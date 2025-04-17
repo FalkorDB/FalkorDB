@@ -33,24 +33,26 @@ typedef enum {
 #define INDEX_FLD_ANY (INDEX_FLD_FULLTEXT | INDEX_FLD_RANGE | INDEX_FLD_VECTOR)
 
 typedef struct {
-	char *name;              // field name
-	AttributeID id;          // field id
-	IndexFieldType type;     // field type(s)
+	char *name;                    // field name
+	AttributeID id;                // field id
+	IndexFieldType type;           // field type(s)
 	struct {
-		double weight;          // the importance of text
-		bool nostem;            // disable stemming of the text
-		char *phonetic;         // phonetic search of text
+		double weight;             // the importance of text
+		bool nostem;               // disable stemming of the text
+		char *phonetic;            // phonetic search of text
 	} options;
 	struct {
-		uint32_t dimension;     // vector dimension
-		size_t M;               // max outgoing edges
-		size_t efConstruction;  // construction parameter for HNSW
-		size_t efRuntime;       // runtime parameter for HNSW
-		VecSimMetric simFunc;     // similarity function
+		uint32_t dimension;        // vector dimension
+		size_t M;                  // max outgoing edges
+		size_t efConstruction;     // construction parameter for HNSW
+		size_t efRuntime;          // runtime parameter for HNSW
+		VecSimMetric simFunc;      // similarity function
 	} hnsw_options;
-	char *range_name;        // 'range:'  + field name
-	char *vector_name;       // 'vector:' + field name
-	char *fulltext_name;     // field name
+	char *range_name;              // 'range:'  + field name
+	char *range_string_arr_name;   // 'range:'  + field name + ':numeric:arr'
+	char *range_numeric_arr_name;  // 'range:'  + field name + ':string:arr'
+	char *vector_name;             // 'vector:' + field name
+	char *fulltext_name;           // field name
 } IndexField;
 
 //------------------------------------------------------------------------------

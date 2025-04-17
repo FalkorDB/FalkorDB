@@ -268,6 +268,62 @@ class testNodeIndexDeletionFlow():
         self.env.assertEquals(res.result_set[0][0],
             Node(labels='X', properties={'uid': '10'}))
 
+    def test_08_remove_range_field(self):
+        # a single range field F is composed of 3 distinct fields:
+        # 1. range:F (scalar exact matching) e.g. n.v = 3 or n.v > 4
+        # 2. range:F:numeric:arr (array numeric element lookup) e.g. 3 in n.v
+        # 3. range:F:string:arr  (array string element lookup) e.g. 'a' in n.v
+        # we need to make sure that upon the removal of a field, all 3 fields
+        # are deleted
+
+        # create an index on N:a and N:b
+        create_node_range_index(self.g, 'N', 'a')
+        create_node_range_index(self.g, 'N', 'b', sync=True)
+
+        # make sure we can see all six field
+        res = self.g.query("""CALL db.indexes()
+                              YIELD label, info
+                              WHERE label = 'N'
+                              RETURN [f in info['fields'] | f.name]""")
+
+        fields = res.result_set[0][0]
+        self.env.assertEquals(len(fields), 7)
+        self.env.assertIn("range:a", fields)
+        self.env.assertIn("range:b", fields)
+        self.env.assertIn("range:a:string:arr", fields)
+        self.env.assertIn("range:b:string:arr", fields)
+        self.env.assertIn("range:a:numeric:arr", fields)
+        self.env.assertIn("range:b:numeric:arr", fields)
+        self.env.assertIn("NONE_INDEXABLE_FIELDS", fields)
+
+        # drop the 'a' field
+        drop_node_range_index(self.g, 'N', 'a')
+
+        # make sure all 3 fields associated with 'a' been removed
+        res = self.g.query("""CALL db.indexes()
+                              YIELD label, info
+                              WHERE label = 'N'
+                              RETURN [f in info['fields'] | f.name]""")
+
+        fields = res.result_set[0][0]
+        self.env.assertEquals(len(fields), 4)
+        self.env.assertIn("range:b", fields)
+        self.env.assertIn("range:b:string:arr", fields)
+        self.env.assertIn("range:b:numeric:arr", fields)
+        self.env.assertIn("NONE_INDEXABLE_FIELDS", fields)
+
+        # drop the last field in the index
+        # drop the 'b' field
+        drop_node_range_index(self.g, 'N', 'b')
+
+        # make sure the N index doesn't exists
+        res = self.g.query("""CALL db.indexes()
+                              YIELD label, info
+                              WHERE label = 'N'
+                              RETURN [f in info['fields'] | f.name]""")
+
+        self.env.assertEquals(len(res.result_set), 0)
+
 class testEdgeIndexDeletionFlow():
     def __init__(self):
         # skip test if we're running under Valgrind

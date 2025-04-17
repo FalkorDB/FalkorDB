@@ -194,3 +194,4 @@ class testIndexUpdatesFlow(FlowTestsBase):
         # Validate that the previous value has been removed
         result = self.graph.query("CALL db.idx.fulltext.queryNodes('label_a', 'Group C')")
         self.env.assertEquals(len(result.result_set), 0)
+

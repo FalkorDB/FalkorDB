@@ -192,7 +192,7 @@ static Record CreateConsume
 
 	// done reading, we're not going to call consume any longer
 	// there might be operations e.g. index scan that need to free
-	// index R/W lock, as such free all execution plan operation up the chain
+	// index R/W lock, as such reset all execution plan operation up the chain
 	if(child) {
 		OpBase_PropagateReset(child);
 	}
