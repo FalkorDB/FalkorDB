@@ -1408,6 +1408,105 @@ static void _Graph_Free
 	rm_free(g);
 }
 
+// get graph's memory usage
+void Graph_memoryUsage
+(
+	const Graph *g,           // graph
+	size_t *lbl_matrices_sz,  // [output] label matrices memory usage
+	size_t *rel_matrices_sz,  // [output] relation matrices memory usage
+	size_t *node_storage_sz,  // [output] node storage memory usage
+	size_t *edge_storage_sz   // [output] edge storage memory usage
+) {
+	ASSERT(g               != NULL);
+	ASSERT(lbl_matrices_sz != NULL);
+	ASSERT(rel_matrices_sz != NULL);
+	ASSERT(node_storage_sz != NULL);
+	ASSERT(edge_storage_sz != NULL);
+
+	*lbl_matrices_sz = 0;
+	*rel_matrices_sz = 0;
+	*node_storage_sz = 0;
+	*edge_storage_sz = 0;
+
+	size_t n = 0;  // matrix memory consumption
+
+	Tensor       T;
+	GrB_Matrix   M;
+	Delta_Matrix D;
+	GrB_Info     info;
+
+	//--------------------------------------------------------------------------
+	// Graph's adjacency matrix
+	//--------------------------------------------------------------------------
+
+	D = Graph_GetAdjacencyMatrix(g, false);
+	M = Delta_Matrix_M(D);
+
+	info = GxB_Matrix_memoryUsage(&n, M);
+	ASSERT(info == GrB_SUCCESS);
+
+	*lbl_matrices_sz += n;
+
+	D = Graph_GetAdjacencyMatrix(g, true);
+	M = Delta_Matrix_M(D);
+
+	info = GxB_Matrix_memoryUsage(&n, M);
+	ASSERT(info == GrB_SUCCESS);
+
+	*lbl_matrices_sz += n;
+
+	//--------------------------------------------------------------------------
+	// Graph's label matrices
+	//--------------------------------------------------------------------------
+
+	int n_lbl = Graph_LabelTypeCount(g);
+
+	for(LabelID lbl = 0; lbl < n_lbl; lbl++) {
+		D = Graph_GetLabelMatrix(g, lbl);
+		M = Delta_Matrix_M(D);
+
+		info = GxB_Matrix_memoryUsage(&n, M);
+		ASSERT(info == GrB_SUCCESS);
+
+		*lbl_matrices_sz += n;
+	}
+
+	//--------------------------------------------------------------------------
+	// Graph's relation matrices
+	//--------------------------------------------------------------------------
+
+	int n_rel = Graph_RelationTypeCount(g);
+	for(RelationID rel = 0; rel < n_rel; rel++) {
+		T = Graph_GetRelationMatrix(g, rel, false);
+		M = Delta_Matrix_M(T);
+
+		info = GxB_Matrix_memoryUsage(&n, M);
+		ASSERT(info == GrB_SUCCESS);
+
+		*rel_matrices_sz += n;
+
+		T = Graph_GetRelationMatrix(g, rel, true);
+		M = Delta_Matrix_M(T);
+
+		info = GxB_Matrix_memoryUsage(&n, M);
+		ASSERT(info == GrB_SUCCESS);
+
+		*rel_matrices_sz += n;
+	}
+
+	//--------------------------------------------------------------------------
+	// Graph's datablocks
+	//--------------------------------------------------------------------------
+
+	DataBlock *block;
+
+	block = g->nodes;
+	*node_storage_sz += DataBlock_itemSize(block) * DataBlock_ItemCount(block);
+
+	block = g->edges;
+	*edge_storage_sz += DataBlock_itemSize(block) * DataBlock_ItemCount(block);
+}
+
 void Graph_PartialFree
 (
 	Graph *g

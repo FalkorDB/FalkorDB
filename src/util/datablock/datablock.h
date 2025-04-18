@@ -68,6 +68,12 @@ DataBlock *DataBlock_New
 // returns number of items stored
 uint64_t DataBlock_ItemCount(const DataBlock *dataBlock);
 
+// returns datablock item size
+uint DataBlock_itemSize
+(
+	const DataBlock *dataBlock  // datablock
+);
+
 // Make sure datablock can accommodate at least k items.
 void DataBlock_Accommodate(DataBlock *dataBlock, int64_t k);
 

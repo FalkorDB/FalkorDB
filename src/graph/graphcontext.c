@@ -176,7 +176,7 @@ GraphContext *GraphContext_Retrieve
 	// check if we're still replicating, if so don't allow access to the graph
 	if(aux_field_counter > 0) {
 		// the whole module is currently replicating, emit an error
-		RedisModule_ReplyWithError(ctx, "ERR RedisGraph module is currently replicating");
+		RedisModule_ReplyWithError(ctx, "ERR FalkorDB module is currently replicating");
 		return NULL;
 	}
 

@@ -441,6 +441,16 @@ Delta_Matrix Graph_GetZeroMatrix
 	const Graph *g
 );
 
+// get graph's memory usage
+void Graph_memoryUsage
+(
+	const Graph *g,           // graph
+	size_t *lbl_matrices_sz,  // [output] label matrices memory usage
+	size_t *rel_matrices_sz,  // [output] relation matrices memory usage
+	size_t *node_storage_sz,  // [output] node storage memory usage
+	size_t *edge_storage_sz   // [output] edge storage memory usage
+);
+
 // free partial graph
 void Graph_PartialFree
 (
