@@ -1445,7 +1445,7 @@ void Graph_memoryUsage
 	info = GxB_Matrix_memoryUsage(&n, M);
 	ASSERT(info == GrB_SUCCESS);
 
-	*lbl_matrices_sz += n;
+	*rel_matrices_sz += n;
 
 	D = Graph_GetAdjacencyMatrix(g, true);
 	M = Delta_Matrix_M(D);
@@ -1453,7 +1453,7 @@ void Graph_memoryUsage
 	info = GxB_Matrix_memoryUsage(&n, M);
 	ASSERT(info == GrB_SUCCESS);
 
-	*lbl_matrices_sz += n;
+	*rel_matrices_sz += n;
 
 	//--------------------------------------------------------------------------
 	// Graph's label matrices

@@ -199,6 +199,12 @@ int Graph_Memory
 			return REDISMODULE_OK;
 		}
 
+		if(samples < 0) {
+			RedisModule_ReplyWithErrorFormat(ctx, EMSG_MUST_BE_NON_NEGATIVE,
+					"SAMPLES");
+			return REDISMODULE_OK;
+		}
+
 		// restrict number of samples to max 10,000
 		MIN(samples, 10000);
 	}
