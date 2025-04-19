@@ -168,15 +168,6 @@ int Graph_Memory
 	}
 
 	//--------------------------------------------------------------------------
-	// get graph key
-	//--------------------------------------------------------------------------
-	
-	GraphContext *gc = GraphContext_Retrieve(ctx, argv[2], true, false);
-	if(gc == NULL) {
-		return REDISMODULE_OK;	
-	}
-
-	//--------------------------------------------------------------------------
 	// set number of samples
 	//--------------------------------------------------------------------------
 
@@ -210,6 +201,15 @@ int Graph_Memory
 	}
 
 	//--------------------------------------------------------------------------
+	// get graph key
+	//--------------------------------------------------------------------------
+
+	GraphContext *gc = GraphContext_Retrieve(ctx, argv[2], true, false);
+	if(gc == NULL) {
+		return REDISMODULE_OK;
+	}
+
+	//--------------------------------------------------------------------------
 	// compute graph memory usage
 	//--------------------------------------------------------------------------
 
@@ -223,11 +223,14 @@ int Graph_Memory
 			&lbl_matrices_sz_mb, &rel_matrices_sz_mb, &node_storage_sz_mb,
 			&edge_storage_sz_mb, &indices_sz_mb);
 
+	// counter to GraphContext_Retrieve
+	GraphContext_Release(gc);
+
 	//--------------------------------------------------------------------------
 	// reply to caller
 	//--------------------------------------------------------------------------
 
-	// reply structure
+	// reply structure:
 	// [
 	//    total_graph_sz_mb
 	//    (integer) total_graph_sz_mb

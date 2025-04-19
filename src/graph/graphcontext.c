@@ -207,6 +207,16 @@ GraphContext *GraphContext_Retrieve
 	return gc;
 }
 
+// decrease graph context reference count
+// graph context will be free once reference count reaches 0
+void GraphContext_Release
+(
+	GraphContext *gc // graph context to release
+) {
+	ASSERT(gc != NULL);
+	GraphContext_DecreaseRefCount(gc);
+}
+
 void GraphContext_MarkWriter(RedisModuleCtx *ctx, GraphContext *gc) {
 	RedisModuleString *graphID = RedisModule_CreateString(ctx, gc->graph_name, strlen(gc->graph_name));
 
