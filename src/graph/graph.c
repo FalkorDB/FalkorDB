@@ -1436,7 +1436,7 @@ void Graph_memoryUsage
 	GrB_Info     info;
 
 	//--------------------------------------------------------------------------
-	// Graph's adjacency matrix
+	// graph's adjacency matrix
 	//--------------------------------------------------------------------------
 
 	D = Graph_GetAdjacencyMatrix(g, false);
@@ -1456,7 +1456,7 @@ void Graph_memoryUsage
 	*rel_matrices_sz += n;
 
 	//--------------------------------------------------------------------------
-	// Graph's label matrices
+	// graph's label matrices
 	//--------------------------------------------------------------------------
 
 	int n_lbl = Graph_LabelTypeCount(g);
@@ -1471,8 +1471,17 @@ void Graph_memoryUsage
 		*lbl_matrices_sz += n;
 	}
 
+	// account for graph's node labels matrix
+	D = Graph_GetNodeLabelMatrix(g);
+	M = Delta_Matrix_M(D);
+
+	info = GxB_Matrix_memoryUsage(&n, M);
+	ASSERT(info == GrB_SUCCESS);
+
+	*lbl_matrices_sz += n;
+
 	//--------------------------------------------------------------------------
-	// Graph's relation matrices
+	// graph's relation matrices
 	//--------------------------------------------------------------------------
 
 	int n_rel = Graph_RelationTypeCount(g);
@@ -1495,7 +1504,7 @@ void Graph_memoryUsage
 	}
 
 	//--------------------------------------------------------------------------
-	// Graph's datablocks
+	// graph's datablocks
 	//--------------------------------------------------------------------------
 
 	DataBlock *block;
