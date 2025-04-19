@@ -21,6 +21,7 @@ class MemoryUsage():
 class testGraphMemoryUsage(FlowTestsBase):
     def tearDown(self):
         self.graph.delete()
+        self.graph = self.db.select_graph(GRAPH_ID)
 
     def __init__(self):
         self.env, self.db = Env()
@@ -35,7 +36,7 @@ class testGraphMemoryUsage(FlowTestsBase):
                                         "SAMPLES", samples)
         return MemoryUsage(res[11], res[1], res[7], res[9], res[3], res[5])
 
-    def test01_invalid_call(self):
+    def test_invalid_call(self):
         """test error reporting from invalid calls to GRAPH.MEMORY USAGE"""
 
         # usage:
@@ -109,11 +110,11 @@ class testGraphMemoryUsage(FlowTestsBase):
         except:
             pass
 
-    def test02_node_memory_usage(self):
+    def test_node_memory_usage(self):
         """make sure node memory consumption is reported"""
 
         # create a graph with only nodes
-        q = "UNWIND range(0, 250000) AS X CREATE ()"
+        q = "UNWIND range(0, 250000) AS x CREATE ()"
         self.graph.query(q)
 
         res = self._graph_memory_usage()
@@ -128,11 +129,11 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         self.env.assertEquals(res.total_graph_sz_mb, res.node_storage_sz_mb)
 
-    def test03_label_matrices_memory_usage(self):
+    def test_label_matrices_memory_usage(self):
         """make sure label matrices memory consumption is reported"""
 
         # create a graph with only nodes
-        q = "UNWIND range(0, 250000) AS X CREATE (:A)"
+        q = "UNWIND range(0, 250000) AS x CREATE (:A)"
         self.graph.query(q)
 
         res = self._graph_memory_usage()
@@ -148,11 +149,11 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.env.assertEquals(res.total_graph_sz_mb, res.node_storage_sz_mb +
                               res.label_matrices_sz_mb)
 
-    def test04_edge_memory_usage(self):
+    def test_edge_memory_usage(self):
         """make sure edge memory consumption is reported"""
 
         # create a graph with only nodes
-        q = "UNWIND range(0, 250000) AS X CREATE ()-[:R]->()"
+        q = "UNWIND range(0, 250000) AS x CREATE ()-[:R]->()"
         self.graph.query(q)
 
         res = self._graph_memory_usage()
@@ -169,11 +170,11 @@ class testGraphMemoryUsage(FlowTestsBase):
                               res.edge_storage_sz_mb +
                               res.relation_matrices_sz_mb)
 
-    def test05_attribute_memory_usage(self):
+    def test_attribute_memory_usage(self):
         """make sure entity attributes memory consumption is reported"""
 
         # create a graph with only nodes
-        q = "UNWIND range(0, 250000) AS X CREATE ()"
+        q = "UNWIND range(0, 250000) AS x CREATE ()"
         self.graph.query(q)
 
         res = self._graph_memory_usage()
@@ -196,7 +197,7 @@ class testGraphMemoryUsage(FlowTestsBase):
         res = self._graph_memory_usage()
         self.env.assertGreater(res.node_storage_sz_mb, prev_node_storage_sz_mb)
 
-    def test06_indices_memory_usage(self):
+    def test_indices_memory_usage(self):
         """make sure indices memory consumption is reported"""
 
         # create a graph with only nodes
@@ -221,7 +222,7 @@ class testGraphMemoryUsage(FlowTestsBase):
                               res.indices_sz_mb +
                               res.label_matrices_sz_mb)
 
-    def test07_different_attributes_memory_consumption(self):
+    def test_different_attributes_memory_consumption(self):
         """ make sure we can compute memory consumption of each
             entity attribute type
         """
@@ -251,11 +252,11 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         self.env.assertEquals(res.total_graph_sz_mb, res.node_storage_sz_mb)
 
-    def test08_restricted_samples_size(self):
+    def test_restricted_samples_size(self):
         """make sure samples size is restricted"""
 
         # create a graph with only nodes
-        q = "UNWIND range(0, 250000) AS X CREATE ()"
+        q = "UNWIND range(0, 250000) AS x CREATE ()"
         self.graph.query(q)
 
         # ask for a huge number of samples
@@ -273,7 +274,7 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         self.env.assertEquals(res.total_graph_sz_mb, res.node_storage_sz_mb)
 
-    def test09_memory_usage_empty_graph(self):
+    def test_memory_usage_empty_graph(self):
         """test memory consumption of an empty graph"""
 
         q = "RETURN 1"
