@@ -21,7 +21,7 @@ static size_t _estimate_memory_consumption
 	size_t *indices_sz_mb        // [output] indices memory usage
 ) {
 	ASSERT(gc                 != NULL);
-	ASSERT(samples            > 0);
+	ASSERT(samples            >= 0);
 	ASSERT(indices_sz_mb      != NULL);
 	ASSERT(lbl_matrices_sz_mb != NULL);
 	ASSERT(rel_matrices_sz_mb != NULL);
@@ -69,7 +69,7 @@ static size_t _estimate_memory_consumption
 	}
 	
 	// compute average memory consumption of a node
-	set_memory_usage /= sample_size;
+	set_memory_usage /= MAX(1, sample_size);
 	*node_storage_sz_mb += set_memory_usage * n_nodes;
 
 	// random set of edges
@@ -89,7 +89,7 @@ static size_t _estimate_memory_consumption
 	}
 
 	// compute average memory consumption of a node
-	set_memory_usage /= sample_size;
+	set_memory_usage /= MAX(1, sample_size);
 	*edge_storage_sz_mb += set_memory_usage * n_edges;
 
 	//--------------------------------------------------------------------------
@@ -206,7 +206,7 @@ int Graph_Memory
 		}
 
 		// restrict number of samples to max 10,000
-		samples =  MIN(samples, 10000);
+		samples = MIN(samples, 10000);
 	}
 
 	//--------------------------------------------------------------------------

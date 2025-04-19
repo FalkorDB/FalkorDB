@@ -273,3 +273,21 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         self.env.assertEquals(res.total_graph_sz_mb, res.node_storage_sz_mb)
 
+    def test09_memory_usage_empty_graph(self):
+        """test memory consumption of an empty graph"""
+
+        q = "RETURN 1"
+        self.graph.query(q)
+
+        # ask for a huge number of samples
+        # if number of samples weren't restricted this test
+        # would take forever to complete
+        res = self._graph_memory_usage()
+
+        self.env.assertEquals(res.indices_sz_mb, 0)
+        self.env.assertEquals(res.edge_storage_sz_mb, 0)
+        self.env.assertEquals(res.label_matrices_sz_mb, 0)
+        self.env.assertEquals(res.relation_matrices_sz_mb, 0)
+        self.env.assertEquals(res.total_graph_sz_mb, 0)
+        self.env.assertEquals(res.node_storage_sz_mb, 0)
+
