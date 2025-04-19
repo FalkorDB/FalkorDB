@@ -77,6 +77,13 @@ GraphContext *GraphContext_Retrieve
 	bool shouldCreate
 );
 
+// decrease graph context reference count
+// graph context will be free once reference count reaches 0
+void GraphContext_Release
+(
+	GraphContext *gc // graph context to release
+);
+
 // mark graph key as "dirty" for Redis to pick up on
 void GraphContext_MarkWriter
 (

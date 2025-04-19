@@ -124,6 +124,12 @@ void AttributeSet_PersistValues
 	const AttributeSet set  // set to persist
 );
 
+// get attributeset's memory usage
+size_t AttributeSet_memoryUsage
+(
+	const AttributeSet set  // set to compute memory consumption of
+);
+
 // free attribute set
 void AttributeSet_Free
 (

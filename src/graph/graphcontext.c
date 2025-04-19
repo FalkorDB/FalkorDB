@@ -176,7 +176,7 @@ GraphContext *GraphContext_Retrieve
 	// check if we're still replicating, if so don't allow access to the graph
 	if(aux_field_counter > 0) {
 		// the whole module is currently replicating, emit an error
-		RedisModule_ReplyWithError(ctx, "ERR RedisGraph module is currently replicating");
+		RedisModule_ReplyWithError(ctx, "ERR FalkorDB module is currently replicating");
 		return NULL;
 	}
 
@@ -205,6 +205,16 @@ GraphContext *GraphContext_Retrieve
 	if(gc) GraphContext_IncreaseRefCount(gc);
 
 	return gc;
+}
+
+// decrease graph context reference count
+// graph context will be free once reference count reaches 0
+void GraphContext_Release
+(
+	GraphContext *gc // graph context to release
+) {
+	ASSERT(gc != NULL);
+	GraphContext_DecreaseRefCount(gc);
 }
 
 void GraphContext_MarkWriter(RedisModuleCtx *ctx, GraphContext *gc) {

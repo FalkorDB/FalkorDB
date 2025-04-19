@@ -32,7 +32,8 @@ typedef enum {
 	CMD_COPY        = 13,
 	CMD_RESTORE     = 14,
 	CMD_ACL         = 15,
-	CMD_PASSWORD    = 16
+	CMD_PASSWORD    = 16,
+	CMD_MEMORY      = 17
 } GRAPH_Commands;
 
 //------------------------------------------------------------------------------
@@ -45,17 +46,18 @@ void Graph_Query(void *args);
 void Graph_Profile(void *args);
 void Graph_Explain(void *args);
 
-int Graph_List(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
-int Graph_Info(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
-int Graph_Copy(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
-int Graph_Debug(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
-int Graph_Delete(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
-int Graph_Effect(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
-int Graph_Config(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
-int Graph_Restore(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
-int Graph_Slowlog(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
-int CommandDispatch(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
-int Graph_Constraint(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
-int graph_acl_cmd(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int Graph_List       (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int Graph_Info       (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int Graph_Copy       (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int Graph_Debug      (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int Graph_Delete     (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int Graph_Effect     (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int Graph_Config     (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int Graph_Restore    (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int Graph_Slowlog    (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int Graph_Memory     (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int CommandDispatch  (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int Graph_Constraint (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int graph_acl_cmd    (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_SetPassword(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 
