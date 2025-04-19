@@ -221,3 +221,55 @@ class testGraphMemoryUsage(FlowTestsBase):
                               res.indices_sz_mb +
                               res.label_matrices_sz_mb)
 
+    def test07_different_attributes_memory_consumption(self):
+        """ make sure we can compute memory consumption of each
+            entity attribute type
+        """
+
+        q = """
+                UNWIND range(0, 32000) AS x
+                CREATE ({v: 1}),
+                       ({v: -2}),
+                       ({v: 3.14}),
+                       ({v:'str'}),
+                       ({v: true}),
+                       ({v: point({latitude: 32.0705767, longitude: 34.8185946})}),
+                       ({v:[1,'2',3, [4,5, [6]]]}),
+                       ({v: vecf32([1,2.2,-3.1])})"""
+
+        self.graph.query(q)
+
+        res = self._graph_memory_usage()
+
+        self.env.assertEquals(res.indices_sz_mb, 0)
+        self.env.assertEquals(res.edge_storage_sz_mb, 0)
+        self.env.assertEquals(res.label_matrices_sz_mb, 0)
+        self.env.assertEquals(res.relation_matrices_sz_mb, 0)
+
+        self.env.assertGreater(res.total_graph_sz_mb, 0)
+        self.env.assertGreater(res.node_storage_sz_mb, 0)
+
+        self.env.assertEquals(res.total_graph_sz_mb, res.node_storage_sz_mb)
+
+    def test08_restricted_samples_size(self):
+        """make sure samples size is restricted"""
+
+        # create a graph with only nodes
+        q = "UNWIND range(0, 250000) AS X CREATE ()"
+        self.graph.query(q)
+
+        # ask for a huge number of samples
+        # if number of samples weren't restricted this test
+        # would take forever to complete
+        res = self._graph_memory_usage(samples=2**64-1)
+
+        self.env.assertEquals(res.indices_sz_mb, 0)
+        self.env.assertEquals(res.edge_storage_sz_mb, 0)
+        self.env.assertEquals(res.label_matrices_sz_mb, 0)
+        self.env.assertEquals(res.relation_matrices_sz_mb, 0)
+
+        self.env.assertGreater(res.total_graph_sz_mb, 0)
+        self.env.assertGreater(res.node_storage_sz_mb, 0)
+
+        self.env.assertEquals(res.total_graph_sz_mb, res.node_storage_sz_mb)
+

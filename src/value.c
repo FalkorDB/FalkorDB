@@ -1053,19 +1053,7 @@ size_t SIValue_memoryUsage
 		case T_ARRAY:
 			l = SIArray_Length(v);
 			for(int i = 0; i < l; i++) {
-				n += SIValue_memoryUsage(v);
-			}
-			break;
-
-		case T_MAP:
-			l = Map_KeyCount(v);
-			for(int i = 0; i < l; i++) {
-				SIValue key;
-				SIValue value;
-				Map_GetIdx(v, i, &key, &value);
-
-				n += SIValue_memoryUsage(key);
-				n += SIValue_memoryUsage(value);
+				n += SIValue_memoryUsage(SIArray_Get(v, i));
 			}
 			break;
 

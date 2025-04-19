@@ -206,7 +206,7 @@ int Graph_Memory
 		}
 
 		// restrict number of samples to max 10,000
-		MIN(samples, 10000);
+		samples =  MIN(samples, 10000);
 	}
 
 	//--------------------------------------------------------------------------
