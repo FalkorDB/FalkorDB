@@ -241,10 +241,10 @@ int Graph_Memory
 	//    relation_matrices_sz_mb
 	//    (integer) <relation_matrices_sz_mb>
 
-	//    node_storage_sz_mb
+	//    amortized_node_storage_sz_mb
 	//    (integer) <node_storage_sz_mb>
 
-	//    edge_storage_sz_mb
+	//    amortized_edge_storage_sz_mb
 	//    (integer) <edge_storage_sz_mb>
 	//
 	//    indices_sz_mb
@@ -266,12 +266,12 @@ int Graph_Memory
 	RedisModule_ReplyWithCString(ctx, "relation_matrices_sz_mb");
 	RedisModule_ReplyWithLongLong(ctx, rel_matrices_sz_mb);
 
-	// node_storage_sz_mb
-	RedisModule_ReplyWithCString(ctx, "node_storage_sz_mb");
+	// amortized_node_storage_sz_mb
+	RedisModule_ReplyWithCString(ctx, "amortized_node_storage_sz_mb");
 	RedisModule_ReplyWithLongLong(ctx, node_storage_sz_mb);
 
-	// edge_storage_sz_mb
-	RedisModule_ReplyWithCString(ctx, "edge_storage_sz_mb");
+	// amortized_edge_storage_sz_mb
+	RedisModule_ReplyWithCString(ctx, "amortized_edge_storage_sz_mb");
 	RedisModule_ReplyWithLongLong(ctx, edge_storage_sz_mb);
 
 	// indices_sz_mb
