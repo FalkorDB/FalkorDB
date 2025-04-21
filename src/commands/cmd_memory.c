@@ -7,6 +7,8 @@
 #include "../errors/error_msgs.h"
 #include "../graph/graphcontext.h"
 
+#define MB (1 <<20)
+
 extern RedisModuleType *GraphContextRedisModuleType;
 
 // returns the total amount of memory consumed by a graph
@@ -123,11 +125,11 @@ static size_t _estimate_memory_consumption
 	}
 
 	// convert from bytes to mb
-	*indices_sz_mb      /= 1000000;
-	*lbl_matrices_sz_mb /= 1000000;
-	*rel_matrices_sz_mb /= 1000000;
-	*node_storage_sz_mb /= 1000000;
-	*edge_storage_sz_mb /= 1000000;
+	*indices_sz_mb      /= MB;
+	*lbl_matrices_sz_mb /= MB;
+	*rel_matrices_sz_mb /= MB;
+	*node_storage_sz_mb /= MB;
+	*edge_storage_sz_mb /= MB;
 
 	// return total memory consumption
 	return (*lbl_matrices_sz_mb +
