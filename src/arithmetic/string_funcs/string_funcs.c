@@ -678,8 +678,14 @@ SIValue AR_REPLACE(SIValue *argv, int argc, void *private_data) {
 	return SI_TransferStringVal(buffer);
 }
 
-// returns a list of strings resulting from the splitting of the original string around matches of the given delimiter
-SIValue AR_SPLIT(SIValue *argv, int argc, void *private_data) {
+// returns a list of strings resulting from the splitting of the original string
+// around matches of the given delimiter
+SIValue AR_SPLIT
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
 	if(SIValue_IsNull(argv[0]) || SIValue_IsNull(argv[1])) {
 		return SI_NullVal();
 	}
@@ -699,7 +705,7 @@ SIValue AR_SPLIT(SIValue *argv, int argc, void *private_data) {
 			const utf8proc_uint8_t *str_i = (const utf8proc_uint8_t *)str;
 			while(str_i[0] != 0) {
 				str_i += utf8proc_iterate(str_i, -1, &c);
-				int i  = utf8proc_encode_char(utf8proc_tolower(c), token);
+				int i  = utf8proc_encode_char(c, token);
 				token[i] = '\0';
 				SIArray_Append(&tokens, SI_ConstStringVal((const char *)token));
 			}
