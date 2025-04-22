@@ -919,9 +919,14 @@ bool AR_EXP_ReturnsBoolean
 	return t & T_BOOL || t == T_NULL;
 }
 
-void _AR_EXP_ToString(const AR_ExpNode *root, char **str, size_t *str_size,
-					  size_t *bytes_written) {
-	/* Make sure there are at least 64 bytes in str. */
+void _AR_EXP_ToString
+(
+	const AR_ExpNode *root,
+	char **str,
+	size_t *str_size,
+	size_t *bytes_written
+) {
+	// make sure there are at least 64 bytes in str
 	if(*str == NULL) {
 		*bytes_written = 0;
 		*str_size = 128;
@@ -983,7 +988,11 @@ void _AR_EXP_ToString(const AR_ExpNode *root, char **str, size_t *str_size,
 	}
 }
 
-void AR_EXP_ToString(const AR_ExpNode *root, char **str) {
+void AR_EXP_ToString
+(
+	const AR_ExpNode *root,
+	char **str
+) {
 	size_t str_size = 0;
 	size_t bytes_written = 0;
 	*str = NULL;
