@@ -55,6 +55,7 @@ void RocksDB_init() {
 	rocksdb_options_set_write_buffer_size(options, 1 * 1024 * 1024);
 	rocksdb_options_set_db_write_buffer_size(options, 1 * 1024 * 1024);
 	rocksdb_options_set_max_bytes_for_level_base(options, 1 * 1024 * 1024);
+	rocksdb_options_set_compression(options, rocksdb_no_compression);
 
 	writeoptions = rocksdb_writeoptions_create();
 	rocksdb_writeoptions_disable_WAL(writeoptions, 1);
