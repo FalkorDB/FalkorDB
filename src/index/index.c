@@ -294,12 +294,12 @@ static inline void _addArrayField
 	ASSERT(field        != NULL);
 	ASSERT(SI_TYPE(arr) == T_ARRAY);
 
-	double      d;  // numerical value
-	const char *s;  // string value
+	char *s;   // string value
+	double d;  // numerical value
 
 	uint32_t l = SIArray_Length(arr);
-	double     *numerics = array_new(double, l);
-	const char **strings = array_new(const char *, l);
+	double *numerics = array_new(double, l);
+	char **strings = array_new(char *, l);
 
 	// split array into dedicated numerical and string arrays
 	for(uint i = 0; i < l; i++) {
@@ -340,7 +340,7 @@ static inline void _addArrayField
 
 	if(n_strings > 0) {
 		RediSearch_DocumentAddFieldStringArray(doc,
-				field->range_string_arr_name, strings, n_strings,
+				field->range_string_arr_name, &strings, n_strings,
 				RSFLDTYPE_TAG);
 	}
 
