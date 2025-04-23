@@ -18,7 +18,10 @@ class testIndexScanFlow():
         self.build_indices()
 
     def tearDown(self):
-        self.graph.delete()
+        try:
+            self.graph.delete()
+        except:
+            pass
 
     def build_indices(self):
         self.graph.create_node_range_index('person', 'age')
