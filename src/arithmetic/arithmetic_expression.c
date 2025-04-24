@@ -758,6 +758,24 @@ SIValue AR_EXP_FinalizeAggregations
 	}
 }
 
+// get the ith child of root
+// in case root isn't a parent or idx > number of children NULL is returned
+AR_ExpNode *AR_EXP_getChild
+(
+	const AR_ExpNode *root,  // arithmetic expression node
+	uint i                   // child index to return
+) {
+	ASSERT(root != NULL);
+
+	if(root->type == AR_EXP_OP) {
+		if(i < root->op.child_count) {
+			return root->op.children[i];
+		}
+	}
+
+	return NULL;
+}
+
 void AR_EXP_CollectEntities
 (
 	AR_ExpNode *root,

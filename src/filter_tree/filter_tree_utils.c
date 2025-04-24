@@ -7,10 +7,20 @@
 #include "filter_tree_utils.h"
 #include "RG.h"
 
-bool isInFilter(const FT_FilterNode *filter) {
-	return (filter->t == FT_N_EXP &&
-			filter->exp.exp->type == AR_EXP_OP &&
-			strcasecmp(AR_EXP_GetFuncName(filter->exp.exp), "in") == 0);
+bool isInFilter
+(
+	const FT_FilterNode *f
+) {
+	// try to treat filter node as an expression
+	AR_ExpNode *exp = FilterTree_getExpression(f);
+
+	// filter isn't an expression
+	if(exp == NULL) {
+		return false;
+	}
+
+	return (AR_EXP_IsOperation(exp) &&
+			strcasecmp(AR_EXP_GetFuncName(exp), "in") == 0);
 }
 
 // extracts both origin and radius from a distance filter
