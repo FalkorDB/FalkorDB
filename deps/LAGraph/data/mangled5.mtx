@@ -1,0 +1,5 @@
+%%MatrixMarket matrix coordinate pattern hermitian
+%%GraphBLAS type bool
+% This matrix is mangled and causes LAGraph_MMRead to return an error code
+2 2 1
+2 2 1 1

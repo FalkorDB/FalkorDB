@@ -1,0 +1,66 @@
+name: CMake
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+        type: [Debug, RelWithDebInfo, MinSizeRel, Release]
+        compiler: [default, clang, gcc]
+        exclude:
+          - {os: "macOS-latest", compiler: "clang"}
+          - {os: "windows-latest", compiler: "gcc"}
+          - {os: "macOS-latest", compiler: "gcc"}
+          - {os: "ubuntu-latest", compiler: "default"}
+          - {os: "ubuntu-latest", compiler: "default"}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Create Build Environment
+      run: cmake -E make_directory ${{github.workspace}}/build
+
+    - name: Setup dependencies
+      if: startsWith(matrix.os, 'ubuntu')
+      run: sudo apt-get install -y gcc-10 g++-10 clang-10
+
+    - name: Configure CMake
+      shell: bash
+      if: matrix.compiler == 'default'
+      working-directory: ${{github.workspace}}/build
+      run: cmake $GITHUB_WORKSPACE/test -DCMAKE_BUILD_TYPE=${{ matrix.type }}
+
+    - name: Configure CMake with GCC
+      shell: bash
+      if: matrix.compiler == 'gcc'
+      working-directory: ${{github.workspace}}/build
+      run: cmake $GITHUB_WORKSPACE/test -DCMAKE_BUILD_TYPE=${{ matrix.type }} -DCMAKE_C_COMPILER=gcc-10 -DCMAKE_CXX_COMPILER=g++-10
+
+    - name: Configure CMake with Clang (Ubuntu)
+      shell: bash
+      if: (matrix.compiler == 'clang') && startsWith(matrix.os, 'ubuntu')
+      working-directory: ${{github.workspace}}/build
+      run: cmake $GITHUB_WORKSPACE/test -DCMAKE_BUILD_TYPE=${{ matrix.type }} -DCMAKE_C_COMPILER=clang-10 -DCMAKE_CXX_COMPILER=clang++-10
+
+    - name: Configure CMake with Clang (Windows)
+      shell: bash
+      if: (matrix.compiler == 'clang') && startsWith(matrix.os, 'windows')
+      working-directory: ${{github.workspace}}/build
+      run: cmake $GITHUB_WORKSPACE/test -DCMAKE_BUILD_TYPE=${{ matrix.type }} -T ClangCL
+
+    - name: Build
+      working-directory: ${{github.workspace}}/build
+      shell: bash
+      run: cmake --build . --config ${{ matrix.type }}
+
+    - name: Test
+      working-directory: ${{github.workspace}}/build
+      shell: bash
+      run: if [ "${{ matrix.os }}" == "windows-latest" ]; then cd ${{ matrix.type }}; fi; ./json_test

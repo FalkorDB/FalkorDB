@@ -1,0 +1,46 @@
+File: LICENSE
+
+LAGraph
+
+Copyright 2019-2022 LAGraph Contributors. All Rights Reserved.
+(see Contributors.txt for a full list of Contributors;
+ see ContributionInstructions.txt for information on how you can
+ Contribute to this project).
+
+BSD
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation
+and/or other materials provided with the distribution.
+
+ACKNOWLEDGMENTS AND DISCLAIMERS:
+
+This program includes and/or can make use of certain third party source code,
+object code, documentation and other files ("Third Party Software"). The Third
+Party Software that is used by this program is dependent upon your system
+configuration. By using this program, You agree to comply with any and all
+relevant Third Party Software terms and conditions contained in any such Third
+Party Software or separate license file distributed with such Third Party
+Software. The parties who own the Third Party Software ("Third Party
+Licensors") are intended third party beneficiaries to this License with
+respect to the terms applicable to their Third Party Software. Third Party
+Software licenses only apply to the Third Party Software and not any other
+portion of this program or this program as a whole.
+
+Created, in part, with funding and support from the United States Government.
+(see Acknowledgments.txt file).
+
+NO WARRANTY. THIS MATERIAL IS FURNISHED ON AN "AS-IS" BASIS. THE LAGRAPH
+CONTRIBUTORS MAKE NO WARRANTIES OF ANY KIND, EITHER EXPRESSED OR IMPLIED, AS
+TO ANY MATTER INCLUDING, BUT NOT LIMITED TO, WARRANTY OF FITNESS FOR PURPOSE
+OR MERCHANTABILITY, EXCLUSIVITY, OR RESULTS OBTAINED FROM USE OF THE
+MATERIAL. THE CONTRIBUTORS DO NOT MAKE ANY WARRANTY OF ANY KIND WITH RESPECT
+TO FREEDOM FROM PATENT, TRADEMARK, OR COPYRIGHT INFRINGEMENT.
+
+DM22-0790

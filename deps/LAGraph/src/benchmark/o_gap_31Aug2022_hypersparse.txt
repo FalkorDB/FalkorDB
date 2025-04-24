@@ -1,0 +1,1926 @@
+Script started on 2022-08-31 17:53:06-05:00 [TERM="screen.xterm-256color" TTY="/dev/pts/1" COLUMNS="150" LINES="79"]
+ 
+:: WARNING: setvars.sh has already been run. Skipping re-execution.
+   To force a re-execution of setvars.sh, use the '--force' option.
+   Using '--force' can result in excessive use of your environment variables.
+  
+usage: source setvars.sh [--force] [--config=file] [--help] [...]
+  --force        Force setvars.sh to re-run, doing so may overload environment.
+  --config=file  Customize env vars using a setvars.sh configuration file.
+  --help         Display this help message and exit.
+  ...            Additional args are passed to individual env/vars.sh scripts
+                 and should follow this script's arguments.
+  
+  Some POSIX shells do not accept command-line options. In that case, you can pass
+  command-line options via the SETVARS_ARGS environment variable. For example:
+  
+  $ SETVARS_ARGS="ia32 --config=config.txt" ; export SETVARS_ARGS
+  $ . path/to/setvars.sh
+  
+  The SETVARS_ARGS environment variable is cleared on exiting setvars.sh.
+  
+[0;36mhypersparse $[0m pwd
+/home/faculty/d/davis/master/LAGraph/src/benchmark
+[0;36mhypersparse $[0m dir
+total 296
+ 8 bc_demo.c        4 [0m[01;31mdo_gap_2[0m*        4 [01;31mdo_gap_cc[0m*         4 [01;31mdo_ss2[0m*                  8 gappagerank_demo.c            12 ss2_demo.c
+12 bfs_demo.c       4 [01;31mdo_gap_all[0m*      4 [01;31mdo_gap_pagerank[0m*   4 [01;31mdo_ss3[0m*                 40 LAGraph_demo.h                 8 sssp_demo.c
+12 cc_demo.c        4 [01;31mdo_gap_bc[0m*       4 [01;31mdo_gap_sssp[0m*       4 GAP_2021_backslash.txt   4 mtx2bin_demo.c                12 tc_demo.c
+ 4 CMakeLists.txt   4 [01;31mdo_gap_bfs[0m*      4 [01;31mdo_gap_tc[0m*        20 GAP_2021.txt            84 o_gap_8Feb22_hypersparse.txt   0 typescript
+ 4 [01;31mdo_cc[0m*           4 [01;31mdo_gap_binary[0m*   4 [01;31mdo_hpec21_pr[0m*      8 GAP_2022.txt             8 README.md
+[0;36mhypersparse $[0m ./do_gap_all
+Matrix input file format:  mtx
+GAP matrices located in:   ../../../GAP
+hypersparse.engr.tamu.edu
+ 
+======================================================================
+GAP benchmarks using LAGraph+GraphBLAS: Breadth First Search
+======================================================================
+Matrix input file format:  mtx
+GAP matrices located in:   ../../../GAP
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+nthreads_max: 40
+threads to test:  40
+matrix: ../../../GAP/GAP-kron/GAP-kron.mtx
+[.mtx]
+Reading matrix market file: ../../../GAP/GAP-kron/GAP-kron.mtx
+^C
+[0;36mhypersparse $[0m ./do_gap_al g[K[Kl grb
+Matrix input file format:  grb
+GAP matrices located in:   ../../../GAP
+hypersparse.engr.tamu.edu
+ 
+======================================================================
+GAP benchmarks using LAGraph+GraphBLAS: Breadth First Search
+======================================================================
+Matrix input file format:  grb
+GAP matrices located in:   ../../../GAP
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+nthreads_max: 40
+threads to test:  40
+matrix: ../../../GAP/GAP-kron/GAP-kron.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-kron/GAP-kron.grb
+sources: ../../../GAP/GAP-kron/GAP-kron_sources.mtx
+read time: 71.4751
+warmup: parent only, pushpull: 0.582349 sec
+
+------------------------------- threads: 40
+parent only  pushpull trial:  0 threads: 40 src: 2.33801e+06     0.5715 sec
+parent only  pushpull trial:  1 threads: 40 src: 3.19977e+07     0.4966 sec
+parent only  pushpull trial:  2 threads: 40 src: 2.35909e+07     0.5118 sec
+parent only  pushpull trial:  3 threads: 40 src: 4.34006e+07     0.5300 sec
+parent only  pushpull trial:  4 threads: 40 src: 7.53379e+07     0.5254 sec
+parent only  pushpull trial:  5 threads: 40 src: 169867     0.4884 sec
+parent only  pushpull trial:  6 threads: 40 src: 1.04041e+08     0.5487 sec
+parent only  pushpull trial:  7 threads: 40 src: 9.41779e+07     0.4989 sec
+parent only  pushpull trial:  8 threads: 40 src: 3.28714e+07     0.5452 sec
+parent only  pushpull trial:  9 threads: 40 src: 5.623e+07     0.6854 sec
+parent only  pushpull trial: 10 threads: 40 src: 6.9883e+07     0.4814 sec
+parent only  pushpull trial: 11 threads: 40 src: 9.34634e+06     0.5271 sec
+parent only  pushpull trial: 12 threads: 40 src: 4.89154e+07     0.5517 sec
+parent only  pushpull trial: 13 threads: 40 src: 1.22571e+08     0.4832 sec
+parent only  pushpull trial: 14 threads: 40 src: 6.18328e+06     0.7841 sec
+parent only  pushpull trial: 15 threads: 40 src: 8.63237e+07     0.5370 sec
+parent only  pushpull trial: 16 threads: 40 src: 1.06726e+08     0.4938 sec
+parent only  pushpull trial: 17 threads: 40 src: 9.23899e+07     0.4770 sec
+parent only  pushpull trial: 18 threads: 40 src: 1.62107e+07     0.4846 sec
+parent only  pushpull trial: 19 threads: 40 src: 5.98167e+07     0.7122 sec
+parent only  pushpull trial: 20 threads: 40 src: 1.1167e+08     0.4960 sec
+parent only  pushpull trial: 21 threads: 40 src: 1.02831e+08     0.4757 sec
+parent only  pushpull trial: 22 threads: 40 src: 1.13385e+08     0.6206 sec
+parent only  pushpull trial: 23 threads: 40 src: 4.38726e+07     0.4791 sec
+parent only  pushpull trial: 24 threads: 40 src: 8.05088e+07     0.4956 sec
+parent only  pushpull trial: 25 threads: 40 src: 2.61056e+07     0.7540 sec
+parent only  pushpull trial: 26 threads: 40 src: 8.80752e+06     0.5004 sec
+parent only  pushpull trial: 27 threads: 40 src: 1.18452e+08     0.4875 sec
+parent only  pushpull trial: 28 threads: 40 src: 1.21819e+08     0.4960 sec
+parent only  pushpull trial: 29 threads: 40 src: 4.23619e+07     0.4850 sec
+parent only  pushpull trial: 30 threads: 40 src: 2.94931e+07     0.5559 sec
+parent only  pushpull trial: 31 threads: 40 src: 9.84615e+07     0.5503 sec
+parent only  pushpull trial: 32 threads: 40 src: 7.19313e+07     0.7733 sec
+parent only  pushpull trial: 33 threads: 40 src: 1.03808e+08     0.5670 sec
+parent only  pushpull trial: 34 threads: 40 src: 4.09234e+06     0.5267 sec
+parent only  pushpull trial: 35 threads: 40 src: 1.15276e+08     0.6610 sec
+parent only  pushpull trial: 36 threads: 40 src: 4.64934e+06     0.5102 sec
+parent only  pushpull trial: 37 threads: 40 src: 7.66562e+07     0.5543 sec
+parent only  pushpull trial: 38 threads: 40 src: 3.1312e+07     0.4936 sec
+parent only  pushpull trial: 39 threads: 40 src: 1.11334e+08     0.4764 sec
+parent only  pushpull trial: 40 threads: 40 src: 1.00963e+08     0.6297 sec
+parent only  pushpull trial: 41 threads: 40 src: 4.18232e+07     0.5085 sec
+parent only  pushpull trial: 42 threads: 40 src: 2.26312e+07     0.5032 sec
+parent only  pushpull trial: 43 threads: 40 src: 4.28485e+07     0.6825 sec
+parent only  pushpull trial: 44 threads: 40 src: 7.94851e+07     0.5426 sec
+parent only  pushpull trial: 45 threads: 40 src: 1.06819e+08     0.5779 sec
+parent only  pushpull trial: 46 threads: 40 src: 7.3348e+07     0.6822 sec
+parent only  pushpull trial: 47 threads: 40 src: 7.88484e+07     0.5471 sec
+parent only  pushpull trial: 48 threads: 40 src: 1.09921e+08     0.4932 sec
+parent only  pushpull trial: 49 threads: 40 src: 1.21492e+08     0.7386 sec
+parent only  pushpull trial: 50 threads: 40 src: 1.01037e+08     0.5716 sec
+parent only  pushpull trial: 51 threads: 40 src: 1.54386e+07     0.5141 sec
+parent only  pushpull trial: 52 threads: 40 src: 4.58478e+06     0.5784 sec
+parent only  pushpull trial: 53 threads: 40 src: 1.24504e+08     0.5455 sec
+parent only  pushpull trial: 54 threads: 40 src: 8.72417e+07     0.4798 sec
+parent only  pushpull trial: 55 threads: 40 src: 1.08297e+08     0.5481 sec
+parent only  pushpull trial: 56 threads: 40 src: 3.39551e+07     0.5260 sec
+parent only  pushpull trial: 57 threads: 40 src: 7.99348e+07     0.4906 sec
+parent only  pushpull trial: 58 threads: 40 src: 8.60848e+06     0.7299 sec
+parent only  pushpull trial: 59 threads: 40 src: 8.24351e+07     0.4894 sec
+parent only  pushpull trial: 60 threads: 40 src: 4.65793e+07     0.5363 sec
+parent only  pushpull trial: 61 threads: 40 src: 515421     0.4855 sec
+parent only  pushpull trial: 62 threads: 40 src: 1.2153e+08     0.4990 sec
+parent only  pushpull trial: 63 threads: 40 src: 1.27979e+08     0.4980 sec
+Avg: BFS pushpull parent only  threads  40:      0.551 sec: ../../../GAP/GAP-kron/GAP-kron.grb
+Avg: BFS pushpull parent only  threads  40:      0.551 sec: ../../../GAP/GAP-kron/GAP-kron.grb
+
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+nthreads_max: 40
+threads to test:  40
+matrix: ../../../GAP/GAP-urand/GAP-urand.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-urand/GAP-urand.grb
+sources: ../../../GAP/GAP-urand/GAP-urand_sources.mtx
+read time: 72.1364
+warmup: parent only, pushpull: 1.32516 sec
+
+------------------------------- threads: 40
+parent only  pushpull trial:  0 threads: 40 src: 2.76914e+07     1.2542 sec
+parent only  pushpull trial:  1 threads: 40 src: 1.2128e+08     1.1796 sec
+parent only  pushpull trial:  2 threads: 40 src: 2.41343e+06     1.2399 sec
+parent only  pushpull trial:  3 threads: 40 src: 3.75121e+07     1.1441 sec
+parent only  pushpull trial:  4 threads: 40 src: 3.83909e+07     1.1674 sec
+parent only  pushpull trial:  5 threads: 40 src: 5.6651e+07     1.1858 sec
+parent only  pushpull trial:  6 threads: 40 src: 1.28461e+08     1.1612 sec
+parent only  pushpull trial:  7 threads: 40 src: 3.30298e+07     1.2304 sec
+parent only  pushpull trial:  8 threads: 40 src: 7.14063e+07     1.2695 sec
+parent only  pushpull trial:  9 threads: 40 src: 1.17873e+08     1.1257 sec
+parent only  pushpull trial: 10 threads: 40 src: 2.43519e+07     1.2676 sec
+parent only  pushpull trial: 11 threads: 40 src: 1.54445e+07     1.2341 sec
+parent only  pushpull trial: 12 threads: 40 src: 1.27526e+08     1.2525 sec
+parent only  pushpull trial: 13 threads: 40 src: 1.12279e+08     1.2890 sec
+parent only  pushpull trial: 14 threads: 40 src: 1.36316e+07     1.1758 sec
+parent only  pushpull trial: 15 threads: 40 src: 1.10379e+08     1.2981 sec
+parent only  pushpull trial: 16 threads: 40 src: 4.48006e+07     1.2708 sec
+parent only  pushpull trial: 17 threads: 40 src: 7.77682e+07     1.2599 sec
+parent only  pushpull trial: 18 threads: 40 src: 175347     1.1822 sec
+parent only  pushpull trial: 19 threads: 40 src: 1.07397e+08     1.3109 sec
+parent only  pushpull trial: 20 threads: 40 src: 4.34572e+07     1.2087 sec
+parent only  pushpull trial: 21 threads: 40 src: 9.72159e+07     1.2012 sec
+parent only  pushpull trial: 22 threads: 40 src: 7.35752e+07     1.2252 sec
+parent only  pushpull trial: 23 threads: 40 src: 4.44497e+07     1.1765 sec
+parent only  pushpull trial: 24 threads: 40 src: 3.39317e+07     1.2574 sec
+parent only  pushpull trial: 25 threads: 40 src: 5.55266e+07     1.2297 sec
+parent only  pushpull trial: 26 threads: 40 src: 1.44221e+07     1.3449 sec
+parent only  pushpull trial: 27 threads: 40 src: 5.80439e+07     1.2291 sec
+parent only  pushpull trial: 28 threads: 40 src: 7.21373e+07     1.2054 sec
+parent only  pushpull trial: 29 threads: 40 src: 9.64784e+06     1.2286 sec
+parent only  pushpull trial: 30 threads: 40 src: 1.59407e+07     1.1720 sec
+parent only  pushpull trial: 31 threads: 40 src: 1.421e+07     1.0998 sec
+parent only  pushpull trial: 32 threads: 40 src: 4.90209e+07     1.2285 sec
+parent only  pushpull trial: 33 threads: 40 src: 2.89011e+07     1.2341 sec
+parent only  pushpull trial: 34 threads: 40 src: 5.04933e+07     1.1975 sec
+parent only  pushpull trial: 35 threads: 40 src: 4.91501e+07     1.2376 sec
+parent only  pushpull trial: 36 threads: 40 src: 1.26525e+08     1.2032 sec
+parent only  pushpull trial: 37 threads: 40 src: 6.38274e+06     1.2629 sec
+parent only  pushpull trial: 38 threads: 40 src: 8.91083e+07     1.1209 sec
+parent only  pushpull trial: 39 threads: 40 src: 9.23974e+06     1.2147 sec
+parent only  pushpull trial: 40 threads: 40 src: 1.10169e+08     1.2867 sec
+parent only  pushpull trial: 41 threads: 40 src: 9.53703e+07     1.1885 sec
+parent only  pushpull trial: 42 threads: 40 src: 1.16654e+08     1.1807 sec
+parent only  pushpull trial: 43 threads: 40 src: 1.23411e+08     1.2537 sec
+parent only  pushpull trial: 44 threads: 40 src: 1.67337e+07     1.1629 sec
+parent only  pushpull trial: 45 threads: 40 src: 4.90303e+07     1.1825 sec
+parent only  pushpull trial: 46 threads: 40 src: 1.08545e+08     1.2541 sec
+parent only  pushpull trial: 47 threads: 40 src: 9.90957e+07     1.2224 sec
+parent only  pushpull trial: 48 threads: 40 src: 1.3385e+08     1.1730 sec
+parent only  pushpull trial: 49 threads: 40 src: 6.34993e+07     1.1647 sec
+parent only  pushpull trial: 50 threads: 40 src: 2.15414e+07     1.1799 sec
+parent only  pushpull trial: 51 threads: 40 src: 6.23075e+06     1.1987 sec
+parent only  pushpull trial: 52 threads: 40 src: 8.90775e+07     1.1990 sec
+parent only  pushpull trial: 53 threads: 40 src: 7.03928e+07     1.2393 sec
+parent only  pushpull trial: 54 threads: 40 src: 6.67046e+06     1.2601 sec
+parent only  pushpull trial: 55 threads: 40 src: 6.17463e+07     1.1845 sec
+parent only  pushpull trial: 56 threads: 40 src: 8.33495e+07     1.2459 sec
+parent only  pushpull trial: 57 threads: 40 src: 1.15272e+08     1.2435 sec
+parent only  pushpull trial: 58 threads: 40 src: 2.01299e+07     1.2917 sec
+parent only  pushpull trial: 59 threads: 40 src: 1.06149e+08     1.2325 sec
+parent only  pushpull trial: 60 threads: 40 src: 1.17042e+08     1.2428 sec
+parent only  pushpull trial: 61 threads: 40 src: 7.14312e+07     1.2317 sec
+parent only  pushpull trial: 62 threads: 40 src: 4.52878e+07     1.3191 sec
+parent only  pushpull trial: 63 threads: 40 src: 1.07702e+08     1.2300 sec
+Avg: BFS pushpull parent only  threads  40:      1.221 sec: ../../../GAP/GAP-urand/GAP-urand.grb
+Avg: BFS pushpull parent only  threads  40:      1.221 sec: ../../../GAP/GAP-urand/GAP-urand.grb
+
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+nthreads_max: 40
+threads to test:  40
+matrix: ../../../GAP/GAP-twitter/GAP-twitter.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-twitter/GAP-twitter.grb
+sources: ../../../GAP/GAP-twitter/GAP-twitter_sources.mtx
+read time: 35.2487
+warmup: parent only, pushpull: 0.00540145 sec
+
+------------------------------- threads: 40
+parent only  pushpull trial:  0 threads: 40 src: 1.24411e+07     0.3275 sec
+parent only  pushpull trial:  1 threads: 40 src: 5.44883e+07     0.3251 sec
+parent only  pushpull trial:  2 threads: 40 src: 2.54519e+07     0.3757 sec
+parent only  pushpull trial:  3 threads: 40 src: 5.77145e+07     0.3500 sec
+parent only  pushpull trial:  4 threads: 40 src: 1.48395e+07     0.4271 sec
+parent only  pushpull trial:  5 threads: 40 src: 3.20811e+07     0.4287 sec
+parent only  pushpull trial:  6 threads: 40 src: 5.29574e+07     0.3596 sec
+parent only  pushpull trial:  7 threads: 40 src: 5.04444e+07     0.3778 sec
+parent only  pushpull trial:  8 threads: 40 src: 4.95907e+07     0.3461 sec
+parent only  pushpull trial:  9 threads: 40 src: 2.01278e+07     0.3407 sec
+parent only  pushpull trial: 10 threads: 40 src: 3.49393e+07     0.3376 sec
+parent only  pushpull trial: 11 threads: 40 src: 4.8251e+07     0.3505 sec
+parent only  pushpull trial: 12 threads: 40 src: 1.95243e+07     0.3320 sec
+parent only  pushpull trial: 13 threads: 40 src: 4.36767e+07     0.3435 sec
+parent only  pushpull trial: 14 threads: 40 src: 3.30555e+07     0.3283 sec
+parent only  pushpull trial: 15 threads: 40 src: 1.52447e+07     0.3407 sec
+parent only  pushpull trial: 16 threads: 40 src: 2.49467e+07     0.4982 sec
+parent only  pushpull trial: 17 threads: 40 src: 6.47947e+06     0.4082 sec
+parent only  pushpull trial: 18 threads: 40 src: 2.60777e+07     0.3270 sec
+parent only  pushpull trial: 19 threads: 40 src: 2.20239e+07     0.3730 sec
+parent only  pushpull trial: 20 threads: 40 src: 2.20819e+07     0.3257 sec
+parent only  pushpull trial: 21 threads: 40 src: 4.00342e+07     0.3565 sec
+parent only  pushpull trial: 22 threads: 40 src: 4.9496e+07     0.3852 sec
+parent only  pushpull trial: 23 threads: 40 src: 4.28475e+07     0.3370 sec
+parent only  pushpull trial: 24 threads: 40 src: 5.24096e+07     0.3267 sec
+parent only  pushpull trial: 25 threads: 40 src: 5.54454e+07     0.3595 sec
+parent only  pushpull trial: 26 threads: 40 src: 2.20281e+07     0.4364 sec
+parent only  pushpull trial: 27 threads: 40 src: 4.87666e+07     0.4011 sec
+parent only  pushpull trial: 28 threads: 40 src: 4.45212e+07     0.3758 sec
+parent only  pushpull trial: 29 threads: 40 src: 6.01355e+07     0.3772 sec
+parent only  pushpull trial: 30 threads: 40 src: 2.85287e+07     0.3570 sec
+parent only  pushpull trial: 31 threads: 40 src: 9.67801e+06     0.3223 sec
+parent only  pushpull trial: 32 threads: 40 src: 4.00203e+07     0.3505 sec
+parent only  pushpull trial: 33 threads: 40 src: 3.16257e+07     0.3275 sec
+parent only  pushpull trial: 34 threads: 40 src: 3.74469e+07     0.3479 sec
+parent only  pushpull trial: 35 threads: 40 src: 5.1789e+07     0.3539 sec
+parent only  pushpull trial: 36 threads: 40 src: 5.25843e+07     0.3547 sec
+parent only  pushpull trial: 37 threads: 40 src: 2.03467e+07     0.3763 sec
+parent only  pushpull trial: 38 threads: 40 src: 4.83879e+07     0.3973 sec
+parent only  pushpull trial: 39 threads: 40 src: 3.73374e+07     0.3793 sec
+parent only  pushpull trial: 40 threads: 40 src: 5.05011e+07     0.3478 sec
+parent only  pushpull trial: 41 threads: 40 src: 3.01301e+07     0.3356 sec
+parent only  pushpull trial: 42 threads: 40 src: 4.11859e+07     0.3390 sec
+parent only  pushpull trial: 43 threads: 40 src: 5.64957e+07     0.3253 sec
+parent only  pushpull trial: 44 threads: 40 src: 4.56633e+07     0.3789 sec
+parent only  pushpull trial: 45 threads: 40 src: 3.33595e+07     0.3404 sec
+parent only  pushpull trial: 46 threads: 40 src: 4.81431e+07     0.3542 sec
+parent only  pushpull trial: 47 threads: 40 src: 3.32915e+07     0.4489 sec
+parent only  pushpull trial: 48 threads: 40 src: 5.34614e+07     0.3593 sec
+parent only  pushpull trial: 49 threads: 40 src: 2.93406e+07     0.3287 sec
+parent only  pushpull trial: 50 threads: 40 src: 3.41485e+07     0.3363 sec
+parent only  pushpull trial: 51 threads: 40 src: 4.91718e+07     0.3710 sec
+parent only  pushpull trial: 52 threads: 40 src: 3.55507e+07     0.3290 sec
+parent only  pushpull trial: 53 threads: 40 src: 1.45215e+07     0.3269 sec
+parent only  pushpull trial: 54 threads: 40 src: 5.16332e+07     0.3737 sec
+parent only  pushpull trial: 55 threads: 40 src: 4.68234e+07     0.3242 sec
+parent only  pushpull trial: 56 threads: 40 src: 1.93963e+07     0.3579 sec
+parent only  pushpull trial: 57 threads: 40 src: 1.98718e+07     0.4290 sec
+parent only  pushpull trial: 58 threads: 40 src: 3.68627e+07     0.3436 sec
+parent only  pushpull trial: 59 threads: 40 src: 4.95391e+07     0.3849 sec
+parent only  pushpull trial: 60 threads: 40 src: 3.40165e+07     0.4110 sec
+parent only  pushpull trial: 61 threads: 40 src: 3.65674e+07     0.4349 sec
+parent only  pushpull trial: 62 threads: 40 src: 5.54878e+07     0.3527 sec
+parent only  pushpull trial: 63 threads: 40 src: 1.43914e+07     0.4179 sec
+Avg: BFS pushpull parent only  threads  40:      0.364 sec: ../../../GAP/GAP-twitter/GAP-twitter.grb
+Avg: BFS pushpull parent only  threads  40:      0.364 sec: ../../../GAP/GAP-twitter/GAP-twitter.grb
+
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+nthreads_max: 40
+threads to test:  40
+matrix: ../../../GAP/GAP-web/GAP-web.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-web/GAP-web.grb
+sources: ../../../GAP/GAP-web/GAP-web_sources.mtx
+read time: 35.0111
+warmup: parent only, pushpull: 0.935578 sec
+
+------------------------------- threads: 40
+parent only  pushpull trial:  0 threads: 40 src: 1.02195e+07     0.9412 sec
+parent only  pushpull trial:  1 threads: 40 src: 4.47582e+07     1.0118 sec
+parent only  pushpull trial:  2 threads: 40 src: 890671     0.9445 sec
+parent only  pushpull trial:  3 threads: 40 src: 1.38438e+07     0.0219 sec
+parent only  pushpull trial:  4 threads: 40 src: 1.41681e+07     0.9471 sec
+parent only  pushpull trial:  5 threads: 40 src: 2.09069e+07     0.9479 sec
+parent only  pushpull trial:  6 threads: 40 src: 1.21896e+07     0.9380 sec
+parent only  pushpull trial:  7 threads: 40 src: 2.63523e+07     0.0199 sec
+parent only  pushpull trial:  8 threads: 40 src: 4.35007e+07     0.9708 sec
+parent only  pushpull trial:  9 threads: 40 src: 8.98702e+06     0.9419 sec
+parent only  pushpull trial: 10 threads: 40 src: 5.69976e+06     0.0183 sec
+parent only  pushpull trial: 11 threads: 40 src: 4.14365e+07     0.9954 sec
+parent only  pushpull trial: 12 threads: 40 src: 5.03073e+06     0.9375 sec
+parent only  pushpull trial: 13 threads: 40 src: 4.07352e+07     0.9571 sec
+parent only  pushpull trial: 14 threads: 40 src: 1.65336e+07     0.9079 sec
+parent only  pushpull trial: 15 threads: 40 src: 2.87002e+07     0.9160 sec
+parent only  pushpull trial: 16 threads: 40 src: 64711     1.0047 sec
+parent only  pushpull trial: 17 threads: 40 src: 3.96348e+07     0.9832 sec
+parent only  pushpull trial: 18 threads: 40 src: 1.60378e+07     0.9305 sec
+parent only  pushpull trial: 19 threads: 40 src: 2.71527e+07     1.0243 sec
+parent only  pushpull trial: 20 threads: 40 src: 1.64041e+07     0.9323 sec
+parent only  pushpull trial: 21 threads: 40 src: 2.0492e+07     0.9083 sec
+parent only  pushpull trial: 22 threads: 40 src: 5.32242e+06     0.9611 sec
+parent only  pushpull trial: 23 threads: 40 src: 2.1421e+07     0.9957 sec
+parent only  pushpull trial: 24 threads: 40 src: 2.66221e+07     1.0215 sec
+parent only  pushpull trial: 25 threads: 40 src: 5.88288e+06     0.9314 sec
+parent only  pushpull trial: 26 threads: 40 src: 1.8091e+07     1.0233 sec
+parent only  pushpull trial: 27 threads: 40 src: 1.06659e+07     0.0320 sec
+parent only  pushpull trial: 28 threads: 40 src: 1.86344e+07     0.9146 sec
+parent only  pushpull trial: 29 threads: 40 src: 1.81387e+07     0.9457 sec
+parent only  pushpull trial: 30 threads: 40 src: 2.35554e+06     1.0009 sec
+parent only  pushpull trial: 31 threads: 40 src: 3.28852e+07     0.0269 sec
+parent only  pushpull trial: 32 threads: 40 src: 4.06574e+07     0.9334 sec
+parent only  pushpull trial: 33 threads: 40 src: 3.51962e+07     0.9550 sec
+parent only  pushpull trial: 34 threads: 40 src: 4.55444e+07     0.9815 sec
+parent only  pushpull trial: 35 threads: 40 src: 6.17552e+06     0.0147 sec
+parent only  pushpull trial: 36 threads: 40 src: 4.00583e+07     0.9813 sec
+parent only  pushpull trial: 37 threads: 40 src: 5.06262e+07     0.9750 sec
+parent only  pushpull trial: 38 threads: 40 src: 3.6571e+07     0.9330 sec
+parent only  pushpull trial: 39 threads: 40 src: 4.93971e+07     0.9217 sec
+parent only  pushpull trial: 40 threads: 40 src: 2.34343e+07     0.9259 sec
+parent only  pushpull trial: 41 threads: 40 src: 2.29944e+06     0.9195 sec
+parent only  pushpull trial: 42 threads: 40 src: 3.28738e+07     0.0244 sec
+parent only  pushpull trial: 43 threads: 40 src: 2.59783e+07     0.9927 sec
+parent only  pushpull trial: 44 threads: 40 src: 2.46172e+06     0.0407 sec
+parent only  pushpull trial: 45 threads: 40 src: 2.27873e+07     0.9339 sec
+parent only  pushpull trial: 46 threads: 40 src: 3.07599e+07     0.9606 sec
+parent only  pushpull trial: 47 threads: 40 src: 7.42889e+06     0.0139 sec
+parent only  pushpull trial: 48 threads: 40 src: 3.91739e+07     0.0047 sec
+parent only  pushpull trial: 49 threads: 40 src: 4.31942e+07     0.0196 sec
+parent only  pushpull trial: 50 threads: 40 src: 2.63615e+07     0.0223 sec
+parent only  pushpull trial: 51 threads: 40 src: 3.97472e+07     0.0080 sec
+parent only  pushpull trial: 52 threads: 40 src: 3.067e+07     0.9794 sec
+parent only  pushpull trial: 53 threads: 40 src: 4.1483e+07     1.0077 sec
+parent only  pushpull trial: 54 threads: 40 src: 9.35867e+06     0.9419 sec
+parent only  pushpull trial: 55 threads: 40 src: 9.94501e+06     0.9413 sec
+parent only  pushpull trial: 56 threads: 40 src: 3.35524e+06     1.0260 sec
+parent only  pushpull trial: 57 threads: 40 src: 3.38313e+07     0.9501 sec
+parent only  pushpull trial: 58 threads: 40 src: 4.51247e+07     0.9765 sec
+parent only  pushpull trial: 59 threads: 40 src: 1.61379e+07     0.0272 sec
+parent only  pushpull trial: 60 threads: 40 src: 1.12354e+07     0.9417 sec
+parent only  pushpull trial: 61 threads: 40 src: 3.75091e+07     0.9296 sec
+parent only  pushpull trial: 62 threads: 40 src: 2.74024e+07     0.9327 sec
+parent only  pushpull trial: 63 threads: 40 src: 3.95461e+07     0.9834 sec
+Avg: BFS pushpull parent only  threads  40:      0.754 sec: ../../../GAP/GAP-web/GAP-web.grb
+Avg: BFS pushpull parent only  threads  40:      0.754 sec: ../../../GAP/GAP-web/GAP-web.grb
+
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+nthreads_max: 40
+threads to test:  40
+matrix: ../../../GAP/GAP-road/GAP-road.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-road/GAP-road.grb
+sources: ../../../GAP/GAP-road/GAP-road_sources.mtx
+read time: 1.33544
+warmup: parent only, pushpull: 3.0869 sec
+
+------------------------------- threads: 40
+parent only  pushpull trial:  0 threads: 40 src: 4.79572e+06     3.0807 sec
+parent only  pushpull trial:  1 threads: 40 src: 2.10039e+07     3.1393 sec
+parent only  pushpull trial:  2 threads: 40 src: 417968     3.1943 sec
+parent only  pushpull trial:  3 threads: 40 src: 6.49651e+06     3.1529 sec
+parent only  pushpull trial:  4 threads: 40 src: 6.6487e+06     3.3742 sec
+parent only  pushpull trial:  5 threads: 40 src: 9.81107e+06     3.0817 sec
+parent only  pushpull trial:  6 threads: 40 src: 2.22475e+07     3.1177 sec
+parent only  pushpull trial:  7 threads: 40 src: 5.72025e+06     3.0569 sec
+parent only  pushpull trial:  8 threads: 40 src: 1.23665e+07     3.1200 sec
+parent only  pushpull trial:  9 threads: 40 src: 2.04137e+07     3.1211 sec
+parent only  pushpull trial: 10 threads: 40 src: 4.21737e+06     3.0246 sec
+parent only  pushpull trial: 11 threads: 40 src: 2.67475e+06     3.0128 sec
+parent only  pushpull trial: 12 threads: 40 src: 2.20856e+07     3.1640 sec
+parent only  pushpull trial: 13 threads: 40 src: 1.9445e+07     3.1118 sec
+parent only  pushpull trial: 14 threads: 40 src: 2.36079e+06     3.0306 sec
+parent only  pushpull trial: 15 threads: 40 src: 1.9116e+07     3.0508 sec
+parent only  pushpull trial: 16 threads: 40 src: 7.75877e+06     3.1305 sec
+parent only  pushpull trial: 17 threads: 40 src: 1.34682e+07     3.0286 sec
+parent only  pushpull trial: 18 threads: 40 src: 30367     3.0984 sec
+parent only  pushpull trial: 19 threads: 40 src: 1.85995e+07     3.0768 sec
+parent only  pushpull trial: 20 threads: 40 src: 7.52611e+06     3.1729 sec
+parent only  pushpull trial: 21 threads: 40 src: 1.68363e+07     3.1602 sec
+parent only  pushpull trial: 22 threads: 40 src: 1.27421e+07     3.1350 sec
+parent only  pushpull trial: 23 threads: 40 src: 7.698e+06     3.2203 sec
+parent only  pushpull trial: 24 threads: 40 src: 5.87644e+06     3.1762 sec
+parent only  pushpull trial: 25 threads: 40 src: 9.61634e+06     3.1439 sec
+parent only  pushpull trial: 26 threads: 40 src: 2.49767e+06     3.1231 sec
+parent only  pushpull trial: 27 threads: 40 src: 1.00523e+07     3.2755 sec
+parent only  pushpull trial: 28 threads: 40 src: 1.24931e+07     3.1343 sec
+parent only  pushpull trial: 29 threads: 40 src: 1.67086e+06     3.1249 sec
+parent only  pushpull trial: 30 threads: 40 src: 2.76068e+06     3.1948 sec
+parent only  pushpull trial: 31 threads: 40 src: 2.46094e+06     3.0301 sec
+parent only  pushpull trial: 32 threads: 40 src: 8.48965e+06     3.2059 sec
+parent only  pushpull trial: 33 threads: 40 src: 5.00522e+06     3.1268 sec
+parent only  pushpull trial: 34 threads: 40 src: 8.74464e+06     3.2034 sec
+parent only  pushpull trial: 35 threads: 40 src: 8.51202e+06     3.2225 sec
+parent only  pushpull trial: 36 threads: 40 src: 2.19122e+07     3.0746 sec
+parent only  pushpull trial: 37 threads: 40 src: 1.10539e+06     3.2056 sec
+parent only  pushpull trial: 38 threads: 40 src: 1.54322e+07     3.2468 sec
+parent only  pushpull trial: 39 threads: 40 src: 1.60018e+06     3.1144 sec
+parent only  pushpull trial: 40 threads: 40 src: 1.90795e+07     3.1374 sec
+parent only  pushpull trial: 41 threads: 40 src: 1.65166e+07     3.0791 sec
+parent only  pushpull trial: 42 threads: 40 src: 2.02026e+07     3.1415 sec
+parent only  pushpull trial: 43 threads: 40 src: 2.13728e+07     3.1365 sec
+parent only  pushpull trial: 44 threads: 40 src: 2.89801e+06     3.1712 sec
+parent only  pushpull trial: 45 threads: 40 src: 8.49128e+06     3.2333 sec
+parent only  pushpull trial: 46 threads: 40 src: 1.87983e+07     3.1805 sec
+parent only  pushpull trial: 47 threads: 40 src: 2.37576e+07     3.1999 sec
+parent only  pushpull trial: 48 threads: 40 src: 1.71618e+07     3.2452 sec
+parent only  pushpull trial: 49 threads: 40 src: 2.31807e+07     3.0651 sec
+parent only  pushpull trial: 50 threads: 40 src: 1.09971e+07     3.2292 sec
+parent only  pushpull trial: 51 threads: 40 src: 3.73063e+06     3.1235 sec
+parent only  pushpull trial: 52 threads: 40 src: 1.07907e+06     3.1922 sec
+parent only  pushpull trial: 53 threads: 40 src: 1.54268e+07     3.2432 sec
+parent only  pushpull trial: 54 threads: 40 src: 1.21909e+07     3.2054 sec
+parent only  pushpull trial: 55 threads: 40 src: 1.15522e+06     3.1964 sec
+parent only  pushpull trial: 56 threads: 40 src: 1.06935e+07     3.2565 sec
+parent only  pushpull trial: 57 threads: 40 src: 1.44348e+07     3.1183 sec
+parent only  pushpull trial: 58 threads: 40 src: 1.99633e+07     3.1272 sec
+parent only  pushpull trial: 59 threads: 40 src: 3.48618e+06     3.1220 sec
+parent only  pushpull trial: 60 threads: 40 src: 1.83833e+07     3.1420 sec
+parent only  pushpull trial: 61 threads: 40 src: 2.02699e+07     3.1617 sec
+parent only  pushpull trial: 62 threads: 40 src: 1.23708e+07     3.0496 sec
+parent only  pushpull trial: 63 threads: 40 src: 7.84314e+06     3.1253 sec
+Avg: BFS pushpull parent only  threads  40:      3.146 sec: ../../../GAP/GAP-road/GAP-road.grb
+Avg: BFS pushpull parent only  threads  40:      3.146 sec: ../../../GAP/GAP-road/GAP-road.grb
+
+ 
+======================================================================
+GAP benchmarks using LAGraph+GraphBLAS: Betweennes Centrality
+======================================================================
+Matrix input file format:  grb
+GAP matrices located in:   ../../../GAP
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+matrix: ../../../GAP/GAP-kron/GAP-kron.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-kron/GAP-kron.grb
+sources: ../../../GAP/GAP-kron/GAP-kron_sources.mtx
+read time: 64.939
+
+Trial 1 : sources: [ 2338012 31997659 23590940 43400604 ]
+BC time 40:      24.5632 (sec)
+
+Trial 2 : sources: [ 75337937 169867 104041220 94177942 ]
+BC time 40:      24.4750 (sec)
+
+Trial 3 : sources: [ 32871357 56230002 69883037 9346345 ]
+BC time 40:      25.7901 (sec)
+
+Trial 4 : sources: [ 48915358 122571173 6183279 86323663 ]
+BC time 40:      24.1874 (sec)
+
+Trial 5 : sources: [ 106725780 92389938 16210738 59816700 ]
+BC time 40:      24.9170 (sec)
+
+Trial 6 : sources: [ 111669929 102831411 113384800 43872564 ]
+BC time 40:      25.4620 (sec)
+
+Trial 7 : sources: [ 80508827 26105648 8807516 118452455 ]
+BC time 40:      20.9326 (sec)
+
+Trial 8 : sources: [ 121818859 42361928 29493053 98461503 ]
+BC time 40:      20.2085 (sec)
+
+Trial 9 : sources: [ 71931337 103808468 4092345 115276241 ]
+BC time 40:      22.3184 (sec)
+
+Trial 10 : sources: [ 4649343 76656189 31312001 111334127 ]
+BC time 40:      24.1695 (sec)
+
+Trial 11 : sources: [ 100962918 41823215 22631240 42848461 ]
+BC time 40:      23.0692 (sec)
+
+Trial 12 : sources: [ 79485148 106818742 73347974 78848445 ]
+BC time 40:      21.2079 (sec)
+
+Trial 13 : sources: [ 109920510 121492133 101037296 15438600 ]
+BC time 40:      24.9830 (sec)
+
+Trial 14 : sources: [ 4584784 124503845 87241743 108297008 ]
+BC time 40:      26.7668 (sec)
+
+Trial 15 : sources: [ 33955082 79934823 8608481 82435063 ]
+BC time 40:      28.3888 (sec)
+
+Trial 16 : sources: [ 46579271 515421 121530467 127978736 ]
+BC time 40:      20.9134 (sec)
+
+ntrials: 16
+
+Ave BC 40:     23.897 sec, rate    176.727
+Avg: BC  40:     23.897 sec: ../../../GAP/GAP-kron/GAP-kron.grb
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+matrix: ../../../GAP/GAP-urand/GAP-urand.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-urand/GAP-urand.grb
+sources: ../../../GAP/GAP-urand/GAP-urand_sources.mtx
+read time: 70.7424
+
+Trial 1 : sources: [ 27691419 121280314 2413431 37512113 ]
+BC time 40:      33.8223 (sec)
+
+Trial 2 : sources: [ 38390877 56651037 128461248 33029842 ]
+BC time 40:      33.7977 (sec)
+
+Trial 3 : sources: [ 71406328 117872827 24351938 15444519 ]
+BC time 40:      33.0231 (sec)
+
+Trial 4 : sources: [ 127526281 112279428 13631649 110379302 ]
+BC time 40:      32.6603 (sec)
+
+Trial 5 : sources: [ 44800623 77768193 175347 107397389 ]
+BC time 40:      32.5439 (sec)
+
+Trial 6 : sources: [ 43457209 97215940 73575165 44449715 ]
+BC time 40:      33.4292 (sec)
+
+Trial 7 : sources: [ 33931724 55526610 14422051 58043873 ]
+BC time 40:      32.4155 (sec)
+
+Trial 8 : sources: [ 72137329 9647840 15940695 14209952 ]
+BC time 40:      33.9676 (sec)
+
+Trial 9 : sources: [ 49020883 28901138 50493273 49150069 ]
+BC time 40:      32.9672 (sec)
+
+Trial 10 : sources: [ 126525082 6382740 89108297 9239735 ]
+BC time 40:      33.5637 (sec)
+
+Trial 11 : sources: [ 110168548 95370259 116653530 123410703 ]
+BC time 40:      33.0105 (sec)
+
+Trial 12 : sources: [ 16733665 49030282 108545121 99095665 ]
+BC time 40:      33.4643 (sec)
+
+Trial 13 : sources: [ 133850077 63499301 21541382 6230751 ]
+BC time 40:      33.8233 (sec)
+
+Trial 14 : sources: [ 89077456 70392765 6670455 61746271 ]
+BC time 40:      32.9315 (sec)
+
+Trial 15 : sources: [ 83349535 115272184 20129908 106148553 ]
+BC time 40:      32.4477 (sec)
+
+Trial 16 : sources: [ 117042375 71431187 45287808 107702120 ]
+BC time 40:      32.3689 (sec)
+
+ntrials: 16
+
+Ave BC 40:     33.140 sec, rate    129.602
+Avg: BC  40:     33.140 sec: ../../../GAP/GAP-urand/GAP-urand.grb
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+matrix: ../../../GAP/GAP-twitter/GAP-twitter.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-twitter/GAP-twitter.grb
+sources: ../../../GAP/GAP-twitter/GAP-twitter_sources.mtx
+read time: 35.3051
+
+Trial 1 : sources: [ 12441072 54488257 25451915 57714473 ]
+BC time 40:       8.9279 (sec)
+
+Trial 2 : sources: [ 14839494 32081104 52957357 50444380 ]
+BC time 40:      11.2360 (sec)
+
+Trial 3 : sources: [ 49590701 20127816 34939333 48251001 ]
+BC time 40:       9.2971 (sec)
+
+Trial 4 : sources: [ 19524253 43676726 33055508 15244687 ]
+BC time 40:       8.1370 (sec)
+
+Trial 5 : sources: [ 24946738 6479472 26077682 22023875 ]
+BC time 40:       9.7527 (sec)
+
+Trial 6 : sources: [ 22081915 40034162 49496014 42847507 ]
+BC time 40:       8.7561 (sec)
+
+Trial 7 : sources: [ 52409557 55445388 22028097 48766648 ]
+BC time 40:       8.9890 (sec)
+
+Trial 8 : sources: [ 44521241 60135542 28528671 9678012 ]
+BC time 40:       9.5459 (sec)
+
+Trial 9 : sources: [ 40020306 31625735 37446892 51788952 ]
+BC time 40:       8.4061 (sec)
+
+Trial 10 : sources: [ 52584255 20346696 48387909 37337427 ]
+BC time 40:       8.4429 (sec)
+
+Trial 11 : sources: [ 50501084 30130061 41185893 56495703 ]
+BC time 40:       8.9352 (sec)
+
+Trial 12 : sources: [ 45663305 33359460 48143058 33291513 ]
+BC time 40:       9.0477 (sec)
+
+Trial 13 : sources: [ 53461445 29340610 34148498 49171806 ]
+BC time 40:       8.9581 (sec)
+
+Trial 14 : sources: [ 35550696 14521507 51633218 46823382 ]
+BC time 40:       8.9059 (sec)
+
+Trial 15 : sources: [ 19396273 19871750 36862677 49539126 ]
+BC time 40:      10.4846 (sec)
+
+Trial 16 : sources: [ 34016452 36567395 55487793 14391370 ]
+BC time 40:       8.6037 (sec)
+
+ntrials: 16
+
+Ave BC 40:      9.152 sec, rate    160.449
+Avg: BC  40:      9.152 sec: ../../../GAP/GAP-twitter/GAP-twitter.grb
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+matrix: ../../../GAP/GAP-web/GAP-web.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-web/GAP-web.grb
+sources: ../../../GAP/GAP-web/GAP-web_sources.mtx
+read time: 33.9054
+
+Trial 1 : sources: [ 10219452 44758211 890671 13843756 ]
+BC time 40:       6.4041 (sec)
+
+Trial 2 : sources: [ 14168062 20906930 12189584 26352335 ]
+BC time 40:       6.1057 (sec)
+
+Trial 3 : sources: [ 43500686 8987024 5699762 41436455 ]
+BC time 40:       6.1705 (sec)
+
+Trial 4 : sources: [ 5030727 40735218 16533563 28700166 ]
+BC time 40:       8.1702 (sec)
+
+Trial 5 : sources: [ 64711 39634750 16037779 27152739 ]
+BC time 40:       8.2089 (sec)
+
+Trial 6 : sources: [ 16404061 20491963 5322423 21420953 ]
+BC time 40:       8.1522 (sec)
+
+Trial 7 : sources: [ 26622109 5882875 18091040 10665896 ]
+BC time 40:       6.2761 (sec)
+
+Trial 8 : sources: [ 18634422 18138715 2355535 32885205 ]
+BC time 40:       6.0418 (sec)
+
+Trial 9 : sources: [ 40657440 35196167 45544426 6175519 ]
+BC time 40:       5.9596 (sec)
+
+Trial 10 : sources: [ 40058318 50626230 36571019 49397052 ]
+BC time 40:       8.0706 (sec)
+
+Trial 11 : sources: [ 23434265 2299444 32873823 25978282 ]
+BC time 40:       5.8881 (sec)
+
+Trial 12 : sources: [ 2461715 22787314 30759947 7428894 ]
+BC time 40:       4.3985 (sec)
+
+Trial 13 : sources: [ 39173870 43194209 26361509 39747211 ]
+BC time 40:       0.2698 (sec)
+
+Trial 14 : sources: [ 30670029 41483033 9358666 9945008 ]
+BC time 40:       8.2651 (sec)
+
+Trial 15 : sources: [ 3355244 33831269 45124744 16137877 ]
+BC time 40:       6.1731 (sec)
+
+Trial 16 : sources: [ 11235448 37509144 27402414 39546083 ]
+BC time 40:       8.0576 (sec)
+
+ntrials: 16
+
+Ave BC 40:      6.413 sec, rate    300.985
+Avg: BC  40:      6.413 sec: ../../../GAP/GAP-web/GAP-web.grb
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+matrix: ../../../GAP/GAP-road/GAP-road.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-road/GAP-road.grb
+sources: ../../../GAP/GAP-road/GAP-road_sources.mtx
+read time: 0.949845
+
+Trial 1 : sources: [ 4795720 21003853 417968 6496511 ]
+BC time 40:      33.1707 (sec)
+
+Trial 2 : sources: [ 6648699 9811073 22247478 5720252 ]
+BC time 40:      33.3723 (sec)
+
+Trial 3 : sources: [ 12366459 20413729 4217374 2674749 ]
+BC time 40:      32.6920 (sec)
+
+Trial 4 : sources: [ 22085557 19445040 2360788 19115968 ]
+BC time 40:      33.1954 (sec)
+
+Trial 5 : sources: [ 7758767 13468234 30367 18599547 ]
+BC time 40:      32.9593 (sec)
+
+Trial 6 : sources: [ 7526108 16836280 12742067 7697995 ]
+BC time 40:      33.0788 (sec)
+
+Trial 7 : sources: [ 5876443 9616340 2497673 10052290 ]
+BC time 40:      33.5230 (sec)
+
+Trial 8 : sources: [ 12493057 1670855 2760679 2460941 ]
+BC time 40:      33.1524 (sec)
+
+Trial 9 : sources: [ 8489650 5005225 8744645 8512023 ]
+BC time 40:      32.5759 (sec)
+
+Trial 10 : sources: [ 21912165 1105390 15432163 1600177 ]
+BC time 40:      33.1767 (sec)
+
+Trial 11 : sources: [ 19079469 16516637 20202566 21372803 ]
+BC time 40:      32.5435 (sec)
+
+Trial 12 : sources: [ 2898009 8491277 18798317 23757560 ]
+BC time 40:      33.4217 (sec)
+
+Trial 13 : sources: [ 17161819 23180739 10997085 3730630 ]
+BC time 40:      33.1297 (sec)
+
+Trial 14 : sources: [ 1079068 15426822 12190925 1155218 ]
+BC time 40:      33.3511 (sec)
+
+Trial 15 : sources: [ 10693488 14434835 19963339 3486185 ]
+BC time 40:      33.0926 (sec)
+
+Trial 16 : sources: [ 18383269 20269908 12370764 7843140 ]
+BC time 40:      33.2464 (sec)
+
+ntrials: 16
+
+Ave BC 40:     33.105 sec, rate      1.743
+Avg: BC  40:     33.105 sec: ../../../GAP/GAP-road/GAP-road.grb
+ 
+======================================================================
+GAP benchmarks using LAGraph+GraphBLAS: Connected Components
+======================================================================
+Matrix input file format:  grb
+GAP matrices located in:   ../../../GAP
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+
+../../../GAP/GAP-kron/GAP-kron.grb:
+matrix: ../../../GAP/GAP-kron/GAP-kron.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-kron/GAP-kron.grb
+read time: 45.4661
+nCC:                7e+07
+# of trials: 16
+
+SV6:      nthreads: 40 trial:  0 time:     3.1692 sec
+SV6:      nthreads: 40 trial:  1 time:     3.1668 sec
+SV6:      nthreads: 40 trial:  2 time:     3.1759 sec
+SV6:      nthreads: 40 trial:  3 time:     3.1791 sec
+SV6:      nthreads: 40 trial:  4 time:     3.1657 sec
+SV6:      nthreads: 40 trial:  5 time:     3.1834 sec
+SV6:      nthreads: 40 trial:  6 time:     3.1861 sec
+SV6:      nthreads: 40 trial:  7 time:     3.5587 sec
+SV6:      nthreads: 40 trial:  8 time:     3.6176 sec
+SV6:      nthreads: 40 trial:  9 time:     3.5991 sec
+SV6:      nthreads: 40 trial: 10 time:     3.6048 sec
+SV6:      nthreads: 40 trial: 11 time:     3.6190 sec
+SV6:      nthreads: 40 trial: 12 time:     3.6135 sec
+SV6:      nthreads: 40 trial: 13 time:     3.5826 sec
+SV6:      nthreads: 40 trial: 14 time:     3.6135 sec
+SV6:      nthreads: 40 trial: 15 time:     3.6255 sec
+SV6:      nthreads: 40 Avg: time:     3.4163 sec ntrials 16
+
+SV6:      nthreads: 40 Avg: time:     3.4163 sec ntrials 16
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+
+../../../GAP/GAP-urand/GAP-urand.grb:
+matrix: ../../../GAP/GAP-urand/GAP-urand.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-urand/GAP-urand.grb
+read time: 67.3697
+nCC:                    1
+# of trials: 16
+
+SV6:      nthreads: 40 trial:  0 time:     3.7354 sec
+SV6:      nthreads: 40 trial:  1 time:     3.7474 sec
+SV6:      nthreads: 40 trial:  2 time:     3.7414 sec
+SV6:      nthreads: 40 trial:  3 time:     3.7413 sec
+SV6:      nthreads: 40 trial:  4 time:     3.7376 sec
+SV6:      nthreads: 40 trial:  5 time:     3.7361 sec
+SV6:      nthreads: 40 trial:  6 time:     3.7303 sec
+SV6:      nthreads: 40 trial:  7 time:     3.7434 sec
+SV6:      nthreads: 40 trial:  8 time:     3.7305 sec
+SV6:      nthreads: 40 trial:  9 time:     3.7326 sec
+SV6:      nthreads: 40 trial: 10 time:     3.7278 sec
+SV6:      nthreads: 40 trial: 11 time:     3.7286 sec
+SV6:      nthreads: 40 trial: 12 time:     3.7202 sec
+SV6:      nthreads: 40 trial: 13 time:     3.7427 sec
+SV6:      nthreads: 40 trial: 14 time:     3.7549 sec
+SV6:      nthreads: 40 trial: 15 time:     3.7380 sec
+SV6:      nthreads: 40 Avg: time:     3.7368 sec ntrials 16
+
+SV6:      nthreads: 40 Avg: time:     3.7368 sec ntrials 16
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+
+../../../GAP/GAP-twitter/GAP-twitter.grb:
+matrix: ../../../GAP/GAP-twitter/GAP-twitter.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-twitter/GAP-twitter.grb
+forcing G-> to be symmetric (via A = A+A')
+read time: 37.3039
+nCC:                2e+07
+# of trials: 16
+
+SV6:      nthreads: 40 trial:  0 time:     1.3689 sec
+SV6:      nthreads: 40 trial:  1 time:     1.3760 sec
+SV6:      nthreads: 40 trial:  2 time:     1.3780 sec
+SV6:      nthreads: 40 trial:  3 time:     1.3788 sec
+SV6:      nthreads: 40 trial:  4 time:     1.3741 sec
+SV6:      nthreads: 40 trial:  5 time:     1.3741 sec
+SV6:      nthreads: 40 trial:  6 time:     1.3702 sec
+SV6:      nthreads: 40 trial:  7 time:     1.3779 sec
+SV6:      nthreads: 40 trial:  8 time:     1.3675 sec
+SV6:      nthreads: 40 trial:  9 time:     1.3732 sec
+SV6:      nthreads: 40 trial: 10 time:     1.3692 sec
+SV6:      nthreads: 40 trial: 11 time:     1.3696 sec
+SV6:      nthreads: 40 trial: 12 time:     1.3690 sec
+SV6:      nthreads: 40 trial: 13 time:     1.3713 sec
+SV6:      nthreads: 40 trial: 14 time:     1.3699 sec
+SV6:      nthreads: 40 trial: 15 time:     1.3778 sec
+SV6:      nthreads: 40 Avg: time:     1.3728 sec ntrials 16
+
+SV6:      nthreads: 40 Avg: time:     1.3728 sec ntrials 16
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+
+../../../GAP/GAP-web/GAP-web.grb:
+matrix: ../../../GAP/GAP-web/GAP-web.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-web/GAP-web.grb
+forcing G-> to be symmetric (via A = A+A')
+read time: 37.5681
+nCC:                1e+02
+# of trials: 16
+
+SV6:      nthreads: 40 trial:  0 time:     2.0241 sec
+SV6:      nthreads: 40 trial:  1 time:     2.0298 sec
+SV6:      nthreads: 40 trial:  2 time:     2.0366 sec
+SV6:      nthreads: 40 trial:  3 time:     2.0441 sec
+SV6:      nthreads: 40 trial:  4 time:     2.0331 sec
+SV6:      nthreads: 40 trial:  5 time:     2.0383 sec
+SV6:      nthreads: 40 trial:  6 time:     2.0417 sec
+SV6:      nthreads: 40 trial:  7 time:     2.0315 sec
+SV6:      nthreads: 40 trial:  8 time:     2.0402 sec
+SV6:      nthreads: 40 trial:  9 time:     2.0493 sec
+SV6:      nthreads: 40 trial: 10 time:     2.0347 sec
+SV6:      nthreads: 40 trial: 11 time:     2.0296 sec
+SV6:      nthreads: 40 trial: 12 time:     2.1461 sec
+SV6:      nthreads: 40 trial: 13 time:     2.0331 sec
+SV6:      nthreads: 40 trial: 14 time:     2.0332 sec
+SV6:      nthreads: 40 trial: 15 time:     2.0430 sec
+SV6:      nthreads: 40 Avg: time:     2.0430 sec ntrials 16
+
+SV6:      nthreads: 40 Avg: time:     2.0430 sec ntrials 16
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+
+../../../GAP/GAP-road/GAP-road.grb:
+matrix: ../../../GAP/GAP-road/GAP-road.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-road/GAP-road.grb
+read time: 1.33625
+nCC:                    1
+# of trials: 16
+
+SV6:      nthreads: 40 trial:  0 time:     0.7681 sec
+SV6:      nthreads: 40 trial:  1 time:     0.7717 sec
+SV6:      nthreads: 40 trial:  2 time:     0.7681 sec
+SV6:      nthreads: 40 trial:  3 time:     0.7597 sec
+SV6:      nthreads: 40 trial:  4 time:     0.7637 sec
+SV6:      nthreads: 40 trial:  5 time:     0.7646 sec
+SV6:      nthreads: 40 trial:  6 time:     0.7754 sec
+SV6:      nthreads: 40 trial:  7 time:     0.7725 sec
+SV6:      nthreads: 40 trial:  8 time:     0.7680 sec
+SV6:      nthreads: 40 trial:  9 time:     0.7637 sec
+SV6:      nthreads: 40 trial: 10 time:     0.7647 sec
+SV6:      nthreads: 40 trial: 11 time:     0.7693 sec
+SV6:      nthreads: 40 trial: 12 time:     0.7665 sec
+SV6:      nthreads: 40 trial: 13 time:     0.7684 sec
+SV6:      nthreads: 40 trial: 14 time:     0.7700 sec
+SV6:      nthreads: 40 trial: 15 time:     0.7721 sec
+SV6:      nthreads: 40 Avg: time:     0.7679 sec ntrials 16
+
+SV6:      nthreads: 40 Avg: time:     0.7679 sec ntrials 16
+ 
+======================================================================
+GAP benchmarks using LAGraph+GraphBLAS: PageRank
+======================================================================
+Matrix input file format:  grb
+GAP matrices located in:   ../../../GAP
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+matrix: ../../../GAP/GAP-kron/GAP-kron.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-kron/GAP-kron.grb
+read time: 71.5242
+nsinks: 71143742
+# of trials: 16
+
+--------------------------- nthreads: 40
+trial:  0 time:    21.8651 sec
+trial:  1 time:    21.6864 sec
+trial:  2 time:    21.7149 sec
+trial:  3 time:    21.7496 sec
+trial:  4 time:    21.6864 sec
+trial:  5 time:    21.7659 sec
+trial:  6 time:    21.6807 sec
+trial:  7 time:    21.7216 sec
+trial:  8 time:    21.7530 sec
+trial:  9 time:    21.7182 sec
+trial: 10 time:    21.7532 sec
+trial: 11 time:    21.7022 sec
+trial: 12 time:    21.7092 sec
+trial: 13 time:    21.6880 sec
+trial: 14 time:    21.7341 sec
+trial: 15 time:    21.7541 sec
+GAP:  40: avg time:     21.730 (sec), rate:     20.318 iters: 7 rsum: 5.494406e-01
+GAP: Avg: PR  40:     21.730 sec: ../../../GAP/GAP-kron/GAP-kron.grb rsum: 5.494406e-01
+
+--------------------------- nthreads: 40
+trial:  0 time:    41.3116 sec
+trial:  1 time:    41.2932 sec
+trial:  2 time:    41.3372 sec
+trial:  3 time:    41.2967 sec
+trial:  4 time:    41.2684 sec
+trial:  5 time:    41.2777 sec
+trial:  6 time:    41.1988 sec
+trial:  7 time:    41.2790 sec
+trial:  8 time:    41.3636 sec
+trial:  9 time:    41.3294 sec
+trial: 10 time:    41.4226 sec
+trial: 11 time:    41.2992 sec
+trial: 12 time:    41.2937 sec
+trial: 13 time:    41.2812 sec
+trial: 14 time:    41.3910 sec
+trial: 15 time:    41.2905 sec
+STD:  40: avg time:     41.308 (sec), rate:     19.850 iters: 13 rsum: 9.999788e-01
+STD: Avg: PR  40:     41.308 sec: ../../../GAP/GAP-kron/GAP-kron.grb rsum: 9.999788e-01
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+matrix: ../../../GAP/GAP-urand/GAP-urand.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-urand/GAP-urand.grb
+read time: 58.8891
+nsinks: 0
+# of trials: 16
+
+--------------------------- nthreads: 40
+trial:  0 time:    27.9376 sec
+trial:  1 time:    27.6800 sec
+trial:  2 time:    27.5331 sec
+trial:  3 time:    27.4952 sec
+trial:  4 time:    27.4926 sec
+trial:  5 time:    27.5234 sec
+trial:  6 time:    27.5274 sec
+trial:  7 time:    27.5392 sec
+trial:  8 time:    27.6410 sec
+trial:  9 time:    27.7672 sec
+trial: 10 time:    27.5389 sec
+trial: 11 time:    27.5283 sec
+trial: 12 time:    27.4896 sec
+trial: 13 time:    27.5252 sec
+trial: 14 time:    27.5207 sec
+trial: 15 time:    27.5056 sec
+GAP:  40: avg time:     27.578 (sec), rate:     29.201 iters: 6 rsum: 1.000000e+00
+GAP: Avg: PR  40:     27.578 sec: ../../../GAP/GAP-urand/GAP-urand.grb rsum: 1.000000e+00
+
+--------------------------- nthreads: 40
+trial:  0 time:    27.5518 sec
+trial:  1 time:    27.5152 sec
+trial:  2 time:    27.4622 sec
+trial:  3 time:    27.4883 sec
+trial:  4 time:    27.4914 sec
+trial:  5 time:    27.4670 sec
+trial:  6 time:    27.5535 sec
+trial:  7 time:    27.5250 sec
+trial:  8 time:    27.4498 sec
+trial:  9 time:    27.5348 sec
+trial: 10 time:    27.5356 sec
+trial: 11 time:    27.4852 sec
+trial: 12 time:    27.5382 sec
+trial: 13 time:    27.5394 sec
+trial: 14 time:    27.5060 sec
+trial: 15 time:    27.5318 sec
+STD:  40: avg time:     27.511 (sec), rate:     29.272 iters: 6 rsum: 1.000000e+00
+STD: Avg: PR  40:     27.511 sec: ../../../GAP/GAP-urand/GAP-urand.grb rsum: 1.000000e+00
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+matrix: ../../../GAP/GAP-twitter/GAP-twitter.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-twitter/GAP-twitter.grb
+read time: 35.3582
+nsinks: 21475137
+# of trials: 16
+
+--------------------------- nthreads: 40
+trial:  0 time:    17.0040 sec
+trial:  1 time:    16.9761 sec
+trial:  2 time:    16.9782 sec
+trial:  3 time:    16.9498 sec
+trial:  4 time:    16.9540 sec
+trial:  5 time:    16.9924 sec
+trial:  6 time:    17.0019 sec
+trial:  7 time:    17.0082 sec
+trial:  8 time:    17.0020 sec
+trial:  9 time:    17.0175 sec
+trial: 10 time:    17.0088 sec
+trial: 11 time:    16.9848 sec
+trial: 12 time:    16.9907 sec
+trial: 13 time:    16.9698 sec
+trial: 14 time:    16.9735 sec
+trial: 15 time:    16.9539 sec
+GAP:  40: avg time:     16.985 (sec), rate:     51.943 iters: 22 rsum: 6.702873e-01
+GAP: Avg: PR  40:     16.985 sec: ../../../GAP/GAP-twitter/GAP-twitter.grb rsum: 6.702873e-01
+
+--------------------------- nthreads: 40
+trial:  0 time:    17.6441 sec
+trial:  1 time:    17.6531 sec
+trial:  2 time:    17.6810 sec
+trial:  3 time:    17.7129 sec
+trial:  4 time:    17.6848 sec
+trial:  5 time:    17.6711 sec
+trial:  6 time:    17.6513 sec
+trial:  7 time:    17.7019 sec
+trial:  8 time:    17.6988 sec
+trial:  9 time:    17.6792 sec
+trial: 10 time:    17.6766 sec
+trial: 11 time:    17.6766 sec
+trial: 12 time:    17.6855 sec
+trial: 13 time:    17.6828 sec
+trial: 14 time:    17.6656 sec
+trial: 15 time:    17.6243 sec
+STD:  40: avg time:     17.674 (sec), rate:     49.918 iters: 22 rsum: 1.000036e+00
+STD: Avg: PR  40:     17.674 sec: ../../../GAP/GAP-twitter/GAP-twitter.grb rsum: 1.000036e+00
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+matrix: ../../../GAP/GAP-web/GAP-web.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-web/GAP-web.grb
+read time: 27.4392
+nsinks: 7236618
+# of trials: 16
+
+--------------------------- nthreads: 40
+trial:  0 time:     9.1741 sec
+trial:  1 time:     9.1724 sec
+trial:  2 time:     9.1817 sec
+trial:  3 time:     9.1790 sec
+trial:  4 time:     9.1876 sec
+trial:  5 time:     9.1627 sec
+trial:  6 time:     9.1677 sec
+trial:  7 time:     9.1763 sec
+trial:  8 time:     9.1893 sec
+trial:  9 time:     9.1777 sec
+trial: 10 time:     9.1700 sec
+trial: 11 time:     9.1687 sec
+trial: 12 time:     9.1897 sec
+trial: 13 time:     9.1739 sec
+trial: 14 time:     9.1692 sec
+trial: 15 time:     9.1854 sec
+GAP:  40: avg time:      9.177 (sec), rate:    141.881 iters: 30 rsum: 7.031181e-01
+GAP: Avg: PR  40:      9.177 sec: ../../../GAP/GAP-web/GAP-web.grb rsum: 7.031181e-01
+
+--------------------------- nthreads: 40
+trial:  0 time:    10.3230 sec
+trial:  1 time:    10.3161 sec
+trial:  2 time:    10.3480 sec
+trial:  3 time:    10.3838 sec
+trial:  4 time:    10.3637 sec
+trial:  5 time:    10.3259 sec
+trial:  6 time:    10.3233 sec
+trial:  7 time:    10.3300 sec
+trial:  8 time:    10.3245 sec
+trial:  9 time:    10.3232 sec
+trial: 10 time:    10.3135 sec
+trial: 11 time:    10.3394 sec
+trial: 12 time:    10.3378 sec
+trial: 13 time:    10.3328 sec
+trial: 14 time:    10.3232 sec
+trial: 15 time:    10.3682 sec
+STD:  40: avg time:     10.336 (sec), rate:    134.363 iters: 32 rsum: 9.981751e-01
+STD: Avg: PR  40:     10.336 sec: ../../../GAP/GAP-web/GAP-web.grb rsum: 9.981751e-01
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+matrix: ../../../GAP/GAP-road/GAP-road.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-road/GAP-road.grb
+read time: 0.918636
+nsinks: 0
+# of trials: 16
+
+--------------------------- nthreads: 40
+trial:  0 time:     1.2105 sec
+trial:  1 time:     1.2072 sec
+trial:  2 time:     1.2346 sec
+trial:  3 time:     1.1963 sec
+trial:  4 time:     1.2030 sec
+trial:  5 time:     1.2129 sec
+trial:  6 time:     1.1991 sec
+trial:  7 time:     1.2048 sec
+trial:  8 time:     1.1990 sec
+trial:  9 time:     1.2038 sec
+trial: 10 time:     1.2087 sec
+trial: 11 time:     1.2054 sec
+trial: 12 time:     1.2119 sec
+trial: 13 time:     1.1953 sec
+trial: 14 time:     1.2088 sec
+trial: 15 time:     1.2104 sec
+GAP:  40: avg time:      1.207 (sec), rate:    773.785 iters: 39 rsum: 1.000001e+00
+GAP: Avg: PR  40:      1.207 sec: ../../../GAP/GAP-road/GAP-road.grb rsum: 1.000001e+00
+
+--------------------------- nthreads: 40
+trial:  0 time:     1.2071 sec
+trial:  1 time:     1.2087 sec
+trial:  2 time:     1.2067 sec
+trial:  3 time:     1.1971 sec
+trial:  4 time:     1.1987 sec
+trial:  5 time:     1.2068 sec
+trial:  6 time:     1.2130 sec
+trial:  7 time:     1.2082 sec
+trial:  8 time:     1.2079 sec
+trial:  9 time:     1.2074 sec
+trial: 10 time:     1.2037 sec
+trial: 11 time:     1.2051 sec
+trial: 12 time:     1.2064 sec
+trial: 13 time:     1.2017 sec
+trial: 14 time:     1.2058 sec
+trial: 15 time:     1.2068 sec
+STD:  40: avg time:      1.206 (sec), rate:    774.612 iters: 39 rsum: 1.000001e+00
+STD: Avg: PR  40:      1.206 sec: ../../../GAP/GAP-road/GAP-road.grb rsum: 1.000001e+00
+ 
+======================================================================
+GAP benchmarks using LAGraph+GraphBLAS: Single-Source Shortest Path
+======================================================================
+Matrix input file format:  grb
+GAP matrices located in:   ../../../GAP
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+matrix: ../../../GAP/GAP-kron/GAP-kron.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-kron/GAP-kron.grb
+sources: ../../../GAP/GAP-kron/GAP-kron_sources.mtx
+read time: 44.4147
+delta: 29
+sssp15:  threads: 40 trial:  0 source 2.33801e+06 time:    17.8255 sec
+sssp15:  threads: 40 trial:  1 source 3.19977e+07 time:    17.4369 sec
+sssp15:  threads: 40 trial:  2 source 2.35909e+07 time:    16.2471 sec
+sssp15:  threads: 40 trial:  3 source 4.34006e+07 time:    15.4916 sec
+sssp15:  threads: 40 trial:  4 source 7.53379e+07 time:    15.8230 sec
+sssp15:  threads: 40 trial:  5 source 169867 time:    15.0506 sec
+sssp15:  threads: 40 trial:  6 source 1.04041e+08 time:    16.4418 sec
+sssp15:  threads: 40 trial:  7 source 9.41779e+07 time:    16.3487 sec
+sssp15:  threads: 40 trial:  8 source 3.28714e+07 time:    16.0591 sec
+sssp15:  threads: 40 trial:  9 source 5.623e+07 time:    16.3459 sec
+sssp15:  threads: 40 trial: 10 source 6.9883e+07 time:    16.5738 sec
+sssp15:  threads: 40 trial: 11 source 9.34634e+06 time:    15.2369 sec
+sssp15:  threads: 40 trial: 12 source 4.89154e+07 time:    15.2308 sec
+sssp15:  threads: 40 trial: 13 source 1.22571e+08 time:    15.3854 sec
+sssp15:  threads: 40 trial: 14 source 6.18328e+06 time:    15.2877 sec
+sssp15:  threads: 40 trial: 15 source 8.63237e+07 time:    15.6778 sec
+sssp15:  threads: 40 trial: 16 source 1.06726e+08 time:    16.3080 sec
+sssp15:  threads: 40 trial: 17 source 9.23899e+07 time:    17.0846 sec
+sssp15:  threads: 40 trial: 18 source 1.62107e+07 time:    16.3640 sec
+sssp15:  threads: 40 trial: 19 source 5.98167e+07 time:    16.1790 sec
+sssp15:  threads: 40 trial: 20 source 1.1167e+08 time:    15.7839 sec
+sssp15:  threads: 40 trial: 21 source 1.02831e+08 time:    16.7406 sec
+sssp15:  threads: 40 trial: 22 source 1.13385e+08 time:    15.1290 sec
+sssp15:  threads: 40 trial: 23 source 4.38726e+07 time:    16.4685 sec
+sssp15:  threads: 40 trial: 24 source 8.05088e+07 time:    16.0733 sec
+sssp15:  threads: 40 trial: 25 source 2.61056e+07 time:    16.1357 sec
+sssp15:  threads: 40 trial: 26 source 8.80752e+06 time:    15.8841 sec
+sssp15:  threads: 40 trial: 27 source 1.18452e+08 time:    15.5760 sec
+sssp15:  threads: 40 trial: 28 source 1.21819e+08 time:    16.0904 sec
+sssp15:  threads: 40 trial: 29 source 4.23619e+07 time:    16.0172 sec
+sssp15:  threads: 40 trial: 30 source 2.94931e+07 time:    16.2907 sec
+sssp15:  threads: 40 trial: 31 source 9.84615e+07 time:    15.7377 sec
+sssp15:  threads: 40 trial: 32 source 7.19313e+07 time:    15.1314 sec
+sssp15:  threads: 40 trial: 33 source 1.03808e+08 time:    16.1725 sec
+sssp15:  threads: 40 trial: 34 source 4.09234e+06 time:    16.1770 sec
+sssp15:  threads: 40 trial: 35 source 1.15276e+08 time:    16.1722 sec
+sssp15:  threads: 40 trial: 36 source 4.64934e+06 time:    15.9299 sec
+sssp15:  threads: 40 trial: 37 source 7.66562e+07 time:    15.8771 sec
+sssp15:  threads: 40 trial: 38 source 3.1312e+07 time:    16.1517 sec
+sssp15:  threads: 40 trial: 39 source 1.11334e+08 time:    16.2541 sec
+sssp15:  threads: 40 trial: 40 source 1.00963e+08 time:    17.0570 sec
+sssp15:  threads: 40 trial: 41 source 4.18232e+07 time:    16.1539 sec
+sssp15:  threads: 40 trial: 42 source 2.26312e+07 time:    15.1420 sec
+sssp15:  threads: 40 trial: 43 source 4.28485e+07 time:    15.7851 sec
+sssp15:  threads: 40 trial: 44 source 7.94851e+07 time:    15.3427 sec
+sssp15:  threads: 40 trial: 45 source 1.06819e+08 time:    15.8845 sec
+sssp15:  threads: 40 trial: 46 source 7.3348e+07 time:    15.8524 sec
+sssp15:  threads: 40 trial: 47 source 7.88484e+07 time:    15.1938 sec
+sssp15:  threads: 40 trial: 48 source 1.09921e+08 time:    16.2178 sec
+sssp15:  threads: 40 trial: 49 source 1.21492e+08 time:    15.8758 sec
+sssp15:  threads: 40 trial: 50 source 1.01037e+08 time:    15.9663 sec
+sssp15:  threads: 40 trial: 51 source 1.54386e+07 time:    16.3563 sec
+sssp15:  threads: 40 trial: 52 source 4.58478e+06 time:    15.5491 sec
+sssp15:  threads: 40 trial: 53 source 1.24504e+08 time:    16.1258 sec
+sssp15:  threads: 40 trial: 54 source 8.72417e+07 time:    15.7423 sec
+sssp15:  threads: 40 trial: 55 source 1.08297e+08 time:    15.3489 sec
+sssp15:  threads: 40 trial: 56 source 3.39551e+07 time:    15.9123 sec
+sssp15:  threads: 40 trial: 57 source 7.99348e+07 time:    15.8930 sec
+sssp15:  threads: 40 trial: 58 source 8.60848e+06 time:    15.2587 sec
+sssp15:  threads: 40 trial: 59 source 8.24351e+07 time:    16.1327 sec
+sssp15:  threads: 40 trial: 60 source 4.65793e+07 time:    15.8895 sec
+sssp15:  threads: 40 trial: 61 source 515421 time:    17.3483 sec
+sssp15:  threads: 40 trial: 62 source 1.2153e+08 time:    15.5685 sec
+sssp15:  threads: 40 trial: 63 source 1.27979e+08 time:    16.1066 sec
+
+40: SSSP    time:      15.998347 sec  rate:   263.98 (delta 29)
+Avg: SSSP          40:     15.998 sec: ../../../GAP/GAP-kron/GAP-kron.grb
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+matrix: ../../../GAP/GAP-urand/GAP-urand.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-urand/GAP-urand.grb
+sources: ../../../GAP/GAP-urand/GAP-urand_sources.mtx
+read time: 66.161
+delta: 41
+sssp15:  threads: 40 trial:  0 source 2.76914e+07 time:    24.6699 sec
+sssp15:  threads: 40 trial:  1 source 1.2128e+08 time:    25.9456 sec
+sssp15:  threads: 40 trial:  2 source 2.41343e+06 time:    24.1325 sec
+sssp15:  threads: 40 trial:  3 source 3.75121e+07 time:    24.5961 sec
+sssp15:  threads: 40 trial:  4 source 3.83909e+07 time:    26.1551 sec
+sssp15:  threads: 40 trial:  5 source 5.6651e+07 time:    25.5309 sec
+sssp15:  threads: 40 trial:  6 source 1.28461e+08 time:    26.5022 sec
+sssp15:  threads: 40 trial:  7 source 3.30298e+07 time:    25.3301 sec
+sssp15:  threads: 40 trial:  8 source 7.14063e+07 time:    24.5316 sec
+sssp15:  threads: 40 trial:  9 source 1.17873e+08 time:    26.2663 sec
+sssp15:  threads: 40 trial: 10 source 2.43519e+07 time:    23.8948 sec
+sssp15:  threads: 40 trial: 11 source 1.54445e+07 time:    24.1886 sec
+sssp15:  threads: 40 trial: 12 source 1.27526e+08 time:    24.6004 sec
+sssp15:  threads: 40 trial: 13 source 1.12279e+08 time:    24.9347 sec
+sssp15:  threads: 40 trial: 14 source 1.36316e+07 time:    25.2777 sec
+sssp15:  threads: 40 trial: 15 source 1.10379e+08 time:    24.1047 sec
+sssp15:  threads: 40 trial: 16 source 4.48006e+07 time:    26.3843 sec
+sssp15:  threads: 40 trial: 17 source 7.77682e+07 time:    24.1147 sec
+sssp15:  threads: 40 trial: 18 source 175347 time:    25.9533 sec
+sssp15:  threads: 40 trial: 19 source 1.07397e+08 time:    25.7357 sec
+sssp15:  threads: 40 trial: 20 source 4.34572e+07 time:    25.7375 sec
+sssp15:  threads: 40 trial: 21 source 9.72159e+07 time:    26.6372 sec
+sssp15:  threads: 40 trial: 22 source 7.35752e+07 time:    24.6612 sec
+sssp15:  threads: 40 trial: 23 source 4.44497e+07 time:    26.2903 sec
+sssp15:  threads: 40 trial: 24 source 3.39317e+07 time:    25.7929 sec
+sssp15:  threads: 40 trial: 25 source 5.55266e+07 time:    24.2038 sec
+sssp15:  threads: 40 trial: 26 source 1.44221e+07 time:    23.8144 sec
+sssp15:  threads: 40 trial: 27 source 5.80439e+07 time:    24.5234 sec
+sssp15:  threads: 40 trial: 28 source 7.21373e+07 time:    26.3569 sec
+sssp15:  threads: 40 trial: 29 source 9.64784e+06 time:    25.7033 sec
+sssp15:  threads: 40 trial: 30 source 1.59407e+07 time:    25.5244 sec
+sssp15:  threads: 40 trial: 31 source 1.421e+07 time:    26.2841 sec
+sssp15:  threads: 40 trial: 32 source 4.90209e+07 time:    27.2201 sec
+sssp15:  threads: 40 trial: 33 source 2.89011e+07 time:    26.8996 sec
+sssp15:  threads: 40 trial: 34 source 5.04933e+07 time:    24.6237 sec
+sssp15:  threads: 40 trial: 35 source 4.91501e+07 time:    24.8228 sec
+sssp15:  threads: 40 trial: 36 source 1.26525e+08 time:    26.0280 sec
+sssp15:  threads: 40 trial: 37 source 6.38274e+06 time:    25.9048 sec
+sssp15:  threads: 40 trial: 38 source 8.91083e+07 time:    25.8699 sec
+sssp15:  threads: 40 trial: 39 source 9.23974e+06 time:    24.7561 sec
+sssp15:  threads: 40 trial: 40 source 1.10169e+08 time:    25.0456 sec
+sssp15:  threads: 40 trial: 41 source 9.53703e+07 time:    28.1472 sec
+sssp15:  threads: 40 trial: 42 source 1.16654e+08 time:    24.6348 sec
+sssp15:  threads: 40 trial: 43 source 1.23411e+08 time:    26.0013 sec
+sssp15:  threads: 40 trial: 44 source 1.67337e+07 time:    24.3974 sec
+sssp15:  threads: 40 trial: 45 source 4.90303e+07 time:    26.2545 sec
+sssp15:  threads: 40 trial: 46 source 1.08545e+08 time:    26.5746 sec
+sssp15:  threads: 40 trial: 47 source 9.90957e+07 time:    26.6704 sec
+sssp15:  threads: 40 trial: 48 source 1.3385e+08 time:    25.8379 sec
+sssp15:  threads: 40 trial: 49 source 6.34993e+07 time:    27.2167 sec
+sssp15:  threads: 40 trial: 50 source 2.15414e+07 time:    25.6772 sec
+sssp15:  threads: 40 trial: 51 source 6.23075e+06 time:    24.3206 sec
+sssp15:  threads: 40 trial: 52 source 8.90775e+07 time:    24.6674 sec
+sssp15:  threads: 40 trial: 53 source 7.03928e+07 time:    26.6098 sec
+sssp15:  threads: 40 trial: 54 source 6.67046e+06 time:    24.7524 sec
+sssp15:  threads: 40 trial: 55 source 6.17463e+07 time:    24.7487 sec
+sssp15:  threads: 40 trial: 56 source 8.33495e+07 time:    25.2842 sec
+sssp15:  threads: 40 trial: 57 source 1.15272e+08 time:    24.7553 sec
+sssp15:  threads: 40 trial: 58 source 2.01299e+07 time:    25.7137 sec
+sssp15:  threads: 40 trial: 59 source 1.06149e+08 time:    24.9246 sec
+sssp15:  threads: 40 trial: 60 source 1.17042e+08 time:    25.6248 sec
+sssp15:  threads: 40 trial: 61 source 7.14312e+07 time:    24.6105 sec
+sssp15:  threads: 40 trial: 62 source 4.52878e+07 time:    26.6372 sec
+sssp15:  threads: 40 trial: 63 source 1.07702e+08 time:    26.9715 sec
+
+40: SSSP    time:      25.477841 sec  rate:   168.58 (delta 41)
+Avg: SSSP          40:     25.478 sec: ../../../GAP/GAP-urand/GAP-urand.grb
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+matrix: ../../../GAP/GAP-twitter/GAP-twitter.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-twitter/GAP-twitter.grb
+sources: ../../../GAP/GAP-twitter/GAP-twitter_sources.mtx
+read time: 34.5806
+delta: 51
+sssp15:  threads: 40 trial:  0 source 1.24411e+07 time:     6.7275 sec
+sssp15:  threads: 40 trial:  1 source 5.44883e+07 time:     7.6548 sec
+sssp15:  threads: 40 trial:  2 source 2.54519e+07 time:     8.1878 sec
+sssp15:  threads: 40 trial:  3 source 5.77145e+07 time:     7.7234 sec
+sssp15:  threads: 40 trial:  4 source 1.48395e+07 time:     7.6250 sec
+sssp15:  threads: 40 trial:  5 source 3.20811e+07 time:     7.1210 sec
+sssp15:  threads: 40 trial:  6 source 5.29574e+07 time:     7.3871 sec
+sssp15:  threads: 40 trial:  7 source 5.04444e+07 time:     7.7166 sec
+sssp15:  threads: 40 trial:  8 source 4.95907e+07 time:     6.9214 sec
+sssp15:  threads: 40 trial:  9 source 2.01278e+07 time:     6.9773 sec
+sssp15:  threads: 40 trial: 10 source 3.49393e+07 time:     7.7134 sec
+sssp15:  threads: 40 trial: 11 source 4.8251e+07 time:     7.9319 sec
+sssp15:  threads: 40 trial: 12 source 1.95243e+07 time:     7.0357 sec
+sssp15:  threads: 40 trial: 13 source 4.36767e+07 time:     7.8867 sec
+sssp15:  threads: 40 trial: 14 source 3.30555e+07 time:     7.2627 sec
+sssp15:  threads: 40 trial: 15 source 1.52447e+07 time:     7.0276 sec
+sssp15:  threads: 40 trial: 16 source 2.49467e+07 time:     8.3260 sec
+sssp15:  threads: 40 trial: 17 source 6.47947e+06 time:     7.5344 sec
+sssp15:  threads: 40 trial: 18 source 2.60777e+07 time:     7.3422 sec
+sssp15:  threads: 40 trial: 19 source 2.20239e+07 time:     7.6307 sec
+sssp15:  threads: 40 trial: 20 source 2.20819e+07 time:     7.9849 sec
+sssp15:  threads: 40 trial: 21 source 4.00342e+07 time:     6.8411 sec
+sssp15:  threads: 40 trial: 22 source 4.9496e+07 time:     7.5501 sec
+sssp15:  threads: 40 trial: 23 source 4.28475e+07 time:     8.8584 sec
+sssp15:  threads: 40 trial: 24 source 5.24096e+07 time:     7.6037 sec
+sssp15:  threads: 40 trial: 25 source 5.54454e+07 time:     6.6203 sec
+sssp15:  threads: 40 trial: 26 source 2.20281e+07 time:     7.2541 sec
+sssp15:  threads: 40 trial: 27 source 4.87666e+07 time:     7.7479 sec
+sssp15:  threads: 40 trial: 28 source 4.45212e+07 time:     7.1492 sec
+sssp15:  threads: 40 trial: 29 source 6.01355e+07 time:     6.8143 sec
+sssp15:  threads: 40 trial: 30 source 2.85287e+07 time:     6.6467 sec
+sssp15:  threads: 40 trial: 31 source 9.67801e+06 time:     7.7430 sec
+sssp15:  threads: 40 trial: 32 source 4.00203e+07 time:     7.8221 sec
+sssp15:  threads: 40 trial: 33 source 3.16257e+07 time:     7.7594 sec
+sssp15:  threads: 40 trial: 34 source 3.74469e+07 time:     7.7481 sec
+sssp15:  threads: 40 trial: 35 source 5.1789e+07 time:     7.3407 sec
+sssp15:  threads: 40 trial: 36 source 5.25843e+07 time:     7.3190 sec
+sssp15:  threads: 40 trial: 37 source 2.03467e+07 time:     7.4797 sec
+sssp15:  threads: 40 trial: 38 source 4.83879e+07 time:     7.1418 sec
+sssp15:  threads: 40 trial: 39 source 3.73374e+07 time:     6.7983 sec
+sssp15:  threads: 40 trial: 40 source 5.05011e+07 time:     7.0319 sec
+sssp15:  threads: 40 trial: 41 source 3.01301e+07 time:     7.3491 sec
+sssp15:  threads: 40 trial: 42 source 4.11859e+07 time:     7.8290 sec
+sssp15:  threads: 40 trial: 43 source 5.64957e+07 time:     6.9370 sec
+sssp15:  threads: 40 trial: 44 source 4.56633e+07 time:     7.3728 sec
+sssp15:  threads: 40 trial: 45 source 3.33595e+07 time:     7.0721 sec
+sssp15:  threads: 40 trial: 46 source 4.81431e+07 time:     7.2999 sec
+sssp15:  threads: 40 trial: 47 source 3.32915e+07 time:     6.5072 sec
+sssp15:  threads: 40 trial: 48 source 5.34614e+07 time:     7.6026 sec
+sssp15:  threads: 40 trial: 49 source 2.93406e+07 time:     6.9877 sec
+sssp15:  threads: 40 trial: 50 source 3.41485e+07 time:     7.1512 sec
+sssp15:  threads: 40 trial: 51 source 4.91718e+07 time:     7.3914 sec
+sssp15:  threads: 40 trial: 52 source 3.55507e+07 time:     7.6480 sec
+sssp15:  threads: 40 trial: 53 source 1.45215e+07 time:     7.5340 sec
+sssp15:  threads: 40 trial: 54 source 5.16332e+07 time:     7.8834 sec
+sssp15:  threads: 40 trial: 55 source 4.68234e+07 time:     7.1887 sec
+sssp15:  threads: 40 trial: 56 source 1.93963e+07 time:     8.3272 sec
+sssp15:  threads: 40 trial: 57 source 1.98718e+07 time:     7.7858 sec
+sssp15:  threads: 40 trial: 58 source 3.68627e+07 time:     8.4478 sec
+sssp15:  threads: 40 trial: 59 source 4.95391e+07 time:     7.8984 sec
+sssp15:  threads: 40 trial: 60 source 3.40165e+07 time:     6.9073 sec
+sssp15:  threads: 40 trial: 61 source 3.65674e+07 time:     7.1818 sec
+sssp15:  threads: 40 trial: 62 source 5.54878e+07 time:     7.0040 sec
+sssp15:  threads: 40 trial: 63 source 1.43914e+07 time:     8.3880 sec
+
+40: SSSP    time:       7.448163 sec  rate:   197.14 (delta 51)
+Avg: SSSP          40:      7.448 sec: ../../../GAP/GAP-twitter/GAP-twitter.grb
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+matrix: ../../../GAP/GAP-web/GAP-web.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-web/GAP-web.grb
+sources: ../../../GAP/GAP-web/GAP-web_sources.mtx
+read time: 24.4954
+delta: 140
+sssp15:  threads: 40 trial:  0 source 1.02195e+07 time:     9.7410 sec
+sssp15:  threads: 40 trial:  1 source 4.47582e+07 time:     9.8728 sec
+sssp15:  threads: 40 trial:  2 source 890671 time:     9.8544 sec
+sssp15:  threads: 40 trial:  3 source 1.38438e+07 time:     1.8783 sec
+sssp15:  threads: 40 trial:  4 source 1.41681e+07 time:     9.9945 sec
+sssp15:  threads: 40 trial:  5 source 2.09069e+07 time:     9.7442 sec
+sssp15:  threads: 40 trial:  6 source 1.21896e+07 time:     9.6852 sec
+sssp15:  threads: 40 trial:  7 source 2.63523e+07 time:     1.8617 sec
+sssp15:  threads: 40 trial:  8 source 4.35007e+07 time:     9.5956 sec
+sssp15:  threads: 40 trial:  9 source 8.98702e+06 time:     9.8046 sec
+sssp15:  threads: 40 trial: 10 source 5.69976e+06 time:     1.8772 sec
+sssp15:  threads: 40 trial: 11 source 4.14365e+07 time:    12.2924 sec
+sssp15:  threads: 40 trial: 12 source 5.03073e+06 time:    10.2002 sec
+sssp15:  threads: 40 trial: 13 source 4.07352e+07 time:     9.6477 sec
+sssp15:  threads: 40 trial: 14 source 1.65336e+07 time:     9.7697 sec
+sssp15:  threads: 40 trial: 15 source 2.87002e+07 time:    10.0691 sec
+sssp15:  threads: 40 trial: 16 source 64711 time:     9.7451 sec
+sssp15:  threads: 40 trial: 17 source 3.96348e+07 time:     9.7378 sec
+sssp15:  threads: 40 trial: 18 source 1.60378e+07 time:     9.7355 sec
+sssp15:  threads: 40 trial: 19 source 2.71527e+07 time:     9.9872 sec
+sssp15:  threads: 40 trial: 20 source 1.64041e+07 time:     9.6226 sec
+sssp15:  threads: 40 trial: 21 source 2.0492e+07 time:     9.6807 sec
+sssp15:  threads: 40 trial: 22 source 5.32242e+06 time:     9.8686 sec
+sssp15:  threads: 40 trial: 23 source 2.1421e+07 time:     9.6743 sec
+sssp15:  threads: 40 trial: 24 source 2.66221e+07 time:     9.7456 sec
+sssp15:  threads: 40 trial: 25 source 5.88288e+06 time:     9.8795 sec
+sssp15:  threads: 40 trial: 26 source 1.8091e+07 time:     9.8881 sec
+sssp15:  threads: 40 trial: 27 source 1.06659e+07 time:     2.0012 sec
+sssp15:  threads: 40 trial: 28 source 1.86344e+07 time:     9.5037 sec
+sssp15:  threads: 40 trial: 29 source 1.81387e+07 time:     9.6130 sec
+sssp15:  threads: 40 trial: 30 source 2.35554e+06 time:    10.0176 sec
+sssp15:  threads: 40 trial: 31 source 3.28852e+07 time:     1.9160 sec
+sssp15:  threads: 40 trial: 32 source 4.06574e+07 time:     9.6665 sec
+sssp15:  threads: 40 trial: 33 source 3.51962e+07 time:     9.7874 sec
+sssp15:  threads: 40 trial: 34 source 4.55444e+07 time:    10.0966 sec
+sssp15:  threads: 40 trial: 35 source 6.17552e+06 time:     1.8300 sec
+sssp15:  threads: 40 trial: 36 source 4.00583e+07 time:    10.0745 sec
+sssp15:  threads: 40 trial: 37 source 5.06262e+07 time:    10.0002 sec
+sssp15:  threads: 40 trial: 38 source 3.6571e+07 time:     9.7921 sec
+sssp15:  threads: 40 trial: 39 source 4.93971e+07 time:     9.4211 sec
+sssp15:  threads: 40 trial: 40 source 2.34343e+07 time:     9.9247 sec
+sssp15:  threads: 40 trial: 41 source 2.29944e+06 time:     9.6637 sec
+sssp15:  threads: 40 trial: 42 source 3.28738e+07 time:     1.9362 sec
+sssp15:  threads: 40 trial: 43 source 2.59783e+07 time:     9.6304 sec
+sssp15:  threads: 40 trial: 44 source 2.46172e+06 time:     1.9919 sec
+sssp15:  threads: 40 trial: 45 source 2.27873e+07 time:     9.7073 sec
+sssp15:  threads: 40 trial: 46 source 3.07599e+07 time:     9.6785 sec
+sssp15:  threads: 40 trial: 47 source 7.42889e+06 time:     1.7967 sec
+sssp15:  threads: 40 trial: 48 source 3.91739e+07 time:     1.7859 sec
+sssp15:  threads: 40 trial: 49 source 4.31942e+07 time:     1.8204 sec
+sssp15:  threads: 40 trial: 50 source 2.63615e+07 time:     1.8723 sec
+sssp15:  threads: 40 trial: 51 source 3.97472e+07 time:     1.7866 sec
+sssp15:  threads: 40 trial: 52 source 3.067e+07 time:     9.7319 sec
+sssp15:  threads: 40 trial: 53 source 4.1483e+07 time:     9.7171 sec
+sssp15:  threads: 40 trial: 54 source 9.35867e+06 time:     9.7534 sec
+sssp15:  threads: 40 trial: 55 source 9.94501e+06 time:     9.5644 sec
+sssp15:  threads: 40 trial: 56 source 3.35524e+06 time:     9.5509 sec
+sssp15:  threads: 40 trial: 57 source 3.38313e+07 time:     9.7263 sec
+sssp15:  threads: 40 trial: 58 source 4.51247e+07 time:    10.2417 sec
+sssp15:  threads: 40 trial: 59 source 1.61379e+07 time:     1.9046 sec
+sssp15:  threads: 40 trial: 60 source 1.12354e+07 time:     9.5731 sec
+sssp15:  threads: 40 trial: 61 source 3.75091e+07 time:    10.0751 sec
+sssp15:  threads: 40 trial: 62 source 2.74024e+07 time:     9.4836 sec
+sssp15:  threads: 40 trial: 63 source 3.95461e+07 time:    10.1855 sec
+
+40: SSSP    time:       8.098054 sec  rate:   238.37 (delta 140)
+Avg: SSSP          40:      8.098 sec: ../../../GAP/GAP-web/GAP-web.grb
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+threads to test:  40
+matrix: ../../../GAP/GAP-road/GAP-road.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-road/GAP-road.grb
+sources: ../../../GAP/GAP-road/GAP-road_sources.mtx
+read time: 1.09158
+delta: 50000
+sssp15:  threads: 40 trial:  0 source 4.79572e+06 time:    31.3667 sec
+sssp15:  threads: 40 trial:  1 source 2.10039e+07 time:    30.4462 sec
+sssp15:  threads: 40 trial:  2 source 417968 time:    30.0263 sec
+sssp15:  threads: 40 trial:  3 source 6.49651e+06 time:    31.0158 sec
+sssp15:  threads: 40 trial:  4 source 6.6487e+06 time:    29.5056 sec
+sssp15:  threads: 40 trial:  5 source 9.81107e+06 time:    31.3728 sec
+sssp15:  threads: 40 trial:  6 source 2.22475e+07 time:    30.2754 sec
+sssp15:  threads: 40 trial:  7 source 5.72025e+06 time:    35.3082 sec
+sssp15:  threads: 40 trial:  8 source 1.23665e+07 time:    29.9629 sec
+sssp15:  threads: 40 trial:  9 source 2.04137e+07 time:    29.9133 sec
+sssp15:  threads: 40 trial: 10 source 4.21737e+06 time:    31.3765 sec
+sssp15:  threads: 40 trial: 11 source 2.67475e+06 time:    31.5002 sec
+sssp15:  threads: 40 trial: 12 source 2.20856e+07 time:    30.3534 sec
+sssp15:  threads: 40 trial: 13 source 1.9445e+07 time:    30.4022 sec
+sssp15:  threads: 40 trial: 14 source 2.36079e+06 time:    31.3719 sec
+sssp15:  threads: 40 trial: 15 source 1.9116e+07 time:    30.8449 sec
+sssp15:  threads: 40 trial: 16 source 7.75877e+06 time:    30.7068 sec
+sssp15:  threads: 40 trial: 17 source 1.34682e+07 time:    30.5719 sec
+sssp15:  threads: 40 trial: 18 source 30367 time:    30.9456 sec
+sssp15:  threads: 40 trial: 19 source 1.85995e+07 time:    30.3275 sec
+sssp15:  threads: 40 trial: 20 source 7.52611e+06 time:    30.4091 sec
+sssp15:  threads: 40 trial: 21 source 1.68363e+07 time:    31.0345 sec
+sssp15:  threads: 40 trial: 22 source 1.27421e+07 time:    31.1583 sec
+sssp15:  threads: 40 trial: 23 source 7.698e+06 time:    29.3039 sec
+sssp15:  threads: 40 trial: 24 source 5.87644e+06 time:    30.3250 sec
+sssp15:  threads: 40 trial: 25 source 9.61634e+06 time:    30.7889 sec
+sssp15:  threads: 40 trial: 26 source 2.49767e+06 time:    31.8915 sec
+sssp15:  threads: 40 trial: 27 source 1.00523e+07 time:    29.9700 sec
+sssp15:  threads: 40 trial: 28 source 1.24931e+07 time:    31.0791 sec
+sssp15:  threads: 40 trial: 29 source 1.67086e+06 time:    30.6231 sec
+sssp15:  threads: 40 trial: 30 source 2.76068e+06 time:    30.1613 sec
+sssp15:  threads: 40 trial: 31 source 2.46094e+06 time:    31.4061 sec
+sssp15:  threads: 40 trial: 32 source 8.48965e+06 time:    29.6425 sec
+sssp15:  threads: 40 trial: 33 source 5.00522e+06 time:    30.9860 sec
+sssp15:  threads: 40 trial: 34 source 8.74464e+06 time:    30.5061 sec
+sssp15:  threads: 40 trial: 35 source 8.51202e+06 time:    29.6591 sec
+sssp15:  threads: 40 trial: 36 source 2.19122e+07 time:    31.7754 sec
+sssp15:  threads: 40 trial: 37 source 1.10539e+06 time:    30.7139 sec
+sssp15:  threads: 40 trial: 38 source 1.54322e+07 time:    29.8862 sec
+sssp15:  threads: 40 trial: 39 source 1.60018e+06 time:    30.7215 sec
+sssp15:  threads: 40 trial: 40 source 1.90795e+07 time:    30.9126 sec
+sssp15:  threads: 40 trial: 41 source 1.65166e+07 time:    31.4484 sec
+sssp15:  threads: 40 trial: 42 source 2.02026e+07 time:    29.9482 sec
+sssp15:  threads: 40 trial: 43 source 2.13728e+07 time:    30.2795 sec
+sssp15:  threads: 40 trial: 44 source 2.89801e+06 time:    31.1548 sec
+sssp15:  threads: 40 trial: 45 source 8.49128e+06 time:    30.0052 sec
+sssp15:  threads: 40 trial: 46 source 1.87983e+07 time:    30.0422 sec
+sssp15:  threads: 40 trial: 47 source 2.37576e+07 time:    30.8789 sec
+sssp15:  threads: 40 trial: 48 source 1.71618e+07 time:    29.7015 sec
+sssp15:  threads: 40 trial: 49 source 2.31807e+07 time:    31.4761 sec
+sssp15:  threads: 40 trial: 50 source 1.09971e+07 time:    30.0694 sec
+sssp15:  threads: 40 trial: 51 source 3.73063e+06 time:    31.7537 sec
+sssp15:  threads: 40 trial: 52 source 1.07907e+06 time:    30.6844 sec
+sssp15:  threads: 40 trial: 53 source 1.54268e+07 time:    30.2239 sec
+sssp15:  threads: 40 trial: 54 source 1.21909e+07 time:    30.4714 sec
+sssp15:  threads: 40 trial: 55 source 1.15522e+06 time:    30.8901 sec
+sssp15:  threads: 40 trial: 56 source 1.06935e+07 time:    29.9670 sec
+sssp15:  threads: 40 trial: 57 source 1.44348e+07 time:    30.9650 sec
+sssp15:  threads: 40 trial: 58 source 1.99633e+07 time:    30.7711 sec
+sssp15:  threads: 40 trial: 59 source 3.48618e+06 time:    30.2877 sec
+sssp15:  threads: 40 trial: 60 source 1.83833e+07 time:    30.5496 sec
+sssp15:  threads: 40 trial: 61 source 2.02699e+07 time:    30.3089 sec
+sssp15:  threads: 40 trial: 62 source 1.23708e+07 time:    30.9735 sec
+sssp15:  threads: 40 trial: 63 source 7.84314e+06 time:    30.7015 sec
+
+40: SSSP    time:      30.689063 sec  rate:     1.88 (delta 50000)
+Avg: SSSP          40:     30.689 sec: ../../../GAP/GAP-road/GAP-road.grb
+ 
+======================================================================
+GAP benchmarks using LAGraph+GraphBLAS: Triangle Counting
+======================================================================
+Matrix input file format:  grb
+GAP matrices located in:   ../../../GAP
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+# of trials: 3
+threads to test:  40
+matrix: ../../../GAP/GAP-kron/GAP-kron.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-kron/GAP-kron.grb
+read time: 46.0571
+Graph: kind: undirected, nodes: 1.34218e+08 entries: 4.22326e+09 type: bool
+  structural symmetry: symmetric  self-edges: 0
+  adjacency matrix: GrB_BOOL matrix: 134217726-by-134217726 entries: 4223264644
+    (1, 83111928)   1
+    (2, 113772338)   1
+    (9, 26920261)   1
+    (9, 33335674)   1
+    (9, 90905511)   1
+    (9, 92964069)   1
+    (9, 126874301)   1
+    (11, 3075467)   1
+    (11, 11283179)   1
+    (11, 14136330)   1
+    (11, 18241662)   1
+    (11, 21256905)   1
+    (11, 26197037)   1
+    (11, 34992956)   1
+    (11, 49762924)   1
+    (11, 54231301)   1
+    (11, 55275316)   1
+    (11, 55896288)   1
+    (11, 56613538)   1
+    (11, 69378808)   1
+    (11, 76391974)   1
+    (11, 77970070)   1
+    (11, 80121717)   1
+    (11, 113872174)   1
+    (11, 115829864)   1
+    (11, 125066355)   1
+    (11, 129708509)   1
+    (11, 131285585)   1
+    (11, 132549336)   1
+    (14, 11049596)   1
+    (14, 11455408)   1
+    (14, 19942609)   1
+    ...
+
+warmup method: Sandia_ULT: sum ((U*L') .* U)   auto-sort
+# of triangles: 106873365648
+Sandia_ULT: sum ((U*L') .* U)   sort: descending degree
+nthreads:  40 time:   916.598141 rate:   4.61 (Sandia_ULT, one trial)
+
+Method: Sandia_LL: sum ((L*L) .* L)     auto-sort
+kron fails on method 3; skipped
+
+Method: Sandia_UU: sum ((U*U) .* U)     auto-sort
+kron fails on method 4; skipped
+
+Method: Sandia_LUT: sum ((L*U') .* L)   auto-sort
+trial  0:   882.518319 sec rate   4.79  # triangles: 1.06873e+11
+trial  1:   882.918372 sec rate   4.78  # triangles: 1.06873e+11
+trial  2:   880.265319 sec rate   4.80  # triangles: 1.06873e+11
+nthreads:  40 time:   881.900670 rate:   4.79   # of triangles: 106873365648 presort: 1
+
+Method used: Sandia_LUT: sum ((L*U') .* L)   ascending degree
+Avg: TC method5.0  40:    881.901 sec: ../../../GAP/GAP-kron/GAP-kron.grb
+
+Best method: Sandia_LUT: sum ((L*U') .* L)   auto-sort
+nthreads:  40 time:   881.900670 rate:   4.79
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+# of trials: 3
+threads to test:  40
+matrix: ../../../GAP/GAP-urand/GAP-urand.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-urand/GAP-urand.grb
+read time: 51.9792
+Graph: kind: undirected, nodes: 1.34218e+08 entries: 4.29497e+09 type: bool
+  structural symmetry: symmetric  self-edges: 0
+  adjacency matrix: GrB_BOOL matrix: 134217728-by-134217728 entries: 4294966740
+    (0, 8291853)   1
+    (0, 9845139)   1
+    (0, 14571172)   1
+    (0, 16459757)   1
+    (0, 27302127)   1
+    (0, 27726180)   1
+    (0, 30303523)   1
+    (0, 32640525)   1
+    (0, 33360373)   1
+    (0, 40782998)   1
+    (0, 41057943)   1
+    (0, 43348321)   1
+    (0, 50206206)   1
+    (0, 52510658)   1
+    (0, 53390371)   1
+    (0, 53579654)   1
+    (0, 54622695)   1
+    (0, 57696071)   1
+    (0, 59385788)   1
+    (0, 60365539)   1
+    (0, 64764501)   1
+    (0, 64889445)   1
+    (0, 72706136)   1
+    (0, 77394182)   1
+    (0, 82101150)   1
+    (0, 86364056)   1
+    (0, 86790574)   1
+    (0, 90287459)   1
+    (0, 104674459)   1
+    (0, 109716228)   1
+    (0, 120042750)   1
+    (0, 125093057)   1
+    ...
+
+warmup method: Sandia_ULT: sum ((U*L') .* U)   auto-sort
+# of triangles: 5378
+Sandia_ULT: sum ((U*L') .* U)   sort: none
+nthreads:  40 time:    33.874811 rate: 126.79 (Sandia_ULT, one trial)
+
+Method: Sandia_LL: sum ((L*L) .* L)     auto-sort
+trial  0:    28.456565 sec rate 150.93  # triangles: 5378
+trial  1:    28.068775 sec rate 153.02  # triangles: 5378
+trial  2:    28.156666 sec rate 152.54  # triangles: 5378
+nthreads:  40 time:    28.227335 rate: 152.16   # of triangles: 5378 presort: 2
+
+Method used: Sandia_LL: sum ((L*L) .* L)     sort: none
+Avg: TC method3.0  40:     28.227 sec: ../../../GAP/GAP-urand/GAP-urand.grb
+
+Method: Sandia_UU: sum ((U*U) .* U)     auto-sort
+trial  0:    26.955340 sec rate 159.34  # triangles: 5378
+trial  1:    26.986168 sec rate 159.15  # triangles: 5378
+trial  2:    27.147351 sec rate 158.21  # triangles: 5378
+nthreads:  40 time:    27.029620 rate: 158.90   # of triangles: 5378 presort: 2
+
+Method used: Sandia_UU: sum ((U*U) .* U)     sort: none
+Avg: TC method4.0  40:     27.030 sec: ../../../GAP/GAP-urand/GAP-urand.grb
+
+Method: Sandia_LUT: sum ((L*U') .* L)   auto-sort
+trial  0:    32.670243 sec rate 131.46  # triangles: 5378
+trial  1:    32.658468 sec rate 131.51  # triangles: 5378
+trial  2:    32.664358 sec rate 131.49  # triangles: 5378
+nthreads:  40 time:    32.664356 rate: 131.49   # of triangles: 5378 presort: 2
+
+Method used: Sandia_LUT: sum ((L*U') .* L)   sort: none
+Avg: TC method5.0  40:     32.664 sec: ../../../GAP/GAP-urand/GAP-urand.grb
+
+Best method: Sandia_UU: sum ((U*U) .* U)     auto-sort
+nthreads:  40 time:    27.029620 rate: 158.90
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+# of trials: 3
+threads to test:  40
+matrix: ../../../GAP/GAP-twitter/GAP-twitter.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-twitter/GAP-twitter.grb
+forcing G-> to be symmetric (via A = A+A')
+read time: 29.356
+Graph: kind: undirected, nodes: 6.15784e+07 entries: 2.40503e+09 type: bool
+  structural symmetry: symmetric  self-edges: 0
+  adjacency matrix: GrB_BOOL matrix: 61578415-by-61578415 entries: 2405026092
+    (12, 13)   1
+    (12, 14)   1
+    (12, 15)   1
+    (12, 16)   1
+    (12, 17)   1
+    (12, 18)   1
+    (12, 20)   1
+    (12, 21)   1
+    (12, 22)   1
+    (12, 23)   1
+    (12, 24)   1
+    (12, 31)   1
+    (12, 38)   1
+    (12, 41)   1
+    (12, 47)   1
+    (12, 52)   1
+    (12, 53)   1
+    (12, 56)   1
+    (12, 57)   1
+    (12, 58)   1
+    (12, 59)   1
+    (12, 60)   1
+    (12, 61)   1
+    (12, 62)   1
+    (12, 64)   1
+    (12, 67)   1
+    (12, 69)   1
+    (12, 70)   1
+    (12, 76)   1
+    (12, 87)   1
+    (12, 89)   1
+    (12, 92)   1
+    ...
+
+warmup method: Sandia_ULT: sum ((U*L') .* U)   auto-sort
+# of triangles: 34824916864
+Sandia_ULT: sum ((U*L') .* U)   sort: descending degree
+nthreads:  40 time:   238.339236 rate:  10.09 (Sandia_ULT, one trial)
+
+Method: Sandia_LL: sum ((L*L) .* L)     auto-sort
+all but urand is slow with method 3: skipped
+
+Method: Sandia_UU: sum ((U*U) .* U)     auto-sort
+all but urand is slow with method 4: skipped
+
+Method: Sandia_LUT: sum ((L*U') .* L)   auto-sort
+trial  0:   225.971847 sec rate  10.64  # triangles: 3.48249e+10
+trial  1:   227.479873 sec rate  10.57  # triangles: 3.48249e+10
+trial  2:   225.579611 sec rate  10.66  # triangles: 3.48249e+10
+nthreads:  40 time:   226.343777 rate:  10.63   # of triangles: 34824916864 presort: 1
+
+Method used: Sandia_LUT: sum ((L*U') .* L)   ascending degree
+Avg: TC method5.0  40:    226.344 sec: ../../../GAP/GAP-twitter/GAP-twitter.grb
+
+Best method: Sandia_LUT: sum ((L*U') .* L)   auto-sort
+nthreads:  40 time:   226.343777 rate:  10.63
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+# of trials: 3
+threads to test:  40
+matrix: ../../../GAP/GAP-web/GAP-web.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-web/GAP-web.grb
+forcing G-> to be symmetric (via A = A+A')
+read time: 34.9651
+Graph: kind: undirected, nodes: 5.06362e+07 entries: 3.62013e+09 type: bool
+  structural symmetry: symmetric  self-edges: 0
+  adjacency matrix: GrB_BOOL matrix: 50636151-by-50636151 entries: 3620126660
+    (0, 50395004)   1
+    (1, 50395004)   1
+    (2, 50395004)   1
+    (3, 50395004)   1
+    (4, 50395004)   1
+    (5, 50395004)   1
+    (6, 50395004)   1
+    (7, 50395004)   1
+    (8, 50395004)   1
+    (9, 50395004)   1
+    (10, 11)   1
+    (10, 49817219)   1
+    (10, 49824797)   1
+    (10, 49824842)   1
+    (10, 49824843)   1
+    (10, 49824846)   1
+    (10, 49826026)   1
+    (10, 49826027)   1
+    (10, 49826709)   1
+    (10, 49826710)   1
+    (10, 49826711)   1
+    (10, 49826712)   1
+    (10, 49826713)   1
+    (10, 49826714)   1
+    (10, 49826715)   1
+    (10, 49826716)   1
+    (10, 49826717)   1
+    (10, 49826719)   1
+    (10, 49827761)   1
+    (10, 49853332)   1
+    (10, 49853570)   1
+    (10, 49853571)   1
+    ...
+
+warmup method: Sandia_ULT: sum ((U*L') .* U)   auto-sort
+# of triangles: 84907041475
+Sandia_ULT: sum ((U*L') .* U)   sort: none
+nthreads:  40 time:    37.147080 rate:  97.45 (Sandia_ULT, one trial)
+
+Method: Sandia_LL: sum ((L*L) .* L)     auto-sort
+all but urand is slow with method 3: skipped
+
+Method: Sandia_UU: sum ((U*U) .* U)     auto-sort
+all but urand is slow with method 4: skipped
+
+Method: Sandia_LUT: sum ((L*U') .* L)   auto-sort
+trial  0:    32.767772 sec rate 110.48  # triangles: 8.4907e+10
+trial  1:    32.847303 sec rate 110.21  # triangles: 8.4907e+10
+trial  2:    32.723504 sec rate 110.63  # triangles: 8.4907e+10
+nthreads:  40 time:    32.779526 rate: 110.44   # of triangles: 84907041475 presort: 2
+
+Method used: Sandia_LUT: sum ((L*U') .* L)   sort: none
+Avg: TC method5.0  40:     32.780 sec: ../../../GAP/GAP-web/GAP-web.grb
+
+Best method: Sandia_LUT: sum ((L*U') .* L)   auto-sort
+nthreads:  40 time:    32.779526 rate: 110.44
+include: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+library: SuiteSparse:GraphBLAS v7.3.0 [Aug 30, 2022]
+# of trials: 3
+threads to test:  40
+matrix: ../../../GAP/GAP-road/GAP-road.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-road/GAP-road.grb
+read time: 1.34858
+Graph: kind: undirected, nodes: 2.39473e+07 entries: 5.77086e+07 type: bool
+  structural symmetry: symmetric  self-edges: 0
+  adjacency matrix: GrB_BOOL matrix: 23947347-by-23947347 entries: 57708624
+    (0, 1)   1
+    (0, 709)   1
+    (0, 1049673)   1
+    (1, 0)   1
+    (1, 2097154)   1
+    (2, 9)   1
+    (2, 2097152)   1
+    (2, 2097156)   1
+    (3, 1903)   1
+    (3, 1048578)   1
+    (4, 5)   1
+    (4, 2097153)   1
+    (5, 4)   1
+    (5, 11)   1
+    (5, 1048579)   1
+    (6, 7)   1
+    (6, 1048580)   1
+    (6, 1048582)   1
+    (7, 6)   1
+    (8, 33976)   1
+    (8, 1048581)   1
+    (9, 2)   1
+    (9, 10)   1
+    (9, 2097155)   1
+    (10, 9)   1
+    (10, 11)   1
+    (10, 2097152)   1
+    (11, 5)   1
+    (11, 10)   1
+    (11, 2097155)   1
+    (12, 1048586)   1
+    (12, 1049686)   1
+    ...
+
+warmup method: Sandia_ULT: sum ((U*L') .* U)   auto-sort
+# of triangles: 438804
+Sandia_ULT: sum ((U*L') .* U)   sort: none
+nthreads:  40 time:     0.201999 rate: 285.69 (Sandia_ULT, one trial)
+
+Method: Sandia_LL: sum ((L*L) .* L)     auto-sort
+all but urand is slow with method 3: skipped
+
+Method: Sandia_UU: sum ((U*U) .* U)     auto-sort
+all but urand is slow with method 4: skipped
+
+Method: Sandia_LUT: sum ((L*U') .* L)   auto-sort
+trial  0:     0.192121 sec rate 300.38  # triangles: 438804
+trial  1:     0.191258 sec rate 301.73  # triangles: 438804
+trial  2:     0.190390 sec rate 303.11  # triangles: 438804
+nthreads:  40 time:     0.191256 rate: 301.73   # of triangles: 438804 presort: 2
+
+Method used: Sandia_LUT: sum ((L*U') .* L)   sort: none
+Avg: TC method5.0  40:      0.191 sec: ../../../GAP/GAP-road/GAP-road.grb
+
+Best method: Sandia_LUT: sum ((L*U') .* L)   auto-sort
+nthreads:  40 time:     0.191256 rate: 301.73
+[0;36mhypersparse $[0m [K[0;36mhypersparse $[0m 
+[0;36mhypersparse $[0m 
+[0;36mhypersparse $[0m 
+[0;36mhypersparse $[0m exit
+exit
+
+Script done on 2022-09-01 05:47:35-05:00 [COMMAND_EXIT_CODE="0"]

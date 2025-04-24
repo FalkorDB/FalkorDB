@@ -1,0 +1,50 @@
+name: Sanitizers
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macOS-latest]
+        type: [Debug, RelWithDebInfo, MinSizeRel, Release]
+        sanitizer: [address, memory, undefined]
+        exclude:
+          - {os: "macOS-latest", sanitizer: "memory"}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Create Build Environment
+      run: cmake -E make_directory ${{github.workspace}}/build
+
+    - name: Setup dependencies
+      if: startsWith(matrix.os, 'ubuntu')
+      run: sudo apt-get install -y clang-10
+
+    - name: Configure CMake (macOS)
+      shell: bash
+      if: startsWith(matrix.os, 'macOS')
+      working-directory: ${{github.workspace}}/build
+      run: cmake $GITHUB_WORKSPACE/test -DCMAKE_BUILD_TYPE=${{ matrix.type }} -DJSON_USE_SANITIZER=${{ matrix.sanitizer }}
+
+    - name: Configure CMake with Clang (Ubuntu)
+      shell: bash
+      if: startsWith(matrix.os, 'ubuntu')
+      working-directory: ${{github.workspace}}/build
+      run: cmake $GITHUB_WORKSPACE/test -DCMAKE_BUILD_TYPE=${{ matrix.type }} -DCMAKE_C_COMPILER=clang-10 -DCMAKE_CXX_COMPILER=clang++-10  -DJSON_USE_SANITIZER=${{ matrix.sanitizer }}
+
+    - name: Build
+      working-directory: ${{github.workspace}}/build
+      shell: bash
+      run: cmake --build . --config ${{ matrix.type }}
+
+    - name: Test
+      working-directory: ${{github.workspace}}/build
+      shell: bash
+      run: if [ "${{ matrix.os }}" == "windows-latest" ]; then cd ${{ matrix.type }}; fi; ./json_test

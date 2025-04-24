@@ -1,0 +1,49 @@
+#!/bin/bash
+
+# LAGraph, (c) 2021 by The LAGraph Contributors, All Rights Reserved.
+# SPDX-License-Identifier: BSD-2-Clause
+# See additional acknowledgments in the LICENSE file,
+# or contact permission@sei.cmu.edu for the full terms.
+
+# do_gap_binary: convert GAP MatrixMarket files to binary
+
+# do_gap_binary converts all GAP MatrixMarket files into binary *.grb files,
+# which are faster to load but require SuiteSparse:GraphBLAS.  By default, the
+# GAP *.mtx matrices are assumed to be located in ../../../GAP, as a peer
+# folder to LAGraph and GraphBLAS.
+
+# Usage:
+#       ./do_gap_binary
+#       ./do_gap_binary /my/path/to/GAP
+
+# The first usage assumes that the following directories exist side-by-side
+# in the same folder:
+
+#   LAGraph
+#   GraphBLAS
+#   GAP
+
+# The second usage allows you to pass in the location of the folder GAP
+# which must contain the following files:
+
+#   ./GAP:
+#       GAP-kron/GAP-kron.mtx
+#       GAP-urand/GAP-urand.mtx
+#       GAP-twitter/GAP-twitter.mtx
+#       GAP-web/GAP-web.mtx
+#       GAP-road/GAP-road.mtx
+
+echo " "
+echo "======================================================================"
+echo "GAP benchmarks using LAGraph+SuiteSparse:GraphBLAS: convert to binary"
+echo "======================================================================"
+
+if [ -z "$1" ]; then GAP="../../../GAP" ; else GAP=$1 ; fi
+echo "GAP matrices located in: " $GAP
+
+../../build/src/benchmark/mtx2bin_demo $GAP/GAP-kron/GAP-kron.mtx       $GAP/GAP-kron/GAP-kron.grb
+../../build/src/benchmark/mtx2bin_demo $GAP/GAP-urand/GAP-urand.mtx     $GAP/GAP-urand/GAP-urand.grb
+../../build/src/benchmark/mtx2bin_demo $GAP/GAP-twitter/GAP-twitter.mtx $GAP/GAP-twitter/GAP-twitter.grb
+../../build/src/benchmark/mtx2bin_demo $GAP/GAP-web/GAP-web.mtx         $GAP/GAP-web/GAP-web.grb
+../../build/src/benchmark/mtx2bin_demo $GAP/GAP-road/GAP-road.mtx       $GAP/GAP-road/GAP-road.grb
+

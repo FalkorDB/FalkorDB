@@ -1,0 +1,7 @@
+%%MatrixMarket matrix coordinate real general
+%%GraphBLAS type gunk
+% This matrix is mangled and causes LAGraph_MMRead to return an error code
+3 3 3
+1 1
+2 2
+3 3

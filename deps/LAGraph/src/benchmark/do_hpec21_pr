@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# LAGraph, (c) 2021 by The LAGraph Contributors, All Rights Reserved.
+# SPDX-License-Identifier: BSD-2-Clause
+# See additional acknowledgments in the LICENSE file,
+# or contact permission@sei.cmu.edu for the full terms.
+
+# do_hpec21_pr: run benchmarks for pagerank
+
+# Usage:
+#
+#       ./do_hpec21_pr > myoutput.txt
+
+echo " "
+echo "======================================================================"
+echo "benchmarks using LAGraph+GraphBLAS: PageRank (HPEC'21 matrices)"
+echo "======================================================================"
+
+../../build/src/benchmark/gappagerank_demo /raid/matrices/com-Youtube/com-Youtube.grb
+../../build/src/benchmark/gappagerank_demo /raid/matrices/as-Skitter/as-Skitter.grb
+../../build/src/benchmark/gappagerank_demo /raid/matrices/com-LiveJournal/com-LiveJournal.grb
+../../build/src/benchmark/gappagerank_demo /raid/matrices/com-Orkut/com-Orkut.grb
+../../build/src/benchmark/gappagerank_demo /raid/matrices/com-Friendster/com-Friendster.grb
+

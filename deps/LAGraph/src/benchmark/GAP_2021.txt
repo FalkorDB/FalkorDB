@@ -1,0 +1,292 @@
+hypersparse: 20-core Intel(R) Xeon(R) CPU E5-2698 v4 @ 2.20GHz,
+with 40 threads (all default settings), with gcc 5.4.0 -O3 (Ubuntu 16.04),
+and then gcc 9.3.0 -O3 for Nov 2021 to date (upgrade to Ubuntu 20.04),
+unless otherwise indicated.
+Single socket system (no NUMA effects).
+
+GAP:2021: with gcc 9.3.0, Ubuntu 20.04 (gap code version June 2020)
+Jan 2021 to date: in-progress comparisons of LAGraph +
+SuiteSparse:GraphBLAS vs GAP.  Results for Jan 26 and following are for
+algorithms in the Experimental2 folder.  May 14 and following are for
+algorithms in LAGraph/src/algorithm, using LAGraph/src/benchmark.
+
+Jan 2, 2022: SS:GrB v6.1.3
+Dec 27: SS:GrB v6.1.0 with gcc 11.2.0
+Nov 25-27: significant improvment in CC, in both LAGraph (Nov 27, 2021 version)
+    and v6.0.1 of GraphBLAS
+Nov 6: v6.0.0.alpha19 with gcc 9.3.0 and Ubuntu 20.04: 9.3.0 is the default
+    compiler for Ubuntu 20.04.  Need to try 10.2.0, which can sometimes generate
+    faster code.
+
+Oct 18: v6.0.0.alpha14 with gcc 10.2.0, Ubuntu 16.04
+Aug 16: v5.1.6
+Jun 25c: v5.1.0beta1 (June 25 version)
+Jun 25a: reading in *.grb matrices as iso, for all but SSSP
+Jun 22: v5.1.0beta1 with iso matrices
+May 14: in the reorg branch, v5.0.4
+May 12: v5.0.3
+May 2: v5.0.1beta2 with refactored saxpy3
+Apr 27: v5.0.1beta2.  BC better on web, some improvement for SSSP
+Mar 11: draft v5.0.0, with free_pool
+Feb 14: BC changed to FP64 (slower, needed only for Road)
+Feb 6: SS:GrB draft v4.0.4 (on master branch), LAGraph/Experimental2
+Jan 26+: SS:GrB v4.0.3 with LAGraph/Experimental2
+Jan 19: SS:GrB v4.0.3 with LAGraph/Experimental
+Jan  3: SS:GrB v4.0.1 with LAGraph/Experimental
+
+                kron        urand       twitter     web         road
+              ------------------------------------------------------------------
+BC   GAP:2021   31.140      46.484      11.035       2.974       1.612 (Nov 27)
+BC   GAP        31.521      46.361      10.821       3.008       1.503
+              ------------------------------------------------------------------
+
+BC   SS         23.984 *    33.425 *     9.185 *     6.511      33.533 (Jan 2)
+BC   SS         24.019 *    32.842 *     9.219 *     6.344      33.506 (Dec 27)
+BC   SS         23.499 *    31.997 *     8.850 *     6.228      33.533 (Nov 30)
+BC   SS         23.122 *    33.018 *     8.911 *     6.280      33.600 (Nov 27)
+BC   SS         23.392 *    32.141 *     8.584 *     6.229      33.539 (Nov 14)
+BC   SS         23.005 *    32.263 *     8.748 *     6.210      33.564 (Nov 6)
+BC   SS         22.897 *    31.746 *     8.639 *     6.328      33.726 (Oct 18)
+BC   SS         23.295 *    32.441 *     9.179 *     6.859      34.512 (Aug 16)
+BC   SS   ???   24.031 ???  33.149 ???   8.754 *     7.226 ???  34.478 (Jun 25c) 
+BC   SS         23.051 *    32.721 *     8.785 *     6.488      34.759 (Jun 25a) 
+BC   SS         23.159 *    32.080 *     9.496 *     6.530      33.833 (Jun 24) 
+BC   SS         23.553 *    32.017 *     8.954 *     6.497      34.601 (Jun 23) 
+BC   SS         23.900 *    32.545 *     9.126 *     6.482      35.048 (Jun 22) 
+--- reorg
+BC   SS         24.803 *    32.090 *     9.210 *     6.653      34.503 (May 12) 
+BC   SS         23.013 *    32.321 *     8.955 *     6.453      34.473 (May 2b) 
+BC   SS         22.987 *    32.439 *     8.728 *     6.414      33.749 (May 2) 
+BC   SS         24.540 *    32.485 *     9.344 *     6.383      35.283 (Apr 27)
+BC   SS         24.276 *    32.816 *     9.514 *     8.151      35.718 (Mar 11)
+BC   SS         23.607 *    32.687 *     9.254 *     8.201      34.398 (Feb 14)
+BC   SS         24.517 *    30.687 *     9.113 *     8.428      34.061 (Feb 7)
+BC   SS         24.752 *    30.656 *     9.283 *     8.971      43.660 (Feb 6)
+BC   SS         26.851 *    31.782 *    10.036 *     9.250      51.910 (Jan 26)
+BC   SS         25.552 *    32.004 *    10.049 *     9.193      50.153 (Jan 19)
+BC   SS         25.448 *    31.758 *    10.008 *     9.179      50.194 (Jan 3b)
+
+from 2020:
+BC   SS:Feb2020 41.687      59.171      14.521       8.790      50.896 (Feb 21)
+
+                kron        urand       twitter     web         road
+              ------------------------------------------------------------------
+BFS  GAP:2021     .309        .542        .209        .341        .316 (Nov 27)
+BFS  GAP          .313        .575        .219        .338        .245
+              ------------------------------------------------------------------
+
+BFS  SS           .543       1.308        .366        .757       3.177 (Jan 2)
+BFS  SS           .539       1.227        .361        .742       3.088 (Dec 27)
+BFS  SS           .502       1.175        .332        .677       3.061 (Nov 30)
+BFS  SS           .500       1.198        .332        .675       3.074 (Nov 27)
+BFS  SS           .495       1.168        .332        .669       3.053 (Nov 14)
+BFS  SS           .500       1.166        .333        .680       3.073 (Nov 6)
+BFS  SS           .496       1.198        .337        .680       3.088 (Oct 18)
+BFS  SS           .505       1.262        .343        .699       3.081 (Aug 16)
+BFS  SS           .524       1.219        .351        .697       3.074 (Jun 25c) 
+BFS  SS           .526       1.231        .352        .700       3.051 (Jun 25a) 
+BFS  SS           .534       1.233        .354        .701       3.057 (Jun 24) 
+BFS  SS           .531       1.223        .352        .698       3.039 (Jun 23) 
+BFS  SS           .526       1.206        .366        .705       3.050 (Jun 22) 
+BFS  SS           .503       1.280        .344        .696       2.971 (May 14) 
+--- reorg
+BFS  SS           .506       1.209        .340        .692       3.002 (May 12) 
+BFS  SS           .519       1.280        .339        .737       3.011 (May 2b) 
+BFS  SS           .523       1.209        .357        .698       2.995 (May 2) 
+BFS  SS           .518       1.216        .394        .692       3.308 (Apr 27)
+BFS  SS           .528       1.196        .326        .665       3.271 (Mar 11)
+BFS  SS           .518       1.204        .325        .661       3.360 (Feb 6) 
+BFS  SS           .518       1.312        .327        .668       3.331 (Jan 26)
+BFS  SS           .513       1.254        .351        .674       3.362 (Jan 19)
+BFS  SS           .514       1.216        .329        .662       3.317 (Jan 3b)
+
+from 2020:
+BFS  SS:Aug2020  2.280       2.052       1.067       1.116       3.067 (8/2/20)
+BFS  SS:Feb2020  3.612       2.818       1.100       1.072       7.170 (2/21/20)
+
+                kron        urand       twitter     web         road
+              ------------------------------------------------------------------
+PR   GAP:2021   20.256      25.438      15.024       5.148       1.043 (Nov 27)
+PR   GAP        19.813      25.285      15.159       5.128       1.007
+              ------------------------------------------------------------------
+
+PR   SS         21.960      27.439      17.258       9.105       1.182 (Jan 2)
+PR   SS         22.670      27.453      16.932       9.096       1.200 (Dec 27)
+PR   SS         21.514      27.631      17.125       9.188       1.277 (Nov 30)
+PR   SS         21.547      27.610      17.136       9.165       1.296 (Nov 27)
+PR   SS         21.496      27.590      17.338       9.226       1.232 (Nov 14)
+PR   SS         21.864      27.567      17.066       9.154       1.225 (Nov 6)
+PR   SS         21.630      27.491      17.042       9.380       1.665 (Oct 18)
+PR   SS         21.495      27.784      17.029       9.202       1.263 (Aug 16)
+PR   SS         21.940      27.873      17.605       9.366       1.667 (Jun 25a)
+PR   SS         21.720      27.625      17.560       9.126       1.267 (Jun 24)
+PR   SS         21.687      27.632      17.277       9.598       1.250 (Jun 24)
+--- reorg
+PR   SS         21.877      27.659      17.998       9.384       1.396 (May 12) 
+PR   SS         21.768      27.747      17.753       9.365       1.376 (May 2b) 
+PR   SS         22.014      27.592      16.962       9.377       1.367 (May 2) 
+PR   SS         22.057      27.609      17.095       9.374       1.382 (Apr 27)
+PR   SS         21.433      27.712      17.130       9.358       1.340 (Mar 11)
+PR   SS         21.665      27.596      17.140       9.338       1.320 (Feb 6)
+PR   SS         21.957      27.746      17.216       9.297       1.344 (Jan 28)
+PR   SS         21.836      27.527      17.021       9.683       1.340 (Jan 19)
+PR   SS         21.781      27.493      16.988      10.331 ??    1.323 (Jan 3b)
+
+Timing jitter for Jan 3b; timing should be identical to Jan 19.
+
+                kron        urand       twitter     web         road
+              ------------------------------------------------------------------
+CC   GAP:2021     .531       1.653        .229        .237        .046 (Nov 27)
+CC   GAP          .534       1.659        .234        .222        .045
+              ------------------------------------------------------------------
+
+CC   SS          3.049       4.136       1.403       2.093        .769 (Jan 2)
+CC   SS:SV6      3.028       3.890       1.488       2.075        .765 (Dec 27)
+CC   SS:SV6      2.926       3.802       1.387       2.361        .771 (Nov 30)
+CC   SS:SV6/7    2.923       3.793       1.386       2.083        .773 (Nov 28)
+CC   SS:SV6      2.922       3.810       1.388       2.085        .774 (Nov 27)
+CC   SS:SV6      2.923       3.822       1.394       2.091        .775 (Nov 26)
+
+---- Nov 26: now using 32-bit integers as much as possible (when n < 2^31).
+     a typecast to 64-bit integers is required in extractTuples, but the
+     opaque GrB_Vectors are all uint32 if n < 2^31.
+
+CC   SS:SV6      3.679       4.645       1.786       2.880       1.460 (Nov 25)
+
+---- change to SV6 with 64-bit integers instead of 32-bit integers.  SV6 can
+     solve larger problems.  The GAP cc.cc and SV5b (below) are limited to
+     32-bit integers and can thus only solve smaller problems.  SV6 also has
+     a faster warmup and Reduce_assign phase; it would be about 30% slower than
+     SV5b otherwise.
+
+CC   SS          3.405       4.482       1.495       2.037        .985 (Nov 14)
+CC   SS          3.885 ???   4.537       1.507       2.024        .979 (Nov 6)
+CC   SS          3.391       4.435       1.489       2.047        .988 (Oct 18)
+CC   SS          3.443       4.500       1.520       2.051       1.010 (Aug 16)
+CC   SS          3.436       4.603       1.591       2.025       1.008 (Jun 25a) 
+CC   SS          3.441       4.518       1.510       2.024        .997 (Jun 24) 
+CC   SS          3.419       4.749       1.489       1.998        .981 (Jun 23) 
+CC   SS          3.422       4.501       1.510       1.999        .992 (Jun 22) 
+--- reorg
+CC   SS          3.365       4.643       1.483       1.973        .983 (May 12) 
+CC   SS          3.354       4.517       1.473       1.957        .965 (May 2b) 
+CC   SS          3.340       4.493       1.478       1.952        .982 (May 2) 
+CC   SS          3.592       4.484       1.487       1.966        .977 (Apr 27)
+CC   SS          3.367       4.523       1.486       1.992        .967 (Mar 11)
+CC   SS          3.353       4.563       1.466       1.964        .974 (Feb 6)
+CC   SS          3.415       4.591       1.481       1.972        .995 (Jan 26)
+CC   SS          3.397       4.610       1.474       1.967        .993 (Jan 19)
+CC   SS          3.389       4.596       1.475       1.959        .950 (Jan 3b)
+from 2020:
+CC   SS:Feb2020  4.042       4.906       1.811       2.342       1.474 (Feb 21)
+
+                kron        urand       twitter     web         road
+              ------------------------------------------------------------------
+SSSP GAP:2021    4.977       7.283       1.962        .781        .265 (Nov 27)
+SSSP GAP         4.908       7.227       2.017        .805        .206
+              ------------------------------------------------------------------
+
+SSSP SS         16.043      24.428       7.487       7.971      44.180 (Jan 2)
+SSSP SS         16.570      24.808       7.641       8.086        .    (Dec 27)
+SSSP SS         17.377      24.798       7.657       8.002      43.922 (Nov 30)
+SSSP SS         16.615      25.105       7.646       8.057      43.798 (Nov 27)
+SSSP SS         16.667      25.162       7.715       8.541      45.749 (Nov 14)
+SSSP SS         16.613      25.031       7.666       8.103      44.264 (Nov 6)
+SSSP SS         16.437      24.511       7.590       8.376      44.175 (Oct 18)
+SSSP SS         16.674      24.417       8.106       8.468      42.191 (Aug 16)
+SSSP SS         17.128      25.200       8.625       9.096      49.905 (Jun 25a)
+SSSP SS         17.154      25.141       7.920       8.647      48.860 (Jun 24) 
+SSSP SS         17.109      25.106       7.970       8.682      48.524 (May 12) 
+--- reorg
+SSSP SS         17.054      25.978       8.265       9.384      48.793 (May 12) 
+SSSP SS         17.015      25.176       7.975       9.495      46.835 (May 2b) 
+SSSP SS         17.028      25.206       7.988       9.538      47.074 (May 2) 
+SSSP SS         17.312      25.306       8.093       8.779      48.627 (Apr 27)
+SSSP SS         17.617      25.547       8.627       9.588      46.692 (Mar 11)
+SSSP SS15       17.582      25.596       8.177       9.603      48.236 (Feb 6)
+SSSP SS15       17.610        .           .           .           .    (Jan 26)
+SSSP SS15       17.658      25.556       8.377       9.625      46.838 (Jan 19)
+SSSP SS15       21.174      29.263       9.619      11.399      48.987 (Jan 3b)
+
+Note change from Jan 3b (v4.0.1) to Jan 19 (v4.0.3), due to faster max monoid.
+
+                kron        urand       twitter     web         road
+              ------------------------------------------------------------------
+TC   GAP:2021  361.216      21.831      77.734      21.834        .031 (Nov 27)
+TC GAP         374.082      21.825      79.576      22.184        .026
+              ------------------------------------------------------------------
+
+TC SS:LL.L        .         28.371        .           .           .    (Jan 2)
+TC SS:UU.U        .         27.320        .           .           .    (Jan 2)
+TC SS:dot      859.471      32.872     222.800      31.911        .192 (Jan 2)
+
+TC SS:LL.L        .         28.423        .           .           .    (Nov 30)
+TC SS:UU.U        .         27.210        .           .           .    (Nov 30)
+TC SS:dot      868.254      32.738     223.168      32.122        .194 (Nov 30)
+
+TC SS:LL.L        .         28.287        .           .           .    (Nov 27)
+TC SS:UU.U        .         27.200        .           .           .    (Nov 27)
+TC SS:dot      866.670      33.091     223.641      32.138        .200 (Nov 27)
+
+TC SS:LL.L        .         28.638        .           .           .    (Nov 14)
+TC SS:UU.U        .         27.437        .           .           .    (Nov 14)
+TC SS:dot      867.778      32.371     224.033      32.071        .192 (Nov 14)
+
+TC SS:LL.L                  28.419                                     (Nov 6)
+TC SS:UU.U                  27.454                                     (Nov 6)
+TC SS:dot      865.815      33.046     224.522      32.171        .191 (Nov 6)
+
+TC SS:LL.L                  28.324                                     (Oct 18)
+TC SS:UU.U                  27.364                                     (Oct 18)
+TC SS:dot      870.332      32.330     223.839      32.064        .192 (Oct 18)
+
+TC SS:LL.L                  28.075                                     (Aug 16)
+TC SS:UU.U                  27.342                                     (Aug 16)
+TC SS:dot      871.863      32.551     226.626      32.201        .196 (Aug 16)
+
+TC SS:LL.L                  27.920                                     (Jun 25a)
+TC SS:UU.U                  26.974                                     (Jun 25a)
+TC SS:dot      927.983      33.655     237.103      34.644        .192 (Jun 25a)
+
+TC SS:LL.L                  28.083                                     (Jun 24) 
+TC SS:UU.U                  26.818                                     (Jun 24) 
+TC SS:dot      926.715      34.030     237.701      34.396        .197 (Jun 24) 
+
+TC SS:LL.L                  27.639                                     (Jun 23) 
+TC SS:UU.U                  26.856                                     (Jun 23) 
+TC SS:dot      928.634      34.030     236.990      34.608        .196 (Jun 23) 
+
+--- reorg
+
+TC SS:LL.L                  27.709                                     (May 12) 
+TC SS:UU.U                  26.934                                     (May 12) 
+TC SS:dot      945.118      34.269     242.208      34.989        .258 (May 12) 
+
+TC SS:LL.L                  28.101                                     (May 2b) 
+TC SS:UU.U                  26.956                                     (May 2b) 
+TC SS:dot      931.879      34.227     241.629      34.820        .199 (May 2b) 
+
+TC SS:LL.L                  28.230                                     (May 2) 
+TC SS:UU.U                  27.103                                     (May 2) 
+TC SS:dot      941.705      34.174     244.225      34.575        .198 (May 2) 
+
+TC SS:LL.L                  26.075                                     (Apr 27)
+TC SS:UU.U                  26.490                                     (Apr 27)
+TC SS:dot      946.240      34.199     243.875      35.486        .200 (Apr 27)
+
+TC SS:LL.L                  26.352                                     (Mar 11)
+TC SS:UU.U                  26.577                                     (Mar 11)
+TC SS:dot      945.400      34.309     245.472      34.974        .234 (Mar 11)
+
+TC SS:LL.L                  26.064                                     (Feb 6)
+TC SS:UU.U                  26.019                                     (Feb 6)
+TC SS:dot      922.349      33.967     238.706      34.656        .233 (Feb 6)
+
+TC SS:LL.L                  25.972                                     (Jan 29)
+TC SS:UU.U                  26.032                                     (Jan 29)
+TC SS:dot      943.469      34.103     242.357      35.150        .286 (Jan 29)
+
+TC SS:LL.L                  26.080                                     (Jan 3b)
+TC SS:UU.U                  26.257                                     (Jan 3b)
+TC SS:dot      968.796      34.055     248.200      34.757        .235 (Jan 3b)
+

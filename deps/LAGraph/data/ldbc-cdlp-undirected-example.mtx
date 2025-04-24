@@ -1,0 +1,16 @@
+%%MatrixMarket matrix coordinate integer symmetric
+%%GraphBLAS type bool
+% Note: duplicate entry (8,6) has been removed
+8 8 12
+2 1 1
+3 1 1
+3 2 1
+5 4 1
+6 4 1
+6 5 1
+7 1 1
+7 5 1
+8 4 1
+8 5 1
+8 6 1
+8 7 1

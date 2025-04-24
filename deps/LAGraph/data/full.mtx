@@ -1,0 +1,13 @@
+%%MatrixMarket matrix array real general
+%%GraphBLAS comment
+% a dense matrix
+3 3
+.646
+.709
+.754
+.276
+.679
+.655
+.162
+.118
+.498

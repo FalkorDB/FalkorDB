@@ -1,0 +1,85 @@
+Burkhardt's results (28 hardware cores E5-2680v4, in 2 sockets).
+
+    com-Youtube     0.231 sec
+    as-Skitter      0.589 sec
+    com-LiveJournal 1.51 sec
+    com-Orkut       4.87 sec
+    com-Friendster  68.4 sec
+
+TC3 method on hypersparse.engr.tamu.edu (Xeon E5-2698v4, 20 cores, 1 socket)
+
+com-Youtube: TC3 is almost 2x faster than Burkhardt's result
+
+    nthreads:  40 time:     0.127644 
+    nthreads:  20 time:     0.126214 
+    nthreads:  16 time:     0.138704 
+    nthreads:   8 time:     0.261565 
+    nthreads:   4 time:     0.502871 
+    nthreads:   2 time:     0.971805 
+    nthreads:   1 time:     1.888724 
+
+as-Skitter: TC3 1.7x faster than Burkhardt's
+
+    nthreads:  40 time:     0.347252 
+    nthreads:  20 time:     0.452775 
+    nthreads:  16 time:     0.541089 
+    nthreads:   8 time:     1.006094 
+    nthreads:   4 time:     1.964017 
+    nthreads:   2 time:     3.862526 
+    nthreads:   1 time:     7.499531 
+
+com-LiveJournal: TC3 slightly faster
+
+    nthreads:  40 time:     1.155752 
+    nthreads:  20 time:     1.672868 
+    nthreads:  16 time:     1.982846 
+    nthreads:   8 time:     3.820233 
+    nthreads:   4 time:     7.519312 
+    nthreads:   2 time:    14.784239 
+    nthreads:   1 time:    28.842645 
+
+com-Orkut: TC3 about 2x slower than Burkhardt's results
+
+    nthreads:  40 time:    10.004293 
+    nthreads:  20 time:    14.621861 
+    nthreads:  16 time:    17.932298 
+    nthreads:   8 time:    34.964201 
+    nthreads:   4 time:    67.986853 
+    nthreads:   2 time:   134.876481 
+    nthreads:   1 time:   265.763156 
+
+com-Friendster: TC3 about 3x slower than Burkhardt's results
+
+    nthreads:  40 time:   228.046847 
+    nthreads:  20 time:   335.125033 
+    nthreads:  16 time:   401.163799 
+    nthreads:   8 time:   782.107510 
+    nthreads:   4 time:  1536.624585 
+    nthreads:   2 time:  3062.387983 
+    nthreads:   1 time:  6057.713364 
+
+Move to experimental, retest TC3 with 40 threads (o_tcc_3h):
+
+    nthreads:  40 time:     0.118935 matrix: com-Youtube
+    nthreads:  40 time:     0.344083 matrix: as-Skitter
+    nthreads:  40 time:     1.157001 matrix: com-LiveJournal
+    nthreads:  40 time:     9.979035 matrix: com-Orkut
+    nthreads:  40 time:   229.765197 matrix: com-Friendster
+
+method TC2 (o_tcc_2g)
+
+    nthreads:  40 time:     0.144131 matrix: com-Youtube
+    nthreads:  40 time:     0.532977 matrix: as-Skitter
+    nthreads:  40 time:     2.132107 matrix: com-LiveJournal
+    nthreads:  40 time:    19.338932 matrix: com-Orkut
+    nthreads:  40 time:   437.765544 matrix: com-Friendster
+
+method TC1.5 (o_tcc_15g)
+
+    nthreads:  40 time:     0.149100 matrix: com-Youtube
+    nthreads:  40 time:     0.545664 matrix: as-Skitter
+    nthreads:  40 time:     2.147791 matrix: com-LiveJournal
+    nthreads:  40 time:    19.586499 matrix: com-Orkut
+    nthreads:  40 time:   441.187323 matrix: com-Friendster
+
+method TC1 (o_tcc_1g)

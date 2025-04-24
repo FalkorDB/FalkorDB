@@ -1,0 +1,1108 @@
+
+=========================================== json_test:
+s 1024 k 583
+[{
+    "glossary": {
+        "title": "example glossary",
+		"GlossDiv": {
+            "title": "S",
+			"GlossList": {
+                "GlossEntry": {
+                    "ID": "SGML",
+					"SortAs": "SGML",
+					"GlossTerm": "Standard Generalized Markup Language",
+					"Acronym": "SGML",
+					"Abbrev": "ISO 8879:1986",
+					"GlossDef": {
+                        "para": "A meta-markup language, used to create markup languages such as DocBook.",
+						"GlossSeeAlso": ["GML", "XML"]
+                    },
+					"GlossSee": "markup"
+                }
+            }
+        }
+    }
+}
+]
+entire json strlen 583
+object, len: 1
+named element: [0]:8:[glossary]
+........object, len: 2
+........named element: [0]:5:[title]
+................string:
+16:[example glossary]
+........named element: [1]:8:[GlossDiv]
+................object, len: 2
+................named element: [0]:5:[title]
+........................string:
+1:[S]
+................named element: [1]:9:[GlossList]
+........................object, len: 1
+........................named element: [0]:10:[GlossEntry]
+................................object, len: 7
+................................named element: [0]:2:[ID]
+........................................string:
+4:[SGML]
+................................named element: [1]:6:[SortAs]
+........................................string:
+4:[SGML]
+................................named element: [2]:9:[GlossTerm]
+........................................string:
+36:[Standard Generalized Markup Language]
+................................named element: [3]:7:[Acronym]
+........................................string:
+4:[SGML]
+................................named element: [4]:6:[Abbrev]
+........................................string:
+13:[ISO 8879:1986]
+................................named element: [5]:8:[GlossDef]
+........................................object, len: 2
+........................................named element: [0]:4:[para]
+................................................string:
+72:[A meta-markup language, used to create markup languages such as DocBook.]
+........................................named element: [1]:12:[GlossSeeAlso]
+................................................array, len: 2
+................................................array el [0]:
+........................................................string:
+3:[GML]
+................................................array el [1]:
+........................................................string:
+3:[XML]
+................................named element: [6]:8:[GlossSee]
+........................................string:
+6:[markup]
+
+#############################
+
+=========================================== json_test: OK
+
+
+=========================================== json_test:
+s 256 k 242
+[{"menu": {
+  "id": "file",
+  "value": "File",
+  "popup": {
+    "menuitem": [
+      {"value": "New", "onclick": "CreateNewDoc()"},
+      {"value": "Open", "onclick": "OpenDoc()"},
+      {"value": "Close", "onclick": "CloseDoc()"}
+    ]
+  }
+}}
+]
+entire json strlen 242
+object, len: 1
+named element: [0]:4:[menu]
+........object, len: 3
+........named element: [0]:2:[id]
+................string:
+4:[file]
+........named element: [1]:5:[value]
+................string:
+4:[File]
+........named element: [2]:5:[popup]
+................object, len: 1
+................named element: [0]:8:[menuitem]
+........................array, len: 3
+........................array el [0]:
+................................object, len: 2
+................................named element: [0]:5:[value]
+........................................string:
+3:[New]
+................................named element: [1]:7:[onclick]
+........................................string:
+14:[CreateNewDoc()]
+........................array el [1]:
+................................object, len: 2
+................................named element: [0]:5:[value]
+........................................string:
+4:[Open]
+................................named element: [1]:7:[onclick]
+........................................string:
+9:[OpenDoc()]
+........................array el [2]:
+................................object, len: 2
+................................named element: [0]:5:[value]
+........................................string:
+5:[Close]
+................................named element: [1]:7:[onclick]
+........................................string:
+10:[CloseDoc()]
+
+#############################
+
+=========================================== json_test: OK
+
+
+=========================================== json_test:
+s 1024 k 602
+[{"widget": {
+    "debug": "on",
+    "window": {
+        "title": "Sample Konfabulator Widget",
+        "name": "main_window",
+        "width": 500,
+        "height": 500
+    },
+    "image": { 
+        "src": "Images/Sun.png",
+        "name": "sun1",
+        "hOffset": 250,
+        "vOffset": 250,
+        "alignment": "center"
+    },
+    "text": {
+        "data": "Click Here",
+        "size": 36,
+        "style": "bold",
+        "name": "text1",
+        "hOffset": 250,
+        "vOffset": 100,
+        "alignment": "center",
+        "onMouseUp": "sun1.opacity = (sun1.opacity / 100) * 90;"
+    }
+}}
+]
+entire json strlen 602
+object, len: 1
+named element: [0]:6:[widget]
+........object, len: 4
+........named element: [0]:5:[debug]
+................string:
+2:[on]
+........named element: [1]:6:[window]
+................object, len: 4
+................named element: [0]:5:[title]
+........................string:
+26:[Sample Konfabulator Widget]
+................named element: [1]:4:[name]
+........................string:
+11:[main_window]
+................named element: [2]:5:[width]
+........................number: 3:[500]
+................named element: [3]:6:[height]
+........................number: 3:[500]
+........named element: [2]:5:[image]
+................object, len: 5
+................named element: [0]:3:[src]
+........................string:
+14:[Images/Sun.png]
+................named element: [1]:4:[name]
+........................string:
+4:[sun1]
+................named element: [2]:7:[hOffset]
+........................number: 3:[250]
+................named element: [3]:7:[vOffset]
+........................number: 3:[250]
+................named element: [4]:9:[alignment]
+........................string:
+6:[center]
+........named element: [3]:4:[text]
+................object, len: 8
+................named element: [0]:4:[data]
+........................string:
+10:[Click Here]
+................named element: [1]:4:[size]
+........................number: 2:[36]
+................named element: [2]:5:[style]
+........................string:
+4:[bold]
+................named element: [3]:4:[name]
+........................string:
+5:[text1]
+................named element: [4]:7:[hOffset]
+........................number: 3:[250]
+................named element: [5]:7:[vOffset]
+........................number: 3:[100]
+................named element: [6]:9:[alignment]
+........................string:
+6:[center]
+................named element: [7]:9:[onMouseUp]
+........................string:
+41:[sun1.opacity = (sun1.opacity / 100) * 90;]
+
+#############################
+
+=========================================== json_test: OK
+
+
+=========================================== json_test:
+s 4096 k 3468
+[{"web-app": {
+  "servlet": [   
+    {
+      "servlet-name": "cofaxCDS",
+      "servlet-class": "org.cofax.cds.CDSServlet",
+      "init-param": {
+        "configGlossary:installationAt": "Philadelphia, PA",
+        "configGlossary:adminEmail": "ksm@pobox.com",
+        "configGlossary:poweredBy": "Cofax",
+        "configGlossary:poweredByIcon": "/images/cofax.gif",
+        "configGlossary:staticPath": "/content/static",
+        "templateProcessorClass": "org.cofax.WysiwygTemplate",
+        "templateLoaderClass": "org.cofax.FilesTemplateLoader",
+        "templatePath": "templates",
+        "templateOverridePath": "",
+        "defaultListTemplate": "listTemplate.htm",
+        "defaultFileTemplate": "articleTemplate.htm",
+        "useJSP": false,
+        "jspListTemplate": "listTemplate.jsp",
+        "jspFileTemplate": "articleTemplate.jsp",
+        "cachePackageTagsTrack": 200,
+        "cachePackageTagsStore": 200,
+        "cachePackageTagsRefresh": 60,
+        "cacheTemplatesTrack": 100,
+        "cacheTemplatesStore": 50,
+        "cacheTemplatesRefresh": 15,
+        "cachePagesTrack": 200,
+        "cachePagesStore": 100,
+        "cachePagesRefresh": 10,
+        "cachePagesDirtyRead": 10,
+        "searchEngineListTemplate": "forSearchEnginesList.htm",
+        "searchEngineFileTemplate": "forSearchEngines.htm",
+        "searchEngineRobotsDb": "WEB-INF/robots.db",
+        "useDataStore": true,
+        "dataStoreClass": "org.cofax.SqlDataStore",
+        "redirectionClass": "org.cofax.SqlRedirection",
+        "dataStoreName": "cofax",
+        "dataStoreDriver": "com.microsoft.jdbc.sqlserver.SQLServerDriver",
+        "dataStoreUrl": "jdbc:microsoft:sqlserver://LOCALHOST:1433;DatabaseName=goon",
+        "dataStoreUser": "sa",
+        "dataStorePassword": "dataStoreTestQuery",
+        "dataStoreTestQuery": "SET NOCOUNT ON;select test='test';",
+        "dataStoreLogFile": "/usr/local/tomcat/logs/datastore.log",
+        "dataStoreInitConns": 10,
+        "dataStoreMaxConns": 100,
+        "dataStoreConnUsageLimit": 100,
+        "dataStoreLogLevel": "debug",
+        "maxUrlLength": 500}},
+    {
+      "servlet-name": "cofaxEmail",
+      "servlet-class": "org.cofax.cds.EmailServlet",
+      "init-param": {
+      "mailHost": "mail1",
+      "mailHostOverride": "mail2"}},
+    {
+      "servlet-name": "cofaxAdmin",
+      "servlet-class": "org.cofax.cds.AdminServlet"},
+ 
+    {
+      "servlet-name": "fileServlet",
+      "servlet-class": "org.cofax.cds.FileServlet"},
+    {
+      "servlet-name": "cofaxTools",
+      "servlet-class": "org.cofax.cms.CofaxToolsServlet",
+      "init-param": {
+        "templatePath": "toolstemplates/",
+        "log": 1,
+        "logLocation": "/usr/local/tomcat/logs/CofaxTools.log",
+        "logMaxSize": "",
+        "dataLog": 1,
+        "dataLogLocation": "/usr/local/tomcat/logs/dataLog.log",
+        "dataLogMaxSize": "",
+        "removePageCache": "/content/admin/remove?cache=pages&id=",
+        "removeTemplateCache": "/content/admin/remove?cache=templates&id=",
+        "fileTransferFolder": "/usr/local/tomcat/webapps/content/fileTransferFolder",
+        "lookInContext": 1,
+        "adminGroupID": 4,
+        "betaServer": true}}],
+  "servlet-mapping": {
+    "cofaxCDS": "/",
+    "cofaxEmail": "/cofaxutil/aemail/*",
+    "cofaxAdmin": "/admin/*",
+    "fileServlet": "/static/*",
+    "cofaxTools": "/tools/*"},
+ 
+  "taglib": {
+    "taglib-uri": "cofax.tld",
+    "taglib-location": "/WEB-INF/tlds/cofax.tld"}}}
+]
+entire json strlen 3468
+object, len: 1
+named element: [0]:7:[web-app]
+........object, len: 3
+........named element: [0]:7:[servlet]
+................array, len: 5
+................array el [0]:
+........................object, len: 3
+........................named element: [0]:12:[servlet-name]
+................................string:
+8:[cofaxCDS]
+........................named element: [1]:13:[servlet-class]
+................................string:
+24:[org.cofax.cds.CDSServlet]
+........................named element: [2]:10:[init-param]
+................................object, len: 42
+................................named element: [0]:29:[configGlossary:installationAt]
+........................................string:
+16:[Philadelphia, PA]
+................................named element: [1]:25:[configGlossary:adminEmail]
+........................................string:
+13:[ksm@pobox.com]
+................................named element: [2]:24:[configGlossary:poweredBy]
+........................................string:
+5:[Cofax]
+................................named element: [3]:28:[configGlossary:poweredByIcon]
+........................................string:
+17:[/images/cofax.gif]
+................................named element: [4]:25:[configGlossary:staticPath]
+........................................string:
+15:[/content/static]
+................................named element: [5]:22:[templateProcessorClass]
+........................................string:
+25:[org.cofax.WysiwygTemplate]
+................................named element: [6]:19:[templateLoaderClass]
+........................................string:
+29:[org.cofax.FilesTemplateLoader]
+................................named element: [7]:12:[templatePath]
+........................................string:
+9:[templates]
+................................named element: [8]:20:[templateOverridePath]
+........................................string:
+0:[]
+................................named element: [9]:19:[defaultListTemplate]
+........................................string:
+16:[listTemplate.htm]
+................................named element: [10]:19:[defaultFileTemplate]
+........................................string:
+19:[articleTemplate.htm]
+................................named element: [11]:6:[useJSP]
+........................................false
+................................named element: [12]:15:[jspListTemplate]
+........................................string:
+16:[listTemplate.jsp]
+................................named element: [13]:15:[jspFileTemplate]
+........................................string:
+19:[articleTemplate.jsp]
+................................named element: [14]:21:[cachePackageTagsTrack]
+........................................number: 3:[200]
+................................named element: [15]:21:[cachePackageTagsStore]
+........................................number: 3:[200]
+................................named element: [16]:23:[cachePackageTagsRefresh]
+........................................number: 2:[60]
+................................named element: [17]:19:[cacheTemplatesTrack]
+........................................number: 3:[100]
+................................named element: [18]:19:[cacheTemplatesStore]
+........................................number: 2:[50]
+................................named element: [19]:21:[cacheTemplatesRefresh]
+........................................number: 2:[15]
+................................named element: [20]:15:[cachePagesTrack]
+........................................number: 3:[200]
+................................named element: [21]:15:[cachePagesStore]
+........................................number: 3:[100]
+................................named element: [22]:17:[cachePagesRefresh]
+........................................number: 2:[10]
+................................named element: [23]:19:[cachePagesDirtyRead]
+........................................number: 2:[10]
+................................named element: [24]:24:[searchEngineListTemplate]
+........................................string:
+24:[forSearchEnginesList.htm]
+................................named element: [25]:24:[searchEngineFileTemplate]
+........................................string:
+20:[forSearchEngines.htm]
+................................named element: [26]:20:[searchEngineRobotsDb]
+........................................string:
+17:[WEB-INF/robots.db]
+................................named element: [27]:12:[useDataStore]
+........................................true
+................................named element: [28]:14:[dataStoreClass]
+........................................string:
+22:[org.cofax.SqlDataStore]
+................................named element: [29]:16:[redirectionClass]
+........................................string:
+24:[org.cofax.SqlRedirection]
+................................named element: [30]:13:[dataStoreName]
+........................................string:
+5:[cofax]
+................................named element: [31]:15:[dataStoreDriver]
+........................................string:
+44:[com.microsoft.jdbc.sqlserver.SQLServerDriver]
+................................named element: [32]:12:[dataStoreUrl]
+........................................string:
+59:[jdbc:microsoft:sqlserver://LOCALHOST:1433;DatabaseName=goon]
+................................named element: [33]:13:[dataStoreUser]
+........................................string:
+2:[sa]
+................................named element: [34]:17:[dataStorePassword]
+........................................string:
+18:[dataStoreTestQuery]
+................................named element: [35]:18:[dataStoreTestQuery]
+........................................string:
+34:[SET NOCOUNT ON;select test='test';]
+................................named element: [36]:16:[dataStoreLogFile]
+........................................string:
+36:[/usr/local/tomcat/logs/datastore.log]
+................................named element: [37]:18:[dataStoreInitConns]
+........................................number: 2:[10]
+................................named element: [38]:17:[dataStoreMaxConns]
+........................................number: 3:[100]
+................................named element: [39]:23:[dataStoreConnUsageLimit]
+........................................number: 3:[100]
+................................named element: [40]:17:[dataStoreLogLevel]
+........................................string:
+5:[debug]
+................................named element: [41]:12:[maxUrlLength]
+........................................number: 3:[500]
+................array el [1]:
+........................object, len: 3
+........................named element: [0]:12:[servlet-name]
+................................string:
+10:[cofaxEmail]
+........................named element: [1]:13:[servlet-class]
+................................string:
+26:[org.cofax.cds.EmailServlet]
+........................named element: [2]:10:[init-param]
+................................object, len: 2
+................................named element: [0]:8:[mailHost]
+........................................string:
+5:[mail1]
+................................named element: [1]:16:[mailHostOverride]
+........................................string:
+5:[mail2]
+................array el [2]:
+........................object, len: 2
+........................named element: [0]:12:[servlet-name]
+................................string:
+10:[cofaxAdmin]
+........................named element: [1]:13:[servlet-class]
+................................string:
+26:[org.cofax.cds.AdminServlet]
+................array el [3]:
+........................object, len: 2
+........................named element: [0]:12:[servlet-name]
+................................string:
+11:[fileServlet]
+........................named element: [1]:13:[servlet-class]
+................................string:
+25:[org.cofax.cds.FileServlet]
+................array el [4]:
+........................object, len: 3
+........................named element: [0]:12:[servlet-name]
+................................string:
+10:[cofaxTools]
+........................named element: [1]:13:[servlet-class]
+................................string:
+31:[org.cofax.cms.CofaxToolsServlet]
+........................named element: [2]:10:[init-param]
+................................object, len: 13
+................................named element: [0]:12:[templatePath]
+........................................string:
+15:[toolstemplates/]
+................................named element: [1]:3:[log]
+........................................number: 1:[1]
+................................named element: [2]:11:[logLocation]
+........................................string:
+37:[/usr/local/tomcat/logs/CofaxTools.log]
+................................named element: [3]:10:[logMaxSize]
+........................................string:
+0:[]
+................................named element: [4]:7:[dataLog]
+........................................number: 1:[1]
+................................named element: [5]:15:[dataLogLocation]
+........................................string:
+34:[/usr/local/tomcat/logs/dataLog.log]
+................................named element: [6]:14:[dataLogMaxSize]
+........................................string:
+0:[]
+................................named element: [7]:15:[removePageCache]
+........................................string:
+37:[/content/admin/remove?cache=pages&id=]
+................................named element: [8]:19:[removeTemplateCache]
+........................................string:
+41:[/content/admin/remove?cache=templates&id=]
+................................named element: [9]:18:[fileTransferFolder]
+........................................string:
+52:[/usr/local/tomcat/webapps/content/fileTransferFolder]
+................................named element: [10]:13:[lookInContext]
+........................................number: 1:[1]
+................................named element: [11]:12:[adminGroupID]
+........................................number: 1:[4]
+................................named element: [12]:10:[betaServer]
+........................................true
+........named element: [1]:15:[servlet-mapping]
+................object, len: 5
+................named element: [0]:8:[cofaxCDS]
+........................string:
+1:[/]
+................named element: [1]:10:[cofaxEmail]
+........................string:
+19:[/cofaxutil/aemail/*]
+................named element: [2]:10:[cofaxAdmin]
+........................string:
+8:[/admin/*]
+................named element: [3]:11:[fileServlet]
+........................string:
+9:[/static/*]
+................named element: [4]:10:[cofaxTools]
+........................string:
+8:[/tools/*]
+........named element: [2]:6:[taglib]
+................object, len: 2
+................named element: [0]:10:[taglib-uri]
+........................string:
+9:[cofax.tld]
+................named element: [1]:15:[taglib-location]
+........................string:
+23:[/WEB-INF/tlds/cofax.tld]
+
+#############################
+
+=========================================== json_test: OK
+
+
+=========================================== json_test:
+s 1024 k 873
+[{"menu": {
+    "header": "SVG Viewer",
+    "items": [
+        {"id": "Open"},
+        {"id": "OpenNew", "label": "Open New"},
+        null,
+        {"id": "ZoomIn", "label": "Zoom In"},
+        {"id": "ZoomOut", "label": "Zoom Out"},
+        {"id": "OriginalView", "label": "Original View"},
+        null,
+        {"id": "Quality"},
+        {"id": "Pause"},
+        {"id": "Mute"},
+        null,
+        {"id": "Find", "label": "Find..."},
+        {"id": "FindAgain", "label": "Find Again"},
+        {"id": "Copy"},
+        {"id": "CopyAgain", "label": "Copy Again"},
+        {"id": "CopySVG", "label": "Copy SVG"},
+        {"id": "ViewSVG", "label": "View SVG"},
+        {"id": "ViewSource", "label": "View Source"},
+        {"id": "SaveAs", "label": "Save As"},
+        null,
+        {"id": "Help"},
+        {"id": "About", "label": "About Adobe CVG Viewer..."}
+    ]
+}}
+]
+entire json strlen 873
+object, len: 1
+named element: [0]:4:[menu]
+........object, len: 2
+........named element: [0]:6:[header]
+................string:
+10:[SVG Viewer]
+........named element: [1]:5:[items]
+................array, len: 22
+................array el [0]:
+........................object, len: 1
+........................named element: [0]:2:[id]
+................................string:
+4:[Open]
+................array el [1]:
+........................object, len: 2
+........................named element: [0]:2:[id]
+................................string:
+7:[OpenNew]
+........................named element: [1]:5:[label]
+................................string:
+8:[Open New]
+................array el [2]:
+........................NULL
+................array el [3]:
+........................object, len: 2
+........................named element: [0]:2:[id]
+................................string:
+6:[ZoomIn]
+........................named element: [1]:5:[label]
+................................string:
+7:[Zoom In]
+................array el [4]:
+........................object, len: 2
+........................named element: [0]:2:[id]
+................................string:
+7:[ZoomOut]
+........................named element: [1]:5:[label]
+................................string:
+8:[Zoom Out]
+................array el [5]:
+........................object, len: 2
+........................named element: [0]:2:[id]
+................................string:
+12:[OriginalView]
+........................named element: [1]:5:[label]
+................................string:
+13:[Original View]
+................array el [6]:
+........................NULL
+................array el [7]:
+........................object, len: 1
+........................named element: [0]:2:[id]
+................................string:
+7:[Quality]
+................array el [8]:
+........................object, len: 1
+........................named element: [0]:2:[id]
+................................string:
+5:[Pause]
+................array el [9]:
+........................object, len: 1
+........................named element: [0]:2:[id]
+................................string:
+4:[Mute]
+................array el [10]:
+........................NULL
+................array el [11]:
+........................object, len: 2
+........................named element: [0]:2:[id]
+................................string:
+4:[Find]
+........................named element: [1]:5:[label]
+................................string:
+7:[Find...]
+................array el [12]:
+........................object, len: 2
+........................named element: [0]:2:[id]
+................................string:
+9:[FindAgain]
+........................named element: [1]:5:[label]
+................................string:
+10:[Find Again]
+................array el [13]:
+........................object, len: 1
+........................named element: [0]:2:[id]
+................................string:
+4:[Copy]
+................array el [14]:
+........................object, len: 2
+........................named element: [0]:2:[id]
+................................string:
+9:[CopyAgain]
+........................named element: [1]:5:[label]
+................................string:
+10:[Copy Again]
+................array el [15]:
+........................object, len: 2
+........................named element: [0]:2:[id]
+................................string:
+7:[CopySVG]
+........................named element: [1]:5:[label]
+................................string:
+8:[Copy SVG]
+................array el [16]:
+........................object, len: 2
+........................named element: [0]:2:[id]
+................................string:
+7:[ViewSVG]
+........................named element: [1]:5:[label]
+................................string:
+8:[View SVG]
+................array el [17]:
+........................object, len: 2
+........................named element: [0]:2:[id]
+................................string:
+10:[ViewSource]
+........................named element: [1]:5:[label]
+................................string:
+11:[View Source]
+................array el [18]:
+........................object, len: 2
+........................named element: [0]:2:[id]
+................................string:
+6:[SaveAs]
+........................named element: [1]:5:[label]
+................................string:
+7:[Save As]
+................array el [19]:
+........................NULL
+................array el [20]:
+........................object, len: 1
+........................named element: [0]:2:[id]
+................................string:
+4:[Help]
+................array el [21]:
+........................object, len: 2
+........................named element: [0]:2:[id]
+................................string:
+5:[About]
+........................named element: [1]:5:[label]
+................................string:
+25:[About Adobe CVG Viewer...]
+
+#############################
+
+=========================================== json_test: OK
+
+
+=========================================== json_test:
+s 4096 k 2534
+[{
+    "notes": 
+    [
+" Laboratory for Web Algorithmics (LAW), Universita degli Studi di Milano, ",
+" http://law.di.unimi.it/index.php.  When using matrices in the LAW/ group ",
+" in the collection, please follow the citation instructions at            ",
+" http://law.di.unimi.it/datasets.php.  If you publish results based on    ",
+" these graphs, please acknowledge the usage of WebGraph and LLP by quoting",
+" the following papers:                                                    ",
+"                                                                          ",
+" [1] \"The WebGraph Framework I: Compression Techniques,' Paolo Boldi      ",
+"     and Sebastiano Vigna, Proc. of the Thirteenth International          ",
+"     World Wide Web Conference (WWW 2004), 2004, Manhattan, USA,          ",
+"     pp. 595--601, ACM Press.                                             ",
+"                                                                          ",
+" [2] 'Layered Label Propagation: A MultiResolution Coordinate-Free        ",
+"     Ordering for Compressing Social Networks,' Paolo Boldi, Marco        ",
+"     Rosa, Massimo Santini, and Sebastiano Vigna, Proceedings of the      ",
+"     20th international conference on World Wide Web, 2011, ACM Press.    ",
+"                                                                          ",
+" If the graphs you are using were gathered by UbiCrawler, please          ",
+" acknowledge the usage of UbiCrawler by quoting the following paper:      ",
+"                                                                          ",
+" [3] \"UbiCrawler: A Scalable Fully Distributed Web Crawler\",              ",
+"     Paolo Boldi, Bruno Codenotti, Massimo Santini, and Sebastiano        ",
+"     Vigna, Software: Practice & Experience, 2004, vol 34, no. 8,         ",
+"     pp. 711--726                                                         ",
+"                                                                          ",
+" LAW/indochina-2004                                                       ",
+"                                                                          ",
+" A fairly large crawl of the country domains of Indochina                 ",
+" performed for the Nagaoka University of Technology.                      ",
+"                                                                          ",
+" For additional graph properties and statistics, including node labels,   ",
+" see http://law.di.unimi.it/webdata/indochina-2004                        " ,
+" "
+    ]
+}
+]
+entire json strlen 2534
+object, len: 1
+named element: [0]:5:[notes]
+........array, len: 33
+........array el [0]:
+................string:
+74:[ Laboratory for Web Algorithmics (LAW), Universita degli Studi di Milano, ]
+........array el [1]:
+................string:
+74:[ http://law.di.unimi.it/index.php.  When using matrices in the LAW/ group ]
+........array el [2]:
+................string:
+74:[ in the collection, please follow the citation instructions at            ]
+........array el [3]:
+................string:
+74:[ http://law.di.unimi.it/datasets.php.  If you publish results based on    ]
+........array el [4]:
+................string:
+74:[ these graphs, please acknowledge the usage of WebGraph and LLP by quoting]
+........array el [5]:
+................string:
+74:[ the following papers:                                                    ]
+........array el [6]:
+................string:
+74:[                                                                          ]
+........array el [7]:
+................string:
+74:[ [1] "The WebGraph Framework I: Compression Techniques,' Paolo Boldi      ]
+........array el [8]:
+................string:
+74:[     and Sebastiano Vigna, Proc. of the Thirteenth International          ]
+........array el [9]:
+................string:
+74:[     World Wide Web Conference (WWW 2004), 2004, Manhattan, USA,          ]
+........array el [10]:
+................string:
+74:[     pp. 595--601, ACM Press.                                             ]
+........array el [11]:
+................string:
+74:[                                                                          ]
+........array el [12]:
+................string:
+74:[ [2] 'Layered Label Propagation: A MultiResolution Coordinate-Free        ]
+........array el [13]:
+................string:
+74:[     Ordering for Compressing Social Networks,' Paolo Boldi, Marco        ]
+........array el [14]:
+................string:
+74:[     Rosa, Massimo Santini, and Sebastiano Vigna, Proceedings of the      ]
+........array el [15]:
+................string:
+74:[     20th international conference on World Wide Web, 2011, ACM Press.    ]
+........array el [16]:
+................string:
+74:[                                                                          ]
+........array el [17]:
+................string:
+74:[ If the graphs you are using were gathered by UbiCrawler, please          ]
+........array el [18]:
+................string:
+74:[ acknowledge the usage of UbiCrawler by quoting the following paper:      ]
+........array el [19]:
+................string:
+74:[                                                                          ]
+........array el [20]:
+................string:
+74:[ [3] "UbiCrawler: A Scalable Fully Distributed Web Crawler",              ]
+........array el [21]:
+................string:
+74:[     Paolo Boldi, Bruno Codenotti, Massimo Santini, and Sebastiano        ]
+........array el [22]:
+................string:
+74:[     Vigna, Software: Practice & Experience, 2004, vol 34, no. 8,         ]
+........array el [23]:
+................string:
+74:[     pp. 711--726                                                         ]
+........array el [24]:
+................string:
+74:[                                                                          ]
+........array el [25]:
+................string:
+74:[ LAW/indochina-2004                                                       ]
+........array el [26]:
+................string:
+74:[                                                                          ]
+........array el [27]:
+................string:
+74:[ A fairly large crawl of the country domains of Indochina                 ]
+........array el [28]:
+................string:
+74:[ performed for the Nagaoka University of Technology.                      ]
+........array el [29]:
+................string:
+74:[                                                                          ]
+........array el [30]:
+................string:
+74:[ For additional graph properties and statistics, including node labels,   ]
+........array el [31]:
+................string:
+74:[ see http://law.di.unimi.it/webdata/indochina-2004                        ]
+........array el [32]:
+................string:
+1:[ ]
+
+#############################
+
+=========================================== json_test: OK
+
+
+=========================================== json_test:
+s 2048 k 1163
+[{
+    "LAGraph": [0,9,9],
+    "GraphBLAS": [ "SuiteSparse:GraphBLAS", [6,0,3]],
+    "my/stuff":
+    [
+        { "GrB_Matrix": "A", "type": "double", "bytes": 1000 },
+        { "GrB_Matrix": "b", "type": "double", "bytes": 256 },
+        { "GrB_Matrix": "x", "type": "double", "bytes": 256 },
+        { "GrB_Matrix": "nodeweight", "type": "int32", "bytes": 256 },
+        { "text": "nodename", "compression": "none", "bytes": 256 },
+        { "text": "edgecolor", "compression": "lz4hc:9", "bytes": 25600 },
+        null
+    ],
+    "id": 42,
+    "title": "short descriptive title",
+    "date": "date of acquisition",
+    "author": "problem creator",
+    "editor": "problem editor ",
+    "kind": "problem kind",
+    "notes": 
+    [
+"--------------------------------------------------------------------------",
+"notes for a matrix at sparse.tamu.edu ------------------------------------",
+"The id, title, date, author, editor, kind, and notes are not yet created",
+"by LAGraph.  This format is for a future copy of all content of",
+"sparse.tamu.edu in the GrB serialized format.",
+"--------------------------------------------------------------------------"
+    ]
+}
+]
+entire json strlen 1163
+object, len: 10
+named element: [0]:7:[LAGraph]
+........array, len: 3
+........array el [0]:
+................number: 1:[0]
+........array el [1]:
+................number: 1:[9]
+........array el [2]:
+................number: 1:[9]
+named element: [1]:9:[GraphBLAS]
+........array, len: 2
+........array el [0]:
+................string:
+21:[SuiteSparse:GraphBLAS]
+........array el [1]:
+................array, len: 3
+................array el [0]:
+........................number: 1:[6]
+................array el [1]:
+........................number: 1:[0]
+................array el [2]:
+........................number: 1:[3]
+named element: [2]:8:[my/stuff]
+........array, len: 7
+........array el [0]:
+................object, len: 3
+................named element: [0]:10:[GrB_Matrix]
+........................string:
+1:[A]
+................named element: [1]:4:[type]
+........................string:
+6:[double]
+................named element: [2]:5:[bytes]
+........................number: 4:[1000]
+........array el [1]:
+................object, len: 3
+................named element: [0]:10:[GrB_Matrix]
+........................string:
+1:[b]
+................named element: [1]:4:[type]
+........................string:
+6:[double]
+................named element: [2]:5:[bytes]
+........................number: 3:[256]
+........array el [2]:
+................object, len: 3
+................named element: [0]:10:[GrB_Matrix]
+........................string:
+1:[x]
+................named element: [1]:4:[type]
+........................string:
+6:[double]
+................named element: [2]:5:[bytes]
+........................number: 3:[256]
+........array el [3]:
+................object, len: 3
+................named element: [0]:10:[GrB_Matrix]
+........................string:
+10:[nodeweight]
+................named element: [1]:4:[type]
+........................string:
+5:[int32]
+................named element: [2]:5:[bytes]
+........................number: 3:[256]
+........array el [4]:
+................object, len: 3
+................named element: [0]:4:[text]
+........................string:
+8:[nodename]
+................named element: [1]:11:[compression]
+........................string:
+4:[none]
+................named element: [2]:5:[bytes]
+........................number: 3:[256]
+........array el [5]:
+................object, len: 3
+................named element: [0]:4:[text]
+........................string:
+9:[edgecolor]
+................named element: [1]:11:[compression]
+........................string:
+7:[lz4hc:9]
+................named element: [2]:5:[bytes]
+........................number: 5:[25600]
+........array el [6]:
+................NULL
+named element: [3]:2:[id]
+........number: 2:[42]
+named element: [4]:5:[title]
+........string:
+23:[short descriptive title]
+named element: [5]:4:[date]
+........string:
+19:[date of acquisition]
+named element: [6]:6:[author]
+........string:
+15:[problem creator]
+named element: [7]:6:[editor]
+........string:
+15:[problem editor ]
+named element: [8]:4:[kind]
+........string:
+12:[problem kind]
+named element: [9]:5:[notes]
+........array, len: 6
+........array el [0]:
+................string:
+74:[--------------------------------------------------------------------------]
+........array el [1]:
+................string:
+74:[notes for a matrix at sparse.tamu.edu ------------------------------------]
+........array el [2]:
+................string:
+72:[The id, title, date, author, editor, kind, and notes are not yet created]
+........array el [3]:
+................string:
+63:[by LAGraph.  This format is for a future copy of all content of]
+........array el [4]:
+................string:
+45:[sparse.tamu.edu in the GrB serialized format.]
+........array el [5]:
+................string:
+74:[--------------------------------------------------------------------------]
+
+#############################
+LAGraph: (0.9.9)
+GraphBLAS: SuiteSparse:GraphBLAS (6.0.3)
+contents: [my/stuff]
+>>> matrix
+[A]
+(double)
+(1000)
+>>> matrix
+[b]
+(double)
+(256)
+>>> matrix
+[x]
+(double)
+(256)
+>>> matrix
+[nodeweight]
+(int32)
+(256)
+>>> text
+[nodename]
+[none]:-1
+(256)
+>>> text
+[edgecolor]
+[lz4hc:9]:2009
+(25600)
+# of contents: 6
+other: [id]
+....number: 2:[42]
+other: [title]
+....string:
+23:[short descriptive title]
+other: [date]
+....string:
+19:[date of acquisition]
+other: [author]
+....string:
+15:[problem creator]
+other: [editor]
+....string:
+15:[problem editor ]
+other: [kind]
+....string:
+12:[problem kind]
+other: [notes]
+....array, len: 6
+....array el [0]:
+............string:
+74:[--------------------------------------------------------------------------]
+....array el [1]:
+............string:
+74:[notes for a matrix at sparse.tamu.edu ------------------------------------]
+....array el [2]:
+............string:
+72:[The id, title, date, author, editor, kind, and notes are not yet created]
+....array el [3]:
+............string:
+63:[by LAGraph.  This format is for a future copy of all content of]
+....array el [4]:
+............string:
+45:[sparse.tamu.edu in the GrB serialized format.]
+....array el [5]:
+............string:
+74:[--------------------------------------------------------------------------]
+
+=========================================== json_test: OK
+

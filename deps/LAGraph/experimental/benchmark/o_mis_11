@@ -1,0 +1,165 @@
+ 
+======================================================================
+Benchmarks using LAGraph+GraphBLAS: MIS
+======================================================================
+GAP matrices located in:   ../../../GAP
+SuiteSparse:GraphBLAS v5.2.0 [Oct 7, 2021 (alpha12)]
+# of trials: 3
+threads to test:  40
+matrix: /raid/matrices/com-Youtube/com-Youtube.grb
+[.grb]
+Reading binary file: /raid/matrices/com-Youtube/com-Youtube.grb
+read time: 0.110823
+maximal independent set OK 840454 of 1134890 nodes
+warmup time 0.0453154 sec
+maximal independent set OK 840454 of 1134890 nodes
+seed          1 threads 40 trial  0:     0.054302 sec
+maximal independent set OK 840586 of 1134890 nodes
+seed    1134891 threads 40 trial  1:     0.061032 sec
+maximal independent set OK 840555 of 1134890 nodes
+seed    2269781 threads 40 trial  2:     0.063014 sec
+Avg: MIS nthreads:  40 time:     0.059450 matrix: /raid/matrices/com-Youtube/com-Youtube.grb
+SuiteSparse:GraphBLAS v5.2.0 [Oct 7, 2021 (alpha12)]
+# of trials: 3
+threads to test:  40
+matrix: /raid/matrices/as-Skitter/as-Skitter.grb
+[.grb]
+Reading binary file: /raid/matrices/as-Skitter/as-Skitter.grb
+read time: 0.246818
+maximal independent set OK 1125783 of 1696415 nodes
+warmup time 0.0534657 sec
+maximal independent set OK 1125783 of 1696415 nodes
+seed          1 threads 40 trial  0:     0.082344 sec
+maximal independent set OK 1126025 of 1696415 nodes
+seed    1696416 threads 40 trial  1:     0.084119 sec
+maximal independent set OK 1125754 of 1696415 nodes
+seed    3392831 threads 40 trial  2:     0.082616 sec
+Avg: MIS nthreads:  40 time:     0.083026 matrix: /raid/matrices/as-Skitter/as-Skitter.grb
+SuiteSparse:GraphBLAS v5.2.0 [Oct 7, 2021 (alpha12)]
+# of trials: 3
+threads to test:  40
+matrix: /raid/matrices/com-LiveJournal/com-LiveJournal.grb
+[.grb]
+Reading binary file: /raid/matrices/com-LiveJournal/com-LiveJournal.grb
+read time: 0.698669
+maximal independent set OK 1985876 of 3997962 nodes
+warmup time 0.110645 sec
+maximal independent set OK 1985876 of 3997962 nodes
+seed          1 threads 40 trial  0:     0.156064 sec
+maximal independent set OK 1986172 of 3997962 nodes
+seed    3997963 threads 40 trial  1:     0.170836 sec
+maximal independent set OK 1985521 of 3997962 nodes
+seed    7995925 threads 40 trial  2:     0.164196 sec
+Avg: MIS nthreads:  40 time:     0.163699 matrix: /raid/matrices/com-LiveJournal/com-LiveJournal.grb
+SuiteSparse:GraphBLAS v5.2.0 [Oct 7, 2021 (alpha12)]
+# of trials: 3
+threads to test:  40
+matrix: /raid/matrices/com-Orkut/com-Orkut.grb
+[.grb]
+Reading binary file: /raid/matrices/com-Orkut/com-Orkut.grb
+read time: 2.34691
+maximal independent set OK 745711 of 3072441 nodes
+warmup time 0.172792 sec
+maximal independent set OK 745711 of 3072441 nodes
+seed          1 threads 40 trial  0:     0.214857 sec
+maximal independent set OK 745045 of 3072441 nodes
+seed    3072442 threads 40 trial  1:     0.221951 sec
+maximal independent set OK 745364 of 3072441 nodes
+seed    6144883 threads 40 trial  2:     0.213032 sec
+Avg: MIS nthreads:  40 time:     0.216613 matrix: /raid/matrices/com-Orkut/com-Orkut.grb
+SuiteSparse:GraphBLAS v5.2.0 [Oct 7, 2021 (alpha12)]
+# of trials: 3
+threads to test:  40
+matrix: /raid/matrices/com-Friendster/com-Friendster.grb
+[.grb]
+Reading binary file: /raid/matrices/com-Friendster/com-Friendster.grb
+read time: 54.9388
+maximal independent set OK 35044972 of 65608366 nodes
+warmup time 5.073 sec
+maximal independent set OK 35044972 of 65608366 nodes
+seed          1 threads 40 trial  0:     5.985578 sec
+maximal independent set OK 35043722 of 65608366 nodes
+seed   65608367 threads 40 trial  1:     5.947435 sec
+maximal independent set OK 35044441 of 65608366 nodes
+seed  131216733 threads 40 trial  2:     6.028655 sec
+Avg: MIS nthreads:  40 time:     5.987223 matrix: /raid/matrices/com-Friendster/com-Friendster.grb
+SuiteSparse:GraphBLAS v5.2.0 [Oct 7, 2021 (alpha12)]
+# of trials: 3
+threads to test:  40
+matrix: ../../../GAP/GAP-kron/GAP-kron.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-kron/GAP-kron.grb
+read time: 72.9832
+maximal independent set OK 117871763 of 134217726 nodes
+warmup time 8.25242 sec
+maximal independent set OK 117871763 of 134217726 nodes
+seed          1 threads 40 trial  0:     9.792452 sec
+maximal independent set OK 117874014 of 134217726 nodes
+seed  134217727 threads 40 trial  1:     9.847944 sec
+maximal independent set OK 117874441 of 134217726 nodes
+seed  268435453 threads 40 trial  2:     9.890183 sec
+Avg: MIS nthreads:  40 time:     9.843526 matrix: ../../../GAP/GAP-kron/GAP-kron.grb
+SuiteSparse:GraphBLAS v5.2.0 [Oct 7, 2021 (alpha12)]
+# of trials: 3
+threads to test:  40
+matrix: ../../../GAP/GAP-urand/GAP-urand.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-urand/GAP-urand.grb
+read time: 74.7585
+maximal independent set OK 15649488 of 134217728 nodes
+warmup time 9.54483 sec
+maximal independent set OK 15649488 of 134217728 nodes
+seed          1 threads 40 trial  0:    10.901920 sec
+maximal independent set OK 15646424 of 134217728 nodes
+seed  134217729 threads 40 trial  1:    10.960355 sec
+maximal independent set OK 15646917 of 134217728 nodes
+seed  268435457 threads 40 trial  2:    11.122882 sec
+Avg: MIS nthreads:  40 time:    10.995052 matrix: ../../../GAP/GAP-urand/GAP-urand.grb
+SuiteSparse:GraphBLAS v5.2.0 [Oct 7, 2021 (alpha12)]
+# of trials: 3
+threads to test:  40
+matrix: ../../../GAP/GAP-twitter/GAP-twitter.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-twitter/GAP-twitter.grb
+read time: 38.3653
+maximal independent set OK 47645149 of 61578415 nodes
+warmup time 3.81001 sec
+maximal independent set OK 47645149 of 61578415 nodes
+seed          1 threads 40 trial  0:     4.686434 sec
+maximal independent set OK 47648385 of 61578415 nodes
+seed   61578416 threads 40 trial  1:     4.690101 sec
+maximal independent set OK 47644738 of 61578415 nodes
+seed  123156831 threads 40 trial  2:     4.667847 sec
+Avg: MIS nthreads:  40 time:     4.681461 matrix: ../../../GAP/GAP-twitter/GAP-twitter.grb
+SuiteSparse:GraphBLAS v5.2.0 [Oct 7, 2021 (alpha12)]
+# of trials: 3
+threads to test:  40
+matrix: ../../../GAP/GAP-web/GAP-web.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-web/GAP-web.grb
+read time: 41.5669
+maximal independent set OK 28710591 of 50636151 nodes
+warmup time 1.54353 sec
+maximal independent set OK 28710591 of 50636151 nodes
+seed          1 threads 40 trial  0:     2.221277 sec
+maximal independent set OK 28708431 of 50636151 nodes
+seed   50636152 threads 40 trial  1:     2.161504 sec
+maximal independent set OK 28710021 of 50636151 nodes
+seed  101272303 threads 40 trial  2:     2.222252 sec
+Avg: MIS nthreads:  40 time:     2.201677 matrix: ../../../GAP/GAP-web/GAP-web.grb
+SuiteSparse:GraphBLAS v5.2.0 [Oct 7, 2021 (alpha12)]
+# of trials: 3
+threads to test:  40
+matrix: ../../../GAP/GAP-road/GAP-road.grb
+[.grb]
+Reading binary file: ../../../GAP/GAP-road/GAP-road.grb
+read time: 1.41997
+maximal independent set OK 10994725 of 23947347 nodes
+warmup time 0.238661 sec
+maximal independent set OK 10994725 of 23947347 nodes
+seed          1 threads 40 trial  0:     0.399690 sec
+maximal independent set OK 10995237 of 23947347 nodes
+seed   23947348 threads 40 trial  1:     0.416283 sec
+maximal independent set OK 10995214 of 23947347 nodes
+seed   47894695 threads 40 trial  2:     0.407545 sec
+Avg: MIS nthreads:  40 time:     0.407840 matrix: ../../../GAP/GAP-road/GAP-road.grb

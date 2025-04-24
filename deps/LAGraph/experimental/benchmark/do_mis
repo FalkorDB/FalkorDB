@@ -1,0 +1,31 @@
+#!/bin/bash
+
+# LAGraph, (c) 2021 by The LAGraph Contributors, All Rights Reserved.
+# SPDX-License-Identifier: BSD-2-Clause
+# See additional acknowledgments in the LICENSE file,
+# or contact permission@sei.cmu.edu for the full terms.
+
+# Contributed by Timothy A. Davis, Texas A&M University
+
+# do_gap_mis: run the benchmarks for MIS
+
+echo " "
+echo "======================================================================"
+echo "Benchmarks using LAGraph+GraphBLAS: MIS"
+echo "======================================================================"
+
+GAP="../../../GAP"
+echo "GAP matrices located in:  " $GAP
+
+../../build/experimental/benchmark/mis_demo /raid/matrices/com-Youtube/com-Youtube.grb
+../../build/experimental/benchmark/mis_demo /raid/matrices/as-Skitter/as-Skitter.grb
+../../build/experimental/benchmark/mis_demo /raid/matrices/com-LiveJournal/com-LiveJournal.grb
+../../build/experimental/benchmark/mis_demo /raid/matrices/com-Orkut/com-Orkut.grb
+../../build/experimental/benchmark/mis_demo /raid/matrices/com-Friendster/com-Friendster.grb
+
+../../build/experimental/benchmark/mis_demo $GAP/GAP-kron/GAP-kron.grb
+../../build/experimental/benchmark/mis_demo $GAP/GAP-urand/GAP-urand.grb
+../../build/experimental/benchmark/mis_demo $GAP/GAP-twitter/GAP-twitter.grb
+../../build/experimental/benchmark/mis_demo $GAP/GAP-web/GAP-web.grb
+../../build/experimental/benchmark/mis_demo $GAP/GAP-road/GAP-road.grb
+

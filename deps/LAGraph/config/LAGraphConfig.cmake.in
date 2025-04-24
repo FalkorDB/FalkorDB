@@ -1,0 +1,185 @@
+#-------------------------------------------------------------------------------
+# SuiteSparse/LAGraph/cmake_modules/LAGraphConfig.cmake
+#-------------------------------------------------------------------------------
+
+# The following copyright and license applies to just this file only, not to
+# the library itself:
+# LAGraphConfig.cmake, Copyright (c) 2019-2023, LAGraph Contributors. All
+# Rights Reserved.
+# SPDX-License-Identifier: BSD-3-clause
+
+#-------------------------------------------------------------------------------
+
+# Finds the LAGraph include file and compiled library.
+# The following targets are defined:
+#   SuiteSparse::LAGraph           - for the shared library (if available)
+#   SuiteSparse::LAGraph_static    - for the static library (if available)
+
+# For backward compatibility the following variables are set:
+
+# LAGRAPH_INCLUDE_DIR - where to find LAGraph.h, etc.
+# LAGRAPH_LIBRARY     - dynamic LAGraph library
+# LAGRAPH_STATIC      - static LAGraph library
+# LAGRAPH_LIBRARIES   - libraries when using LAGraph
+# LAGRAPH_FOUND       - true if LAGraph found
+
+# Set ``CMAKE_MODULE_PATH`` to the parent folder where this module file is
+# installed.
+
+#-------------------------------------------------------------------------------
+
+@PACKAGE_INIT@
+
+set ( LAGRAPH_DATE "@LAGraph_DATE@" )
+set ( LAGRAPH_VERSION_MAJOR @LAGraph_VERSION_MAJOR@ )
+set ( LAGRAPH_VERSION_MINOR @LAGraph_VERSION_MINOR@ )
+set ( LAGRAPH_VERSION_PATCH @LAGraph_VERSION_SUB@ )
+set ( LAGRAPH_VERSION "@LAGraph_VERSION_MAJOR@.@LAGraph_VERSION_MINOR@.@LAGraph_VERSION_SUB@" )
+
+# Check for dependent targets
+include ( CMakeFindDependencyMacro )
+set ( _dependencies_found ON )
+
+if ( NOT TARGET GraphBLAS::GraphBLAS )
+    # Look GraphBLAS 
+    list ( PREPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR} )
+    find_dependency ( GraphBLAS @GraphBLAS_VERSION_MAJOR@.@GraphBLAS_VERSION_MINOR@ )
+endif ( )
+
+if ( NOT GraphBLAS_FOUND )
+    set ( LAGraph_FOUND OFF )
+    return ( )
+endif ( )
+
+# Look for OpenMP
+if ( @LAGRAPH_HAS_OPENMP@ AND NOT OpenMP_C_FOUND )
+    find_dependency ( OpenMP COMPONENTS C )
+    if ( NOT OpenMP_C_FOUND )
+        set ( _dependencies_found OFF )
+    endif ( )
+endif ( )
+
+if ( NOT _dependencies_found )
+    set ( LAGraph_FOUND OFF )
+    return ( )
+endif ( )
+
+# Import target
+include ( ${CMAKE_CURRENT_LIST_DIR}/LAGraphTargets.cmake )
+
+if ( @LAGRAPH_HAS_OPENMP@ )
+    if ( TARGET SuiteSparse::LAGraph )
+        get_property ( _lagraph_aliased TARGET SuiteSparse::LAGraph
+            PROPERTY ALIASED_TARGET )
+        if ( "${_lagraph_aliased}" STREQUAL "" )
+            target_include_directories ( SuiteSparse::LAGraph SYSTEM AFTER INTERFACE
+                "$<TARGET_PROPERTY:OpenMP::OpenMP_C,INTERFACE_INCLUDE_DIRECTORIES>" )
+        else ( )
+            target_include_directories ( ${_lagraph_aliased} SYSTEM AFTER INTERFACE
+                "$<TARGET_PROPERTY:OpenMP::OpenMP_C,INTERFACE_INCLUDE_DIRECTORIES>" )
+        endif ( )
+    endif ( )
+    if ( TARGET SuiteSparse::LAGraph_static )
+        get_property ( _lagraph_aliased TARGET SuiteSparse::LAGraph_static
+            PROPERTY ALIASED_TARGET )
+        if ( "${_lagraph_aliased}" STREQUAL "" )
+            target_include_directories ( SuiteSparse::LAGraph_static SYSTEM AFTER INTERFACE
+                "$<TARGET_PROPERTY:OpenMP::OpenMP_C,INTERFACE_INCLUDE_DIRECTORIES>" )
+        else ( )
+            target_include_directories ( ${_lagraph_aliased} SYSTEM AFTER INTERFACE
+                "$<TARGET_PROPERTY:OpenMP::OpenMP_C,INTERFACE_INCLUDE_DIRECTORIES>" )
+        endif ( )
+    endif ( )
+endif ( )
+
+# The following is only for backward compatibility with FindLAGraph.
+
+set ( _target_shared SuiteSparse::LAGraph )
+set ( _target_static SuiteSparse::LAGraph_static )
+set ( _var_prefix "LAGRAPH" )
+
+if ( NOT @BUILD_SHARED_LIBS@ AND NOT TARGET ${_target_shared} )
+    # make sure there is always an import target without suffix )
+    add_library ( ${_target_shared} ALIAS ${_target_static} )
+endif ( )
+if ( NOT @BUILD_SHARED_LIBS@ AND NOT TARGET SuiteSparse::LAGraphX )
+    # make sure there is always an import target without suffix )
+    add_library ( SuiteSparse::LAGraphX ALIAS SuiteSparse::LAGraphX_static )
+endif ( )
+
+get_target_property ( ${_var_prefix}_INCLUDE_DIR ${_target_shared} INTERFACE_INCLUDE_DIRECTORIES )
+if ( ${_var_prefix}_INCLUDE_DIR )
+    # First item in SuiteSparse targets contains the "main" header directory.
+    list ( GET ${_var_prefix}_INCLUDE_DIR 0 ${_var_prefix}_INCLUDE_DIR )
+endif ( )
+get_target_property ( ${_var_prefix}_LIBRARY ${_target_shared} IMPORTED_IMPLIB )
+if ( NOT ${_var_prefix}_LIBRARY )
+    get_target_property ( _library_chk ${_target_shared} IMPORTED_LOCATION )
+    if ( EXISTS ${_library_chk} )
+        set ( ${_var_prefix}_LIBRARY ${_library_chk} )
+    endif ( )
+endif ( )
+if ( TARGET ${_target_static} )
+    get_target_property ( ${_var_prefix}_STATIC ${_target_static} IMPORTED_LOCATION )
+endif ( )
+
+# Check for most common build types
+set ( _config_types "Debug" "Release" "RelWithDebInfo" "MinSizeRel" "None" )
+
+get_property ( _isMultiConfig GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG )
+if ( _isMultiConfig )
+    # For multi-configuration generators (e.g., Visual Studio), prefer those
+    # configurations.
+    list ( PREPEND _config_types ${CMAKE_CONFIGURATION_TYPES} )
+else ( )
+    # For single-configuration generators, prefer the current configuration.
+    list ( PREPEND _config_types ${CMAKE_BUILD_TYPE} )
+endif ( )
+
+list ( REMOVE_DUPLICATES _config_types )
+
+foreach ( _config ${_config_types} )
+    string ( TOUPPER ${_config} _uc_config )
+    if ( NOT ${_var_prefix}_LIBRARY )
+        get_target_property ( _library_chk ${_target_shared}
+            IMPORTED_IMPLIB_${_uc_config} )
+        if ( EXISTS ${_library_chk} )
+            set ( ${_var_prefix}_LIBRARY ${_library_chk} )
+        endif ( )
+    endif ( )
+    if ( NOT ${_var_prefix}_LIBRARY )
+        get_target_property ( _library_chk ${_target_shared}
+            IMPORTED_LOCATION_${_uc_config} )
+        if ( EXISTS ${_library_chk} )
+            set ( ${_var_prefix}_LIBRARY ${_library_chk} )
+        endif ( )
+    endif ( )
+    if ( TARGET ${_target_static} AND NOT ${_var_prefix}_STATIC )
+        get_target_property ( _library_chk ${_target_static}
+            IMPORTED_LOCATION_${_uc_config} )
+        if ( EXISTS ${_library_chk} )
+            set ( ${_var_prefix}_STATIC ${_library_chk} )
+        endif ( )
+    endif ( )
+endforeach ( )
+
+set ( LAGRAPH_LIBRARIES ${LAGRAPH_LIBRARY} )
+
+macro ( suitesparse_check_exist _var _files )
+  # ignore generator expressions
+  string ( GENEX_STRIP "${_files}" _files2 )
+
+  foreach ( _file ${_files2} )
+    if ( NOT EXISTS "${_file}" )
+      message ( FATAL_ERROR "File or directory ${_file} referenced by variable ${_var} does not exist!" )
+    endif ( )
+  endforeach ()
+endmacro ( )
+
+suitesparse_check_exist ( LAGRAPH_INCLUDE_DIR ${LAGRAPH_INCLUDE_DIR} )
+suitesparse_check_exist ( LAGRAPH_LIBRARY ${LAGRAPH_LIBRARY} )
+
+message ( STATUS "LAGraph version: ${LAGRAPH_VERSION}" )
+message ( STATUS "LAGraph include: ${LAGRAPH_INCLUDE_DIR}" )
+message ( STATUS "LAGraph library: ${LAGRAPH_LIBRARY}" )
+message ( STATUS "LAGraph static:  ${LAGRAPH_STATIC}" )

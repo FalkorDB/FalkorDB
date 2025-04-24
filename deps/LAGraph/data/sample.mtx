@@ -1,0 +1,17 @@
+%%MatrixMarket matrix coordinate pattern general
+%%GraphBLAS type bool
+% Adjacency matrix for sample graph in Figure 6.9 of "Graph Algorithms in the 
+% Language of Linear Algebra", Kepner and Gilbert.
+8 8 12
+1 2
+1 3
+1 4
+2 3
+2 5
+3 5
+4 3
+4 5
+5 6
+5 7
+6 8
+7 8

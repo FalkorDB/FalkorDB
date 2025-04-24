@@ -1,0 +1,19 @@
+%%MatrixMarket matrix coordinate integer general
+%%GraphBLAS type int16_t
+% Matrix from the cover of "Graph Algorithms in the Language of Linear
+% Algebra", Kepner and Gilbert.  Note that cover shows A'.  This is A,
+% but with different values for some entries.
+% This matrix is mangled and causes LAGraph_MMRead to return an error code
+7 7 12
+4 1 -32769
+1 2 32767
+4 3 0
+6 3 5
+7 3 9
+1 4 7
+7 4 1
+2 5 5
+7 5 1
+3 6 1
+5 6 7
+2 7 8

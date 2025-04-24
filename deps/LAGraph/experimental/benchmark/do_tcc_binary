@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# LAGraph, (c) 2021 by The LAGraph Contributors, All Rights Reserved.
+# SPDX-License-Identifier: BSD-2-Clause
+# See additional acknowledgments in the LICENSE file,
+# or contact permission@sei.cmu.edu for the full terms.
+
+# Contributed by Timothy A. Davis, Texas A&M University
+
+# do_tcc_binary: convert TCC MatrixMarket files to binary
+
+# do_tcc_binary converts all TCC MatrixMarket files into binary *.grb files,
+# which are faster to load but require SuiteSparse:GraphBLAS.  By default, the
+# GAP *.mtx matrices are assumed to be located in ../../../GAP, as a peer
+# folder to LAGraph and GraphBLAS.
+
+# Usage:
+#       ./do_tcc_binary
+
+echo " "
+echo "======================================================================"
+echo "TCC benchmarks using LAGraph+SuiteSparse:GraphBLAS: convert to binary"
+echo "======================================================================"
+
+../../build/src/benchmark/mtx2bin_demo /raid/matrices/com-Youtube/com-Youtube.mtx           /raid/matrices/com-Youtube/com-Youtube.grb
+../../build/src/benchmark/mtx2bin_demo /raid/matrices/as-Skitter/as-Skitter.mtx             /raid/matrices/as-Skitter/as-Skitter.grb
+../../build/src/benchmark/mtx2bin_demo /raid/matrices/com-LiveJournal/com-LiveJournal.mtx   /raid/matrices/com-LiveJournal/com-LiveJournal.grb
+../../build/src/benchmark/mtx2bin_demo /raid/matrices/com-Orkut/com-Orkut.mtx               /raid/matrices/com-Orkut/com-Orkut.grb
+../../build/src/benchmark/mtx2bin_demo /raid/matrices/com-Friendster/com-Friendster.mtx     /raid/matrices/com-Friendster/com-Friendster.grb
+

@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# alternatively:
+
+MATS="/raid/matrices"
+
+../../build/experimental/benchmark/tcc_demo $MATS/karate/karate.mtx 
+../../build/experimental/benchmark/tcc_demo $MATS/Harvard500/Harvard500.mtx
+../../build/experimental/benchmark/tcc_demo $MATS/USpowerGrid/USpowerGrid.mtx
+

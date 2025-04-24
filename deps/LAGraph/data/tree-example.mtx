@@ -1,0 +1,8 @@
+%%MatrixMarket matrix coordinate integer symmetric
+%%GraphBLAS comment (this is silently ignored)
+6 6 5
+3 1 1
+4 2 1
+5 3 1
+5 4 1
+6 4 1

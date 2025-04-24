@@ -1,0 +1,6 @@
+# Ignore these files:
+json_test.output
+json_test
+
+# Do not ignore this file
+!.gitignore

@@ -1,0 +1,47 @@
+File: Acknowledgements.txt
+
+THIS WORK IS FUNDED IN PART BY:
+
+1.  The United States Department of Defense under Contract No. FA8702-15-D-0002
+    with Carnegie Mellon University for the operation of the Software
+    Engineering Institute, a federally funded research and development center.
+2.  The United States Department of Defense under Contract No. FA8650-18-2-7835
+    and HR0011-18-3-0007
+3.  NVIDIA, Intel, MIT Lincoln Laboratory, MathWorks, IBM, and Julia Computing.
+4.  The National Science Foundation (1514406, OAC-1740333, CCF-1629657).
+5.  The United States Department of Energy, Office of Science, ASCR Contract
+    No. DE-AC02-05CH11231.
+
+
+THIS WORK BUILDS UPON THE FOLLOWING PRIOR WORKS:
+1.  SuiteSparse:GraphBLAS, 
+    (http://faculty.cse.tamu.edu/davis/GraphBLAS.html) 
+    Copyright 2017-2023  Timothy A. Davis (Author), AldenMath.com.
+    By Tim Davis, Texas A&M University. Note that while SuiteSparse:GraphBLAS
+    is itself under the Apache 2 license, any contributions derived from
+    SuiteSparse:GraphBLAS and incorporated by the Author into LAGraph are
+    contributed under the LAGraph license.
+2.  GraphBLAS Template Library (GBTL). Version 1.0.0
+    (https://github.com/cmu-sei/gbtl/blob/1.0.0)
+    Copyright 2015 Carnegie Mellon University and The Trustees of Indiana.
+    DM-0002659
+3.  GraphBLAS Template Library (GBTL). Version 3.0 (and prior versions)
+    (https://github.com/cmu-sei/gbtl/blob/3.0.0)
+    Copyright 2017-2020 Carnegie Mellon University, Battelle Memorial
+    Institute, and Authors. DM17-0037, DM18-0559, DM20-0442
+4.  Combinatorial BLAS, 
+    (https://people.eecs.berkeley.edu/~aydin/CombBLAS/) 
+    Copyright 2011-2018  The Regents of the University of California,
+    through Lawrence Berkeley National Laboratory (subject to receipt of any
+    required approvals from the U.S. Dept. of Energy) and University of
+    California, Santa Barbara. 
+5.  GraphBLAST,
+    (https://github.com/gunrock/graphblast)
+    Copyright 2015-2019  The Regents of the University of California.
+
+LAGraph depends upon the following 3rd party libraries:
+
+    * json.h:  a simple JSON parser by Neil Henning,
+        ( https://github.com/sheredom/json.h ). Includes its own test suite.
+        required by experimental/utilities/LAGraph_SRead.c
+

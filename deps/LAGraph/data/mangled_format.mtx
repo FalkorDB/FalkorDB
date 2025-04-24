@@ -1,0 +1,15 @@
+%%MatrixMarket matrix array pattern symmetric
+%%GraphBLAS type int64_t
+% This is supposed to be full 3-by-3 matrix that is
+% also "iso-valued" (all entries equal to 1).  This
+% gets detected as a "pattern" matrix, but "array pattern"
+% is an invalid combination in the Matrix Market format.
+% This matrix should be written in "coordinate pattern"
+% format instead.
+3 3 6
+
+
+
+
+
+

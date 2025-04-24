@@ -1,0 +1,20 @@
+%%MatrixMarket matrix coordinate pattern general
+%%GraphBLAS type bool
+% Matrix from the cover of "Graph Algorithms in the Language of Linear
+% Algebra", Kepner and Gilbert.  Note that cover shows A'.  This is A,
+% as the pattern of matrix_fp32.mtx.  The matrix_fp32.mtx has explicit
+% zeros, which tests the use of a structural mask in
+% LAGraph_Matrix_Structure.
+7 7 12
+4 1
+1 2
+4 3
+6 3
+7 3
+1 4
+7 4
+2 5
+7 5
+3 6
+5 6
+2 7

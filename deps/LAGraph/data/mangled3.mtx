@@ -1,0 +1,5 @@
+%%MatrixMarket matrix coordinate mangled symmetric
+%%GraphBLAS type bool
+% This matrix is mangled and causes LAGraph_MMRead to return an error code
+1 1 1
+1 1 1

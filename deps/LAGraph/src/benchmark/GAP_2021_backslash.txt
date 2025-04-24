@@ -1,0 +1,63 @@
+backslash: 12-core Intel(R) Xeon(R) CPU E5-2695 v2 @ 2.40GHz
+with 25 threads (all default settings), with gcc 7.5.0 -O3.
+Single socket system (no NUMA effects).
+
+I haven't run Scott Beamer's GAP benchmarks on this system.
+
+May 15: LAGraph + SuiteSparse:GraphBLAS, vanilla (no GxB* extensions)
+May 14: LAGraph + SuiteSparse:GraphBLAS, using GxB* extensions.
+
+                kron        urand       twitter     web         road
+              ------------------------------------------------------------------
+BC   GAP          .           .           .           .           .     
+              ------------------------------------------------------------------
+
+BC   SSvanilla  53.680      67.262      21.594      12.857      49.285  (May 15)
+BC   SS:GxB     47.536      62.033      22.122      10.735      36.267  (May 14)
+
+                kron        urand       twitter     web         road
+              ------------------------------------------------------------------
+BFS  GAP          .           .           .           .           .     
+              ------------------------------------------------------------------
+
+BFS  SSvanilla   9.991      16.771       4.321       2.087       6.748  (May 15)
+BFS  SSpushonly  6.721       9.322       2.605       1.668       3.446  (May 14)
+BFS  SS:GxB      1.005       2.780       0.889       1.153       3.669  (May 14)
+
+                kron        urand       twitter     web         road
+              ------------------------------------------------------------------
+PR   GAP          .           .           .           .           .     
+              ------------------------------------------------------------------
+
+PR   SSvanilla  50.112      57.846      41.215      14.601       2.154  (May 15)
+PR   SS:GxB     41.334      54.812      36.763      14.176       1.981  (May 14)
+
+                kron        urand       twitter     web         road
+              ------------------------------------------------------------------
+CC   GAP          .           .           .           .           .     
+              ------------------------------------------------------------------
+
+CC   SSvanilla   6.547      12.170       3.241       4.055       1.521  (May 15)
+CC   SS:GxB      6.266       9.180       2.769       4.551       1.527  (May 14)
+
+                kron        urand       twitter     web         road
+              ------------------------------------------------------------------
+SSSP GAP          .           .           .           .           .     
+              ------------------------------------------------------------------
+
+SSSP SSvanilla  38.450      57.199      19.342      15.005      43.024  (May 15)
+SSSP SS:GxB     34.776      56.063      17.889      13.348      42.829  (May 14)
+
+                kron        urand       twitter     web         road
+              ------------------------------------------------------------------
+TC   GAP          .           .           .           .           .     
+              ------------------------------------------------------------------
+
+TC va:LL.L                  85.488                                     (May 15) 
+TC va:UU.U                  90.143                                     (May 15) 
+TC va:dot     1442.265     116.148     378.946     119.971       1.052 (May 15) 
+
+TC SS:GxB:LL.L              49.890                                     (May 14) 
+TC SS:GxB:UU.U              51.877                                     (May 14) 
+TC SS::GxBdot 1279.514      64.213     319.934      49.609        .432 (May 14) 
+

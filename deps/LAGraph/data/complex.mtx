@@ -1,0 +1,12 @@
+%%MatrixMarket matrix array complex general
+% a dense complex matrix
+3 3
+.646 .959
+.709 .340
+.754 .585
+.276 .228
+.679 .751
+.655 .255
+.162 .505
+.118 .699
+.498 .890

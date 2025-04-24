@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# LAGraph, (c) 2021 by The LAGraph Contributors, All Rights Reserved.
+# SPDX-License-Identifier: BSD-2-Clause
+# See additional acknowledgments in the LICENSE file,
+# or contact permission@sei.cmu.edu for the full terms.
+
+../../build/src/benchmark/ss2_demo ../../../MM/Newman/karate/karate.lagraph
+../../build/src/benchmark/ss2_demo ../../../MM/ND/nd3k/nd3k.lagraph
+../../build/src/benchmark/ss2_demo ../../../MM/ND/nd24k/nd24k.lagraph
+../../build/src/benchmark/ss2_demo ../../../MM/SNAP/soc-Pokec/soc-Pokec.lagraph
+../../build/src/benchmark/ss2_demo ../../../MM/Freescale/Freescale2/Freescale2.lagraph
+../../build/src/benchmark/ss2_demo ../../../MM/SNAP/com-Orkut/com-Orkut.lagraph
+../../build/src/benchmark/ss2_demo ../../../MM/LAW/indochina-2004/indochina-2004.lagraph
+../../build/src/benchmark/ss2_demo ../../../MM/SNAP/roadNet-CA/roadNet-CA.lagraph
+

@@ -1,0 +1,18 @@
+%%MatrixMarket matrix coordinate pattern general
+%%GraphBLAS type bool
+% Matrix from the cover of "Graph Algorithms in the Language of Linear
+% Algebra", Kepner and Gilbert.  Note that cover shows A'.  This is A.
+% (just the pattern of the matrix, no values)
+7 7 12
+4 1
+1 2
+4 3
+6 3
+7 3
+1 4
+7 4
+2 5
+7 5
+3 6
+5 6
+2 7

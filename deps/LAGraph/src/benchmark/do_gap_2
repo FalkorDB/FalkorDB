@@ -1,0 +1,41 @@
+#!/bin/bash
+
+# LAGraph, (c) 2021 by The LAGraph Contributors, All Rights Reserved.
+# SPDX-License-Identifier: BSD-2-Clause
+# See additional acknowledgments in the LICENSE file,
+# or contact permission@sei.cmu.edu for the full terms.
+
+# run all GAP benchmarks
+
+# Usage:
+#
+#   To run using *.mtx format, with the files in ../../../GAP:
+#
+#       ./do_gap_all > myoutput.txt
+#
+#   To run using binary *.grb format, with the files in ../../../GAP:
+#
+#       ./do_gap_all grb > myoutput.txt
+#
+#   To run using binary *.mtx format, with the files in /my/stuff/GAP
+#
+#       ./do_gap_all mtx /my/stuff/GAP > myoutput.txt
+#
+#   To run using binary *.mtx format, with the files in /my/stuff/GAP
+#
+#       ./do_gap_all grb /my/stuff/GAP > myoutput.txt
+
+if [ -z "$1" ]; then KIND="mtx" ; else KIND=$1 ; fi
+echo "Matrix input file format: " $KIND
+
+if [ -z "$2" ]; then GAP="../../../GAP" ; else GAP=$2 ; fi
+echo "GAP matrices located in:  " $GAP
+
+# ./do_gap_bfs $KIND $GAP
+# ./do_gap_bc $KIND $GAP
+# ./do_gap_cc $KIND $GAP
+# ./do_gap_pagerank $KIND $GAP
+
+./do_gap_sssp $KIND $GAP
+./do_gap_tc $KIND $GAP
+

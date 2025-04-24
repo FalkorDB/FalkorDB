@@ -1,0 +1,28 @@
+%%MatrixMarket matrix coordinate pattern general
+%%GraphBLAS type bool
+% Synthetic Sparse Deep Neural Network, output categories
+% nneurons: 1024, nlayers: 1920, nfeatures: 60000 subset: 1200
+% Source: https://graphchallenge.mit.edu/data-sets
+% The original problem has 60000 features but this
+% subset only includes the first 1200.
+% Converted to Matrix Matrix Format by Tim Davis.
+1200 1 19
+287 1
+295 1
+386 1
+427 1
+428 1
+529 1
+571 1
+666 1
+757 1
+943 1
+945 1
+1031 1
+1097 1
+1098 1
+1177 1
+1184 1
+1190 1
+1194 1
+1200 1

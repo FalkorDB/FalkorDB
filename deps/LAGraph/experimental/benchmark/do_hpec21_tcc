@@ -1,0 +1,26 @@
+#!/bin/bash
+
+# LAGraph, (c) 2021 by The LAGraph Contributors, All Rights Reserved.
+# SPDX-License-Identifier: BSD-2-Clause
+# See additional acknowledgments in the LICENSE file,
+# or contact permission@sei.cmu.edu for the full terms.
+
+# Contributed by Timothy A. Davis, Texas A&M University
+
+# do_hpec21_tcc: run benchmarks for Triangle Centrality
+
+# Usage:
+#
+#       ./do_hpec21_tcc > myoutput.txt
+
+echo " "
+echo "======================================================================"
+echo "benchmarks using LAGraph+GraphBLAS: Triangle Centrality"
+echo "======================================================================"
+
+../../build/experimental/benchmark/tcc_demo /raid/matrices/com-Youtube/com-Youtube.grb
+../../build/experimental/benchmark/tcc_demo /raid/matrices/as-Skitter/as-Skitter.grb
+../../build/experimental/benchmark/tcc_demo /raid/matrices/com-LiveJournal/com-LiveJournal.grb
+../../build/experimental/benchmark/tcc_demo /raid/matrices/com-Orkut/com-Orkut.grb
+../../build/experimental/benchmark/tcc_demo /raid/matrices/com-Friendster/com-Friendster.grb
+

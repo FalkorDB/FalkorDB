@@ -1,0 +1,13 @@
+%%MatrixMarket matrix coordinate real skew-symmetric
+%%GraphBLAS type float
+6 6 10
+4 1 -.12565
+5 1 inf
+6 1 -.37818
+3 2 .72610
+4 2 .78287
+5 2 -.7709
+4 3 .00980
+6 3 .70433
+6 4 1.6518
+6 5 -.1816

@@ -1,0 +1,58 @@
+#!/bin/bash
+
+# LAGraph, (c) 2021 by The LAGraph Contributors, All Rights Reserved.
+# SPDX-License-Identifier: BSD-2-Clause
+# See additional acknowledgments in the LICENSE file,
+# or contact permission@sei.cmu.edu for the full terms.
+
+# do_gap_cc: run the GAP benchmarks for Connected Components
+
+# Usage:
+#
+#   To run using *.mtx format, with the files in ../../../GAP:
+#
+#       ./do_gap_cc > myoutput.txt
+#
+#   To run using binary *.grb format, with the files in ../../../GAP:
+#
+#       ./do_gap_cc grb > myoutput.txt
+#
+#   To run using binary *.mtx format, with the files in /my/stuff/GAP
+#
+#       ./do_gap_cc mtx /my/stuff/GAP > myoutput.txt
+#
+#   To run using binary *.mtx format, with the files in /my/stuff/GAP
+#
+#       ./do_gap_cc grb /my/stuff/GAP > myoutput.txt
+
+echo " "
+echo "======================================================================"
+echo "GAP benchmarks using LAGraph+GraphBLAS: Connected Components"
+echo "======================================================================"
+
+if [ -z "$2" ]; then GAP="../../../GAP" ; else GAP=$2 ; fi
+echo "GAP matrices located in:  " $GAP
+
+../../build/src/benchmark/cc_demo /home/faculty/d/davis/pushpull.mtx
+../../build/src/benchmark/cc_demo /home/faculty/d/davis/roadNet-CA.mtx
+
+../../build/src/benchmark/cc_demo /raid/matrices/as-Skitter/as-Skitter.grb
+../../build/src/benchmark/cc_demo /raid/matrices/com-Friendster/com-Friendster.grb
+../../build/src/benchmark/cc_demo /raid/matrices/com-LiveJournal/com-LiveJournal.grb
+../../build/src/benchmark/cc_demo /raid/matrices/com-Orkut/com-Orkut.grb
+../../build/src/benchmark/cc_demo /raid/matrices/com-Youtube/com-Youtube.grb
+
+../../build/src/benchmark/cc_demo /home/faculty/d/davis/com-Orkut.grb
+../../build/src/benchmark/cc_demo /home/faculty/d/davis/indochina-2004.grb
+../../build/src/benchmark/cc_demo /home/faculty/d/davis/soc-Pokec.grb
+
+../../build/src/benchmark/cc_demo /home/faculty/d/davis/Freescale2.mtx
+../../build/src/benchmark/cc_demo /home/faculty/d/davis/nd24k.mtx
+../../build/src/benchmark/cc_demo /home/faculty/d/davis/nd6k.mtx
+
+../../build/src/benchmark/cc_demo $GAP/GAP-kron/GAP-kron.grb
+../../build/src/benchmark/cc_demo $GAP/GAP-urand/GAP-urand.grb
+../../build/src/benchmark/cc_demo $GAP/GAP-twitter/GAP-twitter.grb
+../../build/src/benchmark/cc_demo $GAP/GAP-web/GAP-web.grb
+../../build/src/benchmark/cc_demo $GAP/GAP-road/GAP-road.grb
+

@@ -1,0 +1,49 @@
+version: '{build}'
+
+skip_tags: true
+skip_branch_with_pr: true
+
+install: []
+
+environment:
+  matrix:
+    - VSVERSION: Visual Studio 9 2008
+    - VSVERSION: Visual Studio 10 2010
+    - VSVERSION: Visual Studio 11 2012
+    - VSVERSION: Visual Studio 12 2013
+    - VSVERSION: Visual Studio 14 2015
+    - VSVERSION: Visual Studio 15 2017
+      APPVEYOR_BUILD_WORKER_IMAGE: Visual Studio 2017
+    - VSVERSION: Visual Studio 16 2019
+      APPVEYOR_BUILD_WORKER_IMAGE: Visual Studio 2019
+
+matrix:
+  exclude:
+    - platform: x64
+      VSVERSION: Visual Studio 9 2008
+    # VS 2019 / 64-bit is tested in GitHub Actions instead.
+    - platform: x64
+      VSVERSION: Visual Studio 16 2019
+
+platform:
+  - Win32
+  - x64
+
+configuration:
+  - Debug
+  # Removed to reduce configuration explosion.
+  # - RelWithDebInfo
+  # - MinSizeRel
+  - Release
+
+build_script:
+  - md build
+  - cd build
+  - if NOT "%VSVERSION%"=="Visual Studio 16 2019" if "%PLATFORM%"=="x64" cmake -G "%VSVERSION% Win64" ../test
+  - if NOT "%VSVERSION%"=="Visual Studio 16 2019" if "%PLATFORM%"=="Win32" cmake -G "%VSVERSION%" ../test
+  - if "%VSVERSION%"=="Visual Studio 16 2019" cmake -G "%VSVERSION%" -A "%PLATFORM%" ../test
+  - msbuild /m /p:Configuration="%CONFIGURATION%" /p:Platform="%PLATFORM%" json.sln
+  - copy %CONFIGURATION%\json_test.exe json_test.exe
+
+test_script:
+  - json_test.exe

@@ -1,0 +1,44 @@
+#!/bin/bash
+
+# LAGraph, (c) 2021 by The LAGraph Contributors, All Rights Reserved.
+# SPDX-License-Identifier: BSD-2-Clause
+# See additional acknowledgments in the LICENSE file,
+# or contact permission@sei.cmu.edu for the full terms.
+
+# do_gap_tcc: run the GAP benchmarks for Triangle Counting
+
+# Usage:
+#
+#   To run using *.mtx format, with the files in ../../../GAP:
+#
+#       ./do_gap_tcc > myoutput.txt
+#
+#   To run using binary *.grb format, with the files in ../../../GAP:
+#
+#       ./do_gap_tcc grb > myoutput.txt
+#
+#   To run using binary *.mtx format, with the files in /my/stuff/GAP
+#
+#       ./do_gap_tcc mtx /my/stuff/GAP > myoutput.txt
+#
+#   To run using binary *.mtx format, with the files in /my/stuff/GAP
+#
+#       ./do_gap_tcc grb /my/stuff/GAP > myoutput.txt
+
+echo " "
+echo "======================================================================"
+echo "GAP benchmarks using LAGraph+GraphBLAS: Triangle Centrality"
+echo "======================================================================"
+
+if [ -z "$1" ]; then KIND="mtx" ; else KIND=$1 ; fi
+echo "Matrix input file format: " $KIND
+
+if [ -z "$2" ]; then GAP="../../../GAP" ; else GAP=$2 ; fi
+echo "GAP matrices located in:  " $GAP
+
+../../build/experimental/benchmark/tcc_demo $GAP/GAP-kron/GAP-kron.$KIND
+../../build/experimental/benchmark/tcc_demo $GAP/GAP-urand/GAP-urand.$KIND
+../../build/experimental/benchmark/tcc_demo $GAP/GAP-twitter/GAP-twitter.$KIND
+../../build/experimental/benchmark/tcc_demo $GAP/GAP-web/GAP-web.$KIND
+../../build/experimental/benchmark/tcc_demo $GAP/GAP-road/GAP-road.$KIND
+

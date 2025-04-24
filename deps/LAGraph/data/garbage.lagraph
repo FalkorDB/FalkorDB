@@ -1,0 +1,9 @@
+{
+    "LAGraph": [0,9,9],
+    "GraphBLAS": [ "SuiteSparse:GraphBLAS", [6,0,2] ],
+    "lagraph_test":
+    [
+        { "garbage": "A", "type": "single", "bytes": 268 },
+        null
+    ]
+}

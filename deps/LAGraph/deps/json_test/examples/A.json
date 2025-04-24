@@ -1,0 +1,29 @@
+{
+    "LAGraph": [0,9,9],
+    "GraphBLAS": [ "SuiteSparse:GraphBLAS", [6,0,3]],
+    "my/stuff":
+    [
+        { "GrB_Matrix": "A", "type": "double", "bytes": 1000 },
+        { "GrB_Matrix": "b", "type": "double", "bytes": 256 },
+        { "GrB_Matrix": "x", "type": "double", "bytes": 256 },
+        { "GrB_Matrix": "nodeweight", "type": "int32", "bytes": 256 },
+        { "text": "nodename", "compression": "none", "bytes": 256 },
+        { "text": "edgecolor", "compression": "lz4hc:9", "bytes": 25600 },
+        null
+    ],
+    "id": 42,
+    "title": "short descriptive title",
+    "date": "date of acquisition",
+    "author": "problem creator",
+    "editor": "problem editor ",
+    "kind": "problem kind",
+    "notes": 
+    [
+"--------------------------------------------------------------------------",
+"notes for a matrix at sparse.tamu.edu ------------------------------------",
+"The id, title, date, author, editor, kind, and notes are not yet created",
+"by LAGraph.  This format is for a future copy of all content of",
+"sparse.tamu.edu in the GrB serialized format.",
+"--------------------------------------------------------------------------"
+    ]
+}

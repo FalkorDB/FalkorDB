@@ -1,0 +1,17 @@
+# LAGraph, Copyright (c) 2019-2023, LAGraph Contributors. All Rights Reserved.
+# SPDX-License-Identifier: BSD-2-Clause
+
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+libdir=@libdir@
+includedir=@includedir@
+
+Name: LAGraph
+URL: https://github.com/GraphBLAS/LAGraph
+Description: Library plus test harness for collecting algorithms that use GraphBLAS
+Version: @LAGraph_VERSION_MAJOR@.@LAGraph_VERSION_MINOR@.@LAGraph_VERSION_SUB@
+Requires.private: GraphBLAS
+Libs: -L${libdir} -l@SUITESPARSE_LIB_BASE_NAME@
+Libs.private: @LAGRAPH_STATIC_LIBS@
+Cflags: -I${includedir} -DLG_DLL
+Cflags.private: -ULG_DLL

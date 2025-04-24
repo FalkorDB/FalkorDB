@@ -1,0 +1,31 @@
+File: Contributors.txt
+
+See ContributionInstructions.txt for information on how you can Contribute to
+this project.
+
+Contributors (in alphabetical order):
+
+    Janos B. Antal,    Budapest University of Technology and Economics, Hungary
+    Mohsen Aznaveh,    Texas A&M University
+    David A. Bader     New Jersey Institute of Technology
+    Aydin Buluc,       Lawrence Berkeley National Lab
+    Jinhao Chen,       Texas A&M University
+    Tim Davis,         Texas A&M University
+    Florentin Dorre,   Technische Univeritat Dresden, Neo4j
+    Marton Elekes,     Budapest University of Technology and Economics, Hungary
+    Balint Hegyi,      Budapest University of Technology and Economics, Hungary
+    Tanner Hoke,       Texas A&M University
+    James Kitchen,     Anaconda
+    Scott Kolodziej,   Texas A&M University
+    Pranav Konduri,    Texas A&M University
+    Roi Lipman,        Redis Labs
+    Tze Meng Low,      Carnegie Mellon University
+    Tim Mattson,       Intel
+    Scott McMillan,    Carnegie Mellon University
+    Markus Muetzel,
+    Michel Pelletier,  Graphegon
+    Gabor Szarnyas,    CWI Amsterdam, The Netherlands
+    Erik Welch,        Anaconda, NVIDIA
+    Carl Yang,         University of California at Davis, Waymo
+    Yongzhe Zhang,     SOKENDAI, Japan
+
