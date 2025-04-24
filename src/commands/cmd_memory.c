@@ -29,11 +29,18 @@ static size_t _EstimateEdgeAttributeMemory
 	for(RelationID r = 0; r < n; r++) {
 		Edge edge;
 		GrB_Index id;
+		GrB_Info info;
+		Delta_Matrix R;
 		Delta_MatrixTupleIter it;
 
 		// attach iterator to the current relation matrix
-		Delta_Matrix R = Graph_GetRelationMatrix(g, r, false);
-		Delta_MatrixTupleIter_attach(&it, R);
+		R = Graph_GetRelationMatrix(g, r, false);
+
+		info = Delta_MatrixTupleIter_attach(&it, R);
+		ASSERT(info == GrB_SUCCESS);
+
+		info = Delta_MatrixTupleIter_iterate_range(&it, 0, UINT64_MAX);
+		ASSERT(info == GrB_SUCCESS);
 
 		// iterate over relation matrix, limit #iterations to simple_size
 		while(Delta_MatrixTupleIter_next_BOOL(&it, &id, NULL, NULL)
@@ -45,6 +52,7 @@ static size_t _EstimateEdgeAttributeMemory
 			edge_memory_usage += AttributeSet_memoryUsage(set);
 			edges_sample_size--;
 		}
+		Delta_MatrixTupleIter_detach(&it);
 
 		// update number of sampled edges
 		n_sampled_edges += sample_size - edges_sample_size;
@@ -95,11 +103,17 @@ static size_t _EstimateNodeAttributeMemory
 	for(LabelID l = 0; l < n; l++) {
 		Node node;
 		GrB_Index id;
+		GrB_Info info;
+		Delta_Matrix L;
 		Delta_MatrixTupleIter it;
 
 		// attach iterator to the current label matrix
-		Delta_Matrix L = Graph_GetLabelMatrix(g, l);
-		Delta_MatrixTupleIter_attach(&it, L);
+		L = Graph_GetLabelMatrix(g, l);
+		info = Delta_MatrixTupleIter_attach(&it, L);
+		ASSERT(info == GrB_SUCCESS);
+
+		info = Delta_MatrixTupleIter_iterate_range(&it, 0, UINT64_MAX);
+		ASSERT(info == GrB_SUCCESS);
 
 		// iterate over label matrix, limit #iterations to simple_size
 		while(Delta_MatrixTupleIter_next_BOOL(&it, &id, NULL, NULL)
@@ -111,6 +125,7 @@ static size_t _EstimateNodeAttributeMemory
 			node_memory_usage += AttributeSet_memoryUsage(set);
 			nodes_sample_size--;
 		}
+		Delta_MatrixTupleIter_detach(&it);
 
 		// update number of sampled nodes
 		n_sampled_nodes += sample_size - nodes_sample_size;
