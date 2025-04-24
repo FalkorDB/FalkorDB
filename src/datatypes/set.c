@@ -7,17 +7,8 @@
 #include "set.h"
 #include "../util/rmalloc.h"
 
-static uint64_t _id_hash
-(
-	const void *item,
-	uint64_t seed0,
-	uint64_t seed1
-) {
-	return *(uint64_t *)item;
-}
-
 set *Set_New(void) {
-	return hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(uint64_t), 0, 0, 0, _id_hash, NULL, NULL, NULL);
+	return hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
 }
 
 bool Set_Contains
@@ -26,7 +17,7 @@ bool Set_Contains
 	SIValue v
 ) {
 	unsigned long long const hash = SIValue_HashCode(v);
-	return hashmap_get(s, (void*)&hash) != NULL;
+	return hashmap_get_with_hash(s, NULL, hash) != NULL;
 }
 
 // adds v to set
@@ -36,7 +27,7 @@ bool Set_Add
 	SIValue v
 ) {
 	unsigned long long const hash = SIValue_HashCode(v);
-	return hashmap_set(s, (void*)&hash) == NULL;
+	return hashmap_set_with_hash(s, NULL, hash) == NULL;
 }
 
 // removes v from set
@@ -46,7 +37,7 @@ void Set_Remove
 	SIValue v
 ) {
 	unsigned long long const hash = SIValue_HashCode(v);
-	hashmap_delete(s, (void*)&hash);
+	hashmap_delete_with_hash(s, NULL, hash);
 }
 
 // Return number of elements in set
