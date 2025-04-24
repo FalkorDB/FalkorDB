@@ -9,10 +9,11 @@
 #include "op.h"
 #include "../../util/dict.h"
 #include "../execution_plan.h"
+#include "util/hashmap.h"
 
 typedef struct {
 	OpBase op;
-	dict *found;
+	struct hashmap *found;
 	rax *mapping;          // record mapping
 	uint *offsets;         // offsets to expression values
 	const char **aliases;  // expression aliases to distinct by

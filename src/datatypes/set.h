@@ -10,9 +10,9 @@
 
 #include <stddef.h>
 #include "../value.h"
-#include "../util/dict.h"
+#include "../util/hashmap.h"
 
-typedef dict set;
+typedef struct hashmap set;
 
 // create a new set
 set *Set_New(void);
