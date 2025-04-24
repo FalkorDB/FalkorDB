@@ -138,6 +138,29 @@ FT_FilterNode *FilterTree_CreateConditionFilter
 	return filterNode;
 }
 
+// returns type of filter node
+FT_FilterNodeType FilterTree_type
+(
+	const FT_FilterNode *node  // filter tree node
+) {
+	ASSERT(node != NULL);
+
+	return node->t;
+}
+
+// return filtered expression
+// NULL is returned if filter tree isn't of type FT_N_EXP
+AR_ExpNode *FilterTree_getExpression
+(
+	const FT_FilterNode *node  // filter tree node
+) {
+	if(node->t != FT_N_EXP) {
+		return NULL;
+	}
+
+	return node->exp.exp;
+}
+
 void _FilterTree_SubTrees
 (
 	const FT_FilterNode *root,
