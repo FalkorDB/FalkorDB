@@ -11,6 +11,121 @@
 
 extern RedisModuleType *GraphContextRedisModuleType;
 
+// estimate edges attribute-set memory consumption
+static size_t _EstimateEdgeAttributeMemory
+(
+	const GraphContext *gc,  // graph context
+	const Graph *g,          // graph
+	uint samples             // #samples per relationship type to collect
+) {
+	int64_t n_edges           = Graph_EdgeCount(g);     // number of edges
+	int64_t sample_size       = MIN(n_edges, samples);  // sample size
+	int64_t edges_sample_size = sample_size;            // edges sample size
+	int64_t n_sampled_edges   = 0;                      // #edges sampled
+	size_t edge_memory_usage  = 0;                      // sum memory
+
+	// number of relationship-types
+	unsigned short n = GraphContext_SchemaCount(gc, SCHEMA_EDGE);
+	for(RelationID r = 0; r < n; r++) {
+		Edge edge;
+		GrB_Index id;
+		Delta_MatrixTupleIter it;
+
+		// attach iterator to the current relation matrix
+		Delta_Matrix R = Graph_GetRelationMatrix(g, r, false);
+		Delta_MatrixTupleIter_attach(&it, R);
+
+		// iterate over relation matrix, limit #iterations to simple_size
+		while(Delta_MatrixTupleIter_next_BOOL(&it, &id, NULL, NULL)
+				== GrB_SUCCESS && edges_sample_size > 0) {
+			// compute the memory consumption of the current edge
+			Graph_GetEdge(g, id, &edge);
+			AttributeSet set = GraphEntity_GetAttributes((GraphEntity*)&edge);
+
+			edge_memory_usage += AttributeSet_memoryUsage(set);
+			edges_sample_size--;
+		}
+
+		// update number of sampled edges
+		n_sampled_edges += sample_size - edges_sample_size;
+
+		// reset sample size
+		edges_sample_size = sample_size;
+	}
+
+	// compute average edge attribute-set memory consumption
+	n_sampled_edges = (n_sampled_edges == 0) ? 1 : n_sampled_edges;
+
+	// return estimated edge attribute set size
+	return (edge_memory_usage / n_sampled_edges) * n_edges;
+}
+
+// estimate nodes attribute-set memory consumption
+static size_t _EstimateNodeAttributeMemory
+(
+	const GraphContext *gc,  // graph context
+	const Graph *g,          // graph
+	uint samples             // #samples per relationship type to collect
+) {
+	// compute average node attribute memory consumption
+	int64_t n_nodes           = Graph_NodeCount(g);     // number of nodes
+	int64_t sample_size       = MIN(n_nodes, samples);  // sample size
+	int64_t nodes_sample_size = sample_size;            // nodes sample size
+	int64_t n_sampled_nodes   = 0;                      // #nodes sampled
+	size_t  node_memory_usage = 0;                      // node memory usage
+
+	// in case there are unlabeled nodes
+	// compute memory consumption of a random set of nodes
+	for(int i = 0; i < nodes_sample_size; i++) {
+		// pick a random node
+		Node node;
+		NodeID id = rand() % n_nodes;
+		Graph_GetNode(g, id, &node);
+
+		// compute the memory consumption of the current node
+		AttributeSet set  = GraphEntity_GetAttributes((GraphEntity*)&node);
+		node_memory_usage += AttributeSet_memoryUsage(set);
+	}
+
+	// update number of nodes sampled
+	n_sampled_nodes += nodes_sample_size;
+
+	// sample each label
+	unsigned short n = GraphContext_SchemaCount(gc, SCHEMA_NODE);
+	for(LabelID l = 0; l < n; l++) {
+		Node node;
+		GrB_Index id;
+		Delta_MatrixTupleIter it;
+
+		// attach iterator to the current label matrix
+		Delta_Matrix L = Graph_GetLabelMatrix(g, l);
+		Delta_MatrixTupleIter_attach(&it, L);
+
+		// iterate over label matrix, limit #iterations to simple_size
+		while(Delta_MatrixTupleIter_next_BOOL(&it, &id, NULL, NULL)
+				== GrB_SUCCESS && nodes_sample_size > 0) {
+			// compute the memory consumption of the current node
+			Graph_GetNode(g, id, &node);
+			AttributeSet set  = GraphEntity_GetAttributes((GraphEntity*)&node);
+
+			node_memory_usage += AttributeSet_memoryUsage(set);
+			nodes_sample_size--;
+		}
+
+		// update number of sampled nodes
+		n_sampled_nodes += sample_size - nodes_sample_size;
+
+		// reset sample size
+		nodes_sample_size = sample_size;
+	}
+
+	// compute average node attribute-set memory consumption
+	n_sampled_nodes = (n_sampled_nodes == 0) ? 1 : n_sampled_nodes;
+
+	// return estimated nodes attribute set size
+	return (node_memory_usage / n_sampled_nodes) * n_nodes;
+}
+
 // returns the total amount of memory consumed by a graph
 static size_t _estimate_memory_consumption
 (
@@ -50,49 +165,14 @@ static size_t _estimate_memory_consumption
 			node_storage_sz_mb, edge_storage_sz_mb);
 
 	//--------------------------------------------------------------------------
-	// pick #samples random graph entities and compute their memory consumption
+	// estimate nodes & edges attribute-set memory consumption
 	//--------------------------------------------------------------------------
 
-	// node random set size = 66% of the entire sample size
-	// assuming nodes have more attributes than edges
-	uint64_t n_nodes          = Graph_NodeCount(g);
-	int      sample_size      = MIN(n_nodes, 0.6 * samples);
-	size_t   set_memory_usage = 0;
+	// add estimated nodes attribute set size
+	*node_storage_sz_mb += _EstimateNodeAttributeMemory(gc, g, samples);
 
-	// compute memory consumption of a random set of nodes
-	for(int i = 0; i < sample_size; i++) {
-		// pick a random node
-		Node node;
-		NodeID id = rand() % n_nodes;
-		Graph_GetNode(g, id, &node);
-
-		AttributeSet set = GraphEntity_GetAttributes((GraphEntity*)&node);
-		set_memory_usage += AttributeSet_memoryUsage(set);
-	}
-	
-	// compute average memory consumption of a node
-	set_memory_usage /= MAX(1, sample_size);
-	*node_storage_sz_mb += set_memory_usage * n_nodes;
-
-	// random set of edges
-	set_memory_usage = 0;
-	uint64_t n_edges = Graph_EdgeCount(g);
-
-	// edge random set size = 33% of the sample size
-	sample_size = MIN(0.3 * samples, n_edges);
-
-	for(int i = 0; i < sample_size; i++) {
-		Edge edge;
-		EdgeID id = rand() % n_edges;
-		Graph_GetEdge(g, id, &edge);
-
-		AttributeSet set = GraphEntity_GetAttributes((GraphEntity*)&edge);
-		set_memory_usage += AttributeSet_memoryUsage(set);
-	}
-
-	// compute average memory consumption of a node
-	set_memory_usage /= MAX(1, sample_size);
-	*edge_storage_sz_mb += set_memory_usage * n_edges;
+	// add estimated edges attribute set size
+	*edge_storage_sz_mb += _EstimateEdgeAttributeMemory(gc, g, samples);
 
 	//--------------------------------------------------------------------------
 	// collect indices memory usage
