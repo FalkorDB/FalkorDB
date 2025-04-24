@@ -41,8 +41,8 @@ void IndexField_Init
 	AttributeID id,      // attribute ID
 	IndexFieldType type  // field type
 ) {
-	ASSERT(name     != NULL);
-	ASSERT(field    != NULL);
+	ASSERT(name  != NULL);
+	ASSERT(field != NULL);
 
 	// clear field
 	memset(field, 0, sizeof(IndexField));
@@ -63,13 +63,25 @@ void IndexField_Init
 	if(type & INDEX_FLD_FULLTEXT) {
 		field->fulltext_name = field->name;
 	}
+
 	if(type & INDEX_FLD_RANGE) {
-		field->range_name = rm_malloc(strlen(name)+7);
-		sprintf(field->range_name, "range:%s", name);
+		// create all 3 fields associated with a range field
+
+		// exact match field, e.g. n.v = 4
+		// 'range:' + field name
+		asprintf(&field->range_name, "range:%s", name);
+
+		// strign multi-value field, e.g. 'x' in n.v
+		// 'range:' + field name + ':string:arr'
+		asprintf(&field->range_string_arr_name, "%s:string:arr", field->range_name);
+
+		// numeric multi-value field, e.g. 5 in n.v
+		// 'range:' + field name + ':numeric:arr'
+		asprintf(&field->range_numeric_arr_name, "%s:numeric:arr", field->range_name);
 	}
+
 	if(type & INDEX_FLD_VECTOR) {
-		field->vector_name = rm_malloc(strlen(name)+8);
-		sprintf(field->vector_name, "vector:%s", name);
+		asprintf(&field->vector_name, "vector:%s", name);
 	}
 }
 
@@ -170,11 +182,19 @@ void IndexField_Clone
 	if(src->type & INDEX_FLD_FULLTEXT) {
 		dest->fulltext_name = dest->name;
 	}
+
 	if(src->type & INDEX_FLD_RANGE) {
-		dest->range_name = rm_strdup(src->range_name);
+		ASSERT(src->range_name             != NULL);
+		ASSERT(src->range_string_arr_name  != NULL);
+		ASSERT(src->range_numeric_arr_name != NULL);
+
+		dest->range_name             = strdup(src->range_name);
+		dest->range_string_arr_name  = strdup(src->range_string_arr_name);
+		dest->range_numeric_arr_name = strdup(src->range_numeric_arr_name);
 	}
+
 	if(src->type & INDEX_FLD_VECTOR) {
-		dest->vector_name = rm_strdup(src->vector_name);
+		dest->vector_name = strdup(src->vector_name);
 	}
 }
 
@@ -223,8 +243,16 @@ void IndexField_RemoveType
 
 	// remove RANGE type
 	if(t & INDEX_FLD_RANGE) {
-		rm_free(f->range_name);
+		// free all 3 range fields
+
+		free(f->range_name);
 		f->range_name = NULL;
+
+		free(f->range_string_arr_name);
+		f->range_string_arr_name = NULL;
+
+		free(f->range_numeric_arr_name);
+		f->range_numeric_arr_name = NULL;
 	}
 
 	// remove FULLTEXT type
@@ -235,7 +263,7 @@ void IndexField_RemoveType
 
 	// remove VECTOR type
 	if(t & INDEX_FLD_VECTOR) {
-		rm_free(f->vector_name);
+		free(f->vector_name);
 		f->vector_name = NULL;
 		_ResetVectorOptions(f);
 	}
@@ -373,15 +401,17 @@ uint32_t IndexField_OptionsGetDimension
 // free index field
 void IndexField_Free
 (
-	IndexField *field
+	IndexField *f
 ) {
-	ASSERT(field != NULL);
+	ASSERT(f != NULL);
 
-	rm_free(field->name);
-	rm_free(field->options.phonetic);
+	rm_free(f->name);
+	rm_free(f->options.phonetic);
 
 	// free type specific field names
-	if(field->range_name  != NULL) rm_free(field->range_name);
-	if(field->vector_name != NULL) rm_free(field->vector_name);
+	if(f->range_name             != NULL) free(f->range_name);
+	if(f->vector_name            != NULL) free(f->vector_name);
+	if(f->range_string_arr_name  != NULL) free(f->range_string_arr_name);
+	if(f->range_numeric_arr_name != NULL) free(f->range_numeric_arr_name);
 }
 
