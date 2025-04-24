@@ -194,7 +194,7 @@ void IndexField_Clone
 	}
 
 	if(src->type & INDEX_FLD_VECTOR) {
-		dest->vector_name = rm_strdup(src->vector_name);
+		dest->vector_name = strdup(src->vector_name);
 	}
 }
 

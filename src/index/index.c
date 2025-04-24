@@ -103,7 +103,7 @@ static void _Index_MergeFields
 		a->range_numeric_arr_name = strdup(b->range_numeric_arr_name);
 	} else if(b->type & INDEX_FLD_VECTOR) {
 		a->hnsw_options.dimension = b->hnsw_options.dimension;
-		a->vector_name = rm_strdup(b->vector_name);
+		a->vector_name = strdup(b->vector_name);
 	} else {
 		assert(false && "unexpected field type");
 	}
@@ -557,7 +557,7 @@ Index Index_Clone
 	//--------------------------------------------------------------------------
 
 	int n = array_len(idx->fields);
-	clone->fields = array_new(IndexField, 1);
+	clone->fields = array_new(IndexField, n);
 	for(int i = 0; i < n; i++) {
 		IndexField _f;
 		IndexField *f = idx->fields + i;
