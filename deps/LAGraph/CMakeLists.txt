@@ -143,12 +143,13 @@ else ( )
     # or
     #     GRAPHBLAS_ROOT=<path> cmake ..
     # or uncomment the next line:
-    # set ( ENV{GRAPHBLAS_ROOT} ${PROJECT_SOURCE_DIR}/../GraphBLAS )
+	set ( ENV{GRAPHBLAS_ROOT} ${PROJECT_SOURCE_DIR}/../GraphBLAS )
+	set ( ENV{GraphBLAS_ROOT} ${CMAKE_BINARY_DIR}/../GraphBLAS )
 
     # The ../GraphBLAS folder is considered by default, if it exists.
 
-#   message ( STATUS "GraphBLAS_ROOT: ${GraphBLAS_ROOT} $ENV{GraphBLAS_ROOT}" )
-#   message ( STATUS "GRAPHBLAS_ROOT: ${GRAPHBLAS_ROOT} $ENV{GRAPHBLAS_ROOT}" )
+   message ( STATUS "GraphBLAS_ROOT: ${GraphBLAS_ROOT} $ENV{GraphBLAS_ROOT}" )
+   message ( STATUS "GRAPHBLAS_ROOT: ${GRAPHBLAS_ROOT} $ENV{GRAPHBLAS_ROOT}" )
 
     # No package version is explicitly stated here; an arbitrary GraphBLAS
     # library can have any version number.  For SuiteSparse:GraphBLAS, LAGraph

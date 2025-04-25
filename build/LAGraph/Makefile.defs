@@ -1,2 +1,2 @@
 
-export LAGRAPH=$(LAGRAPH_BINDIR)/liblagraph.a
+export LAGRAPH=$(LAGRAPH_BINDIR)/src/liblagraph.a

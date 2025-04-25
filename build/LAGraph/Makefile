@@ -27,7 +27,7 @@ CMAKE_TARGETS=LAGraph_static
 
 BINDIR=$(BINROOT)/LAGraph
 
-TARGET=$(BINDIR)/liblagraph.a
+TARGET=$(BINDIR)/src/liblagraph.a
 
 #----------------------------------------------------------------------------------------------
 

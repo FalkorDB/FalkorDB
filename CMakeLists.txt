@@ -18,8 +18,8 @@ file(GLOB_RECURSE SOURCES "src/*.c")
 add_library(falkordb SHARED ${SOURCES})
 
 include_directories(
-	${root}/src
 	${root}
+	${root}/src
 	${root}/deps
 	${root}/deps/rax
 	${root}/deps/xxHash
