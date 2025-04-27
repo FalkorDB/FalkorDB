@@ -38,10 +38,11 @@ void Proc_Register() {
 	_procRegister("db.relationshipTypes", Proc_RelationsCtx);
 
 	// register graph algorithms
-	_procRegister("algo.BFS", Proc_BFS_Ctx);
+	_procRegister("algo.BFS",      Proc_BFS_Ctx);
+	_procRegister("algo.WCC",      Proc_WCC_Ctx);
 	_procRegister("algo.pageRank", Proc_PagerankCtx);
-	_procRegister("algo.SPpaths", Proc_SPpathCtx);
-	_procRegister("algo.SSpaths", Proc_SSpathCtx);
+	_procRegister("algo.SPpaths",  Proc_SPpathCtx);
+	_procRegister("algo.SSpaths",  Proc_SSpathCtx);
 
 	// register FullText Search generator
 	_procRegister("db.idx.fulltext.drop", Proc_FulltextDropIdxGen);
