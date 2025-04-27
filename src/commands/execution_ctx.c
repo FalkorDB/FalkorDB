@@ -130,9 +130,10 @@ ExecutionCtx *ExecutionCtx_FromQuery
 		return NULL;
 	}
 
-	// update query context with the query without params
+	// update query context with the query & params
 	// (here the QueryInfo is created as well, starting the stage timer)
 	QueryCtx *ctx = QueryCtx_GetQueryCtx();
+	ctx->query_data.parsed_params   = params_parse_result;
 	ctx->query_data.query_no_params = q_str;
 
 	// get cache
@@ -146,8 +147,7 @@ ExecutionCtx *ExecutionCtx_FromQuery
 	//--------------------------------------------------------------------------
 
 	if(ret != NULL) {
-		parse_result_free(params_parse_result);  // free parsed params
-		ret->cached = true;                      // mark cached execution
+		ret->cached = true;  // mark cached execution
 		return ret;
 	}
 
@@ -160,8 +160,6 @@ ExecutionCtx *ExecutionCtx_FromQuery
 
 	// parser failed
 	if(ast == NULL) {
-		parse_result_free(params_parse_result);  // free parsed params
-
 		// if no error has been set, emit one now
 		if(!ErrorCtx_EncounteredError()) {
 			ErrorCtx_SetError(EMSG_COULD_NOT_PARSE_QUERY);
@@ -169,10 +167,8 @@ ExecutionCtx *ExecutionCtx_FromQuery
 		return NULL;
 	}
 
-	// associate parameters with AST
-	AST_SetParamsParseResult(ast, params_parse_result);
-
 	ExecutionType exec_type = _GetExecutionTypeFromAST(ast);
+
 	// in case of valid query
 	// create execution plan, and cache it and the AST
 	if(exec_type == EXECUTION_TYPE_QUERY) {

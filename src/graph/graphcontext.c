@@ -17,8 +17,8 @@
 #include "../serializers/graphcontext_type.h"
 #include "../commands/execution_ctx.h"
 
-#include <sys/param.h>
 #include <pthread.h>
+#include <sys/param.h>
 
 // telemetry stream format
 #define TELEMETRY_FORMAT "telemetry{%s}"
@@ -176,7 +176,7 @@ GraphContext *GraphContext_Retrieve
 	// check if we're still replicating, if so don't allow access to the graph
 	if(aux_field_counter > 0) {
 		// the whole module is currently replicating, emit an error
-		RedisModule_ReplyWithError(ctx, "ERR RedisGraph module is currently replicating");
+		RedisModule_ReplyWithError(ctx, "ERR FalkorDB module is currently replicating");
 		return NULL;
 	}
 
@@ -205,6 +205,16 @@ GraphContext *GraphContext_Retrieve
 	if(gc) GraphContext_IncreaseRefCount(gc);
 
 	return gc;
+}
+
+// decrease graph context reference count
+// graph context will be free once reference count reaches 0
+void GraphContext_Release
+(
+	GraphContext *gc // graph context to release
+) {
+	ASSERT(gc != NULL);
+	GraphContext_DecreaseRefCount(gc);
 }
 
 void GraphContext_MarkWriter(RedisModuleCtx *ctx, GraphContext *gc) {
@@ -868,8 +878,11 @@ static void _DeleteTelemetryStream
 	RedisModule_CloseKey(key);
 }
 
-// Free all data associated with graph
-static void _GraphContext_Free(void *arg) {
+// free all data associated with graph
+static void _GraphContext_Free
+(
+	void *arg
+) {
 	GraphContext *gc = (GraphContext *)arg;
 	uint len;
 
@@ -885,7 +898,8 @@ static void _GraphContext_Free(void *arg) {
 
 	// Redis main thread is 0
 	RedisModuleCtx *ctx = NULL;
-	bool main_thread = ThreadPools_GetThreadID() == 0;
+	extern pthread_t MAIN_THREAD_ID;  // redis main thread ID
+	bool main_thread = (pthread_equal(pthread_self(), MAIN_THREAD_ID) != 0);
 	bool should_lock = !main_thread && RedisModule_GetThreadSafeContext != NULL;
 
 	if(should_lock) {

@@ -31,40 +31,43 @@
 
 // modifies filter tree such that the left hand side performs
 // attribute lookup on 'filtered_entity'
-static void _normalize_filter(const char *filtered_entity,
-		FT_FilterNode **filter) {
+static void _normalize_filter
+(
+	const char *filtered_entity,
+	FT_FilterNode **filter
+) {
 	FT_FilterNode *filter_tree = *filter;
 	bool swap = false;
 	rax *entities = NULL;
 
 	// normalize, left hand side should be variadic, right hand side const
 	switch(filter_tree->t) {
-	case FT_N_PRED:
-		entities = raxNew();
-		AR_ExpNode *rhs = (*filter)->pred.rhs;
-		AR_EXP_CollectEntities(rhs, entities);
-		swap = raxFind(entities, (unsigned char *)filtered_entity,
-				strlen(filtered_entity)) != raxNotFound;
-		raxFree(entities);
+		case FT_N_PRED:
+			entities = raxNew();
+			AR_ExpNode *rhs = (*filter)->pred.rhs;
+			AR_EXP_CollectEntities(rhs, entities);
+			swap = raxFind(entities, (unsigned char *)filtered_entity,
+					strlen(filtered_entity)) != raxNotFound;
+			raxFree(entities);
 
-		if(swap) {
-			AR_ExpNode *tmp = filter_tree->pred.rhs;
-			filter_tree->pred.rhs = filter_tree->pred.lhs;
-			filter_tree->pred.lhs = tmp;
-			filter_tree->pred.op = ArithmeticOp_ReverseOp(filter_tree->pred.op);
-		}
+			if(swap) {
+				AR_ExpNode *tmp = filter_tree->pred.rhs;
+				filter_tree->pred.rhs = filter_tree->pred.lhs;
+				filter_tree->pred.lhs = tmp;
+				filter_tree->pred.op = ArithmeticOp_ReverseOp(filter_tree->pred.op);
+			}
 
-		break;
-	case FT_N_COND:
-		_normalize_filter(filtered_entity, &filter_tree->cond.left);
-		_normalize_filter(filtered_entity, &filter_tree->cond.right);
-		break;
-	case FT_N_EXP:
-		// NOP, expression already normalized
-		break;
-	default:
-		ASSERT(false);
-		break;
+			break;
+		case FT_N_COND:
+			_normalize_filter(filtered_entity, &filter_tree->cond.left);
+			_normalize_filter(filtered_entity, &filter_tree->cond.right);
+			break;
+		case FT_N_EXP:
+			// NOP, expression already normalized
+			break;
+		default:
+			ASSERT(false);
+			break;
 	}
 }
 
@@ -72,21 +75,58 @@ static void _normalize_filter(const char *filtered_entity,
 // Validation functions
 //------------------------------------------------------------------------------
 
-static bool _validateInExpression(AR_ExpNode *exp) {
+// a valid IN filter is in one of two possible forms:
+// 1. n.v IN [1, 2, 3]
+// 2. 8 IN n.v
+static bool _applicableInExpression
+(
+	AR_ExpNode *exp
+) {
 	ASSERT(exp->op.child_count == 2);
 
-	AR_ExpNode *list = exp->op.children[1];
-	SIValue listValue = SI_NullVal();
-	AR_EXP_ReduceToScalar(list, true, &listValue);
-	if(SI_TYPE(listValue) != T_ARRAY) return false;
+	AR_ExpNode *lhs = AR_EXP_getChild(exp, 0);
+	AR_ExpNode *rhs = AR_EXP_getChild(exp, 1);
 
-	uint list_len = SIArray_Length(listValue);
-	for(uint i = 0; i < list_len; i++) {
-		SIValue v = SIArray_Get(listValue, i);
-		// Ignore everything other than number, strings and booleans.
-		if(!(SI_TYPE(v) & (SI_NUMERIC | T_STRING | T_BOOL))) return false;
+	//--------------------------------------------------------------------------
+	// checking for n.v IN [1, 2, 3]
+	//--------------------------------------------------------------------------
+
+	if(AR_EXP_IsAttribute(lhs, NULL)) {
+		SIValue list = SI_NullVal();
+		AR_EXP_ReduceToScalar(rhs, true, &list);
+
+
+		if(SI_TYPE(list) != T_ARRAY) {
+			return false;
+		}
+
+		// validate list elements, accepting only numeric, string and boolean
+		uint len = SIArray_Length(list);
+		for(uint i = 0; i < len; i++) {
+			SIValue v = SIArray_Get(list, i);
+			// ignore everything other than number, strings and booleans
+			if(!(SI_TYPE(v) & (SI_NUMERIC | T_STRING | T_BOOL))) return false;
+		}
+
+		return true;
 	}
-	return true;
+
+	//--------------------------------------------------------------------------
+	// checking for 8 IN n.v
+	//--------------------------------------------------------------------------
+
+	if(AR_EXP_IsAttribute(rhs, NULL)) {
+		SIValue v = SI_NullVal();
+
+		if(AR_EXP_ReduceToScalar(lhs, true, &v)) {
+			return(SI_TYPE(v) & (SI_NUMERIC | T_STRING | T_BOOL));
+		} else {
+			// runtime value, will be evaluated at runtime
+			return true;
+		}
+	}
+
+	return false;
 }
 
 // return true if filter can be resolved by an index query
@@ -105,7 +145,7 @@ static bool _applicable_predicate
 	AR_ExpNode  *rhs_exp = NULL;
 
 	if(isInFilter(filter)) {
-		return _validateInExpression(filter->exp.exp);
+		return _applicableInExpression(FilterTree_getExpression(filter));
 	}
 
 	if(isDistanceFilter(filter)) return true;
@@ -219,13 +259,13 @@ bool _applicableFilter
 	attr = FilterTree_CollectAttributes(filter_tree, filtered_entity);
 	uint filter_attribute_count = raxSize(attr);
 	
-	// No attributes to filter on
+	// no attributes to filter on
 	if(filter_attribute_count == 0) {
 		res = false;
 		goto cleanup;
 	}
 
-	// Filter refers to a greater number of attributes.
+	// filter refers to a greater number of attributes
 	if(filter_attribute_count > idx_fields_count) {
 		res = false;
 		goto cleanup;
@@ -241,7 +281,7 @@ bool _applicableFilter
 
 		if(raxFind(attr, (unsigned char *)field->name, strlen(field->name)) != raxNotFound) {
 			filter_attribute_count--;
-			// All filtered attributes are indexed.
+			// all filtered attributes are indexed
 			if(filter_attribute_count == 0) break;
 		}
 	}
@@ -588,7 +628,7 @@ void utilizeIndices
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	if(!GraphContext_HasIndices(gc)) return;
 
-	// indices are utilized in three sections:
+	// indices are utilized in two sections:
 	// 1. label scan followed by filter(s)
 	// 2. traversal followed by filter(s)
 

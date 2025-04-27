@@ -53,7 +53,10 @@ OpBase *NewIndexScanOp
 	return (OpBase *)op;
 }
 
-static OpResult IndexScanInit(OpBase *opBase) {
+static OpResult IndexScanInit
+(
+	OpBase *opBase
+) {
 	IndexScan *op = (IndexScan *)opBase;
 
 	if(opBase->childCount > 0) {
@@ -93,10 +96,13 @@ static inline bool _PassUnresolvedFilters(const IndexScan *op, Record r) {
 	return FilterTree_applyFilters(unresolved_filters, r) == FILTER_PASS;
 }
 
-static Record IndexScanConsumeFromChild(OpBase *opBase) {
-	IndexScan *op = (IndexScan *)opBase;
-	RSIndex *rsIdx = Index_RSIndex(op->idx);
+static Record IndexScanConsumeFromChild
+(
+	OpBase *opBase
+) {
 	const EntityID *nodeId = NULL;
+	IndexScan *op  = (IndexScan *)opBase;
+	RSIndex *rsIdx = Index_RSIndex(op->idx);
 
 pull_index:
 	//--------------------------------------------------------------------------
@@ -210,6 +216,7 @@ static Record IndexScanConsume(OpBase *opBase) {
 			!= NULL) {
 		// populate record with node
 		_UpdateRecord(op, r, *nodeId);
+
 		// apply unresolved filters
 		if(_PassUnresolvedFilters(op, r)) {
 			return r;
