@@ -17,27 +17,13 @@ static Record AggregateConsume(OpBase *opBase);
 static OpResult AggregateReset(OpBase *opBase);
 static OpBase *AggregateClone(const ExecutionPlan *plan, const OpBase *opBase);
 
-// fake hash function
-// hash of key is simply key
-static uint64_t _id_hash
-(
-	const void *key
-) {
-	return ((uint64_t)key);
-}
-
 // hashtable entry free callback
 static void freeCallback
 (
-	dict *d,
 	void *val
 ) {
-	Group_Free((Group*)val);
+	Group_Free(*(Group**)val);
 }
-
-// hashtable callbacks
-static dictType _dt = {_id_hash, NULL, NULL, NULL, NULL, freeCallback, NULL,
-	NULL, NULL, NULL};
 
 // migrate each expression projected by this operation to either
 // the array of keys or the array of aggregate functions as appropriate
@@ -128,20 +114,15 @@ static Group *_GetGroup
 	XXH64_hash_t hash = _ComputeGroupKey(keys, op, r);
 
 	// lookup group by hashed key
-	Group *g;
-	dictEntry *existing;
-	dictEntry *entry = HashTableAddRaw(op->groups, (void *)hash, &existing);
+	Group *g      = NULL;
+	Group **g_ptr = (Group **)hashmap_get_with_hash(op->groups, NULL, hash);
 
-	if(entry == NULL) {
-		// group exists
-		ASSERT(existing != NULL);
-
+	if(g_ptr != NULL) {
+		g = *g_ptr;
 		// free computed keys
 		for(uint i = 0; i < op->key_count; i++) {
 			SIValue_Free(keys[i]);
 		}
-
-		g = HashTableGetVal(existing);
 	} else {
 		// group does not exists, create it
 
@@ -163,7 +144,7 @@ static Group *_GetGroup
 
 		g = _CreateGroup(op, representative);
 
-		HashTableSetVal(op->groups, entry, g);
+		hashmap_set_with_hash(op->groups, &g, hash);
 	}
 
 	return g;
@@ -193,12 +174,12 @@ static Record _handoff
 (
 	OpAggregate *op
 ) {
-	dictEntry *entry = HashTableNext(op->group_iter);
-	if(entry == NULL) {
+	Group **g_ptr = NULL;
+	if(!hashmap_iter(op->groups, &op->group_iter, (void **)&g_ptr)) {
 		return NULL;
 	}
 
-	Group *g = (Group*)HashTableGetVal(entry);
+	Group *g = *g_ptr;
 	Record r = g->r;
 	g->r = NULL;
 
@@ -214,7 +195,7 @@ static Record _handoff
 
 	// free group
 	Group_Free(g);
-	HashTableSetVal(op->groups, entry, NULL);
+	*g_ptr = NULL;
 
 	return r;
 }
@@ -226,17 +207,13 @@ OpBase *NewAggregateOp
 ) {
 	OpAggregate *op = rm_malloc(sizeof(OpAggregate));
 
-	op->groups               = HashTableCreate(&_dt);
-	op->group_iter           = NULL;
-	op->r 				     = NULL;
+	op->groups     = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(Group *), 2048, 0, 0, NULL, NULL, freeCallback, NULL);
+	op->group_iter = -1;
+	op->r          = NULL;
 
 	OpBase_Init((OpBase *)op, OPType_AGGREGATE, "Aggregate", NULL,
 			AggregateConsume, AggregateReset, NULL, AggregateClone,
 			AggregateFree, false, plan);
-
-	// expand hashtable to 2048 slots
-	int res = HashTableExpand(op->groups, 2048);
-	ASSERT(res == DICT_OK);
 
 	// migrate each expression to the keys array or
 	// the aggregations array as appropriate
@@ -267,7 +244,7 @@ static Record AggregateConsume
 	OpBase *opBase
 ) {
 	OpAggregate *op = (OpAggregate *)opBase;
-	if(op->group_iter != NULL) {
+	if(op->group_iter != -1) {
 		return _handoff(op);
 	}
 
@@ -290,7 +267,7 @@ static Record AggregateConsume
 	// does aggregation contains keys?
 	// e.g.
 	// MATCH (n:N) WHERE n.noneExisting = 2 RETURN count(n)
-	if(HashTableElemCount(op->groups) == 0 && op->key_count == 0) {
+	if(hashmap_count(op->groups) == 0 && op->key_count == 0) {
 
 		// no data was processed and aggregation doesn't have a key
 		// in this case we want to return aggregation default value
@@ -312,7 +289,7 @@ static Record AggregateConsume
 	}
 
 	// create group iterator
-	op->group_iter = HashTableGetIterator(op->groups);
+	op->group_iter = 0;
 
 	return _handoff(op);
 }
@@ -323,20 +300,8 @@ static OpResult AggregateReset
 ) {
 	OpAggregate *op = (OpAggregate *)opBase;
 
-	if(op->group_iter != NULL) {
-		HashTableReleaseIterator(op->group_iter);
-		op->group_iter = NULL;
-	}
-
-	// re-create hashtable
-	unsigned long elem_count = HashTableElemCount(op->groups);
-	HashTableRelease(op->groups);
-
-	op->groups = HashTableCreate(&_dt);
-
-	// expand hashtable to previous element count
-	int res = HashTableExpand(op->groups, elem_count);
-	ASSERT(res == DICT_OK);
+	op->group_iter = -1;
+	hashmap_clear(op->groups, true);
 
 	return OP_OK;
 }
@@ -400,11 +365,6 @@ static void AggregateFree
 		return;
 	}
 
-	if(op->group_iter) {
-		HashTableReleaseIterator(op->group_iter);
-		op->group_iter = NULL;
-	}
-
 	if(op->key_exps) {
 		for(uint i = 0; i < op->key_count; i++) {
 			AR_EXP_Free(op->key_exps[i]);
@@ -422,7 +382,7 @@ static void AggregateFree
 	}
 
 	if(op->groups) {
-		HashTableRelease(op->groups);
+		hashmap_free(op->groups);
 		op->groups = NULL;
 	}
 
