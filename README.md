@@ -218,7 +218,7 @@ reply = g.query("CREATE (:person {name:'roi', age:33, gender:'male', status:'mar
 | [NFalkorDB][nfalkordb-url]  |  C# | Apache-2.0 | [FalkorDB][falkordb-url] | [![nfalkordb-stars]][nfalkordb-url] | [nuget][nfalkordb-package] | |
 
 
-## Additional Clients
+### Additional Clients
 
 | Project                                                   | Language   | License | Author                                      | Stars                                                             | Package | Comment    |
 | --------------------------------------------------------- | ---------- | ------- | ------------------------------------------- | ----------------------------------------------------------------- | ------- | ---------- |
