@@ -9,7 +9,7 @@
 #include "../func_desc.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
-#include "../../util/dict.h"
+#include "../../util/hashmap.h"
 #include "../../util/strutil.h"
 #include "../../errors/errors.h"
 #include "../../datatypes/array.h"
@@ -555,12 +555,12 @@ SIValue AR_INSERT(SIValue *argv, int argc, void *private_data) {
 	return array;
 }
 
-static dict *_list2dict
+static struct hashmap *_list2dict
 (
 	SIValue list
 ) {
 	uint32_t n   = SIArray_Length(list);
-	dict *values = HashTableCreate(&def_dt);
+	struct hashmap *values = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
 	for(uint i = 0; i < n; i++) {
 		SIValue val = SIArray_Get(list, i);
 		XXH64_state_t state;
@@ -571,8 +571,7 @@ static dict *_list2dict
 
 		// finalize the hash
 		XXH64_hash_t hash = XXH64_digest(&state);
-		dictEntry *existing;
-		dictEntry *entry = HashTableAddRaw(values, (void *)hash, &existing);
+		hashmap_set_with_hash(values, NULL, hash);
 	}
 
 	return values;
@@ -622,7 +621,7 @@ SIValue AR_INSERTLISTELEMENTS(SIValue *argv, int argc, void *private_data) {
 			SIArray_Append(&list, SIArray_Get(B, i));
 		}
 	} else {
-		dict *values = _list2dict(A);
+		struct hashmap *values = _list2dict(A);
 		// make sure there are no duplicates
 		for(uint i = 0; i < b_len; i++) {
 			SIValue val = SIArray_Get(B, i);
@@ -634,12 +633,12 @@ SIValue AR_INSERTLISTELEMENTS(SIValue *argv, int argc, void *private_data) {
 
 			// finalize the hash
 			XXH64_hash_t hash = XXH64_digest(&state);
-			if(HashTableFind(values, (void *)hash) == NULL) {
+			if(hashmap_get_with_hash(values, NULL, hash) == NULL) {
 				SIArray_Append(&list, val);
 			}
 		}
 
-		HashTableRelease(values);
+		hashmap_free(values);
 		if(!allow_dups) {
 			SIValue_Free(B);
 		}
@@ -666,7 +665,7 @@ SIValue AR_DEDUP(SIValue *argv, int argc, void *private_data) {
 	uint32_t n          = SIArray_Length(list);
 	SIValue  dedup_list = SI_Array(n);
 
-	dict *values = HashTableCreate(&def_dt);
+	struct hashmap *values = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
 	// check if value already exists in list
 	for(uint i = 0; i < n; i++) {
 		SIValue val = SIArray_Get(list, i);
@@ -679,14 +678,12 @@ SIValue AR_DEDUP(SIValue *argv, int argc, void *private_data) {
 
 		// finalize the hash
 		XXH64_hash_t hash = XXH64_digest(&state);
-		dictEntry *existing;
-		dictEntry *entry = HashTableAddRaw(values, (void *)hash, &existing);
-		if(existing == NULL) {
+		if(hashmap_set_with_hash(values, NULL, hash) == NULL) {
 			SIArray_Append(&dedup_list, val);
 		}
 	}
 
-	HashTableRelease(values);
+	hashmap_free(values);
 
 	return dedup_list;
 }
