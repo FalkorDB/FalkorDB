@@ -126,24 +126,25 @@ static void _buildForeachOp
 	uint *ref_count = rm_malloc(sizeof(uint));
 	*ref_count = 1;
 
-	AST *body_ast = rm_malloc(sizeof(AST));
+	AST *ast = rm_malloc(sizeof(AST));
 
-	body_ast->root                = new_root;
-	body_ast->free_root           = true;
-	body_ast->parse_result        = NULL;
-	body_ast->ref_count           = ref_count;
-	body_ast->params_parse_result = NULL;
-	body_ast->anot_ctx_collection = plan->ast_segment->anot_ctx_collection;
-	body_ast->referenced_entities = raxClone(plan->ast_segment->referenced_entities);
+	ast->root                = new_root;
+	ast->free_root           = true;
+	ast->parse_result        = NULL;
+	ast->ref_count           = ref_count;
+	ast->anot_ctx_collection = plan->ast_segment->anot_ctx_collection;
+	ast->referenced_entities = raxClone(plan->ast_segment->referenced_entities);
 
 	// create the Foreach op, and update (outer) plan root
 	OpBase *foreach = NewForeachOp(plan);
 	ExecutionPlan_UpdateRoot(plan, foreach);
 
 	ExecutionPlan *embedded_plan = ExecutionPlan_NewEmptyExecutionPlan();
-	embedded_plan->ast_segment = body_ast;
-	embedded_plan->record_map = raxClone(plan->record_map);
+	embedded_plan->ast_segment   = ast;
+	embedded_plan->record_map    = raxClone(plan->record_map);
+
 	const char **arguments = NULL;
+
 	if(plan->root) {
 		rax *bound_vars = raxNew();
 		ExecutionPlan_BoundVariables(foreach, bound_vars, plan);
@@ -180,7 +181,7 @@ static void _buildForeachOp
 
 	// build the execution-plan of the body of the clause
 	AST *orig_ast = QueryCtx_GetAST();
-	QueryCtx_SetAST(body_ast);
+	QueryCtx_SetAST(ast);
 	ExecutionPlan_PopulateExecutionPlan(embedded_plan);
 	QueryCtx_SetAST(orig_ast);
 

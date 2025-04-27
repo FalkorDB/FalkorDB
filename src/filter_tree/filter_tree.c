@@ -138,6 +138,29 @@ FT_FilterNode *FilterTree_CreateConditionFilter
 	return filterNode;
 }
 
+// returns type of filter node
+FT_FilterNodeType FilterTree_type
+(
+	const FT_FilterNode *node  // filter tree node
+) {
+	ASSERT(node != NULL);
+
+	return node->t;
+}
+
+// return filtered expression
+// NULL is returned if filter tree isn't of type FT_N_EXP
+AR_ExpNode *FilterTree_getExpression
+(
+	const FT_FilterNode *node  // filter tree node
+) {
+	if(node->t != FT_N_EXP) {
+		return NULL;
+	}
+
+	return node->exp.exp;
+}
+
 void _FilterTree_SubTrees
 (
 	const FT_FilterNode *root,
@@ -547,29 +570,35 @@ rax *FilterTree_CollectAttributes
 	return attributes;
 }
 
+// check if any of the filtered variable refers to a projection alias
 bool FilterTree_FiltersAlias
 (
-	const FT_FilterNode *root,
-	const cypher_astnode_t *ast
+	const FT_FilterNode *root,   // filter tree root
+	const cypher_astnode_t *ast  // AST
 ) {
 	// collect all filtered variables
 	rax *filtered_variables = FilterTree_CollectModified(root);
+
 	raxIterator it;
 	raxStart(&it, filtered_variables);
+
 	// iterate over all keys in the rax
-	raxSeek(&it, "^", NULL, 0);
 	bool alias_is_filtered = false;
+
+	raxSeek(&it, "^", NULL, 0);
 	while(raxNext(&it)) {
-		// build string on the stack to add null terminator
+		// build string on the stack and add null terminator
 		char variable[it.key_len + 1];
 		memcpy(variable, it.key, it.key_len);
 		variable[it.key_len] = 0;
+
 		// check if the filtered variable is an alias
 		if(AST_IdentifierIsAlias(ast, variable)) {
 			alias_is_filtered = true;
 			break;
 		}
 	}
+
 	raxStop(&it);
 	raxFree(filtered_variables);
 

@@ -108,6 +108,19 @@ FT_FilterNode *FilterTree_CreateConditionFilter
 	AST_Operator op
 );
 
+// returns type of filter node
+FT_FilterNodeType FilterTree_type
+(
+	const FT_FilterNode *node  // filter tree node
+);
+
+// return filtered expression
+// NULL is returned if filter tree isn't of type FT_N_EXP
+AR_ExpNode *FilterTree_getExpression
+(
+	const FT_FilterNode *node  // filter tree node
+);
+
 // runs val through the filter tree
 FT_Result FilterTree_applyFilters
 (
@@ -132,11 +145,11 @@ rax *FilterTree_CollectAttributes
 	const char *entity          // filtered entity
 );
 
-// check if any filtered variable is an alias
+// check if any of the filtered variable refers to a projection alias
 bool FilterTree_FiltersAlias
 (
-	const FT_FilterNode *root,
-	const cypher_astnode_t *ast
+	const FT_FilterNode *root,   // filter tree root
+	const cypher_astnode_t *ast  // AST
 );
 
 // checks to see if tree contains given operation

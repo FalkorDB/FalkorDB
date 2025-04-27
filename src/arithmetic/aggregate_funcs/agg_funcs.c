@@ -24,18 +24,18 @@ AR_FuncDesc *AR_AggFuncDescNew
 ) {
 	AR_FuncDesc *desc = rm_calloc(1, sizeof(AR_FuncDesc));
 
-	desc->name                    =  name;
-	desc->func                    =  func;
-	desc->types                   =  types;
-	desc->ret_type                =  ret_type;
-	desc->min_argc                =  min_argc;
-	desc->max_argc                =  max_argc;
-	desc->internal                =  false;
-	desc->aggregate               =  true;
-	desc->reducible               =  false;
-	desc->callbacks.free          =  free;
-	desc->callbacks.finalize      =  finalize;
-	desc->callbacks.private_data  =  private_data;
+	desc->name                   = name;
+	desc->func                   = func;
+	desc->types                  = types;
+	desc->ret_type               = ret_type;
+	desc->min_argc               = min_argc;
+	desc->max_argc               = max_argc;
+	desc->internal               = false;
+	desc->aggregate              = true;
+	desc->reducible              = false;
+	desc->callbacks.free         = free;
+	desc->callbacks.finalize     = finalize;
+	desc->callbacks.private_data = private_data;
 
 	return desc;
 }

@@ -8,9 +8,13 @@
 
 #include "graph/graphcontext.h"
 #include "commands/cmd_context.h"
+#include "string_pool/string_pool.h"
 
 // initialize global variables
 void Globals_Init(void);
+
+// get string pool
+StringPool Globals_Get_StringPool(void);
 
 // read global variable 'process_is_child'
 bool Globals_Get_ProcessIsChild(void);

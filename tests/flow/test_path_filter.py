@@ -241,3 +241,40 @@ class testPathFilter(FlowTestsBase):
         plan_2 = str(self.graph.explain(query))
         # The plan should be identical to the one constructed previously.
         self.env.assertEqual(plan_1, plan_2)
+
+    def test15_named_path_filter_position(self):
+        # make sure the named path filter are positioned correctly
+        # named paths are a bit different than ordinary aliases e.g. 'n'
+        # a named path 'p' is constructed from its individual components
+        # at projection time. this is why filters applied to named paths
+        # need to be positioned right below the projection operation
+        # forming the named path
+
+        # create graph
+        self.graph.query("CREATE (:A {v:1}), (:A {v:2})")
+
+        q = """MATCH p=(n)
+               WITH p
+               WHERE all(x in nodes(p) WHERE x.v=1)
+               RETURN count(1)"""
+
+        plan = self.graph.explain(q)
+
+        op_result = (plan.structured_plan)
+        self.env.assertEqual(op_result.name, 'Results')
+        self.env.assertEqual(len(op_result.children), 1)
+
+        op_aggregate = op_result.children[0]
+        self.env.assertEqual(op_aggregate.name, 'Aggregate')
+        self.env.assertEqual(len(op_aggregate.children), 1)
+
+        op_filter = op_aggregate.children[0]
+        self.env.assertEqual(op_filter.name, 'Filter')
+        self.env.assertEqual(len(op_filter.children), 1)
+
+        op_project = op_filter.children[0]
+        self.env.assertEqual(op_project.name, 'Project')
+        self.env.assertEqual(len(op_project.children), 1)
+
+        res = self.graph.query(q).result_set
+        self.env.assertEqual(res[0][0], 1)
