@@ -5,7 +5,7 @@
  */
 
 #include "../RG.h"
-#include "../util/dict.h"
+#include "../util/hashmap.h"
 #include "../query_ctx.h"
 #include "execution_plan_clone.h"
 #include "../util/rax_extensions.h"
@@ -41,18 +41,18 @@ static ExecutionPlan *_ClonePlanInternals
 static OpBase *_CloneOpTree
 (
 	OpBase *op,
-	dict* old_to_new
+	struct hashmap* old_to_new
 ) {
 	ExecutionPlan *plan_segment;
 
 	// see if op's plan had been cloned?
-	dictEntry *entry = HashTableFind(old_to_new, op->plan);
-	if(entry == NULL) {
+	ExecutionPlan **plan_segment_ptr = (ExecutionPlan **)hashmap_get_with_hash(old_to_new, NULL, (uint64_t)op->plan);
+	if(plan_segment_ptr == NULL) {
 		// clone segment
 		plan_segment = _ClonePlanInternals(op->plan);
-		HashTableAdd(old_to_new, (void *)op->plan, (void *)plan_segment);
+		hashmap_set_with_hash(old_to_new, (void *)&plan_segment, (uint64_t)op->plan);
 	} else {
-		plan_segment = (ExecutionPlan *)HashTableGetVal(entry);
+		plan_segment = *plan_segment_ptr;
 	}
 
 	// temporarily set the thread-local AST to be the one referenced by this
@@ -81,11 +81,11 @@ static ExecutionPlan *_ExecutionPlan_Clone
 	const ExecutionPlan *plan
 ) {
 	// create mapping from old exec-plans to the new ones
-	dict *old_to_new = HashTableCreate(&def_dt);
+	struct hashmap *old_to_new = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(void *), 0, 0, 0, NULL, NULL, NULL, NULL);
 
 	OpBase *root = _CloneOpTree(plan->root, old_to_new);
 
-	HashTableRelease(old_to_new);
+	hashmap_free(old_to_new);
 
 	// the "master" execution plan is the one constructed with the root op
 	ExecutionPlan *clone = (ExecutionPlan *)root->plan;

@@ -693,7 +693,7 @@ void ExecutionPlan_Free
 
 	// traverse the execution-plan graph (DAG -> no endless cycles), while
 	// collecting the different segments, and freeing the op tree
-	dict *plans = HashTableCreate(&def_dt);
+	struct hashmap *plans = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(void *), 0, 0, 0, NULL, NULL, NULL, NULL);
 	OpBase **visited = array_new(OpBase *, 1);
 	OpBase **to_visit = array_new(OpBase *, 1);
 
@@ -704,7 +704,7 @@ void ExecutionPlan_Free
 		op = array_pop(to_visit);
 
 		// add the plan this op is affiliated with
-		HashTableAdd(plans, (void *)op->plan, (void *)op->plan);
+		hashmap_set_with_hash(plans, (void *)&op->plan, (uint64_t)op->plan);
 
 		// add all direct children of op to to_visit
 		for(uint i = 0; i < op->childCount; i++) {
@@ -729,14 +729,14 @@ void ExecutionPlan_Free
 	// free internals of the plans
 	// -------------------------------------------------------------------------
 
-	dictEntry *entry;
 	ExecutionPlan *curr_plan;
-	dictIterator *it = HashTableGetIterator(plans);
-	while((entry = HashTableNext(it)) != NULL) {
-		curr_plan = (ExecutionPlan *)HashTableGetVal(entry);
+	ExecutionPlan **curr_plan_ptr;
+	
+	size_t i = 0;
+	while(hashmap_iter(plans, &i, (void **)&curr_plan_ptr)) {
+		curr_plan = *curr_plan_ptr;
 		_ExecutionPlan_FreeInternals(curr_plan);
 	}
 
-	HashTableReleaseIterator(it);
-	HashTableRelease(plans);
+	hashmap_free(plans);
 }
