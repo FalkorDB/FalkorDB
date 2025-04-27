@@ -30,6 +30,7 @@ include_directories(
 	${root}/deps/libcurl/include/curl
 	${root}/deps/libcypher-parser/lib/src
 	/opt/homebrew/Cellar/rocksdb/9.11.1/include
+	/opt/homebrew/Cellar/rocksdb/10.1.3/include
 	/home/linuxbrew/.linuxbrew/Cellar/rocksdb/9.11.1/include
 	/home/avi/repos/rocksdb/include
 	/rocksdb/include
