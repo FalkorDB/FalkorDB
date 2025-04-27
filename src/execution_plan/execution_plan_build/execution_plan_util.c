@@ -318,10 +318,10 @@ void ExecutionPlan_BoundVariables
 	ASSERT(op        != NULL);
 	ASSERT(modifiers != NULL);
 
-	// TODO: switch from rax to dict,
+	// TODO: switch from rax to hashmap,
 	// TODO: see if we can simply return op's awareness?
+	size_t i   = 0;
 	char **key = NULL;
-	size_t i = 0;
 	while(hashmap_iter(op->awareness, &i, (void **)&key)) {
 		raxInsert(modifiers, (unsigned char *)*key, strlen(*key), (void *)*key,
 				NULL);

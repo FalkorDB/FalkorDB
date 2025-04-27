@@ -44,12 +44,17 @@ OpBase *NewUpdateOp
 	rax *update_exps
 ) {
 	OpUpdate *op = rm_calloc(1, sizeof(OpUpdate));
-	op->gc                = QueryCtx_GetGraphCtx();
-	op->rec_idx           = 0;
-	op->records           = array_new(Record, 64);
-	op->update_ctxs       = update_exps;
-	op->node_updates      = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(void *), 0, 0, 0, NULL, NULL, freeCallback, NULL);
-	op->edge_updates      = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(void *), 0, 0, 0, NULL, NULL, freeCallback, NULL);
+
+	op->gc          = QueryCtx_GetGraphCtx();
+	op->rec_idx     = 0;
+	op->records     = array_new(Record, 64);
+	op->update_ctxs = update_exps;
+
+	op->node_updates = hashmap_new_with_redis_allocator(sizeof(void *), 0, 0, 0,
+			NULL, NULL, freeCallback, NULL);
+
+	op->edge_updates = hashmap_new_with_redis_allocator(sizeof(void *), 0, 0, 0,
+			NULL, NULL, freeCallback, NULL);
 
 	// set our op operations
 	OpBase_Init((OpBase *)op, OPType_UPDATE, "Update", NULL, UpdateConsume,

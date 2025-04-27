@@ -693,8 +693,10 @@ void ExecutionPlan_Free
 
 	// traverse the execution-plan graph (DAG -> no endless cycles), while
 	// collecting the different segments, and freeing the op tree
-	struct hashmap *plans = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(void *), 0, 0, 0, NULL, NULL, NULL, NULL);
-	OpBase **visited = array_new(OpBase *, 1);
+	hashmap plans = hashmap_new_with_redis_allocator(sizeof(void *), 0, 0, 0,
+			NULL, NULL, NULL, NULL);
+
+	OpBase **visited  = array_new(OpBase *, 1);
 	OpBase **to_visit = array_new(OpBase *, 1);
 
 	OpBase *op = plan->root;

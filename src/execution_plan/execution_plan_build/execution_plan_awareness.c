@@ -25,7 +25,7 @@ static void inheritAwareness
 
 		size_t i = 0;
 		char **key = NULL;
-		struct hashmap *awareness = child->awareness;
+		hashmap awareness = child->awareness;
 
 		while(hashmap_iter(awareness, &i, (void **)&key)) {
 			hashmap_set(op->awareness, (void*)key);
@@ -70,10 +70,10 @@ void ExecutionPlanAwareness_PropagateAwareness
 		bool short_circuit = true;
 
 		size_t i = 0;
-		char **key = NULL;
-		while(hashmap_iter(op->awareness, &i, (void **)&key)) {
+		char **alias = NULL;
+		while(hashmap_iter(op->awareness, &i, (void **)&alias)) {
 			short_circuit &=
-				hashmap_set(parent->awareness, (void*)key) != NULL;
+				hashmap_set(parent->awareness, (void*)alias) != NULL;
 		}
 
 		// in case current op didn't changed parent awareness we can break
@@ -112,7 +112,7 @@ void ExecutionPlanAwareness_RemoveAwareness
 	//ASSERT("consider CP where both branches introduce the same aliases" && false);
 	ASSERT(root != NULL);
 
-	struct hashmap *awareness = root->awareness;
+	hashmap awareness = root->awareness;
 	unsigned long n = hashmap_count(awareness);
 	
 	// op isn't aware of any variables, it has no effect on awareness
@@ -125,9 +125,9 @@ void ExecutionPlanAwareness_RemoveAwareness
 	OpBase *parent = root->parent;
 	while(parent != NULL && parent->plan == root->plan) {
 		size_t i = 0;
-		char **key = NULL;
-		while(hashmap_iter(awareness, &i, (void **)&key)) {
-			hashmap_delete(parent->awareness, key);
+		char **var = NULL;
+		while(hashmap_iter(awareness, &i, (void **)&var)) {
+			hashmap_delete(parent->awareness, var);
 		}
 		parent = parent->parent;
 	}

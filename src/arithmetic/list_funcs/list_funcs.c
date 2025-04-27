@@ -555,12 +555,14 @@ SIValue AR_INSERT(SIValue *argv, int argc, void *private_data) {
 	return array;
 }
 
-static struct hashmap *_list2dict
+static hashmap _list2dict
 (
 	SIValue list
 ) {
 	uint32_t n   = SIArray_Length(list);
-	struct hashmap *values = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
+	hashmap values = hashmap_new_with_redis_allocator(0, 0, 0, 0, NULL, NULL,
+			NULL, NULL);
+
 	for(uint i = 0; i < n; i++) {
 		SIValue val = SIArray_Get(list, i);
 		XXH64_state_t state;
@@ -621,7 +623,7 @@ SIValue AR_INSERTLISTELEMENTS(SIValue *argv, int argc, void *private_data) {
 			SIArray_Append(&list, SIArray_Get(B, i));
 		}
 	} else {
-		struct hashmap *values = _list2dict(A);
+		hashmap values = _list2dict(A);
 		// make sure there are no duplicates
 		for(uint i = 0; i < b_len; i++) {
 			SIValue val = SIArray_Get(B, i);
@@ -665,7 +667,9 @@ SIValue AR_DEDUP(SIValue *argv, int argc, void *private_data) {
 	uint32_t n          = SIArray_Length(list);
 	SIValue  dedup_list = SI_Array(n);
 
-	struct hashmap *values = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
+	hashmap values = hashmap_new_with_redis_allocator(0, 0, 0, 0, NULL, NULL,
+			NULL, NULL);
+
 	// check if value already exists in list
 	for(uint i = 0; i < n; i++) {
 		SIValue val = SIArray_Get(list, i);

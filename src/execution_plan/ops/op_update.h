@@ -13,13 +13,13 @@
 
 typedef struct {
 	OpBase op;
-	raxIterator it;                // iterator for traversing update contexts
-	uint64_t rec_idx;              // emit record index
-	Record *records;               // updated records
-	GraphContext *gc;              // graph context
-	rax *update_ctxs;              // entities to update and their expressions
-	struct hashmap *node_updates;  // enqueued node updates
-	struct hashmap *edge_updates;  // enqueued edge updates
+	raxIterator it;        // iterator for traversing update contexts
+	uint64_t rec_idx;      // emit record index
+	Record *records;       // updated records
+	GraphContext *gc;      // graph context
+	rax *update_ctxs;      // entities to update and their expressions
+	hashmap node_updates;  // enqueued node updates
+	hashmap edge_updates;  // enqueued edge updates
 } OpUpdate;
 
 OpBase *NewUpdateOp

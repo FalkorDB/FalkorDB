@@ -207,9 +207,10 @@ OpBase *NewAggregateOp
 ) {
 	OpAggregate *op = rm_malloc(sizeof(OpAggregate));
 
-	op->groups     = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(Group *), 2048, 0, 0, NULL, NULL, freeCallback, NULL);
 	op->group_iter = -1;
 	op->r          = NULL;
+	op->groups     = hashmap_new_with_redis_allocator(sizeof(Group *), 2048, 0,
+			0, NULL, NULL, freeCallback, NULL);
 
 	OpBase_Init((OpBase *)op, OPType_AGGREGATE, "Aggregate", NULL,
 			AggregateConsume, AggregateReset, NULL, AggregateClone,

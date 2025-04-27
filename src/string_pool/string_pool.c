@@ -11,10 +11,12 @@
 #include <string.h>
 #include <pthread.h>
 
+// an entry within the string pool
+// composed of the actual string and a reference counter
 typedef struct {
-	char *key;  // string key
-	uint32_t count;   // reference count
-} StringPoolEntry;
+	char *key;       // string key
+	uint32_t count;  // reference count
+} InternString;
 
 pthread_key_t _tlsStringPool; // thread local storage string-pool access flag
 
@@ -25,7 +27,7 @@ int keyCompare
 	const void *key2,
 	void *udata
 ) {
-	return strcmp(((StringPoolEntry *)key1)->key, ((StringPoolEntry *)key2)->key);
+	return strcmp(((InternString *)key1)->key, ((InternString *)key2)->key);
 }
 
 // key free function
@@ -33,7 +35,7 @@ static void keyDestructor
 (
 	void *obj
 ) {
-	rm_free(((StringPoolEntry *)obj)->key);
+	rm_free(((InternString *)obj)->key);
 }
 
 // grant access to string-pool via TLS key
@@ -52,7 +54,8 @@ StringPool StringPool_create(void) {
 	int res = pthread_key_create(&_tlsStringPool, NULL);
 	ASSERT(res == 0);
 
-	return hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(StringPoolEntry), 0, 0, 0, NULL, keyCompare, keyDestructor, NULL);
+	return hashmap_new_with_redis_allocator(sizeof(InternString), 0, 0, 0, NULL,
+			keyCompare, keyDestructor, NULL);
 }
 
 // add a string to the pool
@@ -69,12 +72,15 @@ char *StringPool_rent
 	ASSERT(pool != NULL);
 	
 	uint64_t hash = XXH3_64bits(str, strlen(str));
-	StringPoolEntry new = {.key = (char *)str, .count = 1};
-	StringPoolEntry *existing = (StringPoolEntry *)hashmap_get_with_hash(pool, &new, hash);
+	InternString istr = {.key = (char *)str, .count = 1};
+
+	InternString *existing =
+		(InternString *)hashmap_get_with_hash(pool, &istr, hash);
+
 	if(existing == NULL) {
-		new.key = rm_strdup(str);
-		hashmap_set_with_hash(pool, (void*)&new, hash);
-		return new.key;
+		istr.key = rm_strdup(str);
+		hashmap_set_with_hash(pool, (void*)&istr, hash);
+		return istr.key;
 	}
 
 	// increase string reference count
@@ -95,10 +101,10 @@ char *StringPool_rentNoClone
 	ASSERT(pool != NULL);
 
 	uint64_t hash = XXH3_64bits(str, strlen(str));
-	StringPoolEntry new = {.key = str, .count = 1};
-	StringPoolEntry *existing;  // existing dict entry
+	InternString istr = {.key = str, .count = 1};
+	InternString *existing;  // existing dict entry
 
-	existing = (StringPoolEntry *)hashmap_set_with_hash(pool, (void*)&new, hash);
+	existing = (InternString *)hashmap_set_with_hash(pool, (void*)&istr, hash);
 	if(existing == NULL) return str;
 
 	// increase string reference count
@@ -120,8 +126,9 @@ void StringPool_return
 	ASSERT(pool != NULL);
 
 	uint64_t hash = XXH3_64bits(str, strlen(str));
-	StringPoolEntry new = {.key = str, .count = 1};
-	StringPoolEntry *existing = (StringPoolEntry *)hashmap_get_with_hash(pool, &new, hash);
+	InternString istr = {.key = str, .count = 1};
+	InternString *existing =
+		(InternString *)hashmap_get_with_hash(pool, &istr, hash);
 
 	if(unlikely(existing == NULL)) {
 		// str is missing from pool
@@ -133,7 +140,9 @@ void StringPool_return
 
 	// free entry if reference count reached 0
 	if(unlikely(existing->count == 0)) {
-		StringPoolEntry *res = (StringPoolEntry *)hashmap_delete_with_hash(pool, &new, hash);
+		InternString *res =
+			(InternString *)hashmap_delete_with_hash(pool, &istr, hash);
+
 		rm_free(res->key);
 		ASSERT(res != NULL);
 	}

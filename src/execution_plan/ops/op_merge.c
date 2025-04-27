@@ -35,8 +35,8 @@ static void freeCallback
 // apply a set of updates to the given records
 static void _UpdateProperties
 (
-	struct hashmap *node_pending_updates,
-	struct hashmap *edge_pending_updates,
+	hashmap node_pending_updates,
+	hashmap edge_pending_updates,
 	raxIterator updates,
 	Record *records,
 	uint record_count
@@ -353,8 +353,11 @@ static Record MergeConsume
 	}
 	OpBase_PropagateReset(op->match_stream);
 
-	op->node_pending_updates = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(void *), 0, 0, 0, NULL, NULL, freeCallback, NULL);
-	op->edge_pending_updates = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(void *), 0, 0, 0, NULL, NULL, freeCallback, NULL);
+	op->node_pending_updates = hashmap_new_with_redis_allocator(sizeof(void *),
+			0, 0, 0, NULL, NULL, freeCallback, NULL);
+
+	op->edge_pending_updates = hashmap_new_with_redis_allocator(sizeof(void *),
+			0, 0, 0, NULL, NULL, freeCallback, NULL);
 
 	// if we are setting properties with ON MATCH, compute all pending updates
 	if(op->on_match && match_count > 0) {

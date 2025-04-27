@@ -20,7 +20,7 @@ typedef struct {
 void CommitUpdates
 (
 	GraphContext *gc,
-	struct hashmap *updates,
+	hashmap updates,
 	EntityType type
 );
 
@@ -30,8 +30,8 @@ void CommitUpdates
 void EvalEntityUpdates
 (
 	GraphContext *gc,
-	struct hashmap *node_updates,
-	struct hashmap *edge_updates,
+	hashmap node_updates,
+	hashmap edge_updates,
 	const Record r,
 	const EntityUpdateEvalCtx *ctx,
 	bool allow_null

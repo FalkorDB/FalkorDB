@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include "GraphBLAS.h"
 #include "../util/hashmap.h"
 #include "../graph/entities/node.h"
 #include "../graph/delta_matrix/delta_matrix.h"
@@ -30,7 +29,7 @@ typedef struct {
 	bool first_pull;                // first call to Next
 	EntityID *visited;              // visited nodes
 	Delta_MatrixTupleIter *levels;  // array of neighbors iterator
-	struct hashmap *visited_nodes;            // visited nodes
+	hashmap visited_nodes;          // visited nodes
 } AllNeighborsCtx;
 
 void AllNeighborsCtx_Reset

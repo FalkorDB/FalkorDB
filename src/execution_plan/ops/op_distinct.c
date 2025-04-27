@@ -70,11 +70,12 @@ OpBase *NewDistinctOp
 
 	OpDistinct *op = rm_malloc(sizeof(OpDistinct));
 
-	op->found        = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
 	op->mapping      = NULL;
 	op->aliases      = rm_malloc(alias_count * sizeof(const char *));
 	op->offset_count = alias_count;
 	op->offsets      = rm_calloc(op->offset_count, sizeof(uint));
+	op->found        = hashmap_new_with_redis_allocator(0, 0, 0, 0, NULL, NULL,
+			NULL, NULL);
 
 	// copy aliases into heap array managed by this op
 	memcpy(op->aliases, aliases, alias_count * sizeof(const char *));

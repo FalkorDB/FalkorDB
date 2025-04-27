@@ -41,12 +41,14 @@ static ExecutionPlan *_ClonePlanInternals
 static OpBase *_CloneOpTree
 (
 	OpBase *op,
-	struct hashmap* old_to_new
+	hashmap old_to_new
 ) {
 	ExecutionPlan *plan_segment;
 
 	// see if op's plan had been cloned?
-	ExecutionPlan **plan_segment_ptr = (ExecutionPlan **)hashmap_get_with_hash(old_to_new, NULL, (uint64_t)op->plan);
+	ExecutionPlan **plan_segment_ptr = (ExecutionPlan **)hashmap_get_with_hash(
+			old_to_new, NULL, (uint64_t)op->plan);
+
 	if(plan_segment_ptr == NULL) {
 		// clone segment
 		plan_segment = _ClonePlanInternals(op->plan);
@@ -81,7 +83,8 @@ static ExecutionPlan *_ExecutionPlan_Clone
 	const ExecutionPlan *plan
 ) {
 	// create mapping from old exec-plans to the new ones
-	struct hashmap *old_to_new = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(void *), 0, 0, 0, NULL, NULL, NULL, NULL);
+	hashmap old_to_new = hashmap_new_with_redis_allocator(sizeof(void *), 0, 0,
+			0, NULL, NULL, NULL, NULL);
 
 	OpBase *root = _CloneOpTree(plan->root, old_to_new);
 

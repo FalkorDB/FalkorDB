@@ -8,7 +8,7 @@
 #include "../util/rmalloc.h"
 
 set *Set_New(void) {
-	return hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
+	return hashmap_new_with_redis_allocator(0, 0, 0, 0, NULL, NULL, NULL, NULL);
 }
 
 bool Set_Contains

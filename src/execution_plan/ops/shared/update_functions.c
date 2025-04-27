@@ -42,7 +42,7 @@ static bool _ValidateAttrType
 void CommitUpdates
 (
 	GraphContext *gc,
-	struct hashmap *updates,
+	hashmap updates,
 	EntityType type
 ) {
 	ASSERT(gc      != NULL);
@@ -122,8 +122,8 @@ void CommitUpdates
 void EvalEntityUpdates
 (
 	GraphContext *gc,
-	struct hashmap *node_updates,
-	struct hashmap *edge_updates,
+	hashmap node_updates,
+	hashmap edge_updates,
 	const Record r,
 	const EntityUpdateEvalCtx *ctx,
 	bool allow_null
@@ -162,7 +162,7 @@ void EvalEntityUpdates
 		return;
 	}
 
-	struct hashmap *updates;
+	hashmap updates;
 	GraphEntityType entity_type;
 	if(t == REC_TYPE_NODE) {
 		updates = node_updates;
@@ -173,7 +173,9 @@ void EvalEntityUpdates
 	}
 
 	PendingUpdateCtx *update;
-	PendingUpdateCtx **entry = (PendingUpdateCtx **)hashmap_get_with_hash(updates, NULL, ENTITY_GET_ID(entity));
+	PendingUpdateCtx **entry = (PendingUpdateCtx **)hashmap_get_with_hash(
+			updates, NULL, ENTITY_GET_ID(entity));
+
 	if(entry == NULL) {
 		// create a new update context
 		update = rm_malloc(sizeof(PendingUpdateCtx));
@@ -181,9 +183,9 @@ void EvalEntityUpdates
 		update->attributes    = AttributeSet_ShallowClone(*entity->attributes);
 		update->add_labels    = NULL;
 		update->remove_labels = NULL;
+
 		// add update context to updates dictionary
 		hashmap_set_with_hash(updates, &update, ENTITY_GET_ID(entity));
-		entry = (PendingUpdateCtx **)hashmap_get_with_hash(updates, NULL, ENTITY_GET_ID(entity));
 	} else {
 		// update context already exists
 		update = *entry;

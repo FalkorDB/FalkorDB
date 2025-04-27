@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stddef.h>
+#include "rmalloc.h"
 #include "hashmap.h"
 
 #define GROW_AT   0.60 /* 60% */
@@ -60,7 +61,7 @@ struct hashmap {
     void *edata;
 };
 
-void hashmap_set_grow_by_power(struct hashmap *map, size_t power) {
+void hashmap_set_grow_by_power(hashmap map, size_t power) {
     map->growpower = power < 1 ? 1 : power > 16 ? 16 : power;
 }
 
@@ -72,7 +73,7 @@ static double clamp_load_factor(double factor, double default_factor) {
            factor;
 }
 
-void hashmap_set_load_factor(struct hashmap *map, double factor) {
+void hashmap_set_load_factor(hashmap map, double factor) {
     factor = clamp_load_factor(factor, map->loadfactor / 100.0);
     map->loadfactor = factor * 100;
     map->growat = map->nbuckets * (map->loadfactor / 100.0);
@@ -82,7 +83,7 @@ static struct bucket *bucket_at0(void *buckets, size_t bucketsz, size_t i) {
     return (struct bucket*)(((char*)buckets)+(bucketsz*i));
 }
 
-static struct bucket *bucket_at(struct hashmap *map, size_t index) {
+static struct bucket *bucket_at(hashmap map, size_t index) {
     return bucket_at0(map->buckets, map->bucketsz, index);
 }
 
@@ -94,14 +95,14 @@ static uint64_t clip_hash(uint64_t hash) {
     return hash & 0xFFFFFFFFFFFF;
 }
 
-static uint64_t get_hash(struct hashmap *map, const void *key) {
+static uint64_t get_hash(hashmap map, const void *key) {
     return clip_hash(map->hash(key, map->seed0, map->seed1));
 }
 
 
 // hashmap_new_with_allocator returns a new hash map using a custom allocator.
 // See hashmap_new for more information information
-struct hashmap *hashmap_new_with_allocator(void *(*_malloc)(size_t), 
+hashmap hashmap_new_with_allocator(void *(*_malloc)(size_t), 
     void *(*_realloc)(void*, size_t), void (*_free)(void*),
     size_t elsize, size_t cap, uint64_t seed0, uint64_t seed1,
     uint64_t (*hash)(const void *item, uint64_t seed0, uint64_t seed1),
@@ -127,7 +128,7 @@ struct hashmap *hashmap_new_with_allocator(void *(*_malloc)(size_t),
     }
     // hashmap + spare + edata
     size_t size = sizeof(struct hashmap)+bucketsz*2;
-    struct hashmap *map = _malloc(size);
+    hashmap map = _malloc(size);
     if (!map) {
         return NULL;
     }
@@ -161,6 +162,17 @@ struct hashmap *hashmap_new_with_allocator(void *(*_malloc)(size_t),
     return map;  
 }
 
+hashmap hashmap_new_with_redis_allocator(size_t elsize, 
+    size_t cap, uint64_t seed0, uint64_t seed1,
+    uint64_t (*hash)(const void *item, uint64_t seed0, uint64_t seed1),
+    int (*compare)(const void *a, const void *b, void *udata),
+    void (*elfree)(void *item),
+    void *udata) {
+
+	return hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, elsize,
+			cap, seed0, seed1, hash, compare, elfree, udata);
+}
+
 // hashmap_new returns a new hash map. 
 // Param `elsize` is the size of each element in the tree. Every element that
 // is inserted, deleted, or retrieved will be this size.
@@ -178,7 +190,7 @@ struct hashmap *hashmap_new_with_allocator(void *(*_malloc)(size_t),
 // The hashmap must be freed with hashmap_free(). 
 // Param `elfree` is a function that frees a specific item. This should be NULL
 // unless you're storing some kind of reference data in the hash.
-struct hashmap *hashmap_new(size_t elsize, size_t cap, uint64_t seed0, 
+hashmap hashmap_new(size_t elsize, size_t cap, uint64_t seed0, 
     uint64_t seed1,
     uint64_t (*hash)(const void *item, uint64_t seed0, uint64_t seed1),
     int (*compare)(const void *a, const void *b, void *udata),
@@ -189,7 +201,7 @@ struct hashmap *hashmap_new(size_t elsize, size_t cap, uint64_t seed0,
         seed1, hash, compare, elfree, udata);
 }
 
-static void free_elements(struct hashmap *map) {
+static void free_elements(hashmap map) {
     if (map->elfree) {
         for (size_t i = 0; i < map->nbuckets; i++) {
             struct bucket *bucket = bucket_at(map, i);
@@ -204,7 +216,7 @@ static void free_elements(struct hashmap *map) {
 // When the update_cap is provided, the map's capacity will be updated to match
 // the currently number of allocated buckets. This is an optimization to ensure
 // that this operation does not perform any allocations.
-void hashmap_clear(struct hashmap *map, bool update_cap) {
+void hashmap_clear(hashmap map, bool update_cap) {
     map->count = 0;
     free_elements(map);
     if (update_cap) {
@@ -223,8 +235,8 @@ void hashmap_clear(struct hashmap *map, bool update_cap) {
     map->shrinkat = map->nbuckets * SHRINK_AT;
 }
 
-static bool resize0(struct hashmap *map, size_t new_cap) {
-    struct hashmap *map2 = hashmap_new_with_allocator(map->malloc, map->realloc, 
+static bool resize0(hashmap map, size_t new_cap) {
+    hashmap map2 = hashmap_new_with_allocator(map->malloc, map->realloc, 
         map->free, map->elsize, new_cap, map->seed0, map->seed1, map->hash, 
         map->compare, map->elfree, map->udata);
     if (!map2) return false;
@@ -260,14 +272,14 @@ static bool resize0(struct hashmap *map, size_t new_cap) {
     return true;
 }
 
-static bool resize(struct hashmap *map, size_t new_cap) {
+static bool resize(hashmap map, size_t new_cap) {
     return resize0(map, new_cap);
 }
 
 // hashmap_set_with_hash works like hashmap_set but you provide your
 // own hash. The 'hash' callback provided to the hashmap_new function
 // will not be called
-const void *hashmap_set_with_hash(struct hashmap *map, const void *item,
+const void *hashmap_set_with_hash(hashmap map, const void *item,
     uint64_t hash)
 {
     hash = clip_hash(hash);
@@ -317,14 +329,14 @@ const void *hashmap_set_with_hash(struct hashmap *map, const void *item,
 // replaced then it is returned otherwise NULL is returned. This operation
 // may allocate memory. If the system is unable to allocate additional
 // memory then NULL is returned and hashmap_oom() returns true.
-const void *hashmap_set(struct hashmap *map, const void *item) {
+const void *hashmap_set(hashmap map, const void *item) {
     return hashmap_set_with_hash(map, item, get_hash(map, item));
 }
 
 // hashmap_get_with_hash works like hashmap_get but you provide your
 // own hash. The 'hash' callback provided to the hashmap_new function
 // will not be called
-const void *hashmap_get_with_hash(struct hashmap *map, const void *key, 
+const void *hashmap_get_with_hash(hashmap map, const void *key, 
     uint64_t hash)
 {
     hash = clip_hash(hash);
@@ -344,14 +356,14 @@ const void *hashmap_get_with_hash(struct hashmap *map, const void *key,
 
 // hashmap_get returns the item based on the provided key. If the item is not
 // found then NULL is returned.
-const void *hashmap_get(struct hashmap *map, const void *key) {
+const void *hashmap_get(hashmap map, const void *key) {
     return hashmap_get_with_hash(map, key, get_hash(map, key));
 }
 
 // hashmap_probe returns the item in the bucket at position or NULL if an item
 // is not set for that bucket. The position is 'moduloed' by the number of 
 // buckets in the hashmap.
-const void *hashmap_probe(struct hashmap *map, uint64_t position) {
+const void *hashmap_probe(hashmap map, uint64_t position) {
     size_t i = position & map->mask;
     struct bucket *bucket = bucket_at(map, i);
     if (!bucket->dib) {
@@ -363,7 +375,7 @@ const void *hashmap_probe(struct hashmap *map, uint64_t position) {
 // hashmap_delete_with_hash works like hashmap_delete but you provide your
 // own hash. The 'hash' callback provided to the hashmap_new function
 // will not be called
-const void *hashmap_delete_with_hash(struct hashmap *map, const void *key,
+const void *hashmap_delete_with_hash(hashmap map, const void *key,
     uint64_t hash)
 {
     hash = clip_hash(hash);
@@ -406,19 +418,19 @@ const void *hashmap_delete_with_hash(struct hashmap *map, const void *key,
 
 // hashmap_delete removes an item from the hash map and returns it. If the
 // item is not found then NULL is returned.
-const void *hashmap_delete(struct hashmap *map, const void *key) {
+const void *hashmap_delete(hashmap map, const void *key) {
     return hashmap_delete_with_hash(map, key, get_hash(map, key));
 }
 
 // hashmap_count returns the number of items in the hash map.
-size_t hashmap_count(struct hashmap *map) {
+size_t hashmap_count(hashmap map) {
     return map->count;
 }
 
 // hashmap_free frees the hash map
 // Every item is called with the element-freeing function given in hashmap_new,
 // if present, to free any data referenced in the elements of the hashmap.
-void hashmap_free(struct hashmap *map) {
+void hashmap_free(hashmap map) {
     if (!map) return;
     free_elements(map);
     map->free(map->buckets);
@@ -427,14 +439,14 @@ void hashmap_free(struct hashmap *map) {
 
 // hashmap_oom returns true if the last hashmap_set() call failed due to the 
 // system being out of memory.
-bool hashmap_oom(struct hashmap *map) {
+bool hashmap_oom(hashmap map) {
     return map->oom;
 }
 
 // hashmap_scan iterates over all items in the hash map
 // Param `iter` can return false to stop iteration early.
 // Returns false if the iteration has been stopped early.
-bool hashmap_scan(struct hashmap *map, 
+bool hashmap_scan(hashmap map, 
     bool (*iter)(const void *item, void *udata), void *udata)
 {
     for (size_t i = 0; i < map->nbuckets; i++) {
@@ -464,7 +476,7 @@ bool hashmap_scan(struct hashmap *map,
 //
 // The function returns true if an item was retrieved; false if the end of the
 // iteration has been reached.
-bool hashmap_iter(struct hashmap *map, size_t *i, void **item) {
+bool hashmap_iter(hashmap map, size_t *i, void **item) {
     struct bucket *bucket;
     do {
         if (*i >= map->nbuckets) return false;
@@ -784,7 +796,7 @@ uint64_t hashmap_xxhash3(const void *data, size_t len, uint64_t seed0,
 //==============================================================================
 #ifdef HASHMAP_TEST
 
-static size_t deepcount(struct hashmap *map) {
+static size_t deepcount(hashmap map) {
     size_t count = 0;
     for (size_t i = 0; i < map->nbuckets; i++) {
         if (bucket_at(map, i)->dib) {
@@ -898,7 +910,7 @@ static void all(void) {
         vals[i] = i;
     }
 
-    struct hashmap *map;
+    hashmap map;
 
     while (!(map = hashmap_new(sizeof(int), 0, seed, seed, 
                                hash_int, compare_ints_udata, NULL, NULL))) {}
@@ -1085,7 +1097,7 @@ static void benchmarks(void) {
 
     shuffle(vals, N, sizeof(int));
 
-    struct hashmap *map;
+    hashmap map;
     shuffle(vals, N, sizeof(int));
 
     map = hashmap_new(sizeof(int), 0, seed, seed, hash_int, compare_ints_udata, 

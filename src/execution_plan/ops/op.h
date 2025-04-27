@@ -145,7 +145,7 @@ struct OpBase {
 	int childCount;                    // number of children
 	struct OpBase **children;          // child operations
 	const char **modifies;             // list of entities this op modifies
-	struct hashmap *awareness;         // variables this op is aware of
+	hashmap awareness;                 // variables this op is aware of
 	OpStats *stats;                    // profiling statistics
 	struct OpBase *parent;             // parent operations
 	const struct ExecutionPlan *plan;  // executionPlan this operation is part of

@@ -13,7 +13,7 @@
 // while the actual value is a referenced count string
 
 // define StringPool as a dict pointer
-typedef struct hashmap* StringPool;
+typedef hashmap StringPool;
 
 // grant access to string-pool via TLS key
 // if a thread has this key set, access to the string pool is granted
