@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "../util/dict.h"
+#include "../util/hashmap.h"
 
 // StringPool is a dict of strings
 // used primarily to reduce memory consumption by removing string duplication
@@ -13,7 +13,7 @@
 // while the actual value is a referenced count string
 
 // define StringPool as a dict pointer
-typedef dict* StringPool;
+typedef struct hashmap* StringPool;
 
 // grant access to string-pool via TLS key
 // if a thread has this key set, access to the string pool is granted

@@ -5,62 +5,36 @@
 
 #include "RG.h"
 #include "string_pool.h"
+#include "util/rmalloc.h"
 #include "deps/xxHash/xxhash.h"
 
 #include <string.h>
 #include <pthread.h>
 
-pthread_key_t _tlsStringPool; // thread local storage string-pool access flag
+typedef struct {
+	char *key;  // string key
+	uint32_t count;   // reference count
+} StringPoolEntry;
 
-// key hash function
-static uint64_t hashFunc
-(
-	const void *key
-) {
-	const char *str = (const char *)key;
-	return XXH3_64bits(key, strlen(key));
-}
+pthread_key_t _tlsStringPool; // thread local storage string-pool access flag
 
 // key compare function
 int keyCompare
 (
-	dict *d,
 	const void *key1,
-	const void *key2
+	const void *key2,
+	void *udata
 ) {
-	return (strcmp((const char*)key1, (const char*)key2) == 0);
+	return strcmp(((StringPoolEntry *)key1)->key, ((StringPoolEntry *)key2)->key);
 }
 
 // key free function
 static void keyDestructor
 (
-	dict *d,
 	void *obj
 ) {
-	rm_free(obj);
+	rm_free(((StringPoolEntry *)obj)->key);
 }
-
-// key metadata byte size
-static size_t metadataBytes
-(
-	dict *d
-) {
-	return sizeof(uint32_t);
-}
-
-// StringPool hashtable callbacks
-static const dictType _type = {
-	hashFunc,
-	NULL,
-	NULL,
-	keyCompare,
-	keyDestructor,
-	NULL,
-	NULL,
-	metadataBytes,
-	NULL,
-	NULL
-};
 
 // grant access to string-pool via TLS key
 // if a thread has this key set, access to the string pool is granted
@@ -78,7 +52,7 @@ StringPool StringPool_create(void) {
 	int res = pthread_key_create(&_tlsStringPool, NULL);
 	ASSERT(res == 0);
 
-	return HashTableCreate(&_type);
+	return hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(StringPoolEntry), 0, 0, 0, NULL, keyCompare, keyDestructor, NULL);
 }
 
 // add a string to the pool
@@ -93,24 +67,20 @@ char *StringPool_rent
 	// validate arguments
 	ASSERT(str  != NULL);	
 	ASSERT(pool != NULL);
-
-	char *ret;            // returned string
-	dictEntry *existing;  // existing dict entry
-
-	dictEntry *de = HashTableAddRaw(pool, (void*)str, &existing);
-	if(de != NULL) {
-		// new string
-		HashTableSetKey(pool, de, rm_strdup(str));
-	} else {
-		de = existing;
+	
+	uint64_t hash = XXH3_64bits(str, strlen(str));
+	StringPoolEntry new = {.key = (char *)str, .count = 1};
+	StringPoolEntry *existing = (StringPoolEntry *)hashmap_get_with_hash(pool, &new, hash);
+	if(existing == NULL) {
+		new.key = rm_strdup(str);
+		hashmap_set_with_hash(pool, (void*)&new, hash);
+		return new.key;
 	}
 
 	// increase string reference count
-	uint32_t *count = (uint32_t*)HashTableEntryMetadata(de);
-	*count = *count + 1;
+	existing->count += 1;
 
-	ret = (char*)HashTableGetKey(de);
-	return ret;
+	return existing->key;
 }
 
 // add string to pool in case it doesn't already exists
@@ -124,20 +94,17 @@ char *StringPool_rentNoClone
 	ASSERT(str  != NULL);	
 	ASSERT(pool != NULL);
 
-	char *ret;            // returned string
-	dictEntry *existing;  // existing dict entry
+	uint64_t hash = XXH3_64bits(str, strlen(str));
+	StringPoolEntry new = {.key = str, .count = 1};
+	StringPoolEntry *existing;  // existing dict entry
 
-	dictEntry *de = HashTableAddRaw(pool, (void*)str, &existing);
-	if(de == NULL) {
-		de = existing;
-	}
+	existing = (StringPoolEntry *)hashmap_set_with_hash(pool, (void*)&new, hash);
+	if(existing == NULL) return str;
 
 	// increase string reference count
-	uint32_t *count = (uint32_t*) HashTableEntryMetadata(de);
-	*count = *count + 1;
+	existing->count += 1;
 
-	ret = (char*)HashTableGetKey(de);
-	return ret;
+	return existing->key;
 }
 
 // remove string from pool
@@ -152,23 +119,22 @@ void StringPool_return
 	ASSERT(str  != NULL);	
 	ASSERT(pool != NULL);
 
-	dictEntry *de = HashTableFind(pool, str);
+	uint64_t hash = XXH3_64bits(str, strlen(str));
+	StringPoolEntry new = {.key = str, .count = 1};
+	StringPoolEntry *existing = (StringPoolEntry *)hashmap_get_with_hash(pool, &new, hash);
 
-	if(unlikely(de == NULL)) {
+	if(unlikely(existing == NULL)) {
 		// str is missing from pool
 		return;
 	}
 
-	// get reference count
-	uint32_t *count = (uint32_t*)HashTableEntryMetadata(de);
-
 	// decrease reference count
-	*count = *count -1;
+	existing->count -= 1;
 
 	// free entry if reference count reached 0
-	if(unlikely(*count == 0)) {
-		int res = HashTableDelete(pool, (const void *)str);
-		ASSERT(res == DICT_OK);
+	if(unlikely(existing->count == 0)) {
+		StringPoolEntry *res = (StringPoolEntry *)hashmap_delete_with_hash(pool, &new, hash);
+		ASSERT(res != NULL);
 	}
 }
 
@@ -182,7 +148,7 @@ void StringPool_free
 	StringPool p = *pool;
 
 	// free hashtable
-	HashTableRelease(p);
+	hashmap_free(p);
 
 	*pool = NULL;
 }
