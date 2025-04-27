@@ -249,9 +249,9 @@ reply = g.query("CREATE (:person {name:'roi', age:33, gender:'male', status:'mar
 [jfalkordb-stars]: https://img.shields.io/github/stars/falkordb/jfalkordb.svg?style=social&amp;label=Star&amp;maxAge=2592000
 [jfalkordb-package]: https://search.maven.org/artifact/com.falkordb/jfalkordb
 
-[NFalkorDB-url]: https://github.com/falkordb/NFalkorDB
-[NFalkorDB-stars]: https://img.shields.io/github/stars/falkordb/nfalkordb.svg?style=social&amp;label=Star&amp;maxAge=2592000
-[NFalkorDB-package]: https://www.nuget.org/packages/NFalkorDB
+[nfalkordb-url]: https://github.com/falkordb/NFalkorDB
+[nfalkordb-stars]: https://img.shields.io/github/stars/falkordb/nfalkordb.svg?style=social&label=Star&maxAge=2592000
+[nfalkordb-package]: https://www.nuget.org/packages/NFalkorDB
 
 [nredisstack-url]: https://github.com/redis/nredisstack
 [nredisstack-stars]: https://img.shields.io/github/stars/redis/nredisstack.svg?style=social&amp;label=Star&amp;maxAge=2592000
