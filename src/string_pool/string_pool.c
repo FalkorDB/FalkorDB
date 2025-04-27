@@ -134,6 +134,7 @@ void StringPool_return
 	// free entry if reference count reached 0
 	if(unlikely(existing->count == 0)) {
 		StringPoolEntry *res = (StringPoolEntry *)hashmap_delete_with_hash(pool, &new, hash);
+		rm_free(res->key);
 		ASSERT(res != NULL);
 	}
 }
