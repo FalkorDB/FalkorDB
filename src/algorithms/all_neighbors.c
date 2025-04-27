@@ -49,8 +49,7 @@ void AllNeighborsCtx_Reset
 	array_clear(ctx->visited);
 
 	// reset visited nodes
-	HashTableRelease(ctx->visited_nodes);
-	ctx->visited_nodes = HashTableCreate(&def_dt);
+	hashmap_clear(ctx->visited_nodes, true);
 
 	// dummy iterator at level 0
 	array_append(ctx->levels, (Delta_MatrixTupleIter) {0});
@@ -76,7 +75,7 @@ AllNeighborsCtx *AllNeighborsCtx_New
 	ctx->visited        = array_new(EntityID, 1);
 	ctx->first_pull     = true;
 	ctx->current_level  = 0;
-	ctx->visited_nodes  = HashTableCreate(&def_dt);
+	ctx->visited_nodes  = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
 
 	// Dummy iterator at level 0
 	array_append(ctx->levels, (Delta_MatrixTupleIter) {0});
@@ -96,7 +95,7 @@ EntityID AllNeighborsCtx_NextNeighbor
 
 		// update visited path, replace frontier with current node
 		array_append(ctx->visited, ctx->src);
-		HashTableAdd(ctx->visited_nodes, (void*)(ctx->src), NULL);
+		hashmap_set_with_hash(ctx->visited_nodes, NULL, ctx->src);
 
 		// current_level >= ctx->minLen
 		// see if we should expand further?
@@ -121,14 +120,14 @@ EntityID AllNeighborsCtx_NextNeighbor
 			// backtrack
 			ctx->current_level--;
 			dest_id = array_pop(ctx->visited);
-			int res = HashTableDelete(ctx->visited_nodes, (void*)(dest_id));
-			ASSERT(res == DICT_OK);
+			const void *res = hashmap_delete_with_hash(ctx->visited_nodes, NULL, dest_id);
+			ASSERT(res != NULL);
 			continue;
 		}
 
 		// update visited path, replace frontier with current node
 		bool visited =
-			HashTableAdd(ctx->visited_nodes, (void*)(dest_id), NULL) != DICT_OK;
+			hashmap_set_with_hash(ctx->visited_nodes, NULL, dest_id) != NULL;
 
 		if(ctx->current_level < ctx->minLen && !visited) {
 			array_append(ctx->visited, dest_id);
@@ -165,7 +164,7 @@ void AllNeighborsCtx_Free
 	array_free(ctx->levels);
 	array_free(ctx->visited);
 
-	HashTableRelease(ctx->visited_nodes);
+	hashmap_free(ctx->visited_nodes);
 
 	rm_free(ctx);
 }
