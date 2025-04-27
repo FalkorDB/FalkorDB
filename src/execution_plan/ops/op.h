@@ -8,8 +8,8 @@
 
 #include "../record.h"
 #include "../../util/arr.h"
-#include "../../util/dict.h"
 #include "../../redismodule.h"
+#include "../../util/hashmap.h"
 #include "../../schema/schema.h"
 #include "../../graph/query_graph.h"
 #include "../../graph/entities/node.h"
@@ -145,7 +145,7 @@ struct OpBase {
 	int childCount;                    // number of children
 	struct OpBase **children;          // child operations
 	const char **modifies;             // list of entities this op modifies
-	dict *awareness;                   // variables this op is aware of
+	struct hashmap *awareness;         // variables this op is aware of
 	OpStats *stats;                    // profiling statistics
 	struct OpBase *parent;             // parent operations
 	const struct ExecutionPlan *plan;  // executionPlan this operation is part of

@@ -322,11 +322,10 @@ void ExecutionPlan_BoundVariables
 	// TODO: switch from rax to dict,
 	// TODO: see if we can simply return op's awareness?
 	dictIterator it;
-	dictEntry    *de;
-	HashTableInitIterator(&it, op->awareness);
-	while((de = HashTableNext(&it)) != NULL) {
-		char *key = HashTableGetKey(de);
-		raxInsert(modifiers, (unsigned char *)key, strlen(key), (void *)key,
+	char **key = NULL;
+	size_t i = 0;
+	while(hashmap_iter(op->awareness, &i, (void **)&key)) {
+		raxInsert(modifiers, (unsigned char *)*key, strlen(*key), (void *)*key,
 				NULL);
 	}
 }

@@ -60,6 +60,30 @@ static Record _InitialConsume
 	return op->consume(op);
 }
 
+// hash function
+// turning string into hash
+static uint64_t _hashFunction
+(
+	const void *key,  // string key
+	uint64_t seed0,
+	uint64_t seed1
+) {
+	return XXH64(*(const void **)key, strlen(*(const void **)key), 0);
+}
+
+// hash compare function
+// checking if two keys are the same using the strcmp function
+static int _hashCompare
+(
+	const void *key1,
+	const void *key2,
+	void *udata
+) {
+	const char *a = *(const char**)key1;
+	const char *b = *(const char**)key2;
+	return strcmp(a, b);
+}
+
 // initialize operation
 void OpBase_Init
 (
@@ -91,7 +115,7 @@ void OpBase_Init
 	op->consume  = _InitialConsume;  // initial consume wrapper function
 	op->_consume = consume;          // op's consume function
 	op->toString = toString;
-	op->awareness = HashTableCreate(&string_dt);
+	op->awareness = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(void *), 0, 0, 0, _hashFunction, _hashCompare, NULL, NULL);
 
 	op->init  = (init)  ? init  : _OpBase_init_noop;
 	op->reset = (reset) ? reset : _OpBase_reset_noop;
@@ -116,7 +140,7 @@ bool OpBase_Aware
 	// make sure op resolves all aliases
 	for(uint i = 0; i < n; i++) {
 		const char *alias = aliases[i];
-		if(HashTableFind(op->awareness, alias) == NULL) {
+		if(hashmap_get(op->awareness, &alias) == NULL) {
 			return false;
 		}
 	}
@@ -148,7 +172,7 @@ int OpBase_Modifies
 	}
 
 	// add alias to op's awareness table
-	HashTableAdd(op->awareness, (void*)alias, NULL);
+	hashmap_set(op->awareness, (void*)&alias);
 
 	return (intptr_t)id;
 }
@@ -453,7 +477,7 @@ void OpBase_Free
 	if(op->modifies) array_free(op->modifies);
 	if(op->stats)    rm_free(op->stats);
 
-	HashTableRelease(op->awareness);
+	hashmap_free(op->awareness);
 	rm_free(op);
 }
 
