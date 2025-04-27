@@ -42,26 +42,26 @@ static bool _ValidateAttrType
 void CommitUpdates
 (
 	GraphContext *gc,
-	dict *updates,
+	struct hashmap *updates,
 	EntityType type
 ) {
 	ASSERT(gc      != NULL);
 	ASSERT(updates != NULL);
 	ASSERT(type    != ENTITY_UNKNOWN);
 
-	uint update_count         = HashTableElemCount(updates);
+	uint update_count         = hashmap_count(updates);
 	bool constraint_violation = false;
 
 	// return early if no updates are enqueued
 	if(update_count == 0) return;
 
-	dictEntry *entry;
-	dictIterator *it = HashTableGetIterator(updates);
+	size_t i = 0;
+	PendingUpdateCtx **entry;
 	MATRIX_POLICY policy = Graph_GetMatrixPolicy(gc->g);
 	Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
 
-	while((entry = HashTableNext(it)) != NULL) {
-		PendingUpdateCtx *update = HashTableGetVal(entry);
+	while(hashmap_iter(updates, &i, (void**)&entry)) {
+		PendingUpdateCtx *update = *entry;
 
 		// if entity has been deleted, perform no updates
 		if(GraphEntity_IsDeleted(update->ge)) continue;
@@ -114,7 +114,6 @@ void CommitUpdates
 		}
 	}
 	Graph_SetMatrixPolicy(gc->g, policy);
-	HashTableReleaseIterator(it);
 }
 
 // build pending updates in the 'updates' array to match all
@@ -123,8 +122,8 @@ void CommitUpdates
 void EvalEntityUpdates
 (
 	GraphContext *gc,
-	dict *node_updates,
-	dict *edge_updates,
+	struct hashmap *node_updates,
+	struct hashmap *edge_updates,
 	const Record r,
 	const EntityUpdateEvalCtx *ctx,
 	bool allow_null
@@ -163,7 +162,7 @@ void EvalEntityUpdates
 		return;
 	}
 
-	dict *updates;
+	struct hashmap *updates;
 	GraphEntityType entity_type;
 	if(t == REC_TYPE_NODE) {
 		updates = node_updates;
@@ -174,7 +173,7 @@ void EvalEntityUpdates
 	}
 
 	PendingUpdateCtx *update;
-	dictEntry *entry = HashTableFind(updates, (void *)ENTITY_GET_ID(entity));
+	PendingUpdateCtx **entry = (PendingUpdateCtx **)hashmap_get_with_hash(updates, NULL, ENTITY_GET_ID(entity));
 	if(entry == NULL) {
 		// create a new update context
 		update = rm_malloc(sizeof(PendingUpdateCtx));
@@ -183,10 +182,11 @@ void EvalEntityUpdates
 		update->add_labels    = NULL;
 		update->remove_labels = NULL;
 		// add update context to updates dictionary
-		HashTableAdd(updates, (void *)ENTITY_GET_ID(entity), update);
+		hashmap_set_with_hash(updates, &update, ENTITY_GET_ID(entity));
+		entry = (PendingUpdateCtx **)hashmap_get_with_hash(updates, NULL, ENTITY_GET_ID(entity));
 	} else {
 		// update context already exists
-		update = (PendingUpdateCtx *)HashTableGetVal(entry);
+		update = *entry;
 	}
 
 	if(array_len(ctx->add_labels) > 0 && update->add_labels == NULL) {

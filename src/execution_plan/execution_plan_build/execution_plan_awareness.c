@@ -4,30 +4,7 @@
  */
 
 #include "RG.h"
-#include "../../util/dict.h"
 #include "execution_plan_awareness.h"
-
-// extract keys from hashtable
-static void HashTableKeys
-(
-	unsigned long n,    // number of keys to extract
-	const char **keys,  // [output] keys array
-	dict *d             // hashtable
-) {
-	ASSERT(n    > 0);
-	ASSERT(keys != NULL);
-	ASSERT(n    == HashTableElemCount(d));
-
-	// collect variables
-	dictIterator it;
-	HashTableInitIterator(&it, d);
-
-	for(int i = 0; i < n; i++) {
-		dictEntry *de = HashTableNext(&it);
-		const char *key = (const char*)HashTableGetKey(de);
-		keys[i] = key;
-	}
-}
 
 // compute op's awareness by inspecting its children awareness
 static void inheritAwareness

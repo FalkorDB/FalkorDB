@@ -30,27 +30,13 @@ static Record _handoff
 	}
 }
 
-// fake hash function
-// hash of key is simply key
-static uint64_t _id_hash
-(
-	const void *key
-) {
-	return ((uint64_t)key);
-}
-
 // hashtable entry free callback
 static void freeCallback
 (
-	dict *d,
 	void *val
 ) {
-	PendingUpdateCtx_Free((PendingUpdateCtx*)val);
+	PendingUpdateCtx_Free(*(PendingUpdateCtx**)val);
 }
-
-// hashtable callbacks
-static dictType _dt = { _id_hash, NULL, NULL, NULL, NULL, freeCallback, NULL,
-	NULL, NULL, NULL};
 
 OpBase *NewUpdateOp
 (
@@ -62,8 +48,8 @@ OpBase *NewUpdateOp
 	op->rec_idx           = 0;
 	op->records           = array_new(Record, 64);
 	op->update_ctxs       = update_exps;
-	op->node_updates      = HashTableCreate(&_dt);
-	op->edge_updates      = HashTableCreate(&_dt);
+	op->node_updates      = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(void *), 0, 0, 0, NULL, NULL, freeCallback, NULL);
+	op->edge_updates      = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(void *), 0, 0, 0, NULL, NULL, freeCallback, NULL);
 
 	// set our op operations
 	OpBase_Init((OpBase *)op, OPType_UPDATE, "Update", NULL, UpdateConsume,
@@ -103,8 +89,8 @@ static Record UpdateConsume
 		array_append(op->records, r);
 	}
 	
-	uint node_updates_count = HashTableElemCount(op->node_updates);
-	uint edge_updates_count = HashTableElemCount(op->edge_updates);
+	uint node_updates_count = hashmap_count(op->node_updates);
+	uint edge_updates_count = hashmap_count(op->edge_updates);
 
 	if(node_updates_count > 0 || edge_updates_count > 0) {
 		// done reading; we're not going to call Consume any longer
@@ -119,8 +105,8 @@ static Record UpdateConsume
 		CommitUpdates(op->gc, op->edge_updates, ENTITY_EDGE);
 	}
 
-	HashTableEmpty(op->node_updates, NULL);
-	HashTableEmpty(op->edge_updates, NULL);
+	hashmap_clear(op->node_updates, true);
+	hashmap_clear(op->edge_updates, true);
 
 	return _handoff(op);
 }
@@ -144,8 +130,8 @@ static OpResult UpdateReset
 ) {
 	OpUpdate *op = (OpUpdate *)ctx;
 
-	HashTableEmpty(op->node_updates, NULL);
-	HashTableEmpty(op->edge_updates, NULL);
+	hashmap_clear(op->node_updates, true);
+	hashmap_clear(op->edge_updates, true);
 
 	uint records_count = array_len(op->records);
 	// records[0..op->record_idx] had been already emitted, skip them
@@ -162,12 +148,12 @@ static void UpdateFree(OpBase *ctx) {
 	OpUpdate *op = (OpUpdate *)ctx;
 
 	if(op->node_updates) {
-		HashTableRelease(op->node_updates);
+		hashmap_free(op->node_updates);
 		op->node_updates = NULL;
 	}
 
 	if(op->edge_updates) {
-		HashTableRelease(op->edge_updates);
+		hashmap_free(op->edge_updates);
 		op->edge_updates = NULL;
 	}
 

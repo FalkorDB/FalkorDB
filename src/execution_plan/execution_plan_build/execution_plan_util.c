@@ -7,7 +7,6 @@
 #include "RG.h"
 #include "../../util/arr.h"
 #include "../ops/op_skip.h"
-#include "../../util/dict.h"
 #include "../ops/op_limit.h"
 #include "execution_plan_util.h"
 
@@ -321,7 +320,6 @@ void ExecutionPlan_BoundVariables
 
 	// TODO: switch from rax to dict,
 	// TODO: see if we can simply return op's awareness?
-	dictIterator it;
 	char **key = NULL;
 	size_t i = 0;
 	while(hashmap_iter(op->awareness, &i, (void **)&key)) {

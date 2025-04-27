@@ -20,27 +20,13 @@ static Record MergeConsume(OpBase *opBase);
 static OpBase *MergeClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void MergeFree(OpBase *opBase);
 
-// fake hash function
-// hash of key is simply key
-static uint64_t _id_hash
-(
-	const void *key
-) {
-	return ((uint64_t)key);
-}
-
 // hashtable entry free callback
 static void freeCallback
 (
-	dict *d,
 	void *val
 ) {
-	PendingUpdateCtx_Free((PendingUpdateCtx*)val);
+	PendingUpdateCtx_Free(*(PendingUpdateCtx**)val);
 }
-
-// hashtable callbacks
-static dictType _dt = { _id_hash, NULL, NULL, NULL, NULL, freeCallback, NULL,
-	NULL, NULL, NULL};
 
 //------------------------------------------------------------------------------
 // ON MATCH / ON CREATE logic
@@ -49,8 +35,8 @@ static dictType _dt = { _id_hash, NULL, NULL, NULL, NULL, freeCallback, NULL,
 // apply a set of updates to the given records
 static void _UpdateProperties
 (
-	dict *node_pending_updates,
-	dict *edge_pending_updates,
+	struct hashmap *node_pending_updates,
+	struct hashmap *edge_pending_updates,
 	raxIterator updates,
 	Record *records,
 	uint record_count
@@ -106,12 +92,12 @@ static inline void _free_pending_updates
 	OpMerge *op
 ) {
 	if(op->node_pending_updates) {
-		HashTableRelease(op->node_pending_updates);
+		hashmap_free(op->node_pending_updates);
 		op->node_pending_updates = NULL;
 	}
 
 	if(op->edge_pending_updates) {
-		HashTableRelease(op->edge_pending_updates);
+		hashmap_free(op->edge_pending_updates);
 		op->edge_pending_updates = NULL;
 	}
 }
@@ -367,8 +353,8 @@ static Record MergeConsume
 	}
 	OpBase_PropagateReset(op->match_stream);
 
-	op->node_pending_updates = HashTableCreate(&_dt);
-	op->edge_pending_updates = HashTableCreate(&_dt);
+	op->node_pending_updates = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(void *), 0, 0, 0, NULL, NULL, freeCallback, NULL);
+	op->edge_pending_updates = hashmap_new_with_allocator(rm_malloc, rm_realloc, rm_free, sizeof(void *), 0, 0, 0, NULL, NULL, freeCallback, NULL);
 
 	// if we are setting properties with ON MATCH, compute all pending updates
 	if(op->on_match && match_count > 0) {
@@ -413,8 +399,8 @@ static Record MergeConsume
 	// update
 	//--------------------------------------------------------------------------
 
-	if(HashTableElemCount(op->node_pending_updates) > 0 ||
-	   HashTableElemCount(op->edge_pending_updates) > 0) {
+	if(hashmap_count(op->node_pending_updates) > 0 ||
+	   hashmap_count(op->edge_pending_updates) > 0) {
 		GraphContext *gc = QueryCtx_GetGraphCtx();
 		// lock everything
 		QueryCtx_LockForCommit(); {
@@ -429,8 +415,8 @@ static Record MergeConsume
 	// free updates
 	//--------------------------------------------------------------------------
 
-	HashTableEmpty(op->node_pending_updates, NULL);
-	HashTableEmpty(op->edge_pending_updates, NULL);
+	hashmap_clear(op->node_pending_updates, true);
+	hashmap_clear(op->edge_pending_updates, true);
 
 	return _handoff(op);
 }
