@@ -99,7 +99,11 @@ static int GraphBLAS_Init(RedisModuleCtx *ctx) {
 
 	// initialize LAGraph
 	char msg [LAGRAPH_MSG_LEN];
-	LAGraph_Init(msg);
+	res = LAGraph_Init(msg);
+	if(res != GrB_SUCCESS) {
+		RedisModule_Log(ctx, "warning", "Encountered error initializing LAGraph: %s", msg);
+		return REDISMODULE_ERR;
+	}
 
 	return REDISMODULE_OK;
 }

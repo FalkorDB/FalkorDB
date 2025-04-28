@@ -108,7 +108,8 @@ static GrB_Matrix _Build_Matrix
 		//info = GxB_Vector_build_Scalar(*N, GrB_ALL, scalar, nrows);
 		//ASSERT(info == GrB_SUCCESS);
 
-		info = GrB_Vector_assign_Scalar(*N, NULL, NULL, scalar, GrB_ALL, nrows, NULL);
+		info = GrB_Vector_assign_Scalar(*N, NULL, NULL, scalar, GrB_ALL, nrows,
+				NULL);
 		ASSERT(info == GrB_SUCCESS);
     
 		info = GrB_free(&scalar);
@@ -116,7 +117,9 @@ static GrB_Matrix _Build_Matrix
 	}
 
 	// make A symmetric A = A + At
-	info = GrB_Matrix_eWiseAdd_Semiring(A, NULL, NULL, GxB_ANY_PAIR_BOOL, A, A, GrB_DESC_T1);
+	info = GrB_Matrix_eWiseAdd_Semiring(A, NULL, NULL, GxB_ANY_PAIR_BOOL, A, A,
+			GrB_DESC_T1);
+	ASSERT(info == GrB_SUCCESS);
 
 	return A;
 }
@@ -151,7 +154,8 @@ GrB_Info WCC
     LAGraph_Graph G = NULL;
 
 	char msg [LAGRAPH_MSG_LEN];
-    LAGraph_New(&G, &A, LAGraph_ADJACENCY_UNDIRECTED, msg);
+    info = LAGraph_New(&G, &A, LAGraph_ADJACENCY_UNDIRECTED, msg);
+	ASSERT(info == GrB_SUCCESS);
 
 	info = LAGr_ConnectedComponents(components, G, msg);
 	if(info != GrB_SUCCESS) {

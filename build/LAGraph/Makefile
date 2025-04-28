@@ -40,8 +40,8 @@ define CMAKE_DEFS +=
 	GraphBLAS_ROOT=$(BINROOT)/GraphBLAS
 	GRAPHBLAS_ROOT=$(ROOT)/deps/GraphBLAS
 	CMAKE_POSITION_INDEPENDENT_CODE=on
-	CMAKE_C_FLAGS=-fno-stack-protector
-	CMAKE_CXX_FLAGS=-fno-stack-protector
+	CMAKE_C_FLAGS=-fPIC
+	CMAKE_CXX_FLAGS=-fPIC
 endef
 
 #----------------------------------------------------------------------------------------------
