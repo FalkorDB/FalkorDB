@@ -4,10 +4,9 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "module_event_handlers.h"
 #include "RG.h"
-#include <pthread.h>
-#include <stdbool.h>
+#include "module_event_handlers.h"
+#include "LAGraph.h"
 #include "globals.h"
 #include "util/uuid.h"
 #include "cron/cron.h"
@@ -20,6 +19,9 @@
 #include "serializers/graphmeta_type.h"
 #include "serializers/graphcontext_type.h"
 #include "commands/util/run_redis_command_as.h"
+
+#include <pthread.h>
+#include <stdbool.h>
 
 // indicates the possibility of half-baked graphs in the keyspace
 #define INTERMEDIATE_GRAPHS (aux_field_counter > 0)
@@ -356,7 +358,7 @@ static void _ShutdownEventHandler
 	ThreadPools_Destroy();
 
 	// server is shutting down, finalize GraphBLAS
-	GrB_finalize();
+	LAGraph_Finalize(NULL);
 
 	RedisModule_Log(ctx, "notice", "%s", "Clearing RediSearch resources on shutdown");
 	RediSearch_CleanupModule();
