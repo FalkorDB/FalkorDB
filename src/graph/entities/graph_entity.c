@@ -62,7 +62,7 @@ SIValue GraphEntity_Keys
 	return keys;
 }
 
-// returns a map containing all the properties in the given node, or edge.
+// returns a map containing all the properties in the given node, or edge
 SIValue GraphEntity_Properties
 (
 	const GraphEntity *e
@@ -71,12 +71,14 @@ SIValue GraphEntity_Properties
 	const AttributeSet set = GraphEntity_GetAttributes(e);
 	int propCount = AttributeSet_Count(set);
 	SIValue map = SI_Map(propCount);
+
 	for(int i = 0; i < propCount; i++) {
 		AttributeID attr_id;
 		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
 		const char *key = GraphContext_GetAttributeString(gc, attr_id);
 		Map_Add(&map, SI_ConstStringVal(key), value);
 	}
+
 	return map;
 }
 

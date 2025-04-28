@@ -27,7 +27,6 @@ typedef struct {
 	bool free_root;                                     // The root should only be freed if this is a sub-AST we constructed
 	uint *ref_count;                                    // A pointer to reference counter (for deletion).
 	cypher_parse_result_t *parse_result;                // Query parsing output.
-	cypher_parse_result_t *params_parse_result;         // Parameters parsing output.
 } AST;
 
 // checks to see if libcypher-parser reported any errors
@@ -158,13 +157,6 @@ AST *AST_NewSegment
 	AST *master_ast,
 	uint start_offset,
 	uint end_offset
-);
-
-// sets a parameter parsing result in the ast
-void AST_SetParamsParseResult
-(
-	AST *ast,
-	cypher_parse_result_t *params_parse_result
 );
 
 // returns a shallow copy of the original AST pointer with ref counter increased

@@ -8,7 +8,7 @@
 #include "../../query_ctx.h"
 #include "shared/print_functions.h"
 
-/* Forward declarations. */
+// forward declarations
 static OpResult AllNodeScanInit(OpBase *opBase);
 static Record AllNodeScanConsume(OpBase *opBase);
 static Record AllNodeScanConsumeFromChild(OpBase *opBase);

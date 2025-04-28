@@ -25,31 +25,6 @@ jobs:
     strategy:
       matrix:
         machines:
-          - name: build
-            machine_type: t2a-standard-4
-            runner_label: build-${{ github.run_id }}-${{ github.run_number }}
-            arm: true
-            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
-          - name: unit-tests
-            machine_type: t2a-standard-4
-            runner_label: unit-tests-${{ github.run_id }}-${{ github.run_number }}
-            arm: true
-            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
-          - name: flow-tests
-            machine_type: t2a-standard-4
-            runner_label: flow-tests-${{ github.run_id }}-${{ github.run_number }}
-            arm: true
-            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
-          - name: tck-tests
-            machine_type: t2a-standard-4
-            runner_label: tck-tests-${{ github.run_id }}-${{ github.run_number }}
-            arm: true
-            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
-          - name: fuzz-tests
-            machine_type: t2a-standard-4
-            runner_label: fuzz-tests-${{ github.run_id }}-${{ github.run_number }}
-            arm: true
-            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
           - name: rhel-build
             machine_type: e2-standard-4
             runner_label: rhel-build-${{ github.run_id }}-${{ github.run_number }}
@@ -97,7 +72,7 @@ jobs:
             platform: linux/arm64
             suffix: arm64v8
             os: ubuntu
-            machine_label: ${{ format('build-{0}-{1}', github.run_id, github.run_number)  }}
+            machine_label: ubuntu-24.04-arm
             build_test_image: true
             test_dockerfile: Dockerfile.debian
             cache_path: linux-arm64v8
@@ -265,7 +240,7 @@ jobs:
 
       - name: Copy .so from image
         run: |
-          docker run --rm --entrypoint cat falkordb/falkordb-${{ matrix.platform.suffix }} /FalkorDB/bin/src/falkordb.so > /tmp/falkordb-${{ matrix.platform.suffix }}.so
+          docker run --rm --entrypoint cat falkordb/falkordb-${{ matrix.platform.suffix }} /var/lib/falkordb/bin/falkordb.so > /tmp/falkordb-${{ matrix.platform.suffix }}.so
 
       - name: Upload .so
         uses: actions/upload-artifact@v4
@@ -280,7 +255,6 @@ jobs:
     strategy:
       matrix:
         platform:
-          - machine_label: ${{ format('build-{0}-{1}', github.run_id, github.run_number)  }}
           - machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
     steps:
       - uses: actions/checkout@v4
@@ -305,7 +279,7 @@ jobs:
           - name: linux/arm64
             suffix: arm64v8
             os: ubuntu
-            machine_label: ${{ format('unit-tests-{0}-{1}', github.run_id, github.run_number)  }}
+            machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
         uses: actions/download-artifact@v4
@@ -322,22 +296,6 @@ jobs:
         run: |
           docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
 
-  cleanup-unit-tests:
-    needs: unit-tests
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        platform:
-          - machine_label: ${{ format('unit-tests-{0}-{1}', github.run_id, github.run_number)  }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/cleanup-runner
-        with:
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
-          zone: ${{ vars.GCP_ZONE }}
-          instance_label: ${{ matrix.platform.machine_label }}
-
   flow-tests:
     needs: build
     runs-on: ${{ matrix.platform.machine_label }}
@@ -352,7 +310,7 @@ jobs:
           - name: linux/arm64
             suffix: arm64v8
             os: ubuntu
-            machine_label: ${{ format('flow-tests-{0}-{1}', github.run_id, github.run_number)  }}
+            machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
         uses: actions/download-artifact@v4
@@ -369,22 +327,6 @@ jobs:
         run: |
           docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
 
-  cleanup-flow-tests:
-    needs: flow-tests
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        platform:
-          - machine_label: ${{ format('flow-tests-{0}-{1}', github.run_id, github.run_number)  }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/cleanup-runner
-        with:
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
-          zone: ${{ vars.GCP_ZONE }}
-          instance_label: ${{ matrix.platform.machine_label }}
-
   tck-tests:
     needs: build
     runs-on: ${{ matrix.platform.machine_label }}
@@ -399,7 +341,7 @@ jobs:
           - name: linux/arm64
             suffix: arm64v8
             os: ubuntu
-            machine_label: ${{ format('tck-tests-{0}-{1}', github.run_id, github.run_number)  }}
+            machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
         uses: actions/download-artifact@v4
@@ -416,22 +358,6 @@ jobs:
         run: |
           docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
 
-  cleanup-tck-tests:
-    needs: tck-tests
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        platform:
-          - machine_label: ${{ format('tck-tests-{0}-{1}', github.run_id, github.run_number)  }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/cleanup-runner
-        with:
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
-          zone: ${{ vars.GCP_ZONE }}
-          instance_label: ${{ matrix.platform.machine_label }}
-
   fuzz-tests:
     needs: build
     runs-on: ${{ matrix.platform.machine_label }}
@@ -446,7 +372,7 @@ jobs:
           - name: linux/arm64
             suffix: arm64v8
             os: ubuntu
-            machine_label: ${{ format('fuzz-tests-{0}-{1}', github.run_id, github.run_number)  }}
+            machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
         uses: actions/download-artifact@v4
@@ -463,62 +389,45 @@ jobs:
         run: |
           docker run -i --rm falkordb/falkordb-tests make fuzz TIMEOUT=180
 
-  cleanup-fuzz-tests:
-    needs: fuzz-tests
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        platform:
-          - machine_label: ${{ format('fuzz-tests-{0}-{1}', github.run_id, github.run_number)  }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/cleanup-runner
-        with:
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
-          zone: ${{ vars.GCP_ZONE }}
-          instance_label:
-            ${{ matrix.platform.machine_label }}
+  #upgrade-tests:
+  #  needs: build
+  #  runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' ||  format('upgrade-tests-{0}-{1}', github.run_id, github.run_number) }}
+  #  strategy:
+  #    fail-fast: false
+  #    matrix:
+  #      platform:
+  #        - linux/amd64
+  #        - linux/arm64
+  #  env:
+  #    ARCH: ${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}
+  #  steps:
+  #    - name: Download image
+  #      uses: actions/download-artifact@v4
+  #      with:
+  #        name: falkordb-tests-${{ matrix.platform.suffix }}
+  #        path: /tmp
 
-            #upgrade-tests:
-            #  needs: build
-            #  runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' ||  format('upgrade-tests-{0}-{1}', github.run_id, github.run_number) }}
-            #  strategy:
-            #    fail-fast: false
-            #    matrix:
-            #      platform:
-            #        - linux/amd64
-            #        - linux/arm64
-            #  env:
-            #    ARCH: ${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}
-            #  steps:
-            #    - name: Download image
-            #      uses: actions/download-artifact@v4
-            #      with:
-            #        name: falkordb-tests-${{ matrix.platform.suffix }}
-            #        path: /tmp
+  #    - name: Load image
+  #      id: load_image
+  #      run: |
+  #        docker load --input /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
 
-            #    - name: Load image
-            #      id: load_image
-            #      run: |
-            #        docker load --input /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
+  #    - name: Upgrade tests
+  #      env:
+  #        DOCKER_NETWORK: falkordb-network
+  #      run: |
+  #        sudo chmod 666 /var/run/docker.sock
+  #        docker network create --driver bridge $DOCKER_NETWORK
+  #        docker run -i --rm --privileged -v /var/run/docker.sock:/var/run/docker.sock --network $DOCKER_NETWORK -e DOCKER_NETWORK=$DOCKER_NETWORK falkordb/falkordb-tests make upgrade-tests TIMEOUT=180
 
-            #    - name: Upgrade tests
-            #      env:
-            #        DOCKER_NETWORK: falkordb-network
-            #      run: |
-            #        sudo chmod 666 /var/run/docker.sock
-            #        docker network create --driver bridge $DOCKER_NETWORK
-            #        docker run -i --rm --privileged -v /var/run/docker.sock:/var/run/docker.sock --network $DOCKER_NETWORK -e DOCKER_NETWORK=$DOCKER_NETWORK falkordb/falkordb-tests make upgrade-tests TIMEOUT=180
-
-            #cleanup-upgrade-tests:
-            #  needs: upgrade-tests
-            #  runs-on: ubuntu-latest
-            #  steps:
-            #    - uses: actions/checkout@v4
-            #    - uses: ./.github/actions/cleanup-runner
-            #      with:
-            #        service_account_key: ${{ secrets.GCP_SA_KEY }}
-            #        project_id: ${{ secrets.GCP_PROJECT_ID }}
-            #        zone: ${{ vars.GCP_ZONE }}
-            #        instance_label: upgrade-tests-${{ github.run_id }}-${{ github.run_number }}
+  #cleanup-upgrade-tests:
+  #  needs: upgrade-tests
+  #  runs-on: ubuntu-latest
+  #  steps:
+  #    - uses: actions/checkout@v4
+  #    - uses: ./.github/actions/cleanup-runner
+  #      with:
+  #        service_account_key: ${{ secrets.GCP_SA_KEY }}
+  #        project_id: ${{ secrets.GCP_PROJECT_ID }}
+  #        zone: ${{ vars.GCP_ZONE }}
+  #        instance_label: upgrade-tests-${{ github.run_id }}-${{ github.run_number }}

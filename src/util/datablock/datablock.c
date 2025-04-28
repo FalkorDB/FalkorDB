@@ -87,13 +87,13 @@ DataBlock *DataBlock_New
 	fpDestructor fp
 ) {
 	DataBlock *dataBlock = rm_malloc(sizeof(DataBlock));
-	dataBlock->blocks      =  NULL;
-	dataBlock->itemSize    =  itemSize + ITEM_HEADER_SIZE;
-	dataBlock->itemCount   =  0;
-	dataBlock->blockCount  =  0;
-	dataBlock->blockCap    =  blockCap;
-	dataBlock->deletedIdx  =  array_new(uint64_t, 128);
-	dataBlock->destructor  =  fp;
+	dataBlock->blocks     = NULL;
+	dataBlock->itemSize   = itemSize + ITEM_HEADER_SIZE;
+	dataBlock->itemCount  = 0;
+	dataBlock->blockCount = 0;
+	dataBlock->blockCap   = blockCap;
+	dataBlock->deletedIdx = array_new(uint64_t, 128);
+	dataBlock->destructor = fp;
 
 	_DataBlock_AddBlocks(dataBlock,
 			ITEM_COUNT_TO_BLOCK_COUNT(itemCap, dataBlock->blockCap));
@@ -103,6 +103,16 @@ DataBlock *DataBlock_New
 
 uint64_t DataBlock_ItemCount(const DataBlock *dataBlock) {
 	return dataBlock->itemCount;
+}
+
+// returns datablock item size
+uint DataBlock_itemSize
+(
+	const DataBlock *dataBlock  // datablock
+) {
+	ASSERT(dataBlock != NULL);
+
+	return dataBlock->itemSize;
 }
 
 DataBlockIterator *DataBlock_Scan(const DataBlock *dataBlock) {
@@ -251,10 +261,12 @@ void DataBlock_MarkAsDeletedOutOfOrder
 	DataBlock *dataBlock,
 	uint64_t idx
 ) {
-	// Check if idx<=data block's current capacity. If needed, allocate additional blocks.
+	// check if idx<=data block's current capacity
+	// if needed, allocate additional blocks
 	DataBlock_Ensure(dataBlock, idx);
 	DataBlockItemHeader *item_header = DataBlock_GetItemHeader(dataBlock, idx);
-	// Delete
+
+	// delete
 	MARK_HEADER_AS_DELETED(item_header);
 	array_append(dataBlock->deletedIdx, idx);
 }

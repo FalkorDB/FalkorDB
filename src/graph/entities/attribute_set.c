@@ -412,6 +412,27 @@ void AttributeSet_PersistValues
 	}
 }
 
+// get attributeset's memory usage
+size_t AttributeSet_memoryUsage
+(
+	const AttributeSet set  // set to compute memory consumption of
+) {
+	size_t   n = 0;  // memory consumption
+	uint16_t l = AttributeSet_Count(set);
+
+	// count memory consumption of each attribute
+	for(int i = 0; i < l; i++) {
+		Attribute *attr = set->attributes + i;
+		SIValue v = attr->value;
+		n += SIValue_memoryUsage(v);
+	}
+
+	// account for AttributeIDs
+	n += l * sizeof(AttributeID);
+
+	return n;
+}
+
 // free attribute set
 void AttributeSet_Free
 (
