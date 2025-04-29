@@ -147,7 +147,7 @@ static bool _read_config
 		match_fields++;
 	}
 
-	if(n - match_fields > 0) {
+	if(n != match_fields) {
 		ErrorCtx_SetError("wcc configuration contains unknown key");
 		goto error;
 	}
