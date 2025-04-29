@@ -10,4 +10,4 @@ WORKDIR /FalkorDB
 
 COPY . /FalkorDB
 
-RUN make DEBUG=$DEBUG
+RUN DEBUG=$DEBUG make
