@@ -158,7 +158,6 @@ jobs:
           build-args: |
             TARGETPLATFORM=${{ matrix.platform.platform }}
             OS=${{ matrix.platform.os }}
-            DEBUG=${{ matrix.platform.is_debug && 1 || 0 }}
       - name: Copy bin from docker for caching
         working-directory: /FalkorDB
         if: steps.cache_graphblas.outputs.cache-hit == false || steps.cache_parser.outputs.cache-hit == false || steps.cache_search.outputs.cache-hit == false || steps.cache_libcurl.outputs.cache-hit == false || steps.cache_libcsv.outputs.cache-hit == false

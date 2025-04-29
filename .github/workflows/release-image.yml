@@ -185,6 +185,7 @@ jobs:
         run: |
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-x64.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-arm64v8.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-rhel-x64.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb.debug-x64.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb.debug-arm64v8.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-rhel-x64.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb.debug-rhel-x64.so
