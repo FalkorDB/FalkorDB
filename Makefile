@@ -134,6 +134,10 @@ GRAPHBLAS_DIR = $(ROOT)/deps/GraphBLAS
 export GRAPHBLAS_BINDIR=$(DEPS_BINDIR)/GraphBLAS
 include $(ROOT)/build/GraphBLAS/Makefile.defs
 
+LAGRAPH_DIR = $(ROOT)/deps/LAGraph
+export LAGRAPH_BINDIR=$(DEPS_BINDIR)/LAGraph
+include $(ROOT)/build/LAGraph/Makefile.defs
+
 UTF8PROC_DIR = $(ROOT)/deps/utf8proc
 export UTF8PROC_BINDIR=$(DEPS_BINDIR)/utf8proc
 include $(ROOT)/build/utf8proc/Makefile.defs
@@ -152,7 +156,7 @@ include $(ROOT)/build/FalkorDB-core-rs/Makefile.defs
 
 BIN_DIRS += $(REDISEARCH_BINROOT)/search-static
 
-LIBS=$(RAX) $(LIBXXHASH) $(GRAPHBLAS) $(REDISEARCH_LIBS) $(LIBCURL) $(LIBCSV) $(LIBCYPHER_PARSER) $(UTF8PROC) $(ONIGURUMA) $(FalkorDBRS)
+LIBS=$(RAX) $(LIBXXHASH) $(GRAPHBLAS) $(LAGRAPH) $(REDISEARCH_LIBS) $(LIBCURL) $(LIBCSV) $(LIBCYPHER_PARSER) $(UTF8PROC) $(ONIGURUMA) $(FalkorDBRS)
 
 #----------------------------------------------------------------------------------------------
 
@@ -194,6 +198,10 @@ ifeq ($(wildcard $(GRAPHBLAS)),)
 MISSING_DEPS += $(GRAPHBLAS)
 endif
 
+ifeq ($(wildcard $(LAGRAPH)),)
+MISSING_DEPS += $(LAGRAPH)
+endif
+
 ifeq ($(wildcard $(LIBCYPHER_PARSER)),)
 MISSING_DEPS += $(LIBCYPHER_PARSER)
 endif
@@ -216,7 +224,7 @@ ifneq ($(MISSING_DEPS),)
 DEPS=1
 endif
 
-DEPENDENCIES=libcypher-parser graphblas libcurl libcsv redisearch rax libxxhash utf8proc oniguruma falkordbrs
+DEPENDENCIES=libcypher-parser graphblas lagraph libcurl libcsv redisearch rax libxxhash utf8proc oniguruma falkordbrs
 
 ifneq ($(filter all deps $(DEPENDENCIES) pack,$(MAKECMDGOALS)),)
 DEPS=1
@@ -242,7 +250,7 @@ include $(MK)/rules
 
 ifeq ($(DEPS),1)
 
-deps: $(LIBCURL) $(LIBCSV) $(LIBCYPHER_PARSER) $(GRAPHBLAS) $(LIBXXHASH) $(RAX) $(REDISEARCH_LIBS) $(UTF8PROC) $(ONIGURUMA) falkordbrs
+deps: $(LIBCURL) $(LIBCSV) $(LIBCYPHER_PARSER) $(GRAPHBLAS) $(LAGRAPH) $(LIBXXHASH) $(RAX) $(REDISEARCH_LIBS) $(UTF8PROC) $(ONIGURUMA) falkordbrs
 
 libxxhash: $(LIBXXHASH)
 
@@ -263,6 +271,12 @@ GRAPHBLAS_MAKE_FLAGS.xenial-x64=CC=gcc-5 CXX=gxx-5
 $(GRAPHBLAS):
 	@echo Building $@ ...
 	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/GraphBLAS DEBUG=$(DEPS_DEBUG) $(GRAPHBLAS_MAKE_FLAGS.$(OSNICK)-$(ARCH))
+
+lagraph: $(LAGRAPH)
+
+$(LAGRAPH):
+	@echo Building $@ ...
+	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/LAGraph DEBUG=$(DEPS_DEBUG) $(LAGRAPH_MAKE_FLAGS.$(OSNICK)-$(ARCH))
 
 libcypher-parser: $(LIBCYPHER_PARSER)
 
@@ -320,7 +334,7 @@ falkordbrs:
 	@echo Building $@ ...
 	cd deps/FalkorDB-core-rs && cargo build $(CARGO_FLAGS) --features falkordb_allocator --target-dir $(FalkorDBRS_BINDIR)
 
-.PHONY: libcypher-parser graphblas libcurl libcsv redisearch libxxhash rax utf8proc oniguruma falkordbrs
+.PHONY: libcypher-parser graphblas lagraph libcurl libcsv redisearch libxxhash rax utf8proc oniguruma falkordbrs
 
 #----------------------------------------------------------------------------------------------
 
@@ -351,6 +365,7 @@ ifeq ($(DEPS),1)
 	$(SHOW)$(MAKE) -C $(ROOT)/build/utf8proc clean DEBUG=$(DEPS_DEBUG)
 	$(SHOW)$(MAKE) -C $(ROOT)/build/oniguruma clean DEBUG=$(DEPS_DEBUG)
 	$(SHOW)$(MAKE) -C $(ROOT)/build/GraphBLAS clean DEBUG=$(DEPS_DEBUG)
+	$(SHOW)$(MAKE) -C $(ROOT)/build/LAGraph clean DEBUG=$(DEPS_DEBUG)
 	$(SHOW)$(MAKE) -C $(ROOT)/build/libcurl clean DEBUG=$(DEPS_DEBUG)
 	$(SHOW)$(MAKE) -C $(ROOT)/build/libcsv clean DEBUG=$(DEPS_DEBUG)
 	$(SHOW)$(MAKE) -C $(ROOT)/build/libcypher-parser clean DEBUG=$(DEPS_DEBUG)
@@ -439,6 +454,7 @@ benchmark: $(TARGET)
 
 COV_EXCLUDE_DIRS += \
 	deps/GraphBLAS \
+	deps/LAGraph \
 	deps/libcurl \
 	deps/libcsv \
 	deps/libcypher-parser \
