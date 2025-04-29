@@ -65,9 +65,9 @@ static bool _read_config
 	RelationID **rels  // [output] relationships
 ) {
 	// expecting configuration to be a map
+	ASSERT(lbls            != NULL);
+	ASSERT(rels            != NULL);
 	ASSERT(SI_TYPE(config) == T_MAP);
-	ASSERT(lbls != NULL && *lbls != NULL);
-	ASSERT(rels != NULL && *rels != NULL);
 
 	// set outputs to NULL
 	*lbls = NULL;
