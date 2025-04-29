@@ -273,13 +273,13 @@ jobs:
 
       - name: Copy .so from image
         run: |
-          docker run --rm --entrypoint cat localhost:5000/falkordb/falkordb-compiler /var/lib/falkordb/bin/falkordb.so${{ matrix.platform.is_debug && '.debug' || '' }} > /tmp/falkordb${{ matrix.platform.is_debug && '.debug' || '' }}-${{ matrix.platform.suffix }}.so
+          docker run --rm --entrypoint cat localhost:5000/falkordb/falkordb-compiler /var/lib/falkordb/bin/falkordb.so${{ matrix.platform.is_debug && '' || '.debug' }} > /tmp/falkordb${{ matrix.platform.is_debug && '' || '.debug' }}-${{ matrix.platform.suffix }}.so
 
       - name: Upload .so
         uses: actions/upload-artifact@v4
         with:
-          name: falkordb${{ matrix.platform.is_debug && '.debug' || '' }}-${{ matrix.platform.suffix }}.so
-          path: /tmp/falkordb${{ matrix.platform.is_debug && '.debug' || '' }}-${{ matrix.platform.suffix }}.so
+          name: falkordb${{ matrix.platform.is_debug && '' || '.debug' }}-${{ matrix.platform.suffix }}.so
+          path: /tmp/falkordb${{ matrix.platform.is_debug && '' || '.debug' }}-${{ matrix.platform.suffix }}.so
           if-no-files-found: error
   cleanup-build:
     needs: build
