@@ -90,6 +90,13 @@ bool AR_EXP_PerformsDistinct(AR_ExpNode *exp) {
 	return AR_EXP_ContainsFunc(exp, "distinct");
 }
 
+static AR_EXP_Result _AR_EXP_EvaluateConstant
+(
+	AR_ExpNode *root,
+	const Record r,
+	SIValue *result
+);
+
 // repurpose node to a constant expression
 static void _AR_EXP_InplaceRepurposeConstant(AR_ExpNode *node, SIValue v) {
 	// free node internals
@@ -100,6 +107,7 @@ static void _AR_EXP_InplaceRepurposeConstant(AR_ExpNode *node, SIValue v) {
 	node->type              =  AR_EXP_OPERAND;
 	node->operand.type      =  AR_EXP_CONSTANT;
 	node->operand.constant  =  v;
+	node->eval_func         =  _AR_EXP_EvaluateConstant;
 }
 
 static AR_ExpNode *_AR_EXP_CloneOperand
@@ -182,6 +190,13 @@ static void _AR_EXP_ValidateArgsCount
 	}
 }
 
+static AR_EXP_Result _AR_EXP_EvaluateFunctionCall
+(
+	AR_ExpNode *node,
+	const Record r,
+	SIValue *result
+);
+
 AR_ExpNode *AR_EXP_NewOpNode
 (
 	const char *func_name,
@@ -191,6 +206,7 @@ AR_ExpNode *AR_EXP_NewOpNode
 	// retrieve function
 	AR_FuncDesc *func = AR_GetFunc(func_name, include_internal);
 	AR_ExpNode *node = _AR_EXP_NewOpNode(child_count);
+	node->eval_func = _AR_EXP_EvaluateFunctionCall;
 
 	if(!func->internal) _AR_EXP_ValidateArgsCount(func, child_count);
 
@@ -207,10 +223,14 @@ AR_ExpNode *AR_EXP_NewOpNode
 	return node;
 }
 
+static AR_EXP_Result _AR_EXP_EvaluateBorrowRecord(AR_ExpNode *node, const Record r,
+	SIValue *result);
+
 static inline AR_ExpNode *_AR_EXP_InitializeOperand(AR_OperandNodeType type) {
 	AR_ExpNode *node = rm_calloc(1, sizeof(AR_ExpNode));
 	node->type = AR_EXP_OPERAND;
 	node->operand.type = type;
+	node->eval_func = _AR_EXP_EvaluateBorrowRecord;
 	return node;
 }
 
@@ -218,6 +238,7 @@ AR_ExpNode *AR_EXP_NewVariableOperandNode(const char *alias) {
 	AR_ExpNode *node = _AR_EXP_InitializeOperand(AR_EXP_VARIADIC);
 	node->operand.variadic.entity_alias = alias;
 	node->operand.variadic.entity_alias_idx = IDENTIFIER_NOT_FOUND;
+	node->eval_func = _AR_EXP_EvaluateVariadic;
 
 	return node;
 }
@@ -252,8 +273,16 @@ AR_ExpNode *AR_EXP_NewAttributeAccessNode(AR_ExpNode *entity,
 AR_ExpNode *AR_EXP_NewConstOperandNode(SIValue constant) {
 	AR_ExpNode *node = _AR_EXP_InitializeOperand(AR_EXP_CONSTANT);
 	node->operand.constant = constant;
+	node->eval_func = _AR_EXP_EvaluateConstant;
 	return node;
 }
+
+static AR_EXP_Result _AR_EXP_EvaluateParam
+(
+	AR_ExpNode *node,
+	const Record r,
+	SIValue *result
+);
 
 AR_ExpNode *AR_EXP_NewParameterOperandNode
 (
@@ -263,6 +292,7 @@ AR_ExpNode *AR_EXP_NewParameterOperandNode
 
 	AR_ExpNode *node = _AR_EXP_InitializeOperand(AR_EXP_PARAM);
 	node->operand.param_name = param_name;
+	node->eval_func = _AR_EXP_EvaluateParam;
 
 	return node;
 }
@@ -354,6 +384,7 @@ bool AR_EXP_ReduceToScalar
 		root->type = AR_EXP_OPERAND;
 		root->operand.type = AR_EXP_CONSTANT;
 		root->operand.constant = v;
+		root->eval_func = _AR_EXP_EvaluateConstant;
 
 		return true;
 	}
@@ -548,6 +579,7 @@ static AR_EXP_Result _AR_EXP_EvaluateVariadic(AR_ExpNode *node, const Record r, 
 static AR_EXP_Result _AR_EXP_EvaluateParam
 (
 	AR_ExpNode *node,
+	const Record r,
 	SIValue *result
 ) {
 	SIValue *param;
@@ -571,16 +603,29 @@ static AR_EXP_Result _AR_EXP_EvaluateParam
 
 	node->operand.type     = AR_EXP_CONSTANT;
 	node->operand.constant = SI_ShareValue(*param);
+	node->eval_func        = _AR_EXP_EvaluateConstant;
 
 	*result = node->operand.constant;
 
 	return EVAL_FOUND_PARAM;
 }
 
-static inline AR_EXP_Result _AR_EXP_EvaluateBorrowRecord(AR_ExpNode *node, const Record r,
+static AR_EXP_Result _AR_EXP_EvaluateBorrowRecord(AR_ExpNode *node, const Record r,
 														 SIValue *result) {
 	// Wrap the current Record in an SI pointer.
 	*result = SI_PtrVal(r);
+	return EVAL_OK;
+}
+
+static AR_EXP_Result _AR_EXP_EvaluateConstant
+(
+	AR_ExpNode *root,
+	const Record r,
+	SIValue *result
+) {
+	// the value is constant or has been computed elsewhere
+	// share with caller
+	*result = SI_ShareValue(root->operand.constant);
 	return EVAL_OK;
 }
 
@@ -593,32 +638,7 @@ static AR_EXP_Result _AR_EXP_Evaluate
 	const Record r,
 	SIValue *result
 ) {
-	AR_EXP_Result res = EVAL_OK;
-
-	switch(root->type) {
-	case AR_EXP_OP:
-		return _AR_EXP_EvaluateFunctionCall(root, r, result);
-	case AR_EXP_OPERAND:
-		switch(root->operand.type) {
-		case AR_EXP_CONSTANT:
-			// the value is constant or has been computed elsewhere
-			// share with caller
-			*result = SI_ShareValue(root->operand.constant);
-			return res;
-		case AR_EXP_VARIADIC:
-			return _AR_EXP_EvaluateVariadic(root, r, result);
-		case AR_EXP_PARAM:
-			return _AR_EXP_EvaluateParam(root, result);
-		case AR_EXP_BORROW_RECORD:
-			return _AR_EXP_EvaluateBorrowRecord(root, r, result);
-		default:
-			ASSERT(false && "Invalid expression type");
-		}
-	default:
-		ASSERT(false && "Unknown expression type");
-	}
-
-	return res;
+	return root->eval_func(root, r, result);
 }
 
 SIValue AR_EXP_Evaluate_NoThrow(AR_ExpNode *root, const Record r) {
@@ -714,6 +734,7 @@ void _AR_EXP_FinalizeAggregations
 		root->type             = AR_EXP_OPERAND;
 		root->operand.type     = AR_EXP_CONSTANT;
 		root->operand.constant = v;
+		root->eval_func        = _AR_EXP_EvaluateConstant;
 
 		// return, aggregation nodes cannot contain nested aggregation nodes
 		return;
@@ -1024,6 +1045,7 @@ AR_ExpNode *AR_EXP_Clone(AR_ExpNode *exp) {
 	}
 
 	clone->resolved_name = exp->resolved_name;
+	clone->eval_func = exp->eval_func;
 
 	return clone;
 }
