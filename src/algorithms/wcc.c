@@ -56,7 +56,7 @@ static GrB_Matrix _Build_Matrix
 	info = GrB_Matrix_ncols(&ncols, A);
 	ASSERT(info == GrB_SUCCESS);
 
-	// expecting a squsre matrix
+	// expecting a square matrix
 	ASSERT(nrows == ncols);
 
 	// create vector N denoting all nodes participating in WCC
@@ -96,6 +96,10 @@ static GrB_Matrix _Build_Matrix
 		// set N to L's main diagonal denoting all nodes participating in WCC
 		info = GxB_Vector_diag(*N, L, 0, NULL);
 		ASSERT(info == GrB_SUCCESS);
+
+		// free L matrix
+		info = GrB_Matrix_free(&L);
+		ASSERT(info == GrB_SUCCESS);
 	} else {
 		// N = [1,....1]
 		GrB_Scalar scalar;
@@ -104,9 +108,6 @@ static GrB_Matrix _Build_Matrix
 
 		info = GxB_Scalar_setElement_BOOL(scalar, true);
 		ASSERT(info == GrB_SUCCESS);
-
-		//info = GxB_Vector_build_Scalar(*N, GrB_ALL, scalar, nrows);
-		//ASSERT(info == GrB_SUCCESS);
 
 		info = GrB_Vector_assign_Scalar(*N, NULL, NULL, scalar, GrB_ALL, nrows,
 				NULL);
@@ -143,7 +144,7 @@ GrB_Info WCC
 
 	// nullify outputs
 	*N          = NULL;
-    *components = NULL;
+	*components = NULL;
 
 	// build matrix on which we'll compute WCC
 	GrB_Matrix A = _Build_Matrix(g, N, lbls, n_lbls, rels, n_rels);
@@ -153,21 +154,40 @@ GrB_Info WCC
 	GrB_Info info;
     LAGraph_Graph G = NULL;
 
-	char msg [LAGRAPH_MSG_LEN];
+	char msg[LAGRAPH_MSG_LEN];
     info = LAGraph_New(&G, &A, LAGraph_ADJACENCY_UNDIRECTED, msg);
 	ASSERT(info == GrB_SUCCESS);
 
 	info = LAGr_ConnectedComponents(components, G, msg);
 	if(info != GrB_SUCCESS) {
-
+		goto error;
 	}
-
-	info = GrB_wait(*components, GrB_MATERIALIZE);
-	ASSERT(info == GrB_SUCCESS);
 
     // free the graph, the connected components, and finish LAGraph
     info = LAGraph_Delete(&G, msg);
 	ASSERT(info == GrB_SUCCESS);
+
+	// wait on outputs
+	info = GrB_wait(*N, GrB_MATERIALIZE);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_wait(*components, GrB_MATERIALIZE);
+	ASSERT(info == GrB_SUCCESS);
+
+	return info;
+
+error:
+	if(*N != NULL) {
+		GrB_free(N);
+		*N = NULL;
+	}
+
+	if(*components != NULL) {
+		GrB_free(components);
+		*components = NULL;
+	}
+
+	LAGraph_Delete(&G, msg);
 
 	return info;
 }

@@ -30,9 +30,9 @@ ProcedureResult Proc_PropKeysInvoke
 
 	RelationsContext *pdata = rm_malloc(sizeof(RelationsContext));
 
-	pdata->prop_id  =  0;
-	pdata->gc       =  QueryCtx_GetGraphCtx();
-	pdata->output   =  array_new(SIValue, 1);
+	pdata->prop_id = 0;
+	pdata->gc      = QueryCtx_GetGraphCtx();
+	pdata->output  = array_new(SIValue, 1);
 
 	array_append(pdata->output, SI_ConstStringVal("propertyKey"));
 

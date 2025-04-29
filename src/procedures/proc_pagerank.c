@@ -93,13 +93,14 @@ ProcedureResult Proc_PagerankInvoke
 
 	// setup context
 	PagerankContext *pdata = rm_malloc(sizeof(PagerankContext));
-	pdata->n = n;
-	pdata->i = 0;
-	pdata->g = g;
-	pdata->node = GE_NEW_NODE();
+	pdata->n       = n;
+	pdata->i       = 0;
+	pdata->g       = g;
+	pdata->node    = GE_NEW_NODE();
+	pdata->output  = array_newlen(SIValue, 2);
 	pdata->mapping = mapping;
 	pdata->ranking = ranking;
-	pdata->output = array_new(SIValue, 2);
+
 	_process_yield(pdata, yield);
 
 	ctx->privateData = pdata;

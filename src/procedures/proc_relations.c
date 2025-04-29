@@ -30,9 +30,9 @@ ProcedureResult Proc_RelationsInvoke
 
 	RelationsContext *pdata = rm_malloc(sizeof(RelationsContext));
 
-	pdata->schema_id  =  0;
-	pdata->gc         =  QueryCtx_GetGraphCtx();
-	pdata->output     =  array_new(SIValue, 1);
+	pdata->gc        = QueryCtx_GetGraphCtx();
+	pdata->output    = array_newlen(SIValue, 1);
+	pdata->schema_id = 0;
 
 	ctx->privateData = pdata;
 	return PROCEDURE_OK;

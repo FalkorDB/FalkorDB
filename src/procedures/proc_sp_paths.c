@@ -72,15 +72,21 @@ static void SinglePairCtx_Free
 	if(ctx == NULL) return;
 
 	uint32_t levelsCount = array_len(ctx->levels);
-	for(int i = 0; i < levelsCount; i++) array_free(ctx->levels[i]);
-	if(ctx->levels) array_free(ctx->levels);
-	if(ctx->path) Path_Free(ctx->path);
-	if(ctx->neighbors) array_free(ctx->neighbors);
-	if(ctx->relationIDs) {
-		array_free(ctx->relationIDs);
+	for(int i = 0; i < levelsCount; i++) {
+		array_free(ctx->levels[i]);
 	}
-	if(ctx->path_count == 0 && ctx->array != NULL) array_free(ctx->array);
-	else if(ctx->path_count > 1 && ctx->heap != NULL) Heap_free(ctx->heap);
+
+	if(ctx->path)        Path_Free(ctx->path);
+	if(ctx->levels)      array_free(ctx->levels);
+	if(ctx->neighbors)   array_free(ctx->neighbors);
+	if(ctx->relationIDs) array_free(ctx->relationIDs);
+
+	if(ctx->path_count == 0 && ctx->array != NULL) {
+		array_free(ctx->array);
+	} else if(ctx->path_count > 1 && ctx->heap != NULL) {
+		Heap_free(ctx->heap);
+	}
+
 	array_free(ctx->output);
 	rm_free(ctx);
 }
@@ -674,12 +680,16 @@ static ProcedureResult Proc_SPpathsInvoke
 	}
 	ctx->privateData = single_pair_ctx;
 
-	single_pair_ctx->output = array_new(SIValue, 3);
+	single_pair_ctx->output = array_newlen(SIValue, 3);
 	_process_yield(single_pair_ctx, yield);
 
-	if(single_pair_ctx->path_count == 0) SPpaths_all_minimal(single_pair_ctx);
-	else if(single_pair_ctx->path_count == 1) SPpaths_single_minimal(single_pair_ctx);
-	else SPpaths_k_minimal(single_pair_ctx);
+	if(single_pair_ctx->path_count == 0) {
+		SPpaths_all_minimal(single_pair_ctx);
+	} else if(single_pair_ctx->path_count == 1) {
+		SPpaths_single_minimal(single_pair_ctx);
+	} else {
+		SPpaths_k_minimal(single_pair_ctx);
+	}
 
 	return PROCEDURE_OK;
 }

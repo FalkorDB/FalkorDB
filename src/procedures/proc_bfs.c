@@ -239,15 +239,15 @@ static BFSCtx *_Build_Private_Data() {
 	// set up the BFS context
 	BFSCtx *pdata = rm_calloc(1, sizeof(BFSCtx));
 
-	pdata->n            =  0;
-	pdata->g            =  QueryCtx_GetGraph();
-	pdata->nodes        =  GrB_NULL;
-	pdata->output       =  array_new(SIValue, 2);
-	pdata->parents      =  GrB_NULL;
-	pdata->depleted     =  false;
-	pdata->reltype_id   =  GRAPH_NO_RELATION;
-	pdata->yield_nodes  =  NULL;
-	pdata->yield_edges  =  NULL;
+	pdata->n            = 0;
+	pdata->g            = QueryCtx_GetGraph();
+	pdata->nodes        = GrB_NULL;
+	pdata->output       = array_newlen(SIValue, 2);
+	pdata->parents      = GrB_NULL;
+	pdata->depleted     = false;
+	pdata->reltype_id   = GRAPH_NO_RELATION;
+	pdata->yield_nodes  = NULL;
+	pdata->yield_edges  = NULL;
 
 	return pdata;
 }

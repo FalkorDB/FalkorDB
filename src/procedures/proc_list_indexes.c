@@ -124,7 +124,7 @@ ProcedureResult Proc_IndexesInvoke
 	IndexesContext *pdata = rm_malloc(sizeof(IndexesContext));
 
 	pdata->gc      = gc;
-	pdata->out     = array_new(SIValue, 9);
+	pdata->out     = array_newlen(SIValue, 9);
 	pdata->indices = array_new(Index, 0);
 
 	//--------------------------------------------------------------------------

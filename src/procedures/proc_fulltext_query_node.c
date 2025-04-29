@@ -82,7 +82,7 @@ ProcedureResult Proc_FulltextQueryNodeInvoke
 	pdata->g      = gc->g;
 	pdata->n      = GE_NEW_NODE();
 	pdata->idx    = idx;
-	pdata->output = array_new(SIValue,  2);
+	pdata->output = array_newlen(SIValue, 2);
 
 	_process_yield(pdata, yield);
 

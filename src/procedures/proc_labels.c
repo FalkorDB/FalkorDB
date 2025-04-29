@@ -30,9 +30,9 @@ ProcedureResult Proc_LabelsInvoke
 
 	LabelsContext *pdata = rm_malloc(sizeof(LabelsContext));
 
-	pdata->schema_id  =  0;
-	pdata->gc         =  QueryCtx_GetGraphCtx();
-	pdata->output     =  array_new(SIValue, 1);
+	pdata->gc        = QueryCtx_GetGraphCtx();
+	pdata->output    = array_new(SIValue, 1);
+	pdata->schema_id = 0;
 
 	array_append(pdata->output, SI_ConstStringVal("label"));
 

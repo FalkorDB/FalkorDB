@@ -5,8 +5,8 @@
 
 #include "RG.h"
 #include "GraphBLAS.h"
-#include "proc_pagerank.h"
 
+#include "proc_wcc.h"
 #include "../value.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
@@ -31,7 +31,7 @@ typedef struct {
 	GxB_Iterator it;           // components iterator
 	Node node;                 // current node
 	Graph *g;                  // graph
-	SIValue *output;           // array with up to 2 entries [node, component]
+	SIValue output[2];         // array with up to 2 entries [node, component]
 	SIValue *yield_node;       // yield node
 	SIValue *yield_component;  // yield component
 } WCC_Context;
@@ -86,24 +86,29 @@ static bool _read_config
 	LabelID *_lbls    = NULL;
 	RelationID *_rels = NULL;
 
-	if(Map_Get(config, SI_ConstStringVal("nodeLabels"), &v)) {
+	if(MAP_GETCASEINSENSITIVE(config, "nodeLabels", v)) {
 		if(SI_TYPE(v) != T_ARRAY) {
-			ErrorCtx_SetError("wcc configuration 'nodeLabels' should be an array of strings");
+			ErrorCtx_SetError("wcc configuration, 'nodeLabels' should be an array of strings");
 			goto error;
 		}
 
 		if(!SIArray_AllOfType(v, T_STRING)) {
 			// error
-			ErrorCtx_SetError("wcc configuration 'nodeLabels' should be an array of strings");
+			ErrorCtx_SetError("wcc configuration, 'nodeLabels' should be an array of strings");
 			goto error;
 		}
 
 		_lbls = array_new(LabelID, 0);
-		u_int32_t n = SIArray_Length(v);
-		for(u_int32_t i = 0; i < n; i++) {
+		u_int32_t l = SIArray_Length(v);
+		for(u_int32_t i = 0; i < l; i++) {
 			SIValue lbl = SIArray_Get(v, i);
 			const char *label = lbl.stringval;
 			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
+			if(s == NULL) {
+				ErrorCtx_SetError("wcc configuration, unknown label %s", label);
+				goto error;
+			}
+
 			LabelID lbl_id = Schema_GetID(s);
 			array_append(_lbls, lbl_id);
 		}
@@ -112,23 +117,28 @@ static bool _read_config
 		match_fields++;
 	}
 
-	if(Map_Get(config, SI_ConstStringVal("relationshipTypes"), &v)) {
+	if(MAP_GETCASEINSENSITIVE(config, "relationshipTypes", v)) {
 		if(SI_TYPE(v) != T_ARRAY) {
-			ErrorCtx_SetError("wcc configuration 'relationshipTypes' should be an array of strings");
+			ErrorCtx_SetError("wcc configuration, 'relationshipTypes' should be an array of strings");
 			goto error;
 		}
 
 		if(!SIArray_AllOfType(v, T_STRING)) {
-			ErrorCtx_SetError("wcc configuration 'relationshipTypes' should be an array of strings");
+			ErrorCtx_SetError("wcc configuration, 'relationshipTypes' should be an array of strings");
 			goto error;
 		}
 
 		_rels = array_new(RelationID, 0);
-		u_int32_t n = SIArray_Length(v);
-		for(u_int32_t i = 0; i < n; i++) {
+		u_int32_t l = SIArray_Length(v);
+		for(u_int32_t i = 0; i < l; i++) {
 			SIValue rel = SIArray_Get(v, i);
 			const char *relation = rel.stringval;
 			Schema *s = GraphContext_GetSchema(gc, relation, SCHEMA_EDGE);
+			if(s == NULL) {
+				ErrorCtx_SetError("wcc configuration, unknown relationship-type %s", relation);
+				goto error;
+			}
+
 			RelationID rel_id = Schema_GetID(s);
 			array_append(_rels, rel_id);
 		}
@@ -192,8 +202,8 @@ ProcedureResult Proc_WCCInvoke
 	//	relationshipTypes: ['R']
 	// }
 
-	LabelID    *lbls;
-	RelationID *rels;
+	LabelID    *lbls = NULL;
+	RelationID *rels = NULL;
 
 	bool config_ok = _read_config(config, &lbls, &rels);
 	SIValue_Free(config);
@@ -211,7 +221,6 @@ ProcedureResult Proc_WCCInvoke
 	pdata->it              = NULL;
 	pdata->lbls            = lbls;
 	pdata->rels            = rels;
-	pdata->output          = array_new(SIValue, 2);
 	pdata->components      = NULL;
 	pdata->yield_node      = NULL;
 	pdata->yield_component = NULL;
@@ -313,7 +322,6 @@ ProcedureResult Proc_WCCFree
 		if(pdata->it         != NULL) GrB_free(&pdata->it);
 		if(pdata->lbls       != NULL) array_free(pdata->lbls);
 		if(pdata->rels       != NULL) array_free(pdata->rels);
-		if(pdata->output     != NULL) array_free(pdata->output);
 		if(pdata->components != NULL) GrB_free(&pdata->components);
 
 		rm_free(ctx->privateData);

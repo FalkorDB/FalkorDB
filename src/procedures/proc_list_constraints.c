@@ -189,7 +189,7 @@ ProcedureResult Proc_ConstraintsInvoke
 	ConstraintsContext *pdata = rm_malloc(sizeof(ConstraintsContext));
 
 	pdata->gc          = gc;
-	pdata->out         = array_new(SIValue, 5);
+	pdata->out         = array_newlen(SIValue, 5);
     pdata->constraints = array_new(Constraint, 0);
 
 	_process_yield(pdata, yield);

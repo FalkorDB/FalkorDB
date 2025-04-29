@@ -164,7 +164,7 @@ ProcedureResult Proc_FulltextQueryRelationshipInvoke
 	pdata->g      = gc->g;
 	pdata->r	  = Schema_GetID(s);
 	pdata->idx    = idx;
-	pdata->output = array_new(SIValue,  2);
+	pdata->output = array_newlen(SIValue, 2);
 
 	_relationship_process_yield(pdata, yield);
 

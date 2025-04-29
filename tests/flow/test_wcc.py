@@ -91,47 +91,29 @@ class testWCC(FlowTestsBase):
 
         # Run WCC algorithm
         result = self.graph.query("CALL algo.WCC(null) YIELD node, componentId")
-
-        # Extract node ids and component ids
-        components = {}
-        for record in result.result_set:
-            node = record[0]  # node is at index 0
-            component_id = record[1]  # componentId is at index 1
-            node_id = node.properties['id']
-
-            if component_id not in components:
-                components[component_id] = []
-            components[component_id].append(node_id)
+        components = get_components(result)
 
         # We should have exactly 3 different components
         self.env.assertEquals(len(components), 3)
 
         # Validate each component has the correct nodes
-        component_sets = []
-        for component_id, node_ids in components.items():
-            node_ids.sort()  # Sort for consistent comparison
-            component_sets.append(node_ids)
-
-        # Sort components by size and then content for deterministic comparison
-        component_sets.sort(key=lambda x: (len(x), x))
-
         # Expected components after sorting:
         # - Component with 1 node (isolated node 6)
         # - Component with 2 nodes (4-5)
         # - Component with 3 nodes (1-2-3)
-        self.env.assertEquals(len(component_sets[0]), 1)  # Isolated node
-        self.env.assertEquals(len(component_sets[1]), 2)  # Two connected nodes
-        self.env.assertEquals(len(component_sets[2]), 3)  # Three connected nodes
+        self.env.assertEquals(len(components[0]), 1)  # Isolated node
+        self.env.assertEquals(len(components[1]), 2)  # Two connected nodes
+        self.env.assertEquals(len(components[2]), 3)  # Three connected nodes
 
         # Check specific node memberships
         # The isolated node component should be just node 6
-        self.env.assertEquals(component_sets[0], [6])
+        self.env.assertEquals(components[0], [6])
 
         # The component with 2 nodes should contain nodes 4 and 5
-        self.env.assertEquals(component_sets[1], [4, 5])
+        self.env.assertEquals(components[1], [4, 5])
 
         # The component with 3 nodes should contain nodes 1, 2, and 3
-        self.env.assertEquals(component_sets[2], [1, 2, 3])
+        self.env.assertEquals(components[2], [1, 2, 3])
 
     def test_wcc_with_different_relationship_types(self):
         """Test WCC algorithm with different relationship type filters"""

@@ -57,7 +57,7 @@ ProcedureResult Proc_ProceduresInvoke
 	rax *procedures = __procedures;
 	raxStart(&pdata->iter, procedures);
 	raxSeek(&pdata->iter, "^", NULL, 0);
-	pdata->output = array_new(SIValue, 2);
+	pdata->output = array_newlen(SIValue, 2);
 	_process_yield(pdata, yield);
 
 	ctx->privateData = pdata;
