@@ -11,3 +11,5 @@ WORKDIR /FalkorDB
 COPY . /FalkorDB
 
 RUN make DEBUG=$DEBUG
+
+COPY /FalkorDB/bin/linux*/src/ /FalkorDB/bin/
