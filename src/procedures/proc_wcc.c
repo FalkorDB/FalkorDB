@@ -192,6 +192,8 @@ ProcedureResult Proc_WCCInvoke
 	// arg0 can be either a map or NULL
 	SIType t = SI_TYPE(config);
 	if(!(t & T_MAP)) {
+		SIValue_Free(config);
+
 		ErrorCtx_SetError("invalid argument to algo.wcc");
 		return PROCEDURE_ERR;
 	}
@@ -330,6 +332,8 @@ ProcedureResult Proc_WCCFree
 	return PROCEDURE_OK;
 }
 
+// CALL algo.WCC({nodeLabels: ['Person'], relationshipTypes: ['KNOWS']})
+// YIELD node, componentId
 ProcedureCtx *Proc_WCCCtx(void) {
 	void *privateData = NULL;
 
