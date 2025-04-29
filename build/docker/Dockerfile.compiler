@@ -2,10 +2,12 @@ ARG TARGETPLATFORM=linux/amd64
 
 ARG OS=ubuntu
 
+ARG DEBUG=0
+
 FROM falkordb/falkordb-build:$OS AS builder
 
 WORKDIR /FalkorDB
 
 COPY . /FalkorDB
 
-RUN make
+RUN make DEBUG=$DEBUG

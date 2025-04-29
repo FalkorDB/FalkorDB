@@ -83,6 +83,32 @@ jobs:
             machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
             build_test_image: false
             cache_path: linux-x64
+          - name: linux/amd64
+            platform: linux/amd64
+            suffix: x64
+            os: ubuntu
+            machine_label: ubuntu-latest
+            build_test_image: true
+            test_dockerfile: Dockerfile.debian
+            cache_path: linux-x64
+            is_debug: true
+          - name: linux/arm64
+            platform: linux/arm64
+            suffix: arm64v8
+            os: ubuntu
+            machine_label: ubuntu-24.04-arm
+            build_test_image: true
+            test_dockerfile: Dockerfile.debian
+            cache_path: linux-arm64v8
+            is_debug: true
+          - name: rhel/amd64
+            platform: linux/amd64
+            suffix: rhel-x64
+            os: rhel
+            machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
+            build_test_image: false
+            cache_path: linux-x64
+            is_debug: true
     steps:
       - name: Safe dir
         run: git config --global --add safe.directory '*'
@@ -158,6 +184,7 @@ jobs:
           build-args: |
             TARGETPLATFORM=${{ matrix.platform.platform }}
             OS=${{ matrix.platform.os }}
+            DEBUG=${{ matrix.platform.is_debug && '1' || '0' }}
       - name: Copy bin from docker for caching
         working-directory: /FalkorDB
         if: steps.cache_graphblas.outputs.cache-hit == false || steps.cache_parser.outputs.cache-hit == false || steps.cache_search.outputs.cache-hit == false || steps.cache_libcurl.outputs.cache-hit == false || steps.cache_libcsv.outputs.cache-hit == false
@@ -239,21 +266,13 @@ jobs:
 
       - name: Copy .so from image
         run: |
-          docker run --rm --entrypoint cat falkordb/falkordb-${{ matrix.platform.suffix }} /var/lib/falkordb/bin/falkordb.so > /tmp/falkordb-${{ matrix.platform.suffix }}.so
-          docker run --rm --entrypoint cat falkordb/falkordb-${{ matrix.platform.suffix }} /var/lib/falkordb/bin/falkordb.so.debug > /tmp/falkordb.debug-${{ matrix.platform.suffix }}.so
+          docker run --rm --entrypoint cat falkordb/falkordb-${{ matrix.platform.suffix }} /var/lib/falkordb/bin/falkordb.so${{ matrix.platform.is_debug && '.debug' || '' }} > /tmp/falkordb${{ matrix.platform.is_debug && '.debug' || '' }}-${{ matrix.platform.suffix }}.so
 
       - name: Upload .so
         uses: actions/upload-artifact@v4
         with:
-          name: falkordb-${{ matrix.platform.suffix }}.so
-          path: /tmp/falkordb-${{ matrix.platform.suffix }}.so
-          if-no-files-found: error
-
-      - name: Upload debug .so
-        uses: actions/upload-artifact@v4
-        with:
-          name: falkordb.debug-${{ matrix.platform.suffix }}.so
-          path: /tmp/falkordb.debug-${{ matrix.platform.suffix }}.so
+          name: falkordb${{ matrix.platform.is_debug && '.debug' || '' }}-${{ matrix.platform.suffix }}.so
+          path: /tmp/falkordb${{ matrix.platform.is_debug && '.debug' || '' }}-${{ matrix.platform.suffix }}.so
           if-no-files-found: error
   cleanup-build:
     needs: build
