@@ -58,7 +58,7 @@ typedef struct {
 		heap_t *heap;            // in case path_count > 1
 		WeightedPath *array;     // path_count == 0 return all minimum result
 	};                           // path collection
-	SIValue *output;             // result returned
+	SIValue output[3];           // result returned
 	SIValue *yield_path;         // yield path
 	SIValue *yield_path_weight;  // yield path weight
 	SIValue *yield_path_cost;    // yield path cost
@@ -87,7 +87,6 @@ static void SinglePairCtx_Free
 		Heap_free(ctx->heap);
 	}
 
-	array_free(ctx->output);
 	rm_free(ctx);
 }
 
@@ -680,7 +679,6 @@ static ProcedureResult Proc_SPpathsInvoke
 	}
 	ctx->privateData = single_pair_ctx;
 
-	single_pair_ctx->output = array_newlen(SIValue, 3);
 	_process_yield(single_pair_ctx, yield);
 
 	if(single_pair_ctx->path_count == 0) {

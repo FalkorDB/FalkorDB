@@ -15,9 +15,9 @@
 // CALL db.relationshipTypes()
 
 typedef struct {
-	uint schema_id;     // Current schema ID.
-	GraphContext *gc;   // Graph context.
-	SIValue *output;    // Output label.
+	uint schema_id;     // current schema ID
+	GraphContext *gc;   // graph context
+	SIValue output[1];  // output label
 } RelationsContext;
 
 ProcedureResult Proc_RelationsInvoke
@@ -31,7 +31,6 @@ ProcedureResult Proc_RelationsInvoke
 	RelationsContext *pdata = rm_malloc(sizeof(RelationsContext));
 
 	pdata->gc        = QueryCtx_GetGraphCtx();
-	pdata->output    = array_newlen(SIValue, 1);
 	pdata->schema_id = 0;
 
 	ctx->privateData = pdata;
@@ -63,7 +62,6 @@ ProcedureResult Proc_RelationsFree
 	// clean up
 	if(ctx->privateData) {
 		RelationsContext *pdata = ctx->privateData;
-		array_free(pdata->output);
 		rm_free(ctx->privateData);
 	}
 

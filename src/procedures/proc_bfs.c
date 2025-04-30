@@ -32,7 +32,7 @@ typedef struct {
 	GrB_Index n;           // total number of results
 	bool depleted;         // true if BFS has already been performed for this node
 	int reltype_id;        // iD of relationship matrix to traverse
-	SIValue *output;       // array with a maximum of 4 entries: ["nodes", nodes, "edges", edges]
+	SIValue output[2];     // array with a maximum of 4 entries: ["nodes", nodes, "edges", edges]
 	SIValue *yield_nodes;  // yield reachable nodes
 	SIValue *yield_edges;  // yield edges traversed
 	GrB_Vector nodes;      // vector of reachable nodes
@@ -226,9 +226,8 @@ static ProcedureResult Proc_BFS_Free
 	// free private data
 	BFSCtx *pdata = ctx->privateData;
 
-	if(pdata->output   !=  NULL)  array_free(pdata->output);
-	if(pdata->nodes    !=  NULL)  GrB_Vector_free(&pdata->nodes);
-	if(pdata->parents  !=  NULL)  GrB_Vector_free(&pdata->parents);
+	if(pdata->nodes   != NULL) GrB_Vector_free(&pdata->nodes);
+	if(pdata->parents != NULL) GrB_Vector_free(&pdata->parents);
 
 	rm_free(ctx->privateData);
 
@@ -242,7 +241,6 @@ static BFSCtx *_Build_Private_Data() {
 	pdata->n            = 0;
 	pdata->g            = QueryCtx_GetGraph();
 	pdata->nodes        = GrB_NULL;
-	pdata->output       = array_newlen(SIValue, 2);
 	pdata->parents      = GrB_NULL;
 	pdata->depleted     = false;
 	pdata->reltype_id   = GRAPH_NO_RELATION;

@@ -17,7 +17,7 @@
 typedef struct {
 	uint schema_id;     // current schema id
 	GraphContext *gc;   // graph context
-	SIValue *output;    // output label
+	SIValue output[1];  // output label
 } LabelsContext;
 
 ProcedureResult Proc_LabelsInvoke
@@ -31,10 +31,7 @@ ProcedureResult Proc_LabelsInvoke
 	LabelsContext *pdata = rm_malloc(sizeof(LabelsContext));
 
 	pdata->gc        = QueryCtx_GetGraphCtx();
-	pdata->output    = array_new(SIValue, 1);
 	pdata->schema_id = 0;
-
-	array_append(pdata->output, SI_ConstStringVal("label"));
 
 	ctx->privateData = pdata;
 	return PROCEDURE_OK;
@@ -66,7 +63,6 @@ ProcedureResult Proc_LabelsFree
 	// clean up
 	if(ctx->privateData) {
 		LabelsContext *pdata = ctx->privateData;
-		array_free(pdata->output);
 		rm_free(ctx->privateData);
 	}
 

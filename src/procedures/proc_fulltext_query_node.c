@@ -23,7 +23,7 @@
 typedef struct {
 	Node n;
 	Graph *g;
-	SIValue *output;
+	SIValue output[2];
 	Index idx;
 	RSResultsIterator *iter;
 	SIValue *yield_node;     // yield node
@@ -79,10 +79,9 @@ ProcedureResult Proc_FulltextQueryNodeInvoke
 	ctx->privateData = rm_malloc(sizeof(QueryNodeContext));
 	QueryNodeContext *pdata = ctx->privateData;
 
-	pdata->g      = gc->g;
-	pdata->n      = GE_NEW_NODE();
-	pdata->idx    = idx;
-	pdata->output = array_newlen(SIValue, 2);
+	pdata->g   = gc->g;
+	pdata->n   = GE_NEW_NODE();
+	pdata->idx = idx;
 
 	_process_yield(pdata, yield);
 
@@ -144,7 +143,6 @@ ProcedureResult Proc_FulltextQueryNodeFree
 	if(!ctx->privateData) return PROCEDURE_OK;
 
 	QueryNodeContext *pdata = ctx->privateData;
-	array_free(pdata->output);
 	if(pdata->iter) RediSearch_ResultsIteratorFree(pdata->iter);
 	rm_free(pdata);
 

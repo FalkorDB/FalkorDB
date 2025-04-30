@@ -19,7 +19,7 @@ typedef struct {
 	Edge e;                       // edge
 	Graph *g;                     // graph
 	RelationID r;                 // edge relation ID
-	SIValue *output;              // output
+	SIValue output[2];            // output
 	Index idx;                    // index
 	RSResultsIterator *iter;      // iterator
 	SIValue *yield_relationship;  // yield relationship
@@ -117,8 +117,6 @@ ProcedureResult Proc_FulltextQueryRelationshipFree
 
 	QueryRelationshipContext *pdata = ctx->privateData;
 
-	array_free(pdata->output);
-
 	if(pdata->iter) RediSearch_ResultsIteratorFree(pdata->iter);
 
 	rm_free(pdata);
@@ -161,10 +159,9 @@ ProcedureResult Proc_FulltextQueryRelationshipInvoke
 	QueryRelationshipContext *pdata = ctx->privateData;
 
 	// populate context
-	pdata->g      = gc->g;
-	pdata->r	  = Schema_GetID(s);
-	pdata->idx    = idx;
-	pdata->output = array_newlen(SIValue, 2);
+	pdata->g   = gc->g;
+	pdata->r   = Schema_GetID(s);
+	pdata->idx = idx;
 
 	_relationship_process_yield(pdata, yield);
 
