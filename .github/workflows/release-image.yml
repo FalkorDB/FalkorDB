@@ -98,7 +98,7 @@ jobs:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
-          name: falkordb.debug-x64.so
+          name: falkordb-debug-x64.so
           path: /tmp
           if_no_artifact_found: error
       - name: Retrieve built debug.so ARM
@@ -107,7 +107,7 @@ jobs:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
-          name: falkordb.debug-arm64v8.so
+          name: falkordb-debug-arm64v8.so
           path: /tmp
           if_no_artifact_found: error
       - name: Retrieve built debug.so RHEL AMD
@@ -116,7 +116,7 @@ jobs:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
-          name: falkordb.debug-rhel-x64.so
+          name: falkordb-debug-rhel-x64.so
           path: /tmp
           if_no_artifact_found: error
 
@@ -186,6 +186,6 @@ jobs:
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-x64.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-arm64v8.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-rhel-x64.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb.debug-x64.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb.debug-arm64v8.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb.debug-rhel-x64.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-x64.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-arm64v8.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-rhel-x64.so

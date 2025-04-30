@@ -278,7 +278,7 @@ jobs:
       - name: Upload .so
         uses: actions/upload-artifact@v4
         with:
-          name: falkordb.${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
+          name: falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
           path: /tmp/falkordb.so
           if-no-files-found: error
   cleanup-build:
