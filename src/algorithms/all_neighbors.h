@@ -6,11 +6,10 @@
 
 #pragma once
 
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
-#include "../util/dict.h"
+#include "../util/hashmap.h"
+#include "../graph/entities/node.h"
 #include "../graph/delta_matrix/delta_matrix.h"
 #include "../graph/delta_matrix/delta_matrix_iter.h"
-#include "../graph/entities/node.h"
 
 // performs iterative DFS from 'src'
 // each iteration (call to AllNeighborsCtx_NextNeighbor)
@@ -30,7 +29,7 @@ typedef struct {
 	bool first_pull;                // first call to Next
 	EntityID *visited;              // visited nodes
 	Delta_MatrixTupleIter *levels;  // array of neighbors iterator
-	dict *visited_nodes;            // visited nodes
+	hashmap visited_nodes;          // visited nodes
 } AllNeighborsCtx;
 
 void AllNeighborsCtx_Reset

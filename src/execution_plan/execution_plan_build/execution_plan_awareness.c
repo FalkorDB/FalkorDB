@@ -4,30 +4,7 @@
  */
 
 #include "RG.h"
-#include "../../util/dict.h"
 #include "execution_plan_awareness.h"
-
-// extract keys from hashtable
-static void HashTableKeys
-(
-	unsigned long n,    // number of keys to extract
-	const char **keys,  // [output] keys array
-	dict *d             // hashtable
-) {
-	ASSERT(n    > 0);
-	ASSERT(keys != NULL);
-	ASSERT(n    == HashTableElemCount(d));
-
-	// collect variables
-	dictIterator it;
-	HashTableInitIterator(&it, d);
-
-	for(int i = 0; i < n; i++) {
-		dictEntry *de = HashTableNext(&it);
-		const char *key = (const char*)HashTableGetKey(de);
-		keys[i] = key;
-	}
-}
 
 // compute op's awareness by inspecting its children awareness
 static void inheritAwareness
@@ -46,14 +23,12 @@ static void inheritAwareness
 			continue;
 		}
 
-		dictEntry *de;
-		dictIterator it;
-		dict *awareness = child->awareness;
-		HashTableInitIterator(&it, awareness);
+		size_t i = 0;
+		char **key = NULL;
+		hashmap awareness = child->awareness;
 
-		while((de = HashTableNext(&it)) != NULL) {
-			const char *key = (const char*)HashTableGetKey(de);
-			HashTableAdd(op->awareness, (void*)key, NULL);
+		while(hashmap_iter(awareness, &i, (void **)&key)) {
+			hashmap_set(op->awareness, (void*)key);
 		}
 	}
 }
@@ -66,12 +41,12 @@ void ExecutionPlanAwareness_SelfAware
 	ASSERT(op            != NULL);
 	ASSERT(op->awareness != NULL);
 
-	HashTableEmpty(op->awareness, NULL);
+	hashmap_clear(op->awareness, true);
 
 	int n = array_len(op->modifies);
 	for(int i = 0; i < n; i++) {
 		const char *alias = op->modifies[i];
-		HashTableAdd(op->awareness, (void*)alias, NULL);
+		hashmap_set(op->awareness, (void*)&alias);
 	}
 }
 
@@ -82,13 +57,10 @@ void ExecutionPlanAwareness_PropagateAwareness
 ) {
 	ASSERT(op != NULL);
 
-	unsigned long n = HashTableElemCount(op->awareness);
+	unsigned long n = hashmap_count(op->awareness);
 	if(n == 0) {
 		return;
 	}
-
-	const char *keys[n];
-	HashTableKeys(n, keys, op->awareness);
 
 	// update parent awareness
 	// do not cross to a different execution-plan
@@ -97,10 +69,11 @@ void ExecutionPlanAwareness_PropagateAwareness
 		// break if no new aliases were added to the awareness table
 		bool short_circuit = true;
 
-		for(int i = 0; i < n; i++) {
-			const char *alias = keys[i];
+		size_t i = 0;
+		char **alias = NULL;
+		while(hashmap_iter(op->awareness, &i, (void **)&alias)) {
 			short_circuit &=
-				HashTableAdd(parent->awareness, (void*)alias, NULL) == DICT_ERR;
+				hashmap_set(parent->awareness, (void*)alias) != NULL;
 		}
 
 		// in case current op didn't changed parent awareness we can break
@@ -139,24 +112,22 @@ void ExecutionPlanAwareness_RemoveAwareness
 	//ASSERT("consider CP where both branches introduce the same aliases" && false);
 	ASSERT(root != NULL);
 
-	dict *awareness = root->awareness;
-	unsigned long n = HashTableElemCount(awareness);
+	hashmap awareness = root->awareness;
+	unsigned long n = hashmap_count(awareness);
 	
 	// op isn't aware of any variables, it has no effect on awareness
 	if(n == 0) {
 		return;
 	}
 
-	const char *variables[n];
-	HashTableKeys(n, variables, awareness);
-
 	// remove variables from each parent
 	// do not cross to a different plan
 	OpBase *parent = root->parent;
 	while(parent != NULL && parent->plan == root->plan) {
-		for(int i = 0; i < n; i++) {
-			const char *var = variables[i];
-			HashTableDelete(parent->awareness, var);
+		size_t i = 0;
+		char **var = NULL;
+		while(hashmap_iter(awareness, &i, (void **)&var)) {
+			hashmap_delete(parent->awareness, var);
 		}
 		parent = parent->parent;
 	}
@@ -188,7 +159,7 @@ void ExecutionPlanAwareness_RemoveOp
 			// TODO: might need to ref count the aliased, drop an alias only when
 			// its count reaches 0
 			//ASSERT("consider CP where both branches introduce the same aliases" && false);
-			HashTableDelete(parent->awareness, alias);
+			hashmap_delete(parent->awareness, &alias);
 		}
 		parent = parent->parent;
 	}

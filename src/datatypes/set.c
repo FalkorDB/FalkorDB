@@ -5,20 +5,10 @@
  */
 
 #include "set.h"
-
-// fake hash function
-// hash of key is simply key
-static uint64_t _id_hash
-(
-	const void *key
-) {
-	return (uint64_t)key;
-}
-
-static dictType _dt = {_id_hash, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
+#include "../util/rmalloc.h"
 
 set *Set_New(void) {
-	return HashTableCreate(&_dt);
+	return hashmap_new_with_redis_allocator(0, 0, 0, 0, NULL, NULL, NULL, NULL);
 }
 
 bool Set_Contains
@@ -27,7 +17,7 @@ bool Set_Contains
 	SIValue v
 ) {
 	unsigned long long const hash = SIValue_HashCode(v);
-	return HashTableFind(s, (void*)hash) != NULL;
+	return hashmap_get_with_hash(s, NULL, hash) != NULL;
 }
 
 // adds v to set
@@ -37,7 +27,7 @@ bool Set_Add
 	SIValue v
 ) {
 	unsigned long long const hash = SIValue_HashCode(v);
-	return HashTableAdd(s, (void*)hash, NULL) == DICT_OK;
+	return hashmap_set_with_hash(s, NULL, hash) == NULL;
 }
 
 // removes v from set
@@ -47,7 +37,7 @@ void Set_Remove
 	SIValue v
 ) {
 	unsigned long long const hash = SIValue_HashCode(v);
-	HashTableDelete(s, (void*)hash);
+	hashmap_delete_with_hash(s, NULL, hash);
 }
 
 // Return number of elements in set
@@ -55,7 +45,7 @@ uint64_t Set_Size
 (
 	set *s
 ) {
-	return HashTableElemCount(s);
+	return hashmap_count(s);
 }
 
 // free set
@@ -63,6 +53,6 @@ void Set_Free
 (
 	set *s
 ) {
-	HashTableRelease(s);
+	hashmap_free(s);
 }
 

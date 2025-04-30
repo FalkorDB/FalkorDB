@@ -5,8 +5,9 @@
  */
 
 #include "RG.h"
-#include "all_neighbors.h"
+#include "GraphBLAS.h"
 #include "../util/arr.h"
+#include "all_neighbors.h"
 #include "../util/rmalloc.h"
 
 static void _AllNeighborsCtx_CollectNeighbors
@@ -49,8 +50,7 @@ void AllNeighborsCtx_Reset
 	array_clear(ctx->visited);
 
 	// reset visited nodes
-	HashTableRelease(ctx->visited_nodes);
-	ctx->visited_nodes = HashTableCreate(&def_dt);
+	hashmap_clear(ctx->visited_nodes, true);
 
 	// dummy iterator at level 0
 	array_append(ctx->levels, (Delta_MatrixTupleIter) {0});
@@ -68,15 +68,16 @@ AllNeighborsCtx *AllNeighborsCtx_New
 
 	AllNeighborsCtx *ctx = rm_calloc(1, sizeof(AllNeighborsCtx));
 
-	ctx->M              = M;
-	ctx->src            = src;
-	ctx->minLen         = minLen;
-	ctx->maxLen         = maxLen;
-	ctx->levels         = array_new(Delta_MatrixTupleIter, 1);
-	ctx->visited        = array_new(EntityID, 1);
-	ctx->first_pull     = true;
-	ctx->current_level  = 0;
-	ctx->visited_nodes  = HashTableCreate(&def_dt);
+	ctx->M             = M;
+	ctx->src           = src;
+	ctx->minLen        = minLen;
+	ctx->maxLen        = maxLen;
+	ctx->levels        = array_new(Delta_MatrixTupleIter, 1);
+	ctx->visited       = array_new(EntityID, 1);
+	ctx->first_pull    = true;
+	ctx->current_level = 0;
+	ctx->visited_nodes = hashmap_new_with_redis_allocator(0, 0, 0, 0, NULL,
+			NULL, NULL, NULL);
 
 	// Dummy iterator at level 0
 	array_append(ctx->levels, (Delta_MatrixTupleIter) {0});
@@ -96,7 +97,7 @@ EntityID AllNeighborsCtx_NextNeighbor
 
 		// update visited path, replace frontier with current node
 		array_append(ctx->visited, ctx->src);
-		HashTableAdd(ctx->visited_nodes, (void*)(ctx->src), NULL);
+		hashmap_set_with_hash(ctx->visited_nodes, NULL, ctx->src);
 
 		// current_level >= ctx->minLen
 		// see if we should expand further?
@@ -115,20 +116,22 @@ EntityID AllNeighborsCtx_NextNeighbor
 		Delta_MatrixTupleIter *it = &ctx->levels[ctx->current_level];
 
 		GrB_Index dest_id;
-		GrB_Info info = Delta_MatrixTupleIter_next_BOOL(it, NULL, &dest_id, NULL);
+		GrB_Info info = Delta_MatrixTupleIter_next_BOOL(it, NULL, &dest_id,
+				NULL);
 
 		if(info == GxB_EXHAUSTED) {
 			// backtrack
 			ctx->current_level--;
 			dest_id = array_pop(ctx->visited);
-			int res = HashTableDelete(ctx->visited_nodes, (void*)(dest_id));
-			ASSERT(res == DICT_OK);
+			const void *res = hashmap_delete_with_hash(ctx->visited_nodes, NULL,
+					dest_id);
+			ASSERT(res != NULL);
 			continue;
 		}
 
 		// update visited path, replace frontier with current node
 		bool visited =
-			HashTableAdd(ctx->visited_nodes, (void*)(dest_id), NULL) != DICT_OK;
+			hashmap_set_with_hash(ctx->visited_nodes, NULL, dest_id) != NULL;
 
 		if(ctx->current_level < ctx->minLen && !visited) {
 			array_append(ctx->visited, dest_id);
@@ -165,7 +168,7 @@ void AllNeighborsCtx_Free
 	array_free(ctx->levels);
 	array_free(ctx->visited);
 
-	HashTableRelease(ctx->visited_nodes);
+	hashmap_free(ctx->visited_nodes);
 
 	rm_free(ctx);
 }

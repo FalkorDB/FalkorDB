@@ -7,7 +7,6 @@
 #include "RG.h"
 #include "../../util/arr.h"
 #include "../ops/op_skip.h"
-#include "../../util/dict.h"
 #include "../ops/op_limit.h"
 #include "execution_plan_util.h"
 
@@ -319,14 +318,12 @@ void ExecutionPlan_BoundVariables
 	ASSERT(op        != NULL);
 	ASSERT(modifiers != NULL);
 
-	// TODO: switch from rax to dict,
+	// TODO: switch from rax to hashmap,
 	// TODO: see if we can simply return op's awareness?
-	dictIterator it;
-	dictEntry    *de;
-	HashTableInitIterator(&it, op->awareness);
-	while((de = HashTableNext(&it)) != NULL) {
-		char *key = HashTableGetKey(de);
-		raxInsert(modifiers, (unsigned char *)key, strlen(key), (void *)key,
+	size_t i   = 0;
+	char **key = NULL;
+	while(hashmap_iter(op->awareness, &i, (void **)&key)) {
+		raxInsert(modifiers, (unsigned char *)*key, strlen(*key), (void *)*key,
 				NULL);
 	}
 }

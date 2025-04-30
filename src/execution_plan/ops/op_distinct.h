@@ -7,17 +7,16 @@
 #pragma once
 
 #include "op.h"
-#include "../../util/dict.h"
 #include "../execution_plan.h"
+#include "util/hashmap.h"
 
 typedef struct {
 	OpBase op;
-	dict *found;
+	hashmap found;         // hashmap of distinct keys
 	rax *mapping;          // record mapping
 	uint *offsets;         // offsets to expression values
 	const char **aliases;  // expression aliases to distinct by
 	uint offset_count;     // number of offsets
-
 } OpDistinct;
 
 OpBase *NewDistinctOp
