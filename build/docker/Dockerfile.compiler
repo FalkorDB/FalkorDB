@@ -12,4 +12,4 @@ COPY . /FalkorDB
 
 RUN make DEBUG=$DEBUG
 
-COPY /FalkorDB/bin/linux*/src/ /FalkorDB/bin/
+COPY --from=builder /FalkorDB/bin/linux*/src/ /FalkorDB/bin/
