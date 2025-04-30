@@ -187,7 +187,7 @@ jobs:
           build-args: |
             TARGETPLATFORM=${{ matrix.platform.platform }}
             OS=${{ matrix.platform.os }}
-            DEBUG=${{ matrix.platform.is_debug == '0' && '0' || '1' }}
+            DEBUG=${{ matrix.platform.is_debug }}
       - name: Copy bin from docker for caching
         working-directory: /FalkorDB
         if: steps.cache_graphblas.outputs.cache-hit == false || steps.cache_parser.outputs.cache-hit == false || steps.cache_search.outputs.cache-hit == false || steps.cache_libcurl.outputs.cache-hit == false || steps.cache_libcsv.outputs.cache-hit == false
@@ -273,13 +273,13 @@ jobs:
 
       - name: Copy .so from image
         run: |
-          docker run --rm --entrypoint cat localhost:5000/falkordb/falkordb-compiler /FalkorDB/bin/src/falkordb.so > /tmp/falkordb${{ matrix.platform.is_debug == '0' && '' || '.debug' }}-${{ matrix.platform.suffix }}.so
+          docker run --rm --entrypoint cat localhost:5000/falkordb/falkordb-compiler /FalkorDB/bin/src/falkordb.so > /tmp/falkordb.so
 
       - name: Upload .so
         uses: actions/upload-artifact@v4
         with:
-          name: falkordb${{ matrix.platform.is_debug == '0' && '' || '.debug' }}-${{ matrix.platform.suffix }}.so
-          path: /tmp/falkordb${{ matrix.platform.is_debug == '0' && '' || '.debug' }}-${{ matrix.platform.suffix }}.so
+          name: falkordb.${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
+          path: /tmp/falkordb.so
           if-no-files-found: error
   cleanup-build:
     needs: build
