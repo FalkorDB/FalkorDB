@@ -68,7 +68,7 @@ jobs:
             build_test_image: true
             test_dockerfile: Dockerfile.debian
             cache_path: linux-x64
-            is_debug: false
+            is_debug: '0'
           - name: linux/arm64
             platform: linux/arm64
             suffix: arm64v8
@@ -77,7 +77,7 @@ jobs:
             build_test_image: true
             test_dockerfile: Dockerfile.debian
             cache_path: linux-arm64v8
-            is_debug: false
+            is_debug: '0'
           - name: rhel/amd64
             platform: linux/amd64
             suffix: rhel-x64
@@ -85,7 +85,7 @@ jobs:
             machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
             build_test_image: false
             cache_path: linux-x64
-            is_debug: false
+            is_debug: '0'
           - name: linux/amd64
             platform: linux/amd64
             suffix: x64
@@ -94,7 +94,7 @@ jobs:
             build_test_image: false
             test_dockerfile: Dockerfile.debian
             cache_path: linux-x64
-            is_debug: true
+            is_debug: '1'
           - name: linux/arm64
             platform: linux/arm64
             suffix: arm64v8
@@ -103,7 +103,7 @@ jobs:
             build_test_image: false
             test_dockerfile: Dockerfile.debian
             cache_path: linux-arm64v8
-            is_debug: true
+            is_debug: '1'
           - name: rhel/amd64
             platform: linux/amd64
             suffix: rhel-x64
@@ -111,7 +111,7 @@ jobs:
             machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
             build_test_image: false
             cache_path: linux-x64
-            is_debug: true
+            is_debug: '1'
     steps:
       - name: Safe dir
         run: git config --global --add safe.directory '*'
@@ -187,7 +187,7 @@ jobs:
           build-args: |
             TARGETPLATFORM=${{ matrix.platform.platform }}
             OS=${{ matrix.platform.os }}
-            DEBUG=${{ matrix.platform.is_debug == 'false' && '0' || '1' }}
+            DEBUG=${{ matrix.platform.is_debug == '0' && '0' || '1' }}
       - name: Copy bin from docker for caching
         working-directory: /FalkorDB
         if: steps.cache_graphblas.outputs.cache-hit == false || steps.cache_parser.outputs.cache-hit == false || steps.cache_search.outputs.cache-hit == false || steps.cache_libcurl.outputs.cache-hit == false || steps.cache_libcsv.outputs.cache-hit == false
@@ -198,7 +198,7 @@ jobs:
           ls -l -R /FalkorDB/bin
 
       - name: Set browser tag
-        if: ${{ matrix.platform.is_debug == false }}
+        if: ${{ matrix.platform.is_debug == '0' }}
         id: set_browser_tag
         run: |
           BROWSER_TAG="latest"
@@ -243,7 +243,7 @@ jobs:
           if-no-files-found: error
 
       - name: Build base image
-        if: ${{ matrix.platform.is_debug == false }}
+        if: ${{ matrix.platform.is_debug == '0' }}
         id: build
         uses: docker/build-push-action@v6
         with:
@@ -258,13 +258,13 @@ jobs:
             BROWSER_TAG=${{ env.BROWSER_TAG }}
 
       - name: Load base image
-        if: ${{ matrix.platform.is_debug == false }}
+        if: ${{ matrix.platform.is_debug == '0' }}
         id: load_base_image
         run: |
           docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
 
       - name: Upload image
-        if: ${{ matrix.platform.is_debug == false }}
+        if: ${{ matrix.platform.is_debug == '0' }}
         uses: actions/upload-artifact@v4
         with:
           name: falkordb-${{ matrix.platform.suffix }}
@@ -273,13 +273,13 @@ jobs:
 
       - name: Copy .so from image
         run: |
-          docker run --rm --entrypoint cat localhost:5000/falkordb/falkordb-compiler /FalkorDB/bin/src/falkordb.so > /tmp/falkordb${{ matrix.platform.is_debug == 'false' && '' || '.debug' }}-${{ matrix.platform.suffix }}.so
+          docker run --rm --entrypoint cat localhost:5000/falkordb/falkordb-compiler /FalkorDB/bin/src/falkordb.so > /tmp/falkordb${{ matrix.platform.is_debug == '0' && '' || '.debug' }}-${{ matrix.platform.suffix }}.so
 
       - name: Upload .so
         uses: actions/upload-artifact@v4
         with:
-          name: falkordb${{ matrix.platform.is_debug == 'false' && '' || '.debug' }}-${{ matrix.platform.suffix }}.so
-          path: /tmp/falkordb${{ matrix.platform.is_debug == 'false' && '' || '.debug' }}-${{ matrix.platform.suffix }}.so
+          name: falkordb${{ matrix.platform.is_debug == '0' && '' || '.debug' }}-${{ matrix.platform.suffix }}.so
+          path: /tmp/falkordb${{ matrix.platform.is_debug == '0' && '' || '.debug' }}-${{ matrix.platform.suffix }}.so
           if-no-files-found: error
   cleanup-build:
     needs: build
