@@ -132,6 +132,14 @@ jobs:
           key: libcsv-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/libcsv/ChangeLog') }}
           enableCrossOsArchive: true
 
+      - name: Cache LAGraph ${{ matrix.platform.suffix }}
+        id: cache_lagraph
+        uses: actions/cache@v4
+        with:
+          path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/LAGraph
+          key: lagraph-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/LAGraph/include/LAGraph.h') }}
+          enableCrossOsArchive: true
+
       # Make sure the working directory is static between runs
       # and always the same for the CMake cache
       - name: Relocate source
@@ -161,7 +169,7 @@ jobs:
 
       - name: Copy bin from docker for caching
         working-directory: /FalkorDB
-        if: steps.cache_graphblas.outputs.cache-hit == false || steps.cache_parser.outputs.cache-hit == false || steps.cache_search.outputs.cache-hit == false || steps.cache_libcurl.outputs.cache-hit == false || steps.cache_libcsv.outputs.cache-hit == false
+        if: steps.cache_lagraph.outputs.cache-hit == false || steps.cache_graphblas.outputs.cache-hit == false || steps.cache_parser.outputs.cache-hit == false || steps.cache_search.outputs.cache-hit == false || steps.cache_libcurl.outputs.cache-hit == false || steps.cache_libcsv.outputs.cache-hit == false
         run: |
           id=$(docker create --platform=${{ matrix.platform.platform }} localhost:5000/falkordb/falkordb-compiler)
           docker cp $id:/FalkorDB/bin .
