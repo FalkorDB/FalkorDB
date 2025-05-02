@@ -21,8 +21,7 @@ static size_t _EstimateEdgeAttributeMemory
 	int64_t n_edges           = Graph_EdgeCount(g);     // number of edges
 	int64_t sample_size       = MIN(n_edges, samples);  // sample size
 	int64_t edges_sample_size = sample_size;            // edges sample size
-	int64_t n_sampled_edges   = 0;                      // #edges sampled
-	size_t edge_memory_usage  = 0;                      // sum memory
+	size_t  edge_memory_usage = 0;                      // sum memory
 
 	// number of relationship-types
 	unsigned short n = GraphContext_SchemaCount(gc, SCHEMA_EDGE);
@@ -32,6 +31,7 @@ static size_t _EstimateEdgeAttributeMemory
 		GrB_Info info;
 		Delta_Matrix R;
 		Delta_MatrixTupleIter it;
+		size_t relation_memory_usage = 0;
 
 		// attach iterator to the current relation matrix
 		R = Graph_GetRelationMatrix(g, r, false);
@@ -49,23 +49,24 @@ static size_t _EstimateEdgeAttributeMemory
 			Graph_GetEdge(g, id, &edge);
 			AttributeSet set = GraphEntity_GetAttributes((GraphEntity*)&edge);
 
-			edge_memory_usage += AttributeSet_memoryUsage(set);
+			relation_memory_usage += AttributeSet_memoryUsage(set);
 			edges_sample_size--;
 		}
 		Delta_MatrixTupleIter_detach(&it);
 
-		// update number of sampled edges
-		n_sampled_edges += sample_size - edges_sample_size;
+		// set number of sampled edges
+		int64_t n_sampled_edges = sample_size - edges_sample_size;
+
+		// compute weighted average
+		edge_memory_usage += (relation_memory_usage / n_sampled_edges)
+			* Graph_RelationEdgeCount(g, r);
 
 		// reset sample size
 		edges_sample_size = sample_size;
 	}
 
-	// compute average edge attribute-set memory consumption
-	n_sampled_edges = (n_sampled_edges == 0) ? 1 : n_sampled_edges;
-
 	// return estimated edge attribute set size
-	return (edge_memory_usage / n_sampled_edges) * n_edges;
+	return edge_memory_usage;
 }
 
 // estimate nodes attribute-set memory consumption
@@ -79,24 +80,8 @@ static size_t _EstimateNodeAttributeMemory
 	int64_t n_nodes           = Graph_NodeCount(g);     // number of nodes
 	int64_t sample_size       = MIN(n_nodes, samples);  // sample size
 	int64_t nodes_sample_size = sample_size;            // nodes sample size
-	int64_t n_sampled_nodes   = 0;                      // #nodes sampled
+	int64_t n_labeled_nodes   = 0;                      // #labeled nodes
 	size_t  node_memory_usage = 0;                      // node memory usage
-
-	// in case there are unlabeled nodes
-	// compute memory consumption of a random set of nodes
-	for(int i = 0; i < nodes_sample_size; i++) {
-		// pick a random node
-		Node node;
-		NodeID id = rand() % n_nodes;
-		Graph_GetNode(g, id, &node);
-
-		// compute the memory consumption of the current node
-		AttributeSet set  = GraphEntity_GetAttributes((GraphEntity*)&node);
-		node_memory_usage += AttributeSet_memoryUsage(set);
-	}
-
-	// update number of nodes sampled
-	n_sampled_nodes += nodes_sample_size;
 
 	// sample each label
 	unsigned short n = GraphContext_SchemaCount(gc, SCHEMA_NODE);
@@ -106,6 +91,7 @@ static size_t _EstimateNodeAttributeMemory
 		GrB_Info info;
 		Delta_Matrix L;
 		Delta_MatrixTupleIter it;
+		size_t label_memory_usage = 0;
 
 		// attach iterator to the current label matrix
 		L = Graph_GetLabelMatrix(g, l);
@@ -122,23 +108,53 @@ static size_t _EstimateNodeAttributeMemory
 			Graph_GetNode(g, id, &node);
 			AttributeSet set  = GraphEntity_GetAttributes((GraphEntity*)&node);
 
-			node_memory_usage += AttributeSet_memoryUsage(set);
+			label_memory_usage += AttributeSet_memoryUsage(set);
 			nodes_sample_size--;
 		}
 		Delta_MatrixTupleIter_detach(&it);
 
-		// update number of sampled nodes
-		n_sampled_nodes += sample_size - nodes_sample_size;
+		// set number of sampled nodes
+		int64_t n_sampled_nodes = sample_size - nodes_sample_size;
+
+		// compute weighted average
+		node_memory_usage += (label_memory_usage / n_sampled_nodes)
+			* Graph_LabeledNodeCount(g, l);
+
+		// sum number of labeled nodes
+		n_labeled_nodes += Graph_LabeledNodeCount(g, l);
 
 		// reset sample size
 		nodes_sample_size = sample_size;
 	}
 
+	if(n_nodes > n_labeled_nodes) {
+		// number of unlabeled nodes in the graph
+		int64_t n_unlabeled_nodes    = n_nodes - n_labeled_nodes;
+		size_t  unlabel_memory_usage = 0;
+
+		// in case there are unlabeled nodes
+		// compute memory consumption of a random set of nodes
+		for(int i = 0; i < nodes_sample_size; i++) {
+			// pick a random node
+			Node node;
+			NodeID id = rand() % n_nodes;
+			Graph_GetNode(g, id, &node);
+
+			// compute the memory consumption of the current node
+			AttributeSet set  = GraphEntity_GetAttributes((GraphEntity*)&node);
+			unlabel_memory_usage += AttributeSet_memoryUsage(set);
+		}
+
+		// compute weighted average
+		node_memory_usage += (unlabel_memory_usage / nodes_sample_size)
+			* n_unlabeled_nodes;
+	}
+
 	// compute average node attribute-set memory consumption
-	n_sampled_nodes = (n_sampled_nodes == 0) ? 1 : n_sampled_nodes;
+	n_nodes = (n_nodes == 0) ? 1 : n_nodes;
 
 	// return estimated nodes attribute set size
-	return (node_memory_usage / n_sampled_nodes) * n_nodes;
+	return node_memory_usage;
 }
 
 // returns the total amount of memory consumed by a graph
