@@ -16,32 +16,88 @@
 #include "../datatypes/array.h"
 #include "../graph/graphcontext.h"
 
+#define BETWEENNESS_DEFAULT_SAMPLE_SIZE 32
+
 // CALL algo.betweenness({}) YIELD node, score
 // CALL algo.betweenness(NULL) YIELD node, score
 // CALL algo.betweenness({nodeLabels: ['L', 'P']}) YIELD node, score
 // CALL algo.betweenness({relationshipTypes: ['R', 'E']}) YIELD node, score
 // CALL algo.betweenness({nodeLabels: ['L'], relationshipTypes: ['E']}) YIELD node, score
+// CALL algo.betweenness({nodeLabels: ['L'], samplingSize:20, samplingSeed: 10})
 
 typedef struct {
 	Graph *g;              // graph
 	GrB_Vector nodes;      // nodes participating in computation
-	GrB_Vector centrality; // centrality(i): betweeness centrality of i
+	GrB_Vector centrality; // centrality(i): betweeness centrality of node i
 	GrB_Info info;         // iterator state
-	GxB_Iterator it;       // nodes iterator
-	Node node;             // current node
+	GxB_Iterator it;       // centrality iterator
+	Node node;             // node
 	SIValue output[2];     // array with up to 2 entries [node, score]
 	SIValue *yield_node;   // yield node
 	SIValue *yield_score;  // yield score
 } Betweenness_Context;
+
+// pick random set of source nodes
+// the set is returned as a GrB_Index array, it is the callers responsibility
+// to free the array
+static GrB_Index* _Random_Sources
+(
+	GrB_Matrix AT,          // transposed adjacency matrix
+	int32_t *samplingSize,  // size of sample
+	int32_t samplingSeed    // random seed
+) {
+	GrB_Info info;
+
+	// pick random nodes from AT's j array
+	// AT->j[i] contains the ID of a reachable source node
+	// to gain access to AT->j we need to unload AT into a container
+	// within the container j is refered to as i
+
+	GxB_Container container;
+	info = GxB_Container_new(&container);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GxB_unload_Matrix_into_Container(AT, container, NULL);
+	ASSERT(info == GrB_SUCCESS);
+
+	*samplingSize = MIN(container->nvals, *samplingSize);
+
+	// allocate sources array
+	GrB_Index *sources = rm_malloc(sizeof(GrB_Index) * (*samplingSize));
+
+	// seed the random number generator
+    srand(samplingSeed);
+
+	// pick random sources
+	for(int i = 0; i < *samplingSize; i++) {
+		uint64_t x;
+		GrB_Index idx = rand() % container->nvals;
+
+		info = GrB_Vector_extractElement(&x, container->i, idx);
+		ASSERT(info == GrB_SUCCESS);
+
+		sources[i] = x;
+	}
+
+	// load AT back from the container
+	info = GxB_load_Matrix_from_Container(AT, container, NULL);
+	ASSERT(info == GrB_SUCCESS);
+
+	// discard container
+	info = GxB_Container_free(&container);
+	ASSERT(info == GrB_SUCCESS);
+
+	return sources;
+}
 
 // build adjacency matrix which will be used to compute Betweenness-Centrality
 static GrB_Matrix _Build_Matrix
 (
 	const Graph *g,         // graph
 	GrB_Vector *N,          // list nodes participating in betweenness
-	LabelID *lbls,          // [optional] labels to consider
+	const LabelID *lbls,    // [optional] labels to consider
 	unsigned short n_lbls,  // number of labels
-	RelationID *rels,       // [optional] relationships to consider
+	const RelationID *rels, // [optional] relationships to consider
 	unsigned short n_rels   // number of relationships
 ) {
 	GrB_Info info;
@@ -148,6 +204,7 @@ static GrB_Matrix _Build_Matrix
 	return A;
 }
 
+// process procedure yield
 static void _process_yield
 (
 	Betweenness_Context *ctx,
@@ -200,8 +257,8 @@ static bool _read_config
 	}
 
 	SIValue v;
-	GraphContext *gc  = QueryCtx_GetGraphCtx();
 	LabelID *_lbls    = NULL;
+	GraphContext *gc  = QueryCtx_GetGraphCtx();
 	RelationID *_rels = NULL;
 
 	if(MAP_GETCASEINSENSITIVE(config, "samplingSize", v)) {
@@ -211,6 +268,7 @@ static bool _read_config
 		}
 		
 		*samplingSize = v.longval;
+		match_fields++;
 	}
 
 	if(MAP_GETCASEINSENSITIVE(config, "samplingSeed", v)) {
@@ -220,6 +278,7 @@ static bool _read_config
 		}
 		
 		*samplingSeed = v.longval;
+		match_fields++;
 	}
 
 	if(MAP_GETCASEINSENSITIVE(config, "nodeLabels", v)) {
@@ -311,7 +370,7 @@ ProcedureResult Proc_BetweennessInvoke
 	const SIValue *args,  // procedure arguments
 	const char **yield    // procedure outputs
 ) {
-	// expecting 0 or 1 argument
+	// expecting a single argument
 
 	size_t l = array_len((SIValue *)args);
 
@@ -319,7 +378,7 @@ ProcedureResult Proc_BetweennessInvoke
 
 	SIValue config;
 
-	if(l == 0 || SIValue_IsNull(args[0])) {
+	if(SIValue_IsNull(args[0])) {
 		config = SI_Map(0);
 	} else {
 		config = SI_CloneValue(args[0]);
@@ -327,7 +386,7 @@ ProcedureResult Proc_BetweennessInvoke
 
 	// arg0 can be either a map or NULL
 	SIType t = SI_TYPE(config);
-	if(!(t & T_MAP)) {
+	if(t != T_MAP) {
 		SIValue_Free(config);
 
 		ErrorCtx_SetError("invalid argument to algo.betweenness");
@@ -338,7 +397,7 @@ ProcedureResult Proc_BetweennessInvoke
 	// {
 	//	nodeLabels: ['A', 'B'],
 	//	relationshipTypes: ['R'],
-	//	samplingSize: 1000,
+	//	samplingSize: 64,
 	//	samplingSeed: 12
 	// }
 
@@ -346,6 +405,10 @@ ProcedureResult Proc_BetweennessInvoke
 	RelationID *rels = NULL;
 	int32_t samplingSize = -1;
 	int32_t samplingSeed = -1;
+
+	//--------------------------------------------------------------------------
+	// load configuration map
+	//--------------------------------------------------------------------------
 
 	bool config_ok = _read_config(config, &lbls, &rels, &samplingSize,
 			&samplingSeed);
@@ -356,7 +419,20 @@ ProcedureResult Proc_BetweennessInvoke
 		return PROCEDURE_ERR;
 	}
 
-	// setup context
+	// assign default values for missing configuration
+
+	if(samplingSeed == -1) {
+		samplingSeed = (int32_t)time(NULL);
+	}
+
+	if(samplingSize == -1) {
+		samplingSize = BETWEENNESS_DEFAULT_SAMPLE_SIZE;
+	}
+
+	//--------------------------------------------------------------------------
+	// setup procedure context
+	//--------------------------------------------------------------------------
+
 	Graph *g = QueryCtx_GetGraph();
 	Betweenness_Context *pdata = rm_calloc(1, sizeof(Betweenness_Context));
 
@@ -376,18 +452,32 @@ ProcedureResult Proc_BetweennessInvoke
 	if(rels != NULL) array_free(rels);
 
 	//--------------------------------------------------------------------------
-	// pick random set of sources
+	// build AT
 	//--------------------------------------------------------------------------
 
-	GrB_Index *sources = rm_malloc(sizeof(GrB_Index) * 7);
-	int32_t ns = 7;
-	sources[0] = 0;
-	sources[1] = 1;
-	sources[2] = 2;
-	sources[3] = 3;
-	sources[4] = 4;
-	sources[5] = 5;
-	sources[6] = 6;
+	GrB_Info   info;
+    GrB_Type   type;
+    GrB_Index  nrows;
+	GrB_Index  ncols;
+	GrB_Matrix AT;
+
+    info = GrB_Matrix_nrows(&nrows, A);
+	ASSERT(info == GrB_SUCCESS);
+
+    info = GrB_Matrix_ncols(&ncols, A);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GxB_Matrix_type(&type, A);
+	ASSERT(info == GrB_SUCCESS);
+
+    info = GrB_Matrix_new(&AT, type, ncols, nrows);
+	ASSERT(info == GrB_SUCCESS);
+
+    info = GrB_transpose(AT, NULL, NULL, A, NULL);
+	ASSERT(info == GrB_SUCCESS);
+
+	// pick random set of source nodes
+	GrB_Index *sources = _Random_Sources(AT, &samplingSize, samplingSeed);
 
 	//--------------------------------------------------------------------------
 	// run betweeness centrality
@@ -396,15 +486,12 @@ ProcedureResult Proc_BetweennessInvoke
 	char msg[LAGRAPH_MSG_LEN];
 	LAGraph_Graph G; 
 
-	GrB_Info info = LAGraph_New(&G, &A, LAGraph_ADJACENCY_DIRECTED, msg);
-
-	// compute G->AT, required by the algorithm
-	info =  LAGraph_Cached_AT(G, msg);
-	ASSERT(info == GrB_SUCCESS);
+	LAGraph_New(&G, &A, LAGraph_ADJACENCY_DIRECTED, msg);
+	G->AT = AT;  // set G->AT, required by the algorithm
 
 	// execute Betweenness Centrality
 	GrB_Info betweeness_res =
-		LAGr_Betweenness(&pdata->centrality, G, sources, ns, msg);
+		LAGr_Betweenness(&pdata->centrality, G, sources, samplingSize, msg);
 
 	// clean up algorithm inputs
 	rm_free(sources);
@@ -470,7 +557,7 @@ SIValue *Proc_BetweennessStep
 	ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
-	// set output(s)
+	// set outputs
 	//--------------------------------------------------------------------------
 
 	if(pdata->yield_node) {
@@ -503,8 +590,7 @@ ProcedureResult Proc_BetweennessFree
 }
 
 // CALL algo.betweenness({nodeLabels: ['Person'], relationshipTypes: ['KNOWS'],
-// samplingSize:2000, samplingSeed: 10})
-// YIELD node, score
+// samplingSize:2000, samplingSeed: 10}) YIELD node, score
 ProcedureCtx *Proc_BetweenessCtx(void) {
 	void *privateData = NULL;
 
