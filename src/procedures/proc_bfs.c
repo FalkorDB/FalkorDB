@@ -32,7 +32,7 @@ typedef struct {
 	GrB_Index n;           // total number of results
 	bool depleted;         // true if BFS has already been performed for this node
 	int reltype_id;        // iD of relationship matrix to traverse
-	SIValue output[2];     // array with a maximum of 4 entries: ["nodes", nodes, "edges", edges]
+	SIValue output[2];     // array with a maximum of 2 entries: [nodes, edges]
 	SIValue *yield_nodes;  // yield reachable nodes
 	SIValue *yield_edges;  // yield edges traversed
 	GrB_Vector nodes;      // vector of reachable nodes

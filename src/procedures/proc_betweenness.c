@@ -65,13 +65,10 @@ static GrB_Index* _Random_Sources
 	// allocate sources array
 	GrB_Index *sources = rm_malloc(sizeof(GrB_Index) * (*samplingSize));
 
-	// seed the random number generator
-    srand(samplingSeed);
-
 	// pick random sources
 	for(int i = 0; i < *samplingSize; i++) {
 		uint64_t x;
-		GrB_Index idx = rand() % container->nvals;
+		GrB_Index idx = rand_r(&samplingSeed) % container->nvals;
 
 		info = GrB_Vector_extractElement(&x, container->i, idx);
 		ASSERT(info == GrB_SUCCESS);
@@ -147,7 +144,7 @@ static GrB_Matrix _Build_Matrix
 	info = GrB_Vector_new(N, GrB_BOOL, nrows);
 	ASSERT(info == GrB_SUCCESS);
 
-	// enforece labels
+	// enforce labels
 	if(n_lbls > 0) {
 		Delta_Matrix DL = Graph_GetLabelMatrix(g, lbls[0]);
 
@@ -170,7 +167,7 @@ static GrB_Matrix _Build_Matrix
 			GrB_Matrix_free(&M);
 		}
 
-		// A = L * M * L
+		// A = L * A * L
 		info = GrB_mxm(A, NULL, NULL, GxB_ANY_PAIR_BOOL, L, A, NULL);
 		ASSERT(info == GrB_SUCCESS);
 
@@ -262,8 +259,8 @@ static bool _read_config
 	RelationID *_rels = NULL;
 
 	if(MAP_GETCASEINSENSITIVE(config, "samplingSize", v)) {
-		if(SI_TYPE(v) != T_INT64 || v.longval < 0) {
-			ErrorCtx_SetError("betweenness configuration, 'samplingSize' should be an integer");
+		if(SI_TYPE(v) != T_INT64 || v.longval <= 0) {
+			ErrorCtx_SetError("betweenness configuration, 'samplingSize' should be a positive integer");
 			return false;
 		}
 		
@@ -591,7 +588,7 @@ ProcedureResult Proc_BetweennessFree
 
 // CALL algo.betweenness({nodeLabels: ['Person'], relationshipTypes: ['KNOWS'],
 // samplingSize:2000, samplingSeed: 10}) YIELD node, score
-ProcedureCtx *Proc_BetweenessCtx(void) {
+ProcedureCtx *Proc_BetweennessCtx(void) {
 	void *privateData = NULL;
 
 	ProcedureOutput *outputs         = array_new(ProcedureOutput, 2);

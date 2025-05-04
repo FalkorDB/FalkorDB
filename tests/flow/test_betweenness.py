@@ -74,7 +74,7 @@ class testBetweenness(FlowTestsBase):
         """Test Betweenness centrality algorithm behavior on an empty graph"""
         # verify graph is empty
         result = self.graph.query("MATCH (n) RETURN count(n) as count")
-        self.env.assertEquals(result.result_set[0][0], 0)
+        self.env.assertEqual(result.result_set[0][0], 0)
         
         # run betweenness centrality on empty graph
         result = self.betweenness_centrality()
@@ -82,7 +82,7 @@ class testBetweenness(FlowTestsBase):
         # if we reach here, the algorithm didn't throw an exception
         
         # check if it returned empty results (acceptable behavior)
-        self.env.assertEquals(len(result.result_set), 0)
+        self.env.assertEqual(len(result.result_set), 0)
 
     def test_betweenness_centrality(self):
         """Test betweenness centrality algorithm on a simple directed graph structure."""

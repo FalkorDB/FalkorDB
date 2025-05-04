@@ -43,7 +43,7 @@ void Proc_Register() {
 	_procRegister("algo.pageRank",    Proc_PagerankCtx);
 	_procRegister("algo.SPpaths",     Proc_SPpathCtx);
 	_procRegister("algo.SSpaths",     Proc_SSpathCtx);
-	_procRegister("algo.betweenness", Proc_BetweenessCtx);
+	_procRegister("algo.betweenness", Proc_BetweennessCtx);
 
 	// register FullText Search generator
 	_procRegister("db.idx.fulltext.drop",               Proc_FulltextDropIdxGen);
