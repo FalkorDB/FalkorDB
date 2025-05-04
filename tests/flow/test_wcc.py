@@ -218,7 +218,7 @@ class testWCC(FlowTestsBase):
     def test_wcc_with_different_node_labels(self):
         """Test WCC algorithm with different node label filters"""
         # Clear the graph
-        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query("MATCH (n) DELETE n")
 
         # Create a graph with multiple labeled and unlabeled nodes
         # - L0 labeled nodes: n1, n2, n3

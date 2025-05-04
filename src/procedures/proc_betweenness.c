@@ -262,7 +262,7 @@ static bool _read_config
 	RelationID *_rels = NULL;
 
 	if(MAP_GETCASEINSENSITIVE(config, "samplingSize", v)) {
-		if(SI_TYPE(v) != T_INT64) {
+		if(SI_TYPE(v) != T_INT64 || v.longval < 0) {
 			ErrorCtx_SetError("betweenness configuration, 'samplingSize' should be an integer");
 			return false;
 		}
