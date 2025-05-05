@@ -148,6 +148,11 @@ static GrB_Matrix _Build_Matrix
 		ASSERT(info == GrB_SUCCESS);
 	}
 
+	// make A symmetric A = A + At
+	info = GrB_Matrix_eWiseAdd_Semiring(A, NULL, NULL, GxB_ANY_PAIR_BOOL, A, A,
+			GrB_DESC_T1);
+	ASSERT(info == GrB_SUCCESS);
+
 	return A;
 }
 
@@ -379,7 +384,7 @@ ProcedureResult Proc_CDLPInvoke
 	LAGraph_Graph G;
 	char msg[LAGRAPH_MSG_LEN];
 
-	GrB_Info info = LAGraph_New(&G, &A, LAGraph_ADJACENCY_DIRECTED, msg);
+	GrB_Info info = LAGraph_New(&G, &A, LAGraph_ADJACENCY_UNDIRECTED, msg);
 	ASSERT(info == GrB_SUCCESS);
 
 	GrB_Info cdlp_res = LAGraph_cdlp(&pdata->communities, G, maxIterations, msg);
