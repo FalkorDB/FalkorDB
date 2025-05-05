@@ -376,17 +376,19 @@ ProcedureResult Proc_CDLPInvoke
 	//--------------------------------------------------------------------------
 
 	// execute CLDP
-    double t[2];
+	LAGraph_Graph G;
 	char msg[LAGRAPH_MSG_LEN];
-	GrB_Info info = LAGraph_cdlp(&pdata->communities, A, false, false,
-			maxIterations, (double*)t, msg);
 
-	GrB_free(&A);
-
-	// clean up algorithm inputs
+	GrB_Info info = LAGraph_New(&G, &A, LAGraph_ADJACENCY_DIRECTED, msg);
 	ASSERT(info == GrB_SUCCESS);
 
-	if(info != GrB_SUCCESS) {
+	GrB_Info cdlp_res = LAGraph_cdlp(&pdata->communities, G, maxIterations, msg);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = LAGraph_Delete(&G, msg);
+	ASSERT(info == GrB_SUCCESS);
+
+	if(cdlp_res != GrB_SUCCESS) {
 		return PROCEDURE_ERR;
 	}
 
