@@ -44,7 +44,7 @@ static GrB_Index* _Random_Sources
 (
 	GrB_Matrix AT,          // transposed adjacency matrix
 	int32_t *samplingSize,  // size of sample
-	int32_t samplingSeed    // random seed
+	uint32_t samplingSeed   // random seed
 ) {
 	GrB_Info info;
 
@@ -230,7 +230,7 @@ static bool _read_config
 	LabelID **lbls,         // [output] labels
 	RelationID **rels,      // [output] relationships
 	int32_t *samplingSize,  // [output] number of source vertices
-	int32_t *samplingSeed	// [output] random number generator seed
+	uint32_t *samplingSeed	// [output] random number generator seed
 ) {
 	// expecting configuration to be a map
 	ASSERT(lbls            != NULL);
@@ -243,7 +243,7 @@ static bool _read_config
 	*lbls = NULL;
 	*rels = NULL;
 	*samplingSize = -1;
-	*samplingSeed = -1;
+	*samplingSeed = 0;
 
 	uint match_fields = 0;
 	uint n = Map_KeyCount(config);
@@ -398,10 +398,10 @@ ProcedureResult Proc_BetweennessInvoke
 	//	samplingSeed: 12
 	// }
 
-	LabelID    *lbls = NULL;
-	RelationID *rels = NULL;
-	int32_t samplingSize = -1;
-	int32_t samplingSeed = -1;
+	LabelID    *lbls      = NULL;
+	RelationID *rels      = NULL;
+	int32_t samplingSize  = -1;
+	uint32_t samplingSeed = 0;
 
 	//--------------------------------------------------------------------------
 	// load configuration map
@@ -418,8 +418,8 @@ ProcedureResult Proc_BetweennessInvoke
 
 	// assign default values for missing configuration
 
-	if(samplingSeed == -1) {
-		samplingSeed = (int32_t)time(NULL);
+	if(samplingSeed == 0) {
+		samplingSeed = (uint32_t)time(NULL);
 	}
 
 	if(samplingSize == -1) {

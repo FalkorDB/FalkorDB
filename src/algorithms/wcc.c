@@ -63,7 +63,7 @@ static GrB_Matrix _Build_Matrix
 	info = GrB_Vector_new(N, GrB_BOOL, nrows);
 	ASSERT(info == GrB_SUCCESS);
 
-	// enforece labels
+	// enforce labels
 	if(n_lbls > 0) {
 		Delta_Matrix DL = Graph_GetLabelMatrix(g, lbls[0]);
 
@@ -179,12 +179,10 @@ GrB_Info WCC
 error:
 	if(*N != NULL) {
 		GrB_free(N);
-		*N = NULL;
 	}
 
 	if(*components != NULL) {
 		GrB_free(components);
-		*components = NULL;
 	}
 
 	LAGraph_Delete(&G, msg);
