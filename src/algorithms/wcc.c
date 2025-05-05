@@ -152,10 +152,10 @@ GrB_Info WCC
 	ASSERT(*N != NULL);
 
 	GrB_Info info;
-    LAGraph_Graph G = NULL;
+	LAGraph_Graph G = NULL;
 
 	char msg[LAGRAPH_MSG_LEN];
-    info = LAGraph_New(&G, &A, LAGraph_ADJACENCY_UNDIRECTED, msg);
+	info = LAGraph_New(&G, &A, LAGraph_ADJACENCY_UNDIRECTED, msg);
 	ASSERT(info == GrB_SUCCESS);
 
 	info = LAGr_ConnectedComponents(components, G, msg);
@@ -164,7 +164,7 @@ GrB_Info WCC
 	}
 
     // free the graph, the connected components, and finish LAGraph
-    info = LAGraph_Delete(&G, msg);
+	info = LAGraph_Delete(&G, msg);
 	ASSERT(info == GrB_SUCCESS);
 
 	// wait on outputs
