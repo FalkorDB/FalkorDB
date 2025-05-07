@@ -87,7 +87,9 @@ class testShortestPath(FlowTestsBase):
 
     def test04_max_hops(self):
         # Traverse from all source nodes to the destination node if there is a single-hop path
-        query = """MATCH (a), (b {v: 4}) WITH a, shortestPath((a)-[*..1]->(b)) AS p RETURN a, nodes(p) ORDER BY a"""
+        query = """MATCH (a), (b {v: 4})
+                   WITH a, shortestPath((a)-[*..1]->(b)) AS p
+                   RETURN a, nodes(p) ORDER BY a"""
         actual_result = self.graph.query(query)
         expected_result = [[nodes[0], None],
                            [nodes[1], None],

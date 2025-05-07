@@ -159,6 +159,7 @@ SIValue AR_SHORTEST_PATH
 	GrB_Matrix M     = NULL;
 	GrB_Vector V     = NULL;  // vector of results
 	GrB_Vector PI    = NULL;  // vector backtracking results to their parents
+	Edge *edges      = NULL;
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 
 	GrB_Index max_level = (ctx->maxHops == EDGE_LENGTH_INF) ? 0 : ctx->maxHops;
@@ -243,7 +244,7 @@ SIValue AR_SHORTEST_PATH
 	p = SIPathBuilder_New(path_len);
 	SIPathBuilder_AppendNode(p, SI_Node(destNode));
 
-	Edge *edges = array_new(Edge, 1);
+	edges = array_new(Edge, 1);
 
 	NodeID id = destNode->id;
 	for(uint i = 0; i < path_len; i++) {
@@ -282,8 +283,8 @@ SIValue AR_SHORTEST_PATH
 	Path_Reverse(p.ptrval);
 
 cleanup:
-	if(V) GrB_free(&V);
-	if(PI) GrB_free(&PI);
+	if(V)     GrB_free(&V);
+	if(PI)    GrB_free(&PI);
 	if(edges) array_free(edges);
 
 	return p;
