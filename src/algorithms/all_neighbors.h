@@ -30,6 +30,7 @@ typedef struct {
 	bool first_pull;                // first call to Next
 	EntityID *visited;              // visited nodes
 	Delta_MatrixTupleIter *levels;  // array of neighbors iterator
+	uint n_levels;                  // number of levels
 	dict *visited_nodes;            // visited nodes
 } AllNeighborsCtx;
 
