@@ -14,6 +14,7 @@
 #include "../util/rmalloc.h"
 #include "../datatypes/map.h"
 #include "../datatypes/array.h"
+#include "./utility/internal.h"
 #include "../graph/graphcontext.h"
 
 #define BETWEENNESS_DEFAULT_SAMPLE_SIZE 32
@@ -47,6 +48,14 @@ static GrB_Index* _Random_Sources
 	uint32_t samplingSeed   // random seed
 ) {
 	GrB_Info info;
+
+	// make sure AT is either sparse or hypersparse
+	int sparsity;
+	GrB_get(AT, &sparsity, GxB_SPARSITY_STATUS);
+	if(sparsity != GxB_HYPERSPARSE || sparsity != GxB_SPARSE) {
+		info = GrB_set(AT, GxB_HYPERSPARSE | GxB_SPARSE, GxB_SPARSITY_CONTROL);
+		ASSERT(info == GrB_SUCCESS);
+	}
 
 	// pick random nodes from AT's j array
 	// AT->j[i] contains the ID of a reachable source node
@@ -85,120 +94,6 @@ static GrB_Index* _Random_Sources
 	ASSERT(info == GrB_SUCCESS);
 
 	return sources;
-}
-
-// build adjacency matrix which will be used to compute Betweenness-Centrality
-static GrB_Matrix _Build_Matrix
-(
-	const Graph *g,         // graph
-	GrB_Vector *N,          // list nodes participating in betweenness
-	const LabelID *lbls,    // [optional] labels to consider
-	unsigned short n_lbls,  // number of labels
-	const RelationID *rels, // [optional] relationships to consider
-	unsigned short n_rels   // number of relationships
-) {
-	GrB_Info info;
-	Delta_Matrix D;       // graph delta matrix
-	GrB_Index nrows;      // number of rows in matrix
-	GrB_Index ncols;      // number of columns in matrix
-	GrB_Matrix A = NULL;  // returned betweenness matrix
-
-	// if no relationships are specified use the adjacency matrix
-	// otherwise use specified relation matrices
-	if(n_rels == 0) {
-		D = Graph_GetAdjacencyMatrix(g, false);
-	} else {
-		RelationID id = rels[0];
-		D = Graph_GetRelationMatrix(g, id, false);
-	}
-
-	// export relation matrix to A
-	info = Delta_Matrix_export(&A, D);
-	ASSERT(info == GrB_SUCCESS);
-
-	// in case there are multiple relation types, include them in A
-	for(unsigned short i = 1; i < n_rels; i++) {
-		D = Graph_GetRelationMatrix(g, rels[i], false);
-
-		GrB_Matrix M;
-		info = Delta_Matrix_export(&M, D);
-		ASSERT(info == GrB_SUCCESS);
-
-		info = GrB_Matrix_eWiseAdd_Semiring(A, NULL, NULL, GxB_ANY_PAIR_BOOL,
-				A, M, NULL);
-		ASSERT(info == GrB_SUCCESS);
-
-		GrB_Matrix_free(&M);
-	}
-
-	info = GrB_Matrix_nrows(&nrows, A);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Matrix_ncols(&ncols, A);
-	ASSERT(info == GrB_SUCCESS);
-
-	// expecting a square matrix
-	ASSERT(nrows == ncols);
-
-	// create vector N denoting all nodes participating in the algorithm
-	info = GrB_Vector_new(N, GrB_BOOL, nrows);
-	ASSERT(info == GrB_SUCCESS);
-
-	// enforce labels
-	if(n_lbls > 0) {
-		Delta_Matrix DL = Graph_GetLabelMatrix(g, lbls[0]);
-
-		GrB_Matrix L;
-		info = Delta_Matrix_export(&L, DL);
-		ASSERT(info == GrB_SUCCESS);
-
-		// L = L U M
-		for(unsigned short i = 1; i < n_lbls; i++) {
-			DL = Graph_GetLabelMatrix(g, lbls[i]);
-
-			GrB_Matrix M;
-			info = Delta_Matrix_export(&M, DL);
-			ASSERT(info == GrB_SUCCESS);
-
-			info = GrB_Matrix_eWiseAdd_Semiring(L, NULL, NULL,
-					GxB_ANY_PAIR_BOOL, L, M, NULL);
-			ASSERT(info == GrB_SUCCESS);
-
-			GrB_Matrix_free(&M);
-		}
-
-		// A = L * A * L
-		info = GrB_mxm(A, NULL, NULL, GxB_ANY_PAIR_BOOL, L, A, NULL);
-		ASSERT(info == GrB_SUCCESS);
-
-		info = GrB_mxm(A, NULL, NULL, GxB_ANY_PAIR_BOOL, A, L, NULL);
-		ASSERT(info == GrB_SUCCESS);
-
-		// set N to L's main diagonal denoting all participating nodes 
-		info = GxB_Vector_diag(*N, L, 0, NULL);
-		ASSERT(info == GrB_SUCCESS);
-
-		// free L matrix
-		info = GrB_Matrix_free(&L);
-		ASSERT(info == GrB_SUCCESS);
-	} else {
-		// N = [1,....1]
-		GrB_Scalar scalar;
-		info = GrB_Scalar_new(&scalar, GrB_BOOL);
-		ASSERT(info == GrB_SUCCESS);
-
-		info = GxB_Scalar_setElement_BOOL(scalar, true);
-		ASSERT(info == GrB_SUCCESS);
-
-		info = GrB_Vector_assign_Scalar(*N, NULL, NULL, scalar, GrB_ALL, nrows,
-				NULL);
-		ASSERT(info == GrB_SUCCESS);
-    
-		info = GrB_free(&scalar);
-		ASSERT(info == GrB_SUCCESS);
-	}
-
-	return A;
 }
 
 // process procedure yield
@@ -440,9 +335,12 @@ ProcedureResult Proc_BetweennessInvoke
 	// save private data
 	ctx->privateData = pdata;
 
-	// build adjacency matrix on which we'll run Betweenness Centrality
-	GrB_Matrix A = _Build_Matrix(g, &pdata->nodes, lbls, array_len(lbls), rels,
-			array_len(rels));
+	GrB_Matrix A;
+	GrB_Info info;
+
+	info = Build_Matrix(&A, &pdata->nodes, g, lbls, array_len(lbls), rels,
+			array_len(rels), false, true);
+	ASSERT(info == GrB_SUCCESS);
 
 	// free build matrix inputs
 	if(lbls != NULL) array_free(lbls);
@@ -452,7 +350,6 @@ ProcedureResult Proc_BetweennessInvoke
 	// build AT
 	//--------------------------------------------------------------------------
 
-	GrB_Info   info;
     GrB_Type   type;
     GrB_Index  nrows;
 	GrB_Index  ncols;

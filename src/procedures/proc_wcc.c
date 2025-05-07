@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "GraphBLAS.h"
+#include "LAGraph.h"
 
 #include "proc_wcc.h"
 #include "../value.h"
@@ -12,7 +13,7 @@
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
 #include "../datatypes/map.h"
-#include "../algorithms/wcc.h"
+#include "./utility/internal.h"
 #include "../datatypes/array.h"
 #include "../graph/graphcontext.h"
 
@@ -23,8 +24,6 @@
 // CALL algo.wcc({nodeLabels: ['L'], relationshipTypes: ['E']}) YIELD node, componentId
 
 typedef struct {
-	LabelID *lbls;             // considered labels
-	RelationID *rels;          // considered relationship-types
 	GrB_Vector components;     // computed components
 	GrB_Vector N;              // nodes participating in WCC
 	GrB_Info info;             // iterator state
@@ -221,8 +220,6 @@ ProcedureResult Proc_WCCInvoke
 	pdata->g               = g;
 	pdata->N               = NULL;
 	pdata->it              = NULL;
-	pdata->lbls            = lbls;
-	pdata->rels            = rels;
 	pdata->components      = NULL;
 	pdata->yield_node      = NULL;
 	pdata->yield_component = NULL;
@@ -233,15 +230,39 @@ ProcedureResult Proc_WCCInvoke
 	ctx->privateData = pdata;
 
 	//--------------------------------------------------------------------------
-	// run the WCC algorithm
+	// build matrix on which we'll compute WCC
 	//--------------------------------------------------------------------------
 
-	GrB_Info info = WCC(&pdata->components, &pdata->N, g, lbls, array_len(lbls),
-			rels, array_len(rels));
+	GrB_Matrix    A;
+	LAGraph_Graph G;
+	GrB_Info      info;
 
-	if(info != GrB_SUCCESS) {
-		return PROCEDURE_ERR;
-	}
+	bool sym     = true;
+	bool compact = true;
+
+	info = Build_Matrix(&A, &pdata->N, g, lbls, array_len(lbls), rels,
+			array_len(rels), sym, compact);
+
+	ASSERT(A        != NULL);
+	ASSERT(pdata->N != NULL);
+
+	char msg[LAGRAPH_MSG_LEN];
+	info = LAGraph_New(&G, &A, LAGraph_ADJACENCY_UNDIRECTED, msg);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = LAGr_ConnectedComponents(&pdata->components, G, msg);
+	ASSERT(info == GrB_SUCCESS);
+
+	// free the graph, the connected components, and finish LAGraph
+	info = LAGraph_Delete(&G, msg);
+	ASSERT(info == GrB_SUCCESS);
+
+	// wait on outputs
+	info = GrB_wait(pdata->N, GrB_MATERIALIZE);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_wait(pdata->components, GrB_MATERIALIZE);
+	ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
 	// initialize iterator
@@ -322,8 +343,6 @@ ProcedureResult Proc_WCCFree
 
 		if(pdata->N          != NULL) GrB_free(&pdata->N);
 		if(pdata->it         != NULL) GrB_free(&pdata->it);
-		if(pdata->lbls       != NULL) array_free(pdata->lbls);
-		if(pdata->rels       != NULL) array_free(pdata->rels);
 		if(pdata->components != NULL) GrB_free(&pdata->components);
 
 		rm_free(ctx->privateData);
