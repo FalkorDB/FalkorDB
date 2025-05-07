@@ -5,18 +5,14 @@
  */
 
 #pragma once
-#include "LAGraph.h"
-#include "../../value.h"
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
 
 // context struct containing traversal data for shortestPath function calls
 typedef struct {
-	uint minHops;                // minimum number of edges traversed by this path
-	uint maxHops;                // maximum number of edges traversed by this path
-	LAGraph_Graph G;             // LAGraph graph object
+	unsigned int minHops;        // minimum number of edges traversed by this path
+	unsigned int maxHops;        // maximum number of edges traversed by this path
 	int *reltypes;               // relationship type IDs
 	const char **reltype_names;  // relationship type names
-	uint reltype_count;          // number of traversed relationship types
+	unsigned int reltype_count;  // number of traversed relationship types
 } ShortestPathCtx;
 
 void Register_PathFuncs();
