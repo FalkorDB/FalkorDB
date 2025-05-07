@@ -15,10 +15,12 @@ static void _AllNeighborsCtx_CollectNeighbors
 	EntityID id
 ) {
 	ctx->current_level++;
-	if(ctx->current_level == array_len(ctx->levels)) {
+	if(ctx->current_level == ctx->n_levels) {
 		Delta_MatrixTupleIter iter = {0};
 		Delta_MatrixTupleIter_AttachRange(&iter, ctx->M, id, id);
-		array_append(ctx->levels, iter);
+		ctx->levels = rm_realloc(ctx->levels, sizeof(Delta_MatrixTupleIter) * (ctx->n_levels+1));
+		ctx->levels[ctx->n_levels] = iter;
+		ctx->n_levels++;
 	} else {
 		Delta_MatrixTupleIter_iterate_row(&ctx->levels[ctx->current_level], id);
 	}
@@ -45,15 +47,11 @@ void AllNeighborsCtx_Reset
 	ctx->first_pull    = true;
 	ctx->current_level = 0;
 
-	array_clear(ctx->levels);
 	array_clear(ctx->visited);
 
 	// reset visited nodes
 	HashTableRelease(ctx->visited_nodes);
 	ctx->visited_nodes = HashTableCreate(&def_dt);
-
-	// dummy iterator at level 0
-	array_append(ctx->levels, (Delta_MatrixTupleIter) {0});
 }
 
 AllNeighborsCtx *AllNeighborsCtx_New
@@ -68,18 +66,19 @@ AllNeighborsCtx *AllNeighborsCtx_New
 
 	AllNeighborsCtx *ctx = rm_calloc(1, sizeof(AllNeighborsCtx));
 
-	ctx->M              = M;
-	ctx->src            = src;
-	ctx->minLen         = minLen;
-	ctx->maxLen         = maxLen;
-	ctx->levels         = array_new(Delta_MatrixTupleIter, 1);
-	ctx->visited        = array_new(EntityID, 1);
-	ctx->first_pull     = true;
-	ctx->current_level  = 0;
-	ctx->visited_nodes  = HashTableCreate(&def_dt);
+	ctx->M             = M;
+	ctx->src           = src;
+	ctx->minLen        = minLen;
+	ctx->maxLen        = maxLen;
+	ctx->levels        = rm_malloc(sizeof(Delta_MatrixTupleIter));
+	ctx->n_levels      = 1;
+	ctx->visited       = array_new(EntityID, 1);
+	ctx->first_pull    = true;
+	ctx->current_level = 0;
+	ctx->visited_nodes = HashTableCreate(&def_dt);
 
 	// Dummy iterator at level 0
-	array_append(ctx->levels, (Delta_MatrixTupleIter) {0});
+	ctx->levels[0] = (Delta_MatrixTupleIter) {0};
 
 	return ctx;
 }
@@ -111,7 +110,7 @@ EntityID AllNeighborsCtx_NextNeighbor
 	}
 
 	while(ctx->current_level > 0) {
-		ASSERT(ctx->current_level < array_len(ctx->levels));
+		ASSERT(ctx->current_level < ctx->n_levels);
 		Delta_MatrixTupleIter *it = &ctx->levels[ctx->current_level];
 
 		GrB_Index dest_id;
@@ -158,11 +157,11 @@ void AllNeighborsCtx_Free
 ) {
 	if(!ctx) return;
 
-	uint count = array_len(ctx->levels);
+	uint count = ctx->n_levels;
 	for (uint i = 0; i < count; i++) {
 		Delta_MatrixTupleIter_detach(ctx->levels + i);
 	}
-	array_free(ctx->levels);
+	rm_free(ctx->levels);
 	array_free(ctx->visited);
 
 	HashTableRelease(ctx->visited_nodes);
