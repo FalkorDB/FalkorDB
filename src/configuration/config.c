@@ -14,84 +14,6 @@
 #include "util/redis_version.h"
 #include "../deps/GraphBLAS/Include/GraphBLAS.h"
 
-//-----------------------------------------------------------------------------
-// Configuration parameters
-//-----------------------------------------------------------------------------
-
-// config param, the timeout for each query in milliseconds
-#define TIMEOUT "TIMEOUT"
-
-// default timeout for read and write queries
-#define TIMEOUT_DEFAULT "TIMEOUT_DEFAULT"
-
-// max timeout that can be enforced
-#define TIMEOUT_MAX "TIMEOUT_MAX"
-
-// config param, the size of each thread cache size, per graph
-#define CACHE_SIZE "CACHE_SIZE"
-
-// whether graphs should be deleted asynchronously
-#define ASYNC_DELETE "ASYNC_DELETE"
-
-// config param, number of threads in thread pool
-#define THREAD_COUNT "THREAD_COUNT"
-
-// resultset size limit
-#define RESULTSET_SIZE "RESULTSET_SIZE"
-
-// config param, max number of OpenMP threads
-#define OMP_THREAD_COUNT "OMP_THREAD_COUNT"
-
-// config param, max number of entities in each virtual key
-#define VKEY_MAX_ENTITY_COUNT "VKEY_MAX_ENTITY_COUNT"
-
-// config param, max number of queued queries
-#define MAX_QUEUED_QUERIES "MAX_QUEUED_QUERIES"
-
-// Max mem(bytes) that query/thread can utilize at any given time
-#define QUERY_MEM_CAPACITY "QUERY_MEM_CAPACITY"
-
-// number of pending changed before Delta_Matrix flushed
-#define DELTA_MAX_PENDING_CHANGES "DELTA_MAX_PENDING_CHANGES"
-
-// size of node creation buffer
-#define NODE_CREATION_BUFFER "NODE_CREATION_BUFFER"
-
-// The GRAPH.INFO command
-#define CMD_INFO "CMD_INFO"
-
-// The GRAPH.INFO QUERIES maximum element count
-#define CMD_INFO_MAX_QUERIES_COUNT_OPTION_NAME "MAX_INFO_QUERIES"
-
-// effects replication threshold
-#define EFFECTS_THRESHOLD "EFFECTS_THRESHOLD"
-
-// bolt protocol port
-#define BOLT_PORT "BOLT_PORT"
-
-// delay indexing
-#define DELAY_INDEXING "DELAY_INDEXING"
-
-// import folder
-#define IMPORT_FOLDER "IMPORT_FOLDER"
-
-// deduplicate string
-#define DEDUPLICATE_STRINGS "DEDUPLICATE_STRINGS"
-
-//------------------------------------------------------------------------------
-// Configuration defaults
-//------------------------------------------------------------------------------
-
-#define CACHE_SIZE_DEFAULT                 25
-#define QUEUED_QUERIES_UNLIMITED           INT64_MAX
-#define VKEY_MAX_ENTITY_COUNT_DEFAULT      100000
-#define CMD_INFO_DEFAULT                   true
-#define CMD_INFO_QUERIES_MAX_COUNT_DEFAULT 1000
-#define BOLT_PROTOCOL_PORT_DEFAULT         -1  // disabled by default
-#define DELAY_INDEXING_DEFAULT             false
-#define IMPORT_DIR_DEFAULT                 "/var/lib/FalkorDB/import/"
-#define DEDUPLICATE_STRINGS_DEFAULT        false
-
 // configuration object
 typedef struct {
 	uint64_t timeout;                  // the timeout for each query in milliseconds
@@ -107,7 +29,7 @@ typedef struct {
 	int64_t query_mem_capacity;        // max mem(bytes) that query/thread can utilize at any given time
 	int64_t delta_max_pending_changes; // number of pending changed before Delta_Matrix flushed
 	uint64_t node_creation_buffer;     // number of extra node creations to buffer as margin in matrices
-	bool cmd_info_on;                  // if true, the GRAPH.INFO is enabled
+	bool cmd_info;                     // if true, the GRAPH.INFO is enabled
 	uint64_t effects_threshold;        // replicate via effects when runtime exceeds threshold
 	uint64_t max_info_queries_count;   // maximum number of query info elements
 	int16_t bolt_port;                 // bolt protocol port
@@ -191,11 +113,12 @@ static inline bool _Config_ParseYesNo
 // max queued queries
 //------------------------------------------------------------------------------
 
-static void Config_max_queued_queries_set
+static bool Config_max_queued_queries_set
 (
 	uint64_t max_queued_queries
 ) {
 	config.max_queued_queries = max_queued_queries;
+	return true;
 }
 
 static uint Config_max_queued_queries_get(void) {
@@ -206,11 +129,12 @@ static uint Config_max_queued_queries_get(void) {
 // timeout
 //------------------------------------------------------------------------------
 
-static void Config_timeout_set
+static bool Config_timeout_set
 (
 	uint64_t timeout
 ) {
 	config.timeout = timeout;
+	return true;
 }
 
 // check if new(TIMEOUT_DEFAULT or TIMEOUT_MAX) are used
@@ -277,11 +201,12 @@ static uint Config_timeout_max_get(void) {
 // thread count
 //------------------------------------------------------------------------------
 
-static void Config_thread_pool_size_set
+static bool Config_thread_pool_size_set
 (
 	uint64_t nthreads
 ) {
 	config.thread_pool_size = nthreads;
+	return true;
 }
 
 static uint64_t Config_thread_pool_size_get(void) {
@@ -292,11 +217,12 @@ static uint64_t Config_thread_pool_size_get(void) {
 // OpenMP thread count
 //------------------------------------------------------------------------------
 
-static void Config_OMP_thread_count_set(uint64_t nthreads) {
+static bool Config_omp_thread_count_set(uint64_t nthreads) {
 	config.omp_thread_count = nthreads;
+	return true;
 }
 
-static uint64_t Config_OMP_thread_count_get(void) {
+static uint64_t Config_omp_thread_count_get(void) {
 	return config.omp_thread_count;
 }
 
@@ -304,14 +230,15 @@ static uint64_t Config_OMP_thread_count_get(void) {
 // virtual key entity count
 //------------------------------------------------------------------------------
 
-static void Config_virtual_key_entity_count_set
+static bool Config_vkey_entity_count_set
 (
 	uint64_t entity_count
 ) {
 	config.vkey_entity_count = entity_count;
+	return true;
 }
 
-static uint64_t Config_virtual_key_entity_count_get(void) {
+static uint64_t Config_vkey_entity_count_get(void) {
 	return config.vkey_entity_count;
 }
 
@@ -319,11 +246,12 @@ static uint64_t Config_virtual_key_entity_count_get(void) {
 // cache size
 //------------------------------------------------------------------------------
 
-static void Config_cache_size_set
+static bool Config_cache_size_set
 (
 	uint64_t cache_size
 ) {
 	config.cache_size = cache_size;
+	return true;
 }
 
 static uint64_t Config_cache_size_get(void) {
@@ -334,11 +262,12 @@ static uint64_t Config_cache_size_get(void) {
 // async delete
 //------------------------------------------------------------------------------
 
-static void Config_async_delete_set
+static bool Config_async_delete_set
 (
 	bool async_delete
 ) {
 	config.async_delete = async_delete;
+	return true;
 }
 
 static bool Config_async_delete_get(void) {
@@ -349,12 +278,14 @@ static bool Config_async_delete_get(void) {
 // result-set max size
 //------------------------------------------------------------------------------
 
-static void Config_resultset_max_size_set
+static bool Config_resultset_size_set
 (
 	int64_t max_size
 ) {
 	if(max_size < 0) config.resultset_size = RESULTSET_SIZE_UNLIMITED;
 	else config.resultset_size = max_size;
+
+	return true;
 }
 
 static uint64_t Config_resultset_max_size_get(void) {
@@ -365,7 +296,7 @@ static uint64_t Config_resultset_max_size_get(void) {
 // query mem capacity
 //------------------------------------------------------------------------------
 
-static void Config_query_mem_capacity_set
+static bool Config_query_mem_capacity_set
 (
 	int64_t capacity
 ) {
@@ -373,6 +304,8 @@ static void Config_query_mem_capacity_set
 		config.query_mem_capacity = QUERY_MEM_CAPACITY_UNLIMITED;
 	else
 		config.query_mem_capacity = capacity;
+
+	return true;
 }
 
 static uint64_t Config_query_mem_capacity_get(void) {
@@ -383,7 +316,7 @@ static uint64_t Config_query_mem_capacity_get(void) {
 // delta max pending changes
 //------------------------------------------------------------------------------
 
-static void Config_delta_max_pending_changes_set
+static bool Config_delta_max_pending_changes_set
 (
 	int64_t capacity
 ) {
@@ -391,6 +324,8 @@ static void Config_delta_max_pending_changes_set
 		config.delta_max_pending_changes = DELTA_MAX_PENDING_CHANGES_DEFAULT;
 	else
 		config.delta_max_pending_changes = capacity;
+
+	return true;
 }
 
 static uint64_t Config_delta_max_pending_changes_get(void) {
@@ -401,11 +336,12 @@ static uint64_t Config_delta_max_pending_changes_get(void) {
 // node creation buffer
 //------------------------------------------------------------------------------
 
-static void Config_node_creation_buffer_set
+static bool Config_node_creation_buffer_set
 (
 	uint64_t buf_size
 ) {
 	config.node_creation_buffer = buf_size;
+	return true;
 }
 
 static uint64_t Config_node_creation_buffer_get(void) {
@@ -417,21 +353,22 @@ static uint64_t Config_node_creation_buffer_get(void) {
 //------------------------------------------------------------------------------
 
 static bool Config_cmd_info_get(void) {
-	return config.cmd_info_on;
+	return config.cmd_info;
 }
 
-static void Config_cmd_info_set
+static bool Config_cmd_info_set
 (
-	const bool cmd_info_on
+	const bool cmd_info
 ) {
-	config.cmd_info_on = cmd_info_on;
+	config.cmd_info = cmd_info;
+	return true;
 }
 
-static uint64_t Config_cmd_info_max_queries_get(void) {
+static uint64_t Config_max_info_queries_get(void) {
 	return config.max_info_queries_count;
 }
 
-static void Config_cmd_info_max_queries_set
+static bool Config_max_info_queries_count_set
 (
 	const uint64_t count
 ) {
@@ -440,17 +377,20 @@ static void Config_cmd_info_max_queries_set
 	} else {
 		config.max_info_queries_count = count;
 	}
+
+	return true;
 }
 
 //------------------------------------------------------------------------------
 // effects threshold
 //------------------------------------------------------------------------------
 
-static void Config_effects_threshold_set
+static bool Config_effects_threshold_set
 (
 	uint64_t threshold
 ) {
 	config.effects_threshold = threshold;
+	return true;
 }
 
 static uint64_t Config_effects_threshold_get (void) {
@@ -461,12 +401,13 @@ static uint64_t Config_effects_threshold_get (void) {
 // bolt protocol port
 //------------------------------------------------------------------------------
 
-static void Config_bolt_port_set
+static bool Config_bolt_port_set
 (
 	int16_t port
 ) {
 	int16_t p = (port < 0) ? BOLT_PROTOCOL_PORT_DEFAULT : port;
 	config.bolt_port = p;
+	return true;
 }
 
 static int16_t Config_bolt_port_get(void) {
@@ -481,18 +422,19 @@ static bool Config_delay_indexing_get(void) {
 	return config.delay_indexing;
 }
 
-static void Config_delay_indexing_set
+static bool Config_delay_indexing_set
 (
 	const bool delay_indexing
 ) {
 	config.delay_indexing = delay_indexing;
+	return true;
 }
 
 //------------------------------------------------------------------------------
 // import folder
 //------------------------------------------------------------------------------
 
-static void Config_import_folder_set
+static bool Config_import_folder_set
 (
 	const char *path
 ) {
@@ -503,6 +445,8 @@ static void Config_import_folder_set
 
 	// copy new path
 	config.import_folder = rm_strdup(path);
+
+	return true;
 }
 
 static const char *Config_import_folder_get(void) {
@@ -513,11 +457,12 @@ static const char *Config_import_folder_get(void) {
 // deduplicate strings
 //------------------------------------------------------------------------------
 
-static void Config_deduplicate_strings_set
+static bool Config_deduplicate_strings_set
 (
 	bool enabled
 ) {
 	config.deduplicate_strings = enabled;
+	return true;
 }
 
 static bool Config_deduplicate_strings_get(void) {
@@ -758,6 +703,413 @@ const char *Config_Field_name
 	return name;
 }
 
+// generate config get function name for an individual configuration attribute
+#define CONFIG_GET_BOOL_FUNC_NAME(config_attr) _Config_Get_##config_attr##_Bool
+#define CONFIG_GET_STRING_FUNC_NAME(config_attr) _Config_Get_##config_attr##_String
+#define CONFIG_GET_NUMERIC_FUNC_NAME(config_attr) _Config_Get_##config_attr##_Numeric
+
+// generate a config get boolean function
+// return the boolean value of the configuration key
+#define CONFIG_GET_BOOL(config_attr)                          \
+int CONFIG_GET_BOOL_FUNC_NAME(config_attr)                    \
+(                                                             \
+	const char *name,                                         \
+	void *privdata                                            \
+) {                                                           \
+	return config.config_attr;                                \
+}
+
+#define CONFIG_GET_NUMERIC(config_attr)                       \
+long long CONFIG_GET_NUMERIC_FUNC_NAME(config_attr)           \
+(                                                             \
+	const char *name,                                         \
+	void *privdata                                            \
+) {                                                           \
+	return config.config_attr;                                \
+}
+
+#define CONFIG_GET_STRING(config_attr)                        \
+RedisModuleString* CONFIG_GET_STRING_FUNC_NAME(config_attr)   \
+(                                                             \
+	const char *name,                                         \
+	void *privdata                                            \
+) {                                                           \
+	return RedisModule_CreateString(NULL,                     \
+			config.config_attr, strlen(config.config_attr));  \
+}
+
+
+//------------------------------------------------------------------------------
+// create config numeric value getters
+//------------------------------------------------------------------------------
+
+CONFIG_GET_BOOL (cmd_info)
+CONFIG_GET_BOOL (async_delete)
+CONFIG_GET_BOOL (delay_indexing)
+CONFIG_GET_BOOL (deduplicate_strings)
+
+CONFIG_GET_NUMERIC (timeout)
+CONFIG_GET_NUMERIC (bolt_port)
+CONFIG_GET_NUMERIC (cache_size)
+CONFIG_GET_NUMERIC (timeout_max)
+CONFIG_GET_NUMERIC (resultset_size)
+CONFIG_GET_NUMERIC (timeout_default)
+CONFIG_GET_NUMERIC (thread_pool_size)
+CONFIG_GET_NUMERIC (omp_thread_count)
+CONFIG_GET_NUMERIC (vkey_entity_count)
+CONFIG_GET_NUMERIC (effects_threshold)
+CONFIG_GET_NUMERIC (max_queued_queries)
+CONFIG_GET_NUMERIC (query_mem_capacity)
+CONFIG_GET_NUMERIC (node_creation_buffer)
+CONFIG_GET_NUMERIC (max_info_queries_count)
+CONFIG_GET_NUMERIC (delta_max_pending_changes)
+
+CONFIG_GET_STRING (import_folder)
+
+
+// generate config set function name for an individual configuration attribute
+#define CONFIG_SET_BOOL_FUNC_NAME(config_attr) _Config_Set_##config_attr##_Bool
+#define CONFIG_SET_NUMERIC_FUNC_NAME(config_attr) _Config_Set_##config_attr##_String
+#define CONFIG_SET_STRING_FUNC_NAME(config_attr) _Config_Set_##config_attr##_Numeric
+
+// generate a config set boolean function
+// sets the boolean value of the configuration key
+#define CONFIG_SET_BOOL(config_attr)                                   \
+int CONFIG_SET_BOOL_FUNC_NAME(config_attr) (                           \
+	const char *name,                                                  \
+	int val,                                                           \
+	void *privdata,                                                    \
+	RedisModuleString **err                                            \
+) {                                                                    \
+	/* call config internal setter */                                  \
+	if(Config_##config_attr##_set(val)) {                              \
+		return REDISMODULE_OK;                                         \
+	}                                                                  \
+                                                                       \
+	/* failed to set config */                                         \
+	*err = RedisModule_CreateStringPrintf(NULL,                        \
+			"Failed to set configuration %s to %d", name, val);        \
+   return REDISMODULE_ERR;                                             \
+}
+
+#define CONFIG_SET_NUMERIC(config_attr)                                \
+int CONFIG_SET_NUMERIC_FUNC_NAME(config_attr) (                        \
+	const char *name,                                                  \
+	long long val,                                                     \
+	void *privdata,                                                    \
+	RedisModuleString **err                                            \
+) {                                                                    \
+	/* call config internal setter */                                  \
+	if(Config_##config_attr##_set(val)) {                              \
+		return REDISMODULE_OK;                                         \
+	}                                                                  \
+                                                                       \
+	/* failed to set config */                                         \
+	*err = RedisModule_CreateStringPrintf(NULL,                        \
+			"Failed to set configuration %s to %lld", name, val);      \
+   return REDISMODULE_ERR;                                             \
+}
+
+#define CONFIG_SET_STRING(config_attr)                                 \
+int CONFIG_SET_STRING_FUNC_NAME(config_attr) (                         \
+	const char *name,                                                  \
+	RedisModuleString *val,                                            \
+	void *privdata,                                                    \
+	RedisModuleString **err                                            \
+) {                                                                    \
+	const char *value = RedisModule_StringPtrLen(val, NULL);           \
+                                                                       \
+	/* call config internal setter */                                  \
+	if(Config_##config_attr##_set(value)) {                            \
+		return REDISMODULE_OK;                                         \
+	}                                                                  \
+                                                                       \
+	/* failed to set config */                                         \
+	*err = RedisModule_CreateStringPrintf(NULL,                        \
+			"Failed to set configuration %s to %s", name, value);      \
+   return REDISMODULE_ERR;                                             \
+}
+
+//------------------------------------------------------------------------------
+// create config numeric value setters
+//------------------------------------------------------------------------------
+
+CONFIG_SET_BOOL (cmd_info)
+CONFIG_SET_BOOL (async_delete)
+CONFIG_SET_BOOL (delay_indexing)
+CONFIG_SET_BOOL (deduplicate_strings)
+
+CONFIG_SET_NUMERIC (timeout)
+CONFIG_SET_NUMERIC (bolt_port)
+CONFIG_SET_NUMERIC (cache_size)
+CONFIG_SET_NUMERIC (timeout_max)
+CONFIG_SET_NUMERIC (resultset_size)
+CONFIG_SET_NUMERIC (timeout_default)
+CONFIG_SET_NUMERIC (thread_pool_size)
+CONFIG_SET_NUMERIC (omp_thread_count)
+CONFIG_SET_NUMERIC (vkey_entity_count)
+CONFIG_SET_NUMERIC (effects_threshold)
+CONFIG_SET_NUMERIC (max_queued_queries)
+CONFIG_SET_NUMERIC (query_mem_capacity)
+CONFIG_SET_NUMERIC (node_creation_buffer)
+CONFIG_SET_NUMERIC (max_info_queries_count)
+CONFIG_SET_NUMERIC (delta_max_pending_changes)
+
+CONFIG_SET_STRING (import_folder)
+
+static void _Config_Register
+(
+	RedisModuleCtx *ctx
+) {
+	//--------------------------------------------------------------------------
+	// register graph configurations
+	//--------------------------------------------------------------------------
+
+	//--------------------------------------------------------------------------
+	// register boolean configurations
+	//--------------------------------------------------------------------------
+
+	int res;
+
+	res = RedisModule_RegisterBoolConfig(ctx,
+			CMD_INFO,
+			CMD_INFO_DEFAULT,
+			REDISMODULE_CONFIG_DEFAULT,
+			CONFIG_GET_BOOL_FUNC_NAME(cmd_info),
+			CONFIG_SET_BOOL_FUNC_NAME(cmd_info),
+			NULL,
+			NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_RegisterBoolConfig(ctx,
+			ASYNC_DELETE,
+			ASYNC_DELETE_DEFAULT,
+			REDISMODULE_CONFIG_DEFAULT,
+			CONFIG_GET_BOOL_FUNC_NAME(async_delete),
+			CONFIG_SET_BOOL_FUNC_NAME(async_delete),
+			NULL,
+			NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_RegisterBoolConfig(ctx,
+			DEDUPLICATE_STRINGS,
+			DEDUPLICATE_STRINGS_DEFAULT,
+			REDISMODULE_CONFIG_DEFAULT,
+			CONFIG_GET_BOOL_FUNC_NAME(deduplicate_strings),
+			CONFIG_SET_BOOL_FUNC_NAME(deduplicate_strings),
+			NULL,
+			NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_RegisterBoolConfig(ctx,
+			DELAY_INDEXING,
+			DELAY_INDEXING_DEFAULT,
+			REDISMODULE_CONFIG_DEFAULT,
+			CONFIG_GET_BOOL_FUNC_NAME(delay_indexing),
+			CONFIG_SET_BOOL_FUNC_NAME(delay_indexing),
+			NULL,
+			NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	//--------------------------------------------------------------------------
+	// register numeric configurations
+	//--------------------------------------------------------------------------
+
+	res = RedisModule_RegisterNumericConfig(ctx,
+										  TIMEOUT,
+										  CONFIG_TIMEOUT_DEFAULT,
+										  REDISMODULE_CONFIG_DEFAULT,
+										  CONFIG_TIMEOUT_MIN,
+										  CONFIG_TIMEOUT_MAX,
+										  CONFIG_GET_NUMERIC_FUNC_NAME(timeout),
+										  CONFIG_SET_NUMERIC_FUNC_NAME(timeout),
+										  NULL,
+										  NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_RegisterNumericConfig(ctx,
+										  BOLT_PORT,
+										  BOLT_PROTOCOL_PORT_DEFAULT,
+										  REDISMODULE_CONFIG_DEFAULT,
+										  BOLT_PROTOCOL_PORT_MIN,
+										  BOLT_PROTOCOL_PORT_MAX,
+										  CONFIG_GET_NUMERIC_FUNC_NAME(bolt_port),
+										  CONFIG_SET_NUMERIC_FUNC_NAME(bolt_port),
+										  NULL,
+										  NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_RegisterNumericConfig(ctx,
+										  CACHE_SIZE,
+										  CACHE_SIZE_DEFAULT,
+										  REDISMODULE_CONFIG_DEFAULT,
+										  CACHE_SIZE_MIN,
+										  CACHE_SIZE_MAX,
+										  CONFIG_GET_NUMERIC_FUNC_NAME(cache_size),
+										  CONFIG_SET_NUMERIC_FUNC_NAME(cache_size),
+										  NULL,
+										  NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_RegisterNumericConfig(ctx,
+										  TIMEOUT_MAX,
+										  CONFIG_TIMEOUT_DEFAULT,
+										  REDISMODULE_CONFIG_DEFAULT,
+										  CONFIG_TIMEOUT_MIN,
+										  CONFIG_TIMEOUT_MAX,
+										  CONFIG_GET_NUMERIC_FUNC_NAME(timeout_max),
+										  CONFIG_SET_NUMERIC_FUNC_NAME(timeout_max),
+										  NULL,
+										  NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_RegisterNumericConfig(ctx,
+										  RESULTSET_SIZE,
+										  RESULTSET_SIZE_DEFAULT,
+										  REDISMODULE_CONFIG_DEFAULT,
+										  RESULTSET_SIZE_MIN,
+										  RESULTSET_SIZE_MAX,
+										  CONFIG_GET_NUMERIC_FUNC_NAME(resultset_size),
+										  CONFIG_SET_NUMERIC_FUNC_NAME(resultset_size),
+										  NULL,
+										  NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_RegisterNumericConfig(ctx,
+										  TIMEOUT_DEFAULT,
+										  CONFIG_TIMEOUT_DEFAULT,
+										  REDISMODULE_CONFIG_DEFAULT,
+										  CONFIG_TIMEOUT_MIN,
+										  CONFIG_TIMEOUT_MAX,
+										  CONFIG_GET_NUMERIC_FUNC_NAME(timeout_default),
+										  CONFIG_SET_NUMERIC_FUNC_NAME(timeout_default),
+										  NULL,
+										  NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_RegisterNumericConfig(ctx,
+										  THREAD_COUNT,
+										  THREAD_COUNT_DEFAULT,
+										  REDISMODULE_CONFIG_DEFAULT,
+										  THREAD_COUNT_MIN,
+										  THREAD_COUNT_MAX,
+										  CONFIG_GET_NUMERIC_FUNC_NAME(thread_pool_size),
+										  CONFIG_SET_NUMERIC_FUNC_NAME(thread_pool_size),
+										  NULL,
+										  NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_RegisterNumericConfig(ctx,
+										  OMP_THREAD_COUNT,
+										  OMP_THREAD_COUNT_DEFAULT,
+										  REDISMODULE_CONFIG_DEFAULT,
+										  OMP_THREAD_COUNT_MIN,
+										  OMP_THREAD_COUNT_MAX,
+										  CONFIG_GET_NUMERIC_FUNC_NAME(omp_thread_count),
+										  CONFIG_SET_NUMERIC_FUNC_NAME(omp_thread_count),
+										  NULL,
+										  NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_RegisterNumericConfig(ctx,
+										  VKEY_MAX_ENTITY_COUNT,
+										  VKEY_MAX_ENTITY_COUNT_DEFAULT,
+										  REDISMODULE_CONFIG_DEFAULT,
+										  VKEY_MAX_ENTITY_COUNT_MIN,
+										  VKEY_MAX_ENTITY_COUNT_MAX,
+										  CONFIG_GET_NUMERIC_FUNC_NAME(vkey_entity_count),
+										  CONFIG_SET_NUMERIC_FUNC_NAME(vkey_entity_count),
+										  NULL,
+										  NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_RegisterNumericConfig(ctx,
+										  EFFECTS_THRESHOLD,
+										  EFFECTS_THRESHOLD_DEFAULT,
+										  REDISMODULE_CONFIG_DEFAULT,
+										  EFFECTS_THRESHOLD_MIN,
+										  EFFECTS_THRESHOLD_MAX,
+										  CONFIG_GET_NUMERIC_FUNC_NAME(effects_threshold),
+										  CONFIG_SET_NUMERIC_FUNC_NAME(effects_threshold),
+										  NULL,
+										  NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_RegisterNumericConfig(ctx,
+										  MAX_QUEUED_QUERIES,
+										  QUEUED_QUERIES_DEFAULT,
+										  REDISMODULE_CONFIG_DEFAULT,
+										  QUEUED_QUERIES_MIN,
+										  QUEUED_QUERIES_MAX,
+										  CONFIG_GET_NUMERIC_FUNC_NAME(max_queued_queries),
+										  CONFIG_SET_NUMERIC_FUNC_NAME(max_queued_queries),
+										  NULL,
+										  NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_RegisterNumericConfig(ctx,
+										  QUERY_MEM_CAPACITY,
+										  QUERY_MEM_CAPACITY_DEFAULT,
+										  REDISMODULE_CONFIG_DEFAULT,
+										  QUERY_MEM_CAPACITY_MIN,
+										  QUERY_MEM_CAPACITY_MAX,
+										  CONFIG_GET_NUMERIC_FUNC_NAME(query_mem_capacity),
+										  CONFIG_SET_NUMERIC_FUNC_NAME(query_mem_capacity),
+										  NULL,
+										  NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_RegisterNumericConfig(ctx,
+										  NODE_CREATION_BUFFER,
+										  NODE_CREATION_BUFFER_DEFAULT,
+										  REDISMODULE_CONFIG_DEFAULT,
+										  NODE_CREATION_BUFFER_MIN,
+										  NODE_CREATION_BUFFER_MAX,
+										  CONFIG_GET_NUMERIC_FUNC_NAME(node_creation_buffer),
+										  CONFIG_SET_NUMERIC_FUNC_NAME(node_creation_buffer),
+										  NULL,
+										  NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_RegisterNumericConfig(ctx,
+										  CMD_INFO_MAX_QUERIES_COUNT_OPTION_NAME,
+										  CMD_INFO_QUERIES_MAX_COUNT_DEFAULT,
+										  REDISMODULE_CONFIG_DEFAULT,
+										  CMD_INFO_QUERIES_MAX_COUNT_MIN,
+										  CMD_INFO_QUERIES_MAX_COUNT_MAX,
+										  CONFIG_GET_NUMERIC_FUNC_NAME(max_info_queries_count),
+										  CONFIG_SET_NUMERIC_FUNC_NAME(max_info_queries_count),
+										  NULL,
+										  NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_RegisterNumericConfig(ctx,
+										  DELTA_MAX_PENDING_CHANGES,
+										  DELTA_MAX_PENDING_CHANGES_DEFAULT,
+										  REDISMODULE_CONFIG_DEFAULT,
+										  DELTA_MAX_PENDING_CHANGES_MIN,
+										  DELTA_MAX_PENDING_CHANGES_MAX,
+										  CONFIG_GET_NUMERIC_FUNC_NAME(delta_max_pending_changes),
+										  CONFIG_SET_NUMERIC_FUNC_NAME(delta_max_pending_changes),
+										  NULL,
+										  NULL);
+	ASSERT(res == REDISMODULE_OK);
+
+	//--------------------------------------------------------------------------
+	// register string configurations
+	//--------------------------------------------------------------------------
+
+	res = RedisModule_RegisterStringConfig(ctx,
+										  IMPORT_FOLDER,
+										  IMPORT_DIR_DEFAULT,
+										  REDISMODULE_CONFIG_DEFAULT,
+										  CONFIG_GET_STRING_FUNC_NAME(import_folder),
+										  CONFIG_SET_STRING_FUNC_NAME(import_folder),
+										  NULL,
+										  NULL);
+
+}
+
 // initialize every module-level configuration to its default value
 static void _Config_SetToDefaults(void) {
 	// the thread pool's default size is equal to the system's number of cores
@@ -806,7 +1158,7 @@ static void _Config_SetToDefaults(void) {
 	config.node_creation_buffer = NODE_CREATION_BUFFER_DEFAULT;
 
 	// GRAPH.INFO command on/off.
-	config.cmd_info_on = CMD_INFO_DEFAULT;
+	config.cmd_info = CMD_INFO_DEFAULT;
 
 	// GRAPH.INFO maximum queries count.
 	config.max_info_queries_count = CMD_INFO_QUERIES_MAX_COUNT_DEFAULT;
@@ -836,8 +1188,13 @@ int Config_Init
 	// make sure reconfiguration callback is already registered
 	ASSERT(config.cb != NULL);
 
+	_Config_Register(ctx);
+
 	// initialize the configuration to its default values
 	_Config_SetToDefaults();
+
+	int res = RedisModule_LoadConfigs(ctx);
+	ASSERT(res == REDISMODULE_OK);
 
 	if(argc % 2) {
 		// emit an error if we received an odd number of arguments,
@@ -989,7 +1346,7 @@ bool Config_Option_get
 			va_end(ap);
 
 			ASSERT(omp_nthreads != NULL);
-			(*omp_nthreads) = Config_OMP_thread_count_get();
+			(*omp_nthreads) = Config_omp_thread_count_get();
 		}
 		break;
 
@@ -1031,7 +1388,7 @@ bool Config_Option_get
 			va_end(ap);
 
 			ASSERT(vkey_max_entity_count != NULL);
-			(*vkey_max_entity_count) = Config_virtual_key_entity_count_get();
+			(*vkey_max_entity_count) = Config_vkey_entity_count_get();
 		}
 		break;
 
@@ -1097,11 +1454,11 @@ bool Config_Option_get
 
 		case Config_CMD_INFO: {
 			va_start(ap, field);
-			bool *cmd_info_on = va_arg(ap, bool *);
+			bool *cmd_info = va_arg(ap, bool *);
 			va_end(ap);
 
-			ASSERT(cmd_info_on != NULL);
-			(*cmd_info_on) = Config_cmd_info_get();
+			ASSERT(cmd_info != NULL);
+			(*cmd_info) = Config_cmd_info_get();
 		}
 		break;
 
@@ -1115,7 +1472,7 @@ bool Config_Option_get
 			va_end(ap);
 
 			ASSERT(count != NULL);
-			(*count) = Config_cmd_info_max_queries_get();
+			(*count) = Config_max_info_queries_get();
 		}
 		break;
 
@@ -1288,7 +1645,7 @@ bool Config_Option_set
 			long long omp_nthreads;
 			if(!_Config_ParsePositiveInteger(val, &omp_nthreads)) return false;
 
-			Config_OMP_thread_count_set(omp_nthreads);
+			Config_omp_thread_count_set(omp_nthreads);
 		}
 		break;
 
@@ -1312,7 +1669,7 @@ bool Config_Option_set
 			long long resultset_max_size;
 			if(!_Config_ParseInteger(val, &resultset_max_size)) return false;
 
-			Config_resultset_max_size_set(resultset_max_size);
+			Config_resultset_size_set(resultset_max_size);
 		}
 		break;
 
@@ -1324,7 +1681,7 @@ bool Config_Option_set
 			long long vkey_max_entity_count;
 			if(!_Config_ParseNonNegativeInteger(val, &vkey_max_entity_count)) return false;
 
-			Config_virtual_key_entity_count_set(vkey_max_entity_count);
+			Config_vkey_entity_count_set(vkey_max_entity_count);
 		}
 		break;
 
@@ -1395,12 +1752,12 @@ bool Config_Option_set
 		//----------------------------------------------------------------------
 
 		case Config_CMD_INFO: {
-			bool cmd_info_on = false;
-			if (!_Config_ParseYesNo(val, &cmd_info_on)) {
+			bool cmd_info = false;
+			if (!_Config_ParseYesNo(val, &cmd_info)) {
 				return false;
 			}
 
-			Config_cmd_info_set(cmd_info_on);
+			Config_cmd_info_set(cmd_info);
 		}
 		break;
 
@@ -1413,7 +1770,7 @@ bool Config_Option_set
 			if (!_Config_ParseNonNegativeInteger(val, &count)) return false;
 			if (count > UINT64_MAX) return false;
 
-			Config_cmd_info_max_queries_set(count);
+			Config_max_info_queries_count_set(count);
 		}
   		break;
 
