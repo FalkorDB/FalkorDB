@@ -15,7 +15,7 @@ extern rax *__procedures;
 // CALL dbms.procedures()
 
 typedef struct {
-	SIValue *output;      // array with a maximum of 2 entries: [name, mode]
+	SIValue output[2];    // array with a maximum of 2 entries: [name, mode]
 	raxIterator iter;     // procedures iterator
 	SIValue *yield_name;  // yield name
 	SIValue *yield_mode;  // yield mode
@@ -57,7 +57,6 @@ ProcedureResult Proc_ProceduresInvoke
 	rax *procedures = __procedures;
 	raxStart(&pdata->iter, procedures);
 	raxSeek(&pdata->iter, "^", NULL, 0);
-	pdata->output = array_new(SIValue, 2);
 	_process_yield(pdata, yield);
 
 	ctx->privateData = pdata;
@@ -96,7 +95,6 @@ ProcedureResult Proc_ProceduresFree
 	// clean up
 	if(ctx->privateData) {
 		ProcProceduresPrivateData *pdata = ctx->privateData;
-		array_free(pdata->output);
 		rm_free(ctx->privateData);
 	}
 
