@@ -1431,7 +1431,6 @@ void Graph_memoryUsage
 	size_t n = 0;  // matrix memory consumption
 
 	Tensor       T;
-	GrB_Matrix   M;
 	Delta_Matrix D;
 	GrB_Info     info;
 
@@ -1440,17 +1439,15 @@ void Graph_memoryUsage
 	//--------------------------------------------------------------------------
 
 	D = Graph_GetAdjacencyMatrix(g, false);
-	M = Delta_Matrix_M(D);
 
-	info = GxB_Matrix_memoryUsage(&n, M);
+	info = Delta_Matrix_memoryUsage(&n, D);
 	ASSERT(info == GrB_SUCCESS);
 
 	*rel_matrices_sz += n;
 
 	D = Graph_GetAdjacencyMatrix(g, true);
-	M = Delta_Matrix_M(D);
 
-	info = GxB_Matrix_memoryUsage(&n, M);
+	info = Delta_Matrix_memoryUsage(&n, D);
 	ASSERT(info == GrB_SUCCESS);
 
 	*rel_matrices_sz += n;
@@ -1463,9 +1460,8 @@ void Graph_memoryUsage
 
 	for(LabelID lbl = 0; lbl < n_lbl; lbl++) {
 		D = Graph_GetLabelMatrix(g, lbl);
-		M = Delta_Matrix_M(D);
 
-		info = GxB_Matrix_memoryUsage(&n, M);
+		info = Delta_Matrix_memoryUsage(&n, D);
 		ASSERT(info == GrB_SUCCESS);
 
 		*lbl_matrices_sz += n;
@@ -1473,9 +1469,8 @@ void Graph_memoryUsage
 
 	// account for graph's node labels matrix
 	D = Graph_GetNodeLabelMatrix(g);
-	M = Delta_Matrix_M(D);
 
-	info = GxB_Matrix_memoryUsage(&n, M);
+	info = Delta_Matrix_memoryUsage(&n, D);
 	ASSERT(info == GrB_SUCCESS);
 
 	*lbl_matrices_sz += n;
@@ -1487,17 +1482,8 @@ void Graph_memoryUsage
 	int n_rel = Graph_RelationTypeCount(g);
 	for(RelationID rel = 0; rel < n_rel; rel++) {
 		T = Graph_GetRelationMatrix(g, rel, false);
-		M = Delta_Matrix_M(T);
 
-		info = GxB_Matrix_memoryUsage(&n, M);
-		ASSERT(info == GrB_SUCCESS);
-
-		*rel_matrices_sz += n;
-
-		T = Graph_GetRelationMatrix(g, rel, true);
-		M = Delta_Matrix_M(T);
-
-		info = GxB_Matrix_memoryUsage(&n, M);
+		info = Delta_Matrix_memoryUsage(&n, T);
 		ASSERT(info == GrB_SUCCESS);
 
 		*rel_matrices_sz += n;
