@@ -15,7 +15,7 @@
 #include "../datatypes/array.h"
 
 typedef struct {
-	SIValue *out;               // outputs
+	SIValue out[5];             // outputs
 	SIValue *yield_type;        // yield constraint type
 	SIValue *yield_label;       // yield constraint label
 	SIValue *yield_properties;  // yield constraint properties
@@ -189,7 +189,6 @@ ProcedureResult Proc_ConstraintsInvoke
 	ConstraintsContext *pdata = rm_malloc(sizeof(ConstraintsContext));
 
 	pdata->gc          = gc;
-	pdata->out         = array_new(SIValue, 5);
     pdata->constraints = array_new(Constraint, 0);
 
 	_process_yield(pdata, yield);
@@ -229,7 +228,6 @@ ProcedureResult Proc_ConstraintsFree
 	// clean up
 	if(ctx->privateData) {
 		ConstraintsContext *pdata = ctx->privateData;
-		array_free(pdata->out);
 		array_free(pdata->constraints);
 		rm_free(pdata);
 	}

@@ -22,10 +22,9 @@
 
 #include "RG.h"
 #include "GraphBLAS.h"
-#include "LAGraph_bfs.h"
 
 //****************************************************************************
-int LG_BreadthFirstSearch_SSGrB
+int LAGr_BreadthFirstSearch_MaxLevel
 (
 	GrB_Vector    *level,
 	GrB_Vector    *parent,
@@ -35,7 +34,6 @@ int LG_BreadthFirstSearch_SSGrB
 	GrB_Index     max_level
 )
 {
-
 	//--------------------------------------------------------------------------
 	// check inputs
 	//--------------------------------------------------------------------------
@@ -175,3 +173,4 @@ int LG_BreadthFirstSearch_SSGrB
 
 	return (0) ;
 }
+
