@@ -35,7 +35,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Retrieve built image AMD
-        uses: dawidd6/action-download-artifact@v7
+        uses: dawidd6/action-download-artifact@v9
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -45,7 +45,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image ARM
-        uses: dawidd6/action-download-artifact@v7
+        uses: dawidd6/action-download-artifact@v9
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -55,7 +55,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image RHEL AMD
-        uses: dawidd6/action-download-artifact@v7
+        uses: dawidd6/action-download-artifact@v9
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -65,7 +65,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built .so AMD
-        uses: dawidd6/action-download-artifact@v7
+        uses: dawidd6/action-download-artifact@v9
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -75,7 +75,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built .so ARM
-        uses: dawidd6/action-download-artifact@v7
+        uses: dawidd6/action-download-artifact@v9
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -84,7 +84,7 @@ jobs:
           path: /tmp
           if_no_artifact_found: error
       - name: Retrieve built .so RHEL AMD
-        uses: dawidd6/action-download-artifact@v7
+        uses: dawidd6/action-download-artifact@v9
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
