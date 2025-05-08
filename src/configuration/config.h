@@ -256,6 +256,12 @@ static const Config_Option_Field RUNTIME_CONFIGS[] = {
 };
 static const size_t RUNTIME_CONFIG_COUNT = sizeof(RUNTIME_CONFIGS) / sizeof(RUNTIME_CONFIGS[0]);
 
+bool Config_Option_get
+(
+	Config_Option_Field field,
+	...
+);
+
 // set module-level configurations to defaults or to user provided arguments
 // returns REDISMODULE_OK on success
 // emits an error and returns REDISMODULE_ERR on failure
@@ -264,47 +270,6 @@ int Config_Init
 	RedisModuleCtx *ctx,
 	RedisModuleString **argv,
 	int argc
-);
-
-// returns true if 'field_str' reffers to a configuration field and sets
-// 'field' accordingly
-bool Config_Contains_field
-(
-	const char *field_str,
-	Config_Option_Field *field
-);
-
-// returns the field type
-SIType Config_Field_type
-(
-	Config_Option_Field field  // field
-);
-
-// returns field name
-const char *Config_Field_name
-(
-	Config_Option_Field field
-);
-
-bool Config_Option_get
-(
-	Config_Option_Field field,
-	...
-);
-
-bool Config_Option_set
-(
-	Config_Option_Field field,
-	const char *val,
-	char **err
-);
-
-// dryrun configuration
-bool Config_Option_dryrun
-(
-	Config_Option_Field field,
-	const char *val,
-	char **err
 );
 
 // sets config update callback function
