@@ -271,6 +271,18 @@ void DataBlock_MarkAsDeletedOutOfOrder
 	array_append(dataBlock->deletedIdx, idx);
 }
 
+size_t DataBlock_memoryUsage
+(
+	const DataBlock *dataBlock
+) {
+	ASSERT(dataBlock != NULL);
+
+	// datablock size = deleted index array size +
+	//                  (number of blocks * block size)
+	return array_len(dataBlock->deletedIdx) * sizeof(uint64_t) +
+		dataBlock->blockCount * (dataBlock->itemSize * dataBlock->blockCap);
+}
+
 void DataBlock_Free(DataBlock *dataBlock) {
 	for(uint i = 0; i < dataBlock->blockCount; i++) Block_Free(dataBlock->blocks[i]);
 

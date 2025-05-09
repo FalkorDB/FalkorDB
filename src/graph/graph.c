@@ -1493,13 +1493,8 @@ void Graph_memoryUsage
 	// graph's datablocks
 	//--------------------------------------------------------------------------
 
-	DataBlock *block;
-
-	block = g->nodes;
-	*node_storage_sz += DataBlock_itemSize(block) * DataBlock_ItemCount(block);
-
-	block = g->edges;
-	*edge_storage_sz += DataBlock_itemSize(block) * DataBlock_ItemCount(block);
+	*node_storage_sz += DataBlock_memoryUsage(g->nodes);
+	*edge_storage_sz += DataBlock_memoryUsage(g->edges);
 }
 
 void Graph_PartialFree

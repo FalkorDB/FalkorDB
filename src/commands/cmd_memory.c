@@ -588,7 +588,7 @@ int Graph_Memory
 
 	// create command context to pass to worker thread
 	GraphMemoryCtx *cmd_ctx = rm_calloc(1, sizeof(GraphMemoryCtx));
-	ASSERT(ctx != NULL);
+	ASSERT(cmd_ctx != NULL);
 
 	cmd_ctx->gc      = gc;
 	cmd_ctx->bc      = bc;
