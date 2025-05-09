@@ -106,6 +106,12 @@ uint DataBlock_DeletedItemsCount(const DataBlock *dataBlock);
 // Returns true if the given item has been deleted.
 bool DataBlock_ItemIsDeleted(void *item);
 
+// returns to amount of memory consumed by the datablock
+size_t DataBlock_memoryUsage
+(
+	const DataBlock *dataBlock
+);
+
 // Free block.
 void DataBlock_Free(DataBlock *block);
 
