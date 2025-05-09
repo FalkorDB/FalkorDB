@@ -69,23 +69,178 @@ static size_t _EstimateEdgeAttributeMemory
 	return edge_memory_usage;
 }
 
+static size_t _SampleVector
+(
+	const Graph *g,
+	const GrB_Vector V,
+	GxB_Iterator it,
+	int64_t samples  // #samples per label to collect
+) {
+	GrB_Info  info;
+	GrB_Index nvals;
+
+	info = GrB_Vector_nvals(&nvals, V);
+	ASSERT(info == GrB_SUCCESS);
+
+	// in case current vector is empty, continue to next label
+	if(nvals == 0) return 0;
+
+	size_t  memory_usage  = 0;
+	int64_t v_sample_size = MIN(nvals, samples);  // sample size
+	int64_t sample_size   = v_sample_size;        // copy v_sample_size
+
+	// iterate over V
+	info = GxB_Vector_Iterator_attach(it, V, NULL);
+	ASSERT(info == GrB_SUCCESS);
+
+	// seek to the first entry
+	info = GxB_Vector_Iterator_seek(it, 0);
+	while(info != GxB_EXHAUSTED && v_sample_size > 0) {
+		// get the entry V(i)
+		GrB_Index i = GxB_Vector_Iterator_getIndex(it);
+
+		Node n;
+		bool node_found = Graph_GetNode(g, i, &n);
+		if(likely(node_found == true)) {
+			AttributeSet set = GraphEntity_GetAttributes((GraphEntity*)&n);
+			memory_usage += AttributeSet_memoryUsage(set);
+		}
+
+		v_sample_size--;
+
+		// move to the next entry in V
+		info = GxB_Vector_Iterator_next(it);
+	}
+
+	// average labeled entity memory consumption
+	ASSERT((sample_size - v_sample_size) > 0);
+	float avg = memory_usage / (sample_size - v_sample_size);
+
+	return avg * nvals;
+}
+
+// estimate nodes attribute-set memory consumption
+static size_t _EstimateOverlapingNodeAttributeMemory
+(
+	const GraphContext *gc,  // graph context
+	const Graph *g,          // graph
+	int64_t samples          // #samples per label to collect
+) {
+	ASSERT(g       != NULL);
+	ASSERT(gc      != NULL);
+	ASSERT(samples > 0);
+
+	size_t node_memory_usage = 0;
+	int n_lbls = Graph_LabelTypeCount(g);
+	Delta_Matrix D = Graph_GetNodeLabelMatrix(g);
+
+	GrB_Info info;
+	GrB_Scalar     x     = NULL;
+	GrB_Vector     V     = NULL;          // current column
+	GrB_Vector     P     = NULL;          // processed entries
+	GxB_Iterator   it    = NULL;          //
+	GrB_Index      nrows = 0;             //
+	GrB_Matrix     lbls  = NULL;          //
+	GrB_Descriptor desc  = GrB_DESC_RSC;  //
+
+	info = Delta_Matrix_export(&lbls, D);
+	ASSERT(info == GrB_SUCCESS);
+
+	// switch to CSC
+	info = GxB_Matrix_Option_set(lbls, GrB_STORAGE_ORIENTATION_HINT,
+			GrB_COLMAJOR);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_Matrix_nrows(&nrows, lbls);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_Vector_new(&P, GrB_BOOL, nrows);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_Vector_new(&V, GrB_BOOL, nrows);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GxB_Iterator_new(&it);
+	ASSERT(info == GrB_SUCCESS);
+
+	for(int j = 0; j < n_lbls; j++) {
+		// extract current column
+		// V<!P> = lbls[:j]
+		info = GrB_Col_extract(V, P, NULL, lbls, GrB_ALL, nrows, j, desc);
+		ASSERT(info == GrB_SUCCESS);
+
+		// sample
+		node_memory_usage += _SampleVector(g, V, it, samples);
+
+		// add V to processed entries
+		// P = P + V
+		info = GrB_Vector_eWiseAdd_Semiring(P, NULL, NULL, GxB_ANY_PAIR_BOOL,
+				P, V, GrB_DESC_S);
+		ASSERT(info == GrB_SUCCESS);
+	}
+
+	// in case there are unlabeled nodes
+	GrB_Index nvals;
+	info = GrB_Vector_nvals(&nvals, P);
+	ASSERT(info == GrB_SUCCESS);
+
+	if(nvals < Graph_NodeCount(g)) {
+		// compute memory consumption of unlabeled nodes
+		// V<!P> = 1
+		// P = U (lbls[0] .. lbls[n_lbls])
+
+		info = GrB_Scalar_new(&x, GrB_BOOL);
+		ASSERT(info == GrB_SUCCESS);
+
+		info = GrB_Scalar_setElement(x, true);
+		ASSERT(info == GrB_SUCCESS);
+
+		info = GrB_Vector_assign_Scalar(V, P, NULL, x, GrB_ALL, nrows, GrB_DESC_C);
+		ASSERT(info == GrB_SUCCESS);
+
+		node_memory_usage += _SampleVector(g, V, it, samples);
+	}
+
+	// clean up
+	GrB_free(&x);
+	GrB_free(&V);
+	GrB_free(&P);
+	GrB_free(&it);
+	GrB_free(&lbls);
+
+	return node_memory_usage;
+}
+
 // estimate nodes attribute-set memory consumption
 static size_t _EstimateNodeAttributeMemory
 (
 	const GraphContext *gc,  // graph context
 	const Graph *g,          // graph
-	uint samples             // #samples per relationship type to collect
+	int64_t samples          // #samples per relationship type to collect
 ) {
 	// compute average node attribute memory consumption
+	int     n_lbls            = Graph_LabelTypeCount(g);
 	int64_t n_nodes           = Graph_NodeCount(g);     // number of nodes
 	int64_t sample_size       = MIN(n_nodes, samples);  // sample size
 	int64_t nodes_sample_size = sample_size;            // nodes sample size
 	int64_t n_labeled_nodes   = 0;                      // #labeled nodes
 	size_t  node_memory_usage = 0;                      // node memory usage
 
-	// sample each label
-	unsigned short n = GraphContext_SchemaCount(gc, SCHEMA_NODE);
-	for(LabelID l = 0; l < n; l++) {
+	// determine if graph contains any overlaping nodes
+	// e.g. CREATE (n:A:B)
+	// in which case SUM(#lbl_nodes) > #graph nodes
+
+	uint64_t total_labeled_node_count = 0;
+	for(LabelID i = 0; i < n_lbls; i++) {
+		total_labeled_node_count += Graph_LabeledNodeCount(g, i);
+	}
+
+	bool overlapping = total_labeled_node_count > n_nodes;
+	if(overlapping) {
+		return _EstimateOverlapingNodeAttributeMemory(gc, g, samples);
+	}
+
+	for(LabelID l = 0; l < n_lbls; l++) {
 		Node node;
 		GrB_Index id;
 		GrB_Info info;
