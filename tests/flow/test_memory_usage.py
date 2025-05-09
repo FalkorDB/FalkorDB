@@ -292,3 +292,63 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.env.assertEquals(res.total_graph_sz_mb, 0)
         self.env.assertEquals(res.node_storage_sz_mb, 0)
 
+    def test_node_label_overlap(self):
+        """test memory consumption of a graph containing multi label nodes"""
+
+        # compute how much node_storage is required for 250000 nodes
+        # with a single attribute
+        q = "UNWIND range(0, 250000) AS x CREATE ({v:-x})"
+        self.graph.query(q)
+
+        res = self._graph_memory_usage()
+        node_storage = res.node_storage_sz_mb
+
+        # make sure node storage memory consumption if greater than 0
+        self.env.assertGreater(node_storage, 0)
+
+        # clear graph
+        self.graph.delete()
+
+        # create a graph of the same size only this time each node
+        # has multiple labels A & B
+        q = "UNWIND range(0, 250000) AS x CREATE (:A:B {v:-x})"
+        self.graph.query(q)
+
+        # expecting the exact same memory consumption as with the labeless graph
+        res = self._graph_memory_usage()
+        self.env.assertEquals(node_storage, res.node_storage_sz_mb)
+
+        # clear graph
+        self.graph.delete()
+
+        # create a graph where third of the nodes are of type A
+        # third of type B and third of type A&B
+        q = "UNWIND range(0, 83333) AS x CREATE (:A:B {v:-x})"
+        self.graph.query(q)
+        q = "UNWIND range(0, 83333) AS x CREATE (:A {v:-x})"
+        self.graph.query(q)
+        q = "UNWIND range(0, 83333) AS x CREATE (:B {v:-x})"
+        self.graph.query(q)
+
+        # expecting the exact same memory consumption as with the labeless graph
+        res = self._graph_memory_usage()
+        self.env.assertEquals(node_storage, res.node_storage_sz_mb)
+
+        # clear graph
+        self.graph.delete()
+
+        # create a graph where forth of the nodes are of type A,
+        # forth of type B, forth of type A&B and forth do not have any labels
+        q = "UNWIND range(0, 62500) AS x CREATE (:A:B {v:-x})"
+        self.graph.query(q)
+        q = "UNWIND range(0, 62500) AS x CREATE (:A {v:-x})"
+        self.graph.query(q)
+        q = "UNWIND range(0, 62500) AS x CREATE (:B {v:-x})"
+        self.graph.query(q)
+        q = "UNWIND range(0, 62500) AS x CREATE ({v:-x})"
+        self.graph.query(q)
+
+        # expecting the exact same memory consumption as with the labeless graph
+        res = self._graph_memory_usage()
+        self.env.assertEquals(node_storage, res.node_storage_sz_mb)
+

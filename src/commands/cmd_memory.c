@@ -5,11 +5,19 @@
 
 #include "cmd_memory.h"
 #include "../errors/error_msgs.h"
+#include "../util/thpool/pools.h"
 #include "../graph/graphcontext.h"
 
 #define MB (1 <<20)
 
 extern RedisModuleType *GraphContextRedisModuleType;
+
+// GRAPH.MEMORY command context
+typedef struct {
+	GraphContext *gc;              // graph context
+	int64_t samples;               // number of samples to inspect
+	RedisModuleBlockedClient *bc;  // blocked client
+} GraphMemoryCtx;
 
 // estimate edges attribute-set memory consumption
 static size_t _EstimateEdgeAttributeMemory
@@ -120,6 +128,9 @@ static size_t _SampleVector
 }
 
 // estimate nodes attribute-set memory consumption
+// use this method only when there's some label overlapping between nodes
+// as this method is much slower than its counter-part
+// _EstimateNodeAttributeMemory
 static size_t _EstimateOverlapingNodeAttributeMemory
 (
 	const GraphContext *gc,  // graph context
@@ -138,15 +149,15 @@ static size_t _EstimateOverlapingNodeAttributeMemory
 	GrB_Scalar     x     = NULL;
 	GrB_Vector     V     = NULL;          // current column
 	GrB_Vector     P     = NULL;          // processed entries
-	GxB_Iterator   it    = NULL;          //
-	GrB_Index      nrows = 0;             //
-	GrB_Matrix     lbls  = NULL;          //
-	GrB_Descriptor desc  = GrB_DESC_RSC;  //
+	GxB_Iterator   it    = NULL;          // vector iterator
+	GrB_Index      nrows = 0;             // number of rows in vector
+	GrB_Matrix     lbls  = NULL;          // labels matrix
+	GrB_Descriptor desc  = GrB_DESC_RSC;  // GraphBLAS descriptor
 
 	info = Delta_Matrix_export(&lbls, D);
 	ASSERT(info == GrB_SUCCESS);
 
-	// switch to CSC
+	// switch to CSC as we'll be performing column operations
 	info = GxB_Matrix_Option_set(lbls, GrB_STORAGE_ORIENTATION_HINT,
 			GrB_COLMAJOR);
 	ASSERT(info == GrB_SUCCESS);
@@ -181,13 +192,13 @@ static size_t _EstimateOverlapingNodeAttributeMemory
 
 	// in case there are unlabeled nodes
 	GrB_Index nvals;
-	info = GrB_Vector_nvals(&nvals, P);
+	info = GrB_Vector_nvals(&nvals, P);  // total number of labeled nodes
 	ASSERT(info == GrB_SUCCESS);
 
 	if(nvals < Graph_NodeCount(g)) {
 		// compute memory consumption of unlabeled nodes
-		// V<!P> = 1
 		// P = U (lbls[0] .. lbls[n_lbls])
+		// V<!P> = 1
 
 		info = GrB_Scalar_new(&x, GrB_BOOL);
 		ASSERT(info == GrB_SUCCESS);
@@ -405,6 +416,93 @@ static size_t _estimate_memory_consumption
 			*indices_sz_mb);
 }
 
+// GRAPH.MEMORY USAGE internal command handler
+// the function is executed on a reader thread to avoid blocking the main thread
+static void _Graph_Memory
+(
+	void *_ctx  // command context
+) {
+	ASSERT(_ctx != NULL);
+
+	GraphMemoryCtx *ctx = (GraphMemoryCtx*)_ctx;
+
+	GraphContext             *gc     = ctx->gc;
+	int64_t                  samples = ctx->samples;
+	RedisModuleBlockedClient *bc     = ctx->bc;
+
+	//--------------------------------------------------------------------------
+	// compute graph memory usage
+	//--------------------------------------------------------------------------
+
+	size_t indices_sz_mb;       // indices memory usage
+	size_t lbl_matrices_sz_mb;  // label matrices memory usage
+	size_t rel_matrices_sz_mb;  // relation matrices memory usage
+	size_t node_storage_sz_mb;  // node storage memory usage
+	size_t edge_storage_sz_mb;  // edge storage memory usage
+
+	// acquire read lock
+	Graph_AcquireReadLock(gc->g);
+
+	size_t total_graph_sz_mb = _estimate_memory_consumption(gc, samples,
+			&lbl_matrices_sz_mb, &rel_matrices_sz_mb, &node_storage_sz_mb,
+			&edge_storage_sz_mb, &indices_sz_mb);
+
+	// release read lock
+	Graph_ReleaseLock(gc->g);
+
+	// counter to GraphContext_Retrieve
+	GraphContext_Release(gc);
+
+	//--------------------------------------------------------------------------
+	// reply to caller
+	//--------------------------------------------------------------------------
+
+	// reply structure:
+	// {
+	//    total_graph_sz_mb: <total_graph_sz_mb>
+	//    label_matrices_sz_mb: <label_matrices_sz_mb>
+	//    relation_matrices_sz_mb: <relation_matrices_sz_mb>
+	//    amortized_node_storage_sz_mb: <node_storage_sz_mb>
+	//    amortized_edge_storage_sz_mb: <edge_storage_sz_mb>
+	//    indices_sz_mb: <indices_sz_mb>
+	// }
+
+	RedisModuleCtx *rm_ctx = RedisModule_GetThreadSafeContext(bc);
+
+	// six key value pairs
+	RedisModule_ReplyWithMap(rm_ctx, 6);
+
+	// total_graph_sz_mb
+	RedisModule_ReplyWithCString(rm_ctx, "total_graph_sz_mb");
+	RedisModule_ReplyWithLongLong(rm_ctx, total_graph_sz_mb);
+
+	// label_matrices_sz_mb
+	RedisModule_ReplyWithCString(rm_ctx, "label_matrices_sz_mb");
+	RedisModule_ReplyWithLongLong(rm_ctx, lbl_matrices_sz_mb);
+
+	// relation_matrices_sz_mb
+	RedisModule_ReplyWithCString(rm_ctx, "relation_matrices_sz_mb");
+	RedisModule_ReplyWithLongLong(rm_ctx, rel_matrices_sz_mb);
+
+	// amortized_node_storage_sz_mb
+	RedisModule_ReplyWithCString(rm_ctx, "amortized_node_storage_sz_mb");
+	RedisModule_ReplyWithLongLong(rm_ctx, node_storage_sz_mb);
+
+	// amortized_edge_storage_sz_mb
+	RedisModule_ReplyWithCString(rm_ctx, "amortized_edge_storage_sz_mb");
+	RedisModule_ReplyWithLongLong(rm_ctx, edge_storage_sz_mb);
+
+	// indices_sz_mb
+	RedisModule_ReplyWithCString(rm_ctx, "indices_sz_mb");
+	RedisModule_ReplyWithLongLong(rm_ctx, indices_sz_mb);
+
+	// unblock client
+    RedisModule_UnblockClient(bc, NULL);
+
+	// free command context
+	rm_free(ctx);
+}
+
 // GRAPH.MEMORY USAGE <key> command reports the number of bytes that a graph
 // require to be stored in RAM
 // e.g. GRAPH.MEMORY USAGE g
@@ -477,74 +575,23 @@ int Graph_Memory
 		return REDISMODULE_OK;
 	}
 
-	//--------------------------------------------------------------------------
-	// compute graph memory usage
-	//--------------------------------------------------------------------------
+	// GRAPH.MEMORY might be an expensive operation to compute
+	// to avoid blocking the main thread
+	// delegate the computation to a dedicated thread
 
-	size_t indices_sz_mb;       // indices memory usage
-	size_t lbl_matrices_sz_mb;  // label matrices memory usage
-	size_t rel_matrices_sz_mb;  // relation matrices memory usage
-	size_t node_storage_sz_mb;  // node storage memory usage
-	size_t edge_storage_sz_mb;  // edge storage memory usage
+	// block the client
+	RedisModuleBlockedClient *bc = RedisModule_BlockClient(ctx, NULL, NULL,
+			NULL, 0);
 
-	size_t total_graph_sz_mb = _estimate_memory_consumption(gc, samples,
-			&lbl_matrices_sz_mb, &rel_matrices_sz_mb, &node_storage_sz_mb,
-			&edge_storage_sz_mb, &indices_sz_mb);
+	// create command context to pass to worker thread
+	GraphMemoryCtx *cmd_ctx = rm_calloc(1, sizeof(GraphMemoryCtx));
+	ASSERT(ctx != NULL);
 
-	// counter to GraphContext_Retrieve
-	GraphContext_Release(gc);
+	cmd_ctx->gc      = gc;
+	cmd_ctx->bc      = bc;
+	cmd_ctx->samples = samples;
 
-	//--------------------------------------------------------------------------
-	// reply to caller
-	//--------------------------------------------------------------------------
-
-	// reply structure:
-	// [
-	//    total_graph_sz_mb
-	//    (integer) total_graph_sz_mb
-	//
-	//    label_matrices_sz_mb
-	//    (integer) <label_matrices_sz_mb>
-
-	//    relation_matrices_sz_mb
-	//    (integer) <relation_matrices_sz_mb>
-
-	//    amortized_node_storage_sz_mb
-	//    (integer) <node_storage_sz_mb>
-
-	//    amortized_edge_storage_sz_mb
-	//    (integer) <edge_storage_sz_mb>
-	//
-	//    indices_sz_mb
-	//    (integer) <indices_sz_mb>
-	//
-	// ]
-
-	RedisModule_ReplyWithArray(ctx, 6 * 2);
-
-	// total_graph_sz_mb
-	RedisModule_ReplyWithCString(ctx, "total_graph_sz_mb");
-	RedisModule_ReplyWithLongLong(ctx, total_graph_sz_mb);
-
-	// label_matrices_sz_mb
-	RedisModule_ReplyWithCString(ctx, "label_matrices_sz_mb");
-	RedisModule_ReplyWithLongLong(ctx, lbl_matrices_sz_mb);
-
-	// relation_matrices_sz_mb
-	RedisModule_ReplyWithCString(ctx, "relation_matrices_sz_mb");
-	RedisModule_ReplyWithLongLong(ctx, rel_matrices_sz_mb);
-
-	// amortized_node_storage_sz_mb
-	RedisModule_ReplyWithCString(ctx, "amortized_node_storage_sz_mb");
-	RedisModule_ReplyWithLongLong(ctx, node_storage_sz_mb);
-
-	// amortized_edge_storage_sz_mb
-	RedisModule_ReplyWithCString(ctx, "amortized_edge_storage_sz_mb");
-	RedisModule_ReplyWithLongLong(ctx, edge_storage_sz_mb);
-
-	// indices_sz_mb
-	RedisModule_ReplyWithCString(ctx, "indices_sz_mb");
-	RedisModule_ReplyWithLongLong(ctx, indices_sz_mb);
+	ThreadPools_AddWorkReader(_Graph_Memory, cmd_ctx, true);
 
 	return REDISMODULE_OK;
 }
