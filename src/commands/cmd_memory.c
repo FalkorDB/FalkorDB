@@ -499,6 +499,9 @@ static void _Graph_Memory
 	// unblock client
     RedisModule_UnblockClient(bc, NULL);
 
+	// free redis module context
+	RedisModule_FreeThreadSafeContext(rm_ctx);
+
 	// free command context
 	rm_free(ctx);
 }
