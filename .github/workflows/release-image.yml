@@ -93,7 +93,7 @@ jobs:
           path: /tmp
           if_no_artifact_found: error
       - name: Retrieve built debug.so AMD
-        uses: dawidd6/action-download-artifact@v7
+        uses: dawidd6/action-download-artifact@v9
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -102,7 +102,7 @@ jobs:
           path: /tmp
           if_no_artifact_found: error
       - name: Retrieve built debug.so ARM
-        uses: dawidd6/action-download-artifact@v7
+        uses: dawidd6/action-download-artifact@v9
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -111,7 +111,7 @@ jobs:
           path: /tmp
           if_no_artifact_found: error
       - name: Retrieve built debug.so RHEL AMD
-        uses: dawidd6/action-download-artifact@v7
+        uses: dawidd6/action-download-artifact@v9
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
