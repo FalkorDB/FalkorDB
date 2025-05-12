@@ -8,7 +8,31 @@
 
 #include "config.h"
 
-// handler function invoked when configuration changes
-// might be called at any time after config_init
-void reconf_handler(Config_Option_Field type);
+int reconf_query_mem_cap_apply
+(
+	RedisModuleCtx *ctx,
+	void *privdata,
+	RedisModuleString **err
+);
+
+int reconf_max_queued_queries_apply
+(
+	RedisModuleCtx *ctx,
+	void *privdata,
+	RedisModuleString **err
+);
+
+int reconf_cmd_info_apply
+(
+	RedisModuleCtx *ctx,
+	void *privdata,
+	RedisModuleString **err
+);
+
+int reconf_deduplicate_strings_apply
+(
+	RedisModuleCtx *ctx,
+	void *privdata,
+	RedisModuleString **err
+);
 

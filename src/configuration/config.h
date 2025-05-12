@@ -69,8 +69,8 @@
 
 // resultset size limit
 #define RESULTSET_SIZE "RESULTSET_SIZE"
-#define RESULTSET_SIZE_UNLIMITED           UINT64_MAX
-#define RESULTSET_SIZE_MIN                 0
+#define RESULTSET_SIZE_UNLIMITED           LLONG_MAX
+#define RESULTSET_SIZE_MIN                 -1
 #define RESULTSET_SIZE_MAX                 RESULTSET_SIZE_UNLIMITED
 #define RESULTSET_SIZE_DEFAULT             RESULTSET_SIZE_UNLIMITED
 
@@ -95,7 +95,7 @@
 #define VKEY_MAX_ENTITY_COUNT_MIN          1
 #define VKEY_MAX_ENTITY_COUNT_MAX          LLONG_MAX
 #define VKEY_MAX_ENTITY_COUNT_DEFAULT      100000
-#define VKEY_ENTITY_COUNT_UNLIMITED        UINT64_MAX
+#define VKEY_ENTITY_COUNT_UNLIMITED        LLONG_MAX
 
 //-----------------------------------------------------------------------------
 // max queued queries config
@@ -103,7 +103,7 @@
 
 // max number of queued queries
 #define MAX_QUEUED_QUERIES "MAX_QUEUED_QUERIES"
-#define QUEUED_QUERIES_UNLIMITED           UINT64_MAX  // unlimited
+#define QUEUED_QUERIES_UNLIMITED           LLONG_MAX  // unlimited
 #define QUEUED_QUERIES_DEFAULT             QUEUED_QUERIES_UNLIMITED
 #define QUEUED_QUERIES_MIN                 1
 #define QUEUED_QUERIES_MAX                 QUEUED_QUERIES_UNLIMITED
@@ -270,11 +270,5 @@ int Config_Init
 	RedisModuleCtx *ctx,
 	RedisModuleString **argv,
 	int argc
-);
-
-// sets config update callback function
-void Config_Subscribe_Changes
-(
-	Config_on_change cb
 );
 

@@ -10,71 +10,63 @@
 #include "reconf_handler.h"
 #include "util/thpool/pools.h"
 
-// handler function invoked when config changes
-void reconf_handler(Config_Option_Field type) {
-	switch (type)
-	{
-		//----------------------------------------------------------------------
-		// max queued queries
-		//----------------------------------------------------------------------
+int reconf_query_mem_cap_apply
+(
+	RedisModuleCtx *ctx,
+	void *privdata,
+	RedisModuleString **err
+) {
+	int64_t query_mem_capacity;
+	bool res = Config_Option_get(Config_QUERY_MEM_CAPACITY, &query_mem_capacity);
+	ASSERT(res);
+	rm_set_mem_capacity(query_mem_capacity);
 
-		case Config_MAX_QUEUED_QUERIES:
-			{
-				uint64_t max_queued_queries;
-				bool res = Config_Option_get(type, &max_queued_queries);
-				ASSERT(res);
-				ThreadPools_SetMaxPendingWork(max_queued_queries);
-			}
-			break;
+	return REDISMODULE_OK;
+}
 
-		//----------------------------------------------------------------------
-		// query mem capacity
-		//----------------------------------------------------------------------
+int reconf_max_queued_queries_apply
+(
+	RedisModuleCtx *ctx,
+	void *privdata,
+	RedisModuleString **err
+) {
+	uint64_t max_queued_queries;
+	bool res = Config_Option_get(Config_MAX_QUEUED_QUERIES, &max_queued_queries);
+	ASSERT(res);
+	ThreadPools_SetMaxPendingWork(max_queued_queries);
 
-		case Config_QUERY_MEM_CAPACITY:
-			{
-				int64_t query_mem_capacity;
-				bool res = Config_Option_get(type, &query_mem_capacity);
-				ASSERT(res);
-				rm_set_mem_capacity(query_mem_capacity);
-			}
-			break;
+	return REDISMODULE_OK;
+}
 
-		//----------------------------------------------------------------------
-		// graph info
-		//----------------------------------------------------------------------
+int reconf_cmd_info_apply
+(
+	RedisModuleCtx *ctx,
+	void *privdata,
+	RedisModuleString **err
+) {
+	bool info_enabled;
+	bool res = Config_Option_get(Config_CMD_INFO, &info_enabled);
+	ASSERT(res);
+	if(info_enabled) {
+		CronTask_AddStreamFinishedQueries();
+	}
 
-		case Config_CMD_INFO:
-			{
-				bool info_enabled;
-				bool res = Config_Option_get(type, &info_enabled);
-				ASSERT(res);
-				if(info_enabled) {
-					CronTask_AddStreamFinishedQueries();
-				}
-			}
-			break;
+	return REDISMODULE_OK;
+}
 
-		//----------------------------------------------------------------------
-		// string deduplication
-		//----------------------------------------------------------------------
+int reconf_deduplicate_strings_apply
+(
+	RedisModuleCtx *ctx,
+	void *privdata,
+	RedisModuleString **err
+) {
+	bool enabled;
+	bool res = Config_Option_get(Config_DEDUPLICATE_STRINGS, &enabled);
+	ASSERT(res);
 
-		case Config_DEDUPLICATE_STRINGS:
-			{
-				bool enabled;
-				bool res = Config_Option_get(type, &enabled);
-				ASSERT(res);
+	extern bool USE_STRING_POOL;  // defined in src/value.c
+	USE_STRING_POOL = enabled;
 
-				extern bool USE_STRING_POOL;  // defined in src/value.c
-				USE_STRING_POOL = enabled;
-			}
-			break;
-
-        //----------------------------------------------------------------------
-        // all other options
-        //----------------------------------------------------------------------
-        default:
-			return;
-    }
+	return REDISMODULE_OK;
 }
 

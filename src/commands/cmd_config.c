@@ -19,7 +19,31 @@ int Graph_Config
 		return RedisModule_WrongArity(ctx);
 	}
 
-	// TODO: config get * should get only graph.* configs
+	// determine action
+	int step;
+	const char *action = RedisModule_StringPtrLen(argv[1], NULL);
+	if(strcasecmp(action, "get") == 0) {
+		step = 1;
+	} else if(strcasecmp(action, "set") == 0) {
+		step = 2;
+	} else {
+		RedisModule_ReplyWithErrorFormat(ctx, "ERR unknown subcommand '%s'.",
+				action);
+		return REDISMODULE_OK;
+	}
+
+	// add "GRAPH." prefix to each config key
+	// e.g.
+	// RESULTSET_MAX_SIZE > GRAPH.RESULTSET_MAX_SIZE
+
+	for(int i = 2; i < argc; i+=step) {
+		RedisModuleString *s = RedisModule_CreateStringPrintf(ctx, "%s%s",
+				"graph.", RedisModule_StringPtrLen(argv[i], NULL));
+
+		RedisModule_FreeString(ctx, argv[i]);
+		argv[i] = s;
+	}
+
 	RedisModuleCallReply *reply = RedisModule_Call(ctx, "CONFIG", "v", argv+1, argc-1);
 
 	RedisModule_ReplyWithCallReply(ctx, reply);

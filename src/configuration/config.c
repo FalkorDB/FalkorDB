@@ -11,6 +11,7 @@
 #include <limits.h>
 #include <errno.h>
 #include "util/rmalloc.h"
+#include "reconf_handler.h"
 #include "util/redis_version.h"
 #include "../deps/GraphBLAS/Include/GraphBLAS.h"
 
@@ -36,10 +37,31 @@ typedef struct {
 	bool delay_indexing;               // delay index construction when decoding
 	char *import_folder;               // path to import folder, used for CSV loading
 	bool deduplicate_strings;          // use string pool to deduplicate strings
-	Config_on_change cb;               // callback function which being called when config param changed
 } RG_Config;
 
-RG_Config config; // global module configuration
+// global module configuration
+RG_Config config = {
+	.timeout                   = CONFIG_TIMEOUT_DEFAULT,
+	.timeout_default           = CONFIG_TIMEOUT_DEFAULT,
+	.timeout_max               = CONFIG_TIMEOUT_DEFAULT,
+	.cache_size                = CACHE_SIZE_DEFAULT,
+	.async_delete              = ASYNC_DELETE_DEFAULT,
+	.omp_thread_count          = OMP_THREAD_COUNT_DEFAULT,
+	.thread_pool_size          = THREAD_COUNT_DEFAULT,
+	.resultset_size            = RESULTSET_SIZE_DEFAULT,
+	.vkey_entity_count         = VKEY_MAX_ENTITY_COUNT_DEFAULT,
+	.max_queued_queries        = QUEUED_QUERIES_DEFAULT,
+	.query_mem_capacity        = QUERY_MEM_CAPACITY_DEFAULT,
+	.delta_max_pending_changes = DELTA_MAX_PENDING_CHANGES_DEFAULT,
+	.node_creation_buffer      = NODE_CREATION_BUFFER_DEFAULT,
+	.cmd_info                  = CMD_INFO_DEFAULT,
+	.effects_threshold         = EFFECTS_THRESHOLD_DEFAULT,
+	.max_info_queries_count    = CMD_INFO_QUERIES_MAX_COUNT_DEFAULT,
+	.bolt_port                 = BOLT_PROTOCOL_PORT_DEFAULT,
+	.delay_indexing            = DELAY_INDEXING_DEFAULT,
+	.import_folder             = IMPORT_DIR_DEFAULT,
+	.deduplicate_strings       = DEDUPLICATE_STRINGS_DEFAULT,
+};
 
 //------------------------------------------------------------------------------
 // Config access functions
@@ -274,8 +296,22 @@ static uint64_t Config_delta_max_pending_changes_get(void) {
 
 static bool Config_node_creation_buffer_set
 (
-	uint64_t buf_size
+	long long buf_size
 ) {
+	// node_creation_buffer should be at-least 128
+	buf_size = (buf_size < 128) ? 128: buf_size;
+
+	// retrieve the MSB of the value
+	long long msb = (sizeof(long long) * 8) - __builtin_clzll(buf_size);
+	long long set_msb = 1 << (msb - 1);
+
+	// if the value is not a power of 2
+	// (if any bits other than the MSB are 1),
+	// raise it to the next power of 2
+	if((~set_msb & buf_size) != 0) {
+		buf_size = 1 << msb;
+	}
+
 	config.node_creation_buffer = buf_size;
 	return true;
 }
@@ -377,7 +413,9 @@ static bool Config_import_folder_set
 	ASSERT(path != NULL);
 
 	// free previous value
-	rm_free(config.import_folder);
+	if(strcmp(config.import_folder, IMPORT_DIR_DEFAULT) != 0) {
+		rm_free(config.import_folder);
+	}
 
 	// copy new path
 	config.import_folder = rm_strdup(path);
@@ -578,7 +616,7 @@ static void _Config_Register
 			REDISMODULE_CONFIG_DEFAULT,
 			CONFIG_GET_BOOL_FUNC_NAME(cmd_info),
 			CONFIG_SET_BOOL_FUNC_NAME(cmd_info),
-			NULL,
+			reconf_cmd_info_apply,
 			NULL);
 	ASSERT(res == REDISMODULE_OK);
 
@@ -598,7 +636,7 @@ static void _Config_Register
 			REDISMODULE_CONFIG_DEFAULT,
 			CONFIG_GET_BOOL_FUNC_NAME(deduplicate_strings),
 			CONFIG_SET_BOOL_FUNC_NAME(deduplicate_strings),
-			NULL,
+			reconf_deduplicate_strings_apply,
 			NULL);
 	ASSERT(res == REDISMODULE_OK);
 
@@ -688,9 +726,14 @@ static void _Config_Register
 										  NULL);
 	ASSERT(res == REDISMODULE_OK);
 
+	// the thread pool's default size is equal to the system's number of cores
+	int CPUCount = sysconf(_SC_NPROCESSORS_ONLN);
+	CPUCount = (CPUCount != -1) ? CPUCount : 1;
+
 	res = RedisModule_RegisterNumericConfig(ctx,
 										  THREAD_COUNT,
-										  THREAD_COUNT_DEFAULT,
+										  //THREAD_COUNT_DEFAULT,
+										  CPUCount,
 										  REDISMODULE_CONFIG_IMMUTABLE,
 										  THREAD_COUNT_MIN,
 										  THREAD_COUNT_MAX,
@@ -700,9 +743,14 @@ static void _Config_Register
 										  NULL);
 	ASSERT(res == REDISMODULE_OK);
 
+	// use the GraphBLAS-defined number of OpenMP threads by default
+	uint64_t omp_thread_count;
+	GxB_get(GxB_NTHREADS, &omp_thread_count);
+
 	res = RedisModule_RegisterNumericConfig(ctx,
 										  OMP_THREAD_COUNT,
-										  OMP_THREAD_COUNT_DEFAULT,
+										  //OMP_THREAD_COUNT_DEFAULT,
+										  omp_thread_count,
 										  REDISMODULE_CONFIG_IMMUTABLE,
 										  OMP_THREAD_COUNT_MIN,
 										  OMP_THREAD_COUNT_MAX,
@@ -744,7 +792,7 @@ static void _Config_Register
 										  QUEUED_QUERIES_MAX,
 										  CONFIG_GET_NUMERIC_FUNC_NAME(max_queued_queries),
 										  CONFIG_SET_NUMERIC_FUNC_NAME(max_queued_queries),
-										  NULL,
+										  reconf_max_queued_queries_apply,
 										  NULL);
 	ASSERT(res == REDISMODULE_OK);
 
@@ -756,7 +804,7 @@ static void _Config_Register
 										  QUERY_MEM_CAPACITY_MAX,
 										  CONFIG_GET_NUMERIC_FUNC_NAME(query_mem_capacity),
 										  CONFIG_SET_NUMERIC_FUNC_NAME(query_mem_capacity),
-										  NULL,
+										  reconf_query_mem_cap_apply,
 										  NULL);
 	ASSERT(res == REDISMODULE_OK);
 
@@ -808,25 +856,6 @@ static void _Config_Register
 										  CONFIG_SET_STRING_FUNC_NAME(import_folder),
 										  NULL,
 										  NULL);
-}
-
-// initialize every module-level configuration to its default value
-static void _Config_SetToDefaults(void) {
-	// the thread pool's default size is equal to the system's number of cores
-	int CPUCount = sysconf(_SC_NPROCESSORS_ONLN);
-	config.thread_pool_size = (CPUCount != -1) ? CPUCount : 1;
-
-	// use the GraphBLAS-defined number of OpenMP threads by default
-	GxB_get(GxB_NTHREADS, &config.omp_thread_count);
-
-	// MEMCHECK compile flag;
-	#ifdef MEMCHECK
-		// disable async delete during memcheck
-		config.async_delete = false;
-	#else
-		// always perform async delete when no checking for memory issues
-		config.async_delete = true;
-	#endif
 }
 
 bool Config_Option_get
@@ -1135,25 +1164,11 @@ int Config_Init
 	RedisModuleString **argv,
 	int argc
 ) {
-	// make sure reconfiguration callback is already registered
-	ASSERT(config.cb != NULL);
-
 	_Config_Register(ctx);
-
-	// initialize the configuration to its default values
-	_Config_SetToDefaults();
 
 	int res = RedisModule_LoadConfigs(ctx);
 	ASSERT(res == REDISMODULE_OK);
 
 	return REDISMODULE_OK;
-}
-
-void Config_Subscribe_Changes
-(
-	Config_on_change cb
-) {
-	ASSERT(cb != NULL);
-	config.cb = cb;
 }
 
