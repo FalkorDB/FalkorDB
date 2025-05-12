@@ -19,7 +19,7 @@ typedef struct {
 	RedisModuleBlockedClient *bc;  // blocked client
 } GraphMemoryCtx;
 
-// checks whether any node in the graph is associated with more than one label.
+// checks whether any node in the graph is associated with more than one label
 // returns true if there exists at least one node with multiple labels
 static bool _Overlapping
 (
@@ -37,7 +37,7 @@ static bool _Overlapping
 	info = GrB_Matrix_ncols(&ncols, lbls);
 	ASSERT(info == GrB_SUCCESS);
 
-	info = GrB_Vector_new(V, GrB_BOOL, ncols);
+	info = GrB_Vector_new(V, GrB_UINT8, ncols);
 	ASSERT(info == GrB_SUCCESS);
 
 	//----------------------------------------------------------------------
@@ -45,7 +45,7 @@ static bool _Overlapping
     // V[i] = sum(lbls(i,:))
     //----------------------------------------------------------------------
 
-	info = GrB_Matrix_reduce_Monoid(*V, NULL, NULL, GrB_PLUS_MONOID_INT8, lbls,
+	info = GrB_Matrix_reduce_Monoid(*V, NULL, NULL, GrB_PLUS_MONOID_UINT8, lbls,
 			NULL);
 	ASSERT(info == GrB_SUCCESS);
 
@@ -63,7 +63,7 @@ static bool _Overlapping
 
 	uint64_t total_labels = 0;
 	info = GrB_Scalar_extractElement(&total_labels, s);
-	ASSERT(info == GrB_SUCCESS);
+	ASSERT(info == GrB_SUCCESS || info == GrB_NO_VALUE);
 
 	info = GrB_free(&s);
 	ASSERT(info == GrB_SUCCESS);
@@ -144,8 +144,8 @@ static size_t _UnlabeledNodesMemory
     int64_t samples      // number of nodes to sample
 ) {
 	ASSERT(g != NULL);
-    ASSERT(V != NULL);
-    ASSERT(samples > 0);
+	ASSERT(V != NULL);
+	ASSERT(samples > 0);
 
     GrB_Info info;
     GrB_Scalar x;
@@ -163,7 +163,7 @@ static size_t _UnlabeledNodesMemory
 	ASSERT(info == GrB_SUCCESS);
 
 	// V<!V> = true  --> Mark unlabeled nodes
-	info = GrB_Vector_assign_Scalar(V, V, NULL, x, GrB_ALL, len, GrB_DESC_C);
+	info = GrB_Vector_assign_Scalar(V, V, NULL, x, GrB_ALL, len, GrB_DESC_RC);
 	ASSERT(info == GrB_SUCCESS);
 
 	info = GrB_free(&x);
@@ -262,7 +262,7 @@ static size_t _EstimateNonOverlapingNodeAttributeMemory
     int64_t sample_size // number of nodes to sample per label
 ) {
 	ASSERT(g != NULL);
-	ASSERT(sample_size > 0);
+	ASSERT(sample_size >= 0);
 
 	size_t total_memory_usage = 0;
 	int n_lbls = Graph_LabelTypeCount(g);
@@ -323,7 +323,7 @@ static size_t _EstimateNodeAttributeMemory
     const Graph *g,          // graph
     int64_t samples          // number of nodes to sample
 ) {
-    ASSERT(g       != NULL);
+	ASSERT(g       != NULL);
 	ASSERT(gc      != NULL);
     ASSERT(samples > 0);
 
@@ -355,6 +355,9 @@ static size_t _EstimateNodeAttributeMemory
 
 	bool has_unlabeled_nodes = Graph_NodeCount(g) > nvals;  // unlabeled nodes
 	if(has_unlabeled_nodes) {
+		// resize vector to match actual number of nodes in the graph
+		info = GrB_Vector_resize(V, Graph_UncompactedNodeCount(g));
+		ASSERT(info == GrB_SUCCESS);
 		node_memory_usage += _UnlabeledNodesMemory(g, V, samples);
 	}
 
