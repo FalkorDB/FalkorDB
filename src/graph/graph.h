@@ -252,6 +252,14 @@ bool Graph_EntityIsDeleted
 	const GraphEntity *e
 );
 
+// populate 'nodes' with deleted node ids
+void Graph_DeletedNodes
+(
+	const Graph *g,  // graph
+	NodeID **nodes,  // [output] array of deleted node IDs
+	uint64_t *n      // [output] number of deleted node IDs
+);
+
 // all graph matrices are required to be squared NXN
 // where N is Graph_RequiredMatrixDim
 size_t Graph_RequiredMatrixDim

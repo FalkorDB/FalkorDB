@@ -239,6 +239,16 @@ inline bool DataBlock_ItemIsDeleted(void *item) {
 	return IS_ITEM_DELETED(header);
 }
 
+// returns datablock's deleted indices array
+const uint64_t *DataBlock_DeletedItems
+(
+	const DataBlock *dataBlock
+) {
+	ASSERT(dataBlock != NULL);
+
+	return (const uint64_t *) dataBlock->deletedIdx;
+}
+
 //------------------------------------------------------------------------------
 // Out of order functionality
 //------------------------------------------------------------------------------

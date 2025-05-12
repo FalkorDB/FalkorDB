@@ -1,3 +1,4 @@
+import itertools
 from common import *
 from index_utils import create_node_range_index
 
@@ -321,34 +322,162 @@ class testGraphMemoryUsage(FlowTestsBase):
         # clear graph
         self.graph.delete()
 
-        # create a graph where third of the nodes are of type A
-        # third of type B and third of type A&B
-        q = "UNWIND range(0, 83333) AS x CREATE (:A:B {v:-x})"
-        self.graph.query(q)
-        q = "UNWIND range(0, 83333) AS x CREATE (:A {v:-x})"
-        self.graph.query(q)
-        q = "UNWIND range(0, 83333) AS x CREATE (:B {v:-x})"
+        queries = [
+            "UNWIND range(0, 83333) AS x CREATE (:A {v:-x})",
+            "UNWIND range(0, 83333) AS x CREATE (:B {v:-x})",
+            "UNWIND range(0, 83333) AS x CREATE (:A:B {v:-x})"
+        ]
+
+        # Generate all 3! = 6 permutations
+        permutations = list(itertools.permutations(queries))
+        for i, perm in enumerate(permutations, 1):
+            for q in perm:
+                self.graph.query(q)
+
+            # expecting the exact same memory consumption as with the labeless graph
+            res = self._graph_memory_usage()
+            self.env.assertEquals(node_storage, res.node_storage_sz_mb)
+
+            # clear graph
+            self.graph.delete()
+
+        # create a graph where forth of the nodes are of type A,
+        # forth of type B, forth of type A&B and forth do not have any labels
+        queries = [
+            "UNWIND range(0, 62500) AS x CREATE ({v:-x})",
+            "UNWIND range(0, 62500) AS x CREATE (:A {v:-x})",
+            "UNWIND range(0, 62500) AS x CREATE (:B {v:-x})",
+            "UNWIND range(0, 62500) AS x CREATE (:A:B {v:-x})"
+        ]
+
+        # Generate all 4! = 24 permutations
+        permutations = list(itertools.permutations(queries))
+        for i, perm in enumerate(permutations, 1):
+            for q in perm:
+                self.graph.query(q)
+
+            # expecting the exact same memory consumption as with the labeless graph
+            res = self._graph_memory_usage()
+            self.env.assertEquals(node_storage, res.node_storage_sz_mb)
+
+            # clear graph
+            self.graph.delete()
+
+        self.graph.query("RETURN 1")
+
+    def test_node_label_overlap_diff_sample_size(self):
+        """test memory consumption of a graph containing multi label nodes
+           using different sample sizes"""
+
+        # compute how much node_storage is required for 250000 nodes
+        # with a single attribute
+        q = "UNWIND range(0, 250000) AS x CREATE ({v:-x})"
         self.graph.query(q)
 
-        # expecting the exact same memory consumption as with the labeless graph
         res = self._graph_memory_usage()
-        self.env.assertEquals(node_storage, res.node_storage_sz_mb)
+        node_storage = res.node_storage_sz_mb
+
+        # make sure node storage memory consumption if greater than 0
+        self.env.assertGreater(node_storage, 0)
 
         # clear graph
         self.graph.delete()
 
-        # create a graph where forth of the nodes are of type A,
-        # forth of type B, forth of type A&B and forth do not have any labels
-        q = "UNWIND range(0, 62500) AS x CREATE (:A:B {v:-x})"
-        self.graph.query(q)
-        q = "UNWIND range(0, 62500) AS x CREATE (:A {v:-x})"
-        self.graph.query(q)
-        q = "UNWIND range(0, 62500) AS x CREATE (:B {v:-x})"
-        self.graph.query(q)
-        q = "UNWIND range(0, 62500) AS x CREATE ({v:-x})"
+        sample_sizes = [10, 50, 100]
+        for sample_size in sample_sizes:
+            # create a graph of the same size only this time each node
+            # has multiple labels A & B
+            q = "UNWIND range(0, 250000) AS x CREATE (:A:B {v:-x})"
+            self.graph.query(q)
+
+            # expecting the exact same memory consumption as with the labeless graph
+            res = self._graph_memory_usage(sample_size)
+            self.env.assertEquals(node_storage, res.node_storage_sz_mb)
+
+            # clear graph
+            self.graph.delete()
+
+            queries = [
+                "UNWIND range(0, 83333) AS x CREATE (:A {v:-x})",
+                "UNWIND range(0, 83333) AS x CREATE (:B {v:-x})",
+                "UNWIND range(0, 83333) AS x CREATE (:A:B {v:-x})"
+            ]
+
+            for q in queries:
+                self.graph.query(q)
+
+            # expecting the exact same memory consumption as with the labeless graph
+            res = self._graph_memory_usage(sample_size)
+            self.env.assertEquals(node_storage, res.node_storage_sz_mb)
+
+            # clear graph
+            self.graph.delete()
+
+            # create a graph where forth of the nodes are of type A,
+            # forth of type B, forth of type A&B and forth do not have any labels
+            queries = [
+                "UNWIND range(0, 62500) AS x CREATE ({v:-x})",
+                "UNWIND range(0, 62500) AS x CREATE (:A {v:-x})",
+                "UNWIND range(0, 62500) AS x CREATE (:B {v:-x})",
+                "UNWIND range(0, 62500) AS x CREATE (:A:B {v:-x})"
+            ]
+
+            for q in queries:
+                self.graph.query(q)
+
+            # expecting the exact same memory consumption as with the labeless graph
+            res = self._graph_memory_usage(sample_size)
+            self.env.assertEquals(node_storage, res.node_storage_sz_mb)
+
+            # clear graph
+            self.graph.delete()
+
+        self.graph.query("RETURN 1")
+
+    def test_node_count_smaller_than_sample_size(self):
+        """test memory consumption report when graph size is smaller than
+           number of entities in the graph"""
+
+        # compute how much node_storage is required for 250000 nodes
+        # with a single attribute
+        long_string = 'A' * 1000
+        q = "UNWIND range(0, 4000) AS x CREATE ({v:$long_string})"
+        self.graph.query(q, {'long_string': long_string})
+
+        res = self._graph_memory_usage(20)
+        node_storage = res.node_storage_sz_mb
+
+        # make sure node storage memory consumption if greater than 0
+        self.env.assertGreater(node_storage, 0)
+
+    def test_graph_with_deleted_nodes(self):
+        """test memory consumption of a graph containing deleted nodes"""
+
+        # create a graph with deleted nodes
+        q = "UNWIND range(0, 250000) AS x CREATE ({v:-x})"
         self.graph.query(q)
 
-        # expecting the exact same memory consumption as with the labeless graph
         res = self._graph_memory_usage()
-        self.env.assertEquals(node_storage, res.node_storage_sz_mb)
+        node_storage = res.node_storage_sz_mb
+
+        # make sure node storage memory consumption if greater than 0
+        self.env.assertGreater(node_storage, 0)
+
+        # double the number of nodes
+        q = "UNWIND range(0, 250000) AS x CREATE ({v:-x})"
+        self.graph.query(q)
+
+        # memory consumption should dobule
+        res = self._graph_memory_usage()
+        double_sized_graph_node_storage = res.node_storage_sz_mb
+        self.env.assertEquals(double_sized_graph_node_storage, node_storage * 2)
+
+        # delete half of the nodes
+        q = "MATCH (n) WHERE ID(n) % 2 = 0 DELETE n"
+        self.graph.query(q)
+
+        # memory consumption should drop back to original
+        res = self._graph_memory_usage()
+        self.env.assertGreater(res.node_storage_sz_mb, node_storage)
+        self.env.assertLess(res.node_storage_sz_mb, double_sized_graph_node_storage)
 
