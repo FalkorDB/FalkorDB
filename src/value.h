@@ -45,7 +45,8 @@ typedef enum {
 	M_NONE     = 0,         // SIValue is not heap-allocated
 	M_SELF     = (1 << 0),  // SIValue is responsible for freeing its reference
 	M_VOLATILE = (1 << 1),  // SIValue does not own its reference and may go out of scope
-	M_CONST    = (1 << 2)   // SIValue does not own its allocation, but its access is safe
+	M_CONST    = (1 << 2),  // SIValue does not own its allocation, but its access is safe
+	M_INTERN   = (1 << 3)   // SIValue shares a ref-counted allocation
 } SIAllocation;
 
 #define T_VECTOR (T_VECTOR_F32)
@@ -127,6 +128,12 @@ SIValue SI_ConstStringVal(const char *s);
 
 // Don't duplicate input string, but assume ownership.
 SIValue SI_TransferStringVal(char *s);
+
+// create an interned string
+SIValue SI_InternStringVal
+(
+	const char *s // string to intern
+);
 
 /* Functions for copying and guaranteeing memory safety for SIValues. */
 // SI_ShareValue creates an SIValue that shares all of the original's allocations.

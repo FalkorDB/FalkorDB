@@ -106,22 +106,6 @@ SIValue SI_Vectorf32
 	return SIVectorf32_New(dim);
 }
 
-bool USE_STRING_POOL = false; // global flag to enable/disable string pooling
-
-// check rather or not to use string pool
-inline static bool use_string_pool(void) {
-	if(unlikely(USE_STRING_POOL)) {
-		// string pool is avaialble
-		// use it only when running under a thread which has access to it
-		// this includes redis main thread and the single writer thread
-		extern pthread_key_t _tlsStringPool;
-		bool can_access = (pthread_getspecific(_tlsStringPool) != NULL);
-		return can_access;
-	}
-
-	return false;
-}
-
 SIValue SI_ConstStringVal
 (
 	const char *s
@@ -135,43 +119,36 @@ SIValue SI_DuplicateStringVal
 (
 	const char *s
 ) {
-	// try to reuse string if string-pool is enabled
-	if(unlikely(use_string_pool())) {
-		StringPool pool = Globals_Get_StringPool();
-		char *str = StringPool_rent(pool, s);
-
-		return (SIValue) {
-			.stringval = str, .type = T_STRING, .allocation = M_SELF
-		};
-	} else {
-		return (SIValue) {
-			.stringval = rm_strdup(s), .type = T_STRING, .allocation = M_SELF
-		};
-	}
+	return (SIValue) {
+		.stringval = rm_strdup(s), .type = T_STRING, .allocation = M_SELF
+	};
 }
 
 SIValue SI_TransferStringVal
 (
 	char *s
 ) {
-	// try to reuse string if string-pool is enabled
-	if(unlikely(use_string_pool())) {
-		StringPool pool = Globals_Get_StringPool();
-		char *str = StringPool_rentNoClone(pool, s);
+	return (SIValue) {
+		.stringval = s, .type = T_STRING, .allocation = M_SELF
+	};
+}
 
-		// free in case of duplication
-		if(str != s) {
-			rm_free(s);
-		}
+// create an SIValue from a string by interning it
+SIValue SI_InternStringVal
+(
+	const char *s  // string to intern
+) {
+	ASSERT(s != NULL);
 
-		return (SIValue) {
-			.stringval = str, .type = T_STRING, .allocation = M_SELF
-		};
-	} else {
-		return (SIValue) {
-			.stringval = s, .type = T_STRING, .allocation = M_SELF
-		};
-	}
+	StringPool pool = Globals_Get_StringPool();
+	ASSERT(pool != NULL);
+
+	char *interned_str = StringPool_rent(pool, s);
+	return (SIValue) {
+		.stringval  = interned_str,
+		.type       = T_STRING,
+		.allocation = M_INTERN
+	};
 }
 
 static void SI_StringValFree
@@ -181,13 +158,7 @@ static void SI_StringValFree
 	ASSERT(s       != NULL);
 	ASSERT(s->type == T_STRING);
 
-	if(unlikely(use_string_pool())) {
-		StringPool string_pool = Globals_Get_StringPool();
-		StringPool_return(string_pool, s->stringval);
-	} else {
-		rm_free(s->stringval);
-	}
-
+	rm_free(s->stringval);
 	s->stringval = NULL;
 }
 
@@ -205,7 +176,10 @@ SIValue SI_ShareValue(const SIValue v) {
 	SIValue dup = v;
 	// if the original value owns an allocation
 	// mark that the duplicate shares it
-	if(v.allocation == M_SELF) dup.allocation = M_VOLATILE;
+	if(v.allocation == M_SELF || v.allocation == M_INTERN) {
+		dup.allocation = M_VOLATILE;
+	}
+
 	return dup;
 }
 
@@ -214,8 +188,14 @@ SIValue SI_ShareValue(const SIValue v) {
 // such as the Entity pointer to the properties of a Node or Edge
 // those are unmodified
 SIValue SI_CloneValue(const SIValue v) {
-	if(v.allocation == M_NONE) {
-		return v; // stack value; no allocation necessary
+	switch(v.allocation) {
+		case M_NONE:
+			return v;
+		case M_INTERN:
+			ASSERT(v.type == T_STRING);
+			return SI_InternStringVal(v.stringval);
+		default:
+			break;
 	}
 
 	switch(v.type) {
@@ -276,7 +256,9 @@ SIValue SI_ConstValue(const SIValue *v) {
 // Clone 'v' and set v's allocation to volatile if 'v' owned the memory
 SIValue SI_TransferOwnership(SIValue *v) {
 	SIValue dup = *v;
-	if(v->allocation == M_SELF) v->allocation = M_VOLATILE;
+	if(v->allocation == M_SELF || v->allocation == M_INTERN) {
+		v->allocation = M_VOLATILE;
+	}
 	return dup;
 }
 
@@ -284,7 +266,9 @@ SIValue SI_TransferOwnership(SIValue *v) {
  * with no responsibility for freeing or guarantee regarding scope.
  * This is used in cases like performing shallow copies of scalars in Record entries. */
 void SIValue_MakeVolatile(SIValue *v) {
-	if(v->allocation == M_SELF) v->allocation = M_VOLATILE;
+	if(v->allocation == M_SELF || v->allocation == M_INTERN) {
+		v->allocation = M_VOLATILE;
+	}
 }
 
 /* Ensure that any allocation held by the given SIValue is guaranteed to not go out
@@ -1018,13 +1002,28 @@ SIValue SIValue_FromBinary
 	return v;
 }
 			
+// the free routine only performs work if it owns a heap allocation
 void SIValue_Free
 (
 	SIValue v
 ) {
-	// the free routine only performs work if it owns a heap allocation
-	if(v.allocation != M_SELF) return;
+	StringPool pool;
 
+	switch(v.allocation) {
+		case M_INTERN:
+			pool = Globals_Get_StringPool();
+			ASSERT(pool != NULL);
+
+			StringPool_return(pool, v.stringval);
+			return;
+		case M_SELF:
+			break;
+		default:
+			// no memory to free
+			return;
+	}
+
+	// free self-allocated SIValue
 	switch(v.type) {
 		case T_STRING:
 			SI_StringValFree(&v);
@@ -1044,9 +1043,10 @@ void SIValue_Free
 			break;
 		case T_VECTOR_F32:
 			SIVector_Free(v);
-			return;
+			break;
 		default:
-			return;
+			// No-op for primitive or unrecognized types
+			break;
 	}
 }
 
