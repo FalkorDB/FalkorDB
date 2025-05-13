@@ -5,7 +5,6 @@ from common import *
 GRAPH_ID = "STRING_POOL"
 
 # test string deduplication
-# incase DEDUPLICATE_STRINGS is set to true
 # string values are unique across the entire DB
 # this reduces our overall memory consumption
 #
@@ -18,7 +17,7 @@ def random_string(length=10):
 
 class testStringPool():
     def __init__(self):
-        self.env, self.db = Env(moduleArgs="DEDUPLICATE_STRINGS yes")
+        self.env, self.db = Env()
         self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
@@ -39,7 +38,7 @@ class testStringPool():
         s = 'A' * 16384 # large string
 
         # create first node
-        q = "CREATE ({value: $s})"
+        q = "CREATE ({value: intern($s)})"
         res = self.graph.query(q, {'s': s})
 
         self.env.assertEquals(res.nodes_created, 1)
@@ -51,11 +50,12 @@ class testStringPool():
         base_line = memory_consumption
 
         # create multiple nodes all sharing the same string value
-        q = "UNWIND range(0, 50) AS x CREATE ({value: $s})"
+        q = "UNWIND range(0, 50) AS x CREATE ({value: intern($s)})"
         res = self.graph.query(q, {'s': s})
         
         # make sure memory consumption didn't increased by a meaningful amount
         memory_consumption = self.used_memory()
+
         # we expect very little increase since strings are deduplicated
         self.env.assertLess(memory_consumption, base_line * 1.2)
 
@@ -68,7 +68,7 @@ class testStringPool():
         s = 'A' * 16384 # large string
 
         # create first node
-        q = "CREATE ({value: $s})"
+        q = "CREATE ({value: intern($s)})"
         res = self.graph.query(q, {'s': s})
 
         # create multiple EMPTY graphs
@@ -100,7 +100,7 @@ class testStringPool():
         s = 'A' * 16384 # large string
 
         # create multiple nodes all sharing the same string value
-        q = "UNWIND range(0, 20) AS x CREATE ({value: $s})"
+        q = "UNWIND range(0, 20) AS x CREATE ({value: intern($s)})"
         p = {'s': s}
         res = self.graph.query(q, p)
 
@@ -123,7 +123,7 @@ class testStringPool():
 
         # Share string across multiple graphs
         # create first node
-        q = "CREATE ({value: $s})"
+        q = "CREATE ({value: intern($s)})"
         res = self.graph.query(q, p)
 
         # create multiple EMPTY graphs
@@ -149,10 +149,10 @@ class testStringPool():
 
         # create a node with a string attribute
         p = {'s': s}
-        self.graph.query("CREATE (:A {v:$s})", p)
+        self.graph.query("CREATE (:A {v:intern($s)})", p)
 
         # create a node with an array containing the duplicated string
-        self.graph.query("CREATE (:B {v:[$s]})", p)
+        self.graph.query("CREATE (:B {v:[intern($s)]})", p)
 
         # delete first reference to shared string
         res = self.graph.query("MATCH (a:A) DELETE a")
@@ -169,7 +169,7 @@ class testStringPool():
         self.graph = self.db.select_graph('A')
 
         # same node containing the same string multiple times
-        self.graph.query("CREATE (:A {a: $s, b:[$s], c:$s})", p)
+        self.graph.query("CREATE (:A {a: intern($s), b:[intern($s)], c:intern($s)})", p)
 
         # delete first reference
         self.graph.query("MATCH (a:A) SET a.a = NULL")
