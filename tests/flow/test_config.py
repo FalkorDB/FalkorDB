@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 20 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 19 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -44,8 +44,7 @@ class testConfig(FlowTestsBase):
                 ("EFFECTS_THRESHOLD", 300),
                 ("BOLT_PORT", 65535),
                 ("DELAY_INDEXING", 0),
-                ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
-                ("DEDUPLICATE_STRINGS", 0)
+                ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/")
         ]
 
         for i, config in enumerate(response):
