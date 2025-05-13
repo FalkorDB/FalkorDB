@@ -243,6 +243,9 @@ ProcedureResult Proc_WCCInvoke
 	info = Build_Matrix(&A, &pdata->N, g, lbls, array_len(lbls), rels,
 			array_len(rels), sym, compact);
 
+	array_free(lbls);
+	array_free(rels);
+
 	ASSERT(A        != NULL);
 	ASSERT(pdata->N != NULL);
 
