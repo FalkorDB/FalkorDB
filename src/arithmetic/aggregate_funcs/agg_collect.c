@@ -33,6 +33,7 @@ AggregateResult AGG_COLLECT
 	switch(allocation) {
 		case M_NONE:
 		case M_CONST:
+		case M_INTERN:
 		case M_VOLATILE:
 			// array will clone the value
 			SIArray_Append(&ctx->result, v);
