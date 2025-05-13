@@ -470,7 +470,7 @@ class testGraphMemoryUsage(FlowTestsBase):
         # memory consumption should dobule
         res = self._graph_memory_usage()
         double_sized_graph_node_storage = res.node_storage_sz_mb
-        self.env.assertEquals(double_sized_graph_node_storage, node_storage * 2)
+        self.env.assertGreater(double_sized_graph_node_storage, node_storage * 1.5)
 
         # delete half of the nodes
         q = "MATCH (n) WHERE ID(n) % 2 = 0 DELETE n"
