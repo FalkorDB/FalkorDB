@@ -44,6 +44,7 @@ GrB_Info Build_Matrix
 		RelationID id = rels[0];
 		D = Graph_GetRelationMatrix(g, id, false);
 	}
+	ASSERT(D != NULL);
 
 	// export relation matrix to A
 	info = Delta_Matrix_export(&_A, D);

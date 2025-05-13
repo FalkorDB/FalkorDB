@@ -23,7 +23,8 @@ endef
 
 SRCDIR=$(ROOT)/deps/LAGraph
 
-CMAKE_TARGETS=LAGraph_static
+# build both liblagraph.a & liblagraphx.a
+CMAKE_TARGETS=LAGraph_static LAGraphX_static
 
 BINDIR=$(BINROOT)/LAGraph
 

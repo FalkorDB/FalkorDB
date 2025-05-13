@@ -5,14 +5,15 @@
  */
 
 #include "path_funcs.h"
+#include "LAGraphX.h"
 #include "../func_desc.h"
 #include "../../ast/ast.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
 #include "../../util/rmalloc.h"
 #include "../../configuration/config.h"
+#include "../../procedures/utility/internal.h"
 #include "../../datatypes/path/sipath_builder.h"
-#include "../../algorithms/LAGr_BreadthFirstSearch_MaxLevel.h"
 
 // creates a path from a given sequence of graph entities
 // the first argument is the ast node represents the path
@@ -154,13 +155,14 @@ SIValue AR_SHORTEST_PATH
 
 	GrB_Info info;
 
-	GrB_Matrix M     = NULL;
+	GrB_Matrix M     = NULL;  // adjacency matrix
 	GrB_Vector V     = NULL;  // vector of results
 	GrB_Vector PI    = NULL;  // vector backtracking results to their parents
 	Edge *edges      = NULL;
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 
-	GrB_Index max_level = (ctx->maxHops == EDGE_LENGTH_INF) ? 0 : ctx->maxHops;
+	// BFS max depth
+	int64_t max_level = (ctx->maxHops == EDGE_LENGTH_INF) ? -1 : ctx->maxHops;
 
 	if(ctx->reltype_count > 0) {
 		// retrieve IDs of traversed relationship types
@@ -180,48 +182,37 @@ SIValue AR_SHORTEST_PATH
 		ctx->reltype_count = array_len(ctx->reltypes);
 	}
 
-	// get edge matrix and transpose matrix, if available
-	if(ctx->reltypes == NULL) {
-		// no edge types were specified, use the overall adjacency matrix
-		info = Delta_Matrix_export(&M, Graph_GetAdjacencyMatrix(gc->g,
-					false));
-		ASSERT(info == GrB_SUCCESS);
-	} else if(ctx->reltype_count == 0) {
+	// build the adjacency matrix BFS will be executed on
+	if(ctx->reltype_names != NULL && ctx->reltype_count == 0) {
 		// if edge types were specified but none were valid,
 		// use the zero matrix
 		info = Delta_Matrix_export(&M, Graph_GetZeroMatrix(gc->g));
 		ASSERT(info == GrB_SUCCESS);
 	} else {
-		info = Delta_Matrix_export(&M, Graph_GetRelationMatrix(gc->g,
-					ctx->reltypes[0], false));
+		info = Build_Matrix(&M, NULL, gc->g, NULL, 0, ctx->reltypes,
+				ctx->reltype_count, false, false);
 		ASSERT(info == GrB_SUCCESS);
-
-		for(uint i = 1; i < ctx->reltype_count; i++) {
-			GrB_Matrix A;
-			info = Delta_Matrix_export(&A, Graph_GetRelationMatrix(gc->g,
-						ctx->reltypes[i], false));
-			ASSERT(info == GrB_SUCCESS);
-
-			info = GrB_eWiseAdd(M, NULL, NULL, GxB_ANY_PAIR_BOOL, M, A, NULL);
-			ASSERT(info == GrB_SUCCESS);
-
-			info = GrB_Matrix_free(&A);
-			ASSERT(info == GrB_SUCCESS);
-		}
 	}
 
-	info = GrB_wait(M, GrB_MATERIALIZE);
-	ASSERT(info == GrB_SUCCESS);
-
+	//--------------------------------------------------------------------------
 	// invoke the BFS algorithm
-	info = LAGr_BreadthFirstSearch_MaxLevel(&V, &PI, M, src_id, &dest_id,
-			max_level);
+	//--------------------------------------------------------------------------
 
-	ASSERT(V   != NULL);
-	ASSERT(PI  != NULL);
+	char msg[LAGRAPH_MSG_LEN];
+	LAGraph_Graph G;
+
+	info = LAGraph_New(&G, &M, LAGraph_ADJACENCY_DIRECTED, msg);
 	ASSERT(info == GrB_SUCCESS);
 
-	info = GrB_free(&M);
+	info = LAGr_BreadthFirstSearch_Extended(&V, &PI, G, src_id, max_level,
+			dest_id, false, msg);
+	ASSERT(info == GrB_SUCCESS);
+
+	ASSERT(V    != NULL);
+	ASSERT(PI   != NULL);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = LAGraph_Delete(&G, msg);
 	ASSERT(info == GrB_SUCCESS);
 
 	SIValue p = SI_NullVal();

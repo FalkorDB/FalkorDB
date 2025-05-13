@@ -5,7 +5,7 @@
  */
 
 #include "RG.h"
-#include "LAGraph.h"
+#include "LAGraphX.h"
 #include "proc_bfs.h"
 #include "../value.h"
 #include "../util/arr.h"
@@ -19,14 +19,14 @@
 // the BFS procedure performs a single source BFS scan
 // it's inputs are:
 // 1. source node to traverse from
-// 2. depth, how deep should the procedure traverse (0 no limit)
+// 2. depth, how deep should the procedure traverse (-1 no limit)
 // 3. relationship type to traverse, (NULL for edge type agnostic)
 //
 // output:
 // 1. nodes - an array of reachable nodes
 // 2. edges - an array of edges traversed
 //
-// MATCH (a:User {id: 1}) CALL algo.bfs(a, 0, 'MANAGES') YIELD nodes, edges
+// MATCH (a:User {id: 1}) CALL algo.bfs(a, -1, 'MANAGES') YIELD nodes, edges
 
 typedef struct {
 	Graph *g;              // graph scanned
@@ -127,18 +127,16 @@ static ProcedureResult Proc_BFS_Invoke
 	char msg[LAGRAPH_MSG_LEN];
 	LAGraph_Graph G;
 
-	GxB_print(R, GxB_SHORT);
 	info = LAGraph_New(&G, &R, LAGraph_ADJACENCY_DIRECTED, msg);
 	ASSERT(info == GrB_SUCCESS);
 
 	GrB_Index src_id = ENTITY_GET_ID(source_node);
-	info = LAGr_BreadthFirstSearch(&V, pPI, G, src_id, msg);
+	info = LAGr_BreadthFirstSearch_Extended(&V, pPI, G, src_id, max_level, -1,
+			false, msg);
 	ASSERT(info == GrB_SUCCESS);
 
 	info = LAGraph_Delete(&G, msg);
 	ASSERT(info == GrB_SUCCESS);
-
-	GxB_print(V, GxB_SHORT);
 
 	// remove all values with a level greater than 0
 	// values of 0 are not connected to the source
