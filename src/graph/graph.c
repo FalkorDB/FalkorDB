@@ -1431,22 +1431,11 @@ static void _Graph_Free
 // get graph's memory usage
 void Graph_memoryUsage
 (
-	const Graph *g,           // graph
-	size_t *lbl_matrices_sz,  // [output] label matrices memory usage
-	size_t *rel_matrices_sz,  // [output] relation matrices memory usage
-	size_t *node_storage_sz,  // [output] node storage memory usage
-	size_t *edge_storage_sz   // [output] edge storage memory usage
+	const Graph *g,            // graph
+	MemoryUsageResult *result  // [output] memory usage
 ) {
-	ASSERT(g               != NULL);
-	ASSERT(lbl_matrices_sz != NULL);
-	ASSERT(rel_matrices_sz != NULL);
-	ASSERT(node_storage_sz != NULL);
-	ASSERT(edge_storage_sz != NULL);
-
-	*lbl_matrices_sz = 0;
-	*rel_matrices_sz = 0;
-	*node_storage_sz = 0;
-	*edge_storage_sz = 0;
+	ASSERT(g      != NULL);
+	ASSERT(result != NULL);
 
 	size_t n = 0;  // matrix memory consumption
 
@@ -1463,14 +1452,14 @@ void Graph_memoryUsage
 	info = Delta_Matrix_memoryUsage(&n, D);
 	ASSERT(info == GrB_SUCCESS);
 
-	*rel_matrices_sz += n;
+	result->rel_matrices_sz += n;
 
 	D = Graph_GetAdjacencyMatrix(g, true);
 
 	info = Delta_Matrix_memoryUsage(&n, D);
 	ASSERT(info == GrB_SUCCESS);
 
-	*rel_matrices_sz += n;
+	result->rel_matrices_sz += n;
 
 	//--------------------------------------------------------------------------
 	// graph's label matrices
@@ -1484,7 +1473,7 @@ void Graph_memoryUsage
 		info = Delta_Matrix_memoryUsage(&n, D);
 		ASSERT(info == GrB_SUCCESS);
 
-		*lbl_matrices_sz += n;
+		result->lbl_matrices_sz += n;
 	}
 
 	// account for graph's node labels matrix
@@ -1493,7 +1482,7 @@ void Graph_memoryUsage
 	info = Delta_Matrix_memoryUsage(&n, D);
 	ASSERT(info == GrB_SUCCESS);
 
-	*lbl_matrices_sz += n;
+	result->lbl_matrices_sz += n;
 
 	//--------------------------------------------------------------------------
 	// graph's relation matrices
@@ -1506,15 +1495,15 @@ void Graph_memoryUsage
 		info = Delta_Matrix_memoryUsage(&n, T);
 		ASSERT(info == GrB_SUCCESS);
 
-		*rel_matrices_sz += n;
+		result->rel_matrices_sz += n;
 	}
 
 	//--------------------------------------------------------------------------
 	// graph's datablocks
 	//--------------------------------------------------------------------------
 
-	*node_storage_sz += DataBlock_memoryUsage(g->nodes);
-	*edge_storage_sz += DataBlock_memoryUsage(g->edges);
+	result->node_storage_sz += DataBlock_memoryUsage(g->nodes);
+	result->edge_storage_sz += DataBlock_memoryUsage(g->edges);
 }
 
 void Graph_PartialFree

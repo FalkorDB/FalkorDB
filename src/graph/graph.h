@@ -10,11 +10,12 @@
 
 #include "rax.h"
 #include "GraphBLAS.h"
+#include "tensor/tensor.h"
 #include "entities/node.h"
 #include "entities/edge.h"
 #include "../redismodule.h"
 #include "graph_statistics.h"
-#include "tensor/tensor.h"
+#include "../commands/cmd_memory.h"
 #include "delta_matrix/delta_matrix.h"
 #include "../util/datablock/datablock.h"
 #include "../util/datablock/datablock_iterator.h"
@@ -452,11 +453,8 @@ Delta_Matrix Graph_GetZeroMatrix
 // get graph's memory usage
 void Graph_memoryUsage
 (
-	const Graph *g,           // graph
-	size_t *lbl_matrices_sz,  // [output] label matrices memory usage
-	size_t *rel_matrices_sz,  // [output] relation matrices memory usage
-	size_t *node_storage_sz,  // [output] node storage memory usage
-	size_t *edge_storage_sz   // [output] edge storage memory usage
+	const Graph *g,            // graph
+	MemoryUsageResult *result  // [output] memory usage
 );
 
 // free partial graph

@@ -10,12 +10,15 @@ class MemoryUsage():
         in a convenient way for consumption"""
 
     def __init__(self, indices_sz_mb, total_graph_sz_mb, node_storage_sz_mb,
-                 edge_storage_sz_mb, label_matrices_sz_mb, relation_matrices_sz_mb):
+                 node_by_label_storage_sz_mb, edge_storage_sz_mb,
+                 edge_by_type_storage_sz_mb, label_matrices_sz_mb, relation_matrices_sz_mb):
 
         self.indices_sz_mb = indices_sz_mb
         self.total_graph_sz_mb = total_graph_sz_mb
         self.node_storage_sz_mb = node_storage_sz_mb
+        self.node_by_label_storage_sz_mb = node_by_label_storage_sz_mb
         self.edge_storage_sz_mb = edge_storage_sz_mb
+        self.edge_by_type_storage_sz_mb = edge_by_type_storage_sz_mb
         self.label_matrices_sz_mb = label_matrices_sz_mb
         self.relation_matrices_sz_mb = relation_matrices_sz_mb
 
@@ -35,7 +38,7 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         res = self.conn.execute_command("GRAPH.MEMORY", "USAGE", GRAPH_ID,
                                         "SAMPLES", samples)
-        return MemoryUsage(res[11], res[1], res[7], res[9], res[3], res[5])
+        return MemoryUsage(res[15], res[1], res[7], res[9], res[11], res[13], res[3], res[5])
 
     def test_invalid_call(self):
         """test error reporting from invalid calls to GRAPH.MEMORY USAGE"""
@@ -127,6 +130,7 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         self.env.assertGreater(res.total_graph_sz_mb, 0)
         self.env.assertGreater(res.node_storage_sz_mb, 0)
+        self.env.assertContains("(unlabeled)", res.node_by_label_storage_sz_mb)
 
         self.env.assertEquals(res.total_graph_sz_mb, res.node_storage_sz_mb)
 
@@ -146,6 +150,7 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.env.assertGreater(res.total_graph_sz_mb, 0)
         self.env.assertGreater(res.node_storage_sz_mb, 0)
         self.env.assertGreater(res.label_matrices_sz_mb, 0)
+        self.env.assertContains("A", res.node_by_label_storage_sz_mb)
 
         self.env.assertEquals(res.total_graph_sz_mb, res.node_storage_sz_mb +
                               res.label_matrices_sz_mb)
