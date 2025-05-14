@@ -455,10 +455,6 @@ static void RG_ForkPrepare() {
 		// set matrix synchronization policy to default
 		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
 
-		// synchronize all matrices, make sure they're in a consistent state
-		// do not force-flush as this can take awhile
-		Graph_ApplyAllPending(g, false);
-
 		GraphContext_DecreaseRefCount(gc);
 	}
 }
@@ -498,6 +494,11 @@ static void RG_AfterForkChild() {
 	uint32_t n = array_len(graphs);
 	for(uint32_t i = 0; i < n; i++) {
 		Graph *g = graphs[i]->g;
+
+		// synchronize all matrices, make sure they're in a consistent state
+		// do not force-flush as this can take awhile
+		Graph_ApplyAllPending(g, false);
+
 		// all matrices should be synced, set synchronization policy to NOP
 		Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
 	}
