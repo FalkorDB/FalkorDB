@@ -283,37 +283,31 @@ void Graph_LockAllMatrices
 ) {
 	ASSERT(g != NULL);
 
-	uint          n  =  0;
-	Delta_Matrix  M  =  NULL;
+	uint n = 0;
 
 	//--------------------------------------------------------------------------
 	// lock every matrix
 	//--------------------------------------------------------------------------
 
 	// lock the adjacency matrix
-	M = Graph_GetAdjacencyMatrix(g, false);
-	Delta_Matrix_lock(M);
+	Delta_Matrix_lock(g->adjacency_matrix);
 
 	// lock node labels matrix
-	M = Graph_GetNodeLabelMatrix(g);
-	Delta_Matrix_lock(M);
+	Delta_Matrix_lock(g->node_labels);
 
 	// lock the zero matrix
-	M = Graph_GetZeroMatrix(g);
-	Delta_Matrix_lock(M);
+	Delta_Matrix_lock(g->_zero_matrix);
 
 	// lock each label matrix
 	n = array_len(g->labels);
 	for(int i = 0; i < n; i ++) {
-		M = Graph_GetLabelMatrix(g, i);
-		Delta_Matrix_lock(M);
+		Delta_Matrix_lock(g->labels[i]);
 	}
 
 	// lock each relation matrix
 	n = array_len(g->relations);
 	for(int i = 0; i < n; i ++) {
-		M = Graph_GetRelationMatrix(g, i, false);
-		Delta_Matrix_lock(M);
+		Delta_Matrix_lock(g->relations[i]);
 	}
 }
 
@@ -323,37 +317,31 @@ void Graph_UnlockAllMatrices
 ) {
 	ASSERT(g != NULL);
 
-	uint          n  =  0;
-	Delta_Matrix  M  =  NULL;
+	uint n = 0;
 
 	//--------------------------------------------------------------------------
 	// unlock every matrix
 	//--------------------------------------------------------------------------
 
 	// unlock the adjacency matrix
-	M = Graph_GetAdjacencyMatrix(g, false);
-	Delta_Matrix_unlock(M);
+	Delta_Matrix_unlock(g->adjacency_matrix);
 
 	// unlock node labels matrix
-	M = Graph_GetNodeLabelMatrix(g);
-	Delta_Matrix_unlock(M);
+	Delta_Matrix_unlock(g->node_labels);
 
 	// unlock the zero matrix
-	M = Graph_GetZeroMatrix(g);
-	Delta_Matrix_unlock(M);
+	Delta_Matrix_unlock(g->_zero_matrix);
 
 	// unlock each label matrix
 	n = array_len(g->labels);
 	for(int i = 0; i < n; i ++) {
-		M = Graph_GetLabelMatrix(g, i);
-		Delta_Matrix_unlock(M);
+		Delta_Matrix_unlock(g->labels[i]);
 	}
 
 	// unlock each relation matrix
 	n = array_len(g->relations);
 	for(int i = 0; i < n; i ++) {
-		M = Graph_GetRelationMatrix(g, i, false);
-		Delta_Matrix_unlock(M);
+		Delta_Matrix_unlock(g->relations[i]);
 	}
 }
 
