@@ -450,13 +450,6 @@ Delta_Matrix Graph_GetZeroMatrix
 	const Graph *g
 );
 
-// get graph's memory usage
-void Graph_memoryUsage
-(
-	const Graph *g,            // graph
-	MemoryUsageResult *result  // [output] memory usage
-);
-
 // free partial graph
 void Graph_PartialFree
 (

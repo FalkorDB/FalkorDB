@@ -7,10 +7,9 @@
 #include "../errors/error_msgs.h"
 #include "../util/thpool/pools.h"
 #include "../graph/graphcontext.h"
+#include "../graph/graph_memoryUsage.h"
 
 #define MB (1 <<20)
-
-extern RedisModuleType *GraphContextRedisModuleType;
 
 // GRAPH.MEMORY command context
 typedef struct {
@@ -41,7 +40,7 @@ static bool _Overlapping
 	ASSERT(info == GrB_SUCCESS);
 
 	//----------------------------------------------------------------------
-    // Reduce each row of the label matrix to get label count per node
+    // reduce each row of the labels matrix to indicate if a node is labeled
     // V[i] = any(lbls(i,:))
     //----------------------------------------------------------------------
 
@@ -50,7 +49,7 @@ static bool _Overlapping
 	ASSERT(info == GrB_SUCCESS);
 
 	//----------------------------------------------------------------------
-    // If total label assignments > number of non-zero entries in V,
+    // if total label assignments > number of non-zero entries in V,
     // at least one node has more than one label
     //----------------------------------------------------------------------
 
@@ -124,8 +123,8 @@ static size_t _SampleVector
 static size_t _UnlabeledNodesMemory
 (
 	const Graph *g,      // graph
-    GrB_Vector V,        // vector where V[i] != 0 marks labeled nodes
-                         // will be updated to contain unlabeled nodes
+    GrB_Vector V,        // vector where V[i] = 1 marks labeled nodes
+                         // will be inversed
     int64_t samples      // number of nodes to sample
 ) {
 	ASSERT(g != NULL);
@@ -147,7 +146,7 @@ static size_t _UnlabeledNodesMemory
 	info = GrB_Vector_size(&len, V);
 	ASSERT(info == GrB_SUCCESS);
 
-	// V<!V> = true  --> Mark unlabeled nodes
+	// V<!V> = true --> (mark unlabeled nodes)
 	info = GrB_Vector_assign_Scalar(V, V, NULL, x, GrB_ALL, len, GrB_DESC_RC);
 	ASSERT(info == GrB_SUCCESS);
 
@@ -158,7 +157,6 @@ static size_t _UnlabeledNodesMemory
 	GxB_Iterator it;
 	info = GxB_Iterator_new(&it);
 	ASSERT(info == GrB_SUCCESS);
-
 
 	//--------------------------------------------------------------------------
 	// remove deleted nodes from V
@@ -186,7 +184,8 @@ static size_t _UnlabeledNodesMemory
 	return memory_usage;
 }
 
-// estimates amortized memory usage for nodes with overlapping labels by sampling
+// estimates amortized memory usage for nodes with overlapping labels
+// by sampling
 // this method is slower and should only be used when nodes may share labels
 // for faster estimation
 // use _EstimateNodeAttributeMemory when labels don't overlap
@@ -239,10 +238,9 @@ static void _EstimateOverlapingNodeAttributeMemory
 		info = GrB_Col_extract(V, P, NULL, lbls, GrB_ALL, nrows, i, desc);
 		ASSERT(info == GrB_SUCCESS);
 
-		// Sample attribute memory usage from unprocessed nodes with this label
+		// sample attribute memory usage from unprocessed nodes within label
 		node_memory_usage = _SampleVector(g, V, it, samples);
-		array_append(result->node_by_label_sz,
-				((SchemaSize){.schema_id = i, .sz = node_memory_usage}));
+		array_append(result->node_by_label_sz, node_memory_usage);
 		result->node_storage_sz += node_memory_usage;
 
 		// mark these nodes as processed: P = P + V
@@ -310,12 +308,13 @@ static void _EstimateNonOverlapingNodeAttributeMemory
 		int64_t sampled = sample_size - nodes_remaining;
 
 		if(sampled > 0) {
-			// Compute average and scale by number of labeled nodes
+			// compute average and scale by number of labeled nodes
             float avg_label_mem = (float)label_memory_usage / sampled;
             int64_t total_labeled_nodes = Graph_LabeledNodeCount(g, l);
+
             label_memory_usage = avg_label_mem * total_labeled_nodes;
-			array_append(result->node_by_label_sz,
-				((SchemaSize){.schema_id = l, .sz = label_memory_usage}));
+
+			array_append(result->node_by_label_sz, label_memory_usage);
 			result->node_storage_sz += label_memory_usage;
 		}
 	}
@@ -367,8 +366,9 @@ static void _EstimateNodeAttributeMemory
 		// resize vector to match actual number of nodes in the graph
 		info = GrB_Vector_resize(V, Graph_UncompactedNodeCount(g));
 		ASSERT(info == GrB_SUCCESS);
+
 		node_memory_usage = _UnlabeledNodesMemory(g, V, samples);
-		array_append(result->node_by_label_sz, ((SchemaSize){.schema_id = -1, .sz = node_memory_usage}));
+		result->unlabeled_node_sz = node_memory_usage;
 		result->node_storage_sz += node_memory_usage;
 	}
 
@@ -417,10 +417,12 @@ static void _EstimateEdgeAttributeMemory
 		ASSERT(info == GrB_SUCCESS);
 
 		// iterate over relation matrix, limit #iterations to simple_size
-		while(Delta_MatrixTupleIter_next_BOOL(&it, &id, NULL, NULL)
+		while(Delta_MatrixTupleIter_next_UINT64(&it, NULL, NULL, &id)
 				== GrB_SUCCESS && edges_sample_size > 0) {
 			// compute the memory consumption of the current edge
-			Graph_GetEdge(g, id, &edge);
+			bool res = Graph_GetEdge(g, id, &edge);
+			ASSERT(res == true);
+
 			AttributeSet set = GraphEntity_GetAttributes((GraphEntity*)&edge);
 
 			relation_memory_usage += AttributeSet_memoryUsage(set);
@@ -434,8 +436,8 @@ static void _EstimateEdgeAttributeMemory
 		// compute weighted average
 		edge_memory_usage = (relation_memory_usage / n_sampled_edges)
 			* Graph_RelationEdgeCount(g, r);
-		array_append(result->edge_by_type_sz,
-				((SchemaSize){.schema_id = r, .sz = edge_memory_usage}));
+
+		array_append(result->edge_by_type_sz, edge_memory_usage);
 		result->edge_storage_sz += edge_memory_usage;
 
 		// reset sample size
@@ -513,11 +515,12 @@ static void _estimate_memory_consumption
 	result->edge_storage_sz /= MB;
 
 	// return total memory consumption
-	result->total_graph_sz_mb = (result->lbl_matrices_sz +
+	result->total_graph_sz_mb =
+			result->lbl_matrices_sz +
 			result->rel_matrices_sz +
 			result->node_storage_sz +
 			result->edge_storage_sz +
-			result->indices_sz);
+			result->indices_sz;
 }
 
 // GRAPH.MEMORY USAGE internal command handler
@@ -539,8 +542,8 @@ static void _Graph_Memory
 	//--------------------------------------------------------------------------
 
 	MemoryUsageResult result = {0};
-	result.node_by_label_sz = array_new(SchemaSize, 0);
-	result.edge_by_type_sz  = array_new(SchemaSize, 0);
+	result.edge_by_type_sz   = array_new(size_t, 0);
+	result.node_by_label_sz  = array_new(size_t, 0);
 
 	// acquire read lock
 	Graph_AcquireReadLock(gc->g);
@@ -560,25 +563,34 @@ static void _Graph_Memory
 	// reply structure:
 	// {
 	//    total_graph_sz_mb: <total_graph_sz_mb>
+	//
 	//    label_matrices_sz_mb: <label_matrices_sz_mb>
+	//
 	//    relation_matrices_sz_mb: <relation_matrices_sz_mb>
+	//
 	//    amortized_node_storage_sz_mb: <node_storage_sz_mb>
+	//
 	//    amortized_node_by_label_storage_sz_mb: {
 	//        <label_name>: <node_storage_sz_mb>
 	//        ...
 	//    }
+	//
+	//    amortized_unlabeled_nodes_sz_mb: <unlabeled_nodes_sz_mb>
+	//
 	//    amortized_edge_storage_sz_mb: <edge_storage_sz_mb>
+	//
 	//    amortized_edge_by_type_storage_sz_mb: {
 	//        <relation_name>: <edge_storage_sz_mb>
 	//        ...
 	//    }
+	//
 	//    indices_sz_mb: <indices_sz_mb>
 	// }
 
 	RedisModuleCtx *rm_ctx = RedisModule_GetThreadSafeContext(bc);
 
 	// six key value pairs
-	RedisModule_ReplyWithMap(rm_ctx, 8);
+	RedisModule_ReplyWithMap(rm_ctx, 9);
 
 	// total_graph_sz_mb
 	RedisModule_ReplyWithCString(rm_ctx, "total_graph_sz_mb");
@@ -596,28 +608,35 @@ static void _Graph_Memory
 	RedisModule_ReplyWithCString(rm_ctx, "amortized_node_storage_sz_mb");
 	RedisModule_ReplyWithLongLong(rm_ctx, result.node_storage_sz);
 
+	// amortized_node_by_label_sz_mb
 	RedisModule_ReplyWithCString(rm_ctx, "amortized_node_by_label_storage_sz_mb");
 	RedisModule_ReplyWithMap(rm_ctx, array_len(result.node_by_label_sz));
+
 	for(size_t i = 0; i < array_len(result.node_by_label_sz); i++) {
-		SchemaSize *sz = result.node_by_label_sz + i;
-		Schema *s = GraphContext_GetSchemaByID(gc, sz->schema_id, SCHEMA_NODE);
-		RedisModule_ReplyWithCString(rm_ctx, s ? s->name : "(unlabeled)");
-		RedisModule_ReplyWithLongLong(rm_ctx, sz->sz / MB);
-	}
+		Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
+		ASSERT(s != NULL);
 	
+		RedisModule_ReplyWithCString(rm_ctx, Schema_GetName(s));
+		RedisModule_ReplyWithLongLong(rm_ctx, result.node_by_label_sz[i] / MB);
+	}
+
+	// amortized_unlabeled_nodes_sz_mb
+	RedisModule_ReplyWithCString(rm_ctx, "amortized_unlabeled_nodes_storage_sz_mb");
+	RedisModule_ReplyWithLongLong(rm_ctx, result.unlabeled_node_sz / MB);
 
 	// amortized_edge_storage_sz_mb
 	RedisModule_ReplyWithCString(rm_ctx, "amortized_edge_storage_sz_mb");
 	RedisModule_ReplyWithLongLong(rm_ctx, result.edge_storage_sz);
 
+	// amortized_edge_by_type_sz_mb
 	RedisModule_ReplyWithCString(rm_ctx, "amortized_edge_by_type_storage_sz_mb");
 	RedisModule_ReplyWithMap(rm_ctx, array_len(result.edge_by_type_sz));
 	for(size_t i = 0; i < array_len(result.edge_by_type_sz); i++) {
-		SchemaSize *sz = result.edge_by_type_sz + i;
-		Schema *s = GraphContext_GetSchemaByID(gc, sz->schema_id, SCHEMA_EDGE);
+		Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_EDGE);
 		ASSERT(s != NULL);
-		RedisModule_ReplyWithCString(rm_ctx, s->name);
-		RedisModule_ReplyWithLongLong(rm_ctx, sz->sz / MB);
+
+		RedisModule_ReplyWithCString(rm_ctx, Schema_GetName(s));
+		RedisModule_ReplyWithLongLong(rm_ctx, result.edge_by_type_sz[i] / MB);
 	}
 
 	// indices_sz_mb
