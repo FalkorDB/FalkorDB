@@ -5,18 +5,14 @@
  */
 
 #pragma once
-#include "../../value.h"
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
 
-// Context struct containing traversal data for shortestPath function calls
+// context struct containing traversal data for shortestPath function calls
 typedef struct {
-	uint minHops;                /* Minimum number of edges traversed by this path */
-	uint maxHops;                /* Maximum number of edges traversed by this path */
-	const char **reltype_names;  /* Relationship type names */
-	int *reltypes;               /* Relationship type IDs */
-	uint reltype_count;          /* Number of traversed relationship types */
-	GrB_Matrix R;                /* Traversed relationship matrix */
-	bool free_matrices;          /* If true, R will ultimately be freed */
+	unsigned int minHops;        // minimum number of edges traversed by this path
+	unsigned int maxHops;        // maximum number of edges traversed by this path
+	int *reltypes;               // relationship type IDs
+	const char **reltype_names;  // relationship type names
+	unsigned int reltype_count;  // number of traversed relationship types
 } ShortestPathCtx;
 
 void Register_PathFuncs();

@@ -7,6 +7,7 @@
 #pragma once
 
 #include "proc_bfs.h"
+#include "proc_wcc.h"
 #include "proc_labels.h"
 #include "proc_pagerank.h"
 #include "proc_sp_paths.h"
@@ -20,4 +21,5 @@
 #include "proc_fulltext_drop_index.h"
 #include "proc_fulltext_create_index.h"
 #include "proc_vector_query.h"
+#include "proc_betweenness.h"
 
