@@ -100,6 +100,16 @@ void Graph_ApplyAllPending
 	bool force_flush    // force sync of delta matrices
 );
 
+void Graph_LockAllMatrices
+(
+	Graph *g            // graph to lock
+);
+
+void Graph_UnlockAllMatrices
+(
+	Graph *g            // graph to unlock
+);
+
 // checks to see if graph has pending operations
 bool Graph_Pending
 (

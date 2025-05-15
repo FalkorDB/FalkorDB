@@ -277,6 +277,86 @@ void Graph_ApplyAllPending
 	Graph_SetMatrixPolicy(g, policy);
 }
 
+void Graph_LockAllMatrices
+(
+	Graph *g            // graph to lock
+) {
+	ASSERT(g != NULL);
+
+	uint          n  =  0;
+	Delta_Matrix  M  =  NULL;
+
+	//--------------------------------------------------------------------------
+	// lock every matrix
+	//--------------------------------------------------------------------------
+
+	// lock the adjacency matrix
+	M = Graph_GetAdjacencyMatrix(g, false);
+	Delta_Matrix_lock(M);
+
+	// lock node labels matrix
+	M = Graph_GetNodeLabelMatrix(g);
+	Delta_Matrix_lock(M);
+
+	// lock the zero matrix
+	M = Graph_GetZeroMatrix(g);
+	Delta_Matrix_lock(M);
+
+	// lock each label matrix
+	n = array_len(g->labels);
+	for(int i = 0; i < n; i ++) {
+		M = Graph_GetLabelMatrix(g, i);
+		Delta_Matrix_lock(M);
+	}
+
+	// lock each relation matrix
+	n = array_len(g->relations);
+	for(int i = 0; i < n; i ++) {
+		M = Graph_GetRelationMatrix(g, i, false);
+		Delta_Matrix_lock(M);
+	}
+}
+
+void Graph_UnlockAllMatrices
+(
+	Graph *g            // graph to unlock
+) {
+	ASSERT(g != NULL);
+
+	uint          n  =  0;
+	Delta_Matrix  M  =  NULL;
+
+	//--------------------------------------------------------------------------
+	// unlock every matrix
+	//--------------------------------------------------------------------------
+
+	// unlock the adjacency matrix
+	M = Graph_GetAdjacencyMatrix(g, false);
+	Delta_Matrix_unlock(M);
+
+	// unlock node labels matrix
+	M = Graph_GetNodeLabelMatrix(g);
+	Delta_Matrix_unlock(M);
+
+	// unlock the zero matrix
+	M = Graph_GetZeroMatrix(g);
+	Delta_Matrix_unlock(M);
+
+	// unlock each label matrix
+	n = array_len(g->labels);
+	for(int i = 0; i < n; i ++) {
+		M = Graph_GetLabelMatrix(g, i);
+		Delta_Matrix_unlock(M);
+	}
+
+	// unlock each relation matrix
+	n = array_len(g->relations);
+	for(int i = 0; i < n; i ++) {
+		M = Graph_GetRelationMatrix(g, i, false);
+		Delta_Matrix_unlock(M);
+	}
+}
+
 // checks to see if graph has pending operations
 bool Graph_Pending
 (

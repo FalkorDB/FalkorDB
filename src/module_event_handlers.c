@@ -452,8 +452,8 @@ static void RG_ForkPrepare() {
 		Graph *g = gc->g;
 		Graph_AcquireReadLock(g);
 
-		// set matrix synchronization policy to default
-		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
+		// lock all matrices, ensure no matrix is being modified
+		Graph_LockAllMatrices(g);
 
 		GraphContext_DecreaseRefCount(gc);
 	}
@@ -473,6 +473,7 @@ static void RG_AfterForkParent() {
 	Globals_ScanGraphs(&it);
 
 	while((gc = GraphIterator_Next(&it)) != NULL) {
+		Graph_UnlockAllMatrices(gc->g);
 		Graph_ReleaseLock(gc->g);
 		GraphContext_DecreaseRefCount(gc);
 	}
@@ -494,10 +495,7 @@ static void RG_AfterForkChild() {
 	uint32_t n = array_len(graphs);
 	for(uint32_t i = 0; i < n; i++) {
 		Graph *g = graphs[i]->g;
-
-		// synchronize all matrices, make sure they're in a consistent state
-		// do not force-flush as this can take awhile
-		Graph_ApplyAllPending(g, false);
+		Graph_UnlockAllMatrices(g);
 
 		// all matrices should be synced, set synchronization policy to NOP
 		Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
