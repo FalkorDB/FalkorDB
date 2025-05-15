@@ -87,9 +87,9 @@ static void _Print_Config
 
 static int GraphBLAS_Init(RedisModuleCtx *ctx) {
 	// GraphBLAS should use Redis allocator
-//	GrB_Info res = GxB_init(GrB_NONBLOCKING, RedisModule_Alloc,
-//			RedisModule_Calloc, RedisModule_Realloc, RedisModule_Free);
-	GrB_Info res = GrB_init(GrB_NONBLOCKING);
+	GrB_Info res = GxB_init(GrB_NONBLOCKING, RedisModule_Alloc,
+			RedisModule_Calloc, RedisModule_Realloc, RedisModule_Free);
+	//GrB_Info res = GrB_init(GrB_NONBLOCKING);
 
 	if(res != GrB_SUCCESS) {
 		RedisModule_Log(ctx, "warning", "Encountered error initializing GraphBLAS");
@@ -101,9 +101,9 @@ static int GraphBLAS_Init(RedisModuleCtx *ctx) {
 
 	// initialize LAGraph
 	char msg [LAGRAPH_MSG_LEN];
-//	res = LAGr_Init(GrB_NONBLOCKING, RedisModule_Alloc, RedisModule_Calloc,
-//			RedisModule_Realloc, RedisModule_Free, msg);
-	res = LAGraph_Init(msg);
+	res = LAGr_Init(GrB_NONBLOCKING, RedisModule_Alloc, RedisModule_Calloc,
+			RedisModule_Realloc, RedisModule_Free, msg);
+	//res = LAGraph_Init(msg);
 	if(res != GrB_SUCCESS) {
 		RedisModule_Log(ctx, "warning", "Encountered error initializing LAGraph: %s", msg);
 		return REDISMODULE_ERR;
