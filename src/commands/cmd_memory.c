@@ -240,8 +240,7 @@ static void _EstimateOverlapingNodeAttributeMemory
 
 		// sample attribute memory usage from unprocessed nodes within label
 		node_memory_usage = _SampleVector(g, V, it, samples);
-		array_append(result->node_by_label_sz, node_memory_usage);
-		result->node_storage_sz += node_memory_usage;
+		array_append(result->node_attr_by_label_sz, node_memory_usage);
 
 		// mark these nodes as processed: P = P + V
 		info = GrB_Vector_eWiseAdd_Semiring(P, NULL, NULL, GxB_ANY_PAIR_BOOL,
@@ -313,8 +312,7 @@ static void _EstimateNonOverlapingNodeAttributeMemory
 
 		label_memory_usage = avg_label_mem * total_labeled_nodes;
 
-		array_append(result->node_by_label_sz, label_memory_usage);
-		result->node_storage_sz += label_memory_usage;
+		array_append(result->node_attr_by_label_sz, label_memory_usage);
 	}
 }
 
@@ -366,8 +364,7 @@ static void _EstimateNodeAttributeMemory
 		ASSERT(info == GrB_SUCCESS);
 
 		node_memory_usage = _UnlabeledNodesMemory(g, V, samples);
-		result->unlabeled_node_sz = node_memory_usage;
-		result->node_storage_sz += node_memory_usage;
+		result->unlabeled_node_attr_sz = node_memory_usage;
 	}
 
 	info = GrB_free(&V);
@@ -435,8 +432,7 @@ static void _EstimateEdgeAttributeMemory
 		edge_memory_usage = (relation_memory_usage / n_sampled_edges)
 			* Graph_RelationEdgeCount(g, r);
 
-		array_append(result->edge_by_type_sz, edge_memory_usage);
-		result->edge_storage_sz += edge_memory_usage;
+		array_append(result->edge_attr_by_type_sz, edge_memory_usage);
 
 		// reset sample size
 		edges_sample_size = sample_size;
@@ -506,19 +502,37 @@ static void _estimate_memory_consumption
 	}
 
 	// convert from bytes to mb
-	result->indices_sz      /= MB;
-	result->lbl_matrices_sz /= MB;
-	result->rel_matrices_sz /= MB;
-	result->node_storage_sz /= MB;
-	result->edge_storage_sz /= MB;
+	result->indices_sz             /= MB;
+	result->lbl_matrices_sz        /= MB;
+	result->rel_matrices_sz        /= MB;
+	result->node_block_storage_sz  /= MB;
+	result->edge_block_storage_sz  /= MB;
+	result->unlabeled_node_attr_sz /= MB;
 
-	// return total memory consumption
-	result->total_graph_sz_mb =
-			result->lbl_matrices_sz +
-			result->rel_matrices_sz +
-			result->node_storage_sz +
-			result->edge_storage_sz +
-			result->indices_sz;
+	//--------------------------------------------------------------------------
+	// compute the total graph memory usage
+	//--------------------------------------------------------------------------
+
+	// sum up node attributes
+	for(int i = 0; i < array_len(result->node_attr_by_label_sz); i++) {
+		result->node_attr_by_label_sz[i] /= MB;
+		result->total_graph_sz_mb += result->node_attr_by_label_sz[i];
+	}
+
+	// sum up edge attributes
+	for(int i = 0; i < array_len(result->edge_attr_by_type_sz); i++) {
+		result->edge_attr_by_type_sz[i] /= MB;
+		result->total_graph_sz_mb += result->edge_attr_by_type_sz[i];
+	}
+
+	// add up the rest of the components
+	result->total_graph_sz_mb +=
+			result->indices_sz             +
+			result->lbl_matrices_sz        +
+			result->rel_matrices_sz        +
+			result->node_block_storage_sz  +
+			result->edge_block_storage_sz  +
+			result->unlabeled_node_attr_sz;
 }
 
 // GRAPH.MEMORY USAGE internal command handler
@@ -540,8 +554,8 @@ static void _Graph_Memory
 	//--------------------------------------------------------------------------
 
 	MemoryUsageResult result = {0};
-	result.edge_by_type_sz   = array_new(size_t, 0);
-	result.node_by_label_sz  = array_new(size_t, 0);
+	result.edge_attr_by_type_sz  = array_new(size_t, 0);
+	result.node_attr_by_label_sz = array_new(size_t, 0);
 
 	// acquire read lock
 	Graph_AcquireReadLock(gc->g);
@@ -566,19 +580,19 @@ static void _Graph_Memory
 	//
 	//    relation_matrices_sz_mb: <relation_matrices_sz_mb>
 	//
-	//    amortized_node_storage_sz_mb: <node_storage_sz_mb>
+	//    amortized_node_sz_mb: <node_sz_mb>
 	//
-	//    amortized_node_by_label_storage_sz_mb: {
-	//        <label_name>: <node_storage_sz_mb>
+	//    amortized_node_attributes_by_label_sz_mb: {
+	//        <label_name>: <node_sz_mb>
 	//        ...
 	//    }
 	//
 	//    amortized_unlabeled_nodes_sz_mb: <unlabeled_nodes_sz_mb>
 	//
-	//    amortized_edge_storage_sz_mb: <edge_storage_sz_mb>
+	//    amortized_edge_sz_mb: <edge_sz_mb>
 	//
-	//    amortized_edge_by_type_storage_sz_mb: {
-	//        <relation_name>: <edge_storage_sz_mb>
+	//    amortized_edge_attributes_by_type_sz_mb: {
+	//        <relation_name>: <edge_sz_mb>
 	//        ...
 	//    }
 	//
@@ -602,39 +616,39 @@ static void _Graph_Memory
 	RedisModule_ReplyWithCString(rm_ctx, "relation_matrices_sz_mb");
 	RedisModule_ReplyWithLongLong(rm_ctx, result.rel_matrices_sz);
 
-	// amortized_node_storage_sz_mb
-	RedisModule_ReplyWithCString(rm_ctx, "amortized_node_storage_sz_mb");
-	RedisModule_ReplyWithLongLong(rm_ctx, result.node_storage_sz);
+	// amortized_node_sz_mb
+	RedisModule_ReplyWithCString(rm_ctx, "amortized_node_block_sz_mb");
+	RedisModule_ReplyWithLongLong(rm_ctx, result.node_block_storage_sz);
 
 	// amortized_node_by_label_sz_mb
-	RedisModule_ReplyWithCString(rm_ctx, "amortized_node_by_label_storage_sz_mb");
-	RedisModule_ReplyWithMap(rm_ctx, array_len(result.node_by_label_sz));
+	RedisModule_ReplyWithCString(rm_ctx, "amortized_node_attributes_by_label_sz_mb");
+	RedisModule_ReplyWithMap(rm_ctx, array_len(result.node_attr_by_label_sz));
 
-	for(size_t i = 0; i < array_len(result.node_by_label_sz); i++) {
+	for(size_t i = 0; i < array_len(result.node_attr_by_label_sz); i++) {
 		Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
 		ASSERT(s != NULL);
 	
 		RedisModule_ReplyWithCString(rm_ctx, Schema_GetName(s));
-		RedisModule_ReplyWithLongLong(rm_ctx, result.node_by_label_sz[i] / MB);
+		RedisModule_ReplyWithLongLong(rm_ctx, result.node_attr_by_label_sz[i]);
 	}
 
 	// amortized_unlabeled_nodes_sz_mb
-	RedisModule_ReplyWithCString(rm_ctx, "amortized_unlabeled_nodes_storage_sz_mb");
-	RedisModule_ReplyWithLongLong(rm_ctx, result.unlabeled_node_sz / MB);
+	RedisModule_ReplyWithCString(rm_ctx, "amortized_unlabeled_nodes_attributes_sz_mb");
+	RedisModule_ReplyWithLongLong(rm_ctx, result.unlabeled_node_attr_sz);
 
-	// amortized_edge_storage_sz_mb
-	RedisModule_ReplyWithCString(rm_ctx, "amortized_edge_storage_sz_mb");
-	RedisModule_ReplyWithLongLong(rm_ctx, result.edge_storage_sz);
+	// amortized_edge_sz_mb
+	RedisModule_ReplyWithCString(rm_ctx, "amortized_edge_block_sz_mb");
+	RedisModule_ReplyWithLongLong(rm_ctx, result.edge_block_storage_sz);
 
-	// amortized_edge_by_type_sz_mb
-	RedisModule_ReplyWithCString(rm_ctx, "amortized_edge_by_type_storage_sz_mb");
-	RedisModule_ReplyWithMap(rm_ctx, array_len(result.edge_by_type_sz));
-	for(size_t i = 0; i < array_len(result.edge_by_type_sz); i++) {
+	// amortized_edge_attributes_by_type_sz_mb
+	RedisModule_ReplyWithCString(rm_ctx, "amortized_edge_attributes_by_type_sz_mb");
+	RedisModule_ReplyWithMap(rm_ctx, array_len(result.edge_attr_by_type_sz));
+	for(size_t i = 0; i < array_len(result.edge_attr_by_type_sz); i++) {
 		Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_EDGE);
 		ASSERT(s != NULL);
 
 		RedisModule_ReplyWithCString(rm_ctx, Schema_GetName(s));
-		RedisModule_ReplyWithLongLong(rm_ctx, result.edge_by_type_sz[i] / MB);
+		RedisModule_ReplyWithLongLong(rm_ctx, result.edge_attr_by_type_sz[i]);
 	}
 
 	// indices_sz_mb
@@ -649,8 +663,8 @@ static void _Graph_Memory
 
 	// free command context
 	rm_free(ctx);
-	array_free(result.node_by_label_sz);
-	array_free(result.edge_by_type_sz);
+	array_free(result.edge_attr_by_type_sz);
+	array_free(result.node_attr_by_label_sz);
 }
 
 // GRAPH.MEMORY USAGE <key> command reports the number of bytes that a graph

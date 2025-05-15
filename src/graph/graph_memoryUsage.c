@@ -79,7 +79,7 @@ void Graph_memoryUsage
 	// graph's datablocks
 	//--------------------------------------------------------------------------
 
-	result->node_storage_sz += DataBlock_memoryUsage(g->nodes);
-	result->edge_storage_sz += DataBlock_memoryUsage(g->edges);
+	result->node_block_storage_sz = DataBlock_memoryUsage(g->nodes);
+	result->edge_block_storage_sz = DataBlock_memoryUsage(g->edges);
 }
 
