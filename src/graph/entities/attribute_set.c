@@ -929,6 +929,31 @@ char *AttributeSet_Attributes
 	return set->attributes;
 }
 
+// get attributeset's memory usage
+size_t AttributeSet_memoryUsage
+(
+	const AttributeSet set  // set to compute memory consumption of
+) {
+	if(set == NULL) {
+		return 0;
+	}
+
+	size_t   n = 0;  // memory consumption
+	uint16_t l = AttributeSet_Count(set);
+
+	// count memory consumption of each attribute
+	for(int i = 0; i < l; i++) {
+		SIValue v;
+		AttributeSet_GetIdx(set, i, NULL, &v);
+		n += SIValue_memoryUsage(v);
+	}
+
+	// account for AttributeIDs
+	n += (l * sizeof(AttributeID)) + sizeof(set->attr_count);
+
+	return n;
+}
+
 // frees an attribute set and all its allocated attributes
 // - if the set is NULL or read-only, it is not modified
 // - heap-allocated attributes are deallocated before freeing the set

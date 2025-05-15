@@ -1061,7 +1061,58 @@ SIValue SIValue_FromDisk
 	RocksDB_set_key(node_key, node_id, attr_id);
 	return (SIValue){.stringval = RocksDB_get(node_key), .type = T_STRING, .allocation = M_DISK};
 }
-			
+
+// compute SIValue memory usage
+size_t SIValue_memoryUsage
+(
+	SIValue v  // value
+) {
+	// expecting SIValue to be used as an attribute value
+	ASSERT(SI_TYPE(v) & SI_VALID_PROPERTY_VALUE);
+
+	u_int32_t l = 0;
+	SIType    t = SI_TYPE(v);
+	size_t    n = sizeof(SIValue);
+
+	switch(t) {
+		case T_DATETIME:
+		case T_LOCALDATETIME:
+		case T_DATE:
+		case T_TIME:
+		case T_LOCALTIME:
+		case T_DURATION:
+			ASSERT("temporal types are yet to be supported" && false);
+			break;
+
+		case T_BOOL:
+		case T_INT64:
+		case T_POINT:
+		case T_DOUBLE:
+			break;
+
+		case T_STRING:
+			n += strlen(v.stringval) * sizeof(char);
+			break;
+
+		case T_ARRAY:
+			l = SIArray_Length(v);
+			for(int i = 0; i < l; i++) {
+				n += SIValue_memoryUsage(SIArray_Get(v, i));
+			}
+			break;
+
+		case T_VECTOR_F32:
+			n += SIVector_ElementsByteSize(v);
+			break;
+
+		default:
+			ASSERT("unexpected type" && false);
+			break;
+	}
+
+	return n;
+}
+
 void SIValue_Free
 (
 	SIValue v

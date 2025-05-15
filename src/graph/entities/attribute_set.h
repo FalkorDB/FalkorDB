@@ -126,6 +126,12 @@ char *AttributeSet_Attributes
 	const AttributeSet set  // set to retrieve attributes from
 );
 
+// get attributeset's memory usage
+size_t AttributeSet_memoryUsage
+(
+	const AttributeSet set  // set to compute memory consumption of
+);
+
 // free attribute set
 void AttributeSet_Free
 (

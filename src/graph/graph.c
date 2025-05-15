@@ -895,6 +895,26 @@ inline bool Graph_EntityIsDeleted
 	return DataBlock_ItemIsDeleted(e->attributes);
 }
 
+// populate 'nodes' with deleted node ids
+void Graph_DeletedNodes
+(
+	const Graph *g,  // graph
+	NodeID **nodes,  // [output] array of deleted node IDs
+	uint64_t *n      // [output] number of deleted node IDs
+) {
+	ASSERT(g     != NULL);
+	ASSERT(n     != NULL);
+	ASSERT(nodes != NULL);
+
+	*n = DataBlock_DeletedItemsCount(g->nodes);
+	const uint64_t *deleted_nodes = DataBlock_DeletedItems(g->nodes);
+
+	*nodes = rm_malloc(sizeof(NodeID) * (*n));
+	ASSERT(*nodes != NULL);
+
+	*nodes = memcpy(*nodes, deleted_nodes, sizeof(uint64_t) * (*n));
+}
+
 // All graph matrices are required to be squared NXN
 // where N = Graph_RequiredMatrixDim.
 inline size_t Graph_RequiredMatrixDim
