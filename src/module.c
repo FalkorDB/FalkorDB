@@ -12,6 +12,7 @@
 #include "errors.h"
 #include "version.h"
 #include "globals.h"
+#include "LAGraph.h"
 #include "util/arr.h"
 #include "cron/cron.h"
 #include "query_ctx.h"
@@ -95,6 +96,15 @@ static int GraphBLAS_Init(RedisModuleCtx *ctx) {
 
 	// all matrices in CSR format
 	GxB_set(GxB_FORMAT, GxB_BY_ROW);
+
+	// initialize LAGraph
+	char msg [LAGRAPH_MSG_LEN];
+	res = LAGr_Init(GrB_NONBLOCKING, RedisModule_Alloc, RedisModule_Calloc,
+			RedisModule_Realloc, RedisModule_Free, msg);
+	if(res != GrB_SUCCESS) {
+		RedisModule_Log(ctx, "warning", "Encountered error initializing LAGraph: %s", msg);
+		return REDISMODULE_ERR;
+	}
 
 	return REDISMODULE_OK;
 }

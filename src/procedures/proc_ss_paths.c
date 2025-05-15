@@ -56,7 +56,7 @@ typedef struct {
 		heap_t *heap;            // in case path_count > 1
 		WeightedPath *array;     // path_count == 0 return all minimum result
 	};                           // path collection
-	SIValue *output;             // result returned
+	SIValue output[3];           // result returned
 	SIValue *yield_path;         // yield path
 	SIValue *yield_path_weight;  // yield path weight
 	SIValue *yield_path_cost;    // yield path cost
@@ -70,16 +70,21 @@ static void SingleSourceCtx_Free
 	if(ctx == NULL) return;
 
 	uint32_t levelsCount = array_len(ctx->levels);
-	for(int i = 0; i < levelsCount; i++) array_free(ctx->levels[i]);
-	if(ctx->levels) array_free(ctx->levels);
-	if(ctx->path) Path_Free(ctx->path);
-	if(ctx->neighbors) array_free(ctx->neighbors);
-	if(ctx->relationIDs) {
-		array_free(ctx->relationIDs);
+	for(int i = 0; i < levelsCount; i++) {
+		array_free(ctx->levels[i]);
 	}
-	if(ctx->path_count == 0 && ctx->array != NULL) array_free(ctx->array);
-	else if(ctx->path_count > 1 && ctx->heap != NULL) Heap_free(ctx->heap);
-	array_free(ctx->output);
+
+	if(ctx->path)        Path_Free(ctx->path);
+	if(ctx->levels)      array_free(ctx->levels);
+	if(ctx->neighbors)   array_free(ctx->neighbors);
+	if(ctx->relationIDs) array_free(ctx->relationIDs);
+
+	if(ctx->path_count == 0 && ctx->array != NULL) {
+		array_free(ctx->array);
+	} else if(ctx->path_count > 1 && ctx->heap != NULL) {
+		Heap_free(ctx->heap);
+	}
+
 	rm_free(ctx);
 }
 
@@ -664,12 +669,15 @@ static ProcedureResult Proc_SSpathsInvoke
 	}
 	ctx->privateData = single_source_ctx;
 
-	single_source_ctx->output = array_new(SIValue, 3);
 	_process_yield(single_source_ctx, yield);
 
-	if(single_source_ctx->path_count == 0) SSpaths_all_minimal(single_source_ctx);
-	else if(single_source_ctx->path_count == 1) SSpaths_single_minimal(single_source_ctx);
-	else SSpaths_k_minimal(single_source_ctx);
+	if(single_source_ctx->path_count == 0) {
+		SSpaths_all_minimal(single_source_ctx);
+	} else if(single_source_ctx->path_count == 1) {
+		SSpaths_single_minimal(single_source_ctx);
+	} else {
+		SSpaths_k_minimal(single_source_ctx);
+	}
 
 	return PROCEDURE_OK;
 }

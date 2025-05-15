@@ -15,7 +15,7 @@
 #include "../datatypes/array.h"
 
 typedef struct {
-	SIValue *out;               // outputs
+	SIValue out[9];             // outputs
 	Index *indices;             // indicies to emit
 	GraphContext *gc;           // graph context
 	SIValue *yield_label;       // yield index label
@@ -124,7 +124,6 @@ ProcedureResult Proc_IndexesInvoke
 	IndexesContext *pdata = rm_malloc(sizeof(IndexesContext));
 
 	pdata->gc      = gc;
-	pdata->out     = array_new(SIValue, 9);
 	pdata->indices = array_new(Index, 0);
 
 	//--------------------------------------------------------------------------
@@ -438,7 +437,6 @@ ProcedureResult Proc_IndexesFree
 	// clean up
 	if(ctx->privateData) {
 		IndexesContext *pdata = ctx->privateData;
-		array_free(pdata->out);
 		array_free(pdata->indices);
 		rm_free(pdata);
 	}
