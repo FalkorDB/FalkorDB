@@ -305,18 +305,16 @@ static void _EstimateNonOverlapingNodeAttributeMemory
 		Delta_MatrixTupleIter_detach(&it);
 
 		// set number of sampled nodes
-		int64_t sampled = sample_size - nodes_remaining;
+		int64_t sampled = MAX(1, sample_size - nodes_remaining);
 
-		if(sampled > 0) {
-			// compute average and scale by number of labeled nodes
-            float avg_label_mem = (float)label_memory_usage / sampled;
-            int64_t total_labeled_nodes = Graph_LabeledNodeCount(g, l);
+		// compute average and scale by number of labeled nodes
+		float avg_label_mem = (float)label_memory_usage / sampled;
+		int64_t total_labeled_nodes = Graph_LabeledNodeCount(g, l);
 
-            label_memory_usage = avg_label_mem * total_labeled_nodes;
+		label_memory_usage = avg_label_mem * total_labeled_nodes;
 
-			array_append(result->node_by_label_sz, label_memory_usage);
-			result->node_storage_sz += label_memory_usage;
-		}
+		array_append(result->node_by_label_sz, label_memory_usage);
+		result->node_storage_sz += label_memory_usage;
 	}
 }
 
