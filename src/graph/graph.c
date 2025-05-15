@@ -277,16 +277,24 @@ void Graph_ApplyAllPending
 	Graph_SetMatrixPolicy(g, policy);
 }
 
+// lock all matrices:
+// 1. adjacency matrix
+// 2. label matrices
+// 3. node labels matrix
+// 4. relation matrices
+//
+// currently only used just before forking for the purpose of
+// taking a snapshot
 void Graph_LockAllMatrices
 (
-	Graph *g            // graph to lock
+	Graph *g  // graph to lock
 ) {
 	ASSERT(g != NULL);
 
-	uint n = 0;
+	uint n = 0;  // length of matrices array
 
 	//--------------------------------------------------------------------------
-	// lock every matrix
+	// lock matrices
 	//--------------------------------------------------------------------------
 
 	// lock the adjacency matrix
@@ -294,9 +302,6 @@ void Graph_LockAllMatrices
 
 	// lock node labels matrix
 	Delta_Matrix_lock(g->node_labels);
-
-	// lock the zero matrix
-	Delta_Matrix_lock(g->_zero_matrix);
 
 	// lock each label matrix
 	n = array_len(g->labels);
@@ -311,16 +316,26 @@ void Graph_LockAllMatrices
 	}
 }
 
+// the counter-part of GraphLockAllMatrices
+// unlocks all matrices:
+//
+// 1. adjacency matrix
+// 2. label matrices
+// 3. node labels matrix
+// 4. relation matrices
+//
+// currently only used after a fork had been issued on both
+// the parent and child processes
 void Graph_UnlockAllMatrices
 (
-	Graph *g            // graph to unlock
+	Graph *g  // graph to unlock
 ) {
 	ASSERT(g != NULL);
 
-	uint n = 0;
+	uint n = 0;  // length of matrices array
 
 	//--------------------------------------------------------------------------
-	// unlock every matrix
+	// unlock matrices
 	//--------------------------------------------------------------------------
 
 	// unlock the adjacency matrix
@@ -328,9 +343,6 @@ void Graph_UnlockAllMatrices
 
 	// unlock node labels matrix
 	Delta_Matrix_unlock(g->node_labels);
-
-	// unlock the zero matrix
-	Delta_Matrix_unlock(g->_zero_matrix);
 
 	// unlock each label matrix
 	n = array_len(g->labels);
