@@ -235,6 +235,13 @@ GrB_Info Delta_Matrix_pending
 	bool *pending                   // are there any pending operations
 );
 
+// return # of bytes used for a matrix
+GrB_Info Delta_Matrix_memoryUsage
+(
+    size_t *size,           // # of bytes used by the matrix A
+    const Delta_Matrix A    // matrix to query
+);
+
 GrB_Info Delta_Matrix_wait
 (
 	Delta_Matrix C,

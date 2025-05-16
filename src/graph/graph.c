@@ -975,6 +975,26 @@ inline bool Graph_EntityIsDeleted
 	return DataBlock_ItemIsDeleted(e->attributes);
 }
 
+// populate 'nodes' with deleted node ids
+void Graph_DeletedNodes
+(
+	const Graph *g,  // graph
+	NodeID **nodes,  // [output] array of deleted node IDs
+	uint64_t *n      // [output] number of deleted node IDs
+) {
+	ASSERT(g     != NULL);
+	ASSERT(n     != NULL);
+	ASSERT(nodes != NULL);
+
+	*n = DataBlock_DeletedItemsCount(g->nodes);
+	const uint64_t *deleted_nodes = DataBlock_DeletedItems(g->nodes);
+
+	*nodes = rm_malloc(sizeof(NodeID) * (*n));
+	ASSERT(*nodes != NULL);
+
+	*nodes = memcpy(*nodes, deleted_nodes, sizeof(uint64_t) * (*n));
+}
+
 // All graph matrices are required to be squared NXN
 // where N = Graph_RequiredMatrixDim.
 inline size_t Graph_RequiredMatrixDim
@@ -1486,114 +1506,6 @@ static void _Graph_Free
 	ASSERT(res == 0);
 
 	rm_free(g);
-}
-
-// get graph's memory usage
-void Graph_memoryUsage
-(
-	const Graph *g,           // graph
-	size_t *lbl_matrices_sz,  // [output] label matrices memory usage
-	size_t *rel_matrices_sz,  // [output] relation matrices memory usage
-	size_t *node_storage_sz,  // [output] node storage memory usage
-	size_t *edge_storage_sz   // [output] edge storage memory usage
-) {
-	ASSERT(g               != NULL);
-	ASSERT(lbl_matrices_sz != NULL);
-	ASSERT(rel_matrices_sz != NULL);
-	ASSERT(node_storage_sz != NULL);
-	ASSERT(edge_storage_sz != NULL);
-
-	*lbl_matrices_sz = 0;
-	*rel_matrices_sz = 0;
-	*node_storage_sz = 0;
-	*edge_storage_sz = 0;
-
-	size_t n = 0;  // matrix memory consumption
-
-	Tensor       T;
-	GrB_Matrix   M;
-	Delta_Matrix D;
-	GrB_Info     info;
-
-	//--------------------------------------------------------------------------
-	// graph's adjacency matrix
-	//--------------------------------------------------------------------------
-
-	D = Graph_GetAdjacencyMatrix(g, false);
-	M = Delta_Matrix_M(D);
-
-	info = GxB_Matrix_memoryUsage(&n, M);
-	ASSERT(info == GrB_SUCCESS);
-
-	*rel_matrices_sz += n;
-
-	D = Graph_GetAdjacencyMatrix(g, true);
-	M = Delta_Matrix_M(D);
-
-	info = GxB_Matrix_memoryUsage(&n, M);
-	ASSERT(info == GrB_SUCCESS);
-
-	*rel_matrices_sz += n;
-
-	//--------------------------------------------------------------------------
-	// graph's label matrices
-	//--------------------------------------------------------------------------
-
-	int n_lbl = Graph_LabelTypeCount(g);
-
-	for(LabelID lbl = 0; lbl < n_lbl; lbl++) {
-		D = Graph_GetLabelMatrix(g, lbl);
-		M = Delta_Matrix_M(D);
-
-		info = GxB_Matrix_memoryUsage(&n, M);
-		ASSERT(info == GrB_SUCCESS);
-
-		*lbl_matrices_sz += n;
-	}
-
-	// account for graph's node labels matrix
-	D = Graph_GetNodeLabelMatrix(g);
-	M = Delta_Matrix_M(D);
-
-	info = GxB_Matrix_memoryUsage(&n, M);
-	ASSERT(info == GrB_SUCCESS);
-
-	*lbl_matrices_sz += n;
-
-	//--------------------------------------------------------------------------
-	// graph's relation matrices
-	//--------------------------------------------------------------------------
-
-	int n_rel = Graph_RelationTypeCount(g);
-	for(RelationID rel = 0; rel < n_rel; rel++) {
-		T = Graph_GetRelationMatrix(g, rel, false);
-		M = Delta_Matrix_M(T);
-
-		info = GxB_Matrix_memoryUsage(&n, M);
-		ASSERT(info == GrB_SUCCESS);
-
-		*rel_matrices_sz += n;
-
-		T = Graph_GetRelationMatrix(g, rel, true);
-		M = Delta_Matrix_M(T);
-
-		info = GxB_Matrix_memoryUsage(&n, M);
-		ASSERT(info == GrB_SUCCESS);
-
-		*rel_matrices_sz += n;
-	}
-
-	//--------------------------------------------------------------------------
-	// graph's datablocks
-	//--------------------------------------------------------------------------
-
-	DataBlock *block;
-
-	block = g->nodes;
-	*node_storage_sz += DataBlock_itemSize(block) * DataBlock_ItemCount(block);
-
-	block = g->edges;
-	*edge_storage_sz += DataBlock_itemSize(block) * DataBlock_ItemCount(block);
 }
 
 void Graph_PartialFree
