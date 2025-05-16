@@ -31,9 +31,28 @@ class testStringPool():
 
         return _used_memory
 
+    def string_pool_stats(self):
+        stats = self.conn.execute_command("GRAPH.INFO", "ObjectPool")
+
+        # GRAPH.INFO ObjectPool
+        # 1) "Object Pool"
+        # 2) 1) 1) "Unique Objects in Pool"
+        # 2) (integer) 1
+        # 2) 1) "Average References per Object"
+        # 2) "2"
+
+        obj_in_pool   = int(stats[1][0][1])
+        avg_ref_count = float(stats[1][1][1])
+
+        return (obj_in_pool, avg_ref_count)
+
+
     def test_01_single_graph_string_share(self):
         # Create a graph with multiple identical string values
         base_line = self.used_memory()
+        obj_in_pool, avg_ref_count = self.string_pool_stats()
+        self.env.assertEquals(obj_in_pool, 0)
+        self.env.assertEquals(avg_ref_count, 0)
 
         s = 'A' * 16384 # large string
 
@@ -44,6 +63,11 @@ class testStringPool():
         self.env.assertEquals(res.nodes_created, 1)
         self.env.assertEquals(res.properties_set, 1)
 
+        # validate string pool stats, expecting a single object
+        obj_in_pool, avg_ref_count = self.string_pool_stats()
+        self.env.assertEquals(obj_in_pool, 1)
+        self.env.assertEquals(avg_ref_count, 1)
+
         # validate memory consumption increased
         memory_consumption = self.used_memory()
         self.env.assertGreater(memory_consumption, base_line)
@@ -52,6 +76,11 @@ class testStringPool():
         # create multiple nodes all sharing the same string value
         q = "UNWIND range(0, 50) AS x CREATE ({value: intern($s)})"
         res = self.graph.query(q, {'s': s})
+
+        # validate string pool stats
+        obj_in_pool, avg_ref_count = self.string_pool_stats()
+        self.env.assertEquals(obj_in_pool, 1)
+        self.env.assertEquals(avg_ref_count, 52)
         
         # make sure memory consumption didn't increased by a meaningful amount
         memory_consumption = self.used_memory()
