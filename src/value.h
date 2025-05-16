@@ -39,6 +39,7 @@ typedef enum {
 	T_PTR           = (1 << 16),
 	T_POINT         = (1 << 17),
 	T_VECTOR_F32    = (1 << 18),
+	T_INTERN_STRING = (1 << 19),
 } SIType;
 
 typedef enum {

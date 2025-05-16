@@ -62,7 +62,14 @@ static void _RdbSaveSIValue
 	// SIType
 	// Value
 
-	SerializerIO_WriteUnsigned(rdb, v->type);
+	// TODO: consider removing the intern allocation type
+	// incase v's allocation is intern encode v as an intern string
+	// otherwise use v's original type
+	SIType t = (SI_ALLOCATION(v) == M_INTERN) ?
+		T_INTERN_STRING :
+		v->type;
+
+	SerializerIO_WriteUnsigned(rdb, t);
 
 	switch(v->type) {
 		case T_BOOL:

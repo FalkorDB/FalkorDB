@@ -974,6 +974,15 @@ SIValue SIValue_FromBinary
 			fread_assert(s, sizeof(char) * len, stream);
 			v = SI_TransferStringVal(s);
 			break;
+		case T_INTERN_STRING:
+			// read string length from stream
+			fread_assert(&len, sizeof(len), stream);
+			s = rm_malloc(sizeof(char) * len);
+			// read string from stream
+			fread_assert(s, sizeof(char) * len, stream);
+			v = SI_InternStringVal(s);
+			rm_free(s);
+			break;
 		case T_BOOL:
 			// read bool from stream
 			fread_assert(&b, sizeof(b), stream);
