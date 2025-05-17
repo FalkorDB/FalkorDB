@@ -237,5 +237,9 @@ void StringPool_free
 	rm_free(*pool);
 
 	*pool = NULL;
+
+	// delete string pool TLS key
+	int res = pthread_key_delete(_tlsStringPool);
+	ASSERT(res == 0);
 }
 
