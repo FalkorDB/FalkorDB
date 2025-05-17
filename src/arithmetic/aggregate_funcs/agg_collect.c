@@ -38,9 +38,14 @@ AggregateResult AGG_COLLECT
 			// array will clone the value
 			SIArray_Append(&ctx->result, v);
 			break;
+
 		case M_SELF:
 			// array will take ownership over the value
 			SIArray_AppendAsOwner(&ctx->result, argv);
+			break;
+
+		default:
+			ASSERT(false && "unknown allocation type");
 			break;
 	}
 

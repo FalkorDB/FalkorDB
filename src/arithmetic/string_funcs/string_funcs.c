@@ -807,7 +807,7 @@ SIValue AR_SPLIT
 			const utf8proc_uint8_t *str_i = (const utf8proc_uint8_t *)str;
 			while(str_i[0] != 0) {
 				str_i += utf8proc_iterate(str_i, -1, &c);
-				int i  = utf8proc_encode_char(utf8proc_tolower(c), token);
+				int i  = utf8proc_encode_char(c, token);
 				token[i] = '\0';
 				SIArray_Append(&tokens, SI_ConstStringVal((const char *)token));
 			}

@@ -224,6 +224,12 @@ SIValue SIValue_FromBinary
 	FILE *stream  // stream to read value from
 );
 
+// compute SIValue memory usage
+size_t SIValue_memoryUsage
+(
+	SIValue v  // value
+);
+
 /* Free an SIValue's internal property if that property is a heap allocation owned
  * by this object. */
 void SIValue_Free(SIValue v);

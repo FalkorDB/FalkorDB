@@ -47,6 +47,7 @@ static void _CommitNodesBlueprint
 			// sync matrix, make sure label matrix is of the right dimensions
 			Graph_GetLabelMatrix(g, Schema_GetID(s));
 		}
+
 		// sync matrix, make sure mapping matrix is of the right dimensions
 		if(label_count > 0) Graph_GetNodeLabelMatrix(g);
 	}
