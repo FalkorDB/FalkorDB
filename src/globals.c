@@ -35,22 +35,19 @@ void Globals_Init(void) {
 	int res = pthread_rwlock_init(&_globals.lock, NULL);
 	ASSERT(res == 0);
 
-	// create string pool if enabled via configuration
-	bool string_pool_enabled = false;
-	Config_Option_get(Config_DEDUPLICATE_STRINGS, &string_pool_enabled);
-	if(string_pool_enabled) {
-		_globals.string_pool = StringPool_create();
+	// create string pool
+	_globals.string_pool = StringPool_create();
 
-		// set main thread TLS granting access to the string pool
-		StringPool_grantAccessViaTLS(NULL);
+	// set main thread TLS granting access to the string pool
+	StringPool_grantAccessViaTLS(NULL);
 
-		// set writer thread TLS granting access to the string pool
-		ThreadPools_AddWorkWriter(StringPool_grantAccessViaTLS,
-				NULL, true);
-	}
+	// set writer thread TLS granting access to the string pool
+	ThreadPools_AddWorkWriter(StringPool_grantAccessViaTLS, NULL, true);
 }
 
 StringPool Globals_Get_StringPool(void) {
+	// TODO: validate accessing thread
+	// thread must be either a writer thread or Redis main thread
 	return _globals.string_pool;
 }
 

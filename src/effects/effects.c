@@ -155,7 +155,11 @@ static void EffectsBuffer_WriteSIValue
 	bool b;
 	size_t len = 0;
 
-	SIType t = v->type;
+	// set type to intern string incase the allocation type is intern
+	// otherwise use v's original type
+	SIType t = (SI_ALLOCATION(v) == M_INTERN) ?
+		T_INTERN_STRING :
+		v->type;
 
 	// write type
 	EffectsBuffer_WriteBytes(&t, sizeof(SIType), buff);
@@ -171,6 +175,7 @@ static void EffectsBuffer_WriteSIValue
 			EffectsBuffer_WriteSIArray(v, buff);
 			break;
 		case T_STRING:
+		case T_INTERN_STRING:
 			EffectsBuffer_WriteString(v->stringval, buff);
 			break;
 		case T_BOOL:

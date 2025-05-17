@@ -55,24 +55,10 @@ void reconf_handler(Config_Option_Field type) {
 			}
 			break;
 
-		//----------------------------------------------------------------------
-		// string deduplication
-		//----------------------------------------------------------------------
-
-		case Config_DEDUPLICATE_STRINGS:
-			{
-				bool enabled;
-				bool res = Config_Option_get(type, &enabled);
-				ASSERT(res);
-
-				extern bool USE_STRING_POOL;  // defined in src/value.c
-				USE_STRING_POOL = enabled;
-			}
-			break;
-
         //----------------------------------------------------------------------
         // all other options
         //----------------------------------------------------------------------
+
         default:
 			return;
     }
