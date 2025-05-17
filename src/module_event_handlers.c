@@ -431,11 +431,10 @@ static void RG_ForkPrepare() {
 	//
 	// on BGSAVE acquire read lock for each graph to ensure no graph is being
 	// modified, otherwise the child process might inherit a malformed matrix
+	// to ensure no matrix is being flushed (GrB_wait) we acquire each matrix
+	// individual lock
 	//
-	// on BGSAVE: acquire read lock
-	// flush all matrices such that child won't inherit locked matrix
-	// release read lock immediately once forked
-	//
+	// the locks will be unlocked on both RG_AfterForkParent & RG_AfterForkChild
 	// in the case of RediSearch GC fork, quickly return
 
 	// BGSAVE is invoked from Redis main thread
@@ -444,21 +443,20 @@ static void RG_ForkPrepare() {
 	// return if we have half-baked graphs
 	if(INTERMEDIATE_GRAPHS) return;
 
-	KeySpaceGraphIterator it;
+	// scan through each graph in the keyspace
 	GraphContext *gc = NULL;
+	KeySpaceGraphIterator it;
 	Globals_ScanGraphs(&it);
+
 	while((gc = GraphIterator_Next(&it)) != NULL) {
-		// acquire read lock, guarantee graph isn't modified
+		// acquire read lock, guarantee graph isn't modified by a writer
 		Graph *g = gc->g;
 		Graph_AcquireReadLock(g);
 
-		// set matrix synchronization policy to default
-		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
+		// lock all matrices, ensure no matrix is being flushed by other readers
+		Graph_LockAllMatrices(g);
 
-		// synchronize all matrices, make sure they're in a consistent state
-		// do not force-flush as this can take awhile
-		Graph_ApplyAllPending(g, false);
-
+		// decrease graph context ref count
 		GraphContext_DecreaseRefCount(gc);
 	}
 }
@@ -472,12 +470,18 @@ static void RG_AfterForkParent() {
 	if(INTERMEDIATE_GRAPHS) return;
 
 	// the child process forked, release all acquired locks
-	KeySpaceGraphIterator it;
 	GraphContext *gc = NULL;
+	KeySpaceGraphIterator it;
 	Globals_ScanGraphs(&it);
 
 	while((gc = GraphIterator_Next(&it)) != NULL) {
+		// unlock all matrices
+		Graph_UnlockAllMatrices(gc->g);
+
+		// release read lock
 		Graph_ReleaseLock(gc->g);
+
+		// decrease graph context ref count
 		GraphContext_DecreaseRefCount(gc);
 	}
 }
@@ -498,8 +502,13 @@ static void RG_AfterForkChild() {
 	uint32_t n = array_len(graphs);
 	for(uint32_t i = 0; i < n; i++) {
 		Graph *g = graphs[i]->g;
-		// all matrices should be synced, set synchronization policy to NOP
-		Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
+
+		// release locked matrices (matrices are inherited locked)
+		// see RG_ForkPrepare
+		Graph_UnlockAllMatrices(g);
+
+		// set sync policy to flush & resize
+		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
 	}
 }
 

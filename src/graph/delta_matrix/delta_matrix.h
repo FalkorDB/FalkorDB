@@ -255,6 +255,16 @@ void Delta_Matrix_synchronize
 	GrB_Index ncols
 );
 
+void Delta_Matrix_lock
+(
+	Delta_Matrix C
+);
+
+void Delta_Matrix_unlock
+(
+	Delta_Matrix C
+);
+
 void Delta_Matrix_free
 (
 	Delta_Matrix *C
