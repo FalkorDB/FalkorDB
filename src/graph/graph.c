@@ -277,6 +277,86 @@ void Graph_ApplyAllPending
 	Graph_SetMatrixPolicy(g, policy);
 }
 
+// lock all matrices:
+// 1. adjacency matrix
+// 2. label matrices
+// 3. node labels matrix
+// 4. relation matrices
+//
+// currently only used just before forking for the purpose of
+// taking a snapshot
+void Graph_LockAllMatrices
+(
+	Graph *g  // graph to lock
+) {
+	ASSERT(g != NULL);
+
+	uint n = 0;  // length of matrices array
+
+	//--------------------------------------------------------------------------
+	// lock matrices
+	//--------------------------------------------------------------------------
+
+	// lock the adjacency matrix
+	Delta_Matrix_lock(g->adjacency_matrix);
+
+	// lock node labels matrix
+	Delta_Matrix_lock(g->node_labels);
+
+	// lock each label matrix
+	n = array_len(g->labels);
+	for(int i = 0; i < n; i ++) {
+		Delta_Matrix_lock(g->labels[i]);
+	}
+
+	// lock each relation matrix
+	n = array_len(g->relations);
+	for(int i = 0; i < n; i ++) {
+		Delta_Matrix_lock(g->relations[i]);
+	}
+}
+
+// the counter-part of GraphLockAllMatrices
+// unlocks all matrices:
+//
+// 1. adjacency matrix
+// 2. label matrices
+// 3. node labels matrix
+// 4. relation matrices
+//
+// currently only used after a fork had been issued on both
+// the parent and child processes
+void Graph_UnlockAllMatrices
+(
+	Graph *g  // graph to unlock
+) {
+	ASSERT(g != NULL);
+
+	uint n = 0;  // length of matrices array
+
+	//--------------------------------------------------------------------------
+	// unlock matrices
+	//--------------------------------------------------------------------------
+
+	// unlock the adjacency matrix
+	Delta_Matrix_unlock(g->adjacency_matrix);
+
+	// unlock node labels matrix
+	Delta_Matrix_unlock(g->node_labels);
+
+	// unlock each label matrix
+	n = array_len(g->labels);
+	for(int i = 0; i < n; i ++) {
+		Delta_Matrix_unlock(g->labels[i]);
+	}
+
+	// unlock each relation matrix
+	n = array_len(g->relations);
+	for(int i = 0; i < n; i ++) {
+		Delta_Matrix_unlock(g->relations[i]);
+	}
+}
+
 // checks to see if graph has pending operations
 bool Graph_Pending
 (
