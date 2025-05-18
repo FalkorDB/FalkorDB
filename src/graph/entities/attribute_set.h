@@ -129,7 +129,8 @@ char *AttributeSet_Attributes
 // get attributeset's memory usage
 size_t AttributeSet_memoryUsage
 (
-	const AttributeSet set  // set to compute memory consumption of
+	const AttributeSet set,  // set to compute memory consumption of
+	uint64_t node_id
 );
 
 // free attribute set

@@ -932,7 +932,8 @@ char *AttributeSet_Attributes
 // get attributeset's memory usage
 size_t AttributeSet_memoryUsage
 (
-	const AttributeSet set  // set to compute memory consumption of
+	const AttributeSet set,  // set to compute memory consumption of
+	uint64_t node_id
 ) {
 	if(set == NULL) {
 		return 0;
@@ -944,8 +945,16 @@ size_t AttributeSet_memoryUsage
 	// count memory consumption of each attribute
 	for(int i = 0; i < l; i++) {
 		SIValue v;
-		AttributeSet_GetIdx(set, i, NULL, &v);
+		AttributeID id;
+		AttributeSet_GetIdx(set, i, &id, &v);
+		if(v->allocation == M_DISK) {
+			SIValue_FromDisk(node_id, id)
+		}
 		n += SIValue_memoryUsage(v);
+		if(v->allocation == M_DISK) {
+			free(v->stringval);
+			v->stringval = NULL;
+		}
 	}
 
 	// account for AttributeIDs

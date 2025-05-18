@@ -101,7 +101,7 @@ static size_t _SampleVector
 		ASSERT(node_found == true);
 
 		AttributeSet set = GraphEntity_GetAttributes((GraphEntity*)&n);
-		memory_usage += AttributeSet_memoryUsage(set);
+		memory_usage += AttributeSet_memoryUsage(set, id);
 
 		remaining_samples--;
 
@@ -297,7 +297,7 @@ static void _EstimateNonOverlapingNodeAttributeMemory
 
 			AttributeSet set = GraphEntity_GetAttributes((GraphEntity*)&node);
 
-			label_memory_usage += AttributeSet_memoryUsage(set);
+			label_memory_usage += AttributeSet_memoryUsage(set, id);
 			nodes_remaining--;
 		}
 
@@ -420,7 +420,7 @@ static void _EstimateEdgeAttributeMemory
 
 			AttributeSet set = GraphEntity_GetAttributes((GraphEntity*)&edge);
 
-			relation_memory_usage += AttributeSet_memoryUsage(set);
+			relation_memory_usage += AttributeSet_memoryUsage(set, id);
 			edges_sample_size--;
 		}
 		Delta_MatrixTupleIter_detach(&it);
