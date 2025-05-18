@@ -10,8 +10,6 @@
 #include <string.h>
 #include <pthread.h>
 
-pthread_key_t _tlsStringPool; // thread local storage string-pool access flag
-
 // StringPool structure
 struct OpaqueStringPool {
 	dict *ht;                  // hashtable
@@ -68,25 +66,8 @@ static const dictType _type = {
 	NULL
 };
 
-// grant access to string-pool via TLS key
-// if a thread has this key set, access to the string pool is granted
-// otherwise the TLS key is NULL and access is denied
-void StringPool_grantAccessViaTLS
-(
-	void* unused
-) {
-	ASSERT(unused == NULL);
-
-	int res = pthread_setspecific(_tlsStringPool, (const void*)1);
-	ASSERT(res == 0);
-}
-
 // create a new StringPool
 StringPool StringPool_create(void) {
-	// create thread local storage string-pool access flag
-	int res = pthread_key_create(&_tlsStringPool, NULL);
-	ASSERT(res == 0);
-
 	StringPool pool = rm_malloc(sizeof(struct OpaqueStringPool));
 
 	pool->ht = HashTableCreate(&_type);
@@ -237,9 +218,5 @@ void StringPool_free
 	rm_free(*pool);
 
 	*pool = NULL;
-
-	// delete string pool TLS key
-	int res = pthread_key_delete(_tlsStringPool);
-	ASSERT(res == 0);
 }
 

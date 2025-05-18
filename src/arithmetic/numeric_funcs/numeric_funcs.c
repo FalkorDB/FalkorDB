@@ -128,6 +128,7 @@ SIValue AR_TOINTEGER(SIValue *argv, int argc, void *private_data) {
 		}
 		return SI_LongVal(0);
 	case T_STRING:
+	case T_INTERN_STRING:
 		if(strlen(arg.stringval) == 0) return SI_NullVal();
 		errno = 0;
 		if(strchr(arg.stringval, '.') == NULL) {
@@ -157,6 +158,7 @@ SIValue AR_TOFLOAT(SIValue *argv, int argc, void *private_data) {
 	case T_DOUBLE:
 		return arg;
 	case T_STRING:
+	case T_INTERN_STRING:
 		if(strlen(arg.stringval) == 0) return SI_NullVal();
 		errno = 0;
 		double parsedval = strtof(arg.stringval, &sEnd);
@@ -384,7 +386,7 @@ void Register_NumericFuncs() {
 	AR_FuncDesc *func_desc;
 
 	types = array_new(SIType, 1);
-	array_append(types, (SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | T_NULL));
+	array_append(types, (SI_NUMERIC | SI_STRING | T_ARRAY | T_BOOL | T_MAP | T_NULL));
 	ret_type = SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | T_NULL;
 	func_desc = AR_FuncDescNew("add", AR_ADD, 2, 2, types, ret_type, true, true);
 	AR_RegFunc(func_desc);
@@ -449,7 +451,7 @@ void Register_NumericFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, (SI_NUMERIC | T_STRING | T_NULL | T_BOOL));
+	array_append(types, (SI_NUMERIC | SI_STRING | T_NULL | T_BOOL));
 	ret_type = T_INT64 | T_NULL;
 	func_desc = AR_FuncDescNew("tointeger", AR_TOINTEGER, 1, 1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
@@ -461,7 +463,7 @@ void Register_NumericFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, (SI_NUMERIC | T_STRING | T_NULL));
+	array_append(types, (SI_NUMERIC | SI_STRING | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
 	func_desc = AR_FuncDescNew("tofloat", AR_TOFLOAT, 1, 1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);

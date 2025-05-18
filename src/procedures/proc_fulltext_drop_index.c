@@ -29,7 +29,7 @@ ProcedureResult Proc_FulltextDropIndexInvoke
 
 	// expecting arg[0] to be a string
 	SIValue arg = args[0];
-	if(!(SI_TYPE(arg) & T_STRING)) {
+	if(!(SI_TYPE(arg) & SI_STRING)) {
 		return PROCEDURE_ERR;
 	}
 

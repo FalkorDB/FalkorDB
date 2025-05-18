@@ -157,9 +157,7 @@ static void EffectsBuffer_WriteSIValue
 
 	// set type to intern string incase the allocation type is intern
 	// otherwise use v's original type
-	SIType t = (SI_ALLOCATION(v) == M_INTERN) ?
-		T_INTERN_STRING :
-		v->type;
+	SIType t = v->type;
 
 	// write type
 	EffectsBuffer_WriteBytes(&t, sizeof(SIType), buff);

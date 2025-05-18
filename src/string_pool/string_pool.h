@@ -21,11 +21,6 @@ typedef struct {
 	double avg_ref_count;  // average reference count
 } StringPoolStats;
 
-// grant access to string-pool via TLS key
-// if a thread has this key set, access to the string pool is granted
-// otherwise the TLS key is NULL and access is denied
-void StringPool_grantAccessViaTLS(void* unused);
-
 // create a new StringPool
 StringPool StringPool_create(void);
 

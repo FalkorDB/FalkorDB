@@ -28,8 +28,8 @@ def assertStringPoolStats(conn, count, avg):
     objs_in_pool   = int(stats[1][0][1])
     avg_ref_count = float(stats[1][1][1])
 
-    assert(avg_ref_count, avg)
-    assert(objs_in_pool, count)
+    assert avg_ref_count == avg, f"expected avg={avg}, got {avg_ref_count}"
+    assert objs_in_pool == count, f"expected count={count}, got {objs_in_pool}"
 
 class testInternString():
     def __init__(self):
@@ -81,7 +81,6 @@ class testInternString():
         
     def test_multi_graph_string_share(self):
         # share string across multiple graphs
-        self.graph = self.db.select_graph('A')
 
         s = 'A' * 16384 # large string
 
@@ -95,13 +94,12 @@ class testInternString():
             g.query(q, {'s': s})
 
         # validate string pool stats
-        assertStringPoolStats(self.conn, 1, 52)
+        assertStringPoolStats(self.conn, 1, 51)
 
     def test_delete_shared_string(self):
         # make sure shared string isn't released prematurely
         # create a graph with multiple identical string values
 
-        self.graph = self.db.select_graph('A')
         s = 'A' * 16384 # large string
 
         # create multiple nodes all sharing the same string value
@@ -164,7 +162,6 @@ class testInternString():
     def test_nested_shared_string(self):
         # make sure shared string via containers isn't released prematurely
 
-        self.graph = self.db.select_graph('A')
         s = 'A' * 16384 # large string
 
         # create a node with a string attribute
@@ -191,8 +188,6 @@ class testInternString():
         self.graph.delete()
 
         #-----------------------------------------------------------------------
-
-        self.graph = self.db.select_graph('A')
 
         # same node containing the same string multiple times
         self.graph.query("CREATE (:A {a: intern($s), b:[intern($s)], c:intern($s)})", p)
@@ -244,6 +239,12 @@ class testInternStringPersistency():
         if VALGRIND or SANITIZER:
             self.env.skip() # sanitizer is not working correctly with bulk
 
+        # Synchronous deletion
+        self.db.config_set('ASYNC_DELETE', 'no')
+
+        # clear DB
+        self.conn.flushall()
+
     def tearDown(self):
         # clear DB
         self.conn.flushall()
@@ -261,13 +262,13 @@ class testInternStringPersistency():
             g.query(q, {'s': s})
 
         # validate string pool stats
-        assertStringPoolStats(self.conn, 1, 51)
+        assertStringPoolStats(self.conn, 1, 50)
 
         # Save RDB & Load from RDB
         self.env.dumpAndReload()
 
         # string-pool stats expected to match former stats before reload
-        assertStringPoolStats(self.conn, 1, 51)
+        assertStringPoolStats(self.conn, 1, 50)
 
 class testInternStringReplication():
     def __init__(self):
@@ -276,6 +277,7 @@ class testInternStringReplication():
             Environment.skip(None) # valgrind is not working correctly with replication
 
         self.env, self.db = Env(env='oss', useSlaves=True)
+        self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
         self.source_con = self.env.getConnection()
@@ -283,6 +285,12 @@ class testInternStringReplication():
 
         # force effects replication
         self.db.config_set('EFFECTS_THRESHOLD', 0)
+
+        # Synchronous deletion
+        self.db.config_set('ASYNC_DELETE', 'no')
+
+        # clear DB
+        self.conn.flushall()
 
     def tearDown(self):
         # clear DB

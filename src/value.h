@@ -46,17 +46,17 @@ typedef enum {
 	M_NONE     = 0,         // SIValue is not heap-allocated
 	M_SELF     = (1 << 0),  // SIValue is responsible for freeing its reference
 	M_VOLATILE = (1 << 1),  // SIValue does not own its reference and may go out of scope
-	M_CONST    = (1 << 2),  // SIValue does not own its allocation, but its access is safe
-	M_INTERN   = (1 << 3)   // SIValue shares a ref-counted allocation
+	M_CONST    = (1 << 2)   // SIValue does not own its allocation, but its access is safe
 } SIAllocation;
 
 #define T_VECTOR (T_VECTOR_F32)
 #define SI_TYPE(value) (value).type
 #define SI_ALLOCATION(value) (value)->allocation
 #define SI_NUMERIC (T_INT64 | T_DOUBLE)
+#define SI_STRING (T_STRING | T_INTERN_STRING)
 #define SI_GRAPHENTITY (T_NODE | T_EDGE)
-#define SI_ALL (T_MAP | T_NODE | T_EDGE | T_ARRAY | T_PATH | T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION | T_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_NULL | T_PTR | T_POINT | T_VECTOR)
-#define SI_VALID_PROPERTY_VALUE (T_POINT | T_ARRAY | T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION | T_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_VECTOR)
+#define SI_ALL (T_MAP | T_NODE | T_EDGE | T_ARRAY | T_PATH | T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION | SI_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_NULL | T_PTR | T_POINT | T_VECTOR)
+#define SI_VALID_PROPERTY_VALUE (T_POINT | T_ARRAY | T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION | SI_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_VECTOR)
 #define SI_INDEXABLE (SI_NUMERIC | T_BOOL | T_STRING | T_POINT | T_VECTOR)
 
 /* Any values (except durations) are comparable with other values of the same type.

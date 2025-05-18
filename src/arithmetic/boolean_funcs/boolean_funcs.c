@@ -184,6 +184,7 @@ SIValue AR_TO_BOOLEAN(SIValue *argv, int argc, void *private_data) {
 	switch (SI_TYPE(v)) {
 		case T_INT64:
 			return SI_BoolVal(v.longval);
+		case T_INTERN_STRING:
 		case T_STRING: {
 			if(!strcasecmp("true", v.stringval)) return SI_BoolVal(true);
 			else if(!strcasecmp("false", v.stringval)) return SI_BoolVal(false);
@@ -208,6 +209,7 @@ SIValue AR_ISEMPTY(SIValue *argv, int argc, void *private_data) {
 			if(array_len(argv[0].map) == 0) return SI_BoolVal(true);
 			break;
 		case T_STRING:
+		case T_INTERN_STRING:
 			if(strlen(argv[0].stringval) == 0) return SI_BoolVal(true);
 			break;
 		default:
@@ -291,7 +293,7 @@ void Register_BooleanFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, T_BOOL | T_INT64 | T_STRING | T_NULL);
+	array_append(types, T_BOOL | T_INT64 | SI_STRING | T_NULL);
 	func_desc = AR_FuncDescNew("toBoolean", AR_TO_BOOLEAN, 1, 1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 
@@ -301,8 +303,9 @@ void Register_BooleanFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, T_ARRAY | T_MAP | T_NULL | T_STRING);
+	array_append(types, T_ARRAY | T_MAP | T_NULL | SI_STRING);
 	ret_type = T_BOOL | T_NULL;
 	func_desc = AR_FuncDescNew("isempty", AR_ISEMPTY, 1, 1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 }
+
