@@ -1090,10 +1090,18 @@ size_t SIValue_memoryUsage
 		case T_DOUBLE:
 			break;
 
-		case T_STRING:
+		case T_STRING: {
+			if (v.allocation == M_DISK) {
+				v.stringval = RocksDB_get(v.stringval);
+			}
 			n += strlen(v.stringval) * sizeof(char);
+			if(v.allocation == M_DISK) {
+				// if the string is on disk, we need to free it
+				free(v.stringval);
+				v.stringval = NULL;
+			}
 			break;
-
+		}
 		case T_ARRAY:
 			l = SIArray_Length(v);
 			for(int i = 0; i < l; i++) {
