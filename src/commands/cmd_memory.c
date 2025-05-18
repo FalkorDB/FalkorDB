@@ -101,7 +101,7 @@ static size_t _SampleVector
 		ASSERT(node_found == true);
 
 		AttributeSet set = GraphEntity_GetAttributes((GraphEntity*)&n);
-		memory_usage += AttributeSet_memoryUsage(set, id);
+		memory_usage += AttributeSet_memoryUsage(set, i);
 
 		remaining_samples--;
 
