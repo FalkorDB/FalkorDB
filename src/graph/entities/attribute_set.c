@@ -948,7 +948,7 @@ size_t AttributeSet_memoryUsage
 		AttributeID id;
 		AttributeSet_GetIdx(set, i, &id, &v);
 		if(v.allocation == M_DISK) {
-			SIValue_FromDisk(node_id, id);
+			v = SIValue_FromDisk(node_id, id);
 		}
 		n += SIValue_memoryUsage(v);
 		if(v.allocation == M_DISK) {
