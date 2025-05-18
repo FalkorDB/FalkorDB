@@ -7,7 +7,6 @@
 #include "RG.h"
 #include "../redismodule.h"
 #include "../module_event_handlers.h"
-#include "../util/rocksdb.h"
 
 #include <string.h>
 
@@ -34,10 +33,6 @@ int Graph_Debug(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
 
 	if(strcmp(RedisModule_StringPtrLen(argv[1], NULL), "AUX") == 0) {
 		Debug_AUX(argv + 1, argc - 1);
-	}
-
-	if(strcmp(RedisModule_StringPtrLen(argv[1], NULL), "rocksdb") == 0) {
-		RocksDB_info();
 	}
 
 	RedisModule_ReplyWithLongLong(ctx, aux_field_counter);

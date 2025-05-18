@@ -8,6 +8,7 @@
 #include "../util/thpool/pools.h"
 #include "../graph/graphcontext.h"
 #include "../graph/graph_memoryUsage.h"
+#include "../util/rocksdb.h"
 
 #define MB (1 <<20)
 
@@ -602,7 +603,7 @@ static void _Graph_Memory
 	RedisModuleCtx *rm_ctx = RedisModule_GetThreadSafeContext(bc);
 
 	// six key value pairs
-	RedisModule_ReplyWithMap(rm_ctx, 9);
+	RedisModule_ReplyWithMap(rm_ctx, 11);
 
 	// total_graph_sz_mb
 	RedisModule_ReplyWithCString(rm_ctx, "total_graph_sz_mb");
@@ -654,6 +655,20 @@ static void _Graph_Memory
 	// indices_sz_mb
 	RedisModule_ReplyWithCString(rm_ctx, "indices_sz_mb");
 	RedisModule_ReplyWithLongLong(rm_ctx, result.indices_sz);
+
+	char *num_keys;
+	char *mem_tables_size;
+
+	RocksDB_get_info(&num_keys, &mem_tables_size);
+
+	RedisModule_ReplyWithCString(rm_ctx, "num_keys");
+	RedisModule_ReplyWithCString(rm_ctx, num_keys);
+
+	RedisModule_ReplyWithCString(rm_ctx, "mem_tables_size");
+	RedisModule_ReplyWithCString(rm_ctx, mem_tables_size);
+
+	free(num_keys);
+	free(mem_tables_size);
 
 	// unblock client
     RedisModule_UnblockClient(bc, NULL);

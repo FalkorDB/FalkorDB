@@ -143,26 +143,11 @@ char *RocksDB_get
 	return returned_value;
 }
 
-void print_info
-(
-	char *property
-) {
-	char* value = rocksdb_property_value(db, property);
-    if (value != NULL) {
-        RedisModule_Log(NULL, "notice", "%s: %s\n", property, value);
-        free(value); // Free the returned value
-    } else {
-        RedisModule_Log(NULL, "notice", "Failed to retrieve %s", property);
-    }
-}
-
-void RocksDB_info() {
+void RocksDB_get_info(char **num_keys, char **mem_tables_size) {
 	if(!use_disk_storage) return;
 
-	print_info("rocksdb.block-cache-usage");
-	print_info("rocksdb.cur-size-all-mem-tables");
-	print_info("rocksdb.estimate-table-readers-mem");
-	print_info("rocksdb.block-cache-pinned-usage");
+	*num_keys = rocksdb_property_value(db, "rocksdb.estimate-num-keys");
+	*mem_tables_size = rocksdb_property_value(db, "rocksdb.cur-size-all-mem-tables");
 }
 
 void RocksDB_cleanup() {

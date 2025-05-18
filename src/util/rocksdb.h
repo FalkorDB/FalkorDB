@@ -42,6 +42,6 @@ char *RocksDB_get(
     const char *key
 );
 
-void RocksDB_info();
+void RocksDB_get_info(char **num_keys, char **mem_tables_size);
 
 void RocksDB_cleanup();
