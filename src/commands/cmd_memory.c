@@ -657,18 +657,17 @@ static void _Graph_Memory
 	RedisModule_ReplyWithLongLong(rm_ctx, result.indices_sz);
 
 	char *num_keys;
-	char *mem_tables_size;
+	uint64_t disk_usage;
 
-	RocksDB_get_info(&num_keys, &mem_tables_size);
+	RocksDB_get_info(&num_keys, &disk_usage);
 
 	RedisModule_ReplyWithCString(rm_ctx, "num_keys");
 	RedisModule_ReplyWithCString(rm_ctx, num_keys);
 
-	RedisModule_ReplyWithCString(rm_ctx, "mem_tables_size");
-	RedisModule_ReplyWithCString(rm_ctx, mem_tables_size);
+	RedisModule_ReplyWithCString(rm_ctx, "disk_usage_mb");
+	RedisModule_ReplyWithLongLong(rm_ctx, disk_usage / MB);
 
 	free(num_keys);
-	free(mem_tables_size);
 
 	// unblock client
     RedisModule_UnblockClient(bc, NULL);

@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #include "redismodule.h"
 #include "rmalloc.h"
 #include "../configuration/config.h"
@@ -143,11 +145,40 @@ char *RocksDB_get
 	return returned_value;
 }
 
-void RocksDB_get_info(char **num_keys, char **mem_tables_size) {
+uint64_t get_sst_file_size(const char *directory) {
+    struct dirent *entry;
+    struct stat file_stat;
+    uint64_t total_size = 0;
+
+    DIR *dir = opendir(directory);
+    if (!dir) {
+        perror("Failed to open directory");
+        return 0;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strstr(entry->d_name, ".sst")) { // Check if file is an SST file
+            char file_path[1024];
+            snprintf(file_path, sizeof(file_path), "%s/%s", directory, entry->d_name);
+
+            if (stat(file_path, &file_stat) == 0) {
+                total_size += file_stat.st_size;
+            }
+        }
+    }
+
+    closedir(dir);
+    return total_size;
+}
+
+void RocksDB_get_info(char **num_keys, uint64_t *disk_usage) {
 	if(!use_disk_storage) return;
 
 	*num_keys = rocksdb_property_value(db, "rocksdb.estimate-num-keys");
-	*mem_tables_size = rocksdb_property_value(db, "rocksdb.cur-size-all-mem-tables");
+	char *path = NULL;
+	asprintf(&path, "%s_%d", ROCKSDB_PATH_BASE, getpid());
+	*disk_usage = get_sst_file_size(path);
+	free(path);
 }
 
 void RocksDB_cleanup() {
