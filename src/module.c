@@ -249,6 +249,11 @@ int RedisModule_OnLoad
 		return REDISMODULE_ERR;
 	}
 
+	if(RedisModule_CreateCommand(ctx, "graph.MEMORY", Graph_Memory,
+				"readonly", 2, 2, 0) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
 	if(BoltApi_Register(ctx) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
