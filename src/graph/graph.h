@@ -100,6 +100,34 @@ void Graph_ApplyAllPending
 	bool force_flush    // force sync of delta matrices
 );
 
+// lock all matrices:
+// 1. adjacency matrix
+// 2. label matrices
+// 3. node labels matrix
+// 4. relation matrices
+//
+// currently only used just before forking for the purpose of
+// taking a snapshot
+void Graph_LockAllMatrices
+(
+	Graph *g  // graph to lock
+);
+
+// the counter-part of GraphLockAllMatrices
+// unlocks all matrices:
+//
+// 1. adjacency matrix
+// 2. label matrices
+// 3. node labels matrix
+// 4. relation matrices
+//
+// currently only used after a fork had been issued on both
+// the parent and child processes
+void Graph_UnlockAllMatrices
+(
+	Graph *g  // graph to unlock
+);
+
 // checks to see if graph has pending operations
 bool Graph_Pending
 (
