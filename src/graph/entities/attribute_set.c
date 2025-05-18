@@ -947,11 +947,11 @@ size_t AttributeSet_memoryUsage
 		SIValue v;
 		AttributeID id;
 		AttributeSet_GetIdx(set, i, &id, &v);
-		if(v.allocation == M_DISK) {
+		if(v.type == T_STRING && v.stringval == NULL) {
 			v = SIValue_FromDisk(node_id, id);
 		}
 		n += SIValue_memoryUsage(v);
-		if(v.allocation == M_DISK) {
+		if(v.type == T_STRING && v.stringval == NULL) {
 			free(v.stringval);
 			v.stringval = NULL;
 		}
