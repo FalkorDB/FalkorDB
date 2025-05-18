@@ -10,11 +10,12 @@
 
 #include "rax.h"
 #include "GraphBLAS.h"
+#include "tensor/tensor.h"
 #include "entities/node.h"
 #include "entities/edge.h"
 #include "../redismodule.h"
 #include "graph_statistics.h"
-#include "tensor/tensor.h"
+#include "../commands/cmd_memory.h"
 #include "delta_matrix/delta_matrix.h"
 #include "../util/datablock/datablock.h"
 #include "../util/datablock/datablock_iterator.h"
@@ -98,6 +99,34 @@ void Graph_ApplyAllPending
 (
 	Graph *g,           // graph to sync
 	bool force_flush    // force sync of delta matrices
+);
+
+// lock all matrices:
+// 1. adjacency matrix
+// 2. label matrices
+// 3. node labels matrix
+// 4. relation matrices
+//
+// currently only used just before forking for the purpose of
+// taking a snapshot
+void Graph_LockAllMatrices
+(
+	Graph *g  // graph to lock
+);
+
+// the counter-part of GraphLockAllMatrices
+// unlocks all matrices:
+//
+// 1. adjacency matrix
+// 2. label matrices
+// 3. node labels matrix
+// 4. relation matrices
+//
+// currently only used after a fork had been issued on both
+// the parent and child processes
+void Graph_UnlockAllMatrices
+(
+	Graph *g  // graph to unlock
 );
 
 // checks to see if graph has pending operations
@@ -250,6 +279,14 @@ void Graph_DeleteEdges
 bool Graph_EntityIsDeleted
 (
 	const GraphEntity *e
+);
+
+// populate 'nodes' with deleted node ids
+void Graph_DeletedNodes
+(
+	const Graph *g,  // graph
+	NodeID **nodes,  // [output] array of deleted node IDs
+	uint64_t *n      // [output] number of deleted node IDs
 );
 
 // all graph matrices are required to be squared NXN
@@ -439,16 +476,6 @@ Delta_Matrix Graph_GetNodeLabelMatrix
 Delta_Matrix Graph_GetZeroMatrix
 (
 	const Graph *g
-);
-
-// get graph's memory usage
-void Graph_memoryUsage
-(
-	const Graph *g,           // graph
-	size_t *lbl_matrices_sz,  // [output] label matrices memory usage
-	size_t *rel_matrices_sz,  // [output] relation matrices memory usage
-	size_t *node_storage_sz,  // [output] node storage memory usage
-	size_t *edge_storage_sz   // [output] edge storage memory usage
 );
 
 // free partial graph
