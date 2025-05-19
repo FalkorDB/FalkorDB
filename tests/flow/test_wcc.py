@@ -28,6 +28,9 @@ class testWCC(FlowTestsBase):
         self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
+    def tearDown(self):
+        self.graph.delete()
+
     def test_invalid_invocation(self):
         invalid_queries = [
                 """CALL algo.WCC({nodeLabels: 'Person'})""",         # non-array nodeLabels parameter
@@ -52,12 +55,6 @@ class testWCC(FlowTestsBase):
 
     def test_wcc_on_empty_graph(self):
         """Test WCC algorithm behavior on an empty graph"""
-        # first, ensure the graph is empty
-        self.graph.query("MATCH (n) DELETE n")
-        
-        # verify graph is empty
-        result = self.graph.query("MATCH (n) RETURN count(n) as count")
-        self.env.assertEqual(result.result_set[0][0], 0)
         
         # run WCC on empty graph
         result = self.graph.query("CALL algo.WCC(null)")
@@ -68,9 +65,6 @@ class testWCC(FlowTestsBase):
 
     def test_wcc_on_unlabeled_graph(self):
         """Test WCC algorithm on unlabeled nodes with multiple connected components"""
-
-        # clear the graph
-        self.graph.query("MATCH (n) DELETE n")
 
         # Create an unlabeled graph with multiple connected components
         # - Component 1: nodes 1-2-3 forming a path
@@ -117,8 +111,6 @@ class testWCC(FlowTestsBase):
 
     def test_wcc_with_different_relationship_types(self):
         """Test WCC algorithm with different relationship type filters"""
-        # Clear the graph
-        self.graph.query("MATCH (n) DELETE n")
 
         # Create an unlabeled graph with two relationship types
         # Relationship type A:
@@ -163,8 +155,8 @@ class testWCC(FlowTestsBase):
         # Check specific node memberships
         # Find the single-node components (they could be either 6 or 7)
         isolated_nodes = [components_A[0][0], components_A[1][0]]
-        self.env.assertTrue(6 in isolated_nodes)
-        self.env.assertTrue(7 in isolated_nodes)
+        self.env.assertContains(6, isolated_nodes)
+        self.env.assertContains(7, isolated_nodes)
 
         # The component with 2 nodes should be 4,5
         self.env.assertEqual(components_A[2], [4, 5])
@@ -195,8 +187,8 @@ class testWCC(FlowTestsBase):
         # Find the two-node components
         two_node_components = [c for c in components_B if len(c) == 2]
         # One should be [3,4] and the other [5,6]
-        self.env.assertTrue([3, 4] in two_node_components)
-        self.env.assertTrue([5, 6] in two_node_components)
+        self.env.assertContains([3, 4], two_node_components)
+        self.env.assertContains([5, 6], two_node_components)
 
         # Test 3: Using both relationship types A and B
         result_AB = self.graph.query("CALL algo.WCC({relationshipTypes: ['A', 'B']})")
@@ -217,8 +209,6 @@ class testWCC(FlowTestsBase):
 
     def test_wcc_with_different_node_labels(self):
         """Test WCC algorithm with different node label filters"""
-        # Clear the graph
-        self.graph.query("MATCH (n) DELETE n")
 
         # Create a graph with multiple labeled and unlabeled nodes
         # - L0 labeled nodes: n1, n2, n3
@@ -279,8 +269,6 @@ class testWCC(FlowTestsBase):
 
     def test_wcc_with_combined_labels_and_relationships(self):
         """Test WCC algorithm with combinations of node labels and relationship types"""
-        # Clear the graph
-        self.graph.query("MATCH (n) DELETE n")
 
         # Create a complex graph with:
         # - Multiple node labels: L1, L2, and unlabeled nodes
@@ -314,14 +302,12 @@ class testWCC(FlowTestsBase):
             (n9)-[:R2]->(n6)
         """)
 
-        # Helper function to extract components from query results
-
         # Test Cases:
 
         # Test 1: Only label L1 and only relationship type R1
         result = self.graph.query("CALL algo.WCC({nodeLabels: ['L1'], relationshipTypes: ['R1']})")
         components = get_components(result)
-        # Expected: One component with nodes 1,2,3
+        # Expected: One component with nodes 1,2,3,9
         self.env.assertEqual(len(components), 1)
         self.env.assertEqual(components, [[1, 2, 3, 9]])
 
@@ -366,4 +352,8 @@ class testWCC(FlowTestsBase):
         # Expected: One component with all nodes 1-9
         self.env.assertEqual(len(components), 1)
         self.env.assertEqual(components[0], [1, 2, 3, 4, 5, 6, 7, 8, 9])
+
+# TODO: make sure we can run WCC on a random generated graph
+# test to the best of our abilities e.g. when specifying a label make sure all ndoes
+# under that labels show up
 

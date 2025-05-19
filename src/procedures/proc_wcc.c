@@ -104,8 +104,8 @@ static bool _read_config
 			const char *label = lbl.stringval;
 			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 			if(s == NULL) {
-				ErrorCtx_SetError("wcc configuration, unknown label %s", label);
-				goto error;
+				// ignore non-existing labels
+				continue;
 			}
 
 			LabelID lbl_id = Schema_GetID(s);
@@ -134,8 +134,8 @@ static bool _read_config
 			const char *relation = rel.stringval;
 			Schema *s = GraphContext_GetSchema(gc, relation, SCHEMA_EDGE);
 			if(s == NULL) {
-				ErrorCtx_SetError("wcc configuration, unknown relationship-type %s", relation);
-				goto error;
+				// ignore non-existing relationships
+				continue;
 			}
 
 			RelationID rel_id = Schema_GetID(s);
@@ -217,12 +217,7 @@ ProcedureResult Proc_WCCInvoke
 	Graph *g = QueryCtx_GetGraph();
 	WCC_Context *pdata = rm_calloc(1, sizeof(WCC_Context));
 
-	pdata->g               = g;
-	pdata->N               = NULL;
-	pdata->it              = NULL;
-	pdata->components      = NULL;
-	pdata->yield_node      = NULL;
-	pdata->yield_component = NULL;
+	pdata->g = g;
 
 	_process_yield(pdata, yield);
 
@@ -240,6 +235,7 @@ ProcedureResult Proc_WCCInvoke
 	bool sym     = true;
 	bool compact = true;
 
+	// TODO: think of a better name
 	info = Build_Matrix(&A, &pdata->N, g, lbls, array_len(lbls), rels,
 			array_len(rels), sym, compact);
 

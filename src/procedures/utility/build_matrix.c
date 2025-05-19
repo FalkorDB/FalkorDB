@@ -47,6 +47,8 @@ GrB_Info Build_Matrix
 	ASSERT(D != NULL);
 
 	// export relation matrix to A
+	// TODO: extend Delta_Matrix_export to include a exported matrix type
+	// cast if needed
 	info = Delta_Matrix_export(&_A, D);
 	ASSERT(info == GrB_SUCCESS);
 
