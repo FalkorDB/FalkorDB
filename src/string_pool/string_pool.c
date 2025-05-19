@@ -13,6 +13,7 @@
 // StringPool structure
 struct OpaqueStringPool {
 	dict *ht;                  // hashtable
+	pthread_rwlock_t rwlock;   // read-write lock scoped to this specific graph
 	uint64_t total_ref_count;  // number of references
 };
 
@@ -73,6 +74,23 @@ StringPool StringPool_create(void) {
 	pool->ht = HashTableCreate(&_type);
 	pool->total_ref_count = 0;
 
+	// create a read write lock which favors writes
+	// specify prefer write in lock creation attributes
+	int res = 0;
+
+	pthread_rwlockattr_t attr;
+	res = pthread_rwlockattr_init(&attr);
+	ASSERT(res == 0);
+
+#if !defined(__APPLE__) && !defined(__FreeBSD__)
+	int pref = PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP;
+	res = pthread_rwlockattr_setkind_np(&attr, pref);
+	ASSERT(res == 0);
+#endif
+
+	res = pthread_rwlock_init(&pool->rwlock, &attr);
+	ASSERT(res == 0) ;
+
 	return pool;
 }
 
@@ -90,10 +108,34 @@ char *StringPool_rent
 	ASSERT(pool != NULL);
 
 	char *ret;            // returned string
+	uint32_t *count;
+	dictEntry *de;
+	dict *ht = pool->ht;
 	dictEntry *existing;  // existing dict entry
 
-	dict *ht = pool->ht;
-	dictEntry *de = HashTableAddRaw(ht, (void*)str, &existing);
+	// first attempt: try to find existing entry with read lock
+    pthread_rwlock_rdlock(&pool->rwlock);
+
+	de = HashTableFind(ht, (void*)str);
+
+	if(de != NULL) {
+        // found existing entry - increment reference count atomically
+        uint32_t *count = (uint32_t*)HashTableEntryMetadata(de);
+        __atomic_fetch_add(count, 1, __ATOMIC_SEQ_CST);
+        __atomic_fetch_add(&pool->total_ref_count, 1, __ATOMIC_SEQ_CST);
+
+        pthread_rwlock_unlock(&pool->rwlock);
+        ret = (char*)HashTableGetKey(de);
+        return ret;
+    }
+    pthread_rwlock_unlock(&pool->rwlock);
+
+	// entry not found - need write lock for insertion
+	pthread_rwlock_wrlock(&pool->rwlock);
+
+	// double-check: another thread might have inserted while we waited
+	de = HashTableAddRaw(ht, (void*)str, &existing);
+
 	if(de != NULL) {
 		// new string
 		HashTableSetKey(ht, de, rm_strdup(str));
@@ -101,43 +143,14 @@ char *StringPool_rent
 		de = existing;
 	}
 
-	// increase string reference count
-	uint32_t *count = (uint32_t*)HashTableEntryMetadata(de);
-	*count = *count + 1;
+	count = (uint32_t*)HashTableEntryMetadata(de);
+	__atomic_fetch_add(count, 1, __ATOMIC_SEQ_CST);
 
-	// increase total reference count
-	pool->total_ref_count++;
+	// update total reference count
+	__atomic_fetch_add(&pool->total_ref_count, 1, __ATOMIC_SEQ_CST);
 
-	ret = (char*)HashTableGetKey(de);
-	return ret;
-}
-
-// add string to pool in case it doesn't already exists
-// the string isn't cloned
-char *StringPool_rentNoClone
-(
-	StringPool pool,  // string pool
-	char *str         // string to add
-) {
-	// validate arguments
-	ASSERT(str  != NULL);	
-	ASSERT(pool != NULL);
-
-	char *ret;            // returned string
-	dictEntry *existing;  // existing dict entry
-
-	dict *ht = pool->ht;
-	dictEntry *de = HashTableAddRaw(ht, (void*)str, &existing);
-	if(de == NULL) {
-		de = existing;
-	}
-
-	// increase string reference count
-	uint32_t *count = (uint32_t*) HashTableEntryMetadata(de);
-	*count = *count + 1;
-
-	// increase total reference count
-	pool->total_ref_count++;
+	// release write lock
+	pthread_rwlock_unlock(&pool->rwlock);
 
 	ret = (char*)HashTableGetKey(de);
 	return ret;
@@ -155,28 +168,45 @@ void StringPool_return
 	ASSERT(str  != NULL);	
 	ASSERT(pool != NULL);
 
+	dictEntry *de;
 	dict *ht = pool->ht;
-	dictEntry *de = HashTableFind(ht, str);
+    uint32_t old_count;
 
-	if(unlikely(de == NULL)) {
-		// str is missing from pool
-		return;
-	}
+	// hold read lock while accessing the entry
+    pthread_rwlock_rdlock(&pool->rwlock);
 
-	// get reference count
-	uint32_t *count = (uint32_t*)HashTableEntryMetadata(de);
+	de = HashTableFind(ht, str);
+	ASSERT(de != NULL);
+
+    pthread_rwlock_unlock(&pool->rwlock);
 
 	// decrease reference count
-	*count = *count -1;
+	uint32_t *count = (uint32_t*)HashTableEntryMetadata(de);
+	old_count = __atomic_fetch_sub(count, 1, __ATOMIC_SEQ_CST);
 
-	// decrease total reference count
-	pool->total_ref_count--;
+	if(old_count == 1) {
+		// acquire write lock for potential deletion
+		pthread_rwlock_wrlock(&pool->rwlock);
 
-	// free entry if reference count reached 0
-	if(unlikely(*count == 0)) {
-		int res = HashTableDelete(ht, (const void *)str);
-		ASSERT(res == DICT_OK);
+		// double-check: find entry again and verify count is still 0
+		de = HashTableFind(ht, str);
+		if(de != NULL) {
+			count = (uint32_t*)HashTableEntryMetadata(de);
+            if(*count == 0) {
+                // Safe to delete
+                int res = HashTableDelete(ht, (const void *)str);
+                ASSERT(res == DICT_OK);
+            }
+			// if count != 0, another thread incremented it, so don't delete
+		}
+		// if de == NULL, another thread already deleted it
+
+		// release write lock
+		pthread_rwlock_unlock(&pool->rwlock);
 	}
+
+	// update total reference count
+	__atomic_fetch_sub(&pool->total_ref_count, 1, __ATOMIC_SEQ_CST);
 }
 
 // get string pool statistics
@@ -214,6 +244,9 @@ void StringPool_free
 
 	// free hashtable
 	HashTableRelease(p->ht);
+
+	int res = pthread_rwlock_destroy(&p->rwlock);
+	ASSERT(res == 0);
 
 	rm_free(*pool);
 
