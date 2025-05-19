@@ -239,6 +239,16 @@ inline bool DataBlock_ItemIsDeleted(void *item) {
 	return IS_ITEM_DELETED(header);
 }
 
+// returns datablock's deleted indices array
+const uint64_t *DataBlock_DeletedItems
+(
+	const DataBlock *dataBlock
+) {
+	ASSERT(dataBlock != NULL);
+
+	return (const uint64_t *) dataBlock->deletedIdx;
+}
+
 //------------------------------------------------------------------------------
 // Out of order functionality
 //------------------------------------------------------------------------------
@@ -269,6 +279,18 @@ void DataBlock_MarkAsDeletedOutOfOrder
 	// delete
 	MARK_HEADER_AS_DELETED(item_header);
 	array_append(dataBlock->deletedIdx, idx);
+}
+
+size_t DataBlock_memoryUsage
+(
+	const DataBlock *dataBlock
+) {
+	ASSERT(dataBlock != NULL);
+
+	// datablock size = deleted index array size +
+	//                  (number of blocks * block size)
+	return array_len(dataBlock->deletedIdx) * sizeof(uint64_t) +
+		dataBlock->blockCount * (dataBlock->itemSize * dataBlock->blockCap);
 }
 
 void DataBlock_Free(DataBlock *dataBlock) {

@@ -417,6 +417,10 @@ size_t AttributeSet_memoryUsage
 (
 	const AttributeSet set  // set to compute memory consumption of
 ) {
+	if(set == NULL) {
+		return 0;
+	}
+
 	size_t   n = 0;  // memory consumption
 	uint16_t l = AttributeSet_Count(set);
 
@@ -428,7 +432,7 @@ size_t AttributeSet_memoryUsage
 	}
 
 	// account for AttributeIDs
-	n += l * sizeof(AttributeID);
+	n += (l * sizeof(AttributeID)) + sizeof(set->attr_count);
 
 	return n;
 }
