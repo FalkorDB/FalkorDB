@@ -238,7 +238,7 @@ StringPoolStats StringPool_stats
 
 	if(n_entries > 0) {
 		// read total_ref_count atomically to avoid stale values
-		total_refs = __atomic_load_n(&pool->total_ref_count, __ATOMIC_RELAXED);
+		total_refs = __atomic_load_n(&pool->total_ref_count, __ATOMIC_SEQ_CST);
         avg_ref_count = (double)total_refs / n_entries;
     }
 
