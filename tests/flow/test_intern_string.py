@@ -138,20 +138,28 @@ class testInternString():
         # create first node
         q = "CREATE ({value: intern($s)})"
         res = self.graph.query(q, p)
+        assertStringPoolStats(self.conn, 1, 1)
 
         # create multiple graphs
-        node_count = 50
         graphs = []
-        for _ in range(0, 50):
-            g = self.db.select_graph(random_string())
+        node_count = 50
+        for i in range(0, node_count):
+            r = random_string()
+            g = self.db.select_graph(r)
             graphs.append(g)
             res = g.query(q, p)
+            assertStringPoolStats(self.conn, 1, i + 2)
+
+        assertStringPoolStats(self.conn, 1, node_count + 1)
 
         for i, g in enumerate(graphs):
-            g.query("MATCH (n) delete n")
+            res = g.query("MATCH (n) delete n")
+            self.env.assertEquals(res.nodes_deleted, 1)
 
             # validate string pool stats
             assertStringPoolStats(self.conn, 1, node_count - i)
+
+        assertStringPoolStats(self.conn, 1, 1)
 
         # make sure string is valid
         value = self.graph.query("MATCH (n) RETURN n.value").result_set[0][0]
