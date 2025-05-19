@@ -125,6 +125,7 @@ char *StringPool_rent
         __atomic_fetch_add(&pool->total_ref_count, 1, __ATOMIC_SEQ_CST);
 
         pthread_rwlock_unlock(&pool->rwlock);
+
         ret = (char*)HashTableGetKey(de);
         return ret;
     }
@@ -214,18 +215,24 @@ StringPoolStats StringPool_stats
 (
 	const StringPool pool  // string pool
 ) {
+	ASSERT(pool != NULL);
+
 	StringPoolStats stats;  // statistics object to populate
 
 	uint64_t n_entries   = 0;
+	uint64_t total_refs  = 0;  // read atomically
 	double avg_ref_count = 0;
 
-	if(pool != NULL) {
-		n_entries = HashTableElemCount(pool->ht);
+	// get hash table entry count under read lock
+	pthread_rwlock_rdlock(&pool->rwlock);
+	n_entries = HashTableElemCount(pool->ht);
+	pthread_rwlock_unlock(&pool->rwlock);
 
-		if(n_entries > 0) {
-			avg_ref_count = (double)pool->total_ref_count / n_entries;
-		}
-	}
+	if(n_entries > 0) {
+		// read total_ref_count atomically to avoid stale values
+		total_refs = __atomic_load_n(&pool->total_ref_count, __ATOMIC_RELAXED);
+        avg_ref_count = (double)total_refs / n_entries;
+    }
 
 	stats.n_entries     = n_entries;
 	stats.avg_ref_count = avg_ref_count;

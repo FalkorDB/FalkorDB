@@ -45,6 +45,8 @@ class testInternString():
         self.conn.flushall()
         self.graph = self.db.select_graph(GRAPH_ID)
 
+        assertStringPoolStats(self.conn, 0, 0)
+
     def used_memory(self):
         # Purge memory
         self.conn.execute_command('MEMORY PURGE')
@@ -105,7 +107,9 @@ class testInternString():
         # create multiple nodes all sharing the same string value
         q = "UNWIND range(0, 20) AS x CREATE ({value: intern($s)})"
         p = {'s': s}
-        res = self.graph.query(q, p)
+        self.graph.query(q, p)
+
+        assertStringPoolStats(self.conn, 1, 21)
 
         # delete nodes one by one, make sure shared string isn't freed prematurely
         node_count = self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0]
@@ -249,6 +253,8 @@ class testInternStringPersistency():
         # clear DB
         self.conn.flushall()
 
+        assertStringPoolStats(self.conn, 0, 0)
+
     def testInternStringPersistent(self):
         # populate DB
         s = 'A' * 16384 # large string
@@ -287,7 +293,8 @@ class testInternStringReplication():
         self.db.config_set('EFFECTS_THRESHOLD', 0)
 
         # Synchronous deletion
-        self.db.config_set('ASYNC_DELETE', 'no')
+        self.source_con.execute_command("GRAPH.CONFIG", "SET", 'ASYNC_DELETE', 'no')
+        self.replica_con.execute_command("GRAPH.CONFIG", "SET", 'ASYNC_DELETE', 'no')
 
         # clear DB
         self.conn.flushall()
@@ -296,6 +303,9 @@ class testInternStringReplication():
         # clear DB
         self.source_con.flushall()
         self.source_con.execute_command("WAIT", "1", "0")
+
+        assertStringPoolStats(self.source_con, 0, 0)
+        assertStringPoolStats(self.replica_con, 0, 0)
 
     def query_and_wait(self, q, p={}):
         res = self.graph.query(q, p)
