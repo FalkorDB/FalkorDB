@@ -398,22 +398,18 @@ static void _EstimateEdgeAttributeMemory
 		Edge edge;
 		GrB_Index id;
 		GrB_Info info;
-		Delta_Matrix R;
-		Delta_MatrixTupleIter it;
+		Tensor R;
+		TensorIterator it;
 		size_t relation_memory_usage = 0;
 
 		// attach iterator to the current relation matrix
 		R = Graph_GetRelationMatrix(g, r, false);
 
-		info = Delta_MatrixTupleIter_attach(&it, R);
-		ASSERT(info == GrB_SUCCESS);
-
-		info = Delta_MatrixTupleIter_iterate_range(&it, 0, UINT64_MAX);
-		ASSERT(info == GrB_SUCCESS);
+		TensorIterator_ScanRange(&it, R, 0, UINT64_MAX, false);
 
 		// iterate over relation matrix, limit #iterations to simple_size
-		while(Delta_MatrixTupleIter_next_UINT64(&it, NULL, NULL, &id)
-				== GrB_SUCCESS && edges_sample_size > 0) {
+		while(TensorIterator_next(&it, NULL, NULL, &id, NULL) &&
+				edges_sample_size > 0) {
 			// compute the memory consumption of the current edge
 			bool res = Graph_GetEdge(g, id, &edge);
 			ASSERT(res == true);
@@ -423,7 +419,6 @@ static void _EstimateEdgeAttributeMemory
 			relation_memory_usage += AttributeSet_memoryUsage(set);
 			edges_sample_size--;
 		}
-		Delta_MatrixTupleIter_detach(&it);
 
 		// set number of sampled edges
 		int64_t n_sampled_edges = sample_size - edges_sample_size;
