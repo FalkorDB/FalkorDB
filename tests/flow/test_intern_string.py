@@ -65,7 +65,6 @@ class testInternString():
 
     def test_single_graph_string_share(self):
         # create a graph with multiple identical string values
-        base_line = self.used_memory()
         assertStringPoolStats(self.conn, 0, 0)
 
         # create first node
@@ -90,7 +89,7 @@ class testInternString():
 
         # create first node
         q = "CREATE ({value: intern($s)})"
-        res = self.graph.query(q, {'s': LARGE_STRING})
+        self.graph.query(q, {'s': LARGE_STRING})
 
         # create multiple EMPTY graphs
         for _ in range(0, 10):
@@ -231,11 +230,11 @@ class testInternString():
         # validate string pool stats
         assertStringPoolStats(self.conn, 0, 0)
 
-    def test_intermidate_intern_string(self):
-        # make sure intermidate intern string are removed
+    def test_intermediate_intern_string(self):
+        # make sure intermediate intern string are removed
 
         # create a node with a string attribute
-        self.graph.query("WITH intern('ABCDEF') AS intermidate RETURN intermidate")
+        self.graph.query("WITH intern('ABCDEF') AS intermediate RETURN intermediate")
 
         # validate string pool stats
         assertStringPoolStats(self.conn, 0, 0)
@@ -265,6 +264,7 @@ class testInternString():
             res = self.graph.query(q)
             self.env.assertFalse("query should fail")
         except:
+            # expecting an error
             pass
 
         # validate node's intern string was restored
@@ -371,7 +371,10 @@ class testInternStringReplication():
         assertStringPoolStats(self.source_con, 0, 0)
         assertStringPoolStats(self.replica_con, 0, 0)
 
-    def query_and_wait(self, q, p={}):
+    def query_and_wait(self, q, p=None):
+        if p is None:
+            p = {}
+
         res = self.graph.query(q, p)
 
         # the WAIT command forces master slave sync to complete
@@ -391,35 +394,35 @@ class testInternStringReplication():
         # create first node
         p = {'s': s}
         q = "CREATE ({value: intern($s)})"
-        res = self.query_and_wait(q, p)
+        self.query_and_wait(q, p)
 
         assertStringPoolStats(self.source_con, 1, 1)
         assertStringPoolStats(self.replica_con, 1, 1)
 
         # replicate an addition of an intern string
         q = "MATCH (n) SET n.s = intern($s)"
-        res = self.query_and_wait(q, p)
+        self.query_and_wait(q, p)
 
         assertStringPoolStats(self.source_con, 1, 2)
         assertStringPoolStats(self.replica_con, 1, 2)
 
         # replicate deletion of an intern string
         q = "MATCH (n) SET n.s = null"
-        res = self.query_and_wait(q)
+        self.query_and_wait(q)
 
         assertStringPoolStats(self.source_con, 1, 1)
         assertStringPoolStats(self.replica_con, 1, 1)
 
         # replicate update of an intern string
         q = "MATCH (n) SET n.value = intern('intern-string')"
-        res = self.query_and_wait(q)
+        self.query_and_wait(q)
 
         assertStringPoolStats(self.source_con, 1, 1)
         assertStringPoolStats(self.replica_con, 1, 1)
 
-        # replicae deletion if a node
+        # replicate deletion if a node
         q = "MATCH (n) DELETE n"
-        res = self.query_and_wait(q)
+        self.query_and_wait(q)
 
         assertStringPoolStats(self.source_con, 0, 0)
         assertStringPoolStats(self.replica_con, 0, 0)

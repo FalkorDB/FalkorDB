@@ -97,7 +97,10 @@ StringPool StringPool_create(void) {
 #endif
 
 	res = pthread_rwlock_init(&pool->rwlock, &attr);
-	ASSERT(res == 0) ;
+	ASSERT(res == 0);
+
+	res = pthread_rwlockattr_destroy(&attr);
+	ASSERT(res == 0);
 
 	return pool;
 }
