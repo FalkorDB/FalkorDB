@@ -126,8 +126,8 @@ char *StringPool_rent
 	if(de != NULL) {
         // found existing entry - increment reference count atomically
         uint32_t *count = (uint32_t*)HashTableEntryMetadata(de);
-        __atomic_fetch_add(count, 1, __ATOMIC_SEQ_CST);
-        __atomic_fetch_add(&pool->total_ref_count, 1, __ATOMIC_SEQ_CST);
+        __atomic_fetch_add(count, 1, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&pool->total_ref_count, 1, __ATOMIC_RELAXED);
 
         pthread_rwlock_unlock(&pool->rwlock);
 
@@ -154,14 +154,14 @@ char *StringPool_rent
 		// another thread inserted it before us
 		de = existing;
 		count = (uint32_t*)HashTableEntryMetadata(de);
-		__atomic_fetch_add(count, 1, __ATOMIC_SEQ_CST);
+		__atomic_fetch_add(count, 1, __ATOMIC_RELAXED);
 	}
 
 	// release write lock
 	pthread_rwlock_unlock(&pool->rwlock);
 
 	// update total reference count
-	__atomic_fetch_add(&pool->total_ref_count, 1, __ATOMIC_SEQ_CST);
+	__atomic_fetch_add(&pool->total_ref_count, 1, __ATOMIC_RELAXED);
 
 	char *stored_str = (char*)HashTableGetKey(de);
 	return stored_str;
@@ -192,7 +192,7 @@ void StringPool_return
 
 	// decrease reference count
 	uint32_t *count = (uint32_t*)HashTableEntryMetadata(de);
-	uint32_t old_count = __atomic_fetch_sub(count, 1, __ATOMIC_SEQ_CST);
+	uint32_t old_count = __atomic_fetch_sub(count, 1, __ATOMIC_RELAXED);
 
 	// if this was the last reference, delete the entry
 	if(old_count == 1) {
@@ -217,7 +217,7 @@ void StringPool_return
 	}
 
 	// update total reference count
-	__atomic_fetch_sub(&pool->total_ref_count, 1, __ATOMIC_SEQ_CST);
+	__atomic_fetch_sub(&pool->total_ref_count, 1, __ATOMIC_RELAXED);
 }
 
 // get string pool statistics
@@ -238,7 +238,7 @@ StringPoolStats StringPool_stats
 
 	if(n_entries > 0) {
 		// read total_ref_count atomically to avoid stale values
-		total_refs = __atomic_load_n(&pool->total_ref_count, __ATOMIC_SEQ_CST);
+		total_refs = __atomic_load_n(&pool->total_ref_count, __ATOMIC_RELAXED);
         avg_ref_count = (double)total_refs / n_entries;
     }
 
