@@ -1,0 +1,22 @@
+name: betweenness-10hop
+description: "
+  1000 nodes -> S0 -> 1000 nodes 
+  1000 nodes -> S1 -> S0
+  "
+db_config:
+  init_commands:
+    - ["GRAPH.QUERY", "graph", "CREATE (s0:S0) WITH * UNWIND range(1, 1000) AS x CREATE (:S)-[:R]->(s0)-[:R]->(:S)"]
+    - ["GRAPH.QUERY", "graph", "CREATE (s1:S1) WITH * UNWIND range(1, 1000) AS x CREATE (:S)-[:R]->(s1)"]
+    - ["GRAPH.QUERY", "graph", "MATCH (s0:S0), (s1:S1) WITH * CREATE (s1)-[:R]->(s0)"]
+
+
+parameters:
+  num_clients: 32
+  num_requests: 12800
+  random_int_max: 262016
+  random_seed: 12345
+  queries:
+    - query: 'CYPHER Id1=__rand_int__ CALL algo.betweenness({samplingSeed: $Id1, 
+              samplingSize: 100}) YIELD node, score RETURN node.name, score'
+      ratio: 1.0
+
