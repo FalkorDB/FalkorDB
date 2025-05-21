@@ -498,3 +498,27 @@ class testGraphMemoryUsage(FlowTestsBase):
         # datablock remaind the same, delete array index grow
         self.env.assertGreater(res.node_block_storage_sz_mb, double_sized_graph_node_storage)
 
+    def test_graph_with_multi_edges(self):
+        """test memory consumption of a graph containing multi-edges"""
+
+        # create a graph with multi-edges
+        q = """CREATE (a), (b)
+               WITH a, b
+               UNWIND range(0, 250000) AS x
+               CREATE (a)-[:R {v:x}]->(b)"""
+        self.graph.query(q)
+
+        # delete a few edges
+        q = """MATCH ()-[e:R]->()
+               WITH e
+               LIMIT 5
+               DELETE e"""
+        self.graph.query(q)
+
+        res = self._graph_memory_usage()
+
+        # validate graph's memory consumption
+        self.env.assertGreater(res.total_graph_sz_mb, 0)
+        self.env.assertGreater(res.edge_block_storage_sz_mb, 0)
+        self.env.assertGreater(res.edge_attributes_by_type_storage_sz_mb[1], 0)
+
