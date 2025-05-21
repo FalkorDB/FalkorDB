@@ -1,0 +1,16 @@
+name: GRAPH500-SCALE_18-WCC
+description: "Dataset: Synthetic graph500 network of scale 18 (262144x262144, 4194304
+  edges) - 262017 nodes with label 'Node' - 4194304 relations of type 'IS_CONNECTED'
+  - Indexed properties: - exact-match: Node; [external_id] "
+db_config:
+  dataset: datasets/graph500.rdb
+  dataset_load_timeout_secs: 180
+parameters:
+  graph: graph500-scale18-ef16
+  num_clients: 32
+  num_requests: 1000
+  queries:
+    - query: 'CALL algo.WCC(NULL) YIELD node, componentId RETURN count(DISTINCT 
+            componentId) AS num_components'
+      ratio: 1.0
+
