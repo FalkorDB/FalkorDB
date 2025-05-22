@@ -1,4 +1,4 @@
-name: betweenness-10hop
+name: betweenness
 description: "
   1000 nodes -> S0 -> 1000 nodes 
   1000 nodes -> S1 -> S0
@@ -19,4 +19,7 @@ parameters:
     - query: 'CYPHER Id1=__rand_int__ CALL algo.betweenness({samplingSeed: $Id1, 
               samplingSize: 100}) YIELD node, score RETURN node.name, score'
       ratio: 1.0
+kpis:
+  - key: '$.OverallClientLatencies.Total.q50'
+    max_value: 150
 

@@ -1,18 +1,20 @@
-name: GRAPH500-SCALE_18-WCC
+name: GRAPH500-SCALE_18-BC
 description: "Dataset: Synthetic graph500 network of scale 18 (262144x262144, 4194304
   edges) - 262017 nodes with label 'Node' - 4194304 relations of type 'IS_CONNECTED'
   - Indexed properties: - exact-match: Node; [external_id] "
 db_config:
   dataset: datasets/graph500.rdb
-  dataset_load_timeout_secs: 180
+  dataset_load_timeout_secs: 500
 parameters:
   graph: graph500-scale18-ef16
   num_clients: 32
-  num_requests: 1000
+  num_requests: 32
+  random_int_max: 262016
+  random_seed: 12345
   queries:
-    - query: 'CALL algo.WCC(NULL) YIELD node, componentId RETURN count(DISTINCT 
-            componentId) AS num_components'
+    - query: 'CYPHER Id1=__rand_int__ CALL algo.betweenness({samplingSeed: $Id1, 
+              samplingSize: 10}) YIELD node, score'
       ratio: 1.0
 kpis:
   - key: '$.OverallClientLatencies.Total.q50'
-    max_value: 4000
+    max_value: 10000
