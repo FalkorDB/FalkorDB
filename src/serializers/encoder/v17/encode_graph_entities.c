@@ -126,18 +126,6 @@ void RdbSaveDeletedNodes_v17
 	// get deleted nodes list
 	uint64_t *deleted_nodes_list = Serializer_Graph_GetDeletedNodesList(gc->g);
 	_RdbSaveDeletedEntities_v17(rdb, n, offset, deleted_nodes_list);
-
-	// optimize memory consumption
-	// if dump is being taken on a fork process, as a result of calling:
-	// BGSAVE or BGREWRITEAOF
-	// to avoid increase in memory consumption due to copy-on-write
-	// we can free processed datablocks at the child process end
-	if(Globals_Get_ProcessIsChild() &&
-	   ((offset + n) == array_len(deleted_nodes_list))) {
-		// on a child process and the datablock is no loger needed
-		DataBlock *datablock = gc->g->nodes;
-		DataBlock_Free(datablock);
-	}
 }
 
 // encode deleted edges IDs
@@ -156,18 +144,6 @@ void RdbSaveDeletedEdges_v17
 	// get deleted edges list
 	uint64_t *deleted_edges_list = Serializer_Graph_GetDeletedEdgesList(gc->g);
 	_RdbSaveDeletedEntities_v17(rdb, n, offset, deleted_edges_list);
-
-	// optimize memory consumption
-	// if dump is being taken on a fork process, as a result of calling:
-	// BGSAVE or BGREWRITEAOF
-	// to avoid increase in memory consumption due to copy-on-write
-	// we can free processed datablocks at the child process end
-	if(Globals_Get_ProcessIsChild() &&
-	   ((offset + n) == array_len(deleted_edges_list))) {
-		// on a child process and the datablock is no loger needed
-		DataBlock *datablock = gc->g->edges;
-		DataBlock_Free(datablock);
-	}
 }
 
 // encode graph entities
@@ -242,17 +218,6 @@ void RdbSaveNodes_v17
 		DataBlockIterator_Free(iter);
 		iter = NULL;
 		GraphEncodeContext_SetDatablockIterator(gc->encoding_context, iter);
-
-		// optimize memory consumption
-		// if dump is being taken on a fork process, as a result of calling:
-		// BGSAVE or BGREWRITEAOF
-		// to avoid increase in memory consumption due to copy-on-write
-		// we can free processed datablocks at the child process end
-		if(Globals_Get_ProcessIsChild() && Graph_DeletedNodeCount(gc->g) == 0) {
-			// on a child process and the datablock is no loger needed
-			DataBlock *datablock = gc->g->nodes;
-			DataBlock_Free(datablock);
-		}
 	}
 }
 
@@ -291,17 +256,6 @@ void RdbSaveEdges_v17
 		DataBlockIterator_Free(iter);
 		iter = NULL;
 		GraphEncodeContext_SetDatablockIterator(gc->encoding_context, iter);
-
-		// optimize memory consumption
-		// if dump is being taken on a fork process, as a result of calling:
-		// BGSAVE or BGREWRITEAOF
-		// to avoid increase in memory consumption due to copy-on-write
-		// we can free processed datablocks at the child process end
-		if(Globals_Get_ProcessIsChild() && Graph_DeletedEdgeCount(gc->g) == 0) {
-			// on a child process and the datablock is no loger needed
-			DataBlock *datablock = gc->g->edges;
-			DataBlock_Free(datablock);
-		}
 	}
 }
 

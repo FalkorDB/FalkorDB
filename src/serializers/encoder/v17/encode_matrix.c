@@ -110,6 +110,16 @@ static void _EncodeTensors
 
 			rm_free(blob);
 
+			// optimize memory consumption
+			// if dump is being taken on a fork process, as a result of calling:
+			// BGSAVE or BGREWRITEAOF
+			// to avoid increase in memory consumption due to copy-on-write
+			// we can free processed tensor at the child process end
+			if(Globals_Get_ProcessIsChild()) {
+				info = GrB_free(&u);
+				ASSERT(info == GrB_SUCCESS);
+			}
+
 			// move to the next entry in A(i,:)
 			info = GxB_rowIterator_nextCol(it);
 		}
