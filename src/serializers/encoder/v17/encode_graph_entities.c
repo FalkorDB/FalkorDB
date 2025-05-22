@@ -4,7 +4,6 @@
  */
 
 #include "encode_v17.h"
-#include "../../../globals.h"
 #include "../../../datatypes/datatypes.h"
 
 // forword decleration
