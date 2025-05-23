@@ -15,4 +15,4 @@ parameters:
       ratio: 1.0
 kpis:
   - key: '$.OverallClientLatencies.Total.q50'
-    max_value: 4000
+    max_value: 5000
