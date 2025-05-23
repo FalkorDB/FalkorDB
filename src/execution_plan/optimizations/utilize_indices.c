@@ -105,7 +105,7 @@ static bool _applicableInExpression
 		for(uint i = 0; i < len; i++) {
 			SIValue v = SIArray_Get(list, i);
 			// ignore everything other than number, strings and booleans
-			if(!(SI_TYPE(v) & (SI_NUMERIC | T_STRING | T_BOOL))) return false;
+			if(!(SI_TYPE(v) & (SI_NUMERIC | SI_STRING | T_BOOL))) return false;
 		}
 
 		return true;
@@ -119,7 +119,7 @@ static bool _applicableInExpression
 		SIValue v = SI_NullVal();
 
 		if(AR_EXP_ReduceToScalar(lhs, true, &v)) {
-			return(SI_TYPE(v) & (SI_NUMERIC | T_STRING | T_BOOL));
+			return(SI_TYPE(v) & (SI_NUMERIC | SI_STRING | T_BOOL));
 		} else {
 			// runtime value, will be evaluated at runtime
 			return true;

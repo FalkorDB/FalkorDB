@@ -38,6 +38,7 @@ void _ResultSet_BoltReplyWithSIValue
 ) {
 	switch(SI_TYPE(v)) {
 	case T_STRING:
+	case T_INTERN_STRING:
 		bolt_reply_string(client, v.stringval, strlen(v.stringval));
 		break;
 	case T_INT64:

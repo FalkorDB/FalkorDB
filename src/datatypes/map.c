@@ -26,7 +26,7 @@ static inline Pair Pair_New
 	SIValue key,
 	SIValue val
 ) {
-	ASSERT(SI_TYPE(key) & T_STRING);
+	ASSERT(SI_TYPE(key) & SI_STRING);
 	ASSERT(SI_ALLOCATION(&key) != M_VOLATILE);
 	ASSERT(SI_ALLOCATION(&val) != M_VOLATILE);
 
@@ -47,7 +47,7 @@ static int Map_KeyIdx
 	SIValue key
 ) {
 	ASSERT(SI_TYPE(map) & T_MAP);
-	ASSERT(SI_TYPE(key) & T_STRING);
+	ASSERT(SI_TYPE(key) & SI_STRING);
 
 	Map m = map.map;
 	uint n = array_len(m);
@@ -125,7 +125,7 @@ void Map_Add
 	SIValue value
 ) {
 	ASSERT(SI_TYPE(*map) & T_MAP);
-	ASSERT(SI_TYPE(key)  & T_STRING);
+	ASSERT(SI_TYPE(key)  & SI_STRING);
 
 	// remove key if already existed
 	Map_Remove(*map, key);
@@ -146,7 +146,7 @@ void Map_AddNoClone
 	SIValue value  // value to add under key
 ) {
 	ASSERT(SI_TYPE(*map) & T_MAP);
-	ASSERT(SI_TYPE(key)  & T_STRING);
+	ASSERT(SI_TYPE(key)  & SI_STRING);
 
 	// remove key if already existed
 	Map_Remove(*map, key);
@@ -165,7 +165,7 @@ void Map_Remove
 	SIValue key
 ) {
 	ASSERT(SI_TYPE(map) & T_MAP);
-	ASSERT(SI_TYPE(key) & T_STRING);
+	ASSERT(SI_TYPE(key) & SI_STRING);
 
 	Map m = map.map;
 
@@ -206,7 +206,7 @@ bool Map_Get
 	SIValue *value
 ) {
 	ASSERT(SI_TYPE(map) & T_MAP);
-	ASSERT(SI_TYPE(key) & T_STRING);
+	ASSERT(SI_TYPE(key) & SI_STRING);
 	ASSERT(value != NULL);
 
 	int idx = Map_KeyIdx(map, key);
@@ -246,7 +246,7 @@ bool Map_Contains
 	SIValue key
 ) {
 	ASSERT(SI_TYPE(map) & T_MAP);
-	ASSERT(SI_TYPE(key) & T_STRING);
+	ASSERT(SI_TYPE(key) & SI_STRING);
 
 	return (Map_KeyIdx(map, key) != -1);
 }

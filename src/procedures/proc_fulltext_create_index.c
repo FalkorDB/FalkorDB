@@ -49,7 +49,7 @@ static ProcedureResult _validateIndexConfigMap
 
 	if(stopword_exists) {
 		if(SI_TYPE(sw) == T_ARRAY) {
-			if(!SIArray_AllOfType(sw, T_STRING)) {
+			if(!SIArray_AllOfType(sw, SI_STRING)) {
 				ErrorCtx_SetError(EMSG_MUST_BE, "Stopword", "string");
 				return PROCEDURE_ERR;
 			}
@@ -64,7 +64,7 @@ static ProcedureResult _validateIndexConfigMap
 	//--------------------------------------------------------------------------
 
 	if(lang_exists) {
-		if(SI_TYPE(lang) != T_STRING) {
+		if(!(SI_TYPE(lang) & SI_STRING)) {
 			ErrorCtx_SetError(EMSG_MUST_BE, "Language", "string");
 			return PROCEDURE_ERR;
 		}
@@ -104,7 +104,7 @@ static ProcedureResult _validateFieldConfigMap
 		return PROCEDURE_ERR;
 	}
 
-	if((SI_TYPE(field) & T_STRING) == 0) {
+	if(!(SI_TYPE(field) & SI_STRING)) {
 		ErrorCtx_SetError(EMSG_MUST_BE, "Field", "string");
 		return PROCEDURE_ERR;
 	}
@@ -124,7 +124,7 @@ static ProcedureResult _validateFieldConfigMap
 	}
 
 	if(phonetic_exists) {
-		if(SI_TYPE(phonetic) != T_STRING) {
+		if(!(SI_TYPE(phonetic) & SI_STRING)) {
 			ErrorCtx_SetError(EMSG_MUST_BE, "Phonetic", "string");
 			return PROCEDURE_ERR;
 		}
@@ -197,7 +197,7 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	}
 
 	// label argument should be of type string or map
-	if(!(SI_TYPE(args[0]) & (T_STRING | T_MAP))) {
+	if(!(SI_TYPE(args[0]) & (SI_STRING | T_MAP))) {
 		ErrorCtx_SetError(EMSG_FULLTEXT_LABEL_TYPE);
 		return PROCEDURE_ERR;
 	}
@@ -212,7 +212,7 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 
 	// validation, fields arguments should be of type string or map
 	for(uint i = 1; i < arg_count; i++) {
-		if(!(SI_TYPE(args[i]) & (T_STRING | T_MAP))) {
+		if(!(SI_TYPE(args[i]) & (SI_STRING | T_MAP))) {
 			ErrorCtx_SetError(EMSG_FULLTEXT_FIELD_TYPE);
 			return PROCEDURE_ERR;
 		}
@@ -223,7 +223,7 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	}
 
 	// extract index label
-	if(SI_TYPE(label_config) == T_STRING) {
+	if(SI_TYPE(label_config) & SI_STRING) {
 		label = label_config.stringval;
 	} else if(SI_TYPE(label_config) == T_MAP) {
 		SIValue label_value;
@@ -253,7 +253,7 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 		nostems[i]   = INDEX_FIELD_DEFAULT_NOSTEM;
 		phonetics[i] = INDEX_FIELD_DEFAULT_PHONETIC;
 
-		if(SI_TYPE(fields[i]) == T_STRING) {
+		if(SI_TYPE(fields[i]) & SI_STRING) {
 			_fields[i] = fields[i].stringval;
 		} else {
 			SIValue tmp;

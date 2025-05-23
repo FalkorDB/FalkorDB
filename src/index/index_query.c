@@ -159,6 +159,7 @@ static bool _FilterTreeToMultiValQueryNode
 		SIValue v = SIArray_Get(list, i);
 		switch(SI_TYPE(v)) {
 			case T_STRING:
+			case T_INTERN_STRING:
 				parent = RediSearch_CreateTagNode(idx, type_aware_field_name);
 				node   = RediSearch_CreateTokenNode(idx, type_aware_field_name,
 						v.stringval);
@@ -234,7 +235,7 @@ static bool _FilterTreeToInQueryNode
 	//--------------------------------------------------------------------------
 
 	// only utilize index if scalar is either numeric, boolean or string
-	if(!(t & (T_DOUBLE | T_INT64 | T_BOOL | T_STRING))) {
+	if(!(t & (T_DOUBLE | T_INT64 | T_BOOL | SI_STRING))) {
 		return false;
 	}
 
@@ -256,6 +257,7 @@ static bool _FilterTreeToInQueryNode
 			res = true;
 			break;
 		case T_STRING:
+		case T_INTERN_STRING:
 				parent = RediSearch_CreateTagNode(idx, type_aware_field_name);
 				child  = RediSearch_CreateTokenNode(idx, type_aware_field_name,
 						v.stringval);
@@ -315,7 +317,7 @@ static bool _predicateTreeToRange
 					nr, NULL);
 		}
 		NumericRange_TightenRange(nr, op, SI_GET_NUMERIC(c));
-	} else if(t == T_STRING) {
+	} else if(t & SI_STRING) {
 		sr = raxFind(string_ranges, (unsigned char *)prop, prop_len);
 		// create if doesn't exists
 		if(sr == raxNotFound) {
@@ -582,7 +584,7 @@ static bool _FilterTreePredicateToQueryNode
 	char type_aware_field_name[512];
 	Index_RangeFieldName(type_aware_field_name, field, NULL);
 
-	if(t == T_STRING) {
+	if(t & SI_STRING) {
 		switch(tree->pred.op) {
 			case OP_LT:    // <
 				node = RediSearch_CreateLexRangeNode(idx, type_aware_field_name,
@@ -849,9 +851,9 @@ RSQNode *Index_BuildUniqueConstraintQuery
 
 		// create RediSearch query node according to entity attr type
 		SIType t = SI_TYPE(*v);
-		ASSERT(t == T_STRING || t & (SI_NUMERIC | T_BOOL));
+		ASSERT(t & (SI_STRING | SI_NUMERIC | T_BOOL));
 
-		if(t == T_STRING) {
+		if(t & SI_STRING) {
 			node  = RediSearch_CreateTagNode(rsIdx, field);
 			RSQNode *child = RediSearch_CreateTagTokenNode(rsIdx, v->stringval);
 			RediSearch_QueryNodeAddChild(node, child);

@@ -235,12 +235,12 @@ static inline bool normalize_index
 	return true;
 }
 
-// If given an array, returns a value in a specific index in an array.
-//    Valid index range is [-arrayLen, arrayLen).
-//    Invalid index will return null.
-//    "RETURN [1, 2, 3][0]" will yield 1.
-// If given a map or graph entity, returns the property value associated
-//    with the given key string.
+// if given an array, returns a value in a specific index in an array
+//    valid index range is [-arrayLen, arrayLen)
+//    invalid index will return null.
+//    "RETURN [1, 2, 3][0]" will yield 1
+// if given a map or graph entity, returns the property value associated
+//    with the given key string
 SIValue AR_SUBSCRIPT(SIValue *argv, int argc, void *private_data) {
 	ASSERT(argc == 2);
 	if(SI_TYPE(argv[0]) == T_NULL || SI_TYPE(argv[1]) == T_NULL) return SI_NullVal();
@@ -380,6 +380,7 @@ SIValue AR_SIZE(SIValue *argv, int argc, void *private_data) {
 		case T_ARRAY:
 			return SI_LongVal(SIArray_Length(value));
 		case T_STRING:
+		case T_INTERN_STRING:
 			return SI_LongVal(str_length(value.stringval));
 		case T_NULL:
 			return SI_NullVal();
@@ -812,7 +813,7 @@ void Register_ListFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, T_STRING | T_ARRAY | T_NULL);
+	array_append(types, SI_STRING | T_ARRAY | T_NULL);
 	ret_type = T_NULL | T_INT64;
 	func_desc = AR_FuncDescNew("size", AR_SIZE, 1, 1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);

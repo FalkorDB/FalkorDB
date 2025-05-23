@@ -94,7 +94,7 @@ bool EnforceUniqueEntity
 
 		// validate attribute type
 		SIType t = SI_TYPE(*v);
-		if(t & ~(T_STRING | T_BOOL | SI_NUMERIC)) {
+		if(t & ~(SI_STRING | T_BOOL | SI_NUMERIC)) {
 			// TODO: see RediSearch MULTI-VALUE index.
 			// TODO: RediSearch exact match for point.
 			return true;

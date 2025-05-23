@@ -18,7 +18,11 @@ static SIValue _RdbLoadSIValue
 	// Format:
 	// SIType
 	// Value
+
+	SIValue v;
+	char *str;
 	SIType t = SerializerIO_ReadUnsigned(rdb);
+
 	switch(t) {
 	case T_INT64:
 		return SI_LongVal(SerializerIO_ReadSigned(rdb));
@@ -28,6 +32,12 @@ static SIValue _RdbLoadSIValue
 		// transfer ownership of the heap-allocated string to the
 		// newly-created SIValue
 		return SI_TransferStringVal(SerializerIO_ReadBuffer(rdb, NULL));
+	case T_INTERN_STRING:
+		// create intern string and free loaded buffer
+		str = SerializerIO_ReadBuffer(rdb, NULL);
+		v = SI_InternStringVal(str);
+		rm_free(str);
+		return v;
 	case T_BOOL:
 		return SI_BoolVal(SerializerIO_ReadSigned(rdb));
 	case T_ARRAY:

@@ -313,6 +313,7 @@ static inline void _addArrayField
 				array_append(numerics, d);
 				break;
 			case T_STRING:
+			case T_INTERN_STRING:
 				s = elem.stringval;
 				array_append(strings, s);
 				break;
@@ -404,7 +405,7 @@ RSDoc *Index_IndexGraphEntity
 
 		if(field->type & INDEX_FLD_FULLTEXT) {
 			// value must be of type string
-			if(t == T_STRING) {
+			if(t & SI_STRING) {
 				*doc_field_count += 1;
 
 				RediSearch_DocumentAddFieldCString(doc, field->fulltext_name,
@@ -424,6 +425,7 @@ RSDoc *Index_IndexGraphEntity
 			*doc_field_count += 1;
 			switch(t) {
 				case T_STRING:
+				case T_INTERN_STRING:
 					_addStringField(doc, field->range_name, v->stringval);
 					break;
 				case T_BOOL:

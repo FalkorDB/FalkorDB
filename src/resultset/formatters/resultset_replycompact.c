@@ -28,6 +28,7 @@ static inline ValueType _mapValueType
 	case T_NULL:
 		return VALUE_NULL;
 	case T_STRING:
+	case T_INTERN_STRING:
 		return VALUE_STRING;
 	case T_INT64:
 		return VALUE_INTEGER;
@@ -74,6 +75,7 @@ static void _ResultSet_CompactReplyWithSIValue
 
 	switch(SI_TYPE(v)) {
 	case T_STRING:
+	case T_INTERN_STRING:
 		RedisModule_ReplyWithStringBuffer(ctx, v.stringval, strlen(v.stringval));
 		return;
 	case T_INT64:
