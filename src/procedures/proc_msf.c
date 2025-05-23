@@ -17,12 +17,12 @@
 #include "./utility/internal.h"
 #include "../graph/graphcontext.h"
 
-// CALL algo.msf({}) YIELD node, score
-// CALL algo.msf(NULL) YIELD node, score
-// CALL algo.msf({nodeLabels: ['L', 'P']}) YIELD node, score
-// CALL algo.msf({relationshipTypes: ['R', 'E']}) YIELD node, score
-// CALL algo.msf({nodeLabels: ['L'], relationshipTypes: ['E']}) YIELD node, score
-// CALL algo.msf({nodeLabels: ['L'], samplingSize:20, samplingSeed: 10})
+// CALL algo.msf({}) YIELD edge, weight
+// CALL algo.msf(NULL) YIELD edge, weight
+// CALL algo.msf({nodeLabels: ['L', 'P']}) YIELD edge, weight
+// CALL algo.msf({relationshipTypes: ['R', 'E']}) YIELD edge, weight
+// CALL algo.msf({nodeLabels: ['L'], relationshipTypes: ['E']}) YIELD edge, weight
+// CALL algo.msf({nodeLabels: ['L'], objective: minimum})
 
 typedef struct {
 	Graph *g;              	// graph
@@ -34,8 +34,8 @@ typedef struct {
 	GxB_Iterator it;       	// iterator
 	Node node;             	// node
 	AttributeID weight_prop;// weight attribute id
-	SIValue output[3];     	// array with up to 2 entries [node, score]
-	SIValue *yield_node;   	// nodes 
+	SIValue output[3];     	// array with up to 2 entries [edge, weight]
+	// SIValue *yield_node;   	// nodes 
 	SIValue *yield_edge;   	// edges
 	SIValue *yield_weight; 	// edge weights
 } MSF_Context;
@@ -48,11 +48,11 @@ static void _process_yield
 ) {
 	int idx = 0;
 	for(uint i = 0; i < array_len(yield); i++) {
-		if(strcasecmp("node", yield[i]) == 0) {
-			ctx->yield_node = ctx->output + idx;
-			idx++;
-			continue;
-		}
+		// if(strcasecmp("node", yield[i]) == 0) {
+		// 	ctx->yield_node = ctx->output + idx;
+		// 	idx++;
+		// 	continue;
+		// }
 
 		if(strcasecmp("edge", yield[i]) == 0) {
 			ctx->yield_edge = ctx->output + idx;
@@ -400,13 +400,13 @@ ProcedureResult Proc_MSFFree
 }
 
 // CALL algo.msf({nodeLabels: ['Person'], relationshipTypes: ['KNOWS'],
-// samplingSize:2000, samplingSeed: 10}) YIELD node, score
+// attribute: 'Years', objective: 'Minimum'}) YIELD node, score
 ProcedureCtx *Proc_msfCtx(void) {
 	void *privateData = NULL;
 
 	ProcedureOutput *outputs         = array_new(ProcedureOutput, 2);
-	ProcedureOutput output_node      = {.name = "node", .type = T_NODE};
-	ProcedureOutput output_component = {.name = "score", .type = T_DOUBLE};
+	ProcedureOutput output_node      = {.name = "edge", .type = T_EDGE};
+	ProcedureOutput output_component = {.name = "weight", .type = T_DOUBLE};
 
 	array_append(outputs, output_node);
 	array_append(outputs, output_component);
