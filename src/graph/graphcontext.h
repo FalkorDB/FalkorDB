@@ -227,7 +227,7 @@ const char *GraphContext_GetAttributeString
 );
 
 // retrieve an attribute ID given a string
-// or ATTRIBUTE_NOTFOUND if attribute doesn't exist
+// or ATTRIBUTE_ID_NONE if attribute doesn't exist
 AttributeID GraphContext_GetAttributeID
 (
 	GraphContext *gc,
