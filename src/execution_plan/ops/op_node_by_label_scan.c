@@ -51,11 +51,8 @@ OpBase *NewNodeByLabelScanOp
 ) {
 	NodeByLabelScan *op = rm_calloc(sizeof(NodeByLabelScan), 1);
 
-	op->g      = QueryCtx_GetGraph();
-	op->n      = n;
-	op->ID_it  = NULL;
-	op->ids    = NULL;
-	op->ranges = NULL;
+	op->g = QueryCtx_GetGraph();
+	op->n = n;
 
 	_update_label_id(op);
 
@@ -358,8 +355,10 @@ static OpResult NodeByLabelScanReset
 ) {
 	NodeByLabelScan *op = (NodeByLabelScan *)ctx;
 
-	if(OpBase_ChildCount(ctx) > 0 && op->child_record != NULL) {
-		OpBase_DeleteRecord(&op->child_record); // free old record
+	if(OpBase_ChildCount(ctx) > 0) {
+		if(op->child_record != NULL) {
+			OpBase_DeleteRecord(&op->child_record); // free old record
+		}
 	} else {
 		_ConstructIterator(op);
 	}
