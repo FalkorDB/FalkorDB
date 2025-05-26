@@ -106,8 +106,6 @@ StringPool StringPool_create(void) {
 	return pool;
 }
 
-#define DEBUG_STRINGPOOL 1
-
 // add a string to the pool
 // incase the string is already stored in the pool
 // its reference count is increased
