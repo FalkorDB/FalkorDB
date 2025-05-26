@@ -61,7 +61,7 @@ SIValue AR_HAS_LABELS(SIValue *argv, int argc, void *private_data) {
 	for (uint32_t i = 0; i < labels_length; i++) {
 		SIValue label_value = SIArray_Get(labels, i);
 		if(!(SI_TYPE(label_value) & SI_STRING)) {
-			Error_SITypeMismatch(label_value, SI_STRING);
+			Error_SITypeMismatch(label_value, T_STRING);
 			return SI_NullVal();
 		}
 		char *label = label_value.stringval;
@@ -166,7 +166,7 @@ static SIValue _AR_NodeDegree
 						SIArray_Append(&labels, argv[i]);
 					}
 				} else {
-					Error_SITypeMismatch(argv[i], SI_STRING);
+					Error_SITypeMismatch(argv[i], T_STRING);
 				}
 			}
 		} else if (SI_TYPE(argv[1]) == T_ARRAY) {
@@ -179,7 +179,7 @@ static SIValue _AR_NodeDegree
 				SIValue elem = SIArray_Get(argv[1], j);
 				if(!(SI_TYPE(elem) & SI_STRING)) {
 					SIArray_Free(labels);
-					Error_SITypeMismatch(elem, SI_STRING);
+					Error_SITypeMismatch(elem, T_STRING);
 					return SI_NullVal();
 				}
 				if(SIArray_ContainsValue(labels, elem, NULL) == false) {
@@ -247,7 +247,7 @@ SIValue AR_PROPERTY(SIValue *argv, int argc, void *private_data) {
 	// As such, we need to validate the argument's type independently of the invocation validation.
 	if(!(SI_TYPE(argv[1]) & SI_STRING)) {
 		// String indexes are only permitted on maps, not arrays.
-		Error_SITypeMismatch(argv[1], SI_STRING);
+		Error_SITypeMismatch(argv[1], T_STRING);
 		return SI_NullVal();
 	}
 

@@ -248,7 +248,7 @@ class testInternString():
         self.env.assertEquals(res.nodes_created, 1)
         self.env.assertEquals(res.properties_set, 1)
         self.env.assertEquals(res.result_set[0][0], LARGE_STRING)
-        self.env.assertEquals(res.result_set[0][1], "Intern String")
+        self.env.assertEquals(res.result_set[0][1], "String")
         assertStringPoolStats(self.conn, 1, 1)
 
         # try to overwrite an intern string with a regular string
@@ -271,7 +271,7 @@ class testInternString():
         q = "MATCH (n) RETURN n.v, typeof(n.v)"
         res = self.graph.query(q).result_set
         self.env.assertEquals(res[0][0], LARGE_STRING)
-        self.env.assertEquals(res[0][1], "Intern String")
+        self.env.assertEquals(res[0][1], "String")
         assertStringPoolStats(self.conn, 1, 1)
 
     def test_implicit_copy(self):
@@ -285,9 +285,9 @@ class testInternString():
         self.env.assertEquals(res.nodes_created, 2)
         self.env.assertEquals(res.properties_set, 2)
         self.env.assertEquals(LARGE_STRING, res.result_set[0][0])
-        self.env.assertEquals("Intern String", res.result_set[0][1])
+        self.env.assertEquals("String", res.result_set[0][1])
         self.env.assertEquals(LARGE_STRING, res.result_set[0][2])
-        self.env.assertEquals("Intern String", res.result_set[0][3])
+        self.env.assertEquals("String", res.result_set[0][3])
         assertStringPoolStats(self.conn, 1, 2)
 
 

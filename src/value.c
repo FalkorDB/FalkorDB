@@ -6,7 +6,6 @@
 
 #include "RG.h"
 #include "value.h"
-#include "globals.h"
 #include "util/rmalloc.h"
 #include "graph/entities/node.h"
 #include "graph/entities/edge.h"
@@ -140,10 +139,7 @@ SIValue SI_InternStringVal
 ) {
 	ASSERT(s != NULL);
 
-	StringPool pool = Globals_Get_StringPool();
-	ASSERT(pool != NULL);
-
-	char *interned_str = StringPool_rent(pool, s);
+	char *interned_str = STRINGPOOL_RENT(s);
 	return (SIValue) {
 		.stringval  = interned_str,
 		.type       = T_INTERN_STRING,
@@ -306,9 +302,8 @@ const char *SIType_ToString(SIType t) {
 		case T_MAP:
 			return "Map";
 		case T_STRING:
-			return "String";
 		case T_INTERN_STRING:
-			return "Intern String";
+			return "String";
 		case T_INT64:
 			return "Integer";
 		case T_BOOL:
@@ -1082,7 +1077,7 @@ void SIValue_Free
 			SI_StringValFree(&v);
 			break;
 		case T_INTERN_STRING:
-			StringPool_return(Globals_Get_StringPool(), v.stringval);
+			STRINGPOOL_RETURN(v.stringval);
 			break;
 		case T_NODE:
 		case T_EDGE:

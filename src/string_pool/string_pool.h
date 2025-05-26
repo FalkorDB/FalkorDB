@@ -7,6 +7,18 @@
 
 #include "../util/dict.h"
 
+// rent a string from string-pool
+#define STRINGPOOL_RENT(str)                     \
+(                                                \
+	StringPool_rent((str), __FILE__, __LINE__)   \
+)
+
+// rent a string from string-pool
+#define STRINGPOOL_RETURN(str)                   \
+(                                                \
+	StringPool_return((str), __FILE__, __LINE__) \
+)
+
 // StringPool is a dict of strings
 // used primarily to reduce memory consumption by removing string duplication
 // the StringPool uses hash(s) for its keys
@@ -30,8 +42,9 @@ StringPool StringPool_create(void);
 // returns a pointer to the stored string
 char *StringPool_rent
 (
-	StringPool pool,  // string pool
-	const char *str   // string to add
+	const char *str,   // string to add
+	const char *file,  // source file calling this function
+	int line           // source file line calling this function
 );
 
 // add string to pool in case it doesn't already exists
@@ -46,8 +59,9 @@ char *StringPool_rentNoClone
 // the string will be free only when its reference count drops to 0
 void StringPool_return
 (
-	StringPool pool,  // string pool
-	char *str         // string to remove
+	char *str,         // string to remove
+	const char *file,  // source file calling this function
+	int line           // source file line calling this function
 );
 
 // get string pool statistics

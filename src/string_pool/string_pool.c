@@ -4,6 +4,7 @@
  */
 
 #include "RG.h"
+#include "../globals.h"
 #include "string_pool.h"
 #include "deps/xxHash/xxhash.h"
 
@@ -105,24 +106,33 @@ StringPool StringPool_create(void) {
 	return pool;
 }
 
+#define DEBUG_STRINGPOOL 1
+
 // add a string to the pool
 // incase the string is already stored in the pool
 // its reference count is increased
 // returns a pointer to the stored string
 char *StringPool_rent
 (
-	StringPool pool,  // string pool
-	const char *str   // string to add
+	const char *str,   // string to add
+	const char *file,  // source file calling this function
+	int line           // source file line calling this function
 ) {
 	// validate arguments
-	ASSERT(str  != NULL);	
+	ASSERT(str != NULL);
+
+	StringPool pool = Globals_Get_StringPool();
 	ASSERT(pool != NULL);
+
+	#ifdef DEBUG_STRINGPOOL
+	fprintf(stderr, "StringPool_rent: \"%s\" from %s:%d\n", str, file, line);
+	#endif
 
 	dictEntry *de;
 	dict *ht = pool->ht;
 
 	// first, try to find the string under a read lock
-    pthread_rwlock_rdlock(&pool->rwlock);
+	pthread_rwlock_rdlock(&pool->rwlock);
 
 	de = HashTableFind(ht, (void*)str);
 
@@ -175,12 +185,19 @@ char *StringPool_rent
 // returns true if the string was freed
 void StringPool_return
 (
-	StringPool pool,  // string pool
-	char *str         // string to remove
+	char *str,         // string to remove
+	const char *file,  // source file calling this function
+	int line           // source file line calling this function
 ) {
 	// validate arguments
-	ASSERT(str  != NULL);	
+	ASSERT(str != NULL);
+
+	StringPool pool = Globals_Get_StringPool();
 	ASSERT(pool != NULL);
+
+	#ifdef DEBUG_STRINGPOOL
+	fprintf(stderr, "StringPool_return: \"%s\" from %s:%d\n", str, file, line);
+	#endif
 
 	dictEntry *de;
 	dict *ht = pool->ht;
