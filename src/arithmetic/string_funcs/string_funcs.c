@@ -19,7 +19,7 @@
 
 // toString supports only integer, float, string, boolean, point, duration, 
 // date, time, localtime, localdatetime or datetime values
-#define STRINGABLE (SI_NUMERIC | T_POINT | T_DURATION | T_DATETIME | SI_STRING | T_BOOL)
+#define STRINGABLE (SI_NUMERIC | T_POINT | T_DURATION | T_DATETIME | T_STRING | T_BOOL)
 
 // returns a string containing the specified number of leftmost characters of
 // the original string
@@ -151,7 +151,7 @@ SIValue AR_REVERSE
 	if(SIValue_IsNull(argv[0])) return SI_NullVal();
 
 	SIValue value = argv[0];
-	if(SI_TYPE(value) & SI_STRING) {
+	if(SI_TYPE(value) & T_STRING) {
 		// string reverse
 		char *str = value.stringval;
 		size_t str_len = strlen(str);
@@ -287,7 +287,7 @@ SIValue AR_JOIN
 	// acount for each string length
 	for(uint i = 0; i < n; i++) {
 		SIValue str = SIArray_Get(list, i);
-		if(!(SI_TYPE(str) & SI_STRING)) {
+		if(!(SI_TYPE(str) & T_STRING)) {
 			// all elements in the list should be string.
 			Error_SITypeMismatch(str, T_STRING);
 			return SI_NullVal();
@@ -884,39 +884,39 @@ void Register_StringFuncs() {
 	AR_FuncDesc *func_desc;
 
 	types = array_new(SIType, 2);
-	array_append(types, (SI_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
 	array_append(types, T_INT64 | T_NULL);
 	ret_type = T_STRING | T_NULL;
 	func_desc = AR_FuncDescNew("left", AR_LEFT, 2, 2, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, (SI_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
 	func_desc = AR_FuncDescNew("ltrim", AR_LTRIM, 1, 1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
-	array_append(types, (SI_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
 	array_append(types, T_INT64 | T_NULL);
 	ret_type = T_STRING | T_NULL;
 	func_desc = AR_FuncDescNew("right", AR_RIGHT, 2, 2, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, (SI_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
 	func_desc = AR_FuncDescNew("rtrim", AR_RTRIM, 1, 1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, (SI_STRING | T_ARRAY | T_NULL));
+	array_append(types, (T_STRING | T_ARRAY | T_NULL));
 	ret_type = T_STRING | T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("reverse", AR_REVERSE, 1, 1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 3);
-	array_append(types, (SI_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
 	array_append(types, T_INT64);
 	array_append(types, T_INT64);
 	ret_type = T_STRING | T_NULL;
@@ -925,34 +925,34 @@ void Register_StringFuncs() {
 
 	types = array_new(SIType, 2);
 	array_append(types, (T_ARRAY | T_NULL));
-	array_append(types, SI_STRING);
+	array_append(types, T_STRING);
 	ret_type = T_STRING | T_NULL;
 	func_desc = AR_FuncDescNew("string.join", AR_JOIN, 1, 2, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
-	array_append(types, (SI_STRING | T_NULL));
-	array_append(types, (SI_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("string.matchRegEx", AR_MATCHREGEX, 2, 2, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 3);
-	array_append(types, (SI_STRING | T_NULL));
-	array_append(types, (SI_STRING | T_NULL));
-	array_append(types, (SI_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
 	func_desc = AR_FuncDescNew("string.replaceRegEx", AR_REPLACEREGEX, 2, 3, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, (SI_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
 	func_desc = AR_FuncDescNew("tolower", AR_TOLOWER, 1, 1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, (SI_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
 	func_desc = AR_FuncDescNew("toupper", AR_TOUPPER, 1, 1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
@@ -976,28 +976,28 @@ void Register_StringFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, (SI_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
 	func_desc = AR_FuncDescNew("trim", AR_TRIM, 1, 1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
-	array_append(types, (SI_STRING | T_NULL));
-	array_append(types, (SI_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_BOOL | T_NULL;
 	func_desc = AR_FuncDescNew("contains", AR_CONTAINS, 2, 2, types, ret_type, true, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
-	array_append(types, (SI_STRING | T_NULL));
-	array_append(types, (SI_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_BOOL | T_NULL;
 	func_desc = AR_FuncDescNew("starts with", AR_STARTSWITH, 2, 2, types, ret_type, true, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
-	array_append(types, (SI_STRING | T_NULL));
-	array_append(types, (SI_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_BOOL | T_NULL;
 	func_desc = AR_FuncDescNew("ends with", AR_ENDSWITH, 2, 2, types, ret_type, true, true);
 	AR_RegFunc(func_desc);
@@ -1008,22 +1008,22 @@ void Register_StringFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 3);
-	array_append(types, (SI_STRING | T_NULL));
-	array_append(types, (SI_STRING | T_NULL));
-	array_append(types, (SI_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
 	func_desc = AR_FuncDescNew("replace", AR_REPLACE, 3, 3, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
-	array_append(types, (SI_STRING | T_NULL));
-	array_append(types, (SI_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("split", AR_SPLIT, 2, 2, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, (SI_STRING | T_NULL));
+	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_INTERN_STRING | T_NULL;
 	func_desc = AR_FuncDescNew("intern", AR_INTERN, 1, 1, types, ret_type, false, false);
 	AR_RegFunc(func_desc);

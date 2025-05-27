@@ -60,7 +60,7 @@ SIValue AR_HAS_LABELS(SIValue *argv, int argc, void *private_data) {
 	uint32_t labels_length = SIArray_Length(labels);
 	for (uint32_t i = 0; i < labels_length; i++) {
 		SIValue label_value = SIArray_Get(labels, i);
-		if(!(SI_TYPE(label_value) & SI_STRING)) {
+		if(!(SI_TYPE(label_value) & T_STRING)) {
 			Error_SITypeMismatch(label_value, T_STRING);
 			return SI_NullVal();
 		}
@@ -158,10 +158,10 @@ static SIValue _AR_NodeDegree
 
 		// get labels array from input arguments, but removing duplicates
 		SIValue labels = SI_EmptyArray();
-		if(SI_TYPE(argv[1]) & SI_STRING) {
+		if(SI_TYPE(argv[1]) & T_STRING) {
 			// validate signature function(NODE, STR_0, STR_1, ... STR_N)
 			for(int i = 1; i < argc; i++) {
-				if(SI_TYPE(argv[i]) & SI_STRING) {
+				if(SI_TYPE(argv[i]) & T_STRING) {
 					if(SIArray_ContainsValue(labels, argv[i], NULL) == false) {
 						SIArray_Append(&labels, argv[i]);
 					}
@@ -177,7 +177,7 @@ static SIValue _AR_NodeDegree
 			uint len = SIArray_Length(argv[1]);
 			for(int j = 0; j < len; j++) {
 				SIValue elem = SIArray_Get(argv[1], j);
-				if(!(SI_TYPE(elem) & SI_STRING)) {
+				if(!(SI_TYPE(elem) & T_STRING)) {
 					SIArray_Free(labels);
 					Error_SITypeMismatch(elem, T_STRING);
 					return SI_NullVal();
@@ -245,7 +245,7 @@ SIValue AR_PROPERTY(SIValue *argv, int argc, void *private_data) {
 	// AR_PROPERTY may be invoked from AR_SUBSCRIPT in a case like:
 	// WITH {val: 5} AS map RETURN map["val"]
 	// As such, we need to validate the argument's type independently of the invocation validation.
-	if(!(SI_TYPE(argv[1]) & SI_STRING)) {
+	if(!(SI_TYPE(argv[1]) & T_STRING)) {
 		// String indexes are only permitted on maps, not arrays.
 		Error_SITypeMismatch(argv[1], T_STRING);
 		return SI_NullVal();
@@ -348,21 +348,21 @@ void Register_EntityFuncs() {
 
 	types = array_new(SIType, 2);
 	array_append(types, T_NULL | T_NODE);
-	array_append(types, SI_STRING | T_ARRAY);
+	array_append(types, T_STRING | T_ARRAY);
 	ret_type = T_NULL | T_INT64;
 	func_desc = AR_FuncDescNew("indegree", AR_INCOMEDEGREE, 1, VAR_ARG_LEN, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, T_NULL | T_NODE);
-	array_append(types, SI_STRING | T_ARRAY);
+	array_append(types, T_STRING | T_ARRAY);
 	ret_type = T_NULL | T_INT64;
 	func_desc = AR_FuncDescNew("outdegree", AR_OUTGOINGDEGREE, 1, VAR_ARG_LEN, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 3);
 	array_append(types, T_NULL | T_NODE | T_EDGE | T_MAP | T_POINT);
-	array_append(types, SI_STRING);
+	array_append(types, T_STRING);
 	array_append(types, T_INT64);
 	ret_type = SI_ALL;
 	func_desc = AR_FuncDescNew("property", AR_PROPERTY, 3, 3, types, ret_type, true, true);

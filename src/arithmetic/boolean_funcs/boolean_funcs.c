@@ -293,7 +293,7 @@ void Register_BooleanFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, T_BOOL | T_INT64 | SI_STRING | T_NULL);
+	array_append(types, T_BOOL | T_INT64 | T_STRING | T_NULL);
 	func_desc = AR_FuncDescNew("toBoolean", AR_TO_BOOLEAN, 1, 1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 
@@ -303,7 +303,7 @@ void Register_BooleanFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, T_ARRAY | T_MAP | T_NULL | SI_STRING);
+	array_append(types, T_ARRAY | T_MAP | T_NULL | T_STRING);
 	ret_type = T_BOOL | T_NULL;
 	func_desc = AR_FuncDescNew("isempty", AR_ISEMPTY, 1, 1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);

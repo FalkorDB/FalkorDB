@@ -501,7 +501,7 @@ size_t SIValue_StringJoinLen
 	for(int i = 0; i < string_count; i ++) {
 		// string elements representing bytes size strings
 		// for all other SIValue types 64 bytes should be enough
-		elem_len = (strings[i].type & SI_STRING) ?
+		elem_len = (strings[i].type & T_STRING) ?
 			strlen(strings[i].stringval) + delimiter_len : 64;
 		length += elem_len;
 	}
@@ -584,10 +584,10 @@ SIValue SIValue_Add
 	const SIValue a,
 	const SIValue b
 ) {
-	if     (a.type == T_NULL   || b.type == T_NULL)   return SI_NullVal();
-	else if(a.type == T_ARRAY  || b.type == T_ARRAY)  return SIValue_ConcatList(a, b);
-	else if(a.type & SI_STRING || b.type & SI_STRING) return SIValue_ConcatString(a, b);
-	else if(a.type == T_MAP    || b.type == T_MAP)    return Map_Merge(a, b);
+	if     (a.type == T_NULL  || b.type == T_NULL)  return SI_NullVal();
+	else if(a.type == T_ARRAY || b.type == T_ARRAY) return SIValue_ConcatList(a, b);
+	else if(a.type & T_STRING || b.type & T_STRING) return SIValue_ConcatString(a, b);
+	else if(a.type == T_MAP   || b.type == T_MAP)   return Map_Merge(a, b);
 
 	// only construct an integer return if both operands are integers
 	if(a.type & b.type & T_INT64) {

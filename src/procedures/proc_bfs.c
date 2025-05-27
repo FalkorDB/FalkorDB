@@ -74,9 +74,9 @@ static ProcedureResult Proc_BFS_Invoke
 	ASSERT(args  !=  NULL);
 
 	if(array_len((SIValue *)args) != 3) return PROCEDURE_ERR;
-	if(SI_TYPE(args[0]) != T_NODE                 ||   // source node
-	   SI_TYPE(args[1]) != T_INT64                ||   // max level to iterate to, unlimited if 0
-	   !(SI_TYPE(args[2]) & (T_NULL | SI_STRING)))     // relationship type to traverse if not NULL
+	if(SI_TYPE(args[0]) != T_NODE                 ||  // source node
+	   SI_TYPE(args[1]) != T_INT64                ||  // max level to iterate to, unlimited if 0
+	   !(SI_TYPE(args[2]) & (T_NULL | T_STRING)))     // relationship type to traverse if not NULL
 		return PROCEDURE_ERR;
 
 	BFSCtx *bfs_ctx = ctx->privateData;

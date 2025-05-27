@@ -217,7 +217,7 @@ static ProcedureResult validate_config
 
 	GRAPH_EDGE_DIR direction = GRAPH_EDGE_DIR_OUTGOING;
 	if(dir_exists) {
-		if(!(SI_TYPE(dir) & SI_STRING)) {
+		if(!(SI_TYPE(dir) & T_STRING)) {
 			ErrorCtx_SetError(EMSG_REL_DIRECTION);
 			return false;
 		}
@@ -248,7 +248,7 @@ static ProcedureResult validate_config
 	uint types_count = 0;
 	if(relationships_exists) {
 		if(SI_TYPE(relationships) != T_ARRAY || 
-			!SIArray_AllOfType(relationships, SI_STRING)) {
+			!SIArray_AllOfType(relationships, T_STRING)) {
 			ErrorCtx_SetError(EMSG_MUST_BE, "relTypes", "array of strings");
 			return false;
 		}
@@ -279,7 +279,7 @@ static ProcedureResult validate_config
 	ctx->path_count = 1;
 	
 	if(weight_prop_exists) {
-		if(!(SI_TYPE(weight_prop) & SI_STRING)) {
+		if(!(SI_TYPE(weight_prop) & T_STRING)) {
 			ErrorCtx_SetError(EMSG_MUST_BE, "weightProp", "string");
 			return false;
 		}
@@ -287,7 +287,7 @@ static ProcedureResult validate_config
 	}
 
 	if(cost_prop_exists) {
-		if(!(SI_TYPE(cost_prop) & SI_STRING)) {
+		if(!(SI_TYPE(cost_prop) & T_STRING)) {
 			ErrorCtx_SetError(EMSG_MUST_BE, "costProp", "string");
 			return false;
 		}

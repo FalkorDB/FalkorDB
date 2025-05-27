@@ -386,7 +386,7 @@ void Register_NumericFuncs() {
 	AR_FuncDesc *func_desc;
 
 	types = array_new(SIType, 1);
-	array_append(types, (SI_NUMERIC | SI_STRING | T_ARRAY | T_BOOL | T_MAP | T_NULL));
+	array_append(types, (SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | T_NULL));
 	ret_type = SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | T_NULL;
 	func_desc = AR_FuncDescNew("add", AR_ADD, 2, 2, types, ret_type, true, true);
 	AR_RegFunc(func_desc);
@@ -451,7 +451,7 @@ void Register_NumericFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, (SI_NUMERIC | SI_STRING | T_NULL | T_BOOL));
+	array_append(types, (SI_NUMERIC | T_STRING | T_NULL | T_BOOL));
 	ret_type = T_INT64 | T_NULL;
 	func_desc = AR_FuncDescNew("tointeger", AR_TOINTEGER, 1, 1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
@@ -463,7 +463,7 @@ void Register_NumericFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, (SI_NUMERIC | SI_STRING | T_NULL));
+	array_append(types, (SI_NUMERIC | T_STRING | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
 	func_desc = AR_FuncDescNew("tofloat", AR_TOFLOAT, 1, 1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);

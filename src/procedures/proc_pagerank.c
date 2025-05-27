@@ -63,14 +63,14 @@ ProcedureResult Proc_PagerankInvoke
 	// arg0 and arg1 can be either String or NULL
 	SIType arg0_t = SI_TYPE(args[0]);
 	SIType arg1_t = SI_TYPE(args[1]);
-	if(!(arg0_t & (SI_STRING | T_NULL))) return PROCEDURE_ERR;
-	if(!(arg1_t & (SI_STRING | T_NULL))) return PROCEDURE_ERR;
+	if(!(arg0_t & (T_STRING | T_NULL))) return PROCEDURE_ERR;
+	if(!(arg1_t & (T_STRING | T_NULL))) return PROCEDURE_ERR;
 
 	// read arguments
 	const char *label = NULL;    // node filter
 	const char *relation = NULL; // edge filter
-	if(arg0_t & SI_STRING) label = args[0].stringval;
-	if(arg1_t & SI_STRING) relation = args[1].stringval;
+	if(arg0_t & T_STRING) label = args[0].stringval;
+	if(arg1_t & T_STRING) relation = args[1].stringval;
 
 	// pagerank config arguments
 	int iters;               // iterations performed

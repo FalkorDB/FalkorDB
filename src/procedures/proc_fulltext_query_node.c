@@ -61,7 +61,7 @@ ProcedureResult Proc_FulltextQueryNodeInvoke
 	const char **yield
 ) {
 	if(array_len((SIValue *)args) != 2) return PROCEDURE_ERR;
-	if(!(SI_TYPE(args[0]) & SI_TYPE(args[1]) & SI_STRING)) return PROCEDURE_ERR;
+	if(!(SI_TYPE(args[0]) & SI_TYPE(args[1]) & T_STRING)) return PROCEDURE_ERR;
 
 	ctx->privateData = NULL;
 	GraphContext *gc = QueryCtx_GetGraphCtx();

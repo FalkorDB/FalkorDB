@@ -39,7 +39,7 @@ typedef enum {
 	T_PTR           = (1 << 16),
 	T_POINT         = (1 << 17),
 	T_VECTOR_F32    = (1 << 18),
-	T_INTERN_STRING = (1 << 19),
+	T_INTERN_STRING = (1 << 19) | T_STRING,
 } SIType;
 
 typedef enum {
@@ -53,10 +53,9 @@ typedef enum {
 #define SI_TYPE(value) (value).type
 #define SI_ALLOCATION(value) (value)->allocation
 #define SI_NUMERIC (T_INT64 | T_DOUBLE)
-#define SI_STRING (T_STRING | T_INTERN_STRING)
 #define SI_GRAPHENTITY (T_NODE | T_EDGE)
-#define SI_ALL (T_MAP | T_NODE | T_EDGE | T_ARRAY | T_PATH | T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION | SI_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_NULL | T_PTR | T_POINT | T_VECTOR)
-#define SI_VALID_PROPERTY_VALUE (T_POINT | T_ARRAY | T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION | SI_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_VECTOR)
+#define SI_ALL (T_MAP | T_NODE | T_EDGE | T_ARRAY | T_PATH | T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION | T_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_NULL | T_PTR | T_POINT | T_VECTOR)
+#define SI_VALID_PROPERTY_VALUE (T_POINT | T_ARRAY | T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION | T_STRING | T_INTERN_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_VECTOR)
 #define SI_INDEXABLE (SI_NUMERIC | T_BOOL | T_STRING | T_POINT | T_VECTOR)
 
 /* Any values (except durations) are comparable with other values of the same type.

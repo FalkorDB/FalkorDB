@@ -31,7 +31,7 @@ static bool _computeURI
 	op->uri = AR_EXP_Evaluate(op->exp, r);
 
 	// check uri type
-	if(!(SI_TYPE(op->uri) & SI_STRING)) {
+	if(!(SI_TYPE(op->uri) & T_STRING)) {
 		ErrorCtx_SetError(EMSG_INVALID_CSV_URI);
 		return false;
 	}

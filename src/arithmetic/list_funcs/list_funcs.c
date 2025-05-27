@@ -707,10 +707,10 @@ SIValue AR_REDUCE
 	if(SI_TYPE(argv[1]) == T_NULL) return SI_NullVal();
 
 	// set arguments
-	SIValue        accum  =  SI_ShareValue(argv[0]);
-	SIValue        list   =  argv[1];
-	Record         rec    =  argv[2].ptrval;
-	ListReduceCtx  *ctx   =  private_data;
+	SIValue       accum = SI_ShareValue(argv[0]);
+	SIValue       list  = argv[1];
+	Record        rec   = argv[2].ptrval;
+	ListReduceCtx *ctx  = private_data;
 
 	// on first invocation build the internal record
 	if(ctx->record == NULL) _PopulateReduceCtx(ctx, rec);
@@ -813,7 +813,7 @@ void Register_ListFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, SI_STRING | T_ARRAY | T_NULL);
+	array_append(types, T_STRING | T_ARRAY | T_NULL);
 	ret_type = T_NULL | T_INT64;
 	func_desc = AR_FuncDescNew("size", AR_SIZE, 1, 1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);

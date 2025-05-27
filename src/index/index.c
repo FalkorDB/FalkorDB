@@ -405,7 +405,7 @@ RSDoc *Index_IndexGraphEntity
 
 		if(field->type & INDEX_FLD_FULLTEXT) {
 			// value must be of type string
-			if(t & SI_STRING) {
+			if(t & T_STRING) {
 				*doc_field_count += 1;
 
 				RediSearch_DocumentAddFieldCString(doc, field->fulltext_name,

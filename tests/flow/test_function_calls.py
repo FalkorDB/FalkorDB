@@ -624,7 +624,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         try:
             self.graph.query(query)
         except redis.ResponseError as e:
-            self.env.assertContains("Type mismatch: expected String or Intern String but was Integer", str(e))
+            self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
 
     def test20_keys(self):
         # Test retrieving keys of a nested map
@@ -2233,9 +2233,9 @@ class testFunctionCallsFlow(FlowTestsBase):
             "RETURN tail(1)": "Type mismatch: expected List or Null but was Integer",
             "CREATE (n) RETURN hasLabels(n, 1)": "Type mismatch: expected List but was Integer",
             "CREATE ()-[r:R]->() RETURN hasLabels(r, ['abc', 'def'])": "Type mismatch: expected Node or Null but was Edge",
-            "RETURN toBoolean(1.2)": "Type mismatch: expected String, Boolean, Integer, Null, or Intern String but was Float",
-            "RETURN isEmpty(1)": "Type mismatch: expected Map, List, String, Null, or Intern String but was Integer",
-            "CREATE ()-[r:R]->() RETURN toString(r)": "Type mismatch: expected Datetime, Duration, String, Boolean, Integer, Float, Null, Point, or Intern String but was Edge",
+            "RETURN toBoolean(1.2)": "Type mismatch: expected String, Boolean, Integer, or Null but was Float",
+            "RETURN isEmpty(1)": "Type mismatch: expected Map, List, String, or Null but was Integer",
+            "CREATE ()-[r:R]->() RETURN toString(r)": "Type mismatch: expected Datetime, Duration, String, Boolean, Integer, Float, Null, or Point but was Edge",
         }
         for query, error in queries_with_errors.items():
             self.expect_error(query, error)
@@ -2442,7 +2442,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             self.graph.query("RETURN string.join(['HELL','OW'], 2)")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Type mismatch: expected String or Intern String but was Integer", str(e))
+            self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
 
         # Test without input argument
         try:
@@ -2465,21 +2465,21 @@ class testFunctionCallsFlow(FlowTestsBase):
             self.graph.query("RETURN string.join(['HELL', 2], ' ')")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Type mismatch: expected String or Intern String but was Integer", str(e))
+            self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
 
         # list args should be string
         try:
             self.graph.query("RETURN string.join(['HELL', 'OW', 2, 'now'], ' ')")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Type mismatch: expected String or Intern String but was Integer", str(e))
+            self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
 
         # list args should be string
         try:
             self.graph.query("RETURN string.join([3, 'OW', 'now'], ' ')")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Type mismatch: expected String or Intern String but was Integer", str(e))
+            self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
 
         ### Test valid inputs ###
         expected_result = ['HELLOW']
@@ -2556,14 +2556,14 @@ class testFunctionCallsFlow(FlowTestsBase):
             self.graph.query("RETURN string.matchRegEx(2, 'bla')")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Type mismatch: expected String, Null, or Intern String but was Integer", str(e))
+            self.env.assertContains("Type mismatch: expected String or Null but was Integer", str(e))
 
         # 2nd arg should be string
         try:
             self.graph.query("RETURN string.matchRegEx('bla', 2)")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Type mismatch: expected String, Null, or Intern String but was Integer", str(e))
+            self.env.assertContains("Type mismatch: expected String or Null but was Integer", str(e))
 
         # Test without input argument
         try:
@@ -2664,21 +2664,21 @@ class testFunctionCallsFlow(FlowTestsBase):
             self.graph.query("RETURN string.replaceRegEx(2, 'bla')")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Type mismatch: expected String, Null, or Intern String but was Integer", str(e))
+            self.env.assertContains("Type mismatch: expected String or Null but was Integer", str(e))
 
         # 2nd arg should be string
         try:
             self.graph.query("RETURN string.replaceRegEx('bla', 2)")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Type mismatch: expected String, Null, or Intern String but was Integer", str(e))
+            self.env.assertContains("Type mismatch: expected String or Null but was Integer", str(e))
 
         # 3rd arg should be string
         try:
             self.graph.query("RETURN string.replaceRegEx('bla', 'bla', 2)")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Type mismatch: expected String, Null, or Intern String but was Integer", str(e))
+            self.env.assertContains("Type mismatch: expected String or Null but was Integer", str(e))
 
         # Test without input argument
         try:
