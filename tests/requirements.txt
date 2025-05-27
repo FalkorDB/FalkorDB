@@ -2,7 +2,6 @@ behave
 click
 docker
 FalkorDB
-falkordb-bulk-loader
 neo4j==5.27.0
 grammarinator
 wheel
