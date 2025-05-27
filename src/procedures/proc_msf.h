@@ -8,5 +8,5 @@
 #include "proc_ctx.h"
 
 // run betweeness centrality on sub graph
-ProcedureCtx *Proc_msfCtx(void);
+ProcedureCtx *Proc_MSFCtx(void);
 
