@@ -2797,5 +2797,8 @@ class testFunctionCallsFlow(FlowTestsBase):
         res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(x)")
         self.env.assertEquals(res.result_set, [[None], [1], [2], [3], [4]])
 
+        res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(prev(x))")
+        self.env.assertEquals(res.result_set, [[None], [None], [1], [2], [3]])
+
         res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(tostring(x) + tostring(x))")
         self.env.assertEquals(res.result_set, [[None], ['11'], ['22'], ['33'], ['44']])
