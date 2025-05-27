@@ -2793,3 +2793,6 @@ class testFunctionCallsFlow(FlowTestsBase):
         for q in queries_with_errors:
             self.expect_error(q, err_msg)
 
+    def test95_prev(self):
+        res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(x)")
+        self.env.assertEquals(res.result_set, [[None], [1], [2], [3], [4]])
