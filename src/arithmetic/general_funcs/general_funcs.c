@@ -4,6 +4,7 @@
  */
 
 #include "general_funcs.h"
+#include "../../value.h"
 #include "../func_desc.h"
 #include "../../util/arr.h"
 
@@ -11,14 +12,22 @@ typedef struct {
 	SIValue value;  // the value to store
 } AR_PrevPrivateData;
 
-void AR_PrevPrivateData_Free(void *ctx_ptr) {
+void AR_PrevPrivateData_Free
+(
+    void *ctx_ptr
+) {
+    ASSERT(ctx_ptr != NULL);
+
 	AR_PrevPrivateData *ctx = ctx_ptr;
 
 	SIValue_Free(ctx->value);
 	rm_free(ctx);
 }
 
-void *AR_PrevPrivateData_Clone(void *orig) {
+void *AR_PrevPrivateData_Clone
+(
+    void *orig
+) {
 	AR_PrevPrivateData *ctx = orig;
 	AR_PrevPrivateData *ctx_clone = rm_malloc(sizeof(AR_PrevPrivateData));
 
@@ -31,7 +40,21 @@ void *AR_PrevPrivateData_Clone(void *orig) {
 	return ctx_clone;
 }
 
-SIValue AR_PREV(SIValue *argv, int argc, void *private_data) {
+// return the previous value of the first argument
+// this function is used to store the previous value of an expression
+// ex: UNWIND range(1, 5) AS x RETURN x, prev(x)
+// the result will be:
+// 1, NULL
+// 2, 1
+// 3, 2
+// 4, 3
+// 5, 4
+SIValue AR_PREV
+(
+    SIValue *argv,
+    int argc,
+    void *private_data
+) {
 	AR_PrevPrivateData *pdata = (AR_PrevPrivateData *)private_data;
 	SIValue value = pdata->value;
 	pdata->value = SI_CloneValue(argv[0]);
