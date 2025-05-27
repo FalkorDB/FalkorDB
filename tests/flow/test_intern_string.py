@@ -274,6 +274,26 @@ class testInternString():
         self.env.assertEquals(res[0][1], "String")
         assertStringPoolStats(self.conn, 1, 1)
 
+        #-----------------------------------------------------------------------
+
+        # undo the creation of an intern string
+
+        queries = [
+            "CREATE (n {v:intern('ba')}) WITH n RETURN n.v / 5",
+            "CREATE ()-[e:R {v:intern('ba')}]->() WITH n RETURN e.v / 4",
+            "CREATE (a {v:intern('abc')})-[e:R {v:intern('bac')}]->(z {v:intern('abc')}) RETURN e.v/z.v"
+        ]
+
+        for q in queries:
+            try:
+                self.graph.query(q).result_set
+                self.env.assertTrue(False and "query should raise an exception")
+            except:
+                pass
+
+            # intern string pool stats should remain the same
+            assertStringPoolStats(self.conn, 1, 1)
+
     def test_implicit_copy(self):
         # implicit copy of an intern string should produce an intern string
         q = """CREATE (a {v:intern($s)}), (b)
@@ -290,6 +310,38 @@ class testInternString():
         self.env.assertEquals("String", res.result_set[0][3])
         assertStringPoolStats(self.conn, 1, 2)
 
+    def test_stress_pool(self):
+        # have multiple queries running concurently access the string-pool
+
+        import threading
+
+        # each thread will insert the same interned string in a new node
+        def worker(conn):
+            q = """UNWIND range(0, 200) AS x
+                   MATCH ({v:intern(tostring(x))})
+                   RETURN count(1)"""
+            conn.execute_command("GRAPH.QUERY", "stress", q)
+
+            q = "CREATE ({v:intern(tostring('x'))})"
+            conn.execute_command("GRAPH.QUERY", "stress", q)
+
+        # initial sanity check: string pool should be empty
+        assertStringPoolStats(self.conn, 0, 0)
+
+        # create dedicated connections for each thread
+        thread_count = 4
+        connections = [self.env.getConnection() for _ in range(thread_count)]
+        threads = [threading.Thread(target=worker, args=(conn,)) for conn in connections]
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # validate pool stats:
+        # - only one unique string in pool (not duplicated)
+        # - total usage count: number of threads = 4
+        assertStringPoolStats(self.conn, 1, 4)
 
 class testInternStringPersistency():
     def __init__(self):

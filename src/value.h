@@ -19,6 +19,9 @@
  * The order of these values is significant, as the delta between values of
  * differing types is used to maintain the Cypher-defined global sort order
  * in the SIValue_Order routine. */
+
+#define T_INTERN (1<< 19)
+
 typedef enum {
 	T_MAP           = (1 << 0),
 	T_NODE          = (1 << 1),
@@ -39,7 +42,7 @@ typedef enum {
 	T_PTR           = (1 << 16),
 	T_POINT         = (1 << 17),
 	T_VECTOR_F32    = (1 << 18),
-	T_INTERN_STRING = (1 << 19) | T_STRING,
+	T_INTERN_STRING = T_INTERN | T_STRING,
 } SIType;
 
 typedef enum {
