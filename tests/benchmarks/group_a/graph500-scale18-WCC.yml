@@ -8,7 +8,7 @@ db_config:
 parameters:
   graph: graph500-scale18-ef16
   num_clients: 32
-  num_requests: 1000
+  num_requests: 512
   queries:
     - query: 'CALL algo.WCC(NULL) YIELD node, componentId RETURN count(DISTINCT 
             componentId) AS num_components'
