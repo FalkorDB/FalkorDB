@@ -110,12 +110,20 @@ StringPool StringPool_create(void) {
 // incase the string is already stored in the pool
 // its reference count is increased
 // returns a pointer to the stored string
+#ifdef DEBUG_STRINGPOOL
 char *StringPool_rent
 (
 	const char *str,   // string to add
 	const char *file,  // source file calling this function
 	int line           // source file line calling this function
-) {
+)
+#else
+char *StringPool_rent
+(
+	const char *str
+)
+#endif
+{
 	// validate arguments
 	ASSERT(str != NULL);
 
@@ -123,7 +131,8 @@ char *StringPool_rent
 	ASSERT(pool != NULL);
 
 	#ifdef DEBUG_STRINGPOOL
-	fprintf(stderr, "StringPool_rent: \"%s\" from %s:%d\n", str, file, line);
+	RedisModule_Log(NULL, "debug", "StringPool_rent: \"%s\" from %s:%d\n",
+			str, file, line);
 	#endif
 
 	dictEntry *de;
@@ -181,12 +190,20 @@ char *StringPool_rent
 // remove string from pool
 // the string will be free only when its reference count drops to 0
 // returns true if the string was freed
+#ifdef DEBUG_STRINGPOOL
 void StringPool_return
 (
 	char *str,         // string to remove
 	const char *file,  // source file calling this function
 	int line           // source file line calling this function
-) {
+)
+#else
+void StringPool_return
+(
+	char *str          // string to remove
+)
+#endif
+{
 	// validate arguments
 	ASSERT(str != NULL);
 
@@ -194,7 +211,8 @@ void StringPool_return
 	ASSERT(pool != NULL);
 
 	#ifdef DEBUG_STRINGPOOL
-	fprintf(stderr, "StringPool_return: \"%s\" from %s:%d\n", str, file, line);
+	RedisModule_Log(NULL, "debug", "StringPool_return: \"%s\" from %s:%d\n",
+			str, file, line);
 	#endif
 
 	dictEntry *de;

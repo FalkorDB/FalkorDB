@@ -734,7 +734,7 @@ int SIValue_Compare
 	if(disjointOrNull) *disjointOrNull = 0;
 
 	// in order to be comparable, both SIValues must be from the same type
-	if(a.type == b.type) {
+	if(a.type & b.type) {
 		switch(a.type) {
 		case T_INT64:
 		case T_BOOL:
@@ -796,8 +796,8 @@ int SIValue_Compare
 		if(disjointOrNull) *disjointOrNull = DISJOINT;
 	}
 
-	// in case of disjoint or null comparison, return value type difference
-	return a.type - b.type;
+	// return base type difference, ignoring intern flag (used for disjoint or null comparisons)
+	return (a.type & ~T_INTERN) - (b.type & ~T_INTERN);
 }
 
 // hashes the id and properties of the node

@@ -7,17 +7,13 @@
 
 #include "../util/dict.h"
 
-// rent a string from string-pool
-#define STRINGPOOL_RENT(str)                     \
-(                                                \
-	StringPool_rent((str), __FILE__, __LINE__)   \
-)
-
-// rent a string from string-pool
-#define STRINGPOOL_RETURN(str)                   \
-(                                                \
-	StringPool_return((str), __FILE__, __LINE__) \
-)
+#ifdef DEBUG_STRINGPOOL
+    #define STRINGPOOL_RENT(str)   (StringPool_rent((str), __FILE__, __LINE__))
+    #define STRINGPOOL_RETURN(str) (StringPool_return((str), __FILE__, __LINE__))
+#else
+    #define STRINGPOOL_RENT(str)   (StringPool_rent((str)))
+    #define STRINGPOOL_RETURN(str) (StringPool_return((str)))
+#endif
 
 // StringPool is a dict of strings
 // used primarily to reduce memory consumption by removing string duplication
@@ -42,9 +38,13 @@ StringPool StringPool_create(void);
 // returns a pointer to the stored string
 char *StringPool_rent
 (
+#ifdef DEBUG_STRINGPOOL
 	const char *str,   // string to add
 	const char *file,  // source file calling this function
 	int line           // source file line calling this function
+#else
+	const char *str          // string to remove
+#endif
 );
 
 // add string to pool in case it doesn't already exists
@@ -59,9 +59,13 @@ char *StringPool_rentNoClone
 // the string will be free only when its reference count drops to 0
 void StringPool_return
 (
+#ifdef DEBUG_STRINGPOOL
 	char *str,         // string to remove
 	const char *file,  // source file calling this function
 	int line           // source file line calling this function
+#else
+	char *str          // string to remove
+#endif
 );
 
 // get string pool statistics

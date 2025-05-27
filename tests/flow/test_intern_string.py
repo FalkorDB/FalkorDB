@@ -343,6 +343,35 @@ class testInternString():
         # - total usage count: number of threads = 4
         assertStringPoolStats(self.conn, 1, 4)
 
+    def test_intern_comparision(self):
+        # validate intern string comparison
+
+        # expecting intern string 'a' to equal non interned string 'a'
+        queries = ["RETURN intern('a') = 'a'",
+                   "RETURN 'a' = intern('a')",
+                   "RETURN intern('a') < 'b'",
+                   "RETURN intern('b') > 'a'"]
+
+        for q in queries:
+            res = self.graph.query(q).result_set
+            self.env.assertTrue(res[0][0])
+
+        q = """UNWIND [intern('c'), intern('b'), intern('a'), 'a', 'c', 'b'] as x
+               WITH x
+               ORDER BY x
+               RETURN collect(x)"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(['a', 'a', 'b', 'b', 'c', 'c'], res[0][0])
+
+        q = """UNWIND [intern('c'), intern('b'), intern('a'), 'a', 'c', 'b', 1, 2, 3] as x
+               WITH x
+               ORDER BY x
+               RETURN collect(x)"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(['a', 'a', 'b', 'b', 'c', 'c', 1, 2, 3], res[0][0])
+
 class testInternStringPersistency():
     def __init__(self):
         self.env, self.db = Env(enableDebugCommand=True)
