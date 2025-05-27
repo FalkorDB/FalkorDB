@@ -17,12 +17,12 @@
 #include "./utility/internal.h"
 #include "../graph/graphcontext.h"
 
-// CALL algo.msf({}) YIELD edge, weight
-// CALL algo.msf(NULL) YIELD edge, weight
-// CALL algo.msf({nodeLabels: ['L', 'P']}) YIELD edge, weight
-// CALL algo.msf({relationshipTypes: ['R', 'E']}) YIELD edge, weight
-// CALL algo.msf({nodeLabels: ['L'], relationshipTypes: ['E']}) YIELD edge, weight
-// CALL algo.msf({nodeLabels: ['L'], objective: minimum})
+// CALL algo.MSF({}) YIELD edge, weight
+// CALL algo.MSF(NULL) YIELD edge, weight
+// CALL algo.MSF({nodeLabels: ['L', 'P']}) YIELD edge, weight
+// CALL algo.MSF({relationshipTypes: ['R', 'E']}) YIELD edge, weight
+// CALL algo.MSF({nodeLabels: ['L'], relationshipTypes: ['E']}) YIELD edge, weight
+// CALL algo.MSF({nodeLabels: ['L'], objective: minimum})
 
 typedef struct {
 	Graph *g;              	// graph
@@ -213,7 +213,6 @@ error:
 	return false;
 }
 
-// TODO: allow for weighted inputs
 
 // invoke the procedure
 ProcedureResult Proc_MSFInvoke
@@ -241,11 +240,11 @@ ProcedureResult Proc_MSFInvoke
 	if(t != T_MAP) {
 		SIValue_Free(config);
 
-		ErrorCtx_SetError("invalid argument to algo.betweenness");
+		ErrorCtx_SetError("invalid argument to algo.MSF");
 		return PROCEDURE_ERR;
 	}
 
-	// read betweenness invoke configuration
+	// read MSF invoke configuration
 	// {
 	//	nodeLabels: ['A', 'B'],
 	//	relationshipTypes: ['R'],
@@ -285,12 +284,13 @@ ProcedureResult Proc_MSFInvoke
 	// save private data
 	ctx->privateData = pdata;
 
-	GrB_Matrix A;
+	GrB_Matrix A = NULL, A_w = NULL, treeWeight = NULL;
 	GrB_Info info;
 
 	//makes into a symetric matrix
-	info = Build_Matrix(&A, &pdata->nodes, g, lbls, array_len(lbls), rels,
-			array_len(rels), true, true);
+	info = Build_Weighted_Matrix(
+			&A, &A_w, &pdata->nodes, g, lbls, array_len(lbls), rels,
+			array_len(rels), weightAtt, true, true);
 	ASSERT(info == GrB_SUCCESS);
 
 	// free build matrix inputs
@@ -303,6 +303,7 @@ ProcedureResult Proc_MSFInvoke
 
 	char msg[LAGRAPH_MSG_LEN];
 	// execute Minimum Spanning Forest
+	// FIXME: Using edgeIDs as weights because MSF doesn't support double weights
 	GrB_Info msf_res =
 		LAGraph_msf(&pdata->tree, A, false, msg);
 	if(msf_res != GrB_SUCCESS) {
@@ -351,21 +352,9 @@ SIValue *Proc_MSFStep
 	// retrieve node from graph
 	GrB_Index node_i, node_j;
 	GxB_Matrix_Iterator_getIndex(pdata->it, &node_i, &node_j);
-	Edge *edge = array_new(Edge, 1);
-	// Scan relation types specified by query
-	for(uint i = 0; i < pdata->relationCount; ++i)
-	{
-		// TODO: check that this handles all relations properly 
-		Graph_GetEdgesConnectingNodes(
-			pdata->g, node_i, node_j, pdata->relationIDs[i], &edge);
-		// TODO: is this the right way to handle the symmetry?
-		Graph_GetEdgesConnectingNodes(
-			pdata->g, node_j, node_i, pdata->relationIDs[i], &edge);
-	}
-	// TODO: there may be multiple edges. which one (or should they all) be 
-	// returned?
-	// If weighted: presumably the one with the lowest weight should be returned
-	
+	Edge edge;
+	EdgeID edgeID = (EdgeID) GxB_Iterator_get_UINT64(pdata->it);
+	ASSERT(Graph_GetEdge(pdata->g, edgeID, &edge)) ;
 	// prep for next call to Proc_BetweennessStep
 	pdata->info = GxB_Matrix_Iterator_next(pdata->it);
 
@@ -374,11 +363,13 @@ SIValue *Proc_MSFStep
 	//--------------------------------------------------------------------------
 
 	if(pdata->yield_edge) {
-		*pdata->yield_edge = SI_Edge(edge);
+		*pdata->yield_edge = SI_Edge(&edge);
 	}
 
 	if(pdata->yield_weight) {
-		*pdata->yield_weight = SI_LongVal(1); //SI_GET_NUMERIC(w);
+		SIValue *yield_w = AttributeSet_Get(*edge.attributes, pdata->weight_prop);
+		ASSERT(yield_w != ATTRIBUTE_NOTFOUND)
+		pdata->yield_weight = yield_w;
 	}
 	return pdata->output;
 }
@@ -399,19 +390,19 @@ ProcedureResult Proc_MSFFree
 	return PROCEDURE_OK;
 }
 
-// CALL algo.msf({nodeLabels: ['Person'], relationshipTypes: ['KNOWS'],
+// CALL algo.MSF({nodeLabels: ['Person'], relationshipTypes: ['KNOWS'],
 // attribute: 'Years', objective: 'Minimum'}) YIELD node, score
-ProcedureCtx *Proc_msfCtx(void) {
+ProcedureCtx *Proc_MSFCtx(void) {
 	void *privateData = NULL;
 
 	ProcedureOutput *outputs         = array_new(ProcedureOutput, 2);
-	ProcedureOutput output_node      = {.name = "edge", .type = T_EDGE};
-	ProcedureOutput output_component = {.name = "weight", .type = T_DOUBLE};
+	ProcedureOutput output_edge      = {.name = "edge", .type = T_EDGE};
+	ProcedureOutput output_weight = {.name = "weight", .type = SI_NUMERIC};
 
-	array_append(outputs, output_node);
-	array_append(outputs, output_component);
+	array_append(outputs, output_edge);
+	array_append(outputs, output_weight);
 
-	ProcedureCtx *ctx = ProcCtxNew("algo.betweenness",
+	ProcedureCtx *ctx = ProcCtxNew("algo.MSF",
 								   1,
 								   outputs,
 								   Proc_MSFStep,
