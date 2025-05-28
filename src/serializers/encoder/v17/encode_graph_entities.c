@@ -73,6 +73,7 @@ static void _RdbSaveSIValue
 			SerializerIO_WriteDouble(rdb, v->doubleval);
 			break;
 		case T_STRING:
+		case T_INTERN_STRING:
 			SerializerIO_WriteBuffer(rdb, v->stringval,
 					strlen(v->stringval) + 1);
 			break;

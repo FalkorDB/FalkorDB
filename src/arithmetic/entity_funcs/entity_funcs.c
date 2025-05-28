@@ -49,18 +49,18 @@ SIValue AR_LABELS(SIValue *argv, int argc, void *private_data) {
 SIValue AR_HAS_LABELS(SIValue *argv, int argc, void *private_data) {
 	if(SI_TYPE(argv[0]) == T_NULL) return SI_NullVal();
 
-	bool         res       =  true;
-	Node         *node     =  argv[0].ptrval;
-	SIValue      labels    =  argv[1];
-	EntityID     id        =  ENTITY_GET_ID(node);
-	GraphContext *gc       =  QueryCtx_GetGraphCtx();
-	Graph        *g        =  gc->g;
+	bool         res    = true;
+	Node         *node  = argv[0].ptrval;
+	SIValue      labels = argv[1];
+	EntityID     id     = ENTITY_GET_ID(node);
+	GraphContext *gc    = QueryCtx_GetGraphCtx();
+	Graph        *g     = gc->g;
 
 	// iterate over given labels
 	uint32_t labels_length = SIArray_Length(labels);
 	for (uint32_t i = 0; i < labels_length; i++) {
 		SIValue label_value = SIArray_Get(labels, i);
-		if(SI_TYPE(label_value) != T_STRING) {
+		if(!(SI_TYPE(label_value) & T_STRING)) {
 			Error_SITypeMismatch(label_value, T_STRING);
 			return SI_NullVal();
 		}
@@ -158,10 +158,10 @@ static SIValue _AR_NodeDegree
 
 		// get labels array from input arguments, but removing duplicates
 		SIValue labels = SI_EmptyArray();
-		if(SI_TYPE(argv[1]) == T_STRING) {
+		if(SI_TYPE(argv[1]) & T_STRING) {
 			// validate signature function(NODE, STR_0, STR_1, ... STR_N)
 			for(int i = 1; i < argc; i++) {
-				if(SI_TYPE(argv[i]) == T_STRING) {
+				if(SI_TYPE(argv[i]) & T_STRING) {
 					if(SIArray_ContainsValue(labels, argv[i], NULL) == false) {
 						SIArray_Append(&labels, argv[i]);
 					}
@@ -177,7 +177,7 @@ static SIValue _AR_NodeDegree
 			uint len = SIArray_Length(argv[1]);
 			for(int j = 0; j < len; j++) {
 				SIValue elem = SIArray_Get(argv[1], j);
-				if(SI_TYPE(elem) != T_STRING) {
+				if(!(SI_TYPE(elem) & T_STRING)) {
 					SIArray_Free(labels);
 					Error_SITypeMismatch(elem, T_STRING);
 					return SI_NullVal();
@@ -245,7 +245,7 @@ SIValue AR_PROPERTY(SIValue *argv, int argc, void *private_data) {
 	// AR_PROPERTY may be invoked from AR_SUBSCRIPT in a case like:
 	// WITH {val: 5} AS map RETURN map["val"]
 	// As such, we need to validate the argument's type independently of the invocation validation.
-	if(SI_TYPE(argv[1]) != T_STRING) {
+	if(!(SI_TYPE(argv[1]) & T_STRING)) {
 		// String indexes are only permitted on maps, not arrays.
 		Error_SITypeMismatch(argv[1], T_STRING);
 		return SI_NullVal();
