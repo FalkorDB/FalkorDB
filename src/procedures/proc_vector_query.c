@@ -75,14 +75,14 @@ static bool _extractArgs
 
 	// extract "label"
 	v = args[0];
-	if(SI_TYPE(v) != T_STRING) {
+	if(!(SI_TYPE(v) & T_STRING)) {
 		return false;
 	}
 	*label = v.stringval;
 
 	// extract "attribute"
 	v = args[1];
-	if(SI_TYPE(v) != T_STRING) {
+	if(!(SI_TYPE(v) & T_STRING)) {
 		return false;
 	}
 	*attribute = v.stringval;
