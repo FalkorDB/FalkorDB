@@ -128,6 +128,7 @@ SIValue AR_TOINTEGER(SIValue *argv, int argc, void *private_data) {
 		}
 		return SI_LongVal(0);
 	case T_STRING:
+	case T_INTERN_STRING:
 		if(strlen(arg.stringval) == 0) return SI_NullVal();
 		errno = 0;
 		if(strchr(arg.stringval, '.') == NULL) {
@@ -157,6 +158,7 @@ SIValue AR_TOFLOAT(SIValue *argv, int argc, void *private_data) {
 	case T_DOUBLE:
 		return arg;
 	case T_STRING:
+	case T_INTERN_STRING:
 		if(strlen(arg.stringval) == 0) return SI_NullVal();
 		errno = 0;
 		double parsedval = strtof(arg.stringval, &sEnd);

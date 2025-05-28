@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "GraphBLAS.h"
+#include "../../../globals.h"
 #include "../../serializer_io.h"
 #include "../../../graph/graphcontext.h"
 #include "../../../graph/tensor/tensor.h"
@@ -109,6 +110,16 @@ static void _EncodeTensors
 
 			rm_free(blob);
 
+			// optimize memory consumption
+			// if dump is being taken on a fork process, as a result of calling:
+			// BGSAVE or BGREWRITEAOF
+			// to avoid increase in memory consumption due to copy-on-write
+			// we can free processed tensor at the child process end
+			if(Globals_Get_ProcessIsChild()) {
+				info = GrB_free(&u);
+				ASSERT(info == GrB_SUCCESS);
+			}
+
 			// move to the next entry in A(i,:)
 			info = GxB_rowIterator_nextCol(it);
 		}
@@ -184,8 +195,17 @@ void RdbSaveLabelMatrices_v17
 		SerializerIO_WriteUnsigned(rdb, i);
 
 		// dump matrix to rdb
-		Delta_Matrix l = Graph_GetLabelMatrix(g, i);
-		_EncodeMatrix(rdb, l);
+		Delta_Matrix L = Graph_GetLabelMatrix(g, i);
+		_EncodeMatrix(rdb, L);
+
+		// optimize memory consumption
+		// if dump is being taken on a fork process, as a result of calling:
+		// BGSAVE or BGREWRITEAOF
+		// to avoid increase in memory consumption due to copy-on-write
+		// we can free processed matrices at the child process end
+		if(Globals_Get_ProcessIsChild()) {
+			Delta_Matrix_free(&L);
+		}
 	}
 }
 
@@ -214,6 +234,15 @@ void RdbSaveRelationMatrices_v17
 		Delta_Matrix R = Graph_GetRelationMatrix(g, i, false);
 		_EncodeMatrix(rdb, R);
 		_EncodeTensors(rdb, g, i, Delta_Matrix_M(R));
+
+		// optimize memory consumption
+		// if dump is being taken on a fork process, as a result of calling:
+		// BGSAVE or BGREWRITEAOF
+		// to avoid increase in memory consumption due to copy-on-write
+		// we can free processed matrices at the child process end
+		if(Globals_Get_ProcessIsChild()) {
+			Delta_Matrix_free(&R);
+		}
 	}
 }
 
@@ -231,6 +260,15 @@ void RdbSaveAdjMatrix_v17
 
 	Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
 	_EncodeMatrix(rdb, ADJ);
+
+	// optimize memory consumption
+	// if dump is being taken on a fork process, as a result of calling:
+	// BGSAVE or BGREWRITEAOF
+	// to avoid increase in memory consumption due to copy-on-write
+	// we can free processed matrices at the child process end
+	if(Globals_Get_ProcessIsChild()) {
+		Delta_Matrix_free(&ADJ);
+	}
 }
 
 // encode graph's node labels matrix
@@ -247,5 +285,14 @@ void RdbSaveLblsMatrix_v17
 
 	Delta_Matrix lbls = Graph_GetNodeLabelMatrix(g);
 	_EncodeMatrix(rdb, lbls);
+
+	// optimize memory consumption
+	// if dump is being taken on a fork process, as a result of calling:
+	// BGSAVE or BGREWRITEAOF
+	// to avoid increase in memory consumption due to copy-on-write
+	// we can free processed matrices at the child process end
+	if(Globals_Get_ProcessIsChild()) {
+		Delta_Matrix_free(&lbls);
+	}
 }
 

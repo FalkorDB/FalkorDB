@@ -21,6 +21,7 @@ void AR_RegisterFuncs() {
 	Register_TimeFuncs();
 	Register_PointFuncs();
 	Register_EntityFuncs();
+	Register_GeneralFuncs();
 	Register_StringFuncs();
 	Register_VectorFuncs();
 	Register_NumericFuncs();

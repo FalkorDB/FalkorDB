@@ -6,7 +6,6 @@
 
 #include "RG.h"
 #include "value.h"
-#include "globals.h"
 #include "util/rmalloc.h"
 #include "graph/entities/node.h"
 #include "graph/entities/edge.h"
@@ -106,22 +105,6 @@ SIValue SI_Vectorf32
 	return SIVectorf32_New(dim);
 }
 
-bool USE_STRING_POOL = false; // global flag to enable/disable string pooling
-
-// check rather or not to use string pool
-inline static bool use_string_pool(void) {
-	if(unlikely(USE_STRING_POOL)) {
-		// string pool is avaialble
-		// use it only when running under a thread which has access to it
-		// this includes redis main thread and the single writer thread
-		extern pthread_key_t _tlsStringPool;
-		bool can_access = (pthread_getspecific(_tlsStringPool) != NULL);
-		return can_access;
-	}
-
-	return false;
-}
-
 SIValue SI_ConstStringVal
 (
 	const char *s
@@ -135,43 +118,33 @@ SIValue SI_DuplicateStringVal
 (
 	const char *s
 ) {
-	// try to reuse string if string-pool is enabled
-	if(unlikely(use_string_pool())) {
-		StringPool pool = Globals_Get_StringPool();
-		char *str = StringPool_rent(pool, s);
-
-		return (SIValue) {
-			.stringval = str, .type = T_STRING, .allocation = M_SELF
-		};
-	} else {
-		return (SIValue) {
-			.stringval = rm_strdup(s), .type = T_STRING, .allocation = M_SELF
-		};
-	}
+	return (SIValue) {
+		.stringval = rm_strdup(s), .type = T_STRING, .allocation = M_SELF
+	};
 }
 
 SIValue SI_TransferStringVal
 (
 	char *s
 ) {
-	// try to reuse string if string-pool is enabled
-	if(unlikely(use_string_pool())) {
-		StringPool pool = Globals_Get_StringPool();
-		char *str = StringPool_rentNoClone(pool, s);
+	return (SIValue) {
+		.stringval = s, .type = T_STRING, .allocation = M_SELF
+	};
+}
 
-		// free in case of duplication
-		if(str != s) {
-			rm_free(s);
-		}
+// create an SIValue from a string by interning it
+SIValue SI_InternStringVal
+(
+	const char *s  // string to intern
+) {
+	ASSERT(s != NULL);
 
-		return (SIValue) {
-			.stringval = str, .type = T_STRING, .allocation = M_SELF
-		};
-	} else {
-		return (SIValue) {
-			.stringval = s, .type = T_STRING, .allocation = M_SELF
-		};
-	}
+	char *interned_str = STRINGPOOL_RENT(s);
+	return (SIValue) {
+		.stringval  = interned_str,
+		.type       = T_INTERN_STRING,
+		.allocation = M_SELF
+	};
 }
 
 static void SI_StringValFree
@@ -181,13 +154,7 @@ static void SI_StringValFree
 	ASSERT(s       != NULL);
 	ASSERT(s->type == T_STRING);
 
-	if(unlikely(use_string_pool())) {
-		StringPool string_pool = Globals_Get_StringPool();
-		StringPool_return(string_pool, s->stringval);
-	} else {
-		rm_free(s->stringval);
-	}
-
+	rm_free(s->stringval);
 	s->stringval = NULL;
 }
 
@@ -205,7 +172,10 @@ SIValue SI_ShareValue(const SIValue v) {
 	SIValue dup = v;
 	// if the original value owns an allocation
 	// mark that the duplicate shares it
-	if(v.allocation == M_SELF) dup.allocation = M_VOLATILE;
+	if(v.allocation == M_SELF) {
+		dup.allocation = M_VOLATILE;
+	}
+
 	return dup;
 }
 
@@ -222,6 +192,9 @@ SIValue SI_CloneValue(const SIValue v) {
 		case T_STRING:
 			// allocate a new copy of the input's string value
 			return SI_DuplicateStringVal(v.stringval);
+
+		case T_INTERN_STRING:
+			return SI_InternStringVal(v.stringval);
 
 		case T_ARRAY:
 			return SIArray_Clone(v);
@@ -276,7 +249,9 @@ SIValue SI_ConstValue(const SIValue *v) {
 // Clone 'v' and set v's allocation to volatile if 'v' owned the memory
 SIValue SI_TransferOwnership(SIValue *v) {
 	SIValue dup = *v;
-	if(v->allocation == M_SELF) v->allocation = M_VOLATILE;
+	if(v->allocation == M_SELF) {
+		v->allocation = M_VOLATILE;
+	}
 	return dup;
 }
 
@@ -284,7 +259,9 @@ SIValue SI_TransferOwnership(SIValue *v) {
  * with no responsibility for freeing or guarantee regarding scope.
  * This is used in cases like performing shallow copies of scalars in Record entries. */
 void SIValue_MakeVolatile(SIValue *v) {
-	if(v->allocation == M_SELF) v->allocation = M_VOLATILE;
+	if(v->allocation == M_SELF) {
+		v->allocation = M_VOLATILE;
+	}
 }
 
 /* Ensure that any allocation held by the given SIValue is guaranteed to not go out
@@ -325,6 +302,7 @@ const char *SIType_ToString(SIType t) {
 		case T_MAP:
 			return "Map";
 		case T_STRING:
+		case T_INTERN_STRING:
 			return "String";
 		case T_INT64:
 			return "Integer";
@@ -374,7 +352,7 @@ void SIType_ToMultipleTypeString(SIType t, char *buf, size_t bufferLen) {
 	SIType currentType  = 1;
 	size_t bytesWritten = 0;
 
-	// Find first type
+	// find first type
 	while((t & currentType) == 0) {
 		currentType = currentType << 1;
 	}
@@ -382,7 +360,7 @@ void SIType_ToMultipleTypeString(SIType t, char *buf, size_t bufferLen) {
 	if(count == 1) return;
 
 	count--;
-	// Iterate over the possible SITypes except last one
+	// iterate over the possible SITypes except last one
 	while(count > 1) {
 		currentType = currentType << 1;
 		if(t & currentType) {
@@ -417,6 +395,7 @@ void SIValue_ToString
 
 	switch(v.type) {
 		case T_STRING:
+		case T_INTERN_STRING:
 			_SIString_ToString(v, buf, bufferLen, bytesWritten);
 			break;
 		case T_INT64:
@@ -522,7 +501,7 @@ size_t SIValue_StringJoinLen
 	for(int i = 0; i < string_count; i ++) {
 		// string elements representing bytes size strings
 		// for all other SIValue types 64 bytes should be enough
-		elem_len = (strings[i].type == T_STRING) ?
+		elem_len = (strings[i].type & T_STRING) ?
 			strlen(strings[i].stringval) + delimiter_len : 64;
 		length += elem_len;
 	}
@@ -605,10 +584,10 @@ SIValue SIValue_Add
 	const SIValue a,
 	const SIValue b
 ) {
-	if     (a.type == T_NULL   || b.type == T_NULL)   return SI_NullVal();
-	else if(a.type == T_ARRAY  || b.type == T_ARRAY)  return SIValue_ConcatList(a, b);
-	else if(a.type == T_STRING || b.type == T_STRING) return SIValue_ConcatString(a, b);
-	else if(a.type == T_MAP    || b.type == T_MAP)    return Map_Merge(a, b);
+	if     (a.type == T_NULL  || b.type == T_NULL)  return SI_NullVal();
+	else if(a.type == T_ARRAY || b.type == T_ARRAY) return SIValue_ConcatList(a, b);
+	else if(a.type & T_STRING || b.type & T_STRING) return SIValue_ConcatString(a, b);
+	else if(a.type == T_MAP   || b.type == T_MAP)   return Map_Merge(a, b);
 
 	// only construct an integer return if both operands are integers
 	if(a.type & b.type & T_INT64) {
@@ -755,7 +734,7 @@ int SIValue_Compare
 	if(disjointOrNull) *disjointOrNull = 0;
 
 	// in order to be comparable, both SIValues must be from the same type
-	if(a.type == b.type) {
+	if(a.type & b.type) {
 		switch(a.type) {
 		case T_INT64:
 		case T_BOOL:
@@ -767,6 +746,7 @@ int SIValue_Compare
 
 			return SAFE_COMPARISON_RESULT(a.doubleval - b.doubleval);
 		case T_STRING:
+		case T_INTERN_STRING:
 			return strcmp(a.stringval, b.stringval);
 		case T_NODE:
 		case T_EDGE:
@@ -816,8 +796,8 @@ int SIValue_Compare
 		if(disjointOrNull) *disjointOrNull = DISJOINT;
 	}
 
-	// in case of disjoint or null comparison, return value type difference
-	return a.type - b.type;
+	// return base type difference, ignoring intern flag (used for disjoint or null comparisons)
+	return (a.type & ~T_INTERN) - (b.type & ~T_INTERN);
 }
 
 // hashes the id and properties of the node
@@ -880,6 +860,7 @@ void SIValue_HashUpdate
 			XXH64_update(state, &null, sizeof(null));
 			return;
 		case T_STRING:
+		case T_INTERN_STRING:
 			XXH64_update(state, &t, sizeof(t));
 			XXH64_update(state, v.stringval, strlen(v.stringval));
 			return;
@@ -990,6 +971,15 @@ SIValue SIValue_FromBinary
 			fread_assert(s, sizeof(char) * len, stream);
 			v = SI_TransferStringVal(s);
 			break;
+		case T_INTERN_STRING:
+			// read string length from stream
+			fread_assert(&len, sizeof(len), stream);
+			s = rm_malloc(sizeof(char) * len);
+			// read string from stream
+			fread_assert(s, sizeof(char) * len, stream);
+			v = SI_InternStringVal(s);
+			rm_free(s);
+			break;
 		case T_BOOL:
 			// read bool from stream
 			fread_assert(&b, sizeof(b), stream);
@@ -1047,6 +1037,7 @@ size_t SIValue_memoryUsage
 			break;
 
 		case T_STRING:
+		case T_INTERN_STRING:
 			n += strlen(v.stringval) * sizeof(char);
 			break;
 
@@ -1069,35 +1060,44 @@ size_t SIValue_memoryUsage
 	return n;
 }
 			
+// the free routine only performs work if it owns a heap allocation
 void SIValue_Free
 (
 	SIValue v
 ) {
-	// the free routine only performs work if it owns a heap allocation
-	if(v.allocation != M_SELF) return;
+	StringPool pool;
 
+	if(v.allocation != M_SELF) {
+		return;
+	}
+
+	// free self-allocated SIValue
 	switch(v.type) {
 		case T_STRING:
 			SI_StringValFree(&v);
-			return;
+			break;
+		case T_INTERN_STRING:
+			STRINGPOOL_RETURN(v.stringval);
+			break;
 		case T_NODE:
 		case T_EDGE:
 			rm_free(v.ptrval);
-			return;
+			break;
 		case T_ARRAY:
 			SIArray_Free(v);
-			return;
+			break;
 		case T_PATH:
 			SIPath_Free(v);
-			return;
+			break;
 		case T_MAP:
 			Map_Free(v);
 			break;
 		case T_VECTOR_F32:
 			SIVector_Free(v);
-			return;
+			break;
 		default:
-			return;
+			// No-op for primitive or unrecognized types
+			break;
 	}
 }
 

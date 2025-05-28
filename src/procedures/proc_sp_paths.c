@@ -222,7 +222,7 @@ static ProcedureResult validate_config
 
 	GRAPH_EDGE_DIR direction = GRAPH_EDGE_DIR_OUTGOING;
 	if(dir_exists) {
-		if(SI_TYPE(dir) != T_STRING) {
+		if(!(SI_TYPE(dir) & T_STRING)) {
 			ErrorCtx_SetError(EMSG_REL_DIRECTION);
 			return false;
 		}
@@ -284,7 +284,7 @@ static ProcedureResult validate_config
 	ctx->path_count = 1;
 	
 	if(weight_prop_exists) {
-		if(SI_TYPE(weight_prop) != T_STRING) {
+		if(!(SI_TYPE(weight_prop) & T_STRING)) {
 			ErrorCtx_SetError(EMSG_MUST_BE, "weightProp", "string");
 			return false;
 		}
@@ -292,7 +292,7 @@ static ProcedureResult validate_config
 	}
 
 	if(cost_prop_exists) {
-		if(SI_TYPE(cost_prop) != T_STRING) {
+		if(!(SI_TYPE(cost_prop) & T_STRING)) {
 			ErrorCtx_SetError(EMSG_MUST_BE, "costProp", "string");
 			return false;
 		}

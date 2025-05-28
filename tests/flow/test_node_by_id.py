@@ -243,3 +243,19 @@ class testNodeByIDFlow(FlowTestsBase):
             self.env.assertEquals(len(resultset), 0)    # Expecting no results.
             self.env.assertIn("Node By Label and ID Scan", str(self.graph.explain(query)))
 
+    def test_node_by_id_scan_reset(self):
+        # the following query used to crash due to wrong reset handeling by
+        # the op_node_by_label_scan operation
+
+        q = """UNWIND $pairs AS pair
+               UNWIND pair.feature_ids AS feature_id
+               MATCH (f:Feature), (n)
+               WHERE id(f) = feature_id AND id(n) = pair.node_id
+               RETURN 1"""
+
+        try:
+            res = self.graph.query(q, {'pairs': [{'node_id':1,'feature_ids':[2]}]}).result_set
+            self.env.assertEquals(len(res), 0)
+        except Exception as e:
+            self.env.assertFalse("query crashed")
+

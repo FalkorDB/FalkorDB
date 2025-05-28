@@ -30,7 +30,7 @@ class testQueryMemoryLimit():
         async def run(self, queries):
             qs           = []  # queries
             should_fails = []  # should query i fail
-            thread_count = self.db.config_get("THREAD_COUNT")
+            thread_count = int(self.db.config_get("THREAD_COUNT"))
 
             # connection pool blocking when there's no available connections 
             pool = BlockingConnectionPool(max_connections=thread_count, timeout=None, port=self.env.port, decode_responses=True)
@@ -63,7 +63,7 @@ class testQueryMemoryLimit():
 
     def test_01_read_memory_limit_config(self):
         # read configuration, test default value, expecting unlimited memory cap
-        query_mem_capacity = self.db.config_get("QUERY_MEM_CAPACITY")
+        query_mem_capacity = int(self.db.config_get("QUERY_MEM_CAPACITY"))
         self.env.assertEquals(query_mem_capacity, 0)
 
         # update configuration, set memory limit to 1MB
@@ -71,12 +71,12 @@ class testQueryMemoryLimit():
         self.db.config_set("QUERY_MEM_CAPACITY", MB)
 
         # re-read configuration
-        query_mem_capacity = self.db.config_get("QUERY_MEM_CAPACITY")
+        query_mem_capacity = int(self.db.config_get("QUERY_MEM_CAPACITY"))
         self.env.assertEquals(query_mem_capacity, MB)
 
     def test_02_overflow_no_limit(self):
         # execute query on each one of the threads
-        n_queries_to_execute = self.db.config_get("THREAD_COUNT")
+        n_queries_to_execute = int(self.db.config_get("THREAD_COUNT"))
 
         # set query memory limit as UNLIMITED
         limit = 0
@@ -86,7 +86,7 @@ class testQueryMemoryLimit():
 
     def test_03_no_overflow_with_limit(self):
         # execute query on each one of the threads
-        n_queries_to_execute = self.db.config_get("THREAD_COUNT")
+        n_queries_to_execute = int(self.db.config_get("THREAD_COUNT"))
 
         # set query memory limit to 1GB
         limit = 1024*1024*1024
@@ -96,7 +96,7 @@ class testQueryMemoryLimit():
 
     def test_04_overflow_with_limit(self):
         # execute query on each one of the threads
-        n_queries_to_execute = self.db.config_get("THREAD_COUNT")
+        n_queries_to_execute = int(self.db.config_get("THREAD_COUNT"))
 
         # set query memory limit to 1MB
         limit = 1024*1024
@@ -109,7 +109,7 @@ class testQueryMemoryLimit():
         total_query_count = 100
 
         # Query the threadpool_size
-        threadpool_size = self.db.config_get("THREAD_COUNT")
+        threadpool_size = int(self.db.config_get("THREAD_COUNT"))
 
         # set query memory limit to 1MB
         limit = 1024*1024
