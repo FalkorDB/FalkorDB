@@ -30,6 +30,7 @@ static void _ResultSet_VerboseReplyWithSIValue
 ) {
 	switch(SI_TYPE(v)) {
 	case T_STRING:
+	case T_INTERN_STRING:
 		RedisModule_ReplyWithStringBuffer(ctx, v.stringval, strlen(v.stringval));
 		return;
 	case T_INT64:

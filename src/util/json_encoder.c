@@ -188,6 +188,7 @@ static sds _JsonEncoder_Map(SIValue map, sds s) {
 sds _JsonEncoder_SIValue(SIValue v, sds s) {
 	switch(v.type) {
 	case T_STRING:
+	case T_INTERN_STRING:
 		s = _JsonEncoder_String(v, s);
 		break;
 	case T_INT64:

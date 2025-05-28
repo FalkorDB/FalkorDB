@@ -69,8 +69,8 @@ ProcedureResult Proc_PagerankInvoke
 	// read arguments
 	const char *label = NULL;    // node filter
 	const char *relation = NULL; // edge filter
-	if(arg0_t == T_STRING) label = args[0].stringval;
-	if(arg1_t == T_STRING) relation = args[1].stringval;
+	if(arg0_t & T_STRING) label = args[0].stringval;
+	if(arg1_t & T_STRING) relation = args[1].stringval;
 
 	// pagerank config arguments
 	int iters;               // iterations performed
