@@ -27,14 +27,16 @@
 typedef struct {
 	Graph *g;              	// graph
 	GrB_Matrix tree;		// The MSF
+	GrB_Matrix w_tree;		// The weighted MSF
 	GrB_Vector nodes; 	   	// nodes participating in computation
 	int *relationIDs;       // edge type(s) to traverse.
 	int relationCount;      // length of relationIDs.
 	GrB_Info info;         	// iterator state
 	GxB_Iterator it;       	// iterator
 	Node node;             	// node
+	Edge edge;             	// edge
 	AttributeID weight_prop;// weight attribute id
-	SIValue output[3];     	// array with up to 2 entries [edge, weight]
+	SIValue output[2];     	// array with up to 2 entries [edge, weight]
 	// SIValue *yield_node;   	// nodes 
 	SIValue *yield_edge;   	// edges
 	SIValue *yield_weight; 	// edge weights
@@ -88,6 +90,8 @@ static bool _read_config
 	// set outputs to NULL
 	*lbls = NULL;
 	*rels = NULL;
+	*weightAtt = ATTRIBUTE_ID_NONE;
+	*maxSF = false;
 
 	uint match_fields = 0;
 	uint n = Map_KeyCount(config);
@@ -162,9 +166,9 @@ static bool _read_config
 
 		match_fields++;
 	}
-	if(MAP_GETCASEINSENSITIVE(config, "weightRelationship", v)) {
+	if(MAP_GETCASEINSENSITIVE(config, "weightAttribute", v)) {
 		if(SI_TYPE(v) != T_STRING) {
-			ErrorCtx_SetError("msf configuration, 'weightRelationship' should be a string");
+			ErrorCtx_SetError("msf configuration, 'weightAttribute' should be a string");
 			goto error;
 		}
 
@@ -190,6 +194,7 @@ static bool _read_config
 			ErrorCtx_SetError("msf configuration, unknown objective %s", objective);
 			goto error;
 		}
+		match_fields++;
 	}
 
 	if(n != match_fields) {
@@ -222,7 +227,6 @@ ProcedureResult Proc_MSFInvoke
 	const char **yield    // procedure outputs
 ) {
 	// expecting a single argument
-
 	size_t l = array_len((SIValue *)args);
 
 	if(l > 1) return PROCEDURE_ERR;
@@ -254,7 +258,7 @@ ProcedureResult Proc_MSFInvoke
 
 	LabelID    *lbls      = NULL;
 	RelationID *rels      = NULL;
-	AttributeID weightAtt = GRAPH_UNKNOWN_RELATION;
+	AttributeID weightAtt = ATTRIBUTE_ID_NONE;
 	bool 		maxSF 	  = false;
 
 	//--------------------------------------------------------------------------
@@ -262,7 +266,6 @@ ProcedureResult Proc_MSFInvoke
 	//--------------------------------------------------------------------------
 
 	bool config_ok = _read_config(config, &lbls, &rels, &weightAtt, &maxSF);
-
 	SIValue_Free(config);
 
 	if(!config_ok) {
@@ -278,17 +281,18 @@ ProcedureResult Proc_MSFInvoke
 	MSF_Context *pdata = rm_calloc(1, sizeof(MSF_Context));
 
 	pdata->g = g;
+	pdata->weight_prop = weightAtt;
 
 	_process_yield(pdata, yield);
 
 	// save private data
 	ctx->privateData = pdata;
 
-	GrB_Matrix A = NULL, A_w = NULL, treeWeight = NULL;
+	GrB_Matrix A = NULL, A_w = NULL, msf = NULL;
 	GrB_Info info;
 
 	//makes into a symetric matrix
-	info = Build_Weighted_Matrix(
+	info =  Build_Weighted_Matrix (
 			&A, &A_w, &pdata->nodes, g, lbls, array_len(lbls), rels,
 			array_len(rels), weightAtt, true, true);
 	ASSERT(info == GrB_SUCCESS);
@@ -303,20 +307,37 @@ ProcedureResult Proc_MSFInvoke
 
 	char msg[LAGRAPH_MSG_LEN];
 	// execute Minimum Spanning Forest
-	// FIXME: Using edgeIDs as weights because MSF doesn't support double weights
 	GrB_Info msf_res =
-		LAGraph_msf(&pdata->tree, A, false, msg);
+		LAGraph_msf(&msf, A_w, false, msg);
 	if(msf_res != GrB_SUCCESS) {
 		GrB_free(&A);
+		GrB_free(&A_w);
 		return PROCEDURE_ERR;
 	}
-	
-	// clean up algorithm inputs
-	info = GrB_free(&A);
+	GrB_Index n;
+	info = GrB_Matrix_nrows(&n, msf);
 	ASSERT(info == GrB_SUCCESS);
 
-	
+	info = GrB_Matrix_new(&pdata->tree, GrB_UINT64, n, n);
+	ASSERT(info == GrB_SUCCESS);
+	info = GrB_Matrix_new(&pdata->w_tree, GrB_UINT64, n, n);
+	ASSERT(info == GrB_SUCCESS);
 
+	info = GrB_Matrix_assign(
+		pdata->tree, msf, NULL, A, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
+	);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_Matrix_assign(
+		pdata->w_tree, msf, NULL, A_w, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
+	);
+	ASSERT(info == GrB_SUCCESS);
+	
+	// clean up algorithm inputs
+	info = GrB_free(&A_w);
+	info |= GrB_free(&A);
+	ASSERT(info == GrB_SUCCESS);
+	
 	//--------------------------------------------------------------------------
 	// initialize iterator
 	//--------------------------------------------------------------------------
@@ -354,22 +375,39 @@ SIValue *Proc_MSFStep
 	GxB_Matrix_Iterator_getIndex(pdata->it, &node_i, &node_j);
 	Edge edge;
 	EdgeID edgeID = (EdgeID) GxB_Iterator_get_UINT64(pdata->it);
-	ASSERT(Graph_GetEdge(pdata->g, edgeID, &edge)) ;
+	ASSERT(SCALAR_ENTRY(edgeID)) ;
+	
 	// prep for next call to Proc_BetweennessStep
 	pdata->info = GxB_Matrix_Iterator_next(pdata->it);
 
 	//--------------------------------------------------------------------------
 	// set outputs
 	//--------------------------------------------------------------------------
-
-	if(pdata->yield_edge) {
-		*pdata->yield_edge = SI_Edge(&edge);
+	if(pdata->yield_edge || pdata->yield_weight)
+	{
+		bool edge_flag = Graph_GetEdge(pdata->g, edgeID, &pdata->edge);
+		ASSERT(edge_flag) ;
 	}
-
+	if(pdata->yield_edge) 
+	{
+		*pdata->yield_edge = SI_Edge(&pdata->edge);
+	}
 	if(pdata->yield_weight) {
-		SIValue *yield_w = AttributeSet_Get(*edge.attributes, pdata->weight_prop);
-		ASSERT(yield_w != ATTRIBUTE_NOTFOUND)
-		pdata->yield_weight = yield_w;
+		int64_t weight_val = 0; 
+		GrB_Matrix_extractElement_INT64(
+			&weight_val, pdata->w_tree, node_i, node_j);
+		*pdata->yield_weight = SI_LongVal(weight_val);
+		// if(pdata->weight_prop == ATTRIBUTE_ID_NONE)
+		// {
+		// 	*pdata->yield_weight = SI_LongVal(0);
+		// }
+		// else
+		// {
+		// 	SIValue *yield_w = GraphEntity_GetProperty((GraphEntity *)
+		// 			pdata->edge.attributes, pdata->weight_prop) ;
+		// 	ASSERT(yield_w != ATTRIBUTE_NOTFOUND);
+		// 	*pdata->yield_weight = SI_LongVal((int64_t) SI_GET_NUMERIC(*yield_w));
+		// }
 	}
 	return pdata->output;
 }
@@ -383,6 +421,7 @@ ProcedureResult Proc_MSFFree
 		MSF_Context *pdata = ctx->privateData;
 
 		if(pdata->tree		 != NULL) GrB_free(&pdata->tree);
+		if(pdata->w_tree	 != NULL) GrB_free(&pdata->w_tree);
 		if(pdata->it         != NULL) GrB_free(&pdata->it);
 		if(pdata->nodes      != NULL) GrB_free(&pdata->nodes);
 		rm_free(ctx->privateData);
@@ -397,7 +436,8 @@ ProcedureCtx *Proc_MSFCtx(void) {
 
 	ProcedureOutput *outputs         = array_new(ProcedureOutput, 2);
 	ProcedureOutput output_edge      = {.name = "edge", .type = T_EDGE};
-	ProcedureOutput output_weight = {.name = "weight", .type = SI_NUMERIC};
+	ProcedureOutput output_weight = {.name = "weight", .type = T_INT64};
+	// ProcedureOutput output_weight = {.name = "weight", .type = SI_NUMERIC};
 
 	array_append(outputs, output_edge);
 	array_append(outputs, output_weight);

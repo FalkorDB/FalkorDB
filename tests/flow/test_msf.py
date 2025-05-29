@@ -43,47 +43,75 @@ class testMSF(FlowTestsBase):
         # check if it returned empty results (acceptable behavior)
         self.env.assertEqual(len(result.result_set), 0)
 
-    # def test_msf_on_unlabeled_graph(self):
-    #     """Test MSF algorithm on unlabeled nodes with multiple connected components"""
+    def test_msf_on_unlabeled_graph(self):
+        """Test MSF algorithm on unlabeled nodes with multiple connected components"""
 
-    #     # Create an unlabeled graph with multiple connected components
-    #     # - Component 1: nodes 1-2-3-1 forming a cycle
-    #     # - Component 2: nodes 4-5 connected
-    #     # - Component 3: isolated node 6
-    #     self.graph.query("""
-    #         CREATE
-    #         (n1 {id: 1}),
-    #         (n2 {id: 2}),
-    #         (n3 {id: 3}),
-    #         (n4 {id: 4}),
-    #         (n5 {id: 5}),
-    #         (n6 {id: 6}),
-    #         (n1)-[:R]->(n2),
-    #         (n2)-[:R]->(n3),
-    #         (n3)-[:R]->(n1),
-    #         (n4)-[:R]->(n5)
-    #     """)
+        # Create an unlabeled graph with multiple connected components
+        # - Component 1: nodes 1-2-3-1 forming a cycle
+        # - Component 2: nodes 4-5 connected
+        # - Component 3: isolated node 6
+        self.graph.query("""
+            CREATE
+            (n1 {id: 1}),
+            (n2 {id: 2}),
+            (n3 {id: 3}),
+            (n4 {id: 4}),
+            (n5 {id: 5}),
+            (n6 {id: 6}),
+            (n1)-[:R]->(n2),
+            (n2)-[:R]->(n3),
+            (n3)-[:R]->(n1),
+            (n4)-[:R]->(n5)
+        """)
 
-    #     # Run MSF algorithm
-    #     result = self.graph.query("CALL algo.MSF(null) YIELD edge")
-    #     result_set = result.result_set
+        # Run MSF algorithm
+        result = self.graph.query("""CALL algo.MSF({relationshipTypes: ['R']}) yield edge""")
+        result_set = result.result_set
 
-    #     # We should have exactly 3 different edges 
-    #     self.env.assertEqual(len(result_set), 3)
+        # We should have exactly 3 different edges 
+        self.env.assertEqual(len(result_set), 3)
+
+    def test_msf_on_multilable(self):
+        """Test MSF algorithm on multilabled nodes with multiple connected components"""
+
+        # Create an unlabeled graph with multiple connected components
+        # - Component 1: nodes 1-2 are connected with multiple edges
+        self.graph.query("""
+            CREATE
+            (n1 {id: 1}),
+            (n2 {id: 2}),
+            (n3 {id: 3}),
+            (n4 {id: 4}),
+            (n5 {id: 5}),
+            (n6 {id: 6}),
+            (n1)-[:Car {distance: 11.2, cost: 23}]->(n2),
+            (n1)-[:Walk {distance: 9.24321, cost: 7}]->(n2),
+            (n1)-[:Plane {distance: 123.2490, cost: 300}]->(n2),
+            (n1)-[:Boat {distance: .75, cost: 100}]->(n2),
+            (n1)<-[:Swim {distance: .5, cost: 12}]-(n2),
+            (n1)<-[:Kayak {distance: .68, cost: 4}]-(n2)
+        """)
+        # Run MSF algorithm
+        result = self.graph.query("""CALL algo.MSF({weightAttribute: 'cost'}) 
+            yield edge, weight""")
+        result_set = result.result_set
+        self.env.assertEqual(len(result_set), 1)
+        # Check the edge and weight
+        edge, weight = result_set[0]
+        self.env.assertEqual(weight, 4)
+        # self.env.assertEqual(edge.end_node.id, 2)
 
 
-    # def test_msf_with_different_relationship_types(self):
+    # def test_msf_with_multiedge(self):
     #     """Test WCC algorithm with different relationship type filters"""
 
     #     # Create an unlabeled graph with two relationship types
     #     # Relationship type A:
-    #     # - n1-A->n2-A->n3 (forms one component)
-    #     # - n4-A->n5 (forms another component)
-    #     # - n6 (isolated)
+    #     # - n1-A->n2 (x3 edges)
     #     # Relationship type B:
-    #     # - n3-B->n4 (connects the first two components from type A)
-    #     # - n5-B->n6 (connects n6 to the second component)
-    #     # - n7 (new isolated node)
+    #     # - n1-B->n2 (x2 edges)
+    #     # - n2-B->n3 (x1 edge w/o score attributes)
+    #     # - n3-B->n4 (x2 edges)
     #     self.graph.query("""
     #         CREATE
     #         (n1 {id: 1}),
@@ -93,82 +121,25 @@ class testMSF(FlowTestsBase):
     #         (n5 {id: 5}),
     #         (n6 {id: 6}),
     #         (n7 {id: 7}),
-    #         (n1)-[:A]->(n2),
-    #         (n2)-[:A]->(n3),
-    #         (n4)-[:A]->(n5),
-    #         (n3)-[:B]->(n4),
-    #         (n5)-[:B]->(n6)
+    #         (n1)-[:A {score: 789134}]->(n2),
+    #         (n1)-[:A {score: 5352}]->(n2),
+    #         (n1)-[:A {score: 1234}]->(n2),
+    #         (n1)-[:B {score: 123456}]->(n2),
+    #         (n1)-[:B {score: 1000}]->(n2),
+    #         (n2)-[:B]->(n3),
+    #         (n3)-[:B {score: 8991234}]->(n4),
+    #         (n3)-[:B {score: 7654}]->(n4)
     #     """)
+    #     # Run MSF algorithm with relationship type A
+    #     result = self.graph.query("""
+    #         CALL algo.MSF({relationshipTypes: ['A'], weightAttribute: 'score'}) 
+    #         yield edge, weight
+    #         """)
+    #     result_set = result.result_set
+    #     self.env.assertEqual(len(result_set), 1)
+    #     edge, weight = result_set[0]
+    #     self.env.assertEqual(weight, 1234)
 
-    #     # Test 1: Using only relationship type A
-    #     result_A = self.graph.query("CALL algo.WCC({relationshipTypes: ['A']})")
-    #     components_A = get_components(result_A)
-
-    #     # With only A relationships, we expect:
-    #     # - Component 1: nodes 1,2,3
-    #     # - Component 2: nodes 4,5
-    #     # - Component 3: node 6 (isolated)
-    #     # - Component 4: node 7 (isolated)
-    #     self.env.assertEqual(len(components_A), 4)
-    #     self.env.assertEqual(len(components_A[0]), 1)  # Isolated node
-    #     self.env.assertEqual(len(components_A[1]), 1)  # Isolated node
-    #     self.env.assertEqual(len(components_A[2]), 2)  # Two connected nodes
-    #     self.env.assertEqual(len(components_A[3]), 3)  # Three connected nodes
-
-    #     # Check specific node memberships
-    #     # Find the single-node components (they could be either 6 or 7)
-    #     isolated_nodes = [components_A[0][0], components_A[1][0]]
-    #     self.env.assertContains(6, isolated_nodes)
-    #     self.env.assertContains(7, isolated_nodes)
-
-    #     # The component with 2 nodes should be 4,5
-    #     self.env.assertEqual(components_A[2], [4, 5])
-
-    #     # The component with 3 nodes should be 1,2,3
-    #     self.env.assertEqual(components_A[3], [1, 2, 3])
-
-    #     # Test 2: Using only relationship type B
-    #     result_B = self.graph.query("CALL algo.WCC({relationshipTypes: ['B']})")
-    #     components_B = get_components(result_B)
-
-    #     # With only B relationships, we expect:
-    #     # - Component 1: node 1 (isolated)
-    #     # - Component 2: node 2 (isolated)
-    #     # - Component 3: nodes 3,4 (connected)
-    #     # - Component 4: nodes 5,6 (connected)
-    #     # - Component 5: node 7 (isolated)
-    #     self.env.assertEqual(len(components_B), 5)
-
-    #     # We should have 3 single-node components
-    #     single_node_count = sum(1 for c in components_B if len(c) == 1)
-    #     self.env.assertEqual(single_node_count, 3)
-
-    #     # And 2 two-node components
-    #     two_node_count = sum(1 for c in components_B if len(c) == 2)
-    #     self.env.assertEqual(two_node_count, 2)
-
-    #     # Find the two-node components
-    #     two_node_components = [c for c in components_B if len(c) == 2]
-    #     # One should be [3,4] and the other [5,6]
-    #     self.env.assertContains([3, 4], two_node_components)
-    #     self.env.assertContains([5, 6], two_node_components)
-
-    #     # Test 3: Using both relationship types A and B
-    #     result_AB = self.graph.query("CALL algo.WCC({relationshipTypes: ['A', 'B']})")
-    #     components_AB = get_components(result_AB)
-
-    #     # With both A and B relationships, we expect:
-    #     # - Component 1: nodes 1,2,3,4,5,6 (all connected)
-    #     # - Component 2: node 7 (isolated)
-    #     self.env.assertEqual(len(components_AB), 2)
-
-    #     # One component should have 6 nodes (1-6)
-    #     major_component = [c for c in components_AB if len(c) == 6][0]
-    #     self.env.assertEqual(sorted(major_component), [1, 2, 3, 4, 5, 6])
-
-    #     # The other component should have just node 7
-    #     isolated_component = [c for c in components_AB if len(c) == 1][0]
-    #     self.env.assertEqual(isolated_component, [7])
 
     # def test_wcc_with_different_node_labels(self):
     #     """Test WCC algorithm with different node label filters"""
