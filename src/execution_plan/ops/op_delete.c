@@ -75,7 +75,7 @@ static void _DeleteEntities
 			
 			if(edge_count > 0) {
 				// node has relationships, NODETACH DELETE should fail
-				ErrorCtx_RaiseRuntimeException("Cannot delete node: node has relationships. Use DETACH DELETE to delete a node and its relationships.");
+				ErrorCtx_RaiseRuntimeException("Cannot delete node in NODETACH DELETE mode: node has relationships. Use DETACH DELETE to delete a node and its relationships.");
 				array_free(distinct_nodes);
 				return;
 			}
