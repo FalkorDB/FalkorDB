@@ -25,7 +25,7 @@ typedef struct {
 	Node node;                      // node
 	GrB_Index *mapping;             // mapping between extracted matrix rows and node ids
 	LAGraph_PageRank *ranking;      // nodes ranking
-	SIValue *output;                // array with up to 2 entries [node, score]
+	SIValue output[2];              // array with up to 2 entries [node, score]
 	SIValue *yield_node;            // yield node
 	SIValue *yield_score;           // yield score
 } PagerankContext;
@@ -93,13 +93,13 @@ ProcedureResult Proc_PagerankInvoke
 
 	// setup context
 	PagerankContext *pdata = rm_malloc(sizeof(PagerankContext));
-	pdata->n = n;
-	pdata->i = 0;
-	pdata->g = g;
-	pdata->node = GE_NEW_NODE();
+	pdata->n       = n;
+	pdata->i       = 0;
+	pdata->g       = g;
+	pdata->node    = GE_NEW_NODE();
 	pdata->mapping = mapping;
 	pdata->ranking = ranking;
-	pdata->output = array_new(SIValue, 2);
+
 	_process_yield(pdata, yield);
 
 	ctx->privateData = pdata;
@@ -210,9 +210,8 @@ ProcedureResult Proc_PagerankFree
 	// clean up
 	if(ctx->privateData) {
 		PagerankContext *pdata = ctx->privateData;
-		if(pdata->output)   array_free(pdata->output);
-		if(pdata->mapping)  rm_free(pdata->mapping);
-		if(pdata->ranking)  rm_free(pdata->ranking);
+		if(pdata->mapping) rm_free(pdata->mapping);
+		if(pdata->ranking) rm_free(pdata->ranking);
 		rm_free(ctx->privateData);
 	}
 
