@@ -172,3 +172,4 @@ class testUnion(FlowTestsBase):
         self.env.assertEquals(len(result.result_set), 1)
         self.env.assertEquals(result.result_set, [[0]])
         self.env.assertEquals(result.nodes_created, 2)
+
