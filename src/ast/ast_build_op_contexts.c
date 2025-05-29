@@ -316,10 +316,14 @@ AST_UnwindContext AST_PrepareUnwindOp
 
 AR_ExpNode **AST_PrepareDeleteOp
 (
-	const cypher_astnode_t *delete_clause
+	const cypher_astnode_t *delete_clause,
+	cypher_ast_delete_mode_t *delete_mode
 ) {
 	uint delete_count = cypher_ast_delete_nexpressions(delete_clause);
 	AR_ExpNode **exps = array_new(AR_ExpNode *, delete_count);
+
+	// extract delete mode from AST
+	*delete_mode = cypher_ast_delete_get_mode(delete_clause);
 
 	for(uint i = 0; i < delete_count; i ++) {
 		const cypher_astnode_t *ast_expr =
