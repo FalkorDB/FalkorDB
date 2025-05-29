@@ -19,6 +19,7 @@
 
 #define BETWEENNESS_DEFAULT_SAMPLE_SIZE 32
 
+// CALL algo.betweenness() YIELD node, score
 // CALL algo.betweenness({}) YIELD node, score
 // CALL algo.betweenness(NULL) YIELD node, score
 // CALL algo.betweenness({nodeLabels: ['L', 'P']}) YIELD node, score
@@ -270,7 +271,7 @@ ProcedureResult Proc_BetweennessInvoke
 
 	SIValue config;
 
-	if(SIValue_IsNull(args[0])) {
+	if(l == 0 || SIValue_IsNull(args[0])) {
 		config = SI_Map(0);
 	} else {
 		config = SI_CloneValue(args[0]);
@@ -350,25 +351,17 @@ ProcedureResult Proc_BetweennessInvoke
 	// build AT
 	//--------------------------------------------------------------------------
 
-    GrB_Type   type;
-    GrB_Index  nrows;
-	GrB_Index  ncols;
-	GrB_Matrix AT;
+	LAGraph_Graph G;
+	char msg[LAGRAPH_MSG_LEN];
 
-    info = GrB_Matrix_nrows(&nrows, A);
+	info = LAGraph_New(&G, &A, LAGraph_ADJACENCY_DIRECTED, msg);
 	ASSERT(info == GrB_SUCCESS);
 
-    info = GrB_Matrix_ncols(&ncols, A);
+	info = LAGraph_Cached_AT(G, msg);
 	ASSERT(info == GrB_SUCCESS);
 
-	info = GxB_Matrix_type(&type, A);
-	ASSERT(info == GrB_SUCCESS);
-
-    info = GrB_Matrix_new(&AT, type, ncols, nrows);
-	ASSERT(info == GrB_SUCCESS);
-
-    info = GrB_transpose(AT, NULL, NULL, A, NULL);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_Matrix AT = G->AT;
+	ASSERT(AT != NULL);
 
 	// pick random set of source nodes
 	GrB_Index *sources = _Random_Sources(AT, &samplingSize, samplingSeed);
@@ -376,12 +369,6 @@ ProcedureResult Proc_BetweennessInvoke
 	//--------------------------------------------------------------------------
 	// run betweeness centrality
 	//--------------------------------------------------------------------------
-
-	char msg[LAGRAPH_MSG_LEN];
-	LAGraph_Graph G; 
-
-	LAGraph_New(&G, &A, LAGraph_ADJACENCY_DIRECTED, msg);
-	G->AT = AT;  // set G->AT, required by the algorithm
 
 	// execute Betweenness Centrality
 	GrB_Info betweeness_res =
@@ -444,12 +431,6 @@ SIValue *Proc_BetweennessStep
 	// prep for next call to Proc_BetweennessStep
 	pdata->info = GxB_Vector_Iterator_next(pdata->it);
 
-	double score;
-	GrB_Info info = GrB_Vector_extractElement_FP64(&score, pdata->centrality,
-			node_id);
-
-	ASSERT(info == GrB_SUCCESS);
-
 	//--------------------------------------------------------------------------
 	// set outputs
 	//--------------------------------------------------------------------------
@@ -459,6 +440,12 @@ SIValue *Proc_BetweennessStep
 	}
 
 	if(pdata->yield_score) {
+		double score;
+		GrB_Info info = GrB_Vector_extractElement_FP64(&score,
+				pdata->centrality, node_id);
+
+		ASSERT(info == GrB_SUCCESS);
+
 		*pdata->yield_score = SI_DoubleVal(score);
 	}
 
@@ -496,7 +483,7 @@ ProcedureCtx *Proc_BetweennessCtx(void) {
 	array_append(outputs, output_component);
 
 	ProcedureCtx *ctx = ProcCtxNew("algo.betweenness",
-								   1,
+			PROCEDURE_VARIABLE_ARG_COUNT,
 								   outputs,
 								   Proc_BetweennessStep,
 								   Proc_BetweennessInvoke,

@@ -58,7 +58,7 @@ class testWCC(FlowTestsBase):
         """Test WCC algorithm behavior on an empty graph"""
         
         # run WCC on empty graph
-        result = self.graph.query("CALL algo.WCC(null)")
+        result = self.graph.query("CALL algo.WCC()")
         # if we reach here, the algorithm didn't throw an exception
         
         # check if it returned empty results (acceptable behavior)
@@ -261,7 +261,7 @@ class testWCC(FlowTestsBase):
         self.env.assertEqual(components_L0_L1[0], [1, 2, 3, 4, 5, 6])
 
         # Test 4: Using all nodes (null parameter)
-        result_all = self.graph.query("CALL algo.WCC(null)")
+        result_all = self.graph.query("CALL algo.WCC()")
         components_all = get_components(result_all)
 
         # With all nodes, we expect one component with all nodes 1-8
@@ -368,7 +368,7 @@ class testWCC(FlowTestsBase):
         run_random_graph_ops(self.graph, nodes, edges, ALL_OPS)
 
         # Test 1: Validate all nodes are reported
-        result = self.graph.query("CALL algo.WCC(NULL)").result_set
+        result = self.graph.query("CALL algo.WCC()").result_set
         node_count = self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0]
         self.env.assertEqual(len(result), node_count)
 
