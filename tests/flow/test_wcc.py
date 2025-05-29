@@ -1,5 +1,5 @@
 from common import *
-from random_graph import create_random_schema, create_random_graph
+from random_graph import create_random_schema, create_random_graph, run_random_graph_ops, ALL_OPS
 
 GRAPH_ID = "WCC"
 
@@ -364,8 +364,11 @@ class testWCC(FlowTestsBase):
         nodes, edges = create_random_schema()
         create_random_graph(self.graph, nodes, edges)
 
+        # introduce random operations to graph
+        run_random_graph_ops(self.graph, nodes, edges, ALL_OPS)
+
         # Test 1: Validate all nodes are reported
-        result = self.graph.query("CALL algo.WCC({})").result_set
+        result = self.graph.query("CALL algo.WCC(NULL)").result_set
         node_count = self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0]
         self.env.assertEqual(len(result), node_count)
 
