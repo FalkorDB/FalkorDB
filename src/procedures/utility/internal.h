@@ -10,7 +10,7 @@
 
 // compose multiple label & relation matrices into a single matrix
 // L = L0 U L1 U ... Lm
-// A = L * (R0 + R1 + ... Rn) * L
+// A = L * (R0 U R1 U ... Rn) * L
 //
 // rows = L's main diagonal
 // in case no labels are specified rows is a dense 1 vector: [1,1,...1]

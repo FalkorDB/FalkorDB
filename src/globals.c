@@ -26,28 +26,14 @@ void Globals_Init(void) {
 	ASSERT(_globals.graphs_in_keyspace == NULL);
 
 	// initialize
-	_globals.string_pool        = NULL;
 	_globals.process_is_child   = false;
+	_globals.string_pool        = StringPool_create();
 	_globals.graphs_in_keyspace = array_new(GraphContext*, 1);
 	_globals.command_ctxs       = rm_calloc(ThreadPools_ThreadCount() + 1,
 			sizeof(CommandCtx *));
 
 	int res = pthread_rwlock_init(&_globals.lock, NULL);
 	ASSERT(res == 0);
-
-	// create string pool if enabled via configuration
-	bool string_pool_enabled = false;
-	Config_Option_get(Config_DEDUPLICATE_STRINGS, &string_pool_enabled);
-	if(string_pool_enabled) {
-		_globals.string_pool = StringPool_create();
-
-		// set main thread TLS granting access to the string pool
-		StringPool_grantAccessViaTLS(NULL);
-
-		// set writer thread TLS granting access to the string pool
-		ThreadPools_AddWorkWriter(StringPool_grantAccessViaTLS,
-				NULL, true);
-	}
 }
 
 StringPool Globals_Get_StringPool(void) {
@@ -335,10 +321,7 @@ GraphContext *GraphIterator_Next
 void Globals_Free(void) {
 	rm_free(_globals.command_ctxs);
 	array_free(_globals.graphs_in_keyspace);
+	StringPool_free(&_globals.string_pool);
 	pthread_rwlock_destroy(&_globals.lock);
-
-	if(_globals.string_pool != NULL) {
-		StringPool_free(&_globals.string_pool);
-	}
 }
 

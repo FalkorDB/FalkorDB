@@ -426,3 +426,33 @@ class testVariableLengthTraversals(FlowTestsBase):
         res  = self.graph.query(q)
         self.env.assertEquals(res.result_set, [[1, 1, 1], [3, 3, 3], [5, 5, 5]])
 
+    def test15_var_len_with_prev_filter(self):
+        self.graph.delete()
+
+        # create graph
+        q = """CREATE (:A {v:1})-[:R {v:2}]->(:B {v:3})-[:R {v:4}]->(:C {v:5}),
+                      (:A {v:6})-[:R {v:9}]->(:B {v:8})-[:R {v:7}]->(:C {v:10})"""
+        res = self.graph.query(q)
+
+
+        q = """MATCH p=(a:A {v:1})-[e*]->(b)
+                   WHERE coalesce(prev(e.v), e.v) <= e.v
+                   RETURN p"""
+        plan = self.graph.explain(q)
+        self.env.assertEquals(plan.structured_plan.name, "Results")
+        self.env.assertEquals(plan.structured_plan.children[0].name, "Project")
+        self.env.assertEquals(plan.structured_plan.children[0].children[0].name, "Conditional Variable Length Traverse")
+
+        res = self.graph.query(q)
+        self.env.assertEquals(len(res.result_set), 2)
+        self.env.assertEquals(res.result_set[0][0], Path(
+            [Node(0, labels=["A"], properties={"v": 1}),
+                Node(1, labels=["B"], properties={"v": 3})],
+            [Edge(0, "R", 1, 0, properties={"v": 2})]
+        ))
+        self.env.assertEquals(res.result_set[1][0], Path(
+            [Node(0, labels=["A"], properties={"v": 1}),
+                Node(1, labels=["B"], properties={"v": 3}),
+                Node(2, labels=["C"], properties={"v": 5})],
+            [Edge(0, "R", 1, 0, properties={"v": 2}), Edge(1, "R", 2, 1, properties={"v": 4})]
+        ))

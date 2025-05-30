@@ -228,9 +228,9 @@ ProcedureResult Proc_WCCInvoke
 	// build matrix on which we'll compute WCC
 	//--------------------------------------------------------------------------
 
-	GrB_Matrix    A;
-	LAGraph_Graph G;
 	GrB_Info      info;
+	GrB_Matrix    A = NULL;
+	LAGraph_Graph G = NULL;
 
 	bool sym     = true;
 	bool compact = true;
@@ -256,13 +256,6 @@ ProcedureResult Proc_WCCInvoke
 	info = LAGraph_Delete(&G, msg);
 	ASSERT(info == GrB_SUCCESS);
 
-	// wait on outputs
-	info = GrB_wait(pdata->N, GrB_MATERIALIZE);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_wait(pdata->components, GrB_MATERIALIZE);
-	ASSERT(info == GrB_SUCCESS);
-
 	//--------------------------------------------------------------------------
 	// initialize iterator
 	//--------------------------------------------------------------------------
@@ -279,7 +272,7 @@ ProcedureResult Proc_WCCInvoke
 	return PROCEDURE_OK;
 }
 
-// yield node and its component
+// yield node and its component id
 // yields NULL if there are no additional nodes to return
 SIValue *Proc_WCCStep
 (
@@ -311,12 +304,6 @@ SIValue *Proc_WCCStep
 	// prep for next call to Proc_WCCStep
 	pdata->info = GxB_Vector_Iterator_next(pdata->it);
 
-	uint64_t component_id;
-	GrB_Info info = GrB_Vector_extractElement_UINT64(&component_id,
-			pdata->components, node_id);
-
-	ASSERT(info == GrB_SUCCESS);
-
 	//--------------------------------------------------------------------------
 	// set output(s)
 	//--------------------------------------------------------------------------
@@ -326,6 +313,12 @@ SIValue *Proc_WCCStep
 	}
 
 	if(pdata->yield_component) {
+		uint64_t component_id;
+		GrB_Info info = GrB_Vector_extractElement_UINT64(&component_id,
+				pdata->components, node_id);
+
+		ASSERT(info == GrB_SUCCESS);
+
 		*pdata->yield_component = SI_LongVal(component_id);
 	}
 
@@ -363,7 +356,7 @@ ProcedureCtx *Proc_WCCCtx(void) {
 	array_append(outputs, output_component);
 
 	ProcedureCtx *ctx = ProcCtxNew("algo.WCC",
-								   1,
+								   PROCEDURE_VARIABLE_ARG_COUNT,
 								   outputs,
 								   Proc_WCCStep,
 								   Proc_WCCInvoke,

@@ -1,4 +1,5 @@
 from common import *
+from random_graph import create_random_schema, create_random_graph, run_random_graph_ops, ALL_OPS
 
 GRAPH_ID = "WCC"
 
@@ -57,7 +58,7 @@ class testWCC(FlowTestsBase):
         """Test WCC algorithm behavior on an empty graph"""
         
         # run WCC on empty graph
-        result = self.graph.query("CALL algo.WCC(null)")
+        result = self.graph.query("CALL algo.WCC()")
         # if we reach here, the algorithm didn't throw an exception
         
         # check if it returned empty results (acceptable behavior)
@@ -260,7 +261,7 @@ class testWCC(FlowTestsBase):
         self.env.assertEqual(components_L0_L1[0], [1, 2, 3, 4, 5, 6])
 
         # Test 4: Using all nodes (null parameter)
-        result_all = self.graph.query("CALL algo.WCC(null)")
+        result_all = self.graph.query("CALL algo.WCC()")
         components_all = get_components(result_all)
 
         # With all nodes, we expect one component with all nodes 1-8
@@ -353,7 +354,34 @@ class testWCC(FlowTestsBase):
         self.env.assertEqual(len(components), 1)
         self.env.assertEqual(components[0], [1, 2, 3, 4, 5, 6, 7, 8, 9])
 
-# TODO: make sure we can run WCC on a random generated graph
-# test to the best of our abilities e.g. when specifying a label make sure all ndoes
-# under that labels show up
+    def test_wcc_with_random_graph(self):
+        """Test WCC algorithm on a random generated graph"""
+
+        # Create a random graph
+
+        # Test Cases:
+        # create a random graph
+        nodes, edges = create_random_schema()
+        create_random_graph(self.graph, nodes, edges)
+
+        # introduce random operations to graph
+        run_random_graph_ops(self.graph, nodes, edges, ALL_OPS)
+
+        # Test 1: Validate all nodes are reported
+        result = self.graph.query("CALL algo.WCC()").result_set
+        node_count = self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0]
+        self.env.assertEqual(len(result), node_count)
+
+        # Test 2: Validate all labeled nodes are reported
+        q = """CALL db.labels() YIELD label
+               CALL algo.WCC({nodeLabels: [label]}) YIELD node
+               RETURN label, count(node)"""
+        components = self.graph.query(q).result_set
+
+        for component in components:
+            lbl = component[0]
+            component_size = component[1]
+            lbl_node_count = self.graph.query(f"MATCH (n:{lbl}) RETURN count(n)").result_set[0][0]
+
+            self.env.assertEqual(lbl_node_count, component_size)
 

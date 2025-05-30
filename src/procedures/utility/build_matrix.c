@@ -7,7 +7,7 @@
 
 // compose multiple label & relation matrices into a single matrix
 // L = L0 U L1 U ... Lm
-// A = L * (R0 + R1 + ... Rn) * L
+// A = L * (R0 U R1 U ... Rn) * L
 //
 // rows = L's main diagonal
 // in case no labels are specified rows is a dense 1 vector: [1,1,...1]
@@ -60,7 +60,7 @@ GrB_Info Build_Matrix
 		info = Delta_Matrix_export(&M, D);
 		ASSERT(info == GrB_SUCCESS);
 
-		info = GrB_Matrix_eWiseAdd_Semiring(_A, NULL, NULL, GxB_ANY_PAIR_BOOL,
+		info = GrB_Matrix_eWiseAdd_Monoid(_A, NULL, NULL, GxB_ANY_BOOL_MONOID,
 				_A, M, NULL);
 		ASSERT(info == GrB_SUCCESS);
 
@@ -76,7 +76,7 @@ GrB_Info Build_Matrix
 	// expecting a square matrix
 	ASSERT(nrows == ncols);
 
-	// create vector N denoting all nodes participating in the algorithm
+	// create vector N denoting all nodes passing the labels filter
 	if(rows != NULL) {
 		info = GrB_Vector_new(&_N, GrB_BOOL, nrows);
 		ASSERT(info == GrB_SUCCESS);
@@ -98,8 +98,8 @@ GrB_Info Build_Matrix
 			info = Delta_Matrix_export(&M, DL);
 			ASSERT(info == GrB_SUCCESS);
 
-			info = GrB_Matrix_eWiseAdd_Semiring(L, NULL, NULL,
-					GxB_ANY_PAIR_BOOL, L, M, NULL);
+			info = GrB_Matrix_eWiseAdd_Monoid(L, NULL, NULL,
+					GxB_ANY_BOOL_MONOID, L, M, NULL);
 			ASSERT(info == GrB_SUCCESS);
 
 			GrB_Matrix_free(&M);
@@ -151,7 +151,7 @@ GrB_Info Build_Matrix
 		size_t n = Graph_UncompactedNodeCount(g);
 
 		// get rid of extra unused rows and columns
-		GrB_Info info = GrB_Matrix_resize(_A, n, n);
+		info = GrB_Matrix_resize(_A, n, n);
 		ASSERT(info == GrB_SUCCESS);
 
 		if(rows != NULL) {
