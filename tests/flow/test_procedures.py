@@ -315,12 +315,12 @@ class testProcedures(FlowTestsBase):
 
     def test10_procedure_get_all_procedures(self):
         actual_resultset = self.graph.call_procedure("dbms.procedures").result_set
-
+        print(actual_resultset)
         # The following two procedure are a part of the expected results
         expected_result = [["db.labels", "READ"], ["db.idx.fulltext.createNodeIndex", "WRITE"],
                            ["db.propertyKeys", "READ"], ["dbms.procedures", "READ"], ["db.relationshipTypes", "READ"],
-                           ["algo.BFS", "READ"], ["algo.pageRank", "READ"], ["db.idx.fulltext.queryNodes", "READ"],
-                           ["db.idx.fulltext.drop", "WRITE"]]
+                           ["algo.BFS", "READ"], ["algo.pageRank", "READ"],  ['algo.MSF', 'READ'], 
+                           ["db.idx.fulltext.queryNodes", "READ"], ["db.idx.fulltext.drop", "WRITE"]]
         for res in expected_result:
             self.env.assertContains(res, actual_resultset)
 
@@ -361,8 +361,9 @@ class testProcedures(FlowTestsBase):
     def test12_procedure_reordered_yields(self):
         # Yield results of procedure in a non-default sequence
         actual_resultset = self.graph.query("CALL dbms.procedures() YIELD mode, name RETURN mode, name ORDER BY name").result_set
-
+        print(actual_resultset)
         expected_result = [["READ",  "algo.BFS"],
+                           ['READ',  "algo.MSF"],
                            ['READ',  "algo.SPpaths"],
                            ['READ',  "algo.SSpaths"],
                            ["READ",  "algo.WCC"],
