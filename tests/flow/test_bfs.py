@@ -32,6 +32,36 @@ class testBFS(FlowTestsBase):
             # Each element in a should appear in b exactly once.
             self.env.assertEquals(b.count(elem), 1)
 
+    def test_invalid_invocation(self):
+        invalid_queries = [
+
+            # array relationship type
+            """MATCH (a {v: 'a'}) CALL algo.bfs(a, -1, {'E1'}) YIELD nodes""",         
+
+            # unexpected extra parameters
+            """MATCH (a {v: 'a'}) CALL algo.bfs(a, -1, NULL, 'extra') YIELD nodes""",         
+
+            # invalid configuration type
+            """MATCH (a {v: 'a'}) CALL algo.bfs('invalid') YIELD nodes""",
+
+            # integer values in relationshipType
+            # FIXME should throw error but does not:
+            # """MATCH (a {v: 'a'}) CALL algo.bfs(a, -1, 0) YIELD nodes""",
+
+            # non-existent yield field
+            """MATCH (a {v: 'a'}) CALL algo.bfs(null) YIELD nodes, invalidField""",
+
+            # max depth is expected to an integer
+            # FIXME should throw error but does not:
+            # """MATCH (a {v: 'a'}) CALL algo.bfs(a, 'hello', NULL)""",
+        ]
+
+        for q in invalid_queries:
+            try:
+                self.graph.query(q)
+                self.env.assertFalse(True)
+            except:
+                pass
     # Test BFS from a single source without specifying a relationship type.
     def test01_bfs_single_source_all_reltypes(self):
         # Test BFS algorithm for node collection.

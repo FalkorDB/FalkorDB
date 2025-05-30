@@ -11,6 +11,32 @@ class testPagerank(FlowTestsBase):
     def tearDown(self):
         self.graph.delete()
 
+    def test_invalid_invocation(self):
+        invalid_queries = [
+
+            # array relationship type
+            """CALL algo.pageRank('Special', {'SPECIAL_CONNECTS'}) YIELD node""",   
+
+            # array label type
+            """CALL algo.pageRank({'Special'}, 'SPECIAL_CONNECTS') YIELD node""",  
+
+            # unexpected extra parameters
+            """CALL algo.pageRank('Special', 'SPECIAL_CONNECTS','extra') YIELD node""",         
+
+            # invalid configuration type
+            """CALL algo.pageRank('invalid') YIELD node""",
+
+            # non-existent yield field
+            """CALL algo.pageRank(null, null) YIELD node, invalidField""",
+        ]
+
+        for q in invalid_queries:
+            try:
+                self.graph.query(q)
+                self.env.assertFalse(True)
+            except:
+                pass
+    
     def test_pagerank_null_arguments(self):
         """Test PageRank algorithm when NULL is passed for both node label and relationship type arguments"""
 
