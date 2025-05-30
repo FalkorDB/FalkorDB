@@ -45,7 +45,7 @@ class testMSF(FlowTestsBase):
 
     def test_msf_on_unlabeled_graph(self):
         """Test MSF algorithm on unlabeled nodes with multiple connected components"""
-
+        print("test_msf_on_unlabeled_graph")
         # Create an unlabeled graph with multiple connected components
         # - Component 1: nodes 1-2-3-1 forming a cycle
         # - Component 2: nodes 4-5 connected
@@ -73,6 +73,7 @@ class testMSF(FlowTestsBase):
 
     def test_msf_on_multilable(self):
         """Test MSF algorithm on multilabled nodes with multiple connected components"""
+        print("test_msf_on_multilable")
 
         # Create an unlabeled graph with multiple connected components
         # - Component 1: nodes 1-2 are connected with multiple edges
@@ -98,48 +99,67 @@ class testMSF(FlowTestsBase):
         self.env.assertEqual(len(result_set), 1)
         # Check the edge and weight
         edge, weight = result_set[0]
+        print(edge)
         self.env.assertEqual(weight, 4)
         # self.env.assertEqual(edge.end_node.id, 2)
 
 
-    # def test_msf_with_multiedge(self):
-    #     """Test WCC algorithm with different relationship type filters"""
-
-    #     # Create an unlabeled graph with two relationship types
-    #     # Relationship type A:
-    #     # - n1-A->n2 (x3 edges)
-    #     # Relationship type B:
-    #     # - n1-B->n2 (x2 edges)
-    #     # - n2-B->n3 (x1 edge w/o score attributes)
-    #     # - n3-B->n4 (x2 edges)
-    #     self.graph.query("""
-    #         CREATE
-    #         (n1 {id: 1}),
-    #         (n2 {id: 2}),
-    #         (n3 {id: 3}),
-    #         (n4 {id: 4}),
-    #         (n5 {id: 5}),
-    #         (n6 {id: 6}),
-    #         (n7 {id: 7}),
-    #         (n1)-[:A {score: 789134}]->(n2),
-    #         (n1)-[:A {score: 5352}]->(n2),
-    #         (n1)-[:A {score: 1234}]->(n2),
-    #         (n1)-[:B {score: 123456}]->(n2),
-    #         (n1)-[:B {score: 1000}]->(n2),
-    #         (n2)-[:B]->(n3),
-    #         (n3)-[:B {score: 8991234}]->(n4),
-    #         (n3)-[:B {score: 7654}]->(n4)
-    #     """)
-    #     # Run MSF algorithm with relationship type A
-    #     result = self.graph.query("""
-    #         CALL algo.MSF({relationshipTypes: ['A'], weightAttribute: 'score'}) 
-    #         yield edge, weight
-    #         """)
-    #     result_set = result.result_set
-    #     self.env.assertEqual(len(result_set), 1)
-    #     edge, weight = result_set[0]
-    #     self.env.assertEqual(weight, 1234)
-
+    def test_msf_with_multiedge(self):
+        """Test WCC algorithm with different relationship type filters"""
+        print("test_msf_with_multiedge")
+        # Create an unlabeled graph with two relationship types
+        # Relationship type A:
+        # - n1-A->n2 (x3 edges)
+        # Relationship type B:
+        # - n1-B->n2 (x2 edges)
+        # - n2-B->n3 (x1 edge w/o score attributes)
+        # - n3-B->n4 (x2 edges)
+        self.graph.query("""
+            CREATE
+            (n1 {id: 1}),
+            (n2 {id: 2}),
+            (n3 {id: 3}),
+            (n4 {id: 4}),
+            (n5 {id: 5}),
+            (n6 {id: 6}),
+            (n7 {id: 7}),
+            (n1)-[:A {score: 789134, msf_ans: 0}]->(n2),
+            (n1)-[:A {score: 5352, msf_ans: 0}]->(n2),
+            (n1)-[:A {score: 1234, msf_ans: 1}]->(n2),
+            (n1)-[:B {score: 123456, msf_ans: 0}]->(n2),
+            (n1)-[:B {score: 1000, msf_ans: 2}]->(n2),
+            (n2)-[:B {msf_ans: 0}]->(n3),
+            (n3)-[:B {score: 8991234, msf_ans: 0}]->(n4),
+            (n3)-[:B {score: 7654, msf_ans: 2}]->(n4)
+        """)
+        # Run MSF algorithm with relationship type A
+        result = self.graph.query("""
+            CALL algo.MSF({relationshipTypes: ['A'], weightAttribute: 'score'}) 
+            YIELD edge RETURN edge.msf_ans
+            """)
+        result_set = result.result_set
+        self.env.assertEqual(len(result_set), 1)
+        for edge in result_set:
+            self.env.assertEqual(edge[0], 1)
+        # Run MSF algorithm with relationship type B
+        result = self.graph.query("""
+            CALL algo.MSF({relationshipTypes: ['B'], weightAttribute: 'score'}) 
+            YIELD edge RETURN edge.msf_ans
+            """)
+        result_set = result.result_set
+        self.env.assertEqual(len(result_set), 2)
+        for edge in result_set:
+            self.env.assertEqual(edge[0], 2)
+        
+        # Run MSF algorithm with both relationships
+        result = self.graph.query("""
+            CALL algo.MSF({weightAttribute: 'score'}) 
+            YIELD edge RETURN edge.msf_ans
+            """)
+        result_set = result.result_set
+        self.env.assertEqual(len(result_set), 2)
+        for edge in result_set:
+            self.env.assertEqual(edge[0], 2)
 
     # def test_wcc_with_different_node_labels(self):
     #     """Test WCC algorithm with different node label filters"""

@@ -390,6 +390,22 @@ SIValue *Proc_MSFStep
 	}
 	if(pdata->yield_edge) 
 	{
+		pdata->edge.src_id = (NodeID) node_i;
+		pdata->edge.dest_id = (NodeID) node_j;
+		pdata->edge.relationID = GRAPH_UNKNOWN_RELATION;
+		if(pdata->relationCount > 0)
+		{
+			for(RelationID relID = 0; relID < pdata->relationCount; relID++) {
+				if(Graph_isEdgeRelationID(pdata->g, &pdata->edge, pdata->relationIDs[relID])) {
+					break;
+				}
+			}	
+		}
+		else
+		{
+			Graph_FindEdgeRelationID(pdata->g, &pdata->edge);
+		}
+		ASSERT(pdata->edge.relationID != GRAPH_UNKNOWN_RELATION);
 		*pdata->yield_edge = SI_Edge(&pdata->edge);
 	}
 	if(pdata->yield_weight) {
