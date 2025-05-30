@@ -5,20 +5,7 @@ description: "
   "
 db_config:
   init_commands:
-    - ["GRAPH.QUERY", "graph", "CREATE (:Node {id: 1}), (:Node {id: 2}), (:Node {id: 3}), (:Node {id: 4}), (:Node {id: 5}), (:Node {id: 6}), (:Node {id: 7}), (:Node {id: 8}), (:Node {id: 9}), (:Node {id: 10}), (:Node {id: 11}), (:Node {id: 12}), (:Node {id: 13}), (:Node {id: 14}), (:Node {id: 15}), (:Node {id: 16}), (:Node {id: 17}), (:Node {id: 18}), (:Node {id: 19}), (:Node {id: 20}), (:Node {id: 21}), (:Node {id: 22}), (:Node {id: 23}), (:Node {id: 24}), (:Node {id: 25}), (:Node {id: 26}), (:Node {id: 27}), (:Node {id: 28}), (:Node {id: 29}), (:Node {id: 30}), (:Node {id: 31}), (:Node {id: 32}), (:Node {id: 33}), (:Node {id: 34})"]
-    - ["GRAPH.QUERY", "graph", "UNWIND [{from: 2, to: 1}, {from: 3, to: 1}, {from: 4, to: 1}, {from: 5, to: 1}, {from: 6, to: 1}, 
-      {from: 7, to: 1}, {from: 8, to: 1}, {from: 9, to: 1}, {from: 11, to: 1}, {from: 12, to: 1}, {from: 13, to: 1}, {from: 14, to: 1}, 
-      {from: 18, to: 1}, {from: 20, to: 1}, {from: 22, to: 1}, {from: 32, to: 1}, {from: 3, to: 2}, {from: 4, to: 2}, {from: 8, to: 2}, 
-      {from: 14, to: 2}, {from: 18, to: 2}, {from: 20, to: 2}, {from: 22, to: 2}, {from: 31, to: 2}, {from: 4, to: 3}, {from: 8, to: 3}, 
-      {from: 9, to: 3}, {from: 10, to: 3}, {from: 14, to: 3}, {from: 28, to: 3}, {from: 29, to: 3}, {from: 33, to: 3}, {from: 8, to: 4}, 
-      {from: 13, to: 4}, {from: 14, to: 4}, {from: 7, to: 5}, {from: 11, to: 5}, {from: 7, to: 6}, {from: 11, to: 6}, {from: 17, to: 6}, 
-      {from: 17, to: 7}, {from: 31, to: 9}, {from: 33, to: 9}, {from: 34, to: 9}, {from: 34, to: 10}, {from: 34, to: 14}, {from: 33, to: 15}, 
-      {from: 34, to: 15}, {from: 33, to: 16}, {from: 34, to: 16}, {from: 33, to: 19}, {from: 34, to: 19}, {from: 34, to: 20}, {from: 33, to: 21}, 
-      {from: 34, to: 21}, {from: 33, to: 23}, {from: 34, to: 23}, {from: 26, to: 24}, {from: 28, to: 24}, {from: 30, to: 24}, {from: 33, to: 24}, 
-      {from: 34, to: 24}, {from: 26, to: 25}, {from: 28, to: 25}, {from: 32, to: 25}, {from: 32, to: 26}, {from: 30, to: 27}, {from: 34, to: 27}, 
-      {from: 34, to: 28}, {from: 32, to: 29}, {from: 34, to: 29}, {from: 33, to: 30}, {from: 34, to: 30}, {from: 33, to: 31}, {from: 34, to: 31}, 
-      {from: 33, to: 32}, {from: 34, to: 32}, {from: 34, to: 33}] 
-      AS row MATCH (a:Node {id: row.from}), (b:Node {id: row.to}) CREATE (a)-[:R]->(b)"]
+    - ["GRAPH.QUERY", "graph", "LOAD CSV FROM 'https://raw.githubusercontent.com/memgraph/jupyter-memgraph-tutorials/refs/heads/main/getting_started/karate-club.csv' AS row MERGE (src:Node {id:row[0]}) MERGE (dest:Node {id:row[1]}) MERGE (src)-[:R]->(dest)"]
 
 parameters:
   num_clients: 32
