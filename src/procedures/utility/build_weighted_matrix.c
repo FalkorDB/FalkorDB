@@ -20,6 +20,7 @@ typedef struct
 {
 	const Graph *g;		// Graph
 	AttributeID w;	// Weight Edge
+	RelationID rel;
 } compareContext;
 
 void _selectAttribute
@@ -107,7 +108,6 @@ void _reduceToMatrixMin
 	else
 	{
 		GrB_Vector _v = AS_VECTOR(*x);
-		GxB_fprint(_v, GxB_SHORT, stdout);
 		compareContext *contx = ((compareContext *) (*y));
 		GxB_Iterator i = NULL;
 		GrB_Info info = GxB_Iterator_new(&i);
@@ -117,19 +117,18 @@ void _reduceToMatrixMin
 		info = GxB_Vector_Iterator_seek(i, 0);
 		ASSERT(info == GrB_SUCCESS)
 		Edge currE;
-		EdgeID minID = GxB_Iterator_get_UINT64(i);
+		EdgeID minID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
 		Graph_GetEdge(contx->g, minID, &currE);
 		SIValue *currV = NULL, minV = SI_DoubleVal(INFINITY), tempV;
 		currV = AttributeSet_Get(*currE.attributes, contx->w);
 		info = GxB_Vector_Iterator_next(i);
-
 		if(currV != ATTRIBUTE_NOTFOUND)
 		{
 			minV = *currV;
 		}
 		while(info != GxB_EXHAUSTED)
 		{
-			EdgeID CurrID = GxB_Iterator_get_UINT64(i);
+			EdgeID CurrID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
 			Graph_GetEdge(contx->g, CurrID, &currE);
 			currV = AttributeSet_Get(*currE.attributes, contx->w);
 			ASSERT(currV == ATTRIBUTE_NOTFOUND 
@@ -314,9 +313,25 @@ GrB_Info Build_Weighted_Matrix
 			} 
 			else 
 			{
+				// Cannot use indexbinaryOp in accum so I use eWiseAdd
+				// FIXME if possible.
+				// info = GrB_Matrix_apply_BinaryOp2nd_UINT64(
+				// 	_A, NULL, minID, toMatrixMin, M, (uint64_t) (&contx), NULL
+				// ) ;
+				GrB_Matrix temp = NULL;
+				info = GrB_Matrix_new(&temp, A_type, nrows, ncols);
+				ASSERT(info == GrB_SUCCESS);
 				info = GrB_Matrix_apply_BinaryOp2nd_UINT64(
-					_A, NULL, minID, toMatrixMin, _A, (uint64_t) (&contx), NULL
+					temp, NULL, NULL, toMatrixMin, M, (uint64_t) (&contx), NULL
 				) ;
+				ASSERT(info == GrB_SUCCESS);
+				info = GrB_Matrix_eWiseAdd_BinaryOp(
+					_A, NULL, NULL, minID, _A, temp, NULL
+				) ;
+				ASSERT(info == GrB_SUCCESS);
+				info = GrB_Matrix_free(&temp);
+				ASSERT(info == GrB_SUCCESS);
+				
 			}
 		}
 		else
@@ -324,6 +339,7 @@ GrB_Info Build_Weighted_Matrix
 			info = GrB_Matrix_eWiseAdd_BinaryOp(
 				_A, NULL, NULL, minID, _A, M, NULL) ;
 		}
+		printf("info: %d\n", info);
 		ASSERT(info == GrB_SUCCESS);
 		M = NULL;
 	}
