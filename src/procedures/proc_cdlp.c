@@ -12,6 +12,7 @@
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
+#include "./utility/internal.h"
 #include "../datatypes/map.h"
 #include "../datatypes/array.h"
 #include "../graph/graphcontext.h"
@@ -369,8 +370,9 @@ ProcedureResult Proc_CDLPInvoke
 	ctx->privateData = pdata;
 
 	// build adjacency matrix on which we'll run CDLP
-	GrB_Matrix A = _Build_Matrix(g, &pdata->nodes, lbls, array_len(lbls), rels,
-			array_len(rels));
+	GrB_Matrix A = NULL;
+	Build_Matrix(&A, &pdata->nodes, g, lbls, array_len(lbls), rels,
+			array_len(rels), true, true);
 
 	// free build matrix inputs
 	if(lbls != NULL) array_free(lbls);
@@ -445,12 +447,6 @@ SIValue *Proc_CDLPStep
 	// prep for next call to Proc_CDLPStep
 	pdata->info = GxB_Vector_Iterator_next(pdata->it);
 
-	uint64_t community_id;
-	GrB_Info info = GrB_Vector_extractElement_UINT64(&community_id,
-			pdata->communities, node_id);
-
-	ASSERT(info == GrB_SUCCESS);
-
 	//--------------------------------------------------------------------------
 	// set outputs
 	//--------------------------------------------------------------------------
@@ -460,6 +456,10 @@ SIValue *Proc_CDLPStep
 	}
 
 	if(pdata->yield_cid) {
+		uint64_t community_id;
+		GrB_Info info = GrB_Vector_extractElement_UINT64(&community_id,
+				pdata->communities, node_id);
+		ASSERT(info == GrB_SUCCESS);
 		*pdata->yield_cid = SI_LongVal(community_id);
 	}
 
