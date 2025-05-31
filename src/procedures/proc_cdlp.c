@@ -191,7 +191,7 @@ ProcedureResult Proc_CDLPInvoke
 	const SIValue *args,  // procedure arguments
 	const char **yield    // procedure outputs
 ) {
-	// expecting a single argument
+	// expecting 0 or 1 argument
 
 	size_t l = array_len((SIValue *)args);
 
@@ -199,14 +199,15 @@ ProcedureResult Proc_CDLPInvoke
 
 	SIValue config;
 
-	if(SIValue_IsNull(args[0])) {
+	if(l == 0 || SIValue_IsNull(args[0])) {
 		config = SI_Map(0);
 	} else {
 		config = SI_CloneValue(args[0]);
 	}
 
 	// arg0 can be either a map or NULL
-	if(SI_TYPE(config) != T_MAP) {
+	SIType t = SI_TYPE(config);
+	if(!(t & T_MAP)) {
 		SIValue_Free(config);
 
 		ErrorCtx_SetError("invalid argument to algo.labelPropagation");
@@ -250,7 +251,10 @@ ProcedureResult Proc_CDLPInvoke
 	// save private data
 	ctx->privateData = pdata;
 
+	//--------------------------------------------------------------------------
 	// build adjacency matrix on which we'll run CDLP
+	//--------------------------------------------------------------------------
+
 	GrB_Matrix A = NULL;
 	Build_Matrix(&A, &pdata->nodes, g, lbls, array_len(lbls), rels,
 			array_len(rels), true, true);
@@ -379,7 +383,7 @@ ProcedureCtx *Proc_CDLPCtx(void) {
 	array_append(outputs, output_community);
 
 	ProcedureCtx *ctx = ProcCtxNew("algo.labelPropagation",
-								   1,
+								   PROCEDURE_VARIABLE_ARG_COUNT,
 								   outputs,
 								   Proc_CDLPStep,
 								   Proc_CDLPInvoke,
