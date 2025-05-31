@@ -382,4 +382,3 @@ class testProcedures(FlowTestsBase):
                            ["READ",  "db.relationshipTypes"],
                            ["READ",  "dbms.procedures"]]
         self.env.assertEquals(actual_resultset, expected_result)
-

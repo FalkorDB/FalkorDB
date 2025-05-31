@@ -23,4 +23,3 @@
 #include "proc_list_constraints.h"
 #include "proc_fulltext_drop_index.h"
 #include "proc_fulltext_create_index.h"
-

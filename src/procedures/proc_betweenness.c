@@ -126,7 +126,7 @@ static bool _read_config
 	LabelID **lbls,         // [output] labels
 	RelationID **rels,      // [output] relationships
 	int32_t *samplingSize,  // [output] number of source vertices
-	uint32_t *samplingSeed  // [output] random number generator seed
+	uint32_t *samplingSeed	// [output] random number generator seed
 ) {
 	// expecting configuration to be a map
 	ASSERT(lbls            != NULL);
