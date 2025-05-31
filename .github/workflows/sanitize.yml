@@ -61,7 +61,13 @@ jobs:
       with:
         path: ./bin/linux-x64-debug-asan/libcsv
         key: libcsv-sanitizer-llvm-${{ hashFiles('./deps/libcsv/ChangeLog') }}
-
+    
+    - name: Cache pip
+      id: cache_pip
+      uses: actions/cache@v4
+      with:
+        path: ./deps/pip-cache
+        key: pip-cache-sanitizer-llvm-${{ hashFiles('./tests/requirements.txt') }}
     - name: Build
       run: |
         rustup default nightly
@@ -74,7 +80,7 @@ jobs:
         apt-get install -y libomp-17-dev libc6-dbg python3-venv
         python3 -m venv venv
         . venv/bin/activate
-        pip install -r tests/requirements.txt
+        pip install --cache-dir=./deps/pip-cache -r tests/requirements.txt
         update-alternatives \
           --verbose \
           --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
