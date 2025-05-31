@@ -275,7 +275,6 @@ ProcedureResult Proc_CDLPInvoke
 	ASSERT(info == GrB_SUCCESS);
 
 	GrB_Info cdlp_res = LAGraph_cdlp(&pdata->communities, G, maxIterations, msg);
-	ASSERT(info == GrB_SUCCESS);
 
 	info = LAGraph_Delete(&G, msg);
 	ASSERT(info == GrB_SUCCESS);
