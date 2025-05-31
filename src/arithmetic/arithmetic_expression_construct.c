@@ -585,15 +585,12 @@ static AR_ExpNode *_AR_ExpFromShortestPath
 
 	AR_ExpNode *op = AR_EXP_NewOpNode("shortestpath", true, 2);
 
-	// Instantiate a context struct with traversal details.
-	ShortestPathCtx *ctx = rm_malloc(sizeof(ShortestPathCtx));
-	ctx->R              =  GrB_NULL;
-	ctx->minHops        =  start;
-	ctx->maxHops        =  end;
-	ctx->reltypes       =  NULL;
-	ctx->reltype_names  =  reltype_names;
-	ctx->reltype_count  =  array_len(reltype_names);
-	ctx->free_matrices  =  false;
+	// instantiate a context struct with traversal details
+	ShortestPathCtx *ctx = rm_calloc(1, sizeof(ShortestPathCtx));
+	ctx->minHops       = start;
+	ctx->maxHops       = end;
+	ctx->reltype_names = reltype_names;
+	ctx->reltype_count = array_len(reltype_names);
 
 	AR_SetPrivateData(op, ctx);
 	AR_ExpNode *src;

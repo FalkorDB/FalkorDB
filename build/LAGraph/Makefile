@@ -23,7 +23,8 @@ endef
 
 SRCDIR=$(ROOT)/deps/LAGraph
 
-CMAKE_TARGETS=LAGraph_static
+# build both liblagraph.a & liblagraphx.a
+CMAKE_TARGETS=LAGraph_static LAGraphX_static
 
 BINDIR=$(BINROOT)/LAGraph
 
@@ -40,8 +41,8 @@ define CMAKE_DEFS +=
 	GraphBLAS_ROOT=$(BINROOT)/GraphBLAS
 	GRAPHBLAS_ROOT=$(ROOT)/deps/GraphBLAS
 	CMAKE_POSITION_INDEPENDENT_CODE=on
-	CMAKE_C_FLAGS=-fno-stack-protector
-	CMAKE_CXX_FLAGS=-fno-stack-protector
+	CMAKE_C_FLAGS=-fPIC
+	CMAKE_CXX_FLAGS=-fPIC
 endef
 
 #----------------------------------------------------------------------------------------------

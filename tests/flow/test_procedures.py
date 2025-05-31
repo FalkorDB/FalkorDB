@@ -365,6 +365,8 @@ class testProcedures(FlowTestsBase):
         expected_result = [["READ",  "algo.BFS"],
                            ['READ',  'algo.SPpaths'],
                            ['READ',  'algo.SSpaths'],
+                           ["READ",  "algo.WCC"],
+                           ['READ', 'algo.betweenness'],
                            ["READ",  "algo.pageRank"],
                            ['READ',  'db.constraints'],
                            ["WRITE", "db.idx.fulltext.createNodeIndex"],
