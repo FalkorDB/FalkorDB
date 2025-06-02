@@ -93,6 +93,7 @@ void _compareAndReturnEdgeID
 		*z = *y;
 	}
 }
+
 // TODO: allow user to customize the comparison function.
 void _reduceToMatrixMin
 (
@@ -143,7 +144,6 @@ void _reduceToMatrixMin
 		} 
 		*z = (uint64_t) minID;
 		GxB_Iterator_free(&i);
-		// GrB_Vector_reduce_INT64(z, NULL, GxB_ANY_UINT64_MONOID, _v, NULL);
 	}
 }
 
@@ -160,7 +160,17 @@ void _reduceToMatrixAny
 	else
 	{
 		GrB_Vector _v = AS_VECTOR(*x);
-		GrB_Vector_reduce_UINT64(z, NULL, GxB_ANY_UINT64_MONOID, _v, NULL);
+		GxB_Iterator i = NULL;
+		GrB_Info info = GxB_Iterator_new(&i);
+		ASSERT(info == GrB_SUCCESS);
+		info = GxB_Vector_Iterator_attach(i, _v, NULL);
+		ASSERT(info == GrB_SUCCESS);
+		info = GxB_Vector_Iterator_seek(i, 0);
+		ASSERT(info == GrB_SUCCESS);
+		EdgeID minID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
+		info = GxB_Iterator_free(&i);
+		ASSERT(info == GrB_SUCCESS);
+		*z = minID;
 	}
 }
 // compose multiple label & relation matrices into a single matrix
@@ -226,21 +236,22 @@ GrB_Info Build_Weighted_Matrix
 	}
 
 	GrB_Info info;
-	Delta_Matrix D;   			// graph delta matrix
+	Delta_Matrix D = NULL;   	// graph delta matrix
 	GrB_Index nrows;  			// number of rows in matrix
 	GrB_Index ncols;  			// number of columns in matrix
 	GrB_Type A_type = NULL;  	// type of the matrix
 	GrB_Matrix _A = NULL;    	// output matrix
 	GrB_Matrix _A_w = NULL;    	// output matrix
 	GrB_Vector _N = NULL;    	// output filtered rows
+	GrB_Matrix M = NULL;		// temporary matrix
 
 	// if no relationships are specified, use all relationships
 	if(rels == NULL)
 	{
 		n_rels = Graph_RelationTypeCount(g);
 	}
-	if(n_rels == 0) { // FIXME this is technically only right for compact?
-		// no relationships, return empty matrix
+	if(n_rels == 0) { 
+		// empty graph, return empty matrix
 		info = GrB_Matrix_new(A, GrB_UINT64, 0, 0);
 		ASSERT(info == GrB_SUCCESS);
 		if(A_w) {
@@ -256,17 +267,17 @@ GrB_Info Build_Weighted_Matrix
 	}
 	RelationID id = GETRELATIONID(0);
 	D = Graph_GetRelationMatrix(g, id, false);
-	ASSERT(D != NULL);
-	info = Delta_Matrix_wait(D, true);
-	ASSERT(info == GrB_SUCCESS);
-	GrB_Matrix M = Delta_Matrix_M(D);
-	info = GrB_Matrix_nrows(&nrows, M);
+
+	info = Delta_Matrix_export_valued(&_A, D);
 	ASSERT(info == GrB_SUCCESS);
 
-	info = GrB_Matrix_ncols(&ncols, M);
+	info = GrB_Matrix_nrows(&nrows, _A);
 	ASSERT(info == GrB_SUCCESS);
 
-	info = GxB_Matrix_type(&A_type, M);
+	info = GrB_Matrix_ncols(&ncols, _A);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GxB_Matrix_type(&A_type, _A);
 	ASSERT(info == GrB_SUCCESS);
 
 	// expecting a square matrix
@@ -274,35 +285,26 @@ GrB_Info Build_Weighted_Matrix
 
 	if(Graph_RelationshipContainsMultiEdge(g, id))
 	{
-		info = GrB_Matrix_new(
-			&_A, A_type, nrows, ncols);
-		ASSERT(info == GrB_SUCCESS);
 		if(weight == ATTRIBUTE_ID_NONE) 
 		{
 			info = GrB_Matrix_apply(
-				_A, NULL, NULL, toMatrix, M, NULL
+				_A, NULL, NULL, toMatrix, _A, NULL
 			) ;
 		} 
 		else 
 		{
 			info = GrB_Matrix_apply_BinaryOp2nd_UINT64(
-				_A, NULL, NULL, toMatrixMin, M, (uint64_t) (&contx), NULL
+				_A, NULL, NULL, toMatrixMin, _A, (uint64_t) (&contx), NULL
 			) ;
 		}
+		ASSERT(info == GrB_SUCCESS);
 	}
-	else
-	{
-		info = GrB_Matrix_dup(&_A, M);
-	}
-	ASSERT(info == GrB_SUCCESS);
-	M = NULL;
 	// in case there are multiple relation types, include them in A
 	for(unsigned short i = 1; i < n_rels; i++) {
 		id = GETRELATIONID(i);
 		D = Graph_GetRelationMatrix(g, id, false);
-		info = Delta_Matrix_wait(D, true);
+		info = Delta_Matrix_export_valued(&M, D);
 		ASSERT(info == GrB_SUCCESS);
-		M = Delta_Matrix_M(D);
 
 		if(Graph_RelationshipContainsMultiEdge(g, id))
 		{
@@ -318,20 +320,14 @@ GrB_Info Build_Weighted_Matrix
 				// info = GrB_Matrix_apply_BinaryOp2nd_UINT64(
 				// 	_A, NULL, minID, toMatrixMin, M, (uint64_t) (&contx), NULL
 				// ) ;
-				GrB_Matrix temp = NULL;
-				info = GrB_Matrix_new(&temp, A_type, nrows, ncols);
-				ASSERT(info == GrB_SUCCESS);
 				info = GrB_Matrix_apply_BinaryOp2nd_UINT64(
-					temp, NULL, NULL, toMatrixMin, M, (uint64_t) (&contx), NULL
+					M, NULL, NULL, toMatrixMin, M, (uint64_t) (&contx), NULL
 				) ;
 				ASSERT(info == GrB_SUCCESS);
 				info = GrB_Matrix_eWiseAdd_BinaryOp(
-					_A, NULL, NULL, minID, _A, temp, NULL
+					_A, NULL, NULL, minID, _A, M, NULL
 				) ;
 				ASSERT(info == GrB_SUCCESS);
-				info = GrB_Matrix_free(&temp);
-				ASSERT(info == GrB_SUCCESS);
-				
 			}
 		}
 		else
@@ -339,7 +335,6 @@ GrB_Info Build_Weighted_Matrix
 			info = GrB_Matrix_eWiseAdd_BinaryOp(
 				_A, NULL, NULL, minID, _A, M, NULL) ;
 		}
-		printf("info: %d\n", info);
 		ASSERT(info == GrB_SUCCESS);
 		M = NULL;
 	}
@@ -362,7 +357,6 @@ GrB_Info Build_Weighted_Matrix
 		for(unsigned short i = 1; i < n_lbls; i++) {
 			DL = Graph_GetLabelMatrix(g, lbls[i]);
 
-			GrB_Matrix M;
 			info = Delta_Matrix_export(&M, DL);
 			ASSERT(info == GrB_SUCCESS);
 

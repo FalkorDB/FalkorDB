@@ -228,6 +228,13 @@ GrB_Info Delta_Matrix_export
 	Delta_Matrix C
 );
 
+// get matrix C without writing to internal matrix
+GrB_Info Delta_Matrix_export_valued
+(
+	GrB_Matrix *A,
+	Delta_Matrix C
+);
+
 // checks to see if matrix has pending operations
 GrB_Info Delta_Matrix_pending
 (

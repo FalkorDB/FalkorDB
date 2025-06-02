@@ -1222,27 +1222,45 @@ bool Graph_isEdgeRelationID
 	if(r == GRAPH_UNKNOWN_RELATION) return false;
 	Tensor R = Graph_GetRelationMatrix(g, r, false);
 	GrB_Index srcID = edge->src_id, destID = edge->dest_id;
-	GrB_Index edge_id;
-	TensorIterator it;
-	TensorIterator_ScanEntry(&it, R, srcID, destID);
-	while(TensorIterator_next(&it, NULL, NULL, &edge_id, NULL)) {
-		if (edge_id == edge->id) {
-			// edge is in relation r
-			edge->relationID = r;
-			return true;
+	bool junk = false;
+	uint64_t x = 0;
+
+	GrB_Info info = Delta_Matrix_extractElement_UINT64(&x, R, srcID, destID);
+	GrB_Matrix M = NULL;
+	bool edgeInRelation = false;
+	ASSERT(info >= 0);
+	if(info == GrB_SUCCESS)
+	{
+		if(SCALAR_ENTRY(x))
+		{
+			edgeInRelation |= (EntityID) x == edge->id;
+		}
+		else
+		{
+			GrB_Vector x_vec = AS_VECTOR(x);
+			info = GrB_Vector_extractElement_BOOL(&junk, x_vec, edge->id);
+			ASSERT(info >= 0);
+			edgeInRelation |= info == GrB_SUCCESS;
 		}
 	}
-	TensorIterator_ScanEntry(&it, R, destID, srcID);
-	while(TensorIterator_next(&it, NULL, NULL, &edge_id, NULL)) {
-		if (edge_id == edge->id) {
-			// edge is in relation r
-			edge->src_id = destID;
-			edge->dest_id = srcID;
-			edge->relationID = r;
-			return true;
+	info = Delta_Matrix_extractElement_UINT64(&x, R, destID, srcID);
+	ASSERT(info >= 0);
+	if(info == GrB_SUCCESS)
+	{
+		if(SCALAR_ENTRY(x))
+		{
+			edgeInRelation |= x == edge->id;
+		}
+		else
+		{
+			GrB_Vector x_vec = AS_VECTOR(x);
+			info = GrB_Vector_extractElement_BOOL(&junk, x_vec, edge->id);
+			ASSERT(info >= 0);
+			edgeInRelation |= info == GrB_SUCCESS;
 		}
 	}
-	return false;
+	if(edgeInRelation) edge->relationID = r;
+	return edgeInRelation;
 }
 
 // Finds the relation ID of the edge and sets edge->relationID.
