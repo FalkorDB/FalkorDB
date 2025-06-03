@@ -294,10 +294,10 @@ ProcedureResult Proc_BetweennessInvoke
 	//	samplingSeed: 12
 	// }
 
-	LabelID    *lbls      = NULL;
-	RelationID *rels      = NULL;
-	int32_t samplingSize  = -1;
-	uint32_t samplingSeed = 0;
+	LabelID    *lbls         = NULL;
+	RelationID *rels         = NULL;
+	int32_t     samplingSize = -1;
+	uint32_t    samplingSeed = 0;
 
 	//--------------------------------------------------------------------------
 	// load configuration map
