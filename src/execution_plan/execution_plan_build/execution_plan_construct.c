@@ -88,8 +88,9 @@ static inline void _buildDeleteOp
 		// is no child op
 		ErrorCtx_SetError(EMSG_DELETE_OPERATE_ON_CHILD);
 	}
-	AR_ExpNode **exps = AST_PrepareDeleteOp(clause);
-	OpBase *op = NewDeleteOp(plan, exps);
+	cypher_ast_delete_mode_t delete_mode;
+	AR_ExpNode **exps = AST_PrepareDeleteOp(clause, &delete_mode);
+	OpBase *op = NewDeleteOp(plan, exps, delete_mode);
 	ExecutionPlan_UpdateRoot(plan, op);
 }
 

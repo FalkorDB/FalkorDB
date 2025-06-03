@@ -309,8 +309,8 @@ static cypher_astnode_t *_merge_properties(yycontext *yy,
 #define set_labels(i) _set_labels(yy, i)
 static cypher_astnode_t *_set_labels(yycontext *yy,
         cypher_astnode_t *identifier);
-#define delete(d) _delete(yy, d)
-static cypher_astnode_t *_delete(yycontext *yy, bool detach);
+#define delete(m) _delete(yy, m)
+static cypher_astnode_t *_delete(yycontext *yy, cypher_ast_delete_mode_t mode);
 #define remove_clause() _remove_clause(yy)
 static cypher_astnode_t *_remove_clause(yycontext *yy);
 #define remove_property(p) _remove_property(yy, p)
@@ -1917,11 +1917,11 @@ cypher_astnode_t *_set_labels(yycontext *yy, cypher_astnode_t *identifier)
 }
 
 
-cypher_astnode_t *_delete(yycontext *yy, bool detach)
+cypher_astnode_t *_delete(yycontext *yy, cypher_ast_delete_mode_t mode)
 {
     assert(yy->prev_block != NULL &&
             "An AST node can only be created immediately after a `>` in the grammar");
-    cypher_astnode_t *node = cypher_ast_delete(detach,
+    cypher_astnode_t *node = cypher_ast_delete(mode,
             astnodes_elements(&(yy->prev_block->sequence)),
             astnodes_size(&(yy->prev_block->sequence)),
             astnodes_elements(&(yy->prev_block->children)),
