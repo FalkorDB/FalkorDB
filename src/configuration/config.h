@@ -272,3 +272,16 @@ int Config_Init
 	int argc
 );
 
+// returns true if 'field_str' reffers to a configuration field and sets
+// 'field' accordingly
+bool Config_Contains_field
+(
+	const char *field_str,
+	Config_Option_Field *field
+);
+
+// returns the field type
+SIType Config_Field_type
+(
+	Config_Option_Field field  // field
+);

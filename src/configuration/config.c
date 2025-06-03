@@ -505,11 +505,146 @@ CONFIG_GET_NUMERIC (delta_max_pending_changes)
 
 CONFIG_GET_STRING (import_folder)
 
+// check if field is a valid configuration option
+bool Config_Contains_field
+(
+	const char *field_str,      // configuration option name
+	Config_Option_Field *field  // [out] configuration field
+) {
+	ASSERT(field_str != NULL);
+
+	Config_Option_Field f;
+
+	if(!strcasecmp(field_str, THREAD_COUNT)) {
+		f = Config_THREAD_POOL_SIZE;
+	} else if(!strcasecmp(field_str, TIMEOUT)) {
+		f = Config_TIMEOUT;
+	} else if(!(strcasecmp(field_str, TIMEOUT_DEFAULT))) {
+		f = Config_TIMEOUT_DEFAULT;
+	} else if(!(strcasecmp(field_str, TIMEOUT_MAX))) {
+		f = Config_TIMEOUT_MAX;
+	} else if(!strcasecmp(field_str, OMP_THREAD_COUNT)) {
+		f = Config_OPENMP_NTHREAD;
+	} else if(!strcasecmp(field_str, VKEY_MAX_ENTITY_COUNT)) {
+		f = Config_VKEY_MAX_ENTITY_COUNT;
+	} else if(!(strcasecmp(field_str, CACHE_SIZE))) {
+		f = Config_CACHE_SIZE;
+	} else if(!(strcasecmp(field_str, RESULTSET_SIZE))) {
+		f = Config_RESULTSET_MAX_SIZE;
+	} else if(!(strcasecmp(field_str, MAX_QUEUED_QUERIES))) {
+		f = Config_MAX_QUEUED_QUERIES;
+	} else if(!(strcasecmp(field_str, QUERY_MEM_CAPACITY))) {
+		f = Config_QUERY_MEM_CAPACITY;
+	} else if(!(strcasecmp(field_str, DELTA_MAX_PENDING_CHANGES))) {
+		f = Config_DELTA_MAX_PENDING_CHANGES;
+	} else if(!(strcasecmp(field_str, NODE_CREATION_BUFFER))) {
+		f = Config_NODE_CREATION_BUFFER;
+	} else if(!(strcasecmp(field_str, ASYNC_DELETE))) {
+		f = Config_ASYNC_DELETE;
+	} else if(!(strcasecmp(field_str, CMD_INFO))) {
+		f = Config_CMD_INFO;
+	} else if(!(strcasecmp(field_str, CMD_INFO_MAX_QUERIES_COUNT_OPTION_NAME))) {
+		f = Config_CMD_INFO_MAX_QUERY_COUNT;
+	} else if (!(strcasecmp(field_str, EFFECTS_THRESHOLD))) {
+		f = Config_EFFECTS_THRESHOLD;
+	} else if (!(strcasecmp(field_str, BOLT_PORT))) {
+		f = Config_BOLT_PORT;
+	} else if (!(strcasecmp(field_str, DELAY_INDEXING))) {
+		f = Config_DELAY_INDEXING;
+	} else if (!(strcasecmp(field_str, IMPORT_FOLDER))) {
+		f = Config_IMPORT_FOLDER;
+	} else if (!(strcasecmp(field_str, DEDUPLICATE_STRINGS))) {
+		f = Config_DEDUPLICATE_STRINGS;
+	} else {
+		return false;
+	}
+
+	if(field) *field = f;
+	return true;
+}
+
+// returns the field type
+SIType Config_Field_type
+(
+	Config_Option_Field field  // field
+) {
+	switch(field) {
+		case Config_TIMEOUT:
+			return T_INT64;
+
+		case Config_TIMEOUT_DEFAULT:
+			return T_INT64;
+
+		case Config_TIMEOUT_MAX:
+			return T_INT64;
+
+		case Config_CACHE_SIZE:
+			return T_INT64;
+
+		case Config_OPENMP_NTHREAD:
+			return T_INT64;
+
+		case Config_THREAD_POOL_SIZE:
+			return T_INT64;
+
+		case Config_RESULTSET_MAX_SIZE:
+			return T_INT64;
+
+		case Config_VKEY_MAX_ENTITY_COUNT:
+			return T_INT64;
+
+		case Config_ASYNC_DELETE:
+			return T_BOOL;
+
+		case Config_MAX_QUEUED_QUERIES:
+			return T_INT64;
+
+		case Config_QUERY_MEM_CAPACITY:
+			return T_INT64;
+
+		case Config_DELTA_MAX_PENDING_CHANGES:
+			return T_INT64;
+
+		case Config_NODE_CREATION_BUFFER:
+			return T_INT64;
+
+		case Config_CMD_INFO:
+			return T_BOOL;
+
+		case Config_CMD_INFO_MAX_QUERY_COUNT:
+			return T_INT64;
+
+		case Config_EFFECTS_THRESHOLD:
+			return T_INT64;
+
+		case Config_BOLT_PORT:
+			return T_INT64;
+
+		case Config_DELAY_INDEXING:
+			return T_BOOL;
+
+		case Config_IMPORT_FOLDER:
+			return T_STRING;
+
+		case Config_DEDUPLICATE_STRINGS:
+			return T_BOOL;	
+
+		//----------------------------------------------------------------------
+		// invalid option
+		//----------------------------------------------------------------------
+
+		default :
+			ASSERT("invalid option field" && false);
+			break;
+	}
+
+	return T_NULL;
+}
 
 // generate config set function name for an individual configuration attribute
 #define CONFIG_SET_BOOL_FUNC_NAME(config_attr) _Config_Set_##config_attr##_Bool
-#define CONFIG_SET_NUMERIC_FUNC_NAME(config_attr) _Config_Set_##config_attr##_String
-#define CONFIG_SET_STRING_FUNC_NAME(config_attr) _Config_Set_##config_attr##_Numeric
+#define CONFIG_SET_NUMERIC_FUNC_NAME(config_attr) _Config_Set_##config_attr##_Numeric
+#define CONFIG_SET_STRING_FUNC_NAME(config_attr) _Config_Set_##config_attr##_String
 
 // generate a config set boolean function
 // sets the boolean value of the configuration key
@@ -612,7 +747,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterBoolConfig(ctx,
 			CMD_INFO,
-			CMD_INFO_DEFAULT,
+			Config_cmd_info_get(),
 			REDISMODULE_CONFIG_DEFAULT,
 			CONFIG_GET_BOOL_FUNC_NAME(cmd_info),
 			CONFIG_SET_BOOL_FUNC_NAME(cmd_info),
@@ -622,7 +757,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterBoolConfig(ctx,
 			ASYNC_DELETE,
-			ASYNC_DELETE_DEFAULT,
+			Config_async_delete_get(),
 			REDISMODULE_CONFIG_DEFAULT,
 			CONFIG_GET_BOOL_FUNC_NAME(async_delete),
 			CONFIG_SET_BOOL_FUNC_NAME(async_delete),
@@ -632,7 +767,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterBoolConfig(ctx,
 			DEDUPLICATE_STRINGS,
-			DEDUPLICATE_STRINGS_DEFAULT,
+			Config_deduplicate_strings_get(),
 			REDISMODULE_CONFIG_DEFAULT,
 			CONFIG_GET_BOOL_FUNC_NAME(deduplicate_strings),
 			CONFIG_SET_BOOL_FUNC_NAME(deduplicate_strings),
@@ -642,7 +777,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterBoolConfig(ctx,
 			DELAY_INDEXING,
-			DELAY_INDEXING_DEFAULT,
+			Config_delay_indexing_get(),
 			REDISMODULE_CONFIG_DEFAULT,
 			CONFIG_GET_BOOL_FUNC_NAME(delay_indexing),
 			CONFIG_SET_BOOL_FUNC_NAME(delay_indexing),
@@ -656,7 +791,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterNumericConfig(ctx,
 										  TIMEOUT,
-										  CONFIG_TIMEOUT_DEFAULT,
+										  Config_timeout_get(),
 										  REDISMODULE_CONFIG_DEFAULT,
 										  CONFIG_TIMEOUT_MIN,
 										  CONFIG_TIMEOUT_MAX,
@@ -668,7 +803,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterNumericConfig(ctx,
 										  BOLT_PORT,
-										  BOLT_PROTOCOL_PORT_DEFAULT,
+										  Config_bolt_port_get(),
 										  REDISMODULE_CONFIG_IMMUTABLE,
 										  BOLT_PROTOCOL_PORT_MIN,
 										  BOLT_PROTOCOL_PORT_MAX,
@@ -680,7 +815,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterNumericConfig(ctx,
 										  CACHE_SIZE,
-										  CACHE_SIZE_DEFAULT,
+										  Config_cache_size_get(),
 										  REDISMODULE_CONFIG_IMMUTABLE,
 										  CACHE_SIZE_MIN,
 										  CACHE_SIZE_MAX,
@@ -692,7 +827,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterNumericConfig(ctx,
 										  TIMEOUT_MAX,
-										  CONFIG_TIMEOUT_DEFAULT,
+										  Config_timeout_max_get(),
 										  REDISMODULE_CONFIG_DEFAULT,
 										  CONFIG_TIMEOUT_MIN,
 										  CONFIG_TIMEOUT_MAX,
@@ -704,7 +839,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterNumericConfig(ctx,
 										  RESULTSET_SIZE,
-										  RESULTSET_SIZE_DEFAULT,
+										  Config_resultset_size_get(),
 										  REDISMODULE_CONFIG_DEFAULT,
 										  RESULTSET_SIZE_MIN,
 										  RESULTSET_SIZE_MAX,
@@ -716,7 +851,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterNumericConfig(ctx,
 										  TIMEOUT_DEFAULT,
-										  CONFIG_TIMEOUT_DEFAULT,
+										  Config_timeout_default_get(),
 										  REDISMODULE_CONFIG_DEFAULT,
 										  CONFIG_TIMEOUT_MIN,
 										  CONFIG_TIMEOUT_MAX,
@@ -762,7 +897,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterNumericConfig(ctx,
 										  VKEY_MAX_ENTITY_COUNT,
-										  VKEY_MAX_ENTITY_COUNT_DEFAULT,
+										  Config_vkey_entity_count_get(),
 										  REDISMODULE_CONFIG_DEFAULT,
 										  VKEY_MAX_ENTITY_COUNT_MIN,
 										  VKEY_MAX_ENTITY_COUNT_MAX,
@@ -774,7 +909,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterNumericConfig(ctx,
 										  EFFECTS_THRESHOLD,
-										  EFFECTS_THRESHOLD_DEFAULT,
+										  Config_effects_threshold_get(),
 										  REDISMODULE_CONFIG_DEFAULT,
 										  EFFECTS_THRESHOLD_MIN,
 										  EFFECTS_THRESHOLD_MAX,
@@ -786,7 +921,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterNumericConfig(ctx,
 										  MAX_QUEUED_QUERIES,
-										  QUEUED_QUERIES_DEFAULT,
+										  Config_max_queued_queries_get(),
 										  REDISMODULE_CONFIG_DEFAULT,
 										  QUEUED_QUERIES_MIN,
 										  QUEUED_QUERIES_MAX,
@@ -798,7 +933,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterNumericConfig(ctx,
 										  QUERY_MEM_CAPACITY,
-										  QUERY_MEM_CAPACITY_DEFAULT,
+										  Config_query_mem_capacity_get(),
 										  REDISMODULE_CONFIG_DEFAULT,
 										  QUERY_MEM_CAPACITY_MIN,
 										  QUERY_MEM_CAPACITY_MAX,
@@ -810,7 +945,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterNumericConfig(ctx,
 										  NODE_CREATION_BUFFER,
-										  NODE_CREATION_BUFFER_DEFAULT,
+										  Config_node_creation_buffer_get(),
 										  REDISMODULE_CONFIG_IMMUTABLE,
 										  NODE_CREATION_BUFFER_MIN,
 										  NODE_CREATION_BUFFER_MAX,
@@ -822,7 +957,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterNumericConfig(ctx,
 										  CMD_INFO_MAX_QUERIES_COUNT_OPTION_NAME,
-										  CMD_INFO_QUERIES_MAX_COUNT_DEFAULT,
+										  Config_max_info_queries_count_get(),
 										  REDISMODULE_CONFIG_DEFAULT,
 										  CMD_INFO_QUERIES_MAX_COUNT_MIN,
 										  CMD_INFO_QUERIES_MAX_COUNT_MAX,
@@ -834,7 +969,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterNumericConfig(ctx,
 										  DELTA_MAX_PENDING_CHANGES,
-										  DELTA_MAX_PENDING_CHANGES_DEFAULT,
+										  Config_delta_max_pending_changes_get(),
 										  REDISMODULE_CONFIG_DEFAULT,
 										  DELTA_MAX_PENDING_CHANGES_MIN,
 										  DELTA_MAX_PENDING_CHANGES_MAX,
@@ -850,7 +985,7 @@ static void _Config_Register
 
 	res = RedisModule_RegisterStringConfig(ctx,
 										  IMPORT_FOLDER,
-										  IMPORT_DIR_DEFAULT,
+										  Config_import_folder_get(),
 										  REDISMODULE_CONFIG_IMMUTABLE,
 										  CONFIG_GET_STRING_FUNC_NAME(import_folder),
 										  CONFIG_SET_STRING_FUNC_NAME(import_folder),
@@ -1158,12 +1293,256 @@ bool Config_Option_get
 	return true;
 }
 
+int Set_Config_Init_Value(RedisModuleCtx *ctx,
+						  Config_Option_Field field,
+						  RedisModuleString *value) {
+	ASSERT(ctx != NULL);
+	ASSERT(value != NULL);
+
+	switch(field) {
+		case Config_TIMEOUT:
+			if(RedisModule_StringToULongLong(value, &config.timeout) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								TIMEOUT, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			return REDISMODULE_OK;
+
+		case Config_TIMEOUT_DEFAULT:
+			if(RedisModule_StringToULongLong(value, &config.timeout_default) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								TIMEOUT_DEFAULT, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			return REDISMODULE_OK;
+		
+		case Config_TIMEOUT_MAX:
+			if(RedisModule_StringToULongLong(value, &config.timeout_max) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								TIMEOUT_MAX, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			return REDISMODULE_OK;
+		case Config_CACHE_SIZE:
+			if(RedisModule_StringToULongLong(value, &config.cache_size) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								CACHE_SIZE, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			return REDISMODULE_OK;
+
+		case Config_OPENMP_NTHREAD:
+			if(RedisModule_StringToULongLong(value, &config.omp_thread_count) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								OMP_THREAD_COUNT, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			return REDISMODULE_OK;
+
+		case Config_THREAD_POOL_SIZE:
+			if(RedisModule_StringToULongLong(value, &config.thread_pool_size) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								THREAD_COUNT, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			return REDISMODULE_OK;
+
+		case Config_RESULTSET_MAX_SIZE:
+			if(RedisModule_StringToULongLong(value, &config.resultset_size) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								RESULTSET_SIZE, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			return REDISMODULE_OK;
+
+		case Config_VKEY_MAX_ENTITY_COUNT:
+			if(RedisModule_StringToULongLong(value, &config.vkey_entity_count) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								VKEY_MAX_ENTITY_COUNT, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			return REDISMODULE_OK;
+
+		case Config_ASYNC_DELETE: {
+			unsigned long long v = 0;
+			if(RedisModule_StringToULongLong(value, &v) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								ASYNC_DELETE, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			config.async_delete = (v != 0);
+			return REDISMODULE_OK;
+		}
+
+		case Config_MAX_QUEUED_QUERIES:
+			if(RedisModule_StringToULongLong(value, &config.max_queued_queries) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								MAX_QUEUED_QUERIES, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			return REDISMODULE_OK;
+
+		case Config_QUERY_MEM_CAPACITY:
+			if(RedisModule_StringToLongLong(value, &config.query_mem_capacity) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								QUERY_MEM_CAPACITY, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			return REDISMODULE_OK;
+
+		case Config_DELTA_MAX_PENDING_CHANGES: {
+			unsigned long long v = 0;
+			if(RedisModule_StringToULongLong(value, &v) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								DELTA_MAX_PENDING_CHANGES, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			config.delta_max_pending_changes = (int64_t)v;
+			return REDISMODULE_OK;
+		}
+
+		case Config_NODE_CREATION_BUFFER:
+			if(RedisModule_StringToULongLong(value, &config.node_creation_buffer) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								NODE_CREATION_BUFFER, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			return REDISMODULE_OK;
+
+		case Config_CMD_INFO: {
+			unsigned long long v = 0;
+			if(RedisModule_StringToULongLong(value, &v) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								CMD_INFO, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			config.cmd_info = (v != 0);
+			return REDISMODULE_OK;
+		}
+
+		case Config_CMD_INFO_MAX_QUERY_COUNT:
+			if(RedisModule_StringToULongLong(value, &config.max_info_queries_count) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								CMD_INFO_MAX_QUERIES_COUNT_OPTION_NAME, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			return T_INT64;
+
+		case Config_EFFECTS_THRESHOLD:
+			if(RedisModule_StringToULongLong(value, &config.effects_threshold) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								EFFECTS_THRESHOLD, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			return REDISMODULE_OK;
+
+		case Config_BOLT_PORT: {
+			unsigned long long v = 0;
+			if(RedisModule_StringToULongLong(value, &v) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								BOLT_PORT, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			config.bolt_port = (int16_t)v;
+			return REDISMODULE_OK;
+		}
+
+		case Config_DELAY_INDEXING: {
+			unsigned long long v = 0;
+			if(RedisModule_StringToULongLong(value, &v) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								DELAY_INDEXING, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			config.delay_indexing = (v != 0);
+			return REDISMODULE_OK;
+		}
+
+		case Config_IMPORT_FOLDER: {
+		   // allocate to c string copy the value and store in config import folder
+			size_t len;
+			const char *import_folder = RedisModule_StringPtrLen(value, &len);
+			// copy the import folder path to config
+			config.import_folder = RedisModule_Alloc(len + 1);
+			memcpy(config.import_folder, import_folder, len);
+			config.import_folder[len] = '\0'; // null-terminate the string
+			return REDISMODULE_OK;
+		}
+
+		case Config_DEDUPLICATE_STRINGS: {
+		    unsigned long long v = 0;
+			if(RedisModule_StringToULongLong(value, &v) != REDISMODULE_OK) {
+				RedisModule_Log(ctx, "error", "Failed to set configuration %s to %s",
+								DEDUPLICATE_STRINGS, RedisModule_StringPtrLen(value, NULL));
+				return REDISMODULE_ERR;
+			}
+			config.deduplicate_strings = (v != 0);
+			return REDISMODULE_OK;
+		}
+		//----------------------------------------------------------------------
+		// invalid option
+		//----------------------------------------------------------------------
+
+		default :
+			ASSERT("invalid option field" && false);
+			return REDISMODULE_ERR;
+	}
+
+	return REDISMODULE_OK;
+}
+
 int Config_Init
 (
 	RedisModuleCtx *ctx,
 	RedisModuleString **argv,
 	int argc
 ) {
+	ASSERT(ctx  != NULL);
+
+	if(argc % 2) {
+		// emit an error if we received an odd number of arguments,
+		// as this indicates an invalid configuration
+		RedisModule_Log(ctx, "warning",
+						"FalkorDB received %d arguments, all configurations should be key-value pairs", argc);
+		return REDISMODULE_ERR;
+	}
+
+	// ovveride default config from module arguments
+	for(int i = 0; i < argc; i += 2) {
+		// each configuration is a key-value pair. (K, V)
+
+		//----------------------------------------------------------------------
+		// get field
+		//----------------------------------------------------------------------
+
+		Config_Option_Field field;
+		RedisModuleString *val = argv[i + 1];
+		size_t key_len, val_len;
+		const char *key_str = RedisModule_StringPtrLen(argv[i], &key_len);
+		const char *val_str = RedisModule_StringPtrLen(val, &val_len);
+
+		char *key_cstr = RedisModule_Alloc(key_len + 1);
+		memcpy(key_cstr, key_str, key_len);
+		key_cstr[key_len] = '\0';
+		
+		
+		// exit if configuration is not aware of field
+		if(!Config_Contains_field(key_cstr, &field)) {
+			RedisModule_Log(ctx, "error",
+							"Encountered unknown configuration field '%s'", key_cstr);
+			RedisModule_Free(key_cstr);
+			return REDISMODULE_ERR;
+		}
+		if (Set_Config_Init_Value(ctx, field, val) != REDISMODULE_OK) {
+			RedisModule_Log(ctx, "error",
+							"Failed to set configuration %s to %s", key_cstr, val_str);
+			RedisModule_Free(key_cstr);
+			return REDISMODULE_ERR;
+		}
+        
+		RedisModule_Free(key_cstr);	 
+	}
+
 	_Config_Register(ctx);
 
 	int res = RedisModule_LoadConfigs(ctx);

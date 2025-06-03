@@ -26,26 +26,26 @@ class testConfig(FlowTestsBase):
         # validate default configuration values
 
         default_config = [
-                ("TIMEOUT", 0),
-                ("TIMEOUT_DEFAULT", 0),
-                ("TIMEOUT_MAX",  0),
-                ("CACHE_SIZE", 25),
-                ("ASYNC_DELETE", [0,1]), # could be either 0 or 1 depending on load time config
-                ("OMP_THREAD_COUNT", os.cpu_count()),
-                ("THREAD_COUNT", os.cpu_count()),
-                ("RESULTSET_SIZE", -1),
-                ("VKEY_MAX_ENTITY_COUNT", 100000),
-                ("MAX_QUEUED_QUERIES", 4294967295),
-                ("QUERY_MEM_CAPACITY", 0),
-                ("DELTA_MAX_PENDING_CHANGES", 10000),
-                ("NODE_CREATION_BUFFER", 16384),
-                ("CMD_INFO", 1),
-                ("MAX_INFO_QUERIES", 1000),
-                ("EFFECTS_THRESHOLD", 300),
-                ("BOLT_PORT", 65535),
-                ("DELAY_INDEXING", 0),
-                ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
-                ("DEDUPLICATE_STRINGS", 0)
+            ("CACHE_SIZE", 25),
+            ("EFFECTS_THRESHOLD", 300),
+            ("TIMEOUT", 0),
+            ("OMP_THREAD_COUNT", os.cpu_count()),
+            ("TIMEOUT_DEFAULT", 0),
+            ("TIMEOUT_MAX", 0),
+            ("THREAD_COUNT", os.cpu_count()),
+            ("BOLT_PORT", 65535),  # Keep original value, not -1 from output
+            ("VKEY_MAX_ENTITY_COUNT", 100000),
+            ("QUERY_MEM_CAPACITY", 0),
+            ("ASYNC_DELETE", [0,1]),  # could be either 0 or 1 depending on load time config
+            ("MAX_INFO_QUERIES", 1000),
+            ("CMD_INFO", 1),
+            ("NODE_CREATION_BUFFER", 16384),
+            ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
+            ("MAX_QUEUED_QUERIES", 4294967295),
+            ("DELAY_INDEXING", 0),
+            ("DEDUPLICATE_STRINGS", 0),
+            ("RESULTSET_SIZE", -1),  # Keep original value, not 9223372036854775807 from output
+            ("DELTA_MAX_PENDING_CHANGES", 10000)
         ]
 
         for i, config in enumerate(response):
@@ -122,7 +122,7 @@ class testConfig(FlowTestsBase):
             assert(False)
         except redis.exceptions.ResponseError as e:
             # Expecting an error.
-            assert("This configuration parameter cannot be set at run-time" in str(e))
+            assert("ERR CONFIG SET failed" in str(e))
 
         try:
             # Set multiple configuration values, FAKE_CONFIG_NAME is NOT a valid
