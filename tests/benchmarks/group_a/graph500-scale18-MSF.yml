@@ -7,8 +7,8 @@ db_config:
   dataset_load_timeout_secs: 180
 parameters:
   graph: graph500-scale18-ef16
-  num_clients: 1
-  num_requests: 120
+  num_clients: 32
+  num_requests: 128
   queries:
     - query: 'CALL algo.MSF(NULL) YIELD weight return sum(weight) as total_weight'
       ratio: 1.0

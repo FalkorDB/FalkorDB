@@ -186,7 +186,7 @@ SIValue AR_SHORTEST_PATH
 	if(ctx->reltype_names != NULL && ctx->reltype_count == 0) {
 		// if edge types were specified but none were valid,
 		// use the zero matrix
-		info = Delta_Matrix_export(&M, Graph_GetZeroMatrix(gc->g));
+		info = Delta_Matrix_export(&M, Graph_GetZeroMatrix(gc->g), GrB_BOOL);
 		ASSERT(info == GrB_SUCCESS);
 	} else {
 		info = Build_Matrix(&M, NULL, gc->g, NULL, 0, ctx->reltypes,
