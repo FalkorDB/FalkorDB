@@ -21,7 +21,7 @@
 // CALL algo.MSF(NULL) YIELD edge, weight
 // CALL algo.MSF({nodeLabels: ['L', 'P']}) YIELD edge, weight
 // CALL algo.MSF({relationshipTypes: ['R', 'E']}) YIELD edge, weight
-// CALL algo.MSF({nodeLabels: ['L'], relationshipTypes: ['E']}) YIELD edge, weight
+// CALL algo.MSF({nodeLabels: ['L'], relationshipTypes: ['E'], weightAttribute: 'cost'}) YIELD edge, weight
 // CALL algo.MSF({nodeLabels: ['L'], objective: minimum})
 
 typedef struct {

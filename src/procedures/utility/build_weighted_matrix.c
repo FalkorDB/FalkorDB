@@ -204,7 +204,6 @@ GrB_Info Build_Weighted_Matrix
 	ASSERT((lbls != NULL && n_lbls > 0) || (lbls == NULL && n_lbls == 0));
 	ASSERT((rels != NULL && n_rels > 0) || (rels == NULL && n_rels == 0));
 
-	
 	if(weight == ATTRIBUTE_ID_NONE)
 	{
 		minID = GrB_SECOND_UINT64;
@@ -245,6 +244,9 @@ GrB_Info Build_Weighted_Matrix
 	GrB_Vector _N = NULL;    	// output filtered rows
 	GrB_Matrix M = NULL;		// temporary matrix
 
+	// TODO do I need a read lock?
+	// Graph_AcquireReadLock(g);
+	
 	// if no relationships are specified, use all relationships
 	if(rels == NULL)
 	{
@@ -263,12 +265,14 @@ GrB_Info Build_Weighted_Matrix
 			ASSERT(info == GrB_SUCCESS);
 		}
 		BWM_FREE;
+		// TODO do I need a read lock?
+		// Graph_ReleaseLock(g);
 		return GrB_SUCCESS;
 	}
 	RelationID id = GETRELATIONID(0);
 	D = Graph_GetRelationMatrix(g, id, false);
 
-	info = Delta_Matrix_export_valued(&_A, D);
+	info = Delta_Matrix_export(&_A, D, GrB_UINT64);
 	ASSERT(info == GrB_SUCCESS);
 
 	info = GrB_Matrix_nrows(&nrows, _A);
@@ -303,7 +307,7 @@ GrB_Info Build_Weighted_Matrix
 	for(unsigned short i = 1; i < n_rels; i++) {
 		id = GETRELATIONID(i);
 		D = Graph_GetRelationMatrix(g, id, false);
-		info = Delta_Matrix_export_valued(&M, D);
+		info = Delta_Matrix_export(&M, D, GrB_UINT64);
 		ASSERT(info == GrB_SUCCESS);
 
 		if(Graph_RelationshipContainsMultiEdge(g, id))
@@ -350,14 +354,14 @@ GrB_Info Build_Weighted_Matrix
 		Delta_Matrix DL = Graph_GetLabelMatrix(g, lbls[0]);
 
 		GrB_Matrix L;
-		info = Delta_Matrix_export(&L, DL);
+		info = Delta_Matrix_export(&L, DL, GrB_BOOL);
 		ASSERT(info == GrB_SUCCESS);
 
 		// L = L U M
 		for(unsigned short i = 1; i < n_lbls; i++) {
 			DL = Graph_GetLabelMatrix(g, lbls[i]);
 
-			info = Delta_Matrix_export(&M, DL);
+			info = Delta_Matrix_export(&M, DL, GrB_BOOL);
 			ASSERT(info == GrB_SUCCESS);
 
 			info = GrB_Matrix_eWiseAdd_Semiring(L, NULL, NULL,
@@ -455,6 +459,9 @@ GrB_Info Build_Weighted_Matrix
 	_A = NULL;
 	_N = NULL;
 	BWM_FREE;
+
+	// TODO do I need a read lock?
+	// Graph_ReleaseLock(g);
 	return info;
 }
 
