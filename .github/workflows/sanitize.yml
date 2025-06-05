@@ -16,7 +16,7 @@ concurrency:
 jobs:
   sanitize-test:
     runs-on: ubuntu-latest
-    container: falkordb/falkordb-build:ubuntu-ff80f19eb70382792c691ea6b2f6bb7f76de957c
+    container: falkordb/falkordb-build:ubuntu-904ca44d1ee4e46ea983970cd1febd9a3c6c6c33
     steps:
 
     - name: Safe dir
