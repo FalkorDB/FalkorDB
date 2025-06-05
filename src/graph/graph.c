@@ -1249,7 +1249,7 @@ bool Graph_isEdgeRelationID
 	{
 		if(SCALAR_ENTRY(x))
 		{
-			edgeInRelation |= x == edge->id;
+			edgeInRelation |= (EntityID) x == edge->id;
 		}
 		else
 		{
