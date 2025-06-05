@@ -16,7 +16,7 @@ concurrency:
 jobs:
   sanitize-test:
     runs-on: ubuntu-latest
-    container: falkordb/falkordb-build:ubuntu-904ca44d1ee4e46ea983970cd1febd9a3c6c6c33
+    container: falkordb/falkordb-sanitizer:latest
     steps:
 
     - name: Safe dir
@@ -68,23 +68,12 @@ jobs:
       with:
         path: ./deps/pip-cache
         key: pip-cache-sanitizer-llvm-${{ hashFiles('./tests/requirements.txt') }}
+    
     - name: Build
       run: |
-        rustup default nightly
-        apt-get update
-        apt-get install -y lsb-release wget software-properties-common gnupg
-        wget https://apt.llvm.org/llvm.sh
-        chmod +x llvm.sh
-        ./llvm.sh 17
-        apt-get update
-        apt-get install -y libomp-17-dev libc6-dbg python3-venv
-        python3 -m venv venv
-        . venv/bin/activate
-        pip install --cache-dir=./deps/pip-cache -r tests/requirements.txt
-        update-alternatives \
-          --verbose \
-          --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
-          --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17
+        rustup default nightly && \
+        . /venv/bin/activate && \
+        pip install --cache-dir=./deps/pip-cache -r tests/requirements.txt && \
         make CLANG=1 SAN=address NPROC=16
 
     - name: Unit tests
@@ -101,7 +90,7 @@ jobs:
     - name: Flow tests
       id: flow_tests
       run: |
-        . venv/bin/activate
+        . /venv/bin/activate
         make flow-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
@@ -114,7 +103,7 @@ jobs:
     - name: TCK tests
       id: tck_tests
       run: |
-        . venv/bin/activate
+        . /venv/bin/activate
         make tck-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
