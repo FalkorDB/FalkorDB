@@ -435,13 +435,13 @@ GrB_Info Build_Weighted_Matrix
 	}
 	if(A_w)
 	{
-		info = GrB_Matrix_new(A_w, GrB_INT64, n, n);
+		info = GrB_Matrix_new(A_w, GrB_UINT64, n, n);
 		ASSERT(info == GrB_SUCCESS);
 		if(weight == ATTRIBUTE_ID_NONE)
 		{
 			// A_w = A
 			info = GrB_Matrix_assign_UINT64(
-				*A_w, _A, NULL, 0, GrB_ALL, n, GrB_ALL, n, NULL
+				*A_w, _A, NULL, (uint64_t) 1, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
 			) ;
 			ASSERT(info == GrB_SUCCESS);
 		}
