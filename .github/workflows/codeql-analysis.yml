@@ -49,7 +49,7 @@ jobs:
     needs: create-runner
     name: Analyze
     runs-on: codeql-${{ github.run_id }}-${{ github.run_number }}
-    container: falkordb/falkordb-build:ubuntu
+    container: falkordb/falkordb-build:ubuntu-ff80f19eb70382792c691ea6b2f6bb7f76de957c
     permissions:
       actions: read
       contents: read
