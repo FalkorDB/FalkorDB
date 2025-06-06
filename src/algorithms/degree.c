@@ -99,3 +99,98 @@ GrB_Info Degree
 	return info;
 }
 
+
+
+void _numInEntryFirst(uint64_t *z, const uint64_t *x, const uint64_t *y) {
+	if(SCALAR_ENTRY(*x))
+	{
+		
+		*z = (uint64_t) 1;
+	}
+	else
+	{
+		GrB_Vector v = AS_VECTOR(*x);
+		GrB_Vector_nvals(z, v);
+	}
+}
+GrB_Info TesorDegree  
+(
+	GrB_Vector degree,  // [input / output] degree vector with values where 
+						// the degree should be added
+	GrB_Vector dest,  	// [input] possible destination / source nodes
+	Tensor T,         	// matrix with tensor entries
+	int ops
+) {
+	ASSERT(T      != NULL);
+	ASSERT(degree != NULL);
+	
+	GrB_Matrix M  = Delta_Matrix_M(T);
+	GrB_Matrix Dp = Delta_Matrix_Dp(T);
+	GrB_Matrix Dm = Delta_Matrix_Dm(T);
+	GrB_Info info;
+
+	// GrB_Vector x                 = NULL;
+	GrB_BinaryOp countEntryFirst = NULL; 
+	GrB_Semiring plus_count_uint64 = NULL;
+	GrB_Semiring semiring = GxB_PLUS_PAIR_UINT64;
+	GrB_Descriptor desc = ops & DEG_INDEGREE? GrB_DESC_ST0: GrB_DESC_S;
+	
+	if(ops & DEG_TENSOR)
+	{
+		// create custom semiring
+		// a * b = count entries in b
+		// a + b = a + b
+		info = GrB_BinaryOp_new(
+			&countEntryFirst, (GxB_binary_function) _numInEntryFirst, 
+			GrB_UINT64, GrB_UINT64, GrB_UINT64);
+		ASSERT(info == GrB_SUCCESS);
+		info = GrB_Semiring_new(&plus_count_uint64, GrB_PLUS_MONOID_UINT64,
+				countEntryFirst);
+		ASSERT(info == GrB_SUCCESS);
+
+		semiring = plus_count_uint64;
+	}
+
+	//--------------------------------------------------------------------------
+	// determine the size of adj
+	//--------------------------------------------------------------------------
+
+	GrB_Index nrows;
+	GrB_Index ncols;
+
+	info = GrB_Matrix_nrows(&nrows, M);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_Matrix_ncols(&ncols, M);
+	ASSERT(info == GrB_SUCCESS);
+	ASSERT(nrows == ncols);
+
+	//--------------------------------------------------------------------------
+	// compute the degree
+	//--------------------------------------------------------------------------
+	// TODO: in theory the next lines should be done inplace. Check burble and adjust accordingly
+	// Also ensure it does not explicitly transpose the matrix.
+	info = GrB_mxv(degree, degree, GrB_PLUS_UINT64, semiring, M, dest, desc);
+	ASSERT(info == GrB_SUCCESS);
+	info = GrB_mxv(
+		degree, degree, GrB_PLUS_UINT64, semiring, Dp, dest, desc);
+	ASSERT(info == GrB_SUCCESS);
+	info = GrB_mxv(
+		degree, degree, GrB_MINUS_UINT64, GxB_PLUS_PAIR_UINT64, Dm, dest, desc);
+	ASSERT(info == GrB_SUCCESS);
+
+	// flush matrix
+	info = GrB_wait(degree, GrB_MATERIALIZE);
+	ASSERT(info == GrB_SUCCESS);
+
+	//--------------------------------------------------------------------------
+	// clean up
+	//--------------------------------------------------------------------------
+
+	info = GrB_free(&countEntryFirst);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_free(&plus_count_uint64);
+	ASSERT(info == GrB_SUCCESS);
+	return info;
+}

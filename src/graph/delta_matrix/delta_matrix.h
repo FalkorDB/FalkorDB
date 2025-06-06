@@ -115,6 +115,16 @@ GrB_Matrix Delta_Matrix_M
 	const Delta_Matrix C
 );
 
+GrB_Matrix Delta_Matrix_Dp
+(
+	const Delta_Matrix C
+);
+
+GrB_Matrix Delta_Matrix_Dm
+(
+	const Delta_Matrix C
+);
+
 // replace C's internal M matrix with given M
 // the operation can only succeed if C's interal matrices:
 // M, DP, DM are all empty
@@ -225,7 +235,8 @@ GrB_Info Delta_Matrix_copy     // copy matrix A to matrix C
 GrB_Info Delta_Matrix_export
 (
 	GrB_Matrix *A,
-	Delta_Matrix C
+	Delta_Matrix C,
+	GrB_Type type
 );
 
 // checks to see if matrix has pending operations
