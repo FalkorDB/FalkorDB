@@ -307,6 +307,15 @@ SIValue AR_PATH_LENGTH
 	return SI_LongVal(SIPath_Length(argv[0]));
 }
 
+SIValue AR_FILTER_PATH
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
+	return SI_CloneValue(argv[0]);
+}
+
 void Register_PathFuncs() {
 	SIType *types;
 	SIType ret_type;
@@ -348,6 +357,14 @@ void Register_PathFuncs() {
 	ret_type = T_INT64 | T_NULL;
 	func_desc = AR_FuncDescNew("length", AR_PATH_LENGTH, 1, 1, types, ret_type,
 			false, false);
+	AR_RegFunc(func_desc);
+
+	types = array_new(SIType, 1);
+	array_append(types, T_NULL | T_PATH);
+	ret_type = T_PATH | T_NULL;
+	func_desc = AR_FuncDescNew("filter_path", AR_FILTER_PATH, 0, 1, types, ret_type,
+			false, false);
+
 	AR_RegFunc(func_desc);
 }
 

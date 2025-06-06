@@ -66,6 +66,12 @@ void addOutgoingNeighbors
 
 			// update the record with the current edge
 			Record_AddEdge(ctx->r, ctx->edge_idx, e);
+			SIValue path = SI_Path(ctx->path);
+			Path_AppendEdge(path.ptrval, e);
+			Node neighbor = GE_NEW_NODE();
+			Graph_GetNode(ctx->g, Edge_GetDestNodeID(ctx->neighbors + i), &neighbor);
+			Path_AppendNode(path.ptrval, neighbor);
+			Record_Add(ctx->r, ctx->path_idx, path);
 
 			// drop edge if it doesn't passes filter
 			if(FilterTree_applyFilters(ctx->ft, ctx->r) != FILTER_PASS) {
@@ -73,6 +79,8 @@ void addOutgoingNeighbors
 				i--;
 				neighborsCount--;
 			}
+			Record_Remove(ctx->r, ctx->path_idx);
+			SIValue_Free(path);
 		}
 	}
 
@@ -115,6 +123,7 @@ void addIncomingNeighbors
 
 			// update the record with the current edge
 			Record_AddEdge(ctx->r, ctx->edge_idx, e);
+			Record_Add(ctx->r, ctx->path_idx, SI_Path(ctx->path));
 
 			// drop edge if it doesn't passes filter
 			if(FilterTree_applyFilters(ctx->ft, ctx->r) != FILTER_PASS) {
@@ -175,6 +184,7 @@ AllPathsCtx *AllPathsCtx_New
 	uint maxLen,
 	Record r,
 	FT_FilterNode *ft,
+	uint path_idx,
 	uint edge_idx,
 	bool shortest_paths
 ) {
@@ -186,6 +196,7 @@ AllPathsCtx *AllPathsCtx_New
 	ctx->ft        =  ft;
 	ctx->dir       =  dir;
 	ctx->edge_idx  =  edge_idx;
+	ctx->path_idx  =  path_idx;
 
 	// Cypher variable path "[:*min..max]"" specifies edge count
 	// While the path constructed here contains only nodes.

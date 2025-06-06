@@ -197,6 +197,12 @@ AR_ExpNode *AR_EXP_NewOpNode
 	ASSERT(func != NULL);
 	node->op.f = func;
 
+	if(strcmp(func->name, "filter_path") == 0) {
+		node->op.child_count = 1;
+		node->op.children = rm_malloc(sizeof(AR_ExpNode *));
+		node->op.children[0] = AR_EXP_NewVariableOperandNode("@path");
+	}
+
 	// add aggregation context as function private data
 	if(func->aggregate) {
 		// generate aggregation context and store it in node's private data

@@ -40,6 +40,7 @@ typedef struct {
 	Node *dst;                  // Destination node, defaults to NULL in case of general all paths execution.
 	Record r;                   // Record the traversal is being performed upon, only used for edge filtering.
 	FT_FilterNode *ft;          // FilterTree of predicates to be applied to traversed edges.
+	uint path_idx;              // Record index of the path alias, only used for path filtering.
 	uint edge_idx;              // Record index of the edge alias, only used for edge filtering.
 	bool shortest_paths;        // Only collect shortest paths.
 	GrB_Vector visited;         // Visited nodes in shortest path.
@@ -57,6 +58,7 @@ AllPathsCtx *AllPathsCtx_New(
 	uint maxLen,         // Path length must not exceed maxLen + 1 nodes.
 	Record r,            // Record the traversal is being performed upon.
 	FT_FilterNode *ft,   // FilterTree of predicates to be applied to traversed edges.
+	uint path_idx,
 	uint edge_idx,       // Record index of the edge alias.
 	bool shortest_paths  // Only collect shortest paths.
 );

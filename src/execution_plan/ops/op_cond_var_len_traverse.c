@@ -151,9 +151,13 @@ OpBase *NewCondVarLenTraverseOp
 	QGEdge *e = QueryGraph_GetEdgeByAlias(plan->query_graph,
 			AlgebraicExpression_Edge(op->ae));
 
-	op->edgesIdx = AST_AliasIsReferenced(ast, e->alias) ?
-		OpBase_Modifies((OpBase *)op, e->alias) :
-		-1;
+	if(AST_AliasIsReferenced(ast, e->alias)) {
+		op->edgesIdx = OpBase_Modifies((OpBase *)op, e->alias);
+		op->pathIdx = OpBase_Modifies((OpBase *)op, "@path");
+	} else {
+		op->edgesIdx = -1; // edge is not referenced
+		op->pathIdx = -1;  // path is not referenced
+	}
 
 	op->shortestPaths = QGEdge_IsShortestPath(e);
 
@@ -319,7 +323,7 @@ static Record CondVarLenTraverseConsume
 		AllPathsCtx_Free(op->allPathsCtx);
 		op->allPathsCtx = AllPathsCtx_New(srcNode, destNode, op->g,
 				op->edgeRelationTypes, op->edgeRelationCount, op->traverseDir,
-				op->minHops, op->maxHops, op->r, op->ft, op->edgesIdx,
+				op->minHops, op->maxHops, op->r, op->ft, op->pathIdx, op->edgesIdx,
 				op->shortestPaths);
 	}
 

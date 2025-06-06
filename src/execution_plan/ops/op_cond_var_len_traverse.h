@@ -19,6 +19,7 @@ typedef struct {
 	Record r;
 	Delta_Matrix M;                        /* Traversed matrix if using the SimpleConsume routine. */
 	int edgesIdx;                          /* Edges set by operation. */
+	int pathIdx;                           /* Path set by operation. */
 	int srcNodeIdx;                        /* Node set by operation. */
 	int destNodeIdx;                       /* Node set by operation. */
 	bool expandInto;                       /* Both src and dest already resolved. */
