@@ -102,7 +102,7 @@ void test_noPaths() {
 
 	int relationships[] = {GRAPH_NO_RELATION};
 	AllPathsCtx *ctx = AllPathsCtx_New(&src, NULL, g, relationships, 1,
-		GRAPH_EDGE_DIR_OUTGOING, minLen, maxLen, NULL, NULL, 0, false);
+		GRAPH_EDGE_DIR_OUTGOING, minLen, maxLen, NULL, NULL, -1, 0, false);
 	Path *p = AllPathsCtx_NextPath(ctx);
 
 	TEST_ASSERT(p == NULL);
@@ -122,7 +122,7 @@ void test_longest_Paths() {
 	unsigned int maxLen = UINT_MAX - 2;
 	int relationships[] = {GRAPH_NO_RELATION};
 	AllPathsCtx *ctx = AllPathsCtx_New(&src, NULL, g, relationships, 1,
-		GRAPH_EDGE_DIR_OUTGOING, minLen, maxLen, NULL, NULL, 0, false);
+		GRAPH_EDGE_DIR_OUTGOING, minLen, maxLen, NULL, NULL, -1, 0, false);
 	Path *path;
 
 	unsigned int longestPath = 0;
@@ -151,7 +151,7 @@ void test_upToThreeLegsPaths() {
 	uint pathsCount = 0;
 	int relationships[] = {GRAPH_NO_RELATION};
 	AllPathsCtx *ctx = AllPathsCtx_New(&src, NULL, g, relationships, 1,
-		GRAPH_EDGE_DIR_OUTGOING, minLen, maxLen, NULL, NULL, 0, false);
+		GRAPH_EDGE_DIR_OUTGOING, minLen, maxLen, NULL, NULL, -1, 0, false);
 
 	/* Connections:
 	 * 0 -> 1
@@ -227,7 +227,7 @@ void test_twoLegPaths() {
 	unsigned int pathsCount = 0;
 	int relationships[] = {GRAPH_NO_RELATION};
 	AllPathsCtx *ctx = AllPathsCtx_New(&src, NULL, g, relationships, 1,
-		GRAPH_EDGE_DIR_OUTGOING, minLen, maxLen, NULL, NULL, 0, false);
+		GRAPH_EDGE_DIR_OUTGOING, minLen, maxLen, NULL, NULL, -1, 0, false);
 	/* Connections:
 	 * 0 -> 1
 	 * 0 -> 2
@@ -290,7 +290,7 @@ void test_destinationSpecificPaths() {
 	unsigned int pathsCount = 0;
 	int relationships[] = {GRAPH_NO_RELATION};
 	AllPathsCtx *ctx = AllPathsCtx_New(&src, &src, g, relationships, 1,
-		GRAPH_EDGE_DIR_OUTGOING, minLen, maxLen, NULL, NULL, 0, false);
+		GRAPH_EDGE_DIR_OUTGOING, minLen, maxLen, NULL, NULL, -1, 0, false);
 
 	while((path = AllPathsCtx_NextPath(ctx))) {
 		TEST_ASSERT(pathsCount < 5);

@@ -122,6 +122,12 @@ SIValue AR_EXP_FinalizeAggregations(AR_ExpNode *root, const Record r);
 // Utility functions
 //------------------------------------------------------------------------------
 
+// returns number of child nodes
+uint AR_EXP_childCount
+(
+	const AR_ExpNode *root  // root node
+);
+
 // get the ith child of root
 // in case root isn't a parent or idx > number of children NULL is returned
 AR_ExpNode *AR_EXP_getChild
@@ -142,6 +148,15 @@ void AR_EXP_CollectAttributes
 	AR_ExpNode *root,    // expression to collect attributes from
 	const char *entity,  // accessed entity
 	rax *attributes      // collected attributes
+);
+
+// collect all arithmetic expressions function call nodes
+// which call the specified function
+void AR_EXP_CollectFunctionCalls
+(
+	AR_ExpNode *root,    // arithmetic expression root node
+	const char *func,    // name of function to locate
+	AR_ExpNode ***funcs  // discovered function call nodes
 );
 
 // search for an aggregation node within the expression tree

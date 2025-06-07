@@ -197,12 +197,6 @@ AR_ExpNode *AR_EXP_NewOpNode
 	ASSERT(func != NULL);
 	node->op.f = func;
 
-	if(strcmp(func->name, "filter_path") == 0) {
-		node->op.child_count = 1;
-		node->op.children = rm_malloc(sizeof(AR_ExpNode *));
-		node->op.children[0] = AR_EXP_NewVariableOperandNode("@path");
-	}
-
 	// add aggregation context as function private data
 	if(func->aggregate) {
 		// generate aggregation context and store it in node's private data
@@ -764,6 +758,26 @@ SIValue AR_EXP_FinalizeAggregations
 	}
 }
 
+// returns number of child nodes
+uint AR_EXP_childCount
+(
+	const AR_ExpNode *root  // root node
+) {
+	ASSERT(root != NULL);
+
+	switch(root->type) {
+		case AR_EXP_OPERAND:
+			return 0;
+		case AR_EXP_OP:
+			return root->op.child_count;
+		default:
+			assert(false && "unknown arithmetic expression node type");
+			break;
+	}
+
+	return 0;
+}
+
 // get the ith child of root
 // in case root isn't a parent or idx > number of children NULL is returned
 AR_ExpNode *AR_EXP_getChild
@@ -845,6 +859,41 @@ void AR_EXP_CollectAttributes
 			AR_EXP_CollectAttributes(NODE_CHILD(root,i), entity, attributes);
 		}
 	}
+}
+
+// collect all arithmetic expressions function call nodes
+// which call the specified function
+void AR_EXP_CollectFunctionCalls
+(
+	AR_ExpNode *root,    // arithmetic expression root node
+	const char *func,    // name of function to locate
+	AR_ExpNode ***funcs  // discovered function call nodes
+) {
+	ASSERT(root  != NULL);
+	ASSERT(func  != NULL);
+	ASSERT(funcs != NULL && *funcs != NULL);
+
+	// arithmetic expression nodes queue
+	AR_ExpNode **queue = array_new(AR_ExpNode*, 0);
+	array_append(queue, root);
+
+	while(array_len(queue) > 0) {
+		AR_ExpNode *node = array_pop(queue);
+
+		if(node->type != AR_EXP_OP) {
+			continue;
+		}
+
+		if(strcmp(node->op.f->name, func) == 0) {
+			array_append(*funcs, node);
+		}
+
+		for(int i = 0; i < node->op.child_count; i++) {
+			array_append(queue, node->op.children[i]);
+		}
+	}
+
+	array_free(queue);
 }
 
 bool AR_EXP_ContainsAggregation(AR_ExpNode *root) {

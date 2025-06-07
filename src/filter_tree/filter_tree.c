@@ -570,6 +570,44 @@ rax *FilterTree_CollectAttributes
 	return attributes;
 }
 
+// collect all arithmetic expressions function call nodes
+// which call the specified function
+void FilterTree_CollectFunctionCalls
+(
+	const FT_FilterNode *root,  // filter tree root node
+	const char *func,           // name of function to locate
+	AR_ExpNode ***funcs         // discovered function call nodes
+) {
+	ASSERT(root  != NULL);
+	ASSERT(func  != NULL);
+	ASSERT(funcs != NULL && *funcs != NULL);
+
+	const FT_FilterNode **queue = array_new(const FT_FilterNode*, 0);
+
+	array_append(queue, root);
+	while(array_len(queue) != 0) {
+		const FT_FilterNode *node = array_pop(queue);
+
+		switch(node->t) {
+			case FT_N_COND:
+				array_append(queue, node->cond.left);
+				array_append(queue, node->cond.right);
+				break;
+			case FT_N_EXP:
+				AR_EXP_CollectFunctionCalls(node->exp.exp, func, funcs);
+				break;
+			case FT_N_PRED:
+				AR_EXP_CollectFunctionCalls(node->pred.lhs, func, funcs);
+				AR_EXP_CollectFunctionCalls(node->pred.rhs, func, funcs);
+				break;
+			default:
+				assert(false && "unknown filter tree node type");
+		}
+	}
+
+	array_free(queue);
+}
+
 // check if any of the filtered variable refers to a projection alias
 bool FilterTree_FiltersAlias
 (

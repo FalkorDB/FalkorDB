@@ -145,6 +145,15 @@ rax *FilterTree_CollectAttributes
 	const char *entity          // filtered entity
 );
 
+// collect all arithmetic expressions function call nodes
+// which call the specified function
+void FilterTree_CollectFunctionCalls
+(
+	const FT_FilterNode *root,  // filter tree root node
+	const char *func,           // name of function to locate
+	AR_ExpNode ***funcs         // discovered function call nodes
+);
+
 // check if any of the filtered variable refers to a projection alias
 bool FilterTree_FiltersAlias
 (

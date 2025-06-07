@@ -12,38 +12,50 @@
 #include "../../algorithms/algorithms.h"
 #include "../../arithmetic/algebraic_expression.h"
 
-/* OP Traverse */
+// OP Conditional Variable Length Traversal
 typedef struct {
-	OpBase op;
-	Graph *g;
-	Record r;
-	Delta_Matrix M;                        /* Traversed matrix if using the SimpleConsume routine. */
-	int edgesIdx;                          /* Edges set by operation. */
-	int pathIdx;                           /* Path set by operation. */
-	int srcNodeIdx;                        /* Node set by operation. */
-	int destNodeIdx;                       /* Node set by operation. */
-	bool expandInto;                       /* Both src and dest already resolved. */
-	FT_FilterNode *ft;                     /* If not NULL, FilterTree applied to traversed edge. */
-	bool shortestPaths;                    /* Only collect shortest paths. */
-	unsigned int minHops;                  /* Maximum number of hops to perform. */
-	unsigned int maxHops;                  /* Maximum number of hops to perform. */
-	int edgeRelationCount;                 /* Length of edgeRelationTypes. */
-	int *edgeRelationTypes;                /* Relation(s) we're traversing. */
-	AlgebraicExpression *ae;               /* ArithmeticExpression describing op's traversal pattern. */
+	OpBase op;                             // base operation
+	Graph *g;                              // graph object
+	Record r;                              // current record
+	Delta_Matrix M;                        // traversed matrix if using the SimpleConsume routine
+	int edgesIdx;                          // edges set by operation
+	int pathIdx;                           // variable length edge path object
+	int srcNodeIdx;                        // node set by operation
+	int destNodeIdx;                       // node set by operation
+	bool expandInto;                       // both src and dest already resolved
+	FT_FilterNode *ft;                     // if not NULL, FilterTree applied to traversed edge
+	bool shortestPaths;                    // only collect shortest paths
+	unsigned int minHops;                  // maximum number of hops to perform
+	unsigned int maxHops;                  // maximum number of hops to perform
+	int edgeRelationCount;                 // length of edgeRelationTypes
+	int *edgeRelationTypes;                // relation(s) we're traversing
+	AlgebraicExpression *ae;               // arithmeticExpression describing op's traversal pattern
 	union {
-		AllPathsCtx *allPathsCtx;          /* Context for collecting all paths. */
-		AllNeighborsCtx *allNeighborsCtx;  /* Context for collecting all neighbors . */
+		AllPathsCtx *allPathsCtx;          // context for collecting all paths
+		AllNeighborsCtx *allNeighborsCtx;  // context for collecting all neighbors
 	};
-	bool collect_paths;                    /* Whether we must populate the entire path. */
-	GRAPH_EDGE_DIR traverseDir;            /* Traverse direction. */
+	bool collect_paths;                    // whether we must populate the entire path
+	GRAPH_EDGE_DIR traverseDir;            // traverse direction
 } CondVarLenTraverse;
 
-OpBase *NewCondVarLenTraverseOp(const ExecutionPlan *plan, Graph *g, AlgebraicExpression *ae);
+OpBase *NewCondVarLenTraverseOp
+(
+	const ExecutionPlan *plan,
+	Graph *g,
+	AlgebraicExpression *ae
+);
 
-/* Transform operation from Conditional Variable Length Traverse
- * to Expand Into Conditional Variable Length Traverse */
-void CondVarLenTraverseOp_ExpandInto(CondVarLenTraverse *op);
+// transform operation from Conditional Variable Length Traverse
+// to Expand Into Conditional Variable Length Traverse
+void CondVarLenTraverseOp_ExpandInto
+(
+	CondVarLenTraverse *op
+);
 
-// Set the FilterTree pointer of a CondVarLenTraverse operation.
-void CondVarLenTraverseOp_SetFilter(CondVarLenTraverse *op, FT_FilterNode *ft);
+// set the FilterTree pointer of a CondVarLenTraverse operation
+void CondVarLenTraverseOp_SetFilter
+(
+	CondVarLenTraverse *op,
+	FT_FilterNode *ft
+);
 

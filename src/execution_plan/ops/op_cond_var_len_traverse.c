@@ -109,6 +109,37 @@ inline void CondVarLenTraverseOp_SetFilter
 	ASSERT(op->ft == NULL);
 
 	op->ft = ft;
+
+	// adjust filter tree
+	// replace each 'intermediate_path' function call argument from edge alias
+	// to '@path'
+
+	AR_ExpNode **fs = array_new(AR_ExpNode*, 0);
+	FilterTree_CollectFunctionCalls(ft, "intermediate_path", &fs);
+
+	size_t n = array_len(fs);
+	if(n > 0) {
+		op->pathIdx = OpBase_Modifies((OpBase *)op, "@path");
+
+		for(int i = 0; i < n; i++) {
+			AR_ExpNode *exp = fs[i];
+			ASSERT(AR_EXP_childCount(exp) == 1);
+
+			AR_ExpNode *arg = AR_EXP_getChild(exp, 0);
+
+			if(arg->type         != AR_EXP_OPERAND ||
+			   arg->operand.type != AR_EXP_VARIADIC) {
+				ErrorCtx_SetError("intermediate_path must accept a single variable length edge alias");
+				break;
+			}
+
+			// update operand name to '@path'
+			arg->operand.variadic.entity_alias = "@path";
+			arg->operand.variadic.entity_alias_idx = op->pathIdx;
+		}
+	}
+
+	array_free(fs);
 }
 
 OpBase *NewCondVarLenTraverseOp
@@ -120,18 +151,12 @@ OpBase *NewCondVarLenTraverseOp
 	ASSERT(g  != NULL);
 	ASSERT(ae != NULL);
 
-	CondVarLenTraverse *op = rm_malloc(sizeof(CondVarLenTraverse));
+	CondVarLenTraverse *op = rm_calloc(1, sizeof(CondVarLenTraverse));
 
-	op->g                 = g;
-	op->r                 = NULL;
-	op->M                 = NULL;
-	op->ae                = ae;
-	op->ft                = NULL;
-	op->expandInto        = false;
-	op->allPathsCtx       = NULL;
-	op->collect_paths     = true;
-	op->allNeighborsCtx   = NULL;
-	op->edgeRelationTypes = NULL;
+	op->g             = g;
+	op->ae            = ae;
+	op->pathIdx       = -1; // path is not referenced
+	op->collect_paths = true;
 
 	OpBase_Init((OpBase *)op, OPType_CONDITIONAL_VAR_LEN_TRAVERSE,
 				"Conditional Variable Length Traverse", CondVarLenTraverseInit,
@@ -151,13 +176,9 @@ OpBase *NewCondVarLenTraverseOp
 	QGEdge *e = QueryGraph_GetEdgeByAlias(plan->query_graph,
 			AlgebraicExpression_Edge(op->ae));
 
-	if(AST_AliasIsReferenced(ast, e->alias)) {
-		op->edgesIdx = OpBase_Modifies((OpBase *)op, e->alias);
-		op->pathIdx = OpBase_Modifies((OpBase *)op, "@path");
-	} else {
-		op->edgesIdx = -1; // edge is not referenced
-		op->pathIdx = -1;  // path is not referenced
-	}
+	op->edgesIdx = AST_AliasIsReferenced(ast, e->alias) ?
+		OpBase_Modifies((OpBase *)op, e->alias) :
+		-1;
 
 	op->shortestPaths = QGEdge_IsShortestPath(e);
 
@@ -287,9 +308,9 @@ static Record CondVarLenTraverseConsume
 (
 	OpBase *opBase
 ) {
-	CondVarLenTraverse  *op     = (CondVarLenTraverse *)opBase;
-	Path                *p      =  NULL;
-	OpBase              *child  =  op->op.children[0];
+	CondVarLenTraverse  *op    = (CondVarLenTraverse *)opBase;
+	Path                *p     = NULL;
+	OpBase              *child = op->op.children[0];
 
 	while(!(p = AllPathsCtx_NextPath(op->allPathsCtx))) {
 		Record childRecord = OpBase_Consume(child);
@@ -323,8 +344,8 @@ static Record CondVarLenTraverseConsume
 		AllPathsCtx_Free(op->allPathsCtx);
 		op->allPathsCtx = AllPathsCtx_New(srcNode, destNode, op->g,
 				op->edgeRelationTypes, op->edgeRelationCount, op->traverseDir,
-				op->minHops, op->maxHops, op->r, op->ft, op->pathIdx, op->edgesIdx,
-				op->shortestPaths);
+				op->minHops, op->maxHops, op->r, op->ft, op->pathIdx,
+				op->edgesIdx, op->shortestPaths);
 	}
 
 	//--------------------------------------------------------------------------

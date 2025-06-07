@@ -430,34 +430,163 @@ class testVariableLengthTraversals(FlowTestsBase):
         self.graph.delete()
 
         # create graph
-        q = """CREATE (:A {v:1})-[:R {v:2}]->(:B {v:3})-[:R {v:4}]->(:C {v:5}),
-                      (:A {v:6})-[:R {v:9}]->(:B {v:8})-[:R {v:7}]->(:C {v:10})"""
-        res = self.graph.query(q)
+        q = """CREATE (a0:A {v:1}),
+                      (b0:B {v:3}),
+                      (c0:C {v:5}),
+                      (a1:A {v:6}),
+                      (b1:B {v:8}),
+                      (c1:C {v:10}),
 
+                      (a0)-[a0b0:R {v:2}]->(b0),
+                      (b0)-[b0c0:R {v:4}]->(c0),
+                      (a1)-[a1b1:R {v:9}]->(b1),
+                      (b1)-[b1c1:R {v:7}]->(c1)
+
+               RETURN a0, b0, c0, a1, b1, c1, a0b0, b0c0, a1b1, b1c1"""
+
+        res = self.graph.query(q).result_set
+
+        a0   = res[0][0]
+        b0   = res[0][1]
+        c0   = res[0][2]
+        a1   = res[0][3]
+        b1   = res[0][4]
+        c1   = res[0][5]
+        a0b0 = res[0][6]
+        b0c0 = res[0][7]
+        a1b1 = res[0][8]
+        b1c1 = res[0][9]
 
         q = """MATCH p=(a:A)-[e*]->(b)
-                   WHERE length(filter_path()) = 1 OR relationships(filter_path())[length(filter_path()) - 2].v < relationships(filter_path())[length(filter_path()) - 1].v
-                   RETURN p"""
+               WHERE length(intermediate_path(e)) = 1 OR
+                     relationships(intermediate_path(e))[-2].v <
+                     relationships(intermediate_path(e))[-1].v
+               RETURN p"""
+
         plan = self.graph.explain(q)
-        self.env.assertEquals(plan.structured_plan.name, "Results")
-        self.env.assertEquals(plan.structured_plan.children[0].name, "Project")
-        self.env.assertEquals(plan.structured_plan.children[0].children[0].name, "Conditional Variable Length Traverse")
+
+        expected_ops = ["Results",
+                        "Project",
+                        "Conditional Variable Length Traverse",
+                        "Node By Label Scan"]
+        expected_ops.reverse()
+
+        op = plan.structured_plan
+        while len(op.children) > 0:
+            self.env.assertEquals(op.name, expected_ops.pop())
+            op = op.children[0]
+
+        # last op
+        self.env.assertEquals(op.name, expected_ops.pop())
 
         res = self.graph.query(q)
         self.env.assertEquals(len(res.result_set), 3)
-        self.env.assertEquals(res.result_set[0][0], Path(
-            [Node(0, labels=["A"], properties={"v": 1}),
-                Node(1, labels=["B"], properties={"v": 3})],
-            [Edge(0, "R", 1, 0, properties={"v": 2})]
-        ))
-        self.env.assertEquals(res.result_set[1][0], Path(
-            [Node(0, labels=["A"], properties={"v": 1}),
-                Node(1, labels=["B"], properties={"v": 3}),
-                Node(2, labels=["C"], properties={"v": 5})],
-            [Edge(0, "R", 1, 0, properties={"v": 2}), Edge(1, "R", 2, 1, properties={"v": 4})]
-        ))
-        self.env.assertEquals(res.result_set[2][0], Path(
-            [Node(3, labels=["A"], properties={"v": 6}),
-                Node(4, labels=["B"], properties={"v": 8})],
-            [Edge(3, "R", 4, 2, properties={"v": 9})]
-        ))
+
+        self.env.assertEquals(res.result_set[0][0], Path([a0, b0], [a0b0]))
+        self.env.assertEquals(res.result_set[1][0], Path([a0, b0, c0], [a0b0, b0c0]))
+        self.env.assertEquals(res.result_set[2][0], Path([a1, b1], [a1b1]))
+
+    def test16_multi_var_len_filters(self):
+        self.graph.delete()
+
+        # create graph
+        q = """
+        CREATE (a:A {v:1}),
+               (b:B {v:2}),
+               (c:C {v:3}),
+               (d:D {v:4}),
+               (e:E {v:3}),
+               (f:F {v:2}),
+               (g:G {v:2})
+
+        CREATE (a)-[ab:R]->(b),
+               (b)-[bc:R]->(c),
+               (c)-[cd:R]->(d),
+               (d)-[de:R]->(e),
+               (e)-[ef:R]->(f),
+               (f)-[fg:R]->(g)
+
+        RETURN a, b, c, d, e, f, g, ab, bc, cd, de, ef, fg
+        """
+
+        res = self.graph.query(q).result_set
+        a = res[0][0]
+        b = res[0][1]
+        c = res[0][2]
+        d = res[0][3]
+        e = res[0][4]
+        f = res[0][5]
+        g = res[0][6]
+
+        ab = res[0][7]
+        bc = res[0][8]
+        cd = res[0][9]
+        de = res[0][10]
+        ef = res[0][11]
+        fg = res[0][12]
+
+        q = """MATCH p0 = (a:A)-[e*]->(d:D)
+               WHERE length(intermediate_path(e)) = 1 OR
+                     nodes(intermediate_path(e))[-2].v < nodes(intermediate_path(e))[-1].v
+
+               MATCH p1 = (d)-[f*]->(z)
+               WHERE length(intermediate_path(f)) = 1 OR
+                     nodes(intermediate_path(f))[-1].v < nodes(intermediate_path(f))[-2].v
+
+               RETURN p0, p1"""
+
+        plan = self.graph.explain(q)
+        expected_ops = ["Results",
+                        "Project",
+                        "Conditional Variable Length Traverse",
+                        "Conditional Traverse",
+                        "Conditional Variable Length Traverse",
+                        "Node By Label Scan"]
+        expected_ops.reverse()
+
+        op = plan.structured_plan
+        while len(op.children) > 0:
+            self.env.assertEquals(op.name, expected_ops.pop())
+            op = op.children[0]
+
+        # last op
+        self.env.assertEquals(op.name, expected_ops.pop())
+
+        self.env.assertEquals(len(expected_ops), 0)
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(len(res), 2)
+
+        expected_p0 = Path([a, b, c, d], [ab, bc, cd])
+        expected_p1 = Path([d, e], [de])
+
+        self.env.assertEquals(res[0][0], expected_p0)
+        self.env.assertEquals(res[0][1], expected_p1)
+
+        expected_p1 = Path([d, e, f], [de, ef])
+        self.env.assertEquals(res[1][0], expected_p0)
+        self.env.assertEquals(res[1][1], expected_p1)
+
+        #-----------------------------------------------------------------------
+        # check variable length incoming edges
+        #-----------------------------------------------------------------------
+
+        # force backward traversal via incoming edges
+        q = """MATCH (d:D)
+               WITH d
+               MATCH p = (d)<-[e*]-(a)
+               WHERE nodes(intermediate_path(e))[-1].v > 1
+
+               RETURN p
+               ORDER BY length(p)"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(len(res), 2)
+
+        expected_p = Path([d, c], [cd])
+
+        self.env.assertEquals(res[0][0], expected_p)
+
+        expected_p = Path([d, c, b], [cd, bc])
+        self.env.assertEquals(res[1][0], expected_p)
+
