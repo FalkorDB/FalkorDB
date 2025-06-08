@@ -15,6 +15,13 @@ SIValue DateTime_now(void) {
 	};
 }
 
+// create a new date object representing the current date
+SIValue Date_now(void) {
+	return (SIValue) {
+		.datetimeval = time(NULL), .type = T_DATE, .allocation = M_NONE
+	};
+}
+
 SIValue DateTime_fromComponents
 (
 	int year,         // year

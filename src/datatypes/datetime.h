@@ -7,8 +7,11 @@
 
 #include "../value.h"
 
-// create a new datetime object representing the current time
+// create a new datetime object representing the current datetime
 SIValue DateTime_now(void);
+
+// create a new date object representing the current date
+SIValue Date_now(void);
 
 SIValue DateTime_fromComponents
 (
