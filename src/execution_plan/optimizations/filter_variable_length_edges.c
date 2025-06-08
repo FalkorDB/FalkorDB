@@ -34,6 +34,7 @@ static bool _applicableFilter
 
 	// Look up the edge alias in the alias map.
 	applicable = (raxFind(filtered, (unsigned char *)edge, strlen(edge)) != raxNotFound);
+
 	if(applicable) {
 		// reject filter trees that contain either the src or dest node
 		// this avoids false positives on TOPATH expressions that collect all
