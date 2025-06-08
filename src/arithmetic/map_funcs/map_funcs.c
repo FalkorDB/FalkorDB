@@ -58,7 +58,12 @@ SIValue AR_KEYS(SIValue *argv, int argc, void *private_data) {
 	return SI_NullVal();
 }
 
-SIValue AR_PROPERTIES(SIValue *argv, int argc, void *private_data) {
+SIValue AR_PROPERTIES
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
 	ASSERT(argc == 1);
 	switch(SI_TYPE(argv[0])) {
 		case T_NULL:

@@ -27,28 +27,46 @@ static inline ValueType _mapValueType
 	switch(t) {
 	case T_NULL:
 		return VALUE_NULL;
+
 	case T_STRING:
 		return VALUE_STRING;
+
 	case T_INT64:
 		return VALUE_INTEGER;
+
 	case T_BOOL:
 		return VALUE_BOOLEAN;
+
 	case T_DOUBLE:
 		return VALUE_DOUBLE;
+
 	case T_ARRAY:
 		return VALUE_ARRAY;
+
 	case T_VECTOR_F32:
 		return VALUE_VECTORF32;
+
 	case T_NODE:
 		return VALUE_NODE;
+
 	case T_EDGE:
 		return VALUE_EDGE;
+
 	case T_PATH:
 		return VALUE_PATH;
+
 	case T_MAP:
 		return VALUE_MAP;
+
 	case T_POINT:
 		return VALUE_POINT;
+
+	case T_DATETIME:
+		return VALUE_DATETIME;
+
+	case T_DATE:
+		return VALUE_DATE;
+
 	default:
 		return VALUE_UNKNOWN;
 	}
@@ -76,40 +94,57 @@ static void _ResultSet_CompactReplyWithSIValue
 	case T_STRING:
 		RedisModule_ReplyWithStringBuffer(ctx, v.stringval, strlen(v.stringval));
 		return;
+
 	case T_INT64:
 		RedisModule_ReplyWithLongLong(ctx, v.longval);
 		return;
+
 	case T_DOUBLE:
 		_ResultSet_ReplyWithRoundedDouble(ctx, v.doubleval);
 		return;
+
 	case T_BOOL:
 		if(v.longval != 0) RedisModule_ReplyWithStringBuffer(ctx, "true", 4);
 		else RedisModule_ReplyWithStringBuffer(ctx, "false", 5);
 		return;
+
+	case T_DATE:
+	case T_DATETIME:
+		RedisModule_ReplyWithLongLong(ctx, v.longval);
+		return;
+
 	case T_ARRAY:
 		_ResultSet_CompactReplyWithSIArray(ctx, gc, v);
 		break;
+
 	case T_VECTOR_F32:
 		_ResultSet_CompactReplyWithVector32F(ctx, v);
 		break;
+
 	case T_NULL:
 		RedisModule_ReplyWithNull(ctx);
 		return;
+
 	case T_NODE:
 		_ResultSet_CompactReplyWithNode(ctx, gc, v.ptrval);
 		return;
+
 	case T_EDGE:
 		_ResultSet_CompactReplyWithEdge(ctx, gc, v.ptrval);
 		return;
+
 	case T_PATH:
 		_ResultSet_CompactReplyWithPath(ctx, gc, v);
 		return;
+
 	case T_MAP:
 		_ResultSet_CompactReplyWithMap(ctx, gc, v);
 		return;
+
 	case T_POINT:
 		_ResultSet_CompactReplyWithPoint(ctx, gc, v);
 		return;
+
 	default:
 		RedisModule_Assert("Unhandled value type" && false);
 		break;

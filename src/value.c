@@ -15,9 +15,9 @@
 #include "graph/entities/graph_entity.h"
 
 #include <errno.h>
-#include <limits.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <limits.h>
 #include <sys/param.h>
 
 static inline void _SIString_ToString
@@ -93,6 +93,12 @@ SIValue SI_Array(u_int64_t initialCapacity) {
 
 SIValue SI_EmptyMap() {
 	return Map_New(0);
+}
+
+SIValue SI_DateTime(time_t datetime) {
+	return (SIValue) {
+		.datetimeval = datetime, .type = T_DATETIME, .allocation = M_NONE
+	};
 }
 
 SIValue SI_Map(u_int64_t initialCapacity) {
@@ -419,12 +425,15 @@ void SIValue_ToString
 		case T_STRING:
 			_SIString_ToString(v, buf, bufferLen, bytesWritten);
 			break;
+
 		case T_INT64:
 			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "%lld", (long long)v.longval);
 			break;
+
 		case T_BOOL:
 			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "%s", v.longval ? "true" : "false");
 			break;
+
 		case T_DOUBLE:
 			{
 				size_t n = snprintf(*buf + *bytesWritten, *bufferLen - *bytesWritten, "%f", v.doubleval);
@@ -440,35 +449,49 @@ void SIValue_ToString
 				*bytesWritten += n;
 				break;
 			}
+
 		case T_NODE:
 			Node_ToString(v.ptrval, buf, bufferLen, bytesWritten, ENTITY_ID);
 			break;
+
 		case T_EDGE:
 			Edge_ToString(v.ptrval, buf, bufferLen, bytesWritten, ENTITY_ID);
 			break;
+
 		case T_ARRAY:
 			SIArray_ToString(v, buf, bufferLen, bytesWritten);
 			break;
+
 		case T_MAP:
 			Map_ToString(v, buf, bufferLen, bytesWritten);
 			break;
+
 		case T_PATH:
 			SIPath_ToString(v, buf, bufferLen, bytesWritten);
 			break;
+
 		case T_NULL:
 			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "NULL");
 			break;
+
 		case T_PTR:
 			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "POINTER");
 			break;
+
 		case T_POINT:
 			// max string length is 32 chars of string + 10 * 2 chars for the floats
 			// = 52 bytes that already checked in the header of the function
 			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "point({latitude: %f, longitude: %f})", Point_lat(v), Point_lon(v));
 			break;
+
 		case T_VECTOR_F32:
 			SIVector_ToString(v, buf, bufferLen, bytesWritten);
 			break;
+
+		case T_DATETIME:
+			DateTime_toString(&v, buf, bufferLen, bytesWritten);
+			break;
+
 		default:
 			// unrecognized type
 			printf("unrecognized type: %d\n", v.type);
@@ -760,25 +783,36 @@ int SIValue_Compare
 		case T_INT64:
 		case T_BOOL:
 			return SAFE_COMPARISON_RESULT(a.longval - b.longval);
+
 		case T_DOUBLE:
 			if(isnan(a.doubleval) || isnan(b.doubleval)) {
 				if(disjointOrNull) *disjointOrNull = COMPARED_NAN;
 			}
 
 			return SAFE_COMPARISON_RESULT(a.doubleval - b.doubleval);
+
 		case T_STRING:
 			return strcmp(a.stringval, b.stringval);
+
 		case T_NODE:
 		case T_EDGE:
 			return ENTITY_GET_ID((GraphEntity *)a.ptrval) - ENTITY_GET_ID((GraphEntity *)b.ptrval);
+
 		case T_ARRAY:
 			return SIArray_Compare(a, b, disjointOrNull);
+
 		case T_PATH:
 			return SIPath_Compare(a, b);
+
 		case T_MAP:
 			return Map_Compare(a, b, disjointOrNull);
+
+		case T_DATETIME:
+			return a.datetimeval - b.datetimeval;
+
 		case T_NULL:
 			break;
+
 		case T_POINT:
 		{
 			int lon_diff = SAFE_COMPARISON_RESULT(Point_lon(a) - Point_lon(b));
@@ -786,8 +820,10 @@ int SIValue_Compare
 				return SAFE_COMPARISON_RESULT(Point_lat(a) - Point_lat(b));
 			return lon_diff;
 		}
+
 		case T_VECTOR_F32:
-		return SIVector_Compare(a, b);
+			return SIVector_Compare(a, b);
+
 		default:
 			// both inputs were of an incomparable type, like a pointer
 			// or not implemented comparison yet
@@ -879,20 +915,24 @@ void SIValue_HashUpdate
 			XXH64_update(state, &t, sizeof(t));
 			XXH64_update(state, &null, sizeof(null));
 			return;
+
 		case T_STRING:
 			XXH64_update(state, &t, sizeof(t));
 			XXH64_update(state, v.stringval, strlen(v.stringval));
 			return;
+
 		case T_INT64:
 			// change type to numeric
 			t = SI_NUMERIC;
 			XXH64_update(state, &t, sizeof(t));
 			XXH64_update(state, &v.longval, sizeof(v.longval));
 			return;
+
 		case T_BOOL:
 			XXH64_update(state, &t, sizeof(t));
 			XXH64_update(state, &v.longval, sizeof(v.longval));
 			return;
+
 		case T_DOUBLE:
 			t = SI_NUMERIC;
 			XXH64_update(state, &t, sizeof(t));
@@ -903,31 +943,43 @@ void SIValue_HashUpdate
 			if(diff != 0) XXH64_update(state, &v.doubleval, sizeof(v.doubleval));
 			else XXH64_update(state, &casted, sizeof(casted));
 			return;
+
 		case T_EDGE:
 			inner_hash = SIEdge_HashCode(v);
 			XXH64_update(state, &inner_hash, sizeof(inner_hash));
 			return;
+
 		case T_NODE:
 			inner_hash = SINode_HashCode(v);
 			XXH64_update(state, &inner_hash, sizeof(inner_hash));
 			return;
+
 		case T_ARRAY:
 			inner_hash = SIArray_HashCode(v);
 			XXH64_update(state, &inner_hash, sizeof(inner_hash));
 			return;
+
 		case T_MAP:
 			inner_hash = Map_HashCode(v);
 			XXH64_update(state, &inner_hash, sizeof(inner_hash));
 			return;
+
 		case T_PATH:
 			inner_hash = SIPath_HashCode(v);
 			XXH64_update(state, &inner_hash, sizeof(inner_hash));
 			return;
+
 		case T_VECTOR_F32:
 			inner_hash = SIVector_HashCode(v);
 			XXH64_update(state, &inner_hash, sizeof(inner_hash));
 			return;
-			// TODO: Implement for temporal types once we support them.
+
+			// TODO: implement for temporal types once we support them.
+		case T_DATETIME:
+			XXH64_update(state, &t, sizeof(t));
+			XXH64_update(state, &v.datetimeval, sizeof(v.datetimeval));
+			return;
+
 		default:
 			ASSERT(false);
 			break;
@@ -969,6 +1021,7 @@ SIValue SIValue_FromBinary
 	double   d;
 	Point    p;
 	char    *s;
+	time_t  ts;
 	struct SIValue *array;
 
 	fread_assert(&t, sizeof(SIType), stream);
@@ -978,10 +1031,12 @@ SIValue SIValue_FromBinary
 			fread_assert(&p, sizeof(v.point), stream);
 			v = SI_Point(p.latitude, p.longitude);
 			break;
+
 		case T_ARRAY:
 			// read array from stream
 			v = SIArray_FromBinary(stream);
 			break;
+
 		case T_STRING:
 			// read string length from stream
 			fread_assert(&len, sizeof(len), stream);
@@ -990,27 +1045,38 @@ SIValue SIValue_FromBinary
 			fread_assert(s, sizeof(char) * len, stream);
 			v = SI_TransferStringVal(s);
 			break;
+
 		case T_BOOL:
 			// read bool from stream
 			fread_assert(&b, sizeof(b), stream);
 			v = SI_BoolVal(b);
 			break;
+
 		case T_INT64:
 			// read int from stream
 			fread_assert(&i, sizeof(i), stream);
 			v = SI_LongVal(i);
 			break;
+
 		case T_DOUBLE:
 			// read double from stream
 			fread_assert(&d, sizeof(d), stream);
 			v = SI_DoubleVal(d);
 			break;
+
 		case T_VECTOR_F32:
 			v = SIVector_FromBinary(stream, t);
 			break;
+
 		case T_NULL:
 			v = SI_NullVal();
 			break;
+
+		case T_DATETIME:
+			fread_assert(&t, sizeof(time_t), stream);
+			v = SI_DateTime(t);
+			break;
+
 		default:
 			assert(false && "unknown SIValue type");
 	}

@@ -293,6 +293,10 @@ RSDoc *Index_IndexGraphEntity
 				double d = SI_GET_NUMERIC(*v);
 				RediSearch_DocumentAddFieldNumber(doc, field->range_name, d,
 						RSFLDTYPE_NUMERIC);
+			} else if(t & T_DATETIME) {
+				double d = (double)v->datetimeval;
+				RediSearch_DocumentAddFieldNumber(doc, field->range_name, d,
+						RSFLDTYPE_NUMERIC);
 			} else if(t == T_POINT) {
 				double lat = (double)Point_lat(*v);
 				double lon = (double)Point_lon(*v);

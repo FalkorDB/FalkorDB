@@ -116,6 +116,7 @@ SIValue SI_PtrVal(void *v);
 SIValue SI_LongVal(int64_t i);
 SIValue SI_DoubleVal(double d);
 SIValue SI_Vectorf32(uint32_t dim);
+SIValue SI_DateTime(time_t datetime);
 SIValue SI_Map(u_int64_t initialCapacity);
 SIValue SI_Array(u_int64_t initialCapacity);
 SIValue SI_Point(float latitude, float longitude);
@@ -200,9 +201,9 @@ SIValue SIValue_Divide(const SIValue a, const SIValue b);
 /* SIValue_Modulo always gets integer values as input and return integer value. */
 SIValue SIValue_Modulo(const SIValue a, const SIValue b);
 
-/* Compares two SIValues and returns a value similar to strcmp.
- * If one of the values is null, the macro COMPARED_NULL is returned in disjointOrNull value.
- * If the the values are not of the same type, the macro DISJOINT is returned in disjointOrNull value. */
+// compares two SIValues and returns a value similar to strcmp
+// if one of the values is null, the macro COMPARED_NULL is returned in disjointOrNull value.
+// if the the values are not of the same type, the macro DISJOINT is returned in disjointOrNull value. */
 int SIValue_Compare(const SIValue a, const SIValue b, int *disjointOrNull);
 
 /* Update the provided hash state with the given SIValue. */

@@ -49,13 +49,36 @@ static int Map_KeyIdx
 	ASSERT(SI_TYPE(map) & T_MAP);
 	ASSERT(SI_TYPE(key) & T_STRING);
 
-	Map m = map.map;
+	Map  m = map.map;
 	uint n = array_len(m);
 
 	// search for key in map
 	for(uint i = 0; i < n; i++) {
 		Pair pair = m[i];
 		if(strcmp(pair.key.stringval, key.stringval) == 0) {
+			return i;
+		}
+	}
+
+	// key not in map
+	return -1;
+}
+
+static int Map_KeyIdxCaseInsensitive
+(
+	SIValue map,
+	SIValue key
+) {
+	ASSERT(SI_TYPE(map) & T_MAP);
+	ASSERT(SI_TYPE(key) & T_STRING);
+
+	Map  m = map.map;
+	uint n = array_len(m);
+
+	// search for key in map
+	for(uint i = 0; i < n; i++) {
+		Pair pair = m[i];
+		if(strcasecmp(pair.key.stringval, key.stringval) == 0) {
 			return i;
 		}
 	}
@@ -107,7 +130,7 @@ SIValue Map_Clone
 	ASSERT(SI_TYPE(map) & T_MAP);
 
 	uint key_count = Map_KeyCount(map);
-	SIValue clone = Map_New(key_count);
+	SIValue clone  = Map_New(key_count);
 
 	for(uint i = 0; i < key_count; i++) {
 		Pair p = map.map[i];
@@ -198,18 +221,43 @@ void Map_Clear
 }
 
 // retrieves value under key, map[key]
-// sets 'value' to NULL if key isn't in map
+// return true and set 'value' if key is in map
+// otherwise return false
 bool Map_Get
 (
-	SIValue map,
-	SIValue key,
-	SIValue *value
+	SIValue map,    // map to get value from
+	SIValue key,    // key to lookup value
+	SIValue *value  // [output] value to retrieve
 ) {
 	ASSERT(SI_TYPE(map) & T_MAP);
 	ASSERT(SI_TYPE(key) & T_STRING);
 	ASSERT(value != NULL);
 
 	int idx = Map_KeyIdx(map, key);
+
+	// key isn't in map, set 'value' to NULL and return
+	if(idx == -1) {
+		*value = SI_NullVal();
+		return false;
+	} else {
+		*value = SI_ShareValue(map.map[idx].val);
+		return true;
+	}
+}
+
+// retrieves value under lower(key), map[lower(key)]
+// sets 'value' to NULL if key isn't in map
+bool Map_GetCaseInsensitive
+(
+	SIValue map,    // map
+	SIValue key,    // key to access
+	SIValue *value  // [output] map[lower(key)]
+) {
+	ASSERT(SI_TYPE(map) & T_MAP);
+	ASSERT(SI_TYPE(key) & T_STRING);
+	ASSERT(value != NULL);
+
+	int idx = Map_KeyIdxCaseInsensitive(map, key);
 
 	// key isn't in map, set 'value' to NULL and return
 	if(idx == -1) {
@@ -228,14 +276,14 @@ void Map_GetIdx
 	SIValue *key,
 	SIValue *value
 ) {
+	ASSERT(key   != NULL);
+	ASSERT(value != NULL);
 	ASSERT(SI_TYPE(map) & T_MAP);
 	ASSERT(idx < Map_KeyCount(map));
-	ASSERT(key != NULL);
-	ASSERT(value != NULL);
 
 	Pair p = map.map[idx];
 
-	*key = SI_ShareValue(p.key);
+	*key   = SI_ShareValue(p.key);
 	*value = SI_ShareValue(p.val);
 }
 
