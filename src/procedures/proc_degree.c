@@ -57,10 +57,10 @@ static void _process_yield
 // parse algo.degree configuration map
 //
 //	{
-//		'source':      <label>,
-//		'dir':         'incoming' / 'outgoing',
-//		'relation':    <relationship-type>,
-//		'destination': <label>,
+//		'srcLabels':      		[<label>, ...],
+//		'dir':         	  		'incoming' / 'outgoing',
+//		'relationshipTypes':    [<type>, ...],
+//		'destLabels':     		[<label>, ...],
 //	}
 
 static bool _read_config
@@ -253,10 +253,10 @@ ProcedureResult Proc_DegreeInvoke
 		ErrorCtx_SetError("invalid argument to algo.degree");
 		return PROCEDURE_ERR;
 	}
-	GRAPH_EDGE_DIR dir;      		// edge direction
-	LabelID *src_labels = NULL;   	// src label
-	LabelID *dest_labels = NULL;   	// src label
-	RelationID *rel_types = NULL;   // edge relationship type
+	GRAPH_EDGE_DIR dir		= GRAPH_EDGE_DIR_OUTGOING; // edge direction
+	LabelID *src_labels 	= NULL;   	// src label
+	LabelID *dest_labels	= NULL;   	// src label
+	RelationID *rel_types 	= NULL;   // edge relationship type
 
 	// parse configuration
 	if(!_read_config(config, &src_labels, &dest_labels, &rel_types, &dir)) {
@@ -382,6 +382,7 @@ ProcedureResult Proc_DegreeInvoke
 			R = Graph_GetRelationMatrix(g, i, false);
 			int opt = Graph_RelationshipContainsMultiEdge(g, i)?
 					DEG_TENSOR : DEG_DEFAULT;
+			
 			TesorDegree(degree, dest, R, direction | opt);
 		}
 	}
@@ -490,21 +491,22 @@ ProcedureResult Proc_DegreeFree
 // define the Degree procedure
 // procedure input:
 //	{
-//		'source':      <label>,
-//		'dir':         'incoming' / 'outgoing',
-//		'relation':    <relationship-type>,
-//		'destination': <label>,
+//		'srcLabels':      		[<label>, ...],
+//		'dir':         	  		'incoming' / 'outgoing',
+//		'relationshipTypes':    [<type>, ...],
+//		'destLabels':     		[<label>, ...],
 //	}
 //
-//  source      - [optional] [string] type of nodes for which degree is computed
-//  dir         - [optional] [string] edge direction: 'incoming' or 'outgoing'
-//  relation    - [optional] [string] the type of edges to consider
-//  destination - [optional] [string] type of reachable nodes
+//  srcLabels      		- [optional] [string[]] type of nodes for which degree is computed
+//  dir         		- [optional] [string] edge direction: 'incoming' or 'outgoing'
+//  relationshipTypes   - [optional] [string[]] the type of edges to consider
+//  destLabels 			- [optional] [string[]] type of reachable nodes
 //
 //  examples:
 //
+//  CALL algo.degree(NULL)
 //  CALL algo.degree({})
-//  CALL algo.degree({source: 'L', relation: 'R', dir: 'outgoing', destination: 'M'})
+//  CALL algo.degree({srcLabels: 'L', relationshipTypes: 'R', dir: 'outgoing', destLabels: 'M'})
 ProcedureCtx *Proc_DegreeCtx()
 {
 	void *privateData = NULL;

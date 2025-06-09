@@ -3,7 +3,7 @@ from common import *
 GRAPH_ID = "degree"
 GRAPH_ID_TENSORS = "degree_tensors"
 
-class testDegree():
+class testDegree(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
         self.conn = self.env.getConnection()
