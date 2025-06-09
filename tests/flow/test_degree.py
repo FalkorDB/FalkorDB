@@ -393,7 +393,6 @@ class testDegree(FlowTestsBase):
                 RETURN node.name, degree
                 ORDER BY node.name"""
         result_set = self.tensorGraph.query(q).result_set
-        self.env.assertEqual(len(result_set), 7)
         ans_set = [
             ['a0', 6],
             ['a1', 6],
@@ -412,7 +411,6 @@ class testDegree(FlowTestsBase):
                 RETURN node.name, degree
                 ORDER BY node.name"""
         result_set = self.tensorGraph.query(q).result_set
-        self.env.assertEqual(len(result_set), 7)
         ans_set = [
             ['a0', 1],
             ['a1', 1],
@@ -431,7 +429,6 @@ class testDegree(FlowTestsBase):
                 RETURN node.name, degree
                 ORDER BY node.name"""
         result_set = self.tensorGraph.query(q).result_set
-        self.env.assertEqual(len(result_set), 7)
         ans_set = [
             ['a0', 4],
             ['a1', 5],
@@ -447,7 +444,6 @@ class testDegree(FlowTestsBase):
                 RETURN node.name, degree
                 ORDER BY node.name"""
         result_set = self.tensorGraph.query(q).result_set
-        self.env.assertEqual(len(result_set), 7)
         ans_set = [
             ['a0', 1],
             ['a1', 1],
@@ -456,5 +452,142 @@ class testDegree(FlowTestsBase):
             ['b0', 5],
             ['b1', 3],
             ['b2', 2]
+        ]
+        self.env.assertEqual(result_set, ans_set)
+
+        q = """CALL algo.degree({relationshipTypes:['S'], dir:'outgoing'}) 
+                YIELD node, degree
+                RETURN node.name, degree
+                ORDER BY node.name"""
+        result_set = self.tensorGraph.query(q).result_set
+        ans_set = [
+            ['a0', 2],
+            ['a1', 1],
+            ['a2', 2],
+            ['a3', 0],
+            ['b0', 0],
+            ['b1', 0],
+            ['b2', 0]
+        ]
+        self.env.assertEqual(result_set, ans_set)
+        q = """CALL algo.degree({relationshipTypes:['S'], dir:'incoming'}) 
+                YIELD node, degree
+                RETURN node.name, degree
+                ORDER BY node.name"""
+        result_set = self.tensorGraph.query(q).result_set
+        ans_set = [
+            ['a0', 0],
+            ['a1', 0],
+            ['a2', 1],
+            ['a3', 0],
+            ['b0', 2],
+            ['b1', 0],
+            ['b2', 2]
+        ]
+        self.env.assertEqual(result_set, ans_set)
+    def test_tensors_nodeTypes(self):
+        # try running algo.degree against a graph containing tensors
+
+        q = """CALL algo.degree({srcLabels:['A']}) YIELD node, degree
+                RETURN node.name, degree
+                ORDER BY node.name"""
+        result_set = self.tensorGraph.query(q).result_set
+        ans_set = [
+            ['a0', 6],
+            ['a1', 6],
+            ['a2', 8],
+            ['a3', 0],
+        ]
+        self.env.assertEqual(result_set, ans_set)
+
+        q = """CALL algo.degree({srcLabels:['A'], dir:'incoming'}) YIELD node, degree
+                RETURN node.name, degree
+                ORDER BY node.name"""
+        result_set = self.tensorGraph.query(q).result_set
+        ans_set = [
+            ['a0', 1],
+            ['a1', 1],
+            ['a2', 3],
+            ['a3', 1],
+        ]
+        self.env.assertEqual(result_set, ans_set)
+
+        q = """CALL algo.degree({srcLabels:['B'], dir:'outgoing'}) 
+                YIELD node, degree
+                RETURN node.name, degree
+                ORDER BY node.name"""
+        result_set = self.tensorGraph.query(q).result_set
+        ans_set = [
+            ['b0', 0],
+            ['b1', 0],
+            ['b2', 0]
+        ]
+        self.env.assertEqual(result_set, ans_set)
+        q = """CALL algo.degree({srcLabels:['B'], dir:'incoming'}) 
+                YIELD node, degree
+                RETURN node.name, degree
+                ORDER BY node.name"""
+        result_set = self.tensorGraph.query(q).result_set
+        ans_set = [
+            ['b0', 7],
+            ['b1', 3],
+            ['b2', 4]
+        ]
+        self.env.assertEqual(result_set, ans_set)
+        q = """CALL algo.degree({srcLabels:['B'], destLabels:['A'], dir:'incoming'}) 
+                YIELD node, degree
+                RETURN node.name, degree
+                ORDER BY node.name"""
+        result_set = self.tensorGraph.query(q).result_set
+        self.env.assertEqual(result_set, ans_set)
+        self.env.assertEqual(result_set, ans_set)
+        q = """CALL algo.degree({srcLabels:['A'], destLabels:['B']}) 
+                YIELD node, degree
+                RETURN node.name, degree
+                ORDER BY node.name"""
+        result_set = self.tensorGraph.query(q).result_set
+        ans_set = [
+            ['a0', 6],
+            ['a1', 3],
+            ['a2', 5],
+            ['a3', 0]
+        ]
+        self.env.assertEqual(result_set, ans_set)
+
+    def test_tensors_type_and_label(self):
+        # try running algo.degree against a graph containing tensors
+
+        q = """CALL algo.degree({srcLabels:['A'],relationshipTypes:['R']}) YIELD node, degree
+                RETURN node.name, degree
+                ORDER BY node.name"""
+        result_set = self.tensorGraph.query(q).result_set
+        ans_set = [
+            ['a0', 4],
+            ['a1', 5],
+            ['a2', 6],
+            ['a3', 0],
+        ]
+        self.env.assertEqual(result_set, ans_set)
+        q = """CALL algo.degree({srcLabels:['A'], destLabels: ['B'], relationshipTypes:['R']}) YIELD node, degree
+                RETURN node.name, degree
+                ORDER BY node.name"""
+        result_set = self.tensorGraph.query(q).result_set
+        ans_set = [
+            ['a0', 4],
+            ['a1', 3],
+            ['a2', 3],
+            ['a3', 0],
+        ]
+        self.env.assertEqual(result_set, ans_set)
+
+        q = """CALL algo.degree({srcLabels:['A'], destLabels: ['B'], relationshipTypes:['S']}) YIELD node, degree
+                RETURN node.name, degree
+                ORDER BY node.name"""
+        result_set = self.tensorGraph.query(q).result_set
+        ans_set = [
+            ['a0', 2],
+            ['a1', 0],
+            ['a2', 2],
+            ['a3', 0],
         ]
         self.env.assertEqual(result_set, ans_set)
