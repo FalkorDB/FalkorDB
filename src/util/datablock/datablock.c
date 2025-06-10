@@ -87,13 +87,13 @@ DataBlock *DataBlock_New
 	fpDestructor fp
 ) {
 	DataBlock *dataBlock = rm_malloc(sizeof(DataBlock));
-	dataBlock->blocks      =  NULL;
-	dataBlock->itemSize    =  itemSize + ITEM_HEADER_SIZE;
-	dataBlock->itemCount   =  0;
-	dataBlock->blockCount  =  0;
-	dataBlock->blockCap    =  blockCap;
-	dataBlock->deletedIdx  =  array_new(uint64_t, 128);
-	dataBlock->destructor  =  fp;
+	dataBlock->blocks     = NULL;
+	dataBlock->itemSize   = itemSize + ITEM_HEADER_SIZE;
+	dataBlock->itemCount  = 0;
+	dataBlock->blockCount = 0;
+	dataBlock->blockCap   = blockCap;
+	dataBlock->deletedIdx = array_new(uint64_t, 128);
+	dataBlock->destructor = fp;
 
 	_DataBlock_AddBlocks(dataBlock,
 			ITEM_COUNT_TO_BLOCK_COUNT(itemCap, dataBlock->blockCap));
@@ -103,6 +103,16 @@ DataBlock *DataBlock_New
 
 uint64_t DataBlock_ItemCount(const DataBlock *dataBlock) {
 	return dataBlock->itemCount;
+}
+
+// returns datablock item size
+uint DataBlock_itemSize
+(
+	const DataBlock *dataBlock  // datablock
+) {
+	ASSERT(dataBlock != NULL);
+
+	return dataBlock->itemSize;
 }
 
 DataBlockIterator *DataBlock_Scan(const DataBlock *dataBlock) {
@@ -229,6 +239,16 @@ inline bool DataBlock_ItemIsDeleted(void *item) {
 	return IS_ITEM_DELETED(header);
 }
 
+// returns datablock's deleted indices array
+const uint64_t *DataBlock_DeletedItems
+(
+	const DataBlock *dataBlock
+) {
+	ASSERT(dataBlock != NULL);
+
+	return (const uint64_t *) dataBlock->deletedIdx;
+}
+
 //------------------------------------------------------------------------------
 // Out of order functionality
 //------------------------------------------------------------------------------
@@ -259,6 +279,18 @@ void DataBlock_MarkAsDeletedOutOfOrder
 	// delete
 	MARK_HEADER_AS_DELETED(item_header);
 	array_append(dataBlock->deletedIdx, idx);
+}
+
+size_t DataBlock_memoryUsage
+(
+	const DataBlock *dataBlock
+) {
+	ASSERT(dataBlock != NULL);
+
+	// datablock size = deleted index array size +
+	//                  (number of blocks * block size)
+	return array_len(dataBlock->deletedIdx) * sizeof(uint64_t) +
+		dataBlock->blockCount * (dataBlock->itemSize * dataBlock->blockCap);
 }
 
 void DataBlock_Free(DataBlock *dataBlock) {

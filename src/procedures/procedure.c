@@ -30,27 +30,30 @@ static void _procRegister
 // register procedures
 void Proc_Register() {
 	__procedures = raxNew();
-	_procRegister("db.labels", Proc_LabelsCtx);
-	_procRegister("db.indexes", Proc_IndexesCtx);
-	_procRegister("db.constraints", Proc_ConstraintsCtx);
-	_procRegister("db.propertyKeys", Proc_PropKeysCtx);
-	_procRegister("dbms.procedures", Proc_ProceduresCtx);
+	_procRegister("db.labels",            Proc_LabelsCtx);
+	_procRegister("db.indexes",           Proc_IndexesCtx);
+	_procRegister("db.constraints",       Proc_ConstraintsCtx);
+	_procRegister("db.propertyKeys",      Proc_PropKeysCtx);
+	_procRegister("dbms.procedures",      Proc_ProceduresCtx);
 	_procRegister("db.relationshipTypes", Proc_RelationsCtx);
 
 	// register graph algorithms
-	_procRegister("algo.BFS", Proc_BFS_Ctx);
-	_procRegister("algo.pageRank", Proc_PagerankCtx);
-	_procRegister("algo.SPpaths", Proc_SPpathCtx);
-	_procRegister("algo.SSpaths", Proc_SSpathCtx);
+	_procRegister("algo.BFS",              Proc_BFS_Ctx);
+	_procRegister("algo.WCC",              Proc_WCCCtx);
+	_procRegister("algo.pageRank",         Proc_PagerankCtx);
+	_procRegister("algo.SPpaths",          Proc_SPpathCtx);
+	_procRegister("algo.SSpaths",          Proc_SSpathCtx);
+	_procRegister("algo.betweenness",      Proc_BetweennessCtx);
+	_procRegister("algo.labelPropagation", Proc_CDLPCtx);
 
 	// register FullText Search generator
-	_procRegister("db.idx.fulltext.drop", Proc_FulltextDropIdxGen);
-	_procRegister("db.idx.fulltext.queryNodes", Proc_FulltextQueryNodeGen);
-	_procRegister("db.idx.fulltext.createNodeIndex", Proc_FulltextCreateNodeIdxGen);
+	_procRegister("db.idx.fulltext.drop",               Proc_FulltextDropIdxGen);
+	_procRegister("db.idx.fulltext.queryNodes",         Proc_FulltextQueryNodeGen);
+	_procRegister("db.idx.fulltext.createNodeIndex",    Proc_FulltextCreateNodeIdxGen);
 	_procRegister("db.idx.fulltext.queryRelationships", Proc_FulltextQueryRelationshipGen);
 
 	// register vector search generator
-	_procRegister("db.idx.vector.queryNodes", Proc_VectorQueryNodeCtx);
+	_procRegister("db.idx.vector.queryNodes",         Proc_VectorQueryNodeCtx);
 	_procRegister("db.idx.vector.queryRelationships", Proc_VectorQueryRelCtx);
 }
 

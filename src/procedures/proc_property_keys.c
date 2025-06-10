@@ -17,7 +17,7 @@
 typedef struct {
 	uint prop_id;       // current property ID
 	GraphContext *gc;   // graph context
-	SIValue *output;    // output label
+	SIValue output[1];  // output label
 } RelationsContext;
 
 ProcedureResult Proc_PropKeysInvoke
@@ -30,11 +30,8 @@ ProcedureResult Proc_PropKeysInvoke
 
 	RelationsContext *pdata = rm_malloc(sizeof(RelationsContext));
 
-	pdata->prop_id  =  0;
-	pdata->gc       =  QueryCtx_GetGraphCtx();
-	pdata->output   =  array_new(SIValue, 1);
-
-	array_append(pdata->output, SI_ConstStringVal("propertyKey"));
+	pdata->prop_id = 0;
+	pdata->gc      = QueryCtx_GetGraphCtx();
 
 	ctx->privateData = pdata;
 	return PROCEDURE_OK;
@@ -65,7 +62,6 @@ ProcedureResult Proc_PropKeysFree
 	// clean up
 	if(ctx->privateData) {
 		RelationsContext *pdata = ctx->privateData;
-		array_free(pdata->output);
 		rm_free(ctx->privateData);
 	}
 

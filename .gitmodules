@@ -22,3 +22,6 @@
 [submodule "deps/libcurl"]
 	path = deps/libcurl
 	url = https://github.com/curl/curl.git
+[submodule "deps/LAGraph"]
+	path = deps/LAGraph
+	url = https://github.com/GraphBLAS/LAGraph.git

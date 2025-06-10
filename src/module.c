@@ -12,6 +12,7 @@
 #include "errors.h"
 #include "version.h"
 #include "globals.h"
+#include "LAGraph.h"
 #include "util/arr.h"
 #include "cron/cron.h"
 #include "query_ctx.h"
@@ -88,6 +89,7 @@ static int GraphBLAS_Init(RedisModuleCtx *ctx) {
 	// GraphBLAS should use Redis allocator
 	GrB_Info res = GxB_init(GrB_NONBLOCKING, RedisModule_Alloc,
 			RedisModule_Calloc, RedisModule_Realloc, RedisModule_Free);
+
 	if(res != GrB_SUCCESS) {
 		RedisModule_Log(ctx, "warning", "Encountered error initializing GraphBLAS");
 		return REDISMODULE_ERR;
@@ -95,6 +97,16 @@ static int GraphBLAS_Init(RedisModuleCtx *ctx) {
 
 	// all matrices in CSR format
 	GxB_set(GxB_FORMAT, GxB_BY_ROW);
+
+	// initialize LAGraph
+	char msg [LAGRAPH_MSG_LEN];
+	res = LAGr_Init(GrB_NONBLOCKING, RedisModule_Alloc, RedisModule_Calloc,
+			RedisModule_Realloc, RedisModule_Free, msg);
+
+	if(res != GrB_SUCCESS) {
+		RedisModule_Log(ctx, "warning", "Encountered error initializing LAGraph: %s", msg);
+		return REDISMODULE_ERR;
+	}
 
 	return REDISMODULE_OK;
 }
@@ -262,6 +274,11 @@ int RedisModule_OnLoad
 
 	if(RedisModule_CreateCommand(ctx, "graph.PASSWORD", Graph_SetPassword,
 				"write deny-oom", 0, 0, 0) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_CreateCommand(ctx, "graph.MEMORY", Graph_Memory,
+				"readonly", 2, 2, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 

@@ -122,6 +122,14 @@ SIValue AR_EXP_FinalizeAggregations(AR_ExpNode *root, const Record r);
 // Utility functions
 //------------------------------------------------------------------------------
 
+// get the ith child of root
+// in case root isn't a parent or idx > number of children NULL is returned
+AR_ExpNode *AR_EXP_getChild
+(
+	const AR_ExpNode *root,  // arithmetic expression node
+	uint idx                 // child index to return
+);
+
 // traverse an expression tree and add all entity aliases to a rax
 void AR_EXP_CollectEntities(AR_ExpNode *root, rax *aliases);
 

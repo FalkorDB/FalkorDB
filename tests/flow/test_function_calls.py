@@ -1127,6 +1127,8 @@ class testFunctionCallsFlow(FlowTestsBase):
             "RETURN split('aa', 'a')": [[["", "", ""]]],
             "RETURN split('', ',')": [[[""]]],
             "RETURN split('', '')": [[[""]]],
+            "RETURN split('aAbBcC', '')": [[['a', 'A', 'b', 'B', 'c', 'C']]],
+            "RETURN split('aAbBcC', 'B')": [[['aAb', 'cC']]],
             # test unicode charecters
             "RETURN split('丁丂七丄丅丆万丈三上', '丄')": [[["丁丂七", "丅丆万丈三上"]]],
             "RETURN split('丁丂七丅', '')": [[["丁", "丂", "七", "丅"]]],
@@ -2791,3 +2793,12 @@ class testFunctionCallsFlow(FlowTestsBase):
         for q in queries_with_errors:
             self.expect_error(q, err_msg)
 
+    def test95_prev(self):
+        res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(x)")
+        self.env.assertEquals(res.result_set, [[None], [1], [2], [3], [4]])
+
+        res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(prev(x))")
+        self.env.assertEquals(res.result_set, [[None], [None], [1], [2], [3]])
+
+        res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(tostring(x) + tostring(x))")
+        self.env.assertEquals(res.result_set, [[None], ['11'], ['22'], ['33'], ['44']])

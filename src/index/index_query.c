@@ -13,11 +13,13 @@
 #include "../util/range/string_range.h"
 #include "../util/range/numeric_range.h"
 #include "../filter_tree/filter_tree_utils.h"
+#include "../arithmetic/arithmetic_expression.h"
 
 extern void Index_RangeFieldName
 (
 	char *type_aware_name,  // [out] type aware name
-	const char *name        // field name
+	const char *name,       // field name
+	SIType *multi_val_type  // [optional] multi-val type
 );
 
 extern void Index_VectorFieldName
@@ -50,7 +52,7 @@ static RSQNode *_NumericRangeToQueryNode
 	const NumericRange *range  // range to query
 ) {
 	char type_aware_field_name[512];
-	Index_RangeFieldName(type_aware_field_name, field);
+	Index_RangeFieldName(type_aware_field_name, field, NULL);
 
 	double max = (range->max == INFINITY) ? RSRANGE_INF : range->max;
 	double min = (range->min == -INFINITY) ? RSRANGE_NEG_INF : range->min;
@@ -66,7 +68,7 @@ static RSQNode *_StringRangeToQueryNode
 	const StringRange *range  // range to query
 ) {
 	char type_aware_field_name[512];
-	Index_RangeFieldName(type_aware_field_name, field);
+	Index_RangeFieldName(type_aware_field_name, field, NULL);
 	RSQNode *root = RediSearch_CreateTagNode(idx, type_aware_field_name);
 	RSQNode *child = NULL;
 	const char *max = range->max;
@@ -92,83 +94,183 @@ static RSQNode *_StringRangeToQueryNode
 static RSQNode *_FilterTreeToDistanceQueryNode
 (
 	const FT_FilterNode *filter,  // filter to convert
-	RSIndex *idx            // queried index
+	RSIndex *idx                  // queried index
 ) {
-	char     *field  =  NULL;         // field being filtered
-	SIValue  origin  =  SI_NullVal(); // center of circle
-	SIValue  radius  =  SI_NullVal(); // circle radius
+	char    *field = NULL;          // field being filtered
+	SIValue origin = SI_NullVal();  // center of circle
+	SIValue radius = SI_NullVal();  // circle radius
 
 	extractOriginAndRadius(filter, &origin, &radius, &field);
 
 	char type_aware_field_name[512];
-	Index_RangeFieldName(type_aware_field_name, field);
+	Index_RangeFieldName(type_aware_field_name, field, NULL);
+
 	return RediSearch_CreateGeoNode(idx, type_aware_field_name,
 			Point_lat(origin), Point_lon(origin), SI_GET_NUMERIC(radius),
 			RS_GEO_DISTANCE_M);
 }
 
-// creates a RediSearch query node out of given IN filter
-static RSQNode *_FilterTreeToInQueryNode
+// creates a RediSearch query node matching an entity with an attribute value
+// which matches one of multiple values specified in an array
+// e.g. WHERE n.v IN [1, 2, 3]
+static bool _FilterTreeToMultiValQueryNode
 (
 	const FT_FilterNode *filter,  // filter to convert
-	RSIndex *idx                  // queried index
+	RSIndex *idx,                 // queried index
+	RSQNode **root                // [output] RediSearch query node
 ) {
 	ASSERT(idx    != NULL);
+	ASSERT(root   != NULL);
 	ASSERT(filter != NULL);
 	ASSERT(isInFilter(filter));
+
+	*root = NULL;
 
 	// n.v IN [1,2,3]
 	// a single union node should hold a number of token/numeric nodes
 	// one for each element in the array.
 
-	// extract both field name and list from expression
-	AR_ExpNode *inOp = filter->exp.exp;
+	// extract both attribute name and list from expression
+	AR_ExpNode *inOp = FilterTree_getExpression(filter);
 
-	char *field;
-	bool attribute = AR_EXP_IsAttribute(inOp->op.children[0], &field);
+	char *attr;
+	bool attribute = AR_EXP_IsAttribute(AR_EXP_getChild(inOp, 0), &attr);
 	ASSERT(attribute == true);
 
-	SIValue list = inOp->op.children[1]->operand.constant;
+	SIValue list  = AR_EXP_getChild(inOp, 1)->operand.constant;
 	uint list_len = SIArray_Length(list);
 
 	if(list_len == 0) {
-		// Special case: "WHERE a.v in []"
-		return RediSearch_CreateEmptyNode(idx);
+		// special case: "WHERE a.v in []"
+		*root = RediSearch_CreateEmptyNode(idx);
+		return true;
 	}
 
-	RSQNode *node = NULL;
+	bool     res    = true;
+	RSQNode *node   = NULL;
 	RSQNode *parent = NULL;
-	RSQNode *U = RediSearch_CreateUnionNode(idx);
+	RSQNode *U      = RediSearch_CreateUnionNode(idx);
 
 	char type_aware_field_name[512];
-	Index_RangeFieldName(type_aware_field_name, field);
+	Index_RangeFieldName(type_aware_field_name, attr, NULL);
 
-	for(uint i = 0; i < list_len; i ++) {
+	for(uint i = 0; res && i < list_len; i++) {
 		double d;
 		SIValue v = SIArray_Get(list, i);
 		switch(SI_TYPE(v)) {
-		case T_STRING:
-			parent = RediSearch_CreateTagNode(idx, type_aware_field_name);
-			node = RediSearch_CreateTokenNode(idx, type_aware_field_name,
-					v.stringval);
-			RediSearch_QueryNodeAddChild(parent, node);
-			node = parent;
-			break;
+			case T_STRING:
+			case T_INTERN_STRING:
+				parent = RediSearch_CreateTagNode(idx, type_aware_field_name);
+				node   = RediSearch_CreateTokenNode(idx, type_aware_field_name,
+						v.stringval);
+				RediSearch_QueryNodeAddChild(parent, node);
+				node = parent;
+
+				RediSearch_QueryNodeAddChild(U, node);
+				break;
+
+			case T_BOOL:
+			case T_INT64:
+			case T_DOUBLE:
+				d = SI_GET_NUMERIC(v);
+				node = RediSearch_CreateNumericNode(idx, type_aware_field_name,
+						d, d, true, true);
+
+				RediSearch_QueryNodeAddChild(U, node);
+				break;
+
+			default:
+				ASSERT(false && "unexpected conditional operation");
+				res = false;
+				break;
+		}
+	}
+
+	if(!res) {
+		RediSearch_QueryNodeFree(U);
+	} else {
+		*root = U;
+	}
+
+	return res;
+}
+
+// convert an IN filter into a RediSearch query
+// e.g. WHERE 8 IN n.v
+static bool _FilterTreeToInQueryNode
+(
+	const FT_FilterNode *filter,  // filter to convert
+	RSIndex *idx,                 // queried index
+	RSQNode **node                // RediSearch query node
+) {
+	ASSERT(idx    != NULL);
+	ASSERT(node   != NULL);
+	ASSERT(filter != NULL);
+	ASSERT(isInFilter(filter));
+
+	*node = NULL;
+
+	// MATCH (n:N) WHERE 8 IN n.v RETURN n
+
+	//--------------------------------------------------------------------------
+	// extract both attribute name and scalar from expression
+	//--------------------------------------------------------------------------
+
+	AR_ExpNode *exp = FilterTree_getExpression(filter);
+
+	// extract scalar
+	AR_ExpNode *scalar = AR_EXP_getChild(exp, 0);
+	ASSERT(AR_EXP_IsConstant(scalar));
+
+	SIValue v = scalar->operand.constant;
+	SIType  t = SI_TYPE(v);
+
+	// extract entity attribute
+	char *attr;
+	bool attribute = AR_EXP_IsAttribute(AR_EXP_getChild(exp, 1), &attr);
+	ASSERT(attribute == true);
+
+	//--------------------------------------------------------------------------
+	// compose RediSearch query
+	//--------------------------------------------------------------------------
+
+	// only utilize index if scalar is either numeric, boolean or string
+	if(!(t & (T_DOUBLE | T_INT64 | T_BOOL | T_STRING))) {
+		return false;
+	}
+
+	double   d;
+	bool     res    = false;
+	RSQNode *child  = NULL;
+	RSQNode *parent = NULL;
+
+	char type_aware_field_name[512];
+	Index_RangeFieldName(type_aware_field_name, attr, &t);
+
+	switch(t) {
 		case T_DOUBLE:
 		case T_INT64:
 		case T_BOOL:
 			d = SI_GET_NUMERIC(v);
-			node = RediSearch_CreateNumericNode(idx, type_aware_field_name, d,
+			*node = RediSearch_CreateNumericNode(idx, type_aware_field_name, d,
 					d, true, true);
+			res = true;
+			break;
+		case T_STRING:
+		case T_INTERN_STRING:
+				parent = RediSearch_CreateTagNode(idx, type_aware_field_name);
+				child  = RediSearch_CreateTokenNode(idx, type_aware_field_name,
+						v.stringval);
+				RediSearch_QueryNodeAddChild(parent, child);
+				*node = parent;
+				res = true;
 			break;
 		default:
-			ASSERT(false && "unexpected conditional operation");
+			ASSERT(false && "unsupported IN filter operand");
 			break;
-		}
-		RediSearch_QueryNodeAddChild(U, node);
 	}
 
-	return U;
+	return res;
 }
 
 // reduce filter into a range object
@@ -215,7 +317,7 @@ static bool _predicateTreeToRange
 					nr, NULL);
 		}
 		NumericRange_TightenRange(nr, op, SI_GET_NUMERIC(c));
-	} else if(t == T_STRING) {
+	} else if(t & T_STRING) {
 		sr = raxFind(string_ranges, (unsigned char *)prop, prop_len);
 		// create if doesn't exists
 		if(sr == raxNotFound) {
@@ -383,10 +485,9 @@ static bool _FilterTreeConditionToQueryNode
 	const FT_FilterNode *tree, // filter to convert
 	RSIndex *idx               // queried index
 ) {
-
-	ASSERT(idx != NULL);
-	ASSERT(root != NULL);
-	ASSERT(tree != NULL);
+	ASSERT(idx     != NULL);
+	ASSERT(root    != NULL);
+	ASSERT(tree    != NULL);
 	ASSERT(tree->t == FT_N_COND);
 
 	*root = NULL; // initialize output to NULL
@@ -395,9 +496,9 @@ static bool _FilterTreeConditionToQueryNode
 	AST_Operator op = tree->cond.op;
 	ASSERT(op == OP_OR || op == OP_AND);
 
-	RSQNode  *node   =  NULL;
-	RSQNode  *left   =  NULL;
-	RSQNode  *right  =  NULL;
+	RSQNode *node  = NULL;
+	RSQNode *left  = NULL;
+	RSQNode *right = NULL;
 
 	// create root node
 	if(op == OP_OR) node = RediSearch_CreateUnionNode(idx);
@@ -409,14 +510,35 @@ static bool _FilterTreeConditionToQueryNode
 
 	// process left branch
 	bool res = _FilterTreeToQueryNode(&left, tree->cond.left, idx);
+
 	// process right branch
 	res &= _FilterTreeToQueryNode(&right, tree->cond.right, idx);
+
+	ASSERT(left  != NULL);
+	ASSERT(right != NULL);
 
 	RediSearch_QueryNodeAddChild(node, left);
 	RediSearch_QueryNodeAddChild(node, right);
 
 	*root = node;
 	return res;
+}
+
+// construct a RediSearch query to locate entities with an un-indexable
+// field value
+static void _NoneIndexableQuery
+(
+	RSQNode **root,
+	RSIndex *idx,
+	const char *field
+) {
+	// none indexable type, consult with the none indexed field
+	RSQNode *parent = RediSearch_CreateTagNode(idx, INDEX_FIELD_NONE_INDEXED);
+	RSQNode *child  = RediSearch_CreateTokenNode(idx, INDEX_FIELD_NONE_INDEXED,
+			field);
+
+	RediSearch_QueryNodeAddChild(parent, child);
+	*root = parent;
 }
 
 // returns true if predicate filter been converted to an index query
@@ -426,33 +548,28 @@ static bool _FilterTreePredicateToQueryNode
 	const FT_FilterNode *tree, // filter to convert
 	RSIndex *idx               // queried index
 ) {
-
-	ASSERT(idx  != NULL);
-	ASSERT(root != NULL);
-	ASSERT(tree != NULL);
+	ASSERT(idx     != NULL);
+	ASSERT(root    != NULL);
+	ASSERT(tree    != NULL);
 	ASSERT(tree->t == FT_N_PRED);
 
 	// initialize root to NULL
 	*root = NULL;
 
 	// expecting left hand side to be an attribute access
-	bool     res        =  true;
-	RSQNode  *node      =  NULL;
-	char     *field     =  NULL;
-	bool     attribute  =  AR_EXP_IsAttribute(tree->pred.lhs,  &field);
-	ASSERT(attribute == true);
+	bool    res    = true;
+	RSQNode *node  = NULL;
+	char    *field = NULL;
+	bool    attr   = AR_EXP_IsAttribute(tree->pred.lhs,  &field);
+
+	ASSERT(attr == true);
 
 	// validate const type
 	SIValue v = AR_EXP_Evaluate(tree->pred.rhs, NULL);
-	SIType t = SI_TYPE(v);
+	SIType  t = SI_TYPE(v);
 	if(!(t & SI_INDEXABLE)) {
 		// none indexable type, consult with the none indexed field
-		node = RediSearch_CreateTagNode(idx, INDEX_FIELD_NONE_INDEXED);
-		RSQNode *child = RediSearch_CreateTokenNode(idx,
-				INDEX_FIELD_NONE_INDEXED, field);
-
-		RediSearch_QueryNodeAddChild(node, child);
-		*root = node;
+		_NoneIndexableQuery(root, idx, field);
 		return false;
 	}
 
@@ -465,9 +582,9 @@ static bool _FilterTreePredicateToQueryNode
 		   op == OP_EQUAL);
 
 	char type_aware_field_name[512];
-	Index_RangeFieldName(type_aware_field_name, field);
+	Index_RangeFieldName(type_aware_field_name, field, NULL);
 
-	if(t == T_STRING) {
+	if(t & T_STRING) {
 		switch(tree->pred.op) {
 			case OP_LT:    // <
 				node = RediSearch_CreateLexRangeNode(idx, type_aware_field_name,
@@ -536,9 +653,9 @@ static bool _FilterTreePredicateToQueryNode
 // returns true if 'tree' been converted into an index query, false otherwise
 static bool _FilterTreeToQueryNode
 (
-	RSQNode **root,            // [output] query node
-	const FT_FilterNode *tree, // filter to convert into an index query
-	RSIndex *idx               // queried index
+	RSQNode **root,             // [output] query node
+	const FT_FilterNode *tree,  // filter to convert into an index query
+	RSIndex *idx                // queried index
 ) {
 	ASSERT(idx  != NULL);
 	ASSERT(root != NULL);
@@ -547,14 +664,36 @@ static bool _FilterTreeToQueryNode
 	// initialize 'root' to NULL
 	*root = NULL;
 
+	// convert IN filter
+	// 1. n.v IN [1,2,3]
+	// 2. 8 IN n.v
 	if(isInFilter(tree)) {
-		bool attribute = AR_EXP_IsAttribute(tree->exp.exp->op.children[0], NULL);
-		if(attribute) {
-			*root = _FilterTreeToInQueryNode(tree, idx);
-			return true;
+		AR_ExpNode *exp = FilterTree_getExpression(tree);
+		AR_ExpNode *lhs = AR_EXP_getChild(exp, 0);
+		AR_ExpNode *rhs = AR_EXP_getChild(exp, 1);
+
+		// either lhs or rhs represent attribute access
+		ASSERT(AR_EXP_IsAttribute(lhs, NULL) || AR_EXP_IsAttribute(rhs, NULL));
+
+		bool res    = false;
+		char *field = NULL;
+
+		if(AR_EXP_IsAttribute(lhs, &field)) {
+			// n.v IN [1,2,3]
+			res = _FilterTreeToMultiValQueryNode(tree, idx, root);
 		} else {
-			return false;
+			// 8 IN n.v
+			AR_EXP_IsAttribute(rhs, &field);
+			res = _FilterTreeToInQueryNode(tree, idx, root);
 		}
+
+		// in case we were unable to convert the filter into a RediSearch query
+		// e.g. [2] in n.v we'll use the 'non-indexable' RediSearch query
+		if(!res) {
+			_NoneIndexableQuery(root, idx, field);
+		}
+
+		return res;
 	}
 
 	if(isDistanceFilter(tree)) {
@@ -610,7 +749,11 @@ RSQNode *Index_BuildQueryTree
 	for(uint i = 0; i < tree_count; i++) {
 		RSQNode *node = NULL;
 		bool resolved_filter = _FilterTreeToQueryNode(&node, trees[i], rsIdx);
-		if(node != NULL) array_append(nodes, node);
+
+		if(node != NULL) {
+			array_append(nodes, node);
+		}
+
 		if(resolved_filter) {
 			// remove converted filter from filters array
 			array_del_fast(trees, i);
@@ -708,9 +851,9 @@ RSQNode *Index_BuildUniqueConstraintQuery
 
 		// create RediSearch query node according to entity attr type
 		SIType t = SI_TYPE(*v);
-		ASSERT(t == T_STRING || t & (SI_NUMERIC | T_BOOL));
+		ASSERT(t & (T_STRING | SI_NUMERIC | T_BOOL));
 
-		if(t == T_STRING) {
+		if(t & T_STRING) {
 			node  = RediSearch_CreateTagNode(rsIdx, field);
 			RSQNode *child = RediSearch_CreateTagTokenNode(rsIdx, v->stringval);
 			RediSearch_QueryNodeAddChild(node, child);

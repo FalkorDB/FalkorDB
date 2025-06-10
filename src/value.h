@@ -19,33 +19,37 @@
  * The order of these values is significant, as the delta between values of
  * differing types is used to maintain the Cypher-defined global sort order
  * in the SIValue_Order routine. */
+
+#define T_INTERN (1<< 19)
+
 typedef enum {
-	T_MAP = (1 << 0),
-	T_NODE = (1 << 1),
-	T_EDGE = (1 << 2),
-	T_ARRAY = (1 << 3),
-	T_PATH = (1 << 4),
-	T_DATETIME = (1 << 5),
+	T_MAP           = (1 << 0),
+	T_NODE          = (1 << 1),
+	T_EDGE          = (1 << 2),
+	T_ARRAY         = (1 << 3),
+	T_PATH          = (1 << 4),
+	T_DATETIME      = (1 << 5),
 	T_LOCALDATETIME = (1 << 6),
-	T_DATE = (1 << 7),
-	T_TIME = (1 << 8),
-	T_LOCALTIME = (1 << 9),
-	T_DURATION = (1 << 10),
-	T_STRING = (1 << 11),
-	T_BOOL = (1 << 12),   // shares 'longval' representation in SIValue union
-	T_INT64 = (1 << 13),
-	T_DOUBLE = (1 << 14),
-	T_NULL = (1 << 15),
-	T_PTR = (1 << 16),
-	T_POINT = (1 << 17),  // TODO: verify type order of point
-	T_VECTOR_F32 = (1 << 18),
+	T_DATE          = (1 << 7),
+	T_TIME          = (1 << 8),
+	T_LOCALTIME     = (1 << 9),
+	T_DURATION      = (1 << 10),
+	T_STRING        = (1 << 11),
+	T_BOOL          = (1 << 12),  // shares 'longval' representation in SIValue  union
+	T_INT64         = (1 << 13),
+	T_DOUBLE        = (1 << 14),
+	T_NULL          = (1 << 15),
+	T_PTR           = (1 << 16),
+	T_POINT         = (1 << 17),
+	T_VECTOR_F32    = (1 << 18),
+	T_INTERN_STRING = T_INTERN | T_STRING,
 } SIType;
 
 typedef enum {
-	M_NONE = 0,             // SIValue is not heap-allocated
-	M_SELF = (1 << 0),      // SIValue is responsible for freeing its reference
+	M_NONE     = 0,         // SIValue is not heap-allocated
+	M_SELF     = (1 << 0),  // SIValue is responsible for freeing its reference
 	M_VOLATILE = (1 << 1),  // SIValue does not own its reference and may go out of scope
-	M_CONST = (1 << 2)      // SIValue does not own its allocation, but its access is safe
+	M_CONST    = (1 << 2)   // SIValue does not own its allocation, but its access is safe
 } SIAllocation;
 
 #define T_VECTOR (T_VECTOR_F32)
@@ -55,8 +59,8 @@ typedef enum {
 // type aliases
 #define SI_NUMERIC              (T_INT64 | T_DOUBLE)  // numbrical types
 #define SI_GRAPHENTITY          (T_NODE | T_EDGE)     // graph entity types
-#define SI_INDEXABLE            (SI_NUMERIC | T_BOOL | T_STRING | T_POINT | T_VECTOR)  // indexable types
 #define SI_TEMPORAL             (T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME)  // temporal types
+#define SI_INDEXABLE            (SI_NUMERIC | T_BOOL | T_STRING | T_POINT | T_VECTOR | SI_TEMPORAL)  // indexable types
 #define SI_VALID_PROPERTY_VALUE (T_POINT | T_ARRAY | T_STRING | T_BOOL | SI_NUMERIC | T_VECTOR | SI_TEMPORAL)  // all valid attribute types
 #define SI_ALL                  (T_MAP | T_NODE | T_EDGE | T_ARRAY | T_PATH | T_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_NULL | T_PTR | T_POINT | T_VECTOR | SI_TEMPORAL)  // all supported types
 
@@ -132,6 +136,12 @@ SIValue SI_ConstStringVal(const char *s);
 
 // Don't duplicate input string, but assume ownership.
 SIValue SI_TransferStringVal(char *s);
+
+// create an interned string
+SIValue SI_InternStringVal
+(
+	const char *s // string to intern
+);
 
 /* Functions for copying and guaranteeing memory safety for SIValues. */
 // SI_ShareValue creates an SIValue that shares all of the original's allocations.
@@ -219,6 +229,12 @@ XXH64_hash_t SIValue_HashCode(SIValue v);
 SIValue SIValue_FromBinary
 (
 	FILE *stream  // stream to read value from
+);
+
+// compute SIValue memory usage
+size_t SIValue_memoryUsage
+(
+	SIValue v  // value
 );
 
 /* Free an SIValue's internal property if that property is a heap allocation owned
