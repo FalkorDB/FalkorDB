@@ -19,7 +19,7 @@
 
 // toString supports only integer, float, string, boolean, point, duration, 
 // date, time, localtime, localdatetime or datetime values
-#define STRINGABLE (SI_NUMERIC | T_POINT | T_DURATION | T_DATETIME | T_STRING | T_BOOL)
+#define STRINGABLE (SI_NUMERIC | T_POINT | T_STRING | T_BOOL | SI_TEMPORAL)
 
 // returns a string containing the specified number of leftmost characters of
 // the original string

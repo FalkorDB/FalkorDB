@@ -15,6 +15,11 @@ int Graph_Effect
 	RedisModuleString **argv,  // command arguments
 	int argc                   // number of arguments
 ) {
+	// reply back to caller
+	RedisModule_ReplyWithSimpleString(ctx, "OK");
+
+	return REDISMODULE_OK;
+
 	// GRAPH.EFFECT <key> <effects>
 	if(argc != 3) {
 		return RedisModule_WrongArity(ctx);
