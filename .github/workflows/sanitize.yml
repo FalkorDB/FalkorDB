@@ -16,7 +16,7 @@ concurrency:
 jobs:
   sanitize-test:
     runs-on: ubuntu-latest
-    container: falkordb/falkordb-sanitizer:latest
+    container: muhammadqadora/sanitizer:1.0
     steps:
 
     - name: Safe dir
