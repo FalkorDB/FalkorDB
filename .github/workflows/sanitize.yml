@@ -16,7 +16,7 @@ concurrency:
 jobs:
   sanitize-test:
     runs-on: ubuntu-latest
-    container: muhammadqadora/sanitizer:1.2
+    container: muhammadqadora/sanitizer:1.3
     steps:
 
     - name: Safe dir
