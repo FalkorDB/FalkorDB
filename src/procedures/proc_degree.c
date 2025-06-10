@@ -259,7 +259,9 @@ ProcedureResult Proc_DegreeInvoke
 	RelationID *rel_types 	= NULL;   // edge relationship type
 
 	// parse configuration
-	if(!_read_config(config, &src_labels, &dest_labels, &rel_types, &dir)) {
+	bool config_ok = _read_config(config, &src_labels, &dest_labels, &rel_types, &dir);
+	SIValue_Free(config);
+	if(!config_ok) {
 		// failed to parse input configuration
 		// emit an error and return
 		ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS, "algo.degree");
@@ -278,7 +280,7 @@ ProcedureResult Proc_DegreeInvoke
 	GrB_Vector 	 dest 	= NULL; // dest vector
 
 	//--------------------------------------------------------------------------
-	// get source label matrix
+	// get source label vector
 	//--------------------------------------------------------------------------
 	info = GrB_Vector_new(&degree, GrB_UINT64, Graph_RequiredMatrixDim(g));
 	ASSERT(info == GrB_SUCCESS);
@@ -325,7 +327,7 @@ ProcedureResult Proc_DegreeInvoke
 		ASSERT(info == GrB_SUCCESS);
 	}
 	//--------------------------------------------------------------------------
-	// get destination label matrix TODO
+	// get destination label vector
 	//--------------------------------------------------------------------------
 	info = GrB_Vector_new(&dest, GrB_BOOL, Graph_RequiredMatrixDim(g));
 	ASSERT(info == GrB_SUCCESS);
@@ -387,6 +389,10 @@ ProcedureResult Proc_DegreeInvoke
 		}
 	}
 	info = GrB_Vector_resize(degree, Graph_UncompactedNodeCount(g));
+
+	array_free(rel_types);
+	array_free(src_labels);
+	array_free(dest_labels);
 
 	//--------------------------------------------------------------------------
 	// initialize procedure context
