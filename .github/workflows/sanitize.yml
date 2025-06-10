@@ -71,7 +71,7 @@ jobs:
     
     - name: Build
       run: |
-        rustup install nightly --profil minimal && \
+        rustup install nightly --profile minimal && \
         . /venv/bin/activate && \
         pip install --cache-dir=./deps/pip-cache -r tests/requirements.txt && \
         make CLANG=1 SAN=address NPROC=16
