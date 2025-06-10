@@ -8,6 +8,8 @@
 
 #include "map.h"
 #include "set.h"
+#include "date.h"
+#include "time.h"
 #include "point.h"
 #include "array.h"
 #include "vector.h"

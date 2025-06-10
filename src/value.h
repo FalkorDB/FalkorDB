@@ -51,14 +51,17 @@ typedef enum {
 #define T_VECTOR (T_VECTOR_F32)
 #define SI_TYPE(value) (value).type
 #define SI_ALLOCATION(value) (value)->allocation
-#define SI_NUMERIC (T_INT64 | T_DOUBLE)
-#define SI_GRAPHENTITY (T_NODE | T_EDGE)
-#define SI_ALL (T_MAP | T_NODE | T_EDGE | T_ARRAY | T_PATH | T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION | T_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_NULL | T_PTR | T_POINT | T_VECTOR)
-#define SI_VALID_PROPERTY_VALUE (T_POINT | T_ARRAY | T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION | T_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_VECTOR)
-#define SI_INDEXABLE (SI_NUMERIC | T_BOOL | T_STRING | T_POINT | T_VECTOR)
 
-/* Any values (except durations) are comparable with other values of the same type.
- * Integer and floating-point values are also comparable with each other. */
+// type aliases
+#define SI_NUMERIC              (T_INT64 | T_DOUBLE)  // numbrical types
+#define SI_GRAPHENTITY          (T_NODE | T_EDGE)     // graph entity types
+#define SI_INDEXABLE            (SI_NUMERIC | T_BOOL | T_STRING | T_POINT | T_VECTOR)  // indexable types
+#define SI_TEMPORAL             (T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME)  // temporal types
+#define SI_VALID_PROPERTY_VALUE (T_POINT | T_ARRAY | T_STRING | T_BOOL | SI_NUMERIC | T_VECTOR | SI_TEMPORAL)  // all valid attribute types
+#define SI_ALL                  (T_MAP | T_NODE | T_EDGE | T_ARRAY | T_PATH | T_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_NULL | T_PTR | T_POINT | T_VECTOR | SI_TEMPORAL)  // all supported types
+
+// any values (except durations) are comparable with other values of the same type
+// integer and floating-point values are also comparable with each other
 #define SI_VALUES_ARE_COMPARABLE(a, b) (((a).type == (b).type) || ((a).type & SI_NUMERIC && (b).type & SI_NUMERIC))
 
 /* Retrieve the numeric associated with an SIValue without explicitly

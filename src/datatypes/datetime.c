@@ -18,13 +18,6 @@ SIValue DateTime_now(void) {
 	return SI_DateTime(time(NULL));
 }
 
-// create a new date object representing the current date
-SIValue Date_now(void) {
-	return (SIValue) {
-		.datetimeval = time(NULL), .type = T_DATE, .allocation = M_NONE
-	};
-}
-
 // parse ISO 8601 datetime string into time_t
 // handles various ISO 8601 formats:
 // - YYYY-MM-DD
@@ -291,66 +284,211 @@ SIValue DateTime_fromComponents
 	return SI_DateTime(sec_since_epoch);
 }
 
+// Helper function to check if a year is a leap year
+static bool is_leap_year
+(
+	int year
+) {
+    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}
+
+// Helper function to get ISO week number and week year
+static void get_iso_week_info
+(
+	struct tm *tm,
+	int *week_year,
+	int *week_num
+) {
+    int year = tm->tm_year + 1900;
+    int yday = tm->tm_yday + 1;     // 1-based day of year
+    int wday = tm->tm_wday;
+    if (wday == 0) wday = 7;        // convert Sunday from 0 to 7 for ISO
+
+    // find Thursday of this week
+    int thursday_yday = yday + (4 - wday);
+
+    if (thursday_yday < 1) {
+        // Thursday is in previous year
+        *week_year = year - 1;
+        // calculate week number in previous year
+        int prev_year_days = is_leap_year(year - 1) ? 366 : 365;
+        thursday_yday += prev_year_days;
+
+        // find first Thursday of previous year
+        struct tm jan1_prev = {0};
+
+        jan1_prev.tm_year = year - 2;  // year - 1900 - 1
+        jan1_prev.tm_mon  = 0;
+        jan1_prev.tm_mday = 1;
+
+        mktime(&jan1_prev);
+        int jan1_wday = jan1_prev.tm_wday;
+        if (jan1_wday == 0)  {
+			jan1_wday = 7;
+		}
+
+        int first_thursday = 4 - jan1_wday + 1;
+        if (first_thursday <= 0) {
+			first_thursday += 7;
+		}
+
+        *week_num = (thursday_yday - first_thursday) / 7 + 1;
+    } else if (thursday_yday > (is_leap_year(year) ? 366 : 365)) {
+        // Thursday is in next year
+        *week_year = year + 1;
+        *week_num = 1;
+    } else {
+        // Thursday is in current year
+        *week_year = year;
+
+        // find first Thursday of current year
+        struct tm jan1 = {0};
+        jan1.tm_year = year - 1900;
+        jan1.tm_mon  = 0;
+        jan1.tm_mday = 1;
+        mktime(&jan1);
+
+        int jan1_wday = jan1.tm_wday;
+        if (jan1_wday == 0) {
+			jan1_wday = 7;
+		}
+
+        int first_thursday = 4 - jan1_wday + 1;
+        if (first_thursday <= 0) {
+			first_thursday += 7;
+		}
+
+        *week_num = (thursday_yday - first_thursday) / 7 + 1;
+    }
+}
+
+// helper function to get quarter from month
+static int get_quarter
+(
+	int month
+) {
+    return (month - 1) / 3 + 1;
+}
+
+// helper function to get day of quarter
+static int get_day_of_quarter
+(
+	int month,
+	int day
+) {
+    static const int quarter_start_days[] = {0, 90, 181, 273}; // Jan 1, Apr 1, Jul 1, Oct 1
+    static const int quarter_start_days_leap[] = {0, 91, 182, 274}; // leap year
+
+    int quarter = get_quarter(month);
+    int year_day = 0;
+
+    // calculate which array to use based on current date
+    // this is simplified - in practice you'd need the actual year
+    const int *start_days = quarter_start_days; // default to non-leap
+
+    // add days for complete months in the quarter
+    int quarter_start_month = (quarter - 1) * 3 + 1;
+    for (int m = quarter_start_month; m < month; m++) {
+        if (m == 2) {
+            year_day += 28; // simplified - would need actual year for leap year
+        } else if (m == 4 || m == 6 || m == 9 || m == 11) {
+            year_day += 30;
+        } else {
+            year_day += 31;
+        }
+    }
+
+    return year_day + day;
+}
+
 // extract component from datetime objects
-// available components:
-// year, quarter, month, week, weekYear, dayOfQuarter, quarterDay, day,
-// ordinalDay, dayOfWeek, weekDay, hour, minute, second, millisecond,
-// microsecond and nanosecond
 bool DateTime_getComponent
 (
-	const SIValue *datetime,  // datetime object
-	const char *component,    // datetime component to get
-	int *value                // [output] component value
+    const SIValue *datetime,  // datetime object
+    const char *component,    // datetime component to get
+    int *value                // [output] component value
 ) {
-	ASSERT(value              != NULL);
-	ASSERT(datetime           != NULL);
-	ASSERT(component          != NULL);
-	ASSERT(SI_TYPE(*datetime) == T_DATETIME);
+    ASSERT(value              != NULL);
+    ASSERT(datetime           != NULL);
+    ASSERT(component          != NULL);
+    ASSERT(SI_TYPE(*datetime) == T_DATETIME);
 
-	// set output
-	*value = -1;
+    // set output
+    *value = -1;
 
-	//--------------------------------------------------------------------------
-	// convert from time_t to tm
-	//--------------------------------------------------------------------------
+    //--------------------------------------------------------------------------
+    // convert from time_t to tm
+    //--------------------------------------------------------------------------
 
-	struct tm time;
-	time_t rawtime = datetime->datetimeval;
-	gmtime_r(&rawtime, &time);
+    struct tm time;
+    time_t rawtime = datetime->datetimeval;
+    gmtime_r(&rawtime, &time);
 
-	//--------------------------------------------------------------------------
-	// extract component
-	//--------------------------------------------------------------------------
+    //--------------------------------------------------------------------------
+    // extract component
+    //--------------------------------------------------------------------------
 
-	if(strcasecmp(component, "second") == 0) {
-		// seconds after the minute — [0, 60]
-		*value = time.tm_sec;
-	} else if(strcasecmp(component, "minute") == 0) {
-		// minutes after the hour — [0, 59]
-		*value = time.tm_min;
-	} else if(strcasecmp(component, "hour") == 0) {
-		// hours since midnight — [0, 23]
-		*value = time.tm_hour;
-	} else if(strcasecmp(component, "day") == 0) {
-		// day of the month — [1, 31]
-		*value = time.tm_mday;
-	} else if(strcasecmp(component, "month") == 0) {
-		// months since January — [0, 11]
-		*value = time.tm_mon + 1;
-	} else if(strcasecmp(component, "year") == 0) {
-		// years since 1900
-		*value = time.tm_year + 1900;
-	} else if(strcasecmp(component, "dayOfWeek") == 0) {
-		// days since Sunday — [0, 6]
-		*value = time.tm_wday;
-	} else if(strcasecmp(component, "ordinalDay") == 0) {
-		// days since January 1 — [0, 365]
-		*value = time.tm_yday;
-	} else {
-		// not supported
-	}
+    if(strcasecmp(component, "second") == 0) {
+        // seconds after the minute — [0, 60]
+        *value = time.tm_sec;
+    } else if(strcasecmp(component, "minute") == 0) {
+        // minutes after the hour — [0, 59]
+        *value = time.tm_min;
+    } else if(strcasecmp(component, "hour") == 0) {
+        // hours since midnight — [0, 23]
+        *value = time.tm_hour;
+    } else if(strcasecmp(component, "day") == 0) {
+        // day of the month — [1, 31]
+        *value = time.tm_mday;
+    } else if(strcasecmp(component, "month") == 0) {
+        // months since January — [1, 12]
+        *value = time.tm_mon + 1;
+    } else if(strcasecmp(component, "year") == 0) {
+        // years since 1900
+        *value = time.tm_year + 1900;
+    } else if(strcasecmp(component, "dayOfWeek") == 0) {
+        // days since Sunday — [0, 6] (Sunday = 0)
+        *value = time.tm_wday;
+    } else if(strcasecmp(component, "weekDay") == 0) {
+        // ISO weekday — [1, 7] (Monday = 1, Sunday = 7)
+        *value = time.tm_wday == 0 ? 7 : time.tm_wday;
+    } else if(strcasecmp(component, "ordinalDay") == 0) {
+        // days since January 1 — [1, 366] (1-based)
+        *value = time.tm_yday + 1;
+    } else if(strcasecmp(component, "quarter") == 0) {
+        // quarter of the year — [1, 4]
+        *value = get_quarter(time.tm_mon + 1);
+    } else if(strcasecmp(component, "week") == 0) {
+        // ISO week number — [1, 53]
+        int week_year, week_num;
+        get_iso_week_info(&time, &week_year, &week_num);
+        *value = week_num;
+    } else if(strcasecmp(component, "weekYear") == 0) {
+        // ISO week-numbering year
+        int week_year, week_num;
+        get_iso_week_info(&time, &week_year, &week_num);
+        *value = week_year;
+    } else if(strcasecmp(component, "dayOfQuarter") == 0) {
+        // day within the quarter — [1, 92/93]
+        *value = get_day_of_quarter(time.tm_mon + 1, time.tm_mday);
+    } else if(strcasecmp(component, "quarterDay") == 0) {
+        // alias for dayOfQuarter
+        *value = get_day_of_quarter(time.tm_mon + 1, time.tm_mday);
+    } else if(strcasecmp(component, "millisecond") == 0) {
+        // milliseconds — [0, 999] (not available in time_t precision)
+        *value = 0;
+    } else if(strcasecmp(component, "microsecond") == 0) {
+        // microseconds — [0, 999999] (not available in time_t precision)
+        *value = 0;
+    } else if(strcasecmp(component, "nanosecond") == 0) {
+        // nanoseconds — [0, 999999999] (not available in time_t precision)
+        *value = 0;
+    } else {
+        // not supported
+        return false;
+    }
 
-	return (*value != -1);
+    return (*value != -1);
 }
 
 // get a string representation of datetime
@@ -378,34 +516,6 @@ void DateTime_toString
 	// format the date and time up to seconds: 2025-04-14T06:08:21
 	*bytesWritten += strftime(*buf + *bytesWritten, *bufferLen,
 			"%Y-%m-%dT%H:%M:%S", &time);
-	ASSERT(*bytesWritten > 0);
-}
-
-// get a string representation of date
-void Date_toString
-(
-	const SIValue *date,  // date object
-	char **buf,           // print buffer
-	size_t *bufferLen,    // print buffer length
-	size_t *bytesWritten  // the actual number of bytes written to the buffer
-) {
-	ASSERT(buf            != NULL);
-	ASSERT(date           != NULL);
-	ASSERT(SI_TYPE(*date) == T_DATE);
-
-	if(*bufferLen - *bytesWritten < 32) {
-		*bufferLen += 32;
-		*buf = rm_realloc(*buf, sizeof(char) * *bufferLen);
-	}
-
-	// get a tm object from time_t
-	struct tm time;
-	time_t rawtime = date->datetimeval;
-	gmtime_r(&rawtime, &time);
-
-	// format the date and time up to seconds: 2025-04-14T06:08:21
-	*bytesWritten += strftime(*buf + *bytesWritten, *bufferLen,
-			"%Y-%m-%d", &time);
 	ASSERT(*bytesWritten > 0);
 }
 

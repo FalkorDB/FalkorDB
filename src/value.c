@@ -492,6 +492,14 @@ void SIValue_ToString
 			DateTime_toString(&v, buf, bufferLen, bytesWritten);
 			break;
 
+		case T_TIME:
+			Time_toString(&v, buf, bufferLen, bytesWritten);
+			break;
+
+		case T_DATE:
+			Date_toString(&v, buf, bufferLen, bytesWritten);
+			break;
+
 		default:
 			// unrecognized type
 			printf("unrecognized type: %d\n", v.type);
@@ -807,6 +815,8 @@ int SIValue_Compare
 		case T_MAP:
 			return Map_Compare(a, b, disjointOrNull);
 
+		case T_DATE:
+		case T_TIME:
 		case T_DATETIME:
 			return a.datetimeval - b.datetimeval;
 
@@ -974,7 +984,8 @@ void SIValue_HashUpdate
 			XXH64_update(state, &inner_hash, sizeof(inner_hash));
 			return;
 
-			// TODO: implement for temporal types once we support them.
+		case T_DATE:
+		case T_TIME:
 		case T_DATETIME:
 			XXH64_update(state, &t, sizeof(t));
 			XXH64_update(state, &v.datetimeval, sizeof(v.datetimeval));
@@ -1072,6 +1083,8 @@ SIValue SIValue_FromBinary
 			v = SI_NullVal();
 			break;
 
+		case T_TIME:
+		case T_DATE:
 		case T_DATETIME:
 			fread_assert(&t, sizeof(time_t), stream);
 			v = SI_DateTime(t);

@@ -304,15 +304,43 @@ SIValue AR_PROPERTY
 		case T_DATETIME:
 		{
 			// retrieve datetime component e.g. year, month, hour
-			int date_comp;
-			bool found = DateTime_getComponent(&obj, key.stringval, &date_comp);
+			int comp;
+			bool found = DateTime_getComponent(&obj, key.stringval, &comp);
 
 			if(found == false) {
 				ErrorCtx_SetError("unknown datetime component %s", key);
 				return SI_NullVal();	
 			}
 
-			return SI_LongVal(date_comp);
+			return SI_LongVal(comp);
+		}
+
+		case T_DATE:
+		{
+			// retrieve date component e.g. year, month, day
+			int comp;
+			bool found = Date_getComponent(&obj, key.stringval, &comp);
+
+			if(found == false) {
+				ErrorCtx_SetError("unknown date component %s", key);
+				return SI_NullVal();
+			}
+
+			return SI_LongVal(comp);
+		}
+
+		case T_TIME:
+		{
+			// retrieve date component e.g. hour, minute, second
+			int comp;
+			bool found = Time_getComponent(&obj, key.stringval, &comp);
+
+			if(found == false) {
+				ErrorCtx_SetError("unknown time component %s", key);
+				return SI_NullVal();
+			}
+
+			return SI_LongVal(comp);
 		}
 
 		default:
@@ -388,7 +416,7 @@ void Register_EntityFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 3);
-	array_append(types, T_NULL | T_NODE | T_EDGE | T_MAP | T_POINT | T_DATETIME);
+	array_append(types, T_NULL | T_NODE | T_EDGE | T_MAP | T_POINT | T_DATETIME | T_DATE | T_TIME);
 	array_append(types, T_STRING);
 	array_append(types, T_INT64);
 	ret_type = SI_ALL;

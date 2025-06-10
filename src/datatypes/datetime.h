@@ -10,9 +10,6 @@
 // create a new datetime object representing the current datetime
 SIValue DateTime_now(void);
 
-// create a new date object representing the current date
-SIValue Date_now(void);
-
 // create a new datetime object from a ISO-8601 string datetime representation
 SIValue DateTime_fromString
 (
@@ -106,14 +103,5 @@ void DateTime_toString
 	char **buf,               // print buffer
 	size_t *bufferLen,        // print buffer length
 	size_t *bytesWritten      // the actual number of bytes written to the buffer
-);
-
-// get a string representation of date
-void Date_toString
-(
-	const SIValue *date,  // date object
-	char **buf,           // print buffer
-	size_t *bufferLen,    // print buffer length
-	size_t *bytesWritten  // the actual number of bytes written to the buffer
 );
 

@@ -33,6 +33,7 @@ typedef enum {
 	VALUE_VECTORF32 = 12,
 	VALUE_DATETIME  = 13,
 	VALUE_DATE      = 14,
+	VALUE_TIME      = 15,
 } ValueType;
 
 typedef struct ResultSet ResultSet;

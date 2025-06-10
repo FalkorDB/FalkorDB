@@ -20,6 +20,7 @@ static void _ResultSet_VerboseReplyWithEdge(RedisModuleCtx *ctx, GraphContext *g
 static void _ResultSet_VerboseReplyWithVector(RedisModuleCtx *ctx, SIValue vector);
 static void _ResultSet_VerboseReplyWithDatetime(RedisModuleCtx *ctx, SIValue v);
 static void _ResultSet_VerboseReplyWithDate(RedisModuleCtx *ctx, SIValue v);
+static void _ResultSet_VerboseReplyWithTime(RedisModuleCtx *ctx, SIValue v);
 
 // this function has handling for all SIValue scalar types
 // the current RESP protocol only has unique support for:
@@ -74,6 +75,9 @@ static void _ResultSet_VerboseReplyWithSIValue
 			break;
 		case T_DATE:
 			_ResultSet_VerboseReplyWithDate(ctx, v);
+			break;
+		case T_TIME:
+			_ResultSet_VerboseReplyWithTime(ctx, v);
 			break;
 		default:
 			RedisModule_Assert("Unhandled value type" && false);
@@ -250,6 +254,20 @@ static void _ResultSet_VerboseReplyWithDate
 	size_t bufferLen = 32;
 	size_t bytesWrriten = 0;
 	Date_toString(&v, (char**)&bufPtr, &bufferLen, &bytesWrriten);
+
+	RedisModule_ReplyWithStringBuffer(ctx, bufPtr, strlen(bufPtr));
+}
+
+static void _ResultSet_VerboseReplyWithTime
+(
+	RedisModuleCtx *ctx,
+	SIValue v
+) {
+	char buffer[32];
+	char *bufPtr = buffer;
+	size_t bufferLen = 32;
+	size_t bytesWrriten = 0;
+	Time_toString(&v, (char**)&bufPtr, &bufferLen, &bytesWrriten);
 
 	RedisModule_ReplyWithStringBuffer(ctx, bufPtr, strlen(bufPtr));
 }

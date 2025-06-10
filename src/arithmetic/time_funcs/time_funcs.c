@@ -9,6 +9,8 @@
 #include "../../util/arr.h"
 #include "../../errors/errors.h"
 #include "../../datatypes/map.h"
+#include "../../datatypes/time.h"
+#include "../../datatypes/date.h"
 #include "../../datatypes/datetime.h"
 #include "../../datatypes/temporal_value.h"
 
@@ -56,6 +58,86 @@ static bool _get_component
 	return exists;
 }
 
+// create a new localtime object
+SIValue AR_LOCALTIME
+(
+	SIValue *argv,      // arguments
+	int argc,           // number of arguments
+	void *private_data  // private data
+) {
+	if(argc == 0) {
+		// return the current time
+		return Time_now();
+	}
+
+	SIValue arg = argv[0];
+
+	if(SIValue_IsNull(arg)) {
+		return SI_NullVal();
+	}
+
+	SIValue time;  // time value
+
+	SIType t = SI_TYPE(arg);
+	ASSERT(t == T_STRING || t == T_MAP);
+
+	if(t == T_STRING) {
+		time = Time_fromString(arg.stringval);
+		if(SIValue_IsNull(time)) {
+			ErrorCtx_SetError("Failed to parse datetime");
+		}
+		return time;
+	} else {
+		// create datetime object from map
+		// datetime components
+		int hour         = 0;  // hour defaults to 0
+		int minute       = 0;  // minute defaults to 0
+		int second       = 0;  // second defaults to 0
+		int millisecond  = 0;  // mili-second defaults to 0
+		int nanosecond   = 0;  // nano-second defaults to 0
+		int microsecond  = 0;  // micro-second defaults to 0
+
+		uint n_keys = Map_KeyCount(arg);
+
+		//----------------------------------------------------------------------
+		// extract individual datetime elements
+		//----------------------------------------------------------------------
+
+		bool hour_specified         = _get_component(&arg, "hour",         &hour,         0, 23);
+		bool minute_specified       = _get_component(&arg, "minute",       &minute,       0, 59);
+		bool second_specified       = _get_component(&arg, "second",       &second,       0, 59);
+		bool milisecond_specified   = _get_component(&arg, "millisecond",  &millisecond,  0, 999);
+		bool microsecond_specified  = _get_component(&arg, "microsecond",  &microsecond,  0, 999999);
+		bool nanosecond_specified   = _get_component(&arg, "nanosecond",   &nanosecond,   0, 999999999);
+
+		n_keys -= hour_specified + minute_specified +
+				  second_specified + milisecond_specified +
+				  microsecond_specified + nanosecond_specified;
+
+		if(hour_specified == false) {
+			ErrorCtx_SetError("hour must be specified");
+			return SI_NullVal();
+		}
+
+		if(minute_specified == false && second_specified == true) {
+			ErrorCtx_SetError("second cannot be specified without minute");
+			return SI_NullVal();
+		}
+
+		// error incase components map contains an unknown key
+		if(n_keys > 0) {
+			ErrorCtx_SetError("datetime components map contains an unknown key");
+			return SI_NullVal();
+		}
+
+		time = DateTime_fromComponents(1900, 1, 1, hour, minute, second,
+				millisecond, microsecond, nanosecond);
+	}
+
+	time.type = T_TIME;
+	return time;
+}
+
 // create a new datetime object
 SIValue AR_DATE
 (
@@ -80,9 +162,9 @@ SIValue AR_DATE
 	ASSERT(t == T_STRING || t == T_MAP);
 
 	if(t == T_STRING) {
-		d = DateTime_fromString(arg.stringval);
+		d = Date_fromString(arg.stringval);
 		if(SIValue_IsNull(d)) {
-			ErrorCtx_SetError("Failed to parse datetime");
+			ErrorCtx_SetError("Failed to parse date");
 		}
 		return d;
 	} else {
@@ -167,13 +249,14 @@ SIValue AR_DATE
 			d = DateTime_fromWeekDate(year, week, dayOfWeek, 0, 0, 0, 0, 0, 0);
 		}
 
-		if(quarter_specified) {
+		else if(quarter_specified) {
 			d = DateTime_fromQuarterDate(year, quarter, dayOfQuarter, 0, 0, 0,
 					0, 0, 0);
-		
 		}
 
-		d = DateTime_fromComponents(year, month, day, 0, 0, 0, 0, 0, 0);
+		else {
+			d = DateTime_fromComponents(year, month, day, 0, 0, 0, 0, 0, 0);
+		}
 	}
 
 	d.type = T_DATE;
@@ -328,11 +411,33 @@ void Register_TimeFuncs() {
 
 	types = array_new(SIType, 1);
 	array_append(types, T_STRING | T_MAP | T_NULL);
+	ret_type = T_TIME | T_NULL;
+	func_desc = AR_FuncDescNew("localtime", AR_LOCALTIME, 0, 1, types, ret_type,
+			false, false);
+	AR_RegFunc(func_desc);
+
+	types = array_new(SIType, 1);
+	array_append(types, T_STRING | T_MAP | T_NULL);
+	ret_type = T_TIME | T_NULL;
+	func_desc = AR_FuncDescNew("localtime.transaction", AR_LOCALTIME, 0, 1,
+			types, ret_type,
+			false, true);
+	AR_RegFunc(func_desc);
+
+	types = array_new(SIType, 1);
+	array_append(types, T_STRING | T_MAP | T_NULL);
 	ret_type = T_DATE | T_NULL;
 	func_desc = AR_FuncDescNew("date", AR_DATE, 0, 1, types, ret_type, false,
 			false);
-
 	AR_RegFunc(func_desc);
+
+	types = array_new(SIType, 1);
+	array_append(types, T_STRING | T_MAP | T_NULL);
+	ret_type = T_DATE | T_NULL;
+	func_desc = AR_FuncDescNew("date.transaction", AR_DATE, 0, 1, types,
+			ret_type, false, true);
+	AR_RegFunc(func_desc);
+
 	types = array_new(SIType, 1);
 	array_append(types, T_STRING | T_MAP | T_NULL);
 	ret_type = T_DATETIME | T_NULL;
@@ -343,8 +448,8 @@ void Register_TimeFuncs() {
 	types = array_new(SIType, 1);
 	array_append(types, T_STRING | T_MAP | T_NULL);
 	ret_type = T_DATETIME | T_NULL;
-	func_desc = AR_FuncDescNew("localdatetime.transaction", AR_LOCALDATETIME, 0, 1, types,
-			ret_type, false, true);
+	func_desc = AR_FuncDescNew("localdatetime.transaction", AR_LOCALDATETIME, 0,
+			1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 }
 

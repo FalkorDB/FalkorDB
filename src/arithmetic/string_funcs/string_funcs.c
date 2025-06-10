@@ -19,7 +19,7 @@
 
 // toString supports only integer, float, string, boolean, point, duration, 
 // date, time, localtime, localdatetime or datetime values
-#define STRINGABLE (SI_NUMERIC | T_POINT | T_DURATION | T_DATETIME | T_STRING | T_BOOL)
+#define STRINGABLE (SI_NUMERIC | T_POINT | T_STRING | T_BOOL | SI_TEMPORAL)
 
 // returns a string containing the specified number of leftmost characters of the original string.
 SIValue AR_LEFT(SIValue *argv, int argc, void *private_data) {
@@ -502,7 +502,12 @@ SIValue AR_TOUPPER(SIValue *argv, int argc, void *private_data) {
 }
 
 // converts an integer, float or boolean value to a string.
-SIValue AR_TOSTRING(SIValue *argv, int argc, void *private_data) {
+SIValue AR_TOSTRING
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
 	if(SI_TYPE(argv[0]) & STRINGABLE) {
 		size_t len = SIValue_StringJoinLen(argv, 1, "");
 		char *str = rm_malloc(len * sizeof(char));
