@@ -2,7 +2,7 @@ ARG TARGETPLATFORM=linux/amd64
 
 ARG OS=ubuntu
 
-FROM falkordb/falkordb-build:$OS-46a8ee6b21d81074a69a80db960b5bfe16d8a22f AS builder
+FROM falkordb/falkordb-build:$OS-dd4534cfeac95f6902de3b054caead580aa14f0c AS builder
 
 ARG DEBUG=0
 
