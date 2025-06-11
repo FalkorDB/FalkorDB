@@ -29,45 +29,28 @@ void _selectAttribute
 	const uint64_t *x,
 	GrB_Index i,
 	GrB_Index j,
-	const uint64_t *y
+	const 	compareContext *contx
 )
 {
-	compareContext *contx = (compareContext *) (*y);
 	Edge _x;
 	Graph_GetEdge(contx->g, (EdgeID) (*x), &_x);
 	SIValue *v = GraphEntity_GetProperty((GraphEntity *) &_x, contx->w);
-	*z = (v != ATTRIBUTE_NOTFOUND);
+	*z = (v != ATTRIBUTE_NOTFOUND) && (SI_NUMERIC & SI_TYPE(*v));
 }
-#if 0
 void _getAttFromID
 (
 	double *z, 
 	const uint64_t *x, 
-	const uint64_t *y
+	const compareContext *contx
 )
 {
-	compareContext *contx = (compareContext *) (*y);
 	Edge _x, _y;
 	Graph_GetEdge(contx->g, (EdgeID) (*x), &_x);
 	SIValue *v = AttributeSet_Get(*_x.attributes, contx->w);
-	SIValue_ToDouble(v, z);
+	ASSERT(v != ATTRIBUTE_NOTFOUND);
+	int info = SIValue_ToDouble(v, z);
+	ASSERT(info == 1);
 }
-#else
-void _getAttFromID
-(
-	int64_t *z, 
-	const uint64_t *x, 
-	const uint64_t *y
-)
-{
-	compareContext *contx = (compareContext *) (*y);
-	Edge _x, _y;
-	Graph_GetEdge(contx->g, (EdgeID) (*x), &_x);
-	SIValue *v = AttributeSet_Get(*_x.attributes, contx->w);
-	ASSERT(v != ATTRIBUTE_NOTFOUND && ((SI_NUMERIC & SI_TYPE(*v)) != 0));
-	*z = (int64_t) SI_GET_NUMERIC(*v);
-}
-#endif
 void _compareAndReturnEdgeID 
 (
 	uint64_t *z, 
@@ -77,17 +60,16 @@ void _compareAndReturnEdgeID
 	const uint64_t *y,
 	GrB_Index iy,
 	GrB_Index jy,
-	const uint64_t *theta
+	const compareContext *contx
 )
 {
 	*z = *x;
-	compareContext *contx = (compareContext *) (*theta);
 	Edge _x, _y;
 	Graph_GetEdge(contx->g, (EdgeID) (*x), &_x);
 	Graph_GetEdge(contx->g, (EdgeID) (*y), &_y);
 	SIValue *xv = AttributeSet_Get(*_x.attributes, contx->w);
 	SIValue *yv = AttributeSet_Get(*_y.attributes, contx->w);
-	if(xv == ATTRIBUTE_NOTFOUND ||
+	if(xv == ATTRIBUTE_NOTFOUND || (SI_NUMERIC & SI_TYPE(*xv)) == 0 ||
 		(yv != ATTRIBUTE_NOTFOUND && SIValue_Compare(*xv, *yv, NULL) == 1))
 	{
 		*z = *y;
@@ -99,17 +81,16 @@ void _reduceToMatrixMin
 (
 	uint64_t *z, 
 	const uint64_t *x, 
-	const uint64_t *y
+	const compareContext *contx
 )
 {
 	if(SCALAR_ENTRY(*x))
 	{
 		*z = *x;
 	}
-	else
+	else // Find the minimum value in the vector.
 	{
 		GrB_Vector _v = AS_VECTOR(*x);
-		compareContext *contx = ((compareContext *) (*y));
 		GxB_Iterator i = NULL;
 		GrB_Info info = GxB_Iterator_new(&i);
 		ASSERT(info == GrB_SUCCESS)
@@ -123,7 +104,9 @@ void _reduceToMatrixMin
 		SIValue *currV = NULL, minV = SI_DoubleVal(INFINITY), tempV;
 		currV = AttributeSet_Get(*currE.attributes, contx->w);
 		info = GxB_Vector_Iterator_next(i);
-		if(currV != ATTRIBUTE_NOTFOUND)
+		// Treat edges without the attribute or with a non-numeric attribute as
+		// infinite length
+		if(currV == ATTRIBUTE_NOTFOUND || (SI_NUMERIC & SI_TYPE(*currV)) == 0)
 		{
 			minV = *currV;
 		}
@@ -132,10 +115,9 @@ void _reduceToMatrixMin
 			EdgeID CurrID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
 			Graph_GetEdge(contx->g, CurrID, &currE);
 			currV = AttributeSet_Get(*currE.attributes, contx->w);
-			ASSERT(currV == ATTRIBUTE_NOTFOUND 
-				|| ((SI_NUMERIC & SI_TYPE(*currV)) != 0));
-			if(currV != ATTRIBUTE_NOTFOUND && 
-				SIValue_Compare(minV, *currV, NULL) == 1)
+			if(currV != ATTRIBUTE_NOTFOUND && (SI_NUMERIC & SI_TYPE(*currV)) &&
+				SIValue_Compare(minV, *currV, NULL) == 1
+			) 
 			{
 				minV = *currV;
 				minID = CurrID;
@@ -194,6 +176,7 @@ GrB_Info Build_Weighted_Matrix
 	bool compact            // remove unused row & columns
 ) {
 	compareContext contx = {.g = g, .w = weight};
+	GrB_Type contx_type = NULL;
 	GxB_IndexBinaryOp minID_indexOP = NULL;
 	GrB_IndexUnaryOp hasAtt = NULL;
 	GrB_BinaryOp minID = NULL, toMatrixMin = NULL, weightOp = NULL;
@@ -203,7 +186,7 @@ GrB_Info Build_Weighted_Matrix
 	ASSERT(A != NULL);
 	ASSERT((lbls != NULL && n_lbls > 0) || (lbls == NULL && n_lbls == 0));
 	ASSERT((rels != NULL && n_rels > 0) || (rels == NULL && n_rels == 0));
-
+	GrB_Type_new(&contx_type, sizeof(compareContext));
 	if(weight == ATTRIBUTE_ID_NONE)
 	{
 		minID = GrB_SECOND_UINT64;
@@ -214,23 +197,23 @@ GrB_Info Build_Weighted_Matrix
 	}
 	else
 	{
-		GrB_Scalar_new(&theta, GrB_UINT64);
-		GrB_Scalar_setElement_UINT64(theta, (uint64_t) (&contx));
+		GrB_Scalar_new(&theta, contx_type);
+		GrB_Scalar_setElement_UDT(theta, (void *) &contx);
 		GrB_BinaryOp_new(
 			&weightOp, (GxB_binary_function) _getAttFromID, 
-			GrB_INT64, GrB_UINT64, GrB_UINT64
+			GrB_FP64, GrB_UINT64, contx_type
 		) ;
 		GrB_BinaryOp_new(
 			&toMatrixMin, (GxB_binary_function) _reduceToMatrixMin, 
-			GrB_UINT64, GrB_UINT64, GrB_UINT64
+			GrB_UINT64, GrB_UINT64, contx_type
 		) ;
 		GxB_IndexBinaryOp_new(
 			&minID_indexOP, (GxB_index_binary_function) _compareAndReturnEdgeID,
-			GrB_UINT64, GrB_UINT64, GrB_UINT64, GrB_UINT64, NULL, NULL) ;
+			GrB_UINT64, GrB_UINT64, GrB_UINT64, contx_type, NULL, NULL) ;
 		GxB_BinaryOp_new_IndexOp (&minID, minID_indexOP, theta) ;
 		GrB_IndexUnaryOp_new(
 			&hasAtt, (GxB_index_unary_function) _selectAttribute, 
-			GrB_BOOL, GrB_UINT64, GrB_UINT64
+			GrB_BOOL, GrB_UINT64, contx_type
 		) ;
 	}
 
@@ -257,7 +240,7 @@ GrB_Info Build_Weighted_Matrix
 		info = GrB_Matrix_new(A, GrB_UINT64, 0, 0);
 		ASSERT(info == GrB_SUCCESS);
 		if(A_w) {
-			info = GrB_Matrix_new(A_w, GrB_INT64, 0, 0);
+			info = GrB_Matrix_new(A_w, GrB_FP64, 0, 0);
 			ASSERT(info == GrB_SUCCESS);
 		}
 		if(rows) {
@@ -297,8 +280,8 @@ GrB_Info Build_Weighted_Matrix
 		} 
 		else 
 		{
-			info = GrB_Matrix_apply_BinaryOp2nd_UINT64(
-				_A, NULL, NULL, toMatrixMin, _A, (uint64_t) (&contx), NULL
+			info = GrB_Matrix_apply_BinaryOp2nd_UDT(
+				_A, NULL, NULL, toMatrixMin, _A, (void *) (&contx), NULL
 			) ;
 		}
 		ASSERT(info == GrB_SUCCESS);
@@ -324,8 +307,8 @@ GrB_Info Build_Weighted_Matrix
 				// info = GrB_Matrix_apply_BinaryOp2nd_UINT64(
 				// 	_A, NULL, minID, toMatrixMin, M, (uint64_t) (&contx), NULL
 				// ) ;
-				info = GrB_Matrix_apply_BinaryOp2nd_UINT64(
-					M, NULL, NULL, toMatrixMin, M, (uint64_t) (&contx), NULL
+				info = GrB_Matrix_apply_BinaryOp2nd_UDT(
+					M, NULL, NULL, toMatrixMin, M, (void *) (&contx), NULL
 				) ;
 				ASSERT(info == GrB_SUCCESS);
 				info = GrB_Matrix_eWiseAdd_BinaryOp(
@@ -429,26 +412,27 @@ GrB_Info Build_Weighted_Matrix
 	if(weight != ATTRIBUTE_ID_NONE)
 	{
 		// Remove edges without the specified attribute
-		info = GrB_Matrix_select_UINT64(
-			_A, NULL, NULL, hasAtt, _A, (uint64_t) (&contx), NULL);
+		info = GrB_Matrix_select_UDT(
+			_A, NULL, NULL, hasAtt, _A, (void *) (&contx), NULL);
 		ASSERT(info == GrB_SUCCESS);
 	}
 	if(A_w)
 	{
-		info = GrB_Matrix_new(A_w, GrB_UINT64, n, n);
+		info = GrB_Matrix_new(A_w, GrB_FP64, n, n);
 		ASSERT(info == GrB_SUCCESS);
 		if(weight == ATTRIBUTE_ID_NONE)
 		{
 			// A_w = A
-			info = GrB_Matrix_assign_UINT64(
-				*A_w, _A, NULL, (uint64_t) 1, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
+			info = GrB_Matrix_assign_FP64(
+				*A_w, _A, NULL, 0.0, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
 			) ;
+			printf("%d", info);
 			ASSERT(info == GrB_SUCCESS);
 		}
 		else
 		{
-			info = GrB_Matrix_apply_BinaryOp2nd_UINT64(
-				*A_w, NULL, NULL, weightOp, _A, (uint64_t) (&contx), NULL
+			info = GrB_Matrix_apply_BinaryOp2nd_UDT(
+				*A_w, NULL, NULL, weightOp, _A, (void *) (&contx), NULL
 			);
 			ASSERT(info == GrB_SUCCESS);
 		}

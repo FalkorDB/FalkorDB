@@ -1,15 +1,65 @@
 from common import *
+import random
 
 GRAPH_ID = "MSF"
+GRAPH_ID_RAND = "MSF_rand"
 
 class testMSF(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
         self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
+        self.randomGraph = self.db.select_graph(GRAPH_ID_RAND)
+        self.generate_random_graph_cypher()
 
-    def tearDown(self):
-        self.graph.delete()
+    def generate_random_graph_cypher(self, num_nodes=20, num_edges=140, numlabels=4):
+        # 1. Create Nodes
+        query_parts = [f"UNWIND range({num_nodes * j}, {num_nodes * (j + 1) - 1}) AS i "
+                        f"CREATE (n:{chr(ord('A') + j)} {{id: i}})"
+                        for j in range(numlabels)]
+
+        # Create a list of node IDs for random selection
+        node_ids = list(range(num_nodes * numlabels))
+
+        # 2. ensure components are connected.
+        for j in range(numlabels):
+            query_parts.append(f"UNWIND range({num_nodes * j + 1}, {num_nodes * (j + 1) - 1}) AS i "
+                f"MATCH (a {{id: {num_nodes * j}}}), (b {{id: i}})"
+                "CREATE (a)-[:R {weight: 100}]->(b)")
+            
+
+        # 3. Create Relationships with random weights
+        relationship_creation_statements = []
+        
+        
+        
+        for _ in range(num_edges):
+            # Pick two random nodes (can be the same for self-loops)
+            source_id = random.choice(node_ids)
+            target_id = random.choice(node_ids)
+            if(source_id == target_id): continue
+            # Generate a random double weight
+            weight = random.uniform(-100.0, 100.0)
+        
+            # Cypher statement to create the relationship
+            # We find the nodes by their 'id' property and then create the relationship.
+            relationship_creation_statements.append(
+                    f'MATCH (a {{id: {source_id}}}), (b {{id: {target_id}}})'
+                    f'CREATE (a)-[:R {{weight: {weight}}}]->(b)'
+                )
+        query_parts.extend(relationship_creation_statements)
+        
+        for q in query_parts:
+            self.randomGraph.query(q)
+    def find_min_edge (self, src, dest):
+        res = self.randomGraph.query(f"MATCH (: {src})-[r]->(: {dest}) RETURN MIN(r.weight) as minW").result_set
+        res2 = self.randomGraph.query(f"MATCH (: {dest})-[r]->(: {src}) RETURN MIN(r.weight) as minW").result_set
+        if res[0][0] is None:
+            return res2[0][0]
+        elif res2[0][0] is None:
+            return res[0][0]
+        else:
+            return min(res[0][0], res2[0][0])
 
     def test_invalid_invocation(self):
         invalid_queries = [
@@ -32,6 +82,7 @@ class testMSF(FlowTestsBase):
                 self.env.assertFalse(True)
             except redis.exceptions.ResponseError as e:
                 pass
+        self.graph.delete()
 
     def test_msf_on_empty_graph(self):
         """Test MSF algorithm behavior on an empty graph"""
@@ -42,6 +93,7 @@ class testMSF(FlowTestsBase):
         
         # check if it returned empty results (acceptable behavior)
         self.env.assertEqual(len(result.result_set), 0)
+        self.graph.delete()
 
     def test_msf_on_unlabeled_graph(self):
         """Test MSF algorithm on unlabeled nodes with multiple connected components"""
@@ -69,6 +121,7 @@ class testMSF(FlowTestsBase):
 
         # We should have exactly 3 different edges 
         self.env.assertEqual(len(result_set), 3)
+        self.graph.delete()
 
     def test_msf_on_multilable(self):
         """Test MSF algorithm on multilabled nodes with multiple connected components"""
@@ -99,6 +152,7 @@ class testMSF(FlowTestsBase):
         edge, weight = result_set[0]
         self.env.assertEqual(edge, 'Kayak')
         self.env.assertEqual(weight, 4)
+        self.graph.delete()
 
 
     def test_msf_with_multiedge(self):
@@ -156,9 +210,79 @@ class testMSF(FlowTestsBase):
         self.env.assertEqual(len(result_set), 2)
         for edge in result_set:
             self.env.assertEqual(edge[0], 2)
+        self.graph.delete()
 
 
-# TODO: make sure we can run WCC on a random generated graph
-# test to the best of our abilities e.g. when specifying a label make sure all ndoes
-# under that labels show up
+    def test_msf_rand_labels(self):
+        result_set = self.randomGraph.query("""
+            CALL algo.MSF({nodeLabels: ['A', 'B'], weightAttribute: 'weight'}) 
+            YIELD weight
+            """).result_set
+        minEdge = self.find_min_edge("A", "B")
+        ok = False
+        for w in result_set:
+            ok = ok or w[0] == minEdge
+        print(minEdge)
+        print(result_set)
+        self.env.assertTrue(ok or (minEdge == None))
+
+        result_set = self.randomGraph.query("""
+            CALL algo.MSF({nodeLabels: ['A', 'C'], weightAttribute: 'weight'}) 
+            YIELD weight
+            """).result_set
+        minEdge = self.find_min_edge("A", "C")
+        ok = False
+        for w in result_set:
+            ok = ok or w[0] == minEdge
+        print(minEdge)
+        print(result_set)
+        self.env.assertTrue(ok or (minEdge == None))
+
+        result_set = self.randomGraph.query("""
+            CALL algo.MSF({nodeLabels: ['A', 'D'], weightAttribute: 'weight'}) 
+            YIELD weight
+            """).result_set
+        minEdge = self.find_min_edge("A", "D")
+        ok = False
+        for w in result_set:
+            ok = ok or w[0] == minEdge
+        print(minEdge)
+        print(result_set)
+        self.env.assertTrue(ok or (minEdge == None))
+
+        result_set = self.randomGraph.query("""
+            CALL algo.MSF({nodeLabels: ['B', 'C'], weightAttribute: 'weight'}) 
+            YIELD weight
+            """).result_set
+        minEdge = self.find_min_edge("B", "C")
+        ok = False
+        for w in result_set:
+            ok = ok or w[0] == minEdge
+        print(minEdge)
+        print(result_set)
+        self.env.assertTrue(ok or (minEdge == None))
+        
+        result_set = self.randomGraph.query("""
+            CALL algo.MSF({nodeLabels: ['B', 'D'], weightAttribute: 'weight'}) 
+            YIELD weight
+            """).result_set
+        minEdge = self.find_min_edge("B", "D")
+        ok = False
+        for w in result_set:
+            ok = ok or w[0] == minEdge
+        print(minEdge)
+        print(result_set)
+        self.env.assertTrue(ok or (minEdge == None))
+
+        result_set = self.randomGraph.query("""
+            CALL algo.MSF({nodeLabels: ['C', 'D'], weightAttribute: 'weight'}) 
+            YIELD weight
+            """).result_set
+        minEdge = self.find_min_edge("C", "D")
+        ok = False
+        for w in result_set:
+            ok = ok or w[0] == minEdge
+        print(minEdge)
+        print(result_set)
+        self.env.assertTrue(ok or (minEdge == None))
 

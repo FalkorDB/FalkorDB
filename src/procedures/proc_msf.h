@@ -7,6 +7,6 @@
 
 #include "proc_ctx.h"
 
-// run betweeness centrality on sub graph
+// run Minimum Spanning Forest centrality on sub graph
 ProcedureCtx *Proc_MSFCtx(void);
 

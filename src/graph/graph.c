@@ -1277,7 +1277,6 @@ void Graph_FindEdgeRelationID
 			break;
 		}
 	}
-	ASSERT(edge->relationID != GRAPH_UNKNOWN_RELATION);
 }
 
 // retrieves all either incoming or outgoing edges

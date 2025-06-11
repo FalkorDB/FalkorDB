@@ -266,6 +266,7 @@ ProcedureResult Proc_MSFInvoke
 	//--------------------------------------------------------------------------
 
 	bool config_ok = _read_config(config, &lbls, &rels, &weightAtt, &maxSF);
+	
 	SIValue_Free(config);
 
 	if(!config_ok) {
@@ -282,13 +283,14 @@ ProcedureResult Proc_MSFInvoke
 
 	pdata->g = g;
 	pdata->weight_prop = weightAtt;
-
+	pdata->relationIDs = rels;
+	pdata->relationCount = array_len(rels);
 	_process_yield(pdata, yield);
 
 	// save private data
 	ctx->privateData = pdata;
 
-	GrB_Matrix A = NULL, A_w = NULL, msf = NULL;
+	GrB_Matrix A = NULL, A_w = NULL;
 	GrB_Info info;
 
 	//makes into a symetric matrix
@@ -296,42 +298,43 @@ ProcedureResult Proc_MSFInvoke
 			&A, &A_w, &pdata->nodes, g, lbls, array_len(lbls), rels,
 			array_len(rels), weightAtt, true, true);
 	ASSERT(info == GrB_SUCCESS);
-
+	
 	// free build matrix inputs
 	if(lbls != NULL) array_free(lbls);
-	if(rels != NULL) array_free(rels);
+	// if(rels != NULL) array_free(rels);
 
 	//--------------------------------------------------------------------------
-	// run betweeness centrality
+	// run MSF centrality
 	//--------------------------------------------------------------------------
 
 	char msg[LAGRAPH_MSG_LEN];
 	// execute Minimum Spanning Forest
 	GrB_Info msf_res =
-		LAGraph_msf(&msf, A_w, false, msg);
+		// LAGraph_msf(&msf, A_w, false, msg);
+		LAGraph_msf(&pdata->w_tree, A_w, false, msg);
 	if(msf_res != GrB_SUCCESS) {
 		GrB_free(&A);
 		GrB_free(&A_w);
 		return PROCEDURE_ERR;
 	}
 	GrB_Index n;
-	info = GrB_Matrix_nrows(&n, msf);
+	info = GrB_Matrix_nrows(&n, pdata->w_tree);
 	ASSERT(info == GrB_SUCCESS);
 
 	info = GrB_Matrix_new(&pdata->tree, GrB_UINT64, n, n);
 	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_new(&pdata->w_tree, GrB_UINT64, n, n);
-	ASSERT(info == GrB_SUCCESS);
+	// info = GrB_Matrix_new(&pdata->w_tree, GrB_FP64, n, n);
+	// ASSERT(info == GrB_SUCCESS);
 
 	info = GrB_Matrix_assign(
-		pdata->tree, msf, NULL, A, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
+		pdata->tree, pdata->w_tree, NULL, A, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
 	);
 	ASSERT(info == GrB_SUCCESS);
 
-	info = GrB_Matrix_assign(
-		pdata->w_tree, msf, NULL, A_w, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
-	);
-	ASSERT(info == GrB_SUCCESS);
+	// info = GrB_Matrix_assign(
+	// 	pdata->w_tree, msf, NULL, A_w, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
+	// );
+	// ASSERT(info == GrB_SUCCESS);
 	
 	// clean up algorithm inputs
 	info = GrB_free(&A_w);
@@ -409,21 +412,12 @@ SIValue *Proc_MSFStep
 		*pdata->yield_edge = SI_Edge(&pdata->edge);
 	}
 	if(pdata->yield_weight) {
-		int64_t weight_val = 0; 
-		GrB_Matrix_extractElement_INT64(
+		double weight_val = 0; 
+		GrB_Info info = GrB_Matrix_extractElement_FP64(
 			&weight_val, pdata->w_tree, node_i, node_j);
-		*pdata->yield_weight = SI_LongVal(weight_val);
-		// if(pdata->weight_prop == ATTRIBUTE_ID_NONE)
-		// {
-		// 	*pdata->yield_weight = SI_LongVal(0);
-		// }
-		// else
-		// {
-		// 	SIValue *yield_w = GraphEntity_GetProperty((GraphEntity *)
-		// 			pdata->edge.attributes, pdata->weight_prop) ;
-		// 	ASSERT(yield_w != ATTRIBUTE_NOTFOUND);
-		// 	*pdata->yield_weight = SI_LongVal((int64_t) SI_GET_NUMERIC(*yield_w));
-		// }
+		// must be found since w_tree and tree have the same structure. 
+		ASSERT(info == GrB_SUCCESS);
+		*pdata->yield_weight = SI_DoubleVal(weight_val);
 	}
 	return pdata->output;
 }
@@ -441,6 +435,7 @@ ProcedureResult Proc_MSFFree
 		if(pdata->it         != NULL) GrB_free(&pdata->it);
 		if(pdata->nodes      != NULL) GrB_free(&pdata->nodes);
 		rm_free(ctx->privateData);
+		array_free(pdata->relationIDs);
 	}
 	return PROCEDURE_OK;
 }
@@ -452,7 +447,7 @@ ProcedureCtx *Proc_MSFCtx(void) {
 
 	ProcedureOutput *outputs         = array_new(ProcedureOutput, 2);
 	ProcedureOutput output_edge      = {.name = "edge", .type = T_EDGE};
-	ProcedureOutput output_weight = {.name = "weight", .type = T_INT64};
+	ProcedureOutput output_weight = {.name = "weight", .type = T_DOUBLE};
 	// ProcedureOutput output_weight = {.name = "weight", .type = SI_NUMERIC};
 
 	array_append(outputs, output_edge);
