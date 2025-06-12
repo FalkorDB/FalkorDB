@@ -106,7 +106,7 @@ void _reduceToMatrixMin
 		info = GxB_Vector_Iterator_next(i);
 		// Treat edges without the attribute or with a non-numeric attribute as
 		// infinite length
-		if(currV == ATTRIBUTE_NOTFOUND || (SI_NUMERIC & SI_TYPE(*currV)) == 0)
+		if(currV != ATTRIBUTE_NOTFOUND && (SI_NUMERIC & SI_TYPE(*currV)))
 		{
 			minV = *currV;
 		}
@@ -248,7 +248,6 @@ GrB_Info Build_Weighted_Matrix
 			ASSERT(info == GrB_SUCCESS);
 		}
 		BWM_FREE;
-		// TODO do I need a read lock?
 		// Graph_ReleaseLock(g);
 		return GrB_SUCCESS;
 	}
@@ -426,7 +425,6 @@ GrB_Info Build_Weighted_Matrix
 			info = GrB_Matrix_assign_FP64(
 				*A_w, _A, NULL, 0.0, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
 			) ;
-			printf("%d", info);
 			ASSERT(info == GrB_SUCCESS);
 		}
 		else
@@ -444,7 +442,6 @@ GrB_Info Build_Weighted_Matrix
 	_N = NULL;
 	BWM_FREE;
 
-	// TODO do I need a read lock?
 	// Graph_ReleaseLock(g);
 	return info;
 }

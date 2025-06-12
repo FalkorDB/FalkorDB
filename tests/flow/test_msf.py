@@ -52,8 +52,8 @@ class testMSF(FlowTestsBase):
         for q in query_parts:
             self.randomGraph.query(q)
     def find_min_edge (self, src, dest):
-        res = self.randomGraph.query(f"MATCH (: {src})-[r]->(: {dest}) RETURN MIN(r.weight) as minW").result_set
-        res2 = self.randomGraph.query(f"MATCH (: {dest})-[r]->(: {src}) RETURN MIN(r.weight) as minW").result_set
+        res = self.randomGraph.query(f"MATCH (:{src})-[r]->(:{dest}) RETURN MIN(r.weight) as minW").result_set
+        res2 = self.randomGraph.query(f"MATCH (:{dest})-[r]->(:{src}) RETURN MIN(r.weight) as minW").result_set
         if res[0][0] is None:
             return res2[0][0]
         elif res2[0][0] is None:
