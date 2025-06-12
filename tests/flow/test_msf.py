@@ -13,6 +13,7 @@ class testMSF(FlowTestsBase):
         self.generate_random_graph_cypher()
 
     def generate_random_graph_cypher(self, num_nodes=20, num_edges=140, numlabels=4):
+        random.seed(1111)
         # 1. Create Nodes
         query_parts = [f"UNWIND range({num_nodes * j}, {num_nodes * (j + 1) - 1}) AS i "
                         f"CREATE (n:{chr(ord('A') + j)} {{id: i}})"
@@ -222,7 +223,7 @@ class testMSF(FlowTestsBase):
         ok = False
         for w in result_set:
             ok = ok or w[0] == minEdge
-        self.env.assertTrue(ok or (minEdge == None))
+        self.env.assertTrue(ok or (minEdge is None))
 
         result_set = self.randomGraph.query("""
             CALL algo.MSF({nodeLabels: ['A', 'C'], weightAttribute: 'weight'}) 
@@ -232,7 +233,7 @@ class testMSF(FlowTestsBase):
         ok = False
         for w in result_set:
             ok = ok or w[0] == minEdge
-        self.env.assertTrue(ok or (minEdge == None))
+        self.env.assertTrue(ok or (minEdge is None))
 
         result_set = self.randomGraph.query("""
             CALL algo.MSF({nodeLabels: ['A', 'D'], weightAttribute: 'weight'}) 
@@ -242,7 +243,7 @@ class testMSF(FlowTestsBase):
         ok = False
         for w in result_set:
             ok = ok or w[0] == minEdge
-        self.env.assertTrue(ok or (minEdge == None))
+        self.env.assertTrue(ok or (minEdge is None))
 
         result_set = self.randomGraph.query("""
             CALL algo.MSF({nodeLabels: ['B', 'C'], weightAttribute: 'weight'}) 
@@ -252,7 +253,7 @@ class testMSF(FlowTestsBase):
         ok = False
         for w in result_set:
             ok = ok or w[0] == minEdge
-        self.env.assertTrue(ok or (minEdge == None))
+        self.env.assertTrue(ok or (minEdge is None))
         
         result_set = self.randomGraph.query("""
             CALL algo.MSF({nodeLabels: ['B', 'D'], weightAttribute: 'weight'}) 
@@ -262,7 +263,7 @@ class testMSF(FlowTestsBase):
         ok = False
         for w in result_set:
             ok = ok or w[0] == minEdge
-        self.env.assertTrue(ok or (minEdge == None))
+        self.env.assertTrue(ok or (minEdge is None))
 
         result_set = self.randomGraph.query("""
             CALL algo.MSF({nodeLabels: ['C', 'D'], weightAttribute: 'weight'}) 
@@ -272,5 +273,5 @@ class testMSF(FlowTestsBase):
         ok = False
         for w in result_set:
             ok = ok or w[0] == minEdge
-        self.env.assertTrue(ok or (minEdge == None))
+        self.env.assertTrue(ok or (minEdge is None))
 
