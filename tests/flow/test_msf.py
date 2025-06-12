@@ -222,8 +222,6 @@ class testMSF(FlowTestsBase):
         ok = False
         for w in result_set:
             ok = ok or w[0] == minEdge
-        print(minEdge)
-        print(result_set)
         self.env.assertTrue(ok or (minEdge == None))
 
         result_set = self.randomGraph.query("""
@@ -234,8 +232,6 @@ class testMSF(FlowTestsBase):
         ok = False
         for w in result_set:
             ok = ok or w[0] == minEdge
-        print(minEdge)
-        print(result_set)
         self.env.assertTrue(ok or (minEdge == None))
 
         result_set = self.randomGraph.query("""
@@ -246,8 +242,6 @@ class testMSF(FlowTestsBase):
         ok = False
         for w in result_set:
             ok = ok or w[0] == minEdge
-        print(minEdge)
-        print(result_set)
         self.env.assertTrue(ok or (minEdge == None))
 
         result_set = self.randomGraph.query("""
@@ -258,8 +252,6 @@ class testMSF(FlowTestsBase):
         ok = False
         for w in result_set:
             ok = ok or w[0] == minEdge
-        print(minEdge)
-        print(result_set)
         self.env.assertTrue(ok or (minEdge == None))
         
         result_set = self.randomGraph.query("""
@@ -270,8 +262,6 @@ class testMSF(FlowTestsBase):
         ok = False
         for w in result_set:
             ok = ok or w[0] == minEdge
-        print(minEdge)
-        print(result_set)
         self.env.assertTrue(ok or (minEdge == None))
 
         result_set = self.randomGraph.query("""
@@ -282,7 +272,5 @@ class testMSF(FlowTestsBase):
         ok = False
         for w in result_set:
             ok = ok or w[0] == minEdge
-        print(minEdge)
-        print(result_set)
         self.env.assertTrue(ok or (minEdge == None))
 

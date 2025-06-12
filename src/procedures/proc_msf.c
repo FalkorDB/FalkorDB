@@ -434,8 +434,8 @@ ProcedureResult Proc_MSFFree
 		if(pdata->w_tree	 != NULL) GrB_free(&pdata->w_tree);
 		if(pdata->it         != NULL) GrB_free(&pdata->it);
 		if(pdata->nodes      != NULL) GrB_free(&pdata->nodes);
-		rm_free(ctx->privateData);
 		array_free(pdata->relationIDs);
+		rm_free(ctx->privateData);
 	}
 	return PROCEDURE_OK;
 }
