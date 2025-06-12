@@ -9,11 +9,18 @@
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
 
+#include <poll.h>
+#include <fcntl.h>      // for fcntl(), O_NONBLOCK, F_SETFL, etc.
+#include <unistd.h>
 #include <pthread.h>
+#include <sys/errno.h>
+
+
 
 // curl download session
 struct Opaque_CurlSession {
 	CURL *handle;         // curl handle
+	int fd;               // stream file discriptor
 	FILE *stream;         // output stream
 	volatile bool abort;  // download abort flag
 	pthread_t thread;     // download thread
@@ -42,13 +49,38 @@ static size_t _curl_write_cb
 ) {
 	CurlSession session = (CurlSession)pdata;
 
-	// check if download was aborted
-	if(session->abort) {
-		return 0;  // 0 indicates to curl that download was aborted
+	//--------------------------------------------------------------------------
+	// check for readiness
+	//--------------------------------------------------------------------------
+
+	ssize_t nbytes = 0;
+
+	struct pollfd pfd = {
+		.fd = session->fd,
+		.events = POLLOUT
+	};
+
+	// as long as download was aborted
+	while(!session->abort) {
+		int ret = poll(&pfd, 1, 50000);  // wait up to 50 second
+
+		if (ret > 0 && (pfd.revents & POLLOUT)) {
+			nbytes = write(session->fd, ptr, size * nmemb);
+			if (nbytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+				// Try again later
+				continue;
+			}
+			break;
+		} else if (ret == 0) {
+			RedisModule_Log(NULL, "warning", "Timeout while waiting to write\n");
+			break;
+		} else {
+			RedisModule_Log(NULL, "warning", "poll failed: %s\n", strerror(errno));
+			break;
+		}
 	}
 
-	// write data to stream
-	return fwrite(ptr, size, nmemb, session->stream);
+	return nbytes;
 }
 
 // curl thread
@@ -78,7 +110,6 @@ static void *_curl_thread
 // asynchonously download a file from the internet
 // populates the stream with the downloaded file
 // returns a session handle
-// NOTE: this function runs on a dedicated thread spwaned by Curl_Download
 CurlSession Curl_Download
 (
 	const char *url,  // URL to download
@@ -90,8 +121,17 @@ CurlSession Curl_Download
 	CurlSession s = rm_calloc(1, sizeof(struct Opaque_CurlSession));
 
 	// take ownership over the stream
+	s->fd     = fileno(*stream);
 	s->stream = *stream;
-	*stream   = NULL;
+
+	// disable buffering on the stream
+	int res = setvbuf(s->stream, NULL, _IONBF, 0);  // use unbuffered mode
+	ASSERT(res == 0);
+
+	fcntl(s->fd, F_SETFL, O_NONBLOCK);  // set non-blocking mode
+
+	// take ownership over the stream
+	*stream = NULL;
 
 	// create a new session
 	CURL *curl = curl_easy_init();
@@ -106,6 +146,10 @@ CurlSession Curl_Download
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, _curl_write_cb);
 	curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);      // treat HTTP errors as failures
 	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);  // establish connection timeout
+
+	// Skip SSL certificate verification
+	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 
 	s->handle = curl;
 
@@ -152,7 +196,7 @@ void Curl_Free
 
 		intptr_t result = (intptr_t)thread_result;
 		if(result != CURLE_OK) {
-			ErrorCtx_SetError("Error downloading file, error_code: %ld", result);
+			//ErrorCtx_SetError("Error downloading file, error_code: %ld", result);
 		}
 	}
 
