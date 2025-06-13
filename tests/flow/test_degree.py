@@ -13,6 +13,18 @@ class testDegree(FlowTestsBase):
 
     def build_graphs(self):
 
+        # R relationships:
+        #   a0   <--->   a1
+        #    '---> b <---'
+        #   c ---> d
+        #
+        # S relationships:
+        #   b ---> a0
+        #   |---> a1
+        #   |---> b
+        #   |---> c
+        #   '---> d
+
         # graph's structure
         #
         #      out-degree / in-degree
@@ -45,12 +57,34 @@ class testDegree(FlowTestsBase):
             (c)-[:R]->(d)
         """)
 
+        # R relationships:
+        #  a2 ---> a0 -x3-> b0
+        #  |^-x2-   '---> b1
+        #  |     \
+        #  |---> a1
+        #  |------|--> b0
+        #  |------|--> b1
+        #  |------'--> b2
+        #  '-> a3
+
+        # S relationships:
+        #  a0 -x2-> b0
+        #  a1 --> a2 -x2-> b2
+
         # build a graph with tensors
         #    a0  a1  a2  a3 b0  b1  b2
         #a0  0   0   0   0  5   1   0
         #a1  0   0   2   0  1   1   1
         #a2  1   1   1   1  1   1   3
 
+        #      in  out
+        #  a0   1   6
+        #  a1   1   6
+        #  a2   3   8
+        #  a3   1   0
+        #  b0   7   0
+        #  b1   3   0
+        #  b2   4   0
         self.tensorGraph.query("""
             CREATE
             (a0:A {name:'a0'}),
@@ -87,10 +121,30 @@ class testDegree(FlowTestsBase):
         """)
 
     def test_invalid_invocation(self):
-        queries = ["CALL algo.degree()",                              # missing mandatory argument
-                   "CALL algo.degree(1)",                             # wrong argument
-                   "CALL algo.degree({dir: 'outgoing', unknown: 4})", # unexpected key
-                   "CALL algo.degree({dir: '4'})"                      # invalid direction value
+        queries = [
+                   # wrong argument
+                   "CALL algo.degree(1)",
+                   # unexpected key
+                   "CALL algo.degree({dir: 'outgoing', unknown: 4})",
+                   # invalid direction value
+                   "CALL algo.degree({dir: '4'})"
+                   # invalid direction value
+                   "CALL algo.degree({dir: 4})"
+                   # second argument
+                   "CALL algo.degree({dir: 'outgoing'}, 0)"
+                   # srcLabels should be a string array
+                   "CALL algo.degree({dir: 'outgoing', srcLabels = [4, 1]})"
+                   "CALL algo.degree({dir: 'outgoing', srcLabels = 3.14})"
+                   "CALL algo.degree({dir: 'incoming', srcLabels = 'A'})"
+                   # destLabels should be a string array
+                   "CALL algo.degree({dir: 'incoming', destLabels = [4,1]})"
+                   "CALL algo.degree({dir: 'incoming', destLabels = 3.14})"
+                   "CALL algo.degree({dir: 'incoming', destLabels = 'A'})"
+                   #relationshipTypes should be a string array
+                   "CALL algo.degree({relationshipTypes = [4,1]})"
+                   "CALL algo.degree({relationshipTypes = 3.14})"
+                   "CALL algo.degree({relationshipTypes = 'A'})"
+
         ]
 
         for q in queries:
@@ -106,7 +160,7 @@ class testDegree(FlowTestsBase):
         # 1. all nodes are considered
         # 2. all edges are considered
         # 3. computing out-degree
-        q = """CALL algo.degree({}) YIELD node, degree
+        q = """CALL algo.degree() YIELD node, degree
                RETURN node.name, degree
                ORDER BY node.name"""
 
@@ -130,13 +184,12 @@ class testDegree(FlowTestsBase):
         self.env.assertEqual(result_set[2][1], 5)
 
         self.env.assertEqual(result_set[3][0], 'c')
-        self.env.assertEqual(result_set[3][1], 1) # multi-edge
+        self.env.assertEqual(result_set[3][1], 1) # multi-edge 
 
-        # 0 is implicit
-        #self.env.assertEqual(result_set[4][0], 'd')
-        #self.env.assertEqual(result_set[4][1], 0)
+        self.env.assertEqual(result_set[4][0], 'd')
+        self.env.assertEqual(result_set[4][1], 0)
 
-    def test_all_nodes_all_edges_outdegree(self):
+    def test_all_nodes_all_edges_outdegree(self): 
         q = """CALL algo.degree({dir:'outgoing'}) YIELD node, degree
                RETURN node.name, degree
                ORDER BY node.name"""
@@ -162,11 +215,10 @@ class testDegree(FlowTestsBase):
         self.env.assertEqual(result_set[2][1], 5)
 
         self.env.assertEqual(result_set[3][0], 'c')
-        self.env.assertEqual(result_set[3][1], 1) # multi-edge
+        self.env.assertEqual(result_set[3][1], 1) 
 
-        # 0 is implicit
-        #self.env.assertEqual(result_set[4][0], 'd') 
-        #self.env.assertEqual(result_set[4][1], 0)
+        self.env.assertEqual(result_set[4][0], 'd') 
+        self.env.assertEqual(result_set[4][1], 0)
 
     def test_all_nodes_all_edges_incoming(self):
         q = """CALL algo.degree({dir:'incoming'}) YIELD node, degree
@@ -360,36 +412,75 @@ class testDegree(FlowTestsBase):
         self.env.assertEqual(result_set[0][1], 2)
 
 
-    # FIXME 
-    # def test_none_existing_labels_relations(self):
-    #     # specify none existing labels and relationship types
+    def test_non_existing_labels_relations(self):
+        # specify none existing labels and relationship types
 
-    #     queries = [
-    #         "CALL algo.degree({srcLabels: ['Z']})",
-    #         "CALL algo.degree({destLabels: ['Z']})",
-    #         "CALL algo.degree({srcLabels: ['Z'], destLabels: ['Z']})",
-    #         "CALL algo.degree({relationshipTypes: ['Z']})",
-    #         "CALL algo.degree({srcLabels: ['Z'], relationshipTypes: ['Z']})",
-    #         "CALL algo.degree({destLabels: ['Z'], relationshipTypes: ['Z']})",
-    #         "CALL algo.degree({srcLabels: ['Z'], destLabels: ['Z'], relationshipTypes: ['Z']})",
+        # expect no answer back
+        queries_empty = [
+            "CALL algo.degree({srcLabels: ['Z']}) YIELD degree",
+            "CALL algo.degree({srcLabels: ['Z'], destLabels: ['Z']}) "
+            "YIELD degree",
+            "CALL algo.degree({srcLabels: ['Z'], relationshipTypes: ['Z']}) "
+            "YIELD degree",
+            "CALL algo.degree({srcLabels: ['Z'], destLabels: ['Z'], "
+            "relationshipTypes: ['Z']}) YIELD degree",
+            "CALL algo.degree({srcLabels: []}) YIELD degree",
+            "CALL algo.degree({srcLabels: [], destLabels: []}) "
+            "YIELD degree",
 
-    #         "CALL algo.degree({srcLabels: ['Z'], dir:'incoming'})",
-    #         "CALL algo.degree({destLabels: ['Z'], dir:'incoming'})",
-    #         "CALL algo.degree({srcLabels: ['Z'], destLabels: ['Z'], dir: 'incoming'})",
-    #         "CALL algo.degree({relationshipTypes: ['Z'], dir: 'incoming'})",
-    #         "CALL algo.degree({srcLabels: ['Z'], relationshipTypes: ['Z'], dir: 'incoming'})",
-    #         "CALL algo.degree({destLabels: ['Z'], relationshipTypes: ['Z'], dir: 'incoming'})",
-    #         "CALL algo.degree({srcLabels: ['Z'], destLabels: ['Z'], relationshipTypes: ['Z'], dir: 'incoming'})"
-    #     ]
+            "CALL algo.degree({srcLabels: ['Z'], dir:'incoming'}) "
+            "YIELD degree",
+            "CALL algo.degree({srcLabels: ['Z'], destLabels: ['Z'], "
+            "dir: 'incoming'}) YIELD degree",
+            "CALL algo.degree({srcLabels: ['Z'], relationshipTypes: ['Z'], "
+            "dir: 'incoming'}) YIELD degree",
+            "CALL algo.degree({srcLabels: ['Z'], destLabels: ['Z'], "
+            "relationshipTypes: ['Z'], dir: 'incoming'}) YIELD degree",
 
-    #     for q in queries:
-    #         result_set = self.graph.query(q).result_set
-    #         self.env.assertEqual(len(result_set), 0)
+            "CALL algo.degree({srcLabels: ['Z'], dir:'both'}) "
+            "YIELD degree",
+            "CALL algo.degree({srcLabels: ['Z'], destLabels: ['Z'], "
+            "dir: 'both'}) YIELD degree",
+            "CALL algo.degree({srcLabels: ['Z'], relationshipTypes: ['Z'], "
+            "dir: 'both'}) YIELD degree",
+            "CALL algo.degree({srcLabels: ['Z'], destLabels: ['Z'], "
+            "relationshipTypes: ['Z'], dir: 'both'}) YIELD degree"
+        ]
+        for q in queries_empty:
+            result_set = self.graph.query(q).result_set
+            self.env.assertEqual(len(result_set), 0)
+        # expect explicit zeros back
+        queries_zero = [
+            "CALL algo.degree({destLabels: []}) YIELD degree",
+            "CALL algo.degree({destLabels: ['Z']}) YIELD degree",
+            "CALL algo.degree({relationshipTypes: ['Z']}) YIELD degree",
+            "CALL algo.degree({destLabels: ['Z'], relationshipTypes: ['Z']}) "
+            "YIELD degree",
+
+            "CALL algo.degree({destLabels: ['Z'], dir:'incoming'}) "
+            "YIELD degree",
+            "CALL algo.degree({relationshipTypes: ['Z'], dir: 'incoming'}) "
+            "YIELD degree",
+            "CALL algo.degree({destLabels: ['Z'], relationshipTypes: ['Z'], "
+            "dir: 'incoming'}) YIELD degree",
+
+            "CALL algo.degree({destLabels: ['Z'], dir:'both'}) "
+            "YIELD degree",
+            "CALL algo.degree({relationshipTypes: ['Z'], dir: 'both'}) "
+            "YIELD degree",
+            "CALL algo.degree({destLabels: ['Z'], relationshipTypes: ['Z'], "
+            "dir: 'both'}) YIELD degree"
+        ]
+
+        for q in queries_zero:
+            result_set = self.graph.query(q).result_set
+            ans = [[0]] * 5
+            self.env.assertEqual(result_set, ans)
 
     def test_tensors_all_outgoing(self):
         # try running algo.degree against a graph containing tensors
 
-        q = """CALL algo.degree({}) YIELD node, degree
+        q = """CALL algo.degree() YIELD node, degree
                 RETURN node.name, degree
                 ORDER BY node.name"""
         result_set = self.tensorGraph.query(q).result_set
@@ -421,6 +512,24 @@ class testDegree(FlowTestsBase):
             ['b2', 4]
         ]
         self.env.assertEqual(result_set, ans_set)
+    def test_tensors_all_both(self):
+        # try running algo.degree against a graph containing tensors
+
+        q = """CALL algo.degree({dir:'both'}) YIELD node, degree
+                RETURN node.name, degree
+                ORDER BY node.name"""
+        result_set = self.tensorGraph.query(q).result_set
+        ans_set = [
+            ['a0', 7],
+            ['a1', 7],
+            ['a2', 11],
+            ['a3', 1],
+            ['b0', 7],
+            ['b1', 3],
+            ['b2', 4]
+        ]
+
+        self.env.assertEqual(result_set, ans_set)
 
     def test_tensors_relationships(self):
         # try running algo.degree against a graph containing tensors
@@ -429,7 +538,7 @@ class testDegree(FlowTestsBase):
                 RETURN node.name, degree
                 ORDER BY node.name"""
         result_set = self.tensorGraph.query(q).result_set
-        ans_set = [
+        ans_set_in = [
             ['a0', 4],
             ['a1', 5],
             ['a2', 6],
@@ -438,13 +547,13 @@ class testDegree(FlowTestsBase):
             ['b1', 0],
             ['b2', 0]
         ]
-        self.env.assertEqual(result_set, ans_set)
+        self.env.assertEqual(result_set, ans_set_in)
 
         q = """CALL algo.degree({relationshipTypes:['R'], dir:'incoming'}) YIELD node, degree
                 RETURN node.name, degree
                 ORDER BY node.name"""
         result_set = self.tensorGraph.query(q).result_set
-        ans_set = [
+        ans_set_out = [
             ['a0', 1],
             ['a1', 1],
             ['a2', 2],
@@ -453,6 +562,15 @@ class testDegree(FlowTestsBase):
             ['b1', 3],
             ['b2', 2]
         ]
+        self.env.assertEqual(result_set, ans_set_out)
+
+        q = """CALL algo.degree({relationshipTypes:['R'], dir:'both'}) YIELD node, degree
+                RETURN node.name, degree
+                ORDER BY node.name"""
+        result_set = self.tensorGraph.query(q).result_set
+        ans_set = ans_set_in
+        for i, n in enumerate(ans_set_out):
+            ans_set[i][1] += n[1]
         self.env.assertEqual(result_set, ans_set)
 
         q = """CALL algo.degree({relationshipTypes:['S'], dir:'outgoing'}) 
@@ -460,7 +578,7 @@ class testDegree(FlowTestsBase):
                 RETURN node.name, degree
                 ORDER BY node.name"""
         result_set = self.tensorGraph.query(q).result_set
-        ans_set = [
+        ans_set_in = [
             ['a0', 2],
             ['a1', 1],
             ['a2', 2],
@@ -469,13 +587,13 @@ class testDegree(FlowTestsBase):
             ['b1', 0],
             ['b2', 0]
         ]
-        self.env.assertEqual(result_set, ans_set)
+        self.env.assertEqual(result_set, ans_set_in)
         q = """CALL algo.degree({relationshipTypes:['S'], dir:'incoming'}) 
                 YIELD node, degree
                 RETURN node.name, degree
                 ORDER BY node.name"""
         result_set = self.tensorGraph.query(q).result_set
-        ans_set = [
+        ans_set_out = [
             ['a0', 0],
             ['a1', 0],
             ['a2', 1],
@@ -484,7 +602,17 @@ class testDegree(FlowTestsBase):
             ['b1', 0],
             ['b2', 2]
         ]
+        self.env.assertEqual(result_set, ans_set_out)
+
+        q = """CALL algo.degree({relationshipTypes:['S'], dir:'both'}) YIELD node, degree
+                RETURN node.name, degree
+                ORDER BY node.name"""
+        result_set = self.tensorGraph.query(q).result_set
+        ans_set = ans_set_in
+        for i, n in enumerate(ans_set_out):
+            ans_set[i][1] += n[1]
         self.env.assertEqual(result_set, ans_set)
+
     def test_tensors_nodeTypes(self):
         # try running algo.degree against a graph containing tensors
 
@@ -492,24 +620,39 @@ class testDegree(FlowTestsBase):
                 RETURN node.name, degree
                 ORDER BY node.name"""
         result_set = self.tensorGraph.query(q).result_set
-        ans_set = [
+        ans_set_in = [
             ['a0', 6],
             ['a1', 6],
             ['a2', 8],
             ['a3', 0],
         ]
-        self.env.assertEqual(result_set, ans_set)
+        self.env.assertEqual(result_set, ans_set_in)
 
         q = """CALL algo.degree({srcLabels:['A'], dir:'incoming'}) YIELD node, degree
                 RETURN node.name, degree
                 ORDER BY node.name"""
         result_set = self.tensorGraph.query(q).result_set
-        ans_set = [
+        ans_set_out = [
             ['a0', 1],
             ['a1', 1],
             ['a2', 3],
             ['a3', 1],
         ]
+        self.env.assertEqual(result_set, ans_set_out)
+        
+        q = """CALL algo.degree({srcLabels:['A'], dir:'both'}) YIELD node, degree
+                RETURN node.name, degree
+                ORDER BY node.name"""
+        result_set = self.tensorGraph.query(q).result_set
+        ans_set_out = [
+            ['a0', 1],
+            ['a1', 1],
+            ['a2', 3],
+            ['a3', 1],
+        ]
+        ans_set = ans_set_in
+        for i, n in enumerate(ans_set_out):
+            ans_set[i][1] += n[1]
         self.env.assertEqual(result_set, ans_set)
 
         q = """CALL algo.degree({srcLabels:['B'], dir:'outgoing'}) 
@@ -534,12 +677,17 @@ class testDegree(FlowTestsBase):
             ['b2', 4]
         ]
         self.env.assertEqual(result_set, ans_set)
-        q = """CALL algo.degree({srcLabels:['B'], destLabels:['A'], dir:'incoming'}) 
+        q = """CALL algo.degree({srcLabels:['B'], dir:'both'}) 
                 YIELD node, degree
                 RETURN node.name, degree
                 ORDER BY node.name"""
         result_set = self.tensorGraph.query(q).result_set
         self.env.assertEqual(result_set, ans_set)
+        q = """CALL algo.degree({srcLabels:['B'], destLabels:['A'], dir:'incoming'}) 
+                YIELD node, degree
+                RETURN node.name, degree
+                ORDER BY node.name"""
+        result_set = self.tensorGraph.query(q).result_set
         self.env.assertEqual(result_set, ans_set)
         q = """CALL algo.degree({srcLabels:['A'], destLabels:['B']}) 
                 YIELD node, degree

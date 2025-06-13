@@ -22,7 +22,7 @@ typedef struct {
 	Node node;              // current node being yield
 	GrB_Vector degree;      // 1xn vector containing node degree
 	GxB_Iterator it;        // iterator over the degree matrix
-	SIValue *output;        // array with up to two entries [node, degree]
+	SIValue output [2];     // array with up to two entries [node, degree]
 	SIValue *yield_node;    // yield node
 	SIValue *yield_degree;  // yield degree
 } DegreeContext;
@@ -65,22 +65,22 @@ static void _process_yield
 
 static bool _read_config
 (
-	SIValue config,    // procedure configuration
-	LabelID **src_lbls,    // [output] labels
-	LabelID **dest_lbls,    // [output] labels
-	RelationID **rels,  // [output] relationships
-	GRAPH_EDGE_DIR *dir     // edge direction
+	SIValue config,    	  // procedure configuration
+	LabelID **src_lbls,   // [output] labels
+	LabelID **dest_lbls,  // [output] labels
+	RelationID **rels,    // [output] relationships
+	GRAPH_EDGE_DIR *dir   // edge direction
 ) {
 	// expecting configuration to be a map
-	ASSERT(src_lbls        != NULL);
-	ASSERT(dest_lbls      != NULL);
 	ASSERT(rels            != NULL);
+	ASSERT(src_lbls        != NULL);
+	ASSERT(dest_lbls       != NULL);
 	ASSERT(SI_TYPE(config) == T_MAP);
 
 	// set outputs to NULL
+	*rels 		= NULL;
 	*src_lbls 	= NULL;
 	*dest_lbls 	= NULL;
-	*rels 		= NULL;
 
 	uint match_fields = 0;
 	uint n = Map_KeyCount(config);
@@ -91,12 +91,13 @@ static bool _read_config
 	}
 
 	SIValue v;
-	GraphContext *gc  = QueryCtx_GetGraphCtx();
-	RelationID *_rels    = NULL;
-	LabelID *_slbls = NULL;
-	LabelID *_dlbls = NULL;
-	// TODO: make case insensitive.
-	if(MAP_GET(config, "srcLabels", v)) {
+	GraphContext *gc  	= QueryCtx_GetGraphCtx();
+	RelationID *_rels   = NULL;
+	LabelID *_slbls 	= NULL;
+	LabelID *_dlbls 	= NULL;
+
+	// Reading the source labels from config map
+	if(MAP_GETCASEINSENSITIVE(config, "srcLabels", v)) {
 		if(SI_TYPE(v) != T_ARRAY) {
 			ErrorCtx_SetError("degree configuration, 'srcLabels' should be an array of strings");
 			goto error;
@@ -126,7 +127,9 @@ static bool _read_config
 
 		match_fields++;
 	}
-	if(MAP_GET(config, "destLabels", v)) {
+
+	// Reading the destination labels from config map
+	if(MAP_GETCASEINSENSITIVE(config, "destLabels", v)) {
 		if(SI_TYPE(v) != T_ARRAY) {
 			ErrorCtx_SetError("degree configuration, 'destLabels' should be an array of strings");
 			goto error;
@@ -157,7 +160,8 @@ static bool _read_config
 		match_fields++;
 	}
 
-	if(MAP_GET(config, "relationshipTypes", v)) {
+	// Reading the relationship types from config map
+	if(MAP_GETCASEINSENSITIVE(config, "relationshipTypes", v)) {
 		if(SI_TYPE(v) != T_ARRAY) {
 			ErrorCtx_SetError("degree configuration, 'relationshipTypes' should be an array of strings");
 			goto error;
@@ -186,23 +190,32 @@ static bool _read_config
 
 		match_fields++;
 	}
-	if(MAP_GET(config, "dir", v)) {
+
+	// Reading the direction from config map
+	if(MAP_GETCASEINSENSITIVE(config, "dir", v)) {
 		if(SI_TYPE(v) == T_STRING) {
 			if(strcmp(v.stringval, "incoming") == 0) {
 				*dir = GRAPH_EDGE_DIR_INCOMING;
 			} else if(strcmp(v.stringval, "outgoing") == 0) {
 				*dir = GRAPH_EDGE_DIR_OUTGOING;
+			}	else if(strcmp(v.stringval, "both") == 0) {
+				*dir = GRAPH_EDGE_DIR_BOTH;
 			} else {
 				// unknown edge direction, fail
 				ErrorCtx_SetError("Unknown direction");
 				goto error;
 			}
 		}
+		else {
+			ErrorCtx_SetError("degree configuration, 'dir' should be a string");
+			goto error;
+		}
+
 		match_fields++;
 	}
 
 	if(n != match_fields) {
-		ErrorCtx_SetError("wcc configuration contains unknown key");
+		ErrorCtx_SetError("degree configuration contains unknown key");
 		goto error;
 	}
 
@@ -261,17 +274,20 @@ ProcedureResult Proc_DegreeInvoke
 	// parse configuration
 	bool config_ok = _read_config(config, &src_labels, &dest_labels, &rel_types, &dir);
 	SIValue_Free(config);
+
 	if(!config_ok) {
 		// failed to parse input configuration
 		// emit an error and return
-		ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS, "algo.degree");
+		// error already set by _read_config
 		return PROCEDURE_ERR;
 	}
-	unsigned short  n_lbls = array_len(src_labels);
-	unsigned short  n_rels = array_len(rel_types);
-	GraphContext *gc        = QueryCtx_GetGraphCtx();
-	Graph        *g         = GraphContext_GetGraph(gc);
-	int           direction = (dir == GRAPH_EDGE_DIR_INCOMING)? DEG_INDEGREE : DEG_DEFAULT;
+
+	unsigned short  n_lbls_s  = array_len(src_labels);
+	unsigned short  n_lbls_d  = array_len(dest_labels);
+	unsigned short  n_rels    = array_len(rel_types);
+	GraphContext *gc          = QueryCtx_GetGraphCtx();
+	Graph        *g           = GraphContext_GetGraph(gc);
+	int           direction   = DEG_DEFAULT;
 
 	Tensor		 R 		= NULL;  // relation adjacency matrix
 	GrB_Info 	 info  	= GrB_SUCCESS;
@@ -279,21 +295,30 @@ ProcedureResult Proc_DegreeInvoke
 	GrB_Vector 	 src 	= NULL; // src vector
 	GrB_Vector 	 dest 	= NULL; // dest vector
 
+	// Set direction
+	direction |= (dir == GRAPH_EDGE_DIR_OUTGOING)? DEG_OUTDEGREE: DEG_DEFAULT;
+	direction |= (dir == GRAPH_EDGE_DIR_INCOMING)? DEG_INDEGREE: DEG_DEFAULT;
+
 	//--------------------------------------------------------------------------
 	// get source label vector
 	//--------------------------------------------------------------------------
 	info = GrB_Vector_new(&degree, GrB_UINT64, Graph_RequiredMatrixDim(g));
 	ASSERT(info == GrB_SUCCESS);
+	// if srcLabels was give but no labels were real, src will be empty.
+	// and no degrees are returned. Shortcut.
+	if(src_labels != NULL && n_lbls_s == 0) goto output_proc;
 	if(src_labels != NULL) {
+		info = GrB_Vector_new(&src, GrB_BOOL, Graph_RequiredMatrixDim(g));
+		ASSERT(info == GrB_SUCCESS);
 		
 		Delta_Matrix DL = Graph_GetLabelMatrix(g, src_labels[0]);
-
 		GrB_Matrix L;
+
 		info = Delta_Matrix_export(&L, DL, GrB_BOOL);
 		ASSERT(info == GrB_SUCCESS);
 
 		// L = L U M
-		for(unsigned short i = 1; i < n_lbls; i++) {
+		for(unsigned short i = 1; i < n_lbls_s; i++) {
 			DL = Graph_GetLabelMatrix(g, src_labels[i]);
 
 			GrB_Matrix M;
@@ -306,29 +331,33 @@ ProcedureResult Proc_DegreeInvoke
 
 			GrB_Matrix_free(&M);
 		}
-		info = GrB_Vector_new(&src, GrB_BOOL, Graph_RequiredMatrixDim(g));
-		ASSERT(info == GrB_SUCCESS);
+
 		info = GxB_Vector_diag(src, L, 0, NULL);
-		ASSERT(info == GrB_SUCCESS);
-		info = GrB_Vector_assign_UINT64(
-			degree, src, NULL, 0, GrB_ALL, 0, GrB_DESC_S);
 		ASSERT(info == GrB_SUCCESS);
 
 		// free L matrix
 		info = GrB_Matrix_free(&L);
 		ASSERT(info == GrB_SUCCESS);
-		info = GrB_Vector_free(&src);
-		ASSERT(info == GrB_SUCCESS);
 	}
-	else {
-		// no source label specified, use all nodes
-		info = GrB_Vector_assign_UINT64(
-			degree, NULL, NULL, 0, GrB_ALL, 0, NULL);
-		ASSERT(info == GrB_SUCCESS);
-	}
+
+	//Setting degree at source node ids to zero
+	info = GrB_Vector_assign_UINT64(
+		degree, src, NULL, 0, GrB_ALL, 0, GrB_DESC_S);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_Vector_free(&src);
+	ASSERT(info == GrB_SUCCESS);
+
 	//--------------------------------------------------------------------------
 	// get destination label vector
 	//--------------------------------------------------------------------------
+	// If destLabels was give but no labels were real, dest will be empty.
+	// All degrees are 0. Shortcut.
+	if(dest_labels != NULL && n_lbls_d == 0) goto output_proc;
+
+	// Same for relationshipTypes. 
+	if(rel_types != NULL && n_rels == 0) goto output_proc;
+
 	info = GrB_Vector_new(&dest, GrB_BOOL, Graph_RequiredMatrixDim(g));
 	ASSERT(info == GrB_SUCCESS);
 	if(dest_labels != NULL) {
@@ -340,7 +369,7 @@ ProcedureResult Proc_DegreeInvoke
 		ASSERT(info == GrB_SUCCESS);
 
 		// L = L U M
-		for(unsigned short i = 1; i < n_lbls; i++) {
+		for(unsigned short i = 1; i < n_lbls_d; i++) {
 			DL = Graph_GetLabelMatrix(g, dest_labels[i]);
 
 			GrB_Matrix M;
@@ -361,12 +390,13 @@ ProcedureResult Proc_DegreeInvoke
 		info = GrB_Matrix_free(&L);
 		ASSERT(info == GrB_SUCCESS);
 	}
-	else {
-		// no source label specified, use all nodes
+	else{
+		// no destination label specified, use all nodes
 		info = GrB_Vector_assign_BOOL(
 			dest, NULL, NULL, (bool) 1, GrB_ALL, 0, NULL);
 		ASSERT(info == GrB_SUCCESS);
 	}
+
 	//--------------------------------------------------------------------------
 	// get relationship type matrix
 	//--------------------------------------------------------------------------
@@ -384,10 +414,14 @@ ProcedureResult Proc_DegreeInvoke
 			R = Graph_GetRelationMatrix(g, i, false);
 			int opt = Graph_RelationshipContainsMultiEdge(g, i)?
 					DEG_TENSOR : DEG_DEFAULT;
-			
 			TesorDegree(degree, dest, R, direction | opt);
 		}
 	}
+
+	info = GrB_free(&dest);
+	ASSERT(info == GrB_SUCCESS);
+
+output_proc:
 	info = GrB_Vector_resize(degree, Graph_UncompactedNodeCount(g));
 
 	array_free(rel_types);
@@ -403,7 +437,6 @@ ProcedureResult Proc_DegreeInvoke
 
 	pdata->g      = QueryCtx_GetGraph();
 	pdata->degree = degree;
-	pdata->output = rm_malloc(sizeof(SIValue) * 2);
 
 	_process_yield(pdata, yield);
 
@@ -449,7 +482,8 @@ SIValue *Proc_DegreeStep
 		return NULL;
 	}
 
-	
+	// advance to next entry
+	pdata->info = GxB_Vector_Iterator_next(pdata->it);
 
 	// yield node
 	if(pdata->yield_node) {
@@ -459,11 +493,8 @@ SIValue *Proc_DegreeStep
 
 	// yield degree
 	if(pdata->yield_degree) {
-		*pdata->yield_degree = SI_DoubleVal(degree);
+		*pdata->yield_degree = SI_LongVal(degree);
 	}
-
-	// advance to next entry
-	pdata->info = GxB_Vector_Iterator_next(pdata->it);
 
 	return pdata->output;
 }
@@ -479,14 +510,8 @@ ProcedureResult Proc_DegreeFree
 		GrB_Info info = GxB_Iterator_free(&pdata->it);
 		ASSERT(info == GrB_SUCCESS);
 
-		if(pdata->degree != NULL) {
-			info = GrB_free(&pdata->degree);
-			ASSERT(info == GrB_SUCCESS);
-		}
-
-		if(pdata->output) {
-			rm_free(pdata->output);
-		}
+		info = GrB_free(&pdata->degree);
+		ASSERT(info == GrB_SUCCESS);
 
 		rm_free(pdata);
 	}
@@ -498,18 +523,19 @@ ProcedureResult Proc_DegreeFree
 // procedure input:
 //	{
 //		'srcLabels':      		[<label>, ...],
-//		'dir':         	  		'incoming' / 'outgoing',
+//		'dir':         	  		'incoming' / 'outgoing' / 'both',
 //		'relationshipTypes':    [<type>, ...],
 //		'destLabels':     		[<label>, ...],
 //	}
 //
 //  srcLabels      		- [optional] [string[]] type of nodes for which degree is computed
-//  dir         		- [optional] [string] edge direction: 'incoming' or 'outgoing'
+//  dir         		- [optional] [string]   'incoming', 'outgoing', or 'both'. default: 'outgoing'
 //  relationshipTypes   - [optional] [string[]] the type of edges to consider
 //  destLabels 			- [optional] [string[]] type of reachable nodes
 //
 //  examples:
 //
+//  CALL algo.degree()
 //  CALL algo.degree(NULL)
 //  CALL algo.degree({})
 //  CALL algo.degree({srcLabels: 'L', relationshipTypes: 'R', dir: 'outgoing', destLabels: 'M'})
@@ -524,7 +550,13 @@ ProcedureCtx *Proc_DegreeCtx()
 	array_append(outputs, output_node);
 	array_append(outputs, output_degree);
 
-	return ProcCtxNew("algo.degree", 1, outputs, Proc_DegreeStep,
-			Proc_DegreeInvoke, Proc_DegreeFree, privateData, true);
+	return ProcCtxNew("algo.degree", 
+						PROCEDURE_VARIABLE_ARG_COUNT, 
+						outputs, 
+						Proc_DegreeStep,
+						Proc_DegreeInvoke, 
+						Proc_DegreeFree, 
+						privateData, 
+						true);
 }
 

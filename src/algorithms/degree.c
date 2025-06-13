@@ -110,38 +110,60 @@ void _numInEntryFirst(uint64_t *z, const uint64_t *x, const uint64_t *y) {
 	else
 	{
 		GrB_Vector v = AS_VECTOR(*x);
-		GrB_Vector_nvals(z, v);
+		GrB_Info info = GrB_Vector_nvals(z, v);
+		ASSERT(info == GrB_SUCCESS);
 	}
 }
 
+// Compute the in or out degree of each node in degree
+//
+// arguments:
+// 'degree' input / output degree vector. Degree of node i is added to degree[i]
+// 'dest' input vector. Boolean vector with entries to be counted for degree.
+// 'T' Tesor being used to find the degree.
+// 'ops' input. DEG_[OUT/IN]DEGREE: compute [out/in]degree. 
+// 				DEG_TENSOR: compute tensor degree
+//				DEG_DEFAULT: compute total degree, without multiedges.
+// returns:
+// GrB_SUCCESS on success otherwise a GraphBLAS error
 GrB_Info TesorDegree  
 (
-	GrB_Vector degree,  // [input / output] degree vector with values where 
-						// the degree should be added
-	GrB_Vector dest,  	// [input] possible destination / source nodes
-	Tensor T,         	// matrix with tensor entries
-	int ops				// options:
-						// DEG_TENSOR: compute tensor degree
-						// DEG_INDEGREE: compute indegree
+	GrB_Vector degree,  	// [input / output] degree vector with values where 
+							// the degree should be accumulated
+	const GrB_Vector dest,  // [input] possible destination / source nodes
+	const Tensor T,         // matrix with tensor entries
+	int ops					// options:
+							// DEG_OUTDEGREE: compute outdegree
+							// DEG_INDEGREE: compute indegree
+							// DEG_TENSOR: compute tensor degree
 ) {
 	ASSERT(T      != NULL);
 	ASSERT(degree != NULL);
-	
+	GrB_Info info;
+
+	if((ops & (DEG_INDEGREE | DEG_OUTDEGREE)) == 0 || 
+		(ops & (DEG_INDEGREE | DEG_OUTDEGREE)) == (DEG_INDEGREE | DEG_OUTDEGREE) )
+	{
+		// Sum the in and out degrees
+		info = TesorDegree(degree, dest, T, ops ^ DEG_INDEGREE);
+		info |= TesorDegree(degree, dest, T, ops ^ DEG_OUTDEGREE);
+		return info;
+	}
+
 	GrB_Matrix M  = Delta_Matrix_M(T);
 	GrB_Matrix Dp = Delta_Matrix_Dp(T);
 	GrB_Matrix Dm = Delta_Matrix_Dm(T);
-	GrB_Info info;
 
 	// GrB_Vector x                 = NULL;
-	GrB_BinaryOp countEntry = NULL; 
-	GrB_Semiring plus_count_uint64 = NULL;
-	GrB_Semiring semiring = GxB_PLUS_PAIR_UINT64;
-	GrB_Descriptor desc = ops & DEG_INDEGREE? GrB_DESC_ST0: GrB_DESC_S;
+	GrB_BinaryOp countEntry 		= NULL; 
+	GrB_Semiring plus_count_uint64 	= NULL;
+	GrB_Semiring semiring 			= GxB_PLUS_PAIR_UINT64;
+	GrB_Descriptor desc				= ops & DEG_INDEGREE? GrB_DESC_ST0: GrB_DESC_S;
 	
 	if(ops & DEG_TENSOR)
 	{
 		// create custom semiring
-		// a * b = count entries in b
+		// a * b = count entries in a
 		// a + b = a + b
 		info = GrB_BinaryOp_new(
 			&countEntry, (GxB_binary_function) _numInEntryFirst, 
@@ -155,33 +177,20 @@ GrB_Info TesorDegree
 	}
 
 	//--------------------------------------------------------------------------
-	// determine the size of adj
-	//--------------------------------------------------------------------------
-
-	GrB_Index nrows;
-	GrB_Index ncols;
-
-	info = GrB_Matrix_nrows(&nrows, M);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Matrix_ncols(&ncols, M);
-	ASSERT(info == GrB_SUCCESS);
-	ASSERT(nrows == ncols);
-
-	//--------------------------------------------------------------------------
 	// compute the degree
 	//--------------------------------------------------------------------------
 	// GraphBLAS decides wether to explicitly transpose.
 	info = GrB_mxv(degree, degree, GrB_PLUS_UINT64, semiring, M, dest, desc);
 	ASSERT(info == GrB_SUCCESS);
+
 	info = GrB_mxv(
 		degree, degree, GrB_PLUS_UINT64, semiring, Dp, dest, desc);
 	ASSERT(info == GrB_SUCCESS);
+
 	info = GrB_mxv(
 		degree, degree, GrB_MINUS_UINT64, GxB_PLUS_PAIR_UINT64, Dm, dest, desc);
 	ASSERT(info == GrB_SUCCESS);
-	info = GrB_wait(degree, GrB_MATERIALIZE);
-	ASSERT(info == GrB_SUCCESS);
+
 	//--------------------------------------------------------------------------
 	// clean up
 	//--------------------------------------------------------------------------

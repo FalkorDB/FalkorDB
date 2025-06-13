@@ -10,8 +10,9 @@
 
 enum {
 	DEG_DEFAULT = 0,
-	DEG_INDEGREE = 1,
-	DEG_TENSOR = 2,
+	DEG_INDEGREE = 1 << 0,
+	DEG_OUTDEGREE = 1 << 1,
+	DEG_TENSOR = 1 << 2,
 } ;
 
 // compute in/out degree for all nodes
