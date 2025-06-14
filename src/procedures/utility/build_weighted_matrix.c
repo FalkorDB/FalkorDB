@@ -7,15 +7,18 @@
 
 #define GETRELATIONID(i) ((rels)? rels[i] : i)
 
-#define BWM_FREE 													\
-{																	\
-	GrB_UnaryOp_free(&toMatrix);									\
-	if (weight != ATTRIBUTE_ID_NONE) GrB_BinaryOp_free(&minID);		\
-	GrB_BinaryOp_free(&toMatrixMin);								\
-	GrB_BinaryOp_free(&weightOp);									\
-	GrB_Scalar_free(&theta);										\
-	GrB_IndexUnaryOp_free(&hasAtt);									\
-}
+ #define BWM_FREE 													\
+ {																	\
+ 	GrB_UnaryOp_free(&toMatrix);									\
+ 	if (weight != ATTRIBUTE_ID_NONE) GrB_BinaryOp_free(&minID);		\
++	GxB_IndexBinaryOp_free(&minID_indexOP);							\
+ 	GrB_BinaryOp_free(&toMatrixMin);								\
+ 	GrB_BinaryOp_free(&weightOp);									\
+ 	GrB_Scalar_free(&theta);										\
+ 	GrB_IndexUnaryOp_free(&hasAtt);									\
++	GrB_Type_free(&contx_type);										\
+ }
+ 
 typedef struct
 {
 	const Graph *g;		// Graph

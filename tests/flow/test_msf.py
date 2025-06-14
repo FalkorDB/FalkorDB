@@ -220,58 +220,76 @@ class testMSF(FlowTestsBase):
             YIELD weight
             """).result_set
         minEdge = self.find_min_edge("A", "B")
-        ok = False
-        for w in result_set:
-            ok = ok or w[0] == minEdge
-        self.env.assertTrue(ok or (minEdge is None))
+
+        if(minEdge is None): #components are disconnected. 
+            #Should return two spanning trees with 19 edges each.
+            self.env.assertEqual(len(result_set), 38)
+        else:
+            self.env.assertEqual(len(result_set), 39)
+            self.env.assertIn([minEdge], result_set)
 
         result_set = self.randomGraph.query("""
             CALL algo.MSF({nodeLabels: ['A', 'C'], weightAttribute: 'weight'}) 
             YIELD weight
             """).result_set
         minEdge = self.find_min_edge("A", "C")
-        ok = False
-        for w in result_set:
-            ok = ok or w[0] == minEdge
-        self.env.assertTrue(ok or (minEdge is None))
+        
+        if(minEdge is None): #components are disconnected. 
+            #Should return two spanning trees with 19 edges each.
+            self.env.assertEqual(len(result_set), 38)
+        else:
+            self.env.assertEqual(len(result_set), 39)
+            self.env.assertIn([minEdge], result_set)
 
         result_set = self.randomGraph.query("""
             CALL algo.MSF({nodeLabels: ['A', 'D'], weightAttribute: 'weight'}) 
             YIELD weight
             """).result_set
         minEdge = self.find_min_edge("A", "D")
-        ok = False
-        for w in result_set:
-            ok = ok or w[0] == minEdge
-        self.env.assertTrue(ok or (minEdge is None))
+        
+        if(minEdge is None): #components are disconnected. 
+            #Should return two spanning trees with 19 edges each.
+            self.env.assertEqual(len(result_set), 38)
+        else:
+            self.env.assertEqual(len(result_set), 39)
+            self.env.assertIn([minEdge], result_set)
 
         result_set = self.randomGraph.query("""
             CALL algo.MSF({nodeLabels: ['B', 'C'], weightAttribute: 'weight'}) 
             YIELD weight
             """).result_set
         minEdge = self.find_min_edge("B", "C")
-        ok = False
-        for w in result_set:
-            ok = ok or w[0] == minEdge
-        self.env.assertTrue(ok or (minEdge is None))
+        
+        if(minEdge is None): #components are disconnected. 
+            #Should return two spanning trees with 19 edges each.
+            self.env.assertEqual(len(result_set), 38)
+        else:
+            self.env.assertEqual(len(result_set), 39)
+            self.env.assertIn([minEdge], result_set)
         
         result_set = self.randomGraph.query("""
             CALL algo.MSF({nodeLabels: ['B', 'D'], weightAttribute: 'weight'}) 
             YIELD weight
             """).result_set
         minEdge = self.find_min_edge("B", "D")
-        ok = False
-        for w in result_set:
-            ok = ok or w[0] == minEdge
-        self.env.assertTrue(ok or (minEdge is None))
+        
+        if(minEdge is None): #components are disconnected. 
+            #Should return two spanning trees with 19 edges each.
+            self.env.assertEqual(len(result_set), 38)
+        else:
+            self.env.assertEqual(len(result_set), 39)
+            self.env.assertIn([minEdge], result_set)
 
         result_set = self.randomGraph.query("""
             CALL algo.MSF({nodeLabels: ['C', 'D'], weightAttribute: 'weight'}) 
             YIELD weight
             """).result_set
         minEdge = self.find_min_edge("C", "D")
-        ok = False
-        for w in result_set:
-            ok = ok or w[0] == minEdge
-        self.env.assertTrue(ok or (minEdge is None))
+        
+        if(minEdge is None): #components are disconnected. 
+            #Should return two spanning trees with 19 edges each.
+            self.env.assertEqual(len(result_set), 38)
+        else:
+            self.env.assertEqual(len(result_set), 39)
+            self.env.assertIn([minEdge], result_set)
 
