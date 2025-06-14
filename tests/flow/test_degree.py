@@ -127,24 +127,23 @@ class testDegree(FlowTestsBase):
                    # unexpected key
                    "CALL algo.degree({dir: 'outgoing', unknown: 4})",
                    # invalid direction value
-                   "CALL algo.degree({dir: '4'})"
+                   "CALL algo.degree({dir: '4'})",
                    # invalid direction value
-                   "CALL algo.degree({dir: 4})"
+                   "CALL algo.degree({dir: 4})",
                    # second argument
-                   "CALL algo.degree({dir: 'outgoing'}, 0)"
+                   "CALL algo.degree({dir: 'outgoing'}, 0)",
                    # srcLabels should be a string array
-                   "CALL algo.degree({dir: 'outgoing', srcLabels = [4, 1]})"
-                   "CALL algo.degree({dir: 'outgoing', srcLabels = 3.14})"
-                   "CALL algo.degree({dir: 'incoming', srcLabels = 'A'})"
+                   "CALL algo.degree({dir: 'outgoing', srcLabels = [4, 1]})",
+                   "CALL algo.degree({dir: 'outgoing', srcLabels = 3.14})",
+                   "CALL algo.degree({dir: 'incoming', srcLabels = 'A'})",
                    # destLabels should be a string array
-                   "CALL algo.degree({dir: 'incoming', destLabels = [4,1]})"
-                   "CALL algo.degree({dir: 'incoming', destLabels = 3.14})"
-                   "CALL algo.degree({dir: 'incoming', destLabels = 'A'})"
+                   "CALL algo.degree({dir: 'incoming', destLabels = [4,1]})",
+                   "CALL algo.degree({dir: 'incoming', destLabels = 3.14})",
+                   "CALL algo.degree({dir: 'incoming', destLabels = 'A'})",
                    #relationshipTypes should be a string array
-                   "CALL algo.degree({relationshipTypes = [4,1]})"
-                   "CALL algo.degree({relationshipTypes = 3.14})"
+                   "CALL algo.degree({relationshipTypes = [4,1]})",
+                   "CALL algo.degree({relationshipTypes = 3.14})",
                    "CALL algo.degree({relationshipTypes = 'A'})"
-
         ]
 
         for q in queries:

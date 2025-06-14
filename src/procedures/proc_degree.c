@@ -251,7 +251,11 @@ ProcedureResult Proc_DegreeInvoke
 	SIValue config;
 	size_t l = array_len((SIValue *)args);
 
-	if(l > 1) return PROCEDURE_ERR;
+	if(l > 1)
+	{
+		ErrorCtx_SetError("invalid argument to algo.degree");
+		return PROCEDURE_ERR;
+	}
 	if(l == 0 || SIValue_IsNull(args[0])) {
 		config = SI_Map(0);
 	} else {
@@ -282,18 +286,19 @@ ProcedureResult Proc_DegreeInvoke
 		return PROCEDURE_ERR;
 	}
 
-	unsigned short  n_lbls_s  = array_len(src_labels);
-	unsigned short  n_lbls_d  = array_len(dest_labels);
-	unsigned short  n_rels    = array_len(rel_types);
-	GraphContext *gc          = QueryCtx_GetGraphCtx();
-	Graph        *g           = GraphContext_GetGraph(gc);
-	int           direction   = DEG_DEFAULT;
+	unsigned short  n_lbls_s   = array_len(src_labels);
+	unsigned short  n_lbls_d   = array_len(dest_labels);
+	unsigned short  n_rels     = array_len(rel_types);
+	GraphContext 	*gc        = QueryCtx_GetGraphCtx();
+	Graph        	*g         = GraphContext_GetGraph(gc);
+	int          	direction  = DEG_DEFAULT;
+	GrB_Index		n		   = Graph_RequiredMatrixDim(g);
 
-	Tensor		 R 		= NULL;  // relation adjacency matrix
-	GrB_Info 	 info  	= GrB_SUCCESS;
-	GrB_Vector 	 degree = NULL; // degree vector
-	GrB_Vector 	 src 	= NULL; // src vector
-	GrB_Vector 	 dest 	= NULL; // dest vector
+	Tensor		 	R 		= NULL;  // relation adjacency matrix
+	GrB_Info 	 	info  	= GrB_SUCCESS;
+	GrB_Vector 	 	degree  = NULL; // degree vector
+	GrB_Vector 	 	src 	= NULL; // src vector
+	GrB_Vector 	 	dest 	= NULL; // dest vector
 
 	// Set direction
 	direction |= (dir == GRAPH_EDGE_DIR_OUTGOING)? DEG_OUTDEGREE: DEG_DEFAULT;
@@ -302,13 +307,13 @@ ProcedureResult Proc_DegreeInvoke
 	//--------------------------------------------------------------------------
 	// get source label vector
 	//--------------------------------------------------------------------------
-	info = GrB_Vector_new(&degree, GrB_UINT64, Graph_RequiredMatrixDim(g));
+	info = GrB_Vector_new(&degree, GrB_UINT64, n);
 	ASSERT(info == GrB_SUCCESS);
 	// if srcLabels was give but no labels were real, src will be empty.
 	// and no degrees are returned. Shortcut.
 	if(src_labels != NULL && n_lbls_s == 0) goto output_proc;
 	if(src_labels != NULL) {
-		info = GrB_Vector_new(&src, GrB_BOOL, Graph_RequiredMatrixDim(g));
+		info = GrB_Vector_new(&src, GrB_BOOL, n);
 		ASSERT(info == GrB_SUCCESS);
 		
 		Delta_Matrix DL = Graph_GetLabelMatrix(g, src_labels[0]);
@@ -342,7 +347,7 @@ ProcedureResult Proc_DegreeInvoke
 
 	//Setting degree at source node ids to zero
 	info = GrB_Vector_assign_UINT64(
-		degree, src, NULL, 0, GrB_ALL, 0, GrB_DESC_S);
+		degree, src, NULL, 0, GrB_ALL, n, GrB_DESC_S);
 	ASSERT(info == GrB_SUCCESS);
 
 	info = GrB_Vector_free(&src);
@@ -358,7 +363,7 @@ ProcedureResult Proc_DegreeInvoke
 	// Same for relationshipTypes. 
 	if(rel_types != NULL && n_rels == 0) goto output_proc;
 
-	info = GrB_Vector_new(&dest, GrB_BOOL, Graph_RequiredMatrixDim(g));
+	info = GrB_Vector_new(&dest, GrB_BOOL, n);
 	ASSERT(info == GrB_SUCCESS);
 	if(dest_labels != NULL) {
 		
@@ -405,7 +410,7 @@ ProcedureResult Proc_DegreeInvoke
 			R = Graph_GetRelationMatrix(g, rel_types[i], false);
 			int opt = Graph_RelationshipContainsMultiEdge(g, rel_types[i])?
 					DEG_TENSOR : DEG_DEFAULT;
-			TesorDegree(degree, dest, R, direction | opt);
+			TensorDegree(degree, dest, R, direction | opt);
 		}
 	} else {
 		n_rels = Graph_RelationTypeCount(g);
@@ -414,7 +419,7 @@ ProcedureResult Proc_DegreeInvoke
 			R = Graph_GetRelationMatrix(g, i, false);
 			int opt = Graph_RelationshipContainsMultiEdge(g, i)?
 					DEG_TENSOR : DEG_DEFAULT;
-			TesorDegree(degree, dest, R, direction | opt);
+			TensorDegree(degree, dest, R, direction | opt);
 		}
 	}
 

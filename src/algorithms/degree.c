@@ -120,13 +120,13 @@ void _numInEntryFirst(uint64_t *z, const uint64_t *x, const uint64_t *y) {
 // arguments:
 // 'degree' input / output degree vector. Degree of node i is added to degree[i]
 // 'dest' input vector. Boolean vector with entries to be counted for degree.
-// 'T' Tesor being used to find the degree.
+// 'T' Tensor being used to find the degree.
 // 'ops' input. DEG_[OUT/IN]DEGREE: compute [out/in]degree. 
 // 				DEG_TENSOR: compute tensor degree
 //				DEG_DEFAULT: compute total degree, without multiedges.
 // returns:
 // GrB_SUCCESS on success otherwise a GraphBLAS error
-GrB_Info TesorDegree  
+GrB_Info TensorDegree  
 (
 	GrB_Vector degree,  	// [input / output] degree vector with values where 
 							// the degree should be accumulated
@@ -145,8 +145,8 @@ GrB_Info TesorDegree
 		(ops & (DEG_INDEGREE | DEG_OUTDEGREE)) == (DEG_INDEGREE | DEG_OUTDEGREE) )
 	{
 		// Sum the in and out degrees
-		info = TesorDegree(degree, dest, T, ops ^ DEG_INDEGREE);
-		info |= TesorDegree(degree, dest, T, ops ^ DEG_OUTDEGREE);
+		info = TensorDegree(degree, dest, T, ops ^ DEG_INDEGREE);
+		info |= TensorDegree(degree, dest, T, ops ^ DEG_OUTDEGREE);
 		return info;
 	}
 

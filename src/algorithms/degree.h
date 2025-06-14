@@ -29,7 +29,7 @@ GrB_Info Degree
 	GrB_Matrix A         // graph matrix
 );
 
-GrB_Info TesorDegree  
+GrB_Info TensorDegree  
 (
 	GrB_Vector degree,  // [input / output] degree vector with values where 
 						// the degree should be added
