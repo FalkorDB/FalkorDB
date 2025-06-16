@@ -9,7 +9,7 @@ FROM $BASE_IMAGE AS compiler
 FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
 
 
-FROM redis:7.4.2
+FROM redis:7.4.4
 
 ENV FALKORDB_HOME=/var/lib/falkordb
 
@@ -34,8 +34,11 @@ RUN apt-get update && apt-get install -y libgomp1 curl && \
     curl -sL https://deb.nodesource.com/setup_22.x -o nodesource_setup.sh && \
     bash nodesource_setup.sh && \
     apt-get install -y nodejs && \
-    rm -rf /var/lib/apt/lists/*
-
+    && apt-get upgrade -y \
+    && apt-get autoremove -y \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /root/.cache
+    
 WORKDIR ${FALKORDB_HOME}
 
 COPY ./build/docker/run.sh ${FALKORDB_BIN_PATH}/run.sh
