@@ -77,8 +77,8 @@ static bool _read_config
 	SIValue config,         // procedure configuration
 	LabelID **lbls,         // [output] labels
 	RelationID **rels,      // [output] relationships
-	AttributeID *weightAtt,// [output] relationship used as weight
-	bool *maxSF 			// [output] true if maximum spanning forest
+	AttributeID *weightAtt, // [output] relationship used as weight
+	bool *maxSF             // [output] true if maximum spanning forest
 ) {
 	// expecting configuration to be a map
 	ASSERT(lbls            != NULL);
@@ -125,8 +125,10 @@ static bool _read_config
 			const char *label = lbl.stringval;
 			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 			if(s == NULL) {
-				ErrorCtx_SetError("msf configuration, unknown label %s", label);
-				goto error;
+				// log non-existant label
+                RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING, 
+                    "Skipping non-existent label: '%s'.", label);
+				continue;
 			}
 
 			LabelID lbl_id = Schema_GetID(s);
@@ -155,8 +157,10 @@ static bool _read_config
 			const char *relation = rel.stringval;
 			Schema *s = GraphContext_GetSchema(gc, relation, SCHEMA_EDGE);
 			if(s == NULL) {
-				ErrorCtx_SetError("msf configuration, unknown relationship-type %s", relation);
-				goto error;
+				// log non-existant relation
+                RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING, 
+                    "Skipping non-existent relation: '%s'.", relation);
+				continue;
 			}
 
 			RelationID rel_id = Schema_GetID(s);
@@ -186,9 +190,9 @@ static bool _read_config
 			goto error;
 		}
 		const char *objective = v.stringval;
-		if(strcasecmp(objective, "minimum") == 0)
+		if(strncasecmp(objective, "min", 3) == 0)
 			*maxSF = false;
-		else if(strcasecmp(objective, "maximum") == 0)
+		else if(strncasecmp(objective, "max", 3) == 0)
 			*maxSF = true;
 		else{
 			ErrorCtx_SetError("msf configuration, unknown objective %s", objective);
@@ -259,7 +263,7 @@ ProcedureResult Proc_MSFInvoke
 	LabelID    *lbls      = NULL;
 	RelationID *rels      = NULL;
 	AttributeID weightAtt = ATTRIBUTE_ID_NONE;
-	bool 		maxSF 	  = false;
+	bool        maxSF     = false;
 
 	//--------------------------------------------------------------------------
 	// load configuration map
@@ -281,10 +285,10 @@ ProcedureResult Proc_MSFInvoke
 	Graph *g = QueryCtx_GetGraph();
 	MSF_Context *pdata = rm_calloc(1, sizeof(MSF_Context));
 
-	pdata->g = g;
-	pdata->weight_prop = weightAtt;
-	pdata->relationIDs = rels;
-	pdata->relationCount = array_len(rels);
+	pdata->g              = g;
+	pdata->weight_prop    = weightAtt;
+	pdata->relationIDs    = rels;
+	pdata->relationCount  = array_len(rels);
 	_process_yield(pdata, yield);
 
 	// save private data
@@ -296,7 +300,7 @@ ProcedureResult Proc_MSFInvoke
 	//makes into a symetric matrix
 	info =  Build_Weighted_Matrix (
 			&A, &A_w, &pdata->nodes, g, lbls, array_len(lbls), rels,
-			array_len(rels), weightAtt, true, true);
+			array_len(rels), weightAtt, maxSF? BWM_MAX: BWM_MIN, true, true);
 	ASSERT(info == GrB_SUCCESS);
 	
 	// free build matrix inputs
@@ -307,15 +311,26 @@ ProcedureResult Proc_MSFInvoke
 	// run MSF centrality
 	//--------------------------------------------------------------------------
 
+	// Make weights negative if looking for Maximum Spanning Tree
+	if(maxSF)
+	{
+		info = GrB_Matrix_apply(A_w, NULL, NULL, GrB_AINV_FP64, A_w, NULL);
+		ASSERT(info == GrB_SUCCESS);
+	}
 	char msg[LAGRAPH_MSG_LEN];
 	// execute Minimum Spanning Forest
 	GrB_Info msf_res =
-		// LAGraph_msf(&msf, A_w, false, msg);
 		LAGraph_msf(&pdata->w_tree, A_w, false, msg);
 	if(msf_res != GrB_SUCCESS) {
 		GrB_free(&A);
 		GrB_free(&A_w);
 		return PROCEDURE_ERR;
+	}
+	if(maxSF)
+	{
+		info = GrB_Matrix_apply(
+			pdata->w_tree, NULL, NULL, GrB_AINV_FP64, pdata->w_tree, NULL) ;
+		ASSERT(info == GrB_SUCCESS);
 	}
 	GrB_Index n;
 	info = GrB_Matrix_nrows(&n, pdata->w_tree);
@@ -323,18 +338,11 @@ ProcedureResult Proc_MSFInvoke
 
 	info = GrB_Matrix_new(&pdata->tree, GrB_UINT64, n, n);
 	ASSERT(info == GrB_SUCCESS);
-	// info = GrB_Matrix_new(&pdata->w_tree, GrB_FP64, n, n);
-	// ASSERT(info == GrB_SUCCESS);
 
 	info = GrB_Matrix_assign(
 		pdata->tree, pdata->w_tree, NULL, A, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
 	);
 	ASSERT(info == GrB_SUCCESS);
-
-	// info = GrB_Matrix_assign(
-	// 	pdata->w_tree, msf, NULL, A_w, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
-	// );
-	// ASSERT(info == GrB_SUCCESS);
 	
 	// clean up algorithm inputs
 	info = GrB_free(&A_w);
@@ -348,9 +356,6 @@ ProcedureResult Proc_MSFInvoke
 	info = GxB_Iterator_new(&pdata->it);
 	ASSERT(info == GrB_SUCCESS);
 
-	// // iterate over participating nodes
-	// info = GxB_Vector_Iterator_attach(pdata->it, pdata->nodes, NULL);
-	// ASSERT(info == GrB_SUCCESS);
 	// iterate over spanning tree
 	info = GxB_Matrix_Iterator_attach(pdata->it, pdata->tree, NULL);
 	ASSERT(info == GrB_SUCCESS);

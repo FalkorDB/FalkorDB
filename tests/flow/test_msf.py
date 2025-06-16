@@ -61,6 +61,15 @@ class testMSF(FlowTestsBase):
             return res[0][0]
         else:
             return min(res[0][0], res2[0][0])
+    def find_max_edge (self, src, dest):
+        res = self.randomGraph.query(f"MATCH (:{src})-[r]->(:{dest}) RETURN MAX(r.weight) as maxW").result_set
+        res2 = self.randomGraph.query(f"MATCH (:{dest})-[r]->(:{src}) RETURN MAX(r.weight) as maxW").result_set
+        if res[0][0] is None:
+            return res2[0][0]
+        elif res2[0][0] is None:
+            return res[0][0]
+        else:
+            return max(res[0][0], res2[0][0])
 
     def test_invalid_invocation(self):
         invalid_queries = [
@@ -94,6 +103,69 @@ class testMSF(FlowTestsBase):
         
         # check if it returned empty results (acceptable behavior)
         self.env.assertEqual(len(result.result_set), 0)
+        self.graph.delete()
+
+    def test_msf_on_missing_attributes(self):
+        """Test MSF algorithm on unlabeled nodes with multiple connected components"""
+        # Create an unlabeled graph with multiple connected components
+        # - Component 1: nodes 1-2-3-1 forming a cycle
+        # - Component 2: nodes 4-5 connected
+        # - Component 3: isolated node 6
+        self.graph.query("""
+            CREATE
+            (n1 {id: 1}),
+            (n2 {id: 2}),
+            (n3 {id: 3}),
+            (n4 {id: 4}),
+            (n5 {id: 5}),
+            (n6 {id: 6}),
+            (n1)-[:R {cost: .2198}]->(n2),
+            (n1)<-[:R {}]-(n2),
+            (n1)<-[:R {cost: 3.14159}]-(n2),
+            (n2)-[:R {cost: .02189}]->(n3),
+            (n3)-[:R {cost: .993284}]->(n1),
+            (n4)-[:R {cost: 2.71828}]->(n5)
+        """)
+
+        # Run MSF algorithm
+        result = self.graph.query("""
+            CALL algo.MSF({relationshipTypes: ['R'], weightAttribute: 'cost'}) 
+            YIELD weight RETURN weight ORDER BY weight""")
+        result_set = result.result_set
+        ans_set = [[0.02189], [0.2198], [2.71828]]
+        self.env.assertEqual(ans_set, result_set)
+        self.graph.delete()
+
+    def test_msf_on_missing_attributes_max(self):
+        """Test MSF algorithm on unlabeled nodes with multiple connected components"""
+        # Create an unlabeled graph with multiple connected components
+        # - Component 1: nodes 1-2-3-1 forming a cycle
+        # - Component 2: nodes 4-5 connected
+        # - Component 3: isolated node 6
+        self.graph.query("""
+            CREATE
+            (n1 {id: 1}),
+            (n2 {id: 2}),
+            (n3 {id: 3}),
+            (n4 {id: 4}),
+            (n5 {id: 5}),
+            (n6 {id: 6}),
+            (n1)-[:R {cost: .2198}]->(n2),
+            (n1)<-[:R {}]-(n2),
+            (n1)<-[:R {cost: 3.14159}]-(n2),
+            (n2)-[:R {cost: .02189}]->(n3),
+            (n3)-[:R {cost: .993284}]->(n1),
+            (n4)-[:R {cost: 2.71828}]->(n5)
+        """)
+
+        # Run MSF algorithm
+        result = self.graph.query("""
+            CALL algo.MSF({relationshipTypes: ['R'], weightAttribute: 'cost',
+            objective: 'max'}) 
+            YIELD weight RETURN weight ORDER BY weight""")
+        result_set = result.result_set
+        ans_set = [[.993284], [2.71828], [3.14159]]
+        self.env.assertEqual(ans_set, result_set)
         self.graph.delete()
 
     def test_msf_on_unlabeled_graph(self):
@@ -153,6 +225,37 @@ class testMSF(FlowTestsBase):
         edge, weight = result_set[0]
         self.env.assertEqual(edge, 'Kayak')
         self.env.assertEqual(weight, 4)
+        self.graph.delete()
+    def test_msf_on_multilable_max(self):
+        """Test MSF algorithm on multilabled nodes with multiple connected components"""
+
+        # Create an unlabeled graph with multiple connected components
+        # - Component 1: nodes 1-2 are connected with multiple edges
+        self.graph.query("""
+            CREATE
+            (n1 {id: 1}),
+            (n2 {id: 2}),
+            (n3 {id: 3}),
+            (n4 {id: 4}),
+            (n5 {id: 5}),
+            (n6 {id: 6}),
+            (n1)-[:Car {distance: 11.2, cost: 23}]->(n2),
+            (n1)-[:Walk {distance: 9.24321, cost: 7}]->(n2),
+            (n1)-[:Plane {distance: 123.2490, cost: 300}]->(n2),
+            (n1)-[:Boat {distance: .75, cost: 100}]->(n2),
+            (n1)<-[:Swim {distance: .5, cost: 12}]-(n2),
+            (n1)<-[:Kayak {distance: .68, cost: 4}]-(n2)
+        """)
+        # Run MSF algorithm
+        result = self.graph.query("""
+            CALL algo.MSF({weightAttribute: 'cost', objective: 'max'}) 
+            yield edge, weight return type(edge), weight""")
+        result_set = result.result_set
+        self.env.assertEqual(len(result_set), 1)
+        # Check the edge and weight
+        edge, weight = result_set[0]
+        self.env.assertEqual(edge, 'Plane')
+        self.env.assertEqual(weight, 300)
         self.graph.delete()
 
 
@@ -292,4 +395,83 @@ class testMSF(FlowTestsBase):
         else:
             self.env.assertEqual(len(result_set), 39)
             self.env.assertIn([minEdge], result_set)
+
+    def test_msf_rand_labels_max(self):
+        result_set = self.randomGraph.query("""
+            CALL algo.MSF({nodeLabels: ['A', 'B'], weightAttribute: 'weight', objective: 'maximize'}) 
+            YIELD weight
+            """).result_set
+        maxEdge = self.find_max_edge("A", "B")
+
+        if(maxEdge is None): #components are disconnected. 
+            #Should return two spanning trees with 19 edges each.
+            self.env.assertEqual(len(result_set), 38)
+        else:
+            self.env.assertEqual(len(result_set), 39)
+            self.env.assertIn([maxEdge], result_set)
+
+        result_set = self.randomGraph.query("""
+            CALL algo.MSF({nodeLabels: ['A', 'C'], weightAttribute: 'weight', objective: 'maximize'}) 
+            YIELD weight
+            """).result_set
+        maxEdge = self.find_max_edge("A", "C")
+        
+        if(maxEdge is None): #components are disconnected. 
+            #Should return two spanning trees with 19 edges each.
+            self.env.assertEqual(len(result_set), 38)
+        else:
+            self.env.assertEqual(len(result_set), 39)
+            self.env.assertIn([maxEdge], result_set)
+
+        result_set = self.randomGraph.query("""
+            CALL algo.MSF({nodeLabels: ['A', 'D'], weightAttribute: 'weight', objective: 'maximize'}) 
+            YIELD weight
+            """).result_set
+        maxEdge = self.find_max_edge("A", "D")
+        
+        if(maxEdge is None): #components are disconnected. 
+            #Should return two spanning trees with 19 edges each.
+            self.env.assertEqual(len(result_set), 38)
+        else:
+            self.env.assertEqual(len(result_set), 39)
+            self.env.assertIn([maxEdge], result_set)
+
+        result_set = self.randomGraph.query("""
+            CALL algo.MSF({nodeLabels: ['B', 'C'], weightAttribute: 'weight', objective: 'maximize'}) 
+            YIELD weight
+            """).result_set
+        maxEdge = self.find_max_edge("B", "C")
+        
+        if(maxEdge is None): #components are disconnected. 
+            #Should return two spanning trees with 19 edges each.
+            self.env.assertEqual(len(result_set), 38)
+        else:
+            self.env.assertEqual(len(result_set), 39)
+            self.env.assertIn([maxEdge], result_set)
+        
+        result_set = self.randomGraph.query("""
+            CALL algo.MSF({nodeLabels: ['B', 'D'], weightAttribute: 'weight', objective: 'maximize'}) 
+            YIELD weight
+            """).result_set
+        maxEdge = self.find_max_edge("B", "D")
+        
+        if(maxEdge is None): #components are disconnected. 
+            #Should return two spanning trees with 19 edges each.
+            self.env.assertEqual(len(result_set), 38)
+        else:
+            self.env.assertEqual(len(result_set), 39)
+            self.env.assertIn([maxEdge], result_set)
+
+        result_set = self.randomGraph.query("""
+            CALL algo.MSF({nodeLabels: ['C', 'D'], weightAttribute: 'weight', objective: 'maximize'}) 
+            YIELD weight
+            """).result_set
+        maxEdge = self.find_max_edge("C", "D")
+        
+        if(maxEdge is None): #components are disconnected. 
+            #Should return two spanning trees with 19 edges each.
+            self.env.assertEqual(len(result_set), 38)
+        else:
+            self.env.assertEqual(len(result_set), 39)
+            self.env.assertIn([maxEdge], result_set)
 

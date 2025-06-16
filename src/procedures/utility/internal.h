@@ -8,6 +8,10 @@
 #include "GraphBLAS.h"
 #include "../../graph/graph.h"
 
+typedef enum{
+	BWM_MIN,
+	BWM_MAX
+} BWM_reduce;
 // compose multiple label & relation matrices into a single matrix
 // L = L0 U L1 U ... Lm
 // A = L * (R0 U R1 U ... Rn) * L
@@ -45,6 +49,7 @@ GrB_Info Build_Weighted_Matrix
 	const RelationID *rels,  // [optional] relationships to consider
 	unsigned short n_rels,   // number of relationships
 	const AttributeID weight,// attribute to return
+	BWM_reduce strategy,     // Decides how singular returned edge id is picked
 	bool symmetric,          // build a symmetric matrix
 	bool compact            // remove unused row & columns
 );
