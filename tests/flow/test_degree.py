@@ -124,23 +124,30 @@ class testDegree(FlowTestsBase):
         queries = [
                    # wrong argument
                    "CALL algo.degree(1)",
+
                    # unexpected key
                    "CALL algo.degree({dir: 'outgoing', unknown: 4})",
+
                    # invalid direction value
                    "CALL algo.degree({dir: '4'})",
+
                    # invalid direction value
                    "CALL algo.degree({dir: 4})",
+
                    # second argument
                    "CALL algo.degree({dir: 'outgoing'}, 0)",
+
                    # srcLabels should be a string array
                    "CALL algo.degree({dir: 'outgoing', srcLabels = [4, 1]})",
                    "CALL algo.degree({dir: 'outgoing', srcLabels = 3.14})",
                    "CALL algo.degree({dir: 'incoming', srcLabels = 'A'})",
+
                    # destLabels should be a string array
                    "CALL algo.degree({dir: 'incoming', destLabels = [4,1]})",
                    "CALL algo.degree({dir: 'incoming', destLabels = 3.14})",
                    "CALL algo.degree({dir: 'incoming', destLabels = 'A'})",
-                   #relationshipTypes should be a string array
+
+                   # relationshipTypes should be a string array
                    "CALL algo.degree({relationshipTypes = [4,1]})",
                    "CALL algo.degree({relationshipTypes = 3.14})",
                    "CALL algo.degree({relationshipTypes = 'A'})"
@@ -172,21 +179,14 @@ class testDegree(FlowTestsBase):
         # b    5            3
         # c    2            1
         # d    0            2
-
-        self.env.assertEqual(result_set[0][0], 'a0')
-        self.env.assertEqual(result_set[0][1], 2)
-
-        self.env.assertEqual(result_set[1][0], 'a1')
-        self.env.assertEqual(result_set[1][1], 2)
-
-        self.env.assertEqual(result_set[2][0], 'b')
-        self.env.assertEqual(result_set[2][1], 5)
-
-        self.env.assertEqual(result_set[3][0], 'c')
-        self.env.assertEqual(result_set[3][1], 1) # multi-edge 
-
-        self.env.assertEqual(result_set[4][0], 'd')
-        self.env.assertEqual(result_set[4][1], 0)
+        ans_set = [
+            ['a0', 2],
+            ['a1', 2],
+            ['b', 5],
+            ['c', 1],
+            ['d', 0]
+        ]
+        self.env.assertEqual(result_set, ans_set)
 
     def test_all_nodes_all_edges_outdegree(self): 
         q = """CALL algo.degree({dir:'outgoing'}) YIELD node, degree
@@ -203,21 +203,14 @@ class testDegree(FlowTestsBase):
         # b    5            3
         # c    2            1
         # d    0            2
-
-        self.env.assertEqual(result_set[0][0], 'a0')
-        self.env.assertEqual(result_set[0][1], 2)
-
-        self.env.assertEqual(result_set[1][0], 'a1')
-        self.env.assertEqual(result_set[1][1], 2)
-
-        self.env.assertEqual(result_set[2][0], 'b')
-        self.env.assertEqual(result_set[2][1], 5)
-
-        self.env.assertEqual(result_set[3][0], 'c')
-        self.env.assertEqual(result_set[3][1], 1) 
-
-        self.env.assertEqual(result_set[4][0], 'd') 
-        self.env.assertEqual(result_set[4][1], 0)
+        ans_set = [
+            ['a0', 2],
+            ['a1', 2],
+            ['b', 5],
+            ['c', 1],
+            ['d', 0]
+        ]
+        self.env.assertEqual(result_set, ans_set)
 
     def test_all_nodes_all_edges_incoming(self):
         q = """CALL algo.degree({dir:'incoming'}) YIELD node, degree
@@ -234,21 +227,14 @@ class testDegree(FlowTestsBase):
         # b    5            3
         # c    2            1
         # d    0            2
-
-        self.env.assertEqual(result_set[0][0], 'a0')
-        self.env.assertEqual(result_set[0][1], 2)
-
-        self.env.assertEqual(result_set[1][0], 'a1')
-        self.env.assertEqual(result_set[1][1], 2)
-
-        self.env.assertEqual(result_set[2][0], 'b')
-        self.env.assertEqual(result_set[2][1], 3)
-
-        self.env.assertEqual(result_set[3][0], 'c')
-        self.env.assertEqual(result_set[3][1], 1)
-
-        self.env.assertEqual(result_set[4][0], 'd')
-        self.env.assertEqual(result_set[4][1], 2)
+        ans_set = [
+            ['a0', 2],
+            ['a1', 2],
+            ['b', 3],
+            ['c', 1],
+            ['d', 2]
+        ]
+        self.env.assertEqual(result_set, ans_set)
 
     def test_relations_specific_outgoing_edges(self):
         # consider only outgoing edges with source nodes of a specific type
@@ -258,13 +244,14 @@ class testDegree(FlowTestsBase):
                ORDER BY node.name"""
 
         result_set = self.graph.query(q).result_set
-
-        self.env.assertEqual(len(result_set), 5)
-        for name, deg in result_set:
-            if name != 'b':
-                self.env.assertEqual(deg, 0)
-            else:
-                self.env.assertEqual(result_set[2][1], 5)
+        ans_set = [
+            ['a0', 0],
+            ['a1', 0],
+            ['b', 5],
+            ['c', 0],
+            ['d', 0]
+        ]
+        self.env.assertEqual(result_set, ans_set)
 
     def test_relations_specific_incoming_edges(self):
         # consider only outgoing edges with source nodes of a specific type
@@ -275,23 +262,14 @@ class testDegree(FlowTestsBase):
                ORDER BY node.name"""
 
         result_set = self.graph.query(q).result_set
-
-        self.env.assertEqual(len(result_set), 5)
-
-        self.env.assertEqual(result_set[0][0], 'a0')
-        self.env.assertEqual(result_set[0][1], 1)
-
-        self.env.assertEqual(result_set[1][0], 'a1')
-        self.env.assertEqual(result_set[1][1], 1)
-
-        self.env.assertEqual(result_set[2][0], 'b')
-        self.env.assertEqual(result_set[2][1], 1)
-
-        self.env.assertEqual(result_set[3][0], 'c')
-        self.env.assertEqual(result_set[3][1], 1)
-
-        self.env.assertEqual(result_set[4][0], 'd')
-        self.env.assertEqual(result_set[4][1], 1)
+        ans_set = [
+            ['a0', 1],
+            ['a1', 1],
+            ['b', 1],
+            ['c', 1],
+            ['d', 1]
+        ]
+        self.env.assertEqual(result_set, ans_set)
 
     def test_labeled_outgoing_srcs(self):
         # consider only outgoing edges with source nodes of a specific type
@@ -301,14 +279,11 @@ class testDegree(FlowTestsBase):
                ORDER BY node.name"""
 
         result_set = self.graph.query(q).result_set
-
-        self.env.assertEqual(len(result_set), 2)
-
-        self.env.assertEqual(result_set[0][0], 'a0')
-        self.env.assertEqual(result_set[0][1], 2)
-
-        self.env.assertEqual(result_set[1][0], 'a1')
-        self.env.assertEqual(result_set[1][1], 2)
+        ans_set = [
+            ['a0', 2],
+            ['a1', 2]
+        ]
+        self.env.assertEqual(result_set, ans_set)
 
     def test_labeled_outgoing_dest(self):
         # consider only outgoing edges with destination nodes of a specific type
@@ -318,23 +293,14 @@ class testDegree(FlowTestsBase):
                ORDER BY node.name"""
 
         result_set = self.graph.query(q).result_set
-
-        self.env.assertEqual(len(result_set), 5)
-
-        self.env.assertEqual(result_set[0][0], 'a0')
-        self.env.assertEqual(result_set[0][1], 1)
-
-        self.env.assertEqual(result_set[1][0], 'a1')
-        self.env.assertEqual(result_set[1][1], 1)
-
-        self.env.assertEqual(result_set[2][0], 'b')
-        self.env.assertEqual(result_set[2][1], 2)
-
-        self.env.assertEqual(result_set[3][0], 'c')
-        self.env.assertEqual(result_set[3][1], 0)
-
-        self.env.assertEqual(result_set[4][0], 'd')
-        self.env.assertEqual(result_set[4][1], 0)
+        ans_set = [
+            ['a0', 1],
+            ['a1', 1],
+            ['b', 2],
+            ['c', 0],
+            ['d', 0],
+        ]
+        self.env.assertEqual(result_set, ans_set)
 
     def test_labeled_outgoing_src_and_dest(self):
         # consider only outgoing edges with source and destination nodes of
@@ -359,14 +325,11 @@ class testDegree(FlowTestsBase):
                ORDER BY node.name"""
 
         result_set = self.graph.query(q).result_set
-
-        self.env.assertEqual(len(result_set), 2)
-
-        self.env.assertEqual(result_set[0][0], 'a0')
-        self.env.assertEqual(result_set[0][1], 2)
-
-        self.env.assertEqual(result_set[1][0], 'a1')
-        self.env.assertEqual(result_set[1][1], 2)
+        ans_set = [
+            ['a0', 2],
+            ['a1', 2]
+        ]
+        self.env.assertEqual(result_set, ans_set)
 
     def test_labeled_incoming_dest(self):
         # consider only incoming edges with destination nodes of a specific type
@@ -377,22 +340,14 @@ class testDegree(FlowTestsBase):
 
         result_set = self.graph.query(q).result_set
 
-        self.env.assertEqual(len(result_set), 5)
-
-        self.env.assertEqual(result_set[0][0], 'a0')
-        self.env.assertEqual(result_set[0][1], 1)
-
-        self.env.assertEqual(result_set[1][0], 'a1')
-        self.env.assertEqual(result_set[1][1], 1)
-
-        self.env.assertEqual(result_set[2][0], 'b')
-        self.env.assertEqual(result_set[2][1], 2)
-
-        self.env.assertEqual(result_set[3][0], 'c')
-        self.env.assertEqual(result_set[3][1], 0)
-
-        self.env.assertEqual(result_set[4][0], 'd')
-        self.env.assertEqual(result_set[4][1], 0)
+        ans_set = [
+            ['a0', 1],
+            ['a1', 1],
+            ['b', 2],
+            ['c', 0],
+            ['d', 0],
+        ]
+        self.env.assertEqual(result_set, ans_set)
 
     def test_labeled_incoming_src_and_dest(self):
         # consider only incoming edges with source and destination nodes of

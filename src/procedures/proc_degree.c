@@ -57,30 +57,30 @@ static void _process_yield
 // parse algo.degree configuration map
 //
 //	{
-//		'srcLabels':      		[<label>, ...],
-//		'dir':         	  		'incoming' / 'outgoing',
-//		'relationshipTypes':    [<type>, ...],
-//		'destLabels':     		[<label>, ...],
+//		'srcLabels':          [<label>, ...],
+//		'dir':                'incoming' / 'outgoing',
+//		'relationshipTypes':  [<type>, ...],
+//		'destLabels':         [<label>, ...],
 //	}
 
 static bool _read_config
 (
-	SIValue config,    	  // procedure configuration
+	SIValue config,       // procedure configuration
 	LabelID **src_lbls,   // [output] labels
 	LabelID **dest_lbls,  // [output] labels
 	RelationID **rels,    // [output] relationships
 	GRAPH_EDGE_DIR *dir   // edge direction
 ) {
 	// expecting configuration to be a map
-	ASSERT(rels            != NULL);
-	ASSERT(src_lbls        != NULL);
-	ASSERT(dest_lbls       != NULL);
-	ASSERT(SI_TYPE(config) == T_MAP);
+	ASSERT(rels             != NULL);
+	ASSERT(src_lbls         != NULL);
+	ASSERT(dest_lbls        != NULL);
+	ASSERT(SI_TYPE(config)  == T_MAP);
 
 	// set outputs to NULL
-	*rels 		= NULL;
-	*src_lbls 	= NULL;
-	*dest_lbls 	= NULL;
+	*rels       = NULL;
+	*src_lbls   = NULL;
+	*dest_lbls  = NULL;
 
 	uint match_fields = 0;
 	uint n = Map_KeyCount(config);
@@ -91,10 +91,10 @@ static bool _read_config
 	}
 
 	SIValue v;
-	GraphContext *gc  	= QueryCtx_GetGraphCtx();
-	RelationID *_rels   = NULL;
-	LabelID *_slbls 	= NULL;
-	LabelID *_dlbls 	= NULL;
+	GraphContext *gc   = QueryCtx_GetGraphCtx();
+	RelationID *_rels  = NULL;
+	LabelID *_slbls    = NULL;
+	LabelID *_dlbls    = NULL;
 
 	// Reading the source labels from config map
 	if(MAP_GETCASEINSENSITIVE(config, "srcLabels", v)) {
@@ -116,7 +116,9 @@ static bool _read_config
 			const char *label = lbl.stringval;
 			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 			if(s == NULL) {
-				// ignore non-existing labels
+				// log non-existant label
+                RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING, 
+                    "Skipping non-existent label: '%s'.", label);
 				continue;
 			}
 
@@ -148,7 +150,9 @@ static bool _read_config
 			const char *label = lbl.stringval;
 			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 			if(s == NULL) {
-				// ignore non-existing labels
+				// log non-existant label
+                RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING, 
+                    "Skipping non-existent label: '%s'.", label);
 				continue;
 			}
 
@@ -179,7 +183,9 @@ static bool _read_config
 			const char *relation = rel.stringval;
 			Schema *s = GraphContext_GetSchema(gc, relation, SCHEMA_EDGE);
 			if(s == NULL) {
-				// ignore non-existing relationships
+				// log non-existant relation
+                RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING, 
+                    "Skipping non-existent relation: '%s'.", relation);
 				continue;
 			}
 
@@ -270,10 +276,10 @@ ProcedureResult Proc_DegreeInvoke
 		ErrorCtx_SetError("invalid argument to algo.degree");
 		return PROCEDURE_ERR;
 	}
-	GRAPH_EDGE_DIR dir		= GRAPH_EDGE_DIR_OUTGOING; // edge direction
-	LabelID *src_labels 	= NULL;   	// src label
-	LabelID *dest_labels	= NULL;   	// src label
-	RelationID *rel_types 	= NULL;   // edge relationship type
+	GRAPH_EDGE_DIR dir     = GRAPH_EDGE_DIR_OUTGOING; // edge direction
+	LabelID *src_labels    = NULL; // src label
+	LabelID *dest_labels   = NULL; // src label
+	RelationID *rel_types  = NULL; // edge relationship type
 
 	// parse configuration
 	bool config_ok = _read_config(config, &src_labels, &dest_labels, &rel_types, &dir);
@@ -289,20 +295,33 @@ ProcedureResult Proc_DegreeInvoke
 	unsigned short  n_lbls_s   = array_len(src_labels);
 	unsigned short  n_lbls_d   = array_len(dest_labels);
 	unsigned short  n_rels     = array_len(rel_types);
-	GraphContext 	*gc        = QueryCtx_GetGraphCtx();
-	Graph        	*g         = GraphContext_GetGraph(gc);
-	int          	direction  = DEG_DEFAULT;
-	GrB_Index		n		   = Graph_RequiredMatrixDim(g);
+	GraphContext    *gc        = QueryCtx_GetGraphCtx();
+	Graph           *g         = GraphContext_GetGraph(gc);
+	Degree_Options  direction  = 0;
+	GrB_Index       n          = Graph_RequiredMatrixDim(g);
 
-	Tensor		 	R 		= NULL;  // relation adjacency matrix
-	GrB_Info 	 	info  	= GrB_SUCCESS;
-	GrB_Vector 	 	degree  = NULL; // degree vector
-	GrB_Vector 	 	src 	= NULL; // src vector
-	GrB_Vector 	 	dest 	= NULL; // dest vector
+	Tensor          R          = NULL;  // relation adjacency matrix
+	GrB_Info        info       = GrB_SUCCESS;
+	GrB_Vector      degree     = NULL; // degree vector
+	GrB_Vector      src        = NULL; // src vector
+	GrB_Vector      dest       = NULL; // dest vector
 
 	// Set direction
-	direction |= (dir == GRAPH_EDGE_DIR_OUTGOING)? DEG_OUTDEGREE: DEG_DEFAULT;
-	direction |= (dir == GRAPH_EDGE_DIR_INCOMING)? DEG_INDEGREE: DEG_DEFAULT;
+	switch (dir)
+	{
+	case GRAPH_EDGE_DIR_INCOMING:
+		direction = DEG_INDEGREE;
+		break;
+	case GRAPH_EDGE_DIR_OUTGOING:
+		direction = DEG_OUTDEGREE;
+		break;
+	case GRAPH_EDGE_DIR_BOTH:
+		direction = DEG_INDEGREE | DEG_OUTDEGREE;
+		break;
+	default:
+        ASSERT(false);
+		break;
+	}
 
 	//--------------------------------------------------------------------------
 	// get source label vector
@@ -409,7 +428,7 @@ ProcedureResult Proc_DegreeInvoke
 		for(unsigned short i = 0; i < n_rels; i++) {
 			R = Graph_GetRelationMatrix(g, rel_types[i], false);
 			int opt = Graph_RelationshipContainsMultiEdge(g, rel_types[i])?
-					DEG_TENSOR : DEG_DEFAULT;
+					DEG_TENSOR : 0;
 			TensorDegree(degree, dest, R, direction | opt);
 		}
 	} else {
@@ -418,7 +437,7 @@ ProcedureResult Proc_DegreeInvoke
 		for(unsigned short i = 0; i < n_rels; i++) {
 			R = Graph_GetRelationMatrix(g, i, false);
 			int opt = Graph_RelationshipContainsMultiEdge(g, i)?
-					DEG_TENSOR : DEG_DEFAULT;
+					DEG_TENSOR : 0;
 			TensorDegree(degree, dest, R, direction | opt);
 		}
 	}
@@ -432,6 +451,10 @@ output_proc:
 	array_free(rel_types);
 	array_free(src_labels);
 	array_free(dest_labels);
+    info = GrB_free(&dest);
+	ASSERT(info == GrB_SUCCESS);
+    info = GrB_free(&src);
+	ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
 	// initialize procedure context
@@ -452,8 +475,7 @@ output_proc:
 	info = GxB_Vector_Iterator_attach(pdata->it, degree, NULL);
 	ASSERT(info == GrB_SUCCESS);
 
-	pdata->info = GxB_Vector_Iterator_seek(pdata->it, 0);
-
+    pdata->info = GxB_Vector_Iterator_seek(pdata->it, 0);
 	return PROCEDURE_OK;
 }
 

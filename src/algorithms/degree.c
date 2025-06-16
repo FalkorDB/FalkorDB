@@ -123,26 +123,25 @@ void _numInEntryFirst(uint64_t *z, const uint64_t *x, const uint64_t *y) {
 // 'T' Tensor being used to find the degree.
 // 'ops' input. DEG_[OUT/IN]DEGREE: compute [out/in]degree. 
 // 				DEG_TENSOR: compute tensor degree
-//				DEG_DEFAULT: compute total degree, without multiedges.
 // returns:
 // GrB_SUCCESS on success otherwise a GraphBLAS error
 GrB_Info TensorDegree  
 (
-	GrB_Vector degree,  	// [input / output] degree vector with values where 
-							// the degree should be accumulated
+	GrB_Vector degree,      // [input / output] degree vector with values where 
+	                        // the degree should be accumulated
 	const GrB_Vector dest,  // [input] possible destination / source nodes
 	const Tensor T,         // matrix with tensor entries
-	int ops					// options:
-							// DEG_OUTDEGREE: compute outdegree
-							// DEG_INDEGREE: compute indegree
-							// DEG_TENSOR: compute tensor degree
+	Degree_Options ops      // options:
+	                        // DEG_OUTDEGREE: compute outdegree
+	                        // DEG_INDEGREE: compute indegree
+	                        // DEG_TENSOR: compute tensor degree
 ) {
 	ASSERT(T      != NULL);
 	ASSERT(degree != NULL);
+	ASSERT(ops &  (DEG_INDEGREE | DEG_OUTDEGREE));
 	GrB_Info info;
 
-	if((ops & (DEG_INDEGREE | DEG_OUTDEGREE)) == 0 || 
-		(ops & (DEG_INDEGREE | DEG_OUTDEGREE)) == (DEG_INDEGREE | DEG_OUTDEGREE) )
+	if((ops & (DEG_INDEGREE | DEG_OUTDEGREE)) == (DEG_INDEGREE | DEG_OUTDEGREE) )
 	{
 		// Sum the in and out degrees
 		info = TensorDegree(degree, dest, T, ops ^ DEG_INDEGREE);
@@ -154,11 +153,10 @@ GrB_Info TensorDegree
 	GrB_Matrix Dp = Delta_Matrix_Dp(T);
 	GrB_Matrix Dm = Delta_Matrix_Dm(T);
 
-	// GrB_Vector x                 = NULL;
-	GrB_BinaryOp countEntry 		= NULL; 
-	GrB_Semiring plus_count_uint64 	= NULL;
-	GrB_Semiring semiring 			= GxB_PLUS_PAIR_UINT64;
-	GrB_Descriptor desc				= ops & DEG_INDEGREE? GrB_DESC_ST0: GrB_DESC_S;
+	GrB_BinaryOp countEntry         = NULL; 
+	GrB_Semiring plus_count_uint64  = NULL;
+	GrB_Semiring semiring           = GxB_PLUS_PAIR_UINT64;
+	GrB_Descriptor desc             = (ops & DEG_INDEGREE)? GrB_DESC_ST0: GrB_DESC_S;
 	
 	if(ops & DEG_TENSOR)
 	{

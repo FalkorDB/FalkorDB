@@ -8,12 +8,11 @@
 #include "GraphBLAS.h"
 #include "../graph/graph.h"
 
-enum {
-	DEG_DEFAULT = 0,
+typedef enum {
 	DEG_INDEGREE = 1 << 0,
 	DEG_OUTDEGREE = 1 << 1,
 	DEG_TENSOR = 1 << 2,
-} ;
+} Degree_Options;
 
 // compute in/out degree for all nodes
 //
@@ -33,8 +32,8 @@ GrB_Info TensorDegree
 (
 	GrB_Vector degree,  // [input / output] degree vector with values where 
 						// the degree should be added
-	GrB_Vector dest,  	// [input] possible destination / source nodes
-	Tensor T,         	// matrix with tensor entries
-	int ops
+	GrB_Vector dest,    // [input] possible destination / source nodes
+	Tensor T,           // matrix with tensor entries
+	Degree_Options ops
 );
 
