@@ -1,17 +1,15 @@
-name: browser tests trigger on new tag release
+name: Trigger Browser Tests on New Tag Release
 
 on:
   release:
     types: [published]
 
-jobs:
-  post-release:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+permissions:
+  contents: read
+  actions: read
 
-      - name: Print Tag
-        run: |
-          echo "Release published!"
-          echo "Latest release tag: ${{ github.event.release.tag_name }}"
+jobs:
+  trigger-browser-tests:
+    uses: FalkorDB/falkordb-browser/.github/workflows/playwright.yml@main
+    secrets:
+      PAT_TOKEN: ${{ secrets.RUN_BROWSER_TESTS }}
