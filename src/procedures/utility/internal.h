@@ -8,10 +8,7 @@
 #include "GraphBLAS.h"
 #include "../../graph/graph.h"
 
-typedef enum{
-	BWM_MIN,
-	BWM_MAX
-} BWM_reduce;
+
 // compose multiple label & relation matrices into a single matrix
 // L = L0 U L1 U ... Lm
 // A = L * (R0 U R1 U ... Rn) * L
@@ -31,25 +28,34 @@ GrB_Info Build_Matrix
 	bool compact             // remove unused row & columns
 );
 
+typedef enum{
+	BWM_MIN,  // choose the minimum Edge 
+	BWM_MAX   // choose the maximum Edge
+} BWM_reduce;
+
 // compose multiple label & relation matrices into a single matrix
 // L = L0 U L1 U ... Lm
 // A = L * (R0 + R1 + ... Rn) * L 
-// (Where + is the "min" operator applied on the given attribute)
+//
+// If a weight attribute is specified, this function will pick which Edge to 
+// return given a BWM_reduce strategy. For example, BWM_MIN returns the edge 
+// with minimum weight.
+// 
 // A_w = [Attribute values of A]
 // rows = L's main diagonal
 // in case no labels are specified rows is a dense 1 vector: [1,1,...1]
 GrB_Info Build_Weighted_Matrix
 (
-	GrB_Matrix *A,           // [output] matrix (EdgeIDs)
-	GrB_Matrix *A_w,         // [output] matrix (weights)
-	GrB_Vector *rows,        // [output] filtered rows
-	const Graph *g,          // graph
-	const LabelID *lbls,     // [optional] labels to consider
-	unsigned short n_lbls,   // number of labels
-	const RelationID *rels,  // [optional] relationships to consider
-	unsigned short n_rels,   // number of relationships
-	const AttributeID weight,// attribute to return
-	BWM_reduce strategy,     // Decides how singular returned edge id is picked
-	bool symmetric,          // build a symmetric matrix
-	bool compact            // remove unused row & columns
+	GrB_Matrix *A,             // [output] matrix (EdgeIDs)
+	GrB_Matrix *A_w,           // [output] matrix (weights)
+	GrB_Vector *rows,          // [output] filtered rows
+	const Graph *g,            // graph
+	const LabelID *lbls,       // [optional] labels to consider
+	unsigned short n_lbls,     // number of labels
+	const RelationID *rels,    // [optional] relationships to consider
+	unsigned short n_rels,     // number of relationships
+	const AttributeID weight,  // attribute to return
+	BWM_reduce strategy,       // Decides how singular returned edge id is picked
+	bool symmetric,            // build a symmetric matrix
+	bool compact               // remove unused row & columns
 );

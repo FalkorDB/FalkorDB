@@ -18,7 +18,7 @@
  	GrB_IndexUnaryOp_free(&hasAtt);									\
 +	GrB_Type_free(&contx_type);										\
  }
-#define COMPAREEDGES \
+#define COMPAREEDGES                                                           \
 (                                                                              \
 	uint64_t *z,                                                               \
 	const uint64_t *x,                                                         \
@@ -27,63 +27,61 @@
 	const uint64_t *y,                                                         \
 	GrB_Index iy,                                                              \
 	GrB_Index jy,                                                              \
-	const compareContext *contx                                                \
+	const compareContext *ctx                                                  \
 )                                                                              \
 {                                                                              \
 	*z = *x;                                                                   \
 	Edge _x, _y;                                                               \
-	Graph_GetEdge(contx->g, (EdgeID) (*x), &_x);                               \
-	Graph_GetEdge(contx->g, (EdgeID) (*y), &_y);                               \
-	SIValue *xv = AttributeSet_Get(*_x.attributes, contx->w);                  \
-	SIValue *yv = AttributeSet_Get(*_y.attributes, contx->w);                  \
+	Graph_GetEdge(ctx->g, (EdgeID) (*x), &_x);                                 \
+	Graph_GetEdge(ctx->g, (EdgeID) (*y), &_y);                                 \
+	SIValue *xv = GraphEntity_GetProperty((GraphEntity *) &_x, ctx->w);        \
+	SIValue *yv = GraphEntity_GetProperty((GraphEntity *) &_y, ctx->w);        \
 	if(xv == ATTRIBUTE_NOTFOUND || (SI_NUMERIC & SI_TYPE(*xv)) == 0 ||         \
-		(yv != ATTRIBUTE_NOTFOUND && BWM_COMP(*xv, *yv)))                      \
-	{                                                                          \
+		(yv != ATTRIBUTE_NOTFOUND && BWM_COMP(*xv, *yv))) {                    \
 		*z = *y;                                                               \
 	}                                                                          \
 }
-#define TENSORPICK \
+#define TENSORPICK                                                             \
 (                                                                              \
 	uint64_t *z,                                                               \
 	const uint64_t *x,                                                         \
-	const compareContext *contx                                                \
+	const compareContext *ctx                                                  \
 )                                                                              \
 {                                                                              \
-	if(SCALAR_ENTRY(*x))                                                       \
-	{                                                                          \
+	if(SCALAR_ENTRY(*x)) {                                                     \
 		*z = *x;                                                               \
-	}                                                                          \
-	else /* Find the minimum value in the vector. */                           \
-	{                                                                          \
+	} else { /* Find the minimum weighted edge in the vector. */               \
 		GrB_Vector _v = AS_VECTOR(*x);                                         \
 		GxB_Iterator i = NULL;                                                 \
+		                                                                       \
 		GrB_Info info = GxB_Iterator_new(&i);                                  \
 		ASSERT(info == GrB_SUCCESS)                                            \
 		info = GxB_Vector_Iterator_attach(i, _v, NULL);                        \
 		ASSERT(info == GrB_SUCCESS)                                            \
 		info = GxB_Vector_Iterator_seek(i, 0);                                 \
 		ASSERT(info == GrB_SUCCESS)                                            \
+		                                                                       \
 		Edge currE;                                                            \
-		EdgeID minID = (EdgeID) GxB_Vector_Iterator_getIndex(i);               \
-		Graph_GetEdge(contx->g, minID, &currE);                                \
-		SIValue *currV = NULL, minV = SI_DoubleVal(BWM_INF), tempV;            \
-		currV = AttributeSet_Get(*currE.attributes, contx->w);                 \
+		EdgeID minID    = (EdgeID) GxB_Vector_Iterator_getIndex(i);            \
+		SIValue *currV  = NULL;                                                \
+		SIValue minV    = SI_DoubleVal(BWM_NOVAL);                             \
+		SIValue tempV;                                                         \
+		Graph_GetEdge(ctx->g, minID, &currE);                                  \
+		currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w);       \
 		info = GxB_Vector_Iterator_next(i);                                    \
 		/* Treat edges without the attribute or with a non-numeric attribute   \
 		as infinite length */                                                  \
-		if(currV != ATTRIBUTE_NOTFOUND && (SI_NUMERIC & SI_TYPE(*currV)))      \
-		{                                                                      \
+		if(currV != ATTRIBUTE_NOTFOUND && (SI_NUMERIC & SI_TYPE(*currV))) {    \
 			minV = *currV;                                                     \
 		}                                                                      \
 		while(info != GxB_EXHAUSTED)                                           \
 		{                                                                      \
 			EdgeID CurrID = (EdgeID) GxB_Vector_Iterator_getIndex(i);          \
-			Graph_GetEdge(contx->g, CurrID, &currE);                           \
-			currV = AttributeSet_Get(*currE.attributes, contx->w);             \
+			Graph_GetEdge(ctx->g, CurrID, &currE);                             \
+			currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w);   \
 			if(currV != ATTRIBUTE_NOTFOUND && (SI_NUMERIC & SI_TYPE(*currV))   \
 				&& BWM_COMP(minV, *currV)                                      \
-			)                                                                  \
-			{                                                                  \
+			){                                                                 \
 				minV = *currV;                                                 \
 				minID = CurrID;                                                \
 			}                                                                  \
@@ -93,72 +91,88 @@
 		GxB_Iterator_free(&i);                                                 \
 	}                                                                          \
 }
+
 typedef struct
 {
-	const Graph *g;		// Graph
-	AttributeID w;	// Weight Edge
-	RelationID rel;
+	const Graph *g;  // Graph
+	AttributeID w;   // Attribute used as weight
+	RelationID rel;  // current relationID
 } compareContext;
 
-void _selectAttribute
+static void _edgeHasAttribute
 (
 	bool *z,
 	const uint64_t *x,
 	GrB_Index i,
 	GrB_Index j,
-	const 	compareContext *contx
+	const compareContext *ctx
 )
 {
 	Edge _x;
-	Graph_GetEdge(contx->g, (EdgeID) (*x), &_x);
-	SIValue *v = GraphEntity_GetProperty((GraphEntity *) &_x, contx->w);
+	Graph_GetEdge(ctx->g, (EdgeID) (*x), &_x);
+	SIValue *v = GraphEntity_GetProperty((GraphEntity *) &_x, ctx->w);
 	*z = (v != ATTRIBUTE_NOTFOUND) && (SI_NUMERIC & SI_TYPE(*v));
 }
 void _getAttFromID
 (
 	double *z, 
 	const uint64_t *x, 
-	const compareContext *contx
+	const compareContext *ctx
 )
 {
-	Edge _x, _y;
-	Graph_GetEdge(contx->g, (EdgeID) (*x), &_x);
-	SIValue *v = AttributeSet_Get(*_x.attributes, contx->w);
+	Edge _x;
+	Graph_GetEdge(ctx->g, (EdgeID) (*x), &_x);
+	SIValue *v = GraphEntity_GetProperty((GraphEntity *) &_x, ctx->w);
+
+	// Edges without the attribute should already have been taken out of the 
+	// matrix.
 	ASSERT(v != ATTRIBUTE_NOTFOUND);
 	int info = SIValue_ToDouble(v, z);
 	ASSERT(info == 1);
 }
 
+// set the comparison function that is used to decide which edge to keep
 #define BWM_COMP(X,Y) SIValue_Compare((X), (Y), NULL) == 1
-#define BWM_INF INFINITY
-void _minGetEdgeID 
+
+// set default value (Greater than all other values) 
+#define BWM_NOVAL INFINITY
+
+// compares two Edges and Returns the ID of the edge with the minimum weight attribute
+static void _minGetEdgeID 
 COMPAREEDGES
 
-void _reduceToMatrixMin
+// reduces Tensor entries to the ID of the edge with the minimum weight attribute
+static void _reduceToMatrixMin 
 TENSORPICK
 
 #undef BWM_COMP
-#undef BWM_INF
+#undef BWM_NOVAL
+
+// Set the comparison function that is used to decide which edge to keep
 #define BWM_COMP(X,Y) SIValue_Compare((X), (Y), NULL) == -1
-#define BWM_INF -INFINITY
-void _maxGetEdgeID 
+
+// Set default value (Less than all other values) 
+#define BWM_NOVAL -INFINITY
+
+
+// compares two Edges and Returns the ID of the edge with the minimum weight attribute
+static void _maxGetEdgeID 
 COMPAREEDGES
 
-void _reduceToMatrixMax
+// reduces Tensor entries to the ID of the edge with the minimum weight attribute
+static void _reduceToMatrixMax
 TENSORPICK
 
-void _reduceToMatrixAny
+//reduces Tensor entries to the first ID.
+static void _reduceToMatrixAny
 (
-	uint64_t *z, 
-	const uint64_t *x
+	uint64_t *z,         // single Edge ID
+	const uint64_t *x    // possibly a vector entry
 )
 {
-	if(SCALAR_ENTRY(*x))
-	{
+	if(SCALAR_ENTRY(*x)){
 		*z = *x;
-	}
-	else
-	{
+	} else {
 		GrB_Vector _v = AS_VECTOR(*x);
 		GxB_Iterator i = NULL;
 		GrB_Info info = GxB_Iterator_new(&i);
@@ -173,38 +187,48 @@ void _reduceToMatrixAny
 		*z = minID;
 	}
 }
+
 // compose multiple label & relation matrices into a single matrix
 // L = L0 U L1 U ... Lm
-// A = L * (R0 + R1 + ... Rn) * L
+// A = L * (R0 + R1 + ... Rn) * L 
 //
+// if a weight attribute is specified, this function will pick which Edge to 
+// return given a BWM_reduce strategy. For example, BWM_MIN returns the edge 
+// with minimum weight.
+// 
+// A_w = [Attribute values of A]
 // rows = L's main diagonal
 // in case no labels are specified rows is a dense 1 vector: [1,1,...1]
 GrB_Info Build_Weighted_Matrix
 (
-	GrB_Matrix *A,           // [output] matrix (EdgeIDs)
-	GrB_Matrix *A_w,         // [output] matrix (weights)
-	GrB_Vector *rows,        // [output] filtered rows
-	const Graph *g,          // graph
-	const LabelID *lbls,     // [optional] labels to consider
-	unsigned short n_lbls,   // number of labels
-	const RelationID *rels,  // [optional] relationships to consider
-	unsigned short n_rels,   // number of relationships
-	const AttributeID weight,// attribute to return
-	BWM_reduce strategy,     // Decides how singular returned edge id is picked
-	bool symmetric,          // build a symmetric matrix
-	bool compact            // remove unused row & columns
+	GrB_Matrix *A,             // [output] matrix (EdgeIDs)
+	GrB_Matrix *A_w,           // [output] matrix (weights)
+	GrB_Vector *rows,          // [output] filtered rows
+	const Graph *g,            // graph
+	const LabelID *lbls,       // [optional] labels to consider
+	unsigned short n_lbls,     // number of labels
+	const RelationID *rels,    // [optional] relationships to consider
+	unsigned short n_rels,     // number of relationships
+	const AttributeID weight,  // attribute to return
+	BWM_reduce strategy,       // decides how singular returned edge id is picked
+	bool symmetric,            // build a symmetric matrix
+	bool compact               // remove unused row & columns
 ) {
-	compareContext contx = {.g = g, .w = weight};
-	GrB_Type contx_type = NULL;
-	GxB_IndexBinaryOp minID_indexOP = NULL;
-	GrB_IndexUnaryOp hasAtt = NULL;
-	GrB_BinaryOp minID = NULL, toMatrixMin = NULL, weightOp = NULL;
-	GrB_UnaryOp toMatrix = NULL;
-	GrB_Scalar theta = NULL;
+	compareContext ctx               = {.g = g, .w = weight};
+	GrB_Type contx_type              = NULL;
+	GxB_IndexBinaryOp minID_indexOP  = NULL;
+	GrB_IndexUnaryOp hasAtt          = NULL;
+	GrB_BinaryOp minID               = NULL;
+	GrB_BinaryOp toMatrixMin         = NULL;
+	GrB_BinaryOp weightOp            = NULL;
+	GrB_UnaryOp toMatrix             = NULL;
+	GrB_Scalar theta                 = NULL;
+
 	ASSERT(g != NULL);
 	ASSERT(A != NULL);
 	ASSERT((lbls != NULL && n_lbls > 0) || (lbls == NULL && n_lbls == 0));
 	ASSERT((rels != NULL && n_rels > 0) || (rels == NULL && n_rels == 0));
+
 	GrB_Type_new(&contx_type, sizeof(compareContext));
 	GxB_binary_function toMatrixStrategy[2];
 	toMatrixStrategy[BWM_MIN] = (GxB_binary_function) _reduceToMatrixMin;
@@ -214,18 +238,15 @@ GrB_Info Build_Weighted_Matrix
 	compareStrategy[BWM_MAX]  = (GxB_index_binary_function) _maxGetEdgeID;
 
 
-	if(weight == ATTRIBUTE_ID_NONE)
-	{
+	if(weight == ATTRIBUTE_ID_NONE) {
 		minID = GrB_SECOND_UINT64;
 		GrB_UnaryOp_new (
 			&toMatrix, (GxB_unary_function) _reduceToMatrixAny, GrB_UINT64, 
 			GrB_UINT64
 		) ;
-	}
-	else
-	{
+	} else {
 		GrB_Scalar_new(&theta, contx_type);
-		GrB_Scalar_setElement_UDT(theta, (void *) &contx);
+		GrB_Scalar_setElement_UDT(theta, (void *) &ctx);
 		GrB_BinaryOp_new(
 			&weightOp, (GxB_binary_function) _getAttFromID, 
 			GrB_FP64, GrB_UINT64, contx_type
@@ -239,7 +260,7 @@ GrB_Info Build_Weighted_Matrix
 			GrB_UINT64, GrB_UINT64, GrB_UINT64, contx_type, NULL, NULL) ;
 		GxB_BinaryOp_new_IndexOp (&minID, minID_indexOP, theta) ;
 		GrB_IndexUnaryOp_new(
-			&hasAtt, (GxB_index_unary_function) _selectAttribute, 
+			&hasAtt, (GxB_index_unary_function) _edgeHasAttribute, 
 			GrB_BOOL, GrB_UINT64, contx_type
 		) ;
 	}
@@ -249,21 +270,17 @@ GrB_Info Build_Weighted_Matrix
 	GrB_Index nrows  = 0;            // number of rows in matrix
 	GrB_Index ncols  = 0;            // number of columns in matrix
 	GrB_Type A_type  = NULL;         // type of the matrix
-	GrB_Matrix _A    = NULL;         // output matrix
-	GrB_Matrix _A_w  = NULL;         // output matrix
+	GrB_Matrix _A    = NULL;         // output matrix containing EdgeIDs
+	GrB_Matrix _A_w  = NULL;         // output matrix containing Weights
 	GrB_Vector _N    = NULL;         // output filtered rows
 	GrB_Matrix M     = NULL;         // temporary matrix
 
-	// TODO do I need a read lock?
-	// Graph_AcquireReadLock(g);
-	
 	// if no relationships are specified, use all relationships
-	if(rels == NULL)
-	{
+	if(rels == NULL){
 		n_rels = Graph_RelationTypeCount(g);
 	}
 	if(n_rels == 0) { 
-		// empty graph, return empty matrix
+		// Graph does not have any relations. Return empty matrix.
 		info = GrB_Matrix_new(A, GrB_UINT64, 0, 0);
 		ASSERT(info == GrB_SUCCESS);
 		if(A_w) {
@@ -275,7 +292,6 @@ GrB_Info Build_Weighted_Matrix
 			ASSERT(info == GrB_SUCCESS);
 		}
 		BWM_FREE;
-		// Graph_ReleaseLock(g);
 		return GrB_SUCCESS;
 	}
 	RelationID id = GETRELATIONID(0);
@@ -296,18 +312,14 @@ GrB_Info Build_Weighted_Matrix
 	// expecting a square matrix
 	ASSERT(nrows == ncols);
 
-	if(Graph_RelationshipContainsMultiEdge(g, id))
-	{
-		if(weight == ATTRIBUTE_ID_NONE) 
-		{
+	if(Graph_RelationshipContainsMultiEdge(g, id)) {
+		if(weight == ATTRIBUTE_ID_NONE) {
 			info = GrB_Matrix_apply(
 				_A, NULL, NULL, toMatrix, _A, NULL
 			) ;
-		} 
-		else 
-		{
+		} else {
 			info = GrB_Matrix_apply_BinaryOp2nd_UDT(
-				_A, NULL, NULL, toMatrixMin, _A, (void *) (&contx), NULL
+				_A, NULL, NULL, toMatrixMin, _A, (void *) (&ctx), NULL
 			) ;
 		}
 		ASSERT(info == GrB_SUCCESS);
@@ -319,22 +331,18 @@ GrB_Info Build_Weighted_Matrix
 		info = Delta_Matrix_export(&M, D, GrB_UINT64);
 		ASSERT(info == GrB_SUCCESS);
 
-		if(Graph_RelationshipContainsMultiEdge(g, id))
-		{
-			if(weight == ATTRIBUTE_ID_NONE) 
-			{
+		if(Graph_RelationshipContainsMultiEdge(g, id)) {
+			if(weight == ATTRIBUTE_ID_NONE) {
 				info = GrB_Matrix_apply(
 					_A, NULL, minID, toMatrix, M, NULL);
-			} 
-			else 
-			{
+			} else {
 				// Cannot use indexbinaryOp in accum so I use eWiseAdd
 				// FIXME if possible.
 				// info = GrB_Matrix_apply_BinaryOp2nd_UINT64(
-				// 	_A, NULL, minID, toMatrixMin, M, (uint64_t) (&contx), NULL
+				// 	_A, NULL, minID, toMatrixMin, M, (uint64_t) (&ctx), NULL
 				// ) ;
 				info = GrB_Matrix_apply_BinaryOp2nd_UDT(
-					M, NULL, NULL, toMatrixMin, M, (void *) (&contx), NULL
+					M, NULL, NULL, toMatrixMin, M, (void *) (&ctx), NULL
 				) ;
 				ASSERT(info == GrB_SUCCESS);
 				info = GrB_Matrix_eWiseAdd_BinaryOp(
@@ -342,14 +350,12 @@ GrB_Info Build_Weighted_Matrix
 				) ;
 				ASSERT(info == GrB_SUCCESS);
 			}
-		}
-		else
-		{
+		} else {
 			info = GrB_Matrix_eWiseAdd_BinaryOp(
 				_A, NULL, NULL, minID, _A, M, NULL) ;
 		}
 		ASSERT(info == GrB_SUCCESS);
-		M = NULL;
+		GrB_free(&M);
 	}
 
 	// create vector N denoting all nodes participating in the algorithm
@@ -396,8 +402,7 @@ GrB_Info Build_Weighted_Matrix
 		// free L matrix
 		info = GrB_Matrix_free(&L);
 		ASSERT(info == GrB_SUCCESS);
-	} 
-	else if(rows != NULL) {
+	} else if(rows != NULL) {
 		// N = [1,....1]
 		GrB_Scalar scalar;
 		info = GrB_Scalar_new(&scalar, GrB_BOOL);
@@ -420,6 +425,7 @@ GrB_Info Build_Weighted_Matrix
 				_A, _A, GrB_DESC_T1);
 		ASSERT(info == GrB_SUCCESS);
 	}
+
 	size_t n = nrows;
 	if(compact) {
 		// determine the number of nodes in the graph
@@ -435,29 +441,25 @@ GrB_Info Build_Weighted_Matrix
 			ASSERT(info == GrB_SUCCESS);
 		}
 	}
-	if(weight != ATTRIBUTE_ID_NONE)
-	{
+	if(weight != ATTRIBUTE_ID_NONE) {
 		// Remove edges without the specified attribute
 		info = GrB_Matrix_select_UDT(
-			_A, NULL, NULL, hasAtt, _A, (void *) (&contx), NULL);
+			_A, NULL, NULL, hasAtt, _A, (void *) (&ctx), NULL);
 		ASSERT(info == GrB_SUCCESS);
 	}
-	if(A_w)
-	{
+
+	if(A_w) {
 		info = GrB_Matrix_new(A_w, GrB_FP64, n, n);
 		ASSERT(info == GrB_SUCCESS);
-		if(weight == ATTRIBUTE_ID_NONE)
-		{
+		if(weight == ATTRIBUTE_ID_NONE) {
 			// A_w = A
 			info = GrB_Matrix_assign_FP64(
 				*A_w, _A, NULL, 0.0, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
 			) ;
 			ASSERT(info == GrB_SUCCESS);
-		}
-		else
-		{
+		} else {
 			info = GrB_Matrix_apply_BinaryOp2nd_UDT(
-				*A_w, NULL, NULL, weightOp, _A, (void *) (&contx), NULL
+				*A_w, NULL, NULL, weightOp, _A, (void *) (&ctx), NULL
 			);
 			ASSERT(info == GrB_SUCCESS);
 		}
@@ -468,8 +470,6 @@ GrB_Info Build_Weighted_Matrix
 	_A = NULL;
 	_N = NULL;
 	BWM_FREE;
-
-	// Graph_ReleaseLock(g);
 	return info;
 }
 

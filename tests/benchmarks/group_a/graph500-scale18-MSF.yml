@@ -10,6 +10,6 @@ parameters:
   num_clients: 32
   num_requests: 128
   queries:
-    - query: 'CALL algo.MSF(NULL) YIELD weight return sum(weight) as total_weight'
+    - query: 'CALL algo.MSF() YIELD weight return sum(weight) as total_weight'
       ratio: 1.0
 

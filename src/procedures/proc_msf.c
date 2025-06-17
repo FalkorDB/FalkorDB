@@ -70,7 +70,7 @@ static void _process_yield
 	}
 }
 
-// TODO show return enum rather than bool?
+// TODO should return enum rather than bool?
 // process procedure configuration argument
 static bool _read_config
 (
@@ -237,7 +237,7 @@ ProcedureResult Proc_MSFInvoke
 
 	SIValue config;
 
-	if(SIValue_IsNull(args[0])) {
+	if(l == 0 || SIValue_IsNull(args[0])) {
 		config = SI_Map(0);
 	} else {
 		config = SI_CloneValue(args[0]);
@@ -274,6 +274,7 @@ ProcedureResult Proc_MSFInvoke
 	SIValue_Free(config);
 
 	if(!config_ok) {
+		//error set by _read_config
 		return PROCEDURE_ERR;
 	}
 
@@ -401,17 +402,30 @@ SIValue *Proc_MSFStep
 		pdata->edge.src_id = (NodeID) node_i;
 		pdata->edge.dest_id = (NodeID) node_j;
 		pdata->edge.relationID = GRAPH_UNKNOWN_RELATION;
-		if(pdata->relationCount > 0)
-		{
+		if(pdata->relationCount > 0) {
 			for(RelationID relID = 0; relID < pdata->relationCount; relID++) {
-				if(Graph_isEdgeRelationID(pdata->g, &pdata->edge, pdata->relationIDs[relID])) {
+				if(Graph_CheckAndSetEdgeRelationID(
+					pdata->g, &pdata->edge, pdata->relationIDs[relID])) {
 					break;
 				}
-			}	
-		}
-		else
-		{
-			Graph_FindEdgeRelationID(pdata->g, &pdata->edge);
+			}
+			if(pdata->edge.relationID == GRAPH_UNKNOWN_RELATION){
+				pdata->edge.src_id = (NodeID) node_j;
+				pdata->edge.dest_id = (NodeID) node_i;
+				for(RelationID relID = 0; relID < pdata->relationCount; relID++) {
+					if(Graph_CheckAndSetEdgeRelationID(
+						pdata->g, &pdata->edge, pdata->relationIDs[relID])) {
+						break;
+					}
+				}
+			}
+		} else {
+			Graph_FindAndSetEdgeRelationID(pdata->g, &pdata->edge);
+			if(pdata->edge.relationID == GRAPH_UNKNOWN_RELATION){
+				pdata->edge.src_id = (NodeID) node_j;
+				pdata->edge.dest_id = (NodeID) node_i;
+				Graph_FindAndSetEdgeRelationID(pdata->g, &pdata->edge);
+			}
 		}
 		ASSERT(pdata->edge.relationID != GRAPH_UNKNOWN_RELATION);
 		*pdata->yield_edge = SI_Edge(&pdata->edge);
@@ -459,7 +473,7 @@ ProcedureCtx *Proc_MSFCtx(void) {
 	array_append(outputs, output_weight);
 
 	ProcedureCtx *ctx = ProcCtxNew("algo.MSF",
-								   1,
+								   PROCEDURE_VARIABLE_ARG_COUNT,
 								   outputs,
 								   Proc_MSFStep,
 								   Proc_MSFInvoke,
