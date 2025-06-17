@@ -101,7 +101,7 @@ GrB_Info Degree
 
 
 
-void _numInEntryFirst(uint64_t *z, const uint64_t *x, const uint64_t *y) {
+static void _numInEntryFirst(uint64_t *z, const uint64_t *x, const uint64_t *y) {
 	if(SCALAR_ENTRY(*x))
 	{
 		
@@ -200,3 +200,4 @@ GrB_Info TensorDegree
 	ASSERT(info == GrB_SUCCESS);
 	return info;
 }
+

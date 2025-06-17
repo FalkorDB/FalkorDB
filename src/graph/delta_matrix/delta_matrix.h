@@ -110,17 +110,17 @@ Delta_Matrix Delta_Matrix_getTranspose
 	const Delta_Matrix C
 );
 
-GrB_Matrix Delta_Matrix_M
+const GrB_Matrix Delta_Matrix_M
 (
 	const Delta_Matrix C
 );
 
-GrB_Matrix Delta_Matrix_Dp
+const GrB_Matrix Delta_Matrix_Dp
 (
 	const Delta_Matrix C
 );
 
-GrB_Matrix Delta_Matrix_Dm
+const GrB_Matrix Delta_Matrix_Dm
 (
 	const Delta_Matrix C
 );
