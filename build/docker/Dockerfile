@@ -9,7 +9,7 @@ FROM $BASE_IMAGE AS compiler
 FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
 
 
-FROM redis:7.4.4
+FROM redis:8.0.2
 
 ENV FALKORDB_HOME=/var/lib/falkordb
 
