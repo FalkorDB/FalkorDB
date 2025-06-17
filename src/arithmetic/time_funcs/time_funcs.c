@@ -11,6 +11,7 @@
 #include "../../datatypes/map.h"
 #include "../../datatypes/time.h"
 #include "../../datatypes/date.h"
+#include "../../datatypes/duration.h"
 #include "../../datatypes/datetime.h"
 #include "../../datatypes/temporal_value.h"
 
@@ -53,6 +54,33 @@ static bool _get_component
 	if(*v < min_val || *v > max_val) {
 		ErrorCtx_SetError("Invalid value for %s (valid values %d - %d)",
 				component, min_val, max_val);
+	}
+
+	return exists;
+}
+
+// extract duration component from map
+static bool _duration_get_component
+(
+	const SIValue *map,     // map
+	const char *component,  // key to extract
+	float *v                // [output] value
+) {
+	ASSERT(v         != NULL);
+	ASSERT(map       != NULL);
+	ASSERT(component != NULL);
+
+	// extract component
+	SIValue _v;
+	bool exists = MAP_GETCASEINSENSITIVE(*map, component, _v);
+
+	// validate component type
+	if(exists) {
+		if(!(SI_TYPE(_v) & (SI_NUMERIC))) {
+			ErrorCtx_SetError("%s must be a numerical value", component);
+		} else {
+			*v = SI_GET_NUMERIC(_v);
+		}
 	}
 
 	return exists;
@@ -398,6 +426,59 @@ SIValue AR_LOCALDATETIME
 	}
 }
 
+// create a new duration object
+SIValue AR_DURATION
+(
+	SIValue *argv,      // arguments
+	int argc,           // number of arguments
+	void *private_data  // private data
+) {
+	SIValue arg = argv[0];
+	
+	if(SIValue_IsNull(arg)) {
+		return SI_NullVal();
+	}
+
+	SIType t = SI_TYPE(arg);
+	ASSERT(t == T_MAP);
+
+	// create duration object from map
+	// duration components
+	float years   = 0;
+	float months  = 0;
+	float weeks   = 0;
+	float days    = 0;
+	float hours   = 0;
+	float minutes = 0;
+	float seconds = 0;
+
+	uint n_keys = Map_KeyCount(arg);
+
+	//----------------------------------------------------------------------
+	// extract individual duration elements
+	//----------------------------------------------------------------------
+
+	bool years_specified   = _duration_get_component(&arg, "years",   &years);
+	bool months_specified  = _duration_get_component(&arg, "months",  &months);
+	bool weeks_specified   = _duration_get_component(&arg, "weeks",   &weeks);
+	bool days_specified    = _duration_get_component(&arg, "days",    &days);
+	bool hours_specified   = _duration_get_component(&arg, "hours",   &hours);
+	bool minutes_specified = _duration_get_component(&arg, "minutes", &minutes);
+	bool seconds_specified = _duration_get_component(&arg, "seconds", &seconds);
+
+	n_keys -= years_specified + months_specified + weeks_specified +
+			  days_specified + hours_specified + minutes_specified +
+			  seconds_specified;
+
+	// error incase components map contains an unknown key
+	if(n_keys > 0) {
+		ErrorCtx_SetError("datetime components map contains an unknown key");	
+		return SI_NullVal();
+	}
+
+	return Duration_New(years, months, weeks, days, hours, minutes, seconds);
+}
+
 void Register_TimeFuncs() {
 	SIType *types;
 	SIType ret_type;
@@ -450,6 +531,13 @@ void Register_TimeFuncs() {
 	ret_type = T_DATETIME | T_NULL;
 	func_desc = AR_FuncDescNew("localdatetime.transaction", AR_LOCALDATETIME, 0,
 			1, types, ret_type, false, true);
+	AR_RegFunc(func_desc);
+
+	types = array_new(SIType, 1);
+	array_append(types, T_MAP | T_NULL);
+	ret_type = T_DURATION | T_NULL;
+	func_desc = AR_FuncDescNew("duration", AR_DURATION, 1, 1, types, ret_type,
+			false, true);
 	AR_RegFunc(func_desc);
 }
 

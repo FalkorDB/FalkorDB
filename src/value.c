@@ -171,6 +171,31 @@ SIValue SI_Point(float latitude, float longitude) {
 	};
 }
 
+// create a new duration object
+SIValue SI_Duration
+(
+	double years,    // years count
+	double months,   // months count
+	double weeks,    // weeks count
+	double days,     // days count
+	double hours,    // hours count
+	double minutes,  // minutes count
+	double seconds   // seconds count
+) {
+	SIValue d = Map_New(6);
+
+	Map_AddNoClone(&d, SI_ConstStringVal("years"),   SI_DoubleVal(years));
+	Map_AddNoClone(&d, SI_ConstStringVal("months"),  SI_DoubleVal(months));
+	Map_AddNoClone(&d, SI_ConstStringVal("weeks"),   SI_DoubleVal(weeks));
+	Map_AddNoClone(&d, SI_ConstStringVal("days"),    SI_DoubleVal(days));
+	Map_AddNoClone(&d, SI_ConstStringVal("hours"),   SI_DoubleVal(hours));
+	Map_AddNoClone(&d, SI_ConstStringVal("minutes"), SI_DoubleVal(minutes));
+	Map_AddNoClone(&d, SI_ConstStringVal("seconds"), SI_DoubleVal(seconds));
+
+	d.type = T_DURATION;
+	return d;
+}
+
 // make an SIValue that reuses the original's allocations, if any
 // the returned value is not responsible for freeing any allocations
 // and is not guaranteed that these allocations will remain in scope
@@ -479,6 +504,10 @@ void SIValue_ToString
 			Date_toString(&v, buf, bufferLen, bytesWritten);
 			break;
 
+		case T_DURATION:
+			Duration_toString(&v, buf, bufferLen, bytesWritten);
+			break;
+
 		default:
 			// unrecognized type
 			printf("unrecognized type: %d\n", v.type);
@@ -624,6 +653,7 @@ SIValue SIValue_Add
 	if(a.type & b.type & T_INT64) {
 		return SI_LongVal(a.longval + b.longval);
 	}
+
 	// return a double representation
 	return SI_DoubleVal(SI_GET_NUMERIC(a) + SI_GET_NUMERIC(b));
 }
@@ -1161,6 +1191,7 @@ void SIValue_Free
 			break;
 		case T_NODE:
 		case T_EDGE:
+		case T_DURATION:
 			rm_free(v.ptrval);
 			break;
 		case T_ARRAY:

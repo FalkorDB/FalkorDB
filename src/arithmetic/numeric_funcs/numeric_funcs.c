@@ -4,12 +4,13 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "numeric_funcs.h"
 #include "RG.h"
-#include "../../errors/errors.h"
 #include "../func_desc.h"
+#include "numeric_funcs.h"
 #include "../../util/arr.h"
 #include "../../util/rmalloc.h"
+#include "../../errors/errors.h"
+#include "../temporal_arithmetic/temporal_arithmetic.h"
 
 #include <math.h>
 #include <errno.h>
@@ -18,9 +19,25 @@
 #define M_PI (3.14159265358979323846)
 #endif /* M_PI */
 
-/* The '+' operator is overloaded to perform string concatenation
- * as well as arithmetic addition. */
-SIValue AR_ADD(SIValue *argv, int argc, void *private_data) {
+// the '+' operator is overloaded to perform string concatenation
+// as well as arithmetic addition
+SIValue AR_ADD
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
+	SIType a_type = SI_TYPE(argv[0]);
+	SIType b_type = SI_TYPE(argv[1]);
+
+	// temporal + duration
+	if(unlikely(
+		(a_type & (SI_TEMPORAL | T_DURATION)) &&
+		(b_type & (SI_TEMPORAL | T_DURATION)) &&
+		(a_type == T_DURATION || b_type == T_DURATION))) {
+		return Temporal_AddDuration(argv[0], argv[1]);
+	}
+
 	return SIValue_Add(argv[0], argv[1]);
 }
 
@@ -386,14 +403,16 @@ void Register_NumericFuncs() {
 	AR_FuncDesc *func_desc;
 
 	types = array_new(SIType, 1);
-	array_append(types, (SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | T_NULL));
-	ret_type = SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | T_NULL;
+	array_append(types, (SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_DURATION | T_NULL));
+	array_append(types, (SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_DURATION | T_NULL));
+	ret_type = SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_DURATION | T_NULL;
 	func_desc = AR_FuncDescNew("add", AR_ADD, 2, 2, types, ret_type, true, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, (SI_NUMERIC | T_NULL));
-	ret_type = SI_NUMERIC | T_NULL;
+	array_append(types, (SI_NUMERIC | SI_TEMPORAL | T_DURATION | T_NULL));
+	array_append(types, (SI_NUMERIC | T_DURATION  | T_NULL));
+	ret_type = SI_NUMERIC | SI_TEMPORAL | T_DURATION | T_NULL;
 	func_desc = AR_FuncDescNew("sub", AR_SUB, 2, 2, types, ret_type, true, true);
 	AR_RegFunc(func_desc);
 

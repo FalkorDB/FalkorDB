@@ -128,6 +128,18 @@ SIValue SI_Map(u_int64_t initialCapacity);
 SIValue SI_Array(u_int64_t initialCapacity);
 SIValue SI_Point(float latitude, float longitude);
 
+// create a new duration object
+SIValue SI_Duration
+(
+	double years,    // years count
+	double months,   // months count
+	double weeks,    // weeks count
+	double days,     // days count
+	double hours,    // hours count
+	double minutes,  // minutes count
+	double seconds   // seconds count
+);
+
 // Duplicate and ultimately free the input string.
 SIValue SI_DuplicateStringVal(const char *s);
 

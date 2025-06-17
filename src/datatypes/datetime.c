@@ -401,7 +401,7 @@ static int get_day_of_quarter
     return year_day + day;
 }
 
-// extract component from datetime objects
+// extract component from datetime object
 bool DateTime_getComponent
 (
     const SIValue *datetime,  // datetime object

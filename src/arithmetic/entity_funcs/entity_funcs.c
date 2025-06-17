@@ -331,7 +331,7 @@ SIValue AR_PROPERTY
 
 		case T_TIME:
 		{
-			// retrieve date component e.g. hour, minute, second
+			// retrieve time component e.g. hour, minute, second
 			int comp;
 			bool found = Time_getComponent(&obj, key.stringval, &comp);
 
@@ -341,6 +341,20 @@ SIValue AR_PROPERTY
 			}
 
 			return SI_LongVal(comp);
+		}
+
+		case T_DURATION:
+		{
+			// retrieve duration component e.g. years, months, hours, minutes
+			float comp;
+			bool found = Duration_getComponent(&obj, key.stringval, &comp);
+
+			if(found == false) {
+				ErrorCtx_SetError("unknown time component %s", key);
+				return SI_NullVal();
+			}
+
+			return SI_DoubleVal(comp);
 		}
 
 		default:
@@ -416,7 +430,7 @@ void Register_EntityFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 3);
-	array_append(types, T_NULL | T_NODE | T_EDGE | T_MAP | T_POINT | T_DATETIME | T_DATE | T_TIME);
+	array_append(types, T_NULL | T_NODE | T_EDGE | T_MAP | T_POINT | T_DATETIME | T_DATE | T_TIME | T_DURATION);
 	array_append(types, T_STRING);
 	array_append(types, T_INT64);
 	ret_type = SI_ALL;
