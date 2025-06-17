@@ -83,9 +83,9 @@ static size_t _curl_write_cb
             total_written  += nbytes;
         }
         else if (ret == 0) {
-            // timeout
+            // timeout, presumably read end is lagging behind
             RedisModule_Log(NULL, "warning", "Timeout while waiting to write");
-            break;
+            continue;
         }
         else {
             // poll() failed
