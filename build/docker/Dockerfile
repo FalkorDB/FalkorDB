@@ -37,8 +37,8 @@ RUN apt-get update && apt-get install -y libgomp1 curl && \
     && apt-get upgrade -y \
     && apt-get autoremove -y \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* /tmp/* /root/.cache
-    
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR ${FALKORDB_HOME}
 
 COPY ./build/docker/run.sh ${FALKORDB_BIN_PATH}/run.sh
