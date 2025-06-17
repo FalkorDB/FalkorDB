@@ -140,14 +140,14 @@ CurlSession Curl_Download
 	s->fd     = fileno(*stream);
 	s->stream = *stream;
 
-	// disable buffering on the stream
-	int res = setvbuf(s->stream, NULL, _IONBF, 0);  // use unbuffered mode
-	ASSERT(res == 0);
-
-	fcntl(s->fd, F_SETFL, O_NONBLOCK);  // set non-blocking mode
-
 	// take ownership over the stream
 	*stream = NULL;
+
+	// disable buffering on the stream
+	int res = setvbuf(s->stream, NULL, _IONBF, 0);  // use unbuffered mode
+	assert(res == 0);
+
+	fcntl(s->fd, F_SETFL, O_NONBLOCK);  // set non-blocking mode
 
 	// create a new session
 	CURL *curl = curl_easy_init();
@@ -162,10 +162,6 @@ CurlSession Curl_Download
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, _curl_write_cb);
 	curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);      // treat HTTP errors as failures
 	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);  // establish connection timeout
-
-	// Skip SSL certificate verification
-	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 
 	s->handle = curl;
 
@@ -209,11 +205,6 @@ void Curl_Free
 		void *thread_result;
 		pthread_join(_session->thread, &thread_result);
 		ASSERT(_session->stream == NULL);
-
-		intptr_t result = (intptr_t)thread_result;
-		if(result != CURLE_OK) {
-			//ErrorCtx_SetError("Error downloading file, error_code: %ld", result);
-		}
 	}
 
 	// free curl handle

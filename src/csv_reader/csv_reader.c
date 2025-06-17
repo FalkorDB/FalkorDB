@@ -12,7 +12,6 @@
 
 #include <poll.h>
 #include <stdio.h>
-#include <stdint.h>
 #include <unistd.h>
 #include <sys/errno.h>
 
@@ -219,7 +218,7 @@ CSVReader CSVReader_New
 
 	// disable buffering on the stream
 	int res = setvbuf(stream, NULL, _IONBF, 0);  // use unbuffered mode
-	ASSERT(res == 0);
+	assert(res == 0);
 
 	CSVReader reader = rm_calloc(1, sizeof(struct Opaque_CSVReader));
 
@@ -290,11 +289,12 @@ SIValue CSVReader_GetRow
 		ssize_t bytesRead = 0;
 		int ret = poll(&pfd, 1, 5000);  // wait up to 5 second
 		if (ret < 0) {
-			RedisModule_Log(NULL, "warning", "poll failed: %s\n",
-					strerror(errno));
+			RedisModule_Log(NULL, "warning",
+					"CSV reader: poll failed: %s\n", strerror(errno));
 			return SI_NullVal();
 		} else if (ret == 0) {
-			RedisModule_Log(NULL, "warning", "Timeout while waiting for data");
+			RedisModule_Log(NULL, "warning",
+					"CSV reader: timeout while waiting for data (5s)");
 			return SI_NullVal();
 		} else if (pfd.revents & POLLIN || pfd.revents & POLLHUP) {
 			// read up to step bytes from the file
@@ -302,6 +302,12 @@ SIValue CSVReader_GetRow
 		} else {
 			RedisModule_Log(NULL, "warning", "Unexpected poll revents: 0x%x",
 					pfd.revents);
+			return SI_NullVal();
+		}
+
+		// read error
+		if(bytesRead < 0) {
+			RedisModule_Log(NULL, "warning", "read failed: %s", strerror(errno));
 			return SI_NullVal();
 		}
 
