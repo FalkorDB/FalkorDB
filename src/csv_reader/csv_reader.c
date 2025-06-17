@@ -10,8 +10,10 @@
 #include "../datatypes/map.h"
 #include "../datatypes/array.h"
 
-#include <stdint.h>
+#include <poll.h>
 #include <stdio.h>
+#include <unistd.h>
+#include <sys/errno.h>
 
 #define DEFAULT_STEP 4096
 
@@ -22,6 +24,7 @@ static char* empty_string = "";
 
 struct Opaque_CSVReader {
 	FILE *stream;               // CSV stream handle
+	int fd;                     // stream file descriptor
 	struct csv_parser parser;   // CSV parser
 	char delimiter;             // CSV delimiter
 	SIValue row;                // parsed row
@@ -213,10 +216,15 @@ CSVReader CSVReader_New
 ) {
 	ASSERT(stream != NULL);
 
+	// disable buffering on the stream
+	int res = setvbuf(stream, NULL, _IONBF, 0);  // use unbuffered mode
+	assert(res == 0);
+
 	CSVReader reader = rm_calloc(1, sizeof(struct Opaque_CSVReader));
 
 	reader->rows        = array_new(SIValue, 0);
 	reader->stream      = stream;
+	reader->fd          = fileno(stream);
 	reader->delimiter   = delimiter;
 	reader->reached_eof = false;
 	reader->col_count   = -1;  // unknown number of columns
@@ -227,7 +235,7 @@ CSVReader CSVReader_New
 
 	// enables strict mode
 	unsigned char options = CSV_STRICT | CSV_APPEND_NULL | CSV_EMPTY_IS_NULL;
-	int res = csv_init(&(reader->parser), options);
+	res = csv_init(&(reader->parser), options);
 	ASSERT(res == 0);
 
 	// CSV has a header row
@@ -268,20 +276,44 @@ SIValue CSVReader_GetRow
 	
 	// try to parse additional data
 	while(!reader->reached_eof && array_len(reader->rows) == 0) {
-		// read up to step bytes from the file
-		size_t bytesRead = fread(reader->buffer, sizeof(char), reader->step,
-				reader->stream);
 
-		// check if an error occurred during reading
-		if(ferror(reader->stream)) {
-			ErrorCtx_SetError("Error reading file");
+		//----------------------------------------------------------------------
+		// pool on stream
+		//----------------------------------------------------------------------
+
+		struct pollfd pfd = {
+			.fd = reader->fd,
+			.events = POLLIN
+		};
+
+		ssize_t bytesRead = 0;
+		int ret = poll(&pfd, 1, 5000);  // wait up to 5 second
+		if (ret < 0) {
+			RedisModule_Log(NULL, "warning",
+					"CSV reader: poll failed: %s\n", strerror(errno));
+			return SI_NullVal();
+		} else if (ret == 0) {
+			RedisModule_Log(NULL, "warning",
+					"CSV reader: timeout while waiting for data (5s)");
+			return SI_NullVal();
+		} else if (pfd.revents & POLLIN || pfd.revents & POLLHUP) {
+			// read up to step bytes from the file
+			bytesRead = read(reader->fd, reader->buffer, reader->step);
+		} else {
+			RedisModule_Log(NULL, "warning", "Unexpected poll revents: 0x%x",
+					pfd.revents);
+			return SI_NullVal();
+		}
+
+		// read error
+		if(bytesRead < 0) {
+			RedisModule_Log(NULL, "warning", "read failed: %s", strerror(errno));
 			return SI_NullVal();
 		}
 
 		// no data was read
 		if(bytesRead == 0) {
 			// reached end of file
-			ASSERT(feof(reader->stream));
 			reader->reached_eof = true;
 
 			// last call to csv parser
