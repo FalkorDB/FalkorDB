@@ -288,7 +288,7 @@ SIValue CSVReader_GetRow
 		};
 
 		ssize_t bytesRead = 0;
-		int ret = poll(&pfd, 1, 50000);  // wait up to 50 second
+		int ret = poll(&pfd, 1, 5000);  // wait up to 5 second
 		if (ret < 0) {
 			RedisModule_Log(NULL, "warning", "poll failed: %s\n",
 					strerror(errno));
@@ -308,7 +308,6 @@ SIValue CSVReader_GetRow
 		// no data was read
 		if(bytesRead == 0) {
 			// reached end of file
-			//ASSERT(feof(reader->stream));
 			reader->reached_eof = true;
 
 			// last call to csv parser
