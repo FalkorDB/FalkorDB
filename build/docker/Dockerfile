@@ -34,9 +34,9 @@ RUN apt-get update && apt-get install -y libgomp1 curl && \
     curl -sL https://deb.nodesource.com/setup_22.x -o nodesource_setup.sh && \
     bash nodesource_setup.sh && \
     apt-get install -y nodejs && \
-    && apt-get upgrade -y \
-    && apt-get autoremove -y \
-    && apt-get clean \
+    apt-get upgrade -y && \
+    apt-get autoremove -y && \
+    apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR ${FALKORDB_HOME}
