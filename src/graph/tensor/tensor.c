@@ -493,7 +493,7 @@ void Tensor_RemoveElements_Flat
 		GrB_Index   row = Edge_GetSrcNodeID(e);   // element row index
 		GrB_Index   col = Edge_GetDestNodeID(e);  // element column index
 
-		GrB_Info info = Delta_Matrix_removeElement(T, row, col);
+		GrB_Info info = Delta_Matrix_removeElement_UINT64(T, row, col);
 		ASSERT(info == GrB_SUCCESS);
 	}
 }
@@ -648,7 +648,7 @@ void Tensor_RemoveElements
 		GrB_Index   row = Edge_GetSrcNodeID(e);   // element row index
 		GrB_Index   col = Edge_GetDestNodeID(e);  // element column index
 
-		info = Delta_Matrix_removeElement(T, row, col);
+		info = Delta_Matrix_removeElement_UINT64(T, row, col);
 		ASSERT(info == GrB_SUCCESS);
 	}
 

@@ -63,7 +63,7 @@ void Graph_DeleteNodes
 	GrB_Info info;             // GraphBLAS return code
 	GrB_Index nrows;           // lbls row count
 	GrB_Index ncols;           // lbls col count
-	GrB_Matrix elems;          // elements to delete
+	// GrB_Matrix elems;          // elements to delete
 	Delta_MatrixTupleIter it;  // matrix iterator
 
 	// get labels matrix
@@ -74,7 +74,7 @@ void Graph_DeleteNodes
 	ASSERT(info == GrB_SUCCESS);
 	info = Delta_Matrix_ncols(&ncols, lbls);
 	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_new(&elems, GrB_BOOL, nrows, ncols);
+	// info = GrB_Matrix_new(&elems, GrB_BOOL, nrows, ncols);
 	ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
@@ -93,12 +93,13 @@ void Graph_DeleteNodes
 		// for each deleted node label
 		while(Delta_MatrixTupleIter_next_BOOL(&it, NULL, &j, NULL) == GrB_SUCCESS) {
 			// populate lbls mask
-			info = GrB_Matrix_setElement_BOOL(elems, true, id, j);
+			// info = GrB_Matrix_setElement_BOOL(elems, true, id, j);
+			info = Delta_Matrix_removeElement_BOOL(lbls, id, j);
 			ASSERT(info == GrB_SUCCESS);
 
 			// clear label matrix j at position [id,id]
 			Delta_Matrix L = Graph_GetLabelMatrix(g, j);
-			info = Delta_Matrix_removeElement(L, id, id);
+			info = Delta_Matrix_removeElement_BOOL(L, id, id);
 			ASSERT(info == GrB_SUCCESS);
 
 			// a label was removed from node, update statistics
@@ -113,11 +114,11 @@ void Graph_DeleteNodes
 	// phase two
 	//--------------------------------------------------------------------------
 
-	Delta_Matrix_removeElements(lbls, elems);
+	// Delta_Matrix_removeElements(lbls, elems);
 
 	// restore matrix sync policy
 	Graph_SetMatrixPolicy(g, policy);
 
-	GrB_free(&elems);
+	// GrB_free(&elems);
 }
 
