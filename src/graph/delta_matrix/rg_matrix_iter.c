@@ -215,7 +215,7 @@ static GrB_Info _next_m_iter_uint64
 
 	GrB_Index  _row ;
 	GrB_Index  _col ;
-
+	uint64_t   _val ;
 	GxB_Iterator m_it = &iter->m_it ;
 
 	do {
@@ -224,19 +224,22 @@ static GrB_Info _next_m_iter_uint64
 
 		_row = GxB_rowIterator_getRowIndex (m_it) ;
 		_col = GxB_rowIterator_getColIndex (m_it) ;
-		if(val) *val = GxB_Iterator_get_UINT64 (m_it) ;
+		_val = GxB_Iterator_get_UINT64 (m_it) ;
 
 		// prep value for next iteration
-		_iter_next(m_it, iter->max_row, depleted);
+		_iter_next(m_it, iter->max_row, depleted) ;
 
-		bool x ;
- 		GrB_Info delete_info = GrB_Matrix_extractElement_BOOL(&x, DM, _row, _col) ;
- 		if(delete_info == GrB_NO_VALUE) break ; // entry isn't deleted, return
+		//check if entry is deleted
+		if(_val != MSB_MASK)
+			break ;
+		// bool x ;
+ 		// GrB_Info delete_info = GrB_Matrix_extractElement_BOOL(&x, DM, _row, _col) ;
+ 		// if(delete_info == GrB_NO_VALUE) break ; // entry isn't deleted, return
 	} while (true) ;
 
 	if(row) *row = _row ;
 	if(col) *col = _col ;
-
+	if(val) *val = _val ;
 	return GrB_SUCCESS ;
 }
 

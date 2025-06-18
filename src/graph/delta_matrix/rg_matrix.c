@@ -35,15 +35,20 @@ bool Delta_Matrix_isDirty
 		return true;
 	}
 	return false;
-	// bool pending_M;
-	// bool pending_DP;
-	// bool pending_DM;
+	int pending_M;
+	int pending_DP;
+	int pending_DM;
 
-	// GxB_Matrix_Pending(DELTA_MATRIX_M(C), &pending_M);
-	// GxB_Matrix_Pending(DELTA_MATRIX_DELTA_PLUS(C), &pending_DP);
-	// GxB_Matrix_Pending(DELTA_MATRIX_DELTA_MINUS(C), &pending_DM);
-
-	// return (pending_M | pending_DM | pending_DP);
+	GrB_Info info = GrB_Matrix_get_INT32(DELTA_MATRIX_M(C), &pending_M, 
+		GxB_WILL_WAIT);
+	ASSERT(info == GrB_SUCCESS)
+	info = GrB_Matrix_get_INT32(DELTA_MATRIX_DELTA_PLUS(C), &pending_DP, 
+		GxB_WILL_WAIT);
+	ASSERT(info == GrB_SUCCESS)
+	info = GrB_Matrix_get_INT32(DELTA_MATRIX_DELTA_MINUS(C), &pending_DM, 
+		GxB_WILL_WAIT);
+	ASSERT(info == GrB_SUCCESS)
+	return (pending_M | pending_DM | pending_DP);
 }
 
 // checks if C is fully synced
@@ -214,17 +219,23 @@ GrB_Info Delta_Matrix_setM
 	GrB_Matrix M     // new M
 ) {
 	GrB_Index nvals = 0;
-	GrB_Info info = GrB_Matrix_nvals(&nvals, DELTA_MATRIX_M(C));
+	GrB_Index tot   = 0;
+	GrB_Info info   = GrB_Matrix_nvals(&nvals, DELTA_MATRIX_M(C));
 	ASSERT(info == GrB_SUCCESS);
-	ASSERT(nvals == 0);
+	tot |= nvals;
 	info = GrB_Matrix_nvals(&nvals, DELTA_MATRIX_DELTA_PLUS(C));
 	ASSERT(info == GrB_SUCCESS);
-	ASSERT(nvals == 0);
+	tot |= nvals;
 	info = GrB_Matrix_nvals(&nvals, DELTA_MATRIX_DELTA_MINUS(C));
 	ASSERT(info == GrB_SUCCESS);
-	ASSERT(nvals == 0);
-	GrB_free(&DELTA_MATRIX_M(C));
+	tot |= nvals;
+	if (tot != 0)
+		return GrB_ALREADY_SET;
+	info = GrB_free(&DELTA_MATRIX_M(C));
+	ASSERT(info == GrB_SUCCESS);
+
 	DELTA_MATRIX_M(C) = M;
+	return GrB_SUCCESS;
 }
 
 const GrB_Matrix Delta_Matrix_M
