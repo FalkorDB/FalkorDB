@@ -68,10 +68,8 @@ GrB_Info Delta_Matrix_export
 	//--------------------------------------------------------------------------
 
 	if(additions) {
-		GrB_Semiring s;
-		s = (t == GrB_BOOL) ? GxB_ANY_PAIR_BOOL : GxB_ANY_PAIR_UINT64;
-		info = GrB_Matrix_eWiseAdd_Semiring(a, NULL, NULL, s, a, dp,
-				NULL);
+		info = GrB_Matrix_assign(
+			a, dp, NULL, dp, GrB_ALL, nrows, GrB_ALL, ncols, GrB_DESC_S);
 		ASSERT(info == GrB_SUCCESS);
 	}
 

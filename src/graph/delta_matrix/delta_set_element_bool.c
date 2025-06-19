@@ -5,12 +5,12 @@
  */
 
 #include "RG.h"
-#include "rg_utils.h"
+#include "delta_utils.h"
 #include "delta_matrix.h"
 
-GrB_Info Delta_Matrix_setElement_BOOL      // C (i,j) = x
+GrB_Info Delta_Matrix_setElement_BOOL   // C (i,j) = x
 (
-    Delta_Matrix C,                        // matrix to modify
+    Delta_Matrix C,                     // matrix to modify
     GrB_Index i,                        // row index
     GrB_Index j                         // column index
 ) {

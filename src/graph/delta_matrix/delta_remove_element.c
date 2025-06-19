@@ -6,7 +6,7 @@
 
 #include "RG.h"
 #include "delta_matrix.h"
-#include "rg_utils.h"
+#include "delta_utils.h"
 #include "../../util/arr.h"
 #include "../../util/rmalloc.h"
 
@@ -133,9 +133,10 @@ GrB_Info Delta_Matrix_removeElement_UINT64
 	//--------------------------------------------------------------------------
 
 	if(in_m) {
-		// mark deletion in delta minus
+		// mark deletion in M
 		info = GrB_Matrix_setElement_UINT64(m, MSB_MASK, i, j);
 		ASSERT(info == GrB_SUCCESS);
+		// mark deletion in delta minus
 		info = GrB_Matrix_setElement(dm, true, i, j);
 		ASSERT(info == GrB_SUCCESS);
 	}

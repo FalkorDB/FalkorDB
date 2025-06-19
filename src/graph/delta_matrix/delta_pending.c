@@ -16,11 +16,11 @@ GrB_Info Delta_Matrix_pending
 	ASSERT(pending != NULL);
 
 	GrB_Info    info;
-	int        p        =  false;
-	bool       res      =  false;
-	GrB_Matrix  M        =  DELTA_MATRIX_M(C);
-	GrB_Matrix  DP       =  DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix  DM       =  DELTA_MATRIX_DELTA_MINUS(C);
+	int         p       =  false;
+	bool        res     =  false;
+	GrB_Matrix  M       =  DELTA_MATRIX_M(C);
+	GrB_Matrix  DP      =  DELTA_MATRIX_DELTA_PLUS(C);
+	GrB_Matrix  DM      =  DELTA_MATRIX_DELTA_MINUS(C);
 
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
 		info = Delta_Matrix_pending(C->transposed, &res);

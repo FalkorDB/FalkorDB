@@ -64,7 +64,6 @@ GrB_Info Delta_Matrix_new
 ) {
 	GrB_Info info;
 	Delta_Matrix matrix = rm_calloc(1, sizeof(_Delta_Matrix));
-
 	//--------------------------------------------------------------------------
 	// input validations
 	//--------------------------------------------------------------------------

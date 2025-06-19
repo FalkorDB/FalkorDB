@@ -1,0 +1,13 @@
+[package]
+name = "FalkorDB-rs"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[features]
+falkordb_allocator = []
+
+[dependencies]
+libc = "0.2.153"
