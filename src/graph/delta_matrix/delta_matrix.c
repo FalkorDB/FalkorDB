@@ -34,7 +34,6 @@ bool Delta_Matrix_isDirty
 	if(C->dirty) {
 		return true;
 	}
-	return false;
 	int pending_M;
 	int pending_DP;
 	int pending_DM;
@@ -48,7 +47,7 @@ bool Delta_Matrix_isDirty
 	info = GrB_Matrix_get_INT32(DELTA_MATRIX_DELTA_MINUS(C), &pending_DM, 
 		GxB_WILL_WAIT);
 	ASSERT(info == GrB_SUCCESS)
-	return (pending_M | pending_DM | pending_DP);
+	return (pending_M || pending_DM || pending_DP);
 }
 
 // checks if C is fully synced
@@ -158,20 +157,24 @@ GrB_Info Delta_Matrix_clear
 
 	GrB_Matrix  m            =  DELTA_MATRIX_M(A);
 	GrB_Info    info         =  GrB_SUCCESS;
-	GrB_Matrix  delta_plus   =  DELTA_MATRIX_DELTA_PLUS(A);
-	GrB_Matrix  delta_minus  =  DELTA_MATRIX_DELTA_MINUS(A);
+	GrB_Matrix  dp           =  DELTA_MATRIX_DELTA_PLUS(A);
+	GrB_Matrix  dm           =  DELTA_MATRIX_DELTA_MINUS(A);
 
 	info = GrB_Matrix_clear(m);
 	ASSERT(info == GrB_SUCCESS);
 
-	info = GrB_Matrix_clear(m);
+	info = GrB_Matrix_clear(dp);
 	ASSERT(info == GrB_SUCCESS);
 
-	info = GrB_Matrix_clear(m);
+	info = GrB_Matrix_clear(dm);
 	ASSERT(info == GrB_SUCCESS);
 
 	A->dirty = false;
-	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(A)) A->transposed->dirty = false;
+	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(A))
+	{
+		info = Delta_Matrix_clear(A->transposed);
+		ASSERT(info == GrB_SUCCESS);
+	}
 
 	return info;
 }

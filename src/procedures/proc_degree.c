@@ -451,9 +451,9 @@ output_proc:
 	array_free(rel_types);
 	array_free(src_labels);
 	array_free(dest_labels);
-    info = GrB_free(&dest);
+	info = GrB_free(&dest);
 	ASSERT(info == GrB_SUCCESS);
-    info = GrB_free(&src);
+	info = GrB_free(&src);
 	ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
