@@ -16,7 +16,7 @@ void Delta_Matrix_checkBounds
 	GrB_Index i,
 	GrB_Index j
 ) {
-#if DELTA_DEBUG
+#ifdef DELTA_DEBUG
 	GrB_Matrix m = DELTA_MATRIX_M(C);
 	// check bounds
 	GrB_Index nrows;
@@ -34,9 +34,9 @@ void Delta_Matrix_checkCompatible
 	const Delta_Matrix M,
 	const Delta_Matrix N
 ) {
-#if DELTA_DEBUG
-	GrB_Matrix m = Delta_MATRIX_M(M);
-	GrB_Matrix n = Delta_MATRIX_M(N);
+#ifdef DELTA_DEBUG
+	GrB_Matrix m = DELTA_MATRIX_M(M);
+	GrB_Matrix n = DELTA_MATRIX_M(N);
 
 	GrB_Type  m_type;
 	GrB_Type  n_type;

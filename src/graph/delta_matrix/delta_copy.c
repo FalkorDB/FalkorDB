@@ -5,7 +5,7 @@
  */
 
 #include "RG.h"
-#include "rg_utils.h"
+#include "delta_utils.h"
 #include "delta_matrix.h"
 #include "../../util/rmalloc.h"
 

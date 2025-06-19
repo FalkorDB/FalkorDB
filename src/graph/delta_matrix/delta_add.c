@@ -9,14 +9,14 @@
 
 GrB_Info Delta_eWiseAdd                // C = A + B
 (
-    Delta_Matrix C,                    // input/output matrix for results
-    const GrB_Semiring semiring,    // defines '+' for T=A+B
-    const Delta_Matrix A,              // first input:  matrix A
-    const Delta_Matrix B               // second input: matrix B
+    Delta_Matrix C,               // input/output matrix for results
+    const GrB_Semiring semiring,  // defines '+' for T=A+B
+    const Delta_Matrix A,         // first input:  matrix A
+    const Delta_Matrix B          // second input: matrix B
 ) {
-	ASSERT(A != NULL);
-	ASSERT(B != NULL);
-	ASSERT(C != NULL);
+	ASSERT(A        != NULL);
+	ASSERT(B        != NULL);
+	ASSERT(C        != NULL);
 	ASSERT(semiring != NULL);
 
 	GrB_Info        info;

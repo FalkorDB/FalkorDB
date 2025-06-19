@@ -553,14 +553,12 @@ ProcedureResult Proc_DegreeFree
 //		'dir':         	  		'incoming' / 'outgoing' / 'both',
 //		'relationshipTypes':    [<type>, ...],
 //		'destLabels':     		[<label>, ...],
-//		'weightAttribute':      <atribute> 
 //	}
 //
-//  srcLabels      		- [optional] [string[]] type of nodes for which degree is computed
-//  dir         		- [optional] [string]   'incoming', 'outgoing', or 'both'. default: 'outgoing'
-//  relationshipTypes   - [optional] [string[]] the type of edges to consider
-//  destLabels 			- [optional] [string[]] type of reachable nodes
-//  weightAttribute 	- [optional] [attribute] attribute to be used for weight
+//  srcLabels          - [optional] [string[]]  type of nodes for which degree is computed
+//  dir                - [optional] [string]    'incoming', 'outgoing', or 'both'. default: 'outgoing'
+//  relationshipTypes  - [optional] [string[]]  the type of edges to consider
+//  destLabels         - [optional] [string[]]  type of reachable nodes
 //
 //  examples:
 //

@@ -576,7 +576,7 @@ void Tensor_RemoveElements
 				// postpone entry removal
 				GrB_free(&V);
 				array_append(delayed, i);
-			} else if(d+1 == nvals) {
+			} else if(d+1 == nvals) { // TODO: this code seems a little convoluted. Why not remove the elements then find the one that is left?
 				// transition from vector to scalar
 				// determine which vector element becomes a scalar
 

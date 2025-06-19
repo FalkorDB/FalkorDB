@@ -34,8 +34,7 @@ typedef _Delta_Matrix *Delta_Matrix;
 	GxB_Matrix_type(&t, m);           \
 	(t == GrB_UINT64);                \
 })
-
-
+#define DELTA_DEBUG 1
 //------------------------------------------------------------------------------
 //
 // possible combinations
@@ -248,16 +247,6 @@ GrB_Info Delta_Matrix_removeElement_UINT64
 	Delta_Matrix C,  // matrix to remove entry from
 	GrB_Index i,     // row index
 	GrB_Index j      // column index
-);
-
-// remove value 'v' from multi-value entry at position C[i,j]
-GrB_Info Delta_Matrix_removeEntry_UINT64
-(
-	Delta_Matrix  C,             // matrix to remove entry from
-	GrB_Index     i,             // row index
-	GrB_Index     j,             // column index
-	uint64_t      v,             // value to remove
-	bool         *entry_deleted  // is entry deleted
 );
 
 // C = A * B
