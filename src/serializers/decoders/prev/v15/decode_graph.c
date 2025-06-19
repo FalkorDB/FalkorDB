@@ -163,7 +163,7 @@ GraphContext *RdbLoadGraphContext_v15
 
 	// log progress
 	RedisModule_Log(NULL, "notice",
-			"Graph '%s' processing virtual key: %" PRIu64 "/% " PRIu64,
+			"Graph '%s' processing virtual key: %" PRIu64 "/%" PRIu64,
 			GraphContext_GetName(gc), gc->decoding_context->keys_processed + 1,
 			gc->decoding_context->graph_keys_count);
 
