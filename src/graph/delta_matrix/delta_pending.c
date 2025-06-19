@@ -34,22 +34,20 @@ GrB_Info Delta_Matrix_pending
 	// check if M contains pending changes
 	info = GrB_Matrix_get_INT32(M, &p, GxB_WILL_WAIT);
 	ASSERT(info == GrB_SUCCESS);
-	res = res || p == 1;
+	res = res || p == true;
 
 	// check if delta-plus contains pending changes
 	info = GrB_Matrix_get_INT32(DP, &p, GxB_WILL_WAIT);
 	ASSERT(info == GrB_SUCCESS);
-	res = res || p == 1;
+	res = res || p == true;
 
 	// check if delta-plus contains pending changes
 	info = GrB_Matrix_get_INT32(DM, &p, GxB_WILL_WAIT);
 	ASSERT(info == GrB_SUCCESS);
-	res = res || p == 1;
+	res = res || p == true;
 
 	// set output
 	*pending = res;
-
-	*pending = C->dirty;
 	return info;
 }
 

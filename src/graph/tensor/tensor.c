@@ -785,7 +785,7 @@ void Tensor_free
 	ASSERT(info == GrB_SUCCESS);
 
 	// apply _free_vectors on every entry of the tensor
-	info = GrB_Matrix_apply(DP, NULL, NULL, unaryop, M, NULL);
+	info = GrB_Matrix_apply(DP, NULL, NULL, unaryop, DP, NULL);
 	ASSERT(info == GrB_SUCCESS);
 
 	// free tensor internals
