@@ -17,7 +17,7 @@
 // to iterate over a Delta_Matrix
 typedef struct
 {
-	Delta_Matrix A;                      // matrix iterated
+	Delta_Matrix A;                   // matrix iterated
 	struct GB_Iterator_opaque m_it;   // internal m iterator
 	struct GB_Iterator_opaque dp_it;  // internal delta plus iterator
 	bool m_depleted;                  // is m iterator depleted
@@ -29,65 +29,65 @@ typedef struct
 // attach iterator to matrix
 GrB_Info Delta_MatrixTupleIter_attach
 (
-	Delta_MatrixTupleIter *iter,       // iterator to update
-	const Delta_Matrix A               // matrix to scan
+	Delta_MatrixTupleIter *iter,  // iterator to update
+	const Delta_Matrix A          // matrix to scan
 );
 
 // attach iterator to matrix governing the specified range
 GrB_Info Delta_MatrixTupleIter_AttachRange
 (
-	Delta_MatrixTupleIter *iter,       // iterator to update
-	const Delta_Matrix A,              // matrix to scan
-	GrB_Index min_row,              // minimum row for iteration
-	GrB_Index max_row               // maximum row for iteration
+	Delta_MatrixTupleIter *iter,  // iterator to update
+	const Delta_Matrix A,         // matrix to scan
+	GrB_Index min_row,            // minimum row for iteration
+	GrB_Index max_row             // maximum row for iteration
 );
 
 // free iterator internals, keeping the iterator intact
 GrB_Info Delta_MatrixTupleIter_detach
 (
-	Delta_MatrixTupleIter *iter       // iterator to free
+	Delta_MatrixTupleIter *iter  // iterator to free
 );
 
 // returns true if iterator is attached to given matrix false otherwise
 bool Delta_MatrixTupleIter_is_attached
 (
-	const Delta_MatrixTupleIter *iter,       // iterator to check
-	const Delta_Matrix M                     // matrix attached to
+	const Delta_MatrixTupleIter *iter,  // iterator to check
+	const Delta_Matrix M                // matrix attached to
 );
 
 GrB_Info Delta_MatrixTupleIter_iterate_row
 (
-	Delta_MatrixTupleIter *iter,      // iterator to use
+	Delta_MatrixTupleIter *iter,   // iterator to use
 	GrB_Index rowIdx               // row to iterate
 );
 
 GrB_Info Delta_MatrixTupleIter_iterate_range
 (
-	Delta_MatrixTupleIter *iter,   // iterator to use
-	GrB_Index startRowIdx,      // row index to start with
-	GrB_Index endRowIdx         // row index to finish with
+	Delta_MatrixTupleIter *iter,  // iterator to use
+	GrB_Index startRowIdx,        // row index to start with
+	GrB_Index endRowIdx           // row index to finish with
 );
 
 // advance iterator
 GrB_Info Delta_MatrixTupleIter_next_BOOL
 (
-	Delta_MatrixTupleIter *iter,       // iterator to consume
-	GrB_Index *row,                 // optional output row index
-	GrB_Index *col,                 // optional output column index
-	bool *val                       // optional value at A[row, col]
+	Delta_MatrixTupleIter *iter,  // iterator to consume
+	GrB_Index *row,               // optional output row index
+	GrB_Index *col,               // optional output column index
+	bool *val                     // optional value at A[row, col]
 );
 
 GrB_Info Delta_MatrixTupleIter_next_UINT64
 (
-	Delta_MatrixTupleIter *iter,       // iterator to consume
-	GrB_Index *row,                 // optional output row index
-	GrB_Index *col,                 // optional output column index
-	uint64_t *val                   // optional value at A[row, col]
+	Delta_MatrixTupleIter *iter,  // iterator to consume
+	GrB_Index *row,               // optional output row index
+	GrB_Index *col,               // optional output column index
+	uint64_t *val                 // optional value at A[row, col]
 );
 
 // reset iterator
 GrB_Info Delta_MatrixTupleIter_reset
 (
-	Delta_MatrixTupleIter *iter       // iterator to reset
+	Delta_MatrixTupleIter *iter  // iterator to reset
 );
 

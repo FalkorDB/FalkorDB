@@ -766,17 +766,12 @@ void Tensor_free
 	Tensor *T  // tensor
 ) {
 	ASSERT(T != NULL && *T != NULL);
-
+	GrB_Info info;
 	Tensor t = *T;
 
-	// flush all pendding changes in T
-	// TODO: we might be able to avoid this if we had access to
-	// the tensor underline matrices: DP, DM & M
-	GrB_Info info = Delta_Matrix_wait(t, true);
-	ASSERT(info == GrB_SUCCESS);
-
 	// get delta matrix M matrix
-	GrB_Matrix M = Delta_Matrix_M(t);
+	GrB_Matrix M   = Delta_Matrix_M(t);
+	GrB_Matrix DP  = DELTA_MATRIX_DELTA_PLUS(t);
 
 	// initialize unaryop only once
 	static GrB_UnaryOp unaryop = NULL;
@@ -787,6 +782,10 @@ void Tensor_free
 
 	// apply _free_vectors on every entry of the tensor
 	info = GrB_Matrix_apply(M, NULL, NULL, unaryop, M, NULL);
+	ASSERT(info == GrB_SUCCESS);
+
+	// apply _free_vectors on every entry of the tensor
+	info = GrB_Matrix_apply(DP, NULL, NULL, unaryop, M, NULL);
 	ASSERT(info == GrB_SUCCESS);
 
 	// free tensor internals

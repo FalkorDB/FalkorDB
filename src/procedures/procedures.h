@@ -21,6 +21,7 @@
 #include "proc_vector_query.h"
 #include "proc_property_keys.h"
 #include "proc_fulltext_query.h"
+#include "proc_degree_weighted.h"
 #include "proc_list_constraints.h"
 #include "proc_fulltext_drop_index.h"
 #include "proc_fulltext_create_index.h"

@@ -19,6 +19,33 @@
 #include "RG.h"
 #include "degree.h"
 
+// Returns the degree vector of a tensor with no multi-edges
+GrB_Info TensorDegree_flat
+(
+	GrB_Vector degree,  // [input / output] degree vector with values where 
+						// the degree should be added
+	GrB_Vector dest,    // [input] possible destination / source nodes
+	Tensor T,           // matrix with tensor entries
+    bool transpose      
+) {
+    GrB_Matrix M         = DELTA_MATRIX_M(T);
+    GrB_Matrix Dp        = DELTA_MATRIX_DELTA_PLUS(T);
+    GrB_Matrix Dm        = DELTA_MATRIX_DELTA_MINUS(T);
+    GrB_Descriptor desc  = transpose? GrB_DESC_ST0: GrB_DESC_S;
+    GrB_Info info;
+
+    info = GrB_mxv(
+        degree, degree, GrB_PLUS_UINT64, GxB_PLUS_PAIR_UINT64, M, dest, desc);
+	if(info != GrB_SUCCESS) return info;
+
+	info = GrB_mxv(
+		degree, degree, GrB_PLUS_UINT64, GxB_PLUS_PAIR_UINT64, Dp, dest, desc);
+	if(info != GrB_SUCCESS) return info;
+
+	info = GrB_mxv(
+		degree, degree, GrB_MINUS_UINT64, GxB_PLUS_PAIR_UINT64, Dm, dest, desc);
+	return info;
+}
 
 static void _numInEntryFirst(uint64_t *z, const uint64_t *x, const uint64_t *y) {
 	if(SCALAR_ENTRY(*x))
@@ -70,7 +97,7 @@ GrB_Info TensorDegree
 		return info;
 	}
 	if((ops & DEG_TENSOR) == 0){
-		return Tensor_flat_degree(degree, dest, T, (ops & DEG_INDEGREE) != 0);
+		return TensorDegree_flat(degree, dest, T, (ops & DEG_INDEGREE) != 0);
 	}
 
 	GrB_BinaryOp countEntry         = NULL; 
@@ -123,7 +150,7 @@ GrB_Info TensorDegree
     if(temp != ATTRIBUTE_NOTFOUND && (SI_NUMERIC & SI_TYPE(*temp))) {          \
         SIValue_ToDouble(temp, &(z));                                          \
     } else {                                                                   \
-        z = FUNCTION_IDENTITY;                                                 \
+        (z) = FUNCTION_IDENTITY;                                               \
     }
 
 #define ACCUM(z,x) ((z) += (x))
@@ -134,7 +161,7 @@ static void _sum_tensor_attributes (
 	const uint64_t *x, 
 	GrB_Index ix, 
 	GrB_Index jx, 
-	const _Bool *y, 
+	const bool *y, 
 	GrB_Index iy, 
 	GrB_Index jy, 
 	const FDB_degree_ctx *ctx 
@@ -145,15 +172,15 @@ static void _flat_get_attribute (
 	const uint64_t *x, 
 	GrB_Index ix, 
 	GrB_Index jx, 
-	const _Bool *y, 
+	const bool *y, 
 	GrB_Index iy, 
 	GrB_Index jy, 
 	const FDB_degree_ctx *ctx 
 ){
 	if(*x == MSB_MASK){
-		GET_VALUE(*z, *x);
-	} else {
 		*z = 0;
+	} else {
+		GET_VALUE(*z, *x);
 	}
 }
 #undef FUNCTION_IDENTITY
@@ -174,7 +201,7 @@ static void _flat_get_attribute (
 GrB_Info TensorDegree_weighted
 (
 	GrB_Vector degree,  // [input / output] degree vector with values where 
-						//         the degree should be added
+	                    //         the degree should be added
 	GrB_Vector dest,    // [input] possible destination / source nodes
 	Tensor T,           // matrix with tensor entries
 	Degree_Options ops,
@@ -196,15 +223,16 @@ GrB_Info TensorDegree_weighted
 		return info;
 	}
 
-	GxB_IndexBinaryOp getWeight_idxop          = NULL; 
-	GrB_BinaryOp getWeight          = NULL; 
-	GrB_Semiring plus_weight_fp64  = NULL;
-	GrB_Descriptor desc              = (ops & DEG_INDEGREE)? GrB_DESC_ST0: GrB_DESC_S;
-	GrB_Type deg_contx = NULL;
-	GrB_Scalar ctx_scalar = NULL;
+	GxB_IndexBinaryOp getWeight_idxop   = NULL; 
+	GrB_BinaryOp      getWeight         = NULL; 
+	GrB_Semiring      plus_weight_fp64  = NULL;
+	GrB_Descriptor    desc              = (ops & DEG_INDEGREE)? 
+	                                        GrB_DESC_ST0: GrB_DESC_S;
+	GrB_Type          deg_contx         = NULL;
+	GrB_Scalar        ctx_scalar        = NULL;
 
 	// create custom semiring
-	// a * b = count entries in a
+	// a * b = sum entries in a
 	// a + b = a + b
 	info = GrB_Type_new(&deg_contx, sizeof(FDB_degree_ctx)) ;
 	info = GrB_Scalar_new(&ctx_scalar, deg_contx) ;
@@ -233,6 +261,11 @@ GrB_Info TensorDegree_weighted
 	//--------------------------------------------------------------------------
 	// clean up
 	//--------------------------------------------------------------------------
+	info = GrB_free(&deg_contx);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_free(&ctx_scalar);
+	ASSERT(info == GrB_SUCCESS);
 
 	info = GrB_free(&getWeight);
 	ASSERT(info == GrB_SUCCESS);
