@@ -46,7 +46,7 @@ typedef struct{
 // 'dest' input vector. Boolean vector with entries to be counted for degree.
 // 'T' Tensor being used to find the degree.
 // 'ops' input. DEG_[OUT/IN]DEGREE: compute [out/in]degree. 
-// 				DEG_TENSOR: compute tensor degree
+//              DEG_TENSOR: compute tensor degree
 // returns:
 // GrB_SUCCESS on success otherwise a GraphBLAS error
 GrB_Info TensorDegree_weighted

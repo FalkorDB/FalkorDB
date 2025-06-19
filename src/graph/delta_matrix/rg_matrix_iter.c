@@ -203,19 +203,19 @@ GrB_Info Delta_MatrixTupleIter_next_BOOL
 static GrB_Info _next_m_iter_uint64
 (
 	Delta_MatrixTupleIter *iter,  // iterator scanning M
-	const GrB_Matrix DM,       // delta-minus, masked entries
-	GrB_Index *row,            // optional extracted row index
-	GrB_Index *col,            // optional extracted column index
-	uint64_t *val,             // optional extracted value
-	bool *depleted             // [output] true if iterator depleted
+	const GrB_Matrix DM,          // delta-minus, masked entries
+	GrB_Index *row,               // optional extracted row index
+	GrB_Index *col,               // optional extracted column index
+	uint64_t *val,                // optional extracted value
+	bool *depleted                // [output] true if iterator depleted
 ) {
 	ASSERT(iter     != NULL) ;
 	ASSERT(DM       != NULL) ;
 	ASSERT(depleted != NULL) ;
 
-	GrB_Index  _row ;
-	GrB_Index  _col ;
-	uint64_t   _val ;
+	GrB_Index    _row ;
+	GrB_Index    _col ;
+	uint64_t     _val ;
 	GxB_Iterator m_it = &iter->m_it ;
 
 	do {
@@ -229,12 +229,8 @@ static GrB_Info _next_m_iter_uint64
 		// prep value for next iteration
 		_iter_next(m_it, iter->max_row, depleted) ;
 
-		//check if entry is deleted
-		if(_val != MSB_MASK)
-			break ;
-		// bool x ;
- 		// GrB_Info delete_info = GrB_Matrix_extractElement_BOOL(&x, DM, _row, _col) ;
- 		// if(delete_info == GrB_NO_VALUE) break ; // entry isn't deleted, return
+		//check if entry is deleted, if not, return.
+		if(_val != MSB_MASK) break ;
 	} while (true) ;
 
 	if(row) *row = _row ;
@@ -253,9 +249,9 @@ GrB_Info Delta_MatrixTupleIter_next_UINT64
 ) {
 	if(IS_DETACHED(iter)) return GrB_NULL_POINTER ;
 
-	GrB_Info             info     =  GrB_SUCCESS                    ;
-	GrB_Matrix           DM       =  DELTA_MATRIX_DELTA_MINUS(iter->A) ;
-	GxB_Iterator         dp_it    =  &iter->dp_it                    ;
+	GrB_Info         info   =  GrB_SUCCESS                    ;
+	GrB_Matrix       DM     =  DELTA_MATRIX_DELTA_MINUS(iter->A) ;
+	GxB_Iterator     dp_it  =  &iter->dp_it                    ;
 
 	if(!iter->m_depleted) {
 		info = _next_m_iter_uint64(iter, DM, row, col, val, &iter->m_depleted) ;

@@ -175,13 +175,3 @@ GrB_Info Tensor_mxv
     const GrB_Vector u,           // [input] GrB_BOOL vector 
     const GrB_Descriptor desc     // [input] descriptor 
 ) ;
-
-// Returns the degree vector of a tensor with no multi-edges
-GrB_Info Tensor_flat_degree
-(
-	GrB_Vector degree,  // [input / output] degree vector with values where 
-						//        the degree should be added
-	GrB_Vector dest,    // [input] possible destination / source nodes
-	Tensor T,           // matrix with tensor entries
-    bool transpose      
-) ;

@@ -154,9 +154,6 @@ class testDegree(FlowTestsBase):
 
                    # fake direction
                    "CALL algo.degree({dir: 'wasd'})",
-                   
-                   # fake attribute
-                   "CALL algo.degree({weightAttribute: 'fake'})"
         ]
 
         for q in queries:
@@ -699,44 +696,3 @@ class testDegree(FlowTestsBase):
             ['a3', 0],
         ]
         self.env.assertEqual(result_set, ans_set)
-    def test_tensors_weight_all(self):
-        # try running algo.degree against a graph containing tensors
-
-        q = """CALL algo.degree({weightAttribute: 'cost'}) 
-                YIELD node, degree, weight
-                RETURN node.name, degree, weight
-                ORDER BY node.name"""
-        result_set = self.tensorGraph.query(q).result_set
-        ans_set = [
-            ['a0', 6, 25],
-            ['a1', 6, 20],
-            ['a2', 8, 37],
-            ['a3', 0, 0],
-            ['b0', 0, 0],
-            ['b1', 0, 0],
-            ['b2', 0, 0]
-        ]
-        self.env.assertEqual(result_set, ans_set)
-        # q = """CALL algo.degree({srcLabels:['A'], destLabels: ['B'], relationshipTypes:['R']}) YIELD node, degree
-        #         RETURN node.name, degree
-        #         ORDER BY node.name"""
-        # result_set = self.tensorGraph.query(q).result_set
-        # ans_set = [
-        #     ['a0', 4],
-        #     ['a1', 3],
-        #     ['a2', 3],
-        #     ['a3', 0],
-        # ]
-        # self.env.assertEqual(result_set, ans_set)
-
-        # q = """CALL algo.degree({srcLabels:['A'], destLabels: ['B'], relationshipTypes:['S']}) YIELD node, degree
-        #         RETURN node.name, degree
-        #         ORDER BY node.name"""
-        # result_set = self.tensorGraph.query(q).result_set
-        # ans_set = [
-        #     ['a0', 2],
-        #     ['a1', 0],
-        #     ['a2', 2],
-        #     ['a3', 0],
-        # ]
-        # self.env.assertEqual(result_set, ans_set)

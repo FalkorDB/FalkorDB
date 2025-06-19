@@ -29,10 +29,10 @@ typedef _Delta_Matrix *Delta_Matrix;
 #define DELTA_MATRIX_MAINTAIN_TRANSPOSE(C) (C)->transposed != NULL
 
 #define DELTA_MATRIX_MULTI_EDGE(M) __extension__({ \
-	GrB_Type t;                    \
+	GrB_Type t;                       \
 	GrB_Matrix m = DELTA_MATRIX_M(M); \
-	GxB_Matrix_type(&t, m);        \
-	(t == GrB_UINT64);             \
+	GxB_Matrix_type(&t, m);           \
+	(t == GrB_UINT64);                \
 })
 
 
@@ -119,19 +119,19 @@ typedef _Delta_Matrix *Delta_Matrix;
 //------------------------------------------------------------------------------
 
 struct _Delta_Matrix {
-	volatile bool dirty;                // Indicates if matrix requires sync
-	GrB_Matrix matrix;                  // Underlying GrB_Matrix
-	GrB_Matrix delta_plus;              // Pending additions
-	GrB_Matrix delta_minus;             // Pending deletions
-	Delta_Matrix transposed;               // Transposed matrix
-	pthread_mutex_t mutex;              // Lock
+	volatile bool dirty;      // Indicates if matrix requires sync
+	GrB_Matrix matrix;        // Underlying GrB_Matrix
+	GrB_Matrix delta_plus;    // Pending additions
+	GrB_Matrix delta_minus;   // Pending deletions
+	Delta_Matrix transposed;  // Transposed matrix
+	pthread_mutex_t mutex;    // Lock
 };
 
 GrB_Info Delta_Matrix_new
 (
-	Delta_Matrix *A,            // handle of matrix to create
-	GrB_Type type,           // type of matrix to create
-	GrB_Index nrows,         // matrix dimension is nrows-by-ncols
+	Delta_Matrix *A,  // handle of matrix to create
+	GrB_Type type,    // type of matrix to create
+	GrB_Index nrows,  // matrix dimension is nrows-by-ncols
 	GrB_Index ncols,
 	bool transpose
 );
@@ -185,100 +185,110 @@ GrB_Info Delta_Matrix_ncols
 	const Delta_Matrix C
 );
 
-GrB_Info Delta_Matrix_nvals    // get the number of entries in a matrix
+// get the number of entries in a matrix
+GrB_Info Delta_Matrix_nvals
 (
-	GrB_Index *nvals,       // matrix has nvals entries
-	const Delta_Matrix A       // matrix to query
+	GrB_Index *nvals,     // matrix has nvals entries
+	const Delta_Matrix A  // matrix to query
 );
 
-GrB_Info Delta_Matrix_resize      // change the size of a matrix
+// change the size of a matrix
+GrB_Info Delta_Matrix_resize
 (
-	Delta_Matrix C,                // matrix to modify
-	GrB_Index nrows_new,        // new number of rows in matrix
-	GrB_Index ncols_new         // new number of columns in matrix
+	Delta_Matrix C,       // matrix to modify
+	GrB_Index nrows_new,  // new number of rows in matrix
+	GrB_Index ncols_new   // new number of columns in matrix
 );
 
-GrB_Info Delta_Matrix_setElement_BOOL      // C (i,j) = x
+// C (i,j) = x
+GrB_Info Delta_Matrix_setElement_BOOL
 (
-	Delta_Matrix C,                        // matrix to modify
-	GrB_Index i,                        // row index
-	GrB_Index j                         // column index
+	Delta_Matrix C,  // matrix to modify
+	GrB_Index i,     // row index
+	GrB_Index j      // column index
 );
 
-GrB_Info Delta_Matrix_setElement_UINT64      // C (i,j) = x
+// C (i,j) = x
+GrB_Info Delta_Matrix_setElement_UINT64
 (
-	Delta_Matrix C,                        // matrix to modify
-	uint64_t x,                         // scalar to assign to C(i,j)
-	GrB_Index i,                        // row index
-	GrB_Index j                         // column index
+	Delta_Matrix C,  // matrix to modify
+	uint64_t x,      // scalar to assign to C(i,j)
+	GrB_Index i,     // row index
+	GrB_Index j      // column index
 );
 
-GrB_Info Delta_Matrix_extractElement_BOOL     // x = A(i,j)
+// x = A(i,j)
+GrB_Info Delta_Matrix_extractElement_BOOL     
 (
-	bool *x,                               // extracted scalar
-	const Delta_Matrix A,                     // matrix to extract a scalar from
-	GrB_Index i,                           // row index
-	GrB_Index j                            // column index
+	bool *x,               // extracted scalar
+	const Delta_Matrix A,  // matrix to extract a scalar from
+	GrB_Index i,           // row index
+	GrB_Index j            // column index
 ) ;
 
-GrB_Info Delta_Matrix_extractElement_UINT64   // x = A(i,j)
+// x = A(i,j)
+GrB_Info Delta_Matrix_extractElement_UINT64   
 (
-	uint64_t *x,                           // extracted scalar
-	const Delta_Matrix A,                     // matrix to extract a scalar from
-	GrB_Index i,                           // row index
-	GrB_Index j                            // column index
+	uint64_t *x,           // extracted scalar
+	const Delta_Matrix A,  // matrix to extract a scalar from
+	GrB_Index i,           // row index
+	GrB_Index j            // column index
 ) ;
 
 // remove entry at position C[i,j]
 GrB_Info Delta_Matrix_removeElement_BOOL
 (
-	Delta_Matrix C,                    // matrix to remove entry from
-	GrB_Index i,                    // row index
-	GrB_Index j                     // column index
+	Delta_Matrix C,  // matrix to remove entry from
+	GrB_Index i,     // row index
+	GrB_Index j      // column index
 );
 
 GrB_Info Delta_Matrix_removeElement_UINT64
 (
-	Delta_Matrix C,                    // matrix to remove entry from
-	GrB_Index i,                    // row index
-	GrB_Index j                     // column index
+	Delta_Matrix C,  // matrix to remove entry from
+	GrB_Index i,     // row index
+	GrB_Index j      // column index
 );
 
 // remove value 'v' from multi-value entry at position C[i,j]
 GrB_Info Delta_Matrix_removeEntry_UINT64
 (
-	Delta_Matrix C,                    // matrix to remove entry from
-	GrB_Index i,                    // row index
-	GrB_Index j,                    // column index
-	uint64_t  v,                    // value to remove
-	bool     *entry_deleted         // is entry deleted
+	Delta_Matrix  C,             // matrix to remove entry from
+	GrB_Index     i,             // row index
+	GrB_Index     j,             // column index
+	uint64_t      v,             // value to remove
+	bool         *entry_deleted  // is entry deleted
 );
 
-GrB_Info Delta_mxm                     // C = A * B
+// C = A * B
+GrB_Info Delta_mxm
 (
-	Delta_Matrix C,                    // input/output matrix for results
-	const GrB_Semiring semiring,    // defines '+' and '*' for A*B
-	const Delta_Matrix A,              // first input:  matrix A
-	const Delta_Matrix B               // second input: matrix B
+	Delta_Matrix C,               // input/output matrix for results
+	const GrB_Semiring semiring,  // defines '+' and '*' for A*B
+	const Delta_Matrix A,         // first input:  matrix A
+	const Delta_Matrix B          // second input: matrix B
 );
 
-GrB_Info Delta_eWiseAdd                // C = A + B
+// C = A + B
+GrB_Info Delta_eWiseAdd
 (
-    Delta_Matrix C,                    // input/output matrix for results
-    const GrB_Semiring semiring,    // defines '+' for T=A+B
-    const Delta_Matrix A,              // first input:  matrix A
-    const Delta_Matrix B               // second input: matrix B
+    Delta_Matrix C,               // input/output matrix for results
+    const GrB_Semiring semiring,  // defines '+' for T=A+B
+    const Delta_Matrix A,         // first input:  matrix A
+    const Delta_Matrix B          // second input: matrix B
 );
 
-GrB_Info Delta_Matrix_clear    // clear a matrix of all entries;
-(                           // type and dimensions remain unchanged
-    Delta_Matrix A             // matrix to clear
+// clear a matrix of all entries
+GrB_Info Delta_Matrix_clear  
+(                            // type and dimensions remain unchanged
+    Delta_Matrix A           // matrix to clear
 );
 
-GrB_Info Delta_Matrix_copy     // copy matrix A to matrix C
+// copy matrix A to matrix C
+GrB_Info Delta_Matrix_copy 
 (
-	Delta_Matrix C,            // output matrix
-	const Delta_Matrix A       // input matrix
+	Delta_Matrix C,       // output matrix
+	const Delta_Matrix A  // input matrix
 );
 
 // get matrix C without writing to internal matrix
@@ -291,8 +301,8 @@ GrB_Info Delta_Matrix_export
 // checks to see if matrix has pending operations
 GrB_Info Delta_Matrix_pending
 (
-	const Delta_Matrix C,              // matrix to query
-	bool *pending                   // are there any pending operations
+	const Delta_Matrix C,  // matrix to query
+	bool *pending          // are there any pending operations
 );
 
 GrB_Info Delta_Matrix_wait
@@ -321,8 +331,8 @@ const GrB_Matrix Delta_Matrix_M
 // return # of bytes used for a matrix
 GrB_Info Delta_Matrix_memoryUsage
 (
-    size_t *size,           // # of bytes used by the matrix A
-    const Delta_Matrix A    // matrix to query
+    size_t *size,         // # of bytes used by the matrix A
+    const Delta_Matrix A  // matrix to query
 );
 
 void Delta_Matrix_synchronize

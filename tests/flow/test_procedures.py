@@ -320,7 +320,7 @@ class testProcedures(FlowTestsBase):
         expected_result = [["db.labels", "READ"], ["db.idx.fulltext.createNodeIndex", "WRITE"],
                            ["db.propertyKeys", "READ"], ["dbms.procedures", "READ"], ["db.relationshipTypes", "READ"],
                            ["algo.BFS", "READ"], ["algo.pageRank", "READ"], ["db.idx.fulltext.queryNodes", "READ"],
-                           ["db.idx.fulltext.drop", "WRITE"]]
+                           ["db.idx.fulltext.drop", "WRITE"], ["algo.degree", "READ"], ["algo.degreeWeight", "READ"]]
         for res in expected_result:
             self.env.assertContains(res, actual_resultset)
 
@@ -367,6 +367,8 @@ class testProcedures(FlowTestsBase):
                            ['READ',  "algo.SSpaths"],
                            ["READ",  "algo.WCC"],
                            ['READ',  "algo.betweenness"],
+                           ['READ',  "algo.degree"],
+                           ['READ',  "algo.degreeWeight"],
                            ["READ",  "algo.labelPropagation"],
                            ["READ",  "algo.pageRank"],
                            ['READ',  "db.constraints"],

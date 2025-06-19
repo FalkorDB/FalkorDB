@@ -20,11 +20,11 @@ typedef struct {
 	const Graph *g;         // graph
 	GrB_Info info;          // iterator info
 	Node node;              // current node being yield
-	GrB_Vector degree;      // 1xn vector containing node degree
+	GrB_Vector w_degree;    // 1xn vector containing node weight
 	GxB_Iterator it;        // iterator over the degree matrix
 	SIValue output [2];     // array with up to two entries [node, degree]
 	SIValue *yield_node;    // yield node
-	SIValue *yield_degree;  // yield degree
+	SIValue *yield_weight;  // yield degree
 } DegreeContext;
 
 // setup procedure outputs according to yield
@@ -46,9 +46,9 @@ static void _process_yield
 			idx++;
 		}
 
-		// yield degree
-		else if(strcasecmp("degree", yield[i]) == 0) {
-			ctx->yield_degree = ctx->output + idx;
+		// yield degree weight
+		else if(strcasecmp("weight", yield[i]) == 0) {
+			ctx->yield_weight = ctx->output + idx;
 			idx++;
 		}
 	}
@@ -61,6 +61,7 @@ static void _process_yield
 //		'dir':                'incoming' / 'outgoing',
 //		'relationshipTypes':  [<type>, ...],
 //		'destLabels':         [<label>, ...],
+//		'weightAttribute':    [weightAttribute],
 //	}
 
 static bool _read_config
@@ -69,6 +70,7 @@ static bool _read_config
 	LabelID **src_lbls,   // [output] labels
 	LabelID **dest_lbls,  // [output] labels
 	RelationID **rels,    // [output] relationships
+	AttributeID *weight,  // [output] weight attribute
 	GRAPH_EDGE_DIR *dir   // edge direction
 ) {
 	// expecting configuration to be a map
@@ -84,7 +86,7 @@ static bool _read_config
 
 	uint match_fields = 0;
 	uint n = Map_KeyCount(config);
-	if(n > 4) {
+	if(n > 5) {
 		// error config contains unknown key
 		ErrorCtx_SetError("invalid degree configuration");
 		return false;
@@ -220,6 +222,26 @@ static bool _read_config
 		match_fields++;
 	}
 
+	// Reading the direction from config map
+	if(MAP_GETCASEINSENSITIVE(config, "weightAttribute", v)) {
+		if(SI_TYPE(v) == T_STRING) {
+			const char *attr = v.stringval;
+			AttributeID s = GraphContext_GetAttributeID(gc, attr);
+			if(s == ATTRIBUTE_ID_NONE) {
+				// log non-existant attr
+				ErrorCtx_SetError("weight ('%s') does not exist.", attr);
+				goto error;
+			}
+			*weight = s;
+		}
+		else {
+			ErrorCtx_SetError("degree configuration, 'weight' should be a string");
+			goto error;
+		}
+
+		match_fields++;
+	}
+
 	if(n != match_fields) {
 		ErrorCtx_SetError("degree configuration contains unknown key");
 		goto error;
@@ -247,7 +269,7 @@ error:
 }
 
 // procedure invoke callback
-ProcedureResult Proc_DegreeInvoke
+ProcedureResult Proc_DegreeWeightInvoke
 (
 	ProcedureCtx *ctx,    // procedure context
 	const SIValue *args,  // invocation args
@@ -259,7 +281,7 @@ ProcedureResult Proc_DegreeInvoke
 
 	if(l > 1)
 	{
-		ErrorCtx_SetError("invalid argument to algo.degree");
+		ErrorCtx_SetError("invalid argument to algo.degreeWeight");
 		return PROCEDURE_ERR;
 	}
 	if(l == 0 || SIValue_IsNull(args[0])) {
@@ -280,10 +302,11 @@ ProcedureResult Proc_DegreeInvoke
 	LabelID        *src_labels   = NULL; // src label
 	LabelID        *dest_labels  = NULL; // src label
 	RelationID     *rel_types    = NULL; // edge relationship type
+	FDB_degree_ctx  deg_ctx      = {.g = NULL, .attribute = ATTRIBUTE_ID_NONE};
 
 	// parse configuration
 	bool config_ok = _read_config(config, &src_labels, &dest_labels, 
-		&rel_types, &dir);
+		&rel_types, &deg_ctx.attribute, &dir);
 	SIValue_Free(config);
 
 	if(!config_ok) {
@@ -303,7 +326,7 @@ ProcedureResult Proc_DegreeInvoke
 
 	Tensor          R          = NULL;  // relation adjacency matrix
 	GrB_Info        info       = GrB_SUCCESS;
-	GrB_Vector      degree     = NULL; // degree vector
+	GrB_Vector      w_degree   = NULL; // weight vector
 	GrB_Vector      src        = NULL; // src vector
 	GrB_Vector      dest       = NULL; // dest vector
 
@@ -327,7 +350,8 @@ ProcedureResult Proc_DegreeInvoke
 	//--------------------------------------------------------------------------
 	// get source label vector
 	//--------------------------------------------------------------------------
-	info = GrB_Vector_new(&degree, GrB_UINT64, n);
+	deg_ctx.g  = g;
+	info = GrB_Vector_new(&w_degree, GrB_FP64, n);
 	ASSERT(info == GrB_SUCCESS);
 	// if srcLabels was give but no labels were real, src will be empty.
 	// and no degrees are returned. Shortcut.
@@ -365,9 +389,9 @@ ProcedureResult Proc_DegreeInvoke
 		ASSERT(info == GrB_SUCCESS);
 	}
 
-	//Setting degree at source node ids to zero
-	info = GrB_Vector_assign_UINT64(
-		degree, src, NULL, 0, GrB_ALL, n, GrB_DESC_S);
+	//Setting weight at source node ids to zero
+	info = GrB_Vector_assign_FP64(
+		w_degree, src, NULL, 0.0, GrB_ALL, n, GrB_DESC_S);
 	ASSERT(info == GrB_SUCCESS);
 
 	info = GrB_Vector_free(&src);
@@ -381,6 +405,9 @@ ProcedureResult Proc_DegreeInvoke
 
 	// Same for relationshipTypes. 
 	if(rel_types != NULL && n_rels == 0) goto output_proc;
+
+	// And weightAttribute.
+	if(deg_ctx.attribute == ATTRIBUTE_ID_NONE) goto output_proc;
 
 	info = GrB_Vector_new(&dest, GrB_BOOL, n);
 	ASSERT(info == GrB_SUCCESS);
@@ -422,14 +449,14 @@ ProcedureResult Proc_DegreeInvoke
 	}
 
 	//--------------------------------------------------------------------------
-	// Calculate unweighted degree vector
+	// Calculate weighted degree vector
 	//--------------------------------------------------------------------------
 	if(rel_types != NULL) {
 		for(unsigned short i = 0; i < n_rels; i++) {
 			R = Graph_GetRelationMatrix(g, rel_types[i], false);
 			int opt = Graph_RelationshipContainsMultiEdge(g, rel_types[i])?
 					DEG_TENSOR : 0;
-			TensorDegree(degree, dest, R, direction | opt);
+			TensorDegree_weighted(w_degree, dest, R, direction | opt, deg_ctx);
 		}
 	} else {
 		n_rels = Graph_RelationTypeCount(g);
@@ -438,7 +465,7 @@ ProcedureResult Proc_DegreeInvoke
 			R = Graph_GetRelationMatrix(g, i, false);
 			int opt = Graph_RelationshipContainsMultiEdge(g, i)?
 					DEG_TENSOR : 0;
-			TensorDegree(degree, dest, R, direction | opt);
+			TensorDegree_weighted(w_degree, dest, R, direction | opt, deg_ctx);
 		}
 	}
 
@@ -446,7 +473,7 @@ ProcedureResult Proc_DegreeInvoke
 	ASSERT(info == GrB_SUCCESS);
 
 output_proc:
-	info = GrB_Vector_resize(degree, Graph_UncompactedNodeCount(g));
+	info = GrB_Vector_resize(w_degree, Graph_UncompactedNodeCount(g));
 
 	array_free(rel_types);
 	array_free(src_labels);
@@ -464,7 +491,7 @@ output_proc:
 	ctx->privateData = pdata;
 
 	pdata->g        = QueryCtx_GetGraph();
-	pdata->degree   = degree;
+	pdata->w_degree = w_degree;
 
 	_process_yield(pdata, yield);
 	
@@ -472,7 +499,7 @@ output_proc:
 	info = GxB_Iterator_new(&pdata->it);
 	ASSERT(info == GrB_SUCCESS);
 
-	info = GxB_Vector_Iterator_attach(pdata->it, degree, NULL);
+	info = GxB_Vector_Iterator_attach(pdata->it, w_degree, NULL);
 	ASSERT(info == GrB_SUCCESS);
 
     pdata->info = GxB_Vector_Iterator_seek(pdata->it, 0);
@@ -480,7 +507,7 @@ output_proc:
 }
 
 // procedure step function
-SIValue *Proc_DegreeStep
+SIValue *Proc_DegreeWeightStep
 (
 	ProcedureCtx *ctx
 ) {
@@ -490,14 +517,14 @@ SIValue *Proc_DegreeStep
 	DegreeContext *pdata = (DegreeContext*)ctx->privateData;
 	
 	// get current entry
-	NodeID   id     = -1;  		// node id
-	uint64_t degree = -1;       // node degree
+	NodeID id     = -1;  // node id
+	double weight = 0.0;  // node weight
 	
 	while(pdata->info != GxB_EXHAUSTED) {
 		// get current node id and its associated component id
 		id = GxB_Vector_Iterator_getIndex(pdata->it);
 		if(Graph_GetNode(pdata->g, id, &pdata->node)) {
-			degree = GxB_Iterator_get_UINT64(pdata->it);	
+			weight = GxB_Iterator_get_FP64(pdata->it);	
 			break;
 		}
 		// move to the next entry in the components vector
@@ -518,16 +545,15 @@ SIValue *Proc_DegreeStep
 		*pdata->yield_node = SI_Node(&pdata->node);
 	}
 
-	// yield degree
-	if(pdata->yield_degree) {
-		*pdata->yield_degree = SI_LongVal(degree);
+	if(pdata->yield_weight) {
+		*pdata->yield_weight = SI_DoubleVal(weight);
 	}
 
 	return pdata->output;
 }
 
 // procedure context free callback
-ProcedureResult Proc_DegreeFree
+ProcedureResult Proc_DegreeWeightFree
 (
 	ProcedureCtx *ctx
 ) {
@@ -537,7 +563,7 @@ ProcedureResult Proc_DegreeFree
 		GrB_Info info = GxB_Iterator_free(&pdata->it);
 		ASSERT(info == GrB_SUCCESS);
 
-		info = GrB_free(&pdata->degree);
+		info = GrB_free(&pdata->w_degree);
 		ASSERT(info == GrB_SUCCESS);
 
 		rm_free(pdata);
@@ -560,31 +586,32 @@ ProcedureResult Proc_DegreeFree
 //  dir         		- [optional] [string]   'incoming', 'outgoing', or 'both'. default: 'outgoing'
 //  relationshipTypes   - [optional] [string[]] the type of edges to consider
 //  destLabels 			- [optional] [string[]] type of reachable nodes
-//  weightAttribute 	- [optional] [attribute] attribute to be used for weight
+//  weightAttribute 	- [attribute] attribute to be used for weight
 //
 //  examples:
 //
 //  CALL algo.degree()
 //  CALL algo.degree(NULL)
 //  CALL algo.degree({})
-//  CALL algo.degree({srcLabels: 'L', relationshipTypes: 'R', dir: 'outgoing', destLabels: 'M'})
-ProcedureCtx *Proc_DegreeCtx()
+//  CALL algo.degree({srcLabels: 'L', relationshipTypes: 'R',
+//      dir: 'outgoing', destLabels: 'M', weightAttribute: 'weight'})
+ProcedureCtx *Proc_DegreeWeightCtx()
 {
 	void *privateData = NULL;
 
 	ProcedureOutput *outputs      = array_new(ProcedureOutput, 1);
 	ProcedureOutput output_node   = {.name = "node",   .type = T_NODE};
-	ProcedureOutput output_degree = {.name = "degree", .type = T_INT64};
+	ProcedureOutput output_weight = {.name = "weight", .type = T_DOUBLE};
 
 	array_append(outputs, output_node);
-	array_append(outputs, output_degree);
+	array_append(outputs, output_weight);
 
-	return ProcCtxNew("algo.degree", 
+	return ProcCtxNew("algo.degreeWeight", 
 						PROCEDURE_VARIABLE_ARG_COUNT, 
 						outputs, 
-						Proc_DegreeStep,
-						Proc_DegreeInvoke, 
-						Proc_DegreeFree, 
+						Proc_DegreeWeightStep,
+						Proc_DegreeWeightInvoke, 
+						Proc_DegreeWeightFree, 
 						privateData, 
 						true);
 }
