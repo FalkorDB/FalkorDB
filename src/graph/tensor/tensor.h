@@ -10,6 +10,7 @@
 #include "../entities/edge.h"
 #include "../delta_matrix/delta_matrix.h"
 #include "../delta_matrix/delta_matrix_iter.h"
+#include "tensor_utils.h"
 
 // Tensor is a 3D Delta Matrix
 typedef Delta_Matrix Tensor;
@@ -163,3 +164,14 @@ bool TensorIterator_is_attached
 	const Tensor T             // tensor
 );
 
+GrB_Info Tensor_mxv
+(
+    GrB_Vector c,                 // [output] vector
+    const GrB_Vector mask,        // [input] mask
+    const GrB_BinaryOp accum,     // [input] accum 
+    const GrB_Semiring semiring,  // [input] semiring see TENSORPICK for 
+                                  //       multiplication definition
+    const Tensor A,               // [input] Tensor
+    const GrB_Vector u,           // [input] GrB_BOOL vector 
+    const GrB_Descriptor desc     // [input] descriptor 
+) ;
