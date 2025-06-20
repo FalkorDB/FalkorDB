@@ -23,7 +23,7 @@
 struct delete_clause
 {
     cypher_astnode_t _astnode;
-    bool detach;
+    cypher_ast_delete_mode_t mode;
     unsigned int nexpressions;
     const cypher_astnode_t *expressions[];
 };
@@ -46,7 +46,7 @@ const struct cypher_astnode_vt cypher_delete_astnode_vt =
       .clone = clone };
 
 
-cypher_astnode_t *cypher_ast_delete(bool detach,
+cypher_astnode_t *cypher_ast_delete(cypher_ast_delete_mode_t mode,
         cypher_astnode_t * const *expressions, unsigned int nexpressions,
         cypher_astnode_t **children, unsigned int nchildren,
         struct cypher_input_range range)
@@ -66,7 +66,7 @@ cypher_astnode_t *cypher_ast_delete(bool detach,
     {
         goto cleanup;
     }
-    node->detach = detach;
+    node->mode = mode;
     memcpy(node->expressions, expressions,
             nexpressions * sizeof(cypher_astnode_t *));
     node->nexpressions = nexpressions;
@@ -99,7 +99,7 @@ cypher_astnode_t *clone(const cypher_astnode_t *self,
         expressions[i] = children[child_index(self, node->expressions[i])];
     }
 
-    cypher_astnode_t *clone = cypher_ast_delete(node->detach, expressions,
+    cypher_astnode_t *clone = cypher_ast_delete(node->mode, expressions,
             node->nexpressions, children, self->nchildren, self->range);
     int errsv = errno;
     free(expressions);
@@ -113,7 +113,16 @@ bool cypher_ast_delete_has_detach(const cypher_astnode_t *astnode)
     REQUIRE_TYPE(astnode, CYPHER_AST_DELETE, false);
     struct delete_clause *node =
             container_of(astnode, struct delete_clause, _astnode);
-    return node->detach;
+    return node->mode == CYPHER_AST_DELETE_MODE_DETACH;
+}
+
+
+cypher_ast_delete_mode_t cypher_ast_delete_get_mode(const cypher_astnode_t *astnode)
+{
+    REQUIRE_TYPE(astnode, CYPHER_AST_DELETE, CYPHER_AST_DELETE_MODE_DELETE);
+    struct delete_clause *node =
+            container_of(astnode, struct delete_clause, _astnode);
+    return node->mode;
 }
 
 
@@ -146,8 +155,21 @@ ssize_t detailstr(const cypher_astnode_t *self, char *str, size_t size)
     struct delete_clause *node =
             container_of(self, struct delete_clause, _astnode);
 
-    ssize_t r = snprintf(str, size, "%sexpressions=",
-            node->detach? "DETACH, ":"");
+    const char *mode_str = "";
+    switch (node->mode) {
+        case CYPHER_AST_DELETE_MODE_DETACH:
+            mode_str = "DETACH, ";
+            break;
+        case CYPHER_AST_DELETE_MODE_NODETACH:
+            mode_str = "NODETACH, ";
+            break;
+        case CYPHER_AST_DELETE_MODE_DELETE:
+        default:
+            mode_str = "";
+            break;
+    }
+
+    ssize_t r = snprintf(str, size, "%sexpressions=", mode_str);
     if (r < 0)
     {
         return -1;

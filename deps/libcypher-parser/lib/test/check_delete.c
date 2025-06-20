@@ -142,11 +142,65 @@ START_TEST (parse_detach_delete)
 END_TEST
 
 
+START_TEST (parse_nodetach_delete)
+{
+    struct cypher_input_position last = cypher_input_position_zero;
+    result = cypher_parse(
+            "/*MATCH*/ NODETACH DELETE n, CASE WHEN exists(n.foo) THEN m ELSE n END;",
+            &last, NULL, 0);
+    ck_assert_ptr_ne(result, NULL);
+    ck_assert_int_eq(last.offset, 71);
+
+    ck_assert(cypher_parse_result_fprint_ast(result, memstream, 0, NULL, 0) == 0);
+    fflush(memstream);
+    const char *expected = "\n"
+" @0   2..7   block_comment            /*MATCH*/\n"
+" @1  10..71  statement                body=@2\n"
+" @2  10..71  > query                  clauses=[@3]\n"
+" @3  10..70  > > DELETE               NODETACH, expressions=[@4, @5]\n"
+" @4  26..27  > > > identifier         `n`\n"
+" @5  29..70  > > > case               alternatives=[(@6:@11)], default=@12\n"
+" @6  39..52  > > > > apply            @7(@8)\n"
+" @7  39..45  > > > > > function name  `exists`\n"
+" @8  46..51  > > > > > property       @9.@10\n"
+" @9  46..47  > > > > > > identifier   `n`\n"
+"@10  48..51  > > > > > > prop name    `foo`\n"
+"@11  58..59  > > > > identifier       `m`\n"
+"@12  65..66  > > > > identifier       `n`\n";
+    ck_assert_str_eq(memstream_buffer, expected);
+
+    const cypher_astnode_t *ast = cypher_parse_result_get_directive(result, 0);
+    ck_assert_int_eq(cypher_astnode_type(ast), CYPHER_AST_STATEMENT);
+    const cypher_astnode_t *query = cypher_ast_statement_get_body(ast);
+    ck_assert_int_eq(cypher_astnode_type(query), CYPHER_AST_QUERY);
+    const cypher_astnode_t *del = cypher_ast_query_get_clause(query, 0);
+    ck_assert_int_eq(cypher_astnode_type(del), CYPHER_AST_DELETE);
+
+    // Test the new delete mode API
+    ck_assert_int_eq(cypher_ast_delete_get_mode(del), CYPHER_AST_DELETE_MODE_NODETACH);
+    
+    // Test backward compatibility - NODETACH is not detach
+    ck_assert(!cypher_ast_delete_has_detach(del));
+
+    ck_assert_int_eq(cypher_ast_delete_nexpressions(del), 2);
+    ck_assert_ptr_eq(cypher_ast_delete_get_expression(del, 2), NULL);
+
+    const cypher_astnode_t *expr = cypher_ast_delete_get_expression(del, 0);
+    ck_assert_int_eq(cypher_astnode_type(expr), CYPHER_AST_IDENTIFIER);
+    ck_assert_str_eq(cypher_ast_identifier_get_name(expr), "n");
+
+    expr = cypher_ast_delete_get_expression(del, 1);
+    ck_assert_int_eq(cypher_astnode_type(expr), CYPHER_AST_CASE);
+}
+END_TEST
+
+
 TCase* delete_tcase(void)
 {
     TCase *tc = tcase_create("delete");
     tcase_add_checked_fixture(tc, setup, teardown);
     tcase_add_test(tc, parse_delete);
     tcase_add_test(tc, parse_detach_delete);
+    tcase_add_test(tc, parse_nodetach_delete);
     return tc;
 }

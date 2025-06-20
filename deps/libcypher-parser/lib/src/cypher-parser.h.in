@@ -2679,11 +2679,20 @@ const cypher_astnode_t *cypher_ast_set_labels_get_label(
 
 
 /**
+ * DELETE mode enumeration.
+ */
+typedef enum {
+    CYPHER_AST_DELETE_MODE_DELETE = 0,    // Regular DELETE (detach relationships)
+    CYPHER_AST_DELETE_MODE_DETACH = 1,    // DETACH DELETE (explicitly detach relationships)
+    CYPHER_AST_DELETE_MODE_NODETACH = 2   // NODETACH DELETE (fail if relationships exist)
+} cypher_ast_delete_mode_t;
+
+/**
  * Construct a `CYPHER_AST_DELETE` node.
  *
  * The node will also be an instance of `CYPHER_AST_CLAUSE`.
  *
- * @param [detach] `true` if the `DETACH` option is present, `false` otherwise.
+ * @param [mode] The delete mode: DELETE, DETACH DELETE, or NODETACH DELETE.
  * @param [expressions] Expressions for `DELETE`, all of type
  *         `CYPHER_AST_EXPRESSION`.
  * @param [nexpressions] The number of expressions.
@@ -2693,7 +2702,7 @@ const cypher_astnode_t *cypher_ast_set_labels_get_label(
  * @return An AST node, or NULL if an error occurs (errno will be set).
  */
 __cypherlang_must_check
-cypher_astnode_t *cypher_ast_delete(bool detach,
+cypher_astnode_t *cypher_ast_delete(cypher_ast_delete_mode_t mode,
         cypher_astnode_t * const *expressions, unsigned int nexpressions,
         cypher_astnode_t **children, unsigned int nchildren,
         struct cypher_input_range range);
@@ -2706,9 +2715,22 @@ cypher_astnode_t *cypher_ast_delete(bool detach,
  *
  * @param [node] The AST node.
  * @return `true` if `DETACH` is present, `false` otherwise.
+ * @deprecated Use cypher_ast_delete_get_mode() instead.
  */
 __cypherlang_pure
 bool cypher_ast_delete_has_detach(const cypher_astnode_t *node);
+
+/**
+ * Get the delete mode for a `CYPHER_AST_DELETE` node.
+ *
+ * If the node is not an instance of `CYPHER_AST_DELETE` then the result will
+ * be undefined.
+ *
+ * @param [node] The AST node.
+ * @return The delete mode (DELETE, DETACH, or NODETACH).
+ */
+__cypherlang_pure
+cypher_ast_delete_mode_t cypher_ast_delete_get_mode(const cypher_astnode_t *node);
 
 /**
  * Get the number of expression in a `CYPHER_AST_DELETE` node.
