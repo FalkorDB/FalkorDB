@@ -78,3 +78,70 @@ GrB_Info Delta_Matrix_export
 	return info;
 }
 
+GrB_Info Delta_Matrix_export_structure
+(
+	GrB_Matrix *A,
+	Delta_Matrix C
+) {
+	ASSERT(C != NULL);
+	ASSERT(A != NULL);
+
+	GrB_Type    t;
+	GrB_Index   nrows;
+	GrB_Index   ncols;
+	GrB_Index   dp_nvals;
+	GrB_Index   dm_nvals;
+	GrB_Matrix  a          =  NULL;
+	GrB_Matrix  m          =  DELTA_MATRIX_M(C);
+	GrB_Info    info       =  GrB_SUCCESS;
+	GrB_Matrix  dp         =  DELTA_MATRIX_DELTA_PLUS(C);
+	GrB_Matrix  dm         =  DELTA_MATRIX_DELTA_MINUS(C);
+
+
+	info = GrB_Matrix_nrows(&nrows, m);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_Matrix_ncols(&ncols, m);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_Matrix_new(&a, GrB_BOOL, nrows, ncols);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_wait(dp, GrB_MATERIALIZE);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_wait(dm, GrB_MATERIALIZE);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_Matrix_nvals(&dp_nvals, dp);
+	ASSERT(info == GrB_SUCCESS);
+	info = GrB_Matrix_nvals(&dm_nvals, dm);
+	ASSERT(info == GrB_SUCCESS);
+
+	bool  additions  =  dp_nvals  >  0;
+	bool  deletions  =  dm_nvals  >  0;
+
+	//--------------------------------------------------------------------------
+	// copy addition and m structure
+	//--------------------------------------------------------------------------
+	info = GrB_Matrix_assign_BOOL(
+		a, dp, NULL, (bool) true, GrB_ALL, nrows, GrB_ALL, ncols, GrB_DESC_S);
+	ASSERT(info == GrB_SUCCESS);
+	info = GrB_Matrix_assign_BOOL(
+		a, m, NULL, (bool) true, GrB_ALL, nrows, GrB_ALL, ncols, GrB_DESC_S);
+	ASSERT(info == GrB_SUCCESS);
+	
+	//--------------------------------------------------------------------------
+	// perform deletions if needed
+	//--------------------------------------------------------------------------
+
+	if(deletions) {
+		info = GrB_transpose(a, dm, NULL, a, GrB_DESC_SC);
+		ASSERT(info == GrB_SUCCESS);
+	}
+
+	*A = a;
+
+	return info;
+}
+

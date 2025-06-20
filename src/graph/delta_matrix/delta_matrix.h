@@ -249,6 +249,12 @@ GrB_Info Delta_Matrix_removeElement_UINT64
 	GrB_Index j      // column index
 );
 
+GrB_Info Delta_Matrix_removeElements
+(
+	Delta_Matrix C,  // matrix to remove entry from
+	GrB_Matrix A     // matrix filled with elements to remove
+) ;
+
 // C = A * B
 GrB_Info Delta_mxm
 (
@@ -285,7 +291,14 @@ GrB_Info Delta_Matrix_export
 (
 	GrB_Matrix *A,
 	Delta_Matrix C
-);
+) ;
+
+// get structural matrix A without writing to internal matrix
+GrB_Info Delta_Matrix_export_structure
+(
+	GrB_Matrix *A,
+	Delta_Matrix C
+) ;
 
 // checks to see if matrix has pending operations
 GrB_Info Delta_Matrix_pending

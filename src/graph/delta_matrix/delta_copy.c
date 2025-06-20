@@ -9,35 +9,12 @@
 #include "delta_matrix.h"
 #include "../../util/rmalloc.h"
 
-static void _copyMatrix
-(
-	const GrB_Matrix in,
-	GrB_Matrix out
-) {
-	GrB_Index   nvals;
-	GrB_Info    info =  GrB_SUCCESS;
-
-	UNUSED(info);
-
-	info = GrB_Matrix_nvals(&nvals, in);
-	ASSERT(info == GrB_SUCCESS);
-
-	if(nvals > 0) {
-		info = GrB_Matrix_apply(out, NULL, NULL, GrB_IDENTITY_BOOL, in,
-				GrB_DESC_R);
-	}
-	else {
-		GrB_Matrix_clear(out);
-	}
-
-	ASSERT(info == GrB_SUCCESS);
-}
-
 GrB_Info Delta_Matrix_copy
 (
 	Delta_Matrix C,
 	const Delta_Matrix A
 ) {
+	GrB_Info    info =  GrB_SUCCESS;
 	Delta_Matrix_checkCompatible(C, A);
 	
 	GrB_Matrix  in_m             =  DELTA_MATRIX_M(A);
@@ -47,10 +24,15 @@ GrB_Info Delta_Matrix_copy
 	GrB_Matrix  out_delta_plus   =  DELTA_MATRIX_DELTA_PLUS(C);
 	GrB_Matrix  out_delta_minus  =  DELTA_MATRIX_DELTA_MINUS(C);
 
-	_copyMatrix(in_m, out_m);
-	_copyMatrix(in_delta_plus, out_delta_plus);
-	_copyMatrix(in_delta_minus, out_delta_minus);
-
-	return GrB_SUCCESS;
+	info = GrB_transpose(
+		out_m, NULL, NULL, in_m, GrB_DESC_T0);
+	ASSERT(info == GrB_SUCCESS);
+	info = GrB_transpose(
+		out_delta_plus, NULL, NULL, in_delta_plus, GrB_DESC_T0);
+	ASSERT(info == GrB_SUCCESS);
+	info = GrB_transpose(
+		out_delta_minus, NULL, NULL, in_delta_minus, GrB_DESC_T0);
+	ASSERT(info == GrB_SUCCESS);
+	return info;
 }
 

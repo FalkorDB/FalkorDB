@@ -155,3 +155,30 @@ GrB_Info Delta_Matrix_removeElement_UINT64
 	return info;
 }
 
+GrB_Info Delta_Matrix_removeElements
+(
+	Delta_Matrix C,  // matrix to remove entry from
+	GrB_Matrix A     // matrix filled with elements to remove
+) {
+	ASSERT(C != NULL);
+	ASSERT(A != NULL);
+	ASSERT(!DELTA_MATRIX_MAINTAIN_TRANSPOSE(C));
+	GrB_Info    info;
+	GrB_Matrix  m  =  DELTA_MATRIX_M(C);
+	GrB_Matrix  dp =  DELTA_MATRIX_DELTA_PLUS(C);
+	GrB_Matrix  dm =  DELTA_MATRIX_DELTA_MINUS(C);
+
+	// add edges in m and A to dm
+	info = GrB_Matrix_eWiseMult_BinaryOp(
+		dm, NULL, GrB_ONEB_BOOL, GrB_ONEB_BOOL, m, A, NULL) ;	
+	ASSERT(info == GrB_SUCCESS);
+
+	// remove edges in dp that are also in A.
+	info = GrB_transpose(dp, A, NULL, dp, GrB_DESC_RSCT0);
+	ASSERT(info == GrB_SUCCESS);
+
+	Delta_Matrix_setDirty(C);
+	return info;
+}
+
+
