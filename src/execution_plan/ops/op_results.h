@@ -4,15 +4,16 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+// Results populates the query's result-set
+// the operation enforces the configured maximum result-set size
+// if that limit been reached query execution terminate
+// otherwise the current record is added to the result-set
+
 #pragma once
 
 #include "op.h"
 #include "../execution_plan.h"
-#include "../../redismodule.h"
-#include "../../graph/graphcontext.h"
 #include "../../resultset/resultset.h"
-
-/* Results generates result set */
 
 typedef struct {
 	OpBase op;
@@ -20,5 +21,9 @@ typedef struct {
 	uint64_t result_set_size_limit;
 } Results;
 
-/* Creates a new Results operation */
-OpBase *NewResultsOp(const ExecutionPlan *plan);
+// creates a new Results operation
+OpBase *NewResultsOp
+(
+	const ExecutionPlan *plan
+);
+

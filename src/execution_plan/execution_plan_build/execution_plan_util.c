@@ -17,7 +17,7 @@ bool ExecutionPlan_isEager
     OpBase *root
 ) {
 	return ExecutionPlan_LocateOpMatchingTypes(root, EAGER_OPERATIONS,
-			EAGER_OP_COUNT) != NULL;
+			EAGER_OP_COUNT, NULL, 0) != NULL;
 }
 
 // checks if op is marked as blacklisted
@@ -102,19 +102,42 @@ static OpBase *_LocateOpResolvingAliases
 // returns NULL if no matching operation was found
 OpBase *ExecutionPlan_LocateOpMatchingTypes
 (
-    OpBase *root,
-    const OPType *types,
-    uint type_count
+    OpBase *root,         // search starts here
+    const OPType *types,  // types to match
+    uint type_count,      // number of types
+	OPType *blacklist,    // [optional] list of ops search won't expand from
+	uint blacklist_n      // number of blacklisted ops
 ) {
+	// return current op if it matches any of the types we're searching for
 	for(int i = 0; i < type_count; i++) {
-		// Return the current op if it matches any of the types we're searching for.
 		if(root->type == types[i]) return root;
 	}
 
+	// scan through root children
 	for(int i = 0; i < root->childCount; i++) {
-		// Recursively visit children.
-		OpBase *op = ExecutionPlan_LocateOpMatchingTypes(root->children[i], types, type_count);
-		if(op) return op;
+		OpBase *child = OpBase_GetChild(root, i);
+
+		// make sure child isn't blacklisted
+		bool blacklisted = false;
+		for(int j = 0; j < blacklist_n; j++) {
+			if(child->type == blacklist[j]) {
+				blacklisted = true;
+				break;
+			}
+		}
+
+		if(blacklisted) {
+			// child is blacklisted move on to the next child
+			continue;
+		}
+
+		// recursively visit child
+		OpBase *op = ExecutionPlan_LocateOpMatchingTypes(child, types,
+				type_count, blacklist, blacklist_n);
+
+		if(op) {
+			return op;
+		}
 	}
 
 	return NULL;
@@ -127,8 +150,7 @@ OpBase *ExecutionPlan_LocateOp
 ) {
 	if(!root) return NULL;
 
-	const OPType type_arr[1] = {type};
-	return ExecutionPlan_LocateOpMatchingTypes(root, type_arr, 1);
+	return ExecutionPlan_LocateOpMatchingTypes(root, &type, 1, NULL, 0);
 }
 
 // searches for an operation of a given type, up to the given depth in the
@@ -287,24 +309,74 @@ OpBase **ExecutionPlan_CollectOps
 	return ops;
 }
 
+// collect all operations belonging to the given plan
+// it is the callers responsibility to free the returned array
+OpBase **ExecutionPlan_CollectAllOps
+(
+	const ExecutionPlan *plan,  // plan to collect ops from
+	uint *n                     // [output] number of ops collected
+) {
+	ASSERT(n    != NULL);
+	ASSERT(plan != NULL);
+
+	*n = 0;
+
+	// can't scan plan, return NULL
+	if(plan->root == NULL) {
+		return NULL;
+	}
+
+	OpBase **ops = rm_malloc(sizeof(OpBase*) * 1);
+
+	uint s = 0;  // current index into ops array
+	uint e = 1;  // length of ops array
+	ops[0] = plan->root;
+
+	// collect upwards using child pointers
+	while(s < e) {
+		OpBase *current = ops[s++];
+
+		// try adding current children
+		for(uint i = 0; i < OpBase_ChildCount(current); i++) {
+			OpBase *child = OpBase_GetChild(current, i);
+
+			// add child only if it belong to given plan
+			if(child->plan == plan) {
+				ops = rm_realloc(ops, sizeof(OpBase*) * (e + 1));
+				ops[e++] = child;
+			}
+		}
+	}
+
+	// no need to collect downwards
+	OpBase *current = plan->root->parent;
+	ASSERT(current == NULL || current->plan != plan);
+
+	*n = e;
+	return ops;
+}
+
 // fills `ops` with all operations from `op` an upward (towards parent) in the
 // execution plan
 // returns the amount of ops collected
 uint ExecutionPlan_CollectUpwards
 (
-    OpBase *ops[],
-    OpBase *op
+    OpBase **restrict ops,  // array to populate
+	uint n,                 // size of ops array
+    OpBase *restrict root   // root operation to scan from
 ) {
-	ASSERT(op != NULL);
-	ASSERT(ops != NULL);
+	ASSERT(n    > 0);
+	ASSERT(ops  != NULL);
+	ASSERT(root != NULL);
 
 	uint i = 0;
-	while(op != NULL) {
-		ops[i] = op;
-		op = op->parent;
+	while(root != NULL) {
+		ops[i] = root;
+		root = root->parent;
 		i++;
 	}
 
+	ASSERT(i <= n);  // make sure we didn't overflow
 	return i;
 }
 
