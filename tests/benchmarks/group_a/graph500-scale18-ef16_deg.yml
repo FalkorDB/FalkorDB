@@ -1,0 +1,17 @@
+name: GRAPH500-SCALE_18-ef16_deg
+description: "Dataset: Synthetic graph500 network of scale 18 (262144x262144, 4194304
+  edges) - 262017 nodes with label 'Node' - 4194304 relations of type 'IS_CONNECTED'
+  - Indexed properties: - exact-match: Node; [external_id] "
+db_config:
+  dataset: datasets/graph500.rdb
+  dataset_load_timeout_secs: 180
+parameters:
+  graph: graph500-scale18-ef16
+  num_clients: 32
+  num_requests: 3200
+  queries:
+    - query: 'CALL algo.Degree(NULL) YIELD node, degree RETURN count(degree) AS total'
+      ratio: 1.0
+kpis:
+  - key: '$.OverallClientLatencies.Total.q50'
+    max_value: 450
