@@ -205,9 +205,9 @@ void _print_matrix(GrB_Matrix mat) {
 	GrB_Matrix_nrows(&nrows, mat);
 	GrB_Matrix_nvals(&nvals, mat);
 #ifdef __aarch64__
-	printf("ncols: %llu, nrows: %llu, nvals: %llu\n", ncols, nrows, nvals);
+	printf("ncols: %" PRIu64 ", nrows: %" PRIu64 ", nvals: %" PRIu64 "\n", ncols, nrows, nvals);
 #else
-    printf("ncols: %lu, nrows: %lu, nvals: %lu\n", ncols, nrows, nvals);
+    printf("ncols: %" PRIu64 ", nrows: %" PRIu64 ", nvals: %" PRIu64 "\n", ncols, nrows, nvals);
 #endif
 
 	GrB_Index II[nvals];    // array for returning row indices of tuples
@@ -216,7 +216,7 @@ void _print_matrix(GrB_Matrix mat) {
 
 	GrB_Matrix_extractTuples_BOOL(II, J, X, &nvals, mat);
 	for(int i = 0; i < nvals; i++) {
-		printf("[%lu,%lu,%d]\n", II[i], J[i], X[i]);
+		printf("[%" PRIu64 ",%" PRIu64 ",%d]\n", II[i], J[i], X[i]);
 	}
 }
 
@@ -236,9 +236,9 @@ bool _compare_matrices(GrB_Matrix expected, Delta_Matrix actual) {
 	GrB_Matrix_nvals(&bvals, b);
 
 	if(acols != bcols || arows != brows || avals != bvals) {
-		printf("acols: %lu bcols: %lu\n", acols, bcols);
-		printf("arows: %lu brows: %lu\n", arows, brows);
-		printf("avals: %lu bvals: %lu\n", avals, bvals);
+		printf("acols: %" PRIu64 " bcols: %" PRIu64 "\n", acols, bcols);
+		printf("arows: %" PRIu64 " brows: %" PRIu64 "\n", arows, brows);
+		printf("avals: %" PRIu64 " bvals: %" PRIu64 "\n", avals, bvals);
 
 		GrB_Matrix_free(&b);
 		return false;

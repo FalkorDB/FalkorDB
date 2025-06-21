@@ -10,10 +10,11 @@
 #include "../errors/errors.h"
 
 #include <poll.h>
+#include <errno.h>
 #include <fcntl.h>      // for fcntl(), O_NONBLOCK, F_SETFL, etc.
 #include <unistd.h>
 #include <pthread.h>
-#include <sys/errno.h>
+
 
 
 // curl download session

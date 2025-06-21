@@ -11,9 +11,10 @@
 #include "../datatypes/array.h"
 
 #include <poll.h>
+#include <errno.h>
 #include <stdio.h>
 #include <unistd.h>
-#include <sys/errno.h>
+
 
 #define DEFAULT_STEP 4096
 
