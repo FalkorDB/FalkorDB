@@ -687,14 +687,8 @@ class testIndexCreationFlow():
         # create an index
         #-----------------------------------------------------------------------
 
-        # determine how much time does it take to construct our index
-        start = time()
-
         res = create_node_fulltext_index(self.graph, 'L', 'v', sync=True)
         self.env.assertEquals(res.indices_created, 1)
-
-        # total index creation time
-        elapsed = time() - start
 
         #-----------------------------------------------------------------------
         # drop the index
@@ -706,8 +700,6 @@ class testIndexCreationFlow():
 
         # recreate the index, but this time introduce additionl fields
         # while the index is being populated
-
-        start = time()
 
         # introduce a new field
         res = self.graph.create_node_fulltext_index('L', 'a')
