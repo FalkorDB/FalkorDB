@@ -4,7 +4,7 @@ ARG TARGETPLATFORM=linux/x86_64
 
 FROM $BASE_IMAGE AS compiler
 
-ENV DEPS "curl automake libtool autoconf py3-pip wget cmake m4 git valgrind python3-dev build-base redis"
+ENV DEPS "curl automake libtool autoconf py3-pip wget cmake m4 git valgrind python3-dev build-base redis gcc musl-dev linux-headers"
 
 # Set up a build environment by installing necessary dependencies.
 # 'set -ex' ensures that the script exits immediately if any command fails.
