@@ -164,7 +164,8 @@ GraphContext *RdbLoadGraphContext_v16
 	GraphContext *gc = _DecodeHeader(rdb);
 
 	// log progress
-	RedisModule_Log(NULL, "notice", "Graph '%s' processing virtual key: %lld/%lld",
+	RedisModule_Log(NULL, "notice",
+			"Graph '%s' processing virtual key: %" PRId64 "/%" PRId64,
 			GraphContext_GetName(gc), gc->decoding_context->keys_processed + 1,
 			gc->decoding_context->graph_keys_count);
 
@@ -188,7 +189,7 @@ GraphContext *RdbLoadGraphContext_v16
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
-						"Graph '%s' processed %zu/%llu nodes",
+						"Graph '%s' processed %zu/%" PRIu64 " nodes",
 						GraphContext_GetName(gc),
 						Graph_UncompactedNodeCount(gc->g),
 						gc->decoding_context->node_count);
@@ -199,7 +200,7 @@ GraphContext *RdbLoadGraphContext_v16
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
-						"Graph '%s' processed %u/%lld deleted nodes",
+						"Graph '%s' processed %u/%" PRId64 " deleted nodes",
 						GraphContext_GetName(gc),
 						Graph_DeletedNodeCount(gc->g),
 						gc->decoding_context->deleted_node_count);
@@ -211,7 +212,7 @@ GraphContext *RdbLoadGraphContext_v16
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
-						"Graph '%s' processed %lld/%lld edges",
+						"Graph '%s' processed %" PRId64 "/%" PRId64 " edges",
 						GraphContext_GetName(gc), Graph_EdgeCount(gc->g),
 						gc->decoding_context->edge_count);
 
@@ -221,7 +222,7 @@ GraphContext *RdbLoadGraphContext_v16
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
-						"Graph '%s' processed %u/%lld deleted edges",
+						"Graph '%s' processed %u/%" PRId64 " deleted edges",
 						GraphContext_GetName(gc),
 						Graph_DeletedEdgeCount(gc->g),
 						gc->decoding_context->deleted_edge_count);
