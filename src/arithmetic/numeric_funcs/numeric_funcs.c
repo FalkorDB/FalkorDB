@@ -27,23 +27,16 @@ SIValue AR_ADD
 	int argc,
 	void *private_data
 ) {
-	SIType a_type = SI_TYPE(argv[0]);
-	SIType b_type = SI_TYPE(argv[1]);
-
-	// temporal + duration
-	if(unlikely(
-		(a_type & (SI_TEMPORAL | T_DURATION)) &&
-		(b_type & (SI_TEMPORAL | T_DURATION)) &&
-		(a_type == T_DURATION || b_type == T_DURATION))) {
-		return Temporal_AddDuration(argv[0], argv[1]);
-	}
-
 	return SIValue_Add(argv[0], argv[1]);
 }
 
-/* returns the subtracting given values. */
-SIValue AR_SUB(SIValue *argv, int argc, void *private_data) {
-	if(SIValue_IsNull(argv[0]) || SIValue_IsNull(argv[1])) return SI_NullVal();
+// returns the subtracting given values
+SIValue AR_SUB
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
 	return SIValue_Subtract(argv[0], argv[1]);
 }
 

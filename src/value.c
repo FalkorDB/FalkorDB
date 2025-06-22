@@ -12,6 +12,7 @@
 #include "datatypes/datatypes.h"
 #include "string_pool/string_pool.h"
 #include "graph/entities/graph_entity.h"
+#include "arithmetic/temporal_arithmetic/temporal_arithmetic.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -644,14 +645,38 @@ SIValue SIValue_Add
 	const SIValue a,
 	const SIValue b
 ) {
-	if     (a.type == T_NULL  || b.type == T_NULL)  return SI_NullVal();
-	else if(a.type == T_ARRAY || b.type == T_ARRAY) return SIValue_ConcatList(a, b);
-	else if(a.type & T_STRING || b.type & T_STRING) return SIValue_ConcatString(a, b);
-	else if(a.type == T_MAP   || b.type == T_MAP)   return Map_Merge(a, b);
+	SIType a_type = SI_TYPE(a);
+	SIType b_type = SI_TYPE(b);
+
+	if (a_type == T_NULL || b_type == T_NULL) {
+		return SI_NullVal();
+	}
 
 	// only construct an integer return if both operands are integers
-	if(a.type & b.type & T_INT64) {
+	if (a_type & b_type & T_INT64) {
 		return SI_LongVal(a.longval + b.longval);
+	}
+
+	// array concatenation
+	if (a_type == T_ARRAY || b_type == T_ARRAY) {
+		return SIValue_ConcatList(a, b);
+	}
+
+	// string concatenation
+	if (a_type & T_STRING || b_type & T_STRING) {
+		return SIValue_ConcatString(a, b);
+	}
+
+	// map + map
+	if (a_type == T_MAP || b_type == T_MAP) {
+		return Map_Merge(a, b);
+	}
+
+	// temporal + duration
+	if (a_type & (SI_TEMPORAL | T_DURATION) &&
+	   (b_type & (SI_TEMPORAL | T_DURATION)) &&
+	   (a_type == T_DURATION || b_type == T_DURATION)) {
+		return Temporal_AddDuration(a, b);
 	}
 
 	// return a double representation
@@ -663,10 +688,32 @@ SIValue SIValue_Subtract
 	const SIValue a,
 	const SIValue b
 ) {
+	SIType a_type = SI_TYPE(a);
+	SIType b_type = SI_TYPE(b);
+
 	// only construct an integer return if both operands are integers
-	if(a.type & b.type & T_INT64) {
+	if(a_type & b_type & T_INT64) {
 		return SI_LongVal(a.longval - b.longval);
 	}
+
+	// either a is double or b is double
+	if(a_type & SI_NUMERIC && b_type & SI_NUMERIC) {
+		return SI_DoubleVal(SI_GET_NUMERIC(a) - SI_GET_NUMERIC(b));
+	}
+
+	// temporal - duration
+	else if(unlikely(
+		(a_type & (SI_TEMPORAL | T_DURATION)) &&
+		(b_type == T_DURATION))) {
+		return Temporal_SubDuration(a, b);
+	}
+
+	// either a or b are nulls
+	else if(unlikely(
+		SIValue_IsNull(a) || SIValue_IsNull(b))) {
+		return SI_NullVal();
+	}
+
 	// return a double representation
 	return SI_DoubleVal(SI_GET_NUMERIC(a) - SI_GET_NUMERIC(b));
 }
