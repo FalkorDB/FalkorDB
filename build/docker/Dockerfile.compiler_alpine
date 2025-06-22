@@ -45,3 +45,5 @@ RUN apk add --no-cache \
 RUN ln -s $(which minipeg) /usr/local/bin/leg || ln -s $(which minipeg) /usr/bin/leg || echo "Could not create symlink for leg. Check minipeg path."
 
 RUN make
+
+RUN mkdir -p /FalkorDB/bin/src && cp -r /FalkorDB/bin/linux*/src/falkordb.so /FalkorDB/bin/src/falkordb.so
