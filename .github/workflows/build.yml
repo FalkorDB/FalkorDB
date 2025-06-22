@@ -381,6 +381,10 @@ jobs:
             suffix: arm64v8
             os: ubuntu
             machine_label: ubuntu-24.04-arm
+          - name: linux/x86_64
+            suffix: alpine-x64
+            os: alpine
+            machine_label: ubuntu-latest
     steps:
       - name: Download image
         uses: actions/download-artifact@v4
@@ -412,6 +416,10 @@ jobs:
             suffix: arm64v8
             os: ubuntu
             machine_label: ubuntu-24.04-arm
+          - name: linux/x86_64
+            suffix: alpine-x64
+            os: alpine
+            machine_label: ubuntu-latest
     steps:
       - name: Download image
         uses: actions/download-artifact@v4
@@ -443,6 +451,10 @@ jobs:
             suffix: arm64v8
             os: ubuntu
             machine_label: ubuntu-24.04-arm
+          - name: linux/x86_64
+            suffix: alpine-x64
+            os: alpine
+            machine_label: ubuntu-latest
     steps:
       - name: Download image
         uses: actions/download-artifact@v4
@@ -474,6 +486,10 @@ jobs:
             suffix: arm64v8
             os: ubuntu
             machine_label: ubuntu-24.04-arm
+          - name: linux/x86_64
+            suffix: alpine-x64
+            os: alpine
+            machine_label: ubuntu-latest
     steps:
       - name: Download image
         uses: actions/download-artifact@v4
