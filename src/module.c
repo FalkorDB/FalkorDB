@@ -75,13 +75,13 @@ static void _Print_Config
 
 	uint64_t ompThreadCount;
 	Config_Option_get(Config_OPENMP_NTHREAD, &ompThreadCount);
-	RedisModule_Log(ctx, "notice", "Maximum number of OpenMP threads set to %llu", ompThreadCount);
+	RedisModule_Log(ctx, "notice", "Maximum number of OpenMP threads set to %"PRIu64, ompThreadCount);
 
 	bool cmd_info_enabled = false;
 	if(Config_Option_get(Config_CMD_INFO, &cmd_info_enabled) && cmd_info_enabled) {
 		uint64_t info_max_query_count = 0;
 		Config_Option_get(Config_CMD_INFO_MAX_QUERY_COUNT, &info_max_query_count);
-		RedisModule_Log(ctx, "notice", "Query backlog size: %llu", info_max_query_count);
+		RedisModule_Log(ctx, "notice", "Query backlog size: %"PRIu64, info_max_query_count);
 	}
 }
 
@@ -181,7 +181,7 @@ int RedisModule_OnLoad
 
 	if(GxB_set(GxB_NTHREADS, ompThreadCount) != GrB_SUCCESS) {
 		RedisModule_Log(ctx, "warning",
-				"Failed to set OpenMP thread count to %llu", ompThreadCount);
+				"Failed to set OpenMP thread count to %" PRIu64, ompThreadCount);
 		return REDISMODULE_ERR;
 	}
 

@@ -205,7 +205,7 @@ int write_value
 		case BVT_INT32:
 			return sprintf(buff, "%d", bolt_read_int32(value));
 		case BVT_INT64:
-			return sprintf(buff, "%lld", bolt_read_int64(value));
+			return sprintf(buff, "%" PRId64, bolt_read_int64(value));
 		case BVT_FLOAT:
 			return sprintf(buff, "%f", bolt_read_float(value));
 		case BVT_STRING: {
