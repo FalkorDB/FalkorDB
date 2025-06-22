@@ -1,0 +1,49 @@
+FROM alpine:latest AS builder
+
+# Install build tools and dependencies for Alpine
+RUN apk add --no-cache \
+    bash \
+    busybox \
+    python3 \
+    py3-pip \
+    ca-certificates \
+    curl \
+    wget \
+    unzip \
+    git \
+    automake \
+    libtool \
+    autoconf \
+    openssl-dev \
+    cmake \
+    g++ \
+    make \
+    rust \
+    cargo \
+    build-base # Essential for compiling C/C++ projects
+
+# Activate pyenv
+RUN python3 -m venv /venv
+RUN chmod +x /venv/bin/*
+ENV PATH="/venv/bin:$PATH"
+RUN /venv/bin/activate
+    
+# Install Python packages for FalkorDB's build system
+RUN pip install --disable-pip-version-check wheel virtualenv
+RUN pip install --disable-pip-version-check setuptools --upgrade
+RUN pip install jinja2
+
+WORKDIR /app
+
+# Clone FalkorDB with submodules
+RUN git clone --recurse-submodules -j8 https://github.com/FalkorDB/FalkorDB.git
+
+WORKDIR /app/FalkorDB
+
+RUN apk add --no-cache \
+    minipeg \
+    lcov
+
+RUN ln -s $(which minipeg) /usr/local/bin/leg || ln -s $(which minipeg) /usr/bin/leg || echo "Could not create symlink for leg. Check minipeg path."
+
+RUN make

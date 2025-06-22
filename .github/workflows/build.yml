@@ -78,6 +78,17 @@ jobs:
             test_dockerfile: Dockerfile.debian
             cache_path: linux-arm64v8
             is_debug: '0'
+          - name: linux/x86_64
+            platform: linux/x86_64
+            suffix: alpine-x64
+            os: alpine
+            machine_label: ubuntu-latest
+            build_test_image: true
+            dockerfile: Dockerfile.alpine
+            compiler_dockerfile: Dockerfile.compiler_alpine
+            test_dockerfile: Dockerfile.alpine
+            cache_path: linux-x64
+            is_debug: '0'
           - name: rhel/amd64
             platform: linux/amd64
             suffix: rhel-x64
@@ -187,7 +198,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: /FalkorDB
-          file: /FalkorDB/build/docker/Dockerfile.compiler
+          file: /FalkorDB/build/docker/${{ matrix.platform.compiler_dockerfile || 'Dockerfile.compiler' }}
           platforms: ${{ matrix.platform.platform }}
           tags: localhost:5000/falkordb/falkordb-compiler
           # outputs: type=docker,dest=/tmp/falkordb-compiler.tar
@@ -196,6 +207,7 @@ jobs:
             TARGETPLATFORM=${{ matrix.platform.platform }}
             OS=${{ matrix.platform.os }}
             DEBUG=${{ matrix.platform.is_debug }}
+
       - name: Copy bin from docker for caching
         working-directory: /FalkorDB
         if: steps.cache_lagraph.outputs.cache-hit == false || steps.cache_graphblas.outputs.cache-hit == false || steps.cache_parser.outputs.cache-hit == false || steps.cache_search.outputs.cache-hit == false || steps.cache_libcurl.outputs.cache-hit == false || steps.cache_libcsv.outputs.cache-hit == false
@@ -256,7 +268,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: /FalkorDB
-          file: /FalkorDB/build/docker/Dockerfile
+          file: /FalkorDB/build/docker/${{ matrix.platform.dockerfile || 'Dockerfile' }}
           platforms: ${{ matrix.platform.platform }}
           outputs: type=docker,dest=/tmp/falkordb-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-${{ matrix.platform.suffix }}

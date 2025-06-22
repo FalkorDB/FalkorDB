@@ -1,0 +1,37 @@
+ARG BASE_IMAGE=falkordb/falkordb-compiler
+
+ARG TARGETPLATFORM=linux/x86_64
+
+FROM $BASE_IMAGE AS compiler
+
+ENV DEPS "curl automake libtool autoconf py3-pip wget cmake m4 git valgrind python3-dev build-base redis"
+
+# Set up a build environment by installing necessary dependencies.
+# 'set -ex' ensures that the script exits immediately if any command fails.
+# 'apk add --no-cache' is Alpine's package manager command to install packages without caching them,
+# which helps in keeping the final image size smaller.
+RUN set -ex ;\
+    apk add --no-cache $DEPS ;
+
+# Note: The original Dockerfile had separate steps for Redis and Python setup.
+# In Alpine, Redis can often be installed directly via `apk add`.
+# The `lsb_release` and GPG key steps are specific to Debian-based systems and are not needed here.
+
+# Create Python virtual environment.
+# python3 usually includes the venv module.
+RUN set -ex ;\
+    python3 -m venv /venv
+
+# Add the virtual environment's bin directory to the PATH.
+ENV PATH=/venv/bin:$PATH
+
+# Upgrade pip and setuptools within the virtual environment.
+RUN set -ex ;\
+    pip install --upgrade pip ;\
+    pip install --upgrade setuptools
+
+# Install Python requirements for FalkorDB tests.
+# This assumes /FalkorDB/tests/requirements.txt is copied into the image at a previous stage or mounted.
+# If not, you might need a COPY instruction here or earlier.
+RUN set -ex ;\
+    pip install -r /FalkorDB/tests/requirements.txt
