@@ -33,12 +33,10 @@ RUN pip install --disable-pip-version-check wheel virtualenv
 RUN pip install --disable-pip-version-check setuptools --upgrade
 RUN pip install jinja2
 
-WORKDIR /app
-
 # Clone FalkorDB with submodules
 RUN git clone --recurse-submodules -j8 https://github.com/FalkorDB/FalkorDB.git
 
-WORKDIR /app/FalkorDB
+WORKDIR /FalkorDB
 
 RUN apk add --no-cache \
     minipeg \
