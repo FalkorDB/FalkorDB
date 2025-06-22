@@ -132,12 +132,21 @@ jobs:
           set-safe-directory: "*"
           submodules: recursive
 
+      - name: Set cache keys
+        run: |
+          echo "CACHE_KEY_GRAPHBLAS=graphblas-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}" >> $GITHUB_ENV
+          echo "CACHE_KEY_PARSER=parser-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}" >> $GITHUB_ENV
+          echo "CACHE_KEY_SEARCH=search-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}" >> $GITHUB_ENV
+          echo "CACHE_KEY_LIBCURL=libcurl-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}" >> $GITHUB_ENV
+          echo "CACHE_KEY_LIBCSV=libcsv-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/libcsv/ChangeLog') }}" >> $GITHUB_ENV
+          echo "CACHE_KEY_LAGRAPH=lagraph-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/LAGraph/include/LAGraph.h') }}" >> $GITHUB_ENV
+
       - name: Cache GraphBLAS ${{ matrix.platform.suffix }}
         id: cache_graphblas
         uses: actions/cache/restore@v4
         with:
           path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
-          key: graphblas-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+          key: ${{ env.CACHE_KEY_GRAPHBLAS }}
           enableCrossOsArchive: true
 
       - name: Cache parser ${{ matrix.platform.suffix }}
@@ -145,7 +154,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /FalkorDB/bin/${{ matrix.platform.cache_path  }}-release/libcypher-parser
-          key: parser-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+          key: ${{ env.CACHE_KEY_PARSER }}
           enableCrossOsArchive: true
 
       - name: Cache search ${{ matrix.platform.suffix }}
@@ -153,7 +162,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /FalkorDB/bin/${{ matrix.platform.cache_path  }}-release/search-static
-          key: search-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+          key: ${{ env.CACHE_KEY_SEARCH }}
           enableCrossOsArchive: true
 
       - name: Cache libcurl ${{ matrix.platform.suffix }}
@@ -161,7 +170,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /FalkorDB/bin/${{ matrix.platform.cache_path  }}-release/libcurl
-          key: libcurl-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}
+          key: ${{ env.CACHE_KEY_LIBCURL }}
           enableCrossOsArchive: true
 
       - name: Cache libcsv ${{ matrix.platform.suffix }}
@@ -169,7 +178,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /FalkorDB/bin/${{ matrix.platform.cache_path  }}-release/libcsv
-          key: libcsv-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/libcsv/ChangeLog') }}
+          key: ${{ env.CACHE_KEY_LIBCSV }}
           enableCrossOsArchive: true
 
       - name: Cache LAGraph ${{ matrix.platform.suffix }}
@@ -177,7 +186,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/LAGraph
-          key: lagraph-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/LAGraph/include/LAGraph.h') }}
+          key: ${{ env.CACHE_KEY_LAGRAPH }}
           enableCrossOsArchive: true
 
       # Make sure the working directory is static between runs
@@ -222,7 +231,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
-          key: graphblas-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+          key: ${{ env.CACHE_KEY_GRAPHBLAS }}
           enableCrossOsArchive: true
 
       - name: Save cache for parser
@@ -230,15 +239,15 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcypher-parser
-          key: parser-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+          key: ${{ env.CACHE_KEY_PARSER }}
           enableCrossOsArchive: true
 
       - name: Save cache for search
         if: always() && steps.cache_search.outputs.cache-hit == false && steps.build_compiler.outcome == 'success'
         uses: actions/cache/save@v4
         with:
-          path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/search
-          key: search-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+          path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/search-static
+          key: ${{ env.CACHE_KEY_SEARCH }}
           enableCrossOsArchive: true
 
       - name: Save cache for libcurl
@@ -246,7 +255,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcurl
-          key: libcurl-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}
+          key: ${{ env.CACHE_KEY_LIBCURL }}
           enableCrossOsArchive: true
 
       - name: Save cache for libcsv
@@ -255,7 +264,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcsv
-          key: libcsv-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/libcsv/ChangeLog') }}
+          key: ${{ env.CACHE_KEY_LIBCSV }}
           enableCrossOsArchive: true
 
       - name: Save cache for LAGraph
@@ -263,7 +272,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/LAGraph
-          key: lagraph-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/LAGraph/include/LAGraph.h') }}
+          key: ${{ env.CACHE_KEY_LAGRAPH }}
           enableCrossOsArchive: true
 
       - name: Set browser tag
