@@ -16,8 +16,6 @@ RUN apk add --no-cache \
     autoconf \
     openssl-dev \
     cmake \
-    g++ \
-    make \
     rust \
     cargo \
     build-base # Essential for compiling C/C++ projects
@@ -26,12 +24,9 @@ RUN apk add --no-cache \
 RUN python3 -m venv /venv
 RUN chmod +x /venv/bin/*
 ENV PATH="/venv/bin:$PATH"
-RUN /venv/bin/activate
     
 # Install Python packages for FalkorDB's build system
-RUN pip install --disable-pip-version-check wheel virtualenv
 RUN pip install --disable-pip-version-check setuptools --upgrade
-RUN pip install jinja2
 
 # Clone FalkorDB with submodules
 RUN git clone --recurse-submodules -j8 https://github.com/FalkorDB/FalkorDB.git
@@ -39,8 +34,7 @@ RUN git clone --recurse-submodules -j8 https://github.com/FalkorDB/FalkorDB.git
 WORKDIR /FalkorDB
 
 RUN apk add --no-cache \
-    minipeg \
-    lcov
+    minipeg
 
 RUN ln -s $(which minipeg) /usr/local/bin/leg || ln -s $(which minipeg) /usr/bin/leg || echo "Could not create symlink for leg. Check minipeg path."
 
