@@ -16,7 +16,7 @@ typedef struct _Delta_Matrix _Delta_Matrix;
 typedef _Delta_Matrix *Delta_Matrix;
 
 // Checks if X represents edge ID.
-#define SINGLE_EDGE(x) !((x) & MSB_MASK)
+#define SINGLE_EDGE(x) (!((x) & MSB_MASK))
 
 #define DELTA_MATRIX_M(C) (C)->matrix
 #define DELTA_MATRIX_DELTA_PLUS(C) (C)->delta_plus
@@ -26,7 +26,7 @@ typedef _Delta_Matrix *Delta_Matrix;
 #define DELTA_MATRIX_TDELTA_PLUS(C) (C)->transposed->delta_plus
 #define DELTA_MATRIX_TDELTA_MINUS(C) (C)->transposed->delta_minus
 
-#define DELTA_MATRIX_MAINTAIN_TRANSPOSE(C) (C)->transposed != NULL
+#define DELTA_MATRIX_MAINTAIN_TRANSPOSE(C) ((C)->transposed != NULL)
 
 #define DELTA_MATRIX_MULTI_EDGE(M) __extension__({ \
 	GrB_Type t;                       \
@@ -34,7 +34,7 @@ typedef _Delta_Matrix *Delta_Matrix;
 	GxB_Matrix_type(&t, m);           \
 	(t == GrB_UINT64);                \
 })
-#define DELTA_DEBUG 1
+
 //------------------------------------------------------------------------------
 //
 // possible combinations
@@ -267,10 +267,10 @@ GrB_Info Delta_mxm
 // C = A + B
 GrB_Info Delta_eWiseAdd
 (
-    Delta_Matrix C,               // input/output matrix for results
-    const GrB_Semiring semiring,  // defines '+' for T=A+B
-    const Delta_Matrix A,         // first input:  matrix A
-    const Delta_Matrix B          // second input: matrix B
+    Delta_Matrix C,       // input/output matrix for results
+    const GrB_Monoid op,  // defines '+' for T=A+B
+    const Delta_Matrix A, // first input:  matrix A
+    const Delta_Matrix B  // second input: matrix B
 );
 
 // clear a matrix of all entries

@@ -242,16 +242,16 @@ static GrB_Info _next_m_iter_uint64
 // advance iterator
 GrB_Info Delta_MatrixTupleIter_next_UINT64
 (
-	Delta_MatrixTupleIter *iter,       // iterator to consume
-	GrB_Index *row,                 // optional output row index
-	GrB_Index *col,                 // optional output column index
-	uint64_t *val                  // optional value at A[row, col]
+	Delta_MatrixTupleIter *iter,  // iterator to consume
+	GrB_Index *row,               // optional output row index
+	GrB_Index *col,               // optional output column index
+	uint64_t *val                 // optional value at A[row, col]
 ) {
 	if(IS_DETACHED(iter)) return GrB_NULL_POINTER ;
 
-	GrB_Info         info   =  GrB_SUCCESS                    ;
-	GrB_Matrix       DM     =  DELTA_MATRIX_DELTA_MINUS(iter->A) ;
-	GxB_Iterator     dp_it  =  &iter->dp_it                    ;
+	GrB_Info      info   =  GrB_SUCCESS                    ;
+	GrB_Matrix    DM     =  DELTA_MATRIX_DELTA_MINUS(iter->A) ;
+	GxB_Iterator  dp_it  =  &iter->dp_it                    ;
 
 	if(!iter->m_depleted) {
 		info = _next_m_iter_uint64(iter, DM, row, col, val, &iter->m_depleted) ;
