@@ -79,7 +79,7 @@ jobs:
             cache_path: linux-arm64v8
             is_debug: "0"
           - name: linux/x86_64
-            platform: linux/x86_64
+            platform: linux/amd64
             suffix: alpine-x64
             os: alpine
             machine_label: ubuntu-latest
@@ -88,6 +88,17 @@ jobs:
             compiler_dockerfile: Dockerfile.compiler_alpine
             test_dockerfile: Dockerfile.alpine
             cache_path: linux-x64
+            is_debug: "0"
+          - name: linux/arm64
+            platform: linux/arm64
+            suffix: alpine-arm64v8
+            os: alpine
+            machine_label: ubuntu-24.04-arm
+            build_test_image: true
+            dockerfile: Dockerfile.alpine
+            compiler_dockerfile: Dockerfile.compiler_alpine
+            test_dockerfile: Dockerfile.alpine
+            cache_path: linux-arm64v8
             is_debug: "0"
           - name: rhel/amd64
             platform: linux/amd64
@@ -394,6 +405,10 @@ jobs:
             suffix: alpine-x64
             os: alpine
             machine_label: ubuntu-latest
+          - name: linux/arm64
+            suffix: alpine-arm64v8
+            os: alpine
+            machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
         uses: actions/download-artifact@v4
@@ -429,6 +444,10 @@ jobs:
             suffix: alpine-x64
             os: alpine
             machine_label: ubuntu-latest
+          - name: linux/arm64
+            suffix: alpine-arm64v8
+            os: alpine
+            machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
         uses: actions/download-artifact@v4
@@ -464,6 +483,10 @@ jobs:
             suffix: alpine-x64
             os: alpine
             machine_label: ubuntu-latest
+          - name: linux/arm64
+            suffix: alpine-arm64v8
+            os: alpine
+            machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
         uses: actions/download-artifact@v4
@@ -499,6 +522,10 @@ jobs:
             suffix: alpine-x64
             os: alpine
             machine_label: ubuntu-latest
+          - name: linux/arm64
+            suffix: alpine-arm64v8
+            os: alpine
+            machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
         uses: actions/download-artifact@v4
