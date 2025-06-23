@@ -27,12 +27,15 @@ GrB_Info Delta_Matrix_copy
 	info = GrB_transpose(
 		out_m, NULL, NULL, in_m, GrB_DESC_T0);
 	ASSERT(info == GrB_SUCCESS);
+
 	info = GrB_transpose(
 		out_delta_plus, NULL, NULL, in_delta_plus, GrB_DESC_T0);
 	ASSERT(info == GrB_SUCCESS);
+
 	info = GrB_transpose(
 		out_delta_minus, NULL, NULL, in_delta_minus, GrB_DESC_T0);
 	ASSERT(info == GrB_SUCCESS);
+	
 	return info;
 }
 

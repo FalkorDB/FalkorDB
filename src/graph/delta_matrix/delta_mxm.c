@@ -7,12 +7,13 @@
 #include "RG.h"
 #include "delta_matrix.h"
 
-GrB_Info Delta_mxm                     // C = A * B
+// C = A * B
+GrB_Info Delta_mxm                     
 (
-    Delta_Matrix C,                    // input/output matrix for results
-    const GrB_Semiring semiring,    // defines '+' and '*' for A*B
-    const Delta_Matrix A,              // first input:  matrix A
-    const Delta_Matrix B               // second input: matrix B
+    Delta_Matrix C,               // input/output matrix for results
+    const GrB_Semiring semiring,  // defines '+' and '*' for A*B
+    const Delta_Matrix A,         // first input:  matrix A
+    const Delta_Matrix B          // second input: matrix B
 ) {
 	ASSERT(C != NULL);
 	ASSERT(A != NULL);
@@ -51,14 +52,14 @@ GrB_Info Delta_mxm                     // C = A * B
 	GrB_Matrix_nvals(&dp_nvals, dp);
 	GrB_Matrix_nvals(&dm_nvals, dm);
 
-	if(dm_nvals > 0) {
+	if(dm_nvals > 0) { 
 		// compute A * 'delta-minus'
 		info = GrB_Matrix_new(&mask, GrB_BOOL, nrows, ncols);
 		ASSERT(info == GrB_SUCCESS);
 
 		info = GrB_mxm(mask, NULL, NULL, GxB_ANY_PAIR_BOOL, _A, dm, NULL);
 		ASSERT(info == GrB_SUCCESS);
-
+		
 		// update 'dm_nvals'
 		info = GrB_Matrix_nvals(&dm_nvals, mask);
 		ASSERT(info == GrB_SUCCESS);
@@ -93,7 +94,7 @@ GrB_Info Delta_mxm                     // C = A * B
 	ASSERT(info == GrB_SUCCESS);
 
 	if(additions) {
-		info = GrB_eWiseAdd(_C, NULL, NULL, GxB_ANY_PAIR_BOOL, _C, accum, NULL);
+		info = GrB_eWiseAdd(_C, NULL, NULL, semiring, _C, accum, NULL);
 		ASSERT(info == GrB_SUCCESS);
 	}
 

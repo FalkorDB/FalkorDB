@@ -40,13 +40,16 @@ bool Delta_Matrix_isDirty
 
 	GrB_Info info = GrB_Matrix_get_INT32(DELTA_MATRIX_M(C), &pending_M, 
 		GxB_WILL_WAIT);
-	ASSERT(info == GrB_SUCCESS)
+	ASSERT(info == GrB_SUCCESS);
+
 	info = GrB_Matrix_get_INT32(DELTA_MATRIX_DELTA_PLUS(C), &pending_DP, 
 		GxB_WILL_WAIT);
-	ASSERT(info == GrB_SUCCESS)
+	ASSERT(info == GrB_SUCCESS);
+
 	info = GrB_Matrix_get_INT32(DELTA_MATRIX_DELTA_MINUS(C), &pending_DM, 
 		GxB_WILL_WAIT);
-	ASSERT(info == GrB_SUCCESS)
+	ASSERT(info == GrB_SUCCESS);
+	
 	return (pending_M || pending_DM || pending_DP);
 }
 

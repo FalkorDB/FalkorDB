@@ -124,6 +124,7 @@ void ASSERT_GrB_Matrices_EQ(const GrB_Matrix A, const GrB_Matrix B)
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	TEST_ASSERT(nvals_C == nvals_A);
+	TEST_ASSERT(nvals_C == nvals_B);
 
 	// clean up
 	info = GrB_Matrix_free(&C);
@@ -1357,17 +1358,17 @@ void test_RGMatrix_copy() {
 }
 
 void test_RGMatrix_mxm() {
-	GrB_Type    t                   =  GrB_BOOL;
-	Delta_Matrix   A                   =  NULL;
-	Delta_Matrix   B                   =  NULL;
-	Delta_Matrix   C                   =  NULL;
-	Delta_Matrix   D                   =  NULL;
-	GrB_Matrix  C_M                 =  NULL;
-	GrB_Matrix  D_M                 =  NULL;
-	GrB_Info    info                =  GrB_SUCCESS;
-	GrB_Index   nrows               =  100;
-	GrB_Index   ncols               =  100;
-	bool        sync                =  false;
+	GrB_Type      t      =  GrB_BOOL;
+	Delta_Matrix  A      =  NULL;
+	Delta_Matrix  B      =  NULL;
+	Delta_Matrix  C      =  NULL;
+	Delta_Matrix  D      =  NULL;
+	GrB_Matrix    C_M    =  NULL;
+	GrB_Matrix    D_M    =  NULL;
+	GrB_Info      info   =  GrB_SUCCESS;
+	GrB_Index     nrows  =  100;
+	GrB_Index     ncols  =  100;
+	bool          sync   =  false;
 
 	info = Delta_Matrix_new(&A, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
@@ -1429,6 +1430,55 @@ void test_RGMatrix_mxm() {
 	C_M  = DELTA_MATRIX_M(C);
 	D_M  = DELTA_MATRIX_M(D);
 	
+	ASSERT_GrB_Matrices_EQ(C_M, D_M);
+
+
+	// set elements
+	Delta_Matrix_clear(A);
+	Delta_Matrix_clear(B);
+	Delta_Matrix_clear(C);
+	Delta_Matrix_clear(D);
+	info = Delta_Matrix_setElement_BOOL(A, 0, 0);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	info = Delta_Matrix_setElement_BOOL(A, 0, 1);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	info = Delta_Matrix_setElement_BOOL(A, 1, 1);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	//--------------------------------------------------------------------------
+	// flush matrix, sync
+	//--------------------------------------------------------------------------
+	
+	// wait, force sync
+	sync = true;
+	Delta_Matrix_wait(A, sync);
+	Delta_Matrix_copy(B, A);
+
+
+	//--------------------------------------------------------------------------
+	// set pending changes
+	//--------------------------------------------------------------------------
+
+	// remove element at position 0,0
+	info = Delta_Matrix_removeElement_BOOL(B, 1, 1);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	//--------------------------------------------------------------------------
+	// mxm matrix
+	//--------------------------------------------------------------------------
+
+	info = Delta_mxm(C, GxB_ANY_PAIR_BOOL, A, B);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	Delta_Matrix_wait(B, sync);
+
+	info = Delta_mxm(D, GxB_ANY_PAIR_BOOL, A, B);
+	//--------------------------------------------------------------------------
+	// validation
+	//--------------------------------------------------------------------------
+
+	C_M  = DELTA_MATRIX_M(C);
+	D_M  = DELTA_MATRIX_M(D);
 	ASSERT_GrB_Matrices_EQ(C_M, D_M);
 
 	// clean up

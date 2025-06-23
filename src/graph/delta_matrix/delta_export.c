@@ -21,11 +21,11 @@ GrB_Info Delta_Matrix_export
 	GrB_Index   ncols;
 	GrB_Index   dp_nvals;
 	GrB_Index   dm_nvals;
-	GrB_Matrix  a          =  NULL;
-	GrB_Matrix  m          =  DELTA_MATRIX_M(C);
-	GrB_Info    info       =  GrB_SUCCESS;
-	GrB_Matrix  dp         =  DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix  dm         =  DELTA_MATRIX_DELTA_MINUS(C);
+	GrB_Matrix  a    =  NULL;
+	GrB_Matrix  m    =  DELTA_MATRIX_M(C);
+	GrB_Info    info =  GrB_SUCCESS;
+	GrB_Matrix  dp   =  DELTA_MATRIX_DELTA_PLUS(C);
+	GrB_Matrix  dm   =  DELTA_MATRIX_DELTA_MINUS(C);
 
 	info = GxB_Matrix_type(&t, m);
 	ASSERT(info == GrB_SUCCESS);
@@ -115,6 +115,7 @@ GrB_Info Delta_Matrix_export_structure
 
 	info = GrB_Matrix_nvals(&dp_nvals, dp);
 	ASSERT(info == GrB_SUCCESS);
+
 	info = GrB_Matrix_nvals(&dm_nvals, dm);
 	ASSERT(info == GrB_SUCCESS);
 
@@ -124,9 +125,12 @@ GrB_Info Delta_Matrix_export_structure
 	//--------------------------------------------------------------------------
 	// copy addition and m structure
 	//--------------------------------------------------------------------------
-	info = GrB_Matrix_assign_BOOL(
-		a, dp, NULL, (bool) true, GrB_ALL, nrows, GrB_ALL, ncols, GrB_DESC_S);
-	ASSERT(info == GrB_SUCCESS);
+	if (additions){
+		info = GrB_Matrix_assign_BOOL(
+			a, dp, NULL, (bool) true, GrB_ALL, nrows, GrB_ALL, ncols, GrB_DESC_S);
+		ASSERT(info == GrB_SUCCESS);
+	}
+
 	info = GrB_Matrix_assign_BOOL(
 		a, m, NULL, (bool) true, GrB_ALL, nrows, GrB_ALL, ncols, GrB_DESC_S);
 	ASSERT(info == GrB_SUCCESS);

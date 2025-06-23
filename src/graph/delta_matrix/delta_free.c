@@ -20,10 +20,10 @@ void Delta_Matrix_free
 ) {
 	ASSERT(C != NULL);
 	Delta_Matrix M = *C;
+	if(M == NULL) return;
 
 	GrB_Info info;
 	UNUSED(info);
-
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(M)) Delta_Matrix_free(&M->transposed);
 
 	info = GrB_Matrix_free(&M->matrix);
