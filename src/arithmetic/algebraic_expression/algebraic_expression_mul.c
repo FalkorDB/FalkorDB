@@ -22,13 +22,13 @@ Delta_Matrix _Eval_Mul
 	ASSERT(AlgebraicExpression_OperationCount(exp, AL_EXP_MUL) == 1) ;
 
 	GrB_Info             info;
-	Delta_Matrix            M;   // current operand
+	Delta_Matrix         M;   // current operand
 	GrB_Index            nvals;  // NNZ in res
 	AlgebraicExpression  *c;     // current child node
 
 	UNUSED(info) ;
 
-	Delta_Matrix     A         = NULL;
+	Delta_Matrix  A         = NULL;
 	bool          res_modified = false;
 	GrB_Semiring  semiring     = GxB_ANY_PAIR_BOOL;
 	uint          child_count  = AlgebraicExpression_ChildCount(exp);
