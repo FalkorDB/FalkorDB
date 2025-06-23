@@ -74,7 +74,7 @@ jobs:
           path: /tmp
           if_no_artifact_found: error
 
-      - name: Retrieve built image Alpine ARD
+      - name: Retrieve built image Alpine ARM
         uses: dawidd6/action-download-artifact@v10
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
