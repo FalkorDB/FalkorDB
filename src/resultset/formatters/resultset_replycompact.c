@@ -71,6 +71,9 @@ static inline ValueType _mapValueType
 	case T_TIME:
 		return VALUE_TIME;
 
+	case T_DURATION:
+		return VALUE_DURATION;
+
 	default:
 		return VALUE_UNKNOWN;
 	}
@@ -116,6 +119,7 @@ static void _ResultSet_CompactReplyWithSIValue
 	case T_TIME:
 	case T_DATE:
 	case T_DATETIME:
+	case T_DURATION:
 		RedisModule_ReplyWithLongLong(ctx, v.longval);
 		return;
 

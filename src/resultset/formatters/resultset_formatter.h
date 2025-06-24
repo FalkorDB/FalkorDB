@@ -34,6 +34,7 @@ typedef enum {
 	VALUE_DATETIME  = 13,
 	VALUE_DATE      = 14,
 	VALUE_TIME      = 15,
+	VALUE_DURATION  = 16,
 } ValueType;
 
 typedef struct ResultSet ResultSet;

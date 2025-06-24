@@ -393,3 +393,90 @@ class testTemporalLocalDateTime(FlowTestsBase):
         self.env.assertTrue(le)
         self.env.assertTrue(e)
 
+class testTemporalDuration(FlowTestsBase):
+    def __init__(self):
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
+
+    def test_duration_component_construction(self):
+        test_cases = [
+            ( {'years':   2},                                                                    'P2Y'             ),
+            ( {'months':  3},                                                                    'P3M'             ),
+            ( {'weeks':   1},                                                                    'P7D'             ),
+            ( {'hours':   6},                                                                    'PT6H'            ),
+            ( {'minutes': 23},                                                                   'PT23M'           ),
+            ( {'seconds': 15},                                                                   'PT15S'           ),
+            ( {'years': 2, 'months': 3},                                                         'P2Y3M'           ),
+            ( {'years': 2, 'months': 3, 'days':  4},                                             'P2Y3M4D'         ),
+            ( {'years': 2, 'months': 3, 'days':  4, 'hours':   5},                               'P2Y3M4DT5H'      ),
+            ( {'years': 2, 'months': 3, 'days':  4, 'hours':   5,  'minutes': 22},               'P2Y3M4DT5H22M'   ),
+            ( {'years': 2, 'months': 3, 'days':  4, 'hours':   5,  'minutes': 22, 'seconds': 7}, 'P2Y3M4DT5H22M7S' ),
+            ( {'years': 2, 'weeks':  1, 'hours': 5, 'minutes': 22, 'seconds': 7},                'P2Y7DT5H22M7S'   ),
+        ]
+
+        for idx, (map_input, expected) in enumerate(test_cases):
+            # construct the map string for the Cypher query
+            map_entries = []
+
+            query = f"RETURN tostring(duration($d))"
+            result = self.graph.query(query, {'d': map_input})
+            actual = str(result.result_set[0][0])
+            self.env.assertEquals(actual, expected)
+
+    def test_duration_components(self):
+        q = """WITH duration({years: 2, months:3, weeks:1, days:4, hours:5, minutes:22, seconds:7}) AS d
+               RETURN d.years, d.months, d.weeks, d.days, d.hours, d.minutes, d.seconds"""
+
+        res = self.graph.query(q).result_set
+
+        years   = res[0][0]
+        months  = res[0][1]
+        weeks   = res[0][2]
+        days    = res[0][3]
+        hours   = res[0][4]
+        minutes = res[0][5]
+        seconds = res[0][6]
+
+        self.env.assertEquals(years,   2)
+        self.env.assertEquals(months,  3)
+        self.env.assertEquals(weeks,   0)  # weeks seems to move to days
+        self.env.assertEquals(days,    11)
+        self.env.assertEquals(hours,   5)
+        self.env.assertEquals(minutes, 22)
+        self.env.assertEquals(seconds, 7)
+
+    def test_duration_compare(self):
+        q = """WITH duration({years: 1, months: 11, days: 11, hours: 12, minutes: 31, seconds: 14}) AS x,
+                    duration({years: 1, months: 10, days: 11, hours: 12, minutes: 31, seconds: 14}) AS d
+               RETURN x > d, x < d, x >= d, x <= d, x = d"""
+
+        res = self.graph.query(q).result_set
+        gt = res[0][0]
+        lt = res[0][1]
+        ge = res[0][2]
+        le = res[0][3]
+        e  = res[0][4]
+
+        self.env.assertTrue(gt)
+        self.env.assertFalse(lt)
+        self.env.assertTrue(ge)
+        self.env.assertFalse(le)
+        self.env.assertFalse(e)
+
+        q = """WITH localdatetime({year: 1, month: 10, day: 11, hour: 12, minute: 31, second: 14}) AS x,
+                    localdatetime({year: 1, month: 10, day: 11, hour: 12, minute: 31, second: 14}) AS d
+               RETURN x > d, x < d, x >= d, x <= d, x = d"""
+
+        res = self.graph.query(q).result_set
+        gt = res[0][0]
+        lt = res[0][1]
+        ge = res[0][2]
+        le = res[0][3]
+        e  = res[0][4]
+
+        self.env.assertFalse(gt)
+        self.env.assertFalse(lt)
+        self.env.assertTrue(ge)
+        self.env.assertTrue(le)
+        self.env.assertTrue(e)
+

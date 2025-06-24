@@ -59,7 +59,7 @@ typedef enum {
 // type aliases
 #define SI_NUMERIC              (T_INT64 | T_DOUBLE)  // numbrical types
 #define SI_GRAPHENTITY          (T_NODE | T_EDGE)     // graph entity types
-#define SI_TEMPORAL             (T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME)  // temporal types
+#define SI_TEMPORAL             (T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION)  // temporal types
 #define SI_INDEXABLE            (SI_NUMERIC | T_BOOL | T_STRING | T_POINT | T_VECTOR | SI_TEMPORAL)  // indexable types
 #define SI_VALID_PROPERTY_VALUE (T_POINT | T_ARRAY | T_STRING | T_INTERN_STRING | T_BOOL | SI_NUMERIC | T_VECTOR | SI_TEMPORAL)  // all valid attribute types
 #define SI_ALL                  (T_MAP | T_NODE | T_EDGE | T_ARRAY | T_PATH | T_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_NULL | T_PTR | T_POINT | T_VECTOR | SI_TEMPORAL)  // all supported types

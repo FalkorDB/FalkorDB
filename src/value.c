@@ -875,6 +875,7 @@ int SIValue_Compare
 		case T_DATE:
 		case T_TIME:
 		case T_DATETIME:
+		case T_DURATION:
 			return a.datetimeval - b.datetimeval;
 
 		case T_NULL:
