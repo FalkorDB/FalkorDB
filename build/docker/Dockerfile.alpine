@@ -18,7 +18,7 @@ ENV FALKORDB_IMPORT_PATH=${FALKORDB_HOME}/import
 RUN apk add --no-cache redis
 
 # Install runtime dependencies
-RUN apk add --no-cache libgomp
+RUN apk add --no-cache libgomp openssl
 
 WORKDIR ${FALKORDB_HOME}
 
