@@ -290,6 +290,16 @@ GrB_Info Delta_eWiseAdd
     const Delta_Matrix B  // second input: matrix B
 );
 
+// zombies must be the identity of the given monoid.
+// C = A + B
+GrB_Info Delta_eWiseAdd_identity
+(
+    Delta_Matrix C,       // input/output matrix for results
+    const GrB_Monoid op,  // defines '+' for T=A+B
+    const Delta_Matrix A, // first input:  matrix A
+    const Delta_Matrix B  // second input: matrix B
+);
+
 // clear a matrix of all entries
 GrB_Info Delta_Matrix_clear  
 (                            // type and dimensions remain unchanged
