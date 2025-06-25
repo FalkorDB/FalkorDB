@@ -98,6 +98,9 @@ static int GraphBLAS_Init(RedisModuleCtx *ctx) {
 	// all matrices in CSR format
 	GxB_set(GxB_FORMAT, GxB_BY_ROW);
 
+	// Turn on JIT LOAD
+	GrB_set (GrB_GLOBAL, GxB_JIT_LOAD, GxB_JIT_C_CONTROL) ;
+
 	// initialize LAGraph
 	char msg [LAGRAPH_MSG_LEN];
 	res = LAGr_Init(GrB_NONBLOCKING, RedisModule_Alloc, RedisModule_Calloc,

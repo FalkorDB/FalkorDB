@@ -264,6 +264,17 @@ GrB_Info Delta_mxm
 	const Delta_Matrix B          // second input: matrix B
 );
 
+// Does not look at dm. Assumes that any "zombie" value is '0'
+// where x '*' 0 = 0 and x '+' 0 = x. (AKA the semiring "zero")
+// C = A * B
+GrB_Info Delta_mxm_identity                    
+(
+    Delta_Matrix C,               // input/output matrix for results
+    const GrB_Semiring semiring,  // defines '+' and '*' for A*B
+    const Delta_Matrix A,         // first input:  matrix A
+    const Delta_Matrix B          // second input: matrix B
+);
+
 // C = A + B
 GrB_Info Delta_eWiseAdd
 (

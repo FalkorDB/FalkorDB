@@ -20,9 +20,7 @@ GrB_Info Delta_eWiseAdd
 	ASSERT(C  != NULL);
 	ASSERT(op != NULL);
 
-	// TODO: properly handle alliasing 
-	// ASSERT(C != A);  // sketchy 
-	ASSERT(C != B); // will break
+	ASSERT(C != B); // Cannot Alias C and B
 	ASSERT (Delta_Matrix_Synced(C));
 
 	GrB_Info  info;
@@ -53,11 +51,12 @@ GrB_Info Delta_eWiseAdd
 	// C = A + B
 	//--------------------------------------------------------------------------
 	
-	if(ADM_nvals > 0 || BDM_nvals > 0) { 
+	if(ADM_nvals > 0 && BDM_nvals > 0) { 
 		// if AM && BM && BDM, then _C gets the entry of AM.
 		// this is accomplised by the mask and accumulator. 
 		// ewiseadd would not work.
-		if(_C != A){
+		if(C != A)
+		{
 			info = GrB_transpose(_C, ADM, NULL, AM, GrB_DESC_SCT0);
 			ASSERT(info == GrB_SUCCESS);
 		}
