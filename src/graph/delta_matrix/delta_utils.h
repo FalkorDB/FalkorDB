@@ -29,3 +29,11 @@ void Delta_Matrix_validateState
 	GrB_Index j
 );
 
+// Check every assumption for the Delta Matrix
+//         ∅ = m  ∩ dp
+//         ∅ = dp ∩ dm
+// {zombies} = m  ∩ dm
+void Delta_Matrix_validate
+(
+	const Delta_Matrix C
+);

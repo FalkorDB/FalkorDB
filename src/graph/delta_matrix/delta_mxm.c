@@ -6,121 +6,7 @@
 
 #include "RG.h"
 #include "delta_matrix.h"
-int myprintf (const char *restrict format, ...)
-{
-    char *log = NULL;
-    va_list ap ;
-    va_start (ap, format) ;
-    int rc __attribute__((unused));
-    rc = vasprintf(&log, format, ap);
-    // vprintf (format, ap) ;
-    va_end (ap) ;
-    RedisModule_Log(NULL, "notice", log);
-    free(log);
-    return (1) ;
-}
-#if 0
-// C = A * B
-GrB_Info Delta_mxm                     
-(
-    Delta_Matrix C,               // input/output matrix for results
-    const GrB_Semiring semiring,  // defines '+' and '*' for A*B
-    const Delta_Matrix A,         // first input:  matrix A
-    const Delta_Matrix B          // second input: matrix B
-) {
-	ASSERT(C != NULL);
-	ASSERT(A != NULL);
-	ASSERT(B != NULL);
- 	// GxB_Global_Option_set(GxB_PRINTF, myprintf);
-	// multiply Delta_Matrix by Delta_Matrix
-	// A * B
-	// where A is fully synced!
-	//
-	// it is possible for either 'delta-plus' or 'delta-minus' to be empty
-	// this operation performs: A * B by computing:
-	// (A * (M + 'delta-plus'))<!'delta-minus'>
 
-	// validate A doesn't contains entries in either delta-plus or delta-minus
-	ASSERT(Delta_Matrix_Synced(A));
-
-	// validate C doesn't contains entries in either delta-plus or delta-minus
-	ASSERT(Delta_Matrix_Synced(C));
-
-	GrB_Info info;
-	GrB_Index nrows;     // number of rows in result matrix
-	GrB_Index ncols;     // number of columns in result matrix 
-	GrB_Index dp_nvals;  // number of entries in A * 'dp'
-	GrB_Index dm_nvals;  // number of entries in A * 'dm'
-
-	GrB_Matrix  _A     =  DELTA_MATRIX_M(A);
-	GrB_Matrix  _B     =  DELTA_MATRIX_M(B);
-	GrB_Matrix  _C     =  DELTA_MATRIX_M(C);
-	GrB_Matrix  dp     =  DELTA_MATRIX_DELTA_PLUS(B);
-	GrB_Matrix  dm     =  DELTA_MATRIX_DELTA_MINUS(B);
-	GrB_Matrix  mask   =  NULL;  // entities removed
-	GrB_Matrix  accum  =  NULL;  // entities added
-
-	Delta_Matrix_nrows(&nrows, C);
-	Delta_Matrix_ncols(&ncols, C);
-	GrB_Matrix_nvals(&dp_nvals, dp);
-	GrB_Matrix_nvals(&dm_nvals, dm);
-
-	if(dm_nvals > 0) { 
-		// compute A * 'delta-minus'
-		info = GrB_Matrix_new(&mask, GrB_BOOL, nrows, ncols);
-		ASSERT(info == GrB_SUCCESS);
-
-		info = GrB_mxm(mask, NULL, NULL, GxB_ANY_PAIR_BOOL, _A, dm, NULL);
-		ASSERT(info == GrB_SUCCESS);
-
-		// update 'dm_nvals'
-		info = GrB_Matrix_nvals(&dm_nvals, mask);
-		ASSERT(info == GrB_SUCCESS);
-	}
-
-	
-
-	GrB_Descriptor  desc       =  NULL;
-	bool            additions  =  dp_nvals  >  0;
-	bool            deletions  =  dm_nvals  >  0;
-
-	if (deletions) {
-		desc = GrB_DESC_RSC;
-	} else {
-		GrB_free(&mask);
-		mask = NULL;
-	}
-	// GxB_Global_Option_set_INT32(true, GxB_BURBLE);
-	if(dp_nvals > 0) {
-		// compute A * 'delta-plus'
-		info = GrB_Matrix_new(&accum, GrB_BOOL, nrows, ncols);
-		ASSERT(info == GrB_SUCCESS);
-
-		info = GrB_mxm(accum, NULL, NULL, semiring, _A, dp, NULL);
-		ASSERT(info == GrB_SUCCESS);
-
-		// // update 'dp_nvals'
-		// info = GrB_Matrix_nvals(&dp_nvals, accum);
-		// ASSERT(info == GrB_SUCCESS);
-	}
-
-	// compute (A * B)<!mask>
-	info = GrB_mxm(_C, mask, NULL, semiring, _A, _B, desc);
-	ASSERT(info == GrB_SUCCESS);
-	
-	if(additions) {
-		info = GrB_eWiseAdd(_C, NULL, NULL, semiring, _C, accum, NULL);
-		ASSERT(info == GrB_SUCCESS);
-	}
-
-	// clean up
-	if(mask)  GrB_free(&mask);
-	if(accum) GrB_free(&accum);
-
-	// GxB_Global_Option_set_INT32(false, GxB_BURBLE);
-	return info;
-}
-#elif 1
 // C = A * B
 GrB_Info Delta_mxm                     
 (
@@ -199,12 +85,8 @@ GrB_Info Delta_mxm
 		info = GrB_Matrix_new(&B_minus, t, nrows, ncols);
 		ASSERT(info == GrB_SUCCESS);
 
-		// GxB_fprint(dm, GxB_SHORT, stdout);
 		info = GrB_transpose(B_minus, dm, NULL, _B, GrB_DESC_SCT0);
 		ASSERT(info == GrB_SUCCESS);
-
-		// GxB_fprint(B_minus, GxB_SHORT, stdout);
-		// GxB_fprint(_B, GxB_SHORT, stdout);
 
 		_B = B_minus;
 	}
@@ -225,20 +107,22 @@ GrB_Info Delta_mxm
 	return info;
 }
 
-// Does not look and dm. Assumes that any "zombie" value is '0'
+// Does not look at dm. Assumes that any "zombie" value is '0'
 // where x \otimes 0 = 0' and x + 0' = x. (AKA the semiring "zero")
+// NOTE: this does not remove explicit zombies.
+// To make the output matrix a proper delta matrix, either remove the zombies 
+// or make dm contain all entries that are zombies.
 // C = A * B
 GrB_Info Delta_mxm_identity                    
 (
-    Delta_Matrix C,               // input/output matrix for results
+    GrB_Matrix C,                 // input/output matrix for results may contain zombie values
     const GrB_Semiring semiring,  // defines '+' and '*' for A*B
-    const Delta_Matrix A,         // first input:  matrix A
+    const GrB_Matrix A,           // first input:  matrix A may contain zombie values
     const Delta_Matrix B          // second input: matrix B
 ) {
 	ASSERT(C != NULL);
 	ASSERT(A != NULL);
 	ASSERT(B != NULL);
-	ASSERT(C != B);
 
 	// multiply Delta_Matrix by Delta_Matrix
 	// A * B
@@ -246,13 +130,9 @@ GrB_Info Delta_mxm_identity
 	//
 	// it is possible for either 'delta-plus' or 'delta-minus' to be empty
 	// this operation performs: A * B by computing:
-	// (A * (M + 'delta-plus'))<!'delta-minus'>
-
-	// validate A doesn't contains entries in either delta-plus or delta-minus
-	assert(Delta_Matrix_Synced(A));
-
-	// validate C doesn't contains entries in either delta-plus or delta-minus
-	assert(Delta_Matrix_Synced(C));
+	// (A * (M + 'delta-plus')) 
+	// it requires that zombie values are the zero of the inputed semiring
+	// it will output a GrB_Matrix that may contain zombie values
 
 	GrB_Info info;
 	GrB_Index nrows;     // number of rows in result matrix
@@ -260,20 +140,18 @@ GrB_Info Delta_mxm_identity
 	GrB_Index dp_nvals;  // number of entries in A * 'dp'
 	GrB_Index dm_nvals;  // number of entries in A * 'dm'
 
-	GrB_Matrix  _A       =  DELTA_MATRIX_M(A);
 	GrB_Matrix  _B       =  DELTA_MATRIX_M(B);
-	GrB_Matrix  _C       =  DELTA_MATRIX_M(C);
 	GrB_Matrix  dp       =  DELTA_MATRIX_DELTA_PLUS(B);
 	GrB_Matrix  dm       =  DELTA_MATRIX_DELTA_MINUS(B);
 	GrB_Matrix  B_minus  =  NULL;  // _B - dm
 	GrB_Matrix  accum    =  NULL; 
 	GrB_Type    t        =  NULL;
 
-	Delta_Matrix_type(&t, C);
-	Delta_Matrix_nrows(&nrows, C);
-	Delta_Matrix_ncols(&ncols, C);
+	GrB_Matrix_nrows(&nrows, C);
+	GrB_Matrix_ncols(&ncols, C);
 	GrB_Matrix_nvals(&dp_nvals, dp);
-
+	GxB_Matrix_type (&t, C);
+	
 	bool  additions  =  dp_nvals  >  0;
 
 	if(additions) { 
@@ -283,7 +161,7 @@ GrB_Info Delta_mxm_identity
 
 		// A could be aliased with C, so this operation needs to be done before 
 		// multiplying into C
-		info = GrB_mxm(accum, NULL, NULL, semiring, _A, dp, NULL);
+		info = GrB_mxm(accum, NULL, NULL, semiring, A, dp, NULL);
 		ASSERT(info == GrB_SUCCESS);
 
 		// update 'dp_nvals'
@@ -293,19 +171,20 @@ GrB_Info Delta_mxm_identity
 	}
 
 	// compute (A * B)
-	info = GrB_mxm(_C, NULL, NULL, semiring, _A, _B, NULL);
+	info = GrB_mxm(C, NULL, NULL, semiring, A, _B, NULL);
 	ASSERT(info == GrB_SUCCESS);
 
 	if(additions) {
 		info = GrB_Matrix_eWiseAdd_Semiring(
-			_C, NULL, NULL, semiring, _C, accum, NULL);
+			C, NULL, NULL, semiring, C, accum, NULL);
 		ASSERT(info == GrB_SUCCESS);
 	}
-	GrB_Matrix_select_BOOL(_C, NULL, NULL, GrB_VALUEEQ_BOOL, _C, true, NULL);
+	
+	// uncomment to remove zombies
+	// GrB_Matrix_select_BOOL(C, NULL, NULL, GrB_VALUEEQ_BOOL, C, true, NULL);
 
 	if(B_minus) GrB_free(&B_minus);
 	if(accum) GrB_free(&accum);
 
 	return info;
 }
-#endif
