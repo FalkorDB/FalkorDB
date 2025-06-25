@@ -1,5 +1,5 @@
 from common import *
-from datetime import datetime
+from datetime import datetime, timedelta
 
 GRAPH_ID = "temporal_test"
 
@@ -479,4 +479,72 @@ class testTemporalDuration(FlowTestsBase):
         self.env.assertTrue(ge)
         self.env.assertTrue(le)
         self.env.assertTrue(e)
+
+    def test_duration_add(self):
+        #-----------------------------------------------------------------------
+        # duration + duration
+        #-----------------------------------------------------------------------
+
+        q = """RETURN duration({years:1, months:1, weeks:1, days:1, hours:1, minutes:32, seconds:10}) +
+                      duration({years:2, months:2, weeks:2, days:2, hours:2, minutes:34, seconds:12})"""
+        res = self.graph.query(q).result_set[0][0]
+        self.env.assertEquals(res, timedelta(years=3, months=3, days=24, hours=4, minutes=6, seconds=24))
+
+        return
+
+        #-----------------------------------------------------------------------
+        # duration - duration
+        #-----------------------------------------------------------------------
+
+        q = "RETURN duration({}) - duration({})"
+        res = self.graph.query(q).result_set[0][0]
+        #self.env.assertEquals(res, timedelta(seconds=))
+
+        #-----------------------------------------------------------------------
+        # date + duration
+        #-----------------------------------------------------------------------
+
+        q = "RETURN date({}) + duration({})"
+        res = self.graph.query(q).result_set[0][0]
+        #self.env.assertEquals(res, timedelta(seconds=))
+
+        #-----------------------------------------------------------------------
+        # date - duration
+        #-----------------------------------------------------------------------
+
+        q = "RETURN date({}) - duration({})"
+        res = self.graph.query(q).result_set[0][0]
+        #self.env.assertEquals(res, timedelta(seconds=))
+
+        #-----------------------------------------------------------------------
+        # time + duration
+        #-----------------------------------------------------------------------
+
+        q = "RETURN time({}) + duration({})"
+        res = self.graph.query(q).result_set[0][0]
+        #self.env.assertEquals(res, timedelta(seconds=))
+
+        #-----------------------------------------------------------------------
+        # time - duration
+        #-----------------------------------------------------------------------
+
+        q = "RETURN time({}) - duration({})"
+        res = self.graph.query(q).result_set[0][0]
+        #self.env.assertEquals(res, timedelta(seconds=))
+
+        #-----------------------------------------------------------------------
+        # datetime + duration
+        #-----------------------------------------------------------------------
+
+        q = "RETURN datetime({}) + duration({})"
+        res = self.graph.query(q).result_set[0][0]
+        #self.env.assertEquals(res, timedelta(seconds=))
+
+        #-----------------------------------------------------------------------
+        # datetime - duration
+        #-----------------------------------------------------------------------
+
+        q = "RETURN datetime({}) - duration({})"
+        res = self.graph.query(q).result_set[0][0]
+        #self.env.assertEquals(res, timedelta(seconds=))
 
