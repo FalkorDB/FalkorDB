@@ -56,6 +56,7 @@ GrB_Info Delta_Matrix_removeElement_BOOL
 
 	if(in_m) {
 		// mark deletion in delta minus
+		info = GrB_Matrix_setElement(m, false, i, j);
 		info = GrB_Matrix_setElement(dm, true, i, j);
 		ASSERT(info == GrB_SUCCESS);
 		Delta_Matrix_setDirty(C);
@@ -176,6 +177,13 @@ GrB_Info Delta_Matrix_removeElements
 	// remove edges in dp that are also in A.
 	info = GrB_transpose(dp, A, NULL, dp, GrB_DESC_RSCT0);
 	ASSERT(info == GrB_SUCCESS);
+
+	// x XOR (x AND TRUE) - Always outputs false.
+	// Done like this in the hope that GBLAS will recognize this can be done inplace.
+	info = GrB_eWiseMult(m, NULL, GrB_LXOR, GrB_LAND, m, A, NULL);
+	ASSERT(info == GrB_SUCCESS);
+
+	Delta_Matrix_validate(C);
 
 	Delta_Matrix_setDirty(C);
 	return info;

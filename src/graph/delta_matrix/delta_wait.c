@@ -5,6 +5,7 @@
  */
 
 #include "RG.h"
+#include "delta_utils.h"
 #include "delta_matrix.h"
 #include "../../util/rmalloc.h"
 #include "configuration/config.h"
@@ -128,6 +129,7 @@ GrB_Info Delta_Matrix_wait
 	bool force_sync
 ) {
 	ASSERT(A != NULL);
+	Delta_Matrix_validate(A);
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(A)) {
 		Delta_Matrix_wait(A->transposed, force_sync);
 	}
@@ -140,6 +142,7 @@ GrB_Info Delta_Matrix_wait
 
 	_SetUndirty(A);
 
+	Delta_Matrix_validate(A);
 	return GrB_SUCCESS;
 }
 
@@ -151,6 +154,7 @@ void Delta_Matrix_synchronize
 )
 {
 	ASSERT(A != NULL);
+	Delta_Matrix_validate(A);
 	uint64_t A_nrows = 0;
 	uint64_t A_ncols = 0;
 	GrB_Info info = Delta_Matrix_nrows(&A_nrows, A);
@@ -162,6 +166,10 @@ void Delta_Matrix_synchronize
 		return;
 	}
 	Delta_Matrix_lock(A);
+	info = Delta_Matrix_nrows(&A_nrows, A);
+	ASSERT(info == GrB_SUCCESS);
+	info = Delta_Matrix_ncols(&A_ncols, A);
+	ASSERT(info == GrB_SUCCESS);
 	if(A_nrows < nrows || A_ncols < ncols) {
 		info = Delta_Matrix_resize(A, nrows, ncols);
 		ASSERT(info == GrB_SUCCESS);
@@ -171,5 +179,6 @@ void Delta_Matrix_synchronize
 		ASSERT(info == GrB_SUCCESS);
 	}
 	Delta_Matrix_unlock(A);
+	Delta_Matrix_validate(A);
 }
 

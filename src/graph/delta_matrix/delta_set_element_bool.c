@@ -33,15 +33,17 @@ GrB_Info Delta_Matrix_setElement_BOOL   // C (i,j) = x
 		ASSERT(info == GrB_SUCCESS);
 	}
 
-	info = GrB_Matrix_extractElement(&v, dm, i, j);
+	info = GxB_Matrix_isStoredElement(dm, i, j);
 	marked_for_deletion = (info == GrB_SUCCESS);
 
 	if(marked_for_deletion) {
-		// unset delta-minus m already assign to true
+		// unset delta-minus. assign m to true
+		info = GrB_Matrix_setElement(m, true, i, j);
+		ASSERT(info == GrB_SUCCESS);
 		info = GrB_Matrix_removeElement(dm, i, j);
 		ASSERT(info == GrB_SUCCESS);
 	} else {
-		info = GrB_Matrix_extractElement(&v, m, i, j);
+		info = GxB_Matrix_isStoredElement(m, i, j);
 		already_allocated = (info == GrB_SUCCESS);
 
 		if(!already_allocated) {

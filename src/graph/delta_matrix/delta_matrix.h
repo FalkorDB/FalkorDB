@@ -35,6 +35,9 @@ typedef _Delta_Matrix *Delta_Matrix;
 	(t == GrB_UINT64);                \
 })
 
+#define U64_ZOMBIE MSB_MASK
+#define BOOL_ZOMBIE ((bool) false)
+
 //------------------------------------------------------------------------------
 //
 // possible combinations
@@ -265,13 +268,16 @@ GrB_Info Delta_mxm
 );
 
 // Does not look at dm. Assumes that any "zombie" value is '0'
-// where x '*' 0 = 0 and x '+' 0 = x. (AKA the semiring "zero")
+// where x \otimes 0 = 0' and x + 0' = x. (AKA the semiring "zero")
+// NOTE: this does not remove explicit zombies.
+// To make the output matrix a proper delta matrix, either remove the zombies 
+// or make dm contain all entries that are zombies.
 // C = A * B
 GrB_Info Delta_mxm_identity                    
 (
-    Delta_Matrix C,               // input/output matrix for results
+    GrB_Matrix C,                 // input/output matrix for results may contain zombie values
     const GrB_Semiring semiring,  // defines '+' and '*' for A*B
-    const Delta_Matrix A,         // first input:  matrix A
+    const GrB_Matrix A,           // first input:  matrix A may contain zombie values
     const Delta_Matrix B          // second input: matrix B
 );
 
