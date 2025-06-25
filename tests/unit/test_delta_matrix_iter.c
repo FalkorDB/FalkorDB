@@ -32,7 +32,7 @@ void tearDown() {
 
 // test RGMatrixTupleIter initialization
 void test_RGMatrixTupleIter_attach() {
-	Delta_Matrix          A                   =  NULL;
+	Delta_Matrix          A                =  NULL;
 	GrB_Type           t                   =  GrB_UINT64;
 	GrB_Info           info                =  GrB_SUCCESS;
 	GrB_Index          nrows               =  100;
@@ -234,7 +234,7 @@ void test_RGMatrixTupleIter_reuse() {
 	Delta_Matrix_free(&A);
 	TEST_ASSERT(A == NULL);
 	Delta_Matrix_free(&B);
-	TEST_ASSERT(A == NULL);
+	TEST_ASSERT(B == NULL);
 	Delta_MatrixTupleIter_detach(&iter);
 	TEST_ASSERT(iter.A == NULL);
 }

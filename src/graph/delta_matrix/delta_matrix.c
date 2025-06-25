@@ -192,7 +192,7 @@ GrB_Info Delta_Matrix_type
 
 	GrB_Matrix M = DELTA_MATRIX_M(A);
 	GrB_Info info = GxB_Matrix_type(type, M);
-	ASSERT(info == GrB_SUCCESS)
+	ASSERT(info == GrB_SUCCESS);
 	return info;
 }
 

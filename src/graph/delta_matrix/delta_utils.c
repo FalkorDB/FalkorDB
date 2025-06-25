@@ -153,7 +153,7 @@ void Delta_Matrix_validate
 	
 	Delta_Matrix_type(&ty, C);
 	GxB_Matrix_type(&ty_m, m);
-	GxB_Matrix_type(&ty_dp, m);
+	GxB_Matrix_type(&ty_dp, dp);
 	Delta_Matrix_nrows(&nrows, C);
 	Delta_Matrix_ncols(&ncols, C);
 	

@@ -230,7 +230,7 @@ static GrB_Info _next_m_iter_uint64
 		_iter_next(m_it, iter->max_row, depleted) ;
 
 		//check if entry is deleted, if not, return.
-		if(_val != MSB_MASK) break ;
+		if(_val != U64_ZOMBIE) break ;
 	} while (true) ;
 
 	if(row) *row = _row ;
