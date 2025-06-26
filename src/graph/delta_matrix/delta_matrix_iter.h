@@ -11,7 +11,7 @@
 #include "GraphBLAS.h"
 
 #define DELTA_ITER_MIN_ROW 0
-#define DELTA_ITER_MAX_ROW ULLONG_MAX
+#define DELTA_ITER_MAX_ROW UINT64_MAX
 
 // TuplesIter maintains information required
 // to iterate over a Delta_Matrix
