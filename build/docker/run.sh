@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 if [ "${BROWSER:-1}" -eq "1" ]; then
     if [ -d "${FALKORDB_BROWSER_PATH}" ]; then
