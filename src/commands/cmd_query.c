@@ -22,7 +22,7 @@
 #include "../configuration/config.h"
 #include "../execution_plan/execution_plan.h"
 
-// GraphQueryCtx stores the allocations required to execute a query.
+// GraphQueryCtx stores the allocations required to execute a query
 typedef struct {
 	GraphContext *graph_ctx;  // graph context
 	RedisModuleCtx *rm_ctx;   // redismodule context
@@ -307,14 +307,17 @@ static void _ExecuteQuery(void *args) {
 	GraphQueryCtx_Free(gq_ctx);
 }
 
-static void _DelegateWriter(GraphQueryCtx *gq_ctx) {
+static bool _DelegateQuery
+(
+	GraphContext *gc,
+	GraphQueryCtx *gq_ctx
+) {
 	ASSERT(gq_ctx != NULL);
 
-	//---------------------------------------------------------------------------
-	// Migrate to writer thread
-	//---------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
+	// delegate query to the current graph writer thread
+	//--------------------------------------------------------------------------
 
-	// write queries will be executed on a dedicated writer thread,
 	// clear this thread data
 	ErrorCtx_Clear();
 	QueryCtx_RemoveFromTLS();
@@ -328,9 +331,39 @@ static void _DelegateWriter(GraphQueryCtx *gq_ctx) {
 	// reset query stage from executing back to waiting
 	QueryCtx_ResetStage(gq_ctx->query_ctx);
 
+	// queue query
+	return GraphContext_EnqueueWriteQuery(gc, gq_ctx);
+
 	// dispatch work to the writer thread
-	int res = ThreadPools_AddWorkWriter(_ExecuteQuery, gq_ctx, 0);
-	ASSERT(res == 0);
+	//int res = ThreadPools_AddWorkWriter(_ExecuteQuery, gq_ctx, 0);
+	//ASSERT(res == 0);
+}
+
+// process all queued write queries
+// writer will only release write access when the queue is truly empty
+static void enter_writer_loop
+(
+	GraphContext *gc
+) {
+	while (true) {
+		// drain the queue
+		GraphQueryCtx *gq_ctx;
+		while ((gq_ctx = (GraphQueryCtx *)GraphContext_DequeueWriteQuery(gc))) {
+			//printf("Processing additional write queries\n");
+			_ExecuteQuery(gq_ctx);
+		}
+
+		// release write access
+		GraphContext_ExitWrite(gc);
+
+		// double check, it is possible for a query to enter the queue
+		// between us exiting the while loop and the release of the write flag
+		if(GraphContext_WriteQueueEmpty(gc) || !GraphContext_TryEnterWrite(gc)) {
+			// either the queue is empty
+			// or the another thread became a writer
+			break;
+		}
+	}
 }
 
 void _query
@@ -402,7 +435,26 @@ void _query
 	if(readonly || command_ctx->thread == EXEC_THREAD_MAIN) {
 		_ExecuteQuery(gq_ctx);
 	} else {
-		_DelegateWriter(gq_ctx);
+		// try to acquire exclusive write access to graph
+		if(GraphContext_TryEnterWrite(gc)) {
+			// thread has exclusive write access to graph
+			// go ahead and run the query
+			_ExecuteQuery(gq_ctx);
+			enter_writer_loop(gc);
+		} else {
+			// thread failed getting exclusive write access to graph
+			// delegate query to current writer
+			if(!_DelegateQuery(gc, gq_ctx)) {
+				printf("Queue full!\n");
+			}
+
+			// it is possible that writer had existed while we were delegating
+			// the query, retry acquiring write access, if successful enter
+			// the writers loop
+			if(GraphContext_TryEnterWrite(gc)) {
+				enter_writer_loop(gc);
+			}
+		}
 	}
 
 	return;
@@ -413,13 +465,13 @@ cleanup:
 		ErrorCtx_EmitException();
 	}
 
-	// Cleanup routine invoked after encountering errors in this function.
+	// cleanup routine invoked after encountering errors in this function
 	ExecutionCtx_Free(exec_ctx);
 	GraphContext_DecreaseRefCount(gc);
 	Globals_UntrackCommandCtx(command_ctx);
 	CommandCtx_UnblockClient(command_ctx);
 	CommandCtx_Free(command_ctx);
-	QueryCtx_Free(); // Reset the QueryCtx and free its allocations.
+	QueryCtx_Free(); // reset the QueryCtx and free its allocations
 	ErrorCtx_Clear();
 }
 
