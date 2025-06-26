@@ -115,7 +115,7 @@ GrB_Info Delta_mxm
 // C = A * B
 GrB_Info Delta_mxm_identity                    
 (
-    GrB_Matrix C,                 // input/output matrix for results may contain zombie values
+    GrB_Matrix C,                 // output matrix: may contain zombie values
     const GrB_Semiring semiring,  // defines '+' and '*' for A*B
     const GrB_Matrix A,           // first input:  matrix A may contain zombie values
     const Delta_Matrix B          // second input: matrix B
@@ -188,3 +188,144 @@ GrB_Info Delta_mxm_identity
 
 	return info;
 }
+
+#if 1
+// Using a plus_x semiring, returns C = A (BM + BMP - BDM)
+// Note this method can be tweeked to be used for any monoid with an inverse 
+// operation
+GrB_Info Delta_mxm_count
+(
+    GrB_Matrix C,                 // output: matrix C 
+    const GrB_Semiring semiring,  // defines '+' and '*' for A*B
+    const GrB_Matrix A,           // first input:  matrix A
+    const Delta_Matrix B          // second input: matrix B
+) {
+	ASSERT(C != NULL);
+	ASSERT(A != NULL);
+	ASSERT(B != NULL);
+
+	// multiply Delta_Matrix by Delta_Matrix
+	// A * B
+	// where A is fully synced!
+	//
+	// it is possible for either 'delta-plus' or 'delta-minus' to be empty
+	// this operation performs: A * B by computing:
+	// (A * (M + 'delta-plus')) 
+	// it requires that zombie values are the zero of the inputed semiring
+	// it will output a GrB_Matrix that may contain zombie values
+
+	GrB_Info info;
+	GrB_Index nrows;     // number of rows in result matrix
+	GrB_Index ncols;     // number of columns in result matrix 
+	GrB_Index dp_nvals;  // number of entries in A * 'dp'
+	GrB_Index dm_nvals;  // number of entries in A * 'dm'
+
+	GrB_Matrix  _B       =  DELTA_MATRIX_M(B);
+	GrB_Matrix  dp       =  DELTA_MATRIX_DELTA_PLUS(B);
+	GrB_Matrix  dm       =  DELTA_MATRIX_DELTA_MINUS(B);
+	GrB_Matrix  _C       =  NULL; 
+	GrB_Type    t        =  NULL;
+	bool        aliased  =  C == A;
+
+	GrB_Matrix_nrows(&nrows, C);
+	GrB_Matrix_ncols(&ncols, C);
+	GrB_Matrix_nvals(&dp_nvals, dp);
+	GxB_Matrix_type (&t, C);
+	info = GrB_Matrix_new(&_C, GrB_UINT64, nrows, ncols);
+	ASSERT(info == GrB_SUCCESS);
+
+	// compute (A * BM)
+	info = GrB_mxm(_C, NULL, NULL, semiring, A, _B, NULL);
+	ASSERT(info == GrB_SUCCESS);
+
+	// C -= (A * BDM) (The mask is used to help GBLAS, does not affect outcome).
+	info = GrB_mxm(_C, C, GrB_MINUS_UINT64, semiring, A, dm, GrB_DESC_S);
+	ASSERT(info == GrB_SUCCESS);
+
+	// C += (A * BDP)
+	info = GrB_mxm(_C, NULL, GrB_PLUS_UINT64, semiring, A, dp, NULL);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_transpose(C, NULL, NULL, _C, GrB_DESC_T0);
+	ASSERT(info == GrB_SUCCESS);
+	GrB_free(&_C);
+
+	info = GrB_Matrix_select_BOOL(C, NULL, NULL, GrB_VALUEEQ_BOOL, C, true, NULL) ;
+	ASSERT(info == GrB_SUCCESS);
+
+	return info;
+}
+#else // C and A uint 64
+// Using a plus_x semiring, returns C = A (BM + BMP - BDM)
+// Note this method can be tweeked to be used for any monoid with an inverse 
+// operation
+GrB_Info Delta_mxm_count
+(
+    GrB_Matrix C,                 // output: matrix C 
+    const GrB_Semiring semiring,  // defines '+' and '*' for A*B
+    const GrB_Matrix A,           // first input:  matrix A
+    const Delta_Matrix B          // second input: matrix B
+) {
+	ASSERT(C != NULL);
+	ASSERT(A != NULL);
+	ASSERT(B != NULL);
+
+	// multiply Delta_Matrix by Delta_Matrix
+	// A * B
+	// where A is fully synced!
+	//
+	// it is possible for either 'delta-plus' or 'delta-minus' to be empty
+	// this operation performs: A * B by computing:
+	// (A * (M + 'delta-plus')) 
+	// it requires that zombie values are the zero of the inputed semiring
+	// it will output a GrB_Matrix that may contain zombie values
+
+	GrB_Info info;
+	GrB_Index nrows;     // number of rows in result matrix
+	GrB_Index ncols;     // number of columns in result matrix 
+	GrB_Index dp_nvals;  // number of entries in A * 'dp'
+	GrB_Index dm_nvals;  // number of entries in A * 'dm'
+
+	GrB_Matrix  _B       =  DELTA_MATRIX_M(B);
+	GrB_Matrix  dp       =  DELTA_MATRIX_DELTA_PLUS(B);
+	GrB_Matrix  dm       =  DELTA_MATRIX_DELTA_MINUS(B);
+	GrB_Matrix  _C       =  NULL; 
+	GrB_Type    t        =  NULL;
+	bool        aliased  =  C == A;
+
+	GrB_Matrix_nrows(&nrows, C);
+	GrB_Matrix_ncols(&ncols, C);
+	GrB_Matrix_nvals(&dp_nvals, dp);
+	GxB_Matrix_type (&t, C);
+
+	if(aliased) {
+		info = GrB_Matrix_new(&_C, t, nrows, ncols);
+		ASSERT(info == GrB_SUCCESS);
+		C = _C;
+	}
+
+	// compute (A * BM)
+	info = GrB_mxm(C, NULL, NULL, semiring, A, _B, NULL);
+	ASSERT(info == GrB_SUCCESS);
+
+	// C -= (A * BDM) (The mask is used to help GBLAS, does not affect outcome).
+	info = GrB_mxm(C, C, GrB_MINUS_UINT64, semiring, A, dm, GrB_DESC_S);
+	ASSERT(info == GrB_SUCCESS);
+
+	// C += (A * BDP)
+	info = GrB_mxm(C, NULL, GrB_PLUS_UINT64, semiring, A, dp, NULL);
+	ASSERT(info == GrB_SUCCESS);
+
+	
+	// uncomment to remove zeros
+	GrB_Matrix_select_UINT64(C, NULL, NULL, GrB_VALUEGT_BOOL, C, 0, NULL);
+
+	if(aliased) {
+		info = GrB_transpose(A, NULL, NULL, _C, GrB_DESC_T0);
+		ASSERT(info == GrB_SUCCESS);
+		GrB_free(&_C);
+	}
+
+	return info;
+}
+#endif

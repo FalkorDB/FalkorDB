@@ -33,6 +33,12 @@ void Delta_Matrix_validateState
 //         ∅ = m  ∩ dp
 //         ∅ = dp ∩ dm
 // {zombies} = m  ∩ dm
+// Transpose
+//    Check it is actually M^T
+// Types / Dimensions
+//    m BOOL / UINT64
+//    dp BOOL / UINT64
+//    dm BOOL
 void Delta_Matrix_validate
 (
 	const Delta_Matrix C

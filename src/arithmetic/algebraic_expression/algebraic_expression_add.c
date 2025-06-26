@@ -21,7 +21,7 @@ Delta_Matrix _Eval_Add
 	GrB_Index nrows;                   // number of rows of operand
 	GrB_Index ncols;                   // number of columns of operand
 
-	bool        res_in_use  =  false;  //  can we use `res` for intermediate evaluation
+	bool        res_in_use     =  false;  //  can we use `res` for intermediate evaluation
 	Delta_Matrix   A           =  NULL;   //  left operand
 	Delta_Matrix   B           =  NULL;   //  right operand
 	Delta_Matrix   inter       =  NULL;   //  intermediate matrix

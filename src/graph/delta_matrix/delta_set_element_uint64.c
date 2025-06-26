@@ -9,13 +9,13 @@
 #include "delta_matrix.h"
 #include "../../util/arr.h"
 
-
-GrB_Info Delta_Matrix_setElement_UINT64    // C (i,j) = x
+// C (i,j) = x
+GrB_Info Delta_Matrix_setElement_UINT64
 (
-    Delta_Matrix C,                        // matrix to modify
-    uint64_t x,                            // scalar to assign to C(i,j)
-    GrB_Index i,                           // row index
-    GrB_Index j                            // column index
+    Delta_Matrix C,  // matrix to modify
+    uint64_t x,      // scalar to assign to C(i,j)
+    GrB_Index i,     // row index
+    GrB_Index j      // column index
 ) {
 	ASSERT(C != NULL);
 	Delta_Matrix_checkBounds(C, i, j);
@@ -36,7 +36,7 @@ GrB_Info Delta_Matrix_setElement_UINT64    // C (i,j) = x
 	GrB_Matrix dp  = DELTA_MATRIX_DELTA_PLUS(C);
 	GrB_Matrix dm  = DELTA_MATRIX_DELTA_MINUS(C);
 
-#ifdef DELTA_DEBUG
+#ifdef RG_DEBUG
 	//--------------------------------------------------------------------------
 	// validate type
 	//--------------------------------------------------------------------------
