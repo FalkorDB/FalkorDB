@@ -131,7 +131,6 @@ void Delta_Matrix_validate
 	const Delta_Matrix C
 ) {
 #ifdef DELTA_DEBUG
-	// printf("Validating Matrix\n");
 	bool        m_dp_disjoint     =  false;
 	bool        dp_dm_disjoint    =  false;
 	bool        m_zombies_valid   =  true;
@@ -175,10 +174,10 @@ void Delta_Matrix_validate
 		dp = dp_bool;
 	}
 	info = GrB_Matrix_reduce_BOOL(
-		&dm_iso, NULL, GrB_LAND_MONOID_BOOL, dm, NULL);
+		&dm_iso, GrB_LAND, GrB_LAND_MONOID_BOOL, dm, NULL);
 	ASSERT(info == GrB_SUCCESS);
 	info = GrB_Matrix_reduce_BOOL(
-		&dp_iso, NULL, GrB_LAND_MONOID_BOOL, dp, NULL);
+		&dp_iso, GrB_LAND, GrB_LAND_MONOID_BOOL, dp, NULL);
 	ASSERT(info == GrB_SUCCESS);
 	// GxB_Matrix_iso (&dm_iso, dm);
 	// GxB_Matrix_iso (&dp_iso, dp);
@@ -186,18 +185,64 @@ void Delta_Matrix_validate
 	ASSERT(dp_iso);
 	info = GrB_Matrix_new(&temp, GrB_BOOL, nrows, ncols);
 	ASSERT(info == GrB_SUCCESS);
+	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) { // this may to too strict
+		// the transpose should be structually the transpose
+		// however doesn't need to have all pending changes be equal.
+		GrB_Matrix tm        = DELTA_MATRIX_TM(C);
+		GrB_Matrix tdp       = DELTA_MATRIX_TDELTA_PLUS(C);
+		GrB_Matrix tdm       = DELTA_MATRIX_TDELTA_MINUS(C);
+		GrB_Index  t_eq_vals = 0;
+		bool       all_t_eq  = true;
+
+		// m = tm^t
+		GrB_Matrix_nvals(&nvals, m);
+		info = GrB_eWiseMult(temp, NULL, NULL, GrB_EQ_BOOL, m, tm, GrB_DESC_T1);
+		ASSERT(info == GrB_SUCCESS);
+		GrB_Matrix_nvals(&t_eq_vals, temp);
+		ASSERT(t_eq_vals == nvals);
+
+		info = GrB_Matrix_reduce_BOOL(
+		&all_t_eq, GrB_LAND, GrB_LAND_MONOID_BOOL, temp, NULL);
+		ASSERT(info == GrB_SUCCESS);
+		ASSERT(all_t_eq);
+
+		// dp = tdp^t
+		GrB_Matrix_nvals(&nvals, dp);
+		info = GrB_eWiseMult(temp, NULL, NULL, GrB_EQ_BOOL, dp, tdp, GrB_DESC_T1);
+		ASSERT(info == GrB_SUCCESS);
+		GrB_Matrix_nvals(&t_eq_vals, temp);
+		ASSERT(t_eq_vals == nvals);
+
+		info = GrB_Matrix_reduce_BOOL(
+		&all_t_eq, GrB_LAND, GrB_LAND_MONOID_BOOL, temp, NULL);
+		ASSERT(info == GrB_SUCCESS);
+		ASSERT(all_t_eq);
+
+		// dm = tdm^t
+		GrB_Matrix_nvals(&nvals, dm);
+		info = GrB_eWiseMult(temp, NULL, NULL, GrB_EQ_BOOL, dm, tdm, GrB_DESC_T1);
+		ASSERT(info == GrB_SUCCESS);
+		GrB_Matrix_nvals(&t_eq_vals, temp);
+		ASSERT(t_eq_vals == nvals);
+
+		info = GrB_Matrix_reduce_BOOL(
+		&all_t_eq, GrB_LAND, GrB_LAND_MONOID_BOOL, temp, NULL);
+		ASSERT(info == GrB_SUCCESS);
+		ASSERT(all_t_eq);
+	}
+	
 	info = GrB_eWiseMult(temp, NULL, NULL, GrB_ONEB_BOOL, m, dp, NULL);
 	ASSERT(info == GrB_SUCCESS);
 	GrB_Matrix_nvals(&nvals, temp);
 	m_dp_disjoint = nvals == 0;
 	if(!m_dp_disjoint)
-		GxB_fprint(temp, GxB_SHORT, stdout);
-
+		GxB_Matrix_fprint(temp, "m&dp",GxB_SHORT, stdout);
 	info = GrB_eWiseMult(temp, NULL, NULL, GrB_ONEB_BOOL, dp, dm, NULL);
 	ASSERT(info == GrB_SUCCESS);
 	GrB_Matrix_nvals(&nvals, temp);
 	dp_dm_disjoint = nvals == 0;
-	
+	if(!dp_dm_disjoint)
+		GxB_Matrix_fprint(temp, "dp&dm",GxB_SHORT, stdout);
 	info = GrB_eWiseAdd(temp, NULL, NULL, GrB_LXOR, dp, dm, NULL);
 	ASSERT(info == GrB_SUCCESS);
 	info = GrB_Matrix_reduce_BOOL(
@@ -215,6 +260,7 @@ void Delta_Matrix_validate
 	// Free allocation.
 	GrB_free(&m_bool);
 	GrB_free(&dp_bool);
+	GrB_free(&temp);
 #endif
 }
 
