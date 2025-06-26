@@ -445,7 +445,8 @@ void _query
 			// thread failed getting exclusive write access to graph
 			// delegate query to current writer
 			if(!_DelegateQuery(gc, gq_ctx)) {
-				printf("Queue full!\n");
+				ErrorCtx_SetError(EMSG_WRITE_QUEUE_FULL);
+				goto cleanup;
 			}
 
 			// it is possible that writer had existed while we were delegating
