@@ -8,6 +8,7 @@
 #include "delta_matrix.h"
 #include "../../util/rmalloc.h"
 
+
 void Delta_Matrix_setDirty
 (
 	Delta_Matrix C
@@ -236,25 +237,21 @@ GrB_Info Delta_Matrix_setM
 
 	GrB_Index nvals = 0;
 	GrB_Index tot   = 0;
+	ASSERT(Delta_Matrix_Synced(C));
 
-	// Check that C is empty.
-	GrB_Info info   = GrB_Matrix_nvals(&nvals, DELTA_MATRIX_M(C));
-	ASSERT(info == GrB_SUCCESS);
-	tot += nvals;
-	info = GrB_Matrix_nvals(&nvals, DELTA_MATRIX_DELTA_PLUS(C));
-	ASSERT(info == GrB_SUCCESS);
-	tot += nvals;
-	info = GrB_Matrix_nvals(&nvals, DELTA_MATRIX_DELTA_MINUS(C));
-	ASSERT(info == GrB_SUCCESS);
-	tot += nvals;
-
-	if (tot != 0)
-		return GrB_ALREADY_SET;
-
-	info = GrB_free(&DELTA_MATRIX_M(C));
+	GrB_Info info = GrB_free(&DELTA_MATRIX_M(C));
 	ASSERT(info == GrB_SUCCESS);
 
 	DELTA_MATRIX_M(C) = *M;
+
+	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C))
+	{
+		Delta_Matrix CT = C->transposed;
+		ASSERT(Delta_Matrix_Synced(CT));
+		info = GrB_Matrix_apply(
+			DELTA_MATRIX_M(CT), NULL, NULL, GxB_ONE_BOOL, *M, GrB_DESC_T0);
+	}
+	
 	*M = NULL;
 	return GrB_SUCCESS;
 }

@@ -182,14 +182,15 @@ void RdbLoadRelationMatrices_v17
 		Delta_Matrix DR = Graph_GetRelationMatrix(g, r, false);
 		ASSERT(DR != NULL);
 
-		info = Delta_Matrix_setM(DR, &R);
-		ASSERT(info == GrB_SUCCESS);
 
 		// update graph edge statistics
 		// number of edges of type 'r' equals to:
 		// |R| - n_tensors + n_elem
 		GrB_Index nvals;
 		info = GrB_Matrix_nvals(&nvals, R);
+		ASSERT(info == GrB_SUCCESS);
+
+		info = Delta_Matrix_setM(DR, &R);
 		ASSERT(info == GrB_SUCCESS);
 
 		GraphStatistics_IncEdgeCount(&g->stats, r, nvals - n_tensors + n_elem);

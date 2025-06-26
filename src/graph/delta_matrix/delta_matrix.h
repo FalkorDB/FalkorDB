@@ -281,6 +281,17 @@ GrB_Info Delta_mxm_identity
     const Delta_Matrix B          // second input: matrix B
 );
 
+// Using a plus_x semiring, returns C = A (BM + BMP - BDM)
+// Note this method can be tweeked to be used for any monoid with an inverse 
+// operation
+GrB_Info Delta_mxm_count
+(
+    GrB_Matrix C,                 // output: matrix C 
+    const GrB_Semiring semiring,  // defines '+' and '*' for A*B
+    const GrB_Matrix A,           // first input:  matrix A
+    const Delta_Matrix B          // second input: matrix B
+) ;
+
 // Inputs need not be synced, but must be of the same type.
 // Output is a valid delta matrix, which may not be synced.
 // zombies must be the identity of the given monoid.

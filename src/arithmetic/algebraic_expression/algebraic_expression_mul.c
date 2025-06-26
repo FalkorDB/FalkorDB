@@ -66,9 +66,11 @@ Delta_Matrix _Eval_Mul
 		}
 		Delta_Matrix_type(&ty, M);
 		semiring = (ty == GrB_BOOL)? GrB_LOR_LAND_SEMIRING_BOOL: any_alive;
-		// 	info = Delta_mxm(res, semiring, A, M);
 		info = Delta_mxm_identity(res_m, semiring, A, M);
 		ASSERT(info == GrB_SUCCESS);
+
+		// info = Delta_mxm_count(res_m, GxB_PLUS_PAIR_UINT64, A, M);
+		// ASSERT(info == GrB_SUCCESS);
 		
 		res_modified = true ;
 		// setup for next iteration

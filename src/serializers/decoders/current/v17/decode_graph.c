@@ -6,51 +6,6 @@
 #include "decode_v17.h"
 #include "../../../../index/indexer.h"
 
-// TODO: have the delta matrix upon setting M, incase the matrix
-// contains a transpose, we should overwrite it with MT
-// compute transpose matrices
-static void _ComputeTransposeMatrix
-(
-	Delta_Matrix A
-) {
-	ASSERT(A != NULL);
-
-	Delta_Matrix AT  = Delta_Matrix_getTranspose(A);
-	GrB_Matrix   AM  = Delta_Matrix_M(A);
-	GrB_Matrix   ATM = Delta_Matrix_M(AT);
-
-	// make sure transpose doesn't contains any entries
-	GrB_Info info;
-	GrB_Index nvals;
-	info = GrB_Matrix_nvals(&nvals, ATM);
-	ASSERT(info  == GrB_SUCCESS);
-	ASSERT(nvals == 0);
-
-	// compute transpose
-	info = GrB_transpose(ATM, NULL, NULL, AM, NULL);
-	ASSERT(info  == GrB_SUCCESS);
-}
-
-static void _ComputeTransposeMatrices
-(
-	Graph *g  // graph
-) {
-	ASSERT(g != NULL);
-
-	GrB_Info info;
-	int n = Graph_RelationTypeCount(g);
-
-	// compute transpose for each relation matrix
-	for(RelationID r = 0; r < n; r++) {
-		Delta_Matrix R = Graph_GetRelationMatrix(g, r, false);
-		_ComputeTransposeMatrix(R);
-	}
-
-	// compute transpose for the adjacency matrix
-	Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
-	_ComputeTransposeMatrix(ADJ);
-}
-
 static GraphContext *_GetOrCreateGraphContext
 (
 	char *graph_name
@@ -328,9 +283,6 @@ GraphContext *RdbLoadGraphContext_latest
 	}
 
 	if(GraphDecodeContext_Finished(gc->decoding_context)) {
-		// compute transposes
-		_ComputeTransposeMatrices(g);
-
 		Graph *g = gc->g;
 
 		// flush graph matrices
@@ -407,7 +359,6 @@ GraphContext *RdbLoadGraphContext_latest
 		RedisModule_Log(NULL, "notice", "Done decoding graph %s",
 				GraphContext_GetName(gc));
 	}
-
 	return gc;
 }
 

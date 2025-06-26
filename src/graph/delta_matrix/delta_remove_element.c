@@ -31,7 +31,7 @@ GrB_Info Delta_Matrix_removeElement_BOOL
 	GrB_Matrix  dp          =  DELTA_MATRIX_DELTA_PLUS(C);
 	GrB_Matrix  dm          =  DELTA_MATRIX_DELTA_MINUS(C);
 
-#ifdef DELTA_DEBUG
+#ifdef RG_DEBUG
 	info = GxB_Matrix_type(&type, m);
 	ASSERT(info == GrB_SUCCESS);
 	ASSERT(type == GrB_BOOL);
@@ -96,7 +96,7 @@ GrB_Info Delta_Matrix_removeElement_UINT64
 	GrB_Matrix  dp          =  DELTA_MATRIX_DELTA_PLUS(C);
 	GrB_Matrix  dm          =  DELTA_MATRIX_DELTA_MINUS(C);
 
-#ifdef DELTA_DEBUG
+#ifdef RG_DEBUG
 	info = GxB_Matrix_type(&type, m);
 	ASSERT(info == GrB_SUCCESS);
 	ASSERT(type == GrB_UINT64);

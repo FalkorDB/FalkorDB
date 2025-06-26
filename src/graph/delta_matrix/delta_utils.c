@@ -16,7 +16,7 @@ void Delta_Matrix_checkBounds
 	GrB_Index i,
 	GrB_Index j
 ) {
-#ifdef DELTA_DEBUG
+#ifdef RG_DEBUG
 	GrB_Matrix m = DELTA_MATRIX_M(C);
 	// check bounds
 	GrB_Index nrows;
@@ -34,7 +34,7 @@ void Delta_Matrix_checkCompatible
 	const Delta_Matrix M,
 	const Delta_Matrix N
 ) {
-#ifdef DELTA_DEBUG
+#ifdef RG_DEBUG
 	GrB_Matrix m = DELTA_MATRIX_M(M);
 	GrB_Matrix n = DELTA_MATRIX_M(N);
 
@@ -63,7 +63,7 @@ void Delta_Matrix_validateState
 	GrB_Index i,
 	GrB_Index j
 ) {
-#ifdef DELTA_DEBUG
+#ifdef RG_DEBUG
 	bool        x_m               =  false;
 	bool        x_dp              =  false;
 	bool        x_dm              =  false;
@@ -130,7 +130,7 @@ void Delta_Matrix_validate
 (
 	const Delta_Matrix C
 ) {
-#ifdef DELTA_DEBUG
+#ifdef RG_DEBUG
 	bool        m_dp_disjoint     =  false;
 	bool        dp_dm_disjoint    =  false;
 	bool        m_zombies_valid   =  true;
