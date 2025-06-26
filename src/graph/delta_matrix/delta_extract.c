@@ -42,10 +42,11 @@ GrB_Info Delta_Matrix_extractElement_BOOL
 	return info;
 }
 
-GrB_Info Delta_Matrix_extractElement_UINT64   // x = A(i,j)
+// x = A(i,j)
+GrB_Info Delta_Matrix_extractElement_UINT64
 (
     uint64_t *x,                           // extracted scalar
-    const Delta_Matrix A,                     // matrix to extract a scalar from
+    const Delta_Matrix A,                  // matrix to extract a scalar from
     GrB_Index i,                           // row index
     GrB_Index j                            // column index
 ) {

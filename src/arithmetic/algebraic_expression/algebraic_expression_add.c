@@ -62,7 +62,7 @@ Delta_Matrix _Eval_Add
 	// perform addition
 	//--------------------------------------------------------------------------
 
-	info = Delta_eWiseAdd_identity(res, GrB_LOR_MONOID_BOOL, A, B);
+	info = Delta_eWiseAdd(res, GrB_LOR_MONOID_BOOL, A, B);
 	ASSERT(info == GrB_SUCCESS);
 
 	uint child_count = AlgebraicExpression_ChildCount(exp);
@@ -86,7 +86,7 @@ Delta_Matrix _Eval_Add
 		}
 
 		// perform addition
-		info = Delta_eWiseAdd_identity(res, GrB_LOR_MONOID_BOOL, res, B);
+		info = Delta_eWiseAdd(res, GrB_LOR_MONOID_BOOL, res, B);
 		ASSERT(info == GrB_SUCCESS);
 	}
 

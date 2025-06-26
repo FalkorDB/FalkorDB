@@ -32,11 +32,11 @@ void tearDown() {
 
 // test RGMatrixTupleIter initialization
 void test_RGMatrixTupleIter_attach() {
-	Delta_Matrix          A                =  NULL;
-	GrB_Type           t                   =  GrB_UINT64;
-	GrB_Info           info                =  GrB_SUCCESS;
-	GrB_Index          nrows               =  100;
-	GrB_Index          ncols               =  100;
+	Delta_Matrix  A      =  NULL;
+	GrB_Type      t      =  GrB_UINT64;
+	GrB_Info      info   =  GrB_SUCCESS;
+	GrB_Index     nrows  =  100;
+	GrB_Index     ncols  =  100;
 	Delta_MatrixTupleIter iter;
 	memset(&iter, 0, sizeof(Delta_MatrixTupleIter));
 
@@ -55,17 +55,17 @@ void test_RGMatrixTupleIter_attach() {
 
 // test RGMatrixTupleIter iteration
 void test_RGMatrixTupleIter_next() {
-	Delta_Matrix          A                   =  NULL;
-	GrB_Type           t                   =  GrB_UINT64;
-	GrB_Info           info                =  GrB_SUCCESS;
-	GrB_Index          i                   =  1;
-	GrB_Index          j                   =  2;
-	GrB_Index          row                 =  0;
-	GrB_Index          col                 =  0;
-	GrB_Index          nrows               =  100;
-	GrB_Index          ncols               =  100;
-	uint64_t           val                 =  0;
-	bool               sync                =  false;
+	Delta_Matrix  A      =  NULL;
+	GrB_Type      t      =  GrB_UINT64;
+	GrB_Info      info   =  GrB_SUCCESS;
+	GrB_Index     i      =  1;
+	GrB_Index     j      =  2;
+	GrB_Index     row    =  0;
+	GrB_Index     col    =  0;
+	GrB_Index     nrows  =  100;
+	GrB_Index     ncols  =  100;
+	uint64_t      val    =  0;
+	bool          sync   =  false;
 	Delta_MatrixTupleIter iter;
 	memset(&iter, 0, sizeof(Delta_MatrixTupleIter));
 
@@ -118,15 +118,15 @@ void test_RGMatrixTupleIter_next() {
 
 // test RGMatrixTupleIter iteration for sparse matrix
 void test_RGMatrixTupleIter_next_sparse() {
-	Delta_Matrix          A                   =  NULL;
-	GrB_Type           t                   =  GrB_UINT64;
-	GrB_Info           info                =  GrB_SUCCESS;
-	GrB_Index          row                 =  0;
-	GrB_Index          col                 =  0;
-	GrB_Index          nrows               =  100;
-	GrB_Index          ncols               =  100;
-	uint64_t           val                 =  0;
-	bool               sync                =  false;
+	Delta_Matrix          A      =  NULL;
+	GrB_Type              t      =  GrB_UINT64;
+	GrB_Info              info   =  GrB_SUCCESS;
+	GrB_Index             row    =  0;
+	GrB_Index             col    =  0;
+	GrB_Index             nrows  =  100;
+	GrB_Index             ncols  =  100;
+	uint64_t              val    =  0;
+	bool                  sync   =  false;
 	Delta_MatrixTupleIter iter;
 	memset(&iter, 0, sizeof(Delta_MatrixTupleIter));
 
@@ -181,18 +181,18 @@ void test_RGMatrixTupleIter_next_sparse() {
 
 // test RGMatrixTupleIter iteration
 void test_RGMatrixTupleIter_reuse() {
-	Delta_Matrix          A                   =  NULL;
-	Delta_Matrix          B                   =  NULL;
-	GrB_Type           t                   =  GrB_UINT64;
-	GrB_Info           info                =  GrB_SUCCESS;
-	GrB_Index          i                   =  1;
-	GrB_Index          j                   =  2;
-	GrB_Index          row                 =  0;
-	GrB_Index          col                 =  0;
-	GrB_Index          nrows               =  100;
-	GrB_Index          ncols               =  100;
-	uint64_t           val                 =  0;
-	bool               sync                =  false;
+	Delta_Matrix  A      =  NULL;
+	Delta_Matrix  B      =  NULL;
+	GrB_Type      t      =  GrB_UINT64;
+	GrB_Info      info   =  GrB_SUCCESS;
+	GrB_Index     i      =  1;
+	GrB_Index     j      =  2;
+	GrB_Index     row    =  0;
+	GrB_Index     col    =  0;
+	GrB_Index     nrows  =  100;
+	GrB_Index     ncols  =  100;
+	uint64_t      val    =  0;
+	bool          sync   =  false;
 	Delta_MatrixTupleIter iter;
 	memset(&iter, 0, sizeof(Delta_MatrixTupleIter));
 
@@ -241,7 +241,7 @@ void test_RGMatrixTupleIter_reuse() {
 
 // test RGMatrixTupleIter_iterate_row
 void test_RGMatrixTupleIter_iterate_row() {
-	Delta_Matrix          A                   =  NULL;
+	Delta_Matrix       A                   =  NULL;
 	GrB_Type           t                   =  GrB_UINT64;
 	GrB_Info           info                =  GrB_SUCCESS;
 	GrB_Index          i                   =  1;
@@ -319,7 +319,7 @@ void test_RGMatrixTupleIter_iterate_row() {
 
 // test RGMatrixTupleiIter_iterate_range
 void test_RGMatrixTupleIter_iterate_range() {
-	Delta_Matrix          A                   =  NULL;
+	Delta_Matrix       A                   =  NULL;
 	GrB_Type           t                   =  GrB_UINT64;
 	GrB_Info           info                =  GrB_SUCCESS;
 	GrB_Index          i                   =  1;

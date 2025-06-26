@@ -88,9 +88,9 @@ GrB_Info Delta_MatrixTupleIter_iterate_row
 
 GrB_Info Delta_MatrixTupleIter_iterate_range
 (
-	Delta_MatrixTupleIter *iter,   // iterator to use
-	GrB_Index startRowIdx,      // row index to start with
-	GrB_Index endRowIdx         // row index to finish with
+	Delta_MatrixTupleIter *iter,  // iterator to use
+	GrB_Index startRowIdx,        // row index to start with
+	GrB_Index endRowIdx           // row index to finish with
 ) {
 	if(IS_DETACHED(iter)) return GrB_NULL_POINTER ;
 
@@ -129,11 +129,11 @@ static void _iter_next
 static GrB_Info _next_m_iter_bool
 (
 	Delta_MatrixTupleIter *iter,  // iterator scanning M
-	const GrB_Matrix DM,       // delta-minus, masked entries
-	GrB_Index *row,            // optional extracted row index
-	GrB_Index *col,            // optional extracted column index
-	bool *val,                 // optional extracted value
-	bool *depleted             // [output] true if iterator depleted
+	const GrB_Matrix DM,          // delta-minus, masked entries
+	GrB_Index *row,               // optional extracted row index
+	GrB_Index *col,               // optional extracted column index
+	bool *val,                    // optional extracted value
+	bool *depleted                // [output] true if iterator depleted
 ) {
 	ASSERT(iter     != NULL) ;
 	ASSERT(DM       != NULL) ;
@@ -169,10 +169,10 @@ static GrB_Info _next_m_iter_bool
 // advance iterator
 GrB_Info Delta_MatrixTupleIter_next_BOOL
 (
-	Delta_MatrixTupleIter *iter,       // iterator to consume
-	GrB_Index *row,                 // optional output row index
-	GrB_Index *col,                 // optional output column index
-	bool *val                       // optional value at A[row, col]
+	Delta_MatrixTupleIter *iter,  // iterator to consume
+	GrB_Index *row,               // optional output row index
+	GrB_Index *col,               // optional output column index
+	bool *val                     // optional value at A[row, col]
 ) {
 	if(IS_DETACHED(iter)) return GrB_NULL_POINTER ;
 
@@ -275,7 +275,7 @@ GrB_Info Delta_MatrixTupleIter_next_UINT64
 // reset iterator, assumes the iterator is valid
 GrB_Info Delta_MatrixTupleIter_reset
 (
-	Delta_MatrixTupleIter *iter       // iterator to reset
+	Delta_MatrixTupleIter *iter  // iterator to reset
 ) {
 	GrB_Info info = GrB_SUCCESS;
 
@@ -290,8 +290,8 @@ GrB_Info Delta_MatrixTupleIter_reset
 // returns true if iterator is attached to given matrix false otherwise
 bool Delta_MatrixTupleIter_is_attached
 (
-	const Delta_MatrixTupleIter *iter,       // iterator to check
-	const Delta_Matrix M                     // matrix attached to
+	const Delta_MatrixTupleIter *iter,  // iterator to check
+	const Delta_Matrix M                // matrix attached to
 ) {
 	ASSERT(iter != NULL);
 
@@ -301,8 +301,8 @@ bool Delta_MatrixTupleIter_is_attached
 // update iterator to scan given matrix
 GrB_Info Delta_MatrixTupleIter_attach
 (
-	Delta_MatrixTupleIter *iter,      // iterator to update
-	const Delta_Matrix A              // matrix to scan
+	Delta_MatrixTupleIter *iter,  // iterator to update
+	const Delta_Matrix A          // matrix to scan
 ) {
 	return Delta_MatrixTupleIter_AttachRange(iter, A, DELTA_ITER_MIN_ROW,
 		DELTA_ITER_MAX_ROW);
@@ -311,10 +311,10 @@ GrB_Info Delta_MatrixTupleIter_attach
 // update iterator to scan given matrix
 GrB_Info Delta_MatrixTupleIter_AttachRange
 (
-	Delta_MatrixTupleIter *iter,       // iterator to update
-	const Delta_Matrix A,              // matrix to scan
-	GrB_Index min_row,              // minimum row for iteration
-	GrB_Index max_row               // maximum row for iteration
+	Delta_MatrixTupleIter *iter,  // iterator to update
+	const Delta_Matrix A,         // matrix to scan
+	GrB_Index min_row,            // minimum row for iteration
+	GrB_Index max_row             // maximum row for iteration
 ) {
 	if(A == NULL) return GrB_NULL_POINTER ;
 	if(iter == NULL) return GrB_NULL_POINTER ;
@@ -335,7 +335,7 @@ GrB_Info Delta_MatrixTupleIter_AttachRange
 // free iterator data
 GrB_Info Delta_MatrixTupleIter_detach
 (
-	Delta_MatrixTupleIter *iter       // iterator to free
+	Delta_MatrixTupleIter *iter  // iterator to free
 ) {
 	ASSERT(iter != NULL) ;
 

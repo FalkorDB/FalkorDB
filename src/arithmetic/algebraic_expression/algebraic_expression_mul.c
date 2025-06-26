@@ -46,7 +46,7 @@ Delta_Matrix _Eval_Mul
 	GrB_Type             ty;
 	UNUSED(info) ;
 
-	GrB_Matrix    res_m        = DELTA_MATRIX_M(res);
+	GrB_Matrix    res_m        = Delta_Matrix_M(res);
 	GrB_Matrix    A            = NULL;
 	bool          res_modified = false;
 	GrB_Semiring  semiring     = NULL;
@@ -61,7 +61,7 @@ Delta_Matrix _Eval_Mul
 		// first time A is set
 		if(A == NULL) {
 			ASSERT(Delta_Matrix_Synced(M));
-			A = DELTA_MATRIX_M(M) ;
+			A = Delta_Matrix_M(M) ;
 			continue ;
 		}
 		Delta_Matrix_type(&ty, M);
@@ -83,8 +83,7 @@ Delta_Matrix _Eval_Mul
 	}
 
 	if(!res_modified) {
-		GxB_Matrix_type(&ty, A);
-		ASSERT(ty == GrB_BOOL);
+		// copy A into res_m
 		info = GrB_transpose(res_m, NULL, NULL, A, GrB_DESC_T0) ;
 		ASSERT(info == GrB_SUCCESS) ;
 	}

@@ -8,11 +8,12 @@
 #include "delta_utils.h"
 #include "delta_matrix.h"
 
-GrB_Info Delta_Matrix_setElement_BOOL   // C (i,j) = x
+// C (i,j) = x
+GrB_Info Delta_Matrix_setElement_BOOL   
 (
-    Delta_Matrix C,                     // matrix to modify
-    GrB_Index i,                        // row index
-    GrB_Index j                         // column index
+    Delta_Matrix C,  // matrix to modify
+    GrB_Index i,     // row index
+    GrB_Index j      // column index
 ) {
 	ASSERT(C != NULL);
 	ASSERT(!DELTA_MATRIX_MULTI_EDGE(C));

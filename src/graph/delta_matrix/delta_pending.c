@@ -9,8 +9,8 @@
 
 GrB_Info Delta_Matrix_pending
 (
-	const Delta_Matrix C,              // matrix to query
-	bool *pending                   // are there any pending operations
+	const Delta_Matrix C,  // matrix to query
+	bool *pending          // are there any pending operations
 ) {
 	ASSERT(C       != NULL);
 	ASSERT(pending != NULL);

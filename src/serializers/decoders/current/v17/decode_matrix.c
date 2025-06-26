@@ -141,7 +141,7 @@ void RdbLoadLabelMatrices_v17
 		ASSERT(lbl != NULL);
 
 		// replace lbl's current M matrix with L
-		info = Delta_Matrix_setM(lbl, L);
+		info = Delta_Matrix_setM(lbl, &L);
 		ASSERT(info == GrB_SUCCESS);
 	}
 }
@@ -182,7 +182,7 @@ void RdbLoadRelationMatrices_v17
 		Delta_Matrix DR = Graph_GetRelationMatrix(g, r, false);
 		ASSERT(DR != NULL);
 
-		info = Delta_Matrix_setM(DR, R);
+		info = Delta_Matrix_setM(DR, &R);
 		ASSERT(info == GrB_SUCCESS);
 
 		// update graph edge statistics
@@ -214,7 +214,7 @@ void RdbLoadAdjMatrix_v17
 	ASSERT(adj != NULL);
 
 	// replace adj's current M matrix with A
-	GrB_Info info = Delta_Matrix_setM(adj, A);
+	GrB_Info info = Delta_Matrix_setM(adj, &A);
 	ASSERT(info == GrB_SUCCESS);
 }
 
@@ -236,7 +236,7 @@ void RdbLoadLblsMatrix_v17
 	ASSERT(lbl != NULL);
 
 	// replace lbl's current M matrix with A
-	GrB_Info info = Delta_Matrix_setM(lbl, A);
+	GrB_Info info = Delta_Matrix_setM(lbl, &A);
 	ASSERT(info == GrB_SUCCESS);
 }
 
