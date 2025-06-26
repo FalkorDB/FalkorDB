@@ -7,11 +7,12 @@
 #include "RG.h"
 #include "delta_matrix.h"
 
-GrB_Info Delta_Matrix_resize    // change the size of a matrix
+// change the size of a matrix
+GrB_Info Delta_Matrix_resize    
 (
-    Delta_Matrix C,             // matrix to modify
-    GrB_Index nrows_new,        // new number of rows in matrix
-    GrB_Index ncols_new         // new number of columns in matrix
+    Delta_Matrix C,       // matrix to modify
+    GrB_Index nrows_new,  // new number of rows in matrix
+    GrB_Index ncols_new   // new number of columns in matrix
 ) {
 	ASSERT(C != NULL);
 	GrB_Info info;

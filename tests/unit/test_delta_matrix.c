@@ -134,14 +134,14 @@ void ASSERT_GrB_Matrices_EQ(const GrB_Matrix A, const GrB_Matrix B)
 // test RGMatrix initialization
 void test_RGMatrix_new() {
 	Delta_Matrix  A     = NULL;
-	GrB_Matrix M     = NULL;
-	GrB_Matrix DP    = NULL;
-	GrB_Matrix DM    = NULL;
-	GrB_Type   t     = GrB_UINT64;
-	GrB_Info   info  = GrB_SUCCESS;
-	GrB_Index  nvals = 0;
-	GrB_Index  nrows = 100;
-	GrB_Index  ncols = 100;
+	GrB_Matrix    M     = NULL;
+	GrB_Matrix    DP    = NULL;
+	GrB_Matrix    DM    = NULL;
+	GrB_Type      t     = GrB_UINT64;
+	GrB_Info      info  = GrB_SUCCESS;
+	GrB_Index     nvals = 0;
+	GrB_Index     nrows = 100;
+	GrB_Index     ncols = 100;
 
 	info = Delta_Matrix_new(&A, t, nrows, ncols, true);
 	TEST_ASSERT(info == GrB_SUCCESS);
@@ -225,18 +225,18 @@ void test_RGMatrix_new() {
 // setting an empty entry
 // M[i,j] = 1
 void test_RGMatrix_simple_set() {
-	GrB_Type    t                   =  GrB_UINT64;
-	Delta_Matrix   A                   =  NULL;
-	GrB_Matrix  M                   =  NULL;
-	GrB_Matrix  DP                  =  NULL;
-	GrB_Matrix  DM                  =  NULL;
-	GrB_Info    info                =  GrB_SUCCESS;
-	GrB_Index   nvals               =  0;
-	GrB_Index   nrows               =  100;
-	GrB_Index   ncols               =  100;
-	GrB_Index   i                   =  0;
-	GrB_Index   j                   =  1;
-	uint64_t    x                   =  1;
+	GrB_Type      t      =  GrB_UINT64;
+	Delta_Matrix  A      =  NULL;
+	GrB_Matrix    M      =  NULL;
+	GrB_Matrix    DP     =  NULL;
+	GrB_Matrix    DM     =  NULL;
+	GrB_Info      info   =  GrB_SUCCESS;
+	GrB_Index     nvals  =  0;
+	GrB_Index     nrows  =  100;
+	GrB_Index     ncols  =  100;
+	GrB_Index     i      =  0;
+	GrB_Index     j      =  1;
+	uint64_t      x      =  1;
 
 	info = Delta_Matrix_new(&A, t, nrows, ncols, true);
 	TEST_ASSERT(info == GrB_SUCCESS);
@@ -766,18 +766,18 @@ void test_RGMatrix_set() {
 
 // flush simple addition
 void test_RGMatrix_flus() {
-	GrB_Type    t                   =  GrB_BOOL;
-	Delta_Matrix   A                   =  NULL;
-	GrB_Matrix  M                   =  NULL;
-	GrB_Matrix  DP                  =  NULL;
-	GrB_Matrix  DM                  =  NULL;
-	GrB_Info    info                =  GrB_SUCCESS;
-	GrB_Index   nvals               =  0;
-	GrB_Index   nrows               =  100;
-	GrB_Index   ncols               =  100;
-	GrB_Index   i                   =  0;
-	GrB_Index   j                   =  1;
-	bool        sync                =  false;
+	GrB_Type       t      =  GrB_BOOL;
+	Delta_Matrix   A      =  NULL;
+	GrB_Matrix     M      =  NULL;
+	GrB_Matrix     DP     =  NULL;
+	GrB_Matrix     DM     =  NULL;
+	GrB_Info       info   =  GrB_SUCCESS;
+	GrB_Index      nvals  =  0;
+	GrB_Index      nrows  =  100;
+	GrB_Index      ncols  =  100;
+	GrB_Index      i      =  0;
+	GrB_Index      j      =  1;
+	bool           sync   =  false;
 
 	info = Delta_Matrix_new(&A, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
@@ -1028,21 +1028,21 @@ void test_GRMatrix_managed_transposed() {
 //------------------------------------------------------------------------------
 
 void test_RGMatrix_fuzzy() {
-	GrB_Type    t                   =  GrB_BOOL;
-	Delta_Matrix   A                   =  NULL;
-	Delta_Matrix   T                   =  NULL;  // A transposed
-	GrB_Matrix  M                   =  NULL;  // primary internal matrix
-	GrB_Matrix  MT                  =  NULL;
-	GrB_Matrix  N                   =  NULL;
-	GrB_Matrix  NT                  =  NULL;
-	GrB_Info    info                =  GrB_SUCCESS;
-	GrB_Index   nrows               =  100;
-	GrB_Index   ncols               =  100;
-	GrB_Index   i                   =  0;
-	GrB_Index   j                   =  1;
-	GrB_Index*  II                  =  NULL;
-	GrB_Index*  J                   =  NULL;
-	uint32_t    operations          =  10000;
+	GrB_Type       t           =  GrB_BOOL;
+	Delta_Matrix   A           =  NULL;
+	Delta_Matrix   T           =  NULL;  // A transposed
+	GrB_Matrix     M           =  NULL;  // primary internal matrix
+	GrB_Matrix     MT          =  NULL;
+	GrB_Matrix     N           =  NULL;
+	GrB_Matrix     NT          =  NULL;
+	GrB_Info       info        =  GrB_SUCCESS;
+	GrB_Index      nrows       =  100;
+	GrB_Index      ncols       =  100;
+	GrB_Index      i           =  0;
+	GrB_Index      j           =  1;
+	GrB_Index*     II          =  NULL;
+	GrB_Index*     J           =  NULL;
+	uint32_t       operations  =  10000;
 
 	//--------------------------------------------------------------------------
 	// create RGMatrix
@@ -1145,16 +1145,16 @@ void test_RGMatrix_fuzzy() {
 // test exporting Delta_Matrix to GrB_Matrix when there are no pending changes
 // by exporting the matrix after flushing
 void test_RGMatrix_export_no_changes() {
-	GrB_Type    t                   =  GrB_BOOL;
-	Delta_Matrix   A                   =  NULL; 
-	GrB_Matrix  M                   =  NULL;
-	GrB_Matrix  N                   =  NULL;  // exported matrix 
-	GrB_Info    info                =  GrB_SUCCESS;
-	GrB_Index   i                   =  0;
-	GrB_Index   j                   =  1;
-	GrB_Index   nrows               =  100;
-	GrB_Index   ncols               =  100;
-	bool        sync                =  false;
+	GrB_Type       t      =  GrB_BOOL;
+	Delta_Matrix   A      =  NULL; 
+	GrB_Matrix     M      =  NULL;
+	GrB_Matrix     N      =  NULL;  // exported matrix 
+	GrB_Info       info   =  GrB_SUCCESS;
+	GrB_Index      i      =  0;
+	GrB_Index      j      =  1;
+	GrB_Index      nrows  =  100;
+	GrB_Index      ncols  =  100;
+	bool           sync   =  false;
 
 	info = Delta_Matrix_new(&A, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
@@ -1213,14 +1213,14 @@ void test_RGMatrix_export_no_changes() {
 // by exporting the matrix after making changes
 // then flush the matrix and compare the internal matrix to the exported matrix
 void test_RGMatrix_export_pending_changes() {
-	GrB_Type    t                   =  GrB_BOOL;
-	Delta_Matrix   A                   =  NULL;
-	GrB_Matrix  M                   =  NULL;
-	GrB_Matrix  N                   =  NULL;  // exported matrix
-	GrB_Info    info                =  GrB_SUCCESS;
-	GrB_Index   nrows               =  100;
-	GrB_Index   ncols               =  100;
-	bool        sync                =  false;
+	GrB_Type       t      =  GrB_BOOL;
+	Delta_Matrix   A      =  NULL;
+	GrB_Matrix     M      =  NULL;
+	GrB_Matrix     N      =  NULL;  // exported matrix
+	GrB_Info       info   =  GrB_SUCCESS;
+	GrB_Index      nrows  =  100;
+	GrB_Index      ncols  =  100;
+	bool           sync   =  false;
 
 	info = Delta_Matrix_new(&A, t, nrows, ncols, true);
 	TEST_ASSERT(info == GrB_SUCCESS);
@@ -1282,19 +1282,19 @@ void test_RGMatrix_export_pending_changes() {
 }
 
 void test_RGMatrix_copy() {
-	GrB_Type    t                   =  GrB_BOOL;
-	Delta_Matrix   A                   =  NULL;
-	Delta_Matrix   B                   =  NULL;
-	GrB_Matrix  A_M                 =  NULL;
-	GrB_Matrix  B_M                 =  NULL;
-	GrB_Matrix  A_DP                =  NULL;
-	GrB_Matrix  B_DP                =  NULL;
-	GrB_Matrix  A_DM                =  NULL;
-	GrB_Matrix  B_DM                =  NULL;
-	GrB_Info    info                =  GrB_SUCCESS;
-	GrB_Index   nrows               =  100;
-	GrB_Index   ncols               =  100;
-	bool        sync                =  false;
+	GrB_Type       t      =  GrB_BOOL;
+	Delta_Matrix   A      =  NULL;
+	Delta_Matrix   B      =  NULL;
+	GrB_Matrix     A_M    =  NULL;
+	GrB_Matrix     B_M    =  NULL;
+	GrB_Matrix     A_DP   =  NULL;
+	GrB_Matrix     B_DP   =  NULL;
+	GrB_Matrix     A_DM   =  NULL;
+	GrB_Matrix     B_DM   =  NULL;
+	GrB_Info       info   =  GrB_SUCCESS;
+	GrB_Index      nrows  =  100;
+	GrB_Index      ncols  =  100;
+	bool           sync   =  false;
 
 	info = Delta_Matrix_new(&A, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
@@ -1495,10 +1495,10 @@ void test_RGMatrix_mxm() {
 void test_RGMatrix_resize() {
 	Delta_Matrix  A        =  NULL;
 	Delta_Matrix  T        =  NULL;
-	GrB_Info   info     =  GrB_SUCCESS;
-	GrB_Type   t        =  GrB_UINT64;
-	GrB_Index  nrows    =  10;
-	GrB_Index  ncols    =  20;
+	GrB_Info      info     =  GrB_SUCCESS;
+	GrB_Type      t        =  GrB_UINT64;
+	GrB_Index     nrows    =  10;
+	GrB_Index     ncols    =  20;
 
 	info = Delta_Matrix_new(&A, t, nrows, ncols, true);
 	T = Delta_Matrix_getTranspose(A);

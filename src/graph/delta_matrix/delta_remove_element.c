@@ -12,9 +12,9 @@
 
 GrB_Info Delta_Matrix_removeElement_BOOL
 (
-	Delta_Matrix C,                    // matrix to remove entry from
-	GrB_Index i,                    // row index
-	GrB_Index j                     // column index
+	Delta_Matrix C,  // matrix to remove entry from
+	GrB_Index i,     // row index
+	GrB_Index j      // column index
 ) {
 	ASSERT(C);
 	Delta_Matrix_checkBounds(C, i, j);
@@ -56,7 +56,7 @@ GrB_Info Delta_Matrix_removeElement_BOOL
 
 	if(in_m) {
 		// mark deletion in delta minus
-		info = GrB_Matrix_setElement(m, false, i, j);
+		info = GrB_Matrix_setElement(m, BOOL_ZOMBIE, i, j);
 		info = GrB_Matrix_setElement(dm, true, i, j);
 		ASSERT(info == GrB_SUCCESS);
 		Delta_Matrix_setDirty(C);
@@ -77,9 +77,9 @@ GrB_Info Delta_Matrix_removeElement_BOOL
 
 GrB_Info Delta_Matrix_removeElement_UINT64
 (
-    Delta_Matrix C,                    // matrix to remove entry from
-    GrB_Index i,                    // row index
-    GrB_Index j                     // column index
+    Delta_Matrix C,  // matrix to remove entry from
+    GrB_Index i,     // row index
+    GrB_Index j      // column index
 ) {
 	ASSERT(C);
 	Delta_Matrix_checkBounds(C, i, j);
@@ -135,7 +135,7 @@ GrB_Info Delta_Matrix_removeElement_UINT64
 
 	if(in_m) {
 		// mark deletion in M
-		info = GrB_Matrix_setElement_UINT64(m, MSB_MASK, i, j);
+		info = GrB_Matrix_setElement_UINT64(m, U64_ZOMBIE, i, j);
 		ASSERT(info == GrB_SUCCESS);
 		// mark deletion in delta minus
 		info = GrB_Matrix_setElement(dm, true, i, j);

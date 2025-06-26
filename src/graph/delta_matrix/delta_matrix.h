@@ -281,18 +281,11 @@ GrB_Info Delta_mxm_identity
     const Delta_Matrix B          // second input: matrix B
 );
 
-// C = A + B
-GrB_Info Delta_eWiseAdd
-(
-    Delta_Matrix C,       // input/output matrix for results
-    const GrB_Monoid op,  // defines '+' for T=A+B
-    const Delta_Matrix A, // first input:  matrix A
-    const Delta_Matrix B  // second input: matrix B
-);
-
+// Inputs need not be synced, but must be of the same type.
+// Output is a valid delta matrix, which may not be synced.
 // zombies must be the identity of the given monoid.
 // C = A + B
-GrB_Info Delta_eWiseAdd_identity
+GrB_Info Delta_eWiseAdd
 (
     Delta_Matrix C,       // input/output matrix for results
     const GrB_Monoid op,  // defines '+' for T=A+B
@@ -374,8 +367,9 @@ void Delta_Matrix_synchronize
 // replace C's internal M matrix with given M
 // the operation can only succeed if C's interal matrices:
 // M, DP, DM are all empty
+// C->M will point to *M and *M will be set to NULL
 GrB_Info Delta_Matrix_setM
 (
 	Delta_Matrix C,  // delta matrix
-	GrB_Matrix M     // new M
+	GrB_Matrix *M    // new M
 );

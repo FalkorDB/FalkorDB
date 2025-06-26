@@ -120,7 +120,7 @@ void Delta_Matrix_validateState
 //         ∅ = m  ∩ dp
 //         ∅ = dp ∩ dm
 // {zombies} = m  ∩ dm
-// TODO Transpose
+// Transpose
 //    Check it is actually M^T
 // Types / Dimensions
 //    m BOOL / UINT64

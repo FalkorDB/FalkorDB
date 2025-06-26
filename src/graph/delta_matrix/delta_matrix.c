@@ -94,10 +94,11 @@ void Delta_Matrix_unlock
 	pthread_mutex_unlock(&C->mutex);
 }
 
+// get the number of rows of a matrix
 GrB_Info Delta_Matrix_nrows
 (
-	GrB_Index *nrows,
-	const Delta_Matrix C
+	GrB_Index *nrows,     // matrix has nrows rows 
+	const Delta_Matrix C  // matrix to query
 ) {
 	ASSERT(C);
 	ASSERT(nrows);
@@ -106,10 +107,11 @@ GrB_Info Delta_Matrix_nrows
 	return GrB_Matrix_nrows(nrows, m);
 }
 
+// get the number of columns of a matrix
 GrB_Info Delta_Matrix_ncols
 (
-	GrB_Index *ncols,
-	const Delta_Matrix C
+	GrB_Index *ncols,     // matrix has ncols columns 
+	const Delta_Matrix C  // matrix to query
 ) {
 	ASSERT(C);
 	ASSERT(ncols);
@@ -118,10 +120,11 @@ GrB_Info Delta_Matrix_ncols
 	return GrB_Matrix_ncols(ncols, m);
 }
 
-GrB_Info Delta_Matrix_nvals    // get the number of entries in a matrix
+// get the number of entries in a matrix
+GrB_Info Delta_Matrix_nvals    
 (
     GrB_Index *nvals,       // matrix has nvals entries
-    const Delta_Matrix A       // matrix to query
+    const Delta_Matrix A    // matrix to query
 ) {
 	ASSERT(A      !=  NULL);
 	ASSERT(nvals  !=  NULL);
@@ -219,28 +222,40 @@ GrB_Info Delta_Matrix_memoryUsage
 	return info;
 }
 
+// replace C's internal M matrix with given M
+// the operation can only succeed if C's interal matrices:
+// M, DP, DM are all empty
+// C->M will point to *M and *M will be set to NULL
 GrB_Info Delta_Matrix_setM
 (
 	Delta_Matrix C,  // delta matrix
-	GrB_Matrix M     // new M
+	GrB_Matrix *M     // new M
 ) {
+	ASSERT(C != NULL);
+	ASSERT(M != NULL && *M != NULL);
+
 	GrB_Index nvals = 0;
 	GrB_Index tot   = 0;
+
+	// Check that C is empty.
 	GrB_Info info   = GrB_Matrix_nvals(&nvals, DELTA_MATRIX_M(C));
 	ASSERT(info == GrB_SUCCESS);
-	tot |= nvals;
+	tot += nvals;
 	info = GrB_Matrix_nvals(&nvals, DELTA_MATRIX_DELTA_PLUS(C));
 	ASSERT(info == GrB_SUCCESS);
-	tot |= nvals;
+	tot += nvals;
 	info = GrB_Matrix_nvals(&nvals, DELTA_MATRIX_DELTA_MINUS(C));
 	ASSERT(info == GrB_SUCCESS);
-	tot |= nvals;
+	tot += nvals;
+
 	if (tot != 0)
 		return GrB_ALREADY_SET;
+
 	info = GrB_free(&DELTA_MATRIX_M(C));
 	ASSERT(info == GrB_SUCCESS);
 
-	DELTA_MATRIX_M(C) = M;
+	DELTA_MATRIX_M(C) = *M;
+	*M = NULL;
 	return GrB_SUCCESS;
 }
 
