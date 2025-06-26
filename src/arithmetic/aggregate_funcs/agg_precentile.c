@@ -17,7 +17,14 @@ static inline int _cmp
 	const double *a,
 	const double *b
 ) {
-	return *a - *b;
+	double diff = *a - *b;
+	if(diff > 0) {
+		return 1;
+	}
+	if(diff < 0) {
+		return -1;
+	}
+	return 0;
 }
 
 //------------------------------------------------------------------------------
