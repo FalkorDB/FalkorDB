@@ -7,8 +7,9 @@
 #include "RG.h"
 #include "delta_matrix.h"
 
-// 
+// zombies should be the monoid's identity value.
 // C = A + B
+// CDM =
 GrB_Info Delta_eWiseAdd
 (
     Delta_Matrix C,       // input/output matrix for results
@@ -25,9 +26,6 @@ GrB_Info Delta_eWiseAdd
 	GrB_Info  info;
 	GrB_Index nrows;
 	GrB_Index ncols;
-	GrB_Index ADM_nvals;
-	GrB_Index BDM_nvals;
-	GrB_Index DP_nvals;
 
 	GrB_Matrix   CM         = DELTA_MATRIX_M(C);
 	GrB_Matrix   CDP        = DELTA_MATRIX_DELTA_PLUS(C);
@@ -38,43 +36,67 @@ GrB_Info Delta_eWiseAdd
 	GrB_Matrix   ADM        = DELTA_MATRIX_DELTA_MINUS(A);
 	GrB_Matrix   BDP        = DELTA_MATRIX_DELTA_PLUS(B);
 	GrB_Matrix   BDM        = DELTA_MATRIX_DELTA_MINUS(B);
+	GrB_Matrix   DM_union   = DELTA_MATRIX_DELTA_MINUS(B);
 	GrB_Matrix   dm_and_dp  = NULL;
 	GrB_BinaryOp biop       = NULL;
 
 	GrB_Monoid_get_VOID(op, (void *) &biop, GxB_MONOID_OPERATOR);
-	GrB_Matrix_nvals(&ADM_nvals, ADM);
-	GrB_Matrix_nvals(&BDM_nvals, BDM);
+
+
+	GxB_Global_Option_set(GxB_BURBLE, true);
+	
 
 	//--------------------------------------------------------------------------
 	// M: CM = AM + BM ----- The bulk of the work.
 	//--------------------------------------------------------------------------
 	info = GrB_Matrix_eWiseAdd_Monoid(CM, NULL, NULL, op, AM, BM, NULL);
 	ASSERT(info == GrB_SUCCESS);
+	// don't use again, could have been overwritten.
+	AM = BM = NULL;
 
 	//--------------------------------------------------------------------------
-	// DP: CDP = ADP + BDP ---- Must later remove intersection with M
+	// DM_union = ADM ∩ BDM 
+	//--------------------------------------------------------------------------
+	info = GrB_Matrix_eWiseAdd_BinaryOp(
+		DM_union, CM, NULL, GrB_ONEB_BOOL, ADM, BDM, GrB_DESC_SC);
+	ASSERT(info == GrB_SUCCESS);
+
+	//--------------------------------------------------------------------------
+	// CDP = ADP + BDP ---- Must later remove intersection with M
 	//--------------------------------------------------------------------------
 	info = GrB_Matrix_eWiseAdd_Monoid(CDP, NULL, NULL, op, ADP, BDP, NULL);
 	ASSERT(info == GrB_SUCCESS);
 
-	//--------------------------------------------------------------------------
-	// M: CM <CM>+= CDP ----- Should be done inplace (TODO check burble)
-	//--------------------------------------------------------------------------
-	info = GrB_Matrix_assign(CM, CM, biop, CDP, GrB_ALL, 0, GrB_ALL, 0 , GrB_DESC_S);
-	ASSERT(info == GrB_SUCCESS);
+	// don't use again, could have been overwritten.
+	ADP = BDP = NULL;
 
 	//--------------------------------------------------------------------------
-	// DM: CDM<!DP> = ADM + BDM 
+	// CDM = (ADM ∩ BDM) ∪ ((dmA ∪ dmB ) - (CM ∪ CDP))
 	//--------------------------------------------------------------------------
-	info = GrB_Matrix_eWiseAdd_BinaryOp(
-		CDM, CDP, NULL, GrB_ONEB_BOOL, ADM, BDM, GrB_DESC_SC);
+	info = GrB_Matrix_eWiseMult_BinaryOp(
+		CDM, NULL, NULL, GrB_ONEB_BOOL, ADM, BDM, NULL);
+	ASSERT(info == GrB_SUCCESS);
+
+	// don't use again, could have been overwritten.
+	ADM = BDM = NULL;
+
+	info = GrB_transpose(
+		CDM, CDP, GrB_ONEB_BOOL, DM_union, GrB_DESC_SCT0);
 	ASSERT(info == GrB_SUCCESS); 
 
 	//--------------------------------------------------------------------------
-	// DP: CDP<!CM> = ADP + BDP ---- remove intersection with M
+	// CM <CM>+= CDP ----- Should be done inplace (currently is not GBLAS TODO)
+	//--------------------------------------------------------------------------
+	info = GrB_Matrix_assign(
+		CM, CM, biop, CDP, GrB_ALL, 0, GrB_ALL, 0 , GrB_DESC_S);
+	ASSERT(info == GrB_SUCCESS);
+
+	//--------------------------------------------------------------------------
+	// CDP<!CM> = ADP + BDP ---- remove intersection with M
 	//--------------------------------------------------------------------------
 	info = GrB_Matrix_assign(CDP, CM, NULL, CDP, GrB_ALL, 0, GrB_ALL, 0 , GrB_DESC_SC);
 	ASSERT(info == GrB_SUCCESS);
+	GxB_Global_Option_set(GxB_BURBLE, false);
 
 	Delta_Matrix_wait(C, false);
 	return info;
