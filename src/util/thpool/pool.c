@@ -123,7 +123,7 @@ void ThreadPool_SetMaxPendingWork
 (
 	uint64_t cap  // pool's queue capacity
 ) {
-	if(_thpool != NULL) thpool_set_jobqueue_cap(_thpool, val);
+	if(_thpool != NULL) thpool_set_jobqueue_cap(_thpool, cap);
 }
 
 // returns a list of queued tasks that match the given handler
