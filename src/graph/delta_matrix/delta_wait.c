@@ -129,7 +129,6 @@ GrB_Info Delta_Matrix_wait
 	bool force_sync
 ) {
 	ASSERT(A != NULL);
-	Delta_Matrix_validate(A);
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(A)) {
 		Delta_Matrix_wait(A->transposed, force_sync);
 	}
@@ -154,7 +153,6 @@ void Delta_Matrix_synchronize
 )
 {
 	ASSERT(A != NULL);
-	Delta_Matrix_validate(A);
 	uint64_t A_nrows = 0;
 	uint64_t A_ncols = 0;
 	GrB_Info info = Delta_Matrix_nrows(&A_nrows, A);
