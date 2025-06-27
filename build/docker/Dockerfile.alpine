@@ -2,7 +2,7 @@ ARG BASE_IMAGE=falkordb/falkordb-compiler-alpine
 
 FROM $BASE_IMAGE AS compiler
 
-FROM alpine:latest
+FROM redis:8.0.2-alpine
 
 ENV FALKORDB_HOME=/var/lib/falkordb
 
@@ -13,11 +13,6 @@ ENV FALKORDB_BIN_PATH=${FALKORDB_HOME}/bin
 ENV FALKORDB_IMPORT_PATH=${FALKORDB_HOME}/import
 
 ENV FALKORDB_TLS_PATH=${FALKORDB_HOME}/tls
-
-# Install runtime dependencies if any (FalkorDB is a Redis module, so Redis is required)
-# You would typically install Redis here or use a Redis base image.
-# For simplicity, let's assume we're just copying the FalkorDB module.
-RUN apk add --no-cache redis
 
 # Install runtime dependencies
 RUN apk add --no-cache libgomp openssl
