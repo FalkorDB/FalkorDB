@@ -18,7 +18,6 @@
 #include "index_operations.h"
 #include "../effects/effects.h"
 #include "../util/cache/cache.h"
-#include "../util/thpool/pools.h"
 #include "../configuration/config.h"
 #include "../execution_plan/execution_plan.h"
 
@@ -333,10 +332,6 @@ static bool _DelegateQuery
 
 	// queue query
 	return GraphContext_EnqueueWriteQuery(gc, gq_ctx);
-
-	// dispatch work to the writer thread
-	//int res = ThreadPools_AddWorkWriter(_ExecuteQuery, gq_ctx, 0);
-	//ASSERT(res == 0);
 }
 
 // process all queued write queries
@@ -349,7 +344,6 @@ static void enter_writer_loop
 		// drain the queue
 		GraphQueryCtx *gq_ctx;
 		while ((gq_ctx = (GraphQueryCtx *)GraphContext_DequeueWriteQuery(gc))) {
-			//printf("Processing additional write queries\n");
 			_ExecuteQuery(gq_ctx);
 		}
 

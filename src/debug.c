@@ -10,7 +10,7 @@
 #include <sys/types.h>
 #include "RG.h"
 #include "globals.h"
-#include "util/thpool/pools.h"
+#include "util/thpool/pool.h"
 #include "commands/cmd_context.h"
 
 static struct sigaction old_act;
@@ -24,8 +24,8 @@ static void endCrashReport(void) {
 }
 
 static void logCommands(void) {
-	// #readers + #writers + Redis main thread
-	uint32_t n = ThreadPools_ThreadCount() + 1;
+	// #readers + Redis main thread
+	uint32_t n = ThreadPool_ThreadCount() + 1;
 	CommandCtx* commands[n];
 	Globals_GetCommandCtxs(commands, &n);
 
@@ -51,10 +51,10 @@ void InfoFunc
 	// pause all working threads
 	// NOTE: pausing is not an atomic action;
 	// other threads can potentially change states before being interrupted.
-	ThreadPools_Pause();
+	ThreadPool_Pause();
 
-	// #readers + #writers + Redis main thread
-	uint32_t n = ThreadPools_ThreadCount() + 1;
+	// #readers + Redis main thread
+	uint32_t n = ThreadPool_ThreadCount() + 1;
 	CommandCtx* commands[n];
 	Globals_GetCommandCtxs(commands, &n);
 
@@ -82,7 +82,7 @@ void crashHandler
 ) {
 	// pause all working threads
 	// NOTE: pausing is an async operation
-	ThreadPools_Pause();
+	ThreadPool_Pause();
 
 	startCrashReport();
 

@@ -12,7 +12,7 @@
 #include "../query_ctx.h"
 #include "../redismodule.h"
 #include "../util/rmalloc.h"
-#include "../util/thpool/pools.h"
+#include "../util/thpool/pool.h"
 #include "../constraint/constraint.h"
 #include "../serializers/graphcontext_type.h"
 #include "../commands/execution_ctx.h"
@@ -75,7 +75,7 @@ inline void GraphContext_DecreaseRefCount
 			// Async delete
 			// add deletion task to pool using force mode
 			// we can't lose this task in-case pool's queue is full
-			ThreadPools_AddWorkWriter(_GraphContext_Free, gc, 1);
+			ThreadPool_AddWork(_GraphContext_Free, gc, 1);
 		} else {
 			// Sync delete
 			_GraphContext_Free(gc);
@@ -92,7 +92,7 @@ GraphContext *GraphContext_New
 (
 	const char *graph_name
 ) {
-	GraphContext *gc = rm_malloc(sizeof(GraphContext));
+	GraphContext *gc = rm_calloc(1, sizeof(GraphContext));
 
 	gc->version          = 0;  // initial graph version
 	gc->slowlog          = SlowLog_New();
@@ -306,7 +306,6 @@ bool GraphContext_EnqueueWriteQuery
 	ASSERT(gc        != NULL);
 	ASSERT(query_ctx != NULL);	
 
-	//printf("enqueue: %p\n", query_ctx);
 	return (CircularBuffer_Add(gc->pending_write_queue, &query_ctx) != 0);
 }
 
@@ -321,7 +320,6 @@ void *GraphContext_DequeueWriteQuery
 
 	void *item = NULL;
 	CircularBuffer_Read(gc->pending_write_queue, &item);
-	//printf("dequeue: %p\n", item);
 
 	return item;
 }
@@ -1066,8 +1064,10 @@ static void _GraphContext_Free
 	// free pending write queue
 	//--------------------------------------------------------------------------
 
-	ASSERT(CircularBuffer_Empty(gc->pending_write_queue));
-	CircularBuffer_Free(gc->pending_write_queue);
+	if(gc->pending_write_queue != NULL) {
+		ASSERT(CircularBuffer_Empty(gc->pending_write_queue));
+		CircularBuffer_Free(gc->pending_write_queue);
+	}
 
 	GraphEncodeContext_Free(gc->encoding_context);
 	GraphDecodeContext_Free(gc->decoding_context);

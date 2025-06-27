@@ -5,7 +5,7 @@
 
 #include "cmd_memory.h"
 #include "../errors/error_msgs.h"
-#include "../util/thpool/pools.h"
+#include "../util/thpool/pool.h"
 #include "../graph/graphcontext.h"
 #include "../graph/graph_memoryUsage.h"
 
@@ -744,7 +744,7 @@ int Graph_Memory
 	cmd_ctx->bc      = bc;
 	cmd_ctx->samples = samples;
 
-	ThreadPools_AddWorkReader(_Graph_Memory, cmd_ctx, true);
+	ThreadPool_AddWork(_Graph_Memory, cmd_ctx, true);
 
 	return REDISMODULE_OK;
 }
