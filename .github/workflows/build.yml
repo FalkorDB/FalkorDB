@@ -584,3 +584,52 @@ jobs:
   #        project_id: ${{ secrets.GCP_PROJECT_ID }}
   #        zone: ${{ vars.GCP_ZONE }}
   #        instance_label: upgrade-tests-${{ github.run_id }}-${{ github.run_number }}
+
+  trivy:
+    needs: build
+    runs-on: ${{ matrix.platform.machine_label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux/amd64
+            suffix: x64
+            os: ubuntu
+            machine_label: ubuntu-latest
+          - name: linux/arm64
+            suffix: arm64v8
+            os: ubuntu
+            machine_label: ubuntu-24.04-arm
+          - name: linux/x86_64
+            suffix: alpine-x64
+            os: alpine
+            machine_label: ubuntu-latest
+          - name: linux/arm64
+            suffix: alpine-arm64v8
+            os: alpine
+            machine_label: ubuntu-24.04-arm
+    steps:
+      - name: Download image
+        uses: actions/download-artifact@v4
+        with:
+          name: falkordb-${{ matrix.platform.suffix }}
+          path: /tmp
+
+      - name: Load image
+        id: load_image
+        run: |
+          docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
+      - name: Set up Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
+          severity: CRITICAL,HIGH
+          format: sarif
+          output: trivy-results.sarif
+          ignore-unfixed: true
+          scan-type: image
+          # ignore-policy: .github/trivy-ignore-policy.json
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
