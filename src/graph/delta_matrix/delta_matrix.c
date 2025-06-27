@@ -211,15 +211,19 @@ GrB_Info Delta_Matrix_memoryUsage
 	size_t temp_size  = 0;
 	size_t _size      = 0;
 	GrB_Info info = GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_M(C));
-	ASSERT(info == GrB_SUCCESS)
+	ASSERT(info == GrB_SUCCESS);
 	_size += temp_size;
+
 	info = GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_DELTA_PLUS(C));
-	ASSERT(info == GrB_SUCCESS)
+	ASSERT(info == GrB_SUCCESS);
 	_size += temp_size;
+
 	info = GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_DELTA_MINUS(C));
-	ASSERT(info == GrB_SUCCESS)
+	ASSERT(info == GrB_SUCCESS);
+
 	_size += temp_size;
 	*size = _size;
+	
 	return info;
 }
 

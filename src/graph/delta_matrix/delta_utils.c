@@ -130,7 +130,7 @@ void Delta_Matrix_validate
 (
 	const Delta_Matrix C
 ) {
-#ifdef RG_DEBUG
+#if RG_DEBUG
 	bool        m_dp_disjoint     =  false;
 	bool        dp_dm_disjoint    =  false;
 	bool        m_zombies_valid   =  true;
@@ -146,6 +146,8 @@ void Delta_Matrix_validate
 	GrB_Index   nrows             = 0;
 	GrB_Index   ncols             = 0;
 	GrB_Index   nvals             = 0;
+	GrB_Index   dp_nvals          = 0;
+	GrB_Index   dm_nvals          = 0;
 	GrB_Type    ty                = NULL;
 	GrB_Type    ty_m              = NULL;
 	GrB_Type    ty_dp             = NULL;
@@ -163,26 +165,51 @@ void Delta_Matrix_validate
 	if(ty == GrB_UINT64)
 	{
 		info = GrB_Matrix_new(&m_bool, GrB_BOOL, nrows, ncols);
+		ASSERT(info == GrB_SUCCESS);
 		info = GrB_Matrix_apply_BinaryOp1st_UINT64(
 			m_bool, NULL, NULL, GrB_NE_UINT64, MSB_MASK, m, NULL
 		);
+		ASSERT(info == GrB_SUCCESS);
 		m = m_bool;
 		info = GrB_Matrix_new(&dp_bool, GrB_BOOL, nrows, ncols);
+		ASSERT(info == GrB_SUCCESS);
 		info = GrB_Matrix_apply_BinaryOp1st_UINT64(
 			dp_bool, NULL, NULL, GrB_NE_UINT64, MSB_MASK, dp, NULL
 		);
+		ASSERT(info == GrB_SUCCESS);
+		info = GrB_Matrix_reduce_BOOL(
+               &dp_iso, GrB_LAND, GrB_LAND_MONOID_BOOL, dp_bool, NULL);
+		ASSERT(info == GrB_SUCCESS);
 		dp = dp_bool;
+	} else{
+		info = GxB_Matrix_iso (&dp_iso, dp);
+		ASSERT(info == GrB_SUCCESS);
 	}
+
+	#if 0 // less strict iso test:
+	// if this passes, Graphblas may not recognize the matrix as iso
+	// but it only has true values. 
 	info = GrB_Matrix_reduce_BOOL(
 		&dm_iso, GrB_LAND, GrB_LAND_MONOID_BOOL, dm, NULL);
 	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_reduce_BOOL(
-		&dp_iso, GrB_LAND, GrB_LAND_MONOID_BOOL, dp, NULL);
+	#else
+	info = GxB_Matrix_iso (&dm_iso, dm);
 	ASSERT(info == GrB_SUCCESS);
-	// GxB_Matrix_iso (&dm_iso, dm);
-	// GxB_Matrix_iso (&dp_iso, dp);
-	ASSERT(dm_iso);
-	ASSERT(dp_iso);
+	#endif
+
+	info = GrB_Matrix_nvals (&dm_nvals, dm);
+	ASSERT(info == GrB_SUCCESS);
+	info = GrB_Matrix_nvals (&dp_nvals, dp);
+	ASSERT(info == GrB_SUCCESS);
+	if(!dm_iso && dm_nvals > 0) {
+		GxB_fprint(dm, GxB_SHORT, stdout);
+	}
+	if(!dp_iso && dp_nvals > 0) {
+		GxB_fprint(dp, GxB_SHORT, stdout);
+	}
+	ASSERT(dm_iso || dm_nvals == 0);
+	ASSERT(dp_iso || dp_nvals == 0);
+
 	info = GrB_Matrix_new(&temp, GrB_BOOL, nrows, ncols);
 	ASSERT(info == GrB_SUCCESS);
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) { // this may to too strict
