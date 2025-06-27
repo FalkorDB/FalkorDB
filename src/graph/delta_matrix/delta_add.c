@@ -7,7 +7,7 @@
 #include "RG.h"
 #include "delta_matrix.h"
 
-// zombies must be the identity of the given monoid.
+// 
 // C = A + B
 GrB_Info Delta_eWiseAdd
 (
@@ -41,7 +41,7 @@ GrB_Info Delta_eWiseAdd
 	GrB_Matrix   dm_and_dp  = NULL;
 	GrB_BinaryOp biop       = NULL;
 
-
+	GrB_Monoid_get_VOID(op, (void *) &biop, GxB_MONOID_OPERATOR);
 	GrB_Matrix_nvals(&ADM_nvals, ADM);
 	GrB_Matrix_nvals(&BDM_nvals, BDM);
 
@@ -58,11 +58,17 @@ GrB_Info Delta_eWiseAdd
 	ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
+	// M: CM <CM>+= CDP ----- Should be done inplace (TODO check burble)
+	//--------------------------------------------------------------------------
+	info = GrB_Matrix_assign(CM, CM, biop, CDP, GrB_ALL, 0, GrB_ALL, 0 , GrB_DESC_S);
+	ASSERT(info == GrB_SUCCESS);
+
+	//--------------------------------------------------------------------------
 	// DM: CDM<!DP> = ADM + BDM 
 	//--------------------------------------------------------------------------
-	info = GrB_Matrix_eWiseAdd_Monoid(
-		CDM, CDP, NULL, op, ADM, BDM, GrB_DESC_SC);
-	ASSERT(info == GrB_SUCCESS);
+	info = GrB_Matrix_eWiseAdd_BinaryOp(
+		CDM, CDP, NULL, GrB_ONEB_BOOL, ADM, BDM, GrB_DESC_SC);
+	ASSERT(info == GrB_SUCCESS); 
 
 	//--------------------------------------------------------------------------
 	// DP: CDP<!CM> = ADP + BDP ---- remove intersection with M

@@ -28,22 +28,11 @@ GrB_Info TensorDegree_flat
 	Tensor T,           // matrix with tensor entries
     bool transpose      
 ) {
-    GrB_Matrix M         = DELTA_MATRIX_M(T);
-    GrB_Matrix Dp        = DELTA_MATRIX_DELTA_PLUS(T);
-    GrB_Matrix Dm        = DELTA_MATRIX_DELTA_MINUS(T);
     GrB_Descriptor desc  = transpose? GrB_DESC_ST0: GrB_DESC_S;
     GrB_Info info;
 
-    info = GrB_mxv(
-        degree, degree, GrB_PLUS_UINT64, GxB_PLUS_PAIR_UINT64, M, dest, desc);
-	if(info != GrB_SUCCESS) return info;
-
-	info = GrB_mxv(
-		degree, degree, GrB_PLUS_UINT64, GxB_PLUS_PAIR_UINT64, Dp, dest, desc);
-	if(info != GrB_SUCCESS) return info;
-
-	info = GrB_mxv(
-		degree, degree, GrB_MINUS_UINT64, GxB_PLUS_PAIR_UINT64, Dm, dest, desc);
+    info = Delta_mxv_count(
+		degree, degree, GrB_PLUS_UINT64, GxB_PLUS_PAIR_UINT64, T, dest, desc);
 	return info;
 }
 
@@ -89,20 +78,27 @@ GrB_Info TensorDegree
 	ASSERT(degree != NULL);
 	ASSERT(ops &  (DEG_INDEGREE | DEG_OUTDEGREE));
 	GrB_Info info;
+	
 
 	if((ops & (DEG_INDEGREE | DEG_OUTDEGREE)) == (DEG_INDEGREE | DEG_OUTDEGREE) ){
 		// Sum the in and out degrees
 		info = TensorDegree(degree, dest, T, ops ^ DEG_INDEGREE);
-		info |= TensorDegree(degree, dest, T, ops ^ DEG_OUTDEGREE);
+		ASSERT(info == GrB_SUCCESS);
+		info = TensorDegree(degree, dest, T, ops ^ DEG_OUTDEGREE);
+		ASSERT(info == GrB_SUCCESS);
 		return info;
 	}
-	if((ops & DEG_TENSOR) == 0){
-		return TensorDegree_flat(degree, dest, T, (ops & DEG_INDEGREE) != 0);
-	}
-
 	GrB_BinaryOp countEntry         = NULL; 
 	GrB_Semiring plus_count_uint64  = NULL;
 	GrB_Descriptor desc             = (ops & DEG_INDEGREE)? GrB_DESC_ST0: GrB_DESC_S;
+
+	if((ops & DEG_TENSOR) == 0){
+		return Delta_mxv_count(
+			degree, degree, GrB_PLUS_UINT64, GxB_PLUS_PAIR_UINT64, T, dest, desc
+		);
+	}
+
+	
 	
 
 	// create custom semiring
@@ -120,7 +116,7 @@ GrB_Info TensorDegree
 	// compute the degree
 	//--------------------------------------------------------------------------
 	// GraphBLAS decides wether to explicitly transpose.
-	info = Tensor_mxv(
+	info = Delta_mxv(
 		degree, degree, GrB_PLUS_UINT64, plus_count_uint64, T, dest, desc);
 	ASSERT(info == GrB_SUCCESS);
 
@@ -254,7 +250,7 @@ GrB_Info TensorDegree_weighted
 	// compute the degree
 	//--------------------------------------------------------------------------
 	// GraphBLAS decides wether to explicitly transpose.
-	info = Tensor_mxv(
+	info = Delta_mxv(
 		degree, degree, GrB_PLUS_FP64, plus_weight_fp64, T, dest, desc);
 	ASSERT(info == GrB_SUCCESS);
 
