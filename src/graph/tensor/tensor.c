@@ -576,16 +576,9 @@ void Tensor_RemoveElements
 				// postpone entry removal
 				GrB_free(&V);
 				array_append(delayed, i);
-			} else if(d+1 == nvals) { // TODO: this code seems a little convoluted. Why not remove the elements then find the one that is left?
+			} else if(d+1 == nvals) { 
 				// transition from vector to scalar
 				// determine which vector element becomes a scalar
-
-				// sort consecutive elements i..j by element value
-				qsort((void*)(elements + i), d, sizeof(Edge), _value_cmp);
-
-				// iterate over vector entries
-				// determine which of the vector's entries transitions into
-				// a scalar
 
 				struct GB_Iterator_opaque _it;
 				GxB_Iterator it = &_it;
@@ -596,27 +589,24 @@ void Tensor_RemoveElements
 				// seek to the first entry
 				info = GxB_Vector_Iterator_seek(it, 0);
 
-				GrB_Index idx;    // vector element
-				uint64_t  v;      // element's value
-				uint64_t  k = i;  // first consecutive element
-				while(info != GxB_EXHAUSTED) {
-					// get current element
+				uint64_t  idx = 0;    // vector element
+
+				// Use bitwise xor to cancel all equal values, leaving only the 
+				// odd one out.
+				
+				for(uint64_t  k = i; k < j; k++){
 					e = elements + k;
-					v = ENTITY_GET_ID(e);
+					idx ^= ENTITY_GET_ID(e); 
+				}
 
+				while(info != GxB_EXHAUSTED) {
 					// get element index within the vector
-					idx = GxB_Vector_Iterator_getIndex(it);
-
-					// break if vector's entry isn't in the list of
-					// deleted elements
-					if(idx != v) break;
-
+					idx ^= GxB_Vector_Iterator_getIndex(it);
 					// move to the next entry in V
 					info = GxB_Vector_Iterator_next(it);
-
-					// advance to next element
-					k = MIN(k + 1, i + d - 1);
 				}
+
+				ASSERT(GxB_Vector_isStoredElement(V, idx) == GrB_SUCCESS);
 
 				// free vector and set scalar
 				GrB_free(&V);
@@ -769,10 +759,6 @@ void Tensor_free
 	GrB_Info info;
 	Tensor t = *T;
 
-	// get delta matrix M matrix
-	GrB_Matrix M   = Delta_Matrix_M(t);
-	GrB_Matrix DP  = DELTA_MATRIX_DELTA_PLUS(t);
-
 	// initialize unaryop only once
 	static GrB_UnaryOp unaryop = NULL;
 	if(unaryop == NULL) {
@@ -781,11 +767,7 @@ void Tensor_free
 	}
 
 	// apply _free_vectors on every entry of the tensor
-	info = GrB_Matrix_apply(M, NULL, NULL, unaryop, M, NULL);
-	ASSERT(info == GrB_SUCCESS);
-
-	// apply _free_vectors on every entry of the tensor
-	info = GrB_Matrix_apply(DP, NULL, NULL, unaryop, DP, NULL);
+	Delta_Matrix_apply(t, unaryop, t);
 	ASSERT(info == GrB_SUCCESS);
 
 	// free tensor internals

@@ -193,6 +193,7 @@ GrB_Info Delta_mxm_identity
 // Using a plus_x semiring, returns C = A (BM + BMP - BDM)
 // Note this method can be tweeked to be used for any monoid with an inverse 
 // operation
+// TODO: make a better name for this function. 
 GrB_Info Delta_mxm_count
 (
     GrB_Matrix C,                 // output: matrix C 

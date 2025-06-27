@@ -549,10 +549,10 @@ ProcedureResult Proc_DegreeFree
 // define the Degree procedure
 // procedure input:
 //	{
-//		'srcLabels':      		[<label>, ...],
-//		'dir':         	  		'incoming' / 'outgoing' / 'both',
-//		'relationshipTypes':    [<type>, ...],
-//		'destLabels':     		[<label>, ...],
+//		'srcLabels':           [<label>, ...],
+//		'dir':                 'incoming' / 'outgoing' / 'both',
+//		'relationshipTypes':   [<type>, ...],
+//		'destLabels':          [<label>, ...],
 //	}
 //
 //  srcLabels          - [optional] [string[]]  type of nodes for which degree is computed
