@@ -484,7 +484,7 @@ ProcedureCtx *Proc_BetweennessCtx(void) {
 	array_append(outputs, output_component);
 
 	ProcedureCtx *ctx = ProcCtxNew("algo.betweenness",
-			PROCEDURE_VARIABLE_ARG_COUNT,
+								   PROCEDURE_VARIABLE_ARG_COUNT,
 								   outputs,
 								   Proc_BetweennessStep,
 								   Proc_BetweennessInvoke,
