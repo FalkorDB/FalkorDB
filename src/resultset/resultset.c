@@ -4,8 +4,8 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "resultset.h"
 #include "RG.h"
+#include "resultset.h"
 #include "../value.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"

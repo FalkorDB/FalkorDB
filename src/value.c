@@ -850,6 +850,7 @@ void SIValue_HashUpdate
 	// handles null value and defaults
 	int64_t null = 0;
 	XXH64_hash_t inner_hash;
+
 	// in case of identical binary representation of the value,
 	// we should hash the type as well
 	SIType t = SI_TYPE(v);
