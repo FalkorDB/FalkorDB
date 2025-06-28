@@ -1205,6 +1205,63 @@ void Graph_GetEdgesConnectingNodes
 	}
 }
 
+// returns true and sets edge->relationID if edge is in that relation
+bool Graph_CheckAndSetEdgeRelationID
+(
+	const Graph *g,  // Graph to get edges from
+	Edge *edge,    	 // Edge to check
+	RelationID r     // Edge type
+) {
+	ASSERT(g);
+	ASSERT(edge);
+	ASSERT(r < Graph_RelationTypeCount(g));
+
+	// invalid relation type specified;
+	// this can occur on multi-type traversals like:
+	// MATCH ()-[:real_type|fake_type]->()
+	if(r == GRAPH_UNKNOWN_RELATION) return false;
+
+	Tensor R             = Graph_GetRelationMatrix(g, r, false);
+	GrB_Index srcID      = edge->src_id;
+	GrB_Index destID     = edge->dest_id;
+	bool v               = false;
+	uint64_t x           = 0;
+	GrB_Matrix M         = NULL;
+	bool edgeInRelation  = false;
+
+	GrB_Info info = Delta_Matrix_extractElement_UINT64(&x, R, srcID, destID);
+	ASSERT(info >= 0);
+
+	if(info == GrB_SUCCESS){
+		if(SCALAR_ENTRY(x)){
+			edgeInRelation = (EntityID) x == edge->id;
+		} else {
+			GrB_Vector x_vec = AS_VECTOR(x);
+			info = GrB_Vector_extractElement_BOOL(&v, x_vec, edge->id);
+			ASSERT(info >= 0);
+			edgeInRelation = info == GrB_SUCCESS;
+		}
+	}
+	if(edgeInRelation) edge->relationID = r;
+	return edgeInRelation;
+}
+
+// Finds the relation ID of the edge and sets edge->relationID.
+void Graph_FindAndSetEdgeRelationID
+(
+	const Graph *g,  // Graph to get edges from.
+	Edge *edge    	 // Edge to check.
+) {
+	ASSERT(g);
+	ASSERT(edge);
+	edge->relationID = GRAPH_UNKNOWN_RELATION;
+	for(RelationID r = 0; r < Graph_RelationTypeCount(g); r++) {
+		if(Graph_CheckAndSetEdgeRelationID(g, edge, r)) {
+			break;
+		}
+	}
+}
+
 // retrieves all either incoming or outgoing edges
 // to/from given node N, depending on given direction
 void Graph_GetNodeEdges
