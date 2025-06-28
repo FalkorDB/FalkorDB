@@ -228,7 +228,8 @@ void GraphContext_MarkWriter
 	RedisModuleCtx *ctx,
 	GraphContext *gc
 ) {
-	RedisModuleString *graphID = RedisModule_CreateString(ctx, gc->graph_name, strlen(gc->graph_name));
+	RedisModuleString *graphID =
+		RedisModule_CreateString(ctx, gc->graph_name, strlen(gc->graph_name));
 
 	// reopen only if key exists (do not re-create) make sure key still exists
 	RedisModuleKey *key = RedisModule_OpenKey(ctx, graphID, REDISMODULE_READ);

@@ -429,27 +429,30 @@ void _query
 	if(readonly || command_ctx->thread == EXEC_THREAD_MAIN) {
 		_ExecuteQuery(gq_ctx);
 	} else {
+		// increase graph ref count, guard against the graph context
+		// being free too early as the writer need access to the graph's
+		// pending queries queue and the writer's flag
+		GraphContext_IncreaseRefCount(gc);
+
+		// thread failed getting exclusive write access to graph
+		// delegate query to current writer
+		if(!_DelegateQuery(gc, gq_ctx)) {
+			ErrorCtx_SetError(EMSG_WRITE_QUEUE_FULL);
+
+			// counter to GraphContext_IncreaseRefCount just above
+			GraphContext_DecreaseRefCount(gc);
+			goto cleanup;
+		}
+
 		// try to acquire exclusive write access to graph
 		if(GraphContext_TryEnterWrite(gc)) {
 			// thread has exclusive write access to graph
 			// go ahead and run the query
-			_ExecuteQuery(gq_ctx);
 			enter_writer_loop(gc);
-		} else {
-			// thread failed getting exclusive write access to graph
-			// delegate query to current writer
-			if(!_DelegateQuery(gc, gq_ctx)) {
-				ErrorCtx_SetError(EMSG_WRITE_QUEUE_FULL);
-				goto cleanup;
-			}
-
-			// it is possible that writer had existed while we were delegating
-			// the query, retry acquiring write access, if successful enter
-			// the writers loop
-			if(GraphContext_TryEnterWrite(gc)) {
-				enter_writer_loop(gc);
-			}
 		}
+
+		// counter to GraphContext_IncreaseRefCount just above
+		GraphContext_DecreaseRefCount(gc);
 	}
 
 	return;
