@@ -307,6 +307,29 @@ SIValue AR_PATH_LENGTH
 	return SI_LongVal(SIPath_Length(argv[0]));
 }
 
+// AR_INTERMEDIATE_PATH enable access to path object as it's being gradually
+// constructd e.g.
+// MATCH ()-[e*]->() WHERE length(AR_INTERMEDIATE_PATH(e)) > 2 RETURN 1
+// the filter: WHERE length(AR_INTERMEDIATE_PATH(e) > 2
+// will be invoked each time the path 'p' updates as part of
+// the variable length traversal, this alows for quick termination of
+// undesiered paths
+//
+// note: this function is intended to be called as part of a variable length
+// traversal filter
+SIValue AR_INTERMEDIATE_PATH
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
+	ASSERT(argc == 1);
+	ASSERT(SI_TYPE(argv[0]) == T_NULL || SI_TYPE(argv[0]) == T_PATH);
+
+	// returns either NULL or a path object
+	return argv[0];
+}
+
 void Register_PathFuncs() {
 	SIType *types;
 	SIType ret_type;
@@ -348,6 +371,14 @@ void Register_PathFuncs() {
 	ret_type = T_INT64 | T_NULL;
 	func_desc = AR_FuncDescNew("length", AR_PATH_LENGTH, 1, 1, types, ret_type,
 			false, false);
+	AR_RegFunc(func_desc);
+
+	types = array_new(SIType, 1);
+	array_append(types, T_PATH);
+	ret_type = T_PATH;
+	func_desc = AR_FuncDescNew("intermediate_path", AR_INTERMEDIATE_PATH, 1, 1,
+			types, ret_type, false, false);
+
 	AR_RegFunc(func_desc);
 }
 
