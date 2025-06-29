@@ -19,6 +19,8 @@ ENV FALKORDB_BIN_PATH=${FALKORDB_HOME}/bin
 
 ENV FALKORDB_IMPORT_PATH=${FALKORDB_HOME}/import
 
+ENV FALKORDB_TLS_PATH=${FALKORDB_HOME}/tls
+
 ENV FALKORDB_BROWSER_PATH=${FALKORDB_HOME}/browser
 
 # For backward compatibility, link previous bin path to new bin path
