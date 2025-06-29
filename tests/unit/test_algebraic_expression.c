@@ -10,7 +10,7 @@
 #include "src/redismodule.h"
 #include "src/graph/graph.h"
 #include "src/util/rmalloc.h"
-#include "src/util/thpool/pools.h"
+#include "src/util/thpool/pool.h"
 #include "src/graph/query_graph.h"
 #include "src/graph/graphcontext.h"
 #include "src/util/simple_timer.h"
@@ -312,7 +312,7 @@ void setup() {
 	Alloc_Reset();
 
 	// Initialize the thread pool.
-	TEST_ASSERT(ThreadPools_CreatePools(1, 1, 2));
+	TEST_ASSERT(ThreadPool_CreatePool(1, 2));
 
 	// Initialize GraphBLAS.
 	GrB_Info info;

@@ -7,7 +7,7 @@
 #include "RG.h"
 #include "commands.h"
 #include "cmd_context.h"
-#include "../util/thpool/pools.h"
+#include "../util/thpool/pool.h"
 #include "../util/simple_timer.h"
 #include "../util/blocked_client.h"
 #include "../configuration/config.h"
@@ -258,8 +258,7 @@ int CommandDispatch
 								 is_replicated, compact, timeout, timeout_rw,
 								 received_ts, timer, bolt_client);
 
-		if(ThreadPools_AddWorkReader(handler, context, false) ==
-				THPOOL_QUEUE_FULL) {
+		if(ThreadPool_AddWork(handler, context, false) == THPOOL_QUEUE_FULL) {
 			// report an error once our workers thread pool internal queue
 			// is full, this error usually happens when the server is
 			// under heavy load and is unable to catch up
