@@ -696,7 +696,7 @@ void BoltHandshakeHandler
 	}
 
 	bolt_version_t version = bolt_read_supported_version(client);
-	if(version.major == (uint)-1) {
+	if(version.major == (uint)-1 || version.major == 255) {
 		version.major = 5;
 		version.minor = 7;
 	}
