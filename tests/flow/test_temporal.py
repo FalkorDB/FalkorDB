@@ -1,5 +1,6 @@
 from common import *
-from datetime import datetime, timedelta
+from datetime import datetime, date, time
+from dateutil.relativedelta import relativedelta
 
 GRAPH_ID = "temporal_test"
 
@@ -266,11 +267,9 @@ class testTemporalLocalDateTime(FlowTestsBase):
             # Construct the map string for the Cypher query
             map_entries = []
 
-            #print(f"map_input: {map_input}")
             query = f"RETURN localdatetime($date)"
             result = self.graph.query(query, {'date': map_input})
             actual = str(result.result_set[0][0])
-            #print(f"actual: {actual}")
             self.env.assertEquals(actual, expected)
 
     def test_localdatetime_week_construction(self):
@@ -304,7 +303,6 @@ class testTemporalLocalDateTime(FlowTestsBase):
                       d.dayOfQuarter, d.ordinalDay, d.hour, d.minute, d.second"""
 
         res = self.graph.query(q).result_set
-        print(f"res: {res[0]}")
 
         year         = res[0][0]
         quarter      = res[0][1]
@@ -485,66 +483,129 @@ class testTemporalDuration(FlowTestsBase):
         # duration + duration
         #-----------------------------------------------------------------------
 
-        q = """RETURN duration({years:1, months:1, weeks:1, days:1, hours:1, minutes:32, seconds:10}) +
-                      duration({years:2, months:2, weeks:2, days:2, hours:2, minutes:34, seconds:12})"""
-        res = self.graph.query(q).result_set[0][0]
-        self.env.assertEquals(res, timedelta(years=3, months=3, days=24, hours=4, minutes=6, seconds=24))
+        a = "duration({years:1, months:1, weeks:1, days:1, hours:1, minutes:32, seconds:10})"
+        b = "duration({years:2, months:2, weeks:2, days:2, hours:2, minutes:34, seconds:12})"
+        q = f"RETURN {a} + {b}, {b} + {a}"
+        expected = relativedelta(years=3, months=3, days=24, hours=4, minutes=6, seconds=22)
 
-        return
+        actual = self.graph.query(q).result_set[0][0]
+        self.env.assertEquals(actual, expected)
+
+        actual = self.graph.query(q).result_set[0][1]
+        self.env.assertEquals(actual, expected)
 
         #-----------------------------------------------------------------------
         # duration - duration
         #-----------------------------------------------------------------------
 
-        q = "RETURN duration({}) - duration({})"
-        res = self.graph.query(q).result_set[0][0]
-        #self.env.assertEquals(res, timedelta(seconds=))
+        q = """RETURN duration({years:2, months:2, weeks:2, days:2, hours:2, minutes:34, seconds:12})
+                      -
+                      duration({years:1, months:1, weeks:1, days:1, hours:1, minutes:32, seconds:10})"""
+        actual = self.graph.query(q).result_set[0][0]
+        expected = relativedelta(years=1, months=1, days=8, hours=1, minutes=2, seconds=2)
+        self.env.assertEquals(actual, expected)
 
         #-----------------------------------------------------------------------
         # date + duration
         #-----------------------------------------------------------------------
 
-        q = "RETURN date({}) + duration({})"
-        res = self.graph.query(q).result_set[0][0]
-        #self.env.assertEquals(res, timedelta(seconds=))
+        a = "date({year:1984, month:10, day:21})"
+        b = "duration({years:1, months:1, days:1, hours:1, minutes:1, seconds:1})"
+        q = f"RETURN {a} + {b}, {b} + {a}"
+        expected = date(year=1985, month=11, day=22)
+
+        actual = self.graph.query(q).result_set[0][0]
+        self.env.assertEquals(actual, expected)
+
+        actual = self.graph.query(q).result_set[0][1]
+        self.env.assertEquals(actual, expected)
 
         #-----------------------------------------------------------------------
         # date - duration
         #-----------------------------------------------------------------------
 
-        q = "RETURN date({}) - duration({})"
-        res = self.graph.query(q).result_set[0][0]
-        #self.env.assertEquals(res, timedelta(seconds=))
+        q = """RETURN date({year:1984, month:10, day:21})
+                      -
+                      duration({years:1, months:1, days:1, hours:1, minutes:1, seconds:1})"""
+        actual = self.graph.query(q).result_set[0][0]
+
+        try:
+            q = """RETURN duration({years:1, months:1, days:1, hours:1, minutes:1, seconds:1})
+                   -
+                   date({year:1984, month:10, day:21})"""
+
+            self.graph.query(q)
+            self.env.assertFalse(True)
+        except Exception:
+            pass
 
         #-----------------------------------------------------------------------
         # time + duration
         #-----------------------------------------------------------------------
 
-        q = "RETURN time({}) + duration({})"
-        res = self.graph.query(q).result_set[0][0]
-        #self.env.assertEquals(res, timedelta(seconds=))
+        a = "localtime({hour:2, minute: 34, second:32})"
+        b = "duration({years:1, months:1, days:1, hours:1, minutes:35, seconds:35})"
+        q = f"RETURN {a} + {b}, {b} + {a}"
+        expected = time(hour=4, minute=10, second=7)
+
+        actual = self.graph.query(q).result_set[0][0]
+        self.env.assertEquals(actual, expected)
+
+        actual = self.graph.query(q).result_set[0][1]
+        self.env.assertEquals(actual, expected)
 
         #-----------------------------------------------------------------------
         # time - duration
         #-----------------------------------------------------------------------
 
-        q = "RETURN time({}) - duration({})"
-        res = self.graph.query(q).result_set[0][0]
-        #self.env.assertEquals(res, timedelta(seconds=))
+        q = """RETURN localtime({hour:10, minute: 30, second:10})
+               -
+               duration({hours:2, minutes:40, seconds:30})"""
+        actual = self.graph.query(q).result_set[0][0]
+        expected = time(hour=7, minute=49, second=40)
+        self.env.assertEquals(actual, expected)
+
+        try:
+            q = """RETURN duration({hours:2, minutes:40, seconds:30})
+                   -
+                   localtime({hour:10, minute: 30, second:10})"""
+            self.graph.query(q)
+            self.env.assertFalse(True)
+        except Exception:
+            pass
 
         #-----------------------------------------------------------------------
         # datetime + duration
         #-----------------------------------------------------------------------
 
-        q = "RETURN datetime({}) + duration({})"
-        res = self.graph.query(q).result_set[0][0]
-        #self.env.assertEquals(res, timedelta(seconds=))
+        a = "localdatetime({year:1984, month:10, day:21, hour:5, minute:30, second:10})"
+        b = "duration({years:1, months:1, days:1, hours:1, minutes:1, seconds:1})"
+        q = f"RETURN {a} + {b}, {b} + {a}"
+        expected = datetime(year=1985, month=11, day=22, hour=6, minute=31, second=11)
+
+        actual = self.graph.query(q).result_set[0][0]
+        self.env.assertEquals(actual, expected)
+
+        actual = self.graph.query(q).result_set[0][1]
+        self.env.assertEquals(actual, expected)
 
         #-----------------------------------------------------------------------
         # datetime - duration
         #-----------------------------------------------------------------------
 
-        q = "RETURN datetime({}) - duration({})"
-        res = self.graph.query(q).result_set[0][0]
-        #self.env.assertEquals(res, timedelta(seconds=))
+        q = """RETURN localdatetime({year:1984, month:10, day:21, hour:5, minute:30, second:10})
+               -
+               duration({years:1, months:1, days:1, hours:1, minutes:1, seconds:1})"""
+        actual = self.graph.query(q).result_set[0][0]
+        expected = datetime(year=1983, month=9, day=20, hour=4, minute=29, second=9)
+        self.env.assertEquals(actual, expected)
+
+        try:
+            q = """RETURN duration({years:1, months:1, days:1, hours:1, minutes:1, seconds:1})
+                   -
+                   localdatetime({year:1984, month:10, day:21, hour:5, minute:30, second:10})"""
+            self.graph.query(q)
+            self.env.assertFalse(True)
+        except Exception:
+            pass
 

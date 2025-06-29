@@ -248,29 +248,3 @@ void Duration_toString
     }
 }
 
-// negate duration object
-// duration.years = -duration.years
-// duration.months = -duration.months
-// ...
-// duration.seconds = -duration.seconds
-void Duration_Negate
-(
-	SIValue *duration
-) {
-	ASSERT(duration != NULL);
-	ASSERT(SI_TYPE(*duration) == T_DURATION);
-
-	Duration d = duration_from_time_t_utc(duration->longval);
-
-	d.years   = -d.years;
-	d.months  = -d.months;
-	d.weeks   = -d.weeks;
-	d.days    = -d.days;
-	d.hours   = -d.hours;
-	d.minutes = -d.minutes;
-	d.seconds = -d.seconds;
-
-	// apply a duration to epoch
-	duration->longval = duration_from_epoch_utc(&d);
-}
-

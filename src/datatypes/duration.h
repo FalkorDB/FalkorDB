@@ -55,20 +55,16 @@ bool Duration_getComponent
     float *value              // [output] component value
 );
 
+// apply a duration to epoch
+time_t duration_from_epoch_utc
+(
+	const Duration *d  // duration added to epoch
+);
+
 // convert UTC time_t to duration since epoch
 Duration duration_from_time_t_utc
 (
 	time_t target  // target = epoch + duration
-);
-
-// negate duration object
-// duration.years = -duration.years
-// duration.months = -duration.months
-// ...
-// duration.seconds = -duration.seconds
-void Duration_Negate
-(
-	SIValue *duration
 );
 
 // get a string representation of duration
