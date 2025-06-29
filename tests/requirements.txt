@@ -8,5 +8,6 @@ grammarinator
 wheel
 rmtest
 psutil
+python-dateutil
 git+https://github.com/falkordb/RLTest.git@master
 
