@@ -30,7 +30,10 @@ void test_threadPool_threadID() {
 	// verify thread count equals to the number of worker threads
 	TEST_ASSERT(WORKERS_COUNT == ThreadPool_ThreadCount());
 
-	volatile int thread_ids[WORKERS_COUNT + 1] = {-1, -1, -1, -1, -1, -1};
+	volatile int thread_ids[WORKERS_COUNT + 1];
+	for(int i = 0; i < WORKERS_COUNT + 1; i++) {
+		thread_ids[i] = -1;
+	}
 
 	// get main thread friendly id
 	thread_ids[0] = ThreadPool_GetThreadID();

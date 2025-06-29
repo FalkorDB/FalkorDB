@@ -78,7 +78,6 @@ int ThreadPool_GetThreadID(void) {
 	// most likely Redis main thread
 	int thread_id;
 	pthread_t pthread = pthread_self();
-	int count = thpool_num_threads(_thpool);
 
 	// search in pool
 	thread_id = thpool_get_thread_id(_thpool, pthread);
@@ -126,6 +125,8 @@ void ThreadPool_SetMaxPendingWork
 	if(_thpool != NULL) thpool_set_jobqueue_cap(_thpool, cap);
 }
 
+#define MAX_TASKS_TO_RETRIEVE 1000
+
 // returns a list of queued tasks that match the given handler
 // caller must free the returned list
 void **ThreadPool_GetTasksByHandler
@@ -139,8 +140,9 @@ void **ThreadPool_GetTasksByHandler
 	ASSERT(_thpool != NULL);
 
 	// cap number of read tasks
-	uint32_t _task_count = (thpool_get_jobqueue_len(_thpool) > 1000)
-		? 1000
+	uint32_t _task_count =
+		(thpool_get_jobqueue_len(_thpool) > MAX_TASKS_TO_RETRIEVE)
+		? MAX_TASKS_TO_RETRIEVE
 		: thpool_get_jobqueue_len(_thpool);
 
 	void **tasks = malloc(sizeof(void *) * _task_count);

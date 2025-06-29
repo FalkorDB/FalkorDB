@@ -305,7 +305,7 @@ bool GraphContext_EnqueueWriteQuery
 	void *query_ctx    // query context
 ) {
 	ASSERT(gc        != NULL);
-	ASSERT(query_ctx != NULL);	
+	ASSERT(query_ctx != NULL);
 
 	return (CircularBuffer_Add(gc->pending_write_queue, &query_ctx) != 0);
 }

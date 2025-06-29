@@ -350,8 +350,12 @@ static void enter_writer_loop
 		// release write access
 		GraphContext_ExitWrite(gc);
 
-		// double check, it is possible for a query to enter the queue
-		// between us exiting the while loop and the release of the write flag
+		// race condition handling: after releasing write access, another thread
+		// may have enqueued a query
+		// we must check the queue again and attempt
+		// to reacquire write access
+		// if we succeed, continue processing
+		// if we fail, another thread is now the writer and will handle the queue
 		if(GraphContext_WriteQueueEmpty(gc) || !GraphContext_TryEnterWrite(gc)) {
 			// either the queue is empty
 			// or the another thread became a writer
