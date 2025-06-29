@@ -16,9 +16,7 @@
 
 // create a new time object representing the current time
 SIValue Time_now(void) {
-	return (SIValue) {
-		.datetimeval = time(NULL), .type = T_TIME, .allocation = M_NONE
-	};
+	return SI_Time(time(NULL));
 }
 
 // create a new time object from a ISO-8601 string time representation

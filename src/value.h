@@ -123,21 +123,31 @@ SIValue SI_PtrVal(void *v);
 SIValue SI_LongVal(int64_t i);
 SIValue SI_DoubleVal(double d);
 SIValue SI_Vectorf32(uint32_t dim);
-SIValue SI_DateTime(time_t datetime);
 SIValue SI_Map(u_int64_t initialCapacity);
 SIValue SI_Array(u_int64_t initialCapacity);
 SIValue SI_Point(float latitude, float longitude);
 
+SIValue SI_Time(time_t t);
+SIValue SI_Date(time_t t);
+SIValue SI_DateTime(time_t datetime);
+
 // create a new duration object
+// 'd' represent the duration from epoch
 SIValue SI_Duration
 (
-	double years,    // years count
-	double months,   // months count
-	double weeks,    // weeks count
-	double days,     // days count
-	double hours,    // hours count
-	double minutes,  // minutes count
-	double seconds   // seconds count
+	time_t d  // duration since epoch
+);
+
+// create a new duration object from individual components
+SIValue SI_DurationFromComponents
+(
+	float years,    // years count
+	float months,   // months count
+	float weeks,    // weeks count
+	float days,     // days count
+	float hours,    // hours count
+	float minutes,  // minutes count
+	float seconds   // seconds count
 );
 
 // Duplicate and ultimately free the input string.

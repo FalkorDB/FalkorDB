@@ -108,7 +108,7 @@ Duration duration_from_time_t_utc
 }
 
 // create a new duration SIValue
-SIValue Duration_New
+SIValue SI_DurationFromComponents
 (
 	float years,    // number of years
 	float months,   // number of months
@@ -118,8 +118,6 @@ SIValue Duration_New
 	float minutes,  // number of minutes
 	float seconds   // number of seconds
 ) {
-	SIValue duration;
-
 	Duration d;
 
 	d.years   = years;
@@ -145,7 +143,7 @@ SIValue Duration_New
 	// 1970/01/01-00:00:00 + duration = 1971/02/03-02:30:20
 	time_t t = duration_from_epoch_utc(&d);
 
-	return (SIValue) {.longval = t, .type = T_DURATION, .allocation = M_NONE};
+	return SI_Duration(t);
 }
 
 // extract component from duration object
@@ -167,7 +165,7 @@ bool Duration_getComponent
     // convert from time_t to tm
     //--------------------------------------------------------------------------
 
-	Duration d = duration_from_time_t_utc(duration->longval);
+	Duration d = duration_from_time_t_utc(duration->datetimeval);
 
     //--------------------------------------------------------------------------
     // extract component
@@ -220,7 +218,7 @@ void Duration_toString
 	ASSERT(bytesWritten       != NULL);
 	ASSERT(SI_TYPE(*duration) == T_DURATION);
 
-	Duration d = duration_from_time_t_utc(duration->longval);
+	Duration d = duration_from_time_t_utc(duration->datetimeval);
 
     // print in a simplified ISO-8601-like format: PnYnMnWnDTnHnMnS
     APPEND("%s", "P");

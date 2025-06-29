@@ -476,7 +476,8 @@ SIValue AR_DURATION
 		return SI_NullVal();
 	}
 
-	return Duration_New(years, months, weeks, days, hours, minutes, seconds);
+	return SI_DurationFromComponents(years, months, weeks, days, hours, minutes,
+			seconds);
 }
 
 void Register_TimeFuncs() {

@@ -96,9 +96,7 @@ static bool _parse_week_date
 
 // create a new date object representing the current date
 SIValue Date_now(void) {
-	return (SIValue) {
-		.datetimeval = time(NULL), .type = T_DATE, .allocation = M_NONE
-	};
+	return SI_Date(time(NULL));
 }
 
 // create a new date object from a ISO-8601 string time representation

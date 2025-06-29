@@ -95,10 +95,41 @@ SIValue SI_EmptyMap() {
 	return Map_New(0);
 }
 
-SIValue SI_DateTime(time_t datetime) {
+// create a time SIValue from time_t
+SIValue SI_Time
+(
+	time_t t  // time value
+) {
+	return (SIValue) {
+		.datetimeval = t, .type = T_TIME, .allocation = M_NONE
+	};
+}
+
+SIValue SI_Date
+(
+	time_t t
+) {
+	return (SIValue) {
+		.datetimeval = t, .type = T_DATE, .allocation = M_NONE
+	};
+}
+
+SIValue SI_DateTime
+(
+	time_t datetime
+) {
 	return (SIValue) {
 		.datetimeval = datetime, .type = T_DATETIME, .allocation = M_NONE
 	};
+}
+
+// create a new duration object
+// 'd' represent the duration from epoch
+SIValue SI_Duration
+(
+	time_t d  // duration since epoch
+) {
+	return (SIValue) {.datetimeval = d, .type = T_DURATION, .allocation = M_NONE};
 }
 
 SIValue SI_Map(u_int64_t initialCapacity) {
@@ -170,31 +201,6 @@ SIValue SI_Point(float latitude, float longitude) {
 		.type = T_POINT, .allocation = M_NONE,
 			.point = {.latitude = latitude, .longitude = longitude}
 	};
-}
-
-// create a new duration object
-SIValue SI_Duration
-(
-	double years,    // years count
-	double months,   // months count
-	double weeks,    // weeks count
-	double days,     // days count
-	double hours,    // hours count
-	double minutes,  // minutes count
-	double seconds   // seconds count
-) {
-	SIValue d = Map_New(6);
-
-	Map_AddNoClone(&d, SI_ConstStringVal("years"),   SI_DoubleVal(years));
-	Map_AddNoClone(&d, SI_ConstStringVal("months"),  SI_DoubleVal(months));
-	Map_AddNoClone(&d, SI_ConstStringVal("weeks"),   SI_DoubleVal(weeks));
-	Map_AddNoClone(&d, SI_ConstStringVal("days"),    SI_DoubleVal(days));
-	Map_AddNoClone(&d, SI_ConstStringVal("hours"),   SI_DoubleVal(hours));
-	Map_AddNoClone(&d, SI_ConstStringVal("minutes"), SI_DoubleVal(minutes));
-	Map_AddNoClone(&d, SI_ConstStringVal("seconds"), SI_DoubleVal(seconds));
-
-	d.type = T_DURATION;
-	return d;
 }
 
 // make an SIValue that reuses the original's allocations, if any
@@ -1046,6 +1052,7 @@ void SIValue_HashUpdate
 		case T_DATE:
 		case T_TIME:
 		case T_DATETIME:
+		case T_DURATION:
 			XXH64_update(state, &t, sizeof(t));
 			XXH64_update(state, &v.datetimeval, sizeof(v.datetimeval));
 			return;
@@ -1153,10 +1160,23 @@ SIValue SIValue_FromBinary
 			break;
 
 		case T_TIME:
+			fread_assert(&ts, sizeof(ts), stream);
+			v = SI_Time(ts);
+			break;
+
 		case T_DATE:
+			fread_assert(&ts, sizeof(ts), stream);
+			v = SI_Date(ts);
+			break;
+
 		case T_DATETIME:
-			fread_assert(&t, sizeof(time_t), stream);
-			v = SI_DateTime(t);
+			fread_assert(&ts, sizeof(ts), stream);
+			v = SI_DateTime(ts);
+			break;
+
+		case T_DURATION:
+			fread_assert(&ts, sizeof(ts), stream);
+			v = SI_Duration(ts);
 			break;
 
 		default:
@@ -1179,19 +1199,19 @@ size_t SIValue_memoryUsage
 	size_t    n = sizeof(SIValue);
 
 	switch(t) {
-		case T_DATETIME:
-		case T_LOCALDATETIME:
-		case T_DATE:
-		case T_TIME:
 		case T_LOCALTIME:
-		case T_DURATION:
-			ASSERT("temporal types are yet to be supported" && false);
+		case T_LOCALDATETIME:
+			ASSERT("unsupported data type" && false);
 			break;
 
 		case T_BOOL:
 		case T_INT64:
 		case T_POINT:
 		case T_DOUBLE:
+		case T_DATE:
+		case T_TIME:
+		case T_DURATION:
+		case T_DATETIME:
 			break;
 
 		case T_STRING:
