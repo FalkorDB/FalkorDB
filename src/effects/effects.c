@@ -189,6 +189,13 @@ static void EffectsBuffer_WriteSIValue
 			// write double to stream
 			EffectsBuffer_WriteBytes(&v->doubleval, sizeof(v->doubleval), buff);
 			break;
+		case T_TIME:
+		case T_DATE:
+		case T_DATETIME:
+		case T_DURATION:
+			// write temporal time_t
+			EffectsBuffer_WriteBytes(&v->longval, sizeof(v->datetimeval), buff);
+
 		case T_NULL:
 			// no additional data is required to represent NULL
 			break;
