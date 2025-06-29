@@ -439,6 +439,7 @@ RSDoc *Index_IndexGraphEntity
 				case T_TIME:
 				case T_DATE:
 				case T_DATETIME:
+				case T_DURATION:
 				{
 					double d = (double)v->datetimeval;
 					RediSearch_DocumentAddFieldNumber(doc, field->range_name, d,
