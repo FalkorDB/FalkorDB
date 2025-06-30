@@ -86,7 +86,7 @@ static SIValue _RdbLoadSIArray
 	SerializerIO rdb
 ) {
 	/* loads array as
-	   unsinged : array legnth
+	   unsinged : array length
 	   array[0]
 	   .
 	   .

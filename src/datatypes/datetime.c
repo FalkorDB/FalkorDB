@@ -7,7 +7,8 @@
 #include "../value.h"
 #include "../util/rmalloc.h"
 
-#define _XOPEN_SOURCE
+#define _XOPEN_SOURCE  700 // needed for gmtime_r
+
 #include <time.h>
 #include <stdio.h>
 #include <string.h>
@@ -23,7 +24,6 @@ SIValue DateTime_now(void) {
 // - YYYY-MM-DD
 // - YYYY-MM-DDThh:mm
 // - YYYY-MM-DDThh:mm:ss
-// - YYYY-MM-DDThh:mm:ss.sss
 // - with or without timezone indicators (Z, +hh:mm, -hh:mm)
 static time_t _parse_iso8601
 (
@@ -31,68 +31,42 @@ static time_t _parse_iso8601
 ) {
 	ASSERT(datetime_str != NULL);
 
-    char *result;
-    struct tm tm          = {0};
-    bool has_timezone     = false;
-    int tz_offset_hours   = 0;
-    int tz_offset_minutes = 0;
-    
-    // check for timezone indicator
-    char *tz_indicator = NULL;
-    if((tz_indicator = strrchr(datetime_str, 'Z')) != NULL &&
-	   *(tz_indicator+1) == '\0') {
-        // UTC timezone (Z)
-        has_timezone = true;
-    } else if((tz_indicator = strrchr(datetime_str, '+')) != NULL) {
-        // positive timezone offset
-        has_timezone = true;
-        sscanf(tz_indicator, "+%d:%d", &tz_offset_hours, &tz_offset_minutes);
-    } else if((tz_indicator = strrchr(datetime_str, '-')) != NULL &&
-			   tz_indicator > datetime_str + 4) {
-        // negative timezone offset
-		// (checking position to avoid confusing with date separators)
-        has_timezone = true;
-        sscanf(tz_indicator, "-%d:%d", &tz_offset_hours, &tz_offset_minutes);
-    }
-    
-    // truncate the timezone part if present
-    if(has_timezone && tz_indicator != NULL) {
-       datetime_str[tz_indicator - datetime_str] = '\0';
-    }
-    
     // try different ISO 8601 formats, from most specific to least
-    const char *formats[] = {
-        "%Y-%m-%dT%H:%M:%S.%f",  // with fractional seconds
-        "%Y-%m-%dT%H:%M:%S",     // without fractional seconds
-        "%Y-%m-%dT%H:%M",        // without seconds
-        "%Y-%m-%d",              // date only
-        "%Y%m%dT%H%M%S",         // basic format (no separators)
-        "%Y%m%d"                 // basic format, date only
-    };
-    
+	// order matters, try shortest last
+	const char *formats[] = {
+		"%Y-%m-%dT%H:%M:%S",
+		"%Y-%m-%dT%H:%M",
+		"%Y-%m-%dT%H",
+		"%Y-%m-%d",
+		"%Y-%m",
+		"%Y%m%dT%H%M%S",
+		"%Y%m%dT%H%M",
+		"%Y%m%dT%H",
+		"%Y%m%d",
+		"%Y%jT%H%M",
+		"%Y%jT%H",
+		"%Y%j",
+		"%Y",
+	};
+
     // try each format
-    for(int i = 0; i < sizeof(formats)/sizeof(formats[0]); i++) {
-        memset(&tm, 0, sizeof(struct tm));
-        result = strptime(datetime_str, formats[i], &tm);
-        if(result != NULL) {
-            // parsed successfully
-            // apply timezone offset
-            if(has_timezone) {
-                // for Z or positive offset, subtract from local time
-                // for negative offset, add to local time
-                if(tz_indicator && *tz_indicator == '-') {
-                    tm.tm_hour += tz_offset_hours;
-                    tm.tm_min  += tz_offset_minutes;
-                } else {
-                    tm.tm_hour -= tz_offset_hours;
-                    tm.tm_min  -= tz_offset_minutes;
-                }
-            }
-            
-            // convert to time_t
-            return mktime(&tm);
-        }
-    }
+	for(int i = 0; i < sizeof(formats)/sizeof(formats[0]); i++) {
+		struct tm tm = {
+			.tm_year = 70,  // default to 1970
+			.tm_mon  = 0,   // January
+			.tm_mday = 1,   // First day
+			.tm_hour = 0,
+			.tm_min  = 0,
+			.tm_sec  = 0
+		};
+
+		char *result = strptime(datetime_str, formats[i], &tm);
+		if(result != NULL) {
+			// parsed successfully
+			// convert to time_t
+			return timegm(&tm);
+		}
+	}
     
     return (time_t)-1;  // return error if no format matched
 }
@@ -275,10 +249,6 @@ SIValue DateTime_fromComponents
     timeinfo.tm_sec  = second;
 
     // convert to time_t
-
-	// mktime doesn not support dates before 1900
-    // time_t sec_since_epoch = mktime(&timeinfo);  
-
     time_t sec_since_epoch = timegm(&timeinfo);
 
 	return SI_DateTime(sec_since_epoch);
@@ -321,7 +291,7 @@ static void get_iso_week_info
         jan1_prev.tm_mon  = 0;
         jan1_prev.tm_mday = 1;
 
-        mktime(&jan1_prev);
+        timegm(&jan1_prev);
         int jan1_wday = jan1_prev.tm_wday;
         if (jan1_wday == 0)  {
 			jan1_wday = 7;
@@ -346,7 +316,7 @@ static void get_iso_week_info
         jan1.tm_year = year - 1900;
         jan1.tm_mon  = 0;
         jan1.tm_mday = 1;
-        mktime(&jan1);
+        timegm(&jan1);
 
         int jan1_wday = jan1.tm_wday;
         if (jan1_wday == 0) {
@@ -422,7 +392,9 @@ bool DateTime_getComponent
 
     struct tm time;
     time_t rawtime = datetime->datetimeval;
-    gmtime_r(&rawtime, &time);
+    if(gmtime_r(&rawtime, &time) == NULL) {
+		return false;
+	}
 
     //--------------------------------------------------------------------------
     // extract component
@@ -511,7 +483,7 @@ void DateTime_toString
 	// get a tm object from time_t
 	struct tm time;
 	time_t rawtime = datetime->datetimeval;
-	gmtime_r(&rawtime, &time);
+	assert(gmtime_r(&rawtime, &time) != NULL);
 
 	// format the date and time up to seconds: 2025-04-14T06:08:21
 	*bytesWritten += strftime(*buf + *bytesWritten, *bufferLen,

@@ -66,7 +66,6 @@ static GraphContext *_DecodeHeader
 
 	// graph name
 	char *graph_name = SerializerIO_ReadBuffer(rdb, NULL);
-	printf("graph_name: %s\n", graph_name);
 
 	// each key header contains the following:
 	// #nodes, #edges, #deleted nodes, #deleted edges, #labels matrices, #relation matrices

@@ -194,7 +194,7 @@ static void EffectsBuffer_WriteSIValue
 		case T_DATETIME:
 		case T_DURATION:
 			// write temporal time_t
-			EffectsBuffer_WriteBytes(&v->longval, sizeof(v->datetimeval), buff);
+			EffectsBuffer_WriteBytes(&v->datetimeval, sizeof(v->datetimeval), buff);
 
 		case T_NULL:
 			// no additional data is required to represent NULL

@@ -120,7 +120,7 @@ static void _ResultSet_CompactReplyWithSIValue
 	case T_DATE:
 	case T_DATETIME:
 	case T_DURATION:
-		RedisModule_ReplyWithLongLong(ctx, v.longval);
+		RedisModule_ReplyWithLongLong(ctx, v.datetimeval);
 		return;
 
 	case T_ARRAY:

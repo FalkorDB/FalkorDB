@@ -396,16 +396,16 @@ void Register_NumericFuncs() {
 	AR_FuncDesc *func_desc;
 
 	types = array_new(SIType, 1);
-	array_append(types, (SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_DURATION | T_NULL));
-	array_append(types, (SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_DURATION | T_NULL));
-	ret_type = SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_DURATION | T_NULL;
+	array_append(types, (SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_NULL));
+	array_append(types, (SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_NULL));
+	ret_type = SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_NULL;
 	func_desc = AR_FuncDescNew("add", AR_ADD, 2, 2, types, ret_type, true, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, (SI_NUMERIC | SI_TEMPORAL | T_DURATION | T_NULL));
+	array_append(types, (SI_NUMERIC | SI_TEMPORAL | T_NULL));
 	array_append(types, (SI_NUMERIC | T_DURATION  | T_NULL));
-	ret_type = SI_NUMERIC | SI_TEMPORAL | T_DURATION | T_NULL;
+	ret_type = SI_NUMERIC | SI_TEMPORAL | T_NULL;
 	func_desc = AR_FuncDescNew("sub", AR_SUB, 2, 2, types, ret_type, true, true);
 	AR_RegFunc(func_desc);
 

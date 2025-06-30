@@ -13,7 +13,7 @@ SIValue DateTime_now(void);
 // create a new datetime object from a ISO-8601 string datetime representation
 SIValue DateTime_fromString
 (
-	char *datetime_str  // datetime ISO-8601 string representation
+	const char *datetime_str  // datetime ISO-8601 string representation
 );
 
 // DateTime_fromWeekDate

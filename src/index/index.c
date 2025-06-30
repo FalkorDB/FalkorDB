@@ -436,16 +436,16 @@ RSDoc *Index_IndexGraphEntity
 					_addNumericField(doc, field->range_name, SI_GET_NUMERIC(*v));
 					break;
 
-				case T_TIME:
-				case T_DATE:
-				case T_DATETIME:
-				case T_DURATION:
-				{
-					double d = (double)v->datetimeval;
-					RediSearch_DocumentAddFieldNumber(doc, field->range_name, d,
-							RSFLDTYPE_NUMERIC);
-					break;
-				}
+				//case T_TIME:
+				//case T_DATE:
+				//case T_DATETIME:
+				//case T_DURATION:
+				//{
+				//	double d = (double)v->datetimeval;
+				//	RediSearch_DocumentAddFieldNumber(doc, field->range_name, d,
+				//			RSFLDTYPE_NUMERIC);
+				//	break;
+				//}
 
 				case T_POINT:
 					_addPointField(doc, field->range_name, *v);

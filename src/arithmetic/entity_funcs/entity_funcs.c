@@ -269,6 +269,8 @@ SIValue AR_PROPERTY
 	SIValue *p_val;
 	SIValue obj = argv[0];
 	SIValue key = argv[1];
+	const char *key_str = key.stringval;
+
 	SIType t = SI_TYPE(obj);
 	switch(t) {
 		case T_NODE:
@@ -305,10 +307,10 @@ SIValue AR_PROPERTY
 		{
 			// retrieve datetime component e.g. year, month, hour
 			int comp;
-			bool found = DateTime_getComponent(&obj, key.stringval, &comp);
+			bool found = DateTime_getComponent(&obj, key_str, &comp);
 
 			if(found == false) {
-				ErrorCtx_SetError("unknown datetime component %s", key);
+				ErrorCtx_SetError("unknown datetime component %s", key_str);
 				return SI_NullVal();	
 			}
 
@@ -319,10 +321,10 @@ SIValue AR_PROPERTY
 		{
 			// retrieve date component e.g. year, month, day
 			int comp;
-			bool found = Date_getComponent(&obj, key.stringval, &comp);
+			bool found = Date_getComponent(&obj, key_str, &comp);
 
 			if(found == false) {
-				ErrorCtx_SetError("unknown date component %s", key);
+				ErrorCtx_SetError("unknown date component %s", key_str);
 				return SI_NullVal();
 			}
 
@@ -333,10 +335,10 @@ SIValue AR_PROPERTY
 		{
 			// retrieve time component e.g. hour, minute, second
 			int comp;
-			bool found = Time_getComponent(&obj, key.stringval, &comp);
+			bool found = Time_getComponent(&obj, key_str, &comp);
 
 			if(found == false) {
-				ErrorCtx_SetError("unknown time component %s", key);
+				ErrorCtx_SetError("unknown time component %s", key_str);
 				return SI_NullVal();
 			}
 
@@ -347,10 +349,10 @@ SIValue AR_PROPERTY
 		{
 			// retrieve duration component e.g. years, months, hours, minutes
 			float comp;
-			bool found = Duration_getComponent(&obj, key.stringval, &comp);
+			bool found = Duration_getComponent(&obj, key_str, &comp);
 
 			if(found == false) {
-				ErrorCtx_SetError("unknown time component %s", key);
+				ErrorCtx_SetError("unknown duration component %s", key_str);
 				return SI_NullVal();
 			}
 
@@ -430,7 +432,7 @@ void Register_EntityFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 3);
-	array_append(types, T_NULL | T_NODE | T_EDGE | T_MAP | T_POINT | T_DATETIME | T_DATE | T_TIME | T_DURATION);
+	array_append(types, T_NULL | T_NODE | T_EDGE | T_MAP | T_POINT | SI_TEMPORAL);
 	array_append(types, T_STRING);
 	array_append(types, T_INT64);
 	ret_type = SI_ALL;

@@ -48,12 +48,11 @@ static bool _get_component
 			ErrorCtx_SetError("%s must be an integer value", component);
 		} else {
 			*v = _v.longval;
+			if(*v < min_val || *v > max_val) {
+				ErrorCtx_SetError("Invalid value for %s (valid values %d - %d)",
+						component, min_val, max_val);
+			}
 		}
-	}
-
-	if(*v < min_val || *v > max_val) {
-		ErrorCtx_SetError("Invalid value for %s (valid values %d - %d)",
-				component, min_val, max_val);
 	}
 
 	return exists;
@@ -138,6 +137,7 @@ SIValue AR_LOCALTIME
 		bool microsecond_specified  = _get_component(&arg, "microsecond",  &microsecond,  0, 999999);
 		bool nanosecond_specified   = _get_component(&arg, "nanosecond",   &nanosecond,   0, 999999999);
 
+		// make sure no unexpected keys exists in the map
 		n_keys -= hour_specified + minute_specified +
 				  second_specified + milisecond_specified +
 				  microsecond_specified + nanosecond_specified;
@@ -160,9 +160,10 @@ SIValue AR_LOCALTIME
 
 		time = DateTime_fromComponents(1900, 1, 1, hour, minute, second,
 				millisecond, microsecond, nanosecond);
+
+		time.type = T_TIME;
 	}
 
-	time.type = T_TIME;
 	return time;
 }
 
@@ -241,7 +242,7 @@ SIValue AR_DATE
 
 		// can't specify dayOfQuarter_specified without specifying quarter
 		if(dayOfQuarter_specified == true && quarter_specified == false) {
-			ErrorCtx_SetError("dayOfQuarter_specified cannot be specified without quarter");	
+			ErrorCtx_SetError("quarter/dayOfQuarter cannot be specified with day/month/week");
 			return SI_NullVal();
 		}
 
@@ -440,7 +441,12 @@ SIValue AR_DURATION
 	}
 
 	SIType t = SI_TYPE(arg);
-	ASSERT(t == T_MAP);
+	ASSERT(t & (T_STRING | T_MAP));
+
+	// parse string as duration
+	if(t == T_STRING) {
+		return SI_DurationFromString(arg.stringval);
+	}
 
 	// create duration object from map
 	// duration components
@@ -535,7 +541,7 @@ void Register_TimeFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
-	array_append(types, T_MAP | T_NULL);
+	array_append(types, T_MAP | T_STRING | T_NULL);
 	ret_type = T_DURATION | T_NULL;
 	func_desc = AR_FuncDescNew("duration", AR_DURATION, 1, 1, types, ret_type,
 			false, true);

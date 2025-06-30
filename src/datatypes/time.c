@@ -8,7 +8,8 @@
 #include "datetime.h"
 #include "../util/rmalloc.h"
 
-#define _XOPEN_SOURCE
+#define _XOPEN_SOURCE  700 // needed for gmtime_r
+
 #include <time.h>
 #include <stdio.h>
 #include <string.h>
@@ -22,9 +23,9 @@ SIValue Time_now(void) {
 // create a new time object from a ISO-8601 string time representation
 SIValue Time_fromString
 (
-	char *time_str  // time ISO-8601 string representation
+	const char *time_str  // time ISO-8601 string representation
 ) {
-    if(!time_str) {
+    if(time_str == NULL) {
         return SI_NullVal();
     }
 
@@ -179,7 +180,7 @@ bool Time_getComponent
 	ASSERT(value              != NULL);
 	ASSERT(time               != NULL);
 	ASSERT(component          != NULL);
-	ASSERT(SI_TYPE(*time) == T_TIME);
+	ASSERT(SI_TYPE(*time)     == T_TIME);
 
 	// set output
 	*value = -1;
@@ -190,7 +191,9 @@ bool Time_getComponent
 
 	struct tm t;
 	time_t rawtime = time->datetimeval;
-	gmtime_r(&rawtime, &t);
+	if(gmtime_r(&rawtime, &t) == NULL) {
+		return false;
+	}
 
 	//--------------------------------------------------------------------------
 	// extract component
@@ -208,7 +211,6 @@ bool Time_getComponent
 	}
 
 	return (*value != -1);
-
 }
 
 // get a string representation of time
@@ -223,6 +225,7 @@ void Time_toString
 	ASSERT(time           != NULL);
 	ASSERT(SI_TYPE(*time) == T_TIME);
 
+	// make sure buffer is big enough
 	if(*bufferLen - *bytesWritten < 32) {
 		*bufferLen += 32;
 		*buf = rm_realloc(*buf, sizeof(char) * *bufferLen);
@@ -231,9 +234,9 @@ void Time_toString
 	// get a tm object from time_t
 	struct tm t;
 	time_t rawtime = time->datetimeval;
-	gmtime_r(&rawtime, &t);
+	assert(gmtime_r(&rawtime, &t) != NULL);
 
-	// format the date and time up to seconds: 2025-04-14T06:08:21
+	// format the time up to seconds: 06:08:21
 	*bytesWritten += strftime(*buf + *bytesWritten, *bufferLen, "%H:%M:%S", &t);
 	ASSERT(*bytesWritten > 0);
 }

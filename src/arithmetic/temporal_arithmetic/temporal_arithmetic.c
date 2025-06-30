@@ -173,13 +173,8 @@ SIValue Temporal_SubDuration
 	// a must be any temporal type
 	// b must be duration
 	
-	if(!(a_type & SI_TEMPORAL)) {
-		// error!
-	}
-
-	if(b_type != T_DURATION) {
-		// error!
-	}
+	ASSERT(a_type & SI_TEMPORAL);
+	ASSERT(b_type == T_DURATION);
 
 	//-------------------------------------------------------------------------
 	// duration - duration
@@ -192,16 +187,6 @@ SIValue Temporal_SubDuration
 	//-------------------------------------------------------------------------
 	// temporal - duration
 	//-------------------------------------------------------------------------
-
-	// normalize to temporal - duration
-	if(b_type != T_DURATION) {
-		SIValue t = a;
-		a = b;
-		b = t;
-
-		a_type = SI_TYPE(a);
-		b_type = SI_TYPE(b);
-	}
 
 	SIType ret_type = a_type;
 	Duration d = duration_from_time_t_utc(b.longval);

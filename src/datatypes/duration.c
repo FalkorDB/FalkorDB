@@ -28,8 +28,8 @@ time_t duration_from_epoch_utc
 	base_tm.tm_mday   = 1;
 
 	// separate integral and fractional parts
-    int years_int  = (int)truncf(d->years);
-    int months_int = (int)truncf(d->months);
+    int years_int  = (int)trunc(d->years);
+    int months_int = (int)trunc(d->months);
 
 	// add whole years and months
     base_tm.tm_year += years_int;
@@ -105,6 +105,114 @@ Duration duration_from_time_t_utc
 
     d.seconds = (float)delta;
     return d;
+}
+
+// parse an ISO 8601 duration string into a Duration struct
+//
+// supports unit-based form:
+//   P[nY][nM][nW][nD][T[nH][nM][nS]]
+//
+// Examples:
+//   "P3Y6M4DT12H30M5S"
+//   "P14DT16H12M"
+//   "PT20M"
+//
+// 'duration_str' the ISO 8601 duration string (e.g. "P14DT16H12M")
+// returns a Duration struct with parsed fields, all unset fields default to 0
+static bool _parse_duration
+(
+	Duration *d,              // [output]
+	const char *duration_str  // duration string representation
+) {
+	ASSERT(d != NULL);
+    ASSERT(duration_str != NULL);
+
+	memset(d, 0, sizeof(Duration));
+    const char *s = duration_str;
+
+    // ISO 8601 duration strings must start with 'P'
+    if (*s != 'P') {
+        return false;
+    }
+
+    s++;  // skip the initial 'P'
+
+    int in_time_section = 0;  // flag to indicate if we're after 'T'
+
+    // parse through each component of the duration string
+    while (*s != '\0') {
+        // 'T' separates date and time components
+        if (*s == 'T') {
+            in_time_section = 1;
+            s++;
+            continue;
+        }
+
+        // parse the numeric part of the component
+        char *endptr;
+        long val = strtol(s, &endptr, 10);
+
+        if (s == endptr) {
+            // no valid integer found, malformed duration
+            return false;
+        }
+
+        // the designator character indicates the time unit
+        char designator = *endptr;
+        switch (designator) {
+            case 'Y':
+                d->years = (int)val;
+                break;
+            case 'M':
+                // 'M' appears in both date and time sections: months or minutes
+                if (in_time_section) {
+                    d->minutes = (int)val;
+                } else {
+                    d->months = (int)val;
+                }
+                break;
+            case 'W':
+                d->weeks = (int)val;
+                break;
+            case 'D':
+                d->days = (int)val;
+                break;
+            case 'H':
+                d->hours = (int)val;
+                break;
+            case 'S':
+                d->seconds = (int)val;
+                break;
+            default:
+                // unknown or invalid designator character
+                return false;
+        }
+
+        // move the pointer past the designator for the next iteration
+        s = endptr + 1;
+    }
+
+    return true;
+}
+
+// construct an SI_Duration value from string representation
+// returns duration value if successful otherwise SI_NULL is returned
+SIValue SI_DurationFromString
+(
+	const char *duration_str  // duration string representation
+) {
+	ASSERT(duration_str != NULL);
+
+	// try to parse the string
+	Duration d;
+	if (!_parse_duration(&d, duration_str)) {
+		// invalid input: return NULL
+		return SI_NullVal();
+	}
+
+	time_t t = duration_from_epoch_utc(&d);
+
+	return SI_Duration(t);
 }
 
 // create a new duration SIValue

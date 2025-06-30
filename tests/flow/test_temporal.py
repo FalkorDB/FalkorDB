@@ -21,11 +21,9 @@ class testTemporalLocalTime(FlowTestsBase):
                 ({'hour': 12, 'minute': 31, 'second': 14, 'nanosecond': 789, 'millisecond': 123, 'microsecond': 456}, '12:31:14')
         ]
 
-        for idx, (map_input, expected) in enumerate(test_cases):
+        query = "RETURN localtime($time)"
+        for map_input, expected in test_cases:
             # Construct the map string for the Cypher query
-            map_entries = []
-
-            query = f"RETURN localtime($time)"
             result = self.graph.query(query, {'time': map_input})
             actual = str(result.result_set[0][0])
             self.env.assertEquals(actual, expected)
@@ -41,7 +39,7 @@ class testTemporalLocalTime(FlowTestsBase):
                 ('21:40:32.143', '21:40:32')
         ]
 
-        for idx, (str_input, expected) in enumerate(test_cases):
+        for str_input, expected in test_cases:
             query = f"RETURN localtime($str)"
             result = self.graph.query(query, {'str': str_input})
             actual = str(result.result_set[0][0])
@@ -107,11 +105,9 @@ class testTemporalDate(FlowTestsBase):
             #({'year': 1984, 'ordinalDay': 202},                '1984-07-20'),
         ]
 
-        for idx, (map_input, expected) in enumerate(test_cases):
+        query = "RETURN date($date)"
+        for map_input, expected in test_cases:
             # Construct the map string for the Cypher query
-            map_entries = []
-
-            query = f"RETURN date($date)"
             result = self.graph.query(query, {'date': map_input})
             actual = str(result.result_set[0][0])
             self.env.assertEquals(actual, expected)
@@ -131,7 +127,7 @@ class testTemporalDate(FlowTestsBase):
           ('2015-W30-2', '2015-07-21')
         ]
 
-        for idx, (str_input, expected) in enumerate(test_cases):
+        for str_input, expected in test_cases:
             query = f"RETURN date($str)"
             result = self.graph.query(query, {'str': str_input})
             actual = str(result.result_set[0][0])
@@ -174,10 +170,8 @@ class testTemporalDate(FlowTestsBase):
             #({'year': 1984, 'ordinalDay': 202},                '1984-07-20'),
         ]
 
-        for idx, (map_input, expected) in enumerate(test_cases):
+        for map_input, expected in test_cases:
             # Construct the map string for the Cypher query
-            map_entries = []
-
             query = """WITH date($comp) AS d
                        RETURN toString(d) AS ts, date(toString(d)) = d AS b"""
 
@@ -263,11 +257,9 @@ class testTemporalLocalDateTime(FlowTestsBase):
             ({'year': 1984}, '1984-01-01 00:00:00')
         ]
 
-        for idx, (map_input, expected) in enumerate(test_cases):
+        query = "RETURN localdatetime($date)"
+        for map_input, expected in test_cases:
             # Construct the map string for the Cypher query
-            map_entries = []
-
-            query = f"RETURN localdatetime($date)"
             result = self.graph.query(query, {'date': map_input})
             actual = str(result.result_set[0][0])
             self.env.assertEquals(actual, expected)
@@ -288,11 +280,9 @@ class testTemporalLocalDateTime(FlowTestsBase):
             ({'year': 1917, 'week': 1, 'dayOfWeek': 2}, '1917-01-02 00:00:00'),
         ]
 
-        for idx, (map_input, expected) in enumerate(test_cases):
+        query = "RETURN localdatetime($date)"
+        for map_input, expected in test_cases:
             # Construct the map string for the Cypher query
-            map_entries = []
-
-            query = f"RETURN localdatetime($date)"
             result = self.graph.query(query, {'date': map_input})
             actual = str(result.result_set[0][0])
             self.env.assertEquals(actual, expected)
@@ -330,31 +320,36 @@ class testTemporalLocalDateTime(FlowTestsBase):
 
     def test_localdatetime_from_string(self):
         test_cases = [
-                #('2015202T21',  '2015-07-21T21:00'),
-                #('2015T214032',  '2015-01-01T21:40:32'),
-                #('2015-W30T2140',  '2015-07-20T21:40'),
-                #('20150721T21:40',  '2015-07-21T21:40'),
-                #('2015-202T21:40:32',  '2015-07-21T21:40:32'),
-                #('2015-W30-2T214032.142',  '2015-07-21T21:40:32.142'),
-                #('2015-07-21T21:40:32.142',  '2015-07-21T21:40:32.142')
+                ('2025',                datetime(year=2025, month=1, day=1)),
+                ('2025-02',             datetime(year=2025, month=2, day=1)),
+                ('2025-02-18',          datetime(year=2025, month=2, day=18)),
+                ('20250218',            datetime(year=2025, month=2, day=18)),
+                ('2025-02-18T12',       datetime(year=2025, month=2, day=18, hour=12)),
+                ('2025-02-18T12:34',    datetime(year=2025, month=2, day=18, hour=12, minute=34)),
+                ('2025-02-18T12:34:56', datetime(year=2025, month=2, day=18, hour=12, minute=34, second=56)),
+                ('20250218T123456',     datetime(year=2025, month=2, day=18, hour=12, minute=34, second=56))
+                #('2025-049', datetime()), # Year + day-of-year
+                #('2025049T12', datetime()), # Year + day-of-year + hour
+                #('2025049T1234', datetime()), # Year + day-of-year + hour + minute
         ]
 
-        for idx, (str_input, expected) in enumerate(test_cases):
-            query = "RETURN localdatetime($str)"
+        query = "RETURN localdatetime($str)"
+        for str_input, expected in test_cases:
             result = self.graph.query(query, {'str': str_input})
-            actual = str(result.result_set[0][0])
+            actual = result.result_set[0][0]
             self.env.assertEquals(actual, expected)
 
     def test_localdatetime_to_from_string(self):
         query = """WITH localdatetime({year: 1984, month: 10, day: 11, hour: 12, minute: 31, second: 14, nanosecond: 645876123}) AS d
-                   RETURN toString(d) AS ts, localdatetime(toString(d)) = d AS b"""
+                   RETURN d AS ts, localdatetime(toString(d)) = d AS b"""
 
-        #res = self.graph.query(query).result_set
-        #ts  = res[0][0]
-        #b   = res[0][1]
+        expected = datetime(year=1984, month=10, day=11, hour=12, minute=31, second=14)
+        res = self.graph.query(query).result_set
+        ts  = res[0][0]
+        b   = res[0][1]
 
-        #self.env.assertTrue(b)
-        #self.env.assertEquals(ts, expected)
+        self.env.assertTrue(b)
+        self.env.assertEquals(ts, expected)
 
     def test_localdatetime_compare(self):
         q = """WITH localdatetime({year: 1980, month: 12, day: 11, hour: 12, minute: 31, second: 14}) AS x,
@@ -398,27 +393,57 @@ class testTemporalDuration(FlowTestsBase):
 
     def test_duration_component_construction(self):
         test_cases = [
-            ( {'years':   2},                                                                    'P2Y'             ),
-            ( {'months':  3},                                                                    'P3M'             ),
-            ( {'weeks':   1},                                                                    'P7D'             ),
-            ( {'hours':   6},                                                                    'PT6H'            ),
-            ( {'minutes': 23},                                                                   'PT23M'           ),
-            ( {'seconds': 15},                                                                   'PT15S'           ),
-            ( {'years': 2, 'months': 3},                                                         'P2Y3M'           ),
-            ( {'years': 2, 'months': 3, 'days':  4},                                             'P2Y3M4D'         ),
-            ( {'years': 2, 'months': 3, 'days':  4, 'hours':   5},                               'P2Y3M4DT5H'      ),
-            ( {'years': 2, 'months': 3, 'days':  4, 'hours':   5,  'minutes': 22},               'P2Y3M4DT5H22M'   ),
-            ( {'years': 2, 'months': 3, 'days':  4, 'hours':   5,  'minutes': 22, 'seconds': 7}, 'P2Y3M4DT5H22M7S' ),
-            ( {'years': 2, 'weeks':  1, 'hours': 5, 'minutes': 22, 'seconds': 7},                'P2Y7DT5H22M7S'   ),
+                 ( {'years':   2},                                                                          relativedelta(years=2)),
+                 ( {'months':  3},                                                                          relativedelta(months=3)),
+                 ( {'weeks':   1},                                                                          relativedelta(weeks=1)),
+                 ( {'hours':   6},                                                                          relativedelta(hours=6)),
+                 ( {'minutes': 23},                                                                         relativedelta(minutes=23)),
+                 ( {'seconds': 15},                                                                         relativedelta(seconds=15)),
+                 ( {'years': 2, 'months': 3},                                                               relativedelta(years=2, months=3)),
+                 ( {'years': 2, 'months': 3, 'days':  4},                                                   relativedelta(years=2, months=3, days=4)),
+                 ( {'years': 2, 'months': 3, 'days':  4, 'hours':   5},                                     relativedelta(years=2, months=3, days=4, hours=5)),
+                 ( {'years': 2, 'months': 3, 'days':  4, 'hours':   5,  'minutes': 22},                     relativedelta(years=2, months=3, days=4, hours=5, minutes=22)),
+                 ( {'years': 2, 'months': 3, 'days':  4, 'hours':   5,  'minutes': 22, 'seconds': 7},       relativedelta(years=2, months=3, days=4, hours=5, minutes=22, seconds=7)),
+                 ( {'years': 2, 'weeks':  1, 'hours': 5, 'minutes': 22, 'seconds': 7},                      relativedelta(years=2, weeks=1, hours=5, minutes=22, seconds=7)),
+
+            # Negative values:
+
+                 ( {'years':   -2},                                                                         relativedelta(years=-2)),
+                 ( {'months':  -3},                                                                         relativedelta(months=-3)),
+                 ( {'weeks':   -1},                                                                         relativedelta(weeks=-1)),
+                 ( {'hours':   -6},                                                                         relativedelta(hours=-6)),
+                 ( {'minutes': -23},                                                                        relativedelta(minutes=-23)),
+                 ( {'seconds': -15},                                                                        relativedelta(seconds=-15)),
+                 ( {'years': -2, 'months': -3},                                                             relativedelta(years=-2, months=-3)),
+                 ( {'years': -2, 'months': -3, 'days':  -4},                                                relativedelta(years=-2, months=-3, days=-4)),
+                 ( {'years': -2, 'months': -3, 'days':  -4, 'hours':   -5},                                 relativedelta(years=-2, months=-3, days=-4, hours=-5)),
+                 ( {'years': -2, 'months': -3, 'days':  -4, 'hours':   -5,  'minutes': -22},                relativedelta(years=-2, months=-3, days=-4, hours=-5, minutes=-22)),
+                 ( {'years': -2, 'months': -3, 'days':  -4, 'hours':   -5,  'minutes': -22, 'seconds': -7}, relativedelta(years=-2, months=-3, days=-4, hours=-5, minutes=-22, seconds=-7)),
+                 ( {'years': -2, 'weeks':  -1, 'hours': -5, 'minutes': -22, 'seconds': -7},                 relativedelta(years=-2, weeks=-1, hours=-5, minutes=-22, seconds=-7)),
         ]
 
-        for idx, (map_input, expected) in enumerate(test_cases):
+        for map_input, expected in test_cases:
             # construct the map string for the Cypher query
-            map_entries = []
-
             query = f"RETURN tostring(duration($d))"
+            query = f"RETURN duration($d)"
             result = self.graph.query(query, {'d': map_input})
-            actual = str(result.result_set[0][0])
+            actual = result.result_set[0][0]
+            self.env.assertEquals(actual, expected)
+
+    def test_duration_from_string(self):
+        test_cases = [
+                ('P1Y',            relativedelta(years=1,)),
+                ('P1Y2M',          relativedelta(years=1, months=2)),
+                ('P1Y2M3D',        relativedelta(years=1, months=2, days=3)),
+                ('P1Y2M3DT4H',     relativedelta(years=1, months=2, days=3, hours=4)),
+                ('P1Y2M3DT4H5M',   relativedelta(years=1, months=2, days=3, hours=4, minutes=5)),
+                ('P1Y2M3DT4H5M6S', relativedelta(years=1, months=2, days=3, hours=4, minutes=5, seconds=6))
+        ]
+
+        query = "RETURN duration($str)"
+        for str_input, expected in test_cases:
+            result = self.graph.query(query, {'str': str_input})
+            actual = result.result_set[0][0]
             self.env.assertEquals(actual, expected)
 
     def test_duration_components(self):

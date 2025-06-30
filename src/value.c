@@ -679,8 +679,8 @@ SIValue SIValue_Add
 	}
 
 	// temporal + duration
-	if (a_type & (SI_TEMPORAL | T_DURATION) &&
-	   (b_type & (SI_TEMPORAL | T_DURATION)) &&
+	if (a_type & SI_TEMPORAL &&
+	    b_type & SI_TEMPORAL &&
 	   (a_type == T_DURATION || b_type == T_DURATION)) {
 		return Temporal_AddDuration(a, b);
 	}
@@ -709,8 +709,8 @@ SIValue SIValue_Subtract
 
 	// temporal - duration
 	else if(unlikely(
-		(a_type & (SI_TEMPORAL | T_DURATION)) &&
-		(b_type == T_DURATION))) {
+		a_type & SI_TEMPORAL &&
+		b_type == T_DURATION)) {
 		return Temporal_SubDuration(a, b);
 	}
 
@@ -1259,7 +1259,6 @@ void SIValue_Free
 			break;
 		case T_NODE:
 		case T_EDGE:
-		case T_DURATION:
 			rm_free(v.ptrval);
 			break;
 		case T_ARRAY:

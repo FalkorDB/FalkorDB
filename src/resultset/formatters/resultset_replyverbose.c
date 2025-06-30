@@ -18,10 +18,7 @@ static void _ResultSet_VerboseReplyWithArray(RedisModuleCtx *ctx, SIValue array)
 static void _ResultSet_VerboseReplyWithNode(RedisModuleCtx *ctx, GraphContext *gc, Node *n);
 static void _ResultSet_VerboseReplyWithEdge(RedisModuleCtx *ctx, GraphContext *gc, Edge *e);
 static void _ResultSet_VerboseReplyWithVector(RedisModuleCtx *ctx, SIValue vector);
-static void _ResultSet_VerboseReplyWithDatetime(RedisModuleCtx *ctx, SIValue v);
-static void _ResultSet_VerboseReplyWithDate(RedisModuleCtx *ctx, SIValue v);
-static void _ResultSet_VerboseReplyWithTime(RedisModuleCtx *ctx, SIValue v);
-static void _ResultSet_VerboseReplyWithDuration(RedisModuleCtx *ctx, SIValue v);
+static void _ResultSet_VerboseReplyAsString(RedisModuleCtx *ctx, SIValue v);
 
 // this function has handling for all SIValue scalar types
 // the current RESP protocol only has unique support for:
@@ -34,56 +31,72 @@ static void _ResultSet_VerboseReplyWithSIValue
 ) {
 	switch(SI_TYPE(v)) {
 		case T_STRING:
-    case T_INTERN_STRING:
+		case T_INTERN_STRING:
 			RedisModule_ReplyWithStringBuffer(ctx, v.stringval,
 					strlen(v.stringval));
 			break;
+
 		case T_INT64:
 			RedisModule_ReplyWithLongLong(ctx, v.longval);
 			break;
+
 		case T_DOUBLE:
 			_ResultSet_ReplyWithRoundedDouble(ctx, v.doubleval);
 			break;
+
 		case T_BOOL:
 			if(v.longval != 0) RedisModule_ReplyWithStringBuffer(ctx, "true", 4);
 			else RedisModule_ReplyWithStringBuffer(ctx, "false", 5);
 			break;
+
 		case T_NULL:
 			RedisModule_ReplyWithNull(ctx);
 			break;
+
 		case T_NODE:
 			_ResultSet_VerboseReplyWithNode(ctx, gc, v.ptrval);
 			break;
+
 		case T_EDGE:
 			_ResultSet_VerboseReplyWithEdge(ctx, gc, v.ptrval);
 			break;
+
 		case T_ARRAY:
 			_ResultSet_VerboseReplyWithArray(ctx, v);
 			break;
+
 		case T_PATH:
 			_ResultSet_VerboseReplyWithPath(ctx, v);
 			break;
+
 		case T_MAP:
 			_ResultSet_VerboseReplyWithMap(ctx, v);
 			break;
+
 		case T_POINT:
 			_ResultSet_VerboseReplyWithPoint(ctx, v);
 			break;
+
 		case T_VECTOR_F32:
 			_ResultSet_VerboseReplyWithVector(ctx, v);
 			break;
+
 		case T_DATETIME:
-			_ResultSet_VerboseReplyWithDatetime(ctx, v);
+			_ResultSet_VerboseReplyAsString(ctx, v);
 			break;
+
 		case T_DATE:
-			_ResultSet_VerboseReplyWithDate(ctx, v);
+			_ResultSet_VerboseReplyAsString(ctx, v);
 			break;
+
 		case T_TIME:
-			_ResultSet_VerboseReplyWithTime(ctx, v);
+			_ResultSet_VerboseReplyAsString(ctx, v);
 			break;
+
 		case T_DURATION:
-			_ResultSet_VerboseReplyWithDuration(ctx, v);
+			_ResultSet_VerboseReplyAsString(ctx, v);
 			break;
+
 		default:
 			RedisModule_Assert("Unhandled value type" && false);
 	}
@@ -235,49 +248,7 @@ static void _ResultSet_VerboseReplyWithVector
 	rm_free(str);
 }
 
-static void _ResultSet_VerboseReplyWithDatetime
-(
-	RedisModuleCtx *ctx,
-	SIValue v
-) {
-	char buffer[32];
-	char *bufPtr = buffer;
-	size_t bufferLen = 32;
-	size_t bytesWrriten = 0;
-	DateTime_toString(&v, (char**)&bufPtr, &bufferLen, &bytesWrriten);
-
-	RedisModule_ReplyWithStringBuffer(ctx, bufPtr, strlen(bufPtr));
-}
-
-static void _ResultSet_VerboseReplyWithDate
-(
-	RedisModuleCtx *ctx,
-	SIValue v
-) {
-	char buffer[32];
-	char *bufPtr = buffer;
-	size_t bufferLen = 32;
-	size_t bytesWrriten = 0;
-	Date_toString(&v, (char**)&bufPtr, &bufferLen, &bytesWrriten);
-
-	RedisModule_ReplyWithStringBuffer(ctx, bufPtr, strlen(bufPtr));
-}
-
-static void _ResultSet_VerboseReplyWithTime
-(
-	RedisModuleCtx *ctx,
-	SIValue v
-) {
-	char buffer[32];
-	char *bufPtr = buffer;
-	size_t bufferLen = 32;
-	size_t bytesWrriten = 0;
-	Time_toString(&v, (char**)&bufPtr, &bufferLen, &bytesWrriten);
-
-	RedisModule_ReplyWithStringBuffer(ctx, bufPtr, strlen(bufPtr));
-}
-
-static void _ResultSet_VerboseReplyWithDuration
+static void _ResultSet_VerboseReplyAsString
 (
 	RedisModuleCtx *ctx,
 	SIValue v
@@ -286,7 +257,7 @@ static void _ResultSet_VerboseReplyWithDuration
 	char *bufPtr = buffer;
 	size_t bufferLen = 128;
 	size_t bytesWrriten = 0;
-	Duration_toString(&v, (char**)&bufPtr, &bufferLen, &bytesWrriten);
+	SIValue_ToString(v, (char**)&bufPtr, &bufferLen, &bytesWrriten);
 
 	RedisModule_ReplyWithStringBuffer(ctx, bufPtr, strlen(bufPtr));
 }

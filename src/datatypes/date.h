@@ -13,7 +13,7 @@ SIValue Date_now(void);
 // create a new date object from a ISO-8601 string time representation
 SIValue Date_fromString
 (
-	char *date_str  // date string representation
+	const char *date_str  // date string representation
 );
 
 // extract component from date objects

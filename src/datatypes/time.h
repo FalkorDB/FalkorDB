@@ -11,7 +11,7 @@ SIValue Time_now(void);
 // create a new time object from a ISO-8601 string time representation
 SIValue Time_fromString
 (
-	char *time_str  // time ISO-8601 string representation
+	const char *time_str  // time ISO-8601 string representation
 );
 
 // extract component from time objects

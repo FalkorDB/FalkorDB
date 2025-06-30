@@ -7,10 +7,12 @@
 #include "../value.h"
 #include "../util/rmalloc.h"
 
-#define _XOPEN_SOURCE
+#define _XOPEN_SOURCE  700 // needed for gmtime_r
+
 #include <time.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -23,7 +25,7 @@ static SIValue _create_date_from_tm
     // force UTC interpretation
     time_t ts = timegm(t);
 
-    return (SIValue) {.datetimeval = ts, .type = T_DATE, .allocation = M_NONE};
+	return SI_Date(ts);
 }
 
 // parse ordinal date: YYYYDDD
@@ -84,7 +86,7 @@ static bool _parse_week_date
 
     int jan4_wday = out->tm_wday;
     if (jan4_wday == 0) {
-        jan4_wday = 7;  // sunday is 7 in ISO week
+        jan4_wday = 7;  // Sunday is 7 in ISO week
     }
 
     int days_offset = (week - 1) * 7 + (weekday - jan4_wday);
@@ -102,7 +104,7 @@ SIValue Date_now(void) {
 // create a new date object from a ISO-8601 string time representation
 SIValue Date_fromString
 (
-	char *date_str  // date string representation
+	const char *date_str  // date string representation
 ) {
     struct tm t;
     memset(&t, 0, sizeof(struct tm));
@@ -172,7 +174,9 @@ bool Date_getComponent
 
     struct tm time;
     time_t rawtime = date->datetimeval;
-    gmtime_r(&rawtime, &time);
+	if(gmtime_r(&rawtime, &time) == NULL) {
+		return false;
+	}
 
     int year  = time.tm_year + 1900;
     int month = time.tm_mon + 1;      // 1–12
@@ -199,7 +203,7 @@ bool Date_getComponent
         struct tm temp = time;
         // adjust day to Thursday of the current week
         temp.tm_mday -= (wday + 6) % 7 - 3;
-        mktime(&temp);
+        timegm(&temp);
         int week = (temp.tm_yday / 7) + 1;
 
         if(strcasecmp(component, "week") == 0) {
@@ -246,7 +250,7 @@ void Date_toString
 	// get a tm object from time_t
 	struct tm time;
 	time_t rawtime = date->datetimeval;
-	gmtime_r(&rawtime, &time);
+	assert(gmtime_r(&rawtime, &time) != NULL);
 
 	// format the date and time up to seconds: 2025-04-14T06:08:21
 	*bytesWritten += strftime(*buf + *bytesWritten, *bufferLen,

@@ -34,7 +34,7 @@ void RdbLoadEdges_v18
 (
 	SerializerIO rdb,  // RDB
 	Graph *g,          // graph context
-	const uint64_t n   // virtual key capacity
+	const uint64_t n   // number of edges to decode
 );
 
 // decode deleted edges
