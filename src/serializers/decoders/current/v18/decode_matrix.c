@@ -8,7 +8,7 @@
 #include "../../../serializer_io.h"
 #include "../../../../graph/graphcontext.h"
 #include "../../../../graph/tensor/tensor.h"
-#include "../../../../graph//graph_statistics.h"
+#include "../../../../graph/graph_statistics.h"
 #include "../../../../graph/delta_matrix/delta_matrix.h"
 
 // decode tensors
@@ -44,8 +44,8 @@ static void _DecodeTensors
 	// decode and set tensors
 	for(uint64_t i = 0; i < n; i++) {
 		// read tensor i,j indicies
-		GrB_Index i = SerializerIO_ReadUnsigned(rdb);
-		GrB_Index j = SerializerIO_ReadUnsigned(rdb);
+		GrB_Index row = SerializerIO_ReadUnsigned(rdb);
+		GrB_Index col = SerializerIO_ReadUnsigned(rdb);
 
 		// read tensor blob
 		GrB_Index blob_size;
@@ -64,7 +64,7 @@ static void _DecodeTensors
 
 		// set tensor
 		uint64_t v = (uint64_t)(uintptr_t)SET_MSB(u);
-		info = GrB_Matrix_setElement_UINT64(A, v, i, j);
+		info = GrB_Matrix_setElement_UINT64(A, v, row, col);
 		ASSERT(info == GrB_SUCCESS);
 
 		rm_free(blob);
@@ -106,7 +106,7 @@ static GrB_Matrix _DecodeMatrix
 }
 
 // decode label matrices from rdb
-void RdbLoadLabelMatrices_v17
+void RdbLoadLabelMatrices_v18
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc   // graph context
@@ -147,7 +147,7 @@ void RdbLoadLabelMatrices_v17
 }
 
 // decode relationship matrices from rdb
-void RdbLoadRelationMatrices_v17
+void RdbLoadRelationMatrices_v18
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc   // graph context
@@ -197,7 +197,7 @@ void RdbLoadRelationMatrices_v17
 }
 
 // decode adjacency matrix
-void RdbLoadAdjMatrix_v17
+void RdbLoadAdjMatrix_v18
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc   // graph context
@@ -219,7 +219,7 @@ void RdbLoadAdjMatrix_v17
 }
 
 // decode labels matrix
-void RdbLoadLblsMatrix_v17
+void RdbLoadLblsMatrix_v18
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc   // graph context
