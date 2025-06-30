@@ -239,20 +239,19 @@ GrB_Info Delta_mxm_count
 	info = GrB_mxm(_C, NULL, NULL, semiring, A, _B, NULL);
 	ASSERT(info == GrB_SUCCESS);
 
-	// C -= (A * BDM) (The mask is used to help GBLAS, does not affect outcome).
-	info = GrB_mxm(_C, C, GrB_MINUS_UINT64, semiring, A, dm, GrB_DESC_S);
+	// C -= (A * BDM) 
+	info = GrB_mxm(_C, NULL, GrB_MINUS_UINT64, semiring, A, dm, NULL);
 	ASSERT(info == GrB_SUCCESS);
 
 	// C += (A * BDP)
 	info = GrB_mxm(_C, NULL, GrB_PLUS_UINT64, semiring, A, dp, NULL);
 	ASSERT(info == GrB_SUCCESS);
 
-	info = GrB_transpose(C, NULL, NULL, _C, GrB_DESC_T0);
+	info = GrB_Matrix_assign_BOOL(
+		C, _C, NULL, true, GrB_ALL, 0, GrB_ALL, 0, NULL);
 	ASSERT(info == GrB_SUCCESS);
-	GrB_free(&_C);
 
-	info = GrB_Matrix_select_BOOL(C, NULL, NULL, GrB_VALUEEQ_BOOL, C, true, NULL) ;
-	ASSERT(info == GrB_SUCCESS);
+	GrB_free(&_C);
 
 	return info;
 }
