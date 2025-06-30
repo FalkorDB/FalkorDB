@@ -34,7 +34,7 @@ static void Delta_Matrix_sync_deletions
 
 	GrB_Info info;
 
-	info = GrB_transpose(m, dm, GrB_NULL, m, GrB_DESC_RSCT0);
+	info = GrB_transpose(m, dm, NULL, m, GrB_DESC_RSCT0);
 	ASSERT(info == GrB_SUCCESS);
 
 	// clear delta minus

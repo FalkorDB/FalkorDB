@@ -45,7 +45,7 @@ GrB_Info Delta_eWiseAdd
 	GrB_Monoid_get_VOID(op, (void *) &biop, GxB_MONOID_OPERATOR);
 
 	GrB_Matrix_new(&DM_union, GrB_BOOL, nrows, ncols);
-	GxB_Global_Option_set(GxB_BURBLE, true);
+	// GxB_Global_Option_set(GxB_BURBLE, true);
 	
 	//--------------------------------------------------------------------------
 	// DM_union = ADM ∩ BDM 
@@ -92,17 +92,17 @@ GrB_Info Delta_eWiseAdd
 	//--------------------------------------------------------------------------
 	// CM <CM>+= CDP ----- Should be done inplace (currently is not GBLAS TODO)
 	//--------------------------------------------------------------------------
-	info = GrB_Matrix_assign(
-		CM, CM, biop, CDP, GrB_ALL, 0, GrB_ALL, 0 , GrB_DESC_S);
+	info = GrB_transpose(
+		CM, CM, biop, CDP, GrB_DESC_ST0);
 	ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
 	// CDP<!CM> = ADP + BDP ---- remove intersection with M
 	//--------------------------------------------------------------------------
-	info = GrB_Matrix_assign(
-		CDP, CM, NULL, CDP, GrB_ALL, 0, GrB_ALL, 0 , GrB_DESC_RSC);
+	info = GrB_transpose(
+		CDP, CM, NULL, CDP, GrB_DESC_RSCT0);
 	ASSERT(info == GrB_SUCCESS);
-	GxB_Global_Option_set(GxB_BURBLE, false);
+	// GxB_Global_Option_set(GxB_BURBLE, false);
 
 	Delta_Matrix_wait(C, false);
 	GrB_free(&DM_union);

@@ -46,11 +46,13 @@ Delta_Matrix _Eval_Mul
 	GrB_Type             ty;
 	UNUSED(info) ;
 
+	ASSERT(Delta_Matrix_Synced(res));
 	GrB_Matrix    res_m        = Delta_Matrix_M(res);
 	GrB_Matrix    A            = NULL;
 	bool          res_modified = false;
 	GrB_Semiring  semiring     = NULL;
 	uint          child_count  = AlgebraicExpression_ChildCount(exp);
+
 
 	for(uint i = 0; i < child_count; i++) {
 		c = CHILD_AT(exp, i) ;
@@ -64,17 +66,18 @@ Delta_Matrix _Eval_Mul
 			A = Delta_Matrix_M(M) ;
 			continue ;
 		}
-		Delta_Matrix_type(&ty, M);
-		semiring = (ty == GrB_BOOL)? GrB_LOR_LAND_SEMIRING_BOOL: any_alive;
-		info = Delta_mxm_identity(res_m, semiring, A, M);
-		ASSERT(info == GrB_SUCCESS);
-
-		// info = Delta_mxm_count(res_m, GxB_PLUS_PAIR_UINT64, A, M);
+		// Delta_Matrix_type(&ty, M);
+		// semiring = (ty == GrB_BOOL)? GrB_LOR_LAND_SEMIRING_BOOL: any_alive;
+		// info = Delta_mxm_identity(res_m, semiring, A, M);
 		// ASSERT(info == GrB_SUCCESS);
+
+		info = Delta_mxm_count(res_m, GxB_PLUS_PAIR_UINT64, A, M);
+		ASSERT(info == GrB_SUCCESS);
 		
 		res_modified = true ;
 		// setup for next iteration
 		A = res_m ;
+		GxB_fprint(res_m, GxB_SHORT, stdout);
 
 		// exit early if 'res' is empty 0 * A = 0
 		bool alive = false;
