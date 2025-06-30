@@ -36,15 +36,27 @@ GrB_Info Delta_eWiseAdd
 	GrB_Matrix   ADM        = DELTA_MATRIX_DELTA_MINUS(A);
 	GrB_Matrix   BDP        = DELTA_MATRIX_DELTA_PLUS(B);
 	GrB_Matrix   BDM        = DELTA_MATRIX_DELTA_MINUS(B);
-	GrB_Matrix   DM_union   = DELTA_MATRIX_DELTA_MINUS(B);
+	GrB_Matrix   DM_union   = NULL;
 	GrB_Matrix   dm_and_dp  = NULL;
 	GrB_BinaryOp biop       = NULL;
 
+	Delta_Matrix_nrows(&nrows, C);
+	Delta_Matrix_ncols(&ncols, C);
 	GrB_Monoid_get_VOID(op, (void *) &biop, GxB_MONOID_OPERATOR);
 
-
+	GrB_Matrix_new(&DM_union, GrB_BOOL, nrows, ncols);
 	GxB_Global_Option_set(GxB_BURBLE, true);
 	
+	//--------------------------------------------------------------------------
+	// DM_union = ADM ∩ BDM 
+	//--------------------------------------------------------------------------
+	info = GrB_Matrix_assign(
+		DM_union, BM, NULL, ADM, GrB_ALL, 0, GrB_ALL, 0 , GrB_DESC_SC);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_Matrix_assign(
+		DM_union, AM, GrB_ONEB_BOOL, BDM, GrB_ALL, 0, GrB_ALL, 0 , GrB_DESC_SC);
+	ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
 	// M: CM = AM + BM ----- The bulk of the work.
@@ -53,13 +65,6 @@ GrB_Info Delta_eWiseAdd
 	ASSERT(info == GrB_SUCCESS);
 	// don't use again, could have been overwritten.
 	AM = BM = NULL;
-
-	//--------------------------------------------------------------------------
-	// DM_union = ADM ∩ BDM 
-	//--------------------------------------------------------------------------
-	info = GrB_Matrix_eWiseAdd_BinaryOp(
-		DM_union, CM, NULL, GrB_ONEB_BOOL, ADM, BDM, GrB_DESC_SC);
-	ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
 	// CDP = ADP + BDP ---- Must later remove intersection with M
@@ -94,10 +99,12 @@ GrB_Info Delta_eWiseAdd
 	//--------------------------------------------------------------------------
 	// CDP<!CM> = ADP + BDP ---- remove intersection with M
 	//--------------------------------------------------------------------------
-	info = GrB_Matrix_assign(CDP, CM, NULL, CDP, GrB_ALL, 0, GrB_ALL, 0 , GrB_DESC_SC);
+	info = GrB_Matrix_assign(
+		CDP, CM, NULL, CDP, GrB_ALL, 0, GrB_ALL, 0 , GrB_DESC_RSC);
 	ASSERT(info == GrB_SUCCESS);
 	GxB_Global_Option_set(GxB_BURBLE, false);
 
 	Delta_Matrix_wait(C, false);
+	GrB_free(&DM_union);
 	return info;
 }

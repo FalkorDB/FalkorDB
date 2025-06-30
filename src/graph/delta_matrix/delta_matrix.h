@@ -334,7 +334,7 @@ GrB_Info Delta_eWiseAdd
     const Delta_Matrix B  // second input: matrix B
 );
 
-// Does not look at dm, just applies on m and dp.
+// applies on m and dp
 GrB_Info Delta_Matrix_apply         // C = op(A)
 (
     Delta_Matrix C,                 // input/output matrix for results

@@ -767,7 +767,7 @@ void Tensor_free
 	}
 
 	// apply _free_vectors on every entry of the tensor
-	Delta_Matrix_apply(t, unaryop, t);
+	info = Delta_Matrix_apply(t, unaryop, t);
 	ASSERT(info == GrB_SUCCESS);
 
 	// free tensor internals
