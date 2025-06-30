@@ -43,3 +43,10 @@ void Delta_Matrix_validate
 (
 	const Delta_Matrix C
 );
+
+#define Delta_Matrix_print(C, p)                                          \
+{                                                                         \
+	GxB_Matrix_fprint(DELTA_MATRIX_M(C), #C, p, stdout);                  \
+	GxB_Matrix_fprint(DELTA_MATRIX_DELTA_PLUS(C), #C "-DP", p, stdout);   \
+	GxB_Matrix_fprint(DELTA_MATRIX_DELTA_MINUS(C), #C "-DM", p, stdout);  \
+}

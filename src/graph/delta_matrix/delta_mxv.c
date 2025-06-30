@@ -17,10 +17,8 @@ GrB_Info Delta_mxv
     GrB_BinaryOp monOP = NULL;
     GrB_Semiring_get_VOID(semiring, &monOP, GxB_MONOID_OPERATOR);
 
-    if(c == u) //TODO: allocate _c (temp vector) to handle
-        return GrB_NOT_IMPLEMENTED;
-    if(accum && accum != monOP) //TODO: allocate _c (temp vector) to handle
-        return GrB_NOT_IMPLEMENTED;
+    ASSERT(c != u); //TODO: allocate _c (temp vector) to handle
+    ASSERT(accum == NULL || accum == monOP); //TODO: allocate _c (temp vector) to handle
 
     GrB_Info info = GrB_mxv(
         c, mask, accum, semiring, DELTA_MATRIX_M(A), u, desc) ; 

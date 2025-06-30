@@ -138,9 +138,8 @@ GrB_Info Delta_Matrix_export_structure
 	//--------------------------------------------------------------------------
 	// perform deletions if needed
 	//--------------------------------------------------------------------------
-
 	if(deletions) {
-		info = GrB_transpose(a, dm, NULL, a, GrB_DESC_SC);
+		info = GrB_transpose(a, dm, NULL, a, GrB_DESC_RSCT0);
 		ASSERT(info == GrB_SUCCESS);
 	}
 

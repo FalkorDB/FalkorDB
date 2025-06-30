@@ -29,10 +29,10 @@ GrB_Info Delta_mxm
 	// (A * (M + 'delta-plus'))<!'delta-minus'>
 
 	// validate A doesn't contains entries in either delta-plus or delta-minus
-	assert(Delta_Matrix_Synced(A));
+	ASSERT(Delta_Matrix_Synced(A));
 
 	// validate C doesn't contains entries in either delta-plus or delta-minus
-	assert(Delta_Matrix_Synced(C));
+	ASSERT(Delta_Matrix_Synced(C));
 
 	GrB_Info info;
 	GrB_Index nrows;     // number of rows in result matrix
@@ -225,13 +225,10 @@ GrB_Info Delta_mxm_count
 	GrB_Matrix  dp       =  DELTA_MATRIX_DELTA_PLUS(B);
 	GrB_Matrix  dm       =  DELTA_MATRIX_DELTA_MINUS(B);
 	GrB_Matrix  _C       =  NULL; 
-	GrB_Type    t        =  NULL;
-	bool        aliased  =  C == A;
 
 	GrB_Matrix_nrows(&nrows, C);
 	GrB_Matrix_ncols(&ncols, C);
 	GrB_Matrix_nvals(&dp_nvals, dp);
-	GxB_Matrix_type (&t, C);
 	info = GrB_Matrix_new(&_C, GrB_UINT64, nrows, ncols);
 	ASSERT(info == GrB_SUCCESS);
 
@@ -248,7 +245,7 @@ GrB_Info Delta_mxm_count
 	ASSERT(info == GrB_SUCCESS);
 
 	info = GrB_Matrix_assign_BOOL(
-		C, _C, NULL, true, GrB_ALL, 0, GrB_ALL, 0, NULL);
+		C, _C, NULL, true, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_R);
 	ASSERT(info == GrB_SUCCESS);
 
 	GrB_free(&_C);

@@ -27,7 +27,7 @@ GrB_Info Delta_Matrix_apply         // C = op(A)
     info = GrB_Matrix_apply(CDP, NULL, NULL, op, ADP, NULL) ; 
     if(info != GrB_SUCCESS) return info;
 
-    if(C != A)
+    if(C != A) // copy the DM matricies if not alliased.
         info = GrB_transpose(CDM, NULL, NULL, ADM, GrB_DESC_T0);
         
     return info;
