@@ -328,11 +328,23 @@ GrB_Info Delta_mxv_count
 // C = A + B
 GrB_Info Delta_eWiseAdd
 (
-    Delta_Matrix C,       // input/output matrix for results
-    const GrB_Monoid op,  // defines '+' for T=A+B
-    const Delta_Matrix A, // first input:  matrix A
-    const Delta_Matrix B  // second input: matrix B
-);
+    Delta_Matrix C,        // input/output matrix for results
+    const GrB_Monoid op,   // defines '+' for T=A+B
+    const Delta_Matrix A,  // first input:  matrix A
+    const Delta_Matrix B   // second input: matrix B
+) ;
+
+// zombies should be the monoid's identity value.
+// C = A + B
+GrB_Info Delta_eWiseUnion
+(
+    Delta_Matrix C,          // input/output matrix for results
+    const GrB_BinaryOp op,   // defines '+' for T=A+B
+    const Delta_Matrix A,    // first input:  matrix A
+	const GrB_Scalar alpha,  // second input: empty value of matrix A
+    const Delta_Matrix B,    // three input: matrix B
+	const GrB_Scalar beta    // fourth input: empty value of matrix B
+) ;
 
 // applies on m and dp
 GrB_Info Delta_Matrix_apply         // C = op(A)
