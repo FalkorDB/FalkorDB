@@ -235,7 +235,7 @@ int RedisModule_OnLoad
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.LIST", Graph_List, "readonly", 0, 0,
+	if(RedisModule_CreateCommand(ctx, "graph.LIST", Graph_List, "readonly", 0, 2,
 								 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
