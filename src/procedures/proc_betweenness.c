@@ -34,6 +34,7 @@ typedef struct {
 	GrB_Vector centrality; // centrality(i): betweeness centrality of node i
 	GrB_Info info;         // iterator state
 	GxB_Iterator it;       // centrality iterator
+	GxB_Iterator bc_it;    // centrality iterator
 	Node node;             // node
 	SIValue output[2];     // array with up to 2 entries [node, score]
 	SIValue *yield_node;   // yield node
@@ -339,9 +340,9 @@ ProcedureResult Proc_BetweennessInvoke
 
 	GrB_Matrix A;
 	GrB_Info info;
-
-	info = Build_Matrix(&A, &pdata->nodes, g, lbls, array_len(lbls), rels,
-			array_len(rels), false, true);
+	
+	info = get_sub_adjecency_matrix(&A, &pdata->nodes, g, lbls, array_len(lbls), rels,
+			array_len(rels), false);
 	ASSERT(info == GrB_SUCCESS);
 
 	// free build matrix inputs
@@ -397,6 +398,15 @@ ProcedureResult Proc_BetweennessInvoke
 
     pdata->info = GxB_Vector_Iterator_seek(pdata->it, 0);
 
+	info = GxB_Iterator_new(&pdata->bc_it);
+	ASSERT(info == GrB_SUCCESS);
+
+	// iterate over participating nodes
+	info = GxB_Vector_Iterator_attach(pdata->bc_it, pdata->centrality, NULL);
+	ASSERT(info == GrB_SUCCESS);
+
+    pdata->info = GxB_Vector_Iterator_seek(pdata->bc_it, 0);
+
 	return PROCEDURE_OK;
 }
 
@@ -409,6 +419,7 @@ SIValue *Proc_BetweennessStep
 	ASSERT(ctx->privateData != NULL);
 
 	Betweenness_Context *pdata = (Betweenness_Context *)ctx->privateData;
+	double score;
 
 	// retrieve node from graph
 	GrB_Index node_id;
@@ -422,15 +433,17 @@ SIValue *Proc_BetweennessStep
 
 		// move to the next entry in the components vector
 		pdata->info = GxB_Vector_Iterator_next(pdata->it);
+		pdata->info = GxB_Vector_Iterator_next(pdata->bc_it);
 	}
 
 	// depleted
 	if(pdata->info == GxB_EXHAUSTED) {
 		return NULL;
 	}
-
+	score = GxB_Iterator_get_FP64(pdata->bc_it);
 	// prep for next call to Proc_BetweennessStep
 	pdata->info = GxB_Vector_Iterator_next(pdata->it);
+	pdata->info = GxB_Vector_Iterator_next(pdata->bc_it);
 
 	//--------------------------------------------------------------------------
 	// set outputs
@@ -441,12 +454,6 @@ SIValue *Proc_BetweennessStep
 	}
 
 	if(pdata->yield_score) {
-		double score;
-		GrB_Info info = GrB_Vector_extractElement_FP64(&score,
-				pdata->centrality, node_id);
-
-		ASSERT(info == GrB_SUCCESS);
-
 		*pdata->yield_score = SI_DoubleVal(score);
 	}
 
@@ -462,6 +469,7 @@ ProcedureResult Proc_BetweennessFree
 		Betweenness_Context *pdata = ctx->privateData;
 
 		if(pdata->it         != NULL) GrB_free(&pdata->it);
+		if(pdata->bc_it      != NULL) GrB_free(&pdata->bc_it);
 		if(pdata->nodes      != NULL) GrB_free(&pdata->nodes);
 		if(pdata->centrality != NULL) GrB_free(&pdata->centrality);
 
