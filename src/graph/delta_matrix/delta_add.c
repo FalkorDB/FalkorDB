@@ -41,6 +41,15 @@ GrB_Info Delta_eWiseAdd
 	GrB_Matrix   dm_and_dp  = NULL;
 	GrB_BinaryOp biop       = NULL;
 
+	if(Delta_Matrix_Synced(A) && Delta_Matrix_Synced(B))
+	{
+		GrB_Matrix_clear(CDM);
+		GrB_Matrix_clear(CDP);
+		GrB_Matrix_eWiseAdd_Monoid(CM, NULL, NULL, op, AM, BM, NULL);
+	}
+	// TODO: skip certain ops if no removals
+	// TODO: skip certain ops if no plus
+
 	Delta_Matrix_nrows(&nrows, C);
 	Delta_Matrix_ncols(&ncols, C);
 	GrB_Monoid_get_VOID(op, (void *) &biop, GxB_MONOID_OPERATOR);
@@ -93,9 +102,16 @@ GrB_Info Delta_eWiseAdd
 	//--------------------------------------------------------------------------
 	// CM <CM>+= CDP ----- Should be done inplace (currently is not GBLAS TODO)
 	//--------------------------------------------------------------------------
-	info = GrB_transpose(
-		CM, CM, biop, CDP, GrB_DESC_ST0);
-	ASSERT(info == GrB_SUCCESS);
+
+	// if the operator does not care which value it returns (CM or CDP) the next 
+	// step is unnessecary.
+	if(biop != GrB_ONEB_BOOL && biop != GxB_ANY_BOOL && 
+		biop != GrB_ONEB_UINT64 && biop != GxB_ANY_UINT64)
+	{
+		info = GrB_transpose(
+			CM, CM, biop, CDP, GrB_DESC_ST0);
+		ASSERT(info == GrB_SUCCESS);
+	}
 
 	//--------------------------------------------------------------------------
 	// CDP<!CM> = ADP + BDP ---- remove intersection with M
@@ -130,6 +146,9 @@ GrB_Info Delta_eWiseUnion
 	GrB_Info  info;
 	GrB_Index nrows;
 	GrB_Index ncols;
+	GrB_Index adm_vals = 0;
+	GrB_Index bdm_vals = 0;
+	GrB_Index dm_vals  = 0;
 
 	GrB_Matrix   CM         = DELTA_MATRIX_M(C);
 	GrB_Matrix   CDP        = DELTA_MATRIX_DELTA_PLUS(C);
@@ -143,12 +162,22 @@ GrB_Info Delta_eWiseUnion
 	GrB_Matrix   DM_union   = NULL;
 	GrB_Matrix   dm_and_dp  = NULL;
 
+	if(Delta_Matrix_Synced(A) && Delta_Matrix_Synced(B))
+	{
+		GrB_Matrix_clear(CDM);
+		GrB_Matrix_clear(CDP);
+		return GxB_Matrix_eWiseUnion(
+			CM, NULL, NULL, op, AM, alpha, BM, beta, NULL);
+	}
 	Delta_Matrix_nrows(&nrows, C);
 	Delta_Matrix_ncols(&ncols, C);
 
 	GrB_Matrix_new(&DM_union, GrB_BOOL, nrows, ncols);
 	// GxB_Global_Option_set(GxB_BURBLE, true);
 	
+	// TODO: skip certain ops if no removals
+	// TODO: skip certain ops if no plus
+
 	//--------------------------------------------------------------------------
 	// DM_union = ADM ∩ BDM 
 	//--------------------------------------------------------------------------
@@ -196,10 +225,12 @@ GrB_Info Delta_eWiseUnion
 	//--------------------------------------------------------------------------
 	// CM <CM>+= CDP ----- Should be done inplace (currently is not GBLAS TODO)
 	//--------------------------------------------------------------------------
-	// FIXME this op should maybe be fed in by the user.
-	info = GrB_transpose(
-		CM, CM, GrB_LOR, CDP, GrB_DESC_ST0);
-	ASSERT(info == GrB_SUCCESS);
+	// FIXME. Currently unneeded because build_matrix uses ONEB_BOOL.
+	// the operator would need to be passed seperately the caller
+	// since it may not be the same as the union op.
+	// info = GrB_transpose(
+	// 	CM, CM, GrB_LOR, CDP, GrB_DESC_ST0);
+	// ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
 	// CDP<!CM> = ADP + BDP ---- remove intersection with M

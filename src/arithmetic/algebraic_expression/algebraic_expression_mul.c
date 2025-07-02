@@ -77,7 +77,6 @@ Delta_Matrix _Eval_Mul
 		res_modified = true ;
 		// setup for next iteration
 		A = res_m ;
-		GxB_fprint(res_m, GxB_SHORT, stdout);
 
 		// exit early if 'res' is empty 0 * A = 0
 		bool alive = false;
