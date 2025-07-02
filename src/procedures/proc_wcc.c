@@ -238,13 +238,8 @@ ProcedureResult Proc_WCCInvoke
 	bool compact = true;
 
 	// TODO: think of a better name
-	double tic[2];
-	simple_tic(tic);
 	info = get_sub_adjecency_matrix(&A, &pdata->N, g, lbls, array_len(lbls), rels,
 			array_len(rels), sym);
-			
-	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING, 
-			"Build time: %f", simple_toc(tic));
 
 	array_free(lbls);
 	array_free(rels);
