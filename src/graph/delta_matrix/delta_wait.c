@@ -33,9 +33,13 @@ static void Delta_Matrix_sync_deletions
 	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(C);
 
 	GrB_Info info;
-
-	info = GrB_transpose(m, dm, NULL, m, GrB_DESC_RSCT0);
+	GrB_Index nvals;
+	info = GrB_Matrix_nvals(&nvals, dm);
 	ASSERT(info == GrB_SUCCESS);
+	if(nvals > 0) { //shortcut if no vals
+		info = GrB_transpose(m, dm, NULL, m, GrB_DESC_RSCT0);
+		ASSERT(info == GrB_SUCCESS);
+	}
 
 	// clear delta minus
 	info = GrB_Matrix_clear(dm);
@@ -52,17 +56,16 @@ static void Delta_Matrix_sync_additions
 	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(C);
 
 	GrB_Info info;
-	GrB_Index nrows;
-	GrB_Index ncols;
+	GrB_Index nvals;
 
-	info = GrB_Matrix_nrows(&nrows, m);
-	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_ncols(&ncols, m);
-	ASSERT(info == GrB_SUCCESS);
 
-	info = GrB_Matrix_assign(m, dp, NULL, dp, GrB_ALL, nrows, GrB_ALL, ncols,
-		GrB_DESC_S);
+	info = GrB_Matrix_nvals(&nvals, dp);
 	ASSERT(info == GrB_SUCCESS);
+	if(nvals > 0) { //shortcut if no vals
+		info = GrB_Matrix_assign(m, dp, NULL, dp, GrB_ALL, 0, GrB_ALL, 0,
+			GrB_DESC_S);
+		ASSERT(info == GrB_SUCCESS);
+	}
 
 	// clear delta plus
 	info = GrB_Matrix_clear(dp);
