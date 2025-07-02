@@ -255,14 +255,9 @@ ProcedureResult Proc_CDLPInvoke
 	//--------------------------------------------------------------------------
 	// build adjacency matrix on which we'll run CDLP
 	//--------------------------------------------------------------------------
-	double tic[2];
-	simple_tic(tic);
 	GrB_Matrix A = NULL;
 	get_sub_adjecency_matrix(&A, &pdata->nodes, g, lbls, array_len(lbls), rels,
 			array_len(rels), true);
-	double bm_time = simple_toc(tic);
-	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING, 
-			"Build time: %f", bm_time);
 	// free build matrix inputs
 	if(lbls != NULL) array_free(lbls);
 	if(rels != NULL) array_free(rels);
@@ -279,11 +274,8 @@ ProcedureResult Proc_CDLPInvoke
 	ASSERT(info == GrB_SUCCESS);
 
 
-	simple_tic(tic);
 	GrB_Info cdlp_res = LAGraph_cdlp(&pdata->communities, G, maxIterations, msg);
-	double cdlp_time = simple_toc(tic);
-	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING, 
-			"CDLP time: %f", cdlp_time);
+	
 	info = LAGraph_Delete(&G, msg);
 	ASSERT(info == GrB_SUCCESS);
 
