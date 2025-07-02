@@ -280,7 +280,7 @@ GrB_Info get_sub_adjecency_matrix
 	return info;
 }
 
-#if 1
+#if 0
 // compose multiple label & relation matrices into a single matrix
 // L = L0 U L1 U ... Lm
 // A = L * (R0 U R1 U ... Rn) * L
