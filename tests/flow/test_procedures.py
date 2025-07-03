@@ -318,7 +318,7 @@ class testProcedures(FlowTestsBase):
         # The following two procedure are a part of the expected results
         expected_result = [["db.labels", "READ"], ["db.idx.fulltext.createNodeIndex", "WRITE"],
                            ["db.propertyKeys", "READ"], ["dbms.procedures", "READ"], ["db.relationshipTypes", "READ"],
-                           ["algo.BFS", "READ"], ["algo.pageRank", "READ"],  ['algo.MSF', 'READ'], 
+                           ["algo.BFS", "READ"], ["algo.pageRank", "READ"],  ['algo.MST', 'READ'], 
                            ["db.idx.fulltext.queryNodes", "READ"], ["db.idx.fulltext.drop", "WRITE"]]
         for res in expected_result:
             self.env.assertContains(res, actual_resultset)
@@ -361,7 +361,7 @@ class testProcedures(FlowTestsBase):
         # Yield results of procedure in a non-default sequence
         actual_resultset = self.graph.query("CALL dbms.procedures() YIELD mode, name RETURN mode, name ORDER BY name").result_set
         expected_result = [["READ",  "algo.BFS"],
-                           ['READ',  "algo.MSF"],
+                           ['READ',  "algo.MST"],
                            ['READ',  "algo.SPpaths"],
                            ['READ',  "algo.SSpaths"],
                            ["READ",  "algo.WCC"],

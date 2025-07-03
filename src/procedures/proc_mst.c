@@ -7,7 +7,7 @@
 #include "LAGraphX.h"
 #include "GraphBLAS.h"
 
-#include "proc_msf.h"
+#include "proc_mst.h"
 #include "../value.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
@@ -17,17 +17,18 @@
 #include "./utility/internal.h"
 #include "../graph/graphcontext.h"
 
-// CALL algo.MSF({}) YIELD edge, weight
-// CALL algo.MSF(NULL) YIELD edge, weight
-// CALL algo.MSF({nodeLabels: ['L', 'P']}) YIELD edge, weight
-// CALL algo.MSF({relationshipTypes: ['R', 'E']}) YIELD edge, weight
-// CALL algo.MSF({nodeLabels: ['L'], relationshipTypes: ['E'], weightAttribute: 'cost'}) YIELD edge, weight
-// CALL algo.MSF({nodeLabels: ['L'], objective: minimum})
+// CALL algo.MST({}) YIELD edge, weight
+// CALL algo.MST(NULL) YIELD edge, weight
+// CALL algo.MST({nodeLabels: ['L', 'P']}) YIELD edge, weight
+// CALL algo.MST({relationshipTypes: ['R', 'E']}) YIELD edge, weight
+// CALL algo.MST({nodeLabels: ['L'], relationshipTypes: ['E'], weightAttribute: 
+//      'cost', objective: 'maximum'}) YIELD edge, weight
+// CALL algo.MST({nodeLabels: ['L'], objective: 'minimum'})
 
 typedef struct {
 	Graph *g;              	// graph
-	GrB_Matrix tree;		// The MSF
-	GrB_Matrix w_tree;		// The weighted MSF
+	GrB_Matrix tree;		// The MST
+	GrB_Matrix w_tree;		// The weighted MST
 	GrB_Vector nodes; 	   	// nodes participating in computation
 	int *relationIDs;       // edge type(s) to traverse.
 	int relationCount;      // length of relationIDs.
@@ -40,22 +41,16 @@ typedef struct {
 	// SIValue *yield_node;   	// nodes 
 	SIValue *yield_edge;   	// edges
 	SIValue *yield_weight; 	// edge weights
-} MSF_Context;
+} MST_Context;
 
 // process procedure yield
 static void _process_yield
 (
-	MSF_Context *ctx,
+	MST_Context *ctx,
 	const char **yield
 ) {
 	int idx = 0;
 	for(uint i = 0; i < array_len(yield); i++) {
-		// if(strcasecmp("node", yield[i]) == 0) {
-		// 	ctx->yield_node = ctx->output + idx;
-		// 	idx++;
-		// 	continue;
-		// }
-
 		if(strcasecmp("edge", yield[i]) == 0) {
 			ctx->yield_edge = ctx->output + idx;
 			idx++;
@@ -83,8 +78,8 @@ static bool _read_config
 	// expecting configuration to be a map
 	ASSERT(lbls            != NULL);
 	ASSERT(rels            != NULL);
-	ASSERT(weightAtt      != NULL);
-	ASSERT(maxSF   	       != NULL);
+	ASSERT(weightAtt       != NULL);
+	ASSERT(maxSF           != NULL);
 	ASSERT(SI_TYPE(config) == T_MAP);
 
 	// set outputs to NULL
@@ -97,7 +92,7 @@ static bool _read_config
 	uint n = Map_KeyCount(config);
 	if(n > 4) {
 		// error config contains unknown key
-		ErrorCtx_SetError("invalid msf configuration");
+		ErrorCtx_SetError("invalid mst configuration");
 		return false;
 	}
 
@@ -108,13 +103,13 @@ static bool _read_config
 
 	if(MAP_GETCASEINSENSITIVE(config, "nodeLabels", v)) {
 		if(SI_TYPE(v) != T_ARRAY) {
-			ErrorCtx_SetError("msf configuration, 'nodeLabels' should be an array of strings");
+			ErrorCtx_SetError("mst configuration, 'nodeLabels' should be an array of strings");
 			goto error;
 		}
 
 		if(!SIArray_AllOfType(v, T_STRING)) {
 			// error
-			ErrorCtx_SetError("msf configuration, 'nodeLabels' should be an array of strings");
+			ErrorCtx_SetError("mst configuration, 'nodeLabels' should be an array of strings");
 			goto error;
 		}
 
@@ -141,12 +136,12 @@ static bool _read_config
 
 	if(MAP_GETCASEINSENSITIVE(config, "relationshipTypes", v)) {
 		if(SI_TYPE(v) != T_ARRAY) {
-			ErrorCtx_SetError("msf configuration, 'relationshipTypes' should be an array of strings");
+			ErrorCtx_SetError("mst configuration, 'relationshipTypes' should be an array of strings");
 			goto error;
 		}
 
 		if(!SIArray_AllOfType(v, T_STRING)) {
-			ErrorCtx_SetError("msf configuration, 'relationshipTypes' should be an array of strings");
+			ErrorCtx_SetError("mst configuration, 'relationshipTypes' should be an array of strings");
 			goto error;
 		}
 
@@ -172,21 +167,21 @@ static bool _read_config
 	}
 	if(MAP_GETCASEINSENSITIVE(config, "weightAttribute", v)) {
 		if(SI_TYPE(v) != T_STRING) {
-			ErrorCtx_SetError("msf configuration, 'weightAttribute' should be a string");
+			ErrorCtx_SetError("mst configuration, 'weightAttribute' should be a string");
 			goto error;
 		}
 
 		const char *relation = v.stringval;
 		*weightAtt = GraphContext_GetAttributeID(gc, relation);
 		if(*weightAtt == ATTRIBUTE_ID_NONE) {
-			ErrorCtx_SetError("msf configuration, unknown attribute-type %s", relation);
+			ErrorCtx_SetError("mst configuration, unknown attribute-type %s", relation);
 			goto error;
 		}
 		match_fields++;
 	}
 	if(MAP_GETCASEINSENSITIVE(config, "objective", v)) {
 		if(SI_TYPE(v) != T_STRING) {
-			ErrorCtx_SetError("msf configuration, 'objective' should be a string");
+			ErrorCtx_SetError("mst configuration, 'objective' should be a string");
 			goto error;
 		}
 		const char *objective = v.stringval;
@@ -195,14 +190,14 @@ static bool _read_config
 		else if(strncasecmp(objective, "max", 3) == 0)
 			*maxSF = true;
 		else{
-			ErrorCtx_SetError("msf configuration, unknown objective %s", objective);
+			ErrorCtx_SetError("mst configuration, unknown objective %s", objective);
 			goto error;
 		}
 		match_fields++;
 	}
 
 	if(n != match_fields) {
-		ErrorCtx_SetError("msf configuration contains unknown key");
+		ErrorCtx_SetError("mst configuration contains unknown key");
 		goto error;
 	}
 
@@ -224,14 +219,14 @@ error:
 
 
 // invoke the procedure
-ProcedureResult Proc_MSFInvoke
+ProcedureResult Proc_MSTInvoke
 (
 	ProcedureCtx *ctx,    // procedure context
 	const SIValue *args,  // procedure arguments
 	const char **yield    // procedure outputs
 ) {
 	// expecting a single argument
-	size_t l = array_len((SIValue *)args);
+	size_t l = array_len((SIValue *) args);
 
 	if(l > 1) return PROCEDURE_ERR;
 
@@ -248,11 +243,11 @@ ProcedureResult Proc_MSFInvoke
 	if(t != T_MAP) {
 		SIValue_Free(config);
 
-		ErrorCtx_SetError("invalid argument to algo.MSF");
+		ErrorCtx_SetError("invalid argument to algo.MST");
 		return PROCEDURE_ERR;
 	}
 
-	// read MSF invoke configuration
+	// read MST invoke configuration
 	// {
 	//	nodeLabels: ['A', 'B'],
 	//	relationshipTypes: ['R'],
@@ -284,7 +279,7 @@ ProcedureResult Proc_MSFInvoke
 	//--------------------------------------------------------------------------
 
 	Graph *g = QueryCtx_GetGraph();
-	MSF_Context *pdata = rm_calloc(1, sizeof(MSF_Context));
+	MST_Context *pdata = rm_calloc(1, sizeof(MST_Context));
 
 	pdata->g              = g;
 	pdata->weight_prop    = weightAtt;
@@ -309,30 +304,31 @@ ProcedureResult Proc_MSFInvoke
 	// if(rels != NULL) array_free(rels);
 
 	//--------------------------------------------------------------------------
-	// run MSF centrality
+	// run MST centrality
 	//--------------------------------------------------------------------------
 
-	// Make weights negative if looking for Maximum Spanning Tree
-	if(maxSF)
-	{
+	if(maxSF) { // if we are optimizing for the max, make weights negative.
 		info = GrB_Matrix_apply(A_w, NULL, NULL, GrB_AINV_FP64, A_w, NULL);
 		ASSERT(info == GrB_SUCCESS);
 	}
+
 	char msg[LAGRAPH_MSG_LEN];
 	// execute Minimum Spanning Forest
-	GrB_Info msf_res =
+	GrB_Info mst_res =
 		LAGraph_msf(&pdata->w_tree, A_w, false, msg);
-	if(msf_res != GrB_SUCCESS) {
+
+	if(mst_res != GrB_SUCCESS) {
 		GrB_free(&A);
 		GrB_free(&A_w);
 		return PROCEDURE_ERR;
 	}
-	if(maxSF)
-	{
+
+	if(maxSF) { // if we are optimizing for the max, make weights negative.
 		info = GrB_Matrix_apply(
 			pdata->w_tree, NULL, NULL, GrB_AINV_FP64, pdata->w_tree, NULL) ;
 		ASSERT(info == GrB_SUCCESS);
 	}
+
 	GrB_Index n;
 	info = GrB_Matrix_nrows(&n, pdata->w_tree);
 	ASSERT(info == GrB_SUCCESS);
@@ -347,7 +343,8 @@ ProcedureResult Proc_MSFInvoke
 	
 	// clean up algorithm inputs
 	info = GrB_free(&A_w);
-	info |= GrB_free(&A);
+	ASSERT(info == GrB_SUCCESS);
+	info = GrB_free(&A);
 	ASSERT(info == GrB_SUCCESS);
 	
 	//--------------------------------------------------------------------------
@@ -366,13 +363,13 @@ ProcedureResult Proc_MSFInvoke
 
 // yield edge and its weight.
 // yields NULL if there are no additional edges to return
-SIValue *Proc_MSFStep
+SIValue *Proc_MSTStep
 (
 	ProcedureCtx *ctx  // procedure context
 ) {
 	ASSERT(ctx->privateData != NULL);
 
-	MSF_Context *pdata = (MSF_Context *)ctx->privateData;
+	MST_Context *pdata = (MST_Context *)ctx->privateData;
 
 	// depleted
 	if(pdata->info == GxB_EXHAUSTED) {
@@ -402,13 +399,18 @@ SIValue *Proc_MSFStep
 		pdata->edge.src_id = (NodeID) node_i;
 		pdata->edge.dest_id = (NodeID) node_j;
 		pdata->edge.relationID = GRAPH_UNKNOWN_RELATION;
-		if(pdata->relationCount > 0) {
+
+		if(pdata->relationCount > 0) { 
+			// if relation types were specified, find the relation the edge 
+			// belongs to.
 			for(RelationID relID = 0; relID < pdata->relationCount; relID++) {
 				if(Graph_CheckAndSetEdgeRelationID(
 					pdata->g, &pdata->edge, pdata->relationIDs[relID])) {
 					break;
 				}
 			}
+
+			// if the relation was not found, try switching the edge direction
 			if(pdata->edge.relationID == GRAPH_UNKNOWN_RELATION){
 				pdata->edge.src_id = (NodeID) node_j;
 				pdata->edge.dest_id = (NodeID) node_i;
@@ -420,7 +422,11 @@ SIValue *Proc_MSFStep
 				}
 			}
 		} else {
+			// if not relation was specified, search all relations
 			Graph_FindAndSetEdgeRelationID(pdata->g, &pdata->edge);
+
+
+			// if the relation was not found, try switching the edge direction
 			if(pdata->edge.relationID == GRAPH_UNKNOWN_RELATION){
 				pdata->edge.src_id = (NodeID) node_j;
 				pdata->edge.dest_id = (NodeID) node_i;
@@ -428,56 +434,60 @@ SIValue *Proc_MSFStep
 			}
 		}
 		ASSERT(pdata->edge.relationID != GRAPH_UNKNOWN_RELATION);
+
 		*pdata->yield_edge = SI_Edge(&pdata->edge);
 	}
+
 	if(pdata->yield_weight) {
 		double weight_val = 0; 
+
+		// must be found since w_tree and tree have the same structure
 		GrB_Info info = GrB_Matrix_extractElement_FP64(
 			&weight_val, pdata->w_tree, node_i, node_j);
-		// must be found since w_tree and tree have the same structure. 
 		ASSERT(info == GrB_SUCCESS);
+
 		*pdata->yield_weight = SI_DoubleVal(weight_val);
 	}
+	
 	return pdata->output;
 }
 
-ProcedureResult Proc_MSFFree
+ProcedureResult Proc_MSTFree
 (
 	ProcedureCtx *ctx
 ) {
 	// clean up
 	if(ctx->privateData != NULL) {
-		MSF_Context *pdata = ctx->privateData;
+		MST_Context *pdata = ctx->privateData;
 
-		if(pdata->tree		 != NULL) GrB_free(&pdata->tree);
-		if(pdata->w_tree	 != NULL) GrB_free(&pdata->w_tree);
-		if(pdata->it         != NULL) GrB_free(&pdata->it);
-		if(pdata->nodes      != NULL) GrB_free(&pdata->nodes);
+		if(pdata->tree    != NULL) GrB_free(&pdata->tree);
+		if(pdata->w_tree  != NULL) GrB_free(&pdata->w_tree);
+		if(pdata->it      != NULL) GrB_free(&pdata->it);
+		if(pdata->nodes   != NULL) GrB_free(&pdata->nodes);
 		array_free(pdata->relationIDs);
 		rm_free(ctx->privateData);
 	}
 	return PROCEDURE_OK;
 }
 
-// CALL algo.MSF({nodeLabels: ['Person'], relationshipTypes: ['KNOWS'],
+// CALL algo.MST({nodeLabels: ['Person'], relationshipTypes: ['KNOWS'],
 // attribute: 'Years', objective: 'Minimum'}) YIELD node, score
-ProcedureCtx *Proc_MSFCtx(void) {
+ProcedureCtx *Proc_MSTCtx(void) {
 	void *privateData = NULL;
 
 	ProcedureOutput *outputs         = array_new(ProcedureOutput, 2);
 	ProcedureOutput output_edge      = {.name = "edge", .type = T_EDGE};
-	ProcedureOutput output_weight = {.name = "weight", .type = T_DOUBLE};
-	// ProcedureOutput output_weight = {.name = "weight", .type = SI_NUMERIC};
+	ProcedureOutput output_weight    = {.name = "weight", .type = T_DOUBLE};
 
 	array_append(outputs, output_edge);
 	array_append(outputs, output_weight);
 
-	ProcedureCtx *ctx = ProcCtxNew("algo.MSF",
+	ProcedureCtx *ctx = ProcCtxNew("algo.MST",
 								   PROCEDURE_VARIABLE_ARG_COUNT,
 								   outputs,
-								   Proc_MSFStep,
-								   Proc_MSFInvoke,
-								   Proc_MSFFree,
+								   Proc_MSTStep,
+								   Proc_MSTInvoke,
+								   Proc_MSTFree,
 								   privateData,
 								   true);
 	return ctx;

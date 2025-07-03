@@ -37,7 +37,7 @@ typedef enum{
 // L = L0 U L1 U ... Lm
 // A = L * (R0 + R1 + ... Rn) * L 
 //
-// If a weight attribute is specified, this function will pick which Edge to 
+// if a weight attribute is specified, this function will pick which Edge to 
 // return given a BWM_reduce strategy. For example, BWM_MIN returns the edge 
 // with minimum weight.
 // 
@@ -55,7 +55,7 @@ GrB_Info Build_Weighted_Matrix
 	const RelationID *rels,    // [optional] relationships to consider
 	unsigned short n_rels,     // number of relationships
 	const AttributeID weight,  // attribute to return
-	BWM_reduce strategy,       // Decides how singular returned edge id is picked
+	BWM_reduce strategy,       // decides how singular returned edge id is picked
 	bool symmetric,            // build a symmetric matrix
 	bool compact               // remove unused row & columns
-);
+) ;

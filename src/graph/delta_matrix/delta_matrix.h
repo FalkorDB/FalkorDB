@@ -215,7 +215,7 @@ GrB_Info Delta_Matrix_clear    // clear a matrix of all entries;
     Delta_Matrix A          // matrix to clear
 );
 
-GrB_Info Delta_Matrix_copy     // copy the structure of matrix A to matrix C
+GrB_Info Delta_Matrix_copy     // copy matrix A to matrix C
 (
 	Delta_Matrix C,            // output matrix
 	const Delta_Matrix A       // input matrix

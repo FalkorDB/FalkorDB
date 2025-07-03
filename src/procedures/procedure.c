@@ -39,7 +39,7 @@ void Proc_Register() {
 
 	// register graph algorithms
 	_procRegister("algo.BFS",              Proc_BFS_Ctx);
-	_procRegister("algo.MSF",              Proc_MSFCtx);
+	_procRegister("algo.MST",              Proc_MSTCtx);
 	_procRegister("algo.WCC",              Proc_WCCCtx);
 	_procRegister("algo.pageRank",         Proc_PagerankCtx);
 	_procRegister("algo.SPpaths",          Proc_SPpathCtx);

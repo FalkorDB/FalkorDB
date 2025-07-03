@@ -1206,6 +1206,7 @@ void Graph_GetEdgesConnectingNodes
 }
 
 // returns true and sets edge->relationID if edge is in that relation
+// otherwise returns false and does not change edge->relationID 
 bool Graph_CheckAndSetEdgeRelationID
 (
 	const Graph *g,  // Graph to get edges from
@@ -1216,9 +1217,7 @@ bool Graph_CheckAndSetEdgeRelationID
 	ASSERT(edge);
 	ASSERT(r < Graph_RelationTypeCount(g));
 
-	// invalid relation type specified;
-	// this can occur on multi-type traversals like:
-	// MATCH ()-[:real_type|fake_type]->()
+	// invalid relation type specified
 	if(r == GRAPH_UNKNOWN_RELATION) return false;
 
 	Tensor R             = Graph_GetRelationMatrix(g, r, false);
@@ -1242,7 +1241,9 @@ bool Graph_CheckAndSetEdgeRelationID
 			edgeInRelation = info == GrB_SUCCESS;
 		}
 	}
+
 	if(edgeInRelation) edge->relationID = r;
+
 	return edgeInRelation;
 }
 
@@ -1255,6 +1256,7 @@ void Graph_FindAndSetEdgeRelationID
 	ASSERT(g);
 	ASSERT(edge);
 	edge->relationID = GRAPH_UNKNOWN_RELATION;
+	
 	for(RelationID r = 0; r < Graph_RelationTypeCount(g); r++) {
 		if(Graph_CheckAndSetEdgeRelationID(g, edge, r)) {
 			break;

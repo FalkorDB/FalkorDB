@@ -5,19 +5,22 @@
 
 #include "./internal.h"
 
+// the ith relationID is i if no relation is given, and rels[i] if it is.
 #define GETRELATIONID(i) ((rels)? rels[i] : i)
 
- #define BWM_FREE 													\
- {																	\
- 	GrB_UnaryOp_free(&toMatrix);									\
- 	if (weight != ATTRIBUTE_ID_NONE) GrB_BinaryOp_free(&minID);		\
-+	GxB_IndexBinaryOp_free(&minID_indexOP);							\
- 	GrB_BinaryOp_free(&toMatrixMin);								\
- 	GrB_BinaryOp_free(&weightOp);									\
- 	GrB_Scalar_free(&theta);										\
- 	GrB_IndexUnaryOp_free(&hasAtt);									\
-+	GrB_Type_free(&contx_type);										\
+// Frees the build weighted matrix workspace
+#define BWM_FREE                                                 \
+{                                                                \
+ 	GrB_UnaryOp_free(&toMatrix);                                 \
+ 	if (weight != ATTRIBUTE_ID_NONE) GrB_BinaryOp_free(&minID);  \
++	GxB_IndexBinaryOp_free(&minID_indexOP);                      \
+ 	GrB_BinaryOp_free(&toMatrixMin);                             \
+ 	GrB_BinaryOp_free(&weightOp);                                \
+ 	GrB_Scalar_free(&theta);                                     \
+ 	GrB_IndexUnaryOp_free(&hasAtt);                              \
++	GrB_Type_free(&contx_type);                                  \
  }
+
 #define COMPAREEDGES                                                           \
 (                                                                              \
 	uint64_t *z,                                                               \
@@ -41,6 +44,7 @@
 		*z = *y;                                                               \
 	}                                                                          \
 }
+
 #define TENSORPICK                                                             \
 (                                                                              \
 	uint64_t *z,                                                               \
@@ -99,6 +103,7 @@ typedef struct
 	RelationID rel;  // current relationID
 } compareContext;
 
+// returns true if the edge has the given attribute and it is numerical.
 static void _edgeHasAttribute
 (
 	bool *z,
@@ -113,6 +118,9 @@ static void _edgeHasAttribute
 	SIValue *v = GraphEntity_GetProperty((GraphEntity *) &_x, ctx->w);
 	*z = (v != ATTRIBUTE_NOTFOUND) && (SI_NUMERIC & SI_TYPE(*v));
 }
+
+// returns the double value of the given attribute given an edgeId
+// precondition: matrix must not contain edges which don't have the attribut
 void _getAttFromID
 (
 	double *z, 
@@ -163,7 +171,7 @@ COMPAREEDGES
 static void _reduceToMatrixMax
 TENSORPICK
 
-//reduces Tensor entries to the first ID.
+// reduces Tensor entries to the first ID
 static void _reduceToMatrixAny
 (
 	uint64_t *z,         // single Edge ID
@@ -179,6 +187,8 @@ static void _reduceToMatrixAny
 		ASSERT(info == GrB_SUCCESS);
 		info = GxB_Vector_Iterator_attach(i, _v, NULL);
 		ASSERT(info == GrB_SUCCESS);
+
+		// find the first edge in the vector
 		info = GxB_Vector_Iterator_seek(i, 0);
 		ASSERT(info == GrB_SUCCESS);
 		EdgeID minID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
@@ -230,6 +240,8 @@ GrB_Info Build_Weighted_Matrix
 	ASSERT((rels != NULL && n_rels > 0) || (rels == NULL && n_rels == 0));
 
 	GrB_Type_new(&contx_type, sizeof(compareContext));
+
+	// arrays contain funtions for known reduction strategies
 	GxB_binary_function toMatrixStrategy[2];
 	toMatrixStrategy[BWM_MIN] = (GxB_binary_function) _reduceToMatrixMin;
 	toMatrixStrategy[BWM_MAX] = (GxB_binary_function) _reduceToMatrixMax;
@@ -251,10 +263,14 @@ GrB_Info Build_Weighted_Matrix
 			&weightOp, (GxB_binary_function) _getAttFromID, 
 			GrB_FP64, GrB_UINT64, contx_type
 		) ;
+
+		// reduce a matrix to its minimum (or maximum) valued edge
 		GrB_BinaryOp_new(
 			&toMatrixMin, toMatrixStrategy[strategy], 
 			GrB_UINT64, GrB_UINT64, contx_type
 		) ;
+
+		// pick the minimum (or maximum) valued edge from the two matricies.
 		GxB_IndexBinaryOp_new(
 			&minID_indexOP, compareStrategy[strategy],
 			GrB_UINT64, GrB_UINT64, GrB_UINT64, contx_type, NULL, NULL) ;
@@ -276,9 +292,11 @@ GrB_Info Build_Weighted_Matrix
 	GrB_Matrix M     = NULL;         // temporary matrix
 
 	// if no relationships are specified, use all relationships
+	// can't use adj matrix since I need access to the edgeIds of all edges
 	if(rels == NULL){
 		n_rels = Graph_RelationTypeCount(g);
 	}
+
 	if(n_rels == 0) { 
 		// Graph does not have any relations. Return empty matrix.
 		info = GrB_Matrix_new(A, GrB_UINT64, 0, 0);
@@ -324,6 +342,7 @@ GrB_Info Build_Weighted_Matrix
 		}
 		ASSERT(info == GrB_SUCCESS);
 	}
+
 	// in case there are multiple relation types, include them in A
 	for(unsigned short i = 1; i < n_rels; i++) {
 		id = GETRELATIONID(i);
@@ -333,18 +352,22 @@ GrB_Info Build_Weighted_Matrix
 
 		if(Graph_RelationshipContainsMultiEdge(g, id)) {
 			if(weight == ATTRIBUTE_ID_NONE) {
+				// apply toMatrix to get any edge and accum to also choose any 
 				info = GrB_Matrix_apply(
 					_A, NULL, minID, toMatrix, M, NULL);
 			} else {
 				// Cannot use indexbinaryOp in accum so I use eWiseAdd
-				// FIXME if possible.
 				// info = GrB_Matrix_apply_BinaryOp2nd_UINT64(
 				// 	_A, NULL, minID, toMatrixMin, M, (uint64_t) (&ctx), NULL
 				// ) ;
+
+				// apply to get the min (max) valued edge from the tensor
 				info = GrB_Matrix_apply_BinaryOp2nd_UDT(
 					M, NULL, NULL, toMatrixMin, M, (void *) (&ctx), NULL
 				) ;
 				ASSERT(info == GrB_SUCCESS);
+
+				// add and pick the min (max) valued edge if there is overlap
 				info = GrB_Matrix_eWiseAdd_BinaryOp(
 					_A, NULL, NULL, minID, _A, M, NULL
 				) ;
@@ -442,7 +465,8 @@ GrB_Info Build_Weighted_Matrix
 		}
 	}
 	if(weight != ATTRIBUTE_ID_NONE) {
-		// Remove edges without the specified attribute
+		// remove edges without the specified attribute
+		// or with a non-numeric attribute value
 		info = GrB_Matrix_select_UDT(
 			_A, NULL, NULL, hasAtt, _A, (void *) (&ctx), NULL);
 		ASSERT(info == GrB_SUCCESS);
@@ -452,12 +476,13 @@ GrB_Info Build_Weighted_Matrix
 		info = GrB_Matrix_new(A_w, GrB_FP64, n, n);
 		ASSERT(info == GrB_SUCCESS);
 		if(weight == ATTRIBUTE_ID_NONE) {
-			// A_w = A
+			// if no weight specified, weights are zero.
 			info = GrB_Matrix_assign_FP64(
 				*A_w, _A, NULL, 0.0, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
 			) ;
 			ASSERT(info == GrB_SUCCESS);
 		} else {
+			// get the weight value from the edge ids.
 			info = GrB_Matrix_apply_BinaryOp2nd_UDT(
 				*A_w, NULL, NULL, weightOp, _A, (void *) (&ctx), NULL
 			);

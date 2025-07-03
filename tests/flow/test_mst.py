@@ -1,10 +1,10 @@
 from common import *
 import random
 
-GRAPH_ID = "MSF"
-GRAPH_ID_RAND = "MSF_rand"
+GRAPH_ID = "MST"
+GRAPH_ID_RAND = "MST_rand"
 
-class testMSF(FlowTestsBase):
+class testMST(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
         self.conn = self.env.getConnection()
@@ -73,15 +73,15 @@ class testMSF(FlowTestsBase):
 
     def test_invalid_invocation(self):
         invalid_queries = [
-                """CALL algo.MSF({nodeLabels: 'Person'})""",         # non-array nodeLabels parameter
-                """CALL algo.MSF({relationshipTypes: 'KNOWS'})""",   # non-array relationshipTypes parameter
-                """CALL algo.MSF({invalidParam: 'value'})""",        # unexpected extra parameters
-                """CALL algo.MSF('invalid')""",                      # invalid configuration type
-                """CALL algo.MSF({nodeLabels: [1, 2, 3]})""",        # integer values in nodeLabels array
-                """CALL algo.MSF({relationshipTypes: [1, 2, 3]})""", # integer values in relationshipTypes array
-                """CALL algo.MSF(null) YIELD node, invalidField""",  # non-existent yield field
+                """CALL algo.MST({nodeLabels: 'Person'})""",         # non-array nodeLabels parameter
+                """CALL algo.MST({relationshipTypes: 'KNOWS'})""",   # non-array relationshipTypes parameter
+                """CALL algo.MST({invalidParam: 'value'})""",        # unexpected extra parameters
+                """CALL algo.MST('invalid')""",                      # invalid configuration type
+                """CALL algo.MST({nodeLabels: [1, 2, 3]})""",        # integer values in nodeLabels array
+                """CALL algo.MST({relationshipTypes: [1, 2, 3]})""", # integer values in relationshipTypes array
+                """CALL algo.MST(null) YIELD node, invalidField""",  # non-existent yield field
 
-                """CALL algo.MSF({nodeLabels: ['Person'],
+                """CALL algo.MST({nodeLabels: ['Person'],
                                relationshipTypes: ['KNOWS'],
                                invalidParam: 'value'})""",           # unexpected extra parameters
         ]
@@ -94,19 +94,19 @@ class testMSF(FlowTestsBase):
                 pass
         self.graph.delete()
 
-    def test_msf_on_empty_graph(self):
-        """Test MSF algorithm behavior on an empty graph"""
+    def test_mst_on_empty_graph(self):
+        """Test MST algorithm behavior on an empty graph"""
         
-        # run MSF on empty graph
-        result = self.graph.query("CALL algo.MSF(null)")
+        # run MST on empty graph
+        result = self.graph.query("CALL algo.MST(null)")
         # if we reach here, the algorithm didn't throw an exception
         
         # check if it returned empty results (acceptable behavior)
         self.env.assertEqual(len(result.result_set), 0)
         self.graph.delete()
 
-    def test_msf_on_missing_attributes(self):
-        """Test MSF algorithm on unlabeled nodes with multiple connected components"""
+    def test_mst_on_missing_attributes(self):
+        """Test MST algorithm on unlabeled nodes with multiple connected components"""
         # Create an unlabeled graph with multiple connected components
         # - Component 1: nodes 1-2-3-1 forming a cycle
         # - Component 2: nodes 4-5 connected
@@ -127,17 +127,17 @@ class testMSF(FlowTestsBase):
             (n4)-[:R {cost: 2.71828}]->(n5)
         """)
 
-        # Run MSF algorithm
+        # Run MST algorithm
         result = self.graph.query("""
-            CALL algo.MSF({relationshipTypes: ['R'], weightAttribute: 'cost'}) 
+            CALL algo.MST({relationshipTypes: ['R'], weightAttribute: 'cost'}) 
             YIELD weight RETURN weight ORDER BY weight""")
         result_set = result.result_set
         ans_set = [[0.02189], [0.2198], [2.71828]]
         self.env.assertEqual(ans_set, result_set)
         self.graph.delete()
 
-    def test_msf_on_missing_attributes_max(self):
-        """Test MSF algorithm on unlabeled nodes with multiple connected components"""
+    def test_mst_on_missing_attributes_max(self):
+        """Test MST algorithm on unlabeled nodes with multiple connected components"""
         # Create an unlabeled graph with multiple connected components
         # - Component 1: nodes 1-2-3-1 forming a cycle
         # - Component 2: nodes 4-5 connected
@@ -158,9 +158,9 @@ class testMSF(FlowTestsBase):
             (n4)-[:R {cost: 2.71828}]->(n5)
         """)
 
-        # Run MSF algorithm
+        # Run MST algorithm
         result = self.graph.query("""
-            CALL algo.MSF({relationshipTypes: ['R'], weightAttribute: 'cost',
+            CALL algo.MST({relationshipTypes: ['R'], weightAttribute: 'cost',
             objective: 'max'}) 
             YIELD weight RETURN weight ORDER BY weight""")
         result_set = result.result_set
@@ -168,8 +168,8 @@ class testMSF(FlowTestsBase):
         self.env.assertEqual(ans_set, result_set)
         self.graph.delete()
 
-    def test_msf_on_unlabeled_graph(self):
-        """Test MSF algorithm on unlabeled nodes with multiple connected components"""
+    def test_mst_on_unlabeled_graph(self):
+        """Test MST algorithm on unlabeled nodes with multiple connected components"""
         # Create an unlabeled graph with multiple connected components
         # - Component 1: nodes 1-2-3-1 forming a cycle
         # - Component 2: nodes 4-5 connected
@@ -188,16 +188,16 @@ class testMSF(FlowTestsBase):
             (n4)-[:R]->(n5)
         """)
 
-        # Run MSF algorithm
-        result = self.graph.query("""CALL algo.MSF({relationshipTypes: ['R']}) yield edge""")
+        # Run MST algorithm
+        result = self.graph.query("""CALL algo.MST({relationshipTypes: ['R']}) yield edge""")
         result_set = result.result_set
 
         # We should have exactly 3 different edges 
         self.env.assertEqual(len(result_set), 3)
         self.graph.delete()
 
-    def test_msf_on_multilable(self):
-        """Test MSF algorithm on multilabled nodes with multiple connected components"""
+    def test_mst_on_multilable(self):
+        """Test MST algorithm on multilabled nodes with multiple connected components"""
 
         # Create an unlabeled graph with multiple connected components
         # - Component 1: nodes 1-2 are connected with multiple edges
@@ -216,8 +216,8 @@ class testMSF(FlowTestsBase):
             (n1)<-[:Swim {distance: .5, cost: 12}]-(n2),
             (n1)<-[:Kayak {distance: .68, cost: 4}]-(n2)
         """)
-        # Run MSF algorithm
-        result = self.graph.query("""CALL algo.MSF({weightAttribute: 'cost'}) 
+        # Run MST algorithm
+        result = self.graph.query("""CALL algo.MST({weightAttribute: 'cost'}) 
             yield edge, weight return type(edge), weight""")
         result_set = result.result_set
         self.env.assertEqual(len(result_set), 1)
@@ -226,8 +226,8 @@ class testMSF(FlowTestsBase):
         self.env.assertEqual(edge, 'Kayak')
         self.env.assertEqual(weight, 4)
         self.graph.delete()
-    def test_msf_on_multilable_max(self):
-        """Test MSF algorithm on multilabled nodes with multiple connected components"""
+    def test_mst_on_multilable_max(self):
+        """Test MST algorithm on multilabled nodes with multiple connected components"""
 
         # Create an unlabeled graph with multiple connected components
         # - Component 1: nodes 1-2 are connected with multiple edges
@@ -246,9 +246,9 @@ class testMSF(FlowTestsBase):
             (n1)<-[:Swim {distance: .5, cost: 12}]-(n2),
             (n1)<-[:Kayak {distance: .68, cost: 4}]-(n2)
         """)
-        # Run MSF algorithm
+        # Run MST algorithm
         result = self.graph.query("""
-            CALL algo.MSF({weightAttribute: 'cost', objective: 'max'}) 
+            CALL algo.MST({weightAttribute: 'cost', objective: 'max'}) 
             yield edge, weight return type(edge), weight""")
         result_set = result.result_set
         self.env.assertEqual(len(result_set), 1)
@@ -259,7 +259,7 @@ class testMSF(FlowTestsBase):
         self.graph.delete()
 
 
-    def test_msf_with_multiedge(self):
+    def test_mst_with_multiedge(self):
         """Test WCC algorithm with different relationship type filters"""
         # Create an unlabeled graph with two relationship types
         # Relationship type A:
@@ -277,38 +277,38 @@ class testMSF(FlowTestsBase):
             (n5 {id: 5}),
             (n6 {id: 6}),
             (n7 {id: 7}),
-            (n1)-[:A {score: 789134, msf_ans: 0}]->(n2),
-            (n1)-[:A {score: 5352, msf_ans: 0}]->(n2),
-            (n1)-[:A {score: 1234, msf_ans: 1}]->(n2),
-            (n1)-[:B {score: 123456, msf_ans: 0}]->(n2),
-            (n1)-[:B {score: 1000, msf_ans: 2}]->(n2),
-            (n2)-[:B {msf_ans: 0}]->(n3),
-            (n3)-[:B {score: 8991234, msf_ans: 0}]->(n4),
-            (n3)-[:B {score: 7654, msf_ans: 2}]->(n4)
+            (n1)-[:A {score: 789134, mst_ans: 0}]->(n2),
+            (n1)-[:A {score: 5352, mst_ans: 0}]->(n2),
+            (n1)-[:A {score: 1234, mst_ans: 1}]->(n2),
+            (n1)-[:B {score: 123456, mst_ans: 0}]->(n2),
+            (n1)-[:B {score: 1000, mst_ans: 2}]->(n2),
+            (n2)-[:B {mst_ans: 0}]->(n3),
+            (n3)-[:B {score: 8991234, mst_ans: 0}]->(n4),
+            (n3)-[:B {score: 7654, mst_ans: 2}]->(n4)
         """)
-        # Run MSF algorithm with relationship type A
+        # Run MST algorithm with relationship type A
         result = self.graph.query("""
-            CALL algo.MSF({relationshipTypes: ['A'], weightAttribute: 'score'}) 
-            YIELD edge RETURN edge.msf_ans
+            CALL algo.MST({relationshipTypes: ['A'], weightAttribute: 'score'}) 
+            YIELD edge RETURN edge.mst_ans
             """)
         result_set = result.result_set
         self.env.assertEqual(len(result_set), 1)
         for edge in result_set:
             self.env.assertEqual(edge[0], 1)
-        # Run MSF algorithm with relationship type B
+        # Run MST algorithm with relationship type B
         result = self.graph.query("""
-            CALL algo.MSF({relationshipTypes: ['B'], weightAttribute: 'score'}) 
-            YIELD edge RETURN edge.msf_ans
+            CALL algo.MST({relationshipTypes: ['B'], weightAttribute: 'score'}) 
+            YIELD edge RETURN edge.mst_ans
             """)
         result_set = result.result_set
         self.env.assertEqual(len(result_set), 2)
         for edge in result_set:
             self.env.assertEqual(edge[0], 2)
         
-        # Run MSF algorithm with both relationships
+        # Run MST algorithm with both relationships
         result = self.graph.query("""
-            CALL algo.MSF({weightAttribute: 'score'}) 
-            YIELD edge RETURN edge.msf_ans
+            CALL algo.MST({weightAttribute: 'score'}) 
+            YIELD edge RETURN edge.mst_ans
             """)
         result_set = result.result_set
         self.env.assertEqual(len(result_set), 2)
@@ -317,9 +317,9 @@ class testMSF(FlowTestsBase):
         self.graph.delete()
 
 
-    def test_msf_rand_labels(self):
+    def test_mst_rand_labels(self):
         result_set = self.randomGraph.query("""
-            CALL algo.MSF({nodeLabels: ['A', 'B'], weightAttribute: 'weight'}) 
+            CALL algo.MST({nodeLabels: ['A', 'B'], weightAttribute: 'weight'}) 
             YIELD weight
             """).result_set
         minEdge = self.find_min_edge("A", "B")
@@ -332,7 +332,7 @@ class testMSF(FlowTestsBase):
             self.env.assertIn([minEdge], result_set)
 
         result_set = self.randomGraph.query("""
-            CALL algo.MSF({nodeLabels: ['A', 'C'], weightAttribute: 'weight'}) 
+            CALL algo.MST({nodeLabels: ['A', 'C'], weightAttribute: 'weight'}) 
             YIELD weight
             """).result_set
         minEdge = self.find_min_edge("A", "C")
@@ -345,7 +345,7 @@ class testMSF(FlowTestsBase):
             self.env.assertIn([minEdge], result_set)
 
         result_set = self.randomGraph.query("""
-            CALL algo.MSF({nodeLabels: ['A', 'D'], weightAttribute: 'weight'}) 
+            CALL algo.MST({nodeLabels: ['A', 'D'], weightAttribute: 'weight'}) 
             YIELD weight
             """).result_set
         minEdge = self.find_min_edge("A", "D")
@@ -358,7 +358,7 @@ class testMSF(FlowTestsBase):
             self.env.assertIn([minEdge], result_set)
 
         result_set = self.randomGraph.query("""
-            CALL algo.MSF({nodeLabels: ['B', 'C'], weightAttribute: 'weight'}) 
+            CALL algo.MST({nodeLabels: ['B', 'C'], weightAttribute: 'weight'}) 
             YIELD weight
             """).result_set
         minEdge = self.find_min_edge("B", "C")
@@ -371,7 +371,7 @@ class testMSF(FlowTestsBase):
             self.env.assertIn([minEdge], result_set)
         
         result_set = self.randomGraph.query("""
-            CALL algo.MSF({nodeLabels: ['B', 'D'], weightAttribute: 'weight'}) 
+            CALL algo.MST({nodeLabels: ['B', 'D'], weightAttribute: 'weight'}) 
             YIELD weight
             """).result_set
         minEdge = self.find_min_edge("B", "D")
@@ -384,7 +384,7 @@ class testMSF(FlowTestsBase):
             self.env.assertIn([minEdge], result_set)
 
         result_set = self.randomGraph.query("""
-            CALL algo.MSF({nodeLabels: ['C', 'D'], weightAttribute: 'weight'}) 
+            CALL algo.MST({nodeLabels: ['C', 'D'], weightAttribute: 'weight'}) 
             YIELD weight
             """).result_set
         minEdge = self.find_min_edge("C", "D")
@@ -396,9 +396,9 @@ class testMSF(FlowTestsBase):
             self.env.assertEqual(len(result_set), 39)
             self.env.assertIn([minEdge], result_set)
 
-    def test_msf_rand_labels_max(self):
+    def test_mst_rand_labels_max(self):
         result_set = self.randomGraph.query("""
-            CALL algo.MSF({nodeLabels: ['A', 'B'], weightAttribute: 'weight', objective: 'maximize'}) 
+            CALL algo.MST({nodeLabels: ['A', 'B'], weightAttribute: 'weight', objective: 'maximize'}) 
             YIELD weight
             """).result_set
         maxEdge = self.find_max_edge("A", "B")
@@ -411,7 +411,7 @@ class testMSF(FlowTestsBase):
             self.env.assertIn([maxEdge], result_set)
 
         result_set = self.randomGraph.query("""
-            CALL algo.MSF({nodeLabels: ['A', 'C'], weightAttribute: 'weight', objective: 'maximize'}) 
+            CALL algo.MST({nodeLabels: ['A', 'C'], weightAttribute: 'weight', objective: 'maximize'}) 
             YIELD weight
             """).result_set
         maxEdge = self.find_max_edge("A", "C")
@@ -424,7 +424,7 @@ class testMSF(FlowTestsBase):
             self.env.assertIn([maxEdge], result_set)
 
         result_set = self.randomGraph.query("""
-            CALL algo.MSF({nodeLabels: ['A', 'D'], weightAttribute: 'weight', objective: 'maximize'}) 
+            CALL algo.MST({nodeLabels: ['A', 'D'], weightAttribute: 'weight', objective: 'maximize'}) 
             YIELD weight
             """).result_set
         maxEdge = self.find_max_edge("A", "D")
@@ -437,7 +437,7 @@ class testMSF(FlowTestsBase):
             self.env.assertIn([maxEdge], result_set)
 
         result_set = self.randomGraph.query("""
-            CALL algo.MSF({nodeLabels: ['B', 'C'], weightAttribute: 'weight', objective: 'maximize'}) 
+            CALL algo.MST({nodeLabels: ['B', 'C'], weightAttribute: 'weight', objective: 'maximize'}) 
             YIELD weight
             """).result_set
         maxEdge = self.find_max_edge("B", "C")
@@ -450,7 +450,7 @@ class testMSF(FlowTestsBase):
             self.env.assertIn([maxEdge], result_set)
         
         result_set = self.randomGraph.query("""
-            CALL algo.MSF({nodeLabels: ['B', 'D'], weightAttribute: 'weight', objective: 'maximize'}) 
+            CALL algo.MST({nodeLabels: ['B', 'D'], weightAttribute: 'weight', objective: 'maximize'}) 
             YIELD weight
             """).result_set
         maxEdge = self.find_max_edge("B", "D")
@@ -463,7 +463,7 @@ class testMSF(FlowTestsBase):
             self.env.assertIn([maxEdge], result_set)
 
         result_set = self.randomGraph.query("""
-            CALL algo.MSF({nodeLabels: ['C', 'D'], weightAttribute: 'weight', objective: 'maximize'}) 
+            CALL algo.MST({nodeLabels: ['C', 'D'], weightAttribute: 'weight', objective: 'maximize'}) 
             YIELD weight
             """).result_set
         maxEdge = self.find_max_edge("C", "D")

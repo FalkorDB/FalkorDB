@@ -411,6 +411,7 @@ void Graph_GetEdgesConnectingNodes
 );
 
 // returns true and sets edge->relationID if edge is in that relation
+// otherwise returns false and does not change edge->relationID 
 bool Graph_CheckAndSetEdgeRelationID
 (
 	const Graph *g,  // Graph to get edges from
