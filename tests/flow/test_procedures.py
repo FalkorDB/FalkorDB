@@ -313,17 +313,7 @@ class testProcedures(FlowTestsBase):
             self.env.assertFalse(1)
             pass
 
-    def test10_procedure_get_all_procedures(self):
-        actual_resultset = self.graph.call_procedure("dbms.procedures").result_set
-        # The following two procedure are a part of the expected results
-        expected_result = [["db.labels", "READ"], ["db.idx.fulltext.createNodeIndex", "WRITE"],
-                           ["db.propertyKeys", "READ"], ["dbms.procedures", "READ"], ["db.relationshipTypes", "READ"],
-                           ["algo.BFS", "READ"], ["algo.pageRank", "READ"],  ['algo.MST', 'READ'], 
-                           ["db.idx.fulltext.queryNodes", "READ"], ["db.idx.fulltext.drop", "WRITE"]]
-        for res in expected_result:
-            self.env.assertContains(res, actual_resultset)
-
-    def test11_procedure_indexes(self):
+    def test10_procedure_indexes(self):
         # flaky when running under valgrind
         # TODO: investigate
         if VALGRIND or SANITIZER:
@@ -357,18 +347,18 @@ class testProcedures(FlowTestsBase):
         expected_results = [["fruit"]]
         self.env.assertEquals(actual_resultset, expected_results)
 
-    def test12_procedure_reordered_yields(self):
-        # Yield results of procedure in a non-default sequence
+    def test11_list_procedures(self):
+        # validates list of available procedures
         actual_resultset = self.graph.query("CALL dbms.procedures() YIELD mode, name RETURN mode, name ORDER BY name").result_set
         expected_result = [["READ",  "algo.BFS"],
-                           ['READ',  "algo.MST"],
-                           ['READ',  "algo.SPpaths"],
-                           ['READ',  "algo.SSpaths"],
+                           ["READ",  "algo.MST"],
+                           ["READ",  "algo.SPpaths"],
+                           ["READ",  "algo.SSpaths"],
                            ["READ",  "algo.WCC"],
-                           ['READ',  "algo.betweenness"],
+                           ["READ",  "algo.betweenness"],
                            ["READ",  "algo.labelPropagation"],
                            ["READ",  "algo.pageRank"],
-                           ['READ',  "db.constraints"],
+                           ["READ",  "db.constraints"],
                            ["WRITE", "db.idx.fulltext.createNodeIndex"],
                            ["WRITE", "db.idx.fulltext.drop"],
                            ["READ",  "db.idx.fulltext.queryNodes"],
@@ -381,3 +371,4 @@ class testProcedures(FlowTestsBase):
                            ["READ",  "db.relationshipTypes"],
                            ["READ",  "dbms.procedures"]]
         self.env.assertEquals(actual_resultset, expected_result)
+
