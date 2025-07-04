@@ -13,6 +13,7 @@ class testMST(FlowTestsBase):
         self.generate_random_graph_cypher()
 
     def tearDown(self):
+        self.graph.query("MATCH (a) RETURN count(a)")
         self.graph.delete()
 
     def generate_random_graph_cypher(self, num_nodes=20, num_edges=140, numlabels=4):
@@ -60,7 +61,7 @@ class testMST(FlowTestsBase):
         OPTIONAL MATCH (:{src})-[r0]->(:{dest})
         WITH MIN(r0.weight) as min_r0
         OPTIONAL MATCH (:{dest})-[r1]->(:{src})
-        WITH MIN(r1.weight)) as min_r1
+        WITH min_r0, MIN(r1.weight) as min_r1
         WITH [min_r0, min_r1] AS mins
         UNWIND mins AS x
         RETURN MIN(x) as minW
@@ -72,12 +73,12 @@ class testMST(FlowTestsBase):
     def find_max_edge(self, src, dest):
         q = f"""
         OPTIONAL MATCH (:{src})-[r0]->(:{dest})
-        WITH MAX(r0.weight) as min_r0
+        WITH MAX(r0.weight) as max_r0
         OPTIONAL MATCH (:{dest})-[r1]->(:{src})
-        WITH MAX(r1.weight)) as min_r1
-        WITH [min_r0, min_r1] AS mins
-        UNWIND mins AS x
-        RETURN MAX(x) as minW
+        WITH max_r0, MAX(r1.weight) as max_r1
+        WITH [max_r0, max_r1] AS maxs
+        UNWIND maxs AS x
+        RETURN MAX(x) as maxW
         """
 
         return self.randomGraph.query(q).result_set[0][0]
@@ -115,7 +116,7 @@ class testMST(FlowTestsBase):
         self.env.assertEqual(len(result.result_set), 0)
 
     def test_mst_on_missing_attributes(self):
-        """Test MST algorithm on unlabeled nodes with multiple connected components"""
+        """Test MST algorithm on multi edges with missing parameters"""
         # Create an unlabeled graph with multiple connected components
         # - Component 1: nodes 1-2-3-1 forming a cycle
         # - Component 2: nodes 4-5 connected
@@ -146,7 +147,7 @@ class testMST(FlowTestsBase):
         self.env.assertEqual(ans_set, result_set)
 
     def test_mst_on_missing_attributes_max(self):
-        """Test MST algorithm on unlabeled nodes with multiple connected components"""
+        """Test MST algorithm on multi edges with missing parameters"""
         # Create an unlabeled graph with multiple connected components
         # - Component 1: nodes 1-2-3-1 forming a cycle
         # - Component 2: nodes 4-5 connected
@@ -189,21 +190,23 @@ class testMST(FlowTestsBase):
             (n4 {id: 4}),
             (n5 {id: 5}),
             (n6 {id: 6}),
-            (n1)-[:R]->(n2),
-            (n2)-[:R]->(n3),
-            (n3)-[:R]->(n1),
-            (n4)-[:R]->(n5)
+            (n1)-[:R {id: 1}]->(n2),
+            (n2)-[:R {id: 2}]->(n3),
+            (n3)-[:R {id: 3}]->(n1),
+            (n4)-[:R {id: 4}]->(n5)
         """)
 
         # Run MST algorithm
-        result = self.graph.query("""CALL algo.MST({relationshipTypes: ['R']}) yield edge""")
+        result = self.graph.query(""" CALL algo.MST({relationshipTypes: ['R']}) 
+            YIELD edge RETURN edge.id""")
         result_set = result.result_set
 
         # We should have exactly 3 different edges 
         self.env.assertEqual(len(result_set), 3)
+        self.env.assertContains([4], result_set)
 
-    def test_mst_on_multilable(self):
-        """Test MST algorithm on multilabled nodes with multiple connected components"""
+    def test_mst_on_multitypes(self):
+        """Test MST algorithm on nodes connected by multiple relationships"""
 
         # Create an unlabeled graph with multiple connected components
         # - Component 1: nodes 1-2 are connected with multiple edges
@@ -230,8 +233,8 @@ class testMST(FlowTestsBase):
         self.env.assertEqual(edge, 'Kayak')
         self.env.assertEqual(weight, 4)
 
-    def test_mst_on_multilable_max(self):
-        """Test MST algorithm on multilabled nodes with multiple connected components"""
+    def test_mst_on_multitypes_max(self):
+        """Test MST algorithm on nodes connected by multiple relationships"""
 
         # Create an unlabeled graph with multiple connected components
         # - Component 1: nodes 1-2 are connected with multiple edges
@@ -239,10 +242,6 @@ class testMST(FlowTestsBase):
             CREATE
             (n1 {id: 1}),
             (n2 {id: 2}),
-            (n3 {id: 3}),
-            (n4 {id: 4}),
-            (n5 {id: 5}),
-            (n6 {id: 6}),
             (n1)-[:Car {distance: 11.2, cost: 23}]->(n2),
             (n1)-[:Walk {distance: 9.24321, cost: 7}]->(n2),
             (n1)-[:Plane {distance: 123.2490, cost: 300}]->(n2),
@@ -279,15 +278,12 @@ class testMST(FlowTestsBase):
             (n2 {id: 2}),
             (n3 {id: 3}),
             (n4 {id: 4}),
-            (n5 {id: 5}),
-            (n6 {id: 6}),
-            (n7 {id: 7}),
             (n1)-[:A {score: 789134, mst_ans: 0}]->(n2),
             (n1)-[:A {score: 5352, mst_ans: 0}]->(n2),
             (n1)-[:A {score: 1234, mst_ans: 1}]->(n2),
             (n1)-[:B {score: 123456, mst_ans: 0}]->(n2),
             (n1)-[:B {score: 1000, mst_ans: 2}]->(n2),
-            (n2)-[:B {mst_ans: 0}]->(n3),
+            (n2)-[:B {mst_ans: 2}]->(n3),
             (n3)-[:B {score: 8991234, mst_ans: 0}]->(n4),
             (n3)-[:B {score: 7654, mst_ans: 2}]->(n4)
         """)
@@ -295,40 +291,58 @@ class testMST(FlowTestsBase):
         # Run MST algorithm with relationship type A
         result = self.graph.query("""
             CALL algo.MST({relationshipTypes: ['A'], weightAttribute: 'score'}) 
-            YIELD edge RETURN edge.mst_ans
+            YIELD edge, weight RETURN edge.mst_ans, weight
+            ORDER BY weight
             """)
 
         result_set = result.result_set
-        self.env.assertEqual(len(result_set), 1)
-        for edge in result_set:
-            self.env.assertEqual(edge[0], 1)
+        ans_set = [[1, 1234.0]]
+        self.env.assertEqual(ans_set, result_set)
 
         # Run MST algorithm with relationship type B
         result = self.graph.query("""
             CALL algo.MST({relationshipTypes: ['B'], weightAttribute: 'score'}) 
-            YIELD edge RETURN edge.mst_ans
+            YIELD edge, weight RETURN edge.mst_ans, weight
+            ORDER BY weight
             """)
 
         result_set = result.result_set
-        self.env.assertEqual(len(result_set), 2)
-        for edge in result_set:
-            self.env.assertEqual(edge[0], 2)
+        ans_set = [[2, 1000.0], [2, 7654.0], [2, None]]
+        self.env.assertEqual(ans_set, result_set)
         
         # Run MST algorithm with both relationships
         result = self.graph.query("""
             CALL algo.MST({weightAttribute: 'score'}) 
-            YIELD edge RETURN edge.mst_ans
+            YIELD edge, weight RETURN edge.mst_ans, weight
+            ORDER BY weight
             """)
 
         result_set = result.result_set
-        self.env.assertEqual(len(result_set), 2)
-        for edge in result_set:
-            self.env.assertEqual(edge[0], 2)
+        ans_set = [[2, 1000.0], [2, 7654.0], [2, None]]
+        self.env.assertEqual(ans_set, result_set)
+
+         # Run MST algorithm with both relationships (max)
+        result = self.graph.query("""
+            CALL algo.MST({weightAttribute: 'score', objective: 'max'}) 
+            YIELD edge, weight RETURN edge.mst_ans, weight
+            ORDER BY weight
+            """)
+
+        result_set = result.result_set
+        ans_set = [[0, 789134.0], [0, 8991234.0], [2, None]]
+        self.env.assertEqual(ans_set, result_set)
 
     def test_mst_rand_labels(self):
+        """Test MST algorithm on random graph with multiple labels"""
+        # randomGraph contains four groups of nodes each of which are connected
+        # each of these groups are likely connected to each other, but this 
+        # is not guaranteed.
+        # test checks that one property of MST is satisfied:
+        # an edge that bridges a partition of the graph must be the minimum 
+        # edge which bridges that partition.
         result_set = self.randomGraph.query("""
             CALL algo.MST({nodeLabels: ['A', 'B'], weightAttribute: 'weight'}) 
-            YIELD weight
+            YIELD edge, weight RETURN edge.weight, weight
             """).result_set
         minEdge = self.find_min_edge("A", "B")
 
@@ -336,12 +350,17 @@ class testMST(FlowTestsBase):
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
+            # connected component with 40 nodes: must have 39 edges.
             self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([minEdge], result_set)
+            self.env.assertIn([minEdge, minEdge], result_set)
+
+        for w1, w2 in result_set:
+            # check that the edge given has the correct weight
+            self.env.assertEqual(w1, w2)
 
         result_set = self.randomGraph.query("""
             CALL algo.MST({nodeLabels: ['A', 'C'], weightAttribute: 'weight'}) 
-            YIELD weight
+            YIELD edge, weight RETURN edge.weight, weight
             """).result_set
         minEdge = self.find_min_edge("A", "C")
         
@@ -349,12 +368,17 @@ class testMST(FlowTestsBase):
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
+            # connected component with 40 nodes: must have 39 edges.
             self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([minEdge], result_set)
+            self.env.assertIn([minEdge, minEdge], result_set)
+
+        for w1, w2 in result_set:
+            # check that the edge given has the correct weight
+            self.env.assertEqual(w1, w2)
 
         result_set = self.randomGraph.query("""
             CALL algo.MST({nodeLabels: ['A', 'D'], weightAttribute: 'weight'}) 
-            YIELD weight
+            YIELD edge, weight RETURN edge.weight, weight
             """).result_set
         minEdge = self.find_min_edge("A", "D")
         
@@ -362,12 +386,17 @@ class testMST(FlowTestsBase):
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
+            # connected component with 40 nodes: must have 39 edges.
             self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([minEdge], result_set)
+            self.env.assertIn([minEdge, minEdge], result_set)
+
+        for w1, w2 in result_set:
+            # check that the edge given has the correct weight
+            self.env.assertEqual(w1, w2)
 
         result_set = self.randomGraph.query("""
             CALL algo.MST({nodeLabels: ['B', 'C'], weightAttribute: 'weight'}) 
-            YIELD weight
+            YIELD edge, weight RETURN edge.weight, weight
             """).result_set
         minEdge = self.find_min_edge("B", "C")
         
@@ -375,12 +404,17 @@ class testMST(FlowTestsBase):
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
+            # connected component with 40 nodes: must have 39 edges.
             self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([minEdge], result_set)
+            self.env.assertIn([minEdge, minEdge], result_set)
+
+        for w1, w2 in result_set:
+            # check that the edge given has the correct weight
+            self.env.assertEqual(w1, w2)
         
         result_set = self.randomGraph.query("""
             CALL algo.MST({nodeLabels: ['B', 'D'], weightAttribute: 'weight'}) 
-            YIELD weight
+            YIELD edge, weight RETURN edge.weight, weight
             """).result_set
         minEdge = self.find_min_edge("B", "D")
         
@@ -388,12 +422,17 @@ class testMST(FlowTestsBase):
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
+            # connected component with 40 nodes: must have 39 edges.
             self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([minEdge], result_set)
+            self.env.assertIn([minEdge, minEdge], result_set)
+
+        for w1, w2 in result_set:
+            # check that the edge given has the correct weight
+            self.env.assertEqual(w1, w2)
 
         result_set = self.randomGraph.query("""
             CALL algo.MST({nodeLabels: ['C', 'D'], weightAttribute: 'weight'}) 
-            YIELD weight
+            YIELD edge, weight RETURN edge.weight, weight
             """).result_set
         minEdge = self.find_min_edge("C", "D")
         
@@ -401,10 +440,22 @@ class testMST(FlowTestsBase):
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
+            # connected component with 40 nodes: must have 39 edges.
             self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([minEdge], result_set)
+            self.env.assertIn([minEdge, minEdge], result_set)
+
+        for w1, w2 in result_set:
+            # check that the edge given has the correct weight
+            self.env.assertEqual(w1, w2)
 
     def test_mst_rand_labels_max(self):
+        """Test MST algorithm on random graph with multiple labels"""
+        # randomGraph contains four groups of nodes each of which are connected
+        # each of these groups are likely connected to each other, but this 
+        # is not guaranteed.
+        # test checks that one property of MST is satisfied:
+        # an edge that bridges a partition of the graph must be the minimum 
+        # edge which bridges that partition.
         result_set = self.randomGraph.query("""
             CALL algo.MST({nodeLabels: ['A', 'B'], weightAttribute: 'weight', objective: 'maximize'}) 
             YIELD weight
@@ -415,6 +466,7 @@ class testMST(FlowTestsBase):
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
+            # connected component with 40 nodes: must have 39 edges.
             self.env.assertEqual(len(result_set), 39)
             self.env.assertIn([maxEdge], result_set)
 
@@ -428,6 +480,7 @@ class testMST(FlowTestsBase):
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
+            # connected component with 40 nodes: must have 39 edges.
             self.env.assertEqual(len(result_set), 39)
             self.env.assertIn([maxEdge], result_set)
 
@@ -441,6 +494,7 @@ class testMST(FlowTestsBase):
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
+            # connected component with 40 nodes: must have 39 edges.
             self.env.assertEqual(len(result_set), 39)
             self.env.assertIn([maxEdge], result_set)
 
@@ -454,6 +508,7 @@ class testMST(FlowTestsBase):
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
+            # connected component with 40 nodes: must have 39 edges.
             self.env.assertEqual(len(result_set), 39)
             self.env.assertIn([maxEdge], result_set)
         
@@ -467,6 +522,7 @@ class testMST(FlowTestsBase):
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
+            # connected component with 40 nodes: must have 39 edges.
             self.env.assertEqual(len(result_set), 39)
             self.env.assertIn([maxEdge], result_set)
 
@@ -480,6 +536,7 @@ class testMST(FlowTestsBase):
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
+            # connected component with 40 nodes: must have 39 edges.
             self.env.assertEqual(len(result_set), 39)
             self.env.assertIn([maxEdge], result_set)
 

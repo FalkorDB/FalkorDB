@@ -369,7 +369,7 @@ SIValue *Proc_MSTStep
 ) {
 	ASSERT(ctx->privateData != NULL);
 
-	MST_Context *pdata = (MST_Context *)ctx->privateData;
+	MST_Context *pdata = (MST_Context *) ctx->privateData;
 
 	// depleted
 	if(pdata->info == GxB_EXHAUSTED) {
@@ -389,13 +389,11 @@ SIValue *Proc_MSTStep
 	//--------------------------------------------------------------------------
 	// set outputs
 	//--------------------------------------------------------------------------
-	if(pdata->yield_edge || pdata->yield_weight)
-	{
+	if(pdata->yield_edge || pdata->yield_weight) {
 		bool edge_flag = Graph_GetEdge(pdata->g, edgeID, &pdata->edge);
 		ASSERT(edge_flag) ;
 	}
-	if(pdata->yield_edge) 
-	{
+	if(pdata->yield_edge) {
 		pdata->edge.src_id = (NodeID) node_i;
 		pdata->edge.dest_id = (NodeID) node_j;
 		pdata->edge.relationID = GRAPH_UNKNOWN_RELATION;
@@ -422,7 +420,7 @@ SIValue *Proc_MSTStep
 				}
 			}
 		} else {
-			// if not relation was specified, search all relations
+			// if no relation was specified, search all relations
 			Graph_FindAndSetEdgeRelationID(pdata->g, &pdata->edge);
 
 
@@ -445,8 +443,18 @@ SIValue *Proc_MSTStep
 		GrB_Info info = GrB_Matrix_extractElement_FP64(
 			&weight_val, pdata->w_tree, node_i, node_j);
 		ASSERT(info == GrB_SUCCESS);
-
-		*pdata->yield_weight = SI_DoubleVal(weight_val);
+		if(weight_val == INFINITY || weight_val == -INFINITY) {
+			// check if attribute is actually infinity, if not return none.
+			SIValue *v = GraphEntity_GetProperty(
+				(GraphEntity *) &pdata->edge, pdata->weight_prop);
+			if((v != ATTRIBUTE_NOTFOUND) && (T_DOUBLE & SI_TYPE(*v))) {
+				*pdata->yield_weight = SI_DoubleVal(weight_val);
+			} else {
+				*pdata->yield_weight = SI_NullVal();
+			}
+		} else {
+			*pdata->yield_weight = SI_DoubleVal(weight_val);
+		}
 	}
 	
 	return pdata->output;
