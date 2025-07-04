@@ -9,8 +9,7 @@
 #include "constraint.h"
 #include "../util/arr.h"
 #include "../index/indexer.h"
-#include "../util/thpool/pools.h"
-#include "../graph//graphcontext.h"
+#include "../graph/graphcontext.h"
 #include "../graph/entities/attribute_set.h"
 #include "../graph/delta_matrix/delta_matrix_iter.h"
 
