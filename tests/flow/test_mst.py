@@ -1,4 +1,5 @@
 from common import *
+from random_graph import create_random_graph
 import random
 
 GRAPH_ID = "MST"
@@ -10,50 +11,41 @@ class testMST(FlowTestsBase):
         self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
         self.randomGraph = self.db.select_graph(GRAPH_ID_RAND)
-        self.generate_random_graph_cypher()
+        self.generate_random_graph()
 
     def tearDown(self):
         self.graph.query("MATCH (a) RETURN count(a)")
         self.graph.delete()
 
-    def generate_random_graph_cypher(self, num_nodes=20, num_edges=140, numlabels=4):
-        random.seed(1111)
-        # 1. Create Nodes
-        query_parts = [f"UNWIND range({num_nodes * j}, {num_nodes * (j + 1) - 1}) AS i "
-                        f"CREATE (n:{chr(ord('A') + j)} {{id: i}})"
-                        for j in range(numlabels)]
+    def generate_random_graph(self):
+        # nodes of four different labels, each with 20 nodes
+        nodes =[{"count": 20, "properties": 3, "labels": [l]} for l in "ABCD"]
+        
+        # add many edges between nodes of the same label
+        edges = [{"type": "R", "source": l, "target": l, "count": 100} 
+                    for l in range(4)]
 
-        # Create a list of node IDs for random selection
-        node_ids = list(range(num_nodes * numlabels))
+        # ensure there are edges between nodes of different labels
+        for l1 in range(4):
+            for l2 in range(4):
+                    edges.append(
+                        {"type": "S", "source": l1, "target": l2, "count": 10})
 
-        # 2. ensure components are connected.
-        for j in range(numlabels):
-            query_parts.append(f"UNWIND range({num_nodes * j + 1}, {num_nodes * (j + 1) - 1}) AS i "
-                f"MATCH (a {{id: {num_nodes * j}}}), (b {{id: i}})"
-                "CREATE (a)-[:R {weight: 100}]->(b)")
+        # call random graph
+        create_random_graph(self.randomGraph, nodes, edges)
+
+        # ensure that each label is connected
+        for label in "ABCD":
+            q = f"""MATCH (s:{label}) 
+                WITH s LIMIT 1 
+                MATCH (n:{label}) 
+                CREATE (n)-[:R]->(s)"""
             
-
-        # 3. Create Relationships with random weights
-        relationship_creation_statements = []
-        
-        for _ in range(num_edges):
-            # Pick two random nodes (can be the same for self-loops)
-            source_id = random.choice(node_ids)
-            target_id = random.choice(node_ids)
-            if(source_id == target_id): continue
-            # Generate a random double weight
-            weight = random.uniform(-100.0, 100.0)
-        
-            # Cypher statement to create the relationship
-            # We find the nodes by their 'id' property and then create the relationship.
-            relationship_creation_statements.append(
-                    f'MATCH (a {{id: {source_id}}}), (b {{id: {target_id}}})'
-                    f'CREATE (a)-[:R {{weight: {weight}}}]->(b)'
-                )
-        query_parts.extend(relationship_creation_statements)
-        
-        for q in query_parts:
             self.randomGraph.query(q)
+        
+        # set the wieghts 
+        q = "MATCH ()-[r]->() SET r.weight = rand() * 100, r.cost = rand() * 10"
+        self.randomGraph.query(q)
 
     # find the minumum edge weight between 'src' node and 'dest' node
     def find_min_edge(self, src, dest):
@@ -143,6 +135,13 @@ class testMST(FlowTestsBase):
             YIELD weight RETURN weight ORDER BY weight""")
         result_set = result.result_set
 
+        # The MST should include the edges with the lowest costs
+        # The edge without a cost attribute is only used if it is the only edge
+        # connecting to seperate components.
+        # The expected edges are:
+        #   .02189 (n2 to n3)
+        #   .2198 (n1 to n2)
+        #   2.71828 (n4 to n5)
         ans_set = [[0.02189], [0.2198], [2.71828]]
         self.env.assertEqual(ans_set, result_set)
 
@@ -173,6 +172,15 @@ class testMST(FlowTestsBase):
             CALL algo.MST({relationshipTypes: ['R'], weightAttribute: 'cost', objective: 'max'})
             YIELD weight RETURN weight ORDER BY weight""")
         result_set = result.result_set
+
+        # The MST should include the edges with the highest costs
+        # The edge without a cost attribute is only used if it is the only edge
+        # connecting to separate components.
+        # The expected edges are:
+        #   .993284 (n3 to n1)
+        #   2.71828 (n4 to n5)
+        #   3.14159 (n2 to n1)
+
         ans_set = [[.993284], [2.71828], [3.14159]]
         self.env.assertEqual(ans_set, result_set)
 
@@ -204,6 +212,14 @@ class testMST(FlowTestsBase):
         # We should have exactly 3 different edges 
         self.env.assertEqual(len(result_set), 3)
         self.env.assertContains([4], result_set)
+        
+        # two edges in the cycle should be present
+        cycle_count = 0
+        for edge in result_set:
+            if edge[0] in [1, 2, 3]:
+                cycle_count += 1
+        self.env.assertEqual(cycle_count, 2)
+
 
     def test_mst_on_multitypes(self):
         """Test MST algorithm on nodes connected by multiple relationships"""
@@ -335,8 +351,7 @@ class testMST(FlowTestsBase):
     def test_mst_rand_labels(self):
         """Test MST algorithm on random graph with multiple labels"""
         # randomGraph contains four groups of nodes each of which are connected
-        # each of these groups are likely connected to each other, but this 
-        # is not guaranteed.
+        # each of these groups are connected to each other
         # test checks that one property of MST is satisfied:
         # an edge that bridges a partition of the graph must be the minimum 
         # edge which bridges that partition.
@@ -451,8 +466,7 @@ class testMST(FlowTestsBase):
     def test_mst_rand_labels_max(self):
         """Test MST algorithm on random graph with multiple labels"""
         # randomGraph contains four groups of nodes each of which are connected
-        # each of these groups are likely connected to each other, but this 
-        # is not guaranteed.
+        # each of these groups are connected to each other
         # test checks that one property of MST is satisfied:
         # an edge that bridges a partition of the graph must be the minimum 
         # edge which bridges that partition.

@@ -78,6 +78,8 @@ static void _reduceToMatrix
 		Edge currE;
 		EdgeID minID    = (EdgeID) GxB_Vector_Iterator_getIndex(i);
 		SIValue *currV  = NULL;
+
+		// -infinity if max or +infinity if min
 		SIValue minV    = SI_DoubleVal(ctx->comp * INFINITY);
 		SIValue tempV;
 
@@ -141,6 +143,7 @@ void _getAttFromID
 		int info = SIValue_ToDouble(v, z);
 		ASSERT(info == 1);
 	} else {
+		// -infinity if max or +infinity if min
 		*z = ctx->comp * INFINITY;
 	}
 }
@@ -165,10 +168,12 @@ static void _reduceToMatrixAny
 		// find the first edge in the vector
 		info = GxB_Vector_Iterator_seek(i, 0);
 		ASSERT(info == GrB_SUCCESS);
+
+		// get the first edge ID in the vector
 		EdgeID minID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
 		info = GxB_Iterator_free(&i);
 		ASSERT(info == GrB_SUCCESS);
-		*z = minID;
+		*z = (uint64_t) minID;
 	}
 }
 
@@ -260,7 +265,7 @@ GrB_Info Build_Weighted_Matrix
 
 	// if no relationships are specified, use all relationships
 	// can't use adj matrix since I need access to the edgeIds of all edges
-	if(rels == NULL){
+	if(rels == NULL) {
 		n_rels = Graph_RelationTypeCount(g);
 	}
 
