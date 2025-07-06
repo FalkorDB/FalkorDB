@@ -27,6 +27,7 @@ static bool accept
 		return true;
 	}
 
+	//printf("accept returned false\n");
 	return false;
 }
 
@@ -86,6 +87,7 @@ static bool consume_name
     if (!((*_head >= 'a' && *_head <= 'z') ||
           (*_head >= 'A' && *_head <= 'Z') ||
           (*_head == '_'))) {
+		//printf("consume_name returned false\n");
         return false;
     }
     _head++;
@@ -116,6 +118,7 @@ static bool parse_param_name
 	*param = _head;
 
 	if(!consume_name(&_head)) {
+		//printf("parse_param_name returned false\n");
 		return false;
 	}
 
@@ -124,6 +127,7 @@ static bool parse_param_name
 	skip_spaces(&_head);
 
 	if(consume_token(&_head) != '=') {
+		//printf("parse_param_name returned false, did not found '='\n");
 		return false;
 	}
 
@@ -150,6 +154,7 @@ static bool parse_key
 	*key = _head;
 
 	if(!consume_name(&_head)) {
+		//printf("parse_key returned false\n");
 		return false;
 	}
 
@@ -158,6 +163,7 @@ static bool parse_key
 	skip_spaces(&_head);
 
 	if(consume_token(&_head) != ':') {
+		//printf("parse_key returned false could not find ':'\n");
 		return false;
 	}
 
@@ -171,44 +177,129 @@ static bool parse_key
 	return true;
 }
 
+#define APPEND_CHAR(buf, len, cap, c)              \
+    do {                                           \
+        if ((len) + 1 >= (cap)) {                  \
+            (cap) = ((cap) == 0) ? 64 : (cap) * 2; \
+            (buf) = rm_realloc((buf), (cap));      \
+        }                                          \
+        (buf)[(len)++] = (c);                      \
+    } while (0)
+
+static bool parse_escaped_string
+(
+	char **head,  // parser head
+	char **str,   // [out] parsed string
+	size_t len,   // string length
+	size_t cap,   // string cap
+	char quote    // enclosing quotation mark
+) {
+	char t;
+	bool escape = false;
+	char *_head = *head;
+
+	while ((t = consume_token(&_head)) != '\0') {
+		if (!escape) {
+            if (t == '\\') {
+                escape = true;
+                continue;
+            }
+
+            if (t == quote) break; // end of quoted string
+
+			APPEND_CHAR(*str, len, cap, t);
+            continue;
+        }
+
+		// handle escape
+		switch(t) {
+			case 'a':  APPEND_CHAR(*str, len, cap, '\a'); break;
+			case 'b':  APPEND_CHAR(*str, len, cap, '\b'); break;
+			case 'f':  APPEND_CHAR(*str, len, cap, '\f'); break;
+			case 'n':  APPEND_CHAR(*str, len, cap, '\n'); break;
+			case 'r':  APPEND_CHAR(*str, len, cap, '\r'); break;
+			case 't':  APPEND_CHAR(*str, len, cap, '\t'); break;
+			case 'v':  APPEND_CHAR(*str, len, cap, '\v'); break;
+			case '\\': APPEND_CHAR(*str, len, cap, '\\'); break;
+			case '\'': APPEND_CHAR(*str, len, cap, '\''); break;
+			case '\"': APPEND_CHAR(*str, len, cap, '\"'); break;
+			case '?':  APPEND_CHAR(*str, len, cap, '?');  break;
+			default:
+				// Unrecognized escape — keep as-is
+				APPEND_CHAR(*str, len, cap, '\\');
+				APPEND_CHAR(*str, len, cap, t);
+				break;
+		}
+
+		escape = false;
+	}
+
+	// did we found matching closing quote
+	if (t != quote) {
+		rm_free(*str);
+		//printf("parse_escaped_string returned false\n");
+		return false;
+	}
+
+	// null terminate
+	APPEND_CHAR(*str, len, cap, '\0');
+
+	// update head
+	*head = _head;
+
+	return true;
+}
+
 // parse a quoted string
 static bool parse_string
 (
 	char **head,  // parser header
-	char **str    // [out] parsed string
+	SIValue *v    // [out] parsed string
 ) {
 	ASSERT(**head == '\'' || **head == '"');
 
 	char t;  // read token
 	char *_head = *head;
-	char quote = consume_token(&_head);
-	char *s = _head;
+	char quote  = consume_token(&_head);
+	char *str   = _head;
 	
 	while ((t = consume_token(&_head)) != '\0') {
 		// escape
 		if (t == '\\') {
-			if (consume_token(&_head) == '\0') {
-				return false;
+			_head--;  // backtrack
+			size_t len = _head - str;
+			size_t cap = len + 16;
+			char *buf  = rm_malloc(cap);
+
+			memcpy(buf, str, len);
+
+			if (parse_escaped_string(&_head, &buf, len, cap, quote)) {
+				*v = SI_TransferStringVal(buf);
+				*head = _head;
+				return true;
 			}
-			// skip escaped character
-			continue;
+
+			//printf("parse_string returned false\n");
+			return false;
 		}
 
 		// found closing quotes
 		if (t == quote) {
-			break;	
+			break;
 		}
 	}
 	
 	// did we found matching closing quote
 	if (t != quote) {
+		//printf("parse_string returned false, no matching quote\n");
 		return false;
 	}
 
 	// set string
-	size_t len = _head - s - 1; // do not count closing quote
-	*str = s;
-	(*str)[len] = '\0';
+	size_t len = _head - str - 1; // do not count closing quote
+	(str)[len] = '\0';
+
+	*v = SI_ConstStringVal(str);
 
 	// update head
 	*head = _head;
@@ -235,17 +326,26 @@ static bool parse_number
 
 	// consume the whole number part
 	t = consume_token(&_head);
-	ASSERT(t == '-' || isdigit(t));
+	ASSERT(t == '-' || t == '.' || isdigit(t));
+
+	bool decimal_point;
+
+	if (t == '.') {
+		decimal_point = true;
+		goto decimal_point;
+	}
 
 	consume_digits(&_head);
 
-	bool decimal_point = (peek(_head) == '.');
+	decimal_point = (peek(_head) == '.');
 	if (decimal_point) {
 		// skip over '.'
 		consume_token(&_head);
 
+decimal_point:
 		// expecting at least a single digit
 		if (!isdigit(peek(_head))) {
+			//printf("parse_number returned false\n");
 			return false;
 		}
 
@@ -261,12 +361,18 @@ static bool parse_number
 		// todo: check for error
 		char *endptr;
 		double v = strtod(s, &endptr);
-		if (*endptr != '\0') return false;
+		if (*endptr != '\0') {
+			//printf("parse_number returned false, strtod\n");
+			return false;
+		}
 		*d = SI_DoubleVal(v);
 	} else {
 		char *endptr;
 		long long v = strtoll(s, &endptr, 10);
-		if (*endptr != '\0') return false;
+		if (*endptr != '\0') {
+			//printf("parse_number returned false, strtoll\n");
+			return false;
+		}
 		*d = SI_LongVal(v);
 	}
 
@@ -307,6 +413,7 @@ static bool parse_array
 
 		if (!parse_value(&_head, &v)) {
 			SIArray_Free(arr);
+			//printf("parse_array returned false\n");
 			return false;
 		}
 
@@ -327,6 +434,7 @@ static bool parse_array
 		return true;
 	}
 
+	//printf("parse_array returned false, no matching ']'\n");
 	SIArray_Free(arr);
 	return false;
 }
@@ -362,11 +470,13 @@ static bool parse_map
 
 		if (!parse_key(&_head, &k)) {
 			Map_Free(map);
+			//printf("parse_map returned false\n");
 			return false;
 		}
 
 		if (!parse_value(&_head, &val)) {
 			Map_Free(map);
+			//printf("parse_map returned false\n");
 			return false;
 		}
 
@@ -389,6 +499,7 @@ static bool parse_map
 	}
 
 	Map_Free(map);
+	//printf("parse_map returned false\n");
 	return false;
 }
 
@@ -407,16 +518,14 @@ static bool parse_value
 
 	else if (p == '"' || p == '\'') {
 		// parse string
-		char *s = NULL;
-		if (!parse_string(head, &s)) {
+		if (!parse_string(head, v)) {
 			return false;
 		}
 
-		*v = SI_ConstStringVal(s);
 		return true;
 	}
 
-	else if (p == '-' || (p >= '0' && p <= '9')) {
+	else if (p == '-' || p == '.' || (p >= '0' && p <= '9')) {
 		if (!parse_number(head, v)) {
 			return false;	
 		}
