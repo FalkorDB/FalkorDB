@@ -22,8 +22,8 @@
 // CALL algo.MST({nodeLabels: ['L', 'P']}) YIELD edge, weight
 // CALL algo.MST({relationshipTypes: ['R', 'E']}) YIELD edge, weight
 // CALL algo.MST({nodeLabels: ['L'], relationshipTypes: ['E'], weightAttribute: 
-//      'cost', objective: 'maximum'}) YIELD edge, weight
-// CALL algo.MST({nodeLabels: ['L'], objective: 'minimum'})
+//      'cost', objective: 'maximize'}) YIELD edge, weight
+// CALL algo.MST({nodeLabels: ['L'], objective: 'minimize'})
 
 typedef struct {
 	Graph *g;              	// graph
@@ -38,7 +38,6 @@ typedef struct {
 	Edge edge;             	// edge
 	AttributeID weight_prop;// weight attribute id
 	SIValue output[2];     	// array with up to 2 entries [edge, weight]
-	// SIValue *yield_node;   	// nodes 
 	SIValue *yield_edge;   	// edges
 	SIValue *yield_weight; 	// edge weights
 } MST_Context;
@@ -65,7 +64,6 @@ static void _process_yield
 	}
 }
 
-// TODO should return enum rather than bool?
 // process procedure configuration argument
 static bool _read_config
 (
@@ -73,20 +71,19 @@ static bool _read_config
 	LabelID **lbls,         // [output] labels
 	RelationID **rels,      // [output] relationships
 	AttributeID *weightAtt, // [output] relationship used as weight
-	bool *maxSF             // [output] true if maximum spanning forest
+	bool *maxST             // [output] true if maximum spanning forest
 ) {
-	// expecting configuration to be a map
 	ASSERT(lbls            != NULL);
 	ASSERT(rels            != NULL);
+	ASSERT(maxST           != NULL);
 	ASSERT(weightAtt       != NULL);
-	ASSERT(maxSF           != NULL);
-	ASSERT(SI_TYPE(config) == T_MAP);
+	ASSERT(SI_TYPE(config) == T_MAP);  // expecting configuration to be a map
 
-	// set outputs to NULL
-	*lbls = NULL;
-	*rels = NULL;
+	// initialize outputs
+	*lbls      = NULL;
+	*rels      = NULL;
+	*maxST     = false;
 	*weightAtt = ATTRIBUTE_ID_NONE;
-	*maxSF = false;
 
 	uint match_fields = 0;
 	uint n = Map_KeyCount(config);
@@ -165,34 +162,38 @@ static bool _read_config
 
 		match_fields++;
 	}
+
 	if(MAP_GETCASEINSENSITIVE(config, "weightAttribute", v)) {
 		if(SI_TYPE(v) != T_STRING) {
 			ErrorCtx_SetError("mst configuration, 'weightAttribute' should be a string");
 			goto error;
 		}
 
-		const char *relation = v.stringval;
-		*weightAtt = GraphContext_GetAttributeID(gc, relation);
+		const char *attr = v.stringval;
+		*weightAtt = GraphContext_GetAttributeID(gc, attr);
 		if(*weightAtt == ATTRIBUTE_ID_NONE) {
-			ErrorCtx_SetError("mst configuration, unknown attribute-type %s", relation);
+			ErrorCtx_SetError("mst configuration, unknown attribute%s", attr);
 			goto error;
 		}
 		match_fields++;
 	}
+
 	if(MAP_GETCASEINSENSITIVE(config, "objective", v)) {
 		if(SI_TYPE(v) != T_STRING) {
 			ErrorCtx_SetError("mst configuration, 'objective' should be a string");
 			goto error;
 		}
+
 		const char *objective = v.stringval;
-		if(strncasecmp(objective, "min", 3) == 0)
-			*maxSF = false;
-		else if(strncasecmp(objective, "max", 3) == 0)
-			*maxSF = true;
-		else{
+		if (strcasecmp(objective, "minimize") == 0) {
+			*maxST = false;
+		} else if (strcasecmp(objective, "maximize") == 0) {
+			*maxST = true;
+		} else {
 			ErrorCtx_SetError("mst configuration, unknown objective %s", objective);
 			goto error;
 		}
+
 		match_fields++;
 	}
 
@@ -204,6 +205,8 @@ static bool _read_config
 	return true;
 
 error:
+	// clean up
+
 	if(_lbls != NULL) {
 		array_free(_lbls);
 		*lbls = NULL;
@@ -216,7 +219,6 @@ error:
 
 	return false;
 }
-
 
 // invoke the procedure
 ProcedureResult Proc_MSTInvoke
@@ -251,20 +253,20 @@ ProcedureResult Proc_MSTInvoke
 	// {
 	//	nodeLabels: ['A', 'B'],
 	//	relationshipTypes: ['R'],
-	//	weightRelationship: 'R',
+	//	attribute: 'score',
 	//	objective: 'minimize'
 	// }
 
 	LabelID    *lbls      = NULL;
 	RelationID *rels      = NULL;
 	AttributeID weightAtt = ATTRIBUTE_ID_NONE;
-	bool        maxSF     = false;
+	bool        maxST     = false;  // true if objective is 'maximize'
 
 	//--------------------------------------------------------------------------
 	// load configuration map
 	//--------------------------------------------------------------------------
 
-	bool config_ok = _read_config(config, &lbls, &rels, &weightAtt, &maxSF);
+	bool config_ok = _read_config(config, &lbls, &rels, &weightAtt, &maxST);
 	
 	SIValue_Free(config);
 
@@ -273,7 +275,6 @@ ProcedureResult Proc_MSTInvoke
 		return PROCEDURE_ERR;
 	}
 
-
 	//--------------------------------------------------------------------------
 	// setup procedure context
 	//--------------------------------------------------------------------------
@@ -281,33 +282,38 @@ ProcedureResult Proc_MSTInvoke
 	Graph *g = QueryCtx_GetGraph();
 	MST_Context *pdata = rm_calloc(1, sizeof(MST_Context));
 
-	pdata->g              = g;
-	pdata->weight_prop    = weightAtt;
-	pdata->relationIDs    = rels;
-	pdata->relationCount  = array_len(rels);
+	pdata->g             = g;
+	pdata->weight_prop   = weightAtt;
+	pdata->relationIDs   = rels;
+	pdata->relationCount = array_len(rels);
+
 	_process_yield(pdata, yield);
 
 	// save private data
 	ctx->privateData = pdata;
 
-	GrB_Matrix A = NULL, A_w = NULL;
-	GrB_Info info;
+	//--------------------------------------------------------------------------
+	// construct input matrix
+	//--------------------------------------------------------------------------
 
-	//makes into a symetric matrix
-	info =  Build_Weighted_Matrix (
-			&A, &A_w, &pdata->nodes, g, lbls, array_len(lbls), rels,
-			array_len(rels), weightAtt, maxSF? BWM_MAX: BWM_MIN, true, true);
+	GrB_Info info;
+	GrB_Matrix A   = NULL;  // edge ids of filtered edges
+	GrB_Matrix A_w = NULL;  // weight of filtered edges
+
+	// makes into a symetric matrix
+	info = Build_Weighted_Matrix(&A, &A_w, &pdata->nodes, g, lbls,
+			array_len(lbls), rels, array_len(rels), weightAtt,
+			maxST ? BWM_MAX : BWM_MIN, true, true);
 	ASSERT(info == GrB_SUCCESS);
 	
 	// free build matrix inputs
-	if(lbls != NULL) array_free(lbls);
-	// if(rels != NULL) array_free(rels);
+	if (lbls != NULL) array_free(lbls);
 
 	//--------------------------------------------------------------------------
-	// run MST centrality
+	// run MST
 	//--------------------------------------------------------------------------
 
-	if(maxSF) { // if we are optimizing for the max, make weights negative.
+	if (maxST) { // if we are optimizing for the max, make weights negative.
 		info = GrB_Matrix_apply(A_w, NULL, NULL, GrB_AINV_FP64, A_w, NULL);
 		ASSERT(info == GrB_SUCCESS);
 	}
@@ -317,13 +323,16 @@ ProcedureResult Proc_MSTInvoke
 	GrB_Info mst_res =
 		LAGraph_msf(&pdata->w_tree, A_w, false, msg);
 
+	// clean up algorithm inputs
+	info = GrB_free(&A_w);
+	ASSERT(info == GrB_SUCCESS);
+
 	if(mst_res != GrB_SUCCESS) {
 		GrB_free(&A);
-		GrB_free(&A_w);
 		return PROCEDURE_ERR;
 	}
 
-	if(maxSF) { // if we are optimizing for the max, make weights negative.
+	if(maxST && yield_weight) { // if we are optimizing for the max, make weights negative.
 		info = GrB_Matrix_apply(
 			pdata->w_tree, NULL, NULL, GrB_AINV_FP64, pdata->w_tree, NULL) ;
 		ASSERT(info == GrB_SUCCESS);
@@ -333,19 +342,13 @@ ProcedureResult Proc_MSTInvoke
 	info = GrB_Matrix_nrows(&n, pdata->w_tree);
 	ASSERT(info == GrB_SUCCESS);
 
-	info = GrB_Matrix_new(&pdata->tree, GrB_UINT64, n, n);
+	// TODO: only compute if yielding edges
+	// mask out dropped edges
+	info = GrB_Matrix_assign(A, pdata->w_tree, NULL, A, GrB_ALL, n, GrB_ALL, n,
+			GrB_DESC_RS);
 	ASSERT(info == GrB_SUCCESS);
 
-	info = GrB_Matrix_assign(
-		pdata->tree, pdata->w_tree, NULL, A, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
-	);
-	ASSERT(info == GrB_SUCCESS);
-	
-	// clean up algorithm inputs
-	info = GrB_free(&A_w);
-	ASSERT(info == GrB_SUCCESS);
-	info = GrB_free(&A);
-	ASSERT(info == GrB_SUCCESS);
+	pdata->tree = A;
 	
 	//--------------------------------------------------------------------------
 	// initialize iterator
@@ -355,13 +358,14 @@ ProcedureResult Proc_MSTInvoke
 	ASSERT(info == GrB_SUCCESS);
 
 	// iterate over spanning tree
+	// TODO: see if we want to use two iterators
 	info = GxB_Matrix_Iterator_attach(pdata->it, pdata->tree, NULL);
 	ASSERT(info == GrB_SUCCESS);
     pdata->info = GxB_Matrix_Iterator_seek(pdata->it, 0);
 	return PROCEDURE_OK;
 }
 
-// yield edge and its weight.
+// yield edge and its weight
 // yields NULL if there are no additional edges to return
 SIValue *Proc_MSTStep
 (
@@ -377,11 +381,13 @@ SIValue *Proc_MSTStep
 	}
 
 	// retrieve node from graph
-	GrB_Index node_i, node_j;
-	GxB_Matrix_Iterator_getIndex(pdata->it, &node_i, &node_j);
 	Edge edge;
-	EdgeID edgeID = (EdgeID) GxB_Iterator_get_UINT64(pdata->it);
-	ASSERT(SCALAR_ENTRY(edgeID)) ;
+	GrB_Index node_i;
+	GrB_Index node_j;
+
+	GxB_Matrix_Iterator_getIndex(pdata->it, &node_i, &node_j);
+	EdgeID edgeID = (EdgeID)GxB_Iterator_get_UINT64(pdata->it);
+	ASSERT(SCALAR_ENTRY(edgeID));
 	
 	// prep for next call to Proc_BetweennessStep
 	pdata->info = GxB_Matrix_Iterator_next(pdata->it);
@@ -389,13 +395,13 @@ SIValue *Proc_MSTStep
 	//--------------------------------------------------------------------------
 	// set outputs
 	//--------------------------------------------------------------------------
-	if(pdata->yield_edge || pdata->yield_weight) {
-		bool edge_flag = Graph_GetEdge(pdata->g, edgeID, &pdata->edge);
-		ASSERT(edge_flag) ;
-	}
+
 	if(pdata->yield_edge) {
-		pdata->edge.src_id = (NodeID) node_i;
-		pdata->edge.dest_id = (NodeID) node_j;
+		bool edge_flag = Graph_GetEdge(pdata->g, edgeID, &pdata->edge);
+		ASSERT(edge_flag);
+
+		pdata->edge.src_id     = (NodeID) node_i;
+		pdata->edge.dest_id    = (NodeID) node_j;
 		pdata->edge.relationID = GRAPH_UNKNOWN_RELATION;
 
 		if(pdata->relationCount > 0) { 
@@ -481,13 +487,11 @@ ProcedureResult Proc_MSTFree
 }
 
 // CALL algo.MST({nodeLabels: ['Person'], relationshipTypes: ['KNOWS'],
-// attribute: 'Years', objective: 'Minimum'}) YIELD node, score
+// attribute: 'Years', objective: 'Minimize'}) YIELD edge, weight
 ProcedureCtx *Proc_MSTCtx(void) {
-	void *privateData = NULL;
-
-	ProcedureOutput *outputs         = array_new(ProcedureOutput, 2);
-	ProcedureOutput output_edge      = {.name = "edge", .type = T_EDGE};
-	ProcedureOutput output_weight    = {.name = "weight", .type = T_DOUBLE};
+	ProcedureOutput *outputs      = array_new(ProcedureOutput, 2);
+	ProcedureOutput output_edge   = {.name = "edge",   .type = T_EDGE};
+	ProcedureOutput output_weight = {.name = "weight", .type = T_DOUBLE};
 
 	array_append(outputs, output_edge);
 	array_append(outputs, output_weight);
@@ -498,7 +502,7 @@ ProcedureCtx *Proc_MSTCtx(void) {
 								   Proc_MSTStep,
 								   Proc_MSTInvoke,
 								   Proc_MSTFree,
-								   privateData,
+								   NULL,
 								   true);
 	return ctx;
 }

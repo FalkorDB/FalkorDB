@@ -1211,7 +1211,7 @@ bool Graph_CheckAndSetEdgeRelationID
 (
 	const Graph *g,  // Graph to get edges from
 	Edge *edge,    	 // Edge to check
-	RelationID r     // Edge type
+	RelationID r     // Edge type  // TODO: change into an array of rels
 ) {
 	ASSERT(g);
 	ASSERT(edge);
@@ -1220,29 +1220,28 @@ bool Graph_CheckAndSetEdgeRelationID
 	// invalid relation type specified
 	if(r == GRAPH_UNKNOWN_RELATION) return false;
 
-	Tensor R             = Graph_GetRelationMatrix(g, r, false);
-	GrB_Index srcID      = edge->src_id;
-	GrB_Index destID     = edge->dest_id;
-	bool v               = false;
-	uint64_t x           = 0;
-	GrB_Matrix M         = NULL;
-	bool edgeInRelation  = false;
+	Tensor R            = Graph_GetRelationMatrix(g, r, false);
+	GrB_Index srcID     = edge->src_id;
+	GrB_Index destID    = edge->dest_id;
+	uint64_t x          = 0;
+	bool edgeInRelation = false;
 
 	GrB_Info info = Delta_Matrix_extractElement_UINT64(&x, R, srcID, destID);
 	ASSERT(info >= 0);
 
-	if(info == GrB_SUCCESS){
-		if(SCALAR_ENTRY(x)){
+	if (info == GrB_SUCCESS) {
+		if (SCALAR_ENTRY(x)) {
 			edgeInRelation = (EntityID) x == edge->id;
 		} else {
 			GrB_Vector x_vec = AS_VECTOR(x);
-			info = GrB_Vector_extractElement_BOOL(&v, x_vec, edge->id);
-			ASSERT(info >= 0);
-			edgeInRelation = info == GrB_SUCCESS;
+			info = GxB_Vector_isStoredElement(x_vec, edge->id);
+			edgeInRelation = (info == GrB_SUCCESS);
 		}
 	}
 
-	if(edgeInRelation) edge->relationID = r;
+	if(edgeInRelation) {
+		edge->relationID = r;
+	}
 
 	return edgeInRelation;
 }
