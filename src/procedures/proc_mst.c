@@ -447,7 +447,9 @@ SIValue *Proc_MSTStep
 			// check if attribute is actually infinity, if not return none.
 			SIValue *v = GraphEntity_GetProperty(
 				(GraphEntity *) &pdata->edge, pdata->weight_prop);
-			if((v != ATTRIBUTE_NOTFOUND) && (T_DOUBLE & SI_TYPE(*v))) {
+			if((v != ATTRIBUTE_NOTFOUND) && ((T_DOUBLE & SI_TYPE(*v)) == 0))
+				*pdata->yield_weight = SI_NullVal();
+			else if ((T_DOUBLE & SI_TYPE(*v))) {
 				*pdata->yield_weight = SI_DoubleVal(weight_val);
 			} else {
 				*pdata->yield_weight = SI_NullVal();

@@ -1,6 +1,7 @@
 from common import *
 from random_graph import create_random_graph
 import random
+from math import nan 
 
 GRAPH_ID = "MST"
 GRAPH_ID_RAND = "MST_rand"
@@ -160,7 +161,7 @@ class testMST(FlowTestsBase):
             (n5 {id: 5}),
             (n6 {id: 6}),
             (n1)-[:R {cost: .2198}]->(n2),
-            (n1)<-[:R {}]-(n2),
+            (n1)<-[:R]-(n2),
             (n1)<-[:R {cost: 3.14159}]-(n2),
             (n2)-[:R {cost: .02189}]->(n3),
             (n3)-[:R {cost: .993284}]->(n1),
@@ -340,12 +341,28 @@ class testMST(FlowTestsBase):
          # Run MST algorithm with both relationships (max)
         result = self.graph.query("""
             CALL algo.MST({weightAttribute: 'score', objective: 'max'}) 
-            YIELD edge, weight RETURN edge.mst_ans, weight
+            YIELD edge, weight
+            RETURN edge.mst_ans, weight
             ORDER BY weight
             """)
 
         result_set = result.result_set
         ans_set = [[0, 789134.0], [0, 8991234.0], [2, None]]
+        self.env.assertEqual(ans_set, result_set)
+
+        q = "MATCH ({id:2})-[b:B]->({id:3}) SET b.score = 'Hello'"
+        self.graph.query(q)
+
+        # Run MST algorithm with relationship type B
+        result = self.graph.query("""
+            CALL algo.MST({relationshipTypes: ['B'], weightAttribute: 'score'}) 
+            YIELD edge, weight 
+            RETURN edge.mst_ans, weight
+            ORDER BY weight
+            """)
+
+        result_set = result.result_set
+        ans_set = [[2, 1000.0], [2, 7654.0], [2, None]]
         self.env.assertEqual(ans_set, result_set)
 
     def test_mst_rand_labels(self):
