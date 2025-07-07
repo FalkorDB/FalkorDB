@@ -330,6 +330,12 @@ static void _QueryCtx_ThreadSafeContextLock
 ) {
 	if(ctx->global_exec_ctx.bc) {
 		RedisModule_ThreadSafeContextLock(ctx->global_exec_ctx.redis_ctx);
+	} else {
+		// when the query run on main thread like in aof loading
+		// we need to yield the main thread to allow other clients to run
+		// this is done to avoid blocking the main thread for a long time
+		// while waiting for the query to finish
+		RedisModule_Yield(ctx->global_exec_ctx.redis_ctx, REDISMODULE_YIELD_FLAG_CLIENTS, NULL);
 	}
 }
 
