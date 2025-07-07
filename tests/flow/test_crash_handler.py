@@ -1,4 +1,4 @@
-from common import Env
+from common import *
 
 GRAPH_ID = "crash_report"
 
@@ -7,6 +7,11 @@ class testCrashHandler():
         self.env, self.db = Env(enableDebugCommand=True)
 
     def test_crash_handler(self):
+        if SANITIZER:
+            # Sanitizers are not compatible with the crash handler
+            self.env.skip()
+            return
+
         try:
             # trigger a crash
             self.db.execute_command("DEBUG", "SEGFAULT")
