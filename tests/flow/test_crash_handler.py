@@ -1,8 +1,6 @@
-from common import *
-from index_utils import *
-from constraint_utils import *
+from common import Env
 
-GRAPH_ID = "constraints"
+GRAPH_ID = "crash_report"
 
 class testCrashHandler():
     def __init__(self):
@@ -10,10 +8,15 @@ class testCrashHandler():
 
     def test_crash_handler(self):
         try:
+            # trigger a crash
             self.db.execute_command("DEBUG", "SEGFAULT")
         except:
             pass
+
+        # verify we see a crash report
         logfilename = self.env.envRunner._getFileName("master", ".log")
-        logfile = open(f"{self.env.logDir}/{logfilename}")
-        log = logfile.read()
+        with open(f"{self.env.logDir}/{logfilename}") as logfile:
+            log = logfile.read()
+
         self.env.assertGreater(len(log.splitlines()), 30)
+
