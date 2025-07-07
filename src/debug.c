@@ -103,6 +103,12 @@ void setupCrashHandlers
 	// to report RedisGraph additional information in case of a crash
 	// otherwise overwrite Redis signal handler
 
+	// Block SIGUSR2 in main thread
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGUSR2);
+    pthread_sigmask(SIG_BLOCK, &set, NULL);
+
 	if(RedisModule_RegisterInfoFunc) {
 		int registered = RedisModule_RegisterInfoFunc(ctx, InfoFunc);
 		ASSERT(registered == REDISMODULE_OK);
