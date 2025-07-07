@@ -35,6 +35,26 @@ class testParams(FlowTestsBase):
             ("CYPHER x = 0.123", 0.123),
             ("CYPHER x = -0.123", -0.123),
             ("CYPHER x = -.123", -0.123),
+
+            # Integer base, positive exponent
+            ("CYPHER x = 2e2",  2e2),
+            ("CYPHER x = 2e+2", 2e+2),
+            ("CYPHER x = 2e-2", 2e-2),
+
+            # Integer base, negative number
+            ("CYPHER x = -2e2",  -2e2),
+            ("CYPHER x = -2e+2", -2e+2),
+            ("CYPHER x = -2e-2", -2e-2),
+
+            # Decimal base, positive exponent
+            ("CYPHER x = 1.2e2", 1.2e2),
+            ("CYPHER x = 1.2e+2", 1.2e+2),
+            ("CYPHER x = 1.2e-2", 1.2e-2),
+
+            # Decimal base, negative number
+            ("CYPHER x = -1.2e2", -1.2e2),
+            ("CYPHER x = -1.2e+2", -1.2e+2),
+            ("CYPHER x = -1.2e-2", -1.2e-2),
     
             # --- Strings ---
 
@@ -169,7 +189,6 @@ class testParams(FlowTestsBase):
         for i in range(0, 50):
             q = "RETURN $x"
             expected = random_value()
-            print(f"param: {expected}")
             actual = self.graph.query(q, {'x': expected}).result_set[0][0]
             self.env.assertEqual(expected, actual)
 
@@ -233,7 +252,6 @@ class testParams(FlowTestsBase):
                 ]
         for q in invalid_queries:
             try:
-                print(f"q: {q}")
                 result = self.graph.query(q)
                 assert(False)
             except redis.exceptions.ResponseError as e:

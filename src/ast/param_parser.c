@@ -12,6 +12,59 @@
 
 #include <ctype.h>
 
+// hash function
+// turning string into hash
+static uint64_t _hashFunction
+(
+	const void *key  // string key
+) {
+	return XXH64(key, strlen(key), 0);
+}
+
+// hash compare function
+// checking if two keys are the same using the strcmp function
+static int _hashCompare
+(
+	dict *d,
+	const void *key1,
+	const void *key2
+) {
+	const char *a = (const char*)key1;
+	const char *b = (const char*)key2;
+	return (strcmp(a, b) == 0);
+}
+
+static void _keyDestructor
+(
+	dict *d,
+	void *key
+) {
+	char *_key = key;
+	rm_free(_key);
+}
+
+static void _valDestructor
+(
+	dict *d,
+	void *obj
+) {
+	SIValue *v = obj;
+	SIValue_Free(*v);
+}
+
+static dictType dt = {
+	.hashFunction           =  _hashFunction,
+	.keyDup                 =  NULL,
+	.valDup                 =  NULL,
+	.keyCompare             =  _hashCompare,
+	.keyDestructor          =  _keyDestructor,
+	.valDestructor          =  _valDestructor,
+	.expandAllowed          =  NULL,
+	.dictEntryMetadataBytes =  NULL,
+	.dictMetadataBytes      =  NULL,
+	.afterReplaceEntry      =  NULL
+};
+
 // forward declaration
 static bool parse_value(char **head, SIValue *v);
 
@@ -27,7 +80,6 @@ static bool accept
 		return true;
 	}
 
-	//printf("accept returned false\n");
 	return false;
 }
 
@@ -39,7 +91,10 @@ static inline void skip_spaces
 	char *_head = *head;
 
 	// skip all spaces
-	while(_head[0] == ' ') {
+	while(_head[0] == ' '  ||
+		  _head[0] == '\n' ||
+		  _head[0] == '\t' ||
+		  _head[0] == '\r') {
 		_head++;
 	}
 
@@ -87,7 +142,6 @@ static bool consume_name
     if (!((*_head >= 'a' && *_head <= 'z') ||
           (*_head >= 'A' && *_head <= 'Z') ||
           (*_head == '_'))) {
-		//printf("consume_name returned false\n");
         return false;
     }
     _head++;
@@ -118,7 +172,6 @@ static bool parse_param_name
 	*param = _head;
 
 	if(!consume_name(&_head)) {
-		//printf("parse_param_name returned false\n");
 		return false;
 	}
 
@@ -127,7 +180,6 @@ static bool parse_param_name
 	skip_spaces(&_head);
 
 	if(consume_token(&_head) != '=') {
-		//printf("parse_param_name returned false, did not found '='\n");
 		return false;
 	}
 
@@ -151,19 +203,42 @@ static bool parse_key
 	char *_head = *head;
 	skip_spaces(&_head);
 
+	bool backtick = false;
 	*key = _head;
 
-	if(!consume_name(&_head)) {
-		//printf("parse_key returned false\n");
-		return false;
+	// key might start with ` (backtick) in which case we consume all chars
+	// up to the closing backtick
+	if (_head[0] == '`') {
+		backtick = true;
+		consume_token(&_head);
+
+		char t;
+		while ((t = consume_token(&_head)) != '\0') {
+			if (t == '`') {
+				break;
+			}
+		}
+		// reached end of string before finding a closing backtick
+		if (t == '\0') {
+			return false;
+		}
+	} else {
+		if (!consume_name(&_head)) {
+			return false;
+		}
 	}
 
 	size_t len = _head - *key;
 
+	// remove enclosing backticks
+	if (backtick) {
+		len -= 2;
+		(*key)++;
+	}
+
 	skip_spaces(&_head);
 
-	if(consume_token(&_head) != ':') {
-		//printf("parse_key returned false could not find ':'\n");
+	if (consume_token(&_head) != ':') {
 		return false;
 	}
 
@@ -237,7 +312,6 @@ static bool parse_escaped_string
 	// did we found matching closing quote
 	if (t != quote) {
 		rm_free(*str);
-		//printf("parse_escaped_string returned false\n");
 		return false;
 	}
 
@@ -279,7 +353,6 @@ static bool parse_string
 				return true;
 			}
 
-			//printf("parse_string returned false\n");
 			return false;
 		}
 
@@ -291,7 +364,6 @@ static bool parse_string
 	
 	// did we found matching closing quote
 	if (t != quote) {
-		//printf("parse_string returned false, no matching quote\n");
 		return false;
 	}
 
@@ -325,44 +397,75 @@ static bool parse_number
 	char t;
 
 	// consume the whole number part
-	t = consume_token(&_head);
+	//t = consume_token(&_head);
+	t = peek(_head);
+
 	ASSERT(t == '-' || t == '.' || isdigit(t));
 
-	bool decimal_point;
+	// bool decimal_point;
 
-	if (t == '.') {
-		decimal_point = true;
-		goto decimal_point;
+	accept(&_head, "-", 1);  // skip - if present
+	bool decimal_point = accept(&_head, ".", 1);  // skip . if present
+
+	// require at least one digist
+	t = consume_token(&_head);
+	if (!isdigit(t)) {
+		return false;
 	}
 
+	// consume additional digits
 	consume_digits(&_head);
 
-	decimal_point = (peek(_head) == '.');
-	if (decimal_point) {
-		// skip over '.'
-		consume_token(&_head);
+	//--------------------------------------------------------------------------
+	// decimal point
+	//--------------------------------------------------------------------------
 
-decimal_point:
+	if (accept(&_head, ".", 1)) {
+		decimal_point = true;
+
+		// consume first digit
+		t = consume_token(&_head);
+
 		// expecting at least a single digit
-		if (!isdigit(peek(_head))) {
-			//printf("parse_number returned false\n");
+		if (!isdigit(t)) {
 			return false;
 		}
 
+		// consume additional digits
 		consume_digits(&_head);
 	}
 
+	//--------------------------------------------------------------------------
+	// exponent
+	//--------------------------------------------------------------------------
+
 	t = peek(_head);
+	bool exponent = (t == 'e' || t == 'E');
+
+	if (exponent) {
+		consume_token(&_head);   // skip 'e'
+		accept(&_head, "+", 1);  // skip + if present
+		accept(&_head, "-", 1);  // skip - if present
+
+		// expecting at least a single digit
+		t = consume_token(&_head);
+		if (!isdigit(t)) {
+			return false;
+		}
+
+		// consume additional digits
+		consume_digits(&_head);
+	}
+
+	t = peek(_head);  // backup char
 
 	size_t len = _head - s;
 	_head[0] = '\0';
 
-	if(decimal_point) {
-		// todo: check for error
+	if(decimal_point || exponent) {
 		char *endptr;
 		double v = strtod(s, &endptr);
 		if (*endptr != '\0') {
-			//printf("parse_number returned false, strtod\n");
 			return false;
 		}
 		*d = SI_DoubleVal(v);
@@ -370,7 +473,6 @@ decimal_point:
 		char *endptr;
 		long long v = strtoll(s, &endptr, 10);
 		if (*endptr != '\0') {
-			//printf("parse_number returned false, strtoll\n");
 			return false;
 		}
 		*d = SI_LongVal(v);
@@ -413,7 +515,6 @@ static bool parse_array
 
 		if (!parse_value(&_head, &v)) {
 			SIArray_Free(arr);
-			//printf("parse_array returned false\n");
 			return false;
 		}
 
@@ -434,7 +535,6 @@ static bool parse_array
 		return true;
 	}
 
-	//printf("parse_array returned false, no matching ']'\n");
 	SIArray_Free(arr);
 	return false;
 }
@@ -470,13 +570,11 @@ static bool parse_map
 
 		if (!parse_key(&_head, &k)) {
 			Map_Free(map);
-			//printf("parse_map returned false\n");
 			return false;
 		}
 
 		if (!parse_value(&_head, &val)) {
 			Map_Free(map);
-			//printf("parse_map returned false\n");
 			return false;
 		}
 
@@ -499,7 +597,6 @@ static bool parse_map
 	}
 
 	Map_Free(map);
-	//printf("parse_map returned false\n");
 	return false;
 }
 
@@ -582,7 +679,7 @@ dict *ParamParser_Parse
 		return NULL;
 	}
 
-	dict *params = HashTableCreate(&string_dt);
+	dict *params = HashTableCreate(&dt);
 
 	while(*head != '\0') {
 		char *param = NULL;
@@ -593,7 +690,9 @@ dict *ParamParser_Parse
 		SIValue *v = rm_malloc(sizeof(SIValue));
 		if(!parse_value(&head, v)) {
 			rm_free(v);
-			break;
+			// todo: release individual values
+			HashTableRelease(params);
+			return NULL;
 		}
 
 		// repeat param name

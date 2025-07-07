@@ -31,7 +31,7 @@ typedef struct {
 // returns ExecutionCtx populated with the current execution relevant objects
 ExecutionCtx *ExecutionCtx_FromQuery
 (
-	const char *q  // string representing the query
+	char *q  // string representing the query
 );
 
 // clone the execution ctx and return a shallow copy for the ast
