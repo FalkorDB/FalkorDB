@@ -13,10 +13,13 @@ class testCrashHandler():
         except:
             pass
 
+        # wait for the master process to exit
+        self.env.envRunner.masterProcess.wait()
+
         # verify we see a crash report
         logfilename = self.env.envRunner._getFileName("master", ".log")
         with open(f"{self.env.logDir}/{logfilename}") as logfile:
             log = logfile.read()
 
-        self.env.assertGreater(len(log.splitlines()), 30)
+        self.env.assertContains("=== REDIS BUG REPORT END", log)
 
