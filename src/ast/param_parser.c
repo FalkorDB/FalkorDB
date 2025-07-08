@@ -141,29 +141,29 @@ static void consume_digits
 // e.g. budget42, _x99, user_name
 static bool consume_name
 (
-    char **head  // parser head
+	char **head  // parser head
 ) {
-    char *_head = *head;
+	char *_head = *head;
 
-    // first character: must be a letter or underscore
-    if (!((*_head >= 'a' && *_head <= 'z') ||
-          (*_head >= 'A' && *_head <= 'Z') ||
-          (*_head == '_'))) {
-        return false;
-    }
-    _head++;
+	// first character: must be a letter or underscore
+	if (!((*_head >= 'a' && *_head <= 'z') ||
+		  (*_head >= 'A' && *_head <= 'Z') ||
+		  (*_head == '_'))) {
+		return false;
+	}
+	_head++;
 
-    // subsequent characters: letters, digits, or underscore
-    while (*_head != '\0' &&
-           ((*_head >= 'a' && *_head <= 'z') ||
-            (*_head >= 'A' && *_head <= 'Z') ||
-            (*_head >= '0' && *_head <= '9') ||
-            (*_head == '_'))) {
-        _head++;
-    }
+	// subsequent characters: letters, digits, or underscore
+	while (*_head != '\0' &&
+		   ((*_head >= 'a' && *_head <= 'z') ||
+			(*_head >= 'A' && *_head <= 'Z') ||
+			(*_head >= '0' && *_head <= '9') ||
+			(*_head == '_'))) {
+		_head++;
+	}
 
-    *head = _head;
-    return true;
+	*head = _head;
+	return true;
 }
 
 // parse parameter name
@@ -264,13 +264,13 @@ static bool parse_key
 }
 
 #define APPEND_CHAR(buf, len, cap, c)              \
-    do {                                           \
-        if ((len) + 1 >= (cap)) {                  \
-            (cap) = ((cap) == 0) ? 64 : (cap) * 2; \
-            (buf) = rm_realloc((buf), (cap));      \
-        }                                          \
-        (buf)[(len)++] = (c);                      \
-    } while (0)
+	do {                                           \
+		if ((len) + 1 >= (cap)) {                  \
+			(cap) = ((cap) == 0) ? 64 : (cap) * 2; \
+			(buf) = rm_realloc((buf), (cap));      \
+		}                                          \
+		(buf)[(len)++] = (c);                      \
+	} while (0)
 
 // called by parse_string on the first occurance of '\'
 // str contains the string content up to the first escape charecter
@@ -288,12 +288,12 @@ static bool parse_escaped_string
 
 	while ((t = consume_char(&_head)) != '\0') {
 		if (!escape) {
-            if (t == '\\') {
-                escape = true;
-                continue;
-            }
+			if (t == '\\') {
+				escape = true;
+				continue;
+			}
 
-            if (t == quote) break; // end of quoted string
+			if (t == quote) break; // end of quoted string
 
 			APPEND_CHAR(*str, len, cap, t);
 			continue;
