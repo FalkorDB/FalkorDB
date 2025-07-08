@@ -1205,57 +1205,66 @@ void Graph_GetEdgesConnectingNodes
 	}
 }
 
-// returns true and sets edge->relationID if edge is in that relation
-// otherwise returns false and does not change edge->relationID 
-bool Graph_CheckAndSetEdgeRelationID
+// returns true and sets edge's relation ID if edge is associated
+// with one of the specified relations, otherwise returns false and does not
+// change edge's relation ID
+bool Graph_LookupEdgeRelationID
 (
-	const Graph *g,    // Graph to get edges from
-	Edge *edge,    	   // Edge to check
-	const RelationID *rels,  // Edge types. Cannot contain unknown relations
-	int n_rels         // The number of relations
+	const Graph *g,          // graph to get edges from
+	Edge *edge,    	         // edge to check
+	const RelationID *rels,  // relationships. (can't contain unknown relations)
+	int n_rels               // the number of relations
 ) {
 	ASSERT(g);
 	ASSERT(edge);
-	ASSERT(rels || (rels == NULL && n_rels == 0));
+	ASSERT((rels && n_rels > 0) || (rels == NULL && n_rels == 0));
 	
-	Tensor R            = NULL; 
-	GrB_Index srcID     = edge->src_id;
-	GrB_Index destID    = edge->dest_id;
-	uint64_t x          = 0;
-	bool edgeInRelation = false;
+	GrB_Info info;
+	uint64_t  x      = 0;
+	Tensor    R      = NULL; 
+	EntityID  id     = ENTITY_GET_ID(edge);
+	GrB_Index srcID  = Edge_GetSrcNodeID(edge);
+	GrB_Index destID = Edge_GetDestNodeID(edge);
+	bool      found  = false;
 
 	// if rels are not specified run through all Relationships in the graph
-	n_rels = rels == NULL? Graph_RelationTypeCount(g) : n_rels;
+	n_rels = (rels == NULL) ? Graph_RelationTypeCount(g) : n_rels;
 
-	for(int i = 0; i < n_rels; i++){
+	for (int i = 0; i < n_rels; i++) {
 		// use the next entry in rels if given, otherwise, the ith rel ID
-		RelationID curr = rels? rels[i] : i;
-		ASSERT(curr < Graph_RelationTypeCount(g) && curr != GRAPH_UNKNOWN_RELATION);
+		RelationID curr = rels ? rels[i] : i;
+		ASSERT(curr != GRAPH_UNKNOWN_RELATION);
+		ASSERT(curr < Graph_RelationTypeCount(g));
 
 		R = Graph_GetRelationMatrix(g, curr, false);
-		GrB_Info info = Delta_Matrix_extractElement_UINT64(&x, R, srcID, destID);
+		info = Delta_Matrix_extractElement_UINT64(&x, R, srcID, destID);
 		ASSERT(info >= 0);
 
 		if (info == GrB_NO_VALUE) {
+			// edge isn't associated with current relation id
+			// move on to the next one
 			continue;
 		}
+
 		ASSERT(info == GrB_SUCCESS);
 
+		// try to find the edge id within the matrix entry
 		if (SCALAR_ENTRY(x)) {
-			edgeInRelation = (EntityID) x == edge->id;
+			found = ((EntityID) x == id);
 		} else {
+			// multi-edge
 			GrB_Vector x_vec = AS_VECTOR(x);
-			info = GxB_Vector_isStoredElement(x_vec, edge->id);
-			edgeInRelation = (info == GrB_SUCCESS);
+			info = GxB_Vector_isStoredElement(x_vec, id);
+			found = (info == GrB_SUCCESS);
 		}
 
-		if(edgeInRelation) {
-			edge->relationID = curr;
+		if (found) {
+			Edge_SetRelationID(edge, curr);
 			break;
 		}
 	}
 
-	return edgeInRelation;
+	return found;
 }
 
 // retrieves all either incoming or outgoing edges

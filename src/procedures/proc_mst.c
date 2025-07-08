@@ -394,13 +394,11 @@ SIValue *Proc_MSTStep
 		return NULL;
 	}
 
-	
-
 	//--------------------------------------------------------------------------
 	// set outputs
 	//--------------------------------------------------------------------------
 
-	if(pdata->yield_edge) {
+	if (pdata->yield_edge) {
 		// retrieve node from graph
 		Edge edge;
 		EdgeID edgeID = (EdgeID) GxB_Iterator_get_UINT64(pdata->it);
@@ -413,44 +411,44 @@ SIValue *Proc_MSTStep
 		bool edge_flag = Graph_GetEdge(pdata->g, edgeID, &pdata->edge);
 		ASSERT(edge_flag);
 
-		pdata->edge.src_id     = (NodeID) node_i;
-		pdata->edge.dest_id    = (NodeID) node_j;
-		pdata->edge.relationID = GRAPH_UNKNOWN_RELATION;
+		// initialize edge
+		Edge_SetSrcNodeID(&pdata->edge,  node_i);
+		Edge_SetDestNodeID(&pdata->edge, node_j);
+		Edge_SetRelationID(&pdata->edge, GRAPH_UNKNOWN_RELATION);
 
-		bool foundRel = Graph_CheckAndSetEdgeRelationID(
-			pdata->g, &pdata->edge, pdata->relationIDs, pdata->relationCount
-		);
+		bool foundRel = Graph_LookupEdgeRelationID(pdata->g, &pdata->edge,
+				pdata->relationIDs, pdata->relationCount);
 		
-		if(!foundRel){
-			pdata->edge.src_id     = (NodeID) node_j;
-			pdata->edge.dest_id    = (NodeID) node_i;
-			
-			foundRel = Graph_CheckAndSetEdgeRelationID(
-				pdata->g, &pdata->edge, pdata->relationIDs, pdata->relationCount
-			);
+		// it is possible for MST to use a reversed edge, as it is operating on
+		// a symetric matrix, in such case we'll have to switch e's src and dest
+		// and preform a second lookup
+		if (!foundRel) {
+			// switch src and dest
+			Edge_SetSrcNodeID(&pdata->edge,  node_j);
+			Edge_SetDestNodeID(&pdata->edge, node_i);
+
+			foundRel = Graph_LookupEdgeRelationID(pdata->g, &pdata->edge,
+					pdata->relationIDs, pdata->relationCount);
 		}
+
 		ASSERT(foundRel);
 		*pdata->yield_edge = SI_Edge(&pdata->edge);
+
+		pdata->info = GxB_Matrix_Iterator_next(pdata->it);
 	}
 
-	if(pdata->yield_weight) {
+	if (pdata->yield_weight) {
 		double weight_val = 0; 
 
-		// must be found since w_tree and tree have the same structure
 		weight_val = GxB_Iterator_get_FP64(pdata->weight_it);
 		if(weight_val == INFINITY || weight_val == -INFINITY) {
 			*pdata->yield_weight = SI_NullVal();
 		} else {
 			*pdata->yield_weight = SI_DoubleVal(weight_val);
 		}
-	}
-	
-	// prep for next call to Proc_BetweennessStep
-	pdata->info = GxB_Matrix_Iterator_next(pdata->weight_it); 
 
-	if(pdata->yield_edge) {
-		GrB_Info info = GxB_Matrix_Iterator_next(pdata->it);
-		ASSERT(info == pdata->info);
+		// advance weight iterator
+		pdata->info = GxB_Matrix_Iterator_next(pdata->weight_it); 
 	}
 
 	return pdata->output;
