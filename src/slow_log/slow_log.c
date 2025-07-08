@@ -11,7 +11,7 @@
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
-#include "../util/thpool/pools.h"
+#include "../util/thpool/pool.h"
 
 // redis prints doubles with up to 17 digits of precision, which captures
 // the inaccuracy of many floating-point numbers (such as 0.1)
@@ -126,8 +126,8 @@ static bool _SlowLog_Contains
 SlowLog *SlowLog_New(void) {
 	SlowLog *slowlog = rm_malloc(sizeof(SlowLog));
 
-	// Redis main thread + writer threads + reader threads.
-	int thread_count = ThreadPools_ThreadCount() + 1;
+	// Redis main thread + worker threads
+	int thread_count = ThreadPool_ThreadCount() + 1;
 
 	slowlog->count    = thread_count;
 	slowlog->locks    = rm_malloc(sizeof(pthread_mutex_t) * thread_count);
@@ -162,7 +162,7 @@ void SlowLog_Add
 	char *key;
 	time_t _time;
 	SlowLogItem *existing_item;
-	int t_id = ThreadPools_GetThreadID();
+	int t_id = ThreadPool_GetThreadID();
 	rax *lookup = slowlog->lookup[t_id];
 	heap_t *heap = slowlog->min_heap[t_id];
 	pthread_mutex_t *lock = slowlog->locks + t_id;
@@ -266,7 +266,7 @@ void SlowLog_Replay
 	const SlowLog *slowlog,
 	RedisModuleCtx *ctx
 ) {
-	int my_t_id = ThreadPools_GetThreadID();
+	int my_t_id = ThreadPool_GetThreadID();
 	SlowLog *aggregated_slowlog = SlowLog_New();
 
 	for(int t_id = 0; t_id < slowlog->count; t_id++) {
