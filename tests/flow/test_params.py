@@ -334,6 +334,21 @@ class testParams(FlowTestsBase):
             # Expecting an error.
             pass
 
+    def test_multi_cypher_directives(self):
+        # cypher allows for multiple CYPHER directives to be specified
+        # make sure we're able to parse such cases correctly
+        queries = [
+                ("CYPHER CYPHER RETURN 1", [[1]]),
+                ("CYPHER a=1 CYPHER b=2 RETURN $a, $b", [[1,2]]),
+                ("CYPHER CYPHER a=1 b=2 RETURN $a, $b", [[1,2]]),
+                ("CYPHER a=1 b=2 CYPHER CYPHER RETURN $a, $b", [[1,2]]),
+                ("CYPHER CYPHER a=1 CYPHER CYPHER b=2 CYPHER CYPHER RETURN $a, $b", [[1,2]])
+            ]
+
+        for q, expected in queries:
+            actual = self.graph.query(q).result_set
+            self.env.assertEqual(actual, expected)
+
     def test_id_scan(self):
         self.graph.query("CREATE ({val:1})")
         expected_results = [[1]]
