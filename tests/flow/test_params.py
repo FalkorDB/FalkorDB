@@ -63,10 +63,10 @@ class testParams(FlowTestsBase):
             ("CYPHER x = 'a'", 'a'),         # 'a'
             ("CYPHER x = \"a\"", "a"),       # "a"
             ("CYPHER x = '\"'", '"'),        # Double quote inside string
-            #("CYPHER x = '\\''", "'"),       # Escaped single quote
-            #("CYPHER x = '\\\"'", '"'),      # Escaped double quote
-            #("CYPHER x = 'a\\nb'", "a\nb"),  # Escaped newline
-            #("CYPHER x = 'a\\\\b'", "a\\b"), # Escaped backslash
+            ("CYPHER x = '\\''", "'"),       # Escaped single quote
+            ("CYPHER x = '\\\"'", '"'),      # Escaped double quote
+            ("CYPHER x = 'a\\nb'", "a\nb"),  # Escaped newline
+            ("CYPHER x = 'a\\\\b'", "a\\b"), # Escaped backslash
             ("CYPHER x = 'aBc'", "aBc"),     # "aBc"
     
             # --- Booleans ---

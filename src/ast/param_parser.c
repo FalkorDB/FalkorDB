@@ -34,6 +34,7 @@ static int _hashCompare
 	return (strcmp(a, b) == 0);
 }
 
+// free parameter name
 static void _keyDestructor
 (
 	dict *d,
@@ -43,6 +44,7 @@ static void _keyDestructor
 	rm_free(_key);
 }
 
+// free parameter
 static void _valDestructor
 (
 	dict *d,
@@ -52,6 +54,7 @@ static void _valDestructor
 	SIValue_Free(*v);
 }
 
+// parameters hashtable type
 static dictType dt = {
 	.hashFunction           =  _hashFunction,
 	.keyDup                 =  NULL,
@@ -68,7 +71,7 @@ static dictType dt = {
 // forward declaration
 static bool parse_value(char **head, SIValue *v);
 
-// try accept given string
+// try accept given string, case insensitive
 static bool accept
 (
 	char **head,      // parser header
@@ -83,7 +86,10 @@ static bool accept
 	return false;
 }
 
-// move head beyond the last space character
+// move head beyond the last space character, these include:
+// 1. space
+// 2. new line
+// 3. tab
 static inline void skip_spaces
 (
 	char **head  // parser head to advance
@@ -101,8 +107,8 @@ static inline void skip_spaces
 	*head = _head;
 }
 
-// consume a single token
-static char consume_token
+// consume a single character
+static char consume_char
 (
 	char **head  // parser head
 ) {
@@ -179,7 +185,7 @@ static bool parse_param_name
 
 	skip_spaces(&_head);
 
-	if(consume_token(&_head) != '=') {
+	if(consume_char(&_head) != '=') {
 		return false;
 	}
 
@@ -210,14 +216,16 @@ static bool parse_key
 	// up to the closing backtick
 	if (_head[0] == '`') {
 		backtick = true;
-		consume_token(&_head);
+		consume_char(&_head);  // advance pass '`'
 
+		// keep going until the closing backtick
 		char t;
-		while ((t = consume_token(&_head)) != '\0') {
+		while ((t = consume_char(&_head)) != '\0') {
 			if (t == '`') {
 				break;
 			}
 		}
+
 		// reached end of string before finding a closing backtick
 		if (t == '\0') {
 			return false;
@@ -228,17 +236,19 @@ static bool parse_key
 		}
 	}
 
+	// determine key length
 	size_t len = _head - *key;
 
 	// remove enclosing backticks
 	if (backtick) {
-		len -= 2;
+		len -= 2;  // compensate for the two backticks
 		(*key)++;
 	}
 
 	skip_spaces(&_head);
 
-	if (consume_token(&_head) != ':') {
+	// expecting ':'
+	if (consume_char(&_head) != ':') {
 		return false;
 	}
 
@@ -261,6 +271,8 @@ static bool parse_key
         (buf)[(len)++] = (c);                      \
     } while (0)
 
+// called by parse_string on the first occurance of '\'
+// str contains the string content up to the first escape charecter
 static bool parse_escaped_string
 (
 	char **head,  // parser head
@@ -273,7 +285,7 @@ static bool parse_escaped_string
 	bool escape = false;
 	char *_head = *head;
 
-	while ((t = consume_token(&_head)) != '\0') {
+	while ((t = consume_char(&_head)) != '\0') {
 		if (!escape) {
             if (t == '\\') {
                 escape = true;
@@ -334,10 +346,10 @@ static bool parse_string
 
 	char t;  // read token
 	char *_head = *head;
-	char quote  = consume_token(&_head);
+	char quote  = consume_char(&_head);
 	char *str   = _head;
 	
-	while ((t = consume_token(&_head)) != '\0') {
+	while ((t = consume_char(&_head)) != '\0') {
 		// escape
 		if (t == '\\') {
 			_head--;  // backtrack
@@ -397,18 +409,16 @@ static bool parse_number
 	char t;
 
 	// consume the whole number part
-	//t = consume_token(&_head);
 	t = peek(_head);
 
+	// expecting number to start with either '-', '.' or [0-9]
 	ASSERT(t == '-' || t == '.' || isdigit(t));
 
-	// bool decimal_point;
-
-	accept(&_head, "-", 1);  // skip - if present
-	bool decimal_point = accept(&_head, ".", 1);  // skip . if present
+	accept(&_head, "-", 1);  // skip '-' if present
+	bool decimal_point = accept(&_head, ".", 1);  // skip '.' if present
 
 	// require at least one digist
-	t = consume_token(&_head);
+	t = consume_char(&_head);
 	if (!isdigit(t)) {
 		return false;
 	}
@@ -424,7 +434,7 @@ static bool parse_number
 		decimal_point = true;
 
 		// consume first digit
-		t = consume_token(&_head);
+		t = consume_char(&_head);
 
 		// expecting at least a single digit
 		if (!isdigit(t)) {
@@ -443,12 +453,12 @@ static bool parse_number
 	bool exponent = (t == 'e' || t == 'E');
 
 	if (exponent) {
-		consume_token(&_head);   // skip 'e'
+		consume_char(&_head);    // skip 'e'
 		accept(&_head, "+", 1);  // skip + if present
 		accept(&_head, "-", 1);  // skip - if present
 
 		// expecting at least a single digit
-		t = consume_token(&_head);
+		t = consume_char(&_head);
 		if (!isdigit(t)) {
 			return false;
 		}
@@ -493,7 +503,7 @@ static bool parse_array
 ) {
 	char *_head = *head;
 
-	char t = consume_token(&_head);
+	char t = consume_char(&_head);
 	ASSERT(t == '[');
 
 	skip_spaces(&_head);
@@ -502,9 +512,9 @@ static bool parse_array
 
 	// empty array
 	if(t == ']') {
-		consume_token(&_head);  // advance
-		*head = _head;          // accept
-		*v = SIArray_New(0);    // set output
+		consume_char(&_head);  // advance
+		*head = _head;         // accept
+		*v = SIArray_New(0);   // set output
 		return true;
 	}
 
@@ -522,7 +532,7 @@ static bool parse_array
 
 		skip_spaces(&_head);
 
-		t = consume_token(&_head);
+		t = consume_char(&_head);
 		if (t != ',') {
 			break;
 		}
@@ -546,7 +556,7 @@ static bool parse_map
 ) {
 	char *_head = *head;
 
-	char t = consume_token(&_head);
+	char t = consume_char(&_head);
 	ASSERT(t == '{');
 
 	skip_spaces(&_head);
@@ -555,7 +565,7 @@ static bool parse_map
 
 	// empty map
 	if(t == '}') {
-		consume_token(&_head);  // advance
+		consume_char(&_head);  // advance
 		*head = _head;          // accept
 		*v = Map_New(0);        // set output
 		return true;
@@ -583,7 +593,7 @@ static bool parse_map
 
 		skip_spaces(&_head);
 
-		t = consume_token(&_head);
+		t = consume_char(&_head);
 		if (t != ',') {
 			break;
 		}
