@@ -7,6 +7,7 @@
 #include "query_ctx.h"
 #include "RG.h"
 #include "errors.h"
+#include "globals.h"
 #include "util/simple_timer.h"
 #include "arithmetic/arithmetic_expression.h"
 #include "serializers/graphcontext_type.h"
@@ -328,14 +329,20 @@ static void _QueryCtx_ThreadSafeContextLock
 (
 	QueryCtx *ctx
 ) {
+	// acquire GIL if we're running with a blocked client
+	// implicates we're running on a worker thread and not on Redis main thread
 	if(ctx->global_exec_ctx.bc) {
 		RedisModule_ThreadSafeContextLock(ctx->global_exec_ctx.redis_ctx);
 	} else {
-		// when the query run on main thread like in aof loading
-		// we need to yield the main thread to allow other clients to run
-		// this is done to avoid blocking the main thread for a long time
-		// while waiting for the query to finish
-		RedisModule_Yield(ctx->global_exec_ctx.redis_ctx, REDISMODULE_YIELD_FLAG_CLIENTS, NULL);
+		// no blocked client, most likely we're running on Redis main thread
+		//ASSERT(!pthread_equal(Globals_Get_MainThreadId(), pthread_self()));
+
+		// it likely we're here because of an execution of a write query
+		// e.g. loading from AOF
+		// to alow Redis to reply to PING requests we should yield execution
+		// giving Redis the opportunity to process commands
+		// see RedisModule_Yield docs
+		//RedisModule_Yield(ctx->global_exec_ctx.redis_ctx, REDISMODULE_YIELD_FLAG_CLIENTS, NULL);
 	}
 }
 
