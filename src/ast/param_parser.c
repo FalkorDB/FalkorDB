@@ -283,43 +283,39 @@ static bool parse_escaped_string
 	char quote    // enclosing quotation mark
 ) {
 	char t;
-	bool escape = false;
 	char *_head = *head;
 
 	while ((t = consume_char(&_head)) != '\0') {
-		if (!escape) {
-			if (t == '\\') {
-				escape = true;
-				continue;
+		if (t == '\\') {
+			// handle escape
+			t = consume_char(&_head); 
+			switch(t) {
+				case 'a':  APPEND_CHAR(*str, len, cap, '\a'); break;
+				case 'b':  APPEND_CHAR(*str, len, cap, '\b'); break;
+				case 'f':  APPEND_CHAR(*str, len, cap, '\f'); break;
+				case 'n':  APPEND_CHAR(*str, len, cap, '\n'); break;
+				case 'r':  APPEND_CHAR(*str, len, cap, '\r'); break;
+				case 't':  APPEND_CHAR(*str, len, cap, '\t'); break;
+				case 'v':  APPEND_CHAR(*str, len, cap, '\v'); break;
+				case '\\': APPEND_CHAR(*str, len, cap, '\\'); break;
+				case '\'': APPEND_CHAR(*str, len, cap, '\''); break;
+				case '\"': APPEND_CHAR(*str, len, cap, '\"'); break;
+				case '?':  APPEND_CHAR(*str, len, cap, '?');  break;
+				case '\0':
+					rm_free(*str);
+					return false;
+				default:
+					// Unrecognized escape — keep as-is
+					APPEND_CHAR(*str, len, cap, '\\');
+					APPEND_CHAR(*str, len, cap, t);
+					break;
 			}
-
-			if (t == quote) break; // end of quoted string
-
-			APPEND_CHAR(*str, len, cap, t);
 			continue;
 		}
 
-		// handle escape
-		switch(t) {
-			case 'a':  APPEND_CHAR(*str, len, cap, '\a'); break;
-			case 'b':  APPEND_CHAR(*str, len, cap, '\b'); break;
-			case 'f':  APPEND_CHAR(*str, len, cap, '\f'); break;
-			case 'n':  APPEND_CHAR(*str, len, cap, '\n'); break;
-			case 'r':  APPEND_CHAR(*str, len, cap, '\r'); break;
-			case 't':  APPEND_CHAR(*str, len, cap, '\t'); break;
-			case 'v':  APPEND_CHAR(*str, len, cap, '\v'); break;
-			case '\\': APPEND_CHAR(*str, len, cap, '\\'); break;
-			case '\'': APPEND_CHAR(*str, len, cap, '\''); break;
-			case '\"': APPEND_CHAR(*str, len, cap, '\"'); break;
-			case '?':  APPEND_CHAR(*str, len, cap, '?');  break;
-			default:
-				// Unrecognized escape — keep as-is
-				APPEND_CHAR(*str, len, cap, '\\');
-				APPEND_CHAR(*str, len, cap, t);
-				break;
-		}
+		if (t == quote) break; // end of quoted string
 
-		escape = false;
+		APPEND_CHAR(*str, len, cap, t);
 	}
 
 	// did we found matching closing quote
