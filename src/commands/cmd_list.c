@@ -14,6 +14,12 @@
 #include <stdbool.h>
 #include <string.h>
 
+// GRAPH.LIST command handler
+// lists all graph objects in the DB
+// users can specify a regex matching pattern to filter out graphs
+// e.g.
+// GRAPH.LIST ^[sS]ervice[s]*
+
 // matches a string against a regex pattern
 // returns true if the string matches the pattern, false otherwise
 static bool _stringmatch_regex
