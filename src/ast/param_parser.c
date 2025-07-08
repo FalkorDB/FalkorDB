@@ -296,8 +296,8 @@ static bool parse_escaped_string
             if (t == quote) break; // end of quoted string
 
 			APPEND_CHAR(*str, len, cap, t);
-            continue;
-        }
+			continue;
+		}
 
 		// handle escape
 		switch(t) {
