@@ -1,6 +1,5 @@
+import contextlib
 from common import *
-
-GRAPH_ID = "crash_report"
 
 class testCrashHandler():
     def __init__(self):
@@ -12,11 +11,9 @@ class testCrashHandler():
             self.env.skip()
             return
 
-        try:
+        with contextlib.suppress(Exception):
             # trigger a crash
             self.db.execute_command("DEBUG", "SEGFAULT")
-        except:
-            pass
 
         # wait for the master process to exit
         self.env.envRunner.masterProcess.wait()
@@ -28,5 +25,7 @@ class testCrashHandler():
         with open(f"{self.env.logDir}/{logfilename}") as logfile:
             log = logfile.read()
 
+        self.env.assertContains("------ MODULES INFO OUTPUT ------", log)
+        self.env.assertContains("# graph_executing commands", log)
         self.env.assertContains("=== REDIS BUG REPORT END", log)
 
