@@ -681,9 +681,16 @@ dict *ParamParser_Parse
 	
 	skip_spaces(&head);
 
-	// expecting keyword: CYPHER
+	// expecting opening keyword: CYPHER
 	if(!accept(&head, "CYPHER", 6)) {
 		return NULL;
+	}
+	skip_spaces(&head);
+
+	// skip any consecutive CYPHER keywords
+	// e.g. CYPHER CYPHER a=1 b=2
+	while(accept(&head, "CYPHER", 6)) {
+		skip_spaces(&head);
 	}
 
 	dict *params = HashTableCreate(&dt);
@@ -709,6 +716,13 @@ dict *ParamParser_Parse
 		strcpy(duplicated_param_name + l/2, param);
 		duplicated_param_name[l] = '\0';
 		HashTableAdd(params, duplicated_param_name, v);
+
+		// skip any consecutive CYPHER keywords
+		// e.g. CYPHER a=1 CYPHER b=2
+		skip_spaces(&head);
+		while(accept(&head, "CYPHER", 6)) {
+			skip_spaces(&head);
+		}
 	}
 
 	*input = head;
