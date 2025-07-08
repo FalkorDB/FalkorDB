@@ -1,3 +1,5 @@
+import random
+import string
 from common import *
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../..')
@@ -21,6 +23,209 @@ class testParams(FlowTestsBase):
             expected_results = [[param]]
             query_info = QueryInfo(query = query, description="Tests simple params", expected_result = expected_results)
             self._assert_resultset_equals_expected(self.graph.query(query, {'param': param}), query_info)
+
+    def test_valid_param(self):
+        queries = [
+            # --- Numbers ---
+
+            ("CYPHER x = 1", 1),
+            ("CYPHER x = -1", -1),
+            ("CYPHER x = .1", 0.1),
+            ("CYPHER x = .123", 0.123),
+            ("CYPHER x = 0.123", 0.123),
+            ("CYPHER x = -0.123", -0.123),
+            ("CYPHER x = -.123", -0.123),
+
+            # Integer base, positive exponent
+            ("CYPHER x = 2e2",  2e2),
+            ("CYPHER x = 2e+2", 2e+2),
+            ("CYPHER x = 2e-2", 2e-2),
+
+            # Integer base, negative number
+            ("CYPHER x = -2e2",  -2e2),
+            ("CYPHER x = -2e+2", -2e+2),
+            ("CYPHER x = -2e-2", -2e-2),
+
+            # Decimal base, positive exponent
+            ("CYPHER x = 1.2e2", 1.2e2),
+            ("CYPHER x = 1.2e+2", 1.2e+2),
+            ("CYPHER x = 1.2e-2", 1.2e-2),
+
+            # Decimal base, negative number
+            ("CYPHER x = -1.2e2", -1.2e2),
+            ("CYPHER x = -1.2e+2", -1.2e+2),
+            ("CYPHER x = -1.2e-2", -1.2e-2),
+    
+            # --- Strings ---
+
+            ("CYPHER x = ''", ''),           # Empty single-quoted
+            ("CYPHER x = \"\"", ""),         # Empty double-quoted
+            ("CYPHER x = 'a'", 'a'),         # 'a'
+            ("CYPHER x = \"a\"", "a"),       # "a"
+            ("CYPHER x = '\"'", '"'),        # Double quote inside string
+            ("CYPHER x = '\\''", "'"),       # Escaped single quote
+            ("CYPHER x = '\\\"'", '"'),      # Escaped double quote
+            ("CYPHER x = 'a\\nb'", "a\nb"),  # Escaped newline
+            ("CYPHER x = 'a\\\\b'", "a\\b"), # Escaped backslash
+            ("CYPHER x = 'aBc'", "aBc"),     # "aBc"
+    
+            # --- Booleans ---
+
+            ("CYPHER x = true",  True),
+            ("CYPHER x = True",  True),
+            ("CYPHER x = TRUE",  True),
+            ("CYPHER x = false", False),
+            ("CYPHER x = False", False),
+            ("CYPHER x = FALSE", False),
+    
+            # --- Null ---
+            ("CYPHER x = null", None),
+            ("CYPHER x = Null", None),
+            ("CYPHER x = NULL", None),
+    
+            # --- Arrays ---
+            ("CYPHER x = []", []),
+            ("CYPHER x = [1, 2, 3]", [1, 2, 3]),
+            ("CYPHER x = ['a', 'b']", ["a", "b"]),
+            ("CYPHER x = [1, 'a', true, null]", [1, "a", True, None]),
+            ("CYPHER x = [[1, 2], [3, 4]]", [[1, 2], [3, 4]]),
+            ("CYPHER x = [[1, [2]], [3]]", [[1, [2]], [3]]),
+            ("CYPHER x = [[], []]", [[], []]),
+    
+            # --- Maps ---
+            ("CYPHER x = {}", {}),
+            ("CYPHER x = {a: 1}", {'a': 1}),
+            ("CYPHER x = {a: 'b'}", {'a': 'b'}),
+            ("CYPHER x = {a: true, b: null, c: [1, 2]}", {'a': True, 'b': None, 'c': [1, 2]}),
+            ("CYPHER x = {nested: {inner: 'val'}}", {'nested': {'inner': 'val'}}),
+            ("CYPHER x = {a: {}, b: []}", {'a': {}, 'b': []}),
+
+            # --- Arrays with Maps ---
+            ("CYPHER x = [{}]", [{}]),
+            ("CYPHER x = [{a: 1}]", [{'a': 1}]),
+            ("CYPHER x = [{a: true, b: null, c: [1, 2]}]", [{'a': True, 'b': None, 'c': [1, 2]}]),
+            ("CYPHER x = [[{a: 1}], [{b: 2}]]", [[{'a': 1}], [{'b': 2}]]),
+            ("CYPHER x = [1, {a: 'str'}, [2, {b: [3, {c: 'deep'}]}]]", [1, {'a': 'str'}, [2, {'b': [3, {'c': 'deep'}]}]]),
+            ("CYPHER x = [[[], [{}, {a: {b: [1, 2, {c: 'x'}]}}]]]", [[[], [{}, {'a': {'b': [1, 2, {'c': 'x'}]}}]]]),
+            ("CYPHER x = [[{nested: {inner: {x: [1, 2, {y: 'z'}]}}}]]", [[{'nested': {'inner': {'x': [1, 2, {'y': 'z'}]}}}]]),
+
+            # --- Maps with Arrays ---
+            ("CYPHER x = {a: []}", {'a': []}),
+            ("CYPHER x = {a: [1, 2, 3]}", {'a': [1, 2, 3]}),
+            ("CYPHER x = {a: ['x', 'y'], b: [true, false]}", {'a': ['x', 'y'], 'b': [True, False]}),
+            ("CYPHER x = {nested: [[1], [2, 3]]}", {'nested': [[1], [2, 3]]}),
+            ("CYPHER x = {mixed: [1, 'a', true, null]}", {'mixed': [1, 'a', True, None]}),
+            ("CYPHER x = {m: [{x: 1}, {y: 2}]}", {'m': [{'x': 1}, {'y': 2}]}),
+            ("CYPHER x = {deep: [1, {a: [2, {b: 'x'}]}]}", {'deep': [1, {'a': [2, {'b': 'x'}]}]}),
+            ("CYPHER x = {emptyMap: {}, emptyArray: [], combo: [{}, []]}", {'emptyMap': {}, 'emptyArray': [], 'combo': [{}, []]}),
+            ("CYPHER x = {a: {b: {c: [1, 2, {d: []}]}}}", {'a': {'b': {'c': [1, 2, {'d': []}]}}})
+        ]
+
+        for q, expected in queries:
+            actual = self.graph.query(q + " RETURN $x").result_set[0][0]
+            self.env.assertEqual(expected, actual)
+
+        #-----------------------------------------------------------------------
+        # random value utilities
+        #-----------------------------------------------------------------------
+
+        def random_scalar():
+            options = [
+                lambda: random.randint(-1000, 1000),
+                lambda: round(random.uniform(-1000.0, 1000.0), random.randint(0, 6)),
+                lambda: ''.join(random.choices(string.ascii_letters + string.digits, k=random.randint(1, 10))),
+                lambda: random.choice([True, False]),
+                lambda: None
+            ]
+            return random.choice(options)()
+
+        def random_array(max_depth=3, current_depth=0):
+            if current_depth >= max_depth:
+                return [random_scalar() for _ in range(random.randint(0, 5))]
+            arr = []
+            for _ in range(random.randint(0, 5)):
+                choice = random.choice(['scalar', 'array', 'dict'])
+                if choice == 'scalar':
+                    arr.append(random_scalar())
+                elif choice == 'array':
+                    arr.append(random_array(max_depth, current_depth + 1))
+                else:
+                    arr.append(random_dict(max_depth, current_depth + 1))
+            return arr
+
+        def random_dict(max_depth=3, current_depth=0):
+            if current_depth >= max_depth:
+                return {
+                    random_key(): random_scalar()
+                    for _ in range(random.randint(0, 5))
+                }
+            d = {}
+            for _ in range(random.randint(0, 5)):
+                key = random_key()
+                choice = random.choice(['scalar', 'array', 'dict'])
+                if choice == 'scalar':
+                    d[key] = random_scalar()
+                elif choice == 'array':
+                    d[key] = random_array(max_depth, current_depth + 1)
+                else:
+                    d[key] = random_dict(max_depth, current_depth + 1)
+            return d
+
+        def random_key(length=None):
+            if length is None:
+                length = random.randint(1, 10)
+
+            key = random.choices(string.ascii_letters)[0]
+            key += ''.join(random.choices(string.ascii_letters + string.digits, k=length-1))
+            return key
+
+        def random_value():
+            return random.choice([
+                random_scalar,
+                random_array,
+                random_dict
+            ])()
+
+        for i in range(0, 50):
+            q = "RETURN $x"
+            expected = random_value()
+            actual = self.graph.query(q, {'x': expected}).result_set[0][0]
+            self.env.assertEqual(expected, actual)
+
+    def test_escaping_param(self):
+        queries = [
+        # --- Valid recognized escapes ---
+        ("CYPHER x = '\\a' RETURN $x as param, '\\a' as raw", "\a"),
+        ("CYPHER x = '\\b' RETURN $x as param, '\\b' as raw", "\b"),
+        ("CYPHER x = '\\f' RETURN $x as param, '\\f' as raw", "\f"),
+        ("CYPHER x = '\\n' RETURN $x as param, '\\n' as raw", "\n"),
+        ("CYPHER x = '\\r' RETURN $x as param, '\\r' as raw", "\r"),
+        ("CYPHER x = '\\t' RETURN $x as param, '\\t' as raw", "\t"),
+        ("CYPHER x = '\\v' RETURN $x as param, '\\v' as raw", "\v"),
+        ("CYPHER x = '\\\\' RETURN $x as param, '\\\\' as raw", "\\"),
+        ("CYPHER x = '\\'' RETURN $x as param, '\\'' as raw", "'"),
+        ("CYPHER x = '\\\"' RETURN $x as param, '\\\"' as raw", "\""),
+        ("CYPHER x = '\\?' RETURN $x as param, '\\?' as raw", "?"),
+
+        # --- Unrecognized escape sequences ---
+        ("CYPHER x = '\\x' RETURN $x as param, '\\x' as raw", "\\x"),
+        ("CYPHER x = '\\!' RETURN $x as param, '\\!' as raw", "\\!"),
+        ("CYPHER x = '\\1' RETURN $x as param, '\\1' as raw", "\\1"),
+
+        # --- Mixed content with recognized and unrecognized escapes ---
+        ("CYPHER x = 'Line1\\nLine2\\xEnd' RETURN $x as param, 'Line1\\nLine2\\xEnd' as raw", "Line1\nLine2\\xEnd"),
+        ("CYPHER x = 'Tab\\tThen\\!Now\\n' RETURN $x as param, 'Tab\\tThen\\!Now\\n' as raw", "Tab\tThen\\!Now\n"),
+        ("CYPHER x = 'Mix\\\\path\\nof\\xfiles' RETURN $x as param, 'Mix\\\\path\\nof\\xfiles' as raw", "Mix\\path\nof\\xfiles"),
+        ("CYPHER x = 'Quotes: \\\"hello\\\" and \\\'bye\\\'' RETURN $x as param, 'Quotes: \\\"hello\\\" and \\\'bye\\\'' as raw", "Quotes: \"hello\" and 'bye'"),
+        ("CYPHER x = '\\nStart and end\\t' RETURN $x as param, '\\nStart and end\\t' as raw", "\nStart and end\t"),
+    ]
+
+        for q, expected in queries:
+            res = self.graph.query(q).result_set[0]
+            actual = res[0]
+            raw = res[1]
+            self.env.assertEqual(expected, actual)
+            self.env.assertEqual(expected, raw)
 
     def test_invalid_param(self):
         invalid_queries = [
