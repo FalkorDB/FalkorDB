@@ -52,6 +52,7 @@ static void _valDestructor
 ) {
 	SIValue *v = obj;
 	SIValue_Free(*v);
+	rm_free(v);
 }
 
 // parameters hashtable type
