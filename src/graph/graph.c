@@ -1209,27 +1209,38 @@ void Graph_GetEdgesConnectingNodes
 // otherwise returns false and does not change edge->relationID 
 bool Graph_CheckAndSetEdgeRelationID
 (
-	const Graph *g,  // Graph to get edges from
-	Edge *edge,    	 // Edge to check
-	RelationID r     // Edge type  // TODO: change into an array of rels
+	const Graph *g,    // Graph to get edges from
+	Edge *edge,    	   // Edge to check
+	const RelationID *rels,  // Edge types. Cannot contain unknown relations
+	int n_rels         // The number of relations
 ) {
 	ASSERT(g);
 	ASSERT(edge);
-	ASSERT(r < Graph_RelationTypeCount(g));
-
-	// invalid relation type specified
-	if(r == GRAPH_UNKNOWN_RELATION) return false;
-
-	Tensor R            = Graph_GetRelationMatrix(g, r, false);
+	ASSERT(rels || (rels == NULL && n_rels == 0));
+	
+	Tensor R            = NULL; 
 	GrB_Index srcID     = edge->src_id;
 	GrB_Index destID    = edge->dest_id;
 	uint64_t x          = 0;
 	bool edgeInRelation = false;
 
-	GrB_Info info = Delta_Matrix_extractElement_UINT64(&x, R, srcID, destID);
-	ASSERT(info >= 0);
+	// if rels are not specified run through all Relationships in the graph
+	n_rels = rels == NULL? Graph_RelationTypeCount(g) : n_rels;
 
-	if (info == GrB_SUCCESS) {
+	for(int i = 0; i < n_rels; i++){
+		// use the next entry in rels if given, otherwise, the ith rel ID
+		RelationID curr = rels? rels[i] : i;
+		ASSERT(curr < Graph_RelationTypeCount(g) && curr != GRAPH_UNKNOWN_RELATION);
+
+		R = Graph_GetRelationMatrix(g, curr, false);
+		GrB_Info info = Delta_Matrix_extractElement_UINT64(&x, R, srcID, destID);
+		ASSERT(info >= 0);
+
+		if (info == GrB_NO_VALUE) {
+			continue;
+		}
+		ASSERT(info == GrB_SUCCESS);
+
 		if (SCALAR_ENTRY(x)) {
 			edgeInRelation = (EntityID) x == edge->id;
 		} else {
@@ -1237,30 +1248,14 @@ bool Graph_CheckAndSetEdgeRelationID
 			info = GxB_Vector_isStoredElement(x_vec, edge->id);
 			edgeInRelation = (info == GrB_SUCCESS);
 		}
-	}
 
-	if(edgeInRelation) {
-		edge->relationID = r;
-	}
-
-	return edgeInRelation;
-}
-
-// Finds the relation ID of the edge and sets edge->relationID.
-void Graph_FindAndSetEdgeRelationID
-(
-	const Graph *g,  // Graph to get edges from.
-	Edge *edge    	 // Edge to check.
-) {
-	ASSERT(g);
-	ASSERT(edge);
-	edge->relationID = GRAPH_UNKNOWN_RELATION;
-	
-	for(RelationID r = 0; r < Graph_RelationTypeCount(g); r++) {
-		if(Graph_CheckAndSetEdgeRelationID(g, edge, r)) {
+		if(edgeInRelation) {
+			edge->relationID = curr;
 			break;
 		}
 	}
+
+	return edgeInRelation;
 }
 
 // retrieves all either incoming or outgoing edges

@@ -17,7 +17,7 @@
 #include "./utility/internal.h"
 #include "../graph/graphcontext.h"
 
-// CALL algo.MST({}) YIELD edge, weight
+// CALL algo.MSF() YIELD edge, weight
 // CALL algo.MST(NULL) YIELD edge, weight
 // CALL algo.MST({nodeLabels: ['L', 'P']}) YIELD edge, weight
 // CALL algo.MST({relationshipTypes: ['R', 'E']}) YIELD edge, weight
@@ -26,20 +26,21 @@
 // CALL algo.MST({nodeLabels: ['L'], objective: 'minimize'})
 
 typedef struct {
-	Graph *g;              	// graph
-	GrB_Matrix tree;		// The MST
-	GrB_Matrix w_tree;		// The weighted MST
-	GrB_Vector nodes; 	   	// nodes participating in computation
-	int *relationIDs;       // edge type(s) to traverse.
-	int relationCount;      // length of relationIDs.
-	GrB_Info info;         	// iterator state
-	GxB_Iterator it;       	// iterator
-	Node node;             	// node
-	Edge edge;             	// edge
-	AttributeID weight_prop;// weight attribute id
-	SIValue output[2];     	// array with up to 2 entries [edge, weight]
-	SIValue *yield_edge;   	// edges
-	SIValue *yield_weight; 	// edge weights
+	Graph *g;                 // graph
+	GrB_Matrix tree;          // The MST
+	GrB_Matrix w_tree;        // The weighted MST
+	GrB_Vector nodes;         // nodes participating in computation
+	RelationID *relationIDs;  // edge type(s) to traverse.
+	int relationCount;        // length of relationIDs.
+	GrB_Info info;            // iterator state
+	GxB_Iterator it;          // iterator
+	GxB_Iterator weight_it;   // iterator
+	Node node;                // node
+	Edge edge;                // edge
+	AttributeID weight_prop;  // weight attribute id
+	SIValue output[2];        // array with up to 2 entries [edge, weight]
+	SIValue *yield_edge;      // edges
+	SIValue *yield_weight;    // edge weights
 } MST_Context;
 
 // process procedure yield
@@ -253,7 +254,7 @@ ProcedureResult Proc_MSTInvoke
 	// {
 	//	nodeLabels: ['A', 'B'],
 	//	relationshipTypes: ['R'],
-	//	attribute: 'score',
+	//	weightAttribute: 'score',
 	//	objective: 'minimize'
 	// }
 
@@ -332,7 +333,8 @@ ProcedureResult Proc_MSTInvoke
 		return PROCEDURE_ERR;
 	}
 
-	if(maxST && yield_weight) { // if we are optimizing for the max, make weights negative.
+	// negate weights again if maximizing
+	if(maxST && pdata->yield_weight != NULL) { 
 		info = GrB_Matrix_apply(
 			pdata->w_tree, NULL, NULL, GrB_AINV_FP64, pdata->w_tree, NULL) ;
 		ASSERT(info == GrB_SUCCESS);
@@ -342,26 +344,38 @@ ProcedureResult Proc_MSTInvoke
 	info = GrB_Matrix_nrows(&n, pdata->w_tree);
 	ASSERT(info == GrB_SUCCESS);
 
-	// TODO: only compute if yielding edges
-	// mask out dropped edges
-	info = GrB_Matrix_assign(A, pdata->w_tree, NULL, A, GrB_ALL, n, GrB_ALL, n,
-			GrB_DESC_RS);
-	ASSERT(info == GrB_SUCCESS);
+	if(pdata->yield_edge){
+        // mask out dropped edges
+        info = GrB_Matrix_assign(A, pdata->w_tree, NULL, A, 
+			GrB_ALL, n, GrB_ALL, n, GrB_DESC_RS);
+        ASSERT(info == GrB_SUCCESS);
+	}
 
 	pdata->tree = A;
 	
 	//--------------------------------------------------------------------------
 	// initialize iterator
 	//--------------------------------------------------------------------------
-
-	info = GxB_Iterator_new(&pdata->it);
+	info = GxB_Iterator_new(&pdata->weight_it);
 	ASSERT(info == GrB_SUCCESS);
 
-	// iterate over spanning tree
-	// TODO: see if we want to use two iterators
-	info = GxB_Matrix_Iterator_attach(pdata->it, pdata->tree, NULL);
+	info = GxB_Matrix_Iterator_attach(pdata->weight_it, pdata->w_tree, NULL);
 	ASSERT(info == GrB_SUCCESS);
-    pdata->info = GxB_Matrix_Iterator_seek(pdata->it, 0);
+
+	pdata->info = GxB_Matrix_Iterator_seek(pdata->weight_it, 0);
+	ASSERT(info == GrB_SUCCESS);
+	
+	if(pdata->yield_edge) {
+		info = GxB_Iterator_new(&pdata->it);
+		ASSERT(info == GrB_SUCCESS);
+		
+		info = GxB_Matrix_Iterator_attach(pdata->it, pdata->tree, NULL);
+		ASSERT(info == GrB_SUCCESS);
+
+		pdata->info = GxB_Matrix_Iterator_seek(pdata->it, 0);
+		ASSERT(info == GrB_SUCCESS);
+	}
+
 	return PROCEDURE_OK;
 }
 
@@ -380,23 +394,22 @@ SIValue *Proc_MSTStep
 		return NULL;
 	}
 
-	// retrieve node from graph
-	Edge edge;
-	GrB_Index node_i;
-	GrB_Index node_j;
-
-	GxB_Matrix_Iterator_getIndex(pdata->it, &node_i, &node_j);
-	EdgeID edgeID = (EdgeID)GxB_Iterator_get_UINT64(pdata->it);
-	ASSERT(SCALAR_ENTRY(edgeID));
 	
-	// prep for next call to Proc_BetweennessStep
-	pdata->info = GxB_Matrix_Iterator_next(pdata->it);
 
 	//--------------------------------------------------------------------------
 	// set outputs
 	//--------------------------------------------------------------------------
 
 	if(pdata->yield_edge) {
+		// retrieve node from graph
+		Edge edge;
+		EdgeID edgeID = (EdgeID) GxB_Iterator_get_UINT64(pdata->it);
+		ASSERT(SCALAR_ENTRY(edgeID));
+
+		GrB_Index node_i;
+		GrB_Index node_j;
+		GxB_Matrix_Iterator_getIndex(pdata->it, &node_i, &node_j);
+
 		bool edge_flag = Graph_GetEdge(pdata->g, edgeID, &pdata->edge);
 		ASSERT(edge_flag);
 
@@ -404,41 +417,19 @@ SIValue *Proc_MSTStep
 		pdata->edge.dest_id    = (NodeID) node_j;
 		pdata->edge.relationID = GRAPH_UNKNOWN_RELATION;
 
-		if(pdata->relationCount > 0) { 
-			// if relation types were specified, find the relation the edge 
-			// belongs to.
-			for(RelationID relID = 0; relID < pdata->relationCount; relID++) {
-				if(Graph_CheckAndSetEdgeRelationID(
-					pdata->g, &pdata->edge, pdata->relationIDs[relID])) {
-					break;
-				}
-			}
-
-			// if the relation was not found, try switching the edge direction
-			if(pdata->edge.relationID == GRAPH_UNKNOWN_RELATION){
-				pdata->edge.src_id = (NodeID) node_j;
-				pdata->edge.dest_id = (NodeID) node_i;
-				for(RelationID relID = 0; relID < pdata->relationCount; relID++) {
-					if(Graph_CheckAndSetEdgeRelationID(
-						pdata->g, &pdata->edge, pdata->relationIDs[relID])) {
-						break;
-					}
-				}
-			}
-		} else {
-			// if no relation was specified, search all relations
-			Graph_FindAndSetEdgeRelationID(pdata->g, &pdata->edge);
-
-
-			// if the relation was not found, try switching the edge direction
-			if(pdata->edge.relationID == GRAPH_UNKNOWN_RELATION){
-				pdata->edge.src_id = (NodeID) node_j;
-				pdata->edge.dest_id = (NodeID) node_i;
-				Graph_FindAndSetEdgeRelationID(pdata->g, &pdata->edge);
-			}
+		bool foundRel = Graph_CheckAndSetEdgeRelationID(
+			pdata->g, &pdata->edge, pdata->relationIDs, pdata->relationCount
+		);
+		
+		if(!foundRel){
+			pdata->edge.src_id     = (NodeID) node_j;
+			pdata->edge.dest_id    = (NodeID) node_i;
+			
+			foundRel = Graph_CheckAndSetEdgeRelationID(
+				pdata->g, &pdata->edge, pdata->relationIDs, pdata->relationCount
+			);
 		}
-		ASSERT(pdata->edge.relationID != GRAPH_UNKNOWN_RELATION);
-
+		ASSERT(foundRel);
 		*pdata->yield_edge = SI_Edge(&pdata->edge);
 	}
 
@@ -446,25 +437,22 @@ SIValue *Proc_MSTStep
 		double weight_val = 0; 
 
 		// must be found since w_tree and tree have the same structure
-		GrB_Info info = GrB_Matrix_extractElement_FP64(
-			&weight_val, pdata->w_tree, node_i, node_j);
-		ASSERT(info == GrB_SUCCESS);
+		weight_val = GxB_Iterator_get_FP64(pdata->weight_it);
 		if(weight_val == INFINITY || weight_val == -INFINITY) {
-			// check if attribute is actually infinity, if not return none.
-			SIValue *v = GraphEntity_GetProperty(
-				(GraphEntity *) &pdata->edge, pdata->weight_prop);
-			if((v != ATTRIBUTE_NOTFOUND) && ((T_DOUBLE & SI_TYPE(*v)) == 0))
-				*pdata->yield_weight = SI_NullVal();
-			else if ((T_DOUBLE & SI_TYPE(*v))) {
-				*pdata->yield_weight = SI_DoubleVal(weight_val);
-			} else {
-				*pdata->yield_weight = SI_NullVal();
-			}
+			*pdata->yield_weight = SI_NullVal();
 		} else {
 			*pdata->yield_weight = SI_DoubleVal(weight_val);
 		}
 	}
 	
+	// prep for next call to Proc_BetweennessStep
+	pdata->info = GxB_Matrix_Iterator_next(pdata->weight_it); 
+
+	if(pdata->yield_edge) {
+		GrB_Info info = GxB_Matrix_Iterator_next(pdata->it);
+		ASSERT(info == pdata->info);
+	}
+
 	return pdata->output;
 }
 
@@ -486,8 +474,13 @@ ProcedureResult Proc_MSTFree
 	return PROCEDURE_OK;
 }
 
-// CALL algo.MST({nodeLabels: ['Person'], relationshipTypes: ['KNOWS'],
-// attribute: 'Years', objective: 'Minimize'}) YIELD edge, weight
+// CALL algo.MST({
+//     nodeLabels:         ['Person'], 
+//     relationshipTypes:  ['KNOWS'],
+//     weightAttribute:     'Years', 
+//     objective:           'Minimize'
+// }) 
+// YIELD edge, weight
 ProcedureCtx *Proc_MSTCtx(void) {
 	ProcedureOutput *outputs      = array_new(ProcedureOutput, 2);
 	ProcedureOutput output_edge   = {.name = "edge",   .type = T_EDGE};

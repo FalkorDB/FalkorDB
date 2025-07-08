@@ -410,20 +410,14 @@ void Graph_GetEdgesConnectingNodes
 	Edge **edges     // array_t of edges connecting src to dest of type r.
 );
 
-// returns true and sets edge->relationID if edge is in that relation
+// returns true and sets edge->relationID if edge is in that set of relations
 // otherwise returns false and does not change edge->relationID 
 bool Graph_CheckAndSetEdgeRelationID
 (
-	const Graph *g,  // Graph to get edges from
-	Edge *edge,    	 // Edge to check
-	RelationID r     // Edge type
-);
-
-// Finds the relation ID of the edge and sets edge->relationID.
-void Graph_FindAndSetEdgeRelationID
-(
-	const Graph *g,  // Graph to get edges from.
-	Edge *edge    	 // Edge to check.
+	const Graph *g,          // Graph to get edges from
+	Edge *edge,    	         // Edge to check
+	const RelationID *rels,  // Edge types. Cannot contain unknown relations
+	int n_rels               // The number of relations
 );
 
 // get node edges

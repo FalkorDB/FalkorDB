@@ -170,7 +170,7 @@ class testMST(FlowTestsBase):
 
         # Run MST algorithm
         result = self.graph.query("""
-            CALL algo.MST({relationshipTypes: ['R'], weightAttribute: 'cost', objective: 'max'})
+            CALL algo.MST({relationshipTypes: ['R'], weightAttribute: 'cost', objective: 'maximize'})
             YIELD weight RETURN weight ORDER BY weight""")
         result_set = result.result_set
 
@@ -269,7 +269,7 @@ class testMST(FlowTestsBase):
 
         # Run MST algorithm
         result = self.graph.query("""
-            CALL algo.MST({weightAttribute: 'cost', objective: 'max'}) 
+            CALL algo.MST({weightAttribute: 'cost', objective: 'maximize'}) 
             yield edge, weight return type(edge), weight""")
 
         result_set = result.result_set
@@ -340,7 +340,7 @@ class testMST(FlowTestsBase):
 
          # Run MST algorithm with both relationships (max)
         result = self.graph.query("""
-            CALL algo.MST({weightAttribute: 'score', objective: 'max'}) 
+            CALL algo.MST({weightAttribute: 'score', objective: 'maximize'}) 
             YIELD edge, weight
             RETURN edge.mst_ans, weight
             ORDER BY weight
