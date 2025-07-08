@@ -15,12 +15,11 @@
 {                                                                \
  	GrB_UnaryOp_free(&toMatrix);                                 \
  	if (weight != ATTRIBUTE_ID_NONE) GrB_BinaryOp_free(&minID);  \
-+	GxB_IndexBinaryOp_free(&minID_indexOP);                      \
+	GxB_IndexBinaryOp_free(&minID_indexOP);                      \
  	GrB_BinaryOp_free(&toMatrixMin);                             \
  	GrB_BinaryOp_free(&weightOp);                                \
  	GrB_Scalar_free(&theta);                                     \
- 	GrB_IndexUnaryOp_free(&hasAtt);                              \
-+	GrB_Type_free(&contx_type);                                  \
+	GrB_Type_free(&contx_type);                                  \
  }
 
 typedef struct
@@ -30,6 +29,8 @@ typedef struct
 	int comp;        // -1 if max, 1 if min
 } compareContext;
 
+// binary index op, does not use the index but needs the context. 
+// will compare two edges and give the one with the minimum or maximum weight.
 static void _compare_EdgeID_value 
 (
 	uint64_t *z,
@@ -55,6 +56,8 @@ static void _compare_EdgeID_value
 	}
 }
 
+// collapse the entries in a tensor down to a single value by finding the lowest 
+// or highest weight edge.
 static void _reduceToMatrix
 (
 	uint64_t *z,
@@ -111,23 +114,23 @@ static void _reduceToMatrix
 }
 
 // returns true if the edge has the given attribute and it is numerical.
-static void _edgeHasAttribute
-(
-	bool *z,
-	const uint64_t *x,
-	GrB_Index i,
-	GrB_Index j,
-	const compareContext *ctx
-)
-{
-	Edge _x;
-	Graph_GetEdge(ctx->g, (EdgeID) (*x), &_x);
-	SIValue *v = GraphEntity_GetProperty((GraphEntity *) &_x, ctx->w);
-	*z = SI_VAL_IS_NUM(v);
-}
+// currently unused
+// static void _edgeHasAttribute
+// (
+// 	bool *z,
+// 	const uint64_t *x,
+// 	GrB_Index i,
+// 	GrB_Index j,
+// 	const compareContext *ctx
+// )
+// {
+// 	Edge _x;
+// 	Graph_GetEdge(ctx->g, (EdgeID) (*x), &_x);
+// 	SIValue *v = GraphEntity_GetProperty((GraphEntity *) &_x, ctx->w);
+// 	*z = SI_VAL_IS_NUM(v);
+// }
 
 // returns the double value of the given attribute given an edgeId
-// precondition: matrix must not contain edges which don't have the attribut
 void _getAttFromID
 (
 	double *z, 
@@ -207,7 +210,6 @@ GrB_Info Build_Weighted_Matrix
 	                                    .comp = (strategy == BWM_MAX)? -1: 1};
 	GrB_Type contx_type              = NULL;
 	GxB_IndexBinaryOp minID_indexOP  = NULL;
-	GrB_IndexUnaryOp hasAtt          = NULL;
 	GrB_BinaryOp minID               = NULL;
 	GrB_BinaryOp toMatrixMin         = NULL;
 	GrB_BinaryOp weightOp            = NULL;
@@ -246,11 +248,6 @@ GrB_Info Build_Weighted_Matrix
 			&minID_indexOP, (GxB_index_binary_function) _compare_EdgeID_value,
 			GrB_UINT64, GrB_UINT64, GrB_UINT64, contx_type, NULL, NULL) ;
 		GxB_BinaryOp_new_IndexOp (&minID, minID_indexOP, theta) ;
-		
-		GrB_IndexUnaryOp_new(
-			&hasAtt, (GxB_index_unary_function) _edgeHasAttribute, 
-			GrB_BOOL, GrB_UINT64, contx_type
-		) ;
 	}
 
 	GrB_Info info    =  GrB_DEFAULT;
@@ -259,7 +256,6 @@ GrB_Info Build_Weighted_Matrix
 	GrB_Index ncols  =  0;            // number of columns in matrix
 	GrB_Type A_type  =  NULL;         // type of the matrix
 	GrB_Matrix _A    =  NULL;         // output matrix containing EdgeIDs
-	GrB_Matrix _A_w  =  NULL;         // output matrix containing Weights
 	GrB_Vector _N    =  NULL;         // output filtered rows
 	GrB_Matrix M     =  NULL;         // temporary matrix
 
@@ -273,6 +269,7 @@ GrB_Info Build_Weighted_Matrix
 		// Graph does not have any relations. Return empty matrix.
 		info = GrB_Matrix_new(A, GrB_UINT64, 0, 0);
 		ASSERT(info == GrB_SUCCESS);
+		
 		if(A_w) {
 			info = GrB_Matrix_new(A_w, GrB_FP64, 0, 0);
 			ASSERT(info == GrB_SUCCESS);
@@ -281,9 +278,11 @@ GrB_Info Build_Weighted_Matrix
 			info = GrB_Vector_new(rows, GrB_BOOL, 0);
 			ASSERT(info == GrB_SUCCESS);
 		}
+
 		BWM_FREE;
 		return GrB_SUCCESS;
 	}
+
 	RelationID id = GETRELATIONID(0);
 	D = Graph_GetRelationMatrix(g, id, false);
 
@@ -302,6 +301,7 @@ GrB_Info Build_Weighted_Matrix
 	// expecting a square matrix
 	ASSERT(nrows == ncols);
 
+	// If _A has tensor entries, reduce it to a matrix.
 	if(Graph_RelationshipContainsMultiEdge(g, id)) {
 		if(weight == ATTRIBUTE_ID_NONE) {
 			info = GrB_Matrix_apply(
@@ -322,6 +322,7 @@ GrB_Info Build_Weighted_Matrix
 		info = Delta_Matrix_export(&M, D, GrB_UINT64);
 		ASSERT(info == GrB_SUCCESS);
 
+		// reduce tensors to matricies and add the resulting matrix to _A.
 		if(Graph_RelationshipContainsMultiEdge(g, id)) {
 			if(weight == ATTRIBUTE_ID_NONE) {
 				// apply toMatrix to get any edge and accum to also choose any 
@@ -406,8 +407,8 @@ GrB_Info Build_Weighted_Matrix
 		info = GxB_Scalar_setElement_BOOL(scalar, true);
 		ASSERT(info == GrB_SUCCESS);
 
-		info = GrB_Vector_assign_Scalar(_N, NULL, NULL, scalar, GrB_ALL, nrows,
-				NULL);
+		info = GrB_Vector_assign_Scalar(
+			_N, NULL, NULL, scalar, GrB_ALL, nrows, NULL);
 		ASSERT(info == GrB_SUCCESS);
     
 		info = GrB_free(&scalar);
@@ -440,6 +441,7 @@ GrB_Info Build_Weighted_Matrix
 	if(A_w) {
 		info = GrB_Matrix_new(A_w, GrB_FP64, n, n);
 		ASSERT(info == GrB_SUCCESS);
+
 		if(weight == ATTRIBUTE_ID_NONE) {
 			// if no weight specified, weights are zero.
 			info = GrB_Matrix_assign_FP64(
@@ -459,6 +461,7 @@ GrB_Info Build_Weighted_Matrix
 	if(rows) *rows = _N;
 	_A = NULL;
 	_N = NULL;
+
 	BWM_FREE;
 	return info;
 }
