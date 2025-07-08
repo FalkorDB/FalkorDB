@@ -20,6 +20,8 @@ class testCrashHandler():
 
         # wait for the master process to exit
         self.env.envRunner.masterProcess.wait()
+        # don't print the crash report to the console
+        self.env.envRunner.masterProcess = None
 
         # verify we see a crash report
         logfilename = self.env.envRunner._getFileName("master", ".log")
