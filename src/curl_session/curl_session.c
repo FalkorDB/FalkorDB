@@ -9,11 +9,18 @@
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
 
+#include <poll.h>
+#include <errno.h>
+#include <fcntl.h>      // for fcntl(), O_NONBLOCK, F_SETFL, etc.
+#include <unistd.h>
 #include <pthread.h>
+
+
 
 // curl download session
 struct Opaque_CurlSession {
 	CURL *handle;         // curl handle
+	int fd;               // stream file discriptor
 	FILE *stream;         // output stream
 	volatile bool abort;  // download abort flag
 	pthread_t thread;     // download thread
@@ -30,25 +37,67 @@ static void _Curl_Abort
 	session->abort = true;
 }
 
-// curl write callback
-// called when curl downloads data
-// writes data to stream
+// Curl write callback
+// called by libcurl when data is downloaded
+// this function writes the received data into a file descriptor (e.g. a pipe)
+// used by another thread or process to consume the data
 static size_t _curl_write_cb
 (
-	void *ptr,     // data to write
-	size_t size,   // size of each element
-	size_t nmemb,  // number of elements
-	void *pdata    // CurlSession
+    void *ptr,     // pointer to the data to be written
+    size_t size,   // size of each element
+    size_t nmemb,  // number of elements
+    void *pdata    // pointer to CurlSession containing the target fd
 ) {
-	CurlSession session = (CurlSession)pdata;
+    CurlSession session = (CurlSession)pdata;
+    char *buf = (char *)ptr;
 
-	// check if download was aborted
-	if(session->abort) {
-		return 0;  // 0 indicates to curl that download was aborted
-	}
+    ssize_t total_written = 0;
+    ssize_t remaining     = size * nmemb;
 
-	// write data to stream
-	return fwrite(ptr, size, nmemb, session->stream);
+    struct pollfd pfd = {
+        .fd     = session->fd,
+        .events = POLLOUT
+    };
+
+    // attempt to write all data unless download is aborted
+    while (!session->abort && remaining > 0) {
+		// wait up to 5 seconds for the fd to be writable
+        int ret = poll(&pfd, 1, 5000);
+
+        if (ret > 0 && (pfd.revents & POLLOUT)) {
+            ssize_t nbytes = write(session->fd, buf, remaining);
+
+            if (nbytes < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    // temporary condition, retry
+                    continue;
+                }
+
+                // log and abort on unrecoverable error
+                RedisModule_Log(NULL, "warning", "Write error: %s", strerror(errno));
+                break;
+            }
+
+            // update buffer position and remaining byte count
+            buf            += nbytes;
+            remaining      -= nbytes;
+            total_written  += nbytes;
+        }
+        else if (ret == 0) {
+            // timeout, presumably read end is lagging behind
+            RedisModule_Log(NULL, "warning", "Timeout while waiting to write");
+            continue;
+        }
+        else {
+            // poll() failed
+            RedisModule_Log(NULL, "warning", "poll failed: %s", strerror(errno));
+            break;
+        }
+    }
+
+    // return number of bytes successfully written
+    // if not all bytes were written, libcurl may treat this as a failure
+	return (size_t)total_written;
 }
 
 // curl thread
@@ -78,7 +127,6 @@ static void *_curl_thread
 // asynchonously download a file from the internet
 // populates the stream with the downloaded file
 // returns a session handle
-// NOTE: this function runs on a dedicated thread spwaned by Curl_Download
 CurlSession Curl_Download
 (
 	const char *url,  // URL to download
@@ -90,8 +138,17 @@ CurlSession Curl_Download
 	CurlSession s = rm_calloc(1, sizeof(struct Opaque_CurlSession));
 
 	// take ownership over the stream
+	s->fd     = fileno(*stream);
 	s->stream = *stream;
-	*stream   = NULL;
+
+	// take ownership over the stream
+	*stream = NULL;
+
+	// disable buffering on the stream
+	int res = setvbuf(s->stream, NULL, _IONBF, 0);  // use unbuffered mode
+	assert(res == 0);
+
+	fcntl(s->fd, F_SETFL, O_NONBLOCK);  // set non-blocking mode
 
 	// create a new session
 	CURL *curl = curl_easy_init();
@@ -149,11 +206,6 @@ void Curl_Free
 		void *thread_result;
 		pthread_join(_session->thread, &thread_result);
 		ASSERT(_session->stream == NULL);
-
-		intptr_t result = (intptr_t)thread_result;
-		if(result != CURLE_OK) {
-			ErrorCtx_SetError("Error downloading file, error_code: %ld", result);
-		}
 	}
 
 	// free curl handle
