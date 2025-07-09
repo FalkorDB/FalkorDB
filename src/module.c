@@ -190,95 +190,149 @@ int RedisModule_OnLoad
 
 	if(_RegisterDataTypes(ctx) != REDISMODULE_OK) return REDISMODULE_ERR;
 
-	if(RedisModule_CreateCommand(ctx, "graph.QUERY", CommandDispatch, "write deny-oom", 1, 1,
-								 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.QUERY",
+				CommandDispatch,
+				"write deny-oom deny-script blocking",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.RO_QUERY", CommandDispatch, "readonly", 1, 1,
-								 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.RO_QUERY",
+				CommandDispatch,
+				"readonly deny-script blocking",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.DELETE", Graph_Delete, "write", 1, 1,
-								 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.DELETE",
+				Graph_Delete,
+				"write deny-script",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.EXPLAIN", CommandDispatch, "write deny-oom", 1, 1,
-								 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.EXPLAIN",
+				CommandDispatch,
+				"write deny-oom deny-script",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.PROFILE", CommandDispatch, "write deny-oom", 1, 1,
-								 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.PROFILE",
+				CommandDispatch,
+				"write deny-oom deny-script blocking",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.BULK", Graph_BulkInsert, "write deny-oom", 1, 1,
-								 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.BULK",
+				Graph_BulkInsert,
+				"write deny-oom deny-script",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.CONSTRAINT", Graph_Constraint, "write deny-oom", 2, 2,
-								 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.CONSTRAINT",
+				Graph_Constraint,
+				"write deny-oom deny-script",
+				2, 2, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.SLOWLOG", Graph_Slowlog, "readonly", 1, 1,
-								 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.SLOWLOG",
+				Graph_Slowlog,
+				"readonly deny-script allow-busy",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.CONFIG", Graph_Config, "readonly", 0, 0,
-								 0) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.CONFIG",
+				Graph_Config,
+				"readonly deny-script allow-busy",
+				0, 0, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.LIST", Graph_List, "readonly", 0, 0,
-								 0) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.LIST",
+				Graph_List,
+				"readonly deny-script allow-busy",
+				0, 0, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.DEBUG", Graph_Debug, "readonly", 0, 0,
-								 0) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.DEBUG",
+				Graph_Debug,
+				"readonly deny-script",
+				0, 0, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.INFO", Graph_Info, "readonly", 1, 1,
-				1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.INFO",
+				Graph_Info,
+				"readonly deny-script allow-busy",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.EFFECT", Graph_Effect, "write", 1,
-				1, 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.EFFECT",
+				Graph_Effect,
+				"write deny-script",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.COPY", Graph_Copy,
-				"write deny-oom", 1, 2, 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.COPY",
+				Graph_Copy,
+				"write deny-oom deny-script",
+				1, 2, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.RESTORE", Graph_Restore,
-				"write deny-oom", 1, 1, 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.RESTORE",
+				Graph_Restore,
+				"write deny-oom deny-script",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
 	if(init_cmd_acl(ctx) == REDISMODULE_OK) {
-		if(RedisModule_CreateCommand(ctx, "graph.ACL", graph_acl_cmd,
-					"write deny-oom", 0, 0, 0) == REDISMODULE_ERR) {
+		if(RedisModule_CreateCommand(ctx,
+					"graph.ACL",
+					graph_acl_cmd,
+					"write deny-oom deny-script",
+					0, 0, 0) == REDISMODULE_ERR) {
 			return REDISMODULE_ERR;
 		}
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.PASSWORD", Graph_SetPassword,
-				"write deny-oom", 0, 0, 0) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.PASSWORD",
+				Graph_SetPassword,
+				"write deny-oom deny-script",
+				0, 0, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.MEMORY", Graph_Memory,
-				"readonly", 2, 2, 0) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.MEMORY",
+				Graph_Memory,
+				"readonly deny-script",
+				2, 2, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
