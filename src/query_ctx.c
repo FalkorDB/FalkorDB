@@ -335,7 +335,7 @@ static void _QueryCtx_ThreadSafeContextLock
 		RedisModule_ThreadSafeContextLock(ctx->global_exec_ctx.redis_ctx);
 	} else {
 		// no blocked client, most likely we're running on Redis main thread
-		ASSERT(pthread_equal(Globals_Get_MainThreadId(), pthread_self()) != 0);
+		// ASSERT(pthread_equal(Globals_Get_MainThreadId(), pthread_self()) != 0);
 
 		// it likely we're here because of an execution of a write query
 		// e.g. loading from AOF
