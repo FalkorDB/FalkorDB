@@ -7,8 +7,6 @@
 
 // the ith relationID is i if no relation is given, and rels[i] if it is.
 #define GETRELATIONID(i) ((rels)? rels[i] : i)
-#define SI_VAL_IS_NUM(X) \
-	(((X) != ATTRIBUTE_NOTFOUND) && ((SI_NUMERIC & SI_TYPE(*(X))) != 0))
 
 // Frees the build weighted matrix workspace
 #define BWM_FREE                                                 \
@@ -22,6 +20,7 @@
 	GrB_Type_free(&contx_type);                                  \
  }
 
+// TODO: describe thie struct and its usage
 typedef struct
 {
 	const Graph *g;  // Graph
@@ -57,54 +56,57 @@ static void _compare_EdgeID_value
 }
 
 // collapse the entries in a tensor down to a single value by finding the lowest 
-// or highest weight edge.
+// or highest weight edge
 static void _reduceToMatrix
 (
 	uint64_t *z,
 	const uint64_t *x,
 	const compareContext *ctx
-)
-{
+) {
 	if(SCALAR_ENTRY(*x)) {
 		*z = *x;
-	} else { // Find the minimum weighted edge in the vector
+	} else { // find the minimum weighted edge in the vector
 		GrB_Vector _v = AS_VECTOR(*x);
 		GxB_Iterator i = NULL;
 
-		GrB_Info info = GxB_Iterator_new(&i);
+		GrB_Info info = GxB_Iterator_new(&i);  // TODO: switch to stack base
 		ASSERT(info == GrB_SUCCESS)
+
 		info = GxB_Vector_Iterator_attach(i, _v, NULL);
 		ASSERT(info == GrB_SUCCESS)
+
 		info = GxB_Vector_Iterator_seek(i, 0);
 		ASSERT(info == GrB_SUCCESS)
 
 		Edge currE;
-		EdgeID minID    = (EdgeID) GxB_Vector_Iterator_getIndex(i);
-		SIValue *currV  = NULL;
+		EdgeID minID   = (EdgeID) GxB_Vector_Iterator_getIndex(i);
+		SIValue *currV = NULL;
 
 		// -infinity if max or +infinity if min
-		SIValue minV    = SI_DoubleVal(ctx->comp * INFINITY);
+		SIValue minV = SI_DoubleVal(ctx->comp * INFINITY);
 		SIValue tempV;
 
 		Graph_GetEdge(ctx->g, minID, &currE);
 		currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w);
 		info = GxB_Vector_Iterator_next(i);
 
-		// Treat edges without the attribute or with a non-numeric attribute
+		// treat edges without the attribute or with a non-numeric attribute
 		// as infinite length
-		if(SI_VAL_IS_NUM(currV)) {
+		if (SI_TYPE(*currV) & SI_NUMERIC) {
 			minV = *currV;
 		}
 
-		while(info != GxB_EXHAUSTED){
+		while (info != GxB_EXHAUSTED) {
 			EdgeID CurrID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
 			Graph_GetEdge(ctx->g, CurrID, &currE);
 			currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w);
-			if(SI_VAL_IS_NUM(currV) && 
-				SIValue_Compare(minV, *currV, NULL) == ctx->comp){
-				minV = *currV;
+
+			if((SI_TYPE(*currV) & SI_NUMERIC) && 
+				SIValue_Compare(minV, *currV, NULL) == ctx->comp) {
+				minV  = *currV;
 				minID = CurrID;
 			}
+
 			info = GxB_Vector_Iterator_next(i);
 		}
 		
@@ -113,36 +115,20 @@ static void _reduceToMatrix
 	}
 }
 
-// returns true if the edge has the given attribute and it is numerical.
-// currently unused
-// static void _edgeHasAttribute
-// (
-// 	bool *z,
-// 	const uint64_t *x,
-// 	GrB_Index i,
-// 	GrB_Index j,
-// 	const compareContext *ctx
-// )
-// {
-// 	Edge _x;
-// 	Graph_GetEdge(ctx->g, (EdgeID) (*x), &_x);
-// 	SIValue *v = GraphEntity_GetProperty((GraphEntity *) &_x, ctx->w);
-// 	*z = SI_VAL_IS_NUM(v);
-// }
-
 // returns the double value of the given attribute given an edgeId
 void _getAttFromID
 (
-	double *z, 
-	const uint64_t *x, 
-	const compareContext *ctx
-)
-{
-	Edge _x;
-	Graph_GetEdge(ctx->g, (EdgeID) (*x), &_x);
-	SIValue *v = GraphEntity_GetProperty((GraphEntity *) &_x, ctx->w);
+	double *z,                 // [output] edge weight
+	const uint64_t *x,         // edge id
+	const compareContext *ctx  // theta
+) {
+	Edge e;
+	bool found = Graph_GetEdge(ctx->g, (EdgeID) (*x), &e);
+	ASSERT(found == true);
 
-	if(SI_VAL_IS_NUM(v)) {
+	SIValue *v = GraphEntity_GetProperty((GraphEntity *) &e, ctx->w);
+
+	if(SI_TYPE(*v) & SI_NUMERIC) {
 		int info = SIValue_ToDouble(v, z);
 		ASSERT(info == 1);
 	} else {
@@ -154,17 +140,17 @@ void _getAttFromID
 // reduces Tensor entries to the first ID
 static void _reduceToMatrixAny
 (
-	uint64_t *z,         // single Edge ID
-	const uint64_t *x    // possibly a vector entry
-)
-{
-	if(SCALAR_ENTRY(*x)){
+	uint64_t *z,       // [output] single Edge ID
+	const uint64_t *x  // possibly a vector entry
+) {
+	if(SCALAR_ENTRY(*x)) {
 		*z = *x;
 	} else {
 		GrB_Vector _v = AS_VECTOR(*x);
 		GxB_Iterator i = NULL;
-		GrB_Info info = GxB_Iterator_new(&i);
+		GrB_Info info = GxB_Iterator_new(&i);  // TODO: switch to stack base
 		ASSERT(info == GrB_SUCCESS);
+
 		info = GxB_Vector_Iterator_attach(i, _v, NULL);
 		ASSERT(info == GrB_SUCCESS);
 
@@ -174,8 +160,10 @@ static void _reduceToMatrixAny
 
 		// get the first edge ID in the vector
 		EdgeID minID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
+
 		info = GxB_Iterator_free(&i);
 		ASSERT(info == GrB_SUCCESS);
+
 		*z = (uint64_t) minID;
 	}
 }
@@ -184,13 +172,13 @@ static void _reduceToMatrixAny
 // L = L0 U L1 U ... Lm
 // A = L * (R0 + R1 + ... Rn) * L 
 //
-// if a weight attribute is specified, this function will pick which Edge to 
-// return given a BWM_reduce strategy. For example, BWM_MIN returns the edge 
-// with minimum weight.
+// if a weight attribute is specified, this function will pick which edge to 
+// return given a BWM_reduce strategy
+// for example, BWM_MIN returns the edge with minimum weight
 // 
-// A_w = [Attribute values of A]
-// rows = L's main diagonal
-// in case no labels are specified rows is a dense 1 vector: [1,1,...1]
+// A_w  = [attribute values of A]
+// rows = nodes with specified labels
+// in case no labels are specified rows is a dense 1 vector: [1, 1, ...1]
 GrB_Info Build_Weighted_Matrix
 (
 	GrB_Matrix *A,             // [output] matrix (EdgeIDs)
@@ -201,29 +189,36 @@ GrB_Info Build_Weighted_Matrix
 	unsigned short n_lbls,     // number of labels
 	const RelationID *rels,    // [optional] relationships to consider
 	unsigned short n_rels,     // number of relationships
-	const AttributeID weight,  // attribute to return
-	BWM_reduce strategy,       // decides how singular returned edge id is picked
+	const AttributeID weight,  // weight attribute to consider
+	BWM_reduce strategy,       // use either maximum or minimum weight
 	bool symmetric,            // build a symmetric matrix
 	bool compact               // remove unused row & columns
 ) {
-	compareContext ctx               = {.g = g, .w = weight, 
-	                                    .comp = (strategy == BWM_MAX)? -1: 1};
-	GrB_Type contx_type              = NULL;
-	GxB_IndexBinaryOp minID_indexOP  = NULL;
-	GrB_BinaryOp minID               = NULL;
-	GrB_BinaryOp toMatrixMin         = NULL;
-	GrB_BinaryOp weightOp            = NULL;
-	GrB_UnaryOp toMatrix             = NULL;
-	GrB_Scalar theta                 = NULL;
-
 	ASSERT(g != NULL);
 	ASSERT(A != NULL);
 	ASSERT((lbls != NULL && n_lbls > 0) || (lbls == NULL && n_lbls == 0));
 	ASSERT((rels != NULL && n_rels > 0) || (rels == NULL && n_rels == 0));
 
+	// TODO: comment
+	compareContext ctx = {
+		.g = g,
+		.w = weight,
+		.comp = (strategy == BWM_MAX)? -1: 1
+	};
+
+	// TODO: comment each
+	GrB_BinaryOp      minID         = NULL;  //
+	GrB_Scalar        theta         = NULL;  //...
+	GrB_UnaryOp       toMatrix      = NULL;
+	GrB_BinaryOp      weightOp      = NULL;
+	GrB_Type          contx_type    = NULL;
+	GrB_BinaryOp      toMatrixMin   = NULL;
+	GxB_IndexBinaryOp minID_indexOP = NULL;
+
 	GrB_Type_new(&contx_type, sizeof(compareContext));
 
 	if(weight == ATTRIBUTE_ID_NONE) {
+		// weight attribute wasn't specified, use a dummy weight with value: 0
 		minID = GrB_SECOND_UINT64;
 		GrB_UnaryOp_new (
 			&toMatrix, (GxB_unary_function) _reduceToMatrixAny, GrB_UINT64, 
@@ -243,21 +238,22 @@ GrB_Info Build_Weighted_Matrix
 			GrB_UINT64, GrB_UINT64, contx_type
 		) ;
 
-		// pick the minimum (or maximum) valued edge from the two matricies.
-		GxB_IndexBinaryOp_new(
-			&minID_indexOP, (GxB_index_binary_function) _compare_EdgeID_value,
-			GrB_UINT64, GrB_UINT64, GrB_UINT64, contx_type, NULL, NULL) ;
-		GxB_BinaryOp_new_IndexOp (&minID, minID_indexOP, theta) ;
+		// pick the minimum (or maximum) valued edge from the two matricies
+		GxB_IndexBinaryOp_new(&minID_indexOP,
+				(GxB_index_binary_function) _compare_EdgeID_value, GrB_UINT64,
+				GrB_UINT64, GrB_UINT64, contx_type, NULL, NULL);
+
+		GxB_BinaryOp_new_IndexOp(&minID, minID_indexOP, theta);
 	}
 
-	GrB_Info info    =  GrB_DEFAULT;
-	Delta_Matrix D   =  NULL;         // graph delta matrix
-	GrB_Index nrows  =  0;            // number of rows in matrix
-	GrB_Index ncols  =  0;            // number of columns in matrix
-	GrB_Type A_type  =  NULL;         // type of the matrix
-	GrB_Matrix _A    =  NULL;         // output matrix containing EdgeIDs
-	GrB_Vector _N    =  NULL;         // output filtered rows
-	GrB_Matrix M     =  NULL;         // temporary matrix
+	GrB_Info info   = GrB_DEFAULT;
+	GrB_Matrix M    = NULL;  // temporary matrix
+	GrB_Matrix _A   = NULL;  // output matrix containing EdgeIDs
+	GrB_Vector _N   = NULL;  // output filtered rows
+	Delta_Matrix D  = NULL;  // graph delta matrix
+	GrB_Index nrows = 0;     // number of rows in matrix
+	GrB_Index ncols = 0;     // number of columns in matrix
+	GrB_Type A_type = NULL;  // type of the matrix
 
 	// if no relationships are specified, use all relationships
 	// can't use adj matrix since I need access to the edgeIds of all edges
@@ -415,7 +411,7 @@ GrB_Info Build_Weighted_Matrix
 		ASSERT(info == GrB_SUCCESS);
 	}
 
-	if(symmetric) {
+	if (symmetric) {
 		// make A symmetric A = A + At
 		info = GrB_Matrix_eWiseAdd_BinaryOp(_A, NULL, NULL, minID,
 				_A, _A, GrB_DESC_T1);

@@ -29,7 +29,6 @@ typedef struct {
 	Graph *g;                 // graph
 	GrB_Matrix tree;          // The MST
 	GrB_Matrix w_tree;        // The weighted MST
-	GrB_Vector nodes;         // nodes participating in computation
 	RelationID *relationIDs;  // edge type(s) to traverse.
 	int relationCount;        // length of relationIDs.
 	GrB_Info info;            // iterator state
@@ -302,7 +301,7 @@ ProcedureResult Proc_MSTInvoke
 	GrB_Matrix A_w = NULL;  // weight of filtered edges
 
 	// makes into a symetric matrix
-	info = Build_Weighted_Matrix(&A, &A_w, &pdata->nodes, g, lbls,
+	info = Build_Weighted_Matrix(&A, &A_w, NULL, g, lbls,
 			array_len(lbls), rels, array_len(rels), weightAtt,
 			maxST ? BWM_MAX : BWM_MIN, true, true);
 	ASSERT(info == GrB_SUCCESS);
@@ -355,7 +354,8 @@ ProcedureResult Proc_MSTInvoke
 	//--------------------------------------------------------------------------
 	// initialize iterator
 	//--------------------------------------------------------------------------
-	if(pdata->yield_weight){
+
+	if (pdata->yield_weight) {
 		info = GxB_Iterator_new(&pdata->weight_it);
 		ASSERT(info == GrB_SUCCESS);
 
@@ -365,10 +365,11 @@ ProcedureResult Proc_MSTInvoke
 		pdata->info = GxB_Matrix_Iterator_seek(pdata->weight_it, 0);
 		ASSERT(info == GrB_SUCCESS);
 	} else {
+		// no need for the weight matrix
 		GrB_free(&pdata->w_tree);
 	}
 	
-	if(pdata->yield_edge) {
+	if (pdata->yield_edge) {
 		info = GxB_Iterator_new(&pdata->it);
 		ASSERT(info == GrB_SUCCESS);
 		
@@ -465,13 +466,15 @@ ProcedureResult Proc_MSTFree
 	if(ctx->privateData != NULL) {
 		MST_Context *pdata = ctx->privateData;
 
-		if(pdata->tree    != NULL) GrB_free(&pdata->tree);
-		if(pdata->w_tree  != NULL) GrB_free(&pdata->w_tree);
-		if(pdata->it      != NULL) GrB_free(&pdata->it);
-		if(pdata->nodes   != NULL) GrB_free(&pdata->nodes);
+		if(pdata->it        != NULL) GrB_free(&pdata->it);
+		if(pdata->tree      != NULL) GrB_free(&pdata->tree);
+		if(pdata->w_tree    != NULL) GrB_free(&pdata->w_tree);
+		if(pdata->weight_it != NULL) GrB_free(&pdata->weight_it);
+
 		array_free(pdata->relationIDs);
 		rm_free(ctx->privateData);
 	}
+
 	return PROCEDURE_OK;
 }
 
