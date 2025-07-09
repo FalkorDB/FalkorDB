@@ -10,6 +10,8 @@
 #include "commands/cmd_context.h"
 #include "string_pool/string_pool.h"
 
+#include <pthread.h>
+
 // initialize global variables
 void Globals_Init(void);
 
