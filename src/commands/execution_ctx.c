@@ -98,7 +98,7 @@ ExecutionCtx *ExecutionCtx_Clone
 // returns ExecutionCtx populated with the current execution relevant objects
 ExecutionCtx *ExecutionCtx_FromQuery
 (
-	const char *q  // string representing the query
+	char *q  // string representing the query
 ) {
 	ASSERT(q != NULL);
 
@@ -111,29 +111,20 @@ ExecutionCtx *ExecutionCtx_FromQuery
 	}
 
 	// parse and validate parameters only
-	// extract query string
-	// return invalid execution context if failed to parse params
-	cypher_parse_result_t *params_parse_result = parse_params(q, &q_str);
-
-	// parameter parsing failed, return NULL
-	if(params_parse_result == NULL) {
-		return NULL;
-	}
+	parse_params(q, &q_str);
 
 	// seems like we should be able to free 'params_parse_result'
 	// at this point but this messes up the parsing of the actual query
 
 	// query included only params e.g. 'cypher a=1' was provided
 	if(unlikely(strlen(q_str) == 0)) {
-		parse_result_free(params_parse_result);
 		ErrorCtx_SetError(EMSG_EMPTY_QUERY);
 		return NULL;
 	}
 
-	// update query context with the query & params
+	// update query context with the query
 	// (here the QueryInfo is created as well, starting the stage timer)
 	QueryCtx *ctx = QueryCtx_GetQueryCtx();
-	ctx->query_data.parsed_params   = params_parse_result;
 	ctx->query_data.query_no_params = q_str;
 
 	// get cache

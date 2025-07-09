@@ -15,6 +15,7 @@
 #include "../datatypes/map.h"
 #include "../datatypes/array.h"
 #include "./utility/internal.h"
+#include "../util/simple_rand.h"
 #include "../graph/graphcontext.h"
 
 #define BETWEENNESS_DEFAULT_SAMPLE_SIZE 32
@@ -46,7 +47,7 @@ static GrB_Index* _Random_Sources
 (
 	GrB_Matrix AT,          // transposed adjacency matrix
 	int32_t *samplingSize,  // size of sample
-	uint32_t samplingSeed   // random seed
+	uint64_t samplingSeed   // random seed
 ) {
 	GrB_Info info;
 
@@ -78,7 +79,7 @@ static GrB_Index* _Random_Sources
 	// pick random sources
 	for(int i = 0; i < *samplingSize; i++) {
 		uint64_t x;
-		GrB_Index idx = rand_r(&samplingSeed) % container->nvals;
+		GrB_Index idx = simple_rand(&samplingSeed) % container->nvals;
 
 		info = GrB_Vector_extractElement(&x, container->i, idx);
 		ASSERT(info == GrB_SUCCESS);
@@ -126,7 +127,7 @@ static bool _read_config
 	LabelID **lbls,         // [output] labels
 	RelationID **rels,      // [output] relationships
 	int32_t *samplingSize,  // [output] number of source vertices
-	uint32_t *samplingSeed	// [output] random number generator seed
+	uint64_t *samplingSeed	// [output] random number generator seed
 ) {
 	// expecting configuration to be a map
 	ASSERT(lbls            != NULL);
@@ -297,7 +298,7 @@ ProcedureResult Proc_BetweennessInvoke
 	LabelID    *lbls         = NULL;
 	RelationID *rels         = NULL;
 	int32_t     samplingSize = -1;
-	uint32_t    samplingSeed = 0;
+	uint64_t    samplingSeed = 0;
 
 	//--------------------------------------------------------------------------
 	// load configuration map
