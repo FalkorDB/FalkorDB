@@ -219,7 +219,7 @@ void QueryCtx_SetResultSet
 // set the parameters map
 void QueryCtx_SetParams
 (
-	rax *params
+	dict *params
 ) {
 	ASSERT(params != NULL);
 
@@ -235,7 +235,7 @@ AST *QueryCtx_GetAST(void) {
 }
 
 // retrieve the query parameters values map
-rax *QueryCtx_GetParams(void) {
+dict *QueryCtx_GetParams(void) {
 	QueryCtx *ctx = _QueryCtx_GetCtx();
 	ASSERT(ctx != NULL);
 	return ctx->query_data.params;
@@ -483,13 +483,8 @@ void QueryCtx_Free(void) {
 	EffectsBuffer_Free(ctx->effects_buffer);
 
 	if(ctx->query_data.params != NULL) {
-		raxFreeWithCallback(ctx->query_data.params, _ParameterFreeCallback);
+		HashTableRelease(ctx->query_data.params);
 		ctx->query_data.params = NULL;
-	}
-
-	if(ctx->query_data.parsed_params != NULL) {
-		parse_result_free(ctx->query_data.parsed_params);
-		ctx->query_data.parsed_params = NULL;
 	}
 
 	rm_free(ctx);
