@@ -84,6 +84,7 @@ class testMST(FlowTestsBase):
                 """CALL algo.MST('invalid')""",                      # invalid configuration type
                 """CALL algo.MST({nodeLabels: [1, 2, 3]})""",        # integer values in nodeLabels array
                 """CALL algo.MST({relationshipTypes: [1, 2, 3]})""", # integer values in relationshipTypes array
+                """CALL algo.MST({relationshipTypes: ['FAKE']})""",  # fake values in relationshipTypes array
                 """CALL algo.MST(null) YIELD node, invalidField""",  # non-existent yield field
 
                 """CALL algo.MST({nodeLabels: ['Person'],
@@ -350,6 +351,7 @@ class testMST(FlowTestsBase):
         ans_set = [[0, 789134.0], [0, 8991234.0], [2, None]]
         self.env.assertEqual(ans_set, result_set)
 
+        # set the edge 2->3 to have a non-numeric score
         q = "MATCH ({id:2})-[b:B]->({id:3}) SET b.score = 'Hello'"
         self.graph.query(q)
 

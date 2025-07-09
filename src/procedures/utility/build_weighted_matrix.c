@@ -213,6 +213,7 @@ GrB_Info Build_Weighted_Matrix
 	GrB_Type          contx_type    = NULL;  // GB equivalent of compareContext
 	GrB_BinaryOp      toMatrixMin   = NULL;  // get min weight ID from vectors
 	GxB_IndexBinaryOp minID_indexOP = NULL;  // minID's underlying index op 
+	size_t n;
 
 	GrB_Type_new(&contx_type, sizeof(compareContext));
 
@@ -261,17 +262,18 @@ GrB_Info Build_Weighted_Matrix
 	}
 
 	if (n_rels == 0) {
+		n = compact? Graph_UncompactedNodeCount(g) : Graph_RequiredMatrixDim(g);
 		// graph does not have any relations, return empty matrix
-		info = GrB_Matrix_new(A, GrB_UINT64, 0, 0);
+		info = GrB_Matrix_new(A, GrB_UINT64, n, n);
 		ASSERT(info == GrB_SUCCESS);
 		
 		if (A_w) {
-			info = GrB_Matrix_new(A_w, GrB_FP64, 0, 0);
+			info = GrB_Matrix_new(A_w, GrB_FP64, n, n);
 			ASSERT(info == GrB_SUCCESS);
 		}
 
 		if (rows) {
-			info = GrB_Vector_new(rows, GrB_BOOL, 0);
+			info = GrB_Vector_new(rows, GrB_BOOL, n);
 			ASSERT(info == GrB_SUCCESS);
 		}
 
@@ -391,18 +393,8 @@ GrB_Info Build_Weighted_Matrix
 		ASSERT(info == GrB_SUCCESS);
 	} else if (rows != NULL) {
 		// no labels, N = [1,....1]
-		GrB_Scalar scalar;
-		info = GrB_Scalar_new(&scalar, GrB_BOOL);
-		ASSERT(info == GrB_SUCCESS);
-
-		info = GxB_Scalar_setElement_BOOL(scalar, true);
-		ASSERT(info == GrB_SUCCESS);
-
-		info = GrB_Vector_assign_Scalar(
-			_N, NULL, NULL, scalar, GrB_ALL, nrows, NULL);
-		ASSERT(info == GrB_SUCCESS);
-    
-		info = GrB_free(&scalar);
+		info = GrB_Vector_assign_BOOL(
+			_N, NULL, NULL, true, GrB_ALL, nrows, NULL);
 		ASSERT(info == GrB_SUCCESS);
 	}
 
@@ -413,7 +405,7 @@ GrB_Info Build_Weighted_Matrix
 		ASSERT(info == GrB_SUCCESS);
 	}
 
-	size_t n = nrows;
+	n = nrows;
 	if (compact) {
 		// determine the number of nodes in the graph
 		// this includes deleted nodes
