@@ -313,7 +313,6 @@ ProcedureResult Proc_MSTInvoke
 	//--------------------------------------------------------------------------
 	// run MST
 	//--------------------------------------------------------------------------
-
 	if (maxST) { // if we are optimizing for the max, make weights negative.
 		info = GrB_Matrix_apply(A_w, NULL, NULL, GrB_AINV_FP64, A_w, NULL);
 		ASSERT(info == GrB_SUCCESS);
@@ -356,14 +355,18 @@ ProcedureResult Proc_MSTInvoke
 	//--------------------------------------------------------------------------
 	// initialize iterator
 	//--------------------------------------------------------------------------
-	info = GxB_Iterator_new(&pdata->weight_it);
-	ASSERT(info == GrB_SUCCESS);
+	if(pdata->yield_weight){
+		info = GxB_Iterator_new(&pdata->weight_it);
+		ASSERT(info == GrB_SUCCESS);
 
-	info = GxB_Matrix_Iterator_attach(pdata->weight_it, pdata->w_tree, NULL);
-	ASSERT(info == GrB_SUCCESS);
+		info = GxB_Matrix_Iterator_attach(pdata->weight_it, pdata->w_tree, NULL);
+		ASSERT(info == GrB_SUCCESS);
 
-	pdata->info = GxB_Matrix_Iterator_seek(pdata->weight_it, 0);
-	ASSERT(info == GrB_SUCCESS);
+		pdata->info = GxB_Matrix_Iterator_seek(pdata->weight_it, 0);
+		ASSERT(info == GrB_SUCCESS);
+	} else {
+		GrB_free(&pdata->w_tree);
+	}
 	
 	if(pdata->yield_edge) {
 		info = GxB_Iterator_new(&pdata->it);
