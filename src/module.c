@@ -303,6 +303,14 @@ int RedisModule_OnLoad
 	}
 
 	if(RedisModule_CreateCommand(ctx,
+				"graph.DUMP",
+				Graph_Dump,
+				"readonly deny-script",
+				1, 2, 1) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_CreateCommand(ctx,
 				"graph.RESTORE",
 				Graph_Restore,
 				"write deny-oom deny-script",
