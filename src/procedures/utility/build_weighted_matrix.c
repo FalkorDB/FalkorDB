@@ -6,19 +6,19 @@
 #include "./internal.h"
 
 // the ith relationID is i if no relation is given, and rels[i] if it is.
-#define GETRELATIONID(i) ((rels)? rels[i] : i)
+#define GETRELATIONID(i) ((rels) ? rels[i] : i)
 
-// Frees the build weighted matrix workspace
+// frees the build weighted matrix workspace
 #define BWM_FREE                                                 \
 {                                                                \
- 	GrB_UnaryOp_free(&toMatrix);                                 \
- 	if (weight != ATTRIBUTE_ID_NONE) GrB_BinaryOp_free(&minID);  \
-	GxB_IndexBinaryOp_free(&minID_indexOP);                      \
- 	GrB_BinaryOp_free(&toMatrixMin);                             \
- 	GrB_BinaryOp_free(&weightOp);                                \
- 	GrB_Scalar_free(&theta);                                     \
+	if (weight != ATTRIBUTE_ID_NONE) GrB_BinaryOp_free(&minID);  \
+	GrB_Scalar_free(&theta);                                     \
 	GrB_Type_free(&contx_type);                                  \
- }
+	GrB_UnaryOp_free(&toMatrix);                                 \
+	GrB_BinaryOp_free(&weightOp);                                \
+	GrB_BinaryOp_free(&toMatrixMin);                             \
+	GxB_IndexBinaryOp_free(&minID_indexOP);                      \
+}
 
 // structure that holds all the context nessesary for the GraphBLAS functions
 // can select the right edge
@@ -256,20 +256,21 @@ GrB_Info Build_Weighted_Matrix
 
 	// if no relationships are specified, use all relationships
 	// can't use adj matrix since I need access to the edgeIds of all edges
-	if(rels == NULL) {
+	if (rels == NULL) {
 		n_rels = Graph_RelationTypeCount(g);
 	}
 
-	if(n_rels == 0) { 
-		// Graph does not have any relations. Return empty matrix.
+	if (n_rels == 0) {
+		// graph does not have any relations, return empty matrix
 		info = GrB_Matrix_new(A, GrB_UINT64, 0, 0);
 		ASSERT(info == GrB_SUCCESS);
 		
-		if(A_w) {
+		if (A_w) {
 			info = GrB_Matrix_new(A_w, GrB_FP64, 0, 0);
 			ASSERT(info == GrB_SUCCESS);
 		}
-		if(rows) {
+
+		if (rows) {
 			info = GrB_Vector_new(rows, GrB_BOOL, 0);
 			ASSERT(info == GrB_SUCCESS);
 		}
@@ -278,8 +279,14 @@ GrB_Info Build_Weighted_Matrix
 		return GrB_SUCCESS;
 	}
 
-	RelationID id = GETRELATIONID(0);
-	D = Graph_GetRelationMatrix(g, id, false);
+	//--------------------------------------------------------------------------
+	// compute R
+	//--------------------------------------------------------------------------
+
+	ASSERT(n_rels > 0);
+
+	RelationID rel_id = GETRELATIONID(0);
+	D = Graph_GetRelationMatrix(g, rel_id, false);
 
 	info = Delta_Matrix_export(&_A, D, GrB_UINT64);
 	ASSERT(info == GrB_SUCCESS);
@@ -296,67 +303,56 @@ GrB_Info Build_Weighted_Matrix
 	// expecting a square matrix
 	ASSERT(nrows == ncols);
 
-	// If _A has tensor entries, reduce it to a matrix.
-	if(Graph_RelationshipContainsMultiEdge(g, id)) {
-		if(weight == ATTRIBUTE_ID_NONE) {
-			info = GrB_Matrix_apply(
-				_A, NULL, NULL, toMatrix, _A, NULL
-			) ;
+	// if _A has tensor entries, reduce it to a matrix
+	if (Graph_RelationshipContainsMultiEdge(g, rel_id)) {
+		if (weight == ATTRIBUTE_ID_NONE) {
+			info = GrB_Matrix_apply(_A, NULL, NULL, toMatrix, _A, NULL);
 		} else {
-			info = GrB_Matrix_apply_BinaryOp2nd_UDT(
-				_A, NULL, NULL, toMatrixMin, _A, (void *) (&ctx), NULL
-			) ;
+			info = GrB_Matrix_apply_BinaryOp2nd_UDT(_A, NULL, NULL, toMatrixMin,
+					_A, (void *) (&ctx), NULL);
 		}
 		ASSERT(info == GrB_SUCCESS);
 	}
 
-	// in case there are multiple relation types, include them in A
-	for(unsigned short i = 1; i < n_rels; i++) {
-		id = GETRELATIONID(i);
-		D = Graph_GetRelationMatrix(g, id, false);
+	// in case there are multiple relation types, include them in _A
+	for (unsigned short i = 1; i < n_rels; i++) {
+		rel_id = GETRELATIONID(i);
+		D = Graph_GetRelationMatrix(g, rel_id, false);
 		info = Delta_Matrix_export(&M, D, GrB_UINT64);
 		ASSERT(info == GrB_SUCCESS);
 
-		// reduce tensors to matricies and add the resulting matrix to _A.
-		if(Graph_RelationshipContainsMultiEdge(g, id)) {
-			if(weight == ATTRIBUTE_ID_NONE) {
+		// reduce tensors to matricies and add the resulting matrix to _A
+		if (Graph_RelationshipContainsMultiEdge(g, rel_id)) {
+			if (weight == ATTRIBUTE_ID_NONE) {
 				// apply toMatrix to get any edge and accum to also choose any 
-				info = GrB_Matrix_apply(
-					_A, NULL, minID, toMatrix, M, NULL);
+				info = GrB_Matrix_apply(M, NULL, NULL, toMatrix, M, NULL);
 			} else {
-				// Cannot use indexbinaryOp in accum so I use eWiseAdd
-				// info = GrB_Matrix_apply_BinaryOp2nd_UINT64(
-				// 	_A, NULL, minID, toMatrixMin, M, (uint64_t) (&ctx), NULL
-				// ) ;
-
 				// apply to get the min (max) valued edge from the tensor
-				info = GrB_Matrix_apply_BinaryOp2nd_UDT(
-					M, NULL, NULL, toMatrixMin, M, (void *) (&ctx), NULL
-				) ;
+				info = GrB_Matrix_apply_BinaryOp2nd_UDT(M, NULL, NULL,
+						toMatrixMin, M, (void *) (&ctx), NULL);
 				ASSERT(info == GrB_SUCCESS);
 
-				// add and pick the min (max) valued edge if there is overlap
-				info = GrB_Matrix_eWiseAdd_BinaryOp(
-					_A, NULL, NULL, minID, _A, M, NULL
-				) ;
-				ASSERT(info == GrB_SUCCESS);
 			}
-		} else {
-			info = GrB_Matrix_eWiseAdd_BinaryOp(
-				_A, NULL, NULL, minID, _A, M, NULL) ;
 		}
+
+		// add and pick the min (max) valued edge if there is overlap
+		info = GrB_Matrix_eWiseAdd_BinaryOp(_A, NULL, NULL, minID, _A, M, NULL);
 		ASSERT(info == GrB_SUCCESS);
 		GrB_free(&M);
 	}
 
+	//--------------------------------------------------------------------------
+	// compute L
+	//--------------------------------------------------------------------------
+
 	// create vector N denoting all nodes participating in the algorithm
-	if(rows != NULL) {
+	if (rows != NULL) {
 		info = GrB_Vector_new(&_N, GrB_BOOL, nrows);
 		ASSERT(info == GrB_SUCCESS);
 	}
 
 	// enforce labels
-	if(n_lbls > 0) {
+	if (n_lbls > 0) {
 		Delta_Matrix DL = Graph_GetLabelMatrix(g, lbls[0]);
 
 		GrB_Matrix L;
@@ -364,7 +360,7 @@ GrB_Info Build_Weighted_Matrix
 		ASSERT(info == GrB_SUCCESS);
 
 		// L = L U M
-		for(unsigned short i = 1; i < n_lbls; i++) {
+		for (unsigned short i = 1; i < n_lbls; i++) {
 			DL = Graph_GetLabelMatrix(g, lbls[i]);
 
 			info = Delta_Matrix_export(&M, DL, GrB_BOOL);
@@ -385,7 +381,7 @@ GrB_Info Build_Weighted_Matrix
 		ASSERT(info == GrB_SUCCESS);
 
 		// set N to L's main diagonal denoting all participating nodes 
-		if(rows != NULL) {
+		if (_N != NULL) {
 			info = GxB_Vector_diag(_N, L, 0, NULL);
 			ASSERT(info == GrB_SUCCESS);
 		}
@@ -393,8 +389,8 @@ GrB_Info Build_Weighted_Matrix
 		// free L matrix
 		info = GrB_Matrix_free(&L);
 		ASSERT(info == GrB_SUCCESS);
-	} else if(rows != NULL) {
-		// N = [1,....1]
+	} else if (rows != NULL) {
+		// no labels, N = [1,....1]
 		GrB_Scalar scalar;
 		info = GrB_Scalar_new(&scalar, GrB_BOOL);
 		ASSERT(info == GrB_SUCCESS);
@@ -412,13 +408,13 @@ GrB_Info Build_Weighted_Matrix
 
 	if (symmetric) {
 		// make A symmetric A = A + At
-		info = GrB_Matrix_eWiseAdd_BinaryOp(_A, NULL, NULL, minID,
-				_A, _A, GrB_DESC_T1);
+		info = GrB_Matrix_eWiseAdd_BinaryOp(_A, NULL, NULL, minID, _A, _A,
+				GrB_DESC_T1);
 		ASSERT(info == GrB_SUCCESS);
 	}
 
 	size_t n = nrows;
-	if(compact) {
+	if (compact) {
 		// determine the number of nodes in the graph
 		// this includes deleted nodes
 		n = Graph_UncompactedNodeCount(g);
@@ -427,23 +423,27 @@ GrB_Info Build_Weighted_Matrix
 		GrB_Info info = GrB_Matrix_resize(_A, n, n);
 		ASSERT(info == GrB_SUCCESS);
 
-		if(rows != NULL) {
+		if (rows != NULL) {
 			info = GrB_Vector_resize(_N, n);
 			ASSERT(info == GrB_SUCCESS);
 		}
 	}
 
-	if(A_w) {
+	//--------------------------------------------------------------------------
+	// compute weight matrix
+	//--------------------------------------------------------------------------
+
+	if (A_w) {
 		info = GrB_Matrix_new(A_w, GrB_FP64, n, n);
 		ASSERT(info == GrB_SUCCESS);
 
-		if(weight == ATTRIBUTE_ID_NONE) {
-			// if no weight specified, weights are zero.
+		if (weight == ATTRIBUTE_ID_NONE) {
+			// if no weight specified, weights are zero
 			info = GrB_Matrix_assign_FP64(
 				*A_w, _A, NULL, 0.0, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
-			) ;
+			);
 		} else {
-			// get the weight value from the edge ids.
+			// get the weight value from the edge ids
 			info = GrB_Matrix_apply_BinaryOp2nd_UDT(
 				*A_w, NULL, NULL, weightOp, _A, (void *) (&ctx), NULL
 			);
@@ -453,7 +453,7 @@ GrB_Info Build_Weighted_Matrix
 
 	// set outputs
 	*A = _A;
-	if(rows) *rows = _N;
+	if (rows) *rows = _N;
 	_A = NULL;
 	_N = NULL;
 
