@@ -117,10 +117,10 @@ static bool _read_config
 			const char *label = lbl.stringval;
 			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 			if(s == NULL) {
-				// log non-existant label
-                RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING, 
-                    "Skipping non-existent label: '%s'.", label);
-				continue;
+				// error
+				ErrorCtx_SetError(
+					"mst configuration contains non-existent label:%s", label);
+				goto error;
 			}
 
 			LabelID lbl_id = Schema_GetID(s);
@@ -149,10 +149,10 @@ static bool _read_config
 			const char *relation = rel.stringval;
 			Schema *s = GraphContext_GetSchema(gc, relation, SCHEMA_EDGE);
 			if(s == NULL) {
-				// log non-existant relation
-                RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING, 
-                    "Skipping non-existent relation: '%s'.", relation);
-				continue;
+				// error
+				ErrorCtx_SetError(
+					"mst configuration contains non-existent type:%s", relation);
+				goto error;
 			}
 
 			RelationID rel_id = Schema_GetID(s);
@@ -172,7 +172,7 @@ static bool _read_config
 		const char *attr = v.stringval;
 		*weightAtt = GraphContext_GetAttributeID(gc, attr);
 		if(*weightAtt == ATTRIBUTE_ID_NONE) {
-			ErrorCtx_SetError("mst configuration, unknown attribute%s", attr);
+			ErrorCtx_SetError("mst configuration, unknown attribute: %s", attr);
 			goto error;
 		}
 		match_fields++;
@@ -190,7 +190,7 @@ static bool _read_config
 		} else if (strcasecmp(objective, "maximize") == 0) {
 			*maxST = true;
 		} else {
-			ErrorCtx_SetError("mst configuration, unknown objective %s", objective);
+			ErrorCtx_SetError("mst configuration, unknown objective: %s", objective);
 			goto error;
 		}
 
@@ -319,8 +319,7 @@ ProcedureResult Proc_MSTInvoke
 
 	char msg[LAGRAPH_MSG_LEN];
 	// execute Minimum Spanning Forest
-	GrB_Info mst_res =
-		LAGraph_msf(&pdata->w_tree, A_w, false, msg);
+	GrB_Info mst_res = LAGraph_msf(&pdata->w_tree, A_w, false, msg);
 
 	// clean up algorithm inputs
 	info = GrB_free(&A_w);

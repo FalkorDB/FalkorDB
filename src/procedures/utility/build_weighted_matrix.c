@@ -20,7 +20,8 @@
 	GrB_Type_free(&contx_type);                                  \
  }
 
-// TODO: describe thie struct and its usage
+// structure that holds all the context nessesary for the GraphBLAS functions
+// can select the right edge
 typedef struct
 {
 	const Graph *g;  // Graph
@@ -49,8 +50,10 @@ static void _compare_EdgeID_value
 	SIValue *xv = GraphEntity_GetProperty((GraphEntity *) &_x, ctx->w);
 	SIValue *yv = GraphEntity_GetProperty((GraphEntity *) &_y, ctx->w);
 
-	if(!SI_VAL_IS_NUM(xv) || 
-		(SI_VAL_IS_NUM(yv) && SIValue_Compare(*xv, *yv, NULL) == ctx->comp)) {
+	if((SI_TYPE(*xv) & SI_NUMERIC) == 0 || 
+		((SI_TYPE(*yv) & SI_NUMERIC) && 
+		SIValue_Compare(*xv, *yv, NULL) == ctx->comp)
+	) {
 		*z = *y;
 	}
 }
@@ -67,12 +70,12 @@ static void _reduceToMatrix
 		*z = *x;
 	} else { // find the minimum weighted edge in the vector
 		GrB_Vector _v = AS_VECTOR(*x);
-		GxB_Iterator i = NULL;
+		
+		// stack allocate the iterator
+		struct GB_Iterator_opaque _i;
+		GxB_Iterator i = &_i;
 
-		GrB_Info info = GxB_Iterator_new(&i);  // TODO: switch to stack base
-		ASSERT(info == GrB_SUCCESS)
-
-		info = GxB_Vector_Iterator_attach(i, _v, NULL);
+		GrB_Info info = GxB_Vector_Iterator_attach(i, _v, NULL);
 		ASSERT(info == GrB_SUCCESS)
 
 		info = GxB_Vector_Iterator_seek(i, 0);
@@ -111,7 +114,6 @@ static void _reduceToMatrix
 		}
 		
 		*z = (uint64_t) minID;
-		GxB_Iterator_free(&i);
 	}
 }
 
@@ -147,11 +149,12 @@ static void _reduceToMatrixAny
 		*z = *x;
 	} else {
 		GrB_Vector _v = AS_VECTOR(*x);
-		GxB_Iterator i = NULL;
-		GrB_Info info = GxB_Iterator_new(&i);  // TODO: switch to stack base
-		ASSERT(info == GrB_SUCCESS);
+		
+		// stack allocate iterator
+		struct GB_Iterator_opaque _i;
+		GxB_Iterator i = &_i;
 
-		info = GxB_Vector_Iterator_attach(i, _v, NULL);
+		GrB_Info info = GxB_Vector_Iterator_attach(i, _v, NULL);
 		ASSERT(info == GrB_SUCCESS);
 
 		// find the first edge in the vector
@@ -160,9 +163,6 @@ static void _reduceToMatrixAny
 
 		// get the first edge ID in the vector
 		EdgeID minID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
-
-		info = GxB_Iterator_free(&i);
-		ASSERT(info == GrB_SUCCESS);
 
 		*z = (uint64_t) minID;
 	}
@@ -199,21 +199,20 @@ GrB_Info Build_Weighted_Matrix
 	ASSERT((lbls != NULL && n_lbls > 0) || (lbls == NULL && n_lbls == 0));
 	ASSERT((rels != NULL && n_rels > 0) || (rels == NULL && n_rels == 0));
 
-	// TODO: comment
+	// context for GrB operations
 	compareContext ctx = {
-		.g = g,
-		.w = weight,
-		.comp = (strategy == BWM_MAX)? -1: 1
+		.g = g,                              // the input graph
+		.w = weight,                         // the weight attribute to consider 
+		.comp = (strategy == BWM_MAX)? -1: 1 // -1 if max, 1 if min
 	};
 
-	// TODO: comment each
-	GrB_BinaryOp      minID         = NULL;  //
-	GrB_Scalar        theta         = NULL;  //...
-	GrB_UnaryOp       toMatrix      = NULL;
-	GrB_BinaryOp      weightOp      = NULL;
-	GrB_Type          contx_type    = NULL;
-	GrB_BinaryOp      toMatrixMin   = NULL;
-	GxB_IndexBinaryOp minID_indexOP = NULL;
+	GrB_BinaryOp      minID         = NULL;  // gets two edge IDs and picks one
+	GrB_Scalar        theta         = NULL;  // Scalar containing the context
+	GrB_UnaryOp       toMatrix      = NULL;  // get any ID from vector entry
+	GrB_BinaryOp      weightOp      = NULL;  // get weight from edgeID
+	GrB_Type          contx_type    = NULL;  // GB equivalent of compareContext
+	GrB_BinaryOp      toMatrixMin   = NULL;  // get min weight ID from vectors
+	GxB_IndexBinaryOp minID_indexOP = NULL;  // minID's underlying index op 
 
 	GrB_Type_new(&contx_type, sizeof(compareContext));
 
