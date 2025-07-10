@@ -1,4 +1,4 @@
-name: GRAPH500-SCALE_18-EF_16-MSF
+name: GRAPH500-SCALE_18-EF_16-MST
 description: "Dataset: Synthetic graph500 network of scale 18 (262144x262144, 4194304
   edges) - 262017 nodes with label 'Node' - 4194304 relations of type 'IS_CONNECTED'
   - Indexed properties: - exact-match: Node; [external_id] "
@@ -10,6 +10,6 @@ parameters:
   num_clients: 32
   num_requests: 128
   queries:
-    - query: 'CALL algo.MSF() YIELD weight return sum(weight) as total_weight'
+    - query: 'CALL algo.MST() YIELD weight RETURN sum(weight) as total_weight'
       ratio: 1.0
 
