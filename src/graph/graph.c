@@ -1585,4 +1585,3 @@ void Graph_Free
 ) {
 	_Graph_Free(g, true);
 }
-
