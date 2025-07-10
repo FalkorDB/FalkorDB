@@ -79,11 +79,14 @@ void CHECK_sub_adjecency_matrix
     TEST_ASSERT(nrows == nvals);
     
     TEST_ASSERT(GrB_Matrix_new(&B, t, nrows, ncols) == GrB_SUCCESS);
-    TEST_ASSERT(GrB_Matrix_new(&C, GrB_UINT64, nrows, ncols) == GrB_SUCCESS);
+    TEST_ASSERT(GrB_Matrix_new(&C, GrB_BOOL, nrows, ncols) == GrB_SUCCESS);
 	TEST_ASSERT(GrB_Descriptor_new(&desc) == GrB_SUCCESS);
-	TEST_ASSERT(GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST) == GrB_SUCCESS);
-	TEST_ASSERT(GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_COLINDEX_LIST) == GrB_SUCCESS);
-    TEST_ASSERT(GxB_Matrix_extract_Vector(B, NULL, NULL, rels[0], rows, rows, desc) == GrB_SUCCESS);
+	TEST_ASSERT(GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST) 
+        == GrB_SUCCESS);
+	TEST_ASSERT(GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_COLINDEX_LIST) 
+        == GrB_SUCCESS);
+    TEST_ASSERT(GxB_Matrix_extract_Vector(B, NULL, NULL, rels[0], rows, rows, 
+        desc) == GrB_SUCCESS);
     
     // add together all relation matrices
     for(int i = 1; i < n_rels; i++){
@@ -110,14 +113,15 @@ void CHECK_sub_adjecency_matrix
 }
 
 void test_sub_adj_matrix(){
-	int edge_count = 10000 * 2.3;
-	int node_count = 10000;
+	int edge_count = 100 * 10;
+	int node_count = 100;
 	int relation_count = 3;
 	int label_count = 3;
 	EdgeDesc connections[edge_count];
     GrB_Matrix mtx_list[3] = {NULL, NULL, NULL};
 	Node node;
 	Edge edge;
+    GrB_Info  info;
 	Graph *g = Graph_New(GRAPH_DEFAULT_NODE_CAP, GRAPH_DEFAULT_EDGE_CAP);
 	Graph_AcquireWriteLock(g);
 
@@ -131,33 +135,122 @@ void test_sub_adj_matrix(){
 
 	for(int i = 0; i < node_count; i++) {
 		node = GE_NEW_NODE();
-		Graph_CreateNode(g, &node, (LabelID) (rand() % relation_count), 0);
+        LabelID labels[] = {rand() % label_count};
+		Graph_CreateNode(g, &node, labels, 1);
 	}
 
     // Describe connections;
     for(int j = 0; j < edge_count; j++) {
-        connections[j].srcId = rand() % node_count;     // Source node id.
-        connections[j].destId = rand() % node_count;    // Destination node id.
-        connections[j].relationId = rand() % relation_count; // Relation.
+        connections[j].srcId = rand() % node_count;          // src node id
+        connections[j].destId = rand() % node_count;         // dest node id
+        connections[j].relationId = rand() % relation_count; // relation
     }
 
-    for(int j = 0; j < edge_count; j++) {
+    for(int j = 0; j < edge_count * .9; j++) {
         Graph_CreateEdge(g, connections[j].srcId, connections[j].destId, 
             connections[j].relationId, &edge);
         
-        GrB_Matrix_setElement_BOOL(mtx_list[connections[j].relationId], 
+        info = GrB_Matrix_setElement_BOOL(mtx_list[connections[j].relationId], 
             true, connections[j].srcId, connections[j].destId);
+        TEST_ASSERT(info == GrB_SUCCESS);
     }
+
+    Graph_ApplyAllPending(g, true);
+
+    // create pending edges
+    for(int j = edge_count * .9; j < edge_count; j++) {
+        Graph_CreateEdge(g, connections[j].srcId, connections[j].destId, 
+            connections[j].relationId, &edge);
+        
+        info = GrB_Matrix_setElement_BOOL(mtx_list[connections[j].relationId], 
+            true, connections[j].srcId, connections[j].destId);
+        TEST_ASSERT(info == GrB_SUCCESS);
+    }
+
+    // Edge *e_del = rm_malloc(sizeof(Edge) * edge_count / 10);
+    // // create pending deletions
+    // for(int j = 0; j < edge_count / 10; j++) {
+    //     EdgeID edge_id = rand() % edge_count; 
+
+    //     // skip edges that have been deleted
+    //     if(connections[j].relationId == GRAPH_NO_RELATION) continue;
+        
+    //     Graph_GetEdge(g, edge_id, &e_del[j]);
+    //     Edge_SetSrcNodeID(&e_del[j], connections[j].srcId);
+    //     Edge_SetDestNodeID(&e_del[j], connections[j].destId);
+    //     Edge_SetRelationID(&e_del[j], connections[j].relationId);
+    //     connections[j].relationId = GRAPH_NO_RELATION; // mark as deleted 
+
+    //     info = GrB_Matrix_removeElement(mtx_list[connections[j].relationId], 
+    //         connections[j].srcId, connections[j].destId);
+    //     TEST_ASSERT(info == GrB_SUCCESS);
+    // }
+
+    // Graph_DeleteEdges(g, e_del, edge_count / 10);
+    // Graph_print(g, GxB_SHORT);
 
     GrB_Vector rows = NULL;
     GrB_Matrix A = NULL;
-    GrB_Matrix Rs[] = {mtx_list[0], mtx_list[1]};
-    RelationID rels[] = {0, 1};
-    LabelID lbls[] = {0, 1};
+    RelationID rels[] = {0, 1, 2};
+    LabelID lbls[] = {0, 1, 2};
    
+    get_sub_adjecency_matrix(&A, &rows, g, lbls, 3, rels, 3, true);
+    CHECK_sub_adjecency_matrix (A, rows, mtx_list, 3, true);
+
+    GrB_Matrix_free(&A);
+    GrB_Vector_free(&rows);
+
+    get_sub_adjecency_matrix(&A, &rows, g, lbls, 2, rels, 3, true);
+    CHECK_sub_adjecency_matrix (A, rows, mtx_list, 3, true);
+
+    GrB_Matrix_free(&A);
+    GrB_Vector_free(&rows);
+
+    get_sub_adjecency_matrix(&A, &rows, g, lbls, 1, rels, 3, true);
+    CHECK_sub_adjecency_matrix (A, rows, mtx_list, 3, true);
+
+
+    GrB_Matrix_free(&A);
+    GrB_Vector_free(&rows);
+
+    get_sub_adjecency_matrix(&A, &rows, g, lbls, 3, rels, 2, true);
+    CHECK_sub_adjecency_matrix (A, rows, mtx_list, 2, true);
+
+    GrB_Matrix_free(&A);
+    GrB_Vector_free(&rows);
+
     get_sub_adjecency_matrix(&A, &rows, g, lbls, 2, rels, 2, true);
-    
-    CHECK_sub_adjecency_matrix (A, rows, Rs, 2, true);
+    CHECK_sub_adjecency_matrix (A, rows, mtx_list, 2, true);
+
+    GrB_Matrix_free(&A);
+    GrB_Vector_free(&rows);
+
+    get_sub_adjecency_matrix(&A, &rows, g, lbls, 1, rels, 2, true);
+    CHECK_sub_adjecency_matrix (A, rows, mtx_list, 2, true);
+    GrB_Matrix_free(&A);
+    GrB_Vector_free(&rows);
+
+    get_sub_adjecency_matrix(&A, &rows, g, lbls, 3, rels, 1, true);
+    CHECK_sub_adjecency_matrix (A, rows, mtx_list, 1, true);
+
+    GrB_Matrix_free(&A);
+    GrB_Vector_free(&rows);
+
+    get_sub_adjecency_matrix(&A, &rows, g, lbls, 2, rels, 1, true);
+    CHECK_sub_adjecency_matrix (A, rows, mtx_list, 1, true);
+
+    GrB_Matrix_free(&A);
+    GrB_Vector_free(&rows);
+
+    get_sub_adjecency_matrix(&A, &rows, g, lbls, 1, rels, 1, true);
+    CHECK_sub_adjecency_matrix (A, rows, mtx_list, 1, true);
+
+    for(int i = 0; i < relation_count; i++) {
+        GrB_Matrix_free(&mtx_list[i]);
+    }
+
+    GrB_Matrix_free(&A);
+    GrB_Vector_free(&rows);
 
 	Graph_ReleaseLock(g);
 	Graph_Free(g);
