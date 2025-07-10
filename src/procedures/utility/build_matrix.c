@@ -250,7 +250,6 @@ GrB_Info get_sub_adjecency_matrix
 		
 	}
 
-	// FIXME this returns deleted nodes?
 	// determine the number of nodes in the graph
 	// this includes deleted nodes
 	size_t n = Graph_UncompactedNodeCount(g);
