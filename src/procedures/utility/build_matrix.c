@@ -4,6 +4,7 @@
  */
 
 #include "./internal.h"
+#include "../../graph/delta_matrix/delta_utils.h"
 
 GrB_Info _get_rows_delta
 (
@@ -80,6 +81,7 @@ GrB_Info _compile_matricies
 				C, GrB_ONEB_BOOL, C, azomb, mats[i], relzomb);
 			ASSERT(info == GrB_SUCCESS);
 		}
+		
 		Delta_Matrix_wait(C, true);
 		*A = DELTA_MATRIX_M(C);
 		DELTA_MATRIX_M(C) = NULL;
@@ -127,7 +129,7 @@ GrB_Info get_sub_adjecency_matrix
 	GrB_Index nrows;  // number of rows in matrix
 	GrB_Index rows_nvals; // number of entries in rows vector  
 
-	GrB_Global_set_INT32(GrB_GLOBAL, true, GxB_BURBLE);
+	// GrB_Global_set_INT32(GrB_GLOBAL, true, GxB_BURBLE);
 	GrB_Scalar_new(&bzomb, GrB_BOOL);
 	GrB_Scalar_setElement_BOOL(bzomb, BOOL_ZOMBIE);
 
@@ -276,7 +278,7 @@ GrB_Info get_sub_adjecency_matrix
 	GrB_free(&bzomb);
 	GrB_free(&u64zomb);
 	GrB_free(&desc);
-	GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
+	// GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
 	return info;
 }
 
