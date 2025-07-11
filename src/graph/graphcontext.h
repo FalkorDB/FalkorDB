@@ -191,27 +191,27 @@ void GraphContext_RemoveSchema
 	SchemaType t
 );
 
-// retrieve the label string for a given Node object
+// returns the label string for a given Node object
 const char *GraphContext_GetNodeLabel
 (
 	const GraphContext *gc,
 	Node *n
 );
 
-// retrieve the relation type string for a given edge object
+// returns the relation type string for a given edge object
 const char *GraphContext_GetEdgeRelationType
 (
 	const GraphContext *gc,
 	Edge *e
 );
 
-// retrieve number of unique attribute keys
+// returns number of unique attribute keys
 uint GraphContext_AttributeCount
 (
 	GraphContext *gc
 );
 
-// retrieve an attribute ID given a string, creating one if not found
+// returns an attribute ID given a string, creating one if not found
 AttributeID GraphContext_FindOrAddAttribute
 (
 	GraphContext *gc,
@@ -219,15 +219,15 @@ AttributeID GraphContext_FindOrAddAttribute
 	bool* created
 );
 
-// retrieve an attribute string given an ID
+// returns an attribute string given an ID
 const char *GraphContext_GetAttributeString
 (
 	GraphContext *gc,
 	AttributeID id
 );
 
-// retrieve an attribute ID given a string
-// or ATTRIBUTE_NOTFOUND if attribute doesn't exist
+// returns an attribute ID given a string
+// or ATTRIBUTE_ID_NONE if attribute doesn't exist
 AttributeID GraphContext_GetAttributeID
 (
 	GraphContext *gc,
