@@ -7,6 +7,6 @@
 
 #include "proc_ctx.h"
 
-// run Minimum Spanning Forest on sub graph
+// run Minimum Spanning Tree on sub graph
 ProcedureCtx *Proc_MSTCtx(void);
 

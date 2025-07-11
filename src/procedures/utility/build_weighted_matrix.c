@@ -41,8 +41,7 @@ static void _compare_EdgeID_value
 	GrB_Index iy,
 	GrB_Index jy,
 	const compareContext *ctx
-)
-{
+) {
 	*z = *x;
 	Edge _x, _y;
 	Graph_GetEdge(ctx->g, (EdgeID) (*x), &_x);
