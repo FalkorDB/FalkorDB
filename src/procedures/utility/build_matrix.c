@@ -45,6 +45,7 @@ GrB_Info _get_rows_delta
 
 	GrB_Descriptor_free(&desc);
 }
+
 GrB_Info _compile_matricies
 (
 	GrB_Matrix *A,             // [output] matrix
