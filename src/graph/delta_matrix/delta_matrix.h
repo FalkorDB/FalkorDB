@@ -322,20 +322,28 @@ GrB_Info Delta_mxv_count
     const GrB_Descriptor desc     // [input] descriptor 
 ) ;
 
-// Inputs need not be synced, but must be of the same type.
-// Output is a valid delta matrix, which may not be synced.
-// zombies must be the identity of the given monoid.
-// C = A + B
-GrB_Info Delta_eWiseAdd
-(
-    Delta_Matrix C,        // input/output matrix for results
-    const GrB_Monoid op,   // defines '+' for T=A+B
-    const Delta_Matrix A,  // first input:  matrix A
-    const Delta_Matrix B   // second input: matrix B
-) ;
-
 // zombies should be the monoid's identity value.
 // C = A + B
+// This is calculated by:
+// CM        = AM + BM
+// CM   <CM>+= ADP + BDP
+// CDP  <!CM>= ADP + BDP
+// CDM <!CDP>= (ADM - BM) ∪ (BDM - AM) ∪ (ADM ∩ BDM)
+GrB_Info Delta_eWiseAdd
+(
+    Delta_Matrix C,       // input/output matrix for results
+    const GrB_Monoid op,  // defines '+' for T=A+B
+    const Delta_Matrix A, // first input:  matrix A
+    const Delta_Matrix B  // second input: matrix B
+) ;
+
+// All zombies should be equal to alpha if in AM or beta if in BM
+// C = A + B
+// This is calculated by:
+// CM        = AM + BM
+// CM   <CM>+= ADP + BDP
+// CDP  <!CM>= ADP + BDP
+// CDM <!CDP>= (ADM - BM) ∪ (BDM - AM) ∪ (ADM ∩ BDM)
 GrB_Info Delta_eWiseUnion
 (
     Delta_Matrix C,          // input/output matrix for results

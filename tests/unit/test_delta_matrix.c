@@ -115,10 +115,11 @@ void ASSERT_GrB_Matrices_EQ(const GrB_Matrix A, const GrB_Matrix B)
 	// structure(A) == structure(B)
 	//--------------------------------------------------------------------------
 
-	info = GrB_Matrix_new(&C, t_A, nrows_A, ncols_A);
+	info = GrB_Matrix_new(&C, GrB_BOOL, nrows_A, ncols_A);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	info = GrB_Matrix_eWiseMult_BinaryOp(C, NULL, NULL, GrB_LAND, A, B, NULL);
+	GrB_BinaryOp op = t_A == GrB_BOOL? GrB_EQ_BOOL: GrB_EQ_UINT64;
+	info = GrB_Matrix_eWiseMult_BinaryOp(C, NULL, NULL, op, A, B, NULL);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	GrB_Matrix_nvals(&nvals_C, C);
@@ -126,6 +127,10 @@ void ASSERT_GrB_Matrices_EQ(const GrB_Matrix A, const GrB_Matrix B)
 
 	TEST_ASSERT(nvals_C == nvals_A);
 	TEST_ASSERT(nvals_C == nvals_B);
+
+	bool ok = true;
+	info = GrB_Matrix_reduce_BOOL(&ok, NULL, GrB_LAND_MONOID_BOOL, C, NULL);
+	TEST_ASSERT(ok);
 
 	// clean up
 	info = GrB_Matrix_free(&C);
@@ -1458,6 +1463,9 @@ void test_Delta_Matrix_add() {
 	GrB_Matrix    B_GB   =  NULL;
 	GrB_Matrix    C_GB   =  NULL;
 	GrB_Matrix    C_M    =  NULL;
+	GrB_Matrix    t_Ap   =  NULL;
+	GrB_Matrix    t_Bp   =  NULL;
+	GrB_Matrix    temp   =  NULL;
 	GrB_Info      info   =  GrB_SUCCESS;
 	GrB_Index     nrows  =  4;
 	GrB_Index     ncols  =  4;
@@ -1472,6 +1480,12 @@ void test_Delta_Matrix_add() {
 	info = Delta_Matrix_new(&C, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
+	info = GrB_Matrix_new(&t_Ap, t, nrows, ncols);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	
+	info = GrB_Matrix_new(&t_Bp, t, nrows, ncols);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
 	info = GrB_Matrix_new(&A_GB, t, nrows, ncols);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
@@ -1483,8 +1497,7 @@ void test_Delta_Matrix_add() {
 
 	// rows of A / columns of B: [M, deleted, new, non-existent]
 	// set elements
-	for(int i = 0; i < 4; i++)
-	{
+	for(int i = 0; i < 4; i++) {
 		info = Delta_Matrix_setElement_BOOL(A, 0, i);
 		TEST_ASSERT(info == GrB_SUCCESS);
 		info = Delta_Matrix_setElement_BOOL(A, 1, i);
@@ -1514,26 +1527,55 @@ void test_Delta_Matrix_add() {
 	Delta_Matrix_wait(B, sync);
 
 	//--------------------------------------------------------------------------
-	// set pending changes
+	// set pending additions
+	//--------------------------------------------------------------------------
+	for(int i = 0; i < 4; i++) {
+		info = Delta_Matrix_setElement_BOOL(A, 2, i);
+		TEST_ASSERT(info == GrB_SUCCESS);
+		info = Delta_Matrix_setElement_BOOL(B, i, 2);
+		TEST_ASSERT(info == GrB_SUCCESS);
+
+		info = GrB_Matrix_setElement_BOOL(A_GB, true, 2, i);
+		TEST_ASSERT(info == GrB_SUCCESS);
+		info = GrB_Matrix_setElement_BOOL(B_GB, true, i, 2);
+		TEST_ASSERT(info == GrB_SUCCESS);
+	}
+	
+	//--------------------------------------------------------------------------
+	// A + B
+	//--------------------------------------------------------------------------
+
+	info = Delta_eWiseAdd(C, GrB_LOR_MONOID_BOOL, A, B);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	Delta_Matrix_validate(C);
+	Delta_Matrix_wait(C, true);
+
+	info = GrB_Matrix_eWiseAdd_Monoid(
+		C_GB, NULL, NULL, GrB_LOR_MONOID_BOOL, A_GB, B_GB, NULL);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	//--------------------------------------------------------------------------
+	// validation
+	//--------------------------------------------------------------------------
+
+	C_M  = DELTA_MATRIX_M(C);
+
+	ASSERT_GrB_Matrices_EQ(C_M, C_GB);
+	
+	//--------------------------------------------------------------------------
+	// set pending removals
 	//--------------------------------------------------------------------------
 	for(int i = 0; i < 4; i++)
 	{
 		info = Delta_Matrix_removeElement_BOOL(A, 1, i);
 		TEST_ASSERT(info == GrB_SUCCESS);
-		info = Delta_Matrix_setElement_BOOL(A, 2, i);
-		TEST_ASSERT(info == GrB_SUCCESS);
 		info = Delta_Matrix_removeElement_BOOL(B, i, 1);
-		TEST_ASSERT(info == GrB_SUCCESS);
-		info = Delta_Matrix_setElement_BOOL(B, i, 2);
 		TEST_ASSERT(info == GrB_SUCCESS);
 
 		info = GrB_Matrix_removeElement(A_GB, 1, i);
 		TEST_ASSERT(info == GrB_SUCCESS);
-		info = GrB_Matrix_setElement_BOOL(A_GB, true, 2, i);
-		TEST_ASSERT(info == GrB_SUCCESS);
 		info = GrB_Matrix_removeElement(B_GB, i, 1);
-		TEST_ASSERT(info == GrB_SUCCESS);
-		info = GrB_Matrix_setElement_BOOL(B_GB, true, i, 2);
 		TEST_ASSERT(info == GrB_SUCCESS);
 	}
 
@@ -1544,13 +1586,13 @@ void test_Delta_Matrix_add() {
 	info = Delta_eWiseAdd(C, GrB_LOR_MONOID_BOOL, A, B);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	Delta_Matrix_wait(A, sync);
-	Delta_Matrix_wait(B, sync);
+	Delta_Matrix_validate(C);
 	Delta_Matrix_wait(C, sync);
 
 	info = GrB_Matrix_eWiseAdd_Monoid(
 		C_GB, NULL, NULL, GrB_LOR_MONOID_BOOL, A_GB, B_GB, NULL);
 	TEST_ASSERT(info == GrB_SUCCESS);
+	
 	//--------------------------------------------------------------------------
 	// validation
 	//--------------------------------------------------------------------------
@@ -1558,7 +1600,7 @@ void test_Delta_Matrix_add() {
 	C_M  = DELTA_MATRIX_M(C);
 
 	ASSERT_GrB_Matrices_EQ(C_M, C_GB);
-	
+
 	// clean up
 	Delta_Matrix_free(&A);
 	TEST_ASSERT(A == NULL);
@@ -1576,7 +1618,7 @@ void test_Delta_Matrix_add() {
 }
 
 void test_Delta_Matrix_union() {
-	GrB_Type      t      =  GrB_BOOL;
+	GrB_Type      t      =  GrB_UINT64;
 	Delta_Matrix  A      =  NULL;
 	Delta_Matrix  B      =  NULL;
 	Delta_Matrix  C      =  NULL;
@@ -1608,29 +1650,29 @@ void test_Delta_Matrix_union() {
 	info = GrB_Matrix_new(&C_GB, t, nrows, ncols);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	info = GrB_Scalar_new(&empty, GrB_BOOL);	
-	info = GrB_Scalar_setElement_BOOL(empty, 0);	
+	info = GrB_Scalar_new(&empty, GrB_UINT64);	
+	info = GrB_Scalar_setElement_UINT64(empty, U64_ZOMBIE);	
 
-	// rows of A / columns of B: [M, deleted, new, non-existent]
+
 	// set elements
 	for(int i = 0; i < 4; i++)
 	{
-		info = Delta_Matrix_setElement_BOOL(A, 0, i);
+		info = Delta_Matrix_setElement_UINT64(A, (uint64_t) 1, 0, i);
 		TEST_ASSERT(info == GrB_SUCCESS);
-		info = Delta_Matrix_setElement_BOOL(A, 1, i);
+		info = Delta_Matrix_setElement_UINT64(A, (uint64_t) 1, 1, i);
 		TEST_ASSERT(info == GrB_SUCCESS);
-		info = Delta_Matrix_setElement_BOOL(B, i, 0);
+		info = Delta_Matrix_setElement_UINT64(B, (uint64_t) 1, i, 0);
 		TEST_ASSERT(info == GrB_SUCCESS);
-		info = Delta_Matrix_setElement_BOOL(B, i, 1);
+		info = Delta_Matrix_setElement_UINT64(B, (uint64_t) 1, i, 1);
 		TEST_ASSERT(info == GrB_SUCCESS);
 
-		info = GrB_Matrix_setElement_BOOL(A_GB, true, 0, i);
+		info = GrB_Matrix_setElement_UINT64(A_GB, (uint64_t) 1, 0, i);
 		TEST_ASSERT(info == GrB_SUCCESS);
-		info = GrB_Matrix_setElement_BOOL(A_GB, true, 1, i);
+		info = GrB_Matrix_setElement_UINT64(A_GB, (uint64_t) 1, 1, i);
 		TEST_ASSERT(info == GrB_SUCCESS);
-		info = GrB_Matrix_setElement_BOOL(B_GB, true, i, 0);
+		info = GrB_Matrix_setElement_UINT64(B_GB, (uint64_t) 1, i, 0);
 		TEST_ASSERT(info == GrB_SUCCESS);
-		info = GrB_Matrix_setElement_BOOL(B_GB, true, i, 1);
+		info = GrB_Matrix_setElement_UINT64(B_GB, (uint64_t) 1, i, 1);
 		TEST_ASSERT(info == GrB_SUCCESS);
 	}
 
@@ -1644,26 +1686,54 @@ void test_Delta_Matrix_union() {
 	Delta_Matrix_wait(B, sync);
 
 	//--------------------------------------------------------------------------
-	// set pending changes
+	// set pending additions
+	//--------------------------------------------------------------------------
+	for(int i = 0; i < 4; i++) {
+		info = Delta_Matrix_setElement_UINT64(A, (uint64_t) 2, 2, i);
+		TEST_ASSERT(info == GrB_SUCCESS);
+		info = Delta_Matrix_setElement_UINT64(B, (uint64_t) 2, i, 2);
+		TEST_ASSERT(info == GrB_SUCCESS);
+
+		info = GrB_Matrix_setElement_UINT64(A_GB, (uint64_t) 2, 2, i);
+		TEST_ASSERT(info == GrB_SUCCESS);
+		info = GrB_Matrix_setElement_UINT64(B_GB, (uint64_t) 2, i, 2);
+		TEST_ASSERT(info == GrB_SUCCESS);
+	}
+	
+	//--------------------------------------------------------------------------
+	// A + B
+	//--------------------------------------------------------------------------
+
+	info = Delta_eWiseUnion(C, GrB_BOR_UINT64, A, empty, B, empty);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	Delta_Matrix_wait(C, true);
+
+	info = GxB_Matrix_eWiseUnion(
+		C_GB, NULL, NULL, GrB_BOR_UINT64, A_GB, empty, B_GB, empty, NULL);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	//--------------------------------------------------------------------------
+	// validation
+	//--------------------------------------------------------------------------
+
+	C_M  = DELTA_MATRIX_M(C);
+
+	ASSERT_GrB_Matrices_EQ(C_M, C_GB);
+	
+	//--------------------------------------------------------------------------
+	// set pending removals
 	//--------------------------------------------------------------------------
 	for(int i = 0; i < 4; i++)
 	{
-		info = Delta_Matrix_removeElement_BOOL(A, 1, i);
+		info = Delta_Matrix_removeElement_UINT64(A, 1, i);
 		TEST_ASSERT(info == GrB_SUCCESS);
-		info = Delta_Matrix_setElement_BOOL(A, 2, i);
-		TEST_ASSERT(info == GrB_SUCCESS);
-		info = Delta_Matrix_removeElement_BOOL(B, i, 1);
-		TEST_ASSERT(info == GrB_SUCCESS);
-		info = Delta_Matrix_setElement_BOOL(B, i, 2);
+		info = Delta_Matrix_removeElement_UINT64(B, i, 1);
 		TEST_ASSERT(info == GrB_SUCCESS);
 
 		info = GrB_Matrix_removeElement(A_GB, 1, i);
 		TEST_ASSERT(info == GrB_SUCCESS);
-		info = GrB_Matrix_setElement_BOOL(A_GB, true, 2, i);
-		TEST_ASSERT(info == GrB_SUCCESS);
 		info = GrB_Matrix_removeElement(B_GB, i, 1);
-		TEST_ASSERT(info == GrB_SUCCESS);
-		info = GrB_Matrix_setElement_BOOL(B_GB, true, i, 2);
 		TEST_ASSERT(info == GrB_SUCCESS);
 	}
 
@@ -1671,21 +1741,18 @@ void test_Delta_Matrix_union() {
 	// A + B
 	//--------------------------------------------------------------------------
 
-	info = Delta_eWiseUnion(C, GrB_LOR, A, empty, B, empty);
+	info = Delta_eWiseUnion(C, GrB_BOR_UINT64, A, empty, B, empty);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	Delta_Matrix_wait(A, sync);
-	Delta_Matrix_wait(B, sync);
-	Delta_Matrix_wait(C, sync);
+	Delta_Matrix_wait(C, true);
 
 	info = GxB_Matrix_eWiseUnion(
-		C_GB, NULL, NULL, GrB_LOR, A_GB, empty, B_GB, empty, NULL);
+		C_GB, NULL, NULL, GrB_BOR_UINT64, A_GB, empty, B_GB, empty, NULL);
 	TEST_ASSERT(info == GrB_SUCCESS);
+	
 	//--------------------------------------------------------------------------
 	// validation
 	//--------------------------------------------------------------------------
-
-	C_M  = DELTA_MATRIX_M(C);
 
 	ASSERT_GrB_Matrices_EQ(C_M, C_GB);
 	
