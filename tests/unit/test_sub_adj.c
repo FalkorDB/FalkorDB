@@ -110,6 +110,15 @@ void CHECK_sub_adjecency_matrix
 	bool ok = true;
 	TEST_ASSERT(GrB_Matrix_reduce_BOOL(&ok, NULL, GrB_LAND_MONOID_BOOL, C, NULL) 
 		== GrB_SUCCESS);
+	
+	if(!ok) {
+		printf("Expected outputs differ on these values: \n\n\n");
+		GrB_Matrix_assign(A, C, NULL, A, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_RC);
+		GrB_Matrix_assign(B, C, NULL, B, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_RC);
+		GxB_fprint(A, GxB_SHORT, stdout);
+		GxB_fprint(B, GxB_SHORT, stdout);
+	}
+
 	TEST_ASSERT(ok);
 }
 
@@ -216,7 +225,7 @@ void test_sub_adj_matrix(){
 }
 
 void test_sub_weight_matrix(){
-	int edge_count     = 100 * 10;
+	int edge_count     = 100 * 90;
 	int node_count     = 100;
 	int relation_count = 3;
 	int label_count    = 3;
