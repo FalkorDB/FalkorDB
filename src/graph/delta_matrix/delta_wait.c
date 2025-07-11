@@ -144,7 +144,8 @@ GrB_Info Delta_Matrix_wait
 
 	_SetUndirty(A);
 
-	Delta_Matrix_validate(A);
+	// enable for rigourous testing (expensive, DEBUG only)
+	// Delta_Matrix_validate(A);
 	return GrB_SUCCESS;
 }
 
@@ -180,6 +181,8 @@ void Delta_Matrix_synchronize
 		ASSERT(info == GrB_SUCCESS);
 	}
 	Delta_Matrix_unlock(A);
-	Delta_Matrix_validate(A);
+	
+	// enable for rigourous testing (expensive, DEBUG only)
+	// Delta_Matrix_validate(A);
 }
 

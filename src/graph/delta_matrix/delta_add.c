@@ -64,10 +64,10 @@ GrB_Info Delta_eWiseAdd
 	GrB_Matrix   DM_union   = NULL;
 	GrB_BinaryOp biop       = NULL;
 
-	GrB_Matrix_nvals(&adp_vals, ADM);
+	GrB_Matrix_nvals(&adp_vals, ADP);
 	GrB_Matrix_nvals(&adm_vals, ADM);
-	GrB_Matrix_nvals(&bdp_vals, ADM);
-	GrB_Matrix_nvals(&bdm_vals, ADM);
+	GrB_Matrix_nvals(&bdp_vals, BDP);
+	GrB_Matrix_nvals(&bdm_vals, BDM);
 
 	bool handle_deletion = adm_vals || bdm_vals;
 	bool handle_addition = adp_vals || bdp_vals;
@@ -75,7 +75,7 @@ GrB_Info Delta_eWiseAdd
 	if(!handle_addition && !handle_deletion) {
 		GrB_Matrix_clear(CDM);
 		GrB_Matrix_clear(CDP);
-		GrB_Matrix_eWiseAdd_Monoid(CM, NULL, NULL, op, AM, BM, NULL);
+		return GrB_Matrix_eWiseAdd_Monoid(CM, NULL, NULL, op, AM, BM, NULL);
 	}
 
 	Delta_Matrix_nrows(&nrows, C);
@@ -157,7 +157,7 @@ GrB_Info Delta_eWiseAdd
 	return info;
 }
 
-// zombies should be the monoid's identity value.
+// All zombies should be equal to alpha if in AM or beta if in BM
 // C = A + B
 // This is calculated by:
 // CM        = AM + BM
@@ -186,6 +186,7 @@ GrB_Info Delta_eWiseUnion
 	GrB_Index adm_vals;
 	GrB_Index bdp_vals;
 	GrB_Index bdm_vals;
+	GrB_Type  C_ty;
 
 	GrB_Matrix   CM         = DELTA_MATRIX_M(C);
 	GrB_Matrix   CDP        = DELTA_MATRIX_DELTA_PLUS(C);
@@ -199,10 +200,12 @@ GrB_Info Delta_eWiseUnion
 	GrB_Matrix   DM_union   = NULL;
 	GrB_Matrix   M_times_DP = NULL;
 
-	GrB_Matrix_nvals(&adp_vals, ADM);
+	GrB_Matrix_nvals(&adp_vals, ADP);
 	GrB_Matrix_nvals(&adm_vals, ADM);
-	GrB_Matrix_nvals(&bdp_vals, ADM);
-	GrB_Matrix_nvals(&bdm_vals, ADM);
+	GrB_Matrix_nvals(&bdp_vals, BDP);
+	GrB_Matrix_nvals(&bdm_vals, BDM);
+	info = Delta_Matrix_type (&C_ty, C);
+	ASSERT(info == GrB_SUCCESS);
 
 	bool handle_deletion = adm_vals || bdm_vals;
 	bool handle_addition = adp_vals || bdp_vals;
@@ -227,6 +230,26 @@ GrB_Info Delta_eWiseUnion
 
 		info = GrB_transpose(DM_union, AM, GrB_ONEB_BOOL, BDM, GrB_DESC_SCT0);
 		ASSERT(info == GrB_SUCCESS);
+	}
+
+	//--------------------------------------------------------------------------
+	// M_times_DP =  AM * BDP U BM * ADP 
+	//--------------------------------------------------------------------------
+	if(handle_addition && op != GrB_ONEB_BOOL) {
+		GrB_Matrix_new(&M_times_DP, C_ty, nrows, ncols);
+
+		info = GrB_Matrix_eWiseMult_BinaryOp(
+			M_times_DP, NULL, NULL, op, AM, BDP, NULL);
+		ASSERT(info == GrB_SUCCESS);
+			
+		// The accum biop is not used 
+		// (since there should be no intersection between AM and BM)
+		// However it is needed so that previous entries are not deleted. 
+		info = GrB_Matrix_eWiseMult_BinaryOp(
+			M_times_DP, NULL, GrB_ONEB_UINT64, op, BM, ADP, NULL);
+		ASSERT(info == GrB_SUCCESS);
+
+		GxB_fprint(M_times_DP, 2, stdout);
 	}
 
 	//--------------------------------------------------------------------------
@@ -268,26 +291,13 @@ GrB_Info Delta_eWiseUnion
 	}
 
 	//--------------------------------------------------------------------------
-	// CM <CM>+= CDP ----- Should be done inplace (currently is not GBLAS TODO)
+	// CM <CM>= M_times_DP 
 	//--------------------------------------------------------------------------
-	// FIXME. Currently unneeded because build_matrix uses ONEB_BOOL.
-	// info = GrB_Matrix_eWiseMult_BinaryOp(
-	// 	M_times_DP, NULL, NULL, op, AM, BDP, NULL);
-		
-	// The accum biop is not used 
-	// (since there should be no intersection between AM and BM)
-	// However it is needed so that previous entries are not deleted. 
-	// info = GrB_Matrix_eWiseMult_BinaryOp(
-	// 	M_times_DP, NULL, GrB_ONEB_UINT64, op, BM, ADP, NULL);
-	
-	// know that M_times_DP is a submatrix of CM. But GBLAS does not so does extra 
-	// work  so instead we do this by hand.
-	// info = GrB_Matrix_assign(
-	// 	CM, M_times_DP, NULL, M_times_DP, GrB_ALL, 0, GrB_ALL, 0, NULL);
-	
-	// info = GrB_transpose(
-	// 	CM, CM, GrB_LOR, CDP, GrB_DESC_ST0);
-	// ASSERT(info == GrB_SUCCESS);
+	if(M_times_DP) {
+		info = GrB_Matrix_assign(
+			CM, M_times_DP, NULL, M_times_DP, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_S);
+		ASSERT(info == GrB_SUCCESS);
+	}
 
 	//--------------------------------------------------------------------------
 	// CDP<!CM> = ADP + BDP ---- remove intersection with M
