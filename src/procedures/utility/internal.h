@@ -8,6 +8,14 @@
 #include "GraphBLAS.h"
 #include "../../graph/graph.h"
 
+GrB_Info _get_rows_with_labels
+(
+	GrB_Vector rows,         // [output] filtered rows
+	const Graph *g,          // graph
+	const LabelID *lbls,     // [optional] labels to consider
+	unsigned short n_lbls    // number of labels
+) ;
+
 // compose multiple label & relation matrices into a single matrix
 // L = L0 U L1 U ... Lm
 // A = L * (R0 U R1 U ... Rn) * L

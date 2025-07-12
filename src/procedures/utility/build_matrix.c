@@ -93,6 +93,42 @@ GrB_Info _compile_matricies
 	return info;
 }
 
+GrB_Info _get_rows_with_labels
+(
+	GrB_Vector rows,         // [output] filtered rows
+	const Graph *g,          // graph
+	const LabelID *lbls,     // [optional] labels to consider
+	unsigned short n_lbls    // number of labels
+) {
+	ASSERT(rows != NULL);
+	
+	if(n_lbls > 0) {
+		Delta_Matrix DL = Graph_GetLabelMatrix(g, lbls[0]);
+		GrB_Matrix L = NULL;	
+		GrB_OK(Delta_Matrix_export(&L, DL));
+
+		// L = L U M
+		for(unsigned short i = 1; i < n_lbls; i++) {
+			DL = Graph_GetLabelMatrix(g, lbls[i]);
+
+			GrB_Matrix M;
+			GrB_OK(Delta_Matrix_export(&M, DL));
+
+			GrB_OK(GrB_Matrix_eWiseAdd_Monoid(L, NULL, NULL,
+					GxB_ANY_BOOL_MONOID, L, M, NULL));
+
+			GrB_Matrix_free(&M);
+		}
+
+		GrB_OK(GxB_Vector_diag(rows, L, 0, NULL));
+		GrB_free(&L);
+	} else if(rows != NULL) {
+		// N = [1,....1]
+		GrB_OK(GrB_Vector_assign_BOOL(
+			rows, NULL, NULL, true, GrB_ALL, 0, NULL));
+	}
+}
+
 // compose multiple label & relation matrices into a single matrix
 // L = L0 U L1 U ... Lm
 // A = L * (R0 U R1 U ... Rn) * L
@@ -147,37 +183,8 @@ GrB_Info get_sub_adjecency_matrix
 	info = GrB_Vector_new(&_N, GrB_BOOL, nrows);
 	ASSERT(info == GrB_SUCCESS);
 
+	_get_rows_with_labels(_N, g, lbls, n_lbls);
 
-	// enforce labels
-	if(n_lbls > 0) {
-		Delta_Matrix DL = Graph_GetLabelMatrix(g, lbls[0]);
-		
-		info = Delta_Matrix_export(&L, DL);
-		ASSERT(info == GrB_SUCCESS);
-
-		// L = L U M
-		for(unsigned short i = 1; i < n_lbls; i++) {
-			DL = Graph_GetLabelMatrix(g, lbls[i]);
-
-			GrB_Matrix M;
-			info = Delta_Matrix_export(&M, DL);
-			ASSERT(info == GrB_SUCCESS);
-
-			info = GrB_Matrix_eWiseAdd_Monoid(L, NULL, NULL,
-					GxB_ANY_BOOL_MONOID, L, M, NULL);
-			ASSERT(info == GrB_SUCCESS);
-
-			GrB_Matrix_free(&M);
-		}
-
-		info = GxB_Vector_diag(_N, L, 0, NULL);
-		ASSERT(info == GrB_SUCCESS);
-	} else if(rows != NULL) {
-		// N = [1,....1]
-		info = GrB_Vector_assign_BOOL(
-			_N, NULL, NULL, true, GrB_ALL, nrows, NULL);
-		ASSERT(info == GrB_SUCCESS);
-	}
 	info = GrB_Vector_nvals(&rows_nvals, _N);
 
 	//TODO: find best value for this hueristic
