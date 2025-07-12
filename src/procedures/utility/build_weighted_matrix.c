@@ -593,6 +593,53 @@ GrB_Info get_sub_weight_matrix_OLD
 }
 
 
+GrB_Info _compile_matricies_w
+(
+	GrB_Matrix *A,             // [output] matrix
+	const Delta_Matrix *mats,  // matricies to consider
+	unsigned short n_mats,     // number of matricies
+	GrB_BinaryOp op            // Input matrix zombie value
+) {
+	ASSERT(n_mats > 0);
+
+	GrB_Info      info;
+	Delta_Matrix C = NULL;
+	GrB_Index    nrows;
+	GrB_Index    ncols;
+
+	Delta_Matrix_nrows(&nrows, mats[0]);
+	Delta_Matrix_ncols(&ncols, mats[0]);
+	
+	if (n_mats == 1){
+		// export relation matrix to A
+		info = Delta_Matrix_export(A, mats[0]);
+		ASSERT(info == GrB_SUCCESS);
+	} else {
+		// given the semiring I am using, C will be an invalid delta matrix.
+		// but it is quickly exported so it should not be an issue.
+		info = Delta_Matrix_new(&C, GrB_UINT64, nrows, ncols, false);
+		ASSERT(info == GrB_SUCCESS);
+
+		info = Delta_eWiseAdd_Biop(C, op, mats[0], mats[1]);
+		ASSERT(info == GrB_SUCCESS);
+
+		// in case there are multiple relation types, include them in A
+		for(unsigned short i = 2; i < n_mats; i++) {
+			info = Delta_eWiseAdd_Biop(C, op, C, mats[1]);
+			ASSERT(info == GrB_SUCCESS);
+		}
+		
+		Delta_Matrix_wait(C, true);
+		*A = DELTA_MATRIX_M(C);
+		DELTA_MATRIX_M(C) = NULL;
+		// info = Delta_Matrix_export(A, C);
+		ASSERT(info == GrB_SUCCESS);
+	}
+
+	Delta_Matrix_free(&C);
+	return info;
+}
+
 // compose multiple label & relation matrices into a single matrix
 // L = L0 U L1 U ... Lm
 // A = L * (R0 + R1 + ... Rn) * L 
@@ -719,34 +766,17 @@ GrB_Info get_sub_weight_matrix
 
 	RelationID rel_id = GETRELATIONID(0);
 	D = Graph_GetRelationMatrix(g, rel_id, false);
+	
+	Delta_Matrix  *rel_ms  =  rm_calloc(n_rels, sizeof(Delta_Matrix)) ;
 
-	info = Delta_Matrix_export(&_A, D);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Matrix_nrows(&nrows, _A);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Matrix_ncols(&ncols, _A);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GxB_Matrix_type(&A_type, _A);
-	ASSERT(info == GrB_SUCCESS);
-
-	// expecting a square matrix
-	ASSERT(nrows == ncols);
-
-	// in case there are multiple relation types, include them in _A
-	for (unsigned short i = 1; i < n_rels; i++) {
-		rel_id = GETRELATIONID(i);
-		D = Graph_GetRelationMatrix(g, rel_id, false);
-		info = Delta_Matrix_export(&M, D);
-		ASSERT(info == GrB_SUCCESS);
-
-		// add and pick the min (max) valued edge if there is overlap
-		info = GrB_Matrix_eWiseAdd_BinaryOp(_A, NULL, NULL, minID, _A, M, NULL);
-		ASSERT(info == GrB_SUCCESS);
-		GrB_free(&M);
+	for(int i = 0; i < n_rels; ++i) {
+		RelationID id = GETRELATIONID(i);
+		rel_ms[i] = Graph_GetRelationMatrix(g, id, false);
 	}
+
+	info = _compile_matricies_w(&_A, rel_ms, n_rels, minID);
+	ASSERT(info == GrB_SUCCESS);
+	rm_free(rel_ms);
 
 	//--------------------------------------------------------------------------
 	// compute L
@@ -759,34 +789,12 @@ GrB_Info get_sub_weight_matrix
 	}
 
 	// enforce labels
-	if (n_lbls > 0) {
-		Delta_Matrix DL = Graph_GetLabelMatrix(g, lbls[0]);
 
-		GrB_Matrix L;
-		info = Delta_Matrix_export(&L, DL);
-		ASSERT(info == GrB_SUCCESS);
+	_get_rows_with_labels(_N, g, lbls, n_lbls);
 
-		// L = L U M
-		for (unsigned short i = 1; i < n_lbls; i++) {
-			DL = Graph_GetLabelMatrix(g, lbls[i]);
+	info = GrB_Vector_nvals(&rows_nvals, _N);
 
-			info = Delta_Matrix_export(&M, DL);
-			ASSERT(info == GrB_SUCCESS);
-
-			info = GrB_Matrix_eWiseAdd_Semiring(L, NULL, NULL,
-					GxB_ANY_PAIR_BOOL, L, M, NULL);
-			ASSERT(info == GrB_SUCCESS);
-
-			GrB_Matrix_free(&M);
-		}
-
-		// set N to L's main diagonal denoting all participating nodes 
-		if (_N != NULL) {
-			info = GxB_Vector_diag(_N, L, 0, NULL);
-			ASSERT(info == GrB_SUCCESS);
-		}
-
-		info = GrB_Vector_nvals(&rows_nvals, _N);
+	if (n_rels > 0){
 		// A = L * A * L
 		GrB_Matrix temp = NULL;
 		GrB_Matrix_new(&temp, GrB_UINT64, rows_nvals, rows_nvals);
@@ -796,15 +804,6 @@ GrB_Info get_sub_weight_matrix
 		info = GrB_Matrix_free(&_A);
 		_A = temp;
 		temp = NULL;
-
-		// free L matrix
-		info = GrB_Matrix_free(&L);
-		ASSERT(info == GrB_SUCCESS);
-	} else if (rows != NULL) {
-		// no labels, N = [1,....1]
-		info = GrB_Vector_assign_BOOL(
-			_N, NULL, NULL, true, GrB_ALL, nrows, NULL);
-		ASSERT(info == GrB_SUCCESS);
 	}
 
 	bool tensor_flag = true; //TODO
