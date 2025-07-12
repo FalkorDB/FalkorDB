@@ -4,6 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+// TODO: Test all rels or lbls and check rows for correctness
 #include "src/util/rmalloc.h"
 #include "src/configuration/config.h"
 #include "src/graph/graph.h"
