@@ -7,10 +7,10 @@
 
 #include "../../../serializers_include.h"
 
-GraphContext *RdbLoadGraphContext_latest
+void RdbLoadGraphContext_latest
 (
 	SerializerIO rdb,
-	const RedisModuleString *rm_key_name
+	GraphContext *gc
 );
 
 // decode nodes

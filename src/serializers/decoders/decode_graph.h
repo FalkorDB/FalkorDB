@@ -8,5 +8,15 @@
 
 #include "../serializers_include.h"
 
-// load RDB
-GraphContext *RdbLoadGraph(RedisModuleIO *rdb);
+// load a graph from RDB
+GraphContext *RdbLoadGraph
+(
+	RedisModuleIO *rdb
+);
+
+// load a graph virtual key from RDB
+GraphContext *RdbLoadMetaGraph
+(
+	RedisModuleIO *rdb
+);
+

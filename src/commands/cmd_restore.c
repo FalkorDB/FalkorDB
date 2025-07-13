@@ -66,7 +66,8 @@ int Graph_Restore
 	SerializerIO io = SerializerIO_FromStream(stream, false);
 
 	// decode graph
-	GraphContext *gc = RdbLoadGraphContext_latest(io, argv[1]);
+	GraphContext *gc = GraphContext_Retrieve(ctx, argv[1], false, true);
+	RdbLoadGraphContext_latest(io, gc);
 	ASSERT(gc != NULL);
 
 	// add graph to keyspace
@@ -87,6 +88,8 @@ int Graph_Restore
 	SerializerIO_Free(&io);
 
 	fclose(stream);
+
+	RedisModule_ReplyWithCString(ctx, "OK");
 
 	return REDISMODULE_OK;
 }

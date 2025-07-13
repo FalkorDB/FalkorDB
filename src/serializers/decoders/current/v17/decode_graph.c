@@ -51,26 +51,6 @@ static void _ComputeTransposeMatrices
 	_ComputeTransposeMatrix(ADJ);
 }
 
-static GraphContext *_GetOrCreateGraphContext
-(
-	char *graph_name
-) {
-	GraphContext *gc = GraphContext_UnsafeGetGraphContext(graph_name);
-	if(gc == NULL) {
-		// new graph is being decoded
-		// inform the module and create new graph context
-		gc = GraphContext_New(graph_name);
-		// while loading the graph
-		// minimize matrix realloc and synchronization calls
-		Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_RESIZE);
-	}
-
-	// free the name string, as it either not in used or copied
-	RedisModule_Free(graph_name);
-
-	return gc;
-}
-
 // the first initialization of the graph data structure guarantees that
 // there will be no further re-allocation of data blocks and matrices
 // since they are all in the appropriate size
@@ -93,12 +73,12 @@ static void _InitGraphDataStructure
 	Graph_ApplyAllPending(g, true);
 }
 
-static GraphContext *_DecodeHeader
+static void _DecodeHeader
 (
-	SerializerIO rdb
+	SerializerIO rdb,
+	GraphContext *gc
 ) {
 	// Header format:
-	// Graph name
 	// Node count
 	// Edge count
 	// Deleted node count
@@ -109,8 +89,6 @@ static GraphContext *_DecodeHeader
 	// Number of graph keys (graph context key + meta keys)
 	// Schema
 
-	// graph name
-	char *graph_name = SerializerIO_ReadBuffer(rdb, NULL);
 
 	// each key header contains the following:
 	// #nodes, #edges, #deleted nodes, #deleted edges, #labels matrices, #relation matrices
@@ -120,6 +98,7 @@ static GraphContext *_DecodeHeader
 	uint64_t deleted_edge_count = SerializerIO_ReadUnsigned(rdb);
 	uint64_t label_count        = SerializerIO_ReadUnsigned(rdb);
 	uint64_t relation_count     = SerializerIO_ReadUnsigned(rdb);
+
 	uint64_t multi_edge[relation_count];
 
 	for(uint i = 0; i < relation_count; i++) {
@@ -129,7 +108,6 @@ static GraphContext *_DecodeHeader
 	// total keys representing the graph
 	uint64_t key_number = SerializerIO_ReadUnsigned(rdb);
 
-	GraphContext *gc = _GetOrCreateGraphContext(graph_name);
 	Graph *g = gc->g;
 
 	// if it is the first key of this graph,
@@ -161,8 +139,6 @@ static GraphContext *_DecodeHeader
 	gc->decoding_context->edge_count         = edge_count;
 	gc->decoding_context->deleted_node_count = deleted_node_count;
 	gc->decoding_context->deleted_edge_count = deleted_edge_count;
-
-	return gc;
 }
 
 static PayloadInfo *_RdbLoadKeySchema
@@ -192,10 +168,10 @@ static PayloadInfo *_RdbLoadKeySchema
 	return payloads;
 }
 
-GraphContext *RdbLoadGraphContext_latest
+void RdbLoadGraphContext_latest
 (
 	SerializerIO rdb,
-	const RedisModuleString *rm_key_name
+	GraphContext *gc
 ) {
 	// Key format:
 	//  Header
@@ -205,8 +181,8 @@ GraphContext *RdbLoadGraphContext_latest
 	//      Entities in payload
 	//  Payload(s) X N
 
-	GraphContext *gc = _DecodeHeader(rdb);
-	Graph        *g  = gc->g;
+	_DecodeHeader(rdb, gc);
+	Graph *g = gc->g;
 
 	// log progress
 	RedisModule_Log(NULL, "notice",
@@ -319,14 +295,6 @@ GraphContext *RdbLoadGraphContext_latest
 	// update decode context
 	GraphDecodeContext_IncreaseProcessedKeyCount(gc->decoding_context);
 
-	// before finalizing keep encountered meta keys names, for future deletion
-	const char *key_name = RedisModule_StringPtrLen(rm_key_name, NULL);
-
-	// the virtual key name is not equal the graph name
-	if(strcmp(key_name, gc->graph_name) != 0) {
-		GraphDecodeContext_AddMetaKey(gc->decoding_context, key_name);
-	}
-
 	if(GraphDecodeContext_Finished(gc->decoding_context)) {
 		// compute transposes
 		_ComputeTransposeMatrices(g);
@@ -407,7 +375,5 @@ GraphContext *RdbLoadGraphContext_latest
 		RedisModule_Log(NULL, "notice", "Done decoding graph %s",
 				GraphContext_GetName(gc));
 	}
-
-	return gc;
 }
 
