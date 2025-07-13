@@ -1,4 +1,5 @@
 import os
+import threading
 from common import *
 from redis import Redis
 from graph_utils import graph_eq
@@ -16,6 +17,10 @@ class testDumpRestore(FlowTestsBase):
     def tearDown(self):
         self.conn.flushall()
         self.graph = self.db.select_graph(GRAPH_ID)
+
+        # delete file if exists
+        if os.path.exists("./dump"):
+            os.remove("./dump")
 
     def dump_graph_to_file(self, graph_name, file_path):
         # delete file if exists
@@ -72,16 +77,9 @@ class testDumpRestore(FlowTestsBase):
         node_count = self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0]
         self.env.assertEqual(0, node_count)
 
-        edge_count = self.graph.query("MATCH ()-[e]->() RETURN count(e)").result_set[0][0]
-        self.env.assertEqual(0, edge_count)
-
         #-----------------------------------------------------------------------
 
         # restore empty graph into a different key
-
-        # Create an empty graph
-        self.graph = self.db.select_graph(GRAPH_ID)
-        self.graph.query("RETURN 1")
 
         # Dump graph
         #dump = self.conn.execute_command("GRAPH.DUMP", GRAPH_ID)
@@ -181,7 +179,14 @@ class testDumpRestore(FlowTestsBase):
 
     def test_dump_restore_existing_graph(self):
         """try to restoring into an already occupied key"""
-        pass
+        self.graph.query("RETURN 1")
+        self.dump_graph_to_file(GRAPH_ID, "./dump")
+
+        try:
+            self.restore_graph_from_file("./dump", GRAPH_ID)
+            self.env.assertFalse(True and "can't restore into existing key")
+        except Exception as e:
+            self.env.assertIn("Target key name already exists", str(e))
 
     def test_dump_restore_large_graph(self):
         node_count = 100000
@@ -201,5 +206,29 @@ class testDumpRestore(FlowTestsBase):
 
     def test_parallel_restore(self):
         """test concurrent graph restores"""
-        pass
+
+        # create a random graph
+        nodes, edges = create_random_schema()
+        create_random_graph(self.graph, nodes, edges)
+
+        self.dump_graph_to_file(GRAPH_ID, "./dump")
+
+        threads = []
+        for key in range(ord('a'), ord('e')):
+            key = chr(key)
+            thread = threading.Thread(
+                target=self.restore_graph_from_file,
+                args=("./dump", key)
+            )
+            threads.append(thread)
+            thread.start()
+
+        # Wait for all threads to complete
+        for thread in threads:
+            thread.join()
+
+        for key in range(ord('a'), ord('e')):
+            key = chr(key)
+            restored_graph = self.db.select_graph(key)
+            self.env.assertTrue(graph_eq(self.graph, restored_graph))
 
