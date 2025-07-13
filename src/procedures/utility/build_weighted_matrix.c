@@ -24,13 +24,13 @@
 // can select the right edge
 typedef struct
 {
-	const Graph *g;  // Graph
-	AttributeID w;   // Attribute used as weight
+	const Graph *g;  // graph
+	AttributeID w;   // attribute used as weight
 	int comp;        // -1 if max, 1 if min
 } compareContext;
 
-// binary index op, does not use the index but needs the context. 
-// will compare two edges and give the one with the minimum or maximum weight.
+// binary index op, does not use the index but needs the context.
+// will compare two edges and give the one with the minimum or maximum weight
 static void _compare_EdgeID_value 
 (
 	uint64_t *z,
@@ -46,10 +46,11 @@ static void _compare_EdgeID_value
 	Edge _x, _y;
 	Graph_GetEdge(ctx->g, (EdgeID) (*x), &_x);
 	Graph_GetEdge(ctx->g, (EdgeID) (*y), &_y);
+
 	SIValue *xv = GraphEntity_GetProperty((GraphEntity *) &_x, ctx->w);
 	SIValue *yv = GraphEntity_GetProperty((GraphEntity *) &_y, ctx->w);
 
-	if((SI_TYPE(*xv) & SI_NUMERIC) == 0 || 
+	if ((SI_TYPE(*xv) & SI_NUMERIC) == 0 ||
 		((SI_TYPE(*yv) & SI_NUMERIC) && 
 		SIValue_Compare(*xv, *yv, NULL) == ctx->comp)
 	) {
@@ -80,7 +81,6 @@ static void _reduceToMatrix
 		info = GxB_Vector_Iterator_seek(i, 0);
 		ASSERT(info == GrB_SUCCESS)
 
-		Edge currE;
 		EdgeID minID   = (EdgeID) GxB_Vector_Iterator_getIndex(i);
 		SIValue *currV = NULL;
 
@@ -88,6 +88,7 @@ static void _reduceToMatrix
 		SIValue minV = SI_DoubleVal(ctx->comp * INFINITY);
 		SIValue tempV;
 
+		Edge currE;
 		Graph_GetEdge(ctx->g, minID, &currE);
 		currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w);
 		info = GxB_Vector_Iterator_next(i);
@@ -200,13 +201,13 @@ GrB_Info Build_Weighted_Matrix
 
 	// context for GrB operations
 	compareContext ctx = {
-		.g = g,                              // the input graph
-		.w = weight,                         // the weight attribute to consider 
-		.comp = (strategy == BWM_MAX)? -1: 1 // -1 if max, 1 if min
+		.g = g,                               // the input graph
+		.w = weight,                          // weight attribute to consider
+		.comp = (strategy == BWM_MAX)? -1: 1  // -1 if max, 1 if min
 	};
 
 	GrB_BinaryOp      minID         = NULL;  // gets two edge IDs and picks one
-	GrB_Scalar        theta         = NULL;  // Scalar containing the context
+	GrB_Scalar        theta         = NULL;  // scalar containing the context
 	GrB_UnaryOp       toMatrix      = NULL;  // get any ID from vector entry
 	GrB_BinaryOp      weightOp      = NULL;  // get weight from edgeID
 	GrB_Type          contx_type    = NULL;  // GB equivalent of compareContext
@@ -245,7 +246,7 @@ GrB_Info Build_Weighted_Matrix
 		GxB_BinaryOp_new_IndexOp(&minID, minID_indexOP, theta);
 	}
 
-	GrB_Info info   = GrB_DEFAULT;
+	GrB_Info info;
 	GrB_Matrix M    = NULL;  // temporary matrix
 	GrB_Matrix _A   = NULL;  // output matrix containing EdgeIDs
 	GrB_Vector _N   = NULL;  // output filtered rows
@@ -255,7 +256,7 @@ GrB_Info Build_Weighted_Matrix
 	GrB_Type A_type = NULL;  // type of the matrix
 
 	// if no relationships are specified, use all relationships
-	// can't use adj matrix since I need access to the edgeIds of all edges
+	// can't use adj matrix since we need access to the edgeIds of all edges
 	if (rels == NULL) {
 		n_rels = Graph_RelationTypeCount(g);
 	}
@@ -288,6 +289,7 @@ GrB_Info Build_Weighted_Matrix
 
 	RelationID rel_id = GETRELATIONID(0);
 	D = Graph_GetRelationMatrix(g, rel_id, false);
+	ASSERT(D != NULL);
 
 	info = Delta_Matrix_export(&_A, D, GrB_UINT64);
 	ASSERT(info == GrB_SUCCESS);
@@ -319,6 +321,8 @@ GrB_Info Build_Weighted_Matrix
 	for (unsigned short i = 1; i < n_rels; i++) {
 		rel_id = GETRELATIONID(i);
 		D = Graph_GetRelationMatrix(g, rel_id, false);
+		ASSERT(D != NULL);
+
 		info = Delta_Matrix_export(&M, D, GrB_UINT64);
 		ASSERT(info == GrB_SUCCESS);
 
@@ -332,7 +336,6 @@ GrB_Info Build_Weighted_Matrix
 				info = GrB_Matrix_apply_BinaryOp2nd_UDT(M, NULL, NULL,
 						toMatrixMin, M, (void *) (&ctx), NULL);
 				ASSERT(info == GrB_SUCCESS);
-
 			}
 		}
 
@@ -355,6 +358,7 @@ GrB_Info Build_Weighted_Matrix
 	// enforce labels
 	if (n_lbls > 0) {
 		Delta_Matrix DL = Graph_GetLabelMatrix(g, lbls[0]);
+		ASSERT(DL != NULL);
 
 		GrB_Matrix L;
 		info = Delta_Matrix_export(&L, DL, GrB_BOOL);
@@ -363,6 +367,7 @@ GrB_Info Build_Weighted_Matrix
 		// L = L U M
 		for (unsigned short i = 1; i < n_lbls; i++) {
 			DL = Graph_GetLabelMatrix(g, lbls[i]);
+			ASSERT(DL != NULL);
 
 			info = Delta_Matrix_export(&M, DL, GrB_BOOL);
 			ASSERT(info == GrB_SUCCESS);
@@ -445,6 +450,7 @@ GrB_Info Build_Weighted_Matrix
 	// set outputs
 	*A = _A;
 	if (rows) *rows = _N;
+
 	_A = NULL;
 	_N = NULL;
 

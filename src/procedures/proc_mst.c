@@ -17,6 +17,8 @@
 #include "./utility/internal.h"
 #include "../graph/graphcontext.h"
 
+// MSF invoke examples:
+//
 // CALL algo.MSF() YIELD edge, weight
 // CALL algo.MST(NULL) YIELD edge, weight
 // CALL algo.MST({nodeLabels: ['L', 'P']}) YIELD edge, weight
@@ -25,16 +27,17 @@
 //      'cost', objective: 'maximize'}) YIELD edge, weight
 // CALL algo.MST({nodeLabels: ['L'], objective: 'minimize'})
 
+
+// MST procedure context
 typedef struct {
-	Graph *g;                 // graph
+	const Graph *g;           // graph
 	GrB_Matrix tree;          // The MST
 	GrB_Matrix w_tree;        // The weighted MST
 	RelationID *relationIDs;  // edge type(s) to traverse.
 	int relationCount;        // length of relationIDs.
 	GrB_Info info;            // iterator state
-	GxB_Iterator it;          // iterator
-	GxB_Iterator weight_it;   // iterator
-	Node node;                // node
+	GxB_Iterator it;          // edge iterator
+	GxB_Iterator weight_it;   // weight iterator
 	Edge edge;                // edge
 	AttributeID weight_prop;  // weight attribute id
 	SIValue output[2];        // array with up to 2 entries [edge, weight]
@@ -98,6 +101,10 @@ static bool _read_config
 	GraphContext *gc  = QueryCtx_GetGraphCtx();
 	RelationID *_rels = NULL;
 
+	//--------------------------------------------------------------------------
+	// read labels
+	//--------------------------------------------------------------------------
+
 	if(MAP_GETCASEINSENSITIVE(config, "nodeLabels", v)) {
 		if(SI_TYPE(v) != T_ARRAY) {
 			ErrorCtx_SetError("mst configuration, 'nodeLabels' should be an array of strings");
@@ -131,6 +138,10 @@ static bool _read_config
 		match_fields++;
 	}
 
+	//--------------------------------------------------------------------------
+	// read relationship-types
+	//--------------------------------------------------------------------------
+
 	if(MAP_GETCASEINSENSITIVE(config, "relationshipTypes", v)) {
 		if(SI_TYPE(v) != T_ARRAY) {
 			ErrorCtx_SetError("mst configuration, 'relationshipTypes' should be an array of strings");
@@ -163,6 +174,10 @@ static bool _read_config
 		match_fields++;
 	}
 
+	//--------------------------------------------------------------------------
+	// read weight attribute
+	//--------------------------------------------------------------------------
+
 	if(MAP_GETCASEINSENSITIVE(config, "weightAttribute", v)) {
 		if(SI_TYPE(v) != T_STRING) {
 			ErrorCtx_SetError("mst configuration, 'weightAttribute' should be a string");
@@ -177,6 +192,10 @@ static bool _read_config
 		}
 		match_fields++;
 	}
+
+	//--------------------------------------------------------------------------
+	// read objective (min/max)
+	//--------------------------------------------------------------------------
 
 	if(MAP_GETCASEINSENSITIVE(config, "objective", v)) {
 		if(SI_TYPE(v) != T_STRING) {
@@ -197,6 +216,7 @@ static bool _read_config
 		match_fields++;
 	}
 
+	// validate no unknown configuration fields
 	if(n != match_fields) {
 		ErrorCtx_SetError("mst configuration contains unknown key");
 		goto error;
@@ -207,12 +227,12 @@ static bool _read_config
 error:
 	// clean up
 
-	if(_lbls != NULL) {
+	if (_lbls != NULL) {
 		array_free(_lbls);
 		*lbls = NULL;
 	}
 
-	if(_rels != NULL) {
+	if (_rels != NULL) {
 		array_free(_rels);
 		*rels = NULL;
 	}
@@ -234,6 +254,7 @@ ProcedureResult Proc_MSTInvoke
 
 	SIValue config;
 
+	// empty config map incase one wasn't provided
 	if(l == 0 || SIValue_IsNull(args[0])) {
 		config = SI_Map(0);
 	} else {
@@ -257,10 +278,10 @@ ProcedureResult Proc_MSTInvoke
 	//	objective: 'minimize'
 	// }
 
-	LabelID    *lbls      = NULL;
-	RelationID *rels      = NULL;
-	AttributeID weightAtt = ATTRIBUTE_ID_NONE;
+	LabelID    *lbls      = NULL;   // filtered labels
+	RelationID *rels      = NULL;   // filtered relationships
 	bool        maxST     = false;  // true if objective is 'maximize'
+	AttributeID weightAtt = ATTRIBUTE_ID_NONE;
 
 	//--------------------------------------------------------------------------
 	// load configuration map
@@ -300,10 +321,9 @@ ProcedureResult Proc_MSTInvoke
 	GrB_Matrix A   = NULL;  // edge ids of filtered edges
 	GrB_Matrix A_w = NULL;  // weight of filtered edges
 
-	// makes into a symetric matrix
-	info = Build_Weighted_Matrix(&A, &A_w, NULL, g, lbls,
-			array_len(lbls), rels, array_len(rels), weightAtt,
-			maxST ? BWM_MAX : BWM_MIN, true, true);
+	// build input matrix
+	info = Build_Weighted_Matrix(&A, &A_w, NULL, g, lbls, array_len(lbls), rels,
+			array_len(rels), weightAtt, maxST ? BWM_MAX : BWM_MIN, true, true);
 	ASSERT(info == GrB_SUCCESS);
 	
 	// free build matrix inputs
@@ -312,28 +332,29 @@ ProcedureResult Proc_MSTInvoke
 	//--------------------------------------------------------------------------
 	// run MST
 	//--------------------------------------------------------------------------
-	if (maxST) { // if we are optimizing for the max, make weights negative.
+
+	if (maxST) { // if we are optimizing for the max, make weights negative
 		info = GrB_Matrix_apply(A_w, NULL, NULL, GrB_AINV_FP64, A_w, NULL);
 		ASSERT(info == GrB_SUCCESS);
 	}
 
-	char msg[LAGRAPH_MSG_LEN];
 	// execute Minimum Spanning Forest
+	char msg[LAGRAPH_MSG_LEN];
 	GrB_Info mst_res = LAGraph_msf(&pdata->w_tree, A_w, false, msg);
 
 	// clean up algorithm inputs
 	info = GrB_free(&A_w);
 	ASSERT(info == GrB_SUCCESS);
 
-	if(mst_res != GrB_SUCCESS) {
+	if (mst_res != GrB_SUCCESS) {
 		GrB_free(&A);
 		return PROCEDURE_ERR;
 	}
 
 	// negate weights again if maximizing
-	if(maxST && pdata->yield_weight != NULL) { 
-		info = GrB_Matrix_apply(
-			pdata->w_tree, NULL, NULL, GrB_AINV_FP64, pdata->w_tree, NULL) ;
+	if (maxST && pdata->yield_weight != NULL) {
+		info = GrB_Matrix_apply(pdata->w_tree, NULL, NULL, GrB_AINV_FP64,
+				pdata->w_tree, NULL);
 		ASSERT(info == GrB_SUCCESS);
 	}
 
@@ -341,24 +362,25 @@ ProcedureResult Proc_MSTInvoke
 	info = GrB_Matrix_nrows(&n, pdata->w_tree);
 	ASSERT(info == GrB_SUCCESS);
 
-	if(pdata->yield_edge){
+	if (pdata->yield_edge) {
         // mask out dropped edges
-        info = GrB_Matrix_assign(A, pdata->w_tree, NULL, A, 
-			GrB_ALL, n, GrB_ALL, n, GrB_DESC_RS);
+        info = GrB_Matrix_assign(A, pdata->w_tree, NULL, A, GrB_ALL, n, GrB_ALL,
+				n, GrB_DESC_RS);
         ASSERT(info == GrB_SUCCESS);
 	}
 
 	pdata->tree = A;
 	
 	//--------------------------------------------------------------------------
-	// initialize iterator
+	// initialize iterators
 	//--------------------------------------------------------------------------
 
 	if (pdata->yield_weight) {
 		info = GxB_Iterator_new(&pdata->weight_it);
 		ASSERT(info == GrB_SUCCESS);
 
-		info = GxB_Matrix_Iterator_attach(pdata->weight_it, pdata->w_tree, NULL);
+		info = GxB_Matrix_Iterator_attach(pdata->weight_it, pdata->w_tree,
+				NULL);
 		ASSERT(info == GrB_SUCCESS);
 
 		pdata->info = GxB_Matrix_Iterator_seek(pdata->weight_it, 0);
@@ -403,7 +425,6 @@ SIValue *Proc_MSTStep
 
 	if (pdata->yield_edge) {
 		// retrieve node from graph
-		Edge edge;
 		EdgeID edgeID = (EdgeID) GxB_Iterator_get_UINT64(pdata->it);
 		ASSERT(SCALAR_ENTRY(edgeID));
 

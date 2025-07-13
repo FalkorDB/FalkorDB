@@ -28,7 +28,7 @@ GrB_Info Build_Matrix
 	bool compact             // remove unused row & columns
 );
 
-typedef enum{
+typedef enum {
 	BWM_MIN,  // choose the minimum Edge 
 	BWM_MAX   // choose the maximum Edge
 } BWM_reduce;
@@ -38,10 +38,10 @@ typedef enum{
 // A = L * (R0 + R1 + ... Rn) * L 
 //
 // if a weight attribute is specified, this function will pick which Edge to 
-// return given a BWM_reduce strategy. For example, BWM_MIN returns the edge 
-// with minimum weight.
+// return given a BWM_reduce strategy
+// for example, BWM_MIN returns the edge with minimum weight
 // 
-// A_w = [Attribute values of A]
+// A_w  = [Attribute values of A]
 // rows = L's main diagonal
 // in case no labels are specified rows is a dense 1 vector: [1,1,...1]
 GrB_Info Build_Weighted_Matrix
@@ -58,4 +58,5 @@ GrB_Info Build_Weighted_Matrix
 	BWM_reduce strategy,       // decides how singular returned edge id is picked
 	bool symmetric,            // build a symmetric matrix
 	bool compact               // remove unused row & columns
-) ;
+);
+

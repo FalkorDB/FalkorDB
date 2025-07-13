@@ -1212,20 +1212,21 @@ bool Graph_LookupEdgeRelationID
 (
 	const Graph *g,          // graph to get edges from
 	Edge *edge,    	         // edge to check
-	const RelationID *rels,  // relationships. (can't contain unknown relations)
+	const RelationID *rels,  // relationships (can't contain unknown relations)
 	int n_rels               // the number of relations
 ) {
-	ASSERT(g);
-	ASSERT(edge);
+	ASSERT(g    != NULL);
+	ASSERT(edge != NULL);
 	ASSERT((rels && n_rels > 0) || (rels == NULL && n_rels == 0));
 	
 	GrB_Info info;
+
 	uint64_t  x      = 0;
 	Tensor    R      = NULL; 
 	EntityID  id     = ENTITY_GET_ID(edge);
+	bool      found  = false;
 	GrB_Index srcID  = Edge_GetSrcNodeID(edge);
 	GrB_Index destID = Edge_GetDestNodeID(edge);
-	bool      found  = false;
 
 	// if rels are not specified run through all Relationships in the graph
 	n_rels = (rels == NULL) ? Graph_RelationTypeCount(g) : n_rels;

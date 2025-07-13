@@ -1,9 +1,7 @@
 from common import *
 from random_graph import create_random_graph
-import random
-from math import nan 
 
-GRAPH_ID = "MST"
+GRAPH_ID      = "MST"
 GRAPH_ID_RAND = "MST_rand"
 
 class testMST(FlowTestsBase):
@@ -13,6 +11,7 @@ class testMST(FlowTestsBase):
         self.graph = self.db.select_graph(GRAPH_ID)
         self.randomGraph = self.db.select_graph(GRAPH_ID_RAND)
         self.generate_random_graph()
+        input()
 
     def tearDown(self):
         self.graph.query("MATCH (a) RETURN count(a)")
@@ -141,8 +140,8 @@ class testMST(FlowTestsBase):
         # The edge without a cost attribute is only used if it is the only edge
         # connecting to seperate components.
         # The expected edges are:
-        #   .02189 (n2 to n3)
-        #   .2198 (n1 to n2)
+        #   0.02189 (n2 to n3)
+        #   0.2198  (n1 to n2)
         #   2.71828 (n4 to n5)
         ans_set = [[0.02189], [0.2198], [2.71828]]
         self.env.assertEqual(ans_set, result_set)
@@ -179,9 +178,9 @@ class testMST(FlowTestsBase):
         # The edge without a cost attribute is only used if it is the only edge
         # connecting to separate components.
         # The expected edges are:
-        #   .993284 (n3 to n1)
-        #   2.71828 (n4 to n5)
-        #   3.14159 (n2 to n1)
+        #   0.993284 (n3 to n1)
+        #   2.71828  (n4 to n5)
+        #   3.14159  (n2 to n1)
 
         ans_set = [[.993284], [2.71828], [3.14159]]
         self.env.assertEqual(ans_set, result_set)
@@ -296,14 +295,18 @@ class testMST(FlowTestsBase):
             (n2 {id: 2}),
             (n3 {id: 3}),
             (n4 {id: 4}),
+
             (n1)-[:A {score: 789134, mst_ans: 0}]->(n2),
-            (n1)-[:A {score: 5352, mst_ans: 0}]->(n2),
-            (n1)-[:A {score: 1234, mst_ans: 1}]->(n2),
+            (n1)-[:A {score: 5352,   mst_ans: 0}]->(n2),
+            (n1)-[:A {score: 1234,   mst_ans: 1}]->(n2),
+
             (n1)-[:B {score: 123456, mst_ans: 0}]->(n2),
-            (n1)-[:B {score: 1000, mst_ans: 2}]->(n2),
+            (n1)-[:B {score: 1000,   mst_ans: 2}]->(n2),
+
             (n2)-[:B {mst_ans: 2}]->(n3),
+
             (n3)-[:B {score: 8991234, mst_ans: 0}]->(n4),
-            (n3)-[:B {score: 7654, mst_ans: 2}]->(n4)
+            (n3)-[:B {score: 7654,    mst_ans: 2}]->(n4)
         """)
 
         # Run MST algorithm with relationship type A
@@ -339,7 +342,7 @@ class testMST(FlowTestsBase):
         ans_set = [[2, 1000.0], [2, 7654.0], [2, None]]
         self.env.assertEqual(ans_set, result_set)
 
-         # Run MST algorithm with both relationships (max)
+        # Run MST algorithm with both relationships (max)
         result = self.graph.query("""
             CALL algo.MST({weightAttribute: 'score', objective: 'maximize'}) 
             YIELD edge, weight
@@ -380,8 +383,8 @@ class testMST(FlowTestsBase):
             """).result_set
         minEdge = self.find_min_edge("A", "B")
 
-        if(minEdge is None): #components are disconnected. 
-            #Should return two spanning trees with 19 edges each.
+        if(minEdge is None): # components are disconnected.
+            # Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
             # connected component with 40 nodes: must have 39 edges.
@@ -398,7 +401,7 @@ class testMST(FlowTestsBase):
             """).result_set
         minEdge = self.find_min_edge("A", "C")
         
-        if(minEdge is None): #components are disconnected. 
+        if(minEdge is None): #components are disconnected.
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
@@ -416,7 +419,7 @@ class testMST(FlowTestsBase):
             """).result_set
         minEdge = self.find_min_edge("A", "D")
         
-        if(minEdge is None): #components are disconnected. 
+        if(minEdge is None): #components are disconnected.
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
@@ -434,7 +437,7 @@ class testMST(FlowTestsBase):
             """).result_set
         minEdge = self.find_min_edge("B", "C")
         
-        if(minEdge is None): #components are disconnected. 
+        if(minEdge is None): #components are disconnected.
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
@@ -452,7 +455,7 @@ class testMST(FlowTestsBase):
             """).result_set
         minEdge = self.find_min_edge("B", "D")
         
-        if(minEdge is None): #components are disconnected. 
+        if(minEdge is None): #components are disconnected.
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
@@ -470,7 +473,7 @@ class testMST(FlowTestsBase):
             """).result_set
         minEdge = self.find_min_edge("C", "D")
         
-        if(minEdge is None): #components are disconnected. 
+        if(minEdge is None): #components are disconnected.
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
@@ -495,7 +498,7 @@ class testMST(FlowTestsBase):
             """).result_set
         maxEdge = self.find_max_edge("A", "B")
 
-        if(maxEdge is None): #components are disconnected. 
+        if(maxEdge is None): #components are disconnected.
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
@@ -509,7 +512,7 @@ class testMST(FlowTestsBase):
             """).result_set
         maxEdge = self.find_max_edge("A", "C")
         
-        if(maxEdge is None): #components are disconnected. 
+        if(maxEdge is None): #components are disconnected.
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
@@ -523,7 +526,7 @@ class testMST(FlowTestsBase):
             """).result_set
         maxEdge = self.find_max_edge("A", "D")
         
-        if(maxEdge is None): #components are disconnected. 
+        if(maxEdge is None): #components are disconnected.
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
@@ -537,7 +540,7 @@ class testMST(FlowTestsBase):
             """).result_set
         maxEdge = self.find_max_edge("B", "C")
         
-        if(maxEdge is None): #components are disconnected. 
+        if(maxEdge is None): #components are disconnected.
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
@@ -551,7 +554,7 @@ class testMST(FlowTestsBase):
             """).result_set
         maxEdge = self.find_max_edge("B", "D")
         
-        if(maxEdge is None): #components are disconnected. 
+        if(maxEdge is None): #components are disconnected.
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
@@ -565,7 +568,7 @@ class testMST(FlowTestsBase):
             """).result_set
         maxEdge = self.find_max_edge("C", "D")
         
-        if(maxEdge is None): #components are disconnected. 
+        if(maxEdge is None): #components are disconnected.
             #Should return two spanning trees with 19 edges each.
             self.env.assertEqual(len(result_set), 38)
         else:
