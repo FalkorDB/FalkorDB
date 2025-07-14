@@ -317,14 +317,12 @@ ProcedureResult Proc_MSTInvoke
 	// construct input matrix
 	//--------------------------------------------------------------------------
 
-	GrB_Info info;
 	GrB_Matrix A   = NULL;  // edge ids of filtered edges
 	GrB_Matrix A_w = NULL;  // weight of filtered edges
 
 	// build input matrix
-	info = Build_Weighted_Matrix(&A, &A_w, NULL, g, lbls, array_len(lbls), rels,
-			array_len(rels), weightAtt, maxST ? BWM_MAX : BWM_MIN, true, true);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (Build_Weighted_Matrix(&A, &A_w, NULL, g, lbls, array_len(lbls), rels,
+			array_len(rels), weightAtt, maxST ? BWM_MAX : BWM_MIN, true, true));
 	
 	// free build matrix inputs
 	if (lbls != NULL) array_free(lbls);
@@ -334,8 +332,7 @@ ProcedureResult Proc_MSTInvoke
 	//--------------------------------------------------------------------------
 
 	if (maxST) { // if we are optimizing for the max, make weights negative
-		info = GrB_Matrix_apply(A_w, NULL, NULL, GrB_AINV_FP64, A_w, NULL);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_Matrix_apply(A_w, NULL, NULL, GrB_AINV_FP64, A_w, NULL));
 	}
 
 	// execute Minimum Spanning Forest
@@ -343,8 +340,7 @@ ProcedureResult Proc_MSTInvoke
 	GrB_Info mst_res = LAGraph_msf(&pdata->w_tree, A_w, false, msg);
 
 	// clean up algorithm inputs
-	info = GrB_free(&A_w);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_free(&A_w));
 
 	if (mst_res != GrB_SUCCESS) {
 		GrB_free(&A);
@@ -353,20 +349,17 @@ ProcedureResult Proc_MSTInvoke
 
 	// negate weights again if maximizing
 	if (maxST && pdata->yield_weight != NULL) {
-		info = GrB_Matrix_apply(pdata->w_tree, NULL, NULL, GrB_AINV_FP64,
-				pdata->w_tree, NULL);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_Matrix_apply(pdata->w_tree, NULL, NULL, GrB_AINV_FP64,
+				pdata->w_tree, NULL));
 	}
 
 	GrB_Index n;
-	info = GrB_Matrix_nrows(&n, pdata->w_tree);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_Matrix_nrows(&n, pdata->w_tree));
 
 	if (pdata->yield_edge) {
         // mask out dropped edges
-        info = GrB_Matrix_assign(A, pdata->w_tree, NULL, A, GrB_ALL, n, GrB_ALL,
-				n, GrB_DESC_RS);
-        ASSERT(info == GrB_SUCCESS);
+        GrB_OK (GrB_Matrix_assign(A, pdata->w_tree, NULL, A, GrB_ALL, n, GrB_ALL,
+				n, GrB_DESC_RS));
 	}
 
 	pdata->tree = A;
@@ -376,26 +369,21 @@ ProcedureResult Proc_MSTInvoke
 	//--------------------------------------------------------------------------
 
 	if (pdata->yield_weight) {
-		info = GxB_Iterator_new(&pdata->weight_it);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GxB_Iterator_new(&pdata->weight_it));
 
-		info = GxB_Matrix_Iterator_attach(pdata->weight_it, pdata->w_tree,
-				NULL);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GxB_Matrix_Iterator_attach(pdata->weight_it, pdata->w_tree,
+				NULL));
 
 		pdata->info = GxB_Matrix_Iterator_seek(pdata->weight_it, 0);
-		ASSERT(info == GrB_SUCCESS);
 	} else {
 		// no need for the weight matrix
 		GrB_free(&pdata->w_tree);
 	}
 	
 	if (pdata->yield_edge) {
-		info = GxB_Iterator_new(&pdata->it);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GxB_Iterator_new(&pdata->it));
 		
-		info = GxB_Matrix_Iterator_attach(pdata->it, pdata->tree, NULL);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GxB_Matrix_Iterator_attach(pdata->it, pdata->tree, NULL));
 
 		pdata->info = GxB_Matrix_Iterator_seek(pdata->it, 0);
 		ASSERT(info == GrB_SUCCESS);

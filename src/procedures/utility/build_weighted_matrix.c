@@ -347,7 +347,6 @@ GrB_Info Build_Weighted_Matrix
 		GxB_BinaryOp_new_IndexOp(&minID, minID_indexOP, theta);
 	}
 
-	GrB_Info info;
 	GrB_Matrix M    = NULL;  // temporary matrix
 	GrB_Matrix _A   = NULL;  // output matrix containing EdgeIDs
 	GrB_Vector _N   = NULL;  // output filtered rows
@@ -365,17 +364,14 @@ GrB_Info Build_Weighted_Matrix
 	if (n_rels == 0) {
 		n = compact? Graph_UncompactedNodeCount(g) : Graph_RequiredMatrixDim(g);
 		// graph does not have any relations, return empty matrix
-		info = GrB_Matrix_new(A, GrB_UINT64, n, n);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(GrB_Matrix_new(A, GrB_UINT64, n, n));
 		
 		if (A_w) {
-			info = GrB_Matrix_new(A_w, GrB_FP64, n, n);
-			ASSERT(info == GrB_SUCCESS);
+			GrB_OK(GrB_Matrix_new(A_w, GrB_FP64, n, n));
 		}
 
 		if (rows) {
-			info = GrB_Vector_new(rows, GrB_BOOL, n);
-			ASSERT(info == GrB_SUCCESS);
+			GrB_OK(GrB_Vector_new(rows, GrB_BOOL, n));
 		}
 
 		BWM_FREE;
@@ -392,17 +388,13 @@ GrB_Info Build_Weighted_Matrix
 	D = Graph_GetRelationMatrix(g, rel_id, false);
 	ASSERT(D != NULL);
 
-	info = Delta_Matrix_export(&_A, D, GrB_UINT64);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(Delta_Matrix_export(&_A, D, GrB_UINT64));
 
-	info = GrB_Matrix_nrows(&nrows, _A);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Matrix_nrows(&nrows, _A));
 
-	info = GrB_Matrix_ncols(&ncols, _A);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Matrix_ncols(&ncols, _A));
 
-	info = GxB_Matrix_type(&A_type, _A);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GxB_Matrix_type(&A_type, _A));
 
 	// expecting a square matrix
 	ASSERT(nrows == ncols);
@@ -417,24 +409,23 @@ GrB_Info Build_Weighted_Matrix
 		D = Graph_GetRelationMatrix(g, rel_id, false);
 		ASSERT(D != NULL);
 
-		info = Delta_Matrix_export(&M, D, GrB_UINT64);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (Delta_Matrix_export(&M, D, GrB_UINT64));
 
 		// add and pick the min (max) valued edge if there is overlap
-		info = GrB_Matrix_eWiseAdd_BinaryOp(_A, NULL, NULL, minID, _A, M, NULL);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp(_A, NULL, NULL, minID, _A, M, NULL));
 		GrB_free(&M);
 	}
 
 	// if _A has tensor entries, reduce it to a matrix
+	// these entries wouldn't be removed by the previous operation if they did
+	// not intersect with any other entries, or if minID was GrB_FIRST
 	if (multiEdgeFlag) {
 		if (weight == ATTRIBUTE_ID_NONE) {
-			info = GrB_Matrix_apply(_A, NULL, NULL, toMatrix, _A, NULL);
+			GrB_OK (GrB_Matrix_apply(_A, NULL, NULL, toMatrix, _A, NULL));
 		} else {
-			info = GrB_Matrix_apply_BinaryOp2nd_UDT(_A, NULL, NULL, toMatrixMin,
-					_A, (void *) (&ctx), NULL);
+			GrB_OK (GrB_Matrix_apply_BinaryOp2nd_UDT(_A, NULL, NULL, toMatrixMin,
+				_A, (void *) (&ctx), NULL));
 		}
-		ASSERT(info == GrB_SUCCESS);
 	}
 
 	//--------------------------------------------------------------------------
@@ -443,8 +434,7 @@ GrB_Info Build_Weighted_Matrix
 
 	// create vector N denoting all nodes participating in the algorithm
 	if (rows != NULL) {
-		info = GrB_Vector_new(&_N, GrB_BOOL, nrows);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_Vector_new(&_N, GrB_BOOL, nrows));
 	}
 
 	// enforce labels
@@ -453,52 +443,43 @@ GrB_Info Build_Weighted_Matrix
 		ASSERT(DL != NULL);
 
 		GrB_Matrix L;
-		info = Delta_Matrix_export(&L, DL, GrB_BOOL);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (Delta_Matrix_export(&L, DL, GrB_BOOL));
 
 		// L = L U M
 		for (unsigned short i = 1; i < n_lbls; i++) {
 			DL = Graph_GetLabelMatrix(g, lbls[i]);
 			ASSERT(DL != NULL);
 
-			info = Delta_Matrix_export(&M, DL, GrB_BOOL);
-			ASSERT(info == GrB_SUCCESS);
+			GrB_OK (Delta_Matrix_export(&M, DL, GrB_BOOL));
 
-			info = GrB_Matrix_eWiseAdd_Semiring(L, NULL, NULL,
-					GxB_ANY_PAIR_BOOL, L, M, NULL);
-			ASSERT(info == GrB_SUCCESS);
+			GrB_OK (GrB_Matrix_eWiseAdd_Semiring(L, NULL, NULL,
+					GxB_ANY_PAIR_BOOL, L, M, NULL));
 
 			GrB_Matrix_free(&M);
 		}
 
 		// A = L * A * L
-		info = GrB_mxm(_A, NULL, NULL, GxB_ANY_SECOND_UINT64, L, _A, NULL);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_mxm(_A, NULL, NULL, GxB_ANY_SECOND_UINT64, L, _A, NULL));
 
-		info = GrB_mxm(_A, NULL, NULL, GxB_ANY_FIRST_UINT64, _A, L, NULL);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_mxm(_A, NULL, NULL, GxB_ANY_FIRST_UINT64, _A, L, NULL));
 
 		// set N to L's main diagonal denoting all participating nodes 
 		if (_N != NULL) {
-			info = GxB_Vector_diag(_N, L, 0, NULL);
-			ASSERT(info == GrB_SUCCESS);
+			GrB_OK (GxB_Vector_diag(_N, L, 0, NULL));
 		}
 
 		// free L matrix
-		info = GrB_Matrix_free(&L);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_Matrix_free(&L));
 	} else if (rows != NULL) {
 		// no labels, N = [1,....1]
-		info = GrB_Vector_assign_BOOL(
-			_N, NULL, NULL, true, GrB_ALL, nrows, NULL);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_Vector_assign_BOOL(
+			_N, NULL, NULL, true, GrB_ALL, nrows, NULL));
 	}
 
 	if (symmetric) {
 		// make A symmetric A = A + At
-		info = GrB_Matrix_eWiseAdd_BinaryOp(_A, NULL, NULL, minID, _A, _A,
-				GrB_DESC_T1);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp(_A, NULL, NULL, minID, _A, _A,
+				GrB_DESC_T1));
 	}
 
 	n = nrows;
@@ -508,12 +489,10 @@ GrB_Info Build_Weighted_Matrix
 		n = Graph_UncompactedNodeCount(g);
 
 		// get rid of extra unused rows and columns
-		GrB_Info info = GrB_Matrix_resize(_A, n, n);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_Matrix_resize(_A, n, n));
 
 		if (rows != NULL) {
-			info = GrB_Vector_resize(_N, n);
-			ASSERT(info == GrB_SUCCESS);
+			GrB_OK (GrB_Vector_resize(_N, n));
 		}
 	}
 
@@ -522,21 +501,19 @@ GrB_Info Build_Weighted_Matrix
 	//--------------------------------------------------------------------------
 
 	if (A_w) {
-		info = GrB_Matrix_new(A_w, GrB_FP64, n, n);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(GrB_Matrix_new(A_w, GrB_FP64, n, n));
 
 		if (weight == ATTRIBUTE_ID_NONE) {
 			// if no weight specified, weights are zero
-			info = GrB_Matrix_assign_FP64(
+			GrB_OK (GrB_Matrix_assign_FP64(
 				*A_w, _A, NULL, 0.0, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
-			);
+			));
 		} else {
 			// get the weight value from the edge ids
-			info = GrB_Matrix_apply_BinaryOp2nd_UDT(
+			GrB_OK (GrB_Matrix_apply_BinaryOp2nd_UDT(
 				*A_w, NULL, NULL, weightOp, _A, (void *) (&ctx), NULL
-			);
+			));
 		}
-		ASSERT(info == GrB_SUCCESS);
 	}
 
 	// set outputs
@@ -547,6 +524,6 @@ GrB_Info Build_Weighted_Matrix
 	_N = NULL;
 
 	BWM_FREE;
-	return info;
+	return GrB_SUCCESS;
 }
 
