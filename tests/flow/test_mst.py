@@ -11,7 +11,6 @@ class testMST(FlowTestsBase):
         self.graph = self.db.select_graph(GRAPH_ID)
         self.randomGraph = self.db.select_graph(GRAPH_ID_RAND)
         self.generate_random_graph()
-        input()
 
     def tearDown(self):
         self.graph.query("MATCH (a) RETURN count(a)")
@@ -20,7 +19,7 @@ class testMST(FlowTestsBase):
     def generate_random_graph(self):
         # nodes of four different labels, each with 20 nodes
         nodes =[{"count": 20, "properties": 3, "labels": [l]} for l in "ABCD"]
-        
+
         # add many edges between nodes of the same label
         edges = [{"type": "R", "source": l, "target": l, "count": 100} 
                     for l in range(4)]
@@ -34,7 +33,8 @@ class testMST(FlowTestsBase):
         # call random graph
         create_random_graph(self.randomGraph, nodes, edges)
 
-        # ensure that each label is connected
+        # ensure that each label is a connected component
+        # by connecting one node (s) in label to every other one (n)
         for label in "ABCD":
             q = f"""MATCH (s:{label}) 
                 WITH s LIMIT 1 
@@ -47,30 +47,22 @@ class testMST(FlowTestsBase):
         q = "MATCH ()-[r]->() SET r.weight = rand() * 100, r.cost = rand() * 10"
         self.randomGraph.query(q)
 
-    # find the minumum edge weight between 'src' node and 'dest' node
+    # find the minumum edge weight between all nodes with label 'src' node and 
+    # all those with label 'dest'
     def find_min_edge(self, src, dest):
         q = f"""
-        OPTIONAL MATCH (:{src})-[r0]->(:{dest})
-        WITH MIN(r0.weight) as min_r0
-        OPTIONAL MATCH (:{dest})-[r1]->(:{src})
-        WITH min_r0, MIN(r1.weight) as min_r1
-        WITH [min_r0, min_r1] AS mins
-        UNWIND mins AS x
-        RETURN MIN(x) as minW
+        OPTIONAL MATCH (:{src})-[r0]-(:{dest})
+        RETURN MIN(r0.weight) as minW
         """
 
         return self.randomGraph.query(q).result_set[0][0]
 
-    # find the maximum edge weight between 'src' node and 'dest' node
+    # find the maximum edge weight between all nodes with label 'src' node and 
+    # all those with label 'dest'
     def find_max_edge(self, src, dest):
         q = f"""
-        OPTIONAL MATCH (:{src})-[r0]->(:{dest})
-        WITH MAX(r0.weight) as max_r0
-        OPTIONAL MATCH (:{dest})-[r1]->(:{src})
-        WITH max_r0, MAX(r1.weight) as max_r1
-        WITH [max_r0, max_r1] AS maxs
-        UNWIND maxs AS x
-        RETURN MAX(x) as maxW
+        OPTIONAL MATCH (:{src})-[r0]-(:{dest})
+        RETURN MAX(r0.weight) as maxW
         """
 
         return self.randomGraph.query(q).result_set[0][0]
@@ -83,7 +75,7 @@ class testMST(FlowTestsBase):
                 """CALL algo.MST('invalid')""",                      # invalid configuration type
                 """CALL algo.MST({nodeLabels: [1, 2, 3]})""",        # integer values in nodeLabels array
                 """CALL algo.MST({relationshipTypes: [1, 2, 3]})""", # integer values in relationshipTypes array
-                """CALL algo.MST({relationshipTypes: ['FAKE']})""",  # fake values in relationshipTypes array
+                """CALL algo.MST({relationshipTypes: ['FAKE']})""",  # non-existent relationship type
                 """CALL algo.MST(null) YIELD node, invalidField""",  # non-existent yield field
 
                 """CALL algo.MST({nodeLabels: ['Person'],
@@ -100,7 +92,10 @@ class testMST(FlowTestsBase):
 
     def test_mst_on_empty_graph(self):
         """Test MST algorithm behavior on an empty graph"""
-        
+
+        node_count = self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0]
+        self.env.assertEqual(node_count, 0)
+
         # run MST on empty graph
         result = self.graph.query("CALL algo.MST()")
 
@@ -377,202 +372,68 @@ class testMST(FlowTestsBase):
         # test checks that one property of MST is satisfied:
         # an edge that bridges a partition of the graph must be the minimum 
         # edge which bridges that partition.
-        result_set = self.randomGraph.query("""
-            CALL algo.MST({nodeLabels: ['A', 'B'], weightAttribute: 'weight'}) 
-            YIELD edge, weight RETURN edge.weight, weight
-            """).result_set
-        minEdge = self.find_min_edge("A", "B")
+        for l1 in "ABCD":
+            for l2 in "ABCD":
+                if(l1 == l2): continue
 
-        if(minEdge is None): # components are disconnected.
-            # Should return two spanning trees with 19 edges each.
-            self.env.assertEqual(len(result_set), 38)
-        else:
-            # connected component with 40 nodes: must have 39 edges.
-            self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([minEdge, minEdge], result_set)
+                result_set = self.randomGraph.query("""
+                    CALL algo.MST({nodeLabels: [$l1, $l2], 
+                    weightAttribute: 'weight'}) 
+                    YIELD edge, weight RETURN edge.weight, weight
+                    """,
+                    params = {'l1':l1, 'l2': l2}).result_set
+                minEdge = self.find_min_edge(l1, l2)
 
-        for w1, w2 in result_set:
-            # check that the edge given has the correct weight
-            self.env.assertEqual(w1, w2)
+                result_wcc = self.randomGraph.query("""
+                    CALL algo.WCC({nodeLabels: [$l1, $l2]}) 
+                    YIELD componentId RETURN DISTINCT(componentId)
+                    """,
+                    params = {'l1':l1, 'l2': l2}).result_set
 
-        result_set = self.randomGraph.query("""
-            CALL algo.MST({nodeLabels: ['A', 'C'], weightAttribute: 'weight'}) 
-            YIELD edge, weight RETURN edge.weight, weight
-            """).result_set
-        minEdge = self.find_min_edge("A", "C")
-        
-        if(minEdge is None): #components are disconnected.
-            #Should return two spanning trees with 19 edges each.
-            self.env.assertEqual(len(result_set), 38)
-        else:
-            # connected component with 40 nodes: must have 39 edges.
-            self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([minEdge, minEdge], result_set)
-
-        for w1, w2 in result_set:
-            # check that the edge given has the correct weight
-            self.env.assertEqual(w1, w2)
-
-        result_set = self.randomGraph.query("""
-            CALL algo.MST({nodeLabels: ['A', 'D'], weightAttribute: 'weight'}) 
-            YIELD edge, weight RETURN edge.weight, weight
-            """).result_set
-        minEdge = self.find_min_edge("A", "D")
-        
-        if(minEdge is None): #components are disconnected.
-            #Should return two spanning trees with 19 edges each.
-            self.env.assertEqual(len(result_set), 38)
-        else:
-            # connected component with 40 nodes: must have 39 edges.
-            self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([minEdge, minEdge], result_set)
-
-        for w1, w2 in result_set:
-            # check that the edge given has the correct weight
-            self.env.assertEqual(w1, w2)
-
-        result_set = self.randomGraph.query("""
-            CALL algo.MST({nodeLabels: ['B', 'C'], weightAttribute: 'weight'}) 
-            YIELD edge, weight RETURN edge.weight, weight
-            """).result_set
-        minEdge = self.find_min_edge("B", "C")
-        
-        if(minEdge is None): #components are disconnected.
-            #Should return two spanning trees with 19 edges each.
-            self.env.assertEqual(len(result_set), 38)
-        else:
-            # connected component with 40 nodes: must have 39 edges.
-            self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([minEdge, minEdge], result_set)
-
-        for w1, w2 in result_set:
-            # check that the edge given has the correct weight
-            self.env.assertEqual(w1, w2)
-        
-        result_set = self.randomGraph.query("""
-            CALL algo.MST({nodeLabels: ['B', 'D'], weightAttribute: 'weight'}) 
-            YIELD edge, weight RETURN edge.weight, weight
-            """).result_set
-        minEdge = self.find_min_edge("B", "D")
-        
-        if(minEdge is None): #components are disconnected.
-            #Should return two spanning trees with 19 edges each.
-            self.env.assertEqual(len(result_set), 38)
-        else:
-            # connected component with 40 nodes: must have 39 edges.
-            self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([minEdge, minEdge], result_set)
-
-        for w1, w2 in result_set:
-            # check that the edge given has the correct weight
-            self.env.assertEqual(w1, w2)
-
-        result_set = self.randomGraph.query("""
-            CALL algo.MST({nodeLabels: ['C', 'D'], weightAttribute: 'weight'}) 
-            YIELD edge, weight RETURN edge.weight, weight
-            """).result_set
-        minEdge = self.find_min_edge("C", "D")
-        
-        if(minEdge is None): #components are disconnected.
-            #Should return two spanning trees with 19 edges each.
-            self.env.assertEqual(len(result_set), 38)
-        else:
-            # connected component with 40 nodes: must have 39 edges.
-            self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([minEdge, minEdge], result_set)
-
-        for w1, w2 in result_set:
-            # check that the edge given has the correct weight
-            self.env.assertEqual(w1, w2)
+                if(minEdge is None): # components are disconnected.
+                    # should return two spanning trees with 19 edges each.
+                    # check that there are 19*2 = 38 edges total 
+                    self.env.assertEqual(len(result_set), 38)
+                    self.env.assertEqual(len(result_wcc), 2)
+                else:
+                    # connected component with 40 nodes: must have 39 edges.
+                    self.env.assertEqual(len(result_set), 39)
+                    self.env.assertIn([minEdge, minEdge], result_set)
+                    self.env.assertEqual(len(result_wcc), 1)
 
     def test_mst_rand_labels_max(self):
         """Test MST algorithm on random graph with multiple labels"""
         # randomGraph contains four groups of nodes each of which are connected
         # each of these groups are connected to each other
         # test checks that one property of MST is satisfied:
-        # an edge that bridges a partition of the graph must be the minimum 
+        # an edge that bridges a partition of the graph must be the maximum 
         # edge which bridges that partition.
-        result_set = self.randomGraph.query("""
-            CALL algo.MST({nodeLabels: ['A', 'B'], weightAttribute: 'weight', objective: 'maximize'}) 
-            YIELD weight
-            """).result_set
-        maxEdge = self.find_max_edge("A", "B")
+        for l1 in "ABCD":
+            for l2 in "ABCD":
+                if(l1 == l2): continue
 
-        if(maxEdge is None): #components are disconnected.
-            #Should return two spanning trees with 19 edges each.
-            self.env.assertEqual(len(result_set), 38)
-        else:
-            # connected component with 40 nodes: must have 39 edges.
-            self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([maxEdge], result_set)
+                result_set = self.randomGraph.query("""
+                    CALL algo.MST({nodeLabels: [$l1, $l2], 
+                    weightAttribute: 'weight', objective: 'maximize'}) 
+                    YIELD edge, weight RETURN edge.weight, weight
+                    """,
+                    params = {'l1':l1, 'l2': l2}).result_set
+                maxEdge = self.find_max_edge(l1, l2)
+                
+                result_wcc = self.randomGraph.query("""
+                    CALL algo.WCC({nodeLabels: [$l1, $l2]}) 
+                    YIELD componentId RETURN DISTINCT(componentId)
+                    """,
+                    params = {'l1':l1, 'l2': l2}).result_set
 
-        result_set = self.randomGraph.query("""
-            CALL algo.MST({nodeLabels: ['A', 'C'], weightAttribute: 'weight', objective: 'maximize'}) 
-            YIELD weight
-            """).result_set
-        maxEdge = self.find_max_edge("A", "C")
-        
-        if(maxEdge is None): #components are disconnected.
-            #Should return two spanning trees with 19 edges each.
-            self.env.assertEqual(len(result_set), 38)
-        else:
-            # connected component with 40 nodes: must have 39 edges.
-            self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([maxEdge], result_set)
-
-        result_set = self.randomGraph.query("""
-            CALL algo.MST({nodeLabels: ['A', 'D'], weightAttribute: 'weight', objective: 'maximize'}) 
-            YIELD weight
-            """).result_set
-        maxEdge = self.find_max_edge("A", "D")
-        
-        if(maxEdge is None): #components are disconnected.
-            #Should return two spanning trees with 19 edges each.
-            self.env.assertEqual(len(result_set), 38)
-        else:
-            # connected component with 40 nodes: must have 39 edges.
-            self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([maxEdge], result_set)
-
-        result_set = self.randomGraph.query("""
-            CALL algo.MST({nodeLabels: ['B', 'C'], weightAttribute: 'weight', objective: 'maximize'}) 
-            YIELD weight
-            """).result_set
-        maxEdge = self.find_max_edge("B", "C")
-        
-        if(maxEdge is None): #components are disconnected.
-            #Should return two spanning trees with 19 edges each.
-            self.env.assertEqual(len(result_set), 38)
-        else:
-            # connected component with 40 nodes: must have 39 edges.
-            self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([maxEdge], result_set)
-        
-        result_set = self.randomGraph.query("""
-            CALL algo.MST({nodeLabels: ['B', 'D'], weightAttribute: 'weight', objective: 'maximize'}) 
-            YIELD weight
-            """).result_set
-        maxEdge = self.find_max_edge("B", "D")
-        
-        if(maxEdge is None): #components are disconnected.
-            #Should return two spanning trees with 19 edges each.
-            self.env.assertEqual(len(result_set), 38)
-        else:
-            # connected component with 40 nodes: must have 39 edges.
-            self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([maxEdge], result_set)
-
-        result_set = self.randomGraph.query("""
-            CALL algo.MST({nodeLabels: ['C', 'D'], weightAttribute: 'weight', objective: 'maximize'}) 
-            YIELD weight
-            """).result_set
-        maxEdge = self.find_max_edge("C", "D")
-        
-        if(maxEdge is None): #components are disconnected.
-            #Should return two spanning trees with 19 edges each.
-            self.env.assertEqual(len(result_set), 38)
-        else:
-            # connected component with 40 nodes: must have 39 edges.
-            self.env.assertEqual(len(result_set), 39)
-            self.env.assertIn([maxEdge], result_set)
+                if(maxEdge is None): # components are disconnected.
+                    # should return two spanning trees with 19 edges each.
+                    # check that there are 19*2 = 38 edges total 
+                    self.env.assertEqual(len(result_set), 38)
+                    self.env.assertEqual(len(result_wcc), 2)
+                else:
+                    # connected component with 40 nodes: must have 39 edges.
+                    self.env.assertEqual(len(result_set), 39)
+                    self.env.assertIn([maxEdge, maxEdge], result_set)
+                    self.env.assertEqual(len(result_wcc), 1)
 

@@ -173,7 +173,7 @@ static void _reduceToMatrixAny
 // A = L * (R0 + R1 + ... Rn) * L 
 //
 // if a weight attribute is specified, this function will pick which edge to 
-// return given a BWM_reduce strategy
+// return given a BWM_reduce_strategy
 // for example, BWM_MIN returns the edge with minimum weight
 // 
 // A_w  = [attribute values of A]
@@ -181,18 +181,18 @@ static void _reduceToMatrixAny
 // in case no labels are specified rows is a dense 1 vector: [1, 1, ...1]
 GrB_Info Build_Weighted_Matrix
 (
-	GrB_Matrix *A,             // [output] matrix (EdgeIDs)
-	GrB_Matrix *A_w,           // [output] matrix (weights)
-	GrB_Vector *rows,          // [output] filtered rows
-	const Graph *g,            // graph
-	const LabelID *lbls,       // [optional] labels to consider
-	unsigned short n_lbls,     // number of labels
-	const RelationID *rels,    // [optional] relationships to consider
-	unsigned short n_rels,     // number of relationships
-	const AttributeID weight,  // weight attribute to consider
-	BWM_reduce strategy,       // use either maximum or minimum weight
-	bool symmetric,            // build a symmetric matrix
-	bool compact               // remove unused row & columns
+	GrB_Matrix *A,                 // [output] matrix (EdgeIDs)
+	GrB_Matrix *A_w,               // [output] matrix (weights)
+	GrB_Vector *rows,              // [output] filtered rows
+	const Graph *g,                // graph
+	const LabelID *lbls,           // [optional] labels to consider
+	unsigned short n_lbls,         // number of labels
+	const RelationID *rels,        // [optional] relationships to consider
+	unsigned short n_rels,         // number of relationships
+	const AttributeID weight,      // weight attribute to consider
+	BWM_reduce_strategy strategy,  // use either maximum or minimum weight
+	bool symmetric,                // build a symmetric matrix
+	bool compact                   // remove unused row & columns
 ) {
 	ASSERT(g != NULL);
 	ASSERT(A != NULL);
