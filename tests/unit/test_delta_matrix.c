@@ -1545,14 +1545,14 @@ void test_Delta_Matrix_add() {
 	// A + B
 	//--------------------------------------------------------------------------
 
-	info = Delta_eWiseAdd(C, GrB_LOR_MONOID_BOOL, A, B);
+	info = Delta_eWiseAdd(C, GrB_LOR, A, B);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	Delta_Matrix_validate(C);
 	Delta_Matrix_wait(C, true);
 
-	info = GrB_Matrix_eWiseAdd_Monoid(
-		C_GB, NULL, NULL, GrB_LOR_MONOID_BOOL, A_GB, B_GB, NULL);
+	info = GrB_Matrix_eWiseAdd_BinaryOp(
+		C_GB, NULL, NULL, GrB_LOR, A_GB, B_GB, NULL);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
@@ -1583,14 +1583,14 @@ void test_Delta_Matrix_add() {
 	// A + B
 	//--------------------------------------------------------------------------
 
-	info = Delta_eWiseAdd(C, GrB_LOR_MONOID_BOOL, A, B);
+	info = Delta_eWiseAdd(C, GrB_LOR, A, B);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	Delta_Matrix_validate(C);
 	Delta_Matrix_wait(C, sync);
 
-	info = GrB_Matrix_eWiseAdd_Monoid(
-		C_GB, NULL, NULL, GrB_LOR_MONOID_BOOL, A_GB, B_GB, NULL);
+	info = GrB_Matrix_eWiseAdd_BinaryOp(
+		C_GB, NULL, NULL, GrB_LOR, A_GB, B_GB, NULL);
 	TEST_ASSERT(info == GrB_SUCCESS);
 	
 	//--------------------------------------------------------------------------

@@ -33,10 +33,10 @@
 // CDM <!CDP>= (ADM - BM) ∪ (BDM - AM) ∪ (ADM ∩ BDM)
 GrB_Info Delta_eWiseAdd
 (
-    Delta_Matrix C,       // input/output matrix for results
-    const GrB_Monoid op,  // defines '+' for T=A+B
-    const Delta_Matrix A, // first input:  matrix A
-    const Delta_Matrix B  // second input: matrix B
+    Delta_Matrix C,         // input/output matrix for results
+    const GrB_BinaryOp op,  // defines '+' for T=A+B
+    const Delta_Matrix A,   // first input:  matrix A
+    const Delta_Matrix B    // second input: matrix B
 ) {
 	ASSERT(A  != NULL);
 	ASSERT(B  != NULL);
@@ -44,7 +44,6 @@ GrB_Info Delta_eWiseAdd
 	ASSERT(op != NULL);
 	ASSERT(!DELTA_MATRIX_MAINTAIN_TRANSPOSE(C));
 
-	GrB_Info  info;
 	GrB_Index nrows;
 	GrB_Index ncols;
 	GrB_Index adp_vals;
@@ -62,7 +61,6 @@ GrB_Info Delta_eWiseAdd
 	GrB_Matrix   BDP        = DELTA_MATRIX_DELTA_PLUS(B);
 	GrB_Matrix   BDM        = DELTA_MATRIX_DELTA_MINUS(B);
 	GrB_Matrix   DM_union   = NULL;
-	GrB_BinaryOp biop       = NULL;
 
 	GrB_Matrix_nvals(&adp_vals, ADP);
 	GrB_Matrix_nvals(&adm_vals, ADM);
@@ -75,12 +73,11 @@ GrB_Info Delta_eWiseAdd
 	if(!handle_addition && !handle_deletion) {
 		GrB_Matrix_clear(CDM);
 		GrB_Matrix_clear(CDP);
-		return GrB_Matrix_eWiseAdd_Monoid(CM, NULL, NULL, op, AM, BM, NULL);
+		return GrB_Matrix_eWiseAdd_BinaryOp(CM, NULL, NULL, op, AM, BM, NULL);
 	}
 
 	Delta_Matrix_nrows(&nrows, C);
 	Delta_Matrix_ncols(&ncols, C);
-	GrB_Monoid_get_VOID(op, (void *) &biop, GxB_MONOID_OPERATOR);
 
 	//--------------------------------------------------------------------------
 	// DM_union = (ADM - BM) ∪ (BDM - AM)
@@ -88,28 +85,23 @@ GrB_Info Delta_eWiseAdd
 	if(handle_deletion) {
 		GrB_Matrix_new(&DM_union, GrB_BOOL, nrows, ncols);
 
-		info = GrB_transpose(
-			DM_union, BM, NULL, ADM, GrB_DESC_SCT0);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_transpose(DM_union, BM, NULL, ADM, GrB_DESC_SCT0));
 
-		info = GrB_transpose(
-			DM_union, AM, GrB_ONEB_BOOL, BDM, GrB_DESC_SCT0);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_transpose(
+			DM_union, AM, GrB_ONEB_BOOL, BDM, GrB_DESC_SCT0));
 	}
 
 	//--------------------------------------------------------------------------
 	// M: CM = AM + BM ----- The bulk of the work.
 	//--------------------------------------------------------------------------
-	info = GrB_Matrix_eWiseAdd_Monoid(CM, NULL, NULL, op, AM, BM, NULL);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp(CM, NULL, NULL, op, AM, BM, NULL));
 	// don't use again, could have been overwritten.
 	AM = BM = NULL;
 
 	//--------------------------------------------------------------------------
 	// CDP = ADP + BDP ---- Must later remove intersection with M
 	//--------------------------------------------------------------------------
-	info = GrB_Matrix_eWiseAdd_Monoid(CDP, NULL, NULL, op, ADP, BDP, NULL);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp(CDP, NULL, NULL, op, ADP, BDP, NULL));
 
 	// don't use again, could have been overwritten.
 	ADP = BDP = NULL;
@@ -117,18 +109,16 @@ GrB_Info Delta_eWiseAdd
 	//--------------------------------------------------------------------------
     // CDM <!CDP>= (ADM - BM) ∪ (BDM - AM) ∪ (ADM ∩ BDM)
 	//--------------------------------------------------------------------------
-	info = GrB_Matrix_eWiseMult_BinaryOp(
-		CDM, NULL, NULL, GrB_ONEB_BOOL, ADM, BDM, NULL);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_Matrix_eWiseMult_BinaryOp(
+		CDM, NULL, NULL, GrB_ONEB_BOOL, ADM, BDM, NULL));
 
 	// don't use again, could have been overwritten.
 	ADM = BDM = NULL;
 
 	if(handle_deletion && handle_addition){
 		// delete intersection of CDM with CDP
-		info = GrB_transpose(
-			CDM, CDP, GrB_ONEB_BOOL, DM_union, GrB_DESC_SCT0);
-		ASSERT(info == GrB_SUCCESS); 
+		GrB_OK (GrB_transpose(
+			CDM, CDP, GrB_ONEB_BOOL, DM_union, GrB_DESC_SCT0));
 	}
 
 	//--------------------------------------------------------------------------
@@ -137,24 +127,22 @@ GrB_Info Delta_eWiseAdd
 
 	// if the operator does not care which value it returns (CM or CDP) the next 
 	// step is unnessecary.
-	if(handle_addition && biop != GrB_ONEB_BOOL && biop != GxB_ANY_BOOL && 
-		biop != GrB_ONEB_UINT64 && biop != GxB_ANY_UINT64)
+	if(handle_addition && op != GrB_ONEB_BOOL && op != GxB_ANY_BOOL && 
+		op != GrB_ONEB_UINT64 && op != GxB_ANY_UINT64)
 	{
-		info = GrB_transpose(CM, CM, biop, CDP, GrB_DESC_ST0);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_transpose(CM, CM, op, CDP, GrB_DESC_ST0));
 	}
 
 	//--------------------------------------------------------------------------
 	// CDP<!CM> = ADP + BDP ---- remove intersection with M
 	//--------------------------------------------------------------------------
 	if(handle_addition){
-		info = GrB_transpose(CDP, CM, NULL, CDP, GrB_DESC_RSCT0);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_transpose(CDP, CM, NULL, CDP, GrB_DESC_RSCT0));
 	}
 
 	Delta_Matrix_wait(C, false);
 	GrB_free(&DM_union);
-	return info;
+	return GrB_SUCCESS;
 }
 
 // All zombies should be equal to alpha if in AM or beta if in BM
@@ -242,7 +230,7 @@ GrB_Info Delta_eWiseUnion
 			M_times_DP, NULL, NULL, op, AM, BDP, NULL);
 		ASSERT(info == GrB_SUCCESS);
 			
-		// The accum biop is not used 
+		// The accum op is not used 
 		// (since there should be no intersection between AM and BM)
 		// However it is needed so that previous entries are not deleted. 
 		info = GrB_Matrix_eWiseMult_BinaryOp(

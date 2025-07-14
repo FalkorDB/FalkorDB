@@ -331,10 +331,10 @@ GrB_Info Delta_mxv_count
 // CDM <!CDP>= (ADM - BM) ∪ (BDM - AM) ∪ (ADM ∩ BDM)
 GrB_Info Delta_eWiseAdd
 (
-    Delta_Matrix C,       // input/output matrix for results
-    const GrB_Monoid op,  // defines '+' for T=A+B
-    const Delta_Matrix A, // first input:  matrix A
-    const Delta_Matrix B  // second input: matrix B
+    Delta_Matrix C,         // input/output matrix for results
+    const GrB_BinaryOp op,  // defines '+' for T=A+B
+    const Delta_Matrix A,   // first input:  matrix A
+    const Delta_Matrix B    // second input: matrix B
 ) ;
 
 // All zombies should be equal to alpha if in AM or beta if in BM
