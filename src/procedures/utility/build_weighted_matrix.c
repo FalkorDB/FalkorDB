@@ -33,14 +33,14 @@ typedef struct
 // will compare two edges and give the one with the minimum or maximum weight
 static void _compare_EdgeID_value 
 (
-	uint64_t *z,
-	const uint64_t *x,
-	GrB_Index ix,
-	GrB_Index jx,
-	const uint64_t *y,
-	GrB_Index iy,
-	GrB_Index jy,
-	const compareContext *ctx
+	uint64_t *z,              // [output] edgeID with lowest weight attribute
+	const uint64_t *x,        // [input]  edgeID of the first matrix
+	GrB_Index ix,             // unused
+	GrB_Index jx,             // unused
+	const uint64_t *y,        // [input]  edgeID of the second matrix
+	GrB_Index iy,             // unused
+	GrB_Index jy,             // unused
+	const compareContext *ctx // [input] context
 ) {
 	*z = *x;
 	Edge _x, _y;
@@ -50,6 +50,10 @@ static void _compare_EdgeID_value
 	SIValue *xv = GraphEntity_GetProperty((GraphEntity *) &_x, ctx->w);
 	SIValue *yv = GraphEntity_GetProperty((GraphEntity *) &_y, ctx->w);
 
+	// if xv is not numeric, assume that yv is lesser (even if it is also non
+	// numeric) and return y.
+	// otherwise, if yv is non numeric, and xv is numeric, return x,
+	// otherwise, return y if it is less than x.
 	if ((SI_TYPE(*xv) & SI_NUMERIC) == 0 ||
 		((SI_TYPE(*yv) & SI_NUMERIC) && 
 		SIValue_Compare(*xv, *yv, NULL) == ctx->comp)
