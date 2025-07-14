@@ -140,8 +140,8 @@ static void _reduceToMatrixAny
 	}
 }
 
-// collapse the entries in a two tensors down to a single value by finding the 
-// lowest or highest weight edge
+// collapse the entries in a two matrices down to a single value by finding the 
+// lowest or highest weight entry
 static void _pickBinary
 (
 	uint64_t *z,               // [output] single edgeId (min or max)
@@ -153,11 +153,11 @@ static void _pickBinary
 	GrB_Index jy,              // unused
 	const compareContext *ctx  // context
 ) {
-	GrB_Vector _v = AS_VECTOR(*x);
-
 	// -infinity if max or +infinity if min
-	SIValue minV = SI_DoubleVal(ctx->comp * INFINITY);
 	EdgeID minID;
+
+	GrB_Vector _v = GrB_NULL;
+	SIValue minV = SI_DoubleVal(ctx->comp * INFINITY);
 
 	if(SCALAR_ENTRY(*x)) {
 		minID = *x;
@@ -165,12 +165,14 @@ static void _pickBinary
 		Graph_GetEdge(ctx->g, minID, &currE);
 		SIValue *currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w);
 
-		// treat edges without the attribute or with a non-numeric attribute
-		// as infinite length
+		// only update minV if edge attribute is numeric
 		if (SI_TYPE(*currV) & SI_NUMERIC) {
 			minV = *currV;
 		}
-	} else { // find the minimum weighted edge in the vector
+	} else {
+		// find the minimum weighted edge in the vector
+		_v = AS_VECTOR(*x);
+
 		// stack allocate the iterator
 		struct GB_Iterator_opaque _i;
 		GxB_Iterator i = &_i;
@@ -189,8 +191,7 @@ static void _pickBinary
 		currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w);
 		info = GxB_Vector_Iterator_next(i);
 
-		// treat edges without the attribute or with a non-numeric attribute
-		// as infinite length
+		// only update minV if edge attribute is numeric
 		if (SI_TYPE(*currV) & SI_NUMERIC) {
 			minV = *currV;
 		}
@@ -209,22 +210,21 @@ static void _pickBinary
 			info = GxB_Vector_Iterator_next(i);
 		}
 	}
-	
-	_v = AS_VECTOR(*y);
-	
+
 	if(SCALAR_ENTRY(*y)) {
 		Edge currE;
 		Graph_GetEdge(ctx->g, (EdgeID) *y, &currE);
 		SIValue *currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w);
 
-		// treat edges without the attribute or with a non-numeric attribute
-		// as infinite length
+		// only update minV if edge attribute is numeric
 		if (SI_TYPE(*currV) & SI_NUMERIC &&
 			SIValue_Compare(minV, *currV, NULL) == ctx->comp) {
 			minV = *currV;
 			minID = *y;
 		}
-	} else { // find the minimum weighted edge in the vector
+	} else {
+		// find the minimum weighted edge in the vector
+		_v = AS_VECTOR(*y);
 		// stack allocate the iterator
 		struct GB_Iterator_opaque _i;
 		GxB_Iterator i = &_i;

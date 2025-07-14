@@ -13,8 +13,10 @@ class testMST(FlowTestsBase):
         self.generate_random_graph()
 
     def tearDown(self):
-        self.graph.query("MATCH (a) RETURN count(a)")
-        self.graph.delete()
+        try:
+            self.graph.delete()
+        except:
+            pass
 
     def generate_random_graph(self):
         # nodes of four different labels, each with 20 nodes
