@@ -238,7 +238,12 @@ SIValue AR_OUTGOINGDEGREE
 	return _AR_NodeDegree(argv, argc, GRAPH_EDGE_DIR_OUTGOING);
 }
 
-SIValue AR_PROPERTY(SIValue *argv, int argc, void *private_data) {
+SIValue AR_PROPERTY
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
 	// return NULL for missing graph entity
 	if(SI_TYPE(argv[0]) == T_NULL) return SI_NullVal();
 
@@ -260,37 +265,103 @@ SIValue AR_PROPERTY(SIValue *argv, int argc, void *private_data) {
 	// Process inputs
 	//--------------------------------------------------------------------------
 
+	SIValue val;
+	SIValue *p_val;
 	SIValue obj = argv[0];
-	if(SI_TYPE(obj) & SI_GRAPHENTITY) {
-		// retrieve entity property
-		GraphEntity *graph_entity = (GraphEntity *)obj.ptrval;
-		const char *prop_name     = argv[1].stringval;
-		AttributeID prop_idx     = argv[2].longval;
+	SIValue key = argv[1];
+	const char *key_str = key.stringval;
 
-		// We have the property string, attempt to look up the index now.
-		if(prop_idx == ATTRIBUTE_ID_NONE) {
-			GraphContext *gc = QueryCtx_GetGraphCtx();
-			prop_idx = GraphContext_GetAttributeID(gc, prop_name);
+	SIType t = SI_TYPE(obj);
+	switch(t) {
+		case T_NODE:
+		case T_EDGE:
+		{
+			// retrieve entity property
+			GraphEntity *graph_entity = (GraphEntity *)obj.ptrval;
+			const char *prop_name     = argv[1].stringval;
+			AttributeID prop_idx      = argv[2].longval;
+
+			// we have the property string, attempt to look up the index now
+			if(prop_idx == ATTRIBUTE_ID_NONE) {
+				GraphContext *gc = QueryCtx_GetGraphCtx();
+				prop_idx = GraphContext_GetAttributeID(gc, prop_name);
+			}
+
+			// retrieve the property
+			p_val = GraphEntity_GetProperty(graph_entity, prop_idx);
+			return SI_ConstValue(p_val);
 		}
 
-		// Retrieve the property.
-		SIValue *value = GraphEntity_GetProperty(graph_entity, prop_idx);
-		return SI_ConstValue(value);
-	} else if(SI_TYPE(obj) & T_MAP) {
-		// retrieve map key
-		SIValue key = argv[1];
-		SIValue value;
+		case T_MAP:
+			// retrieve map key
+			Map_Get(obj, key, &val);
 
-		Map_Get(obj, key, &value);
-		// Return a volatile copy of the value, as it may be heap-allocated.
-		return SI_ShareValue(value);
-	} else if(SI_TYPE(obj) & T_POINT) {
-		// retrieve property key 
-		SIValue key = argv[1];
-		return Point_GetCoordinate(obj, key);
-	} else {
-		// unexpected type SI_TYPE(obj)
-		return SI_NullVal();
+			// Return a volatile copy of the value, as it may be heap-allocated.
+			return SI_ShareValue(val);
+
+		case T_POINT:
+			// retrieve property key 
+			return Point_GetCoordinate(obj, key);
+
+		case T_DATETIME:
+		{
+			// retrieve datetime component e.g. year, month, hour
+			int comp;
+			bool found = DateTime_getComponent(&obj, key_str, &comp);
+
+			if(found == false) {
+				ErrorCtx_SetError("unknown datetime component %s", key_str);
+				return SI_NullVal();	
+			}
+
+			return SI_LongVal(comp);
+		}
+
+		case T_DATE:
+		{
+			// retrieve date component e.g. year, month, day
+			int comp;
+			bool found = Date_getComponent(&obj, key_str, &comp);
+
+			if(found == false) {
+				ErrorCtx_SetError("unknown date component %s", key_str);
+				return SI_NullVal();
+			}
+
+			return SI_LongVal(comp);
+		}
+
+		case T_TIME:
+		{
+			// retrieve time component e.g. hour, minute, second
+			int comp;
+			bool found = Time_getComponent(&obj, key_str, &comp);
+
+			if(found == false) {
+				ErrorCtx_SetError("unknown time component %s", key_str);
+				return SI_NullVal();
+			}
+
+			return SI_LongVal(comp);
+		}
+
+		case T_DURATION:
+		{
+			// retrieve duration component e.g. years, months, hours, minutes
+			float comp;
+			bool found = Duration_getComponent(&obj, key_str, &comp);
+
+			if(found == false) {
+				ErrorCtx_SetError("unknown duration component %s", key_str);
+				return SI_NullVal();
+			}
+
+			return SI_DoubleVal(comp);
+		}
+
+		default:
+			// unexpected type
+			return SI_NullVal();
 	}
 }
 
@@ -361,7 +432,7 @@ void Register_EntityFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 3);
-	array_append(types, T_NULL | T_NODE | T_EDGE | T_MAP | T_POINT);
+	array_append(types, T_NULL | T_NODE | T_EDGE | T_MAP | T_POINT | SI_TEMPORAL);
 	array_append(types, T_STRING);
 	array_append(types, T_INT64);
 	ret_type = SI_ALL;

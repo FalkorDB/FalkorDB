@@ -28,15 +28,15 @@ AR_FuncDesc *AR_FuncDescNew
 ) {
 	AR_FuncDesc *desc = rm_calloc(1, sizeof(AR_FuncDesc));
 
-	desc->name                    =  name;
-	desc->func                    =  func;
-	desc->types                   =  types;
-	desc->ret_type                =  ret_type;
-	desc->min_argc                =  min_argc;
-	desc->max_argc                =  max_argc;
-	desc->internal                =  internal;
-	desc->aggregate               =  false;
-	desc->reducible               =  reducible;
+	desc->name      =  name;
+	desc->func      =  func;
+	desc->types     =  types;
+	desc->ret_type  =  ret_type;
+	desc->min_argc  =  min_argc;
+	desc->max_argc  =  max_argc;
+	desc->internal  =  internal;
+	desc->aggregate =  false;
+	desc->reducible =  reducible;
 
 	return desc;
 }
