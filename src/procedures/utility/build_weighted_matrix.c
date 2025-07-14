@@ -409,11 +409,11 @@ GrB_Info Build_Weighted_Matrix
 
 	bool multiEdgeFlag = Graph_RelationshipContainsMultiEdge(g, rel_id);
 
-	// in case there are multiple relation types, include them in _A
 	for (unsigned short i = 1; i < n_rels; i++) {
 		rel_id = GETRELATIONID(i);
 		multiEdgeFlag = multiEdgeFlag || 
 			Graph_RelationshipContainsMultiEdge(g, rel_id);
+
 		D = Graph_GetRelationMatrix(g, rel_id, false);
 		ASSERT(D != NULL);
 
