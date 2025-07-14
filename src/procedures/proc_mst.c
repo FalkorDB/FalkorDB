@@ -386,7 +386,6 @@ ProcedureResult Proc_MSTInvoke
 		GrB_OK (GxB_Matrix_Iterator_attach(pdata->it, pdata->tree, NULL));
 
 		pdata->info = GxB_Matrix_Iterator_seek(pdata->it, 0);
-		ASSERT(info == GrB_SUCCESS);
 	}
 
 	return PROCEDURE_OK;
