@@ -237,19 +237,7 @@ static void _pickBinary
 
 		Edge currE;
 		SIValue *currV = NULL;
-		EdgeID currID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
-
-		Graph_GetEdge(ctx->g, currID, &currE);
-		currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w);
-		info = GxB_Vector_Iterator_next(i);
-
-		// treat edges without the attribute or with a non-numeric attribute
-		// as infinite length
-		if (SI_TYPE(*currV) & SI_NUMERIC &&
-			SIValue_Compare(minV, *currV, NULL) == ctx->comp) {
-			minV = *currV;
-			minID= currID;
-		}
+		EdgeID currID;
 
 		while (info != GxB_EXHAUSTED) {
 			currID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
@@ -503,6 +491,8 @@ GrB_Info Build_Weighted_Matrix
 	if (A_w) {
 		GrB_OK(GrB_Matrix_new(A_w, GrB_FP64, n, n));
 
+		// if no attribute was specified by the user return any EdgeID and 
+		// zero weight
 		if (weight == ATTRIBUTE_ID_NONE) {
 			// if no weight specified, weights are zero
 			GrB_OK (GrB_Matrix_assign_FP64(
