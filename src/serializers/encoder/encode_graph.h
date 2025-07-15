@@ -8,5 +8,18 @@
 
 #include "../serializers_include.h"
 
-void RdbSaveGraph(RedisModuleIO *rdb, void *value);
+#define GRAPH_ENCODING_LATEST_V  17  // latest RDB encoding version
+#define GRAPH_DECODE_MIN_V       10  // min backward compatible version
+
+void RdbSaveGraph_latest
+(
+	SerializerIO rdb,
+	void *value
+);
+
+void RdbSaveGraph
+(
+	RedisModuleIO *rdb,
+	void *value
+);
 

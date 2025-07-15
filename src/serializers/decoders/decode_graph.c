@@ -3,8 +3,8 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "decoders.h"
 #include "decode_graph.h"
-#include "current/v17/decode_v17.h"
 
 static GraphContext *_GetOrCreateGraphContext
 (
@@ -23,21 +23,13 @@ static GraphContext *_GetOrCreateGraphContext
 	return gc;
 }
 
-// load a graph from RDB
-GraphContext *RdbLoadGraph
+// load a graph from SerializerIO
+GraphContext *SerializerLoadGraph
 (
-	RedisModuleIO *rdb
+	SerializerIO io,       // serializer
+	const char *key_name,  // load graph under this key name
+	int encvar             // encoder version
 ) {
-	const RedisModuleString *rm_key_name = RedisModule_GetKeyNameFromIO(rdb);
-	const char *key_name = RedisModule_StringPtrLen(rm_key_name, NULL);
-
-	// initialize SerializerIO from RDB
-	SerializerIO io = SerializerIO_FromBufferedRedisModuleIO(rdb, false);
-
-	// read encoded graph name
-	char *graph_name = SerializerIO_ReadBuffer(io, NULL);
-	ASSERT(graph_name != NULL);
-
 	// decode under key_name
 	// it is possible for the graph_name not to match key_name
 	// this can happen when restoring a graph under a different name
@@ -50,11 +42,74 @@ GraphContext *RdbLoadGraph
 	GraphContext *gc = _GetOrCreateGraphContext(key_name);
 	ASSERT(gc != NULL);
 
-	// populate graph from RDB
-	RdbLoadGraphContext_latest(io, gc);
+	switch(encvar) {
+		case 10:
+			RdbLoadGraphContext_v10(io, gc);
+			break;
 
-	// clean up
+		case 11:
+			RdbLoadGraphContext_v11(io, gc);
+			break;
+
+		case 12:
+			RdbLoadGraphContext_v12(io, gc);
+			break;
+
+		case 13:
+			RdbLoadGraphContext_v13(io, gc);
+			break;
+
+		case 14: {
+			RdbLoadGraphContext_v14(io, gc);
+			break;
+		}
+
+		case 15: {
+			RdbLoadGraphContext_v15(io, gc);
+			break;
+		}
+
+		case 16: {
+			RdbLoadGraphContext_v16(io, gc);
+			break;
+		}
+
+		case 17: {
+			RdbLoadGraphContext_v17(io, gc);
+			break;
+		}
+
+		default:
+			ASSERT(false && "attempted to read unsupported RedisGraph version from RDB file.");
+			break;
+	}
+
+	return gc;
+}
+
+// load a graph from RDB
+GraphContext *RdbLoadGraph
+(
+	RedisModuleIO *rdb,  // RDB
+	int encvar           // encoder version
+) {
+	// get key name from RDB
+	const RedisModuleString *rm_key_name = RedisModule_GetKeyNameFromIO(rdb);
+	const char *key_name = RedisModule_StringPtrLen(rm_key_name, NULL);
+
+	// initialize SerializerIO from RDB
+	SerializerIO io = SerializerIO_FromBufferedRedisModuleIO(rdb, false);
+
+	// read encoded graph name
+	char *graph_name = SerializerIO_ReadBuffer(io, NULL);
+	ASSERT(graph_name != NULL);
 	rm_free(graph_name);
+
+	// decode under key_name
+	// note that key name might differ from graph name, this can happen in the
+	// event of DUMP & RESTORE when the graph is restored under a different key
+	GraphContext *gc = SerializerLoadGraph(io, key_name, encvar);
+
 	SerializerIO_Free(&io);
 
 	return gc;

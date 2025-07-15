@@ -6,10 +6,8 @@
 
 #include "graphmeta_type.h"
 #include "../version.h"
-#include "encoding_version.h"
 #include "encoder/encode_graph.h"
 #include "decoders/decode_graph.h"
-#include "decoders/decode_previous.h"
 
 // declaration of the type for redis registration
 RedisModuleType *GraphMetaRedisModuleType;
@@ -33,13 +31,7 @@ static void *_GraphMetaType_RdbLoad
 		return NULL;
 	}
 
-	if(encver < GRAPH_ENCODING_LATEST_V) {
-		// previous version
-		gc = Decode_Previous(rdb, encver);
-	} else {
-		// current version
-		gc = RdbLoadMetaGraph(rdb);
-	}
+	gc = RdbLoadMetaGraph(rdb, encver);
 
 	// add GraphContext to global array of graphs
 	GraphContext_RegisterWithModule(gc);
@@ -68,14 +60,17 @@ int GraphMetaType_Register
 	RedisModuleTypeMethods tm = { 0 };
 
 	tm.version  = REDISMODULE_TYPE_METHOD_VERSION;
-	tm.rdb_load = _GraphMetaType_RdbLoad;
+	tm.rdb_load = RdbLoadMetaGraph;
 	tm.rdb_save = _GraphMetaType_RdbSave;
 	tm.free     = _GraphMetaType_Free;
 
 	GraphMetaRedisModuleType = RedisModule_CreateDataType(ctx, "graphmeta",
 			GRAPH_ENCODING_LATEST_V, &tm);
 
-	if(GraphMetaRedisModuleType == NULL) return REDISMODULE_ERR;
+	if(GraphMetaRedisModuleType == NULL) {
+		return REDISMODULE_ERR;
+	}
+
 	return REDISMODULE_OK;
 }
 

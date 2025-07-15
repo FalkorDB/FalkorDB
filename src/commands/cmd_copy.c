@@ -59,8 +59,8 @@
 #include "../redismodule.h"
 #include "../graph/graphcontext.h"
 #include "../serializers/serializer_io.h"
-#include "../serializers/encoder/v17/encode_v17.h"
-#include "../serializers/decoders/current/v17/decode_v17.h"
+#include "../serializers/encoder/encode_graph.h"
+#include "../serializers/decoders/decode_graph.h"
 
 #include <stdio.h>
 #include <fcntl.h>
@@ -136,7 +136,7 @@ static void GraphCopyContext_Free
 	rm_free(copy_ctx);
 }
 
-// encode graph to disk
+// encode graph to FILE*
 // this function should run on a child process, giving us the guarantees:
 // 1. the cloned graph wouldn't change
 // 2. due to memory seperation we do not need to hold any locks
@@ -182,6 +182,10 @@ static int encode_graph
 	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE, "dump graph: %s to: %s",
 			copy_ctx->src, copy_ctx->path);
 
+	// write encoder version
+	SerializerIO_WriteUnsigned(io, GRAPH_ENCODING_LATEST_V);
+
+	// encode graph
 	RdbSaveGraph_latest(io, gc);
 
 cleanup:
@@ -240,8 +244,6 @@ static void LoadGraphFromFile
 	// read file content into buffer
 	fread(buffer, 1, fileLength, f);
 
-	fclose(f);  // close file
-
 	//--------------------------------------------------------------------------
 	// create memory stream
 	//--------------------------------------------------------------------------
@@ -256,12 +258,15 @@ static void LoadGraphFromFile
 	io = SerializerIO_FromStream(stream, false);
 	ASSERT(io != NULL);
 
+	// read encoder version
+	uint64_t encver = SerializerIO_ReadUnsigned(io);
+
 	// decode graph from io
 	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
 			"Decoding graph: %s from: %s", copy_ctx->dest, copy_ctx->path);
 
-	GraphContext *gc = GraphContext_Retrieve(ctx, copy_ctx->rm_dest, false, true);
-	RdbLoadGraphContext_latest(io, gc);
+	GraphContext *gc = SerializerLoadGraph(io, copy_ctx->dest,
+			GRAPH_ENCODING_LATEST_V);
 	ASSERT(gc != NULL);
 
 	//--------------------------------------------------------------------------
@@ -296,8 +301,8 @@ static void LoadGraphFromFile
 
 		// replicate graph
 		// GRAPH.RESTORE dest <payload>
-		RedisModule_Replicate(ctx, "GRAPH.RESTORE", "cb", copy_ctx->dest, buffer,
-				fileLength);
+		RedisModule_Replicate(ctx, "GRAPH.RESTORE", "cb", copy_ctx->dest,
+				buffer, fileLength);
 
 		RedisModule_ThreadSafeContextUnlock(ctx);  // release GIL
 
@@ -339,6 +344,7 @@ static void ForkDoneHandler
 		GraphCopyContext *copy_ctx = (GraphCopyContext*)user_data;
 		RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(copy_ctx->bc);
 		RedisModule_ReplyWithError(ctx, "copy failed");
+
 		// fork failed
 		GraphCopyContext_Free(copy_ctx);
 		RedisModule_FreeThreadSafeContext(ctx);
@@ -363,10 +369,10 @@ static void _Graph_Copy
 	bool error = false;
 	GraphContext *gc = NULL;
 
-	RedisModuleString *rm_src    = copy_ctx->rm_src;
-	RedisModuleString *rm_dest   = copy_ctx->rm_dest;
-	RedisModuleBlockedClient *bc = copy_ctx->bc;
-	RedisModuleCtx *ctx          = RedisModule_GetThreadSafeContext(bc);
+	RedisModuleBlockedClient *bc      = copy_ctx->bc;
+	RedisModuleCtx           *ctx     = RedisModule_GetThreadSafeContext(bc);
+	RedisModuleString        *rm_src  = copy_ctx->rm_src;
+	RedisModuleString        *rm_dest = copy_ctx->rm_dest;
 
 	//--------------------------------------------------------------------------
 	// validations
@@ -410,8 +416,10 @@ static void _Graph_Copy
 	// child process will encode src graph to a file
 	// parent process will decode cloned graph from file
 
-	int pid = -1;
-	while(pid == -1) {
+	int pid   = -1;  // fork pid
+	int tries = 5;   // number of tries
+
+	while(pid == -1 && tries-- > 0) {
 		// try to fork
 		RedisModule_ThreadSafeContextLock(ctx); // lock GIL
 
@@ -419,6 +427,10 @@ static void _Graph_Copy
 		// we do not want to fork while the graph is modified
 		// might be redundant, see: GraphContext_LockForCommit
 		Graph_AcquireReadLock(gc->g);
+
+		// make sure all matrices do not contain pending changes
+		// we do not want to risk forking when some matrix is in mid flush
+		Graph_ApplyAllPending(gc->g, false);
 
 		pid = RedisModule_Fork(ForkDoneHandler, copy_ctx);
 		RedisModule_ThreadSafeContextUnlock(ctx);  // release GIL
@@ -483,16 +495,20 @@ int Graph_Copy
 		return RedisModule_WrongArity(ctx);
 	}
 
+	RedisModuleString *src_graph_id = argv[1];
+	RedisModuleString *dst_graph_id = argv[2];
+
 	// block the client
 	RedisModuleBlockedClient *bc = RedisModule_BlockClient(ctx, NULL, NULL,
 			NULL, 0);
 
 	// retain arguments
-	RedisModule_RetainString(ctx, argv[1]);
-	RedisModule_RetainString(ctx, argv[2]);
+	RedisModule_RetainString(ctx, src_graph_id);
+	RedisModule_RetainString(ctx, dst_graph_id);
 
 	// create command context
-	GraphCopyContext *context = GraphCopyContext_New(bc, argv[1], argv[2]);
+	GraphCopyContext *context =
+		GraphCopyContext_New(bc, src_graph_id, dst_graph_id);
 
 	// add GRAPH.COPY as a cron task to run as soon as possible
 	Cron_AddTask(0, _Graph_Copy, NULL, context);

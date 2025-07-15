@@ -8,15 +8,25 @@
 
 #include "../serializers_include.h"
 
+// load a graph from SerializerIO
+GraphContext *SerializerLoadGraph
+(
+	SerializerIO io,       // serializer
+	const char *key_name,  // load graph under this key name
+	int encver             // encoder version
+);
+
 // load a graph from RDB
 GraphContext *RdbLoadGraph
 (
-	RedisModuleIO *rdb
+	RedisModuleIO *rdb,  // RDB
+	int encver           // encoder version
 );
 
 // load a graph virtual key from RDB
-GraphContext *RdbLoadMetaGraph
+void *RdbLoadMetaGraph
 (
-	RedisModuleIO *rdb
+	RedisModuleIO *rdb,  // RDB
+	int encver           // encoder version
 );
 
