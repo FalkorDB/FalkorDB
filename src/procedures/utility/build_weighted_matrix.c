@@ -27,8 +27,8 @@ currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w); \
 /* only update minV if edge attribute is numeric */              \
 bool replace = (SI_TYPE(*currV) & SI_NUMERIC) &&                 \
 	SIValue_Compare(minV, *currV, NULL) == ctx->comp;            \
-minV  = replace? *currV: minV;                                   \
-minID = replace? currID: minID;
+minV  = replace ? *currV : minV;                                 \
+minID = replace ? currID : minID;
 
 // structure that holds all the context nessesary for the GraphBLAS functions
 // can select the right edge
@@ -155,39 +155,28 @@ static void _pickBinary
 	GrB_Index jy,              // unused
 	const compareContext *ctx  // context
 ) {
-	// -infinity if max or +infinity if min
-	EdgeID minID;
-
-	// stack allocate the iterator
-	struct GB_Iterator_opaque _i;
-	GxB_Iterator i = &_i;
-	GrB_Vector _v  = GrB_NULL;
-	SIValue minV   = SI_DoubleVal(ctx->comp * INFINITY);
-	SIValue *currV = NULL;
-	EdgeID currID;
-	Edge currE;
-	GrB_Info info;
 	uint64_t _x;
-	
-	if(SCALAR_ENTRY(*x)) {
-		minID = *x;
-	} else {
-		// find the minimum weighted edge in the vector
-		_v = AS_VECTOR(*x);
+	Edge currE;
+	EdgeID minID;
+	EdgeID currID;
+	GrB_Info info;
+	struct GB_Iterator_opaque _i;  // stack allocate the iterator
 
-		info = GxB_Vector_Iterator_attach(i, _v, NULL);
-		ASSERT(info == GrB_SUCCESS);
+	GxB_Iterator i     = &_i;
+	GrB_Vector   _v    = GrB_NULL;
+	SIValue      minV  = SI_DoubleVal(ctx->comp * INFINITY); // -inf if max or +inf min
+	SIValue     *currV = NULL;
 
-		info = GxB_Vector_Iterator_seek(i, 0);
-		ASSERT(info == GrB_SUCCESS);
+	//--------------------------------------------------------------------------
+	// search for min / max weight attribute on both x and y
+	//--------------------------------------------------------------------------
 
-		minID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
-	}
+	uint64_t operands[2] = {*x, *y};
 
-	for(int k = 0; k < 2; k++)
-	{
-		_x = k? *y: *x;
-		if(SCALAR_ENTRY(_x)) {
+	for (int k = 0; k < 2; k++) {
+		_x = operands[k];
+
+		if (SCALAR_ENTRY(_x)) {
 			currID = (EdgeID) _x;
 			COMPARE_AND_CHANGE_MINID;
 		} else {
@@ -209,6 +198,14 @@ static void _pickBinary
 		}
 	}
 
+	// in case minV wasn't modified
+	// (both x and y weight attribute isn't numeric)
+	// set minID to the last set edgeID
+	if (minV.doubleval == (ctx->comp * INFINITY)) {
+		minID = currID;
+	}
+
+	// set the entry
 	*z = minID;
 }
 

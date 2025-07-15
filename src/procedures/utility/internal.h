@@ -28,7 +28,7 @@ GrB_Info Build_Matrix
 	bool compact             // remove unused row & columns
 );
 
-//reduction strategy to be used by build weighted matrix
+// reduction strategy to be used by build weighted matrix
 typedef enum {
 	BWM_MIN,  // choose the minimum Edge 
 	BWM_MAX   // choose the maximum Edge
