@@ -60,7 +60,7 @@ int GraphMetaType_Register
 	RedisModuleTypeMethods tm = { 0 };
 
 	tm.version  = REDISMODULE_TYPE_METHOD_VERSION;
-	tm.rdb_load = RdbLoadMetaGraph;
+	tm.rdb_load = _GraphMetaType_RdbLoad;
 	tm.rdb_save = _GraphMetaType_RdbSave;
 	tm.free     = _GraphMetaType_Free;
 

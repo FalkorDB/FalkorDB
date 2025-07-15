@@ -98,7 +98,12 @@ GraphContext *RdbLoadGraph
 	const char *key_name = RedisModule_StringPtrLen(rm_key_name, NULL);
 
 	// initialize SerializerIO from RDB
-	SerializerIO io = SerializerIO_FromBufferedRedisModuleIO(rdb, false);
+	SerializerIO io;
+	if(encvar < 17) {
+		io = SerializerIO_FromRedisModuleIO(rdb, false);
+	} else {
+		io = SerializerIO_FromBufferedRedisModuleIO(rdb, false);
+	}
 
 	// read encoded graph name
 	char *graph_name = SerializerIO_ReadBuffer(io, NULL);
