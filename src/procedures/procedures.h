@@ -7,7 +7,7 @@
 #pragma once
 
 #include "proc_bfs.h"
-#include "proc_mst.h"
+#include "proc_msf.h"
 #include "proc_wcc.h"
 #include "proc_cdlp.h"
 #include "proc_labels.h"
