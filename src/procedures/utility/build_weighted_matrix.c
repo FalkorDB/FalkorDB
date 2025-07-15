@@ -20,6 +20,16 @@
 	GxB_IndexBinaryOp_free(&minID_indexOP);                      \
 }
 
+#define COMPARE_AND_CHANGE_MINID                                 \
+Graph_GetEdge(ctx->g, currID, &currE);                           \
+currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w); \
+                                                                 \
+/* only update minV if edge attribute is numeric */              \
+bool replace = (SI_TYPE(*currV) & SI_NUMERIC) &&                 \
+	SIValue_Compare(minV, *currV, NULL) == ctx->comp;            \
+minV  = replace? *currV: minV;                                   \
+minID = replace? currID: minID;
+
 // structure that holds all the context nessesary for the GraphBLAS functions
 // can select the right edge
 typedef struct
@@ -71,16 +81,8 @@ static void _reduceToMatrix
 		}
 
 		while (info != GxB_EXHAUSTED) {
-			EdgeID CurrID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
-			Graph_GetEdge(ctx->g, CurrID, &currE);
-			currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w);
-
-			if((SI_TYPE(*currV) & SI_NUMERIC) && 
-				SIValue_Compare(minV, *currV, NULL) == ctx->comp) {
-				minV  = *currV;
-				minID = CurrID;
-			}
-
+			EdgeID currID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
+			COMPARE_AND_CHANGE_MINID;
 			info = GxB_Vector_Iterator_next(i);
 		}
 		
@@ -156,101 +158,54 @@ static void _pickBinary
 	// -infinity if max or +infinity if min
 	EdgeID minID;
 
-	GrB_Vector _v = GrB_NULL;
-	SIValue minV = SI_DoubleVal(ctx->comp * INFINITY);
-
+	// stack allocate the iterator
+	struct GB_Iterator_opaque _i;
+	GxB_Iterator i = &_i;
+	GrB_Vector _v  = GrB_NULL;
+	SIValue minV   = SI_DoubleVal(ctx->comp * INFINITY);
+	SIValue *currV = NULL;
+	EdgeID currID;
+	Edge currE;
+	GrB_Info info;
+	uint64_t _x;
+	
 	if(SCALAR_ENTRY(*x)) {
 		minID = *x;
-		Edge currE;
-		Graph_GetEdge(ctx->g, minID, &currE);
-		SIValue *currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w);
-
-		// only update minV if edge attribute is numeric
-		if (SI_TYPE(*currV) & SI_NUMERIC) {
-			minV = *currV;
-		}
 	} else {
 		// find the minimum weighted edge in the vector
 		_v = AS_VECTOR(*x);
 
-		// stack allocate the iterator
-		struct GB_Iterator_opaque _i;
-		GxB_Iterator i = &_i;
-
-		GrB_Info info = GxB_Vector_Iterator_attach(i, _v, NULL);
-		ASSERT(info == GrB_SUCCESS)
+		info = GxB_Vector_Iterator_attach(i, _v, NULL);
+		ASSERT(info == GrB_SUCCESS);
 
 		info = GxB_Vector_Iterator_seek(i, 0);
-		ASSERT(info == GrB_SUCCESS)
+		ASSERT(info == GrB_SUCCESS);
 
-		Edge currE;
-		SIValue *currV = NULL;
 		minID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
-
-		Graph_GetEdge(ctx->g, minID, &currE);
-		currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w);
-		info = GxB_Vector_Iterator_next(i);
-
-		// only update minV if edge attribute is numeric
-		if (SI_TYPE(*currV) & SI_NUMERIC) {
-			minV = *currV;
-		}
-
-		while (info != GxB_EXHAUSTED) {
-			EdgeID CurrID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
-			Graph_GetEdge(ctx->g, CurrID, &currE);
-			currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w);
-
-			if((SI_TYPE(*currV) & SI_NUMERIC) && 
-				SIValue_Compare(minV, *currV, NULL) == ctx->comp) {
-				minV  = *currV;
-				minID = CurrID;
-			}
-
-			info = GxB_Vector_Iterator_next(i);
-		}
 	}
 
-	if(SCALAR_ENTRY(*y)) {
-		Edge currE;
-		Graph_GetEdge(ctx->g, (EdgeID) *y, &currE);
-		SIValue *currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w);
+	for(int k = 0; k < 2; k++)
+	{
+		_x = k? *y: *x;
+		if(SCALAR_ENTRY(_x)) {
+			currID = (EdgeID) _x;
+			COMPARE_AND_CHANGE_MINID;
+		} else {
+			// find the minimum weighted edge in the vector
+			_v = AS_VECTOR(_x);
 
-		// only update minV if edge attribute is numeric
-		if (SI_TYPE(*currV) & SI_NUMERIC &&
-			SIValue_Compare(minV, *currV, NULL) == ctx->comp) {
-			minV = *currV;
-			minID = *y;
-		}
-	} else {
-		// find the minimum weighted edge in the vector
-		_v = AS_VECTOR(*y);
-		// stack allocate the iterator
-		struct GB_Iterator_opaque _i;
-		GxB_Iterator i = &_i;
+			info = GxB_Vector_Iterator_attach(i, _v, NULL);
+			ASSERT(info == GrB_SUCCESS);
 
-		GrB_Info info = GxB_Vector_Iterator_attach(i, _v, NULL);
-		ASSERT(info == GrB_SUCCESS)
+			info = GxB_Vector_Iterator_seek(i, 0);
+			ASSERT(info == GrB_SUCCESS);
+			
+			while (info != GxB_EXHAUSTED) {
+				currID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
+				COMPARE_AND_CHANGE_MINID;
 
-		info = GxB_Vector_Iterator_seek(i, 0);
-		ASSERT(info == GrB_SUCCESS)
-
-		Edge currE;
-		SIValue *currV = NULL;
-		EdgeID currID;
-
-		while (info != GxB_EXHAUSTED) {
-			currID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
-			Graph_GetEdge(ctx->g, currID, &currE);
-			currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w);
-
-			if((SI_TYPE(*currV) & SI_NUMERIC) && 
-				SIValue_Compare(minV, *currV, NULL) == ctx->comp) {
-				minV  = *currV;
-				minID = currID;
+				info = GxB_Vector_Iterator_next(i);
 			}
-
-			info = GxB_Vector_Iterator_next(i);
 		}
 	}
 
