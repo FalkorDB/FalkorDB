@@ -39,17 +39,12 @@ bool Delta_Matrix_isDirty
 	int pending_DP;
 	int pending_DM;
 
-	GrB_Info info = GrB_Matrix_get_INT32(DELTA_MATRIX_M(C), &pending_M, 
-		GxB_WILL_WAIT);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Matrix_get_INT32(DELTA_MATRIX_DELTA_PLUS(C), &pending_DP, 
-		GxB_WILL_WAIT);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Matrix_get_INT32(DELTA_MATRIX_DELTA_MINUS(C), &pending_DM, 
-		GxB_WILL_WAIT);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Matrix_get_INT32(DELTA_MATRIX_M(C), &pending_M, 
+		GxB_WILL_WAIT));
+	GrB_OK(GrB_Matrix_get_INT32(DELTA_MATRIX_DELTA_PLUS(C), &pending_DP, 
+		GxB_WILL_WAIT));
+	GrB_OK(GrB_Matrix_get_INT32(DELTA_MATRIX_DELTA_MINUS(C), &pending_DM, 
+		GxB_WILL_WAIT));
 	
 	return (pending_M || pending_DM || pending_DP);
 }
@@ -71,8 +66,8 @@ bool Delta_Matrix_Synced
 
 	GrB_Index dp_nvals;
 	GrB_Index dm_nvals;
-	GrB_Matrix_nvals(&dp_nvals, DELTA_MATRIX_DELTA_PLUS(C));
-	GrB_Matrix_nvals(&dm_nvals, DELTA_MATRIX_DELTA_MINUS(C));
+	GrB_OK(GrB_Matrix_nvals(&dp_nvals, DELTA_MATRIX_DELTA_PLUS(C)));
+	GrB_OK(GrB_Matrix_nvals(&dm_nvals, DELTA_MATRIX_DELTA_MINUS(C)));
 
 	return ((dp_nvals + dm_nvals) == 0);
 }
@@ -133,7 +128,6 @@ GrB_Info Delta_Matrix_nvals
 	GrB_Matrix  m;
 	GrB_Matrix  dp;
 	GrB_Matrix  dm;
-	GrB_Info    info;
 
 	GrB_Index  m_nvals   =  0;
 	GrB_Index  dp_nvals  =  0;
@@ -145,15 +139,12 @@ GrB_Info Delta_Matrix_nvals
 	dp  =  DELTA_MATRIX_DELTA_PLUS(A);
 	dm  =  DELTA_MATRIX_DELTA_MINUS(A);
 
-	info = GrB_Matrix_nvals(&m_nvals, m);
-	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_nvals(&dp_nvals, dp);
-	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_nvals(&dm_nvals, dm);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Matrix_nvals(&m_nvals, m));
+	GrB_OK(GrB_Matrix_nvals(&dp_nvals, dp));
+	GrB_OK(GrB_Matrix_nvals(&dm_nvals, dm));
 
 	*nvals = m_nvals + dp_nvals - dm_nvals;
-	return info;
+	return GrB_SUCCESS;
 }
 
 GrB_Info Delta_Matrix_clear
@@ -162,19 +153,14 @@ GrB_Info Delta_Matrix_clear
 ) {
 	ASSERT(A !=  NULL);
 
-	GrB_Matrix  m            =  DELTA_MATRIX_M(A);
-	GrB_Info    info         =  GrB_SUCCESS;
-	GrB_Matrix  dp           =  DELTA_MATRIX_DELTA_PLUS(A);
-	GrB_Matrix  dm           =  DELTA_MATRIX_DELTA_MINUS(A);
+	GrB_Matrix m    = DELTA_MATRIX_M(A);
+	GrB_Info   info = GrB_SUCCESS;
+	GrB_Matrix dp   = DELTA_MATRIX_DELTA_PLUS(A);
+	GrB_Matrix dm   = DELTA_MATRIX_DELTA_MINUS(A);
 
-	info = GrB_Matrix_clear(m);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Matrix_clear(dp);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Matrix_clear(dm);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Matrix_clear(m));
+	GrB_OK(GrB_Matrix_clear(dp));
+	GrB_OK(GrB_Matrix_clear(dm));
 
 	A->dirty = false;
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(A))
@@ -195,9 +181,8 @@ GrB_Info Delta_Matrix_type
 	ASSERT(type  !=  NULL);
 
 	GrB_Matrix M = DELTA_MATRIX_M(A);
-	GrB_Info info = GxB_Matrix_type(type, M);
-	ASSERT(info == GrB_SUCCESS);
-	return info;
+	GrB_OK(GxB_Matrix_type(type, M));
+	return GrB_SUCCESS;
 }
 
 // return # of bytes used for a matrix
@@ -210,21 +195,18 @@ GrB_Info Delta_Matrix_memoryUsage
 	ASSERT(size  !=  NULL);
 	size_t temp_size  = 0;
 	size_t _size      = 0;
-	GrB_Info info = GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_M(C));
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_M(C)));
 	_size += temp_size;
 
-	info = GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_DELTA_PLUS(C));
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_DELTA_PLUS(C)));
 	_size += temp_size;
 
-	info = GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_DELTA_MINUS(C));
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_DELTA_MINUS(C)));
 
 	_size += temp_size;
 	*size = _size;
 	
-	return info;
+	return GrB_SUCCESS;
 }
 
 // replace C's internal M matrix with given M
@@ -243,8 +225,7 @@ GrB_Info Delta_Matrix_setM
 	GrB_Index tot   = 0;
 	ASSERT(Delta_Matrix_Synced(C));
 
-	GrB_Info info = GrB_free(&DELTA_MATRIX_M(C));
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_free(&DELTA_MATRIX_M(C)));
 
 	DELTA_MATRIX_M(C) = *M;
 
@@ -252,10 +233,10 @@ GrB_Info Delta_Matrix_setM
 	{
 		Delta_Matrix CT = C->transposed;
 		ASSERT(Delta_Matrix_Synced(CT));
-		info = GrB_Matrix_apply(
-			DELTA_MATRIX_M(CT), NULL, NULL, GxB_ONE_BOOL, *M, GrB_DESC_T0);
+		GrB_OK(GrB_Matrix_apply(
+			DELTA_MATRIX_M(CT), NULL, NULL, GxB_ONE_BOOL, *M, GrB_DESC_T0));
 	}
-	
+
 	*M = NULL;
 	return GrB_SUCCESS;
 }
