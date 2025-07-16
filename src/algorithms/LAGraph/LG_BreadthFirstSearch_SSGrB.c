@@ -1,12 +1,11 @@
-//------------------------------------------------------------------------------
-// LG_BreadthFirstSearch_SSGrB:  BFS using Suitesparse extensions
-//------------------------------------------------------------------------------
-
-// LAGraph, (c) 2021 by The LAGraph Contributors, All Rights Reserved.
-// SPDX-License-Identifier: BSD-2-Clause
-//
-// See additional acknowledgments in the LICENSE file,
-// or contact permission@sei.cmu.edu for the full terms.
+/*
+ * Copyright (c) 2006-Present, Redis Ltd.
+ * All rights reserved.
+ *
+ * Licensed under your choice of the Redis Source Available License 2.0
+ * (RSALv2); or (b) the Server Side Public License v1 (SSPLv1); or (c) the
+ * GNU Affero General Public License v3 (AGPLv3).
+*/
 
 //------------------------------------------------------------------------------
 
