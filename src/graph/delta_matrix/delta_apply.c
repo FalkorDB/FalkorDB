@@ -8,11 +8,11 @@
 #include "delta_matrix.h"
 
 // applies on m and dp
-GrB_Info Delta_Matrix_apply         // C = op(A)
+GrB_Info Delta_Matrix_apply  // C = op(A)
 (
-    Delta_Matrix C,                 // input/output matrix for results
-    const GrB_UnaryOp op,           // operator to apply to the entries
-    const Delta_Matrix A            // first input:  matrix A
+    Delta_Matrix C,       // input/output matrix for results
+    const GrB_UnaryOp op, // operator to apply to the entries
+    const Delta_Matrix A  // first input:  matrix A
 ) {
     GrB_Matrix CM  = DELTA_MATRIX_M(C);
     GrB_Matrix CDP = DELTA_MATRIX_DELTA_PLUS(C);

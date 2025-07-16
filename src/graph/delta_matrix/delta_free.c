@@ -22,18 +22,11 @@ void Delta_Matrix_free
 	Delta_Matrix M = *C;
 	if(M == NULL) return;
 
-	GrB_Info info;
-	UNUSED(info);
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(M)) Delta_Matrix_free(&M->transposed);
 
-	info = GrB_Matrix_free(&M->matrix);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Matrix_free(&M->delta_plus);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Matrix_free(&M->delta_minus);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Matrix_free(&M->matrix));
+	GrB_OK(GrB_Matrix_free(&M->delta_plus));
+	GrB_OK(GrB_Matrix_free(&M->delta_minus));
 
 	pthread_mutex_destroy(&M->mutex);
 
