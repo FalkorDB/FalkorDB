@@ -227,6 +227,21 @@ class testParams(FlowTestsBase):
             self.env.assertEqual(expected, actual)
             self.env.assertEqual(expected, raw)
 
+    def test_backtick_param_name(self):
+        queries = [("CYPHER `param`    = 1 RETURN $`param`",    1),
+                   ("CYPHER `.pa.ram.` = 1 RETURN $`.pa.ram.`", 1),
+                   ("CYPHER `pa\ram`   = 1 RETURN $`pa\ram`",   1),
+                   ("CYPHER `p~aram`   = 1 RETURN $`p~aram`",   1),
+
+                   ("CYPHER `p~aram` = 1 `x` = 2 RETURN $`p~aram` + $`x`", 3),
+                   ("CYPHER `p~aram` = 1 x = 2   RETURN $`p~aram` + $x",   3)
+                   ]
+
+        for q, expected in queries:
+            res = self.graph.query(q).result_set[0]
+            actual = res[0]
+            self.env.assertEqual(expected, actual)
+
     def test_invalid_param(self):
         invalid_queries = [
                 "CYPHER param=a RETURN $param",                            # 'a' is undefined
@@ -358,3 +373,4 @@ class testParams(FlowTestsBase):
         self._assert_resultset_equals_expected(self.graph.query(query, params), query_info)
         plan = str(self.graph.explain(query, params=params))
         self.env.assertIn('NodeByIdSeek', plan)
+

@@ -98,10 +98,10 @@ static inline void skip_spaces
 	char *_head = *head;
 
 	// skip all spaces
-	while(_head[0] == ' '  ||
-		  _head[0] == '\n' ||
-		  _head[0] == '\t' ||
-		  _head[0] == '\r') {
+	while (_head[0] == ' '  ||
+			_head[0] == '\n' ||
+			_head[0] == '\t' ||
+			_head[0] == '\r') {
 		_head++;
 	}
 
@@ -141,9 +141,12 @@ static void consume_digits
 // e.g. budget42, _x99, user_name
 static bool consume_name
 (
-	char **head  // parser head
+	char **head,  // parser head
+	char **name,  // [output] consumed name
+	size_t *len   // [output] length of name
 ) {
 	char *_head = *head;
+	*name = _head;
 
 	// first character: must be a letter or underscore
 	if (!((*_head >= 'a' && *_head <= 'z') ||
@@ -162,7 +165,46 @@ static bool consume_name
 		_head++;
 	}
 
+	*len  = _head - *name;
 	*head = _head;
+	return true;
+}
+
+static bool consume_backtick_string
+(
+	char **head,  // parser head
+	char **str,   // [output] backticked string
+	size_t *len   // [output] length of backticked string
+) {
+	ASSERT(len  != NULL);
+	ASSERT(str  != NULL);
+	ASSERT(head != NULL && *head != NULL);
+
+	char *_head = *head;
+	ASSERT(_head[0] == '`');  // make sure we're on '`'
+
+	consume_char(&_head);  // advance pass '`'
+	*str = _head;          // beginning of string
+
+	// keep going until the closing backtick
+	char t;
+	while ((t = consume_char(&_head)) != '\0') {
+		if (t == '`') {
+			break;
+		}
+	}
+
+	// reached end of string before finding a closing backtick
+	if (t == '\0') {
+		return false;
+	}
+
+	ASSERT(t == '`');  // closing backtick
+
+	// determine string length
+	*len  = _head - *str - 1;  // compensate for closing backtick
+	*head = _head;             // update parser head
+
 	return true;
 }
 
@@ -173,20 +215,25 @@ static bool parse_param_name
 	char **head,  // parser head
 	char **param  // [output] param name
 ) {
+	size_t len = 0;
 	char *_head = *head;
 	skip_spaces(&_head);
 
-	*param = _head;
-
-	if(!consume_name(&_head)) {
-		return false;
+	// param might start with ` (backtick) in which case we consume all chars
+	// up to the closing backtick
+	if (_head[0] == '`') {
+		if (!consume_backtick_string(&_head, param, &len)) {
+			return false;
+		}
+	} else {
+		if (!consume_name(&_head, param, &len)) {
+			return false;
+		}
 	}
-
-	size_t len = _head - *param;
 
 	skip_spaces(&_head);
 
-	if(consume_char(&_head) != '=') {
+	if (consume_char(&_head) != '=') {
 		return false;
 	}
 
@@ -207,43 +254,20 @@ static bool parse_key
 	char **head,  // parser head
 	char **key    // [output] map key
 ) {
+	size_t len = 0;
 	char *_head = *head;
 	skip_spaces(&_head);
-
-	bool backtick = false;
-	*key = _head;
 
 	// key might start with ` (backtick) in which case we consume all chars
 	// up to the closing backtick
 	if (_head[0] == '`') {
-		backtick = true;
-		consume_char(&_head);  // advance pass '`'
-
-		// keep going until the closing backtick
-		char t;
-		while ((t = consume_char(&_head)) != '\0') {
-			if (t == '`') {
-				break;
-			}
-		}
-
-		// reached end of string before finding a closing backtick
-		if (t == '\0') {
+		if (!consume_backtick_string(&_head, key, &len)) {
 			return false;
 		}
 	} else {
-		if (!consume_name(&_head)) {
+		if (!consume_name(&_head, key, &len)) {
 			return false;
 		}
-	}
-
-	// determine key length
-	size_t len = _head - *key;
-
-	// remove enclosing backticks
-	if (backtick) {
-		len -= 2;  // compensate for the two backticks
-		(*key)++;
 	}
 
 	skip_spaces(&_head);
@@ -469,7 +493,7 @@ static bool parse_number
 	size_t len = _head - s;
 	_head[0] = '\0';
 
-	if(decimal_point || exponent) {
+	if (decimal_point || exponent) {
 		char *endptr;
 		double v = strtod(s, &endptr);
 		if (*endptr != '\0') {
@@ -508,7 +532,7 @@ static bool parse_array
 	t = peek(_head);
 
 	// empty array
-	if(t == ']') {
+	if (t == ']') {
 		consume_char(&_head);  // advance
 		*head = _head;         // accept
 		*v = SIArray_New(0);   // set output
@@ -561,7 +585,7 @@ static bool parse_map
 	t = peek(_head);
 
 	// empty map
-	if(t == '}') {
+	if (t == '}') {
 		consume_char(&_head);  // advance
 		*head = _head;          // accept
 		*v = Map_New(0);        // set output
@@ -682,27 +706,27 @@ dict *ParamParser_Parse
 	skip_spaces(&head);
 
 	// expecting opening keyword: CYPHER
-	if(!accept(&head, "CYPHER", 6)) {
+	if (!accept(&head, "CYPHER", 6)) {
 		return NULL;
 	}
 	skip_spaces(&head);
 
 	// skip any consecutive CYPHER keywords
 	// e.g. CYPHER CYPHER a=1 b=2
-	while(accept(&head, "CYPHER", 6)) {
+	while (accept(&head, "CYPHER", 6)) {
 		skip_spaces(&head);
 	}
 
 	dict *params = HashTableCreate(&dt);
 
-	while(*head != '\0') {
+	while (*head != '\0') {
 		char *param = NULL;
-		if(!parse_param_name(&head, &param)) {
+		if (!parse_param_name(&head, &param)) {
 			break;
 		}
 
 		SIValue *v = rm_malloc(sizeof(SIValue));
-		if(!parse_value(&head, v)) {
+		if (!parse_value(&head, v)) {
 			rm_free(v);
 			// todo: release individual values
 			HashTableRelease(params);
@@ -720,7 +744,7 @@ dict *ParamParser_Parse
 		// skip any consecutive CYPHER keywords
 		// e.g. CYPHER a=1 CYPHER b=2
 		skip_spaces(&head);
-		while(accept(&head, "CYPHER", 6)) {
+		while (accept(&head, "CYPHER", 6)) {
 			skip_spaces(&head);
 		}
 	}
