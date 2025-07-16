@@ -131,7 +131,7 @@ The FalkorDB build system runs within docker. For detailed instructions on build
 ## LOADING FALKORDB INTO REDIS
 
 FalkorDB is hosted by [Redis](https://redis.io), so you'll first have to load it as a Module to a Redis server. 
-> Note: [Redis 6.2](https://redis.io/download) is required for FalkorDB 2.12.
+> Note: [Redis 7.4](https://redis.io/download) is required for the latest FalkorDB version.
 
 💡 We recommend having Redis load FalkorDB during startup by adding the following to your redis.conf file:
 
