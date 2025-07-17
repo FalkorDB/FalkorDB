@@ -43,6 +43,8 @@ typedef struct {
 	SIValue output[2];        // array with up to 2 entries [edge, weight]
 	SIValue *yield_edge;      // edges
 	SIValue *yield_weight;    // edge weights
+	Edge **tree_list;         // trees in each forest
+	uint64_t *cc;             // trees in each forest
 } MSF_Context;
 
 // process procedure yield
@@ -240,6 +242,84 @@ error:
 	return false;
 }
 
+void _get_trees_from_matrix(
+	Edge ***trees_e,
+	NodeID ***trees_n,
+	const GrB_Matrix A,
+	uint64_t *cc,
+	GrB_Index cc_nvals
+) {
+	struct GB_Iterator_opaque _i;
+	GrB_Index nrows;
+	GrB_Index r;
+	GrB_Index c;
+	GrB_Info  it_info;
+	GrB_OK(GrB_Matrix_nrows(&nrows, A));
+#if RG_DEBUG
+	GrB_Type ty;
+	GxB_Matrix_type(&ty, A);
+	ASSERT(ty == GrB_UINT64);
+#endif
+	NodeID **_trees_n = array_new(NodeID *, 0);
+
+	for(uint k = 0; k < cc_nvals; k++) {
+		// if k is not included in the forest (UINT64_MAX), skip
+		if (cc[k] & MSB_MASK) continue;
+
+		uint64_t grand_rep = cc[cc[k]];
+		if ((grand_rep & MSB_MASK) == 0) {
+			grand_rep = cc[cc[k]] = SET_MSB((uint64_t) array_len(_trees_n));
+			array_append(_trees_n, array_new(NodeID, 1));
+			array_append(array_tail(_trees_n), k); 
+		} 
+		cc[k] = grand_rep;
+
+		ASSERT(cc[k] & MSB_MASK);
+		ASSERT(CLEAR_MSB(cc[k]) < array_len(_trees_n));
+
+		array_append(_trees_n[CLEAR_MSB(cc[k])], k);
+	}
+
+	Edge **_trees_e = array_new(Edge *, array_len(_trees_n));
+	for(uint k = 0; k < array_len(_trees_n); k++) {
+		array_append(_trees_e, array_new(Edge, array_len(_trees_n[k])));
+	}
+
+	GxB_Iterator i = &_i;
+	GrB_OK(GxB_Matrix_Iterator_attach(i, A, NULL));
+	it_info = GxB_Matrix_Iterator_seek(i, 0);
+	
+	while(it_info == GrB_SUCCESS) {
+		GxB_Matrix_Iterator_getIndex(i, &r, &c);
+		uint64_t j = CLEAR_MSB(cc[r]);
+		Edge **tree = &_trees_e[j];
+
+		// e points to a newly allocated edge at the end of tree
+		*tree = array_grow(*tree, 1);
+		Edge *e = &array_tail(*tree);
+		EdgeID e_id = GxB_Iterator_get_UINT64(i);
+
+		Edge_SetSrcNodeID(e, r);
+		Edge_SetDestNodeID(e, c);
+		e->id = e_id;
+
+		it_info = GxB_Matrix_Iterator_next(i);
+	}
+
+	ASSERT(it_info == GxB_EXHAUSTED);
+	if(trees_n != NULL) {
+		*trees_n = _trees_n;
+	} else {
+		array_free(_trees_n);
+	}
+
+	if(trees_e != NULL) {
+		*trees_e = _trees_e;
+	} else {
+		array_free(_trees_e);
+	}
+}
+
 // invoke the procedure
 ProcedureResult Proc_MSFInvoke
 (
@@ -317,11 +397,17 @@ ProcedureResult Proc_MSFInvoke
 	// construct input matrix
 	//--------------------------------------------------------------------------
 
-	GrB_Matrix A   = NULL;  // edge ids of filtered edges
-	GrB_Matrix A_w = NULL;  // weight of filtered edges
+	GrB_Matrix A     = NULL;  // edge ids of filtered edges
+	GrB_Matrix A_w   = NULL;  // weight of filtered edges
+	GrB_Vector cc    = NULL;
+	GrB_Vector rows  = NULL;
+	uint64_t cc_size;
+	GrB_Type cc_t;
+	uint64_t cc_n;
+	int handle;
 
 	// build input matrix
-	GrB_OK (Build_Weighted_Matrix(&A, &A_w, NULL, g, lbls, array_len(lbls), rels,
+	GrB_OK (Build_Weighted_Matrix(&A, &A_w, &rows, g, lbls, array_len(lbls), rels,
 			array_len(rels), weightAtt, maxST ? BWM_MAX : BWM_MIN, true, true));
 	
 	// free build matrix inputs
@@ -337,7 +423,7 @@ ProcedureResult Proc_MSFInvoke
 
 	// execute Minimum Spanning Forest
 	char msg[LAGRAPH_MSG_LEN];
-	GrB_Info msf_res = LAGraph_msf(&pdata->w_forest, A_w, false, msg);
+	GrB_Info msf_res = LAGraph_msf(&pdata->w_forest, &cc, A_w, false, msg);
 
 	// clean up algorithm inputs
 	GrB_OK (GrB_free(&A_w));
@@ -356,11 +442,9 @@ ProcedureResult Proc_MSFInvoke
 	GrB_Index n;
 	GrB_OK (GrB_Matrix_nrows(&n, pdata->w_forest));
 
-	if (pdata->yield_edge) {
-        // mask out dropped edges
-        GrB_OK (GrB_Matrix_assign(A, pdata->w_forest, NULL, A, GrB_ALL, n, GrB_ALL,
-				n, GrB_DESC_RS));
-	}
+	// mask out dropped edges
+	GrB_OK (GrB_Matrix_assign(A, pdata->w_forest, NULL, A, GrB_ALL, n, GrB_ALL,
+			n, GrB_DESC_RS));
 
 	pdata->forest = A;
 	
@@ -387,7 +471,40 @@ ProcedureResult Proc_MSFInvoke
 
 		pdata->info = GxB_Matrix_Iterator_seek(pdata->it, 0);
 	}
+	// set unused node ids to UINT64_MAX
+	GrB_OK (GrB_Vector_assign_UINT64(cc, rows, NULL, UINT64_MAX, GrB_ALL, n,
+			GrB_DESC_SC));
+	GrB_OK (GxB_Vector_unload(cc, (void *) &pdata->cc, &cc_t, &cc_n, 
+		&cc_size, &handle, NULL))	
+	ASSERT(handle == GrB_DEFAULT);
+	ASSERT(cc_t == GrB_UINT64); 
+	Edge   **trees   = NULL;
+	NodeID **trees_n = NULL;
+	_get_trees_from_matrix(&trees, &trees_n, A, pdata->cc, cc_n);
 
+	int tree_count = array_len(trees);
+	for (size_t i = 0; i < tree_count; i++) {
+		Edge *tree = trees[i];
+		NodeID *tree_n = trees_n[i];
+		printf("Tree %zu:\n", i);
+		for (size_t j = 0; j < array_len(tree); j++) {
+			Edge e = tree[j];
+			printf("  Edge: src=%lu, dest=%lu, id=%lu\n", e.src_id, e.dest_id, e.id);
+		}
+		printf("  Nodes: ");
+		for (size_t j = 0; j < array_len(tree_n); j++) {
+			printf("%lu, ", tree_n[j]);
+		}
+		printf("\n");
+		array_free(tree);
+		array_free(tree_n);
+		trees[i] = NULL;
+		trees_n[i] = NULL;
+	}
+
+	array_free(trees);
+	GrB_OK (GrB_free(&cc));
+	GrB_OK (GrB_free(&rows));
 	return PROCEDURE_OK;
 }
 
@@ -474,12 +591,13 @@ ProcedureResult Proc_MSFFree
 		MSF_Context *pdata = ctx->privateData;
 
 		if(pdata->it        != NULL) GrB_free(&pdata->it);
-		if(pdata->forest      != NULL) GrB_free(&pdata->forest);
-		if(pdata->w_forest    != NULL) GrB_free(&pdata->w_forest);
+		if(pdata->forest    != NULL) GrB_free(&pdata->forest);
+		if(pdata->w_forest  != NULL) GrB_free(&pdata->w_forest);
 		if(pdata->weight_it != NULL) GrB_free(&pdata->weight_it);
 
-		array_free(pdata->relationIDs);
+		rm_free(pdata->cc);
 		rm_free(ctx->privateData);
+		array_free(pdata->relationIDs);
 	}
 
 	return PROCEDURE_OK;

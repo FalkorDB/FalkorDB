@@ -23,10 +23,10 @@
 #define MSB_MASK_CMP ~MSB_MASK
 
 // Set X's most significant bit on.
-#define SET_MSB(x) (x) | MSB_MASK
+#define SET_MSB(x) ((x) | MSB_MASK)
 
 // Clear X's most significant bit.
-#define CLEAR_MSB(x) (x) & MSB_MASK_CMP
+#define CLEAR_MSB(x) ((x) & MSB_MASK_CMP)
 
 //------------------------------------------------------------------------------
 // code development settings
@@ -85,11 +85,19 @@
 // GraphBLAS return code validation
 // both GrB_SUCCESS and GrB_NO_VALUE are valid "OK"
 // return codes
-#define GrB_OK(GrB_method)                                      \
-{                                                               \
-	    GrB_Info info = (GrB_method) ;                          \
-	    ASSERT ( (info == GrB_SUCCESS || info == GrB_NO_VALUE)) \
-}
+#if RG_DEBUG
+	#define GrB_OK(GrB_method)                                       \
+	{                                                                \
+		GrB_Info info = (GrB_method) ;                               \
+		if (unlikely(info != GrB_SUCCESS && info != GrB_NO_VALUE)) { \
+			printf("GraphBLAS error: %d\n", info);                   \
+			printf("While running: %s\n", #GrB_method);              \
+			ASSERT(false);                                           \
+		}                                                            \
+	}
+#else
+	#define GrB_OK(GrB_method) (GrB_method)
+#endif
 
 // use likely and unlikely to provide the compiler with branch prediction information
 // for example:
