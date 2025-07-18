@@ -191,10 +191,11 @@ GrB_Info Delta_Matrix_memoryUsage
     size_t *size,           // # of bytes used by the matrix C
     const Delta_Matrix C    // matrix to query
 ) {
-	ASSERT(C     !=  NULL);
-	ASSERT(size  !=  NULL);
-	size_t temp_size  = 0;
-	size_t _size      = 0;
+	ASSERT(C    != NULL);
+	ASSERT(size != NULL);
+	size_t temp_size = 0;
+	size_t _size     = 0;
+
 	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_M(C)));
 	_size += temp_size;
 
@@ -202,8 +203,14 @@ GrB_Info Delta_Matrix_memoryUsage
 	_size += temp_size;
 
 	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_DELTA_MINUS(C)));
-
 	_size += temp_size;
+
+	// Add transpose 
+	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)){
+		GrB_OK(Delta_Matrix_memoryUsage(&temp_size, C->transposed));
+		_size += temp_size;
+	}
+
 	*size = _size;
 	
 	return GrB_SUCCESS;
