@@ -69,7 +69,7 @@ static void _clear_adj
 	// there are no additional edges connecting source to destination
 	// remove edge from THE adjacency matrix
 	if(!connected) {
-		info = Delta_Matrix_removeElement(ADJ, src, dest);
+		info = Delta_Matrix_removeElement_BOOL(ADJ, src, dest);
 		ASSERT(info == GrB_SUCCESS);
 	}
 }

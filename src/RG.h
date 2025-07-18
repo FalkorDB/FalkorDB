@@ -84,12 +84,16 @@
 
 // GraphBLAS return code validation
 // both GrB_SUCCESS and GrB_NO_VALUE are valid "OK"
-// return codes
-#define GrB_OK(GrB_method)                                      \
-{                                                               \
-	    GrB_Info info = GrB_method ;                            \
-	    ASSERT ( (info == GrB_SUCCESS || info == GrB_NO_VALUE)) \
-}
+// return codes  
+#if RG_DEBUG
+	#define GrB_OK(GrB_method)                                        \
+	{                                                                 \
+		GrB_Info rg_info = GrB_method ;                               \
+		ASSERT ( (rg_info == GrB_SUCCESS || rg_info == GrB_NO_VALUE)) \
+	}
+#else
+	#define GrB_OK(GrB_method) GrB_method
+#endif
 
 // use likely and unlikely to provide the compiler with branch prediction information
 // for example:
