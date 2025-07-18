@@ -1,5 +1,6 @@
 from common import *
 from random_graph import create_random_graph
+from random import randint
 
 GRAPH_ID      = "MSF"
 GRAPH_ID_RAND = "MSF_rand"
@@ -78,7 +79,7 @@ class testMSF(FlowTestsBase):
                 """CALL algo.MSF({nodeLabels: [1, 2, 3]})""",        # integer values in nodeLabels array
                 """CALL algo.MSF({relationshipTypes: [1, 2, 3]})""", # integer values in relationshipTypes array
                 """CALL algo.MSF({relationshipTypes: ['FAKE']})""",  # non-existent relationship type
-                """CALL algo.MSF(null) YIELD node, invalidField""",  # non-existent yield field
+                """CALL algo.MSF(null) YIELD nodes, invalidField""", # non-existent yield field
 
                 """CALL algo.MSF({nodeLabels: ['Person'],
                                relationshipTypes: ['KNOWS'],
@@ -99,7 +100,7 @@ class testMSF(FlowTestsBase):
         self.env.assertEqual(node_count, 0)
 
         # run MSF on empty graph
-        result = self.graph.query("CALL algo.MSF()")
+        result = self.graph.query("CALL algo.MSF() YIELD nodes, edges")
 
         # if we reach here, the algorithm didn't throw an exception
         # check if it returned empty results (acceptable behavior)
@@ -130,12 +131,16 @@ class testMSF(FlowTestsBase):
         # Run MSF algorithm
         result = self.graph.query("""
             CALL algo.MSF({relationshipTypes: ['R'], weightAttribute: 'cost'}) 
-            YIELD weight RETURN weight ORDER BY weight""")
+            YIELD edges 
+            UNWIND edges AS e 
+            RETURN e.cost AS cost
+            ORDER BY cost
+            """)
         result_set = result.result_set
 
         # The MSF should include the edges with the lowest costs
         # The edge without a cost attribute is only used if it is the only edge
-        # connecting to seperate components.
+        # connecting two seperate components.
         # The expected edges are:
         #   0.02189 (n2 to n3)
         #   0.2198  (n1 to n2)
@@ -167,8 +172,14 @@ class testMSF(FlowTestsBase):
 
         # Run MSF algorithm
         result = self.graph.query("""
-            CALL algo.MSF({relationshipTypes: ['R'], weightAttribute: 'cost', objective: 'maximize'})
-            YIELD weight RETURN weight ORDER BY weight""")
+            CALL algo.MSF(
+            {relationshipTypes: ['R'], 
+            weightAttribute: 'cost', 
+            objective: 'maximize'})
+            YIELD edges
+            UNWIND edges AS e
+            RETURN e.cost AS weight 
+            ORDER BY weight""")
         result_set = result.result_set
 
         # The MSF should include the edges with the highest costs
@@ -203,8 +214,12 @@ class testMSF(FlowTestsBase):
         """)
 
         # Run MSF algorithm
-        result = self.graph.query(""" CALL algo.MSF({relationshipTypes: ['R']}) 
-            YIELD edge RETURN edge.id""")
+        result = self.graph.query(""" 
+            CALL algo.MSF({relationshipTypes: ['R']}) 
+            YIELD edges
+            UNWIND edges AS e
+            RETURN e.id AS id
+            """)
         result_set = result.result_set
 
         # We should have exactly 3 different edges 
@@ -237,8 +252,11 @@ class testMSF(FlowTestsBase):
         """)
 
         # Run MSF algorithm
-        result = self.graph.query("""CALL algo.MSF({weightAttribute: 'cost'}) 
-            yield edge, weight return type(edge), weight""")
+        result = self.graph.query("""
+            CALL algo.MSF({weightAttribute: 'cost'}) 
+            YIELD edges
+            UNWIND edges as e
+            RETURN type(e), e.cost""")
         result_set = result.result_set
         self.env.assertEqual(len(result_set), 1)
 
@@ -267,7 +285,9 @@ class testMSF(FlowTestsBase):
         # Run MSF algorithm
         result = self.graph.query("""
             CALL algo.MSF({weightAttribute: 'cost', objective: 'maximize'}) 
-            yield edge, weight return type(edge), weight""")
+            YIELD edges
+            UNWIND edges as e
+            RETURN type(e), e.cost""")
 
         result_set = result.result_set
         self.env.assertEqual(len(result_set), 1)
@@ -309,7 +329,9 @@ class testMSF(FlowTestsBase):
         # Run MSF algorithm with relationship type A
         result = self.graph.query("""
             CALL algo.MSF({relationshipTypes: ['A'], weightAttribute: 'score'}) 
-            YIELD edge, weight RETURN edge.msf_ans, weight
+            YIELD edges
+            UNWIND edges AS e
+            RETURN e.msf_ans, e.score as weight
             ORDER BY weight
             """)
 
@@ -320,7 +342,9 @@ class testMSF(FlowTestsBase):
         # Run MSF algorithm with relationship type B
         result = self.graph.query("""
             CALL algo.MSF({relationshipTypes: ['B'], weightAttribute: 'score'}) 
-            YIELD edge, weight RETURN edge.msf_ans, weight
+            YIELD edges
+            UNWIND edges AS e
+            RETURN e.msf_ans, e.score as weight
             ORDER BY weight
             """)
 
@@ -331,7 +355,9 @@ class testMSF(FlowTestsBase):
         # Run MSF algorithm with both relationships
         result = self.graph.query("""
             CALL algo.MSF({weightAttribute: 'score'}) 
-            YIELD edge, weight RETURN edge.msf_ans, weight
+            YIELD edges
+            UNWIND edges AS e
+            RETURN e.msf_ans, e.score as weight
             ORDER BY weight
             """)
 
@@ -342,8 +368,9 @@ class testMSF(FlowTestsBase):
         # Run MSF algorithm with both relationships (max)
         result = self.graph.query("""
             CALL algo.MSF({weightAttribute: 'score', objective: 'maximize'}) 
-            YIELD edge, weight
-            RETURN edge.msf_ans, weight
+            YIELD edges
+            UNWIND edges AS e
+            RETURN e.msf_ans, e.score as weight
             ORDER BY weight
             """)
 
@@ -358,13 +385,13 @@ class testMSF(FlowTestsBase):
         # Run MSF algorithm with relationship type B
         result = self.graph.query("""
             CALL algo.MSF({relationshipTypes: ['B'], weightAttribute: 'score'}) 
-            YIELD edge, weight 
-            RETURN edge.msf_ans, weight
+            YIELD edges UNWIND edges AS e
+            RETURN e.msf_ans, e.score as weight
             ORDER BY weight
             """)
 
         result_set = result.result_set
-        ans_set = [[2, 1000.0], [2, 7654.0], [2, None]]
+        ans_set = [[2, "Hello"], [2, 1000.0], [2, 7654.0]]
         self.env.assertEqual(ans_set, result_set)
 
     def test_msf_rand_labels(self):
@@ -376,32 +403,28 @@ class testMSF(FlowTestsBase):
         # edge which bridges that partition.
         for l1 in "ABCD":
             for l2 in "ABCD":
-                if(l1 == l2): continue
+                if(l1 >= l2): continue
 
                 result_set = self.randomGraph.query("""
                     CALL algo.MSF({nodeLabels: [$l1, $l2], 
                     weightAttribute: 'weight'}) 
-                    YIELD edge, weight RETURN edge.weight, weight
+                    YIELD edges UNWIND edges AS e 
+                    RETURN COLLECT(e.weight)
                     """,
-                    params = {'l1':l1, 'l2': l2}).result_set
+                    params = {'l1': l1, 'l2': l2}).result_set
                 minEdge = self.find_min_edge(l1, l2)
-
-                result_wcc = self.randomGraph.query("""
-                    CALL algo.WCC({nodeLabels: [$l1, $l2]}) 
-                    YIELD componentId RETURN DISTINCT(componentId)
-                    """,
-                    params = {'l1':l1, 'l2': l2}).result_set
-
+                
                 if(minEdge is None): # components are disconnected.
                     # should return two spanning trees with 19 edges each.
                     # check that there are 19*2 = 38 edges total 
-                    self.env.assertEqual(len(result_set), 38)
-                    self.env.assertEqual(len(result_wcc), 2)
+                    self.env.assertEqual(len(result_set), 2)
+                    self.env.assertEqual(len(result_set[0][0]), 19)
+                    self.env.assertEqual(len(result_set[1][0]), 19)
                 else:
                     # connected component with 40 nodes: must have 39 edges.
-                    self.env.assertEqual(len(result_set), 39)
-                    self.env.assertIn([minEdge, minEdge], result_set)
-                    self.env.assertEqual(len(result_wcc), 1)
+                    self.env.assertEqual(len(result_set), 1)
+                    self.env.assertEqual(len(result_set[0][0]), 39)
+                    self.env.assertIn(minEdge, result_set[0][0])
 
     def test_msf_rand_labels_max(self):
         """Test MSF algorithm on random graph with multiple labels"""
@@ -412,30 +435,59 @@ class testMSF(FlowTestsBase):
         # edge which bridges that partition.
         for l1 in "ABCD":
             for l2 in "ABCD":
-                if(l1 == l2): continue
+                if(l1 >= l2): continue
 
                 result_set = self.randomGraph.query("""
                     CALL algo.MSF({nodeLabels: [$l1, $l2], 
                     weightAttribute: 'weight', objective: 'maximize'}) 
-                    YIELD edge, weight RETURN edge.weight, weight
+                    YIELD edges 
+                    RETURN [e IN edges| e.weight]
                     """,
-                    params = {'l1':l1, 'l2': l2}).result_set
+                    params = {'l1': l1, 'l2': l2}).result_set
                 maxEdge = self.find_max_edge(l1, l2)
                 
-                result_wcc = self.randomGraph.query("""
-                    CALL algo.WCC({nodeLabels: [$l1, $l2]}) 
-                    YIELD componentId RETURN DISTINCT(componentId)
-                    """,
-                    params = {'l1':l1, 'l2': l2}).result_set
-
                 if(maxEdge is None): # components are disconnected.
                     # should return two spanning trees with 19 edges each.
                     # check that there are 19*2 = 38 edges total 
-                    self.env.assertEqual(len(result_set), 38)
-                    self.env.assertEqual(len(result_wcc), 2)
+                    self.env.assertEqual(len(result_set), 2)
+                    self.env.assertEqual(len(result_set[0][0]), 19)
+                    self.env.assertEqual(len(result_set[1][0]), 19)
                 else:
                     # connected component with 40 nodes: must have 39 edges.
-                    self.env.assertEqual(len(result_set), 39)
-                    self.env.assertIn([maxEdge, maxEdge], result_set)
-                    self.env.assertEqual(len(result_wcc), 1)
+                    self.env.assertEqual(len(result_set), 1)
+                    self.env.assertEqual(len(result_set[0][0]), 39)
+                    self.env.assertIn(maxEdge, result_set[0][0])
 
+    # TODO: TEST that nodes are being returned correctly and test on an actual 
+    # forest
+
+    def test_msf_rand_forest(self):
+        """ Test that MSF correctly identifies and groups multiple trees """
+        # create the forest
+        nodes =[{"count": randint(5,40), "properties": 3, "labels": [l]} 
+            for l in "ABCDEFGHIJK"]
+
+        # add many edges between nodes of the same label
+        edges = [{"type": r, "source": l, "target": l, "count": 100} 
+                    for r in "LMNOPQRS" for l in range(11)]
+
+        create_random_graph(self.graph, nodes, edges)    
+        # set the weights
+        q = "MATCH ()-[r]->() SET r.weight = rand() * 100"
+        self.graph.query(q)
+
+        # get nodes and endpoints. 
+        result_set = self.graph.query("""
+            CALL algo.MSF({weightAttribute: 'weight'}) 
+            YIELD nodes, edges
+            RETURN [n in nodes | id(n)] AS nodeIds, 
+                [e IN edges | id(startNode(e))] 
+                + [e IN edges | id(endNode(e))] AS ends 
+            """).result_set
+        
+        # check that there is one more node than edge and that each node can be 
+        # found at least once in the resulting tree.
+        for tree in result_set:
+            self.env.assertEqual(len(tree[0]), len(tree[1]) / 2 + 1)
+            if(len(tree[0]) == 1): continue
+            self.env.assertEqual(set(tree[0]), set(tree[1]))
