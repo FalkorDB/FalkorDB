@@ -191,6 +191,11 @@ int RedisModule_OnLoad
 
 	if(_RegisterDataTypes(ctx) != REDISMODULE_OK) return REDISMODULE_ERR;
 
+	// enable RedisModule_IsIOError
+	// allow repl-diskless-load to work (if enabled)
+	// de-serialization code properly checks and handles IO errors
+	RedisModule_SetModuleOptions(ctx, REDISMODULE_OPTIONS_HANDLE_IO_ERRORS);
+
 	if(RedisModule_CreateCommand(ctx,
 				"graph.QUERY",
 				CommandDispatch,

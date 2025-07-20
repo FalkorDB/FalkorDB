@@ -59,13 +59,6 @@ void SerializerIO_WriteSigned
 	int64_t value     // value
 );
 
-// write string to stream
-void SerializerIO_WriteString
-(
-	SerializerIO io,      // stream to write to
-	RedisModuleString *s  // string
-);
-
 // write buffer to stream
 void SerializerIO_WriteBuffer
 (
@@ -100,47 +93,57 @@ void SerializerIO_WriteLongDouble
 //------------------------------------------------------------------------------
 
 // read unsigned from stream
-uint64_t SerializerIO_ReadUnsigned
+bool SerializerIO_ReadUnsigned
 (
-	SerializerIO io  // stream
+	SerializerIO io,  // stream
+	uint64_t *x       // [output]
 );
 
 // read signed from stream
-int64_t SerializerIO_ReadSigned
+bool SerializerIO_ReadSigned
 (
-	SerializerIO io  // stream
-);
-
-// read string from stream
-RedisModuleString *SerializerIO_ReadString
-(
-	SerializerIO io  // stream
+	SerializerIO io,  // stream
+	int64_t *x        // [output]
 );
 
 // read buffer from stream
-char *SerializerIO_ReadBuffer
+bool SerializerIO_ReadBuffer
 (
 	SerializerIO io,  // stream
-	size_t *lenptr     // number of bytes to read
+	char **x,         // [output]
+	size_t *lenptr    // [output] number of bytes to read
 );
 
 // read double from stream
-double SerializerIO_ReadDouble
+bool SerializerIO_ReadDouble
 (
-	SerializerIO io  // stream
+	SerializerIO io,  // stream
+	double *x         // [output]
 );
 
 // read float from stream
-float SerializerIO_ReadFloat
+bool SerializerIO_ReadFloat
 (
-	SerializerIO io  // stream
+	SerializerIO io,  // stream
+	float *x          // [output]
 );
 
 // read long double from stream
-long double SerializerIO_ReadLongDouble
+bool SerializerIO_ReadLongDouble
 (
-	SerializerIO io  // stream
+	SerializerIO io,  // stream
+	long double *x    // [output]
 );
+
+#define SerializerIO_Read(io, ptr)                                 \
+    _Generic(*(ptr),                                               \
+        uint64_t           : SerializerIO_ReadUnsigned,            \
+        int64_t            : SerializerIO_ReadSigned,              \
+        double             : SerializerIO_ReadDouble,              \
+        float              : SerializerIO_ReadFloat,               \
+        long double        : SerializerIO_ReadLongDouble           \
+    )                                                              \
+	(io, ptr)
 
 #define SerializerIO_Write(io, value,...)                          \
 	_Generic                                                       \
@@ -148,7 +151,6 @@ long double SerializerIO_ReadLongDouble
 		(value),                                                   \
 			uint64_t           : SerializerIO_WriteUnsigned     ,  \
 			int64_t            : SerializerIO_WriteSigned       ,  \
-			RedisModuleString* : SerializerIO_WriteString       ,  \
 			double             : SerializerIO_WriteDouble       ,  \
 			float              : SerializerIO_WriteFloat        ,  \
 			long double        : SerializerIO_WriteLongDouble      \

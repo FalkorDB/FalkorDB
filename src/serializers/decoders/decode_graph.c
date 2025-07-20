@@ -42,46 +42,55 @@ GraphContext *SerializerLoadGraph
 	GraphContext *gc = _GetOrCreateGraphContext(key_name);
 	ASSERT(gc != NULL);
 
+	bool decoded = false;
+
 	switch(encvar) {
-		case 10:
-			RdbLoadGraphContext_v10(io, gc);
-			break;
+		//case 10:
+		//	RdbLoadGraphContext_v10(io, gc);
+		//	break;
 
-		case 11:
-			RdbLoadGraphContext_v11(io, gc);
-			break;
+		//case 11:
+		//	RdbLoadGraphContext_v11(io, gc);
+		//	break;
 
-		case 12:
-			RdbLoadGraphContext_v12(io, gc);
-			break;
+		//case 12:
+		//	RdbLoadGraphContext_v12(io, gc);
+		//	break;
 
-		case 13:
-			RdbLoadGraphContext_v13(io, gc);
-			break;
+		//case 13:
+		//	RdbLoadGraphContext_v13(io, gc);
+		//	break;
 
-		case 14: {
-			RdbLoadGraphContext_v14(io, gc);
-			break;
-		}
+		//case 14: {
+		//	RdbLoadGraphContext_v14(io, gc);
+		//	break;
+		//}
 
-		case 15: {
-			RdbLoadGraphContext_v15(io, gc);
-			break;
-		}
+		//case 15: {
+		//	RdbLoadGraphContext_v15(io, gc);
+		//	break;
+		//}
 
-		case 16: {
-			RdbLoadGraphContext_v16(io, gc);
-			break;
-		}
+		//case 16: {
+		//	RdbLoadGraphContext_v16(io, gc);
+		//	break;
+		//}
 
 		case 17: {
-			RdbLoadGraphContext_v17(io, gc);
+			decoded = RdbLoadGraphContext_v17(io, gc);
 			break;
 		}
 
 		default:
 			ASSERT(false && "attempted to read unsupported RedisGraph version from RDB file.");
 			break;
+	}
+
+	if (!decoded) {
+		// TODO: log error
+		// TODO: might be dangerous, freeing half constructed graph context
+		GraphContext_Release(gc);
+		gc = NULL;
 	}
 
 	return gc;
@@ -104,11 +113,6 @@ GraphContext *RdbLoadGraph
 	} else {
 		io = SerializerIO_FromBufferedRedisModuleIO(rdb, false);
 	}
-
-	// read encoded graph name
-	char *graph_name = SerializerIO_ReadBuffer(io, NULL);
-	ASSERT(graph_name != NULL);
-	rm_free(graph_name);
 
 	// decode under key_name
 	// note that key name might differ from graph name, this can happen in the

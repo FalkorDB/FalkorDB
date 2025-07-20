@@ -88,8 +88,11 @@ static int _GenericKeyspaceHandler
 // Meta keys API
 //------------------------------------------------------------------------------
 
-// Checks if the graph name contains a hash tag between curly braces.
-static bool _GraphContext_NameContainsTag(const GraphContext *gc) {
+// checks if the graph name contains a hash tag between curly braces
+static bool _GraphContext_NameContainsTag
+(
+	const GraphContext *gc
+) {
 	const char *left_curly_brace = strstr(gc->graph_name, "{");
 	if(left_curly_brace) {
 		const char *right_curly_brace = strstr(left_curly_brace, "}");
@@ -100,8 +103,11 @@ static bool _GraphContext_NameContainsTag(const GraphContext *gc) {
 	return false;
 }
 
-// Calculate how many virtual keys are needed to represent the graph.
-static uint64_t _GraphContext_RequiredMetaKeys(const GraphContext *gc) {
+// calculate how many virtual keys are needed to represent the graph.
+static uint64_t _GraphContext_RequiredMetaKeys
+(
+	const GraphContext *gc
+) {
 	uint64_t vkey_entity_count;
 	Config_Option_get(Config_VKEY_MAX_ENTITY_COUNT, &vkey_entity_count);
 	gc->encoding_context->vkey_entity_count = vkey_entity_count;

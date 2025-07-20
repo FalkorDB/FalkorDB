@@ -73,12 +73,13 @@ static void _InitGraphDataStructure
 	Graph_ApplyAllPending(g, true);
 }
 
-static void _DecodeHeader
+static bool _DecodeHeader
 (
-	SerializerIO rdb,
+	SerializerIO io,
 	GraphContext *gc
 ) {
 	// Header format:
+	// Graph name
 	// Node count
 	// Edge count
 	// Deleted node count
@@ -89,23 +90,39 @@ static void _DecodeHeader
 	// Number of graph keys (graph context key + meta keys)
 	// Schema
 
+	// Graph name
+	char *graph_name;
+	if (!SerializerIO_ReadBuffer(io, &graph_name, NULL)) {
+		return false;
+	}
+
+	rm_free(graph_name);
+
 	// each key header contains the following:
 	// #nodes, #edges, #deleted nodes, #deleted edges, #labels matrices, #relation matrices
-	uint64_t node_count         = SerializerIO_ReadUnsigned(rdb);
-	uint64_t edge_count         = SerializerIO_ReadUnsigned(rdb);
-	uint64_t deleted_node_count = SerializerIO_ReadUnsigned(rdb);
-	uint64_t deleted_edge_count = SerializerIO_ReadUnsigned(rdb);
-	uint64_t label_count        = SerializerIO_ReadUnsigned(rdb);
-	uint64_t relation_count     = SerializerIO_ReadUnsigned(rdb);
+	uint64_t node_count;
+	uint64_t edge_count;
+	uint64_t deleted_node_count;
+	uint64_t deleted_edge_count;
+	uint64_t label_count;
+	uint64_t relation_count;
+
+	TRY_READ (io, node_count);
+	TRY_READ (io, edge_count);
+	TRY_READ (io, deleted_node_count);
+	TRY_READ (io, deleted_edge_count);
+	TRY_READ (io, label_count);
+	TRY_READ (io, relation_count);
 
 	uint64_t multi_edge[relation_count];
 
 	for(uint i = 0; i < relation_count; i++) {
-		multi_edge[i] = SerializerIO_ReadUnsigned(rdb);
+		TRY_READ (io, multi_edge[i]);
 	}
 
 	// total keys representing the graph
-	uint64_t key_number = SerializerIO_ReadUnsigned(rdb);
+	uint64_t key_number;
+	TRY_READ (io, key_number);
 
 	Graph *g = gc->g;
 
@@ -114,7 +131,7 @@ static void _DecodeHeader
 	bool first_vkey =
 		GraphDecodeContext_GetProcessedKeyCount(gc->decoding_context) == 0;
 
-	if(first_vkey == true) {
+	if (first_vkey == true) {
 		_InitGraphDataStructure(g, node_count, edge_count, deleted_node_count,
 				deleted_edge_count, label_count, relation_count);
 
@@ -130,7 +147,7 @@ static void _DecodeHeader
 	}
 
 	// decode graph schemas
-	RdbLoadGraphSchema_v17(rdb, gc, !first_vkey);
+	RdbLoadGraphSchema_v17(io, gc, !first_vkey);
 
 	// save decode statistics for later progess reporting
 	// e.g. "Decoded 20000/4500000 nodes"
@@ -138,11 +155,14 @@ static void _DecodeHeader
 	gc->decoding_context->edge_count         = edge_count;
 	gc->decoding_context->deleted_node_count = deleted_node_count;
 	gc->decoding_context->deleted_edge_count = deleted_edge_count;
+
+	return true;
 }
 
-static PayloadInfo *_RdbLoadKeySchema
+static bool _RdbLoadKeySchema
 (
-	SerializerIO rdb
+	SerializerIO io,
+	PayloadInfo **payloads
 ) {
 	// Format:
 	// #Number of payloads info - N
@@ -150,26 +170,33 @@ static PayloadInfo *_RdbLoadKeySchema
 	//     Encode state
 	//     Number of entities encoded in this state.
 
-	uint64_t payloads_count = SerializerIO_ReadUnsigned(rdb);
-	PayloadInfo *payloads = array_new(PayloadInfo, payloads_count);
+	uint64_t payloads_count;
+	TRY_READ (io, payloads_count);
 
-	for(uint i = 0; i < payloads_count; i++) {
+	*payloads = array_new(PayloadInfo, payloads_count);
+
+	for (uint i = 0; i < payloads_count; i++) {
 		// for each payload
 		// load its type and the number of entities it contains
 		PayloadInfo payload_info;
 
-		payload_info.state          = SerializerIO_ReadUnsigned(rdb);
-		payload_info.entities_count = SerializerIO_ReadUnsigned(rdb);
+		uint64_t state;
+		TRY_READ(io, state);
+		payload_info.state = state;
 
-		array_append(payloads, payload_info);
+		if (!SerializerIO_ReadUnsigned(io, &payload_info.entities_count)) {
+			return false;
+		}
+
+		array_append(*payloads, payload_info);
 	}
 
-	return payloads;
+	return true;
 }
 
-void RdbLoadGraphContext_v17
+bool RdbLoadGraphContext_v17
 (
-	SerializerIO rdb,
+	SerializerIO io,
 	GraphContext *gc
 ) {
 	// Key format:
@@ -180,7 +207,12 @@ void RdbLoadGraphContext_v17
 	//      Entities in payload
 	//  Payload(s) X N
 
-	_DecodeHeader(rdb, gc);
+	PayloadInfo *payloads = NULL;
+
+	if (!_DecodeHeader(io, gc)) {
+		goto short_read;
+	}
+
 	Graph *g = gc->g;
 
 	// log progress
@@ -190,7 +222,9 @@ void RdbLoadGraphContext_v17
 			gc->decoding_context->graph_keys_count);
 
 	// load the key schema
-	PayloadInfo *payloads = _RdbLoadKeySchema(rdb);
+	if (!_RdbLoadKeySchema(io, &payloads)) {
+		goto short_read;
+	}
 
 	// The decode process contains the decode operation of many meta keys, representing independent parts of the graph
 	// Each key contains data on one or more of the following:
@@ -205,7 +239,9 @@ void RdbLoadGraphContext_v17
 		switch(payload.state) {
 			case ENCODE_STATE_NODES:
 				Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
-				RdbLoadNodes_v17(rdb, g, payload.entities_count);
+				if (!RdbLoadNodes_v17(io, g, payload.entities_count)) {
+					goto short_read;
+				}
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -217,7 +253,9 @@ void RdbLoadGraphContext_v17
 				break;
 
 			case ENCODE_STATE_DELETED_NODES:
-				RdbLoadDeletedNodes_v17(rdb, g, payload.entities_count);
+				if (!RdbLoadDeletedNodes_v17(io, g, payload.entities_count)) {
+					goto short_read;
+				}
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -230,7 +268,9 @@ void RdbLoadGraphContext_v17
 
 			case ENCODE_STATE_EDGES:
 				Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
-				RdbLoadEdges_v17(rdb, g, payload.entities_count);
+				if (!RdbLoadEdges_v17(io, g, payload.entities_count)) {
+					goto short_read;
+				}
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -240,7 +280,9 @@ void RdbLoadGraphContext_v17
 
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
-				RdbLoadDeletedEdges_v17(rdb, g, payload.entities_count);
+				if (!RdbLoadDeletedEdges_v17(io, g, payload.entities_count)) {
+					goto short_read;
+				}
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -256,7 +298,10 @@ void RdbLoadGraphContext_v17
 						"Graph '%s' loading label matrices",
 						GraphContext_GetName(gc));
 
-				RdbLoadLabelMatrices_v17(rdb, gc);
+				if (!RdbLoadLabelMatrices_v17(io, gc)) {
+					goto short_read;
+				}
+
 				break;
 
 			case ENCODE_STATE_RELATION_MATRICES:
@@ -264,7 +309,9 @@ void RdbLoadGraphContext_v17
 						"Graph '%s' loading relation matrices",
 						GraphContext_GetName(gc));
 
-				RdbLoadRelationMatrices_v17(rdb, gc);
+				if (!RdbLoadRelationMatrices_v17(io, gc)) {
+					goto short_read;
+				}
 				break;
 
 			case ENCODE_STATE_ADJ_MATRIX:
@@ -272,7 +319,10 @@ void RdbLoadGraphContext_v17
 						"Graph '%s' loading Adjacency matrix",
 						GraphContext_GetName(gc));
 
-				RdbLoadAdjMatrix_v17(rdb, gc);
+				if (!RdbLoadAdjMatrix_v17(io, gc)) {
+					goto short_read;
+				}
+
 				break;
 
 			case ENCODE_STATE_LBLS_MATRIX:
@@ -280,7 +330,9 @@ void RdbLoadGraphContext_v17
 						"Graph '%s' loading Labels matrix",
 						GraphContext_GetName(gc));
 
-				RdbLoadLblsMatrix_v17(rdb, gc);
+				if (!RdbLoadLblsMatrix_v17(io, gc)) {
+					goto short_read;
+				}
 				break;
 
 			default:
@@ -290,11 +342,12 @@ void RdbLoadGraphContext_v17
 	}
 
 	array_free(payloads);
+	payloads = NULL;
 
 	// update decode context
 	GraphDecodeContext_IncreaseProcessedKeyCount(gc->decoding_context);
 
-	if(GraphDecodeContext_Finished(gc->decoding_context)) {
+	if (GraphDecodeContext_Finished(gc->decoding_context)) {
 		// compute transposes
 		_ComputeTransposeMatrices(g);
 
@@ -314,7 +367,7 @@ void RdbLoadGraphContext_v17
 		Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
 
 		// report index construction method
-		if(delay_indexing) {
+		if (delay_indexing) {
 			RedisModule_Log(NULL, "notice",
 					"Graph '%s' Indexes are constructed in the background.",
 					GraphContext_GetName(gc));
@@ -334,8 +387,8 @@ void RdbLoadGraphContext_v17
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
 			idx = PENDING_IDX(s);
 
-			if(idx != NULL) {
-				if(delay_indexing) {
+			if (idx != NULL) {
+				if (delay_indexing) {
 					// start async indexing
 					Indexer_PopulateIndex(gc, s, idx);
 				} else {
@@ -353,8 +406,8 @@ void RdbLoadGraphContext_v17
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_EDGE);
 			idx = PENDING_IDX(s);
 
-			if(idx != NULL) {
-				if(delay_indexing) {
+			if (idx != NULL) {
+				if (delay_indexing) {
 					// start async indexing
 					Indexer_PopulateIndex(gc, s, idx);
 				} else {
@@ -374,5 +427,12 @@ void RdbLoadGraphContext_v17
 		RedisModule_Log(NULL, "notice", "Done decoding graph %s",
 				GraphContext_GetName(gc));
 	}
+
+	return true;
+
+short_read:
+	if (payloads != NULL) array_free(payloads);
+
+	return false;
 }
 

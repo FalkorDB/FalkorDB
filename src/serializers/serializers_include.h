@@ -20,6 +20,14 @@
 #include "../graph/graphcontext.h"
 #include "../configuration/config.h"
 
+// try to read from io
+// return false in case of a short read
+#define TRY_READ(io, v)                       \
+    do {                                      \
+        if (!SerializerIO_Read((io), &(v)))   \
+            return false;                     \
+    } while (0)
+
 // this struct is used to describe the payload content of a key
 // it contains the type and the number of entities that were encoded
 typedef struct {

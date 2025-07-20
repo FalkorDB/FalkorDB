@@ -43,6 +43,7 @@ static void _DecodeHeader
 	GraphContext *gc
 ) {
 	// Header format:
+	// Graph name
 	// Node count
 	// Edge count
 	// Label matrix count
@@ -50,6 +51,10 @@ static void _DecodeHeader
 	// Does relationship matrix Ri holds mutiple edges under a single entry X N
 	// Number of graph keys (graph context key + meta keys)
 	// Schemas
+	
+	// Graph name
+	char *graph_name = SerializerIO_ReadBuffer(rdb, NULL);
+	rm_free(graph_name);
 
 	// each key header contains the following: #nodes, #edges, #labels matrices, #relation matrices
 	uint64_t node_count     = SerializerIO_ReadUnsigned(rdb);

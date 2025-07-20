@@ -8,11 +8,11 @@
 #include "uuid.h"
 
 char *UUID_New() {
-	/* Implementation is based on https://www.cryptosys.net/pki/uuid-rfc4122.html */
+	// implementation is based on https://www.cryptosys.net/pki/uuid-rfc4122.html
 
-	// Generate 16 random bytes.
-	unsigned char r[16];
+	// generate 16 random bytes
 	int i;
+	unsigned char r[16];
 
 	for(i = 0; i < 16; i++) {
 		r[i] = rand() % 0xff;
@@ -32,3 +32,4 @@ char *UUID_New() {
 	uuid[36] = '\0';
 	return uuid;
 }
+

@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "GraphBLAS.h"
+#include "decode_v17.h"
 #include "../../serializer_io.h"
 #include "../../../graph/graphcontext.h"
 #include "../../../graph/tensor/tensor.h"
@@ -12,9 +13,9 @@
 #include "../../../graph/delta_matrix/delta_matrix.h"
 
 // decode tensors
-static void _DecodeTensors
+static bool _DecodeTensors
 (
-	SerializerIO rdb,     // RDB
+	SerializerIO io,      // RDB
 	GrB_Matrix A,         // matrix to populate with tensors
 	uint64_t *n_tensors,  // [output] number of tensors loaded
 	uint64_t *n_elem      // [output] number of edges loaded
@@ -27,6 +28,7 @@ static void _DecodeTensors
 	//   tensor
 
 	ASSERT(A         != NULL);
+	ASSERT(io        != NULL);
 	ASSERT(n_elem    != NULL);
 	ASSERT(n_tensors != NULL);
 
@@ -34,22 +36,30 @@ static void _DecodeTensors
 	*n_tensors = 0;
 
 	// read number of tensors
-	uint64_t n = SerializerIO_ReadUnsigned(rdb);
+	uint64_t n;
+	TRY_READ(io, n);
 
 	// no tensors, simply return
-	if(n == 0) {
-		return;
+	if (n == 0) {
+		return true;
 	}
 
 	// decode and set tensors
-	for(uint64_t i = 0; i < n; i++) {
+	for (uint64_t i = 0; i < n; i++) {
 		// read tensor i,j indicies
-		GrB_Index i = SerializerIO_ReadUnsigned(rdb);
-		GrB_Index j = SerializerIO_ReadUnsigned(rdb);
+		GrB_Index i;
+		GrB_Index j;
+		if (!SerializerIO_ReadUnsigned(io, &i) ||
+			!SerializerIO_ReadUnsigned(io, &j)) {
+			return false;
+		}
 
 		// read tensor blob
+		void *blob;
 		GrB_Index blob_size;
-		void *blob = SerializerIO_ReadBuffer(rdb, (size_t*)&blob_size);
+		if (!SerializerIO_ReadBuffer(io, (char**)&blob, (size_t*)&blob_size)) {
+			return false;
+		}
 		ASSERT(blob != NULL);
 
 		GrB_Vector u;
@@ -72,12 +82,15 @@ static void _DecodeTensors
 
 	// set number of loaded tensors
 	*n_tensors = n;
+
+	return true;
 }
 
 // decode matrix
-static GrB_Matrix _DecodeMatrix
+static bool _DecodeMatrix
 (
-	SerializerIO rdb  // RDB
+	SerializerIO io,  // RDB
+	GrB_Matrix *A
 ) {
 	// format:
 	//  blob size
@@ -88,50 +101,61 @@ static GrB_Matrix _DecodeMatrix
 	//--------------------------------------------------------------------------
 
 	// read matrix blob
+	void *blob;
 	GrB_Index blob_size;
-	void *blob = SerializerIO_ReadBuffer(rdb, (size_t*)&blob_size);
+	if (! SerializerIO_ReadBuffer(io, (char**)&blob, (size_t*)&blob_size)) {
+		return false;
+	}
+
 	ASSERT(blob != NULL);
 
 	//--------------------------------------------------------------------------
 	// deserialize a GrB_Matrix from blob
 	//--------------------------------------------------------------------------
 
-	GrB_Matrix A;
-	GrB_Info info = GxB_Matrix_deserialize(&A, NULL, blob, blob_size, NULL);
+	GrB_Info info = GxB_Matrix_deserialize(A, NULL, blob, blob_size, NULL);
 	ASSERT(info == GrB_SUCCESS);
 
 	rm_free(blob);
 
-	return A;
+	return true;
 }
 
 // decode label matrices from rdb
-void RdbLoadLabelMatrices_v17
+bool RdbLoadLabelMatrices_v17
 (
-	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	SerializerIO io,  // RDB
+	GraphContext *gc  // graph context
 ) {
 	// format:
 	//  number of label matrices
 	//   label id
 	//   matrix
 
-	ASSERT(gc  != NULL);
-	ASSERT(rdb != NULL);
+	ASSERT(gc != NULL);
+	ASSERT(io != NULL);
 
 	GrB_Info info;
 	Graph *g = gc->g;
 
 	// read number of label matricies
-	int n = SerializerIO_ReadUnsigned(rdb);
+	uint64_t n;
+	TRY_READ(io, n);
 	
 	// decode each label matrix
-	for(int i = 0; i < n; i++) {
+	for (int i = 0; i < n; i++) {
 		// read label ID
-		LabelID l = SerializerIO_ReadUnsigned(rdb);
+		LabelID l;
+		uint64_t v;
+
+		TRY_READ(io, v);
+		l = v;
 
 		// decode matrix
-		GrB_Matrix L = _DecodeMatrix(rdb);
+		GrB_Matrix L;
+		if (!_DecodeMatrix(io, &L)) {
+			return false;
+		}
 
 		//----------------------------------------------------------------------
 		// update graph's label matrix with L
@@ -144,20 +168,22 @@ void RdbLoadLabelMatrices_v17
 		info = Delta_Matrix_setM(lbl, L);
 		ASSERT(info == GrB_SUCCESS);
 	}
+
+	return true;
 }
 
 // decode relationship matrices from rdb
-void RdbLoadRelationMatrices_v17
+bool RdbLoadRelationMatrices_v17
 (
-	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	SerializerIO io,  // RDB
+	GraphContext *gc  // graph context
 ) {
 	// format:
 	//   relation id X N
 	//   matrix      X N
 
-	ASSERT(gc  != NULL);
-	ASSERT(rdb != NULL);
+	ASSERT(gc != NULL);
+	ASSERT(io != NULL);
 
 	GrB_Info info;
 	Graph *g = gc->g;
@@ -168,15 +194,24 @@ void RdbLoadRelationMatrices_v17
 	// decode relationship matrices
 	for(int i = 0; i < n; i++) {
 		// read relation ID
-		RelationID r = SerializerIO_ReadUnsigned(rdb);
+		uint64_t v;
+		RelationID r;
+
+		TRY_READ(io, v);
+		r = v;
 
 		// decode matrix
-		GrB_Matrix R = _DecodeMatrix(rdb);
+		GrB_Matrix R;
+		if (!_DecodeMatrix(io, &R)) {
+			return false;
+		}
 
 		// decode tensors
 		uint64_t n_elem    = 0;  // number of tensor edges
 		uint64_t n_tensors = 0;  // number of tensors in matrix
-		_DecodeTensors(rdb, R, &n_tensors, &n_elem);
+		if (!_DecodeTensors(io, R, &n_tensors, &n_elem)) {
+			return false;
+		}
 
 		// plant M matrix
 		Delta_Matrix DR = Graph_GetRelationMatrix(g, r, false);
@@ -194,21 +229,26 @@ void RdbLoadRelationMatrices_v17
 
 		GraphStatistics_IncEdgeCount(&g->stats, r, nvals - n_tensors + n_elem);
 	}
+
+	return true;
 }
 
 // decode adjacency matrix
-void RdbLoadAdjMatrix_v17
+bool RdbLoadAdjMatrix_v17
 (
-	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	SerializerIO io,  // RDB
+	GraphContext *gc  // graph context
 ) {
 	// format:
 	//   adjacency matrix
 
-	ASSERT(gc  != NULL);
-	ASSERT(rdb != NULL);
+	ASSERT(io != NULL);
+	ASSERT(gc != NULL);
 
-	GrB_Matrix A = _DecodeMatrix(rdb);
+	GrB_Matrix A;
+	if (! _DecodeMatrix(io, &A)) {
+		return false;
+	}
 
 	Delta_Matrix adj = Graph_GetAdjacencyMatrix(gc->g, false);
 	ASSERT(adj != NULL);
@@ -216,21 +256,26 @@ void RdbLoadAdjMatrix_v17
 	// replace adj's current M matrix with A
 	GrB_Info info = Delta_Matrix_setM(adj, A);
 	ASSERT(info == GrB_SUCCESS);
+
+	return true;
 }
 
 // decode labels matrix
-void RdbLoadLblsMatrix_v17
+bool RdbLoadLblsMatrix_v17
 (
-	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	SerializerIO io,  // RDB
+	GraphContext *gc  // graph context
 ) {
 	// format:
 	//   lbls matrix
 
-	ASSERT(gc  != NULL);
-	ASSERT(rdb != NULL);
+	ASSERT(io != NULL);
+	ASSERT(gc != NULL);
 
-	GrB_Matrix A = _DecodeMatrix(rdb);
+	GrB_Matrix A;
+	if (!_DecodeMatrix(io, &A)) {
+		return false;
+	}
 
 	Delta_Matrix lbl = Graph_GetNodeLabelMatrix(gc->g);
 	ASSERT(lbl != NULL);
@@ -238,5 +283,7 @@ void RdbLoadLblsMatrix_v17
 	// replace lbl's current M matrix with A
 	GrB_Info info = Delta_Matrix_setM(lbl, A);
 	ASSERT(info == GrB_SUCCESS);
+
+	return true;
 }
 

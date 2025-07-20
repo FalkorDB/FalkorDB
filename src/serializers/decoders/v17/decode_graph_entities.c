@@ -7,63 +7,122 @@
 #include "util/datablock/oo_datablock.h"
 
 // forward declarations
-static SIValue _RdbLoadPoint(SerializerIO rdb);
-static SIValue _RdbLoadSIArray(SerializerIO rdb);
-static SIValue _RdbLoadVector(SerializerIO rdb, SIType t);
+static bool _RdbLoadPoint(SerializerIO io, SIValue *value);
+static bool _RdbLoadSIArray(SerializerIO io, SIValue *value);
+static bool _RdbLoadVector(SerializerIO rdb, SIValue *value, SIType t);
 
-static SIValue _RdbLoadSIValue
+static bool _RdbLoadSIValue
 (
-	SerializerIO rdb
+	SerializerIO io,
+	SIValue *value
 ) {
 	// Format:
 	// SIType
 	// Value
 
-	SIValue v;
-	char *str;
-	SIType t = SerializerIO_ReadUnsigned(rdb);
+	SIType t;
+	uint64_t type;
+
+	TRY_READ(io, type);
+	t = type;
 
 	switch(t) {
-	case T_INT64:
-		return SI_LongVal(SerializerIO_ReadSigned(rdb));
-	case T_DOUBLE:
-		return SI_DoubleVal(SerializerIO_ReadDouble(rdb));
-	case T_STRING:
-		// transfer ownership of the heap-allocated string to the
-		// newly-created SIValue
-		return SI_TransferStringVal(SerializerIO_ReadBuffer(rdb, NULL));
-	case T_INTERN_STRING:
-		// create intern string and free loaded buffer
-		str = SerializerIO_ReadBuffer(rdb, NULL);
-		v = SI_InternStringVal(str);
-		rm_free(str);
-		return v;
-	case T_BOOL:
-		return SI_BoolVal(SerializerIO_ReadSigned(rdb));
-	case T_ARRAY:
-		return _RdbLoadSIArray(rdb);
-	case T_POINT:
-		return _RdbLoadPoint(rdb);
-	case T_VECTOR_F32:
-		return _RdbLoadVector(rdb, t);
-	case T_NULL:
-	default: // currently impossible
-		return SI_NullVal();
+		case T_INT64: {
+				int64_t x;
+				TRY_READ(io, x);
+				*value = SI_LongVal(x);
+				break;
+			}
+
+		case T_DOUBLE: {
+				double x;
+				TRY_READ(io, x);
+				*value = SI_DoubleVal(x);
+				break;
+			}
+
+		case T_STRING: {
+				// transfer ownership of the heap-allocated string to the
+				// newly-created SIValue
+				char *x;
+				if(!SerializerIO_ReadBuffer(io, &x, NULL)) {
+					return false;
+				}
+				*value = SI_TransferStringVal(x);
+				break;
+			}
+
+		case T_INTERN_STRING: {
+				// create intern string and free loaded buffer
+				char *x;
+				if(!SerializerIO_ReadBuffer(io, &x, NULL)) {
+					return false;
+				}
+				*value = SI_InternStringVal(x);
+				rm_free(x);
+				break;
+			}
+
+		case T_BOOL: {
+				bool x;
+				int64_t b;
+
+				TRY_READ(io, b);
+				x = b;
+
+				*value = SI_BoolVal(x);
+				break;
+			}
+
+		case T_ARRAY:
+			if (!_RdbLoadSIArray(io, value)) {
+				return false;
+			}
+			break;
+
+		case T_POINT:
+			if (!_RdbLoadPoint(io, value)) {
+				return false;
+			}
+			break;
+
+		case T_VECTOR_F32:
+			if (!_RdbLoadVector(io, value, t)) {
+				return false;
+			}
+			break;
+
+		case T_NULL:
+			*value = SI_NullVal();
+			break;
+
+		default: // currently impossible
+			assert(false && "unknown value type");
+			return false;
 	}
+
+	return true;
 }
 
-static SIValue _RdbLoadPoint
+static bool _RdbLoadPoint
 (
-	SerializerIO rdb
+	SerializerIO io,
+	SIValue *value
 ) {
-	double lat = SerializerIO_ReadDouble(rdb);
-	double lon = SerializerIO_ReadDouble(rdb);
-	return SI_Point(lat, lon);
+	double lat;
+	double lon;
+
+	TRY_READ(io, lat);
+	TRY_READ(io, lon);
+
+	*value = SI_Point(lat, lon);
+	return true;
 }
 
-static SIValue _RdbLoadSIArray
+static bool _RdbLoadSIArray
 (
-	SerializerIO rdb
+	SerializerIO io,
+	SIValue *value
 ) {
 	/* loads array as
 	   unsinged : array legnth
@@ -73,19 +132,25 @@ static SIValue _RdbLoadSIArray
 	   .
 	   array[array length -1]
 	 */
-	uint arrayLen = SerializerIO_ReadUnsigned(rdb);
-	SIValue list = SI_Array(arrayLen);
-	for(uint i = 0; i < arrayLen; i++) {
-		SIValue elem = _RdbLoadSIValue(rdb);
-		SIArray_Append(&list, elem);
-		SIValue_Free(elem);
+	uint64_t arrayLen;
+	TRY_READ(io, arrayLen);
+	*value = SI_Array(arrayLen);
+	for (uint i = 0; i < arrayLen; i++) {
+		SIValue elem;
+		if (!_RdbLoadSIValue(io, &elem)) {
+			SIArray_Free(*value);
+			return false;
+		}
+
+		SIArray_AppendAsOwner(value, &elem);
 	}
-	return list;
+	return true;
 }
 
-static SIValue _RdbLoadVector
+static bool _RdbLoadVector
 (
-	SerializerIO rdb,
+	SerializerIO io,
+	SIValue *value,
 	SIType t
 ) {
 	ASSERT(t & T_VECTOR);
@@ -98,40 +163,56 @@ static SIValue _RdbLoadVector
 	// .
 	// vector[vector length -1]
 
-	SIValue vector = { .type       = T_VECTOR_F32,
-					   .ptrval     = SerializerIO_ReadBuffer(rdb, NULL),
-					   .allocation = M_SELF };
-	return vector;
+	char *elements;
+	if (!SerializerIO_ReadBuffer(io, &elements, NULL)) {
+		return false;
+	}
+
+	*value = (SIValue) { .type       = T_VECTOR_F32,
+						 .ptrval     = elements,
+						 .allocation = M_SELF };
+
+	return true;
 }
 
-static void _RdbLoadEntity
+static bool _RdbLoadEntity
 (
-	SerializerIO rdb,
+	SerializerIO io,
 	GraphEntity *e
 ) {
 	// format:
 	// #properties N
 	// (name, value type, value) X N
 
-	uint64_t n = SerializerIO_ReadUnsigned(rdb);
+	uint64_t n;
+	TRY_READ(io, n);
 
-	if(n == 0) return;
+	if(n == 0) return true;  // no attributes
 
 	SIValue     vals[n];
 	AttributeID ids [n];
 
 	for(uint64_t i = 0; i < n; i++) {
-		ids[i]  = SerializerIO_ReadUnsigned(rdb);
-		vals[i] = _RdbLoadSIValue(rdb);
+		uint64_t id;
+		if (!SerializerIO_ReadUnsigned(io, &id)) {
+			return false;
+		}
+		ids[i] = id;
+
+		if (!_RdbLoadSIValue(io, &vals[i])) {
+			return false;
+		}
 	}
 
 	AttributeSet_AddNoClone(e->attributes, ids, vals, n, false);
+
+	return true;
 }
 
 // decode nodes
-void RdbLoadNodes_v17
+bool RdbLoadNodes_v17
 (
-	SerializerIO rdb, // RDB
+	SerializerIO io,  // RDB
 	Graph *g,         // graph context
 	const uint64_t n  // number of nodes to decode
 ) {
@@ -144,7 +225,11 @@ void RdbLoadNodes_v17
 
 	for(uint64_t i = 0; i < n; i++) {
 		Node n;
-		NodeID id = SerializerIO_ReadUnsigned(rdb);
+		NodeID id;
+
+		if (!SerializerIO_ReadUnsigned(io, &id)) {
+			return false;
+		}
 
 		AttributeSet *set = DataBlock_AllocateItemOutOfOrder(g->nodes, id);
 		*set = NULL;
@@ -152,17 +237,21 @@ void RdbLoadNodes_v17
 		n.id = id;
 		n.attributes = set;
 
-		_RdbLoadEntity(rdb, (GraphEntity *)&n);
+		if (!_RdbLoadEntity(io, (GraphEntity *)&n)) {
+			return false;
+		}
 	}
 
 	// read encoded node count and validate
 	ASSERT(n + prev_graph_node_count == Graph_NodeCount(g));
+
+	return true;
 }
 
 // decode deleted nodes
-void RdbLoadDeletedNodes_v17
+bool RdbLoadDeletedNodes_v17
 (
-	SerializerIO rdb,                  // RDB
+	SerializerIO io,                   // RDB
 	Graph *g,                          // graph context
 	const uint64_t deleted_node_count  // number of deleted nodes
 ) {
@@ -173,7 +262,10 @@ void RdbLoadDeletedNodes_v17
 
 	// read node deleted IDs list from the RDB
 	size_t n;
-	NodeID *deleted_nodes_list = (NodeID*)SerializerIO_ReadBuffer(rdb, &n);
+	NodeID *deleted_nodes_list;
+	if (!SerializerIO_ReadBuffer(io, (char**)&deleted_nodes_list, &n)) {
+		return false;
+	}
 
 	ASSERT((n / sizeof(NodeID)) == deleted_node_count);
 
@@ -187,14 +279,16 @@ void RdbLoadDeletedNodes_v17
 	// validate deleted node count is as expected
 	ASSERT(deleted_node_count + prev_deleted_node_count ==
 			Graph_DeletedNodeCount(g));
+
+	return true;
 }
 
 // decode edges
-void RdbLoadEdges_v17
+bool RdbLoadEdges_v17
 (
-	SerializerIO rdb,  // RDB
-	Graph *g,          // graph context
-	const uint64_t n   // number of edges to decode
+	SerializerIO io,  // RDB
+	Graph *g,         // graph context
+	const uint64_t n  // number of edges to decode
 ) {
 	// format:
 	//  ID
@@ -203,10 +297,13 @@ void RdbLoadEdges_v17
 
 	uint64_t prev_edge_count = Graph_EdgeCount(g); // #edges in the graph
 
-	for(uint64_t i = 0; i < n; i++) {
+	for (uint64_t i = 0; i < n; i++) {
 		Edge e;
+		EdgeID id;
 
-		EdgeID id = SerializerIO_ReadUnsigned(rdb);
+		if (!SerializerIO_ReadUnsigned(io, &id)) {
+			return false;
+		}
 
 		AttributeSet *set = DataBlock_AllocateItemOutOfOrder(g->edges, id);
 		*set = NULL;
@@ -214,17 +311,20 @@ void RdbLoadEdges_v17
 		e.id = id;
 		e.attributes = set;
 
-		_RdbLoadEntity(rdb, (GraphEntity *)&e);
+		if (!_RdbLoadEntity(io, (GraphEntity *)&e)) {
+			return false;
+		}
 	}
 
 	// read encoded edge count and validate
 	ASSERT(n + prev_edge_count == Graph_EdgeCount(g));
+	return true;
 }
 
 // decode deleted edges
-void RdbLoadDeletedEdges_v17
+bool RdbLoadDeletedEdges_v17
 (
-	SerializerIO rdb,                  // RDB
+	SerializerIO io,                   // RDB
 	Graph *g,                          // graph context
 	const uint64_t deleted_edge_count  // number of deleted edges
 ) {
@@ -235,7 +335,10 @@ void RdbLoadDeletedEdges_v17
 
 	// read edge deleted IDs list from the RDB
 	size_t n;
-	EdgeID *deleted_edges_list = (EdgeID*)SerializerIO_ReadBuffer(rdb, &n);
+	EdgeID *deleted_edges_list;
+	if (!SerializerIO_ReadBuffer(io, (char**)&deleted_edges_list, &n)) {
+		return false;
+	}
 
 	ASSERT((n / sizeof(EdgeID)) == deleted_edge_count);
 
@@ -244,10 +347,13 @@ void RdbLoadDeletedEdges_v17
 		EdgeID id = deleted_edges_list[i];
 		Serializer_Graph_MarkEdgeDeleted(g, id);
 	}
+
 	rm_free(deleted_edges_list);
 
 	// validate deleted edge count is as expected
 	ASSERT(deleted_edge_count + prev_deleted_edge_count ==
 			Graph_DeletedEdgeCount(g));
+
+	return true;
 }
 

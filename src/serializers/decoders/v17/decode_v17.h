@@ -7,73 +7,73 @@
 
 #include "../../serializers_include.h"
 
-void RdbLoadGraphContext_v17
+bool RdbLoadGraphContext_v17
 (
-	SerializerIO rdb,
+	SerializerIO io,
 	GraphContext *gc
 );
 
 // decode nodes
-void RdbLoadNodes_v17
+bool RdbLoadNodes_v17
 (
-	SerializerIO rdb,          // RDB
+	SerializerIO io,           // RDB
 	Graph *g,                  // graph context
 	const uint64_t node_count  // number of nodes to decode
 );
 
 // decode deleted nodes
-void RdbLoadDeletedNodes_v17
+bool RdbLoadDeletedNodes_v17
 (
-	SerializerIO rdb,                  // RDB
+	SerializerIO io,                   // RDB
 	Graph *g,                          // graph context
 	const uint64_t deleted_node_count  // number of deleted nodes
 );
 
 // decode edges
-void RdbLoadEdges_v17
+bool RdbLoadEdges_v17
 (
-	SerializerIO rdb,  // RDB
-	Graph *g,          // graph context
-	const uint64_t n   // virtual key capacity
+	SerializerIO io,  // RDB
+	Graph *g,         // graph context
+	const uint64_t n  // virtual key capacity
 );
 
 // decode deleted edges
-void RdbLoadDeletedEdges_v17
+bool RdbLoadDeletedEdges_v17
 (
-	SerializerIO rdb,                  // RDB
+	SerializerIO io,                   // RDB
 	Graph *g,                          // graph context
 	const uint64_t deleted_edge_count  // number of deleted edges
 );
 
-void RdbLoadGraphSchema_v17
+bool RdbLoadGraphSchema_v17
 (
-	SerializerIO rdb,
+	SerializerIO io,
 	GraphContext *gc,
 	bool already_loaded
 );
 
-void RdbLoadLabelMatrices_v17
+bool RdbLoadLabelMatrices_v17
 (
-	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	SerializerIO io,  // RDB
+	GraphContext *gc  // graph context
 );
 
-void RdbLoadRelationMatrices_v17
+bool RdbLoadRelationMatrices_v17
 (
-	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	SerializerIO io,  // RDB
+	GraphContext *gc  // graph context
 );
 
 // decode adjacency matrix
-void RdbLoadAdjMatrix_v17
+bool RdbLoadAdjMatrix_v17
 (
-	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	SerializerIO io,  // RDB
+	GraphContext *gc  // graph context
 );
 
-void RdbLoadLblsMatrix_v17
+bool RdbLoadLblsMatrix_v17
 (
-	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	SerializerIO io,  // RDB
+	GraphContext *gc  // graph context
 );
 

@@ -23,16 +23,15 @@ int Graph_Restore
 	RedisModuleString **argv,  // command argument
 	int argc                   // number of argument
 ) {
-	return REDISMODULE_OK;
-}
 	// validations
-//	ASSERT(ctx  != NULL);
-//	ASSERT(argv != NULL);
-//
-//	// expecting exactly 3 arguments:
-//	// argv[0] command name
-//	// argv[1] graph key
-//	// argv[2] graph payload
+	ASSERT(ctx  != NULL);
+	ASSERT(argv != NULL);
+	return REDISMODULE_OK;
+
+	// expecting exactly 3 arguments:
+	// argv[0] command name
+	// argv[1] graph key
+	// argv[2] graph payload
 //	if(argc != 3) {
 //		return RedisModule_WrongArity(ctx);
 //	}
@@ -56,7 +55,7 @@ int Graph_Restore
 //	//--------------------------------------------------------------------------
 //	// decode payload
 //	//--------------------------------------------------------------------------
-//	
+//
 //	// create memory stream
 //	size_t len;
 //	const char *payload = RedisModule_StringPtrLen(argv[2], &len);
@@ -93,5 +92,5 @@ int Graph_Restore
 //	RedisModule_ReplyWithCString(ctx, "OK");
 //
 //	return REDISMODULE_OK;
-//}
+}
 

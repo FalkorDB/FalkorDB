@@ -64,6 +64,10 @@ static void _DecodeHeader
 	// Number of graph keys (graph context key + meta keys)
 	// Schema
 
+	// Graph name
+	char *graph_name = SerializerIO_ReadBuffer(rdb, NULL);
+	rm_free(graph_name);
+
 	// each key header contains the following:
 	// #nodes, #edges, #deleted nodes, #deleted edges, #labels matrices, #relation matrices
 	uint64_t node_count         = SerializerIO_ReadUnsigned(rdb);
