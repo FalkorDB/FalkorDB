@@ -148,10 +148,6 @@ static void _EncodeMatrix
 
 	GrB_Info info;
 
-	// flush delta matrix
-	info = Delta_Matrix_wait(A, false);
-	ASSERT(info == GrB_SUCCESS);
-
 	GrB_Matrix M  = Delta_Matrix_M(A);
 	GrB_Matrix DP = Delta_Matrix_DP(A);
 	GrB_Matrix DM = Delta_Matrix_DM(A);
