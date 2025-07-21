@@ -259,6 +259,11 @@ void _get_trees_from_matrix(
 #endif
 	NodeID **_trees_n = array_new(NodeID *, 0);
 
+	// this loop changes the ccs from pointing to a representative to pointing
+	// to a place in _trees_n. The first node we encounter will have its whole 
+	// component in _trees_n[0], the next node with a different component will
+	// be placed in _trees_n[1], and so on.
+	// the MSB is used to mark places that already point to the _trees_n array
 	for(uint k = 0; k < cc_nvals; k++) {
 		uint64_t rep = cc[k];
 		// if k is not included in the forest (UINT64_MAX), skip
@@ -277,6 +282,7 @@ void _get_trees_from_matrix(
 			grand_rep = cc[rep] = SET_MSB((uint64_t) array_len(_trees_n));
 			array_append(_trees_n, array_new(NodeID, 1));
 		} 
+
 		cc[k] = grand_rep;
 
 		ASSERT(cc[k] & MSB_MASK);
@@ -285,12 +291,8 @@ void _get_trees_from_matrix(
 		array_append(_trees_n[CLEAR_MSB(cc[k])], k);
 	}
 
-	if(trees_n != NULL) {
-		*trees_n = _trees_n;
-	} else {
-		array_free(_trees_n);
-	}
-
+	// The following code gets the branches of the trees. 
+	// Skip if edges are not requested. Although this would not be common.
 	if (trees_e == NULL) return;
 
 	int n_trees = array_len(_trees_n);
@@ -300,16 +302,17 @@ void _get_trees_from_matrix(
 	}
 
 	GxB_Iterator i = &_i;
-	GrB_OK(GxB_Matrix_Iterator_attach(i, A, NULL));
+	GrB_OK (GxB_Matrix_Iterator_attach(i, A, NULL));
 	it_info = GxB_Matrix_Iterator_seek(i, 0);
 	
+	// iterate over the edges and place them into the correct tree
 	while(it_info == GrB_SUCCESS) {
 		GxB_Matrix_Iterator_getIndex(i, &r, &c);
 		uint64_t j = CLEAR_MSB(cc[r]);
 		Edge **tree = &_trees_e[j];
+		*tree = array_grow(*tree, 1);
 
 		// e points to a newly allocated edge at the end of tree
-		*tree = array_grow(*tree, 1);
 		Edge *e = &array_tail(*tree);
 		EdgeID e_id = GxB_Iterator_get_UINT64(i);
 
@@ -322,11 +325,15 @@ void _get_trees_from_matrix(
 
 	ASSERT(it_info == GxB_EXHAUSTED);
 
-	if(trees_e != NULL) {
-		*trees_e = _trees_e;
+	if(trees_n != NULL) {
+		*trees_n = _trees_n;
 	} else {
-		array_free(_trees_e);
+		for(uint i = 0; i < array_len(_trees_n); i++) {
+			array_free(_trees_n[i]);
+		}
+		array_free(_trees_n);
 	}
+	*trees_e = _trees_e;
 }
 
 // invoke the procedure
@@ -406,10 +413,10 @@ ProcedureResult Proc_MSFInvoke
 	// construct input matrix
 	//--------------------------------------------------------------------------
 
-	GrB_Matrix A     = NULL;  // edge ids of filtered edges
-	GrB_Matrix A_w   = NULL;  // weight of filtered edges
-	GrB_Vector cc    = NULL;
-	GrB_Vector rows  = NULL;
+	GrB_Matrix A    = NULL;  // edge ids of filtered edges
+	GrB_Matrix A_w  = NULL;  // weight of filtered edges
+	GrB_Vector cc   = NULL;
+	GrB_Vector rows = NULL;
 	uint64_t cc_size;
 	GrB_Type cc_t;
 	uint64_t cc_n;
@@ -468,8 +475,10 @@ ProcedureResult Proc_MSFInvoke
 	ASSERT(handle == GrB_DEFAULT);
 	ASSERT(cc_t == GrB_UINT64); 
 
-	_get_trees_from_matrix(&pdata->tree_list, &pdata->tree_nodes, A, pdata->g, 
-		pdata->cc, cc_n);
+	_get_trees_from_matrix(
+		pdata->yield_edges != NULL ? &pdata->tree_list : NULL, 
+		pdata->yield_nodes != NULL ? &pdata->tree_nodes : NULL,  
+		A, pdata->g, pdata->cc, cc_n);
 
 	GrB_OK (GrB_free(&A));
 	GrB_OK (GrB_free(&cc));
@@ -491,15 +500,13 @@ SIValue *Proc_MSFStep
 	if(pdata->idx >= array_len(pdata->tree_list)) {
 		return NULL;
 	}
-	Edge *tree_e = pdata->tree_list[pdata->idx];
-	NodeID *tree_n = pdata->tree_nodes[pdata->idx];
-	pdata->idx++;
 	
 	//--------------------------------------------------------------------------
 	// set outputs
 	//--------------------------------------------------------------------------
 
 	if (pdata->yield_edges != NULL) {
+		Edge *tree_e = pdata->tree_list[pdata->idx];
 		uint len = array_len(tree_e);
 		*pdata->yield_edges = SI_Array(len);
 		for (uint i = 0; i < len; i++) {
@@ -525,6 +532,7 @@ SIValue *Proc_MSFStep
 	}	
 
 	if (pdata->yield_nodes != NULL) {
+		NodeID *tree_n = pdata->tree_nodes[pdata->idx];
 		uint len = array_len(tree_n);
 		*pdata->yield_nodes = SI_Array(len);
 		for (uint i = 0; i < len; i++) {
@@ -537,6 +545,8 @@ SIValue *Proc_MSFStep
 		}
 	}
 
+	// prepare for next step
+	pdata->idx++;
 	return pdata->output;
 }
 
@@ -548,20 +558,24 @@ ProcedureResult Proc_MSFFree
 	if(ctx->privateData != NULL) {
 		MSF_Context *pdata = ctx->privateData;
 		
-		for(uint i = 0; i < array_len(pdata->tree_list); i++) {
-			array_free(pdata->tree_list[i]);
+		if(pdata->tree_list != NULL) {
+			for(uint i = 0; i < array_len(pdata->tree_list); i++) {
+				array_free(pdata->tree_list[i]);
+			}
+			array_free(pdata->tree_list);
 		}
-		array_free(pdata->tree_list);
 
-		for(uint i = 0; i < array_len(pdata->tree_nodes); i++) {
-			array_free(pdata->tree_nodes[i]);
+		if(pdata->tree_nodes != NULL) {
+			for(uint i = 0; i < array_len(pdata->tree_nodes); i++) {
+				array_free(pdata->tree_nodes[i]);
+			}
+			array_free(pdata->tree_nodes);
 		}
-		array_free(pdata->tree_nodes);
-
 
 		rm_free(pdata->cc);
-		rm_free(ctx->privateData);
 		array_free(pdata->relationIDs);
+
+		rm_free(ctx->privateData);
 	}
 
 	return PROCEDURE_OK;
@@ -573,7 +587,7 @@ ProcedureResult Proc_MSFFree
 //     weightAttribute:     'Years', 
 //     objective:           'Minimize'
 // }) 
-// YIELD edge, weight
+// YIELD edges, nodes
 ProcedureCtx *Proc_MSFCtx(void) {
 	ProcedureOutput *outputs      = array_new(ProcedureOutput, 2);
 	ProcedureOutput output_edge   = {.name = "edges", .type = T_ARRAY};
