@@ -19,27 +19,25 @@ GrB_Info Delta_Matrix_removeElement_BOOL
 	ASSERT(C);
 	Delta_Matrix_checkBounds(C, i, j);
 
-	bool        m_x;
-	bool        dm_x;
-	bool        dp_x;
-	GrB_Info    info;
-	GrB_Type    type;
-	bool        in_m        =  false;
-	bool        in_dp       =  false;
-	bool        in_dm       =  false;
-	GrB_Matrix  m           =  DELTA_MATRIX_M(C);
-	GrB_Matrix  dp          =  DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix  dm          =  DELTA_MATRIX_DELTA_MINUS(C);
+	bool       m_x;
+	bool       dm_x;
+	bool       dp_x;
+	GrB_Info   info;
+	GrB_Type   type;
+	bool       in_m  = false;
+	bool       in_dp = false;
+	bool       in_dm = false;
+	GrB_Matrix m     = DELTA_MATRIX_M(C);
+	GrB_Matrix dp    = DELTA_MATRIX_DELTA_PLUS(C);
+	GrB_Matrix dm    = DELTA_MATRIX_DELTA_MINUS(C);
 
 #ifdef RG_DEBUG
-	info = GxB_Matrix_type(&type, m);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GxB_Matrix_type(&type, m));
 	ASSERT(type == GrB_BOOL);
 
 	info = GrB_Matrix_extractElement(&dm_x, dm, i, j);
 	ASSERT(info == GrB_NO_VALUE);
 #endif
-
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
 		info = Delta_Matrix_removeElement_BOOL(C->transposed, j, i);
 		if(info != GrB_SUCCESS) {
@@ -56,9 +54,8 @@ GrB_Info Delta_Matrix_removeElement_BOOL
 
 	if(in_m) {
 		// mark deletion in delta minus
-		info = GrB_Matrix_setElement(m, BOOL_ZOMBIE, i, j);
-		info = GrB_Matrix_setElement(dm, true, i, j);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(GrB_Matrix_setElement(m, BOOL_ZOMBIE, i, j));
+		GrB_OK(GrB_Matrix_setElement(dm, true, i, j));
 		Delta_Matrix_setDirty(C);
 		return info;
 	}
@@ -84,21 +81,20 @@ GrB_Info Delta_Matrix_removeElement_UINT64
 	ASSERT(C);
 	Delta_Matrix_checkBounds(C, i, j);
 
-	uint64_t    m_x;
-	uint64_t    dm_x;
-	uint64_t    dp_x;
-	GrB_Info    info;
-	GrB_Type    type;
-	bool        in_m        =  false;
-	bool        in_dp       =  false;
-	bool        in_dm       =  false;
-	GrB_Matrix  m           =  DELTA_MATRIX_M(C);
-	GrB_Matrix  dp          =  DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix  dm          =  DELTA_MATRIX_DELTA_MINUS(C);
+	uint64_t   m_x;
+	uint64_t   dm_x;
+	uint64_t   dp_x;
+	GrB_Info   info;
+	GrB_Type   type;
+	bool       in_m  = false;
+	bool       in_dp = false;
+	bool       in_dm = false;
+	GrB_Matrix m     = DELTA_MATRIX_M(C);
+	GrB_Matrix dp    = DELTA_MATRIX_DELTA_PLUS(C);
+	GrB_Matrix dm    = DELTA_MATRIX_DELTA_MINUS(C);
 
 #ifdef RG_DEBUG
-	info = GxB_Matrix_type(&type, m);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GxB_Matrix_type(&type, m));
 	ASSERT(type == GrB_UINT64);
 #endif
 
@@ -135,11 +131,9 @@ GrB_Info Delta_Matrix_removeElement_UINT64
 
 	if(in_m) {
 		// mark deletion in M
-		info = GrB_Matrix_setElement_UINT64(m, U64_ZOMBIE, i, j);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(GrB_Matrix_setElement_UINT64(m, U64_ZOMBIE, i, j));
 		// mark deletion in delta minus
-		info = GrB_Matrix_setElement(dm, true, i, j);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(GrB_Matrix_setElement(dm, true, i, j));
 	}
 
 	//--------------------------------------------------------------------------
@@ -148,12 +142,11 @@ GrB_Info Delta_Matrix_removeElement_UINT64
 
 	if(in_dp) {
 		// remove entry from 'dp'
-		info = GrB_Matrix_removeElement(dp, i, j);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(GrB_Matrix_removeElement(dp, i, j));
 	}
 
 	Delta_Matrix_setDirty(C);
-	return info;
+	return GrB_SUCCESS;
 }
 
 GrB_Info Delta_Matrix_removeElements
@@ -164,29 +157,24 @@ GrB_Info Delta_Matrix_removeElements
 	ASSERT(C != NULL);
 	ASSERT(A != NULL);
 	ASSERT(!DELTA_MATRIX_MAINTAIN_TRANSPOSE(C));
-	GrB_Info    info;
 	GrB_Matrix  m  =  DELTA_MATRIX_M(C);
 	GrB_Matrix  dp =  DELTA_MATRIX_DELTA_PLUS(C);
 	GrB_Matrix  dm =  DELTA_MATRIX_DELTA_MINUS(C);
 
 	// add edges in m and A to dm
-	info = GrB_Matrix_eWiseMult_BinaryOp(
-		dm, NULL, GrB_ONEB_BOOL, GrB_ONEB_BOOL, m, A, NULL) ;	
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Matrix_eWiseMult_BinaryOp(
+		dm, NULL, GrB_ONEB_BOOL, GrB_ONEB_BOOL, m, A, NULL)) ;	
 
 	// remove edges in dp that are also in A.
-	info = GrB_transpose(dp, A, NULL, dp, GrB_DESC_RSCT0);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_transpose(dp, A, NULL, dp, GrB_DESC_RSCT0));
 
 	// x XOR (x AND TRUE) - Always outputs false.
 	// Done like this in the hope that GBLAS will recognize this can be done inplace.
-	info = GrB_eWiseMult(m, NULL, GrB_LXOR, GrB_LAND, m, A, NULL);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_eWiseMult(m, NULL, GrB_LXOR, GrB_LAND, m, A, NULL));
 
 	Delta_Matrix_validate(C);
-
 	Delta_Matrix_setDirty(C);
-	return info;
+	return GrB_SUCCESS;
 }
 
 

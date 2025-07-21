@@ -15,8 +15,7 @@ static GrB_Info _Delta_Matrix_init
 	GrB_Index nrows,
 	GrB_Index ncols
 ) {
-	GrB_Info info;
-	A->dirty    =  false;
+	A->dirty = false;
 
 	//--------------------------------------------------------------------------
 	// create m, delta-plus and delta-minus
@@ -25,32 +24,24 @@ static GrB_Info _Delta_Matrix_init
 	//--------------------------------------------------------------------------
 	// m, can be either hypersparse or sparse
 	//--------------------------------------------------------------------------
-	info = GrB_Matrix_new(&A->matrix, type, nrows, ncols);
-	ASSERT(info == GrB_SUCCESS);
-	info = GxB_set(A->matrix, GxB_SPARSITY_CONTROL, GxB_SPARSE | GxB_HYPERSPARSE);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Matrix_new(&A->matrix, type, nrows, ncols));
+	GrB_OK(GxB_set(A->matrix, GxB_SPARSITY_CONTROL, GxB_SPARSE | GxB_HYPERSPARSE));
 
 	//--------------------------------------------------------------------------
 	// delta-plus, always hypersparse
 	//--------------------------------------------------------------------------
-	info = GrB_Matrix_new(&A->delta_plus, type, nrows, ncols);
-	ASSERT(info == GrB_SUCCESS);
-	info = GxB_set(A->delta_plus, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE);
-	ASSERT(info == GrB_SUCCESS);
-	info = GxB_set(A->delta_plus, GxB_HYPER_SWITCH, GxB_ALWAYS_HYPER);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Matrix_new(&A->delta_plus, type, nrows, ncols));
+	GrB_OK(GxB_set(A->delta_plus, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE));
+	GrB_OK(GxB_set(A->delta_plus, GxB_HYPER_SWITCH, GxB_ALWAYS_HYPER));
 
 	//--------------------------------------------------------------------------
 	// delta-minus, always hypersparse
 	//--------------------------------------------------------------------------
-	info = GrB_Matrix_new(&A->delta_minus, GrB_BOOL, nrows, ncols);
-	ASSERT(info == GrB_SUCCESS);
-	info = GxB_set(A->delta_minus, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE);
-	ASSERT(info == GrB_SUCCESS);
-	info = GxB_set(A->delta_minus, GxB_HYPER_SWITCH, GxB_ALWAYS_HYPER);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Matrix_new(&A->delta_minus, GrB_BOOL, nrows, ncols));
+	GrB_OK(GxB_set(A->delta_minus, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE));
+	GrB_OK(GxB_set(A->delta_minus, GxB_HYPER_SWITCH, GxB_ALWAYS_HYPER));
 
-	return info;
+	return GrB_SUCCESS;
 }
 
 // creates a new matrix
@@ -62,7 +53,6 @@ GrB_Info Delta_Matrix_new
 	GrB_Index ncols,
 	bool transpose
 ) {
-	GrB_Info info;
 	Delta_Matrix matrix = rm_calloc(1, sizeof(_Delta_Matrix));
 	//--------------------------------------------------------------------------
 	// input validations
@@ -71,8 +61,7 @@ GrB_Info Delta_Matrix_new
 	// supported types: boolean and uint64
 	ASSERT(type == GrB_BOOL || type == GrB_UINT64);
 
-	info = _Delta_Matrix_init(matrix, type, nrows, ncols);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(_Delta_Matrix_init(matrix, type, nrows, ncols));
 
 	//--------------------------------------------------------------------------
 	// create transpose matrix if required
@@ -80,14 +69,13 @@ GrB_Info Delta_Matrix_new
 
 	if(transpose) {
 		matrix->transposed = rm_calloc(1, sizeof(_Delta_Matrix));
-		info = _Delta_Matrix_init(matrix->transposed, GrB_BOOL, ncols, nrows);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(_Delta_Matrix_init(matrix->transposed, GrB_BOOL, ncols, nrows));
 	}
 
 	int mutex_res = pthread_mutex_init(&matrix->mutex, NULL);
 	ASSERT(mutex_res == 0);
 
 	*A = matrix;
-	return info;
+	return GrB_SUCCESS;
 }
 
