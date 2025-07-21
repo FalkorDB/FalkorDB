@@ -6,6 +6,7 @@
 
 #include "RG.h"
 #include "delta_matrix.h"
+#include "LAGraphX.h"
 
 // check if i and j are within matrix boundries
 // i < nrows
@@ -291,3 +292,64 @@ void Delta_Matrix_validate
 #endif
 }
 
+void Delta_Random_Matrix
+(
+	Delta_Matrix *A,
+	GrB_Type type,
+	GrB_Index n,
+	double density,
+	double add_density,
+	double del_density,
+	uint64_t seed
+) {
+	ASSERT(A != NULL);
+	// TODO: uint64 type
+	ASSERT(type == GrB_BOOL);
+	Delta_Matrix mtx = NULL;
+	GrB_OK(Delta_Matrix_new(&mtx, type, n, n, false));
+	GrB_Matrix *M  = &DELTA_MATRIX_M(mtx);
+	GrB_Matrix *DP = &DELTA_MATRIX_DELTA_PLUS(mtx);
+	GrB_Matrix *DM = &DELTA_MATRIX_DELTA_MINUS(mtx);
+	GrB_Scalar empty = NULL;
+
+    GrB_OK(GrB_Scalar_new(&empty, GrB_BOOL));
+	
+	GrB_OK(GrB_Matrix_free(M));
+	GrB_OK(LAGraph_Random_Matrix(M, GrB_BOOL, n, n, density, seed, NULL));
+	++seed;
+
+	if(add_density > 0) {
+		GrB_OK(GrB_Matrix_free(DP));
+		GrB_OK(LAGraph_Random_Matrix(DP, GrB_BOOL, n, n, add_density, seed, NULL));
+		++seed;
+		GrB_OK(GrB_Matrix_set_INT32(*DP, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
+	}
+	if(del_density > 0) {
+		GrB_OK(GrB_Matrix_free(DM));
+		GrB_OK(LAGraph_Random_Matrix(DM, GrB_BOOL, n, n, del_density, seed, NULL));
+		++seed;
+		GrB_OK(GrB_Matrix_set_INT32(*DM, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
+	}
+
+	// Set all entries to true
+	GrB_OK(GrB_Matrix_assign_BOOL(*M, *M, NULL, true, GrB_ALL, n, GrB_ALL, 
+		n, GrB_DESC_S));
+	GrB_OK(GrB_Matrix_assign_BOOL(*DM, *DM, NULL, true, GrB_ALL, n, GrB_ALL, 
+		n, GrB_DESC_S));
+	GrB_OK(GrB_Matrix_assign_BOOL(*DP, *DP, NULL, true, GrB_ALL, n, GrB_ALL, 
+		n, GrB_DESC_S));
+
+	// M <DM> = 0 
+	GrB_OK(GrB_Matrix_assign_BOOL(*M, *DM, NULL, false, GrB_ALL, n, GrB_ALL, 
+		n, GrB_DESC_S));
+
+	// DP = DP - M
+	GrB_OK(GrB_Matrix_assign_Scalar(*DP, *M, NULL, empty, GrB_ALL, n, GrB_ALL, 
+		n, GrB_DESC_S));
+
+	GrB_OK(GrB_Matrix_wait(*M, GrB_MATERIALIZE));
+	Delta_Matrix_validate(mtx);
+
+	*A = mtx;
+	GrB_OK(GrB_Scalar_free(&empty));
+}

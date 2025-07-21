@@ -174,6 +174,9 @@ ifeq ($(UNIT_TESTS),1)
 CMAKE_DEFS += UNIT_TESTS:BOOL=on
 endif
 
+ifeq ($(UNIT_BENCHMARKS),1)
+CMAKE_DEFS += UNIT_BENCHMARKS:BOOL=on
+endif
 #----------------------------------------------------------------------------------------------
 
 MISSING_DEPS:=
@@ -412,7 +415,7 @@ ifneq ($(BUILD),0)
 TEST_DEPS=$(TARGET)
 endif
 
-test: unit-tests flow-tests tck-tests upgrade-tests
+test: unit-tests unit-benchmarks flow-tests tck-tests upgrade-tests
 
 unit-tests:
 ifneq ($(BUILD),0)
@@ -420,6 +423,12 @@ ifneq ($(BUILD),0)
 endif
 	$(SHOW)BINROOT=$(BINROOT) ./tests/unit/tests.sh
 	$(SHOW)BINROOT=$(BINROOT) cargo test --lib --target-dir $(FalkorDBRS_BINDIR)
+
+unit-benchmarks:
+ifneq ($(BUILD),0)
+	$(SHOW)$(MAKE) build FORCE=1 UNIT_BENCHMARKS=1
+endif
+	$(SHOW)BINROOT=$(BINROOT) ./tests/unit_benchmarks/benchmarks.sh
 
 flow-tests: $(TEST_DEPS)
 	$(SHOW)MODULE=$(TARGET) BINROOT=$(BINROOT) PARALLEL=$(_RLTEST_PARALLEL) GEN=$(GEN) AOF=$(AOF) TCK=0 UPGRADE=0 ./tests/flow/tests.sh
