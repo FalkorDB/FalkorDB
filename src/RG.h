@@ -86,10 +86,14 @@
 // both GrB_SUCCESS and GrB_NO_VALUE are valid "OK"
 // return codes  
 #if RG_DEBUG
-	#define GrB_OK(GrB_method)                                        \
-	{                                                                 \
-		GrB_Info rg_info = GrB_method ;                               \
-		ASSERT ( (rg_info == GrB_SUCCESS || rg_info == GrB_NO_VALUE)) \
+	#define GrB_OK(GrB_method)                                            \
+	{                                                                     \
+		GrB_Info rg_info = GrB_method ;                                   \
+		if (unlikely(rg_info != GrB_SUCCESS && rg_info != GrB_NO_VALUE)) {\
+			printf ("GrB method failed: " #GrB_method " with info %d\n"   \
+				, rg_info) ;                                              \
+			assert(false);                                                \
+		}                                                                 \
 	}
 #else
 	#define GrB_OK(GrB_method) GrB_method
