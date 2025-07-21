@@ -152,6 +152,13 @@ static void _EncodeMatrix
 	GrB_Matrix DP = Delta_Matrix_DP(A);
 	GrB_Matrix DM = Delta_Matrix_DM(A);
 
+	GrB_Descriptor desc;
+	info = GrB_Descriptor_new(&desc);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GxB_Desc_set(desc, GxB_COMPRESSION, GxB_COMPRESSION_ZSTD + 19);
+	ASSERT(info == GrB_SUCCESS);
+
 	//--------------------------------------------------------------------------
 	// serialize M to a blob
 	//--------------------------------------------------------------------------
@@ -159,11 +166,12 @@ static void _EncodeMatrix
 	void *blob;           // the blob
 	GrB_Index blob_size;  // size of the blob
 	// TODO: experiment with the different compression methods
-	info = GxB_Matrix_serialize(&blob, &blob_size, M, NULL);
+	info = GxB_Matrix_serialize(&blob, &blob_size, M, desc);
 	ASSERT(info == GrB_SUCCESS);
 
 	// write blob to rdb
 	SerializerIO_WriteBuffer(rdb, (const char*)blob, blob_size);
+	printf("M blob_size: %lld bytes\n", blob_size);
 
 	rm_free(blob);
 
@@ -171,11 +179,12 @@ static void _EncodeMatrix
 	// serialize Delta-Plus to a blob
 	//--------------------------------------------------------------------------
 
-	info = GxB_Matrix_serialize(&blob, &blob_size, DP, NULL);
+	info = GxB_Matrix_serialize(&blob, &blob_size, DP, desc);
 	ASSERT(info == GrB_SUCCESS);
 
 	// write blob to rdb
 	SerializerIO_WriteBuffer(rdb, (const char*)blob, blob_size);
+	printf("DP blob_size: %lld bytes\n", blob_size);
 
 	rm_free(blob);
 
@@ -183,13 +192,16 @@ static void _EncodeMatrix
 	// serialize Delta-Minus to a blob
 	//--------------------------------------------------------------------------
 
-	info = GxB_Matrix_serialize(&blob, &blob_size, DM, NULL);
+	info = GxB_Matrix_serialize(&blob, &blob_size, DM, desc);
 	ASSERT(info == GrB_SUCCESS);
 
 	// write blob to rdb
 	SerializerIO_WriteBuffer(rdb, (const char*)blob, blob_size);
+	printf("DP blob_size: %lld bytes\n", blob_size);
 
 	rm_free(blob);
+
+	GrB_free(&desc);
 }
 
 // encode label matrices to rdb
