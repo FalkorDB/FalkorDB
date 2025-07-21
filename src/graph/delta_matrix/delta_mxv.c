@@ -20,13 +20,12 @@ GrB_Info Delta_mxv
     ASSERT(c != u); //TODO: allocate _c (temp vector) to handle
     ASSERT(accum == NULL || accum == monOP); //TODO: allocate _c (temp vector) to handle
 
-    GrB_Info info = GrB_mxv(
-        c, mask, accum, semiring, DELTA_MATRIX_M(A), u, desc) ; 
-    if(info != GrB_SUCCESS) return info;
+    GrB_OK(GrB_mxv(
+        c, mask, accum, semiring, DELTA_MATRIX_M(A), u, desc)) ; 
 
-    info = GrB_mxv(
-        c, mask, monOP, semiring, DELTA_MATRIX_DELTA_PLUS(A), u, desc) ;
-    return info;
+    GrB_OK(GrB_mxv(
+        c, mask, monOP, semiring, DELTA_MATRIX_DELTA_PLUS(A), u, desc)) ;
+    return GrB_SUCCESS;
 }
 
 // Computes c = A * u. 
@@ -55,15 +54,12 @@ GrB_Info Delta_mxv_count
     GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(A);
     GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(A);
 
-    GrB_Info info = GrB_mxv(
-        c, mask, accum, semiring, m, u, desc) ; 
-    if(info != GrB_SUCCESS) return info;
+    GrB_OK(GrB_mxv(
+        c, mask, accum, semiring, m, u, desc)) ; 
+    GrB_OK(GrB_mxv(
+        c, mask, GrB_PLUS_UINT64, semiring, dp, u, desc)) ;
+    GrB_OK(GrB_mxv(
+        c, mask, GrB_MINUS_UINT64, semiring, dm, u, desc)) ;
 
-    info = GrB_mxv(
-        c, mask, GrB_PLUS_UINT64, semiring, dp, u, desc) ;
-    if(info != GrB_SUCCESS) return info;
-
-    info = GrB_mxv(
-        c, mask, GrB_MINUS_UINT64, semiring, dm, u, desc) ;
-    return info;
+    return GrB_SUCCESS;
 }

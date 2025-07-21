@@ -18,9 +18,8 @@ GrB_Info Delta_Matrix_setElement_BOOL
 	ASSERT(C != NULL);
 	ASSERT(!DELTA_MATRIX_MULTI_EDGE(C));
 	Delta_Matrix_checkBounds(C, i, j);
-
-	bool v;
 	GrB_Info info;
+	bool v;
 
 	GrB_Matrix m  = DELTA_MATRIX_M(C);
 	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(C);
@@ -30,32 +29,27 @@ GrB_Info Delta_Matrix_setElement_BOOL
 	bool  marked_for_deletion  =  false;  // dm[i,j] exists
 
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
-		info = Delta_Matrix_setElement_BOOL(C->transposed, j, i);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(Delta_Matrix_setElement_BOOL(C->transposed, j, i));
 	}
 
-	info = GxB_Matrix_isStoredElement(dm, i, j);
-	marked_for_deletion = (info == GrB_SUCCESS);
+	GrB_OK(info = GxB_Matrix_isStoredElement(dm, i, j));
 
+	marked_for_deletion = (info == GrB_SUCCESS);
 	if(marked_for_deletion) {
 		// unset delta-minus. assign m to true
-		info = GrB_Matrix_setElement(m, true, i, j);
-		ASSERT(info == GrB_SUCCESS);
-		info = GrB_Matrix_removeElement(dm, i, j);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(GrB_Matrix_setElement(m, true, i, j));
+		GrB_OK(GrB_Matrix_removeElement(dm, i, j));
 	} else {
-		info = GxB_Matrix_isStoredElement(m, i, j);
+		GrB_OK(info = GxB_Matrix_isStoredElement(m, i, j));
 		already_allocated = (info == GrB_SUCCESS);
 
 		if(!already_allocated) {
 			// update entry to dp[i, j]
-			info = GrB_Matrix_setElement_BOOL(dp, true, i, j);
-			ASSERT(info == GrB_SUCCESS);
+			GrB_OK(GrB_Matrix_setElement_BOOL(dp, true, i, j));
 		}
 	}
 
 	Delta_Matrix_setDirty(C);
-
-	return info;
+	return GrB_SUCCESS;
 }
 

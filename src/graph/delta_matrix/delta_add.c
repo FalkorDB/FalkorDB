@@ -93,8 +93,7 @@ GrB_Info Delta_eWiseAdd
 	GrB_Matrix M_times_DP = NULL;
 
 	// Set DM_union and M_times_DP union to be hypersparse like DP and DM
-	GrB_OK(GxB_set(DM_union, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE));
-	GrB_OK(GxB_set(M_times_DP, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE));
+	
 	GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
 
 	GrB_Matrix_nvals(&adp_vals, ADP);
@@ -120,7 +119,7 @@ GrB_Info Delta_eWiseAdd
 	//--------------------------------------------------------------------------
 	if(handle_deletion) {
 		GrB_Matrix_new(&DM_union, GrB_BOOL, nrows, ncols);
-
+		GrB_OK(GxB_set(DM_union, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE));
 		GrB_OK (GrB_transpose(DM_union, BM, NULL, ADM, GrB_DESC_SCT0));
 
 		GrB_OK (GrB_transpose(
@@ -169,6 +168,7 @@ GrB_Info Delta_eWiseAdd
 	{
 		// cannot use an accumulator since op might be an indexBinaryOp
 		GrB_OK(GrB_Matrix_new(&M_times_DP, c_ty, nrows, ncols));
+		GrB_OK(GxB_set(M_times_DP, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE));
 		GrB_OK(GrB_Matrix_eWiseMult_BinaryOp(M_times_DP, NULL, NULL, op, CM, 
 			CDP, NULL));
 		

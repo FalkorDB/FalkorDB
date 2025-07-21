@@ -15,7 +15,6 @@ GrB_Info Delta_Matrix_pending
 	ASSERT(C       != NULL);
 	ASSERT(pending != NULL);
 
-	GrB_Info    info;
 	int         p       =  false;
 	bool        res     =  false;
 	GrB_Matrix  M       =  DELTA_MATRIX_M(C);
@@ -23,8 +22,7 @@ GrB_Info Delta_Matrix_pending
 	GrB_Matrix  DM      =  DELTA_MATRIX_DELTA_MINUS(C);
 
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
-		info = Delta_Matrix_pending(C->transposed, &res);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(Delta_Matrix_pending(C->transposed, &res));
 		if(res == true) {
 			*pending = true;
 			return GrB_SUCCESS;
@@ -32,22 +30,19 @@ GrB_Info Delta_Matrix_pending
 	}
 
 	// check if M contains pending changes
-	info = GrB_Matrix_get_INT32(M, &p, GxB_WILL_WAIT);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Matrix_get_INT32(M, &p, GxB_WILL_WAIT));
 	res = res || p == true;
 
 	// check if delta-plus contains pending changes
-	info = GrB_Matrix_get_INT32(DP, &p, GxB_WILL_WAIT);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Matrix_get_INT32(DP, &p, GxB_WILL_WAIT));
 	res = res || p == true;
 
 	// check if delta-plus contains pending changes
-	info = GrB_Matrix_get_INT32(DM, &p, GxB_WILL_WAIT);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Matrix_get_INT32(DM, &p, GxB_WILL_WAIT));
 	res = res || p == true;
 
 	// set output
 	*pending = res;
-	return info;
+	return GrB_SUCCESS;
 }
 

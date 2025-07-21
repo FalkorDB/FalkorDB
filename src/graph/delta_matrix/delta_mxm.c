@@ -56,11 +56,9 @@ GrB_Info Delta_mxm
 
 	bool  additions  =  dp_nvals  >  0;
 	bool  deletions  =  dm_nvals  >  0;
-	// printf("USING MXM\n");
 
 	if(additions) { 
 		// compute A * 'delta-plus'
-		// printf("Handle dp\n");
 		GrB_OK(GrB_Matrix_new(&accum, t, nrows, ncols));
 
 		// A could be aliased with C so this operation needs to be done before 
@@ -73,7 +71,6 @@ GrB_Info Delta_mxm
 	}
 
 	if(deletions) { 
-		// printf("Handle dm\n");
 		Delta_Matrix_type(&t, B);
 		Delta_Matrix_nrows(&nrows, B);
 		Delta_Matrix_ncols(&ncols, B);
