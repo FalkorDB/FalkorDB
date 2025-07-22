@@ -346,6 +346,15 @@ SIValue CSVReader_GetRow
 				}
 			}
 
+			// some BOM bytes been skipped
+			// but the entire BOM sequence wasn't matched
+			if (reader->search_for_bom == false && bom_idx > 0 && bom_idx < 3) {
+				// in this case we decide to raise an exception as we're not
+				// replaying the skipped bytes
+				RedisModule_Log(NULL, "warning", "BOM partial match");
+				return SI_NullVal();
+			}
+
 			if (reader->search_for_bom) {
 				offset    += n;  // skip BOM bytes
 				bytesRead -= n;  // update number of non-BOM bytes remaining
