@@ -369,6 +369,10 @@ SIValue CSVReader_GetRow
 		}
 	}
 
+	// either at leaset one row was generated or we've reached EOF
+	// either way no need to continue searching for bom
+	reader->search_for_bom = false;
+
 	if(array_len(reader->rows) > 0) {
 		return array_pop(reader->rows);
 	}
