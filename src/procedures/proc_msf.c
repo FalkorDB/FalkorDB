@@ -238,13 +238,14 @@ error:
 	return false;
 }
 
+// get the edges and nodes of the trees in the forest into buckets
 void _get_trees_from_matrix(
-	Edge ***trees_e,
-	NodeID ***trees_n,
-	const GrB_Matrix A,
-	const Graph *g,
-	uint64_t *cc,
-	GrB_Index cc_nvals
+	Edge ***trees_e,       // [output] tree edges
+	NodeID ***trees_n,     // [output] tree nodes
+	const GrB_Matrix A,    // tree matrix with edge id entries
+	const Graph *g,        // graph
+	uint64_t *cc,          // array of representatives
+	GrB_Index cc_nvals     // number of representatives
 ) {
 	struct GB_Iterator_opaque _i;
 	GrB_Index nrows;
@@ -278,6 +279,7 @@ void _get_trees_from_matrix(
 		uint64_t grand_rep = cc[rep];
 
 		// if its our first time seeing this representative, make a new array
+		// and set the representative to point to it.
 		if ((grand_rep & MSB_MASK) == 0) {
 			grand_rep = cc[rep] = SET_MSB((uint64_t) array_len(_trees_n));
 			array_append(_trees_n, array_new(NodeID, 1));
@@ -295,6 +297,8 @@ void _get_trees_from_matrix(
 	// Skip if edges are not requested. Although this would not be common.
 	if (trees_e == NULL) return;
 
+	// trees_e has the same dimensions as trees_n, except with one less entry
+	// per tree.
 	int n_trees = array_len(_trees_n);
 	Edge **_trees_e = array_new(Edge *, n_trees);
 	for(uint k = 0; k < n_trees; k++) {
@@ -307,7 +311,10 @@ void _get_trees_from_matrix(
 	
 	// iterate over the edges and place them into the correct tree
 	while(it_info == GrB_SUCCESS) {
+		// get the row and column indices (the nodes of the edge)
 		GxB_Matrix_Iterator_getIndex(i, &r, &c);
+
+		// Get the tree and append the edge to it.
 		uint64_t j = CLEAR_MSB(cc[r]);
 		Edge **tree = &_trees_e[j];
 		*tree = array_grow(*tree, 1);
@@ -316,6 +323,8 @@ void _get_trees_from_matrix(
 		Edge *e = &array_tail(*tree);
 		EdgeID e_id = GxB_Iterator_get_UINT64(i);
 
+		// get the edge from the graph and set its source and destination
+		// wait until yield to set the relation ID
 		Graph_GetEdge(g, e_id, e);
 		Edge_SetSrcNodeID(e, r);
 		Edge_SetDestNodeID(e, c);
@@ -325,6 +334,7 @@ void _get_trees_from_matrix(
 
 	ASSERT(it_info == GxB_EXHAUSTED);
 
+	// freee trees_n if not requested
 	if(trees_n != NULL) {
 		*trees_n = _trees_n;
 	} else {
@@ -423,8 +433,9 @@ ProcedureResult Proc_MSFInvoke
 	int handle;
 
 	// build input matrix
-	GrB_OK (Build_Weighted_Matrix(&A, &A_w, &rows, g, lbls, array_len(lbls), rels,
-			array_len(rels), weightAtt, maxST ? BWM_MAX : BWM_MIN, true, true));
+	GrB_OK (Build_Weighted_Matrix(&A, &A_w, &rows, g, lbls, array_len(lbls), 
+		rels, array_len(rels), weightAtt, maxST ? BWM_MAX : BWM_MIN, true, true
+	));
 	
 	// free build matrix inputs
 	if (lbls != NULL) array_free(lbls);
