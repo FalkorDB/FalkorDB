@@ -18,7 +18,7 @@
 
 #define DEFAULT_STEP 4096
 
-static unsigned char BOM[3] = {0xef, 0xbb, 0xbf};
+static const unsigned char BOM[3] = {0xef, 0xbb, 0xbf};
 
 typedef void (*field_cb)  (void *data, size_t n, void *pdata);
 typedef void (*record_cb) (int t, void *pdata);
