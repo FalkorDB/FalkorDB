@@ -18,6 +18,8 @@
 
 #define DEFAULT_STEP 4096
 
+static const unsigned char BOM[3] = {0xef, 0xbb, 0xbf};
+
 typedef void (*field_cb)  (void *data, size_t n, void *pdata);
 typedef void (*record_cb) (int t, void *pdata);
 
@@ -25,6 +27,7 @@ static char* empty_string = "";
 
 struct Opaque_CSVReader {
 	FILE *stream;               // CSV stream handle
+	bool search_for_bom;        // flag indicating if we need to search for BOM
 	int fd;                     // stream file descriptor
 	struct csv_parser parser;   // CSV parser
 	char delimiter;             // CSV delimiter
@@ -37,7 +40,7 @@ struct Opaque_CSVReader {
 	int col_idx;                // current processed column idx
 	int col_count;              // number of columns in the last row
 	int step;                   // number of bytes to read in each call to fread
-	char buffer[DEFAULT_STEP];  // input buffer
+	unsigned char buffer[DEFAULT_STEP];  // input buffer
 };
 
 //------------------------------------------------------------------------------
@@ -223,12 +226,13 @@ CSVReader CSVReader_New
 
 	CSVReader reader = rm_calloc(1, sizeof(struct Opaque_CSVReader));
 
-	reader->rows        = array_new(SIValue, 0);
-	reader->stream      = stream;
-	reader->fd          = fileno(stream);
-	reader->delimiter   = delimiter;
-	reader->reached_eof = false;
-	reader->col_count   = -1;  // unknown number of columns
+	reader->rows           = array_new(SIValue, 0);
+	reader->stream         = stream;
+	reader->fd             = fileno(stream);
+	reader->delimiter      = delimiter;
+	reader->col_count      = -1;    // unknown number of columns
+	reader->reached_eof    = false;
+	reader->search_for_bom = true;
 
 	//--------------------------------------------------------------------------
 	// init csv parser
@@ -274,6 +278,8 @@ SIValue CSVReader_GetRow
 	CSVReader reader  // CSV reader
 ) {
 	ASSERT(reader != NULL);
+
+	short bom_idx = 0;
 	
 	// try to parse additional data
 	while(!reader->reached_eof && array_len(reader->rows) == 0) {
@@ -325,9 +331,43 @@ SIValue CSVReader_GetRow
 			break;
 		}
 
+		size_t offset = 0;
+
+		// try to consume BOM bytes
+		if (reader->search_for_bom) {
+			int i = 0;
+			int n = MIN(bytesRead, 3 - bom_idx);
+
+			for (; i < n; i++, bom_idx++) {
+				if (reader->buffer[i] != BOM[bom_idx]) {
+					// BOM mismatch; stop searching
+					reader->search_for_bom = false;
+					break;
+				}
+			}
+
+			// some BOM bytes been skipped
+			// but the entire BOM sequence wasn't matched
+			if (reader->search_for_bom == false && bom_idx > 0 && bom_idx < 3) {
+				// in this case we decide to raise an exception as we're not
+				// replaying the skipped bytes
+				RedisModule_Log(NULL, "warning", "BOM partial match");
+				return SI_NullVal();
+			}
+
+			if (reader->search_for_bom) {
+				offset    += n;  // skip BOM bytes
+				bytesRead -= n;  // update number of non-BOM bytes remaining
+
+				if (bom_idx == 3) {
+					reader->search_for_bom = false; // fully matched
+				}
+			}
+		}
+
 		// process buffer
 		size_t bytesProcessed =
-			csv_parse(&(reader->parser), reader->buffer, bytesRead,
+			csv_parse(&(reader->parser), reader->buffer + offset, bytesRead,
 					reader->cell_cb, reader->row_cb, (void*)reader);
 
 		// expecting number of bytes processed to equal number of bytes read
@@ -337,6 +377,10 @@ SIValue CSVReader_GetRow
 			return SI_NullVal();
 		}
 	}
+
+	// either at leaset one row was generated or we've reached EOF
+	// either way no need to continue searching for bom
+	reader->search_for_bom = false;
 
 	if(array_len(reader->rows) > 0) {
 		return array_pop(reader->rows);
