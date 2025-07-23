@@ -228,29 +228,6 @@ void thpool_destroy(thpool_* thpool_p) {
 	rm_free(thpool_p);
 }
 
-/* Pause all threads in threadpool */
-void thpool_pause(thpool_* thpool_p) {
-	int n;
-	pthread_t caller = pthread_self();
-
-	for(n = 0; n < thpool_p->num_threads_alive; n++) {
-		// do not pause caller
-		if(thpool_p->threads[n]->pthread != caller) {
-			pthread_kill(thpool_p->threads[n]->pthread, SIGUSR2);
-		}
-	}
-}
-
-/* Resume all threads in threadpool */
-void thpool_resume(thpool_* thpool_p) {
-	// resuming a single threadpool hasn't been
-	// implemented yet, meanwhile this supresses
-	// the warnings
-	(void)thpool_p;
-
-	threads_on_hold = 0;
-}
-
 int thpool_num_threads_working(thpool_* thpool_p) {
 	return thpool_p->num_threads_working;
 }
@@ -405,15 +382,6 @@ static void *thread_do(struct thread *thread_p) {
 
 	/* Assure all threads have been created before starting serving */
 	thpool_* thpool_p = thread_p->thpool_p;
-
-	/* Register signal handler */
-	struct sigaction act;
-	sigemptyset(&act.sa_mask);
-	act.sa_flags = 0;
-	act.sa_handler = thread_hold;
-	if(sigaction(SIGUSR2, &act, NULL) == -1) {
-		err("thread_do(): cannot handle SIGUSR1");
-	}
 
 	/* Mark thread as alive (initialized) */
 	++thpool_p->num_threads_alive;
