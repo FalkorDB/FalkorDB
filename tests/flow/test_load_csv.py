@@ -37,6 +37,11 @@ EMPTY_CELL_CSV_HEADER                   = ["FirstName", "LastName", "Age"]
 
 EMPTY_COLUMN_CSV                        = "empty_column.csv"
 
+BOM_CSV                                 = "bom.csv"
+BOM_BYTES                               = b"\xEF\xBB\xBF"
+BOM_CSV_HEADER                          = ["col_1", "col_2", "col_3"]
+BOM_CSV_DATA                            = ["1", "some_string", "http://www.domain.com"]
+
 # Get the absolute path to the current file
 IMPORT_DIR = os.path.dirname(os.path.abspath(__file__)) + '/'
 
@@ -108,6 +113,20 @@ def create_empty_column_csv():
         f.write(f"{header}\n")
         f.write("A,B,C\nD,E,F")
 
+def create_bom_prefixed_csv():
+    # create a csv with BOM bytes
+
+    headers = ','.join(BOM_CSV_HEADER)
+    content = ','.join(str(n) for n in BOM_CSV_DATA)
+
+    path = os.path.join(IMPORT_DIR, BOM_CSV)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    with open(path, 'wb') as f:
+        f.write(BOM_BYTES)
+        f.write((headers + '\n').encode('utf-8'))
+        f.write((content + '\n').encode('utf-8'))
+
 #-------------------------------------------------------------------------------
 # create CSV files
 #-------------------------------------------------------------------------------
@@ -116,6 +135,7 @@ create_empty_csv()
 create_malformed_csv()
 create_empty_cell_csv()
 create_empty_column_csv()
+create_bom_prefixed_csv()
 create_short_csv_with_header()
 create_short_csv_without_header()
 
@@ -312,6 +332,28 @@ class testLoadLocalCSV():
             self.env.assertFalse("we should not be here" and False)
         except:
             pass
+
+    def test12_skip_bom_bytes(self):
+        # make sure bom bytes are skipped
+
+        # load csv with BOM as an array
+        q = f"LOAD CSV FROM 'file://{BOM_CSV}' AS row RETURN row"
+        actual = self.graph.query(q).result_set
+
+        # validate returned arrays
+        self.env.assertEquals(actual[0][0], BOM_CSV_DATA)
+        self.env.assertEquals(actual[1][0], BOM_CSV_HEADER)
+
+        #-----------------------------------------------------------------------
+
+        # load csv with BOM as an dict
+        q = f"LOAD CSV WITH HEADERS FROM 'file://{BOM_CSV}' AS row RETURN row"
+        actual = self.graph.query(q).result_set
+
+        # validate returned dict
+        expected = {k: v for k, v in zip(BOM_CSV_HEADER, BOM_CSV_DATA)}
+        self.env.assertEquals(actual[0][0], expected)
+
 
 class testLoadRemoteCSV():
     def __init__(self):
