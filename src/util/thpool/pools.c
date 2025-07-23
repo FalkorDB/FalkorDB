@@ -123,30 +123,6 @@ int ThreadPools_GetThreadID
 	return 0; // assuming Redis main thread
 }
 
-// pause all thread pools
-void ThreadPools_Pause
-(
-	void
-) {
-	ASSERT(_readers_thpool != NULL);
-	ASSERT(_writers_thpool != NULL);
-
-	thpool_pause(_readers_thpool);
-	thpool_pause(_writers_thpool);
-}
-
-void ThreadPools_Resume
-(
-	void
-) {
-
-	ASSERT(_readers_thpool != NULL);
-	ASSERT(_writers_thpool != NULL);
-
-	thpool_resume(_readers_thpool);
-	thpool_resume(_writers_thpool);
-}
-
 // adds a read task
 int ThreadPools_AddWorkReader
 (

@@ -37,12 +37,6 @@ uint ThreadPools_ReadersCount(void);
 // N + 2..   writers
 int ThreadPools_GetThreadID(void);
 
-// pause all thread pools
-void ThreadPools_Pause(void);
-
-// resume all threads
-void ThreadPools_Resume(void);
-
 // adds a read task
 int ThreadPools_AddWorkReader
 (
