@@ -303,8 +303,7 @@ void Delta_Random_Matrix
 	uint64_t seed
 ) {
 	ASSERT(A != NULL);
-	// TODO: uint64 type
-	ASSERT(type == GrB_BOOL);
+	ASSERT(type == GrB_BOOL || type == GrB_UINT64);
 	Delta_Matrix mtx = NULL;
 	GrB_OK(Delta_Matrix_new(&mtx, type, n, n, false));
 	GrB_Matrix *M  = &DELTA_MATRIX_M(mtx);
@@ -315,15 +314,16 @@ void Delta_Random_Matrix
     GrB_OK(GrB_Scalar_new(&empty, GrB_BOOL));
 	
 	GrB_OK(GrB_Matrix_free(M));
-	GrB_OK(LAGraph_Random_Matrix(M, GrB_BOOL, n, n, density, seed, NULL));
+	GrB_OK(LAGraph_Random_Matrix(M, type, n, n, density, seed, NULL));
 	++seed;
 
 	if(add_density > 0) {
 		GrB_OK(GrB_Matrix_free(DP));
-		GrB_OK(LAGraph_Random_Matrix(DP, GrB_BOOL, n, n, add_density, seed, NULL));
+		GrB_OK(LAGraph_Random_Matrix(DP, type, n, n, add_density, seed, NULL));
 		++seed;
 		GrB_OK(GrB_Matrix_set_INT32(*DP, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
 	}
+
 	if(del_density > 0) {
 		GrB_OK(GrB_Matrix_free(DM));
 		GrB_OK(LAGraph_Random_Matrix(DM, GrB_BOOL, n, n, del_density, seed, NULL));
@@ -331,17 +331,23 @@ void Delta_Random_Matrix
 		GrB_OK(GrB_Matrix_set_INT32(*DM, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
 	}
 
-	// Set all entries to true
-	GrB_OK(GrB_Matrix_assign_BOOL(*M, *M, NULL, true, GrB_ALL, n, GrB_ALL, 
-		n, GrB_DESC_S));
 	GrB_OK(GrB_Matrix_assign_BOOL(*DM, *DM, NULL, true, GrB_ALL, n, GrB_ALL, 
 		n, GrB_DESC_S));
-	GrB_OK(GrB_Matrix_assign_BOOL(*DP, *DP, NULL, true, GrB_ALL, n, GrB_ALL, 
-		n, GrB_DESC_S));
 
-	// M <DM> = 0 
-	GrB_OK(GrB_Matrix_assign_BOOL(*M, *DM, NULL, false, GrB_ALL, n, GrB_ALL, 
-		n, GrB_DESC_S));
+	if(type == GrB_BOOL){
+		// Set all entries to true
+		GrB_OK(GrB_Matrix_assign_BOOL(*M, *M, NULL, true, GrB_ALL, n, GrB_ALL, 
+			n, GrB_DESC_S));
+		GrB_OK(GrB_Matrix_assign_BOOL(*DP, *DP, NULL, true, GrB_ALL, n, GrB_ALL, 
+			n, GrB_DESC_S));
+
+		// M <DM> = 0 
+		GrB_OK(GrB_Matrix_assign_BOOL(*M, *DM, NULL, false, GrB_ALL, n, GrB_ALL, 
+			n, GrB_DESC_S));
+	} else {
+		GrB_OK(GrB_Matrix_assign_UINT64(*M, *DM, NULL, U64_ZOMBIE, GrB_ALL, n, 
+			GrB_ALL, n, GrB_DESC_S));
+	}
 
 	// DP = DP - M
 	GrB_OK(GrB_Matrix_assign_Scalar(*DP, *M, NULL, empty, GrB_ALL, n, GrB_ALL, 

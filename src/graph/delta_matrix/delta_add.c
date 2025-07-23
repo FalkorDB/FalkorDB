@@ -171,19 +171,19 @@ GrB_Info Delta_eWiseAdd
 		GrB_OK(GxB_set(M_times_DP, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE));
 		GrB_OK(GrB_Matrix_eWiseMult_BinaryOp(M_times_DP, NULL, NULL, op, CM, 
 			CDP, NULL));
-		
+
 		// TODO: This might be faster in the future if we can assign in place.
 		GrB_OK(GrB_Matrix_assign(CM, M_times_DP, NULL, M_times_DP, GrB_ALL, 
 			nrows, GrB_ALL, ncols, GrB_DESC_S));
 	}        
-          
+
 	//------ --------------------------------------------------------------------
 	// CDP <!CM> = ADP + BDP ---- remove intersection with M
 	//------ --------------------------------------------------------------------
 	if(handle_addition){
 		GrB_OK  (GrB_transpose(CDP, CM, NULL, CDP, GrB_DESC_RSCT0));
 	}        
-          
+
 	Delta_Matrix_wait(C, false);
 	GrB_free(&DM_union);
 	GrB_free(&M_times_DP);

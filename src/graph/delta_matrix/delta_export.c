@@ -30,8 +30,6 @@ GrB_Info Delta_Matrix_export
 	GrB_OK(GrB_Matrix_nrows(&nrows, m));
 	GrB_OK(GrB_Matrix_ncols(&ncols, m));
 	GrB_OK(GrB_Matrix_new(&a, t, nrows, ncols));
-	GrB_OK(GrB_wait(dp, GrB_MATERIALIZE));
-	GrB_OK(GrB_wait(dm, GrB_MATERIALIZE));
 	GrB_OK(GrB_Matrix_nvals(&dp_nvals, dp));
 	GrB_OK(GrB_Matrix_nvals(&dm_nvals, dm));
 
@@ -69,24 +67,24 @@ GrB_Info Delta_Matrix_export_structure
 	ASSERT(C != NULL);
 	ASSERT(A != NULL);
 
-	GrB_Type    t;
-	GrB_Index   nrows;
-	GrB_Index   ncols;
-	GrB_Index   dp_nvals;
-	GrB_Index   dm_nvals;
-	GrB_Matrix  a          =  NULL;
-	GrB_Matrix  m          =  DELTA_MATRIX_M(C);
-	GrB_Matrix  dp         =  DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix  dm         =  DELTA_MATRIX_DELTA_MINUS(C);
+	GrB_Type  t;
+	GrB_Index nrows;
+	GrB_Index ncols;
+	GrB_Index dp_nvals;
+	GrB_Index dm_nvals;
+	GrB_Scalar empty = NULL;
+	GrB_Matrix a     = NULL;
+	GrB_Matrix m     = DELTA_MATRIX_M(C);
+	GrB_Matrix dp    = DELTA_MATRIX_DELTA_PLUS(C);
+	GrB_Matrix dm    = DELTA_MATRIX_DELTA_MINUS(C);
 
 
 	GrB_OK(GrB_Matrix_nrows(&nrows, m));
 	GrB_OK(GrB_Matrix_ncols(&ncols, m));
 	GrB_OK(GrB_Matrix_new(&a, GrB_BOOL, nrows, ncols));
-	GrB_OK(GrB_wait(dp, GrB_MATERIALIZE));
-	GrB_OK(GrB_wait(dm, GrB_MATERIALIZE));
 	GrB_OK(GrB_Matrix_nvals(&dp_nvals, dp));
 	GrB_OK(GrB_Matrix_nvals(&dm_nvals, dm));
+	GrB_OK(GrB_Scalar_new(&empty, GrB_BOOL));
 
 	bool  additions  =  dp_nvals  >  0;
 	bool  deletions  =  dm_nvals  >  0;
@@ -94,14 +92,14 @@ GrB_Info Delta_Matrix_export_structure
 	//--------------------------------------------------------------------------
 	// copy addition and m structure
 	//--------------------------------------------------------------------------
-	if (additions){
-		GrB_OK(GrB_Matrix_assign_BOOL(
-			a, dp, NULL, (bool) true, GrB_ALL, nrows, GrB_ALL, ncols, GrB_DESC_S));
-	}
-
 	GrB_OK(GrB_Matrix_assign_BOOL(
 		a, m, NULL, (bool) true, GrB_ALL, nrows, GrB_ALL, ncols, GrB_DESC_S));
 	
+	if (additions){
+		GrB_OK(GrB_Matrix_assign_BOOL(a, dp, NULL, (bool) true, GrB_ALL, nrows, 
+			GrB_ALL, ncols, GrB_DESC_S));
+	}
+
 	//--------------------------------------------------------------------------
 	// perform deletions if needed
 	//--------------------------------------------------------------------------
