@@ -45,18 +45,18 @@ GrB_Info Delta_Matrix_extractElement_BOOL
 // x = A(i,j)
 GrB_Info Delta_Matrix_extractElement_UINT64
 (
-    uint64_t *x,                           // extracted scalar
-    const Delta_Matrix A,                  // matrix to extract a scalar from
-    GrB_Index i,                           // row index
-    GrB_Index j                            // column index
+    uint64_t *x,           // extracted scalar
+    const Delta_Matrix A,  // matrix to extract a scalar from
+    GrB_Index i,           // row index
+    GrB_Index j            // column index
 ) {
 	ASSERT(A != NULL);
 
 	GrB_Info info;
-	GrB_Matrix  m      =  DELTA_MATRIX_M(A);
-	GrB_Matrix  dp     =  DELTA_MATRIX_DELTA_PLUS(A);
-	GrB_Matrix  dm     =  DELTA_MATRIX_DELTA_MINUS(A);
-	uint64_t    _x     =  0;
+	GrB_Matrix m  = DELTA_MATRIX_M(A);
+	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(A);
+	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(A);
+	uint64_t   _x = 0;
 
 	// if dp[i,j] exists return it
 	info = GrB_Matrix_extractElement(&_x, dp, i, j);

@@ -71,8 +71,39 @@ static void BM_mxm_all_V2(benchmark::State &state) {
     GrB_Matrix_free(&C);
 }
 
+// simulate matching 
+static void BM_mxm_chain_V1(benchmark::State &state) {
+    Delta_Matrix A = NULL;
+    GrB_Matrix   C = NULL;
+    uint64_t     n     = 100000;
+    uint64_t     m     = 10;
+    uint64_t     seed  = 870713428976ul;    
+
+    GrB_OK(GrB_Matrix_new(&C, GrB_BOOL, m, n));
+    for(int i = 0; i < m; i++){
+        GrB_Matrix_setElement_BOOL(C, i, i, true);
+    }
+
+    Delta_Random_Matrix(&A, GrB_BOOL, n, 0.01, 0.00001, 0.00001, seed);
+
+    for (auto _ : state) {
+        for(int i = 0; i < 5; i++) {
+            Delta_mxm_identity(C, GrB_LOR_LAND_SEMIRING_BOOL, C, A);
+        }
+        GrB_Matrix_clear(C);
+        for(int i = 0; i < m; i++){
+            GrB_Matrix_setElement_BOOL(C, i, i, true);
+        }
+    }
+
+    Delta_Matrix_free(&A);
+    GrB_Matrix_free(&C);
+}
+
 BENCHMARK(BM_mxm_all_V1)->Setup(rg_setup)->Teardown(rg_teardown)
     ->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_mxm_all_V2)->Setup(rg_setup)->Teardown(rg_teardown)
+    ->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_mxm_chain_V1)->Setup(rg_setup)->Teardown(rg_teardown)
     ->Unit(benchmark::kMicrosecond);
 BENCHMARK_MAIN();
