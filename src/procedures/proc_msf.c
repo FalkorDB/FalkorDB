@@ -40,7 +40,6 @@ typedef struct {
 	SIValue *yield_nodes;     // nodes
 	Edge **tree_list;         // trees in each forest
 	NodeID **tree_nodes;      // trees in each forest
-	uint64_t *cc;             // representative of each tree
 } MSF_Context;
 
 // process procedure yield
@@ -243,6 +242,7 @@ void _get_trees_from_matrix(
 	Edge ***trees_e,       // [output] tree edges
 	NodeID ***trees_n,     // [output] tree nodes
 	const GrB_Matrix A,    // tree matrix with edge id entries
+	const GrB_Vector rows, // the rows involved in the tree
 	const Graph *g,        // graph
 	uint64_t *cc,          // array of representatives
 	GrB_Index cc_nvals     // number of representatives
@@ -252,12 +252,22 @@ void _get_trees_from_matrix(
 	GrB_Index r;
 	GrB_Index c;
 	GrB_Info  it_info;
+	GxB_Iterator i = &_i;
+	bool      ret_edges = (trees_e != NULL);
+	bool      ret_nodes = (trees_n != NULL);
 	GrB_OK(GrB_Matrix_nrows(&nrows, A));
-#if RG_DEBUG
+	ASSERT(nrows == cc_nvals);
+	GrB_OK(GrB_Vector_nvals(&nrows, rows));
+	ASSERT(nrows == cc_nvals);
+
+	GrB_Index *id_map = rm_malloc(nrows * sizeof(GrB_Index));
+
+	GrB_OK(GrB_Vector_extractTuples_BOOL(id_map, NULL, &nrows, rows));
+
 	GrB_Type ty;
-	GxB_Matrix_type(&ty, A);
+	GrB_OK(GxB_Matrix_type(&ty, A));
+	ASSERT(nrows == cc_nvals);
 	ASSERT(ty == GrB_UINT64);
-#endif
 	NodeID **_trees_n = array_new(NodeID *, 0);
 
 	// this loop changes the ccs from pointing to a representative to pointing
@@ -267,12 +277,11 @@ void _get_trees_from_matrix(
 	// the MSB is used to mark places that already point to the _trees_n array
 	for(uint k = 0; k < cc_nvals; k++) {
 		uint64_t rep = cc[k];
-		// if k is not included in the forest (UINT64_MAX), skip
-		if (rep == UINT64_MAX) continue;
-		
+
+		ASSERT(id_map[k] < Graph_UncompactedNodeCount(g));
 		// if k is already a representative, put into array and skip.
 		if (rep & MSB_MASK) {
-			array_append(_trees_n[CLEAR_MSB(rep)], k);
+			array_append(_trees_n[CLEAR_MSB(rep)], id_map[k]);
 			continue;
 		} 
 
@@ -285,65 +294,70 @@ void _get_trees_from_matrix(
 			array_append(_trees_n, array_new(NodeID, 1));
 		} 
 
+		ASSERT(grand_rep & MSB_MASK);
+		ASSERT(CLEAR_MSB(grand_rep) < array_len(_trees_n));
+
 		cc[k] = grand_rep;
 
-		ASSERT(cc[k] & MSB_MASK);
-		ASSERT(CLEAR_MSB(cc[k]) < array_len(_trees_n));
-
-		array_append(_trees_n[CLEAR_MSB(cc[k])], k);
+		array_append(_trees_n[CLEAR_MSB(grand_rep)], id_map[k]);
 	}
 
 	// The following code gets the branches of the trees. 
 	// Skip if edges are not requested. Although this would not be common.
-	if (trees_e == NULL) return;
+	if(ret_edges){
+		// trees_e has the same dimensions as trees_n, except with one less entry
+		// per tree.
+		int n_trees = array_len(_trees_n);
+		Edge **_trees_e = array_new(Edge *, n_trees);
+		for(uint k = 0; k < n_trees; k++) {
+			array_append(_trees_e, array_new(Edge, array_len(_trees_n[k]) - 1));
+		}
 
-	// trees_e has the same dimensions as trees_n, except with one less entry
-	// per tree.
-	int n_trees = array_len(_trees_n);
-	Edge **_trees_e = array_new(Edge *, n_trees);
-	for(uint k = 0; k < n_trees; k++) {
-		array_append(_trees_e, array_new(Edge, array_len(_trees_n[k]) - 1));
+		// populate the _trees_e arrays by looping through the MSF matrix 
+		GrB_OK (GxB_Matrix_Iterator_attach(i, A, NULL));
+		it_info = GxB_Matrix_Iterator_seek(i, 0);
+		
+		// iterate over the edges and place them into the correct tree
+		while(it_info == GrB_SUCCESS) {
+			// get the row and column indices (the nodes of the edge)
+			GxB_Matrix_Iterator_getIndex(i, &r, &c);
+
+			// Get the tree and append the edge to it.
+			ASSERT(cc[r] == cc[c]); // src and dest need to be in the same tree
+			ASSERT(id_map[r] < Graph_UncompactedNodeCount(g));
+			ASSERT(id_map[c] < Graph_UncompactedNodeCount(g));
+			uint64_t j = CLEAR_MSB(cc[r]); //tree index
+			Edge **tree = &_trees_e[j];
+
+			// e points to the edge at the end of tree
+			Edge *e = array_ensure_tail(tree, Edge);
+			EdgeID e_id = GxB_Iterator_get_UINT64(i);
+
+			// get the edge from the graph and set its source and destination
+			// wait until yield to set the relation ID
+			Graph_GetEdge(g, e_id, e);
+			Edge_SetSrcNodeID(e, id_map[r]);
+			Edge_SetDestNodeID(e, id_map[c]);
+
+			it_info = GxB_Matrix_Iterator_next(i);
+		}
+
+		ASSERT(it_info == GxB_EXHAUSTED);
+		*trees_e = _trees_e;
 	}
 
-	GxB_Iterator i = &_i;
-	GrB_OK (GxB_Matrix_Iterator_attach(i, A, NULL));
-	it_info = GxB_Matrix_Iterator_seek(i, 0);
-	
-	// iterate over the edges and place them into the correct tree
-	while(it_info == GrB_SUCCESS) {
-		// get the row and column indices (the nodes of the edge)
-		GxB_Matrix_Iterator_getIndex(i, &r, &c);
-
-		// Get the tree and append the edge to it.
-		uint64_t j = CLEAR_MSB(cc[r]);
-		Edge **tree = &_trees_e[j];
-		*tree = array_grow(*tree, 1);
-
-		// e points to a newly allocated edge at the end of tree
-		Edge *e = &array_tail(*tree);
-		EdgeID e_id = GxB_Iterator_get_UINT64(i);
-
-		// get the edge from the graph and set its source and destination
-		// wait until yield to set the relation ID
-		Graph_GetEdge(g, e_id, e);
-		Edge_SetSrcNodeID(e, r);
-		Edge_SetDestNodeID(e, c);
-
-		it_info = GxB_Matrix_Iterator_next(i);
-	}
-
-	ASSERT(it_info == GxB_EXHAUSTED);
-
-	// freee trees_n if not requested
-	if(trees_n != NULL) {
+	// set outputs
+	if(ret_nodes) {
 		*trees_n = _trees_n;
 	} else {
+		// free _trees_n if not requested
 		for(uint i = 0; i < array_len(_trees_n); i++) {
 			array_free(_trees_n[i]);
 		}
 		array_free(_trees_n);
 	}
-	*trees_e = _trees_e;
+
+	rm_free(id_map);
 }
 
 // invoke the procedure
@@ -423,19 +437,19 @@ ProcedureResult Proc_MSFInvoke
 	// construct input matrix
 	//--------------------------------------------------------------------------
 
-	GrB_Matrix A    = NULL;  // edge ids of filtered edges
-	GrB_Matrix A_w  = NULL;  // weight of filtered edges
-	GrB_Vector cc   = NULL;
-	GrB_Vector rows = NULL;
+	GrB_Matrix A       = NULL;  // edge ids of filtered edges
+	GrB_Matrix A_w     = NULL;  // weight of filtered edges
+	GrB_Vector cc      = NULL;
+	GrB_Vector rows    = NULL;
+	uint64_t   *cc_arr = NULL;
 	uint64_t cc_size;
 	GrB_Type cc_t;
 	uint64_t cc_n;
 	int handle;
 
 	// build input matrix
-	GrB_OK (Build_Weighted_Matrix(&A, &A_w, &rows, g, lbls, array_len(lbls), 
-		rels, array_len(rels), weightAtt, maxST ? BWM_MAX : BWM_MIN, true, true
-	));
+	GrB_OK (get_sub_weight_matrix(&A, &A_w, &rows, g, lbls, array_len(lbls), 
+		rels, array_len(rels), weightAtt, maxST ? BWM_MAX : BWM_MIN, true));
 	
 	// free build matrix inputs
 	if (lbls != NULL) array_free(lbls);
@@ -478,10 +492,7 @@ ProcedureResult Proc_MSFInvoke
 	//--------------------------------------------------------------------------
 	// initialize iterators
 	//--------------------------------------------------------------------------
-	// set unused node ids to UINT64_MAX
-	GrB_OK (GrB_Vector_assign_UINT64(cc, rows, NULL, UINT64_MAX, GrB_ALL, n,
-		GrB_DESC_SC));
-	GrB_OK (GxB_Vector_unload(cc, (void *) &pdata->cc, &cc_t, &cc_n, 
+	GrB_OK (GxB_Vector_unload(cc, (void **) &cc_arr, &cc_t, &cc_n, 
 		&cc_size, &handle, NULL))	
 	ASSERT(handle == GrB_DEFAULT);
 	ASSERT(cc_t == GrB_UINT64); 
@@ -489,11 +500,12 @@ ProcedureResult Proc_MSFInvoke
 	_get_trees_from_matrix(
 		pdata->yield_edges != NULL ? &pdata->tree_list : NULL, 
 		pdata->yield_nodes != NULL ? &pdata->tree_nodes : NULL,  
-		A, pdata->g, pdata->cc, cc_n);
+		A, rows, pdata->g, cc_arr, cc_n);
 
 	GrB_OK (GrB_free(&A));
 	GrB_OK (GrB_free(&cc));
 	GrB_OK (GrB_free(&rows));
+	rm_free (&cc_arr);
 	return PROCEDURE_OK;
 }
 
@@ -583,7 +595,6 @@ ProcedureResult Proc_MSFFree
 			array_free(pdata->tree_nodes);
 		}
 
-		rm_free(pdata->cc);
 		array_free(pdata->relationIDs);
 
 		rm_free(ctx->privateData);

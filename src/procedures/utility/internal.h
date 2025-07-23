@@ -36,16 +36,16 @@ typedef enum {
 
 // compose multiple label & relation matrices into a single matrix
 // L = L0 U L1 U ... Lm
-// A = L * (R0 + R1 + ... Rn) * L 
+// A = (R0 + R1 + ... Rn) (compressed to only include the rows/cols from L)
 //
-// if a weight attribute is specified, this function will pick which Edge to 
-// return given a BWM_reduce strategy
+// if a weight attribute is specified, this function will pick which edge to 
+// return given a BWM_reduce_strategy
 // for example, BWM_MIN returns the edge with minimum weight
 // 
-// A_w  = [Attribute values of A]
-// rows = L's main diagonal
-// in case no labels are specified rows is a dense 1 vector: [1,1,...1]
-GrB_Info Build_Weighted_Matrix
+// A_w  = [attribute values of A]
+// rows = nodes with specified labels
+// in case no labels are specified rows is a dense 1 vector: [1, 1, ...1]
+GrB_Info get_sub_weight_matrix
 (
 	GrB_Matrix *A,                 // [output] matrix (EdgeIDs)
 	GrB_Matrix *A_w,               // [output] matrix (weights)
@@ -57,7 +57,6 @@ GrB_Info Build_Weighted_Matrix
 	unsigned short n_rels,         // number of relationships
 	const AttributeID weight,      // weight attribute to consider
 	BWM_reduce_strategy strategy,  // use either maximum or minimum weight
-	bool symmetric,                // build a symmetric matrix
-	bool compact                   // remove unused row & columns
-);
+	bool symmetric                 // build a symmetric matrix
+) ;
 
