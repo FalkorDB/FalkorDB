@@ -6,14 +6,13 @@
 #include "./internal.h"
 #include "../../graph/delta_matrix/delta_utils.h"
 
-GrB_Info _get_rows_delta
+void _get_rows_delta
 (
 	Delta_Matrix *C, 	   // output matrix
 	const Delta_Matrix A,  // input matrix
 	const GrB_Vector _N    // filtered rows
 ) {
 	ASSERT (C != NULL);
-	ASSERT (*C == NULL);
 	GrB_Descriptor  desc   =  NULL;
 	GrB_Matrix      m      =  DELTA_MATRIX_M(A);
 	GrB_Matrix      dp     =  DELTA_MATRIX_DELTA_PLUS(A);
@@ -93,7 +92,7 @@ GrB_Info _compile_matricies
 	return info;
 }
 
-GrB_Info _get_rows_with_labels
+void _get_rows_with_labels
 (
 	GrB_Vector rows,         // [output] filtered rows
 	const Graph *g,          // graph
@@ -127,6 +126,63 @@ GrB_Info _get_rows_with_labels
 		GrB_OK(GrB_Vector_assign_BOOL(
 			rows, NULL, NULL, true, GrB_ALL, 0, NULL));
 	}
+	GrB_OK(GrB_Vector_resize(rows, Graph_RequiredMatrixDim(g)));
+}
+
+void _combine_matricies_and_extract
+(
+	GrB_Matrix *A,            // [output] matrix
+	const Delta_Matrix *mats, // [optional] matricies to consider
+	unsigned short n_mats,    // number of matricies
+	const GrB_Vector rows    // [optional] filtered rows
+) {
+	ASSERT(A != NULL);
+	ASSERT(mats != NULL);
+	ASSERT(n_mats > 0);
+	GrB_Index nrows;
+	GrB_Index nvals;
+	GrB_Descriptor desc    = NULL;
+	GrB_Scalar     bzomb   = NULL;
+	GrB_Scalar     u64zomb = NULL;
+
+	GrB_Scalar_new(&bzomb, GrB_BOOL);
+	GrB_Scalar_setElement_BOOL(bzomb, BOOL_ZOMBIE);
+
+	GrB_Scalar_new(&u64zomb, GrB_UINT64);
+	GrB_Scalar_setElement_UINT64(u64zomb, U64_ZOMBIE);
+
+	GrB_Descriptor_new(&desc);
+	GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST);
+	GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_COLINDEX_LIST);
+
+	GrB_OK(GrB_Vector_nvals(&nvals, rows));
+	GrB_OK(GrB_Vector_nvals(&nrows, rows));
+	bool extractFirst = nvals < nrows /2;
+
+	Delta_Matrix *rel_ms = NULL;
+	if (extractFirst) {
+		rel_ms = rm_calloc(n_mats, sizeof(Delta_Matrix));
+		// extract first matrix
+		for(int i = 0; i < n_mats; ++i) {
+			_get_rows_delta(&rel_ms[i], mats[i], rows);
+		}
+	}
+
+	_compile_matricies(A, rel_ms ? rel_ms : mats, n_mats, bzomb, u64zomb);
+
+	if(rel_ms != NULL) {
+		for(int i = 0; i < n_mats; ++i) {
+			Delta_Matrix_free(&rel_ms[i]);
+		}
+		rm_free(rel_ms);
+	}
+
+	GrB_Matrix temp = NULL;
+	GrB_OK (GrB_Matrix_new(&temp, GrB_BOOL, nvals, nvals));	
+	GrB_OK (GxB_Matrix_extract_Vector(
+		temp, NULL, NULL, *A, (extractFirst? NULL: rows), rows, desc));
+	GrB_free(A);
+	*A = temp;
 }
 
 // compose multiple label & relation matrices into a single matrix
@@ -155,27 +211,15 @@ GrB_Info get_sub_adjecency_matrix
 	GrB_Info info;
 	bool extractRows = false;
 
-	GrB_Matrix      _A       =  NULL;    // output matrix
-	GrB_Matrix      _A_T     =  NULL;    // output matrix
-	GrB_Vector      _N       =  NULL;    // output filtered rows
-	GrB_Scalar      u64zomb  =  NULL;
-	GrB_Scalar      bzomb    =  NULL;
-	GrB_Matrix      L        =  NULL;
-	GrB_Descriptor  desc     =  NULL;
+	GrB_Matrix _A   = NULL;    // output matrix
+	GrB_Matrix _A_T = NULL;    // output matrix
+	GrB_Vector _N   = NULL;    // output filtered rows
+	GrB_Matrix L    = NULL;
 
 	GrB_Index nrows;  // number of rows in matrix
 	GrB_Index rows_nvals; // number of entries in rows vector  
 
 	// GrB_Global_set_INT32(GrB_GLOBAL, true, GxB_BURBLE);
-	GrB_Scalar_new(&bzomb, GrB_BOOL);
-	GrB_Scalar_setElement_BOOL(bzomb, BOOL_ZOMBIE);
-
-	GrB_Scalar_new(&u64zomb, GrB_UINT64);
-	GrB_Scalar_setElement_UINT64(u64zomb, U64_ZOMBIE);
-
-	GrB_Descriptor_new(&desc);
-	GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST);
-	GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_COLINDEX_LIST);
 
 	nrows = Graph_RequiredMatrixDim(g);
 
@@ -185,64 +229,27 @@ GrB_Info get_sub_adjecency_matrix
 
 	_get_rows_with_labels(_N, g, lbls, n_lbls);
 
-	info = GrB_Vector_nvals(&rows_nvals, _N);
-
-	//TODO: find best value for this hueristic
-	extractRows = rows_nvals < Graph_NodeCount(g) / 2 && n_rels > 0;
-
 	// if no relationships are specified use the adjacency matrix
 	// otherwise use specified relation matrices
 	if(n_rels == 0) {
 		Delta_Matrix D = Graph_GetAdjacencyMatrix(g, false);
-		info = Delta_Matrix_export_structure(&_A, D);
+		_combine_matricies_and_extract(&_A, &D, 1, _N);
 		ASSERT(info == GrB_SUCCESS);
 		if(symmetric) {
 			D = Graph_GetAdjacencyMatrix(g, true);
-			info = Delta_Matrix_export_structure(&_A_T, D);
-			ASSERT(info == GrB_SUCCESS);
+			_combine_matricies_and_extract(&_A, &D, 1, _N);
 		}
 	} else {
-		Delta_Matrix  *rel_ms  =  rm_calloc(n_rels, sizeof(Delta_Matrix)) ;
+		Delta_Matrix *rel_ms = rm_malloc(n_rels * sizeof(Delta_Matrix)) ;
 		for(int i = 0; i < n_rels; ++i) {
 			RelationID id = rels[i];
-			Delta_Matrix temp_m = Graph_GetRelationMatrix(g, id, false);
-			if(extractRows){
-				_get_rows_delta(&rel_ms[i], temp_m, _N);
-			} else {
-				rel_ms[i] = temp_m;
-			}
+			rel_ms[i] = Graph_GetRelationMatrix(g, id, false);
 		}
-		info = _compile_matricies(
-			&_A, rel_ms, n_rels, bzomb, u64zomb);
-		ASSERT(info == GrB_SUCCESS);
 
-		if(extractRows){
-			for(int i = 0; i < n_rels; ++i) 
-				Delta_Matrix_free(&rel_ms[i]);
-		}
-		
+		_combine_matricies_and_extract(&_A, rel_ms, n_rels, _N);
 		rm_free(rel_ms);
 	}
 
-	if(n_lbls > 0) {
-		// A = L * A * L
-		GrB_Matrix temp = NULL;
-		GrB_Matrix_new(&temp, GrB_BOOL, rows_nvals, rows_nvals);
-		info = GxB_Matrix_extract_Vector(
-			temp, NULL, NULL, _A, (extractRows? NULL: _N), _N, desc);
-		ASSERT(info == GrB_SUCCESS);
-		info = GrB_Matrix_free(&_A);
-		_A = temp;
-		temp = NULL;
-		if(_A_T){
-			GrB_Matrix_new(&temp, GrB_BOOL, rows_nvals, rows_nvals);
-			info = GxB_Matrix_extract_Vector(
-			temp, NULL, NULL, _A_T, (extractRows? NULL: _N), _N, desc);
-			info = GrB_Matrix_free(&_A_T);
-			_A_T = temp;
-		}
-	}
-	
 	if(symmetric) {
 		if(_A_T) {
 			// make A symmetric A = A + At
@@ -258,21 +265,6 @@ GrB_Info get_sub_adjecency_matrix
 		
 	}
 
-	// determine the number of nodes in the graph
-	// this includes deleted nodes
-	size_t n = Graph_UncompactedNodeCount(g);
-
-	if(n_lbls == 0){
-		// get rid of extra unused rows and columns
-		info = GrB_Matrix_resize(_A, n, n);
-		ASSERT(info == GrB_SUCCESS);
-	}
-
-	if(rows != NULL) {
-		info = GrB_Vector_resize(_N, n);
-		ASSERT(info == GrB_SUCCESS);
-	}
-
 	// set outputs
 	*A = _A;
 	if(rows) {
@@ -282,11 +274,8 @@ GrB_Info get_sub_adjecency_matrix
 	GrB_free(&L);
 	GrB_free(&_N);
 	GrB_free(&_A_T);
-	GrB_free(&bzomb);
-	GrB_free(&u64zomb);
-	GrB_free(&desc);
 	// GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
-	return info;
+	return GrB_SUCCESS;
 }
 
 #if 0
