@@ -48,6 +48,131 @@ void tearDown() {
 	GrB_finalize();
 }
 
+void CHECK_matrix_sub //check A <= B
+(
+	const GrB_Matrix A,      // matrix
+	const GrB_Matrix B,      // matrix
+	const GrB_BinaryOp eq
+) {
+	TEST_ASSERT(A != NULL);
+	TEST_ASSERT(B != NULL);
+	
+	GrB_Matrix C = NULL;
+	GrB_Index nrows;
+	GrB_Index ncols;
+	GrB_Index nvals_a;
+	GrB_Index nvals_b;
+	GrB_Index nvals_c;
+	GrB_Type  t;
+
+	TEST_ASSERT(GrB_Matrix_nrows(&nrows, A) == GrB_SUCCESS);
+	TEST_ASSERT(GrB_Matrix_ncols(&ncols, A) == GrB_SUCCESS);
+
+	TEST_ASSERT(GrB_Matrix_nvals(&nvals_a, A) == GrB_SUCCESS);
+	TEST_ASSERT(GrB_Matrix_nvals(&nvals_b, B) == GrB_SUCCESS);
+
+	TEST_ASSERT(GxB_Matrix_type(&t, A) == GrB_SUCCESS);
+	TEST_ASSERT(GrB_Matrix_new(&C, t, nrows, ncols) == GrB_SUCCESS);
+
+	if(nvals_a > nvals_b)
+	{
+		GxB_fprint(A, GxB_SHORT, stdout);
+		GxB_fprint(B, GxB_SHORT, stdout);
+		GrB_Matrix_assign(C, B, NULL, A, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_SC);
+		GxB_Matrix_fprint(C, "A - B",GxB_SHORT, stdout);
+	}
+	TEST_ASSERT(nvals_a <= nvals_b);
+
+	TEST_ASSERT(GrB_Matrix_eWiseMult_BinaryOp(C, NULL, NULL, eq, A, B, NULL) 
+		== GrB_SUCCESS);
+	TEST_ASSERT(GrB_Matrix_nvals(&nvals_c, C) == GrB_SUCCESS);
+	if(nvals_a != nvals_c)
+	{
+		GxB_fprint(A, GxB_SHORT, stdout);
+		GxB_fprint(B, GxB_SHORT, stdout);
+		GrB_Matrix_assign(A, B, NULL, A, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_RSC);
+		GrB_wait(A, GrB_MATERIALIZE);
+		GxB_Matrix_fprint(A, "A - B",GxB_SHORT, stdout);
+	}
+	TEST_ASSERT(nvals_a == nvals_c);
+
+	bool ok = true;
+	TEST_ASSERT(GrB_Matrix_reduce_BOOL(&ok, NULL, GrB_LAND_MONOID_BOOL, C, 
+		NULL) == GrB_SUCCESS);
+
+	if(!ok) {
+		GrB_Matrix_select_BOOL(C, NULL, NULL, GrB_VALUEEQ_BOOL, C, false, NULL);
+		GxB_fprint(A, GxB_SHORT, stdout);
+		GxB_fprint(B, GxB_SHORT, stdout);
+		// GrB_Matrix_assign(B, B, NULL, A, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_RSC);
+		GrB_Matrix_assign(A, C, GrB_MINUS_FP64, B, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_RS);
+		GrB_wait(A, GrB_MATERIALIZE);
+		GxB_Matrix_fprint(A, "A - B",GxB_SHORT, stdout);
+	}
+
+	GrB_free(&C);
+
+	TEST_ASSERT(ok);
+}
+
+void CHECK_matrix_equal
+(
+	const GrB_Matrix A,      // matrix
+	const GrB_Matrix B,      // matrix
+	const GrB_BinaryOp eq
+) {
+	TEST_ASSERT(A != NULL);
+	TEST_ASSERT(B != NULL);
+	
+	GrB_Matrix C = NULL;
+	GrB_Index nrows;
+	GrB_Index ncols;
+	GrB_Index nvals_a;
+	GrB_Index nvals_b;
+	GrB_Index nvals_c;
+	GrB_Type  t;
+
+	TEST_ASSERT(GrB_Matrix_nrows(&nrows, A) == GrB_SUCCESS);
+	TEST_ASSERT(GrB_Matrix_ncols(&ncols, A) == GrB_SUCCESS);
+
+	TEST_ASSERT(GrB_Matrix_nvals(&nvals_a, A) == GrB_SUCCESS);
+	TEST_ASSERT(GrB_Matrix_nvals(&nvals_b, B) == GrB_SUCCESS);
+
+	TEST_ASSERT(GxB_Matrix_type(&t, A) == GrB_SUCCESS);
+	TEST_ASSERT(GrB_Matrix_new(&C, t, nrows, ncols) == GrB_SUCCESS);
+
+	if(nvals_a != nvals_b)
+	{
+		GxB_fprint(A, GxB_SHORT, stdout);
+		GxB_fprint(B, GxB_SHORT, stdout);
+		GrB_Matrix_assign(C, A, NULL, B, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_SC);
+		GrB_Matrix_assign(C, B, NULL, A, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_SC);
+		GxB_Matrix_fprint(C, "A <symetric diff> B",GxB_SHORT, stdout);
+	}
+	TEST_ASSERT(nvals_a == nvals_b);
+
+	TEST_ASSERT(GrB_Matrix_eWiseMult_BinaryOp(C, NULL, NULL, eq, A, B, NULL) 
+		== GrB_SUCCESS);
+	TEST_ASSERT(GrB_Matrix_nvals(&nvals_c, C) == GrB_SUCCESS);
+	TEST_ASSERT(nvals_a == nvals_c);
+
+	bool ok = true;
+	TEST_ASSERT(GrB_Matrix_reduce_BOOL(&ok, NULL, GrB_LAND_MONOID_BOOL, C, 
+		NULL) == GrB_SUCCESS);
+
+	if(!ok) {
+		printf("Expected outputs differ on these values: \n\n\n");
+		GrB_Matrix_assign(A, C, NULL, A, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_RC);
+		GrB_Matrix_assign(B, C, NULL, B, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_RC);
+		GxB_fprint(A, GxB_SHORT, stdout);
+		GxB_fprint(B, GxB_SHORT, stdout);
+	}
+
+	GrB_free(&C);
+
+	TEST_ASSERT(ok);
+}
+
 void CHECK_sub_adjecency_matrix
 (
 	const GrB_Matrix A,      // matrix
@@ -63,7 +188,6 @@ void CHECK_sub_adjecency_matrix
 	TEST_ASSERT(n_rels > 0);
 	
 	GrB_Matrix     B     = NULL;
-	GrB_Matrix     C     = NULL;
 	GrB_Descriptor desc  = NULL;
 	GrB_Index nrows;
 	GrB_Index ncols;
@@ -77,11 +201,11 @@ void CHECK_sub_adjecency_matrix
 	TEST_ASSERT(GrB_Vector_nvals(&nvals, rows) == GrB_SUCCESS);
 	TEST_ASSERT(GxB_Matrix_type(&t, A) == GrB_SUCCESS);
 	GrB_BinaryOp eq = (t == GrB_BOOL)? GrB_EQ_BOOL: GrB_EQ_FP64; 
-	
+	GrB_BinaryOp ge = (t == GrB_BOOL)? GrB_GE_BOOL: GrB_GE_FP64; 
+
 	TEST_ASSERT(nrows == nvals);
-	
+
 	TEST_ASSERT(GrB_Matrix_new(&B, t, nrows, ncols) == GrB_SUCCESS);
-	TEST_ASSERT(GrB_Matrix_new(&C, GrB_BOOL, nrows, ncols) == GrB_SUCCESS);
 	TEST_ASSERT(GrB_Descriptor_new(&desc) == GrB_SUCCESS);
 	TEST_ASSERT(GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST) 
 		== GrB_SUCCESS);
@@ -89,11 +213,13 @@ void CHECK_sub_adjecency_matrix
 		== GrB_SUCCESS);
 	TEST_ASSERT(GxB_Matrix_extract_Vector(B, NULL, NULL, rels[0], rows, rows, 
 		desc) == GrB_SUCCESS);
-	
-	// add together all relation matrices
+	CHECK_matrix_sub(B, A, ge);
+
+	// add together all relation matrice
 	for(int i = 1; i < n_rels; i++){
 		TEST_ASSERT(GxB_Matrix_extract_Vector(B, NULL, comb, rels[i], 
 			rows, rows, desc) == GrB_SUCCESS);
+		CHECK_matrix_sub(B, A, ge);
 	}
 
 	// if symmetric, add transpose
@@ -101,26 +227,39 @@ void CHECK_sub_adjecency_matrix
 		TEST_ASSERT(GrB_transpose(B, NULL, comb, B, NULL) == GrB_SUCCESS);
 	}
 
-	TEST_ASSERT(GrB_Matrix_nvals(&nvals_a, A) == GrB_SUCCESS);
-	TEST_ASSERT(GrB_Matrix_nvals(&nvals_b, B) == GrB_SUCCESS);
-	TEST_ASSERT(nvals_a == nvals_b);
-	TEST_ASSERT(GrB_Matrix_eWiseMult_BinaryOp(C, NULL, NULL, eq, A, B, desc) 
-		== GrB_SUCCESS);
-	TEST_ASSERT(GrB_Matrix_nvals(&nvals_a, C) == GrB_SUCCESS);
-	TEST_ASSERT(nvals_a == nvals_b);
-	bool ok = true;
-	TEST_ASSERT(GrB_Matrix_reduce_BOOL(&ok, NULL, GrB_LAND_MONOID_BOOL, C, NULL) 
-		== GrB_SUCCESS);
-	
-	if(!ok) {
-		printf("Expected outputs differ on these values: \n\n\n");
-		GrB_Matrix_assign(A, C, NULL, A, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_RC);
-		GrB_Matrix_assign(B, C, NULL, B, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_RC);
-		GxB_fprint(A, GxB_SHORT, stdout);
-		GxB_fprint(B, GxB_SHORT, stdout);
-	}
+	CHECK_matrix_equal(A, B, eq);
+}
 
-	TEST_ASSERT(ok);
+void CHECK_rows(
+	const GrB_Vector rows,
+	const Graph *g,
+	const LabelID *lbls,
+	int n_lbls
+) {
+	Delta_Matrix LD   = Graph_GetNodeLabelMatrix(g);
+	GrB_Matrix L      = NULL;
+	GrB_Vector res    = NULL;
+	GrB_Vector x      = NULL;
+	GrB_Index ncols;
+	GrB_Index nrows;
+	GrB_OK(Delta_Matrix_export(&L, LD));
+	GrB_OK(GrB_Vector_size(&nrows, rows));
+	GrB_OK(GrB_Matrix_ncols(&ncols, L));
+	GrB_OK(GrB_Vector_new(&res, GrB_INT64, ncols));
+	GrB_OK(GrB_Vector_new(&x, GrB_INT64, nrows));
+	GrB_OK(GrB_Matrix_resize(L, nrows, ncols));
+	GrB_OK(GrB_Vector_assign_BOOL(x, NULL, NULL, true, GrB_ALL, nrows, NULL));
+	GrB_OK(GrB_vxm(res, NULL, NULL, GxB_PLUS_PAIR_INT64, x, L, NULL));
+	GrB_OK(GrB_vxm(res, NULL, GrB_MINUS_INT64, GxB_PLUS_PAIR_INT64, rows, L, 
+		NULL));
+
+	for(int i = 0; i < n_lbls; i++) {
+		int64_t k;
+		GrB_Info info = GrB_Vector_extractElement_INT64(&k, res, lbls[i]);
+		// element must be found
+		TEST_ASSERT(info == GrB_SUCCESS);
+		TEST_ASSERT(k == 0);
+	}
 }
 
 void test_sub_adj_matrix(){
@@ -209,9 +348,10 @@ void test_sub_adj_matrix(){
 		for(int n_lbls = 1; n_lbls <= 3; n_lbls ++){
 			get_sub_adjecency_matrix(&A, &rows, g, lbls, n_lbls, rels, n_rels, 
 				true);
+			CHECK_rows(rows, g, lbls, n_lbls);
 			CHECK_sub_adjecency_matrix (A, rows, GrB_ONEB_BOOL, mtx_list, 
 				n_rels, true);
-
+			
 			GrB_Matrix_free(&A);
 			GrB_Vector_free(&rows);
 		}
@@ -237,7 +377,6 @@ void test_sub_weight_matrix(){
 	GrB_Info  info;
 	Graph *g = Graph_New(GRAPH_DEFAULT_NODE_CAP, GRAPH_DEFAULT_EDGE_CAP);
 	Graph_AcquireWriteLock(g);
-
 	
 	// Introduce relations types.
 	for(int i = 0; i < relation_count; i++) {
@@ -291,32 +430,33 @@ void test_sub_weight_matrix(){
 		
 		Graph_CreateEdge(g, connections[j].srcId, connections[j].destId, 
 			connections[j].relationId, &edge);
+		SIValue w = SI_DoubleVal(weight);
+		GraphEntity_AddProperty((GraphEntity *) &edge, 0, w);
 
 		info = GrB_Matrix_extractElement_FP64(&currW, 
 			mtx_list[connections[j].relationId], connections[j].srcId, 
 			connections[j].destId);
-	
-		weight = (info == GrB_SUCCESS && weight >= currW)? currW: weight;
-		SIValue w = SI_DoubleVal(weight);
 
-		GraphEntity_AddProperty((GraphEntity *) &edge, 0, w);
+		weight = (info == GrB_SUCCESS && weight >= currW)? currW: weight;
 		
 		info = GrB_Matrix_setElement_FP64(mtx_list[connections[j].relationId], 
 			weight, connections[j].srcId, connections[j].destId);
+
 		TEST_ASSERT(info == GrB_SUCCESS);
 	}
 
-	GrB_Vector rows = NULL;
-	GrB_Matrix A   = NULL;
-	GrB_Matrix A_w = NULL;
-	RelationID rels[] = {0, 1, 2};
-	LabelID lbls[]    = {0, 1, 2};
-	AttributeID w_att = 0;
+	GrB_Vector  rows   = NULL;
+	GrB_Matrix  A      = NULL;
+	GrB_Matrix  A_w    = NULL;
+	RelationID  rels[] = {0, 1, 2};
+	LabelID     lbls[] = {0, 1, 2};
+	AttributeID w_att  = 0;
    
 	for(int n_rels = 1; n_rels <= 3; n_rels ++){
 		for(int n_lbls = 1; n_lbls <= 3; n_lbls ++){
 			get_sub_weight_matrix(&A, &A_w, &rows, g, lbls, n_lbls, rels, 
 				n_rels, w_att, BWM_MIN, true);
+			CHECK_rows(rows, g, lbls, n_lbls);
 			CHECK_sub_adjecency_matrix (A_w, rows, GrB_MIN_FP64, mtx_list, 
 				n_rels, true);
 
