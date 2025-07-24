@@ -50,10 +50,9 @@ typedef enum QueryStage {
 
 typedef struct {
 	AST *ast;                              // the scoped AST associated with this query
-	rax *params;                           // query parameters
+	dict *params;                          // query parameters
 	const char *query;                     // query string
 	const char *query_no_params;           // query string without parameters part
-	cypher_parse_result_t *parsed_params;  // parsed query parameters
 } QueryCtx_QueryData;
 
 typedef struct {
@@ -164,7 +163,7 @@ void QueryCtx_SetResultSet
 // set the parameters map
 void QueryCtx_SetParams
 (
-	rax *params
+	dict *params
 );
 
 //------------------------------------------------------------------------------
@@ -175,7 +174,7 @@ void QueryCtx_SetParams
 AST *QueryCtx_GetAST(void);
 
 // retrieve the query parameters values map
-rax *QueryCtx_GetParams(void);
+dict *QueryCtx_GetParams(void);
 
 // retrieve the GraphCtx
 GraphContext *QueryCtx_GetGraphCtx(void);

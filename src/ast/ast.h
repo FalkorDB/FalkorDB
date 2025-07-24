@@ -54,12 +54,6 @@ AST_Validation AST_Validate_Query
 	const cypher_astnode_t *root
 );
 
-// validate query parameters parsing only
-AST_Validation AST_Validate_QueryParams
-(
-	const cypher_parse_result_t *result
-);
-
 // checks if the parse result represents a read-only query
 bool AST_ReadOnly
 (
@@ -224,9 +218,9 @@ cypher_parse_result_t *parse_query
 
 // parse a query parameter values only
 // the remaining query string is set in the result body
-cypher_parse_result_t *parse_params
+void parse_params
 (
-	const char *query,
+	char *query,
 	const char **query_body
 );
 

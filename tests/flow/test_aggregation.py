@@ -94,6 +94,9 @@ class testAggregations():
         for i in range(5):
             query = f'UNWIND [2, 4, 6, 8, 10] AS x RETURN percentileDisc(x, {percentile_doubles[i]})'
             self.get_res_and_assertAlmostEquals(query, [[expectedResults[expected[i]]]])
+        
+        query = f'UNWIND [0.5, 0, 1] AS x RETURN percentileDisc(x, 0)'
+        self.get_res_and_assertAlmostEquals(query, [[0]])
     
     def test06_StDev(self):
         # Edge case - less than 2 arguments.

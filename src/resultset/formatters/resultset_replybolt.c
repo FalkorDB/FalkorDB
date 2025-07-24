@@ -115,7 +115,7 @@ static void _ResultSet_BoltReplyWithElementID
 ) {
 	int ndigits = id == 0 ? 1 : floor(log10(id)) + 1;
 	char element_id[ndigits + strlen(prefix) + 2];
-	sprintf(element_id, "%s_%llu", prefix, id);
+	sprintf(element_id, "%s_%" PRIu64, prefix, id);
 	bolt_reply_string(client, element_id, strlen(element_id));
 }
 

@@ -6,7 +6,7 @@
 
 #include "./arithmetic_expression.h"
 
-#include "../RG.h"
+#include "RG.h"
 #include "funcs.h"
 #include "rax.h"
 #include "../util/arr.h"
@@ -551,15 +551,14 @@ static AR_EXP_Result _AR_EXP_EvaluateParam
 	SIValue *result
 ) {
 	SIValue *param;
-	rax *params = QueryCtx_GetParams();
+	dict *params = QueryCtx_GetParams();
 
 	if(params) {
-		param = (SIValue*)raxFind(params,
-				(unsigned char *)node->operand.param_name,
-				strlen(node->operand.param_name));
+		param = HashTableFetchValue(params,
+				(unsigned char *)node->operand.param_name);
 	}
 
-	if(params == NULL || param == raxNotFound) {
+	if(params == NULL || param == NULL) {
 		// set the query-level error
 		ErrorCtx_SetError(EMSG_MISSING_PARAMETERS);
 		return EVAL_ERR;

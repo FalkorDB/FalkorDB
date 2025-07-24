@@ -3,7 +3,7 @@ click
 docker
 FalkorDB
 falkordb-bulk-loader
-neo4j==5.27.0
+neo4j
 grammarinator
 wheel
 rmtest

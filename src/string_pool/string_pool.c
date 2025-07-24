@@ -91,7 +91,7 @@ StringPool StringPool_create(void) {
 	int res = pthread_rwlockattr_init(&attr);
 	ASSERT(res == 0);
 
-#if !defined(__APPLE__) && !defined(__FreeBSD__)
+#ifdef PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP
 	int pref = PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP;
 	res = pthread_rwlockattr_setkind_np(&attr, pref);
 	ASSERT(res == 0);

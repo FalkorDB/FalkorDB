@@ -102,46 +102,6 @@ void thpool_wait(threadpool);
 
 
 /**
- * @brief Pauses all threads immediately
- *
- * The threads will be paused no matter if they are idle or working.
- * The threads return to their previous states once thpool_resume
- * is called.
- *
- * While the thread is being paused, new work can be added.
- *
- * @example
- *
- *    threadpool thpool = thpool_init(4);
- *    thpool_pause(thpool);
- *    ..
- *    // Add a bunch of work
- *    ..
- *    thpool_resume(thpool); // Let the threads start their magic
- *
- * @param threadpool    the threadpool where the threads should be paused
- * @return nothing
- */
-void thpool_pause(threadpool);
-
-
-/**
- * @brief Unpauses all threads if they are paused
- *
- * @example
- *    ..
- *    thpool_pause(thpool);
- *    sleep(10);              // Delay execution 10 seconds
- *    thpool_resume(thpool);
- *    ..
- *
- * @param threadpool     the threadpool where the threads should be unpaused
- * @return nothing
- */
-void thpool_resume(threadpool);
-
-
-/**
  * @brief Destroy the threadpool
  *
  * This will wait for the currently active threads to finish and then 'kill'

@@ -16,6 +16,7 @@ struct Globals {
 	CommandCtx **command_ctxs;          // list of CommandCtxs
 	GraphContext **graphs_in_keyspace;  // list of graphs in keyspace
 	StringPool string_pool;             // pool of reusable strings
+	pthread_t main_thread_id;           // process main thread id
 };
 
 struct Globals _globals = {0};
@@ -29,6 +30,7 @@ void Globals_Init(void) {
 	_globals.process_is_child   = false;
 	_globals.string_pool        = StringPool_create();
 	_globals.graphs_in_keyspace = array_new(GraphContext*, 1);
+	_globals.main_thread_id     = pthread_self();
 	_globals.command_ctxs       = rm_calloc(ThreadPools_ThreadCount() + 1,
 			sizeof(CommandCtx *));
 
@@ -63,6 +65,11 @@ void Globals_Set_ProcessIsChild
 	_globals.process_is_child =	process_is_child;
 
 	pthread_rwlock_unlock(&_globals.lock);
+}
+
+// get main thread id
+pthread_t Globals_Get_MainThreadId(void) {
+	return _globals.main_thread_id;
 }
 
 // get direct access to 'graphs_in_keyspace'

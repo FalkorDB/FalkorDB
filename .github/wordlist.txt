@@ -102,3 +102,9 @@ GraphRAG
 LLMs
 Embeddings
 graphrag
+socio
+sexualized
+html
+https
+www
+faq
