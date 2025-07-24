@@ -267,7 +267,7 @@ void test_sub_adj_matrix(){
 	int node_count = 100;
 	int relation_count = 3;
 	int label_count = 3;
-	EdgeDesc connections[edge_count];
+	EdgeDesc connections[1000];
 	GrB_Matrix mtx_list[3] = {NULL, NULL, NULL};
 	Node node;
 	Edge edge;
