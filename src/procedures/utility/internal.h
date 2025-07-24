@@ -8,7 +8,7 @@
 #include "GraphBLAS.h"
 #include "../../graph/graph.h"
 
-GrB_Info _get_rows_with_labels
+void _get_rows_with_labels
 (
 	GrB_Vector rows,         // [output] filtered rows
 	const Graph *g,          // graph
