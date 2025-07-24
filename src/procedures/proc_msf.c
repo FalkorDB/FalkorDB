@@ -493,7 +493,7 @@ ProcedureResult Proc_MSFInvoke
 	// initialize iterators
 	//--------------------------------------------------------------------------
 	GrB_OK (GxB_Vector_unload(cc, (void **) &cc_arr, &cc_t, &cc_n, 
-		&cc_size, &handle, NULL))	
+		&cc_size, &handle, NULL));
 	ASSERT(handle == GrB_DEFAULT);
 	ASSERT(cc_t == GrB_UINT64); 
 
@@ -502,10 +502,13 @@ ProcedureResult Proc_MSFInvoke
 		pdata->yield_nodes != NULL ? &pdata->tree_nodes : NULL,  
 		A, rows, pdata->g, cc_arr, cc_n);
 
+	GrB_OK (GxB_Vector_load(cc, (void **) &cc_arr, cc_t, cc_n, 
+		cc_size, handle, NULL));	
+
 	GrB_OK (GrB_free(&A));
 	GrB_OK (GrB_free(&cc));
 	GrB_OK (GrB_free(&rows));
-	rm_free (&cc_arr);
+	
 	return PROCEDURE_OK;
 }
 
