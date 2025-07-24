@@ -426,7 +426,7 @@ class testMSF(FlowTestsBase):
                 #     self.env.assertEqual(len(result_set[0][0]), 39)
                 #     self.env.assertIn(minEdge, result_set[0][0])
 
-    def xyz_test_msf_rand_labels_max(self):
+    def test_msf_rand_labels_max(self):
         """Test MSF algorithm on random graph with multiple labels"""
         # randomGraph contains four groups of nodes each of which are connected
         # each of these groups are connected to each other
@@ -458,7 +458,7 @@ class testMSF(FlowTestsBase):
                     self.env.assertEqual(len(result_set[0][0]), 39)
                     self.env.assertIn(maxEdge, result_set[0][0])
 
-    def xyz_test_msf_rand_forest(self):
+    def test_msf_rand_forest(self):
         """ Test that MSF correctly identifies and groups multiple trees """
         # create the forest
         nodes =[{"count": randint(5,40), "properties": 3, "labels": [l]} 
@@ -488,3 +488,46 @@ class testMSF(FlowTestsBase):
             self.env.assertEqual(len(tree[0]), len(tree[1]) / 2 + 1)
             if(len(tree[0]) == 1): continue
             self.env.assertEqual(set(tree[0]), set(tree[1]))
+
+    def test_msf_no_relations(self):
+        """ Test MSF on a graph with some nodes but no relationships """
+        # create a graph with 10 nodes and no relationships
+        self.graph.query("""
+            CREATE (n1 {id: 1}), (n2 {id: 2}), (n3 {id: 3}),
+                   (n4 {id: 4}), (n5 {id: 5}), (n6 {id: 6}),
+                   (n7 {id: 7}), (n8 {id: 8}), (n9 {id: 9}),
+                   (n10 {id: 10})
+        """)
+
+        # run MSF on the graph
+        result = self.graph.query("""CALL algo.MSF() YIELD nodes, edges 
+            RETURN [n in nodes | n.id] AS ids, edges""")
+
+
+        expected = [[[1], []], 
+                    [[2], []], 
+                    [[3], []], 
+                    [[4], []], 
+                    [[5], []], 
+                    [[6], []], 
+                    [[7], []], 
+                    [[8], []], 
+                    [[9], []], 
+                    [[10], []]]
+        self.env.assertEqual(result.result_set, expected)
+
+        # try deleting a node
+        self.graph.query("MATCH (n) WHERE n.id = 1 DETACH DELETE n")
+        # run MSF again
+        result = self.graph.query("""CALL algo.MSF() YIELD nodes, edges 
+            RETURN [n in nodes | n.id] AS ids, edges""")
+        expected = [[[2], []], 
+                    [[3], []], 
+                    [[4], []], 
+                    [[5], []], 
+                    [[6], []], 
+                    [[7], []], 
+                    [[8], []], 
+                    [[9], []], 
+                    [[10], []]]
+        self.env.assertEqual(result.result_set, expected)

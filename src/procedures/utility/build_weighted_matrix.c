@@ -298,6 +298,8 @@ GrB_Info get_sub_weight_matrix
 	GrB_Type       A_type      = NULL;  // type of the matrix
 	GrB_Descriptor desc        = NULL;  // Use row and column indecies 
 
+	bool compact = false;
+
 	GrB_Descriptor_new(&desc);
 	GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST);
 	GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_COLINDEX_LIST);
@@ -314,6 +316,7 @@ GrB_Info get_sub_weight_matrix
 
 	// enforce labels
 	if (n_lbls > 0) {
+		compact = true;
 		Delta_Matrix DL = Graph_GetLabelMatrix(g, lbls[0]);
 		ASSERT(DL != NULL);
 
@@ -342,6 +345,23 @@ GrB_Info get_sub_weight_matrix
 		// no labels, N = present nodes
 		GrB_OK (GrB_Vector_assign_BOOL(
 			_N, NULL, NULL, true, GrB_ALL, nrows, NULL));
+
+		//remove deleted nodes from N
+		if(Graph_DeletedNodeCount(g) > 0) {
+			compact = true;
+			NodeID *deleted_n = NULL;
+			uint64_t deleted_n_count = 0;
+			Graph_DeletedNodes(g, &deleted_n, &deleted_n_count);
+			
+			// TODO: is there a more efficient way to remove deleted nodes?
+			// this also does a whole extract operation for what is likely a 
+			// small number of nodes
+			for(uint64_t i = 0; i < deleted_n_count; i++) {
+				// remove deleted nodes from N
+				GrB_OK (GrB_Vector_removeElement(_N, deleted_n[i]));
+			}
+			rm_free(deleted_n);
+		}
 	}
 
 	GrB_OK(GrB_Vector_resize(_N, n));
@@ -402,7 +422,7 @@ GrB_Info get_sub_weight_matrix
 	}
 
 	GrB_OK(GrB_Vector_nvals(&rows_nvals, _N));
-	if (n_lbls > 0) {
+	if (compact) {
 		// Shrink A to the requested row / column sizes
 		GrB_Matrix temp = NULL;
 		GrB_OK(GrB_Matrix_new(&temp, GrB_UINT64, rows_nvals, rows_nvals));
