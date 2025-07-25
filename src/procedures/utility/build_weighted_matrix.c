@@ -543,7 +543,7 @@ GrB_Info _compile_matricies_w
 	GrB_Matrix *A,             // [output] matrix
 	const Delta_Matrix *mats,  // matricies to consider
 	unsigned short n_mats,     // number of matricies
-	GrB_BinaryOp op            // Input matrix zombie value
+	GrB_BinaryOp op            // Binary operator to use
 ) {
 	ASSERT(n_mats > 0);
 
@@ -583,6 +583,58 @@ GrB_Info _compile_matricies_w
 
 	Delta_Matrix_free(&C);
 	return info;
+}
+
+void _combine_matricies_weighted
+(
+	GrB_Matrix *A,            // [output] matrix
+	const Delta_Matrix *mats, // matricies to consider
+	unsigned short n_mats,    // number of matricies
+	const GrB_Vector rows,    // filtered rows
+	const GrB_BinaryOp op     // Binary operator to use
+) {
+	ASSERT(A != NULL);
+	ASSERT(op != NULL);
+	ASSERT(mats != NULL);
+	ASSERT(rows != NULL);
+	ASSERT(n_mats > 0);
+
+	GrB_Index nrows;
+	GrB_Index nvals;
+	GrB_Descriptor desc = NULL;
+
+	GrB_Descriptor_new(&desc);
+	GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST);
+	GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_COLINDEX_LIST);
+
+	GrB_OK(GrB_Vector_nvals(&nvals, rows));
+	GrB_OK(GrB_Vector_nvals(&nrows, rows));
+	bool extractFirst = nvals < nrows /2;
+
+	Delta_Matrix *rel_ms = NULL;
+	if (extractFirst) {
+		rel_ms = rm_calloc(n_mats, sizeof(Delta_Matrix));
+		// extract first matrix
+		for(int i = 0; i < n_mats; ++i) {
+			_get_rows_delta(&rel_ms[i], mats[i], rows);
+		}
+	}
+
+	_compile_matricies_w(A, rel_ms ? rel_ms : mats, n_mats, op);
+
+	if(rel_ms != NULL) {
+		for(int i = 0; i < n_mats; ++i) {
+			Delta_Matrix_free(&rel_ms[i]);
+		}
+		rm_free(rel_ms);
+	}
+
+	GrB_Matrix temp = NULL;
+	GrB_OK (GrB_Matrix_new(&temp, GrB_UINT64, nvals, nvals));	
+	GrB_OK (GxB_Matrix_extract_Vector(
+		temp, NULL, NULL, *A, (extractFirst? NULL: rows), rows, desc));
+	GrB_free(A);
+	*A = temp;
 }
 
 // compose multiple label & relation matrices into a single matrix
@@ -674,10 +726,6 @@ GrB_Info get_sub_weight_matrix
 
 	GrB_Index rows_nvals;
 
-	GrB_Descriptor_new(&desc);
-	GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST);
-	GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_COLINDEX_LIST);
-
 	// if no relationships are specified, use all relationships
 	// can't use adj matrix since I need access to the edgeIds of all edges
 	if (rels == NULL) {
@@ -686,17 +734,14 @@ GrB_Info get_sub_weight_matrix
 
 	if (n_rels == 0) {
 		// graph does not have any relations, return empty matrix
-		info = GrB_Matrix_new(A, GrB_UINT64, 0, 0);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_Matrix_new(A, GrB_UINT64, 0, 0));
 		
 		if (A_w) {
-			info = GrB_Matrix_new(A_w, GrB_FP64, 0, 0);
-			ASSERT(info == GrB_SUCCESS);
+			GrB_OK (GrB_Matrix_new(A_w, GrB_FP64, 0, 0));
 		}
 
 		if (rows) {
-			info = GrB_Vector_new(rows, GrB_BOOL, 0);
-			ASSERT(info == GrB_SUCCESS);
+			GrB_OK (GrB_Vector_new(rows, GrB_BOOL, 0));
 		}
 
 		BWM_FREE;
@@ -704,53 +749,35 @@ GrB_Info get_sub_weight_matrix
 	}
 
 	//--------------------------------------------------------------------------
-	// compute R
-	//--------------------------------------------------------------------------
-
-	ASSERT(n_rels > 0);
-
-	RelationID rel_id = GETRELATIONID(0);
-	D = Graph_GetRelationMatrix(g, rel_id, false);
-	
-	Delta_Matrix *rel_ms = rm_calloc(n_rels, sizeof(Delta_Matrix)) ;
-
-	bool multiEdgeFlag = true;
-	for(int i = 0; i < n_rels; ++i) {
-		RelationID id = GETRELATIONID(i);
-		multiEdgeFlag = multiEdgeFlag 
-			|| Graph_RelationshipContainsMultiEdge(g, id);
-		rel_ms[i] = Graph_GetRelationMatrix(g, id, false);
-	}
-
-	info = _compile_matricies_w(&_A, rel_ms, n_rels, minID);
-	ASSERT(info == GrB_SUCCESS);
-	rm_free(rel_ms);
-
-	//--------------------------------------------------------------------------
 	// compute L
 	//--------------------------------------------------------------------------
 	nrows = Graph_RequiredMatrixDim(g);
 
 	// create vector N denoting all nodes participating in the algorithm
-	info = GrB_Vector_new(&_N, GrB_BOOL, nrows);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Vector_new(&_N, GrB_BOOL, nrows));
 
 	// enforce labels
 	_get_rows_with_labels(_N, g, lbls, n_lbls);
 
-	info = GrB_Vector_nvals(&rows_nvals, _N);
+	GrB_OK(GrB_Vector_nvals(&rows_nvals, _N));
 
-	if (n_lbls > 0){
-		// A = L * A * L
-		GrB_Matrix temp = NULL;
-		GrB_Matrix_new(&temp, GrB_UINT64, rows_nvals, rows_nvals);
-		info = GxB_Matrix_extract_Vector(
-			temp, NULL, NULL, _A, _N, _N, desc);
-		ASSERT(info == GrB_SUCCESS);
-		info = GrB_Matrix_free(&_A);
-		_A = temp;
-		temp = NULL;
-	}
+	//--------------------------------------------------------------------------
+	// compute R
+	//--------------------------------------------------------------------------
+
+	Delta_Matrix *rel_ms = rm_calloc(n_rels, sizeof(Delta_Matrix)) ;
+
+	bool multiEdgeFlag = false;
+		for(int i = 0; i < n_rels; ++i) {
+			RelationID id = GETRELATIONID(i);
+			multiEdgeFlag = multiEdgeFlag
+				|| Graph_RelationshipContainsMultiEdge(g, id);
+			rel_ms[i] = Graph_GetRelationMatrix(g, id, false);
+		}
+
+	_combine_matricies_weighted(&_A, rel_ms, n_rels, _N, minID);
+	rm_free(rel_ms);
+
 
 	// if _A has tensor entries, reduce it to a matrix
 	if (multiEdgeFlag) {
@@ -770,11 +797,6 @@ GrB_Info get_sub_weight_matrix
 		ASSERT(info == GrB_SUCCESS);
 	}
 
-	if (rows != NULL) {
-		info = GrB_Vector_resize(_N, n);
-		ASSERT(info == GrB_SUCCESS);
-	}
-
 	//--------------------------------------------------------------------------
 	// compute weight matrix
 	//--------------------------------------------------------------------------
@@ -783,6 +805,7 @@ GrB_Info get_sub_weight_matrix
 		info = GrB_Matrix_new(A_w, GrB_FP64, rows_nvals, rows_nvals);
 		ASSERT(info == GrB_SUCCESS);
 
+		GxB_print(_A, GxB_SHORT);
 		if (weight == ATTRIBUTE_ID_NONE) {
 			// if no weight specified, weights are zero
 			info = GrB_Matrix_assign_FP64(
@@ -797,19 +820,13 @@ GrB_Info get_sub_weight_matrix
 		ASSERT(info == GrB_SUCCESS);
 	}
 
-	if(n_lbls == 0){
-		// get rid of extra unused rows and columns
-		info = GrB_Matrix_resize(_A, n, n);
-		ASSERT(info == GrB_SUCCESS);
-	}
-	
 	// set outputs
 	*A = _A;
+	_A = NULL;
 	if (rows) {
 		*rows = _N;
 		_N = NULL;
 	}
-	_A = NULL;
 
 	BWM_FREE;
 	return info;
