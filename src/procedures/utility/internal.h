@@ -16,6 +16,13 @@ void _get_rows_with_labels
 	unsigned short n_lbls    // number of labels
 ) ;
 
+void _get_rows_delta
+(
+	Delta_Matrix *C, 	   // output matrix
+	const Delta_Matrix A,  // input matrix
+	const GrB_Vector _N    // filtered rows
+) ;
+
 // compose multiple label & relation matrices into a single matrix
 // L = L0 U L1 U ... Lm
 // A = L * (R0 U R1 U ... Rn) * L
