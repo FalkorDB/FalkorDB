@@ -78,42 +78,30 @@ static void _reduceToMatrix
 	const uint64_t *x,
 	const compareContext *ctx
 ) {
+	SIValue minV = SI_DoubleVal(ctx->comp * INFINITY); // +inf min / -inf max
+
 	if(SCALAR_ENTRY(*x)) {
 		*z = *x;
 	} else { // find the minimum weighted edge in the vector
 		GrB_Vector _v = AS_VECTOR(*x);
 		
+		// vector should not be NULL at this point.
+		ASSERT(_v != NULL);
 		// stack allocate the iterator
 		struct GB_Iterator_opaque _i;
 		GxB_Iterator i = &_i;
 
-		GrB_Info info = GxB_Vector_Iterator_attach(i, _v, NULL);
-		ASSERT(info == GrB_SUCCESS)
+		GrB_OK(GxB_Vector_Iterator_attach(i, _v, NULL));
 
-		info = GxB_Vector_Iterator_seek(i, 0);
-		ASSERT(info == GrB_SUCCESS)
+		GrB_Info info = GxB_Vector_Iterator_seek(i, 0);
 
 		Edge currE;
-		EdgeID minID   = (EdgeID) GxB_Vector_Iterator_getIndex(i);
 		SIValue *currV = NULL;
-
-		// -infinity if max or +infinity if min
-		SIValue minV = SI_DoubleVal(ctx->comp * INFINITY);
-
-		Graph_GetEdge(ctx->g, minID, &currE);
-		currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w);
-		info = GxB_Vector_Iterator_next(i);
-
-		// treat edges without the attribute or with a non-numeric attribute
-		// as infinite length
-		if (SI_TYPE(*currV) & SI_NUMERIC) {
-			minV = *currV;
-		}
+		EdgeID  minID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
 
 		while (info != GxB_EXHAUSTED) {
 			EdgeID currID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
 			COMPARE_AND_CHANGE_MINID;
-
 			info = GxB_Vector_Iterator_next(i);
 		}
 		
@@ -143,19 +131,28 @@ static void _pickBinary
 	GrB_Vector _v  = GrB_NULL;
 	SIValue minV   = SI_DoubleVal(ctx->comp * INFINITY);
 	SIValue *currV = NULL;
+	uint64_t _x    = *x;
 	EdgeID currID;
 	Edge currE;
 	GrB_Info info;
-	uint64_t _x;
+	
+	// if either are zombie values, allow the other value to be passed through
+	if(*x == U64_ZOMBIE) {
+		*z = *y;
+		return;
+	}
+	if(*y == U64_ZOMBIE) {
+		*z = *x;
+		return;
+	}
 
-	if(SCALAR_ENTRY(*x)) {
-		minID = *x;
+	if(SCALAR_ENTRY(_x)) {
+		minID = _x;
 	} else {
 		// find the minimum weighted edge in the vector
-		_v = AS_VECTOR(*x);
+		_v = AS_VECTOR(_x);
 
-		info = GxB_Vector_Iterator_attach(i, _v, NULL);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(GxB_Vector_Iterator_attach(i, _v, NULL));
 
 		info = GxB_Vector_Iterator_seek(i, 0);
 		ASSERT(info == GrB_SUCCESS);
@@ -173,11 +170,13 @@ static void _pickBinary
 			// find the minimum weighted edge in the vector
 			_v = AS_VECTOR(_x);
 
-			info = GxB_Vector_Iterator_attach(i, _v, NULL);
-			ASSERT(info == GrB_SUCCESS);
+			if(_v == NULL) {
+				continue;
+			}
+
+			GrB_OK(GxB_Vector_Iterator_attach(i, _v, NULL));
 
 			info = GxB_Vector_Iterator_seek(i, 0);
-			ASSERT(info == GrB_SUCCESS);
 
 			while (info != GxB_EXHAUSTED) {
 				currID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
@@ -229,17 +228,13 @@ static void _reduceToMatrixAny
 		struct GB_Iterator_opaque _i;
 		GxB_Iterator i = &_i;
 
-		GrB_Info info = GxB_Vector_Iterator_attach(i, _v, NULL);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(GxB_Vector_Iterator_attach(i, _v, NULL));
 
-		// find the first edge in the vector
-		info = GxB_Vector_Iterator_seek(i, 0);
-		ASSERT(info == GrB_SUCCESS);
+		// find the first edge in the vector (must be found)
+		GrB_OK(GxB_Vector_Iterator_seek(i, 0));
 
 		// get the first edge ID in the vector
-		EdgeID minID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
-
-		*z = (uint64_t) minID;
+		*z = GxB_Vector_Iterator_getIndex(i);
 	}
 }
 
@@ -538,7 +533,7 @@ GrB_Info get_sub_weight_matrix_OLD
 }
 
 
-GrB_Info _compile_matricies_w
+void _add_matrix_chain
 (
 	GrB_Matrix *A,             // [output] matrix
 	const Delta_Matrix *mats,  // matricies to consider
@@ -547,42 +542,34 @@ GrB_Info _compile_matricies_w
 ) {
 	ASSERT(n_mats > 0);
 
-	GrB_Info      info;
 	Delta_Matrix C = NULL;
-	GrB_Index    nrows;
-	GrB_Index    ncols;
+	GrB_Index nrows;
+	GrB_Index ncols;
 
-	Delta_Matrix_nrows(&nrows, mats[0]);
-	Delta_Matrix_ncols(&ncols, mats[0]);
+	GrB_OK(Delta_Matrix_nrows(&nrows, mats[0]));
+	GrB_OK(Delta_Matrix_ncols(&ncols, mats[0]));
 	
 	if (n_mats == 1){
 		// export relation matrix to A
-		info = Delta_Matrix_export(A, mats[0]);
-		ASSERT(info == GrB_SUCCESS);
+		Delta_Matrix_export(A, mats[0]);
 	} else {
 		// given the semiring I am using, C will be an invalid delta matrix.
 		// but it is quickly exported so it should not be an issue.
-		info = Delta_Matrix_new(&C, GrB_UINT64, nrows, ncols, false);
-		ASSERT(info == GrB_SUCCESS);
+		Delta_Matrix_new(&C, GrB_UINT64, nrows, ncols, false);
 
-		info = Delta_eWiseAdd(C, op, mats[0], mats[1]);
-		ASSERT(info == GrB_SUCCESS);
+		Delta_eWiseAdd(C, op, mats[0], mats[1]);
 
 		// in case there are multiple relation types, include them in A
 		for(unsigned short i = 2; i < n_mats; i++) {
-			info = Delta_eWiseAdd(C, op, C, mats[i]);
-			ASSERT(info == GrB_SUCCESS);
+			Delta_eWiseAdd(C, op, C, mats[i]);
 		}
-		
+
 		Delta_Matrix_wait(C, true);
 		*A = DELTA_MATRIX_M(C);
 		DELTA_MATRIX_M(C) = NULL;
-		// info = Delta_Matrix_export(A, C);
-		ASSERT(info == GrB_SUCCESS);
 	}
 
 	Delta_Matrix_free(&C);
-	return info;
 }
 
 void _combine_matricies_weighted
@@ -593,8 +580,8 @@ void _combine_matricies_weighted
 	const GrB_Vector rows,    // filtered rows
 	const GrB_BinaryOp op     // Binary operator to use
 ) {
-	ASSERT(A != NULL);
-	ASSERT(op != NULL);
+	ASSERT(A    != NULL);
+	ASSERT(op   != NULL);
 	ASSERT(mats != NULL);
 	ASSERT(rows != NULL);
 	ASSERT(n_mats > 0);
@@ -603,9 +590,9 @@ void _combine_matricies_weighted
 	GrB_Index nvals;
 	GrB_Descriptor desc = NULL;
 
-	GrB_Descriptor_new(&desc);
-	GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST);
-	GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_COLINDEX_LIST);
+	GrB_OK(GrB_Descriptor_new(&desc));
+	GrB_OK(GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST));
+	GrB_OK(GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_COLINDEX_LIST));
 
 	GrB_OK(GrB_Vector_nvals(&nvals, rows));
 	GrB_OK(GrB_Vector_nvals(&nrows, rows));
@@ -620,7 +607,7 @@ void _combine_matricies_weighted
 		}
 	}
 
-	_compile_matricies_w(A, rel_ms ? rel_ms : mats, n_mats, op);
+	_add_matrix_chain(A, rel_ms ? rel_ms : mats, n_mats, op);
 
 	if(rel_ms != NULL) {
 		for(int i = 0; i < n_mats; ++i) {
@@ -683,7 +670,7 @@ GrB_Info get_sub_weight_matrix
 	GxB_IndexBinaryOp minID_indexOP = NULL;  // minID's underlying index op 
 	size_t            n             = Graph_UncompactedNodeCount(g);
 
-	GrB_Type_new(&contx_type, sizeof(compareContext));
+	GrB_OK(GrB_Type_new(&contx_type, sizeof(compareContext)));
 
 	if(weight == ATTRIBUTE_ID_NONE) {
 		// weight attribute wasn't specified, use a dummy weight with value: 0
@@ -693,8 +680,8 @@ GrB_Info get_sub_weight_matrix
 			GrB_UINT64
 		) ;
 	} else {
-		GrB_Scalar_new(&theta, contx_type);
-		GrB_Scalar_setElement_UDT(theta, (void *) &ctx);
+		GrB_OK(GrB_Scalar_new(&theta, contx_type));
+		GrB_OK(GrB_Scalar_setElement_UDT(theta, (void *) &ctx));
 		GrB_BinaryOp_new(
 			&weightOp, (GxB_binary_function) _getAttFromID, 
 			GrB_FP64, GrB_UINT64, contx_type
@@ -714,15 +701,14 @@ GrB_Info get_sub_weight_matrix
 		GxB_BinaryOp_new_IndexOp(&minID, minID_indexOP, theta);
 	}
 
-	GrB_Info info        = GrB_DEFAULT;
-	GrB_Matrix M         = NULL;  // temporary matrix
-	GrB_Matrix _A        = NULL;  // output matrix containing EdgeIDs
-	GrB_Vector _N        = NULL;  // output filtered rows
-	Delta_Matrix D       = NULL;  // graph delta matrix
-	GrB_Index nrows      = 0;     // number of rows in matrix
-	GrB_Index ncols      = 0;     // number of columns in matrix
-	GrB_Type A_type      = NULL;  // type of the matrix
-	GrB_Descriptor  desc =  NULL;
+	GrB_Matrix      M      = NULL;  // temporary matrix
+	GrB_Matrix      _A     = NULL;  // output matrix containing EdgeIDs
+	GrB_Vector      _N     = NULL;  // output filtered rows
+	Delta_Matrix    D      = NULL;  // graph delta matrix
+	GrB_Index       nrows  = 0;     // number of rows in matrix
+	GrB_Index       ncols  = 0;     // number of columns in matrix
+	GrB_Type        A_type = NULL;  // type of the matrix
+	GrB_Descriptor  desc   =  NULL;
 
 	GrB_Index rows_nvals;
 
@@ -782,19 +768,17 @@ GrB_Info get_sub_weight_matrix
 	// if _A has tensor entries, reduce it to a matrix
 	if (multiEdgeFlag) {
 		if (weight == ATTRIBUTE_ID_NONE) {
-			info = GrB_Matrix_apply(_A, NULL, NULL, toMatrix, _A, NULL);
+			GrB_OK(GrB_Matrix_apply(_A, NULL, NULL, toMatrix, _A, NULL));
 		} else {
-			info = GrB_Matrix_apply_BinaryOp2nd_UDT(_A, NULL, NULL, toMatrixMin,
-					_A, (void *) (&ctx), NULL);
+			GrB_OK(GrB_Matrix_apply_BinaryOp2nd_UDT(_A, NULL, NULL, toMatrixMin,
+					_A, (void *) (&ctx), NULL));
 		}
-		ASSERT(info == GrB_SUCCESS);
 	}
 
 	if (symmetric) {
 		// make A symmetric A = A + At
-		info = GrB_Matrix_eWiseAdd_BinaryOp(_A, NULL, NULL, minID, _A, _A,
-				GrB_DESC_T1);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(GrB_Matrix_eWiseAdd_BinaryOp(_A, NULL, NULL, minID, _A, _A,
+				GrB_DESC_T1));
 	}
 
 	//--------------------------------------------------------------------------
@@ -802,22 +786,20 @@ GrB_Info get_sub_weight_matrix
 	//--------------------------------------------------------------------------
 
 	if (A_w) {
-		info = GrB_Matrix_new(A_w, GrB_FP64, rows_nvals, rows_nvals);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(GrB_Matrix_new(A_w, GrB_FP64, rows_nvals, rows_nvals));
 
 		GxB_print(_A, GxB_SHORT);
 		if (weight == ATTRIBUTE_ID_NONE) {
 			// if no weight specified, weights are zero
-			info = GrB_Matrix_assign_FP64(
+			GrB_OK(GrB_Matrix_assign_FP64(
 				*A_w, _A, NULL, 0.0, GrB_ALL, n, GrB_ALL, n, GrB_DESC_S
-			);
+			));
 		} else {
 			// get the weight value from the edge ids
-			info = GrB_Matrix_apply_BinaryOp2nd_UDT(
+			GrB_OK(GrB_Matrix_apply_BinaryOp2nd_UDT(
 				*A_w, NULL, NULL, weightOp, _A, (void *) (&ctx), NULL
-			);
+			));
 		}
-		ASSERT(info == GrB_SUCCESS);
 	}
 
 	// set outputs
@@ -829,6 +811,6 @@ GrB_Info get_sub_weight_matrix
 	}
 
 	BWM_FREE;
-	return info;
+	return GrB_SUCCESS;
 }
 
