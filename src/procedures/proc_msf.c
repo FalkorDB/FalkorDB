@@ -26,7 +26,14 @@
 // CALL algo.MSF({nodeLabels: ['L'], relationshipTypes: ['E'], weightAttribute: 
 //      'cost', objective: 'maximize'}) YIELD edge, weight
 // CALL algo.MSF({nodeLabels: ['L'], objective: 'minimize'})
-
+#define _GET_ID(id, k) \
+	if (id_map) {                                                  \
+		int32_t _id;                                              \
+		GrB_OK(GrB_Vector_extractElement_INT32(&(_id), id_map, k));\
+		(id) = (NodeID) _id;                                       \
+	} else {                                                       \
+		(id) = (NodeID) (k);                                       \
+	}
 
 // MSF procedure context
 typedef struct {
@@ -252,19 +259,48 @@ void _get_trees_from_matrix(
 	GrB_Index r;
 	GrB_Index c;
 	GrB_Info  it_info;
-	GxB_Iterator i = &_i;
-	bool      ret_edges = (trees_e != NULL);
-	bool      ret_nodes = (trees_n != NULL);
+	GxB_Iterator  i        = &_i;
+	GxB_Container cont     = NULL;
+	int32_t       sparcity = 0;
+	GrB_Vector    id_map   = NULL;
+
+	bool ret_edges = (trees_e != NULL);
+	bool ret_nodes = (trees_n != NULL);
 	GrB_OK(GrB_Matrix_nrows(&nrows, A));
 	ASSERT(nrows == cc_nvals);
 	GrB_OK(GrB_Vector_nvals(&nrows, rows));
 	ASSERT(nrows == cc_nvals);
 
-	GrB_Index *id_map = rm_malloc(nrows * sizeof(GrB_Index));
 
-	GrB_OK(GrB_Vector_extractTuples_BOOL(id_map, NULL, &nrows, rows));
+	GrB_OK(GrB_Vector_get_INT32(rows, &sparcity, GxB_SPARSITY_STATUS));
+	
+	// if the rows vector is full, we don't need to build an id_map
+	// if it is bitmap we make it sparse and unload it to access the id values
+	// in cont->i.
+	switch (sparcity)
+	{
+		case GxB_BITMAP:
+			GrB_OK(GrB_Vector_set_INT32(rows, GxB_SPARSE, GxB_SPARSITY_CONTROL));
+		case GxB_SPARSE:
+			GrB_OK(GxB_Container_new(&cont));
+			GrB_OK(GxB_unload_Vector_into_Container(rows, cont, NULL));
+			id_map = cont->i;
+			break;
+		
+		case GxB_FULL:
+			// if the vector is full, we can just use the index
+			id_map = NULL;
+			break;
+		default:
+			ASSERT(false && "Unexpected vector sparcity");
+			break;
+	}
 
 	GrB_Type ty;
+	if(id_map != NULL) {
+		GrB_OK(GxB_Vector_type(&ty, id_map));
+		ASSERT(ty == GrB_INT32);
+	}
 	GrB_OK(GxB_Matrix_type(&ty, A));
 	ASSERT(nrows == cc_nvals);
 	ASSERT(ty == GrB_UINT64);
@@ -277,11 +313,12 @@ void _get_trees_from_matrix(
 	// the MSB is used to mark places that already point to the _trees_n array
 	for(uint k = 0; k < cc_nvals; k++) {
 		uint64_t rep = cc[k];
-
-		ASSERT(id_map[k] < Graph_UncompactedNodeCount(g));
+		NodeID id;
+		_GET_ID(id, k);
+		ASSERT(id < Graph_UncompactedNodeCount(g));
 		// if k is already a representative, put into array and skip.
 		if (rep & MSB_MASK) {
-			array_append(_trees_n[CLEAR_MSB(rep)], id_map[k]);
+			array_append(_trees_n[CLEAR_MSB(rep)], id);
 			continue;
 		} 
 
@@ -299,7 +336,7 @@ void _get_trees_from_matrix(
 
 		cc[k] = grand_rep;
 
-		array_append(_trees_n[CLEAR_MSB(grand_rep)], id_map[k]);
+		array_append(_trees_n[CLEAR_MSB(grand_rep)], id);
 	}
 
 	// The following code gets the branches of the trees. 
@@ -324,8 +361,7 @@ void _get_trees_from_matrix(
 
 			// Get the tree and append the edge to it.
 			ASSERT(cc[r] == cc[c]); // src and dest need to be in the same tree
-			ASSERT(id_map[r] < Graph_UncompactedNodeCount(g));
-			ASSERT(id_map[c] < Graph_UncompactedNodeCount(g));
+
 			uint64_t j = CLEAR_MSB(cc[r]); //tree index
 			Edge **tree = &_trees_e[j];
 
@@ -333,11 +369,15 @@ void _get_trees_from_matrix(
 			Edge *e = array_ensure_tail(tree, Edge);
 			EdgeID e_id = GxB_Iterator_get_UINT64(i);
 
+			NodeID src_id;
+			NodeID dest_id;
+			_GET_ID(src_id, r);
+			_GET_ID(dest_id, c);
 			// get the edge from the graph and set its source and destination
 			// wait until yield to set the relation ID
 			Graph_GetEdge(g, e_id, e);
-			Edge_SetSrcNodeID(e, id_map[r]);
-			Edge_SetDestNodeID(e, id_map[c]);
+			Edge_SetSrcNodeID(e, src_id);
+			Edge_SetDestNodeID(e, dest_id);
 
 			it_info = GxB_Matrix_Iterator_next(i);
 		}
@@ -357,7 +397,13 @@ void _get_trees_from_matrix(
 		array_free(_trees_n);
 	}
 
-	rm_free(id_map);
+
+	// don't free the id_map, it is in the container.
+	id_map = NULL;
+	if(cont != NULL){
+		GrB_OK(GxB_load_Vector_from_Container(rows, cont, NULL));
+		GrB_OK(GrB_free(&cont));
+	}
 }
 
 // invoke the procedure
@@ -546,8 +592,9 @@ SIValue *Proc_MSFStep
 				// msf thinks the graph is symetric, so it could have returned
 				// a flipped edge
 				EdgeID temp = Edge_GetSrcNodeID(e);
-				Edge_SetSrcNodeID(e, e->dest_id);
+				Edge_SetSrcNodeID(e, Edge_GetDestNodeID(e));
 				Edge_SetDestNodeID(e, temp);
+
 				found_e = Graph_LookupEdgeRelationID(pdata->g, e, 
 					pdata->relationIDs, pdata->relationCount);
 			}
