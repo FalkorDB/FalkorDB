@@ -223,7 +223,7 @@ void _print_matrix(GrB_Matrix mat) {
 bool _compare_matrices(GrB_Matrix expected, Delta_Matrix actual) {
 	GrB_Matrix a = expected;
 	GrB_Matrix b = NULL;
-	Delta_Matrix_export(&b, actual);
+	Delta_Matrix_export(&b, actual, GrB_BOOL);
 
 	GrB_Index acols, arows, avals;
 	GrB_Index bcols, brows, bvals;
@@ -681,7 +681,7 @@ void test_Exp_OP_MUL() {
 	// Using the A matrix described above,
 	// A * I = A.
 	GrB_Matrix expected;
-	Delta_Matrix_export(&expected, A);
+	Delta_Matrix_export(&expected, A, GrB_BOOL);
 	TEST_ASSERT(_compare_matrices(expected, res));
 
 	raxFree(matrices);
