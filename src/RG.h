@@ -88,8 +88,8 @@
 #if RG_DEBUG
 	#define GrB_OK(GrB_method)                                       \
 	{                                                                \
-		GrB_Info rg_info = (GrB_method) ;                            \
-		ASSERT(rg_info == GrB_SUCCESS || rg_info == GrB_NO_VALUE);   \
+		GrB_Info _info = (GrB_method) ;                              \
+		ASSERT(_info == GrB_SUCCESS || _info == GrB_NO_VALUE);       \
 	}
 #else
 	#define GrB_OK(GrB_method) (GrB_method)
