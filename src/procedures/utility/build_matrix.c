@@ -33,8 +33,8 @@ void _get_rows_delta
 	GrB_Matrix      cdm    =  DELTA_MATRIX_DELTA_MINUS(*C);
 
 	GrB_Descriptor_new(&desc);
-
 	GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST);
+
 	info = GxB_Matrix_extract_Vector(cm, NULL, NULL, m, _N, NULL, desc);
 	ASSERT(info == GrB_SUCCESS);
 	info = GxB_Matrix_extract_Vector(cdp, NULL, NULL, dp, _N, NULL, desc);
@@ -132,9 +132,9 @@ void _get_rows_with_labels
 void _combine_matricies_and_extract
 (
 	GrB_Matrix *A,            // [output] matrix
-	const Delta_Matrix *mats, // [optional] matricies to consider
+	const Delta_Matrix *mats, // matricies to consider
 	unsigned short n_mats,    // number of matricies
-	const GrB_Vector rows    // [optional] filtered rows
+	const GrB_Vector rows     // filtered rows
 ) {
 	ASSERT(A != NULL);
 	ASSERT(mats != NULL);
