@@ -293,9 +293,7 @@ GrB_Info get_sub_weight_matrix
 	GrB_Vector     _N          = NULL;  // output filtered rows
 	Delta_Matrix   D           = NULL;  // graph delta matrix
 	GrB_Index      nrows       = 0;     // number of rows in matrix
-	GrB_Index      ncols       = 0;     // number of columns in matrix
 	GrB_Index      rows_nvals  = 0;     // number of rows being returned in matrix
-	GrB_Type       A_type      = NULL;  // type of the matrix
 	GrB_Descriptor desc        = NULL;  // Use row and column indecies 
 
 	bool compact = false;
@@ -342,9 +340,10 @@ GrB_Info get_sub_weight_matrix
 		// free L matrix
 		GrB_OK (GrB_Matrix_free(&L));
 	} else {
+		GrB_OK(GrB_Vector_resize(_N, n));
 		// no labels, N = present nodes
 		GrB_OK (GrB_Vector_assign_BOOL(
-			_N, NULL, NULL, true, GrB_ALL, nrows, NULL));
+			_N, NULL, NULL, true, GrB_ALL, n, NULL));
 
 		//remove deleted nodes from N
 		if(Graph_DeletedNodeCount(g) > 0) {
@@ -395,15 +394,6 @@ GrB_Info get_sub_weight_matrix
 
 	GrB_OK(Delta_Matrix_export(&_A, D, GrB_UINT64));
 
-	GrB_OK(GrB_Matrix_nrows(&nrows, _A));
-
-	GrB_OK(GrB_Matrix_ncols(&ncols, _A));
-
-	GrB_OK(GxB_Matrix_type(&A_type, _A));
-
-	// expecting a square matrix
-	ASSERT(nrows == ncols);
-
 	bool multiEdgeFlag = Graph_RelationshipContainsMultiEdge(g, rel_id);
 
 	for (unsigned short i = 1; i < n_rels; i++) {
@@ -422,6 +412,7 @@ GrB_Info get_sub_weight_matrix
 	}
 
 	GrB_OK(GrB_Vector_nvals(&rows_nvals, _N));
+	
 	if (compact) {
 		// Shrink A to the requested row / column sizes
 		GrB_Matrix temp = NULL;
@@ -430,7 +421,6 @@ GrB_Info get_sub_weight_matrix
 			temp, NULL, NULL, _A, _N, _N, desc));
 		GrB_OK(GrB_Matrix_free(&_A));
 		_A = temp;
-		temp = NULL;
 	} else {
 		// get rid of extra unused rows and columns
 		GrB_OK(GrB_Matrix_resize(_A, rows_nvals, rows_nvals));
@@ -443,8 +433,8 @@ GrB_Info get_sub_weight_matrix
 		if (weight == ATTRIBUTE_ID_NONE) {
 			GrB_OK (GrB_Matrix_apply(_A, NULL, NULL, toMatrix, _A, NULL));
 		} else {
-			GrB_OK (GrB_Matrix_apply_BinaryOp2nd_UDT(_A, NULL, NULL, toMatrixMin,
-				_A, (void *) (&ctx), NULL));
+			GrB_OK (GrB_Matrix_apply_BinaryOp2nd_UDT(_A, NULL, NULL, 
+				toMatrixMin, _A, (void *) (&ctx), NULL));
 		}
 	}
 
