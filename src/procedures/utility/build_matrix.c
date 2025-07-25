@@ -45,7 +45,7 @@ void _get_rows_delta
 	GrB_Descriptor_free(&desc);
 }
 
-GrB_Info _compile_matricies
+GrB_Info _union_matrix_chain
 (
 	GrB_Matrix *A,             // [output] matrix
 	const Delta_Matrix *mats,  // [optional] matricies to consider
@@ -145,15 +145,15 @@ void _combine_matricies_and_extract
 	GrB_Scalar     bzomb   = NULL;
 	GrB_Scalar     u64zomb = NULL;
 
-	GrB_Scalar_new(&bzomb, GrB_BOOL);
-	GrB_Scalar_setElement_BOOL(bzomb, BOOL_ZOMBIE);
+	GrB_OK(GrB_Scalar_new(&bzomb, GrB_BOOL));
+	GrB_OK(GrB_Scalar_setElement_BOOL(bzomb, BOOL_ZOMBIE));
 
-	GrB_Scalar_new(&u64zomb, GrB_UINT64);
-	GrB_Scalar_setElement_UINT64(u64zomb, U64_ZOMBIE);
+	GrB_OK(GrB_Scalar_new(&u64zomb, GrB_UINT64));
+	GrB_OK(GrB_Scalar_setElement_UINT64(u64zomb, U64_ZOMBIE));
 
-	GrB_Descriptor_new(&desc);
-	GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST);
-	GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_COLINDEX_LIST);
+	GrB_OK(GrB_Descriptor_new(&desc));
+	GrB_OK(GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST));
+	GrB_OK(GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_COLINDEX_LIST));
 
 	GrB_OK(GrB_Vector_nvals(&nvals, rows));
 	GrB_OK(GrB_Vector_nvals(&nrows, rows));
@@ -168,7 +168,7 @@ void _combine_matricies_and_extract
 		}
 	}
 
-	_compile_matricies(A, rel_ms ? rel_ms : mats, n_mats, bzomb, u64zomb);
+	_union_matrix_chain(A, rel_ms ? rel_ms : mats, n_mats, bzomb, u64zomb);
 
 	if(rel_ms != NULL) {
 		for(int i = 0; i < n_mats; ++i) {
@@ -224,8 +224,7 @@ GrB_Info get_sub_adjecency_matrix
 	nrows = Graph_RequiredMatrixDim(g);
 
 	// create vector N denoting all nodes passing the labels filter
-	info = GrB_Vector_new(&_N, GrB_BOOL, nrows);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Vector_new(&_N, GrB_BOOL, nrows));
 
 	_get_rows_with_labels(_N, g, lbls, n_lbls);
 
@@ -234,7 +233,6 @@ GrB_Info get_sub_adjecency_matrix
 	if(n_rels == 0) {
 		Delta_Matrix D = Graph_GetAdjacencyMatrix(g, false);
 		_combine_matricies_and_extract(&_A, &D, 1, _N);
-		ASSERT(info == GrB_SUCCESS);
 		if(symmetric) {
 			D = Graph_GetAdjacencyMatrix(g, true);
 			_combine_matricies_and_extract(&_A, &D, 1, _N);
@@ -253,14 +251,12 @@ GrB_Info get_sub_adjecency_matrix
 	if(symmetric) {
 		if(_A_T) {
 			// make A symmetric A = A + At
-			info = GrB_Matrix_eWiseAdd_Semiring(_A, NULL, NULL, GxB_ANY_PAIR_BOOL,
-					_A, _A_T, NULL);
-			ASSERT(info == GrB_SUCCESS);
+			GrB_OK(GrB_Matrix_eWiseAdd_Semiring(_A, NULL, NULL, GxB_ANY_PAIR_BOOL,
+					_A, _A_T, NULL));
 		} else {
 			// make A symmetric A = A + At
-			info = GrB_Matrix_eWiseAdd_Semiring(_A, NULL, NULL, GxB_ANY_PAIR_BOOL,
-					_A, _A, GrB_DESC_T1);
-			ASSERT(info == GrB_SUCCESS);
+			GrB_OK(GrB_Matrix_eWiseAdd_Semiring(_A, NULL, NULL, GxB_ANY_PAIR_BOOL,
+					_A, _A, GrB_DESC_T1));
 		}
 		
 	}
@@ -271,10 +267,10 @@ GrB_Info get_sub_adjecency_matrix
 		*rows = _N;
 		_N = NULL;
 	}
+
 	GrB_free(&L);
 	GrB_free(&_N);
 	GrB_free(&_A_T);
-	// GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
 	return GrB_SUCCESS;
 }
 
