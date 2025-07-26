@@ -10,6 +10,7 @@
 #include "../entities/edge.h"
 #include "../delta_matrix/delta_matrix.h"
 #include "../delta_matrix/delta_matrix_iter.h"
+#include "tensor_utils.h"
 
 // Tensor is a 3D Delta Matrix
 typedef Delta_Matrix Tensor;
