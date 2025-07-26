@@ -47,7 +47,9 @@ GrB_Info Build_Matrix
 	ASSERT(D != NULL);
 
 	// export relation matrix to A
-	info = Delta_Matrix_export_structure(&_A, D);
+	// TODO: extend Delta_Matrix_export to include a exported matrix type
+	// cast if needed
+	info = Delta_Matrix_export(&_A, D);
 	ASSERT(info == GrB_SUCCESS);
 
 	// in case there are multiple relation types, include them in A
@@ -55,7 +57,7 @@ GrB_Info Build_Matrix
 		D = Graph_GetRelationMatrix(g, rels[i], false);
 
 		GrB_Matrix M;
-		info = Delta_Matrix_export_structure(&M, D);
+		info = Delta_Matrix_export(&M, D);
 		ASSERT(info == GrB_SUCCESS);
 
 		info = GrB_Matrix_eWiseAdd_Monoid(_A, NULL, NULL, GxB_ANY_BOOL_MONOID,
@@ -75,46 +77,32 @@ GrB_Info Build_Matrix
 	ASSERT(nrows == ncols);
 
 	// create vector N denoting all nodes passing the labels filter
-	info = GrB_Vector_new(&_N, GrB_BOOL, nrows);
-	ASSERT(info == GrB_SUCCESS);
+	if(rows != NULL) {
+		info = GrB_Vector_new(&_N, GrB_BOOL, nrows);
+		ASSERT(info == GrB_SUCCESS);
+	}
 
 	// enforce labels
 	if(n_lbls > 0) {
-		GrB_Matrix L = NULL;
-		if(n_lbls == 1)
-		{
-			Delta_Matrix DL = Graph_GetLabelMatrix(g, lbls[0]);
+		Delta_Matrix DL = Graph_GetLabelMatrix(g, lbls[0]);
 
-			info = Delta_Matrix_export(&L, DL);
-			ASSERT(info == GrB_SUCCESS);
+		GrB_Matrix L;
+		info = Delta_Matrix_export(&L, DL);
+		ASSERT(info == GrB_SUCCESS);
 
-			// set N to L's main diagonal denoting all participating nodes 
-			if(rows != NULL) {
-				info = GxB_Vector_diag(_N, L, 0, NULL);
-				ASSERT(info == GrB_SUCCESS);
-			}
-		} else {
-			Delta_Matrix DL = Graph_GetNodeLabelMatrix(g);
-			GrB_Vector lbls_v = NULL;
-			info = Delta_Matrix_export(&L, DL);
+		// L = L U M
+		for(unsigned short i = 1; i < n_lbls; i++) {
+			DL = Graph_GetLabelMatrix(g, lbls[i]);
+
+			GrB_Matrix M;
+			info = Delta_Matrix_export(&M, DL);
 			ASSERT(info == GrB_SUCCESS);
 
-			info =  GrB_Vector_new(&lbls_v, GrB_BOOL, ncols);
+			info = GrB_Matrix_eWiseAdd_Monoid(L, NULL, NULL,
+					GxB_ANY_BOOL_MONOID, L, M, NULL);
 			ASSERT(info == GrB_SUCCESS);
 
-			// can't do via assign because lbls is int type. 
-			for(unsigned short i = 0; i < n_lbls; i++) {
-				info = GrB_Vector_setElement_BOOL(lbls_v, true, lbls[i]);
-				ASSERT(info == GrB_SUCCESS);
-			}
-			
-			info = GrB_mxv(_N, NULL, NULL, GxB_ANY_PAIR_BOOL, L, lbls_v, NULL);
-			ASSERT(info == GrB_SUCCESS);
-			
-			info = GrB_Matrix_free(&L);
-			ASSERT(info == GrB_SUCCESS);
-			info = GrB_Matrix_diag(&L, _N, 0);
-			ASSERT(info == GrB_SUCCESS);
+			GrB_Matrix_free(&M);
 		}
 
 		// A = L * A * L
@@ -123,7 +111,13 @@ GrB_Info Build_Matrix
 
 		info = GrB_mxm(_A, NULL, NULL, GxB_ANY_PAIR_BOOL, _A, L, NULL);
 		ASSERT(info == GrB_SUCCESS);
-		
+
+		// set N to L's main diagonal denoting all participating nodes 
+		if(rows != NULL) {
+			info = GxB_Vector_diag(_N, L, 0, NULL);
+			ASSERT(info == GrB_SUCCESS);
+		}
+
 		// free L matrix
 		info = GrB_Matrix_free(&L);
 		ASSERT(info == GrB_SUCCESS);
@@ -168,11 +162,8 @@ GrB_Info Build_Matrix
 
 	// set outputs
 	*A = _A;
-	if(rows) {
-		*rows = _N;
-		_N = NULL;
-	}
-	GrB_free(&_N);
+	if(rows) *rows = _N;
+
 	return info;
 }
 
