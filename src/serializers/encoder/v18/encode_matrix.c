@@ -14,42 +14,20 @@
 #include <mach/mach.h>
 #include <mach/task_info.h>
 
-// encode tensors
-static void _EncodeTensors
+// extract D's tensors
+static void _ExtractTensors
 (
-	SerializerIO rdb,  // RDB
-	const Graph *g,    // graph
-	RelationID r,      // relation id
-	Delta_Matrix D     // matrix from which to extract tensors
+	Delta_Matrix D,    // matrix from which to extract tensors
+	GrB_Matrix *TM,    // M's tensors
+	GrB_Matrix *TDP    // DP's tensors
 ) {
-	// format:
-	//  M - number of tensors
-	//  tensors:
-	//   tensor i index
-	//   tensor j index
-	//   tensor
-	//
-	//  DP - number of tensors
-	//  tensors:
-	//   tensor i index
-	//   tensor j index
-	//   tensor
-
-	ASSERT(g != NULL);
-	ASSERT(D != NULL);
-
-	// in case the relationship doesn't contains any tensors quickly return
-	if (!Graph_RelationshipContainsMultiEdge(g, r)) {
-		// no tensors
-		SerializerIO_WriteUnsigned (rdb, 0) ;
-		return;
-	}
+	ASSERT(D   != NULL);
+	ASSERT(TM  != NULL);
+	ASSERT(TDP != NULL);
 
 	GrB_Info info;
 	GrB_Matrix M  = Delta_Matrix_M  (D) ;
 	GrB_Matrix DP = Delta_Matrix_DP (D) ;
-
-	GrB_Matrix matrices[2] = { M, DP } ;
 
 	// create a scalar with MSB on
 	GrB_Scalar s;
@@ -71,18 +49,70 @@ static void _EncodeTensors
 	ASSERT (info == GrB_SUCCESS) ;
 
 	// tensors only matrix
-	GrB_Matrix T;
-	info = GrB_Matrix_new (&T, GrB_UINT64, nrows, ncols) ;
+	info = GrB_Matrix_new (TM, GrB_UINT64, nrows, ncols) ;
 	ASSERT (info == GrB_SUCCESS) ;
 
-	for (int i = 0; i < 2; i++) {
-		GrB_Matrix A = matrices[i];
+	info = GrB_Matrix_new (TDP, GrB_UINT64, nrows, ncols) ;
+	ASSERT (info == GrB_SUCCESS) ;
 
-		// extract A's tensors
-		// keep entries A[i,j] with MSB on
-		// copy tensor entries from A to T
-		info = GrB_select (T, NULL, NULL, GrB_VALUEGE_UINT64, A, s, NULL) ;
-		ASSERT(info == GrB_SUCCESS);
+	// extract A's tensors
+	// keep entries A[i,j] with MSB on
+	// copy tensor entries from A to T
+	info = GrB_select (*TM, NULL, NULL, GrB_VALUEGE_UINT64, M, s, NULL) ;
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_select (*TDP, NULL, NULL, GrB_VALUEGE_UINT64, DP, s, NULL) ;
+	ASSERT(info == GrB_SUCCESS);
+
+	GrB_free (&s) ;
+}
+
+// encode tensors
+static void _EncodeTensors
+(
+	SerializerIO rdb,  // RDB
+	GrB_Matrix TM,
+	GrB_Matrix TDP
+) {
+	// format:
+	//  M - number of tensors
+	//  tensors:
+	//   tensor i index
+	//   tensor j index
+	//   tensor
+	//
+	//  DP - number of tensors
+	//  tensors:
+	//   tensor i index
+	//   tensor j index
+	//   tensor
+
+	GrB_Info info;
+
+	//--------------------------------------------------------------------------
+	// encode total number of tensors
+	//--------------------------------------------------------------------------
+
+	GrB_Index tm_nvals;
+	info = GrB_Matrix_nvals (&tm_nvals, TM) ;
+	ASSERT (info == GrB_SUCCESS) ;
+
+	GrB_Index tdp_nvals;
+	info = GrB_Matrix_nvals (&tdp_nvals, TDP) ;
+	ASSERT (info == GrB_SUCCESS) ;
+
+	GrB_Index nvals = tm_nvals + tdp_nvals ;
+	SerializerIO_WriteUnsigned (rdb, nvals) ;
+
+	// return if no tensors
+	if (nvals == 0) {
+		return;
+	}
+
+	GrB_Matrix matrices[2] = { TM, TDP } ;
+
+	for (int i = 0; i < 2; i++) {
+		GrB_Matrix T = matrices[i];
 
 		// how many tensors are there?
 		GrB_Index nvals;
@@ -144,9 +174,6 @@ static void _EncodeTensors
 		// clean up
 		GrB_free (&it) ;
 	}
-
-	GrB_free (&s) ;
-	GrB_free (&T) ;
 }
 
 static void print_mem_cons(void) {
@@ -369,23 +396,30 @@ void RdbSaveRelationMatrices_v18
 	ASSERT(rdb != NULL);
 
 	int n = Graph_RelationTypeCount(g);
+	bool reload = !Globals_Get_ProcessIsChild();
 
 	Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
 	for(RelationID i = 0; i < n; i++) {
 		// write relation ID
 		SerializerIO_WriteUnsigned(rdb, i);
 
-		bool reload =
-			Graph_RelationshipContainsMultiEdge(g, i) ||
-			!Globals_Get_ProcessIsChild();
-
 		// dump matrix to rdb
-		Delta_Matrix R = Graph_GetRelationMatrix(g, i, false);
-		_Encode_Delta_Matrix(rdb, R, true);
-		_EncodeTensors(rdb, g, i, R);
+		Delta_Matrix R = Graph_GetRelationMatrix (g, i, false) ;
+		GrB_Matrix TM  = NULL ;
+		GrB_Matrix TDP = NULL ;
 
-		if (Globals_Get_ProcessIsChild()) {
-			Delta_Matrix_free(&R);
+		bool encode_tensors = Graph_RelationshipContainsMultiEdge (g, i) ;
+		if (encode_tensors) {
+			_ExtractTensors (R, &TM, &TDP) ;
+		}
+
+		_Encode_Delta_Matrix (rdb, R, reload) ;
+		_EncodeTensors (rdb, TM, TDP) ;
+
+		// clean up
+		if (encode_tensors) {
+			GrB_free (&TM) ;
+			GrB_free (&TDP) ;
 		}
 	}
 }
