@@ -59,6 +59,15 @@ GraphContext *Decode_Previous
 			break;
 		}
 
+		case 17: {
+			io = SerializerIO_FromRedisModuleIO(rdb, false);
+			const RedisModuleString *rm_key_name =
+				RedisModule_GetKeyNameFromIO(rdb);
+			ctx = RdbLoadGraphContext_v17(io, rm_key_name);
+			SerializerIO_Free(&io);
+			break;
+		}
+
 		default:
 			ASSERT(false && "attempted to read unsupported RedisGraph version from RDB file.");
 			break;

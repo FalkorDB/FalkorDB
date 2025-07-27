@@ -89,7 +89,10 @@ static int _GenericKeyspaceHandler
 //------------------------------------------------------------------------------
 
 // Checks if the graph name contains a hash tag between curly braces.
-static bool _GraphContext_NameContainsTag(const GraphContext *gc) {
+static bool _GraphContext_NameContainsTag
+(
+	const GraphContext *gc
+) {
 	const char *left_curly_brace = strstr(gc->graph_name, "{");
 	if(left_curly_brace) {
 		const char *right_curly_brace = strstr(left_curly_brace, "}");
@@ -101,7 +104,10 @@ static bool _GraphContext_NameContainsTag(const GraphContext *gc) {
 }
 
 // Calculate how many virtual keys are needed to represent the graph.
-static uint64_t _GraphContext_RequiredMetaKeys(const GraphContext *gc) {
+static uint64_t _GraphContext_RequiredMetaKeys
+(
+	const GraphContext *gc
+) {
 	uint64_t vkey_entity_count;
 	Config_Option_get(Config_VKEY_MAX_ENTITY_COUNT, &vkey_entity_count);
 	gc->encoding_context->vkey_entity_count = vkey_entity_count;
@@ -268,7 +274,11 @@ static void _FlushDBHandler
 }
 
 // Checks if the event is persistence start event.
-static bool _IsEventPersistenceStart(RedisModuleEvent eid, uint64_t subevent) {
+static bool _IsEventPersistenceStart
+(
+	RedisModuleEvent eid,
+	uint64_t subevent
+) {
 	return eid.id == REDISMODULE_EVENT_PERSISTENCE  &&
 		   (subevent == REDISMODULE_SUBEVENT_PERSISTENCE_RDB_START      ||    // Normal RDB.
 			subevent == REDISMODULE_SUBEVENT_PERSISTENCE_AOF_START      ||    // Preamble AOF.
@@ -278,7 +288,11 @@ static bool _IsEventPersistenceStart(RedisModuleEvent eid, uint64_t subevent) {
 }
 
 // Checks if the event is persistence end event.
-static bool _IsEventPersistenceEnd(RedisModuleEvent eid, uint64_t subevent) {
+static bool _IsEventPersistenceEnd
+(
+	RedisModuleEvent eid,
+	uint64_t subevent
+) {
 	return eid.id == REDISMODULE_EVENT_PERSISTENCE &&
 		   (subevent == REDISMODULE_SUBEVENT_PERSISTENCE_ENDED ||  // Save ended.
 			subevent == REDISMODULE_SUBEVENT_PERSISTENCE_FAILED    // Save failed.
@@ -311,8 +325,13 @@ static void _ReplicationRoleChangedEventHandler
 }
 
 // server persistence event handler
-static void _PersistenceEventHandler(RedisModuleCtx *ctx, RedisModuleEvent eid,
-		uint64_t subevent, void *data) {
+static void _PersistenceEventHandler
+(
+	RedisModuleCtx *ctx,
+	RedisModuleEvent eid,
+	uint64_t subevent,
+	void *data
+) {
 	if(INTERMEDIATE_GRAPHS) {
 		// check for half-baked graphs
 		// indicated by `aux_field_counter` > 0
@@ -389,7 +408,10 @@ static void _ModuleLoadedHandler
 	}
 }
 
-static void _RegisterServerEvents(RedisModuleCtx *ctx) {
+static void _RegisterServerEvents
+(
+	RedisModuleCtx *ctx
+) {
 	int res;
 	res = RedisModule_SubscribeToServerEvent(ctx,
 			RedisModuleEvent_FlushDB,
@@ -433,17 +455,24 @@ static void RG_ForkPrepare() {
 	//
 	// on BGSAVE acquire read lock for each graph to ensure no graph is being
 	// modified, otherwise the child process might inherit a malformed matrix
-	// to ensure no matrix is being flushed (GrB_wait) we acquire each matrix
-	// individual lock
 	//
-	// the locks will be unlocked on both RG_AfterForkParent & RG_AfterForkChild
+	// on BGSAVE: acquire read lock
+	// flush all matrices such that child won't inherit locked matrix
+	// release read lock immediately once forked
+	//
 	// in the case of RediSearch GC fork, quickly return
 
 	// BGSAVE is invoked from Redis main thread
-	if(!pthread_equal(pthread_self(), redis_main_thread_id)) return;
+	if(!pthread_equal(pthread_self(), redis_main_thread_id)) {
+		return;
+	}
 
 	// return if we have half-baked graphs
-	if(INTERMEDIATE_GRAPHS) return;
+	if(INTERMEDIATE_GRAPHS) {
+		return;
+	}
+
+	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(NULL);
 
 	// scan through each graph in the keyspace
 	GraphContext *gc = NULL;
@@ -453,14 +482,65 @@ static void RG_ForkPrepare() {
 	while((gc = GraphIterator_Next(&it)) != NULL) {
 		// acquire read lock, guarantee graph isn't modified by a writer
 		Graph *g = gc->g;
-		Graph_AcquireReadLock(g);
+		Graph_AcquireReadLock(g);  // release in RG_AfterForkParent
 
-		// lock all matrices, ensure no matrix is being flushed by other readers
-		Graph_LockAllMatrices(g);
+		// set matrix synchronization policy to default
+		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
+
+		// synchronize all matrices, make sure they're in a consistent state
+		// do not force-flush as this can take awhile
+
+		//----------------------------------------------------------------------
+		// sync graph's matrices
+		//----------------------------------------------------------------------
+
+		int n_lbls = Graph_LabelTypeCount(g);
+		int n_rels = Graph_RelationTypeCount(g);
+
+		// total number of matrices in current graph
+		uint n = 1      +  // adjacency matrix
+				 1      +  // labels matrix
+				 n_lbls +  // label matrices
+				 n_rels;   // relationship matrices
+
+		Delta_Matrix matrices[n];
+
+		matrices[0] = Graph_GetAdjacencyMatrix(g, false);
+		RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+				"preparing to fork");
+
+		matrices[1] = Graph_GetNodeLabelMatrix(g);
+			RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+					"preparing to fork");
+
+		int offset = 2;
+		for (int i = 0; i < n_lbls; i++) {
+			matrices[offset + i] = Graph_GetLabelMatrix(g, i);
+			RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+					"preparing to fork");
+		}
+
+		offset += n_lbls;
+		for (int i = 0; i < n_rels; i++) {
+			matrices[offset + i] = Graph_GetRelationMatrix(g, i, false);
+			RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+					"preparing to fork");
+		}
+
+		bool force_flush = false;
+
+		for (int i = 0; i < n; i++) {
+			Delta_Matrix M = matrices[i];
+			Delta_Matrix_wait(M, force_flush);  // redundant due to Graph_Get*
+			RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+					"preparing to fork");
+		}
 
 		// decrease graph context ref count
 		GraphContext_DecreaseRefCount(gc);
 	}
+
+	RedisModule_FreeThreadSafeContext(ctx);
 }
 
 // after fork at parent
@@ -548,7 +628,10 @@ void ModuleEventHandler_AUXAfterKeyspaceEvent(void) {
 	_ModuleEventHandler_TryClearKeyspace();
 }
 
-void RegisterEventHandlers(RedisModuleCtx *ctx) {
+void RegisterEventHandlers
+(
+	RedisModuleCtx *ctx
+) {
 	_RegisterForkHooks();       // set up hooks for forking logic to prevent bgsave deadlocks
 	_RegisterServerEvents(ctx); // set up hooks for del/rename and server events
 }

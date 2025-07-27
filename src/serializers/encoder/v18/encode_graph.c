@@ -3,7 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "encode_v17.h"
+#include "encode_v18.h"
 #include "../../../globals.h"
 
 // Determine whether we are in the context of a bgsave, in which case
@@ -64,7 +64,7 @@ static void _RdbSaveHeader
 	SerializerIO_WriteUnsigned(rdb, header->key_count);
 
 	// save graph schemas
-	RdbSaveGraphSchema_v17(rdb, gc);
+	RdbSaveGraphSchema_v18(rdb, gc);
 }
 
 // returns a state information regarding the number of entities required
@@ -258,39 +258,39 @@ void RdbSaveGraph_latest
 
 		switch(payload->state) {
 			case ENCODE_STATE_NODES:
-				RdbSaveNodes_v17(rdb, gc, payload->offset,
+				RdbSaveNodes_v18(rdb, gc, payload->offset,
 						payload->entities_count);
 				break;
 
 			case ENCODE_STATE_DELETED_NODES:
-				RdbSaveDeletedNodes_v17(rdb, gc, payload->offset,
+				RdbSaveDeletedNodes_v18(rdb, gc, payload->offset,
 						payload->entities_count);
 				break;
 
 			case ENCODE_STATE_EDGES:
-				RdbSaveEdges_v17(rdb, gc, payload->offset,
+				RdbSaveEdges_v18(rdb, gc, payload->offset,
 						payload->entities_count);
 				break;
 
 			case ENCODE_STATE_DELETED_EDGES:
-				RdbSaveDeletedEdges_v17(rdb, gc, payload->offset,
+				RdbSaveDeletedEdges_v18(rdb, gc, payload->offset,
 						payload->entities_count);
 				break;
 
 			case ENCODE_STATE_LABELS_MATRICES:
-				RdbSaveLabelMatrices_v17(rdb, g);
+				RdbSaveLabelMatrices_v18(rdb, g);
 				break;
 
 			case ENCODE_STATE_RELATION_MATRICES:
-				RdbSaveRelationMatrices_v17(rdb, g);
+				RdbSaveRelationMatrices_v18(rdb, g);
 				break;
 
 			case ENCODE_STATE_ADJ_MATRIX:
-				RdbSaveAdjMatrix_v17(rdb, g);
+				RdbSaveAdjMatrix_v18(rdb, g);
 				break;
 
 			case ENCODE_STATE_LBLS_MATRIX:
-				RdbSaveLblsMatrix_v17(rdb, g);
+				RdbSaveLblsMatrix_v18(rdb, g);
 				break;
 
 			default:
@@ -321,5 +321,18 @@ void RdbSaveGraph_latest
 
 	// if a lock was acquired, release it
 	if(_shouldAcquireLocks()) Graph_ReleaseLock(g);
+
+	#include <mach/mach.h>
+	#include <mach/task_info.h>
+
+	struct task_vm_info info;
+	mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+
+	if (task_info(mach_task_self(), TASK_VM_INFO,
+				  (task_info_t)&info, &count) == KERN_SUCCESS) {
+		//printf("Internal: %llu bytes\n", info.internal);
+		//printf("Compressed: %llu bytes\n", info.compressed);
+		//printf("Purgeable: %llu bytes\n", info.purgeable_volatile_pmap);
+	}
 }
 
