@@ -29,23 +29,22 @@ static void F                                                                  \
 #define TENSORPICK(Z_TYPE)                                                     \
 {                                                                              \
 	if(SCALAR_ENTRY(*x)) {                                                     \
-        Edge currE;                                                            \
-        Graph_GetEdge(ctx->g, (EdgeID) *x, &currE);                            \
+		Edge currE;                                                            \
+		Graph_GetEdge(ctx->g, (EdgeID) *x, &currE);                            \
 		GET_VALUE(*z, *x);                                                     \
 	} else { /* Find the minimum weighted edge in the vector. */               \
 		GrB_Vector _v = AS_VECTOR(*x);                                         \
-		GxB_Iterator i = NULL;                                                 \
+		/* stack allocate the iterator */                                      \
+		struct GB_Iterator_opaque _i;                                          \
+		GxB_Iterator i = &_i;                                                  \
 		*z = FUNCTION_IDENTITY;                                                \
 		if (_v == NULL)                                                        \
-            return;                                                            \
+			return;                                                            \
                                                                                \
-		GrB_Info info = GxB_Iterator_new(&i);                                  \
-		ASSERT(info == GrB_SUCCESS)                                            \
-		info = GxB_Vector_Iterator_attach(i, _v, NULL);                        \
-		ASSERT(info == GrB_SUCCESS)                                            \
-		info = GxB_Vector_Iterator_seek(i, 0);                                 \
-		ASSERT(info == GrB_SUCCESS)                                            \
-        Z_TYPE currV;                                                          \
+		GrB_OK(GxB_Vector_Iterator_attach(i, _v, NULL));                       \
+		GrB_Info info  = GxB_Vector_Iterator_seek(i, 0);                       \
+                                                                               \
+		Z_TYPE currV;                                                          \
 		EdgeID currID;                                                         \
                                                                                \
 		while(info != GxB_EXHAUSTED)                                           \
@@ -55,7 +54,5 @@ static void F                                                                  \
 			ACCUM(*z, currV);                                                  \
 		    info = GxB_Vector_Iterator_next(i);                                \
 		}                                                                      \
-                                                                               \
-		GxB_Iterator_free(&i);                                                 \
 	}                                                                          \
 }

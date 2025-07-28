@@ -136,6 +136,7 @@ GrB_Info Delta_Matrix_removeElements
 	Delta_Matrix C,  // matrix to remove entry from
 	GrB_Matrix A     // matrix filled with elements to remove
 ) {
+	// WARNING: A is modified.
 	ASSERT(C != NULL);
 	ASSERT(A != NULL);
 	ASSERT(!DELTA_MATRIX_MAINTAIN_TRANSPOSE(C));
@@ -150,11 +151,11 @@ GrB_Info Delta_Matrix_removeElements
 	// remove edges in dp that are also in A.
 	GrB_OK(GrB_transpose(dp, A, NULL, dp, GrB_DESC_RSCT0));
 
-	// x XOR (x AND TRUE) - Always outputs false.
-	// Done like this in the hope that GBLAS will recognize this can be done inplace.
-	GrB_OK(GrB_eWiseMult(m, NULL, GrB_LXOR, GrB_LAND, m, A, NULL));
+	GrB_OK(GrB_eWiseMult(A, NULL, NULL, GrB_ONEB_BOOL, m, A, NULL));
+	GrB_OK(GrB_Matrix_assign_BOOL(m, A, NULL, BOOL_ZOMBIE, GrB_ALL, 0, GrB_ALL, 
+		0, GrB_DESC_S));
 
-	Delta_Matrix_validate(C);
+	// Delta_Matrix_validate(C);
 	Delta_Matrix_setDirty(C);
 	return GrB_SUCCESS;
 }
