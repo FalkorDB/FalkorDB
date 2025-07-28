@@ -28,11 +28,20 @@ GrB_Info TensorDegree_flat
 	Tensor T,           // matrix with tensor entries
     bool transpose      
 ) {
-    GrB_Descriptor desc  = transpose? GrB_DESC_ST0: GrB_DESC_S;
     GrB_Info info;
 
-    info = Delta_mxv_count(
-		degree, degree, GrB_PLUS_UINT64, GxB_PLUS_PAIR_UINT64, T, dest, desc);
+	// TODO: there could be many more huristics. If dest << degree, then 
+	// we shuld do multiplication with the transpose for indegree and with the 
+	// original matrix for outdegree.
+	if(transpose && DELTA_MATRIX_MAINTAIN_TRANSPOSE(T)){
+		info = Delta_mxv_count(degree, degree, GrB_PLUS_UINT64, 
+			GxB_PLUS_PAIR_UINT64, T->transposed, dest, GrB_DESC_S);
+	} else {
+    	GrB_Descriptor desc  = transpose? GrB_DESC_ST0: GrB_DESC_S;
+		info = Delta_mxv( degree, degree, GrB_PLUS_UINT64, GxB_PLUS_PAIR_UINT64, 
+			T, dest, desc);
+	}
+
 	return info;
 }
 
@@ -44,9 +53,8 @@ static void _numInEntryFirst(uint64_t *z, const uint64_t *x, const uint64_t *y) 
 	else
 	{
 		GrB_Vector v = AS_VECTOR(*x);
-		if(v){
-			GrB_Info info = GrB_Vector_nvals(z, v);
-			ASSERT(info == GrB_SUCCESS);
+		if(v != NULL){
+			GrB_OK(GrB_Vector_nvals(z, v));
 		} else {
 			*z = 0;
 		}
@@ -61,8 +69,6 @@ static void _numInEntryFirst(uint64_t *z, const uint64_t *x, const uint64_t *y) 
 // 'T' Tensor being used to find the degree.
 // 'ops' input. DEG_[OUT/IN]DEGREE: compute [out/in]degree. 
 // 				DEG_TENSOR: compute tensor degree
-// returns:
-// GrB_SUCCESS on success otherwise a GraphBLAS error
 GrB_Info TensorDegree
 (
 	GrB_Vector degree,      // [input / output] degree vector with values where 
@@ -77,20 +83,16 @@ GrB_Info TensorDegree
 	ASSERT(T      != NULL);
 	ASSERT(degree != NULL);
 	ASSERT(ops &  (DEG_INDEGREE | DEG_OUTDEGREE));
-	GrB_Info info;
-	
 
 	if((ops & (DEG_INDEGREE | DEG_OUTDEGREE)) == (DEG_INDEGREE | DEG_OUTDEGREE) ){
 		// Sum the in and out degrees
-		info = TensorDegree(degree, dest, T, ops ^ DEG_INDEGREE);
-		ASSERT(info == GrB_SUCCESS);
-		info = TensorDegree(degree, dest, T, ops ^ DEG_OUTDEGREE);
-		ASSERT(info == GrB_SUCCESS);
-		return info;
+		GrB_OK(TensorDegree(degree, dest, T, ops ^ DEG_INDEGREE));
+		GrB_OK(TensorDegree(degree, dest, T, ops ^ DEG_OUTDEGREE));
+		return GrB_SUCCESS;
 	}
-	GrB_BinaryOp countEntry         = NULL; 
-	GrB_Semiring plus_count_uint64  = NULL;
-	GrB_Descriptor desc             = (ops & DEG_INDEGREE)? GrB_DESC_ST0: GrB_DESC_S;
+	GrB_BinaryOp   countEntry        = NULL; 
+	GrB_Semiring   plus_count_uint64 = NULL;
+	GrB_Descriptor desc              = (ops & DEG_INDEGREE)? GrB_DESC_ST0: GrB_DESC_S;
 
 	if((ops & DEG_TENSOR) == 0){
 		return Delta_mxv_count(
@@ -98,38 +100,30 @@ GrB_Info TensorDegree
 		);
 	}
 
-	
-	
-
 	// create custom semiring
 	// a * b = count entries in a
 	// a + b = a + b
-	info = GrB_BinaryOp_new(
+	GrB_OK(GrB_BinaryOp_new(
 		&countEntry, (GxB_binary_function) _numInEntryFirst, 
-		GrB_UINT64, GrB_UINT64, GrB_UINT64);
-	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Semiring_new(&plus_count_uint64, GrB_PLUS_MONOID_UINT64, 
-		countEntry);
-	ASSERT(info == GrB_SUCCESS);
+		GrB_UINT64, GrB_UINT64, GrB_UINT64));
+	GrB_OK(GrB_Semiring_new(&plus_count_uint64, GrB_PLUS_MONOID_UINT64, 
+		countEntry));
 
 	//--------------------------------------------------------------------------
 	// compute the degree
 	//--------------------------------------------------------------------------
 	// GraphBLAS decides wether to explicitly transpose.
-	info = Delta_mxv(
-		degree, degree, GrB_PLUS_UINT64, plus_count_uint64, T, dest, desc);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(Delta_mxv(
+		degree, degree, GrB_PLUS_UINT64, plus_count_uint64, T, dest, desc));
 
 	//--------------------------------------------------------------------------
 	// clean up
 	//--------------------------------------------------------------------------
 
-	info = GrB_free(&countEntry);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_free(&countEntry));
+	GrB_OK(GrB_free(&plus_count_uint64));
 
-	info = GrB_free(&plus_count_uint64);
-	ASSERT(info == GrB_SUCCESS);
-	return info;
+	return GrB_SUCCESS;
 }
 
 
@@ -209,14 +203,11 @@ GrB_Info TensorDegree_weighted
 	ASSERT (ctx.g         != NULL);
 	ASSERT (ctx.attribute != ATTRIBUTE_ID_NONE);
 
-	GrB_Info info;
-
 	if((ops & (DEG_INDEGREE | DEG_OUTDEGREE)) == (DEG_INDEGREE | DEG_OUTDEGREE) ){
 		// Sum the in and out degrees
-		info = TensorDegree_weighted(degree, dest, T, ops ^ DEG_INDEGREE, ctx) ;
-		info |= TensorDegree_weighted(
-			degree, dest, T, ops ^ DEG_OUTDEGREE, ctx) ;
-		return info;
+		GrB_OK(TensorDegree_weighted(degree, dest, T, ops ^ DEG_INDEGREE, ctx)) ;
+		GrB_OK(TensorDegree_weighted(degree, dest, T, ops ^ DEG_OUTDEGREE, ctx)) ;
+		return GrB_SUCCESS;
 	}
 
 	GxB_IndexBinaryOp getWeight_idxop   = NULL; 
@@ -227,47 +218,36 @@ GrB_Info TensorDegree_weighted
 	GrB_Type          deg_contx         = NULL;
 	GrB_Scalar        ctx_scalar        = NULL;
 
+	//--------------------------------------------------------------------------
 	// create custom semiring
+	//--------------------------------------------------------------------------
+	
 	// a * b = sum entries in a
 	// a + b = a + b
-	info = GrB_Type_new(&deg_contx, sizeof(FDB_degree_ctx)) ;
-	info = GrB_Scalar_new(&ctx_scalar, deg_contx) ;
-	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Scalar_setElement_UDT(ctx_scalar, (void *)&ctx) ;
-	ASSERT(info == GrB_SUCCESS);
-	info = GxB_IndexBinaryOp_new(
+	GrB_OK(GrB_Type_new(&deg_contx, sizeof(FDB_degree_ctx))) ;
+	GrB_OK(GrB_Scalar_new(&ctx_scalar, deg_contx)) ;
+	GrB_OK(GrB_Scalar_setElement_UDT(ctx_scalar, (void *)&ctx)) ;
+	GrB_OK(GxB_IndexBinaryOp_new(
 		&getWeight_idxop, (GxB_index_binary_function) 
 		((ops & DEG_TENSOR)? _sum_tensor_attributes: _flat_get_attribute),
-		GrB_FP64, GrB_UINT64, GrB_UINT64, deg_contx, NULL, NULL);
-	ASSERT(info == GrB_SUCCESS);
-	info = GxB_BinaryOp_new_IndexOp(&getWeight, getWeight_idxop, ctx_scalar) ;
-	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Semiring_new(&plus_weight_fp64, GrB_PLUS_MONOID_FP64, 
-		getWeight);
-	ASSERT(info == GrB_SUCCESS);
+		GrB_FP64, GrB_UINT64, GrB_UINT64, deg_contx, NULL, NULL));
+	GrB_OK(GxB_BinaryOp_new_IndexOp(&getWeight, getWeight_idxop, ctx_scalar)) ;
+	GrB_OK(GrB_Semiring_new(&plus_weight_fp64, GrB_PLUS_MONOID_FP64, 
+		getWeight));
 
 	//--------------------------------------------------------------------------
-	// compute the degree
+	// compute the weighted degree
 	//--------------------------------------------------------------------------
-	// GraphBLAS decides wether to explicitly transpose.
-	info = Delta_mxv(
+	Delta_mxv(
 		degree, degree, GrB_PLUS_FP64, plus_weight_fp64, T, dest, desc);
-	ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
 	// clean up
 	//--------------------------------------------------------------------------
-	info = GrB_free(&deg_contx);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_free(&deg_contx));
+	GrB_OK(GrB_free(&ctx_scalar));
+	GrB_OK(GrB_free(&getWeight));
+	GrB_OK(GrB_free(&plus_weight_fp64));
 
-	info = GrB_free(&ctx_scalar);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_free(&getWeight);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_free(&plus_weight_fp64);
-	ASSERT(info == GrB_SUCCESS);
-	return info;
+	return GrB_SUCCESS;
 }
-
