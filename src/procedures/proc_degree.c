@@ -116,9 +116,9 @@ static bool _read_config
 			const char *label = lbl.stringval;
 			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 			if(s == NULL) {
-				// log non-existant label
-                RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING, 
-                    "Skipping non-existent label: '%s'.", label);
+				// error on non-existant label
+				ErrorCtx_SetError("degree configuration, 'srcLabels' contains "
+					"non-existent label '%s'", label);
 				continue;
 			}
 
@@ -150,9 +150,9 @@ static bool _read_config
 			const char *label = lbl.stringval;
 			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 			if(s == NULL) {
-				// log non-existant label
-                RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING, 
-                    "Skipping non-existent label: '%s'.", label);
+				// error on non-existant label
+				ErrorCtx_SetError("degree configuration, 'destLabels' contains "
+					"non-existent label '%s'", label);
 				continue;
 			}
 
@@ -183,9 +183,9 @@ static bool _read_config
 			const char *relation = rel.stringval;
 			Schema *s = GraphContext_GetSchema(gc, relation, SCHEMA_EDGE);
 			if(s == NULL) {
-				// log non-existant relation
-                RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING, 
-                    "Skipping non-existent relation: '%s'.", relation);
+				// error on non-existant label
+				ErrorCtx_SetError("degree configuration, 'relationshipTypes' "
+					"contains non-existent relation type '%s'", relation);
 				continue;
 			}
 
@@ -262,6 +262,7 @@ ProcedureResult Proc_DegreeInvoke
 		ErrorCtx_SetError("invalid argument to algo.degree");
 		return PROCEDURE_ERR;
 	}
+
 	if(l == 0 || SIValue_IsNull(args[0])) {
 		config = SI_Map(0);
 	} else {
@@ -332,6 +333,8 @@ ProcedureResult Proc_DegreeInvoke
 	// if srcLabels was give but no labels were real, src will be empty.
 	// and no degrees are returned. Shortcut.
 	if(src_labels != NULL && n_lbls_s == 0) goto output_proc;
+
+	// TODO: use the getrow function from sub adj matrix code.
 	if(src_labels != NULL) {
 		info = GrB_Vector_new(&src, GrB_BOOL, n);
 		ASSERT(info == GrB_SUCCESS);

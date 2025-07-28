@@ -121,6 +121,9 @@ class testDegreeWeighted(FlowTestsBase):
                    
                    # fake attribute
                    "CALL algo.degreeWeight({weightAttribute: 'fake'})"
+                   "CALL algo.degreeWeight({relationshipTypes: ['fake']})"
+                   "CALL algo.degreeWeight({srcLabels: ['fake']})"
+                   "CALL algo.degreeWeight({destLabels: ['fake']})"
         ]
 
         for q in queries:
@@ -324,10 +327,15 @@ class testDegreeWeighted(FlowTestsBase):
         """)
 
         # Check weight after deleting edges
-        result_set = self.graph.query("""
-            CALL algo.degreeWeight({weightAttribute: 'cost', relationshipTypes:['TYPE'], dir: 'both'})
-            YIELD node, weight
-            RETURN weight
-        """).result_set
-        ans_set = [[0]]*7
-        self.env.assertEqual(result_set, ans_set)
+        try:
+            result_set = self.graph.query("""
+                CALL algo.degreeWeight({
+                weightAttribute: 'cost', 
+                relationshipTypes:['TYPE'], 
+                dir: 'both'})
+                YIELD node, weight
+                RETURN weight
+            """).result_set
+            self.env.assertFalse(True)
+        except:
+            pass

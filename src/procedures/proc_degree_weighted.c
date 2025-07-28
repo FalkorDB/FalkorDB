@@ -20,7 +20,7 @@ typedef struct {
 	const Graph *g;         // graph
 	GrB_Info info;          // iterator info
 	Node node;              // current node being yield
-	GrB_Vector w_degree;    // 1xn vector containing node weight
+	GrB_Vector w_degree;    // nx1 vector containing node weight
 	GxB_Iterator it;        // iterator over the degree matrix
 	SIValue output [2];     // array with up to two entries [node, degree]
 	SIValue *yield_node;    // yield node
@@ -28,7 +28,7 @@ typedef struct {
 } DegreeContext;
 
 // setup procedure outputs according to yield
-// CALL algo.degree({}) YIELD node, degree
+// CALL algo.degreeWeight({}) YIELD node, degree
 static void _process_yield
 (
 	DegreeContext *ctx,
@@ -54,7 +54,7 @@ static void _process_yield
 	}
 }
 
-// parse algo.degree configuration map
+// parse algo.degreeWeight configuration map
 //
 //	{
 //		'srcLabels':          [<label>, ...],
@@ -118,9 +118,9 @@ static bool _read_config
 			const char *label = lbl.stringval;
 			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 			if(s == NULL) {
-				// log non-existant label
-                RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING, 
-                    "Skipping non-existent label: '%s'.", label);
+				// error on non-existant label
+				ErrorCtx_SetError("degree configuration, 'srcLabels' contains "
+					"non-existent label '%s'", label);
 				continue;
 			}
 
@@ -152,9 +152,9 @@ static bool _read_config
 			const char *label = lbl.stringval;
 			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 			if(s == NULL) {
-				// log non-existant label
-                RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING, 
-                    "Skipping non-existent label: '%s'.", label);
+				// error on non-existant label
+				ErrorCtx_SetError("degree configuration, 'destLabels' contains "
+					"non-existent label '%s'", label);
 				continue;
 			}
 
@@ -185,9 +185,9 @@ static bool _read_config
 			const char *relation = rel.stringval;
 			Schema *s = GraphContext_GetSchema(gc, relation, SCHEMA_EDGE);
 			if(s == NULL) {
-				// log non-existant relation
-                RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING, 
-                    "Skipping non-existent relation: '%s'.", relation);
+				// error on non-existant label
+				ErrorCtx_SetError("degree configuration, 'relationshipTypes' "
+					"contains non-existent relation type '%s'", relation);
 				continue;
 			}
 
