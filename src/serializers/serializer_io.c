@@ -145,8 +145,10 @@ static void *Stream_ReadBuffer
 	void *data = rm_malloc(sizeof(char) * len);
 
 	// read data
-	read = fread(data, len, 1, f);
-	ASSERT(read == 1);
+	if (len > 0) {
+		read = fread(data, len, 1, f);
+		ASSERT(read == 1);
+	}
 
 	if(n != NULL) *n = len;
 
@@ -253,7 +255,7 @@ static inline bool _accommodate
 	return true;
 }
 
-#if RG_DEBUG
+#if SERIALIZER_DEBUG
 
 	// encoded value types, used for debugging purposes
 	static char Bytes      = 0;
