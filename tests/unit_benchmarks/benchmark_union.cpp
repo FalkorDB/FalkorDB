@@ -1,14 +1,8 @@
-#include "RG.h"
-#include <LAGraphX.h>
-#include "GraphBLAS.h"
-#include <benchmark/benchmark.h>
-extern "C" {
-#include "src/configuration/config.h"
-#include "src/graph/delta_matrix/delta_utils.h"
-}
+#include "tests/unit_benchmarks/create_random.h"
 
 void rg_setup(const benchmark::State &state) {
 	// Initialize GraphBLAS.
+    printf("Starting union benchmark ...\n");
 	RedisModule_Alloc   = malloc;
 	RedisModule_Realloc = realloc;
 	RedisModule_Calloc  = calloc;
@@ -24,6 +18,7 @@ void rg_setup(const benchmark::State &state) {
 }
 
 void rg_teardown(const benchmark::State &state) {
+    printf("Ending union benchmark ...\n");
     GrB_finalize();
     // GrB_OK((GrB_Info) LAGraph_Finalize(NULL));
 }

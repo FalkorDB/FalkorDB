@@ -314,6 +314,9 @@ void Delta_Random_Matrix
     GrB_OK(GrB_Scalar_new(&empty, GrB_BOOL));
 	
 	GrB_OK(GrB_Matrix_free(M));
+
+	ASSERT(M != NULL);
+	ASSERT(type != NULL);
 	GrB_OK(LAGraph_Random_Matrix(M, type, n, n, density, seed, NULL));
 	++seed;
 
@@ -350,6 +353,7 @@ void Delta_Random_Matrix
 	}
 
 	// DP = DP - M
+	// FIXME: there is full overlap between DP and M, so DP is being emptied out.
 	GrB_OK(GrB_Matrix_assign_Scalar(*DP, *M, NULL, empty, GrB_ALL, n, GrB_ALL, 
 		n, GrB_DESC_S));
 

@@ -50,15 +50,6 @@ void Delta_Matrix_validate
 	GxB_Matrix_fprint(DELTA_MATRIX_DELTA_MINUS(C), #C "-DM", p, stdout);  \
 }
 
-GrB_Info Delta_eWiseAdd_OLD                // C = A + B
-(
-    Delta_Matrix C,                    // input/output matrix for results
-    const GrB_Semiring semiring,    // defines '+' for T=A+B
-    const Delta_Matrix A,              // first input:  matrix A
-    const Delta_Matrix B               // second input: matrix B
-) ;
-
-// TODO: move to a more appropriate file
 void Delta_Random_Matrix
 (
 	Delta_Matrix *A,
@@ -68,4 +59,4 @@ void Delta_Random_Matrix
 	double add_density,
 	double del_density,
 	uint64_t seed
-);
+) ;

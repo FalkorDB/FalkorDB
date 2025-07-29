@@ -1,11 +1,4 @@
-#include "RG.h"
-#include <LAGraphX.h>
-#include "GraphBLAS.h"
-#include <benchmark/benchmark.h>
-extern "C" {
-#include "src/configuration/config.h"
-#include "src/graph/delta_matrix/delta_utils.h"
-}
+#include "tests/unit_benchmarks/create_random.h"
 
 void rg_setup(const benchmark::State &state) {
 	// Initialize GraphBLAS.

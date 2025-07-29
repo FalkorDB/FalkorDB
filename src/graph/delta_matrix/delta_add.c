@@ -283,8 +283,6 @@ GrB_Info Delta_eWiseUnion
 		info = GrB_Matrix_eWiseMult_BinaryOp(
 			M_times_DP, NULL, GrB_ONEB_UINT64, op, BM, ADP, NULL);
 		ASSERT(info == GrB_SUCCESS);
-
-		GxB_fprint(M_times_DP, 2, stdout);
 	}
 
 	//--------------------------------------------------------------------------
