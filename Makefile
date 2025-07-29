@@ -73,7 +73,8 @@ make upgrade-tests  # Run upgrade tests
 make fuzz-tests     # Run fuzz tester
   TIMEOUT=secs      # Timeout in `secs`
 
-make benchmark    # Run benchmarks
+make benchmark       # Run benchmarks
+make unit-benchmarks # Run C++ benchmarks
 
 make coverage     # Perform coverage analysis (build & test)
 make cov-upload   # Upload coverage data to codecov.io

@@ -49,14 +49,3 @@ void Delta_Matrix_validate
 	GxB_Matrix_fprint(DELTA_MATRIX_DELTA_PLUS(C), #C "-DP", p, stdout);   \
 	GxB_Matrix_fprint(DELTA_MATRIX_DELTA_MINUS(C), #C "-DM", p, stdout);  \
 }
-
-void Delta_Random_Matrix
-(
-	Delta_Matrix *A,
-	GrB_Type type,
-	GrB_Index n,
-	double density,
-	double add_density,
-	double del_density,
-	uint64_t seed
-) ;
