@@ -245,8 +245,9 @@ GrB_Info Delta_Matrix_copy     // copy matrix A to matrix C
 // get matrix C without writing to internal matrix
 GrB_Info Delta_Matrix_export
 (
-	GrB_Matrix *A,
-	Delta_Matrix C
+    GrB_Matrix *A,         // output Matrix 
+    const Delta_Matrix C,  // input Delta Matrix
+    const GrB_Type type    // output matrix type (values will be typecast)
 );
 
 // checks to see if matrix has pending operations
