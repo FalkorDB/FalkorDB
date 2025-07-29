@@ -9,6 +9,7 @@
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
+#include "utility/internal.h"
 #include "../datatypes/map.h"
 #include "../datatypes/array.h"
 #include "../algorithms/degree.h"
@@ -351,51 +352,20 @@ ProcedureResult Proc_DegreeWeightInvoke
 	// get source label vector
 	//--------------------------------------------------------------------------
 	deg_ctx.g  = g;
-	info = GrB_Vector_new(&w_degree, GrB_FP64, n);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Vector_new(&w_degree, GrB_FP64, n));
+
 	// if srcLabels was give but no labels were real, src will be empty.
 	// and no degrees are returned. Shortcut.
 	if(src_labels != NULL && n_lbls_s == 0) goto output_proc;
-	if(src_labels != NULL) {
-		info = GrB_Vector_new(&src, GrB_BOOL, n);
-		ASSERT(info == GrB_SUCCESS);
-		
-		Delta_Matrix DL = Graph_GetLabelMatrix(g, src_labels[0]);
-		GrB_Matrix L;
 
-		info = Delta_Matrix_export(&L, DL);
-		ASSERT(info == GrB_SUCCESS);
-
-		// L = L U M
-		for(unsigned short i = 1; i < n_lbls_s; i++) {
-			DL = Graph_GetLabelMatrix(g, src_labels[i]);
-
-			GrB_Matrix M;
-			info = Delta_Matrix_export(&M, DL);
-			ASSERT(info == GrB_SUCCESS);
-
-			info = GrB_Matrix_eWiseAdd_Monoid(L, NULL, NULL,
-					GxB_ANY_BOOL_MONOID, L, M, NULL);
-			ASSERT(info == GrB_SUCCESS);
-
-			GrB_Matrix_free(&M);
-		}
-
-		info = GxB_Vector_diag(src, L, 0, NULL);
-		ASSERT(info == GrB_SUCCESS);
-
-		// free L matrix
-		info = GrB_Matrix_free(&L);
-		ASSERT(info == GrB_SUCCESS);
-	}
+	GrB_OK(GrB_Vector_new(&src, GrB_BOOL, n));
+	_get_rows_with_labels(src, g, src_labels, n_lbls_s);
 
 	//Setting weight at source node ids to zero
-	info = GrB_Vector_assign_FP64(
-		w_degree, src, NULL, 0.0, GrB_ALL, n, GrB_DESC_S);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Vector_assign_FP64(
+		w_degree, src, NULL, 0.0, GrB_ALL, n, GrB_DESC_S));
 
-	info = GrB_Vector_free(&src);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_Vector_free(&src));
 	//--------------------------------------------------------------------------
 	// get destination label vector
 	//--------------------------------------------------------------------------
@@ -411,42 +381,7 @@ ProcedureResult Proc_DegreeWeightInvoke
 
 	info = GrB_Vector_new(&dest, GrB_BOOL, n);
 	ASSERT(info == GrB_SUCCESS);
-	if(dest_labels != NULL) {
-		
-		Delta_Matrix DL = Graph_GetLabelMatrix(g, dest_labels[0]);
-
-		GrB_Matrix L;
-		info = Delta_Matrix_export(&L, DL);
-		ASSERT(info == GrB_SUCCESS);
-
-		// L = L U M
-		for(unsigned short i = 1; i < n_lbls_d; i++) {
-			DL = Graph_GetLabelMatrix(g, dest_labels[i]);
-
-			GrB_Matrix M;
-			info = Delta_Matrix_export(&M, DL);
-			ASSERT(info == GrB_SUCCESS);
-
-			info = GrB_Matrix_eWiseAdd_Monoid(L, NULL, NULL,
-					GxB_ANY_BOOL_MONOID, L, M, NULL);
-			ASSERT(info == GrB_SUCCESS);
-
-			GrB_Matrix_free(&M);
-		}
-		ASSERT(info == GrB_SUCCESS);
-		info = GxB_Vector_diag(dest, L, 0, NULL);
-		ASSERT(info == GrB_SUCCESS);
-
-		// free L matrix
-		info = GrB_Matrix_free(&L);
-		ASSERT(info == GrB_SUCCESS);
-	}
-	else{
-		// no destination label specified, use all nodes
-		info = GrB_Vector_assign_BOOL(
-			dest, NULL, NULL, (bool) 1, GrB_ALL, 0, NULL);
-		ASSERT(info == GrB_SUCCESS);
-	}
+	_get_rows_with_labels(dest, g, dest_labels, n_lbls_d);
 
 	//--------------------------------------------------------------------------
 	// Calculate weighted degree vector
@@ -469,19 +404,16 @@ ProcedureResult Proc_DegreeWeightInvoke
 		}
 	}
 
-	info = GrB_free(&dest);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GrB_free(&dest));
 
 output_proc:
-	info = GrB_Vector_resize(w_degree, Graph_UncompactedNodeCount(g));
+	GrB_OK(GrB_Vector_resize(w_degree, Graph_UncompactedNodeCount(g)));
 
 	array_free(rel_types);
 	array_free(src_labels);
 	array_free(dest_labels);
-    info = GrB_free(&dest);
-	ASSERT(info == GrB_SUCCESS);
-    info = GrB_free(&src);
-	ASSERT(info == GrB_SUCCESS);
+    GrB_OK(GrB_free(&dest));
+    GrB_OK(GrB_free(&src));
 
 	//--------------------------------------------------------------------------
 	// initialize procedure context
@@ -496,11 +428,9 @@ output_proc:
 	_process_yield(pdata, yield);
 	
 	// attach iterator to degree vector;
-	info = GxB_Iterator_new(&pdata->it);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GxB_Iterator_new(&pdata->it));
 
-	info = GxB_Vector_Iterator_attach(pdata->it, w_degree, NULL);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GxB_Vector_Iterator_attach(pdata->it, w_degree, NULL));
 
     pdata->info = GxB_Vector_Iterator_seek(pdata->it, 0);
 	return PROCEDURE_OK;
