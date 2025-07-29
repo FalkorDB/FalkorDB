@@ -11,9 +11,6 @@
 #include "../../../graph/tensor/tensor.h"
 #include "../../../graph/delta_matrix/delta_matrix.h"
 
-#include <mach/mach.h>
-#include <mach/task_info.h>
-
 // extract D's tensors
 static void _ExtractTensors
 (
