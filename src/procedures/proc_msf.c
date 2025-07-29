@@ -255,11 +255,11 @@ void _get_trees_from_matrix (
 	uint64_t *cc,           // array of representatives
 	GrB_Index cc_nvals      // number of representatives
 ) {
-	GrB_Index nrows;
-	GrB_Info  it_info;
-	GxB_Container cont     = NULL;
-	int32_t       sparcity = 0;
-	GrB_Vector    id_map   = NULL;
+	GrB_Index nrows;    // number of rows in A
+	GrB_Info  it_info;  // iterator info
+	GxB_Container cont     = NULL;  // container to unpack rows
+	int32_t       sparcity = 0;     // sparicty of rows vector
+	GrB_Vector    id_map   = NULL;  // map from row index to node id
 
 	bool ret_edges = (trees_e != NULL);
 	bool ret_nodes = (trees_n != NULL);
@@ -315,7 +315,8 @@ void _get_trees_from_matrix (
 	// the MSB is used to mark places that already point to the _trees_n array
 	for(uint k = 0; k < cc_nvals; k++) {
 		uint64_t rep = cc[k];
-		NodeID id;
+		NodeID id; // the id of node k in the graph
+
 		_GET_ID(id, k);
 		ASSERT(id < Graph_UncompactedNodeCount(g));
 
@@ -355,8 +356,8 @@ void _get_trees_from_matrix (
 			array_append(_trees_e, array_new(Edge, array_len(_trees_n[k]) - 1));
 		}
 
-		struct GB_Iterator_opaque _i;
-		GxB_Iterator  i        = &_i;
+		struct GB_Iterator_opaque _i;  // stack allocated iterator
+		GxB_Iterator  i        = &_i;  // iterates over the MSF matrix
 
 		// populate the _trees_e arrays by looping through the MSF matrix 
 		GrB_OK (GxB_Matrix_Iterator_attach(i, A, NULL));
@@ -368,8 +369,7 @@ void _get_trees_from_matrix (
 			GrB_Index c;  // col index
 
 			// get the row and column indices (the nodes of the edge)
-			info = GxB_Matrix_Iterator_getIndex(i, &r, &c);
-			ASSERT(info == GrB_SUCCESS);
+			GxB_Matrix_Iterator_getIndex(i, &r, &c);
 
 			// get node ids from row and column index
 			NodeID src_id;
