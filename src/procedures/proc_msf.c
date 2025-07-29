@@ -26,6 +26,7 @@
 // CALL algo.MSF({nodeLabels: ['L'], relationshipTypes: ['E'], weightAttribute: 
 //      'cost', objective: 'maximize'}) YIELD edge, weight
 // CALL algo.MSF({nodeLabels: ['L'], objective: 'minimize'})
+
 #define _GET_ID(id, k) \
 	if (id_map) {                                                  \
 		int32_t _id;                                              \
@@ -483,15 +484,16 @@ ProcedureResult Proc_MSFInvoke
 	// construct input matrix
 	//--------------------------------------------------------------------------
 
+	int handle;        // cc's memory ownership
+	GrB_Type cc_t;     // type of cc e.g. GrB_UINT64
+	uint64_t cc_n;     // number of entries in cc
+	uint64_t cc_size;  // cc size in bytes
+
 	GrB_Matrix A       = NULL;  // edge ids of filtered edges
 	GrB_Matrix A_w     = NULL;  // weight of filtered edges
-	GrB_Vector cc      = NULL;
-	GrB_Vector rows    = NULL;
-	uint64_t   *cc_arr = NULL;
-	uint64_t cc_size;
-	GrB_Type cc_t;
-	uint64_t cc_n;
-	int handle;
+	GrB_Vector cc      = NULL;  // connected components (trees)
+	GrB_Vector rows    = NULL;  // nodes involved in the procedure
+	uint64_t   *cc_arr = NULL;  // content cc
 
 	// build input matrix
 	GrB_OK (get_sub_weight_matrix(&A, &A_w, &rows, g, lbls, array_len(lbls), 
@@ -508,8 +510,8 @@ ProcedureResult Proc_MSFInvoke
 		GrB_OK (GrB_Matrix_apply(A_w, NULL, NULL, GrB_AINV_FP64, A_w, NULL));
 	}
 
-	GrB_Matrix w_forest = NULL;
 	// execute Minimum Spanning Forest
+	GrB_Matrix w_forest = NULL;
 	char msg[LAGRAPH_MSG_LEN];
 	GrB_Info msf_res = LAGraph_msf(&w_forest, &cc, A_w, false, msg);
 
@@ -538,6 +540,7 @@ ProcedureResult Proc_MSFInvoke
 	//--------------------------------------------------------------------------
 	// initialize iterators
 	//--------------------------------------------------------------------------
+
 	GrB_OK (GxB_Vector_unload(cc, (void **) &cc_arr, &cc_t, &cc_n, 
 		&cc_size, &handle, NULL));
 	ASSERT(handle == GrB_DEFAULT);

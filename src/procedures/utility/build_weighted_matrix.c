@@ -298,16 +298,6 @@ GrB_Info get_sub_weight_matrix
 
 	bool compact = false;
 
-	GrB_Descriptor_new(&desc);
-	GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST);
-	GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_COLINDEX_LIST);
-
-	// if no relationships are specified, use all relationships
-	// can't use adj matrix since we need access to the edgeIds of all edges
-	if (rels == NULL) {
-		n_rels = Graph_RelationTypeCount(g);
-	}
-
 	nrows = Graph_RequiredMatrixDim(g);
 	// create vector N denoting all nodes participating in the algorithm
 	GrB_OK (GrB_Vector_new(&_N, GrB_BOOL, nrows));
@@ -345,7 +335,7 @@ GrB_Info get_sub_weight_matrix
 		GrB_OK (GrB_Vector_assign_BOOL(
 			_N, NULL, NULL, true, GrB_ALL, n, NULL));
 
-		//remove deleted nodes from N
+		// remove deleted nodes from N
 		if(Graph_DeletedNodeCount(g) > 0) {
 			compact = true;
 			NodeID *deleted_n = NULL;
@@ -365,9 +355,16 @@ GrB_Info get_sub_weight_matrix
 
 	GrB_OK(GrB_Vector_resize(_N, n));
 
+	// if no relationships are specified, use all relationships
+	// can't use adj matrix since we need access to the edgeIds of all edges
+	if (rels == NULL) {
+		n_rels = Graph_RelationTypeCount(g);
+	}
+
 	if (n_rels == 0) {
-		GrB_OK(GrB_Vector_nvals(&rows_nvals, _N));
 		// graph does not have any relations, return empty matrix
+
+		GrB_OK(GrB_Vector_nvals(&rows_nvals, _N));
 		GrB_OK(GrB_Matrix_new(A, GrB_UINT64, rows_nvals, rows_nvals));
 
 		if (A_w) {
@@ -378,6 +375,7 @@ GrB_Info get_sub_weight_matrix
 			*rows = _N;	
 			_N = NULL;
 		}
+
 		BWM_FREE;
 		return GrB_SUCCESS;
 	}
@@ -414,16 +412,22 @@ GrB_Info get_sub_weight_matrix
 	GrB_OK(GrB_Vector_nvals(&rows_nvals, _N));
 	
 	if (compact) {
-		// Shrink A to the requested row / column sizes
+		// shrink A to the requested row / column sizes
 		GrB_Matrix temp = NULL;
 		GrB_OK(GrB_Matrix_new(&temp, GrB_UINT64, rows_nvals, rows_nvals));
-		GrB_OK(GxB_Matrix_extract_Vector(
-			temp, NULL, NULL, _A, _N, _N, desc));
+
+		GrB_Descriptor_new(&desc);
+		GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST);
+		GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_COLINDEX_LIST);
+
+		GrB_OK(GxB_Matrix_extract_Vector(temp, NULL, NULL, _A, _N, _N, desc));
 		GrB_OK(GrB_Matrix_free(&_A));
 		_A = temp;
 	} else {
 		// get rid of extra unused rows and columns
-		GrB_OK(GrB_Matrix_resize(_A, rows_nvals, rows_nvals));
+		n = Graph_UncompactedNodeCount(g);
+		ASSERT(n == rows_nvals);
+		GrB_OK(GrB_Matrix_resize(_A, n, n));
 	}
 
 	// if _A has tensor entries, reduce it to a matrix
@@ -446,12 +450,6 @@ GrB_Info get_sub_weight_matrix
 		// make A symmetric A = A + At
 		GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp(_A, NULL, NULL, minID, _A, _A,
 				GrB_DESC_T1));
-	}
-
-	// determine the number of nodes in the graph
-	// this includes deleted nodes
-	if(rows != NULL) {
-		GrB_OK(GrB_Vector_resize(_N, n));
 	}
 
 	//--------------------------------------------------------------------------
@@ -477,10 +475,12 @@ GrB_Info get_sub_weight_matrix
 
 	// set outputs
 	*A = _A;
-	if (rows) *rows = _N;
-
 	_A = NULL;
-	_N = NULL;
+
+	if (rows) {
+		*rows = _N;
+		_N = NULL;
+	}
 
 	BWM_FREE;
 	return GrB_SUCCESS;
