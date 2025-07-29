@@ -71,10 +71,12 @@ static void _ExtractTensors
 static void _EncodeTensors
 (
 	SerializerIO rdb,  // RDB
-	GrB_Matrix TM,
-	GrB_Matrix TDP
+	GrB_Matrix TM,     // M's tensors
+	GrB_Matrix TDP     // DP's tensors
 ) {
 	// format:
+	//  total number of tensors
+	//
 	//  M - number of tensors
 	//  tensors:
 	//   tensor i index
@@ -86,6 +88,15 @@ static void _EncodeTensors
 	//   tensor i index
 	//   tensor j index
 	//   tensor
+
+	// either both matrices are specified or both are NULL
+	ASSERT ( (TM == NULL && TDP == NULL) || (TM != NULL && TDP != NULL)) ;
+
+	if (TM == NULL && TDP == NULL) {
+		// no tensors
+		SerializerIO_WriteUnsigned (rdb, 0) ;
+		return;
+	}
 
 	GrB_Info info;
 
@@ -102,12 +113,10 @@ static void _EncodeTensors
 	ASSERT (info == GrB_SUCCESS) ;
 
 	GrB_Index nvals = tm_nvals + tdp_nvals ;
-	SerializerIO_WriteUnsigned (rdb, nvals) ;
+	ASSERT (nvals > 0) ;
 
-	// return if no tensors
-	if (nvals == 0) {
-		return;
-	}
+	// encode number of tensors in matrix R
+	SerializerIO_WriteUnsigned (rdb, nvals) ;
 
 	GrB_Matrix matrices[2] = { TM, TDP } ;
 
@@ -176,18 +185,6 @@ static void _EncodeTensors
 	}
 }
 
-static void print_mem_cons(void) {
-	struct task_vm_info _info;
-	mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
-
-	if (task_info(mach_task_self(), TASK_VM_INFO,
-				  (task_info_t)&_info, &count) == KERN_SUCCESS) {
-		printf("Internal: %llu bytes\n", _info.internal);
-		//printf("Compressed: %llu bytes\n", _info.compressed);
-		//printf("Purgeable: %llu bytes\n", _info.purgeable_volatile_pmap);
-	}
-}
-
 // unloads vector to C array and encodes the vector to stream
 static void _unload_and_encode_vector
 (
@@ -210,10 +207,11 @@ static void _unload_and_encode_vector
 	GrB_Type t;          // data type
 	uint64_t n_entries;  // number of entries
 	uint64_t n_bytes;    // data size in bytes
-	int handling;       // memory owner GraphBLAS / Application
+	int handling;        // memory owner GraphBLAS / Application
 
 	// unload vector to C array
-	info = GxB_Vector_unload (v, &arr, &t, &n_entries, &n_bytes, &handling, NULL) ;
+	info = GxB_Vector_unload (v, &arr, &t, &n_entries, &n_bytes, &handling,
+			NULL) ;
 	ASSERT (info == GrB_SUCCESS) ;
 
 	// get type name
@@ -242,7 +240,7 @@ static void _unload_and_encode_vector
 	} else {
 		// free array
 		// NOTE: this destroys the matrix!
-		rm_free(arr);
+		// rm_free(arr);
 	}
 }
 
@@ -257,26 +255,22 @@ static void _Encode_GrB_Matrix
 	//  GraphBLAS container
 	//  unloaded matrix components
 
-	ASSERT (A != NULL) ;
+	ASSERT (A   != NULL) ;
+	ASSERT (rdb != NULL) ;
 
 	GrB_Info info;
-    GxB_set (GxB_BURBLE, true) ;
-
-	print_mem_cons () ;
 
     GxB_Container container;
 	info = GxB_Container_new (&container) ;
 	ASSERT (info == GrB_SUCCESS);
 
 	// unload matrix into a container
-	info = GxB_unload_Matrix_into_Container (A, container, NULL);
+	info = GxB_unload_Matrix_into_Container (A, container, NULL) ;
 	ASSERT(info == GrB_SUCCESS);
 
 	// encode entire container
 	SerializerIO_WriteBuffer (rdb, container,
 			sizeof (struct GxB_Container_struct)) ;
-
-	print_mem_cons();
 
 	//--------------------------------------------------------------------------
 	// encode vectors
@@ -302,8 +296,6 @@ static void _Encode_GrB_Matrix
 				break ;
 	}
 
-	print_mem_cons();
-
 	if (reload) {
 		// reload matrix
 		info = GxB_load_Matrix_from_Container (A, container, NULL) ;
@@ -312,8 +304,6 @@ static void _Encode_GrB_Matrix
 
 	// clean up
 	GxB_Container_free(&container);
-
-    GxB_set (GxB_BURBLE, false) ;
 }
 
 // encode delta matrix
@@ -324,28 +314,22 @@ static void _Encode_Delta_Matrix
 	bool reload        // reload matrix
 ) {
 	// format:
-	//  blob size
-	//  blob
+	//  M
+	//  DP
+	//  DM
 
-	ASSERT(D != NULL);
+	ASSERT (D   != NULL) ;
+	ASSERT (rdb != NULL) ;
 
 	GrB_Info info;
-    GxB_set (GxB_BURBLE, true) ;
 
-	GrB_Matrix M  = Delta_Matrix_M(D);
-	GrB_Matrix DP = Delta_Matrix_DP(D);
-	GrB_Matrix DM = Delta_Matrix_DM(D);
+	GrB_Matrix M  = Delta_Matrix_M  (D) ;
+	GrB_Matrix DP = Delta_Matrix_DP (D) ;
+	GrB_Matrix DM = Delta_Matrix_DM (D) ;
 
-	print_mem_cons();
 	_Encode_GrB_Matrix(rdb, M, reload);
-
-	print_mem_cons();
 	_Encode_GrB_Matrix(rdb, DP, reload);
-
-	print_mem_cons();
 	_Encode_GrB_Matrix(rdb, DM, reload);
-
-	print_mem_cons();
 }
 
 // encode label matrices to rdb
@@ -398,15 +382,15 @@ void RdbSaveRelationMatrices_v18
 	int n = Graph_RelationTypeCount(g);
 	bool reload = !Globals_Get_ProcessIsChild();
 
-	Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
-	for(RelationID i = 0; i < n; i++) {
+	Graph_SetMatrixPolicy (g, SYNC_POLICY_NOP) ;
+	for (RelationID i = 0; i < n; i++) {
 		// write relation ID
-		SerializerIO_WriteUnsigned(rdb, i);
+		SerializerIO_WriteUnsigned (rdb, i) ;
 
 		// dump matrix to rdb
-		Delta_Matrix R = Graph_GetRelationMatrix (g, i, false) ;
-		GrB_Matrix TM  = NULL ;
-		GrB_Matrix TDP = NULL ;
+		Delta_Matrix R   = Graph_GetRelationMatrix (g, i, false) ;
+		GrB_Matrix   TM  = NULL ;  // R's M's tensors
+		GrB_Matrix   TDP = NULL ;  // R's DP's tensors
 
 		bool encode_tensors = Graph_RelationshipContainsMultiEdge (g, i) ;
 		if (encode_tensors) {
@@ -414,9 +398,9 @@ void RdbSaveRelationMatrices_v18
 		}
 
 		_Encode_Delta_Matrix (rdb, R, reload) ;
+
 		_EncodeTensors (rdb, TM, TDP) ;
 
-		// clean up
 		if (encode_tensors) {
 			GrB_free (&TM) ;
 			GrB_free (&TDP) ;

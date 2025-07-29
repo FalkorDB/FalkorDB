@@ -321,18 +321,5 @@ void RdbSaveGraph_latest
 
 	// if a lock was acquired, release it
 	if(_shouldAcquireLocks()) Graph_ReleaseLock(g);
-
-	#include <mach/mach.h>
-	#include <mach/task_info.h>
-
-	struct task_vm_info info;
-	mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
-
-	if (task_info(mach_task_self(), TASK_VM_INFO,
-				  (task_info_t)&info, &count) == KERN_SUCCESS) {
-		//printf("Internal: %llu bytes\n", info.internal);
-		//printf("Compressed: %llu bytes\n", info.compressed);
-		//printf("Purgeable: %llu bytes\n", info.purgeable_volatile_pmap);
-	}
 }
 

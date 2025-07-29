@@ -197,6 +197,11 @@ static void _Decode_Delta_Matrix
 	SerializerIO rdb,  // RDB
 	Delta_Matrix D     // delta matrix to populate
 ) {
+	// format:
+	//  M
+	//  DP
+	//  DM
+
 	ASSERT (D   != NULL) ;
 	ASSERT (rdb != NULL) ;
 

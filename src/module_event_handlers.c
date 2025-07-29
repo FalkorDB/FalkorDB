@@ -472,6 +472,10 @@ static void RG_ForkPrepare() {
 		return;
 	}
 
+	// measure and report prep time
+	double tic[2];
+	simple_tic(tic);
+
 	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(NULL);
 
 	// scan through each graph in the keyspace
@@ -494,44 +498,26 @@ static void RG_ForkPrepare() {
 		// sync graph's matrices
 		//----------------------------------------------------------------------
 
-		int n_lbls = Graph_LabelTypeCount(g);
-		int n_rels = Graph_RelationTypeCount(g);
+		// calling Graph_Get* will sync the retrieved matrix
 
-		// total number of matrices in current graph
-		uint n = 1      +  // adjacency matrix
-				 1      +  // labels matrix
-				 n_lbls +  // label matrices
-				 n_rels;   // relationship matrices
-
-		Delta_Matrix matrices[n];
-
-		matrices[0] = Graph_GetAdjacencyMatrix(g, false);
+		Graph_GetAdjacencyMatrix(g, false);
 		RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
 				"preparing to fork");
 
-		matrices[1] = Graph_GetNodeLabelMatrix(g);
-			RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-					"preparing to fork");
+		Graph_GetNodeLabelMatrix(g);
+		RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+				"preparing to fork");
 
-		int offset = 2;
+		int n_lbls = Graph_LabelTypeCount(g);
 		for (int i = 0; i < n_lbls; i++) {
-			matrices[offset + i] = Graph_GetLabelMatrix(g, i);
+			Graph_GetLabelMatrix(g, i);
 			RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
 					"preparing to fork");
 		}
 
-		offset += n_lbls;
+		int n_rels = Graph_RelationTypeCount(g);
 		for (int i = 0; i < n_rels; i++) {
-			matrices[offset + i] = Graph_GetRelationMatrix(g, i, false);
-			RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-					"preparing to fork");
-		}
-
-		bool force_flush = false;
-
-		for (int i = 0; i < n; i++) {
-			Delta_Matrix M = matrices[i];
-			Delta_Matrix_wait(M, force_flush);  // redundant due to Graph_Get*
+			Graph_GetRelationMatrix(g, i, false);
 			RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
 					"preparing to fork");
 		}
@@ -540,6 +526,10 @@ static void RG_ForkPrepare() {
 		GraphContext_DecreaseRefCount(gc);
 	}
 
+	RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_NOTICE,
+			"Fork preparation time: %.6f sec\n", simple_toc(tic));
+
+	// clean up
 	RedisModule_FreeThreadSafeContext(ctx);
 }
 
@@ -557,9 +547,6 @@ static void RG_AfterForkParent() {
 	Globals_ScanGraphs(&it);
 
 	while((gc = GraphIterator_Next(&it)) != NULL) {
-		// unlock all matrices
-		Graph_UnlockAllMatrices(gc->g);
-
 		// release read lock
 		Graph_ReleaseLock(gc->g);
 
@@ -580,17 +567,16 @@ static void RG_AfterForkChild() {
 	// in forked process
 	GxB_set(GxB_NTHREADS, 1);
 
-	GraphContext **graphs = Globals_Get_GraphsInKeyspace();
-	uint32_t n = array_len(graphs);
-	for(uint32_t i = 0; i < n; i++) {
-		Graph *g = graphs[i]->g;
+	GraphContext *gc = NULL;
+	KeySpaceGraphIterator it;
+	Globals_ScanGraphs(&it);
 
-		// release locked matrices (matrices are inherited locked)
-		// see RG_ForkPrepare
-		Graph_UnlockAllMatrices(g);
+	while((gc = GraphIterator_Next(&it)) != NULL) {
+		// matrices should be synced, don't waste time
+		Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
 
-		// set sync policy to flush & resize
-		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
+		// decrease graph context ref count
+		GraphContext_DecreaseRefCount(gc);
 	}
 }
 
