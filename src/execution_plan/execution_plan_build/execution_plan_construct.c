@@ -63,7 +63,15 @@ static void _buildLoadCSVOp
 	node = cypher_ast_load_csv_get_identifier(clause);
 	const char *alias = cypher_ast_identifier_get_name(node);
 
-	OpBase *op = NewLoadCSVOp(plan, exp, alias, with_headers);
+	// delimiter
+	char delimiter = ',';
+	node = cypher_ast_load_csv_get_field_terminator(clause);
+	if(node != NULL) {
+		ASSERT(cypher_astnode_type(node) == CYPHER_AST_STRING);
+		delimiter = cypher_ast_string_get_value(node)[0];
+	}
+
+	OpBase *op = NewLoadCSVOp(plan, exp, alias, with_headers, delimiter);
 	ExecutionPlan_UpdateRoot(plan, op);
 }
 

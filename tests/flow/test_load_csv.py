@@ -42,6 +42,11 @@ BOM_BYTES                               = b"\xEF\xBB\xBF"
 BOM_CSV_HEADER                          = ["col_1", "col_2", "col_3"]
 BOM_CSV_DATA                            = ["1", "some_string", "http://www.domain.com"]
 
+SEMICOLON_CSV                           = "semicolon.csv"
+SEMICOLON_CSV_HEADER                    = [["given_name", "surname"]]
+SEMICOLON_CSV_DATA                      = [["Roi", "Lipman"]]
+
+
 # Get the absolute path to the current file
 IMPORT_DIR = os.path.dirname(os.path.abspath(__file__)) + '/'
 
@@ -50,11 +55,11 @@ IMPORT_DIR = os.path.dirname(os.path.abspath(__file__)) + '/'
 # 'data' [optional] CSV rows
 def create_csv_file(name, header, data, delimiter=','):
     # create any missing directories in the path
-    path = IMPORT_DIR + name
+    path = os.path.join(IMPORT_DIR, name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
-    with open(path, 'w') as f:
-        writer = csv.writer(f)
+    with open(path, 'w', newline='') as f:
+        writer = csv.writer(f, delimiter=delimiter)
         data = header + data
         writer.writerows(data)
 
@@ -127,6 +132,13 @@ def create_bom_prefixed_csv():
         f.write((headers + '\n').encode('utf-8'))
         f.write((content + '\n').encode('utf-8'))
 
+def create_semicolon_delimited_csv():
+    name   = SEMICOLON_CSV
+    data   = SEMICOLON_CSV_DATA
+    header = SEMICOLON_CSV_HEADER
+
+    create_csv_file(name, header, data, delimiter=';')
+
 #-------------------------------------------------------------------------------
 # create CSV files
 #-------------------------------------------------------------------------------
@@ -137,6 +149,7 @@ create_empty_cell_csv()
 create_empty_column_csv()
 create_bom_prefixed_csv()
 create_short_csv_with_header()
+create_semicolon_delimited_csv()
 create_short_csv_without_header()
 
 class testLoadLocalCSV():
@@ -352,6 +365,27 @@ class testLoadLocalCSV():
 
         # validate returned dict
         expected = {k: v for k, v in zip(BOM_CSV_HEADER, BOM_CSV_DATA)}
+        self.env.assertEquals(actual[0][0], expected)
+
+    def test13_specify_delimiter(self):
+        # read CSV using a different field delimiter
+
+        # load csv when specifying the field delimiter ';'
+        q = f"LOAD CSV FROM 'file://{SEMICOLON_CSV}' AS row FIELDTERMINATOR ';' RETURN row"
+        actual = self.graph.query(q).result_set
+
+        # validate returned arrays
+        self.env.assertEquals(actual[0][0], SEMICOLON_CSV_DATA[0])
+        self.env.assertEquals(actual[1][0], SEMICOLON_CSV_HEADER[0])
+
+        #-----------------------------------------------------------------------
+
+        # load csv with BOM as an dict
+        q = f"LOAD CSV WITH HEADERS FROM 'file://{BOM_CSV}' AS row FIELDTERMINATOR ';' RETURN row"
+        actual = self.graph.query(q).result_set
+
+        # validate returned dict
+        expected = {k: v for k, v in zip(SEMICOLON_CSV_HEADER[0], SEMICOLON_CSV_DATA[0])}
         self.env.assertEquals(actual[0][0], expected)
 
 
