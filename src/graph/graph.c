@@ -1403,7 +1403,7 @@ uint Graph_GetNodeLabels
 	Delta_Matrix M = Graph_GetNodeLabelMatrix(g);
 
 	EntityID id = ENTITY_GET_ID(n);
-	Delta_MatrixTupleIter iter = {0};
+	Delta_MatrixTupleIter iter;
 	res = Delta_MatrixTupleIter_AttachRange(&iter, M, id, id);
 	ASSERT(res == GrB_SUCCESS);
 
