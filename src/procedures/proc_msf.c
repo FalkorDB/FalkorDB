@@ -431,7 +431,10 @@ ProcedureResult Proc_MSFInvoke
 	// expecting a single argument
 	size_t l = array_len((SIValue *) args);
 
-	if(l > 1) return PROCEDURE_ERR;
+	if(l > 1) {
+		ErrorCtx_SetError("algo.MSF expects a single argument");
+		return PROCEDURE_ERR;
+	}
 
 	SIValue config;
 
@@ -535,12 +538,6 @@ ProcedureResult Proc_MSFInvoke
 	if (msf_res != GrB_SUCCESS) {
 		GrB_free(&A);
 		return PROCEDURE_ERR;
-	}
-
-	// negate weights again if maximizing
-	if (maxST && pdata->yield_nodes != NULL) {
-		GrB_OK (GrB_Matrix_apply(w_forest, NULL, NULL, GrB_AINV_FP64,
-			w_forest, NULL));
 	}
 
 	GrB_Index n;

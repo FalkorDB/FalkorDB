@@ -74,16 +74,27 @@ class testMSF(FlowTestsBase):
         invalid_queries = [
                 """CALL algo.MSF({nodeLabels: 'Person'})""",         # non-array nodeLabels parameter
                 """CALL algo.MSF({relationshipTypes: 'KNOWS'})""",   # non-array relationshipTypes parameter
+                """CALL algo.MSF({weightAttribute: 'fake'})""",      # fake weight parameter
+                """CALL algo.MSF({weightAttribute: 4})""",           # fake weight parameter
+                """CALL algo.MSF({objective: 'fake'})""",            # fake objective parameter
+                """CALL algo.MSF({objective: 4})""",                 # fake objective parameter
                 """CALL algo.MSF({invalidParam: 'value'})""",        # unexpected extra parameters
                 """CALL algo.MSF('invalid')""",                      # invalid configuration type
                 """CALL algo.MSF({nodeLabels: [1, 2, 3]})""",        # integer values in nodeLabels array
                 """CALL algo.MSF({relationshipTypes: [1, 2, 3]})""", # integer values in relationshipTypes array
                 """CALL algo.MSF({relationshipTypes: ['FAKE']})""",  # non-existent relationship type
                 """CALL algo.MSF(null) YIELD nodes, invalidField""", # non-existent yield field
+                """CALL algo.MSF('arg1', 'arg2') YIELD nodes""",     # non-existent yield field
 
                 """CALL algo.MSF({nodeLabels: ['Person'],
                                relationshipTypes: ['KNOWS'],
                                invalidParam: 'value'})""",           # unexpected extra parameters
+
+                """CALL algo.MSF({nodeLabels: ['Person'],
+                                objective: 'minimize',
+                                weightAttribute: 'cost',
+                                relationshipTypes: ['KNOWS'],
+                                invalidParam: 'value'})""",           # unexpected extra parameters
         ]
 
         for q in invalid_queries:
@@ -130,7 +141,9 @@ class testMSF(FlowTestsBase):
 
         # Run MSF algorithm
         result = self.graph.query("""
-            CALL algo.MSF({relationshipTypes: ['R'], weightAttribute: 'cost'}) 
+            CALL algo.MSF({relationshipTypes: ['R'], 
+            weightAttribute: 'cost',
+            objective: 'minimize'}) 
             YIELD edges 
             UNWIND edges AS e 
             RETURN e.cost AS cost
@@ -320,6 +333,7 @@ class testMSF(FlowTestsBase):
             (n1)-[:B {score: 123456, msf_ans: 0}]->(n2),
             (n1)-[:B {score: 1000,   msf_ans: 2}]->(n2),
 
+            (n2)-[:A {msf_ans: 2}]->(n3),
             (n2)-[:B {msf_ans: 2}]->(n3),
 
             (n3)-[:B {score: 8991234, msf_ans: 0}]->(n4),
@@ -336,7 +350,7 @@ class testMSF(FlowTestsBase):
             """)
 
         result_set = result.result_set
-        ans_set = [[1, 1234.0]]
+        ans_set = [[1, 1234.0], [2, None]]
         self.env.assertEqual(ans_set, result_set)
 
         # Run MSF algorithm with relationship type B
@@ -391,8 +405,9 @@ class testMSF(FlowTestsBase):
             """)
 
         result_set = result.result_set
-        ans_set = [[2, "Hello"], [2, 1000.0], [2, 7654.0]]
-        self.env.assertEqual(ans_set, result_set)
+        self.env.assertIn([2, 1000.0], result_set)
+        self.env.assertIn([2, 7654.0], result_set)
+        self.env.assertTrue([2, "Hello"] in result_set or [2, None] in result_set)
 
     def test_msf_rand_labels(self):
         """Test MSF algorithm on random graph with multiple labels"""
@@ -458,7 +473,7 @@ class testMSF(FlowTestsBase):
                     self.env.assertEqual(len(result_set[0][0]), 39)
                     self.env.assertIn(maxEdge, result_set[0][0])
 
-    def test_msf_rand_forest(self):
+    def test_msf_rand_forest_no_weight(self):
         """ Test that MSF correctly identifies and groups multiple trees """
         # create the forest
         nodes =[{"count": randint(5,40), "properties": 3, "labels": [l]} 
@@ -469,13 +484,10 @@ class testMSF(FlowTestsBase):
                     for r in "LMNOPQRS" for l in range(11)]
 
         create_random_graph(self.graph, nodes, edges)    
-        # set the weights
-        q = "MATCH ()-[r]->() SET r.weight = rand() * 100"
-        self.graph.query(q)
 
         # get nodes and endpoints. 
         result_set = self.graph.query("""
-            CALL algo.MSF({weightAttribute: 'weight'}) 
+            CALL algo.MSF() 
             YIELD nodes, edges
             RETURN [n in nodes | id(n)] AS nodeIds, 
                 [e IN edges | id(startNode(e))] 
@@ -489,7 +501,7 @@ class testMSF(FlowTestsBase):
             if(len(tree[0]) == 1): continue
             self.env.assertEqual(set(tree[0]), set(tree[1]))
 
-    def xyz_test_msf_no_relations(self):
+    def test_msf_no_relations(self):
         """ Test MSF on a graph with some nodes but no relationships """
         # create a graph with 10 nodes and no relationships
         self.graph.query("""

@@ -17,10 +17,7 @@
 // to iterate over a Delta_Matrix
 struct Opaque_Delta_MatrixTupleIter
 {
-	union {
-		char _private[504];
-		uint64_t _dummy_force_8byte_alignment;
-	};
+	uint64_t _private[63];
 };
 
 typedef struct Opaque_Delta_MatrixTupleIter Delta_MatrixTupleIter ;
