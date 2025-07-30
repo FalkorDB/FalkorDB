@@ -423,24 +423,40 @@ RSDoc *Index_IndexGraphEntity
 			// is that OK ?
 			// also what if we reach the non indexable field type?
 			*doc_field_count += 1;
+
 			switch(t) {
 				case T_STRING:
 				case T_INTERN_STRING:
 					_addStringField(doc, field->range_name, v->stringval);
 					break;
+
 				case T_BOOL:
 				case T_INT64:
 				case T_DOUBLE:
 					_addNumericField(doc, field->range_name, SI_GET_NUMERIC(*v));
 					break;
+
+				//case T_TIME:
+				//case T_DATE:
+				//case T_DATETIME:
+				//case T_DURATION:
+				//{
+				//	double d = (double)v->datetimeval;
+				//	RediSearch_DocumentAddFieldNumber(doc, field->range_name, d,
+				//			RSFLDTYPE_NUMERIC);
+				//	break;
+				//}
+
 				case T_POINT:
 					_addPointField(doc, field->range_name, *v);
 					break;
+
 				case T_ARRAY:
 					_addArrayField(doc, field, *v);
 					// do NOT break, we want to add array field as
 					// 'non indexable' to be able to answer queries
 					// such as n.v = [1]
+
 				default:
 					// none indexable field
 					none_indexable_fields[none_indexable_fields_count++] =
