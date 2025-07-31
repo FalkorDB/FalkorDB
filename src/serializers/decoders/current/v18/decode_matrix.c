@@ -8,7 +8,7 @@
 #include "../../../serializer_io.h"
 #include "../../../../graph/graphcontext.h"
 #include "../../../../graph/tensor/tensor.h"
-#include "../../../../graph//graph_statistics.h"
+#include "../../../../graph/graph_statistics.h"
 #include "../../../../graph/delta_matrix/delta_matrix.h"
 
 // decode tensors
@@ -130,6 +130,7 @@ static void _decode_and_load_vector
 	GrB_Type t;  // data type
 	info = GxB_Type_from_name (&t, t_name) ;
 	ASSERT (info == GrB_SUCCESS) ;
+	rm_free (t_name) ;
 
 	// load vector
 	info = GrB_Vector_new (v, t, 0) ;

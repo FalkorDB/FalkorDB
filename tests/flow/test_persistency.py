@@ -497,10 +497,10 @@ class testGraphPersistency():
 
         # number of edges
         edge_count = g.query("MATCH ()-[e]->() RETURN count(e)").result_set[0][0]
-        self.env.assertEquals(node_count, 500)
+        self.env.assertEquals(edge_count, 500)
 
         edge_count = g.query("MATCH ()-[e:R]->() RETURN count(e)").result_set[0][0]
-        self.env.assertEquals(node_count, 500)
+        self.env.assertEquals(edge_count, 500)
 
     # Verify that the DB will respond to PING which taking a snapshot
     def test_ping_while_saving(self):

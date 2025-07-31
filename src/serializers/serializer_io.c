@@ -365,8 +365,7 @@ void BufferSerializerIO_WriteBuffer
 	const void *value,  // value
 	size_t len          // value size
 ) {
-	ASSERT(io  != NULL);
-	ASSERT(len >= 0);
+	ASSERT(io != NULL);
 
 	BufferedIO *buffer = (BufferedIO*)io;
 
