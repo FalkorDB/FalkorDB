@@ -328,13 +328,13 @@ GraphContext *RdbLoadGraphContext_latest
 	}
 
 	if(GraphDecodeContext_Finished(gc->decoding_context)) {
+		// flush graph matrices
+		Graph_ApplyAllPending(g, true);
+
 		// compute transposes
 		_ComputeTransposeMatrices(g);
 
 		Graph *g = gc->g;
-
-		// flush graph matrices
-		Graph_ApplyAllPending(g, true);
 
 		// revert to default synchronization behavior
 		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);

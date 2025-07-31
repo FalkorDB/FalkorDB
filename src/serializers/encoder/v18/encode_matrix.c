@@ -25,15 +25,7 @@ static void _ExtractTensors
 	GrB_Info info;
 	GrB_Matrix M  = Delta_Matrix_M  (D) ;
 	GrB_Matrix DP = Delta_Matrix_DP (D) ;
-
-	// create a scalar with MSB on
-	GrB_Scalar s;
-	info = GrB_Scalar_new(&s, GrB_UINT64);
-	ASSERT(info == GrB_SUCCESS);
-
-	// tensor entries have their MSB set
-	info = GrB_Scalar_setElement_UINT64(s, (uint64_t)1 << 63);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_Matrix DM = Delta_Matrix_DM (D) ;
 
 	// create a temporary matrix which will contain A's tensors
 	GrB_Index nrows;
@@ -55,13 +47,25 @@ static void _ExtractTensors
 	// extract A's tensors
 	// keep entries A[i,j] with MSB on
 	// copy tensor entries from A to T
-	info = GrB_select (*TM, NULL, NULL, GrB_VALUEGE_UINT64, M, s, NULL) ;
+	info = GrB_Matrix_select_UINT64(*TM, DM, NULL, GrB_VALUEGT_UINT64, M,
+			MSB_MASK, GrB_DESC_SC) ;
 	ASSERT(info == GrB_SUCCESS);
 
-	info = GrB_select (*TDP, NULL, NULL, GrB_VALUEGE_UINT64, DP, s, NULL) ;
+	info = GrB_Matrix_select_UINT64(*TDP, DM, NULL, GrB_VALUEGT_UINT64, DP,
+			MSB_MASK, GrB_DESC_SC) ;
 	ASSERT(info == GrB_SUCCESS);
 
-	GrB_free (&s) ;
+	// expecting at least a single tensor was extracted
+	GrB_Index tm_nvals;
+	GrB_Index tdp_nvals;
+
+	info = GrB_Matrix_nvals (&tm_nvals, *TM) ;
+	ASSERT (info == GrB_SUCCESS) ;
+
+	info = GrB_Matrix_nvals (&tdp_nvals, *TDP) ;
+	ASSERT (info == GrB_SUCCESS) ;
+
+	ASSERT ((tm_nvals + tdp_nvals) > 0) ;
 }
 
 // encode tensors
@@ -117,8 +121,8 @@ static void _EncodeTensors
 
 	GrB_Matrix matrices[2] = { TM, TDP } ;
 
-	for (int i = 0; i < 2; i++) {
-		GrB_Matrix T = matrices[i];
+	for (int l = 0; l < 2; l++) {
+		GrB_Matrix T = matrices[l];
 
 		// how many tensors are there?
 		GrB_Index nvals;
@@ -137,44 +141,44 @@ static void _EncodeTensors
 		info = GxB_Iterator_new (&it) ;
 		ASSERT (info == GrB_SUCCESS) ;
 
-		info = GxB_rowIterator_attach (it, T, NULL) ;
+		info = GxB_Matrix_Iterator_attach (it, T, NULL) ;
 		ASSERT (info == GrB_SUCCESS) ;
 
-		info = GxB_rowIterator_seekRow (it, 0) ;
+		info = GxB_Matrix_Iterator_seek (it, 0) ;
 		while (info != GxB_EXHAUSTED) {
-			// iterate over entries in T(i,:)
-			GrB_Index i = GxB_rowIterator_getRowIndex (it) ;
-			while (info == GrB_SUCCESS) {
-				// get the entry T(i,j)
-				GrB_Index  j   = GxB_rowIterator_getColIndex (it) ;
-				uint64_t   aij = GxB_Iterator_get_UINT64 (it) ;
-				GrB_Vector u   = AS_VECTOR (aij) ;  // treat entry as a vector
+			// iterate over entries
+			GrB_Index i ;
+			GrB_Index j ;
+			GxB_Matrix_Iterator_getIndex (it, &i, &j) ;
 
-				//------------------------------------------------------------------
-				// serialize the tensor
-				//------------------------------------------------------------------
+			// get the entry T(i,j)
+			uint64_t aij = GxB_Iterator_get_UINT64 (it) ;
+			ASSERT (aij & MSB_MASK) ;
 
-				void *blob;           // the blob
-				GrB_Index blob_size;  // size of the blob
+			GrB_Vector u = AS_VECTOR (aij) ;  // treat entry as a vector
+			ASSERT (info == GrB_SUCCESS) ;
 
-				info = GxB_Vector_serialize (&blob, &blob_size, u, NULL) ;
-				ASSERT (info == GrB_SUCCESS) ;
+			//--------------------------------------------------------------
+			// serialize the tensor
+			//--------------------------------------------------------------
 
-				// write tensor i,j position
-				SerializerIO_WriteUnsigned (rdb, i) ;
-				SerializerIO_WriteUnsigned (rdb, j) ;
+			void *blob;           // the blob
+			GrB_Index blob_size;  // size of the blob
 
-				// write blob to rdb
-				SerializerIO_WriteBuffer (rdb, blob, blob_size) ;
+			info = GxB_Vector_serialize (&blob, &blob_size, u, NULL) ;
+			ASSERT (info == GrB_SUCCESS) ;
 
-				rm_free (blob) ;
+			// write tensor i,j position
+			SerializerIO_WriteUnsigned (rdb, i) ;
+			SerializerIO_WriteUnsigned (rdb, j) ;
 
-				// move to the next entry in T(i,:)
-				info = GxB_rowIterator_nextCol (it) ;
-			}
+			// write blob to rdb
+			SerializerIO_WriteBuffer (rdb, blob, blob_size) ;
 
-			// move to the next row, T(i+1,:)
-			info = GxB_rowIterator_nextRow (it) ;
+			rm_free (blob) ;
+
+			// move to the next entry
+			info = GxB_Matrix_Iterator_next (it) ;
 		}
 
 		// clean up
@@ -276,8 +280,7 @@ static void _Encode_GrB_Matrix
 	_unload_and_encode_vector(rdb, container->x, reload);
 
 	// extract the sparsity pattern from the container
-	switch (container->format)
-	{
+	switch (container->format) {
 		case GxB_HYPERSPARSE :
 			_unload_and_encode_vector(rdb, container->h, reload);
 
@@ -324,7 +327,7 @@ static void _Encode_Delta_Matrix
 	GrB_Matrix DP = Delta_Matrix_DP (D) ;
 	GrB_Matrix DM = Delta_Matrix_DM (D) ;
 
-	_Encode_GrB_Matrix(rdb, M, reload);
+	_Encode_GrB_Matrix(rdb, M,  reload);
 	_Encode_GrB_Matrix(rdb, DP, reload);
 	_Encode_GrB_Matrix(rdb, DM, reload);
 }

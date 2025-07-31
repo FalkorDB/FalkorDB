@@ -20,7 +20,15 @@ static void _DecodeTensors
 	uint64_t *n_elem      // [output] number of edges loaded
 ) {
 	// format:
-	//  number of tensors
+	//  total number of tensors
+	//
+	//  M - number of tensors
+	//  tensors:
+	//   tensor i index
+	//   tensor j index
+	//   tensor
+	//
+	//  DP - number of tensors
 	//  tensors:
 	//   tensor i index
 	//   tensor j index
@@ -71,6 +79,7 @@ static void _DecodeTensors
 			GrB_Index nvals;
 			info = GrB_Vector_nvals (&nvals, u) ;
 			ASSERT (info == GrB_SUCCESS) ;
+			ASSERT (nvals > 0) ;
 			*n_elem += nvals;
 
 			// set tensor
@@ -253,8 +262,10 @@ void RdbLoadRelationMatrices_v18
 	GraphContext *gc   // graph context
 ) {
 	// format:
-	//   relation id X N
-	//   matrix      X N
+	//   relation id   X N
+	//   matrix        X N
+	//   tensors count X N
+	//   tensors
 
 	ASSERT(gc  != NULL);
 	ASSERT(rdb != NULL);
@@ -269,9 +280,15 @@ void RdbLoadRelationMatrices_v18
 	for (int i = 0; i < n; i++) {
 		// read relation ID
 		RelationID r = SerializerIO_ReadUnsigned (rdb) ;
+		ASSERT (r == i) ;
 
 		// plant M matrix
 		Delta_Matrix DR = Graph_GetRelationMatrix (g, r, false) ;
+
+		GrB_Index nvals;
+		Delta_Matrix_nvals (&nvals, DR) ;
+		ASSERT (nvals == 0) ;
+
 		_Decode_Delta_Matrix(rdb, DR);
 
 		// decode tensors
@@ -282,7 +299,6 @@ void RdbLoadRelationMatrices_v18
 		// update graph edge statistics
 		// number of edges of type 'r' equals to:
 		// |R| - n_tensors + n_elem
-		GrB_Index nvals;
 		info = Delta_Matrix_nvals (&nvals, DR) ;
 		ASSERT (info == GrB_SUCCESS) ;
 
