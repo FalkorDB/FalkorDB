@@ -18,6 +18,7 @@
 struct OpaqueStringPool {
 	dict *ht;                  // hash table mapping string -> reference count
 	pthread_rwlock_t rwlock;   // read-write lock to protect hash table
+	pthread_mutex_t lock;      // mutex protecting access to hash table
 	uint64_t total_ref_count;  // total number of active references
 };
 
@@ -100,6 +101,9 @@ StringPool StringPool_create(void) {
 	res = pthread_rwlock_init(&pool->rwlock, &attr);
 	ASSERT(res == 0);
 
+	res = pthread_mutex_init (&pool->lock, NULL) ;
+	ASSERT (res == 0) ;
+
 	res = pthread_rwlockattr_destroy(&attr);
 	ASSERT(res == 0);
 
@@ -139,7 +143,8 @@ char *StringPool_rent
 	dict *ht = pool->ht;
 
 	// first, try to find the string under a read lock
-	pthread_rwlock_rdlock(&pool->rwlock);
+	//pthread_rwlock_rdlock(&pool->rwlock);
+	pthread_mutex_lock (&pool->lock) ;
 
 	de = HashTableFind(ht, (void*)str);
 
@@ -149,15 +154,16 @@ char *StringPool_rent
         __atomic_fetch_add(count, 1, __ATOMIC_RELAXED);
         __atomic_fetch_add(&pool->total_ref_count, 1, __ATOMIC_RELAXED);
 
-        pthread_rwlock_unlock(&pool->rwlock);
+        //pthread_rwlock_unlock(&pool->rwlock);
+		pthread_mutex_unlock (&pool->lock) ;
 
         char *stored_str = (char*)HashTableGetKey(de);
         return stored_str;
     }
-    pthread_rwlock_unlock(&pool->rwlock);
+    // pthread_rwlock_unlock(&pool->rwlock);
 
 	// entry not found, insert under write lock
-	pthread_rwlock_wrlock(&pool->rwlock);
+	// pthread_rwlock_wrlock(&pool->rwlock);
 
 	// double-check: another thread might have inserted while we waited
 	dictEntry *existing = NULL;  // existing dict entry
@@ -178,7 +184,8 @@ char *StringPool_rent
 	}
 
 	// release write lock
-	pthread_rwlock_unlock(&pool->rwlock);
+	//pthread_rwlock_unlock(&pool->rwlock);
+	pthread_mutex_unlock (&pool->lock) ;
 
 	// update total reference count
 	__atomic_fetch_add(&pool->total_ref_count, 1, __ATOMIC_RELAXED);
@@ -219,12 +226,14 @@ void StringPool_return
 	dict *ht = pool->ht;
 
 	// access entry under read lock
-    pthread_rwlock_rdlock(&pool->rwlock);
+	pthread_mutex_lock (&pool->lock) ;
+    //pthread_rwlock_rdlock(&pool->rwlock);
 
 	de = HashTableFind(ht, str);
 	ASSERT(de != NULL);
 
-    pthread_rwlock_unlock(&pool->rwlock);
+    //pthread_rwlock_unlock(&pool->rwlock);
+	pthread_mutex_unlock (&pool->lock) ;
 
 	// decrease reference count
 	uint32_t *count = (uint32_t*)HashTableEntryMetadata(de);
@@ -233,7 +242,8 @@ void StringPool_return
 	// if this was the last reference, delete the entry
 	if(old_count == 1) {
 		// acquire write lock for potential deletion
-		pthread_rwlock_wrlock(&pool->rwlock);
+		// pthread_rwlock_wrlock(&pool->rwlock);
+		pthread_mutex_lock (&pool->lock) ;
 
 		// re-check under write lock in case another thread modified the count
 		de = HashTableFind(ht, str);
@@ -249,7 +259,8 @@ void StringPool_return
 		// if de == NULL, another thread already deleted it
 
 		// release write lock
-		pthread_rwlock_unlock(&pool->rwlock);
+		//pthread_rwlock_unlock(&pool->rwlock);
+		pthread_mutex_unlock (&pool->lock) ;
 	}
 
 	// update total reference count
@@ -268,9 +279,11 @@ StringPoolStats StringPool_stats
 	double   avg_ref_count = 0;
 
 	// get hash table entry count under read lock
-	pthread_rwlock_rdlock(&pool->rwlock);
+	//pthread_rwlock_rdlock(&pool->rwlock);
+	pthread_mutex_lock (&pool->lock) ;
 	n_entries = HashTableElemCount(pool->ht);
-	pthread_rwlock_unlock(&pool->rwlock);
+	//pthread_rwlock_unlock(&pool->rwlock);
+	pthread_mutex_unlock (&pool->lock) ;
 
 	if(n_entries > 0) {
 		// read total_ref_count atomically to avoid stale values
@@ -299,6 +312,9 @@ void StringPool_free
 
 	int res = pthread_rwlock_destroy(&p->rwlock);
 	ASSERT(res == 0);
+
+	res = pthread_mutex_destroy (&p->lock) ;
+	ASSERT (res == 0) ;
 
 	rm_free(*pool);
 	*pool = NULL;
