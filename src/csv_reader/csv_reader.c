@@ -243,6 +243,8 @@ CSVReader CSVReader_New
 	res = csv_init(&(reader->parser), options);
 	ASSERT(res == 0);
 
+	csv_set_delim(&reader->parser, reader->delimiter);
+
 	// CSV has a header row
 	// rows will return as maps
 	if(has_headers) {

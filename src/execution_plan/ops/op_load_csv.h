@@ -20,6 +20,7 @@ typedef struct {
 	char *alias;          // CSV row alias
 	int recIdx;           // record index to populate with CSV row
 	bool with_headers;    // CSV contains header row
+	char delimiter;       // field delimiter
 	OpBase *child;        // child operation
 	Record child_record;  // child record
 } OpLoadCSV;
@@ -30,6 +31,7 @@ OpBase *NewLoadCSVOp
 	const ExecutionPlan *plan,  // execution plan
 	AR_ExpNode *exp,            // CSV URI expression
 	const char *alias,          // CSV row alias
-	bool with_headers           // CSV contains header row
+	bool with_headers,          // CSV contains header row
+	char delimiter              // field delimiter
 );
 
