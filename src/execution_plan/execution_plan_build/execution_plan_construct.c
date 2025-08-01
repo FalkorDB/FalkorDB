@@ -68,11 +68,20 @@ static void _buildLoadCSVOp
 	node = cypher_ast_load_csv_get_field_terminator(clause);
 	if(node != NULL) {
 		ASSERT(cypher_astnode_type(node) == CYPHER_AST_STRING);
-		delimiter = cypher_ast_string_get_value(node)[0];
+		const char *str_delimiter = cypher_ast_string_get_value(node) ;
+
+		// error if delimiter is not a single character
+		if (strlen (str_delimiter) != 1) {
+			ErrorCtx_SetError (
+					"CSV field terminator can only be one character wide") ;
+			return ;
+		}
+
+		delimiter = str_delimiter[0] ;
 	}
 
-	OpBase *op = NewLoadCSVOp(plan, exp, alias, with_headers, delimiter);
-	ExecutionPlan_UpdateRoot(plan, op);
+	OpBase *op = NewLoadCSVOp (plan, exp, alias, with_headers, delimiter) ;
+	ExecutionPlan_UpdateRoot (plan, op) ;
 }
 
 static inline void _buildUpdateOp

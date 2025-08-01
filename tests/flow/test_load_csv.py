@@ -388,6 +388,21 @@ class testLoadLocalCSV():
         expected = {k: v for k, v in zip(SEMICOLON_CSV_HEADER[0], SEMICOLON_CSV_DATA[0])}
         self.env.assertEquals(actual[0][0], expected)
 
+    def test14_invalid_delimiter(self):
+        # field delimiter must be one character in length
+
+        invalid_delimiters = ['', ';,']
+        for delimiter in invalid_delimiters:
+            try:
+                # use an invalid delimiter
+                q = f"LOAD CSV FROM 'file://{SEMICOLON_CSV}' AS row FIELDTERMINATOR '{delimiter}' RETURN row"
+                self.graph.query(q).result_set
+
+                # expecting an error
+                self.env.assertFalse(True)
+            except Exception as e:
+                self.env.assertIn("CSV field terminator can only be one character wide", str(e))
+
 
 class testLoadRemoteCSV():
     def __init__(self):
