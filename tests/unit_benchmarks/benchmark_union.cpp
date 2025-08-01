@@ -18,7 +18,6 @@ void rg_setup(const benchmark::State &state) {
 }
 
 void rg_teardown(const benchmark::State &state) {
-    printf("Ending union benchmark ...\n");
     GrB_finalize();
     // GrB_OK((GrB_Info) LAGraph_Finalize(NULL));
 }
