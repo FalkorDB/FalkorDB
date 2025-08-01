@@ -380,8 +380,8 @@ class testLoadLocalCSV():
 
         #-----------------------------------------------------------------------
 
-        # load csv with BOM as an dict
-        q = f"LOAD CSV WITH HEADERS FROM 'file://{BOM_CSV}' AS row FIELDTERMINATOR ';' RETURN row"
+        # load csv with headers when specifying the field delimiter ';'
+        q = f"LOAD CSV WITH HEADERS FROM 'file://{SEMICOLON_CSV}' AS row FIELDTERMINATOR ';' RETURN row"
         actual = self.graph.query(q).result_set
 
         # validate returned dict
