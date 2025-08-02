@@ -1205,6 +1205,69 @@ void Graph_GetEdgesConnectingNodes
 	}
 }
 
+// returns true and sets edge's relation ID if edge is associated
+// with one of the specified relations, otherwise returns false and does not
+// change edge's relation ID
+bool Graph_LookupEdgeRelationID
+(
+	const Graph *g,          // graph to get edges from
+	Edge *edge,    	         // edge to check
+	const RelationID *rels,  // relationships (can't contain unknown relations)
+	int n_rels               // the number of relations
+) {
+	ASSERT(g    != NULL);
+	ASSERT(edge != NULL);
+	ASSERT((rels && n_rels > 0) || (rels == NULL && n_rels == 0));
+	
+	GrB_Info info;
+
+	uint64_t  x      = 0;
+	Tensor    R      = NULL; 
+	EntityID  id     = ENTITY_GET_ID(edge);
+	bool      found  = false;
+	GrB_Index srcID  = Edge_GetSrcNodeID(edge);
+	GrB_Index destID = Edge_GetDestNodeID(edge);
+
+	// if rels are not specified run through all Relationships in the graph
+	n_rels = (rels == NULL) ? Graph_RelationTypeCount(g) : n_rels;
+
+	for (int i = 0; i < n_rels; i++) {
+		// use the next entry in rels if given, otherwise, the ith rel ID
+		RelationID curr = rels ? rels[i] : i;
+		ASSERT(curr != GRAPH_UNKNOWN_RELATION);
+		ASSERT(curr < Graph_RelationTypeCount(g));
+
+		R = Graph_GetRelationMatrix(g, curr, false);
+		info = Delta_Matrix_extractElement_UINT64(&x, R, srcID, destID);
+		ASSERT(info >= 0);
+
+		if (info == GrB_NO_VALUE) {
+			// edge isn't associated with current relation id
+			// move on to the next one
+			continue;
+		}
+
+		ASSERT(info == GrB_SUCCESS);
+
+		// try to find the edge id within the matrix entry
+		if (SCALAR_ENTRY(x)) {
+			found = ((EntityID) x == id);
+		} else {
+			// multi-edge
+			GrB_Vector x_vec = AS_VECTOR(x);
+			info = GxB_Vector_isStoredElement(x_vec, id);
+			found = (info == GrB_SUCCESS);
+		}
+
+		if (found) {
+			Edge_SetRelationID(edge, curr);
+			break;
+		}
+	}
+
+	return found;
+}
+
 // retrieves all either incoming or outgoing edges
 // to/from given node N, depending on given direction
 void Graph_GetNodeEdges
@@ -1340,7 +1403,7 @@ uint Graph_GetNodeLabels
 	Delta_Matrix M = Graph_GetNodeLabelMatrix(g);
 
 	EntityID id = ENTITY_GET_ID(n);
-	Delta_MatrixTupleIter iter = {0};
+	Delta_MatrixTupleIter iter;
 	res = Delta_MatrixTupleIter_AttachRange(&iter, M, id, id);
 	ASSERT(res == GrB_SUCCESS);
 
