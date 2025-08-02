@@ -10,7 +10,10 @@ VERSIONS = [
         {'decoder_version': 12, 'tag': 'redislabs/redisgraph:2.8.14'},
         {'decoder_version': 13, 'tag': 'redislabs/redisgraph:2.12.8'},
         {'decoder_version': 14, 'tag': 'falkordb/falkordb:v4.0.7'},
-        {'decoder_version': 15, 'tag': 'falkordb/falkordb:v4.2.2'}]
+        {'decoder_version': 15, 'tag': 'falkordb/falkordb:v4.2.2'},
+        {'decoder_version': 16, 'tag': 'falkordb/falkordb:v4.8.5'},
+        {'decoder_version': 17, 'tag': 'falkordb/falkordb:v4.10.3'}
+        ]
 
 QUERIES = [
         "CREATE (:L1 {val:1, strval: 'str', numval: 5.5, nullval: NULL, boolval: true, array: [1,2,3], point: POINT({latitude: 32, longitude: 34})})-[:E{val:2}]->(:L2{val:3})",
@@ -56,6 +59,10 @@ def generate_dump(key, port):
 
     # Select the social graph
     g = db.select_graph(key)
+    try:
+        g.delete()
+    except:
+        pass
 
     # Populate graph
     for q in QUERIES:
@@ -96,23 +103,20 @@ def get_dump(v):
         # stop db
         stop_db(container)
 
-        return dump
-    else:
-        with open(path, 'rb') as f:
-            return f.read()
+    with open(path, 'rb') as f:
+        return f.read()
 
 class test_prev_rdb_decode():
     def __init__(self):
         self.env, self.db = Env()
         self.redis_con = self.env.getConnection()
 
-    def test_v10_decode(self):
-        decoder_id = 10
+    def _test_decode(self, decoder_id):
         key = graph_id(decoder_id)
-        rdb = get_dump(decoder_id)
+        dump = get_dump(decoder_id)
 
         # restore dump
-        self.redis_con.restore(key, 0, rdb, True)
+        self.redis_con.restore(key, 0, dump, True)
 
         # select graph
         graph = self.db.select_graph(key)
@@ -131,134 +135,48 @@ class test_prev_rdb_decode():
 
         results = graph.query("MATCH (n:L1 {val:1}) RETURN n")
         self.env.assertEqual(results.result_set, [[node0]])
+
+    def test_v10_decode(self):
+        decoder_id = 10
+        self._test_decode(decoder_id)
 
     def test_v11_decode(self):
         decoder_id = 11
-        key = graph_id(decoder_id)
-        rdb = get_dump(decoder_id)
-
-        # restore dump
-        self.redis_con.restore(key, 0, rdb, True)
-
-        # select graph
-        graph = self.db.select_graph(key)
-
-        # expected entities
-        node0  = Node(node_id=0, labels='L1', properties={'val': 1, 'strval': 'str', 'numval': 5.5, 'boolval': True, 'array': [1,2,3], 'point': {'latitude': 32, 'longitude': 34}})
-        node1  = Node(node_id=1, labels='L2', properties={'val': 3})
-        edge01 = Edge(src_node=0, relation='E', dest_node=1, edge_id=0, properties={'val':2})
-
-        # validations
-        results = graph.query("MATCH (n)-[e]->(m) RETURN n, e, m")
-        self.env.assertEqual(results.result_set, [[node0, edge01, node1]])
-
-        plan = str(graph.explain("MATCH (n:L1 {val:1}) RETURN n"))
-        self.env.assertIn("Index Scan", plan)
-
-        results = graph.query("MATCH (n:L1 {val:1}) RETURN n")
-        self.env.assertEqual(results.result_set, [[node0]])
+        self._test_decode(decoder_id)
 
     def test_v12_decode(self):
         decoder_id = 12
-        key = graph_id(decoder_id)
-        rdb = get_dump(decoder_id)
-
-        # restore dump
-        self.redis_con.restore(key, 0, rdb, True)
-
-        # select graph
-        graph = self.db.select_graph(key)
-
-        # expected entities
-        node0  = Node(node_id=0, labels='L1', properties={'val': 1, 'strval': 'str', 'numval': 5.5, 'boolval': True, 'array': [1,2,3], 'point': {'latitude': 32, 'longitude': 34}})
-        node1  = Node(node_id=1, labels='L2', properties={'val': 3})
-        edge01 = Edge(src_node=0, relation='E', dest_node=1, edge_id=0, properties={'val':2})
-
-        # validations
-        results = graph.query("MATCH (n)-[e]->(m) RETURN n, e, m")
-        self.env.assertEqual(results.result_set, [[node0, edge01, node1]])
-
-        plan = str(graph.explain("MATCH (n:L1 {val:1}) RETURN n"))
-        self.env.assertIn("Index Scan", plan)
-
-        results = graph.query("MATCH (n:L1 {val:1}) RETURN n")
-        self.env.assertEqual(results.result_set, [[node0]])
+        self._test_decode(decoder_id)
 
     def test_v13_decode(self):
         decoder_id = 13
-        key = graph_id(decoder_id)
-        rdb = get_dump(decoder_id)
-
-        # restore dump
-        self.redis_con.restore(key, 0, rdb, True)
-
-        # select graph
-        graph = self.db.select_graph(key)
-
-        # expected entities
-        node0  = Node(node_id=0, labels='L1', properties={'val': 1, 'strval': 'str', 'numval': 5.5, 'boolval': True, 'array': [1,2,3], 'point': {'latitude': 32, 'longitude': 34}})
-        node1  = Node(node_id=1, labels='L2', properties={'val': 3})
-        edge01 = Edge(src_node=0, relation='E', dest_node=1, edge_id=0, properties={'val':2})
-
-        # validations
-        results = graph.query("MATCH (n)-[e]->(m) RETURN n, e, m")
-        self.env.assertEqual(results.result_set, [[node0, edge01, node1]])
-
-        plan = str(graph.explain("MATCH (n:L1 {val:1}) RETURN n"))
-        self.env.assertIn("Index Scan", plan)
-
-        results = graph.query("MATCH (n:L1 {val:1}) RETURN n")
-        self.env.assertEqual(results.result_set, [[node0]])
+        self._test_decode(decoder_id)
 
     def test_v14_decode(self):
         decoder_id = 14
-        key = graph_id(decoder_id)
-        rdb = get_dump(decoder_id)
-
-        # restore dump
-        self.redis_con.restore(key, 0, rdb, True)
-
-        # select graph
-        graph = self.db.select_graph(key)
-
-        # expected entities
-        node0  = Node(node_id=0, labels='L1', properties={'val': 1, 'strval': 'str', 'numval': 5.5, 'boolval': True, 'array': [1,2,3], 'point': {'latitude': 32, 'longitude': 34}})
-        node1  = Node(node_id=1, labels='L2', properties={'val': 3})
-        edge01 = Edge(src_node=0, relation='E', dest_node=1, edge_id=0, properties={'val':2})
-
-        # validations
-        results = graph.query("MATCH (n)-[e]->(m) RETURN n, e, m")
-        self.env.assertEqual(results.result_set, [[node0, edge01, node1]])
-
-        plan = str(graph.explain("MATCH (n:L1 {val:1}) RETURN n"))
-        self.env.assertIn("Index Scan", plan)
-
-        results = graph.query("MATCH (n:L1 {val:1}) RETURN n")
-        self.env.assertEqual(results.result_set, [[node0]])
+        self._test_decode(decoder_id)
 
     def test_v15_decode(self):
         decoder_id = 15
-        key = graph_id(decoder_id)
-        rdb = get_dump(decoder_id)
+        self._test_decode(decoder_id)
 
-        # restore dump
-        self.redis_con.restore(key, 0, rdb, True)
+    def test_v16_decode(self):
+        # under sanitizer we're seeing:
+        # Unhandled exception: DUMP payload version or checksum are wrong
+        if SANITIZER:
+            self.env.skip()
+            return
 
-        # select graph
-        graph = self.db.select_graph(key)
+        decoder_id = 16
+        self._test_decode(decoder_id)
 
-        # expected entities
-        node0  = Node(node_id=0, labels='L1', properties={'val': 1, 'strval': 'str', 'numval': 5.5, 'boolval': True, 'array': [1,2,3], 'point': {'latitude': 32, 'longitude': 34}})
-        node1  = Node(node_id=1, labels='L2', properties={'val': 3})
-        edge01 = Edge(src_node=0, relation='E', dest_node=1, edge_id=0, properties={'val':2})
+    def test_v17_decode(self):
+        # under sanitizer we're seeing:
+        # Unhandled exception: DUMP payload version or checksum are wrong
+        if SANITIZER:
+            self.env.skip()
+            return
 
-        # validations
-        results = graph.query("MATCH (n)-[e]->(m) RETURN n, e, m")
-        self.env.assertEqual(results.result_set, [[node0, edge01, node1]])
-
-        plan = str(graph.explain("MATCH (n:L1 {val:1}) RETURN n"))
-        self.env.assertIn("Index Scan", plan)
-
-        results = graph.query("MATCH (n:L1 {val:1}) RETURN n")
-        self.env.assertEqual(results.result_set, [[node0]])
+        decoder_id = 17
+        self._test_decode(decoder_id)
 

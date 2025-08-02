@@ -3,7 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "decode_v17.h"
+#include "decode_v18.h"
 #include "../../../../index/indexer.h"
 
 // TODO: have the delta matrix upon setting M, incase the matrix
@@ -11,22 +11,35 @@
 // compute transpose matrices
 static void _ComputeTransposeMatrix
 (
-	Delta_Matrix A
+	const Delta_Matrix A
 ) {
 	ASSERT(A != NULL);
 
+	GrB_Info info;
+	GrB_Index nvals;
+
+	// make sure A is full synced
+	GrB_Matrix DP = Delta_Matrix_DP (A) ;
+	GrB_Matrix DM = Delta_Matrix_DM (A) ;
+
+	info = GrB_Matrix_nvals (&nvals, DP) ;
+	ASSERT (info == GrB_SUCCESS) ;
+	ASSERT (nvals == 0) ;
+
+	info = GrB_Matrix_nvals (&nvals, DM) ;
+	ASSERT (info == GrB_SUCCESS) ;
+	ASSERT (nvals == 0) ;
+
+	// compute transpose
 	Delta_Matrix AT  = Delta_Matrix_getTranspose(A);
 	GrB_Matrix   AM  = Delta_Matrix_M(A);
 	GrB_Matrix   ATM = Delta_Matrix_M(AT);
 
 	// make sure transpose doesn't contains any entries
-	GrB_Info info;
-	GrB_Index nvals;
 	info = GrB_Matrix_nvals(&nvals, ATM);
 	ASSERT(info  == GrB_SUCCESS);
 	ASSERT(nvals == 0);
 
-	// compute transpose
 	info = GrB_transpose(ATM, NULL, NULL, AM, NULL);
 	ASSERT(info  == GrB_SUCCESS);
 }
@@ -153,7 +166,7 @@ static GraphContext *_DecodeHeader
 	}
 
 	// decode graph schemas
-	RdbLoadGraphSchema_v17(rdb, gc, !first_vkey);
+	RdbLoadGraphSchema_v18(rdb, gc, !first_vkey);
 
 	// save decode statistics for later progess reporting
 	// e.g. "Decoded 20000/4500000 nodes"
@@ -230,7 +243,7 @@ GraphContext *RdbLoadGraphContext_latest
 		switch(payload.state) {
 			case ENCODE_STATE_NODES:
 				Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
-				RdbLoadNodes_v17(rdb, g, payload.entities_count);
+				RdbLoadNodes_v18(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -242,7 +255,7 @@ GraphContext *RdbLoadGraphContext_latest
 				break;
 
 			case ENCODE_STATE_DELETED_NODES:
-				RdbLoadDeletedNodes_v17(rdb, g, payload.entities_count);
+				RdbLoadDeletedNodes_v18(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -255,7 +268,7 @@ GraphContext *RdbLoadGraphContext_latest
 
 			case ENCODE_STATE_EDGES:
 				Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
-				RdbLoadEdges_v17(rdb, g, payload.entities_count);
+				RdbLoadEdges_v18(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -265,7 +278,7 @@ GraphContext *RdbLoadGraphContext_latest
 
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
-				RdbLoadDeletedEdges_v17(rdb, g, payload.entities_count);
+				RdbLoadDeletedEdges_v18(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -281,7 +294,7 @@ GraphContext *RdbLoadGraphContext_latest
 						"Graph '%s' loading label matrices",
 						GraphContext_GetName(gc));
 
-				RdbLoadLabelMatrices_v17(rdb, gc);
+				RdbLoadLabelMatrices_v18(rdb, gc);
 				break;
 
 			case ENCODE_STATE_RELATION_MATRICES:
@@ -289,7 +302,7 @@ GraphContext *RdbLoadGraphContext_latest
 						"Graph '%s' loading relation matrices",
 						GraphContext_GetName(gc));
 
-				RdbLoadRelationMatrices_v17(rdb, gc);
+				RdbLoadRelationMatrices_v18(rdb, gc);
 				break;
 
 			case ENCODE_STATE_ADJ_MATRIX:
@@ -297,7 +310,7 @@ GraphContext *RdbLoadGraphContext_latest
 						"Graph '%s' loading Adjacency matrix",
 						GraphContext_GetName(gc));
 
-				RdbLoadAdjMatrix_v17(rdb, gc);
+				RdbLoadAdjMatrix_v18(rdb, gc);
 				break;
 
 			case ENCODE_STATE_LBLS_MATRIX:
@@ -305,7 +318,7 @@ GraphContext *RdbLoadGraphContext_latest
 						"Graph '%s' loading Labels matrix",
 						GraphContext_GetName(gc));
 
-				RdbLoadLblsMatrix_v17(rdb, gc);
+				RdbLoadLblsMatrix_v18(rdb, gc);
 				break;
 
 			default:
@@ -328,13 +341,13 @@ GraphContext *RdbLoadGraphContext_latest
 	}
 
 	if(GraphDecodeContext_Finished(gc->decoding_context)) {
+		// flush graph matrices
+		Graph_ApplyAllPending(g, true);
+
 		// compute transposes
 		_ComputeTransposeMatrices(g);
 
 		Graph *g = gc->g;
-
-		// flush graph matrices
-		Graph_ApplyAllPending(g, true);
 
 		// revert to default synchronization behavior
 		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);

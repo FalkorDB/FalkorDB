@@ -59,8 +59,8 @@
 #include "../redismodule.h"
 #include "../graph/graphcontext.h"
 #include "../serializers/serializer_io.h"
-#include "../serializers/encoder/v17/encode_v17.h"
-#include "../serializers/decoders/current/v17/decode_v17.h"
+#include "../serializers/encoder/v18/encode_v18.h"
+#include "../serializers/decoders/current/v18/decode_v18.h"
 
 #include <stdio.h>
 #include <fcntl.h>
