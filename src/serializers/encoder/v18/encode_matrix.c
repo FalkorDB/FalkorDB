@@ -278,23 +278,10 @@ static void _Encode_GrB_Matrix
 	//--------------------------------------------------------------------------
 
 	_unload_and_encode_vector(rdb, container->x, reload);
-
-	// extract the sparsity pattern from the container
-	switch (container->format) {
-		case GxB_HYPERSPARSE :
-			_unload_and_encode_vector(rdb, container->h, reload);
-
-		case GxB_SPARSE :
-			_unload_and_encode_vector(rdb, container->p, reload);
-			_unload_and_encode_vector(rdb, container->i, reload);
-
-				break ;
-
-		case GxB_BITMAP :
-			_unload_and_encode_vector(rdb, container->b, reload);
-
-				break ;
-	}
+	_unload_and_encode_vector(rdb, container->h, reload);
+	_unload_and_encode_vector(rdb, container->p, reload);
+	_unload_and_encode_vector(rdb, container->i, reload);
+	_unload_and_encode_vector(rdb, container->b, reload);
 
 	if (reload) {
 		// reload matrix

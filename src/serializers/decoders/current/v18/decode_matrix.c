@@ -165,22 +165,10 @@ static GrB_Matrix _Decode_GrB_Matrix
     container->Y = NULL ;
 
 	_decode_and_load_vector (rdb, &container->x) ;
-
-	switch (container->format) {
-		case GxB_HYPERSPARSE :
-			_decode_and_load_vector (rdb, &container->h) ;
-
-		case GxB_SPARSE :
-			_decode_and_load_vector (rdb, &container->p) ;
-			_decode_and_load_vector (rdb, &container->i) ;
-
-			break ;
-
-		case GxB_BITMAP :
-			_decode_and_load_vector (rdb, &container->b) ;
-
-			break ;
-	}
+	_decode_and_load_vector (rdb, &container->h) ;
+	_decode_and_load_vector (rdb, &container->p) ;
+	_decode_and_load_vector (rdb, &container->i) ;
+	_decode_and_load_vector (rdb, &container->b) ;
 
 	// load A from the container
 	GrB_Matrix A;
