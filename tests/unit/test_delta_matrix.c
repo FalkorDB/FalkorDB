@@ -341,6 +341,7 @@ void test_RGMatrix_del() {
 	//--------------------------------------------------------------------------
 
 	info = Delta_Matrix_removeElement_UINT64(A, i, j);
+	// TODO: should this return this? Not if it increases the cost significantly.
 	TEST_ASSERT(info == GrB_NO_VALUE);
 
 	// matrix should not contain any entries in either DP or DM

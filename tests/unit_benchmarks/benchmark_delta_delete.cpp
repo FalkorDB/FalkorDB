@@ -93,22 +93,20 @@ static void BM_tensor_delete(benchmark::State &state) {
 
     Random_Tensor(&A, n, 0.001, 0.0000001, 0.0000001, seed);
 
-    Edge arr[20000];
+    Edge arr[40000];
 
     TensorIterator_ScanRange(&it, A, 0, n - 1, false);
-    ASSERT(TensorIterator_is_attached(&it, A));
     
-    for (int i = 0; i < 20000; ++i) {
+    for (int i = 0; i < 40000; ++i) {
         Edge &e = arr[i];
         
         bool found = TensorIterator_next(&it, &e.src_id, &e.dest_id, &e.id, NULL);
-        ASSERT(TensorIterator_is_attached(&it, A));
         ASSERT(found);
     }
 
     int j = 0;
     for (auto _ : state) {
-        if (j >= 20000) break;
+        ASSERT(j < 40000);
         Edge *e = arr + j;
         Tensor_RemoveElements(A, e, 1, NULL);
         j++;
@@ -116,44 +114,43 @@ static void BM_tensor_delete(benchmark::State &state) {
     Tensor_free(&A);
 }
 
-// static void BM_tensor_delete_batch(benchmark::State &state) {
-//     Tensor    A     = NULL;
-//     uint64_t  n     = 500000;
-//     uint64_t  seed  = 870713428976ul;
-//     GrB_Index nvals = 0;
-//     int       batch_size = 1000;
+static void BM_tensor_delete_batch(benchmark::State &state) {
+    Tensor         A     = NULL;
+    TensorIterator it;
+    uint64_t       n     = 500000;
+    uint64_t       seed  = 870713428976ul;    
+    GrB_Index      nvals = 0;
 
-//     TensorIterator it;
+    Random_Tensor(&A, n, 0.001, 0.0000001, 0.0000001, seed);
 
-//     Random_Tensor(&A, n, 0.001, 0.0000001, 0.0000001, seed);
-//     GrB_Matrix M = DELTA_MATRIX_M(A);
+    Edge arr[40000];
 
-//     Delta_Matrix_print(A, 2);
-//     Edge arr[30000];
+    TensorIterator_ScanRange(&it, A, 0, n - 1, false);
+    
+    for (int i = 0; i < 40000; ++i) {
+        Edge &e = arr[i];
+        
+        bool found = TensorIterator_next(&it, &e.src_id, &e.dest_id, &e.id, NULL);
+        ASSERT(found);
+    }
 
-//     TensorIterator_ScanRange(&it, A, 0, n-1, false);
-//     ASSERT(TensorIterator_is_attached(&it, A));
+    int batch_size = 10000;
+    int j = 0;
+    for (auto _ : state) {
+        ASSERT(j + batch_size <= 40000);
+        Edge *e = arr + j;
+        Tensor_RemoveElements(A, e, batch_size, NULL);
+        j += batch_size;
+    }
 
-//     for (int i = 0; i < 30000; ++i) {
-//         Edge e = arr[i];
-//         bool found = TensorIterator_next(&it, &e.src_id, &e.dest_id, &e.id, NULL);
-//         ASSERT(TensorIterator_is_attached(&it, A));
-//         ASSERT(found);
-//     }
-
-//     int j = 0;
-//     for (auto _ : state) {
-//         if (j >= 30000) break;
-//         Edge *e = arr + j;
-//         Tensor_RemoveElements(A, e, batch_size, NULL);
-//         j += batch_size;
-//     }
-//     Tensor_free(&A);
-// }
+    Tensor_free(&A);
+}
 
 BENCHMARK(BM_delete_from_m)->Setup(rg_setup)->Teardown(rg_teardown);
-BENCHMARK(BM_delete_from_dp)->Setup(rg_setup)->Teardown(rg_teardown);
-BENCHMARK(BM_tensor_delete)->Setup(rg_setup)->Teardown(rg_teardown)->
+BENCHMARK(BM_delete_from_dp)->Setup(rg_setup)->Teardown(rg_teardown)->
     Iterations(20000);
-// BENCHMARK(BM_tensor_delete_batch)->Setup(rg_setup)->Teardown(rg_teardown);
+BENCHMARK(BM_tensor_delete)->Setup(rg_setup)->Teardown(rg_teardown)->
+    Iterations(40000);
+BENCHMARK(BM_tensor_delete_batch)->Setup(rg_setup)->Teardown(rg_teardown)->
+    Iterations(4);
 BENCHMARK_MAIN();

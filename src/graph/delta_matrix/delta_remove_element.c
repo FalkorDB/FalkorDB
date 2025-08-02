@@ -33,10 +33,7 @@ GrB_Info Delta_Matrix_removeElement_BOOL
 #endif
 
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
-		info = Delta_Matrix_removeElement_BOOL(C->transposed, j, i);
-		if(info != GrB_SUCCESS) {
-			return info;
-		}
+		Delta_Matrix_removeElement_BOOL(C->transposed, j, i);
 	}
 
 	//--------------------------------------------------------------------------
@@ -44,29 +41,19 @@ GrB_Info Delta_Matrix_removeElement_BOOL
 	//--------------------------------------------------------------------------
 	info = GxB_Matrix_isStoredElement(m, i, j);
 	in_m = (info == GrB_SUCCESS);
-	info = GxB_Matrix_isStoredElement(dp, i, j);
-	in_dp = (info == GrB_SUCCESS);
-	info = GxB_Matrix_isStoredElement(dm, i, j);
-	in_dm = (info == GrB_SUCCESS);
-
-	if(in_dm || !(in_m || in_dp)) {
-		// entry already marked for deletion
-		return GrB_NO_VALUE;
-	}
 
 	if(in_m) {
 		// mark deletion in delta minus
 		GrB_OK(GrB_Matrix_setElement(m, BOOL_ZOMBIE, i, j));
 		GrB_OK(GrB_Matrix_setElement(dm, true, i, j));
-		Delta_Matrix_setDirty(C);
-		return GrB_SUCCESS;
+	} else {
+		GrB_OK (GrB_Matrix_removeElement(dp, i, j));
 	}
 
 	//--------------------------------------------------------------------------
 	// entry exists in 'delta-plus'
 	//--------------------------------------------------------------------------
 	
-	GrB_OK (GrB_Matrix_removeElement(dp, i, j));
 	Delta_Matrix_setDirty(C);
 	return GrB_SUCCESS;
 }
@@ -94,9 +81,6 @@ GrB_Info Delta_Matrix_removeElement_UINT64
 #endif
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
 		info = Delta_Matrix_removeElement_BOOL(C->transposed, j, i);
-		if(info != GrB_SUCCESS) {
-			return info;
-		}
 	}
 
 	//--------------------------------------------------------------------------
@@ -104,29 +88,19 @@ GrB_Info Delta_Matrix_removeElement_UINT64
 	//--------------------------------------------------------------------------
 	info = GxB_Matrix_isStoredElement(m, i, j);
 	in_m = (info == GrB_SUCCESS);
-	info = GxB_Matrix_isStoredElement(dp, i, j);
-	in_dp = (info == GrB_SUCCESS);
-	info = GxB_Matrix_isStoredElement(dm, i, j);
-	in_dm = (info == GrB_SUCCESS);
-
-	if(in_dm || !(in_m || in_dp)) {
-		// entry already marked for deletion
-		return GrB_NO_VALUE;
-	}
 
 	if(in_m) {
 		// mark deletion in delta minus
 		GrB_OK(GrB_Matrix_setElement(m, U64_ZOMBIE, i, j));
 		GrB_OK(GrB_Matrix_setElement(dm, true, i, j));
-		Delta_Matrix_setDirty(C);
-		return GrB_SUCCESS;
+	} else {
+		GrB_OK (GrB_Matrix_removeElement(dp, i, j));
 	}
-
+	
 	//--------------------------------------------------------------------------
 	// entry exists in 'delta-plus'
 	//--------------------------------------------------------------------------
 	
-	GrB_OK (GrB_Matrix_removeElement(dp, i, j));
 	Delta_Matrix_setDirty(C);
 	return GrB_SUCCESS;
 }
