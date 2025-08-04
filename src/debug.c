@@ -10,7 +10,7 @@
 #include <sys/types.h>
 #include "RG.h"
 #include "globals.h"
-#include "util/thpool/pools.h"
+#include "util/thpool/pool.h"
 #include "commands/cmd_context.h"
 
 void InfoFunc
@@ -21,8 +21,8 @@ void InfoFunc
 	// make sure information is requested for crash report
 	if(!for_crash_report) return;
 
-	// #readers + #writers + Redis main thread
-	uint32_t n = ThreadPools_ThreadCount() + 1;
+	// #workers + Redis main thread
+	uint32_t n = ThreadPool_ThreadCount() + 1;
 	CommandCtx* commands[n];
 	Globals_GetCommandCtxs(commands, &n);
 
@@ -48,3 +48,5 @@ void setupCrashHandlers
 ) {
 	int registered = RedisModule_RegisterInfoFunc(ctx, InfoFunc);
 	ASSERT(registered == REDISMODULE_OK);
+}
+

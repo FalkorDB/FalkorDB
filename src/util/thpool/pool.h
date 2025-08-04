@@ -30,12 +30,6 @@ uint ThreadPool_ThreadCount(void);
 // 1..N + 1  workers
 int ThreadPool_GetThreadID(void);
 
-// pause all threads
-void ThreadPool_Pause(void);
-
-// resume all threads
-void ThreadPool_Resume(void);
-
 // adds a task
 int ThreadPool_AddWork
 (

@@ -88,20 +88,6 @@ int ThreadPool_GetThreadID(void) {
 	return 0; // assuming Redis main thread
 }
 
-// pause all threads
-void ThreadPool_Pause(void) {
-	ASSERT(_thpool != NULL);
-
-	thpool_pause(_thpool);
-}
-
-// resume all threads
-void ThreadPool_Resume(void) {
-	ASSERT(_thpool != NULL);
-
-	thpool_resume(_thpool);
-}
-
 // adds a task
 int ThreadPool_AddWork
 (
