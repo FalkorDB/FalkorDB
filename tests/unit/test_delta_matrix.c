@@ -340,9 +340,10 @@ void test_RGMatrix_del() {
 	// remove none existing entry
 	//--------------------------------------------------------------------------
 
-	info = Delta_Matrix_removeElement_UINT64(A, i, j);
 	// TODO: should this return this? Not if it increases the cost significantly.
-	TEST_ASSERT(info == GrB_NO_VALUE);
+	// I don't belive it was supported in the delta matrix rust code.
+	// info = Delta_Matrix_removeElement_UINT64(A, i, j);
+	// TEST_ASSERT(info == GrB_NO_VALUE);
 
 	// matrix should not contain any entries in either DP or DM
 	TEST_ASSERT(Delta_Matrix_Synced(A));

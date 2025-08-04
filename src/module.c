@@ -99,7 +99,7 @@ static int GraphBLAS_Init(RedisModuleCtx *ctx) {
 	GxB_set(GxB_FORMAT, GxB_BY_ROW);
 
 	// Turn on JIT LOAD
-	GrB_set (GrB_GLOBAL, GxB_JIT_ON, GxB_JIT_C_CONTROL) ;
+	// GrB_set (GrB_GLOBAL, GxB_JIT_ON, GxB_JIT_C_CONTROL) ;
 
 	// initialize LAGraph
 	char msg [LAGRAPH_MSG_LEN];
