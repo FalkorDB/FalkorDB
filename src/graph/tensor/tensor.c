@@ -576,6 +576,11 @@ void Tensor_RemoveElements
 				// postpone entry removal
 				GrB_free(&V);
 				array_append(delayed, i);
+
+				// do not leave a dangling pointer
+				// replace vector entry with a delete marker
+				uint64_t delete_marker = MSB_MASK;
+				Delta_Matrix_setElement_UINT64(T, delete_marker, row, col);
 			} else if(d+1 == nvals) {
 				// transition from vector to scalar
 				// determine which vector element becomes a scalar

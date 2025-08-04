@@ -17,6 +17,7 @@
 // to iterate over a Delta_Matrix
 struct Opaque_Delta_MatrixTupleIter
 {
+	//char _private[504];
 	uint64_t _private[63];
 };
 

@@ -10,4 +10,5 @@
 #include "v14/decode_v14.h"
 #include "v15/decode_v15.h"
 #include "v16/decode_v16.h"
+#include "v17/decode_v17.h"
 
