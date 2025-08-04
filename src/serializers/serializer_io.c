@@ -28,16 +28,14 @@ struct SerializerIO_Opaque {
 	void (*WriteSigned)(void*, int64_t);              // write signed int
 	void (*WriteUnsigned)(void*, uint64_t);           // write unsigned int
 	void (*WriteLongDouble)(void*, long double);      // write long double
-	void (*WriteString)(void*, RedisModuleString*);   // write RedisModuleString
 	void (*WriteBuffer)(void*, const void*, size_t);  // write bytes
 
-	float (*ReadFloat)(void*);                        // read float
-	double (*ReadDouble)(void*);                      // read dobule
-	int64_t (*ReadSigned)(void*);                     // read signed int
-	uint64_t (*ReadUnsigned)(void*);                  // read unsigned int
-	void* (*ReadBuffer)(void*, size_t*);              // read bytes
-	long double	(*ReadLongDouble)(void*);             // read long double
-	RedisModuleString* (*ReadString)(void*);          // read RedisModuleString
+	bool (*ReadFloat)(void*, float*);                // read float
+	bool (*ReadDouble)(void*, double*);              // read dobule
+	bool (*ReadSigned)(void*, int64_t*);             // read signed int
+	bool (*ReadUnsigned)(void*, uint64_t*);          // read unsigned int
+	bool (*ReadBuffer)(void*, void**, size_t*);      // read bytes
+	bool (*ReadLongDouble)(void*, long double*);     // read long double
 
 	bool encoder;  // true is serializer is used for encoding, false decoding
 	void *stream;  // RedisModuleIO* or a Stream descriptor
@@ -56,7 +54,6 @@ void SerializerIO_Write##suffix(SerializerIO io, t value) {    \
 
 SERIALIZERIO_WRITE(Unsigned, uint64_t)
 SERIALIZERIO_WRITE(Signed, int64_t)
-SERIALIZERIO_WRITE(String, RedisModuleString*)
 SERIALIZERIO_WRITE(Double, double)
 SERIALIZERIO_WRITE(Float, float)
 SERIALIZERIO_WRITE(LongDouble, long double)
@@ -86,7 +83,6 @@ STREAM_WRITE(Signed, int64_t)             // Stream_WriteSigned
 STREAM_WRITE(Double, double)              // Stream_WriteDouble
 STREAM_WRITE(Float, float)                // Stream_WriteFloat
 STREAM_WRITE(LongDouble, long double)     // Stream_WriteLongDouble
-STREAM_WRITE(String, RedisModuleString*)  // Stream_WriteString
 
 // write buffer to stream
 static void Stream_WriteBuffer
@@ -95,44 +91,46 @@ static void Stream_WriteBuffer
 	const void *buff,  // buffer
 	size_t n           // number of bytes to write
 ) {
+	ASSERT (stream != NULL) ;
+	ASSERT ((n == 0 && buff == NULL) || (n > 0 && buff != NULL)) ;
+
 	FILE *f = (FILE*)stream;
 
 	// write size
-	size_t written = fwrite(&n, sizeof(size_t), 1, f);
-	ASSERT(written == 1);
+	size_t written = fwrite (&n, sizeof(size_t), 1, f) ;
+	ASSERT (written == 1) ;
 
 	// write data
 	if (n > 0) {
-		written = fwrite(buff, n, 1, f);
-		ASSERT(written == 1);
+		written = fwrite (buff, n, 1, f) ;
+		ASSERT (written == 1) ;
 	}
 }
 
 // macro for creating stream serializer read functions
-#define STREAM_READ(suffix, t)                      \
-	static t Stream_Read##suffix(void *stream) {    \
-		ASSERT(stream != NULL);                     \
-		FILE *f = (FILE*)stream;                    \
-		t v;                                        \
-		size_t n = fread(&v, sizeof(t), 1, f);      \
-		ASSERT(n == 1);                             \
-		return v;                                   \
+#define STREAM_READ(suffix, t)                             \
+	static bool Stream_Read##suffix(void *stream, t *v) {  \
+		ASSERT(stream != NULL);                            \
+		FILE *f = (FILE*)stream;                           \
+		size_t n = fread(v, sizeof(t), 1, f);              \
+		return(n == 1);                                    \
 	}
 
 // create stream read functions
-STREAM_READ(Unsigned, uint64_t)          // Stream_ReadUnsigned
-STREAM_READ(Signed, int64_t)             // Stream_ReadSigned
-STREAM_READ(Double, double)              // Stream_ReadDouble
-STREAM_READ(Float, float)                // Stream_ReadFloat
-STREAM_READ(LongDouble, long double)     // Stream_ReadLongDouble
-STREAM_READ(String, RedisModuleString*)  // Stream_ReadString
+STREAM_READ(Unsigned,   uint64_t)     // Stream_ReadUnsigned
+STREAM_READ(Signed,     int64_t)      // Stream_ReadSigned
+STREAM_READ(Double,     double)       // Stream_ReadDouble
+STREAM_READ(Float,      float)        // Stream_ReadFloat
+STREAM_READ(LongDouble, long double)  // Stream_ReadLongDouble
 
 // read buffer from stream
-static void *Stream_ReadBuffer
+static bool Stream_ReadBuffer
 (
 	void *stream,  // stream to read from
+	void **v,      // [output] string
 	size_t *n      // [optional] number of bytes read
 ) {
+	ASSERT(v      != NULL);
 	ASSERT(stream != NULL);
 
 	FILE *f = (FILE*)stream;
@@ -140,19 +138,24 @@ static void *Stream_ReadBuffer
 	// read buffer's size
 	size_t len;
 	size_t read = fread(&len, sizeof(size_t), 1, f);
-	ASSERT(read == 1);
-
-	void *data = rm_malloc(sizeof(char) * len);
-
-	// read data
-	if (len > 0) {
-		read = fread(data, len, 1, f);
-		ASSERT(read == 1);
+	if (read != 1) {
+		return false;
 	}
 
-	if(n != NULL) *n = len;
+	*v = rm_malloc(sizeof(char) * len);
 
-	return data;
+	// read data
+	read = fread(*v, len, 1, f);
+	if (read != 1) {
+		rm_free(*v);
+		return false;
+	}
+
+	if (n != NULL) {
+		*n = len;
+	}
+
+	return true;
 }
 
 //------------------------------------------------------------------------------
@@ -160,26 +163,56 @@ static void *Stream_ReadBuffer
 //------------------------------------------------------------------------------
 
 // macro for creating the serializer read functions
-#define SERIALIZERIO_READ(suffix, t)              \
-t SerializerIO_Read##suffix(SerializerIO io) {    \
-	ASSERT(io != NULL);                           \
-	return io->Read##suffix(io->stream);          \
+#define SERIALIZERIO_READ(suffix, t)                                  \
+__attribute__((deprecated("Use the SerializerIO_TryRead* instead")))  \
+t SerializerIO_Read##suffix(SerializerIO io) {                        \
+	ASSERT (io != NULL) ;                                             \
+	t x ;                                                             \
+	io->Read##suffix (io->stream, &x) ;                               \
+	return x ;                                                        \
 }
 
-SERIALIZERIO_READ(Unsigned, uint64_t)
-SERIALIZERIO_READ(Signed, int64_t)
-SERIALIZERIO_READ(String, RedisModuleString*)
-SERIALIZERIO_READ(Double, double)
-SERIALIZERIO_READ(Float, float)
-SERIALIZERIO_READ(LongDouble, long double)
+SERIALIZERIO_READ (Unsigned,   uint64_t)
+SERIALIZERIO_READ (Signed,     int64_t)
+SERIALIZERIO_READ (Double,     double)
+SERIALIZERIO_READ (Float,      float)
+SERIALIZERIO_READ (LongDouble, long double)
 
 // read buffer from stream
+__attribute__((deprecated("Use the SerializerIO_TryReadBuffer instead")))
 void *SerializerIO_ReadBuffer
 (
 	SerializerIO io,  // stream
 	size_t *lenptr    // number of bytes to read
 ) {
-	return io->ReadBuffer(io->stream, lenptr);
+	void *x ;
+	io->ReadBuffer (io->stream, &x, lenptr) ;
+
+	return x ;
+}
+
+// macro for creating the serializer read functions
+#define SERIALIZERIO_TRY_READ(suffix, t)                     \
+bool SerializerIO_TryRead##suffix(SerializerIO io, t* x) {   \
+	ASSERT(x  != NULL);                                      \
+	ASSERT(io != NULL);                                      \
+	return io->Read##suffix(io->stream, x);                  \
+}
+
+SERIALIZERIO_TRY_READ (Unsigned,   uint64_t)
+SERIALIZERIO_TRY_READ (Signed,     int64_t)
+SERIALIZERIO_TRY_READ (Double,     double)
+SERIALIZERIO_TRY_READ (Float,      float)
+SERIALIZERIO_TRY_READ (LongDouble, long double)
+
+// read buffer from stream
+bool SerializerIO_TryReadBuffer
+(
+	SerializerIO io,  // stream
+	void **x,         // buffer
+	size_t *lenptr    // number of bytes to read
+) {
+	return io->ReadBuffer(io->stream, x, lenptr);
 }
 
 //------------------------------------------------------------------------------
@@ -293,7 +326,7 @@ static inline bool _accommodate
 #else
 	#define DEBUG_WRITE_TYPE(t)           /* nop */
 	#define DEBUG_VALIDATE_TYPE(t)        /* nop */
-	#define REQUIRED_SIZE(t) (sizeof(t))
+	#define REQUIRED_SIZE(t) (sizeof(t))  /* nop */
 #endif
 
 // macro for creating both read and write buffered RDB serializer functions
@@ -316,7 +349,7 @@ static void BufferSerializerIO_Write##suffix(void *io, t v) {   \
 }                                                               \
                                                                 \
 /* buffer serializerio read function*/                          \
-static t BufferSerializerIO_Read##suffix(void *io) {            \
+static bool BufferSerializerIO_Read##suffix(void *io, t *v) {   \
 	BufferedIO *buffer = (BufferedIO*)io;                       \
                                                                 \
 	/* load buffer if depleted */                               \
@@ -325,18 +358,20 @@ static t BufferSerializerIO_Read##suffix(void *io) {            \
 	}                                                           \
                                                                 \
 	/* ensure there's at least sizeof(t) bytes in buffer */     \
-	ASSERT((buffer->cap - buffer->count) >= REQUIRED_SIZE(t));  \
+	if ((buffer->cap - buffer->count) < REQUIRED_SIZE(t))  {    \
+		return false;                                           \
+	}                                                           \
                                                                 \
 	/* validate type */                                         \
 	DEBUG_VALIDATE_TYPE(t)                                      \
                                                                 \
 	/* read value */                                            \
-	t v = *(t*)(buffer->buffer + buffer->count);                \
+	*v = *(t*)(buffer->buffer + buffer->count);                 \
                                                                 \
 	/* update offset */                                         \
 	buffer->count += sizeof(t);                                 \
                                                                 \
-	return v;                                                   \
+	return true;                                                \
 }
 
 //------------------------------------------------------------------------------
@@ -365,52 +400,54 @@ void BufferSerializerIO_WriteBuffer
 	const void *value,  // value
 	size_t len          // value size
 ) {
-	ASSERT(io != NULL);
+	ASSERT (io != NULL) ;
+	ASSERT ((value != NULL && len > 0) || (value == NULL && len == 0)) ;
 
-	BufferedIO *buffer = (BufferedIO*)io;
+	BufferedIO *buffer = (BufferedIO*)io ;
 
 	// make sure value has enough room
-	if(_accommodate(buffer, len + REQUIRED_SIZE(size_t))) {
+	if (_accommodate (buffer, len + REQUIRED_SIZE(size_t))) {
 		// in DEBUG mode we write the value type
 		DEBUG_WRITE_TYPE(char*)
 
 		// add to buffer
 		// write value length to stream
-		*((size_t*)(buffer->buffer + buffer->count)) = len;
-		buffer->count += sizeof(size_t);
+		*((size_t*)(buffer->buffer + buffer->count)) = len ;
+		buffer->count += sizeof (size_t) ;
 
-		// write value to buffer
 		if (len > 0) {
-			memcpy(buffer->buffer + buffer->count, value, len);
-			buffer->count += len;
+			// write value to buffer
+			memcpy (buffer->buffer + buffer->count, value, len) ;
+			buffer->count += len ;
 		}
 	} else {
 		// value is too big
 		// buffer had been flushed by '_accommodate'
-		RedisModule_SaveStringBuffer(buffer->stream, value, len);
+		RedisModule_SaveStringBuffer (buffer->stream, value, len) ;
 	}
 }
 
 // read buffer from stream
-void *BufferSerializerIO_ReadBuffer
+bool BufferSerializerIO_ReadBuffer
 (
 	void *io,       // stream
+	void **v,       // [output]
 	size_t *lenptr  // number of bytes to read
 ) {
 	BufferedIO *buffer = (BufferedIO*)io;
 
 	// load buffer if depleted
-	if(unlikely(buffer->count == buffer->cap)) {
+	if (unlikely(buffer->count == buffer->cap)) {
 		_load_buffer(buffer);
 	}
 
 	// check for large string
-	if(unlikely(buffer->cap > BUFFER_SIZE)) {
+	if (unlikely(buffer->cap > BUFFER_SIZE)) {
 		// large string stand on their own
 		// they're not encoded within the buffer, they are the buffer
 		ASSERT(buffer->count == 0);
 
-		void *ret = buffer->buffer;
+		*v = (char*)buffer->buffer;
 
 		if(lenptr != NULL) {
 			*lenptr = buffer->cap;
@@ -420,11 +457,13 @@ void *BufferSerializerIO_ReadBuffer
 		buffer->cap    = 0;
 		buffer->buffer = NULL;
 
-		return ret;
+		return true;
 	}
 
 	// expecting at least the string length
-	ASSERT((buffer->cap - buffer->count) >= REQUIRED_SIZE(size_t));
+	if ((buffer->cap - buffer->count) < REQUIRED_SIZE(size_t)) {
+		return false;
+	}
 
 	// in DEBUG mode we validate the value type
 	DEBUG_VALIDATE_TYPE(char*);
@@ -434,8 +473,8 @@ void *BufferSerializerIO_ReadBuffer
 	buffer->count += sizeof(size_t);
 
 	// copy buffer
-	void *v = rm_malloc(sizeof(char) * l);
-	memcpy(v, buffer->buffer + buffer->count, l);
+	*v = rm_malloc(sizeof(char) * l);
+	memcpy(*v, buffer->buffer + buffer->count, l);
 
 	buffer->count += l;
 
@@ -443,7 +482,7 @@ void *BufferSerializerIO_ReadBuffer
 		*lenptr = l;
 	}
 
-	return v;
+	return true;
 }
 
 //------------------------------------------------------------------------------
@@ -466,7 +505,6 @@ SerializerIO SerializerIO_FromStream
 	// set serializer function pointers
 	serializer->WriteUnsigned   = Stream_WriteUnsigned;
 	serializer->WriteSigned     = Stream_WriteSigned;
-	serializer->WriteString     = Stream_WriteString;
 	serializer->WriteBuffer     = Stream_WriteBuffer;
 	serializer->WriteDouble     = Stream_WriteDouble;
 	serializer->WriteFloat      = Stream_WriteFloat;
@@ -476,11 +514,71 @@ SerializerIO SerializerIO_FromStream
 	serializer->ReadDouble      = Stream_ReadDouble;
 	serializer->ReadSigned      = Stream_ReadSigned;
 	serializer->ReadBuffer      = Stream_ReadBuffer;
-	serializer->ReadString      = Stream_ReadString;
 	serializer->ReadUnsigned    = Stream_ReadUnsigned;
 	serializer->ReadLongDouble  = Stream_ReadLongDouble;
 
 	return serializer;
+}
+
+static bool _ReadFloat
+(
+	void *stream,  // stream
+	float *x       // [output]
+) {
+	RedisModuleIO *rdb = stream;
+	*x = RedisModule_LoadFloat(rdb);
+    return RedisModule_IsIOError(rdb);
+}
+
+static bool _ReadDouble
+(
+	void *stream,  // stream
+	double *x      // [output]
+) {
+	RedisModuleIO *rdb = stream;
+	*x = RedisModule_LoadDouble(rdb);
+    return RedisModule_IsIOError(rdb);
+}
+
+static bool _ReadSigned
+(
+	void *stream,  // stream
+	int64_t *x     // [output]
+) {
+	RedisModuleIO *rdb = stream;
+	*x = RedisModule_LoadSigned(rdb);
+    return RedisModule_IsIOError(rdb);
+}
+
+static bool _ReadBuffer
+(
+	void *stream,  // stream
+	void **x,      // [output]
+	size_t *t      // [output]
+) {
+	RedisModuleIO *rdb = stream;
+	*x = RedisModule_LoadStringBuffer(rdb, t);
+    return RedisModule_IsIOError(rdb);
+}
+
+static bool _ReadUnsigned
+(
+	void *stream,  // stream
+	uint64_t *x    // [output]
+) {
+	RedisModuleIO *rdb = stream;
+	*x = RedisModule_LoadUnsigned(rdb);
+    return RedisModule_IsIOError(rdb);
+}
+
+static bool _ReadLongDouble
+(
+	void *stream,   // stream
+	long double *x  // [output]
+) {
+	RedisModuleIO *rdb = stream;
+	*x = RedisModule_LoadLongDouble(rdb);
+    return RedisModule_IsIOError(rdb);
 }
 
 // create a serializer which uses RedisIO
@@ -499,19 +597,17 @@ SerializerIO SerializerIO_FromRedisModuleIO
 	// set serializer function pointers
 	serializer->WriteUnsigned   = (void (*)(void*, uint64_t))RedisModule_SaveUnsigned;
 	serializer->WriteSigned     = (void (*)(void*, int64_t))RedisModule_SaveSigned;
-	serializer->WriteString     = (void (*)(void*, RedisModuleString*))RedisModule_SaveString;
 	serializer->WriteBuffer     = (void (*)(void*, const void*, size_t))RedisModule_SaveStringBuffer;
 	serializer->WriteDouble     = (void (*)(void*, double))RedisModule_SaveDouble;
 	serializer->WriteFloat      = (void (*)(void*, float))RedisModule_SaveFloat;
 	serializer->WriteLongDouble = (void (*)(void*, long double))RedisModule_SaveLongDouble;
 
-	serializer->ReadFloat       = (float (*)(void*))RedisModule_LoadFloat;
-	serializer->ReadDouble      = (double (*)(void*))RedisModule_LoadDouble;
-	serializer->ReadSigned      = (int64_t (*)(void*))RedisModule_LoadSigned;
-	serializer->ReadBuffer      = (void* (*)(void*, size_t*))RedisModule_LoadStringBuffer;
-	serializer->ReadString      = (RedisModuleString* (*)(void*))RedisModule_LoadString;
-	serializer->ReadUnsigned    = (uint64_t (*)(void*))RedisModule_LoadUnsigned;
-	serializer->ReadLongDouble  = (long double (*)(void*))RedisModule_LoadLongDouble;	
+	serializer->ReadFloat      = _ReadFloat;
+	serializer->ReadDouble     = _ReadDouble;
+	serializer->ReadSigned     = _ReadSigned;
+	serializer->ReadBuffer     = _ReadBuffer;
+	serializer->ReadUnsigned   = _ReadUnsigned;
+	serializer->ReadLongDouble = _ReadLongDouble;
 
 	return serializer;
 }
@@ -564,7 +660,6 @@ SerializerIO SerializerIO_FromBufferedRedisModuleIO
 	// set serializer function pointers
 	serializer->WriteUnsigned   = BufferSerializerIO_WriteUnsigned;
 	serializer->WriteSigned     = BufferSerializerIO_WriteSigned;
-	serializer->WriteString     = (void (*)(void*, RedisModuleString*))RedisModule_SaveString;
 	serializer->WriteBuffer     = BufferSerializerIO_WriteBuffer;
 	serializer->WriteDouble     = BufferSerializerIO_WriteDouble;
 	serializer->WriteFloat      = BufferSerializerIO_WriteFloat;
@@ -574,7 +669,6 @@ SerializerIO SerializerIO_FromBufferedRedisModuleIO
 	serializer->ReadDouble      = BufferSerializerIO_ReadDouble;
 	serializer->ReadSigned      = BufferSerializerIO_ReadSigned;
 	serializer->ReadBuffer      = BufferSerializerIO_ReadBuffer;
-	serializer->ReadString      = (RedisModuleString* (*)(void*))RedisModule_LoadString;
 	serializer->ReadUnsigned    = BufferSerializerIO_ReadUnsigned;
 	serializer->ReadLongDouble  = BufferSerializerIO_ReadLongDouble;
 

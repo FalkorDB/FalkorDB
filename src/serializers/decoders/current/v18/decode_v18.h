@@ -9,71 +9,71 @@
 
 GraphContext *RdbLoadGraphContext_latest
 (
-	SerializerIO rdb,
+	SerializerIO io,
 	const RedisModuleString *rm_key_name
 );
 
 // decode nodes
-void RdbLoadNodes_v18
+bool RdbLoadNodes_v18
 (
-	SerializerIO rdb,          // RDB
+	SerializerIO io,           // stream
 	Graph *g,                  // graph context
 	const uint64_t node_count  // number of nodes to decode
 );
 
 // decode deleted nodes
-void RdbLoadDeletedNodes_v18
+bool RdbLoadDeletedNodes_v18
 (
-	SerializerIO rdb,                  // RDB
+	SerializerIO io,                   // stream
 	Graph *g,                          // graph context
 	const uint64_t deleted_node_count  // number of deleted nodes
 );
 
 // decode edges
-void RdbLoadEdges_v18
+bool RdbLoadEdges_v18
 (
-	SerializerIO rdb,  // RDB
+	SerializerIO io,   // stream
 	Graph *g,          // graph context
 	const uint64_t n   // virtual key capacity
 );
 
 // decode deleted edges
-void RdbLoadDeletedEdges_v18
+bool RdbLoadDeletedEdges_v18
 (
-	SerializerIO rdb,                  // RDB
+	SerializerIO io,                   // stream
 	Graph *g,                          // graph context
 	const uint64_t deleted_edge_count  // number of deleted edges
 );
 
-void RdbLoadGraphSchema_v18
+bool RdbLoadGraphSchema_v18
 (
-	SerializerIO rdb,
+	SerializerIO io,
 	GraphContext *gc,
 	bool already_loaded
 );
 
-void RdbLoadLabelMatrices_v18
+bool LoadLabelMatrices_v18
 (
-	SerializerIO rdb,  // RDB
+	SerializerIO io,   // stream
 	GraphContext *gc   // graph context
 );
 
-void RdbLoadRelationMatrices_v18
+bool LoadRelationMatrices_v18
 (
-	SerializerIO rdb,  // RDB
+	SerializerIO io,   // stream
 	GraphContext *gc   // graph context
 );
 
 // decode adjacency matrix
-void RdbLoadAdjMatrix_v18
+bool LoadAdjMatrix_v18
 (
-	SerializerIO rdb,  // RDB
+	SerializerIO io,   // stream
 	GraphContext *gc   // graph context
 );
 
-void RdbLoadLblsMatrix_v18
+bool LoadLblsMatrix_v18
 (
-	SerializerIO rdb,  // RDB
+	SerializerIO io,   // stream
 	GraphContext *gc   // graph context
 );
 
