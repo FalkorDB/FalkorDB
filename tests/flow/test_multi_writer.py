@@ -71,7 +71,6 @@ class testMultiWriter():
 
         # validate each graph has the expected number of nodes
         for graph_name in GRAPHS:
-            task_queue.put((graph_name, query))
             g = self.db.select_graph(graph_name)
             node_count = g.query("MATCH (n) RETURN count(n)").result_set[0][0]
             self.env.assertEquals(node_count, 200)
