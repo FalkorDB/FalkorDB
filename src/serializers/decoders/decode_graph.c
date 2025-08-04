@@ -5,7 +5,7 @@
  */
 
 #include "decode_graph.h"
-#include "current/v17/decode_v17.h"
+#include "current/v18/decode_v18.h"
 
 GraphContext *RdbLoadGraph
 (

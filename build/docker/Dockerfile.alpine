@@ -12,6 +12,8 @@ ENV FALKORDB_BIN_PATH=${FALKORDB_HOME}/bin
 
 ENV FALKORDB_IMPORT_PATH=${FALKORDB_HOME}/import
 
+ENV FALKORDB_TLS_PATH=${FALKORDB_HOME}/tls
+
 # Install runtime dependencies
 RUN apk add --no-cache libgomp openssl
 

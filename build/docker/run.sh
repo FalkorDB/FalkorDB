@@ -17,9 +17,9 @@ if [ "${TLS:-0}" -eq "1" ]; then
     # shellcheck disable=SC2086
     exec redis-server ${REDIS_ARGS} --protected-mode no \
         --tls-port 6379 --port 0 \
-        --tls-cert-file ./tls/redis.crt \
-        --tls-key-file ./tls/redis.key \
-        --tls-ca-cert-file ./tls/ca.crt \
+        --tls-cert-file ${FALKORDB_TLS_PATH}/redis.crt \
+        --tls-key-file ${FALKORDB_TLS_PATH}/redis.key \
+        --tls-ca-cert-file ${FALKORDB_TLS_PATH}/ca.crt \
         --tls-auth-clients no \
         --dir "${FALKORDB_DATA_PATH}" \
         --loadmodule "${FALKORDB_BIN_PATH}/falkordb.so" ${FALKORDB_ARGS}

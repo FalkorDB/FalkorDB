@@ -175,7 +175,7 @@ static bool _Init_CSVReader
 		return false;
 	}
 
-	op->reader = CSVReader_New(stream, op->with_headers, ',');
+	op->reader = CSVReader_New(stream, op->with_headers, op->delimiter);
 
 	return (op->reader != NULL);
 }
@@ -200,7 +200,8 @@ OpBase *NewLoadCSVOp
 	const ExecutionPlan *plan,  // execution plan
 	AR_ExpNode *exp,            // CSV URI expression
 	const char *alias,          // CSV row alias
-	bool with_headers           // CSV contains header row
+	bool with_headers,          // CSV contains header row
+	char delimiter              // field delimiter
 ) {
 	ASSERT(exp   != NULL);
 	ASSERT(plan  != NULL);
@@ -211,6 +212,7 @@ OpBase *NewLoadCSVOp
 	op->exp          = exp;
 	op->uri          = SI_NullVal();
 	op->alias        = rm_strdup(alias);
+	op->delimiter    = delimiter;
 	op->with_headers = with_headers;
 
 	// set our Op operations
@@ -364,7 +366,7 @@ static inline OpBase *LoadCSVClone
 
 	OpLoadCSV *op = (OpLoadCSV*)opBase;
 	return NewLoadCSVOp(plan, AR_EXP_Clone(op->exp), op->alias,
-			op->with_headers);
+			op->with_headers, op->delimiter);
 }
 
 static OpResult LoadCSVReset (

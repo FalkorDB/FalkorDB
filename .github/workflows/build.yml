@@ -362,13 +362,13 @@ jobs:
 
       - name: Copy .so from image
         run: |
-          docker run --rm --entrypoint cat localhost:5000/falkordb/falkordb-compiler /FalkorDB/bin/src/falkordb.so > /tmp/falkordb.so
+          docker run --rm --entrypoint cat localhost:5000/falkordb/falkordb-compiler /FalkorDB/bin/src/falkordb.so > /tmp/falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
 
       - name: Upload .so
         uses: actions/upload-artifact@v4
         with:
           name: falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
-          path: /tmp/falkordb.so
+          path: /tmp/falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
           if-no-files-found: error
   cleanup-build:
     needs: build
@@ -620,7 +620,7 @@ jobs:
         run: |
           docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
       - name: Set up Trivy
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.32.0
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
           severity: CRITICAL,HIGH
