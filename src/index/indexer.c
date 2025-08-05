@@ -30,6 +30,7 @@ typedef enum {
 	INDEXER_IDX_POPULATE,        // populate index
 	INDEXER_CONSTRAINT_DROP,     // drop index
 	INDEXER_CONSTRAINT_ENFORCE,  // populate index
+	INDEXER_EXIT,                // fake task which will cause indexer to exit
 } IndexerOp;
 
 // indexer task
@@ -75,6 +76,13 @@ typedef struct {
 static void _indexer_PopTask(IndexerTask *task);
 
 static Indexer *indexer = NULL;
+
+// clear indexer's tasks
+static void _Indexer_ClearTasks(void) {
+	INDEXER_LOCK_QUEUE () ;
+	array_clear (indexer->q) ;
+	INDEXER_UNLOCK_QUEUE () ;
+}
 
 // index populate task handler
 static void _indexer_idx_populate
@@ -221,24 +229,33 @@ static void *_indexer_run
 				_indexer_idx_populate(pdata);
 				break;
 			}
+
 			case INDEXER_IDX_DROP:
 			{
 				IndexDropCtx *pdata = (IndexDropCtx*)ctx.pdata;
 				_indexer_idx_drop(pdata);
 				break;
 			}
+
 			case INDEXER_CONSTRAINT_ENFORCE:
 			{
 				ConstraintEnforceCtx *pdata = (ConstraintEnforceCtx*)ctx.pdata;
 				_indexer_enforce_constraint(pdata);
 				break;
 			}
+
 			case INDEXER_CONSTRAINT_DROP:
 			{
 				ConstraintDropCtx *pdata = (ConstraintDropCtx*)ctx.pdata;
 				_indexer_drop_constraint(pdata);
 				break;
 			}
+
+			case INDEXER_EXIT:
+			{
+				return NULL ;
+			}
+
 			default:
 				assert(false && "unknown indexer operation");
 				break;
@@ -482,5 +499,24 @@ void Indexer_DropConstraint
 
 	// place task into queue
 	_indexer_AddTask(INDEXER_CONSTRAINT_DROP, ctx);
+}
+
+// stop and free indexer
+void Indexer_Stop(void) {
+	// add fake task to cause indexer thread to exit
+	_Indexer_ClearTasks () ;
+
+	_indexer_AddTask (INDEXER_EXIT, NULL) ;
+
+	// wait for indexer thread to exit
+	pthread_join (indexer->t, NULL) ;
+
+	// free indexer
+	array_free (indexer->q) ;
+	pthread_cond_destroy (&indexer->c) ;
+	pthread_mutex_destroy (&indexer->m) ;
+	pthread_mutex_destroy (&indexer->cm) ;
+
+	rm_free (indexer) ;
 }
 
