@@ -8,7 +8,7 @@
 #include "cron/cron.h"
 #include "util/rmalloc.h"
 #include "reconf_handler.h"
-#include "util/thpool/pools.h"
+#include "util/thpool/pool.h"
 
 // handler function invoked when config changes
 void reconf_handler(Config_Option_Field type) {
@@ -23,7 +23,7 @@ void reconf_handler(Config_Option_Field type) {
 				uint64_t max_queued_queries;
 				bool res = Config_Option_get(type, &max_queued_queries);
 				ASSERT(res);
-				ThreadPools_SetMaxPendingWork(max_queued_queries);
+				ThreadPool_SetMaxPendingWork(max_queued_queries);
 			}
 			break;
 

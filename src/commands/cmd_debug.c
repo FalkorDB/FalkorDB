@@ -7,7 +7,7 @@
 #include "RG.h"
 #include "../redismodule.h"
 #include "../util/rmalloc.h"
-#include "../util/thpool/pools.h"
+#include "../util/thpool/pool.h"
 #include "../module_event_handlers.h"
 
 #include <string.h>
@@ -86,19 +86,19 @@ int Graph_Debug
 
 	else if (!strcasecmp(sub_cmd, "OOM")) {
 		// crash the server simulating an out-of-memory error
-		ThreadPools_AddWorkReader(_Debug_OOM, NULL, true);
+		ThreadPool_AddWork(_Debug_OOM, NULL, true);
 		RedisModule_ReplyWithCString(ctx, "OK");
 	}
 
 	else if (!strcasecmp(sub_cmd, "ASSERT")) {
 		// crash by assertion failed
-		ThreadPools_AddWorkReader(_Debug_ASSERT, NULL, true);
+		ThreadPool_AddWork(_Debug_ASSERT, NULL, true);
 		RedisModule_ReplyWithCString(ctx, "OK");
 	}
 
 	else if (!strcasecmp(sub_cmd, "SEGFAULT")) {
 		// crash the server with sigsegv
-		ThreadPools_AddWorkReader(_Debug_SegFault, NULL, true);
+		ThreadPool_AddWork(_Debug_SegFault, NULL, true);
 		RedisModule_ReplyWithCString(ctx, "OK");
 	}
 
