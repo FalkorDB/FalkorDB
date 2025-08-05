@@ -2832,3 +2832,21 @@ class testFunctionCallsFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         expected_result = [['κόσμος']]  # Should have final sigma ς
         self.env.assertEquals(actual_result.result_set, expected_result)
+        
+        # Test single Sigma
+        query = "RETURN toLower('Σ')"
+        actual_result = self.graph.query(query)
+        expected_result = [['ς']]  # Single sigma should be final
+        self.env.assertEquals(actual_result.result_set, expected_result)
+        
+        # Test Sigma before letter (should be medial)
+        query = "RETURN toLower('ΣΑ')"
+        actual_result = self.graph.query(query)
+        expected_result = [['σα']]  # Sigma before letter should be medial
+        self.env.assertEquals(actual_result.result_set, expected_result)
+        
+        # Test Sigma before punctuation (should be final)
+        query = "RETURN toLower('ΚΌΣΜΟΣ.')"
+        actual_result = self.graph.query(query)
+        expected_result = [['κόσμος.']]  # Sigma before punctuation should be final
+        self.env.assertEquals(actual_result.result_set, expected_result)
