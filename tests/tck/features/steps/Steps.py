@@ -34,8 +34,8 @@ def step_impl(context):
 def step_impl(context):
     graphs.any_graph()
 
-@then(u'parameters are')
-@given(u'parameters are')
+@then(u'parameters are:')
+@given(u'parameters are:')
 def set_params(context):
     global params
 
@@ -48,11 +48,11 @@ def set_params(context):
     for row in context.table:
         params += '='.join(row) + ' '
 
-@given(u'having executed')
-@when(u'having executed')
-@then(u'having executed')
-@when(u'executing control query')
-@when(u'executing query')
+@given(u'having executed:')
+@when(u'having executed:')
+@then(u'having executed:')
+@when(u'executing control query:')
+@when(u'executing query:')
 def step_impl(context):
     global resultset
     global exception
@@ -75,7 +75,7 @@ def step_impl(context):
 def step_impl(context):
     assertions.assert_empty_resultset(resultset)
 
-@then(u'the side effects should be')
+@then(u'the side effects should be:')
 def step_impl(context):
     stat = context.table.headings[0]
     value = int(context.table.headings[1])
@@ -90,7 +90,7 @@ def step_impl(context):
 def step_impl(context):
     assertions.assert_no_modifications(resultset)
 
-@then(u'the result should be, in any order')
+@then(u'the result should be, in any order:')
 def step_impl(context):
     if exception:
         raise exception
@@ -98,8 +98,8 @@ def step_impl(context):
     assertions.assert_resultset_length(resultset, expected_length)
     assertions.assert_resultsets_equals(resultset, context.table)
 
-@then(u'the result should be')
-@then(u'the result should be, in order')
+@then(u'the result should be:')
+@then(u'the result should be, in order:')
 def step_impl(context):
     if exception:
         raise exception
