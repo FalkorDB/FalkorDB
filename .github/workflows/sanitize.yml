@@ -96,7 +96,7 @@ jobs:
       id: flow_tests
       run: |
         . venv/bin/activate
-        make flow-tests SLOW=1 CLEAR_LOGS=0 SAN=address
+        make flow-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
     - uses: actions/upload-artifact@v4
