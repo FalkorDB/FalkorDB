@@ -98,6 +98,7 @@ def step_impl(context):
     assertions.assert_resultset_length(resultset, expected_length)
     assertions.assert_resultsets_equals(resultset, context.table)
 
+
 @then(u'the result should be:')
 @then(u'the result should be, in order:')
 def step_impl(context):

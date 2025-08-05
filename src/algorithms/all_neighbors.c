@@ -16,7 +16,7 @@ static void _AllNeighborsCtx_CollectNeighbors
 ) {
 	ctx->current_level++;
 	if(ctx->current_level == ctx->n_levels) {
-		Delta_MatrixTupleIter iter = {0};
+		Delta_MatrixTupleIter iter;
 		Delta_MatrixTupleIter_AttachRange(&iter, ctx->M, id, id);
 		ctx->levels = rm_realloc(ctx->levels, sizeof(Delta_MatrixTupleIter) * (ctx->n_levels+1));
 		ctx->levels[ctx->n_levels] = iter;
