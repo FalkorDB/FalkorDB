@@ -26,13 +26,14 @@ static void BM_mxm_all_V1(benchmark::State &state) {
     GrB_Matrix   A = NULL;
     Delta_Matrix B = NULL;
     GrB_Matrix   C = NULL;
-    uint64_t     n     = 10000;
+    uint64_t     n     = 10000000;
     uint64_t     seed  = 870713428976ul;    
 
     GrB_OK(GrB_Matrix_new(&C, GrB_BOOL, n, n));
 
-    LAGraph_Random_Matrix(&A, GrB_BOOL, n, n, 0.01, seed, NULL);
-    Delta_Random_Matrix(&B, GrB_BOOL, n, 0.01, 0.00001, 0.00001, seed + 1);
+    LAGraph_Random_Matrix(&A, GrB_BOOL, n, n, 5E-7, seed, NULL);
+    Delta_Random_Matrix(&B, GrB_BOOL, n, 5E-7, 1E-10, 1E-10, seed + 1);
+    Delta_Matrix_wait(B, false);
 
     for (auto _ : state) {
         Delta_mxm_identity(C, GrB_LOR_LAND_SEMIRING_BOOL, A, B);
@@ -68,7 +69,7 @@ static void BM_mxm_all_V2(benchmark::State &state) {
 static void BM_mxm_chain_V1(benchmark::State &state) {
     Delta_Matrix A = NULL;
     GrB_Matrix   C = NULL;
-    uint64_t     n     = 100000;
+    uint64_t     n     = 10000000;
     uint64_t     m     = 10;
     uint64_t     seed  = 870713428976ul;    
 
@@ -77,7 +78,7 @@ static void BM_mxm_chain_V1(benchmark::State &state) {
         GrB_Matrix_setElement_BOOL(C, i, i, true);
     }
 
-    Delta_Random_Matrix(&A, GrB_BOOL, n, 0.01, 0.00001, 0.00001, seed);
+    Delta_Random_Matrix(&A, GrB_BOOL, n, 5E-7, 1E-10, 1E-10, seed);
 
     for (auto _ : state) {
         for(int i = 0; i < 5; i++) {

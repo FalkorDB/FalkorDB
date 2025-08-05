@@ -141,6 +141,7 @@ static GrB_Info _next_m_iter_bool
 
 	GrB_Index  _row ;
 	GrB_Index  _col ;
+	GrB_Index  _val;
 
 	GxB_Iterator m_it = &iter->m_it ;
 
@@ -150,18 +151,18 @@ static GrB_Info _next_m_iter_bool
 
 		_row = GxB_rowIterator_getRowIndex (m_it) ;
 		_col = GxB_rowIterator_getColIndex (m_it) ;
-		if(val) *val = GxB_Iterator_get_BOOL (m_it) ;
+		_val = GxB_Iterator_get_BOOL (m_it) ;
 
 		// prep value for next iteration
 		_iter_next(m_it, iter->max_row, depleted);
 
-		bool x ;
- 		GrB_Info delete_info = GrB_Matrix_extractElement_BOOL(&x, DM, _row, _col) ;
- 		if(delete_info == GrB_NO_VALUE) break ; // entry isn't deleted, return
+		// if entry is zombie, (val is false) continue
+ 		if(_val != BOOL_ZOMBIE) break ; // entry isn't deleted, return
 	} while (true) ;
 
 	if(row) *row = _row ;
 	if(col) *col = _col ;
+	if(val) *val = _val ;
 
 	return GrB_SUCCESS ;
 }

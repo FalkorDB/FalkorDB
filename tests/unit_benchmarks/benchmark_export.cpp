@@ -24,13 +24,13 @@ void rg_teardown(const benchmark::State &state) {
 static void BM_export(benchmark::State &state) {
     Delta_Matrix A = NULL;
 	GrB_Matrix   C = NULL;
-    uint64_t     n     = 500000;
+    uint64_t     n     = 10000000;
     uint64_t     seed  = 870713428976ul;
 
-    Delta_Random_Matrix(&A, GrB_BOOL, n, 0.001, 0.0000001, 0.0000001, seed);
+    Delta_Random_Matrix(&A, GrB_BOOL, n, 5E-7, 1E-10, 1E-10, seed);
 
     for (auto _ : state) {
-		Delta_Matrix_export_structure(&C, A);
+		Delta_Matrix_export(&C, A);
         GrB_Matrix_free(&C);
     }
 

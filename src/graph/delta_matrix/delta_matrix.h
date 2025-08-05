@@ -442,3 +442,8 @@ GrB_Info Delta_Matrix_setM
 	Delta_Matrix C,  // delta matrix
 	GrB_Matrix *M    // new M
 );
+
+GrB_Info Delta_cache_transpose
+(
+	Delta_Matrix A  // matrix to cache transpose of
+);
