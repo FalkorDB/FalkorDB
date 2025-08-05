@@ -75,6 +75,29 @@ int str_length
 	return len;
 }
 
+// Helper function to determine if a Greek capital Sigma should be converted to final or medial sigma
+static bool is_sigma_word_final(const utf8proc_uint8_t *str_pos) {
+	utf8proc_int32_t next_c;
+	const utf8proc_uint8_t *lookahead = str_pos;
+	
+	if(lookahead[0] == 0) {
+		return true; // End of string
+	}
+	
+	lookahead += utf8proc_iterate(lookahead, -1, &next_c);
+	if(next_c == -1) {
+		return true; // Invalid UTF-8, treat as word boundary
+	}
+	
+	// If next character is a letter, Sigma is not word-final
+	int category = utf8proc_category(next_c);
+	if(category & (UTF8PROC_CATEGORY_LU | UTF8PROC_CATEGORY_LL | UTF8PROC_CATEGORY_LT)) {
+		return false;
+	}
+	
+	return true; // Next character is not a letter, so Sigma is word-final
+}
+
 char *str_tolower
 (
 	const char *str
@@ -84,28 +107,49 @@ char *str_tolower
 	const utf8proc_uint8_t *str_i = (const utf8proc_uint8_t *)str;
 	size_t lower_len = 0;
 	utf8proc_uint8_t buffer[4];
+	
+	// First pass: calculate length needed for the result
 	while(str_i[0] != 0) {
-		str_i     += utf8proc_iterate(str_i, -1, &c);
+		str_i += utf8proc_iterate(str_i, -1, &c);
 		if(c == -1) {
 			// Unicode character is not valid
 			return NULL;
 		}
-		lower_len += utf8proc_encode_char(utf8proc_tolower(c), buffer);
+		
+		// Handle Greek capital Sigma (U+03A3) context-sensitively
+		if(c == 0x03A3) { // Greek capital Sigma
+			if(is_sigma_word_final(str_i)) {
+				lower_len += utf8proc_encode_char(0x03C2, buffer); // Final sigma
+			} else {
+				lower_len += utf8proc_encode_char(0x03C3, buffer); // Medial sigma
+			}
+		} else {
+			lower_len += utf8proc_encode_char(utf8proc_tolower(c), buffer);
+		}
 	}
 	
 	utf8proc_uint8_t *lower = rm_malloc(lower_len + 1);
+	utf8proc_uint8_t *lower_start = lower;
 
 	str_i = (const utf8proc_uint8_t *)str;
-	// while we didn't get to the end of the string
+	// Second pass: actually convert the string
 	while(str_i[0] != 0) {
-		// increment current position by number of bytes in Unicode character
 		str_i += utf8proc_iterate(str_i, -1, &c);
-		// write the Unicode character to the buffer
-		lower += utf8proc_encode_char(utf8proc_tolower(c), lower);
+		
+		// Handle Greek capital Sigma (U+03A3) context-sensitively
+		if(c == 0x03A3) { // Greek capital Sigma
+			if(is_sigma_word_final(str_i)) {
+				lower += utf8proc_encode_char(0x03C2, lower); // Final sigma
+			} else {
+				lower += utf8proc_encode_char(0x03C3, lower); // Medial sigma
+			}
+		} else {
+			lower += utf8proc_encode_char(utf8proc_tolower(c), lower);
+		}
 	}
 	lower[0] = 0;
 
-	return (char *)(lower - lower_len);
+	return (char *)lower_start;
 }
 
 char *str_toupper
