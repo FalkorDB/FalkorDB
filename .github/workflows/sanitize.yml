@@ -32,7 +32,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-debug-asan/GraphBLAS
-        key: graphblas-sanitizer-llvm-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h ./deps/GraphBLAS/Config/GB_prejit.c') }}
+        key: graphblas-sanitizer-llvm-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
 
     - name: Cache parser
       id: cache_parser
