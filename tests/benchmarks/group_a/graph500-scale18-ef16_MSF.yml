@@ -10,6 +10,6 @@ parameters:
   num_clients: 32
   num_requests: 128
   queries:
-    - query: 'CALL algo.MSF() YIELD weight RETURN sum(weight) as total_weight'
+    - query: 'CALL algo.MSF() YIELD nodes RETURN count(nodes) as tree_size'
       ratio: 1.0
 
