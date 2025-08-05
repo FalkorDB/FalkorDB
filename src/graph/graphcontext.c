@@ -619,11 +619,14 @@ AttributeID GraphContext_GetAttributeID
 	GraphContext *gc,
 	const char *attribute
 ) {
-	// Acquire a read lock for looking up the attribute.
+	// acquire a read lock for looking up the attribute
 	pthread_rwlock_rdlock(&gc->_attribute_rwlock);
-	// Look up the attribute ID.
-	void *id = raxFind(gc->attributes, (unsigned char *)attribute, strlen(attribute));
-	// Release the lock.
+
+	// look up the attribute ID
+	void *id = raxFind(gc->attributes, (unsigned char *)attribute,
+			strlen(attribute));
+
+	// release the lock
 	pthread_rwlock_unlock(&gc->_attribute_rwlock);
 
 	if(id == raxNotFound) return ATTRIBUTE_ID_NONE;

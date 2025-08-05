@@ -407,7 +407,8 @@ void Constraint_EnforceNodes
 	ASSERT(c != NULL);
 	ASSERT(g != NULL);
 
-	Delta_MatrixTupleIter it         = {0};           // matrix iterator
+	
+	Delta_MatrixTupleIter it;                         // matrix iterator
 	bool                  holds      = true;          // constraint holds
 	GrB_Index             rowIdx     = 0;             // current row being scanned
 	int                   enforced   = 0;             // #entities in current batch
