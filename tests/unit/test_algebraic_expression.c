@@ -1793,6 +1793,38 @@ void test_LocateOperand() {
 	AlgebraicExpression_Free(r);
 }
 
+void test_AlgebraicExpression_NULL_Operand() {
+	// Test case for the crash fix: operations with no children should return NULL
+	// This test verifies that AlgebraicExpression_Dest and AlgebraicExpression_Src
+	// handle NULL operands gracefully instead of crashing
+	
+	// Create an empty operation (operation with no children)
+	AlgebraicExpression *empty_op = AlgebraicExpression_NewOperation(AL_EXP_ADD);
+	
+	// Calling Dest or Src on an empty operation should return NULL, not crash
+	const char *dest = AlgebraicExpression_Dest(empty_op);
+	const char *src = AlgebraicExpression_Src(empty_op);
+	
+	TEST_ASSERT(dest == NULL);
+	TEST_ASSERT(src == NULL);
+	
+	AlgebraicExpression_Free(empty_op);
+	
+	// Test with nested empty operations
+	AlgebraicExpression *nested_empty = AlgebraicExpression_NewOperation(AL_EXP_TRANSPOSE);
+	AlgebraicExpression *inner_empty = AlgebraicExpression_NewOperation(AL_EXP_MUL);
+	AlgebraicExpression_AddChild(nested_empty, inner_empty);
+	
+	// Should return NULL without crashing
+	dest = AlgebraicExpression_Dest(nested_empty);
+	src = AlgebraicExpression_Src(nested_empty);
+	
+	TEST_ASSERT(dest == NULL);
+	TEST_ASSERT(src == NULL);
+	
+	AlgebraicExpression_Free(nested_empty);
+}
+
 TEST_LIST = {
 	{"algebraicExpression", test_algebraicExpression},
 	{"algebraicExpression_domains", test_algebraicExpression_domains},
@@ -1817,6 +1849,7 @@ TEST_LIST = {
 	{"ExpressionExecute", test_ExpressionExecute},
 	{"RemoveOperand", test_RemoveOperand},
 	{"LocateOperand", test_LocateOperand},
+	{"AlgebraicExpression_NULL_Operand", test_AlgebraicExpression_NULL_Operand},
 	{NULL, NULL}
 };
 

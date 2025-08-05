@@ -20,6 +20,12 @@ static const AlgebraicExpression *_AlgebraicExpression_SrcOperand
 	AlgebraicExpression *exp = (AlgebraicExpression *)root;
 
 	while(exp->type == AL_OPERATION) {
+		uint child_count = AlgebraicExpression_ChildCount(exp);
+		if(child_count == 0) {
+			// Operation with no children, return NULL
+			return NULL;
+		}
+		
 		switch(exp->operation.op) {
 			case AL_EXP_ADD:
 				// Src (A+B) = Src(A)
@@ -131,6 +137,7 @@ const char *AlgebraicExpression_Src
 	const AlgebraicExpression *exp = NULL;
 
 	exp = _AlgebraicExpression_SrcOperand(root, &transposed);
+	if(exp == NULL) return NULL;
 	return (transposed) ? exp->operand.dest : exp->operand.src;
 }
 
@@ -148,6 +155,7 @@ const char *AlgebraicExpression_Dest
 	const AlgebraicExpression *exp = NULL;
 
 	exp = _AlgebraicExpression_SrcOperand(root, &transposed);
+	if(exp == NULL) return NULL;
 	return (transposed) ? exp->operand.dest : exp->operand.src;
 }
 
