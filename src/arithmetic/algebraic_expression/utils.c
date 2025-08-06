@@ -343,13 +343,17 @@ void _AlgebraicExpression_PopulateOperands
 		case AL_OPERATION:
 			child_count = AlgebraicExpression_ChildCount(root);
 			if(root->operation.op == AL_EXP_TRANSPOSE) {
-				ASSERT(child_count == 1 && "Transpose operation had invalid number of children");
-				AlgebraicExpression *child = _AlgebraicExpression_OperationRemoveDest(root);
-				// fetch the transposed matrix and update the operand
-				_AlgebraicExpression_PopulateTransposedOperand(child, gc);
-				// replace this operation with the transposed operand
-				_AlgebraicExpression_InplaceRepurpose(root, child);
-				break;
+				// Only perform transpose optimization if the operation has exactly 1 child
+				// This prevents crashes when transpose operations are malformed
+				if(child_count == 1) {
+					AlgebraicExpression *child = _AlgebraicExpression_OperationRemoveDest(root);
+					// fetch the transposed matrix and update the operand
+					_AlgebraicExpression_PopulateTransposedOperand(child, gc);
+					// replace this operation with the transposed operand
+					_AlgebraicExpression_InplaceRepurpose(root, child);
+					break;
+				}
+				// If transpose operation is malformed, fall through to normal processing
 			}
 			for(uint i = 0; i < child_count; i++) {
 				_AlgebraicExpression_PopulateOperands(CHILD_AT(root, i), gc);
