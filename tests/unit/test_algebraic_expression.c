@@ -1794,7 +1794,6 @@ void test_LocateOperand() {
 }
 
 TEST_LIST = {
-	{"TransposeMalformedChildren", test_TransposeMalformedChildren},
 	{"algebraicExpression", test_algebraicExpression},
 	{"algebraicExpression_domains", test_algebraicExpression_domains},
 	{"algebraicExpression_Clone", test_algebraicExpression_Clone},

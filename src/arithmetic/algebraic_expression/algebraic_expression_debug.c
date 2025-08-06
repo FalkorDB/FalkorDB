@@ -193,16 +193,11 @@ void AlgebraicExpression_Print
 			}
 			break;
 		case AL_EXP_TRANSPOSE:
-			// Transpose operations should always have exactly 1 child
-			if(AlgebraicExpression_ChildCount(exp) != 1) {
-				fprintf(stderr, "ERROR: Transpose operation has %d children (expected 1) in Print\n", 
-				        AlgebraicExpression_ChildCount(exp));
-				printf("Transpose(MALFORMED)");
-			} else {
-				printf("Transpose(");
-				AlgebraicExpression_Print(FIRST_CHILD(exp));
-				printf(")");
-			}
+			// Expecting a single child.
+			ASSERT(AlgebraicExpression_ChildCount(exp) == 1);
+			printf("Transpose(");
+			AlgebraicExpression_Print(FIRST_CHILD(exp));
+			printf(")");
 			break;
 		default:
 			ASSERT("Unknown algebraic expression operation");
@@ -252,16 +247,11 @@ void _AlgebraicExpression_ToString
 			}
 			break;
 		case AL_EXP_TRANSPOSE:
-			// Transpose operations should always have exactly 1 child
-			if(AlgebraicExpression_ChildCount(exp) != 1) {
-				fprintf(stderr, "ERROR: Transpose operation has %d children (expected 1) in ToString\n", 
-				        AlgebraicExpression_ChildCount(exp));
-				sprintf(buff + strlen(buff), "Transpose(MALFORMED)");
-			} else {
-				sprintf(buff + strlen(buff), "Transpose(");
-				_AlgebraicExpression_ToString(FIRST_CHILD(exp), buff);
-				sprintf(buff + strlen(buff), ")");
-			}
+			// Expecting a single child.
+			ASSERT(AlgebraicExpression_ChildCount(exp) == 1);
+			sprintf(buff + strlen(buff), "Transpose(");
+			_AlgebraicExpression_ToString(FIRST_CHILD(exp), buff);
+			sprintf(buff + strlen(buff), ")");
 			break;
 		default:
 			ASSERT("Unknown algebraic expression operation");

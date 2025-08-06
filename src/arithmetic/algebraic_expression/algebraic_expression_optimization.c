@@ -271,17 +271,8 @@ static void _Pushdown_TransposeTranspose
 	AlgebraicExpression *exp
 ) {
 	// T(T(A)) = A
-	// Transpose operations should always have exactly 1 child by design
-	uint child_count = AlgebraicExpression_ChildCount(exp);
-	if(child_count != 1) {
-		// This indicates a bug in expression construction or optimization
-		// Log detailed information for debugging
-		fprintf(stderr, "ERROR: Transpose operation has %d children (expected 1)\n", child_count);
-		fprintf(stderr, "This indicates a bug in expression construction or optimization\n");
-		// For now, skip this optimization to prevent crash
-		return;
-	}
-	
+	// Expecting just a single operand.
+	ASSERT(AlgebraicExpression_ChildCount(exp) == 1);
 	AlgebraicExpression *only_child = _AlgebraicExpression_OperationRemoveDest(exp);
 
 	// Replace Transpose operation with its child.
@@ -395,16 +386,8 @@ void AlgebraicExpression_PushDownTranspose(AlgebraicExpression *root) {
 			break;
 
 		case AL_EXP_TRANSPOSE:
-			// Transpose operations should always have exactly 1 child by design
 			child_count = AlgebraicExpression_ChildCount(root);
-			if(child_count != 1) {
-				// This indicates a bug in expression construction or optimization
-				fprintf(stderr, "ERROR: Transpose operation has %d children (expected 1) in PushDownTranspose\n", child_count);
-				fprintf(stderr, "This indicates a bug in expression construction or optimization\n");
-				// Skip optimization to prevent crash
-				break;
-			}
-			
+			ASSERT(child_count == 1 && "Transpose operation had invalid number of children");
 			child = root->operation.children[0];
 			if(child->type == AL_OPERATION) {
 				/* Transpose operation:
