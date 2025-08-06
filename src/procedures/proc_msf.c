@@ -568,6 +568,11 @@ ProcedureResult Proc_MSFInvoke
 	GrB_OK (GrB_free(&A));
 	GrB_OK (GrB_free(&cc));
 	GrB_OK (GrB_free(&rows));
+
+	ASSERT(pdata->tree_list != NULL || pdata->tree_nodes != NULL);
+	if(pdata->yield_edges != NULL && pdata->yield_nodes != NULL) {
+		ASSERT(array_len(pdata->tree_list) == array_len(pdata->tree_nodes));
+	}
 	
 	return PROCEDURE_OK;
 }
