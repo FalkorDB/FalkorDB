@@ -582,8 +582,10 @@ SIValue *Proc_MSFStep
 
 	MSF_Context *pdata = (MSF_Context *) ctx->privateData;
 
+	uint32_t n = pdata->tree_list? 
+		array_len(pdata->tree_list) : array_len(pdata->tree_nodes); 
 	// depleted
-	if(pdata->idx >= array_len(pdata->tree_list)) {
+	if(pdata->idx >= n) {
 		return NULL;
 	}
 	
