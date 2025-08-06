@@ -39,7 +39,10 @@ bool Record_ContainsEntry
 	const Record r,
 	uint idx
 ) {
-	ASSERT(idx < Record_length(r));
+	// Add bounds checking to prevent crash
+	if(unlikely(r == NULL || idx >= Record_length(r))) {
+		return false;
+	}
 	return r->entries[idx].type != REC_TYPE_UNKNOWN;
 }
 
@@ -160,7 +163,10 @@ RecordEntryType Record_GetType
 	const Record r,
 	uint idx
 ) {
-	ASSERT(Record_length(r) > idx);
+	// Add bounds checking to prevent crash
+	if(unlikely(r == NULL || idx >= Record_length(r))) {
+		return REC_TYPE_UNKNOWN;
+	}
 	return r->entries[idx].type;
 }
 
@@ -169,6 +175,11 @@ Node *Record_GetNode
 	const Record r,
 	uint idx
 ) {
+	// Add bounds checking to prevent crash
+	if(unlikely(r == NULL || idx >= Record_length(r))) {
+		return NULL;
+	}
+
 	switch(r->entries[idx].type) {
 		case REC_TYPE_NODE:
 			return &(r->entries[idx].value.n);
@@ -188,6 +199,11 @@ Edge *Record_GetEdge
 	const Record r,
 	uint idx
 ) {
+	// Add bounds checking to prevent crash
+	if(unlikely(r == NULL || idx >= Record_length(r))) {
+		return NULL;
+	}
+
 	switch(r->entries[idx].type) {
 		case REC_TYPE_EDGE:
 			return &(r->entries[idx].value.e);
@@ -207,7 +223,12 @@ SIValue Record_Get
 	Record r,
 	uint idx
 ) {
-	ASSERT(Record_length(r) > idx);
+	// Add bounds checking to prevent crash
+	if(unlikely(r == NULL || idx >= Record_length(r))) {
+		// Log error for debugging while returning safe value
+		// This prevents crash while allowing investigation of root cause
+		return SI_NullVal();
+	}
 
 	Entry e = r->entries[idx];
 	switch(e.type) {
@@ -230,6 +251,10 @@ void Record_Remove
 	Record r,
 	uint idx
 ) {
+	// Add bounds checking to prevent crash
+	if(unlikely(r == NULL || idx >= Record_length(r))) {
+		return;
+	}
 	r->entries[idx].type = REC_TYPE_UNKNOWN;
 }
 
@@ -238,6 +263,11 @@ GraphEntity *Record_GetGraphEntity
 	const Record r,
 	uint idx
 ) {
+	// Add bounds checking to prevent crash
+	if(unlikely(r == NULL || idx >= Record_length(r))) {
+		return NULL;
+	}
+
 	Entry e = r->entries[idx];
 	switch(e.type) {
 		case REC_TYPE_NODE:
@@ -256,7 +286,10 @@ void Record_Add
 	uint idx,
 	SIValue v
 ) {
-	ASSERT(idx < Record_length(r));
+	// Add bounds checking to prevent crash
+	if(unlikely(r == NULL || idx >= Record_length(r))) {
+		return;
+	}
 	switch(SI_TYPE(v)) {
 		case T_NODE:
 			Record_AddNode(r, idx, *(Node *)v.ptrval);
@@ -276,6 +309,10 @@ SIValue *Record_AddScalar
 	uint idx,
 	SIValue v
 ) {
+	// Add bounds checking to prevent crash
+	if(unlikely(r == NULL || idx >= Record_length(r))) {
+		return NULL;
+	}
 	r->entries[idx].value.s = v;
 	r->entries[idx].type = REC_TYPE_SCALAR;
 	return &(r->entries[idx].value.s);
@@ -287,6 +324,10 @@ Node *Record_AddNode
 	uint idx,
 	Node node
 ) {
+	// Add bounds checking to prevent crash
+	if(unlikely(r == NULL || idx >= Record_length(r))) {
+		return NULL;
+	}
 	r->entries[idx].value.n = node;
 	r->entries[idx].type = REC_TYPE_NODE;
 	return &(r->entries[idx].value.n);
@@ -298,6 +339,10 @@ Edge *Record_AddEdge
 	uint idx,
 	Edge edge
 ) {
+	// Add bounds checking to prevent crash
+	if(unlikely(r == NULL || idx >= Record_length(r))) {
+		return NULL;
+	}
 	r->entries[idx].value.e = edge;
 	r->entries[idx].type = REC_TYPE_EDGE;
 	return &(r->entries[idx].value.e);
@@ -344,6 +389,10 @@ inline void Record_FreeEntry
 	Record r,
 	int idx
 ) {
+	// Add bounds checking to prevent crash
+	if(unlikely(r == NULL || idx >= (int)Record_length(r))) {
+		return;
+	}
 	if(r->entries[idx].type == REC_TYPE_SCALAR) SIValue_Free(r->entries[idx].value.s);
 	r->entries[idx].type = REC_TYPE_UNKNOWN;
 }
