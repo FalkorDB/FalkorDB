@@ -248,7 +248,40 @@ GrB_Info Delta_Matrix_setM
 	return GrB_SUCCESS;
 }
 
-const GrB_Matrix Delta_Matrix_M
+// replace C's internal M matricies with given
+// the operation can only succeed if C's interal matrices:
+// M, DP, DM are all empty
+// C->M will point to *M and *M will be set to NULL
+GrB_Info Delta_Matrix_setMatrices
+(
+	Delta_Matrix C,  // delta matrix
+	GrB_Matrix M,    // new M
+	GrB_Matrix DP,   // new delta-plus
+	GrB_Matrix DM    // new delta-minus
+) {
+	ASSERT(C  != NULL);
+	ASSERT(M  != NULL);
+	ASSERT(DP != NULL);
+	ASSERT(DM != NULL);
+
+	GrB_Index nvals = 0;
+
+	ASSERT(Delta_Matrix_Synced(C));
+	Delta_Matrix_nvals(&nvals, C);
+	ASSERT(nvals == 0);
+
+	GrB_OK(GrB_free(&DELTA_MATRIX_M(C)));
+	GrB_OK(GrB_free(&DELTA_MATRIX_DELTA_PLUS(C)));
+	GrB_OK(GrB_free(&DELTA_MATRIX_DELTA_MINUS(C)));
+
+	DELTA_MATRIX_M(C) = M;
+	DELTA_MATRIX_DELTA_PLUS(C)  = DP;
+	DELTA_MATRIX_DELTA_MINUS(C) = DM;
+
+	return GrB_SUCCESS;
+}
+
+GrB_Matrix Delta_Matrix_M
 (
 	const Delta_Matrix C  // delta matrix
 ) {

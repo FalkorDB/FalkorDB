@@ -9,7 +9,7 @@
 #include "../globals.h"
 #include "redismodule.h"
 #include "cmd_context.h"
-#include "../util/thpool/pools.h"
+#include "../util/thpool/pool.h"
 
 #include <ctype.h>
 #include <string.h>
@@ -176,8 +176,8 @@ static void _info_running_queries
 	//--------------------------------------------------------------------------
 
 	// get all currently executing commands
-	// #readers + #writers + Redis main thread
-	uint32_t n = ThreadPools_ThreadCount() + 1;
+	// #workers + Redis main thread
+	uint32_t n = ThreadPool_ThreadCount() + 1;
 	CommandCtx* cmds[n];
 	Globals_GetCommandCtxs(cmds, &n);
 
@@ -220,7 +220,7 @@ static void _info_waiting_queries
 	//--------------------------------------------------------------------------
 
 	uint32_t n;
-	CommandCtx **cmds = (CommandCtx**)ThreadPools_GetTasksByHandler(Graph_Query,
+	CommandCtx **cmds = (CommandCtx**)ThreadPool_GetTasksByHandler(Graph_Query,
 			(void(*)(void *))CommandCtx_Incref, &n);
 
 	// create a new subsection in the reply
