@@ -18,10 +18,11 @@ static void _ComputeTransposeMatrix
 	GrB_Info info;
 	GrB_Index nvals;
 
-	// make sure A is full synced
+	// make sure A is fully synced
 	GrB_Matrix DP = Delta_Matrix_DP (A) ;
 	GrB_Matrix DM = Delta_Matrix_DM (A) ;
 
+	// expecting A's DP & DM to have no entries
 	info = GrB_Matrix_nvals (&nvals, DP) ;
 	ASSERT (info == GrB_SUCCESS) ;
 	ASSERT (nvals == 0) ;
@@ -41,6 +42,9 @@ static void _ComputeTransposeMatrix
 	ASSERT(nvals == 0);
 
 	info = GrB_transpose(ATM, NULL, NULL, AM, NULL);
+	ASSERT(info  == GrB_SUCCESS);
+
+	info = GrB_wait (ATM, GrB_MATERIALIZE) ;
 	ASSERT(info  == GrB_SUCCESS);
 }
 
