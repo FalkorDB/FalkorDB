@@ -141,14 +141,16 @@ static AlgebraicExpression *_AlgebraicExpression_RemoveOperand
 
 		switch(current->operation.op) {
 			case AL_EXP_TRANSPOSE:
-				transpose = !transpose;
-				// Only navigate to child if transpose operation is well-formed
-				if(AlgebraicExpression_ChildCount(current) == 1) {
-					current = FIRST_CHILD(current); // transpose has only one child
-				} else {
-					// Malformed transpose operation - treat as operand
-					break;
+				// Transpose operations should always have exactly 1 child
+				if(AlgebraicExpression_ChildCount(current) != 1) {
+					fprintf(stderr, "ERROR: Transpose operation has %d children (expected 1) in RemoveOperand\n", 
+					        AlgebraicExpression_ChildCount(current));
+					// Cannot proceed safely, return NULL
+					array_free(stack);
+					return NULL;
 				}
+				transpose = !transpose;
+				current   = FIRST_CHILD(current); // transpose has only one child
 				break;
 
 			case AL_EXP_ADD:
@@ -362,14 +364,15 @@ bool AlgebraicExpression_Transposed
 	// handle directly nested transposes, e.g. T(T(T(X)))
 	bool transposed = false;
 	while(n->type == AL_OPERATION && n->operation.op == AL_EXP_TRANSPOSE) {
-		// Only navigate to child if transpose operation is well-formed
-		if(AlgebraicExpression_ChildCount(n) == 1) {
-			transposed = !transposed;
-			n = FIRST_CHILD(n);
-		} else {
-			// Malformed transpose operation - stop processing
-			break;
+		// Transpose operations should always have exactly 1 child
+		if(AlgebraicExpression_ChildCount(n) != 1) {
+			fprintf(stderr, "ERROR: Transpose operation has %d children (expected 1) in Transposed\n", 
+			        AlgebraicExpression_ChildCount(n));
+			// Cannot proceed safely, return current state
+			return transposed;
 		}
+		transposed = !transposed;
+		n = FIRST_CHILD(n);
 	}
 
 	// TODO: handle cases such as T(A) + T(B).

@@ -343,9 +343,13 @@ void _AlgebraicExpression_PopulateOperands
 		case AL_OPERATION:
 			child_count = AlgebraicExpression_ChildCount(root);
 			if(root->operation.op == AL_EXP_TRANSPOSE) {
-				// Only perform transpose optimization if the operation has exactly 1 child
-				// This prevents crashes when transpose operations are malformed
-				if(child_count == 1) {
+				// Transpose operations should always have exactly 1 child by design
+				if(child_count != 1) {
+					// This indicates a bug in expression construction or optimization
+					fprintf(stderr, "ERROR: Transpose operation has %d children (expected 1) in PopulateOperands\n", child_count);
+					fprintf(stderr, "This indicates a bug in expression construction or optimization\n");
+					// Skip transpose optimization to prevent crash, continue with normal processing
+				} else {
 					AlgebraicExpression *child = _AlgebraicExpression_OperationRemoveDest(root);
 					// fetch the transposed matrix and update the operand
 					_AlgebraicExpression_PopulateTransposedOperand(child, gc);
@@ -353,7 +357,6 @@ void _AlgebraicExpression_PopulateOperands
 					_AlgebraicExpression_InplaceRepurpose(root, child);
 					break;
 				}
-				// If transpose operation is malformed, fall through to normal processing
 			}
 			for(uint i = 0; i < child_count; i++) {
 				_AlgebraicExpression_PopulateOperands(CHILD_AT(root, i), gc);
