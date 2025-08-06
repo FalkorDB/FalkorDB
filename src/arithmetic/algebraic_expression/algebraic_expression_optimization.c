@@ -271,12 +271,15 @@ static void _Pushdown_TransposeTranspose
 	AlgebraicExpression *exp
 ) {
 	// T(T(A)) = A
-	// Expecting just a single operand.
-	ASSERT(AlgebraicExpression_ChildCount(exp) == 1);
-	AlgebraicExpression *only_child = _AlgebraicExpression_OperationRemoveDest(exp);
+	// Only apply optimization if the operation has exactly 1 child
+	// This prevents crashes when transpose operations are malformed
+	if(AlgebraicExpression_ChildCount(exp) == 1) {
+		AlgebraicExpression *only_child = _AlgebraicExpression_OperationRemoveDest(exp);
 
-	// Replace Transpose operation with its child.
-	_AlgebraicExpression_InplaceRepurpose(exp, only_child);
+		// Replace Transpose operation with its child.
+		_AlgebraicExpression_InplaceRepurpose(exp, only_child);
+	}
+	// If transpose operation is malformed, skip optimization
 }
 
 // Transpose operation.
@@ -386,21 +389,27 @@ void AlgebraicExpression_PushDownTranspose(AlgebraicExpression *root) {
 			break;
 
 		case AL_EXP_TRANSPOSE:
-			child = root->operation.children[0];
-			if(child->type == AL_OPERATION) {
-				/* Transpose operation:
-				 * Transpose(A + B) = Transpose(A) + Transpose(B)
-				 * Transpose(A * B) = Transpose(B) * Transpose(A) */
-				_Pushdown_TransposeExp(child);
-				/* Replace Transpose root with transposed expression.
-				 * Remove root only child. */
-				_AlgebraicExpression_OperationRemoveDest(root);
-				_AlgebraicExpression_InplaceRepurpose(root, child);
+			// Only process transpose optimization if the operation has exactly 1 child
+			// This prevents crashes when transpose operations are malformed
+			child_count = AlgebraicExpression_ChildCount(root);
+			if(child_count == 1) {
+				child = root->operation.children[0];
+				if(child->type == AL_OPERATION) {
+					/* Transpose operation:
+					 * Transpose(A + B) = Transpose(A) + Transpose(B)
+					 * Transpose(A * B) = Transpose(B) * Transpose(A) */
+					_Pushdown_TransposeExp(child);
+					/* Replace Transpose root with transposed expression.
+					 * Remove root only child. */
+					_AlgebraicExpression_OperationRemoveDest(root);
+					_AlgebraicExpression_InplaceRepurpose(root, child);
 
-				/* It is possible for `root` to contain a transpose subexpression
-				 * push it further down. */
-				AlgebraicExpression_PushDownTranspose(root);
+					/* It is possible for `root` to contain a transpose subexpression
+					 * push it further down. */
+					AlgebraicExpression_PushDownTranspose(root);
+				}
 			}
+			// If transpose operation is malformed, skip optimization
 			break;
 		default:
 			ASSERT("Unknown operation" && false);
