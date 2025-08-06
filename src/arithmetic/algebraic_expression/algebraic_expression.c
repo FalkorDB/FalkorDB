@@ -141,6 +141,7 @@ static AlgebraicExpression *_AlgebraicExpression_RemoveOperand
 
 		switch(current->operation.op) {
 			case AL_EXP_TRANSPOSE:
+				ASSERT(AlgebraicExpression_ChildCount(current) == 1 && "Transpose operation had invalid number of children");
 				transpose = !transpose;
 				current   = FIRST_CHILD(current); // transpose has only one child
 				break;
@@ -356,6 +357,7 @@ bool AlgebraicExpression_Transposed
 	// handle directly nested transposes, e.g. T(T(T(X)))
 	bool transposed = false;
 	while(n->type == AL_OPERATION && n->operation.op == AL_EXP_TRANSPOSE) {
+		ASSERT(AlgebraicExpression_ChildCount(n) == 1 && "Transpose operation had invalid number of children");
 		transposed = !transposed;
 		n = FIRST_CHILD(n);
 	}
