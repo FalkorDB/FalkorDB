@@ -4,7 +4,7 @@ db_config:
   dataset_load_timeout_secs: 180
 parameters:
   graph: imdb
-  num_clients: 64
+  num_clients: 32
   num_requests: 120000
   queries:
     - query: 'CALL algo.MSF() YIELD nodes RETURN count(nodes) as tree_size'
