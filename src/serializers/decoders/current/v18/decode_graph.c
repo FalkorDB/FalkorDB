@@ -19,21 +19,12 @@ static void _ComputeTransposeMatrix
 	GrB_Index nvals;
 
 	// make sure A is full synced
-	GrB_Matrix DP = Delta_Matrix_DP (A) ;
-	GrB_Matrix DM = Delta_Matrix_DM (A) ;
-
-	info = GrB_Matrix_nvals (&nvals, DP) ;
-	ASSERT (info == GrB_SUCCESS) ;
-	ASSERT (nvals == 0) ;
-
-	info = GrB_Matrix_nvals (&nvals, DM) ;
-	ASSERT (info == GrB_SUCCESS) ;
-	ASSERT (nvals == 0) ;
+	ASSERT(Delta_Matrix_Synced(A));
 
 	// compute transpose
 	Delta_Matrix AT  = Delta_Matrix_getTranspose(A);
-	GrB_Matrix   AM  = Delta_Matrix_M(A);
-	GrB_Matrix   ATM = Delta_Matrix_M(AT);
+	GrB_Matrix   AM  = DELTA_MATRIX_M(A);
+	GrB_Matrix   ATM = DELTA_MATRIX_M(AT);
 
 	// make sure transpose doesn't contains any entries
 	info = GrB_Matrix_nvals(&nvals, ATM);

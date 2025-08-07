@@ -98,7 +98,7 @@ void Graph_DeleteNodes
 
 			// clear label matrix j at position [id,id]
 			Delta_Matrix L = Graph_GetLabelMatrix(g, j);
-			info = Delta_Matrix_removeElement(L, id, id);
+			info = Delta_Matrix_removeElement_BOOL(L, id, id);
 			ASSERT(info == GrB_SUCCESS);
 
 			// a label was removed from node, update statistics
