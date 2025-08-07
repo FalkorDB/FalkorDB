@@ -314,11 +314,6 @@ class testProcedures(FlowTestsBase):
             pass
 
     def test10_procedure_indexes(self):
-        # flaky when running under valgrind
-        # TODO: investigate
-        if VALGRIND or SANITIZER:
-            self.env.skip()
-
         # Verify that the full-text index is reported properly.
         actual_resultset = self.graph.query("CALL db.indexes() YIELD label, properties").result_set
         expected_results = [["fruit", ["name"]]]
