@@ -483,7 +483,28 @@ class testMSF(FlowTestsBase):
         edges = [{"type": r, "source": l, "target": l, "count": 100} 
                     for r in "LMNOPQRS" for l in range(11)]
 
-        create_random_graph(self.graph, nodes, edges)    
+        create_random_graph(self.graph, nodes, edges)
+
+        #check that YIELDing nodes or edges alone returns correct results
+        result_set_both = self.graph.query("""
+            CALL algo.MSF()
+            YIELD nodes, edges
+            RETURN [n in nodes | id(n)] AS nodeIds,
+                [e IN edges | id(e)] AS edgeIds
+            """).result_set
+        node_set = self.graph.query("""
+            CALL algo.MSF()
+            YIELD nodes
+            RETURN [n in nodes | id(n)] AS nodeIds
+            """).result_set
+        edge_set = self.graph.query("""
+            CALL algo.MSF()
+            YIELD edges
+            RETURN [e IN edges | id(e)] AS edgeIds
+            """).result_set
+        # check these are equal
+        result_set_individual = [[n[0], e[0]] for n, e in zip(node_set, edge_set)]
+        self.env.assertEqual(result_set_both, result_set_individual)
 
         # get nodes and endpoints. 
         result_set = self.graph.query("""
