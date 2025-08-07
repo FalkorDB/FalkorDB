@@ -718,22 +718,6 @@ GrB_Info get_sub_weight_matrix
 		n_rels = Graph_RelationTypeCount(g);
 	}
 
-	if (n_rels == 0) {
-		// graph does not have any relations, return empty matrix
-		GrB_OK (GrB_Matrix_new(A, GrB_UINT64, 0, 0));
-		
-		if (A_w) {
-			GrB_OK (GrB_Matrix_new(A_w, GrB_FP64, 0, 0));
-		}
-
-		if (rows) {
-			GrB_OK (GrB_Vector_new(rows, GrB_BOOL, 0));
-		}
-
-		BWM_FREE;
-		return GrB_SUCCESS;
-	}
-
 	//--------------------------------------------------------------------------
 	// compute L
 	//--------------------------------------------------------------------------
@@ -746,6 +730,23 @@ GrB_Info get_sub_weight_matrix
 	_get_rows_with_labels(_N, g, lbls, n_lbls);
 
 	GrB_OK(GrB_Vector_nvals(&rows_nvals, _N));
+
+	if (n_rels == 0) {
+		// graph does not have any relations, return empty matrix
+		GrB_OK (GrB_Matrix_new(A, GrB_UINT64, rows_nvals, rows_nvals));
+		
+		if (A_w) {
+			GrB_OK (GrB_Matrix_new(A_w, GrB_FP64, rows_nvals, rows_nvals));
+		}
+
+		if (rows) {
+			*rows = _N;
+			_N = NULL;
+		}
+
+		BWM_FREE;
+		return GrB_SUCCESS;
+	}
 
 	//--------------------------------------------------------------------------
 	// compute R
