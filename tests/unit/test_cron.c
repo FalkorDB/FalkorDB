@@ -370,13 +370,13 @@ static void test_AbortRunningTask() {
 	// validate call to Cron_AbortTask returns after task compelted
 	int ms = 100;
 	AddTaskData data = _AddTaskData_New(long_running_task, (void*)&ms);
+	clock_t t = clock(); // start timer
+
 	// issue a long running task, task will sleep for 100 'ms'
 	CronTaskHandle task_handle = Cron_AddTask(0, _AddTaskData_Execute, NULL,
 			&data);
 
 	_AddTaskData_WaitForRunning(data);
-
-	clock_t t = clock(); // start timer
 
 	// the task should be already running
 	// abort the task, call should return until the task completed.
@@ -387,7 +387,7 @@ static void test_AbortRunningTask() {
 
 	// expecting Cron_AbortTask to return after task completed
 	// allow for a margin of error
-	TEST_ASSERT(time_taken_sec >= 0.095);
+	TEST_ASSERT(time_taken_sec >= 0.100);
 
 	_AddTaskData_Free(data);
 }

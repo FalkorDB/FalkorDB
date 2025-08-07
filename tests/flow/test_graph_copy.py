@@ -1,6 +1,7 @@
 from common import Env, FalkorDB, SANITIZER, VALGRIND
 from random_graph import create_random_schema, create_random_graph
 from graph_utils import graph_eq
+from constraint_utils import create_constraint
 import time
 
 GRAPH_ID = "graph_copy"
@@ -145,8 +146,7 @@ class testGraphCopy():
         # create graph with both indices and constrains
         src_graph.create_node_range_index("Person", "name", "age")
 
-        self.conn.execute_command("GRAPH.CONSTRAINT", "CREATE", src_id, "UNIQUE",
-                                  "NODE", "Person", "PROPERTIES", 1, "name")
+        create_constraint(src_graph, "UNIQUE", "NODE", "Person", "name", sync=True)
 
         # copy graph
         self.graph_copy(src_id, clone_id)
