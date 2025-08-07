@@ -122,11 +122,28 @@ void _get_rows_with_labels
 		GrB_OK(GxB_Vector_diag(rows, L, 0, NULL));
 		GrB_free(&L);
 	} else if(rows != NULL) {
-		// N = [1,....1]
-		GrB_OK(GrB_Vector_assign_BOOL(
+		GrB_OK(GrB_Vector_resize(rows, Graph_UncompactedNodeCount(g)));
+		// no labels, N = present nodes
+		GrB_OK (GrB_Vector_assign_BOOL(
 			rows, NULL, NULL, true, GrB_ALL, 0, NULL));
+
+		// remove deleted nodes from N
+		if(Graph_DeletedNodeCount(g) > 0) {
+			NodeID *deleted_n = NULL;
+			uint64_t deleted_n_count = 0;
+			Graph_DeletedNodes(g, &deleted_n, &deleted_n_count);
+			
+			// TODO: is there a more efficient way to remove deleted nodes?
+			// this also does a whole extract operation for what is likely a 
+			// small number of nodes
+			for(uint64_t i = 0; i < deleted_n_count; i++) {
+				// remove deleted nodes from N
+				GrB_OK (GrB_Vector_removeElement(rows, deleted_n[i]));
+			}
+			rm_free(deleted_n);
+		}
 	}
-	GrB_OK(GrB_Vector_resize(rows, Graph_RequiredMatrixDim(g)));
+	GrB_OK(GrB_Vector_resize(rows, Graph_UncompactedNodeCount(g)));
 }
 
 void _combine_matricies_and_extract
