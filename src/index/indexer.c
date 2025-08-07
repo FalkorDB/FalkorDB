@@ -253,6 +253,15 @@ static void *_indexer_run
 
 			case INDEXER_EXIT:
 			{
+				// free indexer
+				array_free (indexer->q) ;
+				indexer->q = NULL ;
+
+				pthread_cond_destroy (&indexer->c) ;
+				pthread_mutex_destroy (&indexer->m) ;
+				pthread_mutex_destroy (&indexer->cm) ;
+
+				rm_free (indexer) ;
 				return NULL ;
 			}
 
@@ -355,7 +364,11 @@ bool Indexer_Init(void) {
 	// create worker thread
 	pthread_attr_t attr;
 	a_res = pthread_attr_init(&attr);
+	if(a_res != 0) {
+		goto cleanup;
+	}
 
+	a_res = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 	if(a_res != 0) {
 		goto cleanup;
 	}
@@ -505,21 +518,6 @@ void Indexer_DropConstraint
 void Indexer_Stop(void) {
 	// add fake task to cause indexer thread to exit
 	_Indexer_ClearTasks () ;
-
 	_indexer_AddTask (INDEXER_EXIT, NULL) ;
-
-	// wait for indexer thread to exit
-	pthread_join (indexer->t, NULL) ;
-	ASSERT(array_len (indexer->q) == 0) ;
-
-	// free indexer
-	array_free (indexer->q) ;
-	indexer->q = NULL ;
-
-	pthread_cond_destroy (&indexer->c) ;
-	pthread_mutex_destroy (&indexer->m) ;
-	pthread_mutex_destroy (&indexer->cm) ;
-
-	rm_free (indexer) ;
 }
 
