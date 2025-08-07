@@ -57,7 +57,10 @@ def graph_eq(A, B):
         B_res = B.ro_query(q).result_set
         if A_res != B_res:
             print(f"diff in {category}")
-            for i in range(0, len(A_res)):
+            if(len(A_res) != len(B_res)):
+                print(f"A_res length: {len(A_res)}, B_res length: {len(B_res)}")
+         
+            for i in range(0, min(len(A_res), len(B_res))):
                 if A_res[i] != B_res[i]:
                     print(f"A_res[{i}]: {A_res[i]}, B_res[{i}]: {B_res[i]}")
 

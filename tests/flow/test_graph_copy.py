@@ -18,15 +18,20 @@ class testGraphCopy():
     # compare graphs
     def assert_graph_eq(self, A, B):
         # tests that the graphs are the same
-        while True:
+        # limit retries to 20
+        for _ in range(20):
             try:
                 self.env.assertTrue(graph_eq(A, B))
-                break
+                return
             except Exception as e:
                 # retry if query was issued while redis is loading
                 if str(e) == "Redis is loading the dataset in memory":
                     print("Retry!")
+                    time.sleep(1)
                     continue
+                else:
+                    raise e
+        raise RuntimeError("Redis not loaded after 20 retries")
 
     def test_01_invalid_invocation(self):
         # validate invalid invocations of the GRAPH.COPY command
