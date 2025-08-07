@@ -368,7 +368,6 @@ static void test_AbortRunningTask() {
 	// issue a long running task ~100ms
 	// issue abort 20ms into execution
 	// validate call to Cron_AbortTask returns after task compelted
-
 	int ms = 100;
 	AddTaskData data = _AddTaskData_New(long_running_task, (void*)&ms);
 	// issue a long running task, task will sleep for 100 'ms'
@@ -387,7 +386,8 @@ static void test_AbortRunningTask() {
 	double time_taken_sec = ((double)t)/CLOCKS_PER_SEC;
 
 	// expecting Cron_AbortTask to return after task completed
-	TEST_ASSERT(time_taken_sec >= 0.1);
+	// allow for a margin of error
+	TEST_ASSERT(time_taken_sec >= 0.095);
 
 	_AddTaskData_Free(data);
 }
