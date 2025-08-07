@@ -320,7 +320,7 @@ class testProcedures(FlowTestsBase):
         self.env.assertEquals(actual_resultset, expected_results)
 
         # Add an exact-match index to a different property on the same label..
-        result = create_node_range_index(self.graph, 'fruit', 'other_property')
+        result = create_node_range_index(self.graph, 'fruit', 'other_property', sync=True)
         self.env.assertEquals(result.indices_created, 1)
 
         # Verify that all indexes are reported.
