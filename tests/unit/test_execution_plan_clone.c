@@ -8,7 +8,7 @@
 #include "src/query_ctx.h"
 #include "src/util/rmalloc.h"
 #include "src/arithmetic/funcs.h"
-#include "src/util/thpool/pools.h"
+#include "src/util/thpool/pool.h"
 #include "src/procedures/procedure.h"
 #include "src/execution_plan/ops/ops.h"
 #include "src/execution_plan/execution_plan_clone.h"
@@ -130,7 +130,7 @@ void setup() {
 	Alloc_Reset();
 
 	// Initialize the thread pool.
-	TEST_ASSERT(ThreadPools_CreatePools(1, 1, 2));
+	TEST_ASSERT(ThreadPool_CreatePool(1, 2));
 
 	// init query context
 	TEST_ASSERT(QueryCtx_Init());

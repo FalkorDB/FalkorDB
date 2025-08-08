@@ -83,7 +83,7 @@ static void _DecodeTensors
 			*n_elem += nvals;
 
 			// set tensor
-			uint64_t v = (uint64_t)(uintptr_t) SET_MSB (u) ;
+			uint64_t v = SET_MSB ((uint64_t)(uintptr_t) u) ;
 			info = GrB_Matrix_setElement_UINT64 (A, v, i, j) ;
 			ASSERT (info == GrB_SUCCESS) ;
 

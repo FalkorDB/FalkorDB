@@ -22,8 +22,8 @@
 #include "redisearch_api.h"
 #include "commands/cmd_acl.h"
 #include "arithmetic/funcs.h"
+#include "util/thpool/pool.h"
 #include "commands/commands.h"
-#include "util/thpool/pools.h"
 #include "graph/graphcontext.h"
 #include "util/redis_version.h"
 #include "ast/ast_validations.h"
@@ -167,14 +167,14 @@ int RedisModule_OnLoad
 	if(!_Cron_Start())                return REDISMODULE_ERR;
 	if(!QueryCtx_Init())              return REDISMODULE_ERR;
 	if(!ErrorCtx_Init())              return REDISMODULE_ERR;
-	if(!ThreadPools_Init())           return REDISMODULE_ERR;
+	if(!ThreadPool_Init())            return REDISMODULE_ERR;
 	if(!Indexer_Init())               return REDISMODULE_ERR;
 	if(!AST_ValidationsMappingInit()) return REDISMODULE_ERR;
 
 	init_acl_admin_username(ctx);  // set ACL ADMIN username
 
 	RedisModule_Log(ctx, "notice", "Thread pool created, using %d threads.",
-			ThreadPools_ReadersCount());
+			ThreadPool_ThreadCount());
 
 	uint64_t ompThreadCount;
 	Config_Option_get(Config_OPENMP_NTHREAD, &ompThreadCount);

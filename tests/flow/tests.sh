@@ -138,7 +138,7 @@ setup_rltest() {
 		fi
 	fi
 	
-	RLTEST_ARGS+=" --enable-debug-command --no-progress"
+	RLTEST_ARGS+=" --enable-debug-command --no-progress --test-timeout 600"
 
 	if [[ $RLTEST_VERBOSE == 1 ]]; then
 		RLTEST_ARGS+=" -v"
