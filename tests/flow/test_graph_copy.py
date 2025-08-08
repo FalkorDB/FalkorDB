@@ -1,6 +1,7 @@
 from common import Env, FalkorDB, SANITIZER, VALGRIND
 from random_graph import create_random_schema, create_random_graph
 from graph_utils import graph_eq
+from constraint_utils import create_constraint
 import time
 
 GRAPH_ID = "graph_copy"
@@ -18,15 +19,20 @@ class testGraphCopy():
     # compare graphs
     def assert_graph_eq(self, A, B):
         # tests that the graphs are the same
-        while True:
+        # limit retries to 20
+        for _ in range(20):
             try:
                 self.env.assertTrue(graph_eq(A, B))
-                break
+                return
             except Exception as e:
                 # retry if query was issued while redis is loading
                 if str(e) == "Redis is loading the dataset in memory":
                     print("Retry!")
+                    time.sleep(1)
                     continue
+                else:
+                    raise e
+        raise RuntimeError("Redis not loaded after 20 retries")
 
     def test_01_invalid_invocation(self):
         # validate invalid invocations of the GRAPH.COPY command
@@ -140,8 +146,7 @@ class testGraphCopy():
         # create graph with both indices and constrains
         src_graph.create_node_range_index("Person", "name", "age")
 
-        self.conn.execute_command("GRAPH.CONSTRAINT", "CREATE", src_id, "UNIQUE",
-                                  "NODE", "Person", "PROPERTIES", 1, "name")
+        create_constraint(src_graph, "UNIQUE", "NODE", "Person", "name", sync=True)
 
         # copy graph
         self.graph_copy(src_id, clone_id)
