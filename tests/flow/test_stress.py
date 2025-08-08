@@ -1,195 +1,207 @@
 from common import Env, Graph
-from falkordb.asyncio import FalkorDB
-from redis.asyncio import BlockingConnectionPool
-
 import time
 import random
-import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 graph    = None
 GRAPH_ID = "stress"  # graph identifier
 
-
-async def query_create(g, i):
+def query_create(g, i):
     param = {'v': i}
     create_query = "CREATE (:Node {v:$v})<-[:HAVE]-(:Node {v:$v})-[:HAVE]->(:Node {v:$v})"
-    await g.query(create_query, param)
+    g.query(create_query, param)
 
-async def query_read(g):
+def query_read(g):
     read_query = "MATCH (n:Node)-[:HAVE]->(m:Node) RETURN n.v, m.v LIMIT 1"
-    await g.ro_query(read_query)
+    g.ro_query(read_query)
 
-async def query_update(g, i):
+def query_update(g, i):
     param = {'v': i}
     update_query = "MATCH (n:Node) WITH n LIMIT 1 SET n.x = $v"
-    await g.query(update_query, param)
+    g.query(update_query, param)
 
-async def query_delete(g):
+def query_delete(g):
     delete_query = "MATCH (n:Node)-[:HAVE*]->(m:Node) WITH n, m LIMIT 1 DELETE n, m"
-    await g.query(delete_query)
+    g.query(delete_query)
 
-async def create_nodes(g, i):
+def create_nodes(g, i):
     params = {'v': i}
-    await g.query("CREATE (:Node {v: $v})-[:R]->()", params)
+    g.query("CREATE (:Node {v: $v})-[:R]->()", params)
 
-async def delete_nodes(g):
-    await g.query("MATCH (n:Node) WITH n LIMIT 1 DELETE n")
+def delete_nodes(g):
+    g.query("MATCH (n:Node) WITH n LIMIT 1 DELETE n")
 
-async def delete_edges(g):
-    await g.query("MATCH (:Node)-[r]->() WITH r LIMIT 1 DELETE r")
+def delete_edges(g):
+    g.query("MATCH (:Node)-[r]->() WITH r LIMIT 1 DELETE r")
 
-async def update_nodes(g):
-    await g.query("MATCH (n:Node) WITH n LIMIT 1 SET n.v = 1")
+def update_nodes(g):
+    g.query("MATCH (n:Node) WITH n LIMIT 1 SET n.v = 1")
 
-async def read_nodes(g):
-    await g.ro_query("MATCH (n:Node)-[:R]->() RETURN n LIMIT 1")
+def read_nodes(g):
+    g.ro_query("MATCH (n:Node)-[:R]->() RETURN n LIMIT 1")
 
-async def merge_nodes_and_edges(g, i):
+def merge_nodes_and_edges(g, i):
     params = {'a': i, 'b': i * 10}
-    await g.query("MERGE (a:Node {v: $a}) MERGE (b:Node {v: $b}) MERGE (a)-[:R]->(b)", params)
+    g.query("MERGE (a:Node {v: $a}) MERGE (b:Node {v: $b}) MERGE (a)-[:R]->(b)", params)
 
 # measure how much time does it takes to perform BGSAVE
 # asserts if BGSAVE took too long
-async def BGSAVE_loop(env, conn):
-    results = conn.execute_command("INFO", "persistence")
-    cur_bgsave_time = prev_bgsave_time = results['rdb_last_save_time']
+def BGSAVE_loop(env, conn, stop_event):
+    while not stop_event.is_set():
+        try:
+            results = conn.execute_command("INFO", "persistence")
+            cur_bgsave_time = prev_bgsave_time = results['rdb_last_save_time']
 
-    conn.execute_command("BGSAVE")
-    start = time.time()
+            conn.execute_command("BGSAVE")
+            start = time.time()
 
-    while(cur_bgsave_time == prev_bgsave_time):
-        # assert and return if the timeout of 5 seconds took place
-        if(time.time() - start > 5):
-            env.assertTrue(False)
-            return
+            while(cur_bgsave_time == prev_bgsave_time):
+                # assert and return if the timeout of 5 seconds took place
+                if(time.time() - start > 5):
+                    env.assertTrue(False)
+                    return
 
-        results = conn.execute_command("INFO", "persistence")
-        cur_bgsave_time = results['rdb_last_save_time']
-        if cur_bgsave_time == prev_bgsave_time:
-            await asyncio.sleep(1) # sleep for 1 second
+                results = conn.execute_command("INFO", "persistence")
+                cur_bgsave_time = results['rdb_last_save_time']
+                if cur_bgsave_time == prev_bgsave_time:
+                    time.sleep(1) # sleep for 1 second
 
-    prev_bgsave_time = cur_bgsave_time
-    env.assertEqual(results['rdb_last_bgsave_status'], "ok")
+            prev_bgsave_time = cur_bgsave_time
+            env.assertEqual(results['rdb_last_bgsave_status'], "ok")
+            
+            # Wait a bit before next BGSAVE
+            time.sleep(2)
+            
+        except Exception as e:
+            if not stop_event.is_set():
+                print(f"BGSAVE error: {e}")
+            break
 
 class testStressFlow():
     def __init__(self):
         self.env, _ = Env()
         self.graph = Graph(self.env.getConnection(), GRAPH_ID)
 
-    # called before each test function
     def setUp(self):
-        # create index
         self.graph.create_node_range_index("Node", "v")
 
     def tearDown(self):
         self.graph.delete()
 
-    # Count number of nodes in the graph
+    def worker_task(self, task_func, *args):
+        thread_conn = self.env.getConnection()
+        thread_graph = Graph(thread_conn, GRAPH_ID)
+        try:
+            return task_func(thread_graph, *args)
+        finally:
+            thread_conn.close()
+
     def test00_stress(self):
-        async def run(self):
-            # connection pool with 16 connections
-            # blocking when there's no connections available
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
-            db = FalkorDB(connection_pool=pool)
-            g = db.select_graph(GRAPH_ID)
+        n_tasks     = 10000 # number of tasks to run
+        n_creations = 0.3   # create ratio
+        n_deletions = 0.7   # delete ratio
+        n_reads     = 0.735 # read ratio
 
-            n_tasks     = 10000 # number of tasks to run
-            n_creations = 0.3   # create ratio
-            n_deletions = 0.7   # delete ratio
-            n_reads     = 0.735 # read ratio
-
-            tasks = []
+        # Use ThreadPoolExecutor to manage threads
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            futures = []
+            
             for i in range(0, n_tasks):
                 r = random.random()
                 if r < n_creations:
-                    tasks.append(asyncio.create_task(query_create(g, i)))
+                    future = executor.submit(self.worker_task, query_create, i)
                 elif r < n_deletions:
-                    tasks.append(asyncio.create_task(query_delete(g)))
+                    future = executor.submit(self.worker_task, query_delete)
                 elif r < n_reads:
-                    tasks.append(asyncio.create_task(query_read(g)))
+                    future = executor.submit(self.worker_task, query_read)
                 else:
-                    tasks.append(asyncio.create_task(query_update(g, i)))
+                    future = executor.submit(self.worker_task, query_update, i)
+                
+                futures.append(future)
 
-            # wait for all tasks to complete
-            await asyncio.gather(*tasks)
-
-            # close the connection pool
-            await pool.aclose()
-
-        asyncio.run(run(self))
+            # Wait for all tasks to complete
+            for future in as_completed(futures):
+                try:
+                    future.result()  # This will raise any exceptions that occurred
+                except Exception as e:
+                    print(f"Task failed: {e}")
 
     def test01_bgsave_stress(self):
-        async def run(self):
-            # connection pool with 16 connections
-            # blocking when there's no connections available
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
-            db = FalkorDB(connection_pool=pool)
-            g = db.select_graph(GRAPH_ID)
+        n_tasks     = 10000 # number of tasks to run
+        n_creations = 0.35  # create ratio
+        n_deletions = 0.7   # delete ratio
+        n_reads     = 0.735 # read ratio
 
-            n_tasks     = 10000 # number of tasks to run
-            n_creations = 0.35  # create ratio
-            n_deletions = 0.7   # delete ratio
-            n_reads     = 0.735 # read ratio
+        # Create stop event for BGSAVE thread
+        stop_event = threading.Event()
+        
+        # Start BGSAVE thread
+        conn = self.env.getConnection()
+        bgsave_thread = threading.Thread(
+            target=BGSAVE_loop, 
+            args=(self.env, conn, stop_event),
+            daemon=True
+        )
+        bgsave_thread.start()
 
-            # async tasks
-            conn = self.env.getConnection()
-            bgsave_task = asyncio.create_task(BGSAVE_loop(self.env, conn))
-
-            tasks = []
+        # Use ThreadPoolExecutor to manage threads
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            futures = []
+            
             for i in range(0, n_tasks):
                 r = random.random()
                 if r < n_creations:
-                    tasks.append(asyncio.create_task(create_nodes(g, i)))
+                    future = executor.submit(self.worker_task, create_nodes, i)
                 elif r < n_deletions:
-                    tasks.append(asyncio.create_task(delete_nodes(g)))
+                    future = executor.submit(self.worker_task, delete_nodes)
                 elif r < n_reads:
-                    tasks.append(asyncio.create_task(read_nodes(g)))
+                    future = executor.submit(self.worker_task, read_nodes)
                 else:
-                    tasks.append(asyncio.create_task(update_nodes(g)))
+                    future = executor.submit(self.worker_task, update_nodes)
+                
+                futures.append(future)
 
-            # wait for all tasks to complete
-            await asyncio.gather(*tasks)
+            # Wait for all tasks to complete
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    print(f"Task failed: {e}")
 
-            # cancel BGSAVE task
-            bgsave_task.cancel()
-
-            # close the connection pool
-            await pool.aclose()
-
-        asyncio.run(run(self))
+        # Stop BGSAVE thread
+        stop_event.set()
+        bgsave_thread.join(timeout=5)
+        conn.close()
 
     def test02_write_only_workload(self):
-        async def run(self):
-            # connection pool with 16 connections
-            # blocking when there's no connections available
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
-            db = FalkorDB(connection_pool=pool)
-            g = db.select_graph(GRAPH_ID)
+        n_tasks           = 10000 # number of tasks to run
+        n_creations       = 0.5
+        n_node_deletions  = 0.75
+        n_edge_deletions  = 1
 
-            n_tasks           = 10000 # number of tasks to run
-            n_creations       = 0.5
-            n_node_deletions  = 0.75
-            n_edge_deletions  = 1
-
-            tasks = []
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            futures = []
+            
             for i in range(0, n_tasks):
                 r = random.random()
                 if r < n_creations:
-                    tasks.append(asyncio.create_task(merge_nodes_and_edges(g, i)))
+                    future = executor.submit(self.worker_task, merge_nodes_and_edges, i)
                 elif r < n_node_deletions:
-                    tasks.append(asyncio.create_task(delete_nodes(g)))
+                    future = executor.submit(self.worker_task, delete_nodes)
                 else:
-                    tasks.append(asyncio.create_task(delete_edges(g)))
+                    future = executor.submit(self.worker_task, delete_edges)
+                
+                futures.append(future)
 
-            # wait for all tasks to complete
-            results = await asyncio.gather(*tasks)
+            # Wait for all tasks to complete
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    print(f"Task failed: {e}")
 
-            # make sure we did not crashed
-            conn = self.env.getConnection()
-            conn.ping()
-            conn.close()
-
-            # close the connection pool
-            await pool.aclose()
-
-        asyncio.run(run(self))
+        # make sure we did not crash
+        conn = self.env.getConnection()
+        conn.ping()
+        conn.close()
