@@ -380,13 +380,12 @@ static void test_AbortRunningTask() {
 
 	// the task should be already running
 	// abort the task, call should return until the task completed.
-	Cron_AbortTask(task_handle);
+	TEST_ASSERT(!Cron_AbortTask(task_handle));
 
 	t = clock() - t; // stop timer
 	double time_taken_sec = ((double)t)/CLOCKS_PER_SEC;
 
 	// expecting Cron_AbortTask to return after task completed
-	// allow for a margin of error
 	TEST_ASSERT(time_taken_sec >= 0.100);
 
 	_AddTaskData_Free(data);
