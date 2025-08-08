@@ -444,63 +444,53 @@ class testGraphPersistency():
         q = "UNWIND range(0, 499) AS x CREATE (:A)-[:R]->(:B)"
 
         for i in range(0, graph_count):
-            g = self.db.select_graph(str(i))
+            g = self.db.select_graph(GRAPH_ID + str(i))
             g.query(q)
 
         # Measure the time it takes to encode 1000 graphs
         # Get the last completed save time before issuing BGSAVE
         before = self.conn.info("persistence").get("rdb_last_save_time")
 
-        # Start timmer
-        start = time.time()
-
         # Issue BGSAVE
         self.conn.bgsave()
+        save_finished = False
 
-        # Wait for BGSAVE to complete
-        while True:
+        # Wait for BGSAVE to complete for a maximum of 10 seconds
+        for _ in range(100):
             time.sleep(0.1)  # poll every 100ms
             now = self.conn.info("persistence").get("rdb_last_save_time")
             if now != before:
+                save_finished = True
                 break
 
-        # Stop timmer
-        elapsed = time.time() - start
-
-        # Expecting BGSAVE to complete under 10 seconds
-        self.env.assertLess(elapsed, 10)
+        self.env.assertTrue(save_finished)
 
         # Save & Load from RDB
         self.env.dumpAndReload()
 
         # Make sure reloaded DB contains all graphs
         graphs = self.db.list_graphs()
-        graphs = list(map(int, graphs))
+        graphs = [int(x.replace(GRAPH_ID, "")) for x in graphs]
         graphs.sort()
 
         self.env.assertEquals(graphs, list(range(0, graph_count)))
 
-        # Pick a graph at random and validate its structure
-        g = self.db.select_graph(str(random.randint(0, graph_count)))
+        qs = [
+            ("MATCH (n) RETURN count(n)"         , 1000),
+            ("MATCH (a:A) RETURN count(a)"       , 500) ,
+            ("MATCH (b:B) RETURN count(b)"       , 500) ,
+            ("MATCH ()-[e]->() RETURN count(e)"  , 500) ,
+            ("MATCH ()-[e:R]->() RETURN count(e)", 500)
+        ]
 
-        # total node count
-        node_count = g.query("MATCH (n) RETURN count(n)").result_set[0][0]
-        self.env.assertEquals(node_count, 1000)
-
-        # number of A nodes
-        node_count = g.query("MATCH (a:A) RETURN count(a)").result_set[0][0]
-        self.env.assertEquals(node_count, 500)
-
-        # number of B nodes
-        node_count = g.query("MATCH (b:B) RETURN count(b)").result_set[0][0]
-        self.env.assertEquals(node_count, 500)
-
-        # number of edges
-        edge_count = g.query("MATCH ()-[e]->() RETURN count(e)").result_set[0][0]
-        self.env.assertEquals(edge_count, 500)
-
-        edge_count = g.query("MATCH ()-[e:R]->() RETURN count(e)").result_set[0][0]
-        self.env.assertEquals(edge_count, 500)
+        # Validate all graphs
+        for i in range(graph_count):
+            g = self.db.select_graph(GRAPH_ID + str(i))
+            for q, expected_count in qs:
+                result = g.query(q).result_set[0][0]
+                if(result != expected_count):
+                    self.env.log(f"Graph {i} expected {expected_count}, got {result}")
+                    self.env.assertFalse(True)
 
     # Verify that the DB will respond to PING which taking a snapshot
     def test_ping_while_saving(self):
@@ -534,20 +524,20 @@ class testGraphPersistency():
         thread = threading.Thread(target=ping_worker, args=(self.conn, pings))
         thread.start()
 
-        # Start timmer
-        start = time.time()
-
         # Issue BGSAVE
         self.conn.bgsave()
 
-        # Wait for BGSAVE to complete
-        while True:
+        save_finished = False
+        start = time.time()
+        # Wait for BGSAVE to complete for a maximum of 10 seconds
+        for _ in range(100):
             time.sleep(0.1)  # poll every 100ms
             now = self.conn.info("persistence").get("rdb_last_save_time")
             if now != before:
+                save_finished = True
                 break
-
-        # Stop timmer
+        
+        self.env.assertTrue(save_finished)
         end = time.time()
 
         stop_event.set()  # Signal the thread to stop
