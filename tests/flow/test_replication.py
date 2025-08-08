@@ -167,6 +167,10 @@ class testReplication(FlowTestsBase):
 
         # the WAIT command forces master slave sync to complete
         source_con.execute_command("WAIT", "1", "0")
+        
+        # TODO: check if this sync is needed
+        wait_for_indices_to_sync(src)
+        wait_for_indices_to_sync(replica)
 
         # make sure both primary and replica have the same set of indexes
         q = "CALL db.indexes() YIELD label, properties, language, stopwords, entitytype"
