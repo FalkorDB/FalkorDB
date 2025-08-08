@@ -470,7 +470,7 @@ class testGraphPersistency():
 
         # Make sure reloaded DB contains all graphs
         graphs = self.db.list_graphs()
-        graphs = [int(x.replace(GRAPH_ID, "")) for x in graphs]
+        graphs = [int(x.replace(GRAPH_ID, "")) for x in graphs if x.startswith(GRAPH_ID)]
         graphs.sort()
 
         self.env.assertEquals(graphs, list(range(0, graph_count)))
