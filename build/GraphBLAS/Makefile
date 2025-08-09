@@ -3,6 +3,12 @@ ROOT=../..
 
 MK.cmake=1
 
+ifeq ($(JIT),1)
+CMAKE_DEFS += GRAPHBLAS_USE_JIT:BOOL=on
+else
+CMAKE_DEFS += GRAPHBLAS_USE_JIT:BOOL=off
+endif
+
 include $(ROOT)/deps/readies/mk/main
 
 #----------------------------------------------------------------------------------------------
@@ -38,7 +44,6 @@ define CMAKE_DEFS +=
 	BUILD_SHARED_LIBS=OFF
 	BUILD_TESTING=off
 	CMAKE_POSITION_INDEPENDENT_CODE=on
-	GRAPHBLAS_USE_JIT=off
 	CMAKE_C_FLAGS=-fno-stack-protector
 	CMAKE_CXX_FLAGS=-fno-stack-protector
 endef

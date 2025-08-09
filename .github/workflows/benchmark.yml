@@ -85,7 +85,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ./bin/linux-x64-release/GraphBLAS
-          key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+          key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
 
       - name: Cache parser
         id: cache_parser
