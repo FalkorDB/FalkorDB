@@ -50,14 +50,13 @@ class testCreateClause():
 
     def test02_edge_reuse(self):
         # bound edges can not be used in a CREATE clause
-
         q = "CREATE ()-[e:R]->()-[e:R]->()"
         try:
             self.g.query(q)
             # should not reach this point
             self.env.assertTrue(False)
         except Exception as e:
-            self.env.assertTrue("Variable `e` already declared" in str(e))
+            self.env.assertTrue("The bound edge 'e' can't be redeclared in a CREATE clause" in str(e))
 
         queries = ["MATCH ()-[e:R]->() CREATE ()-[e:R]->()",
                    "CREATE ()-[e:R]->() CREATE ()-[e:R]->()"]
@@ -68,5 +67,5 @@ class testCreateClause():
                 # should not reach this point
                 self.env.assertTrue(False)
             except Exception as e:
-                self.env.assertTrue("The bound variable 'e' can't be redeclared in a CREATE clause" in str(e))
+                self.env.assertTrue("The bound edge 'e' can't be redeclared in a CREATE clause" in str(e))
 
