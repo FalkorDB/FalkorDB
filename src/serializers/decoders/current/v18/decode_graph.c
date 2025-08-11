@@ -33,6 +33,9 @@ static void _ComputeTransposeMatrix
 
 	info = GrB_transpose(ATM, NULL, NULL, AM, NULL);
 	ASSERT(info  == GrB_SUCCESS);
+
+	info = GrB_wait (ATM, GrB_MATERIALIZE) ;
+	ASSERT(info  == GrB_SUCCESS);
 }
 
 static void _ComputeTransposeMatrices
