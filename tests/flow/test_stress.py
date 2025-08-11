@@ -2,10 +2,11 @@ from common import Env, Graph
 import time
 import random
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from queue import Queue, Empty
 
 graph    = None
 GRAPH_ID = "stress"  # graph identifier
+task_queue = Queue()
 
 def query_create(g, i):
     param = {'v': i}
@@ -50,28 +51,39 @@ def merge_nodes_and_edges(g, i):
 def BGSAVE_loop(env, conn, stop_event):
     while not stop_event.is_set():
         results = conn.execute_command("INFO", "persistence")
-        cur_bgsave_time = prev_bgsave_time = results['rdb_last_save_time']
 
-        conn.execute_command("BGSAVE")
-        start = time.time()
+        conn.bgsave()
+        results = conn.execute_command("INFO", "persistence")
+        in_progress = results['rdb_bgsave_in_progress']
 
-        while(cur_bgsave_time == prev_bgsave_time):
-            # assert and return if the timeout of 5 seconds took place
-            if(time.time() - start > 5):
-                env.assertTrue(False)
-                return
-
+        # wait for BGSAVE to finish
+        # for 5 seconds max
+        for _ in range(50):
             results = conn.execute_command("INFO", "persistence")
-            cur_bgsave_time = results['rdb_last_save_time']
-            if cur_bgsave_time == prev_bgsave_time:
-                time.sleep(1)
+            in_progress = results['rdb_bgsave_in_progress']
+            if not in_progress:
+                break
+            time.sleep(0.1) # sleep 100ms
 
-        prev_bgsave_time = cur_bgsave_time
+        env.assertFalse(in_progress)
         env.assertEqual(results['rdb_last_bgsave_status'], "ok")
-        
-        # Wait a bit before next BGSAVE
-        time.sleep(2)
+
     conn.close()
+
+def worker(graph):
+    while True:
+        try:
+            task = task_queue.get(timeout=1)
+        except Empty:
+            break
+
+        task_func, args = task
+        if args:
+            task_func(graph, *args)
+        else:
+            task_func(graph)
+
+        task_queue.task_done()
 
 class testStressFlow():
     def __init__(self):
@@ -85,41 +97,41 @@ class testStressFlow():
     def tearDown(self):
         self.graph.delete()
 
-    def worker_task(self, task_func, *args):
-        # Get or create a Graph instance for the current thread
-        if not hasattr(self.thread_local, 'graph'):
-            # Create connection and graph only once per thread
-            self.thread_local.conn = self.env.getConnection()
-            self.thread_local.graph = Graph(self.thread_local.conn, GRAPH_ID)
+    def start_workers(self, worker_count):
+        threads = []
+        for _ in range(worker_count):
+            thread = threading.Thread(target=worker, args=(self.graph,))
+            thread.start()
+            threads.append(thread)
+        return threads
 
-        return task_func(self.thread_local.graph, *args)
+    def join_workers(self, threads):
+        for thread in threads:
+            thread.join()
+        task_queue.join()
 
     def test00_stress(self):
         n_tasks     = 10000 # number of tasks to run
         n_creations = 0.3   # create ratio
         n_deletions = 0.7   # delete ratio
         n_reads     = 0.735 # read ratio
+        
+        workers = self.start_workers(16)
 
-        # Use ThreadPoolExecutor to manage threads
-        with ThreadPoolExecutor(max_workers=16) as executor:
-            futures = []
-            
-            for i in range(0, n_tasks):
-                r = random.random()
-                if r < n_creations:
-                    future = executor.submit(self.worker_task, query_create, i)
-                elif r < n_deletions:
-                    future = executor.submit(self.worker_task, query_delete)
-                elif r < n_reads:
-                    future = executor.submit(self.worker_task, query_read)
-                else:
-                    future = executor.submit(self.worker_task, query_update, i)
-                
-                futures.append(future)
-
-            # Wait for all tasks to complete
-            for future in as_completed(futures):
-                future.result()
+        # Queue up all tasks with correct format
+        for i in range(n_tasks):
+            r = random.random()
+            if r < n_creations:
+                task_queue.put((query_create, (i,)))
+            elif r < n_deletions:
+                task_queue.put((query_delete, ()))
+            elif r < n_reads:
+                task_queue.put((query_read, ()))
+            else:
+                task_queue.put((query_update, (i,)))
+        
+        # Wait for all tasks to complete
+        self.join_workers(workers)
 
     def test01_bgsave_stress(self):
         n_tasks     = 10000 # number of tasks to run
@@ -129,42 +141,33 @@ class testStressFlow():
 
         # Create stop event for BGSAVE thread
         stop_event = threading.Event()
-        
+        workers = self.start_workers(16)
+
         # Start BGSAVE thread
         bgsave_thread = threading.Thread(
             target=BGSAVE_loop, 
-            args=(self.env, self.env.getConnection(), stop_event),
-            daemon=True
+            args=(self.env, self.env.getConnection(), stop_event)
         )
+
         bgsave_thread.start()
 
-        # Use ThreadPoolExecutor to manage threads
-        with ThreadPoolExecutor(max_workers=16) as executor:
-            futures = []
-            
-            for i in range(0, n_tasks):
-                r = random.random()
-                if r < n_creations:
-                    future = executor.submit(self.worker_task, create_nodes, i)
-                elif r < n_deletions:
-                    future = executor.submit(self.worker_task, delete_nodes)
-                elif r < n_reads:
-                    future = executor.submit(self.worker_task, read_nodes)
-                else:
-                    future = executor.submit(self.worker_task, update_nodes)
-                
-                futures.append(future)
+        for i in range(0, n_tasks):
+            r = random.random()
+            if r < n_creations:
+                task_queue.put((create_nodes, (i,)))
+            elif r < n_deletions:
+                task_queue.put((delete_nodes, ()))
+            elif r < n_reads:
+                task_queue.put((read_nodes, ()))
+            else:
+                task_queue.put((update_nodes, ()))
 
-            # Wait for all tasks to complete
-            for future in as_completed(futures):
-                future.result()
+        self.join_workers(workers)
 
         # Stop BGSAVE thread
         stop_event.set()
         bgsave_thread.join(timeout=10)
-        if bgsave_thread.is_alive():
-            print("BGSAVE thread did not finish in time")
-            self.env.assertTrue(False)
+        self.env.assertFalse(bgsave_thread.is_alive())
 
     def test02_write_only_workload(self):
         n_tasks           = 10000 # number of tasks to run
@@ -172,23 +175,14 @@ class testStressFlow():
         n_node_deletions  = 0.75
         n_edge_deletions  = 1
 
-        with ThreadPoolExecutor(max_workers=16) as executor:
-            futures = []
-            
-            for i in range(0, n_tasks):
-                r = random.random()
-                if r < n_creations:
-                    future = executor.submit(self.worker_task, merge_nodes_and_edges, i)
-                elif r < n_node_deletions:
-                    future = executor.submit(self.worker_task, delete_nodes)
-                else:
-                    future = executor.submit(self.worker_task, delete_edges)
-                
-                futures.append(future)
-
-            # Wait for all tasks to complete
-            for future in as_completed(futures):
-                future.result()
+        for i in range(0, n_tasks):
+            r = random.random()
+            if r < n_creations:
+                task_queue.put((merge_nodes_and_edges, (i)))
+            elif r < n_node_deletions:
+                task_queue.put((delete_nodes, ()))
+            else:
+                task_queue.put((delete_edges, ()))
 
         # make sure we did not crash
         conn = self.env.getConnection()
