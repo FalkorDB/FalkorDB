@@ -25,18 +25,18 @@ static void BM_add_all(benchmark::State &state) {
     Delta_Matrix A = NULL;
     Delta_Matrix B = NULL;
     Delta_Matrix C = NULL;
-    uint64_t     n     = 500000;
+    uint64_t     n     = 10000000;
     uint64_t     seed  = 870713428976ul;    
 
     GrB_OK(Delta_Matrix_new(&C, GrB_BOOL, n, n, false));
 
     
-    Delta_Random_Matrix(&A, GrB_BOOL, n, 0.001, 0.0000001, 0.0000001, seed);
-    Delta_Random_Matrix(&B, GrB_BOOL, n, 0.001, 0.0000001, 0.0000001, seed + 7);
+    Delta_Random_Matrix(&A, GrB_BOOL, n, 5E-7, 1E-10, 1E-10, seed);
+    Delta_Random_Matrix(&B, GrB_BOOL, n, 5E-7, 1E-10, 1E-10, seed+1);
 
 
     for (auto _ : state) {
-        Delta_eWiseAdd(C, GrB_LOR_LAND_SEMIRING_BOOL, A, B);
+        Delta_eWiseAdd(C, GxB_ANY_PAIR_BOOL, A, B);
     }
 
     Delta_Matrix_free(&A);
@@ -46,22 +46,27 @@ static void BM_add_all(benchmark::State &state) {
 
 static void BM_add_chain(benchmark::State &state) {
     Delta_Matrix Cs[5];
-    uint64_t     n     = 50000;
+    uint64_t     n     = 10000000;
     uint64_t     seed  = 870713428976ul;    
 
+    Delta_Matrix C = NULL;
+    Delta_Matrix_new(&C, GrB_BOOL, n, n, false);
+
     for(int i = 0; i < 5; i++) {
-        Delta_Random_Matrix(&Cs[i], GrB_BOOL, n, 0.01, 0.00001, 0.00001, seed + 7 * i);
+        Delta_Random_Matrix(&Cs[i], GrB_BOOL, n, 5E-7, 1E-10, 5E-10, seed + 7 * i);
     }
 
     for (auto _ : state) {
-        for(int i = 0; i < 4; i++) {
-            Delta_eWiseAdd(Cs[i], GrB_LOR_LAND_SEMIRING_BOOL, Cs[i], Cs[i + 1]);
+        for(int i = 0; i < 5; i++) {
+            Delta_eWiseAdd(C, GxB_ANY_PAIR_BOOL, C, Cs[i]);
         }
+        Delta_Matrix_clear(C);
     }
 
     for(int i = 0; i < 5; i++) {
         Delta_Matrix_free(&Cs[i]);
     }
+    Delta_Matrix_free(&C);
 }
 
 BENCHMARK(BM_add_all)->Setup(rg_setup)->Teardown(rg_teardown)
