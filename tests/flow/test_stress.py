@@ -48,29 +48,29 @@ def merge_nodes_and_edges(g, i):
 # measure how much time does it takes to perform BGSAVE
 # asserts if BGSAVE took too long
 def BGSAVE_loop(env, conn, stop_event):
-    while not stop_event.is_set():
-        results = conn.execute_command("INFO", "persistence")
-        cur_bgsave_time = prev_bgsave_time = results['rdb_last_save_time']
-
-        conn.execute_command("BGSAVE")
-        start = time.time()
-
-        while(cur_bgsave_time == prev_bgsave_time):
-            # assert and return if the timeout of 5 seconds took place
-            if(time.time() - start > 5):
-                env.assertTrue(False)
-                return
-
+        while not stop_event.is_set():
             results = conn.execute_command("INFO", "persistence")
-            cur_bgsave_time = results['rdb_last_save_time']
-            if cur_bgsave_time == prev_bgsave_time:
-                time.sleep(1) # sleep for 1 second
+            cur_bgsave_time = prev_bgsave_time = results['rdb_last_save_time']
 
-        prev_bgsave_time = cur_bgsave_time
-        env.assertEqual(results['rdb_last_bgsave_status'], "ok")
-        
-        # Wait a bit before next BGSAVE
-        time.sleep(2)
+            conn.execute_command("BGSAVE")
+            start = time.time()
+
+            while(cur_bgsave_time == prev_bgsave_time):
+                # assert and return if the timeout of 5 seconds took place
+                if(time.time() - start > 5):
+                    env.assertTrue(False)
+                    return
+
+                results = conn.execute_command("INFO", "persistence")
+                cur_bgsave_time = results['rdb_last_save_time']
+                if cur_bgsave_time == prev_bgsave_time:
+                    time.sleep(1)
+
+            prev_bgsave_time = cur_bgsave_time
+            env.assertEqual(results['rdb_last_bgsave_status'], "ok")
+            
+            # Wait a bit before next BGSAVE
+            time.sleep(2)
 
 class testStressFlow():
     def __init__(self):
@@ -159,7 +159,10 @@ class testStressFlow():
 
         # Stop BGSAVE thread
         stop_event.set()
-        bgsave_thread.join(timeout=5)
+        bgsave_thread.join(timeout=10)
+        if bgsave_thread.is_alive():
+            print("BGSAVE thread did not finish in time")
+            self.env.assertTrue(False)
         conn.close()
 
     def test02_write_only_workload(self):
