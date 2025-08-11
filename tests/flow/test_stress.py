@@ -48,34 +48,36 @@ def merge_nodes_and_edges(g, i):
 # measure how much time does it takes to perform BGSAVE
 # asserts if BGSAVE took too long
 def BGSAVE_loop(env, conn, stop_event):
-        while not stop_event.is_set():
+    while not stop_event.is_set():
+        results = conn.execute_command("INFO", "persistence")
+        cur_bgsave_time = prev_bgsave_time = results['rdb_last_save_time']
+
+        conn.execute_command("BGSAVE")
+        start = time.time()
+
+        while(cur_bgsave_time == prev_bgsave_time):
+            # assert and return if the timeout of 5 seconds took place
+            if(time.time() - start > 5):
+                env.assertTrue(False)
+                return
+
             results = conn.execute_command("INFO", "persistence")
-            cur_bgsave_time = prev_bgsave_time = results['rdb_last_save_time']
+            cur_bgsave_time = results['rdb_last_save_time']
+            if cur_bgsave_time == prev_bgsave_time:
+                time.sleep(1)
 
-            conn.execute_command("BGSAVE")
-            start = time.time()
-
-            while(cur_bgsave_time == prev_bgsave_time):
-                # assert and return if the timeout of 5 seconds took place
-                if(time.time() - start > 5):
-                    env.assertTrue(False)
-                    return
-
-                results = conn.execute_command("INFO", "persistence")
-                cur_bgsave_time = results['rdb_last_save_time']
-                if cur_bgsave_time == prev_bgsave_time:
-                    time.sleep(1)
-
-            prev_bgsave_time = cur_bgsave_time
-            env.assertEqual(results['rdb_last_bgsave_status'], "ok")
-            
-            # Wait a bit before next BGSAVE
-            time.sleep(2)
+        prev_bgsave_time = cur_bgsave_time
+        env.assertEqual(results['rdb_last_bgsave_status'], "ok")
+        
+        # Wait a bit before next BGSAVE
+        time.sleep(2)
+    conn.close()
 
 class testStressFlow():
     def __init__(self):
         self.env, _ = Env()
         self.graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.thread_local = threading.local()
 
     def setUp(self):
         self.graph.create_node_range_index("Node", "v")
@@ -84,12 +86,13 @@ class testStressFlow():
         self.graph.delete()
 
     def worker_task(self, task_func, *args):
-        thread_conn = self.env.getConnection()
-        thread_graph = Graph(thread_conn, GRAPH_ID)
-        try:
-            return task_func(thread_graph, *args)
-        finally:
-            thread_conn.close()
+        # Get or create a Graph instance for the current thread
+        if not hasattr(self.thread_local, 'graph'):
+            # Create connection and graph only once per thread
+            self.thread_local.conn = self.env.getConnection()
+            self.thread_local.graph = Graph(self.thread_local.conn, GRAPH_ID)
+
+        return task_func(self.thread_local.graph, *args)
 
     def test00_stress(self):
         n_tasks     = 10000 # number of tasks to run
@@ -128,10 +131,9 @@ class testStressFlow():
         stop_event = threading.Event()
         
         # Start BGSAVE thread
-        conn = self.env.getConnection()
         bgsave_thread = threading.Thread(
             target=BGSAVE_loop, 
-            args=(self.env, conn, stop_event),
+            args=(self.env, self.env.getConnection(), stop_event),
             daemon=True
         )
         bgsave_thread.start()
@@ -163,7 +165,6 @@ class testStressFlow():
         if bgsave_thread.is_alive():
             print("BGSAVE thread did not finish in time")
             self.env.assertTrue(False)
-        conn.close()
 
     def test02_write_only_workload(self):
         n_tasks           = 10000 # number of tasks to run

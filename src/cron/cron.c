@@ -104,15 +104,21 @@ static bool CRON_PeekDue(
 ) {
 	ASSERT(task != NULL);
 	ASSERT(due != NULL);
+
+	bool due_now = false;
+	struct timespec now;
+
 	pthread_mutex_lock(&cron->mutex);
 	*task = Heap_peek(cron->tasks);
-	struct timespec now;
+
 	if(*task){
 		clock_gettime(CLOCK_REALTIME, &now);
 		*due = (*task)->due;
+		due_now = cmp_timespec(now, *due) >= 0;
 	}
+
 	pthread_mutex_unlock(&cron->mutex);
-	return *task != NULL && cmp_timespec(now, *due) >= 0;
+	return due_now;
 }
 
 static bool CRON_RemoveTask
