@@ -248,12 +248,9 @@ GrB_Info get_sub_adjecency_matrix
 	// if no relationships are specified use the adjacency matrix
 	// otherwise use specified relation matrices
 	if(n_rels == 0) {
-		Delta_Matrix D = Graph_GetAdjacencyMatrix(g, false);
-		_combine_matricies_and_extract(&_A, &D, 1, _N);
-		if(symmetric) {
-			D = Graph_GetAdjacencyMatrix(g, true);
-			_combine_matricies_and_extract(&_A, &D, 1, _N);
-		}
+		Delta_Matrix D[2] = {Graph_GetAdjacencyMatrix(g, false), 
+			Graph_GetAdjacencyMatrix(g, true)};
+		_combine_matricies_and_extract(&_A, D, (symmetric)? 2 : 1, _N);
 	} else {
 		Delta_Matrix *rel_ms = rm_malloc(n_rels * sizeof(Delta_Matrix)) ;
 		for(int i = 0; i < n_rels; ++i) {
@@ -265,17 +262,10 @@ GrB_Info get_sub_adjecency_matrix
 		rm_free(rel_ms);
 	}
 
-	if(symmetric) {
-		if(_A_T) {
-			// make A symmetric A = A + At
-			GrB_OK(GrB_Matrix_eWiseAdd_Semiring(_A, NULL, NULL, GxB_ANY_PAIR_BOOL,
-					_A, _A_T, NULL));
-		} else {
-			// make A symmetric A = A + At
-			GrB_OK(GrB_Matrix_eWiseAdd_Semiring(_A, NULL, NULL, GxB_ANY_PAIR_BOOL,
-					_A, _A, GrB_DESC_T1));
-		}
-		
+	if(symmetric && n_rels > 0) {
+		// make A symmetric A = A + At
+		GrB_OK(GrB_Matrix_eWiseAdd_Semiring(_A, NULL, NULL, GxB_ANY_PAIR_BOOL,
+				_A, _A, GrB_DESC_T1));
 	}
 
 	// set outputs

@@ -235,9 +235,7 @@ ProcedureResult Proc_WCCInvoke
 	LAGraph_Graph G = NULL;
 
 	bool sym     = true;
-	bool compact = true;
 
-	// TODO: think of a better name
 	info = get_sub_adjecency_matrix(&A, &pdata->N, g, lbls, array_len(lbls), rels,
 			array_len(rels), sym);
 
@@ -264,7 +262,6 @@ ProcedureResult Proc_WCCInvoke
 	//--------------------------------------------------------------------------
 	// initialize iterator
 	//--------------------------------------------------------------------------
-
 	info = GxB_Iterator_new(&pdata->it);
 	ASSERT(info == GrB_SUCCESS);
 
@@ -299,24 +296,16 @@ SIValue *Proc_WCCStep
 	GrB_Index node_id;
 	uint64_t component_id;
 
-	while(pdata->info != GxB_EXHAUSTED) {
-		// get current node id and its associated component id
-		node_id = GxB_Vector_Iterator_getIndex(pdata->it);
-
-		if(Graph_GetNode(pdata->g, node_id, &pdata->node)) {
-			break;
-		}
-
-		// move to the next entry in the components vector
-		pdata->info = GxB_Vector_Iterator_next(pdata->it);
-		info = GxB_Vector_Iterator_next(pdata->cc_it);
-		ASSERT(info == pdata->info)
-	}
-
 	// depleted
 	if(pdata->info == GxB_EXHAUSTED) {
 		return NULL;
 	}
+
+	// get current node id and its associated component id
+	node_id = GxB_Vector_Iterator_getIndex(pdata->it);
+	bool node_exists = Graph_GetNode(pdata->g, node_id, &pdata->node);
+	ASSERT(node_exists);
+
 
 	if(pdata->comp_ty == GrB_INT32_CODE){
 		component_id = (uint64_t) GxB_Iterator_get_INT32(pdata->cc_it);
