@@ -27,10 +27,7 @@ class testBFS(FlowTestsBase):
 
     # Verify that the contents of two arrays are equal without respect to order.
     def compare_unsorted_arrays(self, a, b):
-        self.env.assertEquals(len(a), len(b))
-        for elem in a:
-            # Each element in a should appear in b exactly once.
-            self.env.assertEquals(b.count(elem), 1)
+        self.env.assertEquals(set(a), set(b))
 
     def test_invalid_invocation(self):
         invalid_queries = [
