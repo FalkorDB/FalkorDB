@@ -6,7 +6,6 @@ from queue import Queue, Empty
 
 graph    = None
 GRAPH_ID = "stress"  # graph identifier
-task_queue = Queue()
 
 def query_create(g, i):
     param = {'v': i}
@@ -48,17 +47,17 @@ def merge_nodes_and_edges(g, i):
 
 # measure how much time does it takes to perform BGSAVE
 # asserts if BGSAVE took too long
+# this function is run on a separate thread
 def BGSAVE_loop(env, conn, stop_event):
     while not stop_event.is_set():
-        results = conn.execute_command("INFO", "persistence")
-
         conn.bgsave()
         results = conn.execute_command("INFO", "persistence")
         in_progress = results['rdb_bgsave_in_progress']
+        max_iterations = 50
 
         # wait for BGSAVE to finish
-        # for 5 seconds max
-        for _ in range(50):
+        # for 6 seconds max
+        for _ in range(max_iterations):
             results = conn.execute_command("INFO", "persistence")
             in_progress = results['rdb_bgsave_in_progress']
             if not in_progress:
@@ -70,7 +69,9 @@ def BGSAVE_loop(env, conn, stop_event):
 
     conn.close()
 
-def worker(graph):
+def worker(conn, task_queue):
+    graph = Graph(conn, GRAPH_ID)
+
     while True:
         try:
             task = task_queue.get(timeout=1)
@@ -85,11 +86,12 @@ def worker(graph):
 
         task_queue.task_done()
 
+    conn.close()
+
 class testStressFlow():
     def __init__(self):
         self.env, _ = Env()
         self.graph = Graph(self.env.getConnection(), GRAPH_ID)
-        self.thread_local = threading.local()
 
     def setUp(self):
         self.graph.create_node_range_index("Node", "v")
@@ -97,10 +99,10 @@ class testStressFlow():
     def tearDown(self):
         self.graph.delete()
 
-    def start_workers(self, worker_count):
+    def start_workers(self, worker_count, task_queue):
         threads = []
         for _ in range(worker_count):
-            thread = threading.Thread(target=worker, args=(self.graph,))
+            thread = threading.Thread(target=worker, args=(self.env.getConnection(), task_queue))
             thread.start()
             threads.append(thread)
         return threads
@@ -108,15 +110,13 @@ class testStressFlow():
     def join_workers(self, threads):
         for thread in threads:
             thread.join()
-        task_queue.join()
 
     def test00_stress(self):
         n_tasks     = 10000 # number of tasks to run
         n_creations = 0.3   # create ratio
         n_deletions = 0.7   # delete ratio
         n_reads     = 0.735 # read ratio
-        
-        workers = self.start_workers(16)
+        task_queue  = Queue()
 
         # Queue up all tasks with correct format
         for i in range(n_tasks):
@@ -130,18 +130,19 @@ class testStressFlow():
             else:
                 task_queue.put((query_update, (i,)))
         
-        # Wait for all tasks to complete
-        self.join_workers(workers)
+        # start and wait for all tasks to complete
+        self.join_workers(self.start_workers(16, task_queue))
+        task_queue.join()
 
     def test01_bgsave_stress(self):
         n_tasks     = 10000 # number of tasks to run
         n_creations = 0.35  # create ratio
         n_deletions = 0.7   # delete ratio
         n_reads     = 0.735 # read ratio
+        task_queue  = Queue()
 
         # Create stop event for BGSAVE thread
         stop_event = threading.Event()
-        workers = self.start_workers(16)
 
         # Start BGSAVE thread
         bgsave_thread = threading.Thread(
@@ -162,27 +163,34 @@ class testStressFlow():
             else:
                 task_queue.put((update_nodes, ()))
 
-        self.join_workers(workers)
+        # start and wait for all tasks to complete
+        self.join_workers(self.start_workers(16, task_queue))
 
         # Stop BGSAVE thread
         stop_event.set()
         bgsave_thread.join(timeout=10)
         self.env.assertFalse(bgsave_thread.is_alive())
+        task_queue.join()
 
     def test02_write_only_workload(self):
         n_tasks           = 10000 # number of tasks to run
         n_creations       = 0.5
         n_node_deletions  = 0.75
         n_edge_deletions  = 1
+        task_queue        = Queue()
 
         for i in range(0, n_tasks):
             r = random.random()
             if r < n_creations:
-                task_queue.put((merge_nodes_and_edges, (i)))
+                task_queue.put((merge_nodes_and_edges, (i,)))
             elif r < n_node_deletions:
                 task_queue.put((delete_nodes, ()))
             else:
                 task_queue.put((delete_edges, ()))
+
+        # start and wait for all tasks to complete
+        self.join_workers(self.start_workers(16, task_queue))
+        task_queue.join()
 
         # make sure we did not crash
         conn = self.env.getConnection()

@@ -1,5 +1,5 @@
 from common import *
-from index_utils import *
+from index_utils import create_node_fulltext_index, create_node_range_index
 
 GRAPH_ID = "procedures"
 

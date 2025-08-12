@@ -432,12 +432,6 @@ class testGraphPersistency():
             self.env.skip()
             return
 
-        # issue BGSAVE just so we would have something in info persistence rdb_last_save_time
-        self.conn.bgsave()
-
-        # make sure at least one second pass between the first save to the next
-        time.sleep(1)
-
         # create 1000 graphs
         # each containing 1000 nodes and 500 edges
         graph_count = 1000
@@ -447,29 +441,26 @@ class testGraphPersistency():
             g = self.db.select_graph(GRAPH_ID + str(i))
             g.query(q)
 
-        # Measure the time it takes to encode 1000 graphs
-        # Get the last completed save time before issuing BGSAVE
-        before = self.conn.info("persistence").get("rdb_last_save_time")
-
         # Issue BGSAVE
         self.conn.bgsave()
-        save_finished = False
 
+        max_iterations = 100
         # Wait for BGSAVE to complete for a maximum of 10 seconds
-        for _ in range(100):
-            time.sleep(0.1)  # poll every 100ms
-            now = self.conn.info("persistence").get("rdb_last_save_time")
-            if now != before:
-                save_finished = True
+        for _ in range(max_iterations):
+            in_progress = self.conn.info("persistence").get("rdb_bgsave_in_progress")
+            if not in_progress:
                 break
+            time.sleep(0.1)  # poll every 100ms
 
-        self.env.assertTrue(save_finished)
+        self.env.assertFalse(in_progress)
 
         # Save & Load from RDB
         self.env.dumpAndReload()
 
         # Make sure reloaded DB contains all graphs
         graphs = self.db.list_graphs()
+
+        # check that graphs 0-1000 exist by removing the prefix and sorting
         graphs = [int(x.replace(GRAPH_ID, "")) for x in graphs if x.startswith(GRAPH_ID)]
         graphs.sort()
 
@@ -492,25 +483,16 @@ class testGraphPersistency():
                     self.env.log(f"Graph {i} expected {expected_count}, got {result}")
                     self.env.assertFalse(True)
 
-    # Verify that the DB will respond to PING which taking a snapshot
+    # Verify that the DB will respond to PING while taking a snapshot
     def test_ping_while_saving(self):
         if SANITIZER:
             # Sanitizers are not compatible with the crash handler
             self.env.skip()
             return
 
-        # issue BGSAVE just so we would have something in info persistence rdb_last_save_time
-        self.conn.bgsave()
-
-        # make sure at least one second pass between the first save to the next
-        time.sleep(1)
-
         # create a large graph
         g = self.db.select_graph(GRAPH_ID)
         g.query("UNWIND range(0, 200000) AS x CREATE (:A)-[:R]->(:B)")
-
-        # Get the last completed save time before issuing BGSAVE
-        before = self.conn.info("persistence").get("rdb_last_save_time")
 
         # Start pinging
         def ping_worker(conn, pings):
@@ -526,21 +508,20 @@ class testGraphPersistency():
 
         # Issue BGSAVE
         self.conn.bgsave()
-
-        save_finished = False
         start = time.time()
+        max_iterations = 100
+
         # Wait for BGSAVE to complete for a maximum of 10 seconds
-        for _ in range(100):
-            time.sleep(0.1)  # poll every 100ms
-            now = self.conn.info("persistence").get("rdb_last_save_time")
-            if now != before:
-                save_finished = True
+        for _ in range(max_iterations):
+            pending = self.conn.info("persistence").get("rdb_bgsave_in_progress")
+            if not pending:
                 break
+            time.sleep(0.1) # every 100ms
         
-        self.env.assertTrue(save_finished)
+        self.env.assertFalse(pending)
         end = time.time()
 
-        stop_event.set()  # Signal the thread to stop
+        stop_event.set()  # Signal the BGSave thread to stop
         thread.join()
 
         # Make sure PINGs were answered during the save period
@@ -581,15 +562,19 @@ class testGraphPersistency():
 
         # Issue BGSAVE
         self.conn.bgsave()
-
+        in_progress = self.conn.info("persistence").get("rdb_bgsave_in_progress")
+        max_iterations = 100
+        
         # Wait for BGSAVE to complete
-        while True:
+        for _ in range(max_iterations):
             # update peak memory consumption
             peak_memory_consumption = max(peak_memory_consumption, get_total_rss_memory(pid))
             time.sleep(0.005)  # poll every 5ms
-            now = self.conn.info("persistence").get("rdb_last_save_time")
-            if now != before:
+            in_progress = self.conn.info("persistence").get("rdb_bgsave_in_progress")
+            if not in_progress:
                 break
+
+        self.env.assertFalse(in_progress)
 
         # assert that peak memory did not cross 1.50 * base_memory_consumption
         self.env.assertLess(peak_memory_consumption, 1.50 * base_memory_consumption)

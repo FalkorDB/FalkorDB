@@ -19,7 +19,6 @@ def worker(thread_id, db):
             g.query(query)
         except Exception as e:
             print(f"[Worker-{thread_id}] Error on graph {graph_name}: {e}")
-            raise
 
         task_queue.task_done()
 

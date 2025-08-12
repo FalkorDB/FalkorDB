@@ -1,5 +1,5 @@
 from common import *
-from index_utils import *
+from index_utils import wait_for_indices_to_sync
 from constraint_utils import *
 import time
 
