@@ -342,8 +342,8 @@ static void _QueryCtx_ThreadSafeContextLock
 		// to alow Redis to reply to PING requests we should yield execution
 		// giving Redis the opportunity to process commands
 		// see RedisModule_Yield docs
-		RedisModule_Yield(ctx->global_exec_ctx.redis_ctx,
-				REDISMODULE_YIELD_FLAG_CLIENTS, NULL);
+		//RedisModule_Yield(ctx->global_exec_ctx.redis_ctx,
+		//		REDISMODULE_YIELD_FLAG_CLIENTS, NULL);
 	}
 }
 
