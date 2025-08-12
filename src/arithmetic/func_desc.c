@@ -8,6 +8,7 @@
 #include "../RG.h"
 #include "../util/rmalloc.h"
 #include "../util/strutil.h"
+#include "../udf/repository.h"
 #include "../../deps/rax/rax.h"
 #include "aggregate_funcs/agg_funcs.h"
 #include <ctype.h>
@@ -28,15 +29,15 @@ AR_FuncDesc *AR_FuncDescNew
 ) {
 	AR_FuncDesc *desc = rm_calloc(1, sizeof(AR_FuncDesc));
 
-	desc->name                    =  name;
-	desc->func                    =  func;
-	desc->types                   =  types;
-	desc->ret_type                =  ret_type;
-	desc->min_argc                =  min_argc;
-	desc->max_argc                =  max_argc;
-	desc->internal                =  internal;
-	desc->aggregate               =  false;
-	desc->reducible               =  reducible;
+	desc->name      = name;
+	desc->func      = func;
+	desc->types     = types;
+	desc->ret_type  = ret_type;
+	desc->min_argc  = min_argc;
+	desc->max_argc  = max_argc;
+	desc->internal  = internal;
+	desc->aggregate = false;
+	desc->reducible = reducible;
 
 	return desc;
 }
@@ -54,6 +55,14 @@ void AR_RegFunc
 	ASSERT(res == 1);
 }
 
+// mark function as a user defined function
+void AR_SetUDF
+(
+	AR_FuncDesc *func_desc  // function to mark as UDF
+) {
+	func_desc->udf = true ;
+}
+
 inline void AR_SetPrivateDataRoutines
 (
 	AR_FuncDesc *func_desc,
@@ -67,21 +76,36 @@ inline void AR_SetPrivateDataRoutines
 // get arithmetic function
 AR_FuncDesc *AR_GetFunc
 (
-	const char *func_name,
-	bool include_internal
+	const char *func_name,  // function to lookup
+	bool include_internal   // alow using internal functions
 ) {
-	size_t len = strlen(func_name);
-	char lower_func_name[len + 1];
-	str_tolower_ascii(func_name, lower_func_name, &len);
-	void *f = raxFind(__aeRegisteredFuncs, (unsigned char *)lower_func_name, len);
+	ASSERT (func_name != NULL) ;
 
-	if(f == raxNotFound) return NULL;
+	// normalize function name by lowercasing
+	size_t len = strlen (func_name) ;
+	char lower_func_name[len + 1] ;
+	str_tolower_ascii (func_name, lower_func_name, &len) ;
 
-	AR_FuncDesc *func = (AR_FuncDesc*)f;
+	// lookup function
+	void *f = raxFind (__aeRegisteredFuncs, (unsigned char *)lower_func_name,
+			len) ;
 
-	if(func->internal && !include_internal) return NULL;
+	if (f == raxNotFound) {
+		// native function wasn't found, search user defined functions
+		if (UDF_RepoContainsScript (func_name)) {
+			// invoke user define function via the generic UDF function
+			f = raxFind (__aeRegisteredFuncs, (unsigned char *)"udf", 3) ;
+			ASSERT (f != raxNotFound) ;
+		} else {
+			return NULL ;
+		}
+	}
 
-	return func;
+	AR_FuncDesc *func = (AR_FuncDesc*)f ;
+
+	if (func->internal && !include_internal) return NULL ;
+
+	return func ;
 }
 
 SIType AR_FuncDesc_RetType
@@ -102,7 +126,17 @@ bool AR_FuncExists
 	str_tolower_ascii(func_name, lower_func_name, &len);
 	void *f = raxFind(__aeRegisteredFuncs, (unsigned char *)lower_func_name, len);
 
-	if(f == raxNotFound) return false;
+	if (f == raxNotFound) {
+		// native function wasn't found
+		// search user defined functions
+		if (UDF_RepoContainsScript (func_name)) {
+			// invoke user define function via the generic UDF function
+			f = raxFind (__aeRegisteredFuncs, (unsigned char *)"udf", 3) ;
+			ASSERT (f != raxNotFound) ;
+		} else {
+			return false;
+		}
+	}
 
 	AR_FuncDesc *func = (AR_FuncDesc*)f;
 

@@ -189,7 +189,14 @@ AR_ExpNode *AR_EXP_NewOpNode
 	uint child_count
 ) {
 	// retrieve function
-	AR_FuncDesc *func = AR_GetFunc(func_name, include_internal);
+	AR_FuncDesc *func = AR_GetFunc (func_name, include_internal) ;
+
+	// increase child count by 1 in case of a user define function
+	// accommodating the function name as the first argument
+	if (func->udf) {
+		child_count++ ;
+	}
+
 	AR_ExpNode *node = _AR_EXP_NewOpNode(child_count);
 
 	if(!func->internal) _AR_EXP_ValidateArgsCount(func, child_count);

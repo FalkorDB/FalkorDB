@@ -16,6 +16,7 @@ void AR_RegisterFuncs() {
 
 	Register_AggFuncs();
 	Register_MapFuncs();
+	Register_UDFFuncs();
 	Register_PathFuncs();
 	Register_ListFuncs();
 	Register_TimeFuncs();

@@ -62,14 +62,17 @@ static AR_ExpNode *AR_EXP_NewOpNodeFromAST(AST_Operator op, uint child_count) {
 	return AR_EXP_NewOpNode(func_name, true, child_count);
 }
 
-static AR_ExpNode *_AR_EXP_FromApplyExpression(const cypher_astnode_t *expr) {
+static AR_ExpNode *_AR_EXP_FromApplyExpression
+(
+	const cypher_astnode_t *expr
+) {
 	AR_ExpNode *op;
 
-	bool                    distinct    =  cypher_ast_apply_operator_get_distinct(expr);
-	uint                    arg_count   =  cypher_ast_apply_operator_narguments(expr);
-	const cypher_astnode_t  *func_node  =  cypher_ast_apply_operator_get_func_name(expr);
-	const char              *func_name  =  cypher_ast_function_name_get_value(func_node);
-	bool                    aggregate   =  AR_FuncIsAggregate(func_name);
+	bool                   distinct   = cypher_ast_apply_operator_get_distinct(expr);
+	uint                   arg_count  = cypher_ast_apply_operator_narguments(expr);
+	const cypher_astnode_t *func_node = cypher_ast_apply_operator_get_func_name(expr);
+	const char             *func_name = cypher_ast_function_name_get_value(func_node);
+	bool                   aggregate  = AR_FuncIsAggregate(func_name);
 
 	op = AR_EXP_NewOpNode(func_name, false, arg_count);
 
@@ -85,10 +88,22 @@ static AR_ExpNode *_AR_EXP_FromApplyExpression(const cypher_astnode_t *expr) {
 		return AR_EXP_NewConstOperandNode(SI_NullVal());
 	}
 
+	// first argument to a udf function is the function's name
+	// e.g. 'greet'
+
+	unsigned int offset = 0 ;
+
+	if (unlikely (op->op.f->udf)) {
+		op->op.children[0] =
+			AR_EXP_NewConstOperandNode ( SI_ConstStringVal(func_name)) ;
+		offset++ ;
+	}
+
 	for(unsigned int i = 0; i < arg_count; i ++) {
-		const cypher_astnode_t *arg = cypher_ast_apply_operator_get_argument(expr, i);
-		// Recursively convert arguments
-		op->op.children[i] = _AR_EXP_FromASTNode(arg);
+		const cypher_astnode_t *arg =
+			cypher_ast_apply_operator_get_argument(expr, i);
+		// recursively convert arguments
+		op->op.children[i + offset] = _AR_EXP_FromASTNode(arg);
 	}
 
 	if(aggregate && distinct) {

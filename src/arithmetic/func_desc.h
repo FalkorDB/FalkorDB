@@ -51,6 +51,7 @@ typedef struct {
 	bool internal;         // is function internal
 	bool reducible;        // can be reduced using static evaluation
 	bool aggregate;        // true if the function is an aggregation
+	bool udf;              // user define function
 	const char *name;      // function name
 	AR_FuncCBs callbacks;  // aggregation callbacks
 } AR_FuncDesc;
@@ -58,20 +59,26 @@ typedef struct {
 // create a new function descriptor
 AR_FuncDesc *AR_FuncDescNew
 (
-	const char *name,     // function name
-	AR_Func func,         // pointer to function
-	uint min_argc,        // minimum number of arguments
-	uint max_argc,        // maximum number of arguments
-	SIType *types,        // acceptable types
-	SIType ret_type,      // return type
-	bool internal,        // is function internal
-	bool reducible        // is function reducible
+	const char *name,  // function name
+	AR_Func func,      // pointer to function
+	uint min_argc,     // minimum number of arguments
+	uint max_argc,     // maximum number of arguments
+	SIType *types,     // acceptable types
+	SIType ret_type,   // return type
+	bool internal,     // is function internal
+	bool reducible     // is function reducible
 );
 
 // register arithmetic function to repository
 void AR_RegFunc
 (
 	AR_FuncDesc *func
+);
+
+// mark function as a user defined function
+void AR_SetUDF
+(
+	AR_FuncDesc *func_desc  // function to mark as UDF
 );
 
 // set the function pointers for cloning and freeing a function's private data
@@ -82,11 +89,11 @@ void AR_SetPrivateDataRoutines
 	AR_Func_Clone clone
 );
 
-// retrieves an arithmetic function by its name
+// get arithmetic function
 AR_FuncDesc *AR_GetFunc
 (
-	const char *func_name,
-	bool include_internal
+	const char *func_name,  // function to lookup
+	bool include_internal   // alow using internal functions
 );
 
 // get function return type
