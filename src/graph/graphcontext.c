@@ -1070,7 +1070,7 @@ static void _GraphContext_Free
 
 	if(gc->pending_write_queue != NULL) {
 		ASSERT(CircularBuffer_Empty(gc->pending_write_queue));
-		CircularBuffer_Free(gc->pending_write_queue);
+		CircularBuffer_Free(gc->pending_write_queue, NULL);
 	}
 
 	GraphEncodeContext_Free(gc->encoding_context);

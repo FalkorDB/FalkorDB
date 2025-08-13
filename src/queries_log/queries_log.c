@@ -67,34 +67,33 @@ void QueriesLog_AddQuery
 	const char *query             // query string
 ) {
 	// add query stats to buffer
-	// acquire READ lock, multiple threads can be populating the circular buffer
-	// simultaneously (the circular-buffer is lock-free)
 
-	int res = pthread_rwlock_rdlock(&log->rwlock);
-	ASSERT(res == 0);
+	LoggedQuery q = {
+		.received            = received,
+		. wait_duration      = wait_duration,
+		. execution_duration = execution_duration,
+		. report_duration    = report_duration,
+		. parameterized      = parameterized,
+		. utilized_cache     = utilized_cache,
+		. write              = write,
+		. timeout            = timeout,
+		. query              = rm_strdup (query)
+	} ;
 
-	// get a slot within log's buffer
-	void *slot = CircularBuffer_Reserve(log->queries);
+	// try adding query to buffer
+	if (!CircularBuffer_Add (log->queries, &q)) {
+		// failed, buffer is probably full, remove an item and retry
+		LoggedQuery tmp ;
+		int res = CircularBuffer_Read (log->queries, &tmp) ;
+		ASSERT (res == 1) ;
 
-	// dump query to slot
-	LoggedQuery *q = (LoggedQuery*)(slot);
+		LoggedQuery_Free (&tmp) ;
 
-	if(q->query != NULL) {
-		rm_free(q->query);
+		// retry
+		if (!CircularBuffer_Add (log->queries, &q)) {
+			LoggedQuery_Free (&q) ;
+		}
 	}
-
-	q->received           = received;
-	q->wait_duration      = wait_duration;
-	q->execution_duration = execution_duration;
-	q->report_duration    = report_duration;
-	q->parameterized      = parameterized;
-	q->write              = write;
-	q->timeout            = timeout;
-	q->utilized_cache     = utilized_cache;
-	q->query              = rm_strdup(query);
-
-	res = pthread_rwlock_unlock(&log->rwlock);
-	ASSERT(res == 0);
 }
 
 // returns number of queries in log
@@ -106,7 +105,7 @@ uint64_t QueriesLog_GetQueriesCount
 	pthread_rwlock_rdlock(&log->rwlock);
 
 	// there's no harm in returning a lower count than actual
-	// inf favour of performance
+	// in favour of performance
 	uint64_t n = CircularBuffer_ItemCount(log->queries);
 
 	// release lock
@@ -142,28 +141,31 @@ CircularBuffer QueriesLog_ResetQueries
 	return prev;
 }
 
+// free a logged query
+void LoggedQuery_Free
+(
+	LoggedQuery *q
+) {
+	ASSERT (q != NULL) ;
+
+	rm_free (q->query) ;
+}
+
 // free the QueriesLog structure's content
 void QueriesLog_Free
 (
 	QueriesLog log  // queries log
 ) {
-	ASSERT(log != NULL);
+	ASSERT (log != NULL) ;
 
-	LoggedQuery *q = NULL;
-	CircularBuffer_ResetReader(log->queries);
+	CircularBuffer_Free (log->swap,
+			(CircularBuffer_ItemFreeCB) LoggedQuery_Free) ;
 
-	while((q = CircularBuffer_Read(log->queries, NULL)) != NULL) {
-		// clean up
-		if(q->query != NULL) {
-			rm_free(q->query);
-		}
-	}
+	CircularBuffer_Free (log->queries,
+			(CircularBuffer_ItemFreeCB) LoggedQuery_Free) ;
 
-	CircularBuffer_Free(log->swap);
-	CircularBuffer_Free(log->queries);
+	pthread_rwlock_destroy (&log->rwlock) ;
 
-	pthread_rwlock_destroy(&log->rwlock);
-
-	rm_free(log);
+	rm_free (log) ;
 }
 
