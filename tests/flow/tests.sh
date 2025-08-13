@@ -138,7 +138,7 @@ setup_rltest() {
 		fi
 	fi
 	
-	RLTEST_ARGS+=" --enable-debug-command --no-progress --test-timeout 600"
+	RLTEST_ARGS+=" --enable-debug-command --no-progress"
 
 	if [[ $RLTEST_VERBOSE == 1 ]]; then
 		RLTEST_ARGS+=" -v"
@@ -550,10 +550,12 @@ setup_rltest
 
 if [[ -n $SAN ]]; then
 	setup_clang_sanitizer
-fi
-
-if [[ $VG == 1 ]]; then
+	RLTEST_ARGS+=" --test-timeout 900"
+elif [[ $VG == 1 ]]; then
+	# no timeout for Valgrind tests
 	setup_valgrind
+else
+	RLTEST_ARGS+=" --test-timeout 180"
 fi
 
 if [[ $RLEC != 1 ]]; then
