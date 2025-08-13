@@ -96,23 +96,29 @@ static void CRON_WakeUp(void) {
 	pthread_mutex_unlock(&cron->condv_mutex);
 }
 
-// determines if task is due
-static bool CRON_TaskDue
-(
-	const CRON_TASK *t
+// peak at the next task and find out when it is due
+// returns true if there is a task due.
+static bool CRON_PeekDue(
+	CRON_TASK **task,
+	struct timespec *due
 ) {
-	ASSERT(t != NULL);
+	ASSERT(task != NULL);
+	ASSERT(due != NULL);
 
+	bool due_now = false;
 	struct timespec now;
-	clock_gettime(CLOCK_REALTIME, &now);
-	return cmp_timespec(now, t->due) >= 0;
-}
 
-static CRON_TASK *CRON_Peek() {
 	pthread_mutex_lock(&cron->mutex);
-	CRON_TASK *task = Heap_peek(cron->tasks);
+	*task = Heap_peek(cron->tasks);
+
+	if(*task){
+		clock_gettime(CLOCK_REALTIME, &now);
+		*due = (*task)->due;
+		due_now = cmp_timespec(now, *due) >= 0;
+	}
+
 	pthread_mutex_unlock(&cron->mutex);
-	return task;
+	return due_now;
 }
 
 static bool CRON_RemoveTask
@@ -191,7 +197,8 @@ static void *Cron_Run
 	while(cron->alive) {
 		// execute due tasks
 		CRON_TASK *task = NULL;
-		while((task = CRON_Peek()) && CRON_TaskDue(task)) {
+		struct timespec timeout;
+		while(CRON_PeekDue(&task, &timeout)) {
 			if(!CRON_RemoveCurrentTask(task)) {
 				// task is aborted
 				continue;
@@ -204,7 +211,7 @@ static void *Cron_Run
 		}
 
 		// sleep
-		struct timespec timeout = (task) ? task->due : due_in_ms(1000);
+		timeout = (task) ? timeout : due_in_ms(1000);
 		pthread_mutex_lock(&cron->condv_mutex);
 		int res = pthread_cond_timedwait(&cron->condv, &cron->condv_mutex, &timeout);
 		ASSERT(res == 0 || res == ETIMEDOUT);
