@@ -35,6 +35,7 @@ bool Delta_Matrix_isDirty
 	if(C->dirty) {
 		return true;
 	}
+
 	int pending_M;
 	int pending_DP;
 	int pending_DM;
@@ -154,7 +155,6 @@ GrB_Info Delta_Matrix_clear
 	ASSERT(A !=  NULL);
 
 	GrB_Matrix m    = DELTA_MATRIX_M(A);
-	GrB_Info   info = GrB_SUCCESS;
 	GrB_Matrix dp   = DELTA_MATRIX_DELTA_PLUS(A);
 	GrB_Matrix dm   = DELTA_MATRIX_DELTA_MINUS(A);
 
@@ -163,13 +163,11 @@ GrB_Info Delta_Matrix_clear
 	GrB_OK(GrB_Matrix_clear(dm));
 
 	A->dirty = false;
-	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(A))
-	{
-		info = Delta_Matrix_clear(A->transposed);
-		ASSERT(info == GrB_SUCCESS);
+	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(A)) {
+		GrB_OK(Delta_Matrix_clear(A->transposed));
 	}
 
-	return info;
+	return GrB_SUCCESS;
 }
 
 GrB_Info Delta_Matrix_type
@@ -236,13 +234,12 @@ GrB_Info Delta_Matrix_setM
 
 	DELTA_MATRIX_M(C) = *M;
 
-	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C))
-	{
-		Delta_Matrix CT = C->transposed;
-		ASSERT(Delta_Matrix_Synced(CT));
-		GrB_OK(GrB_Matrix_apply(
-			DELTA_MATRIX_M(CT), NULL, NULL, GxB_ONE_BOOL, *M, GrB_DESC_T0));
-	}
+	// if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
+	// 	Delta_Matrix CT = C->transposed;
+	// 	ASSERT(Delta_Matrix_Synced(CT));
+	// 	GrB_OK(GrB_Matrix_apply(
+	// 		DELTA_MATRIX_M(CT), NULL, NULL, GxB_ONE_BOOL, *M, GrB_DESC_T0));
+	// }
 
 	*M = NULL;
 	return GrB_SUCCESS;
@@ -266,6 +263,7 @@ GrB_Info Delta_Matrix_setMatrices
 
 	GrB_Index nvals = 0;
 
+	// Verify that C is empty
 	ASSERT(Delta_Matrix_Synced(C));
 	Delta_Matrix_nvals(&nvals, C);
 	ASSERT(nvals == 0);
@@ -274,7 +272,7 @@ GrB_Info Delta_Matrix_setMatrices
 	GrB_OK(GrB_free(&DELTA_MATRIX_DELTA_PLUS(C)));
 	GrB_OK(GrB_free(&DELTA_MATRIX_DELTA_MINUS(C)));
 
-	DELTA_MATRIX_M(C) = M;
+	DELTA_MATRIX_M(C)           = M;
 	DELTA_MATRIX_DELTA_PLUS(C)  = DP;
 	DELTA_MATRIX_DELTA_MINUS(C) = DM;
 

@@ -15,9 +15,11 @@ GrB_Info Delta_cache_transpose
     GrB_OK(Delta_Matrix_type(&type, A));
 
     ASSERT(A != NULL);
-    // TODO: maybe this should error if the transpose already exists?
     if(A->transposed != NULL){
-        Delta_Matrix_clear(A->transposed);
+        GrB_Index nvals = 0;
+        ASSERT(Delta_Matrix_Synced(A->transposed));
+        Delta_Matrix_nvals(&nvals, A->transposed);
+        ASSERT(nvals == 0);
     } else {
         Delta_Matrix_new(&A->transposed, GrB_BOOL, nrows, ncols, false);
     }

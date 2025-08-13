@@ -22,6 +22,7 @@ GrB_Info Delta_Matrix_extractElement_BOOL
 	GrB_Matrix  dp =  DELTA_MATRIX_DELTA_PLUS(A);
 	GrB_Matrix  dm =  DELTA_MATRIX_DELTA_MINUS(A);
 	bool        _x =  false;
+
 	// if 'delta-plus' exists return dp[i,j]
 	info = GrB_Matrix_extractElement(&_x, dp, i, j);
 	if(info == GrB_SUCCESS) {

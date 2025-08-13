@@ -23,7 +23,6 @@ Delta_Matrix _Eval_Mul
 	const AlgebraicExpression *exp,
 	Delta_Matrix res
 ) {
-	// GrB_set (GrB_GLOBAL, GxB_JIT_ON, GxB_JIT_C_CONTROL) ;
 	GrB_BinaryOp not_zombie = NULL;
 	GrB_Semiring any_alive  = NULL;
 	GxB_BinaryOp_new(
@@ -66,6 +65,7 @@ Delta_Matrix _Eval_Mul
 			A = Delta_Matrix_M(M) ;
 			continue ;
 		}
+
 		Delta_Matrix_type(&ty, M);
 		semiring = (ty == GrB_BOOL)? GrB_LOR_LAND_SEMIRING_BOOL: any_alive;
 		info = Delta_mxm_identity(res_m, semiring, A, M);
@@ -91,6 +91,7 @@ Delta_Matrix _Eval_Mul
 		info = GrB_transpose(res_m, NULL, NULL, A, GrB_DESC_T0) ;
 		ASSERT(info == GrB_SUCCESS) ;
 	}
+
 	if(res_modified)
 	{
 		GrB_Matrix res_dm = DELTA_MATRIX_DELTA_MINUS(res);
@@ -103,7 +104,6 @@ Delta_Matrix _Eval_Mul
 
 	GrB_free(&not_zombie);
 	GrB_free(&any_alive);
-	// GrB_set (GrB_GLOBAL, GxB_JIT_LOAD, GxB_JIT_C_CONTROL) ;
 
 	return res ;
 }

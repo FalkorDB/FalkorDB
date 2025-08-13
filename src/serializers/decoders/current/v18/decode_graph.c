@@ -6,38 +6,6 @@
 #include "decode_v18.h"
 #include "../../../../index/indexer.h"
 
-// TODO: have the delta matrix upon setting M, incase the matrix
-// contains a transpose, we should overwrite it with MT
-// compute transpose matrices
-static void _ComputeTransposeMatrix
-(
-	const Delta_Matrix A
-) {
-	ASSERT(A != NULL);
-
-	GrB_Info info;
-	GrB_Index nvals;
-
-	// make sure A is full synced
-	ASSERT(Delta_Matrix_Synced(A));
-
-	// compute transpose
-	Delta_Matrix AT  = Delta_Matrix_getTranspose(A);
-	GrB_Matrix   AM  = DELTA_MATRIX_M(A);
-	GrB_Matrix   ATM = DELTA_MATRIX_M(AT);
-
-	// make sure transpose doesn't contains any entries
-	info = GrB_Matrix_nvals(&nvals, ATM);
-	ASSERT(info  == GrB_SUCCESS);
-	ASSERT(nvals == 0);
-
-	info = GrB_transpose(ATM, NULL, NULL, AM, NULL);
-	ASSERT(info  == GrB_SUCCESS);
-
-	info = GrB_wait (ATM, GrB_MATERIALIZE) ;
-	ASSERT(info  == GrB_SUCCESS);
-}
-
 static void _ComputeTransposeMatrices
 (
 	Graph *g  // graph
@@ -50,12 +18,12 @@ static void _ComputeTransposeMatrices
 	// compute transpose for each relation matrix
 	for(RelationID r = 0; r < n; r++) {
 		Delta_Matrix R = Graph_GetRelationMatrix(g, r, false);
-		_ComputeTransposeMatrix(R);
+		Delta_cache_transpose(R);
 	}
 
 	// compute transpose for the adjacency matrix
 	Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
-	_ComputeTransposeMatrix(ADJ);
+	Delta_cache_transpose(ADJ);
 }
 
 static GraphContext *_GetOrCreateGraphContext

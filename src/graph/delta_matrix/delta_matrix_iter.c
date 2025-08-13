@@ -62,11 +62,7 @@ static inline void _init_iter
 
 	*depleted = true ; // default
 
-	GrB_Info info ;
-	UNUSED(info) ;
-
-	info = GxB_rowIterator_attach(it, m, NULL) ;
-	ASSERT(info == GrB_SUCCESS) ;
+	GrB_OK(GxB_rowIterator_attach(it, m, NULL)) ;
 	_set_iter_range(it, min_row, max_row, depleted) ;
 }
 

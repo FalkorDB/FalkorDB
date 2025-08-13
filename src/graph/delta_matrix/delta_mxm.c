@@ -132,7 +132,6 @@ GrB_Info Delta_mxm_identity
 	GrB_Matrix _B      = DELTA_MATRIX_M(B);
 	GrB_Matrix dp      = DELTA_MATRIX_DELTA_PLUS(B);
 	GrB_Matrix dm      = DELTA_MATRIX_DELTA_MINUS(B);
-	GrB_Matrix B_minus = NULL;  // _B - dm
 	GrB_Matrix accum   = NULL; 
 	GrB_Type   t       = NULL;
 
@@ -167,7 +166,6 @@ GrB_Info Delta_mxm_identity
 	// uncomment to remove zombies
 	// GrB_Matrix_select_BOOL(C, NULL, NULL, GrB_VALUEEQ_BOOL, C, true, NULL);
 
-	if(B_minus) GrB_free(&B_minus);
 	if(accum) GrB_free(&accum);
 
 	return GrB_SUCCESS;

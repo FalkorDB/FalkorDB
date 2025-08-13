@@ -9,49 +9,6 @@
 #include "delta_matrix.h"
 #include "../../util/rmalloc.h"
 
-// preforms C <A>= A. Assuming A is a submatrix of C, this should be done in  
-// place. TODO does assign do this inplace?
-void _assign_inplace
-(
-	GrB_Matrix C,
-	const GrB_Matrix A
-) {
-	GrB_Index nrows;
-	GrB_Index ncols;
-	GrB_Index r;
-	GrB_Index c;
-	GrB_Type  ty;
-	uint64_t v_int;
-	bool     v_bool;
-
-	GrB_Matrix_nrows(&nrows, A);
-	GrB_Matrix_ncols(&ncols, A);
-	GxB_Matrix_type (&ty, A);
-	ASSERT(ty == GrB_UINT64 || ty == GrB_BOOL);
-	
-	struct GB_Iterator_opaque _i;
-	GxB_Iterator i = &_i;
-	GrB_OK(GxB_Matrix_Iterator_attach(i, A, NULL));
-	
-	GrB_Info it_info = GxB_Matrix_Iterator_seek(i, 0); 
-	if(ty == GrB_UINT64){
-		while(it_info == GrB_SUCCESS) {
-			GxB_Matrix_Iterator_getIndex(i, &r, &c);
-			v_int = GxB_Iterator_get_UINT64(i);			
-			GrB_OK(GrB_Matrix_setElement_UINT64(C, v_int, r, c));
-			it_info = GxB_Matrix_Iterator_next(i);
-		}
-	} else {	
-		while(it_info == GrB_SUCCESS) {
-			GxB_Matrix_Iterator_getIndex(i, &r, &c);
-			v_int = GxB_Iterator_get_BOOL(i);			
-			GrB_OK(GrB_Matrix_setElement_BOOL(C, v_int, r, c));
-			it_info = GxB_Matrix_Iterator_next(i);
-		}
-	}
-	ASSERT(it_info == GxB_EXHAUSTED);
-}
-
 // zombies should be the monoid's identity value.
 // C = A + B
 // This is calculated by:
@@ -93,8 +50,6 @@ GrB_Info Delta_eWiseAdd
 	GrB_Matrix M_times_DP = NULL;
 
 	// Set DM_union and M_times_DP union to be hypersparse like DP and DM
-	
-	GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
 
 	GrB_Matrix_nvals(&adp_vals, ADP);
 	GrB_Matrix_nvals(&adm_vals, ADM);
@@ -166,14 +121,16 @@ GrB_Info Delta_eWiseAdd
 	if(handle_addition && op != GrB_ONEB_BOOL && op != GxB_ANY_BOOL && 
 		op != GrB_ONEB_UINT64 && op != GxB_ANY_UINT64)
 	{
-		// cannot use an accumulator since op might be an indexBinaryOp
-		GrB_OK(GrB_Matrix_new(&M_times_DP, c_ty, nrows, ncols));
-		GrB_OK(GxB_set(M_times_DP, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE));
-		GrB_OK(GrB_Matrix_eWiseMult_BinaryOp(M_times_DP, NULL, NULL, op, CM, 
+		GrB_OK (GrB_Matrix_new(&M_times_DP, c_ty, nrows, ncols));
+
+		// Set M_times_DP to hypersparse since it is a submatrix of DP
+		// so it shouldn't be CSR until we sync it.
+		GrB_OK (GxB_set(M_times_DP, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE));
+		GrB_OK (GrB_Matrix_eWiseMult_BinaryOp(M_times_DP, NULL, NULL, op, CM, 
 			CDP, NULL));
 
-		// TODO: This might be faster in the future if we can assign in place.
-		GrB_OK(GrB_Matrix_assign(CM, M_times_DP, NULL, M_times_DP, GrB_ALL, 
+		// cannot use an accumulator since op might be an indexBinaryOp
+		GrB_OK (GrB_Matrix_assign(CM, M_times_DP, NULL, M_times_DP, GrB_ALL, 
 			nrows, GrB_ALL, ncols, GrB_DESC_S));
 	}        
 
@@ -181,13 +138,12 @@ GrB_Info Delta_eWiseAdd
 	// CDP <!CM> = ADP + BDP ---- remove intersection with M
 	//------ --------------------------------------------------------------------
 	if(handle_addition){
-		GrB_OK  (GrB_transpose(CDP, CM, NULL, CDP, GrB_DESC_RSCT0));
+		GrB_OK (GrB_transpose(CDP, CM, NULL, CDP, GrB_DESC_RSCT0));
 	}        
 
 	Delta_Matrix_wait(C, false);
 	GrB_free(&DM_union);
 	GrB_free(&M_times_DP);
-	GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
 	return GrB_SUCCESS;
 }
 
@@ -240,7 +196,6 @@ GrB_Info Delta_eWiseUnion
 	GrB_Matrix_nvals(&bdm_vals, BDM);
 	info = Delta_Matrix_type (&C_ty, C);
 	ASSERT(info == GrB_SUCCESS);
-	GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
 
 	bool handle_deletion = adm_vals || bdm_vals;
 	bool handle_addition = adp_vals || bdp_vals;
@@ -258,39 +213,36 @@ GrB_Info Delta_eWiseUnion
     // DM_union = (ADM - BM) ∪ (BDM - AM) 
 	//--------------------------------------------------------------------------
 	if(handle_deletion) {
-		GrB_Matrix_new(&DM_union, GrB_BOOL, nrows, ncols);
-
-		info = GrB_transpose(DM_union, BM, NULL, ADM, GrB_DESC_SCT0);
-		ASSERT(info == GrB_SUCCESS);
-
-		info = GrB_transpose(DM_union, AM, GrB_ONEB_BOOL, BDM, GrB_DESC_SCT0);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(GrB_Matrix_new(&DM_union, GrB_BOOL, nrows, ncols));
+		GrB_OK(GrB_transpose(DM_union, BM, NULL, ADM, GrB_DESC_SCT0));
+		GrB_OK(GrB_transpose(DM_union, AM, GrB_ONEB_BOOL, BDM, GrB_DESC_SCT0));
 	}
 
 	//--------------------------------------------------------------------------
 	// M_times_DP =  AM * BDP U BM * ADP 
 	//--------------------------------------------------------------------------
 	if(handle_addition && op != GrB_ONEB_BOOL) {
-		GrB_Matrix_new(&M_times_DP, C_ty, nrows, ncols);
+		GrB_OK(GrB_Matrix_new(&M_times_DP, C_ty, nrows, ncols));
 
-		info = GrB_Matrix_eWiseMult_BinaryOp(
-			M_times_DP, NULL, NULL, op, AM, BDP, NULL);
-		ASSERT(info == GrB_SUCCESS);
+		// Set M_times_DP to hypersparse since it is a submatrix of DP
+		// so it shouldn't be CSR until we sync it.
+		GrB_Matrix_set_INT32(M_times_DP, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL);
+
+		GrB_OK(GrB_Matrix_eWiseMult_BinaryOp(
+			M_times_DP, NULL, NULL, op, AM, BDP, NULL));
 			
 		// The accum op is not used 
 		// (since there should be no intersection between AM and BM)
 		// However it is needed so that previous entries are not deleted. 
-		info = GrB_Matrix_eWiseMult_BinaryOp(
-			M_times_DP, NULL, GrB_ONEB_UINT64, op, BM, ADP, NULL);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(GrB_Matrix_eWiseMult_BinaryOp(
+			M_times_DP, NULL, GrB_ONEB_UINT64, op, BM, ADP, NULL));
 	}
 
 	//--------------------------------------------------------------------------
 	// M: CM = AM + BM ----- The bulk of the work.
 	//--------------------------------------------------------------------------
-	info = GxB_Matrix_eWiseUnion(
-		CM, NULL, NULL, op, AM, alpha, BM, beta, NULL);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GxB_Matrix_eWiseUnion(
+		CM, NULL, NULL, op, AM, alpha, BM, beta, NULL));
 
 	// don't use again, could have been overwritten.
 	AM = BM = NULL;
@@ -298,9 +250,8 @@ GrB_Info Delta_eWiseUnion
 	//--------------------------------------------------------------------------
 	// CDP = ADP + BDP ---- Must later remove intersection with M
 	//--------------------------------------------------------------------------
-	info = GxB_Matrix_eWiseUnion(
-		CDP, NULL, NULL, op, ADP, alpha, BDP, beta, NULL);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK(GxB_Matrix_eWiseUnion(
+		CDP, NULL, NULL, op, ADP, alpha, BDP, beta, NULL));
 
 	// don't use again, could have been overwritten.
 	ADP = BDP = NULL;
@@ -309,104 +260,36 @@ GrB_Info Delta_eWiseUnion
     // CDM <!CDP>= (ADM - BM) ∪ (BDM - AM) ∪ (ADM ∩ BDM)
 	//--------------------------------------------------------------------------
 	if(handle_deletion) {
-		info = GrB_Matrix_eWiseMult_BinaryOp(
-			CDM, NULL, NULL, GrB_ONEB_BOOL, ADM, BDM, NULL);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(GrB_Matrix_eWiseMult_BinaryOp(
+			CDM, NULL, NULL, GrB_ONEB_BOOL, ADM, BDM, NULL));
 	}
 
 	// don't use again, could have been overwritten.
 	ADM = BDM = NULL;
 
 	if(handle_addition && handle_deletion) {
-		info = GrB_transpose(
-			CDM, CDP, GrB_ONEB_BOOL, DM_union, GrB_DESC_SCT0);
-		ASSERT(info == GrB_SUCCESS); 
+		GrB_OK(GrB_transpose(
+			CDM, CDP, GrB_ONEB_BOOL, DM_union, GrB_DESC_SCT0));
 	}
 
 	//--------------------------------------------------------------------------
 	// CM <CM>= M_times_DP 
 	//--------------------------------------------------------------------------
 	if(M_times_DP) {
-		// TODO: which one of these is faster?
 		GrB_OK(GrB_Matrix_assign(CM, M_times_DP, NULL, M_times_DP, GrB_ALL, 
 			nrows, GrB_ALL, ncols, GrB_DESC_S));
-		// _assign_inplace(CM, M_times_DP);
 	}
 
 	//--------------------------------------------------------------------------
 	// CDP<!CM> = ADP + BDP ---- remove intersection with M
 	//--------------------------------------------------------------------------
 	if(handle_addition) {
-		info = GrB_transpose(
-			CDP, CM, NULL, CDP, GrB_DESC_RSCT0);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(GrB_transpose(
+			CDP, CM, NULL, CDP, GrB_DESC_RSCT0));
 	}
 
 	Delta_Matrix_wait(C, false);
 	GrB_free(&DM_union);
 	GrB_free(&M_times_DP);
-	GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
-	return info;
-}
-
-// FIXME: remove. used for benchmarking.
-GrB_Info Delta_eWiseAdd_OLD                // C = A + B
-(
-    Delta_Matrix C,                    // input/output matrix for results
-    const GrB_Semiring semiring,    // defines '+' for T=A+B
-    const Delta_Matrix A,              // first input:  matrix A
-    const Delta_Matrix B               // second input: matrix B
-) {
-	ASSERT(A != NULL);
-	ASSERT(B != NULL);
-	ASSERT(C != NULL);
-	ASSERT(semiring != NULL);
-
-	GrB_Info        info;
-	GrB_Index       nrows;
-	GrB_Index       ncols;
-	GrB_Index       DM_nvals;
-	GrB_Index       DP_nvals;
-
-	GrB_Matrix      _A    =  NULL;
-	GrB_Matrix      _B    =  NULL;
-	GrB_Matrix      _C    =  DELTA_MATRIX_M(C);
-	GrB_Matrix      AM    =  DELTA_MATRIX_M(A);
-	GrB_Matrix      BM    =  DELTA_MATRIX_M(B);
-	GrB_Matrix      ADP   =  DELTA_MATRIX_DELTA_PLUS(A);
-	GrB_Matrix      ADM   =  DELTA_MATRIX_DELTA_MINUS(A);
-	GrB_Matrix      BDP   =  DELTA_MATRIX_DELTA_PLUS(B);
-	GrB_Matrix      BDM   =  DELTA_MATRIX_DELTA_MINUS(B);
-
-	// TODO: check A, B and C are compatible
-
-	GrB_Matrix_nvals(&DM_nvals, ADM);
-	GrB_Matrix_nvals(&DP_nvals, ADP);
-	if(DM_nvals > 0 || DP_nvals > 0) {
-		info = Delta_Matrix_export(&_A, A);
-		ASSERT(info == GrB_SUCCESS);
-	} else {
-		_A = AM;
-	}
-
-	GrB_Matrix_nvals(&DM_nvals, BDM);
-	GrB_Matrix_nvals(&DP_nvals, BDP);
-	if(DM_nvals > 0 || DP_nvals > 0) {
-		info = Delta_Matrix_export(&_B, B);
-		ASSERT(info == GrB_SUCCESS);
-	} else {
-		_B = BM;
-	}
-
-	//--------------------------------------------------------------------------
-	// C = A + B
-	//--------------------------------------------------------------------------
-
-	info = GrB_Matrix_eWiseAdd_Semiring(_C, NULL, NULL, semiring, _A, _B, NULL);
-	ASSERT(info == GrB_SUCCESS);
-
-	if(_A != AM) GrB_free(&_A);
-	if(_B != BM) GrB_free(&_B);
-
-	return info;
+	return GrB_SUCCESS;
 }
