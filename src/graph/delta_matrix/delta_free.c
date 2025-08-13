@@ -26,9 +26,9 @@ void Delta_Matrix_free
 		Delta_Matrix_free(&M->transposed);
 	} 
 
-	GrB_OK(GrB_Matrix_free(&M->matrix));
-	GrB_OK(GrB_Matrix_free(&M->delta_plus));
-	GrB_OK(GrB_Matrix_free(&M->delta_minus));
+	GrB_OK (GrB_Matrix_free(&M->matrix));
+	GrB_OK (GrB_Matrix_free(&M->delta_plus));
+	GrB_OK (GrB_Matrix_free(&M->delta_minus));
 
 	pthread_mutex_destroy(&M->mutex);
 

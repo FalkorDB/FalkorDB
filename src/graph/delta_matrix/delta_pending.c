@@ -15,7 +15,7 @@ GrB_Info Delta_Matrix_pending
 	ASSERT(C       != NULL);
 	ASSERT(pending != NULL);
 
-	int         p       =  false;
+	int32_t     p       =  false;
 	bool        res     =  false;
 	GrB_Matrix  M       =  DELTA_MATRIX_M(C);
 	GrB_Matrix  DP      =  DELTA_MATRIX_DELTA_PLUS(C);

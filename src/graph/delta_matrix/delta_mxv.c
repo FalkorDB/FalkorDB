@@ -18,13 +18,13 @@ GrB_Info Delta_mxv
     GrB_Semiring_get_VOID(semiring, &monOP, GxB_MONOID_OPERATOR);
 
     ASSERT(c != u); //TODO: allocate _c (temp vector) to handle
-    ASSERT(accum == NULL || accum == monOP); //TODO: allocate _c (temp vector) to handle
+    ASSERT(accum == NULL || accum == monOP); //TODO: allocate _c to handle
 
-    GrB_OK(GrB_mxv(
-        c, mask, accum, semiring, DELTA_MATRIX_M(A), u, desc)) ; 
+    GrB_OK(GrB_mxv( c, mask, accum, semiring, DELTA_MATRIX_M(A), u, desc)) ; 
 
     GrB_OK(GrB_mxv(
         c, mask, monOP, semiring, DELTA_MATRIX_DELTA_PLUS(A), u, desc)) ;
+    
     return GrB_SUCCESS;
 }
 
@@ -54,12 +54,9 @@ GrB_Info Delta_mxv_count
     GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(A);
     GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(A);
 
-    GrB_OK(GrB_mxv(
-        c, mask, accum, semiring, m, u, desc)) ; 
-    GrB_OK(GrB_mxv(
-        c, mask, GrB_PLUS_UINT64, semiring, dp, u, desc)) ;
-    GrB_OK(GrB_mxv(
-        c, mask, GrB_MINUS_UINT64, semiring, dm, u, desc)) ;
+    GrB_OK (GrB_mxv(c, mask, accum, semiring, m, u, desc)) ; 
+    GrB_OK (GrB_mxv(c, mask, GrB_PLUS_UINT64, semiring, dp, u, desc)) ;
+    GrB_OK (GrB_mxv(c, mask, GrB_MINUS_UINT64, semiring, dm, u, desc)) ;
 
     return GrB_SUCCESS;
 }

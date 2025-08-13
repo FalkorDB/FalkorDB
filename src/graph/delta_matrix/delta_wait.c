@@ -32,18 +32,15 @@ static void Delta_Matrix_sync_deletions
 	GrB_Matrix m  = DELTA_MATRIX_M(C);
 	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(C);
 
-	GrB_Info info;
 	GrB_Index nvals;
-	info = GrB_Matrix_nvals(&nvals, dm);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_Matrix_nvals(&nvals, dm));
+
 	if(nvals > 0) { //shortcut if no vals
-		info = GrB_transpose(m, dm, NULL, m, GrB_DESC_RSCT0);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_transpose(m, dm, NULL, m, GrB_DESC_RSCT0));
 	}
 
 	// clear delta minus
-	info = GrB_Matrix_clear(dm);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_Matrix_clear(dm));
 }
 
 static void Delta_Matrix_sync_additions
@@ -55,21 +52,16 @@ static void Delta_Matrix_sync_additions
 	GrB_Matrix m  = DELTA_MATRIX_M(C);
 	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(C);
 
-	GrB_Info info;
 	GrB_Index nvals;
+	GrB_OK (GrB_Matrix_nvals(&nvals, dp));
 
-
-	info = GrB_Matrix_nvals(&nvals, dp);
-	ASSERT(info == GrB_SUCCESS);
 	if(nvals > 0) { //shortcut if no vals
-		info = GrB_Matrix_assign(m, dp, NULL, dp, GrB_ALL, 0, GrB_ALL, 0,
-			GrB_DESC_S);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_Matrix_assign(m, dp, NULL, dp, GrB_ALL, 0, GrB_ALL, 0,
+			GrB_DESC_S));
 	}
 
 	// clear delta plus
-	info = GrB_Matrix_clear(dp);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_Matrix_clear(dp));
 }
 
 static void Delta_Matrix_sync
@@ -116,14 +108,9 @@ static void Delta_Matrix_sync
 	}
 
 	// wait on all 3 matrices
-	GrB_Info info = GrB_wait(m, GrB_MATERIALIZE);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_wait(dm, GrB_MATERIALIZE);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_wait(dp, GrB_MATERIALIZE);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_wait(m, GrB_MATERIALIZE));
+	GrB_OK (GrB_wait(dm, GrB_MATERIALIZE));
+	GrB_OK (GrB_wait(dp, GrB_MATERIALIZE));
 }
 
 GrB_Info Delta_Matrix_wait
@@ -159,27 +146,25 @@ void Delta_Matrix_synchronize
 	ASSERT(A != NULL);
 	uint64_t A_nrows = 0;
 	uint64_t A_ncols = 0;
-	GrB_Info info = Delta_Matrix_nrows(&A_nrows, A);
-	ASSERT(info == GrB_SUCCESS);
-	info = Delta_Matrix_ncols(&A_ncols, A);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (Delta_Matrix_nrows(&A_nrows, A));
+	GrB_OK (Delta_Matrix_ncols(&A_ncols, A));
 	
 	if (!(A_nrows < nrows || A_ncols < ncols || A->dirty)) {
 		return;
 	}
+
 	Delta_Matrix_lock(A);
-	info = Delta_Matrix_nrows(&A_nrows, A);
-	ASSERT(info == GrB_SUCCESS);
-	info = Delta_Matrix_ncols(&A_ncols, A);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (Delta_Matrix_nrows(&A_nrows, A));
+	GrB_OK (Delta_Matrix_ncols(&A_ncols, A));
+
 	if(A_nrows < nrows || A_ncols < ncols) {
-		info = Delta_Matrix_resize(A, nrows, ncols);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (Delta_Matrix_resize(A, nrows, ncols));
 	}
+
 	if(A->dirty) {
-		info = Delta_Matrix_wait(A, false);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (Delta_Matrix_wait(A, false));
 	}
+
 	Delta_Matrix_unlock(A);
 	
 	// enable for rigourous testing (expensive, DEBUG only)

@@ -52,22 +52,22 @@ GrB_Info Delta_Matrix_setElement_UINT64
 	//--------------------------------------------------------------------------
 
 	info = GrB_Matrix_extractElement(&v, dm, i, j);	
+	GrB_OK(info);
 	mark_for_deletion = (info == GrB_SUCCESS);
 
 	if(mark_for_deletion) { // m contains single edge, simple replace
 		// clear dm[i,j]
-		info = GrB_Matrix_removeElement(dm, i, j);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_Matrix_removeElement(dm, i, j));
 
 		// overwrite m[i,j]
-		info = GrB_Matrix_setElement(m, x, i, j);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_Matrix_setElement(m, x, i, j));
 	} else {
 		// entry isn't marked for deletion
 		// see if entry already exists in 'm'
 		// we'll prefer setting entry in 'm' incase it already exists
 		// otherwise we'll set the entry in 'delta-plus'
 		info = GrB_Matrix_extractElement_UINT64(&v, m, i, j);
+		GrB_OK(info);
 		entry_exists = (info == GrB_SUCCESS);
 
 		if(entry_exists) {
@@ -77,10 +77,10 @@ GrB_Info Delta_Matrix_setElement_UINT64
 			// update entry at dp[i,j]
 			info = GrB_Matrix_setElement_UINT64(dp, x, i, j);
 		}
+		GrB_OK(info);
 	}
 
 	Delta_Matrix_setDirty(C);
-
 	return info;
 }
 

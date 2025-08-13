@@ -2,6 +2,7 @@
 #include "delta_utils.h"
 #include "delta_matrix.h"
 
+// TODO: Should this function error if the transpose is not NULL?
 GrB_Info Delta_cache_transpose
 (
     Delta_Matrix A
@@ -31,6 +32,7 @@ GrB_Info Delta_cache_transpose
     GrB_Matrix Mt  = DELTA_MATRIX_M(T);
     GrB_Matrix DPt = DELTA_MATRIX_DELTA_PLUS(T);
     GrB_Matrix DMt = DELTA_MATRIX_DELTA_MINUS(T);
+
     if(type == GrB_BOOL){
         GrB_OK(GrB_transpose(Mt, NULL, NULL, M, NULL));
         GrB_OK(GrB_transpose(DPt, NULL, NULL, DP, NULL));
@@ -41,6 +43,7 @@ GrB_Info Delta_cache_transpose
         GrB_OK(GrB_Matrix_apply_BinaryOp2nd_UINT64(DPt, NULL, NULL, 
             GrB_NE_UINT64, DP, U64_ZOMBIE, GrB_DESC_T0));
     }
+
     GrB_OK(GrB_transpose(DMt, NULL, NULL, DM, NULL));
     return GrB_SUCCESS;
 }
