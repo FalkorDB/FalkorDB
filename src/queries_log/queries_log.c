@@ -55,21 +55,21 @@ QueriesLog QueriesLog_New(void) {
 // add query to buffer
 void QueriesLog_AddQuery
 (
-    QueriesLog log,               // queries log
-	uint64_t received,            // query received timestamp
-	double wait_duration,         // waiting time
-	double execution_duration,    // executing time
-	double report_duration,       // reporting time
-	bool parameterized,           // uses parameters
-	bool utilized_cache,          // utilized cache
-	bool write,    	   	          // write query
-	bool timeout,    		      // timeout query
-	const char *query             // query string
+	QueriesLog log,             // queries log
+	uint64_t received,          // query received timestamp
+	double wait_duration,       // waiting time
+	double execution_duration,  // executing time
+	double report_duration,     // reporting time
+	bool parameterized,         // uses parameters
+	bool utilized_cache,        // utilized cache
+	bool write,                 // write query
+	bool timeout,               // timeout query
+	const char *query           // query string
 ) {
 	// add query stats to buffer
 
 	LoggedQuery q = {
-		.received            = received,
+		. received           = received,
 		. wait_duration      = wait_duration,
 		. execution_duration = execution_duration,
 		. report_duration    = report_duration,
@@ -82,17 +82,7 @@ void QueriesLog_AddQuery
 
 	// try adding query to buffer
 	if (!CircularBuffer_Add (log->queries, &q)) {
-		// failed, buffer is probably full, remove an item and retry
-		LoggedQuery tmp ;
-		int res = CircularBuffer_Read (log->queries, &tmp) ;
-		ASSERT (res == 1) ;
-
-		LoggedQuery_Free (&tmp) ;
-
-		// retry
-		if (!CircularBuffer_Add (log->queries, &q)) {
-			LoggedQuery_Free (&q) ;
-		}
+		LoggedQuery_Free (&q) ;
 	}
 }
 

@@ -122,29 +122,38 @@ void test_CircularBuffer_Circularity(void) {
 	CircularBuffer_Free(buff, NULL);
 }
 
+// used by test_CircularBuffer_free
+// to test the CircularBuffer Free item callback
+static int64_t _sum = 0 ;
+
+void sum
+(
+	void *x
+) {
+	int64_t _x = *(int64_t*)(x) ;
+	_sum += _x ;
+}
+
 void test_CircularBuffer_free(void) {
 	//--------------------------------------------------------------------------
 	// fill a buffer of size 16 with int *
 	//--------------------------------------------------------------------------
 
 	uint cap = 16;
-	CircularBuffer buff = CircularBuffer_New(sizeof(int64_t *), cap);
+	CircularBuffer buff = CircularBuffer_New(sizeof(int64_t), cap);
 	for(int i = 0; i < cap; i++) {
-		int64_t *j = malloc(sizeof(int64_t));
-		CircularBuffer_Add(buff, (void*)&j);
+		int64_t j = i;
+		CircularBuffer_Add(buff, &j) ;
 	}
 
 	//--------------------------------------------------------------------------
 	// free the buffer
 	//--------------------------------------------------------------------------
 
-	for(int i = 0; i < cap; i++) {
-		int64_t *item;
-		CircularBuffer_Read(buff, &item);
-		free(item);
-	}
-
-	CircularBuffer_Free(buff, NULL);
+	// free the buffer while summing all elements
+	// summation will be placed in the global variable _sum
+	CircularBuffer_Free(buff, sum);
+	TEST_ASSERT (_sum == 120) ; // SUM(0..15)
 }
 
 void _assert_val_cb

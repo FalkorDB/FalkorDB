@@ -140,10 +140,8 @@ bool CircularBuffer_Add
 		cb->write = cb->data ;
 	}
 
-	void *idx = cb->write ;
-
 	// copy item into buffer
-	memcpy(idx, item, cb->item_size);
+	memcpy(cb->write, item, cb->item_size);
 
 	// update write position
 	cb->write += cb->item_size ;
@@ -170,12 +168,10 @@ bool CircularBuffer_Read
 	_CircularBuffer_Lock (cb) ;
 
 	// make sure there's data to return
-	if (unlikely( CircularBuffer_Empty (cb))) {
+	if (unlikely(cb->item_count == 0)) {
 		_CircularBuffer_Unlock (cb) ;
-		return 0 ;
+		return false ;
 	}
-
-	void *read = cb->read;
 
 	// update buffer item count
 	cb->item_count-- ;
@@ -186,13 +182,15 @@ bool CircularBuffer_Read
 	// advance read position
 	// wrap around if read reached the end of the buffer
 	cb->read += cb->item_size ;
-	if (unlikely (cb->read >= cb->end_marker)) {
+
+	ASSERT (cb->read <= cb->end_marker) ;
+	if (unlikely (cb->read == cb->end_marker)) {
 		cb->read = cb->data ;
 	}
 
 	_CircularBuffer_Unlock (cb) ;
 
-	return 1;
+	return true;
 }
 
 // free buffer (does not free its elements if its free callback is NULL)
@@ -205,7 +203,7 @@ void CircularBuffer_Free
 
 	// invoke free callback for each item
 	if (free_cb != NULL) {
-		for (int i = 0; i < cb->item_count; i++) {
+		for (uint32_t i = 0; i < cb->item_count; i++) {
 			// wrap around
 			if (cb->read == cb->end_marker) {
 				cb->read = cb->data ;
