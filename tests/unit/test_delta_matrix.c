@@ -20,13 +20,13 @@ void tearDown();
 #define MATRIX_EMPTY(M)               \
 	({                                \
 		GrB_Matrix_nvals(&nvals, M);  \
-		TEST_ASSERT(nvals == 0);      \
+		TEST_CHECK(nvals == 0);       \
 	}) 
 
 #define MATRIX_NOT_EMPTY(M)           \
 	({                                \
 		GrB_Matrix_nvals(&nvals, M);  \
-		TEST_ASSERT(nvals != 0);      \
+		TEST_CHECK(nvals != 0);       \
 	}) 
 
 #define M_EMPTY()   MATRIX_EMPTY(M)
@@ -56,8 +56,12 @@ void tearDown() {
 }
 
 // nvals(A + B) == nvals(A) == nvals(B)
-void ASSERT_GrB_Matrices_EQ(const GrB_Matrix A, const GrB_Matrix B)
-{
+void CHECK_GrB_Matrices_EQ
+(
+	const GrB_Matrix A, 
+	const GrB_Matrix B, 
+	const GrB_BinaryOp eq
+) {
 	GrB_Type    t_A                 =  NULL;
 	GrB_Type    t_B                 =  NULL;
 	GrB_Matrix  C                   =  NULL;
@@ -98,8 +102,88 @@ void ASSERT_GrB_Matrices_EQ(const GrB_Matrix A, const GrB_Matrix B)
 	info = GrB_Matrix_ncols(&ncols_B, B);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	TEST_ASSERT(nrows_A == nrows_B);
-	TEST_ASSERT(ncols_A == ncols_B);
+	TEST_CHECK(nrows_A == nrows_B);
+	TEST_CHECK(ncols_A == ncols_B);
+
+	//--------------------------------------------------------------------------
+	// NNZ(A) == NNZ(B)
+	//--------------------------------------------------------------------------
+
+	GrB_Matrix_nvals(&nvals_A, A);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	GrB_Matrix_nvals(&nvals_B, B);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	//--------------------------------------------------------------------------
+	// structure(A) == structure(B)
+	//--------------------------------------------------------------------------
+
+	info = GrB_Matrix_new(&C, GrB_BOOL, nrows_A, ncols_A);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_Matrix_eWiseMult_BinaryOp(C, NULL, NULL, eq, A, B, NULL);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	GrB_Matrix_nvals(&nvals_C, C);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	TEST_CHECK(nvals_C == nvals_A);
+	TEST_CHECK(nvals_C == nvals_B);
+
+	bool ok = true;
+	info = GrB_Matrix_reduce_BOOL(&ok, NULL, GrB_LAND_MONOID_BOOL, C, NULL);
+	TEST_CHECK(ok);
+
+	// clean up
+	info = GrB_Matrix_free(&C);
+	TEST_ASSERT(info == GrB_SUCCESS);
+}
+
+// nvals(A + B) == nvals(A) == nvals(B)
+void ASSERT_GrB_Matrices_EQ(const GrB_Matrix A, const GrB_Matrix B) {
+	GrB_Type    t_A                 =  NULL;
+	GrB_Type    t_B                 =  NULL;
+	GrB_Matrix  C                   =  NULL;
+	GrB_Info    info                =  GrB_SUCCESS;
+	GrB_Index   nvals_A             =  0;
+	GrB_Index   nvals_B             =  0;
+	GrB_Index   nvals_C             =  0;
+	GrB_Index   nrows_A             =  0;
+	GrB_Index   ncols_A             =  0;
+	GrB_Index   nrows_B             =  0;
+	GrB_Index   ncols_B             =  0;
+
+	//--------------------------------------------------------------------------
+	// type(A) == type(B)
+	//--------------------------------------------------------------------------
+
+	info = GxB_Matrix_type(&t_A, A);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	info = GxB_Matrix_type(&t_B, B);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	TEST_ASSERT(t_A == t_B);
+
+	//--------------------------------------------------------------------------
+	// dim(A) == dim(B)
+	//--------------------------------------------------------------------------
+
+	info = GrB_Matrix_nrows(&nrows_A, A);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_Matrix_ncols(&ncols_A, A);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_Matrix_nrows(&nrows_B, B);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_Matrix_ncols(&ncols_B, B);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	TEST_CHECK(nrows_A == nrows_B);
+	TEST_CHECK(ncols_A == ncols_B);
 
 	//--------------------------------------------------------------------------
 	// NNZ(A) == NNZ(B)
@@ -125,16 +209,72 @@ void ASSERT_GrB_Matrices_EQ(const GrB_Matrix A, const GrB_Matrix B)
 	GrB_Matrix_nvals(&nvals_C, C);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	TEST_ASSERT(nvals_C == nvals_A);
-	TEST_ASSERT(nvals_C == nvals_B);
+	TEST_CHECK(nvals_C == nvals_A);
+	TEST_CHECK(nvals_C == nvals_B);
 
 	bool ok = true;
 	info = GrB_Matrix_reduce_BOOL(&ok, NULL, GrB_LAND_MONOID_BOOL, C, NULL);
-	TEST_ASSERT(ok);
+	TEST_CHECK(ok);
 
 	// clean up
 	info = GrB_Matrix_free(&C);
 	TEST_ASSERT(info == GrB_SUCCESS);
+}
+
+// make a matrix for testing
+// if transpose is false, will return:
+// [ . . . . ] A row with entries in M
+// [ - - - - ] A row with deleted entries (in M and DM)
+// [ + + + + ] A row with added entries (in DP)
+// [         ] A row with no entries
+Delta_Matrix make_test_matrix
+(
+	bool transpose
+) {
+	GrB_Info info = GrB_SUCCESS;
+	Delta_Matrix A = NULL;
+
+	// create a new delta matrix
+	info = Delta_Matrix_new(&A, GrB_BOOL, 4, 4, transpose);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	for(int i = 0; i < 4; ++i){
+
+		int j = 0;
+		if (transpose){
+			int tmp = i; i = j; j = tmp;
+		}
+
+		Delta_Matrix_setElement_BOOL(A, i, j);
+		j = 1;
+
+		if (transpose){
+			int tmp = i; i = j; j = tmp;
+		}
+
+		Delta_Matrix_setElement_BOOL(A, i, j);
+	}
+	
+	Delta_Matrix_wait(A, true);
+
+	for(int i = 0; i < 4; ++i){
+
+		int j = 1;
+		if (transpose){
+			int tmp = i; i = j; j = tmp;
+		}
+
+		Delta_Matrix_removeElement_BOOL(A, i, j);
+		j = 2;
+
+		if (transpose){
+			int tmp = i; i = j; j = tmp;
+		}
+
+		Delta_Matrix_setElement_BOOL(A, i, j);
+	}
+
+	return A;
 }
 
 // test RGMatrix initialization
@@ -159,9 +299,6 @@ void test_RGMatrix_new() {
 
 	// uint64 matrix always maintain transpose
 	TEST_ASSERT(DELTA_MATRIX_MAINTAIN_TRANSPOSE(A));
-
-	// uint64 matrix always multi edge
-	TEST_ASSERT(DELTA_MATRIX_MULTI_EDGE(A));
 
 	// a new empty matrix should be synced
 	// no data in either DP or DM
@@ -207,11 +344,7 @@ void test_RGMatrix_new() {
 	DP  =  DELTA_MATRIX_DELTA_PLUS(A);
 	DM  =  DELTA_MATRIX_DELTA_MINUS(A);
 
-	// bool matrix do not maintain transpose
 	TEST_ASSERT(!(DELTA_MATRIX_MAINTAIN_TRANSPOSE(A)));
-
-	// bool matrix always not multi edge
-	TEST_ASSERT(!DELTA_MATRIX_MULTI_EDGE(A));
 
 	// a new empty matrix should be synced
 	// no data in either DP or DM
@@ -221,6 +354,7 @@ void test_RGMatrix_new() {
 	M_EMPTY();
 	DP_EMPTY(); 
 	DM_EMPTY();
+
 	Delta_Matrix_nvals(&nvals, A);
 	TEST_ASSERT(nvals == 0);
 
@@ -257,14 +391,14 @@ void test_RGMatrix_simple_set() {
 	// make sure element at position i,j exists
 	info = Delta_Matrix_extractElement_UINT64(&x, A, i, j);
 	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_ASSERT(x == 1);
+	TEST_CHECK(x == 1);
 	
 	// matrix should contain a single element
 	Delta_Matrix_nvals(&nvals, A);
-	TEST_ASSERT(nvals == 1);
+	TEST_CHECK(nvals == 1);
 
 	// matrix should be mark as dirty
-	TEST_ASSERT(Delta_Matrix_isDirty(A));
+	TEST_CHECK(Delta_Matrix_isDirty(A));
 
 	// get internal matrices
 	M   =  DELTA_MATRIX_M(A);
@@ -275,13 +409,9 @@ void test_RGMatrix_simple_set() {
 	// validations
 	//--------------------------------------------------------------------------
 
-	// M should be empty
+	// All matrices should be empty
 	M_EMPTY();
-
-	// DM should be empty
 	DM_EMPTY();
-
-	// DP should contain a single element
 	DP_NOT_EMPTY();
 
 	//--------------------------------------------------------------------------
@@ -299,54 +429,38 @@ void test_RGMatrix_simple_set() {
 	// validations
 	//--------------------------------------------------------------------------
 
-	// M should be empty
+	// All matrices should be empty
 	M_EMPTY();
-
-	// DM should be empty
 	DM_EMPTY();
-
-	// DP should contain a multi-value entry
 	DP_NOT_EMPTY();
 
 	// clean up
 	Delta_Matrix_free(&A);
-	TEST_ASSERT(A == NULL);
+	TEST_CHECK(A == NULL);
 }
 
 // multiple delete scenarios
 void test_RGMatrix_del() {
-	GrB_Type    t                   =  GrB_UINT64;
+	GrB_Type       t                   =  GrB_UINT64;
 	Delta_Matrix   A                   =  NULL;
-	GrB_Matrix  M                   =  NULL;
-	GrB_Matrix  DP                  =  NULL;
-	GrB_Matrix  DM                  =  NULL;
-	GrB_Info    info                =  GrB_SUCCESS;
-	GrB_Index   nvals               =  0;
-	GrB_Index   nrows               =  100;
-	GrB_Index   ncols               =  100;
-	GrB_Index   i                   =  0;
-	GrB_Index   j                   =  1;
-	uint64_t    x                   =  1;
+	GrB_Matrix     M                   =  NULL;
+	GrB_Matrix     DP                  =  NULL;
+	GrB_Matrix     DM                  =  NULL;
+	GrB_Info       info                =  GrB_SUCCESS;
+	GrB_Index      nvals               =  0;
+	GrB_Index      nrows               =  100;
+	GrB_Index      ncols               =  100;
+	GrB_Index      i                   =  0;
+	GrB_Index      j                   =  1;
+	uint64_t       x                   =  1;
 
 	info = Delta_Matrix_new(&A, t, nrows, ncols, true);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// get internal matrices
-	M   =  DELTA_MATRIX_M(A);
-	DP  =  DELTA_MATRIX_DELTA_PLUS(A);
-	DM  =  DELTA_MATRIX_DELTA_MINUS(A);
-
-	//--------------------------------------------------------------------------
-	// remove none existing entry
-	//--------------------------------------------------------------------------
-
-	// TODO: should this return this? Not if it increases the cost significantly.
-	// I don't belive it was supported in the delta matrix rust code.
-	// info = Delta_Matrix_removeElement_UINT64(A, i, j);
-	// TEST_ASSERT(info == GrB_NO_VALUE);
-
-	// matrix should not contain any entries in either DP or DM
-	TEST_ASSERT(Delta_Matrix_Synced(A));
+	M                   =  DELTA_MATRIX_M(A);
+	DP                  =  DELTA_MATRIX_DELTA_PLUS(A);
+	DM                  =  DELTA_MATRIX_DELTA_MINUS(A);	
 
 	//--------------------------------------------------------------------------
 	// remove none flushed addition
@@ -361,7 +475,7 @@ void test_RGMatrix_del() {
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// matrix should be mark as dirty
-	TEST_ASSERT(Delta_Matrix_isDirty(A));
+	TEST_CHECK(Delta_Matrix_isDirty(A));
 
 	//--------------------------------------------------------------------------
 	// validations
@@ -371,13 +485,9 @@ void test_RGMatrix_del() {
 	Delta_Matrix_nvals(&nvals, A);
 	TEST_ASSERT(nvals == 0);
 
-	// M should be empty
+	// Matrix should be empty
 	M_EMPTY();
-
-	// DM should be empty
 	DM_EMPTY();
-
-	// DP should be empty
 	DP_EMPTY();
 
 	//--------------------------------------------------------------------------
@@ -391,6 +501,7 @@ void test_RGMatrix_del() {
 	// force sync
 	// entry should migrated from 'delta-plus' to 'M'
 	info = Delta_Matrix_wait(A, true);
+	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// remove element at position i,j
 	info = Delta_Matrix_removeElement_UINT64(A, i, j);
@@ -404,13 +515,9 @@ void test_RGMatrix_del() {
 	Delta_Matrix_nvals(&nvals, A);
 	TEST_ASSERT(nvals == 0);
 
-	// M should contain a single element
+	// Matrix should be empty
 	M_NOT_EMPTY();
-
-	// DM should contain a single element
 	DM_NOT_EMPTY();
-
-	// DP should be empty
 	DP_EMPTY();
 
 	//--------------------------------------------------------------------------
@@ -429,13 +536,9 @@ void test_RGMatrix_del() {
 	Delta_Matrix_nvals(&nvals, A);
 	TEST_ASSERT(nvals == 0);
 
-	// M should be empty
+	// Matrix should be empty
 	M_EMPTY();
-
-	// DM should be empty
 	DM_EMPTY();
-
-	// DP should be empty
 	DP_EMPTY();
 
 	//--------------------------------------------------------------------------
@@ -536,18 +639,14 @@ void test_RGMatrix_del_entry() {
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// get internal matrices
-	M   =  DELTA_MATRIX_M(A);
-	DP  =  DELTA_MATRIX_DELTA_PLUS(A);
-	DM  =  DELTA_MATRIX_DELTA_MINUS(A);
+	M  = DELTA_MATRIX_M(A);
+	DP = DELTA_MATRIX_DELTA_PLUS(A);
+	DM = DELTA_MATRIX_DELTA_MINUS(A);	
 
-	
 	//--------------------------------------------------------------------------
 	// remove none existing entry ---- No longer supported ----
 	//--------------------------------------------------------------------------
 	// Tensor_RemoveElements(A, edges, 1, NULL);
-
-	// matrix should not contain any entries in either DP or DM
-	TEST_ASSERT(Delta_Matrix_Synced(A));
 
 	//--------------------------------------------------------------------------
 	// remove none flushed addition
@@ -570,13 +669,8 @@ void test_RGMatrix_del_entry() {
 	Delta_Matrix_nvals(&nvals, A);
 	TEST_ASSERT(nvals == 0);
 
-	// M should be empty
 	M_EMPTY();
-
-	// DM should be empty
 	DM_EMPTY();
-
-	// DP should be empty
 	DP_EMPTY();
 
 	//--------------------------------------------------------------------------
@@ -589,6 +683,7 @@ void test_RGMatrix_del_entry() {
 	// force sync
 	// entry should migrated from 'delta-plus' to 'M'
 	info = Delta_Matrix_wait(A, true);
+	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// remove element at position i,j
 	Tensor_RemoveElements(A, edges, 1, NULL);
@@ -599,15 +694,10 @@ void test_RGMatrix_del_entry() {
 
 	// A should be empty
 	Delta_Matrix_nvals(&nvals, A);
-	TEST_ASSERT(nvals == 0);
+	TEST_CHECK(nvals == 0);
 
-	// M should contain a single element
 	M_NOT_EMPTY();
-
-	// DM should contain a single element
 	DM_NOT_EMPTY();
-
-	// DP should be empty
 	DP_EMPTY();
 
 	//--------------------------------------------------------------------------
@@ -626,13 +716,8 @@ void test_RGMatrix_del_entry() {
 	Delta_Matrix_nvals(&nvals, A);
 	TEST_ASSERT(nvals == 0);
 
-	// M should be empty
 	M_EMPTY();
-
-	// DM should be empty
 	DM_EMPTY();
-
-	// DP should be empty
 	DP_EMPTY();
 
 	//--------------------------------------------------------------------------
@@ -706,25 +791,24 @@ void test_RGMatrix_del_entry() {
 }
 
 void test_RGMatrix_set() {
-	GrB_Type    t                   =  GrB_BOOL;
-	Delta_Matrix   A                   =  NULL;
-	GrB_Matrix  M                   =  NULL;
-	GrB_Matrix  DP                  =  NULL;
-	GrB_Matrix  DM                  =  NULL;
-	GrB_Info    info                =  GrB_SUCCESS;
-	GrB_Index   nvals               =  0;
-	GrB_Index   nrows               =  100;
-	GrB_Index   ncols               =  100;
-	GrB_Index   i                   =  0;
-	GrB_Index   j                   =  1;
+	GrB_Type       t     = GrB_BOOL;
+	Delta_Matrix   A     = NULL;
+	GrB_Matrix     M     = NULL;
+	GrB_Matrix     DP    = NULL;
+	GrB_Matrix     DM    = NULL;
+	GrB_Info       info  = GrB_SUCCESS;
+	GrB_Index      nvals = 0;
+	GrB_Index      nrows = 100;
+	GrB_Index      ncols = 100;
+	GrB_Index      i     = 0;
+	GrB_Index      j     = 1;
 
 	info = Delta_Matrix_new(&A, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	// get internal matrices
-	M   =  DELTA_MATRIX_M(A);
-	DP  =  DELTA_MATRIX_DELTA_PLUS(A);
-	DM  =  DELTA_MATRIX_DELTA_MINUS(A);
+	M     = DELTA_MATRIX_M(A);
+	DP    = DELTA_MATRIX_DELTA_PLUS(A);
+	DM    = DELTA_MATRIX_DELTA_MINUS(A);	
 
 	//--------------------------------------------------------------------------
 	// Set element that marked for deletion
@@ -756,11 +840,7 @@ void test_RGMatrix_set() {
 
 	// M should contain a single element
 	M_NOT_EMPTY();
-
-	// DM should contain a single element
 	DM_EMPTY();
-
-	// DP should be empty
 	DP_EMPTY();
 
 
@@ -795,9 +875,9 @@ void test_RGMatrix_flus() {
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// get internal matrices
-	M   =  DELTA_MATRIX_M(A);
-	DP  =  DELTA_MATRIX_DELTA_PLUS(A);
-	DM  =  DELTA_MATRIX_DELTA_MINUS(A);
+	M  = DELTA_MATRIX_M(A);
+	DP = DELTA_MATRIX_DELTA_PLUS(A);
+	DM = DELTA_MATRIX_DELTA_MINUS(A);
 
 	//--------------------------------------------------------------------------
 	// flush matrix, no sync
@@ -807,10 +887,7 @@ void test_RGMatrix_flus() {
 	sync = false;
 	Delta_Matrix_wait(A, sync);
 
-	// M should be empty
 	M_EMPTY();
-
-	// DM should be empty
 	DM_EMPTY();
 
 	// DP should contain a single element
@@ -827,13 +904,8 @@ void test_RGMatrix_flus() {
 	Delta_Matrix_nvals(&nvals, A);
 	TEST_ASSERT(nvals == 1);
 
-	// M should be empty
 	M_NOT_EMPTY();
-
-	// DM should be empty
 	DM_EMPTY();
-
-	// DP should contain a single element
 	DP_EMPTY();
 
 	// clean up
@@ -850,8 +922,8 @@ void test_GRMatrix_managed_transposed() {
 	GrB_Type      t              =  GrB_UINT64;
 	Delta_Matrix  T              =  NULL;  // A transposed
 	GrB_Matrix    M              =  NULL;  // primary internal matrix
-	GrB_Matrix    DP             =  NULL;  // delta plus
-	GrB_Matrix    DM             =  NULL;  // delta minus
+	GrB_Matrix    DP             =  NULL;  // delta plus internal matrix
+	GrB_Matrix    DM             =  NULL;  // delta minus internal matrix
 	GrB_Info      info           =  GrB_SUCCESS;
 	GrB_Index     nvals          =  0;
 	GrB_Index     nrows          =  100;
@@ -872,13 +944,13 @@ void test_GRMatrix_managed_transposed() {
 
 	// make sure transposed was created
 	T = Delta_Matrix_getTranspose(A);
-	TEST_ASSERT(T != A);
-	TEST_ASSERT(T != NULL);
+	TEST_CHECK(T != A);
+	TEST_CHECK(T != NULL);
 
 	// get internal matrices
-	M   =  DELTA_MATRIX_M(T);
-	DP  =  DELTA_MATRIX_DELTA_PLUS(T);
-	DM  =  DELTA_MATRIX_DELTA_MINUS(T);
+	M  = DELTA_MATRIX_M(T);
+	DP = DELTA_MATRIX_DELTA_PLUS(T);
+	DM = DELTA_MATRIX_DELTA_MINUS(T);
 
 	//--------------------------------------------------------------------------
 	// set element at position i,j
@@ -889,23 +961,20 @@ void test_GRMatrix_managed_transposed() {
 	// make sure element at position j,i exists
 	info = Delta_Matrix_extractElement_BOOL(&b, T, j, i);
 	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_ASSERT(true == b);
+	TEST_CHECK(true == b);
 	
 	// matrix should contain a single element
 	Delta_Matrix_nvals(&nvals, T);
-	TEST_ASSERT(nvals == 1);
+	TEST_CHECK(nvals == 1);
 
 	// matrix should be mark as dirty
-	TEST_ASSERT(Delta_Matrix_isDirty(T));
+	TEST_CHECK(Delta_Matrix_isDirty(T));
 
 	//--------------------------------------------------------------------------
 	// validations
 	//--------------------------------------------------------------------------
 
-	// TM should be empty
 	M_EMPTY();
-
-	// TDM should be empty
 	DM_EMPTY();
 
 	// TDP should contain a single element
@@ -921,11 +990,7 @@ void test_GRMatrix_managed_transposed() {
 
 	// TM should contain a single element
 	M_NOT_EMPTY();
-
-	// TDM should be empty
 	DM_EMPTY();
-
-	// TDP should be empty
 	DP_EMPTY();
 
 	//--------------------------------------------------------------------------
@@ -935,7 +1000,7 @@ void test_GRMatrix_managed_transposed() {
 	Tensor_RemoveElements(A, edges, 1, NULL);
 
 	// matrix should be mark as dirty
-	TEST_ASSERT(Delta_Matrix_isDirty(T));
+	TEST_CHECK(Delta_Matrix_isDirty(T));
 
 	//--------------------------------------------------------------------------
 	// validations
@@ -946,8 +1011,6 @@ void test_GRMatrix_managed_transposed() {
 
 	// TDM should contain a single element
 	DM_NOT_EMPTY();
-
-	// TDP should be empty
 	DP_EMPTY();
 
 	//--------------------------------------------------------------------------
@@ -958,13 +1021,8 @@ void test_GRMatrix_managed_transposed() {
 
 	Delta_Matrix_wait(A, true);
 
-	// TM should be empty
 	M_EMPTY();
-
-	// TDM should be empty
 	DM_EMPTY();
-
-	// TDP should be empty
 	DP_EMPTY();
 
 	//--------------------------------------------------------------------------
@@ -979,7 +1037,7 @@ void test_GRMatrix_managed_transposed() {
 	// make sure element at position j,i exists
 	info = Delta_Matrix_extractElement_BOOL(&b, T, j, i);
 	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_ASSERT(true == b);
+	TEST_CHECK(true == b);
 
 	edges[0].id = x + 1;
 	Tensor_RemoveElements(A, edges, 1, NULL);
@@ -1001,7 +1059,7 @@ void test_GRMatrix_managed_transposed() {
 	// make sure element at position j,i exists
 	info = Delta_Matrix_extractElement_BOOL(&b, T, j, i);
 	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_ASSERT(true == b);
+	TEST_CHECK (true == b);
 
 	edges[0].id = x + 1;
 	Tensor_RemoveElements(A, edges, 1, NULL);
@@ -1024,7 +1082,7 @@ void test_GRMatrix_managed_transposed() {
 	// make sure element at position j,i exists
 	info = Delta_Matrix_extractElement_BOOL(&b, T, j, i);
 	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_ASSERT(true == b);
+	TEST_CHECK (true == b);
 
 	// clean up
 	Tensor_free(&A);
@@ -1358,7 +1416,7 @@ void test_Delta_Matrix_export_structure() {
 
 	GrB_Matrix_nvals(&mvals, M);
 	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_ASSERT(nvals == mvals);
+	TEST_CHECK (nvals == mvals);
 
 	//--------------------------------------------------------------------------
 	// structure(A) == structure(B)
@@ -1373,12 +1431,12 @@ void test_Delta_Matrix_export_structure() {
 
 	GrB_Matrix_nvals(&nvals, C);
 	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_ASSERT(nvals == mvals);
+	TEST_CHECK (nvals == mvals);
 
 	// clean up
 	GrB_Matrix_free(&N);
 	Delta_Matrix_free(&A);
-	TEST_ASSERT(A == NULL);
+	TEST_CHECK (A == NULL);
 }
 
 void test_RGMatrix_copy() {
@@ -1450,12 +1508,71 @@ void test_RGMatrix_copy() {
 	ASSERT_GrB_Matrices_EQ(A_DP, B_DP);
 	ASSERT_GrB_Matrices_EQ(A_DM, B_DM);
 
+	//--------------------------------------------------------------------------
+	// free
+	//--------------------------------------------------------------------------
+	Delta_Matrix_free(&A);
+	info = Delta_Matrix_new(&A, GrB_UINT64, nrows, ncols, false);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	Delta_Matrix_clear(A);
+
+
+	// set elements
+	info = Delta_Matrix_setElement_UINT64(A, 0, 0, 0);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	info = Delta_Matrix_setElement_UINT64(A, 0, 1, 1);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	//--------------------------------------------------------------------------
+	// flush matrix, sync
+	//--------------------------------------------------------------------------
+	
+	// wait, force sync
+	sync = true;
+	Delta_Matrix_wait(A, sync);
+
+	//--------------------------------------------------------------------------
+	// set pending changes
+	//--------------------------------------------------------------------------
+
+	// remove element at position 0,0
+	info = Delta_Matrix_removeElement_UINT64(A, 0, 0);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	// set element at position 2,2
+	info = Delta_Matrix_setElement_UINT64(A, 1, 2, 2);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	//--------------------------------------------------------------------------
+	// copy matrix
+	//--------------------------------------------------------------------------
+
+	info = Delta_Matrix_copy(B, A);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	//--------------------------------------------------------------------------
+	// validation
+	//--------------------------------------------------------------------------
+
+	A_M  = DELTA_MATRIX_M(A);
+	B_M  = DELTA_MATRIX_M(B);
+	A_DP = DELTA_MATRIX_DELTA_PLUS(A);
+	B_DP = DELTA_MATRIX_DELTA_PLUS(B);
+	A_DM = DELTA_MATRIX_DELTA_MINUS(A);
+	B_DM = DELTA_MATRIX_DELTA_MINUS(B);
+	
+	CHECK_GrB_Matrices_EQ(A_M, B_M, GrB_ONEB_BOOL);
+	CHECK_GrB_Matrices_EQ(A_DP, B_DP, GrB_ONEB_BOOL);
+	CHECK_GrB_Matrices_EQ(A_DM, B_DM, GrB_ONEB_BOOL);
+
 	// clean up
 	Delta_Matrix_free(&A);
 	TEST_ASSERT(A == NULL);
 	Delta_Matrix_free(&B);
 	TEST_ASSERT(B == NULL);
 }
+
 void test_Delta_Matrix_add() {
 	GrB_Type      t      =  GrB_BOOL;
 	Delta_Matrix  A      =  NULL;
@@ -1527,6 +1644,28 @@ void test_Delta_Matrix_add() {
 	sync = true;
 	Delta_Matrix_wait(A, sync);
 	Delta_Matrix_wait(B, sync);
+
+	//--------------------------------------------------------------------------
+	// A + B
+	//--------------------------------------------------------------------------
+
+	info = Delta_eWiseAdd(C, GrB_LOR, A, B);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	Delta_Matrix_validate(C);
+	Delta_Matrix_wait(C, true);
+
+	info = GrB_Matrix_eWiseAdd_BinaryOp(
+		C_GB, NULL, NULL, GrB_LOR, A_GB, B_GB, NULL);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	//--------------------------------------------------------------------------
+	// validation
+	//--------------------------------------------------------------------------
+
+	C_M  = DELTA_MATRIX_M(C);
+
+	ASSERT_GrB_Matrices_EQ(C_M, C_GB);
 
 	//--------------------------------------------------------------------------
 	// set pending additions
@@ -2181,6 +2320,84 @@ void test_RGMatrix_resize() {
 	Delta_Matrix_free(&A);
 }
 
+void test_RGMatrix_cache_transpose (){
+	Delta_Matrix A     = make_test_matrix(false);
+	GrB_Info     info  = GrB_SUCCESS;
+
+	// verify the matrix
+	Delta_Matrix_validate(A);
+
+	// cache transpose
+	info = Delta_cache_transpose(A);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	// verify transpose is cached
+	Delta_Matrix T = Delta_Matrix_getTranspose(A);
+	TEST_CHECK (DELTA_MATRIX_MAINTAIN_TRANSPOSE(A));
+	TEST_CHECK (T != NULL);
+	Delta_Matrix_validate(T);
+
+	// free A, T should be freed as well
+	Delta_Matrix_free(&A);
+	TEST_CHECK(A == NULL);
+}
+
+void test_RGMatrix_mxv (){
+	Delta_Matrix A     = make_test_matrix(false);
+	GrB_Matrix   GB_A  = NULL;
+	GrB_Info     info  = GrB_SUCCESS;
+	GrB_Index    nrows = 4;
+	GrB_Vector   x     = NULL;
+	GrB_Vector   y1    = NULL;
+	GrB_Vector   y2    = NULL;
+	GrB_Vector   y3    = NULL;
+
+	Delta_Matrix_export(&GB_A, A);
+	
+	GrB_Vector_new(&x, GrB_BOOL, 4);
+	GrB_Vector_new(&y1, GrB_UINT64, 4);
+	GrB_Vector_new(&y2, GrB_UINT64, 4);
+	GrB_Vector_new(&y3, GrB_UINT64, 4);
+
+
+	for(int i = 0; i < 2; ++i){
+		GrB_Descriptor desc = i == 0 ? NULL : GrB_DESC_T0;
+		info = GrB_Vector_assign_BOOL(x, NULL, NULL, true, GrB_ALL, 4, desc);
+		TEST_ASSERT(info == GrB_SUCCESS);
+
+		info = Delta_mxv(y1, NULL, NULL, GxB_PLUS_FIRST_UINT64, A, x, desc);
+		TEST_ASSERT(info == GrB_SUCCESS);
+
+		info = Delta_mxv_count(y2, NULL, NULL, GxB_PLUS_PAIR_UINT64, A, x, desc);
+		TEST_ASSERT(info == GrB_SUCCESS);
+
+		info = GrB_mxv (y3, NULL, NULL, GxB_PLUS_PAIR_UINT64, GB_A, x, desc);
+		TEST_ASSERT(info == GrB_SUCCESS);
+
+		// validate results
+		GrB_Vector_eWiseMult_BinaryOp(
+			y1, NULL, NULL, GrB_MINUS_UINT64, y1, y2, desc);
+
+		uint64_t sum = 0;
+		GrB_Vector_reduce_UINT64(&sum, NULL, GrB_PLUS_MONOID_UINT64, y1, desc);
+		TEST_CHECK (sum == 0);
+
+		// validate results
+		GrB_Vector_eWiseMult_BinaryOp(
+			y2, NULL, NULL, GrB_MINUS_UINT64, y2, y3, desc);
+
+		sum = 0;
+		GrB_Vector_reduce_UINT64(&sum, NULL, GrB_PLUS_MONOID_UINT64, y2, desc);
+		TEST_CHECK (sum == 0);
+	}
+	GrB_free(&GB_A);
+	GrB_free(&x);
+	GrB_free(&y1);
+	GrB_free(&y2);
+	GrB_free(&y3);
+	Delta_Matrix_free(&A);
+}
+
 TEST_LIST = {
 	{"RGMatrix_new", test_RGMatrix_new},
 	{"RGMatrix_simple_set", test_RGMatrix_simple_set},
@@ -2198,8 +2415,11 @@ TEST_LIST = {
 	{"Delta_Matrix_mxm", test_Delta_Matrix_mxm},
 	{"RGMatrix_mxm", test_RGMatrix_mxm},
 	{"RGMatrix_resize", test_RGMatrix_resize},
+	{"RGMatrix_cache_transpose", test_RGMatrix_cache_transpose},
+	{"RGMatrix_mxv", test_RGMatrix_mxv},
 	{NULL, NULL}
 };
+
 
 //#ifndef RG_DEBUG
 //// test RGMatrix_pending

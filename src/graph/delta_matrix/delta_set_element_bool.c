@@ -16,7 +16,6 @@ GrB_Info Delta_Matrix_setElement_BOOL
     GrB_Index j      // column index
 ) {
 	ASSERT(C != NULL);
-	ASSERT(!DELTA_MATRIX_MULTI_EDGE(C));
 	Delta_Matrix_checkBounds(C, i, j);
 	GrB_Info info;
 

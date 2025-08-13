@@ -28,13 +28,6 @@ typedef _Delta_Matrix *Delta_Matrix;
 
 #define DELTA_MATRIX_MAINTAIN_TRANSPOSE(C) ((C)->transposed != NULL)
 
-#define DELTA_MATRIX_MULTI_EDGE(M) __extension__({ \
-	GrB_Type t;                       \
-	GrB_Matrix m = DELTA_MATRIX_M(M); \
-	GxB_Matrix_type(&t, m);           \
-	(t == GrB_UINT64);                \
-})
-
 #define U64_ZOMBIE MSB_MASK
 #define BOOL_ZOMBIE ((bool) false)
 
