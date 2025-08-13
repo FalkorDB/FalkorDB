@@ -1,5 +1,5 @@
 from common import *
-from index_utils import *
+from index_utils import create_node_fulltext_index, create_node_range_index
 
 GRAPH_ID = "procedures"
 
@@ -314,18 +314,13 @@ class testProcedures(FlowTestsBase):
             pass
 
     def test10_procedure_indexes(self):
-        # flaky when running under valgrind
-        # TODO: investigate
-        if VALGRIND or SANITIZER:
-            self.env.skip()
-
         # Verify that the full-text index is reported properly.
         actual_resultset = self.graph.query("CALL db.indexes() YIELD label, properties").result_set
         expected_results = [["fruit", ["name"]]]
         self.env.assertEquals(actual_resultset, expected_results)
 
         # Add an exact-match index to a different property on the same label..
-        result = create_node_range_index(self.graph, 'fruit', 'other_property')
+        result = create_node_range_index(self.graph, 'fruit', 'other_property', sync=True)
         self.env.assertEquals(result.indices_created, 1)
 
         # Verify that all indexes are reported.
