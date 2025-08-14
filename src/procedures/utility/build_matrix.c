@@ -50,8 +50,8 @@ GrB_Info _union_matrix_chain
 	GrB_Matrix *A,             // [output] matrix
 	const Delta_Matrix *mats,  // [optional] matricies to consider
 	unsigned short n_mats,     // number of matricies
-	GrB_Scalar azomb,          // zombie value of output matrix
-	GrB_Scalar relzomb         // Input matrix zombie value
+	const GrB_Scalar azomb,          // zombie value of output matrix
+	const GrB_Scalar relzomb         // Input matrix zombie value
 ) {
 	ASSERT(n_mats > 0);
 
@@ -198,7 +198,12 @@ void _combine_matricies_and_extract
 	GrB_OK (GrB_Matrix_new(&temp, GrB_BOOL, nvals, nvals));	
 	GrB_OK (GxB_Matrix_extract_Vector(
 		temp, NULL, NULL, *A, (extractFirst? NULL: rows), rows, desc));
+
 	GrB_free(A);
+	GrB_free(&desc);
+	GrB_free(&bzomb);
+	GrB_free(&u64zomb);
+
 	*A = temp;
 }
 
