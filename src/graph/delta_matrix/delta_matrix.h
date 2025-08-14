@@ -372,14 +372,22 @@ GrB_Info Delta_Matrix_copy
 GrB_Info Delta_Matrix_export
 (
 	GrB_Matrix *A,
-	Delta_Matrix C
+	const Delta_Matrix C
+) ;
+
+// get structural matrix A without writing to internal matrix
+GrB_Info Delta_Matrix_export_apply
+(
+	GrB_Matrix *A,
+	const Delta_Matrix C,
+	const GrB_UnaryOp op  // unary operator to apply
 ) ;
 
 // get structural matrix A without writing to internal matrix
 GrB_Info Delta_Matrix_export_structure
 (
 	GrB_Matrix *A,
-	Delta_Matrix C
+	const Delta_Matrix C
 ) ;
 
 // checks to see if matrix has pending operations
