@@ -160,25 +160,21 @@ static void _clearEvent
 // add queries to stream
 static void _stream_queries
 (
-	RedisModuleCtx *ctx,      // redis module context
-	RedisModuleKey *key,      // stream key
-	CircularBuffer queries    // queries to stream
+	RedisModuleCtx *ctx,    // redis module context
+	RedisModuleKey *key,    // stream key
+	CircularBuffer queries  // queries to stream
 ) {
-	LoggedQuery *q = NULL;
+	LoggedQuery q ;
 
-	// reset reader
-	CircularBuffer_ResetReader(queries);
+	while (CircularBuffer_Read (queries, &q)) {
+		_populateEvent (ctx, &q) ;
 
-	while((q = CircularBuffer_Read(queries, NULL)) != NULL) {
-		_populateEvent(ctx, q);
-
-		RedisModule_StreamAdd(key, REDISMODULE_STREAM_ADD_AUTOID, NULL,
-				_event, FLD_COUNT);
+		RedisModule_StreamAdd (key, REDISMODULE_STREAM_ADD_AUTOID, NULL,
+				_event, FLD_COUNT) ;
 
 		// clean up
-		rm_free(q->query);
-		q->query = NULL;
-		_clearEvent(ctx);
+		LoggedQuery_Free (&q) ;
+		_clearEvent (ctx) ;
 	}
 }
 

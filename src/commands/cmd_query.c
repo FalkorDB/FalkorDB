@@ -272,7 +272,7 @@ static void _ExecuteQuery(void *args) {
 				// replicate original query
 				QueryCtx_Replicate(query_ctx);
 			}
-		}	
+		}
 	}
 
 	QueryCtx_UnlockCommit();
