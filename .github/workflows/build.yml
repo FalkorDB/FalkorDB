@@ -108,6 +108,14 @@ jobs:
             build_test_image: false
             cache_path: linux-x64
             is_debug: "0"
+          - name: rhel8/amd64
+            platform: linux/amd64
+            suffix: rhel8-x64
+            os: rhel8
+            machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
+            build_test_image: false
+            cache_path: linux-x64
+            is_debug: "0"
           - name: linux/amd64
             platform: linux/amd64
             suffix: x64
@@ -130,6 +138,14 @@ jobs:
             platform: linux/amd64
             suffix: rhel-x64
             os: rhel
+            machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
+            build_test_image: false
+            cache_path: linux-x64
+            is_debug: "1"
+          - name: rhel8/amd64
+            platform: linux/amd64
+            suffix: rhel8-x64
+            os: rhel8
             machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
             build_test_image: false
             cache_path: linux-x64
