@@ -59,3 +59,36 @@
 		}                                                                      \
 	}                                                                          \
 }
+
+
+// requires:
+// #define GET_VALUE(x, y) x= double value given EdgeID y.
+// #define ACCUM(x, y) x += y
+#define TENSOR_ACCUM_BIOP(Z_TYPE) \
+{                                                                              \
+	EdgeID currID;                                                             \
+	Z_TYPE currV;                                                              \
+	*z = *x;                                                                   \
+	if(SCALAR_ENTRY(*y)) {                                                     \
+		currID = (EdgeID) *y;                                                  \
+		GET_VALUE(currV, currID);                                              \
+		ACCUM(*z, currV);                                                      \
+	} else { /* Find the minimum weighted edge in the vector. */               \
+		GrB_Vector _v = AS_VECTOR(*y);                                         \
+		if (_v == NULL) return;                                                \
+                                                                               \
+		/* stack allocate the iterator */                                      \
+		struct GB_Iterator_opaque _i;                                          \
+		GxB_Iterator i = &_i;                                                  \
+		GrB_OK(GxB_Vector_Iterator_attach(i, _v, NULL));                       \
+		GrB_Info info  = GxB_Vector_Iterator_seek(i, 0);                       \
+                                                                               \
+		while(info != GxB_EXHAUSTED)                                           \
+		{                                                                      \
+		    currID = (EdgeID) GxB_Vector_Iterator_getIndex(i);                 \
+		    GET_VALUE(currV, currID);                                          \
+		    ACCUM(*z, currV);                                                  \
+		    info = GxB_Vector_Iterator_next(i);                                \
+		}                                                                      \
+	}                                                                          \
+}

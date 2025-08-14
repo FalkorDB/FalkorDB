@@ -7,6 +7,7 @@
 
 #include "GraphBLAS.h"
 #include "../../graph/graph.h"
+#include "../../graph/tensor/tensor_utils.h"
 
 void _get_rows_with_labels
 (
@@ -62,7 +63,8 @@ GrB_Info get_sub_adjecency_matrix
 
 typedef enum{
 	BWM_MIN,  // choose the minimum Edge 
-	BWM_MAX   // choose the maximum Edge
+	BWM_MAX,  // choose the maximum Edge
+	BWM_SUM   // sum the weights of all Edges
 } BWM_reduce;
 
 // compose multiple label & relation matrices into a single matrix
