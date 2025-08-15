@@ -18,12 +18,12 @@ static void _ComputeTransposeMatrices
 	// compute transpose for each relation matrix
 	for(RelationID r = 0; r < n; r++) {
 		Delta_Matrix R = Graph_GetRelationMatrix(g, r, false);
-		Delta_cache_transpose(R);
+		GrB_OK (Delta_cache_transpose(R));
 	}
 
 	// compute transpose for the adjacency matrix
 	Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
-	Delta_cache_transpose(ADJ);
+	GrB_OK (Delta_cache_transpose(ADJ));
 }
 
 static GraphContext *_GetOrCreateGraphContext

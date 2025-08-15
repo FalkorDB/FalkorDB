@@ -6,6 +6,26 @@
 #include "decode_v17.h"
 #include "../../../../index/indexer.h"
 
+static void _ComputeTransposeMatrices
+(
+	Graph *g  // graph
+) {
+	ASSERT(g != NULL);
+
+	GrB_Info info;
+	int n = Graph_RelationTypeCount(g);
+
+	// compute transpose for each relation matrix
+	for(RelationID r = 0; r < n; r++) {
+		Delta_Matrix R = Graph_GetRelationMatrix(g, r, false);
+		GrB_OK (Delta_cache_transpose(R));
+	}
+
+	// compute transpose for the adjacency matrix
+	Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
+	GrB_OK (Delta_cache_transpose(ADJ));
+}
+
 static GraphContext *_GetOrCreateGraphContext
 (
 	char *graph_name
@@ -283,6 +303,8 @@ GraphContext *RdbLoadGraphContext_v17
 	}
 
 	if(GraphDecodeContext_Finished(gc->decoding_context)) {
+		// compute transpose matrices
+		_ComputeTransposeMatrices(g);
 		Graph *g = gc->g;
 
 		// flush graph matrices

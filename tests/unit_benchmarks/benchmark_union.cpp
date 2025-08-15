@@ -76,8 +76,10 @@ static void BM_union_chain(benchmark::State &state) {
     for(int i = 0; i < 5; i++) {
         Delta_Matrix_free(&As[i]);
     }
+
     Delta_Matrix_free(&C);
     GrB_Scalar_free(&a);
+    GrB_Scalar_free(&b);
 }
 
 BENCHMARK(BM_union_all)->Setup(rg_setup)->Teardown(rg_teardown)

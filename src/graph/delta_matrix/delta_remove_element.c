@@ -33,7 +33,7 @@ GrB_Info Delta_Matrix_removeElement_BOOL
 #endif
 
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
-		Delta_Matrix_removeElement_BOOL(C->transposed, j, i);
+		GrB_OK (Delta_Matrix_removeElement_BOOL(C->transposed, j, i));
 	}
 
 	//--------------------------------------------------------------------------
@@ -80,7 +80,7 @@ GrB_Info Delta_Matrix_removeElement_UINT64
 	ASSERT(type == GrB_UINT64);
 #endif
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
-		info = Delta_Matrix_removeElement_BOOL(C->transposed, j, i);
+		GrB_OK (Delta_Matrix_removeElement_BOOL(C->transposed, j, i));
 	}
 
 	//--------------------------------------------------------------------------
@@ -137,6 +137,7 @@ GrB_Info Delta_Matrix_removeElements
 	GrB_OK (GrB_transpose(dp, A, NULL, dp, GrB_DESC_RSCT0));
 	GrB_OK (GrB_Matrix_assign_BOOL(m, dels, NULL, BOOL_ZOMBIE, GrB_ALL, 0, 
 		GrB_ALL, 0, GrB_DESC_S));
+	GrB_free (&dels);
 
 	Delta_Matrix_setDirty(C);
 	return GrB_SUCCESS;

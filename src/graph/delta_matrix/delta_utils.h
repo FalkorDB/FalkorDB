@@ -40,7 +40,8 @@ void Delta_Matrix_validateState
 //    dm BOOL
 void Delta_Matrix_validate
 (
-	const Delta_Matrix C
+	const Delta_Matrix C,
+	bool check_transpose
 );
 
 #define Delta_Matrix_print(C, p)                                          \

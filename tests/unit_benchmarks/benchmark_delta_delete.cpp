@@ -42,6 +42,7 @@ static void BM_delete_from_m(benchmark::State &state) {
 
     uint64_t i = 0;
     for (auto _ : state) {
+        if (i >= nvals) break;
         if(x_v[i]){
             GrB_Info info = Delta_Matrix_removeElement_BOOL(A, i_v[i], j_v[i]);
             ASSERT(info == GrB_SUCCESS);

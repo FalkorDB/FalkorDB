@@ -25,6 +25,7 @@ GrB_Info Delta_Matrix_extractElement_BOOL
 
 	// if 'delta-plus' exists return dp[i,j]
 	info = GrB_Matrix_extractElement(&_x, dp, i, j);
+	GrB_OK(info);
 	if(info == GrB_SUCCESS) {
 		if(x) *x = _x;
 		return info;
@@ -32,6 +33,7 @@ GrB_Info Delta_Matrix_extractElement_BOOL
 
 	// if dm[i,j] exists, return no value
 	info = GxB_Matrix_isStoredElement(dm, i, j);
+	GrB_OK(info);
 	if(info == GrB_SUCCESS) {
 		// entry marked for deletion
 		return GrB_NO_VALUE;
@@ -39,6 +41,7 @@ GrB_Info Delta_Matrix_extractElement_BOOL
 
 	// entry isn't marked for deletion, see if it exists in 'm'
 	info = GrB_Matrix_extractElement(&_x, m, i, j);
+	GrB_OK(info);
 	if(x) *x = _x;
 	return info;
 }
@@ -61,6 +64,7 @@ GrB_Info Delta_Matrix_extractElement_UINT64
 
 	// if dp[i,j] exists return it
 	info = GrB_Matrix_extractElement(&_x, dp, i, j);
+	GrB_OK (info);
 	if(info == GrB_SUCCESS) {
 		if(x) *x = _x;
 		return info;
@@ -68,6 +72,8 @@ GrB_Info Delta_Matrix_extractElement_UINT64
 
 	// if dm[i,j] exists, return no value
 	info = GxB_Matrix_isStoredElement(dm, i, j);
+	GrB_OK (info);
+
 	if(info == GrB_SUCCESS) {
 		// entry marked for deletion
 		return GrB_NO_VALUE;
@@ -75,6 +81,7 @@ GrB_Info Delta_Matrix_extractElement_UINT64
 
 	// entry isn't marked for deletion, see if it exists in 'm'
 	info = GrB_Matrix_extractElement(&_x, m, i, j);
+	GrB_OK (info);
 	
 	if(x) *x = _x;
 	return info;

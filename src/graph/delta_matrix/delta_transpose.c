@@ -26,12 +26,12 @@ GrB_Info Delta_cache_transpose
     }
 
     Delta_Matrix T = A->transposed;
-    GrB_Matrix M   = DELTA_MATRIX_M(A);
-    GrB_Matrix DP  = DELTA_MATRIX_DELTA_PLUS(A);
-    GrB_Matrix DM  = DELTA_MATRIX_DELTA_MINUS(A);
-    GrB_Matrix Mt  = DELTA_MATRIX_M(T);
-    GrB_Matrix DPt = DELTA_MATRIX_DELTA_PLUS(T);
-    GrB_Matrix DMt = DELTA_MATRIX_DELTA_MINUS(T);
+    GrB_Matrix   M   = DELTA_MATRIX_M(A);
+    GrB_Matrix   DP  = DELTA_MATRIX_DELTA_PLUS(A);
+    GrB_Matrix   DM  = DELTA_MATRIX_DELTA_MINUS(A);
+    GrB_Matrix   Mt  = DELTA_MATRIX_M(T);
+    GrB_Matrix   DPt = DELTA_MATRIX_DELTA_PLUS(T);
+    GrB_Matrix   DMt = DELTA_MATRIX_DELTA_MINUS(T);
 
     if(type == GrB_BOOL){
         GrB_OK(GrB_transpose(Mt, NULL, NULL, M, NULL));

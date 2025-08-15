@@ -1,25 +1,4 @@
 #pragma once
-#define FDB_IDXBIOP_SIGNATURE(F, CTX_TYPE)                                     \
-static void F                                                                  \
-(                                                                              \
-	double *z,                                                                 \
-	const uint64_t *x,                                                         \
-    GrB_Index ix,                                                              \
-    GrB_Index jx,                                                              \
-    const bool *y,                                                             \
-    GrB_Index iy,                                                              \
-    GrB_Index jy,                                                              \
-	const CTX_TYPE *ctx                                                        \
-)
-#define FDB_IDXUOP_SIGNATURE(F, CTX_TYPE)                                      \
-static void F                                                                  \
-(                                                                              \
-	double *z,                                                                 \
-	const uint64_t *x,                                                         \
-    GrB_Index ix,                                                              \
-    GrB_Index jx,                                                              \
-	const CTX_TYPE *ctx                                                        \
-)
 
 // requires:
 // #define FUNCTION_IDENTITY to the monoid identity of the semiring.

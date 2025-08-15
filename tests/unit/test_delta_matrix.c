@@ -189,10 +189,10 @@ void ASSERT_GrB_Matrices_EQ(const GrB_Matrix A, const GrB_Matrix B) {
 	// NNZ(A) == NNZ(B)
 	//--------------------------------------------------------------------------
 
-	GrB_Matrix_nvals(&nvals_A, A);
+	info = GrB_Matrix_nvals(&nvals_A, A);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	GrB_Matrix_nvals(&nvals_B, B);
+	info = GrB_Matrix_nvals(&nvals_B, B);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
@@ -206,7 +206,7 @@ void ASSERT_GrB_Matrices_EQ(const GrB_Matrix A, const GrB_Matrix B) {
 	info = GrB_Matrix_eWiseMult_BinaryOp(C, NULL, NULL, op, A, B, NULL);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	GrB_Matrix_nvals(&nvals_C, C);
+	info = GrB_Matrix_nvals(&nvals_C, C);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	TEST_CHECK(nvals_C == nvals_A);
@@ -1429,7 +1429,7 @@ void test_Delta_Matrix_export_structure() {
 		C, NULL, NULL, GrB_ONEB_BOOL, N, M, NULL);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	GrB_Matrix_nvals(&nvals, C);
+	info = GrB_Matrix_nvals(&nvals, C);
 	TEST_ASSERT(info == GrB_SUCCESS);
 	TEST_CHECK (nvals == mvals);
 
@@ -1652,7 +1652,7 @@ void test_Delta_Matrix_add() {
 	info = Delta_eWiseAdd(C, GrB_LOR, A, B);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	Delta_Matrix_validate(C);
+	Delta_Matrix_validate(C, true);
 	Delta_Matrix_wait(C, true);
 
 	info = GrB_Matrix_eWiseAdd_BinaryOp(
@@ -1689,7 +1689,7 @@ void test_Delta_Matrix_add() {
 	info = Delta_eWiseAdd(C, GrB_LOR, A, B);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	Delta_Matrix_validate(C);
+	Delta_Matrix_validate(C, true);
 	Delta_Matrix_wait(C, true);
 
 	info = GrB_Matrix_eWiseAdd_BinaryOp(
@@ -1727,7 +1727,7 @@ void test_Delta_Matrix_add() {
 	info = Delta_eWiseAdd(C, GrB_LOR, A, B);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	Delta_Matrix_validate(C);
+	Delta_Matrix_validate(C, true);
 	Delta_Matrix_wait(C, sync);
 
 	info = GrB_Matrix_eWiseAdd_BinaryOp(
@@ -2325,7 +2325,7 @@ void test_RGMatrix_cache_transpose (){
 	GrB_Info     info  = GrB_SUCCESS;
 
 	// verify the matrix
-	Delta_Matrix_validate(A);
+	Delta_Matrix_validate(A, true);
 
 	// cache transpose
 	info = Delta_cache_transpose(A);
@@ -2335,7 +2335,7 @@ void test_RGMatrix_cache_transpose (){
 	Delta_Matrix T = Delta_Matrix_getTranspose(A);
 	TEST_CHECK (DELTA_MATRIX_MAINTAIN_TRANSPOSE(A));
 	TEST_CHECK (T != NULL);
-	Delta_Matrix_validate(T);
+	Delta_Matrix_validate(T, true);
 
 	// free A, T should be freed as well
 	Delta_Matrix_free(&A);

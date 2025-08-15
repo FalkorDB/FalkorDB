@@ -1,7 +1,6 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #pragma once
@@ -373,14 +372,6 @@ GrB_Info Delta_Matrix_export
 (
 	GrB_Matrix *A,
 	const Delta_Matrix C
-) ;
-
-// get structural matrix A without writing to internal matrix
-GrB_Info Delta_Matrix_export_apply
-(
-	GrB_Matrix *A,
-	const Delta_Matrix C,
-	const GrB_UnaryOp op  // unary operator to apply
 ) ;
 
 // get structural matrix A without writing to internal matrix

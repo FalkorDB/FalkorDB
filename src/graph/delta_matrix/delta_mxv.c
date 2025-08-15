@@ -15,7 +15,7 @@ GrB_Info Delta_mxv
     const GrB_Descriptor desc     // [input] descriptor 
 ) {
     GrB_BinaryOp monOP = NULL;
-    GrB_Semiring_get_VOID(semiring, &monOP, GxB_MONOID_OPERATOR);
+    GrB_OK (GrB_Semiring_get_VOID(semiring, &monOP, GxB_MONOID_OPERATOR));
 
     ASSERT(c != u); //TODO: allocate _c (temp vector) to handle
     ASSERT(accum == NULL || accum == monOP); //TODO: allocate _c to handle
@@ -44,11 +44,11 @@ GrB_Info Delta_mxv_count
     const GrB_Descriptor desc     // [input] descriptor 
 ) {
     GrB_BinaryOp monOP = NULL;
-    GrB_Semiring_get_VOID(semiring, &monOP, GxB_MONOID_OPERATOR);
+    GrB_OK (GrB_Semiring_get_VOID(semiring, &monOP, GxB_MONOID_OPERATOR));
     
     ASSERT(c != u); //TODO: allocate _c (temp vector) to handle
     ASSERT(accum == NULL || accum == monOP); //TODO: allocate _c to handle
-    ASSERT(monOP == GrB_PLUS_UINT64)
+    ASSERT(monOP == GrB_PLUS_UINT64);
 
     GrB_Matrix m  = DELTA_MATRIX_M(A);
     GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(A);

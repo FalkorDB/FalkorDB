@@ -83,10 +83,6 @@ void Delta_Matrix_validateState
 	info_dp = GrB_Matrix_extractElement(&x_dp, dp, i, j);
 	info_dm = GrB_Matrix_extractElement(&x_dm, dm, i, j);
 
-	UNUSED(existing_entry);
-	UNUSED(pending_addition);
-	UNUSED(pending_deletion);
-
 	existing_entry    =  info_m  == GrB_SUCCESS;
 	pending_addition  =  info_dp == GrB_SUCCESS;
 	pending_deletion  =  info_dm == GrB_SUCCESS;
@@ -129,7 +125,8 @@ void Delta_Matrix_validateState
 //    dm BOOL
 void Delta_Matrix_validate
 (
-	const Delta_Matrix C
+	const Delta_Matrix C,
+	bool check_transpose
 ) {
 #if RG_DEBUG
 	bool        m_dp_disjoint     =  false;
@@ -213,7 +210,8 @@ void Delta_Matrix_validate
 
 	info = GrB_Matrix_new(&temp, GrB_BOOL, nrows, ncols);
 	ASSERT(info == GrB_SUCCESS);
-	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) { // this may to too strict
+	if(check_transpose && DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) { 
+		// this may to too strict
 		// the transpose should be structually the transpose
 		// however doesn't need to have all pending changes be equal.
 		GrB_Matrix tm        = DELTA_MATRIX_TM(C);

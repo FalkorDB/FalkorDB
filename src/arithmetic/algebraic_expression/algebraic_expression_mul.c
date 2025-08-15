@@ -10,13 +10,14 @@
 
 static void _entry_present (bool *z, const bool *x, const uint64_t *y)
 {
-	*z = *x && *y != U64_ZOMBIE;
+	*z = (*x) && ((*y) != U64_ZOMBIE);
 }
+
 #define _ENTRY_PRESENT                                                         \
-"void _entry_present (bool *z, const bool *x, const uint64_t *y)\n" \
+"void _entry_present (bool *z, const bool *x, const uint64_t *y)\n"            \
 "{\n"                                                                          \
-"	*z = *x && *y !=  (1UL << (sizeof(uint64_t) * 8 - 1)) ;\n"                 \
-"}\n"                                                                          \
+"	*z = (*x) && ((*y) !=  (1UL << (sizeof(uint64_t) * 8 - 1))) ;\n"           \
+"}"
 
 Delta_Matrix _Eval_Mul
 (

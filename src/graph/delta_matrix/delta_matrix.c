@@ -5,7 +5,7 @@
  */
 
 #include "RG.h"
-#include "delta_matrix.h"
+#include "delta_utils.h"
 #include "../../util/rmalloc.h"
 
 
@@ -221,7 +221,7 @@ GrB_Info Delta_Matrix_memoryUsage
 GrB_Info Delta_Matrix_setM
 (
 	Delta_Matrix C,  // delta matrix
-	GrB_Matrix *M     // new M
+	GrB_Matrix *M    // new M
 ) {
 	ASSERT(C != NULL);
 	ASSERT(M != NULL && *M != NULL);
@@ -276,6 +276,7 @@ GrB_Info Delta_Matrix_setMatrices
 	DELTA_MATRIX_DELTA_PLUS(C)  = DP;
 	DELTA_MATRIX_DELTA_MINUS(C) = DM;
 
+	Delta_Matrix_validate(C, false);
 	return GrB_SUCCESS;
 }
 
