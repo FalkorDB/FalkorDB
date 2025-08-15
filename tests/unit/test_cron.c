@@ -6,10 +6,10 @@
 
 #include "src/cron/cron.h"
 #include "src/util/rmalloc.h"
+#include "src/util/simple_timer.h"
 
 #include <assert.h>
 #include <sys/select.h>
-#include <time.h>
 #include <stdatomic.h>
 
 static void setup();
@@ -370,7 +370,8 @@ static void test_AbortRunningTask() {
 	// validate call to Cron_AbortTask returns after task compelted
 	int ms = 100;
 	AddTaskData data = _AddTaskData_New(long_running_task, (void*)&ms);
-	clock_t t = clock(); // start timer
+	double tic[2];
+	simple_tic(tic);
 
 	// issue a long running task, task will sleep for 100 'ms'
 	CronTaskHandle task_handle = Cron_AddTask(0, _AddTaskData_Execute, NULL,
@@ -382,11 +383,8 @@ static void test_AbortRunningTask() {
 	// abort the task, call should return until the task completed.
 	TEST_CHECK(!Cron_AbortTask(task_handle));
 
-	t = clock() - t; // stop timer
-	double time_taken_sec = ((double)t)/CLOCKS_PER_SEC;
-
 	// expecting Cron_AbortTask to return after task completed
-	TEST_CHECK(time_taken_sec >= 0.100);
+	TEST_CHECK(simple_toc(tic) >= 0.100);
 
 	_AddTaskData_Free(data);
 }
