@@ -148,6 +148,7 @@ static AR_ExpNode *_AR_EXP_CloneOp(AR_ExpNode *exp) {
 	const char *func_name = exp->op.f->name;
 	bool include_internal = exp->op.f->internal;
 	uint child_count = exp->op.child_count;
+	if (exp->op.f->udf) child_count-- ;
 	AR_ExpNode *clone = AR_EXP_NewOpNode(func_name, include_internal, child_count);
 	AR_Func_Clone clone_cb = clone->op.f->callbacks.clone;
 	void *pdata = exp->op.private_data;
