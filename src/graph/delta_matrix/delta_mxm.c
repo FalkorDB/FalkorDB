@@ -164,7 +164,7 @@ GrB_Info Delta_mxm_identity
 	}
 	
 	// uncomment to remove zombies
-	// GrB_Matrix_select_BOOL(C, NULL, NULL, GrB_VALUEEQ_BOOL, C, true, NULL);
+	GrB_Matrix_select_BOOL(C, NULL, NULL, GrB_VALUEEQ_BOOL, C, true, NULL);
 
 	if(accum) GrB_free(&accum);
 

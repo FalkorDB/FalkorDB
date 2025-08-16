@@ -471,7 +471,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.graph.delete()
         query = """CREATE (a:A{winner: 1}) WITH a UNWIND range(0, 10000) AS x CREATE (src:N {v: x}), (src)-[:R]->(a), (a)-[:R]->(src)"""
         self.graph.query(query)
-        query = """MATCH (a:A)<-[r:R]-(b:N {v:0}) DELETE r"""
+        query = """MATCH (b:N {v:0})-[r:R]->(a:A) DELETE r"""
         self.graph.query(query)
         query = """MATCH (a:A)-[:R*4]->(b) RETURN b.winner"""
         res = self.graph.query(query)
