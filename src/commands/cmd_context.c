@@ -30,34 +30,37 @@ CommandCtx *CommandCtx_New
 	simple_timer_t timer,          // stopwatch started upon command received
 	bolt_client_t *bolt_client     // BOLT client
 ) {
-	CommandCtx *context = rm_malloc(sizeof(CommandCtx));
+	//CommandCtx *context = rm_malloc(sizeof(CommandCtx));
+	CommandCtx *context = rm_calloc (1, sizeof (CommandCtx)) ;
 
 	context->bc                 = bc;
 	context->ctx                = ctx;
-	context->bolt_client        = bolt_client;
-	context->query              = NULL;
 	context->thread             = thread;
 	context->compact            = compact;
 	context->timeout            = timeout;
 	context->ref_count          = ATOMIC_VAR_INIT(1);
 	context->graph_ctx          = graph_ctx;
 	context->timeout_rw         = timeout_rw;
+	context->bolt_client        = bolt_client;
 	context->received_ts        = received_ts;
-	context->command_name       = NULL;
 	context->replicated_command = replicated_command;
 
 	simple_timer_copy(timer, context->timer);
 
-	if(cmd_name) {
-		// make a copy of command name
-		const char *command_name = RedisModule_StringPtrLen(cmd_name, NULL);
-		context->command_name = rm_strdup(command_name);
+	if (cmd_name) {
+		// retain command name
+		RedisModule_RetainString (ctx, cmd_name) ;
+
+		context->rm_command_name = cmd_name ;
+		context->command_name = RedisModule_StringPtrLen (cmd_name, NULL) ;
 	}
 
-	if(query) {
-		// make a copy of query
-		const char *q = RedisModule_StringPtrLen(query, NULL);
-		context->query = rm_strdup(q);
+	if (query) {
+		// retain query
+		RedisModule_RetainString (ctx, query) ;
+
+		context->rm_query = query ;
+		context->query = RedisModule_StringPtrLen (query, &context->query_len) ;
 	}
 
 	return context;
@@ -66,123 +69,130 @@ CommandCtx *CommandCtx_New
 // increment command context reference count
 void CommandCtx_Incref
 (
-	CommandCtx *command_ctx
+	CommandCtx *cmd_ctx
 ) {
-	ASSERT(command_ctx != NULL);
+	ASSERT(cmd_ctx != NULL);
 
 	// atomicly increment reference count
-	atomic_fetch_add(&command_ctx->ref_count, 1);
+	atomic_fetch_add(&cmd_ctx->ref_count, 1);
 }
 
 RedisModuleCtx *CommandCtx_GetRedisCtx
 (
-	CommandCtx *command_ctx
+	CommandCtx *cmd_ctx
 ) {
-	ASSERT(command_ctx != NULL);
+	ASSERT(cmd_ctx != NULL);
 	// either we already have a context or block client is set
-	if(command_ctx->ctx) {
-		return command_ctx->ctx;
+	if(cmd_ctx->ctx) {
+		return cmd_ctx->ctx;
 	}
 
-	ASSERT(command_ctx->bc != NULL);
+	ASSERT(cmd_ctx->bc != NULL);
 
-	command_ctx->ctx = RedisModule_GetThreadSafeContext(command_ctx->bc);
-	return command_ctx->ctx;
+	cmd_ctx->ctx = RedisModule_GetThreadSafeContext(cmd_ctx->bc);
+	return cmd_ctx->ctx;
 }
 
 bolt_client_t *CommandCtx_GetBoltClient
 (
-	CommandCtx *command_ctx
+	CommandCtx *cmd_ctx
 ) {
-	ASSERT(command_ctx != NULL);
-	return command_ctx->bolt_client;
+	ASSERT(cmd_ctx != NULL);
+	return cmd_ctx->bolt_client;
 }
 
 RedisModuleBlockedClient *CommandCtx_GetBlockingClient
 (
-	const CommandCtx *command_ctx
+	const CommandCtx *cmd_ctx
 ) {
-	ASSERT(command_ctx != NULL);
-	return command_ctx->bc;
+	ASSERT(cmd_ctx != NULL);
+	return cmd_ctx->bc;
 }
 
 GraphContext *CommandCtx_GetGraphContext
 (
-	const CommandCtx *command_ctx
+	const CommandCtx *cmd_ctx
 ) {
-	ASSERT(command_ctx != NULL);
-	return command_ctx->graph_ctx;
+	ASSERT(cmd_ctx != NULL);
+	return cmd_ctx->graph_ctx;
 }
 
 const char *CommandCtx_GetCommandName
 (
-	const CommandCtx *command_ctx
+	const CommandCtx *cmd_ctx
 ) {
-	ASSERT(command_ctx != NULL);
-	return command_ctx->command_name;
+	ASSERT(cmd_ctx != NULL);
+	return cmd_ctx->command_name;
 }
 
 const char *CommandCtx_GetQuery
 (
-	const CommandCtx *command_ctx
+	const CommandCtx *cmd_ctx
 ) {
-	ASSERT(command_ctx != NULL);
-	return command_ctx->query;
+	ASSERT(cmd_ctx != NULL);
+	return cmd_ctx->query;
 }
 
 void CommandCtx_ThreadSafeContextLock
 (
-	const CommandCtx *command_ctx
+	const CommandCtx *cmd_ctx
 ) {
 	// acquire lock only when working with a blocked client
 	// otherwise we're running on Redis main thread
 	// no need to acquire lock
-	ASSERT(command_ctx != NULL && command_ctx->ctx != NULL);
-	if(command_ctx->bc) {
-		RedisModule_ThreadSafeContextLock(command_ctx->ctx);
+	ASSERT(cmd_ctx != NULL && cmd_ctx->ctx != NULL);
+	if(cmd_ctx->bc) {
+		RedisModule_ThreadSafeContextLock(cmd_ctx->ctx);
 	}
 }
 
 void CommandCtx_ThreadSafeContextUnlock
 (
-	const CommandCtx *command_ctx
+	const CommandCtx *cmd_ctx
 ) {
 	// release lock only when working with a blocked client
 	// otherwise we're running on Redis main thread
 	// no need to release lock
-	ASSERT(command_ctx != NULL && command_ctx->ctx != NULL);
-	if(command_ctx->bc) {
-		RedisModule_ThreadSafeContextUnlock(command_ctx->ctx);
+	ASSERT(cmd_ctx != NULL && cmd_ctx->ctx != NULL);
+	if(cmd_ctx->bc) {
+		RedisModule_ThreadSafeContextUnlock(cmd_ctx->ctx);
 	}
 }
 
 void CommandCtx_UnblockClient
 (
-	CommandCtx *command_ctx
+	CommandCtx *cmd_ctx
 ) {
-	ASSERT(command_ctx != NULL);
-	if(command_ctx->bc) {
-		RedisGraph_UnblockClient(command_ctx->bc);
-		command_ctx->bc = NULL;
-		if(command_ctx->ctx) {
-			RedisModule_FreeThreadSafeContext(command_ctx->ctx);
-			command_ctx->ctx = NULL;
+	ASSERT(cmd_ctx != NULL);
+	if(cmd_ctx->bc) {
+		RedisGraph_UnblockClient(cmd_ctx->bc);
+		cmd_ctx->bc = NULL;
+		if(cmd_ctx->ctx) {
+			RedisModule_FreeThreadSafeContext(cmd_ctx->ctx);
+			cmd_ctx->ctx = NULL;
 		}
 	}
 }
 
 void CommandCtx_Free
 (
-	CommandCtx *command_ctx
+	CommandCtx *cmd_ctx
 ) {
 	// decrement reference count
-	if(atomic_fetch_sub(&command_ctx->ref_count, 1) == 1) {
+	if (atomic_fetch_sub(&cmd_ctx->ref_count, 1) == 1) {
 		// reference count is zero, free command context
-		ASSERT(command_ctx->bc == NULL);
+		ASSERT (cmd_ctx->bc == NULL) ;
 
-		if(command_ctx->query != NULL) rm_free(command_ctx->query);
-		rm_free(command_ctx->command_name);
-		rm_free(command_ctx);
+		if (cmd_ctx->rm_query != NULL) {
+			RedisModule_FreeString (cmd_ctx->ctx, cmd_ctx->rm_query) ;
+		}
+
+		if (cmd_ctx->params != NULL) {
+			rm_free (cmd_ctx->params) ;
+		}
+
+		RedisModule_FreeString (cmd_ctx->ctx, cmd_ctx->rm_command_name) ;
+		rm_free (cmd_ctx) ;
 	}
 }
 

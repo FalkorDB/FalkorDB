@@ -23,20 +23,27 @@ typedef enum {
 
 // command context, used for concurrent query processing
 typedef struct {
-	char *query;                   // query string
-	RedisModuleCtx *ctx;           // redis module context
-	char *command_name;            // command to execute
-	GraphContext *graph_ctx;       // graph context
-	atomic_int ref_count;          // reference count
-	RedisModuleBlockedClient *bc;  // blocked client
-	bool replicated_command;       // whether this instance was spawned by a replication command
-	bool compact;                  // whether this query was issued with the compact flag
-	ExecutorThread thread;         // which thread executes this command
-	long long timeout;             // the query timeout, if specified
-	bool timeout_rw;               // apply timeout on both read and write queries
-	uint64_t received_ts;          // command received at this UNIX timestamp
-	simple_timer_t timer;          // stopwatch started upon command received
-	bolt_client_t *bolt_client;    // BOLT client
+	const char *query;                   // query string
+	RedisModuleString *rm_query;         // rm_string query
+	size_t query_len;                    // query length
+	RedisModuleCtx *ctx;                 // redis module context
+
+	const char *command_name;            // command to execute
+	RedisModuleString *rm_command_name;  // rm_string command_name
+
+	char *params;                        // query parameters
+
+	GraphContext *graph_ctx;             // graph context
+	atomic_int ref_count;                // reference count
+	RedisModuleBlockedClient *bc;        // blocked client
+	bool replicated_command;             // whether this instance was spawned by a replication command
+	bool compact;                        // whether this query was issued with the compact flag
+	ExecutorThread thread;               // which thread executes this command
+	long long timeout;                   // the query timeout, if specified
+	bool timeout_rw;                     // apply timeout on both read and write queries
+	uint64_t received_ts;                // command received at this UNIX timestamp
+	simple_timer_t timer;                // stopwatch started upon command received
+	bolt_client_t *bolt_client;          // BOLT client
 } CommandCtx;
 
 // create a new command context
@@ -60,66 +67,66 @@ CommandCtx *CommandCtx_New
 // increment command context reference count
 void CommandCtx_Incref
 (
-	CommandCtx *command_ctx
+	CommandCtx *cmd_ctx
 );
 
 // get Redis module context
 RedisModuleCtx *CommandCtx_GetRedisCtx
 (
-	CommandCtx *command_ctx
+	CommandCtx *cmd_ctx
 );
 
 // get BOLT client
 bolt_client_t *CommandCtx_GetBoltClient
 (
-	CommandCtx *command_ctx
+	CommandCtx *cmd_ctx
 );
 
 // get blocking client
 RedisModuleBlockedClient *CommandCtx_GetBlockingClient
 (
-	const CommandCtx *command_ctx
+	const CommandCtx *cmd_ctx
 );
 
 // get GraphContext
 GraphContext *CommandCtx_GetGraphContext
 (
-	const CommandCtx *command_ctx
+	const CommandCtx *cmd_ctx
 );
 
 // get command name
 const char *CommandCtx_GetCommandName
 (
-	const CommandCtx *command_ctx
+	const CommandCtx *cmd_ctx
 );
 
 // get query string
 const char *CommandCtx_GetQuery
 (
-	const CommandCtx *command_ctx
+	const CommandCtx *cmd_ctx
 );
 
 // acquire Redis global lock
 void CommandCtx_ThreadSafeContextLock
 (
-	const CommandCtx *command_ctx
+	const CommandCtx *cmd_ctx
 );
 
 // release Redis global lock
 void CommandCtx_ThreadSafeContextUnlock
 (
-	const CommandCtx *command_ctx
+	const CommandCtx *cmd_ctx
 );
 
 // unblock the client
 void CommandCtx_UnblockClient
 (
-	CommandCtx *command_ctx
+	CommandCtx *cmd_ctx
 );
 
 // free command context
 void CommandCtx_Free
 (
-	CommandCtx *command_ctx
+	CommandCtx *cmd_ctx
 );
 
