@@ -7,7 +7,7 @@
 #pragma once
 
 #include "../ast/ast.h"
-#include "../commands/cmd_context.h"
+#include "cmd_context.h"
 #include "../execution_plan/execution_plan.h"
 
  // execution type derived from a query

@@ -80,7 +80,7 @@ static int _read_flags
 					return REDISMODULE_ERR;
 				}
 
-				if(*timeout == CONFIG_TIMEOUT_NO_TIMEOUT && timeout_rw) {
+				if(*timeout == CONFIG_TIMEOUT_NO_TIMEOUT && *timeout_rw) {
 					Config_Option_get(Config_TIMEOUT_DEFAULT, timeout);
 					if(*timeout == CONFIG_TIMEOUT_NO_TIMEOUT) {
 						*timeout = max_timeout;

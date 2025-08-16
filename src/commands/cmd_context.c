@@ -30,6 +30,9 @@ CommandCtx *CommandCtx_New
 	simple_timer_t timer,          // stopwatch started upon command received
 	bolt_client_t *bolt_client     // BOLT client
 ) {
+	ASSERT (query    != NULL) ;
+	ASSERT (cmd_name != NULL) ;
+
 	//CommandCtx *context = rm_malloc(sizeof(CommandCtx));
 	CommandCtx *context = rm_calloc (1, sizeof (CommandCtx)) ;
 
@@ -47,21 +50,17 @@ CommandCtx *CommandCtx_New
 
 	simple_timer_copy(timer, context->timer);
 
-	if (cmd_name) {
-		// retain command name
-		RedisModule_RetainString (ctx, cmd_name) ;
+	// retain command name
+	RedisModule_RetainString (ctx, cmd_name) ;
 
-		context->rm_command_name = cmd_name ;
-		context->command_name = RedisModule_StringPtrLen (cmd_name, NULL) ;
-	}
+	context->rm_command_name = cmd_name ;
+	context->command_name = RedisModule_StringPtrLen (cmd_name, NULL) ;
 
-	if (query) {
-		// retain query
-		RedisModule_RetainString (ctx, query) ;
+	// retain query
+	RedisModule_RetainString (ctx, query) ;
 
-		context->rm_query = query ;
-		context->query = RedisModule_StringPtrLen (query, &context->query_len) ;
-	}
+	context->rm_query = query ;
+	context->query = RedisModule_StringPtrLen (query, &context->query_len) ;
 
 	return context;
 }
@@ -179,20 +178,18 @@ void CommandCtx_Free
 	CommandCtx *cmd_ctx
 ) {
 	// decrement reference count
-	if (atomic_fetch_sub(&cmd_ctx->ref_count, 1) == 1) {
+	int prev_ref = atomic_fetch_sub (&cmd_ctx->ref_count, 1) ;
+	ASSERT (prev_ref < 3) ;
+
+	if (prev_ref == 1) {
 		// reference count is zero, free command context
 		ASSERT (cmd_ctx->bc == NULL) ;
 
-		if (cmd_ctx->rm_query != NULL) {
-			RedisModule_FreeString (cmd_ctx->ctx, cmd_ctx->rm_query) ;
-		}
+		RedisModule_FreeString (NULL, cmd_ctx->rm_query) ;
+		RedisModule_FreeString (NULL, cmd_ctx->rm_command_name) ;
 
 		if (cmd_ctx->params != NULL) {
 			rm_free (cmd_ctx->params) ;
-		}
-
-		if (cmd_ctx->rm_command_name != NULL) {
-			RedisModule_FreeString (cmd_ctx->ctx, cmd_ctx->rm_command_name) ;
 		}
 
 		rm_free (cmd_ctx) ;

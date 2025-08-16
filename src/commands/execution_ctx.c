@@ -115,13 +115,14 @@ ExecutionCtx *ExecutionCtx_FromQuery
 	// copy the query
 	ASSERT (cmd_ctx->params == NULL) ;
 	cmd_ctx->params = rm_malloc (cmd_ctx->query_len + 1) ;
-	memcpy (cmd_ctx->params, cmd_ctx->query, cmd_ctx->query_len + 1) ;
+	memcpy (cmd_ctx->params, cmd_ctx->query, cmd_ctx->query_len) ;
+	cmd_ctx->params[cmd_ctx->query_len] = '\0';
 
 	// cmd_ctx->query string excluding query parameters
 	parse_params (cmd_ctx->params, &query_no_params) ;
 
 	// query included only params e.g. 'cypher a=1' was provided
-	if (unlikely (strnlen (query_no_params, 1) == 0)) {
+	if (unlikely (*query_no_params == '\0')) {
 		ErrorCtx_SetError (EMSG_EMPTY_QUERY) ;
 		return NULL ;
 	}
@@ -180,7 +181,11 @@ ExecutionCtx *ExecutionCtx_FromQuery
 			// failed to construct plan
 			// clean up and return NULL
 			AST_Free (ast) ;
-			ExecutionPlan_Free (plan) ;
+
+			if (plan != NULL) {
+				ExecutionPlan_Free (plan) ;
+			}
+
 			return NULL ;
 		}
 

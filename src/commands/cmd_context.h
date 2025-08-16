@@ -7,14 +7,13 @@
 #pragma once
 
 #include "../bolt/bolt.h"
-#include "cypher-parser.h"
 #include "../redismodule.h"
 #include "../util/simple_timer.h"
 #include "../graph/graphcontext.h"
 
 #include <stdatomic.h>
 
-// ExecutorThread lists the diffrent types of threads in the system
+// ExecutorThread lists the different types of threads in the system
 typedef enum {
 	EXEC_THREAD_MAIN,    // redis main thread
 	EXEC_THREAD_READER,  // read only thread
@@ -31,7 +30,7 @@ typedef struct {
 	const char *command_name;            // command to execute
 	RedisModuleString *rm_command_name;  // rm_string command_name
 
-	char *params;                        // query parameters
+	char *params;                        // populated by parse_params
 
 	GraphContext *graph_ctx;             // graph context
 	atomic_int ref_count;                // reference count
