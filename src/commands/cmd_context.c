@@ -191,7 +191,10 @@ void CommandCtx_Free
 			rm_free (cmd_ctx->params) ;
 		}
 
-		RedisModule_FreeString (cmd_ctx->ctx, cmd_ctx->rm_command_name) ;
+		if (cmd_ctx->rm_command_name != NULL) {
+			RedisModule_FreeString (cmd_ctx->ctx, cmd_ctx->rm_command_name) ;
+		}
+
 		rm_free (cmd_ctx) ;
 	}
 }
