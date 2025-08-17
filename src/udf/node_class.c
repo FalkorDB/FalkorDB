@@ -5,8 +5,7 @@
 
 #include "RG.h"
 #include "utils.h"
-#include "quickjs.h"
-#include "../graph/entities/node.h"
+#include "node_class.h"
 
 // Define class + prototype
 static JSClassDef js_node_class = {

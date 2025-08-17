@@ -5,6 +5,7 @@
 
 #include "quickjs.h"
 #include "../value.h"
+#include "node_class.h"
 #include "../datatypes/datatypes.h"
 
 // forward declarations

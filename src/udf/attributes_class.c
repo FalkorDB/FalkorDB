@@ -24,7 +24,7 @@ static JSValue js_entity_get_attributes
 	JSContext *js_ctx,
 	JSValueConst this_val
 ) {
-    GraphEntity *entity = JS_GetOpaque2 (ctx, this_val, js_node_class_id) ;
+    GraphEntity *entity = JS_GetOpaque2 (js_ctx, this_val, js_node_class_id) ;
     if (!entity) {
         return JS_EXCEPTION ;
 	}
@@ -44,38 +44,44 @@ static JSValue js_attributes_get_property
 	JSValueConst obj,
 	JSAtom prop
 ) {
-    GraphEntity *e = JS_GetOpaque (obj, js_attributes_class_id) ;
+	GraphEntity *e = JS_GetOpaque (obj, js_attributes_class_id) ;
     if (!e) {
-        return JS_UNDEFINED ;
-	}
+        return 0;  // property not found
+    }
 
-    const char *key = JS_AtomToCString (js_ctx, prop) ;
+    const char *key = JS_AtomToCString(js_ctx, prop);
     if (!key) {
-        return JS_UNDEFINED ;
-	}
+        return -1; // exception
+    }
 
     // search for attribute
-	GraphContext *gc = QueryCtx_GetGraphCtx () ;
-	ASSERT (gc != NULL) ;
+    GraphContext *gc = QueryCtx_GetGraphCtx();
+    ASSERT(gc != NULL);
 
-	// get attribute id
-	AttributeID attr_id = GraphContext_GetAttributeID (gc, key) ;
-	JS_FreeCString (js_ctx, key) ;
+    // get attribute id
+    AttributeID attr_id = GraphContext_GetAttributeID(gc, key);
+    JS_FreeCString(js_ctx, key);
 
-	// unknown attribute
-	if (attr_id == ATTRIBUTE_ID_NONE) {
-		return JS_UNDEFINED ;	
-	}
+    // unknown attribute
+    if (attr_id == ATTRIBUTE_ID_NONE) {
+        return 0;  // property not found
+    }
 
-	// get attribute from node object
-	SIValue *v = GraphEntity_GetProperty (e, attr_id) ;
+    // get attribute from node object
+    SIValue *v = GraphEntity_GetProperty(e, attr_id);
 
-	// key found convert to JSValue
-	if (v != ATTRIBUTE_NOTFOUND) {
-		return UDF_SIValueToJS (js_ctx, *v) ;
-	}
+    if (v != ATTRIBUTE_NOTFOUND) {
+        // key found -> convert to JSValue
+        if (desc) {
+            desc->flags  = JS_PROP_ENUMERABLE ;  // configurable, etc. as needed
+            desc->value  = UDF_SIValueToJS (js_ctx, *v) ;
+            desc->getter = JS_UNDEFINED ;
+            desc->setter = JS_UNDEFINED ;
+        }
+        return 1 ;  // property exists
+    }
 
-	// missing attribute
-    return JS_UNDEFINED ;
+    // missing attribute
+    return 0 ;  // property not found
 }
 
