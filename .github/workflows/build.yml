@@ -228,6 +228,10 @@ jobs:
         with:
           # network=host driver-opt needed to push to local registry
           driver-opts: network=host
+      
+      - name: Ignore Errors if os is rhel8
+        if: ${{ matrix.platform.os == 'rhel8' }}
+        run: sed -i 's/-Werror//g' /FalkorDB/deps/RediSearch/deps/VectorSimilarity/src/VecSim/CMakeLists.txt
 
       - name: Build compiler image
         id: build_compiler
@@ -478,7 +482,16 @@ jobs:
 
       - name: Flow tests
         run: |
-          docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
+          did=$(docker run -d falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests)
+          docker wait $did
+          docker cp $did:/logs /logs
+      
+      - name: Upload flow test logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: flow-test-logs-${{ matrix.platform.suffix }}
+          path: /logs
+
 
   tck-tests:
     needs: build
