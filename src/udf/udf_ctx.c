@@ -6,6 +6,9 @@
 #include "RG.h"
 #include "udf_ctx.h"
 #include "../util/rmalloc.h"
+#include <pthread.h>
+
+#include <pthread.h>
 
 static pthread_key_t _tlsUDFCtx;  // thread local storage UDF context key
 

@@ -122,6 +122,7 @@ JSValue UDF_SIValueToJS
 
 		case T_NODE:
 		{
+			js_val = js_create_node (js_ctx, val.ptrval) ;
 			assert (false && "Not implemented") ;
 			break ;
 		}

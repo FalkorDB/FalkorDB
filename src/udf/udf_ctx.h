@@ -7,8 +7,6 @@
 
 #include "quickjs.h"
 
-#include <pthread.h>
-
 // instantiate the thread-local UDFCtx on module load
 bool UDFCtx_Init(void);
 
