@@ -17,6 +17,7 @@ RUN apk add --no-cache \
     cmake \
     rust \
     cargo \
+    git \
     build-base # Essential for compiling C/C++ projects
 
 # Activate pyenv
