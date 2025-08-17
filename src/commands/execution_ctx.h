@@ -7,6 +7,7 @@
 #pragma once
 
 #include "../ast/ast.h"
+#include "cmd_context.h"
 #include "../execution_plan/execution_plan.h"
 
  // execution type derived from a query
@@ -31,7 +32,7 @@ typedef struct {
 // returns ExecutionCtx populated with the current execution relevant objects
 ExecutionCtx *ExecutionCtx_FromQuery
 (
-	char *q  // string representing the query
+	CommandCtx *cmd_ctx
 );
 
 // clone the execution ctx and return a shallow copy for the ast
