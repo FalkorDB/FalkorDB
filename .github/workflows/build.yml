@@ -30,6 +30,11 @@ jobs:
             runner_label: rhel-build-${{ github.run_id }}-${{ github.run_number }}
             arm: false
             image: projects/rhel-cloud/global/images/rhel-9-v20241210
+          - name: rhel8-build
+            machine_type: e2-standard-4
+            runner_label: rhel8-build-${{ github.run_id }}-${{ github.run_number }}
+            arm: false
+            image: projects/rhel-cloud/global/images/rhel-9-v20241210
     runs-on: ubuntu-latest
     steps:
       - name: Create runners
@@ -112,7 +117,7 @@ jobs:
             platform: linux/amd64
             suffix: rhel8-x64
             os: rhel8
-            machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
+            machine_label: ${{ format('rhel8-build-{0}-{1}', github.run_id, github.run_number) }}
             build_test_image: false
             cache_path: linux-x64
             is_debug: "0"
@@ -146,7 +151,7 @@ jobs:
             platform: linux/amd64
             suffix: rhel8-x64
             os: rhel8
-            machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
+            machine_label: ${{ format('rhel8-build-{0}-{1}', github.run_id, github.run_number) }}
             build_test_image: false
             cache_path: linux-x64
             is_debug: "1"
