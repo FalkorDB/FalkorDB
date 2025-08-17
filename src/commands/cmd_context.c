@@ -50,13 +50,18 @@ CommandCtx *CommandCtx_New
 	simple_timer_copy(timer, context->timer);
 
 	// retain command name
+	// threaded modules that reference retained strings from other threads
+	// must explicitly trim the allocation as soon as the string is retained.
+	// Not doing so may result with automatic trimming which is not thread safe.
 	RedisModule_RetainString (ctx, cmd_name) ;
+	RedisModule_TrimStringAllocation (cmd_name) ;
 
 	context->rm_command_name = cmd_name ;
 	context->command_name = RedisModule_StringPtrLen (cmd_name, NULL) ;
 
 	// retain query
 	RedisModule_RetainString (ctx, query) ;
+	RedisModule_TrimStringAllocation (query) ;
 
 	context->rm_query = query ;
 	context->query = RedisModule_StringPtrLen (query, &context->query_len) ;
