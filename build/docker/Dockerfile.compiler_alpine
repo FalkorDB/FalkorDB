@@ -2,6 +2,7 @@ FROM alpine:latest AS builder
 
 # Install build tools and dependencies for Alpine
 RUN apk add --no-cache \
+    git \
     bash \
     busybox \
     python3 \
