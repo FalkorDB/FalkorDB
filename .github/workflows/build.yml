@@ -449,7 +449,7 @@ jobs:
       - name: Unit tests
         run: |
           mkdir -p /tmp/logs
-          docker run --rm -it -v /tmp/logs:/FalkorDB/tests/unit/logs falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
+          docker run --rm -i -v /tmp/logs:/FalkorDB/tests/unit/logs falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
 
       - name: Upload unit test logs
         uses: actions/upload-artifact@v4
@@ -495,7 +495,7 @@ jobs:
       - name: Flow tests
         run: |
           mkdir -p /tmp/logs
-          docker run --rm -it -v /tmp/logs:/FalkorDB/tests/flow/logs falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
+          docker run --rm -i -v /tmp/logs:/FalkorDB/tests/flow/logs falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
 
       - name: Upload flow test logs
         uses: actions/upload-artifact@v4
@@ -542,7 +542,7 @@ jobs:
       - name: TCK tests
         run: |
           mkdir -p /tmp/logs
-          docker run --rm -it -v /tmp/logs:/FalkorDB/tests/tck/logs falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
+          docker run --rm -i -v /tmp/logs:/FalkorDB/tests/tck/logs falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
 
       - name: Upload TCK test logs
         uses: actions/upload-artifact@v4
@@ -588,7 +588,7 @@ jobs:
       - name: Fuzz tests
         run: |
           mkdir -p /tmp/logs
-          docker run --rm -it -v /tmp/logs:/FalkorDB/tests/fuzz/logs falkordb/falkordb-tests make fuzz TIMEOUT=180
+          docker run --rm -i -v /tmp/logs:/FalkorDB/tests/fuzz/logs falkordb/falkordb-tests make fuzz TIMEOUT=180
 
       - name: Upload fuzz test logs
         uses: actions/upload-artifact@v4
