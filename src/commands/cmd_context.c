@@ -33,7 +33,6 @@ CommandCtx *CommandCtx_New
 	ASSERT (query    != NULL) ;
 	ASSERT (cmd_name != NULL) ;
 
-	//CommandCtx *context = rm_malloc(sizeof(CommandCtx));
 	CommandCtx *context = rm_calloc (1, sizeof (CommandCtx)) ;
 
 	context->bc                 = bc;
