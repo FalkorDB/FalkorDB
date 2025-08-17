@@ -483,15 +483,17 @@ jobs:
       - name: Flow tests
         run: |
           did=$(docker run -d falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests)
+          path=$(docker exec -it $did find /FalkorDB -type d -name logs)
+          echo "Logs path: $path"
           docker wait $did
-          docker cp $did:/FalkorDB/logs /logs || docker cp $did:/FalkorDB/tests/flow/logs /logs
+          docker cp $did:$path /tmp/logs
           docker rm $did
       
       - name: Upload flow test logs
         uses: actions/upload-artifact@v4
         with:
           name: flow-test-logs-${{ matrix.platform.suffix }}
-          path: /logs
+          path: /tmp/logs
 
 
   tck-tests:
