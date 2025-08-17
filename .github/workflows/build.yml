@@ -484,7 +484,8 @@ jobs:
         run: |
           did=$(docker run -d falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests)
           docker wait $did
-          docker cp $did:/logs /logs
+          docker cp $did:/FalkorDB/logs /logs || docker cp $did:/FalkorDB/tests/flow/logs /logs
+          docker rm $did
       
       - name: Upload flow test logs
         uses: actions/upload-artifact@v4
