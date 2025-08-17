@@ -443,11 +443,9 @@ jobs:
 
       - name: Unit tests
         run: |
-          did=$(docker run -d falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests)
-          docker wait $did
-          docker cp $did:/FalkorDB/tests/unit/logs /tmp/logs
-          docker rm $did
-      
+          mkdir -p /tmp/logs
+          docker run --rm -it -v ${{ github.workspace }}/tmp/logs:/FalkorDB/tests/unit/logs falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
+
       - name: Upload unit test logs
         uses: actions/upload-artifact@v4
         with:
@@ -491,11 +489,8 @@ jobs:
 
       - name: Flow tests
         run: |
-          did=$(docker run -d falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests)
-          docker wait $did
-          docker cp $did:/FalkorDB/tests/flow/logs /tmp/logs
-          docker rm $did
-      
+          docker run --rm -it -v ${{ github.workspace }}/tmp/logs:/FalkorDB/tests/flow/logs falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
+
       - name: Upload flow test logs
         uses: actions/upload-artifact@v4
         with:
@@ -540,10 +535,8 @@ jobs:
 
       - name: TCK tests
         run: |
-          did=$(docker run falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests)
-          docker wait $did
-          docker cp $did:/FalkorDB/tests/tck/logs /tmp/logs
-          docker rm $did
+          docker run --rm -it -v ${{ github.workspace }}/tmp/logs:/FalkorDB/tests/tck/logs falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
+
       - name: Upload TCK test logs
         uses: actions/upload-artifact@v4
         with:
@@ -587,10 +580,8 @@ jobs:
 
       - name: Fuzz tests
         run: |
-          did=$(docker run falkordb/falkordb-tests make fuzz TIMEOUT=180)
-          docker wait $did
-          docker cp $did:/FalkorDB/tests/fuzz/logs /tmp/logs
-          docker rm $did
+          docker run --rm -it -v ${{ github.workspace }}/tmp/logs:/FalkorDB/tests/fuzz/logs falkordb/falkordb-tests make fuzz TIMEOUT=180
+          
       - name: Upload fuzz test logs
         uses: actions/upload-artifact@v4
         with:
