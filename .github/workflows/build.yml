@@ -443,7 +443,16 @@ jobs:
 
       - name: Unit tests
         run: |
-          docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
+          did=$(docker run -d falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests)
+          docker wait $did
+          docker cp $did:/FalkorDB/tests/unit/logs /tmp/logs
+          docker rm $did
+      
+      - name: Upload unit test logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-logs-${{ matrix.platform.suffix }}
+          path: /tmp/logs
 
   flow-tests:
     needs: build
@@ -483,10 +492,8 @@ jobs:
       - name: Flow tests
         run: |
           did=$(docker run -d falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests)
-          path=$(docker exec -it $did find /FalkorDB -type d -name logs)
-          echo "Logs path: $path"
           docker wait $did
-          docker cp $did:$path /tmp/logs
+          docker cp $did:/FalkorDB/tests/flow/logs /tmp/logs
           docker rm $did
       
       - name: Upload flow test logs
@@ -533,7 +540,15 @@ jobs:
 
       - name: TCK tests
         run: |
-          docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
+          did=$(docker run falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests)
+          docker wait $did
+          docker cp $did:/FalkorDB/tests/tck/logs /tmp/logs
+          docker rm $did
+      - name: Upload TCK test logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: tck-test-logs-${{ matrix.platform.suffix }}
+          path: /tmp/logs
 
   fuzz-tests:
     needs: build
@@ -572,7 +587,15 @@ jobs:
 
       - name: Fuzz tests
         run: |
-          docker run -i --rm falkordb/falkordb-tests make fuzz TIMEOUT=180
+          did=$(docker run falkordb/falkordb-tests make fuzz TIMEOUT=180)
+          docker wait $did
+          docker cp $did:/FalkorDB/tests/fuzz/logs /tmp/logs
+          docker rm $did
+      - name: Upload fuzz test logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-test-logs-${{ matrix.platform.suffix }}
+          path: /tmp/logs
 
   #upgrade-tests:
   #  needs: build
