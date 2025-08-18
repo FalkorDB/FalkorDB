@@ -12,7 +12,7 @@ void rg_setup(const benchmark::State &state) {
 	Config_Option_set(Config_DELTA_MAX_PENDING_CHANGES,
 			"100000", NULL);
     GrB_Global_set_INT32(GrB_GLOBAL, GxB_JIT_OFF, GxB_JIT_C_CONTROL);
-    GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
+    GrB_Global_set_INT32(GrB_GLOBAL, true, GxB_BURBLE);
 	GxB_Global_Option_set(GxB_FORMAT, GxB_BY_ROW); // all matrices in CSR format
 }
 
@@ -79,11 +79,7 @@ static void BM_add_chain(benchmark::State &state) {
 }
 
 BENCHMARK(BM_add_all)->Setup(rg_setup)->Teardown(rg_teardown)
-    ->Unit(benchmark::kMicrosecond)->Args({100000, 100000})->Args({0, 0})
-    ->Args({100000, 0})->Args({0, 100000})->Args({100, 100})->Args({0, 100})
-    ->Args({100, 0});
+    ->Unit(benchmark::kMicrosecond)->Args({10000, 10000})->Iterations(1);
 BENCHMARK(BM_add_chain)->Setup(rg_setup)->Teardown(rg_teardown)
-    ->Unit(benchmark::kMicrosecond)->Args({100000, 100000})->Args({0, 0})
-    ->Args({100000, 0})->Args({0, 100000})->Args({100, 100})->Args({0, 100})
-    ->Args({100, 0});
+    ->Unit(benchmark::kMicrosecond)->Args({10000, 10000})->Iterations(1);
 BENCHMARK_MAIN();

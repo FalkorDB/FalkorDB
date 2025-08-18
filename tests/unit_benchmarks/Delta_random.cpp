@@ -26,7 +26,6 @@ void Delta_Random_Matrix
 	// randomize the seed before using it.
 	simple_rand(&seed);
 
-	ASSERT(M != NULL);
 	ASSERT(type != NULL);
 	GrB_OK(LAGraph_Random_Matrix(&M, type, n, n, density, seed, NULL));
 	simple_rand(&seed);
@@ -69,11 +68,22 @@ void Delta_Random_Matrix
 		n, GrB_DESC_S));
 	GrB_OK(GrB_Matrix_apply(DP, NULL, NULL, GxB_ONE_BOOL, DP, NULL));
 
-	GrB_OK(GrB_Matrix_wait(M, GrB_MATERIALIZE));
 
 	Delta_Matrix_setMatrices(mtx, M, DP, DM);
+	GrB_OK (Delta_Matrix_wait(mtx, false));
+
 	*A = mtx;
 	GrB_OK(GrB_Scalar_free(&empty));
+
+	GrB_Index nvals = 0;
+	if (add_density > 0) {
+		GrB_Matrix_nvals(&nvals, DP);
+		ASSERT(nvals > 0);
+	}
+	if (del_density > 0) {
+		GrB_Matrix_nvals(&nvals, DM);
+		ASSERT(nvals > 0);
+	}
 }
 
 static void _push_element
