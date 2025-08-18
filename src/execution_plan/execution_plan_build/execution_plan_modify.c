@@ -83,6 +83,8 @@ static void _OpBase_RemoveChild
 		if(parent->children[i] == child) break;
 	}
 
+	ASSERT(i != parent->childCount);
+
 	// update child count
 	parent->childCount--;
 
@@ -213,6 +215,7 @@ void ExecutionPlan_ReplaceOp
 	ExecutionPlan_RemoveOp(plan, a);
 }
 
+
 // removes operation from execution plan
 void ExecutionPlan_RemoveOp
 (
@@ -224,13 +227,17 @@ void ExecutionPlan_RemoveOp
 
 	if(op->parent == NULL) {
 		// removing execution plan root
-		ASSERT(op->childCount == 1);
+		ASSERT(op->childCount <= 1);
 
-		// assign child as new root
-		plan->root = op->children[0];
+		plan->root = NULL;
 
-		// remove new root's parent pointer
-		plan->root->parent = NULL;
+		if(OpBase_ChildCount(op) == 1) {
+			// assign child as new root
+			plan->root = op->children[0];
+
+			// remove new root's parent pointer
+			plan->root->parent = NULL;
+		}
 	} else {
 		OpBase *parent = op->parent;
 		if(op->childCount > 0) {
@@ -248,10 +255,12 @@ void ExecutionPlan_RemoveOp
 	}
 
 	// clear op
-	op->parent = NULL;
 	rm_free(op->children);
-	op->children = NULL;
+
+	op->parent     = NULL;
+	op->children   = NULL;
 	op->childCount = 0;
+
 	ExecutionPlanAwareness_SelfAware(op);
 }
 
@@ -317,10 +326,10 @@ void ExecutionPlan_BindOpsToPlan
 // binds all ops in `ops` to `plan`, other than ops of type `exclude_type`
 void ExecutionPlan_MigrateOpsExcludeType
 (
-	OpBase *ops[],              // array of ops to bind
-	OPType exclude_type,        // type of ops to exclude
-	uint op_count,              // number of ops in the array
-	const ExecutionPlan *plan   // plan to bind the ops to
+	OpBase *ops[],             // array of ops to bind
+	OPType exclude_type,       // type of ops to exclude
+	uint op_count,             // number of ops in the array
+	const ExecutionPlan *plan  // plan to bind the ops to
 ) {
 	for(uint i = 0; i < op_count; i++) {
 		if(ops[i]->type != exclude_type) {

@@ -169,12 +169,6 @@ void OpBase_Init
 	const struct ExecutionPlan *plan
 );
 
-// free op
-void OpBase_Free
-(
-	OpBase *op
-);
-
 // consume op
 Record OpBase_Consume
 (
@@ -246,9 +240,9 @@ int OpBase_AliasModifier
 // returns true if any of an op's children are aware of the given alias
 bool OpBase_ChildrenAware
 (
-	const OpBase *op,
-	const char *alias,
-	int *idx
+	const OpBase *root,   // root operation
+	const char *alias,    // alias to look for
+	int *idx              // [output] alias record position
 );
 
 // returns true if alias is mapped
@@ -287,8 +281,8 @@ void OpBase_UpdateConsume
 // updates the plan of an operation
 void OpBase_BindOpToPlan
 (
-	OpBase *op,
-	const struct ExecutionPlan *plan
+	OpBase *op,                       // operation to bind
+	const struct ExecutionPlan *plan  // plan to bind to
 );
 
 // creates a new record that will be populated during execution
@@ -314,5 +308,11 @@ void OpBase_MergeRecords
 (
 	Record dest,  // entries are merged into this record
 	Record *src   // entries are merged from this record
+);
+
+// free op
+void OpBase_Free
+(
+	OpBase *op
 );
 

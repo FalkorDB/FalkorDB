@@ -1157,36 +1157,31 @@ updating clause.")
         self.env.assertEquals(res.result_set[1][0], 2)
         self.env.assertEquals(res.result_set[1][1], 5)
 
-        # TODO:
-        # this is a subquery that will require a change for the Join operation,
-        # as it requires the changes of one input record to be visible to the
-        # next input record
+        self.graph.delete()
 
-        # self.graph.delete()
+        # create two nodes with label N and property v=1, v=2
+        self.graph.query("CREATE (:N {v: 1}), (:N {v: 2})")
 
-        # # create two nodes with label N and property v=1, v=2
-        # self.graph.query("CREATE (:N {v: 1}), (:N {v: 2})")
+        res = self.graph.query(
+            """
+            MATCH (n:N)
+            CALL {
+                WITH n
+                MERGE (:N {v: n.v + 1})
+                RETURN 1 AS ret
+                UNION
+                WITH n
+                CREATE (:N {v: n.v + 2})
+                RETURN 1 AS ret
+            }
+            RETURN count(1)
+            """
+        )
 
-        # res = self.graph.query(
-        #     """
-        #     MATCH (n:N)
-        #     CALL {
-        #         WITH n
-        #         MERGE (:N {v: n.v + 1})
-        #         RETURN 1 AS ret
-        #         UNION
-        #         WITH n
-        #         CREATE (:N {v: n.v + 2})
-        #         RETURN 1 AS ret
-        #     }
-        #     RETURN count(1)
-        #     """
-        # )
-
-        # # assert results
-        # self.env.assertEquals(len(res.result_set), 1)
-        # self.env.assertEquals(res.result_set[0][0], 2)
-        # self.env.assertEquals(res.nodes_created, 2)
+        # assert results
+        self.env.assertEquals(len(res.result_set), 1)
+        self.env.assertEquals(res.result_set[0][0], 2)
+        self.env.assertEquals(res.nodes_created, 3)
 
         # union and aggregation function
         res = self.graph.query (
@@ -1389,6 +1384,57 @@ updating clause.")
             """
         )
         self.env.assertEquals(res.result_set, [[0]])
+
+        # changes from one side of a union are visible to the other side
+        self.graph.delete()
+        res = self.graph.query(
+                """
+                CREATE ()<-[:A]-()
+                RETURN 0 AS n0
+
+                UNION
+
+                MATCH ()
+                CALL {
+                    CREATE ()
+                    RETURN 0 AS n2
+                    SKIP 1
+                }
+                RETURN 1 AS n0
+                """
+        )
+
+        self.env.assertEquals(len(res.result_set), 2)
+        self.env.assertEquals(res.result_set[0][0], 0)
+        self.env.assertEquals(res.result_set[1][0], 1)
+
+        # sort projected expression
+        self.graph.delete()
+
+        # create 4 nodes
+        self.graph.query("UNWIND range(0, 3) AS x CREATE ({v:x})")
+
+        res = self.graph.query(
+                """
+                CALL {
+                    MATCH (a)
+                    RETURN a
+
+                    UNION ALL
+
+                    MATCH (a)
+                    RETURN a
+                    ORDER BY a.v desc
+                }
+                RETURN a
+                """
+        )
+
+        self.env.assertEquals(len(res.result_set), 8)
+
+        expected = [0, 1, 2, 3, 3, 2, 1, 0]
+        actual = [row[0].properties['v'] for row in res.result_set]
+        self.env.assertEquals(actual, expected)
 
     def test22_indexes(self):
         """Tests that operations on indexes are properly executed (and reset)
@@ -2228,3 +2274,18 @@ updating clause.")
         res = self.graph.query(q)
         self.env.assertEquals(res.nodes_created, 1)
         self.env.assertEquals(len(res.result_set), 0)
+
+    def test35_no_input(self):
+        # discovered by Celine Wuest
+        # call sub query should be invoked once for each input record
+        # the following doesn't produce any input records and as such the
+        # sub-query should be invoked and no side-effects should be visible
+
+        queries = ["UNWIND null AS n0 CALL { MERGE () }",
+                   "UNWIND null AS n0 CALL { WITH * MERGE () }"]
+
+        for q in queries:
+            res = self.graph.query(q)
+            self.env.assertEquals(res.nodes_created, 0)
+            self.env.assertEquals(len(res.result_set), 0)
+

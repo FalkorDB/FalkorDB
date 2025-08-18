@@ -13,7 +13,7 @@
 // returns true if an operation in the op-tree rooted at `root` is eager
 bool ExecutionPlan_isEager
 (
-    OpBase *root
+	OpBase *root
 );
 
 //------------------------------------------------------------------------------
@@ -26,9 +26,11 @@ bool ExecutionPlan_isEager
 // returns NULL if no matching operation was found
 OpBase *ExecutionPlan_LocateOpMatchingTypes
 (
-    OpBase *root,
-    const OPType *types,
-    uint type_count
+	OpBase *root,         // search starts here
+	const OPType *types,  // types to match
+	uint type_count,      // number of types
+	OPType *blacklist,    // [optional] list of ops search won't expand from
+	uint blacklist_n      // number of blacklisted ops
 );
 
 // Convenience wrapper around ExecutionPlan_LocateOpMatchingType for lookups of a single type.
@@ -36,17 +38,17 @@ OpBase *ExecutionPlan_LocateOpMatchingTypes
 // Returns NULL if operation wasn't found
 OpBase *ExecutionPlan_LocateOp
 (
-    OpBase *root,
-    OPType type
+	OpBase *root,
+	OPType type
 );
 
 // searches for an operation of a given type, up to the given depth in the
 // execution-plan
 OpBase *ExecutionPlan_LocateOpDepth
 (
-    OpBase *root,
-    OPType type,
-    uint depth
+	OpBase *root,
+	OPType type,
+	uint depth
 );
 
 // find the earliest operation at which all references are resolved, if any,
@@ -88,18 +90,26 @@ bool ExecutionPlan_ContainsSkip
 // Returns an array of operations
 OpBase **ExecutionPlan_CollectOpsMatchingTypes
 (
-    OpBase *root,
-    const OPType *types,
-    uint type_count
+	OpBase *root,
+	const OPType *types,
+	uint type_count
 );
 
-// Convenience wrapper around ExecutionPlan_LocateOpMatchingType for
+// convenience wrapper around ExecutionPlan_LocateOpMatchingType for
 // collecting all operations of a given type within the op tree.
-// Returns an array of operations
+// returns an array of operations
 OpBase **ExecutionPlan_CollectOps
 (
-    OpBase *root,
-    OPType type
+	OpBase *root,
+	OPType type
+);
+
+// collect all operations belonging to the given plan
+// it is the callers responsibility to free the returned array
+OpBase **ExecutionPlan_CollectAllOps
+(
+	const ExecutionPlan *plan, // plan to collect ops from
+	uint *n                    // [output] number of ops collected
 );
 
 // fills `ops` with all operations from `op` an upward (towards parent) in the
@@ -107,8 +117,9 @@ OpBase **ExecutionPlan_CollectOps
 // returns the amount of ops collected
 uint ExecutionPlan_CollectUpwards
 (
-    OpBase *ops[],
-    OpBase *op
+	OpBase **restrict ops,  // array to populate
+	uint n,                 // size of ops array
+	OpBase *restrict root   // root operation to scan from
 );
 
 //------------------------------------------------------------------------------
@@ -124,8 +135,7 @@ uint ExecutionPlan_CollectUpwards
 // the Create operation should not introduce a new node 'a'
 void ExecutionPlan_BoundVariables
 (
-    const OpBase *op,
-    rax *modifiers,
-    const ExecutionPlan *plan
+	const OpBase *op,
+	rax *modifiers,
+	const ExecutionPlan *plan
 );
-

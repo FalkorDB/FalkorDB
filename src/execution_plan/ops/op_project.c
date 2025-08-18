@@ -35,7 +35,8 @@ OpBase *NewProjectOp
 	OpBase_Init((OpBase *)op, OPType_PROJECT, "Project", NULL, ProjectConsume,
 				ProjectReset, NULL, ProjectClone, ProjectFree, false, plan);
 
-	for(uint i = 0; i < op->exp_count; i ++) {
+
+	for(uint i = 0; i < op->exp_count; i++) {
 		// the projected record will associate values with their resolved name
 		// to ensure that space is allocated for each entry
 		int record_idx = OpBase_Modifies((OpBase *)op,
@@ -97,9 +98,10 @@ static Record ProjectConsume
 
 	OpBase_DeleteRecord(&op->r);
 
-	// Emit the projected Record once.
+	// emit the projected Record once
 	Record projection = op->projection;
 	op->projection = NULL;
+
 	return projection;
 }
 
@@ -137,9 +139,9 @@ void ProjectBindToPlan
 	array_clear(op->record_offsets);
 
 	for(uint i = 0; i < op->exp_count; i ++) {
-		// The projected record will associate values with their resolved name
-		// to ensure that space is allocated for each entry.
-		int record_idx = OpBase_Modifies((OpBase *)op, op->exps[i]->resolved_name);
+		// the projected record will associate values with their resolved name
+		// to ensure that space is allocated for each entry
+		int record_idx = OpBase_Modifies(opBase, op->exps[i]->resolved_name);
 		array_append(op->record_offsets, record_idx);
 	}
 }
@@ -151,8 +153,7 @@ static void ProjectFree
 	OpProject *op = (OpProject *)ctx;
 
 	if(op->exps) {
-		for(uint i = 0; i < op->exp_count; i ++) AR_EXP_Free(op->exps[i]);
-		array_free(op->exps);
+		array_free_cb(op->exps, AR_EXP_Free);
 		op->exps = NULL;
 	}
 
