@@ -10,6 +10,7 @@
 #include "globals.h"
 #include "util/uuid.h"
 #include "cron/cron.h"
+#include "index/indexer.h"
 #include "bolt/bolt_api.h"
 #include "commands/cmd_acl.h"
 #include "util/thpool/pools.h"
@@ -372,6 +373,9 @@ static void _ShutdownEventHandler
 
 	// stop cron
 	Cron_Stop();
+
+	// stop indexer
+	Indexer_Stop () ;
 
 	// stop threads before finalize GraphBLAS
 	ThreadPools_Destroy();

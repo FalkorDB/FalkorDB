@@ -59,3 +59,5 @@ void Indexer_DropConstraint
 	GraphContext *gc  // graph context
 );
 
+// stop and free indexer
+void Indexer_Stop(void);
