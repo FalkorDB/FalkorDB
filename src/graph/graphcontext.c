@@ -92,7 +92,7 @@ GraphContext *GraphContext_New
 (
 	const char *graph_name
 ) {
-	GraphContext *gc = rm_malloc(sizeof(GraphContext));
+	GraphContext *gc = rm_calloc(1, sizeof(GraphContext));
 
 	gc->version          = 0;  // initial graph version
 	gc->slowlog          = SlowLog_New();
@@ -217,15 +217,20 @@ void GraphContext_Release
 	GraphContext_DecreaseRefCount(gc);
 }
 
-void GraphContext_MarkWriter(RedisModuleCtx *ctx, GraphContext *gc) {
-	RedisModuleString *graphID = RedisModule_CreateString(ctx, gc->graph_name, strlen(gc->graph_name));
+void GraphContext_MarkWriter
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc
+) {
+	RedisModuleString *graphID =
+		RedisModule_CreateString(ctx, gc->graph_name, strlen(gc->graph_name));
 
-	// Reopen only if key exists (do not re-create) make sure key still exists.
+	// reopen only if key exists (do not re-create) make sure key still exists
 	RedisModuleKey *key = RedisModule_OpenKey(ctx, graphID, REDISMODULE_READ);
 	if(RedisModule_KeyType(key) == REDISMODULE_KEYTYPE_EMPTY) goto cleanup;
 	RedisModule_CloseKey(key);
 
-	// Mark as writer.
+	// mark as writer
 	key = RedisModule_OpenKey(ctx, graphID, REDISMODULE_WRITE);
 	RedisModule_CloseKey(key);
 
@@ -543,11 +548,14 @@ AttributeID GraphContext_GetAttributeID
 	GraphContext *gc,
 	const char *attribute
 ) {
-	// Acquire a read lock for looking up the attribute.
+	// acquire a read lock for looking up the attribute
 	pthread_rwlock_rdlock(&gc->_attribute_rwlock);
-	// Look up the attribute ID.
-	void *id = raxFind(gc->attributes, (unsigned char *)attribute, strlen(attribute));
-	// Release the lock.
+
+	// look up the attribute ID
+	void *id = raxFind(gc->attributes, (unsigned char *)attribute,
+			strlen(attribute));
+
+	// release the lock
 	pthread_rwlock_unlock(&gc->_attribute_rwlock);
 
 	if(id == raxNotFound) return ATTRIBUTE_ID_NONE;

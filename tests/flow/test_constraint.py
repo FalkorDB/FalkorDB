@@ -998,7 +998,7 @@ class testConstraintReplication():
         self.monitor = []
         self.g = self.db.select_graph(GRAPH_ID)
 
-        self.monitor_thread = threading.Thread(target=self.monitor_thread)
+        self.monitor_thread = threading.Thread(target=self.monitor_thread, daemon=True)
         self.monitor_thread.start()
 
         # wait for monitor thread to attach

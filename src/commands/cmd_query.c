@@ -272,7 +272,7 @@ static void _ExecuteQuery(void *args) {
 				// replicate original query
 				QueryCtx_Replicate(query_ctx);
 			}
-		}	
+		}
 	}
 
 	QueryCtx_UnlockCommit();
@@ -352,7 +352,7 @@ void _query
 
 	// parse query parameters and build an execution plan
 	// or retrieve it from the cache
-	exec_ctx = ExecutionCtx_FromQuery(command_ctx->query);
+	exec_ctx = ExecutionCtx_FromQuery(command_ctx);
 	if(exec_ctx == NULL) goto cleanup;
 
 	// update cached flag
