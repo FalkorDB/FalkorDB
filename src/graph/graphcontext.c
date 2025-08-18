@@ -12,7 +12,7 @@
 #include "../query_ctx.h"
 #include "../redismodule.h"
 #include "../util/rmalloc.h"
-#include "../util/thpool/pool.h"
+#include "../util/thpool/pools.h"
 #include "../constraint/constraint.h"
 #include "../serializers/graphcontext_type.h"
 #include "../commands/execution_ctx.h"
@@ -75,7 +75,7 @@ inline void GraphContext_DecreaseRefCount
 			// Async delete
 			// add deletion task to pool using force mode
 			// we can't lose this task in-case pool's queue is full
-			ThreadPool_AddWork(_GraphContext_Free, gc, 1);
+			ThreadPools_AddWorkWriter(_GraphContext_Free, gc, 1);
 		} else {
 			// Sync delete
 			_GraphContext_Free(gc);
@@ -103,12 +103,6 @@ GraphContext *GraphContext_New
 	gc->string_mapping   = array_new(char *, 64);
 	gc->encoding_context = GraphEncodeContext_New();
 	gc->decoding_context = GraphDecodeContext_New();
-
-	// initial graph's write in progress atomic flag to false
-	atomic_init(&gc->write_in_progress, false);
-
-	// create graph's pending write queries queue
-	gc->pending_write_queue = CircularBuffer_New(sizeof(void*), 1024);
 
 	// read NODE_CREATION_BUFFER size from configuration
 	// this value controls how much extra room we're willing to spend for:
@@ -266,71 +260,6 @@ void GraphContext_UnlockCommit
 
 	// unlock GIL
 	RedisModule_ThreadSafeContextUnlock(ctx);
-}
-
-// attempt to acquire exclusive write access to the given graph
-// returns true if the calling thread successfully acquired write ownership
-// returns false if another write is already in progress
-bool GraphContext_TryEnterWrite
-(
-	GraphContext *gc  // graph context
-) {
-	ASSERT(gc != NULL);
-
-	bool expected = false;
-
-    // atomically set to true only if current value is false
-    return atomic_compare_exchange_strong(&gc->write_in_progress, &expected,
-			true);
-}
-
-// release exclusive write access to the graph
-// this should be called by a thread that previously acquired write ownership
-// via GraphContext_TryEnterWrite, it clears the write-in-progress flag
-void GraphContext_ExitWrite
-(
-	GraphContext *gc  // graph context
-) {
-	ASSERT(gc != NULL);
-
-	atomic_store(&gc->write_in_progress, false);
-}
-
-// enqueue a write query for deferred execution on the specified graph
-// returns true if the query was successfully enqueued
-// false if the enqueue operation failed (e.g., due to allocation failure)
-bool GraphContext_EnqueueWriteQuery
-(
-	GraphContext *gc,  // graph context
-	void *query_ctx    // query context
-) {
-	ASSERT(gc        != NULL);
-	ASSERT(query_ctx != NULL);
-
-	return (CircularBuffer_Add(gc->pending_write_queue, &query_ctx) != 0);
-}
-
-// dequeue the next pending write query for the specified graph
-// returns a query context pointer if a query was dequeued,
-// or NULL if the pending write queue is empty
-void *GraphContext_DequeueWriteQuery
-(
-	GraphContext *gc  // graph context
-) {
-	ASSERT(gc != NULL);
-
-	void *item = NULL;
-	CircularBuffer_Read(gc->pending_write_queue, &item);
-
-	return item;
-}
-
-// checks if the graph's pending write queue is empty
-bool GraphContext_WriteQueueEmpty
-(
-	const GraphContext *gc  // graph context
-) {
-	return CircularBuffer_Empty(gc->pending_write_queue);
 }
 
 const char *GraphContext_GetName
@@ -1063,15 +992,6 @@ static void _GraphContext_Free
 	//--------------------------------------------------------------------------
 
 	if(gc->cache) Cache_Free(gc->cache);
-
-	//--------------------------------------------------------------------------
-	// free pending write queue
-	//--------------------------------------------------------------------------
-
-	if(gc->pending_write_queue != NULL) {
-		ASSERT(CircularBuffer_Empty(gc->pending_write_queue));
-		CircularBuffer_Free(gc->pending_write_queue, NULL);
-	}
 
 	GraphEncodeContext_Free(gc->encoding_context);
 	GraphDecodeContext_Free(gc->decoding_context);
