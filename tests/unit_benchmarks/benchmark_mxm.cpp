@@ -84,7 +84,11 @@ static void BM_mxm_chain_V1(benchmark::State &state) {
 }
 
 BENCHMARK(BM_mxm_all_V1)->Setup(rg_setup)->Teardown(rg_teardown)
-    ->Unit(benchmark::kMicrosecond);
+    ->Unit(benchmark::kMicrosecond)->Args({100000, 100000})->Args({0, 0})
+    ->Args({100000, 0})->Args({0, 100000})->Args({100, 100})->Args({0, 100})
+    ->Args({100, 0});
 BENCHMARK(BM_mxm_chain_V1)->Setup(rg_setup)->Teardown(rg_teardown)
-    ->Unit(benchmark::kMicrosecond);
+    ->Unit(benchmark::kMicrosecond)->Args({100000, 100000})->Args({0, 0})
+    ->Args({100000, 0})->Args({0, 100000})->Args({100, 100})->Args({0, 100})
+    ->Args({100, 0});
 BENCHMARK_MAIN();

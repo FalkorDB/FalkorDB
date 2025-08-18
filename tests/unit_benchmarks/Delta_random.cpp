@@ -35,11 +35,15 @@ void Delta_Random_Matrix
 		GrB_OK(LAGraph_Random_Matrix(&DP, type, n, n, add_density, seed, NULL));
 		simple_rand(&seed);
 		GrB_OK(GrB_Matrix_set_INT32(DP, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
+	} else {
+		GrB_OK(GrB_Matrix_new(&DP, type, n, n));
 	}
 
 	if(del_density > 0) {
 		GrB_OK(LAGraph_Random_Matrix(&DM, GrB_BOOL, n, n, del_density, seed, NULL));
 		GrB_OK(GrB_Matrix_set_INT32(DM, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
+	} else {
+		GrB_OK(GrB_Matrix_new(&DM, GrB_BOOL, n, n));
 	}
 
 	GrB_OK(GrB_Matrix_assign_BOOL(DM, DM, NULL, true, GrB_ALL, n, GrB_ALL, 
