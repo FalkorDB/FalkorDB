@@ -267,9 +267,10 @@ GrB_Info Delta_mxm
 // C = A * B
 GrB_Info Delta_mxm_identity                    
 (
-    GrB_Matrix C,                 // input/output matrix for results may contain zombie values
+    GrB_Matrix C,                 // output matrix: may contain zombie values
     const GrB_Semiring semiring,  // defines '+' and '*' for A*B
-    const GrB_Matrix A,           // first input:  matrix A may contain zombie values
+    const GrB_Semiring sem_2,     // defines '+' and '*' for matricies without zombies
+    const GrB_Matrix A,           // first input:  matrix A
     const Delta_Matrix B          // second input: matrix B
 );
 

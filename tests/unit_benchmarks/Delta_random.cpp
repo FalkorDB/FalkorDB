@@ -66,7 +66,7 @@ void Delta_Random_Matrix
 		n, GrB_DESC_S));
 	GrB_OK(GrB_Matrix_apply(*DP, NULL, NULL, GxB_ONE_BOOL,*DP, NULL));
 
-	GrB_OK(GrB_Matrix_wait(*M, GrB_MATERIALIZE));
+	Delta_Matrix_wait(mtx, false);
 	Delta_Matrix_validate(mtx, true);
 
 	*A = mtx;

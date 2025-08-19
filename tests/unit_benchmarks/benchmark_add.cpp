@@ -52,26 +52,26 @@ static void BM_add_chain(benchmark::State &state) {
     Delta_Matrix Cs[5];
     uint64_t     n     = 10000000;
     uint64_t     seed  = 870713428976ul;    
-
-    Delta_Matrix C = NULL;
-    Delta_Matrix_new(&C, GrB_BOOL, n, n, false);
+    Delta_Matrix C     = NULL;
 
     int additions = state.range(0);
     int deletions = state.range(1);
-    double add_density = 1e-14 * additions;
-    double del_density = 1e-14 * deletions; 
+    double add_density = additions / ((double) n * (double) n);
+    double del_density = deletions / ((double) n * (double) n); 
 
     for(int i = 0; i < 5; i++) {
         Delta_Random_Matrix(&Cs[i], GrB_BOOL, n, 5E-7, add_density, del_density, seed + 7 * i);
     }
 
     for (auto _ : state) {
+        state.PauseTiming();
+        Delta_Matrix_free(&C);
+        Delta_Matrix_new(&C, GrB_BOOL, n, n, false);
+        state.ResumeTiming();
+
         for(int i = 0; i < 5; i++) {
             Delta_eWiseAdd(C, GrB_LOR, C, Cs[i]);
         }
-        // clean up
-        state.PauseTiming();
-        Delta_Matrix_clear(C);
     }
 
     for(int i = 0; i < 5; i++) {
@@ -82,6 +82,12 @@ static void BM_add_chain(benchmark::State &state) {
 
 BENCHMARK(BM_add_all)->Setup(rg_setup)->Teardown(rg_teardown)
     ->Unit(benchmark::kMicrosecond)->Args({10000, 10000});
+    // ->Unit(benchmark::kMillisecond)->Args({0, 0})->Args({10000, 10000})
+    // ->Args({0, 10000})->Args({10000, 0})->Args({100, 100})->Args({0, 100})
+    // ->Args({100, 0});
 BENCHMARK(BM_add_chain)->Setup(rg_setup)->Teardown(rg_teardown)
     ->Unit(benchmark::kMicrosecond)->Args({10000, 10000});
+    // ->Unit(benchmark::kMillisecond)->Args({0, 0})->Args({10000, 10000})
+    // ->Args({0, 10000})->Args({10000, 0})->Args({100, 100})->Args({0, 100})
+    // ->Args({100, 0});
 BENCHMARK_MAIN();

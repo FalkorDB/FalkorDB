@@ -106,7 +106,8 @@ GrB_Info Delta_mxm_identity
 (
     GrB_Matrix C,                 // output matrix: may contain zombie values
     const GrB_Semiring semiring,  // defines '+' and '*' for A*B
-    const GrB_Matrix A,           // first input:  matrix A may contain zombie values
+    const GrB_Semiring sem_2,     // defines '+' and '*' for matricies without zombies
+    const GrB_Matrix A,           // first input:  matrix A
     const Delta_Matrix B          // second input: matrix B
 ) {
 	ASSERT(C != NULL);
@@ -129,26 +130,34 @@ GrB_Info Delta_mxm_identity
 	GrB_Index dp_nvals;  // number of entries in A * 'dp'
 	GrB_Index dm_nvals;  // number of entries in A * 'dm'
 
-	GrB_Matrix _B      = DELTA_MATRIX_M(B);
-	GrB_Matrix dp      = DELTA_MATRIX_DELTA_PLUS(B);
-	GrB_Matrix dm      = DELTA_MATRIX_DELTA_MINUS(B);
-	GrB_Matrix accum   = NULL; 
-	GrB_Type   t       = NULL;
+	GrB_Matrix   _B         = DELTA_MATRIX_M(B);
+	GrB_Matrix   dp         = DELTA_MATRIX_DELTA_PLUS(B);
+	GrB_Matrix   dm         = DELTA_MATRIX_DELTA_MINUS(B);
+	GrB_Matrix   accum      = NULL; 
+	GrB_Type     t          = NULL;
+	GrB_Semiring M_semiring = NULL;
 
-	GrB_OK(GrB_Matrix_nrows(&nrows, C));
-	GrB_OK(GrB_Matrix_ncols(&ncols, C));
-	GrB_OK(GrB_Matrix_nvals(&dp_nvals, dp));
-	GrB_OK(GxB_Matrix_type (&t, C));
+	int32_t iso = 0;
+
+	GrB_OK (GrB_Matrix_get_INT32(A, &iso, GxB_ISO));
+	GrB_OK (GrB_Matrix_nrows(&nrows, C));
+	GrB_OK (GrB_Matrix_ncols(&ncols, C));
+	GrB_OK (GrB_Matrix_nvals(&dp_nvals, dp));
+	GrB_OK (GrB_Matrix_nvals(&dm_nvals, dm));
+	GrB_OK (GxB_Matrix_type (&t, C));
 	
 	bool  additions  =  dp_nvals  >  0;
+	bool  deletions  =  dm_nvals  >  0;
+
+	M_semiring = deletions || iso == false ? semiring : sem_2;
 
 	if(additions) { 
 		// compute A * 'delta-plus'
 		GrB_OK(GrB_Matrix_new(&accum, t, nrows, ncols));
-
+		GrB_set(accum, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL);
 		// A could be aliased with C, so this operation needs to be done before 
 		// multiplying into C
-		GrB_OK(GrB_mxm(accum, NULL, NULL, semiring, A, dp, NULL));
+		GrB_OK(GrB_mxm(accum, NULL, NULL, sem_2, A, dp, NULL));
 
 		// update 'dp_nvals'
 		GrB_OK(GrB_Matrix_nvals(&dp_nvals, accum));
@@ -156,18 +165,19 @@ GrB_Info Delta_mxm_identity
 	}
 
 	// compute (A * B)
-	GrB_OK(GrB_mxm(C, NULL, NULL, semiring, A, _B, NULL));
+	GrB_OK(GrB_mxm(C, NULL, NULL, M_semiring, A, _B, NULL));
 
 	if(additions) {
 		GrB_OK(GrB_Matrix_eWiseAdd_Semiring(
-			C, NULL, NULL, semiring, C, accum, NULL));
+			C, NULL, NULL, sem_2, C, accum, NULL));
 	}
-	
-	// uncomment to remove zombies
-	GrB_Matrix_select_BOOL(C, NULL, NULL, GrB_VALUEEQ_BOOL, C, true, NULL);
 
-	if(accum) GrB_free(&accum);
+	if(deletions) {
+		GrB_Matrix_select_BOOL(
+			C, NULL, NULL, GrB_VALUEEQ_BOOL, C, true, NULL);
+	}
 
+	GrB_free(&accum);
 	return GrB_SUCCESS;
 }
 

@@ -2063,7 +2063,7 @@ void test_Delta_Matrix_mxm() {
 	// AB via identity
 	//--------------------------------------------------------------------------
 
-	info = Delta_mxm_identity(C, GrB_LOR_LAND_SEMIRING_BOOL, A, B);
+	info = Delta_mxm_identity(C, GrB_LOR_LAND_SEMIRING_BOOL, GxB_ANY_PAIR_BOOL, A, B);
 	TEST_ASSERT(info == GrB_SUCCESS);
 	
 	info = GrB_mxm(D, NULL, NULL, GrB_LOR_LAND_SEMIRING_BOOL, A, B_GB, NULL);
