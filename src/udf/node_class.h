@@ -9,9 +9,16 @@
 #include "../graph/entities/node.h"
 
 // create a JSValue of type Node
-static JSValue js_create_node
+JSValue js_create_node
 (
 	JSContext *js_ctx,
 	const Node *node
+);
+
+// create a JSValue of type Node
+void register_node_class
+(
+	JSRuntime *js_runtime, 
+	JSContext *js_ctx
 );
 

@@ -17,6 +17,7 @@
 #include "cron/cron.h"
 #include "query_ctx.h"
 #include "udf/udf_ctx.h"
+#include "udf/classes.h"
 #include "util/roaring.h"
 #include "bolt/bolt_api.h"
 #include "index/indexer.h"
@@ -168,8 +169,11 @@ int RedisModule_OnLoad
 	// create thread local storage keys for query and error contexts
 	if(!_Cron_Start())                return REDISMODULE_ERR;
 	if(!QueryCtx_Init())              return REDISMODULE_ERR;
+
 	if(!UDFCtx_Init())                return REDISMODULE_ERR;
 	if(!UDF_RepoInit())               return REDISMODULE_ERR;
+	UDF_InitClasses () ;
+
 	if(!ErrorCtx_Init())              return REDISMODULE_ERR;
 	if(!ThreadPool_Init())            return REDISMODULE_ERR;
 	if(!Indexer_Init())               return REDISMODULE_ERR;

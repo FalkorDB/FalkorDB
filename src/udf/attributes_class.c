@@ -3,11 +3,13 @@
 * Licensed under the Server Side Public License v1 (SSPLv1).
 */
 
-#include "attributes_class.h"
+#include "utils.h"
+#include "classes.h"
+#include "../query_ctx.h"
 #include "../graph/entities/graph_entity.h"
 
 // forward declaration
-static int js_attributes_get_property (JSContext *ctx,
+static int js_attributes_get_property (JSContext *js_ctx,
 		JSPropertyDescriptor *desc, JSValueConst obj, JSAtom prop) ;
 
 static JSClassExoticMethods js_attributes_exotic = {
@@ -19,25 +21,9 @@ static JSClassDef js_attributes_class = {
 	.exotic = &js_attributes_exotic,
 };
 
-static JSValue js_entity_get_attributes
-(
-	JSContext *js_ctx,
-	JSValueConst this_val
-) {
-    GraphEntity *entity = JS_GetOpaque2 (js_ctx, this_val, js_node_class_id) ;
-    if (!entity) {
-        return JS_EXCEPTION ;
-	}
-
-    JSValue obj = JS_NewObjectClass (js_ctx, js_attributes_class_id) ;
-    JS_SetOpaque (obj, entity) ;
-
-    return obj;
-}
-
 // retrieve requested attribute of a graph entity
 // e.g. return n.attributes.height ;
-static JSValue js_attributes_get_property
+static int js_attributes_get_property
 (
 	JSContext *js_ctx,
 	JSPropertyDescriptor *desc,
@@ -83,5 +69,21 @@ static JSValue js_attributes_get_property
 
     // missing attribute
     return 0 ;  // property not found
+}
+
+JSValue js_entity_get_attributes
+(
+	JSContext *js_ctx,
+	JSValueConst this_val
+) {
+    GraphEntity *entity = JS_GetOpaque2 (js_ctx, this_val, js_node_class_id) ;
+    if (!entity) {
+        return JS_EXCEPTION ;
+	}
+
+    JSValue obj = JS_NewObjectClass (js_ctx, js_attributes_class_id) ;
+    JS_SetOpaque (obj, entity) ;
+
+    return obj;
 }
 

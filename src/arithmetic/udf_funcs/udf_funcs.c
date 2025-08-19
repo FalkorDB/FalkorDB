@@ -60,7 +60,8 @@ void Register_UDFFuncs (void) {
 	SIType ret_type = SI_ALL ;
 
 	types = array_new (SIType, 1) ;
-	array_append (types, T_STRING) ;
+	// array_append (types, T_STRING) ;
+	array_append (types, SI_ALL) ;
 
 	// TODO: UDF is marked as not internal (it is!)
 	// this should changed, currently if UDF is set as internal

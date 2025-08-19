@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "udf_ctx.h"
+#include "classes.h"
 #include "../util/rmalloc.h"
 #include <pthread.h>
 
@@ -35,6 +36,9 @@ static inline UDFCtx *_UDFCtx_GetCtx(void) {
 
 		// create js context
 		ctx->js_ctx = JS_NewContext(ctx->js_rt) ;
+
+		// register all classes
+		UDF_RegisterClasses (ctx->js_rt, ctx->js_ctx) ;
 
 		pthread_setspecific (_tlsUDFCtx, ctx) ;
 	}

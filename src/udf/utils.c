@@ -5,6 +5,7 @@
 
 #include "quickjs.h"
 #include "../value.h"
+#include "classes.h"
 #include "node_class.h"
 #include "../datatypes/datatypes.h"
 
@@ -124,7 +125,6 @@ JSValue UDF_SIValueToJS
 		case T_NODE:
 		{
 			js_val = js_create_node (js_ctx, val.ptrval) ;
-			assert (false && "Not implemented") ;
 			break ;
 		}
 
@@ -375,11 +375,19 @@ SIValue UDF_JSToSIValue
 				printf("array\n");
 				return _JSArrayToSIValue (js_ctx, val) ;
 			} else if (JS_IsObject(val)) {
-				printf("plain object\n");
-				return _JSObjToSIValue(js_ctx, val) ;
-			} else {
-				ASSERT (false && "unknown class") ;
-				return SI_NullVal () ;
+				// registered classes
+				JSClassID cid = JS_GetClassID (val) ;
+
+				if (cid == js_node_class_id) {
+					printf("Node object\n");
+					Node *n = JS_GetOpaque (val, js_node_class_id) ;
+					return SI_Node (n) ;
+				}
+				
+				else  {
+					printf("plain object\n");
+					return _JSObjToSIValue(js_ctx, val) ;
+				}
 			}
 			break ;
 		}

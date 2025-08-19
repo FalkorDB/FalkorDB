@@ -7,5 +7,9 @@
 
 #include "quickjs.h"
 
-static JSClassID js_attributes_class_id;
+JSValue js_entity_get_attributes
+(
+	JSContext *js_ctx,
+	JSValueConst this_val
+);
 
