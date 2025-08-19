@@ -19,7 +19,7 @@ static OpResult ResultsInit(OpBase *opBase);
 static OpBase *ResultsClone(const ExecutionPlan *plan, const OpBase *opBase);
 
 OpBase *NewResultsOp(const ExecutionPlan *plan) {
-	Results *op = rm_malloc(sizeof(Results));
+	Results *op = rm_calloc (1, sizeof(Results)) ;
 
 	// Set our Op operations
 	OpBase_Init((OpBase *)op, OPType_RESULTS, "Results", ResultsInit, ResultsConsume,

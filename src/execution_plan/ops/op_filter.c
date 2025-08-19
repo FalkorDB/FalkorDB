@@ -17,7 +17,7 @@ OpBase *NewFilterOp
 	const ExecutionPlan *plan,
 	FT_FilterNode *filterTree
 ) {
-	OpFilter *op = rm_malloc(sizeof(OpFilter));
+	OpFilter *op = rm_calloc (1, sizeof(OpFilter)) ;
 	op->filterTree = filterTree;
 
 	// Set our Op operations

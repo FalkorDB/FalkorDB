@@ -120,18 +120,11 @@ OpBase *NewCondVarLenTraverseOp
 	ASSERT(g  != NULL);
 	ASSERT(ae != NULL);
 
-	CondVarLenTraverse *op = rm_malloc(sizeof(CondVarLenTraverse));
+	CondVarLenTraverse *op = rm_calloc (1, sizeof(CondVarLenTraverse)) ;
 
-	op->g                 = g;
-	op->r                 = NULL;
-	op->M                 = NULL;
-	op->ae                = ae;
-	op->ft                = NULL;
-	op->expandInto        = false;
-	op->allPathsCtx       = NULL;
-	op->collect_paths     = true;
-	op->allNeighborsCtx   = NULL;
-	op->edgeRelationTypes = NULL;
+	op->g             = g;
+	op->ae            = ae;
+	op->collect_paths = true;
 
 	OpBase_Init((OpBase *)op, OPType_CONDITIONAL_VAR_LEN_TRAVERSE,
 				"Conditional Variable Length Traverse", CondVarLenTraverseInit,

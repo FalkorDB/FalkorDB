@@ -92,7 +92,7 @@ OpBase *NewCondTraverseOp
 	Graph *g,
 	AlgebraicExpression *ae
 ) {
-	OpCondTraverse *op = rm_calloc(sizeof(OpCondTraverse), 1);
+	OpCondTraverse *op = rm_calloc (1, sizeof(OpCondTraverse)) ;
 
 	op->ae         = ae;
 	op->graph      = g;
