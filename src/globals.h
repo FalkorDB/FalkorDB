@@ -12,6 +12,13 @@
 
 #include <pthread.h>
 
+struct Global_ops {
+	GrB_Scalar   empty;          // empty scalar
+	GrB_BinaryOp not_zombie;     // binary operator to check if a value is not a zombie
+	GrB_Semiring any_alive;      // semiring to check if any entry is alive
+	GrB_UnaryOp  free_tensors;   // unary operator to free tensor entries
+};
+
 // initialize global variables
 void Globals_Init(void);
 
@@ -121,3 +128,10 @@ GraphContext *GraphIterator_Next
 	KeySpaceGraphIterator *it  // iterator to advance
 );
 
+//------------------------------------------------------------------------------
+// Global GraphBLAS objects
+//------------------------------------------------------------------------------
+
+void Operations_Init(void) ;
+void Operations_Free(void) ;
+const struct Global_ops *Globals_GetOps(void) ;

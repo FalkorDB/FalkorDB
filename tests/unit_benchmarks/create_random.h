@@ -5,6 +5,7 @@
 #include "util/simple_rand.h"
 #include <benchmark/benchmark.h>
 extern "C" {
+#include "globals.h"
 #include "src/graph/tensor/tensor.h"
 #include "src/configuration/config.h"
 #include "src/graph/delta_matrix/delta_utils.h"

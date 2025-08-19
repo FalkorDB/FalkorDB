@@ -117,17 +117,6 @@ static void _select_random(
 	*z    = rand < (*t) * UINT64_MAX;
 }
 
-static void _set_zombie_and_free(
-	uint64_t *z,
-	uint64_t *x
-) {
-	if(!SCALAR_ENTRY(*x)) {
-		GrB_Vector v = AS_VECTOR(*x);
-		GrB_Vector_free(&v);
-	}
-	*z = U64_ZOMBIE;
-}
-
 void _make_single_tensor
 (
 	GrB_Matrix A,
@@ -177,7 +166,7 @@ void Random_Tensor
 
 	GrB_BinaryOp     mod_op      = NULL;
 	GrB_BinaryOp     dup_handler = NULL;
-	GrB_UnaryOp      free_entry  = NULL;
+	GrB_UnaryOp      free_entry  = Global_ops()->ops.free_tensors;
 	GrB_IndexUnaryOp select_op   = NULL;
 	GrB_Descriptor   desc        = NULL;
 
@@ -188,8 +177,6 @@ void Random_Tensor
 	GrB_OK(GrB_IndexUnaryOp_new(
 		&select_op, (GxB_index_unary_function) _select_random, 
 		GrB_BOOL, GrB_UINT64, GrB_FP64));
-	GrB_OK(GrB_UnaryOp_new(&free_entry, (GxB_unary_function) _set_zombie_and_free, 
-		GrB_UINT64, GrB_UINT64));
 
 	GrB_OK(GrB_Descriptor_new(&desc));
 	GrB_OK(GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_VALUE_LIST));
@@ -237,4 +224,10 @@ void Random_Tensor
 	
 	GrB_OK (GrB_Matrix_assign_UINT64(M, DM, NULL, U64_ZOMBIE, GrB_ALL, n, 
 		GrB_ALL, n, GrB_DESC_S));
+
+	GrB_OK (GrB_Matrix_free(&temp));
+	GrB_OK (GrB_BinaryOp_free(&dup_handler));
+	GrB_OK (GrB_BinaryOp_free(&mod_op));
+	GrB_OK (GrB_IndexUnaryOp_free(&select_op));
+	GrB_OK (GrB_Descriptor_free(&desc));
 }

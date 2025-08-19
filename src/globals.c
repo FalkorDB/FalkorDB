@@ -10,6 +10,7 @@
 #include "configuration/config.h"
 #include "string_pool/string_pool.h"
 
+
 struct Globals {
 	pthread_rwlock_t lock;              // READ/WRITE lock
 	bool process_is_child;              // running process is a child process
@@ -17,6 +18,7 @@ struct Globals {
 	GraphContext **graphs_in_keyspace;  // list of graphs in keyspace
 	StringPool string_pool;             // pool of reusable strings
 	pthread_t main_thread_id;           // process main thread id
+	struct Global_ops ops;              // global GraphBLAS objects
 };
 
 struct Globals _globals = {0};
@@ -35,6 +37,9 @@ void Globals_Init(void) {
 
 	int res = pthread_rwlock_init(&_globals.lock, NULL);
 	ASSERT(res == 0);
+
+	// initialize GraphBLAS operators
+	Operations_Init();
 }
 
 StringPool Globals_Get_StringPool(void) {
@@ -329,5 +334,71 @@ void Globals_Free(void) {
 	array_free(_globals.graphs_in_keyspace);
 	StringPool_free(&_globals.string_pool);
 	pthread_rwlock_destroy(&_globals.lock);
+	Operations_Free();
 }
 
+static void _entry_present (bool *z, const bool *x, const uint64_t *y)
+{
+	*z = (*x) && ((*y) != U64_ZOMBIE);
+}
+
+#define _ENTRY_PRESENT                                                         \
+"void _entry_present (bool *z, const bool *x, const uint64_t *y)\n"            \
+"{\n"                                                                          \
+"	*z = (*x) && ((*y) !=  (1UL << (sizeof(uint64_t) * 8 - 1))) ;\n"           \
+"}"
+
+// free vector entries of a tensor
+static void _free_vectors
+(
+	uint64_t *z,       // [ignored] new value
+	const uint64_t *x  // current entry
+) {
+	// see if entry is a vector
+	if(!SCALAR_ENTRY(*x)) {
+		// free vector
+		GrB_Vector V = AS_VECTOR(*x);
+		GrB_free(&V);
+	}
+	*z = U64_ZOMBIE;
+}
+
+void Operations_Init(void) {
+	// initialize global GraphBLAS objects
+
+	//--------------------------------------------------------------------------
+	// initialize operators for zombie handling
+	//--------------------------------------------------------------------------
+	GrB_OK (GxB_BinaryOp_new(
+		&_globals.ops.not_zombie, (GxB_binary_function) _entry_present, 
+		GrB_BOOL, GrB_BOOL, GrB_UINT64, "_entry_present", _ENTRY_PRESENT
+	));
+	GrB_OK (GrB_Semiring_new (&_globals.ops.any_alive, GrB_LOR_MONOID_BOOL, 
+		_globals.ops.not_zombie));
+	
+	//--------------------------------------------------------------------------
+	// initialize operators for freeing
+	//--------------------------------------------------------------------------
+	GrB_OK (GrB_UnaryOp_new(
+		&_globals.ops.free_tensors, (GxB_unary_function) _free_vectors, 
+		GrB_UINT64, GrB_UINT64));
+
+	//--------------------------------------------------------------------------
+	// initialize scalars
+	//--------------------------------------------------------------------------
+	GrB_OK (GrB_Scalar_new(&_globals.ops.empty, GrB_BOOL));
+}
+
+void Operations_Free(void) {
+	//--------------------------------------------------------------------------
+	// free everything
+	//--------------------------------------------------------------------------
+	GrB_free(&_globals.ops.not_zombie);
+	GrB_free(&_globals.ops.any_alive);
+	GrB_free(&_globals.ops.free_tensors);
+	GrB_free(&_globals.ops.empty);
+}
+
+const struct Global_ops *Globals_GetOps(void) {
+	return &_globals.ops;
+}

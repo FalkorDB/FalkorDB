@@ -7,30 +7,14 @@
 #include "utils.h"
 #include "../../query_ctx.h"
 #include "../algebraic_expression.h"
-
-static void _entry_present (bool *z, const bool *x, const uint64_t *y)
-{
-	*z = (*x) && ((*y) != U64_ZOMBIE);
-}
-
-#define _ENTRY_PRESENT                                                         \
-"void _entry_present (bool *z, const bool *x, const uint64_t *y)\n"            \
-"{\n"                                                                          \
-"	*z = (*x) && ((*y) !=  (1UL << (sizeof(uint64_t) * 8 - 1))) ;\n"           \
-"}"
+#include "../../globals.h"
 
 Delta_Matrix _Eval_Mul
 (
 	const AlgebraicExpression *exp,
 	Delta_Matrix res
 ) {
-	GrB_BinaryOp not_zombie = NULL;
-	GrB_Semiring any_alive  = NULL;
-	GxB_BinaryOp_new(
-		&not_zombie, (GxB_binary_function) &_entry_present, 
-		GrB_BOOL, GrB_BOOL, GrB_UINT64, "_entry_present", _ENTRY_PRESENT
-	);
-	GrB_Semiring_new (&any_alive, GrB_LOR_MONOID_BOOL, not_zombie);
+	const struct Global_ops *ops = Globals_GetOps();
 	//--------------------------------------------------------------------------
 	// validate expression
 	//--------------------------------------------------------------------------
@@ -72,7 +56,7 @@ Delta_Matrix _Eval_Mul
 		}
 
 		Delta_Matrix_type(&ty, M);
-		semiring = (ty == GrB_BOOL)? GrB_LOR_LAND_SEMIRING_BOOL: any_alive;
+		semiring = (ty == GrB_BOOL)? GrB_LOR_LAND_SEMIRING_BOOL: ops->any_alive;
 		GrB_OK (Delta_mxm_identity(res_m, semiring, GxB_ANY_PAIR_BOOL, A, M));
 
 		// info = Delta_mxm_count(res_m, GxB_PLUS_PAIR_UINT64, A, M);
@@ -102,9 +86,6 @@ Delta_Matrix _Eval_Mul
 			res_dm, NULL, NULL, GrB_VALUEEQ_BOOL, res_m, BOOL_ZOMBIE, NULL));
 		Delta_Matrix_wait(res, false);
 	}
-
-	GrB_free(&not_zombie);
-	GrB_free(&any_alive);
 
 	return res ;
 }

@@ -16,6 +16,7 @@ void tearDown();
 #define TEST_INIT setup();
 #define TEST_FINI tearDown();
 #include "acutest.h"
+#include "globals.h"
 
 #define MATRIX_EMPTY(M)               \
 	({                                \
@@ -43,6 +44,7 @@ void setup() {
 
 	// initialize GraphBLAS
 	GrB_init(GrB_NONBLOCKING);
+	Operations_Init();
 
 	// all matrices in CSR format
 	GxB_Global_Option_set(GxB_FORMAT, GxB_BY_ROW);
@@ -53,6 +55,7 @@ void setup() {
 
 void tearDown() {
 	GrB_finalize();
+	Operations_Free();
 }
 
 // nvals(A + B) == nvals(A) == nvals(B)

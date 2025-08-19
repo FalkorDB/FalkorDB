@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "tensor.h"
 #include "util/arr.h"
+#include "globals.h"
 #include "../delta_matrix/delta_matrix.h"
 #include "../delta_matrix/delta_matrix_iter.h"
 
@@ -735,21 +736,6 @@ uint64_t Tensor_ColDegree
 	return degree;
 }
 
-// free vector entries of a tensor
-static void _free_vectors
-(
-	void *z,       // [ignored] new value
-	const void *x  // current entry
-) {
-	// see if entry is a vector
-	uint64_t _x = *(uint64_t*)(x);
-	if(!SCALAR_ENTRY(_x)) {
-		// free vector
-		GrB_Vector V = AS_VECTOR(_x);
-		GrB_free(&V);
-	}
-}
-
 // free tensor
 void Tensor_free
 (
@@ -759,16 +745,8 @@ void Tensor_free
 	GrB_Info info;
 	Tensor t = *T;
 
-	// initialize unaryop only once
-	static GrB_UnaryOp unaryop = NULL;
-	if(unaryop == NULL) {
-		info = GrB_UnaryOp_new(&unaryop, _free_vectors, GrB_UINT64, GrB_UINT64);
-		ASSERT(info == GrB_SUCCESS);
-	}
-
 	// apply _free_vectors on every entry of the tensor
-	info = Delta_Matrix_apply(t, unaryop, t);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (Delta_Matrix_apply(t, Globals_GetOps()->free_tensors, t));
 
 	// free tensor internals
 	Delta_Matrix_free(T);
