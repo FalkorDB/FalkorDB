@@ -154,7 +154,7 @@ GrB_Info Delta_mxm_identity
 	if(additions) { 
 		// compute A * 'delta-plus'
 		GrB_OK(GrB_Matrix_new(&accum, t, nrows, ncols));
-		GrB_set(accum, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL);
+
 		// A could be aliased with C, so this operation needs to be done before 
 		// multiplying into C
 		GrB_OK(GrB_mxm(accum, NULL, NULL, sem_2, A, dp, NULL));
@@ -170,11 +170,6 @@ GrB_Info Delta_mxm_identity
 	if(additions) {
 		GrB_OK(GrB_Matrix_eWiseAdd_Semiring(
 			C, NULL, NULL, sem_2, C, accum, NULL));
-	}
-
-	if(deletions) {
-		GrB_Matrix_select_BOOL(
-			C, NULL, NULL, GrB_VALUEEQ_BOOL, C, true, NULL);
 	}
 
 	GrB_free(&accum);
