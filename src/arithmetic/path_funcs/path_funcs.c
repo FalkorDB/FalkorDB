@@ -189,8 +189,8 @@ SIValue AR_SHORTEST_PATH
 		info = Delta_Matrix_export(&M, Graph_GetZeroMatrix(gc->g));
 		ASSERT(info == GrB_SUCCESS);
 	} else {
-		info = Build_Matrix(&M, NULL, gc->g, NULL, 0, ctx->reltypes,
-				ctx->reltype_count, false, false);
+		info = get_sub_adjecency_matrix(&M, NULL, gc->g, NULL, 0, ctx->reltypes,
+				ctx->reltype_count, false);
 		ASSERT(info == GrB_SUCCESS);
 	}
 
