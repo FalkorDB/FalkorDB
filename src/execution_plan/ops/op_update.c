@@ -58,12 +58,12 @@ OpBase *NewUpdateOp
 	rax *update_exps
 ) {
 	OpUpdate *op = rm_calloc(1, sizeof(OpUpdate));
-	op->gc                = QueryCtx_GetGraphCtx();
-	op->rec_idx           = 0;
-	op->records           = array_new(Record, 64);
-	op->update_ctxs       = update_exps;
-	op->node_updates      = HashTableCreate(&_dt);
-	op->edge_updates      = HashTableCreate(&_dt);
+
+	op->gc           = QueryCtx_GetGraphCtx();
+	op->records      = array_new(Record, 64);
+	op->update_ctxs  = update_exps;
+	op->node_updates = HashTableCreate(&_dt);
+	op->edge_updates = HashTableCreate(&_dt);
 
 	// set our op operations
 	OpBase_Init((OpBase *)op, OPType_UPDATE, "Update", NULL, UpdateConsume,

@@ -139,7 +139,6 @@ OpBase *NewDeleteOp
 
 	op->gc            = QueryCtx_GetGraphCtx();
 	op->exps          = exps;
-	op->rec_idx       = 0;
 	op->exp_count     = array_len(exps);
 	op->deleted_nodes = array_new(Node, 32);
 	op->deleted_edges = array_new(Edge, 32);

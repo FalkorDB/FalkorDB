@@ -46,11 +46,7 @@ OpBase *NewSkipOp
 	const ExecutionPlan *plan,
 	AR_ExpNode *skip_exp
 ) {
-	OpSkip *op = rm_malloc(sizeof(OpSkip));
-
-	op->skip     = 0;
-	op->skipped  = 0;
-	op->skip_exp = NULL;
+	OpSkip *op = rm_calloc (1, sizeof(OpSkip)) ;
 
 	_eval_skip(op, skip_exp);
 

@@ -18,13 +18,9 @@ OpBase *NewApplyOp
 (
 	const ExecutionPlan *plan
 ) {
-	OpApply *op = rm_malloc(sizeof(OpApply));
+	OpApply *op = rm_calloc (1, sizeof(OpApply)) ;
 
-	op->r            = NULL;
-	op->op_arg       = NULL;
-	op->rhs_branch   = NULL;
-	op->bound_branch = NULL;
-	op->rhs_args     = array_new(OpArgument*, 1);
+	op->rhs_args = array_new(OpArgument*, 1);
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_APPLY, "Apply", ApplyInit, ApplyConsume,
