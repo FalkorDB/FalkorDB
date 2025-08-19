@@ -241,14 +241,11 @@ OpBase *NewValueHashJoin
 	ASSERT(lhs_exp != NULL);
 	ASSERT(rhs_exp != NULL);
 
-	OpValueHashJoin *op = rm_malloc(sizeof(OpValueHashJoin));
+	OpValueHashJoin *op = rm_calloc (1, sizeof(OpValueHashJoin)) ;
 
-	op->rhs_rec                 = NULL;
-	op->lhs_exp                 = lhs_exp;
-	op->rhs_exp                 = rhs_exp;
-	op->intersect_idx           = -1;
-	op->cached_records          = NULL;
-	op->number_of_intersections = 0;
+	op->lhs_exp       = lhs_exp;
+	op->rhs_exp       = rhs_exp;
+	op->intersect_idx = -1;
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_VALUE_HASH_JOIN, "Value Hash Join",

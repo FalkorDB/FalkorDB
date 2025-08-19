@@ -18,9 +18,7 @@ OpBase *NewArgumentListOp
 	const ExecutionPlan *plan,
 	const char **variables
 ) {
-	ArgumentList *op = rm_malloc(sizeof(ArgumentList));
-	op->records = NULL;
-	op->rec_len = 0;
+	ArgumentList *op = rm_calloc (1, sizeof(ArgumentList)) ;
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_ARGUMENT_LIST, "Argument List", NULL,
