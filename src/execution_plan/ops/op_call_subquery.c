@@ -72,7 +72,7 @@ OpBase *NewCallSubqueryOp
 	bool is_eager,              // is the subquery eager or not
 	bool is_returning           // is the subquery returning or not
 ) {
-	OpCallSubquery *op = rm_calloc(1, sizeof(OpCallSubquery));
+	OpCallSubquery *op = rm_calloc (1, sizeof(OpCallSubquery)) ;
 
 	op->first        = true;
 	op->is_eager     = is_eager;

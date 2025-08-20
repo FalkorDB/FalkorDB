@@ -68,10 +68,9 @@ OpBase *NewDistinctOp
 	ASSERT(aliases != NULL);
 	ASSERT(alias_count > 0);
 
-	OpDistinct *op = rm_malloc(sizeof(OpDistinct));
+	OpDistinct *op = rm_calloc (1, sizeof(OpDistinct)) ;
 
 	op->found        = HashTableCreate(&def_dt);
-	op->mapping      = NULL;
 	op->aliases      = rm_malloc(alias_count * sizeof(const char *));
 	op->offset_count = alias_count;
 	op->offsets      = rm_calloc(op->offset_count, sizeof(uint));

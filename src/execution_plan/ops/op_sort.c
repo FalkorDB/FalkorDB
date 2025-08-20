@@ -91,17 +91,12 @@ OpBase *NewSortOp
 	AR_ExpNode **exps,
 	int *directions
 ) {
-	OpSort *op = rm_malloc(sizeof(OpSort));
+	OpSort *op = rm_calloc (1, sizeof(OpSort)) ;
 
-	op->exps           = exps;
-	op->heap           = NULL;
-	op->skip           = 0;
-	op->first          = true;
-	op->limit          = UNLIMITED;
-	op->buffer         = NULL;
-	op->record_idx     = 0;
-	op->directions     = directions;
-	op->record_offsets = NULL;
+	op->exps       = exps;
+	op->first      = true;
+	op->limit      = UNLIMITED;
+	op->directions = directions;
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_SORT, "Sort", SortInit, SortConsume,
