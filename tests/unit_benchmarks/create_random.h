@@ -4,10 +4,46 @@
 #include "GraphBLAS.h"
 #include "util/simple_rand.h"
 #include <benchmark/benchmark.h>
+
 extern "C" {
+#include "rax.h"
 #include "src/graph/tensor/tensor.h"
 #include "src/configuration/config.h"
 #include "src/graph/delta_matrix/delta_matrix.h"
+
+// Define C++ things
+#define atomic_bool std::atomic<bool>
+#define atomic_int std::atomic<int>
+#define restrict 
+
+#include "src/arithmetic/algebraic_expression.h"
+
+struct Global_ops {
+	GrB_Scalar   empty;          // empty scalar
+	GrB_BinaryOp not_zombie;     // binary operator to check if a value is not a zombie
+	GrB_Semiring any_alive;      // semiring to check if any entry is alive
+	GrB_UnaryOp  free_tensors;   // unary operator to free tensor entries
+};
+void Global_Operations_Init(void) ;
+void Global_Operations_Free(void) ;
+const struct Global_ops *Globals_GetOps(void) ;
+
+// typedef struct AlgebraicExpression AlgebraicExpression;
+// AlgebraicExpression *AlgebraicExpression_FromString
+// (
+// 	const char *exp,  // string representation of expression
+// 	rax *matrices     // map of matrices referred to in expression
+// );
+// void AlgebraicExpression_Free
+// (
+// 	AlgebraicExpression *root  // root node
+// );
+// Delta_Matrix AlgebraicExpression_Eval
+// (
+// 	const AlgebraicExpression *exp, // root node
+// 	Delta_Matrix res                // result output
+// );
+
 }
 
 void Delta_Random_Matrix
