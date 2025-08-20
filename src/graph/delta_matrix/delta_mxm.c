@@ -135,7 +135,6 @@ GrB_Info Delta_mxm_identity
 	GrB_Matrix   dm         = DELTA_MATRIX_DELTA_MINUS(B);
 	GrB_Matrix   accum      = NULL; 
 	GrB_Type     t          = NULL;
-	GrB_Semiring M_semiring = NULL;
 
 	int32_t iso = 0;
 
@@ -145,11 +144,22 @@ GrB_Info Delta_mxm_identity
 	GrB_OK (GrB_Matrix_nvals(&dp_nvals, dp));
 	GrB_OK (GrB_Matrix_nvals(&dm_nvals, dm));
 	GrB_OK (GxB_Matrix_type (&t, C));
+
+	// currently only bool is supported for the output
+	ASSERT(t == GrB_BOOL);
 	
+	bool  zombies    =  iso == 0;
 	bool  additions  =  dp_nvals  >  0;
 	bool  deletions  =  dm_nvals  >  0;
 
-	M_semiring = deletions || iso == false ? semiring : sem_2;
+	if(zombies){
+		bool v = true;
+		GrB_OK (GrB_Scalar_extractElement_BOOL(&v, (GrB_Scalar) C));
+		zombies = !v;
+	}
+
+	GrB_Semiring DP_semiring = zombies ? semiring : sem_2;
+	GrB_Semiring M_semiring  = deletions || zombies ? semiring : sem_2;
 
 	if(additions) { 
 		// compute A * 'delta-plus'
@@ -157,7 +167,7 @@ GrB_Info Delta_mxm_identity
 
 		// A could be aliased with C, so this operation needs to be done before 
 		// multiplying into C
-		GrB_OK(GrB_mxm(accum, NULL, NULL, sem_2, A, dp, NULL));
+		GrB_OK(GrB_mxm(accum, NULL, NULL, DP_semiring, A, dp, NULL));
 
 		// update 'dp_nvals'
 		GrB_OK(GrB_Matrix_nvals(&dp_nvals, accum));
@@ -169,7 +179,7 @@ GrB_Info Delta_mxm_identity
 
 	if(additions) {
 		GrB_OK(GrB_Matrix_eWiseAdd_Semiring(
-			C, NULL, NULL, sem_2, C, accum, NULL));
+			C, NULL, NULL, DP_semiring, C, accum, NULL));
 	}
 
 	GrB_free(&accum);

@@ -14,6 +14,8 @@ GrB_Info Delta_Matrix_copy
 	Delta_Matrix C,
 	const Delta_Matrix A
 ) {
+	ASSERT(C != NULL);
+	ASSERT(A != NULL);
 	if (C == A) {
 		// C and A are the same matrix, no need to copy
 		return GrB_SUCCESS;
@@ -28,8 +30,8 @@ GrB_Info Delta_Matrix_copy
 	GrB_Type   t_A             = NULL;
 	GrB_Type   t_C             = NULL;
 
-	Delta_Matrix_type(&t_A, A);
-	Delta_Matrix_type(&t_C, C);
+	GrB_OK (Delta_Matrix_type(&t_A, A));
+	GrB_OK (Delta_Matrix_type(&t_C, C));
 
 	if(t_A == t_C) { 
 		// if the types are the same, simply copy

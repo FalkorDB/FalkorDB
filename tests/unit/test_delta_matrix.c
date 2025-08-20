@@ -44,7 +44,7 @@ void setup() {
 
 	// initialize GraphBLAS
 	GrB_init(GrB_NONBLOCKING);
-	Operations_Init();
+	Global_Operations_Init();
 
 	// all matrices in CSR format
 	GxB_Global_Option_set(GxB_FORMAT, GxB_BY_ROW);
@@ -55,7 +55,7 @@ void setup() {
 
 void tearDown() {
 	GrB_finalize();
-	Operations_Free();
+	Global_Operations_Free();
 }
 
 // nvals(A + B) == nvals(A) == nvals(B)

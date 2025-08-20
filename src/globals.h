@@ -132,6 +132,6 @@ GraphContext *GraphIterator_Next
 // Global GraphBLAS objects
 //------------------------------------------------------------------------------
 
-void Operations_Init(void) ;
-void Operations_Free(void) ;
+void Global_Operations_Init(void) ;
+void Global_Operations_Free(void) ;
 const struct Global_ops *Globals_GetOps(void) ;

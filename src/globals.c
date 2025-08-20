@@ -39,7 +39,7 @@ void Globals_Init(void) {
 	ASSERT(res == 0);
 
 	// initialize GraphBLAS operators
-	Operations_Init();
+	Global_Operations_Init();
 }
 
 StringPool Globals_Get_StringPool(void) {
@@ -334,7 +334,7 @@ void Globals_Free(void) {
 	array_free(_globals.graphs_in_keyspace);
 	StringPool_free(&_globals.string_pool);
 	pthread_rwlock_destroy(&_globals.lock);
-	Operations_Free();
+	Global_Operations_Free();
 }
 
 static void _entry_present (bool *z, const bool *x, const uint64_t *y)
@@ -363,7 +363,7 @@ static void _free_vectors
 	*z = U64_ZOMBIE;
 }
 
-void Operations_Init(void) {
+void Global_Operations_Init(void) {
 	// initialize global GraphBLAS objects
 
 	//--------------------------------------------------------------------------
@@ -389,7 +389,7 @@ void Operations_Init(void) {
 	GrB_OK (GrB_Scalar_new(&_globals.ops.empty, GrB_BOOL));
 }
 
-void Operations_Free(void) {
+void Global_Operations_Free(void) {
 	//--------------------------------------------------------------------------
 	// free everything
 	//--------------------------------------------------------------------------

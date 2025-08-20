@@ -166,7 +166,7 @@ void Random_Tensor
 
 	GrB_BinaryOp     mod_op      = NULL;
 	GrB_BinaryOp     dup_handler = NULL;
-	GrB_UnaryOp      free_entry  = Global_ops()->ops.free_tensors;
+	GrB_UnaryOp      free_entry  = Globals_GetOps()->free_tensors;
 	GrB_IndexUnaryOp select_op   = NULL;
 	GrB_Descriptor   desc        = NULL;
 

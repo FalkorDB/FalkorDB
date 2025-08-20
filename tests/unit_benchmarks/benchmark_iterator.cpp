@@ -18,10 +18,12 @@ void rg_setup(const benchmark::State &state) {
     Config_Option_set(Config_DELTA_MAX_PENDING_CHANGES, "100000", NULL);
     GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
     GxB_Global_Option_set(GxB_FORMAT, GxB_BY_ROW);
+    Global_Operations_Init();
 }
 
 void rg_teardown(const benchmark::State &state) {
     GrB_finalize();
+    Global_Operations_Free();
     // GrB_OK((GrB_Info) LAGraph_Finalize(NULL));
 }
 
