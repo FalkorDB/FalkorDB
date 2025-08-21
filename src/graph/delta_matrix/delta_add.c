@@ -103,6 +103,8 @@ GrB_Info Delta_eWiseAdd
 	//--------------------------------------------------------------------------
 	if (handle_addition){
 		GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp(CDP, NULL, NULL, op, ADP, BDP, NULL));
+	} else {
+		GrB_OK (GrB_Matrix_clear(CDP));
 	}
 
 	// don't use again, could have been overwritten.
@@ -114,6 +116,8 @@ GrB_Info Delta_eWiseAdd
 	if(handle_deletion) {
 		GrB_OK (GrB_Matrix_eWiseMult_BinaryOp(
 			CDM, NULL, NULL, GrB_ONEB_BOOL, ADM, BDM, NULL));
+	} else if (CDM != NULL) {
+		GrB_OK (GrB_Matrix_clear(CDM));
 	}
 
 	// don't use again, could have been overwritten.
@@ -154,6 +158,7 @@ GrB_Info Delta_eWiseAdd
 		GrB_OK (GrB_transpose(CDP, CM, NULL, CDP, GrB_DESC_RSCT0));
 	}        
 
+	GrB_OK (GrB_Matrix_wait(CM, GrB_MATERIALIZE));
 	GrB_free(&DM_union);
 	GrB_free(&M_times_DP);
 	return GrB_SUCCESS;
@@ -202,24 +207,17 @@ GrB_Info Delta_eWiseUnion
 	GrB_Matrix DM_union   = NULL;
 	GrB_Matrix M_times_DP = NULL;
 
-	GrB_OK (GrB_Matrix_nvals(&adp_vals, ADP));
-	GrB_OK (GrB_Matrix_nvals(&adm_vals, ADM));
-	GrB_OK (GrB_Matrix_nvals(&bdp_vals, BDP));
-	GrB_OK (GrB_Matrix_nvals(&bdm_vals, BDM));
-	GrB_OK (Delta_Matrix_type (&C_ty, C));
+	GrB_OK (GrB_Matrix_nvals(&adp_vals, ADP)) ;
+	GrB_OK (GrB_Matrix_nvals(&adm_vals, ADM)) ;
+	GrB_OK (GrB_Matrix_nvals(&bdp_vals, BDP)) ;
+	GrB_OK (GrB_Matrix_nvals(&bdm_vals, BDM)) ;
+	GrB_OK (Delta_Matrix_type (&C_ty, C)) ;
+	GrB_OK (Delta_Matrix_nrows(&nrows, C)) ;
+	GrB_OK (Delta_Matrix_ncols(&ncols, C)) ;
 
 	bool handle_deletion = adm_vals || bdm_vals;
 	bool handle_addition = adp_vals || bdp_vals;
 
-	if(!handle_addition && !handle_deletion) {
-		GrB_OK (GrB_Matrix_clear(CDM));
-		GrB_OK (GrB_Matrix_clear(CDP));
-		return GxB_Matrix_eWiseUnion(
-			CM, NULL, NULL, op, AM, alpha, BM, beta, NULL);
-	}
-
-	GrB_OK (Delta_Matrix_nrows(&nrows, C));
-	GrB_OK (Delta_Matrix_ncols(&ncols, C));
 
 	//--------------------------------------------------------------------------
     // DM_union = (ADM - BM) ∪ (BDM - AM) 
@@ -262,9 +260,12 @@ GrB_Info Delta_eWiseUnion
 	//--------------------------------------------------------------------------
 	// CDP = ADP + BDP ---- Must later remove intersection with M
 	//--------------------------------------------------------------------------
-	GrB_OK (GxB_Matrix_eWiseUnion(
-		CDP, NULL, NULL, op, ADP, alpha, BDP, beta, NULL));
-
+	if(handle_addition) {
+		GrB_OK (GxB_Matrix_eWiseUnion(
+			CDP, NULL, NULL, op, ADP, alpha, BDP, beta, NULL));
+	} else {
+		GrB_OK (GrB_Matrix_clear(CDP));
+	}
 	// don't use again, could have been overwritten.
 	ADP = BDP = NULL;
 
@@ -274,8 +275,9 @@ GrB_Info Delta_eWiseUnion
 	if(handle_deletion) {
 		GrB_OK (GrB_Matrix_eWiseMult_BinaryOp(
 			CDM, NULL, NULL, GrB_ONEB_BOOL, ADM, BDM, NULL));
+	} else if (CDM != NULL) {
+		GrB_OK (GrB_Matrix_clear(CDM));
 	}
-
 	// don't use again, could have been overwritten.
 	ADM = BDM = NULL;
 
@@ -300,7 +302,7 @@ GrB_Info Delta_eWiseUnion
 			CDP, CM, NULL, CDP, GrB_DESC_RSCT0));
 	}
 
-	GrB_OK (Delta_Matrix_wait(C, false));
+	GrB_OK (GrB_Matrix_wait(CM, GrB_MATERIALIZE));
 	GrB_free(&DM_union);
 	GrB_free(&M_times_DP);
 	return GrB_SUCCESS;

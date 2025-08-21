@@ -80,8 +80,8 @@ static void Delta_Matrix_sync
 		Delta_Matrix_sync_deletions(C);
 		Delta_Matrix_sync_additions(C);
 	} else {
-		GrB_Index dp_nvals;
-		GrB_Index dm_nvals;
+		GrB_Index dp_nvals = 0;
+		GrB_Index dm_nvals = 0;
 
 		//----------------------------------------------------------------------
 		// determin change set

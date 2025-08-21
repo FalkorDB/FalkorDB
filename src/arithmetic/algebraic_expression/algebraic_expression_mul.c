@@ -90,6 +90,7 @@ Delta_Matrix _Eval_Mul
 		}
 	}
 
+	GrB_OK (GrB_Matrix_wait(res_m, GrB_MATERIALIZE)) ;
 	return res ;
 }
 
