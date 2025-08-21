@@ -41,15 +41,9 @@ void Tensor_SetElement
 void Tensor_SetElements
 (
 	Tensor T,                        // tensor
-	#ifdef __cplusplus // TODO: make this nicer
-	const GrB_Index *rows,           // array of row indices
-	const GrB_Index *cols,           // array of column indices
-	const uint64_t *vals,            // values
-	#else
 	const GrB_Index *restrict rows,  // array of row indices
 	const GrB_Index *restrict cols,  // array of column indices
 	const uint64_t *restrict vals,   // values
-	#endif
 	uint64_t n                       // number of elements
 );
 
