@@ -125,14 +125,12 @@ static void _iter_next
 static GrB_Info _next_m_iter_bool
 (
 	Delta_MatrixTupleIter *iter,  // iterator scanning M
-	const GrB_Matrix DM,          // delta-minus, masked entries
 	GrB_Index *row,               // optional extracted row index
 	GrB_Index *col,               // optional extracted column index
 	bool *val,                    // optional extracted value
 	bool *depleted                // [output] true if iterator depleted
 ) {
 	ASSERT(iter     != NULL) ;
-	ASSERT(DM       != NULL) ;
 	ASSERT(depleted != NULL) ;
 
 	GrB_Index  _row ;
@@ -174,11 +172,10 @@ GrB_Info Delta_MatrixTupleIter_next_BOOL
 	if(IS_DETACHED(iter)) return GrB_NULL_POINTER ;
 
 	GrB_Info             info     =  GrB_SUCCESS                    ;
-	GrB_Matrix           DM       =  DELTA_MATRIX_DELTA_MINUS(iter->A) ;
 	GxB_Iterator         dp_it    =  &iter->dp_it                   ;
 
 	if(!iter->m_depleted) {
-		info = _next_m_iter_bool(iter, DM, row, col, val, &iter->m_depleted) ;
+		info = _next_m_iter_bool(iter, row, col, val, &iter->m_depleted) ;
 		if(info == GrB_SUCCESS) return GrB_SUCCESS ;
 	}
 
@@ -200,14 +197,12 @@ GrB_Info Delta_MatrixTupleIter_next_BOOL
 static GrB_Info _next_m_iter_uint64
 (
 	Delta_MatrixTupleIter *iter,  // iterator scanning M
-	const GrB_Matrix DM,          // delta-minus, masked entries
 	GrB_Index *row,               // optional extracted row index
 	GrB_Index *col,               // optional extracted column index
 	uint64_t *val,                // optional extracted value
 	bool *depleted                // [output] true if iterator depleted
 ) {
 	ASSERT(iter     != NULL) ;
-	ASSERT(DM       != NULL) ;
 	ASSERT(depleted != NULL) ;
 
 	GrB_Index    _row ;
@@ -247,11 +242,10 @@ GrB_Info Delta_MatrixTupleIter_next_UINT64
 	if(IS_DETACHED(iter)) return GrB_NULL_POINTER ;
 
 	GrB_Info      info   =  GrB_SUCCESS                    ;
-	GrB_Matrix    DM     =  DELTA_MATRIX_DELTA_MINUS(iter->A) ;
 	GxB_Iterator  dp_it  =  &iter->dp_it                    ;
 
 	if(!iter->m_depleted) {
-		info = _next_m_iter_uint64(iter, DM, row, col, val, &iter->m_depleted) ;
+		info = _next_m_iter_uint64(iter, row, col, val, &iter->m_depleted) ;
 		if(info == GrB_SUCCESS) return GrB_SUCCESS ;
 	}
 

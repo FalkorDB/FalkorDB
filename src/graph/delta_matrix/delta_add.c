@@ -52,17 +52,26 @@ GrB_Info Delta_eWiseAdd
 	// Set DM_union and M_times_DP union to be hypersparse like DP and DM
 
 	GrB_OK (GrB_Matrix_nvals(&adp_vals, ADP));
-	GrB_OK (GrB_Matrix_nvals(&adm_vals, ADM));
 	GrB_OK (GrB_Matrix_nvals(&bdp_vals, BDP));
-	GrB_OK (GrB_Matrix_nvals(&bdm_vals, BDM));
 
-	bool handle_deletion = adm_vals || bdm_vals;
+	bool handle_deletion = false;
 	bool handle_addition = adp_vals || bdp_vals;
+
+	if(ADM == NULL || BDM == NULL){
+		ADM = BDM = CDM = NULL;
+		GrB_free(&DELTA_MATRIX_DELTA_MINUS(C));
+	} else {
+		GrB_OK (GrB_Matrix_nvals(&adm_vals, ADM));
+		GrB_OK (GrB_Matrix_nvals(&bdm_vals, BDM));
+		handle_deletion = adm_vals || bdm_vals;
+	}
 	
-	if(!handle_addition && !handle_deletion) {
-		GrB_OK (GrB_Matrix_clear(CDM));
+	if (!handle_addition){
 		GrB_OK (GrB_Matrix_clear(CDP));
-		return GrB_Matrix_eWiseAdd_BinaryOp(CM, NULL, NULL, op, AM, BM, NULL);
+	}
+
+	if (!handle_deletion && CDM != NULL) {
+		GrB_OK (GrB_Matrix_clear(CDM));
 	}
 
 	GrB_OK (Delta_Matrix_nrows(&nrows, C));
@@ -92,7 +101,9 @@ GrB_Info Delta_eWiseAdd
 	//--------------------------------------------------------------------------
 	// CDP = ADP + BDP ---- Must later remove intersection with M
 	//--------------------------------------------------------------------------
-	GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp(CDP, NULL, NULL, op, ADP, BDP, NULL));
+	if (handle_addition){
+		GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp(CDP, NULL, NULL, op, ADP, BDP, NULL));
+	}
 
 	// don't use again, could have been overwritten.
 	ADP = BDP = NULL;
@@ -100,8 +111,10 @@ GrB_Info Delta_eWiseAdd
 	//--------------------------------------------------------------------------
     // CDM <!CDP>= (ADM - BM) ∪ (BDM - AM) ∪ (ADM ∩ BDM)
 	//--------------------------------------------------------------------------
-	GrB_OK (GrB_Matrix_eWiseMult_BinaryOp(
-		CDM, NULL, NULL, GrB_ONEB_BOOL, ADM, BDM, NULL));
+	if(handle_deletion) {
+		GrB_OK (GrB_Matrix_eWiseMult_BinaryOp(
+			CDM, NULL, NULL, GrB_ONEB_BOOL, ADM, BDM, NULL));
+	}
 
 	// don't use again, could have been overwritten.
 	ADM = BDM = NULL;
@@ -141,7 +154,6 @@ GrB_Info Delta_eWiseAdd
 		GrB_OK (GrB_transpose(CDP, CM, NULL, CDP, GrB_DESC_RSCT0));
 	}        
 
-	Delta_Matrix_wait(C, false);
 	GrB_free(&DM_union);
 	GrB_free(&M_times_DP);
 	return GrB_SUCCESS;

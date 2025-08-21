@@ -31,19 +31,20 @@ GrB_Info Delta_Matrix_extractElement_BOOL
 		return info;
 	}
 
-	// if dm[i,j] exists, return no value
-	info = GxB_Matrix_isStoredElement(dm, i, j);
-	GrB_OK(info);
-	if(info == GrB_SUCCESS) {
-		// entry marked for deletion
-		return GrB_NO_VALUE;
-	}
+	// // if dm[i,j] exists, return no value
+	// info = GxB_Matrix_isStoredElement(dm, i, j);
+	// GrB_OK(info);
+	// if(info == GrB_SUCCESS) {
+	// 	// entry marked for deletion
+	// 	return GrB_NO_VALUE;
+	// }
 
-	// entry isn't marked for deletion, see if it exists in 'm'
+	// // entry isn't marked for deletion, see if it exists in 'm'
 	info = GrB_Matrix_extractElement(&_x, m, i, j);
 	GrB_OK(info);
-	if(x) *x = _x;
-	return info;
+
+	if(x && _x != BOOL_ZOMBIE) *x = _x;
+	return (_x == BOOL_ZOMBIE) ? GrB_NO_VALUE : info;
 }
 
 // x = A(i,j)
@@ -70,20 +71,21 @@ GrB_Info Delta_Matrix_extractElement_UINT64
 		return info;
 	}
 
-	// if dm[i,j] exists, return no value
-	info = GxB_Matrix_isStoredElement(dm, i, j);
-	GrB_OK (info);
+	// // if dm[i,j] exists, return no value
+	// info = GxB_Matrix_isStoredElement(dm, i, j);
+	// GrB_OK (info);
 
-	if(info == GrB_SUCCESS) {
-		// entry marked for deletion
-		return GrB_NO_VALUE;
-	}
+	// if(info == GrB_SUCCESS) {
+	// 	// entry marked for deletion
+	// 	return GrB_NO_VALUE;
+	// }
 
-	// entry isn't marked for deletion, see if it exists in 'm'
+	// // entry isn't marked for deletion, see if it exists in 'm'
 	info = GrB_Matrix_extractElement(&_x, m, i, j);
-	GrB_OK (info);
-	
-	if(x) *x = _x;
-	return info;
+	GrB_OK(info);
+
+	if(x && _x != U64_ZOMBIE) *x = _x;
+
+	return (_x == U64_ZOMBIE) ? GrB_NO_VALUE : info;
 }
 

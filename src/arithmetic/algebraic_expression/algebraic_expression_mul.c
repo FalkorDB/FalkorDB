@@ -23,15 +23,13 @@ Delta_Matrix _Eval_Mul
 	ASSERT(AlgebraicExpression_ChildCount(exp) > 1) ;
 	ASSERT(AlgebraicExpression_OperationCount(exp, AL_EXP_MUL) == 1) ;
 
-	GrB_Info             info;
 	Delta_Matrix         M;      // current operand
 	GrB_Index            nvals;  // NNZ in res
 	AlgebraicExpression  *c;     // current child node
 	GrB_Type             ty;
-	UNUSED(info) ;
 
 	// multiplication will work if there are deletions, but not if there are 
-	// additions TODO: mxm could be made to work with additions
+	// additions
 	GrB_OK (GrB_Matrix_nvals(&nvals, DELTA_MATRIX_DELTA_PLUS(res)));
 	ASSERT(nvals == 0);
 
@@ -70,21 +68,26 @@ Delta_Matrix _Eval_Mul
 		bool alive = false;
 		GrB_OK (GrB_Matrix_reduce_BOOL(
 			&alive, NULL, GrB_LOR_MONOID_BOOL, res_m, NULL));
-		if(!alive) break ;
+		if(!alive) 
+		{
+			GrB_OK (GrB_Matrix_clear(res_m));
+			break;
+		}
 	}
 
 	if(!res_modified) {
 		// copy A into res_m
 		GrB_OK (GrB_transpose(res_m, NULL, NULL, A, GrB_DESC_T0)) ;
 	}
-
-	if(res_modified)
-	{
-		GrB_Matrix res_dm = DELTA_MATRIX_DELTA_MINUS(res);
-		//add any explicit zeros to the DM matrix
-		GrB_OK (GrB_Matrix_select_BOOL(
-			res_dm, NULL, NULL, GrB_VALUEEQ_BOOL, res_m, BOOL_ZOMBIE, NULL));
-		Delta_Matrix_wait(res, false);
+	
+	if(res_modified) {
+		int32_t iso = false;
+		GrB_OK (GrB_get(res_m, &iso, GxB_ISO));
+		if (!iso){
+			GrB_Matrix *res_dm = &DELTA_MATRIX_DELTA_MINUS(res);
+			// DM will not be updated. 
+			GrB_Matrix_free(res_dm);
+		}
 	}
 
 	return res ;
