@@ -20,13 +20,7 @@ OpBase *NewForeachOp
 ) {
     OpForeach *op = rm_calloc(1, sizeof(OpForeach));
 
-	op->body           = NULL;
-	op->first          = true;
-	op->rec_idx        = 0;
-	op->records        = NULL;
-	op->supplier       = NULL;
-	op->body_records   = NULL;
-	op->argument_list  = NULL;
+	op->first = true;
 
     OpBase_Init((OpBase *)op, OPType_FOREACH, "Foreach", ForeachInit,
 			ForeachConsume, ForeachReset, NULL, ForeachClone, ForeachFree,

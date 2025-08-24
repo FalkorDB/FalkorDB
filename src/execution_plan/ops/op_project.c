@@ -22,14 +22,11 @@ OpBase *NewProjectOp
 	const ExecutionPlan *plan,
 	AR_ExpNode **exps
 ) {
-	OpProject *op = rm_malloc(sizeof(OpProject));
+	OpProject *op = rm_calloc (1, sizeof(OpProject)) ;
 
-	op->r              = NULL;
 	op->exps           = exps;
 	op->exp_count      = array_len(exps);
-	op->projection     = NULL;
 	op->record_offsets = array_new(uint, op->exp_count);
-	op->singleResponse = false;
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_PROJECT, "Project", NULL, ProjectConsume,

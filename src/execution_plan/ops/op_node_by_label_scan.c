@@ -49,7 +49,7 @@ OpBase *NewNodeByLabelScanOp
 	const ExecutionPlan *plan,
 	NodeScanCtx *n
 ) {
-	NodeByLabelScan *op = rm_calloc(sizeof(NodeByLabelScan), 1);
+	NodeByLabelScan *op = rm_calloc (1, sizeof(NodeByLabelScan)) ;
 
 	op->g = QueryCtx_GetGraph();
 	op->n = n;
