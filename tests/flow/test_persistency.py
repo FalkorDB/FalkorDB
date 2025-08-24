@@ -1,10 +1,10 @@
-from collections import OrderedDict
-from common import *
-import time
 import psutil
 import random
 import threading
+from common import *
+from time import sleep
 from index_utils import *
+from collections import OrderedDict
 from click.testing import CliRunner
 from datetime import datetime, date, time
 from dateutil.relativedelta import relativedelta
@@ -468,7 +468,7 @@ class testGraphPersistency():
             in_progress = self.conn.info("persistence").get("rdb_bgsave_in_progress")
             if not in_progress:
                 break
-            time.sleep(0.1)  # poll every 100ms
+            sleep(0.1)  # poll every 100ms
 
         self.env.assertFalse(in_progress)
 
@@ -516,8 +516,8 @@ class testGraphPersistency():
         def ping_worker(conn, pings):
             while not stop_event.is_set():
                 conn.ping()
-                pings.append(time.time())
-                time.sleep(0.005) # sleep for 5ms
+                pings.append(datetime.now())
+                sleep(0.005) # sleep for 5ms
 
         stop_event = threading.Event()
         pings = []
@@ -526,7 +526,7 @@ class testGraphPersistency():
 
         # Issue BGSAVE
         self.conn.bgsave()
-        start = time.time()
+        start = datetime.now()
         max_iterations = 100
 
         # Wait for BGSAVE to complete for a maximum of 10 seconds
@@ -534,10 +534,10 @@ class testGraphPersistency():
             pending = self.conn.info("persistence").get("rdb_bgsave_in_progress")
             if not pending:
                 break
-            time.sleep(0.1) # every 100ms
+            sleep(0.1) # every 100ms
         
         self.env.assertFalse(pending)
-        end = time.time()
+        end = datetime.now()
 
         stop_event.set()  # Signal the BGSave thread to stop
         thread.join()
@@ -566,7 +566,7 @@ class testGraphPersistency():
         # issue BGSAVE just so we would have something in info persistence rdb_last_save_time
         # make sure at least one second pass between the first save to the next
         self.conn.bgsave()
-        time.sleep(1)
+        sleep(1)
 
         pid = self.env.envRunner.masterProcess.pid
         before = self.conn.info("persistence").get("rdb_last_save_time")
@@ -587,7 +587,7 @@ class testGraphPersistency():
         for _ in range(max_iterations):
             # update peak memory consumption
             peak_memory_consumption = max(peak_memory_consumption, get_total_rss_memory(pid))
-            time.sleep(0.005)  # poll every 5ms
+            sleep(0.005)  # poll every 5ms
             in_progress = self.conn.info("persistence").get("rdb_bgsave_in_progress")
             if not in_progress:
                 break
