@@ -66,6 +66,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <assert.h>
 
 extern RedisModuleType *GraphContextRedisModuleType;
 
@@ -84,7 +85,10 @@ typedef struct {
 static char *_temp_file(void) {
 	char *uuid = UUID_New();
 	char *path;
-	asprintf(&path, "/tmp/%s.dump", uuid);
+
+	int n = asprintf(&path, "/tmp/%s.dump", uuid);
+	assert (n == 36 + 10) ;
+
 	rm_free(uuid);
 
 	return path;
@@ -238,7 +242,8 @@ static void LoadGraphFromFile
 	buffer = rm_malloc(sizeof(char) * fileLength);
 
 	// read file content into buffer
-	fread(buffer, 1, fileLength, f);
+	size_t read = fread(buffer, fileLength, 1, f);
+	assert (read == 1) ;
 
 	fclose(f);  // close file
 
