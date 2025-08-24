@@ -44,8 +44,8 @@ static void _DecodeTensors
 	// decode and set tensors
 	for(uint64_t i = 0; i < n; i++) {
 		// read tensor i,j indicies
-		GrB_Index row = SerializerIO_ReadUnsigned(rdb);
-		GrB_Index col = SerializerIO_ReadUnsigned(rdb);
+		GrB_Index i = SerializerIO_ReadUnsigned(rdb);
+		GrB_Index j = SerializerIO_ReadUnsigned(rdb);
 
 		// read tensor blob
 		GrB_Index blob_size;
@@ -63,8 +63,8 @@ static void _DecodeTensors
 		*n_elem += nvals;
 
 		// set tensor
-		uint64_t v = (uint64_t)(uintptr_t)SET_MSB(u);
-		info = GrB_Matrix_setElement_UINT64(A, v, row, col);
+		uint64_t v = SET_MSB((uint64_t)(uintptr_t) u);
+		info = GrB_Matrix_setElement_UINT64(A, v, i, j);
 		ASSERT(info == GrB_SUCCESS);
 
 		rm_free(blob);

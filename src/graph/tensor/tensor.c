@@ -55,7 +55,7 @@ void Tensor_SetElement
 		ASSERT(info == GrB_SUCCESS);
 
 		// T[row, col] = V
-		uint64_t vec_entry = (uint64_t)(uintptr_t)SET_MSB(V);
+		uint64_t vec_entry = SET_MSB((uint64_t)(uintptr_t)V);
 		info = Delta_Matrix_setElement_UINT64(T, vec_entry, row, col);
 		ASSERT(info == GrB_SUCCESS);
 
@@ -177,7 +177,7 @@ void Tensor_SetElements
 
 				// update scalar entry to a vector
 				// it is OK to write to T->A as we're updating an existing entry
-				uint64_t vec_entry = (uint64_t)(uintptr_t)SET_MSB(V);
+				uint64_t vec_entry = SET_MSB((uint64_t)(uintptr_t) V);
 				info = Delta_Matrix_setElement_UINT64(T, vec_entry, row, col);
 				ASSERT(info == GrB_SUCCESS);
 
@@ -247,7 +247,7 @@ void Tensor_SetElements
 				info = GrB_Vector_new(&V, GrB_BOOL, GrB_INDEX_MAX);
 				ASSERT(info == GrB_SUCCESS);
 
-				uint64_t vec_entry = (uintptr_t)SET_MSB(V);
+				uint64_t vec_entry = SET_MSB((uint64_t)(uintptr_t) V);
 				info = Delta_Matrix_setElement_UINT64(T, vec_entry, row, col);
 				ASSERT(info == GrB_SUCCESS);
 
@@ -365,7 +365,7 @@ void Tensor_SetEdges
 
 				// update scalar entry to a vector
 				// it is OK to write to T->A as we're updating an existing entry
-				uint64_t vec_entry = (uint64_t)(uintptr_t)SET_MSB(V);
+				uint64_t vec_entry = SET_MSB((uint64_t)(uintptr_t) V);
 				info = Delta_Matrix_setElement_UINT64(T, vec_entry, row, col);
 				ASSERT(info == GrB_SUCCESS);
 
@@ -438,7 +438,7 @@ void Tensor_SetEdges
 				info = GrB_Vector_new(&V, GrB_BOOL, GrB_INDEX_MAX);
 				ASSERT(info == GrB_SUCCESS);
 
-				uint64_t vec_entry = (uintptr_t)SET_MSB(V);
+				uint64_t vec_entry = SET_MSB((uint64_t)(uintptr_t) V);
 				info = Delta_Matrix_setElement_UINT64(T, vec_entry, row, col);
 				ASSERT(info == GrB_SUCCESS);
 
@@ -576,6 +576,11 @@ void Tensor_RemoveElements
 				// postpone entry removal
 				GrB_free(&V);
 				array_append(delayed, i);
+
+				// do not leave a dangling pointer
+				// replace vector entry with a delete marker
+				uint64_t delete_marker = MSB_MASK;
+				Delta_Matrix_setElement_UINT64(T, delete_marker, row, col);
 			} else if(d+1 == nvals) {
 				// transition from vector to scalar
 				// determine which vector element becomes a scalar

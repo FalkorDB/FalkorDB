@@ -83,7 +83,6 @@ OpBase *NewMergeCreateOp
 
 	op->records         = array_new(Record, 32);  // accumulated records
 	op->hash_state      = XXH64_createState();    // create a hash state
-	op->handoff_mode    = false;                  // consume mode
 	op->unique_entities = raxNew();               // create a map to unique pending creations
 
 	// insert one NULL value to terminate execution of the op

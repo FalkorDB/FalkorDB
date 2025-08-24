@@ -86,7 +86,7 @@ static SIValue _RdbLoadSIArray
 	SerializerIO rdb
 ) {
 	/* loads array as
-	   unsinged : array length
+	   unsinged : array legnth
 	   array[0]
 	   .
 	   .
@@ -117,6 +117,15 @@ static SIValue _RdbLoadVector
 	// .
 	// .
 	// vector[vector length -1]
+
+	size_t buffer_size;
+	void *buffer = SerializerIO_ReadBuffer(rdb, &buffer_size);
+
+	// validate buffer size is reasonable for a vector
+	if (buffer_size % sizeof(float) != 0) {
+		rm_free (buffer) ;
+		return SI_NullVal() ;
+	}
 
 	SIValue vector = { .type       = T_VECTOR_F32,
 					   .ptrval     = SerializerIO_ReadBuffer(rdb, NULL),
@@ -195,6 +204,12 @@ void RdbLoadDeletedNodes_v18
 	size_t n;
 	NodeID *deleted_nodes_list = (NodeID*)SerializerIO_ReadBuffer(rdb, &n);
 
+	// validate buffer alignment
+	if (n % sizeof(NodeID) != 0) {
+		rm_free (deleted_nodes_list) ;
+		ASSERT (false && "corrupted deleted nodes buffer") ;
+	}
+
 	ASSERT((n / sizeof(NodeID)) == deleted_node_count);
 
 	// mark each node id as deleted
@@ -256,6 +271,12 @@ void RdbLoadDeletedEdges_v18
 	// read edge deleted IDs list from the RDB
 	size_t n;
 	EdgeID *deleted_edges_list = (EdgeID*)SerializerIO_ReadBuffer(rdb, &n);
+
+	// validate buffer alignment
+	if (n % sizeof(EdgeID) != 0) {
+		rm_free(deleted_edges_list);
+		ASSERT(false && "corrupted deleted edges buffer");
+	}
 
 	ASSERT((n / sizeof(EdgeID)) == deleted_edge_count);
 

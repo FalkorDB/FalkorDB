@@ -2,6 +2,7 @@ FROM alpine:latest AS builder
 
 # Install build tools and dependencies for Alpine
 RUN apk add --no-cache \
+    git \
     bash \
     busybox \
     python3 \
@@ -10,7 +11,6 @@ RUN apk add --no-cache \
     curl \
     wget \
     unzip \
-    git \
     automake \
     libtool \
     autoconf \
@@ -18,6 +18,7 @@ RUN apk add --no-cache \
     cmake \
     rust \
     cargo \
+    git \
     build-base # Essential for compiling C/C++ projects
 
 # Activate pyenv
@@ -25,19 +26,19 @@ RUN python3 -m venv /venv
 RUN chmod +x /venv/bin/*
 ENV PATH="/venv/bin:$PATH"
     
+ARG DEBUG=0
+
 # Install Python packages for FalkorDB's build system
 RUN pip install --disable-pip-version-check setuptools --upgrade
 
-# Clone FalkorDB with submodules
-RUN git clone --recurse-submodules -j8 https://github.com/FalkorDB/FalkorDB.git
-
-WORKDIR /FalkorDB
-
-RUN apk add --no-cache \
-    minipeg
+RUN apk add --no-cache minipeg
 
 RUN ln -s $(which minipeg) /usr/local/bin/leg || ln -s $(which minipeg) /usr/bin/leg || echo "Could not create symlink for leg. Check minipeg path."
 
-RUN make
+WORKDIR /FalkorDB
+
+COPY . /FalkorDB
+
+RUN make DEBUG=$DEBUG
 
 RUN mkdir -p /FalkorDB/bin/src && cp -r /FalkorDB/bin/linux*/src/falkordb.so /FalkorDB/bin/src/falkordb.so

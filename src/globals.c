@@ -6,7 +6,7 @@
 
 #include "globals.h"
 #include "util/arr.h"
-#include "util/thpool/pools.h"
+#include "util/thpool/pool.h"
 #include "configuration/config.h"
 #include "string_pool/string_pool.h"
 
@@ -16,6 +16,7 @@ struct Globals {
 	CommandCtx **command_ctxs;          // list of CommandCtxs
 	GraphContext **graphs_in_keyspace;  // list of graphs in keyspace
 	StringPool string_pool;             // pool of reusable strings
+	pthread_t main_thread_id;           // process main thread id
 };
 
 struct Globals _globals = {0};
@@ -29,7 +30,7 @@ void Globals_Init(void) {
 	_globals.process_is_child   = false;
 	_globals.string_pool        = StringPool_create();
 	_globals.graphs_in_keyspace = array_new(GraphContext*, 1);
-	_globals.command_ctxs       = rm_calloc(ThreadPools_ThreadCount() + 1,
+	_globals.command_ctxs       = rm_calloc(ThreadPool_ThreadCount() + 1,
 			sizeof(CommandCtx *));
 
 	int res = pthread_rwlock_init(&_globals.lock, NULL);
@@ -63,6 +64,11 @@ void Globals_Set_ProcessIsChild
 	_globals.process_is_child =	process_is_child;
 
 	pthread_rwlock_unlock(&_globals.lock);
+}
+
+// get main thread id
+pthread_t Globals_Get_MainThreadId(void) {
+	return _globals.main_thread_id;
 }
 
 // get direct access to 'graphs_in_keyspace'
@@ -196,7 +202,7 @@ void Globals_TrackCommandCtx
 	ASSERT(ctx != NULL);
 	ASSERT(_globals.command_ctxs != NULL);
 
-	int tid = ThreadPools_GetThreadID();
+	int tid = ThreadPool_GetThreadID();
 
 	// acuire read lock
 	pthread_rwlock_rdlock(&_globals.lock);
@@ -222,7 +228,7 @@ void Globals_UntrackCommandCtx
 	ASSERT(ctx != NULL);
 	ASSERT(_globals.command_ctxs != NULL);
 
-	int tid = ThreadPools_GetThreadID();
+	int tid = ThreadPool_GetThreadID();
 
 	// acuire read lock
 	pthread_rwlock_rdlock(&_globals.lock);
@@ -248,7 +254,7 @@ void Globals_GetCommandCtxs
 	ASSERT(_globals.command_ctxs != NULL);
 
 	// make a copy of the command contexts
-	uint32_t nthreads = ThreadPools_ThreadCount() + 1;
+	uint32_t nthreads = ThreadPool_ThreadCount() + 1;
 	uint32_t cap = *count;  // capacity of 'commands'
 	uint32_t found = 0;     // number of command contexts found
 

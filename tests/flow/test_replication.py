@@ -1,5 +1,5 @@
 from common import *
-from index_utils import *
+from index_utils import wait_for_indices_to_sync
 from constraint_utils import *
 import time
 
@@ -44,11 +44,20 @@ class testReplication(FlowTestsBase):
         src = Graph(source_con, GRAPH_ID)
         replica = Graph(replica_con, GRAPH_ID)
 
-        s = Node(alias='s', labels='L', properties={'id': 0, 'name': 'abcd', 'height' : 178})
-        t = Node(alias='t', labels='L', properties={'id': 1, 'name': 'efgh', 'height' : 178})
-        e = Edge(s, 'R', t)
+        q = """CREATE
+                (s:L {id: $s_id, name: $s_name, height: $s_height}),
+                (t:L {id: $t_id, name: $t_name, height: $t_height}),
+                (s)-[e:R]->(t)"""
 
-        src.query(f"CREATE {s}, {t}, {e}")
+        params = {'s_id': 0,
+                  's_name': 'abcd',
+                  's_height': 178,
+                  't_id': 1,
+                  't_name': 'efgh',
+                  't_height': 178
+        }
+
+        src.query(q, params)
 
         #-----------------------------------------------------------------------
         # create indices
@@ -78,7 +87,13 @@ class testReplication(FlowTestsBase):
         create_unique_node_constraint(src, "L", "id", "name", sync=True)
 
         # add a unique constraint which is destined to fail
-        result = src.query("CREATE (:Actor {age: 10, name: 'jerry'}), (:Actor {age: 10, name: 'jerry'})")
+        q = """CREATE
+               (:Actor {age: $age, name: $name}),
+               (:Actor {age: $age, name: $name})"""
+
+        params = {'age': 10, 'name': 'jerry'}
+
+        result = src.query(q, params)
         self.env.assertEquals(result.nodes_created, 2)
 
         create_unique_node_constraint(src, "Actor", "age", sync=True)
@@ -86,13 +101,15 @@ class testReplication(FlowTestsBase):
         self.env.assertEquals(c.status, "FAILED")
 
         # update entity
-        q = "MATCH (n:L {id:1}) SET n.id = 2"
-        result = src.query(q)
+        q = "MATCH (n:L {id:$id}) SET n.id = $new_id"
+        params = {'id': 1, 'new_id': 2}
+        result = src.query(q, params)
         self.env.assertEquals(result.properties_set, 1)
 
         # delete entity
-        q = "MATCH (n:L {id:0}) DELETE n"
-        result = src.query(q)
+        q = "MATCH (n:L {id:$id}) DELETE n"
+        params = {'id': 0}
+        result = src.query(q, params)
         self.env.assertEquals(result.nodes_deleted, 1)
 
         # the WAIT command forces master slave sync to complete
@@ -141,8 +158,10 @@ class testReplication(FlowTestsBase):
         env.assertEquals(replica_result, result)
 
         # remove property
-        q = "MATCH (s {id:2}) SET s.id = NULL RETURN s"
-        result = src.query(q)
+        q = "MATCH (s {id:$id}) SET s.id = $new_id RETURN s"
+        params = {'id': 2, 'new_id': None}
+
+        result = src.query(q, params)
         env.assertEqual(result.properties_removed, 1)
 
         # the WAIT command forces master slave sync to complete
@@ -167,6 +186,10 @@ class testReplication(FlowTestsBase):
 
         # the WAIT command forces master slave sync to complete
         source_con.execute_command("WAIT", "1", "0")
+        
+        # TODO: check if this sync is needed
+        wait_for_indices_to_sync(src)
+        wait_for_indices_to_sync(replica)
 
         # make sure both primary and replica have the same set of indexes
         q = "CALL db.indexes() YIELD label, properties, language, stopwords, entitytype"
@@ -200,3 +223,4 @@ class testReplication(FlowTestsBase):
         origin_result = list_constraints(src)
         replica_result = list_constraints(replica)
         env.assertEquals(replica_result, origin_result)
+

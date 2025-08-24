@@ -98,57 +98,53 @@ ExecutionCtx *ExecutionCtx_Clone
 // returns ExecutionCtx populated with the current execution relevant objects
 ExecutionCtx *ExecutionCtx_FromQuery
 (
-	const char *q  // string representing the query
+	CommandCtx *cmd_ctx
 ) {
-	ASSERT(q != NULL);
+	ASSERT (cmd_ctx != NULL) ;
 
-	ExecutionCtx *ret;
-	const char *q_str;  // query string excluding query parameters
+	ExecutionCtx *ret ;
 
-	if(unlikely(strlen(q) == 0)) {
-		ErrorCtx_SetError(EMSG_EMPTY_QUERY);
-		return NULL;
+	if (unlikely (cmd_ctx->query_len == 0)) {
+		ErrorCtx_SetError (EMSG_EMPTY_QUERY) ;
+		return NULL ;
 	}
+
+	const char *query_no_params = cmd_ctx->query ;
 
 	// parse and validate parameters only
-	// extract query string
-	// return invalid execution context if failed to parse params
-	cypher_parse_result_t *params_parse_result = parse_params(q, &q_str);
+	// copy the query
+	ASSERT (cmd_ctx->params == NULL) ;
+	cmd_ctx->params = rm_malloc (cmd_ctx->query_len + 1) ;
+	memcpy (cmd_ctx->params, cmd_ctx->query, cmd_ctx->query_len) ;
+	cmd_ctx->params[cmd_ctx->query_len] = '\0';
 
-	// parameter parsing failed, return NULL
-	if(params_parse_result == NULL) {
-		return NULL;
-	}
-
-	// seems like we should be able to free 'params_parse_result'
-	// at this point but this messes up the parsing of the actual query
+	// cmd_ctx->query string excluding query parameters
+	parse_params (cmd_ctx->params, &query_no_params) ;
 
 	// query included only params e.g. 'cypher a=1' was provided
-	if(unlikely(strlen(q_str) == 0)) {
-		parse_result_free(params_parse_result);
-		ErrorCtx_SetError(EMSG_EMPTY_QUERY);
-		return NULL;
+	if (unlikely (*query_no_params == '\0')) {
+		ErrorCtx_SetError (EMSG_EMPTY_QUERY) ;
+		return NULL ;
 	}
 
-	// update query context with the query & params
+	// update query context with the query
 	// (here the QueryInfo is created as well, starting the stage timer)
-	QueryCtx *ctx = QueryCtx_GetQueryCtx();
-	ctx->query_data.parsed_params   = params_parse_result;
-	ctx->query_data.query_no_params = q_str;
+	QueryCtx *ctx = QueryCtx_GetQueryCtx () ;
+	ctx->query_data.query_no_params = query_no_params ;
 
 	// get cache
 	Cache *cache = GraphContext_GetCache(QueryCtx_GetGraphCtx());
 
 	// see if we already have a cached execution-ctx for given query
-	ret = Cache_GetValue(cache, q_str);
+	ret = Cache_GetValue (cache, query_no_params) ;
 
 	//--------------------------------------------------------------------------
 	// cache hit
 	//--------------------------------------------------------------------------
 
-	if(ret != NULL) {
-		ret->cached = true;  // mark cached execution
-		return ret;
+	if (ret != NULL) {
+		ret->cached = true ;  // mark cached execution
+		return ret ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -156,49 +152,53 @@ ExecutionCtx *ExecutionCtx_FromQuery
 	//--------------------------------------------------------------------------
 
 	// try to parse the query
-	AST *ast = _ExecutionCtx_ParseAST(q_str);
+	AST *ast = _ExecutionCtx_ParseAST (query_no_params) ;
 
 	// parser failed
-	if(ast == NULL) {
+	if (ast == NULL) {
 		// if no error has been set, emit one now
-		if(!ErrorCtx_EncounteredError()) {
-			ErrorCtx_SetError(EMSG_COULD_NOT_PARSE_QUERY);
+		if (!ErrorCtx_EncounteredError()) {
+			ErrorCtx_SetError (EMSG_COULD_NOT_PARSE_QUERY) ;
 		}
-		return NULL;
+		return NULL ;
 	}
 
-	ExecutionType exec_type = _GetExecutionTypeFromAST(ast);
+	ExecutionType exec_type = _GetExecutionTypeFromAST (ast) ;
 
 	// in case of valid query
 	// create execution plan, and cache it and the AST
-	if(exec_type == EXECUTION_TYPE_QUERY) {
+	if (exec_type == EXECUTION_TYPE_QUERY) {
 		//----------------------------------------------------------------------
 		// build execution-plan
 		//----------------------------------------------------------------------
-		ExecutionPlan *plan = ExecutionPlan_FromTLS_AST();
+		ExecutionPlan *plan = ExecutionPlan_FromTLS_AST () ;
 
 		// TODO: there must be a better way to understand if the execution-plan
 		// was constructed correctly,
 		// maybe free the plan within ExecutionPlan_FromTLS_AST, if error was
 		// encountered and return NULL ?
-		if(ErrorCtx_EncounteredError()) {
+		if (ErrorCtx_EncounteredError ()) {
 			// failed to construct plan
 			// clean up and return NULL
-			AST_Free(ast);
-			ExecutionPlan_Free(plan);
-			return NULL;
+			AST_Free (ast) ;
+
+			if (plan != NULL) {
+				ExecutionPlan_Free (plan) ;
+			}
+
+			return NULL ;
 		}
 
 		// apply compile time optimizations
-		Optimizer_CompileTimeOptimize(plan);
+		Optimizer_CompileTimeOptimize (plan) ;
 
-		ExecutionCtx *exec_ctx = _ExecutionCtx_New(ast, plan, exec_type);
-		ret = Cache_SetGetValue(cache, q_str, exec_ctx);
+		ExecutionCtx *exec_ctx = _ExecutionCtx_New (ast, plan, exec_type) ;
+		ret = Cache_SetGetValue (cache, query_no_params, exec_ctx) ;
 	} else {
-		ret = _ExecutionCtx_New(ast, NULL, exec_type);
+		ret = _ExecutionCtx_New (ast, NULL, exec_type) ;
 	}
 
-	return ret;
+	return ret ;
 }
 
 // free an ExecutionCTX struct and its inner fields

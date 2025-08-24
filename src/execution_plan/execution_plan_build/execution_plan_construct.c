@@ -50,21 +50,40 @@ static void _buildLoadCSVOp
 	ASSERT(plan   != NULL);
 	ASSERT(clause != NULL);
 
+	const cypher_astnode_t *node;
+
 	// extract information from AST
 
 	// with headers
 	bool with_headers = cypher_ast_load_csv_has_with_headers(clause);
 
-	// URI expression
-	const cypher_astnode_t *node = cypher_ast_load_csv_get_url(clause);
-	AR_ExpNode *exp = AR_EXP_FromASTNode(node);
-
 	// alias
 	node = cypher_ast_load_csv_get_identifier(clause);
 	const char *alias = cypher_ast_identifier_get_name(node);
 
-	OpBase *op = NewLoadCSVOp(plan, exp, alias, with_headers);
-	ExecutionPlan_UpdateRoot(plan, op);
+	// delimiter
+	char delimiter = ',';
+	node = cypher_ast_load_csv_get_field_terminator(clause);
+	if(node != NULL) {
+		ASSERT(cypher_astnode_type(node) == CYPHER_AST_STRING);
+		const char *str_delimiter = cypher_ast_string_get_value(node) ;
+
+		// error if delimiter is not a single character
+		if (strlen (str_delimiter) != 1) {
+			ErrorCtx_SetError (
+					"CSV field terminator can only be one character wide") ;
+			return ;
+		}
+
+		delimiter = str_delimiter[0] ;
+	}
+
+	// URI expression
+	node = cypher_ast_load_csv_get_url(clause);
+	AR_ExpNode *exp = AR_EXP_FromASTNode(node);
+
+	OpBase *op = NewLoadCSVOp (plan, exp, alias, with_headers, delimiter) ;
+	ExecutionPlan_UpdateRoot (plan, op) ;
 }
 
 static inline void _buildUpdateOp

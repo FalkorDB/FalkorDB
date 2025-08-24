@@ -11,23 +11,40 @@
 // compute transpose matrices
 static void _ComputeTransposeMatrix
 (
-	Delta_Matrix A
+	const Delta_Matrix A
 ) {
 	ASSERT(A != NULL);
 
+	GrB_Info info;
+	GrB_Index nvals;
+
+	// make sure A is fully synced
+	GrB_Matrix DP = Delta_Matrix_DP (A) ;
+	GrB_Matrix DM = Delta_Matrix_DM (A) ;
+
+	// expecting A's DP & DM to have no entries
+	info = GrB_Matrix_nvals (&nvals, DP) ;
+	ASSERT (info == GrB_SUCCESS) ;
+	ASSERT (nvals == 0) ;
+
+	info = GrB_Matrix_nvals (&nvals, DM) ;
+	ASSERT (info == GrB_SUCCESS) ;
+	ASSERT (nvals == 0) ;
+
+	// compute transpose
 	Delta_Matrix AT  = Delta_Matrix_getTranspose(A);
 	GrB_Matrix   AM  = Delta_Matrix_M(A);
 	GrB_Matrix   ATM = Delta_Matrix_M(AT);
 
 	// make sure transpose doesn't contains any entries
-	GrB_Info info;
-	GrB_Index nvals;
 	info = GrB_Matrix_nvals(&nvals, ATM);
 	ASSERT(info  == GrB_SUCCESS);
 	ASSERT(nvals == 0);
 
-	// compute transpose
 	info = GrB_transpose(ATM, NULL, NULL, AM, NULL);
+	ASSERT(info  == GrB_SUCCESS);
+
+	info = GrB_wait (ATM, GrB_MATERIALIZE) ;
 	ASSERT(info  == GrB_SUCCESS);
 }
 
@@ -328,13 +345,13 @@ GraphContext *RdbLoadGraphContext_latest
 	}
 
 	if(GraphDecodeContext_Finished(gc->decoding_context)) {
+		// flush graph matrices
+		Graph_ApplyAllPending(g, true);
+
 		// compute transposes
 		_ComputeTransposeMatrices(g);
 
 		Graph *g = gc->g;
-
-		// flush graph matrices
-		Graph_ApplyAllPending(g, true);
 
 		// revert to default synchronization behavior
 		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
