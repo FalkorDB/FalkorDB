@@ -116,7 +116,7 @@ static void _replace_delete_clause
 	raxFree(identifiers);
 
 	// build the replacement clause
-	cypher_astnode_t *new_clause = cypher_ast_delete(false, exps,
+	cypher_astnode_t *new_clause = cypher_ast_delete(CYPHER_AST_DELETE_MODE_DELETE, exps,
 			array_len(exps), exps, array_len(exps), range);
 
 	// replace original clause with the new one

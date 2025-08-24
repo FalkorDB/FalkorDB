@@ -49,7 +49,8 @@ rax *AST_PrepareUpdateOp
 // extract the necessary information to populate a delete operation from a DELETE clause
 AR_ExpNode **AST_PrepareDeleteOp
 (
-	const cypher_astnode_t *delete_clause
+	const cypher_astnode_t *delete_clause,
+	cypher_ast_delete_mode_t *delete_mode
 );
 
 // determine sort directions (ascending / descending) of multiple sort operations
