@@ -10,6 +10,7 @@
 #include "../entities/edge.h"
 #include "../delta_matrix/delta_matrix.h"
 #include "../delta_matrix/delta_matrix_iter.h"
+#include "tensor_utils.h"
 
 // Tensor is a 3D Delta Matrix
 typedef Delta_Matrix Tensor;
@@ -18,7 +19,7 @@ typedef Delta_Matrix Tensor;
 #define SCALAR_ENTRY(x) !((x) & MSB_MASK)
 
 // clear MSB and cast to GrB_Vector
-#define AS_VECTOR(x) (GrB_Vector)(CLEAR_MSB(x));
+#define AS_VECTOR(x) (GrB_Vector)(CLEAR_MSB(x))
 
 // init new tensor
 Tensor Tensor_new
