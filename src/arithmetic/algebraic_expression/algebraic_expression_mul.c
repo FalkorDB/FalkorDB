@@ -8,11 +8,29 @@
 #include "../../query_ctx.h"
 #include "../algebraic_expression.h"
 
+static void _entry_present (bool *z, const bool *x, const uint64_t *y)
+{
+	*z = (*x) && ((*y) != U64_ZOMBIE);
+}
+
+#define _ENTRY_PRESENT                                                         \
+"void _entry_present (bool *z, const bool *x, const uint64_t *y)\n"            \
+"{\n"                                                                          \
+"	*z = (*x) && ((*y) !=  (1UL << (sizeof(uint64_t) * 8 - 1))) ;\n"           \
+"}"
+
 Delta_Matrix _Eval_Mul
 (
 	const AlgebraicExpression *exp,
 	Delta_Matrix res
 ) {
+	GrB_BinaryOp not_zombie = NULL;
+	GrB_Semiring any_alive  = NULL;
+	GxB_BinaryOp_new(
+		&not_zombie, (GxB_binary_function) &_entry_present, 
+		GrB_BOOL, GrB_BOOL, GrB_UINT64, "_entry_present", _ENTRY_PRESENT
+	);
+	GrB_Semiring_new (&any_alive, GrB_LOR_MONOID_BOOL, not_zombie);
 	//--------------------------------------------------------------------------
 	// validate expression
 	//--------------------------------------------------------------------------
@@ -22,16 +40,23 @@ Delta_Matrix _Eval_Mul
 	ASSERT(AlgebraicExpression_OperationCount(exp, AL_EXP_MUL) == 1) ;
 
 	GrB_Info             info;
-	Delta_Matrix            M;   // current operand
+	Delta_Matrix         M;      // current operand
 	GrB_Index            nvals;  // NNZ in res
 	AlgebraicExpression  *c;     // current child node
-
+	GrB_Type             ty;
 	UNUSED(info) ;
 
-	Delta_Matrix     A         = NULL;
+	// multiplication will work if there are deletions, but not if there are 
+	// additions TODO: mxm could be made to work with additions
+	GrB_OK (GrB_Matrix_nvals(&nvals, DELTA_MATRIX_DELTA_PLUS(res)));
+	ASSERT(nvals == 0);
+
+	GrB_Matrix    res_m        = Delta_Matrix_M(res);
+	GrB_Matrix    A            = NULL;
 	bool          res_modified = false;
-	GrB_Semiring  semiring     = GxB_ANY_PAIR_BOOL;
+	GrB_Semiring  semiring     = NULL;
 	uint          child_count  = AlgebraicExpression_ChildCount(exp);
+
 
 	for(uint i = 0; i < child_count; i++) {
 		c = CHILD_AT(exp, i) ;
@@ -41,26 +66,45 @@ Delta_Matrix _Eval_Mul
 
 		// first time A is set
 		if(A == NULL) {
-			A = M ;
+			ASSERT(Delta_Matrix_Synced(M));
+			A = Delta_Matrix_M(M) ;
 			continue ;
 		}
 
-		// both A and M are valid matrices, perform multiplication
-		info = Delta_mxm(res, semiring, A, M);
+		Delta_Matrix_type(&ty, M);
+		semiring = (ty == GrB_BOOL)? GrB_LOR_LAND_SEMIRING_BOOL: any_alive;
+		GrB_OK (Delta_mxm_identity(res_m, semiring, GxB_ANY_PAIR_BOOL, A, M));
+
+		// info = Delta_mxm_count(res_m, GxB_PLUS_PAIR_UINT64, A, M);
+		// ASSERT(info == GrB_SUCCESS);
+		
 		res_modified = true ;
 		// setup for next iteration
-		A = res ;
+		A = res_m ;
 
 		// exit early if 'res' is empty 0 * A = 0
-		info = Delta_Matrix_nvals(&nvals, res);
-		ASSERT(info == GrB_SUCCESS) ;
-		if(nvals == 0) break ;
+		bool alive = false;
+		GrB_OK (GrB_Matrix_reduce_BOOL(
+			&alive, NULL, GrB_LOR_MONOID_BOOL, res_m, NULL));
+		if(!alive) break ;
 	}
 
 	if(!res_modified) {
-		info = Delta_Matrix_copy(res, A) ;
-		ASSERT(info == GrB_SUCCESS) ;
+		// copy A into res_m
+		GrB_OK (GrB_transpose(res_m, NULL, NULL, A, GrB_DESC_T0)) ;
 	}
+
+	if(res_modified)
+	{
+		GrB_Matrix res_dm = DELTA_MATRIX_DELTA_MINUS(res);
+		//add any explicit zeros to the DM matrix
+		GrB_OK (GrB_Matrix_select_BOOL(
+			res_dm, NULL, NULL, GrB_VALUEEQ_BOOL, res_m, BOOL_ZOMBIE, NULL));
+		Delta_Matrix_wait(res, false);
+	}
+
+	GrB_free(&not_zombie);
+	GrB_free(&any_alive);
 
 	return res ;
 }

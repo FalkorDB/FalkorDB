@@ -21,7 +21,7 @@ Delta_Matrix _Eval_Add
 	GrB_Index nrows;                   // number of rows of operand
 	GrB_Index ncols;                   // number of columns of operand
 
-	bool        res_in_use  =  false;  //  can we use `res` for intermediate evaluation
+	bool        res_in_use     =  false;  //  can we use `res` for intermediate evaluation
 	Delta_Matrix   A           =  NULL;   //  left operand
 	Delta_Matrix   B           =  NULL;   //  right operand
 	Delta_Matrix   inter       =  NULL;   //  intermediate matrix
@@ -62,7 +62,7 @@ Delta_Matrix _Eval_Add
 	// perform addition
 	//--------------------------------------------------------------------------
 
-	info = Delta_eWiseAdd(res, GxB_ANY_PAIR_BOOL, A, B);
+	info = Delta_eWiseAdd(res, GrB_LOR, A, B);
 	ASSERT(info == GrB_SUCCESS);
 
 	uint child_count = AlgebraicExpression_ChildCount(exp);
@@ -86,7 +86,7 @@ Delta_Matrix _Eval_Add
 		}
 
 		// perform addition
-		info = Delta_eWiseAdd(res, GxB_ANY_PAIR_BOOL, res, B);
+		info = Delta_eWiseAdd(res, GrB_LOR, res, B);
 		ASSERT(info == GrB_SUCCESS);
 	}
 

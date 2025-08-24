@@ -97,9 +97,9 @@ static ProcedureResult Proc_BFS_Invoke
 	const char *reltype = SIValue_IsNull(args[2]) ? NULL : args[2].stringval;
 
 	// get edge matrix and transpose matrix, if available
-	GrB_Matrix    R  = NULL;
-	Graph        *g  = QueryCtx_GetGraph();
-	GraphContext *gc = QueryCtx_GetGraphCtx();
+	GrB_Matrix    R    = NULL;
+	Graph        *g    = QueryCtx_GetGraph();
+	GraphContext *gc   = QueryCtx_GetGraphCtx();
 
 	Delta_Matrix D;
 	RelationID *rel_id = NULL;
@@ -114,14 +114,15 @@ static ProcedureResult Proc_BFS_Invoke
 		rel_id = &bfs_ctx->reltype_id;
 	}
 
-	GrB_Info info = Build_Matrix(&R, NULL, g, NULL, 0, rel_id,
-			(rel_id != NULL) ? 1 : 0, false, true);
+	GrB_Info info = get_sub_adjecency_matrix(&R, NULL, g, NULL, 0, rel_id,
+			(rel_id != NULL) ? 1 : 0, false);
 	ASSERT(info == GrB_SUCCESS);
 
 	// if we're not collecting edges, pass a NULL parent pointer
 	// so that the algorithm will not perform unnecessary work
 	GrB_Vector V    = NULL;  // vector of results
 	GrB_Vector PI   = NULL;  // vector backtracking results to their parents
+	GrB_Vector temp = NULL;
 	GrB_Vector *pPI = (bfs_ctx->yield_edges) ? &PI : NULL;
 
 	char msg[LAGRAPH_MSG_LEN];
@@ -130,7 +131,23 @@ static ProcedureResult Proc_BFS_Invoke
 	info = LAGraph_New(&G, &R, LAGraph_ADJACENCY_DIRECTED, msg);
 	ASSERT(info == GrB_SUCCESS);
 
+	// find the source node in the compressed graph
 	GrB_Index src_id = ENTITY_GET_ID(source_node);
+
+	// FUTURE: handling labels
+	// GrB_Index src_loc = 0;
+
+	// struct GB_Iterator_opaque _it;
+	// GxB_Iterator it = &_it;
+	
+	// GrB_OK(GxB_Vector_Iterator_attach(it, rows, NULL));
+
+	// // TODO: probably a better way than linear search but this way we don't care
+	// // about how the vector is stored
+	// for(; GxB_Vector_Iterator_getIndex(it) < src_id; GxB_Vector_Iterator_next(it)) {
+	// 	++src_loc;
+	// }
+
 	info = LAGr_BreadthFirstSearch_Extended(&V, pPI, G, src_id, max_level, -1,
 			false, msg);
 	ASSERT(info == GrB_SUCCESS);
@@ -148,12 +165,40 @@ static ProcedureResult Proc_BFS_Invoke
 	GrB_Index nvals;
 	GrB_Vector_nvals(&nvals, V);
 
+	GrB_Vector_set_INT32(V, GxB_SPARSE, GxB_SPARSITY_CONTROL);
+	GrB_Vector_set_INT32(PI, GxB_SPARSE, GxB_SPARSITY_CONTROL);
+
 	bfs_ctx->n       = nvals;
 	bfs_ctx->nodes   = V;
 	bfs_ctx->parents = PI;
 
-	GxB_Vector_Option_set(bfs_ctx->nodes, GxB_SPARSITY_CONTROL, GxB_SPARSE);
- 	GxB_Vector_Option_set(bfs_ctx->parents, GxB_SPARSITY_CONTROL, GxB_SPARSE);
+	//--------------------------------------------------------------------------
+	// FUTURE: map the outputs mack to their respective node ids
+	//--------------------------------------------------------------------------
+	// GrB_Descriptor desc = NULL;
+	// GrB_Type       ty   = NULL;
+
+	// GrB_Descriptor_new(&desc);
+	// GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST);
+	// GxB_Vector_type(&ty, bfs_ctx->nodes);
+
+	// GrB_Vector_dup(&temp, rows);
+
+	// GxB_Vector_Option_set(temp, GxB_SPARSITY_CONTROL, GxB_SPARSE);
+	// GxB_Vector_assign_Vector(temp, NULL, NULL, bfs_ctx->nodes, rows, desc);
+	// GrB_Vector_free(&bfs_ctx->nodes);
+	// bfs_ctx->nodes = temp; temp = NULL;
+
+	// if(PI) {
+	// 	GrB_Vector_dup(&temp, rows);
+	// 	GxB_Vector_Option_set(temp, GxB_SPARSITY_CONTROL, GxB_SPARSE);
+	// 	GxB_Vector_assign_Vector(temp, NULL, NULL, bfs_ctx->parents, rows, desc);
+	// 	GrB_Vector_free(&bfs_ctx->parents);
+	// 	bfs_ctx->parents = temp; temp = NULL;
+	// }
+
+	// GrB_free(&desc);
+	// GrB_free(&rows);
 
 	return PROCEDURE_OK;
 }
