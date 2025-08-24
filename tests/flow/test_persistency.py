@@ -1,11 +1,13 @@
-from collections import OrderedDict
-from common import *
-import time
 import psutil
 import random
 import threading
+from common import *
+from time import sleep
 from index_utils import *
+from collections import OrderedDict
 from click.testing import CliRunner
+from datetime import datetime, date, time
+from dateutil.relativedelta import relativedelta
 from falkordb_bulk_loader.bulk_insert import bulk_insert
 
 GRAPH_ID = "persistency"
@@ -181,21 +183,37 @@ class testGraphPersistency():
         for graph_name in graph_names:
             graph = self.db.select_graph(graph_name)
 
-            query = """CREATE (:p {strval: 'str', numval: 5.5, boolval: true, array: [1,2,3], pointval: point({latitude: 5.5, longitude: 6})})"""
+            query = """CREATE (:p {strval: 'str',
+                                   numval: 5.5,
+                                   boolval: true,
+                                   array: [1,2,3],
+                                   pointval: point({latitude: 5.5, longitude: 6}),
+                                   date: date({year: 1984, month:10, day:21}),
+                                   time: localtime({hour:10, minute: 30, second:10}),
+                                   datetime: localdatetime({year:1984, month:10, day:21, hour:5, minute:30, second:10}),
+                                   duration: duration({years:1, months:1, days:1, hours:1, minutes:1, seconds:1})
+                                })"""
             result = graph.query(query)
 
             # Verify that node was created correctly
             self.env.assertEquals(result.nodes_created, 1)
-            self.env.assertEquals(result.properties_set, 5)
+            self.env.assertEquals(result.properties_set, 9)
 
             # Save RDB & Load from RDB
             self.env.dumpAndReload()
 
-            query = """MATCH (p) RETURN p.boolval, p.numval, p.strval, p.array, p.pointval"""
+            query = """MATCH (p) RETURN p.boolval, p.numval, p.strval, p.array,
+                                        p.pointval, p.date, p.time, p.datetime,
+                                        p.duration"""
             actual_result = graph.query(query)
 
             # Verify that the properties are loaded correctly.
-            expected_result = [[True, 5.5, 'str', [1, 2, 3], {"latitude": 5.5, "longitude": 6.0}]]
+            expected_result = [[True, 5.5, 'str', [1, 2, 3], {"latitude": 5.5, "longitude": 6.0},
+                                date(year=1984, month=10, day=21),
+                                time(hour=10, minute=30, second=10),
+                                datetime(year=1984, month=10, day=21, hour=5, minute=30, second=10),
+                                relativedelta(years=1, months=1, days=1, hours=1, minutes=1, seconds=1)]]
+
             self.env.assertEquals(actual_result.result_set, expected_result)
 
     # Verify multiple edges of the same relation between nodes A and B
@@ -450,7 +468,7 @@ class testGraphPersistency():
             in_progress = self.conn.info("persistence").get("rdb_bgsave_in_progress")
             if not in_progress:
                 break
-            time.sleep(0.1)  # poll every 100ms
+            sleep(0.1)  # poll every 100ms
 
         self.env.assertFalse(in_progress)
 
@@ -498,8 +516,8 @@ class testGraphPersistency():
         def ping_worker(conn, pings):
             while not stop_event.is_set():
                 conn.ping()
-                pings.append(time.time())
-                time.sleep(0.005) # sleep for 5ms
+                pings.append(datetime.now())
+                sleep(0.005) # sleep for 5ms
 
         stop_event = threading.Event()
         pings = []
@@ -508,7 +526,7 @@ class testGraphPersistency():
 
         # Issue BGSAVE
         self.conn.bgsave()
-        start = time.time()
+        start = datetime.now()
         max_iterations = 100
 
         # Wait for BGSAVE to complete for a maximum of 10 seconds
@@ -516,10 +534,10 @@ class testGraphPersistency():
             pending = self.conn.info("persistence").get("rdb_bgsave_in_progress")
             if not pending:
                 break
-            time.sleep(0.1) # every 100ms
+            sleep(0.1) # every 100ms
         
         self.env.assertFalse(pending)
-        end = time.time()
+        end = datetime.now()
 
         stop_event.set()  # Signal the BGSave thread to stop
         thread.join()
@@ -548,7 +566,7 @@ class testGraphPersistency():
         # issue BGSAVE just so we would have something in info persistence rdb_last_save_time
         # make sure at least one second pass between the first save to the next
         self.conn.bgsave()
-        time.sleep(1)
+        sleep(1)
 
         pid = self.env.envRunner.masterProcess.pid
         before = self.conn.info("persistence").get("rdb_last_save_time")
@@ -569,7 +587,7 @@ class testGraphPersistency():
         for _ in range(max_iterations):
             # update peak memory consumption
             peak_memory_consumption = max(peak_memory_consumption, get_total_rss_memory(pid))
-            time.sleep(0.005)  # poll every 5ms
+            sleep(0.005)  # poll every 5ms
             in_progress = self.conn.info("persistence").get("rdb_bgsave_in_progress")
             if not in_progress:
                 break
