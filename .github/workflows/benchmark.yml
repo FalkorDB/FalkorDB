@@ -70,7 +70,7 @@ jobs:
       matrix:
         benchmark_group: [ a, b ]
     runs-on: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
-    container: falkordb/falkordb-build:ubuntu
+    container: falkordb/falkordb-build:ubuntu-dd4534cfeac95f6902de3b054caead580aa14f0c
     steps:
       - name: Safe dir
         run: git config --global --add safe.directory '*'
