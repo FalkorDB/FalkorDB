@@ -354,7 +354,7 @@ int RedisModule_OnLoad
 
 	if(RedisModule_CreateCommand(ctx,
 				"graph.UDF",
-				Graph_RegisterUDF,
+				Graph_UDF,
 				"deny-script",
 				0, 0, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;

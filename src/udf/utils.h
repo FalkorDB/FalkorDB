@@ -8,6 +8,14 @@
 #include "quickjs.h"
 #include "../value.h"
 
+// returns true if func is a user defined function
+// native functions e.g. console.log typically contains "[native code]"
+bool UDF_IsUserFunction
+(
+	JSContext *js_ctx,  // JavaScript context
+	JSValue func        // function
+);
+
 JSValue UDF_GetFunction
 (
 	const char *func_name,

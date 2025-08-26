@@ -3,10 +3,15 @@
 * Licensed under the Server Side Public License v1 (SSPLv1).
 */
 
+#include "RG.h"
 #include "utils.h"
 #include "classes.h"
 #include "../query_ctx.h"
 #include "../graph/entities/graph_entity.h"
+
+extern JSClassID js_node_class_id;        // JS node class
+extern JSClassID js_edge_class_id;        // JS edge class
+extern JSClassID js_attributes_class_id;  // JS attributes class
 
 // forward declaration
 static int js_attributes_get_property (JSContext *js_ctx,
@@ -71,12 +76,30 @@ static int js_attributes_get_property
     return 0 ;  // property not found
 }
 
+// create a JSValue of type Attributes
+void register_attributes_class
+(
+	JSRuntime *js_runtime, 
+	JSContext *js_ctx
+) {
+	ASSERT (js_ctx     != NULL) ;
+	ASSERT (js_runtime != NULL) ;
+
+	// register for each runtime
+    int res =
+		JS_NewClass (js_runtime, js_attributes_class_id, &js_attributes_class) ;
+	ASSERT (res == 0) ;
+}
+
 JSValue js_entity_get_attributes
 (
 	JSContext *js_ctx,
 	JSValueConst this_val
 ) {
-    GraphEntity *entity = JS_GetOpaque2 (js_ctx, this_val, js_node_class_id) ;
+	JSClassID cid = JS_GetClassID (this_val) ;
+	ASSERT (cid == js_node_class_id || cid == js_edge_class_id) ;
+
+    GraphEntity *entity = JS_GetOpaque2 (js_ctx, this_val, cid) ;
     if (!entity) {
         return JS_EXCEPTION ;
 	}

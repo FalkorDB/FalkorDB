@@ -6,15 +6,17 @@
 #pragma once
 
 #include "quickjs.h"
+#include "../graph/entities/edge.h"
 
-JSValue js_entity_get_attributes
+// create a JSValue of type Edge
+JSValue js_create_edge
 (
 	JSContext *js_ctx,
-	JSValueConst this_val
+	const Edge *edge
 );
 
-// create a JSValue of type Attributes
-void register_attributes_class
+// create a JSValue of type Edge
+void register_edge_class
 (
 	JSRuntime *js_runtime, 
 	JSContext *js_ctx

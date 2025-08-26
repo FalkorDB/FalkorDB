@@ -7,14 +7,53 @@
 #include "../value.h"
 #include "classes.h"
 #include "node_class.h"
+#include "edge_class.h"
+#include "path_class.h"
+#include "../errors/errors.h"
 #include "../datatypes/datatypes.h"
+
+extern JSClassID js_node_class_id;        // JS Node class
+extern JSClassID js_edge_class_id;        // JS Edge class
+extern JSClassID js_path_class_id;        // JS Path class
+extern JSClassID js_attributes_class_id;  // JS Attributes class
 
 // forward declarations
 SIValue UDF_JSToSIValue (JSContext *js_ctx, JSValue val) ;
 
+static void _report_exception
+(
+	JSContext *js_ctx  // java script context
+) {
+    // extract exception object
+    JSValue exception = JS_GetException(js_ctx);
+
+    // if it's an Error object, you can get "message" and "stack"
+    JSValue stack   = JS_GetPropertyStr(js_ctx, exception, "stack");
+    JSValue message = JS_GetPropertyStr(js_ctx, exception, "message");
+
+    const char *msg_str   = JS_ToCString(js_ctx, message);
+    const char *stack_str = JS_ToCString(js_ctx, stack);
+
+    printf("Exception: %s\n", msg_str ? msg_str : "<no message>");
+    printf("Stack: %s\n", stack_str ? stack_str : "<no stack>");
+
+	ErrorCtx_SetError ("UDF Exception: %s\n, Stack: %s",
+			msg_str   ? msg_str   : "<no message>",
+			stack_str ? stack_str : "<no stack>") ;
+
+    // free temporary values
+    JS_FreeCString(js_ctx, msg_str);
+    JS_FreeCString(js_ctx, stack_str);
+    JS_FreeValue(js_ctx, message);
+    JS_FreeValue(js_ctx, stack);
+
+    // finally free the exception object
+    JS_FreeValue(js_ctx, exception);
+}
+
 // returns true if func is a user defined function
 // native functions e.g. console.log typically contains "[native code]"
-static bool _is_user_function
+bool UDF_IsUserFunction
 (
 	JSContext *js_ctx,  // java script context
 	JSValue func        // function
@@ -67,7 +106,7 @@ JSValue UDF_GetFunction
         JSAtom atom = props[i].atom ;
         JSValue val = JS_GetProperty (js_ctx, global_obj, atom) ;
 
-        if (_is_user_function (js_ctx, val)) {
+        if (UDF_IsUserFunction (js_ctx, val)) {
             const char *name = JS_AtomToCString (js_ctx, atom) ;
             JS_FreeCString (js_ctx, name) ;
 
@@ -130,7 +169,7 @@ JSValue UDF_SIValueToJS
 
 		case T_EDGE :
 		{
-			assert (false && "Not implemented") ;
+			js_val = js_create_edge (js_ctx, val.ptrval) ;
 			break ;
 		}
 
@@ -147,7 +186,7 @@ JSValue UDF_SIValueToJS
 
 		case T_PATH:
 		{
-			assert (false && "Not implemented") ;
+			js_val = js_create_path (js_ctx, val.ptrval) ;
 			break ;
 		}
 
@@ -201,7 +240,7 @@ JSValue UDF_SIValueToJS
 
 		case T_INT64:
 		{
-			js_val = JS_NewInt32 (js_ctx, val.longval) ;
+			js_val = JS_NewInt64 (js_ctx, val.longval) ;
 			break ;
 		}
 
@@ -339,53 +378,75 @@ SIValue UDF_JSToSIValue
 
 	switch (tag) {
 
+		case JS_TAG_SHORT_BIG_INT: {
+			int64_t out;
+			if (JS_ToBigInt64 (js_ctx, &out, val) == 0) {
+				return SI_LongVal (out) ;
+			} else {
+				ErrorCtx_SetError ("JS failed to return BitInt64") ;
+				return SI_NullVal () ;
+			}
+		}
+
 		case JS_TAG_INT: {
-			int32_t i ;
-			JS_ToInt32 (js_ctx, &i, val) ;
-			printf ("int: %d\n", i) ;
+			int64_t i ;
+			JS_ToInt64 (js_ctx, &i, val) ;
 			return SI_LongVal (i) ;
 		}
 
 		case JS_TAG_FLOAT64: {
 			double f ;
 			JS_ToFloat64 (js_ctx, &f, val) ;
-			printf ("float: %f\n", f) ;
 			return SI_DoubleVal (f) ;
 		}
 
 		case JS_TAG_STRING: {
 			const char *str = JS_ToCString (js_ctx, val) ;
-			printf ("string: %s\n", str) ;
 			return SI_DuplicateStringVal (str) ;
 		}
 
 		case JS_TAG_BOOL: {
 			int b = JS_ToBool (js_ctx, val) ;
-			printf ("bool: %s\n", b ? "true" : "false") ;
 			return SI_BoolVal (b) ;
 		}
 
 		case JS_TAG_NULL: {
-			printf ("null\n") ;
 			return SI_NullVal () ;
 		}
 
 		case JS_TAG_OBJECT: {
 			if (JS_IsArray (js_ctx, val)) {
-				printf("array\n");
 				return _JSArrayToSIValue (js_ctx, val) ;
-			} else if (JS_IsObject(val)) {
+			} else if (JS_IsObject (val)) {
 				// registered classes
 				JSClassID cid = JS_GetClassID (val) ;
 
 				if (cid == js_node_class_id) {
-					printf("Node object\n");
 					Node *n = JS_GetOpaque (val, js_node_class_id) ;
 					return SI_Node (n) ;
 				}
-				
+
+				else if (cid == js_edge_class_id) {
+					Edge *e = JS_GetOpaque (val, js_edge_class_id) ;
+					return SI_Edge (e) ;
+				}
+
+				else if (cid == js_path_class_id) {
+					Path *p = JS_GetOpaque (val, js_path_class_id) ;
+					return SIPath_New (p) ;
+				}
+
+				else if (cid == js_attributes_class_id) {
+					GraphEntity *e = JS_GetOpaque (val, js_attributes_class_id) ;
+					return GraphEntity_Properties (e) ;
+				}
+
+				else if (cid == 18 ) { // JS_CLASS_REGEXP
+					const char *str = JS_ToCString (js_ctx, val) ;
+					return SI_DuplicateStringVal (str) ;
+				}
+
 				else  {
-					printf("plain object\n");
 					return _JSObjToSIValue(js_ctx, val) ;
 				}
 			}
@@ -393,7 +454,18 @@ SIValue UDF_JSToSIValue
 		}
 
 		case JS_TAG_EXCEPTION: {
-			printf("exception object\n");
+			printf ("exception object\n") ;
+			_report_exception (js_ctx) ;
+			return SI_NullVal () ;
+		}
+
+		case JS_TAG_SYMBOL: {
+			ErrorCtx_SetError ("JS Symbols can not be returned") ;
+			return SI_NullVal () ;
+		}
+
+		case JS_TAG_UNDEFINED: {
+			printf ("undefined\n") ;
 			return SI_NullVal () ;
 		}
 

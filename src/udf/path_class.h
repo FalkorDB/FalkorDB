@@ -6,15 +6,17 @@
 #pragma once
 
 #include "quickjs.h"
+#include "../datatypes/path/path.h"
 
-JSValue js_entity_get_attributes
+// create a JSValue of type Path
+JSValue js_create_path
 (
 	JSContext *js_ctx,
-	JSValueConst this_val
+	const Path *path
 );
 
-// create a JSValue of type Attributes
-void register_attributes_class
+// create a JSValue of type Path
+void register_path_class
 (
 	JSRuntime *js_runtime, 
 	JSContext *js_ctx
