@@ -80,14 +80,10 @@ Delta_Matrix _Eval_Mul
 		GrB_OK (GrB_transpose(res_m, NULL, NULL, A, GrB_DESC_T0)) ;
 	}
 	
+	GrB_Matrix_wait(res_m, GrB_MATERIALIZE) ;
 	if(res_modified) {
-		int32_t iso = false;
-		GrB_OK (GrB_get(res_m, &iso, GxB_ISO));
-		if (!iso){
-			GrB_Matrix *res_dm = &DELTA_MATRIX_DELTA_MINUS(res);
-			// DM will not be updated. 
-			GrB_Matrix_free(res_dm);
-		}
+		GrB_Matrix_select_BOOL(DELTA_MATRIX_DELTA_MINUS(res), NULL, NULL, 
+			GrB_VALUEEQ_BOOL, res_m, BOOL_ZOMBIE, NULL);
 	}
 
 	return res ;

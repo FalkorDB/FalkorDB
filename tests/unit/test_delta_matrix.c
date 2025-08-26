@@ -2104,6 +2104,174 @@ void test_Delta_Matrix_mxm() {
 	TEST_ASSERT(D == NULL);
 }
 
+void test_Delta_Matrix_mxm_struct() {
+	GrB_Type      t      =  GrB_BOOL;
+	Delta_Matrix  A      =  NULL;
+	Delta_Matrix  B      =  NULL;
+	Delta_Matrix  C      =  NULL;
+	GrB_Matrix    A_GB   =  NULL;
+	GrB_Matrix    B_GB   =  NULL;
+	GrB_Matrix    C_GB   =  NULL;
+	GrB_Matrix    D      =  NULL;
+	GrB_Info      info   =  GrB_SUCCESS;
+	GrB_Index     nrows  =  4;
+	GrB_Index     ncols  =  256;
+	bool          sync   =  false;
+
+	info = Delta_Matrix_new(&A, t, nrows, 4, false);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	info = Delta_Matrix_new(&B, t, 4, ncols, false);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	info = Delta_Matrix_new(&C, t, nrows, ncols, false);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_Matrix_new(&A_GB, t, nrows, 4);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	info = GrB_Matrix_new(&D, t, nrows, ncols);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	// The rows of B are every permutation of entry, deleted, new, empty.
+	for(int i = 0; i < 256; i++)
+	{
+		if(((i / 128) % 2) == 0) {
+			info = Delta_Matrix_setElement_BOOL(B, 0, i);
+			TEST_ASSERT(info == GrB_SUCCESS);
+		}
+		if(((i / 32) % 2) == 0) {
+			info = Delta_Matrix_setElement_BOOL(B, 1, i);
+			TEST_ASSERT(info == GrB_SUCCESS);
+		}
+		if(((i / 8) % 2) == 0) {
+			info = Delta_Matrix_setElement_BOOL(B, 2, i);
+			TEST_ASSERT(info == GrB_SUCCESS);
+		}
+		if(((i / 2) % 2) == 0) {
+			info = Delta_Matrix_setElement_BOOL(B, 3, i);
+			TEST_ASSERT(info == GrB_SUCCESS);
+		}
+	}
+
+	//--------------------------------------------------------------------------
+	// flush matrix, sync
+	//--------------------------------------------------------------------------
+	
+	// wait, force sync
+	sync = true;
+	Delta_Matrix_wait(B, sync);
+
+	//--------------------------------------------------------------------------
+	// set pending changes
+	//--------------------------------------------------------------------------
+	for(int i = 0; i < 256; i++)
+	{
+		switch ((i/64) % 4){
+			case 1:
+				info = Delta_Matrix_removeElement_BOOL(B, 0, i);
+				TEST_ASSERT(info == GrB_SUCCESS);
+				break;
+			case 2:
+				info = Delta_Matrix_setElement_BOOL(B, 0, i);
+				TEST_ASSERT(info == GrB_SUCCESS);
+				break;
+			default:
+				break;
+		}
+
+		switch ((i/16) % 4){
+			case 1:
+				info = Delta_Matrix_removeElement_BOOL(B, 1, i);
+				TEST_ASSERT(info == GrB_SUCCESS);
+				break;
+			case 2:
+				info = Delta_Matrix_setElement_BOOL(B, 1, i);
+				TEST_ASSERT(info == GrB_SUCCESS);
+				break;
+			default:
+				break;
+		}
+
+		switch ((i/4) % 4){
+			case 1:
+				info = Delta_Matrix_removeElement_BOOL(B, 2, i);
+				TEST_ASSERT(info == GrB_SUCCESS);
+				break;
+			case 2:
+				info = Delta_Matrix_setElement_BOOL(B, 2, i);
+				TEST_ASSERT(info == GrB_SUCCESS);
+				break;
+			default:
+				break;
+		}
+
+		switch ((i) % 4){
+			case 1:
+				info = Delta_Matrix_removeElement_BOOL(B, 3, i);
+				TEST_ASSERT(info == GrB_SUCCESS);
+				break;
+			case 2:
+				info = Delta_Matrix_setElement_BOOL(B, 3, i);
+				TEST_ASSERT(info == GrB_SUCCESS);
+				break;
+			default:
+				break;
+		}
+	}
+	//--------------------------------------------------------------------------
+	// Set A 
+	//--------------------------------------------------------------------------
+	info = GrB_Matrix_assign_BOOL(DELTA_MATRIX_M(A), NULL, NULL, true, GrB_ALL, 
+		0, GrB_ALL, 0, NULL);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	for(int i = 0; i < 4; ++i)
+		for(int j = 0; j < i; ++j){
+			info = Delta_Matrix_removeElement_BOOL(A, i, j);
+			TEST_ASSERT(info == GrB_SUCCESS);
+		}
+
+	//--------------------------------------------------------------------------
+	// set GrB_Matricies
+	//--------------------------------------------------------------------------
+	info = Delta_Matrix_export(&A_GB, A);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	info = Delta_Matrix_export(&B_GB, B);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+
+	//--------------------------------------------------------------------------
+	// AB via identity
+	//--------------------------------------------------------------------------
+
+	info = Delta_mxm_struct_V3(C, GrB_LOR_LAND_SEMIRING_BOOL, A, B);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	
+	info = GrB_mxm(D, NULL, NULL, GxB_ANY_PAIR_BOOL, A_GB, B_GB, NULL);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	//--------------------------------------------------------------------------
+	// validation
+	//--------------------------------------------------------------------------
+
+	bool d_ok = true;
+	GrB_Matrix_reduce_BOOL(&d_ok, NULL, GrB_LAND_MONOID_BOOL, D, NULL);
+	TEST_ASSERT(d_ok);
+	Delta_Matrix_export(&C_GB, C);
+	
+	Delta_Matrix_print(C, GxB_SHORT);
+	GxB_print(C_GB, GxB_SHORT);
+	GxB_print(D, GxB_SHORT);
+	ASSERT_GrB_Matrices_EQ(C_GB, D);
+	
+	// clean up
+	Delta_Matrix_free(&A);
+	Delta_Matrix_free(&B);
+	Delta_Matrix_free(&C);
+	GrB_Matrix_free(&A_GB);
+	GrB_Matrix_free(&B_GB);
+	GrB_Matrix_free(&C_GB);
+	GrB_Matrix_free(&D);
+}
+
 void test_RGMatrix_mxm() {
 	GrB_Type      t      =  GrB_BOOL;
 	Delta_Matrix  A      =  NULL;
@@ -2416,6 +2584,7 @@ TEST_LIST = {
 	{"Delta_Matrix_add", test_Delta_Matrix_add},
 	{"Delta_Matrix_union", test_Delta_Matrix_union},
 	{"Delta_Matrix_mxm", test_Delta_Matrix_mxm},
+	{"Delta_Matrix_mxm_struct", test_Delta_Matrix_mxm_struct},
 	{"RGMatrix_mxm", test_RGMatrix_mxm},
 	{"RGMatrix_resize", test_RGMatrix_resize},
 	{"RGMatrix_cache_transpose", test_RGMatrix_cache_transpose},

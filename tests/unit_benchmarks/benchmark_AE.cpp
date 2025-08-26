@@ -1,5 +1,4 @@
 #include "tests/unit_benchmarks/create_random.h"
-#include <stdatomic.h>
 #include <pthread.h>
 
 extern "C" {

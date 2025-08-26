@@ -20,6 +20,7 @@ extern "C" {
 		GrB_Semiring any_alive;      // semiring to check if any entry is alive
 		GrB_UnaryOp  free_tensors;   // unary operator to free tensor entries
 	};
+
 	void Global_Operations_Init(void) ;
 	void Global_Operations_Free(void) ;
 	const struct Global_ops *Globals_GetOps(void) ;

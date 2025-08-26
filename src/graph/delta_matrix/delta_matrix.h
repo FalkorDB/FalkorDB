@@ -259,6 +259,27 @@ GrB_Info Delta_mxm
 	const Delta_Matrix B          // second input: matrix B
 );
 
+GrB_Info Delta_mxm_struct
+(
+    Delta_Matrix C,               // output: matrix C 
+    const Delta_Matrix A,         // first input:  matrix A
+    const Delta_Matrix B          // second input: matrix B
+) ;
+GrB_Info Delta_mxm_struct_V2
+(
+    Delta_Matrix C,               // output: matrix C 
+    const GrB_Semiring semiring,  // defines '+' and '*' for A*B
+    const Delta_Matrix A,         // first input:  matrix A
+    const Delta_Matrix B          // second input: matrix B
+) ;
+
+GrB_Info Delta_mxm_struct_V3
+(
+    Delta_Matrix C,               // output: matrix C 
+    const GrB_Semiring semiring,  // defines '+' and '*' for A*B
+    const Delta_Matrix A,         // first input:  matrix A
+    const Delta_Matrix B          // second input: matrix B
+) ;
 // Does not look at dm. Assumes that any "zombie" value is '0'
 // where x \otimes 0 = 0' and x + 0' = x. (AKA the semiring "zero")
 // NOTE: this does not remove explicit zombies.
