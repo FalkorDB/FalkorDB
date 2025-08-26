@@ -49,8 +49,8 @@ static void _DecodeTensors
 		return;
 	}
 
-	GrB_Matrix M  = Delta_Matrix_M  (D) ;
-	GrB_Matrix DP = Delta_Matrix_DP (D) ;
+	GrB_Matrix M  = DELTA_MATRIX_M  (D) ;
+	GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS (D) ;
 
 	GrB_Matrix matrices[2] = {M, DP} ;
 

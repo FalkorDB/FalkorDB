@@ -344,7 +344,7 @@ static void _EstimateNodeAttributeMemory
 	//--------------------------------------------------------------------------
 
 	Delta_Matrix D = Graph_GetNodeLabelMatrix(g);
-	info = Delta_Matrix_export(&lbls, D, GrB_BOOL);
+	info = Delta_Matrix_export(&lbls, D);
 	ASSERT(info == GrB_SUCCESS);
 
 	bool overlapping = _Overlapping(lbls, &V);
