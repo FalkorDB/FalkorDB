@@ -451,29 +451,32 @@ class testUndoLog():
         self.env.assertEquals(result.result_set, expected_result)
 
 
-    def test16_undo_label_set(self):
-        create_node_range_index(self.graph, "L1", "v", sync=True)
-        self.graph.query("CREATE (n:L1 {v:1})")
-        try:
-            self.graph.query("MATCH (n:L1) SET n:L2 WITH n RETURN 1 * n")
-            # we're not supposed to be here, expecting query to fail
-            self.env.assertTrue(False) 
-        except:
-            pass
+    # due to a recent change
+    # we've decided against the removal of a schema
+    # this test is now disabled
+    #def test16_undo_label_set(self):
+    #    create_node_range_index(self.graph, "L1", "v", sync=True)
+    #    self.graph.query("CREATE (n:L1 {v:1})")
+    #    try:
+    #        self.graph.query("MATCH (n:L1) SET n:L2 WITH n RETURN 1 * n")
+    #        # we're not supposed to be here, expecting query to fail
+    #        self.env.assertTrue(False) 
+    #    except:
+    #        pass
 
-        # node label L2 should not be added, expecting an empty result set
-        result = self.graph.query("MATCH (n:L2) RETURN n")
-        self.env.assertEquals(len(result.result_set), 0)
-        # check index is ok
-        query = "MATCH (n:L1 {v: 1}) RETURN n.v"
-        plan = str(self.graph.explain(query))
-        self.env.assertContains("Node By Index Scan", plan)
-        result = self.graph.query(query)
-        self.env.assertEquals(result.result_set[0][0], 1)
+    #    # node label L2 should not be added, expecting an empty result set
+    #    result = self.graph.query("MATCH (n:L2) RETURN n")
+    #    self.env.assertEquals(len(result.result_set), 0)
+    #    # check index is ok
+    #    query = "MATCH (n:L1 {v: 1}) RETURN n.v"
+    #    plan = str(self.graph.explain(query))
+    #    self.env.assertContains("Node By Index Scan", plan)
+    #    result = self.graph.query(query)
+    #    self.env.assertEquals(result.result_set[0][0], 1)
 
-        # L2 label should not be created
-        result = self.graph.query("CALL db.labels")
-        self.env.assertEquals(result.result_set, [["L1"]])
+    #    # L2 label should not be created
+    #    result = self.graph.query("CALL db.labels")
+    #    self.env.assertEquals(result.result_set, [["L1"]])
 
     def test17_undo_remove_label(self):
         create_node_range_index(self.graph, "L2", "v", sync=True)
@@ -562,3 +565,4 @@ class testUndoLog():
 
         # drop index over 'L', 'age'
         result = drop_node_range_index(self.graph, 'L', 'age')
+
