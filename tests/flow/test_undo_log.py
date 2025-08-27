@@ -454,29 +454,73 @@ class testUndoLog():
     # due to a recent change
     # we've decided against the removal of a schema
     # this test is now disabled
-    #def test16_undo_label_set(self):
-    #    create_node_range_index(self.graph, "L1", "v", sync=True)
-    #    self.graph.query("CREATE (n:L1 {v:1})")
-    #    try:
-    #        self.graph.query("MATCH (n:L1) SET n:L2 WITH n RETURN 1 * n")
-    #        # we're not supposed to be here, expecting query to fail
-    #        self.env.assertTrue(False) 
-    #    except:
-    #        pass
+    def disabled_test16_undo_label_set(self):
+        create_node_range_index(self.graph, "L1", "v", sync=True)
+        self.graph.query("CREATE (n:L1 {v:1})")
+        try:
+            self.graph.query("MATCH (n:L1) SET n:L2 WITH n RETURN 1 * n")
+            # we're not supposed to be here, expecting query to fail
+            self.env.assertTrue(False)
+        except:
+            pass
 
-    #    # node label L2 should not be added, expecting an empty result set
-    #    result = self.graph.query("MATCH (n:L2) RETURN n")
-    #    self.env.assertEquals(len(result.result_set), 0)
-    #    # check index is ok
-    #    query = "MATCH (n:L1 {v: 1}) RETURN n.v"
-    #    plan = str(self.graph.explain(query))
-    #    self.env.assertContains("Node By Index Scan", plan)
-    #    result = self.graph.query(query)
-    #    self.env.assertEquals(result.result_set[0][0], 1)
+        # node label L2 should not be added, expecting an empty result set
+        result = self.graph.query("MATCH (n:L2) RETURN n")
+        self.env.assertEquals(len(result.result_set), 0)
+        # check index is ok
+        query = "MATCH (n:L1 {v: 1}) RETURN n.v"
+        plan = str(self.graph.explain(query))
+        self.env.assertContains("Node By Index Scan", plan)
+        result = self.graph.query(query)
+        self.env.assertEquals(result.result_set[0][0], 1)
 
-    #    # L2 label should not be created
-    #    result = self.graph.query("CALL db.labels")
-    #    self.env.assertEquals(result.result_set, [["L1"]])
+        # L2 label should not be created
+        result = self.graph.query("CALL db.labels")
+        self.env.assertEquals(result.result_set, [["L1"]])
+
+    def test16_undo_label_set(self):
+        # labels / relationship-types introduced by a failing query should
+        # NOT be rolled back
+
+        self.graph.query("CREATE (n:L1 {v:1})")
+        try:
+            self.graph.query("MATCH (n:L1) SET n:L2 WITH n RETURN 1 * n")
+            # we're not supposed to be here, expecting query to fail
+            self.env.assertTrue(False)
+        except:
+            pass
+
+        # label L2 should be introduced to the graph
+        q = """CALL db.labels() YIELD label
+               RETURN collect(label)"""
+        result = self.graph.query(q).result_set
+        labels = result[0][0]
+
+        # check index is ok
+        self.env.assertEquals(len(labels), 2)
+        self.env.assertIn("L1", labels)
+        self.env.assertIn("L2", labels)
+
+        #-----------------------------------------------------------------------
+
+        try:
+            self.graph.query("CREATE ()-[e:Z]->() RETURN 1 * e")
+            # we're not supposed to be here, expecting query to fail
+            self.env.assertTrue(False)
+        except:
+            pass
+
+        # relationship type Z should exists
+        q = """CALL db.relationshipTypes()
+               YIELD relationshipType
+               RETURN collect(relationshipType)"""
+
+        result = self.graph.query(q).result_set
+        relationships = result[0][0]
+
+        # check index is ok
+        self.env.assertEquals(len(relationships), 1)
+        self.env.assertIn("Z", relationships)
 
     def test17_undo_remove_label(self):
         create_node_range_index(self.graph, "L2", "v", sync=True)
@@ -484,7 +528,7 @@ class testUndoLog():
         try:
             self.graph.query("MATCH (n:L2) REMOVE n:L2 WITH n RETURN 1 * n")
             # we're not supposed to be here, expecting query to fail
-            self.env.assertTrue(False) 
+            self.env.assertTrue(False)
         except:
             pass
 
