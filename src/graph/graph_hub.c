@@ -444,8 +444,15 @@ Schema *AddSchema
 	Schema *s = GraphContext_AddSchema(gc, label, t);
 
 	if(log == true) {
-		UndoLog undo_log = QueryCtx_GetUndoLog();
-		UndoLog_AddSchema(undo_log, s->id, s->type);
+		// we've decided against the removal of a schema incase a query fails
+		// this is due to the way execution plans are constructed
+		// a plan is built without acquiering R/W lock, as such
+		// it is possible for a thread to rely on a schme which will soon be
+		// removed leading to all sort of issues
+		// i've decided to leave the following lines commented for the time being
+		//
+		//UndoLog undo_log = QueryCtx_GetUndoLog();
+		//UndoLog_AddSchema(undo_log, s->id, s->type);
 		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer();
 		EffectsBuffer_AddNewSchemaEffect(eb, Schema_GetName(s), s->type);
 	}

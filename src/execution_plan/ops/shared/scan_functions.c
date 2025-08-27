@@ -17,6 +17,10 @@ NodeScanCtx *NodeScanCtx_New
     LabelID label_id,   // label id
     const QGNode *n     // node
 ) {
+	ASSERT (n     != NULL) ;
+	ASSERT (alias != NULL) ;
+	ASSERT (label != NULL) ;
+
     NodeScanCtx *ctx = rm_malloc(sizeof(NodeScanCtx));
 
 	ctx->alias    = alias;
@@ -32,7 +36,7 @@ NodeScanCtx *NodeScanCtx_Clone
 (
     const NodeScanCtx *ctx  // context
 ) {
-    ASSERT(ctx != NULL);
+    ASSERT(ctx    != NULL);
     ASSERT(ctx->n != NULL);
 
     NodeScanCtx *clone = rm_malloc(sizeof(NodeScanCtx));
