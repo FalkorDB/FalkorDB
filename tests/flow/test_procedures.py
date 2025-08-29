@@ -369,6 +369,82 @@ class testProcedures(FlowTestsBase):
                            ["READ",  "db.labels"],
                            ["READ",  "db.propertyKeys"],
                            ["READ",  "db.relationshipTypes"],
+                           ["READ",  "dbms.functions"],
                            ["READ",  "dbms.procedures"]]
         self.env.assertEquals(actual_resultset, expected_result)
+
+    def test12_list_functions(self):
+        # test the functions procedure call
+        # CALL dbms.functions()
+
+        q = """CALL dbms.functions()
+               YIELD name, return_type, arguments, internal, reducible,
+               aggregation, variable_len, udf
+               WHERE name = $name
+               RETURN name, return_type, arguments, internal, reducible,
+                      aggregation, variable_len, udf"""
+
+        f = self.graph.query(q, {'name': 'add'}).result_set[0]
+
+        name         = f[0]
+        return_type  = f[1]
+        arguments    = f[2]
+        internal     = f[3]
+        reducible    = f[4]
+        aggregation  = f[5]
+        variable_len = f[6]
+        udf          = f[7]
+
+        self.env.assertEquals(name,         "add")
+        self.env.assertEquals(return_type,  "Map, List, String, Boolean, Integer, Float, or Null")
+        self.env.assertEquals(arguments,    ["Map, List, String, Boolean, Integer, Float, or Null"])
+        self.env.assertEquals(internal,     True)
+        self.env.assertEquals(reducible,    True)
+        self.env.assertEquals(aggregation,  False)
+        self.env.assertEquals(variable_len, False)
+        self.env.assertEquals(udf,          False)
+
+        #-----------------------------------------------------------------------
+
+        f = self.graph.query(q, {'name': 'avg'}).result_set[0]
+
+        name         = f[0]
+        return_type  = f[1]
+        arguments    = f[2]
+        internal     = f[3]
+        reducible    = f[4]
+        aggregation  = f[5]
+        variable_len = f[6]
+        udf          = f[7]
+
+        self.env.assertEquals(name,         "avg")
+        self.env.assertEquals(return_type,  "Float or Null")
+        self.env.assertEquals(arguments,    ["Integer, Float, or Null"])
+        self.env.assertEquals(internal,     False)
+        self.env.assertEquals(reducible,    False)
+        self.env.assertEquals(aggregation,  True)
+        self.env.assertEquals(variable_len, False)
+        self.env.assertEquals(udf,          False)
+
+        #-----------------------------------------------------------------------
+
+        f = self.graph.query(q, {'name': 'case'}).result_set[0]
+
+        name         = f[0]
+        return_type  = f[1]
+        arguments    = f[2]
+        internal     = f[3]
+        reducible    = f[4]
+        aggregation  = f[5]
+        variable_len = f[6]
+        udf          = f[7]
+
+        self.env.assertEquals(name,         "case")
+        self.env.assertEquals(return_type,  "Map, Node, Edge, List, Path, Datetime, Local Datetime, Date, Time, Local Time, Duration, String, Boolean, Integer, Float, Null, Pointer, Point, or Vectorf32")
+        self.env.assertEquals(arguments,    ["Map, Node, Edge, List, Path, Datetime, Local Datetime, Date, Time, Local Time, Duration, String, Boolean, Integer, Float, Null, Pointer, Point, or Vectorf32"])
+        self.env.assertEquals(internal,     True)
+        self.env.assertEquals(reducible,    True)
+        self.env.assertEquals(aggregation,  False)
+        self.env.assertEquals(variable_len, True)
+        self.env.assertEquals(udf,          False)
 

@@ -48,6 +48,8 @@ void Graph_Query(void *args);
 void Graph_Profile(void *args);
 void Graph_Explain(void *args);
 
+int Graph_UDF         (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int Graph_ACL         (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_List        (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_Info        (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_Copy        (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
@@ -61,6 +63,5 @@ int Graph_Slowlog     (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_Memory      (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int CommandDispatch   (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_Constraint  (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
-int graph_acl_cmd     (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_SetPassword (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
-int Graph_RegisterUDF (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+

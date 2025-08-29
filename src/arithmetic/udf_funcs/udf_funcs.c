@@ -63,11 +63,8 @@ void Register_UDFFuncs (void) {
 	// array_append (types, T_STRING) ;
 	array_append (types, SI_ALL) ;
 
-	// TODO: UDF is marked as not internal (it is!)
-	// this should changed, currently if UDF is set as internal
-	// calling functions such as greet() won't work
 	func_desc = AR_FuncDescNew ("UDF", AR_UDF, 0, VAR_ARG_LEN, types, ret_type,
-			false, false) ;
+			true, false) ;
 
 	AR_SetUDF  (func_desc) ;  // mark function as UDF
 	AR_RegFunc (func_desc) ;  // register function

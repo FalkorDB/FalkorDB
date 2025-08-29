@@ -8,23 +8,28 @@
 // initialize UDF repository
 bool UDF_RepoInit(void);
 
-// search UDF repository for function
+// returns script from UDF repository
 const char *UDF_RepoGetScript
 (
-	const char *func_name  // function name to look for
+	const unsigned char *hash  // script SHA1 hash to retrieve
 );
 
-// returns true if UDF repository contains script
+// checks if UDF repository contains script
 bool UDF_RepoContainsScript
 (
-	const char *func_name  // function name to look for
+	const unsigned char *hash  // script SHA1 hash to look for
 );
 
 // register a new UDF script
-bool UDF_RepoSetScript
+bool UDF_RepoRegisterScript
 (
-	const char *func_name,  // function name
-	const char *script      // script
+	const char *script  // script
+);
+
+// removes a script from UDF repository
+bool UDF_RepoRemoveScript
+(
+	const char *hash  // script SHA1 hash to remove
 );
 
 // free UDF repository

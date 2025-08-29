@@ -5,21 +5,28 @@
 
 #include "RG.h"
 #include "quickjs.h"
+#include "../util/arr.h"
 #include "../udf/utils.h"
 #include "../udf/udf_ctx.h"
 #include "../udf/repository.h"
+#include "../arithmetic/func_desc.h"
+#include "../arithmetic/udf_funcs/udf_funcs.h"
+
+#include <openssl/sha.h>
+
 
 // GRAPH.UDF LOAD <script>
 // GRAPH.UDF LOAD "function greet(name) { console.log ('Hello ' + name); }"
 int Graph_UDF_Load
 (
-	RedisModuleCtx *ctx,
-	RedisModuleString **argv,
-	int argc
+	RedisModuleCtx *ctx,       // redis module context
+	RedisModuleString **argv,  // command args
+	int argc                   // number of arguments
 ) {
 	ASSERT (ctx  != NULL) ;
 	ASSERT (argv != NULL) ;
 
+	// expecting a single argument, the script
 	if (argc != 1) {
 		RedisModule_WrongArity (ctx) ;
 		return REDISMODULE_OK ;
@@ -39,11 +46,17 @@ int Graph_UDF_Load
 
 	// validate script wasn't already loaded
 	// compute script SHA
+	unsigned char hash [SHA_DIGEST_LENGTH] ;
+	SHA1 ((unsigned char*)script, script_len, hash) ;
+	// Print result as hex
+    for (int i = 0; i < SHA_DIGEST_LENGTH; i++) {
+        printf("%02x", hash[i]);
+    }
+    printf("\n");
 
-	if (UDF_RepoGetScript (func_name) != NULL) {
-		RedisModule_ReplyWithErrorFormat (ctx,
-				"Failed to register '%s', function already registered",
-				func_name) ;
+	if (UDF_RepoGetScript (hash) != NULL) {
+		RedisModule_ReplyWithError (ctx,
+				"Failed to register UDF script, already registered") ;
 
 		return REDISMODULE_OK ;
 	}
@@ -63,7 +76,7 @@ int Graph_UDF_Load
 	JSRuntime *js_rt  = NULL ;
 	JSContext *js_ctx = NULL ;
 	JSValue global    = JS_NULL ;
-    JSValue val       = JS_NULL ;
+	JSValue val       = JS_NULL ;
 
 	js_rt = JS_NewRuntime() ;
 	ASSERT (js_rt != NULL) ;
@@ -75,7 +88,7 @@ int Graph_UDF_Load
 	ASSERT (js_ctx != NULL) ;
 
 	// evalute script
-    val = JS_Eval (js_ctx, script, script_len, "<input>", JS_EVAL_TYPE_GLOBAL) ;
+	val = JS_Eval (js_ctx, script, script_len, "<input>", JS_EVAL_TYPE_GLOBAL) ;
 
     // report exception
     if (JS_IsException (val)) {
@@ -114,7 +127,7 @@ int Graph_UDF_Load
 		JSValue val = JS_GetProperty (js_ctx, global, atom) ;
 
 		// is this a user defined function ?
-		if (!JS_IsFunction (js_ctx, val) && UDF_IsUserFunction (js_ctx, val)) {
+		if (!JS_IsFunction (js_ctx, val) || !UDF_IsUserFunction (js_ctx, val)) {
 			JS_FreeValue (js_ctx, val) ;
 			continue ;
 		}
@@ -147,6 +160,46 @@ int Graph_UDF_Load
 
 	// UDF passed validations
 	// register script & each function
+
+	res = UDF_RepoRegisterScript (script) ;
+	ASSERT (res == true) ;
+
+	//--------------------------------------------------------------------------
+	// register functions
+	//--------------------------------------------------------------------------
+
+	for (uint32_t i = 0; i < len; i++) {
+		JSAtom atom = props[i].atom ;
+
+		JSValue val = JS_GetProperty (js_ctx, global, atom) ;
+
+		// is this a user defined function ?
+		if (!JS_IsFunction (js_ctx, val) || !UDF_IsUserFunction (js_ctx, val)) {
+			JS_FreeValue (js_ctx, val) ;
+			continue ;
+		}
+
+		// function name
+		const char *func_name = JS_AtomToCString (js_ctx, atom) ;
+
+		// skip anonymous function
+		if (!func_name) {
+			JS_FreeValue (js_ctx, val) ;
+			continue ;
+		}
+
+		SIType *types = array_new (SIType, 1) ;
+		array_append (types, SI_ALL) ;
+
+		AR_FuncDesc *func_desc = AR_FuncDescNew (func_name, AR_UDF, 0,
+				VAR_ARG_LEN, types, SI_ALL, false, false) ;
+
+		AR_SetUDF  (func_desc) ;  // mark function as UDF
+		AR_RegFunc (func_desc) ;  // register function
+
+		JS_FreeCString (js_ctx, func_name) ;
+		JS_FreeValue (js_ctx, val) ;
+	}
 
 	RedisModule_ReplyWithSimpleString (ctx, "OK") ;
 
@@ -235,7 +288,7 @@ int Graph_UDF
 	RedisModuleString *rm_sub_cmd = argv[1] ;
 	const char *sub_cmd = RedisModule_StringPtrLen (rm_sub_cmd, NULL) ;
 
-	if (strcasecmp (sub_cmd, "load")) {
+	if (strcasecmp (sub_cmd, "load") == 0) {
 		return Graph_UDF_Load (ctx, argv+2, argc-2) ;
 	} else {
 		RedisModule_ReplyWithErrorFormat (ctx,

@@ -321,7 +321,7 @@ int RedisModule_OnLoad
 	if(init_cmd_acl(ctx) == REDISMODULE_OK) {
 		if(RedisModule_CreateCommand(ctx,
 					"graph.ACL",
-					graph_acl_cmd,
+					Graph_ACL,
 					"write deny-oom deny-script",
 					0, 0, 0) == REDISMODULE_ERR) {
 			return REDISMODULE_ERR;

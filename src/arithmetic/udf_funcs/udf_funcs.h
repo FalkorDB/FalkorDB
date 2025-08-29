@@ -9,11 +9,10 @@
 
 void Register_UDFFuncs(void);
 
-// invokes a user defined function
-SIValue AR_INVOKE_UDF
+SIValue AR_UDF
 (
-    SIValue *argv,      // arguments
-    int argc,           // number of arguments
-    void *private_data  // private context
+	SIValue *argv,
+	int argc,
+	void *private_data
 );
 

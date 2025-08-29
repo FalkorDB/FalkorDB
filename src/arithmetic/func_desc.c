@@ -8,7 +8,6 @@
 #include "../RG.h"
 #include "../util/rmalloc.h"
 #include "../util/strutil.h"
-#include "../udf/repository.h"
 #include "../../deps/rax/rax.h"
 #include "aggregate_funcs/agg_funcs.h"
 #include <ctype.h>
@@ -91,14 +90,7 @@ AR_FuncDesc *AR_GetFunc
 			len) ;
 
 	if (f == raxNotFound) {
-		// native function wasn't found, search user defined functions
-		if (UDF_RepoContainsScript (func_name)) {
-			// invoke user define function via the generic UDF function
-			f = raxFind (__aeRegisteredFuncs, (unsigned char *)"udf", 3) ;
-			ASSERT (f != raxNotFound) ;
-		} else {
-			return NULL ;
-		}
+		return NULL ;
 	}
 
 	AR_FuncDesc *func = (AR_FuncDesc*)f ;
@@ -127,15 +119,7 @@ bool AR_FuncExists
 	void *f = raxFind(__aeRegisteredFuncs, (unsigned char *)lower_func_name, len);
 
 	if (f == raxNotFound) {
-		// native function wasn't found
-		// search user defined functions
-		if (UDF_RepoContainsScript (func_name)) {
-			// invoke user define function via the generic UDF function
-			f = raxFind (__aeRegisteredFuncs, (unsigned char *)"udf", 3) ;
-			ASSERT (f != raxNotFound) ;
-		} else {
-			return false;
-		}
+		return false;
 	}
 
 	AR_FuncDesc *func = (AR_FuncDesc*)f;
