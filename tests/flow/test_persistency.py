@@ -180,22 +180,31 @@ class testGraphPersistency():
         graph_names = ("simple_props", "{tag}_simple_props")
         for graph_name in graph_names:
             graph = self.db.select_graph(graph_name)
-
-            query = """CREATE (:p {strval: 'str', numval: 5.5, boolval: true, array: [1,2,3], pointval: point({latitude: 5.5, longitude: 6})})"""
+            query = """CREATE (:p {strval: 'str',
+                                   numval: 5.5,
+                                   boolval: true,
+                                   array: [1,2,3],
+                                   pointval: point({latitude: 5.5, longitude: 6}),
+                                   vector: vecf32([1, 0, 3]),
+                                   arr_of_vecs: [vecf32([1, 8, 3]), vecf32([1, -1, 4]), vecf32([2, 2, 3])]
+                                })"""
             result = graph.query(query)
 
             # Verify that node was created correctly
             self.env.assertEquals(result.nodes_created, 1)
-            self.env.assertEquals(result.properties_set, 5)
+            self.env.assertEquals(result.properties_set, 7)
 
             # Save RDB & Load from RDB
             self.env.dumpAndReload()
 
-            query = """MATCH (p) RETURN p.boolval, p.numval, p.strval, p.array, p.pointval"""
+            query = """MATCH (p) RETURN p.boolval, p.numval, p.strval, p.array, p.pointval, p.vector, p.arr_of_vecs"""
             actual_result = graph.query(query)
 
             # Verify that the properties are loaded correctly.
-            expected_result = [[True, 5.5, 'str', [1, 2, 3], {"latitude": 5.5, "longitude": 6.0}]]
+            expected_result = [[True, 5.5, 'str', [1, 2, 3],
+                                {"latitude": 5.5, "longitude": 6.0}, [1, 0, 3],
+                                [[1, 8, 3], [1, -1, 4], [2, 2, 3]]]]
+
             self.env.assertEquals(actual_result.result_set, expected_result)
 
     # Verify multiple edges of the same relation between nodes A and B

@@ -77,8 +77,7 @@ static SIValue _RdbLoadSIArray
 	SIValue list = SI_Array(arrayLen);
 	for(uint i = 0; i < arrayLen; i++) {
 		SIValue elem = _RdbLoadSIValue(rdb);
-		SIArray_Append(&list, elem);
-		SIValue_Free(elem);
+		SIArray_AppendAsOwner (&list, &elem) ;
 	}
 	return list;
 }
@@ -101,14 +100,11 @@ static SIValue _RdbLoadVector
 	size_t buffer_size;
 	void *buffer = SerializerIO_ReadBuffer(rdb, &buffer_size);
 
-	// validate buffer size is reasonable for a vector
-	if (buffer_size % sizeof(float) != 0) {
-		rm_free (buffer) ;
-		return SI_NullVal() ;
-	}
+	// validate buffer size is divisible by float
+	ASSERT (buffer_size % sizeof(float) == 0) ;
 
 	SIValue vector = { .type       = T_VECTOR_F32,
-					   .ptrval     = SerializerIO_ReadBuffer(rdb, NULL),
+					   .ptrval     = buffer,
 					   .allocation = M_SELF };
 	return vector;
 }
