@@ -58,6 +58,8 @@ typedef struct {
 	AR_OperandNodeType type;
 } AR_OperandNode;
 
+typedef AR_EXP_Result (*eval_func)(struct AR_ExpNode *, const Record, SIValue *);
+
 // AR_ExpNode a node within an arithmetic expression tree,
 // This node can take one of two forms:
 // 1. OpNode
@@ -70,6 +72,7 @@ typedef struct AR_ExpNode {
 	AR_ExpNodeType type;
 	// the string representation of the node, such as the literal string "ID(a) + 5"
 	const char *resolved_name;
+	eval_func eval_func; // function to evaluate this node
 } AR_ExpNode;
 
 // creates a new Arithmetic expression operation node
