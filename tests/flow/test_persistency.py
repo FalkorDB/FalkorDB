@@ -188,6 +188,8 @@ class testGraphPersistency():
                                    boolval: true,
                                    array: [1,2,3],
                                    pointval: point({latitude: 5.5, longitude: 6}),
+                                   vector: vecf32([1, 0, 3]),
+                                   arr_of_vecs: [vecf32([1, 8, 3]), vecf32([1, -1, 4]), vecf32([2, 2, 3])],
                                    date: date({year: 1984, month:10, day:21}),
                                    time: localtime({hour:10, minute: 30, second:10}),
                                    datetime: localdatetime({year:1984, month:10, day:21, hour:5, minute:30, second:10}),
@@ -197,18 +199,20 @@ class testGraphPersistency():
 
             # Verify that node was created correctly
             self.env.assertEquals(result.nodes_created, 1)
-            self.env.assertEquals(result.properties_set, 9)
+            self.env.assertEquals(result.properties_set, 11)
 
             # Save RDB & Load from RDB
             self.env.dumpAndReload()
 
             query = """MATCH (p) RETURN p.boolval, p.numval, p.strval, p.array,
-                                        p.pointval, p.date, p.time, p.datetime,
+                                        p.pointval, p.vector, p.arr_of_vecs, p.date, p.time, p.datetime,
                                         p.duration"""
             actual_result = graph.query(query)
 
             # Verify that the properties are loaded correctly.
             expected_result = [[True, 5.5, 'str', [1, 2, 3], {"latitude": 5.5, "longitude": 6.0},
+                                [1, 0, 3],
+                                [[1, 8, 3], [1, -1, 4], [2, 2, 3]],
                                 date(year=1984, month=10, day=21),
                                 time(hour=10, minute=30, second=10),
                                 datetime(year=1984, month=10, day=21, hour=5, minute=30, second=10),
