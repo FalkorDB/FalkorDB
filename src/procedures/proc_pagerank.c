@@ -25,6 +25,7 @@ typedef struct {
 	GrB_Vector centrality;  // nodes centrality
 	GrB_Info info;          // iterator state
 	GxB_Iterator it;        // nodes iterator
+	GxB_Iterator it_cen;    // centrality iterator
 	Node node;              // node
 	SIValue output[2];      // array with up to 2 entries [node, score]
 	SIValue *yield_node;    // yield node
@@ -142,8 +143,11 @@ ProcedureResult Proc_PagerankInvoke
 	GrB_Matrix A;
 	GrB_Info info;
 
-	info = Build_Matrix(&A, &pdata->nodes, g, p_lbls, n_lbls, p_rels, n_rels,
-			false, true);
+	// info = Build_Matrix(&A, &pdata->nodes, g, p_lbls, n_lbls, 
+	// 	p_rels, n_rels, false, true);
+
+	info = get_sub_adjecency_matrix(&A, &pdata->nodes, g, p_lbls, n_lbls, 
+		p_rels, n_rels, false);
 
 	ASSERT(info         == GrB_SUCCESS);
 	ASSERT(A            != NULL);
@@ -202,6 +206,16 @@ ProcedureResult Proc_PagerankInvoke
 	info = LAGraph_Delete(&G, msg);
 	ASSERT(info == GrB_SUCCESS);
 
+	GrB_OK (GxB_Iterator_new(&pdata->it_cen));
+	GrB_OK (GxB_Iterator_new(&pdata->it));
+
+	// iterate over participating nodes
+	GrB_OK (GxB_Vector_Iterator_attach(pdata->it_cen, pdata->centrality, NULL));
+	GrB_OK (GxB_Vector_Iterator_attach(pdata->it, pdata->nodes, NULL));
+
+    GxB_Vector_Iterator_seek(pdata->it_cen, 0);
+    pdata->info = GxB_Vector_Iterator_seek(pdata->it, 0);
+
 	return PROCEDURE_OK;
 }
 
@@ -213,33 +227,22 @@ SIValue *Proc_PagerankStep
 
 	PagerankContext *pdata = (PagerankContext *)ctx->privateData;
 
-	// retrieve node from graph
-	GrB_Index node_id;
-	while(pdata->info != GxB_EXHAUSTED) {
-		// get current node id and its associated score
-		node_id = GxB_Vector_Iterator_getIndex(pdata->it);
-
-		if(Graph_GetNode(pdata->g, node_id, &pdata->node)) {
-			break;
-		}
-
-		// move to the next entry in the components vector
-		pdata->info = GxB_Vector_Iterator_next(pdata->it);
-	}
-
 	// depleted
 	if(pdata->info == GxB_EXHAUSTED) {
 		return NULL;
 	}
 
+	// retrieve node from graph
+	GrB_Index node_id = GxB_Vector_Iterator_getIndex(pdata->it);
+	float score = GxB_Iterator_get_FP32(pdata->it_cen);
+
+	ASSERT (Graph_GetNode(pdata->g, node_id, &pdata->node));
+
 	// prep for next call to Proc_BetweennessStep
 	pdata->info = GxB_Vector_Iterator_next(pdata->it);
+	GrB_Info info = GxB_Vector_Iterator_next(pdata->it_cen);
 
-	double score;
-	GrB_Info info = GrB_Vector_extractElement_FP64(&score, pdata->centrality,
-			node_id);
-
-	ASSERT(info == GrB_SUCCESS);
+	ASSERT(info == pdata->info);
 
 	//--------------------------------------------------------------------------
 	// set outputs
