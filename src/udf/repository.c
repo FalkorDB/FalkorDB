@@ -4,84 +4,21 @@
 */
 
 #include "RG.h"
-#include "../util/dict.h"
+#include "repository.h"
+#include "../util/arr.h"
 #include "../util/rmalloc.h"
 
 #include <pthread.h>
 #include <openssl/sha.h>
 
 typedef struct {
-	dict *repo;
-	pthread_mutex_t lock;
+	pthread_rwlock_t rwlock;  // read/write lock
+	UDF_RepoVersion	v;        // repository version
+	char **scripts;           // array of registered scripts
+
 } UDF_Repository;
 
 static UDF_Repository *udf_repo = NULL ;
-
-// hashtable callbacks
-
-// key compare function
-static int _keyCompare
-(
-	dict *d,
-	const void *key1,
-	const void *key2
-) {
-	return strcmp ((const char*)key1, (const char*)key2) == 0 ;
-}
-
-static void *_keyDup
-(
-	dict *d,
-	const void *key
-) {
-	ASSERT (key != NULL) ;
-	return rm_strdup ((const char *)key) ;
-}
-
-// key free function
-static void _keyDestructor
-(
-	dict *d,
-	void *key
-) {
-	ASSERT (key != NULL) ;
-
-	rm_free (key) ;
-}
-
-static void *_valDup
-(
-	dict *d,
-	const void *obj
-) {
-	ASSERT (obj != NULL) ;
-	return rm_strdup ((const char *)obj) ;
-}
-
-// key free function
-static void _valDestructor
-(
-	dict *d,
-	void *val
-) {
-	ASSERT (val != NULL) ;
-
-	rm_free (val) ;
-}
-
-// StringPool hashtable callbacks
-static const dictType _dictType = {
-	.keyDup                 = _keyDup,
-	.valDup                 = _valDup,
-	.keyCompare             = _keyCompare,
-	.keyDestructor          = _keyDestructor,
-	.valDestructor          = _valDestructor,
-	.hashFunction           = NULL,
-	.expandAllowed          = NULL,
-	.dictEntryMetadataBytes = NULL,
-	.dictMetadataBytes      = NULL,
-	.afterReplaceEntry      = NULL
-};
 
 // initialize UDF repository
 bool UDF_RepoInit(void) {
@@ -89,32 +26,96 @@ bool UDF_RepoInit(void) {
 
 	udf_repo = rm_calloc (1, sizeof(UDF_Repository)) ;
 
-	int res = pthread_mutex_init (&udf_repo->lock, NULL) ;
+	// repo read/write lock
+	int res = pthread_rwlock_init (&udf_repo->rwlock, NULL) ;
 	if (res) {
 		return false ;
 	}
 
-	udf_repo->repo = HashTableCreate (&_dictType) ;
-	return (udf_repo->repo != NULL) ;
+	udf_repo->scripts = array_new(char*, 1) ;
+
+	return (udf_repo->scripts != NULL) ;
+}
+
+// return repo's version
+UDF_RepoVersion UDF_RepoGetVersion(void) {
+	ASSERT (udf_repo != NULL) ;
+
+	return udf_repo->v ;
+}
+
+// build a new JSContext for the given JSRuntime
+// the new js context will be loaded with all registered scripts
+JSContext *UDF_RepoBuildJSContext
+(
+	JSRuntime *js_rt,   // javascript runtime
+	UDF_RepoVersion *v  // [output] repo version
+) {
+	ASSERT (v        != NULL) ;
+	ASSERT (js_rt    != NULL) ;
+	ASSERT (udf_repo != NULL) ;
+
+	// create js context
+	JSContext *js_ctx = JS_NewContext(js_rt) ;
+
+	// lock under READ
+	pthread_rwlock_rdlock (&udf_repo->rwlock) ;
+
+	// load each registered script
+	int n = array_len (udf_repo->scripts) ;
+	for (int i = 0; i < n; i++) {
+		const char *script = udf_repo->scripts[i] ;
+
+		// evalute script
+		JSValue val = JS_Eval (js_ctx, script, strlen(script), "<input>",
+				JS_EVAL_TYPE_GLOBAL) ;
+
+		ASSERT (!JS_IsException (val)) ;
+
+	}
+
+	// set version
+	*v = udf_repo->v ;
+
+	// unlock
+	pthread_rwlock_unlock (&udf_repo->rwlock) ;
+
+	return js_ctx ;
 }
 
 // returns script from UDF repository
 const char *UDF_RepoGetScript
 (
-	const unsigned char *hash  // script SHA1 hash to retrieve
+	const unsigned char *hash,  // script SHA1 hash to retrieve
+	int *idx                    // [optional] script index
 ) {
-	ASSERT (hash != NULL) ;
+	ASSERT (hash     != NULL) ;
+	ASSERT (udf_repo != NULL) ;
 
 	const char *script = NULL ;
 
-	pthread_mutex_lock (&udf_repo->lock) ;
+	pthread_rwlock_rdlock (&udf_repo->rwlock) ;
 
-	dictEntry *e = HashTableFind (udf_repo->repo, hash) ;
-	if (e != NULL) {
-		script = HashTableGetVal(e) ;
+	int n = array_len(udf_repo->scripts) ;
+	for (int i = 0; i < n; i++) {
+		const char *_script = udf_repo->scripts[i] ;
+
+		// compute script hash
+		unsigned char digest [SHA_DIGEST_LENGTH] ;
+		SHA1 ((unsigned char*)_script, strlen (_script), digest) ;
+
+		if (memcmp (hash, digest, SHA_DIGEST_LENGTH) == 0) {
+			script = _script ;
+
+			if (idx != NULL) {
+				*idx = i ;
+			}
+
+			break ;
+		}
 	}
 
-	pthread_mutex_unlock (&udf_repo->lock) ;
+	pthread_rwlock_unlock (&udf_repo->rwlock) ;
 
 	return script ;
 }
@@ -122,9 +123,13 @@ const char *UDF_RepoGetScript
 // checks if UDF repository contains script
 bool UDF_RepoContainsScript
 (
-	const unsigned char *hash  // script SHA1 hash to look for
+	const unsigned char *hash,  // script SHA1 hash to look for
+	int *idx                    // [optional] script index
 ) {
-	return (UDF_RepoGetScript (hash) != NULL) ;
+	ASSERT (hash     != NULL) ;
+	ASSERT (udf_repo != NULL) ;
+
+	return (UDF_RepoGetScript (hash, idx) != NULL) ;
 }
 
 // register a new UDF script
@@ -132,23 +137,27 @@ bool UDF_RepoRegisterScript
 (
 	const char *script  // script
 ) {
-	ASSERT (script != NULL) ;
+	ASSERT (script   != NULL) ;
+	ASSERT (udf_repo != NULL) ;
 
 	// compute script's sha-1 hash
 	unsigned char hash[SHA_DIGEST_LENGTH];  // SHA1 outputs 20 bytes
-    SHA1((unsigned char*)script, strlen(script), hash);
+	SHA1((unsigned char*)script, strlen(script), hash);
 
-	pthread_mutex_lock (&udf_repo->lock) ;
-
-	dictEntry *de = HashTableAddRaw (udf_repo->repo, (void*)hash, NULL) ;
-	if (de == NULL) {
-		// function already registered
+	if (UDF_RepoContainsScript (hash, NULL)) {
 		return false ;
 	}
 
-	HashTableSetVal(udf_repo->repo, de, (void*) script) ;
+	// lock under write
+	pthread_rwlock_wrlock (&udf_repo->rwlock) ;
 
-	pthread_mutex_unlock (&udf_repo->lock) ;
+	array_append (udf_repo->scripts, rm_strdup (script)) ;
+
+	// bump version
+	udf_repo->v++ ;
+
+	// unlock
+	pthread_rwlock_unlock (&udf_repo->rwlock) ;
 
 	return true ;
 }
@@ -156,17 +165,41 @@ bool UDF_RepoRegisterScript
 // removes a script from UDF repository
 bool UDF_RepoRemoveScript
 (
-	const char *hash  // script SHA1 hash to remove
+	const unsigned char *hash,  // script SHA1 hash to remove
+	char **script               // removed script
 ) {
-	ASSERT (hash != NULL) ;
+	ASSERT (hash     != NULL) ;
+	ASSERT (udf_repo != NULL) ;
 	
-	pthread_mutex_lock (&udf_repo->lock) ;
+	int   idx     = -1;
+	bool  res     = false ;
+	char *_script = NULL ;
 
-	int res = HashTableDelete (udf_repo->repo, hash) ;
+	if (UDF_RepoContainsScript (hash, &idx)) {
+		// lock under WRITE
+		pthread_rwlock_wrlock (&udf_repo->rwlock) ;
 
-	pthread_mutex_unlock (&udf_repo->lock) ;
+		_script = udf_repo->scripts[idx] ;
 
-	return res == DICT_OK ;
+		array_del (udf_repo->scripts, idx);
+
+		udf_repo->v++ ; // bump version
+		res = true ;
+
+		// unlock
+		pthread_rwlock_unlock (&udf_repo->rwlock) ;
+	}
+
+	// in case script was found, free or return it
+	if (res) {
+		if (script != NULL) {
+			*script = _script ;
+		} else {
+			rm_free (_script) ;
+		}
+	}
+
+	return res ;
 }
 
 // free UDF repository
@@ -175,10 +208,15 @@ void UDF_RepoFree(void) {
 		return ;
 	}
 
-	int res = pthread_mutex_destroy (&udf_repo->lock) ;
+	for (int i = 0; i < array_len(udf_repo->scripts); i++) {
+		rm_free (udf_repo->scripts[i]) ;
+	}
+
+	array_free (udf_repo->scripts) ;
+
+	// free lock
+	int res = pthread_rwlock_destroy (&udf_repo->rwlock) ;
 	ASSERT (res == 0) ;
-	
-	HashTableRelease (udf_repo->repo) ;
 
 	rm_free (udf_repo) ;
 }

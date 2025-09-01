@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "udf_ctx.h"
 #include "classes.h"
+#include "repository.h"
 #include "../util/rmalloc.h"
 #include <pthread.h>
 
@@ -16,6 +17,7 @@ static pthread_key_t _tlsUDFCtx;  // thread local storage UDF context key
 typedef struct {
 	JSRuntime *js_rt;   // javascript runtime
     JSContext *js_ctx;  // javascript context
+	UDF_RepoVersion v;  // UDF repository version
 } UDFCtx ;
 
 // instantiate the thread-local UDFCtx on module load
@@ -61,7 +63,18 @@ JSContext *UDFCtx_GetJSContext(void) {
 	UDFCtx *ctx = _UDFCtx_GetCtx () ;
 
 	ASSERT (ctx         != NULL) ;
+	ASSERT (ctx->js_rt  != NULL) ;
 	ASSERT (ctx->js_ctx != NULL) ;
+
+	// validate UDF context version against UDF repository version
+	if (unlikely (ctx->v < UDF_RepoGetVersion())) {
+		// UDF context is outdated, reconstruct JSContext
+		JSContext *js_ctx = UDF_RepoBuildJSContext (ctx->js_rt, &ctx->v) ;
+		ASSERT (js_ctx != NULL) ;
+
+		JS_FreeContext (ctx->js_ctx) ;
+		ctx->js_ctx = js_ctx ;
+	}
 
 	return ctx->js_ctx ;
 }

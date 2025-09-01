@@ -10,7 +10,7 @@
 #include "../util/arr.h"
 #include "../datatypes/array.h"
 
-extern rax *__aeRegisteredFuncs;
+extern FuncsRepo *__aeRegisteredFuncs;
 
 // CALL dbms.functions()
 
@@ -100,7 +100,7 @@ ProcedureResult Proc_FunctionsInvoke
 		rm_calloc(1, sizeof(ProcFunctionsPrivateData));
 
 	// initialize an iterator to the rax that contains all functions
-	rax *functions = __aeRegisteredFuncs ;
+	rax *functions = __aeRegisteredFuncs->repo ;
 	raxStart (&pdata->iter, functions) ;
 	raxSeek (&pdata->iter, "^", NULL, 0) ;
 	_process_yield (pdata, yield) ;
@@ -194,6 +194,7 @@ ProcedureResult Proc_FunctionsFree
 	// clean up
 	if (ctx->privateData) {
 		ProcFunctionsPrivateData *pdata = ctx->privateData ;
+		raxStop (&ctx->iter) ;
 		rm_free (ctx->privateData) ;
 	}
 

@@ -4,15 +4,12 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "RG.h"
 #include "funcs.h"
-#include "../RG.h"
 #include "../../deps/rax/rax.h"
 
-extern rax *__aeRegisteredFuncs;
-
 void AR_RegisterFuncs() {
-	ASSERT(__aeRegisteredFuncs == NULL);
-	__aeRegisteredFuncs = raxNew();
+	AR_InitFuncsRepo () ;
 
 	Register_AggFuncs();
 	Register_MapFuncs();

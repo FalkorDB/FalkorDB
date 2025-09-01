@@ -56,6 +56,12 @@ typedef struct {
 	AR_FuncCBs callbacks;  // aggregation callbacks
 } AR_FuncDesc;
 
+// initialize functions repository
+void AR_InitFuncsRepo(void) ;
+
+// finalize functions repository
+void AR_FinalizeFuncsRepo(void) ;
+
 // create a new function descriptor
 AR_FuncDesc *AR_FuncDescNew
 (
@@ -73,6 +79,13 @@ AR_FuncDesc *AR_FuncDescNew
 void AR_RegFunc
 (
 	AR_FuncDesc *func
+);
+
+// unregister arithmetic function to repository
+bool AR_UnregFunc
+(
+	const char *func_name,  // function name to remove from repository
+	AR_FuncDesc **func      // [output] [optional] removed function
 );
 
 // mark function as a user defined function
@@ -115,7 +128,7 @@ bool AR_FuncIsAggregate
 	const char *func_name
 );
 
-//TODO: implement
+// TODO: implement
 void AR_FuncFree
 (
 	AR_FuncDesc *f

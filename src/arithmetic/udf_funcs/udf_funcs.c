@@ -24,18 +24,13 @@ SIValue AR_UDF
 	// locate function
 	//--------------------------------------------------------------------------
 
+	// get thread local JS context
 	JSContext *js_ctx = UDFCtx_GetJSContext () ;
+	ASSERT (js_ctx != NULL) ;
 
+	// locate function
 	JSValue fn = UDF_GetFunction (func_name, js_ctx) ;
-	if (JS_IsNull (fn)) {
-		const char *script = UDF_RepoGetScript (func_name) ;
-
-		JS_Eval (js_ctx, script, strlen (script), "<input>",
-				JS_EVAL_TYPE_GLOBAL) ;
-
-		fn = UDF_GetFunction (func_name, js_ctx) ;
-		ASSERT (!JS_IsNull (fn)) ;
-	}
+	ASSERT (!JS_IsNull (fn)) ;
 
 	//--------------------------------------------------------------------------
 	// convert arguments
