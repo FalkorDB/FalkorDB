@@ -55,7 +55,7 @@ jobs:
   build:
     needs: create-runners
     runs-on: ${{ matrix.platform.machine_label }}
-    container: falkordb/falkordb-build:latest
+    container: falkordb/falkordb-build:ubuntu-dd4534cfeac95f6902de3b054caead580aa14f0c
     services:
       registry:
         image: registry:2
@@ -370,6 +370,9 @@ jobs:
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
             TARGETPLATFORM=${{ matrix.platform.platform }}
             BROWSER_TAG=${{ env.BROWSER_TAG }}
+      - name: Is docker installed?
+        run: |
+          echo "The docker path is: $(which docker)"
 
       - name: Load base image
         if: ${{ matrix.platform.is_debug == '0' }}
