@@ -32,16 +32,21 @@ static inline void NodeByLabelScanToString
 }
 
 // update the label-id of a cached operation, as it may have not 
-// been known when the plan was prepared.
+// been known when the plan was prepared
 static void _update_label_id
 (
 	NodeByLabelScan *op
 ) {
-	if(op->n->label_id != GRAPH_UNKNOWN_LABEL) return;
+	if (op->n->label_id != GRAPH_UNKNOWN_LABEL) {
+		return;
+	}
 
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	Schema *s = GraphContext_GetSchema(gc, op->n->label, SCHEMA_NODE);
-	if(s != NULL) op->n->label_id = Schema_GetID(s);
+
+	if (s != NULL) {
+		op->n->label_id = Schema_GetID(s);
+	}
 }
 
 OpBase *NewNodeByLabelScanOp

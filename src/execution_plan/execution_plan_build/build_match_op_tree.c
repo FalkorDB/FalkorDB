@@ -77,28 +77,30 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 		// reorder exps, to the most performant arrangement of evaluation
 		orderExpressions(qg, exps, &expCount, ft, bound_vars);
 
-		// Create the SCAN operation that will be the tail of the traversal chain.
-		QGNode *src = QueryGraph_GetNodeByAlias(qg,
-			AlgebraicExpression_Src(exps[0]));
+		// create a SCAN operation that will be the tail of the traversal chain
+		QGNode *src = QueryGraph_GetNodeByAlias (qg,
+				AlgebraicExpression_Src (exps[0])) ;
 
-		uint label_count = QGNode_LabelCount(src);
-		if(label_count > 0) {
+		uint label_count = QGNode_LabelCount (src) ;
+
+		if (label_count > 0) {
 			AlgebraicExpression *ae_src =
-				AlgebraicExpression_RemoveSource(&exps[0]);
-			ASSERT(AlgebraicExpression_DiagonalOperand(ae_src, 0));
+				AlgebraicExpression_RemoveSource (&exps[0]) ;
+			ASSERT(AlgebraicExpression_DiagonalOperand (ae_src, 0)) ;
 
-			const char *label = AlgebraicExpression_Label(ae_src);
-			const char *alias = AlgebraicExpression_Src(ae_src);
-			ASSERT(label != NULL);
-			ASSERT(alias != NULL);
+			const char *label = AlgebraicExpression_Label (ae_src) ;
+			const char *alias = AlgebraicExpression_Src (ae_src) ;
+			ASSERT (label != NULL) ;
+			ASSERT (alias != NULL) ;
 
-			int label_id = GRAPH_UNKNOWN_LABEL;
-			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
-			if(s != NULL) label_id = Schema_GetID(s);
+			int label_id = GRAPH_UNKNOWN_LABEL ;
+			Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
+			if (s != NULL) {
+				label_id = Schema_GetID(s);
+			}
 
 			// resolve source node by performing label scan
-			NodeScanCtx *ctx = NodeScanCtx_New((char *)alias, (char *)label,
-				label_id, src);
+			NodeScanCtx *ctx = NodeScanCtx_New (alias, label, label_id, src);
 			root = tail = NewNodeByLabelScanOp(plan, ctx);
 
 			// first operand has been converted into a label scan op

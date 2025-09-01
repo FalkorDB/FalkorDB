@@ -58,8 +58,8 @@
 			if(RedisModule__Assert != NULL) {                       \
 				RedisModule_Assert(X);				                \
 			} else {                                                \
-				printf ("assert(" #X ") failed: "                   \
-				__FILE__ " line %d\n", __LINE__) ;                  \
+				printf("assert(%s) failed in %s line %d\n",         \
+				#X, __FILE__, __LINE__);                            \
 				/* force crash */                                   \
 				char x = *((char*)NULL); /* produce stack trace */  \
 				assert(x); /* solves C++ unused var warning */      \
