@@ -8,18 +8,13 @@ and returns false when patterns don't match, instead of incorrectly
 returning true.
 """
 
-import sys
-import os
-
-# Add the tests directory to Python path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-tests_dir = os.path.dirname(current_dir)
-sys.path.append(tests_dir)
-
-from flow.test_env import FlowTestsBase
+from common import *
 
 class TestExistsPatternIssue1248(FlowTestsBase):
     """Test cases for EXISTS pattern issue #1248"""
+    
+    def __init__(self):
+        self.env, self.db = Env()
     
     def test_exists_pattern_returns_false_when_no_match(self):
         """

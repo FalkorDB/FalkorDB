@@ -137,27 +137,23 @@ SIValue AR_EXISTS(SIValue *argv, int argc, void *private_data) {
 	 * SIValue representing NULL is returned.
 	 * if n.name exists its value can not be NULL.
 	 * 
-	 * For pattern expressions like EXISTS((a)-[]->()),
-	 * the pattern should be evaluated as an existential subquery.
-	 * If the argument is a string representation of a pattern,
-	 * it means the pattern wasn't properly evaluated and should return false.
+	 * TODO: This is a temporary fix for issue #1248.
+	 * The proper solution would be to handle EXISTS with pattern expressions
+	 * during AST compilation by converting them to existential subqueries,
+	 * rather than doing string detection in this function.
 	 */
 	SIValue value = argv[0];
 	
 	// Check for NULL values (property doesn't exist or pattern doesn't match)
 	if(SIValue_IsNull(value)) return SI_BoolVal(false);
 	
-	// If the value is a string that looks like a pattern representation,
-	// it means the pattern wasn't properly evaluated - return false
+	// TEMPORARY HACK: If the value is a string that represents an unevaluated pattern,
+	// return false. This should be handled during query compilation instead.
 	if(SI_TYPE(value) == T_STRING) {
-		const char *str_val = value.stringval;
-		// Check if this looks like a pattern string (contains graph pattern syntax)
-		// We look for combinations that are specific to graph patterns with nodes/relationships
-		if(strstr(str_val, ")-[") != NULL || strstr(str_val, "]->(") != NULL || 
-		   strstr(str_val, ")<-[") != NULL || strstr(str_val, "]-(") != NULL ||
-		   (strstr(str_val, ")-->") != NULL) || (strstr(str_val, ")<--") != NULL) ||
-		   (strstr(str_val, ")--") != NULL && strstr(str_val, "(") != NULL)) {
-			// This appears to be an unevaluated pattern string
+		const char *str = value.stringval;
+		// Quick check for pattern-like strings: look for node-relationship patterns
+		if((strstr(str, ")-[") && strstr(str, "]-")) || 
+		   (strstr(str, ")--") && strstr(str, "(") && strstr(str, ">"))) {
 			return SI_BoolVal(false);
 		}
 	}
