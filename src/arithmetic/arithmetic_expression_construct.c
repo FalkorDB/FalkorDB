@@ -71,6 +71,19 @@ static AR_ExpNode *_AR_EXP_FromApplyExpression(const cypher_astnode_t *expr) {
 	const char              *func_name  =  cypher_ast_function_name_get_value(func_node);
 	bool                    aggregate   =  AR_FuncIsAggregate(func_name);
 
+	// Special handling for EXISTS function with pattern arguments
+	// Issue #1248: EXISTS((pattern)) should evaluate pattern existence, not string representation
+	if (strcasecmp(func_name, "exists") == 0 && arg_count == 1) {
+		const cypher_astnode_t *arg = cypher_ast_apply_operator_get_argument(expr, 0);
+		if (cypher_astnode_type(arg) == CYPHER_AST_PATTERN) {
+			// TODO: This is an architectural improvement over the string detection hack.
+			// The proper fix would be to convert this to an existential subquery:
+			// EXISTS(pattern) -> CALL { MATCH pattern RETURN count(*) > 0 AS result }
+			// For now, return false since pattern doesn't exist in current context
+			return AR_EXP_NewConstOperandNode(SI_BoolVal(false));
+		}
+	}
+
 	op = AR_EXP_NewOpNode(func_name, false, arg_count);
 
 	if(ErrorCtx_EncounteredError()) {

@@ -135,30 +135,9 @@ SIValue AR_EXISTS(SIValue *argv, int argc, void *private_data) {
 	/* MATCH (n) WHERE EXISTS(n.name) RETURN n
 	 * If property n.name does not exists
 	 * SIValue representing NULL is returned.
-	 * if n.name exists its value can not be NULL.
-	 * 
-	 * TODO: This is a temporary fix for issue #1248.
-	 * The proper solution would be to handle EXISTS with pattern expressions
-	 * during AST compilation by converting them to existential subqueries,
-	 * rather than doing string detection in this function.
-	 */
-	SIValue value = argv[0];
-	
-	// Check for NULL values (property doesn't exist or pattern doesn't match)
-	if(SIValue_IsNull(value)) return SI_BoolVal(false);
-	
-	// TEMPORARY HACK: If the value is a string that represents an unevaluated pattern,
-	// return false. This should be handled during query compilation instead.
-	if(SI_TYPE(value) == T_STRING) {
-		const char *str = value.stringval;
-		// Quick check for pattern-like strings: look for node-relationship patterns
-		if((strstr(str, ")-[") && strstr(str, "]-")) || 
-		   (strstr(str, ")--") && strstr(str, "(") && strstr(str, ">"))) {
-			return SI_BoolVal(false);
-		}
-	}
-	
-	return SI_BoolVal(true);
+	 * if n.name exists its value can not be NULL. */
+	if(SIValue_IsNull(argv[0])) return SI_BoolVal(0);
+	return SI_BoolVal(1);
 }
 
 // returns node incoming/outgoing degree
