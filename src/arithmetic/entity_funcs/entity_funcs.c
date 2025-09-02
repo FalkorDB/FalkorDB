@@ -151,9 +151,12 @@ SIValue AR_EXISTS(SIValue *argv, int argc, void *private_data) {
 	// it means the pattern wasn't properly evaluated - return false
 	if(SI_TYPE(value) == T_STRING) {
 		const char *str_val = value.stringval;
-		// Check if this looks like a pattern string (contains pattern syntax)
+		// Check if this looks like a pattern string (contains graph pattern syntax)
+		// We look for combinations that are specific to graph patterns with nodes/relationships
 		if(strstr(str_val, ")-[") != NULL || strstr(str_val, "]->(") != NULL || 
-		   strstr(str_val, ")<-[") != NULL || strstr(str_val, "]-(") != NULL) {
+		   strstr(str_val, ")<-[") != NULL || strstr(str_val, "]-(") != NULL ||
+		   (strstr(str_val, ")-->") != NULL) || (strstr(str_val, ")<--") != NULL) ||
+		   (strstr(str_val, ")--") != NULL && strstr(str_val, "(") != NULL)) {
 			// This appears to be an unevaluated pattern string
 			return SI_BoolVal(false);
 		}
