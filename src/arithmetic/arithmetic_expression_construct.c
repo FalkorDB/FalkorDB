@@ -77,8 +77,10 @@ static AR_ExpNode *_AR_EXP_FromApplyExpression(const cypher_astnode_t *expr) {
 		const cypher_astnode_t *arg = cypher_ast_apply_operator_get_argument(expr, 0);
 		if (cypher_astnode_type(arg) == CYPHER_AST_PATTERN) {
 			// TODO: This is an architectural improvement over the string detection hack.
-			// The proper fix would be to convert this to an existential subquery:
+			// The proper long-term fix would be to convert this to an existential subquery:
 			// EXISTS(pattern) -> CALL { MATCH pattern RETURN count(*) > 0 AS result }
+			// This would require AST rewriting during query compilation similar to 
+			// how CALL subqueries are handled in ast_rewrite_call_subquery.c
 			// For now, return false since pattern doesn't exist in current context
 			return AR_EXP_NewConstOperandNode(SI_BoolVal(false));
 		}
