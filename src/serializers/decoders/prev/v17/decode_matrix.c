@@ -8,7 +8,7 @@
 #include "../../../serializer_io.h"
 #include "../../../../graph/graphcontext.h"
 #include "../../../../graph/tensor/tensor.h"
-#include "../../../../graph//graph_statistics.h"
+#include "../../../../graph/graph_statistics.h"
 #include "../../../../graph/delta_matrix/delta_matrix.h"
 
 // decode tensors

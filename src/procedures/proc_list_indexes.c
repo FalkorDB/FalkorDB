@@ -4,8 +4,8 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "proc_list_indexes.h"
 #include "RG.h"
+#include "proc_list_indexes.h"
 #include "../value.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
@@ -13,6 +13,8 @@
 #include "../schema/schema.h"
 #include "../datatypes/map.h"
 #include "../datatypes/array.h"
+
+#include <assert.h>
 
 typedef struct {
 	SIValue out[9];             // outputs
@@ -212,9 +214,13 @@ static bool _EmitIndex
 			}
 
 			// report progress
+			int res ;
 			char *status;
 			size_t m = info.numDocuments;
-			asprintf(&status, "[Indexing] %zu/%zu: UNDER CONSTRUCTION", m, n);
+			res = asprintf(&status, "[Indexing] %zu/%zu: UNDER CONSTRUCTION",
+					m, n);
+			assert (res >= 34) ;
+
 			*ctx->yield_status = SI_DuplicateStringVal(status);
 			free(status);
 		}

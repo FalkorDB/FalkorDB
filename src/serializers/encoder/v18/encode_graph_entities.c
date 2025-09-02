@@ -69,26 +69,40 @@ static void _RdbSaveSIValue
 		case T_INT64:
 			SerializerIO_WriteSigned(rdb, v->longval);
 			break;
+
 		case T_DOUBLE:
 			SerializerIO_WriteDouble(rdb, v->doubleval);
 			break;
+
 		case T_STRING:
 		case T_INTERN_STRING:
 			SerializerIO_WriteBuffer(rdb, v->stringval,
 					strlen(v->stringval) + 1);
 			break;
+
 		case T_ARRAY:
 			_RdbSaveSIArray(rdb, *v);
 			break;
+
 		case T_POINT:
 			SerializerIO_WriteDouble(rdb, Point_lat(*v));
 			SerializerIO_WriteDouble(rdb, Point_lon(*v));
 			break;
+
 		case T_VECTOR_F32:
 			_RdbSaveSIVector(rdb, *v);
 			break;
+
+		case T_TIME:
+		case T_DATE:
+		case T_DATETIME:
+		case T_DURATION:
+			SerializerIO_WriteSigned(rdb, v->datetimeval);
+			break;
+
 		case T_NULL:
 			break;  // no data beyond type needs to be encoded for NULL
+
 		default:
 			ASSERT(0 && "Attempted to serialize value of invalid type.");
 	}

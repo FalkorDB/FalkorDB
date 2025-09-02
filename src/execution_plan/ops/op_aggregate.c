@@ -224,11 +224,9 @@ OpBase *NewAggregateOp
 	const ExecutionPlan *plan,
 	AR_ExpNode **exps
 ) {
-	OpAggregate *op = rm_malloc(sizeof(OpAggregate));
+	OpAggregate *op = rm_calloc (1, sizeof(OpAggregate)) ;
 
-	op->groups               = HashTableCreate(&_dt);
-	op->group_iter           = NULL;
-	op->r 				     = NULL;
+	op->groups = HashTableCreate(&_dt);
 
 	OpBase_Init((OpBase *)op, OPType_AGGREGATE, "Aggregate", NULL,
 			AggregateConsume, AggregateReset, NULL, AggregateClone,
