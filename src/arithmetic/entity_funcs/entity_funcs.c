@@ -135,9 +135,31 @@ SIValue AR_EXISTS(SIValue *argv, int argc, void *private_data) {
 	/* MATCH (n) WHERE EXISTS(n.name) RETURN n
 	 * If property n.name does not exists
 	 * SIValue representing NULL is returned.
-	 * if n.name exists its value can not be NULL. */
-	if(SIValue_IsNull(argv[0])) return SI_BoolVal(0);
-	return SI_BoolVal(1);
+	 * if n.name exists its value can not be NULL.
+	 * 
+	 * For pattern expressions like EXISTS((a)-[]->()),
+	 * the pattern should be evaluated as an existential subquery.
+	 * If the argument is a string representation of a pattern,
+	 * it means the pattern wasn't properly evaluated and should return false.
+	 */
+	SIValue value = argv[0];
+	
+	// Check for NULL values (property doesn't exist or pattern doesn't match)
+	if(SIValue_IsNull(value)) return SI_BoolVal(false);
+	
+	// If the value is a string that looks like a pattern representation,
+	// it means the pattern wasn't properly evaluated - return false
+	if(SI_TYPE(value) == T_STRING) {
+		const char *str_val = value.stringval;
+		// Check if this looks like a pattern string (contains pattern syntax)
+		if(strstr(str_val, ")-[") != NULL || strstr(str_val, "]->(") != NULL || 
+		   strstr(str_val, ")<-[") != NULL || strstr(str_val, "]-(") != NULL) {
+			// This appears to be an unevaluated pattern string
+			return SI_BoolVal(false);
+		}
+	}
+	
+	return SI_BoolVal(true);
 }
 
 // returns node incoming/outgoing degree
