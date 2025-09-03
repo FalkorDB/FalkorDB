@@ -70,13 +70,7 @@ Our goal is to build a high-performance Knowledge Graph tailored for Large Langu
 To quickly try out FalkorDB, launch an instance using docker:
 
 ```
-docker run -p 6379:6379 -it --rm -v ./data:/var/lib/falkordb/data falkordb/falkordb:edge
-```
-
-Or, to use the built-in browser-based interface, run:
-
-```
-docker run -p 6379:6379 -p 3000:3000 -it --rm -v ./data:/var/lib/falkordb/data falkordb/falkordb:edge
+docker run -p 6379:6379 -p 3000:3000 -it --rm -v ./data:/var/lib/falkordb/data falkordb/falkordb
 ```
 
 ### Step 2
