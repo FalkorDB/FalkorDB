@@ -52,7 +52,7 @@ typedef struct {
 	bool reducible;        // can be reduced using static evaluation
 	bool aggregate;        // true if the function is an aggregation
 	bool udf;              // user define function
-	const char *name;      // function name
+	char *name;            // function name
 	AR_FuncCBs callbacks;  // aggregation callbacks
 } AR_FuncDesc;
 
@@ -75,17 +75,24 @@ AR_FuncDesc *AR_FuncDescNew
 	bool reducible     // is function reducible
 );
 
-// register arithmetic function to repository
-void AR_RegFunc
+// register function to repository
+void AR_FuncRegister
 (
-	AR_FuncDesc *func
+	AR_FuncDesc *func  // function to register
 );
 
-// unregister arithmetic function to repository
-bool AR_UnregFunc
+// unregister function to repository
+bool AR_FuncRemove
 (
 	const char *func_name,  // function name to remove from repository
 	AR_FuncDesc **func      // [output] [optional] removed function
+);
+
+// returns an array of registered functions
+// caller is responsible to free the array and each of its elements
+AR_FuncDesc *AR_FuncList
+(
+	int *n // number of functions
 );
 
 // mark function as a user defined function
@@ -128,7 +135,6 @@ bool AR_FuncIsAggregate
 	const char *func_name
 );
 
-// TODO: implement
 void AR_FuncFree
 (
 	AR_FuncDesc *f

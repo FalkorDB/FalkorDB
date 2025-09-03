@@ -61,7 +61,7 @@ void AR_FinalizeFuncsRepo(void) {
 	ASSERT (res == 0) ;
 
 	// release lock
-	int res = pthread_rwlock_destroy (&__aeRegisteredFuncs->lock) ;
+	res = pthread_rwlock_destroy (&__aeRegisteredFuncs->lock) ;
 	ASSERT (res == 0) ;
 }
 
@@ -78,7 +78,7 @@ AR_FuncDesc *AR_FuncDescNew
 ) {
 	AR_FuncDesc *desc = rm_calloc(1, sizeof(AR_FuncDesc));
 
-	desc->name      = name;
+	desc->name      = rm_strdup (name);
 	desc->func      = func;
 	desc->types     = types;
 	desc->ret_type  = ret_type;
@@ -91,8 +91,8 @@ AR_FuncDesc *AR_FuncDescNew
 	return desc;
 }
 
-// register an arithmetic function
-void AR_RegFunc
+// register function to repository
+void AR_FuncRegister
 (
 	AR_FuncDesc *func  // function to register
 ) {
@@ -117,8 +117,8 @@ void AR_RegFunc
 	ASSERT (res == 0) ;
 }
 
-// unregister arithmetic function to repository
-bool AR_UnregFunc
+// unregister function to repository
+bool AR_FuncRemove
 (
 	const char *func_name,  // function name to remove from repository
 	AR_FuncDesc **func      // [output] [optional] removed function
@@ -136,10 +136,49 @@ bool AR_UnregFunc
 	ASSERT (res == 0) ;
 
 	// remove function from repository
-	res = raxRemove(__aeRegisteredFuncs->repo, (unsigned char *)func_name,
-			strlen (func_name), (void**)func) ;
-	ASSERT(res == 1);
+	int removed = raxRemove(__aeRegisteredFuncs->repo,
+			(unsigned char *)func_name, strlen (func_name), (void**)func) ;
 
+	res = pthread_rwlock_unlock (&__aeRegisteredFuncs->lock) ;
+	ASSERT (res == 0) ;
+
+	return removed == 1 ;
+}
+
+// returns an array of registered functions
+// caller is responsible to free the array and each of its elements
+AR_FuncDesc *AR_FuncList
+(
+	int *n // number of functions
+) {
+	ASSERT (n                   != NULL) ;
+	ASSERT (__aeRegisteredFuncs != NULL) ;
+
+	int i = 0;
+	*n = raxSize (__aeRegisteredFuncs->repo) ;
+	AR_FuncDesc *funcs = rm_calloc (*n, sizeof (AR_FuncDesc)) ;
+
+	// acquire write lock
+	int res = pthread_rwlock_wrlock (&__aeRegisteredFuncs->lock) ;
+	ASSERT (res == 0) ;
+
+	//--------------------------------------------------------------------------
+	// free each registered function
+	//--------------------------------------------------------------------------
+
+	raxIterator it;
+	raxStart (&it, __aeRegisteredFuncs->repo) ;
+
+	// retrieve the first key in the rax
+	raxSeek (&it, "^", NULL, 0);
+	while (raxNext (&it)) {
+		AR_FuncDesc *f = it.data ;
+		funcs[i++] = *f ;
+	}
+
+	raxStop (&it);
+
+	// unlock
 	res = pthread_rwlock_unlock (&__aeRegisteredFuncs->lock) ;
 	ASSERT (res == 0) ;
 }
@@ -259,5 +298,15 @@ bool AR_FuncIsAggregate
 	}
 
 	return f->aggregate ;
+}
+
+void AR_FuncFree
+(
+	AR_FuncDesc *f
+) {
+	ASSERT (f != NULL) ;
+
+	rm_free (f->name) ;
+	rm_free (f) ;
 }
 

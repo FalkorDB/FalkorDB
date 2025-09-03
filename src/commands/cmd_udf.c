@@ -48,7 +48,106 @@ int hex_to_sha1
     return 0; // success
 }
 
-// GRAPH.UDF LOAD <script>
+static int _UDF_Unload
+(
+	RedisModuleCtx *ctx,                     // redis module context
+	unsigned char digest[SHA_DIGEST_LENGTH]  // script sha1 digest
+) {
+	ASSERT (ctx != NULL) ;
+
+	char *script = NULL ;
+	if (!UDF_RepoRemoveScript (digest, &script)) {
+		char sha1[SHA_DIGEST_LENGTH*2+1] ;
+		sha1_to_hex (digest, sha1) ;
+
+		RedisModule_ReplyWithErrorFormat (ctx,
+				"Script with hash %s doesn't exists", sha1) ;
+
+		return 0 ;
+	}
+	size_t script_len = strlen (script) ;
+
+	// unregister script's functions
+	JSRuntime      *js_rt  = NULL ;
+	JSContext      *js_ctx = NULL ;
+	JSPropertyEnum *props  = NULL ;
+
+	JSValue val    = JS_NULL ;
+	JSValue global = JS_NULL ;
+
+	js_rt = JS_NewRuntime() ;
+	ASSERT (js_rt != NULL) ;
+
+	JS_SetMaxStackSize (js_rt, 1024 * 1024) ; // 1 MB stack limit
+
+	// create js context
+	js_ctx = JS_NewContext(js_rt) ;
+	ASSERT (js_ctx != NULL) ;
+
+	// evalute script
+	val = JS_Eval (js_ctx, script, script_len, "<input>", JS_EVAL_TYPE_GLOBAL) ;
+	rm_free (script) ;
+
+    // report exception
+    ASSERT (!JS_IsException (val)) ;
+
+	//--------------------------------------------------------------------------
+	// unregister each of the script's functions
+	//--------------------------------------------------------------------------
+
+	global = JS_GetGlobalObject (js_ctx) ;
+
+	// get all property keys (own only, enumerable or not)
+	uint32_t len ;
+
+	int res = JS_GetOwnPropertyNames (js_ctx, &props, &len, global,
+			JS_GPN_STRING_MASK | JS_GPN_SYMBOL_MASK) ;
+	ASSERT (res == 0) ;
+
+	for (uint32_t i = 0; i < len; i++) {
+		JSAtom atom = props[i].atom ;
+
+		JSValue val = JS_GetProperty (js_ctx, global, atom) ;
+
+		// is this a user defined function ?
+		if (!JS_IsFunction (js_ctx, val) || !UDF_IsUserFunction (js_ctx, val)) {
+			JS_FreeValue (js_ctx, val) ;
+			continue ;
+		}
+
+		// function name
+		const char *func_name = JS_AtomToCString (js_ctx, atom) ;
+
+		// skip anonymous function
+		if (!func_name) {
+			JS_FreeValue (js_ctx, val) ;
+			continue ;
+		}
+
+		JS_FreeCString (js_ctx, func_name) ;
+		JS_FreeValue (js_ctx, val) ;
+	}
+
+	if (props != NULL) {
+		js_free (js_ctx, props) ;
+	}
+
+	if (!JS_IsNull (global)) {
+		JS_FreeValue (js_ctx, global) ;
+	}
+
+	if (js_ctx != NULL) {
+		JS_FreeContext (js_ctx) ;
+	}
+
+	if (js_rt != NULL) {
+		JS_FreeRuntime (js_rt) ;
+	}
+
+	return 1 ;
+}
+
+// GRAPH.UDF LOAD |REPLACE| <script>
 // GRAPH.UDF LOAD "function greet(name) { console.log ('Hello ' + name); }"
 int Graph_UDF_Load
 (
@@ -59,8 +158,8 @@ int Graph_UDF_Load
 	ASSERT (ctx  != NULL) ;
 	ASSERT (argv != NULL) ;
 
-	// expecting a single argument, the script
-	if (argc != 1) {
+	// expecting one or two arguments: optional REPLACE and the script
+	if (argc > 2) {
 		RedisModule_WrongArity (ctx) ;
 		return REDISMODULE_OK ;
 	}
@@ -68,6 +167,22 @@ int Graph_UDF_Load
 	// get script from arguments
 	size_t script_len ;
 	const char *script = RedisModule_StringPtrLen (argv[0], &script_len) ;
+
+	bool replace = false ;
+
+	if (argc == 2) {
+		const char *replace_str = RedisModule_StringPtrLen (argv[0], NULL) ;
+		if (strcasecmp (replace_str, "replace") == 0) {
+			replace = true ;
+		} else {
+			// unknown argument
+			RedisModule_ReplyWithErrorFormat (ctx, "Unknown option given: %s",
+					replace_str) ;
+			return REDISMODULE_OK ;
+		}
+
+		script = RedisModule_StringPtrLen (argv[1], &script_len) ;
+	}
 
 	// check for empty script
 	// GRAPH.UDF LOAD ""
@@ -79,10 +194,12 @@ int Graph_UDF_Load
 
 	// validate script wasn't already loaded
 	// compute script SHA
-	unsigned char hash [SHA_DIGEST_LENGTH] ;
-	SHA1 ((unsigned char*)script, script_len, hash) ;
+	unsigned char digest [SHA_DIGEST_LENGTH] ;
+	SHA1 ((unsigned char*)script, script_len, digest) ;
 
-	if (UDF_RepoContainsScript (hash, NULL)) {
+	// fail in case script alreay exists and replace is false
+	bool script_exists = UDF_RepoContainsScript (digest, NULL) ;
+	if (script_exists && replace == false) {
 		RedisModule_ReplyWithError (ctx,
 				"Failed to register UDF script, already registered") ;
 
@@ -188,6 +305,13 @@ int Graph_UDF_Load
 	// UDF passed validations
 	// register script & each function
 
+	if (script_exists && replace) {
+		if (!_UDF_Unload (ctx, digest)) {
+			RedisModule_ReplyWithError (ctx, "Failed to replace script") ;
+			goto cleanup ;
+		}
+	}
+
 	res = UDF_RepoRegisterScript (script) ;
 	ASSERT (res == true) ;
 
@@ -230,7 +354,7 @@ int Graph_UDF_Load
 
 	// reply with sha1
 	char sha1[SHA_DIGEST_LENGTH*2+1] ;
-	sha1_to_hex (hash, sha1) ;
+	sha1_to_hex (digest, sha1) ;
 	RedisModule_ReplyWithSimpleString (ctx, sha1) ;
 
 cleanup:
@@ -274,96 +398,16 @@ int Graph_UDF_Unload
 	size_t sha1_len;
 	const char *sha1 = RedisModule_StringPtrLen (argv[0], &sha1_len) ;
 
+	// transition from hex string represention to sha1 digest
 	unsigned char digest[SHA_DIGEST_LENGTH] ;
 	if (hex_to_sha1 (sha1, digest) != 0) {
 		RedisModule_ReplyWithErrorFormat (ctx, "invalid sha1 hash %s", sha1) ;
 		return REDISMODULE_OK ;
 	}
 
-	char *script = NULL ;
-	if (!UDF_RepoRemoveScript (digest, &script)) {
-		RedisModule_ReplyWithErrorFormat (ctx, "Script with hash %s doesn't exists", sha1) ;
-		return REDISMODULE_OK ;
+	if (_UDF_Unload(ctx, digest)) {
+		RedisModule_ReplyWithSimpleString (ctx, "OK") ;
 	}
-	size_t script_len = strlen (script) ;
-
-	// unregister script's functions
-	JSRuntime      *js_rt  = NULL ;
-	JSContext      *js_ctx = NULL ;
-	JSPropertyEnum *props  = NULL ;
-
-	JSValue val    = JS_NULL ;
-	JSValue global = JS_NULL ;
-
-	js_rt = JS_NewRuntime() ;
-	ASSERT (js_rt != NULL) ;
-
-	JS_SetMaxStackSize (js_rt, 1024 * 1024) ; // 1 MB stack limit
-
-	// create js context
-	js_ctx = JS_NewContext(js_rt) ;
-	ASSERT (js_ctx != NULL) ;
-
-	// evalute script
-	val = JS_Eval (js_ctx, script, script_len, "<input>", JS_EVAL_TYPE_GLOBAL) ;
-
-    // report exception
-    ASSERT (!JS_IsException (val)) ;
-
-	//--------------------------------------------------------------------------
-	// unregister each of the script's functions
-	//--------------------------------------------------------------------------
-
-	global = JS_GetGlobalObject (js_ctx) ;
-
-	// get all property keys (own only, enumerable or not)
-	uint32_t len ;
-
-	int res = JS_GetOwnPropertyNames (js_ctx, &props, &len, global,
-			JS_GPN_STRING_MASK | JS_GPN_SYMBOL_MASK) ;
-	ASSERT (res == 0) ;
-
-	for (uint32_t i = 0; i < len; i++) {
-		JSAtom atom = props[i].atom ;
-
-		JSValue val = JS_GetProperty (js_ctx, global, atom) ;
-
-		// is this a user defined function ?
-		if (!JS_IsFunction (js_ctx, val) || !UDF_IsUserFunction (js_ctx, val)) {
-			JS_FreeValue (js_ctx, val) ;
-			continue ;
-		}
-
-		// function name
-		const char *func_name = JS_AtomToCString (js_ctx, atom) ;
-
-		// skip anonymous function
-		if (!func_name) {
-			JS_FreeValue (js_ctx, val) ;
-			continue ;
-		}
-
-		JS_FreeCString (js_ctx, func_name) ;
-		JS_FreeValue (js_ctx, val) ;
-	}
-
-	if (props != NULL) {
-		js_free (js_ctx, props) ;
-	}
-
-	if (!JS_IsNull (global)) {
-		JS_FreeValue (js_ctx, global) ;
-	}
-
-	if (js_ctx != NULL) {
-		JS_FreeContext (js_ctx) ;
-	}
-
-	if (js_rt != NULL) {
-		JS_FreeRuntime (js_rt) ;
-	}
-
-	RedisModule_ReplyWithSimpleString (ctx, "OK") ;
 
 	return REDISMODULE_OK ;
 }

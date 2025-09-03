@@ -10,8 +10,6 @@
 #include "../util/arr.h"
 #include "../datatypes/array.h"
 
-extern FuncsRepo *__aeRegisteredFuncs;
-
 // CALL dbms.functions()
 
 typedef struct {
