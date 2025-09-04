@@ -14,40 +14,6 @@
 
 #include <openssl/sha.h>
 
-// compute a string represention of the digest
-static void sha1_to_hex
-(
-	const unsigned char *digest,
-	char out[SHA_DIGEST_LENGTH*2+1]
-) {
-	for (int i = 0; i < SHA_DIGEST_LENGTH; i++) {
-        sprintf (out + (i*2), "%02x", digest[i]) ;
-    }
-
-    out[SHA_DIGEST_LENGTH*2] = '\0' ;
-}
-
-int hex_to_sha1
-(
-	const char *hex,
-	unsigned char digest[SHA_DIGEST_LENGTH]
-) {
-    if (strlen (hex) != SHA_DIGEST_LENGTH * 2) {
-        return -1; // wrong length
-    }
-
-    for (int i = 0; i < SHA_DIGEST_LENGTH; i++) {
-        unsigned int byte;
-        if (sscanf (hex + 2*i, "%2x", &byte) != 1) {
-            return -1; // invalid hex
-        }
-
-        digest[i] = (unsigned char)byte;
-    }
-
-    return 0; // success
-}
-
 static int _UDF_Unload
 (
 	RedisModuleCtx *ctx,                     // redis module context
@@ -147,8 +113,8 @@ static int _UDF_Unload
 	return 1 ;
 }
 
-// GRAPH.UDF LOAD |REPLACE| <script>
-// GRAPH.UDF LOAD "function greet(name) { console.log ('Hello ' + name); }"
+// GRAPH.UDF LOAD |REPLACE| <lib> <script>
+// GRAPH.UDF LOAD hello_world "function greet(name) { console.log ('Hello ' + name); }"
 int Graph_UDF_Load
 (
 	RedisModuleCtx *ctx,       // redis module context
@@ -158,19 +124,40 @@ int Graph_UDF_Load
 	ASSERT (ctx  != NULL) ;
 	ASSERT (argv != NULL) ;
 
-	// expecting one or two arguments: optional REPLACE and the script
-	if (argc > 2) {
+	// expecting two or three arguments: optional REPLACE, lib name and script
+	if (argc < 2 || argc > 3) {
 		RedisModule_WrongArity (ctx) ;
 		return REDISMODULE_OK ;
 	}
 
-	// get script from arguments
+	// get arguments
+
 	size_t script_len ;
-	const char *script = RedisModule_StringPtrLen (argv[0], &script_len) ;
+	const char *script = RedisModule_StringPtrLen (argv[argc-1], &script_len) ;
+
+	size_t lib_len ;
+	const char *lib = RedisModule_StringPtrLen (argv[argc-2], &lib_len) ;
 
 	bool replace = false ;
 
-	if (argc == 2) {
+	ASSERT (lib    != NULL) ;
+	ASSERT (script != NULL) ;
+
+	// check for empty script
+	if (script_len == 0) {
+		// empty string
+		RedisModule_ReplyWithError (ctx, "empty script") ;
+		return REDISMODULE_OK ;
+	}
+
+	// check for empty lib name
+	if (lib_len == 0) {
+		// empty string
+		RedisModule_ReplyWithError (ctx, "empty lib name") ;
+		return REDISMODULE_OK ;
+	}
+
+	if (argc == 3) {
 		const char *replace_str = RedisModule_StringPtrLen (argv[0], NULL) ;
 		if (strcasecmp (replace_str, "replace") == 0) {
 			replace = true ;
@@ -180,25 +167,10 @@ int Graph_UDF_Load
 					replace_str) ;
 			return REDISMODULE_OK ;
 		}
-
-		script = RedisModule_StringPtrLen (argv[1], &script_len) ;
 	}
-
-	// check for empty script
-	// GRAPH.UDF LOAD ""
-	if (script_len == 0) {
-		// empty string
-		RedisModule_ReplyWithError (ctx, "empty script") ;
-		return REDISMODULE_OK ;
-	}
-
-	// validate script wasn't already loaded
-	// compute script SHA
-	unsigned char digest [SHA_DIGEST_LENGTH] ;
-	SHA1 ((unsigned char*)script, script_len, digest) ;
 
 	// fail in case script alreay exists and replace is false
-	bool script_exists = UDF_RepoContainsScript (digest, NULL) ;
+	bool script_exists = UDF_RepoContainsScript (lib, NULL) ;
 	if (script_exists && replace == false) {
 		RedisModule_ReplyWithError (ctx,
 				"Failed to register UDF script, already registered") ;
@@ -209,7 +181,7 @@ int Graph_UDF_Load
 	// load script into a dedicated JavaScript context
 	// validate:
 	// 1. script loads
-	// 2. functions do not already exists
+	// 2. functions do not already exists (in case replace is false)
 	//
 	// if scripts passes validations add script to repository
 	// and add it to the thread JavaScript context
@@ -414,8 +386,8 @@ int Graph_UDF_Unload
 
 // GRAPH.UDF * command handler
 // sub commands:
-// GRAPH.UDF LOAD <script>
-// GRAPH.UDF UNLOAD <sha1>
+// GRAPH.UDF LOAD |REPLACE| <lib> <script>
+// GRAPH.UDF UNLOAD <lib>
 // ...
 // todo: introduce additional sub commands
 int Graph_UDF
