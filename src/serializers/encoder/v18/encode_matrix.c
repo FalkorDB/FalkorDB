@@ -432,4 +432,3 @@ void RdbSaveLblsMatrix_v18
 	Delta_Matrix lbls = Graph_GetNodeLabelMatrix(g);
 	_Encode_Delta_Matrix(rdb, lbls, reload);
 }
-

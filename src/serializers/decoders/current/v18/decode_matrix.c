@@ -326,4 +326,3 @@ void RdbLoadLblsMatrix_v18
 	Delta_Matrix lbl = Graph_GetNodeLabelMatrix(gc->g);
 	_Decode_Delta_Matrix(rdb, lbl);
 }
-

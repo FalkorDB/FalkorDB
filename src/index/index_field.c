@@ -64,24 +64,30 @@ void IndexField_Init
 		field->fulltext_name = field->name;
 	}
 
+	int n ;
+
 	if(type & INDEX_FLD_RANGE) {
 		// create all 3 fields associated with a range field
 
 		// exact match field, e.g. n.v = 4
 		// 'range:' + field name
-		asprintf(&field->range_name, "range:%s", name);
+		n = asprintf(&field->range_name, "range:%s", name);
+		assert (n >= 7) ;
 
 		// strign multi-value field, e.g. 'x' in n.v
 		// 'range:' + field name + ':string:arr'
-		asprintf(&field->range_string_arr_name, "%s:string:arr", field->range_name);
+		n = asprintf(&field->range_string_arr_name, "%s:string:arr", field->range_name);
+		assert (n >= 12) ;
 
 		// numeric multi-value field, e.g. 5 in n.v
 		// 'range:' + field name + ':numeric:arr'
-		asprintf(&field->range_numeric_arr_name, "%s:numeric:arr", field->range_name);
+		n = asprintf(&field->range_numeric_arr_name, "%s:numeric:arr", field->range_name);
+		assert (n >= 13) ;
 	}
 
 	if(type & INDEX_FLD_VECTOR) {
-		asprintf(&field->vector_name, "vector:%s", name);
+		n = asprintf(&field->vector_name, "vector:%s", name);
+		assert (n >= 8) ;
 	}
 }
 
