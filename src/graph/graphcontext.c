@@ -92,23 +92,23 @@ GraphContext *GraphContext_New
 (
 	const char *graph_name
 ) {
-	GraphContext *gc = rm_calloc(1, sizeof(GraphContext));
+	GraphContext *gc = rm_calloc (1, sizeof (GraphContext)) ;
 
-	gc->version          = 0;  // initial graph version
-	gc->slowlog          = SlowLog_New();
-	gc->queries_log      = QueriesLog_New();
-	gc->ref_count        = 0;  // no refences
-	gc->attributes       = raxNew();
-	gc->index_count      = 0;  // no indicies
-	gc->string_mapping   = array_new(char *, 64);
-	gc->encoding_context = GraphEncodeContext_New();
-	gc->decoding_context = GraphDecodeContext_New();
+	gc->version          = 0 ;  // initial graph version
+	gc->slowlog          = SlowLog_New () ;
+	gc->queries_log      = QueriesLog_New () ;
+	gc->ref_count        = 0 ;  // no refences
+	gc->attributes       = raxNew () ;
+	gc->index_count      = 0 ;  // no indicies
+	gc->string_mapping   = array_new (char *, 64) ;
+	gc->encoding_context = GraphEncodeContext_New () ;
+	gc->decoding_context = GraphDecodeContext_New () ;
 
 	// initial graph's write in progress atomic flag to false
-	atomic_init(&gc->write_in_progress, false);
+	atomic_init (&gc->write_in_progress, false) ;
 
 	// create graph's pending write queries queue
-	gc->pending_write_queue = CircularBuffer_New(sizeof(void*), 1024);
+	gc->pending_write_queue = CircularBuffer_New (sizeof (void*), 1024) ;
 
 	// read NODE_CREATION_BUFFER size from configuration
 	// this value controls how much extra room we're willing to spend for:
@@ -120,28 +120,28 @@ GraphContext *GraphContext_New
 	assert(rc);
 	edge_cap = node_cap;
 
-	gc->g = Graph_New(node_cap, edge_cap);
-	gc->graph_name = rm_strdup(graph_name);
-	gc->telemetry_stream = RedisModule_CreateStringPrintf(NULL,
-			TELEMETRY_FORMAT, gc->graph_name);
+	gc->g = Graph_New (node_cap, edge_cap) ;
+	gc->graph_name = rm_strdup (graph_name) ;
+	gc->telemetry_stream = RedisModule_CreateStringPrintf (NULL,
+			TELEMETRY_FORMAT, gc->graph_name) ;
 
 	// allocate the default space for schemas and indices
-	gc->node_schemas = array_new(Schema *, GRAPH_DEFAULT_LABEL_CAP);
-	gc->relation_schemas = array_new(Schema *, GRAPH_DEFAULT_RELATION_TYPE_CAP);
+	gc->node_schemas = array_new (Schema *, GRAPH_DEFAULT_LABEL_CAP) ;
+	gc->relation_schemas = array_new (Schema *, GRAPH_DEFAULT_RELATION_TYPE_CAP) ;
 
 	// initialize the read-write lock to protect access to the attributes rax
-	int rc1 = pthread_rwlock_init(&gc->_attribute_rwlock, NULL);
-	assert(rc1 == 0);
+	int rc1 = pthread_rwlock_init (&gc->_attribute_rwlock, NULL) ;
+	assert (rc1 == 0) ;
 
 	// build the execution plans cache
-	uint64_t cache_size;
-	Config_Option_get(Config_CACHE_SIZE, &cache_size);
-	gc->cache = Cache_New(cache_size, (CacheEntryFreeFunc)ExecutionCtx_Free,
-						  (CacheEntryCopyFunc)ExecutionCtx_Clone);
+	uint64_t cache_size ;
+	Config_Option_get (Config_CACHE_SIZE, &cache_size) ;
+	gc->cache = Cache_New (cache_size, (CacheEntryFreeFunc)ExecutionCtx_Free,
+						  (CacheEntryCopyFunc)ExecutionCtx_Clone) ;
 
-	Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_FLUSH_RESIZE);
+	Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_FLUSH_RESIZE) ;
 
-	return gc;
+	return gc ;
 }
 
 // _GraphContext_Create tries to get a graph context
@@ -410,15 +410,26 @@ static void _GraphContext_UpdateVersion(GraphContext *gc, const char *str) {
 //------------------------------------------------------------------------------
 // Schema API
 //------------------------------------------------------------------------------
-// Find the ID associated with a label for schema and matrix access
-int _GraphContext_GetLabelID(const GraphContext *gc, const char *label, SchemaType t) {
-	// Choose the appropriate schema array given the entity type
-	Schema **schemas = (t == SCHEMA_NODE) ? gc->node_schemas : gc->relation_schemas;
 
-	// TODO optimize lookup
-	for(uint32_t i = 0; i < array_len(schemas); i ++) {
-		if(!strcmp(label, schemas[i]->name)) return i;
+// find the ID associated with a label for schema and matrix access
+int _GraphContext_GetLabelID
+(
+	const GraphContext *gc,
+	const char *label,
+	SchemaType t
+) {
+	// choose the appropriate schema array given the entity type
+	Schema **schemas = (t == SCHEMA_NODE) ?
+		gc->node_schemas : gc->relation_schemas ;
+
+	// TODO: optimize lookup
+	uint32_t l = array_len (schemas) ;
+	for (uint32_t i = 0; i < l; i++) {
+		if (!strcmp (label, schemas[i]->name)) {
+			return i ;
+		}
 	}
+
 	return GRAPH_NO_LABEL; // equivalent to GRAPH_NO_RELATION
 }
 
@@ -501,8 +512,8 @@ Schema *GraphContext_AddSchema
 	const char *label,
 	SchemaType t
 ) {
-	ASSERT(gc != NULL);
-	ASSERT(label != NULL);
+	ASSERT (gc    != NULL) ;
+	ASSERT (label != NULL) ;
 
 	int id;
 	Schema *schema;
@@ -1070,7 +1081,7 @@ static void _GraphContext_Free
 
 	if(gc->pending_write_queue != NULL) {
 		ASSERT(CircularBuffer_Empty(gc->pending_write_queue));
-		CircularBuffer_Free(gc->pending_write_queue);
+		CircularBuffer_Free(gc->pending_write_queue, NULL);
 	}
 
 	GraphEncodeContext_Free(gc->encoding_context);

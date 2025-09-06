@@ -28,7 +28,7 @@ void test_CircularBufferInit(void) {
 	TEST_ASSERT(CircularBuffer_Full(buff) == false);
 
 	// clean up
-	CircularBuffer_Free(buff);
+	CircularBuffer_Free(buff, NULL);
 }
 
 void test_CircularBufferPopulation(void) {
@@ -37,43 +37,48 @@ void test_CircularBufferPopulation(void) {
 	CircularBuffer buff = CircularBuffer_New(sizeof(int), cap);
 
 	// remove item from an empty buffer should report failure
-	TEST_ASSERT(CircularBuffer_Read(buff, &n) == NULL);
+	TEST_ASSERT(CircularBuffer_Read(buff, &n) == false);
 
 	//--------------------------------------------------------------------------
 	// fill buffer
 	//--------------------------------------------------------------------------
+
 	for(int i = 0; i < cap; i++) {
 		// make sure item was added
-		TEST_ASSERT(CircularBuffer_Add(buff, &i) == 1);
+		TEST_ASSERT(CircularBuffer_Add(buff, &i) == true);
+
 		// validate buffer's item count
 		TEST_ASSERT(CircularBuffer_ItemCount(buff) == i+1);
 	}
+
 	TEST_ASSERT(CircularBuffer_Full(buff) == true);
 
 	// forcefully try to overflow buffer
 	for(int i = 0; i < 10; i++) {
-		TEST_ASSERT(CircularBuffer_Add(buff, &n) == 0);
+		TEST_ASSERT(CircularBuffer_Add(buff, &n) == false);
 	}
 
 	//--------------------------------------------------------------------------
 	// empty buffer
 	//--------------------------------------------------------------------------
+
 	for(int i = 0; i < cap; i++) {
 		// get item from buffer
-		TEST_ASSERT(CircularBuffer_Read(buff, &n) != NULL);
+		TEST_ASSERT(CircularBuffer_Read(buff, &n) == true);
 
 		// validate item's value
 		TEST_ASSERT(n == i);
 	}
+
 	TEST_ASSERT(CircularBuffer_Empty(buff) == true);
 
 	// forcefully try to read an item from an empty buffer
 	for(int i = 0; i < 10; i++) {
-		TEST_ASSERT(CircularBuffer_Read(buff, &n) == NULL);
+		TEST_ASSERT(CircularBuffer_Read(buff, &n) == false);
 	}
 
 	// clean up
-	CircularBuffer_Free(buff);
+	CircularBuffer_Free(buff, NULL);
 }
 
 void test_CircularBuffer_Circularity(void) {
@@ -86,16 +91,16 @@ void test_CircularBuffer_Circularity(void) {
 	//--------------------------------------------------------------------------
 	for(int i = 0; i < cap; i++) {
 		// make sure item was added
-		TEST_ASSERT(CircularBuffer_Add(buff, &i) == 1);
+		TEST_ASSERT(CircularBuffer_Add(buff, &i) == true);
 	}
 	TEST_ASSERT(CircularBuffer_Full(buff) == true);
 
 	// try to overflow buffer
-	TEST_ASSERT(CircularBuffer_Add(buff, &n) == 0);
+	TEST_ASSERT(CircularBuffer_Add(buff, &n) == false);
 
 	// removing an item should make space in the buffer
-	TEST_ASSERT(CircularBuffer_Read(buff, &n) != NULL);
-	TEST_ASSERT(CircularBuffer_Add(buff, &n) == 1);
+	TEST_ASSERT(CircularBuffer_Read(buff, &n) != false);
+	TEST_ASSERT(CircularBuffer_Add(buff, &n) == true);
 
 	//--------------------------------------------------------------------------
 	// clear buffer
@@ -107,14 +112,26 @@ void test_CircularBuffer_Circularity(void) {
 
 	// add/remove elements cycling through the buffer multiple times
 	for(int i = 0; i < cap * 4; i++) {
-		TEST_ASSERT(CircularBuffer_Add(buff, &i) == 1);
-		TEST_ASSERT(CircularBuffer_Read(buff, &n) != NULL);
+		TEST_ASSERT(CircularBuffer_Add(buff, &i) == true);
+		TEST_ASSERT(CircularBuffer_Read(buff, &n) == true);
 		TEST_ASSERT(n == i);
 	}
 	TEST_ASSERT(CircularBuffer_Empty(buff) == true);
 
 	// clean up
-	CircularBuffer_Free(buff);
+	CircularBuffer_Free(buff, NULL);
+}
+
+// used by test_CircularBuffer_free
+// to test the CircularBuffer Free item callback
+static int64_t _sum = 0 ;
+
+void sum
+(
+	void *x
+) {
+	int64_t _x = *(int64_t*)(x) ;
+	_sum += _x ;
 }
 
 void test_CircularBuffer_free(void) {
@@ -123,58 +140,20 @@ void test_CircularBuffer_free(void) {
 	//--------------------------------------------------------------------------
 
 	uint cap = 16;
-	CircularBuffer buff = CircularBuffer_New(sizeof(int64_t *), cap);
+	CircularBuffer buff = CircularBuffer_New(sizeof(int64_t), cap);
 	for(int i = 0; i < cap; i++) {
-		int64_t *j = malloc(sizeof(int64_t));
-		CircularBuffer_Add(buff, (void*)&j);
+		int64_t j = i;
+		CircularBuffer_Add(buff, &j) ;
 	}
 
 	//--------------------------------------------------------------------------
 	// free the buffer
 	//--------------------------------------------------------------------------
 
-	for(int i = 0; i < cap; i++) {
-		int64_t *item;
-		CircularBuffer_Read(buff, &item);
-		free(item);
-	}
-
-	CircularBuffer_Free(buff);
-}
-
-void test_CircularBuffer_Reserve(void) {
-
-	// -------------------------------------------------------------------------
-	// fill a buffer of size 16 with 32 integers
-	// -------------------------------------------------------------------------
-
-	uint cap = 16;
-	CircularBuffer buff = CircularBuffer_New(sizeof(int), cap);
-	for(int i = 0; i < 2 * cap; i++) {
-		int *item = CircularBuffer_Reserve(buff);
-		*item = i;
-	}
-
-	// make sure item count did not exceeded buffer cap
-	TEST_ASSERT(CircularBuffer_ItemCount(buff) == CircularBuffer_Cap(buff));
-
-	// -------------------------------------------------------------------------
-	// assert override correctness
-	// -------------------------------------------------------------------------
-
-	for(uint i = 0; i < 16; i++) {
-		int item;
-		void *res = CircularBuffer_Read(buff, &item);
-		TEST_ASSERT(res != NULL);
-		TEST_ASSERT(item == (i + 16));
-		TEST_ASSERT(CircularBuffer_ItemCount(buff) == 16-i-1);
-	}
-
-	// -------------------------------------------------------------------------
-	// free the buffer
-	// -------------------------------------------------------------------------
-
-	CircularBuffer_Free(buff);
+	// free the buffer while summing all elements
+	// summation will be placed in the global variable _sum
+	CircularBuffer_Free(buff, sum);
+	TEST_ASSERT (_sum == 120) ; // SUM(0..15)
 }
 
 void _assert_val_cb
@@ -191,7 +170,6 @@ TEST_LIST = {
 	{"CircularBuffer_Population", test_CircularBufferPopulation},
 	{"CircularBuffer_Circularity", test_CircularBuffer_Circularity},
 	{"CircularBuffer_Free", test_CircularBuffer_free},
-	{"CircularBuffer_Reserve", test_CircularBuffer_Reserve},
 	{NULL, NULL}
 };
 

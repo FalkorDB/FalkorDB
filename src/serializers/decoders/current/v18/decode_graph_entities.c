@@ -26,26 +26,46 @@ static SIValue _RdbLoadSIValue
 	switch(t) {
 	case T_INT64:
 		return SI_LongVal(SerializerIO_ReadSigned(rdb));
+
 	case T_DOUBLE:
 		return SI_DoubleVal(SerializerIO_ReadDouble(rdb));
+
 	case T_STRING:
 		// transfer ownership of the heap-allocated string to the
 		// newly-created SIValue
 		return SI_TransferStringVal(SerializerIO_ReadBuffer(rdb, NULL));
+
 	case T_INTERN_STRING:
 		// create intern string and free loaded buffer
 		str = SerializerIO_ReadBuffer(rdb, NULL);
 		v = SI_InternStringVal(str);
 		rm_free(str);
 		return v;
+
 	case T_BOOL:
 		return SI_BoolVal(SerializerIO_ReadSigned(rdb));
+
 	case T_ARRAY:
 		return _RdbLoadSIArray(rdb);
+
 	case T_POINT:
 		return _RdbLoadPoint(rdb);
+
 	case T_VECTOR_F32:
 		return _RdbLoadVector(rdb, t);
+
+	case T_TIME:
+		return SI_Time(SerializerIO_ReadSigned(rdb));
+
+	case T_DATE:
+		return SI_Date(SerializerIO_ReadSigned(rdb));
+
+	case T_DATETIME:
+		return SI_DateTime(SerializerIO_ReadSigned(rdb));
+
+	case T_DURATION:
+		return SI_Duration(SerializerIO_ReadSigned(rdb));
+
 	case T_NULL:
 	default: // currently impossible
 		return SI_NullVal();
@@ -77,8 +97,7 @@ static SIValue _RdbLoadSIArray
 	SIValue list = SI_Array(arrayLen);
 	for(uint i = 0; i < arrayLen; i++) {
 		SIValue elem = _RdbLoadSIValue(rdb);
-		SIArray_Append(&list, elem);
-		SIValue_Free(elem);
+		SIArray_AppendAsOwner (&list, &elem) ;
 	}
 	return list;
 }
@@ -101,14 +120,11 @@ static SIValue _RdbLoadVector
 	size_t buffer_size;
 	void *buffer = SerializerIO_ReadBuffer(rdb, &buffer_size);
 
-	// validate buffer size is reasonable for a vector
-	if (buffer_size % sizeof(float) != 0) {
-		rm_free (buffer) ;
-		return SI_NullVal() ;
-	}
+	// validate buffer size is divisible by float
+	ASSERT (buffer_size % sizeof(float) == 0) ;
 
 	SIValue vector = { .type       = T_VECTOR_F32,
-					   .ptrval     = SerializerIO_ReadBuffer(rdb, NULL),
+					   .ptrval     = buffer,
 					   .allocation = M_SELF };
 	return vector;
 }

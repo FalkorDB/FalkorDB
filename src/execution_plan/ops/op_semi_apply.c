@@ -28,12 +28,7 @@ OpBase *NewSemiApplyOp
 	const ExecutionPlan *plan,
 	bool anti
 ) {
-	OpSemiApply *op = rm_malloc(sizeof(OpSemiApply));
-
-	op->r            = NULL;
-	op->op_arg       = NULL;
-	op->bound_branch = NULL;
-	op->match_branch = NULL;
+	OpSemiApply *op = rm_calloc (1, sizeof(OpSemiApply)) ;
 
 	// set our Op operations
 	if(anti) {

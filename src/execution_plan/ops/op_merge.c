@@ -128,11 +128,8 @@ OpBase *NewMergeOp
 	// (see CartesianProduct and ValueHashJoin)
 	OpMerge *op = rm_calloc(1, sizeof(OpMerge));
 
-	op->on_match             = on_match;
-	op->on_create            = on_create;
-	op->output_rec_idx       = 0;
-	op->node_pending_updates = NULL;
-	op->edge_pending_updates = NULL;
+	op->on_match  = on_match;
+	op->on_create = on_create;
 	
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_MERGE, "Merge", MergeInit, MergeConsume,
