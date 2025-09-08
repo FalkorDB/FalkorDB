@@ -674,7 +674,7 @@ jobs:
         run: |
           docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
       - name: Set up Trivy
-        uses: aquasecurity/trivy-action@0.33.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
           severity: CRITICAL,HIGH
