@@ -9,6 +9,9 @@
 #include "procedure.h"
 #include "../util/arr.h"
 #include "../datatypes/array.h"
+#include "../arithmetic/func_desc.h"
+
+extern FuncsRepo *__aeRegisteredFuncs ;
 
 // CALL dbms.functions()
 
@@ -192,7 +195,7 @@ ProcedureResult Proc_FunctionsFree
 	// clean up
 	if (ctx->privateData) {
 		ProcFunctionsPrivateData *pdata = ctx->privateData ;
-		raxStop (&ctx->iter) ;
+		raxStop (&pdata->iter) ;
 		rm_free (ctx->privateData) ;
 	}
 

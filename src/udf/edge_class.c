@@ -170,24 +170,31 @@ static JSValue js_edge_startNode
 	//return  js_create_node (js_ctx, val.ptrval) ;
 }
 
-// create a JSValue of type Edge
-void register_edge_class
+// register the edge class with the js-runtime
+void rt_register_edge_class
 (
-	JSRuntime *js_runtime, 
-	JSContext *js_ctx
+	JSRuntime *js_runtime
 ) {
-	ASSERT (js_ctx     != NULL) ;
 	ASSERT (js_runtime != NULL) ;
 
 	// register for each runtime
     int res = JS_NewClass (js_runtime, js_edge_class_id, &js_edge_class) ;
 	ASSERT (res == 0) ;
 
+}
+
+// register the edge class with the js-context
+void ctx_register_edge_class
+(
+	JSContext *js_ctx
+) {
+	ASSERT (js_ctx != NULL) ;
+
 	// prototype object
     JSValue proto = JS_NewObject (js_ctx) ;
 
-    res = JS_SetPropertyFunctionList (js_ctx, proto,
-        (JSCFunctionListEntry[]) {
+    int res = JS_SetPropertyFunctionList (js_ctx, proto,
+			(JSCFunctionListEntry[]) {
             JS_CGETSET_DEF ("id",         js_edge_id,               NULL),
             JS_CGETSET_DEF ("type",       js_edge_type,             NULL),
             JS_CGETSET_DEF ("endNode",    js_edge_endNode,          NULL),

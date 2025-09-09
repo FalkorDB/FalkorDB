@@ -134,24 +134,30 @@ static JSValue js_entity_get_labels
     return obj ;
 }
 
-// create a JSValue of type Node
-void register_node_class
+// register the node class with the js-runtime
+void rt_register_node_class
 (
-	JSRuntime *js_runtime, 
-	JSContext *js_ctx
+	JSRuntime *js_runtime
 ) {
-	ASSERT (js_ctx     != NULL) ;
 	ASSERT (js_runtime != NULL) ;
 
 	// register for each runtime
     int res = JS_NewClass (js_runtime, js_node_class_id, &js_node_class) ;
 	ASSERT (res == 0) ;
+}
+
+// register the node class with the js-context
+void ctx_register_node_class
+(
+	JSContext *js_ctx
+) {
+	ASSERT (js_ctx != NULL) ;
 
 	// prototype object
     JSValue proto = JS_NewObject (js_ctx) ;
 
-    res = JS_SetPropertyFunctionList (js_ctx, proto,
-        (JSCFunctionListEntry[]) {
+    int res = JS_SetPropertyFunctionList (js_ctx, proto,
+			(JSCFunctionListEntry[]) {
             JS_CGETSET_DEF ("id", js_entity_get_id, NULL),
             JS_CGETSET_DEF ("labels", js_entity_get_labels, NULL),
             JS_CGETSET_DEF ("attributes", js_entity_get_attributes, NULL)

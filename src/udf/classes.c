@@ -22,14 +22,22 @@ void UDF_InitClasses(void) {
     JS_NewClassID (&js_attributes_class_id) ;
 }
 
-void UDF_RegisterClasses
+void UDF_RT_RegisterClasses
 (
-	JSRuntime *js_runtime,
+	JSRuntime *js_runtime
+) {
+	rt_register_node_class (js_runtime) ;
+	rt_register_edge_class (js_runtime) ;
+	rt_register_path_class (js_runtime) ;
+	rt_register_attributes_class (js_runtime) ;
+}
+
+void UDF_CTX_RegisterClasses
+(
 	JSContext *js_ctx
 ) {
-	register_node_class (js_runtime, js_ctx) ;
-	register_edge_class (js_runtime, js_ctx) ;
-	register_path_class (js_runtime, js_ctx) ;
-	register_attributes_class (js_runtime, js_ctx) ;
+	ctx_register_node_class (js_ctx) ;
+	ctx_register_edge_class (js_ctx) ;
+	ctx_register_path_class (js_ctx) ;
 }
 

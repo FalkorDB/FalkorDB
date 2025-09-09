@@ -6,10 +6,18 @@
 
 #pragma once
 
-#include <sys/types.h>
 #include "../value.h"
+#include "../../deps/rax/rax.h"
+
+#include <sys/types.h>
 
 #define VAR_ARG_LEN UINT_MAX
+
+// arithmetic function repository
+typedef struct {
+	rax *repo;              // registered funcs
+	pthread_rwlock_t lock;  // RW lock
+} FuncsRepo;
 
 // an aggregation context
 // each aggregation function operates on an aggregation context
@@ -81,18 +89,16 @@ void AR_FuncRegister
 	AR_FuncDesc *func  // function to register
 );
 
+void AR_FuncRegisterUDF
+(
+	const char *name
+);
+
 // unregister function to repository
 bool AR_FuncRemove
 (
 	const char *func_name,  // function name to remove from repository
 	AR_FuncDesc **func      // [output] [optional] removed function
-);
-
-// returns an array of registered functions
-// caller is responsible to free the array and each of its elements
-AR_FuncDesc *AR_FuncList
-(
-	int *n // number of functions
 );
 
 // mark function as a user defined function

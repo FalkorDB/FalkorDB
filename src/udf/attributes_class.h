@@ -13,10 +13,9 @@ JSValue js_entity_get_attributes
 	JSValueConst this_val
 );
 
-// create a JSValue of type Attributes
-void register_attributes_class
+// register the attribute class with the js-runtime
+void rt_register_attributes_class
 (
-	JSRuntime *js_runtime, 
-	JSContext *js_ctx
+	JSRuntime *js_runtime
 );
 

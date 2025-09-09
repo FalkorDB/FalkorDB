@@ -11,9 +11,14 @@
 void UDF_InitClasses(void) ;
 
 // register all classes
-void UDF_RegisterClasses
+void UDF_RT_RegisterClasses
 (
-	JSRuntime *js_runtime,
+	JSRuntime *js_runtime
+);
+
+// register all classes
+void UDF_CTX_RegisterClasses
+(
 	JSContext *js_ctx
 );
 

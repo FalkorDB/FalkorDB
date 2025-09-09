@@ -15,10 +15,15 @@ JSValue js_create_node
 	const Node *node
 );
 
-// create a JSValue of type Node
-void register_node_class
+// register the node class with the js-runtime
+void rt_register_node_class
 (
-	JSRuntime *js_runtime, 
+	JSRuntime *js_runtime
+);
+
+// register the node class with the js-context
+void ctx_register_node_class
+(
 	JSContext *js_ctx
 );
 

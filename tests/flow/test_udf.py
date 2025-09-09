@@ -11,84 +11,111 @@ class testUDF():
     def tearDown(self):
         self.graph.delete()
 
-    def register_udf(self, name, body):
-        res = self.conn.execute_command(
-            "GRAPH.UDF",
-            name,
-            f"function {name}() {{ {body} }}"
-        )
-
-        self.env.assertEqual(res, "OK")
-
     def test_return_primitives(self):
+        script ="""
+        function ReturnInt       () { return 12;        }
+        function ReturnFloat     () { return 3.14;      }
+        function ReturnTrue      () { return true;      }
+        function ReturnString    () { return 'hello';   }
+        function ReturnFalse     () { return false;     }
+        function ReturnNull      () { return null;      }
+        function ReturnUndefined () { return undefined; }
+
+        register ('ReturnInt',       ReturnInt);
+        register ('ReturnFloat',     ReturnFloat);
+        register ('ReturnTrue',      ReturnTrue);
+        register ('ReturnString',    ReturnString);
+        register ('ReturnFalse',     ReturnFalse);
+        register ('ReturnNull',      ReturnNull);
+        register ('ReturnUndefined', ReturnUndefined);
+        """
+
+        self.db.udf_load("ReturnTypes", script, True)
+
         # int
-        self.register_udf("ReturnInt", "return 12;")
         v = self.graph.query("RETURN ReturnInt()").result_set[0][0]
         self.env.assertEqual(v, 12)
 
         # float
-        self.register_udf("ReturnFloat", "return 3.14;")
         v = self.graph.query("RETURN ReturnFloat()").result_set[0][0]
         self.env.assertEqual(v, 3.14)
 
         # string
-        self.register_udf("ReturnString", "return 'hello';")
         v = self.graph.query("RETURN ReturnString()").result_set[0][0]
         self.env.assertEqual(v, "hello")
 
         # boolean
-        self.register_udf("ReturnTrue", "return true;")
         v = self.graph.query("RETURN ReturnTrue()").result_set[0][0]
         self.env.assertEqual(v, True)
 
-        self.register_udf("ReturnFalse", "return false;")
         v = self.graph.query("RETURN ReturnFalse()").result_set[0][0]
         self.env.assertEqual(v, False)
 
         # null
-        self.register_udf("ReturnNull", "return null;")
         v = self.graph.query("RETURN ReturnNull()").result_set[0][0]
         self.env.assertEqual(v, None)
 
         # undefined → maps to NULL
-        self.register_udf("ReturnUndefined", "return undefined;")
         v = self.graph.query("RETURN ReturnUndefined()").result_set[0][0]
         self.env.assertEqual(v, None)
 
     def test_return_collections(self):
+        script ="""
+        function ReturnArray  () { return [1, null, 'str', [42]]; }
+        function ReturnObject () { return {x: 1, y: 'val', z: [true, false]}; }
+        function ReturnNested  () { return {nested: [1, {k:'v'}, [true, null]]}; }
+
+        register ('ReturnArray',  ReturnArray);
+        register ('ReturnObject', ReturnObject);
+        register ('ReturnNested', ReturnNested);
+        """
+
+        self.db.udf_load("ReturnCollections", script, True)
+
         # array
-        self.register_udf("ReturnArray", "return [1, null, 'str', [42]];")
         v = self.graph.query("RETURN ReturnArray()").result_set[0][0]
         self.env.assertEqual(v, [1, None, "str", [42]])
 
         # object (map)
-        self.register_udf("ReturnObject", "return {x: 1, y: 'val', z: [true, false]};")
         v = self.graph.query("RETURN ReturnObject()").result_set[0][0]
         self.env.assertEqual(v, {"x": 1, "y": "val", "z": [True, False]})
 
         # nested structures
-        self.register_udf("ReturnNested", "return {nested: [1, {k:'v'}, [true, null]]};")
         v = self.graph.query("RETURN ReturnNested()").result_set[0][0]
         self.env.assertEqual(v, {"nested": [1, {"k": "v"}, [True, None]]})
 
     def test_return_specials(self):
+        script ="""
+        function ReturnBigInt  () { return 1234567890123456789n; }
+        function ReturnDate    () { return new Date('2025-08-22T12:34:56Z'); }
+        function ReturnRegExp  () { return /abc.*/; }
+        function ReturnSymbol  () { return Symbol('s'); }
+        function ReturnF32Array() { return new Float32Array([1.1, 2.2, 3.3]); }
+        function ReturnPoint   () { return {x:1.0, y:2.0, z:3.0}; }
+
+        register ('ReturnBigInt', ReturnBigInt);
+        register ('ReturnDate',   ReturnDate);
+        register ('ReturnRegExp', ReturnRegExp);
+        register ('ReturnSymbol', ReturnSymbol);
+        register ('ReturnF32Array', ReturnF32Array);
+        register ('ReturnPoint', ReturnPoint);
+        """
+
+        self.db.udf_load("ReturnSpecials", script, True)
+
         # BigInt → maps to INT64
-        self.register_udf("ReturnBigInt", "return 1234567890123456789n;")
         v = self.graph.query("RETURN ReturnBigInt()").result_set[0][0]
         self.env.assertEqual(v, 1234567890123456789)
 
         # Date → maps to DATETIME
-        self.register_udf("ReturnDate", "return new Date('2025-08-22T12:34:56Z');")
         v = self.graph.query("RETURN ReturnDate()").result_set[0][0]
         self.env.assertTrue(v is not None)
 
         # RegExp → converted to string
-        self.register_udf("ReturnRegExp", "return /abc.*/;")
         v = self.graph.query("RETURN ReturnRegExp()").result_set[0][0]
         self.env.assertEqual(v, "/abc.*/")
 
         # Symbol is not supported
-        self.register_udf("ReturnSymbol", "return Symbol('s');")
         try:
             v = self.graph.query("RETURN ReturnSymbol()").result_set[0][0]
             self.env.assertTrue(False)
@@ -96,7 +123,6 @@ class testUDF():
             pass
 
         # TypedArray (Float32Array) → VECTOR_F32
-        self.register_udf("ReturnF32Array", "return new Float32Array([1.1, 2.2, 3.3]);")
         v = self.graph.query("RETURN ReturnF32Array()").result_set[0][0]
         print(f"v: {v}")
         self.env.assertTrue(isinstance(v, list))
@@ -104,22 +130,19 @@ class testUDF():
         self.env.assertTrue(all(abs(a - b) < EPS for a, b in zip(v, [1.1, 2.2, 3.3])))
 
         # Point object
-        self.register_udf("ReturnPoint", "return {x:1.0, y:2.0, z:3.0};")
         v = self.graph.query("RETURN ReturnPoint()").result_set[0][0]
         self.env.assertTrue("x" in v and "y" in v)
 
     # Test that a simple "Echo" UDF returns all supported FalkorDB types unchanged.
     def test_types(self):
         # Register UDF (overwrites if already exists)
-        try:
-            res = self.conn.execute_command(
-                "GRAPH.UDF",
-                "Echo",
-                "function Echo(n) { return n; }"
-            )
-            #self.env.assertEqual(res, "OK")
-        except Exception:
-            pass
+        script ="""
+        function Echo(x) { return x; }
+
+        register ('Echo', Echo);
+        """
+
+        self.db.udf_load("Echo", script, True)
 
         q = "RETURN $item, Echo($item)"
 
@@ -225,23 +248,15 @@ class testUDF():
     # and handles conflicts between internal id vs. user property "id".
     def test_node_object(self):
         # Register UDF that exposes node info
-        try:
-            res = self.conn.execute_command(
-                "GRAPH.UDF",
-                "InspectNode",
-                """
-                function InspectNode(n) {
-                    return {
-                        internal_id: n.id,
-                        labels: n.labels,
-                        attributes: n.attributes
-                    };
-                }
-                """
-            )
-            self.env.assertEqual(res, "OK")
-        except Exception:
-            pass
+        script ="""
+        function InspectNode(n) { return { internal_id: n.id,
+                                         labels: n.labels,
+                                         attributes: n.attributes}; }
+
+        register ('InspectNode', InspectNode);
+        """
+
+        self.db.udf_load("InspectNode", script, True)
 
         # 1. Node with no labels
         q = "CREATE (n {height:180}) RETURN InspectNode(n)"
@@ -284,23 +299,16 @@ class testUDF():
     # and handles conflict between internal id vs. user property "id".
     def test_edge_object(self):
         # Register UDF that exposes edge info
-        try:
-            res = self.conn.execute_command(
-                "GRAPH.UDF",
-                "InspectEdge",
-                """
-                function InspectEdge(e) {
-                    return {
-                        internal_id: e.id,
-                        type: e.type,
-                        attributes: e.attributes
-                    };
-                }
-                """
-            )
-            self.env.assertEqual(res, "OK")
-        except Exception:
-            pass
+        script ="""
+        function InspectEdge(e) { return {internal_id: e.id,
+                                         type: e.type,
+                                         attributes: e.attributes}; }
+
+        register ('InspectEdge', InspectEdge);
+        """
+
+        self.db.udf_load("InspectEdge", script, True)
+
 
         # 1. Simple edge with attributes
         q = """

@@ -6,9 +6,9 @@
 
 #include "RG.h"
 #include "func_desc.h"
+#include "../util/arr.h"
 #include "../util/rmalloc.h"
 #include "../util/strutil.h"
-#include "../../deps/rax/rax.h"
 #include "aggregate_funcs/agg_funcs.h"
 
 #include <ctype.h>
@@ -16,16 +16,13 @@
 
 #define FUNC_NAME_MAX_LEN 64
 
-// arithmetic function repository
-typedef struct {
-	rax *repo;              // registered funcs
-	pthread_rwlock_t lock;  // RW lock
-} FuncsRepo;
-
 FuncsRepo *__aeRegisteredFuncs = NULL;
 
 void AR_InitFuncsRepo(void) {
 	ASSERT (__aeRegisteredFuncs == NULL) ;
+
+	__aeRegisteredFuncs = rm_malloc (sizeof (FuncsRepo)) ;
+	ASSERT (__aeRegisteredFuncs != NULL) ;
 
 	__aeRegisteredFuncs->repo = raxNew () ;
 
@@ -117,13 +114,32 @@ void AR_FuncRegister
 	ASSERT (res == 0) ;
 }
 
+// forward declaration
+SIValue AR_UDF (SIValue *argv, int argc, void *private_data) ;
+
+void AR_FuncRegisterUDF
+(
+	const char *name
+) {
+	SIType ret_type = SI_ALL ;
+	SIType *types = array_new (SIType, 2) ;
+	array_append (types, T_STRING) ;
+	array_append (types, SI_ALL) ;
+
+	AR_FuncDesc *udf = AR_FuncDescNew (name, AR_UDF, 1, VAR_ARG_LEN, types,
+			ret_type, false, false) ;
+
+	AR_SetUDF (udf) ;
+	AR_FuncRegister (udf) ;
+}
+
 // unregister function to repository
 bool AR_FuncRemove
 (
 	const char *func_name,  // function name to remove from repository
 	AR_FuncDesc **func      // [output] [optional] removed function
 ) {
-	ASSERT (func                != NULL) ;
+	ASSERT (func_name != NULL) ;
 	ASSERT (__aeRegisteredFuncs != NULL) ;
 
 	char lower_func_name[FUNC_NAME_MAX_LEN];
@@ -143,44 +159,6 @@ bool AR_FuncRemove
 	ASSERT (res == 0) ;
 
 	return removed == 1 ;
-}
-
-// returns an array of registered functions
-// caller is responsible to free the array and each of its elements
-AR_FuncDesc *AR_FuncList
-(
-	int *n // number of functions
-) {
-	ASSERT (n                   != NULL) ;
-	ASSERT (__aeRegisteredFuncs != NULL) ;
-
-	int i = 0;
-	*n = raxSize (__aeRegisteredFuncs->repo) ;
-	AR_FuncDesc *funcs = rm_calloc (*n, sizeof (AR_FuncDesc)) ;
-
-	// acquire write lock
-	int res = pthread_rwlock_wrlock (&__aeRegisteredFuncs->lock) ;
-	ASSERT (res == 0) ;
-
-	//--------------------------------------------------------------------------
-	// free each registered function
-	//--------------------------------------------------------------------------
-
-	raxIterator it;
-	raxStart (&it, __aeRegisteredFuncs->repo) ;
-
-	// retrieve the first key in the rax
-	raxSeek (&it, "^", NULL, 0);
-	while (raxNext (&it)) {
-		AR_FuncDesc *f = it.data ;
-		funcs[i++] = *f ;
-	}
-
-	raxStop (&it);
-
-	// unlock
-	res = pthread_rwlock_unlock (&__aeRegisteredFuncs->lock) ;
-	ASSERT (res == 0) ;
 }
 
 // mark function as a user defined function

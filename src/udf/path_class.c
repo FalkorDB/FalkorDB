@@ -75,24 +75,30 @@ static JSValue js_path_length
     return obj ;
 }
 
-// create a JSValue of type Path
-void register_path_class
+// register the path class with the js-runtime
+void rt_register_path_class
 (
-	JSRuntime *js_runtime, 
-	JSContext *js_ctx
+	JSRuntime *js_runtime
 ) {
-	ASSERT (js_ctx     != NULL) ;
 	ASSERT (js_runtime != NULL) ;
 
 	// register for each runtime
     int res = JS_NewClass (js_runtime, js_path_class_id, &js_path_class) ;
 	ASSERT (res == 0) ;
+}
+
+// register the path class with the js-context
+void ctx_register_path_class
+(
+	JSContext *js_ctx
+) {
+	ASSERT (js_ctx != NULL) ;
 
 	// prototype object
     JSValue proto = JS_NewObject (js_ctx) ;
 
-    res = JS_SetPropertyFunctionList (js_ctx, proto,
-        (JSCFunctionListEntry[]) {
+    int res = JS_SetPropertyFunctionList (js_ctx, proto,
+			(JSCFunctionListEntry[]) {
             JS_CGETSET_DEF ("nodes", js_path_nodes, NULL),
             JS_CGETSET_DEF ("length", js_path_length, NULL),
             JS_CGETSET_DEF ("relationships", js_path_relationships, NULL)

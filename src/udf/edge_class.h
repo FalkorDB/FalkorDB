@@ -15,10 +15,15 @@ JSValue js_create_edge
 	const Edge *edge
 );
 
-// create a JSValue of type Edge
-void register_edge_class
+// register the edge class with the js-runtime
+void rt_register_edge_class
 (
-	JSRuntime *js_runtime, 
+	JSRuntime *js_runtime
+);
+
+// register the edge class with the js-context
+void ctx_register_edge_class
+(
 	JSContext *js_ctx
 );
 

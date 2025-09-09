@@ -7,8 +7,8 @@
 
 #include "../../value.h"
 
-void Register_UDFFuncs(void);
-
+// execute a JavaScript UDF function
+// the function is execute is specified as a string at argv[0]
 SIValue AR_UDF
 (
 	SIValue *argv,

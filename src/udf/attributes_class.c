@@ -76,13 +76,11 @@ static int js_attributes_get_property
     return 0 ;  // property not found
 }
 
-// create a JSValue of type Attributes
-void register_attributes_class
+// register the attribute class with the js-runtime
+void rt_register_attributes_class
 (
-	JSRuntime *js_runtime, 
-	JSContext *js_ctx
+	JSRuntime *js_runtime
 ) {
-	ASSERT (js_ctx     != NULL) ;
 	ASSERT (js_runtime != NULL) ;
 
 	// register for each runtime

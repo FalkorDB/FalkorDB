@@ -71,6 +71,6 @@ void Register_GeneralFuncs() {
 	ret_type = SI_ALL;
 	func_desc = AR_FuncDescNew("prev", AR_PREV, 1, 1, types, ret_type, false, false);
 	AR_SetPrivateDataRoutines(func_desc, AR_PrevPrivateData_Free, AR_PrevPrivateData_Clone);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 }
 

@@ -1,8 +1,7 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
- */
+* Copyright FalkorDB Ltd. 2023 - present
+* Licensed under the Server Side Public License v1 (SSPLv1).
+*/
 
 #include "../func_desc.h"
 #include "../../util/arr.h"
@@ -11,12 +10,18 @@
 #include "../../udf/repository.h"
 #include "../../errors/errors.h"
 
+// execute a JavaScript UDF function
+// the function is execute is specified as a string at argv[0]
 SIValue AR_UDF
 (
 	SIValue *argv,
 	int argc,
 	void *private_data
 ) {
+	ASSERT (argv != NULL) ;
+	ASSERT (argc >= 1) ;
+	ASSERT (private_data == NULL) ;
+
 	const char *func_name = argv[0].stringval ;
 	SIValue *args = argv + 1 ;
 
@@ -29,8 +34,14 @@ SIValue AR_UDF
 	ASSERT (js_ctx != NULL) ;
 
 	// locate function
-	JSValue fn = UDF_GetFunction (func_name, js_ctx) ;
-	ASSERT (!JS_IsNull (fn)) ;
+	JSValueConst *fn = UDFCtx_GetFunction (func_name) ;
+	if (fn == NULL) {
+		// it is possible for the function to be missing
+		// this can happen if a query is trying to access a UDF as it is being
+		// removed via GRAPH.UDF DELETE
+		ErrorCtx_SetError(EMSG_UNKNOWN_FUNCTION, func_name) ; 	
+		return SI_NullVal() ;
+	}
 
 	//--------------------------------------------------------------------------
 	// convert arguments
@@ -42,26 +53,10 @@ SIValue AR_UDF
 		js_argv[i] = UDF_SIValueToJS (js_ctx, args[i]) ;
 	}
 
-	JSValue res = JS_Call (js_ctx, fn, JS_UNDEFINED, argc-1, js_argv) ;
+	JSValue res = JS_Call (js_ctx, *fn, JS_UNDEFINED, argc-1, js_argv) ;
 
 	SIValue si_res = UDF_JSToSIValue (js_ctx, res) ;
 	
 	return si_res ;
-}
-
-void Register_UDFFuncs (void) {
-	SIType *types ;
-	AR_FuncDesc *func_desc ;
-	SIType ret_type = SI_ALL ;
-
-	types = array_new (SIType, 1) ;
-	// array_append (types, T_STRING) ;
-	array_append (types, SI_ALL) ;
-
-	func_desc = AR_FuncDescNew ("UDF", AR_UDF, 0, VAR_ARG_LEN, types, ret_type,
-			true, false) ;
-
-	AR_SetUDF  (func_desc) ;  // mark function as UDF
-	AR_RegFunc (func_desc) ;  // register function
 }
 

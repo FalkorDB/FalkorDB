@@ -15,10 +15,15 @@ JSValue js_create_path
 	const Path *path
 );
 
-// create a JSValue of type Path
-void register_path_class
+// register the path class with the js-runtime
+void rt_register_path_class
 (
-	JSRuntime *js_runtime, 
+	JSRuntime *js_runtime
+);
+
+// register the path class with the js-context
+void ctx_register_path_class
+(
 	JSContext *js_ctx
 );
 
