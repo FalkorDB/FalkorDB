@@ -523,6 +523,7 @@ SIValue UDF_JSToSIValue
 	// string
 	// null
 
+	SIValue ret = SI_NullVal () ;
 	int tag = JS_VALUE_GET_TAG (val) ;
 
 	switch (tag) {
@@ -530,73 +531,89 @@ SIValue UDF_JSToSIValue
 		case JS_TAG_SHORT_BIG_INT: {
 			int64_t out;
 			if (JS_ToBigInt64 (js_ctx, &out, val) == 0) {
-				return SI_LongVal (out) ;
+				ret = SI_LongVal (out) ;
+				break ;
 			} else {
 				ErrorCtx_SetError ("JS failed to return BitInt64") ;
-				return SI_NullVal () ;
+				ret = SI_NullVal () ;
+				break ;
 			}
 		}
 
 		case JS_TAG_INT: {
 			int64_t i ;
 			JS_ToInt64 (js_ctx, &i, val) ;
-			return SI_LongVal (i) ;
+			ret = SI_LongVal (i) ;
+			break ;
 		}
 
 		case JS_TAG_FLOAT64: {
 			double f ;
 			JS_ToFloat64 (js_ctx, &f, val) ;
-			return SI_DoubleVal (f) ;
+			ret = SI_DoubleVal (f) ;
+			break ;
 		}
 
 		case JS_TAG_STRING: {
 			const char *str = JS_ToCString (js_ctx, val) ;
-			return SI_DuplicateStringVal (str) ;
+			ret = SI_DuplicateStringVal (str) ;
+			JS_FreeCString (js_ctx, str) ;
+			break ;
 		}
 
 		case JS_TAG_BOOL: {
 			int b = JS_ToBool (js_ctx, val) ;
-			return SI_BoolVal (b) ;
+			ret = SI_BoolVal (b) ;
+			break ;
 		}
 
 		case JS_TAG_NULL: {
-			return SI_NullVal () ;
+			ret = SI_NullVal () ;
+			break ;
 		}
 
 		case JS_TAG_OBJECT: {
 			if (JS_IsArray (js_ctx, val)) {
-				return _JSArrayToSIValue (js_ctx, val) ;
+				ret = _JSArrayToSIValue (js_ctx, val) ;
+				break ;
 			} else if (JS_IsObject (val)) {
 				// registered classes
 				JSClassID cid = JS_GetClassID (val) ;
 
 				if (cid == js_node_class_id) {
 					Node *n = JS_GetOpaque (val, js_node_class_id) ;
-					return SI_Node (n) ;
+					ret = SI_Node (n) ;
+					break ;
 				}
 
 				else if (cid == js_edge_class_id) {
 					Edge *e = JS_GetOpaque (val, js_edge_class_id) ;
-					return SI_Edge (e) ;
+					ret = SI_Edge (e) ;
+					break ;
 				}
 
 				else if (cid == js_path_class_id) {
 					Path *p = JS_GetOpaque (val, js_path_class_id) ;
-					return SIPath_New (p) ;
+					ret = SIPath_New (p) ;
+					break ;
 				}
 
 				else if (cid == js_attributes_class_id) {
 					GraphEntity *e = JS_GetOpaque (val, js_attributes_class_id) ;
-					return GraphEntity_Properties (e) ;
+					ret = GraphEntity_Properties (e) ;
+					break ;
 				}
 
 				else if (cid == 18 ) { // JS_CLASS_REGEXP
 					const char *str = JS_ToCString (js_ctx, val) ;
-					return SI_DuplicateStringVal (str) ;
+					ret = SI_DuplicateStringVal (str) ;
+					JS_FreeCString (js_ctx, str) ;
+					break ;
 				}
 
 				else  {
-					return _JSObjToSIValue(js_ctx, val) ;
+					ret = _JSObjToSIValue(js_ctx, val) ;
+					break ;
 				}
 			}
 			break ;
@@ -605,25 +622,28 @@ SIValue UDF_JSToSIValue
 		case JS_TAG_EXCEPTION: {
 			printf ("exception object\n") ;
 			_report_exception (js_ctx) ;
-			return SI_NullVal () ;
+			ret = SI_NullVal () ;
+			break ;
 		}
 
 		case JS_TAG_SYMBOL: {
 			ErrorCtx_SetError ("JS Symbols can not be returned") ;
-			return SI_NullVal () ;
+			ret = SI_NullVal () ;
+			break ;
 		}
 
 		case JS_TAG_UNDEFINED: {
 			printf ("undefined\n") ;
-			return SI_NullVal () ;
+			ret = SI_NullVal () ;
+			break ;
 		}
 
 		default:
 			ASSERT (false && "unknown tag") ;
-			return SI_NullVal () ;
+			ret = SI_NullVal () ;
+			break ;
 	}
 
-	ASSERT (false && "not supposed to reach this point") ;
-	return SI_NullVal () ;
+	return ret ;
 }
 

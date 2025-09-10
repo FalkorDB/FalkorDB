@@ -55,7 +55,13 @@ SIValue AR_UDF
 
 	JSValue res = JS_Call (js_ctx, *fn, JS_UNDEFINED, argc-1, js_argv) ;
 
+	// free args
+	for (int i = 0; i < argc - 1; i++) {
+		JS_FreeValue (js_ctx, js_argv[i]) ;
+	}
+
 	SIValue si_res = UDF_JSToSIValue (js_ctx, res) ;
+	JS_FreeValue (js_ctx, res) ;
 	
 	return si_res ;
 }

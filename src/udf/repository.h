@@ -18,7 +18,6 @@ UDF_RepoVersion UDF_RepoGetVersion(void);
 // populate the JSContext with registered libs
 void UDF_RepoPopulateJSContext
 (
-	JSRuntime *js_rt,   // javascript runtime
 	JSContext *js_ctx,  // context to populate
 	UDF_RepoVersion *v  // [output] repo version
 );

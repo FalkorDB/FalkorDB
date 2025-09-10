@@ -18,6 +18,21 @@
 
 FuncsRepo *__aeRegisteredFuncs = NULL;
 
+static void _NormalizeFunctionName
+(
+	const char *name,
+	char normalized[FUNC_NAME_MAX_LEN],
+	size_t *len
+) {
+	ASSERT (len  != NULL) ;
+	ASSERT (name != NULL) ;
+
+	*len = FUNC_NAME_MAX_LEN ;
+
+	// convert function name to lowercase
+	str_tolower_ascii (name, normalized, len) ;
+}
+
 void AR_InitFuncsRepo(void) {
 	ASSERT (__aeRegisteredFuncs == NULL) ;
 
@@ -96,18 +111,16 @@ void AR_FuncRegister
 	ASSERT (func                != NULL) ;
 	ASSERT (__aeRegisteredFuncs != NULL) ;
 
+	size_t len;
 	char   lower_func_name[FUNC_NAME_MAX_LEN];
-	size_t lower_func_name_len = FUNC_NAME_MAX_LEN;
-
-	// convert function name to lowercase
-	str_tolower_ascii(func->name, lower_func_name, &lower_func_name_len);
+	_NormalizeFunctionName (func->name, lower_func_name, &len) ;
 
 	int res = pthread_rwlock_wrlock (&__aeRegisteredFuncs->lock) ;
 	ASSERT (res == 0) ;
 
 	// add function to repository
 	res = raxInsert(__aeRegisteredFuncs->repo, (unsigned char *)lower_func_name,
-			lower_func_name_len, func, NULL);
+			len, func, NULL);
 	ASSERT(res == 1);
 
 	res = pthread_rwlock_unlock (&__aeRegisteredFuncs->lock) ;
@@ -142,18 +155,19 @@ bool AR_FuncRemove
 	ASSERT (func_name != NULL) ;
 	ASSERT (__aeRegisteredFuncs != NULL) ;
 
-	char lower_func_name[FUNC_NAME_MAX_LEN];
-	size_t lower_func_name_len = FUNC_NAME_MAX_LEN;
+	size_t len ;
+	char lower_func_name[FUNC_NAME_MAX_LEN] ;
 
 	// convert function name to lowercase
-	str_tolower_ascii(func_name, lower_func_name, &lower_func_name_len);
+	_NormalizeFunctionName (func_name, lower_func_name, &len) ;
 
 	int res = pthread_rwlock_wrlock (&__aeRegisteredFuncs->lock) ;
 	ASSERT (res == 0) ;
 
 	// remove function from repository
 	int removed = raxRemove(__aeRegisteredFuncs->repo,
-			(unsigned char *)func_name, strlen (func_name), (void**)func) ;
+			(unsigned char *)lower_func_name, len,
+			(void**)func) ;
 
 	res = pthread_rwlock_unlock (&__aeRegisteredFuncs->lock) ;
 	ASSERT (res == 0) ;

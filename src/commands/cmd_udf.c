@@ -41,18 +41,22 @@ int Graph_UDF
 	}
 
 	int res;
+	bool modify = false ;
 	RedisModuleString *rm_sub_cmd = argv[1] ;
 	const char *sub_cmd = RedisModule_StringPtrLen (rm_sub_cmd, NULL) ;
 
 	if (strcasecmp (sub_cmd, "load") == 0) {
+		modify = true ;
 		res = Graph_UDF_Load (ctx, argv+2, argc-2) ;
 	}
 
 	else if (strcasecmp (sub_cmd, "delete") == 0) {
+		modify = true ;
 		res = Graph_UDF_Delete (ctx, argv+2, argc-2) ;
 	}
 
 	else if (strcasecmp (sub_cmd, "flush") == 0) {
+		modify = true ;
 		res = Graph_UDF_Flush (ctx, argv+2, argc-2) ;
 	}
 
@@ -65,7 +69,7 @@ int Graph_UDF
 				"Unknown GRAPH.UDF sub command %s", sub_cmd) ;
 	}
 
-	if (res == REDISMODULE_OK) {
+	if (modify == true && res == REDISMODULE_OK) {
 		RedisModule_ReplicateVerbatim (ctx) ;
 	}
 

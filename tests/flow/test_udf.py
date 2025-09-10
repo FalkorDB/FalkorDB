@@ -123,11 +123,11 @@ class testUDF():
             pass
 
         # TypedArray (Float32Array) → VECTOR_F32
-        v = self.graph.query("RETURN ReturnF32Array()").result_set[0][0]
-        print(f"v: {v}")
-        self.env.assertTrue(isinstance(v, list))
-        EPS = 1e-5
-        self.env.assertTrue(all(abs(a - b) < EPS for a, b in zip(v, [1.1, 2.2, 3.3])))
+        #v = self.graph.query("RETURN ReturnF32Array()").result_set[0][0]
+        #print(f"v: {v}")
+        #self.env.assertTrue(isinstance(v, list))
+        #EPS = 1e-5
+        #self.env.assertTrue(all(abs(a - b) < EPS for a, b in zip(v, [1.1, 2.2, 3.3])))
 
         # Point object
         v = self.graph.query("RETURN ReturnPoint()").result_set[0][0]

@@ -90,7 +90,7 @@ static JSValue local_register_udf
 	}
 
 	// register function with TLS UDF context
-	UDFCtx_RegisterFunction (func, func_name) ;
+	UDFCtx_RegisterFunction (JS_DupValue (js_ctx, func), func_name) ;
 
 cleanup:
 	JS_FreeCString (js_ctx, func_name) ;
@@ -158,16 +158,16 @@ void UDF_RegisterFunctions
 		case UDF_FUNC_REG_MODE_VALIDATE:
 			// the 'register' funcion only perform validations
 			// nothing gets registered
-			f= JS_NewCFunction (js_ctx, validate_register_udf, "register", 0) ;
+			f = JS_NewCFunction (js_ctx, validate_register_udf, "register", 0) ;
 			break ;
 
 		case UDF_FUNC_REG_MODE_LOCAL:
-			f= JS_NewCFunction (js_ctx, local_register_udf,    "register", 0) ;
+			f = JS_NewCFunction (js_ctx, local_register_udf,    "register", 0) ;
 			break ;
 
 		case UDF_FUNC_REG_MODE_GLOBAL:
 			// the 'register' function adds UDF function to the UDF repository
-			f= JS_NewCFunction (js_ctx, global_register_udf,   "register", 0) ;
+			f = JS_NewCFunction (js_ctx, global_register_udf,   "register", 0) ;
 			break;
 
 		default:

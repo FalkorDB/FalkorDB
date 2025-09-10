@@ -78,24 +78,27 @@ static UDFCtx *_UDFCtx_GetCtx(void) {
 		// register context classes & functions
 		UDF_RegisterFunctions (ctx->js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
 
-		UDF_RepoPopulateJSContext (ctx->js_rt, ctx->js_ctx, &ctx->v) ;
+		UDF_RepoPopulateJSContext (ctx->js_ctx, &ctx->v) ;
 	}
 
 	// validate UDF context version against UDF repository version
 	else if (unlikely (ctx->v < UDF_RepoGetVersion())) {
-		// UDF context is outdated, reconstruct JSContext
-		JS_FreeContext (ctx->js_ctx) ;  // free outdated js context
-
 		// free locally registered functions
 		_UDFCtx_ClearFuncs (ctx) ;
 
-		ctx->js_ctx = JS_NewContext (ctx->js_rt) ;
+		// UDF context is outdated, reconstruct JSContext
+		JS_FreeContext (ctx->js_ctx) ;  // free outdated js context
 
+		//----------------------------------------------------------------------
+		// create js context
+		//----------------------------------------------------------------------
+
+		ctx->js_ctx = JS_NewContext (ctx->js_rt) ;
 		// register context classes & functions
 		UDF_CTX_RegisterClasses (ctx->js_ctx) ;
 		UDF_RegisterFunctions (ctx->js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
 
-		UDF_RepoPopulateJSContext (ctx->js_rt, ctx->js_ctx, &ctx->v) ;
+		UDF_RepoPopulateJSContext (ctx->js_ctx, &ctx->v) ;
 	}
 
 	return ctx;

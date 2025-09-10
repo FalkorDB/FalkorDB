@@ -49,7 +49,7 @@ static void _emit_lib
 	// library_code (optional)
 	if (script != NULL) {
 		RedisModule_ReplyWithSimpleString (ctx, "library_code") ;
-		RedisModule_ReplyWithSimpleString (ctx, script) ;
+		RedisModule_ReplyWithStringBuffer (ctx, script, strlen (script)) ;
 	}
 }
 

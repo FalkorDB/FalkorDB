@@ -144,8 +144,8 @@ static JSValue js_edge_endNode
 	ASSERT (found) ;
 
 	assert ("implement" && false) ;
-	return  JS_NULL ;
-	//return  js_create_node (js_ctx, val.ptrval) ;
+	return JS_NULL ;
+	// return js_create_node (js_ctx, val.ptrval) ;
 }
 
 static JSValue js_edge_startNode
@@ -166,8 +166,8 @@ static JSValue js_edge_startNode
 	ASSERT (found) ;
 
 	assert ("implement" && false) ;
-	return  JS_NULL ;
-	//return  js_create_node (js_ctx, val.ptrval) ;
+	return JS_NULL ;
+	//return js_create_node (js_ctx, val.ptrval) ;
 }
 
 // register the edge class with the js-runtime
@@ -180,7 +180,6 @@ void rt_register_edge_class
 	// register for each runtime
     int res = JS_NewClass (js_runtime, js_edge_class_id, &js_edge_class) ;
 	ASSERT (res == 0) ;
-
 }
 
 // register the edge class with the js-context
