@@ -16,7 +16,7 @@
 
 #define FUNC_NAME_MAX_LEN 64
 
-FuncsRepo *__aeRegisteredFuncs = NULL;
+rax *__aeRegisteredFuncs = NULL;
 
 static void _NormalizeFunctionName
 (
@@ -36,28 +36,18 @@ static void _NormalizeFunctionName
 void AR_InitFuncsRepo(void) {
 	ASSERT (__aeRegisteredFuncs == NULL) ;
 
-	__aeRegisteredFuncs = rm_malloc (sizeof (FuncsRepo)) ;
-	ASSERT (__aeRegisteredFuncs != NULL) ;
-
-	__aeRegisteredFuncs->repo = raxNew () ;
-
-	int res = pthread_rwlock_init(&__aeRegisteredFuncs->lock, NULL) ;
-	ASSERT(res == 0) ;
+	__aeRegisteredFuncs = raxNew () ;
 }
 
 void AR_FinalizeFuncsRepo(void) {
 	ASSERT (__aeRegisteredFuncs != NULL) ;
-
-	// acquire write lock
-	int res = pthread_rwlock_wrlock (&__aeRegisteredFuncs->lock) ;
-	ASSERT (res == 0) ;
 
 	//--------------------------------------------------------------------------
 	// free each registered function
 	//--------------------------------------------------------------------------
 
 	raxIterator it;
-	raxStart (&it, __aeRegisteredFuncs->repo) ;
+	raxStart (&it, __aeRegisteredFuncs) ;
 
 	// retrieve the first key in the rax
 	raxSeek (&it, "^", NULL, 0);
@@ -67,14 +57,6 @@ void AR_FinalizeFuncsRepo(void) {
 	}
 
 	raxStop (&it);
-
-	// unlock
-	res = pthread_rwlock_unlock (&__aeRegisteredFuncs->lock) ;
-	ASSERT (res == 0) ;
-
-	// release lock
-	res = pthread_rwlock_destroy (&__aeRegisteredFuncs->lock) ;
-	ASSERT (res == 0) ;
 }
 
 AR_FuncDesc *AR_FuncDescNew
@@ -88,19 +70,19 @@ AR_FuncDesc *AR_FuncDescNew
 	bool internal,
 	bool reducible
 ) {
-	AR_FuncDesc *desc = rm_calloc(1, sizeof(AR_FuncDesc));
+	AR_FuncDesc *desc = rm_calloc (1, sizeof(AR_FuncDesc)) ;
 
-	desc->name      = rm_strdup (name);
-	desc->func      = func;
-	desc->types     = types;
-	desc->ret_type  = ret_type;
-	desc->min_argc  = min_argc;
-	desc->max_argc  = max_argc;
-	desc->internal  = internal;
-	desc->aggregate = false;
-	desc->reducible = reducible;
+	desc->name      = name ;
+	desc->func      = func ;
+	desc->types     = types ;
+	desc->ret_type  = ret_type ;
+	desc->min_argc  = min_argc ;
+	desc->max_argc  = max_argc ;
+	desc->internal  = internal ;
+	desc->aggregate = false ;
+	desc->reducible = reducible ;
 
-	return desc;
+	return desc ;
 }
 
 // register function to repository
@@ -115,16 +97,10 @@ void AR_FuncRegister
 	char   lower_func_name[FUNC_NAME_MAX_LEN];
 	_NormalizeFunctionName (func->name, lower_func_name, &len) ;
 
-	int res = pthread_rwlock_wrlock (&__aeRegisteredFuncs->lock) ;
-	ASSERT (res == 0) ;
-
 	// add function to repository
-	res = raxInsert(__aeRegisteredFuncs->repo, (unsigned char *)lower_func_name,
+	int res = raxInsert(__aeRegisteredFuncs, (unsigned char *)lower_func_name,
 			len, func, NULL);
 	ASSERT(res == 1);
-
-	res = pthread_rwlock_unlock (&__aeRegisteredFuncs->lock) ;
-	ASSERT (res == 0) ;
 }
 
 // forward declaration
@@ -153,24 +129,16 @@ bool AR_FuncRemove
 	AR_FuncDesc **func      // [output] [optional] removed function
 ) {
 	ASSERT (func_name != NULL) ;
-	ASSERT (__aeRegisteredFuncs != NULL) ;
 
-	size_t len ;
-	char lower_func_name[FUNC_NAME_MAX_LEN] ;
-
-	// convert function name to lowercase
-	_NormalizeFunctionName (func_name, lower_func_name, &len) ;
-
-	int res = pthread_rwlock_wrlock (&__aeRegisteredFuncs->lock) ;
-	ASSERT (res == 0) ;
+	//int res = pthread_rwlock_wrlock (&__aeRegisteredFuncs->lock) ;
+	//ASSERT (res == 0) ;
 
 	// remove function from repository
-	int removed = raxRemove(__aeRegisteredFuncs->repo,
-			(unsigned char *)lower_func_name, len,
-			(void**)func) ;
+	int removed = raxRemove(__aeRegisteredFuncs,
+			(unsigned char *)func_name, strlen (func_name), (void**)func) ;
 
-	res = pthread_rwlock_unlock (&__aeRegisteredFuncs->lock) ;
-	ASSERT (res == 0) ;
+	//res = pthread_rwlock_unlock (&__aeRegisteredFuncs->lock) ;
+	//ASSERT (res == 0) ;
 
 	return removed == 1 ;
 }
@@ -207,17 +175,9 @@ AR_FuncDesc *AR_GetFunc
 	char lower_func_name[len + 1] ;
 	str_tolower_ascii (func_name, lower_func_name, &len) ;
 
-	// lock under read
-	int res = pthread_rwlock_rdlock (&__aeRegisteredFuncs->lock) ;
-	ASSERT (res == 0) ;
-
 	// lookup function
-	void *f = raxFind (__aeRegisteredFuncs->repo,
+	void *f = raxFind (__aeRegisteredFuncs,
 			(unsigned char *)lower_func_name, len) ;
-
-	// unlock
-	res = pthread_rwlock_unlock (&__aeRegisteredFuncs->lock) ;
-	ASSERT (res == 0) ;
 
 	if (f == raxNotFound) {
 		return NULL ;
@@ -252,19 +212,11 @@ bool AR_FuncExists
 	// normalize function name by lowercasing
 	size_t len = strlen (func_name) ;
 	char lower_func_name[len + 1] ;
-	str_tolower_ascii (func_name, lower_func_name, &len) ;
-
-	// lock under read
-	int res = pthread_rwlock_rdlock (&__aeRegisteredFuncs->lock) ;
-	ASSERT (res == 0) ;
+	_NormalizeFunctionName (func_name, lower_func_name, &len) ;
 
 	// look up
-	void *f = raxFind(__aeRegisteredFuncs->repo,
+	void *f = raxFind(__aeRegisteredFuncs,
 			(unsigned char *)lower_func_name, len);
-
-	// unlock
-	res = pthread_rwlock_unlock (&__aeRegisteredFuncs->lock) ;
-	ASSERT (res == 0) ;
 
 	if (f == raxNotFound) {
 		return false;
@@ -298,7 +250,6 @@ void AR_FuncFree
 ) {
 	ASSERT (f != NULL) ;
 
-	rm_free (f->name) ;
 	rm_free (f) ;
 }
 

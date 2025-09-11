@@ -11,7 +11,7 @@
 #include "../datatypes/array.h"
 #include "../arithmetic/func_desc.h"
 
-extern FuncsRepo *__aeRegisteredFuncs ;
+extern rax *__aeRegisteredFuncs ;
 
 // CALL dbms.functions()
 
@@ -101,7 +101,7 @@ ProcedureResult Proc_FunctionsInvoke
 		rm_calloc(1, sizeof(ProcFunctionsPrivateData));
 
 	// initialize an iterator to the rax that contains all functions
-	rax *functions = __aeRegisteredFuncs->repo ;
+	rax *functions = __aeRegisteredFuncs ;
 	raxStart (&pdata->iter, functions) ;
 	raxSeek (&pdata->iter, "^", NULL, 0) ;
 	_process_yield (pdata, yield) ;

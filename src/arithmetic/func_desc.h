@@ -13,12 +13,6 @@
 
 #define VAR_ARG_LEN UINT_MAX
 
-// arithmetic function repository
-typedef struct {
-	rax *repo;              // registered funcs
-	pthread_rwlock_t lock;  // RW lock
-} FuncsRepo;
-
 // an aggregation context
 // each aggregation function operates on an aggregation context
 // this is where the function can maintin its internal state
@@ -60,7 +54,7 @@ typedef struct {
 	bool reducible;        // can be reduced using static evaluation
 	bool aggregate;        // true if the function is an aggregation
 	bool udf;              // user define function
-	char *name;            // function name
+	const char *name;      // function name
 	AR_FuncCBs callbacks;  // aggregation callbacks
 } AR_FuncDesc;
 
