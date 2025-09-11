@@ -9,7 +9,8 @@ class testUDF():
         self.conn = self.env.getConnection()
 
     def tearDown(self):
-        self.graph.delete()
+        if GRAPH_ID in self.db.list_graphs():
+            self.graph.delete()
 
     def test_return_primitives(self):
         script ="""
@@ -347,4 +348,315 @@ class testUDF():
         # User-defined "id" attribute is accessible via e.attributes.id
         self.env.assertEqual(res["attributes"]["id"], "edge_custom_id")
         self.env.assertEqual(res["attributes"]["role"], "dev")
+
+    def _assert_udf_exists(self, lib, funcs, with_code=False, script=None):
+        """
+        Helper to assert that a UDF library is loaded correctly.
+
+        Args:
+            lib (str): The library name to check.
+            funcs (list[str]): Expected list of function names.
+            with_code (bool): If True, also checks for presence of the code in response.
+            script (str|None): Optional script to compare against if with_code is True.
+        """
+
+        res = self.db.udf_list(lib, with_code)
+        self.env.assertEqual(len(res), 1)
+
+        res = res[0]
+
+        self.env.assertEqual(res[0], "library_name")
+        lib_name = res[1]
+
+        self.env.assertEqual(res[2], "functions")
+        lib_funcs = res[3]
+
+        lib_script = None
+        if with_code:
+            self.env.assertEqual(res[2], "library_code")
+            lib_script = res[5] 
+
+        self.env.assertEqual(lib_name, lib)
+        self.env.assertEqual(sorted(lib_funcs), sorted(funcs))
+
+        if with_code:
+            self.env.assertEqual(lib_script, script.strip())
+
+    def _assert_udf_missing(self, lib):
+        """Helper to assert that a UDF library does not exist."""
+
+        res = self.db.udf_list()
+        libs = [r[1] for r in res]
+        self.env.assertNotIn(lib, libs)
+
+    def test_load_invalid_invocations(self):
+        """
+        Test invalid invocations of GRAPH.UDF LOAD:
+        1. Missing arguments (should error).
+        2. Invalid trailing option (should error).
+        """
+
+        try:
+            self.db.execute_command("GRAPH.UDF", "LOAD")
+            assert False, "Expected failure on missing args"
+        except ResponseError as e:
+            self.env.assertIn("wrong number of arguments", str(e).lower())
+
+        try:
+            self.db.execute_command("GRAPH.UDF", "LOAD", "lib", "script", "INVALID")
+            assert False, "Expected failure on invalid option"
+        except ResponseError as e:
+            self.env.assertIn("unknown option given", str(e).lower())
+
+    def test_load_udf_lib(self):
+        """
+        Test successful loading of a UDF library:
+        - Loads a script with two functions (Foo, Bar).
+        - Verifies presence via GRAPH.UDF LIST.
+        - Executes the functions and validates results.
+        """
+
+        script = """
+        function Foo() { return 123; }
+        function Bar(x) { return x + 1; }
+        register("Foo", Foo);
+        register("Bar", Bar);
+        """
+
+        res = self.db.udf_load("mylib", script)
+        self.env.assertEqual(res, "OK")
+
+        self._assert_udf_exists("mylib", ["Foo", "Bar"])
+
+        v = self.graph.query("RETURN Foo()").result_set[0][0]
+        self.env.assertEqual(v, 123)
+
+        v = self.graph.query("RETURN Bar(41)").result_set[0][0]
+        self.env.assertEqual(v, 42)
+
+    def test_replace_library(self):
+        """
+        Test library replacement with REPLACE flag:
+        - Load library 'replace_lib' with one version of function X.
+        - Replace it with a new version of the same function.
+        - Validate the updated function behavior.
+        """
+
+        script1 = """
+        function X() { return "one"; }
+        register("X", X);
+        """
+
+        script2 = """
+        function X() { return "two"; }
+        register("X", X);
+        """
+
+        self.db.udf_load("replace_lib", script1)
+        v = self.graph.query("RETURN X()").result_set[0][0]
+        self.env.assertEqual(v, "one")
+
+        self.db.udf_load("replace_lib", script2, True)
+        v = self.graph.query("RETURN X()").result_set[0][0]
+        self.env.assertEqual(v, "two")
+
+    def test_conflict_on_existing_lib(self):
+        """
+        Test conflict handling:
+        - Load a library normally.
+        - Attempt to load the same library again without REPLACE.
+        - Expect a conflict error indicating the library already exists.
+        """
+
+        script = """
+        function Y() { return 1; }
+        register("Y", Y);
+        """
+        self.db.udf_load("conflict_lib", script)
+
+        try:
+            self.db.udf_load("conflict_lib", script, False)
+            assert False, "Expected conflict error"
+        except ResponseError as e:
+            self.env.assertIn("already registered", str(e).lower())
+
+    def test_invalid_js_script(self):
+        """
+        Test invalid JavaScript script:
+        - Try loading a malformed script.
+        - Expect a parsing/execution error from the engine.
+        """
+
+        bad_script = "function Bad() { return ;"
+        try:
+            self.db.udf_load("badlib", bad_script)
+            assert False, "Expected JS parse error"
+        except ResponseError as e:
+            self.env.assertIn("SyntaxError:", str(e))
+
+    def _test_persistence_and_replication(self):
+        """
+        Test persistence and replication:
+        - Load a UDF library.
+        - Restart the server (simulate persistency check).
+        - Ensure the UDF is still available and functional.
+        - If running in a cluster, ensure replicas have the UDF too.
+        """
+
+        script = """
+        function Persist() { return "I persist"; }
+        register("Persist", Persist);
+        """
+
+        self.db.udf_load("persist_lib", script)
+
+        # restart server (test harness utility)
+        self.env.restart_and_reload()
+
+        self._assert_udf_exists("persist_lib", ["Persist"])
+        v = self.graph.query("RETURN Persist()").result_set[0][0]
+        self.env.assertEqual(v, "I persist")
+
+    def test_delete_invalid_invocations(self):
+        """
+        Test invalid invocations of GRAPH.UDF DELETE:
+        - Missing arguments (should error).
+        - Extra arguments (should error).
+        """
+
+        try:
+            self.db.execute_command("GRAPH.UDF", "DELETE")
+            assert False, "Expected failure on missing args"
+        except ResponseError as e:
+            self.env.assertIn("wrong number of arguments", str(e).lower())
+
+        try:
+            self.db.execute_command("GRAPH.UDF", "DELETE", "lib", "extra")
+            assert False, "Expected failure on extra args"
+        except ResponseError as e:
+            self.env.assertIn("wrong number of arguments", str(e).lower())
+
+    def test_delete_existing_library(self):
+        """
+        Test deletion of an existing library:
+        - Load a library with a UDF.
+        - Verify it exists and works.
+        - Delete it using GRAPH.UDF DELETE.
+        - Verify it no longer exists and calling its function fails.
+        """
+
+        script = """
+        function DelTest() { return "bye"; }
+        register("DelTest", DelTest);
+        """
+        self.db.udf_load("del_lib", script)
+        self._assert_udf_exists("del_lib", ["DelTest"])
+
+        v = self.graph.query("RETURN DelTest()").result_set[0][0]
+        self.env.assertEqual(v, "bye")
+
+        # delete the library
+        res = self.db.udf_delete("del_lib")
+        self.env.assertTrue(res)
+
+        # verify it's gone
+        self._assert_udf_missing("del_lib")
+
+        # function should now error
+        try:
+            self.graph.query("RETURN DelTest()")
+            assert False, "Expected failure calling deleted function"
+        except ResponseError as e:
+            self.env.assertIn("undefined function", str(e).lower())
+
+    def test_delete_nonexistent_library(self):
+        """
+        Test deletion of a non-existing library:
+        - Attempt to delete a library that was never loaded.
+        - Expect an error indicating the library does not exist.
+        """
+
+        try:
+            self.db.udf_delete("no_such_lib")
+            assert False, "Expected error deleting nonexistent library"
+        except ResponseError as e:
+            self.env.assertIn("does not exist", str(e).lower())
+
+    def test_multiple_libraries_deletion(self):
+        """
+        Test deletion when multiple libraries exist:
+        - Load two libraries (lib1, lib2).
+        - Delete only one of them.
+        - Verify the other one remains intact and functional.
+        """
+
+        script1 = "function F1() { return 'f1'; } register('F1', F1);"
+        script2 = "function F2() { return 'f2'; } register('F2', F2);"
+
+        self.db.udf_load("lib1", script1)
+        self.db.udf_load("lib2", script2)
+
+        # delete lib1
+        self.db.udf_delete("lib1")
+        self._assert_udf_missing("lib1")
+        self._assert_udf_exists("lib2", ["F2"])
+
+        # verify lib2 still works
+        v = self.graph.query("RETURN F2()").result_set[0][0]
+        self.env.assertEqual(v, "f2")
+
+    def test_persistence_delete(self):
+        """
+        Test persistence of deletion:
+        - Load a library.
+        - Delete it.
+        - Restart the server.
+        - Verify the library does not reappear.
+        """
+
+        script = """function PersistDel() { return 99; }
+                    register('PersistDel', PersistDel);"""
+
+        self.db.udf_load("persist_del_lib", script)
+        self._assert_udf_exists("persist_del_lib", ["PersistDel"])
+
+        # delete library
+        self.db.udf_delete("persist_del_lib")
+        self._assert_udf_missing("persist_del_lib")
+
+        # restart server
+        self.env.restart_and_reload()
+
+        # confirm library did not come back
+        self._assert_udf_missing("persist_del_lib")
+
+    def test_delete_library_with_multiple_functions(self):
+        """
+        Test deleting a library with multiple functions:
+        - Load a library with two functions.
+        - Delete the library.
+        - Verify all functions are removed together.
+        """
+
+        script = """
+        function F3() { return 3; }
+        function F4() { return 4; }
+        register("F3", F3);
+        register("F4", F4);
+        """
+
+        self.db.udf_load("multi_func_lib", script)
+        self._assert_udf_exists("multi_func_lib", ["F3", "F4"])
+
+        # delete library
+        self.db.udf_delete("multi_func_lib")
+        self._assert_udf_missing("multi_func_lib")
+
+        # calling functions should fail
+        for f in ["F3", "F4"]:
+            try:
+                self.graph.query(f"RETURN {f}()")
+                assert False, f"Expected failure calling deleted function {f}"
+            except ResponseError as e:
+                self.env.assertIn("unknown function", str(e).lower())
 

@@ -144,26 +144,36 @@ static AR_ExpNode *_AR_EXP_NewOpNode(uint child_count) {
 	return node;
 }
 
-static AR_ExpNode *_AR_EXP_CloneOp(AR_ExpNode *exp) {
-	const char *func_name = exp->op.f->name;
-	bool include_internal = exp->op.f->internal;
-	uint child_count = exp->op.child_count;
-	if (exp->op.f->udf) child_count-- ;
-	AR_ExpNode *clone = AR_EXP_NewOpNode(func_name, include_internal, child_count);
-	AR_Func_Clone clone_cb = clone->op.f->callbacks.clone;
-	void *pdata = exp->op.private_data;
-	if(clone_cb != NULL) {
+static AR_ExpNode *_AR_EXP_CloneOp
+(
+	AR_ExpNode *exp
+) {
+	uint child_count      = exp->op.child_count ;
+	const char *func_name = exp->op.f->name ;
+	bool include_internal = exp->op.f->internal ;
+
+	if (exp->op.f->udf) {
+		child_count-- ;
+	}
+
+	AR_ExpNode *clone = AR_EXP_NewOpNode (func_name, include_internal,
+			child_count) ;
+	ASSERT (clone != NULL) ;
+
+	if (clone->op.f != NULL && clone->op.f->callbacks.clone) {
 		// clone callback specified, use it to duplicate function's private data
-		clone->op.private_data = clone_cb(exp->op.private_data);
+		AR_Func_Clone clone_cb = clone->op.f->callbacks.clone ;
+		void *pdata = exp->op.private_data ;
+		clone->op.private_data = clone_cb (pdata) ;
 	}
 
 	// clone child nodes
-	for(uint i = 0; i < exp->op.child_count; i++) {
-		AR_ExpNode *child = AR_EXP_Clone(exp->op.children[i]);
-		clone->op.children[i] = child;
+	for (uint i = 0; i < exp->op.child_count; i++) {
+		AR_ExpNode *child = AR_EXP_Clone (exp->op.children[i]) ;
+		clone->op.children[i] = child ;
 	}
 
-	return clone;
+	return clone ;
 }
 
 static void _AR_EXP_ValidateArgsCount
@@ -191,6 +201,15 @@ AR_ExpNode *AR_EXP_NewOpNode
 ) {
 	// retrieve function
 	AR_FuncDesc *func = AR_GetFunc (func_name, include_internal) ;
+	if (unlikely (func == NULL)) {
+		// function wasn't found, this can happen when
+		// an execution-plan is cloned and a UDF function been removed
+
+		ErrorCtx_SetError ("undefined function: '%s'", func_name);
+
+		// use a placeholder function
+		func = AR_GetFunc ("nop", true) ;
+	}
 
 	// increase child count by 1 in case of a user define function
 	// accommodating the function name as the first argument
@@ -200,19 +219,18 @@ AR_ExpNode *AR_EXP_NewOpNode
 
 	AR_ExpNode *node = _AR_EXP_NewOpNode(child_count);
 
-	if(!func->internal) _AR_EXP_ValidateArgsCount(func, child_count);
+	if (!func->internal) _AR_EXP_ValidateArgsCount (func, child_count) ;
 
-	ASSERT(func != NULL);
 	node->op.f = func;
 
 	// add aggregation context as function private data
-	if(func->aggregate) {
+	if (func->aggregate) {
 		// generate aggregation context and store it in node's private data
-		ASSERT(func->callbacks.private_data != NULL);
-		node->op.private_data = func->callbacks.private_data();
+		ASSERT (func->callbacks.private_data != NULL) ;
+		node->op.private_data = func->callbacks.private_data () ;
 	}
 
-	return node;
+	return node ;
 }
 
 static inline AR_ExpNode *_AR_EXP_InitializeOperand(AR_OperandNodeType type) {
@@ -1013,26 +1031,33 @@ inline const char *AR_EXP_GetFuncName(const AR_ExpNode *exp) {
 	return exp->op.f->name;
 }
 
-AR_ExpNode *AR_EXP_Clone(AR_ExpNode *exp) {
-	if(exp == NULL) return NULL;
+AR_ExpNode *AR_EXP_Clone
+(
+	AR_ExpNode *exp
+) {
+	if (unlikely (exp == NULL)) {
+		return NULL;
+	}
 
 	AR_ExpNode *clone = NULL;
 
-	switch(exp->type) {
-	case AR_EXP_OPERAND:
-		clone = _AR_EXP_CloneOperand(exp);
-		break;
-	case AR_EXP_OP:
-		clone = _AR_EXP_CloneOp(exp);
-		break;
-	default:
-		ASSERT(false);
-		break;
+	switch (exp->type) {
+		case AR_EXP_OPERAND:
+			clone = _AR_EXP_CloneOperand (exp) ;
+			break;
+
+		case AR_EXP_OP:
+			clone = _AR_EXP_CloneOp (exp) ;
+			break;
+
+		default:
+			ASSERT (false) ;
+			break;
 	}
 
-	clone->resolved_name = exp->resolved_name;
+	clone->resolved_name = exp->resolved_name ;
 
-	return clone;
+	return clone ;
 }
 
 static inline void _AR_EXP_FreeOpInternals

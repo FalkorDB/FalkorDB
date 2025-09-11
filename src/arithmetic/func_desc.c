@@ -16,7 +16,13 @@
 
 #define FUNC_NAME_MAX_LEN 64
 
-rax *__aeRegisteredFuncs = NULL;
+typedef struct {
+	rax *repo;
+	pthread_rwlock_t lock;
+} UDFS ;
+
+UDFS *__udfs              = NULL ;
+rax  *__aeRegisteredFuncs = NULL ;
 
 static void _NormalizeFunctionName
 (
@@ -37,9 +43,18 @@ void AR_InitFuncsRepo(void) {
 	ASSERT (__aeRegisteredFuncs == NULL) ;
 
 	__aeRegisteredFuncs = raxNew () ;
+
+	//--------------------------------------------------------------------------
+	// initialize User Defined Functions AR repo
+	//--------------------------------------------------------------------------
+
+	__udfs = rm_calloc (1, sizeof (UDFS)) ;
+	pthread_rwlock_init (&__udfs->lock, NULL) ;
+	__udfs->repo = raxNew () ;
 }
 
 void AR_FinalizeFuncsRepo(void) {
+	ASSERT (__udfs              != NULL) ;
 	ASSERT (__aeRegisteredFuncs != NULL) ;
 
 	//--------------------------------------------------------------------------
@@ -57,6 +72,26 @@ void AR_FinalizeFuncsRepo(void) {
 	}
 
 	raxStop (&it);
+	raxFree (__aeRegisteredFuncs) ;
+
+	//--------------------------------------------------------------------------
+	// free UDFs
+	//--------------------------------------------------------------------------
+
+	raxStart (&it, __udfs->repo) ;
+
+	// retrieve the first key in the rax
+	raxSeek (&it, "^", NULL, 0);
+	while (raxNext (&it)) {
+		AR_FuncDesc *f = it.data ;
+		rm_free ((void*)f->name) ;
+		AR_FuncFree (f) ;
+	}
+
+	pthread_rwlock_destroy (&__udfs->lock) ;
+
+	raxStop (&it);
+	raxFree (__udfs->repo) ;
 }
 
 AR_FuncDesc *AR_FuncDescNew
@@ -115,40 +150,48 @@ void AR_FuncRegisterUDF
 	array_append (types, T_STRING) ;
 	array_append (types, SI_ALL) ;
 
-	AR_FuncDesc *udf = AR_FuncDescNew (name, AR_UDF, 1, VAR_ARG_LEN, types,
-			ret_type, false, false) ;
+	AR_FuncDesc *func = AR_FuncDescNew (rm_strdup (name), AR_UDF, 1,
+			VAR_ARG_LEN, types, ret_type, false, false) ;
 
-	AR_SetUDF (udf) ;
-	AR_FuncRegister (udf) ;
+	func->udf = true ;
+
+	// WRITE lock
+	int res = pthread_rwlock_wrlock (&__udfs->lock) ;
+	ASSERT (res == 0) ;
+
+	// add UDF to repo
+	res = raxInsert(__udfs->repo, (unsigned char *)name, strlen(name), func,
+			NULL);
+	ASSERT(res == 1);
+
+	// unlock
+	res = pthread_rwlock_unlock (&__udfs->lock) ;
+	ASSERT (res == 0) ;
 }
 
 // unregister function to repository
-bool AR_FuncRemove
+bool AR_FuncRemoveUDF
 (
-	const char *func_name,  // function name to remove from repository
-	AR_FuncDesc **func      // [output] [optional] removed function
+	const char *func_name  // function name to remove from repository
 ) {
 	ASSERT (func_name != NULL) ;
 
-	//int res = pthread_rwlock_wrlock (&__aeRegisteredFuncs->lock) ;
-	//ASSERT (res == 0) ;
+	// WRITE lock
+	int res = pthread_rwlock_wrlock (&__udfs->lock) ;
+	ASSERT (res == 0) ;
 
 	// remove function from repository
-	int removed = raxRemove(__aeRegisteredFuncs,
-			(unsigned char *)func_name, strlen (func_name), (void**)func) ;
+	AR_FuncDesc *func = NULL ;
+	int removed = raxRemove(__udfs->repo, (unsigned char *)func_name,
+			strlen (func_name), (void**)func) ;
 
-	//res = pthread_rwlock_unlock (&__aeRegisteredFuncs->lock) ;
-	//ASSERT (res == 0) ;
+	// TODO: leaking func!
+
+	// unlock
+	res = pthread_rwlock_unlock (&__udfs->lock) ;
+	ASSERT (res == 0) ;
 
 	return removed == 1 ;
-}
-
-// mark function as a user defined function
-void AR_SetUDF
-(
-	AR_FuncDesc *func_desc  // function to mark as UDF
-) {
-	func_desc->udf = true ;
 }
 
 inline void AR_SetPrivateDataRoutines
@@ -168,6 +211,7 @@ AR_FuncDesc *AR_GetFunc
 	bool include_internal   // alow using internal functions
 ) {
 	ASSERT (func_name           != NULL) ;
+	ASSERT (__udfs              != NULL) ;
 	ASSERT (__aeRegisteredFuncs != NULL) ;
 
 	// normalize function name by lowercasing
@@ -179,8 +223,26 @@ AR_FuncDesc *AR_GetFunc
 	void *f = raxFind (__aeRegisteredFuncs,
 			(unsigned char *)lower_func_name, len) ;
 
+	// native function wasn't found, search UDFs
 	if (f == raxNotFound) {
-		return NULL ;
+		//----------------------------------------------------------------------
+		// search UDFs
+		//----------------------------------------------------------------------
+
+		// READ lock
+		int res = pthread_rwlock_rdlock (&__udfs->lock) ;
+		ASSERT (res == 0) ;
+
+		// search UDFs repo
+		f = raxFind (__udfs->repo, (unsigned char *)func_name, len) ;
+
+		// unlock
+		res = pthread_rwlock_unlock (&__udfs->lock) ;
+		ASSERT (res == 0) ;
+
+		if (f == raxNotFound) {
+			return NULL ;
+		}
 	}
 
 	AR_FuncDesc *func = (AR_FuncDesc*)f ;
@@ -207,24 +269,10 @@ bool AR_FuncExists
 	const char *func_name  // function name to lookup
 ) {
 	ASSERT (func_name           != NULL) ;
+	ASSERT (__udfs              != NULL) ;
 	ASSERT (__aeRegisteredFuncs != NULL) ;
 
-	// normalize function name by lowercasing
-	size_t len = strlen (func_name) ;
-	char lower_func_name[len + 1] ;
-	_NormalizeFunctionName (func_name, lower_func_name, &len) ;
-
-	// look up
-	void *f = raxFind(__aeRegisteredFuncs,
-			(unsigned char *)lower_func_name, len);
-
-	if (f == raxNotFound) {
-		return false;
-	}
-
-	AR_FuncDesc *func = (AR_FuncDesc*)f;
-
-	return !func->internal;
+	return (AR_GetFunc (func_name, false) != NULL) ;
 }
 
 // returns true if function is an aggregation function
@@ -237,7 +285,7 @@ bool AR_FuncIsAggregate
 
 	AR_FuncDesc *f = AR_GetFunc ( func_name,  true);
 
-	if(f == raxNotFound) {
+	if(f == NULL) {
 		return false ;
 	}
 

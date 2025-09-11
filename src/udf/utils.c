@@ -72,7 +72,7 @@ bool UDF_Delete
 
 	// locate library
 	if (!UDF_RepoGetLib (lib, &functions, NULL)) {
-		asprintf (err, "Library %s doesn't exists", lib) ;
+		asprintf (err, "Library %s does not exist", lib) ;
 		return false ;
 	}
 
@@ -80,7 +80,7 @@ bool UDF_Delete
 	bool removed ;
 	int n = array_len (functions) ;
 	for (int i = 0; i < n; i++) {
-		removed = AR_FuncRemove (functions[i], NULL) ;
+		removed = AR_FuncRemoveUDF (functions[i]) ;
 		ASSERT (removed == true) ;
 	}
 

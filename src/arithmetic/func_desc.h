@@ -89,10 +89,9 @@ void AR_FuncRegisterUDF
 );
 
 // unregister function to repository
-bool AR_FuncRemove
+bool AR_FuncRemoveUDF
 (
-	const char *func_name,  // function name to remove from repository
-	AR_FuncDesc **func      // [output] [optional] removed function
+	const char *func_name  // function name to remove from repository
 );
 
 // mark function as a user defined function

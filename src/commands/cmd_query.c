@@ -384,7 +384,9 @@ void _query
 	// parse query parameters and build an execution plan
 	// or retrieve it from the cache
 	exec_ctx = ExecutionCtx_FromQuery(command_ctx->query);
-	if(exec_ctx == NULL) goto cleanup;
+	if(exec_ctx == NULL || ErrorCtx_EncounteredError()) {
+		goto cleanup;
+	}
 
 	// update cached flag
 	QueryCtx_SetUtilizedCache(query_ctx, exec_ctx->cached);
