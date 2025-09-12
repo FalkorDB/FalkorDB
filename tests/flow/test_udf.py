@@ -1,12 +1,76 @@
 from common import *
 
-GRAPH_ID = "udf_types"
+GRAPH_ID = "udfs"
+
+class library():
+    def __init__(self, name, funcs, script=None):
+        self.name = name
+        self.funcs = funcs
+        self.script = script
 
 class testUDF():
     def __init__(self):
         self.env, self.db = Env()
         self.graph = self.db.select_graph(GRAPH_ID)
         self.conn = self.env.getConnection()
+
+    def udf_list(self, lib=None, with_code=None):
+        libs = []
+        res = self.db.udf_list(lib, with_code)
+
+        for l in res:
+            self.env.assertEqual(l[0], "library_name")
+            lib_name = l[1]
+
+            self.env.assertEqual(l[2], "functions")
+            lib_funcs = l[3]
+
+            lib_script = None
+            if with_code:
+                self.env.assertEqual(l[4], "library_code")
+                lib_script = l[5]
+
+            libs.append({'library_name': lib_name, 'functions': lib_funcs, 'library_code': lib_script })
+
+        return libs
+
+    def _assert_udf_exists(self, lib, funcs, with_code=False, script=None):
+        """
+        Helper to assert that a UDF library is loaded correctly.
+
+        Args:
+            lib (str): The library name to check.
+            funcs (list[str]): Expected list of function names.
+            with_code (bool): If True, also checks for presence of the code in response.
+            script (str|None): Optional script to compare against if with_code is True.
+        """
+
+        res = self.udf_list(lib, with_code)
+        self.env.assertEqual(len(res), 1)
+
+        res = res[0]
+
+        lib_name   = res["library_name"]
+        lib_funcs  = res["functions"]
+        lib_script = res["library_code"]
+
+        self.env.assertEqual(lib_name, lib)
+        self.env.assertEqual(sorted(lib_funcs), sorted(funcs))
+
+        if with_code:
+            self.env.assertEqual(lib_script, script.strip())
+
+    def _assert_any_udfs_missing(self):
+        """Helper to assert that no UDF libraries are loaded at all."""
+
+        res = self.udf_list()
+        self.env.assertEqual(len(res), 0)
+
+    def _assert_udf_missing(self, lib):
+        """Helper to assert that a UDF library does not exist."""
+
+        res = self.udf_list(lib)
+        self.env.assertEqual(len(res), 0)
 
     def tearDown(self):
         if GRAPH_ID in self.db.list_graphs():
@@ -349,46 +413,6 @@ class testUDF():
         self.env.assertEqual(res["attributes"]["id"], "edge_custom_id")
         self.env.assertEqual(res["attributes"]["role"], "dev")
 
-    def _assert_udf_exists(self, lib, funcs, with_code=False, script=None):
-        """
-        Helper to assert that a UDF library is loaded correctly.
-
-        Args:
-            lib (str): The library name to check.
-            funcs (list[str]): Expected list of function names.
-            with_code (bool): If True, also checks for presence of the code in response.
-            script (str|None): Optional script to compare against if with_code is True.
-        """
-
-        res = self.db.udf_list(lib, with_code)
-        self.env.assertEqual(len(res), 1)
-
-        res = res[0]
-
-        self.env.assertEqual(res[0], "library_name")
-        lib_name = res[1]
-
-        self.env.assertEqual(res[2], "functions")
-        lib_funcs = res[3]
-
-        lib_script = None
-        if with_code:
-            self.env.assertEqual(res[2], "library_code")
-            lib_script = res[5] 
-
-        self.env.assertEqual(lib_name, lib)
-        self.env.assertEqual(sorted(lib_funcs), sorted(funcs))
-
-        if with_code:
-            self.env.assertEqual(lib_script, script.strip())
-
-    def _assert_udf_missing(self, lib):
-        """Helper to assert that a UDF library does not exist."""
-
-        res = self.db.udf_list()
-        libs = [r[1] for r in res]
-        self.env.assertNotIn(lib, libs)
-
     def test_load_invalid_invocations(self):
         """
         Test invalid invocations of GRAPH.UDF LOAD:
@@ -494,7 +518,7 @@ class testUDF():
         except ResponseError as e:
             self.env.assertIn("SyntaxError:", str(e))
 
-    def _test_persistence_and_replication(self):
+    def test_persistence_and_replication(self):
         """
         Test persistence and replication:
         - Load a UDF library.
@@ -659,4 +683,299 @@ class testUDF():
                 assert False, f"Expected failure calling deleted function {f}"
             except ResponseError as e:
                 self.env.assertIn("unknown function", str(e).lower())
+
+    def test_flush_invalid_invocations(self):
+        """
+        Test invalid invocations of GRAPH.UDF FLUSH:
+        - Extra arguments (should error).
+        """
+
+        try:
+            self.db.execute_command("GRAPH.UDF", "FLUSH", "extra")
+            assert False, "Expected failure on extra args"
+        except ResponseError as e:
+            self.env.assertIn("wrong number of arguments", str(e).lower())
+
+    def test_flush_removes_all_libraries(self):
+        """
+        Test basic functionality of GRAPH.UDF FLUSH:
+        - Load multiple libraries.
+        - Verify they exist.
+        - Flush all libraries.
+        - Verify no libraries remain and functions are unavailable.
+        """
+
+        script1 = "function A() { return 'a'; } register('A', A);"
+        script2 = "function B() { return 'b'; } register('B', B);"
+
+        self.db.udf_load("lib1", script1)
+        self.db.udf_load("lib2", script2)
+
+        # sanity check they exist
+        res = self.udf_list()
+        libs = [r["library_name"] for r in res]
+        self.env.assertIn("lib1", libs)
+        self.env.assertIn("lib2", libs)
+
+        # flush all UDFs
+        res = self.db.udf_flush()
+        self.env.assertEqual(res, "OK")
+
+        # verify empty registry
+        self._assert_any_udfs_missing()
+
+        # functions should now fail
+        for f in ["A", "B"]:
+            try:
+                self.graph.query(f"RETURN {f}()")
+                assert False, f"Expected failure calling flushed function {f}"
+            except ResponseError as e:
+                self.env.assertIn("unknown function", str(e).lower())
+
+    def test_flush_on_empty_registry(self):
+        """
+        Test flushing when no libraries exist:
+        - Ensure FLUSH is safe and succeeds even when registry is already empty.
+        """
+
+        # make sure registry is empty
+        self.db.udf_flush()
+        self._assert_any_udfs_missing()
+
+        # flush again should still succeed
+        res = self.db.udf_flush()
+        self.env.assertEqual(res, "OK")
+
+    def test_persistence_of_flush(self):
+        """
+        Test persistence of flush:
+        - Load a library.
+        - Flush all libraries.
+        - Restart the server.
+        - Ensure no libraries are restored after restart.
+        """
+
+        script = "function PersistFlush() { return 'stay?'; } register('PersistFlush', PersistFlush);"
+        self.db.udf_load("flush_lib", script)
+
+        # flush all
+        self.db.udf_flush()
+        self._assert_any_udfs_missing()
+
+        # restart server (test infra helper)
+        self.env.restart_and_reload()
+
+        # still no libraries
+        self._assert_any_udfs_missing()
+
+    def test_list_invalid_invocations(self):
+        """
+        GRAPH.UDF LIST should not accept extra arguments.
+        """
+
+        try:
+            self.db.execute_command("GRAPH.UDF", "LIST", "lib", "extra")
+            assert False, "Expected LIST with extra args to fail"
+        except ResponseError as e:
+            self.env.assertIn("unknown option given", str(e).lower())
+
+    def test_list_empty_registry(self):
+        """
+        When no UDF libraries are loaded, LIST should return an empty result.
+        """
+
+        self.db.udf_flush()  # ensure clean state
+        res = self.db.udf_list()
+        self.env.assertEqual(len(res), 0)
+
+class test_udf_javascript():
+    def __init__(self):
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
+        self.conn = self.env.getConnection()
+
+    def test_register_existing_udf(self):
+        """
+        Registering the same UDF name twice within the same library should fail.
+        """
+
+        self.db.udf_flush()
+        script = """
+        function f() { return 1; }
+        register('f', f);
+        """
+        self.db.udf_load("lib1", script)
+
+        # redeclare same function name
+        script2 = """
+        function f() { return 2; }
+        register('f', f);
+        """
+
+        try:
+            self.db.udf_load("lib1_dup", script2)
+            assert False, "Expected duplicate registration to fail"
+        except ResponseError as e:
+            self.env.assertIn("already registered", str(e).lower())
+
+    def test_call_non_existing_function(self):
+        """
+        Calling a non-existent UDF should raise an error.
+        """
+
+        self.db.udf_flush()
+        try:
+            self.graph.query("RETURN DoesNotExist()")
+            assert False, "Expected error when calling unknown UDF"
+        except ResponseError as e:
+            self.env.assertIn("unknown function 'doesnotexist'", str(e).lower())
+
+    def test_redeclaration_non_exposed_function(self):
+        """
+        Redeclaring a plain JS function that is NOT registered should be fine,
+        since it's internal to the library.
+        """
+
+        self.db.udf_flush()
+
+        script = """
+        function helper() { return 1; }
+        function helper() { return 2; }  // redeclaration
+        function exposed() { return helper(); }
+        register('exposed', exposed);
+        """
+
+        self.db.udf_load("lib_redecl", script)
+        v = self.graph.query("RETURN exposed()").result_set[0][0]
+        self.env.assertEqual(v, 2)
+
+    def test_cross_library_calls(self):
+        """
+        Verify cross-library visibility:
+        - Functions in other libraries are accessible to one another
+        """
+
+        self.db.udf_flush()
+
+        script1 = """
+        function base() { return 100; }
+        register('base', base);
+        """
+        self.db.udf_load("lib_base", script1)
+
+        script2 = """
+        function wrapper() {
+            // Attempt to call base() directly - should fail
+            return base();
+        }
+        register('wrapper', wrapper);
+        """
+
+        self.db.udf_load("lib_wrapper", script2, replace=True)
+        res = self.graph.query("RETURN wrapper()").result_set[0][0]
+        self.env.assertEqual(res, 100)
+
+    def test_invalid_function_access(self):
+        """
+        Attempting to access built-in globals like console.log should fail
+        (sandbox enforcement).
+        """
+
+        self.db.udf_flush()
+        script = """
+        function bad() { return console.log('oops'); }
+        register('bad', bad);
+        """
+
+        self.db.udf_load("lib_invalid", script)
+        try:
+            res = self.graph.query("RETURN bad()").result_set
+            assert False, "Expected error when calling unknown UDF"
+        except ResponseError as e:
+            self.env.assertIn("udf exception: 'console' is not defined", str(e).lower())
+
+    def test_global_variable_usage(self):
+        """
+        Globals inside a library should persist across calls within the same lib.
+        """
+
+        self.db.udf_flush()
+        script = """
+        var counter = 0;
+        function inc() { counter += 1; return counter; }
+        register('inc', inc);
+        """
+        self.db.udf_load("lib_globals", script)
+
+        v1 = self.graph.query("RETURN inc()").result_set[0][0]
+        v2 = self.graph.query("RETURN inc()").result_set[0][0]
+        self.env.assertEqual(v1, 1)
+        self.env.assertGreaterEqual(v2, 1) # depending on the executing thread and it's js context
+
+    def test_register_anonymous_function(self):
+        """
+        Registering an anonymous function should work normally.
+        """
+
+        self.db.udf_flush()
+        script = """
+        register('anon', function(x) { return x * 2; });
+        """
+        self.db.udf_load("lib_anon", script)
+
+        v = self.graph.query("RETURN anon(5)").result_set[0][0]
+        self.env.assertEqual(v, 10)
+
+    def test_exception_propagation(self):
+        """
+        Exceptions in UDFs should propagate as Cypher errors.
+        """
+
+        self.db.udf_flush()
+        script = """
+        function fail() { throw new Error('boom'); }
+        register('fail', fail);
+        """
+        self.db.udf_load("lib_fail", script)
+
+        try:
+            self.graph.query("RETURN fail()")
+            assert False, "Expected JS exception to propagate"
+        except ResponseError as e:
+            self.env.assertIn("boom", str(e).lower())
+
+    def test_argument_handling(self):
+        """
+        Validate argument passing:
+        - Too few arguments should yield undefined for missing ones.
+        - Too many arguments should be ignored.
+        """
+
+        self.db.udf_flush()
+        script = """
+        function f(x, y) { return [x, y]; }
+        register('f', f);
+        """
+        self.db.udf_load("lib_args", script)
+
+        v1 = self.graph.query("RETURN f(1)").result_set[0][0]
+        self.env.assertEqual(v1, [1, None])
+
+        v2 = self.graph.query("RETURN f(1, 2, 3)").result_set[0][0]
+        self.env.assertEqual(v2, [1, 2])
+
+    def test_returning_undefined(self):
+        """
+        UDFs returning `undefined` should map to Cypher NULL.
+        """
+
+        self.db.udf_flush()
+        script = """
+        function undef() { return undefined; }
+        register('undef', undef);
+        """
+        self.db.udf_load("lib_undef", script)
+
+        v = self.graph.query("RETURN undef()").result_set[0][0]
+        self.env.assertEqual(v, None)
 
