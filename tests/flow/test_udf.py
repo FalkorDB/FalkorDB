@@ -86,13 +86,13 @@ class testUDF():
         function ReturnNull      () { return null;      }
         function ReturnUndefined () { return undefined; }
 
-        register ('ReturnInt',       ReturnInt);
-        register ('ReturnFloat',     ReturnFloat);
-        register ('ReturnTrue',      ReturnTrue);
-        register ('ReturnString',    ReturnString);
-        register ('ReturnFalse',     ReturnFalse);
-        register ('ReturnNull',      ReturnNull);
-        register ('ReturnUndefined', ReturnUndefined);
+        falkor.register ('ReturnInt',       ReturnInt);
+        falkor.register ('ReturnFloat',     ReturnFloat);
+        falkor.register ('ReturnTrue',      ReturnTrue);
+        falkor.register ('ReturnString',    ReturnString);
+        falkor.register ('ReturnFalse',     ReturnFalse);
+        falkor.register ('ReturnNull',      ReturnNull);
+        falkor.register ('ReturnUndefined', ReturnUndefined);
         """
 
         self.db.udf_load("ReturnTypes", script, True)
@@ -130,9 +130,9 @@ class testUDF():
         function ReturnObject () { return {x: 1, y: 'val', z: [true, false]}; }
         function ReturnNested  () { return {nested: [1, {k:'v'}, [true, null]]}; }
 
-        register ('ReturnArray',  ReturnArray);
-        register ('ReturnObject', ReturnObject);
-        register ('ReturnNested', ReturnNested);
+        falkor.register ('ReturnArray',  ReturnArray);
+        falkor.register ('ReturnObject', ReturnObject);
+        falkor.register ('ReturnNested', ReturnNested);
         """
 
         self.db.udf_load("ReturnCollections", script, True)
@@ -158,12 +158,12 @@ class testUDF():
         function ReturnF32Array() { return new Float32Array([1.1, 2.2, 3.3]); }
         function ReturnPoint   () { return {x:1.0, y:2.0, z:3.0}; }
 
-        register ('ReturnBigInt', ReturnBigInt);
-        register ('ReturnDate',   ReturnDate);
-        register ('ReturnRegExp', ReturnRegExp);
-        register ('ReturnSymbol', ReturnSymbol);
-        register ('ReturnF32Array', ReturnF32Array);
-        register ('ReturnPoint', ReturnPoint);
+        falkor.register ('ReturnBigInt', ReturnBigInt);
+        falkor.register ('ReturnDate',   ReturnDate);
+        falkor.register ('ReturnRegExp', ReturnRegExp);
+        falkor.register ('ReturnSymbol', ReturnSymbol);
+        falkor.register ('ReturnF32Array', ReturnF32Array);
+        falkor.register ('ReturnPoint', ReturnPoint);
         """
 
         self.db.udf_load("ReturnSpecials", script, True)
@@ -204,7 +204,7 @@ class testUDF():
         script ="""
         function Echo(x) { return x; }
 
-        register ('Echo', Echo);
+        falkor.register ('Echo', Echo);
         """
 
         self.db.udf_load("Echo", script, True)
@@ -318,7 +318,7 @@ class testUDF():
                                          labels: n.labels,
                                          attributes: n.attributes}; }
 
-        register ('InspectNode', InspectNode);
+        falkor.register ('InspectNode', InspectNode);
         """
 
         self.db.udf_load("InspectNode", script, True)
@@ -369,7 +369,7 @@ class testUDF():
                                          type: e.type,
                                          attributes: e.attributes}; }
 
-        register ('InspectEdge', InspectEdge);
+        falkor.register ('InspectEdge', InspectEdge);
         """
 
         self.db.udf_load("InspectEdge", script, True)
@@ -443,8 +443,8 @@ class testUDF():
         script = """
         function Foo() { return 123; }
         function Bar(x) { return x + 1; }
-        register("Foo", Foo);
-        register("Bar", Bar);
+        falkor.register("Foo", Foo);
+        falkor.register("Bar", Bar);
         """
 
         res = self.db.udf_load("mylib", script)
@@ -468,12 +468,12 @@ class testUDF():
 
         script1 = """
         function X() { return "one"; }
-        register("X", X);
+        falkor.register("X", X);
         """
 
         script2 = """
         function X() { return "two"; }
-        register("X", X);
+        falkor.register("X", X);
         """
 
         self.db.udf_load("replace_lib", script1)
@@ -494,7 +494,7 @@ class testUDF():
 
         script = """
         function Y() { return 1; }
-        register("Y", Y);
+        falkor.register("Y", Y);
         """
         self.db.udf_load("conflict_lib", script)
 
@@ -529,7 +529,7 @@ class testUDF():
 
         script = """
         function Persist() { return "I persist"; }
-        register("Persist", Persist);
+        falkor.register("Persist", Persist);
         """
 
         self.db.udf_load("persist_lib", script)
@@ -571,7 +571,7 @@ class testUDF():
 
         script = """
         function DelTest() { return "bye"; }
-        register("DelTest", DelTest);
+        falkor.register("DelTest", DelTest);
         """
         self.db.udf_load("del_lib", script)
         self._assert_udf_exists("del_lib", ["DelTest"])
@@ -614,8 +614,8 @@ class testUDF():
         - Verify the other one remains intact and functional.
         """
 
-        script1 = "function F1() { return 'f1'; } register('F1', F1);"
-        script2 = "function F2() { return 'f2'; } register('F2', F2);"
+        script1 = "function F1() { return 'f1'; } falkor.register('F1', F1);"
+        script2 = "function F2() { return 'f2'; } falkor.register('F2', F2);"
 
         self.db.udf_load("lib1", script1)
         self.db.udf_load("lib2", script2)
@@ -639,7 +639,7 @@ class testUDF():
         """
 
         script = """function PersistDel() { return 99; }
-                    register('PersistDel', PersistDel);"""
+                    falkor.register('PersistDel', PersistDel);"""
 
         self.db.udf_load("persist_del_lib", script)
         self._assert_udf_exists("persist_del_lib", ["PersistDel"])
@@ -665,8 +665,8 @@ class testUDF():
         script = """
         function F3() { return 3; }
         function F4() { return 4; }
-        register("F3", F3);
-        register("F4", F4);
+        falkor.register("F3", F3);
+        falkor.register("F4", F4);
         """
 
         self.db.udf_load("multi_func_lib", script)
@@ -705,8 +705,8 @@ class testUDF():
         - Verify no libraries remain and functions are unavailable.
         """
 
-        script1 = "function A() { return 'a'; } register('A', A);"
-        script2 = "function B() { return 'b'; } register('B', B);"
+        script1 = "function A() { return 'a'; } falkor.register('A', A);"
+        script2 = "function B() { return 'b'; } falkor.register('B', B);"
 
         self.db.udf_load("lib1", script1)
         self.db.udf_load("lib2", script2)
@@ -755,7 +755,7 @@ class testUDF():
         - Ensure no libraries are restored after restart.
         """
 
-        script = "function PersistFlush() { return 'stay?'; } register('PersistFlush', PersistFlush);"
+        script = "function PersistFlush() { return 'stay?'; } falkor.register('PersistFlush', PersistFlush);"
         self.db.udf_load("flush_lib", script)
 
         # flush all
@@ -802,14 +802,14 @@ class test_udf_javascript():
         self.db.udf_flush()
         script = """
         function f() { return 1; }
-        register('f', f);
+        falkor.register('f', f);
         """
         self.db.udf_load("lib1", script)
 
         # redeclare same function name
         script2 = """
         function f() { return 2; }
-        register('f', f);
+        falkor.register('f', f);
         """
 
         try:
@@ -842,7 +842,7 @@ class test_udf_javascript():
         function helper() { return 1; }
         function helper() { return 2; }  // redeclaration
         function exposed() { return helper(); }
-        register('exposed', exposed);
+        falkor.register('exposed', exposed);
         """
 
         self.db.udf_load("lib_redecl", script)
@@ -859,7 +859,7 @@ class test_udf_javascript():
 
         script1 = """
         function base() { return 100; }
-        register('base', base);
+        falkor.register('base', base);
         """
         self.db.udf_load("lib_base", script1)
 
@@ -868,7 +868,7 @@ class test_udf_javascript():
             // Attempt to call base() directly - should fail
             return base();
         }
-        register('wrapper', wrapper);
+        falkor.register('wrapper', wrapper);
         """
 
         self.db.udf_load("lib_wrapper", script2, replace=True)
@@ -884,7 +884,7 @@ class test_udf_javascript():
         self.db.udf_flush()
         script = """
         function bad() { return console.log('oops'); }
-        register('bad', bad);
+        falkor.register('bad', bad);
         """
 
         self.db.udf_load("lib_invalid", script)
@@ -903,7 +903,7 @@ class test_udf_javascript():
         script = """
         var counter = 0;
         function inc() { counter += 1; return counter; }
-        register('inc', inc);
+        falkor.register('inc', inc);
         """
         self.db.udf_load("lib_globals", script)
 
@@ -919,7 +919,7 @@ class test_udf_javascript():
 
         self.db.udf_flush()
         script = """
-        register('anon', function(x) { return x * 2; });
+        falkor.register('anon', function(x) { return x * 2; });
         """
         self.db.udf_load("lib_anon", script)
 
@@ -934,7 +934,7 @@ class test_udf_javascript():
         self.db.udf_flush()
         script = """
         function fail() { throw new Error('boom'); }
-        register('fail', fail);
+        falkor.register('fail', fail);
         """
         self.db.udf_load("lib_fail", script)
 
@@ -954,7 +954,7 @@ class test_udf_javascript():
         self.db.udf_flush()
         script = """
         function f(x, y) { return [x, y]; }
-        register('f', f);
+        falkor.register('f', f);
         """
         self.db.udf_load("lib_args", script)
 
@@ -972,7 +972,7 @@ class test_udf_javascript():
         self.db.udf_flush()
         script = """
         function undef() { return undefined; }
-        register('undef', undef);
+        falkor.register('undef', undef);
         """
         self.db.udf_load("lib_undef", script)
 

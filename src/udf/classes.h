@@ -6,6 +6,11 @@
 #pragma once
 
 #include "quickjs.h"
+#include "node_class.h"
+#include "edge_class.h"
+#include "path_class.h"
+#include "falkor_obj.h"
+#include "attributes_class.h"
 
 // init classes
 void UDF_InitClasses(void) ;

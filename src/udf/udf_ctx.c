@@ -6,7 +6,6 @@
 #include "RG.h"
 #include "udf_ctx.h"
 #include "classes.h"
-#include "functions.h"
 #include "repository.h"
 #include "../util/arr.h"
 #include "../util/rmalloc.h"
@@ -76,7 +75,7 @@ static UDFCtx *_UDFCtx_GetCtx(void) {
 		pthread_setspecific (_tlsUDFCtx, ctx) ;
 
 		// register context classes & functions
-		UDF_RegisterFunctions (ctx->js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
+		falkor_set_register_impl (ctx->js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
 
 		UDF_RepoPopulateJSContext (ctx->js_ctx, &ctx->v) ;
 	}
@@ -96,7 +95,7 @@ static UDFCtx *_UDFCtx_GetCtx(void) {
 		ctx->js_ctx = JS_NewContext (ctx->js_rt) ;
 		// register context classes & functions
 		UDF_CTX_RegisterClasses (ctx->js_ctx) ;
-		UDF_RegisterFunctions (ctx->js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
+		falkor_set_register_impl (ctx->js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
 
 		UDF_RepoPopulateJSContext (ctx->js_ctx, &ctx->v) ;
 	}

@@ -8,7 +8,6 @@
 #include "../../util/arr.h"
 #include "../../udf/utils.h"
 #include "../../udf/udf_ctx.h"
-#include "../../udf/functions.h"
 #include "../../udf/repository.h"
 #include "../../arithmetic/func_desc.h"
 #include "../../arithmetic/udf_funcs/udf_funcs.h"

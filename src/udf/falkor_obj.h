@@ -13,8 +13,14 @@ typedef enum {
 	UDF_FUNC_REG_MODE_GLOBAL     // register UDF functions in global functions repository
 } UDF_JSCtxRegisterFuncMode ;
 
-// register proxy functions
-void UDF_RegisterFunctions
+// register the falkor object with the js-context
+void ctx_register_falkor_object
+(
+	JSContext *js_ctx
+);
+
+// set falkor.register function
+void falkor_set_register_impl
 (
 	JSContext *js_ctx,              // javascript context
 	UDF_JSCtxRegisterFuncMode mode  // type of 'register' function

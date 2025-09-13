@@ -4,12 +4,32 @@
 */
 
 #include "RG.h"
+#include "utils.h"
 #include "udf_ctx.h"
-#include "functions.h"
+#include "classes.h"
 #include "repository.h"
+#include "../query_ctx.h"
 #include "../arithmetic/func_desc.h"
 
 extern const char *UDF_LIB ;  // global register library name
+
+// register the falkor object with the js-context
+void ctx_register_falkor_object
+(
+	JSContext *js_ctx
+) {
+	ASSERT (js_ctx != NULL) ;
+
+    // create a plain namespace object: const falkor = {};
+    JSValue falkor_obj = JS_NewObject (js_ctx) ;
+
+    // expose the namespace globally as "falkor"
+    JSValue global_obj = JS_GetGlobalObject (js_ctx) ;
+    JS_SetPropertyStr (js_ctx, global_obj, "falkor", falkor_obj) ;
+
+    // free what we got from GetGlobalObject
+    JS_FreeValue (js_ctx, global_obj) ;
+}
 
 // dryrun register UDF
 static JSValue validate_register_udf
@@ -22,11 +42,11 @@ static JSValue validate_register_udf
 	ASSERT (argv   != NULL) ;
 	ASSERT (js_ctx != NULL) ;
 
-	// user called: register('func_name', function);
+	// user called: falkor.register('func_name', function);
 
 	if (argc != 2) {
 		// raise a TypeError to the JS caller
-		return JS_ThrowTypeError (js_ctx, "register() expects 2 arguments") ;
+		return JS_ThrowTypeError (js_ctx, "falkor.register() expects 2 arguments") ;
 	}
 
 	if (!JS_IsString (argv[0])) {
@@ -69,11 +89,11 @@ static JSValue local_register_udf
 	ASSERT (argv   != NULL) ;
 	ASSERT (js_ctx != NULL) ;
 
-	// user called: register('func_name', function);
+	// user called: falkor.register('func_name', function);
 
 	if (argc != 2) {
 		// raise a TypeError to the JS caller
-		return JS_ThrowTypeError (js_ctx, "register() expects 2 arguments") ;
+		return JS_ThrowTypeError (js_ctx, "falkor.register() expects 2 arguments") ;
 	}
 
 	if (!JS_IsString (argv[0])) {
@@ -109,11 +129,11 @@ static JSValue global_register_udf
 	ASSERT (argv   != NULL) ;
 	ASSERT (js_ctx != NULL) ;
 
-	// user called: register('func_name', function);
+	// user called: falkor.register('func_name', function);
 
 	if (argc != 2) {
 		// raise a TypeError to the JS caller
-		return JS_ThrowTypeError (js_ctx, "register() expects 2 arguments") ;
+		return JS_ThrowTypeError (js_ctx, "falkor.register() expects 2 arguments") ;
 	}
 
 	if (!JS_IsString (argv[0])) {
@@ -144,43 +164,49 @@ cleanup:
 	return res ;
 }
 
-// register proxy functions
-void UDF_RegisterFunctions
+// set falkor.register function
+void falkor_set_register_impl
 (
 	JSContext *js_ctx,              // javascript context
 	UDF_JSCtxRegisterFuncMode mode  // type of 'register' function
 ) {
-	ASSERT (js_ctx != NULL) ;
+	ASSERT(js_ctx != NULL);
 
-	JSValue f;
+    // get global.falkor
+    JSValue global_obj = JS_GetGlobalObject (js_ctx) ;
+    JSValue falkor_obj = JS_GetPropertyStr  (js_ctx, global_obj, "falkor") ;
 
-	switch (mode) {
-		case UDF_FUNC_REG_MODE_VALIDATE:
-			// the 'register' funcion only perform validations
-			// nothing gets registered
-			f = JS_NewCFunction (js_ctx, validate_register_udf, "register", 0) ;
-			break ;
+	ASSERT (JS_IsObject (falkor_obj));
 
-		case UDF_FUNC_REG_MODE_LOCAL:
-			f = JS_NewCFunction (js_ctx, local_register_udf,    "register", 0) ;
-			break ;
+    // create the C function object depending on mode
+    JSValue func_obj = JS_UNDEFINED;
+    switch (mode) {
+        case UDF_FUNC_REG_MODE_VALIDATE:
+            func_obj = JS_NewCFunction (js_ctx, validate_register_udf, "register", 1) ;
+            break ;
 
-		case UDF_FUNC_REG_MODE_GLOBAL:
-			// the 'register' function adds UDF function to the UDF repository
-			f = JS_NewCFunction (js_ctx, global_register_udf,   "register", 0) ;
-			break;
+        case UDF_FUNC_REG_MODE_LOCAL:
+            func_obj = JS_NewCFunction (js_ctx, local_register_udf, "register", 1) ;
+            break ;
 
-		default:
-			assert("unknown UDF_JSCtxRegisterFuncMode mode" && false) ;
-			break;
-	}
-	ASSERT (!JS_IsException (f)) ;
+        case UDF_FUNC_REG_MODE_GLOBAL:
+            func_obj = JS_NewCFunction (js_ctx, global_register_udf, "register", 1) ;
+            break ;
 
-	// expose it in the global object
-	JSValue global = JS_GetGlobalObject (js_ctx) ;
+        default:
+            assert (false && "unknown mode") ;
+    }
 
-	JS_SetPropertyStr (js_ctx, global, "register", f) ;
+	ASSERT (JS_IsFunction (js_ctx, func_obj)) ;
 
-	JS_FreeValue (js_ctx, global) ;
+    // define property with explicit flags (writable, configurable)
+    int def_res = JS_DefinePropertyValueStr (js_ctx, falkor_obj, "register",
+			func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
+
+	ASSERT (def_res >= 0) ;
+
+    // clean up
+    JS_FreeValue (js_ctx, global_obj) ;
+    JS_FreeValue (js_ctx, falkor_obj) ;
 }
 

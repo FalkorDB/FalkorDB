@@ -5,7 +5,6 @@
 
 #include "RG.h"
 #include "classes.h"
-#include "functions.h"
 #include "repository.h"
 #include "../util/arr.h"
 #include "../util/rmalloc.h"
