@@ -9,6 +9,10 @@
 #include "../errors/errors.h"
 #include "../datatypes/datatypes.h"
 
+//------------------------------------------------------------------------------
+// external class IDs
+//------------------------------------------------------------------------------
+
 extern JSClassID js_node_class_id;        // JS Node class
 extern JSClassID js_edge_class_id;        // JS Edge class
 extern JSClassID js_path_class_id;        // JS Path class
@@ -17,6 +21,8 @@ extern JSClassID js_attributes_class_id;  // JS Attributes class
 // forward declarations
 SIValue UDF_JSToSIValue (JSContext *js_ctx, JSValue val) ;
 
+// report a QuickJS exception to FalkorDB's error context
+// extracts message and stack trace if available
 static void _report_exception
 (
 	JSContext *js_ctx  // java script context
@@ -35,16 +41,15 @@ static void _report_exception
 			msg_str   ? msg_str   : "<no message>",
 			stack_str ? stack_str : "<no stack>") ;
 
-    // free temporary values
+    // cleanup
     JS_FreeCString(js_ctx, msg_str);
     JS_FreeCString(js_ctx, stack_str);
     JS_FreeValue(js_ctx, message);
     JS_FreeValue(js_ctx, stack);
-
-    // finally free the exception object
     JS_FreeValue(js_ctx, exception);
 }
 
+// convert a JS Array into an SI Array
 static SIValue _JSArrayToSIValue
 (
     JSContext *js_ctx,
@@ -66,6 +71,8 @@ static SIValue _JSArrayToSIValue
 	return arr ;
 }
 
+// convert a plain JS Object into an SI_Map
+// only enumerable string-keyed properties are processed
 static SIValue _JSObjToSIValue
 (
     JSContext *js_ctx,
@@ -97,7 +104,8 @@ static SIValue _JSObjToSIValue
 		Map_AddNoClone (&map, key, val) ;
 
         // free value and key
-        JS_FreeValue (js_ctx, js_val)  ;
+        JS_FreeValue (js_ctx, js_val) ;
+		JS_FreeCString (js_ctx, key_str) ;
     }
 
     // free the property enum array
@@ -106,22 +114,24 @@ static SIValue _JSObjToSIValue
 	return map ;
 }
 
-
-// convert a JS object to an SIValue
+// convert a QuickJS value into an SIValue
+//
+//  supported conversions:
+//    - JS primitives: number, string, boolean, null
+//    - JS BigInt     -> SI Long
+//    - JS Array      -> SI Array
+//    - JS Object     -> SI Map
+//    - JS Attributes -> SI Map of properties
+//    - Exceptions    -> logged, return Null
+//
+//  unsupported values:
+//    - JS Symbols -> error
+//    - undefined  -> null
 SIValue UDF_JSToSIValue
 (
 	JSContext *js_ctx,
 	JSValue val
 ) {
-	// supported value types:
-	//
-	// JavaScript native types:
-	// array
-	// map
-	// numeric
-	// string
-	// null
-
 	SIValue ret = SI_NullVal () ;
 	int tag = JS_VALUE_GET_TAG (val) ;
 
@@ -174,45 +184,38 @@ SIValue UDF_JSToSIValue
 		case JS_TAG_OBJECT: {
 			if (JS_IsArray (js_ctx, val)) {
 				ret = _JSArrayToSIValue (js_ctx, val) ;
-				break ;
 			} else if (JS_IsObject (val)) {
-				// registered classes
+				// handle registered Falkor classes
 				JSClassID cid = JS_GetClassID (val) ;
 
 				if (cid == js_node_class_id) {
 					Node *n = JS_GetOpaque (val, js_node_class_id) ;
 					ret = SI_Node (n) ;
-					break ;
 				}
 
 				else if (cid == js_edge_class_id) {
 					Edge *e = JS_GetOpaque (val, js_edge_class_id) ;
 					ret = SI_Edge (e) ;
-					break ;
 				}
 
 				else if (cid == js_path_class_id) {
 					Path *p = JS_GetOpaque (val, js_path_class_id) ;
 					ret = SIPath_New (p) ;
-					break ;
 				}
 
 				else if (cid == js_attributes_class_id) {
 					GraphEntity *e = JS_GetOpaque (val, js_attributes_class_id) ;
 					ret = GraphEntity_Properties (e) ;
-					break ;
 				}
 
-				else if (cid == 18 ) { // JS_CLASS_REGEXP
+				else if (cid == 18) { // JS_CLASS_REGEXP
 					const char *str = JS_ToCString (js_ctx, val) ;
 					ret = SI_DuplicateStringVal (str) ;
 					JS_FreeCString (js_ctx, str) ;
-					break ;
 				}
 
 				else  {
 					ret = _JSObjToSIValue(js_ctx, val) ;
-					break ;
 				}
 			}
 			break ;

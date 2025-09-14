@@ -10,7 +10,9 @@ JSClassID js_edge_class_id;        // JS edge class
 JSClassID js_path_class_id;        // JS path class
 JSClassID js_attributes_class_id;  // JS attributes class
 
-// register all classes
+// initialize all QuickJS classes required by the UDF subsystem
+// this should be called once during application startup
+// before any QuickJS runtime or context is created
 void UDF_InitClasses(void) {
     JS_NewClassID (&js_node_class_id) ;
     JS_NewClassID (&js_edge_class_id) ;
@@ -18,23 +20,27 @@ void UDF_InitClasses(void) {
     JS_NewClassID (&js_attributes_class_id) ;
 }
 
+// register all FalkorDB classes with the given QuickJS runtime
 void UDF_RT_RegisterClasses
 (
-	JSRuntime *js_runtime
+	JSRuntime *js_rt  // the QuickJS runtime in which to register classes
 ) {
-	rt_register_node_class       (js_runtime) ;
-	rt_register_edge_class       (js_runtime) ;
-	rt_register_path_class       (js_runtime) ;
-	rt_register_attributes_class (js_runtime) ;
+	ASSERT (js_rt != NULL) ;
+
+	UDF_RegisterNodeClass       (js_rt) ;
+	UDF_RegisterEdgeClass       (js_rt) ;
+	UDF_RegisterPathClass       (js_rt) ;
+	UDF_RegisterAttributesClass (js_rt) ;
 }
 
+// register all FalkorDB classes with the given QuickJS context
 void UDF_CTX_RegisterClasses
 (
-	JSContext *js_ctx
+	JSContext *js_ctx  // the QuickJS context in which to register classes.
 ) {
-	ctx_register_node_class    (js_ctx) ;
-	ctx_register_edge_class    (js_ctx) ;
-	ctx_register_path_class    (js_ctx) ;
-	ctx_register_falkor_object (js_ctx) ;
+	UDF_RegisterNodeProto    (js_ctx) ;
+	UDF_RegisterEdgeProto    (js_ctx) ;
+	UDF_RegisterPathProto    (js_ctx) ;
+	UDF_RegisterFalkorObject (js_ctx) ;
 }
 

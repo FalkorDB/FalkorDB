@@ -10,9 +10,6 @@
 // instantiate the thread-local UDFCtx on module load
 bool UDFCtx_Init(void);
 
-// retrive thread's javascript runtime
-JSRuntime *UDFCtx_GetJSRuntime(void) ;
-
 // retrive thread's javascript context
 JSContext *UDFCtx_GetJSContext(void) ;
 

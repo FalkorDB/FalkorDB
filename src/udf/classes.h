@@ -12,18 +12,20 @@
 #include "falkor_obj.h"
 #include "attributes_class.h"
 
-// init classes
+// initialize all QuickJS classes required by the UDF subsystem
+// this should be called once during application startup
+// before any QuickJS runtime or context is created
 void UDF_InitClasses(void) ;
 
-// register all classes
+// register all FalkorDB classes with the given QuickJS runtime
 void UDF_RT_RegisterClasses
 (
-	JSRuntime *js_runtime
+	JSRuntime *js_rt  // the QuickJS runtime in which to register classes
 );
 
-// register all classes
+// register all FalkorDB classes with the given QuickJS context
 void UDF_CTX_RegisterClasses
 (
-	JSContext *js_ctx
+	JSContext *js_ctx  // the QuickJS context in which to register classes.
 );
 

@@ -17,6 +17,8 @@ static JSClassDef js_path_class = {
     "Path",
 } ;
 
+// retrieve nodes from a Path
+// returns a JavaScript array of Node objects
 static JSValue js_path_nodes
 (
 	JSContext *js_ctx,
@@ -32,12 +34,14 @@ static JSValue js_path_nodes
 
 	for (int i = 0; i < l; i++) {
 		Node *n = Path_GetNode (p, i) ;
-		JS_SetPropertyUint32 (js_ctx, nodes, i, js_create_node (js_ctx, n)) ;
+		JS_SetPropertyUint32 (js_ctx, nodes, i, UDF_CreateNode (js_ctx, n)) ;
 	}
 
     return nodes ;
 }
 
+// retrieve relationships (edges) from a Path
+// returns a JavaScript array of Edge objects
 static JSValue js_path_relationships
 (
 	JSContext *js_ctx,
@@ -53,12 +57,14 @@ static JSValue js_path_relationships
 
 	for (int i = 0; i < l; i++) {
 		Edge *e = Path_GetEdge (p, i) ;
-		JS_SetPropertyUint32 (js_ctx, edges, i, js_create_edge (js_ctx, e)) ;
+		JS_SetPropertyUint32 (js_ctx, edges, i, UDF_CreateEdge (js_ctx, e)) ;
 	}
 
     return edges ;
 }
 
+// get the length of a Path
+// returns the number of edges in the path as a JS integer
 static JSValue js_path_length
 (
 	JSContext *js_ctx,
@@ -69,16 +75,33 @@ static JSValue js_path_length
         return JS_EXCEPTION ;
 	}
 
-	size_t l = Path_Len(p);
-    JSValue obj = JS_NewInt64 (js_ctx, l) ;
+    return JS_NewInt64 (js_ctx, Path_Len (p)) ;
+}
+
+// create a JSValue of type Path
+// create a JavaScript Path object from a FalkorDB Path
+// wraps a native FalkorDB Path into a QuickJS JSValue instance
+// return JSValue representing the Path in QuickJS
+JSValue UDF_CreatePath
+(
+	JSContext *js_ctx,  // JavaScript context
+	const Path *path    // pointer to the native FalkorDB Path
+) {
+    JSValue obj = JS_NewObjectClass (js_ctx, js_path_class_id) ;
+    if (JS_IsException (obj)) {
+        return obj ;
+    }
+
+    JS_SetOpaque (obj, (void*) path) ;
 
     return obj ;
 }
 
-// register the path class with the js-runtime
-void rt_register_path_class
+// register the Path class with a QuickJS runtime
+// associates the Path class definition with the given QuickJS runtime
+void UDF_RegisterPathClass
 (
-	JSRuntime *js_runtime
+	JSRuntime *js_runtime  // JavaScript runtime
 ) {
 	ASSERT (js_runtime != NULL) ;
 
@@ -87,10 +110,11 @@ void rt_register_path_class
 	ASSERT (res == 0) ;
 }
 
-// register the path class with the js-context
-void ctx_register_path_class
+// register the Path class with a QuickJS context
+// makes the Path class available within the provided QuickJS context
+void UDF_RegisterPathProto
 (
-	JSContext *js_ctx
+	JSContext *js_ctx  // JavaScript context
 ) {
 	ASSERT (js_ctx != NULL) ;
 
@@ -108,20 +132,5 @@ void ctx_register_path_class
 	ASSERT (res == 0) ;
 
     JS_SetClassProto (js_ctx, js_path_class_id, proto) ;
-}
-
-JSValue js_create_path
-(
-	JSContext *js_ctx,
-	const Path *path
-) {
-    JSValue obj = JS_NewObjectClass (js_ctx, js_path_class_id) ;
-    if (JS_IsException (obj)) {
-        return obj ;
-    }
-
-    JS_SetOpaque (obj, (void*) path) ;
-
-    return obj ;
 }
 

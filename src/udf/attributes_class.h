@@ -7,15 +7,17 @@
 
 #include "quickjs.h"
 
-JSValue js_entity_get_attributes
+// retrieve the attributes of a given entity.
+// returns a JSValue containing the entity's attributes
+JSValue UDF_EntityGetAttributes
 (
-	JSContext *js_ctx,
-	JSValueConst this_val
+	JSContext *js_ctx,      // the QuickJS context
+	JSValueConst this_val   // the JavaScript object representing the entity
 );
 
-// register the attribute class with the js-runtime
-void rt_register_attributes_class
+// register the `Attributes` class with the provided QuickJS runtime
+void UDF_RegisterAttributesClass
 (
-	JSRuntime *js_runtime
+	JSRuntime *js_runtime  // the QuickJS runtime in which to register the class
 );
 

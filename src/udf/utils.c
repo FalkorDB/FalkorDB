@@ -17,11 +17,115 @@ extern JSClassID js_attributes_class_id;  // JS Attributes class
 
 const char *UDF_LIB = NULL ;              // global register library name
 
+// allocate and return a new JavaScript runtime for UDF operations
+// each call creates an independent runtime
+// the caller owns the runtime and is responsible for freeing it via
+// JS_FreeRuntime() once no longer needed
+// returns: pointer to a newly created JSRuntime
+JSRuntime *UDF_GetJSRuntime(void) {
+	JSRuntime *js_rt = JS_NewRuntime () ;
+	ASSERT (js_rt != NULL) ;
+
+	UDF_RT_RegisterClasses (js_rt) ;
+	JS_SetMaxStackSize (js_rt, 1024 * 1024) ; // 1 MB stack limit
+
+	return js_rt ;
+}
+
+// create a JavaScript context dedicated to validating UDF scripts
+// the validation context is used only for syntax checking and static analysis
+// of UDF libraries before they are registered
+// it should not expose database
+// bindings or allow execution of UDFs against live data
+// returns pointer to a JSContext configured for validation operations
+JSContext *UDF_GetValidationJSContext
+(
+	JSRuntime *js_rt // the JSRuntime from which to create the context
+) {
+	ASSERT (js_rt != NULL) ;
+
+	JSContext *js_ctx = JS_NewContext(js_rt) ;
+	ASSERT (js_ctx != NULL) ;
+
+	// provide validation-only register() hook
+	UDF_RegisterFalkorObject (js_ctx) ;
+	UDF_SetFalkorRegisterImpl (js_ctx, UDF_FUNC_REG_MODE_VALIDATE) ;
+
+	return js_ctx ;
+}
+
+// create a JavaScript context dedicated to UDF registration
+// the registration context is used when loading a UDF library into the system
+// it should expose APIs required to declare UDFs
+// but not execution-time bindings
+// once registration completes, the context can be discarded
+// returns pointer to a JSContext configured for UDF registration
+JSContext *UDF_GetRegistrationJSContext
+(
+	JSRuntime *js_rt  // the JSRuntime from which to create the context
+) {
+	ASSERT (js_rt != NULL) ;
+
+	JSContext *js_ctx = JS_NewContext(js_rt) ;
+	ASSERT (js_ctx != NULL) ;
+
+	// provide validation-only register() hook
+	UDF_RegisterFalkorObject (js_ctx) ;
+	UDF_SetFalkorRegisterImpl (js_ctx, UDF_FUNC_REG_MODE_GLOBAL) ;
+
+	return js_ctx ;
+}
+
+// create a JavaScript context dedicated to executing UDFs
+// the execution context is used when queries invoke registered UDFs
+// it should provide the runtime environment necessary for execution
+// including bindings for type conversion, database value access
+// and error propagation
+// returns pointer to a JSContext configured for UDF execution
+JSContext *UDF_GetExecutionJSContext
+(
+	JSRuntime *js_rt  // the JSRuntime from which to create the context
+) {
+	ASSERT (js_rt != NULL) ;
+
+	JSContext *js_ctx = JS_NewContext(js_rt) ;
+	ASSERT (js_ctx != NULL) ;
+
+	// provide validation-only register() hook
+	UDF_CTX_RegisterClasses (js_ctx) ;
+	UDF_SetFalkorRegisterImpl (js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
+
+	return js_ctx ;
+}
+
+// remove a UDF library and all of its registered functions
+//
+// this function performs the following steps:
+//   1. Verify the library exists in the UDF repository
+//   2. Remove all functions defined by that library from the global function
+//      registry
+//   3. Remove the library itself from the repository
+//
+// returns:
+//   true  - if the library and its functions were successfully removed
+//   false - if the library does not exist. In this case, *err is set
+//
+// Notes:
+//   - unexpected internal errors (e.g. failure to remove a function) will
+//     trigger assertions
+//   - this function does not free the memory of *script; ownership is passed
+//     to the caller
 bool UDF_Delete
 (
-	const char *lib,      // UDF library
-	const char **script,  // [optional] [output] library script
-	char **err            // [output] error message
+	const char *lib,      // the name of the UDF library to delete
+
+	const char **script,  // optional output pointer
+						  // if not NULL, set to the original JS source
+						  // caller owns the returned string
+
+	char **err            // output pointer for an error message
+						  // on error, set to a heap-allocated string describing
+						  // the issue, caller must free the string using free()
 ) {
 	ASSERT (lib != NULL) ;
 	ASSERT (err != NULL) ;
@@ -131,16 +235,8 @@ bool UDF_Load
 	// create dedicated js runtime
 	//--------------------------------------------------------------------------
 
-	JSRuntime *js_rt = JS_NewRuntime() ;
-	UDF_RT_RegisterClasses (js_rt) ;
-	JS_SetMaxStackSize (js_rt, 1024 * 1024) ; // 1 MB stack limit
-
-	// create js context
-	JSContext *js_ctx = JS_NewContext(js_rt) ;
-	UDF_CTX_RegisterClasses (js_ctx) ;
-
-	// provide validation-only register() hook
-	falkor_set_register_impl (js_ctx, UDF_FUNC_REG_MODE_VALIDATE) ;
+	JSRuntime *js_rt  = UDF_GetJSRuntime() ;
+	JSContext *js_ctx = UDF_GetValidationJSContext (js_rt) ;
 
 	JSValue val = JS_Eval (js_ctx, script, script_len, "<input>",
 			JS_EVAL_TYPE_GLOBAL) ;
@@ -169,18 +265,13 @@ bool UDF_Load
 	// UDF passed validations, register library
 	//--------------------------------------------------------------------------
 
+	res = UDF_RepoRegisterLib (lib, script) ;
+	ASSERT (res == true) ;
+
 	// re-run script in registration mode
 	// create a new js context
 	JS_FreeContext (js_ctx) ;
-
-	js_ctx = JS_NewContext(js_rt) ;
-	UDF_CTX_RegisterClasses (js_ctx) ;
-
-	// provide global functions registration register() hook
-	falkor_set_register_impl (js_ctx, UDF_FUNC_REG_MODE_GLOBAL) ;
-
-	res = UDF_RepoRegisterLib (lib, script) ;
-	ASSERT (res == true) ;
+	js_ctx = UDF_GetRegistrationJSContext (js_rt) ;
 
 	// re-evaluate the script this time with the 'register' function actually
 	// adding UDF functions to the UDF repository
@@ -200,15 +291,10 @@ cleanup:
 		ASSERT (restore) ;
 	}
 
-	UDF_LIB = NULL ;  
+	UDF_LIB = NULL ;
 
-	if (js_ctx != NULL) {
-		JS_FreeContext (js_ctx) ;
-	}
-
-	if (js_rt != NULL) {
-		JS_FreeRuntime (js_rt) ;
-	}
+	JS_FreeContext (js_ctx) ;
+	JS_FreeRuntime (js_rt) ;
 
 	return res ;
 }

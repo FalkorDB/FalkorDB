@@ -4,6 +4,7 @@
 */
 
 #include "RG.h"
+#include "utils.h"
 #include "udf_ctx.h"
 #include "classes.h"
 #include "repository.h"
@@ -57,60 +58,32 @@ static UDFCtx *_UDFCtx_GetCtx(void) {
 
 		ctx->funcs = array_new (UDFFunc, 0) ;
 
-		//----------------------------------------------------------------------
-		// create js runtime
-		//----------------------------------------------------------------------
+		// create js runtime & context
+		ctx->js_rt  = UDF_GetJSRuntime() ;
+		ctx->js_ctx = UDF_GetExecutionJSContext (ctx->js_rt) ;
 
-		ctx->js_rt = JS_NewRuntime () ;
-		UDF_RT_RegisterClasses (ctx->js_rt) ;
-		JS_SetMaxStackSize (ctx->js_rt, 1024 * 1024) ; // 1 MB stack limit
-
-		//----------------------------------------------------------------------
-		// create js context
-		//----------------------------------------------------------------------
-
-		ctx->js_ctx = JS_NewContext (ctx->js_rt) ;
-		UDF_CTX_RegisterClasses (ctx->js_ctx) ;
-
+		// set context in TLS
 		pthread_setspecific (_tlsUDFCtx, ctx) ;
 
-		// register context classes & functions
-		falkor_set_register_impl (ctx->js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
-
+		// populate JS context
 		UDF_RepoPopulateJSContext (ctx->js_ctx, &ctx->v) ;
 	}
 
 	// validate UDF context version against UDF repository version
-	else if (unlikely (ctx->v < UDF_RepoGetVersion())) {
-		// free locally registered functions
+	if (unlikely (ctx->v < UDF_RepoGetVersion())) {
+		// free registered functions
 		_UDFCtx_ClearFuncs (ctx) ;
 
 		// UDF context is outdated, reconstruct JSContext
 		JS_FreeContext (ctx->js_ctx) ;  // free outdated js context
 
-		//----------------------------------------------------------------------
 		// create js context
-		//----------------------------------------------------------------------
-
-		ctx->js_ctx = JS_NewContext (ctx->js_rt) ;
-		// register context classes & functions
-		UDF_CTX_RegisterClasses (ctx->js_ctx) ;
-		falkor_set_register_impl (ctx->js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
+		ctx->js_ctx = UDF_GetExecutionJSContext (ctx->js_rt) ;
 
 		UDF_RepoPopulateJSContext (ctx->js_ctx, &ctx->v) ;
 	}
 
 	return ctx;
-}
-
-// retrive thread's javascript runtime
-JSRuntime *UDFCtx_GetJSRuntime(void) {
-	UDFCtx *ctx = _UDFCtx_GetCtx () ;
-
-	ASSERT (ctx        != NULL) ;
-	ASSERT (ctx->js_rt != NULL) ;
-
-	return ctx->js_rt ;
 }
 
 // retrive thread's javascript context

@@ -8,22 +8,26 @@
 #include "quickjs.h"
 #include "../graph/entities/node.h"
 
-// create a JSValue of type Node
-JSValue js_create_node
+// create a JavaScript Node object from a FalkorDB Node
+// wraps a native FalkorDB Node into a QuickJS JSValue instance
+// return JSValue representing the Node in QuickJS
+JSValue UDF_CreateNode
 (
-	JSContext *js_ctx,
-	const Node *node
+	JSContext *js_ctx,  // JavaScript context
+	const Node *node    // pointer to the native FalkorDB Node
 );
 
-// register the node class with the js-runtime
-void rt_register_node_class
+// register the Node class with a JavaScript runtime
+// associates the Node class definition with the given QuickJS runtime
+void UDF_RegisterNodeClass
 (
-	JSRuntime *js_runtime
+	JSRuntime *js_runtime  // JavaScript runtime
 );
 
-// register the node class with the js-context
-void ctx_register_node_class
+// register the Node class with a JavaScript context
+// makes the Node class available within the provided QuickJS context
+void UDF_RegisterNodeProto
 (
-	JSContext *js_ctx
+	JSContext *js_ctx  // JavaScript context
 );
 

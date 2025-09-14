@@ -8,22 +8,29 @@
 #include "quickjs.h"
 #include "../graph/entities/edge.h"
 
-// create a JSValue of type Edge
-JSValue js_create_edge
+//------------------------------------------------------------------------------
+// edge class binding
+//------------------------------------------------------------------------------
+
+// create a new JavaScript object of class `Edge` wrapping a FalkorDB edge
+// return a JSValue representing the edge object, or JS_EXCEPTION on error.
+// note The returned JSValue is owned by QuickJS; caller must free it with
+// JS_FreeValue when no longer needed
+JSValue UDF_CreateEdge
 (
-	JSContext *js_ctx,
-	const Edge *edge
+	JSContext *js_ctx,  // the QuickJS context in which to create the object.
+	const Edge *edge    // the FalkorDB edge to wrap (must not be NULL)
 );
 
-// register the edge class with the js-runtime
-void rt_register_edge_class
+// register the `Edge` class with the given QuickJS runtime
+void UDF_RegisterEdgeClass
 (
-	JSRuntime *js_runtime
+	JSRuntime *js_runtime  // the QuickJS runtime in which to register the class
 );
 
-// register the edge class with the js-context
-void ctx_register_edge_class
+// register the `Edge` class with the given QuickJS context
+void UDF_RegisterEdgeProto
 (
-	JSContext *js_ctx
+	JSContext *js_ctx  // the QuickJS context in which to register the class
 );
 

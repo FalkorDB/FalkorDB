@@ -9,11 +9,18 @@
 #include "../query_ctx.h"
 #include "../graph/entities/graph_entity.h"
 
-extern JSClassID js_node_class_id;        // JS node class
-extern JSClassID js_edge_class_id;        // JS edge class
-extern JSClassID js_attributes_class_id;  // JS attributes class
+//------------------------------------------------------------------------------
+// class IDs
+//------------------------------------------------------------------------------
 
+extern JSClassID js_node_class_id;        // QuickJS class ID for Node
+extern JSClassID js_edge_class_id;        // QuickJS class ID for Edge
+extern JSClassID js_attributes_class_id;  // QuickJS class ID for Attributes
+
+//------------------------------------------------------------------------------
 // forward declaration
+//------------------------------------------------------------------------------
+
 static int js_attributes_get_property (JSContext *js_ctx,
 		JSPropertyDescriptor *desc, JSValueConst obj, JSAtom prop) ;
 
@@ -21,19 +28,36 @@ static JSClassExoticMethods js_attributes_exotic = {
     .get_own_property = js_attributes_get_property,
 };
 
+//------------------------------------------------------------------------------
+// exotic property handler for the Attributes class
+//------------------------------------------------------------------------------
+
 static JSClassDef js_attributes_class = {
     "Attributes",
 	.exotic = &js_attributes_exotic,
 };
 
+//------------------------------------------------------------------------------
+// attribute property resolution
+//------------------------------------------------------------------------------
+
+// retrieve a requested attribute from a graph entity
+//
+// example:
+// n.attributes.height
+//
+// returns:  1 if property exists and was resolved,
+//           0 if not found,
+//           -1 if an exception occurred
+
 // retrieve requested attribute of a graph entity
 // e.g. return n.attributes.height ;
 static int js_attributes_get_property
 (
-	JSContext *js_ctx,
-	JSPropertyDescriptor *desc,
-	JSValueConst obj,
-	JSAtom prop
+	JSContext *js_ctx,           // the QuickJS context
+	JSPropertyDescriptor *desc,  // [optional] descriptor to populate
+	JSValueConst obj,            // the JS object wrapping the graph entity
+	JSAtom prop                  // the property (attribute name) to resolve
 ) {
 	GraphEntity *e = JS_GetOpaque (obj, js_attributes_class_id) ;
     if (!e) {
@@ -60,39 +84,31 @@ static int js_attributes_get_property
 
     // get attribute from node object
     SIValue *v = GraphEntity_GetProperty(e, attr_id);
+	if (v == ATTRIBUTE_NOTFOUND) {
+		return 0 ; // attribute not set
+	}
 
-    if (v != ATTRIBUTE_NOTFOUND) {
-        // key found -> convert to JSValue
-        if (desc) {
-            desc->flags  = JS_PROP_ENUMERABLE ;  // configurable, etc. as needed
-            desc->value  = UDF_SIValueToJS (js_ctx, *v) ;
-            desc->getter = JS_UNDEFINED ;
-            desc->setter = JS_UNDEFINED ;
-        }
-        return 1 ;  // property exists
-    }
+	// key found -> convert to JSValue
+	if (desc) {
+		desc->flags  = JS_PROP_ENUMERABLE ;  // configurable, etc. as needed
+		desc->value  = UDF_SIValueToJS (js_ctx, *v) ;
+		desc->getter = JS_UNDEFINED ;
+		desc->setter = JS_UNDEFINED ;
+	}
 
-    // missing attribute
-    return 0 ;  // property not found
+	return 1 ;
 }
 
-// register the attribute class with the js-runtime
-void rt_register_attributes_class
-(
-	JSRuntime *js_runtime
-) {
-	ASSERT (js_runtime != NULL) ;
+// -----------------------------------------------------------------------------
+// Attributes object factory
+// -----------------------------------------------------------------------------
 
-	// register for each runtime
-    int res =
-		JS_NewClass (js_runtime, js_attributes_class_id, &js_attributes_class) ;
-	ASSERT (res == 0) ;
-}
-
-JSValue js_entity_get_attributes
+// create an `Attributes` object for a given graph entity
+// returns A new JS object of class `Attributes`, or JS_EXCEPTION on error
+JSValue UDF_EntityGetAttributes
 (
-	JSContext *js_ctx,
-	JSValueConst this_val
+	JSContext *js_ctx,      // the QuickJS context
+	JSValueConst this_val   // the JavaScript object representing the entity
 ) {
 	JSClassID cid = JS_GetClassID (this_val) ;
 	ASSERT (cid == js_node_class_id || cid == js_edge_class_id) ;
@@ -106,5 +122,22 @@ JSValue js_entity_get_attributes
     JS_SetOpaque (obj, entity) ;
 
     return obj;
+}
+
+//------------------------------------------------------------------------------
+// Class registration
+//------------------------------------------------------------------------------
+
+// register the `Attributes` class with the provided QuickJS runtime
+void UDF_RegisterAttributesClass
+(
+	JSRuntime *js_runtime  // the QuickJS runtime in which to register the class
+) {
+	ASSERT (js_runtime != NULL) ;
+
+	// register for each runtime
+	int res = JS_NewClass (js_runtime, js_attributes_class_id,
+			&js_attributes_class) ;
+	ASSERT (res == 0) ;
 }
 

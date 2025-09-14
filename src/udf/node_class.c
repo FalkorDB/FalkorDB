@@ -26,8 +26,8 @@ static JSClassDef js_node_class = {
 	.exotic = &js_node_exotic
 } ;
 
-// retrieve requested attribute of a node
-// e.g. return n.attributes.height ;
+// property accessor for Node attributes
+// allows accessing user-defined attributes via n.attributes.xxx
 static int js_node_get_property
 (
 	JSContext *js_ctx,
@@ -72,22 +72,25 @@ static int js_node_get_property
 
     // get attribute from node object
     SIValue *v = GraphEntity_GetProperty (e, attr_id) ;
+    if (v == ATTRIBUTE_NOTFOUND) {
+		return 0 ; // property not found
+	}
 
-    if (v != ATTRIBUTE_NOTFOUND) {
-        // key found -> convert to JSValue
-        if (desc) {
-            desc->flags  = JS_PROP_ENUMERABLE ;  // configurable, etc. as needed
-            desc->value  = UDF_SIValueToJS (js_ctx, *v) ;
-            desc->getter = JS_UNDEFINED ;
-            desc->setter = JS_UNDEFINED ;
-        }
-        return 1 ;  // property exists
-    }
-
-    // missing attribute
-    return 0 ;  // property not found
+	// key found -> convert to JSValue
+	if (desc) {
+		desc->flags  = JS_PROP_ENUMERABLE ;  // configurable, etc. as needed
+		desc->value  = UDF_SIValueToJS (js_ctx, *v) ;
+		desc->getter = JS_UNDEFINED ;
+		desc->setter = JS_UNDEFINED ;
+	}
+	return 1 ;  // property exists
 }
 
+//------------------------------------------------------------------------------
+// node accessors
+//------------------------------------------------------------------------------
+
+// return the ID of the node
 static JSValue js_entity_get_id
 (
 	JSContext *js_ctx,
@@ -103,6 +106,7 @@ static JSValue js_entity_get_id
     return obj ;
 }
 
+// return the label(s) associated with the node
 static JSValue js_entity_get_labels
 (
 	JSContext *js_ctx,
@@ -134,10 +138,29 @@ static JSValue js_entity_get_labels
     return obj ;
 }
 
-// register the node class with the js-runtime
-void rt_register_node_class
+// create a JavaScript Node object from a FalkorDB Node
+// wraps a native FalkorDB Node into a QuickJS JSValue instance
+// return JSValue representing the Node in QuickJS
+JSValue UDF_CreateNode
 (
-	JSRuntime *js_runtime
+	JSContext *js_ctx,  // JavaScript context
+	const Node *node    // pointer to the native FalkorDB Node
+) {
+    JSValue obj = JS_NewObjectClass (js_ctx, js_node_class_id) ;
+    if (JS_IsException (obj)) {
+        return obj ;
+    }
+
+    JS_SetOpaque (obj, (void*) node) ;
+
+    return obj ;
+}
+
+// register the Node class with a JavaScript runtime
+// associates the Node class definition with the given QuickJS runtime
+void UDF_RegisterNodeClass
+(
+	JSRuntime *js_runtime  // JavaScript runtime
 ) {
 	ASSERT (js_runtime != NULL) ;
 
@@ -146,10 +169,11 @@ void rt_register_node_class
 	ASSERT (res == 0) ;
 }
 
-// register the node class with the js-context
-void ctx_register_node_class
+// register the Node class with a JavaScript context
+// makes the Node class available within the provided QuickJS context
+void UDF_RegisterNodeProto
 (
-	JSContext *js_ctx
+	JSContext *js_ctx  // JavaScript context
 ) {
 	ASSERT (js_ctx != NULL) ;
 
@@ -160,27 +184,12 @@ void ctx_register_node_class
 			(JSCFunctionListEntry[]) {
             JS_CGETSET_DEF ("id", js_entity_get_id, NULL),
             JS_CGETSET_DEF ("labels", js_entity_get_labels, NULL),
-            JS_CGETSET_DEF ("attributes", js_entity_get_attributes, NULL)
+            JS_CGETSET_DEF ("attributes", UDF_EntityGetAttributes, NULL)
         },
         3
     ) ;
 	ASSERT (res == 0) ;
 
     JS_SetClassProto (js_ctx, js_node_class_id, proto) ;
-}
-
-JSValue js_create_node
-(
-	JSContext *js_ctx,
-	const Node *node
-) {
-    JSValue obj = JS_NewObjectClass (js_ctx, js_node_class_id) ;
-    if (JS_IsException (obj)) {
-        return obj ;
-    }
-
-    JS_SetOpaque (obj, (void*) node) ;
-
-    return obj ;
 }
 

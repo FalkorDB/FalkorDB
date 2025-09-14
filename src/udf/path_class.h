@@ -9,21 +9,26 @@
 #include "../datatypes/path/path.h"
 
 // create a JSValue of type Path
-JSValue js_create_path
+// create a JavaScript Path object from a FalkorDB Path
+// wraps a native FalkorDB Path into a QuickJS JSValue instance
+// return JSValue representing the Path in QuickJS
+JSValue UDF_CreatePath
 (
-	JSContext *js_ctx,
-	const Path *path
+	JSContext *js_ctx,  // JavaScript context
+	const Path *path    // pointer to the native FalkorDB Path
 );
 
-// register the path class with the js-runtime
-void rt_register_path_class
+// register the Path class with a QuickJS runtime
+// associates the Path class definition with the given QuickJS runtime
+void UDF_RegisterPathClass
 (
-	JSRuntime *js_runtime
+	JSRuntime *js_runtime  // JavaScript runtime
 );
 
-// register the path class with the js-context
-void ctx_register_path_class
+// register the Path class with a QuickJS context
+// makes the Path class available within the provided QuickJS context
+void UDF_RegisterPathProto
 (
-	JSContext *js_ctx
+	JSContext *js_ctx  // JavaScript context
 );
 

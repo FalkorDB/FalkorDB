@@ -11,27 +11,17 @@
 #include "../query_ctx.h"
 #include "../arithmetic/func_desc.h"
 
-extern const char *UDF_LIB ;  // global register library name
+// global UDF library name used when registering functions globally
+extern const char *UDF_LIB ;
 
-// register the falkor object with the js-context
-void ctx_register_falkor_object
-(
-	JSContext *js_ctx
-) {
-	ASSERT (js_ctx != NULL) ;
+//------------------------------------------------------------------------------
+// falkor.register implementations
+//------------------------------------------------------------------------------
 
-    // create a plain namespace object: const falkor = {};
-    JSValue falkor_obj = JS_NewObject (js_ctx) ;
-
-    // expose the namespace globally as "falkor"
-    JSValue global_obj = JS_GetGlobalObject (js_ctx) ;
-    JS_SetPropertyStr (js_ctx, global_obj, "falkor", falkor_obj) ;
-
-    // free what we got from GetGlobalObject
-    JS_FreeValue (js_ctx, global_obj) ;
-}
-
-// dryrun register UDF
+// validation-only implementation of `falkor.register`
+// ensures the function signature is correct and not already defined
+// but does not persist the function
+// JS call: falkor.register("func_name", function);
 static JSValue validate_register_udf
 (
 	JSContext *js_ctx,      // JavaScript context
@@ -42,10 +32,7 @@ static JSValue validate_register_udf
 	ASSERT (argv   != NULL) ;
 	ASSERT (js_ctx != NULL) ;
 
-	// user called: falkor.register('func_name', function);
-
 	if (argc != 2) {
-		// raise a TypeError to the JS caller
 		return JS_ThrowTypeError (js_ctx, "falkor.register() expects 2 arguments") ;
 	}
 
@@ -78,7 +65,9 @@ cleanup:
 	return res ;
 }
 
-// local register UDF
+// thread-local implementation of `falkor.register`
+// functions are stored in the TLS UDF context
+// JS call: falkor.register("func_name", function);
 static JSValue local_register_udf
 (
 	JSContext *js_ctx,      // JavaScript context
@@ -89,10 +78,7 @@ static JSValue local_register_udf
 	ASSERT (argv   != NULL) ;
 	ASSERT (js_ctx != NULL) ;
 
-	// user called: falkor.register('func_name', function);
-
 	if (argc != 2) {
-		// raise a TypeError to the JS caller
 		return JS_ThrowTypeError (js_ctx, "falkor.register() expects 2 arguments") ;
 	}
 
@@ -109,7 +95,7 @@ static JSValue local_register_udf
 				"second argument must be a function") ;
 	}
 
-	// register function with TLS UDF context
+	// register function in TLS UDF context
 	UDFCtx_RegisterFunction (JS_DupValue (js_ctx, func), func_name) ;
 
 cleanup:
@@ -118,7 +104,9 @@ cleanup:
 	return JS_NewBool (js_ctx, true) ;
 }
 
-// register UDF
+// global implementation of `falkor.register`
+// functions are persisted in the global repository
+// JS call: falkor.register("func_name", function);
 static JSValue global_register_udf
 (
 	JSContext *js_ctx,      // JavaScript context
@@ -129,10 +117,7 @@ static JSValue global_register_udf
 	ASSERT (argv   != NULL) ;
 	ASSERT (js_ctx != NULL) ;
 
-	// user called: falkor.register('func_name', function);
-
 	if (argc != 2) {
-		// raise a TypeError to the JS caller
 		return JS_ThrowTypeError (js_ctx, "falkor.register() expects 2 arguments") ;
 	}
 
@@ -164,11 +149,33 @@ cleanup:
 	return res ;
 }
 
-// set falkor.register function
-void falkor_set_register_impl
+//------------------------------------------------------------------------------
+// falkor object setup
+//------------------------------------------------------------------------------
+
+// register the global falkor object in the given QuickJS context
+void UDF_RegisterFalkorObject
 (
-	JSContext *js_ctx,              // javascript context
-	UDF_JSCtxRegisterFuncMode mode  // type of 'register' function
+	JSContext *js_ctx  // the QuickJS context in which to register the object
+) {
+	ASSERT (js_ctx != NULL) ;
+
+    // create a plain namespace object: const falkor = {};
+    JSValue falkor_obj = JS_NewObject (js_ctx) ;
+
+    // expose the namespace globally as "falkor"
+    JSValue global_obj = JS_GetGlobalObject (js_ctx) ;
+    JS_SetPropertyStr (js_ctx, global_obj, "falkor", falkor_obj) ;
+
+    // free what we got from GetGlobalObject
+    JS_FreeValue (js_ctx, global_obj) ;
+}
+
+// set the implementation of the `falkor.register` function
+void UDF_SetFalkorRegisterImpl
+(
+	JSContext *js_ctx,              // the QuickJS context
+	UDF_JSCtxRegisterFuncMode mode  // the registration mode
 ) {
 	ASSERT(js_ctx != NULL);
 
@@ -178,7 +185,7 @@ void falkor_set_register_impl
 
 	ASSERT (JS_IsObject (falkor_obj));
 
-    // create the C function object depending on mode
+	// pick implementation
     JSValue func_obj = JS_UNDEFINED;
     switch (mode) {
         case UDF_FUNC_REG_MODE_VALIDATE:
