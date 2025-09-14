@@ -276,7 +276,22 @@ bool UDF_Load
 	// re-evaluate the script this time with the 'register' function actually
 	// adding UDF functions to the UDF repository
 	val = JS_Eval (js_ctx, script, script_len, "<input>", JS_EVAL_TYPE_GLOBAL) ;
-	ASSERT (!JS_IsException (val)) ;
+
+	// although we've passed validation we can still fail registrating the lib
+	// this can happen if the scripts tried to register the same function
+	// multiple times e.g. falkor.register('a', A); falkor.register('a', B);
+	if (JS_IsException (val)) {
+		res = false ;
+		UDF_RepoRemoveLib (lib, NULL) ;
+		JS_FreeValue (js_ctx, val) ;
+
+		if (err) {
+			asprintf (err, "Failed to register UDF library: '%s'", lib);
+		}
+
+		goto cleanup ;
+	}
+
 	JS_FreeValue (js_ctx, val) ;
 
 	// all done expose the library

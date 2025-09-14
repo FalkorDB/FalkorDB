@@ -345,14 +345,6 @@ int RedisModule_OnLoad
 	}
 
 	if(RedisModule_CreateCommand(ctx,
-				"graph.EVAL",
-				Graph_Eval,
-				"readonly deny-script",
-				0, 0, 0) == REDISMODULE_ERR) {
-		return REDISMODULE_ERR;
-	}
-
-	if(RedisModule_CreateCommand(ctx,
 				"graph.UDF",
 				Graph_UDF,
 				"deny-script",

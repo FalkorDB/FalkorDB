@@ -2,12 +2,6 @@ from common import *
 
 GRAPH_ID = "udfs"
 
-class library():
-    def __init__(self, name, funcs, script=None):
-        self.name = name
-        self.funcs = funcs
-        self.script = script
-
 class testUDF():
     def __init__(self):
         self.env, self.db = Env()
@@ -73,16 +67,20 @@ class testUDF():
         self.env.assertEqual(len(res), 0)
 
     def tearDown(self):
-        if GRAPH_ID in self.db.list_graphs():
-            self.graph.delete()
+        self.db.udf_flush()
+        self.conn.flushall()
 
     def test_return_primitives(self):
+        """
+        test the returning JS primitives back to FalkorDB works as expected
+        """
+
         script ="""
         function ReturnInt       () { return 12;        }
         function ReturnFloat     () { return 3.14;      }
         function ReturnTrue      () { return true;      }
-        function ReturnString    () { return 'hello';   }
         function ReturnFalse     () { return false;     }
+        function ReturnString    () { return 'hello';   }
         function ReturnNull      () { return null;      }
         function ReturnUndefined () { return undefined; }
 
@@ -128,7 +126,7 @@ class testUDF():
         script ="""
         function ReturnArray  () { return [1, null, 'str', [42]]; }
         function ReturnObject () { return {x: 1, y: 'val', z: [true, false]}; }
-        function ReturnNested  () { return {nested: [1, {k:'v'}, [true, null]]}; }
+        function ReturnNested () { return {nested: [1, {k:'v'}, [true, null]]}; }
 
         falkor.register ('ReturnArray',  ReturnArray);
         falkor.register ('ReturnObject', ReturnObject);
@@ -156,14 +154,12 @@ class testUDF():
         function ReturnRegExp  () { return /abc.*/; }
         function ReturnSymbol  () { return Symbol('s'); }
         function ReturnF32Array() { return new Float32Array([1.1, 2.2, 3.3]); }
-        function ReturnPoint   () { return {x:1.0, y:2.0, z:3.0}; }
 
-        falkor.register ('ReturnBigInt', ReturnBigInt);
-        falkor.register ('ReturnDate',   ReturnDate);
-        falkor.register ('ReturnRegExp', ReturnRegExp);
-        falkor.register ('ReturnSymbol', ReturnSymbol);
+        falkor.register ('ReturnBigInt',   ReturnBigInt);
+        falkor.register ('ReturnDate',     ReturnDate);
+        falkor.register ('ReturnRegExp',   ReturnRegExp);
+        falkor.register ('ReturnSymbol',   ReturnSymbol);
         falkor.register ('ReturnF32Array', ReturnF32Array);
-        falkor.register ('ReturnPoint', ReturnPoint);
         """
 
         self.db.udf_load("ReturnSpecials", script, True)
@@ -194,11 +190,7 @@ class testUDF():
         #EPS = 1e-5
         #self.env.assertTrue(all(abs(a - b) < EPS for a, b in zip(v, [1.1, 2.2, 3.3])))
 
-        # Point object
-        v = self.graph.query("RETURN ReturnPoint()").result_set[0][0]
-        self.env.assertTrue("x" in v and "y" in v)
-
-    # Test that a simple "Echo" UDF returns all supported FalkorDB types unchanged.
+    # Test that a simple "Echo" UDF returns all supported FalkorDB types unchanged
     def test_types(self):
         # Register UDF (overwrites if already exists)
         script ="""
@@ -297,7 +289,7 @@ class testUDF():
         self.env.assertEqual(n, echo_n)
 
         # Edge
-        q = "MATCH ()-[r:KNOWS]->() RETURN r, Echo(r)"
+        q = "MATCH ()-[e:KNOWS]->() RETURN e, Echo(e)"
         e, echo_e = self.graph.query(q).result_set[0]
         self.env.assertEqual(e, echo_e)
 
@@ -504,6 +496,39 @@ class testUDF():
         except ResponseError as e:
             self.env.assertIn("already registered", str(e).lower())
 
+        y = self.graph.query("RETURN Y()").result_set[0][0]
+        self.env.assertEqual(y, 1)
+
+    def test_load_large_script(self):
+        """
+        Test loading a large JS script without registrating any UDF
+        validate its registration by a follow up lib which calls one of the
+        previously loaded functions
+        """
+
+        template_function = "function {name}() {{ return {result}; }}"
+
+        # Collect all function definitions efficiently in a list
+        functions = [
+            template_function.format(name=f"func_{i}", result=i)
+            for i in range(20000)
+        ]
+
+        # Join them once into a single script
+        script = "\n".join(functions)
+
+        res = self.db.udf_load("large_lib", script)
+        self.env.assertEqual(res, "OK")
+
+        # register a second library which uses the previous one
+        script = "falkor.register('proxy_func_515', function() { return func_515();})"
+        res = self.db.udf_load("proxy_lib", script)
+        self.env.assertEqual(res, "OK")
+
+        # try calling one of large_lib functions
+        res = self.graph.query("RETURN proxy_func_515()").result_set[0][0]
+        self.env.assertEqual(res, 515)
+
     def test_invalid_js_script(self):
         """
         Test invalid JavaScript script:
@@ -644,6 +669,9 @@ class testUDF():
         self.db.udf_load("persist_del_lib", script)
         self._assert_udf_exists("persist_del_lib", ["PersistDel"])
 
+        # save DB
+        self.conn.save()
+
         # delete library
         self.db.udf_delete("persist_del_lib")
         self._assert_udf_missing("persist_del_lib")
@@ -734,7 +762,7 @@ class testUDF():
 
     def test_flush_on_empty_registry(self):
         """
-        Test flushing when no libraries exist:
+        Test flushing when no libraries:
         - Ensure FLUSH is safe and succeeds even when registry is already empty.
         """
 
@@ -757,6 +785,9 @@ class testUDF():
 
         script = "function PersistFlush() { return 'stay?'; } falkor.register('PersistFlush', PersistFlush);"
         self.db.udf_load("flush_lib", script)
+
+        # save
+        self.conn.save()
 
         # flush all
         self.db.udf_flush()
@@ -794,12 +825,29 @@ class test_udf_javascript():
         self.graph = self.db.select_graph(GRAPH_ID)
         self.conn = self.env.getConnection()
 
+    def tearDown(self):
+        self.db.udf_flush()
+        self.conn.flushall()
+
     def test_register_existing_udf(self):
         """
         Registering the same UDF name twice within the same library should fail.
         """
 
-        self.db.udf_flush()
+        script = """
+        function f() { return 1; }
+        falkor.register('f', f);
+        falkor.register('f', f);
+        """
+
+        try:
+            self.db.udf_load("dup", script)
+            assert False, "Expected duplicate registration to fail"
+        except ResponseError as e:
+            self.env.assertIn("Failed to register UDF library", str(e))
+
+        #-----------------------------------------------------------------------
+
         script = """
         function f() { return 1; }
         falkor.register('f', f);
@@ -836,8 +884,6 @@ class test_udf_javascript():
         since it's internal to the library.
         """
 
-        self.db.udf_flush()
-
         script = """
         function helper() { return 1; }
         function helper() { return 2; }  // redeclaration
@@ -849,13 +895,22 @@ class test_udf_javascript():
         v = self.graph.query("RETURN exposed()").result_set[0][0]
         self.env.assertEqual(v, 2)
 
+        #-----------------------------------------------------------------------
+
+        # overwrite helper once again, see that the latest version takes precedence
+        script = """
+        function helper() { return 3; }
+        """
+
+        self.db.udf_load("lib_redecl_new", script)
+        v = self.graph.query("RETURN exposed()").result_set[0][0]
+        self.env.assertEqual(v, 3)
+
     def test_cross_library_calls(self):
         """
         Verify cross-library visibility:
         - Functions in other libraries are accessible to one another
         """
-
-        self.db.udf_flush()
 
         script1 = """
         function base() { return 100; }
@@ -865,7 +920,6 @@ class test_udf_javascript():
 
         script2 = """
         function wrapper() {
-            // Attempt to call base() directly - should fail
             return base();
         }
         falkor.register('wrapper', wrapper);
@@ -883,7 +937,7 @@ class test_udf_javascript():
 
         self.db.udf_flush()
         script = """
-        function bad() { return console.log('oops'); }
+        function bad() { console.log('oops'); }
         falkor.register('bad', bad);
         """
 

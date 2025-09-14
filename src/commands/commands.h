@@ -34,8 +34,7 @@ typedef enum {
 	CMD_ACL         = 15,
 	CMD_PASSWORD    = 16,
 	CMD_MEMORY      = 17,
-	CMD_EVAL        = 18,
-	CMD_UDF         = 19
+	CMD_UDF         = 18
 } GRAPH_Commands;
 
 //------------------------------------------------------------------------------
@@ -53,7 +52,6 @@ int Graph_ACL         (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_List        (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_Info        (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_Copy        (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
-int Graph_Eval        (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_Debug       (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_Delete      (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_Effect      (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
