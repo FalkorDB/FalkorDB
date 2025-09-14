@@ -86,6 +86,16 @@ static UDFCtx *_UDFCtx_GetCtx(void) {
 	return ctx;
 }
 
+// retrive thread's javascript runtime
+JSRuntime *UDFCtx_GetJSRuntime(void) {
+	UDFCtx *ctx = _UDFCtx_GetCtx () ;
+
+	ASSERT (ctx         != NULL) ;
+	ASSERT (ctx->js_rt  != NULL) ;
+
+	return ctx->js_rt ;
+}
+
 // retrive thread's javascript context
 JSContext *UDFCtx_GetJSContext(void) {
 	UDFCtx *ctx = _UDFCtx_GetCtx () ;

@@ -935,7 +935,6 @@ class test_udf_javascript():
         (sandbox enforcement).
         """
 
-        self.db.udf_flush()
         script = """
         function bad() { console.log('oops'); }
         falkor.register('bad', bad);
@@ -953,7 +952,6 @@ class test_udf_javascript():
         Globals inside a library should persist across calls within the same lib.
         """
 
-        self.db.udf_flush()
         script = """
         var counter = 0;
         function inc() { counter += 1; return counter; }
@@ -971,7 +969,6 @@ class test_udf_javascript():
         Registering an anonymous function should work normally.
         """
 
-        self.db.udf_flush()
         script = """
         falkor.register('anon', function(x) { return x * 2; });
         """
@@ -985,7 +982,6 @@ class test_udf_javascript():
         Exceptions in UDFs should propagate as Cypher errors.
         """
 
-        self.db.udf_flush()
         script = """
         function fail() { throw new Error('boom'); }
         falkor.register('fail', fail);
@@ -1005,7 +1001,6 @@ class test_udf_javascript():
         - Too many arguments should be ignored.
         """
 
-        self.db.udf_flush()
         script = """
         function f(x, y) { return [x, y]; }
         falkor.register('f', f);
@@ -1023,7 +1018,6 @@ class test_udf_javascript():
         UDFs returning `undefined` should map to Cypher NULL.
         """
 
-        self.db.udf_flush()
         script = """
         function undef() { return undefined; }
         falkor.register('undef', undef);
@@ -1032,4 +1026,29 @@ class test_udf_javascript():
 
         v = self.graph.query("RETURN undef()").result_set[0][0]
         self.env.assertEqual(v, None)
+
+    def test_runtime_interrupt(self):
+        """
+        UDFs should be time bounded, avoiding infinity loop
+        and long computations
+        """
+
+        script = """
+        function infinity() {
+            while(1) {
+                var a = 1;
+            }
+            return 1;
+        }
+
+        falkor.register('infinity', infinity);
+        """
+
+        self.db.udf_load("infinity", script)
+
+        try:
+            v = self.graph.query("RETURN infinity()")
+            assert False, "Expected JS exception to propagate"
+        except ResponseError as e:
+            self.env.assertIn("UDF Exception: interrupted", str(e))
 
