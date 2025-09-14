@@ -8,7 +8,10 @@
 #include "quickjs.h"
 #include "../datatypes/path/path.h"
 
-// create a JSValue of type Path
+//------------------------------------------------------------------------------
+// path class binding
+//------------------------------------------------------------------------------
+
 // create a JavaScript Path object from a FalkorDB Path
 // wraps a native FalkorDB Path into a QuickJS JSValue instance
 // return JSValue representing the Path in QuickJS

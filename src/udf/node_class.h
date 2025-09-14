@@ -8,6 +8,10 @@
 #include "quickjs.h"
 #include "../graph/entities/node.h"
 
+//------------------------------------------------------------------------------
+// node class binding
+//------------------------------------------------------------------------------
+
 // create a JavaScript Node object from a FalkorDB Node
 // wraps a native FalkorDB Node into a QuickJS JSValue instance
 // return JSValue representing the Node in QuickJS

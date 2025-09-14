@@ -186,14 +186,13 @@ static JSValue js_edge_startNode
 // edge object creation
 //------------------------------------------------------------------------------
 
-// create a new JavaScript object of class `Edge` wrapping a FalkorDB edge
-// return a JSValue representing the edge object, or JS_EXCEPTION on error.
-// note The returned JSValue is owned by QuickJS; caller must free it with
-// JS_FreeValue when no longer needed
+// create a JavaScript Edge object from a FalkorDB Edge
+// wraps a native FalkorDB Edge into a QuickJS JSValue instance
+// return JSValue representing the Edge in QuickJS
 JSValue UDF_CreateEdge
 (
-	JSContext *js_ctx,  // the QuickJS context in which to create the object.
-	const Edge *edge    // the FalkorDB edge to wrap (must not be NULL)
+	JSContext *js_ctx,  // JavaScript context
+	const Edge *edge    // pointer to the native FalkorDB Edge
 ) {
     JSValue obj = JS_NewObjectClass (js_ctx, js_edge_class_id) ;
     if (JS_IsException (obj)) {
@@ -209,7 +208,8 @@ JSValue UDF_CreateEdge
 // class registration
 //------------------------------------------------------------------------------
 
-// register the `Edge` class with the given QuickJS runtime
+// register the Edge class with a JavaScript runtime
+// associates the Edge class definition with the given QuickJS runtime
 void UDF_RegisterEdgeClass
 (
 	JSRuntime *js_runtime  // the QuickJS runtime in which to register the class
@@ -221,10 +221,11 @@ void UDF_RegisterEdgeClass
 	ASSERT (res == 0) ;
 }
 
-// register the `Edge` class with the given QuickJS context
+// register the Edge class with a JavaScript context
+// makes the Edge class available within the provided QuickJS context
 void UDF_RegisterEdgeProto
 (
-	JSContext *js_ctx  // the QuickJS context in which to register the class
+	JSContext *js_ctx  // JavaScript context
 ) {
 	ASSERT (js_ctx != NULL) ;
 

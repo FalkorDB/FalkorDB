@@ -7,7 +7,7 @@
 
 #include "quickjs.h"
 
-// retrieve the attributes of a given entity.
+// retrieve the attributes of a given entity
 // returns a JSValue containing the entity's attributes
 JSValue UDF_EntityGetAttributes
 (

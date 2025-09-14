@@ -99,12 +99,12 @@ static int js_attributes_get_property
 	return 1 ;
 }
 
-// -----------------------------------------------------------------------------
+//------------------------------------------------------------------------------
 // Attributes object factory
-// -----------------------------------------------------------------------------
+//------------------------------------------------------------------------------
 
 // create an `Attributes` object for a given graph entity
-// returns A new JS object of class `Attributes`, or JS_EXCEPTION on error
+// returns a new JS object of class `Attributes`, or JS_EXCEPTION on error
 JSValue UDF_EntityGetAttributes
 (
 	JSContext *js_ctx,      // the QuickJS context
