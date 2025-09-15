@@ -391,8 +391,8 @@ class testProcedures(FlowTestsBase):
         udf          = f[7]
 
         self.env.assertEquals(name,         "add")
-        self.env.assertEquals(return_type,  "Map, List, String, Boolean, Integer, Float, or Null")
-        self.env.assertEquals(arguments,    ["Map, List, String, Boolean, Integer, Float, or Null"])
+        self.env.assertEquals(return_type,  "Map, List, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, or Null")
+        self.env.assertEquals(arguments,    ['Map, List, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, or Null', 'Map, List, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, or Null'])
         self.env.assertEquals(internal,     True)
         self.env.assertEquals(reducible,    True)
         self.env.assertEquals(aggregation,  False)
@@ -435,8 +435,8 @@ class testProcedures(FlowTestsBase):
         udf          = f[7]
 
         self.env.assertEquals(name,         "case")
-        self.env.assertEquals(return_type,  "Map, Node, Edge, List, Path, Datetime, Local Datetime, Date, Time, Local Time, Duration, String, Boolean, Integer, Float, Null, Pointer, Point, or Vectorf32")
-        self.env.assertEquals(arguments,    ["Map, Node, Edge, List, Path, Datetime, Local Datetime, Date, Time, Local Time, Duration, String, Boolean, Integer, Float, Null, Pointer, Point, or Vectorf32"])
+        self.env.assertEquals(return_type,  "Map, Node, Edge, List, Path, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, Null, Pointer, Point, or Vectorf32")
+        self.env.assertEquals(arguments,    ['Map, Node, Edge, List, Path, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, Null, Pointer, Point, or Vectorf32'])
         self.env.assertEquals(internal,     True)
         self.env.assertEquals(reducible,    True)
         self.env.assertEquals(aggregation,  False)
