@@ -603,6 +603,15 @@ class testOptimizationsPlan(FlowTestsBase):
         expected = [[10000]]
         self.env.assertEqual(resultset, expected)
         
+        # Verify the intermediate aggregation is calculated properly
+        # Test the WITH clause separately to ensure it produces the correct count
+        intermediate_query = """MATCH (n1:N1), (n2:N2)
+                               WITH COUNT(*) AS c
+                               RETURN c"""
+        intermediate_result = test_graph.query(intermediate_query).result_set
+        expected_intermediate = [[10000]]
+        self.env.assertEqual(intermediate_result, expected_intermediate)
+        
         # Check that the execution plan is optimized (should not contain nested Aggregate operations)
         executionPlan = str(test_graph.explain(query))
         self.env.assertIn("Project", executionPlan)
@@ -628,6 +637,26 @@ class testOptimizationsPlan(FlowTestsBase):
         mixed_resultset = test_graph.query(mixed_query).result_set
         expected_mixed = [[20400]]
         self.env.assertEqual(mixed_resultset, expected_mixed)
+        
+        # Additional test: Verify COUNT(*) works correctly in multiple scenarios
+        # Test 1: Single label count
+        single_label_query = """MATCH (n:N1) RETURN COUNT(*)"""
+        single_result = test_graph.query(single_label_query).result_set
+        expected_single = [[100]]
+        self.env.assertEqual(single_result, expected_single)
+        
+        # Test 2: Verify aggregation with WHERE clause (should not be optimized)
+        where_query = """MATCH (n1:N1), (n2:N2) WHERE n1.id = n2.id RETURN COUNT(*)"""
+        where_result = test_graph.query(where_query).result_set
+        expected_where = [[100]]  # Only matching IDs (1-100 match)
+        self.env.assertEqual(where_result, expected_where)
+        
+        # Test 3: Verify that optimization doesn't break with additional aggregations
+        sum_query = """MATCH (n1:N1) RETURN COUNT(*), SUM(n1.id)"""
+        sum_result = test_graph.query(sum_query).result_set
+        # COUNT(*) = 100, SUM(1..100) = 5050
+        expected_sum = [[100, 5050]]
+        self.env.assertEqual(sum_result, expected_sum)
         
         # Clean up test data
         test_graph.delete()

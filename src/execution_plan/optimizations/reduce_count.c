@@ -76,6 +76,34 @@ static int _identifyNodeCountPattern(OpBase *root, OpResult **opResult, OpAggreg
 	return 1;
 }
 
+// Helper function to create and apply the count optimization
+static bool _applyCountOptimization(ExecutionPlan *plan, OpResult *opResult, 
+									OpAggregate *opAggregate, SIValue countValue, 
+									OpBase **opsToRemove, uint removeCount) {
+	// construct a constant expression, used by a new projection operation
+	AR_ExpNode *exp = AR_EXP_NewConstOperandNode(countValue);
+	// the new expression must be aliased to populate the Record
+	exp->resolved_name = opAggregate->aggregate_exps[0]->resolved_name;
+	AR_ExpNode **exps = array_new(AR_ExpNode *, 1);
+	array_append(exps, exp);
+
+	OpBase *opProject = NewProjectOp(opAggregate->op.plan, exps);
+
+	// Remove all operations that need to be removed
+	for(uint i = 0; i < removeCount; i++) {
+		ExecutionPlan_RemoveOp(plan, opsToRemove[i]);
+		OpBase_Free(opsToRemove[i]);
+	}
+
+	// Remove the aggregate operation
+	ExecutionPlan_RemoveOp(plan, (OpBase *)opAggregate);
+	OpBase_Free((OpBase *)opAggregate);
+
+	// Add the project operation
+	ExecutionPlan_AddOp((OpBase *)opResult, opProject);
+	return true;
+}
+
 bool _reduceNodeCount
 (
 	ExecutionPlan *plan
@@ -89,9 +117,42 @@ bool _reduceNodeCount
 
 	// see if execution-plan matches the pattern:
 	// "Scan -> Aggregate -> Results"
-	// if that's not the case, simply return without making any modifications
+	// if that's not the case, try Cartesian Product pattern
 	if(!_identifyNodeCountPattern(plan->root, &opResult, &opAggregate, &opScan,
-				&label)) {
+			&label)) {
+		
+		// Try Cartesian Product pattern - which is essentially a multi-node count
+		OpBase *opCartesian;
+		if(_identifyCartesianProductCountPattern(plan->root, &opResult, &opAggregate, &opCartesian)) {
+			// Calculate the cartesian product count
+			GraphContext *gc = QueryCtx_GetGraphCtx();
+			uint64_t totalCount = _calculateCartesianProductCount(opCartesian, gc);
+			SIValue cartesianCount = SI_LongVal(totalCount);
+
+			// Collect all operations that need to be removed for Cartesian Product
+			OpBase **toRemove = array_new(OpBase *, 16);
+			array_append(toRemove, opCartesian);
+			
+			for(int i = 0; i < opCartesian->childCount; i++) {
+				OpBase *child = opCartesian->children[i];
+				array_append(toRemove, child);
+				
+				if(child->type == OPType_AGGREGATE && child->childCount == 1) {
+					OpBase *nestedCartesian = child->children[0];
+					if(nestedCartesian->type == OPType_CARTESIAN_PRODUCT) {
+						array_append(toRemove, nestedCartesian);
+						for(int j = 0; j < nestedCartesian->childCount; j++) {
+							array_append(toRemove, nestedCartesian->children[j]);
+						}
+					}
+				}
+			}
+			
+			bool result = _applyCountOptimization(plan, opResult, opAggregate, cartesianCount, 
+												  toRemove, array_len(toRemove));
+			array_free(toRemove);
+			return result;
+		}
 		return false;
 	}
 
@@ -109,24 +170,8 @@ bool _reduceNodeCount
 		nodeCount = SI_LongVal(Graph_NodeCount(gc->g));
 	}
 
-	// construct a constant expression, used by a new projection operation
-	AR_ExpNode *exp = AR_EXP_NewConstOperandNode(nodeCount);
-	// the new expression must be aliased to populate the Record
-	exp->resolved_name = opAggregate->aggregate_exps[0]->resolved_name;
-	AR_ExpNode **exps = array_new(AR_ExpNode *, 1);
-	array_append(exps, exp);
-
-	OpBase *opProject = NewProjectOp(opAggregate->op.plan, exps);
-
-	// new execution plan: "Project -> Results"
-	ExecutionPlan_RemoveOp(plan, opScan);
-	OpBase_Free(opScan);
-
-	ExecutionPlan_RemoveOp(plan, (OpBase *)opAggregate);
-	OpBase_Free((OpBase *)opAggregate);
-
-	ExecutionPlan_AddOp((OpBase *)opResult, opProject);
-	return true;
+	OpBase *opsToRemove[] = {opScan};
+	return _applyCountOptimization(plan, opResult, opAggregate, nodeCount, opsToRemove, 1);
 }
 
 // checks if execution plan solely performs edge count
@@ -212,26 +257,8 @@ void _reduceEdgeCount
 	}
 	edgeCount = SI_LongVal(edges);
 
-	// construct a constant expression, used by a new projection operation
-	AR_ExpNode *exp = AR_EXP_NewConstOperandNode(edgeCount);
-	// the new expression must be aliased to populate the Record
-	exp->resolved_name = opAggregate->aggregate_exps[0]->resolved_name;
-	AR_ExpNode **exps = array_new(AR_ExpNode *, 1);
-	array_append(exps, exp);
-
-	OpBase *opProject = NewProjectOp(opAggregate->op.plan, exps);
-
-	// new execution plan: "Project -> Results"
-	ExecutionPlan_RemoveOp(plan, opScan);
-	OpBase_Free(opScan);
-
-	ExecutionPlan_RemoveOp(plan, (OpBase *)opTraverse);
-	OpBase_Free(opTraverse);
-
-	ExecutionPlan_RemoveOp(plan, (OpBase *)opAggregate);
-	OpBase_Free((OpBase *)opAggregate);
-
-	ExecutionPlan_AddOp((OpBase *)opResult, opProject);
+	OpBase *opsToRemove[] = {opScan, opTraverse};
+	_applyCountOptimization(plan, opResult, opAggregate, edgeCount, opsToRemove, 2);
 }
 
 // checks if execution plan solely performs cartesian product count
@@ -355,89 +382,14 @@ static uint64_t _calculateCartesianProductCount(OpBase *cartesianOp, GraphContex
 	return totalCount;
 }
 
-bool _reduceCartesianProductCount
-(
-	ExecutionPlan *plan
-) {
-	// we'll only modify execution plan if it is structured as follows:
-	// "Node Scans -> Cartesian Product -> Aggregate -> Results"
-	// or nested version with embedded aggregations
-	OpBase *opCartesian;
-	OpResult *opResult;
-	OpAggregate *opAggregate;
-
-	// see if execution-plan matches the pattern
-	if(!_identifyCartesianProductCountPattern(plan->root, &opResult, &opAggregate, &opCartesian)) {
-		return false;
-	}
-
-	// calculate the cartesian product count
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	uint64_t totalCount = _calculateCartesianProductCount(opCartesian, gc);
-
-	SIValue cartesianCount = SI_LongVal(totalCount);
-
-	// construct a constant expression, used by a new projection operation
-	AR_ExpNode *exp = AR_EXP_NewConstOperandNode(cartesianCount);
-	// the new expression must be aliased to populate the Record
-	exp->resolved_name = opAggregate->aggregate_exps[0]->resolved_name;
-	AR_ExpNode **exps = array_new(AR_ExpNode *, 1);
-	array_append(exps, exp);
-
-	OpBase *opProject = NewProjectOp(opAggregate->op.plan, exps);
-
-	// Remove the cartesian product and its children operations
-	// First, collect all operations that need to be removed
-	OpBase **toRemove = array_new(OpBase *, 16);
-	
-	// Add the main cartesian product
-	array_append(toRemove, opCartesian);
-	
-	// Add all its children (scans and nested aggregations)
-	for(int i = 0; i < opCartesian->childCount; i++) {
-		OpBase *child = opCartesian->children[i];
-		array_append(toRemove, child);
-		
-		// If child is an aggregate with a nested cartesian product, add those too
-		if(child->type == OPType_AGGREGATE && child->childCount == 1) {
-			OpBase *nestedCartesian = child->children[0];
-			if(nestedCartesian->type == OPType_CARTESIAN_PRODUCT) {
-				array_append(toRemove, nestedCartesian);
-				// Add all nested scan operations
-				for(int j = 0; j < nestedCartesian->childCount; j++) {
-					array_append(toRemove, nestedCartesian->children[j]);
-				}
-			}
-		}
-	}
-	
-	// Remove all collected operations
-	for(uint i = 0; i < array_len(toRemove); i++) {
-		ExecutionPlan_RemoveOp(plan, toRemove[i]);
-		OpBase_Free(toRemove[i]);
-	}
-	array_free(toRemove);
-	
-	// Remove the main aggregate operation
-	ExecutionPlan_RemoveOp(plan, (OpBase *)opAggregate);
-	OpBase_Free((OpBase *)opAggregate);
-
-	// Add the project operation
-	ExecutionPlan_AddOp((OpBase *)opResult, opProject);
-	return true;
-}
-
 void reduceCount
 (
 	ExecutionPlan *plan
 ) {
-	// start by trying to identify node count pattern
+	// start by trying to identify node count pattern (including Cartesian Product)
 	// if unsuccessful try edge count pattern
-	// if unsuccessful try cartesian product count pattern
 	if(!_reduceNodeCount(plan)) {
-		if(!_reduceEdgeCount(plan)) {
-			_reduceCartesianProductCount(plan);
-		}
+		_reduceEdgeCount(plan);
 	}
 }
 
