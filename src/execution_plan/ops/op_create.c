@@ -23,9 +23,6 @@ OpBase *NewCreateOp
 ) {
 	OpCreate *op = rm_calloc(1, sizeof(OpCreate));
 
-	op->rec_idx  = 0;
-	op->records  = NULL;
-
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_CREATE, "Create", NULL, CreateConsume,
 				NULL, NULL, CreateClone, CreateFree, true, plan);

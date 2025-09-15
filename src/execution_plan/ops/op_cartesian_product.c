@@ -18,10 +18,9 @@ OpBase *NewCartesianProductOp
 (
 	const ExecutionPlan *plan
 ) {
-	CartesianProduct *op = rm_malloc(sizeof(CartesianProduct));
+	CartesianProduct *op = rm_calloc (1, sizeof(CartesianProduct)) ;
 
-	op->init    = true;
-	op->records = NULL;
+	op->init = true;
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_CARTESIAN_PRODUCT, "Cartesian Product",

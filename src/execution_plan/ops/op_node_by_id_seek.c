@@ -33,14 +33,11 @@ OpBase *NewNodeByIdSeekOp
 	const char *alias,          // node alias
 	RangeExpression *ranges     // ID range expressions
 ) {
-	NodeByIdSeek *op = rm_malloc(sizeof(NodeByIdSeek));
+	NodeByIdSeek *op = rm_calloc (1, sizeof(NodeByIdSeek)) ;
 
 	op->g = QueryCtx_GetGraph();
-	op->it           = NULL;
-	op->ids          = NULL;
-	op->alias        = alias;
-	op->ranges       = ranges;
-	op->child_record = NULL;
+	op->alias  = alias;
+	op->ranges = ranges;
 
 	OpBase_Init((OpBase *)op, OPType_NODE_BY_ID_SEEK, "NodeByIdSeek",
 			NodeByIdSeekInit, NodeByIdSeekConsume, NodeByIdSeekReset,

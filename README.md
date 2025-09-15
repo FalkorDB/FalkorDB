@@ -1,15 +1,34 @@
-[![Dockerhub](https://img.shields.io/docker/pulls/falkordb/falkordb?label=Docker)](https://hub.docker.com/r/falkordb/falkordb/)
-[![Discord](https://img.shields.io/discord/1146782921294884966?style=flat-square)](https://discord.gg/6M4QwDXn2w)
-[![codecov](https://codecov.io/gh/falkordb/falkordb/graph/badge.svg?token=0G4HBEJMW0)](https://codecov.io/gh/falkordb/falkordb)
-[![Workflow](https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml)
+<div align="center">
+  <img width="100" height="100" alt="FalkorDB Logo Square B" src="https://github.com/user-attachments/assets/ec67e5e3-a060-405d-b229-1fe2badcf8ad" />
+</div>
+<div align="center">
+  <h1>FalkorDB</h1>
+  <h2>Ultra-fast, Multi-tenant Graph Database</h2>
+  <h3>Powering Generative AI, Agent Memory, Cloud Security, and Fraud Detection</h3>
+</div>
 
-# FalkorDB - Graph Database for GraphRAG & GenAI
+<div align="center">
+  <a href="https://app.falkordb.cloud/signup">
+    <img src="https://img.shields.io/badge/Try%20Free-FalkorDB%20Cloud-FF8101?labelColor=FDE900&style=for-the-badge" alt="Try Free" />
+  </a><br>
+  <a href="https://discord.com/invite/TJ4SaPTptf" rel="nofollow">
+    <img src="https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white" alt="Discord" />
+  </a>
+  <a href="https://hub.docker.com/r/falkordb/falkordb/">
+    <img src="https://img.shields.io/docker/pulls/falkordb/falkordb?label=Docker" alt="Dockerhub" />
+  </a>
+  <a href="https://discord.gg/6M4QwDXn2w">
+    <img src="https://img.shields.io/discord/1146782921294884966?style=flat-square" alt="Discord" />
+  </a>
+  <a href="https://codecov.io/gh/falkordb/falkordb">
+    <img src="https://codecov.io/gh/falkordb/falkordb/graph/badge.svg?token=0G4HBEJMW0" alt="codecov" />
+  </a>
+  <a href="https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml">
+    <img src="https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml/badge.svg?branch=master" alt="Workflow" />
+  </a>
+</div>
 
-A scalable, low-latency graph database designed for development teams managing structured and unstructured interconnected data in real-time or interactive environments.
-
-[![Try Free](https://img.shields.io/badge/Try%20Free-FalkorDB%20Cloud-FF8101?labelColor=FDE900&style=for-the-badge&link=https://app.falkordb.cloud)](https://app.falkordb.cloud)<br>
-
-![FalkorDB Graph Database](/assets/header.jpg)
+---
 
 ## UNIQUE FEATURES
 
@@ -51,13 +70,7 @@ Our goal is to build a high-performance Knowledge Graph tailored for Large Langu
 To quickly try out FalkorDB, launch an instance using docker:
 
 ```
-docker run -p 6379:6379 -it --rm -v ./data:/var/lib/falkordb/data falkordb/falkordb:edge
-```
-
-Or, to use the built-in browser-based interface, run:
-
-```
-docker run -p 6379:6379 -p 3000:3000 -it --rm -v ./data:/var/lib/falkordb/data falkordb/falkordb:edge
+docker run -p 6379:6379 -p 3000:3000 -it --rm -v ./data:/var/lib/falkordb/data falkordb/falkordb
 ```
 
 ### Step 2

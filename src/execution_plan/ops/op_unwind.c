@@ -23,13 +23,10 @@ OpBase *NewUnwindOp
 	const ExecutionPlan *plan,
 	AR_ExpNode *exp
 ) {
-	OpUnwind *op = rm_malloc(sizeof(OpUnwind));
+	OpUnwind *op = rm_calloc (1, sizeof(OpUnwind)) ;
 
-	op->exp           = exp;
-	op->list          = SI_NullVal();
-	op->listIdx       = 0;
-	op->listLen       = 0;
-	op->currentRecord = NULL;
+	op->exp  = exp;
+	op->list = SI_NullVal();
 
 	// Set our Op operations
 	OpBase_Init((OpBase *)op, OPType_UNWIND, "Unwind", UnwindInit, UnwindConsume,

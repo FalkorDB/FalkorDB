@@ -30,6 +30,11 @@ jobs:
             runner_label: rhel-build-${{ github.run_id }}-${{ github.run_number }}
             arm: false
             image: projects/rhel-cloud/global/images/rhel-9-v20241210
+          - name: rhel8-build
+            machine_type: e2-standard-4
+            runner_label: rhel8-build-${{ github.run_id }}-${{ github.run_number }}
+            arm: false
+            image: projects/rhel-cloud/global/images/rhel-9-v20241210
     runs-on: ubuntu-latest
     steps:
       - name: Create runners
@@ -108,6 +113,14 @@ jobs:
             build_test_image: false
             cache_path: linux-x64
             is_debug: "0"
+          - name: rhel8/amd64
+            platform: linux/amd64
+            suffix: rhel8-x64
+            os: rhel8
+            machine_label: ${{ format('rhel8-build-{0}-{1}', github.run_id, github.run_number) }}
+            build_test_image: false
+            cache_path: linux-x64
+            is_debug: "0"
           - name: linux/amd64
             platform: linux/amd64
             suffix: x64
@@ -134,18 +147,26 @@ jobs:
             build_test_image: false
             cache_path: linux-x64
             is_debug: "1"
+          - name: rhel8/amd64
+            platform: linux/amd64
+            suffix: rhel8-x64
+            os: rhel8
+            machine_label: ${{ format('rhel8-build-{0}-{1}', github.run_id, github.run_number) }}
+            build_test_image: false
+            cache_path: linux-x64
+            is_debug: "1"
     steps:
       - name: Safe dir
         run: git config --global --add safe.directory '*'
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           set-safe-directory: "*"
           submodules: recursive
 
       - name: Set cache keys
         run: |
-          echo "CACHE_KEY_GRAPHBLAS=graphblas-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}" >> $GITHUB_ENV
+          echo "CACHE_KEY_GRAPHBLAS=graphblas-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}" >> $GITHUB_ENV
           echo "CACHE_KEY_PARSER=parser-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}" >> $GITHUB_ENV
           echo "CACHE_KEY_SEARCH=search-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}" >> $GITHUB_ENV
           echo "CACHE_KEY_LIBCURL=libcurl-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}" >> $GITHUB_ENV
@@ -212,6 +233,10 @@ jobs:
         with:
           # network=host driver-opt needed to push to local registry
           driver-opts: network=host
+      
+      - name: Ignore Errors if os is rhel8
+        if: ${{ matrix.platform.os == 'rhel8' }}
+        run: sed -i 's/-Werror//g' /FalkorDB/deps/RediSearch/deps/VectorSimilarity/src/VecSim/CMakeLists.txt
 
       - name: Build compiler image
         id: build_compiler
@@ -378,7 +403,7 @@ jobs:
         platform:
           - machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/cleanup-runner
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
@@ -411,7 +436,7 @@ jobs:
             machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp
@@ -423,7 +448,14 @@ jobs:
 
       - name: Unit tests
         run: |
-          docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
+          mkdir -p /tmp/logs
+          docker run --rm -i -v /tmp/logs:/FalkorDB/tests/unit/logs falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
+
+      - name: Upload unit test logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-logs-${{ matrix.platform.suffix }}
+          path: /tmp/logs
 
   flow-tests:
     needs: build
@@ -450,7 +482,7 @@ jobs:
             machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp
@@ -462,7 +494,15 @@ jobs:
 
       - name: Flow tests
         run: |
-          docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
+          mkdir -p /tmp/logs
+          docker run --rm -i -v /tmp/logs:/FalkorDB/tests/flow/logs falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
+
+      - name: Upload flow test logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: flow-test-logs-${{ matrix.platform.suffix }}
+          path: /tmp/logs
+
 
   tck-tests:
     needs: build
@@ -489,7 +529,7 @@ jobs:
             machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp
@@ -501,7 +541,14 @@ jobs:
 
       - name: TCK tests
         run: |
-          docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
+          mkdir -p /tmp/logs
+          docker run --rm -i -v /tmp/logs:/FalkorDB/tests/tck/logs falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
+
+      - name: Upload TCK test logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: tck-test-logs-${{ matrix.platform.suffix }}
+          path: /tmp/logs
 
   fuzz-tests:
     needs: build
@@ -528,7 +575,7 @@ jobs:
             machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp
@@ -540,7 +587,14 @@ jobs:
 
       - name: Fuzz tests
         run: |
-          docker run -i --rm falkordb/falkordb-tests make fuzz TIMEOUT=180
+          mkdir -p /tmp/logs
+          docker run --rm -i -v /tmp/logs:/FalkorDB/tests/fuzz/logs falkordb/falkordb-tests make fuzz TIMEOUT=180
+
+      - name: Upload fuzz test logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-test-logs-${{ matrix.platform.suffix }}
+          path: /tmp/logs
 
   #upgrade-tests:
   #  needs: build
@@ -555,7 +609,7 @@ jobs:
   #    ARCH: ${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}
   #  steps:
   #    - name: Download image
-  #      uses: actions/download-artifact@v4
+  #      uses: actions/download-artifact@v5
   #      with:
   #        name: falkordb-tests-${{ matrix.platform.suffix }}
   #        path: /tmp
@@ -577,7 +631,7 @@ jobs:
   #  needs: upgrade-tests
   #  runs-on: ubuntu-latest
   #  steps:
-  #    - uses: actions/checkout@v4
+  #    - uses: actions/checkout@v5
   #    - uses: ./.github/actions/cleanup-runner
   #      with:
   #        service_account_key: ${{ secrets.GCP_SA_KEY }}
@@ -610,7 +664,7 @@ jobs:
             machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: falkordb-${{ matrix.platform.suffix }}
           path: /tmp
@@ -620,7 +674,7 @@ jobs:
         run: |
           docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
       - name: Set up Trivy
-        uses: aquasecurity/trivy-action@0.32.0
+        uses: aquasecurity/trivy-action@0.33.0
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
           severity: CRITICAL,HIGH
