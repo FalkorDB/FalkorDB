@@ -96,7 +96,7 @@ Delta_Matrix _Eval_Add
 		ASSERT (t == GrB_BOOL);
 
 		// perform addition
-		info = Delta_eWiseAdd(res, GrB_LOR, res, B);
+		info = Delta_add(res, res, B);
 		ASSERT(info == GrB_SUCCESS);
 	}
 

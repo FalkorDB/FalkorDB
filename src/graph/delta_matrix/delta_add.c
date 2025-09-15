@@ -45,7 +45,7 @@ GrB_Info Delta_add
 	GrB_Matrix_nvals(&deletions, CDM);
 
 	// add zombies to removed entries in M
-	if(deletions){
+	if(deletions > 0){
 		GrB_OK (GrB_Matrix_assign_BOOL(CM, CDM, NULL, BOOL_ZOMBIE, GrB_ALL, 0,
 			GrB_ALL, 0, GrB_DESC_S));
 	}
