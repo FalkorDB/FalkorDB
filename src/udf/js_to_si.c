@@ -208,6 +208,17 @@ SIValue UDF_JSToSIValue
 					ret = GraphEntity_Properties (e) ;
 				}
 
+				else if (cid == 10) { // JS_CLASS_DATE
+					double ms ;
+					if (JS_ToFloat64 (js_ctx, &ms, val) < 0) {
+						// conversion failed, return Null
+						ret = SI_NullVal () ;
+					} else {
+						time_t sec = (time_t)(ms / 1000.0);  // convert ms → sec
+						ret = SI_DateTime (sec) ;
+					}
+				}
+
 				else if (cid == 18) { // JS_CLASS_REGEXP
 					const char *str = JS_ToCString (js_ctx, val) ;
 					ret = SI_DuplicateStringVal (str) ;
@@ -239,7 +250,7 @@ SIValue UDF_JSToSIValue
 		}
 
 		default:
-			ASSERT (false && "unknown tag") ;
+			ErrorCtx_SetError ("JS returned an unknown tag") ;
 			ret = SI_NullVal () ;
 			break ;
 	}

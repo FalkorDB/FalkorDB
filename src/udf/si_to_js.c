@@ -101,38 +101,34 @@ JSValue UDF_SIValueToJS
 
 		case T_DATETIME:
 		{
-			// JS_NewDate (js_ctx, double epoch_ms) ;
-			assert (false && "Not implemented") ;
-			break ;
-		}
-
-		case T_LOCALDATETIME:
-		{
-			assert (false && "Not implemented") ;
+			js_val = JS_NewDate (js_ctx, val.datetimeval * 1000) ;
 			break ;
 		}
 
 		case T_DATE:
 		{
-			assert (false && "Not implemented") ;
+			js_val = JS_NewDate (js_ctx, val.datetimeval * 1000) ;
 			break ;
 		}
 
 		case T_TIME:
 		{
-			assert (false && "Not implemented") ;
+			js_val = JS_ThrowTypeError (js_ctx,
+					"the time datatype isn't supported") ;
 			break ;
 		}
 
 		case T_LOCALTIME:
 		{
-			assert (false && "Not implemented") ;
+			js_val = JS_ThrowTypeError (js_ctx,
+					"the localtime datatype isn't supported") ;
 			break ;
 		}
 
 		case T_DURATION:
 		{
-			assert (false && "Not implemented") ;
+			js_val = JS_ThrowTypeError (js_ctx,
+					"the duration datatype isn't supported") ;
 			break ;
 		}
 
@@ -185,7 +181,8 @@ JSValue UDF_SIValueToJS
 
 		case T_PTR:
 		{
-			assert (false && "Not implemented") ;
+			js_val = JS_ThrowTypeError (js_ctx,
+					"the pointer datatype isn't supported") ;
 			break ;
 		}
 

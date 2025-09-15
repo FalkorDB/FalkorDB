@@ -228,24 +228,6 @@ class testUDF():
             self.env.assertEqual(v, echo_v)
 
         #-----------------------------------------------------------------------
-        # Temporal Types
-        #-----------------------------------------------------------------------
-
-        # FalkorDB temporal literals are constructed from Cypher functions.
-        #temporal_queries = [
-        #    "WITH time('13:37:00Z')                    AS x RETURN x, Echo(x)",
-        #    "WITH date('2025-08-22')                   AS x RETURN x, Echo(x)",
-        #    "WITH duration('P2DT3H4M')                 AS x RETURN x, Echo(x)",
-        #    "WITH localtime('13:37:00')                AS x RETURN x, Echo(x)",
-        #    "WITH datetime('2025-08-22T13:37:00Z')     AS x RETURN x, Echo(x)",
-        #    "WITH localdatetime('2025-08-22T13:37:00') AS x RETURN x, Echo(x)"
-        #]
-
-        #for q in temporal_queries:
-        #    t, echo_t = self.graph.query(q).result_set[0]
-        #    self.env.assertEqual(t, echo_t)
-
-        #-----------------------------------------------------------------------
         # Collections
         #-----------------------------------------------------------------------
 
@@ -297,6 +279,40 @@ class testUDF():
         q = "MATCH p=(a:Person {name:'Alice'})-[:KNOWS]->(b:Person {name:'Bob'}) RETURN p, Echo(p)"
         p, echo_p = self.graph.query(q).result_set[0]
         self.env.assertEqual(p, echo_p)
+
+        #-----------------------------------------------------------------------
+        # Temporal Types
+        #-----------------------------------------------------------------------
+
+        unsupported_temporal_types = [
+            "WITH duration('P2DT3H4M')  AS x RETURN x, Echo(x)",
+            "WITH localtime('13:37:00') AS x RETURN x, Echo(x)",
+        ]
+
+        for q in unsupported_temporal_types:
+            try:
+                self.graph.query(q)
+                assert False, "Expected failure on missing args"
+            except ResponseError as e:
+                self.env.assertIn("UDF Exception:", str(e))
+
+        temporal_queries = [
+            """WITH date('2025-08-22') AS x
+               WITH x, Echo(x) AS echo_x
+               RETURN x.year  = echo_x.year  AND
+                      x.month = echo_x.month AND
+                      x.day   = echo_x.day""",
+
+            """WITH localdatetime('2025-08-22T13:37:00') AS x
+               WITH x, Echo(x) AS echo_x
+               RETURN x.year  = echo_x.year  AND
+                      x.month = echo_x.month AND
+                      x.day   = echo_x.day"""
+        ]
+
+        for q in temporal_queries:
+            res = self.graph.query(q).result_set[0][0]
+            self.env.assertTrue(res)
 
     # Test that FalkorDB’s JavaScript Node object exposes
     # - `id`: internal node ID
