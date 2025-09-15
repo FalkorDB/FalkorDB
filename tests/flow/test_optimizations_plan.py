@@ -582,3 +582,52 @@ class testOptimizationsPlan(FlowTestsBase):
         # validate result-set
         res = self.graph.query(q, params).result_set
         self.env.assertEquals(len(res), 0)
+
+    def test33_cartesian_product_count_optimization(self):
+        # Create test data
+        test_graph_id = "cartesian_count_test"
+        test_graph = self.db.select_graph(test_graph_id)
+        
+        # Create 100 nodes of each type N1 and N2
+        test_graph.query("UNWIND range(1, 100) AS i CREATE (n:N1 {id: i})")
+        test_graph.query("UNWIND range(1, 100) AS i CREATE (n:N2 {id: i})")
+        
+        # Test the problematic query that should be optimized
+        query = """MATCH (n1:N1), (n2:N2)
+                   WITH COUNT(*) AS c
+                   MATCH (n1:N1), (n2:N2)
+                   RETURN COUNT(*)"""
+        
+        # First verify the result is correct (100 * 100 = 10000)
+        resultset = test_graph.query(query).result_set
+        expected = [[10000]]
+        self.env.assertEqual(resultset, expected)
+        
+        # Check that the execution plan is optimized (should not contain nested Aggregate operations)
+        executionPlan = str(test_graph.explain(query))
+        self.env.assertIn("Project", executionPlan)
+        self.env.assertIn("Results", executionPlan)
+        # Should not have nested Cartesian Products or multiple Aggregate operations
+        self.env.assertTrue(executionPlan.count("Aggregate") <= 1)
+        
+        # Test simpler case: single cartesian product count
+        simple_query = """MATCH (n1:N1), (n2:N2) RETURN COUNT(*)"""
+        simple_resultset = test_graph.query(simple_query).result_set
+        self.env.assertEqual(simple_resultset, expected)
+        
+        # Check that the simple query is also optimized
+        simple_plan = str(test_graph.explain(simple_query))
+        self.env.assertIn("Project", simple_plan)
+        self.env.assertNotIn("Cartesian Product", simple_plan)
+        self.env.assertNotIn("Node By Label Scan", simple_plan)
+        self.env.assertNotIn("Aggregate", simple_plan)
+        
+        # Test with mixed node types
+        mixed_query = """MATCH (n1:N1), (n2) RETURN COUNT(*)"""
+        # Should be 100 * 204 = 20400 (100 N1 nodes + 100 N2 nodes + 4 person nodes)
+        mixed_resultset = test_graph.query(mixed_query).result_set
+        expected_mixed = [[20400]]
+        self.env.assertEqual(mixed_resultset, expected_mixed)
+        
+        # Clean up test data
+        test_graph.delete()
