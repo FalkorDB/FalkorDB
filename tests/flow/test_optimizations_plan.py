@@ -603,14 +603,47 @@ class testOptimizationsPlan(FlowTestsBase):
         expected = [[10000]]
         self.env.assertEqual(resultset, expected)
         
-        # Verify the intermediate aggregation is calculated properly
-        # Test the WITH clause separately to ensure it produces the correct count
+        # Verify both aggregations are calculated properly
+        # Test 1: Test the intermediate aggregation separately
         intermediate_query = """MATCH (n1:N1), (n2:N2)
                                WITH COUNT(*) AS c
                                RETURN c"""
         intermediate_result = test_graph.query(intermediate_query).result_set
         expected_intermediate = [[10000]]
         self.env.assertEqual(intermediate_result, expected_intermediate)
+        
+        # Test 2: Test that intermediate values work correctly with operations
+        intermediate_usage_query = """MATCH (n1:N1), (n2:N2)
+                                     WITH COUNT(*) AS c
+                                     RETURN c, c * 2 AS doubled"""
+        intermediate_usage_result = test_graph.query(intermediate_usage_query).result_set
+        expected_usage = [[10000, 20000]]
+        self.env.assertEqual(intermediate_usage_result, expected_usage)
+        
+        # Test 3: Test both aggregations work together in a chained query
+        chained_query = """MATCH (n1:N1), (n2:N2)
+                          WITH COUNT(*) AS intermediate_count
+                          MATCH (n3:N1), (n4:N2) 
+                          WITH intermediate_count, COUNT(*) AS final_count
+                          RETURN intermediate_count, final_count"""
+        chained_result = test_graph.query(chained_query).result_set
+        expected_chained = [[10000, 10000]]
+        self.env.assertEqual(chained_result, expected_chained)
+        
+        # Test 4: Test the original problematic pattern with validation of intermediate result
+        # This ensures the WITH COUNT(*) AS c step produces correct intermediate aggregation
+        validation_query = """MATCH (n1:N1), (n2:N2)
+                             WITH COUNT(*) AS c
+                             RETURN 'intermediate_result' AS step, c AS count
+                             UNION ALL
+                             MATCH (n1:N1), (n2:N2)
+                             WITH COUNT(*) AS c
+                             MATCH (n1:N1), (n2:N2)
+                             RETURN 'final_result' AS step, COUNT(*) AS count"""
+        validation_result = test_graph.query(validation_query).result_set
+        # Should return both intermediate and final counts as 10000
+        expected_validation = [['intermediate_result', 10000], ['final_result', 10000]]
+        self.env.assertEqual(validation_result, expected_validation)
         
         # Check that the execution plan is optimized (should not contain nested Aggregate operations)
         executionPlan = str(test_graph.explain(query))
