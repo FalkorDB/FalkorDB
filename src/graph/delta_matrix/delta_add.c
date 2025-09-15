@@ -8,6 +8,48 @@
 #include "delta_utils.h"
 #include "delta_matrix.h"
 #include "../../util/rmalloc.h"
+#include "../../globals.h"
+
+
+// Structurally add two delta matricies. Will output a boolean matrix. 
+// C = A + B
+GrB_Info Delta_add
+(
+    Delta_Matrix C,         // input/output matrix for results
+    const Delta_Matrix A,   // first input:  matrix A
+    const Delta_Matrix B    // second input: matrix B
+) {
+	ASSERT(A  != NULL);
+	ASSERT(B  != NULL);
+	ASSERT(C  != NULL);
+	// Delta_Matrix_validate(A, false);
+	// Delta_Matrix_validate(B, false);
+
+	GrB_Type a_ty;
+	GrB_Type b_ty;
+	GrB_Type c_ty;
+	Delta_Matrix_type(&a_ty, A);
+	Delta_Matrix_type(&b_ty, B);
+	Delta_Matrix_type(&c_ty, C);
+
+	ASSERT(c_ty == GrB_BOOL);
+	
+	const struct GrB_ops *ops = Global_GrB_Ops_Get();
+	GrB_Scalar alpha = a_ty == GrB_BOOL ? ops->bool_zombie : ops->u64_zombie;
+	GrB_Scalar beta  = b_ty == GrB_BOOL ? ops->bool_zombie : ops->u64_zombie;
+	Delta_eWiseUnion(C, GrB_ONEB_BOOL, A, alpha, B, beta);
+	
+	GrB_Matrix CM  = DELTA_MATRIX_M(C);
+	GrB_Matrix CDM = DELTA_MATRIX_DELTA_MINUS(C);
+	GrB_Index deletions = 0;
+	GrB_Matrix_nvals(&deletions, CDM);
+
+	// add zombies to removed entries in M
+	if(deletions){
+		GrB_OK (GrB_Matrix_assign_BOOL(CM, CDM, NULL, BOOL_ZOMBIE, GrB_ALL, 0,
+			GrB_ALL, 0, GrB_DESC_S));
+	}
+}
 
 // zombies should be the monoid's identity value.
 // C = A + B
@@ -133,10 +175,7 @@ GrB_Info Delta_eWiseAdd
 	// CM <CM>+= CDP ----- Should be done inplace (currently is not GBLAS TODO)
 	//--------------------------------------------------------------------------
 
-	// if the operator does not care which value it returns (CM or CDP) the next 
-	// step is unnessecary.
-	if(handle_addition && op != GrB_ONEB_BOOL && op != GxB_ANY_BOOL && 
-		op != GrB_ONEB_UINT64 && op != GxB_ANY_UINT64)
+	if(handle_addition)
 	{
 		GrB_OK (GrB_Matrix_new(&M_times_DP, c_ty, nrows, ncols));
 

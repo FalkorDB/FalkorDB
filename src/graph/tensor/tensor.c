@@ -746,7 +746,7 @@ void Tensor_free
 	Tensor t = *T;
 
 	// apply _free_vectors on every entry of the tensor
-	GrB_OK (Delta_Matrix_apply(t, Globals_GetOps()->free_tensors, t));
+	GrB_OK (Delta_Matrix_apply(t, Global_GrB_Ops_Get()->free_tensors, t));
 
 	// free tensor internals
 	Delta_Matrix_free(T);

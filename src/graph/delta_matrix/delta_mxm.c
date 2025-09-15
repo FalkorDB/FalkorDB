@@ -469,7 +469,7 @@ GrB_Info Delta_mxm_struct_V3
 			accum, NULL, NULL, op, CM, accum, NULL));
 
 		GrB_OK (GrB_Matrix_assign_Scalar(
-			CDP, accum, NULL, Globals_GetOps()->empty, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_S));
+			CDP, accum, NULL, Global_GrB_Ops_Get()->empty, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_S));
 
 		GrB_OK (GrB_Matrix_assign_BOOL(
 			CM, accum, NULL, true, GrB_ALL, 0, GrB_ALL, 0, NULL));

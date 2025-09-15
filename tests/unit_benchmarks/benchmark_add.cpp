@@ -14,10 +14,12 @@ void rg_setup(const benchmark::State &state) {
     GrB_Global_set_INT32(GrB_GLOBAL, GxB_JIT_OFF, GxB_JIT_C_CONTROL);
     GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
 	GxB_Global_Option_set(GxB_FORMAT, GxB_BY_ROW); // all matrices in CSR format
+    Global_GrB_Ops_Init();
 }
 
 void rg_teardown(const benchmark::State &state) {
     GrB_finalize();
+    Global_GrB_Ops_Free();
     // GrB_OK((GrB_Info) LAGraph_Finalize(NULL));
 }
 
@@ -40,7 +42,7 @@ static void BM_add_all(benchmark::State &state) {
 
 
     for (auto _ : state) {
-        Delta_eWiseAdd(C, GrB_LOR, A, B);
+        Delta_add(C, A, B);
     }
 
     Delta_Matrix_free(&A);
@@ -70,7 +72,7 @@ static void BM_add_chain(benchmark::State &state) {
         state.ResumeTiming();
 
         for(int i = 0; i < 5; i++) {
-            Delta_eWiseAdd(C, GrB_LOR, C, Cs[i]);
+            Delta_add(C, C, Cs[i]);
         }
     }
 
@@ -81,13 +83,13 @@ static void BM_add_chain(benchmark::State &state) {
 }
 
 BENCHMARK(BM_add_all)->Setup(rg_setup)->Teardown(rg_teardown)
-    ->Unit(benchmark::kMicrosecond)->Args({10000, 10000});
-    // ->Unit(benchmark::kMillisecond)->Args({0, 0})->Args({10000, 10000})
-    // ->Args({0, 10000})->Args({10000, 0})->Args({100, 100})->Args({0, 100})
-    // ->Args({100, 0});
+    // ->Unit(benchmark::kMicrosecond)->Args({10000, 10000});
+    ->Unit(benchmark::kMillisecond)->Args({0, 0})->Args({10000, 10000})
+    ->Args({0, 10000})->Args({10000, 0})->Args({100, 100})->Args({0, 100})
+    ->Args({100, 0});
 BENCHMARK(BM_add_chain)->Setup(rg_setup)->Teardown(rg_teardown)
-    ->Unit(benchmark::kMicrosecond)->Args({10000, 10000});
-    // ->Unit(benchmark::kMillisecond)->Args({0, 0})->Args({10000, 10000})
-    // ->Args({0, 10000})->Args({10000, 0})->Args({100, 100})->Args({0, 100})
-    // ->Args({100, 0});
+    // ->Unit(benchmark::kMicrosecond)->Args({10000, 10000});
+    ->Unit(benchmark::kMillisecond)->Args({0, 0})->Args({10000, 10000})
+    ->Args({0, 10000})->Args({10000, 0})->Args({100, 100})->Args({0, 100})
+    ->Args({100, 0});
 BENCHMARK_MAIN();

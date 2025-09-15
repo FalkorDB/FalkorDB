@@ -21,9 +21,9 @@ extern "C" {
 		GrB_UnaryOp  free_tensors;   // unary operator to free tensor entries
 	};
 
-	void Global_Operations_Init(void) ;
-	void Global_Operations_Free(void) ;
-	const struct Global_ops *Globals_GetOps(void) ;
+	void Global_GrB_Ops_Init(void) ;
+	void Global_GrB_Ops_Free(void) ;
+	const struct Global_ops *Global_GrB_Ops_Get(void) ;
 }
 
 void Delta_Random_Matrix

@@ -336,6 +336,13 @@ GrB_Info Delta_mxv_count
     const GrB_Descriptor desc     // [input] descriptor 
 ) ;
 
+GrB_Info Delta_add
+(
+    Delta_Matrix C,         // input/output matrix for results
+    const Delta_Matrix A,   // first input:  matrix A
+    const Delta_Matrix B    // second input: matrix B
+) ;
+
 // zombies should be the monoid's identity value.
 // C = A + B
 // This is calculated by:

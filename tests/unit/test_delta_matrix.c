@@ -44,7 +44,7 @@ void setup() {
 
 	// initialize GraphBLAS
 	GrB_init(GrB_NONBLOCKING);
-	Global_Operations_Init();
+	Global_GrB_Ops_Init();
 
 	// all matrices in CSR format
 	GxB_Global_Option_set(GxB_FORMAT, GxB_BY_ROW);
@@ -55,7 +55,7 @@ void setup() {
 
 void tearDown() {
 	GrB_finalize();
-	Global_Operations_Free();
+	Global_GrB_Ops_Free();
 }
 
 // nvals(A + B) == nvals(A) == nvals(B)
@@ -1698,6 +1698,24 @@ void test_Delta_Matrix_add() {
 	info = GrB_Matrix_eWiseAdd_BinaryOp(
 		C_GB, NULL, NULL, GrB_LOR, A_GB, B_GB, NULL);
 	TEST_ASSERT(info == GrB_SUCCESS);
+
+	//--------------------------------------------------------------------------
+	// validation
+	//--------------------------------------------------------------------------
+
+	C_M  = DELTA_MATRIX_M(C);
+
+	ASSERT_GrB_Matrices_EQ(C_M, C_GB);
+
+	//--------------------------------------------------------------------------
+	// A + B
+	//--------------------------------------------------------------------------
+
+	info = Delta_add(C, A, B);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	Delta_Matrix_validate(C, true);
+	Delta_Matrix_wait(C, true);
 
 	//--------------------------------------------------------------------------
 	// validation

@@ -14,7 +14,7 @@ Delta_Matrix _Eval_Mul
 	const AlgebraicExpression *exp,
 	Delta_Matrix res
 ) {
-	const struct Global_ops *ops = Globals_GetOps();
+	const struct GrB_ops *ops = Global_GrB_Ops_Get();
 	//--------------------------------------------------------------------------
 	// validate expression
 	//--------------------------------------------------------------------------
