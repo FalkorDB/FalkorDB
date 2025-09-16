@@ -26,8 +26,10 @@
 typedef struct {
 	GrB_Vector components;     // computed components
 	GrB_Vector N;              // nodes participating in WCC
+	GrB_Type_Code comp_ty;     // type of the computed components
 	GrB_Info info;             // iterator state
 	GxB_Iterator it;           // components iterator
+	GxB_Iterator cc_it;        // components iterator
 	Node node;                 // current node
 	Graph *g;                  // graph
 	SIValue output[2];         // array with up to 2 entries [node, component]
@@ -233,11 +235,9 @@ ProcedureResult Proc_WCCInvoke
 	LAGraph_Graph G = NULL;
 
 	bool sym     = true;
-	bool compact = true;
 
-	// TODO: think of a better name
-	info = Build_Matrix(&A, &pdata->N, g, lbls, array_len(lbls), rels,
-			array_len(rels), sym, compact);
+	info = get_sub_adjecency_matrix(&A, &pdata->N, g, lbls, array_len(lbls), rels,
+			array_len(rels), sym);
 
 	array_free(lbls);
 	array_free(rels);
@@ -252,22 +252,32 @@ ProcedureResult Proc_WCCInvoke
 	info = LAGr_ConnectedComponents(&pdata->components, G, msg);
 	ASSERT(info == GrB_SUCCESS);
 
-	// free the graph, the connected components, and finish LAGraph
+	// free the graph
 	info = LAGraph_Delete(&G, msg);
 	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_Vector_get_INT32(
+		pdata->components, (int *)&pdata->comp_ty, GrB_EL_TYPE_CODE);
 
 	//--------------------------------------------------------------------------
 	// initialize iterator
 	//--------------------------------------------------------------------------
-
 	info = GxB_Iterator_new(&pdata->it);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GxB_Iterator_new(&pdata->cc_it);
 	ASSERT(info == GrB_SUCCESS);
 
 	// iterate over participating nodes
 	info = GxB_Vector_Iterator_attach(pdata->it, pdata->N, NULL);
 	ASSERT(info == GrB_SUCCESS);
 
+	// iterate over participating nodes
+	info = GxB_Vector_Iterator_attach(pdata->cc_it, pdata->components, NULL);
+	ASSERT(info == GrB_SUCCESS);
+
     pdata->info = GxB_Vector_Iterator_seek(pdata->it, 0);
+    pdata->info = GxB_Vector_Iterator_seek(pdata->cc_it, 0);
 
 	return PROCEDURE_OK;
 }
@@ -279,30 +289,34 @@ SIValue *Proc_WCCStep
 	ProcedureCtx *ctx  // procedure context
 ) {
 	ASSERT(ctx->privateData != NULL);
-
+	GrB_Info info;
 	WCC_Context *pdata = (WCC_Context *)ctx->privateData;
 
 	// retrieve node from graph
 	GrB_Index node_id;
-	while(pdata->info != GxB_EXHAUSTED) {
-		// get current node id and its associated component id
-		node_id = GxB_Vector_Iterator_getIndex(pdata->it);
-
-		if(Graph_GetNode(pdata->g, node_id, &pdata->node)) {
-			break;
-		}
-
-		// move to the next entry in the components vector
-		pdata->info = GxB_Vector_Iterator_next(pdata->it);
-	}
+	uint64_t component_id;
 
 	// depleted
 	if(pdata->info == GxB_EXHAUSTED) {
 		return NULL;
 	}
 
+	// get current node id and its associated component id
+	node_id = GxB_Vector_Iterator_getIndex(pdata->it);
+	bool node_exists = Graph_GetNode(pdata->g, node_id, &pdata->node);
+	ASSERT(node_exists);
+
+
+	if(pdata->comp_ty == GrB_INT32_CODE){
+		component_id = (uint64_t) GxB_Iterator_get_INT32(pdata->cc_it);
+	} else {
+	 	component_id = GxB_Iterator_get_UINT64(pdata->cc_it);
+	}
+
 	// prep for next call to Proc_WCCStep
 	pdata->info = GxB_Vector_Iterator_next(pdata->it);
+	info = GxB_Vector_Iterator_next(pdata->cc_it);
+	ASSERT(info == pdata->info)
 
 	//--------------------------------------------------------------------------
 	// set output(s)
@@ -313,12 +327,6 @@ SIValue *Proc_WCCStep
 	}
 
 	if(pdata->yield_component) {
-		uint64_t component_id;
-		GrB_Info info = GrB_Vector_extractElement_UINT64(&component_id,
-				pdata->components, node_id);
-
-		ASSERT(info == GrB_SUCCESS);
-
 		*pdata->yield_component = SI_LongVal(component_id);
 	}
 
@@ -335,6 +343,7 @@ ProcedureResult Proc_WCCFree
 
 		if(pdata->N          != NULL) GrB_free(&pdata->N);
 		if(pdata->it         != NULL) GrB_free(&pdata->it);
+		if(pdata->cc_it      != NULL) GrB_free(&pdata->cc_it);
 		if(pdata->components != NULL) GrB_free(&pdata->components);
 
 		rm_free(ctx->privateData);

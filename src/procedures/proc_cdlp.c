@@ -32,6 +32,7 @@ typedef struct {
 	GrB_Vector nodes;        // nodes participating in computation
 	GrB_Info info;           // iterator state
 	GxB_Iterator it;         // communities iterator
+	GxB_Iterator cm_it;      // communities iterator
 	Node node;               // node
 	SIValue output[2];       // array with up to 2 entries [node, community id]
 	SIValue *yield_node;     // yield node
@@ -254,11 +255,9 @@ ProcedureResult Proc_CDLPInvoke
 	//--------------------------------------------------------------------------
 	// build adjacency matrix on which we'll run CDLP
 	//--------------------------------------------------------------------------
-
 	GrB_Matrix A = NULL;
-	Build_Matrix(&A, &pdata->nodes, g, lbls, array_len(lbls), rels,
-			array_len(rels), true, true);
-
+	get_sub_adjecency_matrix(&A, &pdata->nodes, g, lbls, array_len(lbls), rels,
+			array_len(rels), true);
 	// free build matrix inputs
 	if(lbls != NULL) array_free(lbls);
 	if(rels != NULL) array_free(rels);
@@ -274,8 +273,9 @@ ProcedureResult Proc_CDLPInvoke
 	GrB_Info info = LAGraph_New(&G, &A, LAGraph_ADJACENCY_UNDIRECTED, msg);
 	ASSERT(info == GrB_SUCCESS);
 
-	GrB_Info cdlp_res = LAGraph_cdlp(&pdata->communities, G, maxIterations, msg);
 
+	GrB_Info cdlp_res = LAGraph_cdlp(&pdata->communities, G, maxIterations, msg);
+	
 	info = LAGraph_Delete(&G, msg);
 	ASSERT(info == GrB_SUCCESS);
 
@@ -286,6 +286,14 @@ ProcedureResult Proc_CDLPInvoke
 	//--------------------------------------------------------------------------
 	// initialize iterator
 	//--------------------------------------------------------------------------
+	info = GxB_Iterator_new(&pdata->cm_it);
+	ASSERT(info == GrB_SUCCESS);
+
+	// iterate over participating nodes
+	info = GxB_Vector_Iterator_attach(pdata->cm_it, pdata->communities, NULL);
+	ASSERT(info == GrB_SUCCESS);
+
+    pdata->info = GxB_Vector_Iterator_seek(pdata->cm_it, 0);
 
 	info = GxB_Iterator_new(&pdata->it);
 	ASSERT(info == GrB_SUCCESS);
@@ -311,6 +319,7 @@ SIValue *Proc_CDLPStep
 
 	// retrieve node from graph
 	GrB_Index node_id;
+	uint64_t community_id;
 	while(pdata->info != GxB_EXHAUSTED) {
 		// get current node id and its associated score
 		node_id = GxB_Vector_Iterator_getIndex(pdata->it);
@@ -321,6 +330,7 @@ SIValue *Proc_CDLPStep
 
 		// move to the next entry in the components vector
 		pdata->info = GxB_Vector_Iterator_next(pdata->it);
+		pdata->info = GxB_Vector_Iterator_next(pdata->cm_it);
 	}
 
 	// depleted
@@ -328,9 +338,12 @@ SIValue *Proc_CDLPStep
 		return NULL;
 	}
 
+	community_id = GxB_Iterator_get_UINT64(pdata->cm_it);
+
 	// prep for next call to Proc_CDLPStep
 	pdata->info = GxB_Vector_Iterator_next(pdata->it);
-
+	pdata->info = GxB_Vector_Iterator_next(pdata->cm_it);
+	
 	//--------------------------------------------------------------------------
 	// set outputs
 	//--------------------------------------------------------------------------
@@ -340,10 +353,6 @@ SIValue *Proc_CDLPStep
 	}
 
 	if(pdata->yield_cid) {
-		uint64_t community_id;
-		GrB_Info info = GrB_Vector_extractElement_UINT64(&community_id,
-				pdata->communities, node_id);
-		ASSERT(info == GrB_SUCCESS);
 		*pdata->yield_cid = SI_LongVal(community_id);
 	}
 
@@ -359,6 +368,7 @@ ProcedureResult Proc_CDLPFree
 		CDLP_Context *pdata = ctx->privateData;
 
 		if(pdata->it          != NULL) GrB_free(&pdata->it);
+		if(pdata->cm_it       != NULL) GrB_free(&pdata->cm_it);
 		if(pdata->nodes       != NULL) GrB_free(&pdata->nodes);
 		if(pdata->communities != NULL) GrB_free(&pdata->communities);
 

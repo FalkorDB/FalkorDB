@@ -776,11 +776,11 @@ void Graph_RemoveNodeLabels
 		Delta_Matrix M = Graph_GetLabelMatrix(g, l);
 
 		// remove matrix at position [id, id]
-		info = Delta_Matrix_removeElement(M, id, id);
+		info = Delta_Matrix_removeElement_BOOL(M, id, id);
 		ASSERT(info == GrB_SUCCESS);
 
 		// remove this label from node's set of labels
-		info = Delta_Matrix_removeElement(nl, id, l);
+		info = Delta_Matrix_removeElement_BOOL(nl, id, l);
 		ASSERT(info == GrB_SUCCESS);
 
 		// a label was removed from node, update statistics
@@ -1585,4 +1585,3 @@ void Graph_Free
 ) {
 	_Graph_Free(g, true);
 }
-

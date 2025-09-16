@@ -501,3 +501,12 @@ void Graph_Free
 	Graph *g
 );
 
+#define Graph_print(g, pr) \
+	Delta_Matrix_print(g->adjacency_matrix, pr);        \
+	Delta_Matrix_print(g->node_labels, pr);             \
+	for(int i = 0; i < array_len(g->labels); i++) {     \
+		Delta_Matrix_print(g->labels[i], pr);           \
+	}                                                   \
+	for(int i = 0; i < array_len(g->relations); i++) {  \
+		Delta_Matrix_print(g->relations[i], pr);        \
+	} 

@@ -205,8 +205,7 @@ vector_consume:
 		GrB_Vector V = AS_VECTOR(it->x);
 		v_it = &it->v_it;
 
-		info = GxB_Vector_Iterator_attach(v_it, V, NULL);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK(GxB_Vector_Iterator_attach(v_it, V, NULL));
 
 		info = GxB_Vector_Iterator_seek(v_it, 0);
 		ASSERT(info == GrB_SUCCESS);

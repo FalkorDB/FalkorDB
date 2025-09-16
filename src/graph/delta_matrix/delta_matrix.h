@@ -8,10 +8,27 @@
 #include "RG.h"
 #include "GraphBLAS.h"
 
+#include <pthread.h>
+
 // forward declaration of Delta_Matrix type
 typedef struct _Delta_Matrix _Delta_Matrix;
 typedef _Delta_Matrix *Delta_Matrix;
 
+// Checks if X represents edge ID.
+#define SINGLE_EDGE(x) (!((x) & MSB_MASK))
+
+#define DELTA_MATRIX_M(C) (C)->matrix
+#define DELTA_MATRIX_DELTA_PLUS(C) (C)->delta_plus
+#define DELTA_MATRIX_DELTA_MINUS(C) (C)->delta_minus
+
+#define DELTA_MATRIX_TM(C) (C)->transposed->matrix
+#define DELTA_MATRIX_TDELTA_PLUS(C) (C)->transposed->delta_plus
+#define DELTA_MATRIX_TDELTA_MINUS(C) (C)->transposed->delta_minus
+
+#define DELTA_MATRIX_MAINTAIN_TRANSPOSE(C) ((C)->transposed != NULL)
+
+#define U64_ZOMBIE MSB_MASK
+#define BOOL_ZOMBIE ((bool) false)
 
 //------------------------------------------------------------------------------
 //
@@ -95,13 +112,22 @@ typedef _Delta_Matrix *Delta_Matrix;
 //
 //------------------------------------------------------------------------------
 
+struct _Delta_Matrix {
+	volatile bool dirty;      // Indicates if matrix requires sync
+	GrB_Matrix matrix;        // Underlying GrB_Matrix
+	GrB_Matrix delta_plus;    // Pending additions
+	GrB_Matrix delta_minus;   // Pending deletions
+	Delta_Matrix transposed;  // Transposed matrix
+	pthread_mutex_t mutex;    // Lock
+};
+
 GrB_Info Delta_Matrix_new
 (
-	Delta_Matrix *A,         // handle of matrix to create
-	GrB_Type type,           // type of matrix to create
-	GrB_Index nrows,         // matrix dimension is nrows-by-ncols
+	Delta_Matrix *A,  // handle of matrix to create
+	GrB_Type type,    // type of matrix to create
+	GrB_Index nrows,  // matrix dimension is nrows-by-ncols
 	GrB_Index ncols,
-	bool transpose           // if true, create a transpose of the matrix
+	bool transpose
 );
 
 // returns transposed matrix of C
@@ -110,39 +136,35 @@ Delta_Matrix Delta_Matrix_getTranspose
 	const Delta_Matrix C
 );
 
-GrB_Matrix Delta_Matrix_M
+// mark matrix as dirty
+void Delta_Matrix_setDirty
+(
+	Delta_Matrix C
+);
+
+bool Delta_Matrix_isDirty
 (
 	const Delta_Matrix C
 );
 
-GrB_Matrix Delta_Matrix_DP
+// checks if C is fully synced
+// a synced delta matrix does not contains any entries in
+// either its delta-plus and delta-minus internal matrices
+bool Delta_Matrix_Synced
 (
-	const Delta_Matrix C
+	const Delta_Matrix C  // matrix to inquery
 );
 
-GrB_Matrix Delta_Matrix_DM
+// locks the matrix
+void Delta_Matrix_lock
 (
-	const Delta_Matrix C
+	Delta_Matrix C
 );
 
-// replace C's internal M matrix with given M
-// the operation can only succeed if C's interal matrices:
-// M, DP, DM are all empty
-GrB_Info Delta_Matrix_setM
+// unlocks the matrix
+void Delta_Matrix_unlock
 (
-	Delta_Matrix C,  // delta matrix
-	GrB_Matrix M     // new M
-);
-
-// replace C's internal matrices (M, DP & DM)
-// the operation can only succeed if C's interal matrices:
-// M, DP, DM are all empty
-GrB_Info Delta_Matrix_setMatrices
-(
-	Delta_Matrix C,  // delta matrix
-	GrB_Matrix M,    // new M
-	GrB_Matrix DP,   // new delta-plus
-	GrB_Matrix DM    // new delta-minus
+	Delta_Matrix C
 );
 
 GrB_Info Delta_Matrix_nrows
@@ -157,117 +179,244 @@ GrB_Info Delta_Matrix_ncols
 	const Delta_Matrix C
 );
 
-GrB_Info Delta_Matrix_nvals    // get the number of entries in a matrix
+// get the number of entries in a matrix
+GrB_Info Delta_Matrix_nvals
 (
-	GrB_Index *nvals,       // matrix has nvals entries
-	const Delta_Matrix A    // matrix to query
+	GrB_Index *nvals,     // matrix has nvals entries
+	const Delta_Matrix A  // matrix to query
 );
 
-GrB_Info Delta_Matrix_resize      // change the size of a matrix
+// change the size of a matrix
+GrB_Info Delta_Matrix_resize
 (
-	Delta_Matrix C,             // matrix to modify
-	GrB_Index nrows_new,        // new number of rows in matrix
-	GrB_Index ncols_new         // new number of columns in matrix
+	Delta_Matrix C,       // matrix to modify
+	GrB_Index nrows_new,  // new number of rows in matrix
+	GrB_Index ncols_new   // new number of columns in matrix
 );
 
-GrB_Info Delta_Matrix_setElement_BOOL      // C (i,j) = x
+// C (i,j) = x
+GrB_Info Delta_Matrix_setElement_BOOL
 (
-	Delta_Matrix C,                     // matrix to modify
-	GrB_Index i,                        // row index
-	GrB_Index j                         // column index
+	Delta_Matrix C,  // matrix to modify
+	GrB_Index i,     // row index
+	GrB_Index j      // column index
 );
 
-GrB_Info Delta_Matrix_setElement_UINT64      // C (i,j) = x
+// C (i,j) = x
+GrB_Info Delta_Matrix_setElement_UINT64
 (
-	Delta_Matrix C,                     // matrix to modify
-	uint64_t x,                         // value
-	GrB_Index i,                        // row index
-	GrB_Index j                         // column index
+	Delta_Matrix C,  // matrix to modify
+	uint64_t x,      // scalar to assign to C(i,j)
+	GrB_Index i,     // row index
+	GrB_Index j      // column index
 );
 
-GrB_Info Delta_Matrix_extractElement_BOOL     // x = A(i,j)
+// x = A(i,j)
+GrB_Info Delta_Matrix_extractElement_BOOL     
 (
-	bool *x,                               // extracted scalar
-	const Delta_Matrix A,                  // matrix to extract a scalar from
-	GrB_Index i,                           // row index
-	GrB_Index j                            // column index
+	bool *x,               // extracted scalar
+	const Delta_Matrix A,  // matrix to extract a scalar from
+	GrB_Index i,           // row index
+	GrB_Index j            // column index
 ) ;
 
-GrB_Info Delta_Matrix_extractElement_UINT64     // x = A(i,j)
+// x = A(i,j)
+GrB_Info Delta_Matrix_extractElement_UINT64   
 (
-	uint64_t *x,                           // extracted scalar
-	const Delta_Matrix A,                  // matrix to extract a scalar from
-	GrB_Index i,                           // row index
-	GrB_Index j                            // column index
+	uint64_t *x,           // extracted scalar
+	const Delta_Matrix A,  // matrix to extract a scalar from
+	GrB_Index i,           // row index
+	GrB_Index j            // column index
 ) ;
 
 // remove entry at position C[i,j]
-GrB_Info Delta_Matrix_removeElement
+GrB_Info Delta_Matrix_removeElement_BOOL
 (
-	Delta_Matrix C,                 // matrix to remove entry from
-	GrB_Index i,                    // row index
-	GrB_Index j                     // column index
+	Delta_Matrix C,  // matrix to remove entry from
+	GrB_Index i,     // row index
+	GrB_Index j      // column index
+);
+
+GrB_Info Delta_Matrix_removeElement_UINT64
+(
+	Delta_Matrix C,  // matrix to remove entry from
+	GrB_Index i,     // row index
+	GrB_Index j      // column index
 );
 
 GrB_Info Delta_Matrix_removeElements
 (
-	Delta_Matrix C,                 // matrix to remove entry from
-	GrB_Matrix m                    // elements to remove
-);
+	Delta_Matrix C,  // matrix to remove entry from
+	GrB_Matrix A     // matrix filled with elements to remove
+) ;
 
-GrB_Info Delta_mxm                     // C = A * B
+// C = A * B
+GrB_Info Delta_mxm
 (
-	Delta_Matrix C,                    // input/output matrix for results
-	const GrB_Semiring semiring,       // defines '+' and '*' for A*B
-	const Delta_Matrix A,              // first input:  matrix A
-	const Delta_Matrix B               // second input: matrix B
+	Delta_Matrix C,               // input/output matrix for results
+	const GrB_Semiring semiring,  // defines '+' and '*' for A*B
+	const Delta_Matrix A,         // first input:  matrix A
+	const Delta_Matrix B          // second input: matrix B
 );
 
-GrB_Info Delta_eWiseAdd                // C = A + B
+// Does not look at dm. Assumes that any "zombie" value is '0'
+// where x \otimes 0 = 0' and x + 0' = x. (AKA the semiring "zero")
+// NOTE: this does not remove explicit zombies.
+// To make the output matrix a proper delta matrix, either remove the zombies 
+// or make dm contain all entries that are zombies.
+// C = A * B
+GrB_Info Delta_mxm_identity                    
 (
-    Delta_Matrix C,                    // input/output matrix for results
-    const GrB_Semiring semiring,       // defines '+' for T=A+B
-    const Delta_Matrix A,              // first input:  matrix A
-    const Delta_Matrix B               // second input: matrix B
+    GrB_Matrix C,                 // output matrix: may contain zombie values
+    const GrB_Semiring semiring,  // defines '+' and '*' for A*B
+    const GrB_Semiring sem_2,     // defines '+' and '*' for matricies without zombies
+    const GrB_Matrix A,           // first input:  matrix A
+    const Delta_Matrix B          // second input: matrix B
 );
 
-GrB_Info Delta_Matrix_clear    // clear a matrix of all entries;
-(                           // type and dimensions remain unchanged
-    Delta_Matrix A          // matrix to clear
-);
-
-GrB_Info Delta_Matrix_copy     // copy matrix A to matrix C
+// Using a plus_x semiring, returns C = A (BM + BMP - BDM)
+// Note this method can be tweeked to be used for any monoid with an inverse 
+// operation
+GrB_Info Delta_mxm_count
 (
-	Delta_Matrix C,            // output matrix
-	const Delta_Matrix A       // input matrix
+    GrB_Matrix C,                 // output: matrix C 
+    const GrB_Semiring semiring,  // defines '+' and '*' for A*B
+    const GrB_Matrix A,           // first input:  matrix A
+    const Delta_Matrix B          // second input: matrix B
+) ;
+
+// Computes c = A * u. 
+// Does not look at dm. Assumes that any "zombie" value is a semiring zero.
+GrB_Info Delta_mxv
+(
+    GrB_Vector c,                 // [output] vector
+    const GrB_Vector mask,        // [input] mask
+    const GrB_BinaryOp accum,     // [input] accum 
+    const GrB_Semiring semiring,  // [input] must treat zombie values as 
+                                  //    semiring zero
+    const Delta_Matrix A,         // [input] Delta_Matrix
+    const GrB_Vector u,           // [input] GrB_BOOL vector 
+    const GrB_Descriptor desc     // [input] descriptor 
+) ;
+
+// Computes c = A * u. 
+// Assumes that the addition operation is plus. This same strategy could work 
+// for any invertable monoid.
+// TODO: make a better name for this function. 
+GrB_Info Delta_mxv_count
+(
+    GrB_Vector c,                 // [output] vector
+    const GrB_Vector mask,        // [input] mask
+    const GrB_BinaryOp accum,     // [input] accum 
+    const GrB_Semiring semiring,  // [input] must treat zombie values as 
+                                  //    semiring zero
+    const Delta_Matrix A,         // [input] Delta_Matrix
+    const GrB_Vector u,           // [input] GrB_BOOL vector 
+    const GrB_Descriptor desc     // [input] descriptor 
+) ;
+
+// zombies should be the monoid's identity value.
+// C = A + B
+// This is calculated by:
+// CM        = AM + BM
+// CM   <CM>+= ADP + BDP
+// CDP  <!CM>= ADP + BDP
+// CDM <!CDP>= (ADM - BM) ∪ (BDM - AM) ∪ (ADM ∩ BDM)
+GrB_Info Delta_eWiseAdd
+(
+    Delta_Matrix C,         // input/output matrix for results
+    const GrB_BinaryOp op,  // defines '+' for T=A+B
+    const Delta_Matrix A,   // first input:  matrix A
+    const Delta_Matrix B    // second input: matrix B
+) ;
+
+// All zombies should be equal to alpha if in AM or beta if in BM
+// C = A + B
+// This is calculated by:
+// CM        = AM + BM
+// CM   <CM>+= ADP + BDP
+// CDP  <!CM>= ADP + BDP
+// CDM <!CDP>= (ADM - BM) ∪ (BDM - AM) ∪ (ADM ∩ BDM)
+GrB_Info Delta_eWiseUnion
+(
+    Delta_Matrix C,          // input/output matrix for results
+    const GrB_BinaryOp op,   // defines '+' for T=A+B
+    const Delta_Matrix A,    // first input:  matrix A
+	const GrB_Scalar alpha,  // second input: empty value of matrix A
+    const Delta_Matrix B,    // three input: matrix B
+	const GrB_Scalar beta    // fourth input: empty value of matrix B
+) ;
+
+// applies on m and dp
+GrB_Info Delta_Matrix_apply         // C = op(A)
+(
+    Delta_Matrix C,                 // input/output matrix for results
+    const GrB_UnaryOp op,           // operator to apply to the entries
+    const Delta_Matrix A            // first input:  matrix A
+) ;
+
+// clear a matrix of all entries
+GrB_Info Delta_Matrix_clear  
+(                            // type and dimensions remain unchanged
+    Delta_Matrix A           // matrix to clear
+);
+
+// copy matrix A to matrix C
+GrB_Info Delta_Matrix_copy 
+(
+	Delta_Matrix C,       // output matrix
+	const Delta_Matrix A  // input matrix
 );
 
 // get matrix C without writing to internal matrix
 GrB_Info Delta_Matrix_export
 (
-    GrB_Matrix *A,         // output Matrix 
-    const Delta_Matrix C,  // input Delta Matrix
-    const GrB_Type type    // output matrix type (values will be typecast)
-);
+	GrB_Matrix *A,
+	const Delta_Matrix C
+) ;
+
+// get structural matrix A without writing to internal matrix
+GrB_Info Delta_Matrix_export_structure
+(
+	GrB_Matrix *A,
+	const Delta_Matrix C
+) ;
 
 // checks to see if matrix has pending operations
 GrB_Info Delta_Matrix_pending
 (
-	const Delta_Matrix C,           // matrix to query
-	bool *pending                   // are there any pending operations
-);
-
-// return # of bytes used for a matrix
-GrB_Info Delta_Matrix_memoryUsage
-(
-    size_t *size,           // # of bytes used by the matrix A
-    const Delta_Matrix A    // matrix to query
+	const Delta_Matrix C,  // matrix to query
+	bool *pending          // are there any pending operations
 );
 
 GrB_Info Delta_Matrix_wait
 (
 	Delta_Matrix C,
 	bool force_sync
+);
+
+// get the type of the M matrix
+GrB_Info Delta_Matrix_type
+(
+	GrB_Type *type,
+	Delta_Matrix A
+);
+
+void Delta_Matrix_free
+(
+	Delta_Matrix *C
+);
+
+GrB_Matrix Delta_Matrix_M
+(
+	const Delta_Matrix C
+);
+
+// return # of bytes used for a matrix
+GrB_Info Delta_Matrix_memoryUsage
+(
+    size_t *size,         // # of bytes used by the matrix A
+    const Delta_Matrix A  // matrix to query
 );
 
 void Delta_Matrix_synchronize
@@ -277,18 +426,28 @@ void Delta_Matrix_synchronize
 	GrB_Index ncols
 );
 
-void Delta_Matrix_lock
+// replace C's internal M matrix with given M
+// the operation can only succeed if C's interal matrices:
+// M, DP, DM are all empty
+// C->M will point to *M and *M will be set to NULL
+GrB_Info Delta_Matrix_setM
 (
-	Delta_Matrix C
+	Delta_Matrix C,  // delta matrix
+	GrB_Matrix *M    // new M
 );
 
-void Delta_Matrix_unlock
+// replace C's internal matrices (M, DP & DM)
+// the operation can only succeed if C's interal matrices:
+// M, DP, DM are all empty
+GrB_Info Delta_Matrix_setMatrices
 (
-	Delta_Matrix C
+	Delta_Matrix C,  // delta matrix
+	GrB_Matrix M,    // new M
+	GrB_Matrix DP,   // new delta-plus
+	GrB_Matrix DM    // new delta-minus
 );
 
-void Delta_Matrix_free
+GrB_Info Delta_cache_transpose
 (
-	Delta_Matrix *C
+	Delta_Matrix A  // matrix to cache transpose of
 );
-
