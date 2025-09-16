@@ -582,3 +582,114 @@ class testOptimizationsPlan(FlowTestsBase):
         # validate result-set
         res = self.graph.query(q, params).result_set
         self.env.assertEquals(len(res), 0)
+
+    def test33_cartesian_product_count_optimization(self):
+        # Create test data
+        test_graph_id = "cartesian_count_test"
+        test_graph = self.db.select_graph(test_graph_id)
+        
+        # Create 100 nodes of each type N1 and N2
+        test_graph.query("UNWIND range(1, 100) AS i CREATE (n:N1 {id: i})")
+        test_graph.query("UNWIND range(1, 100) AS i CREATE (n:N2 {id: i})")
+        
+        # Test the problematic query that should be optimized
+        query = """MATCH (n1:N1), (n2:N2)
+                   WITH COUNT(*) AS c
+                   MATCH (n1:N1), (n2:N2)
+                   RETURN COUNT(*)"""
+        
+        # First verify the result is correct (100 * 100 = 10000)
+        resultset = test_graph.query(query).result_set
+        expected = [[10000]]
+        self.env.assertEqual(resultset, expected)
+        
+        # Verify both aggregations are calculated properly
+        # Test 1: Test the intermediate aggregation separately
+        intermediate_query = """MATCH (n1:N1), (n2:N2)
+                               WITH COUNT(*) AS c
+                               RETURN c"""
+        intermediate_result = test_graph.query(intermediate_query).result_set
+        expected_intermediate = [[10000]]
+        self.env.assertEqual(intermediate_result, expected_intermediate)
+        
+        # Test 2: Test that intermediate values work correctly with operations
+        intermediate_usage_query = """MATCH (n1:N1), (n2:N2)
+                                     WITH COUNT(*) AS c
+                                     RETURN c, c * 2 AS doubled"""
+        intermediate_usage_result = test_graph.query(intermediate_usage_query).result_set
+        expected_usage = [[10000, 20000]]
+        self.env.assertEqual(intermediate_usage_result, expected_usage)
+        
+        # Test 3: Test both aggregations work together in a chained query
+        chained_query = """MATCH (n1:N1), (n2:N2)
+                          WITH COUNT(*) AS intermediate_count
+                          MATCH (n3:N1), (n4:N2) 
+                          WITH intermediate_count, COUNT(*) AS final_count
+                          RETURN intermediate_count, final_count"""
+        chained_result = test_graph.query(chained_query).result_set
+        expected_chained = [[10000, 10000]]
+        self.env.assertEqual(chained_result, expected_chained)
+        
+        # Test 4: Test the original problematic pattern with validation of intermediate result
+        # This ensures the WITH COUNT(*) AS c step produces correct intermediate aggregation
+        validation_query = """MATCH (n1:N1), (n2:N2)
+                             WITH COUNT(*) AS c
+                             RETURN 'intermediate_result' AS step, c AS count
+                             UNION ALL
+                             MATCH (n1:N1), (n2:N2)
+                             WITH COUNT(*) AS c
+                             MATCH (n1:N1), (n2:N2)
+                             RETURN 'final_result' AS step, COUNT(*) AS count"""
+        validation_result = test_graph.query(validation_query).result_set
+        # Should return both intermediate and final counts as 10000
+        expected_validation = [['intermediate_result', 10000], ['final_result', 10000]]
+        self.env.assertEqual(validation_result, expected_validation)
+        
+        # Check that the execution plan is optimized (should not contain nested Aggregate operations)
+        executionPlan = str(test_graph.explain(query))
+        self.env.assertIn("Project", executionPlan)
+        self.env.assertIn("Results", executionPlan)
+        # Should not have nested Cartesian Products or multiple Aggregate operations
+        self.env.assertTrue(executionPlan.count("Aggregate") <= 1)
+        
+        # Test simpler case: single cartesian product count
+        simple_query = """MATCH (n1:N1), (n2:N2) RETURN COUNT(*)"""
+        simple_resultset = test_graph.query(simple_query).result_set
+        self.env.assertEqual(simple_resultset, expected)
+        
+        # Check that the simple query is also optimized
+        simple_plan = str(test_graph.explain(simple_query))
+        self.env.assertIn("Project", simple_plan)
+        self.env.assertNotIn("Cartesian Product", simple_plan)
+        self.env.assertNotIn("Node By Label Scan", simple_plan)
+        self.env.assertNotIn("Aggregate", simple_plan)
+        
+        # Test with mixed node types
+        mixed_query = """MATCH (n1:N1), (n2) RETURN COUNT(*)"""
+        # Should be 100 * 204 = 20400 (100 N1 nodes + 100 N2 nodes + 4 person nodes)
+        mixed_resultset = test_graph.query(mixed_query).result_set
+        expected_mixed = [[20400]]
+        self.env.assertEqual(mixed_resultset, expected_mixed)
+        
+        # Additional test: Verify COUNT(*) works correctly in multiple scenarios
+        # Test 1: Single label count
+        single_label_query = """MATCH (n:N1) RETURN COUNT(*)"""
+        single_result = test_graph.query(single_label_query).result_set
+        expected_single = [[100]]
+        self.env.assertEqual(single_result, expected_single)
+        
+        # Test 2: Verify aggregation with WHERE clause (should not be optimized)
+        where_query = """MATCH (n1:N1), (n2:N2) WHERE n1.id = n2.id RETURN COUNT(*)"""
+        where_result = test_graph.query(where_query).result_set
+        expected_where = [[100]]  # Only matching IDs (1-100 match)
+        self.env.assertEqual(where_result, expected_where)
+        
+        # Test 3: Verify that optimization doesn't break with additional aggregations
+        sum_query = """MATCH (n1:N1) RETURN COUNT(*), SUM(n1.id)"""
+        sum_result = test_graph.query(sum_query).result_set
+        # COUNT(*) = 100, SUM(1..100) = 5050
+        expected_sum = [[100, 5050]]
+        self.env.assertEqual(sum_result, expected_sum)
+        
+        # Clean up test data
+        test_graph.delete()
