@@ -9,6 +9,7 @@
 #include "delta_utils.h"
 #include "../../util/arr.h"
 #include "../../util/rmalloc.h"
+#include "../../globals.h"
 
 GrB_Info Delta_Matrix_removeElement_BOOL
 (
@@ -135,8 +136,10 @@ GrB_Info Delta_Matrix_removeElements
 
 	// remove edges in dp that are also in A.
 	GrB_OK (GrB_transpose(dp, A, NULL, dp, GrB_DESC_RSCT0));
+
 	GrB_OK (GrB_Matrix_assign_BOOL(m, dels, NULL, BOOL_ZOMBIE, GrB_ALL, 0, 
 		GrB_ALL, 0, GrB_DESC_S));
+	GrB_OK (GrB_wait(m, GrB_MATERIALIZE));
 	GrB_free (&dels);
 
 	Delta_Matrix_setDirty(C);

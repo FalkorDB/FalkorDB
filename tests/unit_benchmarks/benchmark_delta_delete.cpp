@@ -19,8 +19,8 @@ void rg_setup(const benchmark::State &state) {
 }
 
 void rg_teardown(const benchmark::State &state) {
-    GrB_finalize();
     Global_GrB_Ops_Free();
+    GrB_finalize();
     // GrB_OK((GrB_Info) LAGraph_Finalize(NULL));
 }
 
@@ -92,15 +92,15 @@ static void BM_tensor_delete(benchmark::State &state) {
     TensorIterator it;
     uint64_t       n     = 500000;
     uint64_t       seed  = 870713428976ul;    
-    GrB_Index      nvals = 0;
+    GrB_Index      nvals = 500000;
 
     Random_Tensor(&A, n, 0.001, 0.0000001, 0.0000001, seed);
 
-    Edge arr[40000];
+    Edge *arr = new Edge [nvals];
 
     TensorIterator_ScanRange(&it, A, 0, n - 1, false);
     
-    for (int i = 0; i < 40000; ++i) {
+    for (int i = 0; i < nvals; ++i) {
         Edge &e = arr[i];
         
         bool found = TensorIterator_next(&it, &e.src_id, &e.dest_id, &e.id, NULL);
@@ -109,12 +109,13 @@ static void BM_tensor_delete(benchmark::State &state) {
 
     int j = 0;
     for (auto _ : state) {
-        ASSERT(j < 40000);
+        ASSERT(j < nvals);
         Edge *e = arr + j;
         Tensor_RemoveElements(A, e, 1, NULL);
         j++;
     }
     Tensor_free(&A);
+    delete [] arr;
 }
 
 static void BM_tensor_delete_batch(benchmark::State &state) {
@@ -149,11 +150,11 @@ static void BM_tensor_delete_batch(benchmark::State &state) {
     Tensor_free(&A);
 }
 
-BENCHMARK(BM_delete_from_m)->Setup(rg_setup)->Teardown(rg_teardown);
-BENCHMARK(BM_delete_from_dp)->Setup(rg_setup)->Teardown(rg_teardown)->
-    Iterations(20000);
+// BENCHMARK(BM_delete_from_m)->Setup(rg_setup)->Teardown(rg_teardown);
+// BENCHMARK(BM_delete_from_dp)->Setup(rg_setup)->Teardown(rg_teardown)->
+    // Iterations(20000);
 BENCHMARK(BM_tensor_delete)->Setup(rg_setup)->Teardown(rg_teardown)->
-    Iterations(40000);
-BENCHMARK(BM_tensor_delete_batch)->Setup(rg_setup)->Teardown(rg_teardown)->
-    Iterations(4);
+    Iterations(500000);
+// BENCHMARK(BM_tensor_delete_batch)->Setup(rg_setup)->Teardown(rg_teardown)->
+    // Iterations(4);
 BENCHMARK_MAIN();

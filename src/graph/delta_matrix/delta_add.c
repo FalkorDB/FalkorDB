@@ -49,6 +49,7 @@ GrB_Info Delta_add
 		GrB_OK (GrB_Matrix_assign_BOOL(CM, CDM, NULL, BOOL_ZOMBIE, GrB_ALL, 0,
 			GrB_ALL, 0, GrB_DESC_S));
 	}
+	return GrB_SUCCESS;
 }
 
 // zombies should be the monoid's identity value.

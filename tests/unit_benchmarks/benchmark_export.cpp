@@ -31,6 +31,7 @@ static void BM_export(benchmark::State &state) {
 
     for (auto _ : state) {
 		Delta_Matrix_export(&C, A);
+        GrB_Matrix_wait(C, GrB_MATERIALIZE);
         GrB_Matrix_free(&C);
     }
 

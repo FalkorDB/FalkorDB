@@ -206,8 +206,8 @@ void Random_Tensor
 	//--------------------------------------------------------------------------
 	// Make M and DP disjoint
 	//--------------------------------------------------------------------------
-	GrB_OK(GrB_Matrix_apply(DP, M, NULL, free_entry, DP, GrB_DESC_S)); 
-	GrB_OK(GrB_Matrix_select_UINT64(DP, NULL, NULL, GrB_VALUENE_UINT64, DP, 
+	GrB_OK (GrB_Matrix_apply(DP, M, NULL, free_entry, DP, GrB_DESC_S)); 
+	GrB_OK (GrB_Matrix_select_UINT64(DP, NULL, NULL, GrB_VALUENE_UINT64, DP, 
 		U64_ZOMBIE, NULL));
 
 

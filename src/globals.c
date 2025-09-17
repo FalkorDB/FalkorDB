@@ -17,7 +17,7 @@ struct Globals {
 	GraphContext **graphs_in_keyspace;  // list of graphs in keyspace
 	StringPool string_pool;             // pool of reusable strings
 	pthread_t main_thread_id;           // process main thread id
-	struct GrB_ops ops;              // global GraphBLAS objects
+	struct GrB_ops ops;                 // global GraphBLAS objects
 };
 
 struct Globals _globals = {0};

@@ -14,8 +14,10 @@ extern "C" {
 	#include "src/graph/delta_matrix/delta_utils.h"
 	#include "src/arithmetic/algebraic_expression.h"
 
-	struct Global_ops {
+	struct GrB_ops {
 		GrB_Scalar   empty;          // empty scalar
+		GrB_Scalar   bool_zombie;    // zombie scalar for boolean matrices
+		GrB_Scalar   u64_zombie;     // zombie scalar for uint64 matrices
 		GrB_BinaryOp not_zombie;     // binary operator to check if a value is not a zombie
 		GrB_Semiring any_alive;      // semiring to check if any entry is alive
 		GrB_UnaryOp  free_tensors;   // unary operator to free tensor entries
@@ -23,7 +25,7 @@ extern "C" {
 
 	void Global_GrB_Ops_Init(void) ;
 	void Global_GrB_Ops_Free(void) ;
-	const struct Global_ops *Global_GrB_Ops_Get(void) ;
+	const struct GrB_ops *Global_GrB_Ops_Get(void) ;
 }
 
 void Delta_Random_Matrix
