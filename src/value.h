@@ -72,6 +72,9 @@ typedef enum {
  * assigning it a type. */
 #define SI_GET_NUMERIC(v) ((v).type == T_DOUBLE ? (v).doubleval : (v).longval)
 
+#define SI_HEAP_ALLOCATED(v) ( ((v).allocation == M_SELF) && ((v).type & (T_MAP | T_NODE | T_EDGE | T_ARRAY | T_PATH | T_STRING | T_PTR | T_VECTOR_F32 | T_INTERN_STRING)) )
+
+
 /* Build an integer return value for a comparison routine in the style of strcmp.
  * This is necessary to construct safe returns when the delta between
  * two values is < 1.0 (and would thus be rounded to 0)
