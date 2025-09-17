@@ -113,7 +113,7 @@ static int defrag_nodes
 	return defrag_entities (ctx, g, gc, it) ;
 }
 
-int FragDefrag
+int _GraphContextType_Defrag
 (
 	RedisModuleDefragCtx *ctx,
 	RedisModuleString *key,
