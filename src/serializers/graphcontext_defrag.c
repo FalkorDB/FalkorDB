@@ -70,21 +70,25 @@ void defrag_attributeset
 static int defrag_entities
 (
 	RedisModuleDefragCtx *ctx,
-	Graph *g,
+	const Graph *g,
 	GraphContext *gc,
 	DataBlockIterator *it
 ) {
+	unsigned long i   = 0 ;
 	uint64_t      id  = 0 ;
 	AttributeSet *set = NULL ;
 
-	while (set = DataBlockIterator_Next (it, &id) != NULL) {
+	while ((set = (AttributeSet*)(DataBlockIterator_Next (it, &id))) != NULL) {
         if ((i % 64 == 0) && RedisModule_DefragShouldStop(ctx)) {
             RedisModule_DefragCursorSet(ctx, i);
             return 1;
         }
+		i++ ;
 	}
 
-	defrag_attributeset (ctx, set) ;
+	defrag_attributeset (ctx, *set) ;
+
+	return 0 ;
 }
 
 static int defrag_edges
