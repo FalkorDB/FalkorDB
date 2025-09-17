@@ -223,7 +223,7 @@ void _print_matrix(GrB_Matrix mat) {
 bool _compare_matrices(GrB_Matrix expected, Delta_Matrix actual) {
 	GrB_Matrix a = expected;
 	GrB_Matrix b = NULL;
-	Delta_Matrix_export(&b, actual, GrB_BOOL);
+	Delta_Matrix_export(&b, actual);
 
 	GrB_Index acols, arows, avals;
 	GrB_Index bcols, brows, bvals;
@@ -681,7 +681,7 @@ void test_Exp_OP_MUL() {
 	// Using the A matrix described above,
 	// A * I = A.
 	GrB_Matrix expected;
-	Delta_Matrix_export(&expected, A, GrB_BOOL);
+	Delta_Matrix_export(&expected, A);
 	TEST_ASSERT(_compare_matrices(expected, res));
 
 	raxFree(matrices);
@@ -730,19 +730,36 @@ void test_Exp_OP_ADD_Transpose() {
 	GrB_Matrix_setElement_BOOL(expected, true, 2, 0);
 	GrB_Matrix_setElement_BOOL(expected, true, 2, 1);
 	GrB_Matrix_setElement_BOOL(expected, true, 3, 0);
+
+	// Algebraic expression add does not support uint64 matricies
+
+	rax *matrices = raxNew();
+	Delta_Matrix A;
+	Delta_Matrix At;
+	Delta_Matrix_new(&A, GrB_BOOL, n, n, false);
+	Delta_Matrix_new(&At, GrB_BOOL, n, n, false);
+	Delta_Matrix_copy(A, mat_ev);
+	Delta_Matrix_copy(At, mat_tev);
+	raxInsert(matrices, (unsigned char *)"A", strlen("A"), A, NULL);
+	raxInsert(matrices, (unsigned char *)"At", strlen("At"), At, NULL);
+
 	// Matrix used for intermidate computations of AlgebraicExpression_Eval
 	// but also contains the result of expression evaluation.
 	Delta_Matrix_new(&res, GrB_BOOL, n, n, false);
-	AlgebraicExpression *exp = AlgebraicExpression_FromString("V+tV", _matrices);
+	AlgebraicExpression *exp = AlgebraicExpression_FromString("A+At", matrices);
 	AlgebraicExpression_Eval(exp, res);
 
 	// Using the A matrix described above,
 	// A + Transpose(A) = B.
 	TEST_ASSERT(_compare_matrices(expected, res));
 
+	raxFree(matrices);
+	Delta_Matrix_free(&A);
+	Delta_Matrix_free(&At);
 	Delta_Matrix_free(&res);
 	GrB_Matrix_free(&expected);
 	AlgebraicExpression_Free(exp);
+
 }
 
 void test_Exp_OP_MUL_Transpose() {
