@@ -9,64 +9,124 @@
 #include "../graph/graphcontext.h"
 #include "../util/datablock/datablock.h"
 
+#define STAGE_SHIFT 56
+#define OFFSET_MASK 0x00FFFFFFFFFFFFFFULL
+
 // defrage stage
 typedef enum {
-	DEFRAG_NOT_STARTED,
-	DEFRAG_NODES,
-	DEFRAG_EDGES
+	DEFRAG_NODES = 0,
+	DEFRAG_EDGES = 1,
+	DEFRAG_DONE  = 2
 } defrag_stage;
 
-void defrag_attributeset
+// get the stage & offset from which we've left off
+static void _load_stage
+(
+	RedisModuleDefragCtx *ctx,
+	defrag_stage *stage,
+	uint64_t *offset
+) {
+	ASSERT (ctx    != NULL) ;
+	ASSERT (stage  != NULL) ;
+	ASSERT (offset != NULL) ;
+
+	// start stage
+	*offset = 0 ;
+	*stage  = DEFRAG_NODES ;
+
+	// attempt to get cursor
+	unsigned long raw ;
+	if (RedisModule_DefragCursorGet (ctx, &raw) != REDISMODULE_OK) {
+		return ;
+	}
+
+	uint64_t cursor = (uint64_t)raw ;
+	*stage  = (defrag_stage)(cursor >> STAGE_SHIFT) ;  // high byte
+	*offset = cursor & OFFSET_MASK ;  // low 7 bytes
+
+	// sanity
+	ASSERT (*stage >= DEFRAG_NODES && *stage <= DEFRAG_DONE) ;
+}
+
+// save stage + offset in a single 64-bit value
+// (stage in high byte, offset low 56 bits)
+static void _save_stage
+(
+	RedisModuleDefragCtx *ctx,
+	defrag_stage stage,
+	uint64_t offset
+) {
+	ASSERT (ctx != NULL) ;
+	ASSERT (stage >= DEFRAG_NODES && stage <= DEFRAG_DONE) ;
+
+	// mask offset to 56 bits to be compatible with load function
+	uint64_t cursor = (((uint64_t)stage) << STAGE_SHIFT) | (offset & OFFSET_MASK);
+	unsigned long long raw = (unsigned long long)cursor;
+
+	int res = RedisModule_DefragCursorSet (ctx, raw) ;
+	ASSERT (res == REDISMODULE_OK) ;
+}
+
+// defrag an AttributeSet
+// ensure any heap pointers are moved using RedisModule_DefragAlloc
+static void _defrag_attributeset
 (
 	RedisModuleDefragCtx *ctx,
 	AttributeSet set
 ) {
-	ASSERT (set != NULL) ;
-
 	uint16_t n = AttributeSet_Count (set) ;
 
 	for (uint16_t i = 0; i < n ; i++) {
-		SIValue v = AttributeSet_GetIdx (set, i, NULL) ;
-		if (!SI_HEAP_ALLOCATED (v)) {
+		// read current SIValue
+		SIValue *v = AttributeSet_GetIdxRef (set, i, NULL) ;
+		SIType t = SI_TYPE (*v) ;
+
+		// skip non-heap values quickly
+		if (!SI_HEAP_ALLOCATED (*v)) {
 			continue ;
 		}
+
 		void *p = NULL ;
 		void **ref_p = NULL ;
-		SIType t = SI_TYPE (v) ;
 
 		switch (t) {
-			case T_MAP:
-				p     = v.map  ;
-				ref_p = (void**)&v.map ;
+			case T_ARRAY:
+				p     = v->array ;
+				ref_p = (void**)&v->array ;
 				break ;
 
-			case T_ARRAY:
-				p     = v.array  ;
-				ref_p = (void**)&v.array ;
+			case T_VECTOR_F32:
+				p = v->ptrval ;
+				ref_p = &v->ptrval ;
 				break ;
 
 			case T_STRING:
 			case T_INTERN_STRING:
-				p     = v.stringval  ;
-				ref_p = (void**)&v.stringval ;
+				p     = v->stringval ;
+				ref_p = (void**)&v->stringval ;
+				break ;
+
+			case T_MAP:
+				p     = v->map ;
+				ref_p = (void**)&v->map ;
 				break ;
 
 			default :
-				p     = v.ptrval  ;
-				ref_p = (void**)&v.ptrval ;
+				ASSERT (false && "unexpected value type") ;
 				break ;
 		}
 
 		ASSERT (p     != NULL) ;
 		ASSERT (ref_p != NULL) ;
 
-        void *new = RedisModule_DefragAlloc (ctx, p) ;
-        if (new) {
-			*ref_p = new ;
-        }
+		void *moved = RedisModule_DefragAlloc (ctx, p) ;
+		if (moved != NULL) {
+			*ref_p = moved ;
+		}
 	}
 }
 
+// defrag entities (both nodes and edges)
 static int defrag_entities
 (
 	RedisModuleDefragCtx *ctx,
@@ -74,19 +134,20 @@ static int defrag_entities
 	GraphContext *gc,
 	DataBlockIterator *it
 ) {
-	unsigned long i   = 0 ;
-	uint64_t      id  = 0 ;
+	uint64_t counter = 0 ;
 	AttributeSet *set = NULL ;
 
-	while ((set = (AttributeSet*)(DataBlockIterator_Next (it, &id))) != NULL) {
-        if ((i % 64 == 0) && RedisModule_DefragShouldStop(ctx)) {
-            RedisModule_DefragCursorSet(ctx, i);
+	// get current entity attribute-set
+	while ((set = (AttributeSet*)(DataBlockIterator_Next (it, NULL))) != NULL) {
+		_defrag_attributeset (ctx, *set) ;
+
+		// check if we should stop
+        if ((counter % 64 == 0) && RedisModule_DefragShouldStop (ctx)) {
             return 1;
         }
-		i++ ;
-	}
 
-	defrag_attributeset (ctx, *set) ;
+		counter++ ;
+	}
 
 	return 0 ;
 }
@@ -94,64 +155,117 @@ static int defrag_entities
 static int defrag_edges
 (
 	RedisModuleDefragCtx *ctx,
-	GraphContext *gc
+	GraphContext *gc,
+	uint64_t offset
 ) {
-	const Graph *g = GraphContext_GetGraph (gc) ;
+	Graph *g = GraphContext_GetGraph (gc) ;
 	DataBlockIterator *it = Graph_ScanEdges (g) ;
+	DataBlockIterator_Seek (it, offset) ;  // seek iterator to offset
 
-	return defrag_entities (ctx, g, gc, it) ;
+	// obtain exclusive access to the graph
+	Graph_AcquireWriteLock (g) ;
+
+	int res = defrag_entities (ctx, g, gc, it) ;
+
+	Graph_ReleaseLock (g) ;
+
+	// save current stage and offset
+	_save_stage (ctx, DEFRAG_EDGES, DataBlockIterator_Position (it)) ;
+
+	// clean up
+	DataBlockIterator_Free (it) ;
+	return res ;
 }
 
 static int defrag_nodes
 (
 	RedisModuleDefragCtx *ctx,
-	GraphContext *gc
+	GraphContext *gc,
+	uint64_t offset
 ) {
-	const Graph *g = GraphContext_GetGraph (gc) ;
-	DataBlockIterator *it = Graph_ScanNodes (g) ;
+	Graph *g = GraphContext_GetGraph (gc) ;
 
-	return defrag_entities (ctx, g, gc, it) ;
+	DataBlockIterator *it = Graph_ScanNodes (g) ;
+	DataBlockIterator_Seek (it, offset) ;  // seek iterator to offset
+
+	// obtain exclusive access to the graph
+	Graph_AcquireWriteLock (g) ;
+
+	int res = defrag_entities (ctx, g, gc, it) ;
+
+	Graph_ReleaseLock (g) ;
+
+	// save current stage and offset
+	_save_stage (ctx, DEFRAG_NODES, DataBlockIterator_Position (it)) ;
+
+	// clean up
+	DataBlockIterator_Free (it) ;
+	return res ;
 }
 
+// graph context type defrag call back
+// invoked by redis active defrag
 int _GraphContextType_Defrag
 (
 	RedisModuleDefragCtx *ctx,
 	RedisModuleString *key,
 	void **value
 ) {
-	ASSERT (ctx   != NULL) ;	
-	ASSERT (key   != NULL) ;	
-	ASSERT (value != NULL) ;	
+	ASSERT (ctx   != NULL) ;
+	ASSERT (key   != NULL) ;
+	ASSERT (value != NULL) ;
 
-    int steps = 0;
-    unsigned long i = 0;
-	defrag_stage stage = DEFRAG_NOT_STARTED ;
-
-    RedisModule_Log (NULL, "notice", "Defrag key: %s",
-			RedisModule_StringPtrLen(key, NULL)) ;
+	RedisModule_Log (NULL, "notice", "Defrag key: %s",
+		RedisModule_StringPtrLen(key, NULL)) ;
 
 	GraphContext *gc = *((GraphContext**)(value)) ;
 
-    // attempt to get cursor
-    if (RedisModule_DefragCursorGet (ctx, &i) != REDISMODULE_OK) {
-		stage = DEFRAG_NODES ;
-	} else {
-		stage = (defrag_stage) i ;  // resume
-	}
+	//--------------------------------------------------------------------------
+	// determine stage
+	//--------------------------------------------------------------------------
+
+	uint64_t offset = 0 ;
+	defrag_stage stage = DEFRAG_NODES ;
+
+	_load_stage (ctx, &stage, &offset) ;
+
+	RedisModule_Log (NULL, "notice", "defrag stage: %d, defrag offset: %llu",
+			stage, offset) ;
 
 	int res = 0 ;
 
-	switch (stage) {
-		case DEFRAG_NODES:
-			res = defrag_nodes (ctx, gc) ;
-			break ;
-		case DEFRAG_EDGES:
-			res = defrag_edges (ctx, gc) ;
-			break ;
-		default:
-			ASSERT (false && "unknown defrag stage") ;
+	while (res == 0 && stage < DEFRAG_DONE) {
+		switch (stage) {
+			case DEFRAG_NODES:
+				res = defrag_nodes (ctx, gc, offset) ;
+				break ;
+
+			case DEFRAG_EDGES:
+				res = defrag_edges (ctx, gc, offset) ;
+				break ;
+
+			default:
+				ASSERT (false && "unexpected defrag stage") ;
+		}
+
+		// are we done we current stage ?
+		if (res == 0) {
+			// advance to next stage and reset offset to zero
+			// (will be picked up by subsequent _load_stage)
+			stage++ ;
+			offset = 0;
+
+			// save progress: either next loop will start and possibly save
+			// or final save below
+            _save_stage (ctx, stage, offset) ;
+		}
 	}
 
-    return 0;
+	// if fully done, set cursor to DEFRAG_DONE (offset 0)
+    if (res == 0 && stage >= DEFRAG_DONE) {
+        _save_stage (ctx, DEFRAG_DONE, 0) ;
+    }
+
+    return res ;
 }
 
