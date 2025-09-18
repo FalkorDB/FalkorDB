@@ -32,6 +32,16 @@ DataBlockIterator *DataBlockIterator_New
 	return iter ;
 }
 
+// checks if iterator is depleted
+bool DataBlockIterator_Depleted
+(
+	const DataBlockIterator *it  // iterator
+) {
+	ASSERT (it != NULL) ;
+
+	return (it->_current_pos == it->_end_pos) ;
+}
+
 // returns the next item, unless we've reached the end
 // in which case NULL is returned
 // if `id` is provided and an item is located

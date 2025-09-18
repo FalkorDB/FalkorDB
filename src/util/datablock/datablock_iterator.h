@@ -20,6 +20,8 @@ typedef struct {
 	uint64_t _end_pos;      // iterator won't pass end position
 } DataBlockIterator;
 
+#define DataBlockIterator_Position(iter) (iter)->_current_pos
+
 // creates a new datablock iterator
 DataBlockIterator *DataBlockIterator_New
 (
@@ -28,7 +30,11 @@ DataBlockIterator *DataBlockIterator_New
 	uint64_t end_pos	 // iteration stops here
 );
 
-#define DataBlockIterator_Position(iter) (iter)->_current_pos
+// checks if iterator is depleted
+bool DataBlockIterator_Depleted
+(
+	const DataBlockIterator *it  // iterator
+);
 
 // returns the next item, unless we've reached the end
 // in which case NULL is returned

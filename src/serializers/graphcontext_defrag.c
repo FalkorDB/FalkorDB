@@ -45,7 +45,7 @@ static void _load_stage
 	*offset = cursor & OFFSET_MASK ;  // low 7 bytes
 
 	// sanity
-	ASSERT (*stage >= DEFRAG_NODES && *stage <= DEFRAG_DONE) ;
+	ASSERT (*stage >= DEFRAG_NODES && *stage < DEFRAG_DONE) ;
 }
 
 // save stage + offset in a single 64-bit value
@@ -140,15 +140,19 @@ static int defrag_entities
 	// get current entity attribute-set
 	while ((set = (AttributeSet*)(DataBlockIterator_Next (it, NULL))) != NULL) {
 		_defrag_attributeset (ctx, *set) ;
+		counter++ ;
 
 		// check if we should stop
         if ((counter % 64 == 0) && RedisModule_DefragShouldStop (ctx)) {
-            return 1;
+			// only pause if NOT at the end
+			if (!DataBlockIterator_Depleted (it)) {
+				return 1;
+			}
+			// else: fall through, loop will terminate, return 0
         }
-
-		counter++ ;
 	}
 
+	// iterator exhausted, no more work
 	return 0 ;
 }
 
