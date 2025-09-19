@@ -72,13 +72,16 @@ static void _save_stage
 static void _defrag_attributeset
 (
 	RedisModuleDefragCtx *ctx,
-	AttributeSet set
+	AttributeSet *set
 ) {
-	uint16_t n = AttributeSet_Count (set) ;
+	void *moved = NULL ;
+	AttributeSet _set = *set ;
+	uint16_t n = AttributeSet_Count (_set) ;
 
+	// defrag attributes
 	for (uint16_t i = 0; i < n ; i++) {
 		// read current SIValue
-		SIValue *v = AttributeSet_GetIdxRef (set, i, NULL) ;
+		SIValue *v = AttributeSet_GetIdxRef (_set, i, NULL) ;
 		SIType t = SI_TYPE (*v) ;
 
 		// skip non-heap values quickly
@@ -100,8 +103,12 @@ static void _defrag_attributeset
 				ref_p = &v->ptrval ;
 				break ;
 
-			case T_STRING:
 			case T_INTERN_STRING:
+				// do not defrag intern strings, as these are managed
+				// by a string pool
+				break;
+
+			case T_STRING:
 				p     = v->stringval ;
 				ref_p = (void**)&v->stringval ;
 				break ;
@@ -124,12 +131,19 @@ static void _defrag_attributeset
 			*ref_p = moved ;
 		}
 	}
+
+	// defrag set
+	moved = RedisModule_DefragAlloc (ctx, _set) ;
+	if (moved != NULL) {
+		*set = moved ;
+	}
 }
 
 // defrag entities (both nodes and edges)
 static int defrag_entities
 (
 	RedisModuleDefragCtx *ctx,
+	defrag_stage stage,
 	const Graph *g,
 	GraphContext *gc,
 	DataBlockIterator *it
@@ -139,13 +153,22 @@ static int defrag_entities
 
 	// get current entity attribute-set
 	while ((set = (AttributeSet*)(DataBlockIterator_Next (it, NULL))) != NULL) {
-		_defrag_attributeset (ctx, *set) ;
 		counter++ ;
+
+		// entity has no attributes, skip
+		if (*set == NULL) {
+			continue ;
+		}
+
+		_defrag_attributeset (ctx, set) ;
 
 		// check if we should stop
         if ((counter % 64 == 0) && RedisModule_DefragShouldStop (ctx)) {
 			// only pause if NOT at the end
 			if (!DataBlockIterator_Depleted (it)) {
+				// save current stage and offset
+				_save_stage (ctx, stage, DataBlockIterator_Position (it)) ;
+
 				return 1;
 			}
 			// else: fall through, loop will terminate, return 0
@@ -169,12 +192,9 @@ static int defrag_edges
 	// obtain exclusive access to the graph
 	Graph_AcquireWriteLock (g) ;
 
-	int res = defrag_entities (ctx, g, gc, it) ;
+	int res = defrag_entities (ctx, DEFRAG_EDGES, g, gc, it) ;
 
 	Graph_ReleaseLock (g) ;
-
-	// save current stage and offset
-	_save_stage (ctx, DEFRAG_EDGES, DataBlockIterator_Position (it)) ;
 
 	// clean up
 	DataBlockIterator_Free (it) ;
@@ -195,12 +215,9 @@ static int defrag_nodes
 	// obtain exclusive access to the graph
 	Graph_AcquireWriteLock (g) ;
 
-	int res = defrag_entities (ctx, g, gc, it) ;
+	int res = defrag_entities (ctx, DEFRAG_NODES, g, gc, it) ;
 
 	Graph_ReleaseLock (g) ;
-
-	// save current stage and offset
-	_save_stage (ctx, DEFRAG_NODES, DataBlockIterator_Position (it)) ;
 
 	// clean up
 	DataBlockIterator_Free (it) ;
@@ -233,7 +250,7 @@ int _GraphContextType_Defrag
 
 	_load_stage (ctx, &stage, &offset) ;
 
-	RedisModule_Log (NULL, "notice", "defrag stage: %d, defrag offset: %llu",
+	RedisModule_Log (NULL, "notice", "defrag stage: %d, defrag offset: %"PRIu64,
 			stage, offset) ;
 
 	int res = 0 ;
@@ -258,17 +275,8 @@ int _GraphContextType_Defrag
 			// (will be picked up by subsequent _load_stage)
 			stage++ ;
 			offset = 0;
-
-			// save progress: either next loop will start and possibly save
-			// or final save below
-            _save_stage (ctx, stage, offset) ;
 		}
 	}
-
-	// if fully done, set cursor to DEFRAG_DONE (offset 0)
-    if (res == 0 && stage >= DEFRAG_DONE) {
-        _save_stage (ctx, DEFRAG_DONE, 0) ;
-    }
 
     return res ;
 }

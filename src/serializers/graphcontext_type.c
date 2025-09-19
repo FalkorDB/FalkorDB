@@ -77,8 +77,8 @@ static size_t _GraphContextType_FreeEffort
 	RedisModuleString *key,
 	const void *value
 ) {
-	// always return a large to force lazy defrag
-	return 1000000000000ULL;   // 1 trillion
+	// return a large value to prefer lazy freeing of large keys
+	return (size_t)1000000000000ULL;   // 1 trillion
 }
 
 static void _GraphContextType_Free(void *value) {

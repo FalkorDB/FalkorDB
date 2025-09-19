@@ -117,7 +117,6 @@ void DataBlockIterator_Seek
 	int skipped_blocks = idx / it->_block_cap ;
 	for (int i = 0; i < skipped_blocks ; i++) {
 		it->_current_block = it->_current_block->next ;
-		ASSERT (it->_current_block != NULL) ;
 	}
 
 	// set offset within current block
