@@ -7,8 +7,9 @@
 #include "array.h"
 #include "../util/arr.h"
 #include "../util/qsort.h"
-#include <limits.h>
 #include "xxhash.h"
+
+#include <limits.h>
 
 // initialize a new SIValue array type with given capacity
 // returns initialized array
@@ -17,9 +18,11 @@ SIValue SIArray_New
 	u_int32_t initialCapacity // initial capacity
 ) {
 	SIValue siarray;
-	siarray.array = array_new(SIValue, initialCapacity);
-	siarray.type = T_ARRAY;
-	siarray.allocation = M_SELF;
+
+	siarray.array      = array_new (SIValue, initialCapacity) ;
+	siarray.type       = T_ARRAY ;
+	siarray.allocation = M_SELF ;
+
 	return siarray;
 }
 
@@ -85,9 +88,28 @@ SIValue SIArray_Get
 	SIValue siarray,  // siarray: array
 	u_int32_t index   // index: index
 ) {
+	SIValue *v = SIArray_GetRef (siarray, index) ;
+
+	if (unlikely (v == NULL)) {
+		return SI_NullVal () ;
+	} else {
+		return SI_ShareValue (*v) ;
+	}
+}
+
+// get a reference to the 'idx' element on the array
+// if index is out of bounds NULL is returned
+SIValue *SIArray_GetRef
+(
+	SIValue siarray,  // array
+	u_int32_t index   // index
+) {
 	// check index
-	if(index >= SIArray_Length(siarray)) return SI_NullVal();
-	return SI_ShareValue(siarray.array[index]);
+	if (unlikely (index >= SIArray_Length (siarray))) {
+		return NULL ;
+	}
+
+	return siarray.array + index ;
 }
 
 // get the array length
