@@ -6,8 +6,10 @@
 
 #pragma once
 
-#include <stdint.h>
 #include "../block.h"
+
+#include <stdint.h>
+#include <stdbool.h>
 
 // Datablock iterator iterates over items within a datablock
 

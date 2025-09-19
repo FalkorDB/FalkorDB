@@ -4,12 +4,10 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "datablock_iterator.h"
 #include "RG.h"
+#include "datablock_iterator.h"
 #include "datablock.h"
 #include "../rmalloc.h"
-#include <stdio.h>
-#include <stdbool.h>
 
 // creates a new datablock iterator
 DataBlockIterator *DataBlockIterator_New
