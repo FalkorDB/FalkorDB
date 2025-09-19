@@ -63,8 +63,7 @@ static void _save_stage
 	uint64_t cursor = (((uint64_t)stage) << STAGE_SHIFT) | (offset & OFFSET_MASK);
 	unsigned long long raw = (unsigned long long)cursor;
 
-	int res = RedisModule_DefragCursorSet (ctx, raw) ;
-	ASSERT (res == REDISMODULE_OK) ;
+	RedisModule_DefragCursorSet (ctx, raw) ;
 }
 
 // defrag an AttributeSet
@@ -106,7 +105,7 @@ static void _defrag_attributeset
 			case T_INTERN_STRING:
 				// do not defrag intern strings, as these are managed
 				// by a string pool
-				break;
+				continue ;
 
 			case T_STRING:
 				p     = v->stringval ;

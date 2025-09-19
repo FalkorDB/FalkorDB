@@ -13,7 +13,7 @@ class testDefrag():
         if SANITIZER:
             self.env.skip() # sanitizer is not working correctly with bulk
 
-    def test_farg_ratio(self):
+    def test_frag_ratio(self):
         #-----------------------------------------------------------------------
         # 1. Create many fragmented graphs
         #-----------------------------------------------------------------------
@@ -53,10 +53,16 @@ class testDefrag():
         for k in keys:
             original_cfg.update(self.conn.config_get(k))
 
-        self.conn.config_set("activedefrag", "yes")
-        self.conn.config_set("active-defrag-threshold-lower", "1")
-        self.conn.config_set("active-defrag-threshold-upper", "1")
-        self.conn.config_set("active-defrag-ignore-bytes", "1")
+        try:
+            self.conn.config_set("activedefrag", "yes")
+            self.conn.config_set("active-defrag-threshold-lower", "1")
+            self.conn.config_set("active-defrag-threshold-upper", "1")
+            self.conn.config_set("active-defrag-ignore-bytes", "1")
+        except Exception:
+            # failed to reconfig most likely due to:
+            # "Active defragmentation cannot be enabled:
+            # it requires a Redis server compiled with a modified Jemalloc"
+            self.env.skip()
 
         #-------------------------------------------------------------------
         # 3. Wait for defrag to run (poll instead of fixed sleep)
