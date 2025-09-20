@@ -58,6 +58,14 @@ SIValue *AttributeSet_Get
 	AttributeID attr_id      // attribute identifier
 );
 
+// retrieves a reference to value from set by index
+SIValue *AttributeSet_GetIdxRef
+(
+	const AttributeSet set,  // set to retieve attribute from
+	uint16_t i,              // index of the property
+	AttributeID *attr_id     // attribute identifier
+);
+
 // retrieves a value from set by index
 SIValue AttributeSet_GetIdx
 (

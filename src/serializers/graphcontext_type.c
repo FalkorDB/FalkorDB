@@ -72,6 +72,15 @@ static int _GraphContextType_AuxLoad(RedisModuleIO *rdb, int encver, int when) {
 	return REDISMODULE_OK;
 }
 
+static size_t _GraphContextType_FreeEffort
+(
+	RedisModuleString *key,
+	const void *value
+) {
+	// return a large value to prefer lazy freeing of large keys
+	return (size_t)1000000000000ULL;   // 1 trillion
+}
+
 static void _GraphContextType_Free(void *value) {
 	GraphContext *gc = value;
 	Globals_RemoveGraph(gc);
@@ -81,11 +90,13 @@ static void _GraphContextType_Free(void *value) {
 int GraphContextType_Register(RedisModuleCtx *ctx) {
 	RedisModuleTypeMethods tm = { 0 };
 	tm.free              = _GraphContextType_Free;
+	tm.defrag            = _GraphContextType_Defrag;
 	tm.version           = REDISMODULE_TYPE_METHOD_VERSION;
 	tm.rdb_load          = _GraphContextType_RdbLoad;
 	tm.rdb_save          = _GraphContextType_RdbSave;
 	tm.aux_save          = _GraphContextType_AuxSave;
 	tm.aux_load          = _GraphContextType_AuxLoad;
+	tm.free_effort       = _GraphContextType_FreeEffort;
 	tm.aux_save_triggers = REDISMODULE_AUX_BEFORE_RDB | REDISMODULE_AUX_AFTER_RDB;
 
 	GraphContextRedisModuleType = RedisModule_CreateDataType(ctx, "graphdata",

@@ -120,6 +120,28 @@ SIValue *AttributeSet_Get
 	return ATTRIBUTE_NOTFOUND;
 }
 
+// retrieves a reference to value from set by index
+SIValue *AttributeSet_GetIdxRef
+(
+	const AttributeSet set,  // set to retieve attribute from
+	uint16_t i,              // index of the property
+	AttributeID *attr_id     // attribute identifier
+) {
+	// in case attribute-set is marked as read-only, clear marker
+	AttributeSet _set = (AttributeSet)ATTRIBUTE_SET_CLEAR_MSB (set) ;
+
+	ASSERT (_set != NULL) ;
+
+	ASSERT (i < _set->attr_count) ;
+
+	Attribute *attr = _set->attributes + i;
+	if (attr_id != NULL) {
+		*attr_id = attr->id;
+	}
+
+	return &attr->value;
+}
+
 // retrieves a value from set by index
 SIValue AttributeSet_GetIdx
 (
@@ -127,19 +149,8 @@ SIValue AttributeSet_GetIdx
 	uint16_t i,              // index of the property
 	AttributeID *attr_id     // attribute identifier
 ) {
-	ASSERT(attr_id != NULL);
-
-	// in case attribute-set is marked as read-only, clear marker
-	AttributeSet _set = (AttributeSet)ATTRIBUTE_SET_CLEAR_MSB(set);
-
-	ASSERT(_set != NULL);
-
-	ASSERT(i < _set->attr_count);
-
-	Attribute *attr = _set->attributes + i;
-	*attr_id = attr->id;
-
-	return attr->value;
+	SIValue *v = AttributeSet_GetIdxRef (set, i, attr_id) ;
+	return *v ;
 }
 
 static AttributeSet AttributeSet_AddPrepare
