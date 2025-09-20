@@ -79,74 +79,66 @@ class testDefrag():
             self.conn.config_set("active-defrag-threshold-lower", "1")
             self.conn.config_set("active-defrag-threshold-upper", "1")
             self.conn.config_set("active-defrag-ignore-bytes", "1")
-        except Exception:
-            # failed to reconfig most likely due to:
-            # "Active defragmentation cannot be enabled:
-            # it requires a Redis server compiled with a modified Jemalloc"
+
+            #-------------------------------------------------------------------
+            # 3. Wait for defrag to run (poll instead of fixed sleep)
+            #-------------------------------------------------------------------
+
+            # Wait until some active defrag hits occur
+            timeout = 2
+            started = False
+            initial_hits = int(self.conn.info("memory").get("active_defrag_hits", 0))
+
+            for _ in range(timeout):
+                info = self.conn.info("memory")
+                hits = int(info.get("active_defrag_hits", 0))
+                if hits > initial_hits:
+                    started = True
+                    break
+                time.sleep(1)
+
+            #if not started:
+            #    # Active defrag did not start within timeout
+            #    self.env.assertTrue(False)
+
+            new_frag_ratio = frag_ratio
+
+            for _ in range(timeout):
+                info = self.conn.info("memory")
+                new_frag_ratio = float(info.get("mem_fragmentation_ratio"))
+                #print(
+                #    "active_defrag_running:",
+                #    info.get("active_defrag_running"),
+                #    "hits:",
+                #    info.get("active_defrag_hits"),
+                #    "misses:",
+                #    info.get("active_defrag_misses"),
+                #    "mem_fragmentation_ratio:",
+                #    new_frag_ratio,
+                #)
+
+                # If defrag is no longer running and fragmentation dropped
+                # we can stop early
+                if int(info.get("active_defrag_running")) == 0 and new_frag_ratio < frag_ratio:
+                    break
+
+                time.sleep(1)
+
+        except ResponseError:
+            # Active defragmentation not supported on this build
             self.env.skip()
+            return
 
-        #-------------------------------------------------------------------
-        # 3. Wait for defrag to run (poll instead of fixed sleep)
-        #-------------------------------------------------------------------
+        finally:
+            #-------------------------------------------------------------------
+            # 4. Restore original config
+            #-------------------------------------------------------------------
 
-        # Wait until some active defrag hits occur
-        timeout = 2
-        started = False
-        initial_hits = int(self.conn.info("memory").get("active_defrag_hits", 0))
-
-        for _ in range(timeout):
-            info = self.conn.info("memory")
-            hits = int(info.get("active_defrag_hits", 0))
-            if hits > initial_hits:
-                started = True
-                break
-            time.sleep(1)
-
-        #if not started:
-        #    # Active defrag did not start within timeout
-        #    self.env.assertTrue(False)
-
-        new_frag_ratio = frag_ratio
-
-        for _ in range(timeout):
-            info = self.conn.info("memory")
-            new_frag_ratio = float(info.get("mem_fragmentation_ratio"))
-            #print(
-            #    "active_defrag_running:",
-            #    info.get("active_defrag_running"),
-            #    "hits:",
-            #    info.get("active_defrag_hits"),
-            #    "misses:",
-            #    info.get("active_defrag_misses"),
-            #    "mem_fragmentation_ratio:",
-            #    new_frag_ratio,
-            #)
-
-            # If defrag is no longer running and fragmentation dropped
-            # we can stop early
-            if int(info.get("active_defrag_running")) == 0 and new_frag_ratio < frag_ratio:
-                break
-
-            time.sleep(1)
+            for k, v in original_cfg.items():
+                self.conn.config_set(k, v)
 
         #-----------------------------------------------------------------------
-        # 4. Restore original config
-        #-----------------------------------------------------------------------
-
-        for k, v in original_cfg.items():
-            self.conn.config_set(k, v)
-
-        #-----------------------------------------------------------------------
-        # 5. Assert: fragmentation ratio dropped
-        #-----------------------------------------------------------------------
-
-        #print(f"Prev fragmentation ratio: {frag_ratio}")
-        #print(f"Final fragmentation ratio: {new_frag_ratio}")
-        # Allow tiny fluctuation (0.01) to avoid flaky tests
-        #self.env.assertLess(new_frag_ratio, frag_ratio + 0.01)
-
-        #-----------------------------------------------------------------------
-        # 6. Assert: graphs are intact
+        # 5. Assert: graphs are intact
         #-----------------------------------------------------------------------
 
         g = self.db.select_graph(f"key:11")
