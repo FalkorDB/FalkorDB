@@ -6,9 +6,7 @@ import threading
 from click.testing import CliRunner
 from falkordb_bulk_loader.bulk_insert import bulk_insert
 
-GRAPH_ID    = "graph"
-redis_graph = None
-
+GRAPH_ID = "bulk_insert"
 
 def ping_server(stop_event, res, self):
     ping_count = 0
@@ -31,13 +29,11 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         if VALGRIND:
             self.env.skip() # valgrind is not working correctly with replication
 
-        global redis_graph
         self.port = self.env.envRunner.port
-        redis_graph = self.db.select_graph(GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
     # Run bulk loader script and validate terminal output
     def test01_run_script(self):
-        graphname = "graph"
         runner = CliRunner()
 
         csv_path = os.path.dirname(os.path.abspath(__file__)) + '/../../demo/social/resources/bulk_formatted/'
@@ -46,7 +42,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                                           '--nodes', csv_path + 'Country.csv',
                                           '--relations', csv_path + 'KNOWS.csv',
                                           '--relations', csv_path + 'VISITED.csv',
-                                          graphname])
+                                          GRAPH_ID])
 
         # The script should report 27 node creations and 48 edge creations
         self.env.assertEquals(res.exit_code, 0)
@@ -55,9 +51,8 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
     # Validate that the expected nodes and properties have been constructed
     def test02_validate_nodes(self):
-        global redis_graph
         # Query the newly-created graph
-        query_result = redis_graph.query('MATCH (p:Person) RETURN p.name, p.age, p.gender, p.status, ID(p) ORDER BY p.name')
+        query_result = self.graph.query('MATCH (p:Person) RETURN p.name, p.age, p.gender, p.status, ID(p) ORDER BY p.name')
         # Verify that the Person label exists, has the correct attributes, and is properly populated
         expected_result = [['Ailon Velger', 32, 'male', 'married', 2],
                            ['Alon Fital', 32, 'male', 'married', 1],
@@ -76,7 +71,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         self.env.assertEquals(query_result.result_set, expected_result)
 
         # Verify that the Country label exists, has the correct attributes, and is properly populated
-        query_result = redis_graph.query('MATCH (c:Country) RETURN c.name, ID(c) ORDER BY c.name')
+        query_result = self.graph.query('MATCH (c:Country) RETURN c.name, ID(c) ORDER BY c.name')
         expected_result = [['Andora', 21],
                            ['Canada', 18],
                            ['China', 19],
@@ -95,7 +90,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
     # Validate that the expected relations and properties have been constructed
     def test03_validate_relations(self):
         # Query the newly-created graph
-        query_result = redis_graph.query('MATCH (a)-[e:KNOWS]->(b) RETURN a.name, e.relation, b.name ORDER BY e.relation, a.name, b.name')
+        query_result = self.graph.query('MATCH (a)-[e:KNOWS]->(b) RETURN a.name, e.relation, b.name ORDER BY e.relation, a.name, b.name')
 
         expected_result = [['Ailon Velger', 'friend', 'Noam Nativ'],
                            ['Alon Fital', 'friend', 'Gal Derriere'],
@@ -112,7 +107,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                            ['Ori Laslo', 'married', 'Shelly Laslo Rooz']]
         self.env.assertEquals(query_result.result_set, expected_result)
 
-        query_result = redis_graph.query('MATCH (a)-[e:VISITED]->(b) RETURN a.name, e.purpose, b.name ORDER BY e.purpose, a.name, b.name')
+        query_result = self.graph.query('MATCH (a)-[e:VISITED]->(b) RETURN a.name, e.purpose, b.name ORDER BY e.purpose, a.name, b.name')
 
         expected_result = [['Alon Fital', 'business', 'Prague'],
                            ['Alon Fital', 'business', 'USA'],
@@ -157,6 +152,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                            ['Tal Doron', 'pleasure', 'USA'],
                            ['Valerie Abigail Arad', 'pleasure', 'Netherlands'],
                            ['Valerie Abigail Arad', 'pleasure', 'Russia']]
+
         self.env.assertEquals(query_result.result_set, expected_result)
 
     def test04_private_identifiers(self):
@@ -255,11 +251,11 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         new_graph = self.db.select_graph(graphname)
 
         # Newly-created graph should be identical to graph created in single query
-        original_result = redis_graph.query('MATCH (p:Person) RETURN p, ID(p) ORDER BY p.name')
+        original_result = self.graph.query('MATCH (p:Person) RETURN p, ID(p) ORDER BY p.name')
         new_result = new_graph.query('MATCH (p:Person) RETURN p, ID(p) ORDER BY p.name')
         self.env.assertEquals(original_result.result_set, new_result.result_set)
 
-        original_result = redis_graph.query('MATCH (a)-[e:KNOWS]->(b) RETURN a.name, e, b.name ORDER BY e.relation, a.name')
+        original_result = self.graph.query('MATCH (a)-[e:KNOWS]->(b) RETURN a.name, e, b.name ORDER BY e.relation, a.name')
         new_result = new_graph.query('MATCH (a)-[e:KNOWS]->(b) RETURN a.name, e, b.name ORDER BY e.relation, a.name')
         self.env.assertEquals(original_result.result_set, new_result.result_set)
 

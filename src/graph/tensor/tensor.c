@@ -375,7 +375,7 @@ void Tensor_SetEdges
 
 				// add new entries
 				for(; i < j; i++) { 
-					e = elements[i];          // tuple (row, col, x)
+					e = elements[i];       // tuple (row, col, x)
 					x = ENTITY_GET_ID(e);  // element value
 					// add entry to vector
 					info = GrB_Vector_setElement_BOOL(V, true, x);

@@ -33,6 +33,7 @@ void CreateNode
 	if(log == true) {
 		UndoLog undo_log = QueryCtx_GetUndoLog();
 		UndoLog_CreateNode(undo_log, n);
+
 		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer();
 		EffectsBuffer_AddCreateNodeEffect(eb, n, labels, label_count);
 	}
@@ -63,6 +64,7 @@ void CreateEdge
 	if(log == true) {
 		UndoLog undo_log = QueryCtx_GetUndoLog();
 		UndoLog_CreateEdge(undo_log, e);
+
 		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer();
 		EffectsBuffer_AddCreateEdgeEffect(eb, e);
 	}
@@ -76,31 +78,39 @@ void CreateEdges
 	AttributeSet *sets,
 	bool log
 ) {
-	ASSERT(edges  != NULL);
-	ASSERT(gc != NULL);
+	ASSERT (gc    != NULL) ;
+	ASSERT (edges != NULL) ;
 
-	Schema *s = GraphContext_GetSchemaByID(gc, r, SCHEMA_EDGE);
+	Graph_CreateEdges (gc->g, r, edges, sets) ;
 
-	Graph_CreateEdges(gc->g, r, edges);
+	Schema *s = GraphContext_GetSchemaByID (gc, r, SCHEMA_EDGE) ;
+	ASSERT (s != NULL) ;
+	bool has_indices = Schema_HasIndices (s) ;
 
-	uint count = array_len(edges);
-	for(uint i = 0; i < count; i++) {
-		Edge *e = edges[i];
-		ASSERT(e->relationID == r);
+	if (has_indices || log) {
+		uint count = array_len (edges) ;
+		UndoLog undo_log = NULL ;
+		EffectsBuffer *eb = NULL ;
 
-		AttributeSet set = sets[i];
-		*e->attributes = set;
+		if (log) {
+			eb = QueryCtx_GetEffectsBuffer () ;
+			undo_log = QueryCtx_GetUndoLog () ;
+		}
 
-		// all schemas have been created in the edge blueprint loop or earlier
-		ASSERT(s != NULL);
-		Schema_AddEdgeToIndex(s, e);
+		for (uint i = 0; i < count; i++) {
+			Edge *e = edges[i] ;
+			ASSERT (e->relationID == r) ;
+			ASSERT (e->attributes != NULL) ;
 
-		// add edge creation operation to undo log
-		if(log == true) {
-			UndoLog undo_log = QueryCtx_GetUndoLog();
-			UndoLog_CreateEdge(undo_log, e);
-			EffectsBuffer *eb = QueryCtx_GetEffectsBuffer();
-			EffectsBuffer_AddCreateEdgeEffect(eb, e);
+			if (has_indices) {
+				Schema_AddEdgeToIndex (s, e) ;
+			}
+
+			// add edge creation operation to undo log
+			if (log) {
+				UndoLog_CreateEdge (undo_log, e) ;
+				EffectsBuffer_AddCreateEdgeEffect (eb, e) ;
+			}
 		}
 	}
 }
@@ -116,31 +126,38 @@ void DeleteNodes
 	uint n,
 	bool log
 ) {
-	ASSERT(gc != NULL);
-	ASSERT(nodes != NULL);
+	ASSERT (gc    != NULL) ;
+	ASSERT (nodes != NULL) ;
 
-	bool has_indices = GraphContext_HasIndices(gc);
+	bool has_indices = GraphContext_HasIndices (gc) ;
 
-	UndoLog undo_log  = (log) ? QueryCtx_GetUndoLog() : NULL;
-	EffectsBuffer *eb = (log) ? QueryCtx_GetEffectsBuffer() : NULL;
-	for(uint i = 0; i < n; i++) {
-		Node *n = nodes + i;
+	Graph *g          = NULL ;
+	UndoLog undo_log  = NULL ;
+	EffectsBuffer *eb = NULL ;
 
-		if(log) {
+	if (log) {
+		g = QueryCtx_GetGraph () ;
+		eb = QueryCtx_GetEffectsBuffer () ;
+		undo_log = QueryCtx_GetUndoLog () ;
+	}
+
+	for (uint i = 0; i < n; i++) {
+		Node *n = nodes + i ;
+
+		if (log) {
 			// add node deletion operation to undo log
-			Graph *g = QueryCtx_GetGraph();
-			size_t label_count;
-			NODE_GET_LABELS(g, n, label_count);
-			UndoLog_DeleteNode(undo_log, n, labels, label_count);
-			EffectsBuffer_AddDeleteNodeEffect(eb, n);
+			size_t label_count ;
+			NODE_GET_LABELS (g, n, label_count) ;
+			UndoLog_DeleteNode (undo_log, n, labels, label_count) ;
+			EffectsBuffer_AddDeleteNodeEffect (eb, n) ;
 		}
 
-		if(has_indices) {
-			GraphContext_DeleteNodeFromIndices(gc, n, NULL, 0);
+		if (has_indices) {
+			GraphContext_DeleteNodeFromIndices (gc, n, NULL, 0) ;
 		}
 	}
 
-	Graph_DeleteNodes(gc->g, nodes, n);
+	Graph_DeleteNodes (gc->g, nodes, n) ;
 }
 
 void DeleteEdges
@@ -157,8 +174,13 @@ void DeleteEdges
 	// add edge deletion operation to undo log
 	bool has_indecise = GraphContext_HasIndices(gc);
 
-	UndoLog undo_log  = (log == true) ? QueryCtx_GetUndoLog() : NULL;
-	EffectsBuffer *eb = (log == true) ? QueryCtx_GetEffectsBuffer() : NULL;
+	UndoLog undo_log  = NULL ;
+	EffectsBuffer *eb = NULL ;
+
+	if (log) {
+		eb = QueryCtx_GetEffectsBuffer() ;
+		undo_log = QueryCtx_GetUndoLog() ;
+	}
 
 	if(log == true || has_indecise == true) {
 		for(uint i = 0; i < n; i++) {

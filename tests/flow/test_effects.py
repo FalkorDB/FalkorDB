@@ -827,7 +827,7 @@ class testEffects():
         # make sure no effects had been recieved
         self.env.assertFalse(self.monitor_containt_effect())
 
-    def test_17_random_ops(self):
+    def test17_random_ops(self):
         # update graph key
         global GRAPH_ID
         GRAPH_ID = "random_graph"

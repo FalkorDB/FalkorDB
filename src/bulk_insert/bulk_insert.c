@@ -15,12 +15,12 @@
 // the first byte of each property in the binary stream
 // is used to indicate the type of the subsequent SIValue
 typedef enum {
-	BI_NULL = 0,
-	BI_BOOL = 1,
+	BI_NULL   = 0,
+	BI_BOOL   = 1,
 	BI_DOUBLE = 2,
 	BI_STRING = 3,
-	BI_LONG = 4,
-	BI_ARRAY = 5,
+	BI_LONG   = 4,
+	BI_ARRAY  = 5,
 } TYPE;
 
 // binary header format:
@@ -132,105 +132,101 @@ static SIValue _BulkInsert_ReadProperty
 	size_t *data_idx
 ) {
 	// binary property format:
-	// - property type : 1-byte integer corresponding to TYPE enum
-	// - Nothing if type is NULL
-	// - 1-byte true/false if type is boolean
-	// - 8-byte double if type is double
-	// - 8-byte integer if type is integer
-	// - Null-terminated C string if type is string
-	// - 8-byte array length followed by N values if type is array
+    // - 1 byte: TYPE enum
+    // - NULL      : no payload
+    // - BOOL      : 1 byte (0/1)
+    // - DOUBLE    : 8 bytes
+    // - LONG      : 8 bytes
+    // - STRING    : null-terminated C string
+    // - ARRAY     : 8-byte length + N serialized values
 
-	// possible property values
-	bool b;
-	double d;
-	int64_t i;
-	int64_t len;
-	const char *s;
-
-	SIValue v = SI_NullVal () ;
 	TYPE t = data[*data_idx] ;
-	*data_idx += 1 ;
+	(*data_idx)++ ;
 
 	switch (t) {
 		case BI_NULL:
-			v = SI_NullVal () ;
-			break ;
+			return SI_NullVal () ;
 
-		case BI_BOOL:
-			b = data[*data_idx];
-			*data_idx += 1 ;
-			v = SI_BoolVal (b) ;
-			break ;
+		case BI_BOOL: {
+			bool b = data[*data_idx];
+			(*data_idx)++ ;
+			return SI_BoolVal (b) ;
+		}
 
-		case BI_DOUBLE:
-			d = *(double*)&data[*data_idx] ;
+		case BI_DOUBLE: {
+			double d = *(double*)&data[*data_idx] ;
 			*data_idx += sizeof (double) ;
-			v = SI_DoubleVal (d) ;
-			break ;
+			return SI_DoubleVal (d) ;
+		}
 
-		case BI_LONG:
-			i = *(int64_t*)&data[*data_idx] ;
+		case BI_LONG: {
+			int64_t i = *(int64_t*)&data[*data_idx] ;
 			*data_idx += sizeof (int64_t) ;
-			v = SI_LongVal (i) ;
-			break ;
+			return SI_LongVal (i) ;
+		}
 
-		case BI_STRING:
-			s = data + *data_idx ;
+		case BI_STRING: {
+			const char *s = data + *data_idx ;
 			*data_idx += strlen (s) + 1 ;
-			// the string itself will be cloned when added to the attribute-set
-			v = SI_ConstStringVal ((char*)s) ;
-			break ;
+			return SI_DuplicateStringVal ((char*)s) ;
+		}
 
-		case BI_ARRAY:
-			// The first 8 bytes of a received array will be the array length.
-			len = *(int64_t*)&data[*data_idx] ;
+		case BI_ARRAY: {
+			int64_t len = *(int64_t*)&data[*data_idx] ;
 			*data_idx += sizeof (int64_t) ;
-			v = SIArray_New (len) ;
+			SIValue arr = SIArray_New (len) ;
 			for (uint i = 0; i < len; i++) {
 				// convert every element and add to array.
-				SIArray_Append (&v, _BulkInsert_ReadProperty (data, data_idx)) ;
+				SIArray_Append (&arr, _BulkInsert_ReadProperty (data, data_idx)) ;
 			}
-			break ;
+			return arr ;
+		}
 
 		default:
 			ASSERT (false && "unknown value type") ;
-			break ;
+			return SI_NullVal () ;
 	}
-
-	return v ;
 }
 
+// process a single node CSV file
 static int _BulkInsert_ProcessNodeFile
 (
-	GraphContext *gc,
-	const char *data,
-	size_t data_len
+	GraphContext *gc,  // graph context
+	const char *data,  // raw data
+	size_t data_len    // number of bytes in data
 ) {
-	uint prop_count ;
+	uint prop_count = 0 ;
 	size_t data_idx = 0 ;
 
-	// read the CSV file header labels and update all schemas
+	//--------------------------------------------------------------------------
+	// parse CSV headers
+	//--------------------------------------------------------------------------
+
 	int *label_ids = _BulkInsert_ReadHeaderLabels (gc, SCHEMA_NODE, data,
 			&data_idx) ;
+	ASSERT (label_ids != NULL) ;
 
 	uint label_count = array_len (label_ids) ;
 
-	GrB_Matrix node_lbls ;
-	GrB_Matrix lbls[label_count] ;
-
 	// read the CSV header properties and collect their indices
-	AttributeID* prop_indices = _BulkInsert_ReadHeaderProperties (gc,
+	AttributeID *prop_indices = _BulkInsert_ReadHeaderProperties (gc,
 			SCHEMA_NODE, data, &data_idx, &prop_count) ;
 
-	// sync each matrix once
+	//--------------------------------------------------------------------------
+	// collect matrices
+	//--------------------------------------------------------------------------
+
 	ASSERT (Graph_GetMatrixPolicy (gc->g) == SYNC_POLICY_RESIZE);
 
+	GrB_Matrix node_labels[label_count] ;
 	for (uint i = 0; i < label_count; i++) {
-		lbls[i] = Delta_Matrix_M (Graph_GetLabelMatrix (gc->g, label_ids[i])) ;
+		node_labels[i] =
+			Delta_Matrix_M (Graph_GetLabelMatrix (gc->g, label_ids[i])) ;
 	}
 
-	// sync node-label matrix
-	node_lbls = Delta_Matrix_M (Graph_GetNodeLabelMatrix (gc->g)) ;
+	GrB_Matrix node_lbls = Delta_Matrix_M (Graph_GetNodeLabelMatrix (gc->g)) ;
+
+	// temporarily disable sync policy for direct updates
 	MATRIX_POLICY policy = Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_NOP) ;
 
 	//--------------------------------------------------------------------------
@@ -238,90 +234,116 @@ static int _BulkInsert_ProcessNodeFile
 	//--------------------------------------------------------------------------
 
 	while (data_idx < data_len) {
-		GraphEntity *ge ;
-		Node n = GE_NEW_NODE () ;
-		//Graph_CreateNode (gc->g, &n, label_ids, label_count) ;
-		Graph_CreateNode (gc->g, &n, NULL, 0) ;
-		ge = (GraphEntity*)&n;
-
 		GrB_Info info ;
+		Node n = GE_NEW_NODE () ;
+
+		Graph_CreateNode (gc->g, &n, NULL, 0) ;  // unlabeled node
+
+		// assign labels
 		for (uint i = 0; i < label_count; i++) {
-			info = GrB_Matrix_setElement (lbls[i], true, n.id, n.id) ;
+			info = GrB_Matrix_setElement (node_labels[i], true, n.id, n.id) ;
 			ASSERT (info == GrB_SUCCESS) ;
 
 			info = GrB_Matrix_setElement (node_lbls, true, n.id, label_ids[i]) ;
 			ASSERT (info == GrB_SUCCESS) ;
 		}
 
-		// process entity attributes
+		// read properties
+		SIValue props[prop_count] ;
+		AttributeID prop_attr_ids[prop_count] ;
+
+		uint idx = 0 ;
+		// read node properties
 		for (uint i = 0; i < prop_count; i++) {
-			SIValue value = _BulkInsert_ReadProperty (data, &data_idx) ;
-			// skip invalid attribute values
-			if (!(SI_TYPE (value) & SI_VALID_PROPERTY_VALUE)) {
-				continue;
+			SIValue v = _BulkInsert_ReadProperty (data, &data_idx) ;
+
+			// skip null values
+			if (unlikely (SI_TYPE (v) == T_NULL)) {
+				continue ;
 			}
 
-			GraphEntity_AddProperty (ge, prop_indices[i], value) ;
+			// accumulate attributes
+			props[idx] = v ;
+			prop_attr_ids[idx] = prop_indices[i] ;
+			idx++ ;
 		}
+
+		// assign properties
+		AttributeSet_AddNoClone (n.attributes, prop_attr_ids, props, idx,
+				false) ;
 	}
 
+	//--------------------------------------------------------------------------
+	// restore state and cleanup
+	//--------------------------------------------------------------------------
+
 	Graph_SetMatrixPolicy (gc->g, policy) ;
+
+	// clean up
 	if (prop_indices) {
 		rm_free (prop_indices) ;
 	}
-
 	array_free (label_ids) ;
 
 	return BULK_OK ;
 }
 
+// process a single edge CSV file
 static int _BulkInsert_ProcessEdgeFile
 (
-	GraphContext *gc,
-	const char *data,
-	size_t data_len
+	GraphContext *gc,  // graph context
+	const char *data,  // raw data
+	size_t data_len    // number of bytes in data
 ) {
-	int relation_id ;
-	uint prop_count ;
+	uint prop_count = 0 ;
 	size_t data_idx = 0 ;
 
-	// read the CSV file header
-	// and commit all relationship-types and attributes it introduces
+	//--------------------------------------------------------------------------
+	// parse CSV headers
+	//--------------------------------------------------------------------------
+
 	int *type_ids = _BulkInsert_ReadHeaderLabels (gc, SCHEMA_EDGE, data,
 			&data_idx) ;
 	uint type_count = array_len (type_ids) ;
 
-	// edges can only have one type
+	// // edges must have exactly one type
 	ASSERT (type_count == 1) ;
-
 	int type_id = type_ids[0] ;
+
 	AttributeID *prop_indices = _BulkInsert_ReadHeaderProperties (gc,
 			SCHEMA_EDGE, data, &data_idx, &prop_count) ;
 
-	// sync matrix once
+	//--------------------------------------------------------------------------
+	// prepare matrices
+	//--------------------------------------------------------------------------
+
 	ASSERT (Graph_GetMatrixPolicy(gc->g) == SYNC_POLICY_RESIZE) ;
+
+	// warm up matrices to avoid resizes
 	Graph_GetRelationMatrix (gc->g, type_id, false) ;
 	Graph_GetAdjacencyMatrix (gc->g, false) ;
+
+	// temporarily disable sync policy
 	MATRIX_POLICY policy = Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_NOP) ;
 
 	//--------------------------------------------------------------------------
 	// load edges
 	//--------------------------------------------------------------------------
 
-	uint32_t count = 0 ;
 	Edge *edges = array_new (Edge, 1) ;
 	AttributeSet *sets = array_new (AttributeSet, 1) ;
 
-	SIValue props [prop_count] ;
+	SIValue props[prop_count] ;
+	AttributeID prop_attr_ids[prop_count] ;
+
 	while (data_idx < data_len) {
 		Edge e ;
-		GraphEntity *ge ;
 
-		// next 8 bytes are source ID
+		// read source ID
 		NodeID src = *(NodeID*)&data[data_idx] ;
 		data_idx += sizeof (NodeID) ;
 
-		// next 8 bytes are destination ID
+		// read destination ID
 		NodeID dest = *(NodeID*)&data[data_idx] ;
 		data_idx += sizeof (NodeID) ;
 
@@ -330,25 +352,31 @@ static int _BulkInsert_ProcessEdgeFile
 		Edge_SetDestNodeID (&e, dest) ;
 		array_append (edges, e) ;
 
-		// Graph_CreateEdge (gc->g, src, dest, type_id, &e) ;
-		// ge = (GraphEntity*)&e ;
-
-		// process entity attributes
+		uint idx = 0 ;
+		// read edge properties
 		for (uint i = 0; i < prop_count; i++) {
-			SIValue value = _BulkInsert_ReadProperty (data, &data_idx) ;
-			// skip invalid attribute values
-			if (!(SI_TYPE(value) & SI_VALID_PROPERTY_VALUE)) {
+			SIValue v = _BulkInsert_ReadProperty (data, &data_idx) ;
+
+			// skip null values
+			if (unlikely (SI_TYPE (v) == T_NULL)) {
 				continue ;
 			}
-			props[i] = value ;
 
-			// GraphEntity_AddProperty (ge, prop_indices[i], value) ;
+			// accumulate attributes
+			props[idx] = v ;
+			prop_attr_ids[idx] = prop_indices[idx] ;
+			idx++ ;
 		}
 
+		// assign properties
 		AttributeSet set = NULL;
-		AttributeSet_AddNoClone (&set, prop_indices, props, prop_count, false) ;
+		AttributeSet_AddNoClone (&set, prop_indices, props, idx, false) ;
 		array_append (sets, set) ;
 	}
+
+	//--------------------------------------------------------------------------
+	// commit edges
+	//--------------------------------------------------------------------------
 
 	uint n = array_len (edges) ;
 	if (n > 0) {
@@ -362,6 +390,10 @@ static int _BulkInsert_ProcessEdgeFile
 
 		array_free (pedges) ;
 	}
+
+	//--------------------------------------------------------------------------
+	// cleanup
+	//--------------------------------------------------------------------------
 
 	array_free (sets) ;
 	array_free (edges) ;
@@ -397,14 +429,15 @@ static int _BulkInsert_ProcessTokens
 	return BULK_OK ;
 }
 
+// entry point for bulk insertion of nodes and edges
 int BulkInsert
 (
-	RedisModuleCtx *ctx,
-	GraphContext *gc,
-	RedisModuleString **argv,
-	int argc,
-	uint node_count,
-	uint edge_count
+	RedisModuleCtx *ctx,       // redis context
+	GraphContext *gc,          // graph context
+	RedisModuleString **argv,  // arguments
+	int argc,                  // number of arguments
+	uint node_count,           // number of nodes
+	uint edge_count            // number of edges
 ) {
 	ASSERT (gc   != NULL) ;
 	ASSERT (ctx  != NULL) ;
@@ -416,7 +449,10 @@ int BulkInsert
 		return BULK_FAIL;
 	}
 
-	// read the number of node tokens
+	//--------------------------------------------------------------------------
+	// parse section token counts
+	//--------------------------------------------------------------------------
+
 	long long node_token_count;
 	long long relation_token_count;
 
@@ -427,13 +463,18 @@ int BulkInsert
 		return BULK_FAIL ;
 	}
 
-	// read the number of relation tokens
 	if (RedisModule_StringToLongLong (*argv++, &relation_token_count)
 			!= REDISMODULE_OK) {
 		RedisModule_ReplyWithError(ctx,
 				"Error parsing number of relation descriptor tokens.") ;
 		return BULK_FAIL ;
 	}
+
+	argc -= 2 ;
+
+	//--------------------------------------------------------------------------
+	// prepare graph for bulk load
+	//--------------------------------------------------------------------------
 
 	Graph *g = gc->g ;
 	int res = BULK_OK ;
@@ -445,13 +486,16 @@ int BulkInsert
 
 	Graph_AllocateNodes (g, node_count) ;
 	Graph_AllocateEdges (g, edge_count) ;
+
 	MATRIX_POLICY policy = Graph_SetMatrixPolicy (g, SYNC_POLICY_RESIZE) ;
 
-	argc -= 2 ;
+	//--------------------------------------------------------------------------
+	// process node tokens
+	//--------------------------------------------------------------------------
 
 	if (node_token_count > 0) {
 		ASSERT (argc >= node_token_count) ;
-		// process all node files
+
 		if (_BulkInsert_ProcessTokens (gc, node_token_count, argv, SCHEMA_NODE)
 				!= BULK_OK) {
 			res = BULK_FAIL ;
@@ -462,9 +506,13 @@ int BulkInsert
 		argc -= node_token_count ;
 	}
 
+	//--------------------------------------------------------------------------
+	// process edge tokens
+	//--------------------------------------------------------------------------
+
 	if (relation_token_count > 0) {
 		ASSERT (argc >= relation_token_count) ;
-		// process all relationship files
+
 		if (_BulkInsert_ProcessTokens (gc, relation_token_count, argv,
 					SCHEMA_EDGE) != BULK_OK) {
 			res = BULK_FAIL ;

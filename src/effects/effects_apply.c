@@ -104,10 +104,44 @@ static void ApplyCreateNode
 	CreateNode(gc, &n, labels, lbl_count, attr_set, false);
 }
 
+static inline void FlushEdges
+(
+	GraphContext *gc,
+	Edge **batch,
+	AttributeSet *sets,
+	RelationID r,
+	int *i
+) {
+	ASSERT (i     != NULL) ;
+	ASSERT (gc    != NULL) ;
+	ASSERT (sets  != NULL) ;
+	ASSERT (batch != NULL) ;
+
+	if (*i > 0) {
+		CreateEdges (gc, batch, r, sets, false) ;
+		array_clear (sets) ;
+		array_clear (batch) ;
+		*i = 0 ;
+	}
+}
+
+// apply "create edge" effects from a serialized stream
+//
+// the stream encodes a sequence of EFFECT_CREATE_EDGE operations
+//  format per edge:
+//    - uint16_t   rel_count (must be 1)
+//    - RelationID relation
+//    - NodeID     src node ID
+//    - NodeID     dest node ID
+//    - AttributeSet (id, value pairs)
+//
+// multiple edges of the same relation type are batched together
+// for efficient insertion
 static void ApplyCreateEdge
 (
-	FILE *stream,     // effects stream
-	GraphContext *gc  // graph to operate on
+	FILE *stream,      // effects stream
+	GraphContext *gc,  // graph to operate on
+	size_t l           // length of stream
 ) {
 	//--------------------------------------------------------------------------
 	// effect format:
@@ -120,47 +154,89 @@ static void ApplyCreateEdge
 	// attributes (id,value) pair
 	//--------------------------------------------------------------------------
 
-	//--------------------------------------------------------------------------
-	// read relationship type count
-	//--------------------------------------------------------------------------
+	int i = 0 ;                      // size of current batch
+	const size_t batch_size = 512 ;  // max batch size
+	Edge edges[batch_size] ;         // edges
 
-	ushort rel_count;
-	fread_assert(&rel_count, sizeof(rel_count), stream);
-	ASSERT(rel_count == 1);
+	Edge **batch = array_new (Edge *, 1) ;              // batch, points to edges
+	AttributeSet *sets = array_new (AttributeSet, 1) ;  // attribute-sets
 
-	//--------------------------------------------------------------------------
-	// read relationship type
-	//--------------------------------------------------------------------------
+	RelationID r      = GRAPH_UNKNOWN_RELATION ;  // current edge relation id
+	RelationID prev_r = GRAPH_UNKNOWN_RELATION ;  // last processed relation id
 
-	RelationID r;
-	fread_assert(&r, sizeof(r), stream);
+	// encoded edge struct
+	#pragma pack(push, 1)
+	struct {
+		ushort rel_count ;
+		RelationID r ;
+		NodeID src_id ;
+		NodeID dest_id ;
+	} _edge_desc;
+	#pragma pack(pop)
 
-	//--------------------------------------------------------------------------
-	// read src node ID
-	//--------------------------------------------------------------------------
+	while (true) {
+		Edge *e = edges + i ;
 
-	NodeID src_id;
-	fread_assert(&src_id, sizeof(NodeID), stream);
+		//----------------------------------------------------------------------
+		// read a single edge description in one go
+		//----------------------------------------------------------------------
 
-	//--------------------------------------------------------------------------
-	// read dest node ID
-	//--------------------------------------------------------------------------
+		fread_assert(&_edge_desc, sizeof (_edge_desc), stream);
+		ASSERT(_edge_desc.rel_count == 1);
 
-	NodeID dest_id;
-	fread_assert(&dest_id, sizeof(NodeID), stream);
+		if (prev_r == GRAPH_UNKNOWN_RELATION) {
+			prev_r = _edge_desc.r ;
+		}
 
-	//--------------------------------------------------------------------------
-	// read attributes
-	//--------------------------------------------------------------------------
+		// check if relationship-type changed
+		if (_edge_desc.r != prev_r) {
+			FlushEdges (gc, batch, sets, prev_r, &i) ;
+			prev_r = _edge_desc.r ;
+		}
 
-	AttributeSet attr_set = ReadAttributeSet(stream);
+		//----------------------------------------------------------------------
+		// read attributes
+		//----------------------------------------------------------------------
 
-	//--------------------------------------------------------------------------
-	// create edge
-	//--------------------------------------------------------------------------
+		array_append (sets, ReadAttributeSet(stream)) ;
 
-	Edge e;
-	CreateEdge(gc, &e, src_id, dest_id, r, attr_set, false);
+		//----------------------------------------------------------------------
+		// add edge to batch
+		//----------------------------------------------------------------------
+
+		r = _edge_desc.r ;
+		Edge_SetRelationID (e, _edge_desc.r) ;
+		Edge_SetSrcNodeID  (e, _edge_desc.src_id) ;
+		Edge_SetDestNodeID (e, _edge_desc.dest_id) ;
+
+		array_append (batch, e) ;
+		i++ ;
+
+		// check if batch is full
+		if (i == batch_size) {
+			FlushEdges (gc, batch, sets, r, &i) ;
+		}
+
+		// have we reached the end of the stream ?
+		if (ftell (stream) >= l) {
+			break ;
+		}
+
+		// check if the next item in the stream is an edge?
+		EffectType t = ReadEffectType (stream) ;
+		if (t != EFFECT_CREATE_EDGE) {
+			// go back sizeof (EffectType) bytes
+			fseek (stream, -((long)sizeof (EffectType)), SEEK_CUR) ;
+			break ;
+		}
+	}
+
+	// flush last batch
+	FlushEdges (gc, batch, sets, r, &i) ;
+
+	// clean up
+	array_free (sets) ;
+	array_free (batch) ;
 }
 
 static void ApplyLabels
@@ -532,43 +608,43 @@ void Effects_Apply
 	MATRIX_POLICY policy = Graph_SetMatrixPolicy(g, SYNC_POLICY_RESIZE);
 
 	// as long as there's data in stream
-	while(ftell(stream) < l) {
+	while (ftell (stream) < l) {
 		// read effect type
-		EffectType t = ReadEffectType(stream);
-		switch(t) {
+		EffectType t = ReadEffectType (stream) ;
+		switch (t) {
 			case EFFECT_DELETE_NODE:
-				ApplyDeleteNode(stream, gc);
-				break;
+				ApplyDeleteNode (stream, gc) ;
+				break ;
 			case EFFECT_DELETE_EDGE:
-				ApplyDeleteEdge(stream, gc);
-				break;
+				ApplyDeleteEdge (stream, gc) ;
+				break ;
 			case EFFECT_UPDATE_NODE:
-				ApplyUpdateNode(stream, gc);
-				break;
+				ApplyUpdateNode (stream, gc) ;
+				break ;
 			case EFFECT_UPDATE_EDGE:
-				ApplyUpdateEdge(stream, gc);
-				break;
+				ApplyUpdateEdge (stream, gc) ;
+				break ;
 			case EFFECT_CREATE_NODE:    
-				ApplyCreateNode(stream, gc);
-				break;
+				ApplyCreateNode (stream, gc) ;
+				break ;
 			case EFFECT_CREATE_EDGE:
-				ApplyCreateEdge(stream, gc);
-				break;
+				ApplyCreateEdge (stream, gc, l) ;
+				break ;
 			case EFFECT_SET_LABELS:
-				ApplyLabels(stream, gc, true);
-				break;
+				ApplyLabels (stream, gc, true) ;
+				break ;
 			case EFFECT_REMOVE_LABELS: 
-				ApplyLabels(stream, gc, false);
-				break;
+				ApplyLabels (stream, gc, false) ;
+				break ;
 			case EFFECT_ADD_SCHEMA:
-				ApplyAddSchema(stream, gc);
-				break;
+				ApplyAddSchema (stream, gc) ;
+				break ;
 			case EFFECT_ADD_ATTRIBUTE:
-				ApplyAddAttribute(stream, gc);
-				break;
+				ApplyAddAttribute (stream, gc) ;
+				break ;
 			default:
-				assert(false && "unknown effect type");
-				break;
+				assert (false && "unknown effect type") ;
+				break ;
 		}
 	}
 

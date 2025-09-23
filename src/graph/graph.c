@@ -471,14 +471,14 @@ static void _GetOutgoingNodeEdges
 	RelationID r,    // relationship type
 	Edge **edges     // [output] array of edges
 ) {
-	ASSERT(g);
-	ASSERT(n);
-	ASSERT(edges);
-	ASSERT(r != GRAPH_NO_RELATION && r != GRAPH_UNKNOWN_RELATION);
+	ASSERT (g) ;
+	ASSERT (n) ;
+	ASSERT (edges) ;
+	ASSERT (r != GRAPH_NO_RELATION && r != GRAPH_UNKNOWN_RELATION) ;
 
-	TensorIterator it;
-	NodeID src_id = ENTITY_GET_ID(n);
-	Tensor R      = Graph_GetRelationMatrix(g, r, false);
+	TensorIterator it ;
+	NodeID src_id = ENTITY_GET_ID (n) ;
+	Tensor R      = Graph_GetRelationMatrix (g, r, false) ;
 
 	Edge e = {.src_id = src_id, .relationID = r};
 
@@ -859,73 +859,87 @@ static int _edge_src_dest_cmp
 	const void *a,
 	const void *b
 ) {
-	Edge *ea = *(Edge **)a;
-	Edge *eb = *(Edge **)b;
-	if(ea->src_id == eb->src_id) return ea->dest_id - eb->dest_id;
-	return ea->src_id - eb->src_id;
+	Edge *ea = *(Edge **)a ;
+	Edge *eb = *(Edge **)b ;
+
+	if (ea->src_id == eb->src_id) {
+		return ea->dest_id - eb->dest_id ;
+	}
+
+	return ea->src_id - eb->src_id ;
 }
 
 // create multiple edges
 void Graph_CreateEdges
 (
-	Graph *g,      // graph on which to operate
-	RelationID r,  // relationship type
-	Edge **edges   // edges to create
+	Graph *g,           // graph on which to operate
+	RelationID r,       // relationship type
+	Edge **edges,       // edges to create
+	AttributeSet *sets  // [optional] attribute sets
 ) {
-	ASSERT(g != NULL);
-	ASSERT(r < Graph_RelationTypeCount(g));
-	ASSERT(r != GRAPH_NO_RELATION && r != GRAPH_UNKNOWN_RELATION);
+	ASSERT (g != NULL) ;
+	ASSERT (r < Graph_RelationTypeCount (g)) ;
+	ASSERT (r != GRAPH_NO_RELATION && r != GRAPH_UNKNOWN_RELATION) ;
+
+	if (sets != NULL) {
+		ASSERT (array_len (edges) == array_len (sets)) ;
+	}
 
 	uint edge_count = array_len(edges);
+	Edge **edges_copy = rm_malloc (sizeof (Edge*) * edge_count) ;
+	memcpy (edges_copy, edges, sizeof (Edge*) * edge_count) ;
 
 	// sort edges by src & dest IDs
-	qsort(edges, edge_count, sizeof(Edge *), _edge_src_dest_cmp);
+	//qsort(edges, edge_count, sizeof(Edge *), _edge_src_dest_cmp);
 
 #ifdef RG_DEBUG
 	// make sure both src and destination nodes exists
 	for(uint i = 0; i < edge_count; i++) {
-		Edge   *e   = edges[i];
-		NodeID src  = e->src_id;
-		NodeID dest = e->dest_id;
-		Node   node = GE_NEW_NODE();
-		ASSERT(Graph_GetNode(g, src, &node)  == true);
-		ASSERT(Graph_GetNode(g, dest, &node) == true);
+		Edge   *e   = edges[i] ;
+		NodeID src  = e->src_id ;
+		NodeID dest = e->dest_id ;
+		Node   node = GE_NEW_NODE () ;
+		ASSERT (Graph_GetNode (g, src, &node)  == true) ;
+		ASSERT (Graph_GetNode (g, dest, &node) == true) ;
 	}
 #endif
 
 	// make sure we have room for 'edge_count' edges
-	DataBlock_Accommodate(g->edges, edge_count);
-
-	GrB_Info info;
+	DataBlock_Accommodate (g->edges, edge_count) ;
 
 	// sync matrices
-	Tensor       R   = Graph_GetRelationMatrix(g, r, false);
-	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
+	Tensor       R   = Graph_GetRelationMatrix  (g, r, false) ;
+	Delta_Matrix adj = Graph_GetAdjacencyMatrix (g, false) ;
 
 	// allocate edges and update ADJ matrix
-	for(uint i = 0; i < edge_count; i++) {
-		Edge *e = edges[i];
+	for (uint i = 0; i < edge_count; i++) {
+		Edge *e = edges_copy[i] ;
+
 		// TODO: switch to batch allocation of items
-		AttributeSet *set = DataBlock_AllocateItem(g->edges, &e->id);
-		*set = NULL;
+		AttributeSet *set = DataBlock_AllocateItem (g->edges, &e->id) ;
+		*set = (sets != NULL) ? sets[i] : NULL ;
 
-		e->relationID = r;
-		e->attributes = set;
+		e->relationID = r ;
+		e->attributes = set ;
 
-		NodeID src  = e->src_id;
-		NodeID dest = e->dest_id;
+		NodeID src  = e->src_id ;
+		NodeID dest = e->dest_id ;
 
-		// rows represent source nodes, columns represent destination nodes
 		// TODO: introduce batch version of setElement, e.g. GrB_Matrix_build
-		info = Delta_Matrix_setElement_BOOL(adj, src, dest);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_Info info = Delta_Matrix_setElement_BOOL (adj, src, dest) ;
+		ASSERT (info == GrB_SUCCESS) ;
 	}
 
+	// sort edges by src & dest IDs
+	qsort(edges_copy, edge_count, sizeof(Edge *), _edge_src_dest_cmp);
+
 	// update R tensor
-	Tensor_SetEdges(R, (const Edge **)edges, edge_count);
+	Tensor_SetEdges(R, (const Edge **)edges_copy, edge_count);
 
 	// update graph statistics
 	GraphStatistics_IncEdgeCount(&g->stats, r, edge_count);
+
+	rm_free (edges_copy) ;
 }
 
 // forward declaration
@@ -1278,11 +1292,13 @@ void Graph_GetNodeEdges
 	RelationID r,        // relationship type
 	Edge **edges         // [output] array of edges
 ) {
-	ASSERT(g);
-	ASSERT(n);
-	ASSERT(edges);
+	ASSERT (g) ;
+	ASSERT (n) ;
+	ASSERT (edges) ;
 
-	if(r == GRAPH_UNKNOWN_RELATION) return;
+	if (r == GRAPH_UNKNOWN_RELATION) {
+		return ;
+	}
 
 	bool outgoing = (dir == GRAPH_EDGE_DIR_OUTGOING ||
 					 dir == GRAPH_EDGE_DIR_BOTH);
@@ -1295,14 +1311,14 @@ void Graph_GetNodeEdges
 	// and (a)<-(a)
 	bool skip_self_edges = (dir == GRAPH_EDGE_DIR_BOTH);
 
-	if(outgoing) {
-		if(r != GRAPH_NO_RELATION) {
-			_GetOutgoingNodeEdges(g, n, r, edges);
+	if (outgoing) {
+		if (r != GRAPH_NO_RELATION) {
+			_GetOutgoingNodeEdges (g, n, r, edges) ;
 		} else {
 			// relation type missing, scan through each edge type
-			int relationCount = Graph_RelationTypeCount(g);
-			for(int i = 0; i < relationCount; i++) {
-				_GetOutgoingNodeEdges(g, n, i, edges);
+			int relationCount = Graph_RelationTypeCount (g) ;
+			for (int i = 0; i < relationCount; i++) {
+				_GetOutgoingNodeEdges (g, n, i, edges) ;
 			}
 		}
 	}

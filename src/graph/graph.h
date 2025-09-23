@@ -254,9 +254,10 @@ void Graph_CreateEdge
 // create multiple edges
 void Graph_CreateEdges
 (
-	Graph *g,      // graph on which to operate
-	RelationID r,  // relationship type
-	Edge **edges   // edges to create
+	Graph *g,           // graph on which to operate
+	RelationID r,       // relationship type
+	Edge **edges,       // edges to create
+	AttributeSet *sets  // [optional] attribute sets
 );
 
 // deletes nodes from the graph
