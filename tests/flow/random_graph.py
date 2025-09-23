@@ -157,7 +157,7 @@ def delete_node(nodes, edges):
     node = nodes[randint(0, labels - 1)]
     label = node["labels"][0]
     label_count = node["count"]
-    v = randint(0, label_count)
+    v = randint(0, label_count - 1)
     query = f"MATCH (n:{label} {{v: $v}}) DELETE n"
     params = {'v': v}
     return params, query
@@ -174,8 +174,8 @@ def delete_edge(nodes, edges):
     target_label = nodes[target]["labels"][0]
     target_count = nodes[target]["count"]
 
-    src = randint(0, source_count)
-    dest = randint(0, target_count)
+    src = randint(0, source_count - 1)
+    dest = randint(0, target_count - 1)
 
     query = f"MATCH (n:{source_label} {{v: $s}})-[r:{type}]->(m:{target_label} {{v: $t}}) DELETE r"
     params = {'s': src, 't': dest}
@@ -187,7 +187,7 @@ def update_node(nodes, edges):
     node = nodes[randint(0, labels - 1)]
     label = node["labels"][0]
     label_count = node["count"]
-    v = randint(0, label_count)
+    v = randint(0, label_count - 1)
     new_v = random()
 
     query = f"MATCH (n:{label} {{v: $v}}) SET n.v = $new_v"
@@ -206,8 +206,8 @@ def update_edge(nodes, edges):
     target_label = nodes[target]["labels"][0]
     target_count = nodes[target]["count"]
 
-    src = randint(0, source_count)
-    dest = randint(0, target_count)
+    src = randint(0, source_count - 1)
+    dest = randint(0, target_count - 1)
     new_v = random()
 
     query = f"MATCH (n:{source_label} {{v: $s}})-[r:{type}]->(m:{target_label} {{v: $t}}) SET r.v = $new_v"

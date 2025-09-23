@@ -44,7 +44,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                                           '--relations', csv_path + 'VISITED.csv',
                                           GRAPH_ID])
 
-        # The script should report 27 node creations and 48 edge creations
+        # The script should report 27 node creations and 56 edge creations
         self.env.assertEquals(res.exit_code, 0)
         self.env.assertIn('27 nodes created', res.output)
         self.env.assertIn('56 relations created', res.output)

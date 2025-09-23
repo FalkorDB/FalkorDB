@@ -47,7 +47,7 @@ void CreateEdge
 void CreateEdges
 (
 	GraphContext *gc,    // graph context to create the edge
-	Edge **edges,        // output edge created
+	Edge **edges,        // edges to create
 	RelationID r,        // edge relation type
 	AttributeSet *sets,  // edge attributes
 	bool log             // log operation in undo-log

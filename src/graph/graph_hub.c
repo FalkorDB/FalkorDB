@@ -141,19 +141,21 @@ void DeleteNodes
 		undo_log = QueryCtx_GetUndoLog () ;
 	}
 
-	for (uint i = 0; i < n; i++) {
-		Node *n = nodes + i ;
+	if (log || has_indices) {
+		for (uint i = 0; i < n; i++) {
+			Node *node = nodes + i ;
 
-		if (log) {
-			// add node deletion operation to undo log
-			size_t label_count ;
-			NODE_GET_LABELS (g, n, label_count) ;
-			UndoLog_DeleteNode (undo_log, n, labels, label_count) ;
-			EffectsBuffer_AddDeleteNodeEffect (eb, n) ;
-		}
+			if (log) {
+				// add node deletion operation to undo log
+				size_t label_count ;
+				NODE_GET_LABELS (g, node, label_count) ;
+				UndoLog_DeleteNode (undo_log, node, labels, label_count) ;
+				EffectsBuffer_AddDeleteNodeEffect (eb, node) ;
+			}
 
-		if (has_indices) {
-			GraphContext_DeleteNodeFromIndices (gc, n, NULL, 0) ;
+			if (has_indices) {
+				GraphContext_DeleteNodeFromIndices (gc, node, NULL, 0) ;
+			}
 		}
 	}
 
@@ -172,7 +174,7 @@ void DeleteEdges
 	ASSERT(edges != NULL);
 
 	// add edge deletion operation to undo log
-	bool has_indecise = GraphContext_HasIndices(gc);
+	bool has_indices = GraphContext_HasIndices(gc);
 
 	UndoLog undo_log  = NULL ;
 	EffectsBuffer *eb = NULL ;
@@ -182,16 +184,16 @@ void DeleteEdges
 		undo_log = QueryCtx_GetUndoLog() ;
 	}
 
-	if(log == true || has_indecise == true) {
-		for(uint i = 0; i < n; i++) {
-			Edge *e = edges + i;
-			if(log == true) {
-				UndoLog_DeleteEdge(undo_log, e);
-				EffectsBuffer_AddDeleteEdgeEffect(eb, e);
+	if (log == true || has_indices == true) {
+		for (uint i = 0; i < n; i++) {
+			Edge *e = edges + i ;
+			if (log == true) {
+				UndoLog_DeleteEdge (undo_log, e) ;
+				EffectsBuffer_AddDeleteEdgeEffect (eb, e) ;
 			}
 
-			if(has_indecise == true) {
-				GraphContext_DeleteEdgeFromIndices(gc, e);
+			if (has_indices == true) {
+				GraphContext_DeleteEdgeFromIndices (gc, e) ;
 			}
 		}
 	}

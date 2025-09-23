@@ -309,7 +309,7 @@ void Tensor_SetEdges
 	GrB_Info info;
 
 	// i's is advanced within the loop's body
-	for(uint i = 0; i < n;) {
+	for (uint64_t i = 0; i < n;) {
 		enum SetMethod method;                    // insert method
 		const Edge *e   = elements[i];            // tuple (row, col, x)
 		uint64_t    x   = ENTITY_GET_ID(e);       // element value
@@ -336,7 +336,7 @@ void Tensor_SetEdges
 		}
 
 		// consecutive elements sharing the same row, col indexes
-		uint j = i;
+		uint64_t j = i;
 		while(j < n) {
 			const Edge *next = elements[j];
 			GrB_Index next_row = Edge_GetSrcNodeID(next);   // next row index
@@ -443,7 +443,7 @@ void Tensor_SetEdges
 				ASSERT(info == GrB_SUCCESS);
 
 				// add elements to vector
-				for(uint j = a; j < z; j++) {
+				for(uint64_t j = a; j < z; j++) {
 					e = elements[j];
 					x = ENTITY_GET_ID(e);
 					info = GrB_Vector_setElement_BOOL(V, true, x);

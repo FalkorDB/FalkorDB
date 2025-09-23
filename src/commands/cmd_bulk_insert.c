@@ -122,7 +122,7 @@ int Graph_BulkInsert
 
 	// replay to caller
 	char reply[1024] ;
-	int len = snprintf (reply, 1024, "%llu nodes created, %llu edges created",
+	int len = snprintf (reply, 1024, "%" PRIu64 " nodes created, %" PRIu64 " edges created",
 			node_count, edge_count) ;
 	RedisModule_ReplyWithStringBuffer (ctx, reply, len) ;
 

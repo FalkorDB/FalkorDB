@@ -862,11 +862,24 @@ static int _edge_src_dest_cmp
 	Edge *ea = *(Edge **)a ;
 	Edge *eb = *(Edge **)b ;
 
-	if (ea->src_id == eb->src_id) {
-		return ea->dest_id - eb->dest_id ;
+	if (ea->src_id < eb->src_id) {
+		return -1 ;
 	}
 
-	return ea->src_id - eb->src_id ;
+	if (ea->src_id > eb->src_id) {
+		return  1 ;
+	}
+
+	// src_id equal
+	if (ea->dest_id < eb->dest_id) {
+		return -1 ;
+	}
+
+	if (ea->dest_id > eb->dest_id) {
+		return  1 ;
+	}
+
+	return 0 ;
 }
 
 // create multiple edges

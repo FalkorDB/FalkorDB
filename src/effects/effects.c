@@ -498,7 +498,9 @@ void EffectsBuffer_AddCreateEdgeEffect
 	// write attribute set 
 	//--------------------------------------------------------------------------
 
-	const AttributeSet attrs = GraphEntity_GetAttributes ((GraphEntity*)edge) ;
+	const AttributeSet attrs =
+		GraphEntity_GetAttributes ((const GraphEntity*)edge) ;
+
 	EffectsBuffer_WriteAttributeSet (attrs, buff) ;
 
 	EffectsBuffer_IncEffectCount (buff) ;
@@ -777,8 +779,6 @@ void EffectsBuffer_AddLabelsEffect
 
 	EffectType t = EFFECT_SET_LABELS;
 	EffectsBuffer_AddSetRemoveLabelsEffect(buff, node, lbl_ids, lbl_count, t);
-
-	EffectsBuffer_IncEffectCount(buff);
 }
 
 // add a node remove labels effect to buffer
@@ -801,8 +801,6 @@ void EffectsBuffer_AddRemoveLabelsEffect
 
 	EffectType t = EFFECT_REMOVE_LABELS;
 	EffectsBuffer_AddSetRemoveLabelsEffect(buff, node, lbl_ids, lbl_count, t);
-
-	EffectsBuffer_IncEffectCount(buff);
 }
 
 // add a schema addition effect to buffer

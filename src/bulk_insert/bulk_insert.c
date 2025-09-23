@@ -43,7 +43,7 @@ static int *_BulkInsert_ReadHeaderLabels
 
 	// first sequence is entity label(s)
 	const char *labels = data + *data_idx ;
-	int labels_len = strlen (labels) ;
+	size_t labels_len = strlen (labels) ;
 	*data_idx += labels_len + 1 ;
 
 	// array of all label IDs
@@ -302,13 +302,13 @@ static int _BulkInsert_ProcessEdgeFile
 	// parse CSV headers
 	//--------------------------------------------------------------------------
 
-	int *type_ids = _BulkInsert_ReadHeaderLabels (gc, SCHEMA_EDGE, data,
+	RelationID *rels = _BulkInsert_ReadHeaderLabels (gc, SCHEMA_EDGE, data,
 			&data_idx) ;
-	uint type_count = array_len (type_ids) ;
+	uint type_count = array_len (rels) ;
 
 	// // edges must have exactly one type
 	ASSERT (type_count == 1) ;
-	int type_id = type_ids[0] ;
+	RelationID rel = rels[0] ;
 
 	AttributeID *prop_indices = _BulkInsert_ReadHeaderProperties (gc,
 			SCHEMA_EDGE, data, &data_idx, &prop_count) ;
@@ -320,7 +320,7 @@ static int _BulkInsert_ProcessEdgeFile
 	ASSERT (Graph_GetMatrixPolicy(gc->g) == SYNC_POLICY_RESIZE) ;
 
 	// warm up matrices to avoid resizes
-	Graph_GetRelationMatrix (gc->g, type_id, false) ;
+	Graph_GetRelationMatrix (gc->g, rel, false) ;
 	Graph_GetAdjacencyMatrix (gc->g, false) ;
 
 	// temporarily disable sync policy
@@ -364,13 +364,13 @@ static int _BulkInsert_ProcessEdgeFile
 
 			// accumulate attributes
 			props[idx] = v ;
-			prop_attr_ids[idx] = prop_indices[idx] ;
+			prop_attr_ids[idx] = prop_indices[i] ;
 			idx++ ;
 		}
 
 		// assign properties
 		AttributeSet set = NULL;
-		AttributeSet_AddNoClone (&set, prop_indices, props, idx, false) ;
+		AttributeSet_AddNoClone (&set, prop_attr_ids, props, idx, false) ;
 		array_append (sets, set) ;
 	}
 
@@ -386,7 +386,7 @@ static int _BulkInsert_ProcessEdgeFile
 			pedges[i] = edges + i ;
 		}
 
-		CreateEdges (gc, pedges, type_id, sets, false) ;
+		CreateEdges (gc, pedges, rel, sets, false) ;
 
 		array_free (pedges) ;
 	}
@@ -397,8 +397,8 @@ static int _BulkInsert_ProcessEdgeFile
 
 	array_free (sets) ;
 	array_free (edges) ;
+	array_free (rels) ;
 
-	array_free (type_ids) ;
 	if (prop_indices) {
 		rm_free (prop_indices) ;
 	}
