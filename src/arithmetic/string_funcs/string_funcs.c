@@ -298,7 +298,7 @@ SIValue AR_JOIN
 		}
 	}
 
-	// acoun for null terminator
+	// account for null terminator
 	if(safe_add(str_len, 1, &str_len)) {
 		ErrorCtx_SetError(EMSG_STRING_OVERFLOW);
 		return SI_NullVal();
