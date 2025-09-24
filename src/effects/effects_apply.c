@@ -118,6 +118,9 @@ static inline void FlushEdges
 	ASSERT (batch != NULL) ;
 
 	if (*i > 0) {
+		ASSERT (array_len (batch) == *i) ;
+		ASSERT (array_len (batch) == array_len (sets)) ;
+
 		CreateEdges (gc, batch, r, sets, false) ;
 		array_clear (sets) ;
 		array_clear (batch) ;
@@ -175,8 +178,6 @@ static void ApplyCreateEdge
 	#pragma pack(pop)
 
 	while (true) {
-		Edge *e = edges + i ;
-
 		//----------------------------------------------------------------------
 		// read a single edge description in one go
 		//----------------------------------------------------------------------
@@ -205,9 +206,11 @@ static void ApplyCreateEdge
 		//----------------------------------------------------------------------
 
 		r = _edge_desc.r ;
-		Edge_SetRelationID (e, _edge_desc.r) ;
+
+		Edge *e = edges + i ;
 		Edge_SetSrcNodeID  (e, _edge_desc.src_id) ;
 		Edge_SetDestNodeID (e, _edge_desc.dest_id) ;
+		Edge_SetRelationID (e, _edge_desc.r) ;
 
 		array_append (batch, e) ;
 		i++ ;
@@ -505,8 +508,8 @@ static void ApplyDeleteNode
 		fread_assert (&id, sizeof(EntityID), stream) ;
 
 		// retrieve node from graph
-		int res = Graph_GetNode(g, id, nodes + i) ;
-		ASSERT(res != 0);
+		bool found = Graph_GetNode (g, id, nodes + i) ;
+		ASSERT (found == true) ;
 
 		i++ ;
 
@@ -556,9 +559,6 @@ static void ApplyDeleteEdge
 	const size_t batch_size = 512 ;  // max batch size
 	Edge edges[batch_size] ;         // edges
 
-	int res;
-	UNUSED(res);
-
 	// encoded edge struct
 	#pragma pack(push, 1)
 	struct {
@@ -578,8 +578,8 @@ static void ApplyDeleteEdge
 		Edge *e = edges + i ;
 
 		// get edge from the graph
-		res = Graph_GetEdge (g, _edge_desc.id, edges + i) ;
-		ASSERT (res != 0) ;
+		bool found = Graph_GetEdge (g, _edge_desc.id, edges + i) ;
+		ASSERT (found == true) ;
 
 		// set edge relation, src and destination node
 		Edge_SetSrcNodeID  (e, _edge_desc.src_id) ;
