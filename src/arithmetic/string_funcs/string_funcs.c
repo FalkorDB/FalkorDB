@@ -267,7 +267,7 @@ SIValue AR_JOIN
 	size_t delimeter_len = strlen(delimiter);  // length of the delimiter
 
 	// empty list
-	if(unlikely(n) == 0) {
+	if(unlikely(n == 0)) {
 		return SI_ConstStringVal("");
 	}
 
