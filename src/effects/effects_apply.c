@@ -37,7 +37,7 @@ static AttributeSet ReadAttributeSet
 	// read attribute count
 	//--------------------------------------------------------------------------
 
-	ushort attr_count;
+	uint16_t attr_count;
 	fread_assert(&attr_count, sizeof(attr_count), stream);
 
 	//--------------------------------------------------------------------------
@@ -47,7 +47,7 @@ static AttributeSet ReadAttributeSet
 	SIValue values[attr_count];
 	AttributeID ids[attr_count];
 
-	for(ushort i = 0; i < attr_count; i++) {
+	for(uint16_t i = 0; i < attr_count; i++) {
 		// read attribute ID
 		fread_assert(ids + i, sizeof(AttributeID), stream);
 		
@@ -78,7 +78,7 @@ static void ApplyCreateNode
 	// read label count
 	//--------------------------------------------------------------------------
 
-	ushort lbl_count;
+	uint16_t lbl_count;
 	fread_assert(&lbl_count, sizeof(lbl_count), stream);
 
 	//--------------------------------------------------------------------------
@@ -86,7 +86,7 @@ static void ApplyCreateNode
 	//--------------------------------------------------------------------------
 
 	LabelID labels[lbl_count];
-	for(ushort i = 0; i < lbl_count; i++) {
+	for(uint16_t i = 0; i < lbl_count; i++) {
 		fread_assert(labels + i, sizeof(LabelID), stream);
 	}
 
@@ -170,7 +170,7 @@ static void ApplyCreateEdge
 	// encoded edge struct
 	#pragma pack(push, 1)
 	struct {
-		ushort rel_count ;
+		uint16_t rel_count ;
 		RelationID r ;
 		NodeID src_id ;
 		NodeID dest_id ;
@@ -301,7 +301,7 @@ static void ApplyLabels
 	// read labels
 	//--------------------------------------------------------------------------
 
-	for(ushort i = 0; i < lbl_count; i++) {
+	for(uint16_t i = 0; i < lbl_count; i++) {
 		LabelID l;
 		fread_assert(&l, sizeof(LabelID), stream);
 		Schema *s = GraphContext_GetSchemaByID(gc, l, SCHEMA_NODE);
@@ -700,7 +700,7 @@ void Effects_Apply
 				ApplyAddAttribute (stream, gc) ;
 				break ;
 			default:
-				assert (false && "unknown effect type") ;
+				ASSERT (false && "unknown effect type") ;
 				break ;
 		}
 	}
