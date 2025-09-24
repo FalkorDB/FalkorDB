@@ -222,7 +222,7 @@ static void ApplyCreateEdge
 			break ;
 		}
 
-		// check if the next item in the stream is an edge?
+		// check if the next item in the stream is a EFFECT_CREATE_EDGE effect
 		EffectType t = ReadEffectType (stream) ;
 		if (t != EFFECT_CREATE_EDGE) {
 			// go back sizeof (EffectType) bytes
@@ -484,34 +484,65 @@ static void ApplyUpdateNode
 // process DeleteNode effect
 static void ApplyDeleteNode
 (
-	FILE *stream,     // effects stream
-	GraphContext *gc  // graph to operate on
+	FILE *stream,      // effects stream
+	GraphContext *gc,  // graph to operate on
+	size_t l           // length of stream
 ) {
 	//--------------------------------------------------------------------------
 	// effect format:
 	//    node ID
 	//--------------------------------------------------------------------------
 	
-	Node n;            // node to delete
 	EntityID id;       // node ID
 	Graph *g = gc->g;  // graph to delete node from
 
-	// read node ID off of stream
-	fread_assert(&id, sizeof(EntityID), stream);
+	int i = 0 ;                     // size of batch
+	const size_t batch_size = 512 ; // max batch size
+	Node nodes[batch_size] ;        // nodes
 
-	// retrieve node from graph
-	int res = Graph_GetNode(g, id, &n);
-	ASSERT(res != 0);
+	while (true) {
+		// read node ID off of stream
+		fread_assert (&id, sizeof(EntityID), stream) ;
 
-	// delete node
-	DeleteNodes(gc, &n, 1, false);
+		// retrieve node from graph
+		int res = Graph_GetNode(g, id, nodes + i) ;
+		ASSERT(res != 0);
+
+		i++ ;
+
+		if (i == batch_size) {
+			// flush batch
+			DeleteNodes (gc, nodes, i, false) ;
+			i = 0 ;
+		}
+
+		// have we reached the end of the stream ?
+		if (ftell (stream) >= l) {
+			break ;
+		}
+
+		// check if the next item in the stream is a EFFECT_DELETE_NODE effect
+		EffectType t = ReadEffectType (stream) ;
+		if (t != EFFECT_DELETE_NODE) {
+			// go back sizeof (EffectType) bytes
+			fseek (stream, -((long)sizeof (EffectType)), SEEK_CUR) ;
+			break ;
+		}
+	}
+
+	// flush any remaining node deletions
+	if (i > 0) {
+		// flush batch
+		DeleteNodes (gc, nodes, i, false) ;
+	}
 }
 
 // process DeleteNode effect
 static void ApplyDeleteEdge
 (
-	FILE *stream,     // effects stream
-	GraphContext *gc  // graph to operate on
+	FILE *stream,      // effects stream
+	GraphContext *gc,  // graph to operate on
+	size_t l           // length of stream
 ) {
 	//--------------------------------------------------------------------------
 	// effect format:
@@ -521,41 +552,67 @@ static void ApplyDeleteEdge
 	//    dest ID
 	//--------------------------------------------------------------------------
 
-	Edge e;  // edge to delete
-
-	EntityID id   = INVALID_ENTITY_ID;       // edge ID
-	int      r_id = GRAPH_UNKNOWN_RELATION;  // edge rel-type
-	NodeID   s_id = INVALID_ENTITY_ID;       // edge src node ID
-	NodeID   t_id = INVALID_ENTITY_ID;       // edge dest node ID
+	int i = 0 ;                      // size of current batch
+	const size_t batch_size = 512 ;  // max batch size
+	Edge edges[batch_size] ;         // edges
 
 	int res;
 	UNUSED(res);
 
-	Graph *g = gc->g;  // graph to delete edge from
+	// encoded edge struct
+	#pragma pack(push, 1)
+	struct {
+		EntityID id ;
+		RelationID r ;
+		NodeID src_id ;
+		NodeID dest_id ;
+	} _edge_desc ;
+	#pragma pack(pop)
 
-	// read edge ID
-	fread_assert(&id, sizeof(EntityID), stream);
+	Graph *g = gc->g ;  // graph to delete edge from
 
-	// read relation ID
-	fread_assert(&r_id, sizeof(RelationID), stream);
+	while (true) {
+		// read edge description from stream
+		fread_assert (&_edge_desc, sizeof (_edge_desc), stream) ;
 
-	// read src node ID
-	fread_assert(&s_id, sizeof(EntityID), stream);
+		Edge *e = edges + i ;
 
-	// read dest node ID
-	fread_assert(&t_id, sizeof(EntityID), stream);
+		// get edge from the graph
+		res = Graph_GetEdge (g, _edge_desc.id, edges + i) ;
+		ASSERT (res != 0) ;
 
-	// get edge from the graph
-	res = Graph_GetEdge(g, id, (Edge*)&e);
-	ASSERT(res != 0);
+		// set edge relation, src and destination node
+		Edge_SetSrcNodeID  (e, _edge_desc.src_id) ;
+		Edge_SetDestNodeID (e, _edge_desc.dest_id) ;
+		Edge_SetRelationID (e, _edge_desc.r) ;
 
-	// set edge relation, src and destination node
-	Edge_SetSrcNodeID(&e, s_id);
-	Edge_SetDestNodeID(&e, t_id);
-	Edge_SetRelationID(&e, r_id);
+		i++ ;
 
-	// delete edge
-	DeleteEdges(gc, &e, 1, false);
+		// check if batch is full
+		if (i == batch_size) {
+			// flush batch
+			DeleteEdges (gc, edges, i, false) ;
+			i = 0 ;
+		}
+
+		// have we reached the end of the stream ?
+		if (ftell (stream) >= l) {
+			break ;
+		}
+
+		// check if the next item in the stream is a EFFECT_DELETE_EDGE effect
+		EffectType t = ReadEffectType (stream) ;
+		if (t != EFFECT_DELETE_EDGE) {
+			// go back sizeof (EffectType) bytes
+			fseek (stream, -((long)sizeof (EffectType)), SEEK_CUR) ;
+			break ;
+		}
+	}
+
+	// flush last batch
+	if (i > 0) {
+		DeleteEdges (gc, edges, i, false) ;
+	}
 }
 
 // returns false in case of effect encode/decode version mismatch
@@ -613,10 +670,10 @@ void Effects_Apply
 		EffectType t = ReadEffectType (stream) ;
 		switch (t) {
 			case EFFECT_DELETE_NODE:
-				ApplyDeleteNode (stream, gc) ;
+				ApplyDeleteNode (stream, gc, l) ;
 				break ;
 			case EFFECT_DELETE_EDGE:
-				ApplyDeleteEdge (stream, gc) ;
+				ApplyDeleteEdge (stream, gc, l) ;
 				break ;
 			case EFFECT_UPDATE_NODE:
 				ApplyUpdateNode (stream, gc) ;
