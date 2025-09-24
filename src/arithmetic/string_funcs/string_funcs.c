@@ -283,7 +283,7 @@ SIValue AR_JOIN
 		}
 	}
 
-	// acount for each string length
+	// account for each string length
 	for(uint i = 0; i < n; i++) {
 		SIValue str = SIArray_Get(list, i);
 		if(!(SI_TYPE(str) & T_STRING)) {
