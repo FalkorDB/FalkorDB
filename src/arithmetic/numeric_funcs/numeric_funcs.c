@@ -409,19 +409,22 @@ void Register_NumericFuncs() {
 	func_desc = AR_FuncDescNew("sub", AR_SUB, 2, 2, types, ret_type, true, true);
 	AR_RegFunc(func_desc);
 
-	types = array_new(SIType, 1);
+	types = array_new(SIType, 2);
+	array_append(types, (SI_NUMERIC | T_NULL));
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
 	func_desc = AR_FuncDescNew("mul", AR_MUL, 2, 2, types, ret_type, true, true);
 	AR_RegFunc(func_desc);
 
-	types = array_new(SIType, 1);
+	types = array_new(SIType, 2);
+	array_append(types, (SI_NUMERIC | T_NULL));
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
 	func_desc = AR_FuncDescNew("div", AR_DIV, 2, 2, types, ret_type, true, true);
 	AR_RegFunc(func_desc);
 
-	types = array_new(SIType, 1);
+	types = array_new(SIType, 2);
+	array_append(types, (SI_NUMERIC | T_NULL));
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
 	func_desc = AR_FuncDescNew("mod", AR_MODULO, 2, 2, types, ret_type, true, true);
