@@ -765,7 +765,7 @@ SIValue AR_REPLACE
 		// move forward to copy more data to the buffer
 		buffer_ptr += new_string_len;
 
-		// move forwart to copy more data from the original string
+		// move forward to copy more data from the original string
 		ptr = arr[i] + old_string_len;
 	}
 
