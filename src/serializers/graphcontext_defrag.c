@@ -61,7 +61,7 @@ static void _save_stage
 	uint64_t offset
 ) {
 	ASSERT (ctx != NULL) ;
-	ASSERT (stage >= DEFRAG_NODES && stage <= DEFRAG_DONE) ;
+	ASSERT (stage >= DEFRAG_NODES && stage < DEFRAG_DONE) ;
 
 	// mask offset to 56 bits to be compatible with load function
 	uint64_t cursor = (((uint64_t)stage) << STAGE_SHIFT) | (offset & OFFSET_MASK);
@@ -106,8 +106,9 @@ static void defrag_value
 			break ;
 
 		default :
-			ASSERT (false && "unexpected value type") ;
-			break ;
+			RedisModule_Log (NULL, "notice", "Unexpected defrag value type: %s",
+					SIType_ToString (t)) ;
+			return ;
 	}
 
 	ASSERT (p     != NULL) ;
@@ -176,14 +177,12 @@ static int defrag_entities
 
 	// get current entity attribute-set
 	while ((set = (AttributeSet*)(DataBlockIterator_Next (it, NULL))) != NULL) {
-		counter++ ;
-
 		// entity has no attributes, skip
-		if (*set == NULL) {
-			continue ;
+		if (*set != NULL) {
+			defrag_attributeset (ctx, set) ;
 		}
 
-		defrag_attributeset (ctx, set) ;
+		counter++ ;
 
 		// check if we should stop
         if ((counter % 64 == 0) && RedisModule_DefragShouldStop (ctx)) {
@@ -212,8 +211,14 @@ static int defrag_edges
 	DataBlockIterator *it = Graph_ScanEdges (g) ;
 	DataBlockIterator_Seek (it, offset) ;  // seek iterator to offset
 
-	// obtain exclusive access to the graph
-	Graph_AcquireWriteLock (g) ;
+	// try to obtain exclusive access to the graph
+	int timeout_ms = 50 ;
+	if (Graph_TimeAcquireWriteLock (g, timeout_ms) != 0) {
+		// failed to acquire write lock, check if we're out of time
+		RedisModule_Log (NULL, "notice",
+				"Graph defrag, failed to acquire write lock") ;
+		return 1 ;  // there's more work to be done
+	}
 
 	int res = defrag_entities (ctx, DEFRAG_EDGES, g, gc, it) ;
 
@@ -231,12 +236,17 @@ static int defrag_nodes
 	uint64_t offset
 ) {
 	Graph *g = GraphContext_GetGraph (gc) ;
-
 	DataBlockIterator *it = Graph_ScanNodes (g) ;
 	DataBlockIterator_Seek (it, offset) ;  // seek iterator to offset
 
-	// obtain exclusive access to the graph
-	Graph_AcquireWriteLock (g) ;
+	// try to obtain exclusive access to the graph
+	int timeout_ms = 50 ;
+	if (Graph_TimeAcquireWriteLock (g, timeout_ms) != 0) {
+		// failed to acquire write lock, check if we're out of time
+		RedisModule_Log (NULL, "notice",
+				"Graph defrag, failed to acquire write lock") ;
+			return 1 ;  // there's more work to be done
+	}
 
 	int res = defrag_entities (ctx, DEFRAG_NODES, g, gc, it) ;
 

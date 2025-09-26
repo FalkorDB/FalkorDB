@@ -127,18 +127,23 @@ bool SIArray_ContainsType
 	SIValue siarray,  // array to inspect
 	SIType t          // bitmap of types to search for
 ) {
-	uint array_len = SIArray_Length(siarray);
-	for(uint i = 0; i < array_len; i++) {
-		SIValue elem = siarray.array[i];
-		if(SI_TYPE(elem) & t) return true;
+	uint array_len = SIArray_Length (siarray) ;
+	for (uint i = 0; i < array_len; i++) {
+		SIValue elem = siarray.array[i] ;
+		if (SI_TYPE (elem) & t) {
+			return true ;
+		}
 
 		// recursively check nested arrays
-		if(SI_TYPE(elem) == T_ARRAY) {
-			bool type_is_nested = SIArray_ContainsType(elem, t);
-			if(type_is_nested) return true;
+		if (SI_TYPE (elem) == T_ARRAY) {
+			bool type_is_nested = SIArray_ContainsType (elem, t) ;
+			if (type_is_nested) {
+				return true ;
+			}
 		}
 	}
-	return false;
+
+	return false ;
 }
 
 // returns true if the array contains an element equals to 'value'

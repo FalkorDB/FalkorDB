@@ -12,10 +12,6 @@ class testDefrag():
         self.env, self.db = Env(enableDebugCommand=True)
         self.conn = self.env.getConnection()
 
-        # skip test if we're running under Sanitizer
-        if SANITIZER:
-            self.env.skip() # sanitizer is not working correctly with bulk
-
     def test_frag_ratio(self):
         #-----------------------------------------------------------------------
         # 1. Create many fragmented graphs
@@ -35,13 +31,16 @@ class testDefrag():
                     'f':{'latitude': 30, 'longitude': -27}
             }
 
-            q = """UNWIND range(0, 200) AS x
-                   CREATE ({a: $a, b: $b, c0:$c, c1: intern($c), d0: $d,
+            q = """
+                   WITH {a: $a, b: $b, c0:$c, c1: intern($c), d0: $d,
                             d1: vecf32($d[..3]), e: $e, f:point($f),
                             g:date('2025-09-15'),
                             h: localtime('07:00:00'),
                             i: localdatetime('2025-06-29T13:45:00'),
-                            j: duration('P3DT12H')})"""
+                            j: duration('P3DT12H')} as props
+                   UNWIND range(0, 200) AS x
+                   CREATE (s)-[e:R]->()
+                   SET s = props, e = props"""
 
             g.query(q, params)
 
@@ -152,12 +151,13 @@ class testDefrag():
                  'i': datetime.datetime(2025, 6, 29, 13, 45),
                  'j': relativedelta(days=3, hours=12)}
 
-        q = """MATCH (n)
-               RETURN properties(n)"""
+        q = """MATCH (n)-[e]->()
+               RETURN properties(n), properties(e)"""
 
         res = g.query(q, params).result_set
         self.env.assertGreater(len(res), 0)
 
         for row in res:
             self.env.assertEquals(props, row[0])
+            self.env.assertEquals(props, row[1])
 
