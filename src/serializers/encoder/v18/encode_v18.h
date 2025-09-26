@@ -13,6 +13,12 @@ void RdbSaveGraph_latest
 	void *value
 );
 
+// encode DB UDFs
+void AUXSaveUDF_latest
+(
+	RedisModuleIO *io  // IO
+);
+
 // encode nodes
 void RdbSaveNodes_v18
 (
