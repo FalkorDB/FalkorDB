@@ -19,10 +19,9 @@ int rwlock_timedwrlock
 		return pthread_rwlock_wrlock (lock) ;
 	}
 
-	// zero: non-blocking attempt; return EBUSY if not acquired
+	// zero: non-blocking attempt;
 	if (timeout_ms == 0) {
-		int rc = pthread_rwlock_trywrlock (lock) ;
-		return (rc == 0) ? 0 : EBUSY ;
+		return pthread_rwlock_trywrlock (lock) ;
 	}
 
 	// positive: compute absolute timeout
@@ -41,8 +40,13 @@ int rwlock_timedwrlock
 	struct timespec sleep_ts = {0, sleep_ns} ;
 
 	while (1) {
-		if (pthread_rwlock_trywrlock (lock) == 0) {
+		int rc = pthread_rwlock_trywrlock (lock) ;
+		if (rc == 0) {
 			return 0 ; // acquired
+		}
+
+		if (rc != EBUSY) {
+			return rc ; // propagate fatal errors
 		}
 
 		// check timeout
