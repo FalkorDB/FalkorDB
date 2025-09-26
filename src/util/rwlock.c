@@ -7,8 +7,6 @@
 
 #include <time.h>
 #include <errno.h>
-#include <stdio.h>
-#include <unistd.h>
 
 // portable wrapper: try to acquire a write lock with timeout
 int rwlock_timedwrlock
