@@ -16,11 +16,21 @@ int rwlock_timedwrlock
 	pthread_rwlock_t *lock,
 	int timeout_ms
 ) {
+	// negative: block until acquired
+	if (timeout_ms < 0) {
+		return pthread_rwlock_wrlock (lock) ;
+	}
+
+	// zero: non-blocking attempt; return EBUSY if not acquired
+	if (timeout_ms == 0) {
+		int rc = pthread_rwlock_trywrlock (lock) ;
+		return (rc == 0) ? 0 : EBUSY ;
+	}
+
+	// positive: compute absolute timeout
 	struct timespec ts ;
 	clock_gettime (CLOCK_REALTIME, &ts) ;
-
-	// calculate absolute timeout
-	ts.tv_sec += timeout_ms / 1000 ;
+	ts.tv_sec  += timeout_ms / 1000 ;
 	ts.tv_nsec += (timeout_ms % 1000) * 1000000 ;
 	if (ts.tv_nsec >= 1000000000L) {
 		ts.tv_sec++ ;
@@ -30,7 +40,7 @@ int rwlock_timedwrlock
 #if defined(__APPLE__)
 	// macOS does not implement pthread_rwlock_timedwrlock
 	const int sleep_ns = 1000000; // 1ms backoff
-	struct timespec sleep_ts = {0, sleep_ns};
+	struct timespec sleep_ts = {0, sleep_ns} ;
 
 	while (1) {
 		if (pthread_rwlock_trywrlock (lock) == 0) {

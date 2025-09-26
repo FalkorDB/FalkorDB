@@ -208,8 +208,6 @@ static int defrag_edges
 	uint64_t offset
 ) {
 	Graph *g = GraphContext_GetGraph (gc) ;
-	DataBlockIterator *it = Graph_ScanEdges (g) ;
-	DataBlockIterator_Seek (it, offset) ;  // seek iterator to offset
 
 	// try to obtain exclusive access to the graph
 	int timeout_ms = 50 ;
@@ -219,6 +217,9 @@ static int defrag_edges
 				"Graph defrag, failed to acquire write lock") ;
 		return 1 ;  // there's more work to be done
 	}
+
+	DataBlockIterator *it = Graph_ScanEdges (g) ;
+	DataBlockIterator_Seek (it, offset) ;  // seek iterator to offset
 
 	int res = defrag_entities (ctx, DEFRAG_EDGES, g, gc, it) ;
 
@@ -236,8 +237,6 @@ static int defrag_nodes
 	uint64_t offset
 ) {
 	Graph *g = GraphContext_GetGraph (gc) ;
-	DataBlockIterator *it = Graph_ScanNodes (g) ;
-	DataBlockIterator_Seek (it, offset) ;  // seek iterator to offset
 
 	// try to obtain exclusive access to the graph
 	int timeout_ms = 50 ;
@@ -247,6 +246,9 @@ static int defrag_nodes
 				"Graph defrag, failed to acquire write lock") ;
 			return 1 ;  // there's more work to be done
 	}
+
+	DataBlockIterator *it = Graph_ScanNodes (g) ;
+	DataBlockIterator_Seek (it, offset) ;  // seek iterator to offset
 
 	int res = defrag_entities (ctx, DEFRAG_NODES, g, gc, it) ;
 
