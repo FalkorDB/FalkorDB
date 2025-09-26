@@ -58,10 +58,11 @@ static void _CommitNodes
 (
 	PendingCreations *pending
 ) {
-	Node         *n         = NULL ;
-	GraphContext *gc        = QueryCtx_GetGraphCtx () ;
-	Graph        *g         = gc->g ;
-	uint         node_count = array_len (pending->nodes.created_nodes) ;
+	Node         *n                   = NULL ;
+	GraphContext *gc                  = QueryCtx_GetGraphCtx () ;
+	Graph        *g                   = gc->g ;
+	uint         node_count           = array_len (pending->nodes.created_nodes) ;
+	bool         constraint_violation = false;
 
 	// sync policy should be set to NOP, no need to sync/resize
 	ASSERT (Graph_GetMatrixPolicy (g) == SYNC_POLICY_NOP) ;
@@ -80,16 +81,18 @@ static void _CommitNodes
 		// enforce constraints
 		//----------------------------------------------------------------------
 
-		for(uint j = 0; j < label_count; j++) {
-			Schema *s = GraphContext_GetSchemaByID (gc, labels[j], SCHEMA_NODE) ;
-			char *err_msg = NULL;
-			if (!Schema_EnforceConstraints (s, (GraphEntity*)n, &err_msg)) {
-				// constraint violated!
-				ASSERT (err_msg != NULL) ;
-
-				ErrorCtx_SetError ("%s", err_msg) ;
-				free (err_msg) ;
-				return ;
+		if(constraint_violation == false) {
+			for(uint j = 0; j < label_count; j++) {
+				Schema *s = GraphContext_GetSchemaByID(gc, labels[j], SCHEMA_NODE);
+				char *err_msg = NULL;
+				if(!Schema_EnforceConstraints(s, (GraphEntity*)n, &err_msg)) {
+					// constraint violation
+					ASSERT(err_msg != NULL);
+					constraint_violation = true;
+					ErrorCtx_SetError("%s", err_msg);
+					free(err_msg);
+					break;
+				}
 			}
 		}
 	}
@@ -133,9 +136,10 @@ static void _CommitEdges
 (
 	PendingCreations *pending
 ) {
-	Edge         *e  = NULL;
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Graph        *g  = gc->g;
+	Edge         *e                   = NULL;
+	GraphContext *gc                  = QueryCtx_GetGraphCtx();
+	Graph        *g                   = gc->g;
+	bool         constraint_violation = false;
 
 	// sync policy should be set to NOP, no need to sync/resize
 	ASSERT (Graph_GetMatrixPolicy (g) == SYNC_POLICY_NOP) ;
@@ -167,20 +171,22 @@ static void _CommitEdges
 			continue ;
 		}
 
-		//----------------------------------------------------------------------
-		// enforce constraints
-		//----------------------------------------------------------------------
-
 		for (uint j = 0; j < edge_count; j++) {
 			e = edges[j] ;
-			char *err_msg = NULL ;
-			if (!Schema_EnforceConstraints (s, (GraphEntity*)e, &err_msg)) {
-				// constraint violated!
-				ASSERT (err_msg != NULL) ;
 
-				ErrorCtx_SetError ("%s", err_msg) ;
-				free (err_msg) ;
-				return ;
+			//------------------------------------------------------------------
+			// enforce constraints
+			//------------------------------------------------------------------
+
+			if (constraint_violation == false) {
+				char *err_msg = NULL ;
+				if (!Schema_EnforceConstraints (s, (GraphEntity*)e, &err_msg)) {
+					// constraint violated!
+					ASSERT (err_msg != NULL) ;
+					constraint_violation = true ;
+					ErrorCtx_SetError ("%s", err_msg) ;
+					free(err_msg) ;
+				}
 			}
 		}
 	}
