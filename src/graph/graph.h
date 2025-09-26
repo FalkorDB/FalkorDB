@@ -75,6 +75,25 @@ void Graph_AcquireWriteLock
 	Graph *g
 );
 
+// acquire the graph write lock with a timeout
+// attempts to acquire the write lock on the given graph
+// if the lock is not acquired immediately the function will block until either
+// the lock becomes available or the timeout elapses
+//
+// returns:
+// - 0 on success (lock acquired)
+// - ETIMEDOUT if the timeout expired before acquiring the lock
+// - EBUSY if called with timeout_ms == 0 and the lock could not be acquired
+// - other nonzero error codes may be returned for unexpected failures
+int Graph_TimeAcquireWriteLock
+(
+	Graph *g,       // graph to lock
+	int timeout_ms  // maximum time in milliseconds to wait for the lock:
+                    // - timeout_ms < 0 : block until the lock is acquired
+                    // - timeout_ms = 0 : non-blocking attempt (try-lock)
+                    // - timeout_ms > 0 : wait up to timeout_ms milliseconds
+);
+
 // release the held lock
 void Graph_ReleaseLock
 (
