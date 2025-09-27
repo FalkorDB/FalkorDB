@@ -50,6 +50,14 @@ SIValue SIArray_Get
 	u_int32_t index   // index: index
 );
 
+// get a reference to the 'idx' element on the array
+// if index is out of bounds NULL is returned
+SIValue *SIArray_GetRef
+(
+	SIValue siarray,  // array
+	u_int32_t index   // index
+);
+
 // get the array length
 u_int32_t SIArray_Length
 (
