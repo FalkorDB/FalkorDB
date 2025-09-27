@@ -952,6 +952,9 @@ void Graph_CreateEdges
 	Tensor       R   = Graph_GetRelationMatrix  (g, r, false) ;
 	Delta_Matrix adj = Graph_GetAdjacencyMatrix (g, false) ;
 
+	// in case R is empty switch to a more optimize construction approach
+	// using GrB_Matrix_Build to build R
+
 	// allocate edges and update ADJ matrix
 	for (uint i = 0; i < edge_count; i++) {
 		Edge *e = edges_copy[i] ;

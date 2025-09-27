@@ -474,7 +474,7 @@ void EffectsBuffer_AddCreateEdgeEffect
 	#pragma pack(push, 1)
 	struct {
 		EffectType t ;
-		ushort rel_count ;
+		uint16_t rel_count ;
 		RelationID r ;
 		NodeID src_id ;
 		NodeID dest_id ;

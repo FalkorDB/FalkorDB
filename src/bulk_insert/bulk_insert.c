@@ -96,7 +96,7 @@ static AttributeID *_BulkInsert_ReadHeaderProperties
 	SchemaType t,
 	const char *data,
 	size_t *data_idx,
-	uint *prop_count
+	uint16_t *prop_count
 ) {
 	ASSERT (gc         != NULL) ;
 	ASSERT (data       != NULL) ;
@@ -104,7 +104,10 @@ static AttributeID *_BulkInsert_ReadHeaderProperties
 	ASSERT (prop_count != NULL) ;
 
 	// next 4 bytes are property count
-	*prop_count = *(uint*)&data[*data_idx] ;
+	uint _prop_count = *(uint*)&data[*data_idx] ;
+	assert (_prop_count < 65535) ;  // restrict number of attributes
+
+	*prop_count = _prop_count ;
 	*data_idx += sizeof (unsigned int) ;
 
 	if (*prop_count == 0) {
@@ -195,8 +198,8 @@ static int _BulkInsert_ProcessNodeFile
 	const char *data,  // raw data
 	size_t data_len    // number of bytes in data
 ) {
-	uint prop_count = 0 ;
-	size_t data_idx = 0 ;
+	size_t   data_idx   = 0 ;
+	uint16_t prop_count = 0 ;
 
 	//--------------------------------------------------------------------------
 	// parse CSV headers
@@ -295,8 +298,8 @@ static int _BulkInsert_ProcessEdgeFile
 	const char *data,  // raw data
 	size_t data_len    // number of bytes in data
 ) {
-	uint prop_count = 0 ;
-	size_t data_idx = 0 ;
+	size_t   data_idx   = 0 ;
+	uint16_t prop_count = 0 ;
 
 	//--------------------------------------------------------------------------
 	// parse CSV headers

@@ -157,9 +157,9 @@ static void ApplyCreateEdge
 	// attributes (id,value) pair
 	//--------------------------------------------------------------------------
 
-	int i = 0 ;                      // size of current batch
-	const size_t batch_size = 512 ;  // max batch size
-	Edge edges[batch_size] ;         // edges
+	int i = 0 ;                       // size of current batch
+	const size_t batch_size = 4096 ;  // max batch size
+	Edge edges[batch_size] ;          // edges
 
 	Edge **batch = array_new (Edge *, batch_size) ;  // batch, points to edges
 	AttributeSet *sets = array_new (AttributeSet, batch_size) ;  // attribute-sets
@@ -179,7 +179,7 @@ static void ApplyCreateEdge
 
 	while (true) {
 		//----------------------------------------------------------------------
-		// read a single edge description in one go
+		// read a single edge descriptor in one go
 		//----------------------------------------------------------------------
 
 		fread_assert(&_edge_desc, sizeof (_edge_desc), stream);
@@ -499,9 +499,9 @@ static void ApplyDeleteNode
 	EntityID id;       // node ID
 	Graph *g = gc->g;  // graph to delete node from
 
-	int i = 0 ;                     // size of batch
-	const size_t batch_size = 512 ; // max batch size
-	Node nodes[batch_size] ;        // nodes
+	int i = 0 ;                      // size of batch
+	const size_t batch_size = 4096 ; // max batch size
+	Node nodes[batch_size] ;         // nodes
 
 	while (true) {
 		// read node ID off of stream
@@ -555,9 +555,9 @@ static void ApplyDeleteEdge
 	//    dest ID
 	//--------------------------------------------------------------------------
 
-	int i = 0 ;                      // size of current batch
-	const size_t batch_size = 512 ;  // max batch size
-	Edge edges[batch_size] ;         // edges
+	int i = 0 ;                       // size of current batch
+	const size_t batch_size = 4096 ;  // max batch size
+	Edge edges[batch_size] ;          // edges
 
 	// encoded edge struct
 	#pragma pack(push, 1)
@@ -577,14 +577,14 @@ static void ApplyDeleteEdge
 
 		Edge *e = edges + i ;
 
-		// get edge from the graph
-		bool found = Graph_GetEdge (g, _edge_desc.id, edges + i) ;
-		ASSERT (found == true) ;
+		// debug assert edge exists
+		ASSERT (Graph_GetEdge (g, _edge_desc.id, edges + i) == true) ;
 
 		// set edge relation, src and destination node
-		Edge_SetSrcNodeID  (e, _edge_desc.src_id) ;
-		Edge_SetDestNodeID (e, _edge_desc.dest_id) ;
-		Edge_SetRelationID (e, _edge_desc.r) ;
+		e->id         = _edge_desc.id      ;
+		e->src_id     = _edge_desc.src_id  ;
+		e->dest_id    = _edge_desc.dest_id ;
+		e->relationID = _edge_desc.r       ;
 
 		i++ ;
 

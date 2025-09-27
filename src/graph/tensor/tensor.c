@@ -302,7 +302,7 @@ void Tensor_SetEdges
 
 	// array of indexes pairs
 	// delayed[i, i+1] points to a range of consecutive elements to be inserted
-	// these elements are creating a new entries either scalar or vector
+	// these elements are creating new entries either scalar or vector
 	uint64_t *delayed = array_new(uint64_t, 0); 
 
 	GrB_Vector V;
