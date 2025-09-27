@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "tensor.h"
 #include "util/arr.h"
+#include "globals.h"
 #include "../delta_matrix/delta_matrix.h"
 #include "../delta_matrix/delta_matrix_iter.h"
 
@@ -493,7 +494,7 @@ void Tensor_RemoveElements_Flat
 		GrB_Index   row = Edge_GetSrcNodeID(e);   // element row index
 		GrB_Index   col = Edge_GetDestNodeID(e);  // element column index
 
-		GrB_Info info = Delta_Matrix_removeElement(T, row, col);
+		GrB_Info info = Delta_Matrix_removeElement_UINT64(T, row, col);
 		ASSERT(info == GrB_SUCCESS);
 	}
 }
@@ -576,21 +577,9 @@ void Tensor_RemoveElements
 				// postpone entry removal
 				GrB_free(&V);
 				array_append(delayed, i);
-
-				// do not leave a dangling pointer
-				// replace vector entry with a delete marker
-				uint64_t delete_marker = MSB_MASK;
-				Delta_Matrix_setElement_UINT64(T, delete_marker, row, col);
 			} else if(d+1 == nvals) {
 				// transition from vector to scalar
 				// determine which vector element becomes a scalar
-
-				// sort consecutive elements i..j by element value
-				qsort((void*)(elements + i), d, sizeof(Edge), _value_cmp);
-
-				// iterate over vector entries
-				// determine which of the vector's entries transitions into
-				// a scalar
 
 				struct GB_Iterator_opaque _it;
 				GxB_Iterator it = &_it;
@@ -601,27 +590,24 @@ void Tensor_RemoveElements
 				// seek to the first entry
 				info = GxB_Vector_Iterator_seek(it, 0);
 
-				GrB_Index idx;    // vector element
-				uint64_t  v;      // element's value
-				uint64_t  k = i;  // first consecutive element
-				while(info != GxB_EXHAUSTED) {
-					// get current element
+				uint64_t  idx = 0;    // vector element
+
+				// Use bitwise xor to cancel all equal values, leaving only the 
+				// odd one out.
+				
+				for(uint64_t  k = i; k < j; k++){
 					e = elements + k;
-					v = ENTITY_GET_ID(e);
+					idx ^= ENTITY_GET_ID(e); 
+				}
 
+				while(info != GxB_EXHAUSTED) {
 					// get element index within the vector
-					idx = GxB_Vector_Iterator_getIndex(it);
-
-					// break if vector's entry isn't in the list of
-					// deleted elements
-					if(idx != v) break;
-
+					idx ^= GxB_Vector_Iterator_getIndex(it);
 					// move to the next entry in V
 					info = GxB_Vector_Iterator_next(it);
-
-					// advance to next element
-					k = MIN(k + 1, i + d - 1);
 				}
+
+				ASSERT(GxB_Vector_isStoredElement(V, idx) == GrB_SUCCESS);
 
 				// free vector and set scalar
 				GrB_free(&V);
@@ -653,7 +639,7 @@ void Tensor_RemoveElements
 		GrB_Index   row = Edge_GetSrcNodeID(e);   // element row index
 		GrB_Index   col = Edge_GetDestNodeID(e);  // element column index
 
-		info = Delta_Matrix_removeElement(T, row, col);
+		info = Delta_Matrix_removeElement_UINT64(T, row, col);
 		ASSERT(info == GrB_SUCCESS);
 	}
 
@@ -750,49 +736,17 @@ uint64_t Tensor_ColDegree
 	return degree;
 }
 
-// free vector entries of a tensor
-static void _free_vectors
-(
-	void *z,       // [ignored] new value
-	const void *x  // current entry
-) {
-	// see if entry is a vector
-	uint64_t _x = *(uint64_t*)(x);
-	if(!SCALAR_ENTRY(_x)) {
-		// free vector
-		GrB_Vector V = AS_VECTOR(_x);
-		GrB_free(&V);
-	}
-}
-
 // free tensor
 void Tensor_free
 (
 	Tensor *T  // tensor
 ) {
 	ASSERT(T != NULL && *T != NULL);
-
+	GrB_Info info;
 	Tensor t = *T;
 
-	// flush all pendding changes in T
-	// TODO: we might be able to avoid this if we had access to
-	// the tensor underline matrices: DP, DM & M
-	GrB_Info info = Delta_Matrix_wait(t, true);
-	ASSERT(info == GrB_SUCCESS);
-
-	// get delta matrix M matrix
-	GrB_Matrix M = Delta_Matrix_M(t);
-
-	// initialize unaryop only once
-	static GrB_UnaryOp unaryop = NULL;
-	if(unaryop == NULL) {
-		info = GrB_UnaryOp_new(&unaryop, _free_vectors, GrB_UINT64, GrB_UINT64);
-		ASSERT(info == GrB_SUCCESS);
-	}
-
 	// apply _free_vectors on every entry of the tensor
-	info = GrB_Matrix_apply(M, NULL, NULL, unaryop, M, NULL);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (Delta_Matrix_apply(t, Global_GrB_Ops_Get()->free_tensors, t));
 
 	// free tensor internals
 	Delta_Matrix_free(T);
