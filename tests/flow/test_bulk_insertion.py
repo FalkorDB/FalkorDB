@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-from common import *
 import csv
 import time
+import random
 import threading
+from common import *
 from click.testing import CliRunner
 from falkordb_bulk_loader.bulk_insert import bulk_insert
 
@@ -714,4 +715,97 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         for q in queries:
             query_result = graph.query(q)
             self.env.assertEquals(query_result.result_set, expected_result)
+
+    def test12_load_large_graph(self):
+        """make sure bulk-loader is able to load a large graph quickly"""
+
+        if SANITIZER:
+            # Sanitizers are not compatible with the crash handler
+            self.env.skip()
+            return
+
+        graphname = "bulk-loader-large-graph"
+        n_lbls = 3
+        n_rels = 2
+        node_lbl_count = 2000000
+        edge_rel_min = 500000
+        edge_rel_max = 10000000
+        total_node_count = node_lbl_count * n_lbls
+
+        node_csvs = [f"./node_{i}.csv" for i in range(0, n_lbls)]
+        edge_csvs = [f"./edge_{i}.csv" for i in range(0, n_rels)]
+
+        # delete old csv files
+        for node_csv in node_csvs:
+            if os.path.exists(node_csv):
+                os.remove(node_csv)
+
+        for edge_csv in edge_csvs:
+            if os.path.exists(edge_csv):
+                os.remove(edge_csv)
+
+        #-----------------------------------------------------------------------
+        # create node csv files
+        #-----------------------------------------------------------------------
+
+        node_count = 0
+        for node_csv in node_csvs:
+            with open(node_csv, 'w') as f:
+                writer = csv.writer(f)
+
+                # header row
+                writer.writerow(["id:ID"])
+
+                for i in range(0, node_lbl_count):
+                    writer.writerow([node_count])
+                    node_count = node_count + 1
+
+        #-----------------------------------------------------------------------
+        # create edge csv files
+        #-----------------------------------------------------------------------
+
+        edge_count = 0
+        for edge_csv in edge_csvs:
+            with open(edge_csv, 'w') as f:
+                writer = csv.writer(f)
+
+                # Header row
+                writer.writerow(['src', 'dest'])
+
+                count = random.randint(edge_rel_min, edge_rel_max)
+                for i in range(0, count):
+                    src  = edge_count % (total_node_count - 1) + 1
+                    dest = src + random.randint(-1, 1) # 1/3 self pointing edge
+                    writer.writerow([src, dest])
+                    edge_count = edge_count + 1
+
+        #-----------------------------------------------------------------------
+        # load graph
+        #-----------------------------------------------------------------------
+
+        nodes_args = [arg for node_csv in node_csvs for arg in ('--nodes', node_csv)]
+        edges_args = [arg for edge_csv in edge_csvs for arg in ('--relations', edge_csv)]
+
+        runner = CliRunner()
+
+        start_time = time.perf_counter()
+        res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{self.port}",
+                                          *nodes_args, *edges_args, graphname])
+        # calculate the execution time
+        execution_time = time.perf_counter() - start_time
+
+        # validate script results
+        self.env.assertEquals(res.exit_code, 0)
+        self.env.assertIn(f'{node_count} nodes created', res.output)
+        self.env.assertIn(f'{edge_count} relations created', res.output)
+
+        # make sure load time did not exceeds 40 seconds
+        self.env.assertLess(execution_time, 40)
+
+        # clean up
+        for node_csv in node_csvs:
+            os.remove(node_csv)
+
+        for edge_csv in edge_csvs:
+            os.remove(edge_csv)
 
