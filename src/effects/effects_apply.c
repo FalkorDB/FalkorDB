@@ -504,11 +504,12 @@ static void ApplyDeleteNode
 	Node nodes[batch_size] ;         // nodes
 
 	while (true) {
+		Node *n = nodes + i ;
 		// read node ID off of stream
-		fread_assert (&id, sizeof(EntityID), stream) ;
+		fread_assert (&n->id, sizeof(EntityID), stream) ;
 
 		// debug assert node exists
-		ASSERT (Graph_GetNode (g, id, nodes + i)) ;
+		ASSERT (Graph_GetNode (g, n->id, nodes + i)) ;
 
 		i++ ;
 
