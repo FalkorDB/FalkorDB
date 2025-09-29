@@ -12,6 +12,8 @@
 #include "../datatypes/array.h"
 #include "../graph/graph_hub.h"
 
+#include <string.h>
+
 // the first byte of each property in the binary stream
 // is used to indicate the type of the subsequent SIValue
 typedef enum {

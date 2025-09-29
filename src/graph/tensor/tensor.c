@@ -149,7 +149,7 @@ void Tensor_SetElements
 		}
 
 		// consecutive elements sharing the same row, col indexes
-		uint j = i;
+		uint64_t j = i;
 		while(j < n) {
 			GrB_Index next_row = rows[j];  // next row index
 			GrB_Index next_col = cols[j];  // next column index
@@ -535,7 +535,7 @@ void Tensor_RemoveElements
 		GrB_Index   col = Edge_GetDestNodeID(e);  // element column index
 
 		// consecutive elements sharing the same row, col indexes
-		uint j = i;
+		uint64_t j = i;
 		while(j < n) {
 			const Edge *next     = elements + j;
 			GrB_Index   next_row = Edge_GetSrcNodeID(next);   // next row index

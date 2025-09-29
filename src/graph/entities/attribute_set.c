@@ -211,6 +211,11 @@ void AttributeSet_AddNoClone
 		ASSERT (AttributeSet_Get (*set, ids[i]) == ATTRIBUTE_NOTFOUND) ;
 		// make sure value isn't volotile
 		ASSERT (SI_ALLOCATION (values + i) != M_VOLATILE) ;
+
+		// ensure no duplicate attribute IDs within this batch
+		for (ushort j = i + 1; j < n; j++) {
+			ASSERT (ids[i] != ids[j]) ;
+		}
 	}
 #endif
 

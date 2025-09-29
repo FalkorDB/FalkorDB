@@ -39,6 +39,9 @@ static AttributeSet ReadAttributeSet
 
 	uint16_t attr_count;
 	fread_assert(&attr_count, sizeof(attr_count), stream);
+	if (attr_count == 0) {
+		return NULL ;
+	}
 
 	//--------------------------------------------------------------------------
 	// read attributes
@@ -386,8 +389,6 @@ static void ApplyUpdateEdge
 	//--------------------------------------------------------------------------
 	
 	SIValue v;            // updated value
-	uint props_set;       // number of attributes updated
-	uint props_removed;   // number of attributes removed
 	AttributeID attr_id;  // entity ID
 
 	NodeID     s_id = INVALID_ENTITY_ID;       // edge src node ID
@@ -455,8 +456,6 @@ static void ApplyUpdateNode
 	//--------------------------------------------------------------------------
 
 	SIValue v;            // updated value
-	uint props_set;       // number of attributes updated
-	uint props_removed;   // number of attributes removed
 	AttributeID attr_id;  // entity ID
 
 	EntityID id = INVALID_ENTITY_ID;

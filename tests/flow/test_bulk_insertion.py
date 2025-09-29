@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import os
 import csv
 import time
 import random
@@ -15,7 +16,7 @@ def ping_server(stop_event, res, self, interval = 0.1, delay = 2):
         t0 = time.time()
         self.db.connection.ping()
         t1 = time.time() - t0
-        # Verify that pinging the server takes less than 1 second during bulk insertion
+        # Verify that pinging the server takes less than delay seconds during bulk insertion
         self.env.assertLess(t1, delay)
         ping_count += 1
         time.sleep(interval)
@@ -368,7 +369,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         with open(filename, mode='w') as csv_file:
             out = csv.writer(csv_file)
             out.writerow(["long_property_string"])
-            for i in range(100_000):
+            for _ in range(100_000):
                 out.writerow([prop_str])
 
         runner = CliRunner()
@@ -756,7 +757,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                 # header row
                 writer.writerow(["id:ID"])
 
-                for i in range(0, node_lbl_count):
+                for _ in range(0, node_lbl_count):
                     writer.writerow([node_count])
                     node_count = node_count + 1
 
@@ -773,7 +774,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                 writer.writerow(['src', 'dest'])
 
                 count = random.randint(edge_rel_min, edge_rel_max)
-                for i in range(0, count):
+                for _ in range(0, count):
                     src  = edge_count % total_node_count
                     dest = min(max(0, src + random.randint(-1, 1)), total_node_count-1) # 1/3 self pointing edge
                     writer.writerow([src, dest])

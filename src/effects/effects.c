@@ -166,44 +166,53 @@ static void EffectsBuffer_WriteSIValue
 	switch(t) {
 		case T_POINT:
 			// write value to stream
-			EffectsBuffer_WriteBytes(&v->point, sizeof(Point), buff);
-			break;
+			EffectsBuffer_WriteBytes (&v->point, sizeof (Point), buff) ;
+			break ;
+
 		case T_ARRAY:
 			// write array to stream
-			EffectsBuffer_WriteSIArray(v, buff);
-			break;
+			EffectsBuffer_WriteSIArray (v, buff) ;
+			break ;
+
 		case T_STRING:
 		case T_INTERN_STRING:
-			EffectsBuffer_WriteString(v->stringval, buff);
-			break;
+			EffectsBuffer_WriteString (v->stringval, buff) ;
+			break ;
+
 		case T_BOOL:
 			// write bool to stream
-			b = SIValue_IsTrue(*v);
-			EffectsBuffer_WriteBytes(&b, sizeof(bool), buff);
-			break;
+			b = SIValue_IsTrue (*v) ;
+			EffectsBuffer_WriteBytes (&b, sizeof (bool), buff) ;
+			break ;
+
 		case T_INT64:
 			// write int to stream
-			EffectsBuffer_WriteBytes(&v->longval, sizeof(v->longval), buff);
-			break;
+			EffectsBuffer_WriteBytes (&v->longval, sizeof (v->longval), buff) ;
+			break ;
+
 		case T_DOUBLE:
 			// write double to stream
-			EffectsBuffer_WriteBytes(&v->doubleval, sizeof(v->doubleval), buff);
-			break;
+			EffectsBuffer_WriteBytes (&v->doubleval, sizeof (v->doubleval), buff) ;
+			break ;
+
 		case T_TIME:
 		case T_DATE:
 		case T_DATETIME:
 		case T_DURATION:
 			// write temporal time_t
-			EffectsBuffer_WriteBytes(&v->datetimeval, sizeof(v->datetimeval), buff);
+			EffectsBuffer_WriteBytes (&v->datetimeval, sizeof (v->datetimeval), buff) ;
+			break ;
 
 		case T_NULL:
 			// no additional data is required to represent NULL
-			break;
+			break ;
+
 		case T_VECTOR_F32:
-			EffectsBuffer_WriteSIVector(v, buff);
-			break;
+			EffectsBuffer_WriteSIVector (v, buff) ;
+			break ;
+
 		default:
-			assert(false && "unknown SIValue type");
+			assert (false && "unknown SIValue type") ;
 	}
 }
 

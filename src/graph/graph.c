@@ -887,8 +887,8 @@ static int _edge_src_dest_cmp
 	const void *a,
 	const void *b
 ) {
-	Edge *ea = *(Edge **)a ;
-	Edge *eb = *(Edge **)b ;
+	const Edge *ea = *(Edge **)a ;
+	const Edge *eb = *(Edge **)b ;
 
 	if (ea->src_id < eb->src_id) {
 		return -1 ;
