@@ -7,6 +7,7 @@
 #include "RG.h"
 #include "graph.h"
 #include "../util/arr.h"
+#include "../util/rwlock.h"
 #include "../util/rmalloc.h"
 #include "delta_matrix/delta_matrix_iter.h"
 #include "../util/datablock/oo_datablock.h"
@@ -67,6 +68,33 @@ void Graph_AcquireWriteLock
 
 	pthread_rwlock_wrlock(&g->_rwlock);
 	g->_writelocked = true;
+}
+
+// acquire the graph write lock with a timeout
+// attempts to acquire the write lock on the given graph
+// if the lock is not acquired immediately the function will block until either
+// the lock becomes available or the timeout elapses
+//
+// returns:
+// - 0 on success (lock acquired)
+// - ETIMEDOUT if the timeout expired before acquiring the lock
+// - EBUSY if called with timeout_ms == 0 and the lock could not be acquired
+// - other nonzero error codes may be returned for unexpected failures
+int Graph_TimeAcquireWriteLock
+(
+	Graph *g,       // graph to lock
+	int timeout_ms  // maximum time in milliseconds to wait for the lock:
+                    // - timeout_ms < 0 : block until the lock is acquired
+                    // - timeout_ms = 0 : non-blocking attempt (try-lock)
+                    // - timeout_ms > 0 : wait up to timeout_ms milliseconds
+) {
+	ASSERT (g != NULL) ;
+	ASSERT (g->_writelocked == false) ;
+
+	int res = rwlock_timedwrlock (&g->_rwlock, timeout_ms) ;
+	g->_writelocked = (res == 0) ;
+
+	return res ;
 }
 
 // Release the held lock
