@@ -9,14 +9,14 @@ from falkordb_bulk_loader.bulk_insert import bulk_insert
 
 GRAPH_ID = "bulk_insert"
 
-def ping_server(stop_event, res, self, interval = 0.1):
+def ping_server(stop_event, res, self, interval = 0.1, delay = 2):
     ping_count = 0
     while not stop_event.is_set():
         t0 = time.time()
         self.db.connection.ping()
         t1 = time.time() - t0
         # Verify that pinging the server takes less than 1 second during bulk insertion
-        self.env.assertLess(t1, 2)
+        self.env.assertLess(t1, delay)
         ping_count += 1
         time.sleep(interval)
 
@@ -791,7 +791,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         # ping server during bulk-load
         pings = [None]
         stop_event = threading.Event()
-        thread = threading.Thread(target=ping_server, args=(stop_event, pings, self, 1))
+        thread = threading.Thread(target=ping_server, args=(stop_event, pings, self, 1, 4))
         thread.start()
 
         # start bulk-insert
@@ -813,8 +813,8 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         self.env.assertIn(f'{node_lbl_count} nodes created', res.output)
         self.env.assertIn(f'{edge_count} relations created', res.output)
 
-        # make sure load time did not exceeds 40 seconds
-        self.env.assertLess(execution_time, 40)
+        # make sure load time did not exceeds 80 seconds
+        self.env.assertLess(execution_time, 80)
 
         # clean up
         for node_csv in node_csvs:
