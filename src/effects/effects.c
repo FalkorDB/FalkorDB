@@ -653,7 +653,7 @@ static void EffectsBuffer_AddEdgeUpdateEffect
 	_update_edge_desc.d       = Edge_GetDestNodeID (edge) ;
 	_update_edge_desc.attr_id = attr_id ;
 
-	EffectsBuffer_WriteBytes (&_update_edge_desc, sizeof(_update_edge_desc),
+	EffectsBuffer_WriteBytes (&_update_edge_desc, sizeof (_update_edge_desc),
 			buff) ;
 
 	//--------------------------------------------------------------------------

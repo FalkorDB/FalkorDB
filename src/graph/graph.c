@@ -975,13 +975,13 @@ void Graph_CreateEdges
 	}
 
 	// sort edges by src & dest IDs
-	qsort(edges_copy, edge_count, sizeof(Edge *), _edge_src_dest_cmp);
+	qsort (edges_copy, edge_count, sizeof (Edge *), _edge_src_dest_cmp) ;
 
 	// update R tensor
-	Tensor_SetEdges(R, (const Edge **)edges_copy, edge_count);
+	Tensor_SetEdges (R, (const Edge **)edges_copy, edge_count) ;
 
 	// update graph statistics
-	GraphStatistics_IncEdgeCount(&g->stats, r, edge_count);
+	GraphStatistics_IncEdgeCount (&g->stats, r, edge_count) ;
 
 	rm_free (edges_copy) ;
 }

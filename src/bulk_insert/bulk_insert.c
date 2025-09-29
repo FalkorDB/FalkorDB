@@ -194,12 +194,14 @@ static SIValue _BulkInsert_ReadProperty
 // process a single node CSV file
 static int _BulkInsert_ProcessNodeFile
 (
-	GraphContext *gc,  // graph context
-	const char *data,  // raw data
-	size_t data_len    // number of bytes in data
+	RedisModuleCtx *ctx,  // redis module context
+	GraphContext *gc,     // graph context
+	const char *data,     // raw data
+	size_t data_len       // number of bytes in data
 ) {
 	size_t   data_idx   = 0 ;
 	uint16_t prop_count = 0 ;
+	uint64_t iterations = 0 ;
 
 	//--------------------------------------------------------------------------
 	// parse CSV headers
@@ -228,9 +230,6 @@ static int _BulkInsert_ProcessNodeFile
 	}
 
 	GrB_Matrix node_lbls = Delta_Matrix_M (Graph_GetNodeLabelMatrix (gc->g)) ;
-
-	// temporarily disable sync policy for direct updates
-	MATRIX_POLICY policy = Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_NOP) ;
 
 	//--------------------------------------------------------------------------
 	// load nodes
@@ -274,13 +273,13 @@ static int _BulkInsert_ProcessNodeFile
 		// assign properties
 		AttributeSet_AddNoClone (n.attributes, prop_attr_ids, props, idx,
 				false) ;
+
+		// yield every 500,000 iterations
+		if (iterations++ == 500000) {
+			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS, NULL) ;
+			iterations = 0 ;
+		}
 	}
-
-	//--------------------------------------------------------------------------
-	// restore state and cleanup
-	//--------------------------------------------------------------------------
-
-	Graph_SetMatrixPolicy (gc->g, policy) ;
 
 	// clean up
 	if (prop_indices) {
@@ -294,13 +293,14 @@ static int _BulkInsert_ProcessNodeFile
 // process a single edge CSV file
 static int _BulkInsert_ProcessEdgeFile
 (
-	GraphContext *gc,  // graph context
-	const char *data,  // raw data
-	size_t data_len    // number of bytes in data
+	RedisModuleCtx *ctx,  // redis module context
+	GraphContext *gc,     // graph context
+	const char *data,     // raw data
+	size_t data_len       // number of bytes in data
 ) {
 	size_t   data_idx   = 0 ;
 	uint16_t prop_count = 0 ;
-
+	uint64_t iterations = 0 ;
 	//--------------------------------------------------------------------------
 	// parse CSV headers
 	//--------------------------------------------------------------------------
@@ -375,6 +375,12 @@ static int _BulkInsert_ProcessEdgeFile
 		AttributeSet set = NULL;
 		AttributeSet_AddNoClone (&set, prop_attr_ids, props, idx, false) ;
 		array_append (sets, set) ;
+
+		// yield every 500000 iterations
+		if (iterations++ == 500000) {
+			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS, NULL) ;
+			iterations = 0 ;
+		}
 	}
 
 	//--------------------------------------------------------------------------
@@ -389,6 +395,9 @@ static int _BulkInsert_ProcessEdgeFile
 			pedges[i] = edges + i ;
 		}
 
+		// yield just before we're creating the edges
+		RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS, NULL) ;
+
 		CreateEdges (gc, pedges, rel, sets, false) ;
 
 		array_free (pedges) ;
@@ -398,9 +407,9 @@ static int _BulkInsert_ProcessEdgeFile
 	// cleanup
 	//--------------------------------------------------------------------------
 
+	array_free (rels) ;
 	array_free (sets) ;
 	array_free (edges) ;
-	array_free (rels) ;
 
 	if (prop_indices) {
 		rm_free (prop_indices) ;
@@ -413,6 +422,7 @@ static int _BulkInsert_ProcessEdgeFile
 
 static int _BulkInsert_ProcessTokens
 (
+	RedisModuleCtx *ctx,
 	GraphContext *gc,
 	int token_count,
 	RedisModuleString **argv,
@@ -423,8 +433,8 @@ static int _BulkInsert_ProcessTokens
 		// retrieve a pointer to the next binary stream and record its length
 		const char *data = RedisModule_StringPtrLen (argv[i], &len) ;
 		int rc = (type == SCHEMA_NODE)
-			? _BulkInsert_ProcessNodeFile (gc, data, len)
-			: _BulkInsert_ProcessEdgeFile (gc, data, len) ;
+			? _BulkInsert_ProcessNodeFile (ctx, gc, data, len)
+			: _BulkInsert_ProcessEdgeFile (ctx, gc, data, len) ;
 		UNUSED (rc) ;
 		ASSERT (rc == BULK_OK) ;
 	}
@@ -499,8 +509,8 @@ int BulkInsert
 	if (node_token_count > 0) {
 		ASSERT (argc >= node_token_count) ;
 
-		if (_BulkInsert_ProcessTokens (gc, node_token_count, argv, SCHEMA_NODE)
-				!= BULK_OK) {
+		if (_BulkInsert_ProcessTokens (ctx, gc, node_token_count, argv,
+					SCHEMA_NODE) != BULK_OK) {
 			res = BULK_FAIL ;
 			goto cleanup ;
 		}
@@ -516,7 +526,7 @@ int BulkInsert
 	if (relation_token_count > 0) {
 		ASSERT (argc >= relation_token_count) ;
 
-		if (_BulkInsert_ProcessTokens (gc, relation_token_count, argv,
+		if (_BulkInsert_ProcessTokens (ctx, gc, relation_token_count, argv,
 					SCHEMA_EDGE) != BULK_OK) {
 			res = BULK_FAIL ;
 			goto cleanup ;

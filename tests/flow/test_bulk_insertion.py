@@ -9,7 +9,7 @@ from falkordb_bulk_loader.bulk_insert import bulk_insert
 
 GRAPH_ID = "bulk_insert"
 
-def ping_server(stop_event, res, self):
+def ping_server(stop_event, res, self, interval = 0.1):
     ping_count = 0
     while not stop_event.is_set():
         t0 = time.time()
@@ -18,7 +18,7 @@ def ping_server(stop_event, res, self):
         # Verify that pinging the server takes less than 1 second during bulk insertion
         self.env.assertLess(t1, 2)
         ping_count += 1
-        time.sleep(0.1)
+        time.sleep(interval)
 
     res[0] = ping_count
 
@@ -727,9 +727,9 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         graphname = "bulk-loader-large-graph"
         n_lbls = 3
         n_rels = 2
-        node_lbl_count = 2000000
         edge_rel_min = 500000
         edge_rel_max = 10000000
+        node_lbl_count = 2000000
         total_node_count = node_lbl_count * n_lbls
 
         node_csvs = [f"./node_{i}.csv" for i in range(0, n_lbls)]
@@ -774,8 +774,8 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
                 count = random.randint(edge_rel_min, edge_rel_max)
                 for i in range(0, count):
-                    src  = edge_count % (total_node_count - 1) + 1
-                    dest = src + random.randint(-1, 1) # 1/3 self pointing edge
+                    src  = edge_count % total_node_count
+                    dest = min(max(0, src + random.randint(-1, 1)), total_node_count-1) # 1/3 self pointing edge
                     writer.writerow([src, dest])
                     edge_count = edge_count + 1
 
@@ -788,15 +788,29 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
         runner = CliRunner()
 
+        # ping server during bulk-load
+        pings = [None]
+        stop_event = threading.Event()
+        thread = threading.Thread(target=ping_server, args=(stop_event, pings, self, 1))
+        thread.start()
+
+        # start bulk-insert
         start_time = time.perf_counter()
         res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{self.port}",
                                           *nodes_args, *edges_args, graphname])
         # calculate the execution time
         execution_time = time.perf_counter() - start_time
 
+        # Signal the thread to stop
+        stop_event.set()
+        thread.join()
+        ping_count = pings[0]
+        # Expecting at minimum ping every 2 seconds
+        self.env.assertGreaterEqual(ping_count, execution_time / 2)
+
         # validate script results
         self.env.assertEquals(res.exit_code, 0)
-        self.env.assertIn(f'{node_count} nodes created', res.output)
+        self.env.assertIn(f'{node_lbl_count} nodes created', res.output)
         self.env.assertIn(f'{edge_count} relations created', res.output)
 
         # make sure load time did not exceeds 40 seconds

@@ -161,8 +161,8 @@ static void ApplyCreateEdge
 	const size_t batch_size = 4096 ;  // max batch size
 	Edge edges[batch_size] ;          // edges
 
-	Edge **batch = array_new (Edge *, batch_size) ;  // batch, points to edges
-	AttributeSet *sets = array_new (AttributeSet, batch_size) ;  // attribute-sets
+	Edge **batch = array_new (Edge *, 1) ;  // batch, points to edges
+	AttributeSet *sets = array_new (AttributeSet, 1) ;  // attribute-sets
 
 	RelationID r      = GRAPH_UNKNOWN_RELATION ;  // current edge relation id
 	RelationID prev_r = GRAPH_UNKNOWN_RELATION ;  // last processed relation id
@@ -507,9 +507,8 @@ static void ApplyDeleteNode
 		// read node ID off of stream
 		fread_assert (&id, sizeof(EntityID), stream) ;
 
-		// retrieve node from graph
-		bool found = Graph_GetNode (g, id, nodes + i) ;
-		ASSERT (found == true) ;
+		// debug assert node exists
+		ASSERT (Graph_GetNode (g, id, nodes + i)) ;
 
 		i++ ;
 

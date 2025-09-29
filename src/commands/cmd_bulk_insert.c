@@ -4,8 +4,8 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "cmd_bulk_insert.h"
 #include "query_ctx.h"
+#include "cmd_bulk_insert.h"
 #include "bulk_insert/bulk_insert.h"
 
 // process "BEGIN" token, expected to be present only on first bulk-insert
@@ -13,12 +13,12 @@
 // and graph key 'graphname' already exists
 static int _Graph_Bulk_Begin
 (
-	RedisModuleCtx *ctx,
-	RedisModuleString ***argv,
-	int *argc,
-	RedisModuleString *rs_graph_name,
-	const char *graphname,
-	bool *begin
+	RedisModuleCtx *ctx,               // redis module context
+	RedisModuleString ***argv,         // arguments
+	int *argc,                         // number of arguments
+	RedisModuleString *rs_graph_name,  // key name
+	const char *graphname,             // graph name
+	bool *begin                        // begin token present
 ) {
 	ASSERT (argv          != NULL) ;
 	ASSERT (argc          != NULL) ;
@@ -53,12 +53,14 @@ static int _Graph_Bulk_Begin
 	return BULK_OK ;
 }
 
+// bulk-insert command handler
 int Graph_BulkInsert
 (
-	RedisModuleCtx *ctx,
-	RedisModuleString **argv,
-	int argc
+	RedisModuleCtx *ctx,       // redis module context
+	RedisModuleString **argv,  // arguments
+	int argc                   // number of arguments
 ) {
+	// expecting at least 3 arguments
 	if (argc < 3) {
 		return RedisModule_WrongArity (ctx) ;
 	}
@@ -89,7 +91,7 @@ int Graph_BulkInsert
 		goto cleanup ;
 	}
 
-	// read the user-provided counts for nodes and edges in the current query
+	// read the user-provided counts for nodes and edges in the current batch
 	if (RedisModule_StringToLongLong (*argv++, &node_count) != REDISMODULE_OK) {
 		RedisModule_ReplyWithError (ctx, "Error parsing node count.") ;
 		goto cleanup ;
@@ -122,8 +124,9 @@ int Graph_BulkInsert
 
 	// replay to caller
 	char reply[1024] ;
-	int len = snprintf (reply, 1024, "%" PRIu64 " nodes created, %" PRIu64 " edges created",
-			node_count, edge_count) ;
+	int len = snprintf (reply, 1024,
+			"%" PRIu64 " nodes created, %" PRIu64 " edges created", node_count,
+			edge_count) ;
 	RedisModule_ReplyWithStringBuffer (ctx, reply, len) ;
 
 cleanup:
