@@ -30,6 +30,7 @@ static int _set_password_fun
 
 	RedisModuleCallReply *reply = 
 		RedisModule_Call(ctx, "ACL", "ccc", "SETUSER", username, password);
+		RedisModule_ReplicateVerbatim(ctx);
 	
 	int ret = REDISMODULE_OK;
 

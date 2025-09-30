@@ -3,7 +3,7 @@ from common import *
 from index_utils import *
 
 
-class testACL():
+class testACL(FlowTestsBase):
     def __init__(self):
         ACL_GRAPH_ADMIN_COMMANDS = """INFO CLIENT DBSIZE PING HELLO AUTH RESTORE
         DUMP DEL EXISTS UNLINK TYPE FLUSHALL TOUCH EXPIRE PEXPIREAT TTL PTTL
@@ -32,8 +32,17 @@ class testACL():
 
         os.environ['ACL_GRAPH_READONLY_USER'] = ACL_GRAPH_READONLY_USER_COMMANDS.replace('\n', ' ')
 
-        self.env, self.db = Env()
+        self.env, self.db = Env(env='oss', useSlaves=True)
         self.redis_con = self.env.getConnection()
+        self.replica_con = self.env.getSlaveConnection()
+        
+        # enable write commands on slave, required as all FalkorDB
+        # commands are registered as write commands
+        self.replica_con.config_set("slave-read-only", "no")
+
+        # the WAIT command forces master slave sync to complete
+        self.redis_con.execute_command("WAIT", "1", "0")
+
 
         # set password 'pass' for user 'default'
         # permit access to the command 'GRAPH.ACL'
@@ -256,10 +265,17 @@ class testACL():
         # try to use GRAPH.ACL to change the global admin
         v = self.db.execute_command("GRAPH.PASSWORD", "ADD", "foo")
         self.env.assertTrue(v == "OK")
-        self.db.execute_command("AUTH", "default", "pass")
+        v = self.db.execute_command("AUTH", "default", "pass")
         self.env.assertTrue(v)
-        self.db.execute_command("AUTH", "falkordb-user", "foo")
+        v = self.db.execute_command("AUTH", "falkordb-user", "foo")
         self.env.assertTrue(v)
+        
+        # wait for replica to sync
+        self.db.execute_command("WAIT", "1", "0")
+         
+        v = self.replica_con.execute_command("AUTH", "falkordb-user", "pass")
+        self.env.assertTrue(v)
+        
         v = self.db.execute_command("GRAPH.PASSWORD", "REMOVE", "foo")
         self.db.execute_command("AUTH", "default", "pass")
         self.env.assertTrue(v)
