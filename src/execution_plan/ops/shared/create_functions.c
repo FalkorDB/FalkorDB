@@ -37,7 +37,7 @@ static void _CommitNodesBlueprint
 			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 
 			if(s == NULL) {
-				s = AddSchema(gc, label, SCHEMA_NODE, true);
+				s = GraphHub_AddSchema(gc, label, SCHEMA_NODE, true);
 				QueryCtx_GetResultSetStatistics()->labels_added++;
 			}
 
@@ -75,7 +75,7 @@ static void _CommitNodes
 		uint         label_count = array_len (labels) ;
 
 		// introduce node into graph
-		CreateNode (gc, n, labels, label_count, attr, true) ;
+		GraphHub_CreateNode (gc, n, labels, label_count, attr, true) ;
 
 		//----------------------------------------------------------------------
 		// enforce constraints
@@ -119,7 +119,9 @@ static void _CommitEdgesBlueprint
 
 		const char *relation = edge_ctx->relation;
 		Schema *s = GraphContext_GetSchema(gc, relation, SCHEMA_EDGE);
-		if(s == NULL) s = AddSchema(gc, relation, SCHEMA_EDGE, true);
+		if(s == NULL) {
+			s = GraphHub_AddSchema(gc, relation, SCHEMA_EDGE, true);
+		}
 
 		// calling Graph_GetRelationMatrix will make sure relationship matrix
 		// is of the right dimensions
@@ -164,7 +166,7 @@ static void _CommitEdges
 		uint         edge_count = array_len (edges) ;
 
 		// introduce all edges to the graph at once
-		CreateEdges (gc, edges, relation_id, attrs, true) ;
+		GraphHub_CreateEdges (gc, edges, relation_id, attrs, true) ;
 
 		// no constraints, quick return
 		if (!Schema_HasConstraints (s)) {
@@ -360,7 +362,7 @@ void ConvertPropertyMap
 		}
 
 		// set the converted attribute
-		ids[attrs_count] = FindOrAddAttribute(gc, map->keys[i], true);
+		ids[attrs_count] = GraphHub_FindOrAddAttribute(gc, map->keys[i], true);
 		vals[attrs_count++] = SI_CloneValue(val);
 		SIValue_Free(val);
 	}

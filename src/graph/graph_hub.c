@@ -7,7 +7,11 @@
 #include "graph_hub.h"
 #include "../query_ctx.h"
 
-void CreateNode
+// create a node
+// set the node labels and attributes
+// add the node to the relevant indexes
+// add node creation operation to undo-log
+void GraphHub_CreateNode
 (
 	GraphContext *gc,
 	Node *n,
@@ -39,7 +43,74 @@ void CreateNode
 	}
 }
 
-void CreateEdge
+// batch create nodes
+// all nodes share the same set of labels
+// set the nodes labels and attributes
+// add the nodes to the relevant indexes
+// add nodes creation operation to undo-log
+void GraphHub_CreateNodes
+(
+	GraphContext *gc,    // graph context
+	Node **nodes,        // nodes to create
+	AttributeSet *sets,  // nodes attributes
+	uint node_count,     // number of nodes
+	LabelID *labels,     // nodes labels
+	uint label_count,    // number of labels
+	bool log             // true if operation needs to be logged
+) {
+	ASSERT (gc    != NULL) ;
+	ASSERT (nodes != NULL) ;
+	ASSERT (node_count > 0) ;
+	ASSERT (label_count == 0 || labels != NULL) ;
+
+	// introduce nodes to graph
+	Graph_CreateNodes (gc->g, nodes, sets, node_count, labels, label_count) ;
+
+	//--------------------------------------------------------------------------
+	// collect schemas with indices
+	//--------------------------------------------------------------------------
+
+	int s_idx = 0 ;
+	Schema *schemas[label_count] ;
+
+	for(uint i = 0; i < label_count; i++) {
+		Schema *s = GraphContext_GetSchemaByID (gc, labels[i], SCHEMA_NODE) ;
+		ASSERT (s != NULL) ;
+
+		if (Schema_HasIndices (s)) {
+			schemas[s_idx++] = s ;
+		}
+	}
+	bool index = s_idx > 0 ;
+
+	// add nodes creation operation to undo log
+	if (log || index) {
+		UndoLog undo_log  = NULL ;
+		EffectsBuffer *eb = NULL ;
+
+		if (log) {
+			eb = QueryCtx_GetEffectsBuffer () ;
+			undo_log = QueryCtx_GetUndoLog () ;
+		}
+
+		for (uint i = 0; i < node_count; i++) {
+			Node *n = nodes[i] ;
+
+			if (log == true) {
+				UndoLog_CreateNode (undo_log, n) ;
+				EffectsBuffer_AddCreateNodeEffect (eb, n, labels, label_count) ;
+			}
+
+			if (index) {
+				for (uint j = 0; j < s_idx; j++) {
+					Schema_AddNodeToIndex (schemas[j], n) ;
+				}
+			}
+		}
+	}
+}
+
+void GraphHub_CreateEdge
 (
 	GraphContext *gc,
 	Edge *e,
@@ -70,7 +141,7 @@ void CreateEdge
 	}
 }
 
-void CreateEdges
+void GraphHub_CreateEdges
 (
 	GraphContext *gc,
 	Edge **edges,
@@ -119,7 +190,7 @@ void CreateEdges
 // remove the node from the relevant indexes
 // add node deletion operation to undo-log
 // return 1 on success, 0 otherwise
-void DeleteNodes
+void GraphHub_DeleteNodes
 (
 	GraphContext *gc,
 	Node *nodes,
@@ -162,7 +233,7 @@ void DeleteNodes
 	Graph_DeleteNodes (gc->g, nodes, n) ;
 }
 
-void DeleteEdges
+void GraphHub_DeleteEdges
 (
 	GraphContext *gc,
 	Edge *edges,
@@ -203,7 +274,7 @@ void DeleteEdges
 
 // updates a graph entity attribute set. Returns as out params the number
 // of properties set and removed.
-void UpdateEntityProperties
+void GraphHub_UpdateEntityProperties
 (
 	GraphContext *gc,             // graph context
 	GraphEntity *ge,              // updated entity
@@ -234,7 +305,7 @@ void UpdateEntityProperties
 	}
 }
 
-void UpdateNodeProperty
+void GraphHub_UpdateNodeProperty
 (
 	GraphContext *gc,     // graph context
 	NodeID id,            // node ID
@@ -278,7 +349,7 @@ void UpdateNodeProperty
 	}
 }
 
-void UpdateEdgeProperty
+void GraphHub_UpdateEdgeProperty
 (
 	GraphContext *gc,     // graph context
 	EdgeID id,            // edge ID
@@ -338,7 +409,7 @@ void UpdateEdgeProperty
 	}
 }
 
-void UpdateNodeLabels
+void GraphHub_UpdateNodeLabels
 (
 	GraphContext *gc,            // graph context to update the entity
 	Node *node,                  // the node to be updated
@@ -382,7 +453,7 @@ void UpdateNodeLabels
 			const Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 			bool schema_created = false;
 			if(s == NULL) {
-				s = AddSchema(gc, label, SCHEMA_NODE, log);
+				s = GraphHub_AddSchema(gc, label, SCHEMA_NODE, log);
 				schema_created = true;
 			}
 
@@ -456,7 +527,7 @@ void UpdateNodeLabels
 	}
 }
 
-Schema *AddSchema
+Schema *GraphHub_AddSchema
 (
 	GraphContext *gc,   // graph context to add the schema
 	const char *label,  // schema label
@@ -484,7 +555,7 @@ Schema *AddSchema
 	return s;
 }
 
-AttributeID FindOrAddAttribute
+AttributeID GraphHub_FindOrAddAttribute
 (
 	GraphContext *gc,       // graph context to add the attribute
 	const char *attribute,  // attribute name
@@ -509,7 +580,7 @@ AttributeID FindOrAddAttribute
 }
 
 // create index
-Index AddIndex
+Index GraphHub_AddIndex
 (
 	const char *label,   // label/relationship type
 	const char *attr,    // attribute to index
@@ -536,7 +607,7 @@ Index AddIndex
 
 	// schema missing, creating an index will create the schema
 	if(s == NULL) {
-		s = AddSchema(gc, label, st, log);
+		s = GraphHub_AddSchema(gc, label, st, log);
 	}
 	ASSERT(s != NULL);
 
@@ -545,7 +616,7 @@ Index AddIndex
 	//--------------------------------------------------------------------------
 
 	// creating an index will create the attribute
-	AttributeID attr_id = FindOrAddAttribute(gc, attr, log);
+	AttributeID attr_id = GraphHub_FindOrAddAttribute(gc, attr, log);
 
 	//--------------------------------------------------------------------------
 	// create index field

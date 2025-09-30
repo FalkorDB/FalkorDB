@@ -81,30 +81,30 @@ static void ApplyCreateNode
 	// read label count
 	//--------------------------------------------------------------------------
 
-	uint16_t lbl_count;
-	fread_assert(&lbl_count, sizeof(lbl_count), stream);
+	uint16_t lbl_count ;
+	fread_assert (&lbl_count, sizeof (lbl_count), stream) ;
 
 	//--------------------------------------------------------------------------
 	// read labels
 	//--------------------------------------------------------------------------
 
-	LabelID labels[lbl_count];
-	for(uint16_t i = 0; i < lbl_count; i++) {
-		fread_assert(labels + i, sizeof(LabelID), stream);
+	LabelID labels[lbl_count] ;
+	for (uint16_t i = 0; i < lbl_count; i++) {
+		fread_assert (labels + i, sizeof (LabelID), stream) ;
 	}
 
 	//--------------------------------------------------------------------------
 	// read attributes
 	//--------------------------------------------------------------------------
 
-	AttributeSet attr_set = ReadAttributeSet(stream);
+	AttributeSet attr_set = ReadAttributeSet (stream) ;
 
 	//--------------------------------------------------------------------------
 	// create node
 	//--------------------------------------------------------------------------
 
-	Node n = GE_NEW_NODE();
-	CreateNode(gc, &n, labels, lbl_count, attr_set, false);
+	Node n = GE_NEW_NODE () ;
+	GraphHub_CreateNode (gc, &n, labels, lbl_count, attr_set, false) ;
 }
 
 static inline void FlushEdges
@@ -124,7 +124,7 @@ static inline void FlushEdges
 		ASSERT (array_len (batch) == *i) ;
 		ASSERT (array_len (batch) == array_len (sets)) ;
 
-		CreateEdges (gc, batch, r, sets, false) ;
+		GraphHub_CreateEdges (gc, batch, r, sets, false) ;
 		array_clear (sets) ;
 		array_clear (batch) ;
 		*i = 0 ;
@@ -263,61 +263,61 @@ static void ApplyLabels
 	// read node ID
 	//--------------------------------------------------------------------------
 
-	EntityID id;
-	fread_assert(&id, sizeof(id), stream);
+	EntityID id ;
+	fread_assert (&id, sizeof (id), stream) ;
 
 	//--------------------------------------------------------------------------
 	// get updated node
 	//--------------------------------------------------------------------------
 
-	Node  n;
-	Graph *g = gc->g;
+	Node  n ;
+	Graph *g = gc->g ;
 
-	bool found = Graph_GetNode(g, id, &n);
-	ASSERT(found == true);
+	bool found = Graph_GetNode (g, id, &n) ;
+	ASSERT (found == true) ;
 
 	//--------------------------------------------------------------------------
 	// read labels count
 	//--------------------------------------------------------------------------
 
-	uint8_t lbl_count;
-	fread_assert(&lbl_count, sizeof(lbl_count), stream);
-	ASSERT(lbl_count > 0);
+	uint8_t lbl_count ;
+	fread_assert (&lbl_count, sizeof (lbl_count), stream) ;
+	ASSERT (lbl_count > 0) ;
 
 	// TODO: move to LabelID
-	uint n_add_labels          = 0;
-	uint n_remove_labels       = 0;
-	const char **add_labels    = NULL;
-	const char **remove_labels = NULL;
-	const char *lbl[lbl_count];
+	uint n_add_labels          = 0 ;
+	uint n_remove_labels       = 0 ;
+	const char **add_labels    = NULL ;
+	const char **remove_labels = NULL ;
+	const char *lbl[lbl_count] ;
 
 	// assign lbl to the appropriate array
-	if(add) {
-		add_labels = lbl;
-		n_add_labels = lbl_count;
+	if (add) {
+		add_labels = lbl ;
+		n_add_labels = lbl_count ;
 	} else {
-		remove_labels = lbl;
-		n_remove_labels = lbl_count;
+		remove_labels = lbl ;
+		n_remove_labels = lbl_count ;
 	}
 
 	//--------------------------------------------------------------------------
 	// read labels
 	//--------------------------------------------------------------------------
 
-	for(uint16_t i = 0; i < lbl_count; i++) {
-		LabelID l;
-		fread_assert(&l, sizeof(LabelID), stream);
-		Schema *s = GraphContext_GetSchemaByID(gc, l, SCHEMA_NODE);
-		ASSERT(s != NULL);
-		lbl[i] = Schema_GetName(s);
+	for (uint16_t i = 0; i < lbl_count; i++) {
+		LabelID l ;
+		fread_assert (&l, sizeof (LabelID), stream) ;
+		Schema *s = GraphContext_GetSchemaByID (gc, l, SCHEMA_NODE) ;
+		ASSERT (s != NULL) ;
+		lbl[i] = Schema_GetName (s) ;
 	}
 
 	//--------------------------------------------------------------------------
 	// update node labels
 	//--------------------------------------------------------------------------
 
-	UpdateNodeLabels(gc, &n, add_labels, remove_labels, n_add_labels,
-			n_remove_labels, false);
+	GraphHub_UpdateNodeLabels (gc, &n, add_labels, remove_labels, n_add_labels,
+			n_remove_labels, false) ;
 }
 
 static void ApplyAddSchema
@@ -346,7 +346,7 @@ static void ApplyAddSchema
 	fread_assert(schema_name, l, stream);
 
 	// create schema
-	AddSchema(gc, schema_name, t, false);
+	GraphHub_AddSchema(gc, schema_name, t, false);
 }
 
 static void ApplyAddAttribute
@@ -361,18 +361,18 @@ static void ApplyAddAttribute
 	//--------------------------------------------------------------------------
 	
 	// read attribute name length
-	size_t l;
-	fread_assert(&l, sizeof(l), stream);
+	size_t l ;
+	fread_assert (&l, sizeof (l), stream) ;
 
 	// read attribute name
-	const char attr[l];
-	fread_assert(attr, l, stream);
+	const char attr[l] ;
+	fread_assert (attr, l, stream) ;
 
 	// attr should not exist
-	ASSERT(GraphContext_GetAttributeID(gc, attr) == ATTRIBUTE_ID_NONE);
+	ASSERT (GraphContext_GetAttributeID (gc, attr) == ATTRIBUTE_ID_NONE) ;
 
 	// add attribute
-	FindOrAddAttribute(gc, attr, false);
+	GraphHub_FindOrAddAttribute (gc, attr, false) ;
 }
 
 // process Update_Edge effect
@@ -439,7 +439,7 @@ static void ApplyUpdateEdge
 	ASSERT(SI_TYPE(v) & (SI_VALID_PROPERTY_VALUE | T_NULL));
 	ASSERT((attr_id != ATTRIBUTE_ID_ALL || SIValue_IsNull(v)) && attr_id != ATTRIBUTE_ID_NONE);
 
-	UpdateEdgeProperty(gc, id, r_id, s_id, t_id, attr_id, v);
+	GraphHub_UpdateEdgeProperty(gc, id, r_id, s_id, t_id, attr_id, v);
 }
 
 // process UpdateNode effect
@@ -480,7 +480,7 @@ static void ApplyUpdateNode
 	ASSERT(SI_TYPE(v) & (SI_VALID_PROPERTY_VALUE | T_NULL));
 	ASSERT((attr_id != ATTRIBUTE_ID_ALL || SIValue_IsNull(v)) && attr_id != ATTRIBUTE_ID_NONE);
 
-	UpdateNodeProperty(gc, id, attr_id, v);
+	GraphHub_UpdateNodeProperty(gc, id, attr_id, v);
 }
 
 // process DeleteNode effect
@@ -514,7 +514,7 @@ static void ApplyDeleteNode
 
 		if (i == batch_size) {
 			// flush batch
-			DeleteNodes (gc, nodes, i, false) ;
+			GraphHub_DeleteNodes (gc, nodes, i, false) ;
 			i = 0 ;
 		}
 
@@ -535,7 +535,7 @@ static void ApplyDeleteNode
 	// flush any remaining node deletions
 	if (i > 0) {
 		// flush batch
-		DeleteNodes (gc, nodes, i, false) ;
+		GraphHub_DeleteNodes (gc, nodes, i, false) ;
 	}
 }
 
@@ -590,7 +590,7 @@ static void ApplyDeleteEdge
 		// check if batch is full
 		if (i == batch_size) {
 			// flush batch
-			DeleteEdges (gc, edges, i, false) ;
+			GraphHub_DeleteEdges (gc, edges, i, false) ;
 			i = 0 ;
 		}
 
@@ -610,7 +610,7 @@ static void ApplyDeleteEdge
 
 	// flush last batch
 	if (i > 0) {
-		DeleteEdges (gc, edges, i, false) ;
+		GraphHub_DeleteEdges (gc, edges, i, false) ;
 	}
 }
 

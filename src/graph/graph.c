@@ -729,6 +729,67 @@ void Graph_CreateNode
 	}
 }
 
+// create multiple nodes
+// all nodes share the same set of labels
+void Graph_CreateNodes
+(
+	Graph *g,            // graph
+	Node **nodes,        // array of nodes to create
+	AttributeSet *sets,  // nodes attributes
+	uint node_count,     // number of nodes
+	LabelID *labels,     // labels, same set of labels applied to all nodes
+	uint label_count     // number of labels
+) {
+	ASSERT (g     != NULL) ;
+	ASSERT (sets  != NULL) ;
+	ASSERT (nodes != NULL) ;
+	ASSERT (node_count > 0) ;
+	ASSERT (label_count == 0 || labels != NULL) ;
+
+	// collect label matrices
+	Delta_Matrix lbl_matrices[label_count] ;
+	Delta_Matrix node_label_matrix = Graph_GetNodeLabelMatrix (g) ;
+	for (uint i = 0; i < label_count; i++) {
+		lbl_matrices[i] = Graph_GetLabelMatrix (g, labels[i]) ;
+	}
+
+	// add nodes
+	for (uint i = 0; i < node_count; i++) {
+		Node *n = nodes[i] ;
+		NodeID id = n->id ;  // save node ID
+
+		// set attributes
+		n->attributes  = DataBlock_AllocateItem (g->nodes, &n->id) ;
+		*n->attributes = sets[i] ;
+
+		// node ID was reserved, make sure reserved ID was assigned
+		if (id != INVALID_ENTITY_ID) {
+			// NodeID was preallocated via reservation
+			// so now that it’s used we decrement the counter
+			ASSERT (id == n->id) ;
+			g->reserved_node_count-- ;
+			ASSERT (g->reserved_node_count >= 0) ;
+		}
+
+		// label node
+		for (uint j = 0; j < label_count; j++) {
+			// set matrix at position [id, id]
+			Delta_Matrix L = lbl_matrices[j] ;
+			GrB_OK (Delta_Matrix_setElement_BOOL (L, n->id, n->id)) ;
+
+			// map this label in this node's set of labels
+			LabelID l = labels[j] ;
+			GrB_OK (Delta_Matrix_setElement_BOOL (node_label_matrix, n->id, l)) ;
+		}
+	}
+
+	// update statistics
+	for (uint i = 0; i < label_count; i++) {
+		LabelID l = labels[i] ;
+		GraphStatistics_IncNodeCount (&g->stats, l, node_count) ;
+	}
+}
+
 // label node with each label in 'lbls'
 void Graph_LabelNode
 (

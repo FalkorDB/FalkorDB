@@ -726,15 +726,19 @@ class testGraphBulkInsertFlow(FlowTestsBase):
             return
 
         graphname = "bulk-loader-large-graph"
-        n_lbls = 3
-        n_rels = 2
-        edge_rel_min = 500000
-        edge_rel_max = 10000000
-        node_lbl_count = 2000000
+        self.graph = self.db.select_graph(graphname)
+
+        n_lbls = 3                # 3 different types of nodes
+        n_rels = 2                # 2 different types of edges
+        node_lbl_count = 2000000  # number of nodes under each label
+        edge_rel_count = 4000000  # number of edges under each relationship-type
         total_node_count = node_lbl_count * n_lbls
 
-        node_csvs = [f"./node_{i}.csv" for i in range(0, n_lbls)]
-        edge_csvs = [f"./edge_{i}.csv" for i in range(0, n_rels)]
+        labels        = [f"node_{i}" for i in range(0, n_lbls)]
+        relationships = [f"edge_{i}" for i in range(0, n_rels)]
+
+        node_csvs = [f"./{l}.csv" for l in labels]
+        edge_csvs = [f"./{r}.csv" for r in relationships]
 
         # delete old csv files
         for node_csv in node_csvs:
@@ -773,8 +777,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                 # Header row
                 writer.writerow(['src', 'dest'])
 
-                count = random.randint(edge_rel_min, edge_rel_max)
-                for _ in range(0, count):
+                for _ in range(0, edge_rel_count):
                     src  = edge_count % total_node_count
                     dest = min(max(0, src + random.randint(-1, 1)), total_node_count-1) # 1/3 self pointing edge
                     writer.writerow([src, dest])
@@ -816,6 +819,17 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
         # make sure load time did not exceeds 80 seconds
         self.env.assertLess(execution_time, 80)
+
+        # validate graph node / edge count
+        for l in labels:
+            q = f"MATCH (n:{l}) RETURN count(n)"
+            lbl_count = self.graph.query(q).result_set[0][0]
+            self.env.assertEquals(lbl_count, node_lbl_count)
+
+        for r in relationships:
+            q = f"MATCH ()-[e:{r}]->() RETURN count(e)"
+            rel_count = self.graph.query(q).result_set[0][0]
+            self.env.assertEquals(rel_count, edge_rel_count)
 
         # clean up
         for node_csv in node_csvs:

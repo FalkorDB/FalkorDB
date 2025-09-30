@@ -204,6 +204,7 @@ static int _BulkInsert_ProcessNodeFile
 	size_t   data_idx   = 0 ;
 	uint16_t prop_count = 0 ;
 	uint64_t iterations = 0 ;
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	//--------------------------------------------------------------------------
 	// parse CSV headers
@@ -213,44 +214,27 @@ static int _BulkInsert_ProcessNodeFile
 			&data_idx) ;
 	ASSERT (label_ids != NULL) ;
 
-	uint label_count = array_len (label_ids) ;
+	uint n_lbl = array_len (label_ids) ;
 
 	// read the CSV header properties and collect their indices
 	AttributeID *prop_indices = _BulkInsert_ReadHeaderProperties (gc,
 			SCHEMA_NODE, data, &data_idx, &prop_count) ;
 
 	//--------------------------------------------------------------------------
-	// collect matrices
-	//--------------------------------------------------------------------------
-
-	ASSERT (Graph_GetMatrixPolicy (gc->g) == SYNC_POLICY_RESIZE);
-
-	GrB_Matrix node_labels[label_count] ;
-	for (uint i = 0; i < label_count; i++) {
-		node_labels[i] =
-			Delta_Matrix_M (Graph_GetLabelMatrix (gc->g, label_ids[i])) ;
-	}
-
-	GrB_Matrix node_lbls = Delta_Matrix_M (Graph_GetNodeLabelMatrix (gc->g)) ;
-
-	//--------------------------------------------------------------------------
 	// load nodes
 	//--------------------------------------------------------------------------
 
+	uint32_t batch_size = 0 ;
+	const uint32_t batch_cap = 4096 ;
+
+	Node nodes[batch_cap] ;         // batched nodes
+	Node *p_nodes[batch_cap] ;      // pointer to nodes
+	AttributeSet sets[batch_cap] ;  // attribute sets
+
 	while (data_idx < data_len) {
-		GrB_Info info ;
-		Node n = GE_NEW_NODE () ;
-
-		Graph_CreateNode (gc->g, &n, NULL, 0) ;  // unlabeled node
-
-		// assign labels
-		for (uint i = 0; i < label_count; i++) {
-			info = GrB_Matrix_setElement (node_labels[i], true, n.id, n.id) ;
-			ASSERT (info == GrB_SUCCESS) ;
-
-			info = GrB_Matrix_setElement (node_lbls, true, n.id, label_ids[i]) ;
-			ASSERT (info == GrB_SUCCESS) ;
-		}
+		Node *n = nodes + batch_size ;
+		p_nodes[batch_size] = n ;
+		*n = GE_NEW_NODE () ;
 
 		// read properties
 		SIValue props[prop_count] ;
@@ -273,14 +257,30 @@ static int _BulkInsert_ProcessNodeFile
 		}
 
 		// assign properties
-		AttributeSet_AddNoClone (n.attributes, prop_attr_ids, props, idx,
-				false) ;
+		AttributeSet set = NULL ;
+		AttributeSet_AddNoClone (&set, prop_attr_ids, props, idx, false) ;
+		sets[batch_size] = set ;
+
+		batch_size++ ;
+		// flush batch
+		if (batch_size == 4096) {
+			GraphHub_CreateNodes (gc, p_nodes, sets, batch_size, label_ids,
+					n_lbl, false) ;
+			batch_size = 0 ;
+		}
 
 		// yield every 500,000 iterations
 		if (iterations++ == 500000) {
 			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS, NULL) ;
 			iterations = 0 ;
 		}
+	}
+
+	// flush last batch
+	if (batch_size > 0) {
+		GraphHub_CreateNodes (gc, p_nodes, sets, batch_size, label_ids, n_lbl,
+				false) ;
+		batch_size = 0 ;
 	}
 
 	// clean up
@@ -303,6 +303,7 @@ static int _BulkInsert_ProcessEdgeFile
 	size_t   data_idx   = 0 ;
 	uint16_t prop_count = 0 ;
 	uint64_t iterations = 0 ;
+
 	//--------------------------------------------------------------------------
 	// parse CSV headers
 	//--------------------------------------------------------------------------
@@ -400,7 +401,7 @@ static int _BulkInsert_ProcessEdgeFile
 		// yield just before we're creating the edges
 		RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS, NULL) ;
 
-		CreateEdges (gc, pedges, rel, sets, false) ;
+		GraphHub_CreateEdges (gc, pedges, rel, sets, false) ;
 
 		array_free (pedges) ;
 	}
