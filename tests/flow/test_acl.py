@@ -48,6 +48,8 @@ class testACL(FlowTestsBase):
         # permit access to the command 'GRAPH.ACL'
         self.db.execute_command("ACL", "SETUSER", "default", "on", ">pass",
                                     "+GRAPH.ACL")
+        self.replica_con.execute_command("ACL", "SETUSER", "default", "on", ">pass",
+                                    "+GRAPH.ACL")
        
     def get_user_commands(self, user_details):
         """
