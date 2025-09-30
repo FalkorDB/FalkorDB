@@ -28,6 +28,7 @@ static int _set_password_fun
 	ASSERT(username != NULL);
 	ASSERT(password[0] == '<' || password[0] == '>');
 
+	RedisModule_ReplicateVerbatim(ctx);
 	RedisModuleCallReply *reply = 
 		RedisModule_Call(ctx, "ACL", "ccc", "SETUSER", username, password);
 	
@@ -174,7 +175,9 @@ int Graph_SetPassword
 	int ret = run_acl_function_as(ctx, argv, argc, f, ACL_ADMIN_USER,
 		 (void*) username);
 
-	RedisModule_FreeString(ctx, _redis_current_user_name);
+	if(_redis_current_user_name != NULL) {
+		RedisModule_FreeString(ctx, _redis_current_user_name);
+	}
 	return ret;
 }
 

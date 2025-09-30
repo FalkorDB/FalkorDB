@@ -86,7 +86,7 @@ int run_acl_function_as
 	
 	// try switching user
 	uint64_t client_id = 0;
-	if(_switch_user(ctx, username, &client_id) != REDISMODULE_OK) {
+	if(_redis_current_user_name != NULL && _switch_user(ctx, username, &client_id) != REDISMODULE_OK) {
 		RedisModule_Log(ctx, "error", "Failed to authenticate as user %s",
 				username);
 
@@ -101,7 +101,7 @@ int run_acl_function_as
 	int res = cmd(ctx, argv, argc, privdata);
 
 	// restore original user
-	if(_switch_user(ctx, redis_current_user_name, NULL) != REDISMODULE_OK) {
+	if(_redis_current_user_name != NULL && _switch_user(ctx, redis_current_user_name, NULL) != REDISMODULE_OK) {
 		RedisModule_Log(ctx, "error", "Failed to authenticate back as user %s",
 				redis_current_user_name);
 
@@ -112,7 +112,10 @@ int run_acl_function_as
 		return REDISMODULE_ERR;
 	}
 
-	RedisModule_FreeString(ctx, _redis_current_user_name);
+	if(_redis_current_user_name != NULL) {
+		RedisModule_FreeString(ctx, _redis_current_user_name);
+	}
+
 	return res;
 }
 

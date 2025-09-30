@@ -528,6 +528,7 @@ static int _execute_acl_cmd_fn
 		
 	RedisModuleCallReply *reply = 
 		RedisModule_Call(ctx, "ACL", "v", argv, argc);
+		RedisModule_ReplicateVerbatim(ctx);
 	
 	if(reply == NULL) {
 		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
