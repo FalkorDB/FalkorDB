@@ -223,6 +223,18 @@ void Graph_CreateNode
 	uint label_count  // number of labels
 );
 
+// create multiple nodes
+// all nodes share the same set of labels
+void Graph_CreateNodes
+(
+	Graph *g,            // graph
+	Node **nodes,        // array of nodes to create
+	AttributeSet *sets,  // nodes attributes
+	uint node_count,     // number of nodes
+	LabelID *labels,     // labels, same set of labels applied to all nodes
+	uint label_count     // number of labels
+);
+
 // label node with each label in 'lbls'
 void Graph_LabelNode
 (
@@ -273,9 +285,10 @@ void Graph_CreateEdge
 // create multiple edges
 void Graph_CreateEdges
 (
-	Graph *g,      // graph on which to operate
-	RelationID r,  // relationship type
-	Edge **edges   // edges to create
+	Graph *g,           // graph on which to operate
+	RelationID r,       // relationship type
+	Edge **edges,       // edges to create
+	AttributeSet *sets  // [optional] attribute sets
 );
 
 // deletes nodes from the graph

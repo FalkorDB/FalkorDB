@@ -37,7 +37,7 @@ static void _CommitNodesBlueprint
 			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 
 			if(s == NULL) {
-				s = AddSchema(gc, label, SCHEMA_NODE, true);
+				s = GraphHub_AddSchema(gc, label, SCHEMA_NODE, true);
 				QueryCtx_GetResultSetStatistics()->labels_added++;
 			}
 
@@ -58,24 +58,24 @@ static void _CommitNodes
 (
 	PendingCreations *pending
 ) {
-	Node         *n                   = NULL;
-	GraphContext *gc                  = QueryCtx_GetGraphCtx();
-	Graph        *g                   = gc->g;
-	uint         node_count           = array_len(pending->nodes.created_nodes);
+	Node         *n                   = NULL ;
+	GraphContext *gc                  = QueryCtx_GetGraphCtx () ;
+	Graph        *g                   = gc->g ;
+	uint         node_count           = array_len (pending->nodes.created_nodes) ;
 	bool         constraint_violation = false;
 
 	// sync policy should be set to NOP, no need to sync/resize
-	ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_NOP);
+	ASSERT (Graph_GetMatrixPolicy (g) == SYNC_POLICY_NOP) ;
 
-	for(int i = 0; i < node_count; i++) {
-		n = pending->nodes.created_nodes[i];
+	for (uint i = 0; i < node_count; i++) {
+		n = pending->nodes.created_nodes[i] ;
 
-		AttributeSet attr        = pending->nodes.node_attributes[i];
-		int*         labels      = pending->nodes.node_labels[i];
-		uint         label_count = array_len(labels);
+		AttributeSet attr        = pending->nodes.node_attributes[i] ;
+		LabelID     *labels      = pending->nodes.node_labels[i] ;
+		uint         label_count = array_len (labels) ;
 
 		// introduce node into graph
-		CreateNode(gc, n, labels, label_count, attr, true);
+		GraphHub_CreateNode (gc, n, labels, label_count, attr, true) ;
 
 		//----------------------------------------------------------------------
 		// enforce constraints
@@ -119,7 +119,9 @@ static void _CommitEdgesBlueprint
 
 		const char *relation = edge_ctx->relation;
 		Schema *s = GraphContext_GetSchema(gc, relation, SCHEMA_EDGE);
-		if(s == NULL) s = AddSchema(gc, relation, SCHEMA_EDGE, true);
+		if(s == NULL) {
+			s = GraphHub_AddSchema(gc, relation, SCHEMA_EDGE, true);
+		}
 
 		// calling Graph_GetRelationMatrix will make sure relationship matrix
 		// is of the right dimensions
@@ -142,44 +144,50 @@ static void _CommitEdges
 	bool         constraint_violation = false;
 
 	// sync policy should be set to NOP, no need to sync/resize
-	ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_NOP);
+	ASSERT (Graph_GetMatrixPolicy (g) == SYNC_POLICY_NOP) ;
 
 	// process batches
-	uint count = array_len(pending->edges);
-	for(uint i = 0; i < count; i++) {
+	uint count = array_len (pending->edges) ;
+	for (uint i = 0; i < count; i++) {
 		// processing current batch
 		// get batched edges along with their corresponding attribute sets
-		PendingEdgeCreations *pending_edge = pending->edges + i;
+		PendingEdgeCreations *pending_edge = pending->edges + i ;
 
 		// all edges in a batch share the same relationship-type
-		Schema *s = GraphContext_GetSchema(gc,
-				pending_edge->edges_to_create.relation, SCHEMA_EDGE);
+		Schema *s = GraphContext_GetSchema (gc,
+				pending_edge->edges_to_create.relation, SCHEMA_EDGE) ;
 
 		// all schemas have been created in the edge blueprint loop or earlier
-		ASSERT(s != NULL);
-		int relation_id = Schema_GetID(s);
-		Edge        **edges     = pending_edge->created_edges;
-		AttributeSet *attrs     = pending_edge->edge_attributes;
-		uint         edge_count = array_len(edges);
+		ASSERT (s != NULL) ;
+
+		int relation_id = Schema_GetID (s) ;
+		Edge        **edges     = pending_edge->created_edges ;
+		AttributeSet *attrs     = pending_edge->edge_attributes ;
+		uint         edge_count = array_len (edges) ;
 
 		// introduce all edges to the graph at once
-		CreateEdges(gc, edges, relation_id, attrs, true);
+		GraphHub_CreateEdges (gc, edges, relation_id, attrs, true) ;
 
-		for(int j = 0; j < edge_count; j++) {
-			e = edges[j];
+		// no constraints, quick return
+		if (!Schema_HasConstraints (s)) {
+			continue ;
+		}
 
-			//----------------------------------------------------------------------
+		for (uint j = 0; j < edge_count; j++) {
+			e = edges[j] ;
+
+			//------------------------------------------------------------------
 			// enforce constraints
-			//----------------------------------------------------------------------
+			//------------------------------------------------------------------
 
-			if(constraint_violation == false) {
-				char *err_msg = NULL;
-				if(!Schema_EnforceConstraints(s, (GraphEntity*)e, &err_msg)) {
+			if (constraint_violation == false) {
+				char *err_msg = NULL ;
+				if (!Schema_EnforceConstraints (s, (GraphEntity*)e, &err_msg)) {
 					// constraint violated!
-					ASSERT(err_msg != NULL);
-					constraint_violation = true;
-					ErrorCtx_SetError("%s", err_msg);
-					free(err_msg);
+					ASSERT (err_msg != NULL) ;
+					constraint_violation = true ;
+					ErrorCtx_SetError ("%s", err_msg) ;
+					free(err_msg) ;
 				}
 			}
 		}
@@ -354,7 +362,7 @@ void ConvertPropertyMap
 		}
 
 		// set the converted attribute
-		ids[attrs_count] = FindOrAddAttribute(gc, map->keys[i], true);
+		ids[attrs_count] = GraphHub_FindOrAddAttribute(gc, map->keys[i], true);
 		vals[attrs_count++] = SI_CloneValue(val);
 		SIValue_Free(val);
 	}
