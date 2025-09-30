@@ -760,7 +760,7 @@ void Graph_CreateNodes
 
 		// set attributes
 		n->attributes  = DataBlock_AllocateItem (g->nodes, &n->id) ;
-		*n->attributes = sets[i] ;
+		*n->attributes = (sets == NULL) ? NULL : sets[i] ;
 
 		// node ID was reserved, make sure reserved ID was assigned
 		if (id != INVALID_ENTITY_ID) {

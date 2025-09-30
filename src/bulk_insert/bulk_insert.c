@@ -343,7 +343,7 @@ static int _BulkInsert_ProcessEdgeFile
 	AttributeID prop_attr_ids[prop_count] ;
 
 	while (data_idx < data_len) {
-		Edge e ;
+		Edge e = GE_NEW_LABELED_EDGE (NULL, rel) ;
 
 		// read source ID
 		NodeID src = *(NodeID*)&data[data_idx] ;
