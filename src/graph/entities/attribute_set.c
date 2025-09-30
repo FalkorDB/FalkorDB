@@ -183,46 +183,55 @@ void AttributeSet_AddNoClone
 	AttributeSet *set,  // set to update
 	AttributeID *ids,   // identifiers
 	SIValue *values,    // values
-	ushort n,           // number of values to add
-	bool allowNull		// accept NULLs
+	uint16_t n,         // number of values to add
+	bool allowNull      // accept NULLs
 ) {
-	ASSERT(set != NULL);
+	ASSERT (set != NULL) ;
+
+	if (unlikely (n == 0)) {
+		return ;
+	}
 
 	// return if set is read-only
-	if(unlikely(ATTRIBUTE_SET_IS_READONLY(*set))) {
-		return;
+	if(unlikely (ATTRIBUTE_SET_IS_READONLY(*set))) {
+		return ;
 	}
 
 	// validate value type
 	// value must be a valid property type
 #ifdef RG_DEBUG
 	SIType t = SI_VALID_PROPERTY_VALUE;
-	if(allowNull == true) {
-		t |= T_NULL;
+	if (allowNull == true) {
+		t |= T_NULL ;
 	}
 
-	for(ushort i = 0; i < n; i++) {
-		ASSERT(SI_TYPE(values[i]) & t);
+	for (ushort i = 0; i < n; i++) {
+		ASSERT (SI_TYPE (values[i]) & t) ;
 		// make sure attribute isn't already in set
-		ASSERT(AttributeSet_Get(*set, ids[i]) == ATTRIBUTE_NOTFOUND);
+		ASSERT (AttributeSet_Get (*set, ids[i]) == ATTRIBUTE_NOTFOUND) ;
 		// make sure value isn't volotile
-		ASSERT(SI_ALLOCATION(values + i) != M_VOLATILE);
+		ASSERT (SI_ALLOCATION (values + i) != M_VOLATILE) ;
+
+		// ensure no duplicate attribute IDs within this batch
+		for (ushort j = i + 1; j < n; j++) {
+			ASSERT (ids[i] != ids[j]) ;
+		}
 	}
 #endif
 
-	ushort prev_count = AttributeSet_Count(*set);
-	AttributeSet _set = AttributeSet_AddPrepare(set, n);
-	Attribute *attrs  = _set->attributes + prev_count;
+	ushort prev_count = AttributeSet_Count (*set) ;
+	AttributeSet _set = AttributeSet_AddPrepare (set, n) ;
+	Attribute *attrs  = _set->attributes + prev_count ;
 
 	// add attributes to set
-	for(ushort i = 0; i < n; i++) {
-		Attribute *attr = attrs + i;
-		attr->id    = ids[i];
-		attr->value = values[i];
+	for (ushort i = 0; i < n; i++) {
+		Attribute *attr = attrs + i ;
+		attr->id        = ids[i] ;
+		attr->value     = values[i] ;
 	}
 
 	// update pointer
-	*set = _set;
+	*set = _set ;
 }
 
 // adds an attribute to the set

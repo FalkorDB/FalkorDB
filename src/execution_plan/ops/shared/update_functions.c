@@ -69,12 +69,12 @@ void CommitUpdates
 		AttributeSet_PersistValues(update->attributes);
 		
 		// update the attributes on the graph entity
-		UpdateEntityProperties(gc, update->ge, update->attributes,
+		GraphHub_UpdateEntityProperties(gc, update->ge, update->attributes,
 				type == ENTITY_NODE ? GETYPE_NODE : GETYPE_EDGE, true);
 		update->attributes = NULL;
 
 		if(type == ENTITY_NODE) {
-			UpdateNodeLabels(gc, (Node*)update->ge, update->add_labels,
+			GraphHub_UpdateNodeLabels(gc, (Node*)update->ge, update->add_labels,
 				update->remove_labels, array_len(update->add_labels),
 				array_len(update->remove_labels), true);
 		}
@@ -249,7 +249,8 @@ void EvalEntityUpdates
 				break;
 			}
 
-			AttributeID attr_id = FindOrAddAttribute(gc, attribute, true);
+			AttributeID attr_id =
+				GraphHub_FindOrAddAttribute(gc, attribute, true);
 
 			switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, v))
 			{
@@ -318,7 +319,8 @@ void EvalEntityUpdates
 					break;
 				}
 
-				AttributeID attr_id = FindOrAddAttribute(gc, key.stringval, true);
+				AttributeID attr_id = GraphHub_FindOrAddAttribute(gc,
+						key.stringval, true);
 				// TODO: would have been nice we just sent n = {v:2}
 				switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, value))
 				{
