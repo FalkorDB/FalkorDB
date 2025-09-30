@@ -505,25 +505,25 @@ static void RG_ForkPrepare() {
 		// calling Graph_Get* will sync the retrieved matrix
 
 		Graph_GetAdjacencyMatrix(g, false);
-		RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-				"preparing to fork");
+		//RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+		//		"preparing to fork");
 
 		Graph_GetNodeLabelMatrix(g);
-		RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-				"preparing to fork");
+		//RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+		//		"preparing to fork");
 
 		int n_lbls = Graph_LabelTypeCount(g);
 		for (int i = 0; i < n_lbls; i++) {
 			Graph_GetLabelMatrix(g, i);
-			RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-					"preparing to fork");
+			//RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+			//		"preparing to fork");
 		}
 
 		int n_rels = Graph_RelationTypeCount(g);
 		for (int i = 0; i < n_rels; i++) {
 			Graph_GetRelationMatrix(g, i, false);
-			RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-					"preparing to fork");
+			//RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+			//		"preparing to fork");
 		}
 
 		// decrease graph context ref count
