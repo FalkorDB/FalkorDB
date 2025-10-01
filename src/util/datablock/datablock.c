@@ -175,39 +175,50 @@ void *DataBlock_GetItem(const DataBlock *dataBlock, uint64_t idx) {
 	return ITEM_DATA(item_header);
 }
 
-uint64_t DataBlock_GetReservedIdx(const DataBlock *dataBlock, uint64_t n) {
-	ASSERT(dataBlock != NULL);
+uint64_t DataBlock_GetReservedIdx
+(
+	const DataBlock *dataBlock,
+	uint64_t n
+) {
+	ASSERT (dataBlock != NULL) ;
 
-	uint deleted = DataBlock_DeletedItemsCount(dataBlock);
-	if(n < deleted) {
-		return dataBlock->deletedIdx[deleted - n - 1];
+	uint deleted = DataBlock_DeletedItemsCount (dataBlock) ;
+	if (n < deleted) {
+		return dataBlock->deletedIdx[deleted - n - 1] ;
 	} 
-	
-	return DataBlock_ItemCount(dataBlock) + n;
+
+	return DataBlock_ItemCount (dataBlock) + n ;
 }
 
-void *DataBlock_AllocateItem(DataBlock *dataBlock, uint64_t *idx) {
+void *DataBlock_AllocateItem
+(
+	DataBlock *dataBlock,
+	uint64_t *idx
+) {
 	// make sure we've got room for items
-	if(dataBlock->itemCount >= dataBlock->itemCap) {
+	if (unlikely (dataBlock->itemCount >= dataBlock->itemCap)) {
 		// allocate an additional block
-		_DataBlock_AddBlocks(dataBlock, 1);
+		_DataBlock_AddBlocks (dataBlock, 1) ;
 	}
-	ASSERT(dataBlock->itemCap > dataBlock->itemCount);
+
+	ASSERT (dataBlock->itemCap > dataBlock->itemCount) ;
 
 	// get index into which to store item,
 	// prefer reusing free indicies
-	uint pos = dataBlock->itemCount;
-	if(array_len(dataBlock->deletedIdx) > 0) {
-		pos = array_pop(dataBlock->deletedIdx);
+	uint pos = dataBlock->itemCount ;
+	if (array_len (dataBlock->deletedIdx) > 0) {
+		pos = array_pop (dataBlock->deletedIdx) ;
 	}
-	dataBlock->itemCount++;
+	dataBlock->itemCount++ ;
 
-	if(idx) *idx = pos;
+	if (idx) {
+		*idx = pos;
+	}
 
-	DataBlockItemHeader *item_header = DataBlock_GetItemHeader(dataBlock, pos);
-	MARK_HEADER_AS_NOT_DELETED(item_header);
+	DataBlockItemHeader *header = DataBlock_GetItemHeader (dataBlock, pos) ;
+	MARK_HEADER_AS_NOT_DELETED (header) ;
 
-	return ITEM_DATA(item_header);
+	return ITEM_DATA (header) ;
 }
 
 void DataBlock_DeleteItem(DataBlock *dataBlock, uint64_t idx) {

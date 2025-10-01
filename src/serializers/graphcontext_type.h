@@ -8,4 +8,15 @@
 
 #include "serializers_include.h"
 
-int GraphContextType_Register(RedisModuleCtx *ctx);
+int _GraphContextType_Defrag
+(
+	RedisModuleDefragCtx *ctx,
+	RedisModuleString *key,
+	void **value
+);
+
+int GraphContextType_Register
+(
+	RedisModuleCtx *ctx
+);
+
