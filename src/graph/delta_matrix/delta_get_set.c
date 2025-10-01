@@ -60,21 +60,21 @@ GrB_Info Delta_Matrix_setM
 	return GrB_SUCCESS;
 }
 
-const GrB_Matrix Delta_Matrix_M
+GrB_Matrix Delta_Matrix_M
 (
 	const Delta_Matrix C  // delta matrix
 ) {
 	return DELTA_MATRIX_M(C);
 }
 
-const GrB_Matrix Delta_Matrix_DP
+GrB_Matrix Delta_Matrix_DP
 (
 	const Delta_Matrix C  // delta matrix
 ) {
 	return DELTA_MATRIX_DELTA_PLUS(C);
 }
 
-const GrB_Matrix Delta_Matrix_DM
+GrB_Matrix Delta_Matrix_DM
 (
 	const Delta_Matrix C  // delta matrix
 ) {
