@@ -411,6 +411,15 @@ static AlgebraicExpression *_AlgebraicExpression_OperandFromEdge
 		root = op_transpose;
 	}
 
+    // Special-case: variable-length self-alias traversals should become a single
+    // diagonal operand (self traversal), with labels applied via filters.
+    if(var_len_traversal && src_node->alias == dest_node->alias) {
+        // replace root with a diagonal operand to represent self-traversal.
+        const char *alias = src_node->alias;
+        AlgebraicExpression *self = AlgebraicExpression_NewOperand(NULL, true, alias, alias, edge, NULL);
+        root = self;
+    }
+
 	// apply source filter by multiplying to the left
 	if(src_filter) {
 		root = _AlgebraicExpression_MultiplyToTheLeft(src_filter, root);

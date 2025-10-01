@@ -22,16 +22,28 @@ static const AlgebraicExpression *_AlgebraicExpression_SrcOperand
 	while(exp->type == AL_OPERATION) {
 		switch(exp->operation.op) {
 			case AL_EXP_ADD:
+				// require at least one child
+				if(AlgebraicExpression_ChildCount(exp) == 0) {
+					return NULL;
+				}
 				// Src (A+B) = Src(A)
 				// Src (Transpose(A+B)) = Src (Transpose(A)+Transpose(B)) = Src (Transpose(A))
 				exp = FIRST_CHILD(exp);
 				break;
 			case AL_EXP_MUL:
+				// require at least one child to select src/dest operand
+				if(AlgebraicExpression_ChildCount(exp) == 0) {
+					return NULL;
+				}
 				// Src (A*B) = Src(A)
 				// Src (Transpose(A*B)) = Src (Transpose(B)*Transpose(A)) = Src (Transpose(B))
 				exp = (t) ? LAST_CHILD(exp) : FIRST_CHILD(exp);
 				break;
 			case AL_EXP_TRANSPOSE:
+				// transpose must have exactly one child
+				if(AlgebraicExpression_ChildCount(exp) != 1) {
+					return NULL;
+				}
 				// Src (Transpose(Transpose(A))) = Src(A)
 				// negate transpose
 				t = !t;
@@ -131,10 +143,7 @@ const char *AlgebraicExpression_Src
 	const AlgebraicExpression *exp = NULL;
 
 	exp = _AlgebraicExpression_SrcOperand(root, &transposed);
-	// Check if _AlgebraicExpression_SrcOperand returned NULL due to unknown operation
-	if(exp == NULL) {
-		return NULL;
-	}
+	if(exp == NULL) return NULL;
 	return (transposed) ? exp->operand.dest : exp->operand.src;
 }
 
@@ -152,10 +161,7 @@ const char *AlgebraicExpression_Dest
 	const AlgebraicExpression *exp = NULL;
 
 	exp = _AlgebraicExpression_SrcOperand(root, &transposed);
-	// Check if _AlgebraicExpression_SrcOperand returned NULL due to unknown operation
-	if(exp == NULL) {
-		return NULL;
-	}
+	if(exp == NULL) return NULL;
 	return (transposed) ? exp->operand.dest : exp->operand.src;
 }
 
