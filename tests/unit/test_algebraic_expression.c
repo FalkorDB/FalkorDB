@@ -1793,6 +1793,23 @@ void test_LocateOperand() {
 	AlgebraicExpression_Free(r);
 }
 
+void test_AlgebraicExpression_Src_Dest_UnknownOperation() {
+	AlgebraicExpression *operand = AlgebraicExpression_NewOperand(
+		NULL, false, "src", "dest", "edge", "label");
+	AlgebraicExpression *operation = AlgebraicExpression_NewOperation(AL_EXP_ADD);
+	AlgebraicExpression_AddChild(operation, operand);
+	
+	//unknown operation type to trigger NULL return
+	operation->operation.op = (AL_EXP_OP)999;
+	
+	TEST_ASSERT(AlgebraicExpression_Src(operation) == NULL);
+	TEST_ASSERT(AlgebraicExpression_Dest(operation) == NULL);
+	
+	// restore operation type for cleanup
+	operation->operation.op = AL_EXP_ADD;
+	AlgebraicExpression_Free(operation);
+}
+
 TEST_LIST = {
 	{"algebraicExpression", test_algebraicExpression},
 	{"algebraicExpression_domains", test_algebraicExpression_domains},
@@ -1817,6 +1834,7 @@ TEST_LIST = {
 	{"ExpressionExecute", test_ExpressionExecute},
 	{"RemoveOperand", test_RemoveOperand},
 	{"LocateOperand", test_LocateOperand},
+	{"AlgebraicExpression_Src_Dest_UnknownOperation", test_AlgebraicExpression_Src_Dest_UnknownOperation},
 	{NULL, NULL}
 };
 
