@@ -1,3 +1,8 @@
+/*
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
+ */
+
 #include "RG.h"
 #include "delta_matrix.h"
 
@@ -42,19 +47,18 @@ GrB_Info Delta_Matrix_setM
 ) {
 	GrB_Index nvals = 0;
 	GrB_Index tot   = 0;
-	GrB_Info info   = GrB_Matrix_nvals(&nvals, DELTA_MATRIX_M(C));
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_Matrix_nvals(&nvals, DELTA_MATRIX_M(C)));
 	tot |= nvals;
-	info = GrB_Matrix_nvals(&nvals, DELTA_MATRIX_DELTA_PLUS(C));
-	ASSERT(info == GrB_SUCCESS);
+
+	GrB_OK (GrB_Matrix_nvals(&nvals, DELTA_MATRIX_DELTA_PLUS(C)));
 	tot |= nvals;
-	info = GrB_Matrix_nvals(&nvals, DELTA_MATRIX_DELTA_MINUS(C));
-	ASSERT(info == GrB_SUCCESS);
+
+	GrB_OK (GrB_Matrix_nvals(&nvals, DELTA_MATRIX_DELTA_MINUS(C)));
 	tot |= nvals;
+
 	if (tot != 0)
 		return GrB_ALREADY_SET;
-	info = GrB_free(&DELTA_MATRIX_M(C));
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_free(&DELTA_MATRIX_M(C)));
 
 	DELTA_MATRIX_M(C) = M;
 	return GrB_SUCCESS;

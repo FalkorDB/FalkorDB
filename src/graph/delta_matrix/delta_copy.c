@@ -30,12 +30,12 @@ GrB_Info Delta_Matrix_copy
 ) {
 	Delta_Matrix_checkCompatible(C, A);
 	
-	GrB_Matrix  in_m             =  DELTA_MATRIX_M(A);
-	GrB_Matrix  out_m            =  DELTA_MATRIX_M(C);
-	GrB_Matrix  in_delta_plus    =  DELTA_MATRIX_DELTA_PLUS(A);
-	GrB_Matrix  in_delta_minus   =  DELTA_MATRIX_DELTA_MINUS(A);
-	GrB_Matrix  out_delta_plus   =  DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix  out_delta_minus  =  DELTA_MATRIX_DELTA_MINUS(C);
+	GrB_Matrix in_m            = DELTA_MATRIX_M(A);
+	GrB_Matrix out_m           = DELTA_MATRIX_M(C);
+	GrB_Matrix in_delta_plus   = DELTA_MATRIX_DELTA_PLUS(A);
+	GrB_Matrix in_delta_minus  = DELTA_MATRIX_DELTA_MINUS(A);
+	GrB_Matrix out_delta_plus  = DELTA_MATRIX_DELTA_PLUS(C);
+	GrB_Matrix out_delta_minus = DELTA_MATRIX_DELTA_MINUS(C);
 
 	_copyMatrix(in_m, out_m);
 	_copyMatrix(in_delta_plus, out_delta_plus);

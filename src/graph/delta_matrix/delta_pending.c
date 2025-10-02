@@ -1,7 +1,6 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #include "RG.h"
@@ -15,11 +14,11 @@ GrB_Info Delta_Matrix_pending
 	ASSERT(C       != NULL);
 	ASSERT(pending != NULL);
 
-	int32_t     p       =  false;
-	bool        res     =  false;
-	GrB_Matrix  M       =  DELTA_MATRIX_M(C);
-	GrB_Matrix  DP      =  DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix  DM      =  DELTA_MATRIX_DELTA_MINUS(C);
+	int32_t    p   = false;
+	bool       res = false;
+	GrB_Matrix M   = DELTA_MATRIX_M(C);
+	GrB_Matrix DP  = DELTA_MATRIX_DELTA_PLUS(C);
+	GrB_Matrix DM  = DELTA_MATRIX_DELTA_MINUS(C);
 
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
 		GrB_OK(Delta_Matrix_pending(C->transposed, &res));

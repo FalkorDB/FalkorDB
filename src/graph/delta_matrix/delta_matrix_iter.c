@@ -1,12 +1,12 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #include "RG.h"
 #include "./delta_matrix_iter.h"
 #include "../../util/rmalloc.h"
+#include "./delta_utils.h"
 
 // returns true if iterator is detached from a matrix
 #define IS_DETACHED(iter) ((iter) == NULL || (iter)->A == NULL)
@@ -78,6 +78,7 @@ GrB_Info Delta_MatrixTupleIter_iterate_row
 
 	_set_iter_range(&iter->m_it, iter->min_row, iter->max_row, &iter->m_depleted) ;
 	_set_iter_range(&iter->dp_it, iter->min_row, iter->max_row, &iter->dp_depleted) ;
+	_set_iter_range(&iter->dm_it, iter->min_row, iter->max_row, &iter->dm_depleted) ;
 
 	return GrB_SUCCESS ;
 }
@@ -95,6 +96,7 @@ GrB_Info Delta_MatrixTupleIter_iterate_range
 
 	_set_iter_range(&iter->m_it, iter->min_row, iter->max_row, &iter->m_depleted) ;
 	_set_iter_range(&iter->dp_it, iter->min_row, iter->max_row, &iter->dp_depleted) ;
+	_set_iter_range(&iter->dm_it, iter->min_row, iter->max_row, &iter->dm_depleted) ;
 
 	return GrB_SUCCESS ;
 }
@@ -135,10 +137,13 @@ static GrB_Info _next_m_iter_bool
 
 	GrB_Index  _row ;
 	GrB_Index  _col ;
+	GrB_Index  d_row = -1;
+	GrB_Index  d_col = -1;
+
 	GrB_Index  _val;
 
 	GxB_Iterator m_it = &iter->m_it ;
-	GrB_Matrix    DM   = DELTA_MATRIX_DELTA_MINUS(iter->A) ;
+	GxB_Iterator dm_it = &iter->dm_it ;
 
 	do {
 		// iterator depleted, return
@@ -151,9 +156,17 @@ static GrB_Info _next_m_iter_bool
 		// prep value for next iteration
 		_iter_next(m_it, iter->max_row, depleted);
 
-		//check if entry is deleted, if not, return.
-		GrB_Info info = GxB_Matrix_isStoredElement(DM, _row, _col) ;
-		if(info == GrB_NO_VALUE) break ;
+		bool deleted = false ;
+
+		if(!iter->dm_depleted){
+			d_row = GxB_rowIterator_getRowIndex (dm_it) ;
+			d_col = GxB_rowIterator_getColIndex (dm_it) ;
+			deleted = (d_row == _row && d_col == _col) ;
+		}
+
+		if(!deleted) break;
+
+		_iter_next( dm_it, iter->max_row, &iter->dm_depleted ) ;
 	} while (true) ;
 
 	if(row) *row = _row ;
@@ -173,8 +186,8 @@ GrB_Info Delta_MatrixTupleIter_next_BOOL
 ) {
 	if(IS_DETACHED(iter)) return GrB_NULL_POINTER ;
 
-	GrB_Info             info     =  GrB_SUCCESS                    ;
-	GxB_Iterator         dp_it    =  &iter->dp_it                   ;
+	GrB_Info             info     =  GrB_SUCCESS  ;
+	GxB_Iterator         dp_it    =  &iter->dp_it ;
 
 	if(!iter->m_depleted) {
 		info = _next_m_iter_bool(iter, row, col, val, &iter->m_depleted) ;
@@ -210,8 +223,12 @@ static GrB_Info _next_m_iter_uint64
 
 	GrB_Index    _row ;
 	GrB_Index    _col ;
+	GrB_Index    d_row = -1;
+	GrB_Index    d_col = -1;
+	
 	uint64_t     _val ;
 	GxB_Iterator m_it = &iter->m_it ;
+	GxB_Iterator dm_it = &iter->dm_it ;
 
 	do {
 		// iterator depleted, return
@@ -224,9 +241,16 @@ static GrB_Info _next_m_iter_uint64
 		// prep value for next iteration
 		_iter_next(m_it, iter->max_row, depleted) ;
 
-		//check if entry is deleted, if not, return.
-		GrB_Info info = GxB_Matrix_isStoredElement(DM, _row, _col) ;
-		if(info == GrB_NO_VALUE) break ;
+		bool deleted = false ;
+
+		if(!iter->dm_depleted){
+			d_row = GxB_rowIterator_getRowIndex (dm_it) ;
+			d_col = GxB_rowIterator_getColIndex (dm_it) ;
+			deleted = (d_row == _row && d_col == _col) ;
+		}
+
+		if(!deleted) break;
+		_iter_next( &iter->dm_it, iter->max_row, &iter->dm_depleted ) ;
 	} while (true) ;
 
 	if(row) *row = _row ;
@@ -278,6 +302,7 @@ GrB_Info Delta_MatrixTupleIter_reset
 
 	_set_iter_range(&iter->m_it, iter->min_row, iter->max_row, &iter->m_depleted) ;
 	_set_iter_range(&iter->dp_it, iter->min_row, iter->max_row, &iter->dp_depleted) ;
+	_set_iter_range(&iter->dm_it, iter->min_row, iter->max_row, &iter->dm_depleted) ;
 
 	return info ;
 }
@@ -316,6 +341,7 @@ GrB_Info Delta_MatrixTupleIter_AttachRange
 
 	GrB_Matrix M  = DELTA_MATRIX_M(A) ;
 	GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS(A) ;
+	GrB_Matrix DM = DELTA_MATRIX_DELTA_MINUS(A) ;
 
 	iter->A = A ;
 	iter->min_row = min_row ;
@@ -323,6 +349,7 @@ GrB_Info Delta_MatrixTupleIter_AttachRange
 
 	_init_iter(&iter->m_it, M, iter->min_row, iter->max_row, &iter->m_depleted) ;
 	_init_iter(&iter->dp_it, DP, iter->min_row, iter->max_row, &iter->dp_depleted) ;
+	_init_iter(&iter->dm_it, DM, iter->min_row, iter->max_row, &iter->dm_depleted) ;
 
 	return GrB_SUCCESS ;
 }
@@ -337,6 +364,7 @@ GrB_Info Delta_MatrixTupleIter_detach
 	iter->A           = NULL ;
 	iter->m_depleted  = true ;
 	iter->dp_depleted = true ;
+	iter->dm_depleted = true ;
 
 	return GrB_SUCCESS ;
 }

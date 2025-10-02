@@ -7,6 +7,7 @@
 #include "delta_matrix.h"
 #include "../../util/rmalloc.h"
 
+// get matrix C without writing to internal matrix
 GrB_Info Delta_Matrix_export
 (
 	GrB_Matrix *A,
@@ -16,11 +17,11 @@ GrB_Info Delta_Matrix_export
 	ASSERT(C != NULL);
 	ASSERT(A != NULL);
 
-	GrB_Type   t;
-	GrB_Index  nrows;
-	GrB_Index  ncols;
-	GrB_Index  dp_nvals;
-	GrB_Index  dm_nvals;
+	GrB_Type  t;
+	GrB_Index nrows;
+	GrB_Index ncols;
+	GrB_Index dp_nvals;
+	GrB_Index dm_nvals;
 
 	GrB_Matrix _A = NULL;
 	GrB_Matrix m  = DELTA_MATRIX_M(C);
@@ -42,11 +43,11 @@ GrB_Info Delta_Matrix_export
 	//--------------------------------------------------------------------------
 
 	// in case there are items to delete use mask otherwise just copy
-	GrB_Matrix mask = deletions ? dm : NULL;
+	GrB_Matrix     mask = deletions ? dm : NULL;
 	GrB_Descriptor desc = deletions ? GrB_DESC_RSC : GrB_DESC_R;
 
 	// If type is boolean make the matrix true, otherwise copy values
-	GrB_UnaryOp op = type == GrB_BOOL ? GxB_ONE_BOOL: GrB_IDENTITY_UINT64;
+	GrB_UnaryOp    op   = type == GrB_BOOL ? GxB_ONE_BOOL : GrB_IDENTITY_UINT64;
 
 	GrB_OK (GrB_Matrix_apply(_A, mask, NULL, op, m, desc));
 	

@@ -20,10 +20,10 @@ GrB_Info Delta_Matrix_setElement_UINT64
 	ASSERT(C != NULL);
 	Delta_Matrix_checkBounds(C, i, j);
 
-	uint64_t  v;
-	GrB_Info  info;
-	bool      entry_exists       =  false;          //  M[i,j] exists
-	bool      mark_for_deletion  =  false;          //  dm[i,j] exists
+	uint64_t v;
+	GrB_Info info;
+	bool     entry_exists      = false;  //  M[i,j] exists
+	bool     mark_for_deletion = false;  //  dm[i,j] exists
 
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
 		info =  Delta_Matrix_setElement_BOOL(C->transposed, j, i);
@@ -32,9 +32,9 @@ GrB_Info Delta_Matrix_setElement_UINT64
 		}
 	}
 
-	GrB_Matrix m   = DELTA_MATRIX_M(C);
-	GrB_Matrix dp  = DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix dm  = DELTA_MATRIX_DELTA_MINUS(C);
+	GrB_Matrix m  = DELTA_MATRIX_M(C);
+	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(C);
+	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(C);
 
 #ifdef RG_DEBUG
 	//--------------------------------------------------------------------------
