@@ -20,12 +20,17 @@ typedef struct {
 	uint64_t rec_idx;          // emit record index
 	Record *records;           // array of Records created by this operation
 	PendingCreations pending;  // container struct for all graph changes to be committed
+	// named paths to bind to record
+	const char **named_paths_aliases;
+	const char ***named_paths_elements;
 } OpCreate;
 
 OpBase *NewCreateOp
 (
 	const ExecutionPlan *plan,
 	NodeCreateCtx *nodes,
-	EdgeCreateCtx *edges
+	EdgeCreateCtx *edges,
+	const char **named_paths_aliases,
+	const char ***named_paths_elements
 );
 

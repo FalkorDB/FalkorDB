@@ -443,19 +443,52 @@ AST_CreateContext AST_PrepareCreateOp
 	NodeCreateCtx *nodes_to_create = array_new(NodeCreateCtx, 1);
 	EdgeCreateCtx *edges_to_create = array_new(EdgeCreateCtx, 1);
 
+	// collect named paths for later binding
+	const char **named_paths_aliases = array_new(const char *, 1);
+	const char ***named_paths_elements = array_new(const char **, 1);
+
 	const cypher_astnode_t *pattern = cypher_ast_create_get_pattern(clause);
 	uint npaths = cypher_ast_pattern_npaths(pattern);
 
 	for(uint j = 0; j < npaths; j++) {
 		const cypher_astnode_t *path = cypher_ast_pattern_get_path(pattern, j);
+
+		// if this is a named path, collect its alias and elements for later binding
+		if(cypher_astnode_type(path) == CYPHER_AST_NAMED_PATH) {
+			const cypher_astnode_t *path_identifier = cypher_ast_named_path_get_identifier(path);
+			const char *path_alias = cypher_ast_identifier_get_name(path_identifier);
+
+			// collect the alias
+			array_append(named_paths_aliases, path_alias);
+
+			// collect the ordered elements (nodes and edges) in this path
+			const cypher_astnode_t *underlying_path = cypher_ast_named_path_get_path(path);
+			uint path_elem_count = cypher_ast_pattern_path_nelements(underlying_path);
+			const char **elements = array_new(const char *, path_elem_count);
+
+			for(uint k = 0; k < path_elem_count; k++) {
+				const cypher_astnode_t *elem = cypher_ast_pattern_path_get_element(underlying_path, k);
+				const char *elem_alias = AST_ToString(elem);
+				array_append(elements, elem_alias);
+			}
+			array_append(named_paths_elements, elements);
+
+			// use the underlying path for entity creation
+			path = underlying_path;
+		}
+
 		AST_PreparePathCreation(path, qg, bound_and_introduced_entities,
 				&nodes_to_create, &edges_to_create);
 	}
 
 	raxFree(bound_and_introduced_entities);
 
-	AST_CreateContext ctx = { .nodes_to_create = nodes_to_create,
-		.edges_to_create = edges_to_create };
+	AST_CreateContext ctx = {
+		.nodes_to_create = nodes_to_create,
+		.edges_to_create = edges_to_create,
+		.named_paths_aliases = named_paths_aliases,
+		.named_paths_elements = named_paths_elements
+	};
 
 	return ctx;
 }

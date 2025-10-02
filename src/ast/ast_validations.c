@@ -1653,6 +1653,9 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 	// track new entities (identifier + type) introduced by CREATE clause
 	const char **new_identifiers = array_new(const char*, 1);
 
+	// track named path aliases introduced by CREATE clause
+	const char **new_path_aliases = array_new(const char*, 1);
+
 	// manual traverse validation of the CREATE clause
 	// this is done primarily because of identifiers scoping
 	// the CREATE isn't allowed access to its own identifiers
@@ -1684,17 +1687,31 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 
 	for(uint i = 0; i < npaths; i++) {
 		const cypher_astnode_t *path = cypher_ast_pattern_get_path(pattern, i);
+
+		// If this path is a named path (e.g., CREATE p=(...)), collect its alias
+		// and operate on the underlying pattern path for element validation.
+		const cypher_astnode_t *pattern_path = path;
+		if(cypher_astnode_type(path) == CYPHER_AST_NAMED_PATH) {
+			const cypher_astnode_t *alias_node = cypher_ast_named_path_get_identifier(path);
+			if(alias_node) {
+				const char *alias = cypher_ast_identifier_get_name(alias_node);
+				array_append(new_path_aliases, alias);
+			}
+			pattern_path = cypher_ast_named_path_get_path(path);
+		}
+
 		// make sure CREATE actually creates something
 		// e.g. MATCH (a) CREATE (a) doesn't create anything
-		if(_Validate_CREATE_Entities(path, vctx) == AST_INVALID) {
+		// validate against the underlying pattern path (handles named paths)
+		if(_Validate_CREATE_Entities(pattern_path, vctx) == AST_INVALID) {
 			res = VISITOR_BREAK;
 			goto cleanup;
 		}
 
 		// validate individual path elements
-		uint nelems = cypher_ast_pattern_path_nelements(path);
+		uint nelems = cypher_ast_pattern_path_nelements(pattern_path);
 		for(uint j = 0; j < nelems; j++) {
-			const cypher_astnode_t *e = cypher_ast_pattern_path_get_element(path, j);
+			const cypher_astnode_t *e = cypher_ast_pattern_path_get_element(pattern_path, j);
 			SIType t;
 			const cypher_astnode_t *id;
 
@@ -1754,8 +1771,17 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 		}
 	}
 
+	// introduce named path aliases (if any) to scope so they can be referenced
+	// by following RETURN/WITH clauses
+	uint lp = array_len(new_path_aliases);
+	for(uint i = 0; i < lp; i++) {
+		const char *alias = new_path_aliases[i];
+		_IdentifierAdd(vctx, alias, NULL);
+	}
+
 	cleanup:
 	array_free(new_identifiers);
+	array_free(new_path_aliases);
 	return res;
 }
 

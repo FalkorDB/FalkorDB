@@ -27,7 +27,9 @@ static inline void _buildCreateOp
 
 	OpBase *op =
 		NewCreateOp(plan, create_ast_ctx.nodes_to_create,
-				create_ast_ctx.edges_to_create);
+				create_ast_ctx.edges_to_create,
+				create_ast_ctx.named_paths_aliases,
+				create_ast_ctx.named_paths_elements);
 
 	ExecutionPlan_UpdateRoot(plan, op);
 }
