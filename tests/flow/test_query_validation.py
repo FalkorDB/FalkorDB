@@ -695,3 +695,83 @@ class testQueryValidationFlow(FlowTestsBase):
 
         q = "OPTIONAL MATCH (a) RETURN a UNION MATCH (a) RETURN a"
         self.graph.query(q)
+
+    # Property access on scalar types in inline patterns should fail (issue #622).
+    def test46_property_access_on_scalar_in_inline_patterns(self):
+        # Integer with property access in CALL subquery.
+        try:
+            query = """WITH 1 AS x
+                       CALL {
+                           WITH x
+                           MATCH ({v:x.n1}), ()
+                           RETURN 0
+                       }
+                       RETURN 0"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            self.env.assertIn("Type mismatch", str(e))
+
+        # Property access on integer literal.
+        try:
+            query = """WITH 1 AS x MATCH ({v:x.prop}) RETURN 1"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            self.env.assertIn("Type mismatch", str(e))
+
+        # Property access on string literal.
+        try:
+            query = """WITH 'text' AS x MATCH ({v:x.prop}) RETURN 1"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            self.env.assertIn("Type mismatch", str(e))
+
+        # Property access on arithmetic expression result.
+        try:
+            query = """WITH 1 AS a, 2 AS b MATCH ({v: (a + b).prop}) RETURN 1"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            self.env.assertIn("Type mismatch", str(e))
+
+    # Valid property access in inline patterns.
+    def test47_valid_property_access_in_inline_patterns(self):
+        # Create test data.
+        self.graph.query("CREATE (:Person {name: 'Alice', age: 30})")
+        self.graph.query("CREATE (:Person {name: 'Bob', age: 25})")
+
+        # Property access on node entity should succeed.
+        query = """MATCH (x:Person)
+                   MATCH (y {name: x.name})
+                   RETURN count(y) AS cnt"""
+        result = self.graph.query(query)
+        self.env.assertEquals(result.result_set[0][0], 2)
+
+        # Property access on parameter should succeed.
+        query = """CYPHER x={prop: 'Alice'}
+                   MATCH ({name: $x.prop})
+                   RETURN count(*) AS cnt"""
+        result = self.graph.query(query)
+        self.env.assertEquals(result.result_set[0][0], 1)
+
+        # Property access on function result should succeed.
+        query = """MATCH (x:Person)
+                   WITH head(collect(x)) AS first
+                   MATCH ({name: first.name})
+                   RETURN count(*) AS cnt"""
+        result = self.graph.query(query)
+        self.env.assertTrue(result.result_set[0][0] >= 1)
+
+        # Property access on edge should succeed.
+        self.graph.query("MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'}) CREATE (a)-[:KNOWS {since: 2020}]->(b)")
+        query = """MATCH (a)-[r:KNOWS]->(b)
+                   MATCH ()-[:KNOWS {since: r.since}]->()
+                   RETURN count(*) AS cnt"""
+        result = self.graph.query(query)
+        self.env.assertEquals(result.result_set[0][0], 1)

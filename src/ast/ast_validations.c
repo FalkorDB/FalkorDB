@@ -763,10 +763,136 @@ static VISITOR_STRATEGY _Validate_reduce
 	return VISITOR_CONTINUE;
 }
 
+// check if an expression can have properties accessed
+static bool _IsValidPropertyBase
+(
+	const cypher_astnode_t *expr,  // expression to check
+	validations_ctx *vctx          // validation context
+) {
+	if(expr == NULL) {
+		return false;
+	}
+
+	cypher_astnode_type_t type = cypher_astnode_type(expr);
+	
+	if(type == CYPHER_AST_IDENTIFIER) {
+		const char *identifier = cypher_ast_identifier_get_name(expr);
+		void *alias_type = _IdentifiersFind(vctx, identifier);
+		
+		if(alias_type == raxNotFound) {
+			return true;
+		}
+		
+		// allow nodes, edges, and unknowns (could be maps)
+		return (alias_type == NULL || 
+		        alias_type == (void*)T_NODE || 
+		        alias_type == (void*)T_EDGE);
+	}
+	
+	if(type == CYPHER_AST_MAP) {
+		return true;
+	}
+	
+	if(type == CYPHER_AST_APPLY_OPERATOR || 
+	   type == CYPHER_AST_APPLY_ALL_OPERATOR) {
+		return true;
+	}
+	
+	if(type == CYPHER_AST_PARAMETER) {
+		return true;
+	}
+	
+	if(type == CYPHER_AST_PROPERTY_OPERATOR) {
+		return true;
+	}
+	
+	if(type == CYPHER_AST_LIST_COMPREHENSION ||
+	   type == CYPHER_AST_PATTERN_COMPREHENSION) {
+		return true;
+	}
+	
+	// reject scalar literals
+	if(type == CYPHER_AST_INTEGER ||
+	   type == CYPHER_AST_FLOAT ||
+	   type == CYPHER_AST_STRING ||
+	   type == CYPHER_AST_TRUE ||
+	   type == CYPHER_AST_FALSE ||
+	   type == CYPHER_AST_NULL ||
+	   type == CYPHER_AST_COLLECTION) {
+		return false;
+	}
+	
+	// conservatively allow other expressions
+	return true;
+}
+
+// validate property access expressions in map values
+static AST_Validation _ValidateMapValueForPropertyAccess
+(
+	const cypher_astnode_t *value,  // map value to check
+	validations_ctx *vctx           // validation context
+) {
+	if(value == NULL) {
+		return AST_VALID;
+	}
+
+	cypher_astnode_type_t type = cypher_astnode_type(value);
+	
+	if(type == CYPHER_AST_PROPERTY_OPERATOR) {
+		const cypher_astnode_t *expr = 
+			cypher_ast_property_operator_get_expression(value);
+		
+		if(!_IsValidPropertyBase(expr, vctx)) {
+			const cypher_astnode_t *prop_name_node = 
+				cypher_ast_property_operator_get_prop_name(value);
+			const char *prop_name = 
+				cypher_ast_prop_name_get_value(prop_name_node);
+			
+			if(cypher_astnode_type(expr) == CYPHER_AST_IDENTIFIER) {
+				const char *identifier = cypher_ast_identifier_get_name(expr);
+				ErrorCtx_SetError(
+					"Type mismatch: expected Node, Relationship or Map for '%s' accessing property '%s'",
+					identifier, prop_name);
+			} else {
+				ErrorCtx_SetError(
+					"Type mismatch: property access on non-entity type in inline pattern properties");
+			}
+			return AST_INVALID;
+		}
+		
+		return _ValidateMapValueForPropertyAccess(expr, vctx);
+	}
+	
+	if(type == CYPHER_AST_MAP) {
+		uint nentries = cypher_ast_map_nentries(value);
+		for(uint i = 0; i < nentries; i++) {
+			const cypher_astnode_t *entry_value = 
+				cypher_ast_map_get_value(value, i);
+			if(_ValidateMapValueForPropertyAccess(entry_value, vctx) == AST_INVALID) {
+				return AST_INVALID;
+			}
+		}
+	}
+	
+	if(type == CYPHER_AST_COLLECTION) {
+		uint nelems = cypher_ast_collection_length(value);
+		for(uint i = 0; i < nelems; i++) {
+			const cypher_astnode_t *elem = 
+				cypher_ast_collection_get(value, i);
+			if(_ValidateMapValueForPropertyAccess(elem, vctx) == AST_INVALID) {
+				return AST_INVALID;
+			}
+		}
+	}
+	
+	return AST_VALID;
+}
+
 // validate the property maps used in node/edge patterns in MATCH, and CREATE clauses
 static AST_Validation _ValidateInlinedProperties
 (
-	const cypher_astnode_t *props  // ast-node representing the map
+	const cypher_astnode_t *props,  // ast-node representing the map
+	validations_ctx *vctx           // validation context
 ) {
 	if(props == NULL) {
 		return AST_VALID;
@@ -790,6 +916,11 @@ static AST_Validation _ValidateInlinedProperties
 			// encountered query of the form
 			// MATCH (a {prop: ()-[]->()}) RETURN a
 			ErrorCtx_SetError(EMSG_UNHANDLED_TYPE_INLINE_PROPERTIES);
+			return AST_INVALID;
+		}
+		
+		// validate property access on non-entity types
+		if(_ValidateMapValueForPropertyAccess(prop_val, vctx) == AST_INVALID) {
 			return AST_INVALID;
 		}
 	}
@@ -836,7 +967,7 @@ static VISITOR_STRATEGY _Validate_rel_pattern
 		}
 	}
 
-	if(_ValidateInlinedProperties(cypher_ast_rel_pattern_get_properties(n)) == AST_INVALID) {
+	if(_ValidateInlinedProperties(cypher_ast_rel_pattern_get_properties(n), vctx) == AST_INVALID) {
 		return VISITOR_BREAK;
 	}
 
@@ -889,7 +1020,7 @@ static VISITOR_STRATEGY _Validate_node_pattern
 		return VISITOR_CONTINUE;
 	}
 
-	if(_ValidateInlinedProperties(cypher_ast_node_pattern_get_properties(n)) == AST_INVALID) {
+	if(_ValidateInlinedProperties(cypher_ast_node_pattern_get_properties(n), vctx) == AST_INVALID) {
 		return VISITOR_BREAK;
 	}
 
