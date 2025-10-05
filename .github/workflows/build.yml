@@ -94,6 +94,17 @@ jobs:
             test_dockerfile: Dockerfile.alpine
             cache_path: linux-x64
             is_debug: "0"
+          - name: linux/x86_64
+            platform: linux/amd64
+            suffix: server-alpine-x64
+            os: alpine
+            machine_label: ubuntu-latest
+            build_test_image: true
+            dockerfile: Dockerfile.alpine-server
+            compiler_dockerfile: Dockerfile.compiler_alpine
+            test_dockerfile: Dockerfile.alpine
+            cache_path: linux-x64
+            is_debug: "0"
           - name: linux/arm64
             platform: linux/arm64
             suffix: alpine-arm64v8
@@ -101,6 +112,17 @@ jobs:
             machine_label: ubuntu-24.04-arm
             build_test_image: true
             dockerfile: Dockerfile.alpine
+            compiler_dockerfile: Dockerfile.compiler_alpine
+            test_dockerfile: Dockerfile.alpine
+            cache_path: linux-arm64v8
+            is_debug: "0"
+          - name: linux/arm64
+            platform: linux/arm64
+            suffix: server-alpine-arm64v8
+            os: alpine
+            machine_label: ubuntu-24.04-arm
+            build_test_image: true
+            dockerfile: Dockerfile.alpine-server
             compiler_dockerfile: Dockerfile.compiler_alpine
             test_dockerfile: Dockerfile.alpine
             cache_path: linux-arm64v8
@@ -138,6 +160,17 @@ jobs:
             build_test_image: false
             test_dockerfile: Dockerfile.debian
             cache_path: linux-arm64v8
+            is_debug: "1"
+          - name: linux/x86_64
+            platform: linux/amd64
+            suffix: server-alpine-x64
+            os: alpine
+            machine_label: ubuntu-latest
+            build_test_image: true
+            dockerfile: Dockerfile.alpine-server
+            compiler_dockerfile: Dockerfile.compiler_alpine
+            test_dockerfile: Dockerfile.alpine
+            cache_path: linux-x64
             is_debug: "1"
           - name: rhel/amd64
             platform: linux/amd64
