@@ -160,7 +160,7 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 		}
 	}
 
-	if(cartesianProduct != NULL && cartesianProduct->childCount > 0) {
+	if(cartesianProduct != NULL && OpBase_ChildCount(cartesianProduct) > 0) {
 		if(plan->root != NULL) {
 			// connect existing operations via an apply operation
 			// these will become the apply's left handside
