@@ -1,0 +1,53 @@
+ARG BASE_IMAGE=falkordb/falkordb-compiler
+
+ARG TARGETPLATFORM=linux/amd64
+
+FROM $BASE_IMAGE AS compiler
+
+FROM redis:8.2.2
+
+ENV FALKORDB_HOME=/var/lib/falkordb
+
+ENV FALKORDB_DATA_PATH=${FALKORDB_HOME}/data
+
+ENV FALKORDB_BIN_PATH=${FALKORDB_HOME}/bin
+
+ENV FALKORDB_IMPORT_PATH=${FALKORDB_HOME}/import
+
+ENV FALKORDB_TLS_PATH=${FALKORDB_HOME}/tls
+
+# For backward compatibility, link previous bin path to new bin path
+RUN mkdir -p /FalkorDB/build/docker && \
+    mkdir -p /FalkorDB/bin/src && \
+    mkdir -p /data
+
+# Install runtime dependencies
+RUN apt-get update && \
+    apt-get install -y libgomp1 openssl && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy FalkorDB binary
+COPY --from=compiler /FalkorDB/bin/src/falkordb.so /usr/lib/redis/modules/
+
+# Copy configurations and scripts
+COPY --from=compiler /FalkorDB/build/docker/run.sh ${FALKORDB_BIN_PATH}/
+COPY --from=compiler /FalkorDB/build/docker/gen-certs.sh ${FALKORDB_BIN_PATH}/
+
+# Create data, bin and import directories
+RUN mkdir -p ${FALKORDB_DATA_PATH} ${FALKORDB_BIN_PATH} ${FALKORDB_IMPORT_PATH} ${FALKORDB_TLS_PATH} && \
+    chown -R redis:redis ${FALKORDB_HOME}
+
+# For backward compatibility, create symlinks to old paths
+RUN ln -s ${FALKORDB_BIN_PATH} /FalkorDB/build/docker/bin && \
+    ln -s ${FALKORDB_DATA_PATH} /data/falkordb && \
+    ln -s ${FALKORDB_IMPORT_PATH} /data/import && \
+    ln -s ${FALKORDB_TLS_PATH} /data/tls
+
+WORKDIR ${FALKORDB_DATA_PATH}
+
+USER redis
+
+EXPOSE 6379
+
+CMD ["redis-server", "--loadmodule", "/usr/lib/redis/modules/falkordb.so"]

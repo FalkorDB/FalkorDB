@@ -145,6 +145,26 @@ jobs:
             is_debug: "0"
           - name: linux/amd64
             platform: linux/amd64
+            suffix: server-x64
+            os: ubuntu
+            machine_label: ubuntu-latest
+            build_test_image: true
+            dockerfile: Dockerfile.server
+            test_dockerfile: Dockerfile.debian
+            cache_path: linux-x64
+            is_debug: "0"
+          - name: linux/arm64
+            platform: linux/arm64
+            suffix: server-arm64v8
+            os: ubuntu
+            machine_label: ubuntu-24.04-arm
+            build_test_image: true
+            dockerfile: Dockerfile.server
+            test_dockerfile: Dockerfile.debian
+            cache_path: linux-arm64v8
+            is_debug: "0"
+          - name: linux/amd64
+            platform: linux/amd64
             suffix: x64
             os: ubuntu
             machine_label: ubuntu-latest
