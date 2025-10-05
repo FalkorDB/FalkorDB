@@ -183,7 +183,7 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 			for(int i = 0; i < OpBase_ChildCount(cartesianProduct); i++) {
 				OpBase *child = OpBase_GetChild(cartesianProduct, i);
 
-				// get to the tap of the current branch
+				// get to the tip of the current branch
 				while(OpBase_ChildCount(child) > 0) {
 					child = OpBase_GetChild(child, 0);
 				}
