@@ -181,17 +181,6 @@ jobs:
             test_dockerfile: Dockerfile.debian
             cache_path: linux-arm64v8
             is_debug: "1"
-          - name: linux/x86_64
-            platform: linux/amd64
-            suffix: server-alpine-x64
-            os: alpine
-            machine_label: ubuntu-latest
-            build_test_image: true
-            dockerfile: Dockerfile.alpine-server
-            compiler_dockerfile: Dockerfile.compiler_alpine
-            test_dockerfile: Dockerfile.alpine
-            cache_path: linux-x64
-            is_debug: "1"
           - name: rhel/amd64
             platform: linux/amd64
             suffix: rhel-x64
@@ -405,7 +394,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: ${{ matrix.platform.build_test_image }}
         with:
-          name: falkordb-tests-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}
+          name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
           if-no-files-found: error
 
