@@ -8,10 +8,17 @@
 #include "RG.h"
 #include "GraphBLAS.h"
 
+#include <pthread.h>
+
 // forward declaration of Delta_Matrix type
 typedef struct _Delta_Matrix _Delta_Matrix;
 typedef _Delta_Matrix *Delta_Matrix;
 
+#define DELTA_MATRIX_M(C)            ((C)->matrix)
+#define DELTA_MATRIX_DELTA_PLUS(C)   ((C)->delta_plus)
+#define DELTA_MATRIX_DELTA_MINUS(C)  ((C)->delta_minus)
+
+#define DELTA_MATRIX_MAINTAIN_TRANSPOSE(C) ((C)->transposed != NULL)
 
 //------------------------------------------------------------------------------
 //
@@ -94,6 +101,15 @@ typedef _Delta_Matrix *Delta_Matrix;
 //   . . .     . . .     . . .
 //
 //------------------------------------------------------------------------------
+
+struct _Delta_Matrix {
+	volatile bool dirty;      // Indicates if matrix requires sync
+	GrB_Matrix matrix;        // Underlying GrB_Matrix
+	GrB_Matrix delta_plus;    // Pending additions
+	GrB_Matrix delta_minus;   // Pending deletions
+	Delta_Matrix transposed;  // Transposed matrix
+	pthread_mutex_t mutex;    // Lock
+};
 
 GrB_Info Delta_Matrix_new
 (
@@ -277,6 +293,11 @@ void Delta_Matrix_synchronize
 	GrB_Index ncols
 );
 
+bool Delta_Matrix_Synced
+(
+	const Delta_Matrix C
+);
+
 void Delta_Matrix_lock
 (
 	Delta_Matrix C
@@ -287,8 +308,12 @@ void Delta_Matrix_unlock
 	Delta_Matrix C
 );
 
+void Delta_Matrix_setDirty
+(
+	Delta_Matrix C
+);
+
 void Delta_Matrix_free
 (
 	Delta_Matrix *C
 );
-
