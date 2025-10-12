@@ -1,7 +1,6 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #include "RG.h"
@@ -22,8 +21,8 @@ GrB_Info Delta_Matrix_setElement_UINT64
 
 	uint64_t v;
 	GrB_Info info;
-	bool     entry_exists      = false;  //  M[i,j] exists
-	bool     mark_for_deletion = false;  //  dm[i,j] exists
+	bool entry_exists      = false;  //  M[i,j] exists
+	bool mark_for_deletion = false;  //  dm[i,j] exists
 
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
 		info =  Delta_Matrix_setElement_BOOL(C->transposed, j, i);

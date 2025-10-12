@@ -20,8 +20,6 @@ GrB_Info Delta_Matrix_removeElement
 	Delta_Matrix_checkBounds(C, i, j);
 	GrB_Info   info;
 	bool       in_m  = false;
-	bool       in_dp = false;
-	bool       in_dm = false;
 	GrB_Matrix m     = DELTA_MATRIX_M(C);
 	GrB_Matrix dp    = DELTA_MATRIX_DELTA_PLUS(C);
 	GrB_Matrix dm    = DELTA_MATRIX_DELTA_MINUS(C);
@@ -42,10 +40,6 @@ GrB_Info Delta_Matrix_removeElement
 	} else {
 		GrB_OK (GrB_Matrix_removeElement(dp, i, j));
 	}
-
-	//--------------------------------------------------------------------------
-	// entry exists in 'delta-plus'
-	//--------------------------------------------------------------------------
 	
 	Delta_Matrix_setDirty(C);
 	return GrB_SUCCESS;

@@ -16,6 +16,7 @@ GrB_Info Delta_Matrix_export
 ) {
 	ASSERT(C != NULL);
 	ASSERT(A != NULL);
+	ASSERT(type == GrB_BOOL || type == GrB_UINT64);
 
 	GrB_Type  t;
 	GrB_Index nrows;
@@ -29,9 +30,11 @@ GrB_Info Delta_Matrix_export
 	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(C);
 
 	GrB_OK (GxB_Matrix_type  (&t, m));
+	ASSERT (type == GrB_BOOL || type == t)
+
 	GrB_OK (GrB_Matrix_nrows (&nrows, m));
 	GrB_OK (GrB_Matrix_ncols (&ncols, m));
-	GrB_OK (GrB_Matrix_new   (&_A, t, nrows, ncols));
+	GrB_OK (GrB_Matrix_new   (&_A, type, nrows, ncols));
 	GrB_OK (GrB_Matrix_nvals (&dp_nvals, dp));
 	GrB_OK (GrB_Matrix_nvals (&dm_nvals, dm));
 

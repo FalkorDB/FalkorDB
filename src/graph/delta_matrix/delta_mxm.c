@@ -31,7 +31,6 @@ GrB_Info Delta_mxm                     // C = A * B
 	// validate C doesn't contains entries in either delta-plus or delta-minus
 	ASSERT(Delta_Matrix_Synced(C));
 
-	GrB_Info info;
 	GrB_Index nrows;     // number of rows in result matrix
 	GrB_Index ncols;     // number of columns in result matrix 
 	GrB_Index dp_nvals;  // number of entries in A * 'dp'
@@ -90,6 +89,6 @@ GrB_Info Delta_mxm                     // C = A * B
 	if(mask)  GrB_free(&mask);
 	if(accum) GrB_free(&accum);
 
-	return info;
+	return GrB_SUCCESS;
 }
 

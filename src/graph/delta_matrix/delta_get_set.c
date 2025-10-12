@@ -9,7 +9,6 @@
 // replace C's internal M matricies with given
 // the operation can only succeed if C's interal matrices:
 // M, DP, DM are all empty
-// C->M will point to *M and *M will be set to NULL
 GrB_Info Delta_Matrix_setMatrices
 (
 	Delta_Matrix C,  // delta matrix

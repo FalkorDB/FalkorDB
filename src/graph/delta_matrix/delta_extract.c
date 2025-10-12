@@ -36,7 +36,7 @@ GrB_Info Delta_Matrix_extractElement_BOOL  // x = A(i,j)
 
 	// entry isn't marked for deletion, see if it exists in 'm'
 	info = GrB_Matrix_extractElement(&_x, m, i, j);
-	if(x) *x = _x;
+	if(info == GrB_SUCCESS && x) *x = _x;
 
 	return info;
 }
