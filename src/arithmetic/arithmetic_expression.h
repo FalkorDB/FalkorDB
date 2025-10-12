@@ -122,6 +122,16 @@ SIValue AR_EXP_FinalizeAggregations(AR_ExpNode *root, const Record r);
 // Utility functions
 //------------------------------------------------------------------------------
 
+// set the ith child of parent
+// asserts if idx is out of bounds
+// returns previous child at `idx` position
+AR_ExpNode *AR_EXP_setChild
+(
+	const AR_ExpNode *parent,  // parent node
+	AR_ExpNode *child,         // child to add
+	uint idx                   // child index
+);
+
 // get the ith child of root
 // in case root isn't a parent or idx > number of children NULL is returned
 AR_ExpNode *AR_EXP_getChild
@@ -131,7 +141,11 @@ AR_ExpNode *AR_EXP_getChild
 );
 
 // traverse an expression tree and add all entity aliases to a rax
-void AR_EXP_CollectEntities(AR_ExpNode *root, rax *aliases);
+void AR_EXP_CollectEntities
+(
+	const AR_ExpNode *root,
+	rax *aliases
+);
 
 // collect accessed attribute for a given entity
 // e.g. person.first_name + person.last_name
@@ -142,6 +156,12 @@ void AR_EXP_CollectAttributes
 	AR_ExpNode *root,    // expression to collect attributes from
 	const char *entity,  // accessed entity
 	rax *attributes      // collected attributes
+);
+
+// collect each variable operand node expands from root
+AR_ExpNode **AR_EXP_CollectVariableOperands
+(
+	AR_ExpNode *root  // expression root
 );
 
 // search for an aggregation node within the expression tree
@@ -192,7 +212,25 @@ bool AR_EXP_ReturnsBoolean(const AR_ExpNode *exp);
 const char *AR_EXP_GetFuncName(const AR_ExpNode *exp);
 
 // clones given expression
-AR_ExpNode *AR_EXP_Clone(AR_ExpNode *exp);
+AR_ExpNode *AR_EXP_Clone
+(
+	const AR_ExpNode *exp
+);
+
+// copies the content of `src` into `dest`
+void AR_EXP_Overwrite
+(
+	AR_ExpNode *dest,      // node being overwritten
+	const AR_ExpNode *src  // node to overwrite with
+);
+
+// compare two expressions
+// returns true if `a` and `b` represent the same expression
+bool AR_EXP_Equals
+(
+	const AR_ExpNode *a,  // first expression
+	const AR_ExpNode *b   // second expression
+) ;
 
 // free arithmetic expression tree
 void AR_EXP_Free(AR_ExpNode *root);

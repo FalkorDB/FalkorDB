@@ -48,6 +48,8 @@ static void _AR_EXP_ResolveVariables(AR_ExpNode *root, const Record r);
 // Clear an op node internals, without freeing the node allocation itself.
 static void _AR_EXP_FreeOpInternals(AR_ExpNode *op_node);
 
+static void _AR_EXP_FreeInternals (AR_ExpNode *node) ;
+
 inline bool AR_EXP_IsConstant(const AR_ExpNode *exp) {
 	return exp->type == AR_EXP_OPERAND && exp->operand.type == AR_EXP_CONSTANT;
 }
@@ -137,32 +139,37 @@ static AR_ExpNode *_AR_EXP_CloneOperand
 static AR_ExpNode *_AR_EXP_NewOpNode(uint child_count) {
 	AR_ExpNode *node = rm_calloc(1, sizeof(AR_ExpNode));
 
-	node->type            =  AR_EXP_OP;
-	node->op.children     =  rm_malloc(child_count * sizeof(AR_ExpNode *));
-	node->op.child_count  =  child_count;
+	node->type           = AR_EXP_OP;
+	node->op.children    = rm_calloc (child_count, sizeof (AR_ExpNode *)) ;
+	node->op.child_count = child_count;
 
 	return node;
 }
 
-static AR_ExpNode *_AR_EXP_CloneOp(AR_ExpNode *exp) {
-	const char *func_name = exp->op.f->name;
-	bool include_internal = exp->op.f->internal;
-	uint child_count = exp->op.child_count;
-	AR_ExpNode *clone = AR_EXP_NewOpNode(func_name, include_internal, child_count);
-	AR_Func_Clone clone_cb = clone->op.f->callbacks.clone;
-	void *pdata = exp->op.private_data;
-	if(clone_cb != NULL) {
+static AR_ExpNode *_AR_EXP_CloneOp
+(
+	const AR_ExpNode *exp
+) {
+	const char *func_name = exp->op.f->name ;
+	bool include_internal = exp->op.f->internal ;
+	uint child_count = exp->op.child_count ;
+	AR_ExpNode *clone =
+		AR_EXP_NewOpNode (func_name, include_internal, child_count) ;
+
+	AR_Func_Clone clone_cb = clone->op.f->callbacks.clone ;
+	void *pdata = exp->op.private_data ;
+	if (clone_cb != NULL) {
 		// clone callback specified, use it to duplicate function's private data
-		clone->op.private_data = clone_cb(exp->op.private_data);
+		clone->op.private_data = clone_cb (exp->op.private_data) ;
 	}
 
 	// clone child nodes
-	for(uint i = 0; i < exp->op.child_count; i++) {
-		AR_ExpNode *child = AR_EXP_Clone(exp->op.children[i]);
-		clone->op.children[i] = child;
+	for (uint i = 0; i < exp->op.child_count; i++) {
+		AR_ExpNode *child = AR_EXP_Clone (exp->op.children[i]) ;
+		clone->op.children[i] = child ;
 	}
 
-	return clone;
+	return clone ;
 }
 
 static void _AR_EXP_ValidateArgsCount
@@ -757,6 +764,27 @@ SIValue AR_EXP_FinalizeAggregations
 	}
 }
 
+// set the ith child of parent
+// asserts if idx is out of bounds
+// returns previous child at `idx` position
+AR_ExpNode *AR_EXP_setChild
+(
+	const AR_ExpNode *parent,  // parent node
+	AR_ExpNode *child,         // child to add
+	uint idx                   // child index
+) {
+	ASSERT (parent       != NULL) ;
+	ASSERT (child        != NULL) ;
+	ASSERT (child        != parent) ;
+	ASSERT (parent->type == AR_EXP_OP) ;
+	ASSERT (idx < parent->op.child_count) ;
+
+	AR_ExpNode *prev_child = parent->op.children[idx] ;
+	parent->op.children[idx] = child ;
+
+	return prev_child ;
+}
+
 // get the ith child of root
 // in case root isn't a parent or idx > number of children NULL is returned
 AR_ExpNode *AR_EXP_getChild
@@ -777,9 +805,12 @@ AR_ExpNode *AR_EXP_getChild
 
 void AR_EXP_CollectEntities
 (
-	AR_ExpNode *root,
+	const AR_ExpNode *root,
 	rax *aliases
 ) {
+	ASSERT (root    != NULL) ;
+	ASSERT (aliases != NULL) ;
+
 	if(AR_EXP_IsOperation(root)) {
 		for(int i = 0; i < root->op.child_count; i++) {
 			AR_EXP_CollectEntities(root->op.children[i], aliases);
@@ -838,6 +869,62 @@ void AR_EXP_CollectAttributes
 			AR_EXP_CollectAttributes(NODE_CHILD(root,i), entity, attributes);
 		}
 	}
+}
+
+// collect each variable operand node expands from root
+AR_ExpNode **AR_EXP_CollectVariableOperands
+(
+	AR_ExpNode *root  // expression root
+) {
+	ASSERT (root != NULL) ;
+	uint i = 0 ;
+	AR_ExpNode **nodes = array_new (AR_ExpNode*, 1) ;
+
+	array_append (nodes, root) ;
+	while (i < array_len(nodes)) {
+		AR_ExpNode *node = nodes[i] ;
+
+		switch (node->type) {
+			case AR_EXP_OPERAND:
+				switch (node->operand.type) {
+					case AR_EXP_PARAM:
+					case AR_EXP_CONSTANT:
+					case AR_EXP_BORROW_RECORD:
+						array_del_fast (nodes, i) ;
+						break ;
+
+					case AR_EXP_VARIADIC:
+						i++ ;
+						break;
+
+					default:
+						ASSERT (false) ;
+						break ;
+				}
+				break;
+
+			case AR_EXP_OP:
+				for (uint j = 0; j < node->op.child_count; j++) {
+					AR_ExpNode *child = node->op.children[j] ;
+
+					if (AR_EXP_IsConstant (child) ||
+						AR_EXP_IsParameter (child) ) {
+						continue ;
+					}
+
+					array_append (nodes, child) ;
+				}
+
+				array_del_fast (nodes, i) ;
+				break;
+
+			default:
+				ASSERT(false);
+				break;
+		}
+	}
+
+	return nodes ;
 }
 
 bool AR_EXP_ContainsAggregation(AR_ExpNode *root) {
@@ -1005,26 +1092,56 @@ inline const char *AR_EXP_GetFuncName(const AR_ExpNode *exp) {
 	return exp->op.f->name;
 }
 
-AR_ExpNode *AR_EXP_Clone(AR_ExpNode *exp) {
-	if(exp == NULL) return NULL;
+AR_ExpNode *AR_EXP_Clone
+(
+	const AR_ExpNode *exp
+) {
+	if (exp == NULL) {
+		return NULL ;
+	}
 
 	AR_ExpNode *clone = NULL;
 
-	switch(exp->type) {
-	case AR_EXP_OPERAND:
-		clone = _AR_EXP_CloneOperand(exp);
-		break;
-	case AR_EXP_OP:
-		clone = _AR_EXP_CloneOp(exp);
-		break;
-	default:
-		ASSERT(false);
-		break;
+	switch (exp->type) {
+		case AR_EXP_OPERAND:
+			clone = _AR_EXP_CloneOperand (exp) ;
+			break ;
+
+		case AR_EXP_OP:
+			clone = _AR_EXP_CloneOp (exp) ;
+			break ;
+
+		default:
+			ASSERT (false) ;
+			break ;
 	}
 
-	clone->resolved_name = exp->resolved_name;
+	clone->resolved_name = exp->resolved_name ;
 
-	return clone;
+	return clone ;
+}
+
+// copies the content of `src` into `dest`
+void AR_EXP_Overwrite
+(
+	AR_ExpNode *dest,      // node whose content will be replaced
+	const AR_ExpNode *src  // node to overwrite with
+) {
+	ASSERT (src  != NULL) ;
+	ASSERT (dest != NULL) ;
+
+	// free any dynamically allocated internals within dest
+	_AR_EXP_FreeInternals (dest) ;
+
+	// create a deep copy of src
+	AR_ExpNode *clone = AR_EXP_Clone (src) ;
+
+	// copy the cloned content into dest's memory location
+	*dest = *clone ;
+
+	// free the clone's outer shell without freeing its internals
+	// (since those internals now belong to dest)
+	rm_free (clone) ;
 }
 
 static inline void _AR_EXP_FreeOpInternals
@@ -1049,16 +1166,22 @@ static inline void _AR_EXP_FreeOpInternals
 	rm_free(op_node->op.children);
 }
 
+static void _AR_EXP_FreeInternals
+(
+	AR_ExpNode *node
+) {
+	if (AR_EXP_IsOperation (node)) {
+		_AR_EXP_FreeOpInternals (node) ;
+	} else if (AR_EXP_IsConstant (node)) {
+		SIValue_Free (node->operand.constant) ;
+	}
+}
+
 inline void AR_EXP_Free
 (
 	AR_ExpNode *root
 ) {
-	if(AR_EXP_IsOperation(root)) {
-		_AR_EXP_FreeOpInternals(root);
-	} else if(AR_EXP_IsConstant(root)) {
-		SIValue_Free(root->operand.constant);
-	}
-
-	rm_free(root);
+	_AR_EXP_FreeInternals (root) ;
+	rm_free (root) ;
 }
 

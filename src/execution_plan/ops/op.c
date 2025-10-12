@@ -6,6 +6,7 @@
 
 #include "op.h"
 #include "RG.h"
+#include "op_sort.h"
 #include "op_project.h"
 #include "op_aggregate.h"
 #include "../../util/rmalloc.h"
@@ -131,6 +132,10 @@ int OpBase_Modifies
 	OpBase *op,
 	const char *alias
 ) {
+	ASSERT (op    != NULL) ;
+	ASSERT (alias != NULL) ;
+	//ASSERT (op->plan->prepared == false) ;
+
 	if(!op->modifies) {
 		op->modifies = array_new(const char *, 1);
 	}
@@ -349,12 +354,22 @@ void OpBase_BindOpToPlan
 	ASSERT(op != NULL);
 
 	OPType type = OpBase_Type(op);
-	if(type == OPType_PROJECT) {
-		ProjectBindToPlan(op, plan);
-	} else if(type == OPType_AGGREGATE) {
-		AggregateBindToPlan(op, plan);
-	} else {
-		op->plan = plan;
+	switch (type) {
+		case OPType_PROJECT:
+			ProjectBindToPlan (op, plan) ;
+			break ;	
+
+		case OPType_AGGREGATE:
+			AggregateBindToPlan (op, plan) ;
+			break ;
+
+		case OPType_SORT:
+			SortBindToPlan (op, plan) ;
+			break ;
+
+		default:
+			op->plan = plan;
+			break ;
 	}
 }
 

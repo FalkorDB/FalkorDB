@@ -60,3 +60,81 @@ class testOrderBy(FlowTestsBase):
         # assert the order of the results
         self.env.assertEquals(res.result_set[0][0], Node(labels='N', properties={'v': 1}))
         self.env.assertEquals(res.result_set[1][0], Node(labels='N', properties={'v': 2}))
+
+    def test03_order_by_projected_exp(self):
+        """order-by accesses projected alias by its original form"""
+        q = """UNWIND [{v:3}, {v:1}, {v:2}] AS element
+               WITH element.v AS X
+               ORDER BY element.v
+               RETURN X"""
+
+        expected = [[1], [2], [3]]
+
+        actual = self.graph.query(q).result_set
+        self.env.assertEquals(actual, expected)
+
+    def test04_order_by_alias_prop(self):
+        """order-by access projected alias by its original name"""
+        q = """UNWIND [{v:3}, {v:1}, {v:2}] AS element
+               WITH element AS X
+               ORDER BY element.v
+               RETURN X"""
+
+        expected = [[{'v':1}], [{'v':2}], [{'v':3}]]
+
+        actual = self.graph.query(q).result_set
+        self.env.assertEquals(actual, expected)
+
+        # nest replaced expression within a larger expression
+        q = """UNWIND [{v:3}, {v:1}, {v:2}] AS element
+               WITH element AS X
+               ORDER BY element.v + 12 + element.v
+               RETURN X"""
+
+        actual = self.graph.query(q).result_set
+        self.env.assertEquals(actual, expected)
+
+        # combine the two types of order-by rewritting
+        q = """UNWIND [{v:3, y:3}, {v:1, y:1}, {v:2, y:2}] AS element
+               WITH element AS X, element.y AS Y
+               ORDER BY toInteger(element.v) + 12 + element.y, 1 + toInteger(element.y) + 2
+               RETURN X"""
+
+        expected = [[{'v':1, 'y':1}], [{'v':2, 'y':2}], [{'v':3, 'y':3}]]
+        actual = self.graph.query(q).result_set
+        self.env.assertEquals(actual, expected)
+
+    def test05_order_by_nonprojected(self):
+        q = """UNWIND [3, 1, 2] AS X
+               UNWIND [3, 1, 2] AS Y
+               WITH X
+               ORDER BY Y, X
+               RETURN X"""
+
+        expected = [[1], [2], [3], [1], [2], [3], [1], [2], [3]]
+        actual = self.graph.query(q).result_set
+        self.env.assertEquals(actual, expected)
+
+        q = """UNWIND [1, 2] AS X
+               UNWIND [1, 2] AS Y
+               WITH X
+               ORDER BY Y + X + 1, X
+               RETURN X"""
+
+        expected = [[1], [1], [2], [2]]
+        actual = self.graph.query(q).result_set
+        self.env.assertEquals(actual, expected)
+
+    def test06_order_by_unallowed(self):
+
+        q = """UNWIND [1, 2, 3] AS X
+               WITH count(X) AS cnt
+               ORDER BY X
+               RETURN cnt"""
+
+        try:
+            self.graph.query(q).result_set
+            self.env.assertTrue(False and "should fail")
+        except Exception as e:
+            self.env.assertIn("ORDER BY cannot reference variables not projected", str(e))
+
