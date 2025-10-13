@@ -368,7 +368,7 @@ void Global_GrB_Ops_Init(void) {
 	//--------------------------------------------------------------------------
 	GrB_OK (GrB_Scalar_new(&ops->empty, GrB_BOOL));
 	GrB_OK (GrB_Scalar_new(&ops->bool_zombie, GrB_BOOL));
-	GrB_OK (GrB_Scalar_new(&ops->u64_zombie, GrB_BOOL));
+	GrB_OK (GrB_Scalar_new(&ops->u64_zombie, GrB_UINT64));
 
 	GrB_OK (GrB_Scalar_setElement_BOOL(ops->bool_zombie, BOOL_ZOMBIE));
 	GrB_OK (GrB_Scalar_setElement_UINT64(ops->u64_zombie, U64_ZOMBIE));
@@ -383,6 +383,7 @@ void Global_GrB_Ops_Free(void) {
 	GrB_free(&ops->not_zombie);
 	GrB_free(&ops->any_alive);
 	GrB_free(&ops->free_tensors);
+	GrB_free(&ops->push_id);
 	GrB_free(&ops->empty);
 	GrB_free(&ops->bool_zombie);
 	GrB_free(&ops->u64_zombie);

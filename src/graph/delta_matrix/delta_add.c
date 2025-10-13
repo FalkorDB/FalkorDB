@@ -21,8 +21,8 @@ GrB_Info Delta_add
 	ASSERT(A  != NULL);
 	ASSERT(B  != NULL);
 	ASSERT(C  != NULL);
-	// Delta_Matrix_validate(A, false);
-	// Delta_Matrix_validate(B, false);
+	Delta_Matrix_validate(A, false);
+	Delta_Matrix_validate(B, false);
 
 	GrB_Type a_ty;
 	GrB_Type b_ty;
@@ -32,6 +32,8 @@ GrB_Info Delta_add
 	Delta_Matrix_type(&c_ty, C);
 
 	ASSERT(c_ty == GrB_BOOL);
+	ASSERT(a_ty == GrB_BOOL || a_ty == GrB_UINT64);
+	ASSERT(b_ty == GrB_BOOL || b_ty == GrB_UINT64);
 	
 	const struct GrB_ops *ops = Global_GrB_Ops_Get();
 	GrB_Scalar alpha = a_ty == GrB_BOOL ? ops->bool_zombie : ops->u64_zombie;
@@ -48,6 +50,10 @@ GrB_Info Delta_add
 		GrB_OK (GrB_Matrix_assign_BOOL(CM, CDM, NULL, BOOL_ZOMBIE, GrB_ALL, 0,
 			GrB_ALL, 0, GrB_DESC_S));
 	}
+
+	GrB_Matrix_wait(CM, GrB_MATERIALIZE);
+	Delta_Matrix_validate(C, false);
+
 	return GrB_SUCCESS;
 }
 
@@ -126,6 +132,7 @@ GrB_Info Delta_eWiseAdd
 	if(handle_deletion) {
 		GrB_OK (GrB_Matrix_new(&DM_union, GrB_BOOL, nrows, ncols));
 		GrB_OK (GxB_set(DM_union, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE));
+
 		GrB_OK (GrB_transpose(DM_union, BM, NULL, ADM, GrB_DESC_SCT0));
 
 		GrB_OK (GrB_transpose(
@@ -141,10 +148,38 @@ GrB_Info Delta_eWiseAdd
 	AM = BM = NULL;
 
 	//--------------------------------------------------------------------------
-	// CDP = ADP + BDP ---- Must later remove intersection with M
+	// CM <CM> = AM + BDP equivalently CM <CM> = CM + BDP
+	// CM <CM> = ADP + BM equivalently CM <CM> = ADP + CM
+	//--------------------------------------------------------------------------
+
+	// This code should call ewiseadd, but must wait for a certain GraphBLAS
+	// kernel to be efficient.
+
+	if(handle_addition) {
+		GrB_OK (GrB_Matrix_new(&M_times_DP, c_ty, nrows, ncols));
+
+		// Set M_times_DP to hypersparse since it is a submatrix of DP
+		// so it shouldn't be CSR until we sync it.
+		GrB_OK (GxB_set(M_times_DP, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE));
+
+
+		GrB_OK (GrB_Matrix_eWiseMult_BinaryOp(M_times_DP, NULL, NULL, op, CM, 
+			BDP, NULL));
+		GrB_OK (GrB_Matrix_eWiseMult_BinaryOp(M_times_DP, M_times_DP, NULL, op, 
+			ADP, CM, GrB_DESC_SC));
+
+		// cannot use an accumulator since op might be an indexBinaryOp
+		GrB_OK (GrB_Matrix_assign(CM, M_times_DP, NULL, M_times_DP, GrB_ALL, 
+			nrows, GrB_ALL, ncols, GrB_DESC_S));
+	}
+	
+
+	//--------------------------------------------------------------------------
+	// CDP <!CM> = ADP + BDP 
 	//--------------------------------------------------------------------------
 	if (handle_addition){
-		GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp(CDP, NULL, NULL, op, ADP, BDP, NULL));
+		GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp(CDP, M_times_DP, NULL, op, ADP, 
+			BDP, GrB_DESC_SC));
 	} else {
 		GrB_OK (GrB_Matrix_clear(CDP));
 	}
@@ -168,34 +203,8 @@ GrB_Info Delta_eWiseAdd
 	if(handle_deletion && handle_addition){
 		// delete intersection of CDM with CDP
 		GrB_OK (GrB_transpose(
-			CDM, CDP, GrB_ONEB_BOOL, DM_union, GrB_DESC_SCT0));
+			CDM, M_times_DP, GrB_ONEB_BOOL, DM_union, GrB_DESC_SCT0));
 	}
-
-	//--------------------------------------------------------------------------
-	// CM <CM>+= CDP ----- Should be done inplace (currently is not GBLAS TODO)
-	//--------------------------------------------------------------------------
-
-	if(handle_addition)
-	{
-		GrB_OK (GrB_Matrix_new(&M_times_DP, c_ty, nrows, ncols));
-
-		// Set M_times_DP to hypersparse since it is a submatrix of DP
-		// so it shouldn't be CSR until we sync it.
-		GrB_OK (GxB_set(M_times_DP, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE));
-		GrB_OK (GrB_Matrix_eWiseMult_BinaryOp(M_times_DP, NULL, NULL, op, CM, 
-			CDP, NULL));
-
-		// cannot use an accumulator since op might be an indexBinaryOp
-		GrB_OK (GrB_Matrix_assign(CM, M_times_DP, NULL, M_times_DP, GrB_ALL, 
-			nrows, GrB_ALL, ncols, GrB_DESC_S));
-	}        
-
-	//------ --------------------------------------------------------------------
-	// CDP <!CM> = ADP + BDP ---- remove intersection with M
-	//------ --------------------------------------------------------------------
-	if(handle_addition){
-		GrB_OK (GrB_transpose(CDP, CM, NULL, CDP, GrB_DESC_RSCT0));
-	}        
 
 	GrB_OK (GrB_Matrix_wait(CM, GrB_MATERIALIZE));
 	GrB_free(&DM_union);
@@ -254,12 +263,26 @@ GrB_Info Delta_eWiseUnion
 	GrB_OK (Delta_Matrix_nrows(&nrows, C)) ;
 	GrB_OK (Delta_Matrix_ncols(&ncols, C)) ;
 
+	#if RG_DEBUG || 1
+	GrB_OK (GrB_Matrix_apply_BinaryOp1st_Scalar(ADM, ADM, GrB_SECOND_BOOL, 
+		GrB_EQ_UINT64, alpha, AM, GrB_DESC_S));
+	GrB_OK (GrB_Matrix_apply_BinaryOp1st_Scalar(BDM, BDM, GrB_SECOND_BOOL, 
+		GrB_EQ_UINT64, beta, BM, GrB_DESC_S));
+	GrB_OK (GrB_Matrix_set_INT32(ADM, true, GxB_ISO));
+	GrB_OK (GrB_Matrix_set_INT32(BDM, true, GxB_ISO));
+	bool ok = true;
+	GrB_OK (GrB_Matrix_reduce_BOOL(&ok, NULL, GrB_LAND_MONOID_BOOL, ADM, NULL));
+	ASSERT(ok);
+	GrB_OK (GrB_Matrix_reduce_BOOL(&ok, NULL, GrB_LAND_MONOID_BOOL, BDM, NULL));
+	ASSERT(ok);
+	#endif
+
 	bool handle_deletion = adm_vals || bdm_vals;
 	bool handle_addition = adp_vals || bdp_vals;
 
 
 	//--------------------------------------------------------------------------
-  // DM_union = (ADM - BM) ∪ (BDM - AM) 
+	// DM_union = (ADM - BM) ∪ (BDM - AM) 
 	//--------------------------------------------------------------------------
 	if(handle_deletion) {
 		GrB_OK (GrB_Matrix_new(&DM_union, GrB_BOOL, nrows, ncols));
@@ -270,7 +293,7 @@ GrB_Info Delta_eWiseUnion
 	//--------------------------------------------------------------------------
 	// M_times_DP =  AM * BDP U BM * ADP 
 	//--------------------------------------------------------------------------
-	if(handle_addition && op != GrB_ONEB_BOOL) {
+	if(handle_addition) {
 		GrB_OK (GrB_Matrix_new(&M_times_DP, C_ty, nrows, ncols));
 
 		// Set M_times_DP to hypersparse since it is a submatrix of DP
@@ -284,7 +307,7 @@ GrB_Info Delta_eWiseUnion
 		// (since there should be no intersection between AM and BM)
 		// However it is needed so that previous entries are not deleted. 
 		GrB_OK (GrB_Matrix_eWiseMult_BinaryOp(
-			M_times_DP, NULL, GrB_ONEB_UINT64, op, BM, ADP, NULL));
+			M_times_DP, M_times_DP, NULL, op, BM, ADP, GrB_DESC_SC));
 	}
 
 	//--------------------------------------------------------------------------
@@ -297,14 +320,15 @@ GrB_Info Delta_eWiseUnion
 	AM = BM = NULL;
 
 	//--------------------------------------------------------------------------
-	// CDP = ADP + BDP ---- Must later remove intersection with M
+	// CDP = ADP + BDP
 	//--------------------------------------------------------------------------
 	if(handle_addition) {
 		GrB_OK (GxB_Matrix_eWiseUnion(
-			CDP, NULL, NULL, op, ADP, alpha, BDP, beta, NULL));
+			CDP, M_times_DP, NULL, op, ADP, alpha, BDP, beta, GrB_DESC_SC));
 	} else {
 		GrB_OK (GrB_Matrix_clear(CDP));
 	}
+
 	// don't use again, could have been overwritten.
 	ADP = BDP = NULL;
 
@@ -322,23 +346,15 @@ GrB_Info Delta_eWiseUnion
 
 	if(handle_addition && handle_deletion) {
 		GrB_OK (GrB_transpose(
-			CDM, CDP, GrB_ONEB_BOOL, DM_union, GrB_DESC_SCT0));
+			CDM, M_times_DP, GrB_ONEB_BOOL, DM_union, GrB_DESC_SCT0));
 	}
 
 	//--------------------------------------------------------------------------
-	// CM <CM>= M_times_DP 
+	// CM <CM> = M_times_DP 
 	//--------------------------------------------------------------------------
 	if(M_times_DP) {
 		GrB_OK (GrB_Matrix_assign(CM, M_times_DP, NULL, M_times_DP, GrB_ALL, 
 			nrows, GrB_ALL, ncols, GrB_DESC_S));
-	}
-
-	//--------------------------------------------------------------------------
-	// CDP<!CM> = ADP + BDP ---- remove intersection with M
-	//--------------------------------------------------------------------------
-	if(handle_addition) {
-		GrB_OK (GrB_transpose(
-			CDP, CM, NULL, CDP, GrB_DESC_RSCT0));
 	}
 
 	GrB_OK (GrB_Matrix_wait(CM, GrB_MATERIALIZE));

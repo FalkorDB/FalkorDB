@@ -12,6 +12,7 @@ GrB_Info Delta_cache_transpose
 (
     Delta_Matrix A
 ) {
+    ASSERT(A != NULL);
     GrB_Index nrows = 0;
     GrB_Index ncols = 0;
     GrB_Type  type = NULL;
@@ -20,7 +21,6 @@ GrB_Info Delta_cache_transpose
     GrB_OK(Delta_Matrix_ncols(&ncols, A));
     GrB_OK(Delta_Matrix_type(&type, A));
 
-    ASSERT(A != NULL);
     if(A->transposed != NULL){
         GrB_Index nvals = 0;
         ASSERT(Delta_Matrix_Synced(A->transposed));
