@@ -80,7 +80,7 @@ void AttributeSet_AddNoClone
 	AttributeSet *set,  // set to update
 	AttributeID *ids,   // identifiers
 	SIValue *values,    // values
-	ushort n,           // number of values to add
+	uint16_t n,         // number of values to add
 	bool allowNull		// accept NULLs
 );
 

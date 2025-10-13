@@ -1,25 +1,25 @@
 # -*- coding: utf-8 -*-
-from common import *
+import os
 import csv
 import time
+import random
 import threading
+from common import *
 from click.testing import CliRunner
 from falkordb_bulk_loader.bulk_insert import bulk_insert
 
-GRAPH_ID    = "graph"
-redis_graph = None
+GRAPH_ID = "bulk_insert"
 
-
-def ping_server(stop_event, res, self):
+def ping_server(stop_event, res, self, interval = 0.1, delay = 2):
     ping_count = 0
     while not stop_event.is_set():
         t0 = time.time()
         self.db.connection.ping()
         t1 = time.time() - t0
-        # Verify that pinging the server takes less than 1 second during bulk insertion
-        self.env.assertLess(t1, 2)
+        # Verify that pinging the server takes less than delay seconds during bulk insertion
+        self.env.assertLess(t1, delay)
         ping_count += 1
-        time.sleep(0.1)
+        time.sleep(interval)
 
     res[0] = ping_count
 
@@ -31,13 +31,11 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         if VALGRIND:
             self.env.skip() # valgrind is not working correctly with replication
 
-        global redis_graph
         self.port = self.env.envRunner.port
-        redis_graph = self.db.select_graph(GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
     # Run bulk loader script and validate terminal output
     def test01_run_script(self):
-        graphname = "graph"
         runner = CliRunner()
 
         csv_path = os.path.dirname(os.path.abspath(__file__)) + '/../../demo/social/resources/bulk_formatted/'
@@ -46,18 +44,17 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                                           '--nodes', csv_path + 'Country.csv',
                                           '--relations', csv_path + 'KNOWS.csv',
                                           '--relations', csv_path + 'VISITED.csv',
-                                          graphname])
+                                          GRAPH_ID])
 
-        # The script should report 27 node creations and 48 edge creations
+        # The script should report 27 node creations and 56 edge creations
         self.env.assertEquals(res.exit_code, 0)
         self.env.assertIn('27 nodes created', res.output)
         self.env.assertIn('56 relations created', res.output)
 
     # Validate that the expected nodes and properties have been constructed
     def test02_validate_nodes(self):
-        global redis_graph
         # Query the newly-created graph
-        query_result = redis_graph.query('MATCH (p:Person) RETURN p.name, p.age, p.gender, p.status, ID(p) ORDER BY p.name')
+        query_result = self.graph.query('MATCH (p:Person) RETURN p.name, p.age, p.gender, p.status, ID(p) ORDER BY p.name')
         # Verify that the Person label exists, has the correct attributes, and is properly populated
         expected_result = [['Ailon Velger', 32, 'male', 'married', 2],
                            ['Alon Fital', 32, 'male', 'married', 1],
@@ -76,7 +73,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         self.env.assertEquals(query_result.result_set, expected_result)
 
         # Verify that the Country label exists, has the correct attributes, and is properly populated
-        query_result = redis_graph.query('MATCH (c:Country) RETURN c.name, ID(c) ORDER BY c.name')
+        query_result = self.graph.query('MATCH (c:Country) RETURN c.name, ID(c) ORDER BY c.name')
         expected_result = [['Andora', 21],
                            ['Canada', 18],
                            ['China', 19],
@@ -95,7 +92,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
     # Validate that the expected relations and properties have been constructed
     def test03_validate_relations(self):
         # Query the newly-created graph
-        query_result = redis_graph.query('MATCH (a)-[e:KNOWS]->(b) RETURN a.name, e.relation, b.name ORDER BY e.relation, a.name, b.name')
+        query_result = self.graph.query('MATCH (a)-[e:KNOWS]->(b) RETURN a.name, e.relation, b.name ORDER BY e.relation, a.name, b.name')
 
         expected_result = [['Ailon Velger', 'friend', 'Noam Nativ'],
                            ['Alon Fital', 'friend', 'Gal Derriere'],
@@ -112,7 +109,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                            ['Ori Laslo', 'married', 'Shelly Laslo Rooz']]
         self.env.assertEquals(query_result.result_set, expected_result)
 
-        query_result = redis_graph.query('MATCH (a)-[e:VISITED]->(b) RETURN a.name, e.purpose, b.name ORDER BY e.purpose, a.name, b.name')
+        query_result = self.graph.query('MATCH (a)-[e:VISITED]->(b) RETURN a.name, e.purpose, b.name ORDER BY e.purpose, a.name, b.name')
 
         expected_result = [['Alon Fital', 'business', 'Prague'],
                            ['Alon Fital', 'business', 'USA'],
@@ -157,6 +154,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                            ['Tal Doron', 'pleasure', 'USA'],
                            ['Valerie Abigail Arad', 'pleasure', 'Netherlands'],
                            ['Valerie Abigail Arad', 'pleasure', 'Russia']]
+
         self.env.assertEquals(query_result.result_set, expected_result)
 
     def test04_private_identifiers(self):
@@ -255,11 +253,11 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         new_graph = self.db.select_graph(graphname)
 
         # Newly-created graph should be identical to graph created in single query
-        original_result = redis_graph.query('MATCH (p:Person) RETURN p, ID(p) ORDER BY p.name')
+        original_result = self.graph.query('MATCH (p:Person) RETURN p, ID(p) ORDER BY p.name')
         new_result = new_graph.query('MATCH (p:Person) RETURN p, ID(p) ORDER BY p.name')
         self.env.assertEquals(original_result.result_set, new_result.result_set)
 
-        original_result = redis_graph.query('MATCH (a)-[e:KNOWS]->(b) RETURN a.name, e, b.name ORDER BY e.relation, a.name')
+        original_result = self.graph.query('MATCH (a)-[e:KNOWS]->(b) RETURN a.name, e, b.name ORDER BY e.relation, a.name')
         new_result = new_graph.query('MATCH (a)-[e:KNOWS]->(b) RETURN a.name, e, b.name ORDER BY e.relation, a.name')
         self.env.assertEquals(original_result.result_set, new_result.result_set)
 
@@ -371,7 +369,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         with open(filename, mode='w') as csv_file:
             out = csv.writer(csv_file)
             out.writerow(["long_property_string"])
-            for i in range(100_000):
+            for _ in range(100_000):
                 out.writerow([prop_str])
 
         runner = CliRunner()
@@ -718,4 +716,125 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         for q in queries:
             query_result = graph.query(q)
             self.env.assertEquals(query_result.result_set, expected_result)
+
+    def test12_load_large_graph(self):
+        """make sure bulk-loader is able to load a large graph quickly"""
+
+        if SANITIZER:
+            # Sanitizers are not compatible with the crash handler
+            self.env.skip()
+            return
+
+        graphname = "bulk-loader-large-graph"
+        self.graph = self.db.select_graph(graphname)
+
+        n_lbls = 3                # 3 different types of nodes
+        n_rels = 2                # 2 different types of edges
+        node_lbl_count = 2000000  # number of nodes under each label
+        edge_rel_count = 4000000  # number of edges under each relationship-type
+        total_node_count = node_lbl_count * n_lbls
+
+        labels        = [f"node_{i}" for i in range(0, n_lbls)]
+        relationships = [f"edge_{i}" for i in range(0, n_rels)]
+
+        node_csvs = [f"./{l}.csv" for l in labels]
+        edge_csvs = [f"./{r}.csv" for r in relationships]
+
+        # delete old csv files
+        for node_csv in node_csvs:
+            if os.path.exists(node_csv):
+                os.remove(node_csv)
+
+        for edge_csv in edge_csvs:
+            if os.path.exists(edge_csv):
+                os.remove(edge_csv)
+
+        #-----------------------------------------------------------------------
+        # create node csv files
+        #-----------------------------------------------------------------------
+
+        node_count = 0
+        for node_csv in node_csvs:
+            with open(node_csv, 'w') as f:
+                writer = csv.writer(f)
+
+                # header row
+                writer.writerow(["id:ID"])
+
+                for _ in range(0, node_lbl_count):
+                    writer.writerow([node_count])
+                    node_count = node_count + 1
+
+        #-----------------------------------------------------------------------
+        # create edge csv files
+        #-----------------------------------------------------------------------
+
+        edge_count = 0
+        for edge_csv in edge_csvs:
+            with open(edge_csv, 'w') as f:
+                writer = csv.writer(f)
+
+                # Header row
+                writer.writerow(['src', 'dest'])
+
+                for _ in range(0, edge_rel_count):
+                    src  = edge_count % total_node_count
+                    dest = min(max(0, src + random.randint(-1, 1)), total_node_count-1) # 1/3 self pointing edge
+                    writer.writerow([src, dest])
+                    edge_count = edge_count + 1
+
+        #-----------------------------------------------------------------------
+        # load graph
+        #-----------------------------------------------------------------------
+
+        nodes_args = [arg for node_csv in node_csvs for arg in ('--nodes', node_csv)]
+        edges_args = [arg for edge_csv in edge_csvs for arg in ('--relations', edge_csv)]
+
+        runner = CliRunner()
+
+        # ping server during bulk-load
+        pings = [None]
+        stop_event = threading.Event()
+        thread = threading.Thread(target=ping_server, args=(stop_event, pings, self, 1, 4))
+        thread.start()
+
+        # start bulk-insert
+        start_time = time.perf_counter()
+        res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{self.port}",
+                                          *nodes_args, *edges_args, graphname])
+        # calculate the execution time
+        execution_time = time.perf_counter() - start_time
+
+        # Signal the thread to stop
+        stop_event.set()
+        thread.join()
+        ping_count = pings[0]
+        # Expecting at minimum ping every 2 seconds
+        self.env.assertGreaterEqual(ping_count, execution_time / 2)
+
+        # validate script results
+        self.env.assertEquals(res.exit_code, 0)
+        self.env.assertIn(f'{node_lbl_count} nodes created', res.output)
+        self.env.assertIn(f'{edge_count} relations created', res.output)
+
+        # make sure load time did not exceeds 80 seconds
+        self.env.assertLess(execution_time, 80)
+
+        # validate graph node / edge count
+        for l in labels:
+            q = f"MATCH (n:{l}) RETURN count(n)"
+            lbl_count = self.graph.query(q).result_set[0][0]
+            self.env.assertEquals(lbl_count, node_lbl_count)
+
+        for r in relationships:
+            q = f"MATCH ()-[e:{r}]->() RETURN count(e)"
+            rel_count = self.graph.query(q).result_set[0][0]
+            self.env.assertEquals(rel_count, edge_rel_count)
+
+        # clean up
+        for node_csv in node_csvs:
+            os.remove(node_csv)
+
+        for edge_csv in edge_csvs:
+            os.remove(edge_csv)
 

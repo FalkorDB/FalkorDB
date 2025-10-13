@@ -15,7 +15,7 @@
 // set the node labels and attributes
 // add the node to the relevant indexes
 // add node creation operation to undo-log
-void CreateNode
+void GraphHub_CreateNode
 (
 	GraphContext *gc,  // graph context to create the node
 	Node *n,           // output node created
@@ -25,11 +25,27 @@ void CreateNode
 	bool log           // log operation in undo-log
 );
 
+// batch create nodes
+// all nodes share the same set of labels
+// set the nodes labels and attributes
+// add the nodes to the relevant indexes
+// add nodes creation operation to undo-log
+void GraphHub_CreateNodes
+(
+	GraphContext *gc,    // graph context
+	Node **nodes,        // nodes to create
+	AttributeSet *sets,  // nodes attributes
+	uint node_count,     // number of nodes
+	LabelID *labels,     // node labels
+	uint label_count,    // number of labels
+	bool log             // true if operation needs to be logged
+);
+
 // create an edge
 // set the edge src, dst endpoints and attributes
 // add the edge to the relevant indexes
 // add edge creation operation to undo-log
-void CreateEdge
+void GraphHub_CreateEdge
 (
 	GraphContext *gc,  // graph context to create the edge
 	Edge *e,           // output edge created
@@ -44,10 +60,10 @@ void CreateEdge
 // set the edge src, dst endpoints and attributes
 // add the edge to the relevant indexes
 // add edge creation operation to undo-log
-void CreateEdges
+void GraphHub_CreateEdges
 (
 	GraphContext *gc,    // graph context to create the edge
-	Edge **edges,         // output edge created
+	Edge **edges,        // edges to create
 	RelationID r,        // edge relation type
 	AttributeSet *sets,  // edge attributes
 	bool log             // log operation in undo-log
@@ -56,7 +72,7 @@ void CreateEdges
 // delete nodes
 // remove nodes from the relevant indexes
 // add node deletion operations to undo-log
-void DeleteNodes
+void GraphHub_DeleteNodes
 (
 	GraphContext *gc,  // graph context to delete the node
 	Node *nodes,       // nodes to be deleted
@@ -68,7 +84,7 @@ void DeleteNodes
 // delete the edge from the graph
 // delete the edge from the relevant indexes
 // add edge deletion operation to undo-log
-void DeleteEdges
+void GraphHub_DeleteEdges
 (
 	GraphContext *gc,  // graph context to delete the edge
 	Edge *edges,       // the edge to be deleted
@@ -80,7 +96,7 @@ void DeleteEdges
 // update the entity attributes
 // update the relevant indexes of the entity
 // add entity update operations to undo log
-void UpdateEntityProperties
+void GraphHub_UpdateEntityProperties
 (
 	GraphContext *gc,             // graph context to update the entity
 	GraphEntity *ge,              // the entity to be updated
@@ -93,7 +109,7 @@ void UpdateEntityProperties
 // update the node attributes
 // update the relevant indexes of the node
 // used from effects
-void UpdateNodeProperty
+void GraphHub_UpdateNodeProperty
 (
 	GraphContext *gc,             // graph context
 	NodeID id,                    // node ID
@@ -105,7 +121,7 @@ void UpdateNodeProperty
 // update the edge attributes
 // update the relevant indexes of the edge
 // used from effects
-void UpdateEdgeProperty
+void GraphHub_UpdateEdgeProperty
 (
 	GraphContext *gc,             // graph context
 	EdgeID id,                    // edge ID
@@ -120,7 +136,7 @@ void UpdateEdgeProperty
 // creates the label matrix if not exists
 // adds node to the label matrix
 // updates the relevant indexes of the entity
-void UpdateNodeLabels
+void GraphHub_UpdateNodeLabels
 (
 	GraphContext *gc,            // graph context to update the entity
 	Node *node,                  // the node to be updated
@@ -133,7 +149,7 @@ void UpdateNodeLabels
 
 // Adds a schema to the graph. The schema is tracked by the undo log
 // so in case of error it will be deleted.
-Schema *AddSchema
+Schema *GraphHub_AddSchema
 (
 	GraphContext *gc,   // graph context to add the schema
 	const char *label,  // schema label
@@ -143,7 +159,7 @@ Schema *AddSchema
 
 // Find or adding attribute. If there is a need to add an attribute to the graph
 // the attribute is tracked by the undo log so in case of error it will be deleted.
-AttributeID FindOrAddAttribute
+AttributeID GraphHub_FindOrAddAttribute
 (
 	GraphContext *gc,       // graph context to add the attribute
 	const char *attribute,  // attribute name
@@ -151,7 +167,7 @@ AttributeID FindOrAddAttribute
 );
 
 // create index
-Index AddIndex
+Index GraphHub_AddIndex
 (
 	const char *label,   // label/relationship type
 	const char *attr,    // attribute to index

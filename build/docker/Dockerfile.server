@@ -2,12 +2,7 @@ ARG BASE_IMAGE=falkordb/falkordb-compiler
 
 ARG TARGETPLATFORM=linux/amd64
 
-ARG BROWSER_TAG=latest
-
 FROM $BASE_IMAGE AS compiler
-
-FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
-
 
 FROM redis:8.2.2
 
@@ -20,8 +15,6 @@ ENV FALKORDB_BIN_PATH=${FALKORDB_HOME}/bin
 ENV FALKORDB_IMPORT_PATH=${FALKORDB_HOME}/import
 
 ENV FALKORDB_TLS_PATH=${FALKORDB_HOME}/tls
-
-ENV FALKORDB_BROWSER_PATH=${FALKORDB_HOME}/browser
 
 # For backward compatibility, link previous bin path to new bin path
 RUN mkdir -p /FalkorDB/build/docker && \
@@ -48,13 +41,9 @@ COPY ./build/docker/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 
 COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
-COPY --from=browser /app ${FALKORDB_BROWSER_PATH}
-
 ENV ARCH=${TARGETPLATFORM}
 
 ENV TLS=0
-
-ENV BROWSER=1
 
 EXPOSE 6379/tcp
 

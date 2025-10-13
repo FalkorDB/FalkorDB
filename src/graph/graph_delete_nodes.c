@@ -36,23 +36,23 @@ void Graph_DeleteNodes
 ) {
 	// assumption, nodes are detached
 	// there are no incoming nor outgoing edges leading to / from nodes
-	ASSERT(g != NULL);
-	ASSERT(count > 0);
-	ASSERT(nodes != NULL);
+	ASSERT (g     != NULL) ;
+	ASSERT (count > 0) ;
+	ASSERT (nodes != NULL) ;
 
 	// set matrix sync policy to NOP
-	MATRIX_POLICY policy = Graph_GetMatrixPolicy(g);
-	Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
+	MATRIX_POLICY policy = Graph_GetMatrixPolicy (g) ;
+	Graph_SetMatrixPolicy (g, SYNC_POLICY_NOP) ;
 
 #if RG_DEBUG
-	Edge *es = array_new(Edge, 0);
-	for(uint i = 0; i < count; i++) {
+	Edge *es = array_new (Edge, 0) ;
+	for (uint i = 0; i < count; i++) {
 		Node *n = nodes + i;
 		// validate assumption
-		Graph_GetNodeEdges(g, n, GRAPH_EDGE_DIR_BOTH, GRAPH_NO_RELATION, &es);
-		ASSERT(array_len(es) == 0);
+		Graph_GetNodeEdges (g, n, GRAPH_EDGE_DIR_BOTH, GRAPH_NO_RELATION, &es) ;
+		ASSERT (array_len (es) == 0) ;
 	}
-	array_free(es);
+	array_free (es) ;
 #endif
 
 	//--------------------------------------------------------------------------

@@ -157,8 +157,9 @@ def delete_node(nodes, edges):
     node = nodes[randint(0, labels - 1)]
     label = node["labels"][0]
     label_count = node["count"]
-    query = f"MATCH (n:{label} {{v: ToInteger(rand()*{label_count})}}) DELETE n"
-    params = {}
+    v = randint(0, label_count - 1)
+    query = f"MATCH (n:{label} {{v: $v}}) DELETE n"
+    params = {'v': v}
     return params, query
 
 
@@ -172,8 +173,12 @@ def delete_edge(nodes, edges):
     target = edge["target"]
     target_label = nodes[target]["labels"][0]
     target_count = nodes[target]["count"]
-    query = f"MATCH (n:{source_label} {{v: ToInteger(rand()*{source_count})}})-[r:{type}]->(m:{target_label} {{v: ToInteger(rand()*{target_count})}}) DELETE r"
-    params = {}
+
+    src = randint(0, source_count - 1)
+    dest = randint(0, target_count - 1)
+
+    query = f"MATCH (n:{source_label} {{v: $s}})-[r:{type}]->(m:{target_label} {{v: $t}}) DELETE r"
+    params = {'s': src, 't': dest}
     return params, query
 
 
@@ -182,8 +187,11 @@ def update_node(nodes, edges):
     node = nodes[randint(0, labels - 1)]
     label = node["labels"][0]
     label_count = node["count"]
-    query = f"MATCH (n:{label} {{v: ToInteger(rand()*{label_count})}}) SET n.v = rand()"
-    params = {}
+    v = randint(0, label_count - 1)
+    new_v = random()
+
+    query = f"MATCH (n:{label} {{v: $v}}) SET n.v = $new_v"
+    params = {'v': v, 'new_v': new_v}
     return params, query
 
 
@@ -197,8 +205,13 @@ def update_edge(nodes, edges):
     target = edge["target"]
     target_label = nodes[target]["labels"][0]
     target_count = nodes[target]["count"]
-    query = f"MATCH (n:{source_label} {{v: ToInteger(rand()*{source_count})}})-[r:{type}]->(m:{target_label} {{v: ToInteger(rand()*{target_count})}}) SET r.v = rand()"
-    params = {}
+
+    src = randint(0, source_count - 1)
+    dest = randint(0, target_count - 1)
+    new_v = random()
+
+    query = f"MATCH (n:{source_label} {{v: $s}})-[r:{type}]->(m:{target_label} {{v: $t}}) SET r.v = $new_v"
+    params = {'s': src, 't': dest, 'new_v': new_v}
     return params, query
 
 
@@ -215,7 +228,7 @@ def run_random_graph_ops(g, nodes, edges, ops):
     for i in range(0, randint(10, 1000)):
         op = randint(0, len(ops) - 1)
         params, query = ops[op](nodes, edges)
-        # print(query)
+        #print(query)
         res = g.query(query, params)
         result.append(res)
 

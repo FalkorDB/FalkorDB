@@ -442,7 +442,7 @@ static void index_create
 	ASSERT(result_set != NULL);
 
 	for(uint i = 0; i < nfields; i++) {
-		idx = AddIndex(label, fields[i], et, idx_type, options, true);
+		idx = GraphHub_AddIndex(label, fields[i], et, idx_type, options, true);
 		if(idx != NULL) {
 			ResultSet_IndexCreated(result_set, INDEX_OK);
 		} else {
