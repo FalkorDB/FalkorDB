@@ -9,12 +9,13 @@
 #include "../../util/arr.h"
 
 // C (i,j) = x
-GrB_Info Delta_Matrix_setElement_UINT64
+GrB_Info Delta_Matrix_Assign_Element_UINT64
 (
-    Delta_Matrix C,  // matrix to modify
-    uint64_t x,      // scalar to assign to C(i,j)
-    GrB_Index i,     // row index
-    GrB_Index j      // column index
+    Delta_Matrix C,     // matrix to modify
+	GrB_BinaryOp accum, // accumulator to apply to duplicates
+    uint64_t x,         // scalar to assign to C(i,j)
+    GrB_Index i,        // row index
+    GrB_Index j         // column index
 ) {
 	ASSERT(C != NULL);
 	Delta_Matrix_checkBounds(C, i, j);
@@ -59,7 +60,7 @@ GrB_Info Delta_Matrix_setElement_UINT64
 		GrB_OK (GrB_Matrix_removeElement(dm, i, j));
 
 		// overwrite m[i,j]
-		GrB_OK (GrB_Matrix_setElement(m, x, i, j));
+		GrB_OK (GrB_Matrix_setElement_UINT64(m, x, i, j));
 	} else {
 		// entry isn't marked for deletion
 		// see if entry already exists in 'm'
@@ -71,10 +72,12 @@ GrB_Info Delta_Matrix_setElement_UINT64
 
 		if(entry_exists) {
 			// update entry at m[i,j]
-			info = GrB_Matrix_setElement_UINT64(m, x, i, j);
+			GrB_OK (GrB_Matrix_assign_UINT64(m, NULL, accum, x, &i, 1, &j, 1, 
+				NULL));
 		} else {
 			// update entry at dp[i,j]
-			info = GrB_Matrix_setElement_UINT64(dp, x, i, j);
+			GrB_OK (GrB_Matrix_assign_UINT64(dp, NULL, accum, x, &i, 1, &j, 1, 
+				NULL));
 		}
 		GrB_OK(info);
 	}

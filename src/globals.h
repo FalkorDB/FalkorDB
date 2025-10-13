@@ -17,6 +17,7 @@ struct GrB_ops {
 	GrB_Scalar   bool_zombie;    // zombie scalar for boolean matrices
 	GrB_Scalar   u64_zombie;     // zombie scalar for uint64 matrices
 	GrB_BinaryOp not_zombie;     // binary operator to check if a value is not a zombie
+	GrB_BinaryOp push_id;        // binary operator to add an ID to a  tensor entry
 	GrB_Semiring any_alive;      // semiring to check if any entry is alive
 	GrB_UnaryOp  free_tensors;   // unary operator to free tensor entries
 };

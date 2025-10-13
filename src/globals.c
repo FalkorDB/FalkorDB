@@ -349,6 +349,10 @@ void Global_GrB_Ops_Init(void) {
 		&ops->not_zombie, (GxB_binary_function) _entry_present, 
 		GrB_BOOL, GrB_BOOL, GrB_UINT64, "_entry_present", _ENTRY_PRESENT_JIT_STR
 	));
+	
+	GrB_OK (GrB_BinaryOp_new( &ops->push_id, (GxB_binary_function) _push_element, 
+		GrB_UINT64, GrB_UINT64, GrB_UINT64));
+	
 	GrB_OK (GrB_Semiring_new (&ops->any_alive, GrB_LOR_MONOID_BOOL, 
 		ops->not_zombie));
 	

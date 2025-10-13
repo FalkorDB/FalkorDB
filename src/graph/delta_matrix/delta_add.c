@@ -1,7 +1,6 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #include "RG.h"
@@ -260,7 +259,7 @@ GrB_Info Delta_eWiseUnion
 
 
 	//--------------------------------------------------------------------------
-    // DM_union = (ADM - BM) ∪ (BDM - AM) 
+  // DM_union = (ADM - BM) ∪ (BDM - AM) 
 	//--------------------------------------------------------------------------
 	if(handle_deletion) {
 		GrB_OK (GrB_Matrix_new(&DM_union, GrB_BOOL, nrows, ncols));

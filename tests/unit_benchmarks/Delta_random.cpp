@@ -73,26 +73,6 @@ void Delta_Random_Matrix
 	GrB_OK(GrB_Scalar_free(&empty));
 }
 
-static void _push_element
-(
-    uint64_t *z,
-    const uint64_t *x,
-    const uint64_t *y
-) {
-    ASSERT(SCALAR_ENTRY(*y));
-    if(SCALAR_ENTRY(*x)){
-        GrB_Vector v = NULL;
-		GrB_Vector_new(&v, GrB_BOOL, GrB_INDEX_MAX);
-        GrB_Vector_setElement_BOOL(v, true, *x);
-        GrB_Vector_setElement_BOOL(v, true, *y);
-        *z = SET_MSB((uint64_t) v);
-    } else {
-        ASSERT(*z == *x);
-        GrB_Vector v = AS_VECTOR(*z);
-        GrB_Vector_setElement_BOOL(v, true, *y);
-    }
-}
-
 static void _mod_function
 (
     uint64_t *z,
@@ -165,14 +145,12 @@ void Random_Tensor
 	ASSERT(A != NULL);
 
 	GrB_BinaryOp     mod_op      = NULL;
-	GrB_BinaryOp     dup_handler = NULL;
+	GrB_BinaryOp     dup_handler = Global_GrB_Ops_Get()->push_id;
 	GrB_UnaryOp      free_entry  = Global_GrB_Ops_Get()->free_tensors;
 	GrB_IndexUnaryOp select_op   = NULL;
 	GrB_Descriptor   desc        = NULL;
 
 	GrB_OK(GrB_BinaryOp_new(&mod_op, (GxB_binary_function) _mod_function, 
-		GrB_UINT64, GrB_UINT64, GrB_UINT64));
-	GrB_OK(GrB_BinaryOp_new(&dup_handler, (GxB_binary_function) _push_element, 
 		GrB_UINT64, GrB_UINT64, GrB_UINT64));
 	GrB_OK(GrB_IndexUnaryOp_new(
 		&select_op, (GxB_index_unary_function) _select_random, 
