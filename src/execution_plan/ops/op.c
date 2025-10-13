@@ -134,7 +134,6 @@ int OpBase_Modifies
 ) {
 	ASSERT (op    != NULL) ;
 	ASSERT (alias != NULL) ;
-	//ASSERT (op->plan->prepared == false) ;
 
 	if(!op->modifies) {
 		op->modifies = array_new(const char *, 1);

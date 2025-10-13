@@ -37,9 +37,9 @@ static bool is_projected_var
 // or NULL if there's isn't such expression
 static const AR_ExpNode *find_projection
 (
-	const AR_ExpNode **projections,  // projected expressions
-	uint proj_count,                 // number of projected expressions
-	const AR_ExpNode *expr           // expression to compare against
+	AR_ExpNode **projections,  // projected expressions
+	uint proj_count,           // number of projected expressions
+	const AR_ExpNode *expr     // expression to compare against
 ) {
 	ASSERT (expr        != NULL) ;
 	ASSERT (projections != NULL) ;	
@@ -79,7 +79,7 @@ static char **collect_expr_vars
 // out_alias_map_vals[0] = 'y'
 static void build_alias_map
 (
-	const AR_ExpNode **projections,     // projected expressions
+	AR_ExpNode **projections,           // projected expressions
 	uint proj_count,                    // number of expressions
 	const char ***out_projected_names,  // [output] projected aliases
 	const char ***out_alias_map_keys,   // [output] projected variables
@@ -92,7 +92,7 @@ static void build_alias_map
 	ASSERT (out_alias_map_size  != NULL) ;
 	ASSERT (out_projected_names != NULL) ;
 
-	*out_alias_map_vals = 0 ;
+	*out_alias_map_size = 0 ;
 	const char **alias_map_keys  = rm_malloc (proj_count * sizeof (const char *)) ;
 	const char **alias_map_vals  = rm_malloc (proj_count * sizeof (const char *)) ;
 	const char **projected_names = rm_malloc (proj_count * sizeof (const char *)) ;
@@ -153,7 +153,7 @@ void normalize_sort_exps
     ASSERT (sort_exps   != NULL) ;
 	ASSERT (projections != NULL && *projections != NULL) ;
 
-	const AR_ExpNode **_projections = (const AR_ExpNode**)(*projections) ;
+	AR_ExpNode **_projections = *projections ;
     int sort_count = array_len (sort_exps) ;
     int proj_count = array_len (_projections) ;
 
@@ -323,8 +323,7 @@ void normalize_sort_exps
 		array_free(var_ops);
 
 		// add modified sort expression to projections
-		assert (false && "I think we need to clone `sort_exp` as not to share expressions") ;
-		array_append (_projections, sort_exp) ;
+		array_append (_projections, AR_EXP_Clone (sort_exp)) ;
 
 cleanup:
 		// free the char ** returned by collect_expr_vars
@@ -339,6 +338,6 @@ cleanup:
 	rm_free (alias_vals) ;
 	rm_free (projected_names) ;
 
-	*projections = (AR_ExpNode**)_projections ;
+	*projections = _projections ;
 }
 

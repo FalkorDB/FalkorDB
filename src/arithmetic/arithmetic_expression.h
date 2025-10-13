@@ -127,9 +127,9 @@ SIValue AR_EXP_FinalizeAggregations(AR_ExpNode *root, const Record r);
 // returns previous child at `idx` position
 AR_ExpNode *AR_EXP_setChild
 (
-	const AR_ExpNode *parent,  // parent node
-	AR_ExpNode *child,         // child to add
-	uint idx                   // child index
+	AR_ExpNode *parent,  // parent node
+	AR_ExpNode *child,   // child to add
+	uint idx             // child index
 );
 
 // get the ith child of root
