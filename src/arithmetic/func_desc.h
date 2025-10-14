@@ -6,8 +6,10 @@
 
 #pragma once
 
-#include <sys/types.h>
 #include "../value.h"
+#include "../../deps/rax/rax.h"
+
+#include <sys/types.h>
 
 #define VAR_ARG_LEN UINT_MAX
 
@@ -51,27 +53,51 @@ typedef struct {
 	bool internal;         // is function internal
 	bool reducible;        // can be reduced using static evaluation
 	bool aggregate;        // true if the function is an aggregation
+	bool udf;              // user define function
 	const char *name;      // function name
 	AR_FuncCBs callbacks;  // aggregation callbacks
 } AR_FuncDesc;
 
+// initialize functions repository
+void AR_InitFuncsRepo(void) ;
+
+// finalize functions repository
+void AR_FinalizeFuncsRepo(void) ;
+
 // create a new function descriptor
 AR_FuncDesc *AR_FuncDescNew
 (
-	const char *name,     // function name
-	AR_Func func,         // pointer to function
-	uint min_argc,        // minimum number of arguments
-	uint max_argc,        // maximum number of arguments
-	SIType *types,        // acceptable types
-	SIType ret_type,      // return type
-	bool internal,        // is function internal
-	bool reducible        // is function reducible
+	const char *name,  // function name
+	AR_Func func,      // pointer to function
+	uint min_argc,     // minimum number of arguments
+	uint max_argc,     // maximum number of arguments
+	SIType *types,     // acceptable types
+	SIType ret_type,   // return type
+	bool internal,     // is function internal
+	bool reducible     // is function reducible
 );
 
-// register arithmetic function to repository
-void AR_RegFunc
+// register function to repository
+void AR_FuncRegister
 (
-	AR_FuncDesc *func
+	AR_FuncDesc *func  // function to register
+);
+
+void AR_FuncRegisterUDF
+(
+	const char *name
+);
+
+// unregister function to repository
+bool AR_FuncRemoveUDF
+(
+	const char *func_name  // function name to remove from repository
+);
+
+// mark function as a user defined function
+void AR_SetUDF
+(
+	AR_FuncDesc *func_desc  // function to mark as UDF
 );
 
 // set the function pointers for cloning and freeing a function's private data
@@ -82,11 +108,11 @@ void AR_SetPrivateDataRoutines
 	AR_Func_Clone clone
 );
 
-// retrieves an arithmetic function by its name
+// get arithmetic function
 AR_FuncDesc *AR_GetFunc
 (
-	const char *func_name,
-	bool include_internal
+	const char *func_name,  // function to lookup
+	bool include_internal   // alow using internal functions
 );
 
 // get function return type
@@ -108,7 +134,6 @@ bool AR_FuncIsAggregate
 	const char *func_name
 );
 
-//TODO: implement
 void AR_FuncFree
 (
 	AR_FuncDesc *f

@@ -12,27 +12,20 @@
 // create a new aggregation function descriptor
 AR_FuncDesc *AR_AggFuncDescNew
 (
-	const char *name,                   // function name
-	AR_Func func,                       // pointer to function
-	uint min_argc,                      // minimum number of arguments
-	uint max_argc,                      // maximum number of arguments
-	SIType *types,                      // acceptable types
-	SIType ret_type,                    // return type
-	AR_Func_Free free,                  // free aggregation callback
-	AR_Func_Finalize finalize,          // finalize aggregation callback
-	AR_Func_PrivateData private_data    // generate private data
+	const char *name,                 // function name
+	AR_Func func,                     // pointer to function
+	uint min_argc,                    // minimum number of arguments
+	uint max_argc,                    // maximum number of arguments
+	SIType *types,                    // acceptable types
+	SIType ret_type,                  // return type
+	AR_Func_Free free,                // free aggregation callback
+	AR_Func_Finalize finalize,        // finalize aggregation callback
+	AR_Func_PrivateData private_data  // generate private data
 ) {
-	AR_FuncDesc *desc = rm_calloc(1, sizeof(AR_FuncDesc));
+	AR_FuncDesc *desc = AR_FuncDescNew (name, func, min_argc, max_argc, types,
+			ret_type, false, false) ;
 
-	desc->name                   = name;
-	desc->func                   = func;
-	desc->types                  = types;
-	desc->ret_type               = ret_type;
-	desc->min_argc               = min_argc;
-	desc->max_argc               = max_argc;
-	desc->internal               = false;
 	desc->aggregate              = true;
-	desc->reducible              = false;
 	desc->callbacks.free         = free;
 	desc->callbacks.finalize     = finalize;
 	desc->callbacks.private_data = private_data;
