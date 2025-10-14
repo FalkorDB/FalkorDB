@@ -47,7 +47,7 @@ static bool _OperandEquals
 		case AR_EXP_BORROW_RECORD:
 			return true ;
 		default:
-			assert ("unknown operand type" && false) ;
+			ASSERT ("unknown operand type" && false) ;
 			return false ;
 	}
 }
@@ -73,7 +73,7 @@ bool AR_EXP_Equals
 				res = _OperandEquals (&a->operand, &b->operand) ;
 				break ;
 			default:
-				assert ("unknown expression type" && false) ;
+				ASSERT ("unknown expression type" && false) ;
 				return false ;
 		}
 	}

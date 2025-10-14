@@ -88,6 +88,15 @@ bool AR_EXP_IsAttribute(const AR_ExpNode *exp, char **attr) {
 	return true;
 }
 
+// returns true if `exp` is an aggregation
+bool AR_EXP_IsAggregation
+(
+	const AR_ExpNode *exp  // expression to inspect
+) {
+	ASSERT (exp != NULL) ;
+	return AGGREGATION_NODE (exp) ;
+}
+
 bool AR_EXP_PerformsDistinct(AR_ExpNode *exp) {
 	return AR_EXP_ContainsFunc(exp, "distinct");
 }
@@ -803,10 +812,11 @@ AR_ExpNode *AR_EXP_getChild
 	return NULL;
 }
 
+// traverse an expression tree and add all entity aliases to a rax
 void AR_EXP_CollectEntities
 (
-	const AR_ExpNode *root,
-	rax *aliases
+	const AR_ExpNode *root,  // expression root node
+	rax *aliases             // collected aliases
 ) {
 	ASSERT (root    != NULL) ;
 	ASSERT (aliases != NULL) ;
@@ -927,17 +937,64 @@ AR_ExpNode **AR_EXP_CollectVariableOperands
 	return nodes ;
 }
 
-bool AR_EXP_ContainsAggregation(AR_ExpNode *root) {
-	if(AGGREGATION_NODE(root)) return true;
+// collect every aggregation node within expression tree
+// returns: dynamically allocated array of AR_ExpNode pointers caller must free
+// with array_free()
+AR_ExpNode **AR_EXP_CollectAggregations
+(
+	AR_ExpNode *root  // expression root node
+) {
+	ASSERT (root != NULL) ;
 
-	if(AR_EXP_IsOperation(root)) {
-		for(int i = 0; i < root->op.child_count; i++) {
-			AR_ExpNode *child = root->op.children[i];
-			if(AR_EXP_ContainsAggregation(child)) return true;
+	AR_ExpNode **nodes        = array_new (AR_ExpNode*, 1) ;
+	AR_ExpNode **aggregations = array_new (AR_ExpNode*, 1) ;
+
+	array_append (nodes, root) ;
+
+	while (array_len (nodes) > 0) {
+		AR_ExpNode *node = array_pop (nodes) ;
+
+		if (AGGREGATION_NODE (node)) {
+			// found an aggregation node, as aggregation functions can not be
+			// nested, we can simply continue
+			array_append (aggregations, node) ;
+			continue ;
+		}
+
+		// inspect only operation nodes
+		if (node->type == AR_EXP_OP) {
+			for (uint i = 0; i < node->op.child_count; i++) {
+				AR_ExpNode *child = node->op.children[i] ;
+				if (child->type == AR_EXP_OP) {
+					array_append (nodes, child) ;
+				}
+			}
 		}
 	}
 
-	return false;
+	array_free (nodes) ;
+
+	return aggregations ;
+}
+
+bool AR_EXP_ContainsAggregation
+(
+	const AR_ExpNode *root
+) {
+	if (AGGREGATION_NODE (root)) {
+		return true;
+	}
+
+	if (AR_EXP_IsOperation (root)) {
+		for (int i = 0; i < root->op.child_count; i++) {
+			AR_ExpNode *child = root->op.children[i] ;
+			if (AR_EXP_ContainsAggregation (child)) {
+				return true ;
+			}
+		}
+	}
+
+	return false ;
 }
 
 bool AR_EXP_ContainsFunc(const AR_ExpNode *root, const char *func) {

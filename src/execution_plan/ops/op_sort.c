@@ -5,8 +5,6 @@
  */
 
 #include "op_sort.h"
-#include "op_project.h"
-#include "op_aggregate.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
 #include "../../util/qsort.h"
@@ -96,8 +94,7 @@ static inline Record _handoff
 
 static void _map_expressions
 (
-	OpSort *op,
-	AR_ExpNode **exps
+	OpSort *op
 ) {
 	//--------------------------------------------------------------------------
 	// compute expressions record index
@@ -141,7 +138,7 @@ OpBase *NewSortOp
 	OpBase_Init ((OpBase *)op, OPType_SORT, "Sort", SortInit, SortConsume,
 			SortReset, NULL, SortClone, SortFree, false, plan) ;
 
-	_map_expressions (op, op->exps) ;
+	_map_expressions (op) ;
 
 	return (OpBase *)op ;
 }

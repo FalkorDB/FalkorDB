@@ -143,8 +143,8 @@ AR_ExpNode *AR_EXP_getChild
 // traverse an expression tree and add all entity aliases to a rax
 void AR_EXP_CollectEntities
 (
-	const AR_ExpNode *root,
-	rax *aliases
+	const AR_ExpNode *root,  // expression root node
+	rax *aliases             // collected aliases
 );
 
 // collect accessed attribute for a given entity
@@ -164,10 +164,21 @@ AR_ExpNode **AR_EXP_CollectVariableOperands
 	AR_ExpNode *root  // expression root
 );
 
+// collect every aggregation node within expression tree
+// returns: dynamically allocated array of AR_ExpNode pointers caller must free
+// with array_free()
+AR_ExpNode **AR_EXP_CollectAggregations
+(
+	AR_ExpNode *root  // expression root node
+);
+
 // search for an aggregation node within the expression tree
 // return 1 if one exists
 // please note an expression tree can't contain nested aggregation nodes
-bool AR_EXP_ContainsAggregation(AR_ExpNode *root);
+bool AR_EXP_ContainsAggregation
+(
+	const AR_ExpNode *root
+);
 
 // constructs string representation of arithmetic expression tree
 void AR_EXP_ToString(const AR_ExpNode *root, char **str);
@@ -195,6 +206,12 @@ bool AR_EXP_IsOperation(const AR_ExpNode *exp);
 // returns true if 'exp' represent attribute extraction
 // sets 'attr' to attribute name if provided
 bool AR_EXP_IsAttribute(const AR_ExpNode *exp, char **attr);
+
+// returns true if `exp` is an aggregation
+bool AR_EXP_IsAggregation
+(
+	const AR_ExpNode *exp  // expression to inspect
+);
 
 // check to see if the function operates on distinct values
 bool AR_EXP_PerformsDistinct(AR_ExpNode *exp);
