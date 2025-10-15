@@ -164,6 +164,11 @@ AR_ExpNode **AR_EXP_CollectVariableOperands
 	AR_ExpNode *root  // expression root
 );
 
+AR_ExpNode **AR_EXP_CollectFunctions
+(
+	AR_ExpNode *root
+);
+
 // collect every aggregation node within expression tree
 // returns: dynamically allocated array of AR_ExpNode pointers caller must free
 // with array_free()

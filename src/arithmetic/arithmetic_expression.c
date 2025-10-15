@@ -937,6 +937,37 @@ AR_ExpNode **AR_EXP_CollectVariableOperands
 	return nodes ;
 }
 
+AR_ExpNode **AR_EXP_CollectFunctions
+(
+	AR_ExpNode *root
+) {
+	ASSERT (root != NULL) ;
+
+	AR_ExpNode **funcs = array_new (AR_ExpNode*, 0) ;
+	AR_ExpNode **nodes = array_new (AR_ExpNode*, 1) ;
+
+	array_append (nodes, root) ;
+
+	while (array_len (nodes) > 0) {
+		AR_ExpNode *node = array_pop (nodes) ;
+
+		if (node->type == AR_EXP_OP) {
+			array_append (funcs, node) ;
+
+			for (int i = 0; i < NODE_CHILD_COUNT (node); i++) {
+				AR_ExpNode *child = NODE_CHILD (node, i) ;
+				if (child->type == AR_EXP_OP) {
+					array_append (nodes, child) ;
+				}
+			}
+		}
+	}
+
+	array_free (nodes) ;
+
+	return funcs ;
+}
+
 // collect every aggregation node within expression tree
 // returns: dynamically allocated array of AR_ExpNode pointers caller must free
 // with array_free()
@@ -963,8 +994,8 @@ AR_ExpNode **AR_EXP_CollectAggregations
 
 		// inspect only operation nodes
 		if (node->type == AR_EXP_OP) {
-			for (uint i = 0; i < node->op.child_count; i++) {
-				AR_ExpNode *child = node->op.children[i] ;
+			for (uint i = 0; i < NODE_CHILD_COUNT (node); i++) {
+				AR_ExpNode *child = NODE_CHILD (node, i) ;
 				if (child->type == AR_EXP_OP) {
 					array_append (nodes, child) ;
 				}

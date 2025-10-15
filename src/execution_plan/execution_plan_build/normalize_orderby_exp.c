@@ -32,27 +32,6 @@ static bool is_projected_var
 	return false ;
 }
 
-// checks if `expr` is in `projections`
-// return the first projected expression that's equals to `expr`
-// or NULL if there's isn't such expression
-static const AR_ExpNode *find_projection
-(
-	AR_ExpNode **projections,  // projected expressions
-	uint proj_count,           // number of projected expressions
-	const AR_ExpNode *expr     // expression to compare against
-) {
-	ASSERT (expr        != NULL) ;
-	ASSERT (projections != NULL) ;	
-
-	for (uint i = 0; i < proj_count; i++) {
-		if (AR_EXP_Equals (expr, projections[i])) {
-			return projections[i] ;
-		}
-	}
-
-	return NULL ;
-}
-
 // collect all mentioned entities within `expr`
 // caller is responsible for freeing the returned array and its elements
 static char **collect_expr_vars
@@ -81,31 +60,23 @@ static void build_alias_map
 (
 	AR_ExpNode **projections,           // projected expressions
 	uint proj_count,                    // number of expressions
-	bool aggregate,                     // does projections contain aggregations
-	AR_ExpNode ***out_aggregations,     // [output] aggregated expressions
 	const char ***out_projected_names,  // [output] projected aliases
 	const char ***out_alias_map_keys,   // [output] projected variables
 	const char ***out_alias_map_vals,   // [output] projected variables aliases
 	int *out_alias_map_size             // [output] size of out_alias_map_size
 ) {
 	ASSERT (projections         != NULL) ;
-	ASSERT (out_aggregations    != NULL) ;
 	ASSERT (out_alias_map_keys  != NULL) ;
 	ASSERT (out_alias_map_vals  != NULL) ;
 	ASSERT (out_alias_map_size  != NULL) ;
 	ASSERT (out_projected_names != NULL) ;
 
 	*out_alias_map_size = 0 ;
-	AR_ExpNode **aggregations = NULL ;
 
 	size_t m = proj_count * sizeof (const char *) ;
 	const char **alias_map_keys  = rm_malloc (m) ;
 	const char **alias_map_vals  = rm_malloc (m) ;
 	const char **projected_names = rm_malloc (m) ;
-
-	if (aggregate) {
-		aggregations = array_new (AR_ExpNode*, 0) ;
-	}
 
 	for (uint i = 0; i < proj_count; i++) {
 		AR_ExpNode *exp = projections[i] ;
@@ -122,14 +93,9 @@ static void build_alias_map
 
 			*out_alias_map_size += 1 ;
 		}
-
-		if (aggregate && AR_EXP_IsAggregation (exp)) {
-			array_append (aggregations, exp) ;
-		}
 	}
 
 	// set outputs
-	*out_aggregations    = aggregations ;
 	*out_alias_map_keys  = alias_map_keys  ;
 	*out_alias_map_vals  = alias_map_vals  ;
 	*out_projected_names = projected_names ;
@@ -180,26 +146,18 @@ void normalize_sort_exps
 	const char **alias_keys      = NULL ;
 	const char **alias_vals      = NULL ;
 	const char **projected_names = NULL ;
-	AR_ExpNode **aggregations    = NULL ;
 
-	build_alias_map (_projections, proj_count, aggregate, &aggregations,
-			&projected_names, &alias_keys, &alias_vals, &alias_count) ;
-
-	ASSERT ((aggregate == true  && aggregations != NULL) ||
-			(aggregate == false && aggregations == NULL)) ;
+	build_alias_map (_projections, proj_count, &projected_names, &alias_keys,
+			&alias_vals, &alias_count) ;
 
 	// process each ORDER BY expression
 	for (int si = 0; si < sort_count; si++) {
 		AR_ExpNode *sort_exp = sort_exps[si] ;
-		char **vars = NULL ;
 
 		//----------------------------------------------------------------------
-		// remap aggregations
+		// remap functions
 		//----------------------------------------------------------------------
 
-		// order-by can't contain aggregation expressions unless these can be
-		// remapped to aliases e.g.
-		//
 		// WITH sum(n.score) AS total_score
 		// ORDER BY sum(n.score) / 2
 		//
@@ -207,54 +165,56 @@ void normalize_sort_exps
 		//
 		// WITH sum(n.score) AS total_score
 		// ORDER BY total_score / 2
-		//
-		// in no alias is found we'll omit an error
 
-		if (aggregate) {
-			// remap each aggregation node
-			AR_ExpNode **agg_nodes = AR_EXP_CollectAggregations (sort_exp) ;
+		// try to remap each function node
+		// starting from top level function nodes and descending downward
+		// to internal function calls
+		AR_ExpNode **func_nodes = AR_EXP_CollectFunctions (sort_exp) ;
 
-			for (int ai = 0; ai < array_len (agg_nodes); ai++) {
+		for (int ai = 0; ai < array_len (func_nodes); ai++) {
+			AR_ExpNode *f = func_nodes[ai] ;
 
-				// lookup aliased
-				bool has_alias = false ;
+			for (int pi = 0; pi < proj_count; pi++) {
+				AR_ExpNode *candidate = _projections[pi] ;
 
-				for (int aj = 0; aj < array_len (aggregations); aj++) {
-					if (AR_EXP_Equals (agg_nodes[ai], aggregations[aj])) {
-						has_alias = true ;
+				if (AR_EXP_Equals (candidate, f)) {
+					// found a match
+					// `f` will be replaced with candidate alias
 
-						AR_ExpNode *replacement =
-							AR_EXP_NewVariableOperandNode (
-									aggregations[aj]->resolved_name) ;
+					AR_ExpNode *replacement = AR_EXP_NewVariableOperandNode (
+							candidate->resolved_name) ;
+					replacement->resolved_name = candidate->resolved_name ;
 
-						replacement->resolved_name =
-							aggregations[aj]->resolved_name ;
+					AR_EXP_Overwrite (f, replacement) ;
+					AR_EXP_Free (replacement) ;
 
-						AR_EXP_Overwrite (agg_nodes[ai], replacement) ;
-						AR_EXP_Free (replacement) ;
+					// recompute func_nodes
+					// by replacing `f` all of its inner function node
+					// are removed
+					array_free (func_nodes) ;
+					func_nodes = AR_EXP_CollectFunctions (sort_exp) ;
+					ai-- ;  // reset loop index
 
-						break ;
-					}
-				}
-
-				if (!has_alias) {
-					// error!
-					array_free (agg_nodes) ;
-
-					ErrorCtx_SetError ("failed to map aggregation expression "
-							"within ORDER BY clause, please use alias") ;
-					goto cleanup ;
+					break ;  // move on to the next function call expression
 				}
 			}
+		}
 
-			array_free (agg_nodes) ;
+		array_free (func_nodes) ;
+
+		// check if there are any aggregation nodes in expression
+		// as the order-by clause can not have aggregation expressions
+		if (AR_EXP_ContainsAggregation (sort_exp)) {
+			ErrorCtx_SetError ("failed to map aggregation expression "
+					"within ORDER BY clause, please use alias") ;
+			goto cleanup ;
 		}
 
 		//----------------------------------------------------------------------
-		// check if any variables are not projected
+		// check for un-projected variables
 		//----------------------------------------------------------------------
 
-		vars = collect_expr_vars (sort_exp) ;
+		char **vars = collect_expr_vars (sort_exp) ;
 		int n_vars = array_len (vars) ;
 		bool has_nonprojected_vars = false ;
 
@@ -270,30 +230,7 @@ void normalize_sort_exps
 			goto cleanup ;
 		}
 
-		// case A: entire order-by expression equals some projection
-		// e.g.
-		// WITH a.v AS V
-		// ORDER BY a.v
-		//
-		// replace with projected alias
-		//
-		// WITH a.v AS V
-		// ORDER BY V
-
-		const AR_ExpNode *proj_eq =
-			find_projection (_projections, proj_count, sort_exp) ;
-
-		if (proj_eq != NULL) {
-			// replace order-by expression with a new simpler one
-			AR_EXP_Free (sort_exp) ;
-			const char *alias_name = proj_eq->resolved_name ;
-			sort_exps[si] = AR_EXP_NewVariableOperandNode (alias_name) ;
-			sort_exps[si]->resolved_name = alias_name ;
-
-			goto cleanup ;
-		}
-
-		// case B: remapping
+		// case A: remapping
 		// e.g.
 		//
 		// WITH n AS m
@@ -351,6 +288,7 @@ void normalize_sort_exps
 					if (strcmp (entity_alias, alias_keys[ak]) == 0) {
 						// remap
 						node->operand.variadic.entity_alias = alias_vals[ak] ;
+						node->resolved_name = alias_vals[ak] ;
 						break ;
 					}
 				}
@@ -361,7 +299,7 @@ void normalize_sort_exps
 			goto cleanup ;
 		}
 
-		// case C: last resort
+		// case B: last resort
 		// replace projected aliases with their original expressions
 		// e.g.
 		//
@@ -374,6 +312,7 @@ void normalize_sort_exps
 		// MATCH (a), (b)
 		// WITH b.v AS X, a.v + b.v
 		// ORDER BY a.v, a.v + b.v
+
 		if (aggregate) {
 			// in aggregation, ORDER BY cannot reference unprojected variables
 			// as it would introduce unintended grouping keys
@@ -416,10 +355,6 @@ cleanup:
 	rm_free (alias_keys) ;
 	rm_free (alias_vals) ;
 	rm_free (projected_names) ;
-
-	if (aggregations != NULL) {
-		array_free (aggregations) ;
-	}
 
 	*projections = _projections ;
 }
