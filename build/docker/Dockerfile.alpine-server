@@ -2,11 +2,7 @@ ARG BASE_IMAGE=falkordb/falkordb-compiler-alpine
 
 ARG TARGETPLATFORM=linux/amd64
 
-ARG BROWSER_TAG=latest
-
 FROM $BASE_IMAGE AS compiler
-
-FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
 
 FROM redis:8.2.2-alpine
 
@@ -20,8 +16,6 @@ ENV FALKORDB_IMPORT_PATH=${FALKORDB_HOME}/import
 
 ENV FALKORDB_TLS_PATH=${FALKORDB_HOME}/tls
 
-ENV FALKORDB_BROWSER_PATH=${FALKORDB_HOME}/browser
-
 # Install runtime dependencies using Alpine packages (equivalent to Debian version)
 RUN apk add --no-cache libgomp openssl nodejs npm
 
@@ -33,14 +27,9 @@ COPY ./build/docker/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 # Copy the compiled FalkorDB module from the Alpine compiler
 COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
-# Copy browser files from the Alpine-based browser image
-COPY --from=browser /app ${FALKORDB_BROWSER_PATH}
-
 ENV ARCH=${TARGETPLATFORM}
 
 ENV TLS=0
-
-ENV BROWSER=1
 
 EXPOSE 6379/tcp
 
