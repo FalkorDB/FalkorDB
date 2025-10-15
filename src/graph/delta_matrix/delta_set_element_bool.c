@@ -29,8 +29,7 @@ GrB_Info Delta_Matrix_setElement_BOOL
 		GrB_OK(Delta_Matrix_setElement_BOOL(C->transposed, j, i));
 	}
 
-	info = GxB_Matrix_isStoredElement(dm, i, j);
-	GrB_OK (info);
+	GrB_OK (info = GxB_Matrix_isStoredElement(dm, i, j));
 	marked_for_deletion = (info == GrB_SUCCESS);
 
 	if(marked_for_deletion) {
@@ -38,8 +37,7 @@ GrB_Info Delta_Matrix_setElement_BOOL
 		GrB_OK(GrB_Matrix_setElement(m, true, i, j));
 		GrB_OK(GrB_Matrix_removeElement(dm, i, j));
 	} else {
-		info = GxB_Matrix_isStoredElement(m, i, j);
-		GrB_OK (info);
+		GrB_OK (info = GxB_Matrix_isStoredElement(m, i, j));
 		already_allocated = (info == GrB_SUCCESS);
 
 		if(!already_allocated) {

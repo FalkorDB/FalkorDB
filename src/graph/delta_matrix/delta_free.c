@@ -22,7 +22,11 @@ void Delta_Matrix_free
 	if(M == NULL) return;
 
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(M)){
-		Delta_Matrix_free(&M->transposed);
+		Delta_Matrix T = M->transposed;
+		M->transposed = NULL;
+		GrB_OK (GrB_Matrix_free(&T->matrix));
+		GrB_OK (GrB_Matrix_free(&T->delta_plus));
+		GrB_OK (GrB_Matrix_free(&T->delta_minus));
 	} 
 
 	GrB_OK (GrB_Matrix_free(&M->matrix));

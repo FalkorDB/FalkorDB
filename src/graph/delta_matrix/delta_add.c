@@ -55,7 +55,10 @@ GrB_Info Delta_eWiseAdd                // C = A + B
 	// C = A + B
 	//--------------------------------------------------------------------------
 
-	GrB_OK (GrB_Matrix_eWiseAdd_Semiring(_C, NULL, NULL, semiring, _A, _B, NULL));
+	GrB_OK (GrB_Matrix_eWiseAdd_Semiring(_C, NULL, NULL, semiring, _A, _B,
+		NULL));
+
+	Delta_Matrix_wait(C, false);
 
 	if(_A != AM) GrB_free(&_A);
 	if(_B != BM) GrB_free(&_B);

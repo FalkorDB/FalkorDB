@@ -15,7 +15,8 @@ void Delta_Matrix_checkBounds
 	GrB_Index i,
 	GrB_Index j
 ) {
-#ifdef DELTA_DEBUG
+#ifdef RG_DEBUG
+	ASSERT (C != NULL);
 	GrB_Matrix m = DELTA_MATRIX_M(C);
 	// check bounds
 	GrB_Index nrows;
@@ -33,7 +34,9 @@ void Delta_Matrix_checkCompatible
 	const Delta_Matrix M,
 	const Delta_Matrix N
 ) {
-#ifdef DELTA_DEBUG
+#ifdef RG_DEBUG
+	ASSERT(M != NULL);
+	ASSERT(N != NULL);
 	GrB_Matrix m = DELTA_MATRIX_M(M);
 	GrB_Matrix n = DELTA_MATRIX_M(N);
 
@@ -56,62 +59,159 @@ void Delta_Matrix_checkCompatible
 #endif
 }
 
-void Delta_Matrix_validateState
+bool _matrix_leq
+(
+	const GrB_BinaryOp leq,
+	const GrB_Matrix A,
+	const GrB_Matrix B
+) {
+	GrB_Index a_nvals = 0;
+	GrB_Index b_nvals = 0;
+	GrB_Index c_nvals = 0;
+	GrB_Index nrows   = 0;
+	GrB_Index ncols   = 0;
+	GrB_Index brows   = 0;
+	GrB_Index bcols   = 0;
+	
+	GrB_OK (GrB_Matrix_nvals(&a_nvals, A));
+	GrB_OK (GrB_Matrix_nvals(&b_nvals, B));
+	if (a_nvals > b_nvals) return false;
+
+	GrB_OK (GrB_Matrix_nrows(&nrows, A));
+	GrB_OK (GrB_Matrix_ncols(&ncols, A));
+	GrB_OK (GrB_Matrix_nrows(&brows, B));
+	GrB_OK (GrB_Matrix_ncols(&bcols, B));
+	if(nrows != brows || ncols != bcols) return false;
+
+	GrB_Matrix C = NULL;
+	GrB_OK (GrB_Matrix_new(&C, GrB_BOOL, nrows, ncols));
+	GrB_OK (GrB_eWiseMult(C, NULL, NULL, leq, A, B, NULL));
+	GrB_OK (GrB_Matrix_nvals(&c_nvals, C));
+
+	bool result = true;
+	GrB_OK(GrB_Matrix_reduce_BOOL(
+		&result, NULL, GrB_LAND_MONOID_BOOL, C, NULL));
+	GrB_free(&C);
+
+	result = result && (c_nvals == a_nvals);
+	return result;
+}
+
+// Check every assumption for the Delta Matrix
+//         ∅ = m  ∩ dp
+//         ∅ = dp ∩ dm
+//         m \superset dm
+// Transpose
+//    Check it is actually M^T
+// Types / Dimensions
+//    m BOOL / UINT64
+//    dp BOOL / UINT64
+//    dm BOOL
+void Delta_Matrix_validate
 (
 	const Delta_Matrix C,
-	GrB_Index i,
-	GrB_Index j
+	bool check_transpose
 ) {
-#ifdef DELTA_DEBUG
-	bool        x_m               =  false;
-	bool        x_dp              =  false;
-	bool        x_dm              =  false;
-	bool        existing_entry    =  false;
-	bool        pending_addition  =  false;
-	bool        pending_deletion  =  false;
-	GrB_Info    info_m            =  GrB_SUCCESS;
-	GrB_Info    info_dp           =  GrB_SUCCESS;
-	GrB_Info    info_dm           =  GrB_SUCCESS;
+#if RG_DEBUG
+	ASSERT (C != NULL);
+
+	bool        m_dp_disjoint     =  false;
+	bool        dp_dm_disjoint    =  false;
+	bool        m_zombies_valid   =  true;
+	bool        dp_iso            =  true;
+	bool        dm_iso            =  true;
+	GrB_Info    info              =  GrB_SUCCESS;
 	GrB_Matrix  m                 =  DELTA_MATRIX_M(C);
 	GrB_Matrix  dp                =  DELTA_MATRIX_DELTA_PLUS(C);
 	GrB_Matrix  dm                =  DELTA_MATRIX_DELTA_MINUS(C);
+	GrB_Matrix  temp              =  NULL;
+	GrB_Index   nrows             = 0;
+	GrB_Index   ncols             = 0;
+	GrB_Index   nvals             = 0;
+	GrB_Index   dp_nvals          = 0;
+	GrB_Index   dm_nvals          = 0;
+	GrB_Type    ty                = NULL;
+	GrB_Type    ty_m              = NULL;
+	GrB_Type    ty_dp             = NULL;
+	
+	// GrB_OK (Delta_Matrix_type(&ty, C));
+	GrB_OK (GxB_Matrix_type(&ty_m, m));
+	GrB_OK (GxB_Matrix_type(&ty_dp, dp));
+	ty = ty_m;
 
-	// find out which entries exists
-	info_m  = GrB_Matrix_extractElement(&x_m,  m,  i, j);
-	info_dp = GrB_Matrix_extractElement(&x_dp, dp, i, j);
-	info_dm = GrB_Matrix_extractElement(&x_dm, dm, i, j);
+	GrB_OK (Delta_Matrix_nrows(&nrows, C));
+	GrB_OK (Delta_Matrix_ncols(&ncols, C));
+	
+	ASSERT(ty == ty_m);
+	ASSERT(ty == ty_dp);
+	ASSERT(ty == GrB_BOOL || ty == GrB_UINT64);
 
-	UNUSED(existing_entry);
-	UNUSED(pending_addition);
-	UNUSED(pending_deletion);
+	#if 0 // less strict iso test:
+	// if this passes, Graphblas may not recognize the matrix as iso
+	// but it only has true values. 
+	info = GrB_Matrix_reduce_BOOL(
+		&dm_iso, GrB_LAND, GrB_LAND_MONOID_BOOL, dm, NULL);
+	ASSERT(info == GrB_SUCCESS);
+	#else
+	GrB_OK (GxB_Matrix_iso (&dm_iso, dm));
+	#endif
 
-	existing_entry    =  info_m  == GrB_SUCCESS;
-	pending_addition  =  info_dp == GrB_SUCCESS;
-	pending_deletion  =  info_dm == GrB_SUCCESS;
+	GrB_OK (GrB_Matrix_nvals (&dm_nvals, dm));
+
+	if(!dm_iso && dm_nvals > 0) {
+		GxB_fprint(dm, GxB_SHORT, stdout);
+	}
+
+	ASSERT(dm_iso || dm_nvals == 0);
+
+	if(check_transpose && DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) { 
+		// this may to too strict
+		// the transpose should be structually the transpose
+		// however doesn't need to have all pending changes be equal.
+		GrB_Matrix tm        = DELTA_MATRIX_TM(C);
+		GrB_Matrix tdp       = DELTA_MATRIX_TDELTA_PLUS(C);
+		GrB_Matrix tdm       = DELTA_MATRIX_TDELTA_MINUS(C);
+
+		// m = tm^t
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, m, tm));
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tm, m));
+
+		// dp = tdp^t
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, dp, tdp));
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tdp, dp));
+
+		// dm = tdm^t
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, dm, tdm));
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tdm, dm));
+	}
+	
+	GrB_OK (GrB_Matrix_new(&temp, GrB_BOOL, nrows, ncols));
+	GrB_OK (GrB_eWiseMult(temp, NULL, NULL, GrB_ONEB_BOOL, m, dp, NULL));
+	GrB_OK (GrB_Matrix_nvals(&nvals, temp));
+	m_dp_disjoint = nvals == 0;
+
+	// if(!m_dp_disjoint)
+	// 	GxB_Matrix_fprint(temp, "m&dp",GxB_SHORT, stdout);
+	
+	GrB_OK (GrB_eWiseMult(temp, NULL, NULL, GrB_ONEB_BOOL, dp, dm, NULL));
+	GrB_OK (GrB_Matrix_nvals(&nvals, temp));
+
+	dp_dm_disjoint = nvals == 0;
+
+	// if(!dp_dm_disjoint)
+	// 	GxB_Matrix_fprint(temp, "dp&dm",GxB_SHORT, stdout);
+
+	// m \superset dm
+	ASSERT(_matrix_leq(GrB_ONEB_BOOL, dm, m));
 
 	//--------------------------------------------------------------------------
-	// impossible states
+	// check assumptions 
 	//--------------------------------------------------------------------------
 
-	// matrix disjoint
-	ASSERT(!(existing_entry   &&
-			 pending_addition &&
-			 pending_deletion));
+	ASSERT(m_dp_disjoint);
+	ASSERT(dp_dm_disjoint);
 
-	// deletion only
-	ASSERT(!(!existing_entry   &&
-			 !pending_addition &&
-			 pending_deletion));
-
-	// addition to already existing entry
-	ASSERT(!(existing_entry   &&
-			 pending_addition &&
-			 !pending_deletion));
-
-	// pending deletion and pending addition
-	ASSERT(!(!existing_entry   &&
-			  pending_addition &&
-			  pending_deletion));
+	// Free allocation.
+	GrB_free(&temp);
 #endif
 }
-

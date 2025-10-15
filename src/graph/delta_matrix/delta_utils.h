@@ -28,3 +28,18 @@ void Delta_Matrix_validateState
 	GrB_Index j
 );
 
+// Check every assumption for the Delta Matrix
+//         ∅ = m  ∩ dp
+//         ∅ = dp ∩ dm
+//         m \superset dm
+// Transpose
+//    Check it is actually M^T
+// Types / Dimensions
+//    m BOOL / UINT64
+//    dp BOOL / UINT64
+//    dm BOOL
+void Delta_Matrix_validate
+(
+	const Delta_Matrix C,
+	bool check_transpose
+) ;

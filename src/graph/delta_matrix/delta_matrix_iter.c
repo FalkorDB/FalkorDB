@@ -90,6 +90,7 @@ GrB_Info Delta_MatrixTupleIter_iterate_range
 	GrB_Index endRowIdx           // row index to finish with
 ) {
 	if(IS_DETACHED(iter)) return GrB_NULL_POINTER ;
+	ASSERT(startRowIdx <= endRowIdx) ;
 
 	iter->min_row = startRowIdx ;
 	iter->max_row = endRowIdx ;
@@ -140,7 +141,7 @@ static GrB_Info _next_m_iter_bool
 	GrB_Index  d_row = -1;
 	GrB_Index  d_col = -1;
 
-	GrB_Index  _val;
+	bool  _val;
 
 	GxB_Iterator m_it = &iter->m_it ;
 	GxB_Iterator dm_it = &iter->dm_it ;
@@ -338,6 +339,7 @@ GrB_Info Delta_MatrixTupleIter_AttachRange
 ) {
 	if(A == NULL) return GrB_NULL_POINTER ;
 	if(iter == NULL) return GrB_NULL_POINTER ;
+	ASSERT(min_row <= max_row) ;
 
 	GrB_Matrix M  = DELTA_MATRIX_M(A) ;
 	GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS(A) ;

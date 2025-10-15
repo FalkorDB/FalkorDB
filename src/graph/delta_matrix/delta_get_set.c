@@ -5,21 +5,24 @@
 
 #include "RG.h"
 #include "delta_matrix.h"
+#include "delta_utils.h"
 
-// replace C's internal M matricies with given
-// the operation can only succeed if C's interal matrices:
-// M, DP, DM are all empty
+// Set the internal matricies of C
+// the operation can only succeed if C's interal matrices are all empty
 GrB_Info Delta_Matrix_setMatrices
 (
 	Delta_Matrix C,  // delta matrix
-	GrB_Matrix M,    // new M
-	GrB_Matrix DP,   // new delta-plus
-	GrB_Matrix DM    // new delta-minus
+	GrB_Matrix *M,   // new M
+	GrB_Matrix *DP,  // new delta-plus
+	GrB_Matrix *DM   // new delta-minus
 ) {
 	ASSERT(C  != NULL);
 	ASSERT(M  != NULL);
 	ASSERT(DP != NULL);
 	ASSERT(DM != NULL);
+	ASSERT(*M  != NULL);
+	ASSERT(*DP != NULL);
+	ASSERT(*DM != NULL);
 
 	GrB_Index nvals = 0;
 
@@ -32,9 +35,16 @@ GrB_Info Delta_Matrix_setMatrices
 	GrB_OK(GrB_free(&DELTA_MATRIX_DELTA_PLUS(C)));
 	GrB_OK(GrB_free(&DELTA_MATRIX_DELTA_MINUS(C)));
 
-	DELTA_MATRIX_M(C)           = M;
-	DELTA_MATRIX_DELTA_PLUS(C)  = DP;
-	DELTA_MATRIX_DELTA_MINUS(C) = DM;
+	DELTA_MATRIX_M(C)           = *M;
+	DELTA_MATRIX_DELTA_PLUS(C)  = *DP;
+	DELTA_MATRIX_DELTA_MINUS(C) = *DM;
+	GrB_OK (GrB_Matrix_wait(*M, GrB_MATERIALIZE));
+
+	*M  = NULL;
+	*DP  = NULL;
+	*DM  = NULL;
+
+	Delta_Matrix_validate(C, false);
 
 	return GrB_SUCCESS;
 }
@@ -42,7 +52,7 @@ GrB_Info Delta_Matrix_setMatrices
 GrB_Info Delta_Matrix_setM
 (
 	Delta_Matrix C,  // delta matrix
-	GrB_Matrix M     // new M
+	GrB_Matrix *M    // new M
 ) {
 	GrB_Index nvals = 0;
 	GrB_Index tot   = 0;
@@ -57,9 +67,15 @@ GrB_Info Delta_Matrix_setM
 
 	if (tot != 0)
 		return GrB_ALREADY_SET;
+
 	GrB_OK (GrB_free(&DELTA_MATRIX_M(C)));
 
-	DELTA_MATRIX_M(C) = M;
+	DELTA_MATRIX_M(C) = *M;
+
+	GrB_OK (GrB_Matrix_wait(*M, GrB_MATERIALIZE));
+
+	*M = NULL;
+
 	return GrB_SUCCESS;
 }
 

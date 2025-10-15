@@ -84,7 +84,7 @@ static void Delta_Matrix_sync
 		GrB_Index dm_nvals = 0;
 
 		//----------------------------------------------------------------------
-		// determin change set
+		// determine change set
 		//----------------------------------------------------------------------
 
 		GrB_OK (GrB_Matrix_nvals(&dp_nvals, dp));

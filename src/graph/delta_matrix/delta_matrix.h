@@ -17,6 +17,9 @@ typedef _Delta_Matrix *Delta_Matrix;
 #define DELTA_MATRIX_M(C)            ((C)->matrix)
 #define DELTA_MATRIX_DELTA_PLUS(C)   ((C)->delta_plus)
 #define DELTA_MATRIX_DELTA_MINUS(C)  ((C)->delta_minus)
+#define DELTA_MATRIX_TM(C)            ((C)->transposed->matrix)
+#define DELTA_MATRIX_TDELTA_PLUS(C)   ((C)->transposed->delta_plus)
+#define DELTA_MATRIX_TDELTA_MINUS(C)  ((C)->transposed->delta_minus)
 
 #define DELTA_MATRIX_MAINTAIN_TRANSPOSE(C) ((C)->transposed != NULL)
 
@@ -141,25 +144,21 @@ GrB_Matrix Delta_Matrix_DM
 	const Delta_Matrix C
 );
 
-// replace C's internal M matrix with given M
-// the operation can only succeed if C's interal matrices:
-// M, DP, DM are all empty
 GrB_Info Delta_Matrix_setM
 (
 	Delta_Matrix C,  // delta matrix
-	GrB_Matrix M     // new M
+	GrB_Matrix *M    // new M
 );
 
-// replace C's internal matrices (M, DP & DM)
-// the operation can only succeed if C's interal matrices:
-// M, DP, DM are all empty
+// Set the internal matricies of C
+// the operation can only succeed if C's interal matrices are all empty
 GrB_Info Delta_Matrix_setMatrices
 (
 	Delta_Matrix C,  // delta matrix
-	GrB_Matrix M,    // new M
-	GrB_Matrix DP,   // new delta-plus
-	GrB_Matrix DM    // new delta-minus
-);
+	GrB_Matrix *M,   // new M
+	GrB_Matrix *DP,  // new delta-plus
+	GrB_Matrix *DM   // new delta-minus
+) ;
 
 GrB_Info Delta_Matrix_nrows
 (
@@ -215,6 +214,13 @@ GrB_Info Delta_Matrix_extractElement_UINT64     // x = A(i,j)
 	const Delta_Matrix A,                  // matrix to extract a scalar from
 	GrB_Index i,                           // row index
 	GrB_Index j                            // column index
+) ;
+
+GrB_Info Delta_Matrix_isStoredElement
+(
+	const Delta_Matrix A,  // matrix to check
+	GrB_Index i,           // row index
+	GrB_Index j            // column index
 ) ;
 
 // remove entry at position C[i,j]
