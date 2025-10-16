@@ -63,6 +63,7 @@ class testOrderBy(FlowTestsBase):
 
     def test03_order_by_projected_exp(self):
         """order-by accesses projected alias by its original form"""
+
         q = """UNWIND [{v:3}, {v:1}, {v:2}] AS element
                WITH element.v AS X
                ORDER BY element.v
@@ -75,6 +76,7 @@ class testOrderBy(FlowTestsBase):
 
     def test04_order_by_alias_prop(self):
         """order-by access projected alias by its original name"""
+
         q = """UNWIND [{v:3}, {v:1}, {v:2}] AS element
                WITH element AS X
                ORDER BY element.v
@@ -105,6 +107,9 @@ class testOrderBy(FlowTestsBase):
         self.env.assertEquals(actual, expected)
 
     def test05_order_by_nonprojected(self):
+        """order-by reference non-projected variables"""
+
+        # `Y` is implicitly added to the projected clause
         q = """UNWIND [3, 1, 2] AS X
                UNWIND [3, 1, 2] AS Y
                WITH X
@@ -126,6 +131,7 @@ class testOrderBy(FlowTestsBase):
         self.env.assertEquals(actual, expected)
 
     def test06_order_by_unallowed(self):
+        """order-by can not refer to non-projected variabels in aggregation scope"""
 
         q = """UNWIND [1, 2, 3] AS X
                WITH count(X) AS cnt
