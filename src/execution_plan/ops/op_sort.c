@@ -5,8 +5,6 @@
  */
 
 #include "op_sort.h"
-#include "op_project.h"
-#include "op_aggregate.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
 #include "../../util/qsort.h"
@@ -28,19 +26,23 @@ static int _record_cmp
 	Record b,
 	OpSort *op
 ) {
-	ASSERT(a->owner == b->owner);
+	ASSERT (a->owner == b->owner) ;
 
-	uint comparison_count = array_len(op->record_offsets);
+	uint comparison_count = array_len (op->sort_offsets) ;
 	for(uint i = 0; i < comparison_count; i++) {
-		SIValue aVal = Record_Get(a, op->record_offsets[i]);
-		SIValue bVal = Record_Get(b, op->record_offsets[i]);
-		int rel = SIValue_Compare(aVal, bVal, NULL);
-		if(rel == 0) continue; // elements are equal; try next ORDER BY element
-		rel *= op->directions[i]; // flip value for descending order
-		return rel;
+		SIValue aVal = Record_Get (a, op->sort_offsets[i]) ;
+		SIValue bVal = Record_Get (b, op->sort_offsets[i]) ;
+
+		int rel = SIValue_Compare (aVal, bVal, NULL) ;
+		if (rel == 0) {
+			continue ;  // elements are equal; try next ORDER BY element
+		}
+
+		rel *= op->directions[i] ; // flip value for descending order
+		return rel ;
 	}
 
-	return 0;
+	return 0 ;
 }
 
 static int _buffer_elem_cmp
@@ -58,31 +60,61 @@ static void _accumulate
 	Record r
 ) {
 	if(op->limit == UNLIMITED) {
-		// not using a heap and there's room for record
-		array_append(op->buffer, r);
-		return;
+		// not using a heap
+		array_append (op->buffer, r) ;
+		return ;
 	}
 
-	if(Heap_count(op->heap) < op->limit) {
-		Heap_offer(&op->heap, r);
+	// add record to the heap if limit hasn't been reached
+	if (Heap_count (op->heap) < op->limit) {
+		Heap_offer (&op->heap, r) ;
 	} else {
-		// no room in the heap, see if we need to replace
-		// a heap stored record with the current record
-		if(_record_cmp(Heap_peek(op->heap), r, op) > 0) {
-			Record replaced = Heap_poll(op->heap);
-			OpBase_DeleteRecord(&replaced);
-			Heap_offer(&op->heap, r);
+		// no room in the heap, see if we need to replace heap's head 
+		if (_record_cmp (Heap_peek (op->heap), r, op) > 0) {
+			// add record to heap
+			Record replaced = Heap_poll (op->heap) ;
+			OpBase_DeleteRecord (&replaced) ;
+			Heap_offer (&op->heap, r) ;
 		} else {
-			OpBase_DeleteRecord(&r);
+			// discard record
+			OpBase_DeleteRecord (&r) ;
 		}
 	}
 }
 
-static inline Record _handoff(OpSort *op) {
+static inline Record _handoff
+(
+	OpSort *op
+) {
 	if(op->record_idx < array_len(op->buffer)) {
 		return op->buffer[op->record_idx++];
 	}
 	return NULL;
+}
+
+static void _map_expressions
+(
+	OpSort *op
+) {
+	//--------------------------------------------------------------------------
+	// compute expressions record index
+	//--------------------------------------------------------------------------
+
+	uint n = array_len (op->exps) ;
+	op->to_eval = array_new (AR_ExpNode *, n) ;  // expressions to eval
+
+	// process sort expressions
+	for (uint i = 0; i < n; i++) {
+		AR_ExpNode *exp = op->exps[i] ;
+		const char *alias = exp->resolved_name ;
+
+		bool mapped = OpBase_AliasMapping ((OpBase*)op, alias, NULL) ;
+		if (!mapped) {
+			// expression value is missing from record, make sure to evaluate
+			OpBase_Modifies ((OpBase*)op, alias) ;
+			array_append (op->to_eval, AR_EXP_Clone (exp)) ;
+		}
+	}
 }
 
 OpBase *NewSortOp
@@ -91,21 +123,30 @@ OpBase *NewSortOp
 	AR_ExpNode **exps,
 	int *directions
 ) {
-	OpSort *op = rm_calloc (1, sizeof(OpSort)) ;
+	ASSERT (exps       != NULL) ;
+	ASSERT (plan       != NULL) ;
+	ASSERT (directions != NULL) ;
 
-	op->exps       = exps;
-	op->first      = true;
-	op->limit      = UNLIMITED;
-	op->directions = directions;
+	OpSort *op = rm_calloc (1, sizeof (OpSort)) ;
+
+	op->exps       = exps ;
+	op->first      = true ;
+	op->limit      = UNLIMITED ;
+	op->directions = directions ;
 
 	// set our Op operations
-	OpBase_Init((OpBase *)op, OPType_SORT, "Sort", SortInit, SortConsume,
-			SortReset, NULL, SortClone, SortFree, false, plan);
+	OpBase_Init ((OpBase *)op, OPType_SORT, "Sort", SortInit, SortConsume,
+			SortReset, NULL, SortClone, SortFree, false, plan) ;
 
-	return (OpBase *)op;
+	_map_expressions (op) ;
+
+	return (OpBase *)op ;
 }
 
-static OpResult SortInit(OpBase *opBase) {
+static OpResult SortInit
+(
+	OpBase *opBase
+) {
 	OpSort *op = (OpSort *)opBase;
 
 	// set skip and limit if present in the execution-plan
@@ -126,48 +167,79 @@ static OpResult SortInit(OpBase *opBase) {
 		op->buffer = array_new(Record, 32);
 	}
 
-	uint comparison_count = array_len(op->exps);
-	op->record_offsets = array_new(uint, comparison_count);
-	for(uint i = 0; i < comparison_count; i ++) {
-		int record_idx;
-		bool aware = OpBase_AliasMapping((OpBase *)op,
-				op->exps[i]->resolved_name, &record_idx);
-		ASSERT(aware);
-		array_append(op->record_offsets, record_idx);
+	//--------------------------------------------------------------------------
+	// compute expressions record index
+	//--------------------------------------------------------------------------
+
+	// process sort expressions
+	uint n = array_len (op->exps) ;
+	op->sort_offsets = array_new (uint, n) ;  // used for sorting
+	for (uint i = 0; i < n; i++) {
+		int rec_idx ;
+		AR_ExpNode *exp = op->exps[i] ;
+		const char *alias = exp->resolved_name ;
+
+		bool mapped = OpBase_AliasMapping ((OpBase*)op, alias, &rec_idx) ;
+		ASSERT (mapped == true) ;
+
+		array_append (op->sort_offsets, rec_idx) ;
+	}
+
+	// process eval expressions
+	n = array_len (op->to_eval) ;
+	op->record_offsets = array_new (uint, n) ;  // used for exp eval
+	for (uint i = 0; i < n; i++) {
+		int rec_idx ;
+		AR_ExpNode *exp = op->to_eval[i] ;
+		const char *alias = exp->resolved_name ;
+
+		bool mapped = OpBase_AliasMapping ((OpBase*)op, alias, &rec_idx) ;
+		ASSERT (mapped == true) ;
+
+		array_append (op->record_offsets, rec_idx) ;
 	}
 
 	return OP_OK;
 }
 
-static Record SortConsume(OpBase *opBase) {
-	OpSort *op = (OpSort *)opBase;
+static Record SortConsume
+(
+	OpBase *opBase
+) {
+	OpSort *op = (OpSort *)opBase ;
 
-	if(!op->first) {
-		return _handoff(op);
+	if (!op->first) {
+		return _handoff (op) ;
 	}
-	// make sure consume will not be called on children again, as their depleted
-	op->first = false;
+	op->first = false ;
 
-	Record r;
-	// if we're here, we don't have any records to return
-	// try to get records
-	OpBase *child = op->op.children[0];
-	bool newData = false;
-	while((r = OpBase_Consume(child))) {
-		_accumulate(op, r);
-		newData = true;
+	//--------------------------------------------------------------------------
+	// consume all records from child
+	//--------------------------------------------------------------------------
+
+	Record r ;
+	OpBase *child = op->op.children[0] ;
+
+	while ((r = OpBase_Consume (child))) {
+		// evaluate sort expressions
+		for (uint i = 0; i < array_len (op->to_eval); i++) {
+			SIValue v = AR_EXP_Evaluate (op->to_eval[i], r) ;
+			Record_Add (r, op->record_offsets[i], v) ;
+		}
+
+		_accumulate (op, r) ;
 	}
-	if(!newData) return NULL;
 
 	if(op->buffer) {
 		sort_r(op->buffer, array_len(op->buffer), sizeof(Record),
 				(heap_cmp)_buffer_elem_cmp, op);
 	} else {
 		// heap
-		int records_count = Heap_count(op->heap);
-		op->buffer = array_newlen(Record, records_count);
-		for(int i = records_count-1; i >= 0 ; i--) {
-			op->buffer[i] = Heap_poll(op->heap);
+		int records_count = Heap_count (op->heap) ;
+		op->buffer = array_newlen (Record, records_count) ;
+
+		for (int i = records_count-1; i >= 0 ; i--) {
+			op->buffer[i] = Heap_poll (op->heap) ;
 		}
 	}
 
@@ -176,44 +248,81 @@ static Record SortConsume(OpBase *opBase) {
 }
 
 // restart iterator
-static OpResult SortReset(OpBase *ctx) {
+static OpResult SortReset
+(
+	OpBase *ctx
+) {
 	OpSort *op = (OpSort *)ctx;
 	uint recordCount;
 
-	if(op->heap) {
+	if (op->heap) {
 		recordCount = Heap_count(op->heap);
-		for(uint i = 0; i < recordCount; i++) {
-			Record r = (Record)Heap_poll(op->heap);
-			OpBase_DeleteRecord(&r);
+		for (uint i = 0; i < recordCount; i++) {
+			Record r = (Record)Heap_poll (op->heap) ;
+			OpBase_DeleteRecord (&r) ;
 		}
 	}
 
-	if(op->buffer) {
-		recordCount = array_len(op->buffer);
-		for(uint i = op->record_idx; i < recordCount; i++) {
-			Record r = op->buffer[i];
-			OpBase_DeleteRecord(&r);
+	if (op->buffer) {
+		recordCount = array_len (op->buffer) ;
+		for (uint i = op->record_idx; i < recordCount; i++) {
+			Record r = op->buffer[i] ;
+			OpBase_DeleteRecord (&r) ;
 		}
-		array_clear(op->buffer);
+		array_clear (op->buffer) ;
 	}
 
-	op->record_idx = 0;
+	op->first = true ;
+	op->record_idx = 0 ;
 
 	return OP_OK;
 }
 
-static OpBase *SortClone(const ExecutionPlan *plan, const OpBase *opBase) {
-	ASSERT(opBase->type == OPType_SORT);
-	OpSort *op = (OpSort *)opBase;
-	int *directions;
-	AR_ExpNode **exps;
-	array_clone(directions, op->directions);
-	array_clone_with_cb(exps, op->exps, AR_EXP_Clone);
-	return NewSortOp(plan, exps, directions);
+static OpBase *SortClone
+(
+	const ExecutionPlan *plan,
+	const OpBase *opBase
+) {
+	ASSERT (opBase->type == OPType_SORT) ;
+
+	OpSort *op = (OpSort *)opBase ;
+	OpSort *clone = rm_calloc (1, sizeof (OpSort)) ;
+
+	clone->first = true ;
+	clone->limit = UNLIMITED ;
+
+	array_clone (clone->directions, op->directions) ;
+	array_clone_with_cb (clone->exps, op->exps, AR_EXP_Clone) ;
+	array_clone_with_cb (clone->to_eval, op->to_eval, AR_EXP_Clone) ;
+
+	// set our Op operations
+	OpBase_Init ((OpBase *)clone, OPType_SORT, "Sort", SortInit, SortConsume,
+			SortReset, NULL, SortClone, SortFree, false, plan) ;
+
+	return (OpBase*)clone ;
+}
+
+void SortBindToPlan
+(
+	OpBase *opBase,            // op to bind
+	const ExecutionPlan *plan  // plan to bind the op to
+) {
+	OpSort *op = (OpSort *)opBase ;
+	opBase->plan = plan ;
+
+	// introduce the projected aliases to the plan record-mapping, 
+	for (uint i = 0; i < array_len (op->to_eval); i++) {
+		// the projected record will associate values with their resolved name
+		// to ensure that space is allocated for each entry
+		OpBase_Modifies ((OpBase *)op, op->to_eval[i]->resolved_name) ;
+	}
 }
 
 // frees sort
-static void SortFree(OpBase *ctx) {
+static void SortFree
+(
+	OpBase *ctx
+) {
 	OpSort *op = (OpSort *)ctx;
 
 	if(op->heap) {
@@ -236,9 +345,14 @@ static void SortFree(OpBase *ctx) {
 		op->buffer = NULL;
 	}
 
-	if(op->record_offsets) {
-		array_free(op->record_offsets);
-		op->record_offsets = NULL;
+	if(op->sort_offsets) {
+		array_free(op->sort_offsets);
+		op->sort_offsets = NULL;
+	}
+
+	if (op->record_offsets) {
+		array_free (op->record_offsets) ;
+		op->record_offsets = NULL ;
 	}
 
 	if(op->directions) {
@@ -246,10 +360,22 @@ static void SortFree(OpBase *ctx) {
 		op->directions = NULL;
 	}
 
-	if(op->exps) {
-		uint exps_count = array_len(op->exps);
-		for(uint i = 0; i < exps_count; i++) AR_EXP_Free(op->exps[i]);
-		array_free(op->exps);
-		op->exps = NULL;
+	if (op->to_eval) {
+		uint n = array_len (op->to_eval) ;
+		for (uint i = 0; i < n; i++) {
+			AR_EXP_Free (op->to_eval[i]) ;
+		}
+		array_free (op->to_eval) ;
+		op->to_eval = NULL ;
+	}
+
+	if (op->exps) {
+		uint n = array_len (op->exps) ;
+		for (uint i = 0; i < n; i++) {
+			AR_EXP_Free (op->exps[i]) ;
+		}
+		array_free (op->exps) ;
+		op->exps = NULL ;
 	}
 }
+

@@ -174,7 +174,10 @@ class testOptionalFlow(FlowTestsBase):
 
     # Build a named path in an optional clause.
     def test15_optional_named_path(self):
-        query = """MATCH (a) OPTIONAL MATCH p = (a)-[]->(b) RETURN length(p) ORDER BY length(p)"""
+        query = """MATCH (a)
+                   OPTIONAL MATCH p = (a)-[]->(b)
+                   RETURN length(p)
+                   ORDER BY length(p)"""
         actual_result = self.graph.query(query)
         # 2 nodes have outgoing edges and 2 do not, so expected 2 paths of length 1 and 2 null results.
         expected_result = [[1],
