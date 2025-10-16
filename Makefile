@@ -147,14 +147,14 @@ export ONIGURUMA_BINDIR=$(DEPS_BINDIR)/oniguruma
 include $(ROOT)/build/oniguruma/Makefile.defs
 
 REDISEARCH_DIR = $(ROOT)/deps/RediSearch
-export REDISEARCH_BINROOT=$(BINROOT)
+export REDISEARCH_BINROOT=$(REDISEARCH_DIR)/bin/$(FULL_VARIANT)/search
 include $(ROOT)/build/RediSearch/Makefile.defs
 
 FalkorDBRS_DIR = $(ROOT)/deps/FalkorDB-core-rs
 export FalkorDBRS_BINDIR=$(BINROOT)/FalkorDB-core-rs
 include $(ROOT)/build/FalkorDB-core-rs/Makefile.defs
 
-BIN_DIRS += $(REDISEARCH_BINROOT)/search-static
+BIN_DIRS += $(REDISEARCH_BINROOT)
 
 LIBS=$(RAX) $(LIBXXHASH) $(GRAPHBLAS) $(LAGRAPH) $(REDISEARCH_LIBS) $(LIBCURL) $(LIBCSV) $(LIBCYPHER_PARSER) $(UTF8PROC) $(ONIGURUMA) $(FalkorDBRS)
 
@@ -378,7 +378,7 @@ clean-libcypher-parser:
 
 clean-search:
 ifeq ($(ALL),1)
-	$(SHOW)rm -rf $(REDISEARCH_BINROOT)/search-static
+	$(SHOW)rm -rf $(REDISEARCH_BINROOT)
 else
 	$(SHOW)$(MAKE) -C $(REDISEARCH_DIR) clean BINROOT=$(REDISEARCH_BINROOT)
 endif
