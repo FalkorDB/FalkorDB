@@ -27,6 +27,7 @@ void Delta_Matrix_free
 		GrB_OK (GrB_Matrix_free(&T->matrix));
 		GrB_OK (GrB_Matrix_free(&T->delta_plus));
 		GrB_OK (GrB_Matrix_free(&T->delta_minus));
+		rm_free(T);
 	} 
 
 	GrB_OK (GrB_Matrix_free(&M->matrix));

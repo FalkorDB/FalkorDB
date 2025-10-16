@@ -63,29 +63,42 @@ bool _matrix_leq
 (
 	const GrB_BinaryOp leq,
 	const GrB_Matrix A,
-	const GrB_Matrix B
+	const GrB_Matrix B,
+	bool transpose
 ) {
-	GrB_Index a_nvals = 0;
-	GrB_Index b_nvals = 0;
-	GrB_Index c_nvals = 0;
-	GrB_Index nrows   = 0;
-	GrB_Index ncols   = 0;
-	GrB_Index brows   = 0;
-	GrB_Index bcols   = 0;
+	GrB_Index      a_nvals = 0;
+	GrB_Index      b_nvals = 0;
+	GrB_Index      c_nvals = 0;
+	GrB_Index      nrows   = 0;
+	GrB_Index      ncols   = 0;
+	GrB_Index      brows   = 0;
+	GrB_Index      bcols   = 0;
+	GrB_Descriptor desc = transpose ? GrB_DESC_T1 : NULL;
 	
 	GrB_OK (GrB_Matrix_nvals(&a_nvals, A));
 	GrB_OK (GrB_Matrix_nvals(&b_nvals, B));
-	if (a_nvals > b_nvals) return false;
+	if (a_nvals > b_nvals) {
+		return false;
+	}
 
 	GrB_OK (GrB_Matrix_nrows(&nrows, A));
 	GrB_OK (GrB_Matrix_ncols(&ncols, A));
 	GrB_OK (GrB_Matrix_nrows(&brows, B));
 	GrB_OK (GrB_Matrix_ncols(&bcols, B));
-	if(nrows != brows || ncols != bcols) return false;
+
+	if (transpose) {
+		GrB_Index temp = brows;
+		brows = bcols;
+		bcols = temp;
+	}
+
+	if(nrows != brows || ncols != bcols) {
+		return false;
+	}
 
 	GrB_Matrix C = NULL;
 	GrB_OK (GrB_Matrix_new(&C, GrB_BOOL, nrows, ncols));
-	GrB_OK (GrB_eWiseMult(C, NULL, NULL, leq, A, B, NULL));
+	GrB_OK (GrB_eWiseMult(C, NULL, NULL, leq, A, B, desc));
 	GrB_OK (GrB_Matrix_nvals(&c_nvals, C));
 
 	bool result = true;
@@ -118,7 +131,6 @@ void Delta_Matrix_validate
 	bool        m_dp_disjoint     =  false;
 	bool        dp_dm_disjoint    =  false;
 	bool        m_zombies_valid   =  true;
-	bool        dp_iso            =  true;
 	bool        dm_iso            =  true;
 	GrB_Info    info              =  GrB_SUCCESS;
 	GrB_Matrix  m                 =  DELTA_MATRIX_M(C);
@@ -173,16 +185,16 @@ void Delta_Matrix_validate
 		GrB_Matrix tdm       = DELTA_MATRIX_TDELTA_MINUS(C);
 
 		// m = tm^t
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, m, tm));
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tm, m));
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, m, tm, true));
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tm, m, true));
 
 		// dp = tdp^t
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, dp, tdp));
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tdp, dp));
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, dp, tdp, true));
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tdp, dp, true));
 
 		// dm = tdm^t
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, dm, tdm));
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tdm, dm));
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, dm, tdm, true));
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tdm, dm, true));
 	}
 	
 	GrB_OK (GrB_Matrix_new(&temp, GrB_BOOL, nrows, ncols));
@@ -202,7 +214,7 @@ void Delta_Matrix_validate
 	// 	GxB_Matrix_fprint(temp, "dp&dm",GxB_SHORT, stdout);
 
 	// m \superset dm
-	ASSERT(_matrix_leq(GrB_ONEB_BOOL, dm, m));
+	ASSERT(_matrix_leq(GrB_ONEB_BOOL, dm, m, false));
 
 	//--------------------------------------------------------------------------
 	// check assumptions 
