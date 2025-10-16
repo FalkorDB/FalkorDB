@@ -96,6 +96,33 @@ class testOrderBy(FlowTestsBase):
         actual = self.graph.query(q).result_set
         self.env.assertEquals(actual, expected)
 
+        # nest replaced expression within a larger expression
+        q = """UNWIND [{v:3}, {v:1}, {v:2}] AS element
+               WITH element AS X
+               ORDER BY X.v + 12 + element.v
+               RETURN X"""
+
+        actual = self.graph.query(q).result_set
+        self.env.assertEquals(actual, expected)
+
+        # nest replaced expression within a larger expression
+        q = """UNWIND [{v:3}, {v:1}, {v:2}] AS element
+               WITH element AS X
+               ORDER BY element.v + 12 + X.v
+               RETURN X"""
+
+        actual = self.graph.query(q).result_set
+        self.env.assertEquals(actual, expected)
+
+        # nest replaced expression within a larger expression
+        q = """UNWIND [{v:3}, {v:1}, {v:2}] AS element
+               WITH element AS X
+               ORDER BY X.v + 12 + X.v
+               RETURN X"""
+
+        actual = self.graph.query(q).result_set
+        self.env.assertEquals(actual, expected)
+
         # combine the two types of order-by rewritting
         q = """UNWIND [{v:3, y:3}, {v:1, y:1}, {v:2, y:2}] AS element
                WITH element AS X, element.y AS Y
