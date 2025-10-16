@@ -97,7 +97,7 @@ PropertyMap *PropertyMap_New
 		}
 
 		if(insert_idx == prop_idx) {
-			array_append(map->keys, attribute);			
+			array_append(map->keys, attribute);
 			array_append(map->values, value);
 		} else {
 			AR_EXP_Free(map->values[insert_idx]);
