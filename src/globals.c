@@ -17,6 +17,7 @@ struct Globals {
 	GraphContext **graphs_in_keyspace;  // list of graphs in keyspace
 	StringPool string_pool;             // pool of reusable strings
 	pthread_t main_thread_id;           // process main thread id
+	struct GrB_ops ops;                 // global GraphBLAS objects
 };
 
 struct Globals _globals = {0};
@@ -35,6 +36,9 @@ void Globals_Init(void) {
 
 	int res = pthread_rwlock_init(&_globals.lock, NULL);
 	ASSERT(res == 0);
+
+	// initialize GraphBLAS operators
+	Global_GrB_Ops_Init();
 }
 
 StringPool Globals_Get_StringPool(void) {
@@ -329,5 +333,62 @@ void Globals_Free(void) {
 	array_free(_globals.graphs_in_keyspace);
 	StringPool_free(&_globals.string_pool);
 	pthread_rwlock_destroy(&_globals.lock);
+	Global_GrB_Ops_Free();
 }
 
+#include "graph/tensor/tensor_grb_functions.h"
+
+void Global_GrB_Ops_Init(void) {
+	struct GrB_ops *ops = &_globals.ops;
+	// initialize global GraphBLAS objects
+
+	//--------------------------------------------------------------------------
+	// initialize operators for zombie handling
+	//--------------------------------------------------------------------------
+	GrB_OK (GxB_BinaryOp_new(
+		&ops->not_zombie, (GxB_binary_function) _entry_present, 
+		GrB_BOOL, GrB_BOOL, GrB_UINT64, "_entry_present", _ENTRY_PRESENT_JIT_STR
+	));
+	
+	GrB_OK (GrB_BinaryOp_new( &ops->push_id, (GxB_binary_function) _push_element, 
+		GrB_UINT64, GrB_UINT64, GrB_UINT64));
+	
+	GrB_OK (GrB_Semiring_new (&ops->any_alive, GrB_LOR_MONOID_BOOL, 
+		ops->not_zombie));
+	
+	//--------------------------------------------------------------------------
+	// initialize operators for freeing
+	//--------------------------------------------------------------------------
+	GrB_OK (GrB_UnaryOp_new(
+		&ops->free_tensors, (GxB_unary_function) _free_vectors, 
+		GrB_UINT64, GrB_UINT64));
+
+	//--------------------------------------------------------------------------
+	// initialize scalars
+	//--------------------------------------------------------------------------
+	GrB_OK (GrB_Scalar_new(&ops->empty, GrB_BOOL));
+	GrB_OK (GrB_Scalar_new(&ops->bool_zombie, GrB_BOOL));
+	GrB_OK (GrB_Scalar_new(&ops->u64_zombie, GrB_UINT64));
+
+	GrB_OK (GrB_Scalar_setElement_BOOL(ops->bool_zombie, BOOL_ZOMBIE));
+	GrB_OK (GrB_Scalar_setElement_UINT64(ops->u64_zombie, U64_ZOMBIE));
+}
+
+void Global_GrB_Ops_Free(void) {
+	struct GrB_ops *ops = &_globals.ops;
+
+	//--------------------------------------------------------------------------
+	// free everything
+	//--------------------------------------------------------------------------
+	GrB_free(&ops->not_zombie);
+	GrB_free(&ops->any_alive);
+	GrB_free(&ops->free_tensors);
+	GrB_free(&ops->push_id);
+	GrB_free(&ops->empty);
+	GrB_free(&ops->bool_zombie);
+	GrB_free(&ops->u64_zombie);
+}
+
+const struct GrB_ops *Global_GrB_Ops_Get(void) {
+	return &_globals.ops;
+}
