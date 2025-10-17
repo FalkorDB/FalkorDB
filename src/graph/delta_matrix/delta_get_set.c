@@ -8,7 +8,7 @@
 #include "delta_utils.h"
 
 // Set the internal matricies of C
-// the operation can only succeed if C's interal matrices are all empty
+// the operation can only succeed if C's internal matrices are all empty
 GrB_Info Delta_Matrix_setMatrices
 (
 	Delta_Matrix C,  // delta matrix
@@ -55,7 +55,7 @@ GrB_Info Delta_Matrix_setMatrices
 }
 
 // set the internal matrix M
-// the operation can only succeed if C's interal matrices are all empty
+// the operation can only succeed if C's internal matrices are all empty
 GrB_Info Delta_Matrix_setM
 (
 	Delta_Matrix C,  // delta matrix

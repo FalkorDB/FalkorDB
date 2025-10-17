@@ -109,10 +109,10 @@ void CHECK_GrB_Matrices_EQ
 	// NNZ(A) == NNZ(B)
 	//--------------------------------------------------------------------------
 
-	GrB_Matrix_nvals(&nvals_A, A);
+	info =GrB_Matrix_nvals(&nvals_A, A);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	GrB_Matrix_nvals(&nvals_B, B);
+	info = GrB_Matrix_nvals(&nvals_B, B);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
@@ -125,7 +125,7 @@ void CHECK_GrB_Matrices_EQ
 	info = GrB_Matrix_eWiseMult_BinaryOp(C, NULL, NULL, eq, A, B, NULL);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	GrB_Matrix_nvals(&nvals_C, C);
+	info = GrB_Matrix_nvals(&nvals_C, C);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	TEST_CHECK(nvals_C == nvals_A);

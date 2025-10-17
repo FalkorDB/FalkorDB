@@ -39,7 +39,7 @@ GrB_Info Delta_Matrix_pending
 	GrB_OK(GrB_Matrix_get_INT32(DP, &p, GxB_WILL_WAIT));
 	res = res || p == 1;
 
-	// check if delta-plus contains pending changes
+	// check if delta-minus contains pending changes
 	GrB_OK(GrB_Matrix_get_INT32(DM, &p, GxB_WILL_WAIT));
 	res = res || p == 1;
 

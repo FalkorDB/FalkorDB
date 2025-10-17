@@ -30,7 +30,7 @@ GrB_Info Delta_Matrix_export
 	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(C);
 
 	GrB_OK (GxB_Matrix_type  (&t, m));
-	ASSERT (type == GrB_BOOL || type == t)
+	ASSERT (type == GrB_BOOL || type == t);
 
 	GrB_OK (GrB_Matrix_nrows (&nrows, m));
 	GrB_OK (GrB_Matrix_ncols (&ncols, m));

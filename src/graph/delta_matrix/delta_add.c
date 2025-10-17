@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "delta_matrix.h"
+#include "delta_utils.h"
 
 GrB_Info Delta_eWiseAdd                // C = A + B
 (
@@ -13,13 +14,16 @@ GrB_Info Delta_eWiseAdd                // C = A + B
     const Delta_Matrix A,         // first input:  matrix A
     const Delta_Matrix B          // second input: matrix B
 ) {
-	ASSERT(A        != NULL);
-	ASSERT(B        != NULL);
-	ASSERT(C        != NULL);
+	Delta_Matrix_addCompatible(C, A, B);
 	ASSERT(semiring != NULL);
 
 	GrB_Index  nrows;
 	GrB_Index  ncols;
+	GrB_Index a_rows;
+	GrB_Index a_cols;
+	GrB_Index b_rows;
+	GrB_Index b_cols;
+
 	GrB_Index  DM_nvals;
 	GrB_Index  DP_nvals;
 
@@ -33,6 +37,8 @@ GrB_Info Delta_eWiseAdd                // C = A + B
 	GrB_Matrix BDP = DELTA_MATRIX_DELTA_PLUS(B);
 	GrB_Matrix BDM = DELTA_MATRIX_DELTA_MINUS(B);
 
+	Delta_Matrix_nrows(&nrows, C);
+	Delta_Matrix_ncols(&ncols, C);
 
 	if(Delta_Matrix_Synced(A)) {
 		_A = AM;

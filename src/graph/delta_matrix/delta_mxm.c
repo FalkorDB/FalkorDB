@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "delta_matrix.h"
+#include "delta_utils.h"
 
 // C = AB
 // A should be fully synced on input
@@ -16,9 +17,7 @@ GrB_Info Delta_mxm
 	const Delta_Matrix A,         // first input:  matrix A (Must be synced)
 	const Delta_Matrix B          // second input: matrix B
 ) {
-	ASSERT(C != NULL);
-	ASSERT(A != NULL);
-	ASSERT(B != NULL);
+	Delta_Matrix_mulCompatible(C, A, B);
 
 	// multiply Delta_Matrix by Delta_Matrix
 	// A * B
@@ -36,6 +35,7 @@ GrB_Info Delta_mxm
 
 	GrB_Index nrows;     // number of rows in result matrix
 	GrB_Index ncols;     // number of columns in result matrix 
+
 	GrB_Index dp_nvals;  // number of entries in A * 'dp'
 	GrB_Index dm_nvals;  // number of entries in A * 'dm'
 

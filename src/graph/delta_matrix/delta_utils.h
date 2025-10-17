@@ -20,6 +20,22 @@ void Delta_Matrix_checkCompatible
 	const Delta_Matrix N
 );
 
+// check if the dimensions of C, A and B are compatible for addition
+void Delta_Matrix_addCompatible
+(
+	const Delta_Matrix C,
+	const Delta_Matrix A,
+	const Delta_Matrix B
+) ;
+
+// check if the dimensions of C, A and B are compatible for multiplication
+void Delta_Matrix_mulCompatible
+(
+	const Delta_Matrix C,
+	const Delta_Matrix A,
+	const Delta_Matrix B
+) ;
+
 // validate 'C' isn't in an invalid state
 void Delta_Matrix_validateState
 (

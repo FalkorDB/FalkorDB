@@ -59,6 +59,71 @@ void Delta_Matrix_checkCompatible
 #endif
 }
 
+// check if the dimensions of C, A and B are compatible for addition
+void Delta_Matrix_addCompatible
+(
+	const Delta_Matrix C,
+	const Delta_Matrix A,
+	const Delta_Matrix B
+) {
+#ifdef RG_DEBUG
+	ASSERT(C != NULL);
+	ASSERT(A != NULL);
+	ASSERT(B != NULL);
+
+	GrB_Index c_rows;
+	GrB_Index c_cols;
+	GrB_Index a_rows;
+	GrB_Index a_cols;
+	GrB_Index b_rows;
+	GrB_Index b_cols;
+
+	Delta_Matrix_nrows(&c_rows, C);
+	Delta_Matrix_ncols(&c_cols, C);
+	Delta_Matrix_nrows(&a_rows, A);
+	Delta_Matrix_ncols(&a_cols, A);
+	Delta_Matrix_nrows(&b_rows, B);
+	Delta_Matrix_ncols(&b_cols, B);
+
+	ASSERT(c_rows == a_rows);
+	ASSERT(c_cols == a_cols);
+	ASSERT(c_rows == b_rows);
+	ASSERT(c_cols == b_cols);
+#endif
+}
+
+// check if the dimensions of C, A and B are compatible for multiplication
+void Delta_Matrix_mulCompatible
+(
+	const Delta_Matrix C,
+	const Delta_Matrix A,
+	const Delta_Matrix B
+) {
+#ifdef RG_DEBUG
+	ASSERT(C != NULL);
+	ASSERT(A != NULL);
+	ASSERT(B != NULL);
+
+	GrB_Index c_rows;
+	GrB_Index c_cols;
+	GrB_Index a_rows;
+	GrB_Index a_cols;
+	GrB_Index b_rows;
+	GrB_Index b_cols;
+
+	Delta_Matrix_nrows(&c_rows, C);
+	Delta_Matrix_ncols(&c_cols, C);
+	Delta_Matrix_nrows(&a_rows, A);
+	Delta_Matrix_ncols(&a_cols, A);
+	Delta_Matrix_nrows(&b_rows, B);
+	Delta_Matrix_ncols(&b_cols, B);
+
+	ASSERT(c_rows == a_rows);
+	ASSERT(c_cols == b_cols);
+	ASSERT(a_cols == b_rows);
+#endif
+}
+
 bool _matrix_leq
 (
 	const GrB_BinaryOp leq,
@@ -125,7 +190,7 @@ void Delta_Matrix_validate
 	const Delta_Matrix C,
 	bool check_transpose
 ) {
-#if RG_DEBUG ||1
+#ifdef RG_DEBUG
 	ASSERT (C != NULL);
 
 	bool        m_dp_disjoint     =  false;
