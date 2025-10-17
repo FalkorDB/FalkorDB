@@ -1,7 +1,6 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #include "src/util/rmalloc.h"
@@ -1337,9 +1336,6 @@ void test_RGMatrix_copy() {
 	info = Delta_Matrix_new(&A, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	info = Delta_Matrix_new(&B, t, nrows, ncols, false);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
 	// set elements
 	info = Delta_Matrix_setElement_BOOL(A, 0, 0);
 	TEST_ASSERT(info == GrB_SUCCESS);
@@ -1370,7 +1366,7 @@ void test_RGMatrix_copy() {
 	// copy matrix
 	//--------------------------------------------------------------------------
 
-	info = Delta_Matrix_copy(B, A);
+	info = Delta_Matrix_dup(&B, A);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
@@ -1392,6 +1388,7 @@ void test_RGMatrix_copy() {
 	// free
 	//--------------------------------------------------------------------------
 	Delta_Matrix_free(&A);
+	Delta_Matrix_free(&B);
 	info = Delta_Matrix_new(&A, GrB_UINT64, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
@@ -1428,7 +1425,7 @@ void test_RGMatrix_copy() {
 	// copy matrix
 	//--------------------------------------------------------------------------
 
-	info = Delta_Matrix_copy(B, A);
+	info = Delta_Matrix_dup(&B, A);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------

@@ -33,22 +33,20 @@ GrB_Info Delta_eWiseAdd                // C = A + B
 	GrB_Matrix BDP = DELTA_MATRIX_DELTA_PLUS(B);
 	GrB_Matrix BDM = DELTA_MATRIX_DELTA_MINUS(B);
 
-	GrB_OK (GrB_Matrix_nvals(&DM_nvals, ADM));
-	GrB_OK (GrB_Matrix_nvals(&DP_nvals, ADP));
 
-	if(DM_nvals > 0 || DP_nvals > 0) {
-		GrB_OK (Delta_Matrix_export(&_A, A, GrB_BOOL));
-	} else {
+	if(Delta_Matrix_Synced(A)) {
 		_A = AM;
+	} else {
+		GrB_OK (Delta_Matrix_export(&_A, A, GrB_BOOL));
 	}
 
 	GrB_OK (GrB_Matrix_nvals(&DM_nvals, BDM));
 	GrB_OK (GrB_Matrix_nvals(&DP_nvals, BDP));
 
-	if(DM_nvals > 0 || DP_nvals > 0) {
-		GrB_OK (Delta_Matrix_export(&_B, B, GrB_BOOL));
-	} else {
+	if(Delta_Matrix_Synced(B)) {
 		_B = BM;
+	} else {
+		GrB_OK (Delta_Matrix_export(&_B, B, GrB_BOOL));
 	}
 
 	//--------------------------------------------------------------------------

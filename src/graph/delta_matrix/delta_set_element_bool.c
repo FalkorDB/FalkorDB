@@ -34,7 +34,6 @@ GrB_Info Delta_Matrix_setElement_BOOL
 
 	if(marked_for_deletion) {
 		// unset delta-minus. assign m to true
-		GrB_OK(GrB_Matrix_setElement(m, true, i, j));
 		GrB_OK(GrB_Matrix_removeElement(dm, i, j));
 	} else {
 		GrB_OK (info = GxB_Matrix_isStoredElement(m, i, j));

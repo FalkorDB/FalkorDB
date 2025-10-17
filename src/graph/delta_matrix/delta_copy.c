@@ -8,39 +8,32 @@
 #include "delta_matrix.h"
 #include "../../util/rmalloc.h"
 
-static void _copyMatrix
+// copy matrix A to matrix C
+// does not set the transpose
+GrB_Info Delta_Matrix_dup
 (
-	const GrB_Matrix in,
-	GrB_Matrix out
+	Delta_Matrix *C,      // output matrix
+	const Delta_Matrix A  // input matrix
 ) {
-	GrB_Index   nvals;
-	GrB_OK (GrB_Matrix_nvals(&nvals, in));
-
-	if(nvals > 0) {
-		GrB_OK (GrB_transpose(out, NULL, NULL, in, GrB_DESC_T0));
-	} else {
-		GrB_OK (GrB_Matrix_clear(out));
-	}
-}
-
-GrB_Info Delta_Matrix_copy
-(
-	Delta_Matrix C,
-	const Delta_Matrix A
-) {
-	Delta_Matrix_checkCompatible(C, A);
+	ASSERT(C != NULL);
+	ASSERT(A != NULL);
 	
-	GrB_Matrix in_m            = DELTA_MATRIX_M(A);
-	GrB_Matrix out_m           = DELTA_MATRIX_M(C);
-	GrB_Matrix in_delta_plus   = DELTA_MATRIX_DELTA_PLUS(A);
-	GrB_Matrix in_delta_minus  = DELTA_MATRIX_DELTA_MINUS(A);
-	GrB_Matrix out_delta_plus  = DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix out_delta_minus = DELTA_MATRIX_DELTA_MINUS(C);
+	Delta_Matrix _C    = rm_calloc(sizeof(_Delta_Matrix), 1);
 
-	_copyMatrix(in_m, out_m);
-	_copyMatrix(in_delta_plus, out_delta_plus);
-	_copyMatrix(in_delta_minus, out_delta_minus);
+	GrB_Matrix   in_m  = DELTA_MATRIX_M(A);
+	GrB_Matrix   in_dp = DELTA_MATRIX_DELTA_PLUS(A);
+	GrB_Matrix   in_dm = DELTA_MATRIX_DELTA_MINUS(A);
 
+
+	GrB_OK (GrB_Matrix_dup(&DELTA_MATRIX_M(_C), in_m));
+	GrB_OK (GrB_Matrix_dup(&DELTA_MATRIX_DELTA_PLUS(_C), in_dp));
+	GrB_OK (GrB_Matrix_dup(&DELTA_MATRIX_DELTA_MINUS(_C), in_dm));
+
+	int mutex_res = pthread_mutex_init(&_C->mutex, NULL);
+	ASSERT(mutex_res == 0);
+
+	Delta_Matrix_validate(_C, true);
+	*C = _C;
 	return GrB_SUCCESS;
 }
 

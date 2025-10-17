@@ -125,7 +125,7 @@ void Delta_Matrix_validate
 	const Delta_Matrix C,
 	bool check_transpose
 ) {
-#if RG_DEBUG
+#if RG_DEBUG ||1
 	ASSERT (C != NULL);
 
 	bool        m_dp_disjoint     =  false;
@@ -145,18 +145,39 @@ void Delta_Matrix_validate
 	GrB_Type    ty                = NULL;
 	GrB_Type    ty_m              = NULL;
 	GrB_Type    ty_dp             = NULL;
-	
-	// GrB_OK (Delta_Matrix_type(&ty, C));
-	GrB_OK (GxB_Matrix_type(&ty_m, m));
-	GrB_OK (GxB_Matrix_type(&ty_dp, dp));
-	ty = ty_m;
 
 	GrB_OK (Delta_Matrix_nrows(&nrows, C));
 	GrB_OK (Delta_Matrix_ncols(&ncols, C));
 	
+	//--------------------------------------------------------------------------
+	// Check type is allowed
+	//--------------------------------------------------------------------------
+
+	// GrB_OK (Delta_Matrix_type(&ty, C));
+	GrB_OK (GxB_Matrix_type(&ty_m, m));
+	GrB_OK (GxB_Matrix_type(&ty_dp, dp));
+	ty = ty_m;
 	ASSERT(ty == ty_m);
 	ASSERT(ty == ty_dp);
 	ASSERT(ty == GrB_BOOL || ty == GrB_UINT64);
+
+	//--------------------------------------------------------------------------
+	// check sparcity control
+	//--------------------------------------------------------------------------
+
+	int32_t sparticy;
+	GrB_OK(GrB_Matrix_get_INT32(m, &sparticy, GxB_SPARSITY_CONTROL));
+	ASSERT(sparticy == GxB_SPARSE | GxB_HYPERSPARSE)
+
+	GrB_OK(GrB_Matrix_get_INT32(dp, &sparticy, GxB_SPARSITY_CONTROL));
+	ASSERT(sparticy == GxB_HYPERSPARSE)
+
+	GrB_OK(GrB_Matrix_get_INT32(dm, &sparticy, GxB_SPARSITY_CONTROL));
+	ASSERT(sparticy == GxB_HYPERSPARSE)
+
+	//--------------------------------------------------------------------------
+	// Check dm is iso
+	//--------------------------------------------------------------------------
 
 	#if 0 // less strict iso test:
 	// if this passes, Graphblas may not recognize the matrix as iso
@@ -176,6 +197,9 @@ void Delta_Matrix_validate
 
 	ASSERT(dm_iso || dm_nvals == 0);
 
+	//--------------------------------------------------------------------------
+	// Check the transpose
+	//--------------------------------------------------------------------------
 	if(check_transpose && DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) { 
 		// this may to too strict
 		// the transpose should be structually the transpose
@@ -197,6 +221,9 @@ void Delta_Matrix_validate
 		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tdm, dm, true));
 	}
 	
+	//--------------------------------------------------------------------------
+	// check assumptions
+	//--------------------------------------------------------------------------
 	GrB_OK (GrB_Matrix_new(&temp, GrB_BOOL, nrows, ncols));
 	GrB_OK (GrB_eWiseMult(temp, NULL, NULL, GrB_ONEB_BOOL, m, dp, NULL));
 	GrB_OK (GrB_Matrix_nvals(&nvals, temp));
@@ -215,10 +242,6 @@ void Delta_Matrix_validate
 
 	// m \superset dm
 	ASSERT(_matrix_leq(GrB_ONEB_BOOL, dm, m, false));
-
-	//--------------------------------------------------------------------------
-	// check assumptions 
-	//--------------------------------------------------------------------------
 
 	ASSERT(m_dp_disjoint);
 	ASSERT(dp_dm_disjoint);

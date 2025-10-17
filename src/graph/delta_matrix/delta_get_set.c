@@ -40,6 +40,13 @@ GrB_Info Delta_Matrix_setMatrices
 	DELTA_MATRIX_DELTA_MINUS(C) = *DM;
 	GrB_OK (GrB_Matrix_wait(*M, GrB_MATERIALIZE));
 
+	// Set correct sparcity controls
+	GrB_OK (GrB_set(*M, GxB_SPARSE | GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
+	GrB_OK (GrB_set(*DP, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE));
+	GrB_OK (GrB_set(*DP, GxB_HYPER_SWITCH, GxB_ALWAYS_HYPER));
+	GrB_OK (GrB_set(*DM, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE));
+	GrB_OK (GrB_set(*DM, GxB_HYPER_SWITCH, GxB_ALWAYS_HYPER));
+
 	*M  = NULL;
 	*DP  = NULL;
 	*DM  = NULL;
@@ -49,6 +56,8 @@ GrB_Info Delta_Matrix_setMatrices
 	return GrB_SUCCESS;
 }
 
+// set the internal matrix M
+// the operation can only succeed if C's interal matrices are all empty
 GrB_Info Delta_Matrix_setM
 (
 	Delta_Matrix C,  // delta matrix
@@ -74,11 +83,15 @@ GrB_Info Delta_Matrix_setM
 
 	GrB_OK (GrB_Matrix_wait(*M, GrB_MATERIALIZE));
 
+	// set correct sparcity controls
+	GrB_OK (GrB_set(*M, GxB_SPARSE | GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
+
 	*M = NULL;
 
 	return GrB_SUCCESS;
 }
 
+// get the internal matrix M
 GrB_Matrix Delta_Matrix_M
 (
 	const Delta_Matrix C  // delta matrix
@@ -86,6 +99,7 @@ GrB_Matrix Delta_Matrix_M
 	return DELTA_MATRIX_M(C);
 }
 
+// get the internal matrix delta plus
 GrB_Matrix Delta_Matrix_DP
 (
 	const Delta_Matrix C  // delta matrix
@@ -93,6 +107,7 @@ GrB_Matrix Delta_Matrix_DP
 	return DELTA_MATRIX_DELTA_PLUS(C);
 }
 
+// get the internal matrix delta minus
 GrB_Matrix Delta_Matrix_DM
 (
 	const Delta_Matrix C  // delta matrix
