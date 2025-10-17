@@ -56,12 +56,14 @@ bool Delta_MatrixTupleIter_is_attached
 	const Delta_Matrix M                // matrix attached to
 );
 
+// iterate over a single row
 GrB_Info Delta_MatrixTupleIter_iterate_row
 (
 	Delta_MatrixTupleIter *iter,   // iterator to use
 	GrB_Index rowIdx               // row to iterate
 );
 
+// iterate over a range of rows
 GrB_Info Delta_MatrixTupleIter_iterate_range
 (
 	Delta_MatrixTupleIter *iter,  // iterator to use

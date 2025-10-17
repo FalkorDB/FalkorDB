@@ -6,12 +6,15 @@
 #include "RG.h"
 #include "delta_matrix.h"
 
-GrB_Info Delta_mxm                     // C = A * B
+// C = AB
+// A should be fully synced on input
+// C will be fully synced on output
+GrB_Info Delta_mxm
 (
-    Delta_Matrix C,                    // input/output matrix for results
-    const GrB_Semiring semiring,    // defines '+' and '*' for A*B
-    const Delta_Matrix A,              // first input:  matrix A
-    const Delta_Matrix B               // second input: matrix B
+	Delta_Matrix C,               // input/output matrix for results
+	const GrB_Semiring semiring,  // defines '+' and '*' for A*B
+	const Delta_Matrix A,         // first input:  matrix A (Must be synced)
+	const Delta_Matrix B          // second input: matrix B
 ) {
 	ASSERT(C != NULL);
 	ASSERT(A != NULL);

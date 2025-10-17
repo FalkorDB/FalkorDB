@@ -6,6 +6,9 @@
 #include "RG.h"
 #include "delta_matrix.h"
 
+// checks to see if matrix has pending operations
+// pending is set to true if any of the internal matricies have pending
+// operations
 GrB_Info Delta_Matrix_pending
 (
 	const Delta_Matrix C,  // matrix to query

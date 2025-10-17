@@ -7,12 +7,12 @@
 #include "delta_matrix.h"
 #include "../../util/rmalloc.h"
 
-// get matrix C without writing to internal matrix
+// get the fully synced GrB_Matrix from Delta_Matrix C without modifying C
 GrB_Info Delta_Matrix_export
 (
-	GrB_Matrix *A,
-	const Delta_Matrix C,
-	const GrB_Type type
+    GrB_Matrix *A,         // output Matrix 
+    const Delta_Matrix C,  // input Delta Matrix
+    const GrB_Type type    // output matrix type (values will be typecast)
 ) {
 	ASSERT(C != NULL);
 	ASSERT(A != NULL);

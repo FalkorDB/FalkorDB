@@ -33,8 +33,9 @@ GrB_Info Delta_Matrix_setElement_BOOL
 	marked_for_deletion = (info == GrB_SUCCESS);
 
 	if(marked_for_deletion) {
-		// unset delta-minus. assign m to true
+		// unset delta-minus
 		GrB_OK(GrB_Matrix_removeElement(dm, i, j));
+		Delta_Matrix_setDirty(C);
 	} else {
 		GrB_OK (info = GxB_Matrix_isStoredElement(m, i, j));
 		already_allocated = (info == GrB_SUCCESS);
@@ -42,10 +43,10 @@ GrB_Info Delta_Matrix_setElement_BOOL
 		if(!already_allocated) {
 			// update entry to dp[i, j]
 			GrB_OK(GrB_Matrix_setElement_BOOL(dp, true, i, j));
+			Delta_Matrix_setDirty(C);
 		}
 	}
 
-	Delta_Matrix_setDirty(C);
 	return GrB_SUCCESS;
 }
 

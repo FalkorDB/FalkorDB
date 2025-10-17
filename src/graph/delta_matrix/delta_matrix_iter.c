@@ -11,6 +11,8 @@
 // returns true if iterator is detached from a matrix
 #define IS_DETACHED(iter) ((iter) == NULL || (iter)->A == NULL)
 
+// seek iterator within the given range of rows
+// sets depleted to true if no values exist in the given range
 static inline void _set_iter_range
 (
 	GxB_Iterator it,
@@ -47,13 +49,14 @@ static inline void _set_iter_range
 	}
 }
 
+// allocate, attach, and seek iterator 
 static inline void _init_iter
 (
-	GxB_Iterator it,
-	GrB_Matrix m,
-	GrB_Index min_row,
-	GrB_Index max_row,
-	bool *depleted
+	GxB_Iterator it,    // iterator
+	GrB_Matrix m,       // matrix to attach to
+	GrB_Index min_row,  // starting row (inclusive)
+	GrB_Index max_row,  // ending row (exclusive)
+	bool *depleted      // true if no values in range
 ) {
 	ASSERT(it       != NULL) ;
 	ASSERT(m        != NULL) ;
@@ -66,10 +69,11 @@ static inline void _init_iter
 	_set_iter_range(it, min_row, max_row, depleted) ;
 }
 
+// iterate over a single row
 GrB_Info Delta_MatrixTupleIter_iterate_row
 (
-	Delta_MatrixTupleIter *iter,
-	GrB_Index rowIdx
+	Delta_MatrixTupleIter *iter,  //must be attached
+	GrB_Index rowIdx              // row index to iterate
 ) {
 	if(IS_DETACHED(iter)) return GrB_NULL_POINTER ;
 
@@ -83,11 +87,12 @@ GrB_Info Delta_MatrixTupleIter_iterate_row
 	return GrB_SUCCESS ;
 }
 
+// iterate over a range of rows
 GrB_Info Delta_MatrixTupleIter_iterate_range
 (
 	Delta_MatrixTupleIter *iter,  // iterator to use
-	GrB_Index startRowIdx,        // row index to start with
-	GrB_Index endRowIdx           // row index to finish with
+	GrB_Index startRowIdx,        // row index to start with (inclusive)
+	GrB_Index endRowIdx           // row index to finish with (exclusive)
 ) {
 	if(IS_DETACHED(iter)) return GrB_NULL_POINTER ;
 	ASSERT(startRowIdx <= endRowIdx) ;
@@ -102,6 +107,7 @@ GrB_Info Delta_MatrixTupleIter_iterate_range
 	return GrB_SUCCESS ;
 }
 
+// advance internal iterator
 static void _iter_next
 (
 	GxB_Iterator it,

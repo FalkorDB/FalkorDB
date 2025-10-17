@@ -205,14 +205,6 @@ GrB_Info Delta_Matrix_setElement_UINT64  // C (i,j) = x
 	GrB_Index j                          // column index
 );
 
-GrB_Info Delta_Matrix_extractElement_BOOL  // x = A(i,j)
-(
-	bool *x,                               // extracted scalar
-	const Delta_Matrix A,                  // matrix to extract a scalar from
-	GrB_Index i,                           // row index
-	GrB_Index j                            // column index
-) ;
-
 GrB_Info Delta_Matrix_extractElement_UINT64  // x = A(i,j)
 (
 	uint64_t *x,                             // extracted scalar
@@ -221,6 +213,7 @@ GrB_Info Delta_Matrix_extractElement_UINT64  // x = A(i,j)
 	GrB_Index j                              // column index
 ) ;
 
+// check if element A(i,j) is stored in the delta matrix
 GrB_Info Delta_Matrix_isStoredElement
 (
 	const Delta_Matrix A,  // matrix to check
@@ -236,11 +229,12 @@ GrB_Info Delta_Matrix_removeElement
 	GrB_Index j      // column index
 );
 
+// remove all entries in matrix m from delta matrix C
 GrB_Info Delta_Matrix_removeElements
 (
-	Delta_Matrix C,  // matrix to remove entry from
-	GrB_Matrix m     // elements to remove
-);
+	Delta_Matrix C,     // matrix to remove entry from
+	const GrB_Matrix A  // elements to remove
+) ;
 
 // C = AB
 // A should be fully synced on input
@@ -276,7 +270,7 @@ GrB_Info Delta_Matrix_dup
 	const Delta_Matrix A  // input matrix
 ) ;
 
-// get matrix C without writing to internal matrix
+// get the fully synced GrB_Matrix from Delta_Matrix C without modifying C
 GrB_Info Delta_Matrix_export
 (
     GrB_Matrix *A,         // output Matrix 
@@ -285,6 +279,8 @@ GrB_Info Delta_Matrix_export
 );
 
 // checks to see if matrix has pending operations
+// pending is set to true if any of the internal matricies have pending
+// operations
 GrB_Info Delta_Matrix_pending
 (
 	const Delta_Matrix C,  // matrix to query

@@ -908,7 +908,6 @@ void test_GRMatrix_managed_transposed() {
 	GrB_Index     i              =  0;
 	GrB_Index     j              =  1;
 	uint64_t      x              =  0;  // M[i,j] = x
-	bool          b              =  false;
 	bool          entry_deleted  =  false;
 	Edge          edges[1]       = {{.id = x, .src_id = i, .dest_id = j}};
 
@@ -936,9 +935,8 @@ void test_GRMatrix_managed_transposed() {
 	Tensor_SetElement(A, i, j, x);
 
 	// make sure element at position j,i exists
-	info = Delta_Matrix_extractElement_BOOL(&b, T, j, i);
+	info = Delta_Matrix_isStoredElement(T, j, i);
 	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_CHECK(true == b);
 	
 	// matrix should contain a single element
 	Delta_Matrix_nvals(&nvals, T);
@@ -1006,13 +1004,12 @@ void test_GRMatrix_managed_transposed() {
 	Tensor_RemoveElements(A, edges, 1, NULL);
 
 	// make sure element at position j,i exists
-	info = Delta_Matrix_extractElement_BOOL(&b, T, j, i);
+	info = Delta_Matrix_isStoredElement(T, j, i);
 	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_CHECK(true == b);
 
 	edges[0].id = x + 1;
 	Tensor_RemoveElements(A, edges, 1, NULL);
-	info = Delta_Matrix_extractElement_BOOL(&b, T, j, i);
+	info = Delta_Matrix_isStoredElement(T, j, i);
 	TEST_ASSERT(info == GrB_NO_VALUE);
 
 	//--------------------------------------------------------------------------
@@ -1028,14 +1025,13 @@ void test_GRMatrix_managed_transposed() {
 	Tensor_RemoveElements(A, edges, 1, NULL);
 
 	// make sure element at position j,i exists
-	info = Delta_Matrix_extractElement_BOOL(&b, T, j, i);
+	info = Delta_Matrix_isStoredElement(T, j, i);
 	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_CHECK (true == b);
 
 	edges[0].id = x + 1;
 	Tensor_RemoveElements(A, edges, 1, NULL);
 
-	info = Delta_Matrix_extractElement_BOOL(&b, T, j, i);
+	info = Delta_Matrix_isStoredElement(T, j, i);
 	TEST_ASSERT(info == GrB_NO_VALUE);
 
 	//--------------------------------------------------------------------------
@@ -1051,9 +1047,8 @@ void test_GRMatrix_managed_transposed() {
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// make sure element at position j,i exists
-	info = Delta_Matrix_extractElement_BOOL(&b, T, j, i);
+	info = Delta_Matrix_isStoredElement(T, j, i);
 	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_CHECK (true == b);
 
 	// clean up
 	Tensor_free(&A);

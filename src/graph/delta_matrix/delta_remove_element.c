@@ -10,6 +10,7 @@
 #include "../../util/rmalloc.h"
 #include "../../globals.h"
 
+// remove entry at position C[i,j]
 GrB_Info Delta_Matrix_removeElement
 (
 	Delta_Matrix C,  // matrix to remove entry from
@@ -45,10 +46,11 @@ GrB_Info Delta_Matrix_removeElement
 	return GrB_SUCCESS;
 }
 
+// remove all entries in matrix m from delta matrix C
 GrB_Info Delta_Matrix_removeElements
 (
-	Delta_Matrix C,  // matrix to remove entry from
-	GrB_Matrix A     // matrix filled with elements to remove
+	Delta_Matrix C,     // matrix to remove entry from
+	const GrB_Matrix A  // elements to remove
 ) {
 	ASSERT(C != NULL);
 	ASSERT(A != NULL);

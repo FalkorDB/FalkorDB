@@ -6,23 +6,24 @@
 #include "RG.h"
 #include "delta_matrix.h"
 
-GrB_Info Delta_Matrix_extractElement_UINT64   // x = A(i,j)
+// check if element A(i,j) is stored in the delta matrix
+GrB_Info Delta_Matrix_isStoredElement
 (
-    uint64_t *x,           // extracted scalar
-    const Delta_Matrix A,  // matrix to extract a scalar from
-    GrB_Index i,           // row index
-    GrB_Index j            // column index
+	const Delta_Matrix A,  // matrix to check
+	GrB_Index i,           // row index
+	GrB_Index j            // column index
 ) {
-	ASSERT(x != NULL);
 	ASSERT(A != NULL);
 
 	GrB_Info info;
 	GrB_Matrix m  = DELTA_MATRIX_M(A);
 	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(A);
 	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(A);
+	bool in_M = false;
+	bool in_DM = false;
 
 	// if dp[i,j] exists return it
-	GrB_OK (info = GrB_Matrix_extractElement(x, dp, i, j));
+	GrB_OK (info = GxB_Matrix_isStoredElement(dp, i, j));
 	if(info == GrB_SUCCESS) {
 		return info;
 	}
@@ -35,6 +36,6 @@ GrB_Info Delta_Matrix_extractElement_UINT64   // x = A(i,j)
 	}
 
 	// entry isn't marked for deletion, see if it exists in 'm'
-	GrB_OK (info = GrB_Matrix_extractElement(x, m, i, j));
+	GrB_OK (info = GxB_Matrix_isStoredElement(m, i, j));
 	return info;
 }

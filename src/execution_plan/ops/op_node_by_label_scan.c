@@ -228,8 +228,7 @@ static Record NodeByLabelAndIDScanConsume
 	while(roaring64_iterator_has_value(op->ID_it)) {
 		id = roaring64_iterator_value(op->ID_it);
 		roaring64_iterator_advance(op->ID_it);
-		bool x;
-		if(Delta_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
+		if(Delta_Matrix_isStoredElement(op->L, id, id) == GrB_SUCCESS) {
 			Record r = OpBase_CreateRecord((OpBase *)op);
 
 			// Populate the Record with the actual node.
@@ -302,7 +301,6 @@ static Record NodeByLabelAndIDScanConsumeFromChild
 ) {
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 
-	bool      x;
 	bool      emited;
 	GrB_Index id;
 	GrB_Info  info;
@@ -315,7 +313,7 @@ pull:
 		roaring64_iterator_advance(op->ID_it);
 
 		// make sure ID is labeled as L
-		if(Delta_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
+		if(Delta_Matrix_isStoredElement(op->L, id, id) == GrB_SUCCESS) {
 			emited = true;
 			break;
 		}
