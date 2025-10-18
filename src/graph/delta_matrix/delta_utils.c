@@ -238,7 +238,7 @@ void Delta_Matrix_validate
 	ASSERT(sparticy == GxB_HYPERSPARSE)
 
 	GrB_OK(GrB_Matrix_get_INT32(dm, &sparticy, GxB_SPARSITY_CONTROL));
-	ASSERT(sparticy == GxB_HYPERSPARSE)
+	ASSERT(sparticy == GxB_HYPERSPARSE);
 
 	//--------------------------------------------------------------------------
 	// Check dm is iso
