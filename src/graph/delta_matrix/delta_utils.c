@@ -232,10 +232,10 @@ void Delta_Matrix_validate
 
 	int32_t sparticy;
 	GrB_OK(GrB_Matrix_get_INT32(m, &sparticy, GxB_SPARSITY_CONTROL));
-	ASSERT(sparticy == GxB_SPARSE | GxB_HYPERSPARSE)
+	ASSERT(sparticy == GxB_SPARSE | GxB_HYPERSPARSE);
 
 	GrB_OK(GrB_Matrix_get_INT32(dp, &sparticy, GxB_SPARSITY_CONTROL));
-	ASSERT(sparticy == GxB_HYPERSPARSE)
+	ASSERT(sparticy == GxB_HYPERSPARSE);
 
 	GrB_OK(GrB_Matrix_get_INT32(dm, &sparticy, GxB_SPARSITY_CONTROL));
 	ASSERT(sparticy == GxB_HYPERSPARSE);
