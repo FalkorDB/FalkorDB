@@ -835,10 +835,9 @@ bool Graph_IsNodeLabeled
 	ASSERT(g  != NULL);
 	ASSERT(id != INVALID_ENTITY_ID);
 
-	bool x;
 	// consult with labels matrix
 	Delta_Matrix nl = Graph_GetNodeLabelMatrix(g);
-	GrB_Info info = Delta_Matrix_extractElement_BOOL(&x, nl, id, l);
+	GrB_Info info = Delta_Matrix_isStoredElement(nl, id, l);
 	ASSERT(info == GrB_SUCCESS || info == GrB_NO_VALUE);
 	return info == GrB_SUCCESS;
 }
