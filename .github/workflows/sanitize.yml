@@ -79,6 +79,8 @@ jobs:
           --verbose \
           --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
           --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17
+        chmod +x ./deps/RediSearch/.install/install_cmake.sh
+        ./deps/RediSearch/.install/install_cmake.sh
         make CLANG=1 SAN=address NPROC=16
 
     - name: Unit tests

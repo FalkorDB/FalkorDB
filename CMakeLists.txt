@@ -26,10 +26,12 @@ include_directories(
 	${root}/deps/utf8proc
 	${root}/deps/oniguruma
 	${root}/deps/RediSearch/src
+	${root}/deps/RediSearch/deps
 	${root}/deps/LAGraph/include
 	${root}/deps/GraphBLAS/Include
 	${root}/deps/libcurl/include/curl
 	${root}/deps/libcypher-parser/lib/src
+	${root}/deps/RediSearch/deps/VectorSimilarity/src
 	$ENV{LIBCYPHER_PARSER_BINDIR}/lib/src)
 
 add_compile_definitions(
