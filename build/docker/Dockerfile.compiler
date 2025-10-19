@@ -10,7 +10,15 @@ WORKDIR /FalkorDB
 
 COPY . /FalkorDB
 
-RUN apt install -y wget
+# if os is ubuntu, use apt to install wget
+RUN if [ "$OS" = "ubuntu" ]; then \
+        apt install -y wget; \
+    fi
+
+# if os is rhel, use yum to install wget
+RUN if [ "$OS" = "rhel" ]; then \
+        yum install -y wget; \
+    fi
 
 RUN chmod +x ./deps/RediSearch/.install/install_cmake.sh
 
