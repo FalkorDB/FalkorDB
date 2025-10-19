@@ -10,6 +10,8 @@ WORKDIR /FalkorDB
 
 COPY . /FalkorDB
 
+RUN apt install -y wget
+
 RUN chmod +x ./deps/RediSearch/.install/install_cmake.sh
 
 RUN ./deps/RediSearch/.install/install_cmake.sh
