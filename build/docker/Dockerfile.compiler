@@ -10,6 +10,8 @@ WORKDIR /FalkorDB
 
 COPY . /FalkorDB
 
+RUN echo "Building on OS: $OS"
+
 # if os is ubuntu, use apt to install wget
 RUN if [ "$OS" = "ubuntu" ]; then \
         apt install -y wget; \
