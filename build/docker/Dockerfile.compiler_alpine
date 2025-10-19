@@ -39,6 +39,8 @@ WORKDIR /FalkorDB
 
 COPY . /FalkorDB
 
+RUN apk add bsd-compat-headers
+
 RUN make DEBUG=$DEBUG
 
 RUN mkdir -p /FalkorDB/bin/src && cp -r /FalkorDB/bin/linux*/src/falkordb.so /FalkorDB/bin/src/falkordb.so
