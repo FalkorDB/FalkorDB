@@ -39,7 +39,9 @@ WORKDIR /FalkorDB
 
 COPY . /FalkorDB
 
-RUN apk add bsd-compat-headers
+RUN chmod +x ./deps/RediSearch/.install/install_script.sh
+
+RUN cd deps/RediSearch/.install/ && ./install_script.sh
 
 RUN make DEBUG=$DEBUG
 

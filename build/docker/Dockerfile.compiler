@@ -12,23 +12,9 @@ WORKDIR /FalkorDB
 
 COPY . /FalkorDB
 
-# if os is ubuntu, use apt to install wget
-RUN if [ "$OS" = "ubuntu" ]; then \
-        apt install -y wget; \
-    else \
-        echo "Not ubuntu, skipping apt install wget"; \
-    fi
+RUN chmod +x ./deps/RediSearch/.install/install_script.sh
 
-# if os is rhel, use yum to install wget
-RUN if [ "$OS" = "rhel" ]; then \
-        yum install -y wget; \
-    else \
-        echo "Not rhel, skipping yum install wget"; \
-    fi
-
-RUN chmod +x ./deps/RediSearch/.install/install_cmake.sh
-
-RUN ./deps/RediSearch/.install/install_cmake.sh
+RUN cd deps/RediSearch/.install/ && ./install_script.sh
 
 RUN make DEBUG=$DEBUG
 
