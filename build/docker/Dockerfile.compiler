@@ -1,8 +1,10 @@
-ARG TARGETPLATFORM=linux/amd64
+ARG TARGETPLATFORM=linux/arm64
 
 ARG OS=ubuntu
 
 FROM falkordb/falkordb-build:$OS AS builder
+
+ARG OS
 
 ARG DEBUG=0
 
