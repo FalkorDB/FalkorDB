@@ -63,6 +63,7 @@
 #define EMSG_VAIABLE_ALREADY_DECLARED "Variable `%s` already declared"
 #define EMSG_PROCEDURE_INVALID_OUTPUT "Procedure `%s` does not yield output `%s`"
 #define EMSG_CALLSUBQUERY_INVALID_REFERENCES "WITH imports in CALL {} must consist of only simple references to outside variables"
+#define EMSG_CALLSUBQUERY_ALIAS_EXPRESSION "Expression in CALL must be aliased (use AS)"
 #define EMSG_VAIABLE_ALREADY_DECLARED_IN_OUTER_SCOPE "Variable `%s` already declared in outer scope"
 #define EMSG_DELETE_INVALID_ARGUMENTS "DELETE can only be called on nodes, paths and relationships"
 #define EMSG_SET_LHS_NON_ALIAS "FalkorDB does not currently support non-alias references on the left-hand side of SET expressions"

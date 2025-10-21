@@ -13,7 +13,6 @@
 #include "procedures/procedure.h"
 #include "ast_build_value.h"
 #include "ast_rewrite_same_clauses.h"
-#include "ast_rewrite_call_subquery.h"
 #include "ast_rewrite_star_projections.h"
 #include "arithmetic/arithmetic_expression.h"
 #include "arithmetic/arithmetic_expression_construct.h"
@@ -697,13 +696,6 @@ cypher_parse_result_t *parse_query
 	// will be rewritten as:
 	// MATCH (a:N), (b:N) RETURN a,b
 	bool rerun_validation = AST_RewriteSameClauses(root);
-
-	// rewrite eager & resulting Call {} clauses
-	// e.g. MATCH (m) CALL { CREATE (n:N) RETURN n } RETURN n, m
-	// will be rewritten as:
-	// MATCH (m) CALL { WITH m AS @m CREATE (n:N) RETURN n, @m AS m } RETURN n, m
-	// note: we rewrite the ast for sure here, so we need to re-validate it
-	rerun_validation |= AST_RewriteCallSubquery(root);
 
 	// rewrite '*' projections
 	// e.g. MATCH (a), (b) RETURN *

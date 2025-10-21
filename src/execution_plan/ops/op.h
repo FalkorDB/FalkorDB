@@ -44,7 +44,6 @@ typedef enum {
 	OPType_UNWIND,
 	OPType_FOREACH,
 	OPType_PROC_CALL,
-	OPType_CALLSUBQUERY,
 	OPType_ARGUMENT,
 	OPType_ARGUMENT_LIST,
 	OPType_CARTESIAN_PRODUCT,
@@ -57,6 +56,8 @@ typedef enum {
 	OPType_AND_APPLY_MULTIPLEXER,
 	OPType_OPTIONAL,
 	OPType_LOAD_CSV,
+	OPType_SUBQUERY_FOREACH,
+	OPType_EMPTY_ROW
 } OPType;
 
 typedef enum {

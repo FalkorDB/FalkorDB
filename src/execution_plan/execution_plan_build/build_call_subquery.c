@@ -5,80 +5,18 @@
  */
 
 #include "../../ast/ast.h"
-#include "../ops/op_join.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
-#include "../execution_plan.h"
+#include "../ops/op_join.h"
 #include "../ops/op_project.h"
 #include "../ops/op_argument.h"
-#include "execution_plan_util.h"
 #include "../ops/op_aggregate.h"
-#include "execution_plan_modify.h"
+#include "../ops/op_empty_row.h"
 #include "../ops/op_argument_list.h"
-#include "../ops/op_call_subquery.h"
-
-// adds an empty projection as the child of parent, such that the records passed
-// to parent are "filtered" to contain no bound vars
-static OpBase *_add_empty_projection
-(
-	OpBase *parent
-) {
-	OpBase *empty_proj =
-		NewProjectOp (parent->plan, array_new (AR_ExpNode *, 0)) ;
-
-	OPType type = OpBase_Type(parent);
-	if(type == OPType_CALLSUBQUERY || type == OPType_FOREACH) {
-		ExecutionPlan_AddOpInd(parent, empty_proj, 0);
-	} else {
-		ExecutionPlan_AddOp(parent, empty_proj);
-	}
-
-	return empty_proj;
-}
-
-// returns true if op is effectively a deepest op (i.e., no lhs)
-static inline bool _is_deepest_call_foreach
-(
-	OpBase *op  // op to check
-) {
-	OPType type = OpBase_Type(op);
-	return (type == OPType_CALLSUBQUERY || type == OPType_FOREACH) &&
-			op->childCount == 1;
-}
-
-// finds the deepest operation starting from root, and appends it to deepest_ops
-// if a call {} op with one child is found, it is appended to deepest_ops
-static void _get_deepest
-(
-	OpBase *root,          // root op from which to look for the deepest op
-	OpBase ***deepest_ops  // target array to which the deepest op is appended
-) {
-	OpBase *deepest = root;
-
-	// check root
-	if(_is_deepest_call_foreach(deepest)) {
-		array_append(*deepest_ops, deepest);
-		return;
-	}
-
-	// traverse children
-	OPType type;
-	while(OpBase_ChildCount(deepest) > 0) {
-		deepest = deepest->children[0];
-		// in case of a CallSubquery op with no lhs, we want to stop
-		// here, as the added op should be its first child (instead of
-		// the current child, which will be moved to be the second)
-		// Example:
-		// "CALL {CALL {RETURN 1 AS one} RETURN one} RETURN one"
-		type = OpBase_Type(deepest);
-		if(_is_deepest_call_foreach(deepest)){
-			array_append(*deepest_ops, deepest);
-			return;
-		}
-	}
-
-	array_append(*deepest_ops, deepest);
-}
+#include "../ops/op_subquery_foreach.h"
+#include "../execution_plan.h"
+#include "execution_plan_util.h"
+#include "execution_plan_modify.h"
 
 // looks for a Join operation at root or root->children[0] and returns it, or
 // NULL if not found
@@ -99,35 +37,43 @@ static OpBase *_get_join
 
 // returns an array with the deepest ops of an execution plan
 // note: it's that caller's responsibility to free the array
+// TODO: make a utility function
 static OpBase **_find_feeding_points
 (
 	const ExecutionPlan *plan
 ) {
 	ASSERT(plan != NULL);
 
-	// the root is a Results op if the subquery is returning.
-	// search for a Join op in its first child or its first child's first child
-	// (depending on whether there is a `UNION` or `UNION ALL` clause)
-	OpBase *join = (OpBase_ChildCount(plan->root) > 0) ?
-		_get_join(plan->root->children[0]) :
-		NULL;
+	OpBase **taps = array_new (OpBase*, 1) ;
+	OpBase **ops  = array_new (OpBase*, 1) ;
 
-	// get the deepest op(s)
-	uint n_branches = 1;
-	OpBase **feeding_points = array_new(OpBase *, n_branches);
+	OpBase *sub_query_root = plan->root ;
+	array_append (ops, sub_query_root) ;
 
-	if(join != NULL) {
-		n_branches = OpBase_ChildCount(join);
-		for(uint i = 0; i < n_branches; i++) {
-			OpBase *branch = OpBase_GetChild(join, i);
-			_get_deepest(branch, &feeding_points);
+	while (array_len (ops) > 0) {
+		OpBase *child = array_pop (ops) ;
+		OPType t = OpBase_Type (child) ;
+
+		// tap located
+		if ((OpBase_ChildCount (child) == 0)) {
+			array_append (taps, child) ;
 		}
-	} else {
-		_get_deepest(plan->root, &feeding_points);
+
+		// join op, traverse each branch
+		else if (t == OPType_JOIN || t == OPType_CARTESIAN_PRODUCT) {
+			for (uint i = 0; i < OpBase_ChildCount (child); i++) {
+				array_append (ops, OpBase_GetChild (child, i)) ;
+			}
+		}
+
+		// go "left"
+		else if (OpBase_ChildCount (child) > 0) {
+			array_append (ops, OpBase_GetChild (child, 0)) ;
+		}
 	}
 
-	ASSERT(array_len(feeding_points) == n_branches);
-	return feeding_points;
+	array_free (ops) ;
+	return taps ;
 }
 
 // binds the returning ops (effectively, all ops between the first
@@ -193,20 +139,6 @@ static bool _bind_returning_ops_to_plan
 	}
 }
 
-// add empty projections to the branches which do not contain an importing WITH
-// clause, in order to 'reset' the bound-vars environment
-static void _add_empty_projections
-(
-	OpBase **feeding_points  // deepest op in each of the UNION branches
-) {
-	uint n_branches = array_len(feeding_points);
-	for(uint i = 0; i < n_branches; i++) {
-		if(OpBase_Type(feeding_points[i]) != OPType_PROJECT) {
-			feeding_points[i] = _add_empty_projection(feeding_points[i]);
-		}
-	}
-}
-
 // construct the execution-plan corresponding to a call {} clause
 void buildCallSubqueryPlan
 (
@@ -218,85 +150,90 @@ void buildCallSubqueryPlan
 	//--------------------------------------------------------------------------
 
 	// save the original AST
-	AST *orig_ast = QueryCtx_GetAST();
+	AST *orig_ast = QueryCtx_GetAST () ;
 
 	// create an AST from the body of the subquery
-	AST subquery_ast = {0};
-	subquery_ast.root = cypher_ast_call_subquery_get_query(clause);
-	subquery_ast.anot_ctx_collection = orig_ast->anot_ctx_collection;
+	AST subquery_ast = {0} ;
+	subquery_ast.root = cypher_ast_call_subquery_get_query (clause) ;
+	subquery_ast.anot_ctx_collection = orig_ast->anot_ctx_collection ;
 
 	//--------------------------------------------------------------------------
 	// build the embedded execution plan corresponding to the subquery
 	//--------------------------------------------------------------------------
 
-	QueryCtx_SetAST(&subquery_ast);
-	ExecutionPlan *embedded_plan = ExecutionPlan_FromTLS_AST();
-	QueryCtx_SetAST(orig_ast);
+	QueryCtx_SetAST (&subquery_ast) ;
+	ExecutionPlan *embedded_plan = ExecutionPlan_FromTLS_AST () ;
 
-	// characterize whether the query performs modifications or not
+	// restore original AST
+	QueryCtx_SetAST (orig_ast) ;
+
+	// characterize whether the sub-query performs modifications or not
 	// if it is the call sub-query becomes eager, consuming all possible records
 	// before running
-	bool is_eager = ExecutionPlan_LocateOpMatchingTypes(embedded_plan->root,
-			MODIFYING_OPERATIONS, MODIFYING_OP_COUNT) != NULL;
+	bool is_eager = ExecutionPlan_LocateOpMatchingTypes (embedded_plan->root,
+			MODIFYING_OPERATIONS, MODIFYING_OP_COUNT) != NULL ;
 
 	// characterize whether the query is returning or not
-	bool is_returning = (OpBase_Type(embedded_plan->root) == OPType_RESULTS);
+	bool is_returning = (OpBase_Type(embedded_plan->root) == OPType_RESULTS) ;
 
+	// TODO: check if call sub-query imports any variables
 	// find the feeding points, to which we will add the projections and feeders
-	OpBase **feeding_points = _find_feeding_points(embedded_plan);
-
-	// if no variables are imported, add an 'empty' projection so that the
-	// records within the subquery will be cleared from the outer-context
-	_add_empty_projections(feeding_points);
-
-	//--------------------------------------------------------------------------
-	// Bind returning projection(s)\aggregation(s) to the outer plan
-	//--------------------------------------------------------------------------
-
-	bool free_embedded_plan = false;
-	if(is_returning) {
-		// remove the Results op from the embedded execution-plan
-		OpBase *results_op = embedded_plan->root;
-		ASSERT(OpBase_Type(results_op) == OPType_RESULTS);
-		ExecutionPlan_RemoveOp(embedded_plan, embedded_plan->root);
-		OpBase_Free(results_op);
-
-		// bind the returning ops to the outer plan
-		free_embedded_plan = _bind_returning_ops_to_plan(embedded_plan, plan);
-	}
+	OpBase **feeding_points = _find_feeding_points (embedded_plan) ;
 
 	//--------------------------------------------------------------------------
 	// plant feeders
 	//--------------------------------------------------------------------------
 
-	uint n_feeding_points = array_len(feeding_points);
-	if(is_eager) {
-		for(uint i = 0; i < n_feeding_points; i++) {
-			OpBase *argument_list = NewArgumentListOp(plan, NULL);
-			ExecutionPlan_AddOp(feeding_points[i], argument_list);
+	uint n_feeding_points = array_len (feeding_points) ;
+	if (is_eager) {
+		for (uint i = 0; i < n_feeding_points; i++) {
+			OpBase *argument_list = NewArgumentListOp (plan, NULL) ;
+			ExecutionPlan_AddOp (feeding_points[i], argument_list) ;
 		}
 	} else {
-		for(uint i = 0; i < n_feeding_points; i++) {
-			OpBase *argument = NewArgumentOp(plan, NULL);
-			ExecutionPlan_AddOp(feeding_points[i], argument);
+		for (uint i = 0; i < n_feeding_points; i++) {
+			OpBase *argument = NewArgumentOp (plan, NULL) ;
+			ExecutionPlan_AddOp (feeding_points[i], argument) ;
 		}
 	}
 
 	array_free(feeding_points);
 
 	//--------------------------------------------------------------------------
+	// bind returning projection(s)\aggregation(s) to the outer plan
+	//--------------------------------------------------------------------------
+
+	bool free_embedded_plan = false;
+	if (is_returning) {
+		// remove the Results op from the embedded execution-plan
+		OpBase *results_op = embedded_plan->root ;
+		ASSERT (OpBase_Type (results_op) == OPType_RESULTS) ;
+		ExecutionPlan_RemoveOp (embedded_plan, embedded_plan->root) ;
+		OpBase_Free (results_op) ;
+
+		// bind the returning ops to the outer plan
+		free_embedded_plan = _bind_returning_ops_to_plan (embedded_plan, plan) ;
+	}
+
+	//--------------------------------------------------------------------------
 	// introduce a Call-Subquery op
 	//--------------------------------------------------------------------------
 
-	OpBase *call_op = NewCallSubqueryOp(plan, is_eager, is_returning);
-	ExecutionPlan_UpdateRoot(plan, call_op);
+	OpBase *call_op = NewSubQueryForeach (plan) ;
+	ExecutionPlan_UpdateRoot (plan, call_op) ;
+
+	// in case there's no operation feeding SubqueryForeach
+	// add EmptyRow as an input
+	if (OpBase_ChildCount (call_op) == 0) {
+		ExecutionPlan_AddOp (call_op, NewEmptyRow (plan)) ;
+	}
 
 	// add the embedded plan as a child of the Call-Subquery op
-	ExecutionPlan_AddOp(call_op, embedded_plan->root);
+	ExecutionPlan_AddOp (call_op, embedded_plan->root) ;
 
-	if(free_embedded_plan) {
+	if (free_embedded_plan) {
 		embedded_plan->root = NULL;
-		ExecutionPlan_Free(embedded_plan);
+		ExecutionPlan_Free (embedded_plan) ;
 	}
 }
 
