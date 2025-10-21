@@ -197,7 +197,7 @@ void BM_eval_mul_chain(benchmark::State &state) {
     raxInsert(matrices, (unsigned char *) "C", strlen("C"), C, NULL);
     raxInsert(matrices, (unsigned char *) "F", strlen("F"), F, NULL);
 
-	AlgebraicExpression *exp = AlgebraicExpression_FromString("F*C*C*C*C*C", matrices);
+	AlgebraicExpression *exp = AlgebraicExpression_FromString("F*C", matrices);
     GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
 
     for (auto _ : state) {
@@ -207,6 +207,7 @@ void BM_eval_mul_chain(benchmark::State &state) {
         state.ResumeTiming();
 
         AlgebraicExpression_Eval(exp, res);
+        Delta_Matrix_wait(res, false);
     }
 
     AlgebraicExpression_Free(exp);
@@ -222,7 +223,7 @@ void BM_eval_mul_chain(benchmark::State &state) {
     // ->Args({100, 0});
 BENCHMARK(BM_eval_mul_chain)->Setup(rg_setup)->Teardown(rg_teardown)
     // ->Unit(benchmark::kMicrosecond)->Args({10000, 10000});
-    ->Unit(benchmark::kMillisecond)->Args({0, 0})->Args({10000, 10000})
+    ->Args({0, 0})->Args({10000, 10000})
     ->Args({0, 10000})->Args({10000, 0})->Args({100, 100})->Args({0, 100})
     ->Args({100, 0});
 // BENCHMARK_CAPTURE(BM_eval, (F*C0*C1*C2) + (F*C1*C2*C3) + (F*C2*C3*C4), 

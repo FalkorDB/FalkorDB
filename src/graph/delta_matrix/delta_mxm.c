@@ -186,325 +186,174 @@ GrB_Info Delta_mxm_identity
 	return GrB_SUCCESS;
 }
 
+#if 0
 GrB_Info Delta_mxm_struct
 (
-    Delta_Matrix C,               // output: matrix C 
-    const Delta_Matrix A,         // first input:  matrix A
+    GrB_Matrix C,                 // output: matrix C 
+    const GrB_Matrix A,           // first input:  matrix A
     const Delta_Matrix B          // second input: matrix B
 ) {
 	ASSERT(C != NULL);
 	ASSERT(A != NULL);
 	ASSERT(B != NULL);
 
-	// multiply Delta_Matrix by Delta_Matrix
-	// A * B
-	// where A has no DP entries
 
 	GrB_Index nrows;     // number of rows in result matrix
 	GrB_Index ncols;     // number of columns in result matrix 
-	GrB_Index dp_nvals;  // number of entries in A * 'dp'
-	GrB_Index dm_nvals;  // number of entries in A * 'dm'
+	GrB_Index dp_nvals;
+	GrB_Index dm_nvals;
+	bool 	  additions;
+	bool      deletions;
 
-	GrB_Matrix CM         = DELTA_MATRIX_M(C);
-	GrB_Matrix CDP        = DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix CDM        = DELTA_MATRIX_DELTA_MINUS(C);
-	GrB_Matrix AM         = DELTA_MATRIX_M(A);
-	GrB_Matrix ADP        = DELTA_MATRIX_DELTA_PLUS(A);
-	GrB_Matrix ADM        = DELTA_MATRIX_DELTA_MINUS(A);
-	GrB_Matrix BM         = DELTA_MATRIX_M(B);
-	GrB_Matrix BDP        = DELTA_MATRIX_DELTA_PLUS(B);
-	GrB_Matrix BDM        = DELTA_MATRIX_DELTA_MINUS(B);
-	GrB_Matrix maybe_del  = NULL;
-	GrB_Matrix accum      = NULL;
+	GrB_Matrix    m        = DELTA_MATRIX_M(B);
+	GrB_Matrix    dp       = DELTA_MATRIX_DELTA_PLUS(B);
+	GrB_Matrix    dm       = DELTA_MATRIX_DELTA_MINUS(B);
+	GrB_Matrix    _C       = NULL; 
+	GxB_Container cont     = NULL;
+	GrB_Scalar    temp     = NULL;
 
-	GrB_OK (GrB_Matrix_nvals(&dp_nvals, ADP));
-	ASSERT(dp_nvals == 0);
-	
-	GrB_OK (GrB_Matrix_nvals(&dm_nvals, ADM));
-	bool deletions_a = dm_nvals > 0;
+	GrB_OK(GrB_Matrix_nrows(&nrows, C));
+	GrB_OK(GrB_Matrix_ncols(&ncols, C));
+	GrB_OK(GrB_Matrix_nvals(&dp_nvals, dp));
+	GrB_OK(GrB_Matrix_nvals(&dm_nvals, dm));
+	additions  =  dp_nvals  >  0;
+	deletions  =  dm_nvals  >  0;
 
-	GrB_OK (GrB_Matrix_nvals(&dp_nvals, BDP));
-	bool additions_b = dp_nvals > 0;
+	if(deletions) {
+		GrB_Semiring  semiring = GxB_PLUS_PAIR_UINT64;
+		GrB_OK(GrB_Matrix_new(&_C, GrB_UINT64, nrows, ncols));
+		GrB_OK(GxB_Container_new(&cont));
 
-	GrB_OK (GrB_Matrix_nvals(&dm_nvals, BDM));
-	bool deletions_b = dm_nvals > 0;
+		// compute (A * BM)
+		GrB_OK(GrB_mxm(_C, NULL, NULL, semiring, A, m, NULL));
 
-	GrB_OK(GrB_Matrix_nrows(&nrows, CM));
-	GrB_OK(GrB_Matrix_ncols(&ncols, CM));
+		// C -= (A * BDM) 
+		GrB_OK(GrB_mxm(_C, NULL, GrB_MINUS_UINT64, semiring, A, dm, NULL));
 
-	if(additions_b) {
-		GrB_OK (GrB_Matrix_new(&accum, GrB_BOOL, nrows, ncols));
-		GrB_OK (GrB_mxm(accum, NULL, NULL, GxB_ANY_PAIR_BOOL, AM, BDP, NULL));
-		GrB_OK (GrB_Matrix_nvals(&dp_nvals, accum));
-		if(dp_nvals == 0) {
-			GrB_free(&accum);
-			additions_b = false;
-		}
-	}
+		// C += (A * BDP)
+		GrB_OK(GrB_mxm(_C, NULL, GrB_PLUS_UINT64, semiring, A, dp, NULL));
 
-	// compute (AM * BM)
-	GrB_OK(GrB_mxm(CM, NULL, NULL, GxB_ANY_PAIR_BOOL, AM, BM, NULL));
-
-	if(accum != NULL) {
-		GrB_OK(GrB_Matrix_eWiseAdd_BinaryOp(
-			CM, NULL, NULL, GrB_ONEB_BOOL, CM, accum, NULL));
-	}
-
-	if(deletions_a || deletions_b){
-		GrB_OK(GrB_Matrix_new(&maybe_del, GrB_UINT64, nrows, ncols));
-
-		if(deletions_b) {
-			GrB_OK(GrB_mxm(
-				maybe_del, NULL, NULL, GxB_PLUS_PAIR_UINT64, AM, BDM, NULL));
-		}
-
-		if(deletions_a) {
-			GrB_OK(GrB_mxm(maybe_del, NULL, GrB_PLUS_UINT64, 
-				GxB_PLUS_PAIR_UINT64, ADM, BM, NULL));
-			GrB_OK(GrB_mxm(maybe_del, NULL, GrB_PLUS_UINT64, 
-				GxB_PLUS_PAIR_UINT64, ADM, BDP, NULL));
-		}
-
-		if(deletions_b && deletions_a) {
-			GrB_OK(GrB_mxm(maybe_del, maybe_del, GrB_MINUS_UINT64, 
-				GxB_PLUS_PAIR_UINT64, ADM, BDM, GrB_DESC_S));
-		}
-
-		GrB_OK(GrB_mxm(maybe_del, maybe_del, GrB_MINUS_UINT64, 
-			GxB_PLUS_PAIR_UINT64, AM, BM, GrB_DESC_S));
-
-		if(accum) {
-			GrB_OK(GrB_mxm(maybe_del, maybe_del, GrB_MINUS_UINT64, 
-				GxB_PLUS_PAIR_UINT64, AM, BDP, GrB_DESC_S));
-		}
-		GrB_OK(GrB_Matrix_select_UINT64(maybe_del, NULL, NULL, GrB_VALUEEQ_INT64, 
-			maybe_del, 0, NULL));
+		GrB_OK(GrB_Matrix_select_UINT64(
+			_C, NULL, NULL, GrB_VALUENE_UINT64, _C, (uint64_t) 0, NULL));
 		GrB_OK(GrB_Matrix_assign_BOOL(
-			CDM, maybe_del, NULL, true, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_RS));
+			_C, _C, NULL, true, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_S));
+
+		// move _C into C
+		GrB_OK(GxB_unload_Matrix_into_Container(_C, cont, NULL));
+		GrB_OK(GxB_load_Matrix_from_Container(C, cont, NULL));
+	} else {
+		GrB_Semiring  semiring = GxB_ANY_PAIR_BOOL;
+		GrB_OK(GrB_Matrix_new(&_C, GrB_BOOL, nrows, ncols));
+
+		if(additions){
+			// _C = (A * BDP)
+			GrB_OK(GrB_mxm(_C, NULL, NULL, semiring, A, dp, NULL));
+		}
+
+		// compute (A * BM)
+		GrB_OK(GrB_mxm(C, NULL, NULL, semiring, A, m, NULL));
+
+		if(additions){
+			// C += _C
+			GrB_OK (GrB_Matrix_assign_BOOL(
+				C, _C, NULL, true, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_S));
+		}
 	}
-
-	GrB_free(&accum);
-	GrB_free(&maybe_del);
-
+	GrB_free(&_C);
 	return GrB_SUCCESS;
 }
-
-GrB_Info Delta_mxm_struct_V2
+#else
+GrB_Info Delta_mxm_struct
 (
-    Delta_Matrix C,               // output: matrix C 
-    const GrB_Semiring semiring,  // defines '+' and '*' for A*B
-    const Delta_Matrix A,         // first input:  matrix A
+    GrB_Matrix C,                 // output: matrix C 
+    const GrB_Matrix A,           // first input:  matrix A
     const Delta_Matrix B          // second input: matrix B
 ) {
 	ASSERT(C != NULL);
 	ASSERT(A != NULL);
 	ASSERT(B != NULL);
 
-	// multiply Delta_Matrix by Delta_Matrix
-	// A * B
-	// where A has no DP entries
 
 	GrB_Index nrows;     // number of rows in result matrix
 	GrB_Index ncols;     // number of columns in result matrix 
-	GrB_Index dp_nvals;  // number of entries in A * 'dp'
-	GrB_Index dm_nvals;  // number of entries in A * 'dm'
+	GrB_Index dp_nvals;
+	GrB_Index dm_nvals;
+	bool 	  additions;
+	bool      deletions;
 
-	GrB_Matrix CM         = DELTA_MATRIX_M(C);
-	GrB_Matrix CDP        = DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix CDM        = DELTA_MATRIX_DELTA_MINUS(C);
-	GrB_Matrix AM         = DELTA_MATRIX_M(A);
-	GrB_Matrix ADP        = DELTA_MATRIX_DELTA_PLUS(A);
-	GrB_Matrix ADM        = DELTA_MATRIX_DELTA_MINUS(A);
-	GrB_Matrix BM         = DELTA_MATRIX_M(B);
-	GrB_Matrix BDP        = DELTA_MATRIX_DELTA_PLUS(B);
-	GrB_Matrix BDM        = DELTA_MATRIX_DELTA_MINUS(B);
-	GrB_Matrix maybe_del  = NULL;
-	GrB_Matrix accum      = NULL;
+	GrB_Matrix    m        = DELTA_MATRIX_M(B);
+	GrB_Matrix    dp       = DELTA_MATRIX_DELTA_PLUS(B);
+	GrB_Matrix    dm       = DELTA_MATRIX_DELTA_MINUS(B);
+	GrB_Matrix    mask     = NULL; 
+	GrB_Matrix    _C       = NULL; 
+	GxB_Container cont     = NULL;
+	GrB_Scalar    temp     = NULL;
 
-	GrB_OK (GrB_Matrix_nvals(&dp_nvals, ADP));
-	ASSERT(dp_nvals == 0);
-	
-	GrB_OK (GrB_Matrix_nvals(&dm_nvals, ADM));
-	bool deletions_a = dm_nvals > 0;
+	GrB_OK(GrB_Matrix_nrows(&nrows, C));
+	GrB_OK(GrB_Matrix_ncols(&ncols, C));
+	GrB_OK(GrB_Matrix_nvals(&dp_nvals, dp));
+	GrB_OK(GrB_Matrix_nvals(&dm_nvals, dm));
+	additions  =  dp_nvals  >  0;
+	deletions  =  dm_nvals  >  0;
 
-	GrB_OK (GrB_Matrix_nvals(&dp_nvals, BDP));
-	bool additions_b = dp_nvals > 0;
+	if(deletions) {
+		GrB_OK(GrB_Matrix_new(&mask, GrB_UINT64, nrows, ncols));
 
-	GrB_OK (GrB_Matrix_nvals(&dm_nvals, BDM));
-	bool deletions_b = dm_nvals > 0;
+		// C -= (A * BDM) 
+		GrB_OK(GrB_mxm(mask, NULL, NULL, GxB_PLUS_PAIR_UINT64, A, dm, NULL));
 
-	GrB_OK(GrB_Matrix_nrows(&nrows, CM));
-	GrB_OK(GrB_Matrix_ncols(&ncols, CM));
-
-	if(additions_b) {
-		GrB_OK (GrB_Matrix_new(&accum, GrB_BOOL, nrows, ncols));
-		GrB_OK (GrB_mxm(accum, NULL, NULL, semiring, AM, BDP, NULL));
-		GrB_OK (GrB_Matrix_nvals(&dp_nvals, accum));
-		if(dp_nvals == 0) {
-			GrB_free(&accum);
-			additions_b = false;
+		// check if there are any deletions
+		GrB_OK (GrB_Matrix_nvals(&dm_nvals, mask));
+		deletions  =  dm_nvals  >  0;
+		if (deletions){
+			GrB_OK(GrB_Matrix_apply(
+				mask, NULL, NULL, GrB_AINV_UINT64, mask, NULL));
+			// compute (A * BM)
+			GrB_OK(GrB_mxm(mask, mask, GrB_PLUS_UINT64, GxB_PLUS_PAIR_UINT64, 
+				A, m, GrB_DESC_S));
+			GrB_OK (GrB_Matrix_select_UINT64(mask, NULL, NULL,
+				GrB_VALUEEQ_UINT64, mask, (uint64_t) 0, NULL));
+			
+			// check if there are any deletions
+			GrB_OK (GrB_Matrix_nvals(&dm_nvals, mask));
+			deletions  =  dm_nvals  >  0;
+		}
+		if (!deletions){
+			GrB_free(&mask);
 		}
 	}
 
-	// compute (AM * BM)
-	GrB_OK(GrB_mxm(CM, NULL, NULL, semiring, AM, BM, NULL));
+	GrB_Semiring  semiring = GxB_ANY_PAIR_BOOL;
+	GrB_OK(GrB_Matrix_new(&_C, GrB_BOOL, nrows, ncols));
 
-	if(accum != NULL) {
-		GrB_OK(GrB_Matrix_eWiseAdd_BinaryOp(
-			CM, NULL, NULL, GrB_LOR, CM, accum, NULL));
+	if(additions){
+
+		// _C = (A * BDP)
+		GrB_OK(GrB_mxm(_C, NULL, NULL, semiring, A, dp, NULL));
 	}
 
-	if(deletions_a || deletions_b){
-		// GrB_OK(GrB_Matrix_new(&maybe_del, GrB_BOOL, nrows, ncols));
+	// compute (A * BM)
+	// GrB_Descriptor desc = deletions ? GrB_DESC_RSC : NULL;
+	// GrB_OK(GrB_mxm(C, mask, NULL, semiring, A, m, desc));
 
-		// if(deletions_b) {
-		// 	GrB_OK(GrB_mxm(
-		// 		maybe_del, NULL, NULL, GxB_ANY_PAIR_BOOL, AM, BDM, NULL));
-		// }
+	GrB_OK(GrB_mxm(C, NULL, NULL, semiring, A, m, NULL));
 
-		// if(deletions_a) {
-		// 	GrB_OK(GrB_mxm(maybe_del, NULL, GrB_ONEB_BOOL, 
-		// 		GxB_ANY_PAIR_BOOL, ADM, BM, NULL));
-		// 	GrB_OK(GrB_mxm(maybe_del, NULL, GrB_ONEB_BOOL, 
-		// 		GxB_ANY_PAIR_BOOL, ADM, BDP, NULL));
-		// }
-
-		// GrB_OK(GrB_Matrix_assign(maybe_del, maybe_del, NULL, CM, GrB_ALL, 0, GrB_ALL, 0, NULL));
-		GrB_OK (GrB_Matrix_select_BOOL(CM, NULL, NULL, GrB_VALUENE_BOOL, 
-			CM, BOOL_ZOMBIE, NULL));
-
-		// GrB_OK(GrB_Matrix_select_BOOL(CDM, NULL, NULL, GrB_VALUEEQ_BOOL, 
-		// 	CM, BOOL_ZOMBIE, NULL));
-
-		// GrB_OK(GrB_Matrix_assign_BOOL(
-		// 	CDM, CDM, NULL, true, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_RS));
+	if(deletions){
+		GrB_OK (GrB_Matrix_assign_Scalar(C, mask, NULL, Global_GrB_Ops_Get()->empty,
+			GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_S));
 	}
 
-	GrB_free(&accum);
-	GrB_free(&maybe_del);
-
-	return GrB_SUCCESS;
-}
-
-GrB_Info Delta_mxm_struct_V3
-(
-    Delta_Matrix C,               // output: matrix C 
-    const GrB_Semiring semiring,  // defines '+' and '*' for A*B
-    const Delta_Matrix A,         // first input:  matrix A
-    const Delta_Matrix B          // second input: matrix B
-) {
-	ASSERT(C != NULL);
-	ASSERT(A != NULL);
-	ASSERT(B != NULL);
-
-	// multiply Delta_Matrix by Delta_Matrix
-	// A * B
-	// where A has no DP entries
-
-	GrB_Index nrows;     // number of rows in result matrix
-	GrB_Index ncols;     // number of columns in result matrix 
-	GrB_Index dp_nvals;  // number of entries in A * 'dp'
-	GrB_Index dm_nvals;  // number of entries in A * 'dm'
-
-	GrB_Matrix CM         = DELTA_MATRIX_M(C);
-	GrB_Matrix CDP        = DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix CDM        = DELTA_MATRIX_DELTA_MINUS(C);
-	GrB_Matrix AM         = DELTA_MATRIX_M(A);
-	GrB_Matrix ADP        = DELTA_MATRIX_DELTA_PLUS(A);
-	GrB_Matrix ADM        = DELTA_MATRIX_DELTA_MINUS(A);
-	GrB_Matrix BM         = DELTA_MATRIX_M(B);
-	GrB_Matrix BDP        = DELTA_MATRIX_DELTA_PLUS(B);
-	GrB_Matrix BDM        = DELTA_MATRIX_DELTA_MINUS(B);
-	GrB_Matrix maybe_del  = NULL;
-	GrB_Matrix accum      = NULL;
-	GrB_BinaryOp op       = NULL;
-	GrB_Semiring sem      = NULL;
-
-	GrB_Semiring_get_VOID(semiring, (void *)&op, GxB_MONOID_OPERATOR);
-
-	GrB_OK (GrB_Matrix_nvals(&dp_nvals, ADP));
-	bool additions_a = dp_nvals > 0;
-	
-	GrB_OK (GrB_Matrix_nvals(&dm_nvals, ADM));
-	bool deletions_a = dm_nvals > 0;
-
-	GrB_OK (GrB_Matrix_nvals(&dp_nvals, BDP));
-	bool additions_b = dp_nvals > 0;
-
-	GrB_OK (GrB_Matrix_nvals(&dm_nvals, BDM));
-	bool deletions_b = dm_nvals > 0;
-
-	GrB_OK(GrB_Matrix_nrows(&nrows, CM));
-	GrB_OK(GrB_Matrix_ncols(&ncols, CM));
-
-	if(additions_a || additions_b) {
-		GrB_OK (GrB_Matrix_new(&accum, GrB_BOOL, nrows, ncols));
-		GrB_set(accum, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL);
-	}
-
-	if(additions_a) {
-		sem = deletions_b ? semiring : GxB_ANY_PAIR_BOOL;
-		GrB_OK (GrB_mxm(accum, NULL, NULL, sem, ADP, BM, NULL));
-	}
-	
-	if(additions_b) {
-		sem = deletions_a ? semiring : GxB_ANY_PAIR_BOOL;
-		GrB_OK (GrB_mxm(accum, NULL, op, sem, AM, BDP, NULL));
-	}
-
-	if(additions_a && additions_b) {
-		GrB_OK (GrB_mxm(accum, NULL, op, semiring, ADP, BDP, NULL));
-	}
-
-	sem = (deletions_a || deletions_b) ? semiring : GxB_ANY_PAIR_BOOL;
-	// compute (AM * BM)
-	GrB_OK(GrB_mxm(CM, NULL, NULL, sem, AM, BM, NULL));
-
-	if(accum != NULL) {
-		GrB_OK(GrB_Matrix_select_BOOL(CDP, NULL, NULL, GrB_VALUENE_BOOL, 
-			accum, BOOL_ZOMBIE, NULL));
-		
-		GrB_OK (GrB_Matrix_eWiseMult_BinaryOp(
-			accum, NULL, NULL, op, CM, accum, NULL));
-
-		GrB_OK (GrB_Matrix_assign_Scalar(
-			CDP, accum, NULL, Global_GrB_Ops_Get()->empty, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_S));
-
+	if(additions){
+		// C += _C
 		GrB_OK (GrB_Matrix_assign_BOOL(
-			CM, accum, NULL, true, GrB_ALL, 0, GrB_ALL, 0, NULL));
+			C, _C, NULL, true, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_S));
 	}
 
-	if(deletions_a || deletions_b){
-	// 	// GrB_OK(GrB_Matrix_new(&maybe_del, GrB_BOOL, nrows, ncols));
-
-	// 	// if(deletions_b) {
-	// 	// 	GrB_OK(GrB_mxm(
-	// 	// 		maybe_del, NULL, NULL, GxB_ANY_PAIR_BOOL, AM, BDM, NULL));
-	// 	// }
-
-	// 	// if(deletions_a) {
-	// 	// 	GrB_OK(GrB_mxm(maybe_del, NULL, GrB_ONEB_BOOL, 
-	// 	// 		GxB_ANY_PAIR_BOOL, ADM, BM, NULL));
-	// 	// 	GrB_OK(GrB_mxm(maybe_del, NULL, GrB_ONEB_BOOL, 
-	// 	// 		GxB_ANY_PAIR_BOOL, ADM, BDP, NULL));
-	// 	// }
-
-	// 	// GrB_OK(GrB_Matrix_assign(maybe_del, maybe_del, NULL, CM, GrB_ALL, 0, GrB_ALL, 0, NULL));
-	// 	// GrB_OK (GrB_Matrix_select_BOOL(CM, NULL, NULL, GrB_VALUENE_BOOL, 
-	// 	// 	CM, BOOL_ZOMBIE, NULL));
-
-		GrB_OK(GrB_Matrix_select_BOOL(CDM, NULL, NULL, GrB_VALUEEQ_BOOL, 
-			CM, BOOL_ZOMBIE, NULL));
-
-	// 	// GrB_OK(GrB_Matrix_assign_BOOL(
-	// 	// 	CDM, CDM, NULL, true, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_RS));
-	}
-
-	GrB_free(&accum);
-	GrB_free(&maybe_del);
-
+	GrB_free(&_C);
+	GrB_free(&mask);
 	return GrB_SUCCESS;
 }
+#endif
 
 #if 1
 // Using a plus_x semiring, returns C = A (BM + BMP - BDM)

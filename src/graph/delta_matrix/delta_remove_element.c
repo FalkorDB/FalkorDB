@@ -44,8 +44,8 @@ GrB_Info Delta_Matrix_removeElement_BOOL
 
 	if(in_m) {
 		// mark deletion in delta minus and M
-		GrB_OK(GrB_Matrix_setElement(m, BOOL_ZOMBIE, i, j));
-		GrB_OK(GrB_Matrix_setElement(dm, true, i, j));
+		GrB_OK (GrB_Matrix_setElement_BOOL(m, BOOL_ZOMBIE, i, j));
+		GrB_OK (GrB_Matrix_setElement_BOOL(dm, true, i, j));
 	} else {
 		GrB_OK (GrB_Matrix_removeElement(dp, i, j));
 	}
@@ -91,8 +91,8 @@ GrB_Info Delta_Matrix_removeElement_UINT64
 
 	if(in_m) {
 		// mark deletion in delta minus and M
-		GrB_OK(GrB_Matrix_setElement(m, U64_ZOMBIE, i, j));
-		GrB_OK(GrB_Matrix_setElement(dm, true, i, j));
+		GrB_OK (GrB_Matrix_setElement_UINT64(m, U64_ZOMBIE, i, j));
+		GrB_OK (GrB_Matrix_setElement_BOOL(dm, true, i, j));
 	} else {
 		GrB_OK (GrB_Matrix_removeElement(dp, i, j));
 	}

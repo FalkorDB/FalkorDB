@@ -260,10 +260,11 @@ GrB_Info Delta_mxm
 
 GrB_Info Delta_mxm_struct
 (
-    Delta_Matrix C,               // output: matrix C 
-    const Delta_Matrix A,         // first input:  matrix A
+    GrB_Matrix C,               // output: matrix C 
+    const GrB_Matrix A,         // first input:  matrix A
     const Delta_Matrix B          // second input: matrix B
 ) ;
+
 GrB_Info Delta_mxm_struct_V2
 (
     Delta_Matrix C,               // output: matrix C 

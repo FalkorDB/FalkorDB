@@ -71,6 +71,9 @@ GrB_Info Delta_eWiseAdd
     const Delta_Matrix A,   // first input:  matrix A
     const Delta_Matrix B    // second input: matrix B
 ) {
+	Delta_Matrix_validate(A, false);
+	Delta_Matrix_validate(B, false);
+
 	ASSERT(A  != NULL);
 	ASSERT(B  != NULL);
 	ASSERT(C  != NULL);
@@ -101,18 +104,11 @@ GrB_Info Delta_eWiseAdd
 
 	GrB_OK (GrB_Matrix_nvals(&adp_vals, ADP));
 	GrB_OK (GrB_Matrix_nvals(&bdp_vals, BDP));
+	GrB_OK (GrB_Matrix_nvals(&adm_vals, ADM));
+	GrB_OK (GrB_Matrix_nvals(&bdm_vals, BDM));
 
-	bool handle_deletion = false;
 	bool handle_addition = adp_vals || bdp_vals;
-
-	if(ADM == NULL || BDM == NULL){
-		ADM = BDM = CDM = NULL;
-		GrB_free(&DELTA_MATRIX_DELTA_MINUS(C));
-	} else {
-		GrB_OK (GrB_Matrix_nvals(&adm_vals, ADM));
-		GrB_OK (GrB_Matrix_nvals(&bdm_vals, BDM));
-		handle_deletion = adm_vals || bdm_vals;
-	}
+	bool handle_deletion = adm_vals || bdm_vals;
 	
 	if (!handle_addition){
 		GrB_OK (GrB_Matrix_clear(CDP));
@@ -200,10 +196,10 @@ GrB_Info Delta_eWiseAdd
 	// don't use again, could have been overwritten.
 	ADM = BDM = NULL;
 
-	if(handle_deletion && handle_addition){
+	if(handle_deletion){
 		// delete intersection of CDM with CDP
-		GrB_OK (GrB_transpose(
-			CDM, M_times_DP, GrB_ONEB_BOOL, DM_union, GrB_DESC_SCT0));
+		GrB_OK (GrB_Matrix_assign(CDM, M_times_DP, GrB_ONEB_BOOL, DM_union,
+			GrB_ALL, 0, GrB_ALL, 0, handle_addition ? GrB_DESC_SC : NULL));
 	}
 
 	GrB_OK (GrB_Matrix_wait(CM, GrB_MATERIALIZE));
@@ -263,7 +259,7 @@ GrB_Info Delta_eWiseUnion
 	GrB_OK (Delta_Matrix_nrows(&nrows, C)) ;
 	GrB_OK (Delta_Matrix_ncols(&ncols, C)) ;
 
-	#if RG_DEBUG || 1
+	#if RG_DEBUG
 	GrB_OK (GrB_Matrix_apply_BinaryOp1st_Scalar(ADM, ADM, GrB_SECOND_BOOL, 
 		GrB_EQ_UINT64, alpha, AM, GrB_DESC_S));
 	GrB_OK (GrB_Matrix_apply_BinaryOp1st_Scalar(BDM, BDM, GrB_SECOND_BOOL, 
@@ -344,9 +340,10 @@ GrB_Info Delta_eWiseUnion
 	// don't use again, could have been overwritten.
 	ADM = BDM = NULL;
 
-	if(handle_addition && handle_deletion) {
-		GrB_OK (GrB_transpose(
-			CDM, M_times_DP, GrB_ONEB_BOOL, DM_union, GrB_DESC_SCT0));
+	if(handle_deletion){
+		// delete intersection of CDM with CDP
+		GrB_OK (GrB_Matrix_assign(CDM, M_times_DP, GrB_ONEB_BOOL, DM_union,
+			GrB_ALL, 0, GrB_ALL, 0, handle_addition ? GrB_DESC_SC : NULL));
 	}
 
 	//--------------------------------------------------------------------------

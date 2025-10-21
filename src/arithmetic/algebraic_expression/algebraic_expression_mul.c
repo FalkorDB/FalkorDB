@@ -53,9 +53,10 @@ Delta_Matrix _Eval_Mul
 			continue ;
 		}
 
-		Delta_Matrix_type(&ty, M);
-		semiring = (ty == GrB_BOOL)? GrB_LOR_LAND_SEMIRING_BOOL: ops->any_alive;
-		GrB_OK (Delta_mxm_identity(res_m, semiring, GxB_ANY_PAIR_BOOL, A, M));
+		GrB_OK (Delta_mxm_struct(res_m, A, M));
+		// Delta_Matrix_type(&ty, M);
+		// semiring = (ty == GrB_BOOL)? GrB_LOR_LAND_SEMIRING_BOOL: ops->any_alive;
+		// GrB_OK (Delta_mxm_identity(res_m, semiring, GxB_ANY_PAIR_BOOL, A, M));
 
 		// info = Delta_mxm_count(res_m, GxB_PLUS_PAIR_UINT64, A, M);
 		// ASSERT(info == GrB_SUCCESS);
@@ -80,11 +81,11 @@ Delta_Matrix _Eval_Mul
 		GrB_OK (GrB_transpose(res_m, NULL, NULL, A, GrB_DESC_T0)) ;
 	}
 	
+	// if(res_modified) {
+	// 	GrB_Matrix_select_BOOL(DELTA_MATRIX_DELTA_MINUS(res), NULL, NULL, 
+	// 		GrB_VALUEEQ_BOOL, res_m, BOOL_ZOMBIE, NULL);
+	// }
 	GrB_Matrix_wait(res_m, GrB_MATERIALIZE) ;
-	if(res_modified) {
-		GrB_Matrix_select_BOOL(DELTA_MATRIX_DELTA_MINUS(res), NULL, NULL, 
-			GrB_VALUEEQ_BOOL, res_m, BOOL_ZOMBIE, NULL);
-	}
 
 	return res ;
 }

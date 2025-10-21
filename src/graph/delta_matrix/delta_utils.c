@@ -183,7 +183,7 @@ void Delta_Matrix_validate
 		ASSERT(info == GrB_SUCCESS);
 	}
 
-	#if 0 // less strict iso test:
+	#if 1 // less strict iso test:
 	// if this passes, Graphblas may not recognize the matrix as iso
 	// but it only has true values. 
 	info = GrB_Matrix_reduce_BOOL(
