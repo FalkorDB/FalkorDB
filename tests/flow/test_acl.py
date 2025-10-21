@@ -159,7 +159,7 @@ class testACL(FlowTestsBase):
             self.env.assertFalse('acl' in user_commands)
             self.env.assertEqual(48, len(user_commands))
 
-    def test05_graph_acl_ignotr_unautherized_permissinos_with_pipe(self):
+    def test05_graph_acl_ignore_unautherized_permissions_with_pipe(self):
         """
         make sure we can't grant un-autherized permissions with pipe
         e.g. +COMMAND|LIST

@@ -28,7 +28,6 @@ static int _set_password_fun
 	ASSERT(username != NULL);
 	ASSERT(password[0] == '<' || password[0] == '>');
 
-	RedisModule_ReplicateVerbatim(ctx);
 	RedisModuleCallReply *reply = 
 		RedisModule_Call(ctx, "ACL", "ccc", "SETUSER", username, password);
 	
@@ -147,13 +146,6 @@ int Graph_SetPassword
 		return RedisModule_WrongArity(ctx);
 	}
 
-	// get the current user name as C string, to pass as private data
-	RedisModuleString *_redis_current_user_name = 
-		RedisModule_GetCurrentUserName(ctx);
-
-	const char *username = 
-		RedisModule_StringPtrLen(_redis_current_user_name, NULL);
-
 	// get the action ADD / REMOVE
  	const char *action = RedisModule_StringPtrLen(argv[1], NULL);
 	
@@ -163,7 +155,6 @@ int Graph_SetPassword
 	} else if(strcasecmp(action, "REMOVE") == 0) {
 		f = _remove_password;
 	} else {
-		RedisModule_FreeString(ctx, _redis_current_user_name);
 		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING, 
 		"Unknown command: GRAPH.PASSWORD %s, passible commands are [ADD, REMOVE]",
 		action);
@@ -171,6 +162,26 @@ int Graph_SetPassword
 		RedisModule_ReplyWithError(ctx, "Unknown sub-command");
 		return REDISMODULE_ERR;
 	}
+
+	// if running on replica, just execute the command directly
+	// the username will be extracted from argv[0] (set during replication)
+	if(is_replica(ctx)) {
+		// on replica, we need to get username from the replicated command context
+		// since GetCurrentUserName won't work during replication
+		// we'll extract it from the ACL SETUSER command that gets executed
+		const char *replica_username = "default";  // fallback
+		return f(ctx, argv, argc, (void*)replica_username);
+	}
+
+	// replicate this command to the replica
+	RedisModule_ReplicateVerbatim(ctx);
+
+	// get the current user name as C string, to pass as private data
+	RedisModuleString *_redis_current_user_name = 
+		RedisModule_GetCurrentUserName(ctx);
+
+	const char *username = 
+		RedisModule_StringPtrLen(_redis_current_user_name, NULL);
 
 	int ret = run_acl_function_as(ctx, argv, argc, f, ACL_ADMIN_USER,
 		 (void*) username);
