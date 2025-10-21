@@ -18,9 +18,7 @@ GrB_Info Delta_add
     const Delta_Matrix A,   // first input:  matrix A
     const Delta_Matrix B    // second input: matrix B
 ) {
-	ASSERT(A  != NULL);
-	ASSERT(B  != NULL);
-	ASSERT(C  != NULL);
+	Delta_Matrix_addCompatible(C, A, B);
 	Delta_Matrix_validate(A, false);
 	Delta_Matrix_validate(B, false);
 
@@ -71,6 +69,7 @@ GrB_Info Delta_eWiseAdd
     const Delta_Matrix A,   // first input:  matrix A
     const Delta_Matrix B    // second input: matrix B
 ) {
+	Delta_Matrix_addCompatible(C, A, B);
 	Delta_Matrix_validate(A, false);
 	Delta_Matrix_validate(B, false);
 
@@ -224,9 +223,7 @@ GrB_Info Delta_eWiseUnion
     const Delta_Matrix B,    // three input: matrix B
 	const GrB_Scalar beta    // fourth input: empty value of matrix B
 ) {
-	ASSERT(A  != NULL);
-	ASSERT(B  != NULL);
-	ASSERT(C  != NULL);
+	Delta_Matrix_addCompatible(C, A, B);
 	ASSERT(op != NULL);
 	ASSERT(!DELTA_MATRIX_MAINTAIN_TRANSPOSE(C));
 

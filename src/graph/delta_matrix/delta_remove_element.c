@@ -20,8 +20,6 @@ GrB_Info Delta_Matrix_removeElement_BOOL
 	Delta_Matrix_checkBounds(C, i, j);
 	GrB_Info   info;
 	bool       in_m  = false;
-	bool       in_dp = false;
-	bool       in_dm = false;
 	GrB_Matrix m     = DELTA_MATRIX_M(C);
 	GrB_Matrix dp    = DELTA_MATRIX_DELTA_PLUS(C);
 	GrB_Matrix dm    = DELTA_MATRIX_DELTA_MINUS(C);
@@ -68,8 +66,6 @@ GrB_Info Delta_Matrix_removeElement_UINT64
 	Delta_Matrix_checkBounds(C, i, j);
 	GrB_Info   info;
 	bool       in_m  = false;
-	bool       in_dp = false;
-	bool       in_dm = false;
 	GrB_Matrix m     = DELTA_MATRIX_M(C);
 	GrB_Matrix dp    = DELTA_MATRIX_DELTA_PLUS(C);
 	GrB_Matrix dm    = DELTA_MATRIX_DELTA_MINUS(C);
@@ -105,10 +101,11 @@ GrB_Info Delta_Matrix_removeElement_UINT64
 	return GrB_SUCCESS;
 }
 
+// remove all entries in matrix m from delta matrix C
 GrB_Info Delta_Matrix_removeElements
 (
-	Delta_Matrix C,  // matrix to remove entry from
-	GrB_Matrix A     // matrix filled with elements to remove
+	Delta_Matrix C,     // matrix to remove entry from
+	const GrB_Matrix A  // elements to remove
 ) {
 	ASSERT(C != NULL);
 	ASSERT(A != NULL);

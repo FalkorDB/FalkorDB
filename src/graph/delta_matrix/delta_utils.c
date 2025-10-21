@@ -4,8 +4,7 @@
  */
 
 #include "RG.h"
-#include "LAGraphX.h"
-#include "delta_utils.h"
+#include "delta_matrix.h"
 
 // check if i and j are within matrix boundries
 // i < nrows
@@ -17,6 +16,7 @@ void Delta_Matrix_checkBounds
 	GrB_Index j
 ) {
 #ifdef RG_DEBUG
+	ASSERT (C != NULL);
 	GrB_Matrix m = DELTA_MATRIX_M(C);
 	// check bounds
 	GrB_Index nrows;
@@ -35,6 +35,8 @@ void Delta_Matrix_checkCompatible
 	const Delta_Matrix N
 ) {
 #ifdef RG_DEBUG
+	ASSERT(M != NULL);
+	ASSERT(N != NULL);
 	GrB_Matrix m = DELTA_MATRIX_M(M);
 	GrB_Matrix n = DELTA_MATRIX_M(N);
 
@@ -57,59 +59,120 @@ void Delta_Matrix_checkCompatible
 #endif
 }
 
-void Delta_Matrix_validateState
+// check if the dimensions of C, A and B are compatible for addition
+void Delta_Matrix_addCompatible
 (
 	const Delta_Matrix C,
-	GrB_Index i,
-	GrB_Index j
+	const Delta_Matrix A,
+	const Delta_Matrix B
 ) {
 #ifdef RG_DEBUG
-	bool        x_m               =  false;
-	bool        x_dp              =  false;
-	bool        x_dm              =  false;
-	bool        existing_entry    =  false;
-	bool        pending_addition  =  false;
-	bool        pending_deletion  =  false;
-	GrB_Info    info_m            =  GrB_SUCCESS;
-	GrB_Info    info_dp           =  GrB_SUCCESS;
-	GrB_Info    info_dm           =  GrB_SUCCESS;
-	GrB_Matrix  m                 =  DELTA_MATRIX_M(C);
-	GrB_Matrix  dp                =  DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix  dm                =  DELTA_MATRIX_DELTA_MINUS(C);
+	ASSERT(C != NULL);
+	ASSERT(A != NULL);
+	ASSERT(B != NULL);
 
-	// find out which entries exists
-	info_m  = GrB_Matrix_extractElement(&x_m,  m,  i, j);
-	info_dp = GrB_Matrix_extractElement(&x_dp, dp, i, j);
-	info_dm = GrB_Matrix_extractElement(&x_dm, dm, i, j);
+	GrB_Index c_rows;
+	GrB_Index c_cols;
+	GrB_Index a_rows;
+	GrB_Index a_cols;
+	GrB_Index b_rows;
+	GrB_Index b_cols;
 
-	existing_entry    =  info_m  == GrB_SUCCESS;
-	pending_addition  =  info_dp == GrB_SUCCESS;
-	pending_deletion  =  info_dm == GrB_SUCCESS;
+	Delta_Matrix_nrows(&c_rows, C);
+	Delta_Matrix_ncols(&c_cols, C);
+	Delta_Matrix_nrows(&a_rows, A);
+	Delta_Matrix_ncols(&a_cols, A);
+	Delta_Matrix_nrows(&b_rows, B);
+	Delta_Matrix_ncols(&b_cols, B);
 
-	//--------------------------------------------------------------------------
-	// impossible states
-	//--------------------------------------------------------------------------
-
-	// matrix disjoint
-	ASSERT(!(existing_entry   &&
-			 pending_addition &&
-			 pending_deletion));
-
-	// deletion only
-	ASSERT(!(!existing_entry   &&
-			 !pending_addition &&
-			 pending_deletion));
-
-	// addition to already existing entry
-	ASSERT(!(existing_entry   &&
-			 pending_addition &&
-			 !pending_deletion));
-
-	// pending deletion and pending addition
-	ASSERT(!(!existing_entry   &&
-			  pending_addition &&
-			  pending_deletion));
+	ASSERT(c_rows == a_rows);
+	ASSERT(c_cols == a_cols);
+	ASSERT(c_rows == b_rows);
+	ASSERT(c_cols == b_cols);
 #endif
+}
+
+// check if the dimensions of C, A and B are compatible for multiplication
+void Delta_Matrix_mulCompatible
+(
+	const Delta_Matrix C,
+	const Delta_Matrix A,
+	const Delta_Matrix B
+) {
+#ifdef RG_DEBUG
+	ASSERT(C != NULL);
+	ASSERT(A != NULL);
+	ASSERT(B != NULL);
+
+	GrB_Index c_rows;
+	GrB_Index c_cols;
+	GrB_Index a_rows;
+	GrB_Index a_cols;
+	GrB_Index b_rows;
+	GrB_Index b_cols;
+
+	Delta_Matrix_nrows(&c_rows, C);
+	Delta_Matrix_ncols(&c_cols, C);
+	Delta_Matrix_nrows(&a_rows, A);
+	Delta_Matrix_ncols(&a_cols, A);
+	Delta_Matrix_nrows(&b_rows, B);
+	Delta_Matrix_ncols(&b_cols, B);
+
+	ASSERT(c_rows == a_rows);
+	ASSERT(c_cols == b_cols);
+	ASSERT(a_cols == b_rows);
+#endif
+}
+
+bool _matrix_leq
+(
+	const GrB_BinaryOp leq,
+	const GrB_Matrix A,
+	const GrB_Matrix B,
+	bool transpose
+) {
+	GrB_Index      a_nvals = 0;
+	GrB_Index      b_nvals = 0;
+	GrB_Index      c_nvals = 0;
+	GrB_Index      nrows   = 0;
+	GrB_Index      ncols   = 0;
+	GrB_Index      brows   = 0;
+	GrB_Index      bcols   = 0;
+	GrB_Descriptor desc = transpose ? GrB_DESC_T1 : NULL;
+	
+	GrB_OK (GrB_Matrix_nvals(&a_nvals, A));
+	GrB_OK (GrB_Matrix_nvals(&b_nvals, B));
+	if (a_nvals > b_nvals) {
+		return false;
+	}
+
+	GrB_OK (GrB_Matrix_nrows(&nrows, A));
+	GrB_OK (GrB_Matrix_ncols(&ncols, A));
+	GrB_OK (GrB_Matrix_nrows(&brows, B));
+	GrB_OK (GrB_Matrix_ncols(&bcols, B));
+
+	if (transpose) {
+		GrB_Index temp = brows;
+		brows = bcols;
+		bcols = temp;
+	}
+
+	if(nrows != brows || ncols != bcols) {
+		return false;
+	}
+
+	GrB_Matrix C = NULL;
+	GrB_OK (GrB_Matrix_new(&C, GrB_BOOL, nrows, ncols));
+	GrB_OK (GrB_eWiseMult(C, NULL, NULL, leq, A, B, desc));
+	GrB_OK (GrB_Matrix_nvals(&c_nvals, C));
+
+	bool result = true;
+	GrB_OK(GrB_Matrix_reduce_BOOL(
+		&result, NULL, GrB_LAND_MONOID_BOOL, C, NULL));
+	GrB_free(&C);
+
+	result = result && (c_nvals == a_nvals);
+	return result;
 }
 
 // Check every assumption for the Delta Matrix
@@ -183,21 +246,20 @@ void Delta_Matrix_validate
 		ASSERT(info == GrB_SUCCESS);
 	}
 
+	//--------------------------------------------------------------------------
+	// Check dm and dp are iso
+	//--------------------------------------------------------------------------
 	#if 1 // less strict iso test:
 	// if this passes, Graphblas may not recognize the matrix as iso
 	// but it only has true values. 
-	info = GrB_Matrix_reduce_BOOL(
-		&dm_iso, GrB_LAND, GrB_LAND_MONOID_BOOL, dm, NULL);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_Matrix_reduce_BOOL(
+		&dm_iso, GrB_LAND, GrB_LAND_MONOID_BOOL, dm, NULL));
 	#else
-	info = GxB_Matrix_iso (&dm_iso, dm);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GxB_Matrix_iso (&dm_iso, dm));
 	#endif
 
-	info = GrB_Matrix_nvals (&dm_nvals, dm);
-	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_nvals (&dp_nvals, dp);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_Matrix_nvals (&dm_nvals, dm));
+	GrB_OK (GrB_Matrix_nvals (&dp_nvals, dp));
 	if(!dm_iso && dm_nvals > 0) {
 		GxB_fprint(dm, GxB_SHORT, stdout);
 	}
@@ -207,8 +269,11 @@ void Delta_Matrix_validate
 	ASSERT(dm_iso || dm_nvals == 0);
 	ASSERT(dp_iso || dp_nvals == 0);
 
-	info = GrB_Matrix_new(&temp, GrB_BOOL, nrows, ncols);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_Matrix_new(&temp, GrB_BOOL, nrows, ncols));
+
+	//--------------------------------------------------------------------------
+	// Check the transpose
+	//--------------------------------------------------------------------------
 	if(check_transpose && DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) { 
 		// this may to too strict
 		// the transpose should be structually the transpose
@@ -216,63 +281,33 @@ void Delta_Matrix_validate
 		GrB_Matrix tm        = DELTA_MATRIX_TM(C);
 		GrB_Matrix tdp       = DELTA_MATRIX_TDELTA_PLUS(C);
 		GrB_Matrix tdm       = DELTA_MATRIX_TDELTA_MINUS(C);
-		GrB_Index  t_eq_vals = 0;
-		bool       all_t_eq  = true;
 
 		// m = tm^t
-		GrB_Matrix_nvals(&nvals, m);
-		info = GrB_eWiseMult(temp, NULL, NULL, GrB_EQ_BOOL, m, tm, GrB_DESC_T1);
-		ASSERT(info == GrB_SUCCESS);
-		GrB_Matrix_nvals(&t_eq_vals, temp);
-		ASSERT(t_eq_vals == nvals);
-
-		info = GrB_Matrix_reduce_BOOL(
-		&all_t_eq, GrB_LAND, GrB_LAND_MONOID_BOOL, temp, NULL);
-		ASSERT(info == GrB_SUCCESS);
-		ASSERT(all_t_eq);
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, m, tm, true));
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tm, m, true));
 
 		// dp = tdp^t
-		GrB_Matrix_nvals(&nvals, dp);
-		info = GrB_eWiseMult(temp, NULL, NULL, GrB_EQ_BOOL, dp, tdp, GrB_DESC_T1);
-		ASSERT(info == GrB_SUCCESS);
-		GrB_Matrix_nvals(&t_eq_vals, temp);
-		ASSERT(t_eq_vals == nvals);
-
-		info = GrB_Matrix_reduce_BOOL(
-		&all_t_eq, GrB_LAND, GrB_LAND_MONOID_BOOL, temp, NULL);
-		ASSERT(info == GrB_SUCCESS);
-		ASSERT(all_t_eq);
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, dp, tdp, true));
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tdp, dp, true));
 
 		// dm = tdm^t
-		GrB_Matrix_nvals(&nvals, dm);
-		info = GrB_eWiseMult(temp, NULL, NULL, GrB_EQ_BOOL, dm, tdm, GrB_DESC_T1);
-		ASSERT(info == GrB_SUCCESS);
-		GrB_Matrix_nvals(&t_eq_vals, temp);
-		ASSERT(t_eq_vals == nvals);
-
-		info = GrB_Matrix_reduce_BOOL(
-		&all_t_eq, GrB_LAND, GrB_LAND_MONOID_BOOL, temp, NULL);
-		ASSERT(info == GrB_SUCCESS);
-		ASSERT(all_t_eq);
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, dm, tdm, true));
+		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tdm, dm, true));
 	}
 	
-	info = GrB_eWiseMult(temp, NULL, NULL, GrB_ONEB_BOOL, m, dp, NULL);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_eWiseMult(temp, NULL, NULL, GrB_ONEB_BOOL, m, dp, NULL));
 	GrB_Matrix_nvals(&nvals, temp);
 	m_dp_disjoint = nvals == 0;
 	if(!m_dp_disjoint)
 		GxB_Matrix_fprint(temp, "m&dp",GxB_SHORT, stdout);
-	info = GrB_eWiseMult(temp, NULL, NULL, GrB_ONEB_BOOL, dp, dm, NULL);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_eWiseMult(temp, NULL, NULL, GrB_ONEB_BOOL, dp, dm, NULL));
 	GrB_Matrix_nvals(&nvals, temp);
 	dp_dm_disjoint = nvals == 0;
 	if(!dp_dm_disjoint)
 		GxB_Matrix_fprint(temp, "dp&dm",GxB_SHORT, stdout);
-	info = GrB_eWiseAdd(temp, NULL, NULL, GrB_LXOR, dp, dm, NULL);
-	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_reduce_BOOL(
-		&m_zombies_valid, NULL, GrB_LAND_MONOID_BOOL, temp, NULL);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_eWiseAdd(temp, NULL, NULL, GrB_LXOR, dp, dm, NULL));
+	GrB_OK (GrB_Matrix_reduce_BOOL(
+		&m_zombies_valid, NULL, GrB_LAND_MONOID_BOOL, temp, NULL));
 
 	//--------------------------------------------------------------------------
 	// check assumptions 
@@ -288,4 +323,3 @@ void Delta_Matrix_validate
 	GrB_free(&temp);
 #endif
 }
-

@@ -62,13 +62,7 @@ Delta_Matrix _Eval_Add
 	//--------------------------------------------------------------------------
 	// perform addition
 	//--------------------------------------------------------------------------
-	// TODO: handle different types by using the global any_alive ops
-	GrB_OK (Delta_Matrix_type(&t, A));
-	ASSERT (t == GrB_BOOL);
-	GrB_OK (Delta_Matrix_type(&t, B));
-	ASSERT (t == GrB_BOOL);
-
-	info = Delta_eWiseAdd(res, GrB_LOR, A, B);
+	info = Delta_add(res, A, B);
 	ASSERT(info == GrB_SUCCESS);
 
 	uint child_count = AlgebraicExpression_ChildCount(exp);

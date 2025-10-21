@@ -6,7 +6,6 @@
 
 #include "RG.h"
 #include "GraphBLAS.h"
-
 #include <pthread.h>
 
 // forward declaration of Delta_Matrix type
@@ -135,36 +134,48 @@ Delta_Matrix Delta_Matrix_getTranspose
 	const Delta_Matrix C
 );
 
-// mark matrix as dirty
-void Delta_Matrix_setDirty
+// get the internal matrix M
+GrB_Matrix Delta_Matrix_M
 (
 	Delta_Matrix C
 );
 
-bool Delta_Matrix_isDirty
+// get the internal matrix delta plus
+GrB_Matrix Delta_Matrix_DP
 (
 	const Delta_Matrix C
 );
 
-// checks if C is fully synced
-// a synced delta matrix does not contains any entries in
-// either its delta-plus and delta-minus internal matrices
-bool Delta_Matrix_Synced
+// get the internal matrix delta minus
+GrB_Matrix Delta_Matrix_DM
 (
-	const Delta_Matrix C  // matrix to inquery
+	const Delta_Matrix C
 );
 
-// locks the matrix
-void Delta_Matrix_lock
+// set the internal matrix M
+// the operation can only succeed if C's interal matrices are all empty
+GrB_Info Delta_Matrix_setM
 (
-	Delta_Matrix C
+	Delta_Matrix C,  // delta matrix
+	GrB_Matrix *M    // new M
 );
 
-// unlocks the matrix
-void Delta_Matrix_unlock
+// Set the internal matricies of C
+// the operation can only succeed if C's interal matrices are all empty
+GrB_Info Delta_Matrix_setMatrices
 (
-	Delta_Matrix C
-);
+	Delta_Matrix C,  // delta matrix
+	GrB_Matrix *M,   // new M
+	GrB_Matrix *DP,  // new delta-plus
+	GrB_Matrix *DM   // new delta-minus
+) ;
+
+// Cache and compute the transpose of a matrix
+// Returns GrB_ALREADY_SET if the transpose is non-null when called
+GrB_Info Delta_cache_transpose
+(
+    Delta_Matrix A
+) ;
 
 GrB_Info Delta_Matrix_nrows
 (
@@ -178,11 +189,10 @@ GrB_Info Delta_Matrix_ncols
 	const Delta_Matrix C
 );
 
-// get the number of entries in a matrix
-GrB_Info Delta_Matrix_nvals
+GrB_Info Delta_Matrix_nvals  // get the number of entries in a matrix
 (
-	GrB_Index *nvals,     // matrix has nvals entries
-	const Delta_Matrix A  // matrix to query
+	GrB_Index *nvals,        // matrix has nvals entries
+	const Delta_Matrix A     // matrix to query
 );
 
 // change the size of a matrix
@@ -210,20 +220,29 @@ GrB_Info Delta_Matrix_setElement_UINT64
 	GrB_Index j      // column index
 );
 
-// x = A(i,j)
-GrB_Info Delta_Matrix_extractElement_BOOL     
+// C (i,j) += x
+GrB_Info Delta_Matrix_Assign_Element_UINT64
 (
-	bool *x,               // extracted scalar
+	Delta_Matrix C,     // matrix to modify
+	GrB_BinaryOp accum, // accumulator to apply to duplicates
+	uint64_t x,         // scalar to assign to C(i,j)
+	GrB_Index i,        // row index
+	GrB_Index j         // column index
+) ;
+
+// x = A(i,j)
+GrB_Info Delta_Matrix_extractElement_UINT64
+(
+	uint64_t *x,           // extracted scalar
 	const Delta_Matrix A,  // matrix to extract a scalar from
 	GrB_Index i,           // row index
 	GrB_Index j            // column index
 ) ;
 
-// x = A(i,j)
-GrB_Info Delta_Matrix_extractElement_UINT64   
+// check if element A(i,j) is stored in the delta matrix
+GrB_Info Delta_Matrix_isStoredElement
 (
-	uint64_t *x,           // extracted scalar
-	const Delta_Matrix A,  // matrix to extract a scalar from
+	const Delta_Matrix A,  // matrix to check
 	GrB_Index i,           // row index
 	GrB_Index j            // column index
 ) ;
@@ -243,10 +262,11 @@ GrB_Info Delta_Matrix_removeElement_UINT64
 	GrB_Index j      // column index
 );
 
+// remove all entries in matrix m from delta matrix C
 GrB_Info Delta_Matrix_removeElements
 (
 	Delta_Matrix C,  // matrix to remove entry from
-	GrB_Matrix A     // matrix filled with elements to remove
+	const GrB_Matrix A     // matrix filled with elements to remove
 ) ;
 
 // C = A * B
@@ -280,6 +300,7 @@ GrB_Info Delta_mxm_struct_V3
     const Delta_Matrix A,         // first input:  matrix A
     const Delta_Matrix B          // second input: matrix B
 ) ;
+
 // Does not look at dm. Assumes that any "zombie" value is '0'
 // where x \otimes 0 = 0' and x + 0' = x. (AKA the semiring "zero")
 // NOTE: this does not remove explicit zombies.
@@ -390,31 +411,35 @@ GrB_Info Delta_Matrix_clear
 );
 
 // copy matrix A to matrix C
-GrB_Info Delta_Matrix_copy 
+// does not set the transpose
+GrB_Info Delta_Matrix_dup
 (
-	Delta_Matrix C,       // output matrix
+	Delta_Matrix *C,      // output matrix
 	const Delta_Matrix A  // input matrix
-);
+) ;
 
-// get matrix C without writing to internal matrix
+// get the fully synced GrB_Matrix from Delta_Matrix C without modifying C
 GrB_Info Delta_Matrix_export
 (
-	GrB_Matrix *A,
-	const Delta_Matrix C
-) ;
-
-// get structural matrix A without writing to internal matrix
-GrB_Info Delta_Matrix_export_structure
-(
-	GrB_Matrix *A,
-	const Delta_Matrix C
-) ;
+    GrB_Matrix *A,         // output Matrix 
+    const Delta_Matrix C,  // input Delta Matrix
+    const GrB_Type type    // output matrix type (values will be typecast)
+);
 
 // checks to see if matrix has pending operations
+// pending is set to true if any of the internal matricies have pending
+// operations
 GrB_Info Delta_Matrix_pending
 (
 	const Delta_Matrix C,  // matrix to query
 	bool *pending          // are there any pending operations
+);
+
+// return # of bytes used for a matrix
+GrB_Info Delta_Matrix_memoryUsage
+(
+    size_t *size,         // # of bytes used by the matrix A
+    const Delta_Matrix A  // matrix to query
 );
 
 GrB_Info Delta_Matrix_wait
@@ -435,18 +460,6 @@ void Delta_Matrix_free
 	Delta_Matrix *C
 );
 
-GrB_Matrix Delta_Matrix_M
-(
-	const Delta_Matrix C
-);
-
-// return # of bytes used for a matrix
-GrB_Info Delta_Matrix_memoryUsage
-(
-    size_t *size,         // # of bytes used by the matrix A
-    const Delta_Matrix A  // matrix to query
-);
-
 void Delta_Matrix_synchronize
 (
 	Delta_Matrix C,
@@ -454,38 +467,33 @@ void Delta_Matrix_synchronize
 	GrB_Index ncols
 );
 
-// replace C's internal M matrix with given M
-// the operation can only succeed if C's interal matrices:
-// M, DP, DM are all empty
-// C->M will point to *M and *M will be set to NULL
-GrB_Info Delta_Matrix_setM
+bool Delta_Matrix_Synced
 (
-	Delta_Matrix C,  // delta matrix
-	GrB_Matrix *M    // new M
+	const Delta_Matrix C
 );
 
-// replace C's internal matrices (M, DP & DM)
-// the operation can only succeed if C's interal matrices:
-// M, DP, DM are all empty
-GrB_Info Delta_Matrix_setMatrices
+bool Delta_Matrix_Synced
 (
-	Delta_Matrix C,  // delta matrix
-	GrB_Matrix M,    // new M
-	GrB_Matrix DP,   // new delta-plus
-	GrB_Matrix DM    // new delta-minus
+	const Delta_Matrix C
 );
 
-GrB_Info Delta_cache_transpose
+void Delta_Matrix_lock
 (
-	Delta_Matrix A  // matrix to cache transpose of
+	Delta_Matrix C
 );
 
-// C (i,j) = x
-GrB_Info Delta_Matrix_Assign_Element_UINT64
+void Delta_Matrix_unlock
 (
-    Delta_Matrix C,     // matrix to modify
-	GrB_BinaryOp accum, // accumulator to apply to duplicates
-    uint64_t x,         // scalar to assign to C(i,j)
-    GrB_Index i,        // row index
-    GrB_Index j         // column index
+	Delta_Matrix C
+);
+
+void Delta_Matrix_setDirty
+(
+	Delta_Matrix C
 ) ;
+
+bool Delta_Matrix_isDirty
+(
+	const Delta_Matrix C
+) ;
+

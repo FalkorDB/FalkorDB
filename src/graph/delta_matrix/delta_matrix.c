@@ -66,6 +66,7 @@ bool Delta_Matrix_Synced
 
 	GrB_Index dp_nvals;
 	GrB_Index dm_nvals;
+
 	GrB_OK(GrB_Matrix_nvals(&dp_nvals, DELTA_MATRIX_DELTA_PLUS(C)));
 	GrB_OK(GrB_Matrix_nvals(&dm_nvals, DELTA_MATRIX_DELTA_MINUS(C)));
 
@@ -186,102 +187,29 @@ GrB_Info Delta_Matrix_type
 GrB_Info Delta_Matrix_memoryUsage
 (
     size_t *size,           // # of bytes used by the matrix C
-    const Delta_Matrix C    // matrix to query
+    const Delta_Matrix A    // matrix to query
 ) {
-	ASSERT(C    != NULL);
+	ASSERT(A    != NULL);
 	ASSERT(size != NULL);
 	size_t temp_size = 0;
 	size_t _size     = 0;
 
-	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_M(C)));
+	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_M(A)));
 	_size += temp_size;
 
-	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_DELTA_PLUS(C)));
+	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_DELTA_PLUS(A)));
 	_size += temp_size;
 
-	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_DELTA_MINUS(C)));
+	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_DELTA_MINUS(A)));
 	_size += temp_size;
 
 	// Add transpose 
-	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)){
-		GrB_OK(Delta_Matrix_memoryUsage(&temp_size, C->transposed));
+	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(A)){
+		GrB_OK(Delta_Matrix_memoryUsage(&temp_size, A->transposed));
 		_size += temp_size;
 	}
 
 	*size = _size;
 	
 	return GrB_SUCCESS;
-}
-
-// replace C's internal M matrix with given M
-// the operation can only succeed if C's interal matrices:
-// M, DP, DM are all empty
-// C->M will point to *M and *M will be set to NULL
-GrB_Info Delta_Matrix_setM
-(
-	Delta_Matrix C,  // delta matrix
-	GrB_Matrix *M    // new M
-) {
-	ASSERT(C != NULL);
-	ASSERT(M != NULL && *M != NULL);
-
-	GrB_Index nvals = 0;
-	GrB_Index tot   = 0;
-	ASSERT(Delta_Matrix_Synced(C));
-
-	GrB_OK(GrB_free(&DELTA_MATRIX_M(C)));
-
-	DELTA_MATRIX_M(C) = *M;
-
-	// if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
-	// 	Delta_Matrix CT = C->transposed;
-	// 	ASSERT(Delta_Matrix_Synced(CT));
-	// 	GrB_OK(GrB_Matrix_apply(
-	// 		DELTA_MATRIX_M(CT), NULL, NULL, GxB_ONE_BOOL, *M, GrB_DESC_T0));
-	// }
-
-	*M = NULL;
-	return GrB_SUCCESS;
-}
-
-// replace C's internal M matricies with given
-// the operation can only succeed if C's interal matrices:
-// M, DP, DM are all empty
-// C->M will point to *M and *M will be set to NULL
-GrB_Info Delta_Matrix_setMatrices
-(
-	Delta_Matrix C,  // delta matrix
-	GrB_Matrix M,    // new M
-	GrB_Matrix DP,   // new delta-plus
-	GrB_Matrix DM    // new delta-minus
-) {
-	ASSERT(C  != NULL);
-	ASSERT(M  != NULL);
-	ASSERT(DP != NULL);
-	ASSERT(DM != NULL);
-
-	GrB_Index nvals = 0;
-
-	// Verify that C is empty
-	ASSERT(Delta_Matrix_Synced(C));
-	Delta_Matrix_nvals(&nvals, C);
-	ASSERT(nvals == 0);
-
-	GrB_OK(GrB_free(&DELTA_MATRIX_M(C)));
-	GrB_OK(GrB_free(&DELTA_MATRIX_DELTA_PLUS(C)));
-	GrB_OK(GrB_free(&DELTA_MATRIX_DELTA_MINUS(C)));
-
-	DELTA_MATRIX_M(C)           = M;
-	DELTA_MATRIX_DELTA_PLUS(C)  = DP;
-	DELTA_MATRIX_DELTA_MINUS(C) = DM;
-
-	Delta_Matrix_validate(C, false);
-	return GrB_SUCCESS;
-}
-
-GrB_Matrix Delta_Matrix_M
-(
-	const Delta_Matrix C  // delta matrix
-) {
-	return DELTA_MATRIX_M(C);
 }

@@ -5,6 +5,7 @@
  */
 
 #include "src/value.h"
+#include "src/globals.h"
 #include "src/util/arr.h"
 #include "src/query_ctx.h"
 #include "src/redismodule.h"
@@ -23,8 +24,8 @@
 #include <assert.h>
 #include <stdlib.h>
 
-void setup();
-void tearDown();
+void setup() ;
+void tearDown() ;
 
 #define TEST_INIT setup();
 #define TEST_FINI tearDown();
@@ -223,7 +224,7 @@ void _print_matrix(GrB_Matrix mat) {
 bool _compare_matrices(GrB_Matrix expected, Delta_Matrix actual) {
 	GrB_Matrix a = expected;
 	GrB_Matrix b = NULL;
-	Delta_Matrix_export(&b, actual);
+	Delta_Matrix_export(&b, actual, GrB_BOOL);
 
 	GrB_Index acols, arows, avals;
 	GrB_Index bcols, brows, bvals;
@@ -329,6 +330,7 @@ void setup() {
 	_bind_matrices();
 
 	qg = QueryGraph_New(16, 16);
+	Global_GrB_Ops_Init();
 }
 
 void tearDown() {
@@ -337,6 +339,7 @@ void tearDown() {
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	GraphContext_DecreaseRefCount(gc);
 	QueryCtx_Free();
+	Global_GrB_Ops_Free();
 }
 
 void test_algebraicExpression() {
@@ -681,7 +684,7 @@ void test_Exp_OP_MUL() {
 	// Using the A matrix described above,
 	// A * I = A.
 	GrB_Matrix expected;
-	Delta_Matrix_export(&expected, A);
+	Delta_Matrix_export(&expected, A, GrB_BOOL);
 	TEST_ASSERT(_compare_matrices(expected, res));
 
 	raxFree(matrices);
@@ -736,10 +739,8 @@ void test_Exp_OP_ADD_Transpose() {
 	rax *matrices = raxNew();
 	Delta_Matrix A;
 	Delta_Matrix At;
-	Delta_Matrix_new(&A, GrB_BOOL, n, n, false);
-	Delta_Matrix_new(&At, GrB_BOOL, n, n, false);
-	Delta_Matrix_copy(A, mat_ev);
-	Delta_Matrix_copy(At, mat_tev);
+	Delta_Matrix_dup(&A, mat_ev);
+	Delta_Matrix_dup(&At, mat_tev);
 	raxInsert(matrices, (unsigned char *)"A", strlen("A"), A, NULL);
 	raxInsert(matrices, (unsigned char *)"At", strlen("At"), At, NULL);
 

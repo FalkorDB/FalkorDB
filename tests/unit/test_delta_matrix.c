@@ -1,7 +1,6 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #include "src/util/rmalloc.h"
@@ -112,10 +111,10 @@ void CHECK_GrB_Matrices_EQ
 	// NNZ(A) == NNZ(B)
 	//--------------------------------------------------------------------------
 
-	GrB_Matrix_nvals(&nvals_A, A);
+	info =GrB_Matrix_nvals(&nvals_A, A);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	GrB_Matrix_nvals(&nvals_B, B);
+	info = GrB_Matrix_nvals(&nvals_B, B);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
@@ -128,7 +127,7 @@ void CHECK_GrB_Matrices_EQ
 	info = GrB_Matrix_eWiseMult_BinaryOp(C, NULL, NULL, eq, A, B, NULL);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	GrB_Matrix_nvals(&nvals_C, C);
+	info = GrB_Matrix_nvals(&nvals_C, C);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	TEST_CHECK(nvals_C == nvals_A);
@@ -238,24 +237,17 @@ Delta_Matrix make_test_matrix
 	Delta_Matrix A = NULL;
 
 	// create a new delta matrix
-	info = Delta_Matrix_new(&A, GrB_BOOL, 4, 4, transpose);
+	info = Delta_Matrix_new(&A, GrB_BOOL, 4, 4, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	for(int i = 0; i < 4; ++i){
 
 		int j = 0;
-		if (transpose){
-			int tmp = i; i = j; j = tmp;
-		}
 
-		Delta_Matrix_setElement_BOOL(A, i, j);
+		Delta_Matrix_setElement_BOOL(A, transpose? j : i, transpose? i : j);
 		j = 1;
 
-		if (transpose){
-			int tmp = i; i = j; j = tmp;
-		}
-
-		Delta_Matrix_setElement_BOOL(A, i, j);
+		Delta_Matrix_setElement_BOOL(A, transpose? j : i, transpose? i : j);
 	}
 	
 	Delta_Matrix_wait(A, true);
@@ -263,18 +255,11 @@ Delta_Matrix make_test_matrix
 	for(int i = 0; i < 4; ++i){
 
 		int j = 1;
-		if (transpose){
-			int tmp = i; i = j; j = tmp;
-		}
 
-		Delta_Matrix_removeElement_BOOL(A, i, j);
+		Delta_Matrix_removeElement_BOOL(A, transpose? j : i, transpose? i : j);
 		j = 2;
 
-		if (transpose){
-			int tmp = i; i = j; j = tmp;
-		}
-
-		Delta_Matrix_setElement_BOOL(A, i, j);
+		Delta_Matrix_setElement_BOOL(A, transpose? j : i, transpose? i : j);
 	}
 
 	return A;
@@ -934,7 +919,6 @@ void test_GRMatrix_managed_transposed() {
 	GrB_Index     i              =  0;
 	GrB_Index     j              =  1;
 	uint64_t      x              =  0;  // M[i,j] = x
-	bool          b              =  false;
 	bool          entry_deleted  =  false;
 	Edge          edges[1]       = {{.id = x, .src_id = i, .dest_id = j}};
 
@@ -962,9 +946,8 @@ void test_GRMatrix_managed_transposed() {
 	Tensor_SetElement(A, i, j, x);
 
 	// make sure element at position j,i exists
-	info = Delta_Matrix_extractElement_BOOL(&b, T, j, i);
+	info = Delta_Matrix_isStoredElement(T, j, i);
 	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_CHECK(true == b);
 	
 	// matrix should contain a single element
 	Delta_Matrix_nvals(&nvals, T);
@@ -1038,13 +1021,12 @@ void test_GRMatrix_managed_transposed() {
 	Tensor_RemoveElements(A, edges, 1, NULL);
 
 	// make sure element at position j,i exists
-	info = Delta_Matrix_extractElement_BOOL(&b, T, j, i);
+	info = Delta_Matrix_isStoredElement(T, j, i);
 	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_CHECK(true == b);
 
 	edges[0].id = x + 1;
 	Tensor_RemoveElements(A, edges, 1, NULL);
-	info = Delta_Matrix_extractElement_BOOL(&b, T, j, i);
+	info = Delta_Matrix_isStoredElement(T, j, i);
 	TEST_ASSERT(info == GrB_NO_VALUE);
 
 	//--------------------------------------------------------------------------
@@ -1060,14 +1042,13 @@ void test_GRMatrix_managed_transposed() {
 	Tensor_RemoveElements(A, edges, 1, NULL);
 
 	// make sure element at position j,i exists
-	info = Delta_Matrix_extractElement_BOOL(&b, T, j, i);
+	info = Delta_Matrix_isStoredElement(T, j, i);
 	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_CHECK (true == b);
 
 	edges[0].id = x + 1;
 	Tensor_RemoveElements(A, edges, 1, NULL);
 
-	info = Delta_Matrix_extractElement_BOOL(&b, T, j, i);
+	info = Delta_Matrix_isStoredElement(T, j, i);
 	TEST_ASSERT(info == GrB_NO_VALUE);
 
 	//--------------------------------------------------------------------------
@@ -1083,9 +1064,8 @@ void test_GRMatrix_managed_transposed() {
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// make sure element at position j,i exists
-	info = Delta_Matrix_extractElement_BOOL(&b, T, j, i);
+	info = Delta_Matrix_isStoredElement(T, j, i);
 	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_CHECK (true == b);
 
 	// clean up
 	Tensor_free(&A);
@@ -1235,7 +1215,7 @@ void test_RGMatrix_export_no_changes() {
 	// export empty matrix
 	//--------------------------------------------------------------------------
 
-	info = Delta_Matrix_export(&N, A);
+	info = Delta_Matrix_export(&N, A, t);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
@@ -1265,7 +1245,7 @@ void test_RGMatrix_export_no_changes() {
 	// validation
 	//--------------------------------------------------------------------------
 
-	info = Delta_Matrix_export(&N, A);
+	info = Delta_Matrix_export(&N, A, t);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	ASSERT_GrB_Matrices_EQ(M, N);
@@ -1327,7 +1307,7 @@ void test_RGMatrix_export_pending_changes() {
 	// export matrix
 	//--------------------------------------------------------------------------
 
-	info = Delta_Matrix_export(&N, A);
+	info = Delta_Matrix_export(&N, A, t);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
@@ -1399,7 +1379,7 @@ void test_Delta_Matrix_export_structure() {
 	// export matrix
 	//--------------------------------------------------------------------------
 
-	info = Delta_Matrix_export_structure(&N, A);
+	info = Delta_Matrix_export(&N, A, GrB_BOOL);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
@@ -1460,9 +1440,6 @@ void test_RGMatrix_copy() {
 	info = Delta_Matrix_new(&A, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	info = Delta_Matrix_new(&B, t, nrows, ncols, false);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
 	// set elements
 	info = Delta_Matrix_setElement_BOOL(A, 0, 0);
 	TEST_ASSERT(info == GrB_SUCCESS);
@@ -1493,7 +1470,7 @@ void test_RGMatrix_copy() {
 	// copy matrix
 	//--------------------------------------------------------------------------
 
-	info = Delta_Matrix_copy(B, A);
+	info = Delta_Matrix_dup(&B, A);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
@@ -1515,6 +1492,7 @@ void test_RGMatrix_copy() {
 	// free
 	//--------------------------------------------------------------------------
 	Delta_Matrix_free(&A);
+	Delta_Matrix_free(&B);
 	info = Delta_Matrix_new(&A, GrB_UINT64, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
@@ -1551,7 +1529,7 @@ void test_RGMatrix_copy() {
 	// copy matrix
 	//--------------------------------------------------------------------------
 
-	info = Delta_Matrix_copy(B, A);
+	info = Delta_Matrix_dup(&B, A);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
@@ -2250,9 +2228,9 @@ void test_Delta_Matrix_mxm_struct() {
 	//--------------------------------------------------------------------------
 	// set GrB_Matricies
 	//--------------------------------------------------------------------------
-	info = Delta_Matrix_export(&A_GB, A);
+	info = Delta_Matrix_export(&A_GB, A, t);
 	TEST_ASSERT(info == GrB_SUCCESS);
-	info = Delta_Matrix_export(&B_GB, B);
+	info = Delta_Matrix_export(&B_GB, B, t);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 
@@ -2365,7 +2343,7 @@ void test_RGMatrix_mxm() {
 
 	// set elements
 	Delta_Matrix_clear(A);
-	Delta_Matrix_clear(B);
+	Delta_Matrix_free(&B);
 	Delta_Matrix_clear(C);
 	Delta_Matrix_clear(D);
 	info = Delta_Matrix_setElement_BOOL(A, 0, 0);
@@ -2382,7 +2360,7 @@ void test_RGMatrix_mxm() {
 	// wait, force sync
 	sync = true;
 	Delta_Matrix_wait(A, sync);
-	Delta_Matrix_copy(B, A);
+	Delta_Matrix_dup(&B, A);
 
 
 	//--------------------------------------------------------------------------
@@ -2538,7 +2516,7 @@ void test_RGMatrix_mxv (){
 	GrB_Vector   y2    = NULL;
 	GrB_Vector   y3    = NULL;
 
-	Delta_Matrix_export(&GB_A, A);
+	Delta_Matrix_export(&GB_A, A, GrB_BOOL);
 	
 	GrB_Vector_new(&x, GrB_BOOL, 4);
 	GrB_Vector_new(&y1, GrB_UINT64, 4);

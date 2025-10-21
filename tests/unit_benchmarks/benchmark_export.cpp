@@ -30,7 +30,7 @@ static void BM_export(benchmark::State &state) {
     Delta_Random_Matrix(&A, GrB_BOOL, n, 5E-7, 1E-10, 1E-10, seed);
 
     for (auto _ : state) {
-		Delta_Matrix_export(&C, A);
+		Delta_Matrix_export(&C, A, GrB_BOOL);
         GrB_Matrix_wait(C, GrB_MATERIALIZE);
         GrB_Matrix_free(&C);
     }

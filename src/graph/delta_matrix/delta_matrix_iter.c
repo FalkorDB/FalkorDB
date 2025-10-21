@@ -6,10 +6,13 @@
 #include "RG.h"
 #include "./delta_matrix_iter.h"
 #include "../../util/rmalloc.h"
+#include "./delta_utils.h"
 
 // returns true if iterator is detached from a matrix
 #define IS_DETACHED(iter) ((iter) == NULL || (iter)->A == NULL)
 
+// seek iterator within the given range of rows
+// sets depleted to true if no values exist in the given range
 static inline void _set_iter_range
 (
 	GxB_Iterator it,
@@ -46,13 +49,14 @@ static inline void _set_iter_range
 	}
 }
 
+// allocate, attach, and seek iterator 
 static inline void _init_iter
 (
-	GxB_Iterator it,
-	GrB_Matrix m,
-	GrB_Index min_row,
-	GrB_Index max_row,
-	bool *depleted
+	GxB_Iterator it,    // iterator
+	GrB_Matrix m,       // matrix to attach to
+	GrB_Index min_row,  // starting row (inclusive)
+	GrB_Index max_row,  // ending row (exclusive)
+	bool *depleted      // true if no values in range
 ) {
 	ASSERT(it       != NULL) ;
 	ASSERT(m        != NULL) ;
@@ -65,10 +69,11 @@ static inline void _init_iter
 	_set_iter_range(it, min_row, max_row, depleted) ;
 }
 
+// iterate over a single row
 GrB_Info Delta_MatrixTupleIter_iterate_row
 (
-	Delta_MatrixTupleIter *iter,
-	GrB_Index rowIdx
+	Delta_MatrixTupleIter *iter,  //must be attached
+	GrB_Index rowIdx              // row index to iterate
 ) {
 	if(IS_DETACHED(iter)) return GrB_NULL_POINTER ;
 
@@ -77,27 +82,32 @@ GrB_Info Delta_MatrixTupleIter_iterate_row
 
 	_set_iter_range(&iter->m_it, iter->min_row, iter->max_row, &iter->m_depleted) ;
 	_set_iter_range(&iter->dp_it, iter->min_row, iter->max_row, &iter->dp_depleted) ;
+	_set_iter_range(&iter->dm_it, iter->min_row, iter->max_row, &iter->dm_depleted) ;
 
 	return GrB_SUCCESS ;
 }
 
+// iterate over a range of rows
 GrB_Info Delta_MatrixTupleIter_iterate_range
 (
 	Delta_MatrixTupleIter *iter,  // iterator to use
-	GrB_Index startRowIdx,        // row index to start with
-	GrB_Index endRowIdx           // row index to finish with
+	GrB_Index startRowIdx,        // row index to start with (inclusive)
+	GrB_Index endRowIdx           // row index to finish with (exclusive)
 ) {
 	if(IS_DETACHED(iter)) return GrB_NULL_POINTER ;
+	ASSERT(startRowIdx <= endRowIdx) ;
 
 	iter->min_row = startRowIdx ;
 	iter->max_row = endRowIdx ;
 
 	_set_iter_range(&iter->m_it, iter->min_row, iter->max_row, &iter->m_depleted) ;
 	_set_iter_range(&iter->dp_it, iter->min_row, iter->max_row, &iter->dp_depleted) ;
+	_set_iter_range(&iter->dm_it, iter->min_row, iter->max_row, &iter->dm_depleted) ;
 
 	return GrB_SUCCESS ;
 }
 
+// advance internal iterator
 static void _iter_next
 (
 	GxB_Iterator it,
@@ -134,9 +144,13 @@ static GrB_Info _next_m_iter_bool
 
 	GrB_Index  _row ;
 	GrB_Index  _col ;
-	GrB_Index  _val;
+	GrB_Index  d_row = -1;
+	GrB_Index  d_col = -1;
+
+	bool  _val;
 
 	GxB_Iterator m_it = &iter->m_it ;
+	GxB_Iterator dm_it = &iter->dm_it ;
 
 	do {
 		// iterator depleted, return
@@ -149,8 +163,17 @@ static GrB_Info _next_m_iter_bool
 		// prep value for next iteration
 		_iter_next(m_it, iter->max_row, depleted);
 
-		// if entry is zombie, (val is false) continue
- 		if(_val != BOOL_ZOMBIE) break ; // entry isn't deleted, return
+		bool deleted = false ;
+
+		if(!iter->dm_depleted){
+			d_row = GxB_rowIterator_getRowIndex (dm_it) ;
+			d_col = GxB_rowIterator_getColIndex (dm_it) ;
+			deleted = (d_row == _row && d_col == _col) ;
+		}
+
+		if(!deleted) break;
+
+		_iter_next( dm_it, iter->max_row, &iter->dm_depleted ) ;
 	} while (true) ;
 
 	if(row) *row = _row ;
@@ -170,8 +193,8 @@ GrB_Info Delta_MatrixTupleIter_next_BOOL
 ) {
 	if(IS_DETACHED(iter)) return GrB_NULL_POINTER ;
 
-	GrB_Info             info     =  GrB_SUCCESS                    ;
-	GxB_Iterator         dp_it    =  &iter->dp_it                   ;
+	GrB_Info             info     =  GrB_SUCCESS  ;
+	GxB_Iterator         dp_it    =  &iter->dp_it ;
 
 	if(!iter->m_depleted) {
 		info = _next_m_iter_bool(iter, row, col, val, &iter->m_depleted) ;
@@ -203,11 +226,16 @@ static GrB_Info _next_m_iter_uint64
 ) {
 	ASSERT(iter     != NULL) ;
 	ASSERT(depleted != NULL) ;
+	GrB_Matrix    DM     = DELTA_MATRIX_DELTA_MINUS(iter->A) ;
 
 	GrB_Index    _row ;
 	GrB_Index    _col ;
+	GrB_Index    d_row = -1;
+	GrB_Index    d_col = -1;
+	
 	uint64_t     _val ;
 	GxB_Iterator m_it = &iter->m_it ;
+	GxB_Iterator dm_it = &iter->dm_it ;
 
 	do {
 		// iterator depleted, return
@@ -220,8 +248,16 @@ static GrB_Info _next_m_iter_uint64
 		// prep value for next iteration
 		_iter_next(m_it, iter->max_row, depleted) ;
 
-		//check if entry is deleted, if not, return.
-		if(_val != U64_ZOMBIE) break ;
+		bool deleted = false ;
+
+		if(!iter->dm_depleted){
+			d_row = GxB_rowIterator_getRowIndex (dm_it) ;
+			d_col = GxB_rowIterator_getColIndex (dm_it) ;
+			deleted = (d_row == _row && d_col == _col) ;
+		}
+
+		if(!deleted) break;
+		_iter_next( &iter->dm_it, iter->max_row, &iter->dm_depleted ) ;
 	} while (true) ;
 
 	if(row) *row = _row ;
@@ -273,6 +309,7 @@ GrB_Info Delta_MatrixTupleIter_reset
 
 	_set_iter_range(&iter->m_it, iter->min_row, iter->max_row, &iter->m_depleted) ;
 	_set_iter_range(&iter->dp_it, iter->min_row, iter->max_row, &iter->dp_depleted) ;
+	_set_iter_range(&iter->dm_it, iter->min_row, iter->max_row, &iter->dm_depleted) ;
 
 	return info ;
 }
@@ -308,9 +345,11 @@ GrB_Info Delta_MatrixTupleIter_AttachRange
 ) {
 	if(A == NULL) return GrB_NULL_POINTER ;
 	if(iter == NULL) return GrB_NULL_POINTER ;
+	ASSERT(min_row <= max_row) ;
 
 	GrB_Matrix M  = DELTA_MATRIX_M(A) ;
 	GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS(A) ;
+	GrB_Matrix DM = DELTA_MATRIX_DELTA_MINUS(A) ;
 
 	iter->A = A ;
 	iter->min_row = min_row ;
@@ -318,6 +357,7 @@ GrB_Info Delta_MatrixTupleIter_AttachRange
 
 	_init_iter(&iter->m_it, M, iter->min_row, iter->max_row, &iter->m_depleted) ;
 	_init_iter(&iter->dp_it, DP, iter->min_row, iter->max_row, &iter->dp_depleted) ;
+	_init_iter(&iter->dm_it, DM, iter->min_row, iter->max_row, &iter->dm_depleted) ;
 
 	return GrB_SUCCESS ;
 }
@@ -332,6 +372,7 @@ GrB_Info Delta_MatrixTupleIter_detach
 	iter->A           = NULL ;
 	iter->m_depleted  = true ;
 	iter->dp_depleted = true ;
+	iter->dm_depleted = true ;
 
 	return GrB_SUCCESS ;
 }

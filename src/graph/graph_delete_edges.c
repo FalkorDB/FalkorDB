@@ -59,7 +59,7 @@ static void _clear_adj
 		if(ri == r) continue;
 
 		Delta_Matrix A = Graph_GetRelationMatrix(g, ri, false);
-		info = Delta_Matrix_extractElement_BOOL(NULL, A, src, dest);
+		info = Delta_Matrix_isStoredElement(A, src, dest);
 		if(info == GrB_SUCCESS) {
 			connected = true;
 			break;

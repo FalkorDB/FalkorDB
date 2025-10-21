@@ -8,14 +8,14 @@
 #include "delta_matrix.h"
 #include "../../util/arr.h"
 
-// C (i,j) = x
+// C (i,j) += x
 GrB_Info Delta_Matrix_Assign_Element_UINT64
 (
-    Delta_Matrix C,     // matrix to modify
+	Delta_Matrix C,     // matrix to modify
 	GrB_BinaryOp accum, // accumulator to apply to duplicates
-    uint64_t x,         // scalar to assign to C(i,j)
-    GrB_Index i,        // row index
-    GrB_Index j         // column index
+	uint64_t x,         // scalar to assign to C(i,j)
+	GrB_Index i,        // row index
+	GrB_Index j         // column index
 ) {
 	ASSERT(C != NULL);
 	Delta_Matrix_checkBounds(C, i, j);

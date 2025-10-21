@@ -6,6 +6,9 @@
 #include "RG.h"
 #include "delta_matrix.h"
 
+// checks to see if matrix has pending operations
+// pending is set to true if any of the internal matricies have pending
+// operations
 GrB_Info Delta_Matrix_pending
 (
 	const Delta_Matrix C,  // matrix to query
@@ -14,11 +17,11 @@ GrB_Info Delta_Matrix_pending
 	ASSERT(C       != NULL);
 	ASSERT(pending != NULL);
 
-	int32_t     p       =  false;
-	bool        res     =  false;
-	GrB_Matrix  M       =  DELTA_MATRIX_M(C);
-	GrB_Matrix  DP      =  DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix  DM      =  DELTA_MATRIX_DELTA_MINUS(C);
+	int32_t    p   = false;
+	bool       res = false;
+	GrB_Matrix M   = DELTA_MATRIX_M(C);
+	GrB_Matrix DP  = DELTA_MATRIX_DELTA_PLUS(C);
+	GrB_Matrix DM  = DELTA_MATRIX_DELTA_MINUS(C);
 
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
 		GrB_OK(Delta_Matrix_pending(C->transposed, &res));
@@ -36,7 +39,7 @@ GrB_Info Delta_Matrix_pending
 	GrB_OK(GrB_Matrix_get_INT32(DP, &p, GxB_WILL_WAIT));
 	res = res || p == 1;
 
-	// check if delta-plus contains pending changes
+	// check if delta-minus contains pending changes
 	GrB_OK(GrB_Matrix_get_INT32(DM, &p, GxB_WILL_WAIT));
 	res = res || p == 1;
 

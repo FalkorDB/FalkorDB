@@ -10,7 +10,7 @@
 #include "GraphBLAS.h"
 
 #define DELTA_ITER_MIN_ROW 0
-#define DELTA_ITER_MAX_ROW UINT64_MAX
+#define DELTA_ITER_MAX_ROW ULLONG_MAX
 
 // TuplesIter maintains information required
 // to iterate over a Delta_Matrix
@@ -19,8 +19,10 @@ typedef struct
 	Delta_Matrix A;                   // matrix iterated
 	struct GB_Iterator_opaque m_it;   // internal m iterator
 	struct GB_Iterator_opaque dp_it;  // internal delta plus iterator
+	struct GB_Iterator_opaque dm_it;  // internal delta minus iterator
 	bool m_depleted;                  // is m iterator depleted
 	bool dp_depleted;                 // is dp iterator depleted
+	bool dm_depleted;                 // is dp iterator depleted
 	GrB_Index min_row;                // minimum row for iteration
 	GrB_Index max_row;                // maximum row for iteration
 } Delta_MatrixTupleIter ;
@@ -54,12 +56,14 @@ bool Delta_MatrixTupleIter_is_attached
 	const Delta_Matrix M                // matrix attached to
 );
 
+// iterate over a single row
 GrB_Info Delta_MatrixTupleIter_iterate_row
 (
 	Delta_MatrixTupleIter *iter,   // iterator to use
 	GrB_Index rowIdx               // row to iterate
 );
 
+// iterate over a range of rows
 GrB_Info Delta_MatrixTupleIter_iterate_range
 (
 	Delta_MatrixTupleIter *iter,  // iterator to use

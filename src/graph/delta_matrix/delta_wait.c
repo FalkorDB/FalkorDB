@@ -83,11 +83,11 @@ static void Delta_Matrix_sync
 		GrB_Index dm_nvals = 0;
 
 		//----------------------------------------------------------------------
-		// determin change set
+		// determine change set
 		//----------------------------------------------------------------------
 
-		GrB_Matrix_nvals(&dp_nvals, dp);
-		GrB_Matrix_nvals(&dm_nvals, dm);
+		GrB_OK (GrB_Matrix_nvals(&dp_nvals, dp));
+		GrB_OK (GrB_Matrix_nvals(&dm_nvals, dm));
 
 		//----------------------------------------------------------------------
 		// perform deletions
@@ -130,8 +130,6 @@ GrB_Info Delta_Matrix_wait
 
 	_SetUndirty(A);
 
-	// enable for rigourous testing (expensive, DEBUG only)
-	// Delta_Matrix_validate(A);
 	return GrB_SUCCESS;
 }
 
@@ -165,8 +163,5 @@ void Delta_Matrix_synchronize
 	}
 
 	Delta_Matrix_unlock(A);
-	
-	// enable for rigourous testing (expensive, DEBUG only)
-	// Delta_Matrix_validate(A);
 }
 

@@ -182,7 +182,6 @@ void RdbLoadRelationMatrices_v17
 		Delta_Matrix DR = Graph_GetRelationMatrix(g, r, false);
 		ASSERT(DR != NULL);
 
-
 		// update graph edge statistics
 		// number of edges of type 'r' equals to:
 		// |R| - n_tensors + n_elem

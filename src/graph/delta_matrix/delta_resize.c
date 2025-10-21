@@ -16,16 +16,16 @@ GrB_Info Delta_Matrix_resize
 	ASSERT(C != NULL);
 
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
-		GrB_OK(Delta_Matrix_resize(C->transposed, ncols_new, nrows_new));
+		GrB_OK (Delta_Matrix_resize(C->transposed, ncols_new, nrows_new));
 	}
 
-	GrB_Matrix m           = DELTA_MATRIX_M(C);
-	GrB_Matrix delta_plus  = DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix delta_minus = DELTA_MATRIX_DELTA_MINUS(C);
+	GrB_Matrix  m            =  DELTA_MATRIX_M(C);
+	GrB_Matrix  delta_plus   =  DELTA_MATRIX_DELTA_PLUS(C);
+	GrB_Matrix  delta_minus  =  DELTA_MATRIX_DELTA_MINUS(C);
 
-	GrB_OK(GrB_Matrix_resize(m, nrows_new, ncols_new));
-	GrB_OK(GrB_Matrix_resize(delta_plus, nrows_new, ncols_new));
-	GrB_OK(GrB_Matrix_resize(delta_minus, nrows_new, ncols_new));
+	GrB_OK (GrB_Matrix_resize(m, nrows_new, ncols_new));
+	GrB_OK (GrB_Matrix_resize(delta_plus, nrows_new, ncols_new));
+	GrB_OK (GrB_Matrix_resize(delta_minus, nrows_new, ncols_new));
 	
 	return GrB_SUCCESS;
 }
