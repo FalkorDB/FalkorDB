@@ -14,6 +14,7 @@ COPY . /FalkorDB
 
 # if $OS is rhel8 install gcc 12
 RUN if [ "$OS" = "rhel8" ]; then \
+        yum remove -y gcc && \
         yum install -y gcc-toolset-12 && \
         scl enable gcc-toolset-12 bash; \
     else \
