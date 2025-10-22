@@ -69,7 +69,6 @@ Feature: ReturnOrderBy6 - Aggregation expressions in order by
       | age | cnt |
     And no side effects
 
-  @skip
   Scenario: [4] Fail if not returned variables are used inside an order by item which contains an aggregation expression
     Given an empty graph
     When executing query:
