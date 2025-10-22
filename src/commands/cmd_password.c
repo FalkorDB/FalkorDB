@@ -179,6 +179,7 @@ int Graph_SetPassword
 	}
 
 	// get the current user name as C string, to pass as private data
+	// when not on replica _redis_current_user_name should never be NULL
 	RedisModuleString *_redis_current_user_name = 
 		RedisModule_GetCurrentUserName(ctx);
 
