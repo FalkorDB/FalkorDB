@@ -15,9 +15,9 @@ COPY . /FalkorDB
 # if $OS is rhel8 install gcc 12
 RUN if [ "$OS" = "rhel8" ]; then \
         yum install -y gcc-toolset-12 && \
-        scl enable gcc-toolset-12 bash \
+        scl enable gcc-toolset-12 bash; \
     else \
-        echo "Not RHEL8, skipping gcc 12 installation" \
+        echo "Not RHEL8, skipping gcc 12 installation"; \
     fi
 
 RUN chmod +x ./deps/RediSearch/.install/install_script.sh
