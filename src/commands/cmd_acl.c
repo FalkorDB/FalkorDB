@@ -526,8 +526,6 @@ static int _execute_acl_cmd_fn
 	sdsfree(msg);
 #endif
 
-    RedisModule_ReplicateVerbatim(ctx);	
-
 	RedisModuleCallReply *reply = 
 		RedisModule_Call(ctx, "ACL", "v", argv, argc);
  	if(reply == NULL) {
@@ -539,6 +537,9 @@ static int _execute_acl_cmd_fn
 		}
 		return REDISMODULE_ERR;
 	}
+
+	// replicate only after successful execution
+	RedisModule_ReplicateVerbatim(ctx);
 
 	RedisModule_ReplyWithCallReply(ctx, reply);
 	RedisModule_FreeCallReply(reply);

@@ -167,6 +167,12 @@ int Graph_SetPassword
 
 	// if running on replica, extract username from argv[3]
 	if(is_replica(ctx)) {
+		if(argc != 4) {
+ 			RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
+ 				"Replica execution requires 4 arguments (username missing)");
+ 			RedisModule_ReplyWithError(ctx, "FAILED");
+ 			return REDISMODULE_ERR;
+ 		}
 		// username was passed as the 4th argument during replication
 		const char *username = RedisModule_StringPtrLen(argv[3], NULL);
 		return f(ctx, argv, argc, (void*)username);
@@ -179,12 +185,15 @@ int Graph_SetPassword
 	const char *username = 
 		RedisModule_StringPtrLen(_redis_current_user_name, NULL);
 
-	// replicate this command to the replica with username appended
-	RedisModule_Replicate(ctx, "GRAPH.PASSWORD", "sss", argv[1], argv[2], 
-		_redis_current_user_name);
 
 	int ret = run_acl_function_as(ctx, argv, argc, f, ACL_ADMIN_USER,
 		 (void*) username);
+
+	if(ret == REDISMODULE_OK) {
+		// replicate this command to the replica with username appended
+		RedisModule_Replicate(ctx, "GRAPH.PASSWORD", "sss", argv[1], argv[2], 
+			_redis_current_user_name);		
+	}
 
 	if(_redis_current_user_name != NULL) {
 		RedisModule_FreeString(ctx, _redis_current_user_name);

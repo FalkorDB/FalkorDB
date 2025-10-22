@@ -92,9 +92,11 @@ int run_acl_function_as
 	RedisModuleString *_redis_current_user_name = 
 		RedisModule_GetCurrentUserName(ctx);
 
+	ASSERT(_redis_current_user_name != NULL);
+
 	const char *redis_current_user_name = 
 		RedisModule_StringPtrLen(_redis_current_user_name, NULL);
-	
+		
 	// try switching user
 	uint64_t client_id = 0;
 	if(_switch_user(ctx, username, &client_id) != REDISMODULE_OK) {
