@@ -275,7 +275,7 @@ class testACL(FlowTestsBase):
         # wait for replica to sync
         self.db.execute_command("WAIT", "1", "0")
          
-        v = self.replica_con.execute_command("AUTH", "falkordb-user", "pass")
+        v = self.replica_con.execute_command("AUTH", "falkordb-user", "foo")
         self.env.assertTrue(v)
         
         v = self.db.execute_command("GRAPH.PASSWORD", "REMOVE", "foo")

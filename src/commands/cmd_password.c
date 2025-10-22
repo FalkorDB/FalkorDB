@@ -130,7 +130,9 @@ static int _remove_password
 // add or remove password for current user
 // examples:
 // GRAPH.PASSWORD ADD <password>
+// GRAPH.PASSWORD ADD <password> <username>  (internal, for replication)
 // GRAPH.PASSWORD REMOVE <password>
+// GRAPH.PASSWORD REMOVE <password> <username>  (internal, for replication)
 int Graph_SetPassword
 (
 	RedisModuleCtx *ctx,       // redis module context
@@ -141,8 +143,8 @@ int Graph_SetPassword
 	ASSERT(argv != NULL);
 	ASSERT(argc > 0);
 
-	// expecting 3 arguments
-	if(argc != 3) {
+	// expecting 3 or 4 arguments (4th is username for replication)
+	if(argc != 3 && argc != 4) {
 		return RedisModule_WrongArity(ctx);
 	}
 
@@ -163,18 +165,12 @@ int Graph_SetPassword
 		return REDISMODULE_ERR;
 	}
 
-	// if running on replica, just execute the command directly
-	// the username will be extracted from argv[0] (set during replication)
+	// if running on replica, extract username from argv[3]
 	if(is_replica(ctx)) {
-		// on replica, we need to get username from the replicated command context
-		// since GetCurrentUserName won't work during replication
-		// we'll extract it from the ACL SETUSER command that gets executed
-		const char *replica_username = "default";  // fallback
-		return f(ctx, argv, argc, (void*)replica_username);
+		// username was passed as the 4th argument during replication
+		const char *username = RedisModule_StringPtrLen(argv[3], NULL);
+		return f(ctx, argv, argc, (void*)username);
 	}
-
-	// replicate this command to the replica
-	RedisModule_ReplicateVerbatim(ctx);
 
 	// get the current user name as C string, to pass as private data
 	RedisModuleString *_redis_current_user_name = 
@@ -182,6 +178,10 @@ int Graph_SetPassword
 
 	const char *username = 
 		RedisModule_StringPtrLen(_redis_current_user_name, NULL);
+
+	// replicate this command to the replica with username appended
+	RedisModule_Replicate(ctx, "GRAPH.PASSWORD", "sss", argv[1], argv[2], 
+		_redis_current_user_name);
 
 	int ret = run_acl_function_as(ctx, argv, argc, f, ACL_ADMIN_USER,
 		 (void*) username);

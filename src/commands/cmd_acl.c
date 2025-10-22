@@ -525,7 +525,9 @@ static int _execute_acl_cmd_fn
 		"delegating to execute ACL command '%s'", msg);
 	sdsfree(msg);
 #endif
-		
+
+    RedisModule_ReplicateVerbatim(ctx);	
+
 	RedisModuleCallReply *reply = 
 		RedisModule_Call(ctx, "ACL", "v", argv, argc);
  	if(reply == NULL) {
@@ -537,7 +539,6 @@ static int _execute_acl_cmd_fn
 		}
 		return REDISMODULE_ERR;
 	}
-    RedisModule_ReplicateVerbatim(ctx);	
 
 	RedisModule_ReplyWithCallReply(ctx, reply);
 	RedisModule_FreeCallReply(reply);
