@@ -2,7 +2,8 @@
 REDISEARCH=$(REDISEARCH_BINROOT)/libredisearch-static.a
 UTILS_LIBS=\
 	$(REDISEARCH_BINROOT)/src/util/hash/libredisearch-hash.a \
-	$(REDISEARCH_BINROOT)/src/geometry/libredisearch-geometry.a
+	$(REDISEARCH_BINROOT)/src/geometry/libredisearch-geometry.a \
+	$(REDISEARCH_BINROOT)/_deps/cpu_features-build/libcpu_features.a
 
 export REDISEARCH_LIBS=$(REDISEARCH)
 
