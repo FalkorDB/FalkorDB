@@ -12,6 +12,7 @@
 #include "op_join.h"
 #include "op_apply.h"
 #include "op_merge.h"
+#include "op_eager.h"
 #include "op_limit.h"
 #include "op_create.h"
 #include "op_delete.h"

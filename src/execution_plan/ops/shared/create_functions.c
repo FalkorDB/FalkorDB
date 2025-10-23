@@ -224,6 +224,35 @@ void NewPendingCreationsContainer
 	array_free(edges);
 }
 
+void PendingCreations_Reset
+(
+	PendingCreations *ctx
+) {
+	ASSERT (ctx != NULL) ;
+
+	// clear nodes pending changes
+	if (ctx->nodes.node_labels != NULL) {
+		array_clear (ctx->nodes.node_labels) ;
+	}
+
+	if (ctx->nodes.created_nodes != NULL) {
+		array_clear (ctx->nodes.created_nodes) ;
+	}
+
+	if (ctx->nodes.node_attributes != NULL) {
+		uint n = array_len (ctx->nodes.node_attributes) ;
+		for (uint i = 0; i < n; i++) {
+			AttributeSet_Free (ctx->nodes.node_attributes + i) ;
+		}
+		array_clear (ctx->nodes.node_attributes) ;
+	}
+
+	for(uint i = 0; i < array_len(ctx->edges); i++) {
+		array_clear (ctx->edges[i].created_edges) ;
+		array_clear (ctx->edges[i].edge_attributes) ;
+	}
+}
+
 // lock the graph and commit all pending changes
 void CommitNewEntities
 (
@@ -285,8 +314,9 @@ void CommitNewEntities
 
 		// clear pending attributes array
 		for(uint i = 0; i < array_len(pending->edges); i++) {
-			array_free(pending->edges[i].edge_attributes);
-			pending->edges[i].edge_attributes = NULL;
+			//array_free(pending->edges[i].edge_attributes);
+			//pending->edges[i].edge_attributes = NULL;
+			array_clear (pending->edges[i].edge_attributes) ;
 		}
 
 		if(unlikely(ErrorCtx_EncounteredError())) {
@@ -382,6 +412,7 @@ void PendingCreationsFree
 		array_free(pending->nodes.nodes_to_create);
 		pending->nodes.nodes_to_create = NULL;
 	}
+
 	if(pending->nodes.node_attributes) {
 		uint prop_count = array_len(pending->nodes.node_attributes);
 		for(uint i = 0; i < prop_count; i++) {

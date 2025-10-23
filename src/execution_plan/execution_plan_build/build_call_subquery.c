@@ -7,12 +7,10 @@
 #include "../../ast/ast.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
-#include "../ops/op_join.h"
-#include "../ops/op_project.h"
+#include "../ops/op_eager.h"
+#include "../ops/op_apply.h"
 #include "../ops/op_argument.h"
-#include "../ops/op_aggregate.h"
 #include "../ops/op_empty_row.h"
-#include "../ops/op_argument_list.h"
 #include "../ops/op_subquery_foreach.h"
 #include "../execution_plan.h"
 #include "execution_plan_util.h"
@@ -44,8 +42,8 @@ static OpBase **_find_feeding_points
 ) {
 	ASSERT(plan != NULL);
 
-	OpBase **taps = array_new (OpBase*, 1) ;
 	OpBase **ops  = array_new (OpBase*, 1) ;
+	OpBase **taps = array_new (OpBase*, 1) ;
 
 	OpBase *sub_query_root = plan->root ;
 	array_append (ops, sub_query_root) ;
@@ -55,7 +53,7 @@ static OpBase **_find_feeding_points
 		OPType t = OpBase_Type (child) ;
 
 		// tap located
-		if ((OpBase_ChildCount (child) == 0)) {
+		if ((OpBase_ChildCount (child) == 0) && t == OPType_PROJECT) {
 			array_append (taps, child) ;
 		}
 
@@ -185,16 +183,9 @@ void buildCallSubqueryPlan
 	//--------------------------------------------------------------------------
 
 	uint n_feeding_points = array_len (feeding_points) ;
-	if (is_eager) {
-		for (uint i = 0; i < n_feeding_points; i++) {
-			OpBase *argument_list = NewArgumentListOp (plan, NULL) ;
-			ExecutionPlan_AddOp (feeding_points[i], argument_list) ;
-		}
-	} else {
-		for (uint i = 0; i < n_feeding_points; i++) {
-			OpBase *argument = NewArgumentOp (plan, NULL) ;
-			ExecutionPlan_AddOp (feeding_points[i], argument) ;
-		}
+	for (uint i = 0; i < n_feeding_points; i++) {
+		OpBase *argument = NewArgumentOp (plan, NULL) ;
+		ExecutionPlan_AddOp (feeding_points[i], argument) ;
 	}
 
 	array_free(feeding_points);
@@ -216,20 +207,43 @@ void buildCallSubqueryPlan
 	}
 
 	//--------------------------------------------------------------------------
-	// introduce a Call-Subquery op
+	// connect the embedded plan
 	//--------------------------------------------------------------------------
 
-	OpBase *call_op = NewSubQueryForeach (plan) ;
+	OpBase *call_op;
+
+	// in case the sub-query returns data use the Apply op
+	// to merge records, otherwise the sub-query doesn't return anything
+	// and we can simply ignore its emitted records, in this case use the
+	// SubQueryForeach op
+	if (is_returning) {
+		call_op = NewApplyOp (plan) ;
+	} else {
+		call_op = NewSubQueryForeach (plan) ;
+	}
+
 	ExecutionPlan_UpdateRoot (plan, call_op) ;
 
-	// in case there's no operation feeding SubqueryForeach
-	// add EmptyRow as an input
+	// in case there's no operation feeding the `call_op`
+	// add EmptyRow op as an input
 	if (OpBase_ChildCount (call_op) == 0) {
 		ExecutionPlan_AddOp (call_op, NewEmptyRow (plan)) ;
 	}
 
-	// add the embedded plan as a child of the Call-Subquery op
+	// in case there's an input stream ChildCount > 0
+	// and the sub-query has write operation(s)
+	// add an eager operation to drain the input stream before any modifications
+	// are applied
+	else if (is_eager) {
+		ExecutionPlan_PushBelow (OpBase_GetChild(call_op, 0), NewEagerOp (plan)) ;
+	}
+
+	// attach the embedded plan
 	ExecutionPlan_AddOp (call_op, embedded_plan->root) ;
+
+	if (is_eager) {
+		ExecutionPlan_UpdateRoot (plan, NewEagerOp (plan)) ;
+	}
 
 	if (free_embedded_plan) {
 		embedded_plan->root = NULL;

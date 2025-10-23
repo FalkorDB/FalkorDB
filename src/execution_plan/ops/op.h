@@ -57,7 +57,8 @@ typedef enum {
 	OPType_OPTIONAL,
 	OPType_LOAD_CSV,
 	OPType_SUBQUERY_FOREACH,
-	OPType_EMPTY_ROW
+	OPType_EMPTY_ROW,
+	OPType_EAGER
 } OPType;
 
 typedef enum {

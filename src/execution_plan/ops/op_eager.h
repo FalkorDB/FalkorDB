@@ -10,11 +10,11 @@
 
 typedef struct {
 	OpBase op;
-	OpArgument **taps;
-	uint n_taps;
-} OpSubQueryForeach;
+	Record *records;
+	uint rec_idx;
+} OpEager;
 
-OpBase *NewSubQueryForeach
+OpBase *NewEagerOp
 (
 	const ExecutionPlan *plan
 );

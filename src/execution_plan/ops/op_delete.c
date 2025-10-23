@@ -243,6 +243,11 @@ static Record DeleteConsume
 		_DeleteEntities(op);
 	}
 
+	// no one consumes our output, return NULL
+	if (opBase->parent == NULL) {
+		return NULL ;
+	}
+
 	// return record
 	return _handoff(op);
 }
@@ -267,11 +272,6 @@ static void DeleteFree
 	OpDelete *op = (OpDelete *)opBase;
 
 	if(op->records) {
-		uint rec_count = array_len(op->records);
-		// records[0..op->rec_idx] had been already emitted, skip them
-		for(uint i = op->rec_idx; i < rec_count; i++) {
-			OpBase_DeleteRecord(op->records+i);
-		}
 		array_free(op->records);
 		op->records = NULL;
 	}
