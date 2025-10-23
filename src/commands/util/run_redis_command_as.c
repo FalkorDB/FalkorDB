@@ -125,9 +125,9 @@ int run_acl_function_as
 		return REDISMODULE_ERR;
 	}
 
-	if(_redis_current_user_name != NULL) {
-		RedisModule_FreeString(ctx, _redis_current_user_name);
-	}
+	
+	RedisModule_FreeString(ctx, _redis_current_user_name);
+
 
 	return res;
 }

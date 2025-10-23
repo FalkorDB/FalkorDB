@@ -158,7 +158,7 @@ int Graph_SetPassword
 		f = _remove_password;
 	} else {
 		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING, 
-		"Unknown command: GRAPH.PASSWORD %s, passible commands are [ADD, REMOVE]",
+		"Unknown command: GRAPH.PASSWORD %s, possible commands are [ADD, REMOVE]",
 		action);
 
 		RedisModule_ReplyWithError(ctx, "Unknown sub-command");
