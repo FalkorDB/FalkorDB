@@ -148,6 +148,10 @@ int Graph_SetPassword
 		return RedisModule_WrongArity(ctx);
 	}
 
+	if(argc == 4 && !is_replica(ctx)) {
+		return RedisModule_WrongArity(ctx);
+	}
+
 	// get the action ADD / REMOVE
  	const char *action = RedisModule_StringPtrLen(argv[1], NULL);
 	

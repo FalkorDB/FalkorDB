@@ -56,7 +56,10 @@ static int _switch_user
 	return REDISMODULE_OK;
 }
 
-int is_replica(RedisModuleCtx *ctx) {
+int is_replica
+(
+	RedisModuleCtx *ctx
+) {
     int flags = RedisModule_GetContextFlags(ctx);
     return (flags & REDISMODULE_CTX_FLAGS_SLAVE) != 0;
 }
@@ -96,20 +99,17 @@ int run_acl_function_as
 
 	const char *redis_current_user_name = 
 		RedisModule_StringPtrLen(_redis_current_user_name, NULL);
-		
+
 	// try switching user
 	uint64_t client_id = 0;
 	if(_switch_user(ctx, username, &client_id) != REDISMODULE_OK) {
 		RedisModule_Log(ctx, "error", "Failed to authenticate as user %s",
 				username);
-
 		RedisModule_ReplyWithError(ctx, "FAILED");
-
 		RedisModule_FreeString(ctx, _redis_current_user_name);
-
 		return REDISMODULE_ERR;
     }
-	
+
 	// managed to swtich, run function under new user
 	int res = cmd(ctx, argv, argc, privdata);
 
@@ -117,18 +117,12 @@ int run_acl_function_as
 	if(_switch_user(ctx, redis_current_user_name, NULL) != REDISMODULE_OK) {
 		RedisModule_Log(ctx, "error", "Failed to authenticate back as user %s",
 				redis_current_user_name);
-
 		RedisModule_DeauthenticateAndCloseClient(ctx, client_id);
-
 		RedisModule_FreeString(ctx, _redis_current_user_name);
-
 		return REDISMODULE_ERR;
 	}
 
-	
 	RedisModule_FreeString(ctx, _redis_current_user_name);
-
-
 	return res;
 }
 
