@@ -15,7 +15,7 @@ static Record CreateConsume (OpBase *opBase) ;
 static OpResult CreateReset(OpBase *opBase);
 static OpBase *CreateClone (const ExecutionPlan *plan, const OpBase *opBase) ;
 static void CreateFree (OpBase *opBase) ;
-static void FreeInternals (OpBase *ctx) ;
+static void FreeInternals (OpCreate *op) ;
 
 OpBase *NewCreateOp
 (
@@ -214,15 +214,8 @@ static OpResult CreateReset
 ) {
 	OpCreate *op = (OpCreate*) opBase ;
 
-	if (op->records != NULL) {
-		uint n = array_len (op->records) ;
-		for (uint i = op->rec_idx; i < n; i++) {
-			OpBase_DeleteRecord (op->records + i) ;
-		}
-		array_free (op->records) ;
-		op->records = NULL ;
-		op->rec_idx = 0 ;
-	}
+	FreeInternals (op) ;
+	op->rec_idx = 0 ;
 
 	// reset PendingCreations
 	PendingCreations_Reset (&op->pending) ;
@@ -250,16 +243,29 @@ static OpBase *CreateClone
 	return NewCreateOp(plan, nodes, edges);
 }
 
+static void FreeInternals
+(
+	OpCreate *op
+) {
+	if (op->records) {
+		uint rec_count = array_len (op->records) ;
+		// records[0..op->rec_idx] had already been emitted, skip them
+		for (uint i = op->rec_idx; i < rec_count; i++) {
+			OpBase_DeleteRecord (op->records+i) ;
+		}
+
+		array_free (op->records) ;
+		op->records = NULL ;
+	}
+}
+
 static void CreateFree
 (
 	OpBase *ctx
 ) {
 	OpCreate *op = (OpCreate *)ctx ;
 
-	if (op->records) {
-		array_free (op->records) ;
-		op->records = NULL ;
-	}
+	FreeInternals (op) ;
 
 	PendingCreationsFree (&op->pending) ;
 }
