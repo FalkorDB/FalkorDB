@@ -72,6 +72,7 @@ static OpResult EagerReset
 		}
 
 		array_free (op->records) ;
+		op->records = NULL ;
 	}
 
 	op->rec_idx = 0 ;

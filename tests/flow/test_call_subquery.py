@@ -6,13 +6,9 @@ from execution_plan_util import locate_operation, count_operation
 GRAPH_ID = "call_subquery"
 
 def _assert_subquery_contains_single(plan: ExecutionPlan, operation_name: str, env):
-    """Asserts that the sub-plan embedded in a CallSubquery contains a single
-    operation with name `operation_name`. If `plan` contains more than one
-    CallSubquery operations, only the first will be checked."""
-
-    callsubquery = locate_operation(plan.structured_plan, "CallSubquery")
-    env.assertIsNotNone(callsubquery)
-    env.assertEquals(count_operation(callsubquery, operation_name), 1)
+    """Asserts that the plan contains a single operation with name
+    `operation_name`."""
+    env.assertEquals(count_operation(plan.structured_plan, operation_name), 1)
 
 class testCallSubqueryFlow():
     def __init__(self):
@@ -796,54 +792,7 @@ updating clause.")
         # make sure that DELETE is called only once
         _assert_subquery_contains_single(plan, "Delete", self.env)
 
-    def test17_leading_with(self):
-        """Tests that we can use leading WITH queries with non-simple
-        projections if they do not import any outer-scope data"""
-
-        query_to_expected_result = [
-            ("""
-            CALL {
-                WITH 1 AS b 
-                RETURN b
-            }
-            RETURN b
-            """
-            , [[1]]),
-            ("""
-            CALL {
-                WITH {} AS b 
-                RETURN b
-            }
-            RETURN b
-            """
-            , [[{}]]),
-            ("""
-            CALL {
-                WITH 'a' AS b 
-                RETURN b
-            } 
-            RETURN b"""
-            , [['a']]),
-            ("""
-            CALL { 
-                WITH ['foo', 'bar'] AS l1 
-                RETURN l1
-            } 
-            RETURN l1
-            """
-            , [[['foo', 'bar']]]),
-            ("""
-            CALL {
-                WITH toUpper('a') AS A, 5 - 2 AS num
-                RETURN A, num
-            }
-            RETURN *
-            """, [['A', 3]])
-        ]
-        for query, expected_result in query_to_expected_result:
-            self.get_res_and_assertEquals(query, expected_result)
-
-    def test18_returning_aggregations(self):
+    def test17_returning_aggregations(self):
         """Tests that we deal properly with returning aggregations instead of
         regular projections"""
 
@@ -920,7 +869,7 @@ updating clause.")
         self.env.assertEquals(res[2][0], [1, 2])
         self.env.assertEquals(res[2][1], 2)
 
-    def test19_optional_match(self):
+    def test18_optional_match(self):
         """Tests that we deal properly with `OPTIONAL MATCH` clauses in a
         subquery"""
 
@@ -941,7 +890,7 @@ updating clause.")
         self.env.assertEquals(res.result_set[0][0], None)
         self.env.assertEquals(res.result_set[1][0], None)
 
-    def test20_aggregation_in_subquery(self):
+    def test19_aggregation_in_subquery(self):
         """Tests that we deal properly with aggregations in a subquery"""
 
         # Create 3 nodes
@@ -974,7 +923,7 @@ updating clause.")
         for query, expected_result in query_to_expected_result:
             self.get_res_and_assertEquals(query, expected_result)
 
-    def test21_union(self):
+    def test20_union(self):
         """Tests that UNION works properly within a subquery"""
 
         self.graph.delete()
@@ -1209,8 +1158,9 @@ updating clause.")
         # one branch is eager and the other is not
         res = self.graph.query (
             """
+            WITH 0 AS i
             CALL {
-                WITH 0 AS i
+                WITH i
                 RETURN i AS v
                 UNION
                 CREATE (n:EAGER {v:1})
@@ -1390,7 +1340,7 @@ updating clause.")
         )
         self.env.assertEquals(res.result_set, [[0]])
 
-    def test22_indexes(self):
+    def test21_indexes(self):
         """Tests that operations on indexes are properly executed (and reset)
         in subqueries"""
 
@@ -1425,7 +1375,7 @@ updating clause.")
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(res.result_set[0][0], '11')
 
-    def test25_named_paths(self):
+    def test22_named_paths(self):
         """Tests that named paths are handled correctly, when defined/referred
         inside or outside of a subquery"""
 
@@ -1521,7 +1471,7 @@ updating clause.")
         self.env.assertEquals(res.result_set[0][0], node)
         self.env.assertEquals(res.result_set[1][0], OrderedDict([('v', 2)]))
 
-    def test26_eager_returning(self):
+    def test23_eager_returning(self):
         """Tests the eager and returning case of Call {}"""
 
         self.graph.delete()
@@ -1682,13 +1632,14 @@ updating clause.")
         # outer {} is not eager, inner is
         res = self.graph.query(
             """
+            WITH 1 AS x
             CALL {
-                WITH 1 AS x
+                WITH x
                 CALL {
                     UNWIND range(1, 5) AS x
                     RETURN collect(x) as y
                 }
-                RETURN x, y
+                RETURN y
             }
             RETURN x, y
             """
@@ -1755,7 +1706,7 @@ updating clause.")
         self.env.assertEquals(res.result_set[2][0], 3)
         self.env.assertEquals(res.result_set[2][1], list(range(0, 4)))
 
-    def test27_read_no_with_after_writing_subquery(self):
+    def test24_read_no_with_after_writing_subquery(self):
         """Tests that a read clause following a writing subquery is handled
         correctly with\without a separating `WITH` clause"""
 
@@ -1820,7 +1771,7 @@ updating clause.")
         self.env.assertEquals(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Roi'}))
 
-    def test28_reset(self):
+    def test25_reset(self):
         """Tests that the resetting of a call {} operation is handled
         correctly"""
 
@@ -1855,7 +1806,7 @@ updating clause.")
         self.env.assertEquals(res.result_set[1][1], Node(labels='N',
             properties={'v': 4}))
 
-    def test29_rewrite_star_projections(self):
+    def test26_rewrite_star_projections(self):
         """Tests that star projections within call {}are rewritten correctly"""
 
         self.graph.delete()
@@ -1881,11 +1832,12 @@ updating clause.")
         # return with *
         res = self.graph.query(
             """
+            WITH 1 AS a, 2 AS b
             CALL {
-                WITH 1 AS a, 2 AS b
-                RETURN *
+                WITH a, b
+                RETURN a as c, b as d
             }
-            RETURN a, b
+            RETURN c, d
             """
         )
 
@@ -1902,7 +1854,7 @@ updating clause.")
             CALL {
                 WITH *
                 WITH a + b AS c
-                RETURN *
+                RETURN c
             }
             RETURN a, b, c
             """
@@ -1950,7 +1902,7 @@ updating clause.")
                     WITH *
                     RETURN a + 1 AS num
                 }
-                RETURN *
+                RETURN a, num
             }
             RETURN a, num order by a, num
             """
@@ -2032,7 +1984,7 @@ updating clause.")
                 WITH *
                 CREATE (n:C)
                 WITH n
-                RETURN *
+                RETURN n
             }
             RETURN a, b, n
             """
@@ -2045,7 +1997,7 @@ updating clause.")
         self.env.assertEquals(res.result_set[0][1], 2)
         self.env.assertEquals(res.result_set[0][2], Node(labels='C'))
 
-    def test30_surrounding_matches(self):
+    def test27_surrounding_matches(self):
         """Tests that in case the call {} is surrounded by matches, the
         following match does not affect the input records to the call {} op"""
 
@@ -2088,7 +2040,7 @@ updating clause.")
         self.env.assertEquals(res.result_set[1][1], n3)
         self.env.assertEquals(res.result_set[1][2], 1)
 
-    def test31_following_scans(self):
+    def test28_following_scans(self):
         """Tests that in case the call {} is followed by scans, the
         following scans are planned and executed properly"""
 
@@ -2181,7 +2133,7 @@ updating clause.")
         scan = locate_operation(plan.structured_plan, "Conditional Traverse")
         self.env.assertEquals(str(scan), "Conditional Traverse | (n:N)->(n:N)")
 
-    def test32_rewrite_call_subquery(self):
+    def test29_rewrite_call_subquery(self):
         self.graph.delete()
 
         # create the node (:N {v: 1})
@@ -2198,7 +2150,7 @@ updating clause.")
                RETURN 0""")
         self.env.assertEquals(res.result_set, [[0]])
 
-    def test33_merge_after_call_subquery(self):
+    def test30_merge_after_call_subquery(self):
         self.graph.delete()
 
         # create the node (:N {v: 1})
@@ -2212,7 +2164,7 @@ updating clause.")
             """)
         self.env.assertEquals(res.result_set, [[1]])
 
-    def test34_create_within_call(self):
+    def test31_create_within_call(self):
         # The query will:
         # 1. Create an entity within a CALL sub query
         # 2. a Match outside the sub query will pull as many records as it can

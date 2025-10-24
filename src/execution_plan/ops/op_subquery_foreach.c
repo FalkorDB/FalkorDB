@@ -113,6 +113,9 @@ static Record SubQueryForeachConsume
 		OpBase_DeleteRecord (&ignore) ;
 	}
 
+	// reset sub-query
+	OpBase_PropagateReset (sub_query_root) ;
+
 	// return record
 	return r ;
 }
