@@ -271,9 +271,14 @@ static void DeleteFree
 ) {
 	OpDelete *op = (OpDelete *)opBase;
 
-	if(op->records) {
-		array_free(op->records);
-		op->records = NULL;
+	if (op->records) {
+		uint rec_count = array_len (op->records) ;
+		// records[0..rec_idx-1] had been already emitted, skip them
+		for (uint i = op->rec_idx; i < rec_count; i++) {
+			OpBase_DeleteRecord (op->records+i) ;
+		}
+		array_free (op->records) ;
+		op->records = NULL ;
 	}
 
 	if(op->deleted_nodes) {

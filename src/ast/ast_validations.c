@@ -1212,9 +1212,6 @@ static bool _ValidateCallInitialWith
 	const cypher_astnode_t *with_clause,  // `WITH` clause to validate
 	validations_ctx *vctx                 // validation context
 ) {
-	bool found_simple     = false ;
-	bool found_non_simple = false ;
-
 	for (uint i = 0; i < cypher_ast_with_nprojections (with_clause); i++) {
 		const cypher_astnode_t *curr_proj =
 			cypher_ast_with_get_projection (with_clause, i) ;

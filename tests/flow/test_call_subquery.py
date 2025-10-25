@@ -1829,7 +1829,6 @@ updating clause.")
         for i in range(3):
             self.env.assertEquals(res.result_set[0][i], i + 1)
 
-        # return with *
         res = self.graph.query(
             """
             WITH 1 AS a, 2 AS b
@@ -1976,7 +1975,7 @@ updating clause.")
         self.env.assertEquals(res.result_set[0][1], 2)
         self.env.assertEquals(res.result_set[0][2], Node(labels='C'))
 
-        # create node and return it with star
+        # create node and return it
         res = self.graph.query(
             """
             WITH 1 AS a, 2 AS b

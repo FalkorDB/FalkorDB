@@ -21,12 +21,10 @@
 typedef struct {
 	OpBase op;
 	Record r;               // bound branch record
-	//Record **records;       // collected input records [eager mode]
 	OpBase *bound_branch;   // bound branch
 	OpBase *rhs_branch;     // right-hand branch
-	OpBase **rhs_args;  // right-hand taps
+	OpArgument **rhs_args;  // right-hand taps
 	uint nargs;             // number of right hand side args
-	OpArgument *op_arg;     // right-hand branch tap
 } OpApply;
 
 OpBase *NewApplyOp

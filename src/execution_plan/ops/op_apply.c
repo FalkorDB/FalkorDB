@@ -20,7 +20,7 @@ OpBase *NewApplyOp
 ) {
 	OpApply *op = rm_calloc (1, sizeof(OpApply)) ;
 
-	op->rhs_args = array_new(OpBase*, 1);
+	op->rhs_args = array_new(OpArgument*, 1);
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_APPLY, "Apply", ApplyInit, ApplyConsume,
@@ -54,7 +54,7 @@ static OpResult ApplyInit
 
 		// found an argument op, add it to our arguments array
 		if (t == OPType_ARGUMENT) {
-			array_append (op->rhs_args, current);
+			array_append (op->rhs_args, (OpArgument*)current);
 			continue ;
 		}
 
@@ -99,7 +99,7 @@ pull_lhs:
 		// successfully pulled a new record
 		// propagate to the top of the RHS branch
 		for (uint i = 0; i < op->nargs; i++) {
-			OpArgument *arg = (OpArgument*)op->rhs_args[i] ;
+			OpArgument *arg = op->rhs_args[i] ;
 			Argument_AddRecord (arg, OpBase_CloneRecord (op->r)) ;
 		}
 	}
@@ -128,61 +128,16 @@ pull_lhs:
 	goto pull_lhs ;
 }
 
-//static Record ApplyConsumeEager
-//(
-//	OpBase *opBase
-//) {
-//	OpApply *op = (OpApply *)opBase ;
-//
-//	//--------------------------------------------------------------------------
-//	// drain bound stream
-//	//--------------------------------------------------------------------------
-//
-//	Record r = NULL ;
-//	while ((r = OpBase_Consume (op->bound_branch))) {
-//		array_append (op->records, r) ;
-//	}
-//
-//	// propagate records to RHS inputs
-//	for (uint i = 0; i < op->nargs; i++) {
-//		OpArgument *arg = (OpArgument*)op->rhs_args[i] ;
-//		Argument_AddRecord (arg, OpBase_CloneRecord (op->r)) ;
-//	}
-//
-//	//--------------------------------------------------------------------------
-//	// pull record from RHS
-//	//--------------------------------------------------------------------------
-//
-//	Record rhs_record = OpBase_Consume (op->rhs_branch) ;
-//	if (rhs_record != NULL) {
-//		// TODO: merge op->r into rhs_record, no need for the extra clone
-//		// clone the bound Record and merge the RHS Record into it
-//		Record r = OpBase_CloneRecord (op->r) ;
-//		OpBase_MergeRecords (r, &rhs_record) ;
-//		return r ;
-//	}
-//
-//	// RHS branch depleted for the current bound Record
-//	// free it and loop back to retrieve a new one
-//	OpBase_DeleteRecord (&op->r) ;
-//
-//	// reset the RHS branch
-//	OpBase_PropagateReset (op->rhs_branch) ;
-//
-//	// try getting a new left hand side record
-//	goto pull_lhs ;
-//}
-
 static OpResult ApplyReset
 (
 	OpBase *opBase
 ) {
-	OpApply *op = (OpApply *)opBase;
-	if(op->r != NULL) {
-		OpBase_DeleteRecord(&op->r);
+	OpApply *op = (OpApply *)opBase ;
+	if (op->r != NULL) {
+		OpBase_DeleteRecord (&op->r) ;
 	}
 
-	return OP_OK;
+	return OP_OK ;
 }
 
 static OpBase *ApplyClone

@@ -107,8 +107,12 @@ OpBase *ExecutionPlan_LocateOpMatchingTypes
 	uint type_count,      // number of types
 	uint *depth           // [optional] depth of returned op
 ) {
+	if (root == NULL) {
+		return NULL ;
+	}
+
 	// check if root is of one of the specified types
-	for (int i = 0; i < type_count; i++) {
+	for (uint i = 0; i < type_count; i++) {
 		// root matched, return
 		if (root->type == types[i]) {
 			if (depth != NULL) {
@@ -121,9 +125,10 @@ OpBase *ExecutionPlan_LocateOpMatchingTypes
 	// continue searching
 	for (int i = 0; i < root->childCount; i++) {
 		// recursively visit children
-		OpBase *op = ExecutionPlan_LocateOpMatchingTypes (root->children[i],
-				types, type_count, depth) ;
-		if (op) {
+		OpBase *op =
+			ExecutionPlan_LocateOpMatchingTypes (OpBase_GetChild (root, i),
+					types, type_count, depth) ;
+		if (op != NULL) {
 			if (depth != NULL) {
 				*depth += 1 ;
 			}
@@ -186,7 +191,6 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
 	rax *refs_to_resolve            // references to resolve
 ) {
 	// locate earliest op under which all references are resolved
-	OpBase *ret = NULL;
 	int n = raxSize(refs_to_resolve);
 	char **references = (char**)raxKeys(refs_to_resolve);
 

@@ -314,8 +314,6 @@ void CommitNewEntities
 
 		// clear pending attributes array
 		for(uint i = 0; i < array_len(pending->edges); i++) {
-			//array_free(pending->edges[i].edge_attributes);
-			//pending->edges[i].edge_attributes = NULL;
 			array_clear (pending->edges[i].edge_attributes) ;
 		}
 

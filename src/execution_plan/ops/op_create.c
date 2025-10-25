@@ -249,7 +249,7 @@ static void FreeInternals
 ) {
 	if (op->records) {
 		uint rec_count = array_len (op->records) ;
-		// records[0..op->rec_idx] had already been emitted, skip them
+		// records[0..rec_idx-1] had already been emitted, skip them
 		for (uint i = op->rec_idx; i < rec_count; i++) {
 			OpBase_DeleteRecord (op->records+i) ;
 		}

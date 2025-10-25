@@ -96,6 +96,14 @@ static void EagerFree
 ) {
 	OpEager *op = (OpEager *)opBase;
 
-	array_free (op->records) ;
+	if (op->records != NULL) {
+		uint n = array_len (op->records) ;
+		for (uint i = op->rec_idx; i < n; i++) {
+			OpBase_DeleteRecord (op->records + i) ;
+		}
+
+		array_free (op->records) ;
+		op->records = NULL ;
+	}
 }
 
