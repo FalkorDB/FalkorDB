@@ -17,7 +17,7 @@ bool ExecutionPlan_isEager
     OpBase *root
 ) {
 	return ExecutionPlan_LocateOpMatchingTypes(root, EAGER_OPERATIONS,
-			EAGER_OP_COUNT) != NULL;
+			EAGER_OP_COUNT, NULL) != NULL;
 }
 
 // checks if op is marked as blacklisted
@@ -102,22 +102,36 @@ static OpBase *_LocateOpResolvingAliases
 // returns NULL if no matching operation was found
 OpBase *ExecutionPlan_LocateOpMatchingTypes
 (
-    OpBase *root,
-    const OPType *types,
-    uint type_count
+	OpBase *root,         // start lookup from here
+	const OPType *types,  // types to match
+	uint type_count,      // number of types
+	uint *depth           // [optional] depth of returned op
 ) {
-	for(int i = 0; i < type_count; i++) {
-		// Return the current op if it matches any of the types we're searching for.
-		if(root->type == types[i]) return root;
+	// check if root is of one of the specified types
+	for (int i = 0; i < type_count; i++) {
+		// root matched, return
+		if (root->type == types[i]) {
+			if (depth != NULL) {
+				*depth = 0 ;
+			}
+			return root ;
+		}
 	}
 
-	for(int i = 0; i < root->childCount; i++) {
-		// Recursively visit children.
-		OpBase *op = ExecutionPlan_LocateOpMatchingTypes(root->children[i], types, type_count);
-		if(op) return op;
+	// continue searching
+	for (int i = 0; i < root->childCount; i++) {
+		// recursively visit children
+		OpBase *op = ExecutionPlan_LocateOpMatchingTypes (root->children[i],
+				types, type_count, depth) ;
+		if (op) {
+			if (depth != NULL) {
+				*depth += 1 ;
+			}
+			return op ;
+		}
 	}
 
-	return NULL;
+	return NULL ;
 }
 
 OpBase *ExecutionPlan_LocateOp
@@ -128,7 +142,7 @@ OpBase *ExecutionPlan_LocateOp
 	if(!root) return NULL;
 
 	const OPType type_arr[1] = {type};
-	return ExecutionPlan_LocateOpMatchingTypes(root, type_arr, 1);
+	return ExecutionPlan_LocateOpMatchingTypes(root, type_arr, 1, NULL);
 }
 
 // searches for an operation of a given type, up to the given depth in the

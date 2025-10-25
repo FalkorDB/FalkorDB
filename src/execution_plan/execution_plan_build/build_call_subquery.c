@@ -91,16 +91,22 @@ static bool _bind_returning_ops_to_plan
 	// 5 place-holders are allocated for a maximum of 5 operations between the
 	// returning op (Project/Aggregate) and the CallSubquery op
 	// (Sort, Join, Distinct, Skip, Limit)
-	OpBase *ops[5];
+	uint depth = 0 ;  // depth of returning_op from root
 	OPType return_types[] = {OPType_PROJECT, OPType_AGGREGATE};
 
 	if(join_op == NULL) {
 		// only one returning projection/aggregation
 		OpBase *returning_op =
-			ExecutionPlan_LocateOpMatchingTypes(root, return_types, 2);
+			ExecutionPlan_LocateOpMatchingTypes (root, return_types, 2, &depth) ;
+
+		ASSERT (returning_op != NULL) ;
+		depth++ ;  // accommodate root
+
 		// if the returning op has no children, we need to free its exec-plan
 		// after binding it to a new plan
 		ExecutionPlan *old_plan = (ExecutionPlan *)returning_op->plan;
+
+		OpBase *ops[depth];
 		uint n_ops = ExecutionPlan_CollectUpwards(ops, returning_op);
 		ExecutionPlan_MigrateOpsExcludeType(ops, OPType_JOIN, n_ops, plan);
 		if(returning_op->childCount == 0) {
@@ -120,16 +126,22 @@ static bool _bind_returning_ops_to_plan
 		// if there is a Union operation, we need to look at all of its branches
 		for(uint i = 0; i < join_op->childCount; i++) {
 			OpBase *child = join_op->children[i];
+
 			OpBase *returning_op =
-				ExecutionPlan_LocateOpMatchingTypes(child, return_types, 2);
+				ExecutionPlan_LocateOpMatchingTypes (child, return_types, 2,
+						&depth) ;
+			ASSERT (returning_op != NULL) ;
+			depth++ ;  // accommodate root
+
 			if(returning_op->childCount == 0) {
 				ExecutionPlan *old_plan = (ExecutionPlan *)returning_op->plan;
 				old_plan->root = NULL;
 				ExecutionPlan_Free(old_plan);
 			}
+
+			OpBase *ops[depth];
 			uint n_ops = ExecutionPlan_CollectUpwards(ops, child);
 			ExecutionPlan_MigrateOpsExcludeType(ops, OPType_JOIN, n_ops, plan);
-
 		}
 
 		// if there is a join op, we never free the embedded plan
@@ -169,7 +181,7 @@ void buildCallSubqueryPlan
 	// if it is the call sub-query becomes eager, consuming all possible records
 	// before running
 	bool is_eager = ExecutionPlan_LocateOpMatchingTypes (embedded_plan->root,
-			MODIFYING_OPERATIONS, MODIFYING_OP_COUNT) != NULL ;
+			MODIFYING_OPERATIONS, MODIFYING_OP_COUNT, NULL) != NULL ;
 
 	// characterize whether the query is returning or not
 	bool is_returning = (OpBase_Type(embedded_plan->root) == OPType_RESULTS) ;
