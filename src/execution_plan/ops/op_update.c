@@ -182,7 +182,15 @@ static void UpdateFree(OpBase *ctx) {
 		op->update_ctxs = NULL;
 	}
 
-	array_free(op->records);
+	if (op->records) {
+		uint64_t n = array_len (op->records) ;
+		for (uint64_t i = op->rec_idx; i < n; i++) {
+			OpBase_DeleteRecord (op->records+i) ;
+		}
+
+		array_free (op->records) ;
+		op->records = NULL ;
+	}
 
 	raxStop(&op->it);
 }

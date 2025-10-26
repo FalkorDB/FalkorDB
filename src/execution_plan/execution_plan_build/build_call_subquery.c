@@ -127,21 +127,17 @@ static bool _bind_returning_ops_to_plan
 		for(uint i = 0; i < join_op->childCount; i++) {
 			OpBase *child = join_op->children[i];
 
-			OpBase *returning_op =
-				ExecutionPlan_LocateOpMatchingTypes (child, return_types, 2,
-						&depth) ;
-			ASSERT (returning_op != NULL) ;
-			depth++ ;  // accommodate root
+			while (true) {
+				OpBase_BindOpToPlan (child, plan);
 
-			if(returning_op->childCount == 0) {
-				ExecutionPlan *old_plan = (ExecutionPlan *)returning_op->plan;
-				old_plan->root = NULL;
-				ExecutionPlan_Free(old_plan);
+				OPType t = OpBase_Type (child) ;
+
+				if ((t == OPType_PROJECT || t != OPType_AGGREGATE)) {
+					break ;
+				}
+
+				child = OpBase_GetChild (child, 0) ;
 			}
-
-			OpBase *ops[depth];
-			uint n_ops = ExecutionPlan_CollectUpwards(ops, child);
-			ExecutionPlan_MigrateOpsExcludeType(ops, OPType_JOIN, n_ops, plan);
 		}
 
 		// if there is a join op, we never free the embedded plan
