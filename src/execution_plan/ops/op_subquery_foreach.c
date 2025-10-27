@@ -57,7 +57,8 @@ static OpResult SubQueryForeachInit
 		OPType t = OpBase_Type (child) ;
 
 		// tap located
-		if ((OpBase_ChildCount (child) == 0) && (t == OPType_ARGUMENT)) {
+		if (t == OPType_ARGUMENT) {
+			ASSERT (OpBase_ChildCount (child) == 0) ;
 			array_append (op->taps, (OpArgument*) child) ;
 		}
 
