@@ -62,7 +62,7 @@ static OpResult SubQueryForeachInit
 		}
 
 		// join op, traverse each branch
-		else if (t == OPType_JOIN || t == OPType_CARTESIAN_PRODUCT) {
+		else if (OP_JOIN_MULTIPLE_STREAMS (child)) {
 			for (uint i = 0; i < OpBase_ChildCount (child); i++) {
 				array_append (ops, OpBase_GetChild (child, i)) ;
 			}

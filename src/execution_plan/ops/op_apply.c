@@ -59,7 +59,7 @@ static OpResult ApplyInit
 		}
 
 		uint n;
-		if (t == OPType_CARTESIAN_PRODUCT || t == OPType_JOIN) {
+		if (OP_JOIN_MULTIPLE_STREAMS (current)) {
 			n = OpBase_ChildCount (current) ;
 		} else {
 			n = MIN (OpBase_ChildCount (current), 1);

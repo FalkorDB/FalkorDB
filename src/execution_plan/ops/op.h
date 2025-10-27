@@ -17,6 +17,10 @@
 
 #define OP_REQUIRE_NEW_DATA(opRes) (opRes & (OP_DEPLETED | OP_REFRESH)) > 0
 
+#define OP_JOIN_MULTIPLE_STREAMS(op)                     \
+	(OpBase_Type((op)) == OPType_JOIN ||                 \
+	 OpBase_Type((op)) == OPType_CARTESIAN_PRODUCT)
+
 typedef enum {
 	OPType_ALL_NODE_SCAN,
 	OPType_NODE_BY_LABEL_SCAN,
