@@ -15,9 +15,11 @@ static Record SubQueryForeachConsume(OpBase *opBase);
 static void SubQueryForeachFree(OpBase *opBase);
 static OpBase *SubQueryForeachClone(const ExecutionPlan *plan, const OpBase *opBase);
 
+// construct a new SubQueryForeach operator
+// return pointer to a fully initialized SubQueryForeach operator
 OpBase *NewSubQueryForeach
 (
-	const ExecutionPlan *plan
+	const ExecutionPlan *plan  // execution plan to which this operator belongs
 ) {
 	// validate inputs
 	ASSERT (plan != NULL) ;
