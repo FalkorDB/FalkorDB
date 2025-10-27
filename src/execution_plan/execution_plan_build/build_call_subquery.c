@@ -132,7 +132,7 @@ static bool _bind_returning_ops_to_plan
 
 				OPType t = OpBase_Type (child) ;
 
-				if ((t == OPType_PROJECT || t != OPType_AGGREGATE)) {
+				if ((t == OPType_PROJECT || t == OPType_AGGREGATE)) {
 					break ;
 				}
 
