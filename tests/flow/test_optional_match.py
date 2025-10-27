@@ -296,3 +296,52 @@ class testOptionalFlow(FlowTestsBase):
 
         self.graph.query(q)
 
+    def test26_optional_with_alias_cartesian_product(self):
+        """ 
+        Test for issue #1280
+        Query with WITH *, n0 AS alias4 followed by MATCH (n0), (alias4)
+        should not crash when handling cartesian product
+        """
+        self.graph.delete()
+
+        query = """OPTIONAL MATCH (n0)
+                   WITH *, n0 AS alias4
+                   MATCH (n0), (alias4)
+                   RETURN n0"""
+
+        # This should execute without crashing
+        actual_result = self.graph.query(query)
+        # With empty graph and optional match, n0 will be null
+        # The MATCH (n0), (alias4) will produce no results
+        expected_result = []
+        self.env.assertEquals(actual_result.result_set, expected_result)
+
+        # Test with populated graph
+        self.graph.query("CREATE (n:Node {v: 'test'})")
+        actual_result = self.graph.query(query)
+        # Should return one result where n0 and alias4 refer to the same node
+        self.env.assertEquals(len(actual_result.result_set), 1)
+
+    def test27_match_cartesian_optional_match_cartesian(self):
+        """
+        Test for issue #1281
+        MATCH with cartesian product followed by OPTIONAL MATCH with cartesian product
+        should not crash the database
+        """
+        self.graph.delete()
+        self.graph.query("CREATE (n)")
+
+        query = """MATCH (n), (n1)
+                   OPTIONAL MATCH (n), (n1)
+                   RETURN n"""
+
+        # This should execute without crashing
+        actual_result = self.graph.query(query)
+        # With one node, cartesian product of (n), (n1) produces 1 result
+        self.env.assertEquals(len(actual_result.result_set), 1)
+
+        # Test with multiple nodes
+        self.graph.query("CREATE (n)")
+        actual_result = self.graph.query(query)
+        # With 2 nodes, cartesian product of (n), (n1) produces 4 results (2x2)
+        self.env.assertEquals(len(actual_result.result_set), 4)

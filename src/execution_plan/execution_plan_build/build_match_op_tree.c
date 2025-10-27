@@ -40,17 +40,6 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 	OpBase *cartesianProduct = NULL;
 	if(connectedComponentsCount > 1) {
 		cartesianProduct = NewCartesianProductOp(plan);
-		if(plan->root != NULL) {
-			// connect existing operations via an apply operation
-			// these will become the apply's left handside
-			// while the cartesian product will be its right handside
-			apply = NewApplyOp(plan);
-			ExecutionPlan_UpdateRoot(plan, apply);
-
-			ExecutionPlan_AddOp(apply, cartesianProduct);
-		} else {
-			ExecutionPlan_UpdateRoot(plan, cartesianProduct);
-		}
 	}
 
 	// keep track after all traversal operations along a pattern
@@ -171,28 +160,47 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 		}
 	}
 
-	if(cartesianProduct != NULL && apply != NULL) {
-		rax *bound_args = raxNew();
-		ExecutionPlan_BoundVariables(OpBase_GetChild(apply, 0), bound_args,
-				plan);
-		const char **arguments = (const char**)raxValues(bound_args);
+	if(cartesianProduct != NULL && OpBase_ChildCount(cartesianProduct) > 0) {
+		if(plan->root != NULL) {
+			// connect existing operations via an apply operation
+			// these will become the apply's left handside
+			// while the cartesian product will be its right handside
+			apply = NewApplyOp(plan);
+			ExecutionPlan_UpdateRoot(plan, apply);
 
-		// add Argument op to each branch within the cartesian product
-		for(int i = 0; i < OpBase_ChildCount(cartesianProduct); i++) {
-			OpBase *child = OpBase_GetChild(cartesianProduct, i);
-
-			// get to the tap of the current branch
-			while(OpBase_ChildCount(child) > 0) {
-				child = OpBase_GetChild(child, 0);
-			}
-
-			// add argument to the tip of the branch
-			OpBase *arg = NewArgumentOp(plan, arguments);
-			ExecutionPlan_AddOp(child, arg);
+			ExecutionPlan_AddOp(apply, cartesianProduct);
+		} else {
+			ExecutionPlan_UpdateRoot(plan, cartesianProduct);
 		}
 
-		raxFree(bound_args);
-		array_free(arguments);
+		if(apply != NULL) {
+			rax *bound_args = raxNew();
+			ExecutionPlan_BoundVariables(OpBase_GetChild(apply, 0), bound_args,
+					plan);
+			const char **arguments = (const char**)raxValues(bound_args);
+
+			// add Argument op to each branch within the cartesian product
+			for(int i = 0; i < OpBase_ChildCount(cartesianProduct); i++) {
+				OpBase *child = OpBase_GetChild(cartesianProduct, i);
+
+				// get to the tip of the current branch
+				while(OpBase_ChildCount(child) > 0) {
+					child = OpBase_GetChild(child, 0);
+				}
+
+				// add argument to the tip of the branch
+				OpBase *arg = NewArgumentOp(plan, arguments);
+				ExecutionPlan_AddOp(child, arg);
+			}
+
+			raxFree(bound_args);
+			array_free(arguments);
+		}
+	} else if(cartesianProduct != NULL) {
+		// cartesian product has no children
+		// free it and return the plan root
+		OpBase_Free(cartesianProduct);
+		cartesianProduct = NULL;
 	}
 
 	for(uint i = 0; i < connectedComponentsCount; i++) {
