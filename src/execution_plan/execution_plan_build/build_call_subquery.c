@@ -182,22 +182,6 @@ void buildCallSubqueryPlan
 	// characterize whether the query is returning or not
 	bool is_returning = (OpBase_Type(embedded_plan->root) == OPType_RESULTS) ;
 
-	// TODO: check if call sub-query imports any variables
-	// find the feeding points, to which we will add the projections and feeders
-	OpBase **feeding_points = _find_feeding_points (embedded_plan) ;
-
-	//--------------------------------------------------------------------------
-	// plant feeders
-	//--------------------------------------------------------------------------
-
-	uint n_feeding_points = array_len (feeding_points) ;
-	for (uint i = 0; i < n_feeding_points; i++) {
-		OpBase *argument = NewArgumentOp (plan, NULL) ;
-		ExecutionPlan_AddOp (feeding_points[i], argument) ;
-	}
-
-	array_free(feeding_points);
-
 	//--------------------------------------------------------------------------
 	// bind returning projection(s)\aggregation(s) to the outer plan
 	//--------------------------------------------------------------------------
@@ -213,6 +197,22 @@ void buildCallSubqueryPlan
 		// bind the returning ops to the outer plan
 		free_embedded_plan = _bind_returning_ops_to_plan (embedded_plan, plan) ;
 	}
+
+	//--------------------------------------------------------------------------
+	// plant feeders
+	//--------------------------------------------------------------------------
+
+	// TODO: check if call sub-query imports any variables
+	// find the feeding points, to which we will add the projections and feeders
+	OpBase **feeding_points = _find_feeding_points (embedded_plan) ;
+
+	uint n_feeding_points = array_len (feeding_points) ;
+	for (uint i = 0; i < n_feeding_points; i++) {
+		OpBase *argument = NewArgumentOp (plan, NULL) ;
+		ExecutionPlan_AddOp (feeding_points[i], argument) ;
+	}
+
+	array_free(feeding_points);
 
 	//--------------------------------------------------------------------------
 	// connect the embedded plan
