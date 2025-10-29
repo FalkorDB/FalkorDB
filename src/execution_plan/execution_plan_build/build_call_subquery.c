@@ -128,14 +128,26 @@ static bool _bind_returning_ops_to_plan
 			OpBase *child = join_op->children[i];
 
 			while (true) {
-				OpBase_BindOpToPlan (child, plan);
-
 				OPType t = OpBase_Type (child) ;
 
-				if ((t == OPType_PROJECT || t == OPType_AGGREGATE)) {
+				// do not go beyond a project / aggregate operation
+				bool stop = (t == OPType_PROJECT || t == OPType_AGGREGATE) ;
+
+				// consumed the entire join stream
+				// free its plan
+				if (stop && OpBase_ChildCount (child) == 0) {
+						ExecutionPlan *old_plan = (ExecutionPlan *)child->plan ;
+						old_plan->root = NULL ;
+						ExecutionPlan_Free (old_plan) ;
+				}
+
+				OpBase_BindOpToPlan (child, plan) ;
+
+				if (stop) {
 					break ;
 				}
 
+				// continue on to the LHS
 				child = OpBase_GetChild (child, 0) ;
 			}
 		}
