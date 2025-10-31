@@ -36,7 +36,7 @@ static void BM_add_all(benchmark::State &state) {
     int deletions = state.range(1);
     double add_density = 1e-14 * additions;
     double del_density = 1e-14 * deletions; 
-    
+
     Delta_Random_Matrix(&A, GrB_BOOL, n, 5E-7, add_density, del_density, seed) ;
     Delta_Random_Matrix(&B, GrB_BOOL, n, 5E-7, add_density, del_density, seed+1) ;
 

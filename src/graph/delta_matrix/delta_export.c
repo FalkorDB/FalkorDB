@@ -3,9 +3,11 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "GraphBLAS.h"
 #include "RG.h"
 #include "delta_matrix.h"
 #include "../../util/rmalloc.h"
+#include "globals.h"
 
 // get the fully synced GrB_Matrix from Delta_Matrix C without modifying C
 GrB_Info Delta_Matrix_export
@@ -47,19 +49,19 @@ GrB_Info Delta_Matrix_export
 
 	// in case there are items to delete use mask otherwise just copy
 	GrB_Matrix     mask = deletions ? dm : NULL;
-	GrB_Descriptor desc = deletions ? GrB_DESC_RSC : GrB_DESC_R;
+	GrB_Descriptor desc = deletions ? GrB_DESC_SC : NULL;
 
 	// If type is boolean make the matrix true, otherwise copy values
 	GrB_UnaryOp    op   = type == GrB_BOOL ? GxB_ONE_BOOL : GrB_IDENTITY_UINT64;
 
-	GrB_OK (GrB_Matrix_apply(_A, mask, NULL, op, m, desc));
-	
-	//--------------------------------------------------------------------------
-	// perform additions
-	//--------------------------------------------------------------------------
-
-	if(additions) {
-		GrB_OK (GrB_Matrix_apply(_A, dp, NULL, op, dp, GrB_DESC_S));
+	if (type == GrB_BOOL){
+		GrB_Scalar alpha = t == GrB_BOOL ? Global_GrB_Ops_Get()->bool_zombie :
+			Global_GrB_Ops_Get()->u64_zombie;
+		GrB_OK (GxB_Matrix_eWiseUnion(_A, mask, NULL, GrB_ONEB_BOOL, m, alpha,
+			dp, alpha, desc));
+	} else {
+		GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp(_A, mask, NULL, GxB_ANY_UINT64, m,
+			dp, desc));
 	}
 
 	*A = _A;

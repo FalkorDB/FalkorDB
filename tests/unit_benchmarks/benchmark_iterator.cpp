@@ -11,7 +11,7 @@ void rg_setup(const benchmark::State &state) {
         RedisModule_Strdup  = strdup;
         allocators_initialized = true;
     }
-    
+
     printf("Starting benchmark ...\n");
     LAGraph_Init(NULL);
 
@@ -70,7 +70,7 @@ static void BM_tensor_iterator_transpose(benchmark::State &state) {
     GrB_Index      nvals = 0;
 
     Random_Tensor(&A, n, 5E-7, 1E-10, 1E-10, seed);
-    
+
     Delta_cache_transpose(A);
 
     TensorIterator_ScanRange(&it, A, 0, n - 1, true);
