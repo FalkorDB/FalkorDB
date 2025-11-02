@@ -52,7 +52,7 @@ jobs:
         id: cache_graphblas
         uses: actions/cache/restore@v4
         with:
-          path: ./bin/macos-arm64v8-release/GraphBLAS
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/GraphBLAS
           key: ${{ env.CACHE_KEY_GRAPHBLAS }}
           enableCrossOsArchive: true
 
@@ -60,7 +60,7 @@ jobs:
         id: cache_parser
         uses: actions/cache/restore@v4
         with:
-          path: ./bin/macos-arm64v8-release/libcypher-parser
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcypher-parser
           key: ${{ env.CACHE_KEY_PARSER }}
           enableCrossOsArchive: true
 
@@ -68,7 +68,7 @@ jobs:
         id: cache_search
         uses: actions/cache/restore@v4
         with:
-          path: ./bin/macos-arm64v8-release/search-static
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/search-static
           key: ${{ env.CACHE_KEY_SEARCH }}
           enableCrossOsArchive: true
 
@@ -76,7 +76,7 @@ jobs:
         id: cache_libcurl
         uses: actions/cache/restore@v4
         with:
-          path: ./bin/macos-arm64v8-release/libcurl
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcurl
           key: ${{ env.CACHE_KEY_LIBCURL }}
           enableCrossOsArchive: true
 
@@ -84,7 +84,7 @@ jobs:
         id: cache_libcsv
         uses: actions/cache/restore@v4
         with:
-          path: ./bin/macos-arm64v8-release/libcsv
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcsv
           key: ${{ env.CACHE_KEY_LIBCSV }}
           enableCrossOsArchive: true
 
@@ -92,7 +92,7 @@ jobs:
         id: cache_lagraph
         uses: actions/cache/restore@v4
         with:
-          path: ./bin/macos-arm64v8-release/LAGraph
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/LAGraph
           key: ${{ env.CACHE_KEY_LAGRAPH }}
           enableCrossOsArchive: true
 
@@ -105,7 +105,7 @@ jobs:
         if: always() && steps.cache_graphblas.outputs.cache-hit == false
         uses: actions/cache/save@v4
         with:
-          path: ./bin/macos-arm64v8-release/GraphBLAS
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/GraphBLAS
           key: ${{ env.CACHE_KEY_GRAPHBLAS }}
           enableCrossOsArchive: true
 
@@ -113,7 +113,7 @@ jobs:
         if: always() && steps.cache_parser.outputs.cache-hit == false
         uses: actions/cache/save@v4
         with:
-          path: ./bin/macos-arm64v8-release/libcypher-parser
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcypher-parser
           key: ${{ env.CACHE_KEY_PARSER }}
           enableCrossOsArchive: true
 
@@ -121,7 +121,7 @@ jobs:
         if: always() && steps.cache_search.outputs.cache-hit == false
         uses: actions/cache/save@v4
         with:
-          path: ./bin/macos-arm64v8-release/search-static
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/search-static
           key: ${{ env.CACHE_KEY_SEARCH }}
           enableCrossOsArchive: true
 
@@ -129,7 +129,7 @@ jobs:
         if: always() && steps.cache_libcurl.outputs.cache-hit == false
         uses: actions/cache/save@v4
         with:
-          path: ./bin/macos-arm64v8-release/libcurl
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcurl
           key: ${{ env.CACHE_KEY_LIBCURL }}
           enableCrossOsArchive: true
 
@@ -137,7 +137,7 @@ jobs:
         if: always() && steps.cache_libcsv.outputs.cache-hit == false
         uses: actions/cache/save@v4
         with:
-          path: ./bin/macos-arm64v8-release/libcsv
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcsv
           key: ${{ env.CACHE_KEY_LIBCSV }}
           enableCrossOsArchive: true
 
@@ -145,7 +145,7 @@ jobs:
         if: always() && steps.cache_lagraph.outputs.cache-hit == false
         uses: actions/cache/save@v4
         with:
-          path: ./bin/macos-arm64v8-release/LAGraph
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/LAGraph
           key: ${{ env.CACHE_KEY_LAGRAPH }}
           enableCrossOsArchive: true
 
