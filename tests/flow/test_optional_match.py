@@ -140,7 +140,11 @@ class testOptionalFlow(FlowTestsBase):
 
     # Multiple interdependent optional MATCH clauses.
     def test12_multiple_optional_traversals(self):
-        query = """MATCH (a) OPTIONAL MATCH (a)-[]->(b) OPTIONAL MATCH (b)-[]->(c) RETURN a.v, b.v, c.v ORDER BY a.v, b.v, c.v"""
+        query = """MATCH (a)
+                   OPTIONAL MATCH (a)-[]->(b)
+                   OPTIONAL MATCH (b)-[]->(c)
+                   RETURN a.v, b.v, c.v
+                   ORDER BY a.v, b.v, c.v"""
         actual_result = self.graph.query(query)
         expected_result = [['v1', 'v2', 'v3'],
                            ['v2', 'v3', None],
@@ -197,7 +201,10 @@ class testOptionalFlow(FlowTestsBase):
         self.env.assertEquals(actual_result.result_set, expected_result)
 
     def test17_optional_label_introductions(self):
-        query = """MATCH (a) OPTIONAL MATCH (a:L)-[]->(b:L) RETURN a.v, b.v ORDER BY a.v, b.v"""
+        query = """MATCH (a)
+                   OPTIONAL MATCH (a:L)-[]->(b:L)
+                   RETURN a.v, b.v
+                   ORDER BY a.v, b.v"""
         actual_result = self.graph.query(query)
         expected_result = [['v1', 'v2'],
                            ['v2', 'v3'],
