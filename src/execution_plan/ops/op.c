@@ -332,6 +332,11 @@ bool OpBase_IsEager
 	return false;
 }
 
+Record OpBase_Profile_init
+(
+	OpBase *op
+) ;
+
 void OpBase_UpdateConsume
 (
 	OpBase *op,
@@ -340,7 +345,9 @@ void OpBase_UpdateConsume
 	ASSERT(op != NULL);
 
 	// update both consume and backup consume function
-	op->consume  = consume;  // in case update performed within op consume
+	if(op->consume != OpBase_Profile_init && op->consume != OpBase_Profile) {
+		op->consume  = consume;  // in case update performed within op consume
+	}
 	op->_consume = consume;  // in case update performed within op init
 }
 
