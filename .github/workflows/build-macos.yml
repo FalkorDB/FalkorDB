@@ -18,6 +18,8 @@ concurrency:
 jobs:
   build-macos:
     runs-on: ${{ matrix.platform.machine_label }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
