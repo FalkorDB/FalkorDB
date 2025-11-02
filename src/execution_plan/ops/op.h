@@ -76,6 +76,8 @@ static const OPType PROJECT_OPS[] = {
 	OPType_AGGREGATE
 };
 
+// TODO: add OPType_OPTIONAL_CONDITIONAL_TRAVERSE to TRAVERSE_OPS
+// and adjust relevent optimizations accordingly
 #define TRAVERSE_OP_COUNT 2
 static const OPType TRAVERSE_OPS[] = {
 	OPType_CONDITIONAL_TRAVERSE,

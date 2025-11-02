@@ -100,7 +100,7 @@ void _traverse
 		// e[i] = true row i of M is empty
 		GrB_Index nrows = op->record_cap ;
 		GrB_OK (GrB_Vector_assign_Scalar (op->e, op->w, NULL, op->s, GrB_ALL,
-					nrows, GrB_DESC_SC));
+					nrows, GrB_DESC_RSC));
 
 		// populate optional records
 		GxB_Iterator it ;

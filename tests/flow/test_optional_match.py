@@ -303,3 +303,15 @@ class testOptionalFlow(FlowTestsBase):
 
         self.graph.query(q)
 
+    # validate Optional Conditional Traverse operation is used
+    def test26_optional_batch_traversal(self):
+        query = """MATCH (a)
+                   OPTIONAL MATCH (a)-[]->(b)
+                   OPTIONAL MATCH (b)-[]->(c)
+                   RETURN a, b, c"""
+
+        # Expecting to find "Optional Conditional Traverse" operations
+        plan = str(self.graph.explain(query))
+        self.env.assertIn("Optional Conditional Traverse | (a)->(b)", plan)
+        self.env.assertIn("Optional Conditional Traverse | (b)->(c)", plan)
+

@@ -88,6 +88,28 @@ static void _reduceOptionalMatch
 	OpBase_Free (apply) ;
 }
 
+// simplifies Apply + Optional + Traverse + Argument
+// patterns into:
+// Optional Conditional Traverse
+//
+// by doing so we transition from a single source BFS into multi-source
+// batch traversal
+//
+// e.g.
+//
+// Apply
+//      Node By Label Scan
+//      Optional
+//          Conditional Traverse
+//              Argument
+//
+// ->
+//
+// Optional Conditional Traverse
+//     Node By Label Scan
+//
+//------------------------------------------------------------------------------
+//
 // Apply
 //     Optional
 //         Conditional Traverse
