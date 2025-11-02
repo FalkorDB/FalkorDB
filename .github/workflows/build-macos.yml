@@ -37,7 +37,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install cmake m4 automake peg libtool autoconf python3
+          brew install cmake m4 automake peg libtool autoconf python3 gcc
 
       - name: Set cache keys
         run: |
@@ -98,7 +98,8 @@ jobs:
 
       - name: Build FalkorDB
         run: |
-          make DEBUG=${{ matrix.platform.is_debug }}
+          # Use GCC for OpenMP support on macOS
+          make GCC=1 DEBUG=${{ matrix.platform.is_debug }}
 
       - name: Save cache for GraphBLAS
         if: always() && steps.cache_graphblas.outputs.cache-hit == false
