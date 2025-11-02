@@ -421,6 +421,16 @@ OpBase *OpBase_GetChild
 	return op->children[i];
 }
 
+// returns op's parent
+OpBase *OpBase_Parent
+(
+	const OpBase *op  // op
+) {
+	ASSERT (op != NULL) ;
+
+	return op->parent ;
+}
+
 inline void OpBase_DeleteRecord
 (
 	Record *r
