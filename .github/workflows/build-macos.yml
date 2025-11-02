@@ -23,11 +23,11 @@ jobs:
       matrix:
         platform:
           - name: macos/arm64
-            suffix: macos-arm64
+            suffix: macos-arm64v8
             machine_label: macos-latest
             is_debug: "0"
           - name: macos/arm64
-            suffix: macos-arm64
+            suffix: macos-arm64v8
             machine_label: macos-latest
             is_debug: "1"
     steps:

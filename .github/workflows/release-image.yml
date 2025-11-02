@@ -187,7 +187,7 @@ jobs:
           workflow: ${{ env.MACOS_BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
-          name: falkordb-macos-arm64.so
+          name: falkordb-macos-arm64v8.so
           path: /tmp
           if_no_artifact_found: ignore
 
@@ -197,7 +197,7 @@ jobs:
           workflow: ${{ env.MACOS_BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
-          name: falkordb-debug-macos-arm64.so
+          name: falkordb-debug-macos-arm64v8.so
           path: /tmp
           if_no_artifact_found: ignore
 
@@ -307,9 +307,9 @@ jobs:
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-arm64v8.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-rhel-x64.so
           # Upload macOS binaries if they exist
-          if [ -f /tmp/falkordb-macos-arm64.so ]; then
-            gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-macos-arm64.so
+          if [ -f /tmp/falkordb-macos-arm64v8.so ]; then
+            gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-macos-arm64v8.so
           fi
-          if [ -f /tmp/falkordb-debug-macos-arm64.so ]; then
-            gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-macos-arm64.so
+          if [ -f /tmp/falkordb-debug-macos-arm64v8.so ]; then
+            gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-macos-arm64v8.so
           fi
