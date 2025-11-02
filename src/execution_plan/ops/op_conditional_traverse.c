@@ -92,7 +92,6 @@ void _traverse
 	//--------------------------------------------------------------------------
 
 	if (op->optional) {
-		GrB_OK (GrB_Vector_clear (op->w)) ;
 		// w[i] = true if row i of M is not empty
 		GrB_OK (GrB_Matrix_reduce_Monoid (op->w, NULL, NULL,
 					GxB_LOR_BOOL_MONOID, DELTA_MATRIX_M (op->M), NULL)) ;
@@ -263,6 +262,7 @@ static Record CondTraverseConsume
 			for (uint i = 0; i < array_len (op->optional_records); i++) {
 				OpBase_DeleteRecord (op->optional_records+i) ;
 			}
+			array_clear (op->optional_records) ;
 		}
 
 		//----------------------------------------------------------------------
