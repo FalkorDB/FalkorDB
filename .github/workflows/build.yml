@@ -814,6 +814,12 @@ jobs:
           key: ${{ env.CACHE_KEY_LAGRAPH }}
           enableCrossOsArchive: true
 
+      - name: Clear CMake cache
+        run: |
+          # Remove CMake cache files to force reconfiguration with correct flags
+          find ./bin -name "CMakeCache.txt" -delete || true
+          find ./bin -name "CMakeFiles" -type d -exec rm -rf {} + || true
+
       - name: Build FalkorDB
         run: |
           # Use GCC for OpenMP support on macOS and set minimum SDK version
