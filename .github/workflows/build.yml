@@ -391,7 +391,7 @@ jobs:
             TARGETPLATFORM=${{ matrix.platform.platform }}
 
       - name: Upload tests image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: ${{ matrix.platform.build_test_image }}
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
@@ -421,7 +421,7 @@ jobs:
 
       - name: Upload image
         if: ${{ matrix.platform.is_debug == '0' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: falkordb-${{ matrix.platform.suffix }}
           path: /tmp/falkordb-${{ matrix.platform.suffix }}.tar
@@ -432,7 +432,7 @@ jobs:
           docker run --rm --entrypoint cat localhost:5000/falkordb/falkordb-compiler /FalkorDB/bin/src/falkordb.so > /tmp/falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
 
       - name: Upload .so
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
           path: /tmp/falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
@@ -494,7 +494,7 @@ jobs:
           docker run --rm -i -v /tmp/logs:/FalkorDB/tests/unit/logs falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
 
       - name: Upload unit test logs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: unit-test-logs-${{ matrix.platform.suffix }}
           path: /tmp/logs
@@ -540,7 +540,7 @@ jobs:
           docker run --rm -i -v /tmp/logs:/FalkorDB/tests/flow/logs falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
 
       - name: Upload flow test logs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: flow-test-logs-${{ matrix.platform.suffix }}
           path: /tmp/logs
@@ -587,7 +587,7 @@ jobs:
           docker run --rm -i -v /tmp/logs:/FalkorDB/tests/tck/logs falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
 
       - name: Upload TCK test logs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: tck-test-logs-${{ matrix.platform.suffix }}
           path: /tmp/logs
@@ -633,7 +633,7 @@ jobs:
           docker run --rm -i -v /tmp/logs:/FalkorDB/tests/fuzz/logs falkordb/falkordb-tests make fuzz TIMEOUT=180
 
       - name: Upload fuzz test logs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: fuzz-test-logs-${{ matrix.platform.suffix }}
           path: /tmp/logs
