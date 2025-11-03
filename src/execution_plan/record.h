@@ -192,6 +192,12 @@ void Record_FreeEntries
 	Record r
 );
 
+// increase record's reference count
+void Record_IncRefCount
+(
+	Record r
+);
+
 // Free record.
 void Record_Free
 (
