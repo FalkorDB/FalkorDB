@@ -759,12 +759,12 @@ jobs:
 
       - name: Set cache keys
         run: |
-          echo "CACHE_KEY_GRAPHBLAS=graphblas-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}" >> $GITHUB_ENV
-          echo "CACHE_KEY_PARSER=parser-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}" >> $GITHUB_ENV
-          echo "CACHE_KEY_SEARCH=search-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}" >> $GITHUB_ENV
-          echo "CACHE_KEY_LIBCURL=libcurl-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}" >> $GITHUB_ENV
-          echo "CACHE_KEY_LIBCSV=libcsv-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/libcsv/ChangeLog') }}" >> $GITHUB_ENV
-          echo "CACHE_KEY_LAGRAPH=lagraph-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/LAGraph/include/LAGraph.h') }}" >> $GITHUB_ENV
+          echo "CACHE_KEY_GRAPHBLAS=graphblas-${{ matrix.platform.suffix }}-${{ matrix.platform.is_debug }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}" >> $GITHUB_ENV
+          echo "CACHE_KEY_PARSER=parser-${{ matrix.platform.suffix }}-${{ matrix.platform.is_debug }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}" >> $GITHUB_ENV
+          echo "CACHE_KEY_SEARCH=search-${{ matrix.platform.suffix }}-${{ matrix.platform.is_debug }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}" >> $GITHUB_ENV
+          echo "CACHE_KEY_LIBCURL=libcurl-${{ matrix.platform.suffix }}-${{ matrix.platform.is_debug }}-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}" >> $GITHUB_ENV
+          echo "CACHE_KEY_LIBCSV=libcsv-${{ matrix.platform.suffix }}-${{ matrix.platform.is_debug }}-${{ hashFiles('./deps/libcsv/ChangeLog') }}" >> $GITHUB_ENV
+          echo "CACHE_KEY_LAGRAPH=lagraph-${{ matrix.platform.suffix }}-${{ matrix.platform.is_debug }}-${{ hashFiles('./deps/LAGraph/include/LAGraph.h') }}" >> $GITHUB_ENV
 
       - name: Cache GraphBLAS ${{ matrix.platform.suffix }}
         id: cache_graphblas
