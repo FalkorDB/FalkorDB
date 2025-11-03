@@ -106,7 +106,7 @@ static const OPType FILTER_RECURSE_BLACKLIST[] = {
 	OPType_MERGE
 };
 
-#define EAGER_OP_COUNT 7
+#define EAGER_OP_COUNT 8
 static const OPType EAGER_OPERATIONS[] = {
 	OPType_AGGREGATE,
 	OPType_CREATE,
@@ -114,7 +114,8 @@ static const OPType EAGER_OPERATIONS[] = {
 	OPType_UPDATE,
 	OPType_MERGE,
 	OPType_FOREACH,
-	OPType_SORT
+	OPType_SORT,
+	OPType_EAGER
 };
 
 #define MODIFYING_OP_COUNT 4

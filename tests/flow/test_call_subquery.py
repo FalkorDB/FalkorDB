@@ -2179,3 +2179,4 @@ updating clause.")
         res = self.graph.query(q)
         self.env.assertEquals(res.nodes_created, 1)
         self.env.assertEquals(len(res.result_set), 0)
+

@@ -315,10 +315,20 @@ static void _AST_GetTypedNodes
 	const cypher_astnode_t *root,
 	cypher_astnode_type_t type
 ) {
-	if(cypher_astnode_type(root) == type) array_append(*nodes, root);
-	uint nchildren = cypher_astnode_nchildren(root);
-	for(uint i = 0; i < nchildren; i ++) {
-		_AST_GetTypedNodes(nodes, cypher_astnode_get_child(root, i), type);
+	if (cypher_astnode_type(root) == type) {
+		array_append (*nodes, root) ;
+	}
+
+	uint nchildren = cypher_astnode_nchildren (root) ;
+	for (uint i = 0; i < nchildren; i ++) {
+		const cypher_astnode_t *child = cypher_astnode_get_child (root, i) ;
+
+		// we shouldn't peak into sub-query
+		if (cypher_astnode_type (child) == CYPHER_AST_CALL_SUBQUERY) {
+			continue ;
+		}
+
+		_AST_GetTypedNodes (nodes, child, type) ;
 	}
 }
 

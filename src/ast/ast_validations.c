@@ -1212,18 +1212,29 @@ static bool _ValidateCallInitialWith
 	const cypher_astnode_t *with_clause,  // `WITH` clause to validate
 	validations_ctx *vctx                 // validation context
 ) {
-	for (uint i = 0; i < cypher_ast_with_nprojections (with_clause); i++) {
-		const cypher_astnode_t *curr_proj =
-			cypher_ast_with_get_projection (with_clause, i) ;
-		const cypher_astnode_t *exp =
-			cypher_ast_projection_get_expression (curr_proj) ;
-		const cypher_astnode_type_t t = cypher_astnode_type (exp) ;
+	// in case WITH contains *
+	// skip this test, wait for second pass (after * AST rewrite)
+	if (!cypher_ast_with_has_include_existing (with_clause)) {
+		uint n = cypher_ast_with_nprojections (with_clause);
+		for (uint i = 0; i < n; i++) {
+			const cypher_astnode_t *curr_proj =
+				cypher_ast_with_get_projection (with_clause, i) ;
+			const cypher_astnode_t *exp =
+				cypher_ast_projection_get_expression (curr_proj) ;
+			const cypher_astnode_type_t t = cypher_astnode_type (exp) ;
 
-		// fail if WITH expression isn't a simple import expression:
-		// WITH a, b, c...
-		if (t != CYPHER_AST_IDENTIFIER ||
-			cypher_ast_projection_get_alias (curr_proj) != NULL) {
-			return false ;
+			// special case (empty star import)
+			// CALL { WITH * ... }
+			if (unlikely (t == CYPHER_AST_NULL)) {
+				continue ;
+			}
+
+			// fail if WITH expression isn't a simple import expression:
+			// WITH a, b, c...
+			if (t != CYPHER_AST_IDENTIFIER ||
+				cypher_ast_projection_get_alias (curr_proj) != NULL) {
+				return false ;
+			}
 		}
 	}
 
@@ -2277,6 +2288,7 @@ bool AST_ValidationsMappingInit(void) {
 	validations_mapping[CYPHER_AST_CALL_SUBQUERY]              = _Validate_call_subquery;
 	validations_mapping[CYPHER_AST_SHORTEST_PATH]              = _Validate_shortest_path;
 	validations_mapping[CYPHER_AST_APPLY_OPERATOR]             = _Validate_apply_operator;
+	validations_mapping[CYPHER_AST_BINARY_OPERATOR]            = _visit_binary_op;
 	validations_mapping[CYPHER_AST_APPLY_ALL_OPERATOR]         = _Validate_apply_all_operator;
 	validations_mapping[CYPHER_AST_LIST_COMPREHENSION]         = _Validate_list_comprehension;
 	validations_mapping[CYPHER_AST_PATTERN_COMPREHENSION]      = _Validate_pattern_comprehension;
@@ -2302,7 +2314,6 @@ bool AST_ValidationsMappingInit(void) {
 	validations_mapping[CYPHER_AST_REMOVE_ITEM]                 = _visit_break;
 	validations_mapping[CYPHER_AST_QUERY_OPTION]                = _visit_break;
 	validations_mapping[CYPHER_AST_REL_INDEX_QUERY]             = _visit_break;
-	validations_mapping[CYPHER_AST_BINARY_OPERATOR]             = _visit_binary_op;
 	validations_mapping[CYPHER_AST_EXPLAIN_OPTION]              = _visit_break;
 	validations_mapping[CYPHER_AST_PROFILE_OPTION]              = _visit_break;
 	validations_mapping[CYPHER_AST_SCHEMA_COMMAND]              = _visit_break;
