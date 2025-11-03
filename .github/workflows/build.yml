@@ -729,3 +729,160 @@ jobs:
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-results.sarif'
+
+  build-macos:
+    runs-on: ${{ matrix.platform.machine_label }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: macos/arm64
+            suffix: macos-arm64v8
+            machine_label: macos-latest
+            is_debug: "0"
+          - name: macos/arm64
+            suffix: macos-arm64v8
+            machine_label: macos-latest
+            is_debug: "1"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          brew install cmake m4 automake peg libtool autoconf python3 gcc make
+          # Add GNU make to PATH (installed as gmake)
+          echo "/opt/homebrew/opt/make/libexec/gnubin" >> $GITHUB_PATH
+
+      - name: Set cache keys
+        run: |
+          echo "CACHE_KEY_GRAPHBLAS=graphblas-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}" >> $GITHUB_ENV
+          echo "CACHE_KEY_PARSER=parser-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}" >> $GITHUB_ENV
+          echo "CACHE_KEY_SEARCH=search-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}" >> $GITHUB_ENV
+          echo "CACHE_KEY_LIBCURL=libcurl-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}" >> $GITHUB_ENV
+          echo "CACHE_KEY_LIBCSV=libcsv-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/libcsv/ChangeLog') }}" >> $GITHUB_ENV
+          echo "CACHE_KEY_LAGRAPH=lagraph-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/LAGraph/include/LAGraph.h') }}" >> $GITHUB_ENV
+
+      - name: Cache GraphBLAS ${{ matrix.platform.suffix }}
+        id: cache_graphblas
+        uses: actions/cache/restore@v4
+        with:
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/GraphBLAS
+          key: ${{ env.CACHE_KEY_GRAPHBLAS }}
+          enableCrossOsArchive: true
+
+      - name: Cache parser ${{ matrix.platform.suffix }}
+        id: cache_parser
+        uses: actions/cache/restore@v4
+        with:
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcypher-parser
+          key: ${{ env.CACHE_KEY_PARSER }}
+          enableCrossOsArchive: true
+
+      - name: Cache search ${{ matrix.platform.suffix }}
+        id: cache_search
+        uses: actions/cache/restore@v4
+        with:
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/search-static
+          key: ${{ env.CACHE_KEY_SEARCH }}
+          enableCrossOsArchive: true
+
+      - name: Cache libcurl ${{ matrix.platform.suffix }}
+        id: cache_libcurl
+        uses: actions/cache/restore@v4
+        with:
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcurl
+          key: ${{ env.CACHE_KEY_LIBCURL }}
+          enableCrossOsArchive: true
+
+      - name: Cache libcsv ${{ matrix.platform.suffix }}
+        id: cache_libcsv
+        uses: actions/cache/restore@v4
+        with:
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcsv
+          key: ${{ env.CACHE_KEY_LIBCSV }}
+          enableCrossOsArchive: true
+
+      - name: Cache LAGraph ${{ matrix.platform.suffix }}
+        id: cache_lagraph
+        uses: actions/cache/restore@v4
+        with:
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/LAGraph
+          key: ${{ env.CACHE_KEY_LAGRAPH }}
+          enableCrossOsArchive: true
+
+      - name: Build FalkorDB
+        run: |
+          # Use GCC for OpenMP support on macOS
+          make GCC=1 DEBUG=${{ matrix.platform.is_debug }}
+
+      - name: Save cache for GraphBLAS
+        if: always() && steps.cache_graphblas.outputs.cache-hit == false
+        uses: actions/cache/save@v4
+        with:
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/GraphBLAS
+          key: ${{ env.CACHE_KEY_GRAPHBLAS }}
+          enableCrossOsArchive: true
+
+      - name: Save cache for parser
+        if: always() && steps.cache_parser.outputs.cache-hit == false
+        uses: actions/cache/save@v4
+        with:
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcypher-parser
+          key: ${{ env.CACHE_KEY_PARSER }}
+          enableCrossOsArchive: true
+
+      - name: Save cache for search
+        if: always() && steps.cache_search.outputs.cache-hit == false
+        uses: actions/cache/save@v4
+        with:
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/search-static
+          key: ${{ env.CACHE_KEY_SEARCH }}
+          enableCrossOsArchive: true
+
+      - name: Save cache for libcurl
+        if: always() && steps.cache_libcurl.outputs.cache-hit == false
+        uses: actions/cache/save@v4
+        with:
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcurl
+          key: ${{ env.CACHE_KEY_LIBCURL }}
+          enableCrossOsArchive: true
+
+      - name: Save cache for libcsv
+        if: always() && steps.cache_libcsv.outputs.cache-hit == false
+        uses: actions/cache/save@v4
+        with:
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcsv
+          key: ${{ env.CACHE_KEY_LIBCSV }}
+          enableCrossOsArchive: true
+
+      - name: Save cache for LAGraph
+        if: always() && steps.cache_lagraph.outputs.cache-hit == false
+        uses: actions/cache/save@v4
+        with:
+          path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/LAGraph
+          key: ${{ env.CACHE_KEY_LAGRAPH }}
+          enableCrossOsArchive: true
+
+      - name: Find and upload .so file
+        run: |
+          # Find the built .so file
+          SO_FILE=$(find ./bin -name "falkordb.so" -type f | head -1)
+          if [ -z "$SO_FILE" ]; then
+            echo "Error: falkordb.so not found"
+            exit 1
+          fi
+          echo "Found .so file at: $SO_FILE"
+          mkdir -p /tmp
+          cp "$SO_FILE" /tmp/falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
+          ls -lh /tmp/falkordb-*.so
+
+      - name: Upload .so
+        uses: actions/upload-artifact@v5
+        with:
+          name: falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
+          path: /tmp/falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
+          if-no-files-found: error

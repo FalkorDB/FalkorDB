@@ -10,7 +10,7 @@ on:
         description: "Commit SHA"
         required: true
   workflow_run:
-    workflows: ["Build on ubuntu", "Build on macOS"]
+    workflows: ["Build on ubuntu"]
     types:
       - completed
     branches: [master, "v[0-9]+.[0-9]+"]
@@ -19,7 +19,6 @@ on:
 
 env:
   BUILD_WORKFLOW_NAME: build.yml
-  MACOS_BUILD_WORKFLOW_NAME: build-macos.yml
   # Get the commit SHA from the event that triggered the workflow
   # If the event is a workflow_dispatch, use the input value
   # If the event is a workflow_run, use the head_commit.id
@@ -184,7 +183,7 @@ jobs:
       - name: Retrieve built .so macOS ARM64
         uses: dawidd6/action-download-artifact@v11
         with:
-          workflow: ${{ env.MACOS_BUILD_WORKFLOW_NAME }}
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
           name: falkordb-macos-arm64v8.so
@@ -194,7 +193,7 @@ jobs:
       - name: Retrieve built debug.so macOS ARM64
         uses: dawidd6/action-download-artifact@v11
         with:
-          workflow: ${{ env.MACOS_BUILD_WORKFLOW_NAME }}
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
           name: falkordb-debug-macos-arm64v8.so
