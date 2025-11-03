@@ -31,6 +31,7 @@ typedef enum {
 	OPType_EXPAND_INTO,
 	OPType_CONDITIONAL_TRAVERSE,
 	OPType_CONDITIONAL_VAR_LEN_TRAVERSE,
+	OPType_OPTIONAL_CONDITIONAL_TRAVERSE,
 	OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO,
 	OPType_RESULTS,
 	OPType_PROJECT,
@@ -81,6 +82,8 @@ static const OPType PROJECT_OPS[] = {
 	OPType_AGGREGATE
 };
 
+// TODO: add OPType_OPTIONAL_CONDITIONAL_TRAVERSE to TRAVERSE_OPS
+// and adjust relevent optimizations accordingly
 #define TRAVERSE_OP_COUNT 2
 static const OPType TRAVERSE_OPS[] = {
 	OPType_CONDITIONAL_TRAVERSE,
@@ -222,6 +225,12 @@ OpBase *OpBase_GetChild
 (
 	const OpBase *op,  // op
 	uint i             // child index
+);
+
+// returns op's parent
+OpBase *OpBase_Parent
+(
+	const OpBase *op  // op
 );
 
 // returns true if operation is aware of all aliases
