@@ -124,6 +124,8 @@ jobs:
       - name: Build
         run: |
           rustup default stable
+          chmod +x ./deps/RediSearch/.install/install_cmake.sh
+          ./deps/RediSearch/.install/install_cmake.sh
           make build
 
       # ℹ️ Command-line programs to run using the OS shell.
