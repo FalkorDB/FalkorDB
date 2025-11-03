@@ -817,6 +817,7 @@ jobs:
       - name: Build FalkorDB
         run: |
           # Use GCC for OpenMP support on macOS
+          export MACOSX_DEPLOYMENT_TARGET=11.0
           make GCC=1 DEBUG=${{ matrix.platform.is_debug }}
 
       - name: Save cache for GraphBLAS
