@@ -39,7 +39,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install cmake m4 automake peg libtool autoconf python3 gcc
+          brew install cmake m4 automake peg libtool autoconf python3 gcc make
+          # Add GNU make to PATH (installed as gmake)
+          echo "/opt/homebrew/opt/make/libexec/gnubin" >> $GITHUB_PATH
 
       - name: Set cache keys
         run: |
