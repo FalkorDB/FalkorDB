@@ -41,7 +41,7 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def __init__(self):
-        self.env, self.db = Env()
+        self.env, self.db = Env(env='oss-cluster')
         self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 

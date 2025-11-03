@@ -24,7 +24,7 @@ static OpBase *_add_empty_projection
 	OpBase *parent
 ) {
 	OpBase *empty_proj =
-		NewProjectOp(parent->plan, array_new(AR_ExpNode *, 0));
+		NewProjectOp (parent->plan, array_new (AR_ExpNode *, 0)) ;
 
 	OPType type = OpBase_Type(parent);
 	if(type == OPType_CALLSUBQUERY || type == OPType_FOREACH) {
