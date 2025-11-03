@@ -819,8 +819,7 @@ jobs:
           # Use GCC for OpenMP support on macOS and set minimum SDK version
           export MACOSX_DEPLOYMENT_TARGET=11.0
           export OSX_MIN_SDK_VER=11.0
-          export CMAKE_FLAGS="${CMAKE_FLAGS:-} -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-          make GCC=1 DEBUG=${{ matrix.platform.is_debug }}
+          make GCC=1 DEBUG=${{ matrix.platform.is_debug }} CMAKE_FLAGS="-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 
       - name: Save cache for GraphBLAS
         if: always() && steps.cache_graphblas.outputs.cache-hit == false
