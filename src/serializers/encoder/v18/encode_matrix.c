@@ -23,9 +23,9 @@ static void _ExtractTensors
 	ASSERT(TDP != NULL);
 
 	GrB_Info info;
-	GrB_Matrix M  = Delta_Matrix_M  (D) ;
-	GrB_Matrix DP = Delta_Matrix_DP (D) ;
-	GrB_Matrix DM = Delta_Matrix_DM (D) ;
+	GrB_Matrix M  = DELTA_MATRIX_M  (D) ;
+	GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS (D) ;
+	GrB_Matrix DM = DELTA_MATRIX_DELTA_MINUS (D) ;
 
 	// create a temporary matrix which will contain A's tensors
 	GrB_Index nrows;
@@ -310,9 +310,9 @@ static void _Encode_Delta_Matrix
 
 	GrB_Info info;
 
-	GrB_Matrix M  = Delta_Matrix_M  (D) ;
-	GrB_Matrix DP = Delta_Matrix_DP (D) ;
-	GrB_Matrix DM = Delta_Matrix_DM (D) ;
+	GrB_Matrix M  = DELTA_MATRIX_M  (D) ;
+	GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS (D) ;
+	GrB_Matrix DM = DELTA_MATRIX_DELTA_MINUS (D) ;
 
 	_Encode_GrB_Matrix(rdb, M,  reload);
 	_Encode_GrB_Matrix(rdb, DP, reload);

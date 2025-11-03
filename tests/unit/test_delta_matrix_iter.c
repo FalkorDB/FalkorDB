@@ -89,7 +89,7 @@ void test_RGMatrixTupleIter_next() {
 	//--------------------------------------------------------------------------
 
 	// remove element at position i,j
-	info = Delta_Matrix_removeElement(A, i, j);
+	info = Delta_Matrix_removeElement_UINT64(A, i, j);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// set element at position i+1,j+1
@@ -275,7 +275,7 @@ void test_RGMatrixTupleIter_iterate_row() {
 	//--------------------------------------------------------------------------
 
 	// remove element at position i,j
-	info = Delta_Matrix_removeElement(A, i, j);
+	info = Delta_Matrix_removeElement_UINT64(A, i, j);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// wait, DM can't have pendding changes
@@ -353,7 +353,7 @@ void test_RGMatrixTupleIter_iterate_range() {
 	//--------------------------------------------------------------------------
 
 	// remove element at position i,j
-	info = Delta_Matrix_removeElement(A, i, j);
+	info = Delta_Matrix_removeElement_UINT64(A, i, j);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// set element at position i+1,j+1

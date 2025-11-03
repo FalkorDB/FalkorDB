@@ -6,7 +6,9 @@
 #include "RG.h"
 #include "tensor.h"
 #include "util/arr.h"
+#include "globals.h"
 #include "../delta_matrix/delta_matrix.h"
+#include "../delta_matrix/delta_utils.h"
 #include "../delta_matrix/delta_matrix_iter.h"
 
 // init new tensor
@@ -30,60 +32,8 @@ void Tensor_SetElement
 	uint64_t x      // value
 ) {
 	ASSERT(T != NULL);
-
-	// _x = A[row, col]
-	GrB_Index _x;
-	GrB_Vector V;
-	GrB_Info info = Delta_Matrix_extractElement_UINT64(&_x, T, row, col);
-
-	//--------------------------------------------------------------------------
-	// new entry
-	//--------------------------------------------------------------------------
-
-	if(info == GrB_NO_VALUE) {
-		info = Delta_Matrix_setElement_UINT64(T, x, row, col);
-		ASSERT(info == GrB_SUCCESS);
-		return;
-	}
-
-	//--------------------------------------------------------------------------
-	// single entry -> vector
-	//--------------------------------------------------------------------------
-
-	if(SCALAR_ENTRY(_x)) {
-		info = GrB_Vector_new(&V, GrB_BOOL, GrB_INDEX_MAX);
-		ASSERT(info == GrB_SUCCESS);
-
-		// T[row, col] = V
-		uint64_t vec_entry = SET_MSB((uint64_t)(uintptr_t)V);
-		info = Delta_Matrix_setElement_UINT64(T, vec_entry, row, col);
-		ASSERT(info == GrB_SUCCESS);
-
-		// populate vector with both original entry and newly added value
-		info = GrB_Vector_setElement_BOOL(V, true, _x);
-		ASSERT(info == GrB_SUCCESS);
-
-		info = GrB_Vector_setElement_BOOL(V, true, x);
-		ASSERT(info == GrB_SUCCESS);
-
-		// flush vector
-		info = GrB_wait(V, GrB_MATERIALIZE);
-		ASSERT(info == GrB_SUCCESS);
-
-		return;
-	}
-
-	//--------------------------------------------------------------------------
-	// add x to existing vector
-	//--------------------------------------------------------------------------
-
-	V = AS_VECTOR(_x);
-	info = GrB_Vector_setElement_BOOL(V, true, x);
-	ASSERT(info == GrB_SUCCESS);
-
-	// flush vector
-	info = GrB_wait(V, GrB_MATERIALIZE);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_BinaryOp accum = Global_GrB_Ops_Get()->push_id;
+	Delta_Matrix_Assign_Element_UINT64(T, accum, x, row, col);
 }
 
 // different set methods available for tensor
@@ -108,167 +58,9 @@ void Tensor_SetElements
 	ASSERT(cols != NULL);
 	ASSERT(vals != NULL);
 
-	// a new entry can cause one of the following transitions:
-	// 1. the new entry creates a new scalar at T[i,j]
-	// 2. the new entry convers an existing scalar at T[i,j] to a vector
-	// 3. the new entry is added to an already existing vector
-
-	// array of indexes pairs
-	// delayed[i, i+1] points to a range of consecutive elements to be inserted
-	// these elements are creating a new entries either scalar or vector
-	uint64_t *delayed = array_new(uint64_t, 0);
-
-	GrB_Vector V;
-	GrB_Info info;
-
-	// i's is advanced within the loop's body
-	for(uint64_t i = 0; i < n;) {
-		enum SetMethod method;  // insert method
-
-		uint64_t  x   = vals[i];  // element value
-		GrB_Index row = rows[i];  // element row index
-		GrB_Index col = cols[i];  // element column index
-
-		//----------------------------------------------------------------------
-		// determine insert method
-		//----------------------------------------------------------------------
-
-		// check tensor at T[row,col]
-		uint64_t _x;
-		info = Delta_Matrix_extractElement_UINT64(&_x, T, row, col);
-
-		if(info == GrB_NO_VALUE) {
-			// new entry
-			method = NEW_SCALAR;
-		} else if(SCALAR_ENTRY(_x)) {
-			// switch from scalar entry to vector
-			method = NEW_VECTOR;
-		} else {
-			// add to existing vector
-			method = EXISTING_VECTOR;
-		}
-
-		// consecutive elements sharing the same row, col indexes
-		uint64_t j = i;
-		while(j < n) {
-			GrB_Index next_row = rows[j];  // next row index
-			GrB_Index next_col = cols[j];  // next column index
-
-			if(row != next_row || col != next_col) {
-				break;
-			}
-
-			// consecutive elements, advance
-			j++;
-		}
-
-		// act according to insert method
-		switch(method) {
-			case NEW_SCALAR:
-				// save elements IDs
-				// we can't insert at this time as we'll be introducing pendding
-				// changes in a READ / WRITE scenario
-				array_append(delayed, i);
-				array_append(delayed, j);
-				break;
-			case NEW_VECTOR:
-				info = GrB_Vector_new(&V, GrB_BOOL, GrB_INDEX_MAX);
-				ASSERT(info == GrB_SUCCESS);
-
-				// update scalar entry to a vector
-				// it is OK to write to T->A as we're updating an existing entry
-				uint64_t vec_entry = SET_MSB((uint64_t)(uintptr_t) V);
-				info = Delta_Matrix_setElement_UINT64(T, vec_entry, row, col);
-				ASSERT(info == GrB_SUCCESS);
-
-				// add existing entry to vector
-				info = GrB_Vector_setElement_BOOL(V, true, _x);
-				ASSERT(info == GrB_SUCCESS);
-
-				// add new entries
-				for(; i < j; i++) {
-					x = vals[i];  // element value
-					// add entry to vector
-					info = GrB_Vector_setElement_BOOL(V, true, x);
-					ASSERT(info == GrB_SUCCESS);
-				}
-
-				// flush vector
-				info = GrB_wait(V, GrB_MATERIALIZE);
-				ASSERT(info == GrB_SUCCESS);
-
-				break;
-			case EXISTING_VECTOR:
-				V = AS_VECTOR(_x);
-
-				// add new entries
-				for(; i < j; i++) {
-					x = vals[i];  // element value
-					// add entry to vector
-					info = GrB_Vector_setElement_BOOL(V, true, x);
-					ASSERT(info == GrB_SUCCESS);
-				}
-
-				// flush vector
-				info = GrB_wait(V, GrB_MATERIALIZE);
-				ASSERT(info == GrB_SUCCESS);
-
-				break;
-			default:
-				ASSERT(false);
-		}
-
-		// advance i, skipping all consecutive elements
-		i = j;
+	for(uint64_t i = 0; i < n; ++i){
+		Tensor_SetElement(T, rows[i], cols[i], vals[i]);
 	}
-
-	// process delayed inserts
-	n = array_len(delayed);
-	for(uint64_t i = 0; i < n; i+=2) {
-		uint64_t a = delayed[i];
-		uint64_t z = delayed[i+1];
-
-		uint64_t  x   = vals[a];  // element value
-		GrB_Index row = rows[a];  // element row index
-		GrB_Index col = cols[a];  // element column index
-
-		// determine insert method:
-		// single element -> scalar
-		// multiple entries -> vector
-		enum SetMethod method = (z - a == 1) ? NEW_SCALAR : NEW_VECTOR;
-
-		switch(method) {
-			case NEW_SCALAR:
-				info = Delta_Matrix_setElement_UINT64(T, x, row, col);
-				ASSERT(info == GrB_SUCCESS);
-				break;
-			case NEW_VECTOR:
-				// set vector entry
-				info = GrB_Vector_new(&V, GrB_BOOL, GrB_INDEX_MAX);
-				ASSERT(info == GrB_SUCCESS);
-
-				uint64_t vec_entry = SET_MSB((uint64_t)(uintptr_t) V);
-				info = Delta_Matrix_setElement_UINT64(T, vec_entry, row, col);
-				ASSERT(info == GrB_SUCCESS);
-
-				// add elements to vector
-				for(uint j = a; j < z; j++) {
-					x = vals[j];
-					info = GrB_Vector_setElement_BOOL(V, true, x);
-					ASSERT(info == GrB_SUCCESS);
-				}
-
-				// flush vector
-				info = GrB_wait(V, GrB_MATERIALIZE);
-				ASSERT(info == GrB_SUCCESS);
-
-				break;
-			default:
-				break;
-		}
-	}
-
-	array_free(delayed);
 }
 
 // set multiple entries
@@ -294,173 +86,13 @@ void Tensor_SetEdges
 				Edge_GetDestNodeID(e) <= Edge_GetDestNodeID(next)));
 	}
 	#endif
-
-	// a new entry can cause one of the following transitions:
-	// 1. the new entry creates a new scalar at T[i,j]
-	// 2. the new entry convers an existing scalar at T[i,j] to a vector
-	// 3. the new entry is added to an already existing vector
-
-	// array of indexes pairs
-	// delayed[i, i+1] points to a range of consecutive elements to be inserted
-	// these elements are creating new entries either scalar or vector
-	uint64_t *delayed = array_new(uint64_t, 0); 
-
-	GrB_Vector V;
-	GrB_Info info;
-
-	// i's is advanced within the loop's body
-	for (uint64_t i = 0; i < n;) {
-		enum SetMethod method;                    // insert method
-		const Edge *e   = elements[i];            // tuple (row, col, x)
-		uint64_t    x   = ENTITY_GET_ID(e);       // element value
-		GrB_Index   row = Edge_GetSrcNodeID(e);   // element row index
-		GrB_Index   col = Edge_GetDestNodeID(e);  // element column index
-
-		//----------------------------------------------------------------------
-		// determine insert method
-		//----------------------------------------------------------------------
-
-		// check tensor at T[row,col]
-		uint64_t _x;
-		info = Delta_Matrix_extractElement_UINT64(&_x, T, row, col);
-
-		if(info == GrB_NO_VALUE) {
-			// new entry
-			method = NEW_SCALAR;
-		} else if(SCALAR_ENTRY(_x)) {
-			// switch from scalar entry to vector
-			method = NEW_VECTOR;
-		} else {
-			// add to existing vector
-			method = EXISTING_VECTOR;
-		}
-
-		// consecutive elements sharing the same row, col indexes
-		uint64_t j = i;
-		while(j < n) {
-			const Edge *next = elements[j];
-			GrB_Index next_row = Edge_GetSrcNodeID(next);   // next row index
-			GrB_Index next_col = Edge_GetDestNodeID(next);  // next column index
-
-			if(row != next_row || col != next_col) {
-				break;
-			}
-
-			// consecutive elements, advance
-			j++;
-		}
-
-		// act according to insert method
-		switch(method) {
-			case NEW_SCALAR:
-				// save elements IDs
-				// we can't insert at this time as we'll be introducing pendding
-				// changes in a READ / WRITE scenario
-				array_append(delayed, i);
-				array_append(delayed, j);
-				break;
-			case NEW_VECTOR:
-				info = GrB_Vector_new(&V, GrB_BOOL, GrB_INDEX_MAX);
-				ASSERT(info == GrB_SUCCESS);
-
-				// update scalar entry to a vector
-				// it is OK to write to T->A as we're updating an existing entry
-				uint64_t vec_entry = SET_MSB((uint64_t)(uintptr_t) V);
-				info = Delta_Matrix_setElement_UINT64(T, vec_entry, row, col);
-				ASSERT(info == GrB_SUCCESS);
-
-				// add existing entry to vector
-				info = GrB_Vector_setElement_BOOL(V, true, _x);
-				ASSERT(info == GrB_SUCCESS);
-
-				// add new entries
-				for(; i < j; i++) { 
-					e = elements[i];       // tuple (row, col, x)
-					x = ENTITY_GET_ID(e);  // element value
-					// add entry to vector
-					info = GrB_Vector_setElement_BOOL(V, true, x);
-					ASSERT(info == GrB_SUCCESS);
-				}
-
-				// flush vector
-				info = GrB_wait(V, GrB_MATERIALIZE);
-				ASSERT(info == GrB_SUCCESS);
-
-				break;
-			case EXISTING_VECTOR:
-				V = AS_VECTOR(_x);
-
-				// add new entries
-				for(; i < j; i++) { 
-					e = elements[i];          // tuple (row, col, x)
-					x = ENTITY_GET_ID(e);  // element value
-					// add entry to vector
-					info = GrB_Vector_setElement_BOOL(V, true, x);
-					ASSERT(info == GrB_SUCCESS);
-				}
-
-				// flush vector
-				info = GrB_wait(V, GrB_MATERIALIZE);
-				ASSERT(info == GrB_SUCCESS);
-
-				break;
-			default:
-				ASSERT(false);
-		}
-
-		// advance i, skipping all consecutive elements
-		i = j;
+	for(uint64_t i = 0; i < n; ++i) {
+		const Edge *e = elements[i];
+		NodeID     src    = Edge_GetSrcNodeID(e);
+		NodeID     dest   = Edge_GetDestNodeID(e);
+		EdgeID     id     = e->id;
+		Tensor_SetElement(T, src, dest, id);
 	}
-
-	// process delayed inserts
-	n = array_len(delayed);
-	for(uint64_t i = 0; i < n; i+=2) {
-		uint64_t a = delayed[i];
-		uint64_t z = delayed[i+1];
-
-		const Edge *e   = elements[a];
-		uint64_t    x   = ENTITY_GET_ID(e);       // element value
-		GrB_Index   row = Edge_GetSrcNodeID(e);   // element row index
-		GrB_Index   col = Edge_GetDestNodeID(e);  // element column index
-
-		// determine insert method:
-		// single element -> scalar
-		// multiple entries -> vector
-		enum SetMethod method = (z - a == 1) ? NEW_SCALAR : NEW_VECTOR;
-
-		switch(method) {
-			case NEW_SCALAR:
-				info = Delta_Matrix_setElement_UINT64(T, x, row, col);
-				ASSERT(info == GrB_SUCCESS);
-				break;
-			case NEW_VECTOR:
-				// set vector entry
-				info = GrB_Vector_new(&V, GrB_BOOL, GrB_INDEX_MAX);
-				ASSERT(info == GrB_SUCCESS);
-
-				uint64_t vec_entry = SET_MSB((uint64_t)(uintptr_t) V);
-				info = Delta_Matrix_setElement_UINT64(T, vec_entry, row, col);
-				ASSERT(info == GrB_SUCCESS);
-
-				// add elements to vector
-				for(uint64_t j = a; j < z; j++) {
-					e = elements[j];
-					x = ENTITY_GET_ID(e);
-					info = GrB_Vector_setElement_BOOL(V, true, x);
-					ASSERT(info == GrB_SUCCESS);
-				}
-
-				// flush vector
-				info = GrB_wait(V, GrB_MATERIALIZE);
-				ASSERT(info == GrB_SUCCESS);
-
-				break;
-			default:
-				break;
-		}
-	}
-
-	array_free(delayed);
 }
 
 // qsort element compare function
@@ -493,7 +125,7 @@ void Tensor_RemoveElements_Flat
 		GrB_Index   row = Edge_GetSrcNodeID(e);   // element row index
 		GrB_Index   col = Edge_GetDestNodeID(e);  // element column index
 
-		GrB_Info info = Delta_Matrix_removeElement(T, row, col);
+		GrB_Info info = Delta_Matrix_removeElement_UINT64(T, row, col);
 		ASSERT(info == GrB_SUCCESS);
 	}
 }
@@ -576,21 +208,9 @@ void Tensor_RemoveElements
 				// postpone entry removal
 				GrB_free(&V);
 				array_append(delayed, i);
-
-				// do not leave a dangling pointer
-				// replace vector entry with a delete marker
-				uint64_t delete_marker = MSB_MASK;
-				Delta_Matrix_setElement_UINT64(T, delete_marker, row, col);
 			} else if(d+1 == nvals) {
 				// transition from vector to scalar
 				// determine which vector element becomes a scalar
-
-				// sort consecutive elements i..j by element value
-				qsort((void*)(elements + i), d, sizeof(Edge), _value_cmp);
-
-				// iterate over vector entries
-				// determine which of the vector's entries transitions into
-				// a scalar
 
 				struct GB_Iterator_opaque _it;
 				GxB_Iterator it = &_it;
@@ -601,27 +221,24 @@ void Tensor_RemoveElements
 				// seek to the first entry
 				info = GxB_Vector_Iterator_seek(it, 0);
 
-				GrB_Index idx;    // vector element
-				uint64_t  v;      // element's value
-				uint64_t  k = i;  // first consecutive element
-				while(info != GxB_EXHAUSTED) {
-					// get current element
+				uint64_t  idx = 0;    // vector element
+
+				// Use bitwise xor to cancel all equal values, leaving only the 
+				// odd one out.
+				
+				for(uint64_t  k = i; k < j; k++){
 					e = elements + k;
-					v = ENTITY_GET_ID(e);
+					idx ^= ENTITY_GET_ID(e); 
+				}
 
+				while(info != GxB_EXHAUSTED) {
 					// get element index within the vector
-					idx = GxB_Vector_Iterator_getIndex(it);
-
-					// break if vector's entry isn't in the list of
-					// deleted elements
-					if(idx != v) break;
-
+					idx ^= GxB_Vector_Iterator_getIndex(it);
 					// move to the next entry in V
 					info = GxB_Vector_Iterator_next(it);
-
-					// advance to next element
-					k = MIN(k + 1, i + d - 1);
 				}
+
+				ASSERT(GxB_Vector_isStoredElement(V, idx) == GrB_SUCCESS);
 
 				// free vector and set scalar
 				GrB_free(&V);
@@ -653,7 +270,7 @@ void Tensor_RemoveElements
 		GrB_Index   row = Edge_GetSrcNodeID(e);   // element row index
 		GrB_Index   col = Edge_GetDestNodeID(e);  // element column index
 
-		info = Delta_Matrix_removeElement(T, row, col);
+		info = Delta_Matrix_removeElement_UINT64(T, row, col);
 		ASSERT(info == GrB_SUCCESS);
 	}
 
@@ -750,49 +367,17 @@ uint64_t Tensor_ColDegree
 	return degree;
 }
 
-// free vector entries of a tensor
-static void _free_vectors
-(
-	void *z,       // [ignored] new value
-	const void *x  // current entry
-) {
-	// see if entry is a vector
-	uint64_t _x = *(uint64_t*)(x);
-	if(!SCALAR_ENTRY(_x)) {
-		// free vector
-		GrB_Vector V = AS_VECTOR(_x);
-		GrB_free(&V);
-	}
-}
-
 // free tensor
 void Tensor_free
 (
 	Tensor *T  // tensor
 ) {
 	ASSERT(T != NULL && *T != NULL);
-
+	GrB_Info info;
 	Tensor t = *T;
 
-	// flush all pendding changes in T
-	// TODO: we might be able to avoid this if we had access to
-	// the tensor underline matrices: DP, DM & M
-	GrB_Info info = Delta_Matrix_wait(t, true);
-	ASSERT(info == GrB_SUCCESS);
-
-	// get delta matrix M matrix
-	GrB_Matrix M = Delta_Matrix_M(t);
-
-	// initialize unaryop only once
-	static GrB_UnaryOp unaryop = NULL;
-	if(unaryop == NULL) {
-		info = GrB_UnaryOp_new(&unaryop, _free_vectors, GrB_UINT64, GrB_UINT64);
-		ASSERT(info == GrB_SUCCESS);
-	}
-
 	// apply _free_vectors on every entry of the tensor
-	info = GrB_Matrix_apply(M, NULL, NULL, unaryop, M, NULL);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (Delta_Matrix_apply(t, Global_GrB_Ops_Get()->free_tensors, t));
 
 	// free tensor internals
 	Delta_Matrix_free(T);

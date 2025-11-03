@@ -33,7 +33,8 @@ GrB_Info Delta_Matrix_setElement_BOOL
 	marked_for_deletion = (info == GrB_SUCCESS);
 
 	if(marked_for_deletion) {
-		// unset delta-minus
+		// unset delta-minus and set m
+		GrB_OK(GrB_Matrix_setElement_BOOL(m, true, i, j));
 		GrB_OK(GrB_Matrix_removeElement(dm, i, j));
 		Delta_Matrix_setDirty(C);
 	} else {
@@ -46,7 +47,6 @@ GrB_Info Delta_Matrix_setElement_BOOL
 			Delta_Matrix_setDirty(C);
 		}
 	}
-
 	return GrB_SUCCESS;
 }
 

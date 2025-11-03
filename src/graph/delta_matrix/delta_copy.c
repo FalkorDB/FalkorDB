@@ -36,4 +36,3 @@ GrB_Info Delta_Matrix_dup
 	*C = _C;
 	return GrB_SUCCESS;
 }
-

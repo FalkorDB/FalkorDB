@@ -1,9 +1,9 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "GraphBLAS.h"
 #include "RG.h"
 #include "delta_utils.h"
 #include "delta_matrix.h"
@@ -37,10 +37,10 @@ static void Delta_Matrix_sync_deletions
 
 	if(nvals > 0) { //shortcut if no vals
 		GrB_OK (GrB_transpose(m, dm, NULL, m, GrB_DESC_RSCT0));
-	}
 
-	// clear delta minus
-	GrB_OK (GrB_Matrix_clear(dm));
+		// clear delta minus
+		GrB_OK (GrB_Matrix_clear(dm));
+	}
 }
 
 static void Delta_Matrix_sync_additions
@@ -49,19 +49,23 @@ static void Delta_Matrix_sync_additions
 ) {
 	ASSERT(C != NULL);
 
+	GrB_Type   t  = NULL;
 	GrB_Matrix m  = DELTA_MATRIX_M(C);
 	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(C);
 
 	GrB_Index nvals;
 	GrB_OK (GrB_Matrix_nvals(&nvals, dp));
+	GrB_OK (GxB_Matrix_type(&t, m));
 
 	if(nvals > 0) { //shortcut if no vals
-		GrB_OK (GrB_Matrix_assign(m, dp, NULL, dp, GrB_ALL, 0, GrB_ALL, 0,
-			GrB_DESC_S));
-	}
+		// The binary operator should not get applied since m and dp are
+		// disjoint
+		GrB_BinaryOp op = t == GrB_BOOL? GrB_ONEB_BOOL : GxB_ANY_UINT64;
+		GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp (m, NULL, NULL, op, m, dp, NULL));
 
-	// clear delta plus
-	GrB_OK (GrB_Matrix_clear(dp));
+		// clear delta plus
+		GrB_OK (GrB_Matrix_clear(dp));
+	}
 }
 
 static void Delta_Matrix_sync

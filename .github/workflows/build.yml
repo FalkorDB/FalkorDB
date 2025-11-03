@@ -499,6 +499,47 @@ jobs:
           name: unit-test-logs-${{ matrix.platform.suffix }}
           path: /tmp/logs
 
+  unit-benchmarks:
+    needs: build
+    runs-on: ${{ matrix.platform.machine_label }}
+    # if: github.ref == 'refs/heads/master'
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux/amd64
+            suffix: x64
+            os: ubuntu
+            machine_label: ubuntu-latest
+          - name: linux/arm64
+            suffix: arm64v8
+            os: ubuntu
+            machine_label: ubuntu-24.04-arm
+    steps:
+      - name: Download image
+        uses: actions/download-artifact@v4
+        with:
+          name: falkordb-tests-${{ matrix.platform.suffix }}
+          path: /tmp
+
+      - name: Load image
+        id: load_image
+        run: |
+          docker load --input /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
+
+      - name: Unit benchmarks
+        run: |
+          docker run -i --rm falkordb/falkordb-tests bash -c "
+            apt-get update && apt-get install -y git cmake build-essential &&
+            git clone https://github.com/google/benchmark.git /tmp/benchmark &&
+            cd /tmp/benchmark &&
+            cmake -E make_directory build &&
+            cmake -E chdir build cmake -DBENCHMARK_DOWNLOAD_DEPENDENCIES=on -DCMAKE_BUILD_TYPE=Release .. &&
+            cmake --build build --config Release --target install &&
+            cd - &&
+            make CLEAR_LOGS=0 unit-benchmarks
+          "
+
   flow-tests:
     needs: build
     runs-on: ${{ matrix.platform.machine_label }}

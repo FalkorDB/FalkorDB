@@ -1,0 +1,236 @@
+#include "tests/unit_benchmarks/create_random.h"
+#include <pthread.h>
+
+extern "C" {
+    #include "src/schema/schema.h"
+    #include "src/slow_log/slow_log.h"
+    #include "src/queries_log/queries_log.h"
+    #include "src/serializers/encode_context.h"
+    #include "src/serializers/decode_context.h"
+    #include "src/util/cache/cache.h"
+
+    struct GraphContext {
+        Graph *g;                              // container for all matrices and entity properties
+        int ref_count;                         // number of active references
+        rax *attributes;                       // from strings to attribute IDs
+        pthread_rwlock_t _attribute_rwlock;    // read-write lock to protect access to the attribute maps
+        char *graph_name;                      // string associated with graph
+        char **string_mapping;                 // from attribute IDs to strings
+        Schema **node_schemas;                 // array of schemas for each node label
+        Schema **relation_schemas;             // array of schemas for each relation type
+        unsigned short index_count;            // number of indicies
+        SlowLog *slowlog;                      // slowlog associated with graph
+        QueriesLog queries_log;                // log last x executed queries
+        GraphEncodeContext *encoding_context;  // encode context of the graph
+        GraphDecodeContext *decoding_context;  // decode context of the graph
+        Cache *cache;                          // global cache of execution plans
+        XXH32_hash_t version;                  // graph version
+        RedisModuleString *telemetry_stream;   // telemetry stream name
+        
+        bool write_in_progress;                // write query in progess
+        CircularBuffer pending_write_queue;    // pending write queries queue
+    };
+
+    Schema *GraphContext_AddSchema
+    (
+        GraphContext *gc,
+        const char *label,
+        SchemaType t
+    ) ;
+
+    bool QueryCtx_Init(void) ;
+    void QueryCtx_Free(void) ;
+    void QueryCtx_SetGraphCtx (GraphContext *gc) ;
+}
+
+static void _fake_graph_context() {
+	GraphContext *gc = (GraphContext *)calloc(1, sizeof(GraphContext));
+    gc->g = Graph_New(16, 16);
+	ASSERT(QueryCtx_Init());
+	QueryCtx_SetGraphCtx(gc);
+}
+
+void rg_setup(const benchmark::State &state) {
+	// Initialize GraphBLAS.
+	RedisModule_Alloc   = malloc;
+	RedisModule_Realloc = realloc;
+	RedisModule_Calloc  = calloc;
+	RedisModule_Free    = free;
+	RedisModule_Strdup  = strdup;
+	LAGraph_Init(NULL);
+
+	Config_Option_set(Config_DELTA_MAX_PENDING_CHANGES,
+			"100000", NULL);
+    GrB_Global_set_INT32(GrB_GLOBAL, GxB_JIT_OFF, GxB_JIT_C_CONTROL);
+    GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
+	GxB_Global_Option_set(GxB_FORMAT, GxB_BY_ROW); // all matrices in CSR format
+    _fake_graph_context();
+}
+
+void rg_teardown(const benchmark::State &state) {
+    GrB_finalize();
+    QueryCtx_Free();
+    // GrB_OK((GrB_Info) LAGraph_Finalize(NULL));
+}
+
+void BM_eval_add_chain(benchmark::State &state) {
+    Delta_Matrix Cs[5];
+    rax          *matrices = raxNew();
+    uint64_t     n         = 10000000;
+    uint64_t     seed      = 870713428976ul;    
+    Delta_Matrix res       = NULL;
+
+    int additions = state.range(0);
+    int deletions = state.range(1);
+    double add_density = additions / ((double) n * (double) n);
+    double del_density = deletions / ((double) n * (double) n); 
+    unsigned char names[5][16] = {"C0", "C1", "C2", "C3", "C4"};
+
+
+    for(int i = 0; i < 5; i++) {
+        Delta_Random_Matrix(&Cs[i], GrB_BOOL, n, 5E-7, add_density, del_density, seed + 7 * i);
+        
+        Delta_Matrix_wait(Cs[i], false);
+        Delta_Matrix_validate(Cs[i], true);
+
+        raxInsert(matrices, names[i], strlen((char *) names[i]), Cs[i], NULL);
+    }
+
+	AlgebraicExpression *exp = AlgebraicExpression_FromString("C0+C1+C2+C3+C4", matrices);
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        Delta_Matrix_free(&res);
+        Delta_Matrix_new(&res, GrB_BOOL, n, n, false);
+        Delta_Matrix_wait(res, true);
+        state.ResumeTiming();
+
+        AlgebraicExpression_Eval(exp, res);
+    }
+
+    AlgebraicExpression_Free(exp);
+
+    for(int i = 0; i < 5; i++) {
+        Delta_Matrix_free(&Cs[i]);
+    }
+    Delta_Matrix_free(&res);
+}
+
+void BM_eval(benchmark::State &state, const char *expression) {
+    Delta_Matrix F;
+    Delta_Matrix Cs[5];
+    rax          *matrices = raxNew();
+    uint64_t     n         = 10000000;
+    uint64_t     m         = 16;
+    uint64_t     seed      = 870713428976ul;    
+    Delta_Matrix res       = NULL;
+
+    int additions = state.range(0);
+    int deletions = state.range(1);
+    double add_density = additions / ((double) n * (double) n);
+    double del_density = deletions / ((double) n * (double) n); 
+    unsigned char names[5][16] = {"C0", "C1", "C2", "C3", "C4"};
+
+
+    for(int i = 0; i < 5; i++) {
+        Delta_Random_Matrix(&Cs[i], GrB_BOOL, n, 5E-7, add_density, del_density, seed + 7 * i);
+        
+        Delta_Matrix_wait(Cs[i], false);
+        Delta_Matrix_validate(Cs[i], true);
+
+        raxInsert(matrices, names[i], strlen((char *) names[i]), Cs[i], NULL);
+    }
+
+    Delta_Matrix_new (&F, GrB_BOOL, m, n, false);
+    for(int i = 0; i < m; i++) {
+        Delta_Matrix_setElement_BOOL(F, i, i);
+    }
+    Delta_Matrix_wait(F, true);
+    raxInsert(matrices, (unsigned char *) "F", strlen("F"), F, NULL);
+
+	AlgebraicExpression *exp = AlgebraicExpression_FromString(expression, matrices);
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        Delta_Matrix_free(&res);
+        Delta_Matrix_new(&res, GrB_BOOL, m, n, false);
+        Delta_Matrix_wait(res, true);
+        state.ResumeTiming();
+
+        AlgebraicExpression_Eval(exp, res);
+    }
+
+    AlgebraicExpression_Free(exp);
+
+    for(int i = 0; i < 5; i++) {
+        Delta_Matrix_free(&Cs[i]);
+    }
+    Delta_Matrix_free(&res);
+    Delta_Matrix_free(&F);
+}
+
+void BM_eval_mul_chain(benchmark::State &state) {
+    Delta_Matrix C;
+    rax          *matrices = raxNew();
+    Delta_Matrix F         = NULL;
+    uint64_t     n         = 10000000;
+    uint64_t     m         = 16;
+    uint64_t     seed      = 870713428976ul;    
+    Delta_Matrix res       = NULL;
+
+    int    additions   = state.range(0);
+    int    deletions   = state.range(1);
+    double add_density = additions / ((double) n * (double) n);
+    double del_density = deletions / ((double) n * (double) n); 
+
+    Delta_Random_Matrix(&C, GrB_BOOL, n, 5E-7, add_density, del_density, seed);
+    
+    Delta_Matrix_wait(C, false);
+    Delta_Matrix_validate(C, true);
+
+
+    Delta_Matrix_new (&F, GrB_BOOL, m, n, false);
+    for(int i = 0; i < m; i++) {
+        Delta_Matrix_setElement_BOOL(F, i, i);
+    }
+    Delta_Matrix_wait(F, true);
+    raxInsert(matrices, (unsigned char *) "C", strlen("C"), C, NULL);
+    raxInsert(matrices, (unsigned char *) "F", strlen("F"), F, NULL);
+
+	AlgebraicExpression *exp = AlgebraicExpression_FromString("F*C", matrices);
+    GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        Delta_Matrix_free(&res);
+        Delta_Matrix_new(&res, GrB_BOOL, m, n, false);
+        state.ResumeTiming();
+
+        AlgebraicExpression_Eval(exp, res);
+        Delta_Matrix_wait(res, false);
+    }
+
+    AlgebraicExpression_Free(exp);
+    Delta_Matrix_free(&res);
+    Delta_Matrix_free(&C);
+}
+
+
+// BENCHMARK(BM_eval_add_chain)->Setup(rg_setup)->Teardown(rg_teardown)
+    // ->Unit(benchmark::kMicrosecond)->Args({10000, 10000});
+    // ->Unit(benchmark::kMillisecond)->Args({0, 0})->Args({10000, 10000})
+    // ->Args({0, 10000})->Args({10000, 0})->Args({100, 100})->Args({0, 100})
+    // ->Args({100, 0});
+BENCHMARK(BM_eval_mul_chain)->Setup(rg_setup)->Teardown(rg_teardown)
+    // ->Unit(benchmark::kMicrosecond)->Args({10000, 10000});
+    ->Args({0, 0})->Args({10000, 10000})
+    ->Args({0, 10000})->Args({10000, 0})->Args({100, 100})->Args({0, 100})
+    ->Args({100, 0});
+// BENCHMARK_CAPTURE(BM_eval, (F*C0*C1*C2) + (F*C1*C2*C3) + (F*C2*C3*C4), 
+//     "(F*C0*C1*C2)+(F*C0)")
+//     ->Setup(rg_setup)->Teardown(rg_teardown)
+//     ->Unit(benchmark::kMicrosecond)->Args({10000, 10000})->Iterations(1);
+//     // ->Unit(benchmark::kMillisecond)->Args({0, 0})->Args({10000, 10000})
+//     // ->Args({0, 10000})->Args({10000, 0})->Args({100, 100})->Args({0, 100})
+//     // ->Args({100, 0});
+BENCHMARK_MAIN();
