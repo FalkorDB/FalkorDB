@@ -93,7 +93,7 @@ jobs:
       uses: codecov/codecov-action@v5.5.0
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
-        file: codecov.txt
-        plugin: noop
+        files: codecov.txt
+        plugins: noop
         disable_search: true
         verbose: true
