@@ -9,6 +9,15 @@ else
 CMAKE_DEFS += GRAPHBLAS_USE_JIT:BOOL=off
 endif
 
+# Set CMAKE_DEFS before including readies makefiles so they get processed correctly
+CMAKE_DEFS += GRAPHBLAS_BUILD_STATIC_LIBS=ON
+CMAKE_DEFS += BUILD_STATIC_LIBS=ON
+CMAKE_DEFS += BUILD_SHARED_LIBS=OFF
+CMAKE_DEFS += BUILD_TESTING=off
+CMAKE_DEFS += CMAKE_POSITION_INDEPENDENT_CODE=on
+CMAKE_DEFS += CMAKE_C_FLAGS=-fno-stack-protector
+CMAKE_DEFS += CMAKE_CXX_FLAGS=-fno-stack-protector
+
 include $(ROOT)/deps/readies/mk/main
 
 #----------------------------------------------------------------------------------------------
@@ -38,14 +47,6 @@ TARGET=$(BINDIR)/libgraphblas.a
 #----------------------------------------------------------------------------------------------
 
 include $(MK)/defs
-
-CMAKE_DEFS += GRAPHBLAS_BUILD_STATIC_LIBS=ON
-CMAKE_DEFS += BUILD_STATIC_LIBS=ON
-CMAKE_DEFS += BUILD_SHARED_LIBS=OFF
-CMAKE_DEFS += BUILD_TESTING=off
-CMAKE_DEFS += CMAKE_POSITION_INDEPENDENT_CODE=on
-CMAKE_DEFS += CMAKE_C_FLAGS=-fno-stack-protector
-CMAKE_DEFS += CMAKE_CXX_FLAGS=-fno-stack-protector
 
 #----------------------------------------------------------------------------------------------
 
