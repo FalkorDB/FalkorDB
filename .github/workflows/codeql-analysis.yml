@@ -124,6 +124,7 @@ jobs:
       - name: Build
         run: |
           rustup default stable
+          apt install wget -y
           chmod +x ./deps/RediSearch/.install/install_cmake.sh
           ./deps/RediSearch/.install/install_cmake.sh
           make build
