@@ -39,15 +39,13 @@ TARGET=$(BINDIR)/libgraphblas.a
 
 include $(MK)/defs
 
-define CMAKE_DEFS +=
-	GRAPHBLAS_BUILD_STATIC_LIBS=ON
-	BUILD_STATIC_LIBS=ON
-	BUILD_SHARED_LIBS=OFF
-	BUILD_TESTING=off
-	CMAKE_POSITION_INDEPENDENT_CODE=on
-	CMAKE_C_FLAGS=-fno-stack-protector
-	CMAKE_CXX_FLAGS=-fno-stack-protector
-endef
+CMAKE_DEFS += GRAPHBLAS_BUILD_STATIC_LIBS=ON
+CMAKE_DEFS += BUILD_STATIC_LIBS=ON
+CMAKE_DEFS += BUILD_SHARED_LIBS=OFF
+CMAKE_DEFS += BUILD_TESTING=off
+CMAKE_DEFS += CMAKE_POSITION_INDEPENDENT_CODE=on
+CMAKE_DEFS += CMAKE_C_FLAGS=-fno-stack-protector
+CMAKE_DEFS += CMAKE_CXX_FLAGS=-fno-stack-protector
 
 #----------------------------------------------------------------------------------------------
 
