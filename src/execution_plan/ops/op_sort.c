@@ -255,14 +255,6 @@ static OpResult SortReset
 	OpSort *op = (OpSort *)ctx;
 	uint recordCount;
 
-	if (op->heap) {
-		recordCount = Heap_count(op->heap);
-		for (uint i = 0; i < recordCount; i++) {
-			Record r = (Record)Heap_poll (op->heap) ;
-			OpBase_DeleteRecord (&r) ;
-		}
-	}
-
 	if (op->buffer) {
 		recordCount = array_len (op->buffer) ;
 		for (uint i = op->record_idx; i < recordCount; i++) {
@@ -270,6 +262,16 @@ static OpResult SortReset
 			OpBase_DeleteRecord (&r) ;
 		}
 		array_clear (op->buffer) ;
+	}
+
+	if (op->heap) {
+		recordCount = Heap_count(op->heap);
+		for (uint i = 0; i < recordCount; i++) {
+			Record r = (Record)Heap_poll (op->heap) ;
+			OpBase_DeleteRecord (&r) ;
+		}
+		array_free (op->buffer) ;
+		op->buffer = NULL ;
 	}
 
 	op->first = true ;

@@ -39,6 +39,11 @@ void NewPendingCreationsContainer
 	EdgeCreateCtx *edges
 );
 
+void PendingCreations_Reset
+(
+	PendingCreations *ctx
+);
+
 // lock the graph and commit all pending changes
 void CommitNewEntities
 (
