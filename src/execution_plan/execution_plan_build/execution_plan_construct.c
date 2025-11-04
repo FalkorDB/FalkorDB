@@ -302,7 +302,7 @@ void ExecutionPlanSegment_ConvertClause
 	} else if(t == CYPHER_AST_FOREACH) {
 		_buildForeachOp(plan, clause, gc);
 	} else if(t == CYPHER_AST_CALL_SUBQUERY) {
-		buildCallSubqueryPlan(plan, clause);
+		buildCallSubqueryPlan (plan, clause) ;
 	} else if(t == CYPHER_AST_LOAD_CSV) {
 		_buildLoadCSVOp(plan, clause);
 	} else {

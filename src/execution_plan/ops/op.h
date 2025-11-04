@@ -17,6 +17,10 @@
 
 #define OP_REQUIRE_NEW_DATA(opRes) (opRes & (OP_DEPLETED | OP_REFRESH)) > 0
 
+#define OP_JOIN_MULTIPLE_STREAMS(op)                     \
+	(OpBase_Type((op)) == OPType_JOIN ||                 \
+	 OpBase_Type((op)) == OPType_CARTESIAN_PRODUCT)
+
 typedef enum {
 	OPType_ALL_NODE_SCAN,
 	OPType_NODE_BY_LABEL_SCAN,
@@ -45,7 +49,6 @@ typedef enum {
 	OPType_UNWIND,
 	OPType_FOREACH,
 	OPType_PROC_CALL,
-	OPType_CALLSUBQUERY,
 	OPType_ARGUMENT,
 	OPType_ARGUMENT_LIST,
 	OPType_CARTESIAN_PRODUCT,
@@ -58,6 +61,9 @@ typedef enum {
 	OPType_AND_APPLY_MULTIPLEXER,
 	OPType_OPTIONAL,
 	OPType_LOAD_CSV,
+	OPType_SUBQUERY_FOREACH,
+	OPType_EMPTY_ROW,
+	OPType_EAGER
 } OPType;
 
 typedef enum {
@@ -100,7 +106,7 @@ static const OPType FILTER_RECURSE_BLACKLIST[] = {
 	OPType_MERGE
 };
 
-#define EAGER_OP_COUNT 7
+#define EAGER_OP_COUNT 8
 static const OPType EAGER_OPERATIONS[] = {
 	OPType_AGGREGATE,
 	OPType_CREATE,
@@ -108,7 +114,8 @@ static const OPType EAGER_OPERATIONS[] = {
 	OPType_UPDATE,
 	OPType_MERGE,
 	OPType_FOREACH,
-	OPType_SORT
+	OPType_SORT,
+	OPType_EAGER
 };
 
 #define MODIFYING_OP_COUNT 4
