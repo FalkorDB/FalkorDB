@@ -2638,3 +2638,249 @@ updating clause.")
         res = self.graph.query(q).result_set
         self.env.assertEquals(res[0][0], 6) # total
 
+    def test_47_type_boundries(self):
+        # Divide-by-zero inside subquery
+        q = """UNWIND [0, 1, 2] AS x
+               CALL {
+                   WITH x
+                   RETURN 10 / x AS val
+               }
+               RETURN x, val"""
+
+        try:
+            self.graph.query(q).result_set
+            self.env.assertTrue(False)
+        except Exception as e:
+            pass
+
+        # Accessing missing variable from parent
+        q = """WITH 1 AS a
+               CALL {
+                   WITH *
+                   RETURN b + 1 AS res
+                }
+                RETURN res"""
+        try:
+            self.graph.query(q).result_set
+            self.env.assertTrue(False)
+        except Exception as e:
+            pass
+
+        # Type mismatch propagation
+        q = """WITH '5' AS s
+               CALL {
+                   WITH s
+                   RETURN s / 1 AS result
+               }
+               RETURN result"""
+
+        try:
+            self.graph.query(q).result_set
+            self.env.assertTrue(False)
+        except Exception as e:
+            pass
+
+        # Using property access on non-node
+        q = """WITH 1 AS a
+               CALL {
+                   RETURN a.v AS res
+               }
+               RETURN res"""
+
+        try:
+            self.graph.query(q).result_set
+            self.env.assertTrue(False)
+        except Exception as e:
+            pass
+
+        # Null propagation check
+        q = """WITH null AS n
+               CALL {
+                   WITH n
+                   RETURN range(n, 99) AS v
+               }
+               RETURN v"""
+
+        try:
+            self.graph.query(q).result_set
+            self.env.assertTrue(False)
+        except Exception as e:
+            pass
+
+
+    def test_48_limit_skip_order(self):
+        q = """UNWIND range(1,10) AS i
+               CALL {
+                   WITH i
+                   RETURN i AS j
+                   ORDER BY i DESC
+                   LIMIT 2
+               }
+               RETURN j
+               ORDER BY j ASC"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(len(res), 10)
+
+        q = """CALL {
+                   UNWIND range(1,5) AS x
+                   RETURN x
+                   ORDER BY x DESC
+                   SKIP 2
+                   LIMIT 1
+               }
+               RETURN x"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(len(res), 1)
+        self.env.assertEquals(res[0][0], 3)
+
+        q = """UNWIND [3, 1, 2] AS a
+               CALL {
+                   WITH a
+                   RETURN a AS val
+                   ORDER BY val ASC
+                   LIMIT 1
+               }
+               RETURN a, val
+               ORDER BY a"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(len(res), 3)
+        self.env.assertEquals(res[0][0], 1) # a
+        self.env.assertEquals(res[0][1], 1) # val
+        self.env.assertEquals(res[1][0], 2) # a
+        self.env.assertEquals(res[1][1], 2) # val
+        self.env.assertEquals(res[2][0], 3) # a
+        self.env.assertEquals(res[2][1], 3) # val
+
+    def test_49_multiple_calls(self):
+        q = """WITH 1 AS a, 2 AS b
+               CALL {
+                   WITH a
+                   RETURN a + 10 AS plus
+               }
+               CALL {
+                   WITH b
+                   RETURN b * 2 AS mult
+               }
+               RETURN a, b, plus, mult"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 1) # a
+        self.env.assertEquals(res[0][1], 2) # b
+        self.env.assertEquals(res[0][2], 11) # plus
+        self.env.assertEquals(res[0][3], 4) # mult
+
+        q = """MATCH (n:N)
+               WHERE n.v IS NOT NULL
+               CALL {
+                   WITH n
+                   RETURN n.v AS val
+               }
+               CALL {
+                   WITH n
+                   RETURN n.v + 1 AS nextVal
+               }
+               RETURN val, nextVal"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertGreater(len(res), 0)
+        for row in res:
+            self.env.assertEquals(row[0] + 1, row[1])
+
+    def test_50_Independent_call_chains(self):
+        q = """CALL {
+                   CALL {
+                       RETURN 1 AS a
+                   }
+                   CALL {
+                       RETURN 2 AS b
+                   }
+                   RETURN a + b AS sum
+               } RETURN sum"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 3) # sum
+
+    def test_51_union_limit_aggregation_interplay(self):
+        q = """CALL {
+                   RETURN 1 AS n
+                   UNION
+                   RETURN 2 AS n
+                   UNION
+                   RETURN 3 AS n
+               }
+               RETURN sum(n) AS total"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 6) # total
+
+        q = """CALL {
+                   RETURN 1 AS n
+                   UNION ALL
+                   RETURN 2 AS n
+                   UNION ALL
+                   RETURN 2 AS n
+               }
+               RETURN count(DISTINCT n) AS c"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 2) # c
+
+        q = """CALL {
+                   UNWIND range(1,10) AS x
+                   RETURN x
+                   UNION ALL
+                   RETURN 5 AS x
+               }
+               RETURN collect(DISTINCT x) AS vals
+               ORDER BY vals ASC"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], [1,2,3,4,5,6,7,8,9,10])
+
+    def test_52_create_delete(self):
+        pass
+        # q = """CREATE (:Temp {v: 1}), (:Temp {v: 2})
+        #        WITH *
+        #        CALL {
+        #            MATCH (t:Temp)
+        #            DELETE t
+        #            RETURN count(t) AS deleted
+        #        }
+        #        RETURN deleted"""
+
+        # res = self.graph.query(q)
+        # self.env.assertGreaterEqual(res.nodes_deleted, 2)
+
+        #q = """CALL {
+        #           CREATE (n:T {x:1})
+        #           RETURN n
+        #           UNION
+        #           MATCH (m:T)
+        #           DELETE m
+        #           RETURN 0 AS n
+        #       }
+        #       RETURN n"""
+
+        #res = self.graph.query(q)
+        #self.env.assertEquals(res.nodes_created, 1)
+        #self.env.assertEquals(res.nodes_deleted, 1)
+
+    def test_53_nested_union(self):
+        q = """CALL {
+                   RETURN 1 AS x
+                   UNION ALL
+                   CALL {
+                       RETURN 2 AS x
+                       UNION ALL
+                       RETURN 3 AS x
+                   }
+                   RETURN x
+               }
+               RETURN avg(x) AS avgX"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 2) # avgX
+

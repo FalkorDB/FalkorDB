@@ -323,7 +323,7 @@ static void _AST_GetTypedNodes
 	for (uint i = 0; i < nchildren; i ++) {
 		const cypher_astnode_t *child = cypher_astnode_get_child (root, i) ;
 
-		// we shouldn't peak into sub-query
+		// we shouldn't peek into sub-query
 		if (cypher_astnode_type (child) == CYPHER_AST_CALL_SUBQUERY) {
 			continue ;
 		}
