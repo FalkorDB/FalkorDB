@@ -405,7 +405,7 @@ updating clause.")
         )
 
         # assert the correctness of the results
-        res = self.graph.query("MATCH(n:TEMP) RETURN n ORDER BY n.v ASC")
+        res = self.graph.query("MATCH (n:TEMP) RETURN n ORDER BY n.v ASC")
         self.env.assertEquals(len(res.result_set), 2)
         self.env.assertEquals(res.result_set[0][0],
             Node(labels='TEMP', properties={'v': 5}))
@@ -428,7 +428,7 @@ updating clause.")
         )
 
         # assert the correctness of the results
-        res = self.graph.query("MATCH(n:TEMP) RETURN n ORDER BY n.v ASC")
+        res = self.graph.query("MATCH (n:TEMP) RETURN n ORDER BY n.v ASC")
         self.env.assertEquals(len(res.result_set), 2)
 
         # delete the nodes with label :TEMP
@@ -2179,4 +2179,462 @@ updating clause.")
         res = self.graph.query(q)
         self.env.assertEquals(res.nodes_created, 1)
         self.env.assertEquals(len(res.result_set), 0)
+
+    def test32_variable_scope_propagation(self):
+        q = """WITH 1 AS a, 2 AS b
+               CALL {
+                   WITH a
+                   RETURN a + 1 AS c
+               }
+               RETURN a, b, c"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 1) # a
+        self.env.assertEquals(res[0][1], 2) # b
+        self.env.assertEquals(res[0][2], 2) # c
+
+        q = """WITH 1 AS a
+               CALL {
+                   WITH a
+                   CALL {
+                       WITH a RETURN a * 2 AS y
+                    }
+                    RETURN y
+                }
+                RETURN a, y"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 1) # a
+        self.env.assertEquals(res[0][1], 2) # y
+
+        q = """WITH 10 AS base
+               CALL {
+                   WITH base
+                   CALL {
+                       WITH base
+                       RETURN (base + 5) * 2 AS doubled
+                   }
+                   RETURN doubled
+               } RETURN base, doubled"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 10) # base
+        self.env.assertEquals(res[0][1], 30) # double
+
+        q = """WITH 1 AS a, 2 AS b
+               CALL {
+                   WITH *
+                   RETURN a + b AS c
+
+                   UNION ALL
+
+                   WITH b, a
+                   RETURN b - a AS c
+               }
+               RETURN c
+               ORDER BY c DESC"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 3) # sum
+        self.env.assertEquals(res[1][0], 1) # diff
+
+        q = """WITH 1 AS a
+               CALL {
+                   WITH a
+                   UNWIND [a, a + 1, a + 2] AS x
+                   RETURN collect(x) AS lst
+               }
+               RETURN lst"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], [1, 2, 3]) # lst
+
+    def test33_nested_call(self):
+        q = """UNWIND range(1, 3) AS i
+               CALL {
+                   WITH i
+                   UNWIND range(1, i) AS j
+                   RETURN sum(j) AS s
+               }
+               RETURN i, s ORDER BY i"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 1) # i
+        self.env.assertEquals(res[0][1], 1) # s
+        self.env.assertEquals(res[1][0], 2) # i
+        self.env.assertEquals(res[1][1], 3) # s
+        self.env.assertEquals(res[2][0], 3) # i
+        self.env.assertEquals(res[2][1], 6) # s
+
+        q = """WITH 1 AS dummy
+               CALL {
+                   UNWIND [10, 20, 30] AS n
+                   CALL {
+                       WITH n
+                       RETURN n * 2 AS doubled
+                   }
+                   RETURN collect(doubled) AS vals
+               } RETURN vals"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], [20, 40, 60]) # vals
+
+        q = """UNWIND [1, 2] AS x
+               CALL {
+                   WITH x
+                   CALL {
+                       WITH x
+                       UNWIND range(1, x + 1) AS y
+                       RETURN avg(y) AS a
+                   }
+                   RETURN a
+               }
+               RETURN x, a"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 1)   # x
+        self.env.assertEquals(res[0][1], 1.5) # a
+        self.env.assertEquals(res[1][0], 2)   # x
+        self.env.assertEquals(res[1][1], 2)   # a
+
+    def test34_path_graph_pattern_scope(self):
+        q = "CREATE (:N)-[:R]->(:M), (:N)-[:R]->(:N)-[:R]->(:M)"
+        self.graph.query(q).result_set
+
+        q = """MATCH p = (a)-[:R*1..2]->(b)
+               CALL {
+                   WITH p
+                   RETURN length(p) AS l
+               }
+               RETURN p, l
+               ORDER BY l ASC"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][1], 1) # l
+        self.env.assertEquals(res[1][1], 1) # l
+        self.env.assertEquals(res[2][1], 1) # l
+        self.env.assertEquals(res[3][1], 2) # l
+
+
+        q = """MATCH (a:N)-[:R]->(b)
+               CALL {
+                   WITH b MATCH (b)-->(c)
+                   RETURN collect(distinct c) AS cs
+               }
+               RETURN a, b, cs"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(len(res), 3)
+
+        q = """MATCH p = (n:N)-[:R]->(m:M)
+               CALL {
+                   WITH p
+                   RETURN nodes(p)[1] AS dest
+               }
+               RETURN dest"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(len(res), 2)
+
+    def test_35_recursive(self):
+        q = """WITH 2 AS a
+               CALL {
+                   WITH a
+                   CALL {
+                       WITH a
+                       RETURN a + 1 AS b
+                   }
+                   RETURN b * 2 AS c
+               }
+               RETURN c"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 6)
+
+        q = """WITH 5 AS a
+               CALL {
+                   WITH a
+                   CALL {
+                       WITH a
+                       RETURN range(1, a) AS seq
+                   }
+                   UNWIND seq AS i
+                   RETURN sum(i) AS total
+               }
+               RETURN total"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 15) # total
+
+
+    def test_36_call_write_interplay(self):
+        q = """CREATE (:N {v: 1})
+               WITH *
+               CALL {
+                   MATCH (n:N {v: 1})
+                   MERGE (m:M {v: n.v})
+                   SET m.created = true
+                   RETURN m
+               }
+               RETURN m.v, m.created"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 1)    # v
+        self.env.assertEquals(res[0][1], True) # created
+
+        q = """WITH 1 AS id
+               CALL {
+                   WITH *
+                   MERGE (n:N {id: id}) ON CREATE SET n.v = 0
+                   SET n.v = n.v + 1
+                   RETURN n
+               }
+               RETURN n.v"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 1) # v
+
+    def test_37_call_inside_optional(self):
+        q = """OPTIONAL MATCH (n:N)
+               CALL {
+                   WITH n
+                   RETURN coalesce(n.v, 0) AS v
+               }
+               RETURN v ORDER BY v ASC"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 0) # v
+        self.env.assertEquals(res[1][0], 0) # v
+        self.env.assertEquals(res[2][0], 0) # v
+        self.env.assertEquals(res[3][0], 1) # v
+        self.env.assertEquals(res[4][0], 1) # v
+        self.env.assertEquals(res[5][0], 1) # v
+
+        q = """CALL {
+                   OPTIONAL MATCH (n:N {missing: true})
+                   RETURN count(n) AS cnt
+               }
+               RETURN cnt"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 0) # cnt
+
+    def test_38_call_aggregation_distinct(self):
+        q = """UNWIND ['a', 'b', 'a', 'c'] AS name
+               CALL {
+                   WITH name
+                   RETURN name AS key, count(DISTINCT name) AS cnt
+               }
+               RETURN name, key, cnt
+               ORDER BY name ASC"""
+
+        res = self.graph.query(q).result_set
+
+        self.env.assertEquals(res[0][0], "a") # name
+        self.env.assertEquals(res[0][1], "a") # key
+        self.env.assertEquals(res[0][2], 1)   # cnt
+
+        self.env.assertEquals(res[1][0], "a") # name
+        self.env.assertEquals(res[1][1], "a") # key
+        self.env.assertEquals(res[1][2], 1)   # cnt
+
+        self.env.assertEquals(res[2][0], "b") # name
+        self.env.assertEquals(res[2][1], "b") # key
+        self.env.assertEquals(res[2][2], 1)   # cnt
+
+        self.env.assertEquals(res[3][0], "c") # name
+        self.env.assertEquals(res[3][1], "c") # key
+        self.env.assertEquals(res[3][2], 1)   # cnt
+
+        q = """CALL {
+                   UNWIND range(1, 5) AS x
+                   WITH x
+                   WHERE x % 2 = 1
+                   RETURN collect(x) AS odds
+               }
+               RETURN odds"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], [1,3,5]) # odds
+
+    def test_39_call_returning_complex_structures(self):
+        q = """WITH 2 AS x
+               CALL {
+                   WITH x
+                   RETURN {val: x, square: x * x} AS info
+               } RETURN info.val, info.square"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 2) # val
+        self.env.assertEquals(res[0][1], 4) # square
+
+        q = """WITH ['a','b'] AS lst
+               CALL {
+                   WITH lst
+                   RETURN {len: size(lst), joined: reduce(s = '', x IN lst | s + x)} AS meta
+               }
+               RETURN meta"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], {"len": 2, "joined": "ab"}) # meta
+
+        q = """CALL {
+                   UNWIND range(1,3) AS i
+                   RETURN collect({num: i, sq: i*i}) AS data
+               }
+               RETURN data"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], [{"num": 1, "sq": 1},
+                                          {"num": 2, "sq": 4},
+                                          {"num": 3, "sq": 9}]) # data
+
+    def test_40_call_with_yield_like_semantics(self):
+        q = """CALL {
+                   RETURN 1 AS val, 2 AS other
+               }
+               RETURN val + other AS sum"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 3) # sum
+
+        q = """CALL {
+                    RETURN rand() AS r
+                }
+                RETURN r, r > 0.5 AS gt_half"""
+
+        res = self.graph.query(q).result_set
+        r = res[0][0]
+        self.env.assertEquals(res[0][1], r > 0.5) # gt_half
+
+    def test_41_deep_nesting_multiple_union(self):
+        q = """CALL {
+                   RETURN 1 AS x
+                   UNION ALL
+                   RETURN 2 AS x
+                   UNION ALL
+                   CALL {
+                       RETURN 3 AS x
+                   }
+                   RETURN x
+               }
+               RETURN x ORDER BY x ASC"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 1) # x
+        self.env.assertEquals(res[1][0], 2) # x
+        self.env.assertEquals(res[2][0], 3) # x
+
+        q = """CALL {
+                   UNWIND range(1, 3) AS i
+                   RETURN i
+                   UNION ALL
+                   CALL {
+                       UNWIND range(4, 6) AS j
+                       RETURN j
+                   }
+                   RETURN j AS i
+               }
+               RETURN i
+               ORDER BY i ASC"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 1) # i
+        self.env.assertEquals(res[1][0], 2) # i
+        self.env.assertEquals(res[2][0], 3) # i
+        self.env.assertEquals(res[3][0], 4) # i
+        self.env.assertEquals(res[4][0], 5) # i
+        self.env.assertEquals(res[5][0], 6) # i
+
+    def test_42_with_where_propagation(self):
+        q = """WITH 1 AS a, 2 AS b
+               CALL {
+                   WITH a, b
+                   WITH a AS c, b AS d
+                   WHERE c < d
+                   RETURN c + d AS sum
+               }
+               RETURN sum"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 3) # sum
+
+        q = """WITH 10 AS limit
+               CALL {
+                   WITH *
+                   UNWIND range(1, 20) AS i
+                   WITH i
+                   WHERE i < limit
+                   RETURN collect(i) AS filtered
+               }
+               RETURN size(filtered) AS count"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 9) # count
+
+    def test_43_call_foreach(self):
+        q = """CALL {
+                   UNWIND range(1,3) AS n
+                   FOREACH (x IN [n] | CREATE (:TempX {v:x}))
+                   RETURN count(1) AS created
+               }
+               RETURN created"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 3) # created
+
+    def test_44_subpath_manipulation(self):
+        q = """MATCH p = (a)-[:R*1..3]->(b)
+               CALL {
+                   WITH p
+                   UNWIND relationships(p) AS r
+                   RETURN type(r) AS relType
+               }
+               RETURN collect(relType) AS rels"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], ["R", "R", "R", "R", "R"]) # rels
+
+    def test_45_pattern_comprehension_list_expressions(self):
+        q = """CALL {
+                   UNWIND range(1, 4) AS i
+                   RETURN [x IN range(1, i) | x * 2] AS doubled
+               } RETURN doubled"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], [2]) # doubled
+        self.env.assertEquals(res[1][0], [2, 4]) # rels
+        self.env.assertEquals(res[2][0], [2, 4, 6]) # rels
+        self.env.assertEquals(res[3][0], [2, 4, 6, 8]) # rels
+
+        q = """WITH 3 AS n
+               CALL {
+                   WITH *
+                   RETURN [x IN range(1, n) WHERE x % 2 = 0 | x] AS evens
+               }
+               RETURN evens"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], [2]) # evens
+
+
+    def test_46_reduce(self):
+        q = """WITH 'foo' AS s
+               CALL {
+                   WITH *
+                   RETURN toUpper(reverse(s)) AS val
+               } RETURN val"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], "OOF") # val
+
+        q = """WITH [1,2,3] AS list
+               CALL {
+                   WITH *
+                   RETURN reduce(acc = 0, x IN list | acc + x) AS total
+               }
+               RETURN total"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 6) # total
 
