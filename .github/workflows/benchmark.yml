@@ -117,11 +117,13 @@ jobs:
 
       - name: Build
         run: |
-          apt update && apt install -y lsb-release
+          apt update && apt install -y lsb-release wget
           curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
           echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
           apt update && apt install -y redis python3-venv python3-pip
           rustup default stable
+          chmod +x ./deps/RediSearch/.install/install_cmake.sh
+          ./deps/RediSearch/.install/install_cmake.sh
           make -j$(nproc)
 
       - name: Install benchmark dependencies
