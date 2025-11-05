@@ -814,21 +814,10 @@ jobs:
           key: ${{ env.CACHE_KEY_LAGRAPH }}
           enableCrossOsArchive: true
 
-      - name: Clear CMake cache
-        run: |
-          # Remove CMake cache files to force reconfiguration with correct flags
-          find ./bin -name "CMakeCache.txt" -delete || true
-          find ./bin -depth -name "CMakeFiles" -type d -exec rm -rf {} + || true
-
       - name: Build FalkorDB
         run: |
-          # Use GCC for OpenMP support on macOS and set minimum SDK version
-          export MACOSX_DEPLOYMENT_TARGET=11.0
-          export OSX_MIN_SDK_VER=11.0
-          # Explicitly set CC and CXX to use GCC for all dependencies
-          export CC=/opt/homebrew/bin/gcc-14
-          export CXX=/opt/homebrew/bin/g++-14
-          make GCC=1 DEBUG=${{ matrix.platform.is_debug }} CMAKE_FLAGS="-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+          make clean
+          make DEBUG=${{ matrix.platform.is_debug }}
 
       - name: Save cache for GraphBLAS
         if: always() && steps.cache_graphblas.outputs.cache-hit == false
