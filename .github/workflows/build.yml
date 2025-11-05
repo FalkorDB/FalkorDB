@@ -816,9 +816,12 @@ jobs:
 
       - name: Build FalkorDB
         run: |
-          # Skip clean on first build or if directory doesn't exist
-          if [ -d "./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}" ]; then
+          # Skip clean on first build or if build directory doesn't exist
+          if [ -d "./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/src" ]; then
             make clean
+          elif [ -d "./bin" ]; then
+            # If bin exists but not the specific build dir, clean everything
+            make clean ALL=1 || true
           fi
           make DEBUG=${{ matrix.platform.is_debug }}
 
