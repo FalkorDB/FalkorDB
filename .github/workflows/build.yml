@@ -820,6 +820,8 @@ jobs:
           enableCrossOsArchive: true
 
       - name: Build FalkorDB
+        env:
+          OSX_MIN_SDK_VER: "15.0"
         run: |
           # Skip clean on first build or if build directory doesn't exist
           if [ -d "./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/src" ]; then
