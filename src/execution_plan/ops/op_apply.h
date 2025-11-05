@@ -25,7 +25,6 @@ typedef struct {
 	OpBase *rhs_branch;     // right-hand branch
 	OpArgument **rhs_args;  // right-hand taps
 	uint nargs;             // number of right hand side args
-	OpArgument *op_arg;     // right-hand branch tap
 } OpApply;
 
 OpBase *NewApplyOp
