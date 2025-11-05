@@ -122,6 +122,11 @@ static Record UpdateConsume
 	HashTableEmpty(op->node_updates, NULL);
 	HashTableEmpty(op->edge_updates, NULL);
 
+	// no one consumes our output, return NULL
+	if (opBase->parent == NULL) {
+		return NULL ;
+	}
+
 	return _handoff(op);
 }
 
@@ -177,12 +182,16 @@ static void UpdateFree(OpBase *ctx) {
 		op->update_ctxs = NULL;
 	}
 
-	uint records_count = array_len(op->records);
-	// records[0..op->record_idx] had been already emitted, skip them
-	for(uint i = op->rec_idx; i < records_count; i++) {
-		OpBase_DeleteRecord(op->records+i);
+	if (op->records) {
+		uint64_t n = array_len (op->records) ;
+		for (uint64_t i = op->rec_idx; i < n; i++) {
+			OpBase_DeleteRecord (op->records+i) ;
+		}
+
+		array_free (op->records) ;
+		op->records = NULL ;
 	}
-	array_free(op->records);
 
 	raxStop(&op->it);
 }
+

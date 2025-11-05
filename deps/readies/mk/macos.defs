@@ -8,21 +8,6 @@ ifeq ($(OS),macos)
 
 #----------------------------------------------------------------------------------------------
 
-ifeq ($(OSNICK),sonoma)
-OSX_MIN_SDK_VER=14.0
-else ifeq ($(OSNICK),ventura)
-OSX_MIN_SDK_VER=13.0
-else ifeq ($(OSNICK),monterey)
-OSX_MIN_SDK_VER=12.0
-else ifeq ($(OSNICK),bigsur)
-OSX_MIN_SDK_VER=11.00
-else ifeq ($(OSNICK),catalina)
-OSX_MIN_SDK_VER=10.15
-else ifeq ($(OSNICK),sonoma)
-OSX_MIN_SDK_VER=14.2
-endif
-
-CC_FLAGS.macos += -mmacosx-version-min=$(OSX_MIN_SDK_VER)
 CMAKE_FLAGS += -DCMAKE_OSX_DEPLOYMENT_TARGET=$(OSX_MIN_SDK_VER)
 
  MACOS_SDK_PREFIX:=$(shell xcrun --show-sdk-path)
