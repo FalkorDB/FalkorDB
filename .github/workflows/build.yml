@@ -830,7 +830,8 @@ jobs:
             # If bin exists but not the specific build dir, clean everything
             make clean ALL=1 || true
           fi
-          make DEBUG=${{ matrix.platform.is_debug }}
+          # Enable verbose output to see the actual error
+          make DEBUG=${{ matrix.platform.is_debug }} VERBOSE=1 V=1
 
       - name: Save cache for GraphBLAS
         if: always() && steps.cache_graphblas.outputs.cache-hit == false
