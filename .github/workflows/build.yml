@@ -754,7 +754,7 @@ jobs:
       - name: Setup CMake
         uses: jwlawson/actions-setup-cmake@v2
         with:
-          cmake-version: '3.20'
+          cmake-version: '4.1.2'
 
       - name: Install dependencies
         run: |
@@ -832,14 +832,7 @@ jobs:
           fi
           # Build with detailed error capture
           set -o pipefail
-          make DEBUG=${{ matrix.platform.is_debug }} -j1 2>&1 | tee build.log || {
-            echo "=== BUILD FAILED ==="
-            echo "=== Last 50 lines of build log ==="
-            tail -50 build.log
-            echo "=== Full error log ==="
-            cat build.log
-            exit 1
-          }
+          make DEBUG=${{ matrix.platform.is_debug }} -j1
 
       - name: Save cache for GraphBLAS
         if: always() && steps.cache_graphblas.outputs.cache-hit == false
