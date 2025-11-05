@@ -816,7 +816,10 @@ jobs:
 
       - name: Build FalkorDB
         run: |
-          make clean
+          # Skip clean on first build or if directory doesn't exist
+          if [ -d "./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}" ]; then
+            make clean
+          fi
           make DEBUG=${{ matrix.platform.is_debug }}
 
       - name: Save cache for GraphBLAS
