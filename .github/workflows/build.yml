@@ -478,7 +478,7 @@ jobs:
             machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp
@@ -524,7 +524,7 @@ jobs:
             machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp
@@ -571,7 +571,7 @@ jobs:
             machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp
@@ -617,7 +617,7 @@ jobs:
             machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp
@@ -651,7 +651,7 @@ jobs:
   #    ARCH: ${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}
   #  steps:
   #    - name: Download image
-  #      uses: actions/download-artifact@v5
+  #      uses: actions/download-artifact@v6
   #      with:
   #        name: falkordb-tests-${{ matrix.platform.suffix }}
   #        path: /tmp
@@ -706,7 +706,7 @@ jobs:
             machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: falkordb-${{ matrix.platform.suffix }}
           path: /tmp
