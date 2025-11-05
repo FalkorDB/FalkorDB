@@ -830,8 +830,16 @@ jobs:
             # If bin exists but not the specific build dir, clean everything
             make clean ALL=1 || true
           fi
-          # Build with single job to see actual errors and avoid parallel build issues
-          make DEBUG=${{ matrix.platform.is_debug }} -j1 VERBOSE=1
+          # Build with detailed error capture
+          set -o pipefail
+          make DEBUG=${{ matrix.platform.is_debug }} -j1 2>&1 | tee build.log || {
+            echo "=== BUILD FAILED ==="
+            echo "=== Last 50 lines of build log ==="
+            tail -50 build.log
+            echo "=== Full error log ==="
+            cat build.log
+            exit 1
+          }
 
       - name: Save cache for GraphBLAS
         if: always() && steps.cache_graphblas.outputs.cache-hit == false
