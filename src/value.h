@@ -63,6 +63,7 @@ typedef enum {
 #define SI_INDEXABLE            (SI_NUMERIC | T_BOOL | T_STRING | T_POINT | T_VECTOR )  // indexable types
 #define SI_VALID_PROPERTY_VALUE (T_POINT | T_ARRAY | T_STRING | T_INTERN_STRING | T_BOOL | SI_NUMERIC | T_VECTOR | SI_TEMPORAL)  // all valid attribute types
 #define SI_ALL                  (T_MAP | T_NODE | T_EDGE | T_ARRAY | T_PATH | T_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_NULL | T_PTR | T_POINT | T_VECTOR | SI_TEMPORAL)  // all supported types
+#define SI_HEAP                 (T_MAP | T_NODE | T_EDGE | T_ARRAY | T_PATH | T_STRING | T_INTERN_STRING | T_PTR | T_VECTOR_F32)  // heap allocated type
 
 // any values (except durations) are comparable with other values of the same type
 // integer and floating-point values are also comparable with each other
@@ -71,6 +72,9 @@ typedef enum {
 /* Retrieve the numeric associated with an SIValue without explicitly
  * assigning it a type. */
 #define SI_GET_NUMERIC(v) ((v).type == T_DOUBLE ? (v).doubleval : (v).longval)
+
+#define SI_HEAP_ALLOCATED(v) (((v).allocation == M_SELF) && ((v).type & SI_HEAP))
+
 
 /* Build an integer return value for a comparison routine in the style of strcmp.
  * This is necessary to construct safe returns when the delta between

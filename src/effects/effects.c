@@ -106,24 +106,24 @@ static void EffectsBuffer_WriteBytes
 	size_t n,          // number of bytes to write
 	EffectsBuffer *eb  // effects-buffer
 ) {
-	ASSERT(n   > 0);
-	ASSERT(eb  != NULL);
-	ASSERT(ptr != NULL);
+	ASSERT (n   > 0) ;
+	ASSERT (eb  != NULL) ;
+	ASSERT (ptr != NULL) ;
 
-	while(n > 0) {
-		struct EffectsBufferBlock *b = eb->current;
-		size_t written = EffectsBufferBlock_WriteBytes(ptr, n, b);
+	while (n > 0) {
+		struct EffectsBufferBlock *b = eb->current ;
+		size_t written = EffectsBufferBlock_WriteBytes (ptr, n, b) ;
 
 		// advance ptr
-		ptr += written;
+		ptr += written ;
 
-		if(written == 0) {
+		if (written == 0) {
 			// no bytes written block is full, create a new block
-			EffectsBuffer_AddBlock(eb);
+			EffectsBuffer_AddBlock (eb) ;
 		}
 
 		// update remaining bytes to write
-		n -= written;
+		n -= written ;
 	}
 }
 
@@ -166,44 +166,53 @@ static void EffectsBuffer_WriteSIValue
 	switch(t) {
 		case T_POINT:
 			// write value to stream
-			EffectsBuffer_WriteBytes(&v->point, sizeof(Point), buff);
-			break;
+			EffectsBuffer_WriteBytes (&v->point, sizeof (Point), buff) ;
+			break ;
+
 		case T_ARRAY:
 			// write array to stream
-			EffectsBuffer_WriteSIArray(v, buff);
-			break;
+			EffectsBuffer_WriteSIArray (v, buff) ;
+			break ;
+
 		case T_STRING:
 		case T_INTERN_STRING:
-			EffectsBuffer_WriteString(v->stringval, buff);
-			break;
+			EffectsBuffer_WriteString (v->stringval, buff) ;
+			break ;
+
 		case T_BOOL:
 			// write bool to stream
-			b = SIValue_IsTrue(*v);
-			EffectsBuffer_WriteBytes(&b, sizeof(bool), buff);
-			break;
+			b = SIValue_IsTrue (*v) ;
+			EffectsBuffer_WriteBytes (&b, sizeof (bool), buff) ;
+			break ;
+
 		case T_INT64:
 			// write int to stream
-			EffectsBuffer_WriteBytes(&v->longval, sizeof(v->longval), buff);
-			break;
+			EffectsBuffer_WriteBytes (&v->longval, sizeof (v->longval), buff) ;
+			break ;
+
 		case T_DOUBLE:
 			// write double to stream
-			EffectsBuffer_WriteBytes(&v->doubleval, sizeof(v->doubleval), buff);
-			break;
+			EffectsBuffer_WriteBytes (&v->doubleval, sizeof (v->doubleval), buff) ;
+			break ;
+
 		case T_TIME:
 		case T_DATE:
 		case T_DATETIME:
 		case T_DURATION:
 			// write temporal time_t
-			EffectsBuffer_WriteBytes(&v->datetimeval, sizeof(v->datetimeval), buff);
+			EffectsBuffer_WriteBytes (&v->datetimeval, sizeof (v->datetimeval), buff) ;
+			break ;
 
 		case T_NULL:
 			// no additional data is required to represent NULL
-			break;
+			break ;
+
 		case T_VECTOR_F32:
-			EffectsBuffer_WriteSIVector(v, buff);
-			break;
+			EffectsBuffer_WriteSIVector (v, buff) ;
+			break ;
+
 		default:
-			assert(false && "unknown SIValue type");
+			assert (false && "unknown SIValue type") ;
 	}
 }
 
@@ -466,45 +475,44 @@ void EffectsBuffer_AddCreateEdgeEffect
 	// attributes (id,value) pair
 	//--------------------------------------------------------------------------
 	
-	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics();
-	stats->relationships_created++;
-	stats->properties_set += AttributeSet_Count(*edge->attributes);
+	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
+	stats->relationships_created++ ;
+	stats->properties_set += AttributeSet_Count (*edge->attributes) ;
 
-	EffectType t = EFFECT_CREATE_EDGE;
-	EffectsBuffer_WriteBytes(&t, sizeof(t), buff);
-
-	//--------------------------------------------------------------------------
-	// write relationship type
-	//--------------------------------------------------------------------------
-
-	ushort rel_count = 1;
-	EffectsBuffer_WriteBytes(&rel_count, sizeof(rel_count), buff);
-
-	RelationID rel_id = Edge_GetRelationID(edge);
-	EffectsBuffer_WriteBytes(&rel_id, sizeof(RelationID), buff);
+	// encoded edge struct
+	#pragma pack(push, 1)
+	struct {
+		EffectType t ;
+		uint16_t rel_count ;
+		RelationID r ;
+		NodeID src_id ;
+		NodeID dest_id ;
+	} _create_edge_desc;
+	#pragma pack(pop)
 
 	//--------------------------------------------------------------------------
-	// write src node ID
-	//--------------------------------------------------------------------------
-	
-	NodeID src_id = Edge_GetSrcNodeID(edge);
-	EffectsBuffer_WriteBytes(&src_id, sizeof(NodeID), buff);
-
-	//--------------------------------------------------------------------------
-	// write dest node ID
+	// populate & write edge
 	//--------------------------------------------------------------------------
 
-	NodeID dest_id = Edge_GetDestNodeID(edge);
-	EffectsBuffer_WriteBytes(&dest_id, sizeof(NodeID), buff);
+	_create_edge_desc.t         = EFFECT_CREATE_EDGE ;
+	_create_edge_desc.rel_count = 1 ;
+	_create_edge_desc.r         = Edge_GetRelationID (edge) ;
+	_create_edge_desc.src_id    = Edge_GetSrcNodeID  (edge) ;
+	_create_edge_desc.dest_id   = Edge_GetDestNodeID (edge) ;
+
+	EffectsBuffer_WriteBytes (&_create_edge_desc, sizeof (_create_edge_desc),
+			buff) ;
 
 	//--------------------------------------------------------------------------
 	// write attribute set 
 	//--------------------------------------------------------------------------
 
-	const AttributeSet attrs = GraphEntity_GetAttributes((GraphEntity*)edge);
-	EffectsBuffer_WriteAttributeSet(attrs, buff);
+	const AttributeSet attrs =
+		GraphEntity_GetAttributes ((const GraphEntity*)edge) ;
 
-	EffectsBuffer_IncEffectCount(buff);
+	EffectsBuffer_WriteAttributeSet (attrs, buff) ;
+
+	EffectsBuffer_IncEffectCount (buff) ;
 }
 
 // add a node deletion effect to buffer
@@ -521,13 +529,20 @@ void EffectsBuffer_AddDeleteNodeEffect
 
 	QueryCtx_GetResultSetStatistics()->nodes_deleted++;
 
-	EffectType t = EFFECT_DELETE_NODE;
-	EffectsBuffer_WriteBytes(&t, sizeof(t), buff);
+	#pragma pack(push, 1)
+	struct {
+		EffectType t;
+		EntityID id;
+	} _delete_node_desc ;
+	#pragma pack(pop)
 
-	// write node ID
-	EffectsBuffer_WriteBytes(&ENTITY_GET_ID(node), sizeof(EntityID), buff);
+	_delete_node_desc.t  = EFFECT_DELETE_NODE ;
+	_delete_node_desc.id = ENTITY_GET_ID (node) ;
 
-	EffectsBuffer_IncEffectCount(buff);
+	EffectsBuffer_WriteBytes (&_delete_node_desc, sizeof(_delete_node_desc),
+			buff) ;
+
+	EffectsBuffer_IncEffectCount (buff) ;
 }
 
 // add a edge deletion effect to buffer
@@ -547,22 +562,28 @@ void EffectsBuffer_AddDeleteEdgeEffect
 
 	QueryCtx_GetResultSetStatistics()->relationships_deleted++;
 
-	EffectType t = EFFECT_DELETE_EDGE;
-	EffectsBuffer_WriteBytes(&t, sizeof(t), eb);
+	// encoded edge struct
+	#pragma pack(push, 1)
+	struct {
+		EffectType t ;
+		EntityID id;
+		RelationID r ;
+		NodeID src_id ;
+		NodeID dest_id ;
+	} _delete_edge_desc;
+	#pragma pack(pop)
 
-	EffectsBuffer_WriteBytes(&ENTITY_GET_ID(edge), sizeof(EntityID), eb);
+	_delete_edge_desc.t       = EFFECT_DELETE_EDGE ;
+	_delete_edge_desc.id      = ENTITY_GET_ID      (edge) ;
+	_delete_edge_desc.r       = Edge_GetRelationID (edge) ;
+	_delete_edge_desc.src_id  = Edge_GetSrcNodeID  (edge) ;
+	_delete_edge_desc.dest_id = Edge_GetDestNodeID (edge) ;
 
-	RelationID r_id = Edge_GetRelationID(edge);
-	EffectsBuffer_WriteBytes(&r_id, sizeof(RelationID), eb);
-
-	NodeID src_id = Edge_GetSrcNodeID(edge);
-	EffectsBuffer_WriteBytes(&src_id, sizeof(EntityID), eb);
-
-	NodeID dest_id = Edge_GetDestNodeID(edge);
-	EffectsBuffer_WriteBytes(&dest_id, sizeof(EntityID), eb);
+	EffectsBuffer_WriteBytes (&_delete_edge_desc, sizeof(_delete_edge_desc),
+			eb) ;
 
 	EffectsBuffer_IncEffectCount(eb);
-};
+}
 
 // add an entity update effect to buffer
 static void EffectsBuffer_AddNodeUpdateEffect
@@ -580,28 +601,28 @@ static void EffectsBuffer_AddNodeUpdateEffect
 	//    attribute value
 	//--------------------------------------------------------------------------
 
-	EffectType t = EFFECT_UPDATE_NODE;
-	EffectsBuffer_WriteBytes(&t, sizeof(t), buff);
+	#pragma pack(push, 1)
+	struct {
+		EffectType t ;
+		EntityID id;
+		AttributeID attr_id ;
+	} _update_node_desc;
+	#pragma pack(pop)
 
-	//--------------------------------------------------------------------------
-	// write entity ID
-	//--------------------------------------------------------------------------
+	_update_node_desc.t       = EFFECT_UPDATE_NODE ;
+	_update_node_desc.id      = ENTITY_GET_ID (node) ;
+	_update_node_desc.attr_id = attr_id ;
 
-	EffectsBuffer_WriteBytes(&ENTITY_GET_ID(node), sizeof(EntityID), buff);
-
-	//--------------------------------------------------------------------------
-	// write attribute ID
-	//--------------------------------------------------------------------------
-	
-	EffectsBuffer_WriteBytes(&attr_id, sizeof(AttributeID), buff);
+	EffectsBuffer_WriteBytes (&_update_node_desc, sizeof(_update_node_desc),
+			buff) ;
 
 	//--------------------------------------------------------------------------
 	// write attribute value
 	//--------------------------------------------------------------------------
 
-	EffectsBuffer_WriteSIValue(&value, buff);
+	EffectsBuffer_WriteSIValue (&value, buff) ;
 
-	EffectsBuffer_IncEffectCount(buff);
+	EffectsBuffer_IncEffectCount (buff) ;
 }
 
 // add an entity update effect to buffer
@@ -623,41 +644,26 @@ static void EffectsBuffer_AddEdgeUpdateEffect
 	//    attributes (id,value) pair
 	//--------------------------------------------------------------------------
 
-	EffectType t = EFFECT_UPDATE_EDGE;
-	EffectsBuffer_WriteBytes(&t, sizeof(t), buff);
+	#pragma pack(push, 1)
+	struct {
+		EffectType t ;
+		EntityID id;
+		RelationID r;
+		NodeID s;
+		NodeID d;
+		AttributeID attr_id ;
+	} _update_edge_desc;
+	#pragma pack(pop)
 
-	//--------------------------------------------------------------------------
-	// write edge ID
-	//--------------------------------------------------------------------------
+	_update_edge_desc.t       = EFFECT_UPDATE_EDGE ;
+	_update_edge_desc.id      = ENTITY_GET_ID      (edge) ;
+	_update_edge_desc.r       = Edge_GetRelationID (edge) ;
+	_update_edge_desc.s       = Edge_GetSrcNodeID  (edge) ;
+	_update_edge_desc.d       = Edge_GetDestNodeID (edge) ;
+	_update_edge_desc.attr_id = attr_id ;
 
-	EffectsBuffer_WriteBytes(&ENTITY_GET_ID(edge), sizeof(EntityID), buff);
-
-	//--------------------------------------------------------------------------
-	// write relation ID
-	//--------------------------------------------------------------------------
-
-	RelationID r = Edge_GetRelationID(edge);
-	EffectsBuffer_WriteBytes(&r, sizeof(RelationID), buff);
-
-	//--------------------------------------------------------------------------
-	// write src ID
-	//--------------------------------------------------------------------------
-
-	NodeID s = Edge_GetSrcNodeID(edge);
-	EffectsBuffer_WriteBytes(&s, sizeof(NodeID), buff);
-
-	//--------------------------------------------------------------------------
-	// write dest ID
-	//--------------------------------------------------------------------------
-
-	NodeID d = Edge_GetDestNodeID(edge);
-	EffectsBuffer_WriteBytes(&d, sizeof(NodeID), buff);
-
-	//--------------------------------------------------------------------------
-	// write attribute ID
-	//--------------------------------------------------------------------------
-
-	EffectsBuffer_WriteBytes(&attr_id, sizeof(AttributeID), buff);
+	EffectsBuffer_WriteBytes (&_update_edge_desc, sizeof (_update_edge_desc),
+			buff) ;
 
 	//--------------------------------------------------------------------------
 	// write attribute value
@@ -782,8 +788,6 @@ void EffectsBuffer_AddLabelsEffect
 
 	EffectType t = EFFECT_SET_LABELS;
 	EffectsBuffer_AddSetRemoveLabelsEffect(buff, node, lbl_ids, lbl_count, t);
-
-	EffectsBuffer_IncEffectCount(buff);
 }
 
 // add a node remove labels effect to buffer
@@ -806,8 +810,6 @@ void EffectsBuffer_AddRemoveLabelsEffect
 
 	EffectType t = EFFECT_REMOVE_LABELS;
 	EffectsBuffer_AddSetRemoveLabelsEffect(buff, node, lbl_ids, lbl_count, t);
-
-	EffectsBuffer_IncEffectCount(buff);
 }
 
 // add a schema addition effect to buffer

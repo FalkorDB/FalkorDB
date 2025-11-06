@@ -7,8 +7,9 @@
 #include "array.h"
 #include "../util/arr.h"
 #include "../util/qsort.h"
-#include <limits.h>
 #include "xxhash.h"
+
+#include <limits.h>
 
 // initialize a new SIValue array type with given capacity
 // returns initialized array
@@ -17,9 +18,11 @@ SIValue SIArray_New
 	u_int32_t initialCapacity // initial capacity
 ) {
 	SIValue siarray;
-	siarray.array = array_new(SIValue, initialCapacity);
-	siarray.type = T_ARRAY;
-	siarray.allocation = M_SELF;
+
+	siarray.array      = array_new (SIValue, initialCapacity) ;
+	siarray.type       = T_ARRAY ;
+	siarray.allocation = M_SELF ;
+
 	return siarray;
 }
 
@@ -85,9 +88,28 @@ SIValue SIArray_Get
 	SIValue siarray,  // siarray: array
 	u_int32_t index   // index: index
 ) {
+	SIValue *v = SIArray_GetRef (siarray, index) ;
+
+	if (unlikely (v == NULL)) {
+		return SI_NullVal () ;
+	} else {
+		return SI_ShareValue (*v) ;
+	}
+}
+
+// get a reference to the 'idx' element on the array
+// if index is out of bounds NULL is returned
+SIValue *SIArray_GetRef
+(
+	SIValue siarray,  // array
+	u_int32_t index   // index
+) {
 	// check index
-	if(index >= SIArray_Length(siarray)) return SI_NullVal();
-	return SI_ShareValue(siarray.array[index]);
+	if (unlikely (index >= SIArray_Length (siarray))) {
+		return NULL ;
+	}
+
+	return siarray.array + index ;
 }
 
 // get the array length
@@ -105,18 +127,23 @@ bool SIArray_ContainsType
 	SIValue siarray,  // array to inspect
 	SIType t          // bitmap of types to search for
 ) {
-	uint array_len = SIArray_Length(siarray);
-	for(uint i = 0; i < array_len; i++) {
-		SIValue elem = siarray.array[i];
-		if(SI_TYPE(elem) & t) return true;
+	uint array_len = SIArray_Length (siarray) ;
+	for (uint i = 0; i < array_len; i++) {
+		SIValue elem = siarray.array[i] ;
+		if (SI_TYPE (elem) & t) {
+			return true ;
+		}
 
 		// recursively check nested arrays
-		if(SI_TYPE(elem) == T_ARRAY) {
-			bool type_is_nested = SIArray_ContainsType(elem, t);
-			if(type_is_nested) return true;
+		if (SI_TYPE (elem) == T_ARRAY) {
+			bool type_is_nested = SIArray_ContainsType (elem, t) ;
+			if (type_is_nested) {
+				return true ;
+			}
 		}
 	}
-	return false;
+
+	return false ;
 }
 
 // returns true if the array contains an element equals to 'value'

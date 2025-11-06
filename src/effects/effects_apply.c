@@ -37,8 +37,11 @@ static AttributeSet ReadAttributeSet
 	// read attribute count
 	//--------------------------------------------------------------------------
 
-	ushort attr_count;
+	uint16_t attr_count;
 	fread_assert(&attr_count, sizeof(attr_count), stream);
+	if (attr_count == 0) {
+		return NULL ;
+	}
 
 	//--------------------------------------------------------------------------
 	// read attributes
@@ -47,7 +50,7 @@ static AttributeSet ReadAttributeSet
 	SIValue values[attr_count];
 	AttributeID ids[attr_count];
 
-	for(ushort i = 0; i < attr_count; i++) {
+	for(uint16_t i = 0; i < attr_count; i++) {
 		// read attribute ID
 		fread_assert(ids + i, sizeof(AttributeID), stream);
 		
@@ -78,36 +81,73 @@ static void ApplyCreateNode
 	// read label count
 	//--------------------------------------------------------------------------
 
-	ushort lbl_count;
-	fread_assert(&lbl_count, sizeof(lbl_count), stream);
+	uint16_t lbl_count ;
+	fread_assert (&lbl_count, sizeof (lbl_count), stream) ;
 
 	//--------------------------------------------------------------------------
 	// read labels
 	//--------------------------------------------------------------------------
 
-	LabelID labels[lbl_count];
-	for(ushort i = 0; i < lbl_count; i++) {
-		fread_assert(labels + i, sizeof(LabelID), stream);
+	LabelID labels[lbl_count] ;
+	for (uint16_t i = 0; i < lbl_count; i++) {
+		fread_assert (labels + i, sizeof (LabelID), stream) ;
 	}
 
 	//--------------------------------------------------------------------------
 	// read attributes
 	//--------------------------------------------------------------------------
 
-	AttributeSet attr_set = ReadAttributeSet(stream);
+	AttributeSet attr_set = ReadAttributeSet (stream) ;
 
 	//--------------------------------------------------------------------------
 	// create node
 	//--------------------------------------------------------------------------
 
-	Node n = GE_NEW_NODE();
-	CreateNode(gc, &n, labels, lbl_count, attr_set, false);
+	Node n = GE_NEW_NODE () ;
+	GraphHub_CreateNode (gc, &n, labels, lbl_count, attr_set, false) ;
 }
 
+static inline void FlushEdges
+(
+	GraphContext *gc,
+	Edge **batch,
+	AttributeSet *sets,
+	RelationID r,
+	int *i
+) {
+	ASSERT (i     != NULL) ;
+	ASSERT (gc    != NULL) ;
+	ASSERT (sets  != NULL) ;
+	ASSERT (batch != NULL) ;
+
+	if (*i > 0) {
+		ASSERT (array_len (batch) == *i) ;
+		ASSERT (array_len (batch) == array_len (sets)) ;
+
+		GraphHub_CreateEdges (gc, batch, r, sets, false) ;
+		array_clear (sets) ;
+		array_clear (batch) ;
+		*i = 0 ;
+	}
+}
+
+// apply "create edge" effects from a serialized stream
+//
+// the stream encodes a sequence of EFFECT_CREATE_EDGE operations
+//  format per edge:
+//    - uint16_t   rel_count (must be 1)
+//    - RelationID relation
+//    - NodeID     src node ID
+//    - NodeID     dest node ID
+//    - AttributeSet (id, value pairs)
+//
+// multiple edges of the same relation type are batched together
+// for efficient insertion
 static void ApplyCreateEdge
 (
-	FILE *stream,     // effects stream
-	GraphContext *gc  // graph to operate on
+	FILE *stream,      // effects stream
+	GraphContext *gc,  // graph to operate on
+	size_t l           // length of stream
 ) {
 	//--------------------------------------------------------------------------
 	// effect format:
@@ -120,47 +160,89 @@ static void ApplyCreateEdge
 	// attributes (id,value) pair
 	//--------------------------------------------------------------------------
 
-	//--------------------------------------------------------------------------
-	// read relationship type count
-	//--------------------------------------------------------------------------
+	int i = 0 ;                       // size of current batch
+	const size_t batch_size = 4096 ;  // max batch size
+	Edge edges[batch_size] ;          // edges
 
-	ushort rel_count;
-	fread_assert(&rel_count, sizeof(rel_count), stream);
-	ASSERT(rel_count == 1);
+	Edge **batch = array_new (Edge *, 1) ;  // batch, points to edges
+	AttributeSet *sets = array_new (AttributeSet, 1) ;  // attribute-sets
 
-	//--------------------------------------------------------------------------
-	// read relationship type
-	//--------------------------------------------------------------------------
+	RelationID r      = GRAPH_UNKNOWN_RELATION ;  // current edge relation id
+	RelationID prev_r = GRAPH_UNKNOWN_RELATION ;  // last processed relation id
 
-	RelationID r;
-	fread_assert(&r, sizeof(r), stream);
+	// encoded edge struct
+	#pragma pack(push, 1)
+	struct {
+		uint16_t rel_count ;
+		RelationID r ;
+		NodeID src_id ;
+		NodeID dest_id ;
+	} _edge_desc;
+	#pragma pack(pop)
 
-	//--------------------------------------------------------------------------
-	// read src node ID
-	//--------------------------------------------------------------------------
+	while (true) {
+		//----------------------------------------------------------------------
+		// read a single edge descriptor in one go
+		//----------------------------------------------------------------------
 
-	NodeID src_id;
-	fread_assert(&src_id, sizeof(NodeID), stream);
+		fread_assert(&_edge_desc, sizeof (_edge_desc), stream);
+		ASSERT(_edge_desc.rel_count == 1);
 
-	//--------------------------------------------------------------------------
-	// read dest node ID
-	//--------------------------------------------------------------------------
+		if (prev_r == GRAPH_UNKNOWN_RELATION) {
+			prev_r = _edge_desc.r ;
+		}
 
-	NodeID dest_id;
-	fread_assert(&dest_id, sizeof(NodeID), stream);
+		// check if relationship-type changed
+		if (_edge_desc.r != prev_r) {
+			FlushEdges (gc, batch, sets, prev_r, &i) ;
+			prev_r = _edge_desc.r ;
+		}
 
-	//--------------------------------------------------------------------------
-	// read attributes
-	//--------------------------------------------------------------------------
+		//----------------------------------------------------------------------
+		// read attributes
+		//----------------------------------------------------------------------
 
-	AttributeSet attr_set = ReadAttributeSet(stream);
+		array_append (sets, ReadAttributeSet(stream)) ;
 
-	//--------------------------------------------------------------------------
-	// create edge
-	//--------------------------------------------------------------------------
+		//----------------------------------------------------------------------
+		// add edge to batch
+		//----------------------------------------------------------------------
 
-	Edge e;
-	CreateEdge(gc, &e, src_id, dest_id, r, attr_set, false);
+		r = _edge_desc.r ;
+
+		Edge *e = edges + i ;
+		Edge_SetSrcNodeID  (e, _edge_desc.src_id) ;
+		Edge_SetDestNodeID (e, _edge_desc.dest_id) ;
+		Edge_SetRelationID (e, _edge_desc.r) ;
+
+		array_append (batch, e) ;
+		i++ ;
+
+		// check if batch is full
+		if (i == batch_size) {
+			FlushEdges (gc, batch, sets, r, &i) ;
+		}
+
+		// have we reached the end of the stream ?
+		if (ftell (stream) >= l) {
+			break ;
+		}
+
+		// check if the next item in the stream is a EFFECT_CREATE_EDGE effect
+		EffectType t = ReadEffectType (stream) ;
+		if (t != EFFECT_CREATE_EDGE) {
+			// go back sizeof (EffectType) bytes
+			fseek (stream, -((long)sizeof (EffectType)), SEEK_CUR) ;
+			break ;
+		}
+	}
+
+	// flush last batch
+	FlushEdges (gc, batch, sets, r, &i) ;
+
+	// clean up
+	array_free (sets) ;
+	array_free (batch) ;
 }
 
 static void ApplyLabels
@@ -181,61 +263,61 @@ static void ApplyLabels
 	// read node ID
 	//--------------------------------------------------------------------------
 
-	EntityID id;
-	fread_assert(&id, sizeof(id), stream);
+	EntityID id ;
+	fread_assert (&id, sizeof (id), stream) ;
 
 	//--------------------------------------------------------------------------
 	// get updated node
 	//--------------------------------------------------------------------------
 
-	Node  n;
-	Graph *g = gc->g;
+	Node  n ;
+	Graph *g = gc->g ;
 
-	bool found = Graph_GetNode(g, id, &n);
-	ASSERT(found == true);
+	bool found = Graph_GetNode (g, id, &n) ;
+	ASSERT (found == true) ;
 
 	//--------------------------------------------------------------------------
 	// read labels count
 	//--------------------------------------------------------------------------
 
-	uint8_t lbl_count;
-	fread_assert(&lbl_count, sizeof(lbl_count), stream);
-	ASSERT(lbl_count > 0);
+	uint8_t lbl_count ;
+	fread_assert (&lbl_count, sizeof (lbl_count), stream) ;
+	ASSERT (lbl_count > 0) ;
 
 	// TODO: move to LabelID
-	uint n_add_labels          = 0;
-	uint n_remove_labels       = 0;
-	const char **add_labels    = NULL;
-	const char **remove_labels = NULL;
-	const char *lbl[lbl_count];
+	uint n_add_labels          = 0 ;
+	uint n_remove_labels       = 0 ;
+	const char **add_labels    = NULL ;
+	const char **remove_labels = NULL ;
+	const char *lbl[lbl_count] ;
 
 	// assign lbl to the appropriate array
-	if(add) {
-		add_labels = lbl;
-		n_add_labels = lbl_count;
+	if (add) {
+		add_labels = lbl ;
+		n_add_labels = lbl_count ;
 	} else {
-		remove_labels = lbl;
-		n_remove_labels = lbl_count;
+		remove_labels = lbl ;
+		n_remove_labels = lbl_count ;
 	}
 
 	//--------------------------------------------------------------------------
 	// read labels
 	//--------------------------------------------------------------------------
 
-	for(ushort i = 0; i < lbl_count; i++) {
-		LabelID l;
-		fread_assert(&l, sizeof(LabelID), stream);
-		Schema *s = GraphContext_GetSchemaByID(gc, l, SCHEMA_NODE);
-		ASSERT(s != NULL);
-		lbl[i] = Schema_GetName(s);
+	for (uint16_t i = 0; i < lbl_count; i++) {
+		LabelID l ;
+		fread_assert (&l, sizeof (LabelID), stream) ;
+		Schema *s = GraphContext_GetSchemaByID (gc, l, SCHEMA_NODE) ;
+		ASSERT (s != NULL) ;
+		lbl[i] = Schema_GetName (s) ;
 	}
 
 	//--------------------------------------------------------------------------
 	// update node labels
 	//--------------------------------------------------------------------------
 
-	UpdateNodeLabels(gc, &n, add_labels, remove_labels, n_add_labels,
-			n_remove_labels, false);
+	GraphHub_UpdateNodeLabels (gc, &n, add_labels, remove_labels, n_add_labels,
+			n_remove_labels, false) ;
 }
 
 static void ApplyAddSchema
@@ -264,7 +346,7 @@ static void ApplyAddSchema
 	fread_assert(schema_name, l, stream);
 
 	// create schema
-	AddSchema(gc, schema_name, t, false);
+	GraphHub_AddSchema(gc, schema_name, t, false);
 }
 
 static void ApplyAddAttribute
@@ -279,18 +361,18 @@ static void ApplyAddAttribute
 	//--------------------------------------------------------------------------
 	
 	// read attribute name length
-	size_t l;
-	fread_assert(&l, sizeof(l), stream);
+	size_t l ;
+	fread_assert (&l, sizeof (l), stream) ;
 
 	// read attribute name
-	const char attr[l];
-	fread_assert(attr, l, stream);
+	const char attr[l] ;
+	fread_assert (attr, l, stream) ;
 
 	// attr should not exist
-	ASSERT(GraphContext_GetAttributeID(gc, attr) == ATTRIBUTE_ID_NONE);
+	ASSERT (GraphContext_GetAttributeID (gc, attr) == ATTRIBUTE_ID_NONE) ;
 
 	// add attribute
-	FindOrAddAttribute(gc, attr, false);
+	GraphHub_FindOrAddAttribute (gc, attr, false) ;
 }
 
 // process Update_Edge effect
@@ -307,8 +389,6 @@ static void ApplyUpdateEdge
 	//--------------------------------------------------------------------------
 	
 	SIValue v;            // updated value
-	uint props_set;       // number of attributes updated
-	uint props_removed;   // number of attributes removed
 	AttributeID attr_id;  // entity ID
 
 	NodeID     s_id = INVALID_ENTITY_ID;       // edge src node ID
@@ -359,7 +439,7 @@ static void ApplyUpdateEdge
 	ASSERT(SI_TYPE(v) & (SI_VALID_PROPERTY_VALUE | T_NULL));
 	ASSERT((attr_id != ATTRIBUTE_ID_ALL || SIValue_IsNull(v)) && attr_id != ATTRIBUTE_ID_NONE);
 
-	UpdateEdgeProperty(gc, id, r_id, s_id, t_id, attr_id, v);
+	GraphHub_UpdateEdgeProperty(gc, id, r_id, s_id, t_id, attr_id, v);
 }
 
 // process UpdateNode effect
@@ -376,8 +456,6 @@ static void ApplyUpdateNode
 	//--------------------------------------------------------------------------
 
 	SIValue v;            // updated value
-	uint props_set;       // number of attributes updated
-	uint props_removed;   // number of attributes removed
 	AttributeID attr_id;  // entity ID
 
 	EntityID id = INVALID_ENTITY_ID;
@@ -402,40 +480,71 @@ static void ApplyUpdateNode
 	ASSERT(SI_TYPE(v) & (SI_VALID_PROPERTY_VALUE | T_NULL));
 	ASSERT((attr_id != ATTRIBUTE_ID_ALL || SIValue_IsNull(v)) && attr_id != ATTRIBUTE_ID_NONE);
 
-	UpdateNodeProperty(gc, id, attr_id, v);
+	GraphHub_UpdateNodeProperty(gc, id, attr_id, v);
 }
 
 // process DeleteNode effect
 static void ApplyDeleteNode
 (
-	FILE *stream,     // effects stream
-	GraphContext *gc  // graph to operate on
+	FILE *stream,      // effects stream
+	GraphContext *gc,  // graph to operate on
+	size_t l           // length of stream
 ) {
 	//--------------------------------------------------------------------------
 	// effect format:
 	//    node ID
 	//--------------------------------------------------------------------------
 	
-	Node n;            // node to delete
 	EntityID id;       // node ID
 	Graph *g = gc->g;  // graph to delete node from
 
-	// read node ID off of stream
-	fread_assert(&id, sizeof(EntityID), stream);
+	int i = 0 ;                      // size of batch
+	const size_t batch_size = 4096 ; // max batch size
+	Node nodes[batch_size] ;         // nodes
 
-	// retrieve node from graph
-	int res = Graph_GetNode(g, id, &n);
-	ASSERT(res != 0);
+	while (true) {
+		Node *n = nodes + i ;
+		// read node ID off of stream
+		fread_assert (&n->id, sizeof(EntityID), stream) ;
 
-	// delete node
-	DeleteNodes(gc, &n, 1, false);
+		// debug assert node exists
+		ASSERT (Graph_GetNode (g, n->id, nodes + i)) ;
+
+		i++ ;
+
+		if (i == batch_size) {
+			// flush batch
+			GraphHub_DeleteNodes (gc, nodes, i, false) ;
+			i = 0 ;
+		}
+
+		// have we reached the end of the stream ?
+		if (ftell (stream) >= l) {
+			break ;
+		}
+
+		// check if the next item in the stream is a EFFECT_DELETE_NODE effect
+		EffectType t = ReadEffectType (stream) ;
+		if (t != EFFECT_DELETE_NODE) {
+			// go back sizeof (EffectType) bytes
+			fseek (stream, -((long)sizeof (EffectType)), SEEK_CUR) ;
+			break ;
+		}
+	}
+
+	// flush any remaining node deletions
+	if (i > 0) {
+		// flush batch
+		GraphHub_DeleteNodes (gc, nodes, i, false) ;
+	}
 }
 
 // process DeleteNode effect
 static void ApplyDeleteEdge
 (
-	FILE *stream,     // effects stream
-	GraphContext *gc  // graph to operate on
+	FILE *stream,      // effects stream
+	GraphContext *gc,  // graph to operate on
+	size_t l           // length of stream
 ) {
 	//--------------------------------------------------------------------------
 	// effect format:
@@ -445,41 +554,64 @@ static void ApplyDeleteEdge
 	//    dest ID
 	//--------------------------------------------------------------------------
 
-	Edge e;  // edge to delete
+	int i = 0 ;                       // size of current batch
+	const size_t batch_size = 4096 ;  // max batch size
+	Edge edges[batch_size] ;          // edges
 
-	EntityID id   = INVALID_ENTITY_ID;       // edge ID
-	int      r_id = GRAPH_UNKNOWN_RELATION;  // edge rel-type
-	NodeID   s_id = INVALID_ENTITY_ID;       // edge src node ID
-	NodeID   t_id = INVALID_ENTITY_ID;       // edge dest node ID
+	// encoded edge struct
+	#pragma pack(push, 1)
+	struct {
+		EntityID id ;
+		RelationID r ;
+		NodeID src_id ;
+		NodeID dest_id ;
+	} _edge_desc ;
+	#pragma pack(pop)
 
-	int res;
-	UNUSED(res);
+	Graph *g = gc->g ;  // graph to delete edge from
 
-	Graph *g = gc->g;  // graph to delete edge from
+	while (true) {
+		// read edge description from stream
+		fread_assert (&_edge_desc, sizeof (_edge_desc), stream) ;
 
-	// read edge ID
-	fread_assert(&id, sizeof(EntityID), stream);
+		Edge *e = edges + i ;
 
-	// read relation ID
-	fread_assert(&r_id, sizeof(RelationID), stream);
+		// debug assert edge exists
+		ASSERT (Graph_GetEdge (g, _edge_desc.id, edges + i) == true) ;
 
-	// read src node ID
-	fread_assert(&s_id, sizeof(EntityID), stream);
+		// set edge relation, src and destination node
+		e->id         = _edge_desc.id      ;
+		e->src_id     = _edge_desc.src_id  ;
+		e->dest_id    = _edge_desc.dest_id ;
+		e->relationID = _edge_desc.r       ;
 
-	// read dest node ID
-	fread_assert(&t_id, sizeof(EntityID), stream);
+		i++ ;
 
-	// get edge from the graph
-	res = Graph_GetEdge(g, id, (Edge*)&e);
-	ASSERT(res != 0);
+		// check if batch is full
+		if (i == batch_size) {
+			// flush batch
+			GraphHub_DeleteEdges (gc, edges, i, false) ;
+			i = 0 ;
+		}
 
-	// set edge relation, src and destination node
-	Edge_SetSrcNodeID(&e, s_id);
-	Edge_SetDestNodeID(&e, t_id);
-	Edge_SetRelationID(&e, r_id);
+		// have we reached the end of the stream ?
+		if (ftell (stream) >= l) {
+			break ;
+		}
 
-	// delete edge
-	DeleteEdges(gc, &e, 1, false);
+		// check if the next item in the stream is a EFFECT_DELETE_EDGE effect
+		EffectType t = ReadEffectType (stream) ;
+		if (t != EFFECT_DELETE_EDGE) {
+			// go back sizeof (EffectType) bytes
+			fseek (stream, -((long)sizeof (EffectType)), SEEK_CUR) ;
+			break ;
+		}
+	}
+
+	// flush last batch
+	if (i > 0) {
+		GraphHub_DeleteEdges (gc, edges, i, false) ;
+	}
 }
 
 // returns false in case of effect encode/decode version mismatch
@@ -532,43 +664,43 @@ void Effects_Apply
 	MATRIX_POLICY policy = Graph_SetMatrixPolicy(g, SYNC_POLICY_RESIZE);
 
 	// as long as there's data in stream
-	while(ftell(stream) < l) {
+	while (ftell (stream) < l) {
 		// read effect type
-		EffectType t = ReadEffectType(stream);
-		switch(t) {
+		EffectType t = ReadEffectType (stream) ;
+		switch (t) {
 			case EFFECT_DELETE_NODE:
-				ApplyDeleteNode(stream, gc);
-				break;
+				ApplyDeleteNode (stream, gc, l) ;
+				break ;
 			case EFFECT_DELETE_EDGE:
-				ApplyDeleteEdge(stream, gc);
-				break;
+				ApplyDeleteEdge (stream, gc, l) ;
+				break ;
 			case EFFECT_UPDATE_NODE:
-				ApplyUpdateNode(stream, gc);
-				break;
+				ApplyUpdateNode (stream, gc) ;
+				break ;
 			case EFFECT_UPDATE_EDGE:
-				ApplyUpdateEdge(stream, gc);
-				break;
+				ApplyUpdateEdge (stream, gc) ;
+				break ;
 			case EFFECT_CREATE_NODE:    
-				ApplyCreateNode(stream, gc);
-				break;
+				ApplyCreateNode (stream, gc) ;
+				break ;
 			case EFFECT_CREATE_EDGE:
-				ApplyCreateEdge(stream, gc);
-				break;
+				ApplyCreateEdge (stream, gc, l) ;
+				break ;
 			case EFFECT_SET_LABELS:
-				ApplyLabels(stream, gc, true);
-				break;
+				ApplyLabels (stream, gc, true) ;
+				break ;
 			case EFFECT_REMOVE_LABELS: 
-				ApplyLabels(stream, gc, false);
-				break;
+				ApplyLabels (stream, gc, false) ;
+				break ;
 			case EFFECT_ADD_SCHEMA:
-				ApplyAddSchema(stream, gc);
-				break;
+				ApplyAddSchema (stream, gc) ;
+				break ;
 			case EFFECT_ADD_ATTRIBUTE:
-				ApplyAddAttribute(stream, gc);
-				break;
+				ApplyAddAttribute (stream, gc) ;
+				break ;
 			default:
-				assert(false && "unknown effect type");
-				break;
+				ASSERT (false && "unknown effect type") ;
+				break ;
 		}
 	}
 

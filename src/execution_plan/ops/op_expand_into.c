@@ -207,7 +207,6 @@ static Record _handoff
 		op->record_count--;
 		r = op->records[op->record_count];
 
-		bool x;
 		uint row;
 
 		// resolve row index
@@ -226,7 +225,7 @@ static Record _handoff
 		// M is the result of F*A*B, in which case we can switch from
 		// M being a Delta_Matrix to a GrB_Matrix, making the extract element
 		// operation a bit cheaper to compute
-		GrB_Info res    =  Delta_Matrix_extractElement_BOOL(&x, op->M, row, col);
+		GrB_Info res    =  Delta_Matrix_isStoredElement(op->M, row, col);
 
 		// src is not connected to dest, free the current record and continue
 		if(res != GrB_SUCCESS) {

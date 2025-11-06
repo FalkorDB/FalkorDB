@@ -113,13 +113,13 @@ static void _DeleteEntities
 
 			// delete edges
 			if(edge_count > 0) {
-				DeleteEdges(gc, distinct_edges, edge_count, true);
+				GraphHub_DeleteEdges(gc, distinct_edges, edge_count, true);
 				edge_deleted = edge_count;
 			}
 
 			// delete nodes
 			if(node_count > 0) {
-				DeleteNodes(gc, distinct_nodes, node_count, true);
+				GraphHub_DeleteNodes(gc, distinct_nodes, node_count, true);
 				node_deleted = node_count;
 			}
 		}
@@ -243,6 +243,11 @@ static Record DeleteConsume
 		_DeleteEntities(op);
 	}
 
+	// no one consumes our output, return NULL
+	if (opBase->parent == NULL) {
+		return NULL ;
+	}
+
 	// return record
 	return _handoff(op);
 }
@@ -266,14 +271,14 @@ static void DeleteFree
 ) {
 	OpDelete *op = (OpDelete *)opBase;
 
-	if(op->records) {
-		uint rec_count = array_len(op->records);
-		// records[0..op->rec_idx] had been already emitted, skip them
-		for(uint i = op->rec_idx; i < rec_count; i++) {
-			OpBase_DeleteRecord(op->records+i);
+	if (op->records) {
+		uint rec_count = array_len (op->records) ;
+		// records[0..rec_idx-1] had been already emitted, skip them
+		for (uint i = op->rec_idx; i < rec_count; i++) {
+			OpBase_DeleteRecord (op->records+i) ;
 		}
-		array_free(op->records);
-		op->records = NULL;
+		array_free (op->records) ;
+		op->records = NULL ;
 	}
 
 	if(op->deleted_nodes) {
