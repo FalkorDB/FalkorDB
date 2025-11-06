@@ -223,9 +223,7 @@ static bool _ExecutionPlan_HasLocateTaps
 	if((root->childCount == 0 && root->type != OPType_ARGUMENT &&
 		root->type != OPType_ARGUMENT_LIST) ||
 		// when Foreach or Call {} have a single child, they don't need a tap
-		(root->childCount == 1 &&
-			(root->type == OPType_FOREACH || root->type == OPType_CALLSUBQUERY))
-		) {
+		(root->childCount == 1 && root->type == OPType_FOREACH)) {
 			return true;
 	}
 
@@ -244,11 +242,11 @@ static ExecutionPlan *_tie_segments
 	ExecutionPlan **segments,
 	uint segment_count
 ) {
-	FT_FilterNode  *ft                 = NULL;  // filters following WITH
-	OpBase         *connecting_op      = NULL;  // op connecting one segment to another
-	ExecutionPlan  *prev_segment       = NULL;
-	ExecutionPlan  *current_segment    = NULL;
-	AST            *master_ast         = QueryCtx_GetAST();  // top-level AST of plan
+	FT_FilterNode  *ft              = NULL;  // filters following WITH
+	OpBase         *connecting_op   = NULL;  // op connecting one segment to another
+	ExecutionPlan  *prev_segment    = NULL;
+	ExecutionPlan  *current_segment = NULL;
+	AST            *master_ast      = QueryCtx_GetAST();  // top-level AST of plan
 
 	//--------------------------------------------------------------------------
 	// merge segments

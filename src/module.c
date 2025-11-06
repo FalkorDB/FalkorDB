@@ -332,7 +332,7 @@ int RedisModule_OnLoad
 				"graph.MEMORY",
 				Graph_Memory,
 				"readonly deny-script",
-				2, 2, 0) == REDISMODULE_ERR) {
+				2, 2, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 

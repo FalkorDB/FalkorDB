@@ -147,10 +147,11 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 						ErrorCtx_SetError(EMSG_ALLSHORTESTPATH_SRC_DST_RESLOVED);
 					}
 				}
-				root = NewCondVarLenTraverseOp(plan, gc->g, exp);
+				root = NewCondVarLenTraverseOp (plan, gc->g, exp) ;
 			} else {
-				root = NewCondTraverseOp(plan, gc->g, exp);
+				root = NewCondTraverseOp (plan, gc->g, exp) ;
 			}
+
 			// insert the new traversal op at the root of the chain
 			ExecutionPlan_AddOp(root, tail);
 			tail = root;

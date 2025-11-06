@@ -74,11 +74,10 @@ SIValue AR_HAS_LABELS(SIValue *argv, int argc, void *private_data) {
 		}
 
 		// validate label is set
-		bool x;
 		Delta_Matrix M = Graph_GetLabelMatrix(g, Schema_GetID(s));
 		ASSERT(M != NULL);
 
-		if(Delta_Matrix_extractElement_BOOL(&x, M, id, id) == GrB_NO_VALUE) {
+		if(Delta_Matrix_isStoredElement(M, id, id) == GrB_NO_VALUE) {
 			res = false;
 			break;
 		}

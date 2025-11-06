@@ -149,7 +149,7 @@ void Tensor_SetElements
 		}
 
 		// consecutive elements sharing the same row, col indexes
-		uint j = i;
+		uint64_t j = i;
 		while(j < n) {
 			GrB_Index next_row = rows[j];  // next row index
 			GrB_Index next_col = cols[j];  // next column index
@@ -302,14 +302,14 @@ void Tensor_SetEdges
 
 	// array of indexes pairs
 	// delayed[i, i+1] points to a range of consecutive elements to be inserted
-	// these elements are creating a new entries either scalar or vector
+	// these elements are creating new entries either scalar or vector
 	uint64_t *delayed = array_new(uint64_t, 0); 
 
 	GrB_Vector V;
 	GrB_Info info;
 
 	// i's is advanced within the loop's body
-	for(uint i = 0; i < n;) {
+	for (uint64_t i = 0; i < n;) {
 		enum SetMethod method;                    // insert method
 		const Edge *e   = elements[i];            // tuple (row, col, x)
 		uint64_t    x   = ENTITY_GET_ID(e);       // element value
@@ -336,7 +336,7 @@ void Tensor_SetEdges
 		}
 
 		// consecutive elements sharing the same row, col indexes
-		uint j = i;
+		uint64_t j = i;
 		while(j < n) {
 			const Edge *next = elements[j];
 			GrB_Index next_row = Edge_GetSrcNodeID(next);   // next row index
@@ -375,7 +375,7 @@ void Tensor_SetEdges
 
 				// add new entries
 				for(; i < j; i++) { 
-					e = elements[i];          // tuple (row, col, x)
+					e = elements[i];       // tuple (row, col, x)
 					x = ENTITY_GET_ID(e);  // element value
 					// add entry to vector
 					info = GrB_Vector_setElement_BOOL(V, true, x);
@@ -443,7 +443,7 @@ void Tensor_SetEdges
 				ASSERT(info == GrB_SUCCESS);
 
 				// add elements to vector
-				for(uint j = a; j < z; j++) {
+				for(uint64_t j = a; j < z; j++) {
 					e = elements[j];
 					x = ENTITY_GET_ID(e);
 					info = GrB_Vector_setElement_BOOL(V, true, x);
@@ -535,7 +535,7 @@ void Tensor_RemoveElements
 		GrB_Index   col = Edge_GetDestNodeID(e);  // element column index
 
 		// consecutive elements sharing the same row, col indexes
-		uint j = i;
+		uint64_t j = i;
 		while(j < n) {
 			const Edge *next     = elements + j;
 			GrB_Index   next_row = Edge_GetSrcNodeID(next);   // next row index
