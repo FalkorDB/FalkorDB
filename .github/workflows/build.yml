@@ -758,7 +758,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install m4 automake peg libtool autoconf python3 gcc make
+          brew install m4 automake peg libtool autoconf python3 gcc make zlib libiconv libomp
           # Add GNU make to PATH (installed as gmake)
           echo "/opt/homebrew/opt/make/libexec/gnubin" >> $GITHUB_PATH
 
