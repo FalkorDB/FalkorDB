@@ -103,7 +103,7 @@ void ExecutionPlan_RePositionFilterOp
 		// place the filter directly below the first projection if there is one
 		// otherwise update the execution plan's root
 		op = ExecutionPlan_LocateOpMatchingTypes(plan->root, PROJECT_OPS,
-				PROJECT_OP_COUNT);
+				PROJECT_OP_COUNT, NULL);
 		op = (op == NULL) ? plan->root : op;
 	}
 

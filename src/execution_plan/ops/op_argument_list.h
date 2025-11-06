@@ -27,6 +27,6 @@ OpBase *NewArgumentListOp
 void ArgumentList_AddRecordList
 (
 	ArgumentList *arg,  // Argument operation to plant the list in
-	Record *records     // record list
+	Record **records    // record list
 );
 

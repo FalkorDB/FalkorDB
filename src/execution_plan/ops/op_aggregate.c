@@ -5,7 +5,6 @@
  */
 
 #include "RG.h"
-#include "op_sort.h"
 #include "op_aggregate.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
@@ -226,7 +225,7 @@ OpBase *NewAggregateOp
 ) {
 	OpAggregate *op = rm_calloc (1, sizeof(OpAggregate)) ;
 
-	op->groups = HashTableCreate(&_dt);
+	op->groups = HashTableCreate (&_dt) ;
 
 	OpBase_Init((OpBase *)op, OPType_AGGREGATE, "Aggregate", NULL,
 			AggregateConsume, AggregateReset, NULL, AggregateClone,
@@ -433,3 +432,4 @@ static void AggregateFree
 		OpBase_DeleteRecord(&op->r);
 	}
 }
+

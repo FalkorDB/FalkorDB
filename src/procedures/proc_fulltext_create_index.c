@@ -289,8 +289,8 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 		Map_Add(&options, SI_ConstStringVal("nostem"),
 				SI_BoolVal(nostems[i]));
 
-		idx = AddIndex(label, _fields[i], GETYPE_NODE, INDEX_FLD_FULLTEXT,
-				options, true);
+		idx = GraphHub_AddIndex(label, _fields[i], GETYPE_NODE,
+				INDEX_FLD_FULLTEXT, options, true);
 		if(idx != NULL) {
 			ResultSet_IndexCreated(result_set, INDEX_OK);
 		} else {

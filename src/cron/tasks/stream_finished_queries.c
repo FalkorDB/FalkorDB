@@ -27,6 +27,7 @@
 #define FLD_NAME_REPORT_DURATION     "Report duration"
 #define FLD_NAME_EXECUTION_DURATION  "Execution duration"
 
+#define TELEMETRY_STREAM_TTL 1000 * 60 * 30  // stream TTL ms, 30 minutes
 
 // event field:value pairs
 static RedisModuleString *_event[FLD_COUNT * 2] = {0};
@@ -279,6 +280,12 @@ bool CronTask_streamFinishedQueries
 			// cap stream
 			RedisModule_StreamTrimByLength(key,
 					REDISMODULE_STREAM_TRIM_APPROX, max_query_count);
+
+			// set stream TTL
+			if (key_type == REDISMODULE_KEYTYPE_EMPTY) {
+				int res = RedisModule_SetExpire (key, TELEMETRY_STREAM_TTL) ;
+				ASSERT (res == REDISMODULE_OK) ;
+			}
 		} else {
 			// TODO: decide how to handle this...
 		}

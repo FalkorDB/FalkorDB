@@ -359,6 +359,17 @@ void Record_FreeEntries
 	}
 }
 
+// increase record's reference count
+void Record_IncRefCount
+(
+	Record r
+) {
+	ASSERT (r != NULL) ;
+	ASSERT (r->ref_count > 0) ;  // can't revive a freed record
+
+	r->ref_count++ ;
+}
+
 void Record_Free
 (
 	Record r

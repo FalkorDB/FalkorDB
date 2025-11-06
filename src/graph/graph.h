@@ -75,6 +75,25 @@ void Graph_AcquireWriteLock
 	Graph *g
 );
 
+// acquire the graph write lock with a timeout
+// attempts to acquire the write lock on the given graph
+// if the lock is not acquired immediately the function will block until either
+// the lock becomes available or the timeout elapses
+//
+// returns:
+// - 0 on success (lock acquired)
+// - ETIMEDOUT if the timeout expired before acquiring the lock
+// - EBUSY if called with timeout_ms == 0 and the lock could not be acquired
+// - other nonzero error codes may be returned for unexpected failures
+int Graph_TimeAcquireWriteLock
+(
+	Graph *g,       // graph to lock
+	int timeout_ms  // maximum time in milliseconds to wait for the lock:
+                    // - timeout_ms < 0 : block until the lock is acquired
+                    // - timeout_ms = 0 : non-blocking attempt (try-lock)
+                    // - timeout_ms > 0 : wait up to timeout_ms milliseconds
+);
+
 // release the held lock
 void Graph_ReleaseLock
 (
@@ -204,6 +223,18 @@ void Graph_CreateNode
 	uint label_count  // number of labels
 );
 
+// create multiple nodes
+// all nodes share the same set of labels
+void Graph_CreateNodes
+(
+	Graph *g,            // graph
+	Node **nodes,        // array of nodes to create
+	AttributeSet *sets,  // nodes attributes
+	uint node_count,     // number of nodes
+	LabelID *labels,     // labels, same set of labels applied to all nodes
+	uint label_count     // number of labels
+);
+
 // label node with each label in 'lbls'
 void Graph_LabelNode
 (
@@ -254,9 +285,10 @@ void Graph_CreateEdge
 // create multiple edges
 void Graph_CreateEdges
 (
-	Graph *g,      // graph on which to operate
-	RelationID r,  // relationship type
-	Edge **edges   // edges to create
+	Graph *g,           // graph on which to operate
+	RelationID r,       // relationship type
+	Edge **edges,       // edges to create
+	AttributeSet *sets  // [optional] attribute sets
 );
 
 // deletes nodes from the graph

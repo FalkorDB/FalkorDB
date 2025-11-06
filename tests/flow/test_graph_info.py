@@ -434,3 +434,23 @@ class testGraphInfo(FlowTestsBase):
         for t in threads:
             t.join()
 
+    def test08_telemetry_ttl(self):
+        """make sure telemetry keys have ttl"""
+
+        # make sure graph exists
+        self.graph.query("RETURN 1")
+
+        # wait for telemetry stream to be created
+        key_type = 'none' # type of stream_key
+        telemetry_key = StreamName(self.graph)
+
+        while key_type == 'none':
+            key_type = self.conn.type(telemetry_key)
+
+        # make sure we're dealing with a telemetry stream
+        self.env.assertEquals(key_type, "stream")
+
+        # make sure stream is associated with TTL
+        ttl = self.conn.ttl(telemetry_key)
+        self.env.assertGreater(ttl, 0)
+

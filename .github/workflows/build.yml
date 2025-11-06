@@ -94,6 +94,17 @@ jobs:
             test_dockerfile: Dockerfile.alpine
             cache_path: linux-x64
             is_debug: "0"
+          - name: linux/x86_64
+            platform: linux/amd64
+            suffix: server-alpine-x64
+            os: alpine
+            machine_label: ubuntu-latest
+            build_test_image: true
+            dockerfile: Dockerfile.alpine-server
+            compiler_dockerfile: Dockerfile.compiler_alpine
+            test_dockerfile: Dockerfile.alpine
+            cache_path: linux-x64
+            is_debug: "0"
           - name: linux/arm64
             platform: linux/arm64
             suffix: alpine-arm64v8
@@ -101,6 +112,17 @@ jobs:
             machine_label: ubuntu-24.04-arm
             build_test_image: true
             dockerfile: Dockerfile.alpine
+            compiler_dockerfile: Dockerfile.compiler_alpine
+            test_dockerfile: Dockerfile.alpine
+            cache_path: linux-arm64v8
+            is_debug: "0"
+          - name: linux/arm64
+            platform: linux/arm64
+            suffix: server-alpine-arm64v8
+            os: alpine
+            machine_label: ubuntu-24.04-arm
+            build_test_image: true
+            dockerfile: Dockerfile.alpine-server
             compiler_dockerfile: Dockerfile.compiler_alpine
             test_dockerfile: Dockerfile.alpine
             cache_path: linux-arm64v8
@@ -120,6 +142,26 @@ jobs:
             machine_label: ${{ format('rhel8-build-{0}-{1}', github.run_id, github.run_number) }}
             build_test_image: false
             cache_path: linux-x64
+            is_debug: "0"
+          - name: linux/amd64
+            platform: linux/amd64
+            suffix: server-x64
+            os: ubuntu
+            machine_label: ubuntu-latest
+            build_test_image: true
+            dockerfile: Dockerfile.server
+            test_dockerfile: Dockerfile.debian
+            cache_path: linux-x64
+            is_debug: "0"
+          - name: linux/arm64
+            platform: linux/arm64
+            suffix: server-arm64v8
+            os: ubuntu
+            machine_label: ubuntu-24.04-arm
+            build_test_image: true
+            dockerfile: Dockerfile.server
+            test_dockerfile: Dockerfile.debian
+            cache_path: linux-arm64v8
             is_debug: "0"
           - name: linux/amd64
             platform: linux/amd64
@@ -349,7 +391,7 @@ jobs:
             TARGETPLATFORM=${{ matrix.platform.platform }}
 
       - name: Upload tests image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: ${{ matrix.platform.build_test_image }}
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
@@ -379,7 +421,7 @@ jobs:
 
       - name: Upload image
         if: ${{ matrix.platform.is_debug == '0' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: falkordb-${{ matrix.platform.suffix }}
           path: /tmp/falkordb-${{ matrix.platform.suffix }}.tar
@@ -390,7 +432,7 @@ jobs:
           docker run --rm --entrypoint cat localhost:5000/falkordb/falkordb-compiler /FalkorDB/bin/src/falkordb.so > /tmp/falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
 
       - name: Upload .so
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
           path: /tmp/falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
@@ -436,7 +478,7 @@ jobs:
             machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp
@@ -452,7 +494,7 @@ jobs:
           docker run --rm -i -v /tmp/logs:/FalkorDB/tests/unit/logs falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
 
       - name: Upload unit test logs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: unit-test-logs-${{ matrix.platform.suffix }}
           path: /tmp/logs
@@ -482,7 +524,7 @@ jobs:
             machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp
@@ -498,7 +540,7 @@ jobs:
           docker run --rm -i -v /tmp/logs:/FalkorDB/tests/flow/logs falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
 
       - name: Upload flow test logs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: flow-test-logs-${{ matrix.platform.suffix }}
           path: /tmp/logs
@@ -529,7 +571,7 @@ jobs:
             machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp
@@ -545,7 +587,7 @@ jobs:
           docker run --rm -i -v /tmp/logs:/FalkorDB/tests/tck/logs falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
 
       - name: Upload TCK test logs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: tck-test-logs-${{ matrix.platform.suffix }}
           path: /tmp/logs
@@ -575,7 +617,7 @@ jobs:
             machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp
@@ -591,7 +633,7 @@ jobs:
           docker run --rm -i -v /tmp/logs:/FalkorDB/tests/fuzz/logs falkordb/falkordb-tests make fuzz TIMEOUT=180
 
       - name: Upload fuzz test logs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: fuzz-test-logs-${{ matrix.platform.suffix }}
           path: /tmp/logs
@@ -609,7 +651,7 @@ jobs:
   #    ARCH: ${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}
   #  steps:
   #    - name: Download image
-  #      uses: actions/download-artifact@v5
+  #      uses: actions/download-artifact@v6
   #      with:
   #        name: falkordb-tests-${{ matrix.platform.suffix }}
   #        path: /tmp
@@ -664,7 +706,7 @@ jobs:
             machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: falkordb-${{ matrix.platform.suffix }}
           path: /tmp
@@ -684,6 +726,6 @@ jobs:
           scan-type: image
           # ignore-policy: .github/trivy-ignore-policy.json
       - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-results.sarif'
