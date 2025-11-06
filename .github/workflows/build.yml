@@ -754,7 +754,7 @@ jobs:
       - name: Setup CMake
         uses: jwlawson/actions-setup-cmake@v2
         with:
-          cmake-version: '4.1.2'
+          cmake-version: '3.27.x'
 
       - name: Install dependencies
         run: |
