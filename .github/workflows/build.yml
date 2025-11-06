@@ -832,7 +832,7 @@ jobs:
           fi
           # Build with detailed error capture
           set -o pipefail
-          make DEBUG=${{ matrix.platform.is_debug }} -j1
+          make DEBUG=${{ matrix.platform.is_debug }} CXXFLAGS="-Wno-error=vla-cxx-extension" -j1
 
       - name: Save cache for GraphBLAS
         if: always() && steps.cache_graphblas.outputs.cache-hit == false
