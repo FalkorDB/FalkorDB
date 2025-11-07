@@ -16,6 +16,11 @@
 
 #include <stdatomic.h>
 
+// maximum size for index field name buffers
+// sufficient for most field names which are typically < 50 characters
+// plus prefixes like "range:" and suffixes like ":string:arr"
+#define INDEX_FIELD_NAME_BUFFER_SIZE 512
+
 // gets type aware index field name
 void Index_RangeFieldName
 (
@@ -41,7 +46,7 @@ void Index_RangeFieldName
 }
 
 // gets type aware index field name
-void Index_FulltextxFieldName
+void Index_FulltextFieldName
 (
 	char *type_aware_name,  // [out] type aware name
 	const char *name        // field name
@@ -64,6 +69,22 @@ void Index_VectorFieldName
 
 	// prefix vector field name with "vector:"
 	sprintf(type_aware_name, "vector:%s", name);
+}
+
+// helper: generate range array field names
+// generates both numeric and string array field names from base range name
+static inline void _Index_RangeArrayFieldNames
+(
+	char *numeric_arr_name,  // [out] numeric array field name
+	char *string_arr_name,   // [out] string array field name
+	const char *range_name   // base range field name
+) {
+	ASSERT(range_name       != NULL);
+	ASSERT(numeric_arr_name != NULL);
+	ASSERT(string_arr_name  != NULL);
+
+	sprintf(numeric_arr_name, "%s:numeric:arr", range_name);
+	sprintf(string_arr_name, "%s:string:arr", range_name);
 }
 
 // index structure
@@ -151,7 +172,7 @@ static void _Index_ConstructStructure
 		//----------------------------------------------------------------------
 
 		if(field->type & INDEX_FLD_VECTOR) {
-			char vector_name[512];
+			char vector_name[INDEX_FIELD_NAME_BUFFER_SIZE];
 			Index_VectorFieldName(vector_name, field->name);
 			
 			RSFieldID fieldID = RediSearch_CreateVectorField(rsIdx,
@@ -166,13 +187,13 @@ static void _Index_ConstructStructure
 		//----------------------------------------------------------------------
 
 		if(field->type & INDEX_FLD_RANGE) {
-			char range_name[512];
-			char range_numeric_arr_name[512];
-			char range_string_arr_name[512];
+			char range_name[INDEX_FIELD_NAME_BUFFER_SIZE];
+			char range_numeric_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
+			char range_string_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
 			
 			Index_RangeFieldName(range_name, field->name, NULL);
-			sprintf(range_numeric_arr_name, "%s:numeric:arr", range_name);
-			sprintf(range_string_arr_name, "%s:string:arr", range_name);
+			_Index_RangeArrayFieldNames(range_numeric_arr_name,
+					range_string_arr_name, range_name);
 			
 			// introduce both text, numeric and geo fields
 			unsigned types = RSFLDTYPE_NUMERIC | RSFLDTYPE_GEO | RSFLDTYPE_TAG;
@@ -343,10 +364,13 @@ static inline void _addArrayField
 	//--------------------------------------------------------------------------
 
 	if(n_numerics > 0) {
-		char range_name[512];
-		char range_numeric_arr_name[512];
+		char range_name[INDEX_FIELD_NAME_BUFFER_SIZE];
+		char range_numeric_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
+		char range_string_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
+		
 		Index_RangeFieldName(range_name, field->name, NULL);
-		sprintf(range_numeric_arr_name, "%s:numeric:arr", range_name);
+		_Index_RangeArrayFieldNames(range_numeric_arr_name,
+				range_string_arr_name, range_name);
 		
 		RediSearch_DocumentAddFieldNumericArray(doc,
 				range_numeric_arr_name, &numerics, RSFLDTYPE_NUMERIC);
@@ -357,10 +381,13 @@ static inline void _addArrayField
 	//--------------------------------------------------------------------------
 
 	if(n_strings > 0) {
-		char range_name[512];
-		char range_string_arr_name[512];
+		char range_name[INDEX_FIELD_NAME_BUFFER_SIZE];
+		char range_numeric_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
+		char range_string_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
+		
 		Index_RangeFieldName(range_name, field->name, NULL);
-		sprintf(range_string_arr_name, "%s:string:arr", range_name);
+		_Index_RangeArrayFieldNames(range_numeric_arr_name,
+				range_string_arr_name, range_name);
 		
 		RediSearch_DocumentAddFieldStringArray(doc,
 				range_string_arr_name, &strings, n_strings,
@@ -441,7 +468,7 @@ RSDoc *Index_IndexGraphEntity
 		//----------------------------------------------------------------------
 
 		if(field->type & INDEX_FLD_RANGE) {
-			char range_name[512];
+			char range_name[INDEX_FIELD_NAME_BUFFER_SIZE];
 			Index_RangeFieldName(range_name, field->name, NULL);
 			
 			// TODO: is it possible that the field count is incremented twice
@@ -508,7 +535,7 @@ RSDoc *Index_IndexGraphEntity
 			uint32_t dim      = SIVector_Dim(*v);
 			void*    elements = SIVector_Elements(*v);
 
-			char vector_name[512];
+			char vector_name[INDEX_FIELD_NAME_BUFFER_SIZE];
 			Index_VectorFieldName(vector_name, field->name);
 
 			// value must be of type array
