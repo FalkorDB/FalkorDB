@@ -35,13 +35,16 @@ void Index_RangeFieldName
 
 	if(unlikely(multi_val_type != NULL)) {
 		if(*multi_val_type == T_STRING) {
-			sprintf(type_aware_name, "range:%s:string:arr", name);
+			snprintf(type_aware_name, INDEX_FIELD_NAME_BUFFER_SIZE,
+					"range:%s:string:arr", name);
 		} else {
-			sprintf(type_aware_name, "range:%s:numeric:arr", name);
+			snprintf(type_aware_name, INDEX_FIELD_NAME_BUFFER_SIZE,
+					"range:%s:numeric:arr", name);
 		}
 	} else {
 		// prefix range field name with "range:"
-		sprintf(type_aware_name, "range:%s", name);
+		snprintf(type_aware_name, INDEX_FIELD_NAME_BUFFER_SIZE,
+				"range:%s", name);
 	}
 }
 
@@ -55,7 +58,8 @@ void Index_FulltextFieldName
 	ASSERT(type_aware_name != NULL);
 
 	// maintain original name for full text fields
-	strcpy(type_aware_name, name);
+	// use snprintf for safety even though we're just copying
+	snprintf(type_aware_name, INDEX_FIELD_NAME_BUFFER_SIZE, "%s", name);
 }
 
 // gets type aware index field name
@@ -68,7 +72,8 @@ void Index_VectorFieldName
 	ASSERT(type_aware_name != NULL);
 
 	// prefix vector field name with "vector:"
-	sprintf(type_aware_name, "vector:%s", name);
+	snprintf(type_aware_name, INDEX_FIELD_NAME_BUFFER_SIZE,
+			"vector:%s", name);
 }
 
 // helper: generate range array field names
@@ -83,8 +88,28 @@ static inline void _Index_RangeArrayFieldNames
 	ASSERT(numeric_arr_name != NULL);
 	ASSERT(string_arr_name  != NULL);
 
-	sprintf(numeric_arr_name, "%s:numeric:arr", range_name);
-	sprintf(string_arr_name, "%s:string:arr", range_name);
+	snprintf(numeric_arr_name, INDEX_FIELD_NAME_BUFFER_SIZE,
+			"%s:numeric:arr", range_name);
+	snprintf(string_arr_name, INDEX_FIELD_NAME_BUFFER_SIZE,
+			"%s:string:arr", range_name);
+}
+
+// helper: generate all range field name variations
+// generates range name and both array field names from base field name
+static inline void _Index_AllRangeFieldNames
+(
+	char *range_name,           // [out] range field name
+	char *numeric_arr_name,     // [out] numeric array field name
+	char *string_arr_name,      // [out] string array field name
+	const char *field_name      // base field name
+) {
+	ASSERT(field_name       != NULL);
+	ASSERT(range_name       != NULL);
+	ASSERT(numeric_arr_name != NULL);
+	ASSERT(string_arr_name  != NULL);
+
+	Index_RangeFieldName(range_name, field_name, NULL);
+	_Index_RangeArrayFieldNames(numeric_arr_name, string_arr_name, range_name);
 }
 
 // index structure
@@ -191,9 +216,8 @@ static void _Index_ConstructStructure
 			char range_numeric_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
 			char range_string_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
 			
-			Index_RangeFieldName(range_name, field->name, NULL);
-			_Index_RangeArrayFieldNames(range_numeric_arr_name,
-					range_string_arr_name, range_name);
+			_Index_AllRangeFieldNames(range_name, range_numeric_arr_name,
+					range_string_arr_name, field->name);
 			
 			// introduce both text, numeric and geo fields
 			unsigned types = RSFLDTYPE_NUMERIC | RSFLDTYPE_GEO | RSFLDTYPE_TAG;
@@ -359,19 +383,21 @@ static inline void _addArrayField
 	size_t n_strings  = array_len(strings);
 	size_t n_numerics = array_len(numerics);
 
+	// generate range field names once if needed
+	char range_name[INDEX_FIELD_NAME_BUFFER_SIZE];
+	char range_numeric_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
+	char range_string_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
+	
+	if(n_numerics > 0 || n_strings > 0) {
+		_Index_AllRangeFieldNames(range_name, range_numeric_arr_name,
+				range_string_arr_name, field->name);
+	}
+
 	//--------------------------------------------------------------------------
 	// index numerical values
 	//--------------------------------------------------------------------------
 
 	if(n_numerics > 0) {
-		char range_name[INDEX_FIELD_NAME_BUFFER_SIZE];
-		char range_numeric_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
-		char range_string_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
-		
-		Index_RangeFieldName(range_name, field->name, NULL);
-		_Index_RangeArrayFieldNames(range_numeric_arr_name,
-				range_string_arr_name, range_name);
-		
 		RediSearch_DocumentAddFieldNumericArray(doc,
 				range_numeric_arr_name, &numerics, RSFLDTYPE_NUMERIC);
 	}
@@ -381,14 +407,6 @@ static inline void _addArrayField
 	//--------------------------------------------------------------------------
 
 	if(n_strings > 0) {
-		char range_name[INDEX_FIELD_NAME_BUFFER_SIZE];
-		char range_numeric_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
-		char range_string_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
-		
-		Index_RangeFieldName(range_name, field->name, NULL);
-		_Index_RangeArrayFieldNames(range_numeric_arr_name,
-				range_string_arr_name, range_name);
-		
 		RediSearch_DocumentAddFieldStringArray(doc,
 				range_string_arr_name, &strings, n_strings,
 				RSFLDTYPE_TAG);
