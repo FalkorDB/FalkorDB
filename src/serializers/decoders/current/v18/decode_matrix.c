@@ -302,6 +302,7 @@ void RdbLoadAdjMatrix_v18
 
 	ASSERT(gc  != NULL);
 	ASSERT(rdb != NULL);
+	GrB_Type ty = NULL;
 
 	Delta_Matrix adj = Graph_GetAdjacencyMatrix(gc->g, false);
 	_Decode_Delta_Matrix(rdb, adj);

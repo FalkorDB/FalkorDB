@@ -3,9 +3,11 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "GraphBLAS.h"
 #include "RG.h"
 #include "graph.h"
 #include "../util/arr.h"
+#include "graph/delta_matrix/delta_matrix.h"
 #include "tensor/tensor.h"
 #include "delta_matrix/delta_matrix_iter.h"
 
@@ -36,42 +38,6 @@ static int _edge_cmp
 	// same relationship-type and src node ID
 	// compare base on destination node ID
 	return at - bt;
-}
-
-static void _clear_adj
-(
-	Graph *g,
-	Delta_Matrix ADJ,
-	const Edge *e
-) {
-	RelationID r    = Edge_GetRelationID(e);
-	NodeID     src  = Edge_GetSrcNodeID(e);
-	NodeID     dest = Edge_GetDestNodeID(e);
-
-	// see if source is connected to destination with additional edges
-	// TODO: this is expensive, consider switching to numeric ADJ matrix
-	// where ADJ[i, j] = k the number of edges of any type connecting
-	// node i to node j, the entry can be dropped once ADJ[i, j] = 0
-	GrB_Info info;
-	bool connected = false;
-	int relationCount = Graph_RelationTypeCount(g);
-	for(int ri = 0; ri < relationCount; ri++) {
-		if(ri == r) continue;
-
-		Delta_Matrix A = Graph_GetRelationMatrix(g, ri, false);
-		info = Delta_Matrix_isStoredElement(A, src, dest);
-		if(info == GrB_SUCCESS) {
-			connected = true;
-			break;
-		}
-	}
-
-	// there are no additional edges connecting source to destination
-	// remove edge from THE adjacency matrix
-	if(!connected) {
-		info = Delta_Matrix_removeElement(ADJ, src, dest);
-		ASSERT(info == GrB_SUCCESS);
-	}
 }
 
 // clears connections from the graph by updating relevent matrices
@@ -124,6 +90,8 @@ void Graph_ClearConnections
 		Delta_Matrix R   = Graph_GetRelationMatrix(g, r, false);
 		Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
 
+		// FIXME: Properly delete entries that go to zero
+		ASSERT(false);
 		if(flat_deletion) {
 			// tensor R doesn't contains any vector
 			// perform a simple "flat" deletion
@@ -131,7 +99,8 @@ void Graph_ClearConnections
 			// for each removed edge E see if ADJ[E.src, E.dest] needs clearing
 			for (uint64_t k = 0; k < d; k++) {
 				e = edges + (i + k);
-				_clear_adj(g, ADJ, e);
+				Delta_Matrix_Assign_Element_UINT64(ADJ, GrB_PLUS_UINT64, 1,
+					Edge_GetSrcNodeID(e), Edge_GetDestNodeID(e));
 			}
 		} else {
 			// tensor R contains vectors
@@ -142,13 +111,15 @@ void Graph_ClearConnections
 			// for each cleared entry E see if ADJ[E.src, E.dest] needs clearing
 			uint64_t m = array_len(cleared_entries);
 			for (uint k = 0; k < m; k++) {
-				e = edges + (i + cleared_entries[k]);
-				_clear_adj(g, ADJ, e);
+				e = edges + (i + k);
+				Delta_Matrix_Assign_Element_UINT64(ADJ, GrB_PLUS_UINT64, 1,
+					Edge_GetSrcNodeID(e), Edge_GetDestNodeID(e));
 			}
 
 			// free reported cleared entries
 			array_free(cleared_entries);
 		}
+		
 
 		i = j;
 	}

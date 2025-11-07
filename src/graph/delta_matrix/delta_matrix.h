@@ -205,6 +205,16 @@ GrB_Info Delta_Matrix_setElement_UINT64  // C (i,j) = x
 	GrB_Index j                          // column index
 );
 
+// C (i,j) += x
+GrB_Info Delta_Matrix_Assign_Element_UINT64
+(
+	Delta_Matrix C,     // matrix to modify
+	GrB_BinaryOp accum, // accumulator to apply to duplicates
+	uint64_t x,         // scalar to assign to C(i,j)
+	GrB_Index i,        // row index
+	GrB_Index j         // column index
+) ;
+
 GrB_Info Delta_Matrix_extractElement_UINT64  // x = A(i,j)
 (
 	uint64_t *x,                             // extracted scalar
