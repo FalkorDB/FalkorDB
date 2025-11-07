@@ -26,7 +26,7 @@ This document provides a comprehensive analysis of memory consumption in FalkorD
 
 **Solution Implemented**:
 - Removed all redundant field name storage from IndexField structure
-- Field name variations are now generated on-demand into 512-byte stack buffers using `Index_RangeFieldName()` and `Index_VectorFieldName()` functions
+- Field name variations are now generated on-demand into 256-byte stack buffers using `Index_RangeFieldName()` and `Index_VectorFieldName()` functions
 - Trade-off: Minimal CPU overhead for sprintf operations vs significant memory savings
 
 **Impact on a typical graph**:
