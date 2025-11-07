@@ -15,19 +15,6 @@
 #include "../filter_tree/filter_tree_utils.h"
 #include "../arithmetic/arithmetic_expression.h"
 
-extern void Index_RangeFieldName
-(
-	char *type_aware_name,  // [out] type aware name
-	const char *name,       // field name
-	SIType *multi_val_type  // [optional] multi-val type
-);
-
-extern void Index_VectorFieldName
-(
-	char *type_aware_name,  // [out] type aware name
-	const char *name        // field name
-);
-
 //------------------------------------------------------------------------------
 // forward declarations
 //------------------------------------------------------------------------------

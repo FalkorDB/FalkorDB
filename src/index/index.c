@@ -16,11 +16,6 @@
 
 #include <stdatomic.h>
 
-// maximum size for index field name buffers
-// sufficient for most field names which are typically < 50 characters
-// plus prefixes like "range:" and suffixes like ":string:arr"
-#define INDEX_FIELD_NAME_BUFFER_SIZE 512
-
 // gets type aware index field name
 void Index_RangeFieldName
 (
@@ -78,7 +73,7 @@ void Index_VectorFieldName
 
 // helper: generate range array field names
 // generates both numeric and string array field names from base range name
-static inline void _Index_RangeArrayFieldNames
+static void _Index_RangeArrayFieldNames
 (
 	char *numeric_arr_name,  // [out] numeric array field name
 	char *string_arr_name,   // [out] string array field name
@@ -96,7 +91,7 @@ static inline void _Index_RangeArrayFieldNames
 
 // helper: generate all range field name variations
 // generates range name and both array field names from base field name
-static inline void _Index_AllRangeFieldNames
+static void _Index_AllRangeFieldNames
 (
 	char *range_name,           // [out] range field name
 	char *numeric_arr_name,     // [out] numeric array field name

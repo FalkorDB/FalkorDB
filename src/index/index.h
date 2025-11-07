@@ -296,6 +296,41 @@ bool Index_SetStopwords
 	char ***stopwords  // stopwords
 );
 
+//------------------------------------------------------------------------------
+// index field name generation utilities
+//------------------------------------------------------------------------------
+
+// maximum size for index field name buffers
+// sufficient for most field names which are typically < 50 characters
+// plus prefixes like "range:" and suffixes like ":string:arr"
+#define INDEX_FIELD_NAME_BUFFER_SIZE 256
+
+// generate range field name from base field name
+// for exact matches: "range:{name}"
+// for array values: "range:{name}:string:arr" or "range:{name}:numeric:arr"
+void Index_RangeFieldName
+(
+	char *type_aware_name,  // [out] type aware name buffer
+	const char *name,       // field name
+	SIType *multi_val_type  // [optional] multi-val type
+);
+
+// generate fulltext field name from base field name
+// fulltext fields use the original field name without prefix
+void Index_FulltextFieldName
+(
+	char *type_aware_name,  // [out] type aware name buffer
+	const char *name        // field name
+);
+
+// generate vector field name from base field name
+// format: "vector:{name}"
+void Index_VectorFieldName
+(
+	char *type_aware_name,  // [out] type aware name buffer
+	const char *name        // field name
+);
+
 // free index
 void Index_Free
 (
