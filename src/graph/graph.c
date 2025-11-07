@@ -11,6 +11,7 @@
 #include "../util/rmalloc.h"
 #include "delta_matrix/delta_matrix_iter.h"
 #include "../util/datablock/oo_datablock.h"
+#include "graph/delta_matrix/delta_matrix.h"
 
 //------------------------------------------------------------------------------
 // Synchronization functions
@@ -896,7 +897,8 @@ void Graph_FormConnection
 	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
 
 	// rows represent source nodes, columns represent destination nodes
-	info = Delta_Matrix_setElement_BOOL(adj, src, dest);
+	info = Delta_Matrix_Assign_Element_UINT64(adj, GrB_PLUS_UINT64, 1, src,
+		dest);
 	ASSERT(info == GrB_SUCCESS);
 
 	// add entry to relation tensor
@@ -1030,7 +1032,8 @@ void Graph_CreateEdges
 		NodeID dest = e->dest_id ;
 
 		// TODO: introduce batch version of setElement, e.g. GrB_Matrix_build
-		GrB_Info info = Delta_Matrix_setElement_BOOL (adj, src, dest) ;
+		GrB_Info info = Delta_Matrix_Assign_Element_UINT64 (adj,
+			GrB_PLUS_UINT64, 1, src, dest) ;
 		ASSERT (info == GrB_SUCCESS) ;
 	}
 

@@ -3,8 +3,11 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "GraphBLAS.h"
 #include "decode_v18.h"
 #include "../../../../index/indexer.h"
+#include "graph/delta_matrix/delta_matrix.h"
+#include "graph/tensor/tensor.h"
 
 // TODO: have the delta matrix upon setting M, incase the matrix
 // contains a transpose, we should overwrite it with MT
@@ -66,6 +69,74 @@ static void _ComputeTransposeMatrices
 	// compute transpose for the adjacency matrix
 	Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
 	_ComputeTransposeMatrix(ADJ);
+}
+
+static void _vector_size
+(
+	uint64_t *z,
+	uint64_t *x
+) {
+	if(SCALAR_ENTRY(*x)){
+		*z = 1;
+	} else {
+		GrB_OK (GrB_Vector_nvals(z, AS_VECTOR(*x)));
+	}
+}
+
+// if the rdb we are loading is old, then we must recalculate the number of
+// edges connecting ech pair of nodes
+// precondition: relation matricies have been calculated and fully synced
+static void _ComputeAdjMatrix
+(
+	Graph *g
+) {
+	ASSERT(g != NULL);
+
+	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
+
+	GrB_Type ty = NULL;
+	GrB_OK (GxB_Matrix_type(&ty, Delta_Matrix_M(adj)));
+
+	if (ty == GrB_UINT64) {
+		return;
+	}
+
+	GrB_Index nrows;
+	GrB_Index ncols;
+
+	GrB_OK (Delta_Matrix_nrows(&nrows, adj));
+	GrB_OK (Delta_Matrix_ncols(&ncols, adj));
+
+	Delta_Matrix_clear(adj);
+
+	// TODO: once the GB kernel is fast, since you already know the stucture,
+	// it may be faster to compute a_m <(struct) a_m> += R
+
+	// TODO: make UINT16
+	GrB_Matrix  a_m  = NULL;
+	GrB_Matrix  a_dp = NULL;
+	GrB_Matrix  a_dm = NULL;
+
+	GrB_UnaryOp op  = NULL;
+
+	GrB_UnaryOp_new(
+		&op, (GxB_unary_function) _vector_size, GrB_UINT64, GrB_UINT64);
+
+	GrB_Matrix_new(&a_m, GrB_UINT64, nrows, ncols);
+	GrB_Matrix_new(&a_dp, GrB_UINT64, nrows, ncols);
+	GrB_Matrix_new(&a_dm, GrB_BOOL, nrows, ncols);
+
+	int n = Graph_RelationTypeCount(g);
+
+	// compute transpose for each relation matrix
+	for(RelationID r = 0; r < n; r++) {
+		Delta_Matrix R = Graph_GetRelationMatrix(g, r, false);
+	
+		GrB_OK (GrB_Matrix_apply(
+			a_m, NULL, GrB_PLUS_UINT64, op, Delta_Matrix_M(R), NULL));
+	}
+
+	Delta_Matrix_setMatrices(adj, &a_m, &a_dp, &a_dm);
 }
 
 static GraphContext *_GetOrCreateGraphContext
@@ -347,6 +418,9 @@ GraphContext *RdbLoadGraphContext_latest
 	if(GraphDecodeContext_Finished(gc->decoding_context)) {
 		// flush graph matrices
 		Graph_ApplyAllPending(g, true);
+
+		// Compute adjacency if it was not stored
+		_ComputeAdjMatrix(g);
 
 		// compute transposes
 		_ComputeTransposeMatrices(g);
