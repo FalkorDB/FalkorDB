@@ -10,6 +10,7 @@
 #include "graph/delta_matrix/delta_matrix.h"
 #include "tensor/tensor.h"
 #include "delta_matrix/delta_matrix_iter.h"
+#include <stdint.h>
 
 // qsort compare function
 // compare edges by relationship-type, src ID and dest ID
@@ -90,37 +91,50 @@ void Graph_ClearConnections
 		Delta_Matrix R   = Graph_GetRelationMatrix(g, r, false);
 		Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
 
-		// FIXME: Properly delete entries that go to zero
-		ASSERT(false);
 		if(flat_deletion) {
 			// tensor R doesn't contains any vector
 			// perform a simple "flat" deletion
 			Tensor_RemoveElements_Flat(R, edges + i, d);
-			// for each removed edge E see if ADJ[E.src, E.dest] needs clearing
-			for (uint64_t k = 0; k < d; k++) {
-				e = edges + (i + k);
-				Delta_Matrix_Assign_Element_UINT64(ADJ, GrB_PLUS_UINT64, 1,
-					Edge_GetSrcNodeID(e), Edge_GetDestNodeID(e));
-			}
 		} else {
 			// tensor R contains vectors
 			// perform deletion which handels vector entries
-			uint64_t *cleared_entries = NULL;
-			Tensor_RemoveElements(R, edges + i, d, &cleared_entries);
+			Tensor_RemoveElements(R, edges + i, d, NULL);
+		}
 
-			// for each cleared entry E see if ADJ[E.src, E.dest] needs clearing
-			uint64_t m = array_len(cleared_entries);
-			for (uint k = 0; k < m; k++) {
-				e = edges + (i + k);
-				Delta_Matrix_Assign_Element_UINT64(ADJ, GrB_PLUS_UINT64, 1,
-					Edge_GetSrcNodeID(e), Edge_GetDestNodeID(e));
+		// for each cleared entry E see if ADJ[E.src, E.dest] needs clearing
+		// TODO: could take advantage of this being sorted to reduce
+		// elements by more than one at a time (for tensors).
+		uint64_t *deleted_entries = array_new(uint64_t, d / 4);
+
+		// NOTE: nothing in this for loop actually causes pending changes
+		for (uint k = 0; k < d; k++) {
+			e = edges + (i + k);
+			uint64_t v = 0;
+
+			NodeID src  = Edge_GetSrcNodeID(e);
+			NodeID dest = Edge_GetDestNodeID(e);
+			info = Delta_Matrix_extractElement_UINT64(&v, ADJ, src, dest);
+			ASSERT (info == GrB_SUCCESS);
+
+			if(--v == 0) {
+				array_append(deleted_entries, (uint64_t) src);
+				array_append(deleted_entries, (uint64_t) dest);
 			}
 
-			// free reported cleared entries
-			array_free(cleared_entries);
+			GrB_OK(Delta_Matrix_setElement_UINT64(ADJ, v, src, dest));
 		}
-		
 
+		uint64_t m = array_len(deleted_entries);
+
+		// if any slots have been left with zero edges, remove them from ADJ
+		// NOTE: done like this to reduce read after writes
+		for (uint64_t k = 0; k < m; k++) {
+			NodeID src  = deleted_entries[k];
+			NodeID dest = deleted_entries[++k];
+			GrB_OK (Delta_Matrix_removeElement(ADJ, src, dest));
+		}
+
+		array_free(deleted_entries);
 		i = j;
 	}
 

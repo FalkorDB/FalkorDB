@@ -51,8 +51,7 @@ GrB_Info Delta_Matrix_Assign_Element_UINT64
 	// check deleted
 	//--------------------------------------------------------------------------
 
-	info = GrB_Matrix_extractElement(&v, dm, i, j);	
-	GrB_OK(info);
+	GrB_OK (info = GrB_Matrix_extractElement(&v, dm, i, j));
 	mark_for_deletion = (info == GrB_SUCCESS);
 
 	if(mark_for_deletion) { // m contains single edge, simple replace
@@ -66,8 +65,7 @@ GrB_Info Delta_Matrix_Assign_Element_UINT64
 		// see if entry already exists in 'm'
 		// we'll prefer setting entry in 'm' incase it already exists
 		// otherwise we'll set the entry in 'delta-plus'
-		info = GrB_Matrix_extractElement_UINT64(&v, m, i, j);
-		GrB_OK(info);
+		GrB_OK (info = GrB_Matrix_extractElement_UINT64(&v, m, i, j));
 		entry_exists = (info == GrB_SUCCESS);
 
 		if(entry_exists) {
@@ -79,10 +77,9 @@ GrB_Info Delta_Matrix_Assign_Element_UINT64
 			GrB_OK (GrB_Matrix_assign_UINT64(dp, NULL, accum, x, &i, 1, &j, 1, 
 				NULL));
 		}
-		GrB_OK(info);
 	}
 
 	Delta_Matrix_setDirty(C);
-	return info;
+	return GrB_SUCCESS;
 }
 
