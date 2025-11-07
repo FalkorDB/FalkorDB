@@ -199,7 +199,7 @@ static void _Index_ConstructStructure
 		if(field->type & INDEX_FLD_VECTOR) {
 			char vector_name[INDEX_FIELD_NAME_BUFFER_SIZE];
 			Index_VectorFieldName(vector_name, field->name);
-			
+
 			RSFieldID fieldID = RediSearch_CreateVectorField(rsIdx,
 					vector_name);
 
@@ -215,10 +215,10 @@ static void _Index_ConstructStructure
 			char range_name[INDEX_FIELD_NAME_BUFFER_SIZE];
 			char range_numeric_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
 			char range_string_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
-			
+
 			_Index_AllRangeFieldNames(range_name, range_numeric_arr_name,
 					range_string_arr_name, field->name);
-			
+
 			// introduce both text, numeric and geo fields
 			unsigned types = RSFLDTYPE_NUMERIC | RSFLDTYPE_GEO | RSFLDTYPE_TAG;
 
@@ -387,7 +387,7 @@ static inline void _addArrayField
 	char range_name[INDEX_FIELD_NAME_BUFFER_SIZE];
 	char range_numeric_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
 	char range_string_arr_name[INDEX_FIELD_NAME_BUFFER_SIZE];
-	
+
 	if(n_numerics > 0 || n_strings > 0) {
 		_Index_AllRangeFieldNames(range_name, range_numeric_arr_name,
 				range_string_arr_name, field->name);
@@ -488,7 +488,7 @@ RSDoc *Index_IndexGraphEntity
 		if(field->type & INDEX_FLD_RANGE) {
 			char range_name[INDEX_FIELD_NAME_BUFFER_SIZE];
 			Index_RangeFieldName(range_name, field->name, NULL);
-			
+
 			// TODO: is it possible that the field count is incremented twice
 			// once for fulltext and one for range?
 			// is that OK ?
@@ -635,7 +635,7 @@ Index Index_Clone
 	clone->rsIdx           = NULL;
 	clone->label           = rm_strdup(idx->label);
 	clone->pending_changes = ATOMIC_VAR_INIT(0);
-	
+
 	if(clone->stopwords != NULL) {
 		array_clone_with_cb(clone->stopwords, idx->stopwords, rm_strdup);
 	}
@@ -971,7 +971,7 @@ RSIndex *Index_RSIndex
 	const Index idx  // index to get internal RediSearch index from
 ) {
 	ASSERT(idx != NULL);
-	
+
 	return idx->rsIdx;
 }
 
