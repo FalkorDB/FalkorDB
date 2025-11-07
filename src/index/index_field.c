@@ -60,35 +60,9 @@ void IndexField_Init
 	field->hnsw_options.efConstruction = INDEX_FIELD_DEFAULT_EF_CONSTRUCTION;
 	field->hnsw_options.efRuntime      = INDEX_FIELD_DEFAULT_EF_RUNTIME;
 
-	if(type & INDEX_FLD_FULLTEXT) {
-		field->fulltext_name = field->name;
-	}
-
-	int n ;
-
-	if(type & INDEX_FLD_RANGE) {
-		// create all 3 fields associated with a range field
-
-		// exact match field, e.g. n.v = 4
-		// 'range:' + field name
-		n = asprintf(&field->range_name, "range:%s", name);
-		assert (n >= 7) ;
-
-		// strign multi-value field, e.g. 'x' in n.v
-		// 'range:' + field name + ':string:arr'
-		n = asprintf(&field->range_string_arr_name, "%s:string:arr", field->range_name);
-		assert (n >= 12) ;
-
-		// numeric multi-value field, e.g. 5 in n.v
-		// 'range:' + field name + ':numeric:arr'
-		n = asprintf(&field->range_numeric_arr_name, "%s:numeric:arr", field->range_name);
-		assert (n >= 13) ;
-	}
-
-	if(type & INDEX_FLD_VECTOR) {
-		n = asprintf(&field->vector_name, "vector:%s", name);
-		assert (n >= 8) ;
-	}
+	// Note: field name variations (range_name, vector_name, etc.) are no longer
+	// stored here. They are generated on-demand to reduce memory consumption.
+	// Each indexed field previously allocated 3-5 copies of the field name string.
 }
 
 // set index field options
@@ -181,27 +155,8 @@ void IndexField_Clone
 		dest->options.phonetic = rm_strdup(src->options.phonetic);
 	}
 
-	//--------------------------------------------------------------------------
-	// clone type specific field names
-	//--------------------------------------------------------------------------
-
-	if(src->type & INDEX_FLD_FULLTEXT) {
-		dest->fulltext_name = dest->name;
-	}
-
-	if(src->type & INDEX_FLD_RANGE) {
-		ASSERT(src->range_name             != NULL);
-		ASSERT(src->range_string_arr_name  != NULL);
-		ASSERT(src->range_numeric_arr_name != NULL);
-
-		dest->range_name             = strdup(src->range_name);
-		dest->range_string_arr_name  = strdup(src->range_string_arr_name);
-		dest->range_numeric_arr_name = strdup(src->range_numeric_arr_name);
-	}
-
-	if(src->type & INDEX_FLD_VECTOR) {
-		dest->vector_name = strdup(src->vector_name);
-	}
+	// Note: field name variations (range_name, vector_name, etc.) are no longer
+	// stored in IndexField, so no need to clone them
 }
 
 // return number of types in field
@@ -247,30 +202,15 @@ void IndexField_RemoveType
 	ASSERT(t & (INDEX_FLD_RANGE | INDEX_FLD_FULLTEXT | INDEX_FLD_VECTOR));
 	ASSERT(f->type & t);
 
-	// remove RANGE type
-	if(t & INDEX_FLD_RANGE) {
-		// free all 3 range fields
-
-		free(f->range_name);
-		f->range_name = NULL;
-
-		free(f->range_string_arr_name);
-		f->range_string_arr_name = NULL;
-
-		free(f->range_numeric_arr_name);
-		f->range_numeric_arr_name = NULL;
-	}
+	// Note: field name variations are no longer stored, so no need to free them
 
 	// remove FULLTEXT type
 	if(t & INDEX_FLD_FULLTEXT) {
-		f->fulltext_name = NULL;
 		_ResetFulltextOptions(f);
 	}
 
 	// remove VECTOR type
 	if(t & INDEX_FLD_VECTOR) {
-		free(f->vector_name);
-		f->vector_name = NULL;
 		_ResetVectorOptions(f);
 	}
 
@@ -414,10 +354,7 @@ void IndexField_Free
 	rm_free(f->name);
 	rm_free(f->options.phonetic);
 
-	// free type specific field names
-	if(f->range_name             != NULL) free(f->range_name);
-	if(f->vector_name            != NULL) free(f->vector_name);
-	if(f->range_string_arr_name  != NULL) free(f->range_string_arr_name);
-	if(f->range_numeric_arr_name != NULL) free(f->range_numeric_arr_name);
+	// Note: range_name, vector_name, etc. are no longer stored,
+	// so no need to free them here
 }
 

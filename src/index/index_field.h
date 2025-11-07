@@ -48,11 +48,10 @@ typedef struct {
 		size_t efRuntime;          // runtime parameter for HNSW
 		VecSimMetric simFunc;      // similarity function
 	} hnsw_options;
-	char *range_name;              // 'range:'  + field name
-	char *range_string_arr_name;   // 'range:'  + field name + ':numeric:arr'
-	char *range_numeric_arr_name;  // 'range:'  + field name + ':string:arr'
-	char *vector_name;             // 'vector:' + field name
-	char *fulltext_name;           // field name
+	// Note: field name variations (range_name, vector_name, etc.) are now
+	// generated on-demand using Index_RangeFieldName/Index_VectorFieldName
+	// to reduce memory consumption. Each indexed field previously stored
+	// 3-5 copies of the field name string.
 } IndexField;
 
 //------------------------------------------------------------------------------

@@ -139,8 +139,9 @@ static void _Index_ConstructStructure
 				options |= RSFLDOPT_TXTPHONETIC;
 			}
 
+			// fulltext field name is the same as the field name
 			RSFieldID fieldID = RediSearch_CreateField(rsIdx,
-					field->fulltext_name, RSFLDTYPE_FULLTEXT, options);
+					field->name, RSFLDTYPE_FULLTEXT, options);
 
 			RediSearch_TextFieldSetWeight(rsIdx, fieldID, field->options.weight);
 		}
@@ -150,8 +151,11 @@ static void _Index_ConstructStructure
 		//----------------------------------------------------------------------
 
 		if(field->type & INDEX_FLD_VECTOR) {
+			char vector_name[512];
+			Index_VectorFieldName(vector_name, field->name);
+			
 			RSFieldID fieldID = RediSearch_CreateVectorField(rsIdx,
-					field->vector_name);
+					vector_name);
 
 			RediSearch_VectorFieldSetDim(rsIdx, fieldID, field->hnsw_options.dimension);
 			RediSearch_VectorFieldSetHNSWParams(rsIdx, fieldID, IndexField_OptionsGetM(field), IndexField_OptionsGetEfConstruction(field), IndexField_OptionsGetEfRuntime(field), IndexField_OptionsGetSimFunc(field));
@@ -162,10 +166,18 @@ static void _Index_ConstructStructure
 		//----------------------------------------------------------------------
 
 		if(field->type & INDEX_FLD_RANGE) {
+			char range_name[512];
+			char range_numeric_arr_name[512];
+			char range_string_arr_name[512];
+			
+			Index_RangeFieldName(range_name, field->name, NULL);
+			sprintf(range_numeric_arr_name, "%s:numeric:arr", range_name);
+			sprintf(range_string_arr_name, "%s:string:arr", range_name);
+			
 			// introduce both text, numeric and geo fields
 			unsigned types = RSFLDTYPE_NUMERIC | RSFLDTYPE_GEO | RSFLDTYPE_TAG;
 
-			RSFieldID fieldID = RediSearch_CreateField(rsIdx, field->range_name,
+			RSFieldID fieldID = RediSearch_CreateField(rsIdx, range_name,
 					types, RSFLDOPT_NONE);
 
 			RediSearch_TagFieldSetSeparator(rsIdx, fieldID, INDEX_SEPARATOR);
@@ -174,14 +186,14 @@ static void _Index_ConstructStructure
 			// numeric array field
 			types = RSFLDTYPE_NUMERIC;
 
-			RediSearch_CreateField(rsIdx, field->range_numeric_arr_name, types,
+			RediSearch_CreateField(rsIdx, range_numeric_arr_name, types,
 					RSFLDOPT_NONE);
 
 			// string array field
 			types = RSFLDTYPE_TAG;
 
 			fieldID = RediSearch_CreateField(rsIdx,
-					field->range_string_arr_name, types, RSFLDOPT_NONE);
+					range_string_arr_name, types, RSFLDOPT_NONE);
 
 			RediSearch_TagFieldSetSeparator(rsIdx, fieldID, INDEX_SEPARATOR);
 			RediSearch_TagFieldSetCaseSensitive(rsIdx, fieldID, 1);
@@ -287,7 +299,7 @@ static inline void _addPointField
 static inline void _addArrayField
 (
 	RSDoc *doc,               // document
-	const IndexField *field,  // field name
+	const IndexField *field,  // field
 	SIValue arr               // array
 ) {
 	ASSERT(doc          != NULL);
@@ -331,8 +343,13 @@ static inline void _addArrayField
 	//--------------------------------------------------------------------------
 
 	if(n_numerics > 0) {
+		char range_name[512];
+		char range_numeric_arr_name[512];
+		Index_RangeFieldName(range_name, field->name, NULL);
+		sprintf(range_numeric_arr_name, "%s:numeric:arr", range_name);
+		
 		RediSearch_DocumentAddFieldNumericArray(doc,
-				field->range_numeric_arr_name, &numerics, RSFLDTYPE_NUMERIC);
+				range_numeric_arr_name, &numerics, RSFLDTYPE_NUMERIC);
 	}
 
 	//--------------------------------------------------------------------------
@@ -340,8 +357,13 @@ static inline void _addArrayField
 	//--------------------------------------------------------------------------
 
 	if(n_strings > 0) {
+		char range_name[512];
+		char range_string_arr_name[512];
+		Index_RangeFieldName(range_name, field->name, NULL);
+		sprintf(range_string_arr_name, "%s:string:arr", range_name);
+		
 		RediSearch_DocumentAddFieldStringArray(doc,
-				field->range_string_arr_name, &strings, n_strings,
+				range_string_arr_name, &strings, n_strings,
 				RSFLDTYPE_TAG);
 	}
 
@@ -408,7 +430,8 @@ RSDoc *Index_IndexGraphEntity
 			if(t & T_STRING) {
 				*doc_field_count += 1;
 
-				RediSearch_DocumentAddFieldCString(doc, field->fulltext_name,
+				// fulltext field name is the same as the field name
+				RediSearch_DocumentAddFieldCString(doc, field->name,
 						v->stringval, RSFLDTYPE_FULLTEXT);
 			}
 		}
@@ -418,6 +441,9 @@ RSDoc *Index_IndexGraphEntity
 		//----------------------------------------------------------------------
 
 		if(field->type & INDEX_FLD_RANGE) {
+			char range_name[512];
+			Index_RangeFieldName(range_name, field->name, NULL);
+			
 			// TODO: is it possible that the field count is incremented twice
 			// once for fulltext and one for range?
 			// is that OK ?
@@ -427,13 +453,13 @@ RSDoc *Index_IndexGraphEntity
 			switch(t) {
 				case T_STRING:
 				case T_INTERN_STRING:
-					_addStringField(doc, field->range_name, v->stringval);
+					_addStringField(doc, range_name, v->stringval);
 					break;
 
 				case T_BOOL:
 				case T_INT64:
 				case T_DOUBLE:
-					_addNumericField(doc, field->range_name, SI_GET_NUMERIC(*v));
+					_addNumericField(doc, range_name, SI_GET_NUMERIC(*v));
 					break;
 
 				//case T_TIME:
@@ -442,13 +468,13 @@ RSDoc *Index_IndexGraphEntity
 				//case T_DURATION:
 				//{
 				//	double d = (double)v->datetimeval;
-				//	RediSearch_DocumentAddFieldNumber(doc, field->range_name, d,
+				//	RediSearch_DocumentAddFieldNumber(doc, range_name, d,
 				//			RSFLDTYPE_NUMERIC);
 				//	break;
 				//}
 
 				case T_POINT:
-					_addPointField(doc, field->range_name, *v);
+					_addPointField(doc, range_name, *v);
 					break;
 
 				case T_ARRAY:
@@ -482,8 +508,11 @@ RSDoc *Index_IndexGraphEntity
 			uint32_t dim      = SIVector_Dim(*v);
 			void*    elements = SIVector_Elements(*v);
 
+			char vector_name[512];
+			Index_VectorFieldName(vector_name, field->name);
+
 			// value must be of type array
-			RediSearch_DocumentAddFieldVector(doc, field->vector_name, elements,
+			RediSearch_DocumentAddFieldVector(doc, vector_name, elements,
 					dim, n);
 		}
 	}
