@@ -43,7 +43,7 @@ jobs:
 
       - name: Update formula
         run: |
-          FORMULA_FILE="Formula/falkordb.rb"
+          FORMULA_FILE="build/homebrew/Formula/falkordb.rb"
           
           # Update version in URL
           sed -i '' "s|url \".*\"|url \"https://github.com/FalkorDB/FalkorDB/archive/refs/tags/${{ env.VERSION }}.tar.gz\"|" $FORMULA_FILE
@@ -56,7 +56,7 @@ jobs:
 
       - name: Test formula locally
         run: |
-          brew install --build-from-source Formula/falkordb.rb || echo "Build test failed, will still create PR"
+          brew install --build-from-source build/homebrew/Formula/falkordb.rb || echo "Build test failed, will still create PR"
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v7
@@ -88,7 +88,7 @@ jobs:
       - name: Update tap formula
         if: ${{ vars.HOMEBREW_TAP_ENABLED == 'true' }}
         run: |
-          cp Formula/falkordb.rb homebrew-tap/Formula/falkordb.rb
+          cp build/homebrew/Formula/falkordb.rb homebrew-tap/Formula/falkordb.rb
           cd homebrew-tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

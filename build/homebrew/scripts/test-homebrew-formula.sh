@@ -5,8 +5,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-FORMULA_FILE="${REPO_ROOT}/Formula/falkordb.rb"
+HOMEBREW_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+FORMULA_FILE="${HOMEBREW_DIR}/Formula/falkordb.rb"
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "FalkorDB Homebrew Formula Test Script"

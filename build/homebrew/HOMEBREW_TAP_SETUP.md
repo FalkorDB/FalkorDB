@@ -20,7 +20,7 @@ cd homebrew-falkordb
 mkdir Formula
 
 # Copy the initial formula
-cp ../FalkorDB/Formula/falkordb.rb Formula/
+cp ../FalkorDB/build/homebrew/Formula/falkordb.rb Formula/
 
 # Create a README
 cat > README.md << 'EOF'
@@ -99,7 +99,7 @@ To manually update the formula:
 
 ```bash
 # In the main FalkorDB repository
-cd Formula
+cd build/homebrew/Formula
 
 # Update the version and SHA256 in falkordb.rb
 # Then test locally
@@ -107,10 +107,10 @@ brew install --build-from-source ./falkordb.rb
 brew test falkordb
 
 # Copy to the tap repository
-cp falkordb.rb ../homebrew-falkordb/Formula/
+cp falkordb.rb ../../../homebrew-falkordb/Formula/
 
 # Commit and push in the tap repository
-cd ../homebrew-falkordb
+cd ../../../homebrew-falkordb
 git add Formula/falkordb.rb
 git commit -m "Update FalkorDB to version X.Y.Z"
 git push
@@ -122,7 +122,7 @@ git push
 
 ```bash
 # Install from the formula file
-brew install --build-from-source Formula/falkordb.rb
+brew install --build-from-source build/homebrew/Formula/falkordb.rb
 
 # Run the test
 brew test falkordb

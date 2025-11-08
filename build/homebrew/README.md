@@ -18,7 +18,7 @@ brew install falkordb
 #### Option 2: Install directly from this formula
 
 ```bash
-brew install Formula/falkordb.rb
+brew install build/homebrew/Formula/falkordb.rb
 ```
 
 ### Usage
@@ -96,7 +96,7 @@ This interactive script will:
 To test the formula manually:
 
 ```bash
-brew install --build-from-source Formula/falkordb.rb
+brew install --build-from-source build/homebrew/Formula/falkordb.rb
 brew test falkordb
 ```
 

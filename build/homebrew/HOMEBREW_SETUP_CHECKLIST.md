@@ -24,7 +24,7 @@ This checklist will guide you through the one-time setup process for publishing 
   git clone https://github.com/FalkorDB/homebrew-falkordb.git
   cd homebrew-falkordb
   mkdir Formula
-  cp ../FalkorDB/Formula/falkordb.rb Formula/
+  cp ../FalkorDB/build/homebrew/Formula/falkordb.rb Formula/
   git add Formula/falkordb.rb
   git commit -m "Add FalkorDB formula"
   git push
@@ -113,10 +113,10 @@ If you have access to a macOS machine:
 - Ensure the token has access to the `homebrew-falkordb` repository
 
 ### Formula installation fails
-- Check the formula syntax: `ruby -c Formula/falkordb.rb`
+- Check the formula syntax: `ruby -c build/homebrew/Formula/falkordb.rb`
 - Verify all dependencies are available
 - Review build logs for specific errors
-- Test locally using `./scripts/test-homebrew-formula.sh`
+- Test locally using `./build/homebrew/scripts/test-homebrew-formula.sh`
 
 ### SHA256 mismatch error
 - The tarball might have changed
@@ -150,6 +150,6 @@ After completing this checklist:
 
 ## Questions?
 
-- Check the detailed guide: `.github/HOMEBREW_TAP_SETUP.md`
-- Review the formula README: `Formula/README.md`
+- Check the detailed guide: `build/homebrew/HOMEBREW_TAP_SETUP.md`
+- Review the formula README: `build/homebrew/README.md`
 - Open an issue in the FalkorDB repository
