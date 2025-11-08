@@ -76,7 +76,8 @@ static RSQNode *_StringRangeToQueryNode
 
 	if(max != NULL && min != NULL && strcmp(max, min) == 0) {
 		// exact match
-		child = RediSearch_CreateTagTokenNode(idx, max);
+		// use lex range to avoid tokenization for strings with spaces
+		child = RediSearch_CreateTagLexRangeNode(idx, max, max, true, true);
 	} else {
 		// range search
 		max = (max == NULL) ? RSLECRANGE_INF     : max;
@@ -855,7 +856,10 @@ RSQNode *Index_BuildUniqueConstraintQuery
 
 		if(t & T_STRING) {
 			node  = RediSearch_CreateTagNode(rsIdx, field);
-			RSQNode *child = RediSearch_CreateTagTokenNode(rsIdx, v->stringval);
+			// use lex range for exact match to avoid tokenization
+			// this is important for strings with leading/trailing spaces
+			RSQNode *child = RediSearch_CreateTagLexRangeNode(rsIdx, 
+					v->stringval, v->stringval, true, true);
 			RediSearch_QueryNodeAddChild(node, child);
 		} else {
 			double d = SI_GET_NUMERIC((*v));
