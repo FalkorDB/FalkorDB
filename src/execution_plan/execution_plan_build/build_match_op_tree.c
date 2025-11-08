@@ -174,15 +174,18 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 
 	// if a cartesian product was created but has no children
 	// (all components were skipped because nodes were already bound)
-	// remove it from the plan to avoid crashes
+	// remove it from the plan to avoid crashes when accessing children[0]
 	if(cartesianProduct != NULL && OpBase_ChildCount(cartesianProduct) == 0) {
 		if(apply != NULL) {
-			// remove the cartesian product from the apply operation
-			// and restore the previous root
+			// the cartesian product is a child of apply
+			// remove it and restore the previous state
 			OpBase *prev_root = OpBase_GetChild(apply, 0);
 			ExecutionPlan_UpdateRoot(plan, prev_root);
+			// free apply, which will disconnect its children but not free them
 			OpBase_Free(apply);
+			apply = NULL;
 		}
+		// free the empty cartesian product
 		OpBase_Free(cartesianProduct);
 		cartesianProduct = NULL;
 	}
