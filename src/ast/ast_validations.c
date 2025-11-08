@@ -296,12 +296,13 @@ static AST_Validation _ValidateMergeRelation
 		// verify that we're not redeclaring a bound variable
 		void *alias_type = _IdentifiersFind(vctx, alias);
 		if(alias_type != raxNotFound) {
-			// Check for type conflicts
-			if(alias_type != NULL && alias_type != (void *)T_EDGE) {
+			// Check for type conflicts - path and node types cannot be used as relationships
+			if(alias_type == (void *)T_PATH || alias_type == (void *)T_NODE) {
 				ErrorCtx_SetError(EMSG_CONFLICTING_TYPE, alias,
 					_SITypeToString((SIType)(uintptr_t)alias_type), "Relationship");
 				return AST_INVALID;
 			}
+			// For T_EDGE or other types, this is a redeclaration error
 			ErrorCtx_SetError(EMSG_REDECLARE, "variable", alias, "MERGE");
 			return AST_INVALID;
 		}
@@ -342,14 +343,14 @@ static AST_Validation _ValidateMergeNode
 		return AST_VALID;
 	}
 
-	// Check for type conflicts - a non-node type cannot be used as a node
-	if(alias_type != NULL && alias_type != (void *)T_NODE) {
+	// Check for type conflicts - path and relationship types cannot be used as nodes
+	if(alias_type == (void *)T_PATH || alias_type == (void *)T_EDGE) {
 		ErrorCtx_SetError(EMSG_CONFLICTING_TYPE, alias, 
 			_SITypeToString((SIType)(uintptr_t)alias_type), "Node");
 		return AST_INVALID;
 	}
 
-	// If the entity is already bound, the MERGE pattern should not introduce labels or properties
+	// If the entity is already bound as a node, the MERGE pattern should not introduce labels or properties
 	if(cypher_ast_node_pattern_nlabels(entity) ||
 	   cypher_ast_node_pattern_get_properties(entity)) {
 		ErrorCtx_SetError(EMSG_REDECLARE, "node", alias, "MERGE");
