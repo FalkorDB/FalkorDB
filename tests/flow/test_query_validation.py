@@ -707,3 +707,14 @@ class testQueryValidationFlow(FlowTestsBase):
         except redis.exceptions.ResponseError as e:
             # Expecting an error about type conflict
             self.env.assertIn("defined with conflicting type Path (expected Node)", str(e))
+
+        # Test that path variables cannot be used as relationship variables in MERGE
+        try:
+            query = """MERGE p = (n0:l0)-[r0:rt0]->(n1:l1)
+                       MERGE (n2:l2)-[p:rt1]->(n3:l3)
+                       RETURN p"""
+            self.graph.query(query)
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error about type conflict
+            self.env.assertIn("defined with conflicting type Path (expected Relationship)", str(e))
