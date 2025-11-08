@@ -15,12 +15,15 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runs-on }}
     strategy:
+      fail-fast: false
       matrix:
-        architecture:
-          - amd64
-          - arm64
+        include:
+          - architecture: amd64
+            runs-on: ubuntu-latest
+          - architecture: arm64
+            runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -33,7 +36,6 @@ jobs:
         id: snapcraft
         with:
           snapcraft-channel: latest/stable
-          architecture: ${{ matrix.architecture }}
 
       - name: Upload snap artifact
         uses: actions/upload-artifact@v5
