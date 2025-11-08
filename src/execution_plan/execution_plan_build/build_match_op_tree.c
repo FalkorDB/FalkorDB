@@ -172,6 +172,21 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 		}
 	}
 
+	// if a cartesian product was created but has no children
+	// (all components were skipped because nodes were already bound)
+	// remove it from the plan to avoid crashes
+	if(cartesianProduct != NULL && OpBase_ChildCount(cartesianProduct) == 0) {
+		if(apply != NULL) {
+			// remove the cartesian product from the apply operation
+			// and restore the previous root
+			OpBase *prev_root = OpBase_GetChild(apply, 0);
+			ExecutionPlan_UpdateRoot(plan, prev_root);
+			OpBase_Free(apply);
+		}
+		OpBase_Free(cartesianProduct);
+		cartesianProduct = NULL;
+	}
+
 	if(cartesianProduct != NULL && apply != NULL) {
 		rax *bound_args = raxNew();
 		ExecutionPlan_BoundVariables(OpBase_GetChild(apply, 0), bound_args,
