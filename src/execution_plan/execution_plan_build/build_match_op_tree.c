@@ -179,8 +179,13 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 		if(apply != NULL) {
 			// the cartesian product is a child of apply
 			// remove it and restore the previous state
-			OpBase *prev_root = OpBase_GetChild(apply, 0);
-			ExecutionPlan_UpdateRoot(plan, prev_root);
+			OpBase *prev_root = NULL;
+			if(OpBase_ChildCount(apply) > 0) {
+				prev_root = OpBase_GetChild(apply, 0);
+			}
+			if(prev_root != NULL) {
+				ExecutionPlan_UpdateRoot(plan, prev_root);
+			}
 			// free apply, which will disconnect its children but not free them
 			OpBase_Free(apply);
 			apply = NULL;

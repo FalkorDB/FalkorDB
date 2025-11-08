@@ -11,8 +11,8 @@ class testOptionalMatchPathCrash(FlowTestsBase):
     def test01_multiple_single_node_paths(self):
         # This query was causing a crash
         query = """OPTIONAL MATCH (n0)--(n1)
-                   OPTIONAL MATCH p0 = (n1), p1 = (n0)
-                   RETURN *"""
+OPTIONAL MATCH p0 = (n1), p1 = (n0)
+RETURN *"""
         
         # The query should not crash and should return valid results
         # When n0 and n1 don't exist (empty graph), all should be null
@@ -28,9 +28,9 @@ class testOptionalMatchPathCrash(FlowTestsBase):
         self.graph.query("CREATE (n0 {v: 'v0'})-[:E]->(n1 {v: 'v1'})")
         
         query = """OPTIONAL MATCH (n0)--(n1)
-                   OPTIONAL MATCH p0 = (n1), p1 = (n0)
-                   RETURN n0.v, n1.v, length(p0), length(p1)
-                   ORDER BY n0.v, n1.v"""
+OPTIONAL MATCH p0 = (n1), p1 = (n0)
+RETURN n0.v, n1.v, length(p0), length(p1)
+ORDER BY n0.v, n1.v"""
         
         actual_result = self.graph.query(query)
         
@@ -51,8 +51,8 @@ class testOptionalMatchPathCrash(FlowTestsBase):
         self.graph.query("CREATE (n {v: 'value'})")
         
         query = """OPTIONAL MATCH (n)
-                   OPTIONAL MATCH p = (n)
-                   RETURN n.v, length(p)"""
+OPTIONAL MATCH p = (n)
+RETURN n.v, length(p)"""
         
         actual_result = self.graph.query(query)
         expected_result = [['value', 0]]
