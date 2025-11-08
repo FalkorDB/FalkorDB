@@ -51,6 +51,7 @@
 #define EMSG_UNHANDLED_TYPE_INLINE_PROPERTIES "Encountered unhandled type in inlined properties."
 #define EMSG_CREATE_DIRECTED_RELATIONSHIP "Only directed relationships are supported in CREATE"
 #define EMSG_SAME_ALIAS_NODE_RELATIONSHIP "The alias '%s' was specified for both a node and a relationship."
+#define EMSG_CONFLICTING_TYPE "Variable '%s' defined with conflicting type %s (expected %s)"
 #define EMSG_SAME_ALIAS_MULTIPLE_PATTERNS "Cannot use the same relationship variable '%s' for multiple patterns."
 #define EMSG_SHORTESTPATH_BOUND_NODES "A shortestPath requires bound nodes"
 #define EMSG_ALLSHORTESTPATH_MINIMAL_LENGTH "allShortestPaths(...) does not support a minimal length different from 1"

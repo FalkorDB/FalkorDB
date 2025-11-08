@@ -695,3 +695,15 @@ class testQueryValidationFlow(FlowTestsBase):
 
         q = "OPTIONAL MATCH (a) RETURN a UNION MATCH (a) RETURN a"
         self.graph.query(q)
+
+    def test46_path_variable_type_conflict(self):
+        # Test that path variables cannot be used as node variables in MERGE
+        try:
+            query = """MERGE p = (n0:l0)-[r0:rt0]->(n1:l1)
+                       MERGE (n2:l2)-[r1:rt1]->(p)
+                       RETURN p"""
+            self.graph.query(query)
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error about type conflict
+            self.env.assertIn("defined with conflicting type Path (expected Node)", str(e))

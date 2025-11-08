@@ -82,6 +82,23 @@ static int _IdentifierCount
 	return raxSize(vctx->defined_identifiers);
 }
 
+// convert SIType to a human-readable string
+static const char *_SITypeToString
+(
+	SIType type  // type to convert
+) {
+	switch(type) {
+		case T_NODE:
+			return "Node";
+		case T_EDGE:
+			return "Relationship";
+		case T_PATH:
+			return "Path";
+		default:
+			return "Unknown";
+	}
+}
+
 // validate that allShortestPaths is in a supported place
 static bool _ValidateAllShortestPaths
 (
@@ -277,7 +294,14 @@ static AST_Validation _ValidateMergeRelation
 	if(identifier) {
 		alias = cypher_ast_identifier_get_name(identifier);
 		// verify that we're not redeclaring a bound variable
-		if(_IdentifiersFind(vctx, alias) != raxNotFound) {
+		void *alias_type = _IdentifiersFind(vctx, alias);
+		if(alias_type != raxNotFound) {
+			// Check for type conflicts
+			if(alias_type != NULL && alias_type != (void *)T_EDGE) {
+				ErrorCtx_SetError(EMSG_CONFLICTING_TYPE, alias,
+					_SITypeToString((SIType)(uintptr_t)alias_type), "Relationship");
+				return AST_INVALID;
+			}
 			ErrorCtx_SetError(EMSG_REDECLARE, "variable", alias, "MERGE");
 			return AST_INVALID;
 		}
@@ -313,8 +337,16 @@ static AST_Validation _ValidateMergeNode
 
 	const char *alias = cypher_ast_identifier_get_name(identifier);
 	// if the entity is unaliased or not previously bound, it cannot be redeclared
-	if(_IdentifiersFind(vctx, alias) == raxNotFound) {
+	void *alias_type = _IdentifiersFind(vctx, alias);
+	if(alias_type == raxNotFound) {
 		return AST_VALID;
+	}
+
+	// Check for type conflicts - a non-node type cannot be used as a node
+	if(alias_type != NULL && alias_type != (void *)T_NODE) {
+		ErrorCtx_SetError(EMSG_CONFLICTING_TYPE, alias, 
+			_SITypeToString((SIType)(uintptr_t)alias_type), "Node");
+		return AST_INVALID;
 	}
 
 	// If the entity is already bound, the MERGE pattern should not introduce labels or properties
@@ -985,7 +1017,7 @@ static VISITOR_STRATEGY _Validate_named_path
 	// introduce identifiers to bound variables environment
 	const cypher_astnode_t *alias_node = cypher_ast_named_path_get_identifier(n);
 	const char *alias = cypher_ast_identifier_get_name(alias_node);
-	_IdentifierAdd(vctx, alias, NULL);
+	_IdentifierAdd(vctx, alias, (void*)T_PATH);
 
 	return VISITOR_RECURSE;
 }
