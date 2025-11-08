@@ -38,7 +38,7 @@ jobs:
         id: snapcraft
         with:
           snapcraft-channel: latest/stable
-          path: build/snap
+          path: build
 
       - name: Upload snap artifact
         uses: actions/upload-artifact@v5
