@@ -84,4 +84,4 @@ tags
 /parts/
 /stage/
 /prime/
-/snap/.snapcraft/
+/build/snap/.snapcraft/
