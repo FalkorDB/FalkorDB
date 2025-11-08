@@ -574,6 +574,59 @@ class testConstraintNodes():
         drop_node_range_index(self.g, "Author", "nickname")
         drop_node_range_index(self.g, "Author", "birthdate")
 
+    def test09_unique_constraint_with_spaces(self):
+        # test that unique constraints work with strings containing leading/trailing spaces
+        # this was previously causing crashes due to tokenization issues
+
+        # create unique constraint over Customer ref
+        create_unique_node_constraint(self.g, "Customer", "ref", sync=True)
+
+        # create first node with no spaces
+        self.g.query("CREATE (:Customer {ref:'1093436713'})")
+
+        # create node with leading space - should succeed as it's different
+        self.g.query("CREATE (:Customer {ref:' 1093436713'})")
+
+        # create node with trailing space - should succeed as it's different
+        self.g.query("CREATE (:Customer {ref:'1093436713 '})")
+
+        # verify all three nodes exist
+        result = self.g.query("MATCH (c:Customer) RETURN c.ref ORDER BY c.ref")
+        self.env.assertEqual(len(result.result_set), 3)
+        self.env.assertEqual(result.result_set[0][0], ' 1093436713')
+        self.env.assertEqual(result.result_set[1][0], '1093436713')
+        self.env.assertEqual(result.result_set[2][0], '1093436713 ')
+
+        # try to create duplicate with leading space - should fail
+        try:
+            self.g.query("CREATE (:Customer {ref:' 1093436713'})")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type Customer", str(e))
+
+        # try to create duplicate with trailing space - should fail
+        try:
+            self.g.query("CREATE (:Customer {ref:'1093436713 '})")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type Customer", str(e))
+
+        # test MERGE with leading space
+        result = self.g.query("MERGE (c:Customer {ref:' 1093436713'}) RETURN c.ref")
+        self.env.assertEqual(result.result_set[0][0], ' 1093436713')
+
+        # test MERGE with trailing space
+        result = self.g.query("MERGE (c:Customer {ref:'1093436713 '}) RETURN c.ref")
+        self.env.assertEqual(result.result_set[0][0], '1093436713 ')
+
+        # verify we still only have 3 nodes
+        result = self.g.query("MATCH (c:Customer) RETURN count(c)")
+        self.env.assertEqual(result.result_set[0][0], 3)
+
+        # cleanup
+        drop_unique_node_constraint(self.g, "Customer", "ref")
+        self.g.query("MATCH (c:Customer) DELETE c")
+
 class testConstraintEdges():
     def __init__(self):
         self.env, self.db = Env()
@@ -987,6 +1040,59 @@ class testConstraintEdges():
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("unique constraint violation, on edge of relationship-type Artist", str(e))
+
+    def test08_unique_constraint_with_spaces(self):
+        # test that unique constraints work with strings containing leading/trailing spaces
+        # this was previously causing crashes due to tokenization issues
+
+        # create unique constraint over Device ref
+        create_unique_edge_constraint(self.g, "Device", "ref", sync=True)
+
+        # create first edge with no spaces
+        self.g.query("CREATE ()-[:Device {ref:'188.53.126.127-1093436713'}]->()")
+
+        # create edge with leading space - should succeed as it's different
+        self.g.query("CREATE ()-[:Device {ref:' 188.53.126.127-1093436713'}]->()")
+
+        # create edge with trailing space - should succeed as it's different
+        self.g.query("CREATE ()-[:Device {ref:'188.53.126.127-1093436713 '}]->()")
+
+        # verify all three edges exist
+        result = self.g.query("MATCH ()-[d:Device]->() RETURN d.ref ORDER BY d.ref")
+        self.env.assertEqual(len(result.result_set), 3)
+        self.env.assertEqual(result.result_set[0][0], ' 188.53.126.127-1093436713')
+        self.env.assertEqual(result.result_set[1][0], '188.53.126.127-1093436713')
+        self.env.assertEqual(result.result_set[2][0], '188.53.126.127-1093436713 ')
+
+        # try to create duplicate with leading space - should fail
+        try:
+            self.g.query("CREATE ()-[:Device {ref:' 188.53.126.127-1093436713'}]->()")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation, on edge of relationship-type Device", str(e))
+
+        # try to create duplicate with trailing space - should fail
+        try:
+            self.g.query("CREATE ()-[:Device {ref:'188.53.126.127-1093436713 '}]->()")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation, on edge of relationship-type Device", str(e))
+
+        # test MERGE with leading space
+        result = self.g.query("MERGE ()-[d:Device {ref:' 188.53.126.127-1093436713'}]->() RETURN d.ref")
+        self.env.assertEqual(result.result_set[0][0], ' 188.53.126.127-1093436713')
+
+        # test MERGE with trailing space
+        result = self.g.query("MERGE ()-[d:Device {ref:'188.53.126.127-1093436713 '}]->() RETURN d.ref")
+        self.env.assertEqual(result.result_set[0][0], '188.53.126.127-1093436713 ')
+
+        # verify we still only have 3 edges
+        result = self.g.query("MATCH ()-[d:Device]->() RETURN count(d)")
+        self.env.assertEqual(result.result_set[0][0], 3)
+
+        # cleanup
+        drop_unique_edge_constraint(self.g, "Device", "ref")
+        self.g.query("MATCH ()-[d:Device]->() DELETE d")
 
 MONITOR_ATTACHED = False
 
