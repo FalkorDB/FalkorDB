@@ -1,0 +1,110 @@
+name: falkordb
+base: core24
+version: git
+summary: Ultra-fast, Multi-tenant Graph Database
+description: |
+  FalkorDB is the first queryable Property Graph database to leverage sparse
+  matrices for representing the adjacency matrix in graphs and linear algebra
+  for querying. It supports the OpenCypher query language and is designed for
+  high-performance graph operations, making it ideal for Generative AI, Agent
+  Memory, Cloud Security, and Fraud Detection applications.
+  
+  This snap includes both Redis server and the FalkorDB module pre-configured
+  and ready to use.
+
+grade: stable
+confinement: strict
+
+architectures:
+  - build-on: amd64
+  - build-on: arm64
+
+apps:
+  falkordb:
+    command: bin/redis-server-wrapper.sh
+    daemon: simple
+    plugs:
+      - network
+      - network-bind
+    environment:
+      FALKORDB_HOME: $SNAP_COMMON
+      FALKORDB_DATA_PATH: $SNAP_COMMON/data
+      FALKORDB_BIN_PATH: $SNAP/usr/local/bin
+
+parts:
+  redis:
+    plugin: make
+    source: https://github.com/redis/redis.git
+    source-tag: '8.2.2'
+    build-packages:
+      - build-essential
+      - tcl
+      - pkg-config
+      - libssl-dev
+    stage-packages:
+      - libssl3t64
+    override-build: |
+      make BUILD_TLS=yes
+      make PREFIX=$CRAFT_PART_INSTALL/usr/local install
+    prime:
+      - usr/local/bin/redis-server
+      - usr/local/bin/redis-cli
+      - lib/*/libssl.so*
+      - lib/*/libcrypto.so*
+
+  falkordb:
+    plugin: nil
+    source: .
+    after: [redis]
+    build-packages:
+      - build-essential
+      - cmake
+      - m4
+      - automake
+      - peg
+      - libtool
+      - autoconf
+      - python3
+      - python3-pip
+      - libgomp1
+      - git
+      - libssl-dev
+      - pkg-config
+    stage-packages:
+      - libgomp1
+      - libssl3t64
+    override-build: |
+      # Build FalkorDB
+      make
+      
+      # Install the FalkorDB module
+      mkdir -p $CRAFT_PART_INSTALL/usr/local/lib/falkordb
+      find ./bin -name "falkordb.so" -exec cp {} $CRAFT_PART_INSTALL/usr/local/lib/falkordb/falkordb.so \;
+      
+      # Create wrapper script
+      mkdir -p $CRAFT_PART_INSTALL/bin
+      cat > $CRAFT_PART_INSTALL/bin/redis-server-wrapper.sh << 'EOF'
+      #!/bin/bash
+      
+      # Create necessary directories
+      mkdir -p $SNAP_COMMON/data
+      mkdir -p $SNAP_COMMON/logs
+      
+      # Start Redis with FalkorDB module
+      exec $SNAP/usr/local/bin/redis-server \
+        --dir $SNAP_COMMON/data \
+        --logfile $SNAP_COMMON/logs/falkordb.log \
+        --loadmodule $SNAP/usr/local/lib/falkordb/falkordb.so \
+        --bind 127.0.0.1 \
+        --port 6379 \
+        --protected-mode yes \
+        "$@"
+      EOF
+      
+      chmod +x $CRAFT_PART_INSTALL/bin/redis-server-wrapper.sh
+    prime:
+      - usr/local/lib/falkordb/falkordb.so
+      - bin/redis-server-wrapper.sh
+      - lib/*/libgomp.so*
+      - lib/*/libssl.so*
+      - lib/*/libcrypto.so*
