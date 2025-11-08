@@ -77,7 +77,23 @@ To manually update the formula:
 
 ### Testing the Formula
 
-To test the formula locally:
+#### Quick Test (Recommended)
+
+Use the provided test script:
+
+```bash
+./scripts/test-homebrew-formula.sh
+```
+
+This interactive script will:
+- Validate the formula syntax
+- Check dependencies
+- Help you install or build FalkorDB
+- Run brew audit
+
+#### Manual Testing
+
+To test the formula manually:
 
 ```bash
 brew install --build-from-source Formula/falkordb.rb
