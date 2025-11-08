@@ -71,6 +71,8 @@ parts:
     source: .
     source-submodules: []
     after: [redis]
+    build-snaps:
+      - rustup/latest/stable
     build-packages:
       - build-essential
       - cmake
@@ -89,6 +91,10 @@ parts:
       - libgomp1
       - libssl3t64
     override-build: |
+      # Set up Rust environment from rustup snap
+      export PATH="/snap/bin:$PATH"
+      rustup default stable
+      
       # Build FalkorDB
       make
       
