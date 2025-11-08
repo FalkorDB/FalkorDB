@@ -33,13 +33,20 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
+      - name: Install snapcraft
+        run: |
+          sudo snap install snapcraft --classic
+
       - name: Build snap
-        uses: snapcore/action-build@v1
         id: snapcraft
-        with:
-          snapcraft-channel: latest/stable
-          path: build
-          use-lxd: false
+        working-directory: build
+        run: |
+          # Build the snap using destructive mode (builds in current environment)
+          sudo snapcraft --destructive-mode --verbose
+          
+          # Find the generated snap file
+          SNAP_FILE=$(ls *.snap | head -1)
+          echo "snap=${PWD}/${SNAP_FILE}" >> $GITHUB_OUTPUT
 
       - name: Upload snap artifact
         uses: actions/upload-artifact@v5
