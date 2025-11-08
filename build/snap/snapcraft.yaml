@@ -68,7 +68,7 @@ parts:
 
   falkordb:
     plugin: nil
-    source: ../..
+    source: .
     source-submodules: []
     after: [redis]
     build-packages:

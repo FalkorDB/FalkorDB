@@ -39,14 +39,16 @@ jobs:
 
       - name: Build snap
         id: snapcraft
-        working-directory: build
         run: |
+          # Copy snapcraft.yaml to repository root for building
+          cp build/snap/snapcraft.yaml snapcraft.yaml
+          
           # Build the snap using destructive mode (builds in current environment)
           sudo snapcraft --destructive-mode --verbose
           
           # Find the generated snap file
           SNAP_FILE=$(ls *.snap | head -1)
-          echo "snap=${PWD}/${SNAP_FILE}" >> $GITHUB_OUTPUT
+          echo "snap=$(pwd)/${SNAP_FILE}" >> $GITHUB_OUTPUT
 
       - name: Upload snap artifact
         uses: actions/upload-artifact@v5
