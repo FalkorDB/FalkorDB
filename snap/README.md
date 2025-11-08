@@ -53,9 +53,13 @@ sudo snap logs falkordb
 
 ### Connect to FalkorDB
 
-You can connect to the running FalkorDB instance using redis-cli or any Redis client:
+You can connect to the running FalkorDB instance using the included redis-cli or any Redis client:
 
 ```bash
+# Using the snap's built-in redis-cli
+falkordb.cli
+
+# Or using an external redis-cli
 redis-cli
 ```
 

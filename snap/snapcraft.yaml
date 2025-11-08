@@ -12,6 +12,11 @@ description: |
   This snap includes both Redis server and the FalkorDB module pre-configured
   and ready to use.
 
+website: https://www.falkordb.com
+source-code: https://github.com/FalkorDB/FalkorDB
+issues: https://github.com/FalkorDB/FalkorDB/issues
+license: SSPL-1.0
+
 grade: stable
 confinement: strict
 
@@ -30,6 +35,11 @@ apps:
       FALKORDB_HOME: $SNAP_COMMON
       FALKORDB_DATA_PATH: $SNAP_COMMON/data
       FALKORDB_BIN_PATH: $SNAP/usr/local/bin
+  
+  cli:
+    command: usr/local/bin/redis-cli
+    plugs:
+      - network
 
 parts:
   redis:
@@ -55,6 +65,7 @@ parts:
   falkordb:
     plugin: nil
     source: .
+    source-submodules: []
     after: [redis]
     build-packages:
       - build-essential
