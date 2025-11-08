@@ -39,6 +39,7 @@ jobs:
         with:
           snapcraft-channel: latest/stable
           path: build
+          use-lxd: false
 
       - name: Upload snap artifact
         uses: actions/upload-artifact@v5
