@@ -174,3 +174,32 @@ class testValueComparison(FlowTestsBase):
         actual_result = self.graph.query(query)
         # Test value search, first expressions is not null.
         self.env.assertEquals([[1.1], [1.1], [1.1], [1.1], [1.1], [1.1], [1.1]], actual_result.result_set)
+
+    # Verify that string concatenation in comparison expressions doesn't cause infinite loops
+    def test_string_concat_comparison(self):
+        # Test case that previously caused a hang due to buffer management bug in _SIString_ToString
+        query = """MATCH (n), (), ()
+                   WHERE ('a' <= ('km' + 'X'))
+                   RETURN *"""
+        # The query should complete and return results based on the filter condition
+        # Since 'a' <= 'kmX' is true, the result set depends on the number of nodes
+        actual_result = self.graph.query(query)
+        # We don't need to validate the exact results, just that the query completes
+        # without hanging
+        self.env.assertTrue(actual_result is not None)
+        
+        # Test additional string concatenation comparison cases
+        query = """RETURN 'abc' <= ('def' + 'ghi')"""
+        actual_result = self.graph.query(query)
+        # 'abc' <= 'defghi' should be true
+        self.env.assertEquals(actual_result.result_set[0][0], True)
+        
+        query = """RETURN 'xyz' > ('abc' + 'def')"""
+        actual_result = self.graph.query(query)
+        # 'xyz' > 'abcdef' should be true
+        self.env.assertEquals(actual_result.result_set[0][0], True)
+        
+        query = """RETURN 'test' = ('te' + 'st')"""
+        actual_result = self.graph.query(query)
+        # 'test' = 'test' should be true
+        self.env.assertEquals(actual_result.result_set[0][0], True)

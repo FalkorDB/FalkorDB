@@ -32,7 +32,7 @@ static inline void _SIString_ToString
 		*bufferLen += strLen;
 		*buf = rm_realloc(*buf, *bufferLen);
 	}
-	*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "%s",
+	*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen - *bytesWritten, "%s",
 			str.stringval);
 }
 
@@ -438,11 +438,11 @@ void SIValue_ToString
 			break;
 
 		case T_INT64:
-			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "%lld", (long long)v.longval);
+			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen - *bytesWritten, "%lld", (long long)v.longval);
 			break;
 
 		case T_BOOL:
-			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "%s", v.longval ? "true" : "false");
+			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen - *bytesWritten, "%s", v.longval ? "true" : "false");
 			break;
 
 		case T_DOUBLE:
@@ -482,17 +482,17 @@ void SIValue_ToString
 			break;
 
 		case T_NULL:
-			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "NULL");
+			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen - *bytesWritten, "NULL");
 			break;
 
 		case T_PTR:
-			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "POINTER");
+			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen - *bytesWritten, "POINTER");
 			break;
 
 		case T_POINT:
 			// max string length is 32 chars of string + 10 * 2 chars for the floats
 			// = 52 bytes that already checked in the header of the function
-			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "point({latitude: %f, longitude: %f})", Point_lat(v), Point_lon(v));
+			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen - *bytesWritten, "point({latitude: %f, longitude: %f})", Point_lat(v), Point_lon(v));
 			break;
 
 		case T_VECTOR_F32:
