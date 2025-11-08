@@ -16,6 +16,8 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.runs-on }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -47,6 +49,8 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # Only publish on tags (releases) or master branch
     if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/master')
     steps:
