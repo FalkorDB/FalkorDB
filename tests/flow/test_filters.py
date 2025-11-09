@@ -40,7 +40,7 @@ class testFilters():
         result = self.g.query("MATCH (n:N), (m:N) WHERE NOT (n.b XOR m.b) RETURN n.v, m.v ORDER BY n.v, m.v")
         self.env.assertEqual(result.result_set,  expected)
 
-    def test01_filter_with_null(self):
+    def test02_filter_with_null(self):
         conditions = [("null", None), ("true", True), ("false", False), ("x", True), ("y", False), ("z", None)]
         for c in conditions:
             q = "WITH true AS x, false AS y, null AS z WHERE %s RETURN x" % c[0]
@@ -87,9 +87,17 @@ class testFilters():
                                 print(q)
                             self.env.assertEqual(result.result_set,  expected)
 
-    def test02_filter_with_nan(self):
+    def test03_filter_with_nan(self):
         res = self.g.query("WITH 1 AS x WHERE 0.0 / 0.0 = 0.0 / 0.0 RETURN x")
         self.env.assertEquals(res.result_set, [])
 
         res = self.g.query("WITH 1 AS x WHERE 0.0 / 0.0 <> 0.0 / 0.0 RETURN x")
         self.env.assertEquals(res.result_set, [[1]])
+
+    def test04_redundant_filter(self):
+        q = """MATCH (n), (), ()
+               WHERE ('a' <= ('km' + 'X'))
+               RETURN *"""
+        plan = self.g.explain(q)
+        self.env.assertFalse('Filter' in plan)
+

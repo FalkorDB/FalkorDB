@@ -78,7 +78,7 @@ void reduceTraversal(ExecutionPlan *plan) {
 		   AlgebraicExpression_OperandCount(ae) == 1 &&
 		   AlgebraicExpression_DiagonalOperand(ae, 0)) continue;
 
-		// Collect variables bound before this op.
+		// collect variables bound before this op
 		rax *bound_vars = raxNew();
 		for(int i = 0; i < op->childCount; i ++) {
 			ExecutionPlan_BoundVariables(op->children[i], bound_vars,
