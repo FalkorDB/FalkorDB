@@ -17,7 +17,7 @@ GraphContext *RdbLoadGraphContext_latest
 void RdbLoadNodes_v18
 (
 	SerializerIO rdb,          // RDB
-	Graph *g,                  // graph context
+	Graph *g,                  // graph
 	const uint64_t node_count  // number of nodes to decode
 );
 
@@ -25,7 +25,7 @@ void RdbLoadNodes_v18
 void RdbLoadDeletedNodes_v18
 (
 	SerializerIO rdb,                  // RDB
-	Graph *g,                          // graph context
+	Graph *g,                          // graph
 	const uint64_t deleted_node_count  // number of deleted nodes
 );
 
@@ -33,7 +33,7 @@ void RdbLoadDeletedNodes_v18
 void RdbLoadEdges_v18
 (
 	SerializerIO rdb,  // RDB
-	Graph *g,          // graph context
+	Graph *g,          // graph
 	const uint64_t n   // virtual key capacity
 );
 
@@ -41,7 +41,7 @@ void RdbLoadEdges_v18
 void RdbLoadDeletedEdges_v18
 (
 	SerializerIO rdb,                  // RDB
-	Graph *g,                          // graph context
+	Graph *g,                          // graph
 	const uint64_t deleted_edge_count  // number of deleted edges
 );
 
@@ -62,6 +62,14 @@ void RdbLoadRelationMatrices_v18
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc   // graph context
+);
+
+// if the rdb we are loading is old, then we must recalculate the number of
+// edges connecting ech pair of nodes
+// precondition: relation matricies have been calculated and fully synced
+void RdbNormalizeAdjMatrix
+(
+	const Graph *g  // graph
 );
 
 // decode adjacency matrix
