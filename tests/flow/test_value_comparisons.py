@@ -174,3 +174,22 @@ class testValueComparison(FlowTestsBase):
         actual_result = self.graph.query(query)
         # Test value search, first expressions is not null.
         self.env.assertEquals([[1.1], [1.1], [1.1], [1.1], [1.1], [1.1], [1.1]], actual_result.result_set)
+
+    # Verify string concatenation in comparison expressions
+    def test_string_concat_comparison(self):
+        # Test additional string concatenation comparison cases
+        query = """RETURN 'abc' <= ('def' + 'ghi')"""
+        actual_result = self.graph.query(query)
+        # 'abc' <= 'defghi' should be true
+        self.env.assertEquals(actual_result.result_set[0][0], True)
+
+        query = """RETURN 'xyz' > ('abc' + 'def')"""
+        actual_result = self.graph.query(query)
+        # 'xyz' > 'abcdef' should be true
+        self.env.assertEquals(actual_result.result_set[0][0], True)
+
+        query = """RETURN 'test' = ('te' + 'st')"""
+        actual_result = self.graph.query(query)
+        # 'test' = 'test' should be true
+        self.env.assertEquals(actual_result.result_set[0][0], True)
+

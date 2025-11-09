@@ -77,6 +77,9 @@ static FilterCtx *_locate_filters_and_entities
 	while(parent != NULL && parent->type == OPType_FILTER) {
 		OpFilter *filter_op = (OpFilter *)parent;
 
+		// advance to the next op
+		parent = parent->parent;
+
 		// collect referenced entities
 		rax *entities = FilterTree_CollectModified(filter_op->filterTree);
 
@@ -88,9 +91,6 @@ static FilterCtx *_locate_filters_and_entities
 
 		FilterCtx filter_ctx = {.filter = filter_op, .entities = entities};
 		array_append(filter_ctx_arr, filter_ctx);
-
-		// advance to the next op
-		parent = parent->parent;
 	}
 
 	// sort by the number of referenced entities
