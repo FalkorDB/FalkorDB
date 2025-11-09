@@ -7,6 +7,8 @@
 
 #include "../redismodule.h"
 
+#include <stdbool.h>
+
 // SerializerIO
 // acts as an abstraction layer for both graph encoding and decoding
 // there are two types of serializers:
@@ -21,13 +23,22 @@ typedef struct SerializerIO_Opaque *SerializerIO;
 // create a serializer which uses a stream
 SerializerIO SerializerIO_FromStream
 (
-	FILE *stream  // stream
+	FILE *stream,  // stream
+	bool encoder   // true for encoder, false decoder
 );
 
 // create a serializer which uses RedisIO
 SerializerIO SerializerIO_FromRedisModuleIO
 (
-	RedisModuleIO *io
+	RedisModuleIO *io,  // redis module io
+	bool encoder        // true for encoder, false decoder
+);
+
+// create a buffered serializer which uses RedisIO
+SerializerIO SerializerIO_FromBufferedRedisModuleIO
+(
+	RedisModuleIO *io,  // redis module io
+	bool encoder        // true for encoder, false decoder
 );
 
 //------------------------------------------------------------------------------
@@ -59,7 +70,7 @@ void SerializerIO_WriteString
 void SerializerIO_WriteBuffer
 (
 	SerializerIO io,   // stream to write to
-	const char *buff,  // buffer 
+	const void *buff,  // buffer
 	size_t len         // number of bytes to write
 );
 
@@ -107,7 +118,7 @@ RedisModuleString *SerializerIO_ReadString
 );
 
 // read buffer from stream
-char *SerializerIO_ReadBuffer
+void *SerializerIO_ReadBuffer
 (
 	SerializerIO io,  // stream
 	size_t *lenptr     // number of bytes to read

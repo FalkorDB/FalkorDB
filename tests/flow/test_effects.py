@@ -1,4 +1,5 @@
 import time
+import random
 import threading
 from common import *
 from index_utils import *
@@ -444,7 +445,7 @@ class testEffects():
 
         self.assert_graph_eq()
 
-    def _test07_update_edge_effect(self, expect_effect=True):
+    def test07_update_edge_effect(self, expect_effect=True):
 
         # no leftovers from previous test
         self.env.assertFalse(self.monitor_containt_effect())
@@ -777,7 +778,20 @@ class testEffects():
 
         self.assert_graph_eq()
 
-    def test15_rerun_disable_effects(self):
+    def test15_create_node_with_random_and_timestamp_effect(self, expect_effect=True):
+        q = "CREATE ({r:rand(), t:timestamp()})"
+        res = self.query_master_and_wait(q)
+        self.env.assertEquals(res.nodes_created, 1)
+        self.env.assertEquals(res.properties_set, 2)
+
+        if expect_effect:
+            self.wait_for_effect()
+            self.assert_graph_eq()
+        else:
+            self.wait_for_query()
+            # graphs will likely differ.
+
+    def test16_rerun_disable_effects(self):
         # test replication works when effects are disabled
 
         # no leftovers from previous test
@@ -801,7 +815,7 @@ class testEffects():
         self.test04_create_node_effect(False)
         self.test05_create_edge_effect(False)
         self.test06_update_node_effect(False)
-        #self.test07_update_edge_effect(False)
+        self.test07_update_edge_effect(False)
         self.test08_set_labels_effect(False)
         self.test09_remove_labels_effect(False)
         self.test10_delete_edge_effect(False)
@@ -809,11 +823,12 @@ class testEffects():
         self.test12_merge_node(False)
         self.test13_merge_edge(False)
         self.test14_empty_vector(False)
+        self.test15_create_node_with_random_and_timestamp_effect(False)
 
         # make sure no effects had been recieved
         self.env.assertFalse(self.monitor_containt_effect())
 
-    def test_16_random_ops(self):
+    def test17_random_ops(self):
         # update graph key
         global GRAPH_ID
         GRAPH_ID = "random_graph"
@@ -838,4 +853,179 @@ class testEffects():
         # wait for replica and master to sync
         self.master.wait(1, 0)
         self.assert_graph_eq()
+
+    def test18_multiple_nodes(self):
+        """Test the creation & deletion of multiple nodes."""
+
+        self.env.flush()  # clean slate
+        self.effects_enable()
+
+        # labels
+        lbls = ["L0", "L1", "L2", "L3"]
+
+        # create 2048 nodes with random labels: L0, L1, L2, L3
+        q = "(:{})"
+        nodes = [q.format(random.choice(lbls)) for _ in range(2048)]
+        multi_create = "CREATE " + ",".join(nodes)
+        res = self.query_master_and_wait(multi_create)
+
+        self.env.assertEquals(res.nodes_created, 2048)
+        self.assert_graph_eq()
+
+        # delete nodes
+        res = self.query_master_and_wait("MATCH (n) DELETE n")
+        self.env.assertEquals(res.nodes_deleted, 2048)
+
+        self.assert_graph_eq()
+
+        q = "MATCH (n) RETURN count(n)"
+        replica_node_count = self.replica_graph.ro_query(q).result_set[0][0]
+        master_node_count = self.master_graph.query(q).result_set[0][0]
+        self.env.assertEquals(master_node_count, 0)
+        self.env.assertEquals(replica_node_count, master_node_count)
+
+        for l in lbls:
+            q = "MATCH (n:{}) RETURN count(n)".format(l)
+            master_node_count = self.master_graph.query(q).result_set[0][0]
+            replica_node_count = self.replica_graph.ro_query(q).result_set[0][0]
+            self.env.assertEquals(master_node_count, 0)
+            self.env.assertEquals(replica_node_count, master_node_count)
+
+    def test19_multiple_edges(self):
+        """Test the creation & deletion of multiple edges."""
+
+        self.env.flush()  # clean slate
+        self.effects_enable()
+
+        # relation types
+        types = ["R0", "R1", "R2", "R3"]
+
+        # create 2048 edges of types: R0, R1, R2, R3
+        q = "()-[:{}]->()"
+        edges = [q.format(random.choice(types)) for _ in range(2048)]
+        multi_create = "CREATE" + ",".join(edges)
+        res = self.query_master_and_wait(multi_create)
+
+        self.env.assertEquals(res.relationships_created, 2048)
+        self.assert_graph_eq()
+
+        # delete edges
+        res = self.query_master_and_wait("MATCH ()-[e]->() DELETE e")
+
+        self.env.assertEquals(res.relationships_deleted, 2048)
+        self.assert_graph_eq()
+
+        q = "MATCH ()-[e]->() RETURN count(e)"
+        replica_edge_count = self.replica_graph.ro_query(q).result_set[0][0]
+        master_edge_count = self.master_graph.query(q).result_set[0][0]
+        self.env.assertEquals(master_edge_count, 0)
+        self.env.assertEquals(replica_edge_count, master_edge_count)
+
+        for t in types:
+            q = "MATCH ()-[e:{}]->() RETURN count(e)".format(t)
+            master_edge_count = self.master_graph.query(q).result_set[0][0]
+            replica_edge_count = self.replica_graph.ro_query(q).result_set[0][0]
+            self.env.assertEquals(master_edge_count, 0)
+            self.env.assertEquals(replica_edge_count, master_edge_count)
+
+    def test20_multiple_entities(self):
+        """Test creation & deletion of multiple entities with a single randomized delete query."""
+
+        self.env.flush()  # clean slate
+        self.effects_enable()
+
+        # labels and relation types
+        lbls = ["L0", "L1", "L2", "L3"]
+        types = ["R0", "R1", "R2", "R3"]
+
+        edge_count = 2048
+        node_count = edge_count * 2
+
+        #-------------------------------------------------------------------
+        # create nodes + edges in a single query
+        #-------------------------------------------------------------------
+
+        q_pattern = "(:{src_lbl})-[:{r_type}]->(:{dest_lbl})"
+        patterns = [
+            q_pattern.format(
+                src_lbl=random.choice(lbls),
+                r_type=random.choice(types),
+                dest_lbl=random.choice(lbls)
+            )
+            for _ in range(edge_count)
+        ]
+        multi_create = "CREATE " + ",".join(patterns)
+        res = self.query_master_and_wait(multi_create)
+
+        self.env.assertEquals(res.nodes_created, node_count)
+        self.env.assertEquals(res.relationships_created, edge_count)
+        self.assert_graph_eq()
+
+        #-------------------------------------------------------------------
+        # assign random IDs to nodes and edges
+        #-------------------------------------------------------------------
+
+        node_ids = list(range(node_count))
+        edge_ids = list(range(edge_count))
+        random.shuffle(node_ids)
+        random.shuffle(edge_ids)
+
+        node_id_map = {l: [] for l in lbls}
+        for nid in node_ids:
+            label = random.choice(lbls)
+            node_id_map[label].append(nid)
+
+        edge_id_map = {t: [] for t in types}
+        for eid in edge_ids:
+            r_type = random.choice(types)
+            edge_id_map[r_type].append(eid)
+
+        #-------------------------------------------------------------------
+        # build single delete query
+        #-------------------------------------------------------------------
+
+        delete_clauses = []
+
+        # edges first
+        for t, ids in edge_id_map.items():
+            if ids:
+                delete_clauses.append(
+                    f"OPTIONAL MATCH ()-[e:{t}]->() WHERE ID(e) IN {ids} DELETE e WITH count(1) AS x"
+                )
+
+        # nodes per label
+        for l, ids in node_id_map.items():
+            if ids:
+                delete_clauses.append(
+                    f"OPTIONAL MATCH (n:{l}) WHERE ID(n) IN {ids} DELETE n WITH count(1) AS x"
+                )
+
+        # final catch-all for any remaining nodes
+        delete_clauses.append("MATCH (n) DELETE n")
+
+        # combine everything into a single query
+        single_delete_query = "\n".join(delete_clauses)
+
+        # execute the delete
+        res = self.query_master_and_wait(single_delete_query)
+
+        self.env.assertEqual(res.nodes_deleted, node_count)
+        self.env.assertEqual(res.relationships_deleted, edge_count)
+        self.assert_graph_eq()
+
+        #-------------------------------------------------------------------
+        # verification: master and replica must be empty
+        #-------------------------------------------------------------------
+
+        q = "MATCH (n) RETURN count(n)"
+        replica_node_count = self.replica_graph.ro_query(q).result_set[0][0]
+        master_node_count = self.master_graph.query(q).result_set[0][0]
+        self.env.assertEquals(master_node_count, 0)
+        self.env.assertEquals(replica_node_count, master_node_count)
+
+        q = "MATCH ()-[e]->() RETURN count(e)"
+        replica_edge_count = self.replica_graph.ro_query(q).result_set[0][0]
+        master_edge_count = self.master_graph.query(q).result_set[0][0]
+        self.env.assertEquals(master_edge_count, 0)
+        self.env.assertEquals(replica_edge_count, master_edge_count)
 

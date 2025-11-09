@@ -377,7 +377,7 @@ class testGraphInfo(FlowTestsBase):
         # validate running queries
         #-----------------------------------------------------------------------
 
-        res = self.conn.execute_command("GRAPH.INFO")
+        res = self.conn.execute_command("GRAPH.INFO", "RunningQueries", "WaitingQueries")
         while True:
             # validate response structure
             self.env.assertEquals(len(res), 4)
@@ -385,7 +385,7 @@ class testGraphInfo(FlowTestsBase):
             self.env.assertEquals(res[2], "# Waiting queries")
             if len(res[1]) > 0:
                 break
-            res = self.conn.execute_command("GRAPH.INFO")
+            res = self.conn.execute_command("GRAPH.INFO", "RunningQueries", "WaitingQueries")
 
         running_queries = res[1]
         running_query = running_queries[0]
@@ -405,7 +405,7 @@ class testGraphInfo(FlowTestsBase):
         # validate waiting queries
         #-----------------------------------------------------------------------
 
-        res = self.conn.execute_command("GRAPH.INFO")
+        res = self.conn.execute_command("GRAPH.INFO", "RunningQueries", "WaitingQueries")
         while True:
             # validate response structure
             self.env.assertEquals(len(res), 4)
@@ -413,7 +413,7 @@ class testGraphInfo(FlowTestsBase):
             self.env.assertEquals(res[2], "# Waiting queries")
             if len(res[3]) > 0:
                 break
-            res = self.conn.execute_command("GRAPH.INFO")
+            res = self.conn.execute_command("GRAPH.INFO", "RunningQueries", "WaitingQueries")
 
         waiting_queries = res[3]
         waiting_query = waiting_queries[0]
@@ -433,3 +433,24 @@ class testGraphInfo(FlowTestsBase):
         # wait for all threads to complete
         for t in threads:
             t.join()
+
+    def test08_telemetry_ttl(self):
+        """make sure telemetry keys have ttl"""
+
+        # make sure graph exists
+        self.graph.query("RETURN 1")
+
+        # wait for telemetry stream to be created
+        key_type = 'none' # type of stream_key
+        telemetry_key = StreamName(self.graph)
+
+        while key_type == 'none':
+            key_type = self.conn.type(telemetry_key)
+
+        # make sure we're dealing with a telemetry stream
+        self.env.assertEquals(key_type, "stream")
+
+        # make sure stream is associated with TTL
+        ttl = self.conn.ttl(telemetry_key)
+        self.env.assertGreater(ttl, 0)
+

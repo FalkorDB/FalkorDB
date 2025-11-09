@@ -68,6 +68,12 @@ DataBlock *DataBlock_New
 // returns number of items stored
 uint64_t DataBlock_ItemCount(const DataBlock *dataBlock);
 
+// returns datablock item size
+uint DataBlock_itemSize
+(
+	const DataBlock *dataBlock  // datablock
+);
+
 // Make sure datablock can accommodate at least k items.
 void DataBlock_Accommodate(DataBlock *dataBlock, int64_t k);
 
@@ -99,6 +105,18 @@ uint DataBlock_DeletedItemsCount(const DataBlock *dataBlock);
 
 // Returns true if the given item has been deleted.
 bool DataBlock_ItemIsDeleted(void *item);
+
+// returns datablock's deleted indices array
+const uint64_t *DataBlock_DeletedItems
+(
+	const DataBlock *dataBlock
+);
+
+// returns to amount of memory consumed by the datablock
+size_t DataBlock_memoryUsage
+(
+	const DataBlock *dataBlock
+);
 
 // Free block.
 void DataBlock_Free(DataBlock *block);

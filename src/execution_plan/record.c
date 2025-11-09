@@ -46,11 +46,12 @@ bool Record_ContainsEntry
 // retrieve the offset into the Record of the given alias
 uint Record_GetEntryIdx (
 	Record r,
-	const char *alias
+	const char *alias,
+	size_t len
 ) {
 	ASSERT(r && alias);
 
-	void *idx = raxFind(r->mapping, (unsigned char *)alias, strlen(alias));
+	void *idx = raxFind(r->mapping, (unsigned char *)alias, len);
 
 	return idx != raxNotFound ? (intptr_t)idx : INVALID_INDEX;
 }
@@ -60,10 +61,10 @@ void Record_Clone
 	const restrict Record r,
 	restrict Record clone
 ) {
-	int entry_count = Record_length(clone);
 	// r and clone share the same record mapping
 	if(likely(r->owner == clone->owner)) {
-		size_t required_record_size = sizeof(Entry) * entry_count;
+		ASSERT(Record_length(r) <= Record_length(clone));
+		size_t required_record_size = sizeof(Entry) * Record_length(r);
 		memcpy(clone->entries, r->entries, required_record_size);
 
 		// foreach scalar entry in cloned record, make sure it is not freed
@@ -80,8 +81,7 @@ void Record_Clone
 		raxSeek(&it, "^", NULL, 0);
 
 		while(raxNext(&it)) {
-			it.key[it.key_len] = '\0';
-			uint src_idx = Record_GetEntryIdx(r, (const char*)it.key);
+			uint src_idx = Record_GetEntryIdx(r, (const char*)it.key, it.key_len);
 
 			if(src_idx == INVALID_INDEX) continue;
 			if(Record_GetType(r, src_idx) == REC_TYPE_UNKNOWN) continue;
@@ -96,6 +96,7 @@ void Record_Clone
 	// TODO: i wish we wouldn't have to perform this loop
 	// as it is a major performance hit
 	// with the introduction of a garbage collection this should be removed
+	int entry_count = Record_length(clone);
 	for(int i = 0; i < entry_count; i++) {
 		if(Record_GetType(clone, i) == REC_TYPE_SCALAR) {
 			SIValue_MakeVolatile(&clone->entries[i].value.s);
@@ -356,6 +357,17 @@ void Record_FreeEntries
 		// free any allocations held by this Record
 		Record_FreeEntry(r, i);
 	}
+}
+
+// increase record's reference count
+void Record_IncRefCount
+(
+	Record r
+) {
+	ASSERT (r != NULL) ;
+	ASSERT (r->ref_count > 0) ;  // can't revive a freed record
+
+	r->ref_count++ ;
 }
 
 void Record_Free

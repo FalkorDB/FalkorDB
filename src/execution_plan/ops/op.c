@@ -6,6 +6,7 @@
 
 #include "op.h"
 #include "RG.h"
+#include "op_sort.h"
 #include "op_project.h"
 #include "op_aggregate.h"
 #include "../../util/rmalloc.h"
@@ -17,7 +18,8 @@ rax *ExecutionPlan_GetMappings(const struct ExecutionPlan *plan);
 void ExecutionPlan_ReturnRecord(const struct ExecutionPlan *plan, Record r);
 
 // default reset function for operations
-OpResult _OpBase_reset_noop
+// does nothing
+static OpResult _OpBase_reset_noop
 (
 	OpBase *op
 ) {
@@ -25,6 +27,41 @@ OpResult _OpBase_reset_noop
 	return OP_OK;
 }
 
+// defualt init function for operations
+// does nothing
+static OpResult _OpBase_init_noop
+(
+	OpBase *op
+) {
+	ASSERT(op != NULL);
+	return OP_OK;
+}
+
+// before the fist call to consume is made, we need to initialize the operation
+// operation initializion is done lazily right before the fist invocation
+// further invocation go stright to the operation's consume function
+static Record _InitialConsume
+(
+	OpBase *op  // operation to initialize and consume from
+) {
+	// validations
+	ASSERT(op           != NULL);
+	ASSERT(op->init     != NULL);
+	ASSERT(op->_consume != NULL);
+	ASSERT(op->consume  == _InitialConsume);
+
+	// first and ONLY call to operation initialization
+	op->init(op);
+
+	// overwrite op's initial consume WRAPPER function (this one)
+	// with the op's original consume func
+	op->consume = op->_consume;
+
+	// run consume
+	return op->consume(op);
+}
+
+// initialize operation
 void OpBase_Init
 (
 	OpBase *op,
@@ -39,33 +76,53 @@ void OpBase_Init
 	bool writer,
 	const struct ExecutionPlan *plan
 ) {
-	op->type           = type;
-	op->name           = name;
-	op->plan           = plan;
-	op->stats          = NULL;
-	op->parent         = NULL;
-	op->parent         = NULL;
-	op->writer         = writer;
-	op->modifies       = NULL;
-	op->children       = NULL;
-	op->childCount     = 0;
-	op->op_initialized = false;
+	op->type       = type;
+	op->name       = name;
+	op->plan       = plan;
+	op->stats      = NULL;
+	op->parent     = NULL;
+	op->writer     = writer;
+	op->modifies   = NULL;
+	op->children   = NULL;
+	op->childCount = 0;
 
-	// function pointers
-	op->init     = init;
+	// set op's function pointers
 	op->free     = free;
 	op->clone    = clone;
-	op->reset    = (reset) ? reset : _OpBase_reset_noop;
-	op->profile  = NULL;
-	op->consume  = consume;
+	op->consume  = _InitialConsume;  // initial consume wrapper function
+	op->_consume = consume;          // op's consume function
 	op->toString = toString;
+	op->awareness = HashTableCreate(&string_dt);
+
+	op->init  = (init)  ? init  : _OpBase_init_noop;
+	op->reset = (reset) ? reset : _OpBase_reset_noop;
 }
 
 inline Record OpBase_Consume
 (
 	OpBase *op
 ) {
+	ASSERT(op != NULL);
+
 	return op->consume(op);
+}
+
+// returns true if operation is aware of all aliases
+bool OpBase_Aware
+(
+	const OpBase *op,      // op
+	const char **aliases,  // aliases
+	uint n                 // number of aliases
+) {
+	// make sure op resolves all aliases
+	for(uint i = 0; i < n; i++) {
+		const char *alias = aliases[i];
+		if(HashTableFind(op->awareness, alias) == NULL) {
+			return false;
+		}
+	}
+
+	return true;
 }
 
 // mark alias as being modified by operation
@@ -75,7 +132,13 @@ int OpBase_Modifies
 	OpBase *op,
 	const char *alias
 ) {
-	if(!op->modifies) op->modifies = array_new(const char *, 1);
+	ASSERT (op    != NULL) ;
+	ASSERT (alias != NULL) ;
+
+	if(!op->modifies) {
+		op->modifies = array_new(const char *, 1);
+	}
+
 	array_append(op->modifies, alias);
 
 	// make sure alias has an entry associated with it
@@ -87,6 +150,9 @@ int OpBase_Modifies
 		id = (void *)raxSize(mapping);
 		raxInsert(mapping, (unsigned char *)alias, strlen(alias), id, NULL);
 	}
+
+	// add alias to op's awareness table
+	HashTableAdd(op->awareness, (void*)alias, NULL);
 
 	return (intptr_t)id;
 }
@@ -128,7 +194,7 @@ bool OpBase_ChildrenAware
 						void *rec_idx = raxFind(mapping, (unsigned char *)alias, strlen(alias));
 						*idx = (intptr_t)rec_idx;
 					}
-					return true;				
+					return true;
 				}
 			}
 		}
@@ -138,15 +204,23 @@ bool OpBase_ChildrenAware
 	return false;
 }
 
-bool OpBase_Aware
+// returns true if alias is mapped
+bool OpBase_AliasMapping
 (
-	const OpBase *op,
-	const char *alias,
-	int *idx
+	const OpBase *op,   // op
+	const char *alias,  // alias
+	int *idx            // alias map id
 ) {
-	rax *mapping = ExecutionPlan_GetMappings(op->plan);
+	ASSERT(op    != NULL);
+	ASSERT(alias != NULL);
+
+	rax *mapping  = ExecutionPlan_GetMappings(op->plan);
 	void *rec_idx = raxFind(mapping, (unsigned char *)alias, strlen(alias));
-	if(idx) *idx = (intptr_t)rec_idx;
+
+	if(idx != NULL) {
+		*idx = (intptr_t)rec_idx;
+	}
+
 	return (rec_idx != raxNotFound);
 }
 
@@ -217,16 +291,22 @@ void OpBase_ToString
 	if(op->stats) _OpBase_StatsToString(op, buff);
 }
 
+// profile function
+// used to profile an operation consume function
 Record OpBase_Profile
 (
 	OpBase *op
 ) {
 	double tic [2];
-	// Start timer.
+	// start timer
 	simple_tic(tic);
-	Record r = op->profile(op);
-	// Stop timer and accumulate.
+
+	// call op's consume function
+	Record r = op->_consume(op);
+
+	// stop timer and accumulate
 	op->stats->profileExecTime += simple_toc(tic);
+
 	if(r) op->stats->profileRecordCount++;
 	return r;
 }
@@ -252,16 +332,23 @@ bool OpBase_IsEager
 	return false;
 }
 
+Record OpBase_Profile_init
+(
+	OpBase *op
+) ;
+
 void OpBase_UpdateConsume
 (
 	OpBase *op,
 	fpConsume consume
 ) {
 	ASSERT(op != NULL);
-	// if Operation is profiled, update profiled function
-	// otherwise update consume function
-	if(op->profile != NULL) op->profile = consume;
-	else op->consume = consume;
+
+	// update both consume and backup consume function
+	if(op->consume != OpBase_Profile_init && op->consume != OpBase_Profile) {
+		op->consume  = consume;  // in case update performed within op consume
+	}
+	op->_consume = consume;  // in case update performed within op init
 }
 
 // updates the plan of an operation
@@ -273,12 +360,22 @@ void OpBase_BindOpToPlan
 	ASSERT(op != NULL);
 
 	OPType type = OpBase_Type(op);
-	if(type == OPType_PROJECT) {
-		ProjectBindToPlan(op, plan);
-	} else if(type == OPType_AGGREGATE) {
-		AggregateBindToPlan(op, plan);
-	} else {
-		op->plan = plan;
+	switch (type) {
+		case OPType_PROJECT:
+			ProjectBindToPlan (op, plan) ;
+			break ;	
+
+		case OPType_AGGREGATE:
+			AggregateBindToPlan (op, plan) ;
+			break ;
+
+		case OPType_SORT:
+			SortBindToPlan (op, plan) ;
+			break ;
+
+		default:
+			op->plan = plan;
+			break ;
 	}
 }
 
@@ -331,10 +428,24 @@ OpBase *OpBase_GetChild
 	return op->children[i];
 }
 
+// returns op's parent
+OpBase *OpBase_Parent
+(
+	const OpBase *op  // op
+) {
+	ASSERT (op != NULL) ;
+
+	return op->parent ;
+}
+
 inline void OpBase_DeleteRecord
 (
 	Record *r
 ) {
+	ASSERT(r != NULL);
+
+	if(unlikely(*r == NULL)) return;
+
 	ExecutionPlan_ReturnRecord((*r)->owner, *r);
 	// nullify record
 	*r = NULL;
@@ -368,10 +479,12 @@ void OpBase_Free
 	OpBase *op
 ) {
 	// free internal operation
-	if(op->free) op->free(op);
+	if(op->free)     op->free(op);
 	if(op->children) rm_free(op->children);
 	if(op->modifies) array_free(op->modifies);
-	if(op->stats) rm_free(op->stats);
+	if(op->stats)    rm_free(op->stats);
+
+	HashTableRelease(op->awareness);
 	rm_free(op);
 }
 

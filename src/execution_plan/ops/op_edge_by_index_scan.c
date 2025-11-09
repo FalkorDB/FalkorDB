@@ -48,17 +48,11 @@ OpBase *NewEdgeIndexScanOp
 	ASSERT(QGEdge_Alias(e)         != NULL);
 	ASSERT(QGEdge_RelationCount(e) == 1);
 
-	OpEdgeIndexScan *op      =  rm_malloc(sizeof(OpEdgeIndexScan));
-	op->g                    =  g;
-	op->idx                  =  idx;
-	op->edge                 =  e;
-	op->iter                 =  NULL;
-	op->filter               =  filter;
-	op->child_record         =  NULL;
-	op->current_src_node_id  =  NULL;
-	op->current_dest_node_id =  NULL;
-	op->unresolved_filters   =  NULL;
-	op->rebuild_index_query  =  false;
+	OpEdgeIndexScan *op = rm_calloc (1, sizeof(OpEdgeIndexScan)) ;
+	op->g               = g;
+	op->idx             = idx;
+	op->edge            = e;
+	op->filter          = filter;
 
 	// set our Op operations
 	OpBase_Init(

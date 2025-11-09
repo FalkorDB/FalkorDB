@@ -6,7 +6,7 @@
 #include "RG.h"
 #include "../graph/graphcontext.h"
 #include "../serializers/serializer_io.h"
-#include "../serializers/decoders/current/v14/decode_v14.h"
+#include "../serializers/decoders/current/v18/decode_v18.h"
 
 extern RedisModuleType *GraphContextRedisModuleType;
 
@@ -63,7 +63,7 @@ int Graph_Restore
 	FILE *stream = fmemopen((void*)payload, len, "r");
 	ASSERT(stream != NULL);
 
-	SerializerIO io = SerializerIO_FromStream(stream);
+	SerializerIO io = SerializerIO_FromStream(stream, false);
 
 	// decode graph
 	GraphContext *gc = RdbLoadGraphContext_latest(io, argv[1]);

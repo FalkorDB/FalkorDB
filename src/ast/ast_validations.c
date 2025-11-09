@@ -27,7 +27,6 @@ typedef struct {
 	rax *defined_identifiers;      // identifiers environment
 	cypher_astnode_type_t clause;  // top-level clause type
 	is_union_all union_all;        // union type (regular or ALL)
-	bool ignore_identifiers;       // ignore identifiers in case `RETURN *` was met in a call {} clause
 } validations_ctx;
 
 // ast validation visitor mappings
@@ -448,6 +447,23 @@ static VISITOR_STRATEGY _Validate_pattern_comprehension
 	return VISITOR_CONTINUE;
 }
 
+// validate LOAD CSV clause
+static VISITOR_STRATEGY _Validate_load_csv
+(
+	const cypher_astnode_t *n,  // ast-node (LOAD CSV)
+	bool start,                 // first traversal
+	ast_visitor *visitor        // visitor
+) {
+	validations_ctx *vctx = AST_Visitor_GetContext(visitor);
+
+	const cypher_astnode_t *node = cypher_ast_load_csv_get_identifier(n);
+	const char *alias = cypher_ast_identifier_get_name(node);
+
+	_IdentifierAdd(vctx, alias, NULL);
+
+	return VISITOR_CONTINUE;
+}
+
 // validate that an identifier is bound
 static VISITOR_STRATEGY _Validate_identifier
 (
@@ -457,7 +473,7 @@ static VISITOR_STRATEGY _Validate_identifier
 ) {
 	validations_ctx *vctx = AST_Visitor_GetContext(visitor);
 
-	if(!start || vctx->ignore_identifiers) {
+	if (!start) {
 		return VISITOR_CONTINUE;
 	}
 
@@ -1127,81 +1143,83 @@ cleanup:
 	return VISITOR_CONTINUE;
 }
 
-// validates that root does not contain (bound) identifiers. For instance, would
-// fail on `MATCH (a) CALL {WITH a AS b RETURN b}`
-static bool _ValidateSubqueryFirstWithClauseIdentifiers
-(
-	const cypher_astnode_t *root  // root to validate
-) {
-	ASSERT(root != NULL);
-
-	if(cypher_astnode_type(root) == CYPHER_AST_IDENTIFIER) {
-		return false;
-	}
-
-	// recursively traverse all children
-	uint nchildren = cypher_astnode_nchildren(root);
-	for(uint i = 0; i < nchildren; i ++) {
-		const cypher_astnode_t *child = cypher_astnode_get_child(root, i);
-		if(!_ValidateSubqueryFirstWithClauseIdentifiers(child)) {
-			return false;
-		}
-	}
-
-	return true;
-}
-
 // validates a leading `WITH` clause of a subquery
 static bool _ValidateCallInitialWith
 (
 	const cypher_astnode_t *with_clause,  // `WITH` clause to validate
-	validations_ctx *vctx            // validation context
+	validations_ctx *vctx                 // validation context
 ) {
-	bool found_simple = false;
-	bool found_non_simple = false;
+	// in case WITH contains *
+	// skip this test, wait for second pass (after * AST rewrite)
+	if (!cypher_ast_with_has_include_existing (with_clause)) {
+		uint n = cypher_ast_with_nprojections (with_clause);
+		for (uint i = 0; i < n; i++) {
+			const cypher_astnode_t *curr_proj =
+				cypher_ast_with_get_projection (with_clause, i) ;
+			const cypher_astnode_t *exp =
+				cypher_ast_projection_get_expression (curr_proj) ;
+			const cypher_astnode_type_t t = cypher_astnode_type (exp) ;
 
-	for(uint i = 0; i < cypher_ast_with_nprojections(with_clause); i++) {
-		const cypher_astnode_t *curr_proj =
-			cypher_ast_with_get_projection(with_clause, i);
-		const cypher_astnode_t *exp =
-			cypher_ast_projection_get_expression(curr_proj);
-		const cypher_astnode_type_t t = cypher_astnode_type(exp);
+			// special case (empty star import)
+			// CALL { WITH * ... }
+			if (unlikely (t == CYPHER_AST_NULL)) {
+				continue ;
+			}
 
-		if (t == CYPHER_AST_IDENTIFIER ) {
-			const cypher_astnode_t *alias =
-				cypher_ast_projection_get_alias(curr_proj);
-			// if this is an internal representation of a variable, skip it
-			if(alias != NULL && cypher_ast_identifier_get_name(alias)[0] == '@') {
-				continue;
+			// fail if WITH expression isn't a simple import expression:
+			// WITH a, b, c...
+			if (t != CYPHER_AST_IDENTIFIER ||
+				cypher_ast_projection_get_alias (curr_proj) != NULL) {
+				return false ;
 			}
-			const char *identifier = cypher_ast_identifier_get_name(exp);
-			int len = strlen(identifier);
-			if(found_non_simple || alias != NULL) {
-				return false;
-			}
-			found_simple = true;
-		} else {
-			// check that the import does not make reference to an outer scope
-			// identifier. This is invalid:
-			// 'WITH 1 AS a CALL {WITH a + 1 AS b RETURN b} RETURN b'
-			if(found_simple ||
-			   !_ValidateSubqueryFirstWithClauseIdentifiers(exp)) {
-					return false;
-			}
-			found_non_simple = true;
 		}
 	}
 
 	// order by, predicates, limit and skips are not valid
-	if(cypher_ast_with_get_skip(with_clause)      != NULL ||
+	if (cypher_ast_with_get_skip(with_clause)      != NULL ||
 		cypher_ast_with_get_limit(with_clause)     != NULL ||
 		cypher_ast_with_get_order_by(with_clause)  != NULL ||
 		cypher_ast_with_get_predicate(with_clause) != NULL) {
 
-		return false;
+		return false ;
 	}
 
-	return true;
+	return true ;
+}
+
+// return true only if each returned expression is associated with as alias
+// e.g.
+// RETURN a AS b, 2 AS c...
+static bool _ValidateCallReturn
+(
+	const cypher_astnode_t *return_clause,
+	validations_ctx *vctx
+) {
+	uint n = cypher_ast_return_nprojections (return_clause) ;
+
+	for (uint i = 0; i < n; i++) {
+		const cypher_astnode_t *proj =
+			cypher_ast_return_get_projection (return_clause, i) ;
+
+		// projecting an identifier
+		const cypher_astnode_t *exp =
+			cypher_ast_projection_get_expression (proj) ;
+		if (cypher_astnode_type (exp) == CYPHER_AST_IDENTIFIER) {
+			continue ;
+		}
+
+		// projecting a more complex expression, make sure it's aliased
+		const cypher_astnode_t *ast_alias =
+			cypher_ast_projection_get_alias (proj) ;
+
+		// projection isn't aliased
+		if (ast_alias == NULL) {
+			return false ;
+		}
+	}
+
+	// all projected expressions are aliased
+	return true ;
 }
 
 // validate a CALL {} (subquery) clause
@@ -1211,147 +1229,146 @@ static VISITOR_STRATEGY _Validate_call_subquery
 	bool start,                 // first traversal
 	ast_visitor *visitor        // visitor
 ) {
-	validations_ctx *vctx = AST_Visitor_GetContext(visitor);
+	validations_ctx *vctx = AST_Visitor_GetContext (visitor) ;
 
-	vctx->clause = cypher_astnode_type(n);
+	vctx->clause = cypher_astnode_type (n) ;
 
 	// create a query astnode with the body of the subquery as its body
-	cypher_astnode_t *body = cypher_ast_call_subquery_get_query(n);
-	uint nclauses = cypher_ast_query_nclauses(body);
+	cypher_astnode_t *body = cypher_ast_call_subquery_get_query (n) ;
+	uint nclauses = cypher_ast_query_nclauses (body) ;
 
 	// clone the bound vars context
-	rax *in_env = raxClone(vctx->defined_identifiers);
+	rax *in_env = raxClone (vctx->defined_identifiers) ;
 
-	// if there are no imports, set the env of bound-vars to the empty env
-	const cypher_astnode_t *first_clause = cypher_ast_query_get_clause(body, 0);
-	if(cypher_astnode_type(first_clause) !=
-	   CYPHER_AST_WITH) {
-		raxFree(vctx->defined_identifiers);
-		vctx->defined_identifiers = raxNew();
+	// if there are no imports, clear the env
+	const cypher_astnode_t *first_clause = cypher_ast_query_get_clause (body, 0) ;
+	if (cypher_astnode_type (first_clause) != CYPHER_AST_WITH) {
+		raxFree (vctx->defined_identifiers) ;
+		vctx->defined_identifiers = raxNew () ;
 	} else {
-		// validate that the with imports (if exist) are simple, i.e., 'WITH a'
-		if(!_ValidateCallInitialWith(first_clause, vctx)) {
-			raxFree(in_env);
-			ErrorCtx_SetError(EMSG_CALLSUBQUERY_INVALID_REFERENCES);
-			return VISITOR_BREAK;
+		// validate that the WITH imports are "simple" expressions
+		// i.e., 'WITH a, b, c'
+		if (!_ValidateCallInitialWith (first_clause, vctx)) {
+			raxFree (in_env) ;
+			ErrorCtx_SetError (EMSG_CALLSUBQUERY_INVALID_REFERENCES) ;
+			return VISITOR_BREAK ;
 		}
 	}
 
 	// save current state
-	is_union_all union_all = vctx->union_all;
+	is_union_all union_all = vctx->union_all ;
 	// reset state
-	vctx->union_all = NOT_DEFINED;
+	vctx->union_all = NOT_DEFINED ;
 
 	// visit the subquery clauses
-	bool last_is_union = false;
-	for(uint i = 0; i < nclauses; i++) {
-		const cypher_astnode_t *clause =
-			cypher_ast_query_get_clause(body, i);
-		cypher_astnode_type_t type = cypher_astnode_type(clause);
+	bool after_union = false ;
+	for (uint i = 0; i < nclauses; i++) {
+		const cypher_astnode_t *clause = cypher_ast_query_get_clause (body, i) ;
+		cypher_astnode_type_t type = cypher_astnode_type (clause) ;
 
 		// if the current clause is a `UNION` clause, it has reset the bound
-		// vars env to the empty env. We compensate for that in case there is no
-		// initial `WITH` clause
-		if(last_is_union && type == CYPHER_AST_WITH) {
+		// vars env to the empty env
+		// we compensate for that in case there is no initial `WITH` clause
+		if (after_union && type == CYPHER_AST_WITH) {
 			// set the env of bound-vars to the input env
-			raxFree(vctx->defined_identifiers);
-			vctx->defined_identifiers = raxClone(in_env);
+			raxFree (vctx->defined_identifiers) ;
+			vctx->defined_identifiers = raxClone (in_env) ;
 
-			// validate that the with imports (if exist) are simple, i.e.,
-			// 'WITH a'
-			if(!_ValidateCallInitialWith(clause, vctx)) {
-				raxFree(in_env);
-				ErrorCtx_SetError(EMSG_CALLSUBQUERY_INVALID_REFERENCES);
-				return VISITOR_BREAK;
+			// validate that the WITH imports are "simple" expressions
+			// i.e., 'WITH a, b, c'
+			if (!_ValidateCallInitialWith (clause, vctx)) {
+				raxFree (in_env) ;
+				ErrorCtx_SetError (EMSG_CALLSUBQUERY_INVALID_REFERENCES) ;
+				return VISITOR_BREAK ;
 			}
 		}
 
-		AST_Visitor_visit(clause, visitor);
-		if(ErrorCtx_EncounteredError()) {
-			raxFree(in_env);
-			return VISITOR_BREAK;
+		AST_Visitor_visit (clause, visitor) ;
+		if (ErrorCtx_EncounteredError ()) {
+			raxFree (in_env) ;
+			return VISITOR_BREAK ;
 		}
 
-		if(type == CYPHER_AST_UNION) {
-			last_is_union = true;
-		} else if(type == CYPHER_AST_RETURN &&
-			cypher_ast_return_has_include_existing(clause)){
-				vctx->ignore_identifiers = true;
-				last_is_union = false;
-		} else {
-			last_is_union = false;
+		if (type == CYPHER_AST_UNION) {
+			after_union = true ;
+			continue ;
 		}
+
+		if (type == CYPHER_AST_RETURN) {
+			if (!_ValidateCallReturn (clause, vctx)) {
+				raxFree (in_env) ;
+				ErrorCtx_SetError (EMSG_CALLSUBQUERY_ALIAS_EXPRESSION) ;
+				return VISITOR_BREAK ;
+			}
+		}
+
+		after_union = false ;
 	}
 
 	// restore state
-	vctx->union_all = union_all;
+	vctx->union_all = union_all ;
 
 	// free the temporary environment
-	raxFree(vctx->defined_identifiers);
-	vctx->defined_identifiers = in_env;
+	raxFree (vctx->defined_identifiers) ;
 
-	const cypher_astnode_t *last_clause = cypher_ast_query_get_clause(body,
-		nclauses-1);
-	bool is_returning = cypher_astnode_type(last_clause) == CYPHER_AST_RETURN;
+	// restored original env
+	vctx->defined_identifiers = in_env ;
 
-	if(is_returning) {
+	const cypher_astnode_t *last_clause =
+		cypher_ast_query_get_clause (body, nclauses-1) ;
+	bool is_returning = cypher_astnode_type (last_clause) == CYPHER_AST_RETURN ;
+
+	if (is_returning) {
 		// merge projected aliases from in_env into vctx->defined_identifiers
 		// make sure no returned aliases are bound
 		// notice: this can be done only once for the last branch of a UNION
 		// since the returned aliases are always the same
 
-		const cypher_astnode_t *return_clause
-			= cypher_ast_query_get_clause(body, nclauses-1);
+		const cypher_astnode_t *return_clause = last_clause ;
 
-		uint n_projections = cypher_ast_return_nprojections(return_clause);
-		for(uint i = 0; i < n_projections; i++) {
+		uint n = cypher_ast_return_nprojections (return_clause) ;
+		for (uint i = 0; i < n; i++) {
 			const cypher_astnode_t *proj =
-				cypher_ast_return_get_projection(return_clause, i);
-			const char *var_name;
-			const cypher_astnode_t *identifier =
-				cypher_ast_projection_get_alias(proj);
-			const cypher_astnode_t *exp =
-					cypher_ast_projection_get_expression(proj);
-			if(identifier) {
-				var_name = cypher_ast_identifier_get_name(identifier);
-				if(exp &&
-				   cypher_astnode_type(exp) == CYPHER_AST_IDENTIFIER &&
-				   cypher_ast_identifier_get_name(exp)[0] == '@') {
-					// this is an artificial projection, skip it
-					continue;
-				}
+				cypher_ast_return_get_projection (return_clause, i) ;
+			const cypher_astnode_t *ast_alias =
+				cypher_ast_projection_get_alias (proj) ;
+
+			const char *name = NULL ;
+
+			if (ast_alias == NULL) {
+				// projecting an identifier
+				const cypher_astnode_t *exp =
+					cypher_ast_projection_get_expression (proj) ;
+				ASSERT (cypher_astnode_type (exp) == CYPHER_AST_IDENTIFIER) ;
+				name = cypher_ast_identifier_get_name (exp) ;
 			} else {
-				var_name = cypher_ast_identifier_get_name(exp);
+				name = cypher_ast_identifier_get_name (ast_alias) ;
 			}
 
-			if(!raxTryInsert(vctx->defined_identifiers,
-				(unsigned char *)var_name, strlen(var_name), NULL, NULL)) {
-					ErrorCtx_SetError(
+			ASSERT (name != NULL) ;
+
+			if (!raxTryInsert (vctx->defined_identifiers,
+						(unsigned char *)name, strlen (name), NULL, NULL)) {
+				ErrorCtx_SetError (
 						EMSG_VAIABLE_ALREADY_DECLARED_IN_OUTER_SCOPE,
-						var_name);
-					return VISITOR_BREAK;
+						name) ;
+				return VISITOR_BREAK ;
 			}
 		}
 	}
 
 	// don't traverse children
-	return VISITOR_CONTINUE;
+	return VISITOR_CONTINUE ;
 }
 
-// returns true if the clause is an updating clause, false otherwise
-static bool _is_updating_clause
-(
-	const cypher_astnode_t *clause  // clause
-) {
-	cypher_astnode_type_t type = cypher_astnode_type(clause);
-
-	return type == CYPHER_AST_CREATE             ||
-	       type == CYPHER_AST_MERGE              ||
-	       type == CYPHER_AST_DELETE             ||
-	       type == CYPHER_AST_SET                ||
-	       type == CYPHER_AST_REMOVE             ||
-	       type == CYPHER_AST_FOREACH;
-}
+// returns true if the clause is an updating clause
+#define UPDATING_CALUSE(t)           \
+	(type == CYPHER_AST_CREATE ||    \
+	 type == CYPHER_AST_MERGE  ||    \
+	 type == CYPHER_AST_DELETE ||    \
+	 type == CYPHER_AST_SET    ||    \
+	 type == CYPHER_AST_REMOVE ||    \
+	 type == CYPHER_AST_FOREACH)
 
 // validate a WITH clause
 static VISITOR_STRATEGY _Validate_WITH_Clause
@@ -2058,21 +2075,25 @@ static AST_Validation _ValidateQuerySequence
 	return AST_VALID;
 }
 
-/* In any given query scope, reading clauses (MATCH, UNWIND, and InQueryCall)
- * cannot follow updating clauses (CREATE, MERGE, DELETE, SET, REMOVE, FOREACH).
- * https://s3.amazonaws.com/artifacts.opencypher.org/railroad/SinglePartQuery.html
- * Additionally, a MATCH clause cannot follow an OPTIONAL MATCH clause. */
+// in any given query scope, reading clauses (MATCH, UNWIND, and InQueryCall)
+// cannot follow updating clauses (CREATE, MERGE, DELETE, SET, REMOVE, FOREACH).
+// https://s3.amazonaws.com/artifacts.opencypher.org/railroad/SinglePartQuery.html
+// Additionally, a MATCH clause cannot follow an OPTIONAL MATCH clause
 static AST_Validation _ValidateClauseOrder
 (
 	const AST *ast  // ast
 ) {
-	uint clause_count = cypher_ast_query_nclauses(ast->root);
+	ASSERT(ast != NULL);
 
-	bool encountered_optional_match = false;
+	uint clause_count                = cypher_ast_query_nclauses(ast->root);
+	bool encountered_optional_match  = false;
 	bool encountered_updating_clause = false;
-	for(uint i = 0; i < clause_count; i ++) {
-		const cypher_astnode_t *clause = cypher_ast_query_get_clause(ast->root, i);
+
+	for(uint i = 0; i < clause_count; i++) {
+		const cypher_astnode_t *clause =
+			cypher_ast_query_get_clause(ast->root, i);
 		cypher_astnode_type_t type = cypher_astnode_type(clause);
+
 		if(encountered_updating_clause && (type == CYPHER_AST_MATCH          ||
 										   type == CYPHER_AST_UNWIND         ||
 										   type == CYPHER_AST_CALL           ||
@@ -2080,27 +2101,24 @@ static AST_Validation _ValidateClauseOrder
 			ErrorCtx_SetError(EMSG_MISSING_WITH, cypher_astnode_typestr(type));
 			return AST_INVALID;
 		}
-		encountered_updating_clause = (encountered_updating_clause ||
-									   _is_updating_clause(clause));
+
+		encountered_updating_clause |= UPDATING_CALUSE(type);
 
 		if(type == CYPHER_AST_MATCH) {
-			// Check whether this match is optional
+			// check whether this match is optional
 			bool current_clause_is_optional = cypher_ast_match_is_optional(clause);
-			// If the current clause is non-optional but we have already
+			// if the current clause is non-optional but we have already
 			// encountered an optional match, emit an error
 			if(!current_clause_is_optional && encountered_optional_match) {
 				ErrorCtx_SetError(EMSG_MISSING_WITH_AFTER_MATCH);
 				return AST_INVALID;
 			}
 			encountered_optional_match |= current_clause_is_optional;
-		}
-
-		if(type == CYPHER_AST_WITH) {
-			encountered_optional_match = false;
+		} else if(type == CYPHER_AST_WITH || type == CYPHER_AST_UNION) {
+			// reset scope on WITH / UNION clauses
+			encountered_optional_match  = false;
 			encountered_updating_clause = false;
-		}
-
-		if(type == CYPHER_AST_CALL_SUBQUERY) {
+		} else if(type == CYPHER_AST_CALL_SUBQUERY) {
 			AST subquery_ast = {
 				.root = cypher_ast_call_subquery_get_query(clause)
 			};
@@ -2149,8 +2167,7 @@ static AST_Validation _ValidateScopes
 	// create a context for the traversal
 	validations_ctx ctx = {
 		.union_all = NOT_DEFINED,
-		.defined_identifiers = raxNew(),
-		.ignore_identifiers = false
+		.defined_identifiers = raxNew()
 	};
 
 	// create a visitor
@@ -2198,6 +2215,7 @@ bool AST_ValidationsMappingInit(void) {
 	validations_mapping[CYPHER_AST_REMOVE]                     = _Validate_REMOVE_Clause;
 	validations_mapping[CYPHER_AST_REDUCE]                     = _Validate_reduce;
 	validations_mapping[CYPHER_AST_FOREACH]                    = _Validate_FOREACH_Clause;
+	validations_mapping[CYPHER_AST_LOAD_CSV]                   = _Validate_load_csv;
 	validations_mapping[CYPHER_AST_IDENTIFIER]                 = _Validate_identifier;
 	validations_mapping[CYPHER_AST_PROJECTION]                 = _Validate_projection;
 	validations_mapping[CYPHER_AST_NAMED_PATH]                 = _Validate_named_path;
@@ -2207,6 +2225,7 @@ bool AST_ValidationsMappingInit(void) {
 	validations_mapping[CYPHER_AST_CALL_SUBQUERY]              = _Validate_call_subquery;
 	validations_mapping[CYPHER_AST_SHORTEST_PATH]              = _Validate_shortest_path;
 	validations_mapping[CYPHER_AST_APPLY_OPERATOR]             = _Validate_apply_operator;
+	validations_mapping[CYPHER_AST_BINARY_OPERATOR]            = _visit_binary_op;
 	validations_mapping[CYPHER_AST_APPLY_ALL_OPERATOR]         = _Validate_apply_all_operator;
 	validations_mapping[CYPHER_AST_LIST_COMPREHENSION]         = _Validate_list_comprehension;
 	validations_mapping[CYPHER_AST_PATTERN_COMPREHENSION]      = _Validate_pattern_comprehension;
@@ -2221,7 +2240,6 @@ bool AST_ValidationsMappingInit(void) {
 	validations_mapping[CYPHER_AST_FILTER]                      = _visit_break;
 	validations_mapping[CYPHER_AST_EXTRACT]                     = _visit_break;
 	validations_mapping[CYPHER_AST_COMMAND]                     = _visit_break;
-	validations_mapping[CYPHER_AST_LOAD_CSV]                    = _visit_break;
 	validations_mapping[CYPHER_AST_MATCH_HINT]                  = _visit_break;
 	validations_mapping[CYPHER_AST_USING_JOIN]                  = _visit_break;
 	validations_mapping[CYPHER_AST_USING_SCAN]                  = _visit_break;
@@ -2233,7 +2251,6 @@ bool AST_ValidationsMappingInit(void) {
 	validations_mapping[CYPHER_AST_REMOVE_ITEM]                 = _visit_break;
 	validations_mapping[CYPHER_AST_QUERY_OPTION]                = _visit_break;
 	validations_mapping[CYPHER_AST_REL_INDEX_QUERY]             = _visit_break;
-	validations_mapping[CYPHER_AST_BINARY_OPERATOR]             = _visit_binary_op;
 	validations_mapping[CYPHER_AST_EXPLAIN_OPTION]              = _visit_break;
 	validations_mapping[CYPHER_AST_PROFILE_OPTION]              = _visit_break;
 	validations_mapping[CYPHER_AST_SCHEMA_COMMAND]              = _visit_break;
@@ -2306,6 +2323,15 @@ AST_Validation AST_Validate_Query
 	ast.root = body;
 
 	cypher_astnode_type_t body_type = cypher_astnode_type(body);
+
+	if(body_type == CYPHER_AST_CREATE_NODE_PROP_CONSTRAINT ||
+	   body_type == CYPHER_AST_CREATE_REL_PROP_CONSTRAINT ||
+	   body_type == CYPHER_AST_DROP_NODE_PROP_CONSTRAINT ||
+	   body_type == CYPHER_AST_DROP_REL_PROP_CONSTRAINT) {
+		ErrorCtx_SetError(EMSG_INVALID_CONSTRAINT_COMMAND);
+		return AST_INVALID;
+	}
+
 	if(body_type == CYPHER_AST_CREATE_NODE_PROPS_INDEX    ||
 	   body_type == CYPHER_AST_CREATE_PATTERN_PROPS_INDEX ||
 	   body_type == CYPHER_AST_DROP_PROPS_INDEX           ||
@@ -2341,98 +2367,6 @@ AST_Validation AST_Validate_Query
 
 	// check for invalid queries not captured by libcypher-parser
 	return _ValidateScopes(&ast);
-}
-
-//------------------------------------------------------------------------------
-// Query params validations
-//------------------------------------------------------------------------------
-
-// validate the parameters of a statement expression are not EXPLAIN or PROFILE
-static AST_Validation _ValidateParamsOnly
-(
-	const cypher_astnode_t *statement  // statement
-) {
-	uint noptions = cypher_ast_statement_noptions(statement);
-	for(uint i = 0; i < noptions; i++) {
-		const cypher_astnode_t *option = cypher_ast_statement_get_option(statement, i);
-		const cypher_astnode_type_t type = cypher_astnode_type(option);
-		if((type == CYPHER_AST_EXPLAIN_OPTION) || (type == CYPHER_AST_PROFILE_OPTION)) {
-			const char *invalid_option_name = cypher_astnode_typestr(type);
-			ErrorCtx_SetError(EMSG_EXPLAIN_PROFILE_USAGE,
-							  invalid_option_name, invalid_option_name);
-			return AST_INVALID;
-		}
-	}
-	return AST_VALID;
-}
-
-// Make sure no duplicated parameters are given in a statement expression
-static AST_Validation _ValidateDuplicateParameters
-(
-	const cypher_astnode_t *statement  // statement
-) {
-	rax *param_names = raxNew();
-	uint noptions = cypher_ast_statement_noptions(statement);
-	for(uint i = 0; i < noptions; i++) {
-		const cypher_astnode_t *option = cypher_ast_statement_get_option(statement, i);
-		uint nparams = cypher_ast_cypher_option_nparams(option);
-		for(uint j = 0; j < nparams; j++) {
-			const cypher_astnode_t *param = cypher_ast_cypher_option_get_param(option, j);
-			const char *paramName = cypher_ast_string_get_value(cypher_ast_cypher_option_param_get_name(param));
-			// if parameter already exists return an error
-			if(!raxInsert(param_names, (unsigned char *)paramName, strlen(paramName), NULL, NULL)) {
-				ErrorCtx_SetError(EMSG_DUPLICATE_PARAMETERS, paramName);
-				raxFree(param_names);
-				return AST_INVALID;
-			}
-		}
-	}
-
-	raxFree(param_names);
-	return AST_VALID;
-}
-
-// validate parameters of a query
-AST_Validation AST_Validate_QueryParams
-(
-	const cypher_parse_result_t *result  // parse-result to validate
-) {
-	int index;
-	if(AST_Validate_ParseResultRoot(result, &index) != AST_VALID) {
-		return AST_INVALID;
-	}
-
-	const cypher_astnode_t *root = cypher_parse_result_get_root(result, index);
-
-	// in case of no parameters
-	if(cypher_ast_statement_noptions(root) == 0) {
-		return AST_VALID;
-	}
-
-	if(_ValidateParamsOnly(root) != AST_VALID) {
-		return AST_INVALID;
-	}
-	if(_ValidateDuplicateParameters(root) != AST_VALID) {
-		return AST_INVALID;
-	}
-
-	// create a context for the traversal
-	validations_ctx ctx = {
-		.union_all = NOT_DEFINED,
-		.defined_identifiers = raxNew(),
-		.ignore_identifiers = false
-	};
-
-	// create a visitor
-	ast_visitor visitor = {&ctx, validations_mapping};
-	
-	// visit (traverse) the ast
-	AST_Visitor_visit(root, &visitor);
-
-	// cleanup
-	raxFree(ctx.defined_identifiers);
-
-	return !ErrorCtx_EncounteredError() ? AST_VALID : AST_INVALID;
 }
 
 // report encountered errors by libcypher-parser

@@ -2,7 +2,7 @@
 # SuiteSparse/SuiteSparse_config/cmake_modules/SuiteSparsePolicy.cmake
 #-------------------------------------------------------------------------------
 
-# Copyright (c) 2022-2023, Timothy A. Davis.  All Rights Reserved.
+# Copyright (c) 2022-2025, Timothy A. Davis.  All Rights Reserved.
 # SPDX-License-Identifier: BSD-3-clause
 
 #-------------------------------------------------------------------------------
@@ -111,10 +111,10 @@ endif ( )
 # readability (such as "/* do nothing */ ;" in SuiteSparse_config.c).  Disable
 # the clang warning for these statements:
 if ( CMAKE_C_COMPILER_ID STREQUAL "Clang" )
-    set ( CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Wno-extra-semi-stmt" )
+    set ( CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Wno-extra-semi" )
 endif ( )
 if ( CMAKE_CXX_COMPILER_ID STREQUAL "Clang" )
-    set ( CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wno-extra-semi-stmt" )
+    set ( CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wno-extra-semi" )
 endif ( )
 
 if ( WIN32 )
@@ -131,6 +131,10 @@ set ( CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
 
 # Use OpenMP
 option ( SUITESPARSE_USE_OPENMP "ON (default): Use OpenMP in libraries by default if available.  OFF: Do not use OpenMP by default." ON )
+
+# control the use of Python interfaces in SuiteSparse packages (currently only
+# for SPEX)
+option ( SUITESPARSE_USE_PYTHON "ON (default): build Python interfaces for SuiteSparse packages (SPEX).  OFF: do not build Python interfaces for SuiteSparse packages" ON )
 
 # strict usage
 option ( SUITESPARSE_USE_STRICT "ON: treat all _USE__ settings as strict if they are ON. OFF (default): consider *_USE_* as preferences, not strict" OFF )

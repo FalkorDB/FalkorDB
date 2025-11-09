@@ -57,6 +57,7 @@ make test         # Run tests
   UNIT=1            # Run unit tests
   FLOW=1            # Run flow tests (Python)
   TCK=1             # Run TCK framework tests
+  UPGRADE=1         # Run upgrade tests
   COV=1             # Perform coverage analysis
   SLOW=1            # Do not run in parallel
   PARALLEL=n        # Set testing parallelism
@@ -65,14 +66,14 @@ make test         # Run tests
   TESTFILE=file     # Run tests listed in file
   FAILFILE=file     # Write failed tests to file
 
-make unit-tests   # Run unit tests
-make flow-tests   # Run flow tests
-make tck-tests    # Run TCK tests
-make fuzz-tests   # Run fuzz tester
+make unit-tests     # Run unit tests
+make flow-tests     # Run flow tests
+make tck-tests      # Run TCK tests
+make upgrade-tests  # Run upgrade tests
+make fuzz-tests     # Run fuzz tester
   TIMEOUT=secs      # Timeout in `secs`
 
 make benchmark    # Run benchmarks
-  REMOTE=1          # Run remotely
 
 make coverage     # Perform coverage analysis (build & test)
 make cov-upload   # Upload coverage data to codecov.io
@@ -116,6 +117,14 @@ LIBXXHASH_DIR = $(ROOT)/deps/xxHash
 export LIBXXHASH_BINDIR=$(DEPS_BINDIR)/xxHash
 include $(ROOT)/build/xxHash/Makefile.defs
 
+LIBCURL_DIR = $(ROOT)/deps/libcurl
+export LIBCURL_BINDIR=$(DEPS_BINDIR)/libcurl
+include $(ROOT)/build/libcurl/Makefile.defs
+
+LIBCSV_DIR = $(ROOT)/deps/libcsv
+export LIBCSV_BINDIR=$(DEPS_BINDIR)/libcsv
+include $(ROOT)/build/libcsv/Makefile.defs
+
 LIBCYPHER_PARSER_DIR = $(ROOT)/deps/libcypher-parser
 LIBCYPHER_PARSER_SRCDIR = $(LIBCYPHER_PARSER_DIR)/lib/src
 export LIBCYPHER_PARSER_BINDIR=$(DEPS_BINDIR)/libcypher-parser
@@ -124,6 +133,10 @@ include $(ROOT)/build/libcypher-parser/Makefile.defs
 GRAPHBLAS_DIR = $(ROOT)/deps/GraphBLAS
 export GRAPHBLAS_BINDIR=$(DEPS_BINDIR)/GraphBLAS
 include $(ROOT)/build/GraphBLAS/Makefile.defs
+
+LAGRAPH_DIR = $(ROOT)/deps/LAGraph
+export LAGRAPH_BINDIR=$(DEPS_BINDIR)/LAGraph
+include $(ROOT)/build/LAGraph/Makefile.defs
 
 UTF8PROC_DIR = $(ROOT)/deps/utf8proc
 export UTF8PROC_BINDIR=$(DEPS_BINDIR)/utf8proc
@@ -143,7 +156,7 @@ include $(ROOT)/build/FalkorDB-core-rs/Makefile.defs
 
 BIN_DIRS += $(REDISEARCH_BINROOT)/search-static
 
-LIBS=$(RAX) $(LIBXXHASH) $(GRAPHBLAS) $(REDISEARCH_LIBS) $(LIBCYPHER_PARSER) $(UTF8PROC) $(ONIGURUMA) $(FalkorDBRS)
+LIBS=$(RAX) $(LIBXXHASH) $(GRAPHBLAS) $(LAGRAPH) $(REDISEARCH_LIBS) $(LIBCURL) $(LIBCSV) $(LIBCYPHER_PARSER) $(UTF8PROC) $(ONIGURUMA) $(FalkorDBRS)
 
 #----------------------------------------------------------------------------------------------
 
@@ -169,12 +182,24 @@ ifeq ($(wildcard $(RAX)),)
 MISSING_DEPS += $(RAX)
 endif
 
+ifeq ($(wildcard $(LIBCURL)),)
+MISSING_DEPS += $(LIBCURL)
+endif
+
+ifeq ($(wildcard $(LIBCSV)),)
+MISSING_DEPS += $(LIBCSV)
+endif
+
 ifeq ($(wildcard $(LIBXXHASH)),)
 MISSING_DEPS += $(LIBXXHASH)
 endif
 
 ifeq ($(wildcard $(GRAPHBLAS)),)
 MISSING_DEPS += $(GRAPHBLAS)
+endif
+
+ifeq ($(wildcard $(LAGRAPH)),)
+MISSING_DEPS += $(LAGRAPH)
 endif
 
 ifeq ($(wildcard $(LIBCYPHER_PARSER)),)
@@ -199,7 +224,7 @@ ifneq ($(MISSING_DEPS),)
 DEPS=1
 endif
 
-DEPENDENCIES=libcypher-parser graphblas redisearch rax libxxhash utf8proc oniguruma falkordbrs
+DEPENDENCIES=libcypher-parser graphblas lagraph libcurl libcsv redisearch rax libxxhash utf8proc oniguruma falkordbrs
 
 ifneq ($(filter all deps $(DEPENDENCIES) pack,$(MAKECMDGOALS)),)
 DEPS=1
@@ -225,7 +250,7 @@ include $(MK)/rules
 
 ifeq ($(DEPS),1)
 
-deps: $(LIBCYPHER_PARSER) $(GRAPHBLAS) $(LIBXXHASH) $(RAX) $(REDISEARCH_LIBS) $(UTF8PROC) $(ONIGURUMA) falkordbrs
+deps: $(LIBCURL) $(LIBCSV) $(LIBCYPHER_PARSER) $(GRAPHBLAS) $(LAGRAPH) $(LIBXXHASH) $(RAX) $(REDISEARCH_LIBS) $(UTF8PROC) $(ONIGURUMA) falkordbrs
 
 libxxhash: $(LIBXXHASH)
 
@@ -245,13 +270,33 @@ GRAPHBLAS_MAKE_FLAGS.xenial-x64=CC=gcc-5 CXX=gxx-5
 
 $(GRAPHBLAS):
 	@echo Building $@ ...
-	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/GraphBLAS DEBUG=$(DEPS_DEBUG) $(GRAPHBLAS_MAKE_FLAGS.$(OSNICK)-$(ARCH))
+	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/GraphBLAS DEBUG=$(DEPS_DEBUG) $(GRAPHBLAS_MAKE_FLAGS.$(OSNICK)-$(ARCH)) JIT=$(JIT)
+
+lagraph: $(LAGRAPH)
+
+$(LAGRAPH):
+	@echo Building $@ ...
+	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/LAGraph DEBUG=$(DEPS_DEBUG) $(LAGRAPH_MAKE_FLAGS.$(OSNICK)-$(ARCH))
 
 libcypher-parser: $(LIBCYPHER_PARSER)
 
 $(LIBCYPHER_PARSER):
 	@echo Building $@ ...
 	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcypher-parser DEBUG=$(DEPS_DEBUG)
+
+libcurl: $(LIBCURL)
+
+$(LIBCURL):
+	@echo Building $@ ...
+	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcurl autoreconf DEBUG=$(DEPS_DEBUG)
+	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcurl DEBUG=$(DEPS_DEBUG)
+
+libcsv: $(LIBCSV)
+
+$(LIBCSV):
+	@echo Building $@ ...
+	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcsv autoreconf DEBUG=$(DEPS_DEBUG)
+	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcsv DEBUG=$(DEPS_DEBUG)
 
 utf8proc: $(UTF8PROC)
 
@@ -281,11 +326,15 @@ export RUSTFLAGS=-Zsanitizer=$(SAN)
 CARGO_FLAGS=--target x86_64-unknown-linux-gnu
 endif
 
+ifneq ($(COV),)
+export RUSTFLAGS=-C instrument-coverage
+endif
+
 falkordbrs:
 	@echo Building $@ ...
 	cd deps/FalkorDB-core-rs && cargo build $(CARGO_FLAGS) --features falkordb_allocator --target-dir $(FalkorDBRS_BINDIR)
 
-.PHONY: libcypher-parser graphblas redisearch libxxhash rax utf8proc oniguruma falkordbrs
+.PHONY: libcypher-parser graphblas lagraph libcurl libcsv redisearch libxxhash rax utf8proc oniguruma falkordbrs
 
 #----------------------------------------------------------------------------------------------
 
@@ -316,6 +365,9 @@ ifeq ($(DEPS),1)
 	$(SHOW)$(MAKE) -C $(ROOT)/build/utf8proc clean DEBUG=$(DEPS_DEBUG)
 	$(SHOW)$(MAKE) -C $(ROOT)/build/oniguruma clean DEBUG=$(DEPS_DEBUG)
 	$(SHOW)$(MAKE) -C $(ROOT)/build/GraphBLAS clean DEBUG=$(DEPS_DEBUG)
+	$(SHOW)$(MAKE) -C $(ROOT)/build/LAGraph clean DEBUG=$(DEPS_DEBUG)
+	$(SHOW)$(MAKE) -C $(ROOT)/build/libcurl clean DEBUG=$(DEPS_DEBUG)
+	$(SHOW)$(MAKE) -C $(ROOT)/build/libcsv clean DEBUG=$(DEPS_DEBUG)
 	$(SHOW)$(MAKE) -C $(ROOT)/build/libcypher-parser clean DEBUG=$(DEPS_DEBUG)
 	$(SHOW)$(MAKE) -C $(REDISEARCH_DIR) clean ALL=1 BINROOT=$(REDISEARCH_BINROOT)
 endif
@@ -360,21 +412,25 @@ ifneq ($(BUILD),0)
 TEST_DEPS=$(TARGET)
 endif
 
-test: unit-tests flow-tests tck-tests
+test: unit-tests flow-tests tck-tests upgrade-tests
 
 unit-tests:
 ifneq ($(BUILD),0)
 	$(SHOW)$(MAKE) build FORCE=1 UNIT_TESTS=1
 endif
 	$(SHOW)BINROOT=$(BINROOT) ./tests/unit/tests.sh
+	$(SHOW)BINROOT=$(BINROOT) cargo test --lib --target-dir $(FalkorDBRS_BINDIR)
 
 flow-tests: $(TEST_DEPS)
-	$(SHOW)MODULE=$(TARGET) BINROOT=$(BINROOT) PARALLEL=$(_RLTEST_PARALLEL) GEN=$(GEN) AOF=$(AOF) TCK=0 ./tests/flow/tests.sh
+	$(SHOW)MODULE=$(TARGET) BINROOT=$(BINROOT) PARALLEL=$(_RLTEST_PARALLEL) GEN=$(GEN) AOF=$(AOF) TCK=0 UPGRADE=0 ./tests/flow/tests.sh
+
+upgrade-tests: $(TEST_DEPS)
+	$(SHOW)MODULE=$(TARGET) BINROOT=$(BINROOT) PARALLEL=$(_RLTEST_PARALLEL) GEN=0 AOF=0 TCK=0 SLOW=1 UPGRADE=1 ./tests/flow/tests.sh
 
 tck-tests: $(TEST_DEPS)
-	$(SHOW)MODULE=$(TARGET) BINROOT=$(BINROOT) PARALLEL=$(_RLTEST_PARALLEL) GEN=0 AOF=0 TCK=1 ./tests/flow/tests.sh
+	$(SHOW)MODULE=$(TARGET) BINROOT=$(BINROOT) PARALLEL=$(_RLTEST_PARALLEL) GEN=0 AOF=0 TCK=1 UPGRADE=0 ./tests/flow/tests.sh
 
-.PHONY: test unit-tests flow-tests tck-tests
+.PHONY: test unit-tests flow-tests tck-tests upgrade-tests
 
 #----------------------------------------------------------------------------------------------
 
@@ -389,26 +445,24 @@ fuzz fuzz-tests: $(TARGET)
 
 #----------------------------------------------------------------------------------------------
 
-ifneq ($(REMOTE),)
-BENCHMARK_ARGS=run-remote
-else
-BENCHMARK_ARGS=run-local
-endif
-
-BENCHMARK_ARGS += --module_path $(TARGET) --required-module graph
-ifneq ($(BENCHMARK),)
-BENCHMARK_ARGS += --test $(BENCHMARK)
-endif
-
 benchmark: $(TARGET)
-	$(SHOW)cd tests/benchmarks && redisbench-admin $(BENCHMARK_ARGS)
+	$(SHOW)cd tests/benchmarks && python3 -m venv venv && source venv/bin/activate && pip install -r benchmarks_requirements.txt && python3 run_benchmarks.py group_a && python3 run_benchmarks.py group_b
 
 .PHONY: benchmark
 
 #----------------------------------------------------------------------------------------------
 
 COV_EXCLUDE_DIRS += \
-	deps \
+	deps/GraphBLAS \
+	deps/LAGraph \
+	deps/libcurl \
+	deps/libcsv \
+	deps/libcypher-parser \
+	deps/oniguruma \
+	deps/rax \
+	deps/RediSearch \
+	deps/utf8proc \
+	deps/xxHash \
 	src/util/sds \
 	tests
 
@@ -416,11 +470,11 @@ COV_EXCLUDE+=$(foreach D,$(COV_EXCLUDE_DIRS),'$(realpath $(ROOT))/$(D)/*')
 
 coverage:
 	$(SHOW)$(MAKE) build COV=1
-	$(SHOW)$(COVERAGE_RESET)
+	$(SHOW)$(COVERAGE_RESET.llvm)
 	-$(SHOW)$(MAKE) unit-tests COV=1
 	-$(SHOW)$(MAKE) flow-tests COV=1
 	-$(SHOW)$(MAKE) tck-tests COV=1
-	$(SHOW)$(COVERAGE_COLLECT_REPORT)
+	$(SHOW)$(COVERAGE_COLLECT_REPORT.llvm)
 
 .PHONY: coverage
 

@@ -1,6 +1,6 @@
 # GraphBLAS/JITPackage:  package GraphBLAS source for the JIT
 
-SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 
 The use of this package is not required by the end user.  If you edit the

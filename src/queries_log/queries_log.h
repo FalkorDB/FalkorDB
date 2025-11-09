@@ -55,6 +55,12 @@ CircularBuffer QueriesLog_ResetQueries
 	QueriesLog log  // queries log
 );
 
+// free a logged query
+void LoggedQuery_Free
+(
+	LoggedQuery *q
+) ;
+
 // free the QueriesLog structure's content
 void QueriesLog_Free
 (

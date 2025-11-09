@@ -138,6 +138,29 @@ FT_FilterNode *FilterTree_CreateConditionFilter
 	return filterNode;
 }
 
+// returns type of filter node
+FT_FilterNodeType FilterTree_type
+(
+	const FT_FilterNode *node  // filter tree node
+) {
+	ASSERT(node != NULL);
+
+	return node->t;
+}
+
+// return filtered expression
+// NULL is returned if filter tree isn't of type FT_N_EXP
+AR_ExpNode *FilterTree_getExpression
+(
+	const FT_FilterNode *node  // filter tree node
+) {
+	if(node->t != FT_N_EXP) {
+		return NULL;
+	}
+
+	return node->exp.exp;
+}
+
 void _FilterTree_SubTrees
 (
 	const FT_FilterNode *root,
@@ -486,30 +509,41 @@ rax *FilterTree_CollectModified
 	return modified;
 }
 
-void _FilterTree_CollectAttributes
+// collect filtered attribute for a given entity
+// e.g. person.first_name = 'a' OR person.last_name = 'b'
+// will collect both 'first_name' and 'last_name'
+// if entity is 'person'
+static void _FilterTree_CollectAttributes
 (
-	const FT_FilterNode *root,
-	rax *attributes
+	const FT_FilterNode *root,  // filter tree
+	const char *entity,         // filtered entity
+	rax *attributes             // collected attributes
 ) {
+	ASSERT(entity     != NULL);
+	ASSERT(attributes != NULL);
+
 	if(root == NULL) return;
 
 	switch(root->t) {
 		case FT_N_COND: {
-			_FilterTree_CollectAttributes(root->cond.left, attributes);
-			_FilterTree_CollectAttributes(root->cond.right, attributes);
+			_FilterTree_CollectAttributes(root->cond.left,  entity, attributes);
+			_FilterTree_CollectAttributes(root->cond.right, entity, attributes);
 			break;
 		}
+
 		case FT_N_PRED: {
 			// traverse left and right-hand expressions,
 			// adding all encountered attributes to the triemap
-			AR_EXP_CollectAttributes(root->pred.lhs, attributes);
-			AR_EXP_CollectAttributes(root->pred.rhs, attributes);
+			AR_EXP_CollectAttributes(root->pred.lhs, entity, attributes);
+			AR_EXP_CollectAttributes(root->pred.rhs, entity, attributes);
 			break;
 		}
+
 		case FT_N_EXP: {
-			AR_EXP_CollectAttributes(root->exp.exp, attributes);
+			AR_EXP_CollectAttributes(root->exp.exp, entity, attributes);
 			break;
 		}
+
 		default: {
 			ASSERT(0);
 			break;
@@ -517,38 +551,54 @@ void _FilterTree_CollectAttributes
 	}
 }
 
+// collect filtered attribute for a given entity
+// e.g. person.first_name = 'a' OR person.last_name = 'b'
+// will collect both 'first_name' and 'last_name'
+// if entity is 'person'
 rax *FilterTree_CollectAttributes
 (
-	const FT_FilterNode *root
+	const FT_FilterNode *root,  // filter tree
+	const char *entity          // filtered entity
 ) {
+	ASSERT(root   != NULL);
+	ASSERT(entity != NULL);
+
 	rax *attributes = raxNew();
-	_FilterTree_CollectAttributes(root, attributes);
+
+	_FilterTree_CollectAttributes(root, entity, attributes);
+
 	return attributes;
 }
 
+// check if any of the filtered variable refers to a projection alias
 bool FilterTree_FiltersAlias
 (
-	const FT_FilterNode *root,
-	const cypher_astnode_t *ast
+	const FT_FilterNode *root,   // filter tree root
+	const cypher_astnode_t *ast  // AST
 ) {
-	// Collect all filtered variables.
+	// collect all filtered variables
 	rax *filtered_variables = FilterTree_CollectModified(root);
+
 	raxIterator it;
 	raxStart(&it, filtered_variables);
-	// Iterate over all keys in the rax.
-	raxSeek(&it, "^", NULL, 0);
+
+	// iterate over all keys in the rax
 	bool alias_is_filtered = false;
+
+	raxSeek(&it, "^", NULL, 0);
 	while(raxNext(&it)) {
-		// Build string on the stack to add null terminator.
+		// build string on the stack and add null terminator
 		char variable[it.key_len + 1];
 		memcpy(variable, it.key, it.key_len);
 		variable[it.key_len] = 0;
-		// Check if the filtered variable is an alias.
+
+		// check if the filtered variable is an alias
 		if(AST_IdentifierIsAlias(ast, variable)) {
 			alias_is_filtered = true;
 			break;
 		}
 	}
+
 	raxStop(&it);
 	raxFree(filtered_variables);
 

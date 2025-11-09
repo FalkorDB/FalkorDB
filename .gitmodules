@@ -7,15 +7,18 @@
 [submodule "deps/RediSearch"]
 	path = deps/RediSearch
 	url = https://github.com/FalkorDB/RediSearch.git
-[submodule "deps/readies"]
-	path = deps/readies
-	url = https://github.com/RedisLabsModules/readies.git
 [submodule "deps/utf8proc"]
 	path = deps/utf8proc
 	url = https://github.com/JuliaStrings/utf8proc.git
 [submodule "deps/oniguruma"]
 	path = deps/oniguruma
 	url = https://github.com/kkos/oniguruma.git
-[submodule "deps/FalkorDB-core-rs"]
-	path = deps/FalkorDB-core-rs
-	url = https://github.com/FalkorDB/FalkorDB-core-rs.git
+[submodule "deps/libcsv"]
+	path = deps/libcsv
+	url = https://github.com/rgamble/libcsv.git
+[submodule "deps/libcurl"]
+	path = deps/libcurl
+	url = https://github.com/curl/curl.git
+[submodule "deps/LAGraph"]
+	path = deps/LAGraph
+	url = https://github.com/GraphBLAS/LAGraph.git

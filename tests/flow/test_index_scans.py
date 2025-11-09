@@ -530,11 +530,14 @@ class testIndexScanFlow():
         # to which the index scan operation will have to apply the original filter
 
         # create person nodes with array value for their 'age' attribute
-        q = """CREATE (:person {age:[36], name:'leonard'}), (:person {age:[34], name:['maynard']})"""
+        q = """CREATE (:person {age:[36], name:'leonard'}),
+                      (:person {age:[34], name:['maynard']})"""
         self.graph.query(q)
 
         # find all person nodes with age value of [36]
-        q = """WITH [36] AS age MATCH (a:person {age:age}) RETURN a.name"""
+        q = """WITH [36] AS age
+               MATCH (a:person {age:age})
+               RETURN a.name"""
         plan = str(self.graph.explain(q))
         self.env.assertIn('Node By Index Scan', plan)
         query_result = self.graph.query(q)
@@ -542,7 +545,10 @@ class testIndexScanFlow():
         self.env.assertEquals(query_result.result_set, expected_result)
 
         # find all person nodes with age > [33]
-        q = """WITH [33] AS age MATCH (a:person) WHERE a.age > age RETURN a.name"""
+        q = """WITH [33] AS age
+               MATCH (a:person)
+               WHERE a.age > age
+               RETURN a.name"""
         plan = str(self.graph.explain(q))
         self.env.assertIn('Node By Index Scan', plan)
         query_result = self.graph.query(q)
@@ -550,7 +556,10 @@ class testIndexScanFlow():
         self.env.assertEquals(query_result.result_set, expected_result)
 
         # combine indexable value with none-indexable value index query
-        q = """WITH [33] AS age, 'leonard' AS name MATCH (a:person) WHERE a.age >= age AND a.name = name RETURN a.name"""
+        q = """WITH [33] AS age, 'leonard' AS name
+               MATCH (a:person)
+               WHERE a.age >= age AND a.name = name
+               RETURN a.name"""
         plan = str(self.graph.explain(q))
         self.env.assertIn('Node By Index Scan', plan)
         query_result = self.graph.query(q)
@@ -569,41 +578,76 @@ class testIndexScanFlow():
     def test19_index_scan_numeric_accuracy(self):
         create_node_range_index(self.graph, 'L1', 'id', sync=True)
         create_node_range_index(self.graph, 'L2', 'id1', 'id2', sync=True)
-        self.graph.query("UNWIND range(1, 5) AS v CREATE (:L1 {id: 990000000262240068 + v})")
-        self.graph.query("UNWIND range(1, 5) AS v CREATE (:L2 {id1: 990000000262240068 + v, id2: 990000000262240068 - v})")
+        self.graph.query("""UNWIND range(1, 5) AS v
+                            CREATE (:L1 {id: 990000000262240068 + v})"""
+        )
+
+        self.graph.query("""UNWIND range(1, 5) AS v
+                            CREATE (:L2 {id1: 990000000262240068 + v, id2: 990000000262240068 - v})"""
+        )
 
         # test index search
-        result = self.graph.query("MATCH (u:L1{id: 990000000262240069}) RETURN u.id")
+        result = self.graph.query("""MATCH (u:L1{id: 990000000262240069})
+                                     RETURN u.id"""
+        )
         expected_result = [[990000000262240069]]
         self.env.assertEquals(result.result_set, expected_result)
 
         # test index search from child
-        result = self.graph.query("MATCH (u:L1) WITH min(u.id) as id MATCH (u:L1{id: id}) RETURN u.id")
+        result = self.graph.query("""MATCH (u:L1)
+                                     WITH min(u.id) AS id
+                                     MATCH (u:L1{id: id})
+                                     RETURN u.id"""
+        )
         expected_result = [[990000000262240069]]
         self.env.assertEquals(result.result_set, expected_result)
 
         # test index search with or
-        result = self.graph.query("MATCH (u:L1) WHERE u.id = 990000000262240069 OR u.id = 990000000262240070 RETURN u.id ORDER BY u.id")
+        result = self.graph.query("""MATCH (u:L1)
+                                     WHERE u.id = 990000000262240069 OR
+                                           u.id = 990000000262240070
+                                     RETURN u.id
+                                     ORDER BY u.id"""
+        )
         expected_result = [[990000000262240069], [990000000262240070]]
         self.env.assertEquals(result.result_set, expected_result)
 
         # test resetting index scan operation
-        result = self.graph.query("MATCH (u1:L1), (u2:L1) WHERE u1.id = 990000000262240069 AND (u2.id = 990000000262240070 OR u2.id = 990000000262240071) RETURN u1.id, u2.id ORDER BY u1.id, u2.id")
+        result = self.graph.query("""MATCH (u1:L1), (u2:L1)
+                                     WHERE u1.id = 990000000262240069 AND
+                                     (u2.id = 990000000262240070 OR u2.id = 990000000262240071)
+                                     RETURN u1.id, u2.id
+                                     ORDER BY u1.id, u2.id""")
         expected_result = [[990000000262240069, 990000000262240070], [990000000262240069, 990000000262240071]]
         self.env.assertEquals(result.result_set, expected_result)
 
         # test resetting index scan operation when using the consume from child function
-        result = self.graph.query("MATCH (u:L1) WITH min(u.id) as id MATCH (u1:L1), (u2:L1) WHERE u1.id = 990000000262240069 AND (u2.id = 990000000262240070 OR u2.id = 990000000262240071) RETURN u1.id, u2.id ORDER BY u1.id, u2.id")
+        result = self.graph.query("""MATCH (u:L1)
+                                     WITH min(u.id) as id
+                                     MATCH (u1:L1), (u2:L1)
+                                     WHERE u1.id = 990000000262240069 AND
+                                     (u2.id = 990000000262240070 OR u2.id = 990000000262240071)
+                                     RETURN u1.id, u2.id
+                                     ORDER BY u1.id, u2.id""")
         expected_result = [[990000000262240069, 990000000262240070], [990000000262240069, 990000000262240071]]
         self.env.assertEquals(result.result_set, expected_result)
 
         # test resetting index scan operation when rebuild index is required
-        result = self.graph.query("MATCH (u:L1) WITH min(u.id) as id MATCH (u1:L1), (u2:L1) WHERE u1.id = id AND (u2.id = 990000000262240070 OR u2.id = 990000000262240071) RETURN u1.id, u2.id ORDER BY u1.id, u2.id")
+        result = self.graph.query("""MATCH (u:L1)
+                                     WITH min(u.id) as id
+                                     MATCH (u1:L1), (u2:L1)
+                                     WHERE u1.id = id AND
+                                     (u2.id = 990000000262240070 OR u2.id = 990000000262240071)
+                                     RETURN u1.id, u2.id
+                                     ORDER BY u1.id, u2.id""")
         expected_result = [[990000000262240069, 990000000262240070], [990000000262240069, 990000000262240071]]
         self.env.assertEquals(result.result_set, expected_result)
 
         # test index scan with 2 different attributes
-        result = self.graph.query("MATCH (u:L2) WHERE u.id1 = 990000000262240069 AND u.id2 = 990000000262240067 RETURN u.id1, u.id2")
+        result = self.graph.query("""MATCH (u:L2)
+                                     WHERE u.id1 = 990000000262240069 AND
+                                           u.id2 = 990000000262240067
+                                     RETURN u.id1, u.id2""")
         expected_result = [[990000000262240069, 990000000262240067]]
         self.env.assertEquals(result.result_set, expected_result)
 
@@ -742,3 +786,450 @@ class testIndexScanFlow():
         # make sure we're able to locate node using index scan
         res = self.graph.query("MATCH (p:Page {url: $url}) RETURN p.url", params)
         self.env.assertEqual(url, res.result_set[0][0])
+
+    def test_26_index_scan_with_other_filters(self):
+        # make sure index is utilized when the compared value is not a trivial
+        # expression e.g. p.name = metadata.age
+
+        queries = ["""UNWIND [{age: 30}, {age: 31}] AS metadata
+                      MATCH (p:person)
+                      WHERE p.age = metadata.age
+                      RETURN p.name""",
+                    
+                    # different property name
+                    """UNWIND [{my_age: 30}, {my_age: 31}] AS metadata
+                      MATCH (p:person)
+                      WHERE p.age = metadata.my_age
+                      RETURN p.name""",
+
+                   # same as previous query only reversed filter operands
+                   """UNWIND [{age: 30}, {age: 31}] AS metadata
+                      MATCH (p:person)
+                      WHERE metadata.age = p.age
+                      RETURN p.name""",
+
+                   """UNWIND [ [-1, 30], [0, 31] ] AS metadata
+                      MATCH (p:person)
+                      WHERE p.age = metadata[1]
+                      RETURN p.name""",
+
+                   # same as previous query only reversed filter operands
+                   """UNWIND [ [-1, 30], [0, 31] ] AS metadata
+                      MATCH (p:person)
+                      WHERE metadata[1] = p.age
+                      RETURN p.name""",
+
+                   """UNWIND [ [-1, 30], [0, 31] ] AS metadata
+                      MATCH (p:person)
+                      WHERE p.age = metadata[0] + metadata[1]
+                      RETURN p.name""",
+
+                   # same as previous query only reversed filter operands
+                   """UNWIND [ [-1, 30], [0, 31] ] AS metadata
+                      MATCH (p:person)
+                      WHERE  metadata[0] + metadata[1] = p.age
+                      RETURN p.name""",
+
+                   """UNWIND [{age: 30}, {age: 31}] AS metadata
+                      MATCH (p:person)
+                      WHERE p.age = metadata.age + metadata.age
+                      RETURN p.name""",
+
+                   # same as previous query only reversed filter operands
+                   """UNWIND [{age: 30}, {age: 31}] AS metadata
+                      MATCH (p:person)
+                      WHERE metadata.age + metadata.age = p.age
+                      RETURN p.name"""]
+
+        for q in queries:
+            plan = self.graph.explain(q)
+            self.env.assertIn('Node By Index Scan', plan)
+
+    def test_27_multi_index_scan(self):
+        # make sure multiple index scans are utilized
+
+        queries = ["""UNWIND [{age: 30}, {age: 31}] AS metadata
+                      MATCH (a:person), (b:person)
+                      WHERE a.age = metadata.age AND b.age = metadata.age + 1
+                      RETURN a.name, b.name""",
+
+                    # different property name
+                    """UNWIND [{my_age: 30}, {my_age: 31}] AS metadata
+                      MATCH (a:person), (b:person)
+                      WHERE a.age = metadata.my_age AND b.age = metadata.my_age
+                      RETURN a.name, b.name""",
+
+                   # same as previous query only reversed filter operands
+                   """UNWIND [{age: 30}, {age: 31}] AS metadata
+                      MATCH (a:person), (b:person)
+                      WHERE metadata.my_age = a.age AND metadata.my_age = b.age
+                      RETURN a.name, b.name""",
+
+                   """UNWIND [ [-1, 30], [0, 31] ] AS metadata
+                      MATCH (a:person), (b:person)
+                      WHERE a.age = metadata[1] AND b.age = metadata[0]
+                      RETURN a.name, b.name""",
+
+                   # same as previous query only reversed filter operands
+                   """UNWIND [ [-1, 30], [0, 31] ] AS metadata
+                      MATCH (a:person), (b:person)
+                      WHERE metadata[1] = a.age AND metadata[0] = b.age
+                      RETURN a.name, b.name""",
+
+                   """UNWIND [ [-1, 30], [0, 31] ] AS metadata
+                      MATCH (a:person), (b:person)
+                      WHERE a.age = metadata[0] + metadata[1] AND
+                            b.age = metadata[1] - metadata[0]
+                      RETURN a.name, b.name""",
+
+                   # same as previous query only reversed filter operands
+                   """UNWIND [ [-1, 30], [0, 31] ] AS metadata
+                      MATCH (a:person), (b:person)
+                      WHERE metadata[0] + metadata[1] = a.age AND
+                            metadata[1] - metadata[0] = b.age
+                      RETURN a.name, b.name""",
+
+                   """UNWIND [{age: 30}, {age: 31}] AS metadata
+                      MATCH (a:person), (b:person)
+                      WHERE a.age = metadata.age + metadata.age AND
+                            b.age = metadata.age + metadata.age
+                      RETURN a.name, b.name""",
+
+                   # same as previous query only reversed filter operands
+                   """UNWIND [{age: 30}, {age: 31}] AS metadata
+                      MATCH (a:person), (b:person)
+                      WHERE metadata.age + metadata.age = a.age AND
+                            metadata.age + metadata.age = b.age
+                      RETURN a.name, b.name"""]
+
+        for q in queries:
+            plan = self.graph.explain(q)
+            self.env.assertIn('Node By Index Scan', plan)
+
+    def test_28_array_index(self):
+        # test array indexing
+        # we only support index lookups of strings, numeric and booleans
+        # other types e.g. points within arrays won't utilize the index
+
+        # create an exact match index over person:samples
+        self.graph.create_node_range_index('person', 'samples')
+        wait_for_indices_to_sync(self.graph)
+
+        #----------------------------------------------------------------------
+        # numerical array
+        #----------------------------------------------------------------------
+
+        # create a node with an array attribute
+        samples = [-21, 30.5, 0, 90, 3.14]
+        q = "CREATE (:person {samples: $samples})"
+        self.graph.query(q, {'samples': samples})
+
+        # make sure we're able to lookup the preson using index scan
+        q = "MATCH (p:person) WHERE $x in p.samples RETURN p"
+        for sample in samples:
+            # make sure index is utilized
+            plan = str(self.graph.explain(q, {'x':sample}))
+            self.env.assertNotIn('Label Scan', plan) # not expecting label scan
+            self.env.assertIn('Node By Index Scan', plan) # expecting index scan
+
+            res = self.graph.query(q, {'x':sample}).result_set
+            self.env.assertEqual(len(res), 1)
+
+        # try searching for a non existing sample
+        res = self.graph.query(q, {'x':12345}).result_set
+        self.env.assertEqual(len(res), 0)
+
+        #----------------------------------------------------------------------
+        # strings array
+        #----------------------------------------------------------------------
+
+        # create a node with an array attribute
+        samples = ['a', 'ab', 'abc', 'AbC', 'one tOw', 'the fat cow']
+        q = "CREATE (:person {samples: $samples})"
+        self.graph.query(q, {'samples': samples})
+
+        # make sure we're able to lookup the preson using index scan
+        q = "MATCH (p:person) WHERE $x in p.samples RETURN p"
+        for sample in samples:
+            # make sure index is utilized
+            plan = str(self.graph.explain(q, {'x':sample}))
+            self.env.assertNotIn('Label Scan', plan) # not expecting label scan
+            self.env.assertIn('Node By Index Scan', plan) # expecting index scan
+
+            res = self.graph.query(q, {'x':sample}).result_set
+            self.env.assertEqual(len(res), 1)
+
+        # try searching for a non existing sample
+        res = self.graph.query(q, {'x':'non existing'}).result_set
+        self.env.assertEqual(len(res), 0)
+
+        #----------------------------------------------------------------------
+        # mix numerics & strings array
+        #----------------------------------------------------------------------
+
+        # create a node with an array attribute
+        samples = ['a', -21, 'ab', 30.5, 'abc', 0, 'AbC', 90, 'one tOw', 3.14, 'the fat cow']
+        q = "CREATE (:person {samples: $samples})"
+        self.graph.query(q, {'samples': samples})
+
+        # make sure we're able to lookup the preson using index scan
+        q = "MATCH (p:person) WHERE $x IN p.samples RETURN p"
+        for sample in samples:
+            # make sure index is utilized
+            plan = str(self.graph.explain(q, {'x':sample}))
+            self.env.assertNotIn('Label Scan', plan) # not expecting label scan
+            self.env.assertIn('Node By Index Scan', plan) # expecting index scan
+
+            res = self.graph.query(q, {'x':sample}).result_set
+            self.env.assertEqual(len(res), 2)
+
+        # try searching for a non existing samples
+        res = self.graph.query(q, {'x':'non existing'}).result_set
+        self.env.assertEqual(len(res), 0)
+
+        res = self.graph.query(q, {'x':12345}).result_set
+        self.env.assertEqual(len(res), 0)
+
+    def test_29_array_index(self):
+        # test array indexing where the search entry is produced
+        # via UNWIND
+
+        # create an exact match index over person:samples
+        self.graph.create_node_range_index('person', 'samples')
+        wait_for_indices_to_sync(self.graph)
+
+        #----------------------------------------------------------------------
+        # numerical array
+        #----------------------------------------------------------------------
+
+        # create a node with an array attribute
+        q = "CREATE (:person {samples: range(0, 10, 2)})"
+        self.graph.query(q)
+
+        # make sure we're able to lookup the preson using index scan
+        q = """UNWIND range(0, 10, 2) AS x
+               MATCH (p:person)
+               WHERE x in p.samples
+               RETURN p"""
+
+        # make sure index is utilized
+        plan = str(self.graph.explain(q))
+        self.env.assertNotIn('Label Scan', plan) # not expecting label scan
+        self.env.assertIn('Node By Index Scan', plan) # expecting index scan
+
+        res = self.graph.query(q).result_set
+        self.env.assertEqual(len(res), 6)
+
+        # look up entity using exact match
+        q = """WITH range(0, 10, 2) AS arr
+               MATCH (p:person)
+               WHERE arr = p.samples
+               RETURN p"""
+
+        # make sure index is utilized
+        plan = str(self.graph.explain(q))
+        self.env.assertNotIn('Label Scan', plan) # not expecting label scan
+        self.env.assertIn('Node By Index Scan', plan) # expecting index scan
+
+        res = self.graph.query(q).result_set
+        self.env.assertEqual(len(res), 1)
+
+        # look up entity using exact match
+        q = """WITH range(0, 10, 2) AS arr
+               MATCH (p:person)
+               WHERE p.samples = arr
+               RETURN p"""
+
+        # make sure index is utilized
+        plan = str(self.graph.explain(q))
+        self.env.assertNotIn('Label Scan', plan) # not expecting label scan
+        self.env.assertIn('Node By Index Scan', plan) # expecting index scan
+
+        res = self.graph.query(q).result_set
+        self.env.assertEqual(len(res), 1)
+
+    def test_30_update_array_index(self):
+        # test index update of array attributes
+
+        # create an exact match index over person:samples
+        self.graph.create_node_range_index('person', 'samples')
+        wait_for_indices_to_sync(self.graph)
+
+        # create a node with an array attribute
+        samples = [48, 47, 46]
+        q = "CREATE (:person {samples: $samples})"
+        self.graph.query(q, {'samples': samples})
+
+        # make sure we're able to lookup the preson using index scan
+        q = "MATCH (p:person) WHERE $x in p.samples RETURN p"
+        for sample in samples:
+            # make sure index is utilized
+            plan = str(self.graph.explain(q, {'x':sample}))
+            self.env.assertNotIn('Label Scan', plan) # not expecting label scan
+            self.env.assertIn('Node By Index Scan', plan) # expecting index scan
+
+            res = self.graph.query(q, {'x':sample}).result_set
+            self.env.assertEqual(len(res), 1)
+
+        # update the person node with a new set of samples
+        new_samples = [51, 50, 46, 'a', 'ab']
+        q = """MATCH (p:person)
+               WHERE $x in p.samples
+               SET p.samples = $new_samples"""
+        self.graph.query(q, {'x': samples[0] , 'new_samples': new_samples})
+
+        # make sure we're able to locate the updated node
+        q = "MATCH (p:person) WHERE $x in p.samples RETURN p"
+        for sample in new_samples:
+            # make sure index is utilized
+            plan = str(self.graph.explain(q, {'x':sample}))
+            self.env.assertNotIn('Label Scan', plan) # not expecting label scan
+            self.env.assertIn('Node By Index Scan', plan) # expecting index scan
+
+            res = self.graph.query(q, {'x':sample}).result_set
+            self.env.assertEqual(len(res), 1)
+
+        # use an old sample value and make sure node couldn't be located
+        q = """MATCH (p:person)
+               WHERE $x in p.samples
+               RETURN p"""
+        res = self.graph.query(q, {'x': samples[0]}).result_set
+        self.env.assertEqual(len(res), 0)
+
+    def test_31_remove_array_index(self):
+        # make sure removing an array attribute causes the entity
+        # not to be found when searching for each removed array element
+
+        # create an exact match index over person:samples
+        self.graph.create_node_range_index('person', 'samples')
+        wait_for_indices_to_sync(self.graph)
+
+        # create a node with an array attribute
+        samples = [1, 2, 3.4, 'abc']
+        q = "CREATE (:person {samples: $samples})"
+        self.graph.query(q, {'samples': samples})
+
+        # make sure we're able to locate the node
+        q = "MATCH (p:person) WHERE $x in p.samples RETURN p"
+        for sample in samples:
+            # make sure index is utilized
+            plan = str(self.graph.explain(q, {'x':sample}))
+            self.env.assertNotIn('Label Scan', plan) # not expecting label scan
+            self.env.assertIn('Node By Index Scan', plan) # expecting index scan
+
+            res = self.graph.query(q, {'x':sample}).result_set
+            self.env.assertEqual(len(res), 1)
+
+        # delete the array from the node
+        q = """MATCH (p:person)
+               WHERE $x in p.samples
+               SET p.samples = NULL"""
+
+        res = self.graph.query(q, {'x':samples[0]}).result_set
+
+        # make sure we're unable to locate the node
+        q = "MATCH (p:person) WHERE $x in p.samples RETURN p"
+        for sample in samples:
+            # make sure index is utilized
+            plan = str(self.graph.explain(q, {'x':sample}))
+            self.env.assertNotIn('Label Scan', plan) # not expecting label scan
+            self.env.assertIn('Node By Index Scan', plan) # expecting index scan
+
+            res = self.graph.query(q, {'x':sample}).result_set
+            self.env.assertEqual(len(res), 0)
+
+    def test_32_multiple_array_indexed_entities(self):
+        # test array index lookup in situations where there are multiple
+        # entities which match the query
+
+        # create an exact match index over person:samples
+        self.graph.create_node_range_index('person', 'samples')
+        wait_for_indices_to_sync(self.graph)
+
+        # create a node with an array attribute
+        q = """UNWIND range(0, 10) AS x
+               CREATE (:person {samples: [x, x+1, x/3, tostring(x)]})"""
+        self.graph.query(q)
+
+        # make sure we're able to locate the nodes
+        q = """UNWIND range(0, 10) AS x
+               MATCH (p:person)
+               WHERE tostring(x) in p.samples
+               RETURN count(DISTINCT p)"""
+
+        # make sure index is utilized
+        plan = str(self.graph.explain(q))
+        self.env.assertNotIn('Label Scan', plan) # not expecting label scan
+        self.env.assertIn('Node By Index Scan', plan) # expecting index scan
+
+        res = self.graph.query(q).result_set
+        self.env.assertEqual(res[0][0], 11)
+
+    def test_33_non_supported_array_entries(self):
+        # make sure we can find entities which contains non supported
+        # index array entries e.g. point and sub arrys
+
+        # create an exact match index over person:samples
+        self.graph.create_node_range_index('person', 'samples')
+        wait_for_indices_to_sync(self.graph)
+
+        # create a node with an array attribute containing non indexable
+        # array entries
+        q = "CREATE (:person {samples: [[1], point({latitude: 10, longitude: 20})]})"
+        self.graph.query(q)
+
+        # try to find an unsupported data type
+        q = """WITH [1] AS entry
+               MATCH (p:person)
+               WHERE entry in p.samples
+               RETURN p"""
+
+        # make sure index is utilized
+        plan = str(self.graph.explain(q))
+        self.env.assertNotIn('Label Scan', plan) # not expecting label scan
+        self.env.assertIn('Node By Index Scan', plan) # expecting index scan
+
+        res = self.graph.query(q).result_set
+        self.env.assertEqual(len(res), 1)
+
+        # try to find an unsupported data type
+        q = """WITH point({latitude: 10, longitude: 20}) AS entry
+               MATCH (p:person)
+               WHERE entry in p.samples
+               RETURN p"""
+
+        # make sure index is utilized
+        plan = str(self.graph.explain(q))
+        self.env.assertNotIn('Label Scan', plan) # not expecting label scan
+        self.env.assertIn('Node By Index Scan', plan) # expecting index scan
+
+        res = self.graph.query(q).result_set
+        self.env.assertEqual(len(res), 1)
+
+    def test_34_exact_match_array_value(self):
+        # make sure we can locate entities using exact match
+
+        # create an exact match index over person:samples
+        self.graph.create_node_range_index('person', 'samples')
+        wait_for_indices_to_sync(self.graph)
+
+        # create a node with an array attribute containing non indexable
+        # array entries
+        entries = [1, 2, 23, 'abc', 'B']
+        q = "CREATE (:person {samples: $entries})"
+        self.graph.query(q, {'entries': entries})
+
+        # try to find an unsupported data type
+        q = """WITH $entries AS entries
+               MATCH (p:person)
+               WHERE entries = p.samples
+               RETURN p"""
+
+        # make sure index is utilized
+        plan = str(self.graph.explain(q, {'entries': entries}))
+        self.env.assertNotIn('Label Scan', plan) # not expecting label scan
+        self.env.assertIn('Node By Index Scan', plan) # expecting index scan
+
+        res = self.graph.query(q, {'entries': entries}).result_set
+        self.env.assertEqual(len(res), 1)
+

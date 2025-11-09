@@ -2,14 +2,14 @@
 // gbclear: set all global GraphBLAS settings to their defaults for MATLAB
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 // This method does not clear the JIT hash table.  To do that, use:
 //
-//      GrB.jit ('off') ; GrB.jit ('on') ;
+//      GrB.jit ('flush') ;
 
 #include "gb_interface.h"
 
@@ -46,6 +46,6 @@ void mexFunction
     // save test coverage
     //--------------------------------------------------------------------------
 
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

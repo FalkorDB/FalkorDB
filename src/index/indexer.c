@@ -6,9 +6,23 @@
 
 #include "indexer.h"
 #include "../redismodule.h"
-#include "../util/circular_buffer.h"
+#include "../util/rmalloc.h"
 #include <assert.h>
 #include <pthread.h>
+
+// lock indexer task queue
+#define INDEXER_LOCK_QUEUE()                            \
+	do {                                                \
+		int res = pthread_mutex_lock (&indexer->m) ;    \
+		ASSERT (res == 0) ;                             \
+	} while (0) ;
+
+// unlock indexer task queue
+#define INDEXER_UNLOCK_QUEUE()                          \
+	do {                                                \
+		int res = pthread_mutex_unlock (&indexer->m) ;  \
+		ASSERT (res == 0) ;                             \
+	} while (0) ;
 
 // operations performed by indexer
 typedef enum {
@@ -16,6 +30,7 @@ typedef enum {
 	INDEXER_IDX_POPULATE,        // populate index
 	INDEXER_CONSTRAINT_DROP,     // drop index
 	INDEXER_CONSTRAINT_ENFORCE,  // populate index
+	INDEXER_EXIT,                // fake task which will cause indexer to exit
 } IndexerOp;
 
 // indexer task
@@ -54,13 +69,20 @@ typedef struct {
 	pthread_mutex_t m;   // queue mutex
 	pthread_mutex_t cm;  // conditional variable mutex
 	pthread_cond_t c;    // conditional variable
-	CircularBuffer q;    // task queue
+	IndexerTask * q;     // task queue
 } Indexer;
 
 // forward declarations
 static void _indexer_PopTask(IndexerTask *task);
 
 static Indexer *indexer = NULL;
+
+// clear indexer's tasks
+static void _Indexer_ClearTasks(void) {
+	INDEXER_LOCK_QUEUE () ;
+	array_clear (indexer->q) ;
+	INDEXER_UNLOCK_QUEUE () ;
+}
 
 // index populate task handler
 static void _indexer_idx_populate
@@ -207,24 +229,33 @@ static void *_indexer_run
 				_indexer_idx_populate(pdata);
 				break;
 			}
+
 			case INDEXER_IDX_DROP:
 			{
 				IndexDropCtx *pdata = (IndexDropCtx*)ctx.pdata;
 				_indexer_idx_drop(pdata);
 				break;
 			}
+
 			case INDEXER_CONSTRAINT_ENFORCE:
 			{
 				ConstraintEnforceCtx *pdata = (ConstraintEnforceCtx*)ctx.pdata;
 				_indexer_enforce_constraint(pdata);
 				break;
 			}
+
 			case INDEXER_CONSTRAINT_DROP:
 			{
 				ConstraintDropCtx *pdata = (ConstraintDropCtx*)ctx.pdata;
 				_indexer_drop_constraint(pdata);
 				break;
 			}
+
+			case INDEXER_EXIT:
+			{
+				return NULL ;
+			}
+
 			default:
 				assert(false && "unknown indexer operation");
 				break;
@@ -234,30 +265,23 @@ static void *_indexer_run
 	return NULL;
 }
 
-// add task to indexer queue
-static void _indexer_AddTask
+// add a new task to indexer queue
+void _indexer_AddTask
 (
 	IndexerOp op,
 	void *pdata
 ) {
-	// lock
-	int res = pthread_mutex_lock(&indexer->m);
-	ASSERT(res == 0);
-
 	// add task to queue
-	IndexerTask	task = {.op = op, .pdata = pdata};
+	IndexerTask	task = {.op = op, .pdata = pdata} ;
 
-	res = CircularBuffer_Add(indexer->q, &task);
-	ASSERT(res == 1);
-
-	// unlock
-	res = pthread_mutex_unlock(&indexer->m);
-	ASSERT(res == 0);
+	INDEXER_LOCK_QUEUE () ;
+	array_append (indexer->q, task) ;
+	INDEXER_UNLOCK_QUEUE () ;
 
 	// signal conditional variable
-	pthread_mutex_lock(&indexer->cm); 
-	pthread_cond_signal(&indexer->c);
-	pthread_mutex_unlock(&indexer->cm);
+	pthread_mutex_lock (&indexer->cm) ;
+	pthread_cond_signal (&indexer->c) ;
+	pthread_mutex_unlock (&indexer->cm) ;
 }
 
 // pops a task from queue
@@ -269,34 +293,29 @@ static void _indexer_PopTask
 	ASSERT(task != NULL);
 
 	// lock queue
-	int res = pthread_mutex_lock(&indexer->m);
-	ASSERT(res == 0);
+	INDEXER_LOCK_QUEUE () ;
 
 	// remove task to queue
-	if(CircularBuffer_Empty(indexer->q)) {
+	if (array_len (indexer->q) == 0) {
 		// waiting for work
 		// lock conditional variable mutex
 		pthread_mutex_lock(&indexer->cm);
 
 		// unlock queue mutex
-		pthread_mutex_unlock(&indexer->m);
+		INDEXER_UNLOCK_QUEUE () ;
 
 		// wait on conditional variable
 		pthread_cond_wait(&indexer->c, &indexer->cm);
 		pthread_mutex_unlock(&indexer->cm);
 
 		// work been added to queue
-		// lock queue
-		int res = pthread_mutex_lock(&indexer->m);
-		ASSERT(res == 0);
+		INDEXER_LOCK_QUEUE () ;
 	}
 
-	void *read = CircularBuffer_Read(indexer->q, task);
-	ASSERT(read != NULL);
+	*task = indexer->q[0] ;
+	array_del (indexer->q, 0) ;
 
-	// unlock
-	res = pthread_mutex_unlock(&indexer->m);
-	ASSERT(res == 0);
+	INDEXER_UNLOCK_QUEUE () ;
 }
 
 // initialize indexer
@@ -331,12 +350,11 @@ bool Indexer_Init(void) {
 	}
 
 	// create task queue
-	indexer->q = CircularBuffer_New(sizeof(IndexerTask), 256);
+	indexer->q = array_new (IndexerTask, 0) ;
 
 	// create worker thread
 	pthread_attr_t attr;
 	a_res = pthread_attr_init(&attr);
-	a_res = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 	if(a_res != 0) {
 		goto cleanup;
 	}
@@ -368,7 +386,7 @@ cleanup:
 	}
 
 	if(indexer->q != NULL) {
-		CircularBuffer_Free(indexer->q);
+		array_free (indexer->q) ;
 	}
 
 	rm_free(indexer);
@@ -480,5 +498,23 @@ void Indexer_DropConstraint
 
 	// place task into queue
 	_indexer_AddTask(INDEXER_CONSTRAINT_DROP, ctx);
+}
+
+// stop and free indexer
+void Indexer_Stop(void) {
+	// add fake task to cause indexer thread to exit
+	_Indexer_ClearTasks () ;
+	_indexer_AddTask (INDEXER_EXIT, NULL) ;
+	
+	// wait for indexer thread to exit
+	pthread_join (indexer->t, NULL) ;
+
+	// free indexer
+	array_free (indexer->q) ;
+	pthread_cond_destroy (&indexer->c) ;
+	pthread_mutex_destroy (&indexer->m) ;
+	pthread_mutex_destroy (&indexer->cm) ;
+
+	rm_free (indexer) ;
 }
 

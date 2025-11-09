@@ -2,18 +2,12 @@
 // GB_JITpackage.h: definitions to package GraphBLAS source code for the JIT
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-
-#ifdef GBMATLAB
-#include "GB_rename.h"
-#endif
+#include "GraphBLAS.h"
 
 typedef struct
 {
@@ -24,6 +18,6 @@ typedef struct
 }
 GB_JITpackage_index_struct ;
 
-extern int GB_JITpackage_nfiles ;
-extern GB_JITpackage_index_struct GB_JITpackage_index [ ] ;
+int GB_JITpackage_nfiles_get (void) ;
+void *GB_JITpackage_index_get (void) ;
 

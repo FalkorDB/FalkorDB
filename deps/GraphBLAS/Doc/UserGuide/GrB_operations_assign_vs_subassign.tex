@@ -1,0 +1,456 @@
+
+\newpage
+%===============================================================================
+\subsection{Comparing {\sf GrB\_assign} and {\sf GxB\_subassign}} %=============
+%===============================================================================
+\label{compare_assign}
+
+The \verb'GxB_subassign' and \verb'GrB_assign' operations are very similar, but
+they differ in two ways:
+
+\begin{enumerate}
+\item {\bf The Mask has a different size:}
+    The mask in \verb'GxB_subassign' has the same dimensions as \verb'w(I)' for
+    vectors and \verb'C(I,J)' for matrices.  In \verb'GrB_assign', the mask is
+    the same size as \verb'w' or \verb'C', respectively (except for the row/col
+    variants).  The two masks are related.  If \verb'M' is the mask for
+    \verb'GrB_assign', then \verb'M(I,J)' is the mask for \verb'GxB_subassign'.
+    If there is no mask, or if \verb'I' and \verb'J' are both \verb'GrB_ALL',
+    the two masks are the same.
+    For \verb'GrB_Row_assign' and \verb'GrB_Col_assign', the \verb'mask' vector
+    is the same size as a row or column of \verb'C', respectively.  For the
+    corresponding \verb'GxB_Row_subassign' and \verb'GxB_Col_subassign'
+    operations, the \verb'mask' is the same size as the sub-row \verb'C(i,J)' or
+    subcolumn \verb'C(I,j)', respectively.
+
+\item {\bf \verb'GrB_REPLACE' is different:}
+    They differ in how \verb'C' is affected in areas outside the \verb'C(I,J)'
+    submatrix.  In \verb'GxB_subassign', the \verb'C(I,J)' submatrix is the
+    only part of \verb'C' that can be modified, and no part of \verb'C' outside
+    the submatrix is ever modified.  In \verb'GrB_assign', it is possible to
+    delete entries in \verb'C' outside the submatrix, but only in one specific
+    manner.  Suppose the mask \verb'M' is present (or, suppose it is not
+    present but \verb'GrB_COMP' is true).  After (optionally) complementing the
+    mask, the value of \verb'M(i,j)' can be 0 for some entry outside the
+    \verb'C(I,J)' submatrix.  If the \verb'GrB_REPLACE' descriptor is
+    true, \verb'GrB_assign' deletes this entry.
+
+\end{enumerate}
+
+\verb'GxB_subassign' and \verb'GrB_assign' are identical if \verb'GrB_REPLACE'
+is set to its default value of false, and if the masks happen to be the same.
+The two masks can be the same in two cases:  either the \verb'Mask' input is
+\verb'NULL' (and it is not complemented via \verb'GrB_COMP'), or \verb'I' and
+\verb'J' are both \verb'GrB_ALL'.
+If all these conditions hold,
+the two algorithms are identical and have the same performance.  Otherwise,
+\verb'GxB_subassign' is much faster than \verb'GrB_assign' when the latter
+must examine the entire matrix \verb'C' to delete entries (when
+\verb'GrB_REPLACE' is true), and if it must deal with a much larger \verb'Mask'
+matrix.  However, both methods have specific uses.
+
+Consider using \verb'C(I,J)+=F' for many submatrices \verb'F' (for example,
+when assembling a finite-element matrix).  If the \verb'Mask' is meant as a
+specification for which entries of \verb'C' should appear in the final result,
+then use \verb'GrB_assign'.
+
+If instead the \verb'Mask' is meant to control which entries of the submatrix
+\verb'C(I,J)' are modified by the finite-element \verb'F', then use
+\verb'GxB_subassign'.  This is particularly useful is the \verb'Mask' is a
+template that follows along with the finite-element \verb'F', independent of
+where it is applied to \verb'C'.  Using \verb'GrB_assign' would be very
+difficult in this case since a new \verb'Mask', the same size as \verb'C',
+would need to be constructed for each finite-element \verb'F'.
+
+In GraphBLAS notation, the two methods can be described as follows:
+
+\vspace{0.05in}
+\begin{tabular}{ll}
+\hline
+matrix and vector subassign & ${\bf C(I,J) \langle M \rangle}  = {\bf C(I,J)} \odot {\bf A}$ \\
+matrix and vector    assign & ${\bf C \langle M \rangle (I,J)} = {\bf C(I,J)} \odot {\bf A}$ \\
+\hline
+\end{tabular}
+\vspace{0.05in}
+
+This notation does not include the details of the \verb'GrB_COMP' and
+\verb'GrB_REPLACE' descriptors, but it does illustrate the difference in the
+\verb'Mask'.  In the subassign, \verb'Mask' is the same size as \verb'C(I,J)'
+and \verb'A'.  If \verb'I[0]=i' and \verb'J[0]=j', Then \verb'Mask(0,0)'
+controls how \verb'C(i,j)' is modified by the subassign, from the value
+\verb'A(0,0)'.  In the assign, \verb'Mask' is the same size as \verb'C', and
+\verb'Mask(i,j)' controls how \verb'C(i,j)' is modified.
+
+The \verb'GxB_subassign' and \verb'GrB_assign' functions have the same
+signatures; they differ only in how they consider the \verb'Mask' and the
+\verb'GrB_REPLACE' descriptor
+
+Details of each step of the two operations are listed below:
+
+\vspace{0.1in}
+\begin{tabular}{lll}
+\hline
+Step & \verb'GrB_Matrix_assign'                & \verb'GxB_Matrix_subassign'                        \\
+\hline
+1 & ${\bf S} = {\bf C(I,J)}$                & ${\bf S} = {\bf C(I,J)}$                              \\
+2 & ${\bf S} = {\bf S} \odot {\bf A}$       & ${\bf S \langle M \rangle} = {\bf S} \odot {\bf A}$   \\
+3 & ${\bf Z} = {\bf C}$                     & ${\bf C(I,J)}= {\bf S}$                               \\
+4 & ${\bf Z(I,J)} = {\bf S}$                &                                                       \\
+5 & ${\bf C \langle M \rangle = Z}$         &                                                       \\
+\hline
+\end{tabular}
+\vspace{0.1in}
+
+Step 1 is the same.  In the Accumulator Phase (Step 2), the expression
+${\bf S} \odot {\bf A}$,
+described in Section~\ref{accummask}, is the same in both
+operations.  The result is simply ${\bf A}$ if \verb'accum' is \verb'NULL'.  It
+only applies to the submatrix ${\bf S}$, not the whole matrix.
+The result ${\bf S} \odot {\bf A}$ is used differently in the Mask/Replace
+phase.
+
+The Mask/Replace Phase, described in Section~\ref{accummask} is different:
+\begin{itemize}
+\item
+    For \verb'GrB_assign' (Step 5), the mask is applied to all of ${\bf
+    C}$.  The mask has the same size as ${\bf C}$.  Just prior to making the
+    assignment via the mask, the \verb'GrB_REPLACE' option can be used to clear
+    all of ${\bf C}$ first.  This is the only way in which entries in ${\bf C}$ that
+    are outside the ${\bf C(I,J)}$ submatrix can be modified by this operation.
+
+\item
+    For \verb'GxB_subassign' (Step 2b), the mask is applied to just
+    ${\bf S}$.  The mask has the same size as ${\bf C(I,J)}$, ${\bf S}$, and
+    ${\bf A}$.  Just prior to making the assignment via the mask, the
+    \verb'GrB_REPLACE' option can be used to clear ${\bf S}$ first.  No entries
+    in ${\bf C}$ that are outside the ${\bf C(I,J)}$ can be modified by this
+    operation.  Thus, \verb'GrB_REPLACE' has no effect on entries in ${\bf C}$
+    outside the ${\bf C(I,J)}$ submatrix.
+
+\end{itemize}
+
+The differences between \verb'GrB_assign' and
+\verb'GxB_subassign' can be seen in Tables~\ref{insubmatrix} and
+\ref{outsubmatrix}.  The first table considers the case when the entry $c_{ij}$
+is in the ${\bf C(I,J)}$ submatrix, and it describes what is computed for both
+\verb'GrB_assign' and \verb'GxB_subassign'.  They perform the
+exact same computation; the only difference is how the value of the mask is
+specified.  Compare Table~\ref{insubmatrix} with Table~\ref{tab:maskaccum}
+in Section~\ref{sec:maskaccum}.
+
+The first column of Table~\ref{insubmatrix} is {\em yes} if \verb'GrB_REPLACE' is enabled,
+and a dash otherwise.  The second column is {\em yes} if an accumulator
+operator is given, and a dash otherwise.  The third column is $c_{ij}$ if the
+entry is present in ${\bf C}$, and a dash otherwise.  The fourth column is
+$a_{i'j'}$ if the corresponding entry is present in ${\bf A}$, where
+$i={\bf I}(i')$ and $j={\bf J}(i')$.
+
+The {\em mask} column is 1 if the effective value of the mask mask allows ${\bf
+C}$ to be modified, and 0 otherwise.  This is $m_{ij}$ for \verb'GrB_assign',
+and $m_{i'j'}$ for \verb'GxB_subassign', to reflect the difference in the mask,
+but this difference is not reflected in the table.  The value 1 or 0 is the
+value of the entry in the mask after it is optionally complemented via the
+\verb'GrB_COMP' option.
+
+Finally, the last column is the action taken in this case.  It is left blank if
+no action is taken, in which case $c_{ij}$ is not modified if present, or not
+inserted into ${\bf C}$ if not present.
+
+\begin{table}
+{\small
+\begin{tabular}{lllll|l}
+\hline
+repl & accum & ${\bf C}$ & ${\bf A}$ & mask & action taken by \verb'GrB_assign' and \verb'GxB_subassign'\\
+\hline
+    -  &-   & $c_{ij}$ & $a_{i'j'}$  & 1    &  $c_{ij} = a_{i'j'}$, update \\
+    -  &-   &  -       & $a_{i'j'}$  & 1    &  $c_{ij} = a_{i'j'}$, insert \\
+    -  &-   & $c_{ij}$ &  -          & 1    &  delete $c_{ij}$ because $a_{i'j'}$ not present \\
+    -  &-   &  -       &  -          & 1    &   \\
+    -  &-   & $c_{ij}$ & $a_{i'j'}$  & 0    &   \\
+    -  &-   &  -       & $a_{i'j'}$  & 0    &   \\
+    -  &-   & $c_{ij}$ &  -          & 0    &   \\
+    -  &-   &  -       &  -          & 0    &   \\
+\hline
+    yes&-   & $c_{ij}$ & $a_{i'j'}$  & 1    &  $c_{ij} = a_{i'j'}$, update \\
+    yes&-   &  -       & $a_{i'j'}$  & 1    &  $c_{ij} = a_{i'j'}$, insert \\
+    yes&-   & $c_{ij}$ &  -          & 1    &  delete $c_{ij}$ because $a_{i'j'}$ not present \\
+    yes&-   &  -       &  -          & 1    &   \\
+    yes&-   & $c_{ij}$ & $a_{i'j'}$  & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+    yes&-   &  -       & $a_{i'j'}$  & 0    &   \\
+    yes&-   & $c_{ij}$ &  -          & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+    yes&-   &  -       &  -          & 0    &   \\
+\hline
+    -  &yes & $c_{ij}$ & $a_{i'j'}$  & 1    &  $c_{ij} = c_{ij} \odot a_{i'j'}$, apply accumulator \\
+    -  &yes &  -       & $a_{i'j'}$  & 1    &  $c_{ij} = a_{i'j'}$, insert \\
+    -  &yes & $c_{ij}$ &  -          & 1    &   \\
+    -  &yes &  -       &  -          & 1    &   \\
+    -  &yes & $c_{ij}$ & $a_{i'j'}$  & 0    &   \\
+    -  &yes &  -       & $a_{i'j'}$  & 0    &   \\
+    -  &yes & $c_{ij}$ &  -          & 0    &   \\
+    -  &yes &  -       &  -          & 0    &   \\
+\hline
+    yes&yes & $c_{ij}$ & $a_{i'j'}$  & 1    &  $c_{ij} = c_{ij} \odot a_{i'j'}$, apply accumulator \\
+    yes&yes &  -       & $a_{i'j'}$  & 1    &  $c_{ij} = a_{i'j'}$, insert \\
+    yes&yes & $c_{ij}$ &  -          & 1    &   \\
+    yes&yes &  -       &  -          & 1    &   \\
+    yes&yes & $c_{ij}$ & $a_{i'j'}$  & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+    yes&yes &  -       & $a_{i'j'}$  & 0    &   \\
+    yes&yes & $c_{ij}$ &  -          & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+    yes&yes &  -       &  -          & 0    &   \\
+\hline
+\end{tabular}
+}
+\caption{Results of assign and subassign for entries in the ${\bf C(I,J)}$ submatrix \label{insubmatrix}}
+\end{table}
+
+\newpage
+Table~\ref{outsubmatrix} illustrates how \verb'GrB_assign' and
+\verb'GxB_subassign' differ for entries outside the submatrix.
+\verb'GxB_subassign' never modifies any entry outside the ${\bf C(I,J)}$
+submatrix, but \verb'GrB_assign' can modify them in two cases listed in
+Table~\ref{outsubmatrix}.  When the \verb'GrB_REPLACE' option is selected, and
+when the \verb'Mask(i,j)' for an entry $c_{ij}$ is false (or if the
+\verb'Mask(i,j)' is true and \verb'GrB_COMP' is enabled via the descriptor),
+then the entry is deleted by \verb'GrB_assign'.
+
+The fourth column of Table~\ref{outsubmatrix} differs from
+Table~\ref{insubmatrix}, since entries in ${\bf A}$ never affect these entries.
+Instead, for all index pairs outside the $I \times J$ submatrix, ${\bf C}$ and
+${\bf Z}$ are identical (see Step 3 above).  As a result, each section of the
+table includes just two cases: either $c_{ij}$ is present, or not.   This in
+contrast to Table~\ref{insubmatrix}, where each section must consider four
+different cases.
+
+The \verb'GrB_Row_assign' and \verb'GrB_Col_assign' operations are slightly
+different.  They only affect a single row or column of ${\bf C}$.
+For \verb'GrB_Row_assign', Table~\ref{outsubmatrix} only applies to entries in
+the single row \verb'C(i,J)' that are outside the list of indices, \verb'J'.
+For \verb'GrB_Col_assign', Table~\ref{outsubmatrix} only applies to entries in
+the single column \verb'C(I,j)' that are outside the list of indices, \verb'I'.
+
+\begin{table}
+{\small
+\begin{tabular}{lllll|l}
+\hline
+repl & accum & ${\bf C}$ & ${\bf C=Z}$ & mask & action taken by \verb'GrB_assign' \\
+\hline
+   -   &-     & $c_{ij}$ & $c_{ij}$ & 1 &  \\
+   -   &-     &  -       & -        & 1 &  \\
+   -   &-     & $c_{ij}$ & $c_{ij}$ & 0 &  \\
+   -   &-     &  -       & -        & 0 &  \\
+\hline
+   yes &  -   & $c_{ij}$ & $c_{ij}$ & 1 &  \\
+   yes &  -   &    -     &     -    & 1 &  \\
+   yes &  -   & $c_{ij}$ & $c_{ij}$ & 0 & delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+   yes &  -   &    -     &  -       & 0 &  \\
+\hline
+   -   &yes   & $c_{ij}$ & $c_{ij}$ & 1 &  \\
+   -   &yes   &    -     &  -       & 1 &  \\
+   -   &yes   & $c_{ij}$ & $c_{ij}$ & 0 &  \\
+   -   &yes   &    -     &  -       & 0 &  \\
+\hline
+   yes &  yes & $c_{ij}$ & $c_{ij}$ & 1 &  \\
+   yes &  yes &   -      &  -       & 1 &  \\
+   yes &  yes & $c_{ij}$ & $c_{ij}$ & 0 & delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+   yes &  yes &   -      &  -       & 0 &  \\
+\hline
+\end{tabular}
+}
+\caption{Results of assign for entries outside the
+${\bf C(I,J)}$ submatrix.  Subassign has no effect on these entries. \label{outsubmatrix}}
+\end{table}
+
+%-------------------------------------------------------------------------------
+\subsubsection{Example}
+%-------------------------------------------------------------------------------
+
+The difference between \verb'GxB_subassign' and \verb'GrB_assign' is
+illustrated in the following example.  Consider the 2-by-2 matrix ${\bf C}$
+where all entries are present.
+
+\[
+{\bf C} = \left[
+    \begin{array}{rr}
+    11 & 12 \\
+    21 & 22 \\
+    \end{array}
+    \right]
+\]
+
+Suppose \verb'GrB_REPLACE' is true, and \verb'GrB_COMP' is false.  Let the
+\verb'Mask' be:
+
+\[
+{\bf M} = \left[
+    \begin{array}{rr}
+    1 & 1 \\
+    0 & 1 \\
+    \end{array}
+    \right].
+\]
+
+Let ${\bf A} = 100$, and let the index sets be ${\bf I}=0$ and ${\bf J}=1$.
+Consider the computation
+${\bf C \langle M \rangle} (0,1) = {\bf C}(0,1) + {\bf A}$,
+using the \verb'GrB_assign' operation.  The result is:
+\[
+{\bf C} = \left[
+    \begin{array}{rr}
+    11 & 112 \\
+     - &  22 \\
+    \end{array}
+    \right].
+\]
+The $(0,1)$ entry is updated and the $(1,0)$ entry is deleted because
+its \verb'Mask' is zero.  The other two entries are not modified since ${\bf Z}
+= {\bf C}$ outside the submatrix, and those two values are written back into
+${\bf C}$ because their \verb'Mask' values are 1.  The $(1,0)$ entry is deleted
+because the entry ${\bf Z}(1,0)=21$ is prevented from being written back into
+${\bf C}$ since \verb'Mask(1,0)=0'.
+
+Now consider the analogous \verb'GxB_subassign' operation.  The \verb'Mask' has
+the same size as ${\bf A}$, namely:
+\[
+{\bf M} = \left[
+    \begin{array}{r}
+    1 \\
+    \end{array}
+    \right].
+\]
+
+After computing
+${\bf C} (0,1) {\bf \langle M \rangle} = {\bf C}(0,1) + {\bf A}$,
+the result is
+
+\[
+{\bf C} = \left[
+    \begin{array}{rr}
+    11 & 112 \\
+    21 &  22 \\
+    \end{array}
+    \right].
+\]
+
+Only the ${\bf C(I,J)}$ submatrix, the single entry ${\bf C}(0,1)$, is modified
+by \verb'GxB_subassign'.  The entry ${\bf C}(1,0)=21$ is unaffected by
+\verb'GxB_subassign', but it is deleted by \verb'GrB_assign'.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{Performance of {\sf GxB\_subassign}, {\sf GrB\_assign}
+and {\sf GrB\_*\_setElement}}
+%-------------------------------------------------------------------------------
+
+When SuiteSparse:GraphBLAS uses non-blocking mode, the modifications to a
+matrix by \verb'GxB_subassign', \verb'GrB_assign', and \verb'GrB_*_setElement'
+can postponed, and computed all at once later on.  This has a huge impact on
+performance.
+
+A sequence of assignments is fast if their completion can be postponed for as
+long as possible, or if they do not modify the pattern at all.  Modifying the
+pattern can be costly, but it is fast if non-blocking mode can be fully
+exploited.
+
+Consider a sequence of $t$ submatrix assignments \verb'C(I,J)=C(I,J)+A' to an
+$n$-by-$n$ matrix \verb'C' where each submatrix \verb'A' has size $a$-by-$a$
+with $s$ entries, and where \verb'C' starts with $c$ entries.
+Assume the matrices are all stored in non-hypersparse form, by row
+(\verb'GrB_ROWMAJOR').
+
+If blocking mode is enabled, or if the sequence requires the matrix to be
+completed after each assignment, each of the $t$ assignments takes $O(a + s
+\log n)$ time to process the \verb'A' matrix and then $O(n + c + s \log s)$
+time to complete \verb'C'.  The latter step uses \verb'GrB_*_build' to build an
+update matrix and then merge it with \verb'C'.  This step does not occur if the
+sequence of assignments does not add new entries to the pattern of \verb'C',
+however.  Assuming in the worst case that the pattern does change, the total
+time is $O (t \left[ a + s \log n + n + c + s \log s \right] )$.
+
+If the sequence can be computed with all updates postponed until the end of the
+sequence, then the total time is no worse than $O(a + s \log n)$ to process
+each \verb'A' matrix, for $t$ assignments, and then a single \verb'build' at
+the end, taking $O(n + c + st \log st)$ time.
+The total time is $O (t \left [a + s \log n \right] + (n + c + st \log st))$.
+If no new entries appear in
+\verb'C' the time drops to $O (t \left [a + s \log n \right])$, and in this
+case, the time for both methods is the same; both are equally efficient.
+
+A few simplifying assumptions are useful to compare these times.  Consider a
+graph of $n$ nodes with $O(n)$ edges, and with a constant bound on the degree
+of each node.  The asymptotic bounds assume a worst-case scenario where
+\verb'C' has a least some dense rows (thus the $\log n$ terms).  If these
+are not present, if both $t$ and $c$ are $O(n)$, and if $a$ and $s$ are
+constants, then the total time with blocking mode becomes $O(n^2)$, assuming
+the pattern of \verb'C' changes at each assignment.  This very high for a
+sparse graph problem.  In contrast, the non-blocking time becomes $O(n \log n)$
+under these same assumptions, which is asymptotically much faster.
+
+\newpage
+The difference in practice can be very dramatic, since $n$ can be many millions
+for sparse graphs with $n$ nodes and $O(n)$, which can be handled on a
+commodity laptop.
+
+The following guidelines should be considered when using
+\verb'GxB_subassign', \verb'GrB_assign' and \verb'GrB_*_setElement'.
+
+\begin{enumerate}
+
+\item A sequence of assignments that does not modify the pattern at all is
+fast, taking as little as $\Omega(1)$ time per entry modified.  The worst case
+time complexity is $O(\log n)$ per entry, assuming they all modify a dense
+row of \verb'C' with \verb'n' entries, which can occur in practice.  It is
+more common, however, that most rows of \verb'C' have a constant number of
+entries, independent of \verb'n'.  No work is ever left pending when the
+pattern of \verb'C' does not change.
+
+\item A sequence of assignments that modifies the entries that already exist in
+the pattern of a matrix, or adds new entries to the pattern (using the same
+\verb'accum' operator), but does not delete any entries, is fast.  The matrix
+is not completed until the end of the sequence.
+
+\item Similarly, a sequence that modifies existing entries, or deletes them,
+but does not add new ones, is also fast.  This sequence can also repeatedly
+delete pre-existing entries and then reinstate them and still be fast.  The
+matrix is not completed until the end of the sequence.
+
+\item A sequence that mixes assignments of types (2) and (3) above can be
+costly, since the matrix may need to be completed after each assignment.  The
+time complexity can become quadratic in the worst case.
+
+\item However, any single assignment takes no more than $O (a + s \log n + n +
+c + s \log s )$ time, even including the time for a matrix completion, where
+\verb'C' is $n$-by-$n$ with $c$ entries and \verb'A' is $a$-by-$a$ with $s$
+entries.  This time is essentially linear in the size of the matrix \verb'C',
+if \verb'A' is relatively small and sparse compared with \verb'C'.  In this
+case, $n+c$ are the two dominant terms.
+
+\item In general, \verb'GxB_subassign' is faster than \verb'GrB_assign'.
+If \verb'GrB_REPLACE' is used with \verb'GrB_assign', the entire matrix
+\verb'C' must be traversed.  This is much slower than \verb'GxB_subassign',
+which only needs to examine the \verb'C(I,J)' submatrix.  Furthermore,
+\verb'GrB_assign' must deal with a much larger \verb'Mask' matrix, whereas
+\verb'GxB_subassign' has a smaller mask.  Since its mask is smaller,
+\verb'GxB_subassign' takes less time than \verb'GrB_assign' to access the mask.
+
+\end{enumerate}
+
+% see GraphBLAS/Test/test46.m
+
+Submatrix assignment in SuiteSparse:GraphBLAS is extremely efficient, even
+without considering the advantages of non-blocking mode discussed in
+Section~\ref{compare_assign}.  It can be up to 1000x faster than MATLAB R2019b,
+or even higher depending on the kind of matrix assignment.  MATLAB logical
+indexing (the mask of GraphBLAS) is extremely faster with GraphBLAS as compared
+in MATLAB R2019b; differences of up to 250,000x have been observed (0.4 seconds
+in GraphBLAS versus 28 hours in MATLAB).
+
+All of the algorithmic variants of assign/subassign in SuiteSparse:GraphBLAS
+are either asymptotically optimal, or to within a log factor of being
+asymptotically optimal.  The methods are also fully parallel.  For hypersparse
+matrices, the term $n$ in the expressions in the above discussion is dropped,
+and is replaced with $h \log h$, at the worst case, where $h << n$ is the
+number of non-empty columns of a hypersparse matrix stored by column, or the
+number of non-empty rows of a hypersparse matrix stored by row.  In many
+methods, $n$ is replaced with $h$, not $h \log h$.
+
+

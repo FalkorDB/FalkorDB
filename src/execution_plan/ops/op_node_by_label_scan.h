@@ -12,7 +12,7 @@
 #include "../../util/roaring.h"
 #include "shared/scan_functions.h"
 #include "../../util/range/range.h"
-#include "../../graph/rg_matrix/rg_matrix_iter.h"
+#include "../../graph/delta_matrix/delta_matrix_iter.h"
 
 // NodeByLabelScan, scans entire label
 typedef struct {
@@ -23,8 +23,8 @@ typedef struct {
 	RangeExpression *ranges;      // array of ID range expressions
 	roaring64_bitmap_t *ids;      // resolved ids by filters
 	roaring64_iterator_t *ID_it;  // ID iterator
-	RG_Matrix L;                  // label matrix
-	RG_MatrixTupleIter iter;      // iterator over label matrix
+	Delta_Matrix L;               // label matrix
+	Delta_MatrixTupleIter iter;   // iterator over label matrix
 	Record child_record;          // the record this op acts on if it is not a tap
 } NodeByLabelScan;
 

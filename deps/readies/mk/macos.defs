@@ -1,0 +1,62 @@
+
+ifeq ($(OS),macos)
+
+#----------------------------------------------------------------------------------------------
+
+## pip install --user puts packages here:
+#export PATH:=$(PATH):$(HOME)/Library/Python/2.7/bin
+
+#----------------------------------------------------------------------------------------------
+
+CMAKE_FLAGS += -DCMAKE_OSX_DEPLOYMENT_TARGET=$(OSX_MIN_SDK_VER)
+
+ MACOS_SDK_PREFIX:=$(shell xcrun --show-sdk-path)
+
+ export CPPFLAGS += -I$(MACOS_SDK_PREFIX)/usr/include
+ export LDFLAGS += -L$(MACOS_SDK_PREFIX)/usr/lib
+
+ CC_FLAGS.macos += \
+	-isysroot $(MACOS_SDK_PREFIX) \
+	-I$(MACOS_SDK_PREFIX)/usr/include \
+	-Wno-expansion-to-defined \
+	-Wno-nullability-completeness
+
+ LD_FLAGS.macos += -L$(MACOS_SDK_PREFIX)/usr/lib
+
+#----------------------------------------------------------------------------------------------
+
+define add_macos_package
+	__$1:=$(call toupper,$1)
+	ifeq ($$($1_prefix),)
+		$1_prefix=$$(call cached-shell,$1_prefix,brew --prefix $1)
+	endif
+
+	ifneq ($$($1_prefix),)
+		PKG_CONFIG_DIRS += $$($1_prefix)
+		CPPFLAGS += -I$$($1_prefix)/include
+		LDFLAGS += -L$$($1_prefix)/lib
+	endif
+endef
+
+MACOS_PACKAGES ?= ALL
+
+ifeq ($(MACOS_PACKAGES),ALL)
+override MACOS_PACKAGES=zlib openssl readline libiconv gettext
+endif
+
+$(foreach pkg,$(MACOS_PACKAGES),$(eval $(call add_macos_package,$(pkg))))
+
+ifneq ($(wildcard /usr/local/lib/libintl.a),)
+gettext_prefix := /usr/local
+endif
+
+export PKG_CONFIG_PATH:=$(subst $(__SPACE),:,$(strip $(addsuffix /lib/pkgconfig,$(PKG_CONFIG_DIRS)))):$(PKG_CONFIG_PATH)
+
+CONFIGURE_FLAGS.macos += \
+	CPPFLAGS='$(CPPFLAGS)' \
+	LDFLAGS='$(LDFLAGS)' \
+	--with-openssl=$(openssl_prefix)
+
+#----------------------------------------------------------------------------------------------
+
+endif # macos

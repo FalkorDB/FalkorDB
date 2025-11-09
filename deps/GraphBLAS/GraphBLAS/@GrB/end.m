@@ -3,7 +3,7 @@ function i = end (G, k, ndims)
 %
 % See also GrB/size, GrB/length.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (ndims == 1)

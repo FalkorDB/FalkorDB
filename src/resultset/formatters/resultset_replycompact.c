@@ -11,122 +11,187 @@
 #include "resultset_formatters.h"
 #include "../../datatypes/datatypes.h"
 
-// Forward declarations.
+// forward declarations
 static void _ResultSet_CompactReplyWithNode(RedisModuleCtx *ctx, GraphContext *gc, Node *n);
 static void _ResultSet_CompactReplyWithEdge(RedisModuleCtx *ctx, GraphContext *gc, Edge *e);
 static void _ResultSet_CompactReplyWithSIArray(RedisModuleCtx *ctx, GraphContext *gc, SIValue array);
 static void _ResultSet_CompactReplyWithPath(RedisModuleCtx *ctx, GraphContext *gc, SIValue path);
 static void _ResultSet_CompactReplyWithMap(RedisModuleCtx *ctx, GraphContext *gc, SIValue v);
 static void _ResultSet_CompactReplyWithPoint(RedisModuleCtx *ctx, GraphContext *gc, SIValue v);
-static void _ResultSet_CompactReplyWithVector(RedisModuleCtx *ctx, SIValue vec);
+static void _ResultSet_CompactReplyWithVector32F(RedisModuleCtx *ctx, SIValue vec);
 
-static inline ValueType _mapValueType(SIType t) {
+static inline ValueType _mapValueType
+(
+	SIType t
+) {
 	switch(t) {
 	case T_NULL:
 		return VALUE_NULL;
+
 	case T_STRING:
+	case T_INTERN_STRING:
 		return VALUE_STRING;
+
 	case T_INT64:
 		return VALUE_INTEGER;
+
 	case T_BOOL:
 		return VALUE_BOOLEAN;
+
 	case T_DOUBLE:
 		return VALUE_DOUBLE;
+
 	case T_ARRAY:
 		return VALUE_ARRAY;
+
 	case T_VECTOR_F32:
-		return VALUE_ARRAY;
+		return VALUE_VECTORF32;
+
 	case T_NODE:
 		return VALUE_NODE;
+
 	case T_EDGE:
 		return VALUE_EDGE;
+
 	case T_PATH:
 		return VALUE_PATH;
+
 	case T_MAP:
 		return VALUE_MAP;
+
 	case T_POINT:
 		return VALUE_POINT;
+
+	case T_DATETIME:
+		return VALUE_DATETIME;
+
+	case T_DATE:
+		return VALUE_DATE;
+
+	case T_TIME:
+		return VALUE_TIME;
+
+	case T_DURATION:
+		return VALUE_DURATION;
+
 	default:
 		return VALUE_UNKNOWN;
 	}
 }
 
-static inline void _ResultSet_ReplyWithValueType(RedisModuleCtx *ctx, SIType t) {
+static inline void _ResultSet_ReplyWithValueType
+(
+	RedisModuleCtx *ctx,
+	SIType t
+) {
 	RedisModule_ReplyWithLongLong(ctx, _mapValueType(t));
 }
 
+// emit value to reply stream
 static void _ResultSet_CompactReplyWithSIValue
 (
-	RedisModuleCtx *ctx,
-	GraphContext *gc,
-	const SIValue v
+	RedisModuleCtx *ctx,  // redis context
+	GraphContext *gc,     // graph context
+	const SIValue v       // value to emit
 ) {
 	// Emit the value type, then the actual value (to facilitate client-side parsing)
 	_ResultSet_ReplyWithValueType(ctx, SI_TYPE(v));
 
 	switch(SI_TYPE(v)) {
 	case T_STRING:
+	case T_INTERN_STRING:
 		RedisModule_ReplyWithStringBuffer(ctx, v.stringval, strlen(v.stringval));
 		return;
+
 	case T_INT64:
 		RedisModule_ReplyWithLongLong(ctx, v.longval);
 		return;
+
 	case T_DOUBLE:
 		_ResultSet_ReplyWithRoundedDouble(ctx, v.doubleval);
 		return;
+
 	case T_BOOL:
 		if(v.longval != 0) RedisModule_ReplyWithStringBuffer(ctx, "true", 4);
 		else RedisModule_ReplyWithStringBuffer(ctx, "false", 5);
 		return;
+
+	case T_TIME:
+	case T_DATE:
+	case T_DATETIME:
+	case T_DURATION:
+		RedisModule_ReplyWithLongLong(ctx, v.datetimeval);
+		return;
+
 	case T_ARRAY:
 		_ResultSet_CompactReplyWithSIArray(ctx, gc, v);
 		break;
+
 	case T_VECTOR_F32:
-		_ResultSet_CompactReplyWithVector(ctx, v);
+		_ResultSet_CompactReplyWithVector32F(ctx, v);
 		break;
+
 	case T_NULL:
 		RedisModule_ReplyWithNull(ctx);
 		return;
+
 	case T_NODE:
 		_ResultSet_CompactReplyWithNode(ctx, gc, v.ptrval);
 		return;
+
 	case T_EDGE:
 		_ResultSet_CompactReplyWithEdge(ctx, gc, v.ptrval);
 		return;
+
 	case T_PATH:
 		_ResultSet_CompactReplyWithPath(ctx, gc, v);
 		return;
+
 	case T_MAP:
 		_ResultSet_CompactReplyWithMap(ctx, gc, v);
 		return;
+
 	case T_POINT:
 		_ResultSet_CompactReplyWithPoint(ctx, gc, v);
 		return;
+
 	default:
 		RedisModule_Assert("Unhandled value type" && false);
 		break;
 	}
 }
 
-static void _ResultSet_CompactReplyWithProperties(RedisModuleCtx *ctx, GraphContext *gc,
-												  const GraphEntity *e) {
+static void _ResultSet_CompactReplyWithProperties
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	const GraphEntity *e
+) {
 	const AttributeSet set = GraphEntity_GetAttributes(e);
 	int prop_count = AttributeSet_Count(set);
 	RedisModule_ReplyWithArray(ctx, prop_count);
-	// Iterate over all properties stored on entity
+
+	// iterate over all properties stored on entity
 	for(int i = 0; i < prop_count; i ++) {
-		// Compact replies include the value's type; verbose replies do not
+		// compact replies include the value's type; verbose replies do not
 		RedisModule_ReplyWithArray(ctx, 3);
 		AttributeID attr_id;
 		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
-		// Emit the string index
+
+		// emit the attribute id
 		RedisModule_ReplyWithLongLong(ctx, attr_id);
-		// Emit the value
+
+		// emit the value
 		_ResultSet_CompactReplyWithSIValue(ctx, gc, value);
 	}
 }
 
-static void _ResultSet_CompactReplyWithNode(RedisModuleCtx *ctx, GraphContext *gc, Node *n) {
+static void _ResultSet_CompactReplyWithNode
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	Node *n
+) {
 	/*  Compact node reply format:
 	 *  [
 	 *      Node ID (integer),
@@ -154,7 +219,12 @@ static void _ResultSet_CompactReplyWithNode(RedisModuleCtx *ctx, GraphContext *g
 	_ResultSet_CompactReplyWithProperties(ctx, gc, (GraphEntity *)n);
 }
 
-static void _ResultSet_CompactReplyWithEdge(RedisModuleCtx *ctx, GraphContext *gc, Edge *e) {
+static void _ResultSet_CompactReplyWithEdge
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	Edge *e
+) {
 	/*  Compact edge reply format:
 	 *  [
 	 *      Edge ID (integer),
@@ -186,8 +256,12 @@ static void _ResultSet_CompactReplyWithEdge(RedisModuleCtx *ctx, GraphContext *g
 	_ResultSet_CompactReplyWithProperties(ctx, gc, (GraphEntity *)e);
 }
 
-static void _ResultSet_CompactReplyWithSIArray(RedisModuleCtx *ctx, GraphContext *gc,
-											   SIValue array) {
+static void _ResultSet_CompactReplyWithSIArray
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	SIValue array
+) {
 
 	/*  Compact array reply format:
 	 *  [
@@ -207,23 +281,22 @@ static void _ResultSet_CompactReplyWithSIArray(RedisModuleCtx *ctx, GraphContext
 	}
 }
 
-static void _ResultSet_CompactReplyWithVector
+static void _ResultSet_CompactReplyWithVector32F
 (
 	RedisModuleCtx *ctx,
 	SIValue vec
 ) {
 	/*  Compact vector reply format:
 	 *  [
-	 *      [double, value]
-	 *      [double, value]
+	 *      value
 	 *      .
 	 *      .
 	 *      .
-	 *      [double, value]
+	 *      value
 	 *  ]
 	 */
 
-	ASSERT(SI_TYPE(vec) & T_VECTOR);
+	ASSERT(SI_TYPE(vec) == T_VECTOR_F32);
 
 	// construct arrry of vector elements
 	uint32_t dim = SIVector_Dim(vec);
@@ -235,13 +308,16 @@ static void _ResultSet_CompactReplyWithVector
 	// reply with vector elements
 	float *values = (float*)elements;
 	for(uint i = 0; i < dim; i++) {
-		RedisModule_ReplyWithArray(ctx, 2);
-		_ResultSet_ReplyWithValueType(ctx, T_DOUBLE);
-		_ResultSet_ReplyWithRoundedDouble(ctx, (double)values[i]);
+		RedisModule_ReplyWithDouble(ctx, (double)values[i]);
 	}
 }
 
-static void _ResultSet_CompactReplyWithPath(RedisModuleCtx *ctx, GraphContext *gc, SIValue path) {
+static void _ResultSet_CompactReplyWithPath
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	SIValue path
+) {
 	/* Path will return as an array of two SIArrays, the first is path nodes and the second is edges,
 	* see array compact format.
 	* Compact path reply:
@@ -279,7 +355,12 @@ static void _ResultSet_CompactReplyWithPath(RedisModuleCtx *ctx, GraphContext *g
 	SIValue_Free(relationships);
 }
 
-static void _ResultSet_CompactReplyWithMap(RedisModuleCtx *ctx, GraphContext *gc, SIValue v) {
+static void _ResultSet_CompactReplyWithMap
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	SIValue v
+) {
 	// map will be returned as an array of key/value pairs
 	// consider the map object: {a:1, b:'str', c: {x:1, y:2}}
 	//
@@ -313,7 +394,12 @@ static void _ResultSet_CompactReplyWithMap(RedisModuleCtx *ctx, GraphContext *gc
 	}
 }
 
-static void _ResultSet_CompactReplyWithPoint(RedisModuleCtx *ctx, GraphContext *gc, SIValue v) {
+static void _ResultSet_CompactReplyWithPoint
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	SIValue v
+) {
 	ASSERT(SI_TYPE(v) == T_POINT);
 	RedisModule_ReplyWithArray(ctx, 2);
 
@@ -459,3 +545,4 @@ void ResultSet_EmitCompactStats
 	buflen = sprintf(buff, "Query internal execution time: %.6f milliseconds", t);
 	RedisModule_ReplyWithStringBuffer(ctx, buff, buflen);
 }
+

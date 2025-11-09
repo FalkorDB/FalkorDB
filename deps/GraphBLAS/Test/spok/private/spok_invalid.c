@@ -14,7 +14,8 @@ void mexFunction
     const mxArray *pargin [ ]
 )
 {
-    SPOK_INT *Ap, *Ai ;
+    mwIndex *Ap ;
+    mwIndex *Ai ;
     double *Ax ;
     int kind ;
 
@@ -32,8 +33,8 @@ void mexFunction
 
         /* a sparse 2-by-2 matrix with invalid column pointers*/
         pargout [0] = mxCreateSparse (2, 2, 4, mxREAL) ;
-        Ap = (mwSignedIndex *) mxGetJc (pargout [0]) ;
-        Ai = (mwSignedIndex *) mxGetIr (pargout [0]) ;
+        Ap = (mwIndex *) mxGetJc (pargout [0]) ;
+        Ai = (mwIndex *) mxGetIr (pargout [0]) ;
         Ax = mxGetPr (pargout [0]) ;
         Ap [0] = 2 ;
         Ap [1] = 2 ;
@@ -45,8 +46,8 @@ void mexFunction
 
         /* a sparse 1-by-1 matrix with one explicit zero */
         pargout [0] = mxCreateSparse (1, 1, 1, mxREAL) ;
-        Ap = (mwSignedIndex *) mxGetJc (pargout [0]) ;
-        Ai = (mwSignedIndex *) mxGetIr (pargout [0]) ;
+        Ap = (mwIndex *) mxGetJc (pargout [0]) ;
+        Ai = (mwIndex *) mxGetIr (pargout [0]) ;
         Ax = mxGetPr (pargout [0]) ;
         Ap [0] = 0 ;
         Ap [1] = 1 ;
@@ -59,8 +60,8 @@ void mexFunction
 
         /* a sparse 2-by-2 matrix with jumbled row indices */
         pargout [0] = mxCreateSparse (2, 2, 4, mxREAL) ;
-        Ap = (mwSignedIndex *) mxGetJc (pargout [0]) ;
-        Ai = (mwSignedIndex *) mxGetIr (pargout [0]) ;
+        Ap = (mwIndex *) mxGetJc (pargout [0]) ;
+        Ai = (mwIndex *) mxGetIr (pargout [0]) ;
         Ax = mxGetPr (pargout [0]) ;
         Ap [0] = 0 ;
         Ap [1] = 2 ;

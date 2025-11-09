@@ -136,31 +136,31 @@ class testEntityUpdate():
             self.graph.query("MATCH P=() SET nodes(P).prop = 1 RETURN nodes(P)")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("RedisGraph does not currently support non-alias references on the left-hand side of SET expressions", str(e))
+            self.env.assertContains("FalkorDB does not currently support non-alias references on the left-hand side of SET expressions", str(e))
 
         try:
             self.graph.query("MERGE (n:N) ON CREATE SET n.a.b=3 RETURN n")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("RedisGraph does not currently support non-alias references on the left-hand side of SET expressions", str(e))
+            self.env.assertContains("FalkorDB does not currently support non-alias references on the left-hand side of SET expressions", str(e))
 
         try:
             self.graph.query("MERGE (n:N) ON CREATE SET n = {v: 1}, n.a.b=3 RETURN n")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("RedisGraph does not currently support non-alias references on the left-hand side of SET expressions", str(e))
+            self.env.assertContains("FalkorDB does not currently support non-alias references on the left-hand side of SET expressions", str(e))
 
         try:
             self.graph.query("MERGE (n:N) ON MATCH SET n.a.b=3 RETURN n")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("RedisGraph does not currently support non-alias references on the left-hand side of SET expressions", str(e))
+            self.env.assertContains("FalkorDB does not currently support non-alias references on the left-hand side of SET expressions", str(e))
 
         try:
             self.graph.query("MERGE (n:N) ON MATCH SET n = {v: 1}, n.a.b=3 RETURN n")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("RedisGraph does not currently support non-alias references on the left-hand side of SET expressions", str(e))
+            self.env.assertContains("FalkorDB does not currently support non-alias references on the left-hand side of SET expressions", str(e))
 
     # Fail when a property is a complex type nested within an array type
     def test13_invalid_complex_type_in_array(self):

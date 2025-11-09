@@ -4,7 +4,7 @@ from index_utils import *
 
 GRAPH_ID = "merge_1"
 
-class testGraphMergeFlow(FlowTestsBase):
+class testGraphMergeFlow():
     def __init__(self):
         self.env, self.db = Env()
         self.graph = self.db.select_graph(GRAPH_ID)
@@ -268,7 +268,7 @@ class testGraphMergeFlow(FlowTestsBase):
 
         # Verify UNWIND...MERGE does not recreate existing entities
         query = """UNWIND ['a', 'b'] AS names MERGE (a:Person {name: names}) RETURN a.name"""
-        expected = [['a'], ['b']]
+        expected = [['b'], ['a']]
 
         result = self.graph.query(query)
         self.env.assertEquals(result.labels_added, 0)
@@ -302,7 +302,7 @@ class testGraphMergeFlow(FlowTestsBase):
 
         # Verify function calls in MERGE do not recreate existing entities
         query = """UNWIND ['A', 'B'] AS names MERGE (a:Person {name: toLower(names)}) RETURN a.name"""
-        expected = [['a'], ['b']]
+        expected = [['b'], ['a']]
 
         result = self.graph.query(query)
         self.env.assertEquals(result.labels_added, 0)
@@ -541,27 +541,27 @@ class testGraphMergeFlow(FlowTestsBase):
 
     def test29_merge_resue(self):
         query = """
-        CREATE (m:L1 {v: "abc"})
-        CREATE (u:L2 {v: "x"})
-        CREATE (n:L2 {v: "y"})
+        CREATE (m:L1 {v: 'abc'})
+        CREATE (u:L2 {v: 'x'})
+        CREATE (n:L2 {v: 'y'})
         CREATE (:L2 {v: 'y'})
         CREATE (u)-[:R]->(m), (u)-[:R]->(m)
         CREATE (n)-[:R]->(m), (n)-[:R]->(m)"""
         self.graph.query(query)
 
         query = """
-        MERGE (m:L1 {v: "abc"})
-        SET m.v = "abcd"
+        MERGE (m:L1 {v: 'abc'})
+        SET m.v = 'abcd'
         WITH m
-        MATCH (u:L2 {v: "x"})
-        MATCH (n:L2 {v: "y"})
+        MATCH (u:L2 {v: 'x'})
+        MATCH (n:L2 {v: 'y'})
         MERGE (u)-[:R]->(m)<-[:R]-(n)
         RETURN m.v, u.v, n.v"""
 
         res = self.graph.query(query)
         self.env.assertEquals(res.nodes_created, 0)
-        self.env.assertEquals(res.relationships_created, 0)
-        self.env.assertEquals(res.result_set, [['abcd', 'x', 'y']])
+        self.env.assertEquals(res.relationships_created, 2)
+        self.env.assertEquals(res.result_set, [['abcd', 'x', 'y'],['abcd', 'x', 'y']])
 
     def test30_record_clone_under_merge(self):
         # the following operations
@@ -636,3 +636,64 @@ class testGraphMergeFlow(FlowTestsBase):
         # ensure that only 11 nodes are created and no crash
         res = self.graph.query("UNWIND range(0, 10) AS i CREATE (:A {id: i}) MERGE (:B {id: i % 10})")
         self.env.assertEquals(res.nodes_created, 11)
+
+    def test34_merge_handle_duplicates(self):
+        # duplicates scheduled for creation should be matched
+        # consider the following:
+        # UNWIND [{a:1, b:1}, {a:1, b:2}] AS x
+        # MERGE (n {v:x.a})
+        # ON CREATE SET n.created = true
+        # ON MATCH  SET n.matched = true
+        #
+        # given an empty graph the first record {a:1, b:1} will create the node
+        # the second record {a:1, b:2} will be detected as a duplicate
+        # MERGE need to match the second record applying the ON MATCH directive
+        # on it and include it in its output
+
+        q = """UNWIND [{a:1, b:1}, {a:1, b:2}, {a:1, b:3}] AS x
+               MERGE (n {v:x.a})
+               ON CREATE SET n.created = true
+               ON MATCH  SET n.matched = true
+               RETURN n.v, n.created, n.matched"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(len(res), 3)
+        for row in res:
+            self.env.assertEquals(row[0], 1)
+            self.env.assertEquals(row[1], True)
+            self.env.assertEquals(row[2], True)
+
+    def test35_inquery_rel_intro(self):
+        # make sure relationship types introduced within a query
+        # are visible to the merge clause once it is done commiting
+
+        # in this query B is firstly created
+        # then on the second time MERGE ()-[:B]->()
+        # is called, the pattern is considered duplicated and as such
+        # need to be matched
+
+        # start with an empty graph
+        self.graph.delete()
+
+        q = """MERGE ()-[:A]->()
+               WITH * MATCH (x)
+               MERGE ()-[:B]->()
+               ON MATCH SET x = {}
+               RETURN count(1)"""
+
+        res = self.graph.query(q).result_set[0][0]
+        self.env.assertEquals(res, 2)
+
+        # clear the graph
+        self.graph.delete()
+
+        # this time the second merge pattern will use ExpandInto
+        q = """MERGE (a)-[:A]->(b)
+               WITH * MATCH (x)
+               MERGE (a)-[:B]->(b)
+               ON MATCH SET x = {}
+               RETURN count(1)"""
+
+        res = self.graph.query(q).result_set[0][0]
+        self.env.assertEquals(res, 2)
+

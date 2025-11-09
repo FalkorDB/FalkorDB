@@ -35,15 +35,11 @@ OpBase *NewIndexScanOp
 	ASSERT(plan   != NULL);
 	ASSERT(filter != NULL);
 
-	IndexScan *op = rm_malloc(sizeof(IndexScan));
-	op->g                    =  g;
-	op->n                    =  n;
-	op->idx                  =  idx;
-	op->iter                 =  NULL;
-	op->filter               =  filter;
-	op->child_record         =  NULL;
-	op->unresolved_filters   =  NULL;
-	op->rebuild_index_query  =  false;
+	IndexScan *op = rm_calloc (1, sizeof(IndexScan)) ;
+	op->g      = g;
+	op->n      = n;
+	op->idx    = idx;
+	op->filter = filter;
 
 	// Set our Op operations
 	OpBase_Init((OpBase *)op, OPType_NODE_BY_INDEX_SCAN, "Node By Index Scan", IndexScanInit, IndexScanConsume,
@@ -53,7 +49,10 @@ OpBase *NewIndexScanOp
 	return (OpBase *)op;
 }
 
-static OpResult IndexScanInit(OpBase *opBase) {
+static OpResult IndexScanInit
+(
+	OpBase *opBase
+) {
 	IndexScan *op = (IndexScan *)opBase;
 
 	if(opBase->childCount > 0) {
@@ -93,10 +92,13 @@ static inline bool _PassUnresolvedFilters(const IndexScan *op, Record r) {
 	return FilterTree_applyFilters(unresolved_filters, r) == FILTER_PASS;
 }
 
-static Record IndexScanConsumeFromChild(OpBase *opBase) {
-	IndexScan *op = (IndexScan *)opBase;
-	RSIndex *rsIdx = Index_RSIndex(op->idx);
+static Record IndexScanConsumeFromChild
+(
+	OpBase *opBase
+) {
 	const EntityID *nodeId = NULL;
+	IndexScan *op  = (IndexScan *)opBase;
+	RSIndex *rsIdx = Index_RSIndex(op->idx);
 
 pull_index:
 	//--------------------------------------------------------------------------
@@ -210,6 +212,7 @@ static Record IndexScanConsume(OpBase *opBase) {
 			!= NULL) {
 		// populate record with node
 		_UpdateRecord(op, r, *nodeId);
+
 		// apply unresolved filters
 		if(_PassUnresolvedFilters(op, r)) {
 			return r;

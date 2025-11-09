@@ -1,7 +1,7 @@
 function test169
 %TEST169 C<M>=A+B with different sparsity formats
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
@@ -18,6 +18,11 @@ for trial = 1:5
     M = GB_spec_random (n, n, 0.2, 1, 'double') ;
     A = GB_spec_random (n, n, 0.5, 1, 'double') ;
     B = GB_spec_random (n, n, 0.5, 1, 'double') ;
+
+    % test the no_hyper_hash cases
+    A.no_hyper_hash = true ;
+    C.no_hyper_hash = true ;
+    B.no_hyper_hash = true ;
 
     for C_sparsity = [1 2 4 8]
         C.sparsity = C_sparsity ;

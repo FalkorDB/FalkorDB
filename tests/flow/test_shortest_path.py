@@ -11,22 +11,32 @@ class testShortestPath(FlowTestsBase):
 
     def populate_graph(self):
         # Construct a graph with the form:
-        # (v1)-[:E]->(v2)-[:E]->(v3)-[:E]->(v4), (v1)-[:E]->(v5)-[:E2]->(v4)
+        # (a {v:1})-[:E]->(b {v:2})-[:E]->(c {v:3})-[:E]->(d {v:4}),
+        # (a)-[:E]->(e {v:5})-[:E2]->(d)
+
+        q = """
+        CREATE (a:L {v:1})
+        CREATE (b:L {v:2})
+        CREATE (c:L {v:3})
+        CREATE (d:L {v:4})
+        CREATE (e:L {v:5})
+        CREATE (a)-[:E]->(b)
+        CREATE (b)-[:E]->(c)
+        CREATE (c)-[:E]->(d)
+        CREATE (a)-[:E]->(e)
+        CREATE (e)-[:E2]->(d)
+
+        RETURN a, b, c, d, e
+        """
+
+        res = self.graph.query(q).result_set
 
         global nodes
-        for v in range(1, 6):
-            nodes.append(Node(alias=f"n{v}", labels="L", properties={"v": v}))
-
-        edges = []
-        edges.append(Edge(nodes[0], "E", nodes[1]))
-        edges.append(Edge(nodes[1], "E", nodes[2]))
-        edges.append(Edge(nodes[2], "E", nodes[3]))
-        edges.append(Edge(nodes[0], "E", nodes[4]))
-        edges.append(Edge(nodes[4], "E2", nodes[3]))
-
-        nodes_str = [str(n) for n in nodes]
-        edges_str = [str(e) for e in edges]
-        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
+        nodes.append(res[0][0])
+        nodes.append(res[0][1])
+        nodes.append(res[0][2])
+        nodes.append(res[0][3])
+        nodes.append(res[0][4])
 
     def test01_invalid_shortest_paths(self):
         query = """MATCH (a {v: 1}), (b {v: 4}), p = shortestPath((a)-[*]->(b)) RETURN p"""
@@ -34,7 +44,7 @@ class testShortestPath(FlowTestsBase):
             self.graph.query(query)
             self.env.assertTrue(False)
         except redis.exceptions.ResponseError as e:
-            self.env.assertIn("RedisGraph currently only supports shortestPaths in WITH or RETURN clauses", str(e))
+            self.env.assertIn("FalkorDB currently only supports shortestPaths in WITH or RETURN clauses", str(e))
 
         query = """MATCH (a {v: 1}), (b {v: 4}) RETURN shortestPath((a)-[*2..]->(b))"""
         try:
@@ -65,13 +75,22 @@ class testShortestPath(FlowTestsBase):
         self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test02_simple_shortest_path(self):
-        query = """MATCH (a {v: 1}), (b {v: 4}) WITH shortestPath((a)-[*]->(b)) AS p UNWIND nodes(p) AS n RETURN n.v"""
+        query = """MATCH (a {v: 1}), (d {v: 4})
+                   WITH shortestPath((a)-[*]->(d)) AS p
+                   UNWIND nodes(p) AS n
+                   RETURN n.v"""
         actual_result = self.graph.query(query)
+
         # The shorter 2-hop traversal should be found
+        # (a)-[]->(e)-[]->(d)
         expected_result = [[1], [5], [4]]
         self.env.assertEqual(actual_result.result_set, expected_result)
+
         # Verify that a right-to-left traversal produces the same results
-        query = """MATCH (a {v: 1}), (b {v: 4}) WITH shortestPath((b)<-[*]-(a)) AS p UNWIND nodes(p) AS n RETURN n.v"""
+        query = """MATCH (a {v: 1}), (b {v: 4})
+                   WITH shortestPath((b)<-[*]-(a)) AS p
+                   UNWIND nodes(p) AS n
+                   RETURN n.v"""
         self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test03_shortest_path_multiple_results(self):
@@ -87,7 +106,9 @@ class testShortestPath(FlowTestsBase):
 
     def test04_max_hops(self):
         # Traverse from all source nodes to the destination node if there is a single-hop path
-        query = """MATCH (a), (b {v: 4}) WITH a, shortestPath((a)-[*..1]->(b)) AS p RETURN a, nodes(p) ORDER BY a"""
+        query = """MATCH (a), (b {v: 4})
+                   WITH a, shortestPath((a)-[*..1]->(b)) AS p
+                   RETURN a, nodes(p) ORDER BY a"""
         actual_result = self.graph.query(query)
         expected_result = [[nodes[0], None],
                            [nodes[1], None],
@@ -153,3 +174,4 @@ class testShortestPath(FlowTestsBase):
                 self.env.assertTrue(False)
             except redis.exceptions.ResponseError as e:
                 self.env.assertIn("A shortestPath requires bound nodes", str(e))
+

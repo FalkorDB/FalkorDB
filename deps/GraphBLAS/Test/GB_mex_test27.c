@@ -2,15 +2,13 @@
 // GB_mex_test27: test GrB_get and GrB_set (unary ops)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
-
-#define USAGE "GB_mex_test27"
 
 #define FREE_ALL ;
 #define GET_DEEP_COPY ;
@@ -21,7 +19,8 @@
     OK (GrB_UnaryOp_get_String (op, name, GrB_NAME)) ;                  \
     CHECK (MATCH (name, opname)) ;                                      \
     OK (GrB_UnaryOp_get_String (op, cname, GxB_JIT_C_NAME)) ;           \
-    printf ("%s: %s\n", name, cname) ;                                  \
+    printf ("\n%s: %s\n", name, cname) ;                                \
+    OK (GxB_UnaryOp_fprint (op, "unop", 5, stdout)) ;                   \
     OK (GrB_UnaryOp_get_SIZE (op, &size, GrB_NAME)) ;                   \
     CHECK (size == strlen (name) + 1) ;                                 \
     GrB_Info info2, info3 ;                                             \
@@ -45,13 +44,11 @@
 #define GETNAME(op)                                         \
 {                                                           \
     GETOP (op, #op) ;                                       \
-/*  OK (GxB_UnaryOp_fprint (op, "unop", 3, NULL)) ; */      \
 }
 
 #define GETNAM2(op,alias)                                   \
 {                                                           \
     GETOP (op,alias) ;                                      \
-/*  OK (GxB_UnaryOp_fprint (op, "unop", 3, NULL)) ; */      \
 }
 
 void myfunc (float *z, const float *x) ;

@@ -7,7 +7,7 @@ function C = GB_spec_kron (C, Mask, accum, mult, A, B, descriptor)
 % Computes C<Mask> = accum(C,T), in GraphBLAS notation, where T = kron(A,B),
 % kron(A',B), kron(A,B') or kron(A',B')
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 %-------------------------------------------------------------------------------
@@ -76,30 +76,9 @@ for ja = 1:ancols
     end
 end
 
-%{
-    % do the values
-    S = GB_spec_zeros ([bnrows bncols], xtype) ;
-    for j = 1:ancols
-        for i = 1:anrows
-            if A.pattern (i,j)
-                S (:,:) = A1 (i,j) ;
-                ci = (i-1) * bnrows + 1 ;
-                cj = (j-1) * bncols + 1 ;
-                p = B.pattern ;
-                K = GB_spec_op (mult, S(p), B1(p)) ;
-                Tblock = GB_spec_zeros ([bnrows bncols], ztype) ;
-                Tblock (p) = K ;
-                T.matrix  (ci:ci+bnrows-1, cj:cj+bncols-1) = Tblock ;
-                T.pattern (ci:ci+bnrows-1, cj:cj+bncols-1) = B.pattern ;
-            end
-        end
-    end
-%}
-
 assert (isequal (ztype, GB_spec_type (T.matrix))) ;
 T.class = ztype ;
 
 % C<Mask> = accum (C,T): apply the accum, then Mask, and return the result
 C = GB_spec_accum_mask (C, Mask, accum, T, C_replace, Mask_comp, 0) ;
-
 

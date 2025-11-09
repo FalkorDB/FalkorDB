@@ -1,7 +1,7 @@
 function test227
 %TEST227 test kron
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 [binops, ~, ~, ~, ~, ~] = GB_spec_opsall ;
@@ -111,6 +111,19 @@ for k2 = [4 7 45:52 ]
         fprintf ('\n') ;
     end
 end
+
+% test the empty case
+clear op
+op.opname = 'times' ;
+op.optype = 'double' ;
+clear A C
+A.matrix = sparse (10,10) ;
+A.pattern = zeros (10) ;
+C.matrix = sparse (100,100) ;
+C.pattern = zeros (100) ;
+C0 = GB_spec_kron (C, [ ], [ ], op, A, A, dnn) ;
+C1 = GB_mex_kron  (C, [ ], [ ], op, A, A, dnn) ;
+GB_spec_compare (C0, C1) ;
 
 fprintf ('\ntest227: all tests passed\n') ;
 

@@ -2,7 +2,7 @@
 // GB_mex_setElement: interface for A(i,j) = x
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -38,7 +38,7 @@ GrB_Type xtype = NULL ;
 
 #define setEl(prefix,name,type)                                             \
 GrB_Info set_ ## name                                                       \
-(GrB_Matrix A, type *X, GrB_Index *I, GrB_Index *J, GrB_Index ni)           \
+(GrB_Matrix A, type *X, uint64_t *I, uint64_t *J, uint64_t ni) /* OK */     \
 {                                                                           \
     GrB_Info info ;                                                         \
     GrB_Scalar Scalar = NULL ;                                              \
@@ -109,7 +109,7 @@ setEl (GrB_, UDT    , GxB_FC64_t) ;
 
 #define vsetEl(prefix,name,type)                                            \
 GrB_Info vset_ ## name                                                      \
-(GrB_Matrix A, type *X, GrB_Index *I, GrB_Index ni)                         \
+(GrB_Matrix A, type *X, uint64_t *I, uint64_t ni)  /* OK */                 \
 {                                                                           \
     GrB_Info info ;                                                         \
     GrB_Scalar Scalar = NULL ;                                              \
@@ -183,8 +183,8 @@ void mexFunction
 
     GrB_Matrix A = NULL ;
     GB_void *Y ;
-    GrB_Index *I = NULL, ni = 0, I_range [3] ;
-    GrB_Index *J = NULL, nj = 0, J_range [3] ;
+    uint64_t *I = NULL, ni = 0, I_range [3] ;   // OK; 64-bit only
+    uint64_t *J = NULL, nj = 0, J_range [3] ;   // OK; 64-bit only
     bool is_list ;
 
     // check inputs
@@ -205,24 +205,28 @@ void mexFunction
     }
 
     // get I
-    if (!GB_mx_mxArray_to_indices (&I, pargin [1], &ni, I_range, &is_list))
+    if (!GB_mx_mxArray_to_indices (pargin [1], &I, &ni, I_range, &is_list,
+        NULL))
     {
         FREE_ALL ;
         mexErrMsgTxt ("I failed") ;
     }
     if (!is_list)
     {
+        FREE_ALL ;
         mexErrMsgTxt ("I is invalid; must be a list") ;
     }
 
     // get J
-    if (!GB_mx_mxArray_to_indices (&J, pargin [2], &nj, J_range, &is_list))
+    if (!GB_mx_mxArray_to_indices (pargin [2], &J, &nj, J_range, &is_list,
+        NULL))
     {
         FREE_ALL ;
         mexErrMsgTxt ("J failed") ;
     }
     if (!is_list)
     {
+        FREE_ALL ;
         mexErrMsgTxt ("J is invalid; must be a list") ;
     }
 

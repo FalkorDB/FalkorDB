@@ -27,7 +27,6 @@ typedef struct {
 	bool free_root;                                     // The root should only be freed if this is a sub-AST we constructed
 	uint *ref_count;                                    // A pointer to reference counter (for deletion).
 	cypher_parse_result_t *parse_result;                // Query parsing output.
-	cypher_parse_result_t *params_parse_result;         // Parameters parsing output.
 } AST;
 
 // checks to see if libcypher-parser reported any errors
@@ -53,12 +52,6 @@ AST_Validation AST_Validate_ParseResultRoot
 AST_Validation AST_Validate_Query
 (
 	const cypher_astnode_t *root
-);
-
-// validate query parameters parsing only
-AST_Validation AST_Validate_QueryParams
-(
-	const cypher_parse_result_t *result
 );
 
 // checks if the parse result represents a read-only query
@@ -160,13 +153,6 @@ AST *AST_NewSegment
 	uint end_offset
 );
 
-// sets a parameter parsing result in the ast
-void AST_SetParamsParseResult
-(
-	AST *ast,
-	cypher_parse_result_t *params_parse_result
-);
-
 // returns a shallow copy of the original AST pointer with ref counter increased
 AST *AST_ShallowCopy
 (
@@ -232,9 +218,9 @@ cypher_parse_result_t *parse_query
 
 // parse a query parameter values only
 // the remaining query string is set in the result body
-cypher_parse_result_t *parse_params
+void parse_params
 (
-	const char *query,
+	char *query,
 	const char **query_body
 );
 

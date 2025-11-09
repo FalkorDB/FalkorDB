@@ -120,6 +120,28 @@ SIValue *AttributeSet_Get
 	return ATTRIBUTE_NOTFOUND;
 }
 
+// retrieves a reference to value from set by index
+SIValue *AttributeSet_GetIdxRef
+(
+	const AttributeSet set,  // set to retieve attribute from
+	uint16_t i,              // index of the property
+	AttributeID *attr_id     // attribute identifier
+) {
+	// in case attribute-set is marked as read-only, clear marker
+	AttributeSet _set = (AttributeSet)ATTRIBUTE_SET_CLEAR_MSB (set) ;
+
+	ASSERT (_set != NULL) ;
+
+	ASSERT (i < _set->attr_count) ;
+
+	Attribute *attr = _set->attributes + i;
+	if (attr_id != NULL) {
+		*attr_id = attr->id;
+	}
+
+	return &attr->value;
+}
+
 // retrieves a value from set by index
 SIValue AttributeSet_GetIdx
 (
@@ -127,19 +149,8 @@ SIValue AttributeSet_GetIdx
 	uint16_t i,              // index of the property
 	AttributeID *attr_id     // attribute identifier
 ) {
-	ASSERT(attr_id != NULL);
-
-	// in case attribute-set is marked as read-only, clear marker
-	AttributeSet _set = (AttributeSet)ATTRIBUTE_SET_CLEAR_MSB(set);
-
-	ASSERT(_set != NULL);
-
-	ASSERT(i < _set->attr_count);
-
-	Attribute *attr = _set->attributes + i;
-	*attr_id = attr->id;
-
-	return attr->value;
+	SIValue *v = AttributeSet_GetIdxRef (set, i, attr_id) ;
+	return *v ;
 }
 
 static AttributeSet AttributeSet_AddPrepare
@@ -172,46 +183,55 @@ void AttributeSet_AddNoClone
 	AttributeSet *set,  // set to update
 	AttributeID *ids,   // identifiers
 	SIValue *values,    // values
-	ushort n,           // number of values to add
-	bool allowNull		// accept NULLs
+	uint16_t n,         // number of values to add
+	bool allowNull      // accept NULLs
 ) {
-	ASSERT(set != NULL);
+	ASSERT (set != NULL) ;
+
+	if (unlikely (n == 0)) {
+		return ;
+	}
 
 	// return if set is read-only
-	if(unlikely(ATTRIBUTE_SET_IS_READONLY(*set))) {
-		return;
+	if(unlikely (ATTRIBUTE_SET_IS_READONLY(*set))) {
+		return ;
 	}
 
 	// validate value type
 	// value must be a valid property type
 #ifdef RG_DEBUG
 	SIType t = SI_VALID_PROPERTY_VALUE;
-	if(allowNull == true) {
-		t |= T_NULL;
+	if (allowNull == true) {
+		t |= T_NULL ;
 	}
 
-	for(ushort i = 0; i < n; i++) {
-		ASSERT(SI_TYPE(values[i]) & t);
+	for (ushort i = 0; i < n; i++) {
+		ASSERT (SI_TYPE (values[i]) & t) ;
 		// make sure attribute isn't already in set
-		ASSERT(AttributeSet_Get(*set, ids[i]) == ATTRIBUTE_NOTFOUND);
+		ASSERT (AttributeSet_Get (*set, ids[i]) == ATTRIBUTE_NOTFOUND) ;
 		// make sure value isn't volotile
-		ASSERT(SI_ALLOCATION(values + i) != M_VOLATILE);
+		ASSERT (SI_ALLOCATION (values + i) != M_VOLATILE) ;
+
+		// ensure no duplicate attribute IDs within this batch
+		for (ushort j = i + 1; j < n; j++) {
+			ASSERT (ids[i] != ids[j]) ;
+		}
 	}
 #endif
 
-	ushort prev_count = AttributeSet_Count(*set);
-	AttributeSet _set = AttributeSet_AddPrepare(set, n);
-	Attribute *attrs  = _set->attributes + prev_count;
+	ushort prev_count = AttributeSet_Count (*set) ;
+	AttributeSet _set = AttributeSet_AddPrepare (set, n) ;
+	Attribute *attrs  = _set->attributes + prev_count ;
 
 	// add attributes to set
-	for(ushort i = 0; i < n; i++) {
-		Attribute *attr = attrs + i;
-		attr->id    = ids[i];
-		attr->value = values[i];
+	for (ushort i = 0; i < n; i++) {
+		Attribute *attr = attrs + i ;
+		attr->id        = ids[i] ;
+		attr->value     = values[i] ;
 	}
 
 	// update pointer
-	*set = _set;
+	*set = _set ;
 }
 
 // adds an attribute to the set
@@ -410,6 +430,31 @@ void AttributeSet_PersistValues
 
 		SIValue_Persist(&attr->value);
 	}
+}
+
+// get attributeset's memory usage
+size_t AttributeSet_memoryUsage
+(
+	const AttributeSet set  // set to compute memory consumption of
+) {
+	if(set == NULL) {
+		return 0;
+	}
+
+	size_t   n = 0;  // memory consumption
+	uint16_t l = AttributeSet_Count(set);
+
+	// count memory consumption of each attribute
+	for(int i = 0; i < l; i++) {
+		Attribute *attr = set->attributes + i;
+		SIValue v = attr->value;
+		n += SIValue_memoryUsage(v);
+	}
+
+	// account for AttributeIDs
+	n += (l * sizeof(AttributeID)) + sizeof(set->attr_count);
+
+	return n;
 }
 
 // free attribute set

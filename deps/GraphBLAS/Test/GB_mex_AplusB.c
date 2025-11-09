@@ -2,7 +2,7 @@
 // GB_mex_AplusB: compute C=A+B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -32,7 +32,7 @@ void mexFunction
 )
 {
     struct GB_Matrix_opaque C_header ;
-    GrB_Matrix C = GB_clear_static_header (&C_header) ;
+    GrB_Matrix C = GB_clear_matrix_header (&C_header) ;
 
     bool malloc_debug = GB_mx_get_global (true) ;
     GrB_Matrix A = NULL ;
@@ -72,7 +72,7 @@ void mexFunction
     // C = A+B using the op.  No mask, so this will always work.
     bool ignore ;
     METHOD (GB_add (C, A->type, true, NULL, false, false, &ignore, A, B,
-        false, NULL, NULL, op, false, Werk)) ;
+        false, NULL, NULL, op, false, false, Werk)) ;
 
     // return C as a plain sparse matrix
     pargout [0] = GB_mx_Matrix_to_mxArray (&C, "C AplusB result", false) ;

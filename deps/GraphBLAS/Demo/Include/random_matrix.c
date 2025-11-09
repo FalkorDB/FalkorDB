@@ -2,15 +2,14 @@
 // GraphBLAS/Demo/Include/random_matrix.c: create a random matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 // Creates a random sparse matrix, using either setElement or build.
 
-#include "GraphBLAS.h"
-#undef I
+#include "graphblas_demos.h"
 
 #undef  FREE_ALL
 #define FREE_ALL                    \
@@ -20,8 +19,6 @@
     if (I != NULL) free (I) ;       \
     if (J != NULL) free (J) ;       \
     if (X != NULL) free (X) ;
-
-#include "graphblas_demos.h"
 
 //------------------------------------------------------------------------------
 // create a random matrix
@@ -36,7 +33,8 @@ GrB_Info random_matrix      // create a random double-precision matrix
     int64_t ncols,          // number of columns
     int64_t nedges,         // number of edges
     int method,             // method to use: 0:setElement, 1:build,
-    bool A_complex          // if true, create a Complex matrix
+    bool A_complex,         // if true, create a Complex matrix
+    uint64_t *state         // random number state (revised on output)
 )
 {
     GrB_Matrix Areal = NULL, Aimag = NULL, A = NULL ;
@@ -59,11 +57,11 @@ GrB_Info random_matrix      // create a random double-precision matrix
     {
         // Areal = real random matrix
         OK (random_matrix (&Areal, make_symmetric, no_self_edges, nrows,
-            ncols, nedges, method, false)) ;
+            ncols, nedges, method, false, state)) ;
         OK (GxB_Matrix_fprint (Areal, "random real part", GxB_SHORT, stderr)) ;
         // Aimag = real random matrix
         OK (random_matrix (&Aimag, make_symmetric, no_self_edges, nrows,
-            ncols, nedges, method, false)) ;
+            ncols, nedges, method, false, state)) ;
         OK (GxB_Matrix_fprint (Aimag, "random imag part", GxB_SHORT, stderr)) ;
         // A = Areal + imag(Aimag)
         OK (GrB_Matrix_new (&A, Complex, nrows, ncols)) ;
@@ -112,10 +110,10 @@ GrB_Info random_matrix      // create a random double-precision matrix
 
         for (int64_t k = 0 ; k < nedges ; k++)
         {
-            GrB_Index i = simple_rand_i ( ) % nrows ;
-            GrB_Index j = simple_rand_i ( ) % ncols ;
+            GrB_Index i = simple_rand (state) % nrows ;
+            GrB_Index j = simple_rand (state) % ncols ;
             if (no_self_edges && (i == j)) continue ;
-            double x = simple_rand_x ( ) ;
+            double x = simple_rand_x (state) ;
             // A (i,j) = x
             OK (GrB_Matrix_setElement_FP64 (A, x, i, j)) ;
             if (make_symmetric)
@@ -154,10 +152,10 @@ GrB_Info random_matrix      // create a random double-precision matrix
         int64_t ntuples = 0 ;
         for (int64_t k = 0 ; k < nedges ; k++)
         {
-            GrB_Index i = simple_rand_i ( ) % nrows ;
-            GrB_Index j = simple_rand_i ( ) % ncols ;
+            GrB_Index i = simple_rand (state) % nrows ;
+            GrB_Index j = simple_rand (state) % ncols ;
             if (no_self_edges && (i == j)) continue ;
-            double x = simple_rand_x ( ) ;
+            double x = simple_rand_x (state) ;
             // A (i,j) = x
             I [ntuples] = i ;
             J [ntuples] = j ;

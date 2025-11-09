@@ -1,5 +1,6 @@
 /*
  * Copyright Redis Ltd. 2018 - present
+ * Copyright FalkorDB Ltd. 2024 - present
  * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
  * the Server Side Public License v1 (SSPLv1).
  */
@@ -11,6 +12,7 @@
 #include "errors.h"
 #include "version.h"
 #include "globals.h"
+#include "LAGraph.h"
 #include "util/arr.h"
 #include "cron/cron.h"
 #include "query_ctx.h"
@@ -18,9 +20,10 @@
 #include "bolt/bolt_api.h"
 #include "index/indexer.h"
 #include "redisearch_api.h"
+#include "commands/cmd_acl.h"
 #include "arithmetic/funcs.h"
+#include "util/thpool/pool.h"
 #include "commands/commands.h"
-#include "util/thpool/pools.h"
 #include "graph/graphcontext.h"
 #include "util/redis_version.h"
 #include "ast/ast_validations.h"
@@ -31,11 +34,13 @@
 #include "configuration/reconf_handler.h"
 #include "serializers/graphcontext_type.h"
 #include "arithmetic/arithmetic_expression.h"
+#include "commands/util/run_redis_command_as.h"
 
 // minimal supported Redis version
-#define MIN_REDIS_VERION_MAJOR 7
-#define MIN_REDIS_VERION_MINOR 2
-#define MIN_REDIS_VERION_PATCH 0
+#define MIN_REDIS_VERSION_MAJOR 7
+#define MIN_REDIS_VERSION_MINOR 2
+#define MIN_REDIS_VERSION_PATCH 0
+
 
 static int _RegisterDataTypes(RedisModuleCtx *ctx) {
 	if(GraphContextType_Register(ctx) == REDISMODULE_ERR) {
@@ -61,22 +66,22 @@ static bool _Cron_Start(void) {
 	return res;
 }
 
-// print RedisGraph configuration
+// print FalkorDB configuration
 static void _Print_Config
 (
 	RedisModuleCtx *ctx
 ) {
 	// TODO: consider adding Config_Print
 
-	int ompThreadCount;
+	uint64_t ompThreadCount;
 	Config_Option_get(Config_OPENMP_NTHREAD, &ompThreadCount);
-	RedisModule_Log(ctx, "notice", "Maximum number of OpenMP threads set to %d", ompThreadCount);
+	RedisModule_Log(ctx, "notice", "Maximum number of OpenMP threads set to %"PRIu64, ompThreadCount);
 
 	bool cmd_info_enabled = false;
 	if(Config_Option_get(Config_CMD_INFO, &cmd_info_enabled) && cmd_info_enabled) {
-		uint32_t info_max_query_count = 0;
+		uint64_t info_max_query_count = 0;
 		Config_Option_get(Config_CMD_INFO_MAX_QUERY_COUNT, &info_max_query_count);
-		RedisModule_Log(ctx, "notice", "Query backlog size: %u", info_max_query_count);
+		RedisModule_Log(ctx, "notice", "Query backlog size: %"PRIu64, info_max_query_count);
 	}
 }
 
@@ -84,6 +89,7 @@ static int GraphBLAS_Init(RedisModuleCtx *ctx) {
 	// GraphBLAS should use Redis allocator
 	GrB_Info res = GxB_init(GrB_NONBLOCKING, RedisModule_Alloc,
 			RedisModule_Calloc, RedisModule_Realloc, RedisModule_Free);
+
 	if(res != GrB_SUCCESS) {
 		RedisModule_Log(ctx, "warning", "Encountered error initializing GraphBLAS");
 		return REDISMODULE_ERR;
@@ -91,6 +97,16 @@ static int GraphBLAS_Init(RedisModuleCtx *ctx) {
 
 	// all matrices in CSR format
 	GxB_set(GxB_FORMAT, GxB_BY_ROW);
+
+	// initialize LAGraph
+	char msg [LAGRAPH_MSG_LEN];
+	res = LAGr_Init(GrB_NONBLOCKING, RedisModule_Alloc, RedisModule_Calloc,
+			RedisModule_Realloc, RedisModule_Free, msg);
+
+	if(res != GrB_SUCCESS) {
+		RedisModule_Log(ctx, "warning", "Encountered error initializing LAGraph: %s", msg);
+		return REDISMODULE_ERR;
+	}
 
 	return REDISMODULE_OK;
 }
@@ -120,12 +136,12 @@ int RedisModule_OnLoad
 	});
 
 	// validate minimum redis-server version
-	if(!Redis_Version_GreaterOrEqual(MIN_REDIS_VERION_MAJOR,
-				MIN_REDIS_VERION_MINOR, MIN_REDIS_VERION_PATCH)) {
+	if(!Redis_Version_GreaterOrEqual(MIN_REDIS_VERSION_MAJOR,
+				MIN_REDIS_VERSION_MINOR, MIN_REDIS_VERSION_PATCH)) {
 		RedisModule_Log(ctx, "warning",
 				"FalkorDB requires redis-server version %d.%d.%d and up",
-				MIN_REDIS_VERION_MAJOR, MIN_REDIS_VERION_MINOR,
-				MIN_REDIS_VERION_PATCH);
+				MIN_REDIS_VERSION_MAJOR, MIN_REDIS_VERSION_MINOR,
+				MIN_REDIS_VERSION_PATCH);
 		return REDISMODULE_ERR;
 	}
 
@@ -151,19 +167,21 @@ int RedisModule_OnLoad
 	if(!_Cron_Start())                return REDISMODULE_ERR;
 	if(!QueryCtx_Init())              return REDISMODULE_ERR;
 	if(!ErrorCtx_Init())              return REDISMODULE_ERR;
-	if(!ThreadPools_Init())           return REDISMODULE_ERR;
+	if(!ThreadPool_Init())            return REDISMODULE_ERR;
 	if(!Indexer_Init())               return REDISMODULE_ERR;
 	if(!AST_ValidationsMappingInit()) return REDISMODULE_ERR;
 
-	RedisModule_Log(ctx, "notice", "Thread pool created, using %d threads.",
-			ThreadPools_ReadersCount());
+	init_acl_admin_username(ctx);  // set ACL ADMIN username
 
-	int ompThreadCount;
+	RedisModule_Log(ctx, "notice", "Thread pool created, using %d threads.",
+			ThreadPool_ThreadCount());
+
+	uint64_t ompThreadCount;
 	Config_Option_get(Config_OPENMP_NTHREAD, &ompThreadCount);
 
 	if(GxB_set(GxB_NTHREADS, ompThreadCount) != GrB_SUCCESS) {
 		RedisModule_Log(ctx, "warning",
-				"Failed to set OpenMP thread count to %d", ompThreadCount);
+				"Failed to set OpenMP thread count to %" PRIu64, ompThreadCount);
 		return REDISMODULE_ERR;
 	}
 
@@ -172,78 +190,149 @@ int RedisModule_OnLoad
 
 	if(_RegisterDataTypes(ctx) != REDISMODULE_OK) return REDISMODULE_ERR;
 
-	if(RedisModule_CreateCommand(ctx, "graph.QUERY", CommandDispatch, "write deny-oom", 1, 1,
-								 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.QUERY",
+				CommandDispatch,
+				"write deny-oom deny-script blocking",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.RO_QUERY", CommandDispatch, "readonly", 1, 1,
-								 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.RO_QUERY",
+				CommandDispatch,
+				"readonly deny-script blocking",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.DELETE", Graph_Delete, "write", 1, 1,
-								 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.DELETE",
+				Graph_Delete,
+				"write deny-script",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.EXPLAIN", CommandDispatch, "write deny-oom", 1, 1,
-								 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.EXPLAIN",
+				CommandDispatch,
+				"write deny-oom deny-script",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.PROFILE", CommandDispatch, "write deny-oom", 1, 1,
-								 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.PROFILE",
+				CommandDispatch,
+				"write deny-oom deny-script blocking",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.BULK", Graph_BulkInsert, "write deny-oom", 1, 1,
-								 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.BULK",
+				Graph_BulkInsert,
+				"write deny-oom deny-script",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.CONSTRAINT", Graph_Constraint, "write deny-oom", 2, 2,
-								 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.CONSTRAINT",
+				Graph_Constraint,
+				"write deny-oom deny-script",
+				2, 2, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.SLOWLOG", Graph_Slowlog, "readonly", 1, 1,
-								 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.SLOWLOG",
+				Graph_Slowlog,
+				"readonly deny-script allow-busy",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.CONFIG", Graph_Config, "readonly", 0, 0,
-								 0) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.CONFIG",
+				Graph_Config,
+				"readonly deny-script allow-busy",
+				0, 0, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.LIST", Graph_List, "readonly", 0, 0,
-								 0) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.LIST",
+				Graph_List,
+				"readonly deny-script allow-busy",
+				0, 0, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.DEBUG", Graph_Debug, "readonly", 0, 0,
-								 0) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.DEBUG",
+				Graph_Debug,
+				"readonly deny-script",
+				0, 0, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.INFO", Graph_Info, "readonly", 1, 1,
-				1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.INFO",
+				Graph_Info,
+				"readonly deny-script allow-busy",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.EFFECT", Graph_Effect, "write", 1,
-				1, 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.EFFECT",
+				Graph_Effect,
+				"write deny-script",
+				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.COPY", Graph_Copy,
-				"write deny-oom", 1, 2, 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.COPY",
+				Graph_Copy,
+				"write deny-oom deny-script",
+				1, 2, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.RESTORE", Graph_Restore,
-				"write deny-oom", 1, 1, 1) == REDISMODULE_ERR) {
+	if(RedisModule_CreateCommand(ctx,
+				"graph.RESTORE",
+				Graph_Restore,
+				"write deny-oom deny-script",
+				1, 1, 1) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(init_cmd_acl(ctx) == REDISMODULE_OK) {
+		if(RedisModule_CreateCommand(ctx,
+					"graph.ACL",
+					graph_acl_cmd,
+					"write deny-oom deny-script",
+					0, 0, 0) == REDISMODULE_ERR) {
+			return REDISMODULE_ERR;
+		}
+	}
+
+	if(RedisModule_CreateCommand(ctx,
+				"graph.PASSWORD",
+				Graph_SetPassword,
+				"write deny-oom deny-script",
+				0, 0, 0) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_CreateCommand(ctx,
+				"graph.MEMORY",
+				Graph_Memory,
+				"readonly deny-script",
+				2, 2, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 

@@ -2,7 +2,7 @@
 // gbdisp: display a GraphBLAS matrix struct
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -63,14 +63,15 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     // print 1-based indices
-    OK (GxB_Global_Option_set (GxB_PRINT_1BASED, true)) ;
+    OK (GrB_Global_set_INT32 (GrB_GLOBAL, true, GxB_PRINT_1BASED)) ;
 
     // print sizes of shallow components
-    GB_Global_print_mem_shallow_set (true) ;
+    OK (GrB_Global_set_INT32 (GrB_GLOBAL, true,
+        GxB_INCLUDE_READONLY_STATISTICS)) ;
 
     GrB_Matrix C = gb_get_shallow (pargin [0]) ;
     OK (GxB_Matrix_fprint (C, s, level, NULL)) ;
     OK (GrB_Matrix_free (&C)) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

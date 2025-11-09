@@ -74,14 +74,23 @@ static FilterCtx *_locate_filters_and_entities
 	OpBase *parent = cp->parent;
 	FilterCtx *filter_ctx_arr = array_new(FilterCtx, 0);
 
-	while(parent && parent->type == OPType_FILTER) {
+	while(parent != NULL && parent->type == OPType_FILTER) {
 		OpFilter *filter_op = (OpFilter *)parent;
-		FilterCtx filter_ctx;
-		filter_ctx.filter = filter_op;
-		// collect referenced entities
-		filter_ctx.entities = FilterTree_CollectModified(filter_op->filterTree);
-		array_append(filter_ctx_arr, filter_ctx);
+
+		// advance to the next op
 		parent = parent->parent;
+
+		// collect referenced entities
+		rax *entities = FilterTree_CollectModified(filter_op->filterTree);
+
+		// continue if entities count is less than two
+		if(unlikely(raxSize(entities) <= 1)) {
+			raxFree(entities);
+			continue;
+		}
+
+		FilterCtx filter_ctx = {.filter = filter_op, .entities = entities};
+		array_append(filter_ctx_arr, filter_ctx);
 	}
 
 	// sort by the number of referenced entities
@@ -90,39 +99,66 @@ static FilterCtx *_locate_filters_and_entities
 	return filter_ctx_arr;
 }
 
-// Finds all the cartesian product's children which solve a specific filter entities.
+// finds all the cartesian product's children which solve
+// a specific filter entities
+// returns an array of branches resolving entities
+// caller is responsibe for freeing the array
 static OpBase **_find_entities_solving_branches
 (
-	rax *entities,
-	OpBase *cp
+	rax *entities,  // entities to locate
+	OpBase *cp      // cartesian product operation
 ) {
-	int entities_count = raxSize(entities);
-	if(entities_count == 0) return NULL; // No dependencies in filters.
+	// validations
+	ASSERT(cp       != NULL);
+	ASSERT(entities != NULL);
 
-	OpBase **solving_branches = array_new(OpBase *, 1);
-	// Iterate over all the children or until all the entities are resolved.
-	for(int i = 0; i < cp->childCount && entities_count > 0; i++) {
-		OpBase *branch = cp->children[i];
-		// Don't recurse into previous scopes when trying to resolve references.
-		OpBase *recurse_limit = ExecutionPlan_LocateOpMatchingTypes(branch, PROJECT_OPS, PROJECT_OP_COUNT);
-		/* Locate references reduces the amount of entities upon each call
-		 * that partially solves the references. */
-		ExecutionPlan_LocateReferences(branch, recurse_limit, entities);
-		int new_entities_count = raxSize(entities);
-		if(new_entities_count != entities_count) {
-			// Update entity count.
-			entities_count = new_entities_count;
-			// Add partially solving branch into the array.
-			array_append(solving_branches, branch);
+	// get an array of aliases to locate
+	char **aliases = (char**)raxKeys(entities);
+	int n = array_len(aliases);
+
+	// expecting at least 2 entities
+	ASSERT(n >= 2);
+
+	// array of branches resolving aliases
+	OpBase **resolving_branches = array_new(OpBase *, 1);
+
+	// iterate through all children or until all the aliases are resolved
+	for(int i = 0; i < cp->childCount && array_len(aliases) > 0; i++) {
+		bool add_branch = false;
+		OpBase *branch  = cp->children[i];
+
+		// scan through the remaining aliases
+		for(int j = 0; j < array_len(aliases); j++) {
+			char *alias = aliases[j];
+			// see if current branch resolves alias
+			if(OpBase_Aware(branch, (const char**)&alias, 1)) {
+				// branch resolves alias
+				// remove it from the aliases array
+				// and mark branch for output addition
+				rm_free(alias);
+				array_del_fast(aliases, j);
+				add_branch = true;
+				j--;  // compensate for the alias removal
+			}
+		}
+
+		// add branch to output
+		if(add_branch) {
+			array_append(resolving_branches, branch);
 		}
 	}
 
-	if(entities_count != 0) {
+	// all entities should have been resolved, error otherwise
+	n = array_len(aliases);
+	array_free_cb(aliases, rm_free);
+
+	if(n != 0) {
 		Error_InvalidFilterPlacement(entities);
-		array_free(solving_branches);
+		array_free(resolving_branches);
 		return NULL;
 	}
-	return solving_branches;
+
+	return resolving_branches;
 }
 
 static void _optimize_cartesian_product
@@ -130,43 +166,51 @@ static void _optimize_cartesian_product
 	ExecutionPlan *plan,
 	OpBase *cp
 ) {
-	// retrieve all filter operations located upstream from the cartesian product
+	// retrieve all filter operations following the cartesian product
 	FilterCtx *filter_ctx_arr = _locate_filters_and_entities(cp);
 	uint filter_count = array_len(filter_ctx_arr);
 
-	for(uint i = 0; i < filter_count; i ++) {
-		// Try to create a cartesian product, followed by the current filter.
+	for(uint i = 0; i < filter_count; i++) {
+		// try to create a cartesian product, followed by the current filter
 		OpFilter *filter_op = filter_ctx_arr[i].filter;
-		OpBase **solving_branches = _find_entities_solving_branches(filter_ctx_arr[i].entities, cp);
+		OpBase **solving_branches =
+			_find_entities_solving_branches(filter_ctx_arr[i].entities, cp);
+
 		if(solving_branches == NULL) {
-			// Filter placement failed, return early.
+			// filter placement failed, return early
 			array_free(filter_ctx_arr);
 			return;
 		}
 
 		uint solving_branch_count = array_len(solving_branches);
-		// In case this filter is solved by the entire cartesian product, it does not need to be repositioned.
+		// in case this filter is solved by the entire cartesian product
+		// it does not need to be repositioned
 		if(solving_branch_count == cp->childCount) {
 			array_free(solving_branches);
 			continue;
 		}
 
-		// The filter needs to be repositioned.
+		// the filter needs to be repositioned
 		ExecutionPlan_RemoveOp(plan, (OpBase *)filter_op);
-		// This filter is solved by a single cartesian product child and needs to be propagated up.
+
+		// this filter is solved by a single cartesian product child
+		// and needs to be propagated up
 		if(solving_branch_count == 1) {
 			OpBase *solving_op = solving_branches[0];
-			/* Single branch solving a filter that was after a cartesian product.
-			 * The filter may be pushed directly onto the appropriate branch. */
+			// single branch solving a filter that was after a cartesian product
+			// the filter may be pushed directly onto the appropriate branch
 			ExecutionPlan_PushBelow(solving_op, (OpBase *)filter_op);
 			array_free(solving_branches);
 			continue;
 		}
 
-		// Need to create a new cartesian product and connect the solving branches to the filter.
+		// need to create a new cartesian product and connect
+		// the solving branches to the filter
 		OpBase *new_cp = NewCartesianProductOp(cp->plan);
 		ExecutionPlan_AddOp((OpBase *)filter_op, new_cp);
-		// Detach each solving branch from the original cp, and attach them as children for the new cp.
+
+		// detach each solving branch from the original cp
+		// and attach them as children for the new cp
 		for(uint j = 0; j < solving_branch_count; j++) {
 			OpBase *solving_branch = solving_branches[j];
 			ExecutionPlan_DetachOp(solving_branch);
@@ -174,41 +218,41 @@ static void _optimize_cartesian_product
 		}
 		array_free(solving_branches);
 
-		if(cp->childCount == 0) {
-			// The entire Cartesian Product can be removed.
-			ExecutionPlan_ReplaceOp(plan, cp, (OpBase *)filter_op);
-			OpBase_Free(cp);
-			/* The optimization has depleted all of the cartesian product children, merged them and replaced the
-			 * cartesian product with the filter op.
-			 * Since the original cartesian product is no longer a valid operation, and there might be
-			 * additional filters which are applicable to reposition after the optimization is done,
-			 * the following code tries to propagate up the remaining filters, and finish the loop. */
-			i++;
-			for(; i < filter_count; i++) {
-				ExecutionPlan_RePositionFilterOp(plan, (OpBase *)filter_op, NULL,
-												 (OpBase *)filter_ctx_arr[i].filter);
-			}
-		} else {
-			// The Cartesian Product still has a child operation; introduce the new op as another child.
-			ExecutionPlan_AddOp(cp, (OpBase *)filter_op);
-		}
+		ASSERT(cp->childCount > 0);
+		ExecutionPlan_AddOp(cp, (OpBase *)filter_op);
 	}
-	// Clean up.
-	for(uint i = 0; i < filter_count; i++) _FilterCtx_Free(filter_ctx_arr + i);
+
+	// clean up
+	for(uint i = 0; i < filter_count; i++) {
+		_FilterCtx_Free(filter_ctx_arr + i);
+	}
+
 	array_free(filter_ctx_arr);
 }
 
+// optimize cartesian product operations by splitting them up
+// into sub cartesian products allowing filters touching multiple branches
+// to be applied earlier
 void reduceCartesianProductStreamCount
 (
 	ExecutionPlan *plan
 ) {
+	ASSERT(plan != NULL);
+
+	// collect all cartesian product operations in plan
 	OpBase **cps = ExecutionPlan_CollectOps(plan->root,
 			OPType_CARTESIAN_PRODUCT);
 	uint cp_count = array_len(cps);
 
-	for(uint i = 0; i < cp_count ; i++) {
+	// try to optimize each cartesian product
+	// by splitting it up into multiple sub cartesian products
+	for(uint i = 0; i < cp_count; i++) {
 		OpBase *cp = cps[i];
-		if(cp->childCount > 2) _optimize_cartesian_product(plan, cp);
+
+		// skip cartesian products with less then 3 branches
+		if(cp->childCount > 2) {
+			_optimize_cartesian_product(plan, cp);
+		}
 	}
 
 	array_free(cps);

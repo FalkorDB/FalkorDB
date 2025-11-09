@@ -2,15 +2,13 @@
 // GB_mex_test14: more simple tests
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
-
-#define USAGE "GB_mex_test14"
 
 #define FREE_ALL ;
 #define GET_DEEP_COPY ;

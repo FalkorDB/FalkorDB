@@ -48,7 +48,7 @@ function [S,p] = GB_spec_build (I, J, X, nrows, ncols, op, order, sclass)
 % parameters, or pass fewer inputs.  For exampe S = GB_spec_build (I, J, X,
 % nrows, ncols) uses defaults for op, and order, but not X, nrows and ncols.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 %-------------------------------------------------------------------------------

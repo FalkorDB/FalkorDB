@@ -2,7 +2,7 @@
 // GB_mex_test6: still more basic tests
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,7 +11,7 @@
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
-#include "GB_serialize.h"
+#include "../Source/serialize/GB_serialize.h"
 
 #define USAGE "GB_mex_test6"
 #define FREE_ALL ;

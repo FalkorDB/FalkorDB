@@ -12,16 +12,21 @@
 // allocates and returns a new context
 NodeScanCtx *NodeScanCtx_New
 (
-    char *alias,       // alias
-    char *label,       // label
-    LabelID label_id,  // label id
-    const QGNode *n    // node
+    const char *alias,  // alias
+    const char *label,  // label
+    LabelID label_id,   // label id
+    const QGNode *n     // node
 ) {
+	ASSERT (n     != NULL) ;
+	ASSERT (alias != NULL) ;
+	ASSERT (label != NULL) ;
+
     NodeScanCtx *ctx = rm_malloc(sizeof(NodeScanCtx));
-    ctx->alias = alias;
-    ctx->label = label;
-    ctx->label_id = label_id;
-    ctx->n = QGNode_Clone(n);
+
+	ctx->alias    = alias;
+	ctx->label    = label;
+	ctx->label_id = label_id;
+	ctx->n        = QGNode_Clone(n);
 
     return ctx;
 }
@@ -31,7 +36,7 @@ NodeScanCtx *NodeScanCtx_Clone
 (
     const NodeScanCtx *ctx  // context
 ) {
-    ASSERT(ctx != NULL);
+    ASSERT(ctx    != NULL);
     ASSERT(ctx->n != NULL);
 
     NodeScanCtx *clone = rm_malloc(sizeof(NodeScanCtx));
@@ -53,3 +58,4 @@ void NodeScanCtx_Free
 
     rm_free(ctx);
 }
+

@@ -15,19 +15,6 @@ void Optimizer_CompileTimeOptimize
 	// remove redundant SCAN operations
 	reduceScans(plan);
 
-	// tries to compact filter trees, and remove redundant filters
-	compactFilters(plan);
-
-	// scan optimizations order:
-	// 1. remove redundant scans which checks for the same node
-	// 2. try to use the indices
-	//    given a label scan and an indexed property, apply index scan
-	// 3. given a filter which checks id condition, and full or label scan
-	//    reduce it to id scan or label with id scan
-	//    note: due to the scan optimization order
-	//          label scan will be replaced with index scan when possible
-	//          so the id filter remains
-
 	// migrate filters on variable-length edges into the traversal operations
 	filterVariableLengthEdges(plan);
 
@@ -43,6 +30,9 @@ void Optimizer_CompileTimeOptimize
 
 	// try to reduce distinct if it follows aggregation
 	reduceDistinct(plan);
+
+	// batch optional match
+	batchOptionalMatch (plan) ;
 }
 
 // apply runtime optimizations
@@ -50,6 +40,9 @@ void Optimizer_RuntimeOptimize
 (
 	ExecutionPlan *plan  // plan to optimize
 ) {
+	// tries to compact filter trees, and remove redundant filters
+	compactFilters(plan);
+
 	// when possible, replace label scan and filter ops with index scans
 	// note: this is a run-time optimization as indices might be added/remove
 	// over time

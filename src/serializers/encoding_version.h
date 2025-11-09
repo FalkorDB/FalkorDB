@@ -6,5 +6,5 @@
 
 #pragma once
 
-#define GRAPH_ENCODING_LATEST_V  14  // latest RDB encoding version
-#define GRAPH_DECODE_MIN_V       8   // min backward compatible version
+#define GRAPH_ENCODING_LATEST_V  18  // latest RDB encoding version
+#define GRAPH_DECODE_MIN_V       10  // min backward compatible version

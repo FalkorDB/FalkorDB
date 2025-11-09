@@ -1,7 +1,7 @@
 function test243
 %TEST243 test GxB_Vector_Iterator
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
@@ -118,6 +118,10 @@ for k = 1:(ntypes + 1)
 
                 % with vector iterator, brute force, with functions
                 y1 = GB_mex_dot_iterator (X, Y, 3) ;
+                GB_spec_compare (y0, y1, 0, tol) ;
+
+                % with vector iterator, brute force, with functions, deep and jumbled
+                y1 = GB_mex_dot_iterator (X, Y, -3) ;
                 GB_spec_compare (y0, y1, 0, tol) ;
 
             end

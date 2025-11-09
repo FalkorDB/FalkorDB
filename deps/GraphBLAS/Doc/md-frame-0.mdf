@@ -1,0 +1,861 @@
+
+%% Style file for mdframed for package option `framemethod=default`
+%%
+%% This package may be distributed under the terms of the LaTeX Project
+%% Public License, as described in lppl.txt in the base LaTeX distribution.
+%% Either version 1.0 or, at your option, any later version.
+%%
+\def\mdframedOpackagename{md-frame-0}
+\ProvidesFile{md-frame-0.mdf}%
+    [\mdfmaindate\ %
+     \mdversion: \mdframedOpackagename]
+\def\mdf@background@default{\color{\mdf@backgroundcolor}}
+\def\mdf@frametitlebackground@default{\color{\mdf@frametitlebackgroundcolor}}
+\def\mdf@shadow@default{\color{\mdf@shadowcolor}}
+\def\mdf@innerlinecolor@default{\color{\mdf@innerlinecolor}}
+\def\mdf@middlelinecolor@default{\color{\mdf@middlelinecolor}}
+\def\mdf@outerlinecolor@default{\color{\mdf@outerlinecolor}}
+\def\mdf@frametitlerulecolor@default{\color{\mdf@frametitlerulecolor}}
+\let\mdf@linecolor@default\mdf@middlelinecolor@default
+\def\mdf@@frametitlerule{%
+  \ifbool{mdf@frametitlerule}{%
+   \vbox{\hsize\mdfframetitleboxwidth%
+     \par\unskip\vskip\mdf@frametitlebelowskip@length%
+     \rlap{\noindent\hspace*{-\mdf@innerleftmargin@length}%
+     \mdf@frametitlerulecolor@default%
+     \rule{\dimexpr\mdfframetitleboxwidth%
+           +\mdf@innerleftmargin@length
+           +\mdf@innerrightmargin@length\relax
+          }{\mdf@frametitlerulewidth@length}%
+       }\hrule \@height\z@ \@width\hsize}%
+  }{%
+   \vbox{\hsize\mdfframetitleboxwidth%
+     \par\unskip\vskip\mdf@frametitlebelowskip@length%
+     \rlap{\noindent\hspace*{-\mdf@innerleftmargin@length}%
+     \mdf@frametitlerulecolor@default%
+     \rule{\dimexpr\mdfframetitleboxwidth%
+           +\mdf@innerleftmargin@length
+           +\mdf@innerrightmargin@length\relax
+          }{\z@}%
+       }\hrule \@height\z@ \@width\hsize}%
+    }%
+  \iftoggle{mdf@notfirstframetitle}%
+    {%
+      \par\unskip\vskip\mdf@splittopskip@length%
+    }%
+    {%
+      \par\unskip\vskip\mdf@innertopmargin@length%
+    }%
+}%
+
+\def\mdf@drawsubtitleaboveline{%
+ \rlap{%
+  \hspace*{-\mdf@innerleftmargin@length}%
+  \color{\mdf@subtitleabovelinecolor}%
+  \rule{\mdf@templength}{\mdf@subtitleabovelinewidth@length}%
+ }%
+}
+\def\mdf@drawsubtitlebelowline{%
+ \rlap{%
+  \hspace*{-\mdf@innerleftmargin@length}%
+  \color{\mdf@subtitlebelowlinecolor}%
+  \rule{\mdf@templength}{\mdf@subtitlebelowlinewidth@length}%
+ }%
+}
+\def\mdf@drawsubtitlebackground{%
+ \rlap{\smash{%
+  \hspace*{-\mdf@innerleftmargin@length}%
+  \color{\mdf@subtitlebackgroundcolor}%
+  \rule[-\mdfsubtitleheight]{\mdf@templength}{\mdfsubtitleheight}%
+ }}%
+}
+\def\mdf@frame@background@single{%
+  \ifbool{mdf@shadow}%
+   {%
+    \rlap%
+     {%
+      \smash%
+       {%
+        \mdf@shadow@default%
+         \rule[\dimexpr
+                -\mdfboundingboxdepth
+                -\mdf@shadowsize@length
+                \ifbool{mdf@bottomline}{-\mdf@middlelinewidth@length}{}
+              \relax]%
+             {\dimexpr
+                \mdfboundingboxtotalwidth
+                +\mdf@shadowsize@length
+                \ifbool{mdf@rightline}{+\mdf@middlelinewidth@length}{}
+              \relax}%
+             {\dimexpr
+                \mdfboundingboxtotalheight
+                +\mdf@shadowsize@length
+                \ifbool{mdf@bottomline}{+\mdf@middlelinewidth@length}{}
+              \relax}%
+       }%
+     }%
+   }{}%
+  \rlap%
+   {%
+    \mdf@background@default%
+    \rule[-\mdfboundingboxdepth]%
+         {\mdfboundingboxtotalwidth}%
+         {\mdfboundingboxtotalheight}%
+   }%
+}%
+\def\mdf@frame@frametitlebackground@single{%
+  \rlap%
+   {%
+    \mdf@frametitlebackground@default%
+    \rule[\dimexpr
+            -\mdfboundingboxdepth
+            +\mdfboundingboxtotalheight
+            -\mdfframetitleboxtotalheight
+          \relax]%
+         {\mdfboundingboxtotalwidth}%
+         {\mdfframetitleboxtotalheight}%
+   }%
+}%
+\def\mdf@frame@topline@single{%
+  \rlap%
+   {%
+    \mdf@linecolor@default%
+    \ifbool{mdf@topline}%
+      {%
+       \rule[\dimexpr
+               \mdfboundingboxheight
+               -\mdfboundingboxdepth%
+               +\mdf@innerbottommargin@length
+               +\mdf@innertopmargin@length
+             \relax]%
+            {\mdfboundingboxtotalwidth}%
+            {\mdf@middlelinewidth@length}%
+      }{}%
+   }%
+}%
+\def\mdf@frame@bottomline@single{%
+  \rlap%
+   {%
+    \ifbool{mdf@leftline}%
+      {%
+       \hspace*{-\mdf@middlelinewidth@length}%
+      }{}%
+    \mdf@linecolor@default%
+    \ifbool{mdf@bottomline}%
+      {%
+       \rule[\dimexpr
+               -\mdfboundingboxdepth
+               -\mdf@middlelinewidth@length
+             \relax]%
+            {\dimexpr
+               \mdfboundingboxtotalwidth
+               \ifbool{mdf@rightline}{+\mdf@middlelinewidth@length}{}%
+               \ifbool{mdf@leftline}{+\mdf@middlelinewidth@length}{}%
+             \relax}%
+            {\mdf@middlelinewidth@length}%
+      }{}%
+   }%
+}%
+\def\mdf@frame@leftline@single{%
+  \llap%
+   {%
+    \mdf@linecolor@default%
+    \rule[-\mdfboundingboxdepth]%
+         {\mdf@middlelinewidth@length}%
+         {\dimexpr
+            \mdfboundingboxtotalheight%
+            \ifbool{mdf@topline}{+\mdf@middlelinewidth@length}{}%
+          \relax}%
+   }%
+}%
+\def\mdf@frame@rightline@single{%
+  \rlap%
+   {%
+    \mdf@linecolor@default%
+    \hspace*{\mdfboundingboxwidth}%
+    \hspace*{\mdf@innerrightmargin@length}%
+    \rule[\dimexpr
+            -\mdfboundingboxdepth%
+          \relax]%
+         {\mdf@middlelinewidth@length}%
+         {\dimexpr
+            \mdfboundingboxtotalheight%
+            \ifbool{mdf@topline}{+\mdf@middlelinewidth@length}{}%
+          \relax}%
+   }%
+}%
+\def\mdf@putbox@single{%
+  \ifvoid\mdf@splitbox@one\relax
+  \else%
+    \mdf@makebox@out%
+     {%
+      \mdf@makeboxalign@left%
+      \setlength{\mdfboundingboxwidth}%
+                {\wd\mdf@splitbox@one}%
+      \setlength{\mdfboundingboxtotalwidth}%
+                {\dimexpr
+                   \mdfboundingboxwidth
+                   +\mdf@innerleftmargin@length%
+                   +\mdf@innerrightmargin@length
+                 \relax}%
+      \setlength{\mdfboundingboxheight}%
+                {\dimexpr
+                   \ht\mdf@splitbox@one
+                   +\dp\mdf@splitbox@one
+                 \relax}%
+      \setlength{\mdfboundingboxdepth}%
+                {\dimexpr
+                   \dp\mdf@splitbox@one
+                   +\mdf@innerbottommargin@length
+                 \relax}%
+      \setlength{\mdfboundingboxtotalheight}%
+                {\dimexpr
+                   \mdfboundingboxheight
+                   +\mdf@innertopmargin@length%
+                   +\mdf@innerbottommargin@length
+                 \relax}%
+      \setlength{\mdftotallinewidth}%
+                {\dimexpr
+                   \mdf@innerlinewidth@length
+                   +\mdf@middlelinewidth@length%
+                   +\mdf@outerlinewidth@length
+                 \relax}%
+      \noindent%
+      \setlength{\@tempdima}%
+                {\dimexpr
+                   \mdfboundingboxtotalwidth%
+                   \ifbool{mdf@leftline}{+\mdf@middlelinewidth@length}{}%
+                   \ifbool{mdf@rightline}{+\mdf@middlelinewidth@length}{}
+                 \relax}%
+      \mdf@makebox@in[\@tempdima]%
+       {%
+        \null%
+        \ifbool{mdf@leftline}%
+          {%
+           \hspace*{\mdftotallinewidth}%
+           \mdf@frame@leftline@single%
+          }{}%
+        \mdf@frame@topline@single%
+        \mdf@frame@background@single%
+        \mdf@frame@bottomline@single%
+        \ifdefempty{\mdf@frametitle}{}{\mdf@frame@frametitlebackground@single}%
+        \hspace*{\mdf@innerleftmargin@length}%
+        \ifbool{mdf@rightline}%
+          {%
+           \mdf@frame@rightline@single%
+          }{}%
+        {\box\mdf@splitbox@one}%
+       }%
+      \mdf@extra%
+      \mdf@singleextra
+      \mdf@makeboxalign@right%
+     }%
+  \fi%
+}
+\def\mdf@frame@background@first{%
+  \ifbool{mdf@shadow}%
+   {%
+    \rlap%
+     {%
+      \smash%
+       {%
+        \mdf@shadow@default%
+        \rule[\dimexpr
+                -\mdfboundingboxdepth
+                -\mdf@shadowsize@length
+              \relax]%
+             {\dimexpr
+                \mdfboundingboxtotalwidth
+                +\mdf@shadowsize@length
+                \ifbool{mdf@rightline}{+\mdf@middlelinewidth@length}{}
+              \relax}%
+             {\dimexpr
+                \mdfboundingboxtotalheight
+                +\mdf@shadowsize@length
+              \relax}%
+       }%
+     }%
+   }{}%
+  \rlap%
+   {%
+    \mdf@background@default%
+    \rule[-\mdfboundingboxdepth]%
+         {\mdfboundingboxtotalwidth}%
+         {\mdfboundingboxtotalheight}%
+   }%
+}%
+\def\mdf@frame@frametitlebackground@first{%
+ \ifbool{mdf@repeatframetitle}%
+  {%repeating title = true
+   \rlap%
+    {%
+     \mdf@frametitlebackground@default%
+     \rule[\dimexpr
+             -\mdfboundingboxdepth
+             +\mdfboundingboxtotalheight
+             -\mdfframetitleboxtotalheight
+           \relax]%
+          {\mdfboundingboxtotalwidth}%
+          {\mdfframetitleboxtotalheight}%
+    }%
+  }%
+  {%repeating title = false -- maybe splitted
+   \ifdimless{\mdfframetitleboxtotalheight}{\mdfboundingboxtotalheight}%
+    {%
+     \rlap%
+      {%
+       \mdf@frametitlebackground@default%
+       \rule[\dimexpr
+               -\mdfboundingboxdepth
+               +\mdfboundingboxtotalheight
+               -\mdfframetitleboxtotalheight
+             \relax]%
+            {\mdfboundingboxtotalwidth}%
+            {\mdfframetitleboxtotalheight}%
+      }%
+     \global\mdfframetitleboxtotalheight=-\p@\relax%
+    }%
+    {%
+     \mdf@PackageWarning{You got a page break inside the title\MessageBreak
+                         Current this isn't well supported}%
+     \rlap%
+      {%
+       \mdf@frametitlebackground@default%
+       \rule[-\mdfboundingboxdepth]%
+            {\mdfboundingboxtotalwidth}%
+            {\mdfboundingboxtotalheight}%
+      }%
+     \global\mdfframetitleboxtotalheight=%
+          \dimexpr%
+            \mdfframetitleboxtotalheight
+            -\mdfboundingboxheight
+            +\mdf@frametitlebelowskip@length
+            +.5\baselineskip-1pt
+          \relax%
+    }%
+  }%
+}%
+\def\mdf@frame@leftline@first{%
+  \llap%
+   {%
+    \mdf@linecolor@default%
+    \rule[-\mdfboundingboxdepth]%
+         {\mdf@middlelinewidth@length}%
+         {\dimexpr
+            \mdfboundingboxtotalheight%
+            \ifbool{mdf@topline}{+\mdf@middlelinewidth@length}{}
+          \relax}%
+   }%
+}%
+\def\mdf@frame@topline@first{%
+  \rlap%
+   {%
+    \mdf@linecolor@default%
+    \rule[\dimexpr
+            \mdfboundingboxheight
+            -\mdfboundingboxdepth
+            +\mdf@splitbottomskip@length
+            +\mdf@innertopmargin@length
+          \relax]%
+         {\mdfboundingboxtotalwidth}%
+         {\mdf@middlelinewidth@length}%
+   }%
+}
+\def\mdf@frame@rightline@first{%
+  \rlap%
+   {%
+    \mdf@linecolor@default%
+    \hspace*{\mdfboundingboxwidth}%
+    \hspace*{\mdf@innerrightmargin@length}%
+    \rule[-\mdfboundingboxdepth]%
+         {\mdf@middlelinewidth@length}%
+         {\dimexpr
+            \mdfboundingboxtotalheight%
+            \ifbool{mdf@topline}{+\mdf@middlelinewidth@length}{}
+          \relax}%
+   }%
+}%
+\def\mdf@frame@bottomline@first{%
+  \rlap%
+   {%
+    \ifbool{mdf@leftline}%
+      {%
+       \hspace*{-\mdf@middlelinewidth@length}%
+      }{}%
+    \mdf@linecolor@default%
+    \ifbool{mdf@bottomline}%
+      {%
+       \rule[\dimexpr
+               -\mdfboundingboxdepth
+               -\mdf@middlelinewidth@length
+             \relax]%
+            {\dimexpr
+               \mdfboundingboxtotalwidth
+               \ifbool{mdf@rightline}{+\mdf@middlelinewidth@length}{}%
+               \ifbool{mdf@leftline}{+\mdf@middlelinewidth@length}{}
+             \relax}%
+            {\mdf@middlelinewidth@length}%
+      }{}%
+   }%
+}%
+\def\mdf@putbox@first{%
+  \ifvoid\mdf@splitbox@two\relax
+  \else%
+    \mdf@makebox@out[\linewidth]%
+     {%
+      \mdf@makeboxalign@left%
+      \setlength{\mdfboundingboxwidth}
+                {\wd\mdf@splitbox@two}%
+      \setlength{\mdfboundingboxtotalwidth}%
+                {\dimexpr
+                   \mdfboundingboxwidth
+                   +\mdf@innerleftmargin@length%
+                   +\mdf@innerrightmargin@length
+                 \relax}%
+      \setlength{\mdfboundingboxheight}
+                {\dimexpr
+                   \ht\mdf@splitbox@two
+                   +\dp\mdf@splitbox@two
+                 \relax}%
+      \setlength{\mdfboundingboxdepth}%
+                {\dimexpr
+                   \dp\mdf@splitbox@two
+                    +\mdf@splitbottomskip@length
+                 \relax}%
+      \setlength{\mdfboundingboxtotalheight}%
+                {\dimexpr
+                   \mdfboundingboxheight
+                   +\mdf@innertopmargin@length%
+                   +\mdf@splitbottomskip@length
+                 \relax}%
+      \setlength{\@tempdima}%
+                {\dimexpr
+                   \mdfboundingboxtotalwidth%
+                   \ifbool{mdf@leftline}{+\mdf@middlelinewidth@length}{}%
+                   \ifbool{mdf@rightline}{+\mdf@middlelinewidth@length}{}%
+                 \relax}%
+       \mdf@makebox@in[\@tempdima]%
+        {%
+         \null%
+         \ifbool{mdf@leftline}%
+           {%
+            \hspace*{\mdf@middlelinewidth@length}%
+            \mdf@frame@leftline@first%
+           }{}%
+         \ifbool{mdf@everyline}%
+           {%
+            \mdf@frame@bottomline@first%
+           }{}%
+         \ifbool{mdf@topline}%
+           {%
+            \mdf@frame@topline@first%
+           }{}%
+         \mdf@frame@background@first%
+         \ifdefempty{\mdf@frametitle}{}{\mdf@frame@frametitlebackground@first}%
+         \hspace*{\mdf@innerleftmargin@length}%
+         \ifbool{mdf@rightline}%
+          {%
+           \mdf@frame@rightline@first%
+          }{}%
+         {\box\mdf@splitbox@two}%
+        }%
+       \mdf@extra%
+       \mdf@firstextra%
+       \mdf@makeboxalign@right%
+     }%
+ \fi%
+}
+\def\mdf@frame@background@second{%
+  \ifbool{mdf@shadow}%
+    {%
+     \rlap%
+      {%
+       \smash%
+        {%
+         \mdf@shadow@default%
+         \rule[\dimexpr
+                 -\mdfboundingboxdepth
+                 -\mdf@shadowsize@length
+                 \ifbool{mdf@bottomline}{-\mdf@middlelinewidth@length}{}
+               \relax]%
+              {\dimexpr
+                 \mdfboundingboxtotalwidth
+                 +\mdf@shadowsize@length
+                 \ifbool{mdf@rightline}{+\mdf@middlelinewidth@length}{}
+               \relax}%
+              {\dimexpr
+                 \mdfboundingboxtotalheight
+                 +\mdf@shadowsize@length
+                \relax}%
+        }%
+      }%
+    }{}%
+  \rlap%
+   {%
+    \mdf@background@default%
+    \rule[-\mdfboundingboxdepth]%
+         {\mdfboundingboxtotalwidth}%
+         {\mdfboundingboxtotalheight}%
+   }%
+}%
+\def\mdf@frame@frametitlebackground@second{%
+ \ifbool{mdf@repeatframetitle}%
+  {%repeating title = true
+   \rlap%
+    {%
+     \mdf@frametitlebackground@default%
+     \rule[\dimexpr
+             -\mdfboundingboxdepth
+             +\mdfboundingboxtotalheight
+             -\mdfframetitleboxtotalheight
+           \relax]%
+          {\mdfboundingboxtotalwidth}%
+          {\mdfframetitleboxtotalheight}%
+    }%
+  }%
+  {%repeating title = false -- maybe splitted
+   \ifdimless{\mdfframetitleboxtotalheight}{\z@}%
+    {}%
+    {%
+     \rlap%
+      {%
+       \mdf@frametitlebackground@default%
+       \rule[\dimexpr
+               -\mdfboundingboxdepth
+               +\mdfboundingboxtotalheight
+               -\mdfframetitleboxtotalheight
+             \relax]%
+            {\mdfboundingboxtotalwidth}%
+            {\mdfframetitleboxtotalheight}%
+      }%
+    }%
+  }%
+}%
+\def\mdf@frame@leftline@second{%
+  \llap%
+   {%
+    \mdf@linecolor@default%
+    \rule[-\mdfboundingboxdepth]%
+         {\mdf@middlelinewidth@length}%
+         {\dimexpr\mdfboundingboxtotalheight}%
+   }%
+}%
+\def\mdf@frame@bottomline@second{%
+  \rlap%
+   {%
+    \ifbool{mdf@leftline}%
+      {%
+       \hspace*{-\mdf@middlelinewidth@length}%
+      }{}%
+    \mdf@linecolor@default%
+    \rule[\dimexpr
+            -\mdfboundingboxdepth
+            -\mdf@middlelinewidth@length
+          \relax]%
+         {\dimexpr
+            \mdfboundingboxtotalwidth
+            \ifbool{mdf@rightline}{+\mdf@middlelinewidth@length}{}
+            \ifbool{mdf@leftline}{+\mdf@middlelinewidth@length}{}
+          \relax}%
+         {\mdf@middlelinewidth@length}%
+   }%
+}%
+\def\mdf@frame@rightline@second{%
+  \rlap%
+   {%
+    \mdf@linecolor@default\hspace*{\mdfboundingboxwidth}%
+    \hspace*{\mdf@innerrightmargin@length}%
+    \rule[-\mdfboundingboxdepth]%
+         {\mdf@middlelinewidth@length}%
+         {\mdfboundingboxtotalheight}%
+   }%
+}%
+\def\mdf@frame@topline@second{%
+  \rlap%
+   {%
+    \ifbool{mdf@leftline}%
+      {%
+       \hspace*{-\mdf@middlelinewidth@length}%
+      }{}%
+    \mdf@linecolor@default%
+    \ifbool{mdf@topline}%
+      {%
+       \rule[\dimexpr
+               \mdfboundingboxheight
+               -\mdfboundingboxdepth%
+               +\mdf@innerbottommargin@length
+             \relax]%
+            {\dimexpr
+               \mdfboundingboxtotalwidth
+               \ifbool{mdf@rightline}{+\mdf@middlelinewidth@length}{}%
+               \ifbool{mdf@leftline}{+\mdf@middlelinewidth@length}{}
+             \relax}%
+            {\mdf@middlelinewidth@length}%
+      }{}%
+   }%
+}%
+
+\def\mdf@putbox@second{%
+  \ifvoid\mdf@splitbox@one\relax%
+  \else
+   \mdf@makebox@out%
+     {%
+      \mdf@makeboxalign@left%
+      \setlength{\mdfboundingboxwidth}%
+                {\wd\mdf@splitbox@one}%
+      \setlength{\mdfboundingboxtotalwidth}%
+                {\dimexpr
+                   \mdfboundingboxwidth
+                   +\mdf@innerleftmargin@length%
+                   +\mdf@innerrightmargin@length
+                 \relax}%
+      \setlength{\mdfboundingboxheight}%
+                {\dimexpr
+                   \ht\mdf@splitbox@one
+                   +\dp\mdf@splitbox@one
+                 \relax}%
+      \setlength{\mdfboundingboxdepth}%
+                {\dimexpr
+                   \dp\mdf@splitbox@one
+                   +\mdf@innerbottommargin@length
+                 \relax}%
+      \setlength{\mdfboundingboxtotalheight}%
+                {\dimexpr
+                   \mdfboundingboxheight
+                   +\mdf@innerbottommargin@length
+                 \relax}%
+      \setlength{\@tempdima}%
+                {\dimexpr
+                   \mdfboundingboxtotalwidth%
+                   \ifbool{mdf@leftline}{+\mdf@middlelinewidth@length}{}%
+                   \ifbool{mdf@rightline}{+\mdf@middlelinewidth@length}{}%
+                 \relax}%
+      \mdf@makebox@in[\@tempdima]%
+       {%
+        \null%
+        \ifbool{mdf@leftline}%
+          {%
+           \hspace*{\mdf@middlelinewidth@length}%
+           \mdf@frame@leftline@second%
+          }{}%
+        \ifbool{mdf@everyline}%
+          {%
+           \mdf@frame@topline@second
+          }{}%
+        \mdf@frame@background@second%
+        \ifbool{mdf@bottomline}%
+          {%
+           \mdf@frame@bottomline@second%
+          }{}%
+        \ifdefempty{\mdf@frametitle}{}{\mdf@frame@frametitlebackground@second}%
+        \hspace*{\mdf@innerleftmargin@length}%
+        \ifbool{mdf@rightline}%
+          {%
+           \mdf@frame@rightline@second%
+          }{}%
+        {\box\mdf@splitbox@one}%
+       }%
+      \mdf@extra%
+      \mdf@secondextra%
+      \mdf@makeboxalign@right%
+     }%
+  \fi%
+}%
+\def\mdf@frame@leftline@middle{%
+  \llap%
+   {%
+    \mdf@linecolor@default%
+    \rule[-\mdfboundingboxdepth]%
+         {\mdf@middlelinewidth@length}%
+         {\mdfboundingboxtotalheight}%
+  }%
+}%
+\def\mdf@frame@background@middle{%
+  \ifbool{mdf@shadow}%
+    {%
+     \rlap%
+      {%
+       \smash%
+        {%
+         \mdf@shadow@default%
+         \rule[\dimexpr
+                 -\mdfboundingboxdepth
+                 -\mdf@shadowsize@length
+               \relax]%
+              {\dimexpr
+                 \mdfboundingboxtotalwidth
+                 +\mdf@shadowsize@length
+                 \ifbool{mdf@rightline}{+\mdf@middlelinewidth@length}{}
+               \relax}%
+              {\mdfboundingboxtotalheight}%
+        }%
+      }%
+    }{}%
+  \rlap%
+   {%
+    \mdf@background@default%
+    \rule[-\mdfboundingboxdepth]%
+         {\mdfboundingboxtotalwidth}%
+         {\mdfboundingboxtotalheight}%
+   }%
+}%
+\def\mdf@frame@frametitlebackground@middle{%
+ \ifbool{mdf@repeatframetitle}%
+  {%repeating title = true
+   \rlap%
+    {%
+     \mdf@frametitlebackground@default%
+     \rule[\dimexpr
+             -\mdfboundingboxdepth
+             +\mdfboundingboxtotalheight
+             -\mdfframetitleboxtotalheight
+           \relax]%
+          {\mdfboundingboxtotalwidth}%
+          {\mdfframetitleboxtotalheight}%
+    }%
+  }%
+  {%repeating title = false -- maybe splitted
+   \ifdimless{\mdfframetitleboxtotalheight}{\z@}%
+    {}%
+    {%
+     \rlap%
+      {%
+       \mdf@frametitlebackground@default%
+       \rule[\dimexpr
+               -\mdfboundingboxdepth
+               +\mdfboundingboxtotalheight
+               -\mdfframetitleboxtotalheight
+             \relax]%
+            {\mdfboundingboxtotalwidth}%
+            {\mdfframetitleboxtotalheight}%
+      }%
+     \global\mdfframetitleboxtotalheight=-\p@\relax%
+    }%
+    }%
+}%
+\def\mdf@frame@rightline@middle{%
+  \rlap%
+   {%
+    \mdf@linecolor@default%
+    \hspace*{\mdfboundingboxwidth}%
+    \hspace*{\mdf@innerrightmargin@length}%
+    \rule[-\mdfboundingboxdepth]%
+         {\mdf@middlelinewidth@length}%
+         {\mdfboundingboxtotalheight}%
+   }%
+}%
+\def\mdf@frame@topline@middle{%
+  \rlap%
+   {%
+    \ifbool{mdf@leftline}%
+      {%
+       \hspace*{-\mdf@middlelinewidth@length}%
+      }{}%
+    \mdf@linecolor@default%
+    \ifbool{mdf@topline}%
+      {%
+       \rule[\dimexpr
+               \mdfboundingboxtotalheight
+               -\mdfboundingboxdepth
+             \relax]%
+            {\dimexpr
+               \mdfboundingboxtotalwidth
+               \ifbool{mdf@rightline}{+\mdf@middlelinewidth@length}{}%
+               \ifbool{mdf@leftline}{+\mdf@middlelinewidth@length}{}
+             \relax}%
+            {\mdf@middlelinewidth@length}%
+      }{}%
+   }%
+}%
+\def\mdf@frame@bottomline@middle{%
+  \rlap%
+   {%
+    \ifbool{mdf@leftline}%
+      {%
+       \hspace*{-\mdf@middlelinewidth@length}%
+      }{}%
+    \mdf@linecolor@default%
+    \ifbool{mdf@bottomline}%
+      {%
+       \rule[\dimexpr
+               -\mdfboundingboxdepth
+               -\mdf@middlelinewidth@length
+             \relax]%
+            {\dimexpr
+               \mdfboundingboxtotalwidth
+               \ifbool{mdf@rightline}{+\mdf@middlelinewidth@length}{}%
+               \ifbool{mdf@leftline}{+\mdf@middlelinewidth@length}{}
+             \relax}%
+            {\mdf@middlelinewidth@length}%
+      }{}%
+   }%
+}%
+
+\def\mdf@putbox@middle{%
+  \ifvoid\mdf@splitbox@two\relax%
+  \else
+   \mdf@makebox@out%
+     {%
+      \mdf@makeboxalign@left%
+      \setlength{\mdfboundingboxwidth}
+                {\wd\mdf@splitbox@two}%
+      \setlength{\mdfboundingboxtotalwidth}%
+                {\dimexpr
+                   \mdfboundingboxwidth
+                   +\mdf@innerleftmargin@length%
+                   +\mdf@innerrightmargin@length
+                 \relax}%
+      \setlength{\mdfboundingboxheight}
+                {\dimexpr
+                   \ht\mdf@splitbox@two
+                   +\dp\mdf@splitbox@two
+                 \relax}%
+      \setlength{\mdfboundingboxdepth}%
+                {\dimexpr
+                   \dp\mdf@splitbox@two
+                   +\mdf@splitbottomskip@length
+                 \relax}%
+      \setlength{\mdfboundingboxtotalheight}%
+                {\dimexpr
+                   \mdfboundingboxheight
+                   +\mdf@splitbottomskip@length
+                 \relax}%
+      \setlength{\@tempdima}
+                {\dimexpr
+                    \mdfboundingboxtotalwidth%
+                    \ifbool{mdf@leftline}{+\mdf@middlelinewidth@length}{}%
+                    \ifbool{mdf@rightline}{+\mdf@middlelinewidth@length}{}%
+                 \relax}%
+      \mdf@makebox@in[\@tempdima]%
+        {%
+         \null%
+         \ifbool{mdf@leftline}%
+           {%
+            \hspace*{\mdf@middlelinewidth@length}%
+            \mdf@frame@leftline@middle%
+           }{}%
+         \mdf@frame@background@middle%
+         \ifbool{mdf@everyline}%
+           {%
+            \mdf@frame@topline@middle
+           }{}%
+         \ifdefempty{\mdf@frametitle}{}
+                    {\mdf@frame@frametitlebackground@middle}%
+         \ifbool{mdf@everyline}%
+           {%
+            \mdf@frame@bottomline@middle%
+           }{}%
+         \hspace*{\mdf@innerleftmargin@length}%
+         \ifbool{mdf@rightline}%
+           {%
+            \mdf@frame@rightline@middle%
+           }{}%
+         {\box\mdf@splitbox@two}%
+        }%
+      \mdf@extra%
+      \mdf@middleextra%
+      \mdf@makeboxalign@right%
+     }%
+  \fi%
+}
+ \endinput

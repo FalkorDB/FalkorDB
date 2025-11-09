@@ -2,15 +2,13 @@
 // GB_mex_test32: test GrB_get and GrB_set (semirings)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
-
-#define USAGE "GB_mex_test32"
 
 #define FREE_ALL ;
 #define GET_DEEP_COPY ;
@@ -21,21 +19,23 @@
     size_t siz1, siz2, siz3 ;                                           \
     OK (GrB_Semiring_get_String (op, name, GrB_NAME)) ;                 \
     CHECK (MATCH (name, opname)) ;                                      \
+    printf ("\nname: %s\n", name) ;                                     \
+    OK (GxB_Semiring_fprint (op, "semiring", 3, NULL)) ;                \
     OK (GrB_Semiring_get_SIZE (op, &size, GrB_NAME)) ;                  \
     CHECK (size == strlen (name) + 1) ;                                 \
     GrB_Info info2, info3 ;                                             \
-    info2 = GrB_Semiring_get_SIZE (op, &siz1, GrB_INP0_TYPE_STRING) ;  \
-    info3 = GrB_Semiring_get_String (op, name, GrB_INP0_TYPE_STRING) ; \
+    info2 = GrB_Semiring_get_SIZE (op, &siz1, GrB_INP0_TYPE_STRING) ;   \
+    info3 = GrB_Semiring_get_String (op, name, GrB_INP0_TYPE_STRING) ;  \
     CHECK (info2 == info3) ;                                            \
     CHECK (siz1 == strlen (name) + 1) ;                                 \
     if (info2 == GrB_NO_VALUE) { CHECK (siz1 == 1) ; }                  \
-    info2 = GrB_Semiring_get_SIZE (op, &siz2, GrB_INP1_TYPE_STRING) ;  \
-    info3 = GrB_Semiring_get_String (op, name, GrB_INP1_TYPE_STRING) ; \
+    info2 = GrB_Semiring_get_SIZE (op, &siz2, GrB_INP1_TYPE_STRING) ;   \
+    info3 = GrB_Semiring_get_String (op, name, GrB_INP1_TYPE_STRING) ;  \
     CHECK (info2 == info3) ;                                            \
     CHECK (siz2 == strlen (name) + 1) ;                                 \
     if (info2 == GrB_NO_VALUE) { CHECK (siz1 == 1) ; }                  \
-    info2 = GrB_Semiring_get_SIZE (op, &siz3, GrB_OUTP_TYPE_STRING) ;  \
-    info3 = GrB_Semiring_get_String (op, name, GrB_OUTP_TYPE_STRING) ; \
+    info2 = GrB_Semiring_get_SIZE (op, &siz3, GrB_OUTP_TYPE_STRING) ;   \
+    info3 = GrB_Semiring_get_String (op, name, GrB_OUTP_TYPE_STRING) ;  \
     CHECK (info2 == info3) ;                                            \
     CHECK (siz3 == strlen (name) + 1) ;                                 \
     if (info2 == GrB_NO_VALUE) { CHECK (siz1 == 1) ; }                  \
@@ -44,13 +44,11 @@
 #define GETNAME(op)                                         \
 {                                                           \
     GETOP (op, #op) ;                                       \
-/*  OK (GxB_Semiring_fprint (sm, "semiring", 3, NULL)) ; */ \
 }
 
 #define GETNAM2(op,alias)                                   \
 {                                                           \
     GETOP (op,alias) ;                                      \
-/*  OK (GxB_Semiring_fprint (sm, "semiring", 3, NULL)) ; */ \
 }
 
 void mytimes (float *z, const float *x, const float *y) ;
@@ -90,7 +88,7 @@ void mexFunction
     int32_t code, i ;
     float fvalue ;
     double dvalue ;
-    GrB_Index nvals = 999 ;
+    uint64_t nvals = 999 ;
 
     OK (GrB_Scalar_new (&s_fp64, GrB_FP64)) ;
     OK (GrB_Scalar_new (&s_fp32, GrB_FP32)) ;
@@ -2171,13 +2169,12 @@ void mexFunction
         (GxB_binary_function) mytimes, GrB_FP32, GrB_FP32, GrB_FP32)) ;
     OK (GrB_BinaryOp_set_String_(times, "mytimes", GrB_NAME)) ;
     METHOD (GrB_BinaryOp_set_String (times, MYTIMES_DEFN,
-        (GrB_Field) GxB_JIT_C_DEFINITION)) ;
+        GxB_JIT_C_DEFINITION)) ;
 
     OK (GrB_BinaryOp_new (&add,
         (GxB_binary_function) myadd, GrB_FP32, GrB_FP32, GrB_FP32)) ;
     OK (GrB_BinaryOp_set_String_(add, "myadd", GrB_NAME)) ;
-    METHOD (GrB_BinaryOp_set_String (add, MYADD_DEFN,
-        (GrB_Field) GxB_JIT_C_DEFINITION)) ;
+    METHOD (GrB_BinaryOp_set_String (add, MYADD_DEFN, GxB_JIT_C_DEFINITION)) ;
 
     OK (GrB_Monoid_new_FP32 (&monoid, add, (float) 0.0)) ;
     OK (GrB_Monoid_get_SIZE_(monoid, &size, GrB_NAME)) ;

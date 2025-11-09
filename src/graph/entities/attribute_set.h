@@ -58,6 +58,14 @@ SIValue *AttributeSet_Get
 	AttributeID attr_id      // attribute identifier
 );
 
+// retrieves a reference to value from set by index
+SIValue *AttributeSet_GetIdxRef
+(
+	const AttributeSet set,  // set to retieve attribute from
+	uint16_t i,              // index of the property
+	AttributeID *attr_id     // attribute identifier
+);
+
 // retrieves a value from set by index
 SIValue AttributeSet_GetIdx
 (
@@ -72,7 +80,7 @@ void AttributeSet_AddNoClone
 	AttributeSet *set,  // set to update
 	AttributeID *ids,   // identifiers
 	SIValue *values,    // values
-	ushort n,           // number of values to add
+	uint16_t n,         // number of values to add
 	bool allowNull		// accept NULLs
 );
 
@@ -122,6 +130,12 @@ AttributeSet AttributeSet_ShallowClone
 void AttributeSet_PersistValues
 (
 	const AttributeSet set  // set to persist
+);
+
+// get attributeset's memory usage
+size_t AttributeSet_memoryUsage
+(
+	const AttributeSet set  // set to compute memory consumption of
 );
 
 // free attribute set

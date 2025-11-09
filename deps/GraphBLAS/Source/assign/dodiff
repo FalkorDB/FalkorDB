@@ -1,0 +1,103 @@
+#!/bin/bash
+
+# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+echo "======================================================================="
+echo "02 and 04:"
+echo "======================================================================="
+diff *suba*02* *suba*04*
+diff ../jit_kernels/template/*suba*02* ../jit_kernels/template/*suba*04*
+diff template/*suba*02* template/*suba*04*
+
+echo "======================================================================="
+echo "01 and 03:"
+echo "======================================================================="
+diff *suba*01* *suba*03*
+diff ../jit_kernels/template/*suba*01* ../jit_kernels/template/*suba*03*
+diff template/*suba*01* template/*suba*03*
+
+echo "======================================================================="
+echo "05 and 07:"
+echo "======================================================================="
+diff *suba*05.c* *suba*07*
+diff ../jit_kernels/template/*suba*05.c ../jit_kernels/template/*suba*07*
+diff template/*suba*05_*.c* template/*suba*07*
+
+echo "======================================================================="
+echo "09 and 11:"
+echo "======================================================================="
+diff *suba*09* *suba*11*
+diff ../jit_kernels/template/*suba*09* ../jit_kernels/template/*suba*11*
+diff template/*suba*09* template/*suba*11*
+
+echo "======================================================================="
+echo "13 and 15:"
+echo "======================================================================="
+diff *suba*13* *suba*15*
+diff ../jit_kernels/template/*suba*13* ../jit_kernels/template/*suba*15*
+diff template/*suba*13* template/*suba*15*
+
+echo "======================================================================="
+echo "13 and 17:"
+echo "======================================================================="
+diff *suba*13* *suba*17*
+diff ../jit_kernels/template/*suba*13* ../jit_kernels/template/*suba*17*
+diff template/*suba*13* template/*suba*17*
+
+echo "======================================================================="
+echo "13 and 19:"
+echo "======================================================================="
+diff *suba*13* *suba*19*
+diff ../jit_kernels/template/*suba*13* ../jit_kernels/template/*suba*19*
+diff template/*suba*13* template/*suba*19*
+
+echo "======================================================================="
+echo "15 and 19:"
+echo "======================================================================="
+diff *suba*15* *suba*19*
+diff ../jit_kernels/template/*suba*15* ../jit_kernels/template/*suba*19*
+diff template/*suba*15* template/*suba*19*
+
+echo "======================================================================="
+echo "15 and 17:"
+echo "======================================================================="
+diff *suba*15* *suba*17*
+diff ../jit_kernels/template/*suba*15* ../jit_kernels/template/*suba*17*
+diff template/*suba*15* template/*suba*17*
+
+echo "======================================================================="
+echo "17 and 19:"
+echo "======================================================================="
+diff *suba*17* *suba*19*
+diff ../jit_kernels/template/*suba*17* ../jit_kernels/template/*suba*19*
+diff template/*suba*17* template/*suba*19*
+
+echo "======================================================================="
+echo "06s/14 and 10/18:"
+echo "======================================================================="
+diff *suba*06s* *suba*10*
+diff ../jit_kernels/template/*suba*06s* ../jit_kernels/template/*suba*10*
+diff template/*suba*06s* template/*suba*10*
+
+echo "======================================================================="
+echo "10/18 and 12/20:"
+echo "======================================================================="
+diff *suba*10* *suba*12*
+diff ../jit_kernels/template/*suba*10* ../jit_kernels/template/*suba*12*
+diff template/*suba*10* template/*suba*12*
+
+echo "======================================================================="
+echo "06s/14 and 12/20:"
+echo "======================================================================="
+diff *suba*06s* *suba*12*
+diff ../jit_kernels/template/*suba*06s* ../jit_kernels/template/*suba*12*
+diff template/*suba*06s* template/*suba*12*
+
+echo "======================================================================="
+echo "06s/14 and 08s/16:"
+echo "======================================================================="
+diff *suba*06s* *suba*08s*
+diff ../jit_kernels/template/*suba*06s* ../jit_kernels/template/*suba*08s*
+diff template/*suba*06s* template/*suba*08s*
+

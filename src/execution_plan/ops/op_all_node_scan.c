@@ -8,7 +8,7 @@
 #include "../../query_ctx.h"
 #include "shared/print_functions.h"
 
-/* Forward declarations. */
+// forward declarations
 static OpResult AllNodeScanInit(OpBase *opBase);
 static Record AllNodeScanConsume(OpBase *opBase);
 static Record AllNodeScanConsumeFromChild(OpBase *opBase);
@@ -20,34 +20,50 @@ static inline void AllNodeScanToString(const OpBase *ctx, sds *buf) {
 	ScanToString(ctx, buf, ((AllNodeScan *)ctx)->alias, NULL);
 }
 
-OpBase *NewAllNodeScanOp(const ExecutionPlan *plan, const char *alias) {
-	AllNodeScan *op = rm_malloc(sizeof(AllNodeScan));
-	op->iter = NULL;
-	op->alias = alias;
-	op->child_record = NULL;
+OpBase *NewAllNodeScanOp
+(
+	const ExecutionPlan *plan,
+	const char *alias
+) {
+	AllNodeScan *op = rm_calloc (1, sizeof(AllNodeScan)) ;
 
-	// Set our Op operations
-	OpBase_Init((OpBase *)op, OPType_ALL_NODE_SCAN, "All Node Scan", AllNodeScanInit,
-				AllNodeScanConsume, AllNodeScanReset, AllNodeScanToString, AllNodeScanClone, AllNodeScanFree, false,
-				plan);
+	op->alias = alias;
+
+	// set our Op operations
+	OpBase_Init((OpBase *)op, OPType_ALL_NODE_SCAN, "All Node Scan",
+			AllNodeScanInit, AllNodeScanConsume, AllNodeScanReset,
+			AllNodeScanToString, AllNodeScanClone, AllNodeScanFree, false,
+			plan);
+
 	op->nodeRecIdx = OpBase_Modifies((OpBase *)op, alias);
 	return (OpBase *)op;
 }
 
-static OpResult AllNodeScanInit(OpBase *opBase) {
+static OpResult AllNodeScanInit
+(
+	OpBase *opBase
+) {
 	AllNodeScan *op = (AllNodeScan *)opBase;
-	if(opBase->childCount > 0) OpBase_UpdateConsume(opBase, AllNodeScanConsumeFromChild);
-	else op->iter = Graph_ScanNodes(QueryCtx_GetGraph());
+
+	if(opBase->childCount > 0) {
+		OpBase_UpdateConsume(opBase, AllNodeScanConsumeFromChild);
+	} else {
+		op->iter = Graph_ScanNodes(QueryCtx_GetGraph());
+	}
 	return OP_OK;
 }
 
-static Record AllNodeScanConsumeFromChild(OpBase *opBase) {
+static Record AllNodeScanConsumeFromChild
+(
+	OpBase *opBase
+) {
 	AllNodeScan *op = (AllNodeScan *)opBase;
 
 	if(op->child_record == NULL) {
 		op->child_record = OpBase_Consume(op->op.children[0]);
-		if(op->child_record == NULL) return NULL;
-		else {
+		if(op->child_record == NULL) {
+			return NULL;
+		} else {
 			if(!op->iter) op->iter = Graph_ScanNodes(QueryCtx_GetGraph());
 			else DataBlockIterator_Reset(op->iter);
 		}
@@ -76,7 +92,10 @@ static Record AllNodeScanConsumeFromChild(OpBase *opBase) {
 	return r;
 }
 
-static Record AllNodeScanConsume(OpBase *opBase) {
+static Record AllNodeScanConsume
+(
+	OpBase *opBase
+) {
 	AllNodeScan *op = (AllNodeScan *)opBase;
 
 	Node n = GE_NEW_NODE();
@@ -89,26 +108,51 @@ static Record AllNodeScanConsume(OpBase *opBase) {
 	return r;
 }
 
-static OpResult AllNodeScanReset(OpBase *op) {
+static void _AllNodeScan_FreeInternals
+(
+	AllNodeScan *op
+) {
+	if(op->child_record) {
+		OpBase_DeleteRecord(&op->child_record);
+		op->child_record = NULL;
+	}
+
+	if(op->iter != NULL) {
+		DataBlockIterator_Free(op->iter);
+		op->iter = NULL;
+	}
+}
+
+static OpResult AllNodeScanReset
+(
+	OpBase *op
+) {
 	AllNodeScan *allNodeScan = (AllNodeScan *)op;
-	if(allNodeScan->iter) DataBlockIterator_Reset(allNodeScan->iter);
+
+	_AllNodeScan_FreeInternals(allNodeScan);
+
+	// reset iterator by recreating it
+	// a simple DataBlockIterator_Reset is NOT good enough
+	// as the iterator "end" position might be outdated
+	allNodeScan->iter = Graph_ScanNodes(QueryCtx_GetGraph());
+
 	return OP_OK;
 }
 
-static inline OpBase *AllNodeScanClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static inline OpBase *AllNodeScanClone
+(
+	const ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_ALL_NODE_SCAN);
 	return NewAllNodeScanOp(plan, ((AllNodeScan *)opBase)->alias);
 }
 
-static void AllNodeScanFree(OpBase *ctx) {
+static void AllNodeScanFree
+(
+	OpBase *ctx
+) {
 	AllNodeScan *op = (AllNodeScan *)ctx;
-	if(op->iter) {
-		DataBlockIterator_Free(op->iter);
-		op->iter = NULL;
-	}
-
-	if(op->child_record) {
-		OpBase_DeleteRecord(&op->child_record);
-	}
+	_AllNodeScan_FreeInternals(op);
 }
 

@@ -1,12 +1,12 @@
 function test220
 %TEST220 test mask C<M>=Z, iso case
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
 
-GB_mex_burble (0) ;
+GB_mex_burble (1) ;
 n = 100 ;
 Cin.matrix = spones (sprand (n, n, 0.01)) ;
 Cin.sparsity = 1 ;

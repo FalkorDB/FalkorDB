@@ -9,15 +9,20 @@
 #include "../../query_ctx.h"
 #include "../../errors/errors.h"
 
-/* Forward declarations. */
+// forward declarations
 static Record MergeCreateConsume(OpBase *opBase);
 static OpBase *MergeCreateClone(const ExecutionPlan *plan, const OpBase *opBase);
 static OpResult MergeCreateInit(OpBase* opBase);
 static void MergeCreateFree(OpBase *opBase);
 
 // convert a graph entity's components into an identifying hash code
-static void _IncrementalHashEntity(XXH64_state_t *state, const char **labels,
-								   uint label_count, AttributeSet *set) {
+static void _IncrementalHashEntity
+(
+	XXH64_state_t *state,
+	const char **labels,
+	uint label_count,
+	AttributeSet *set
+) {
 	AttributeSet _set = *set;
 
 	// update hash with label if one is provided
@@ -49,63 +54,77 @@ static void _IncrementalHashEntity(XXH64_state_t *state, const char **labels,
 	}
 }
 
-// revert the most recent set of buffered creations and free any allocations.
+// revert the most recent set of buffered creations and free any allocations
 static void _RollbackPendingCreations
 (
 	OpMergeCreate *op
 ) {
-	uint nodes_to_create_count = array_len(op->pending.nodes_to_create);
+	uint nodes_to_create_count = array_len(op->pending.nodes.nodes_to_create);
 	for(uint i = 0; i < nodes_to_create_count; i++) {
-		AttributeSet props = array_pop(op->pending.node_attributes);
+		AttributeSet props = array_pop(op->pending.nodes.node_attributes);
 		AttributeSet_Free(&props);
 	}
 
-	uint edges_to_create_count = array_len(op->pending.edges_to_create);
+	uint edges_to_create_count = array_len(op->pending.edges);
 	for(uint i = 0; i < edges_to_create_count; i++) {
-		AttributeSet props = array_pop(op->pending.edge_attributes);
+		PendingEdgeCreations *pending_edge = op->pending.edges + i;
+		AttributeSet props = array_pop(pending_edge->edge_attributes);
 		AttributeSet_Free(&props);
 	}
 }
 
-OpBase *NewMergeCreateOp(const ExecutionPlan *plan, NodeCreateCtx *nodes, EdgeCreateCtx *edges) {
+OpBase *NewMergeCreateOp
+(
+	const ExecutionPlan *plan,
+	NodeCreateCtx *nodes,
+	EdgeCreateCtx *edges
+) {
 	OpMergeCreate *op = rm_calloc(1, sizeof(OpMergeCreate));
-	op->unique_entities = raxNew();       // Create a map to unique pending creations.
-	op->hash_state = XXH64_createState(); // Create a hash state.
 
-	NewPendingCreationsContainer(&op->pending, nodes, edges); // Prepare all creation variables.
-	op->handoff_mode = false;
-	op->records = array_new(Record, 32);
+	op->records         = array_new(Record, 32);  // accumulated records
+	op->hash_state      = XXH64_createState();    // create a hash state
+	op->unique_entities = raxNew();               // create a map to unique pending creations
 
 	// insert one NULL value to terminate execution of the op
 	array_append(op->records, NULL);
 
-	// Set our Op operations
-	OpBase_Init((OpBase *)op, OPType_MERGE_CREATE, "MergeCreate", MergeCreateInit, MergeCreateConsume,
-				NULL, NULL, MergeCreateClone, MergeCreateFree, true, plan);
+	// set our Op operations
+	OpBase_Init((OpBase *)op, OPType_MERGE_CREATE, "MergeCreate",
+			MergeCreateInit, MergeCreateConsume, NULL, NULL, MergeCreateClone,
+			MergeCreateFree, true, plan);
 
 	uint node_blueprint_count = array_len(nodes);
 	uint edge_blueprint_count = array_len(edges);
 
-	// Construct the array of IDs this operation modifies
+	// construct the array of IDs this operation modifies
 	for(uint i = 0; i < node_blueprint_count; i ++) {
 		NodeCreateCtx *n = nodes + i;
 		n->node_idx = OpBase_Modifies((OpBase *)op, n->alias);
 	}
+
 	for(uint i = 0; i < edge_blueprint_count; i ++) {
 		EdgeCreateCtx *e = edges + i;
 		e->edge_idx = OpBase_Modifies((OpBase *)op, e->alias);
 		bool aware;
 		UNUSED(aware);
-		aware = OpBase_Aware((OpBase *)op, e->src, &e->src_idx);
+
+		aware = OpBase_AliasMapping((OpBase *)op, e->src, &e->src_idx);
 		ASSERT(aware == true);
-		aware = OpBase_Aware((OpBase *)op, e->dest, &e->dest_idx);
+
+		aware = OpBase_AliasMapping((OpBase *)op, e->dest, &e->dest_idx);
 		ASSERT(aware == true);
 	}
+
+	// prepare all creation variables
+	NewPendingCreationsContainer(&op->pending, nodes, edges);
 
 	return (OpBase *)op;
 }
 
-static OpResult MergeCreateInit(OpBase* opBase) {
+static OpResult MergeCreateInit
+(
+	OpBase* opBase
+) {
 	OpMergeCreate *op = (OpMergeCreate *)opBase;
 	op->gc = QueryCtx_GetGraphCtx();
 	return OP_OK;
@@ -114,7 +133,12 @@ static OpResult MergeCreateInit(OpBase* opBase) {
 // prepare all creations associated with the current Record
 // returns false and do not buffer data if every entity to create for this Record
 // has been created in a previous call
-static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
+static bool _CreateEntities
+(
+	OpMergeCreate *op,
+	Record r,
+	GraphContext *gc
+) {
 	XXH_errorcode res = XXH64_reset(op->hash_state, 0); // reset hash state
 	UNUSED(res);
 	ASSERT(res != XXH_ERROR);
@@ -123,11 +147,11 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 	// hash nodes
 	//--------------------------------------------------------------------------
 
-	uint nodes_to_create_count = array_len(op->pending.nodes_to_create);
+	uint nodes_to_create_count = array_len(op->pending.nodes.nodes_to_create);
 
 	for(uint i = 0; i < nodes_to_create_count; i++) {
 		// get specified node to create
-		NodeCreateCtx *n = op->pending.nodes_to_create + i;
+		NodeCreateCtx *n = op->pending.nodes.nodes_to_create + i;
 
 		// convert properties
 		PropertyMap *map = n->properties;
@@ -142,22 +166,22 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 				&converted_attr);
 
 		// save attributes
-		array_append(op->pending.node_attributes, converted_attr);
+		array_append(op->pending.nodes.node_attributes, converted_attr);
 
 		// save labels
-		array_append(op->pending.node_labels, n->labelsId);
+		array_append(op->pending.nodes.node_labels, n->labelsId);
 	}
-
 
 	//--------------------------------------------------------------------------
 	// hash edges
 	//--------------------------------------------------------------------------
 
-	uint edges_to_create_count = array_len(op->pending.edges_to_create);
+	uint edges_to_create_count = array_len(op->pending.edges);
 
 	for(uint i = 0; i < edges_to_create_count; i++) {
+		PendingEdgeCreations *pending_edge = op->pending.edges + i;
 		// get specified edge to create
-		EdgeCreateCtx *e = op->pending.edges_to_create + i;
+		EdgeCreateCtx *e = &pending_edge->edges_to_create;
 
 		// retrieve source and dest nodes
 		Node *src_node = Record_GetNode(r, e->src_idx);
@@ -200,7 +224,7 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 		}
 
 		// save attributes
-		array_append(op->pending.edge_attributes, converted_attr);
+		array_append(pending_edge->edge_attributes, converted_attr);
 	}
 
 	// finalize the hash value for all processed creations
@@ -215,7 +239,7 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 	if(should_create_entities) {
 		// reserve node ids for edges creation
 		for(uint i = 0; i < nodes_to_create_count; i++) {
-			NodeCreateCtx *n = op->pending.nodes_to_create + i;
+			NodeCreateCtx *n = op->pending.nodes.nodes_to_create + i;
 
 			Node newNode = Graph_ReserveNode(gc->g);
 
@@ -223,12 +247,13 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 			Node *node_ref = Record_AddNode(r, n->node_idx, newNode);
 
 			// save node for later insertion
-			array_append(op->pending.created_nodes, node_ref);
+			array_append(op->pending.nodes.created_nodes, node_ref);
 		}
 
 		// updated edges with reserved node ids
 		for(uint i = 0; i < edges_to_create_count; i++) {
-			EdgeCreateCtx *ctx = op->pending.edges_to_create + i;
+			PendingEdgeCreations *pending_edge = op->pending.edges + i;
+			EdgeCreateCtx *ctx = &pending_edge->edges_to_create;
 
 			// retrieve source and dest nodes
 			Node *src_node  = Record_GetNode(r, ctx->src_idx);
@@ -248,7 +273,7 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 			Edge_SetDestNodeID(e, ENTITY_GET_ID(dest_node));
 
 			// save edge for later insertion
-			array_append(op->pending.created_edges, e);
+			array_append(pending_edge->created_edges, e);
 		}
 	} else {
 		_RollbackPendingCreations(op);
@@ -257,70 +282,116 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 	return should_create_entities;
 }
 
-// Return mode, emit a populated Record.
-static Record _handoff(OpMergeCreate *op) {
+// emit a populated Record
+static Record _handoff
+(
+	OpMergeCreate *op
+) {
 	return array_pop(op->records);
 }
 
-static Record MergeCreateConsume(OpBase *opBase) {
+// operation consume method
+// depending on the operation's mode 'handoff_mode'
+// this function will either emit records (handoff_mode == true)
+// or (handoff_mode == false) compute future changes
+static Record MergeCreateConsume
+(
+	OpBase *opBase
+) {
 	OpMergeCreate *op = (OpMergeCreate *)opBase;
 	Record r;
 
-	// Return mode, all data was consumed.
+	// return mode, all data was consumed
 	if(op->handoff_mode) return _handoff(op);
 
-	// Consume mode.
+	// consume mode
 	if(!opBase->childCount) {
-		// No child operation to call.
+		// no child operation to call
 		r = OpBase_CreateRecord(opBase);
 
-		/* Buffer all entity creations.
-		 * If this operation has no children, it should always have unique creations. */
+		// buffer all entity creations
+		// if this operation has no children, it should always have unique creations
 		bool entities_created = _CreateEntities(op, r, op->gc);
 		ASSERT(entities_created == true);
 
-		// Save record for later use.
+		// save record for later use
 		array_append(op->records, r);
+
+		r = NULL; // record scheduled for creation nullify it
 	} else {
-		// Pull record from child.
+		// pull record from child
 		r = OpBase_Consume(opBase->children[0]);
 		if(r) {
-			/* Create entities. */
+			// create entities
 			if(_CreateEntities(op, r, op->gc)) {
-				// Save record for later use.
+				// save record for later use
 				array_append(op->records, r);
-			} else {
-				OpBase_DeleteRecord(&r);
+
+				r = NULL; // record scheduled for creation nullify it
 			}
 		}
 	}
 
-	// MergeCreate returns no data while in creation mode.
-	return NULL;
+	// return NULL if record is scheduled for creation
+	// return the input record in case it represents a duplicate
+	// which will later on be matched
+	return r;
 }
 
-void MergeCreate_Commit(OpBase *opBase) {
+// commit accumulated changes and switch to Record handoff mode
+void MergeCreate_Commit
+(
+	OpBase *opBase
+) {
+	ASSERT(opBase != NULL);
+
 	OpMergeCreate *op = (OpMergeCreate *)opBase;
+
+	// switch to hand-off mode
 	op->handoff_mode = true;
-	/* Done reading, we're not going to call consume any longer
-	 * there might be operations e.g. index scan that need to free
-	 * index R/W lock, as such free all execution plan operation up the chain. */
+
+	// done reading, we're not going to call consume any longer
+	// there might be operations e.g. index scan that need to free
+	// index R/W lock, as such free all execution plan operation up the chain
 	if(opBase->childCount > 0) OpBase_PropagateReset(opBase->children[0]);
-	// Create entities.
-	CommitNewEntities(opBase, &op->pending);
+
+	// create entities
+	CommitNewEntities(&op->pending);
 }
 
-static OpBase *MergeCreateClone(const ExecutionPlan *plan, const OpBase *opBase) {
+// clone operation
+static OpBase *MergeCreateClone
+(
+	const ExecutionPlan *plan,
+	const OpBase *opBase
+) {
+	ASSERT(plan         != NULL);
+	ASSERT(opBase       != NULL);
 	ASSERT(opBase->type == OPType_MERGE_CREATE);
+
 	OpMergeCreate *op = (OpMergeCreate *)opBase;
+
 	NodeCreateCtx *nodes;
-	EdgeCreateCtx *edges;
-	array_clone_with_cb(nodes, op->pending.nodes_to_create, NodeCreateCtx_Clone);
-	array_clone_with_cb(edges, op->pending.edges_to_create, EdgeCreateCtx_Clone);
+	array_clone_with_cb(nodes, op->pending.nodes.nodes_to_create,
+			NodeCreateCtx_Clone);
+
+	EdgeCreateCtx *edges = array_new(EdgeCreateCtx,
+			array_len(op->pending.edges));
+
+	for(uint i = 0; i < array_len(op->pending.edges); i++) {
+		EdgeCreateCtx ctx =
+			EdgeCreateCtx_Clone(op->pending.edges[i].edges_to_create);
+		array_append(edges, ctx);
+	}
+
 	return NewMergeCreateOp(plan, nodes, edges);
 }
 
-static void MergeCreateFree(OpBase *ctx) {
+// free any memory allocated by operation
+static void MergeCreateFree
+(
+	OpBase *ctx
+) {
 	OpMergeCreate *op = (OpMergeCreate *)ctx;
 
 	if(op->records) {
@@ -342,3 +413,4 @@ static void MergeCreateFree(OpBase *ctx) {
 
 	PendingCreationsFree(&op->pending);
 }
+

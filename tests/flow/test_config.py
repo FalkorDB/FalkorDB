@@ -1,8 +1,8 @@
+import os
 from common import *
 
-# Number of options available.
-NUMBER_OF_OPTIONS = 17
 GRAPH_ID = "config"
+NUMBER_OF_CONFIGURATIONS = 19 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -19,8 +19,46 @@ class testConfig(FlowTestsBase):
 
         # Try reading all configurations
         response = self.redis_con.execute_command("GRAPH.CONFIG GET *")
+
         # 16 configurations should be reported
-        self.env.assertEquals(len(response), NUMBER_OF_OPTIONS)
+        self.env.assertEquals(len(response), NUMBER_OF_CONFIGURATIONS)
+
+        # validate default configuration values
+
+        default_config = [
+                ("TIMEOUT", 0),
+                ("TIMEOUT_DEFAULT", 0),
+                ("TIMEOUT_MAX",  0),
+                ("CACHE_SIZE", 25),
+                ("ASYNC_DELETE", [0,1]), # could be either 0 or 1 depending on load time config
+                ("OMP_THREAD_COUNT", os.cpu_count()),
+                ("THREAD_COUNT", os.cpu_count()),
+                ("RESULTSET_SIZE", -1),
+                ("VKEY_MAX_ENTITY_COUNT", 100000),
+                ("MAX_QUEUED_QUERIES", 4294967295),
+                ("QUERY_MEM_CAPACITY", 0),
+                ("DELTA_MAX_PENDING_CHANGES", 10000),
+                ("NODE_CREATION_BUFFER", 16384),
+                ("CMD_INFO", 1),
+                ("MAX_INFO_QUERIES", 1000),
+                ("EFFECTS_THRESHOLD", 300),
+                ("BOLT_PORT", 65535),
+                ("DELAY_INDEXING", 0),
+                ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/")
+        ]
+
+        for i, config in enumerate(response):
+            name  = config[0]
+            value = config[1]
+
+            # validate config name
+            self.env.assertEquals(name, default_config[i][0])
+
+            # validate config value
+            if type(default_config[i][1]) is list:
+                self.env.assertIn(value, default_config[i][1])
+            else:
+                self.env.assertEquals(value, default_config[i][1])
 
     def test02_config_get_invalid_name(self):
         # Ensure that getter fails on invalid parameters appropriately
@@ -211,6 +249,10 @@ class testConfig(FlowTestsBase):
         expected_response = 16384
         self.env.assertEqual(response, expected_response)
 
+        response = self.db.config_get("DELAY_INDEXING")
+        expected_response = 0
+        self.env.assertEqual(response, expected_response)
+
     def test09_set_invalid_values(self):
         # The run-time configurations supported by RedisGraph are:
         # MAX_QUEUED_QUERIES
@@ -283,4 +325,3 @@ class testConfig(FlowTestsBase):
         creation_buffer_size = self.db.config_get("NODE_CREATION_BUFFER")
         expected_response = 1024
         self.env.assertEqual(creation_buffer_size, expected_response)
-

@@ -11,39 +11,64 @@ def graph_eq(A, B):
 
     queries = [
             # labels
-            "CALL db.labels() YIELD label RETURN label ORDER BY label",
+            ('labels', "CALL db.labels() YIELD label RETURN label ORDER BY label"),
             
-            # relationships
-            """CALL db.relationshiptypes() YIELD relationshipType
-               RETURN relationshipType ORDER BY relationshipType""",
+            # relationships-types
+            ('relationships-types', """CALL db.relationshiptypes() YIELD relationshipType
+               RETURN relationshipType ORDER BY relationshipType"""),
             
             # properties
-            """CALL db.propertyKeys() YIELD propertyKey
-               RETURN propertyKey ORDER BY propertyKey""",
+            ('properties', """CALL db.propertyKeys() YIELD propertyKey
+               RETURN propertyKey ORDER BY propertyKey"""),
+
+            # node count stats
+            ('node count stats', "MATCH (n) return count(n)"),
+
+            # node count
+            ('node count', "MATCH (n) WHERE ID(n) = ID(n) return count(n)"),
 
             # nodes
-            "MATCH (n) RETURN n ORDER BY(n)",
+            ('nodes', "MATCH (n) RETURN n ORDER BY(n)"),
 
-            # validate relationships
-            "MATCH ()-[e]->() RETURN e ORDER BY(e)",
+            # relation count stats
+            ('relation count stats', "MATCH ()-[e]->() return count(e)"),
+
+            # relation count
+            ('relation count', "MATCH ()-[e]->() WHERE ID(e) = ID(e) return count(e)"),
+
+            # validate relations
+            ('relations', "MATCH ()-[e]->() RETURN e ORDER BY(e)"),
 
             # indices
-            """CALL db.indexes()
+            ('indices', """CALL db.indexes()
                YIELD label, properties, types, language, stopwords, entitytype
                RETURN label, properties, types, language, stopwords, entitytype
-               ORDER BY label, properties, types, language, stopwords, entitytype""",
+               ORDER BY label, properties, types, language, stopwords, entitytype"""),
 
             # constraints
-            """CALL db.constraints()
+            ('constraints', """CALL db.constraints()
                YIELD type, label, properties, entitytype, status
                RETURN type, label, properties, entitytype, status
-               ORDER BY type, label, properties, entitytype, status"""
+               ORDER BY type, label, properties, entitytype, status""")
             ]
 
-    for q in queries:
-        A_labels = A.ro_query(q).result_set
-        B_labels = B.ro_query(q).result_set
-        if A_labels != B_labels:
+    for category, q in queries:
+        A_res = A.ro_query(q).result_set
+        B_res = B.ro_query(q).result_set
+        if A_res != B_res:
+            print(f"Graphs differ in {category}:")
+            print("A:")
+            for row in A_res:
+               for col in row:
+                print(col, end=' ')
+               print()
+
+            print("B:")
+            for row in B_res:
+               for col in row:
+                print(col, end=' ')
+               print()
+
             return False
 
     return True

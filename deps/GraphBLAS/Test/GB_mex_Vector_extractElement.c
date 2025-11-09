@@ -2,7 +2,7 @@
 // GB_mex_Vector_extractElement: interface for x = v(i)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,7 +30,7 @@ void mexFunction
     bool malloc_debug = GB_mx_get_global (true) ;
     GrB_Vector v = NULL ;
     GB_void *Y = NULL ;
-    GrB_Index *I = NULL, ni = 0, I_range [3] ;
+    uint64_t *I = NULL, ni = 0, I_range [3] ;       // OK
     bool is_list ;
     GrB_Scalar S = NULL ;
 
@@ -52,13 +52,15 @@ void mexFunction
     }
 
     // get I
-    if (!GB_mx_mxArray_to_indices (&I, pargin [1], &ni, I_range, &is_list))
+    if (!GB_mx_mxArray_to_indices (pargin [1], &I, &ni, I_range, &is_list,
+        NULL))
     {
         FREE_ALL ;
         mexErrMsgTxt ("I failed") ;
     }
     if (!is_list)
     {
+        FREE_ALL ;
         mexErrMsgTxt ("I must be a list") ;
     }
 

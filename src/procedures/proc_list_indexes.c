@@ -4,8 +4,8 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "proc_list_indexes.h"
 #include "RG.h"
+#include "proc_list_indexes.h"
 #include "../value.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
@@ -14,13 +14,16 @@
 #include "../datatypes/map.h"
 #include "../datatypes/array.h"
 
+#include <assert.h>
+
 typedef struct {
-	SIValue *out;               // outputs
+	SIValue out[9];             // outputs
 	Index *indices;             // indicies to emit
 	GraphContext *gc;           // graph context
 	SIValue *yield_label;       // yield index label
 	SIValue *yield_types;       // yield index fields types
 	SIValue *yield_fields;      // yield index fields
+	SIValue *yield_options;     // yield index options
 	SIValue *yield_language;    // yield index language
 	SIValue *yield_stopwords;   // yield index stopwords
 	SIValue *yield_entity_type; // yield index entity type
@@ -38,6 +41,7 @@ static void _process_yield
 	ctx->yield_types       = NULL;
 	ctx->yield_fields      = NULL;
 	ctx->yield_status      = NULL;
+	ctx->yield_options     = NULL;
 	ctx->yield_language    = NULL;
 	ctx->yield_stopwords   = NULL;
 	ctx->yield_entity_type = NULL;
@@ -52,6 +56,12 @@ static void _process_yield
 
 		if(strcasecmp("types", yield[i]) == 0) {
 			ctx->yield_types = ctx->out + idx;
+			idx++;
+			continue;
+		}
+
+		if(strcasecmp("options", yield[i]) == 0) {
+			ctx->yield_options = ctx->out + idx;
 			idx++;
 			continue;
 		}
@@ -116,7 +126,6 @@ ProcedureResult Proc_IndexesInvoke
 	IndexesContext *pdata = rm_malloc(sizeof(IndexesContext));
 
 	pdata->gc      = gc;
-	pdata->out     = array_new(SIValue, 8);
 	pdata->indices = array_new(Index, 0);
 
 	//--------------------------------------------------------------------------
@@ -160,6 +169,14 @@ static bool _EmitIndex
 	IndexesContext *ctx,
 	Index idx
 ) {
+	GraphContext *gc = ctx->gc;
+	Graph        *g = GraphContext_GetGraph(gc);
+
+	// get index info
+	RSIdxInfo info = { .version = RS_INFO_CURRENT_VERSION };
+	RSIndex *rsIdx = Index_RSIndex(idx);
+	RediSearch_IndexInfo(rsIdx, &info);
+
 	//--------------------------------------------------------------------------
 	// index entity type
 	//--------------------------------------------------------------------------
@@ -178,9 +195,34 @@ static bool _EmitIndex
 
 	if(ctx->yield_status != NULL) {
 		if(Index_Enabled(idx)) {
+			// index is operational
 			*ctx->yield_status = SI_ConstStringVal("OPERATIONAL");
 		} else {
-			*ctx->yield_status = SI_ConstStringVal("UNDER CONSTRUCTION");
+			// report index construction progress
+			// determine number of entities being indexed
+			size_t n;                               // total number of entities
+			Schema *s;                              // entities schema
+			const char *lbl = Index_GetLabel(idx);  // entities label
+
+			// get total number of entities from the graph
+			if(Index_GraphEntityType(idx) == GETYPE_NODE) {
+				s = GraphContext_GetSchema(gc, lbl, SCHEMA_NODE);
+				n = Graph_LabeledNodeCount(g, Schema_GetID(s));
+			} else {
+				s = GraphContext_GetSchema(gc, lbl, SCHEMA_EDGE);
+				n = Graph_RelationEdgeCount(g, Schema_GetID(s));
+			}
+
+			// report progress
+			int res ;
+			char *status;
+			size_t m = info.numDocuments;
+			res = asprintf(&status, "[Indexing] %zu/%zu: UNDER CONSTRUCTION",
+					m, n);
+			assert (res >= 34) ;
+
+			*ctx->yield_status = SI_DuplicateStringVal(status);
+			free(status);
 		}
 	}
 
@@ -249,6 +291,47 @@ static bool _EmitIndex
 	}
 
 	//--------------------------------------------------------------------------
+	// index fields options
+	//--------------------------------------------------------------------------
+
+	if(ctx->yield_options) {
+		// {field_name, {field_options}
+		// e.g.
+		// {
+		//  'embedding': {'dimension': 100, 'M': 16, 'efConstruction': 200, 'efRuntime': 100}
+		// }
+
+		uint fields_count        = Index_FieldsCount(idx);
+		const IndexField *fields = Index_GetFields(idx);
+		*ctx->yield_options      = SI_Map(fields_count);
+
+		for(uint i = 0; i < fields_count; i++) {
+			const IndexField *field = fields + i;
+			IndexFieldType types = IndexField_GetType(field);
+
+			SIValue prop_types = SI_Map(0);
+
+			if(types & INDEX_FLD_VECTOR) {
+				Map_Add(&prop_types, SI_ConstStringVal("dimension"),
+						SI_LongVal(IndexField_OptionsGetDimension(field)));
+				Map_Add(&prop_types, SI_ConstStringVal("similarityFunction"),
+						SI_ConstStringVal(IndexField_OptionsGetSimFunc(field) == VecSimMetric_L2 ? "euclidean" : "cosine"));
+				Map_Add(&prop_types, SI_ConstStringVal("M"),
+						SI_LongVal(IndexField_OptionsGetM(field)));
+				Map_Add(&prop_types, SI_ConstStringVal("efConstruction"),
+						SI_LongVal(IndexField_OptionsGetEfConstruction(field)));
+				Map_Add(&prop_types, SI_ConstStringVal("efRuntime"),
+						SI_LongVal(IndexField_OptionsGetEfRuntime(field)));
+			}
+
+			Map_Add(ctx->yield_options,
+					SI_ConstStringVal(IndexField_GetName(field)), prop_types);
+
+			SIValue_Free(prop_types);
+		}
+	}
+
+	//--------------------------------------------------------------------------
 	// index language
 	//--------------------------------------------------------------------------
 
@@ -282,11 +365,6 @@ static bool _EmitIndex
 	//--------------------------------------------------------------------------
 
 	if(ctx->yield_info) {
-		RSIdxInfo info = { .version = RS_INFO_CURRENT_VERSION };
-
-		RSIndex *rsIdx = Index_RSIndex(idx);
-
-		RediSearch_IndexInfo(rsIdx, &info);
 		SIValue map = SI_Map(23);
 
 		Map_Add(&map, SI_ConstStringVal("gcPolicy"), SI_LongVal(info.gcPolicy));
@@ -328,9 +406,11 @@ static bool _EmitIndex
 		Map_Add(&map, SI_ConstStringVal("totalMSRun"),       SI_LongVal(info.totalMSRun));
 		Map_Add(&map, SI_ConstStringVal("lastRunTimeMs"),    SI_LongVal(info.lastRunTimeMs));
 
-		RediSearch_IndexInfoFree(&info);
 		*ctx->yield_info = map;
 	}
+
+	// clean up
+	RediSearch_IndexInfoFree(&info);
 
 	return true;
 }
@@ -363,7 +443,6 @@ ProcedureResult Proc_IndexesFree
 	// clean up
 	if(ctx->privateData) {
 		IndexesContext *pdata = ctx->privateData;
-		array_free(pdata->out);
 		array_free(pdata->indices);
 		rm_free(pdata);
 	}
@@ -374,7 +453,7 @@ ProcedureResult Proc_IndexesFree
 ProcedureCtx *Proc_IndexesCtx(void) {
 	void *privateData = NULL;
 	ProcedureOutput output;
-	ProcedureOutput *outputs = array_new(ProcedureOutput, 7);
+	ProcedureOutput *outputs = array_new(ProcedureOutput, 9);
 
 	// indexed label
 	output = (ProcedureOutput) {
@@ -391,6 +470,12 @@ ProcedureCtx *Proc_IndexesCtx(void) {
 	// indexed fields types
 	output = (ProcedureOutput) {
 		.name = "types", .type = T_MAP
+	};
+	array_append(outputs, output);
+
+	// indexed fields options
+	output = (ProcedureOutput) {
+		.name = "options", .type = T_MAP
 	};
 	array_append(outputs, output);
 

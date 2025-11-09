@@ -2,7 +2,7 @@
 // gb_mxarray_to_descriptor: get the contents of a GraphBLAS Descriptor
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,7 +18,7 @@ static void get_descriptor
     GrB_Descriptor desc,            // GraphBLAS descriptor to modify
     const mxArray *desc_builtin,    // built-in struct with d.out, etc
     const char *fieldname,          // fieldname to extract from desc_builtin
-    const GrB_Desc_Field field      // field to set in desc
+    const int field                 // field to set in desc
 )
 {
 
@@ -30,67 +30,56 @@ static void get_descriptor
         // the field is present
         mxArray *value = mxGetFieldByNumber (desc_builtin, 0, fieldnumber) ;
 
-        if (MATCH (fieldname, "nthreads"))
+        // get the string from the built-in field
+        char s [LEN+2] ;
+        gb_mxstring_to_string (s, LEN, value, "field") ;
+
+        // convert the string to a Descriptor value, and set the value
+        if (MATCH (s, "default"))
         { 
-            // ignored
+            OK (GrB_Descriptor_set_INT32 (desc, GxB_DEFAULT, field)) ;
         }
-        else if (MATCH (fieldname, "chunk"))
+        else if (MATCH (s, "transpose"))
         { 
-            // ignored
+            OK (GrB_Descriptor_set_INT32 (desc, GrB_TRAN, field)) ;
+        }
+        else if (MATCH (s, "complement"))
+        { 
+            OK (GrB_Descriptor_set_INT32 (desc, GrB_COMP, field)) ;
+        }
+        else if (MATCH (s, "structure") || MATCH (s, "structural"))
+        { 
+            OK (GrB_Descriptor_set_INT32 (desc, GrB_STRUCTURE, field)) ;
+        }
+        else if (MATCH (s, "structural complement"))
+        { 
+            OK (GrB_Descriptor_set_INT32 (desc, GrB_COMP+GrB_STRUCTURE,
+                field)) ;
+        }
+        else if (MATCH (s, "replace"))
+        { 
+            OK (GrB_Descriptor_set_INT32 (desc, GrB_REPLACE, field)) ;
+        }
+        else if (MATCH (s, "gustavson"))
+        { 
+            OK (GrB_Descriptor_set_INT32 (desc, GxB_AxB_GUSTAVSON, field)) ;
+        }
+        else if (MATCH (s, "dot"))
+        { 
+            OK (GrB_Descriptor_set_INT32 (desc, GxB_AxB_DOT, field)) ;
+        }
+        else if (MATCH (s, "saxpy"))
+        { 
+            OK (GrB_Descriptor_set_INT32 (desc, GxB_AxB_SAXPY, field)) ;
+        }
+        else if (MATCH (s, "hash"))
+        { 
+            OK (GrB_Descriptor_set_INT32 (desc, GxB_AxB_HASH, field)) ;
         }
         else
-        {
-
-            // get the string from the built-in field
-            char s [LEN+2] ;
-            gb_mxstring_to_string (s, LEN, value, "field") ;
-
-            // convert the string to a Descriptor value, and set the value
-            if (MATCH (s, "default"))
-            { 
-                OK (GxB_Desc_set (desc, field, GxB_DEFAULT)) ;
-            }
-            else if (MATCH (s, "transpose"))
-            { 
-                OK (GxB_Desc_set (desc, field, GrB_TRAN)) ;
-            }
-            else if (MATCH (s, "complement"))
-            { 
-                OK (GxB_Desc_set (desc, field, GrB_COMP)) ;
-            }
-            else if (MATCH (s, "structure") || MATCH (s, "structural"))
-            { 
-                OK (GxB_Desc_set (desc, field, GrB_STRUCTURE)) ;
-            }
-            else if (MATCH (s, "structural complement"))
-            { 
-                OK (GxB_Desc_set (desc, field, GrB_COMP+GrB_STRUCTURE)) ;
-            }
-            else if (MATCH (s, "replace"))
-            { 
-                OK (GxB_Desc_set (desc, field, GrB_REPLACE)) ;
-            }
-            else if (MATCH (s, "gustavson"))
-            { 
-                OK (GxB_Desc_set (desc, field, GxB_AxB_GUSTAVSON)) ;
-            }
-            else if (MATCH (s, "dot"))
-            { 
-                OK (GxB_Desc_set (desc, field, GxB_AxB_DOT)) ;
-            }
-            else if (MATCH (s, "saxpy"))
-            { 
-                OK (GxB_Desc_set (desc, field, GxB_AxB_SAXPY)) ;
-            }
-            else if (MATCH (s, "hash"))
-            { 
-                OK (GxB_Desc_set (desc, field, GxB_AxB_HASH)) ;
-            }
-            else
-            { 
-                // the string must be one of the strings listed above
-                ERROR ("unrecognized descriptor value") ;
-            }
+        { 
+            // the string must be one of the strings listed above
+            ERROR ("unrecognized descriptor value") ;
         }
     }
 }
@@ -103,7 +92,7 @@ GrB_Descriptor gb_mxarray_to_descriptor // new descriptor, or NULL if none
 (
     const mxArray *desc_builtin, // built-in struct with possible descriptor
     kind_enum_t *kind,          // GrB, sparse, or full
-    GxB_Format_Value *fmt,      // by row or by col
+    int *fmt,                   // by row or by col
     int *sparsity,              // hypersparse/sparse/bitmap/full
     base_enum_t *base           // 0-based int, 1-based int, or 1-based double
 )
@@ -120,6 +109,7 @@ GrB_Descriptor gb_mxarray_to_descriptor // new descriptor, or NULL if none
     (*sparsity) = 0 ;
 
     if (desc_builtin == NULL || !mxIsStruct (desc_builtin)
+        || (mxGetField (desc_builtin, 0, "GraphBLASv10") != NULL)
         || (mxGetField (desc_builtin, 0, "GraphBLASv7_3") != NULL)
         || (mxGetField (desc_builtin, 0, "GraphBLASv5_1") != NULL)
         || (mxGetField (desc_builtin, 0, "GraphBLASv5") != NULL)
@@ -139,12 +129,12 @@ GrB_Descriptor gb_mxarray_to_descriptor // new descriptor, or NULL if none
     GrB_Descriptor desc ;
     OK (GrB_Descriptor_new (&desc)) ;
 
-    // get each component of the descriptor struct
-    get_descriptor (desc, desc_builtin, "out"     , GrB_OUTP) ;
-    get_descriptor (desc, desc_builtin, "in0"     , GrB_INP0) ;
-    get_descriptor (desc, desc_builtin, "in1"     , GrB_INP1) ;
-    get_descriptor (desc, desc_builtin, "mask"    , GrB_MASK) ;
-    get_descriptor (desc, desc_builtin, "axb"     , GxB_AxB_METHOD) ;
+    // get each component for the GraphBLAS GrB_Descriptor
+    get_descriptor (desc, desc_builtin, "out" , GrB_OUTP) ;
+    get_descriptor (desc, desc_builtin, "in0" , GrB_INP0) ;
+    get_descriptor (desc, desc_builtin, "in1" , GrB_INP1) ;
+    get_descriptor (desc, desc_builtin, "mask", GrB_MASK) ;
+    get_descriptor (desc, desc_builtin, "axb" , GxB_AxB_METHOD) ;
 
     //--------------------------------------------------------------------------
     // get the desired kind of output
@@ -206,34 +196,25 @@ GrB_Descriptor gb_mxarray_to_descriptor // new descriptor, or NULL if none
         gb_mxstring_to_string (s, LEN, mxbase, "base") ;
         if (MATCH (s, "default"))
         { 
-            // The indices are one-based by default.  The type is determined
-            // automatically:  if I and J are outputs, then the type is double
-            // (BASE_1_DOUBLE) unless the indices can exceed flintmax (in which
-            // case BASE_1_INT64 is used)
+            // The indices are one-based integer by default.
             (*base) = BASE_DEFAULT ;
         }
-        else if (MATCH (s, "zero-based"))
+        else if (MATCH (s, "zero-based") || MATCH (s, "zero-based int"))
         { 
-            // zero-based indices are always int64.  This is performance
-            // purposes, internal to GrB methods.  The user may also use this
-            // to speed up GrB.build, GrB.extract, GrB.assign. and
-            // GrB.subassign.
-            (*base) = BASE_0_INT64 ;
+            // zero-based indices are always uint64/uint32.  This is the
+            // fastest option since GraphBLAS uses zero-based indices.
+            (*base) = BASE_0_INT ;
         }
-        else if (MATCH (s, "one-based int"))
+        else if (MATCH (s, "one-based") || MATCH (s, "one-based int"))
         { 
-            // one-based indices, but in int64.  These are important for
-            // indexing into matrices with dimension larger than flintmax.
-            (*base) = BASE_1_INT64 ;
+            // one-based indices, but in uint64/uint32 (the default)
+            (*base) = BASE_1_INT ;
         }
-        else if (MATCH (s, "one-based") || MATCH (s, "one-based double"))
+        else if (MATCH (s, "double") || MATCH (s, "one-based double"))
         { 
-            // for 'one-based', the caller may change this to BASE_1_INT64,
-            // if I and J are inputs to the function are int64.  This is
-            // the typical default.
+            // one-based double indices
             (*base) = BASE_1_DOUBLE ;
         }
-
         else
         { 
             ERROR ("invalid descriptor.base") ;

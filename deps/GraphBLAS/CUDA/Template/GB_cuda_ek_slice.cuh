@@ -1,9 +1,9 @@
 //------------------------------------------------------------------------------
-// GraphBLAS/CUDA/Template/GB_cuda_ek_slice.cuh
+// GraphBLAS/CUDA/template/GB_cuda_ek_slice.cuh
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
-// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// This file: Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -53,19 +53,30 @@
 // Otherwise, the set of k values can be computed in a shared array ks, using
 // the single method GB_cuda_ek_slice.
 
+// FIXME: discuss grid-stride loops, the pdelta loop, and the max chunk size
+// here
+
+// question: why chunks are necessary? why not just do ek_slice_setup across
+// all entries in one go?  answer: the slope method is only useful for a small
+// range of entries; non-uniform entry distributions can distort the usefulness
+// of the slope (will require an exhaustive linear search) for a large range of
+// entries
+
 //------------------------------------------------------------------------------
 // GB_cuda_ek_slice_setup
 //------------------------------------------------------------------------------
 
-static __device__ __inline__ int64_t GB_cuda_ek_slice_setup
+template <typename T> __device__ void GB_cuda_ek_slice_setup
 (
     // inputs, not modified:
-    const int64_t *Ap,          // array of size anvec+1
+    const T *Ap,                // array of size anvec+1
     const int64_t anvec,        // # of vectors in the matrix A
     const int64_t anz,          // # of entries in the sparse/hyper matrix A
     const int64_t pfirst,       // first entry in A to find k
     const int64_t max_pchunk,   // max # of entries in A to find k
     // output:
+    int64_t *kfirst,            // first vector of the slice for this chunk
+    int64_t *klast,             // last vector of the slice for this chunk
     int64_t *my_chunk_size,     // size of the chunk for this threadblock
     int64_t *anvec1,            // anvec-1
     float *slope                // slope of vectors from kfirst to klast
@@ -94,32 +105,43 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice_setup
     // the vector that owns the entry Ai [pfirst] and Ax [pfirst].  The search
     // does not need to be exact, so kfirst is an estimate.
 
-    int64_t kfirst = 0 ;
+    (*kfirst) = 0 ;
     int64_t kright = anvec ;
-    GB_TRIM_BINARY_SEARCH (pfirst, Ap, kfirst, kright) ;
+    if (sizeof (T) == sizeof (uint32_t))
+    {
+        GB_trim_binary_search_32 (pfirst, (const uint32_t *) Ap, kfirst, &kright) ;
+    }
+    else
+    {
+        GB_trim_binary_search_64 (pfirst, (const uint64_t *) Ap, kfirst, &kright) ;
+    }
 
     // find klast, the last vector of the slice for this chunk.  klast is the
     // vector that owns the entry Ai [plast-1] and Ax [plast-1].  The search
     // does not have to be exact, so klast is an estimate.
 
-    int64_t klast = kfirst ;
+    (*klast) = (*kfirst) ;
     kright = anvec ;
-    GB_TRIM_BINARY_SEARCH (plast, Ap, klast, kright) ;
-
+    if (sizeof (T) == sizeof (uint32_t))
+    {
+        GB_trim_binary_search_32 (plast, (const uint32_t *) Ap, klast, &kright) ;
+    }
+    else
+    {
+        GB_trim_binary_search_64 (plast, (const uint64_t *) Ap, klast, &kright) ;
+    }
     //--------------------------------------------------------------------------
     // find slope of vectors in this chunk, and return result
     //--------------------------------------------------------------------------
 
     // number of vectors in A for this chunk, where
     // Ap [kfirst:klast-1] will be searched.
-    int64_t nk = klast - kfirst + 1 ;
+    int64_t nk = (*klast) - (*kfirst) + 1 ;
 
     // slope is the estimated # of vectors in this chunk, divided by the
     // chunk size.
     (*slope) = ((float) nk) / ((float) (*my_chunk_size)) ;
-
     (*anvec1) = anvec - 1 ;
-    return (kfirst) ;
 }
 
 //------------------------------------------------------------------------------
@@ -139,7 +161,7 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice_setup
 // The method returns the index k of the vector in A that contains the pth
 // entry in A, at position p = pfirst + pdelta.
 
-static __device__ __inline__ int64_t GB_cuda_ek_slice_entry
+template <typename T> __device__ int64_t GB_cuda_ek_slice_entry
 (
     // output:
     int64_t *p_handle,          // p = pfirst + pdelta
@@ -147,7 +169,7 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice_entry
     const int64_t pdelta,       // find the k value of the pfirst+pdelta entry
     const int64_t pfirst,       // first entry in A to find k (for which
                                 // pdelta=0)
-    const int64_t *Ap,          // array of size anvec+1
+    const T *Ap,                // array of size anvec+1
     const int64_t anvec1,       // anvec-1
     const int64_t kfirst,       // estimate of first vector in the chunk
     const float slope           // estimate # vectors in chunk / my_chunk_size
@@ -190,10 +212,10 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice_entry
 // CPU.  The latter is for OpenMP parallelism on the CPU only; it does not
 // need to compute ks.
 
-static __device__ __inline__ int64_t GB_cuda_ek_slice // returns my_chunk_size
+template <typename T>__device__ int64_t GB_cuda_ek_slice // returns my_chunk_size
 (
     // inputs, not modified:
-    const int64_t *Ap,          // array of size anvec+1
+    const T *Ap,                // array of size anvec+1
     const int64_t anvec,        // # of vectors in the matrix A
     const int64_t anz,          // # of entries in the sparse/hyper matrix A
     const int64_t pfirst,       // first entry in A to find k
@@ -207,10 +229,10 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice // returns my_chunk_size
     // determine the chunk for this threadblock and its slope
     //--------------------------------------------------------------------------
 
-    int64_t my_chunk_size, anvec1 ;
+    int64_t my_chunk_size, anvec1, kfirst, klast ;
     float slope ;
-    int64_t kfirst = GB_cuda_ek_slice_setup (Ap, anvec, anz, pfirst,
-        max_pchunk, &my_chunk_size, &anvec1, &slope) ;
+    GB_cuda_ek_slice_setup<T> (Ap, anvec, anz, pfirst, max_pchunk,
+        &kfirst, &klast, &my_chunk_size, &anvec1, &slope) ;
 
     //--------------------------------------------------------------------------
     // find the kth vector that contains each entry p = pfirst:plast-1
@@ -226,7 +248,7 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice // returns my_chunk_size
         //----------------------------------------------------------------------
 
         int64_t p ;     // unused, p = pfirst + pdelta
-        int64_t k = GB_cuda_ek_slice_entry (&p, pdelta, pfirst, Ap, anvec1,
+        int64_t k = GB_cuda_ek_slice_entry<T> (&p, pdelta, pfirst, Ap, anvec1,
             kfirst, slope) ;
 
         //----------------------------------------------------------------------

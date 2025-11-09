@@ -1,7 +1,7 @@
 function test236
 %TEST236 test GxB_Matrix_sort and GxB_Vector_sort
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 [~, ~, ~, types, ~, ~] = GB_spec_opsall ;
@@ -48,6 +48,29 @@ for k = 1:length (types)
             [C2,P2] = GB_spec_Matrix_sort (lt, A, [ ]) ;
             GB_spec_compare (P1, P2) ;
 
+            P1 = GB_mex_Matrix_sort  (lt, A, [ ], 1, 'int32') ;
+            assert (isequal (P1.class, 'int32')) ;
+            P1.class = 'int64' ;
+            GB_spec_compare (P1, P2) ;
+
+            P1 = GB_mex_Matrix_sort  (lt, A, [ ], 1, 'uint32') ;
+            assert (isequal (P1.class, 'uint32')) ;
+            P1.class = 'int64' ;
+            GB_spec_compare (P1, P2) ;
+
+            try
+                P1 = GB_mex_Matrix_sort  (lt, A, [ ], 1, 'double') ;
+                ok = 0 ;
+            catch me
+                ok = 1 ;
+            end
+            assert (ok) ;
+
+            P1 = GB_mex_Matrix_sort  (lt, A, [ ], 1, 'uint64') ;
+            assert (isequal (P1.class, 'uint64')) ;
+            P1.class = 'int64' ;
+            GB_spec_compare (P1, P2) ;
+
             C1 = GB_mex_Matrix_sort  (gt, A) ;
             C2 = GB_spec_Matrix_sort (gt, A, [ ]) ;
             GB_spec_compare (C1, C2) ;
@@ -66,6 +89,11 @@ for k = 1:length (types)
             GB_spec_compare (C1, C2) ;
 
             [C1,P1] = GB_mex_Matrix_sort  (lt, A, desc) ;
+            [C2,P2] = GB_spec_Matrix_sort (lt, A, desc) ;
+            GB_spec_compare (C1, C2) ;
+            GB_spec_compare (P1, P2) ;
+
+            [C1,P1] = GB_mex_Matrix_sort  (lt, A, desc, -1) ;
             [C2,P2] = GB_spec_Matrix_sort (lt, A, desc) ;
             GB_spec_compare (C1, C2) ;
             GB_spec_compare (P1, P2) ;
@@ -146,19 +174,38 @@ GB_spec_compare (C1, C2) ;
 fprintf (' typecast') ;
 lt.optype = 'single' ;
 gt.optype = 'single' ;
-A = GB_spec_random (m, n, 0.3, 100, 'double', is_csc) ;
+is_csc = 1 ;
 
-fprintf ('.') ;
-[C1,P1] = GB_mex_Matrix_sort  (lt, A) ;
-[C2,P2] = GB_spec_Matrix_sort (lt, A, [ ]) ;
-GB_spec_compare (C1, C2) ;
-GB_spec_compare (P1, P2) ;
+    A = GB_spec_random (m, n, 0.3, 100, 'double', is_csc) ;
 
-fprintf ('.') ;
-[C1,P1] = GB_mex_Matrix_sort  (gt, A) ;
-[C2,P2] = GB_spec_Matrix_sort (gt, A, [ ]) ;
-GB_spec_compare (C1, C2) ;
-GB_spec_compare (P1, P2) ;
+    fprintf ('.') ;
+    [C1,P1] = GB_mex_Matrix_sort  (lt, A) ;
+    [C2,P2] = GB_spec_Matrix_sort (lt, A, [ ]) ;
+    GB_spec_compare (C1, C2) ;
+    GB_spec_compare (P1, P2) ;
+
+    fprintf ('.') ;
+    [C1,P1] = GB_mex_Matrix_sort  (gt, A) ;
+    [C2,P2] = GB_spec_Matrix_sort (gt, A, [ ]) ;
+    GB_spec_compare (C1, C2) ;
+    GB_spec_compare (P1, P2) ;
+
+% with typecasing, to bool 
+lt.optype = 'bool' ;
+
+    A.matrix = double (A.matrix > 0) ;
+    A.pattern = logical (spones (A.matrix)) ;
+
+    fprintf ('.') ;
+    [C1,P1] = GB_mex_Matrix_sort  (lt, A) ;
+    [C2,P2] = GB_spec_Matrix_sort (lt, A, [ ]) ;
+    GB_spec_compare (C1, C2) ;
+    GB_spec_compare (P1, P2) ;
+
+lt.opname = 'lt' ;
+gt.opname = 'gt' ;
+lt.optype = 'double' ;
+gt.optype = 'double' ;
 
 % matrix with large vectors
 fprintf (' large') ;
@@ -166,7 +213,6 @@ m = 100000 ;
 n = 2 ;
 A = sparse (rand (m, n)) ;
 A (:,2) = sprand (m, 1, 0.02) ;
-lt.optype = 'double' ;
 
 fprintf ('.') ;
 [C1,P1] = GB_mex_Matrix_sort  (lt, A, desc) ;

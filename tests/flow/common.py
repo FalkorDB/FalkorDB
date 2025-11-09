@@ -15,8 +15,8 @@ Defaults.decode_responses = True
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../deps/readies"))
 import paella
 
-SANITIZER     = os.getenv('SANITIZER', '')
-VALGRIND      = os.getenv('VALGRIND', '0') == '1'
+VALGRIND      = os.getenv('VALGRIND', '0')      == '1'
+SANITIZER     = os.getenv('SANITIZER', '')      != ''
 CODE_COVERAGE = os.getenv('CODE_COVERAGE', '0') == '1'
 
 OS     = paella.Platform().os

@@ -2,7 +2,7 @@
 // GB_mex_test9: still more basic tests (not for Windows)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,7 +11,7 @@
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
-#include "GB_stringify.h"
+#include "../Source/jitifyer/GB_stringify.h"
 
 #define USAGE "GB_mex_test9"
 #define FREE_ALL ;
@@ -26,25 +26,24 @@ bigtype ;
 
  void f1 (void *z, const void *x) ;
  void f2 (void *z, const void *x, const void *y) ;
- void i1 (void *z, const void *x, GrB_Index i, GrB_Index j, const void *thunk) ;
+ void i1 (void *z, const void *x, uint64_t i, uint64_t j, const void *thunk) ;
 
-#define F1                                                              \
-"void f1 (void *z, const void *x) "                                     \
+#define F1_DEFN                                     \
+"void f1 (void *z, const void *x) "                 \
 "{ (*((double *)z)) = 2*(*(double *)x) ; } "
  void f1 (void *z, const void *x)
  { (*((double *)z)) = 2*(*(double *)x) ; }
 
-#define F2                                                              \
-"void f2 (void *z, const void *x, const void *y) "                      \
+#define F2_DEFN                                     \
+"void f2 (void *z, const void *x, const void *y) "  \
 "{ (*((double *)z)) = 2*(*(double *)x) + 1 ; }   "
  void f2 (void *z, const void *x, const void *y)
  { (*((double *)z)) = 2*(*(double *)x) + 1 ; }
 
-#define I1                                                          \
-"void i1 (void *z, const void *x, GrB_Index i, GrB_Index j, "       \
-" const void *thunk) "                                              \
+#define I1_DEFN                                                                \
+"void i1 (void *z, const void *x, uint64_t i, uint64_t j, const void *thunk) " \
 "{ (*((bool *)z)) = (i == j) ; }"
- void i1 (void *z, const void *x, GrB_Index i, GrB_Index j, const void *thunk)
+ void i1 (void *z, const void *x, uint64_t i, uint64_t j, const void *thunk)
  { (*((bool *)z)) = (i == j) ; }
 
 #define GET_DEEP_COPY ;
@@ -83,19 +82,19 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     GrB_UnaryOp op1 = NULL ;
-    METHOD (GxB_UnaryOp_new (&op1, &f1, GrB_FP64, GrB_FP64, "f1", F1)) ;
+    METHOD (GxB_UnaryOp_new (&op1, &f1, GrB_FP64, GrB_FP64, "f1", F1_DEFN)) ;
     OK (GxB_UnaryOp_fprint (op1, "f1", GxB_COMPLETE, stdout)) ;
     OK (GrB_UnaryOp_free (&op1)) ;
 
     GrB_BinaryOp op2 = NULL ;
     METHOD (GxB_BinaryOp_new (&op2, &f2, GrB_FP64, GrB_FP64, GrB_FP64,
-        "f2", F2)) ;
+        "f2", F2_DEFN)) ;
     OK (GxB_BinaryOp_fprint (op2, "f2", GxB_COMPLETE, stdout)) ;
     OK (GrB_BinaryOp_free (&op2)) ;
 
     GrB_IndexUnaryOp opi = NULL ;
     METHOD (GxB_IndexUnaryOp_new (&opi, &i1, GrB_FP64, GrB_FP64, GrB_FP64,
-        "i1", I1)) ;
+        "i1", I1_DEFN)) ;
     OK (GxB_IndexUnaryOp_fprint (opi, "i1", GxB_COMPLETE, stdout)) ;
     OK (GrB_IndexUnaryOp_free (&opi)) ;
 
@@ -133,30 +132,33 @@ void mexFunction
 
     // Using GB_boolean_rename results in these cases not being tested.
     int ecode = -1 ;
-    GB_enumify_binop (&ecode, GB_MIN_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_MIN_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 18) ;
-    GB_enumify_binop (&ecode, GB_MAX_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_MAX_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 17) ;
-    GB_enumify_binop (&ecode, GB_TIMES_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_TIMES_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 18) ;
-    GB_enumify_binop (&ecode, GB_PLUS_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_PLUS_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 17) ;
-    GB_enumify_binop (&ecode, GB_NE_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_NE_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 16) ;
-    GB_enumify_binop (&ecode, GB_ISEQ_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_ISEQ_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 15) ;
-    GB_enumify_binop (&ecode, GB_ISNE_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_ISNE_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 16) ;
-    GB_enumify_binop (&ecode, GB_DIV_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_DIV_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 1) ;
-    GB_enumify_binop (&ecode, GB_RDIV_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_RDIV_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 2) ;
-    GB_enumify_binop (&ecode, GB_RMINUS_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_RMINUS_binop_code, GB_BOOL_code, false, false);
     CHECK (ecode == 16) ;
-    GB_enumify_binop (&ecode, GB_POW_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_POW_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 71) ;
-    GB_enumify_binop (&ecode, GB_MINUS_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_MINUS_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 16) ;
+
+    GB_enumify_binop (&ecode, GB_NOP_code, GB_BOOL_code, false, false) ;
+    CHECK (ecode == 255) ;
 
     GB_enumify_identity (&ecode, GB_MIN_binop_code, GB_BOOL_code) ;
     CHECK (ecode == 2) ;
@@ -173,7 +175,7 @@ void mexFunction
     CHECK (ecode == 2) ;
 
     FILE *fp = fopen ("/tmp/GB_tcov_gunk.h", "w") ;
-    GB_macrofy_binop (fp, "nothing", false, false, false,
+    GB_macrofy_binop (fp, "nothing", false, false, false, false, false,
         199, false, NULL, NULL, NULL, NULL) ;
     fclose (fp) ;
 

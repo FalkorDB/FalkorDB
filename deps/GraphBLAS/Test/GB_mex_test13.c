@@ -2,15 +2,13 @@
 // GB_mex_test13: more JIT tests
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
-
-#define USAGE "GB_mex_test13"
 
 #define FREE_ALL ;
 #define GET_DEEP_COPY ;
@@ -68,7 +66,7 @@ void mexFunction
     {
         unsetenv ("GRAPHBLAS_CACHE_PATH") ;
     }
-    system ("rm -rf /tmp/grbcache13") ;
+    int ignore = system ("rm -rf /tmp/grbcache13") ;
     cache_env = getenv ("GRAPHBLAS_CACHE_PATH") ;
     CHECK (cache_env == NULL) ;
 

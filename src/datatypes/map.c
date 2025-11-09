@@ -7,6 +7,7 @@
 #include "map.h"
 #include "array.h"
 #include "../util/arr.h"
+#include "errors/errors.h"
 #include "../util/rmalloc.h"
 #include "../util/strutil.h"
 
@@ -26,9 +27,10 @@ static inline Pair Pair_New
 	SIValue val
 ) {
 	ASSERT(SI_TYPE(key) & T_STRING);
-	return (Pair) {
-		.key = SI_CloneValue(key), .val = SI_CloneValue(val)
-	};
+	ASSERT(SI_ALLOCATION(&key) != M_VOLATILE);
+	ASSERT(SI_ALLOCATION(&val) != M_VOLATILE);
+
+	return (Pair) { .key = key, .val = val };
 }
 
 static void Pair_Free
@@ -47,7 +49,7 @@ static int Map_KeyIdx
 	ASSERT(SI_TYPE(map) & T_MAP);
 	ASSERT(SI_TYPE(key) & T_STRING);
 
-	Map m = map.map;
+	Map  m = map.map;
 	uint n = array_len(m);
 
 	// search for key in map
@@ -62,15 +64,61 @@ static int Map_KeyIdx
 	return -1;
 }
 
+static int Map_KeyIdxCaseInsensitive
+(
+	SIValue map,
+	SIValue key
+) {
+	ASSERT(SI_TYPE(map) & T_MAP);
+	ASSERT(SI_TYPE(key) & T_STRING);
+
+	Map  m = map.map;
+	uint n = array_len(m);
+
+	// search for key in map
+	for(uint i = 0; i < n; i++) {
+		Pair pair = m[i];
+		if(strcasecmp(pair.key.stringval, key.stringval) == 0) {
+			return i;
+		}
+	}
+
+	// key not in map
+	return -1;
+}
+
 // create a new map
 SIValue Map_New
 (
 	uint capacity
 ) {
 	SIValue map;
-	map.map = array_new(Pair, capacity);
-	map.type = T_MAP;
+
+	map.map        = array_new(Pair, capacity);
+	map.type       = T_MAP;
 	map.allocation = M_SELF;
+
+	return map;
+}
+
+// create a map from keys and values arrays
+// keys and values are both of length n
+SIValue Map_FromArrays
+(
+	const SIValue *keys,    // keys
+	const SIValue *values,  // values
+	uint n                  // arrays length
+) {
+	ASSERT(keys   != NULL);
+	ASSERT(values != NULL);
+
+	SIValue map = Map_New(n);
+
+	for(uint i = 0; i < n; i++) {
+		array_append(map.map, Pair_New(SI_CloneValue(keys[i]),
+					SI_CloneValue(values[i])));
+	}
+
 	return map;
 }
 
@@ -82,7 +130,7 @@ SIValue Map_Clone
 	ASSERT(SI_TYPE(map) & T_MAP);
 
 	uint key_count = Map_KeyCount(map);
-	SIValue clone = Map_New(key_count);
+	SIValue clone  = Map_New(key_count);
 
 	for(uint i = 0; i < key_count; i++) {
 		Pair p = map.map[i];
@@ -100,7 +148,28 @@ void Map_Add
 	SIValue value
 ) {
 	ASSERT(SI_TYPE(*map) & T_MAP);
-	ASSERT(SI_TYPE(key) & T_STRING);
+	ASSERT(SI_TYPE(key)  & T_STRING);
+
+	// remove key if already existed
+	Map_Remove(*map, key);
+
+	// create a new pair
+	Pair pair = Pair_New(SI_CloneValue(key), SI_CloneValue(value));
+
+	// add pair to the end of map
+	array_append(map->map, pair);
+}
+
+// adds key/value to map
+// both key and value aren't cloned
+void Map_AddNoClone
+(
+	SIValue *map,  // map to add element to
+	SIValue key,   // key under which value is added
+	SIValue value  // value to add under key
+) {
+	ASSERT(SI_TYPE(*map) & T_MAP);
+	ASSERT(SI_TYPE(key)  & T_STRING);
 
 	// remove key if already existed
 	Map_Remove(*map, key);
@@ -152,18 +221,43 @@ void Map_Clear
 }
 
 // retrieves value under key, map[key]
-// sets 'value' to NULL if key isn't in map
+// return true and set 'value' if key is in map
+// otherwise return false
 bool Map_Get
 (
-	SIValue map,
-	SIValue key,
-	SIValue *value
+	SIValue map,    // map to get value from
+	SIValue key,    // key to lookup value
+	SIValue *value  // [output] value to retrieve
 ) {
 	ASSERT(SI_TYPE(map) & T_MAP);
 	ASSERT(SI_TYPE(key) & T_STRING);
 	ASSERT(value != NULL);
 
 	int idx = Map_KeyIdx(map, key);
+
+	// key isn't in map, set 'value' to NULL and return
+	if(idx == -1) {
+		*value = SI_NullVal();
+		return false;
+	} else {
+		*value = SI_ShareValue(map.map[idx].val);
+		return true;
+	}
+}
+
+// retrieves value under lower(key), map[lower(key)]
+// sets 'value' to NULL if key isn't in map
+bool Map_GetCaseInsensitive
+(
+	SIValue map,    // map
+	SIValue key,    // key to access
+	SIValue *value  // [output] map[lower(key)]
+) {
+	ASSERT(SI_TYPE(map) & T_MAP);
+	ASSERT(SI_TYPE(key) & T_STRING);
+	ASSERT(value != NULL);
+
+	int idx = Map_KeyIdxCaseInsensitive(map, key);
 
 	// key isn't in map, set 'value' to NULL and return
 	if(idx == -1) {
@@ -182,14 +276,14 @@ void Map_GetIdx
 	SIValue *key,
 	SIValue *value
 ) {
+	ASSERT(key   != NULL);
+	ASSERT(value != NULL);
 	ASSERT(SI_TYPE(map) & T_MAP);
 	ASSERT(idx < Map_KeyCount(map));
-	ASSERT(key != NULL);
-	ASSERT(value != NULL);
 
 	Pair p = map.map[idx];
 
-	*key = SI_ShareValue(p.key);
+	*key   = SI_ShareValue(p.key);
 	*value = SI_ShareValue(p.val);
 }
 
@@ -276,6 +370,33 @@ int Map_Compare
 
 	// maps are equal
 	return 0;
+}
+
+// merge two maps
+// in case of key collision, the value from 'b' is used
+SIValue Map_Merge
+(
+	const SIValue a,
+	const SIValue b
+) {
+	// in case both operands aren't maps
+	if(! (SI_TYPE(a) & T_MAP && SI_TYPE(b) & T_MAP)) {
+		// raise an error
+		ErrorCtx_RaiseRuntimeException(EMSG_MERGE_MAP_ERROR);
+		return SI_NullVal();
+	}
+
+	SIValue result = Map_Clone(a);
+
+	// merge b into result
+	uint bLen = Map_KeyCount(b);
+	for(uint i = 0; i < bLen; i++) {
+		SIValue key, value;
+		Map_GetIdx(b, i, &key, &value);
+		Map_Add(&result, key, value);
+	}
+
+	return result;
 }
 
 // this method referenced by Java ArrayList.hashCode() method, which takes

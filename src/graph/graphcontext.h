@@ -16,8 +16,10 @@
 #include "../serializers/encode_context.h"
 #include "../serializers/decode_context.h"
 
+#include <stdatomic.h>
+
 // GraphContext holds refrences to various elements of a graph object
-// It is the value sitting behind a Redis graph key
+// it is the value sitting behind a Redis graph key
 //
 // the graph context is versioned, the version value itself is meaningless
 // it is used as a "signature" for the graph schema: (labels, relationship-types
@@ -43,6 +45,9 @@ typedef struct {
 	Cache *cache;                          // global cache of execution plans
 	XXH32_hash_t version;                  // graph version
 	RedisModuleString *telemetry_stream;   // telemetry stream name
+	
+	atomic_bool write_in_progress;         // write query in progess
+	CircularBuffer pending_write_queue;    // pending write queries queue
 } GraphContext;
 
 //------------------------------------------------------------------------------
@@ -77,6 +82,13 @@ GraphContext *GraphContext_Retrieve
 	bool shouldCreate
 );
 
+// decrease graph context reference count
+// graph context will be free once reference count reaches 0
+void GraphContext_Release
+(
+	GraphContext *gc // graph context to release
+);
+
 // mark graph key as "dirty" for Redis to pick up on
 void GraphContext_MarkWriter
 (
@@ -94,6 +106,45 @@ void GraphContext_UnlockCommit
 (
 	RedisModuleCtx *ctx,
 	GraphContext *gc
+);
+
+// attempt to acquire exclusive write access to the given graph
+// returns true if the calling thread successfully acquired write ownership
+// returns false if another write is already in progress
+bool GraphContext_TryEnterWrite
+(
+	GraphContext *gc  // graph context
+);
+
+// release exclusive write access to the graph
+// this should be called by a thread that previously acquired write ownership
+// via GraphContext_TryEnterWrite, it clears the write-in-progress flag
+void GraphContext_ExitWrite
+(
+	GraphContext *gc  // graph context
+);
+
+// enqueue a write query for deferred execution on the specified graph
+// returns true if the query was successfully enqueued
+// false if the enqueue operation failed (e.g., due to allocation failure)
+bool GraphContext_EnqueueWriteQuery
+(
+	GraphContext *gc,  // graph context
+	void *query_ctx    // query context
+);
+
+// dequeue the next pending write query for the specified graph
+// returns a query context pointer if a query was dequeued,
+// or NULL if the pending write queue is empty
+void *GraphContext_DequeueWriteQuery
+(
+	GraphContext *gc  // graph context
+);
+
+// checks if the graph's pending write queue is empty
+bool GraphContext_WriteQueueEmpty
+(
+	const GraphContext *gc  // graph context
 );
 
 // get graph name out of graph context
@@ -184,27 +235,27 @@ void GraphContext_RemoveSchema
 	SchemaType t
 );
 
-// retrieve the label string for a given Node object
+// returns the label string for a given Node object
 const char *GraphContext_GetNodeLabel
 (
 	const GraphContext *gc,
 	Node *n
 );
 
-// retrieve the relation type string for a given edge object
+// returns the relation type string for a given edge object
 const char *GraphContext_GetEdgeRelationType
 (
 	const GraphContext *gc,
 	Edge *e
 );
 
-// retrieve number of unique attribute keys
+// returns number of unique attribute keys
 uint GraphContext_AttributeCount
 (
 	GraphContext *gc
 );
 
-// retrieve an attribute ID given a string, creating one if not found
+// returns an attribute ID given a string, creating one if not found
 AttributeID GraphContext_FindOrAddAttribute
 (
 	GraphContext *gc,
@@ -212,15 +263,15 @@ AttributeID GraphContext_FindOrAddAttribute
 	bool* created
 );
 
-// retrieve an attribute string given an ID
+// returns an attribute string given an ID
 const char *GraphContext_GetAttributeString
 (
 	GraphContext *gc,
 	AttributeID id
 );
 
-// retrieve an attribute ID given a string
-// or ATTRIBUTE_NOTFOUND if attribute doesn't exist
+// returns an attribute ID given a string
+// or ATTRIBUTE_ID_NONE if attribute doesn't exist
 AttributeID GraphContext_GetAttributeID
 (
 	GraphContext *gc,

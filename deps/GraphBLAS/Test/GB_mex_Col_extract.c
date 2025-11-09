@@ -2,20 +2,21 @@
 // GB_mex_Col_extract: interface for w<mask> = accum (w,A(I,j))
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "GB_mex.h"
 
-#define USAGE "w = GB_mex_Col_extract (w, mask, accum, A, I, j, desc)"
+#define USAGE "w = GB_mex_Col_extract (w, mask, accum, A, I, j, desc, method)"
 
 #define FREE_ALL                        \
 {                                       \
     GrB_Vector_free_(&w) ;              \
     GrB_Vector_free_(&mask) ;           \
     GrB_Matrix_free_(&A) ;              \
+    GrB_Matrix_free_(&I_vector) ;       \
     GrB_Descriptor_free_(&desc) ;       \
     GB_mx_put_global (true) ;           \
 }
@@ -30,16 +31,15 @@ void mexFunction
 {
 
     bool malloc_debug = GB_mx_get_global (true) ;
-    GrB_Vector w = NULL ;
-    GrB_Vector mask = NULL ;
+    GrB_Vector w = NULL, mask = NULL, I_vector = NULL ;
     GrB_Matrix A = NULL ;
     GrB_Descriptor desc = NULL ;
-    GrB_Index *I = NULL, ni = 0, I_range [3] ;
-    GrB_Index *J = NULL, nj = 0, J_range [3] ;
+    uint64_t *I = NULL, ni = 0, I_range [3] ;
+    uint64_t *J = NULL, nj = 0, J_range [3] ;
     bool ignore ;
 
     // check inputs
-    if (nargout > 1 || nargin < 6 || nargin > 7)
+    if (nargout > 1 || nargin < 6 || nargin > 8)
     {
         mexErrMsgTxt ("Usage: " USAGE) ;
     }
@@ -82,27 +82,38 @@ void mexFunction
         mexErrMsgTxt ("accum failed") ;
     }
 
-    // get I
-    if (!GB_mx_mxArray_to_indices (&I, pargin [4], &ni, I_range, &ignore))
+    // get the method:  0: use (uint64_t *), 1: use GrB_Vector for I
+    int GET_SCALAR (7, int, method, 0) ;
+
+    if (method == 0)
     {
-        FREE_ALL ;
-        mexErrMsgTxt ("I failed") ;
+        // get I
+        if (!GB_mx_mxArray_to_indices (pargin [4], &I, &ni, I_range, &ignore,
+            NULL))
+        {
+            FREE_ALL ;
+            mexErrMsgTxt ("I failed") ;
+        }
+    }
+    else
+    {
+        // get I_vector
+        I_vector = GB_mx_mxArray_to_Vector (pargin [4], "I", false, false) ;
     }
 
     // get J
-    if (!GB_mx_mxArray_to_indices (&J, pargin [5], &nj, J_range, &ignore))
+    if (!GB_mx_mxArray_to_indices (pargin [5], &J, &nj, J_range, &ignore,
+        NULL))
     {
         FREE_ALL ;
         mexErrMsgTxt ("J failed") ;
     }
-
     if (nj != 1)
     {
         FREE_ALL ;
         mexErrMsgTxt ("j must be a scalar") ;
     }
-
-    GrB_Index j = J [0] ;
+    uint64_t j = J [0] ;
 
     // get desc
     if (!GB_mx_mxArray_to_Descriptor (&desc, PARGIN (6), "desc"))
@@ -112,7 +123,14 @@ void mexFunction
     }
 
     // w<mask> = accum (w,A(I,j))
-    METHOD (GrB_Col_extract_(w, mask, accum, A, I, ni, j, desc)) ;
+    if (method == 0)
+    {
+        METHOD (GrB_Col_extract_(w, mask, accum, A, I, ni, j, desc)) ;
+    }
+    else
+    {
+        METHOD (GxB_Col_extract_Vector_(w, mask, accum, A, I_vector, j, desc)) ;
+    }
 
     // return w as a struct and free the GraphBLAS C
     pargout [0] = GB_mx_Vector_to_mxArray (&w, "w output", true) ;

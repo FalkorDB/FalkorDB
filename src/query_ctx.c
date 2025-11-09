@@ -7,6 +7,7 @@
 #include "query_ctx.h"
 #include "RG.h"
 #include "errors.h"
+#include "globals.h"
 #include "util/simple_timer.h"
 #include "arithmetic/arithmetic_expression.h"
 #include "serializers/graphcontext_type.h"
@@ -218,7 +219,7 @@ void QueryCtx_SetResultSet
 // set the parameters map
 void QueryCtx_SetParams
 (
-	rax *params
+	dict *params
 ) {
 	ASSERT(params != NULL);
 
@@ -234,7 +235,7 @@ AST *QueryCtx_GetAST(void) {
 }
 
 // retrieve the query parameters values map
-rax *QueryCtx_GetParams(void) {
+dict *QueryCtx_GetParams(void) {
 	QueryCtx *ctx = _QueryCtx_GetCtx();
 	ASSERT(ctx != NULL);
 	return ctx->query_data.params;
@@ -328,8 +329,21 @@ static void _QueryCtx_ThreadSafeContextLock
 (
 	QueryCtx *ctx
 ) {
+	// acquire GIL if we're running with a blocked client
+	// implicates we're running on a worker thread and not on Redis main thread
 	if(ctx->global_exec_ctx.bc) {
 		RedisModule_ThreadSafeContextLock(ctx->global_exec_ctx.redis_ctx);
+	} else {
+		// no blocked client, most likely we're running on Redis main thread
+		// ASSERT(pthread_equal(Globals_Get_MainThreadId(), pthread_self()) != 0);
+
+		// it likely we're here because of an execution of a write query
+		// e.g. loading from AOF
+		// to alow Redis to reply to PING requests we should yield execution
+		// giving Redis the opportunity to process commands
+		// see RedisModule_Yield docs
+		RedisModule_Yield(ctx->global_exec_ctx.redis_ctx,
+				REDISMODULE_YIELD_FLAG_CLIENTS, NULL);
 	}
 }
 
@@ -469,7 +483,7 @@ void QueryCtx_Free(void) {
 	EffectsBuffer_Free(ctx->effects_buffer);
 
 	if(ctx->query_data.params != NULL) {
-		raxFreeWithCallback(ctx->query_data.params, _ParameterFreeCallback);
+		HashTableRelease(ctx->query_data.params);
 		ctx->query_data.params = NULL;
 	}
 

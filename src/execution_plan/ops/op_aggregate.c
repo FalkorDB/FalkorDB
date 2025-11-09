@@ -5,7 +5,6 @@
  */
 
 #include "RG.h"
-#include "op_sort.h"
 #include "op_aggregate.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
@@ -36,7 +35,7 @@ static void freeCallback
 }
 
 // hashtable callbacks
-static dictType _dt = { _id_hash, NULL, NULL, NULL, NULL, freeCallback, NULL,
+static dictType _dt = {_id_hash, NULL, NULL, NULL, NULL, freeCallback, NULL,
 	NULL, NULL, NULL};
 
 // migrate each expression projected by this operation to either
@@ -224,11 +223,9 @@ OpBase *NewAggregateOp
 	const ExecutionPlan *plan,
 	AR_ExpNode **exps
 ) {
-	OpAggregate *op = rm_malloc(sizeof(OpAggregate));
+	OpAggregate *op = rm_calloc (1, sizeof(OpAggregate)) ;
 
-	op->groups               = HashTableCreate(&_dt);
-	op->group_iter           = NULL;
-	op->r 				     = NULL;
+	op->groups = HashTableCreate (&_dt) ;
 
 	OpBase_Init((OpBase *)op, OPType_AGGREGATE, "Aggregate", NULL,
 			AggregateConsume, AggregateReset, NULL, AggregateClone,
@@ -435,3 +432,4 @@ static void AggregateFree
 		OpBase_DeleteRecord(&op->r);
 	}
 }
+

@@ -2,8 +2,8 @@
 // GraphBLAS/CUDA/GB_cuda.hpp: include file for host CUDA methods (not for JIT)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
-// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// This file: Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,23 +11,14 @@
 #ifndef GB_CUDA_HPP
 #define GB_CUDA_HPP
 
-extern "C"
-{ 
-    #include "GB_dev.h"
-    #include "GB_compiler.h"
-    #include "GB_cpu_features.h"
-    #include "GB_warnings.h"
-}
-
-#include "GraphBLAS_cuda.hpp"
+#include "CUDA/include/GraphBLAS_cuda.hpp"
 
 extern "C"
 {
     #include <cassert>
     #include <cmath>
     #include "GB.h"
-    #include "GB_stringify.h"
-    #include "GB_iceil.h"
+    #include "jitifyer/GB_stringify.h"
 }
 
 // Finally, include the CUDA definitions
@@ -40,15 +31,15 @@ extern "C"
 #include <stdint.h>
 #include <stdio.h>
 
-#include "GB_cuda_error.hpp"
-#include "GB_cuda_timer.hpp"
+#include "CUDA/include/GB_cuda_error.hpp"
+#include "CUDA/include/GB_cuda_timer.hpp"
 
 //------------------------------------------------------------------------------
 // prefetch and memadvise
 //------------------------------------------------------------------------------
 
 // for the "which" parameter of GB_cuda_matrix_prefetch:
-// FIXME: rename this to GB_WHATEVER_P for GB_cuda_matrix_advise
+// FIXME: rename this to GB_WHATEVER_P for GB_cuda_matrix_memadvise
 
 #define GB_PREFETCH_P   1
 #define GB_PREFETCH_H   2
@@ -73,12 +64,10 @@ GrB_Info GB_cuda_matrix_prefetch
 ) ;
 
 #if 0
-// do we need this function too?
-GrB_Info GB_cuda_matrix_advise
+// we need this function too:
+GrB_Info GB_cuda_matrix_memadvise
 (
     GrB_Matrix A,
-
-    p, h, y, b, i, x?   6 bools
 
     what to do:  advise (prefer location? access by)?  prefetch? nothing?
         avdice: enum (1 to 6)

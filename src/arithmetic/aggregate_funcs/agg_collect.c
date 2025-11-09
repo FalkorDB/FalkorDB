@@ -14,15 +14,39 @@
 // Collect
 //------------------------------------------------------------------------------
 
-AggregateResult AGG_COLLECT(SIValue *argv, int argc, void *private_data) {
+AggregateResult AGG_COLLECT
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
 	AggregateCtx *ctx = private_data;
 
 	SIValue v = argv[0];
 	if(SI_TYPE(v) == T_NULL) return AGGREGATE_OK;
 
-	// SIArray_Append will clone the added value, ensuring it can be
-	// safely accessed for the lifetime of the Collect context.
-	SIArray_Append(&ctx->result, v);
+	// depending on the value's allocation type we'll entier
+	// add a clone of it to the array (SIArray_Append clones the value)
+	// or transfer owership of the value to the array
+	SIAllocation allocation = SI_ALLOCATION(argv);
+
+	switch(allocation) {
+		case M_NONE:
+		case M_CONST:
+		case M_VOLATILE:
+			// array will clone the value
+			SIArray_Append(&ctx->result, v);
+			break;
+
+		case M_SELF:
+			// array will take ownership over the value
+			SIArray_AppendAsOwner(&ctx->result, argv);
+			break;
+
+		default:
+			ASSERT(false && "unknown allocation type");
+			break;
+	}
 
 	return AGGREGATE_OK;
 }

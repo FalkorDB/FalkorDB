@@ -2,46 +2,32 @@
 // GraphBLAS/Demo/Program/context_demo: example for the GxB_Context
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-#include "GraphBLAS.h"
-#undef I
-#include "simple_rand.h"
-#include "simple_rand.c"
-#define MIN(x,y) ((x) < (y)) ? (x) : (y)
-#define MAX(x,y) ((x) > (y)) ? (x) : (y)
-#ifdef _OPENMP
-#include <omp.h>
-#define TIMER omp_get_wtime ( )
-#else
-#define TIMER 0
-#endif
+#include "graphblas_demos.h"
+#define FREE_ALL ;
 
-#undef  OK
-#define OK(method)                                                      \
+#define TRY(method)                                                     \
 {                                                                       \
-    GrB_Info info = (method) ;                                          \
-    if (info != GrB_SUCCESS)                                            \
-    {                                                                   \
-        printf ("abort at line: %d, info: %d\n", __LINE__, info) ;      \
-        abort ( ) ;                                                     \
-    }                                                                   \
+    GrB_Info info = method ;                                            \
+    if (info != GrB_SUCCESS) printf ("Failure: %d, %s, %d\n", info,     \
+        __FILE__, __LINE__) ;                                           \
 }
 
 int main (void)
 {
 #if defined ( _MSC_VER )
-    printf ("context_demo: requires OpenMP 4.0 (not supported on Windows)\n") ;
+    printf ("context_demo: requires OpenMP 4.0\n") ;
 #else
 
     // start GraphBLAS
+    GrB_Info info ;
     OK (GrB_init (GrB_NONBLOCKING)) ;
-
     int nthreads_max = 0 ;
-    OK (GxB_Global_Option_get (GxB_GLOBAL_NTHREADS, &nthreads_max)) ;
+    OK (GrB_Global_get_INT32 (GrB_GLOBAL, &nthreads_max, GxB_NTHREADS)) ;
     nthreads_max = MIN (nthreads_max, 256) ;
     printf ("context demo: nthreads_max %d\n", nthreads_max) ;
     OK (GxB_Context_fprint (GxB_CONTEXT_WORLD, "World", GxB_COMPLETE, stdout)) ;
@@ -55,7 +41,7 @@ int main (void)
     }
 
     printf ("\nnthreads to use: %d\n", nthreads) ;
-    OK (GxB_Global_Option_set (GxB_GLOBAL_NTHREADS, nthreads)) ;
+    OK (GrB_Global_set_INT32 (GrB_GLOBAL, nthreads, GxB_NTHREADS)) ;
 
     #ifdef _OPENMP
     omp_set_max_active_levels (2) ;
@@ -67,15 +53,15 @@ int main (void)
 
     GrB_Index n = 100000 ;
     GrB_Index nvals = 20000000 ;
-    simple_rand_seed (1) ;
+    uint64_t state = 1 ;
     GrB_Index *I = malloc (nvals * sizeof (GrB_Index)) ;
     GrB_Index *J = malloc (nvals * sizeof (GrB_Index)) ;
     double    *X = malloc (nvals * sizeof (double)) ;
     for (int k = 0 ; k < nvals ; k++)
     {
-        I [k] = simple_rand_i ( ) % n ;
-        J [k] = simple_rand_i ( ) % n ;
-        X [k] = simple_rand_x ( ) ;
+        I [k] = simple_rand (&state) % n ;
+        J [k] = simple_rand (&state) % n ;
+        X [k] = simple_rand_x (&state) ;
     }
 
     //--------------------------------------------------------------------------
@@ -102,7 +88,7 @@ int main (void)
                 if (nouter <= nmat)
                 {
 
-                    double t = TIMER ;
+                    double t = WALLCLOCK ;
 
                     #pragma omp parallel for num_threads (nouter) \
                         schedule (dynamic, 1)
@@ -110,25 +96,27 @@ int main (void)
                     {
                         // each user thread constructs its own context
                         GxB_Context Context = NULL ;
-                        OK (GxB_Context_new (&Context)) ;
-                        OK (GxB_Context_set (Context, GxB_NTHREADS, ninner)) ;
-                        OK (GxB_Context_engage (Context)) ;
+                        TRY (GxB_Context_new (&Context)) ;
+                        TRY (GxB_Context_set_INT (Context, ninner,
+                            GxB_NTHREADS)) ;
+//                      TRY (GxB_Context_set (Context, GxB_NTHREADS, ninner)) ;
+                        TRY (GxB_Context_engage (Context)) ;
 
                         // kth user thread builds kth matrix with ninner threads
                         GrB_Matrix A = NULL ;
-                        OK (GrB_Matrix_new (&A, GrB_FP64, n, n)) ;
-                        OK (GrB_Matrix_build (A, I, J, X, nvals,
+                        TRY (GrB_Matrix_new (&A, GrB_FP64, n, n)) ;
+                        TRY (GrB_Matrix_build (A, I, J, X, nvals,
                             GrB_PLUS_FP64)) ;
 
                         // free the matrix just built
-                        OK (GrB_Matrix_free (&A)) ;
+                        TRY (GrB_Matrix_free (&A)) ;
 
                         // each user thread frees its own context
-                        OK (GxB_Context_disengage (Context)) ;
-                        OK (GxB_Context_free (&Context)) ;
+                        TRY (GxB_Context_disengage (Context)) ;
+                        TRY (GxB_Context_free (&Context)) ;
                     }
 
-                    t = TIMER - t ;
+                    t = WALLCLOCK - t ;
                     if (nouter == 1 && ninner == 1) t1 = t ;
 
                     printf ("   threads (%4d,%4d): %4d "

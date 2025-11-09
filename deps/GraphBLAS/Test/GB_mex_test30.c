@@ -2,15 +2,13 @@
 // GB_mex_test30: test GrB_get and GrB_set (index unary ops)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
-
-#define USAGE "GB_mex_test30"
 
 #define FREE_ALL ;
 #define GET_DEEP_COPY ;
@@ -21,9 +19,9 @@
     size_t siz1, siz2, siz3 ;                                               \
     OK (GrB_IndexUnaryOp_get_String (op, name, GrB_NAME)) ;                 \
     CHECK (MATCH (name, opname)) ;                                          \
-    OK (GrB_IndexUnaryOp_get_String (op, cname,                             \
-        (GrB_Field) GxB_JIT_C_NAME));                                       \
-    printf ("%s: %s\n", name, cname) ;                                      \
+    OK (GrB_IndexUnaryOp_get_String (op, cname, GxB_JIT_C_NAME));           \
+    printf ("\n%s: %s\n", name, cname) ;                                    \
+    OK (GxB_IndexUnaryOp_fprint (op, "idxunop", 5, stdout)) ;               \
     OK (GrB_IndexUnaryOp_get_SIZE (op, &size, GrB_NAME)) ;                  \
     CHECK (size == strlen (name) + 1) ;                                     \
     GrB_Info info2, info3 ;                                                 \
@@ -47,19 +45,18 @@
 #define GETNAME(op)                                         \
 {                                                           \
     GETOP (op, #op) ;                                       \
-/*  OK (GxB_IndexUnaryOp_fprint (op, "idxop", 3, NULL)) ; */\
 }
 
-void myfunc (bool *z, const float *x, GrB_Index i, GrB_Index j,
+void myfunc (bool *z, const float *x, uint64_t i, uint64_t j,
     const float *y) ;
-void myfunc (bool *z, const float *x, GrB_Index i, GrB_Index j,
+void myfunc (bool *z, const float *x, uint64_t i, uint64_t j,
     const float *y)
 {
     (*z) = (*x) > 2 ;
 }
 
 #define MYFUNC_DEFN \
-"void myfunc (bool *z, const float *x, GrB_Index i, GrB_Index j,    \n" \
+"void myfunc (bool *z, const float *x, uint64_t i, uint64_t j,      \n" \
 "    const float *y)                                                \n" \
 "{                                                                  \n" \
 "    (*z) = (*x) > 2 ;                                              \n" \

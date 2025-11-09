@@ -8,94 +8,112 @@
 
 #include "../value.h"
 
-/**
-  * @brief  Initialize a new SIValue array type with given capacity
-  * @param  initialCapacity:
-  * @retval Initialized array
-  */
-SIValue SIArray_New(u_int32_t initialCapacity);
+// initialize a new SIValue array type with given capacity
+// returns initialized array
+SIValue SIArray_New
+(
+	u_int32_t initialCapacity // initial capacity
+);
 
-/**
-  * @brief  Appends a new SIValue to a given array
-  * @param  siarray: pointer to array
-  * @param  value: new value
-  */
-void SIArray_Append(SIValue *siarray, SIValue value);
+// creates an SIArray from a raw 'arr.h' array
+// SIArray takes ownership over 'raw'
+SIValue SIArray_FromRaw
+(
+	SIValue **raw  // raw array
+);
 
-/**
-  * @brief  Returns a volatile copy of the SIValue from an array in a given index
-  * @note   If index is out of bound, SI_NullVal is returned
-  *         Caller is expected either to not free the returned value or take ownership on
-  *         its own copy
-  * @param  siarray: array
-  * @param  index: index
-  * @retval The value in the requested index
-  */
-SIValue SIArray_Get(SIValue siarray, u_int32_t index);
+// appends a new SIValue to array
+// the value is cloned before it is added to the array
+void SIArray_Append
+(
+	SIValue *siarray,  // pointer to array
+	SIValue value      // value to add
+);
 
-/**
-  * @brief  Returns the array length
-  * @param  siarray:
-  * @retval array length
-  */
-u_int32_t SIArray_Length(SIValue siarray);
+// appends value to array
+// the value is added as is, no cloning is performed
+// the array takes ownership over the value
+void SIArray_AppendAsOwner
+(
+	SIValue *siarray,  // pointer to array
+	SIValue *value     // value to add
+);
 
-/**
-  * @brief  Returns true if any of the types in 't' are contained in the array
-            or its nested array children, if any
-  * @param  siarray: array
-  * @param  t: bitmap of types to search for
-  * @retval a boolean indicating whether any types were matched
-  */
-bool SIArray_ContainsType(SIValue siarray, SIType t);
+// returns a volatile copy of the SIValue from an array in a given index
+// if index is out of bound, SI_NullVal is returned
+// caller is expected either to not free the returned value or take ownership on
+// its own copy
+// returns the value in the requested index
+SIValue SIArray_Get
+(
+	SIValue siarray,  // siarray: array
+	u_int32_t index   // index: index
+);
 
-/**
-  * @brief  Returns true if the array contains an element equals to 'value'
-  * @param  siarray: array
-  * @param  value: value to search for
-  * @param  comparedNull: indicate if there was a null comparison during the array scan
-  * @retval a boolean indicating whether value was found in siarray
-  */
-bool SIArray_ContainsValue(SIValue siarray, SIValue value, bool *comparedNull);
+// get a reference to the 'idx' element on the array
+// if index is out of bounds NULL is returned
+SIValue *SIArray_GetRef
+(
+	SIValue siarray,  // array
+	u_int32_t index   // index
+);
 
-/**
-  * @brief  Returns true if all of the elements in the array are of type 't'
-  * @param  siarray: array
-  * @param  t: type to compare
-  * @retval a boolean indicating whether all elements are of type 't'
-  */
-bool SIArray_AllOfType(SIValue siarray, SIType t);
+// get the array length
+u_int32_t SIArray_Length
+(
+	SIValue siarray  // array to return length of
+);
 
-/**
-  * @brief  Sorts the array in place
-  * @param  siarray: array to sort
-  * @param  ascending: sort order
-  */
-void SIArray_Sort(SIValue siarray, bool ascending);
+// returns true if any of the types in 't' are contained in the array
+// or its nested array children, if any
+bool SIArray_ContainsType
+(
+	SIValue siarray,  // array to inspect
+	SIType t          // bitmap of types to search for
+);
 
-/**
-  * @brief  Returns a copy of the array
-  * @note   The caller needs to free the array
-  * @param  siarray:
-  * @retval A clone of the given array
-  */
-SIValue SIArray_Clone(SIValue siarray);
+// returns true if the array contains an element equals to 'value'
+bool SIArray_ContainsValue
+(
+	SIValue siarray,    // array to search
+	SIValue value,      // value to search for
+	bool *comparedNull  // indicate if there was a null comparison
+);
 
-/**
-  * @brief  Prints an array into a given buffer
-  * @param  list: array to print
-  * @param  buf: print buffer (pointer to pointer to allow re allocation)
-  * @param  len: print buffer length
-  * @param  bytesWritten: the actual number of bytes written to the buffer
-  */
-void SIArray_ToString(SIValue list, char **buf, size_t *bufferLen, size_t *bytesWritten);
+// returns true if all of the elements in the array are of type 't'
+bool SIArray_AllOfType
+(
+	SIValue siarray,  // array to inspect
+	SIType t          // type to compare against
+);
 
-/**
- * @brief  Returns the array hash code.
- * @param  siarray: SIArray.
- * @retval The array hashCode.
- */
-XXH64_hash_t SIArray_HashCode(SIValue siarray);
+// sorts the array in place
+void SIArray_Sort
+(
+	SIValue siarray,  // array to sort
+	bool ascending    // sorting order
+);
+
+// clones an array, caller needs to free the array
+SIValue SIArray_Clone
+(
+	SIValue siarray  // array to clone
+);
+
+// prints an array into a given buffer
+void SIArray_ToString
+(
+	SIValue siarray,      // array to print
+	char **buf,           // print buffer
+	size_t *bufferLen,    // print buffer length
+	size_t *bytesWritten  // the actual number of bytes written to the buffer
+);
+
+ // returns the array hash code.
+XXH64_hash_t SIArray_HashCode
+(
+	SIValue siarray  // array to hash
+);
 
 // creates an array from its binary representation
 // this is the reverse of SIArray_ToBinary
@@ -106,10 +124,9 @@ SIValue SIArray_FromBinary
 	FILE *stream  // stream containing binary representation of an array
 );
 
-/**
-  * @brief  delete an array
-  * @param  siarray:
-  * @retval None
-  */
-void SIArray_Free(SIValue siarray);
+// free an array
+void SIArray_Free
+(
+	SIValue siarray  // array to free
+);
 

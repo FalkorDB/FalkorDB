@@ -87,7 +87,8 @@ bool Record_ContainsEntry
 uint Record_GetEntryIdx
 (
 	Record r,
-	const char *alias
+	const char *alias,
+	size_t len
 );
 
 // get entry type
@@ -187,6 +188,12 @@ void Record_FreeEntry
 
 // free record entries
 void Record_FreeEntries
+(
+	Record r
+);
+
+// increase record's reference count
+void Record_IncRefCount
 (
 	Record r
 );

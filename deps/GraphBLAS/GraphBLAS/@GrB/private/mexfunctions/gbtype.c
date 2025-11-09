@@ -2,7 +2,7 @@
 // gbtype: type of a GraphBLAS matrix struct, or any built-in variable
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -44,7 +44,12 @@ void mexFunction
     if (class == mxSTRUCT_CLASS)
     {
         // get the content of a GraphBLASv7_3 struct
-        mxArray *mx_type = mxGetField (pargin [0], 0, "GraphBLASv7_3") ;
+        mxArray *mx_type = mxGetField (pargin [0], 0, "GraphBLASv10") ;
+        if (mx_type == NULL)
+        { 
+            // check if it is a GraphBLASv5_1 struct
+            mx_type = mxGetField (pargin [0], 0, "GraphBLASv7_3") ;
+        }
         if (mx_type == NULL)
         { 
             // check if it is a GraphBLASv5_1 struct
@@ -85,6 +90,6 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     pargout [0] = c ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

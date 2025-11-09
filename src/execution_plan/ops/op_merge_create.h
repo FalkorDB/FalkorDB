@@ -13,18 +13,27 @@
 #include "../../graph/entities/node.h"
 #include "../../graph/entities/edge.h"
 
-/* Create new graph entities without introducing any non-unique patterns. */
+// create new graph entities without introducing any non-unique patterns
 typedef struct {
-	OpBase op;                 // The base operation.
-	bool handoff_mode;         // Flag denoting whether the op is in Record creation or handoff mode.
-	Record *records;           // Array of Records created by this operation.
-	rax *unique_entities;      // A map of each unique pending set of creations.
-	XXH64_state_t *hash_state; // Reusable hash state for determining creation uniqueness.
-	PendingCreations pending;  // Container struct for all graph changes to be committed.
+	OpBase op;                  // the base operation
+	bool handoff_mode;          // flag denoting whether the op is in Record creation or handoff mode
+	Record *records;            // array of Records created by this operation
+	rax *unique_entities;       // a map of each unique pending set of creations
+	XXH64_state_t *hash_state;  // reusable hash state for determining creation uniqueness
+	PendingCreations pending;   // container struct for all graph changes to be committed
 	GraphContext *gc;
 } OpMergeCreate;
 
-OpBase *NewMergeCreateOp(const ExecutionPlan *plan, NodeCreateCtx *nodes, EdgeCreateCtx *edges);
+OpBase *NewMergeCreateOp
+(
+	const ExecutionPlan *plan,
+	NodeCreateCtx *nodes,
+	EdgeCreateCtx *edges
+);
 
-// Commit all pending creations and switch to Record handoff mode.
-void MergeCreate_Commit(OpBase *opBase);
+// commit accumulated changes and switch to Record handoff mode
+void MergeCreate_Commit
+(
+	OpBase *opBase
+);
+

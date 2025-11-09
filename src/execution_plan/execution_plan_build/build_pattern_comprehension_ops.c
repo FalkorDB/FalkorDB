@@ -115,7 +115,7 @@ void buildPatternComprehensionOps
 				FilterTree_DeMorgan(&filter_tree);
 
 				// place filters
-				ExecutionPlan_PlaceFilterOps(plan, aggregate, NULL, filter_tree);
+				ExecutionPlan_PlaceFilterOps(plan, aggregate, filter_tree);
 			}
 		}
 

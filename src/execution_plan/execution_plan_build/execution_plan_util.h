@@ -21,21 +21,15 @@ bool ExecutionPlan_isEager
 // For performing existence checks and looking up individual operations in tree.
 //------------------------------------------------------------------------------
 
-// Traverse upwards until an operation that resolves the given alias is found.
-// Returns NULL if alias is not resolved
-OpBase *ExecutionPlan_LocateOpResolvingAlias
-(
-    OpBase *root,
-    const char *alias
-);
-
-// Locate the first operation matching one of the given types in the op tree by
-// performing DFS. Returns NULL if no matching operation was found
+// locate the first operation matching one of the given types in the op tree by
+// performing DFS
+// returns NULL if no matching operation was found
 OpBase *ExecutionPlan_LocateOpMatchingTypes
 (
-    OpBase *root,
-    const OPType *types,
-    uint type_count
+	OpBase *root,         // start lookup from here
+	const OPType *types,  // types to match
+	uint type_count,      // number of types
+	uint *depth           // [optional] depth of returned op
 );
 
 // Convenience wrapper around ExecutionPlan_LocateOpMatchingType for lookups of a single type.
@@ -56,33 +50,14 @@ OpBase *ExecutionPlan_LocateOpDepth
     uint depth
 );
 
-// returns all operations of a certain type in a execution plan
-void ExecutionPlan_LocateOps
-(
-	OpBase ***plans,  // array in which ops are stored
-	OpBase *root,     // root operation of the plan to traverse
-	OPType type       // operation type to search
-);
-
-// Find the earliest operation above the provided recurse_limit, if any,
-// at which all references are resolved
-OpBase *ExecutionPlan_LocateReferences
-(
-    OpBase *root,
-    const OpBase *recurse_limit,
-    rax *references_to_resolve
-);
-
-// Find the earliest operation at which all references are resolved, if any,
-// both above the provided recurse_limit and without recursing past a
-// blacklisted op
+// find the earliest operation at which all references are resolved, if any,
+// without recursing past a blacklisted op
 OpBase *ExecutionPlan_LocateReferencesExcludingOps
 (
-    OpBase *root,
-    const OpBase *recurse_limit,
-    const OPType *blacklisted_ops,
-	int nblacklisted_ops,
-    rax *refs_to_resolve
+	OpBase *root,                   // start point
+	const OPType *blacklisted_ops,  // blacklisted operations
+	int nblacklisted_ops,           // number of blacklisted operations
+	rax *refs_to_resolve            // references to resolve
 );
 
 // scans plan from root via parent nodes until a limit operation is found
@@ -138,17 +113,20 @@ uint ExecutionPlan_CollectUpwards
 );
 
 //------------------------------------------------------------------------------
-// API for building and relocating operations in transient ExecutionPlans.
+// API for building and relocating operations in transient ExecutionPlans
 //------------------------------------------------------------------------------
 
-// Populate a rax with all aliases that have been resolved by the given operation
-// and its children. These are the bound variables at this point in execution, and
-// subsequent operations should not introduce them as new entities. For example, in the query:
+// populate a rax with all aliases that have been resolved by the given operation
+// and its children
+// these are the bound variables at this point in execution, and
+// subsequent operations should not introduce them as new entities
+// for example, in the query:
 // MATCH (a:A) CREATE (a)-[:E]->(b:B)
-// The Create operation should never introduce a new node 'a'
+// the Create operation should not introduce a new node 'a'
 void ExecutionPlan_BoundVariables
 (
     const OpBase *op,
     rax *modifiers,
     const ExecutionPlan *plan
 );
+

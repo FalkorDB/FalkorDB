@@ -49,18 +49,18 @@ SIValue AR_LABELS(SIValue *argv, int argc, void *private_data) {
 SIValue AR_HAS_LABELS(SIValue *argv, int argc, void *private_data) {
 	if(SI_TYPE(argv[0]) == T_NULL) return SI_NullVal();
 
-	bool         res       =  true;
-	Node         *node     =  argv[0].ptrval;
-	SIValue      labels    =  argv[1];
-	EntityID     id        =  ENTITY_GET_ID(node);
-	GraphContext *gc       =  QueryCtx_GetGraphCtx();
-	Graph        *g        =  gc->g;
+	bool         res    = true;
+	Node         *node  = argv[0].ptrval;
+	SIValue      labels = argv[1];
+	EntityID     id     = ENTITY_GET_ID(node);
+	GraphContext *gc    = QueryCtx_GetGraphCtx();
+	Graph        *g     = gc->g;
 
 	// iterate over given labels
 	uint32_t labels_length = SIArray_Length(labels);
 	for (uint32_t i = 0; i < labels_length; i++) {
 		SIValue label_value = SIArray_Get(labels, i);
-		if(SI_TYPE(label_value) != T_STRING) {
+		if(!(SI_TYPE(label_value) & T_STRING)) {
 			Error_SITypeMismatch(label_value, T_STRING);
 			return SI_NullVal();
 		}
@@ -74,11 +74,10 @@ SIValue AR_HAS_LABELS(SIValue *argv, int argc, void *private_data) {
 		}
 
 		// validate label is set
-		bool x;
-		RG_Matrix M = Graph_GetLabelMatrix(g, Schema_GetID(s));
+		Delta_Matrix M = Graph_GetLabelMatrix(g, Schema_GetID(s));
 		ASSERT(M != NULL);
 
-		if(RG_Matrix_extractElement_BOOL(&x, M, id, id) == GrB_NO_VALUE) {
+		if(Delta_Matrix_isStoredElement(M, id, id) == GrB_NO_VALUE) {
 			res = false;
 			break;
 		}
@@ -158,10 +157,10 @@ static SIValue _AR_NodeDegree
 
 		// get labels array from input arguments, but removing duplicates
 		SIValue labels = SI_EmptyArray();
-		if(SI_TYPE(argv[1]) == T_STRING) {
+		if(SI_TYPE(argv[1]) & T_STRING) {
 			// validate signature function(NODE, STR_0, STR_1, ... STR_N)
 			for(int i = 1; i < argc; i++) {
-				if(SI_TYPE(argv[i]) == T_STRING) {
+				if(SI_TYPE(argv[i]) & T_STRING) {
 					if(SIArray_ContainsValue(labels, argv[i], NULL) == false) {
 						SIArray_Append(&labels, argv[i]);
 					}
@@ -177,7 +176,7 @@ static SIValue _AR_NodeDegree
 			uint len = SIArray_Length(argv[1]);
 			for(int j = 0; j < len; j++) {
 				SIValue elem = SIArray_Get(argv[1], j);
-				if(SI_TYPE(elem) != T_STRING) {
+				if(!(SI_TYPE(elem) & T_STRING)) {
 					SIArray_Free(labels);
 					Error_SITypeMismatch(elem, T_STRING);
 					return SI_NullVal();
@@ -238,14 +237,19 @@ SIValue AR_OUTGOINGDEGREE
 	return _AR_NodeDegree(argv, argc, GRAPH_EDGE_DIR_OUTGOING);
 }
 
-SIValue AR_PROPERTY(SIValue *argv, int argc, void *private_data) {
+SIValue AR_PROPERTY
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
 	// return NULL for missing graph entity
 	if(SI_TYPE(argv[0]) == T_NULL) return SI_NullVal();
 
 	// AR_PROPERTY may be invoked from AR_SUBSCRIPT in a case like:
 	// WITH {val: 5} AS map RETURN map["val"]
 	// As such, we need to validate the argument's type independently of the invocation validation.
-	if(SI_TYPE(argv[1]) != T_STRING) {
+	if(!(SI_TYPE(argv[1]) & T_STRING)) {
 		// String indexes are only permitted on maps, not arrays.
 		Error_SITypeMismatch(argv[1], T_STRING);
 		return SI_NullVal();
@@ -260,37 +264,103 @@ SIValue AR_PROPERTY(SIValue *argv, int argc, void *private_data) {
 	// Process inputs
 	//--------------------------------------------------------------------------
 
+	SIValue val;
+	SIValue *p_val;
 	SIValue obj = argv[0];
-	if(SI_TYPE(obj) & SI_GRAPHENTITY) {
-		// retrieve entity property
-		GraphEntity *graph_entity = (GraphEntity *)obj.ptrval;
-		const char *prop_name     = argv[1].stringval;
-		AttributeID prop_idx     = argv[2].longval;
+	SIValue key = argv[1];
+	const char *key_str = key.stringval;
 
-		// We have the property string, attempt to look up the index now.
-		if(prop_idx == ATTRIBUTE_ID_NONE) {
-			GraphContext *gc = QueryCtx_GetGraphCtx();
-			prop_idx = GraphContext_GetAttributeID(gc, prop_name);
+	SIType t = SI_TYPE(obj);
+	switch(t) {
+		case T_NODE:
+		case T_EDGE:
+		{
+			// retrieve entity property
+			GraphEntity *graph_entity = (GraphEntity *)obj.ptrval;
+			const char *prop_name     = argv[1].stringval;
+			AttributeID prop_idx      = argv[2].longval;
+
+			// we have the property string, attempt to look up the index now
+			if(prop_idx == ATTRIBUTE_ID_NONE) {
+				GraphContext *gc = QueryCtx_GetGraphCtx();
+				prop_idx = GraphContext_GetAttributeID(gc, prop_name);
+			}
+
+			// retrieve the property
+			p_val = GraphEntity_GetProperty(graph_entity, prop_idx);
+			return SI_ConstValue(p_val);
 		}
 
-		// Retrieve the property.
-		SIValue *value = GraphEntity_GetProperty(graph_entity, prop_idx);
-		return SI_ConstValue(value);
-	} else if(SI_TYPE(obj) & T_MAP) {
-		// retrieve map key
-		SIValue key = argv[1];
-		SIValue value;
+		case T_MAP:
+			// retrieve map key
+			Map_Get(obj, key, &val);
 
-		Map_Get(obj, key, &value);
-		// Return a volatile copy of the value, as it may be heap-allocated.
-		return SI_ShareValue(value);
-	} else if(SI_TYPE(obj) & T_POINT) {
-		// retrieve property key 
-		SIValue key = argv[1];
-		return Point_GetCoordinate(obj, key);
-	} else {
-		// unexpected type SI_TYPE(obj)
-		return SI_NullVal();
+			// Return a volatile copy of the value, as it may be heap-allocated.
+			return SI_ShareValue(val);
+
+		case T_POINT:
+			// retrieve property key 
+			return Point_GetCoordinate(obj, key);
+
+		case T_DATETIME:
+		{
+			// retrieve datetime component e.g. year, month, hour
+			int comp;
+			bool found = DateTime_getComponent(&obj, key_str, &comp);
+
+			if(found == false) {
+				ErrorCtx_SetError("unknown datetime component %s", key_str);
+				return SI_NullVal();	
+			}
+
+			return SI_LongVal(comp);
+		}
+
+		case T_DATE:
+		{
+			// retrieve date component e.g. year, month, day
+			int comp;
+			bool found = Date_getComponent(&obj, key_str, &comp);
+
+			if(found == false) {
+				ErrorCtx_SetError("unknown date component %s", key_str);
+				return SI_NullVal();
+			}
+
+			return SI_LongVal(comp);
+		}
+
+		case T_TIME:
+		{
+			// retrieve time component e.g. hour, minute, second
+			int comp;
+			bool found = Time_getComponent(&obj, key_str, &comp);
+
+			if(found == false) {
+				ErrorCtx_SetError("unknown time component %s", key_str);
+				return SI_NullVal();
+			}
+
+			return SI_LongVal(comp);
+		}
+
+		case T_DURATION:
+		{
+			// retrieve duration component e.g. years, months, hours, minutes
+			float comp;
+			bool found = Duration_getComponent(&obj, key_str, &comp);
+
+			if(found == false) {
+				ErrorCtx_SetError("unknown duration component %s", key_str);
+				return SI_NullVal();
+			}
+
+			return SI_DoubleVal(comp);
+		}
+
+		default:
+			// unexpected type
+			return SI_NullVal();
 	}
 }
 
@@ -361,7 +431,7 @@ void Register_EntityFuncs() {
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 3);
-	array_append(types, T_NULL | T_NODE | T_EDGE | T_MAP | T_POINT);
+	array_append(types, T_NULL | T_NODE | T_EDGE | T_MAP | T_POINT | SI_TEMPORAL);
 	array_append(types, T_STRING);
 	array_append(types, T_INT64);
 	ret_type = SI_ALL;

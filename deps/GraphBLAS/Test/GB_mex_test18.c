@@ -2,16 +2,14 @@
 // GB_mex_test18: demacrofy tests
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
-#include "GB_stringify.h"
-
-#define USAGE "GB_mex_test18"
+#include "../Source/jitifyer/GB_stringify.h"
 
 #define FREE_ALL ;
 #define GET_DEEP_COPY ;
@@ -37,37 +35,42 @@ void mexFunction
     // test GB_demacrofy_name
     //--------------------------------------------------------------------------
 
-    uint64_t scode ;
+    uint64_t method_code ;
     char *name_space, *kname, *suffix ;
     char name [4096] ;
 
     strcpy (name, "bad") ;
-    info = GB_demacrofy_name (name, &name_space, &kname, &scode, &suffix) ;
+    info = GB_demacrofy_name (name, &name_space, &kname, &method_code,
+        &suffix) ;
     CHECK (info == GrB_NO_VALUE) ;
 
     strcpy (name, "alsobad") ;
-    info = GB_demacrofy_name (name, &name_space, &kname, &scode, &suffix) ;
+    info = GB_demacrofy_name (name, &name_space, &kname, &method_code,
+        &suffix) ;
     CHECK (info == GrB_NO_VALUE) ;
 
     strcpy (name, "space__kname__007__suffix") ;
-    info = GB_demacrofy_name (name, &name_space, &kname, &scode, &suffix) ;
+    info = GB_demacrofy_name (name, &name_space, &kname, &method_code,
+        &suffix) ;
     CHECK (info == GrB_SUCCESS) ;
     CHECK (MATCH (name_space, "space")) ;
     CHECK (MATCH (kname, "kname")) ;
     CHECK (MATCH (suffix, "suffix")) ;
-    CHECK (scode == 7) ;
+    CHECK (method_code == 7) ;
 
     strcpy (name, "space__kname__mangle__suffix") ;
-    info = GB_demacrofy_name (name, &name_space, &kname, &scode, &suffix) ;
+    info = GB_demacrofy_name (name, &name_space, &kname, &method_code,
+        &suffix) ;
     CHECK (info == GrB_NO_VALUE) ;
 
     strcpy (name, "morespace__morekname__042") ;
-    info = GB_demacrofy_name (name, &name_space, &kname, &scode, &suffix) ;
+    info = GB_demacrofy_name (name, &name_space, &kname, &method_code,
+        &suffix) ;
     CHECK (info == GrB_SUCCESS) ;
     CHECK (MATCH (name_space, "morespace")) ;
     CHECK (MATCH (kname, "morekname")) ;
     CHECK (suffix == NULL) ;
-    CHECK (scode == 0x42) ;
+    CHECK (method_code == 0x42) ;
 
     //--------------------------------------------------------------------------
     // finalize GraphBLAS

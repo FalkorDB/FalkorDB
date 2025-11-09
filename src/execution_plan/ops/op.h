@@ -8,6 +8,7 @@
 
 #include "../record.h"
 #include "../../util/arr.h"
+#include "../../util/dict.h"
 #include "../../redismodule.h"
 #include "../../schema/schema.h"
 #include "../../graph/query_graph.h"
@@ -15,6 +16,10 @@
 #include "../../graph/entities/edge.h"
 
 #define OP_REQUIRE_NEW_DATA(opRes) (opRes & (OP_DEPLETED | OP_REFRESH)) > 0
+
+#define OP_JOIN_MULTIPLE_STREAMS(op)                     \
+	(OpBase_Type((op)) == OPType_JOIN ||                 \
+	 OpBase_Type((op)) == OPType_CARTESIAN_PRODUCT)
 
 typedef enum {
 	OPType_ALL_NODE_SCAN,
@@ -26,6 +31,7 @@ typedef enum {
 	OPType_EXPAND_INTO,
 	OPType_CONDITIONAL_TRAVERSE,
 	OPType_CONDITIONAL_VAR_LEN_TRAVERSE,
+	OPType_OPTIONAL_CONDITIONAL_TRAVERSE,
 	OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO,
 	OPType_RESULTS,
 	OPType_PROJECT,
@@ -43,7 +49,6 @@ typedef enum {
 	OPType_UNWIND,
 	OPType_FOREACH,
 	OPType_PROC_CALL,
-	OPType_CALLSUBQUERY,
 	OPType_ARGUMENT,
 	OPType_ARGUMENT_LIST,
 	OPType_CARTESIAN_PRODUCT,
@@ -55,6 +60,10 @@ typedef enum {
 	OPType_OR_APPLY_MULTIPLEXER,
 	OPType_AND_APPLY_MULTIPLEXER,
 	OPType_OPTIONAL,
+	OPType_LOAD_CSV,
+	OPType_SUBQUERY_FOREACH,
+	OPType_EMPTY_ROW,
+	OPType_EAGER
 } OPType;
 
 typedef enum {
@@ -73,6 +82,8 @@ static const OPType PROJECT_OPS[] = {
 	OPType_AGGREGATE
 };
 
+// TODO: add OPType_OPTIONAL_CONDITIONAL_TRAVERSE to TRAVERSE_OPS
+// and adjust relevent optimizations accordingly
 #define TRAVERSE_OP_COUNT 2
 static const OPType TRAVERSE_OPS[] = {
 	OPType_CONDITIONAL_TRAVERSE,
@@ -95,7 +106,7 @@ static const OPType FILTER_RECURSE_BLACKLIST[] = {
 	OPType_MERGE
 };
 
-#define EAGER_OP_COUNT 7
+#define EAGER_OP_COUNT 8
 static const OPType EAGER_OPERATIONS[] = {
 	OPType_AGGREGATE,
 	OPType_CREATE,
@@ -103,7 +114,16 @@ static const OPType EAGER_OPERATIONS[] = {
 	OPType_UPDATE,
 	OPType_MERGE,
 	OPType_FOREACH,
-	OPType_SORT
+	OPType_SORT,
+	OPType_EAGER
+};
+
+#define MODIFYING_OP_COUNT 4
+static const OPType MODIFYING_OPERATIONS[] = {
+	OPType_CREATE,
+	OPType_DELETE,
+	OPType_UPDATE,
+	OPType_MERGE
 };
 
 struct OpBase;
@@ -123,23 +143,23 @@ typedef struct {
 }  OpStats;
 
 struct OpBase {
-	OPType type;                // Type of operation.
-	fpInit init;                // Called once before execution.
-	fpFree free;                // Free operation.
-	fpReset reset;              // Reset operation state.
-	fpClone clone;              // Operation clone.
-	fpConsume consume;          // Produce next record.
-	fpConsume profile;          // Profiled version of consume.
-	fpToString toString;        // Operation string representation.
-	const char *name;           // Operation name.
-	int childCount;             // Number of children.
-	bool op_initialized;        // True if the operation has already been initialized.
-	struct OpBase **children;   // Child operations.
-	const char **modifies;      // List of entities this op modifies.
-	OpStats *stats;             // Profiling statistics.
-	struct OpBase *parent;      // Parent operations.
-	const struct ExecutionPlan *plan; // ExecutionPlan this operation is part of.
-	bool writer;             // Indicates this is a writer operation.
+	OPType type;                       // type of operation
+	fpInit init;                       // called once before execution
+	fpFree free;                       // free operation
+	fpReset reset;                     // reset operation state
+	fpClone clone;                     // operation clone
+	fpConsume consume;                 // produce next record
+	fpConsume _consume;                // backup for the original consume func
+	fpToString toString;               // operation string representation
+	const char *name;                  // operation name
+	int childCount;                    // number of children
+	struct OpBase **children;          // child operations
+	const char **modifies;             // list of entities this op modifies
+	dict *awareness;                   // variables this op is aware of
+	OpStats *stats;                    // profiling statistics
+	struct OpBase *parent;             // parent operations
+	const struct ExecutionPlan *plan;  // executionPlan this operation is part of
+	bool writer;                       // indicates this is a writer operation
 };
 typedef struct OpBase OpBase;
 
@@ -208,6 +228,20 @@ OpBase *OpBase_GetChild
 	uint i             // child index
 );
 
+// returns op's parent
+OpBase *OpBase_Parent
+(
+	const OpBase *op  // op
+);
+
+// returns true if operation is aware of all aliases
+bool OpBase_Aware
+(
+	const OpBase *op,      // op
+	const char **aliases,  // aliases
+	uint n                 // number of aliases
+);
+
 // mark alias as being modified by operation
 // returns the ID associated with alias
 int OpBase_Modifies
@@ -233,14 +267,12 @@ bool OpBase_ChildrenAware
 	int *idx
 );
 
-// returns true if op is aware of alias
-// an operation is aware of all aliases it modifies and all aliases
-// modified by prior operation within its segment
-bool OpBase_Aware
+// returns true if alias is mapped
+bool OpBase_AliasMapping
 (
-	const OpBase *op,
-	const char *alias,
-	int *idx
+	const OpBase *op,   // op
+	const char *alias,  // alias
+	int *idx            // alias map id
 );
 
 // sends reset request to each operation up the chain

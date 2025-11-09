@@ -1,0 +1,785 @@
+%%
+%% This is file `zref-base.sty',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% zref.dtx  (with options: `base')
+%% 
+%% This is a generated file.
+%% 
+%% Project: zref
+%% Version: 2016/05/21 v2.26
+%% 
+%% Copyright (C) 2006-2012 by
+%%    Heiko Oberdiek <heiko.oberdiek at googlemail.com>
+%% 
+%% This work may be distributed and/or modified under the
+%% conditions of the LaTeX Project Public License, either
+%% version 1.3c of this license or (at your option) any later
+%% version. This version of this license is in
+%%    http://www.latex-project.org/lppl/lppl-1-3c.txt
+%% and the latest version of this license is in
+%%    http://www.latex-project.org/lppl.txt
+%% and version 1.3 or later is part of all distributions of
+%% LaTeX version 2005/12/01 or later.
+%% 
+%% This work has the LPPL maintenance status "maintained".
+%% 
+%% This Current Maintainer of this work is Heiko Oberdiek.
+%% 
+%% This work consists of the main source file zref.dtx
+%% and the derived files
+%%    zref.sty, zref.pdf, zref.ins, zref.drv, zref-base.sty,
+%%    zref-abspage.sty, zref-abspos.sty, zref-counter.sty,
+%%    zref-dotfill.sty, zref-env.sty, zref-hyperref.sty,
+%%    zref-lastpage.sty, zref-marks.sty, zref-nextpage.sty,
+%%    zref-pageattr.sty, zref-pagelayout.sty, zref-perpage.sty,
+%%    zref-runs.sty, zref-savepos.sty, zref-thepage.sty,
+%%    zref-titleref.sty, zref-totpages.sty, zref-user.sty,
+%%    zref-xr.sty, zref-example.tex, zref-example-lastpage.tex,
+%%    zref-example-nextpage.tex, zref-test1.tex,
+%%    zref-test-base.tex, zref-test-runs.tex,
+%%    zref-test-titleref-memoir.tex.
+%% 
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{zref-base}%
+  [2016/05/21 v2.26 Module base for zref (HO)]%
+\RequirePackage{ltxcmds}[2010/12/02]
+\RequirePackage{infwarerr}[2010/04/08]
+\RequirePackage{kvsetkeys}[2010/03/01]
+\RequirePackage{kvdefinekeys}[2010/03/01]
+\RequirePackage{pdftexcmds}[2010/04/01]
+\def\ZREF@name{zref}
+\ltx@IfUndefined{protected}{%
+  \RequirePackage{makerobust}[2006/03/18]%
+  \def\ZREF@Robust#1#2{%
+    \def\ZREF@temp{\MakeRobustcommand#2}%
+    \afterassignment\ZREF@temp
+    #1#2%
+  }%
+}{%
+  \def\ZREF@Robust#1{%
+    \protected#1%
+  }%
+}
+\def\ZREF@IfDefinable#1#2#3{%
+  \@ifdefinable{#1}{%
+    \ZREF@Robust{#2}#1#3%
+  }%
+}
+\def\ZREF@UpdatePdfTeX{Update pdfTeX.}
+\newif\ifZREF@found
+\def\ZREF@patch#1{%
+  \ltx@IfUndefined{#1}{%
+    \ltx@gobble
+  }{%
+    \expandafter\let\csname ZREF@org@#1\expandafter\endcsname
+    \csname #1\endcsname
+    \ltx@firstofone
+  }%
+}
+\ltx@IfUndefined{eTeXversion}{%
+  \PackageError\ZREF@name{%
+    Missing support for eTeX; package is abandoned%
+  }{%
+    Use a TeX compiler that support eTeX and enable eTeX %
+    in the format.%
+  }%
+  \endinput
+}{}%
+\RequirePackage{etexcmds}[2007/09/09]
+\ifetex@unexpanded
+\else
+  \PackageError\ZREF@name{%
+    Missing e-TeX's \string\unexpanded.\MessageBreak
+    Add \string\RequirePackage\string{etexcmds\string} before %
+    \string\documentclass%
+  }{%
+    Probably you are using some package (e.g. ConTeXt) that %
+    redefines \string\unexpanded%
+  }%
+  \expandafter\endinput
+\fi
+\RequirePackage{auxhook}
+\AddLineBeginAux{%
+  \string\providecommand\string\zref@newlabel[2]{}%
+}
+\def\ZREF@RefPrefix{Z@R}
+\ZREF@Robust\edef\zref@newlabel{%
+  \noexpand\@newl@bel{\ZREF@RefPrefix}%
+}
+\ZREF@Robust\def\zref@newlist#1{%
+  \zref@iflistundefined{#1}{%
+    \@ifdefinable{Z@L@#1}{%
+     \global\expandafter\let\csname Z@L@#1\endcsname\ltx@empty
+     \PackageInfo\ZREF@name{New property list: #1}%
+    }%
+  }{%
+    \PackageError\ZREF@name{%
+      Property list `#1' already exists%
+    }\@ehc
+  }%
+}
+\def\zref@iflistundefined#1{%
+  \ltx@ifundefined{Z@L@#1}%
+}
+\ZREF@Robust\def\zref@listexists#1{%
+  \zref@iflistundefined{#1}{%
+    \PackageError\ZREF@name{%
+      Property list `#1' does not exist%
+    }\@ehc
+  }%
+}
+\ZREF@Robust\def\zref@iflistcontainsprop#1#2{%
+  \zref@iflistundefined{#1}{%
+    \ltx@secondoftwo
+  }{%
+    \begingroup\expandafter\endgroup
+    \expandafter\in@
+    \csname#2\expandafter\expandafter\expandafter\endcsname
+    \expandafter\expandafter\expandafter{\csname Z@L@#1\endcsname}%
+    \csname ltx@\ifin@ first\else second\fi oftwo\endcsname
+  }%
+}
+\def\zref@listforloop#1#2{%
+  \zref@listexists{#1}{%
+    \expandafter\expandafter\expandafter\@tfor
+    \expandafter\expandafter\expandafter\zref@prop
+    \expandafter\expandafter\expandafter:%
+    \expandafter\expandafter\expandafter=%
+    \csname Z@L@#1\endcsname
+    \do{%
+      \begingroup
+        \escapechar=-1 %
+        \edef\x{\endgroup
+          \def\noexpand\zref@prop{%
+            \expandafter\string\zref@prop
+          }%
+        }%
+      \x
+      #2\zref@prop
+    }%
+  }%
+}
+\ZREF@Robust\def\zref@addprops#1#2{%
+  \zref@listexists{#1}{%
+    \comma@parse{#2}{%
+      \zref@propexists\comma@entry{%
+        \zref@iflistcontainsprop{#1}\comma@entry{%
+          \PackageWarning\ZREF@name{%
+            Property `\comma@entry' is already in list `#1'%
+          }%
+        }{%
+          \begingroup\expandafter\endgroup
+          \expandafter\g@addto@macro
+          \csname Z@L@#1\expandafter\endcsname
+          \expandafter{\csname\comma@entry\endcsname}%
+        }%
+      }%
+      \ltx@gobble
+    }%
+  }%
+}
+\ZREF@Robust\def\zref@addprop#1#2{%
+  \zref@listexists{#1}{%
+    \zref@propexists{#2}{%
+      \zref@iflistcontainsprop{#1}{#2}{%
+        \PackageWarning\ZREF@name{%
+          Property `#2' is already in list `#1'%
+        }%
+      }{%
+        \begingroup\expandafter\endgroup
+        \expandafter\g@addto@macro
+        \csname Z@L@#1\expandafter\endcsname
+        \expandafter{\csname#2\endcsname}%
+      }%
+    }%
+  }%
+}
+\ZREF@Robust\def\zref@localaddprops#1#2{%
+  \zref@listexists{#1}{%
+    \comma@parse{#2}{%
+      \zref@propexists\comma@entry{%
+        \zref@iflistcontainsprop{#1}\comma@entry{%
+          \PackageWarning\ZREF@name{%
+            Property `\comma@entry' is already in list `#1'%
+          }%
+        }{%
+          \begingroup\expandafter\endgroup
+          \expandafter\ltx@LocalAppendToMacro
+          \csname Z@L@#1\expandafter\endcsname
+          \expandafter{\csname\comma@entry\endcsname}%
+        }%
+      }%
+      \ltx@gobble
+    }%
+  }%
+}
+\ZREF@Robust\def\zref@localaddprop#1#2{%
+  \zref@listexists{#1}{%
+    \zref@propexists{#2}{%
+      \zref@iflistcontainsprop{#1}{#2}{%
+        \PackageWarning\ZREF@name{%
+          Property `#2' is already in list `#1'%
+        }%
+      }{%
+        \begingroup\expandafter\endgroup
+        \expandafter\ltx@LocalAppendToMacro
+        \csname Z@L@#1\expandafter\endcsname
+        \expandafter{\csname#2\endcsname}%
+      }%
+    }%
+  }%
+}
+\ltx@IfUndefined{pdf@strcmp}{%
+  \ZREF@Robust\def\zref@delprop{%
+    \ZREF@delprop\gdef
+  }%
+  \ZREF@Robust\def\zref@localdelprop{%
+    \ZREF@delprop\def
+  }%
+  \def\ZREF@delprop#1#2#3{%
+    \zref@listexists{#2}{%
+      \begingroup
+        \escapechar=-1 %
+        \def\ZREF@param{#3}%
+        \@onelevel@sanitize\ZREF@param
+        \toks@{}%
+        \expandafter\expandafter\expandafter\ZREF@@delprop
+        \csname Z@L@#2\endcsname!%
+      \expandafter\endgroup
+      \expandafter#1\csname Z@L@#2\expandafter\endcsname
+      \expandafter{%
+        \the\toks@
+      }%
+    }%
+  }%
+  \def\ZREF@@delprop#1{%
+    \expandafter\ZREF@@@delprop\expandafter{\string#1}#1%
+  }%
+  \def\ZREF@@@delprop#1#2{%
+    \ifx#2!%
+    \else
+      \def\ZREF@temp{#1}%
+      \@onelevel@sanitize\ZREF@temp
+      \ifx\ZREF@param\ZREF@temp
+      \else
+        \toks@\expandafter{%
+          \the\expandafter\toks@\csname#1\endcsname
+        }%
+      \fi
+      \expandafter\ZREF@@delprop
+    \fi
+  }%
+}{%
+  \ZREF@Robust\def\zref@delprop{%
+    \ZREF@delprop\xdef
+  }%
+  \ZREF@Robust\def\zref@localdelprop{%
+    \ZREF@delprop\edef
+  }%
+  \def\ZREF@delprop#1#2#3{%
+    \zref@listexists{#2}{%
+      \def\ZREF@param{#3}%
+      \edef\ZREF@SavedEscapechar{\the\escapechar}%
+      \escapechar=-1 %
+      \expandafter#1\csname Z@L@#2%
+      \expandafter\expandafter\expandafter\endcsname{%
+        \expandafter\expandafter\expandafter\ZREF@@delprop
+        \csname Z@L@#2\endcsname!%
+      }%
+      \escapechar=\ZREF@SavedEscapechar\relax
+    }%
+  }%
+  \def\ZREF@@delprop#1{%
+    \expandafter\ZREF@@@delprop\expandafter{\string#1}#1%
+  }%
+  \def\ZREF@@@delprop#1#2{%
+    \ifx#2!%
+    \else
+      \ifnum\pdf@strcmp{#1}{\ZREF@param}=\ltx@zero
+      \else
+        \expandafter\noexpand\csname#1\endcsname
+      \fi
+      \expandafter\ZREF@@delprop
+    \fi
+  }%
+}
+\def\zref@ifpropundefined#1{%
+  \ltx@ifundefined{Z@E@#1}%
+}
+\ZREF@Robust\def\zref@propexists#1{%
+  \zref@ifpropundefined{#1}{%
+    \PackageError\ZREF@name{%
+      Property `#1' does not exist%
+    }\@ehc
+  }%
+}
+\ZREF@Robust\def\zref@newprop{%
+  \@ifstar{%
+    \let\ZREF@X\noexpand
+    \ZREF@newprop
+  }{%
+    \let\ZREF@X\ltx@empty
+    \ZREF@newprop
+  }%
+}
+\def\ZREF@newprop#1{%
+  \edef\ZREF@P{#1}%
+  \@onelevel@sanitize\ZREF@P
+  \begingroup
+  \ifx\ZREF@P\ZREF@par
+    \@PackageError\ZREF@name{%
+      Invalid property name `\ZREF@P'%
+    }{%
+      The property name `par' is not allowed %
+      because of internal reasons.%
+      \MessageBreak
+      \@ehc
+    }%
+    \def\ZREF@@newprop[##1]##2{\endgroup}%
+  \else
+    \zref@ifpropundefined\ZREF@P{%
+      \endgroup
+      \PackageInfo\ZREF@name{%
+        New property: \ZREF@P
+      }%
+    }{%
+      \@PackageError\ZREF@name{%
+        Property `\ZREF@P' already exists%
+      }\@ehc
+      \def\ZREF@@newprop[##1]##2{\endgroup}%
+    }%
+  \fi
+  \@ifnextchar[\ZREF@@newprop{\ZREF@@newprop[\zref@default]}%
+}
+\def\ZREF@par{par}
+\@onelevel@sanitize\ZREF@par
+\def\ZREF@@newprop[#1]{%
+  \global\@namedef{Z@D@\ZREF@P}{#1}%
+  \global\expandafter\let\csname Z@X@\ZREF@P\endcsname\ZREF@X
+  \begingroup\expandafter\endgroup
+  \expandafter\ZREF@@@newprop\csname\ZREF@P\endcsname
+  \expandafter\gdef\csname Z@C@\ZREF@P\endcsname{}%
+  \zref@setcurrent\ZREF@P
+}
+\def\ZREF@@@newprop#1{%
+  \expandafter
+  \gdef\csname Z@E@\ZREF@P\endcsname##1#1##2##3\ZREF@nil{##2}%
+}
+\ZREF@Robust\def\zref@showprop#1{%
+  \zref@ifpropundefined{#1}{%
+    \@PackageInfoNoLine{\ZREF@name}{%
+      Show property `#1': <undefined>%
+    }%
+  }{%
+    \begingroup
+      \toks@\expandafter\expandafter\expandafter{%
+        \csname Z@C@#1\endcsname
+      }%
+      \edef\ZREF@value{\the\toks@}%
+      \ltx@onelevel@sanitize\ZREF@value
+      \toks@\expandafter\expandafter\expandafter{%
+        \csname Z@D@#1\endcsname
+      }%
+      \edef\ZREF@default{\the\toks@}%
+      \ltx@onelevel@sanitize\ZREF@default
+      \@PackageInfoNoLine{\ZREF@name}{%
+        Show property `#1':\MessageBreak
+        \expandafter\ifx\csname Z@X@#1\endcsname\ltx@empty
+          Immediate %
+        \else
+          Delayed %
+        \fi
+        value: [\ZREF@value]\MessageBreak
+        Default: [\ZREF@default]%
+      }%
+    \endgroup
+  }%
+}
+\ZREF@Robust\def\zref@setcurrent#1#2{%
+  \zref@propexists{#1}{%
+    \expandafter\def\csname Z@C@#1\endcsname{#2}%
+  }%
+}
+\def\ZREF@getcurrent#1{%
+  \romannumeral0%
+  \ltx@ifundefined{Z@C@#1}{%
+    \ltx@space
+  }{%
+    \expandafter\expandafter\expandafter\ltx@space
+    \csname Z@C@#1\endcsname
+  }%
+}
+\def\ZREF@wu@getcurrent#1{%
+  \etex@unexpanded\expandafter\expandafter\expandafter{%
+    \ZREF@getcurrent{#1}%
+  }%
+}
+\let\zref@getcurrent\ZREF@getcurrent
+\ZREF@Robust\def\zref@label#1{%
+  \zref@labelbylist{#1}\ZREF@mainlist
+}
+\ZREF@Robust\def\zref@labelbylist#1#2{%
+  \@bsphack
+    \zref@listexists{#2}{%
+      \expandafter\expandafter\expandafter\ZREF@label
+      \expandafter\expandafter\expandafter{%
+        \csname Z@L@#2\endcsname
+      }{#1}%
+    }%
+  \@esphack
+}
+\ZREF@Robust\def\zref@labelbyprops#1#2{%
+  \@bsphack
+    \begingroup
+      \toks@{}%
+      \comma@parse{#2}{%
+        \zref@ifpropundefined\comma@entry{%
+          \PackageWarning\ZREF@name{%
+            Property `\comma@entry' is not known%
+          }%
+        }{%
+          \toks@\expandafter{%
+            \the\expandafter\toks@\csname\comma@entry\endcsname
+          }%
+        }%
+        \ltx@gobble
+      }%
+    \expandafter\endgroup
+    \expandafter\ZREF@label\expandafter{\the\toks@}{#1}%
+  \@esphack
+}
+\ZREF@Robust\def\zref@labelbykv#1#2{%
+  \@bsphack
+    \begingroup
+      \let\Z@L@ZREF@temp\ltx@empty
+      \kvsetkeys{ZREF@LABEL}{#1}%
+      \ifZREF@immediate
+        \expandafter\zref@wrapper@immediate\expandafter{%
+          \expandafter\ZREF@label\expandafter{\Z@L@ZREF@temp}{#2}%
+        }%
+      \else
+        \expandafter\ZREF@label\expandafter{\Z@L@ZREF@temp}{#2}%
+      \fi
+    \endgroup
+  \@esphack
+}
+\kv@define@key{ZREF@LABEL}{prop}{%
+  \edef\ZREF@param{#1}%
+  \zref@propexists\ZREF@param{%
+    \zref@iflistcontainsprop{ZREF@temp}\ZREF@param{}{%
+      \begingroup\expandafter\endgroup
+      \expandafter\ltx@LocalAppendToMacro
+      \expandafter\Z@L@ZREF@temp
+      \expandafter{\csname\ZREF@param\endcsname}%
+    }%
+  }%
+}
+\kv@define@key{ZREF@LABEL}{list}{%
+  \zref@listforloop{#1}{%
+    \zref@iflistcontainsprop{ZREF@temp}\zref@prop{}{%
+      \begingroup\expandafter\endgroup
+      \expandafter\ltx@LocalAppendToMacro
+      \expandafter\Z@L@ZREF@temp
+      \expandafter{\csname\zref@prop\endcsname}%
+    }%
+    \ltx@gobble
+  }%
+}
+\kv@define@key{ZREF@LABEL}{delprop}{%
+  \zref@propexists{#1}{%
+    \zref@localdelprop{ZREF@temp}{#1}%
+  }%
+}
+\kv@define@key{ZREF@LABEL}{immediate}[true]{%
+  \edef\ZREF@param{#1}%
+  \ifx\ZREF@param\ZREF@true
+    \ZREF@immediatetrue
+  \else
+    \ifx\ZREF@param\ZREF@false
+      \ZREF@immediatefalse
+    \else
+      \PackageWarning\ZREF@name{%
+        Option `immediate' expects `true' or `false'.\MessageBreak
+        Ignoring invalid value `\ZREF@param'%
+      }%
+    \fi
+  \fi
+}
+\def\ZREF@false{false}
+\def\ZREF@true{true}
+\kv@define@key{ZREF@LABEL}{values}[]{%
+  \kv@parse{#1}{%
+    \ifx\kv@value\relax
+      \@PackageWarning\ZREF@name{%
+        Missing value for property `\kv@key'%
+      }%
+      \expandafter\ltx@gobbletwo
+    \else
+      \expandafter\zref@setcurrent
+    \fi
+  }%
+}
+\newif\ifZREF@immediate
+\ZREF@Robust{\long\def}\zref@wrapper@immediate#1{%
+  \begingroup
+    \ZREF@immediatetrue
+    \let\ZREF@org@write\write
+    \def\write{\immediate\ZREF@org@write}%
+    #1%
+  \endgroup
+}
+\def\ZREF@label#1#2{%
+  \if@filesw
+    \begingroup
+      \ifZREF@immediate
+        \let\ZREF@org@thepage\thepage
+      \fi
+      \protected@write\@auxout{%
+        \ifZREF@immediate
+          \let\thepage\ZREF@org@thepage
+        \fi
+        \let\ZREF@temp\ltx@empty
+        \@tfor\ZREF@P:=#1\do{%
+          \begingroup
+            \escapechar=-1 %
+            \edef\x{\endgroup
+              \def\noexpand\ZREF@P{%
+                \expandafter\string\ZREF@P
+              }%
+            }%
+          \x
+          \expandafter\ifx
+              \csname
+                \ifZREF@immediate
+                  relax%
+                \else
+                  Z@X@\ZREF@P%
+                \fi
+              \endcsname
+              \noexpand
+            \expandafter\let\csname Z@C@\ZREF@P\endcsname\relax
+          \fi
+          \toks@\expandafter{\ZREF@temp}%
+          \edef\ZREF@temp{%
+            \the\toks@
+            \ltx@backslashchar\ZREF@P{%
+              \expandafter\noexpand\csname Z@C@\ZREF@P\endcsname
+            }%
+          }%
+        }%
+      }{%
+        \string\zref@newlabel{#2}{\ZREF@temp}%
+      }%
+    \endgroup
+  \fi
+}
+\def\ZREF@addtoks#1{%
+  \toks@\expandafter\expandafter\expandafter{%
+    \expandafter\the\expandafter\toks@#1%
+  }%
+}
+\def\zref@ifrefundefined#1{%
+  \ltx@ifundefined{Z@R@#1}%
+}
+\ZREF@IfDefinable\zifrefundefined\def{%
+  #1{%
+    \zref@wrapper@babel\ZREF@ifrefundefined{#1}%
+  }%
+}
+\def\ZREF@ifrefundefined#1{%
+  \zref@refused{#1}%
+  \zref@ifrefundefined{#1}%
+}
+\ZREF@Robust\def\zref@refused#1{%
+  \zref@wrapper@babel\ZREF@refused{#1}%
+}
+\def\ZREF@refused#1{%
+  \zref@ifrefundefined{#1}{%
+    \protect\G@refundefinedtrue
+    \@latex@warning{%
+      Reference `#1' on page \thepage \space undefined%
+    }%
+  }{}%
+}
+\def\zref@ifrefcontainsprop#1#2{%
+  \zref@ifrefundefined{#1}{%
+    \ltx@secondoftwo
+  }{%
+    \expandafter\ZREF@ifrefcontainsprop
+    \csname Z@E@#2\expandafter\endcsname
+    \csname#2\expandafter\expandafter\expandafter\endcsname
+    \expandafter\expandafter\expandafter{%
+      \csname Z@R@#1\endcsname
+    }%
+  }%
+}
+\def\ZREF@ifrefcontainsprop#1#2#3{%
+  \expandafter\ifx\expandafter\ZREF@novalue
+  #1#3#2\ZREF@novalue\ZREF@nil\ltx@empty
+    \expandafter\ltx@secondoftwo
+  \else
+    \expandafter\ltx@firstoftwo
+  \fi
+}
+\def\ZREF@novalue{\ZREF@NOVALUE}
+\def\ZREF@extract#1#2{%
+  \romannumeral0%
+  \ltx@ifundefined{Z@D@#2}{%
+    \expandafter\ltx@space\zref@default
+  }{%
+    \expandafter\expandafter\expandafter\ZREF@@extract
+    \expandafter\expandafter\expandafter{%
+      \csname Z@D@#2\endcsname
+    }{#1}{#2}%
+  }%
+}
+\def\ZREF@@extract#1#2#3{%
+  \expandafter\expandafter\expandafter\ltx@space
+  \zref@extractdefault{#2}{#3}{#1}%
+}
+\def\ZREF@wu@extract#1#2{%
+  \etex@unexpanded\expandafter\expandafter\expandafter{%
+    \ZREF@extract{#1}{#2}%
+  }%
+}
+\let\zref@extract\ZREF@extract
+\def\ZREF@extractdefault#1#2#3{%
+  \romannumeral0%
+  \zref@ifrefundefined{#1}\ltx@firstoftwo{%
+    \zref@ifpropundefined{#2}\ltx@firstoftwo\ltx@secondoftwo
+  }{%
+    \ltx@space
+    #3%
+  }{%
+    \expandafter\expandafter\expandafter\ltx@space
+    \csname Z@E@#2\expandafter\expandafter\expandafter\endcsname
+    \csname Z@R@#1\expandafter\endcsname
+    \csname#2\endcsname{#3}\ZREF@nil
+  }%
+}
+\def\ZREF@wu@extractdefault#1#2#3{%
+  \etex@unexpanded\expandafter\expandafter\expandafter{%
+    \ZREF@extractdefault{#1}{#2}{#3}%
+  }%
+}
+\let\zref@extractdefault\ZREF@extractdefault
+\ZREF@Robust\def\zref@def@extract#1{%
+  \zref@wrapper@babel{\ZREF@def@extract{#1}}%
+}
+\def\ZREF@def@extract#1#2#3{%
+  \zref@refused{#2}%
+  \expandafter\expandafter\expandafter\def
+  \expandafter\expandafter\expandafter#1%
+  \expandafter\expandafter\expandafter{%
+    \zref@extract{#2}{#3}%
+  }%
+}
+\ZREF@Robust\def\zref@def@extractdefault#1{%
+  \zref@wrapper@babel{\ZREF@def@extractdefault{#1}}%
+}
+\def\ZREF@def@extractdefault#1#2#3#4{%
+  \zref@refused{#2}%
+  \expandafter\expandafter\expandafter\def
+  \expandafter\expandafter\expandafter#1%
+  \expandafter\expandafter\expandafter{%
+    \zref@extractdefault{#2}{#3}{#4}%
+  }%
+}
+\ZREF@Robust{\long\def}\ZREF@wrapper@unexpanded#1{%
+  \let\zref@wrapper@unexpanded\ltx@firstofone
+  \let\zref@getcurrent\ZREF@wu@getcurrent
+  \let\zref@extractdefault\ZREF@wu@extractdefault
+  \let\zref@extract\ZREF@wu@extract
+  #1%
+  \let\zref@wrapper@unexpanded\ZREF@wrapper@unexpanded
+  \let\zref@getcurrent\ZREF@getcurrent
+  \let\zref@extractdefault\ZREF@extractdefault
+  \let\zref@extract\ZREF@extract
+}
+\ltx@IfUndefined{etex@unexpanded}{%
+  \let\zref@wrapper@unexpanded\ltx@firstofone
+}{%
+  \let\zref@wrapper@unexpanded\ZREF@wrapper@unexpanded
+}
+\ZREF@Robust{\long\def}\zref@wrapper@babel#1#2{%
+  \ifcsname if@safe@actives\endcsname
+    \expandafter\ltx@firstofone
+  \else
+    \expandafter\ltx@secondoftwo
+  \fi
+  {%
+    \if@safe@actives
+      \expandafter\ltx@secondoftwo
+    \else
+      \expandafter\ltx@firstoftwo
+    \fi
+    {%
+      \begingroup
+        \csname @safe@activestrue\endcsname
+        \edef\x{#2}%
+      \expandafter\endgroup
+      \expandafter\ZREF@wrapper@babel\expandafter{\x}{#1}%
+    }%
+  }{%
+    #1{#2}%
+  }%
+}
+\long\def\ZREF@wrapper@babel#1#2{%
+  #2{#1}%
+}
+\ZREF@Robust\def\zref@require@unique{%
+  \@ifundefined{c@zref@unique}{%
+    \begingroup
+      \let\@addtoreset\ltx@gobbletwo
+      \newcounter{zref@unique}%
+    \endgroup
+    \renewcommand*{\thezref@unique}{%
+      zref@\number\c@zref@unique
+    }%
+  }{}%
+}
+\ltx@IfUndefined{numexpr}{%
+  \def\ZREF@number#1{\number#1}%
+}{%
+  \def\ZREF@number#1{\the\numexpr(#1)\relax}%
+}
+\ZREF@Robust\def\zref@setdefault#1{%
+  \def\zref@default{#1}%
+}
+\zref@setdefault{%
+  \nfss@text{\reset@font\bfseries ??}%
+}
+\ZREF@Robust\def\zref@setmainlist#1{%
+  \def\ZREF@mainlist{#1}%
+}
+\zref@setmainlist{main}
+\zref@newlist\ZREF@mainlist
+\zref@newprop{default}{\@currentlabel}
+\zref@newprop*{page}{\thepage}
+\zref@addprops\ZREF@mainlist{default,page}
+\def\ZREF@NewPropAnchor{%
+  \zref@newprop{anchor}{%
+    \ltx@ifundefined{@currentHref}{}{\@currentHref}%
+  }%
+  \global\let\ZREF@NewPropAnchor\relax
+}
+\def\ZREF@NewPropTitle{%
+  \gdef\zref@titleref@current{}%
+  \zref@newprop{title}{\zref@titleref@current}%
+  \global\let\ZREF@NewPropTitle\relax
+}
+\def\ZREF@NewPropTheotype{%
+  \zref@newprop{theotype}{}%
+  \global\let\ZREF@NewPropTheotype\relax
+}
+\def\ZREF@NewPropPageValue{%
+  \zref@newprop*{pagevalue}[0]{\number\c@page}%
+  \global\let\ZREF@NewPropPageValue\relax
+}
+\let\ZREF@base@ok=Y
+\endinput
+%%
+%% End of file `zref-base.sty'.

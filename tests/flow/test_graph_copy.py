@@ -1,6 +1,8 @@
 from common import Env, FalkorDB, SANITIZER, VALGRIND
+from redis import BusyLoadingError
 from random_graph import create_random_schema, create_random_graph
 from graph_utils import graph_eq
+from constraint_utils import create_constraint
 import time
 
 GRAPH_ID = "graph_copy"
@@ -17,16 +19,18 @@ class testGraphCopy():
 
     # compare graphs
     def assert_graph_eq(self, A, B):
+        max_iterations = 20
         # tests that the graphs are the same
-        while True:
+        # limit retries to 20
+        for _ in range(max_iterations):
             try:
                 self.env.assertTrue(graph_eq(A, B))
-                break
-            except Exception as e:
-                # retry if query was issued while redis is loading
-                if str(e) == "Redis is loading the dataset in memory":
-                    print("Retry!")
-                    continue
+                return
+            except BusyLoadingError as e:
+                print("Retry!")
+                time.sleep(1)
+
+        raise RuntimeError("Redis not loaded after 20 seconds")
 
     def test_01_invalid_invocation(self):
         # validate invalid invocations of the GRAPH.COPY command
@@ -140,8 +144,7 @@ class testGraphCopy():
         # create graph with both indices and constrains
         src_graph.create_node_range_index("Person", "name", "age")
 
-        self.conn.execute_command("GRAPH.CONSTRAINT", "CREATE", src_id, "UNIQUE",
-                                  "NODE", "Person", "PROPERTIES", 1, "name")
+        create_constraint(src_graph, "UNIQUE", "NODE", "Person", "name", sync=True)
 
         # copy graph
         self.graph_copy(src_id, clone_id)
@@ -156,7 +159,7 @@ class testGraphCopy():
     def test_05_chain_of_copies(self):
         # make multiple copies of essentially the same graph
         # start with graph A
-        # copy A to B, copy B to C and so on and so forth up to J
+        # copy A to B, copy B to C and C to D
         # A == B == C == D
         src = 'A'
 
@@ -241,7 +244,7 @@ class testGraphCopy():
 
     def test_08_replicated_copy(self):
         # skip test if we're running under Valgrind or sanitizer
-        if VALGRIND or SANITIZER != "":
+        if VALGRIND or SANITIZER:
             self.env.skip() # valgrind is not working correctly with replication
 
         # make sure the GRAPH.COPY command is replicated

@@ -13,7 +13,7 @@ on:
     workflows: ["Build on ubuntu"]
     types:
       - completed
-    branches: [master, "[0-9]+.[0-9]+"]
+    branches: [master, "v[0-9]+.[0-9]+"]
   release:
     types: [published]
 
@@ -28,11 +28,14 @@ env:
 jobs:
   release:
     # Only run this job if the workflow_run event is successful or if the event is not a workflow_run
-    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' || github.event_name != 'workflow_run' }}
+    if: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') || github.event_name != 'workflow_run' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
       - name: Retrieve built image AMD
-        uses: dawidd6/action-download-artifact@v3
+        uses: dawidd6/action-download-artifact@v11
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -42,7 +45,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image ARM
-        uses: dawidd6/action-download-artifact@v3
+        uses: dawidd6/action-download-artifact@v11
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -51,10 +54,163 @@ jobs:
           path: /tmp
           if_no_artifact_found: error
 
+      - name: Retrieve built image RHEL AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-rhel-x64
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image Alpine AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-alpine-x64
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image Alpine ARM
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-alpine-arm64v8
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image Alpine AMD server only
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-server-alpine-x64
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image Alpine ARM server only
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-server-alpine-arm64v8
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image Ubuntu AMD server only
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-server-x64
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image Ubuntu ARM server only
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-server-arm64v8
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so ARM
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-arm64v8.so
+          path: /tmp
+          if_no_artifact_found: error
+      - name: Retrieve built .so RHEL AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-rhel-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+      - name: Retrieve built debug.so AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+      - name: Retrieve built debug.so ARM
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-arm64v8.so
+          path: /tmp
+          if_no_artifact_found: error
+      - name: Retrieve built debug.so RHEL AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-rhel-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so macOS ARM64
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-macos-arm64v8.so
+          path: /tmp
+          if_no_artifact_found: ignore
+
+      - name: Retrieve built debug.so macOS ARM64
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-macos-arm64v8.so
+          path: /tmp
+          if_no_artifact_found: ignore
+
       - name: Load image
         run: |
           docker load -i /tmp/falkordb-x64.tar
           docker load -i /tmp/falkordb-arm64v8.tar
+          docker load -i /tmp/falkordb-rhel-x64.tar
+          docker load -i /tmp/falkordb-server-alpine-x64.tar
+          docker load -i /tmp/falkordb-server-alpine-arm64v8.tar
+          docker load -i /tmp/falkordb-server-x64.tar
+          docker load -i /tmp/falkordb-server-arm64v8.tar
+          docker load -i /tmp/falkordb-alpine-x64.tar
+          docker load -i /tmp/falkordb-alpine-arm64v8.tar
 
       - name: Login to DockerHub
         uses: docker/login-action@v3
@@ -88,20 +244,83 @@ jobs:
 
           echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_ENV
 
-      - name: Tag x64 and ARM images
+      - name: Tag x64, ARM, and rhel-x64 images
         run: |
           docker tag falkordb/falkordb-x64 falkordb/falkordb:${{ env.TAG_NAME }}-x64
           docker tag falkordb/falkordb-arm64v8 falkordb/falkordb:${{ env.TAG_NAME }}-arm64v8
+          docker tag falkordb/falkordb-rhel-x64 falkordb/falkordb:${{ env.TAG_NAME }}-rhel-x64
 
-      - name: Push x64 and ARM images & create manifest
+          docker tag falkordb/falkordb-alpine-x64 falkordb/falkordb:${{ env.TAG_NAME }}-alpine-x64
+          docker tag falkordb/falkordb-alpine-arm64v8 falkordb/falkordb:${{ env.TAG_NAME }}-alpine-arm64v8
+
+          docker tag falkordb/falkordb-server-alpine-x64 falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-x64
+          docker tag falkordb/falkordb-server-alpine-arm64v8 falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-arm64v8
+
+          docker tag falkordb/falkordb-server-x64 falkordb/falkordb-server:${{ env.TAG_NAME }}-x64
+          docker tag falkordb/falkordb-server-arm64v8 falkordb/falkordb-server:${{ env.TAG_NAME }}-arm64v8
+
+      - name: Push x64, ARM, rhel-x64 images & create manifest
         run: |
           docker push falkordb/falkordb:${{ env.TAG_NAME }}-x64
           docker push falkordb/falkordb:${{ env.TAG_NAME }}-arm64v8
+          docker push falkordb/falkordb:${{ env.TAG_NAME }}-rhel-x64
+          docker push falkordb/falkordb:${{ env.TAG_NAME }}-alpine-x64
+          docker push falkordb/falkordb:${{ env.TAG_NAME }}-alpine-arm64v8
+          docker push falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-x64
+          docker push falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-arm64v8
+          docker push falkordb/falkordb-server:${{ env.TAG_NAME }}-x64
+          docker push falkordb/falkordb-server:${{ env.TAG_NAME }}-arm64v8
 
           docker buildx imagetools create -t falkordb/falkordb:${{ env.TAG_NAME }} ${{ env.IS_LATEST == '1' && '-t falkordb/falkordb:latest' || '' }} \
           falkordb/falkordb:${{ env.TAG_NAME }}-x64 \
           falkordb/falkordb:${{ env.TAG_NAME }}-arm64v8
 
+          docker buildx imagetools create -t falkordb/falkordb:${{ env.TAG_NAME }}-alpine ${{ env.IS_LATEST == '1' && '-t falkordb/falkordb:latest-alpine' || '' }} \
+          falkordb/falkordb:${{ env.TAG_NAME }}-alpine-x64 \
+          falkordb/falkordb:${{ env.TAG_NAME }}-alpine-arm64v8
+
+          docker buildx imagetools create -t falkordb/falkordb-server:${{ env.TAG_NAME }} ${{ env.IS_LATEST == '1' && '-t falkordb/falkordb-server:latest' || '' }} \
+          falkordb/falkordb-server:${{ env.TAG_NAME }}-x64 \
+          falkordb/falkordb-server:${{ env.TAG_NAME }}-arm64v8
+
+          docker buildx imagetools create -t falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine ${{ env.IS_LATEST == '1' && '-t falkordb/falkordb-server:latest-alpine' || '' }} \
+          falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-x64 \
+          falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-arm64v8
+
       - name: Inspect image
         run: |
           docker buildx imagetools inspect falkordb/falkordb:${{ env.TAG_NAME }}
+          docker buildx imagetools inspect falkordb/falkordb:${{ env.TAG_NAME }}-alpine
+          docker buildx imagetools inspect falkordb/falkordb-server:${{ env.TAG_NAME }}
+          docker buildx imagetools inspect falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine
+
+      - name: Upload falkordb.so files to release
+        if: github.event_name == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-x64.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-arm64v8.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-rhel-x64.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-x64.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-arm64v8.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-rhel-x64.so
+          # Upload macOS binaries if they exist
+          if [ -f /tmp/falkordb-macos-arm64v8.so ]; then
+            gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-macos-arm64v8.so
+          fi
+          if [ -f /tmp/falkordb-debug-macos-arm64v8.so ]; then
+            gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-macos-arm64v8.so
+          fi
+
+      - name: Trigger FalkorDB Cloud Version Update
+        if: github.event_name == 'release'
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.FALKORDB_OMNISTRATE_PAT }}
+          repository: FalkorDB/falkordb-omnistrate
+          event-type: bump-falkordb-version
+          client-payload: |
+            {
+              "new_version": "${{ github.event.release.tag_name }}"
+            }

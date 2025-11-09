@@ -2,21 +2,21 @@
 // gb_default_format: determine the default format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "gb_interface.h"
 
-GxB_Format_Value gb_default_format      // GxB_BY_ROW or GxB_BY_COL
+int gb_default_format      // GxB_BY_ROW or GxB_BY_COL
 (
-    GrB_Index nrows,        // row vectors are stored by row
-    GrB_Index ncols         // column vectors are stored by column
+    uint64_t nrows,        // row vectors are stored by row
+    uint64_t ncols         // column vectors are stored by column
 )
 {
 
-    GxB_Format_Value fmt ;
+    int fmt ;
     if (ncols == 1)
     { 
         // column vectors are stored by column, by default
@@ -30,7 +30,7 @@ GxB_Format_Value gb_default_format      // GxB_BY_ROW or GxB_BY_COL
     else
     { 
         // get the default format
-        OK (GxB_Global_Option_get (GxB_FORMAT, &fmt)) ;
+        OK (GrB_Global_get_INT32 (GrB_GLOBAL, &fmt, GxB_FORMAT)) ;
     }
     return (fmt) ;
 }

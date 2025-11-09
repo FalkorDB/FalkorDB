@@ -6,15 +6,17 @@
 
 #pragma once
 
-#include <stdbool.h>
+#include "../value.h"
 #include "redismodule.h"
 
-#define RESULTSET_SIZE_UNLIMITED           UINT64_MAX
-#define CONFIG_TIMEOUT_NO_TIMEOUT          0
-#define VKEY_ENTITY_COUNT_UNLIMITED        UINT64_MAX
-#define QUERY_MEM_CAPACITY_UNLIMITED       0
-#define NODE_CREATION_BUFFER_DEFAULT       16384
-#define DELTA_MAX_PENDING_CHANGES_DEFAULT  10000
+#include <stdbool.h>
+
+#define RESULTSET_SIZE_UNLIMITED          UINT64_MAX
+#define CONFIG_TIMEOUT_NO_TIMEOUT         0
+#define VKEY_ENTITY_COUNT_UNLIMITED       UINT64_MAX
+#define QUERY_MEM_CAPACITY_UNLIMITED      0
+#define NODE_CREATION_BUFFER_DEFAULT      16384
+#define DELTA_MAX_PENDING_CHANGES_DEFAULT 10000
 
 typedef enum {
 	Config_TIMEOUT                   = 0,   // timeout value for queries
@@ -28,13 +30,15 @@ typedef enum {
 	Config_VKEY_MAX_ENTITY_COUNT     = 8,   // max number of elements in vkey
 	Config_MAX_QUEUED_QUERIES        = 9,   // max number of queued queries
 	Config_QUERY_MEM_CAPACITY        = 10,  // max mem(bytes) that query/thread can utilize at any given time
-	Config_DELTA_MAX_PENDING_CHANGES = 11,  // number of pending changes before RG_Matrix flushed
+	Config_DELTA_MAX_PENDING_CHANGES = 11,  // number of pending changes before Delta_Matrix flushed
 	Config_NODE_CREATION_BUFFER      = 12,  // size of buffer to maintain as margin in matrices
 	Config_CMD_INFO                  = 13,  // toggle on/off the GRAPH.INFO
 	Config_CMD_INFO_MAX_QUERY_COUNT  = 14,  // the max number of info queries count
 	Config_EFFECTS_THRESHOLD         = 15,  // bolt protocol port
 	Config_BOLT_PORT                 = 16,  // replicate queries via effects
-	Config_END_MARKER                = 17
+	Config_DELAY_INDEXING            = 17,  // delay index construction when decoding
+	Config_IMPORT_FOLDER             = 18,  // path to CSV import folder
+	Config_END_MARKER                = 19
 } Config_Option_Field;
 
 // callback function, invoked once configuration changes as a result of
@@ -54,7 +58,8 @@ static const Config_Option_Field RUNTIME_CONFIGS[] = {
 	Config_DELTA_MAX_PENDING_CHANGES,
 	Config_CMD_INFO,
 	Config_CMD_INFO_MAX_QUERY_COUNT,
-	Config_EFFECTS_THRESHOLD
+	Config_EFFECTS_THRESHOLD,
+	Config_DELAY_INDEXING
 };
 static const size_t RUNTIME_CONFIG_COUNT = sizeof(RUNTIME_CONFIGS) / sizeof(RUNTIME_CONFIGS[0]);
 
@@ -74,6 +79,12 @@ bool Config_Contains_field
 (
 	const char *field_str,
 	Config_Option_Field *field
+);
+
+// returns the field type
+SIType Config_Field_type
+(
+	Config_Option_Field field  // field
 );
 
 // returns field name

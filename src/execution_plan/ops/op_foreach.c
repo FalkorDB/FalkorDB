@@ -20,12 +20,7 @@ OpBase *NewForeachOp
 ) {
     OpForeach *op = rm_calloc(1, sizeof(OpForeach));
 
-	op->body           = NULL;
-	op->first          = true;
-	op->records        = NULL;
-	op->supplier       = NULL;
-	op->body_records   = NULL;
-	op->argument_list  = NULL;
+	op->first = true;
 
     OpBase_Init((OpBase *)op, OPType_FOREACH, "Foreach", ForeachInit,
 			ForeachConsume, ForeachReset, NULL, ForeachClone, ForeachFree,
@@ -65,26 +60,28 @@ static OpResult ForeachInit
 	op->records = array_new(Record, 1);
 	op->body_records = array_new(Record, 1);
 
-	// insert a NULL value to both arrays, so that execution terminates when it
-	// is consumed by the parent
-	array_append(op->records, NULL);
-
     return OP_OK;
 }
 
 // if there is a record to return, it is returned
 // otherwise, returns NULL (last value in op->records)
-static Record _handoff(OpForeach *op) {
-	ASSERT(op->records != NULL);
-	return array_pop(op->records);
+static Record _handoff
+(
+	OpForeach *op
+) {
+	if(op->rec_idx < array_len(op->records)) {
+		return op->records[op->rec_idx++];
+	} else {
+		return NULL;
+	}
 }
 
-// the Foreach consume function aggregates all the records from the supplier if
-// it exists, or a dummy record if not, in a list.
+// the Foreach consume function collects all the records from the supplier if
+// it exists, or a dummy record if not, into a list.
 // this list is passed AS IS (i.e., no cloning) to the ArgumentList
 // operation which passes them ONE-BY-ONE to the Unwind operation which clones
 // every record it receives BEFORE performing its modifications (this is what
-// allows us to not clone the records in Foreach or ArgumentList!).
+// allows us not to clone the records in Foreach or ArgumentList!).
 // Unwind will not free the records if ArgumentList is its child (i.e., part of
 // an execution-plan embedded in Foreach), such that Foreach is responsible for
 // the records.
@@ -128,16 +125,15 @@ static Record ForeachConsume
 	}
 
 	// pass body_records onwards to argumentList
-	ArgumentList_AddRecordList(op->argument_list, op->body_records);
-	op->body_records = NULL;
+	ArgumentList_AddRecordList(op->argument_list, &op->body_records);
 
 	// call consume on loop body first op
 	// the result is thrown away
-	while((r = OpBase_Consume(op->body))) {
-		OpBase_DeleteRecord(&r);
+	while ((r = OpBase_Consume(op->body))) {
+		OpBase_DeleteRecord (&r) ;
 	}
 
-	return _handoff(op);
+	return _handoff (op) ;
 }
 
 // free foreach internal data structures
@@ -149,7 +145,8 @@ static void _freeInternals
 	if(op->records != NULL) {
 		// free record list components (except first element, which is NULL)
 		uint nrecords = array_len(op->records);
-		for(uint i = 1; i < nrecords; i++) {
+		// records[0..rec_idx] had been emitted, skip them
+		for(uint i = op->rec_idx; i < nrecords; i++) {
 			OpBase_DeleteRecord(op->records+i);
 		}
 
@@ -175,14 +172,15 @@ static OpResult ForeachReset
 ) {
     OpForeach *op = (OpForeach *)opBase;
 
-	op->first = true;
+	op->first = true ;
 
-	_freeInternals(op);
+	_freeInternals (op) ;
 
-	op->records = array_new(Record, 1);
-	array_append(op->records, NULL);
+	op->rec_idx = 0 ;
+	op->records = array_new (Record, 1) ;
+	op->body_records = array_new (Record, 1) ;
 
-	return OP_OK;
+	return OP_OK ;
 }
 
 static OpBase *ForeachClone

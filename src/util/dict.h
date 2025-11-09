@@ -38,7 +38,7 @@
 #include "mt19937-64.h"
 #include <limits.h>
 #include <stdint.h>
-#include <stdlib.h>
+#include "rmalloc.h"
 
 #define DICT_OK 0
 #define DICT_ERR 1
@@ -93,8 +93,9 @@ struct dict {
                                  * by dictType's dictEntryBytes. */
 };
 
-// global default dictType with identity hash function
-dictType def_dt;
+// global hashtable types
+extern dictType def_dt;     // default dictType with identity hash function
+extern dictType string_dt;  // string based dictType
 
 /* If safe is set to 1 this is a safe iterator, that means, you can call
  * dictAdd, dictFind, and other functions against the dictionary even while

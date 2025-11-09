@@ -18,15 +18,17 @@ file(GLOB_RECURSE SOURCES "src/*.c")
 add_library(falkordb SHARED ${SOURCES})
 
 include_directories(
-	${root}/src
 	${root}
+	${root}/src
 	${root}/deps
 	${root}/deps/rax
 	${root}/deps/xxHash
 	${root}/deps/utf8proc
 	${root}/deps/oniguruma
 	${root}/deps/RediSearch/src
+	${root}/deps/LAGraph/include
 	${root}/deps/GraphBLAS/Include
+	${root}/deps/libcurl/include/curl
 	${root}/deps/libcypher-parser/lib/src
 	$ENV{LIBCYPHER_PARSER_BINDIR}/lib/src)
 
@@ -52,11 +54,11 @@ set(FALKORDB_OBJECTS $<TARGET_OBJECTS:falkordb>)
 
 find_package(OpenSSL)
 
-lists_from_env(GRAPHBLAS LIBXXHASH RAX LIBCYPHER_PARSER REDISEARCH_LIBS UTF8PROC ONIGURUMA FalkorDBRS)
-set(FALKORDB_LIBS ${GRAPHBLAS} ${LIBXXHASH} ${RAX} ${LIBCYPHER_PARSER} ${REDISEARCH_LIBS} ${UTF8PROC} ${ONIGURUMA} ${FalkorDBRS} OpenSSL::SSL)
+lists_from_env(GRAPHBLAS LAGRAPH LAGRAPHX LIBXXHASH LIBCURL LIBCSV RAX LIBCYPHER_PARSER REDISEARCH_LIBS UTF8PROC ONIGURUMA FalkorDBRS)
+set(FALKORDB_LIBS ${FalkorDBRS} ${LAGRAPHX} ${LAGRAPH} ${GRAPHBLAS} ${LIBXXHASH} ${LIBCURL} ${LIBCSV} ${RAX} ${LIBCYPHER_PARSER} ${REDISEARCH_LIBS} ${UTF8PROC} ${ONIGURUMA} OpenSSL::SSL)
 
 target_link_options(falkordb PRIVATE ${CMAKE_LD_FLAGS_LIST} ${CMAKE_SO_LD_FLAGS_LIST})
-target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS})
+target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS} ${CoreFoundation_Library} ${SystemConfiguration_Library})
 
 extract_debug_symbols(falkordb)
 

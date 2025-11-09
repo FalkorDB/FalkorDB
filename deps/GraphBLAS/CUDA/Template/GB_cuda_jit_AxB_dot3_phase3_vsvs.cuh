@@ -1,9 +1,9 @@
 //------------------------------------------------------------------------------
-// GraphBLAS/CUDA/JitKernels/GB_cuda_jit_AxB_dot3_phase3_vsvs.cuh
+// GraphBLAS/CUDA/template/GB_cuda_jit_AxB_dot3_phase3_vsvs.cuh
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
-// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// This file: Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -25,49 +25,10 @@
 //  A         <- input matrix A
 //  B         <- input matrix B
 
-//  Blocksize is 1024, uses warp and block reductions to count zombies produced.
+//  Blocksize is 1024, uses tile and block reductions to count zombies produced.
 //******************************************************************************
 
-//------------------------------------------------------------------------------
-// GB_block_ReduceSum_uint64
-//------------------------------------------------------------------------------
-
-__inline__ __device__ uint64_t GB_block_ReduceSum_uint64
-(
-    thread_block g,
-    uint64_t val
-)
-{
-    // Shared mem for 32 partial sums
-    static __shared__ uint64_t shared [tile_sz] ;
-
-    // FIXME: assumes tile_sz is 32:  (use an #if .. #else ... #endif)
-    int lane = threadIdx.x & 31 ; // % tile_sz;
-    int wid  = threadIdx.x >> 5 ; // / tile_sz;
-    thread_block_tile<tile_sz> tile = tiled_partition<tile_sz> (g) ;
-
-    // Each warp performs partial reduction
-    val = GB_cuda_warp_sum_uint64 (tile, val) ;    
-
-    // Wait for all partial reductions
-    if (lane == 0)
-    {
-        shared [wid] = val ; // Write reduced value to shared memory
-    }
-
-    g.sync();                     // Wait for all partial reductions
-
-    // read from shared memory only if that warp existed
-    val = (threadIdx.x <  (blockDim.x / tile_sz ) ) ? shared[lane] : 0;
-
-    // Final reduce within first warp
-    if (wid == 0)
-    {
-        val = GB_cuda_warp_sum_uint64 (tile, val) ;
-    }
-
-    return (val) ;
-}
+#include "template/GB_cuda_threadblock_sum_uint64.cuh"
 
 //------------------------------------------------------------------------------
 // GB_cuda_AxB_dot3_phase3_vsvs_kernel
@@ -81,7 +42,8 @@ __global__ void GB_cuda_AxB_dot3_phase3_vsvs_kernel
     GrB_Matrix C,
     GrB_Matrix M,
     GrB_Matrix A,
-    GrB_Matrix B
+    GrB_Matrix B,
+    const void *theta
 )
 {
 
@@ -92,37 +54,35 @@ __global__ void GB_cuda_AxB_dot3_phase3_vsvs_kernel
     const GB_B_TYPE *__restrict__ Bx = (GB_B_TYPE *)B->x  ;
     #endif
           GB_C_TYPE *__restrict__ Cx = (GB_C_TYPE *)C->x  ;
-          int64_t *__restrict__ Ci = C->i ;
-    const int64_t *__restrict__ Mi = M->i ;
+          GB_Ci_SIGNED_TYPE *__restrict__ Ci = (GB_Ci_SIGNED_TYPE *) C->i ;
+    const GB_Mi_TYPE *__restrict__ Mi = (GB_Mi_TYPE *) M->i ;
     #if GB_M_IS_HYPER
-    const int64_t *__restrict__ Mh = M->h ;
+    const GB_Mj_TYPE *__restrict__ Mh = (GB_Mj_TYPE *) M->h ;
     #endif
 
     ASSERT (GB_A_IS_HYPER || GB_A_IS_SPARSE) ;
-    const int64_t *__restrict__ Ai = A->i ;
-    const int64_t *__restrict__ Ap = A->p ;
+    const GB_Ai_TYPE *__restrict__ Ai = (GB_Ai_TYPE *) A->i ;
+    const GB_Ap_TYPE *__restrict__ Ap = (GB_Ap_TYPE *) A->p ;
 
     ASSERT (GB_B_IS_HYPER || GB_B_IS_SPARSE) ;
-    const int64_t *__restrict__ Bi = B->i ;
-    const int64_t *__restrict__ Bp = B->p ;
+    const GB_Bi_TYPE *__restrict__ Bi = (GB_Bi_TYPE *) B->i ;
+    const GB_Bp_TYPE *__restrict__ Bp = (GB_Bp_TYPE *) B->p ;
 
     #if GB_A_IS_HYPER
     const int64_t anvec = A->nvec ;
-    const int64_t *__restrict__ Ah = A->h ;
-    const int64_t *__restrict__ A_Yp = (A->Y == NULL) ? NULL : A->Y->p ;
-    const int64_t *__restrict__ A_Yi = (A->Y == NULL) ? NULL : A->Y->i ;
-    const int64_t *__restrict__ A_Yx = (int64_t *)
-        ((A->Y == NULL) ? NULL : A->Y->x) ;
+    const GB_Aj_TYPE *__restrict__ Ah = (GB_Aj_TYPE *) A->h ;
+    const void *A_Yp = (void *) ((A->Y == NULL) ? NULL : A->Y->p) ;
+    const void *A_Yi = (void *) ((A->Y == NULL) ? NULL : A->Y->i) ;
+    const void *A_Yx = (void *) ((A->Y == NULL) ? NULL : A->Y->x) ;
     const int64_t A_hash_bits = (A->Y == NULL) ? 0 : (A->Y->vdim - 1) ;
     #endif
 
     #if GB_B_IS_HYPER
     const int64_t bnvec = B->nvec ;
-    const int64_t *__restrict__ Bh = B->h ;
-    const int64_t *__restrict__ B_Yp = (B->Y == NULL) ? NULL : B->Y->p ;
-    const int64_t *__restrict__ B_Yi = (B->Y == NULL) ? NULL : B->Y->i ;
-    const int64_t *__restrict__ B_Yx = (int64_t *)
-        ((B->Y == NULL) ? NULL : B->Y->x) ;
+    const GB_Bj_TYPE *__restrict__ Bh = (GB_Bj_TYPE *) B->h ;
+    const void *B_Yp = (void *) ((B->Y == NULL) ? NULL : B->Y->p) ;
+    const void *B_Yi = (void *) ((B->Y == NULL) ? NULL : B->Y->i) ;
+    const void *B_Yx = (void *) ((B->Y == NULL) ? NULL : B->Y->x) ;
     const int64_t B_hash_bits = (B->Y == NULL) ? 0 : (B->Y->vdim - 1) ;
     #endif
 
@@ -139,15 +99,16 @@ __global__ void GB_cuda_AxB_dot3_phase3_vsvs_kernel
 
         int64_t i = Mi [pair_id] ;
         int64_t k = Ci [pair_id]>>4 ;
+        // assert: Ci [pair_id] & 0xF == GB_BUCKET_VSVS
 
         // j = k or j = Mh [k] if C and M are hypersparse
-        int64_t j = GBH_M (Mh, k) ;
+        int64_t j = GBh_M (Mh, k) ;
 
         // find A(:,i):  A is always sparse or hypersparse
         int64_t pA, pA_end ;
         #if GB_A_IS_HYPER
-        GB_hyper_hash_lookup (Ah, anvec, Ap, A_Yp, A_Yi, A_Yx, A_hash_bits,
-           i, &pA, &pA_end) ;
+        GB_hyper_hash_lookup (GB_Ap_IS_32, GB_Aj_IS_32,
+            Ah, anvec, Ap, A_Yp, A_Yi, A_Yx, A_hash_bits, i, &pA, &pA_end) ;
         #else
         pA     = Ap [i] ;
         pA_end = Ap [i+1] ;
@@ -156,8 +117,8 @@ __global__ void GB_cuda_AxB_dot3_phase3_vsvs_kernel
         // find B(:,j):  B is always sparse or hypersparse
         int64_t pB, pB_end ;
         #if GB_B_IS_HYPER
-        GB_hyper_hash_lookup (Bh, bnvec, Bp, B_Yp, B_Yi, B_Yx, B_hash_bits,
-           j, &pB, &pB_end) ;
+        GB_hyper_hash_lookup (GB_Bp_IS_32, GB_Bj_IS_32,
+            Bh, bnvec, Bp, B_Yp, B_Yi, B_Yx, B_hash_bits, j, &pB, &pB_end) ;
         #else
         pB     = Bp [j] ;
         pB_end = Bp [j+1] ;
@@ -189,6 +150,10 @@ __global__ void GB_cuda_AxB_dot3_phase3_vsvs_kernel
 
 
         GB_CIJ_EXIST_POSTCHECK ;
+
+// HACK
+// cij_exists = false ;
+
         if (cij_exists)
         {
             GB_PUTC (cij, Cx, pair_id) ;    // Cx [pair_id] = (GB_C_TYPE) cij
@@ -198,15 +163,11 @@ __global__ void GB_cuda_AxB_dot3_phase3_vsvs_kernel
         {
             // cij is a zombie
             my_nzombies++;
-            Ci [pair_id] = GB_FLIP (i) ;
+            Ci [pair_id] = GB_ZOMBIE (i) ;
         }
     }
 
-    // FIXME: use this in spdn and vsdn:
-    this_thread_block().sync(); 
-
-    my_nzombies = GB_block_ReduceSum_uint64 (this_thread_block(), my_nzombies) ;
-    this_thread_block().sync(); 
+    my_nzombies = GB_cuda_threadblock_sum_uint64 (my_nzombies) ;
 
     if( threadIdx.x == 0 && my_nzombies > 0)
     {

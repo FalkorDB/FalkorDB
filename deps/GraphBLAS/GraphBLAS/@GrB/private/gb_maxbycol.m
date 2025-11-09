@@ -2,7 +2,7 @@ function C = gb_maxbycol (op, A)
 %GB_MAXBYCOL max, by column
 % Implements C = max (A, [ ], 1)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % C = max (A, [ ], 1) reduces each col to a scalar; C is 1-by-n

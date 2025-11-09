@@ -1,9 +1,9 @@
 //------------------------------------------------------------------------------
-// GraphBLAS/CUDA/JitKernels/GB_cuda_jit_AxB_dot3_phase2end.cuh
+// GraphBLAS/CUDA/template/GB_cuda_jit_AxB_dot3_phase2end.cuh
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
-// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// This file: Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -35,15 +35,14 @@ __global__ void GB_cuda_AxB_dot3_phase2end_kernel
     // get C information 
     //--------------------------------------------------------------------------
 
-    // Ci [p] for an entry C(i,j) contains either GB_FLIP(i) if C(i,j) is a
+    // Ci [p] for an entry C(i,j) contains either GB_ZOMBIE (i) if C(i,j) is a
     // zombie, or (k << 4) + bucket otherwise, where C(:,j) is the kth vector
     // of C (j = Ch [k] if hypersparse or j = k if standard sparse), and
     // where bucket is the bucket assignment for C(i,j).  This phase does not
     // need k, just the bucket for each entry C(i,j).
 
-    int64_t *__restrict__ Ci = C->i ;       // for zombies, or bucket assignment
-    //int64_t *Mp = C->p ;       // for offset calculations
-    //int64_t mnvec = C->nvec;
+    // for zombies, or bucket assignment:
+    GB_Ci_SIGNED_TYPE *__restrict__ Ci = (GB_Ci_SIGNED_TYPE *) C->i ;
 
     //--------------------------------------------------------------------------
     // load and shift the nanobuckets for this thread block
@@ -85,9 +84,6 @@ __global__ void GB_cuda_AxB_dot3_phase2end_kernel
     // FIXME: why is bucket_idx needed?
     __shared__ int64_t bucket_idx [chunk_size] ;
 
-//  int64_t chunk_max = (cnz + chunk_size -1) / chunk_size ;
-//  for (int64_t chunk = blockIdx.x ; chunk < chunk_max ; chunk += gridDim.x)
-
     for (int64_t pfirst = blockIdx.x << log2_chunk_size ;
                  pfirst < cnz ;
                  pfirst += gridDim.x << log2_chunk_size)
@@ -117,7 +113,10 @@ __global__ void GB_cuda_AxB_dot3_phase2end_kernel
             //bucket_s[ibucket][ idx ] = p;
 
             bucket_idx [tid] = my_bucket [ibucket]++ ;
-            Ci [p] = (ibucket==0) * (Ci [p] >> 4) + (ibucket > 0) * Ci [p] ;
+
+            // finalize the zombie bucket; no change to the rest of Ci
+            Ci [p] = (ibucket == GB_BUCKET_ZOMBIE) * (Ci [p] >> 4) +
+                     (ibucket != GB_BUCKET_ZOMBIE) * (Ci [p]) ;
 
             //if(ibucket == 0) {
             ////    bucket[my_bucket[0]++] = p;

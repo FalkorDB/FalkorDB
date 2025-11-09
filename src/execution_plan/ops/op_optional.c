@@ -12,14 +12,17 @@ static OpResult OptionalReset(OpBase *opBase);
 static OpBase *OptionalClone(const ExecutionPlan *plan, const OpBase *opBase);
 
 OpBase *NewOptionalOp(const ExecutionPlan *plan) {
-	Optional *op = rm_malloc(sizeof(Optional));
-	op->emitted_record = false;
+	Optional *op = rm_calloc (1, sizeof(Optional)) ;
 
 	// Set our Op operations
 	OpBase_Init((OpBase *)op, OPType_OPTIONAL, "Optional", NULL, OptionalConsume,
 				OptionalReset, NULL, OptionalClone, NULL, false, plan);
 
 	return (OpBase *)op;
+}
+
+static Record _DepleteConsume(OpBase *opBase) {
+	return NULL;
 }
 
 static Record OptionalConsume(OpBase *opBase) {
@@ -31,6 +34,7 @@ static Record OptionalConsume(OpBase *opBase) {
 	// and this op has not yet returned data.
 	if(!r && !op->emitted_record) {
 		r = OpBase_CreateRecord(opBase);
+		OpBase_UpdateConsume(opBase, _DepleteConsume);
 	}
 
 	// don't produce multiple empty Records.
@@ -42,6 +46,7 @@ static Record OptionalConsume(OpBase *opBase) {
 static OpResult OptionalReset(OpBase *opBase) {
 	Optional *op = (Optional *)opBase;
 	op->emitted_record = false;
+	OpBase_UpdateConsume(opBase, OptionalConsume);
 	return OP_OK;
 }
 

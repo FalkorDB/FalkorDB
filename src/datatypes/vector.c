@@ -21,7 +21,8 @@ SIValue SIVectorf32_New
 (
 	uint32_t dim  // vector's dimension
 ) {
-	SIVector *v = rm_calloc(1, sizeof(SIVector) + dim * sizeof(float));
+	size_t n = sizeof(SIVector) + (dim * sizeof(float)) ;
+	SIVector *v = rm_calloc (1, n) ;
 	v->dim = dim;
 
 	return (SIValue) {
@@ -29,6 +30,24 @@ SIValue SIVectorf32_New
 		.ptrval     = (void*)v,
 		.allocation = M_SELF
 	};
+}
+
+// returns number of bytes used to represent vector's elements
+// for vector32f this is 4 * vector's dimension
+// for vector64f this is 8 * vector's dimension
+size_t SIVector_ElementsByteSize
+(
+	SIValue vector // vector to get binary size of
+) {
+	return SIVector_Dim(vector) * sizeof(float);
+}
+
+// returns number of bytes used to represent the entire vector
+size_t SIVector_ByteSize
+(
+	SIValue vector  // vector to get binary size of
+) {
+	return SIVector_ElementsByteSize(vector) + sizeof(SIVector);
 }
 
 // clones vector
@@ -171,16 +190,6 @@ uint32_t SIVector_Dim
 	return v->dim;
 }
 
-// returns number of bytes used to represent vector's elements
-// for vector32f this is 4 * vector's dimension
-// for vector64f this is 8 * vector's dimension
-size_t SIVector_ElementsByteSize
-(
-	SIValue vector // vector to get binary size of
-) {
-	return SIVector_Dim(vector) * sizeof(float);
-}
-
 // computes the euclidean distance between two vectors
 // distance = sqrt(sum((a[i] - b[i])^2))
 float SIVector_EuclideanDistance
@@ -207,6 +216,37 @@ float SIVector_EuclideanDistance
 	}
 
 	return sqrtf(sum);
+}
+
+// computes the cosine distance between two vectors
+// distance = 1 - dot(a, b) / (||a|| * ||b||)
+float SIVector_CosineDistance
+(
+	SIValue a,  // first vector
+	SIValue b   // second vector
+) {
+	// cosineDistance(vecf32([0.2, 0.12, 0.3178]), vecf32([0.1, 0.2, 0.3]))
+	ASSERT(SI_TYPE(a) & T_VECTOR);
+	ASSERT(SI_TYPE(b) & T_VECTOR);
+
+	// validate input vectors are of the same length
+	uint32_t n1 = SIVector_Dim(a);
+	uint32_t n2 = SIVector_Dim(b);
+	ASSERT(n1 == n2);
+
+	// compute the cosine distance between the two vectors
+	float dot        = 0;
+	float *elements1 = (float*)SIVector_Elements(a);
+	float *elements2 = (float*)SIVector_Elements(b);
+	float norm_a     = 0;
+	float norm_b     = 0;
+	for(uint32_t i = 0; i < n1; i++) {
+		dot    += elements1[i] * elements2[i];
+		norm_a += elements1[i] * elements1[i];
+		norm_b += elements2[i] * elements2[i];
+	}
+
+	return 1 - dot / (sqrtf(norm_a) * sqrtf(norm_b));
 }
 
 // write a string representation of vector to buf

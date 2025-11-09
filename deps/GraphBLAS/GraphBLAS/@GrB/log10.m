@@ -6,9 +6,9 @@ function C = log10 (G)
 %
 % See also GrB/log, GrB/log1p, GrB/log2, GrB/exp.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 G = G.opaque ;
-C = GrB (gb_check_imag_zero (gb_trig ('log10', gbfull (G)))) ;
+C = GrB (gb_make_real (gb_trig ('log10', gbfull (G)))) ;
 

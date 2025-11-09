@@ -1,7 +1,7 @@
 function test53(fulltests)
 %TEST53 test GrB_Matrix_extract
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (nargin < 1)
@@ -114,6 +114,18 @@ for k0 = 1:size (problems,1) ;
             assert (isequal (C.matrix .* Mask, (A.matrix).*Mask)) ;
         end
 
+        if (isequal (atype, 'double') && isequal (C.class, 'double'))
+            % C<Mask> = A (:,:) with user-defined types
+            C = GB_mex_Matrix_extract_UDT (Cempty, Mask, [ ], A, ...
+                [ ], [ ], [ ], true) ;
+            assert (GB_spok (C.matrix*1) == 1) ;
+            S = GB_spec_Matrix_extract (Cempty, Mask, [ ], A, [ ], [ ], [ ]) ;
+            assert (isequal (C.class, A.class)) ;
+            assert (isequal (C.class, S.class)) ;
+            assert (isequal (full (double (C.matrix)), double (S.matrix))) ;
+            assert (isequal (C.matrix .* Mask, (A.matrix).*Mask)) ;
+        end
+
         % C<Mask> = A (:,:)'
         clear D
         D = struct ('inp0', 'tran') ;
@@ -211,6 +223,12 @@ for k0 = 1:size (problems,1) ;
                             k6_cases = 4 ;
                         end
 
+                        if (isempty (I))
+                            I0 = [ ] ;
+                        else
+                            I0 = I (:) - 1 ;
+                        end
+
                         % try several J's
                         for k6 = 1:k6_cases
 
@@ -232,6 +250,12 @@ for k0 = 1:size (problems,1) ;
                                 JJ = 1:ncols ;
                             end
                             nj = length (JJ) ;
+
+                            if (isempty (J))
+                                J0 = [ ] ;
+                            else
+                                J0 = J (:) - 1 ;
+                            end
 
                             clear Csub Csub2
 
@@ -267,31 +291,35 @@ for k0 = 1:size (problems,1) ;
                             if (A_is_vector)
                                 % A is a column vector; test Vector_extract
                                 % C = op (Csub,A(I,1))
-                                C = GB_mex_Vector_extract  (Csub, [ ], ...
-                                    accum, A, I-1, [ ]) ;
-                                assert (GB_spok (C.matrix*1) == 1) ;
                                 S = GB_spec_Vector_extract (Csub, [ ], ...
                                     accum, A, I, [ ]) ;
-                                assert (isequal (C.class, cintype)) ;
-                                assert (isequal (C.class, S.class)) ;
-                                assert (isequalwithequalnans (...
-                                    full (double (C.matrix)), ...
-                                    double (S.matrix))) ;
+                                for method = 0:1
+                                    C = GB_mex_Vector_extract  (Csub, [ ], ...
+                                        accum, A, I0, [ ], method) ;
+                                    assert (GB_spok (C.matrix*1) == 1) ;
+                                    assert (isequal (C.class, cintype)) ;
+                                    assert (isequal (C.class, S.class)) ;
+                                    assert (isequalwithequalnans (...
+                                        full (double (C.matrix)), ...
+                                        double (S.matrix))) ;
+                                end
                             end
 
                             if (length (J) == 1)
                                 % J is a scalar, test Col_extract
                                 % C = op (Csub,A(I,j))
-                                C = GB_mex_Col_extract  (Csub, [ ], ...
-                                    accum, A, I-1, J-1, [ ]) ;
-                                assert (GB_spok (C.matrix*1) == 1) ;
                                 S = GB_spec_Col_extract (Csub, [ ], ...
                                     accum, A, I, J, [ ]) ;
-                                assert (isequal (C.class, cintype)) ;
-                                assert (isequal (C.class, S.class)) ;
-                                assert (isequalwithequalnans (...
-                                    full (double (C.matrix)), ...
-                                    double (S.matrix))) ;
+                                for method = 0:1
+                                    C = GB_mex_Col_extract  (Csub, [ ], ...
+                                        accum, A, I0, J0, [ ], method) ;
+                                    assert (GB_spok (C.matrix*1) == 1) ;
+                                    assert (isequal (C.class, cintype)) ;
+                                    assert (isequal (C.class, S.class)) ;
+                                    assert (isequalwithequalnans (...
+                                        full (double (C.matrix)), ...
+                                        double (S.matrix))) ;
+                                end
                             end
 
                             % C = op (Csub,A(J,I)')
@@ -347,16 +375,18 @@ for k0 = 1:size (problems,1) ;
                                 if (A_is_vector)
                                     % A is a column vector; test Vector_extract
                                     % C = op (Csub,A(I,1))
-                                    C = GB_mex_Vector_extract  (Csub, Msub, ...
-                                        accum, A, I-1, [ ]) ;
-                                    assert (GB_spok (C.matrix*1) == 1) ;
                                     S = GB_spec_Vector_extract (Csub, Msub, ...
                                         accum, A, I, [ ]) ;
-                                    assert (isequal (C.class, cintype)) ;
-                                    assert (isequal (C.class, S.class)) ;
-                                    assert (isequalwithequalnans (...
-                                        full (double (C.matrix)), ...
-                                        double (S.matrix))) ;
+                                    for method = 0:1
+                                        C = GB_mex_Vector_extract  (Csub, ...
+                                            Msub, accum, A, I0, [ ], method) ;
+                                        assert (GB_spok (C.matrix*1) == 1) ;
+                                        assert (isequal (C.class, cintype)) ;
+                                        assert (isequal (C.class, S.class)) ;
+                                        assert (isequalwithequalnans (...
+                                            full (double (C.matrix)), ...
+                                            double (S.matrix))) ;
+                                    end
                                 end
 
                                 if (length (J) == 1)

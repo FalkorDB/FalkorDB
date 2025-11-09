@@ -8,6 +8,7 @@
 #include "../../query_ctx.h"
 #include "shared/print_functions.h"
 #include "../execution_plan_build/execution_plan_util.h"
+#include "../../arithmetic/algebraic_expression/utils.h"
 
 // default number of records to accumulate before traversing
 #define BATCH_SIZE 16
@@ -34,7 +35,7 @@ static void _populate_filter_matrix
 (
 	OpExpandInto *op
 ) {
-	GrB_Matrix FM = RG_MATRIX_M(op->F);
+	GrB_Matrix FM = Delta_Matrix_M(op->F);
 
 	// clear filter matrix
 	GrB_Matrix_clear(FM);
@@ -65,13 +66,18 @@ static void _traverse
 	if(op->F == NULL) {
 		// create both filter matrix F and result matrix M
 		size_t required_dim = Graph_RequiredMatrixDim(op->graph);
-		RG_Matrix_new(&op->M, GrB_BOOL, op->record_cap, required_dim);
-		RG_Matrix_new(&op->F, GrB_BOOL, op->record_cap, required_dim);
+		Delta_Matrix_new(&op->M, GrB_BOOL, op->record_cap, required_dim, false);
+		Delta_Matrix_new(&op->F, GrB_BOOL, op->record_cap, required_dim, false);
 
 		// prepend the filter matrix to algebraic expression
 		// as the leftmost operand
 		AlgebraicExpression_MultiplyToTheLeft(&op->ae, op->F);
 		AlgebraicExpression_Optimize(&op->ae);
+
+		// partial_ae is true when
+		// the algebraic expression contains the zero matrix
+		op->partial_ae = AlgebraicExpression_ContainsMatrix(op->ae,
+				Graph_GetZeroMatrix(QueryCtx_GetGraph()));
 	}
 
 	// populate filter matrix
@@ -87,18 +93,11 @@ OpBase *NewExpandIntoOp
 	Graph *g,
 	AlgebraicExpression *ae
 ) {
-	OpExpandInto *op = rm_malloc(sizeof(OpExpandInto));
+	OpExpandInto *op = rm_calloc (1, sizeof(OpExpandInto)) ;
 
-	op->r               =  NULL;
-	op->F               =  NULL;
-	op->M               =  NULL;
-	op->ae              =  ae;
-	op->graph           =  g;
-	op->records         =  NULL;
-	op->edge_ctx        =  NULL;
-	op->record_cap      =  BATCH_SIZE;
-	op->record_count    =  0;
-	op->single_operand  =  false;
+	op->ae         = ae;
+	op->graph      = g;
+	op->record_cap = BATCH_SIZE;
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_EXPAND_INTO, "Expand Into", ExpandIntoInit,
@@ -109,9 +108,9 @@ OpBase *NewExpandIntoOp
 	bool aware;
 	UNUSED(aware);
  
-	aware = OpBase_Aware((OpBase *)op, AlgebraicExpression_Src(ae), &op->srcNodeIdx);
+	aware = OpBase_AliasMapping((OpBase *)op, AlgebraicExpression_Src(ae), &op->srcNodeIdx);
 	ASSERT(aware);
-	aware = OpBase_Aware((OpBase *)op, AlgebraicExpression_Dest(ae), &op->destNodeIdx);
+	aware = OpBase_AliasMapping((OpBase *)op, AlgebraicExpression_Dest(ae), &op->destNodeIdx);
 	ASSERT(aware);
 
 	const char *edge = AlgebraicExpression_Edge(ae);
@@ -208,7 +207,6 @@ static Record _handoff
 		op->record_count--;
 		r = op->records[op->record_count];
 
-		bool x;
 		uint row;
 
 		// resolve row index
@@ -225,9 +223,9 @@ static Record _handoff
 		NodeID col      =  ENTITY_GET_ID(destNode);
 		// TODO: in the case of multiple operands ()-[:A]->()-[:B]->()
 		// M is the result of F*A*B, in which case we can switch from
-		// M being a RG_Matrix to a GrB_Matrix, making the extract element
+		// M being a Delta_Matrix to a GrB_Matrix, making the extract element
 		// operation a bit cheaper to compute
-		GrB_Info res    =  RG_Matrix_extractElement_BOOL(&x, op->M, row, col);
+		GrB_Info res    =  Delta_Matrix_isStoredElement(op->M, row, col);
 
 		// src is not connected to dest, free the current record and continue
 		if(res != GrB_SUCCESS) {
@@ -327,6 +325,14 @@ static OpResult ExpandIntoReset
 
 	if(op->edge_ctx != NULL) EdgeTraverseCtx_Reset(op->edge_ctx);
 
+	// in case algebraic expression has missing operands
+	// i.e. has an operand which is the zero matrix
+	// see if at this point in time the graph is aware of the missing operand
+	// and if so replace the zero matrix operand with the actual matrix
+	if(unlikely(op->partial_ae == true)) {
+		_AlgebraicExpression_PopulateOperands(op->ae, QueryCtx_GetGraphCtx());
+	}
+
 	return OP_OK;
 }
 
@@ -350,14 +356,14 @@ static void ExpandIntoFree
 	OpExpandInto *op = (OpExpandInto *)ctx;
 
 	if(op->F != NULL) {
-		RG_Matrix_free(&op->F);
+		Delta_Matrix_free(&op->F);
 		op->F = NULL;
 	}
 
 	if(op->ae != NULL) {
 		// M was allocated by us
 		if(op->M != NULL && !op->single_operand) {
-			RG_Matrix_free(&op->M);
+			Delta_Matrix_free(&op->M);
 			op->M = NULL;
 		}
 

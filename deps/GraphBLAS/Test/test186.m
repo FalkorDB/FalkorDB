@@ -1,7 +1,7 @@
 function test186 (dohack)
 %TEST186 test saxpy for all sparsity formats
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test186 --------------- C<!M>A*B for all sparsity formats\n') ;
@@ -14,8 +14,7 @@ hack = save ;
 if (nargin < 1)
     dohack = 2 ;
 end
-hack (1) = dohack ;     % modify "very_costly" in GxB_AxB_saxpy3_slice_balanced
-GB_mex_hack (hack) ;
+hack (1) = dohack ; GB_mex_hack (hack) ; % "very_costly" in saxpy3
 
 load west0479 ;
 A.matrix = west0479 ;

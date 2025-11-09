@@ -1,0 +1,169 @@
+
+\newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{The mask, accumulator, and replace option} %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\label{sec:maskaccum}
+
+After a GraphBLAS operation computes a result ${\bf T}$, (for example, ${\bf
+T=AB}$ for \verb'GrB_mxm'), the results are assigned to an output matrix ${\bf
+C}$ via the mask/ accumulator phase, written as ${\bf C \langle M \rangle = C
+\odot T}$.  This phase is affected by the \verb'GrB_REPLACE' option in the
+descriptor, the presence of an optional binary accumulator operator ($\odot$),
+the presence of the optional mask matrix ${\bf M}$, and the status of the mask
+descriptor.  The interplay of these options is summarized in
+Table~\ref{tab:maskaccum}.
+
+The mask ${\bf M}$ may be present, or not.  It may be structural or valued, and
+it may be complemented, or not.  These options may be combined, for a total of
+8 cases, although the structural/valued option as no effect if ${\bf M}$ is not
+present.  If ${\bf M}$ is not present and not complemented, then $m_{ij}$ is
+implicitly true.  If not present yet complemented, then all $m_{ij}$ entries are
+implicitly zero; in this case, ${\bf T}$ need not be computed at all.  Either
+${\bf C}$ is not modified, or all its entries are cleared if the replace option
+is enabled.  If ${\bf M}$ is present, and the structural option is used, then
+$m_{ij}$ is treated as true if it is an entry in the matrix (its value is
+ignored).  Otherwise, the value of $m_{ij}$ is used.  In both cases, entries
+not present are implicitly zero.  These values are negated if the mask is
+complemented.  All of these various cases are combined to give a single
+effective value of the mask at position ${ij}$.
+
+The combination of all these options are presented in the
+Table~\ref{tab:maskaccum}.  The first column is the \verb'GrB_REPLACE' option.
+The second column lists whether or not the accumulator operator is present.
+The third column lists whether or not $c_{ij}$ exists on input to the
+mask/accumulator phase (a dash means that it does not exist).  The fourth
+column lists whether or not the entry $t_{ij}$ is present in the result matrix
+${\bf T}$.  The mask column is the final effective value of $m_{ij}$, after
+accounting for the presence of ${\bf M}$ and the mask options.  Finally, the
+last column states the result of the mask/accum step; if no action is listed in
+this column, then $c_{ij}$ is not modified.
+
+Several important observations can be made from this table.  First,
+if no mask is present (and the mask-complement descriptor option is not used),
+then only the first half of the table is used.  In this case, the \verb'GrB_REPLACE'
+option has no effect.  The entire matrix ${\bf C}$ is modified.
+
+Consider the cases when $c_{ij}$ is present but $t_{ij}$ is not, and there is no
+mask or the effective value of the mask is true for this ${ij}$ position.  With
+no accumulator operator, $c_{ij}$ is deleted.  If the accumulator operator is
+present and the replace option is not used, $c_{ij}$ remains unchanged.
+
+\begin{table}
+{\small
+\begin{tabular}{lllll|l}
+\hline
+repl & accum & ${\bf C}$ & ${\bf T}$ & mask & action taken by ${\bf C \langle M \rangle = C \odot T}$ \\
+\hline
+    -  &-   & $c_{ij}$ & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, update \\
+    -  &-   &  -       & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, insert \\
+    -  &-   & $c_{ij}$ &  -        & 1    &  delete $c_{ij}$ because $t_{ij}$ not present \\
+    -  &-   &  -       &  -        & 1    &   \\
+    -  &-   & $c_{ij}$ & $t_{ij}$  & 0    &   \\
+    -  &-   &  -       & $t_{ij}$  & 0    &   \\
+    -  &-   & $c_{ij}$ &  -        & 0    &   \\
+    -  &-   &  -       &  -        & 0    &   \\
+\hline
+    yes&-   & $c_{ij}$ & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, update \\
+    yes&-   &  -       & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, insert \\
+    yes&-   & $c_{ij}$ &  -        & 1    &  delete $c_{ij}$ because $t_{ij}$ not present \\
+    yes&-   &  -       &  -        & 1    &   \\
+    yes&-   & $c_{ij}$ & $t_{ij}$  & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+    yes&-   &  -       & $t_{ij}$  & 0    &   \\
+    yes&-   & $c_{ij}$ &  -        & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+    yes&-   &  -       &  -        & 0    &   \\
+\hline
+    -  &yes & $c_{ij}$ & $t_{ij}$  & 1    &  $c_{ij} = c_{ij} \odot t_{ij}$, apply accumulator \\
+    -  &yes &  -       & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, insert \\
+    -  &yes & $c_{ij}$ &  -        & 1    &   \\
+    -  &yes &  -       &  -        & 1    &   \\
+    -  &yes & $c_{ij}$ & $t_{ij}$  & 0    &   \\
+    -  &yes &  -       & $t_{ij}$  & 0    &   \\
+    -  &yes & $c_{ij}$ &  -        & 0    &   \\
+    -  &yes &  -       &  -        & 0    &   \\
+\hline
+    yes&yes & $c_{ij}$ & $t_{ij}$  & 1    &  $c_{ij} = c_{ij} \odot t_{ij}$, apply accumulator \\
+    yes&yes &  -       & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, insert \\
+    yes&yes & $c_{ij}$ &  -        & 1    &   \\
+    yes&yes &  -       &  -        & 1    &   \\
+    yes&yes & $c_{ij}$ & $t_{ij}$  & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+    yes&yes &  -       & $t_{ij}$  & 0    &   \\
+    yes&yes & $c_{ij}$ &  -        & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+    yes&yes &  -       &  -        & 0    &   \\
+\hline
+\end{tabular}
+}
+\caption{Results of the mask/accumulator phase. \label{tab:maskaccum}}
+\end{table}
+
+When there is no mask and the mask \verb'GrB_COMP' option is not selected, the
+table simplifies (Table~\ref{tab:maskaccum_nomask}).  The \verb'GrB_REPLACE'
+option no longer has any effect.  The \verb'GrB_SECOND_T' binary operator when
+used as the accumulator unifies the first cases, shown in
+Table~\ref{tab:maskaccum_nomask_2nd}.  The only difference now is the behavior
+when $c_{ij}$ is present but $t_{ij}$ is not.  Finally, the effect of
+\verb'GrB_FIRST_T' as the accumulator is shown in
+Table~\ref{tab:maskaccum_nomask_1st}.
+
+\begin{table}[h]
+\begin{center}
+{\small
+\begin{tabular}{lll|l}
+\hline
+       accum & ${\bf C}$ & ${\bf T}$        & action taken by ${\bf C = C \odot T}$ \\
+\hline
+        -   & $c_{ij}$ & $t_{ij}$         &  $c_{ij} = t_{ij}$, update \\
+        -   &  -       & $t_{ij}$         &  $c_{ij} = t_{ij}$, insert \\
+        -   & $c_{ij}$ &  -               &  delete $c_{ij}$ because $t_{ij}$ not present \\
+        -   &  -       &  -               &   \\
+\hline
+        yes & $c_{ij}$ & $t_{ij}$         &  $c_{ij} = c_{ij} \odot t_{ij}$, apply accumulator \\
+        yes &  -       & $t_{ij}$         &  $c_{ij} = t_{ij}$, insert \\
+        yes & $c_{ij}$ &  -               &   \\
+        yes &  -       &  -               &   \\
+\hline
+\end{tabular}
+}
+\caption{When no mask is present (and not complemented).
+\label{tab:maskaccum_nomask}}
+\end{center}
+\end{table}
+
+\begin{table}[h]
+\begin{center}
+{\small
+\begin{tabular}{lll|l}
+\hline
+       accum & ${\bf C}$ & ${\bf T}$        & action taken by ${\bf C = C \odot T}$ \\
+\hline
+        yes & $c_{ij}$ & $t_{ij}$         &  $c_{ij} = t_{ij}$, apply \verb'GrB_SECOND' accumulator \\
+        yes &  -       & $t_{ij}$         &  $c_{ij} = t_{ij}$, insert \\
+        yes & $c_{ij}$ &  -               &   \\
+        yes &  -       &  -               &   \\
+\hline
+\end{tabular}
+}
+\caption{No mask, with the SECOND operator as the accumulator.
+\label{tab:maskaccum_nomask_2nd}}
+\end{center}
+\end{table}
+
+\begin{table}[h]
+\begin{center}
+{\small
+\begin{tabular}{lll|l}
+\hline
+       accum & ${\bf C}$ & ${\bf T}$        & action taken by ${\bf C = C \odot T}$ \\
+\hline
+        yes & $c_{ij}$ & $t_{ij}$         &  \\
+        yes &  -       & $t_{ij}$         &  $c_{ij} = t_{ij}$, insert \\
+        yes & $c_{ij}$ &  -               &   \\
+        yes &  -       &  -               &   \\
+\hline
+\end{tabular}
+}
+\caption{No Mask, with the FIRST operator as the accumulator.
+\label{tab:maskaccum_nomask_1st}}
+\end{center}
+\end{table}
+

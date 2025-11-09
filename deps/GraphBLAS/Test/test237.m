@@ -1,7 +1,7 @@
 function test237
 %TEST237 test GrB_mxm (saxpy4)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 GB_mex_burble (1) ;
@@ -44,9 +44,9 @@ for kind = 1:2
 
     % typecasting (to trigger the JIT)
     A.class = 'single' ;
-    C1 = GB_mex_mxm  (F, [ ], accum, semiring, A, B, [ ]) ;
-    C2 = GB_spec_mxm (F, [ ], accum, semiring, A, B, [ ]) ;
-    GB_spec_compare (C2, C1, 0, tol) ;
+    C1s = GB_mex_mxm  (F, [ ], accum, semiring, A, B, [ ]) ;
+    C2s = GB_spec_mxm (F, [ ], accum, semiring, A, B, [ ]) ;
+    GB_spec_compare (C2s, C1s, 0, tol) ;
 
 end
 

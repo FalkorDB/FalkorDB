@@ -2,16 +2,14 @@
 // GB_mex_test24: JIT error handling
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
-#include "GB_stringify.h"
-
-#define USAGE "GB_mex_test24"
+#include "../Source/jitifyer/GB_stringify.h"
 
 #define FREE_ALL ;
 #define GET_DEEP_COPY ;

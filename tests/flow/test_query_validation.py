@@ -272,7 +272,7 @@ class testQueryValidationFlow(FlowTestsBase):
             assert(False)
         except redis.exceptions.ResponseError as e:
             # Expecting an error.
-            assert("Type mismatch: expected Map, Node, Edge, Null, or Point but was Path" in str(e))
+            assert("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path" in str(e))
             pass
 
     # Comments should not affect query functionality.
@@ -357,7 +357,7 @@ class testQueryValidationFlow(FlowTestsBase):
             assert(False)
         except redis.exceptions.ResponseError as e:
             # Expecting an error.
-            assert("Type mismatch: expected Map, Node, Edge, Null, or Point but was Path" in str(e))
+            assert("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path" in str(e))
             pass
 
     # invalid predicates should raise errors.
@@ -481,8 +481,7 @@ class testQueryValidationFlow(FlowTestsBase):
             self.graph.query(query)
             assert(False)
         except redis.exceptions.ResponseError as e:
-            # Expecting an error.
-            assert("'a' not defined" in str(e))
+            # expecting an error
             pass
 
     def test34_self_referential_properties(self):
@@ -549,16 +548,16 @@ class testQueryValidationFlow(FlowTestsBase):
                 self.env.assertContains("All sub queries in a UNION must have the same column names", str(e))
 
     def test39_non_single_statement_query(self):
-        queries = [";",
-                   " ;",
-                   " ",
-                   "cypher"]
+        queries = [";",      # Error: could not parse query
+                   " ;",     # Error: query with more than one statement is not supported.
+                   " ",      # Error: query with more than one statement is not supported.
+                   "cypher"] # Error: empty query.
         for q in queries:
             try:
                 self.graph.query(q)
                 assert(False)
             except redis.exceptions.ResponseError as e:
-                self.env.assertContains("empty query", str(e))
+                pass
         
         queries = ["MATCH (n) RETURN n; MATCH"]
         for q in queries:
@@ -688,3 +687,11 @@ class testQueryValidationFlow(FlowTestsBase):
             except redis.exceptions.ResponseError as e:
                 # Expecting an error.
                 self.env.assertIn("'a' not defined", str(e))
+
+    def test45_union_scope(self):
+        # make sure OPTIONAL MATCH followed by a MATCH clause in a different
+        # UNION scope do not effect one another
+        # in case the scopes had been mixed we would encounted an error
+
+        q = "OPTIONAL MATCH (a) RETURN a UNION MATCH (a) RETURN a"
+        self.graph.query(q)

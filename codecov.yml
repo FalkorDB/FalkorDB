@@ -1,5 +1,0 @@
-ignore:
-  - "deps"
-  - "src/util/sds"
-  - "src/util/roaring.c"
-  - "tests"

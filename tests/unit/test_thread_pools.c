@@ -5,13 +5,12 @@
  */
 
 #include "src/util/rmalloc.h"
-#include "src/util/thpool/pools.h"
+#include "src/util/thpool/pool.h"
 #include "src/configuration/config.h"
 
 #include <assert.h>
 
-#define READER_COUNT 4
-#define WRITER_COUNT 1
+#define WORKERS_COUNT 5
 
 void setup() {
 	Alloc_Reset();
@@ -22,38 +21,33 @@ void setup() {
 
 static void get_thread_friendly_id(void *arg) {
 	int *threadID = (int*)arg;
-	*threadID = ThreadPools_GetThreadID();	
+	*threadID = ThreadPool_GetThreadID();	
 }
 
-void test_threadPools_threadID() {
-	ThreadPools_CreatePools(READER_COUNT, WRITER_COUNT, UINT64_MAX);
+void test_threadPool_threadID() {
+	ThreadPool_CreatePool(WORKERS_COUNT, UINT64_MAX);
 
-	// verify thread count equals to the number of reader and writer threads
-	TEST_ASSERT(READER_COUNT + WRITER_COUNT == ThreadPools_ThreadCount());
+	// verify thread count equals to the number of worker threads
+	TEST_ASSERT(WORKERS_COUNT == ThreadPool_ThreadCount());
 
-	volatile int thread_ids[READER_COUNT + WRITER_COUNT + 1] = {-1, -1, -1, -1, -1, -1};
+	volatile int thread_ids[WORKERS_COUNT + 1];
+	for(int i = 0; i < WORKERS_COUNT + 1; i++) {
+		thread_ids[i] = -1;
+	}
 
 	// get main thread friendly id
-	thread_ids[0] = ThreadPools_GetThreadID();
+	thread_ids[0] = ThreadPool_GetThreadID();
 
-	// get reader threads friendly ids
-	for(int i = 0; i < READER_COUNT; i++) {
+	// get worker threads friendly ids
+	for(int i = 0; i < WORKERS_COUNT; i++) {
 		int offset = i + 1;
 		TEST_ASSERT(0 == 
-				ThreadPools_AddWorkReader(get_thread_friendly_id,
+				ThreadPool_AddWork(get_thread_friendly_id,
 					(int*)(thread_ids + offset), false));
 	}
 
-	// get writer threads friendly ids
-	for(int i = 0; i < WRITER_COUNT; i++) {
-		int offset = i + READER_COUNT + 1;
-		TEST_ASSERT(0 ==
-				ThreadPools_AddWorkWriter(get_thread_friendly_id,
-					(int*)(thread_ids + offset), 0));
-	}
-
 	// wait for all threads
-	for(int i = 0; i < READER_COUNT + WRITER_COUNT + 1; i++) {
+	for(int i = 0; i < WORKERS_COUNT + 1; i++) {
 		while(thread_ids[i] == -1) { i = i; }
 	}
 
@@ -61,21 +55,14 @@ void test_threadPools_threadID() {
 	int main_thread_id = 0;
 	TEST_ASSERT(thread_ids[0] == main_thread_id);
 
-	// reader thread ids should be > main thread id and < writer thread id
-	for(int i = 0; i < READER_COUNT; i++) {
-		TEST_ASSERT(thread_ids[i+1] >= main_thread_id);
-		TEST_ASSERT(thread_ids[i+1] <= thread_ids[1+READER_COUNT]);
-	}
-
-	// writer thread ids should be > reader thread ids
-	for(int i = 0; i < WRITER_COUNT; i++) {
-		int offset = i + READER_COUNT + 1;
-		TEST_ASSERT(thread_ids[offset] >= thread_ids[1]);
+	// worker thread ids should be > main thread id
+	for(int i = 0; i < WORKERS_COUNT; i++) {
+		TEST_ASSERT(thread_ids[i+1] > main_thread_id);
 	}
 }
 
 TEST_LIST = {
-	{"threadPools_threadID", test_threadPools_threadID},
+	{"threadPool_threadID", test_threadPool_threadID},
 	{NULL, NULL}
 };
 

@@ -6,7 +6,7 @@ function count = fprintf (varargin)
 %
 % See also fprintf, sprintf, GrB/sprintf.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 c = gb_printf_helper ('fprintf', varargin {:}) ;

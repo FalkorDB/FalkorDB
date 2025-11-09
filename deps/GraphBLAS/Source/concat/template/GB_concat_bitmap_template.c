@@ -1,0 +1,81 @@
+//------------------------------------------------------------------------------
+// GB_concat_bitmap_template: concatenate a tile into a bitmap matrix
+//------------------------------------------------------------------------------
+
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//------------------------------------------------------------------------------
+
+{
+
+    //--------------------------------------------------------------------------
+    // get C (bitmap) and the tile A (any sparsity)
+    //--------------------------------------------------------------------------
+
+    ASSERT (GB_IS_BITMAP (C)) ;
+
+    #ifdef GB_JIT_KERNEL
+    const int64_t avdim = A->vdim ;
+    const int64_t avlen = A->vlen ;
+    const int64_t cvlen = C->vlen ;
+    const int64_t anz = avlen * avdim ;
+    #endif
+
+    #ifndef GB_ISO_CONCAT
+    const GB_A_TYPE *restrict Ax = (GB_A_TYPE *) A->x ;
+          GB_C_TYPE *restrict Cx = (GB_C_TYPE *) C->x ;
+    #ifdef GB_JIT_KERNEL
+    #define A_iso GB_A_ISO
+    #else
+    const bool A_iso = A->iso ;
+    #endif
+    #endif
+
+    int8_t *restrict Cb = C->b ;
+
+    //--------------------------------------------------------------------------
+    // copy the tile A into C
+    //--------------------------------------------------------------------------
+
+    #ifdef GB_JIT_KERNEL
+    {
+        #if GB_A_IS_FULL
+            #include "template/GB_concat_bitmap_full.c"
+        #elif GB_A_IS_BITMAP
+            #include "template/GB_concat_bitmap_bitmap.c"
+        #else
+            #include "template/GB_concat_bitmap_sparse.c"
+        #endif
+    }
+    #else
+    {
+        switch (GB_sparsity (A))
+        {
+
+            case GxB_FULL : // A is full
+            {
+                #include "template/GB_concat_bitmap_full.c"
+            }
+            break ;
+
+            case GxB_BITMAP : // A is bitmap
+            {
+                #include "template/GB_concat_bitmap_bitmap.c"
+            }
+            break ;
+
+            default : // A is sparse or hypersparse
+            {
+                #include "template/GB_concat_bitmap_sparse.c"
+            }
+            break ;
+        }
+    }
+    #endif
+}
+
+#undef GB_C_TYPE
+#undef GB_A_TYPE
+#undef GB_ISO_CONCAT
+

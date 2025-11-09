@@ -2,7 +2,7 @@
 # GraphBLAS/Tcov/Makefile
 #-------------------------------------------------------------------------------
 
-# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 #-------------------------------------------------------------------------------
@@ -30,7 +30,7 @@ INC = tmp_include/*
 SRC2 = $(notdir $(wildcard $(SRC)))
 OBJ = $(SRC2:.c=.o)
 LIBS = 
-I = -Itmp_include -I../Test -I../rmm_wrap -I../zstd -I../zstd/zstd_subset -I../lz4 -I../xxHash -I../Source/JitKernels
+I = -Itmp_include -I../Test -I../rmm_wrap -I../zstd -I../zstd/zstd_subset -I../lz4 -I../xxHash
 CPPFLAGS = $(I) -DGBNCPUFEAT -DGBCOVER $(MATLAB)
 SO_OPTS = $(LDFLAGS)
 
@@ -59,7 +59,7 @@ clean:
 
 distclean: clean
 	$(RM) *.mex* tmp*/* errlog*.txt grbstat.mat fprint.txt
-	$(RM) libgraphblas_tcov.*
+	$(RM) libgraphblas_tcov.* log_GB_mex_test21.txt
 
 purge: distclean
 	$(RM) log.txt

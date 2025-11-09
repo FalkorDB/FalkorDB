@@ -2,7 +2,7 @@
 // gbsemiringinfo: print a GraphBLAS semiring (for illustration only)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,6 +11,7 @@
 
 // gbsemiringinfo (semiring_string)
 // gbsemiringinfo (semiring_string, type)
+// ok = gbsemiringinfo (semiring_string)
 
 #include "gb_interface.h"
 
@@ -29,7 +30,7 @@ void mexFunction
     // check inputs
     //--------------------------------------------------------------------------
 
-    gb_usage (nargin >= 1 && nargin <= 2 && nargout == 0, USAGE) ;
+    gb_usage (nargin >= 1 && nargin <= 2 && nargout <= 1, USAGE) ;
 
     //--------------------------------------------------------------------------
     // construct the GraphBLAS semiring and print it
@@ -47,7 +48,12 @@ void mexFunction
     }
 
     GrB_Semiring semiring = gb_mxstring_to_semiring (pargin [0], type, type) ;
-    OK (GxB_Semiring_fprint (semiring, opstring, GxB_COMPLETE, NULL)) ;
-    GB_WRAPUP ;
+    int pr = (nargout < 1) ? GxB_COMPLETE : GxB_SILENT ;
+    OK (GxB_Semiring_fprint (semiring, opstring, pr, NULL)) ;
+    if (nargout == 1)
+    {
+        pargout [0] = mxCreateLogicalScalar (true) ;
+    }
+    gb_wrapup ( ) ;
 }
 

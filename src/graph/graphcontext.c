@@ -12,13 +12,13 @@
 #include "../query_ctx.h"
 #include "../redismodule.h"
 #include "../util/rmalloc.h"
-#include "../util/thpool/pools.h"
+#include "../util/thpool/pool.h"
 #include "../constraint/constraint.h"
 #include "../serializers/graphcontext_type.h"
 #include "../commands/execution_ctx.h"
 
-#include <sys/param.h>
 #include <pthread.h>
+#include <sys/param.h>
 
 // telemetry stream format
 #define TELEMETRY_FORMAT "telemetry{%s}"
@@ -75,7 +75,7 @@ inline void GraphContext_DecreaseRefCount
 			// Async delete
 			// add deletion task to pool using force mode
 			// we can't lose this task in-case pool's queue is full
-			ThreadPools_AddWorkWriter(_GraphContext_Free, gc, 1);
+			ThreadPool_AddWork(_GraphContext_Free, gc, 1);
 		} else {
 			// Sync delete
 			_GraphContext_Free(gc);
@@ -92,17 +92,23 @@ GraphContext *GraphContext_New
 (
 	const char *graph_name
 ) {
-	GraphContext *gc = rm_malloc(sizeof(GraphContext));
+	GraphContext *gc = rm_calloc (1, sizeof (GraphContext)) ;
 
-	gc->version          = 0;  // initial graph version
-	gc->slowlog          = SlowLog_New();
-	gc->queries_log      = QueriesLog_New();
-	gc->ref_count        = 0;  // no refences
-	gc->attributes       = raxNew();
-	gc->index_count      = 0;  // no indicies
-	gc->string_mapping   = array_new(char *, 64);
-	gc->encoding_context = GraphEncodeContext_New();
-	gc->decoding_context = GraphDecodeContext_New();
+	gc->version          = 0 ;  // initial graph version
+	gc->slowlog          = SlowLog_New () ;
+	gc->queries_log      = QueriesLog_New () ;
+	gc->ref_count        = 0 ;  // no refences
+	gc->attributes       = raxNew () ;
+	gc->index_count      = 0 ;  // no indicies
+	gc->string_mapping   = array_new (char *, 64) ;
+	gc->encoding_context = GraphEncodeContext_New () ;
+	gc->decoding_context = GraphDecodeContext_New () ;
+
+	// initial graph's write in progress atomic flag to false
+	atomic_init (&gc->write_in_progress, false) ;
+
+	// create graph's pending write queries queue
+	gc->pending_write_queue = CircularBuffer_New (sizeof (void*), 1024) ;
 
 	// read NODE_CREATION_BUFFER size from configuration
 	// this value controls how much extra room we're willing to spend for:
@@ -114,28 +120,28 @@ GraphContext *GraphContext_New
 	assert(rc);
 	edge_cap = node_cap;
 
-	gc->g = Graph_New(node_cap, edge_cap);
-	gc->graph_name = rm_strdup(graph_name);
-	gc->telemetry_stream = RedisModule_CreateStringPrintf(NULL,
-			TELEMETRY_FORMAT, gc->graph_name);
+	gc->g = Graph_New (node_cap, edge_cap) ;
+	gc->graph_name = rm_strdup (graph_name) ;
+	gc->telemetry_stream = RedisModule_CreateStringPrintf (NULL,
+			TELEMETRY_FORMAT, gc->graph_name) ;
 
 	// allocate the default space for schemas and indices
-	gc->node_schemas = array_new(Schema *, GRAPH_DEFAULT_LABEL_CAP);
-	gc->relation_schemas = array_new(Schema *, GRAPH_DEFAULT_RELATION_TYPE_CAP);
+	gc->node_schemas = array_new (Schema *, GRAPH_DEFAULT_LABEL_CAP) ;
+	gc->relation_schemas = array_new (Schema *, GRAPH_DEFAULT_RELATION_TYPE_CAP) ;
 
 	// initialize the read-write lock to protect access to the attributes rax
-	int rc1 = pthread_rwlock_init(&gc->_attribute_rwlock, NULL);
-	assert(rc1 == 0);
+	int rc1 = pthread_rwlock_init (&gc->_attribute_rwlock, NULL) ;
+	assert (rc1 == 0) ;
 
 	// build the execution plans cache
-	uint64_t cache_size;
-	Config_Option_get(Config_CACHE_SIZE, &cache_size);
-	gc->cache = Cache_New(cache_size, (CacheEntryFreeFunc)ExecutionCtx_Free,
-						  (CacheEntryCopyFunc)ExecutionCtx_Clone);
+	uint64_t cache_size ;
+	Config_Option_get (Config_CACHE_SIZE, &cache_size) ;
+	gc->cache = Cache_New (cache_size, (CacheEntryFreeFunc)ExecutionCtx_Free,
+						  (CacheEntryCopyFunc)ExecutionCtx_Clone) ;
 
-	Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_FLUSH_RESIZE);
+	Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_FLUSH_RESIZE) ;
 
-	return gc;
+	return gc ;
 }
 
 // _GraphContext_Create tries to get a graph context
@@ -176,7 +182,7 @@ GraphContext *GraphContext_Retrieve
 	// check if we're still replicating, if so don't allow access to the graph
 	if(aux_field_counter > 0) {
 		// the whole module is currently replicating, emit an error
-		RedisModule_ReplyWithError(ctx, "ERR RedisGraph module is currently replicating");
+		RedisModule_ReplyWithError(ctx, "ERR FalkorDB module is currently replicating");
 		return NULL;
 	}
 
@@ -207,15 +213,30 @@ GraphContext *GraphContext_Retrieve
 	return gc;
 }
 
-void GraphContext_MarkWriter(RedisModuleCtx *ctx, GraphContext *gc) {
-	RedisModuleString *graphID = RedisModule_CreateString(ctx, gc->graph_name, strlen(gc->graph_name));
+// decrease graph context reference count
+// graph context will be free once reference count reaches 0
+void GraphContext_Release
+(
+	GraphContext *gc // graph context to release
+) {
+	ASSERT(gc != NULL);
+	GraphContext_DecreaseRefCount(gc);
+}
 
-	// Reopen only if key exists (do not re-create) make sure key still exists.
+void GraphContext_MarkWriter
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc
+) {
+	RedisModuleString *graphID =
+		RedisModule_CreateString(ctx, gc->graph_name, strlen(gc->graph_name));
+
+	// reopen only if key exists (do not re-create) make sure key still exists
 	RedisModuleKey *key = RedisModule_OpenKey(ctx, graphID, REDISMODULE_READ);
 	if(RedisModule_KeyType(key) == REDISMODULE_KEYTYPE_EMPTY) goto cleanup;
 	RedisModule_CloseKey(key);
 
-	// Mark as writer.
+	// mark as writer
 	key = RedisModule_OpenKey(ctx, graphID, REDISMODULE_WRITE);
 	RedisModule_CloseKey(key);
 
@@ -245,6 +266,71 @@ void GraphContext_UnlockCommit
 
 	// unlock GIL
 	RedisModule_ThreadSafeContextUnlock(ctx);
+}
+
+// attempt to acquire exclusive write access to the given graph
+// returns true if the calling thread successfully acquired write ownership
+// returns false if another write is already in progress
+bool GraphContext_TryEnterWrite
+(
+	GraphContext *gc  // graph context
+) {
+	ASSERT(gc != NULL);
+
+	bool expected = false;
+
+    // atomically set to true only if current value is false
+    return atomic_compare_exchange_strong(&gc->write_in_progress, &expected,
+			true);
+}
+
+// release exclusive write access to the graph
+// this should be called by a thread that previously acquired write ownership
+// via GraphContext_TryEnterWrite, it clears the write-in-progress flag
+void GraphContext_ExitWrite
+(
+	GraphContext *gc  // graph context
+) {
+	ASSERT(gc != NULL);
+
+	atomic_store(&gc->write_in_progress, false);
+}
+
+// enqueue a write query for deferred execution on the specified graph
+// returns true if the query was successfully enqueued
+// false if the enqueue operation failed (e.g., due to allocation failure)
+bool GraphContext_EnqueueWriteQuery
+(
+	GraphContext *gc,  // graph context
+	void *query_ctx    // query context
+) {
+	ASSERT(gc        != NULL);
+	ASSERT(query_ctx != NULL);
+
+	return (CircularBuffer_Add(gc->pending_write_queue, &query_ctx) != 0);
+}
+
+// dequeue the next pending write query for the specified graph
+// returns a query context pointer if a query was dequeued,
+// or NULL if the pending write queue is empty
+void *GraphContext_DequeueWriteQuery
+(
+	GraphContext *gc  // graph context
+) {
+	ASSERT(gc != NULL);
+
+	void *item = NULL;
+	CircularBuffer_Read(gc->pending_write_queue, &item);
+
+	return item;
+}
+
+// checks if the graph's pending write queue is empty
+bool GraphContext_WriteQueueEmpty
+(
+	const GraphContext *gc  // graph context
+) {
+	return CircularBuffer_Empty(gc->pending_write_queue);
 }
 
 const char *GraphContext_GetName
@@ -324,15 +410,26 @@ static void _GraphContext_UpdateVersion(GraphContext *gc, const char *str) {
 //------------------------------------------------------------------------------
 // Schema API
 //------------------------------------------------------------------------------
-// Find the ID associated with a label for schema and matrix access
-int _GraphContext_GetLabelID(const GraphContext *gc, const char *label, SchemaType t) {
-	// Choose the appropriate schema array given the entity type
-	Schema **schemas = (t == SCHEMA_NODE) ? gc->node_schemas : gc->relation_schemas;
 
-	// TODO optimize lookup
-	for(uint32_t i = 0; i < array_len(schemas); i ++) {
-		if(!strcmp(label, schemas[i]->name)) return i;
+// find the ID associated with a label for schema and matrix access
+int _GraphContext_GetLabelID
+(
+	const GraphContext *gc,
+	const char *label,
+	SchemaType t
+) {
+	// choose the appropriate schema array given the entity type
+	Schema **schemas = (t == SCHEMA_NODE) ?
+		gc->node_schemas : gc->relation_schemas ;
+
+	// TODO: optimize lookup
+	uint32_t l = array_len (schemas) ;
+	for (uint32_t i = 0; i < l; i++) {
+		if (!strcmp (label, schemas[i]->name)) {
+			return i ;
+		}
 	}
+
 	return GRAPH_NO_LABEL; // equivalent to GRAPH_NO_RELATION
 }
 
@@ -415,8 +512,8 @@ Schema *GraphContext_AddSchema
 	const char *label,
 	SchemaType t
 ) {
-	ASSERT(gc != NULL);
-	ASSERT(label != NULL);
+	ASSERT (gc    != NULL) ;
+	ASSERT (label != NULL) ;
 
 	int id;
 	Schema *schema;
@@ -533,11 +630,14 @@ AttributeID GraphContext_GetAttributeID
 	GraphContext *gc,
 	const char *attribute
 ) {
-	// Acquire a read lock for looking up the attribute.
+	// acquire a read lock for looking up the attribute
 	pthread_rwlock_rdlock(&gc->_attribute_rwlock);
-	// Look up the attribute ID.
-	void *id = raxFind(gc->attributes, (unsigned char *)attribute, strlen(attribute));
-	// Release the lock.
+
+	// look up the attribute ID
+	void *id = raxFind(gc->attributes, (unsigned char *)attribute,
+			strlen(attribute));
+
+	// release the lock
 	pthread_rwlock_unlock(&gc->_attribute_rwlock);
 
 	if(id == raxNotFound) return ATTRIBUTE_ID_NONE;
@@ -868,8 +968,11 @@ static void _DeleteTelemetryStream
 	RedisModule_CloseKey(key);
 }
 
-// Free all data associated with graph
-static void _GraphContext_Free(void *arg) {
+// free all data associated with graph
+static void _GraphContext_Free
+(
+	void *arg
+) {
 	GraphContext *gc = (GraphContext *)arg;
 	uint len;
 
@@ -885,7 +988,8 @@ static void _GraphContext_Free(void *arg) {
 
 	// Redis main thread is 0
 	RedisModuleCtx *ctx = NULL;
-	bool main_thread = ThreadPools_GetThreadID() == 0;
+	extern pthread_t MAIN_THREAD_ID;  // redis main thread ID
+	bool main_thread = (pthread_equal(pthread_self(), MAIN_THREAD_ID) != 0);
 	bool should_lock = !main_thread && RedisModule_GetThreadSafeContext != NULL;
 
 	if(should_lock) {
@@ -970,6 +1074,15 @@ static void _GraphContext_Free(void *arg) {
 	//--------------------------------------------------------------------------
 
 	if(gc->cache) Cache_Free(gc->cache);
+
+	//--------------------------------------------------------------------------
+	// free pending write queue
+	//--------------------------------------------------------------------------
+
+	if(gc->pending_write_queue != NULL) {
+		ASSERT(CircularBuffer_Empty(gc->pending_write_queue));
+		CircularBuffer_Free(gc->pending_write_queue, NULL);
+	}
 
 	GraphEncodeContext_Free(gc->encoding_context);
 	GraphDecodeContext_Free(gc->decoding_context);

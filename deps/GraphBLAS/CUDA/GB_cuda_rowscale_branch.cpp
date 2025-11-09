@@ -1,4 +1,3 @@
-#include "GraphBLAS_cuda.hpp"
 #include "GB_cuda.hpp"
 
 bool GB_cuda_rowscale_branch
@@ -9,7 +8,16 @@ bool GB_cuda_rowscale_branch
     const bool flipxy
 )
 {
-    if (!GB_cuda_type_branch (D->type) || 
+    if (D->header_size == 0)
+    {
+        return false ;
+    }
+    if (B->header_size == 0)
+    {
+        return false ;
+    }
+
+    if (!GB_cuda_type_branch (D->type) ||
         !GB_cuda_type_branch (B->type) ||
         !GB_cuda_type_branch (semiring->multiply->ztype))
     {

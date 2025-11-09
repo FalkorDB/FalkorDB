@@ -91,8 +91,8 @@ static void _PopulateReduceCtx
 
 	// this could just be assigned to 'id'
 	// but for safety we'll use a Record lookup
-	ctx->variable_idx = Record_GetEntryIdx(ctx->record, ctx->variable);
-	ctx->accumulator_idx = Record_GetEntryIdx(ctx->record, ctx->accumulator);
+	ctx->variable_idx = Record_GetEntryIdx(ctx->record, ctx->variable, strlen(ctx->variable));
+	ctx->accumulator_idx = Record_GetEntryIdx(ctx->record, ctx->accumulator, strlen(ctx->accumulator));
 	ASSERT(ctx->variable_idx != INVALID_INDEX);
 	ASSERT(ctx->accumulator_idx != INVALID_INDEX);
 }
@@ -235,12 +235,12 @@ static inline bool normalize_index
 	return true;
 }
 
-// If given an array, returns a value in a specific index in an array.
-//    Valid index range is [-arrayLen, arrayLen).
-//    Invalid index will return null.
-//    "RETURN [1, 2, 3][0]" will yield 1.
-// If given a map or graph entity, returns the property value associated
-//    with the given key string.
+// if given an array, returns a value in a specific index in an array
+//    valid index range is [-arrayLen, arrayLen)
+//    invalid index will return null.
+//    "RETURN [1, 2, 3][0]" will yield 1
+// if given a map or graph entity, returns the property value associated
+//    with the given key string
 SIValue AR_SUBSCRIPT(SIValue *argv, int argc, void *private_data) {
 	ASSERT(argc == 2);
 	if(SI_TYPE(argv[0]) == T_NULL || SI_TYPE(argv[1]) == T_NULL) return SI_NullVal();
@@ -380,6 +380,7 @@ SIValue AR_SIZE(SIValue *argv, int argc, void *private_data) {
 		case T_ARRAY:
 			return SI_LongVal(SIArray_Length(value));
 		case T_STRING:
+		case T_INTERN_STRING:
 			return SI_LongVal(str_length(value.stringval));
 		case T_NULL:
 			return SI_NullVal();
@@ -706,10 +707,10 @@ SIValue AR_REDUCE
 	if(SI_TYPE(argv[1]) == T_NULL) return SI_NullVal();
 
 	// set arguments
-	SIValue        accum  =  SI_ShareValue(argv[0]);
-	SIValue        list   =  argv[1];
-	Record         rec    =  argv[2].ptrval;
-	ListReduceCtx  *ctx   =  private_data;
+	SIValue       accum = SI_ShareValue(argv[0]);
+	SIValue       list  = argv[1];
+	Record        rec   = argv[2].ptrval;
+	ListReduceCtx *ctx  = private_data;
 
 	// on first invocation build the internal record
 	if(ctx->record == NULL) _PopulateReduceCtx(ctx, rec);

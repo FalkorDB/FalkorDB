@@ -46,10 +46,15 @@
 
 typedef struct OpApplyMultiplexer {
 	OpBase op;
-	Record r;                       // Bound branch record.
-	OpBase *bound_branch;           // Bound branch root;
-	Argument **branch_arguments;    // Branches taps.
-	AST_Operator boolean_operator;  // Defines the operation logic - OR/AND.
+	Record r;                       // bound branch record
+	OpBase *bound_branch;           // bound branch root
+	OpArgument **branch_arguments;  // branches taps
+	AST_Operator boolean_operator;  // defines the operation logic - OR/AND
 } OpApplyMultiplexer;
 
-OpBase *NewApplyMultiplexerOp(const ExecutionPlan *plan, AST_Operator boolean_operator);
+OpBase *NewApplyMultiplexerOp
+(
+	const ExecutionPlan *plan,
+	AST_Operator boolean_operator
+);
+

@@ -14,7 +14,7 @@
 #include "../../algorithms/all_neighbors.h"
 #include "../../query_ctx.h"
 
-/* Forward declarations. */
+// forward declarations
 static OpResult CondVarLenTraverseInit(OpBase *opBase);
 static OpResult CondVarLenTraverseReset(OpBase *opBase);
 static Record CondVarLenTraverseConsume(OpBase *opBase);
@@ -22,8 +22,13 @@ static Record CondVarLenTraverseOptimizedConsume(OpBase *opBase);
 static OpBase *CondVarLenTraverseClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void CondVarLenTraverseFree(OpBase *opBase);
 
-static void _setupTraversedRelations(CondVarLenTraverse *op) {
-	QGEdge *e = QueryGraph_GetEdgeByAlias(op->op.plan->query_graph, AlgebraicExpression_Edge(op->ae));
+static void _setupTraversedRelations
+(
+	CondVarLenTraverse *op
+) {
+	QGEdge *e = QueryGraph_GetEdgeByAlias(op->op.plan->query_graph,
+			AlgebraicExpression_Edge(op->ae));
+
 	ASSERT(e->minHops <= e->maxHops);
 	op->minHops = e->minHops;
 	op->maxHops = e->maxHops;
@@ -53,8 +58,13 @@ static void _setupTraversedRelations(CondVarLenTraverse *op) {
 	}
 }
 
-// Set the traversal direction to match the traversed edge and AlgebraicExpression form.
-static inline void _setTraverseDirection(CondVarLenTraverse *op, const QGEdge *e) {
+// set the traversal direction to match the traversed edge
+// and AlgebraicExpression form
+static inline void _setTraverseDirection
+(
+	CondVarLenTraverse *op,
+	const QGEdge *e
+) {
 	if(e->bidirectional) {
 		op->traverseDir = GRAPH_EDGE_DIR_BOTH;
 	} else {
@@ -107,21 +117,14 @@ OpBase *NewCondVarLenTraverseOp
 	Graph *g,
 	AlgebraicExpression *ae
 ) {
-	ASSERT(g != NULL);
+	ASSERT(g  != NULL);
 	ASSERT(ae != NULL);
 
-	CondVarLenTraverse *op = rm_malloc(sizeof(CondVarLenTraverse));
+	CondVarLenTraverse *op = rm_calloc (1, sizeof(CondVarLenTraverse)) ;
 
-	op->g                 = g;
-	op->r                 = NULL;
-	op->M                 = NULL;
-	op->ae                = ae;
-	op->ft                = NULL;
-	op->expandInto        = false;
-	op->allPathsCtx       = NULL;
-	op->collect_paths     = true;
-	op->allNeighborsCtx   = NULL;
-	op->edgeRelationTypes = NULL;
+	op->g             = g;
+	op->ae            = ae;
+	op->collect_paths = true;
 
 	OpBase_Init((OpBase *)op, OPType_CONDITIONAL_VAR_LEN_TRAVERSE,
 				"Conditional Variable Length Traverse", CondVarLenTraverseInit,
@@ -129,14 +132,22 @@ OpBase *NewCondVarLenTraverseOp
 				CondVarLenTraverseToString, CondVarLenTraverseClone,
 				CondVarLenTraverseFree, false, plan);
 
-	bool aware = OpBase_Aware((OpBase *)op, AlgebraicExpression_Src(ae), &op->srcNodeIdx);
+	bool aware = OpBase_AliasMapping((OpBase *)op, AlgebraicExpression_Src(ae),
+			&op->srcNodeIdx);
 	ASSERT(aware);
-	op->destNodeIdx = OpBase_Modifies((OpBase *)op, AlgebraicExpression_Dest(ae));
+
+	op->destNodeIdx = OpBase_Modifies((OpBase *)op,
+			AlgebraicExpression_Dest(ae));
 
 	// populate edge value in record only if it is referenced
 	AST *ast = QueryCtx_GetAST();
-	QGEdge *e = QueryGraph_GetEdgeByAlias(plan->query_graph, AlgebraicExpression_Edge(op->ae));
-	op->edgesIdx = AST_AliasIsReferenced(ast, e->alias) ? OpBase_Modifies((OpBase *)op, e->alias) : -1;
+	QGEdge *e = QueryGraph_GetEdgeByAlias(plan->query_graph,
+			AlgebraicExpression_Edge(op->ae));
+
+	op->edgesIdx = AST_AliasIsReferenced(ast, e->alias) ?
+		OpBase_Modifies((OpBase *)op, e->alias) :
+		-1;
+
 	op->shortestPaths = QGEdge_IsShortestPath(e);
 
 	_setTraverseDirection(op, e);
@@ -144,7 +155,10 @@ OpBase *NewCondVarLenTraverseOp
 	return (OpBase *)op;
 }
 
-static OpResult CondVarLenTraverseInit(OpBase *opBase) {
+static OpResult CondVarLenTraverseInit
+(
+	OpBase *opBase
+) {
 	CondVarLenTraverse *op = (CondVarLenTraverse *)opBase;
 
 	// check if variable length traversal doesn't require path construction
@@ -167,21 +181,19 @@ static OpResult CondVarLenTraverseInit(OpBase *opBase) {
 			AlgebraicExpression_Edge(op->ae));
 	uint reltype_count = QGEdge_RelationCount(e);
 
-	bool  multi_edge  =  true;
-	bool  transpose   =  op->traverseDir != GRAPH_EDGE_DIR_OUTGOING;
+	bool multi_edge = true;
 	if(reltype_count == 1) {
 		int rel_id = QGEdge_RelationID(e, 0);
 		if(rel_id != GRAPH_NO_RELATION && rel_id != GRAPH_UNKNOWN_RELATION) {
-			multi_edge = Graph_RelationshipContainsMultiEdge(op->g, rel_id,
-					transpose);
+			multi_edge = Graph_RelationshipContainsMultiEdge(op->g, rel_id);
 		}
 	}
 
-	if(op->ft          == NULL                && // no filter on path
-	   op->edgesIdx    == -1                  && // edge isn't required
-	   op->expandInto  == false               && // destination unknown
-	   reltype_count   == 1                   && // single relationship
-	   multi_edge      == false               && // no multi edge entries
+	if(op->ft          == NULL  && // no filter on path
+	   op->edgesIdx    == -1    && // edge isn't required
+	   op->expandInto  == false && // destination unknown
+	   reltype_count   == 1     && // single relationship
+	   multi_edge      == false && // no multi edge entries
 	   op->traverseDir != GRAPH_EDGE_DIR_BOTH    // directed
 	  ) {
 		AlgebraicExpression_Optimize(&op->ae);
@@ -193,7 +205,10 @@ static OpResult CondVarLenTraverseInit(OpBase *opBase) {
 	return OP_OK;
 }
 
-static Record CondVarLenTraverseOptimizedConsume(OpBase *opBase) {
+static Record CondVarLenTraverseOptimizedConsume
+(
+	OpBase *opBase
+) {
 	CondVarLenTraverse  *op     = (CondVarLenTraverse *)opBase;
 	OpBase              *child  =  op->op.children[0];
 	Node                dest    =  GE_NEW_NODE();
@@ -204,7 +219,7 @@ static Record CondVarLenTraverseOptimizedConsume(OpBase *opBase) {
 		Record childRecord = OpBase_Consume(child);
 		if(!childRecord) return NULL;
 
-		if(op->r) OpBase_DeleteRecord(&op->r);
+		OpBase_DeleteRecord(&op->r);
 		op->r = childRecord;
 
 		Node *srcNode = Record_GetNode(op->r, op->srcNodeIdx);
@@ -257,7 +272,10 @@ static Record CondVarLenTraverseOptimizedConsume(OpBase *opBase) {
 	return r;
 }
 
-static Record CondVarLenTraverseConsume(OpBase *opBase) {
+static Record CondVarLenTraverseConsume
+(
+	OpBase *opBase
+) {
 	CondVarLenTraverse  *op     = (CondVarLenTraverse *)opBase;
 	Path                *p      =  NULL;
 	OpBase              *child  =  op->op.children[0];
@@ -266,29 +284,29 @@ static Record CondVarLenTraverseConsume(OpBase *opBase) {
 		Record childRecord = OpBase_Consume(child);
 		if(!childRecord) return NULL;
 
-		if(op->r) OpBase_DeleteRecord(&op->r);
+		OpBase_DeleteRecord(&op->r);
 		op->r = childRecord;
 
 		Node *srcNode = Record_GetNode(op->r, op->srcNodeIdx);
 		if(srcNode == NULL) {
-			/* The child Record may not contain the source node in scenarios like
-			 * a failed OPTIONAL MATCH. In this case, delete the Record and try again. */
+			// the child Record may not contain the source node in scenarios like
+			// a failed OPTIONAL MATCH. In this case, delete the Record and try again
 			OpBase_DeleteRecord(&op->r);
 			continue;
 		}
 
-		// Create edge relation type array on first call to consume.
+		// create edge relation type array on first call to consume
 		if(!op->edgeRelationTypes) {
 			_setupTraversedRelations(op);
-			/* Incase we don't have any relations to traverse and minimal traversal is at least one hop
-			 * we can return quickly.
-			 * Consider: MATCH (S)-[:L*]->(M) RETURN M
-			 * where label L does not exists. */
+			// incase we don't have any relations to traverse and
+			// minimal traversal is at least one hop, we can return quickly
+			// consider: MATCH (S)-[:L*]->(M) RETURN M
+			// where label L does not exists
 			if(op->edgeRelationCount == 0 && op->minHops > 0) return NULL;
 		}
 
 		Node *destNode = NULL;
-		// The destination node is known in advance if we're performing an ExpandInto.
+		// the destination node is known in advance if we're performing an ExpandInto
 		if(op->expandInto) destNode = Record_GetNode(op->r, op->destNodeIdx);
 
 		AllPathsCtx_Free(op->allPathsCtx);
@@ -313,7 +331,10 @@ static Record CondVarLenTraverseConsume(OpBase *opBase) {
 	return r;
 }
 
-static OpResult CondVarLenTraverseReset(OpBase *ctx) {
+static OpResult CondVarLenTraverseReset
+(
+	OpBase *ctx
+) {
 	CondVarLenTraverse *op = (CondVarLenTraverse *)ctx;
 	if(op->r) {
 		OpBase_DeleteRecord(&op->r);
@@ -363,7 +384,10 @@ static OpBase *CondVarLenTraverseClone
 	return clone;
 }
 
-static void CondVarLenTraverseFree(OpBase *ctx) {
+static void CondVarLenTraverseFree
+(
+	OpBase *ctx
+) {
 	CondVarLenTraverse *op = (CondVarLenTraverse *)ctx;
 
 	if(op->edgeRelationTypes) {

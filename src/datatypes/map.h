@@ -31,10 +31,26 @@ typedef Pair *Map;
 // otherwise return false
 #define MAP_GET(map, key, value) Map_Get(map, SI_ConstStringVal(key), &value)
 
+// retrieves value under lower(key), map[lower(key)]
+// where key is const string 
+// return true and set 'value' if key is in map
+// otherwise return false
+#define MAP_GETCASEINSENSITIVE(map, key, value) \
+	Map_GetCaseInsensitive(map, SI_ConstStringVal(key), &value)
+
 // create a new map
 SIValue Map_New
 (
 	uint capacity     // map initial capacity
+);
+
+// create a map from keys and values arrays
+// keys and values are both of length n
+SIValue Map_FromArrays
+(
+	const SIValue *keys,    // keys
+	const SIValue *values,  // values
+	uint n                  // arrays length
 );
 
 // clones map
@@ -45,6 +61,15 @@ SIValue Map_Clone
 
 // adds key/value to map
 void Map_Add
+(
+	SIValue *map,  // map to add element to
+	SIValue key,   // key under which value is added
+	SIValue value  // value to add under key
+);
+
+// adds key/value to map
+// both key and value aren't cloned
+void Map_AddNoClone
 (
 	SIValue *map,  // map to add element to
 	SIValue key,   // key under which value is added
@@ -72,6 +97,15 @@ bool Map_Get
 	SIValue map,    // map to get value from
 	SIValue key,    // key to lookup value
 	SIValue *value  // [output] value to retrieve
+);
+
+// retrieves value under lower(key), map[lower(key)]
+// sets 'value' to NULL if key isn't in map
+bool Map_GetCaseInsensitive
+(
+	SIValue map,    // map
+	SIValue key,    // key to access
+	SIValue *value  // [output] map[lower(key)]
 );
 
 // checks if 'key' is in map
@@ -125,6 +159,14 @@ int Map_Compare
 	SIValue mapA,
 	SIValue mapB,
 	int *disjointOrNull
+);
+
+// merge two maps
+// in case of key collision, the value from 'b' is used
+SIValue Map_Merge
+(
+	const SIValue a,
+	const SIValue b
 );
 
 // compute hash code for map

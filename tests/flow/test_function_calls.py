@@ -1127,6 +1127,8 @@ class testFunctionCallsFlow(FlowTestsBase):
             "RETURN split('aa', 'a')": [[["", "", ""]]],
             "RETURN split('', ',')": [[[""]]],
             "RETURN split('', '')": [[[""]]],
+            "RETURN split('aAbBcC', '')": [[['a', 'A', 'b', 'B', 'c', 'C']]],
+            "RETURN split('aAbBcC', 'B')": [[['aAb', 'cC']]],
             # test unicode charecters
             "RETURN split('丁丂七丄丅丆万丈三上', '丄')": [[["丁丂七", "丅丆万丈三上"]]],
             "RETURN split('丁丂七丅', '')": [[["丁", "丂", "七", "丅"]]],
@@ -1850,6 +1852,8 @@ class testFunctionCallsFlow(FlowTestsBase):
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
+
+        self.expect_error('RETURN toLower(replace("�", "", "   "))', "Invalid UTF8 string")
     
     def test66_ToUpper(self):
         query_to_expected_result = {
@@ -1863,6 +1867,8 @@ class testFunctionCallsFlow(FlowTestsBase):
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
+
+        self.expect_error('RETURN toUpper(replace("�", "", "   "))', "Invalid UTF8 string")
     
     def test67_Exists(self):
         query_to_expected_result = {
@@ -2229,7 +2235,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             "CREATE ()-[r:R]->() RETURN hasLabels(r, ['abc', 'def'])": "Type mismatch: expected Node or Null but was Edge",
             "RETURN toBoolean(1.2)": "Type mismatch: expected String, Boolean, Integer, or Null but was Float",
             "RETURN isEmpty(1)": "Type mismatch: expected Map, List, String, or Null but was Integer",
-            "CREATE ()-[r:R]->() RETURN toString(r)": "Type mismatch: expected Datetime, Duration, String, Boolean, Integer, Float, Null, or Point but was Edge",
+            "CREATE ()-[r:R]->() RETURN toString(r)": "Type mismatch: expected Datetime, Date, Time, Duration, String, Boolean, Integer, Float, Null, or Point but was Edge",
         }
         for query, error in queries_with_errors.items():
             self.expect_error(query, error)
@@ -2507,6 +2513,15 @@ class testFunctionCallsFlow(FlowTestsBase):
         except ResponseError as e:
             self.env.assertContains("String overflow", str(e))
 
+        # join empty list
+        queries = ["RETURN string.join([])",
+                   "RETURN string.join([], '|')"]
+
+        for q in queries:
+            actual_result = self.graph.query(q).result_set[0][0]
+            # expecting an empty string
+            self.env.assertEquals(actual_result, "")
+
     def test90_size(self):
         query_to_expected_result = {
             "RETURN size(NULL)" : [[None]],
@@ -2778,3 +2793,12 @@ class testFunctionCallsFlow(FlowTestsBase):
         for q in queries_with_errors:
             self.expect_error(q, err_msg)
 
+    def test95_prev(self):
+        res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(x)")
+        self.env.assertEquals(res.result_set, [[None], [1], [2], [3], [4]])
+
+        res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(prev(x))")
+        self.env.assertEquals(res.result_set, [[None], [None], [1], [2], [3]])
+
+        res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(tostring(x) + tostring(x))")
+        self.env.assertEquals(res.result_set, [[None], ['11'], ['22'], ['33'], ['44']])

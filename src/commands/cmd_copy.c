@@ -59,13 +59,14 @@
 #include "../redismodule.h"
 #include "../graph/graphcontext.h"
 #include "../serializers/serializer_io.h"
-#include "../serializers/encoder/v14/encode_v14.h"
-#include "../serializers/decoders/current/v14/decode_v14.h"
+#include "../serializers/encoder/v18/encode_v18.h"
+#include "../serializers/decoders/current/v18/decode_v18.h"
 
 #include <stdio.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <assert.h>
 
 extern RedisModuleType *GraphContextRedisModuleType;
 
@@ -84,7 +85,10 @@ typedef struct {
 static char *_temp_file(void) {
 	char *uuid = UUID_New();
 	char *path;
-	asprintf(&path, "/tmp/%s.dump", uuid);
+
+	int n = asprintf(&path, "/tmp/%s.dump", uuid);
+	assert (n == 36 + 10) ;
+
 	rm_free(uuid);
 
 	return path;
@@ -175,7 +179,7 @@ static int encode_graph
 	}
 
 	// create serializer
-	io = SerializerIO_FromStream(f);
+	io = SerializerIO_FromStream(f, true);
 	ASSERT(io != NULL);
 
 	// encode graph to disk
@@ -238,7 +242,8 @@ static void LoadGraphFromFile
 	buffer = rm_malloc(sizeof(char) * fileLength);
 
 	// read file content into buffer
-	fread(buffer, 1, fileLength, f);
+	size_t read = fread(buffer, fileLength, 1, f);
+	assert (read == 1) ;
 
 	fclose(f);  // close file
 
@@ -253,7 +258,7 @@ static void LoadGraphFromFile
 	}
 
 	// create serializer ontop of file descriptor
-	io = SerializerIO_FromStream(stream);
+	io = SerializerIO_FromStream(stream, false);
 	ASSERT(io != NULL);
 
 	// decode graph from io

@@ -38,6 +38,7 @@ void _ResultSet_BoltReplyWithSIValue
 ) {
 	switch(SI_TYPE(v)) {
 	case T_STRING:
+	case T_INTERN_STRING:
 		bolt_reply_string(client, v.stringval, strlen(v.stringval));
 		break;
 	case T_INT64:
@@ -114,7 +115,7 @@ static void _ResultSet_BoltReplyWithElementID
 ) {
 	int ndigits = id == 0 ? 1 : floor(log10(id)) + 1;
 	char element_id[ndigits + strlen(prefix) + 2];
-	sprintf(element_id, "%s_%llu", prefix, id);
+	sprintf(element_id, "%s_%" PRIu64, prefix, id);
 	bolt_reply_string(client, element_id, strlen(element_id));
 }
 
@@ -242,7 +243,7 @@ static void _ResultSet_BoltReplyWithPath
 
 	size_t indices = node_count + edge_count - 1;
 	bolt_reply_list(client, indices);
-	for(uint8_t i = 0; i < edge_count; i++) {
+	for(size_t i = 0; i < edge_count; i++) {
 		Edge *e = (Edge *)SIPath_GetRelationship(path, i).ptrval;
 		Node *n = (Node *)SIPath_GetNode(path, i).ptrval;
 		if(e->src_id == n->id) {

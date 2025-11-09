@@ -30,7 +30,7 @@ static void _ResetVectorOptions
 ) {
 	ASSERT(f != NULL);
 
-	f->options.dimension = 0;
+	f->hnsw_options.dimension = 0;
 }
 
 // initialize index field
@@ -41,8 +41,8 @@ void IndexField_Init
 	AttributeID id,      // attribute ID
 	IndexFieldType type  // field type
 ) {
-	ASSERT(name     != NULL);
-	ASSERT(field    != NULL);
+	ASSERT(name  != NULL);
+	ASSERT(field != NULL);
 
 	// clear field
 	memset(field, 0, sizeof(IndexField));
@@ -52,21 +52,42 @@ void IndexField_Init
 	field->type = type;
 
 	// set default options
-	field->options.weight    = INDEX_FIELD_DEFAULT_WEIGHT;
-	field->options.nostem    = INDEX_FIELD_DEFAULT_NOSTEM;
-	field->options.phonetic  = rm_strdup(INDEX_FIELD_DEFAULT_PHONETIC);
-	field->options.dimension = 0;
+	field->options.weight              = INDEX_FIELD_DEFAULT_WEIGHT;
+	field->options.nostem              = INDEX_FIELD_DEFAULT_NOSTEM;
+	field->options.phonetic            = rm_strdup(INDEX_FIELD_DEFAULT_PHONETIC);
+	field->hnsw_options.dimension      = 0;
+	field->hnsw_options.M              = INDEX_FIELD_DEFAULT_M;
+	field->hnsw_options.efConstruction = INDEX_FIELD_DEFAULT_EF_CONSTRUCTION;
+	field->hnsw_options.efRuntime      = INDEX_FIELD_DEFAULT_EF_RUNTIME;
 
 	if(type & INDEX_FLD_FULLTEXT) {
 		field->fulltext_name = field->name;
 	}
+
+	int n ;
+
 	if(type & INDEX_FLD_RANGE) {
-		field->range_name = rm_malloc(strlen(name)+7);
-		sprintf(field->range_name, "range:%s", name);
+		// create all 3 fields associated with a range field
+
+		// exact match field, e.g. n.v = 4
+		// 'range:' + field name
+		n = asprintf(&field->range_name, "range:%s", name);
+		assert (n >= 7) ;
+
+		// strign multi-value field, e.g. 'x' in n.v
+		// 'range:' + field name + ':string:arr'
+		n = asprintf(&field->range_string_arr_name, "%s:string:arr", field->range_name);
+		assert (n >= 12) ;
+
+		// numeric multi-value field, e.g. 5 in n.v
+		// 'range:' + field name + ':numeric:arr'
+		n = asprintf(&field->range_numeric_arr_name, "%s:numeric:arr", field->range_name);
+		assert (n >= 13) ;
 	}
+
 	if(type & INDEX_FLD_VECTOR) {
-		field->vector_name = rm_malloc(strlen(name)+8);
-		sprintf(field->vector_name, "vector:%s", name);
+		n = asprintf(&field->vector_name, "vector:%s", name);
+		assert (n >= 8) ;
 	}
 }
 
@@ -84,15 +105,15 @@ void IndexField_SetOptions
 	ASSERT(phonetic != NULL);
 
 	// default options
-	ASSERT(field->options.dimension == 0);
 	ASSERT(field->options.weight    == INDEX_FIELD_DEFAULT_WEIGHT);
 	ASSERT(field->options.nostem    == INDEX_FIELD_DEFAULT_NOSTEM);
+	ASSERT(field->hnsw_options.dimension == 0);
 	ASSERT(strcmp(field->options.phonetic, INDEX_FIELD_DEFAULT_PHONETIC) == 0);
 
 	// set options
-	field->options.weight    = weight;
-	field->options.nostem    = nostem;
-	field->options.dimension = dimension;
+	field->options.weight         = weight;
+	field->options.nostem         = nostem;
+	field->hnsw_options.dimension = dimension;
 
 	if(phonetic != NULL) {
 		rm_free(field->options.phonetic);
@@ -126,13 +147,21 @@ void IndexField_NewFullTextField
 // create a new vector index field
 void IndexField_NewVectorField
 (
-	IndexField *field,   // field to initialize
-	const char *name,    // field name
-	AttributeID id,      // field id
-	uint32_t dimension   // vector dimension
+	IndexField *field,      // field to initialize
+	const char *name,       // field name
+	AttributeID id,         // field id
+	uint32_t dimension,     // vector dimension
+	size_t M,               // max outgoing edges
+	size_t efConstruction,  // construction error factor
+	size_t efRuntime,       // runtime error factor
+	VecSimMetric simFunc      // similarity function
 ) {
 	IndexField_Init(field, name, id, INDEX_FLD_VECTOR);
 	IndexField_OptionsSetDimension(field, dimension);
+	IndexField_OptionsSetM(field, M);
+	IndexField_OptionsSetEfConstruction(field, efConstruction);
+	IndexField_OptionsSetEfRuntime(field, efRuntime);
+	IndexField_OptionsSetSimFunc(field, simFunc);
 }
 
 // clone index field
@@ -159,11 +188,19 @@ void IndexField_Clone
 	if(src->type & INDEX_FLD_FULLTEXT) {
 		dest->fulltext_name = dest->name;
 	}
+
 	if(src->type & INDEX_FLD_RANGE) {
-		dest->range_name = rm_strdup(src->range_name);
+		ASSERT(src->range_name             != NULL);
+		ASSERT(src->range_string_arr_name  != NULL);
+		ASSERT(src->range_numeric_arr_name != NULL);
+
+		dest->range_name             = strdup(src->range_name);
+		dest->range_string_arr_name  = strdup(src->range_string_arr_name);
+		dest->range_numeric_arr_name = strdup(src->range_numeric_arr_name);
 	}
+
 	if(src->type & INDEX_FLD_VECTOR) {
-		dest->vector_name = rm_strdup(src->vector_name);
+		dest->vector_name = strdup(src->vector_name);
 	}
 }
 
@@ -212,8 +249,16 @@ void IndexField_RemoveType
 
 	// remove RANGE type
 	if(t & INDEX_FLD_RANGE) {
-		rm_free(f->range_name);
+		// free all 3 range fields
+
+		free(f->range_name);
 		f->range_name = NULL;
+
+		free(f->range_string_arr_name);
+		f->range_string_arr_name = NULL;
+
+		free(f->range_numeric_arr_name);
+		f->range_numeric_arr_name = NULL;
 	}
 
 	// remove FULLTEXT type
@@ -224,7 +269,7 @@ void IndexField_RemoveType
 
 	// remove VECTOR type
 	if(t & INDEX_FLD_VECTOR) {
-		rm_free(f->vector_name);
+		free(f->vector_name);
 		f->vector_name = NULL;
 		_ResetVectorOptions(f);
 	}
@@ -276,7 +321,77 @@ void IndexField_OptionsSetDimension
 	uint32_t dimension  // vector dimension
 ) {
 	ASSERT(field != NULL);
-	field->options.dimension = dimension;
+	field->hnsw_options.dimension = dimension;
+}
+
+// set index field vector max outgoing edges
+void IndexField_OptionsSetM
+(
+	IndexField *field,  // field to update
+	size_t M            // max outgoing edges
+) {
+	ASSERT(field != NULL);
+	field->hnsw_options.M = M;
+}
+
+// get index field vector max outgoing edges
+size_t IndexField_OptionsGetM
+(
+	const IndexField *field   // field to update
+) {
+	ASSERT(field != NULL);
+	return field->hnsw_options.M;
+}
+
+void IndexField_OptionsSetEfConstruction
+(
+	IndexField *field,     // field to update
+	size_t efConstruction  // construction error factor
+) {
+	ASSERT(field != NULL);
+	field->hnsw_options.efConstruction = efConstruction;
+}
+
+size_t IndexField_OptionsGetEfConstruction
+(
+	const IndexField *field     // field to update
+) {
+	ASSERT(field != NULL);
+	return field->hnsw_options.efConstruction;
+}
+
+void IndexField_OptionsSetEfRuntime
+(
+	IndexField *field,  // field to update
+	size_t efRuntime    // runtime error factor
+) {
+	ASSERT(field != NULL);
+	field->hnsw_options.efRuntime = efRuntime;
+}
+
+size_t IndexField_OptionsGetEfRuntime
+(
+	const IndexField *field  // field to update
+) {
+	ASSERT(field != NULL);
+	return field->hnsw_options.efRuntime;
+}
+
+void IndexField_OptionsSetSimFunc
+(
+	IndexField *field,  // field to update
+	VecSimMetric func   // similarity function
+) {
+	ASSERT(field != NULL);
+	field->hnsw_options.simFunc = func;
+}
+
+VecSimMetric IndexField_OptionsGetSimFunc
+(
+	const IndexField *field  // field to update
+) {
+	ASSERT(field != NULL);
+	return field->hnsw_options.simFunc;
 }
 
 uint32_t IndexField_OptionsGetDimension
@@ -286,21 +401,23 @@ uint32_t IndexField_OptionsGetDimension
 	ASSERT(field != NULL);
 	ASSERT(field->type & INDEX_FLD_VECTOR);
 
-	return field->options.dimension;
+	return field->hnsw_options.dimension;
 }
 
 // free index field
 void IndexField_Free
 (
-	IndexField *field
+	IndexField *f
 ) {
-	ASSERT(field != NULL);
+	ASSERT(f != NULL);
 
-	rm_free(field->name);
-	rm_free(field->options.phonetic);
+	rm_free(f->name);
+	rm_free(f->options.phonetic);
 
 	// free type specific field names
-	if(field->range_name  != NULL) rm_free(field->range_name);
-	if(field->vector_name != NULL) rm_free(field->vector_name);
+	if(f->range_name             != NULL) free(f->range_name);
+	if(f->vector_name            != NULL) free(f->vector_name);
+	if(f->range_string_arr_name  != NULL) free(f->range_string_arr_name);
+	if(f->range_numeric_arr_name != NULL) free(f->range_numeric_arr_name);
 }
 

@@ -7,6 +7,7 @@
 #include "globals.h"
 #include "cron/cron.h"
 #include "redismodule.h"
+#include "../../util/rmalloc.h"
 #include "graph/graphcontext.h"
 #include "configuration/config.h"
 #include "util/circular_buffer.h"
@@ -26,6 +27,7 @@
 #define FLD_NAME_REPORT_DURATION     "Report duration"
 #define FLD_NAME_EXECUTION_DURATION  "Execution duration"
 
+#define TELEMETRY_STREAM_TTL 1000 * 60 * 30  // stream TTL ms, 30 minutes
 
 // event field:value pairs
 static RedisModuleString *_event[FLD_COUNT * 2] = {0};
@@ -159,25 +161,21 @@ static void _clearEvent
 // add queries to stream
 static void _stream_queries
 (
-	RedisModuleCtx *ctx,      // redis module context
-	RedisModuleKey *key,      // stream key
-	CircularBuffer queries    // queries to stream
+	RedisModuleCtx *ctx,    // redis module context
+	RedisModuleKey *key,    // stream key
+	CircularBuffer queries  // queries to stream
 ) {
-	LoggedQuery *q = NULL;
+	LoggedQuery q ;
 
-	// reset reader
-	CircularBuffer_ResetReader(queries);
+	while (CircularBuffer_Read (queries, &q)) {
+		_populateEvent (ctx, &q) ;
 
-	while((q = CircularBuffer_Read(queries, NULL)) != NULL) {
-		_populateEvent(ctx, q);
-
-		RedisModule_StreamAdd(key, REDISMODULE_STREAM_ADD_AUTOID, NULL,
-				_event, FLD_COUNT);
+		RedisModule_StreamAdd (key, REDISMODULE_STREAM_ADD_AUTOID, NULL,
+				_event, FLD_COUNT) ;
 
 		// clean up
-		rm_free(q->query);
-		q->query = NULL;
-		_clearEvent(ctx);
+		LoggedQuery_Free (&q) ;
+		_clearEvent (ctx) ;
 	}
 }
 
@@ -216,7 +214,7 @@ bool CronTask_streamFinishedQueries
 	simple_timer_t stopwatch;
 	simple_tic(stopwatch);
 
-	uint32_t max_query_count = 0;  // determine max number of queries to collect
+	uint64_t max_query_count = 0;  // determine max number of queries to collect
 	Config_Option_get(Config_CMD_INFO_MAX_QUERY_COUNT, &max_query_count);
 
 	KeySpaceGraphIterator it;
@@ -282,6 +280,12 @@ bool CronTask_streamFinishedQueries
 			// cap stream
 			RedisModule_StreamTrimByLength(key,
 					REDISMODULE_STREAM_TRIM_APPROX, max_query_count);
+
+			// set stream TTL
+			if (key_type == REDISMODULE_KEYTYPE_EMPTY) {
+				int res = RedisModule_SetExpire (key, TELEMETRY_STREAM_TTL) ;
+				ASSERT (res == REDISMODULE_OK) ;
+			}
 		} else {
 			// TODO: decide how to handle this...
 		}

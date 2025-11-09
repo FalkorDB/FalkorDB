@@ -1,5 +1,5 @@
 function count = grbcover_edit (infiles, count, outdir)
-%GBCOVER_EDIT create a version of GraphBLAS for statement coverage tests
+%GRBCOVER_EDIT create a version of GraphBLAS for statement coverage tests
 %
 % Usage:
 % count = grbcover_edit (infiles, count)
@@ -25,7 +25,7 @@ function count = grbcover_edit (infiles, count, outdir)
 %       default :     GB_cov[count]++ ; statement
 %
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (ispc)
@@ -37,9 +37,26 @@ if (~isstruct (infiles))
     infiles = dir (infiles) ;
 end
 nfiles = length (infiles) ;
-enabled = true ;
+
+% determine which types are disabled:
+types = { 'bool', 'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', ...
+    'uint32', 'uint64', 'fp32', 'fp64', 'fc32', 'fc64' } ;
+disabled = zeros (length (types), 1) ;
+for k = 1:length(types)
+    t = upper (types {k}) ;
+    [status, result] = system (sprintf ( ...
+        'grep "^   #define GxB_NO_%s" ../Source/GB_control.h', t)) ;
+    disabled (k) = ~isempty (result) ;
+    if (disabled (k))
+        fprintf ('type disabled: %s\n', t) ;
+    end
+end
 
 for k = 1:nfiles
+
+    if (mod (k, 70) == 0)
+        fprintf ('\n') ;
+    end
 
     if (infiles (k).bytes == 0)
         continue ;
@@ -47,9 +64,37 @@ for k = 1:nfiles
 
     infile  = [infiles(k).folder '/' infiles(k).name] ;
     outfile = [outdir '/' infiles(k).name] ;
-    fprintf ('.') ;
-    if (mod (k, 40) == 0)
-        fprintf ('\n') ;
+
+    enabled = true ;
+    coverage = true ;
+
+    if (contains (infile, 'FactoryKernel'))
+        % this is a FactoryKernel; check if its type is disabled
+        if (contains (infile, 'GB_sel__'))
+            % select FactoryKernels are never disabled
+            coverage = true ;
+        elseif (contains (infile, 'GB_uop__identity'))
+            % identity FactoryKernels are never disabled by type
+            coverage = true ;
+        else
+            % all other FactoryKernels may be disabled
+            found = zeros (length (types), 1) ;
+            for kk = 1:length (types)
+                t = types {kk} ;
+                t = ['_' t] ;
+                found (kk) = length (strfind (infile, t)) ;
+            end
+            if (sum (found .* disabled) > 0)
+                % no coverage for this file
+                coverage = false ;
+            end
+        end
+    end
+
+    if (coverage)
+        fprintf ('.') ;
+    else
+        fprintf ('o') ;
     end
 
     f_input  = fopen (infile,  'r') ;
@@ -67,13 +112,34 @@ for k = 1:nfiles
             % empty line: as-is
             fprintf (f_output, '\n') ;
 
+        elseif (len >= 2 && isequal (cline (1:2), '//'))
+
+            % comment line: as-is
+            fprintf (f_output, '%s\n', cline) ;
+
+        elseif (contains (cline, '#include "'))
+
+            if (contains (cline, '/GB_'))
+                % convert '#include "mxm/template/GB_AxB_whatever.h'
+                % to just '#include "GB_AxB_whatever.h'
+                quote = strfind (cline, '"') ;
+                quote = quote (1) ;
+                gb = strfind (cline, '/GB_') ;
+                gb = gb (1) ;
+                fprintf (f_output, '%s%s\n', ...
+                    cline (1:quote), cline (gb+1:end)) ;
+            else
+                % no change to this line
+                fprintf (f_output, '%s\n', cline) ;
+            end
+
         elseif (len > 1 && all (cline (1:len-2) == ' ') ...
                 && (cline (len-1) == '{') && (cline (len) == ' '))
 
             % left curly brackect and space at the end of the line
             % "{ " changes to "{   GB_cov[n]++ ; "
 
-            if (enabled)
+            if (coverage && enabled)
                 fprintf (f_output, '%s  GB_cov[%d]++ ;\n', cline, count) ;
                 count = count + 1 ;
             else
@@ -87,7 +153,7 @@ for k = 1:nfiles
             % a switch case statement, or "default : "
             % "case stuff : statement" => "case stuff : GB_cov[n]++ ; statement"
 
-            if (enabled)
+            if (coverage && enabled)
                 colon = find (cline == ':', 1) ;
                 fprintf (f_output, '%s : GB_cov[%d]++ ; %s\n', ...
                     cline (1:colon-1), count, cline (colon+1:end)) ;
@@ -102,7 +168,9 @@ for k = 1:nfiles
             fprintf (f_output, '%s\n', cline) ;
 
             % determine if the code is commented out
-            if (isequal (cline, '#if 0') && enabled)
+            if (~coverage)
+                % do nothing
+            elseif (isequal (cline, '#if 0') && enabled)
                 % code coverage disabled until reaching "#endif"
                 indent = false ;
                 enabled = false ;

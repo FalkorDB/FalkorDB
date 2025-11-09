@@ -61,14 +61,12 @@ OpBase *NewProcCallOp
 	ASSERT(arg_exps   != NULL);
 	ASSERT(yield_exps != NULL);
 
-	OpProcCall *op = rm_malloc(sizeof(OpProcCall));
+	OpProcCall *op = rm_calloc (1, sizeof(OpProcCall)) ;
 
-	op->r          = NULL;
 	op->args       = array_new(SIValue, array_len(arg_exps));
 	op->arg_exps   = arg_exps;
 	op->arg_count  = array_len(arg_exps);
 	op->proc_name  = proc_name;
-	op->yield_map  = NULL;
 	op->first_call = true;
 	op->yield_exps = yield_exps;
 

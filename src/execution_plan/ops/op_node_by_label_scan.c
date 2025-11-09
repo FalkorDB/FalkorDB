@@ -32,16 +32,21 @@ static inline void NodeByLabelScanToString
 }
 
 // update the label-id of a cached operation, as it may have not 
-// been known when the plan was prepared.
+// been known when the plan was prepared
 static void _update_label_id
 (
 	NodeByLabelScan *op
 ) {
-	if(op->n->label_id != GRAPH_UNKNOWN_LABEL) return;
+	if (op->n->label_id != GRAPH_UNKNOWN_LABEL) {
+		return;
+	}
 
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	Schema *s = GraphContext_GetSchema(gc, op->n->label, SCHEMA_NODE);
-	if(s != NULL) op->n->label_id = Schema_GetID(s);
+
+	if (s != NULL) {
+		op->n->label_id = Schema_GetID(s);
+	}
 }
 
 OpBase *NewNodeByLabelScanOp
@@ -49,13 +54,10 @@ OpBase *NewNodeByLabelScanOp
 	const ExecutionPlan *plan,
 	NodeScanCtx *n
 ) {
-	NodeByLabelScan *op = rm_calloc(sizeof(NodeByLabelScan), 1);
+	NodeByLabelScan *op = rm_calloc (1, sizeof(NodeByLabelScan)) ;
 
-	op->g      = QueryCtx_GetGraph();
-	op->n      = n;
-	op->ID_it  = NULL;
-	op->ids    = NULL;
-	op->ranges = NULL;
+	op->g = QueryCtx_GetGraph();
+	op->n = n;
 
 	_update_label_id(op);
 
@@ -82,6 +84,13 @@ void NodeByLabelScanOp_SetIDRange
 	op->ranges  = ranges;
 	op->op.type = OPType_NODE_BY_LABEL_AND_ID_SCAN;
 	op->op.name = "Node By Label and ID Scan";
+
+	// initialize IDs bitmap
+	ASSERT(op->ids   == NULL);
+	ASSERT(op->ID_it == NULL);
+
+	op->ids   = roaring64_bitmap_create();
+	op->ID_it = roaring64_iterator_create(op->ids);
 }
 
 // constructs either a range iterator or a matrix iterator
@@ -96,7 +105,8 @@ static bool _ConstructIterator
 
 	op->L = Graph_GetLabelMatrix(op->g, op->n->label_id);
 
-	if(array_len(op->ranges) > 0) {
+	bool has_ranges = array_len(op->ranges) > 0;
+	if(has_ranges) {
 		// use range iterator
 		if(!BitmapRange_FromRanges(op->ranges, op->ids, op->child_record, 0,
 				Graph_UncompactedNodeCount(op->g))) {
@@ -113,7 +123,7 @@ static bool _ConstructIterator
 	}
 
 	// use matrix iterator
-	info = RG_MatrixTupleIter_attach(&op->iter, op->L);
+	info = Delta_MatrixTupleIter_attach(&op->iter, op->L);
 	ASSERT(info == GrB_SUCCESS);
 
 	return true;
@@ -130,11 +140,6 @@ static OpResult NodeByLabelScanInit
 	OpBase_UpdateConsume(opBase, has_ranges
 		? NodeByLabelAndIDScanConsume 
 		: NodeByLabelScanConsume); // default consume function
-
-	if(has_ranges) {
-		op->ids   = roaring64_bitmap_create();
-		op->ID_it = roaring64_iterator_create(op->ids);
-	}
 
 	// operation has children, consume from child
 	if(OpBase_ChildCount(opBase) > 0) {
@@ -197,7 +202,7 @@ static Record NodeByLabelScanConsume
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 
 	GrB_Index id;
-	GrB_Info info = RG_MatrixTupleIter_next_BOOL(&op->iter, &id, NULL, NULL);
+	GrB_Info info = Delta_MatrixTupleIter_next_BOOL(&op->iter, &id, NULL, NULL);
 	if(info == GxB_EXHAUSTED) return NULL;
 
 	ASSERT(info == GrB_SUCCESS);
@@ -223,8 +228,7 @@ static Record NodeByLabelAndIDScanConsume
 	while(roaring64_iterator_has_value(op->ID_it)) {
 		id = roaring64_iterator_value(op->ID_it);
 		roaring64_iterator_advance(op->ID_it);
-		bool x;
-		if(RG_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
+		if(Delta_Matrix_isStoredElement(op->L, id, id) == GrB_SUCCESS) {
 			Record r = OpBase_CreateRecord((OpBase *)op);
 
 			// Populate the Record with the actual node.
@@ -247,7 +251,7 @@ static Record NodeByLabelScanConsumeFromChild
 
 	// try to get new nodeID
 	GrB_Index id;
-	GrB_Info info = RG_MatrixTupleIter_next_BOOL(&op->iter, &id, NULL, NULL);
+	GrB_Info info = Delta_MatrixTupleIter_next_BOOL(&op->iter, &id, NULL, NULL);
 
 	// iterator depleted, try to get a new record
 	while(op->child_record == NULL ||
@@ -267,7 +271,7 @@ static Record NodeByLabelScanConsumeFromChild
 		}
 
 		// got a new record
-		if(op->n->label_id == GRAPH_UNKNOWN_LABEL) {
+		if(unlikely(op->n->label_id == GRAPH_UNKNOWN_LABEL)) {
 			_update_label_id(op);
 		}
 
@@ -276,7 +280,7 @@ static Record NodeByLabelScanConsumeFromChild
 		}
 
 		// try to get new NodeID
-		info = RG_MatrixTupleIter_next_BOOL(&op->iter, &id, NULL, NULL);
+		info = Delta_MatrixTupleIter_next_BOOL(&op->iter, &id, NULL, NULL);
 	}
 
 	// we've got a record and NodeID
@@ -297,7 +301,6 @@ static Record NodeByLabelAndIDScanConsumeFromChild
 ) {
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 
-	bool      x;
 	bool      emited;
 	GrB_Index id;
 	GrB_Info  info;
@@ -310,7 +313,7 @@ pull:
 		roaring64_iterator_advance(op->ID_it);
 
 		// make sure ID is labeled as L
-		if(RG_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
+		if(Delta_Matrix_isStoredElement(op->L, id, id) == GrB_SUCCESS) {
 			emited = true;
 			break;
 		}
@@ -355,8 +358,10 @@ static OpResult NodeByLabelScanReset
 ) {
 	NodeByLabelScan *op = (NodeByLabelScan *)ctx;
 
-	if(OpBase_ChildCount(ctx) > 0 && op->child_record != NULL) {
-		OpBase_DeleteRecord(&op->child_record); // free old record
+	if(OpBase_ChildCount(ctx) > 0) {
+		if(op->child_record != NULL) {
+			OpBase_DeleteRecord(&op->child_record); // free old record
+		}
 	} else {
 		_ConstructIterator(op);
 	}
@@ -380,7 +385,7 @@ static void NodeByLabelScanFree
 ) {
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 
-	GrB_Info info = RG_MatrixTupleIter_detach(&(op->iter));
+	GrB_Info info = Delta_MatrixTupleIter_detach(&(op->iter));
 	ASSERT(info == GrB_SUCCESS);
 
 	if(op->child_record) {

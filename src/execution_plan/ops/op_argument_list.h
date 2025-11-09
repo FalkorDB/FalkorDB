@@ -20,12 +20,13 @@ typedef struct {
 
 OpBase *NewArgumentListOp
 (
-	const ExecutionPlan *plan
+	const ExecutionPlan *plan,
+	const char **variables
 );
 
 void ArgumentList_AddRecordList
 (
 	ArgumentList *arg,  // Argument operation to plant the list in
-	Record *records     // record list
+	Record **records    // record list
 );
 

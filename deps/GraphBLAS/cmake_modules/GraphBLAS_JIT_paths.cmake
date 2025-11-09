@@ -2,7 +2,7 @@
 # GraphBLAS/GraphBLAS_JIT_paths.cmake:  configure the JIT paths
 #-------------------------------------------------------------------------------
 
-# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0.
 
 #-------------------------------------------------------------------------------
@@ -40,11 +40,23 @@ endif ( )
 
 if ( SUITESPARSE_HAS_CUDA AND GRAPHBLAS_USE_CUDA )
     # FOR NOW: do not compile FactoryKernels when developing the CUDA kernels
-    set ( GRAPHBLAS_COMPACT on )
+#   set ( GRAPHBLAS_COMPACT on )    # Fixme for CUDA
 endif ( )
 
+include ( CheckSymbolExists )
+check_symbol_exists ( system "stdlib.h" HAVE_C_SYSTEM )
+
 option ( GRAPHBLAS_COMPACT "ON: do not compile FactoryKernels.  OFF (default): compile FactoryKernels" OFF )
-option ( GRAPHBLAS_USE_JIT "ON (default): use the CPU JIT.  OFF: do not use the CPU JIT" ON )
+option ( GRAPHBLAS_USE_JIT "ON (default): use the CPU JIT.  OFF: do not use the CPU JIT" ${HAVE_C_SYSTEM} )
+
+if ( GRAPHBLAS_USE_JIT AND NOT HAVE_C_SYSTEM )
+    if ( SUITESPARSE_USE_STRICT )
+        message ( FATAL_ERROR "GRAPHBLAS CPU JIT cannot be built without support for the C standard function 'system'." )
+    else ( )
+        message ( STATUS "C standard function 'system' cannot be used. GRAPHBLAS CPU JIT will be disabled." )
+        set ( GRAPHBLAS_USE_JIT OFF CACHE BOOL "ON (default): use the CPU JIT.  OFF: do not use the CPU JIT" FORCE )
+    endif ( )
+endif ( )
 
 if ( GRAPHBLAS_USE_JIT )
     message ( STATUS "GraphBLAS CPU JIT: enabled")

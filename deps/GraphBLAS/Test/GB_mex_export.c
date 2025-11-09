@@ -2,7 +2,7 @@
 // GB_mex_export: test import/export
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -44,20 +44,20 @@
 
 GrB_Vector v = NULL ;
 GrB_Matrix C = NULL ;
-GrB_Index *Ap = NULL ;
-GrB_Index *Ah = NULL ;
-GrB_Index *Ai = NULL ;
-GrB_Index *Aj = NULL ;
-GrB_Index nrows = 0 ;
-GrB_Index ncols = 0 ;
-GrB_Index nvals = 0 ;
-GrB_Index nvec = 0 ;
-GrB_Index Ai_size = 0 ;
-GrB_Index Ax_size = 0 ;
+uint64_t *Ap = NULL ;       // OK; 64-bit only
+uint64_t *Ah = NULL ;       // OK; 64-bit only
+uint64_t *Ai = NULL ;       // OK; 64-bit only
+uint64_t *Aj = NULL ;       // OK; 64-bit only
+uint64_t nrows = 0 ;
+uint64_t ncols = 0 ;
+uint64_t nvals = 0 ;
+uint64_t nvec = 0 ;
+uint64_t Ai_size = 0 ;
+uint64_t Ax_size = 0 ;
 bool iso = false ;
-GrB_Index Ap_size = 0 ;
-GrB_Index Aj_size = 0 ;
-GrB_Index Ah_size = 0 ;
+uint64_t Ap_size = 0 ;
+uint64_t Aj_size = 0 ;
+uint64_t Ah_size = 0 ;
 int64_t ignore = -1 ;
 char *Ax = NULL ;
 int format = 0 ;

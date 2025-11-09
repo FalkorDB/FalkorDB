@@ -2,7 +2,7 @@
 // gbapply2: apply idxunop or binary operator to a matrix, with scalar binding
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -51,7 +51,7 @@ void mexFunction
     mxArray *Matrix [6], *String [2], *Cell [2] ;
     base_enum_t base ;
     kind_enum_t kind ;
-    GxB_Format_Value fmt ;
+    int fmt ;
     int nmatrices, nstrings, ncells, sparsity ;
     GrB_Descriptor desc ;
     gb_get_mxargs (nargin, pargin, USAGE, Matrix, &nmatrices, String, &nstrings,
@@ -97,7 +97,7 @@ void mexFunction
     // determine which input is the scalar and which is the matrix
     //--------------------------------------------------------------------------
 
-    GrB_Index anrows, ancols, bnrows, bncols, anvals, bnvals ;
+    uint64_t anrows, ancols, bnrows, bncols, anvals, bnvals ;
 
     // get the size of A and B
     OK (GrB_Matrix_nrows (&anrows, A)) ;
@@ -173,12 +173,12 @@ void mexFunction
     if (C == NULL)
     { 
         // get the descriptor to determine if the input matrix is transposed
-        GrB_Index cnrows, cncols ;
+        uint64_t cnrows, cncols ;
         if (binop_bind1st)
         {
             // A is the scalar and B is the matrix
-            GrB_Desc_Value in1 ;
-            OK (GxB_Desc_get (desc, GrB_INP0, &in1)) ;
+            int in1 ;
+            OK (GrB_Descriptor_get_INT32 (desc, &in1, GrB_INP1)) ;
             bool B_transpose = (in1 == GrB_TRAN) ;
             // determine the size of C
             cnrows = (B_transpose) ? bncols : bnrows ;
@@ -187,8 +187,8 @@ void mexFunction
         else
         {
             // A is the matrix and B is the scalar
-            GrB_Desc_Value in0 ;
-            OK (GxB_Desc_get (desc, GrB_INP0, &in0)) ;
+            int in0 ;
+            OK (GrB_Descriptor_get_INT32 (desc, &in0, GrB_INP0)) ;
             bool A_transpose = (in0 == GrB_TRAN) ;
             // determine the size of C
             cnrows = (A_transpose) ? ancols : anrows ;
@@ -198,12 +198,14 @@ void mexFunction
         // use the ztype of the op as the type of C
         if (op2 != NULL)
         {
-            OK (GxB_BinaryOp_ztype (&ctype, op2)) ;
+            ctype = gb_binaryop_ztype (op2) ;
         }
         else
         {
-            // OK (GxB_IndexUnaryOp_ztype (&ctype, idxunop)) ;
-            ctype = idxunop->ztype ;
+            int code = 0 ;
+            OK (GrB_IndexUnaryOp_get_INT32 (idxunop, &code,
+                GrB_OUTP_TYPE_CODE)) ;
+            ctype = gb_code_to_type (code) ;
         }
 
         // create the matrix C and set its format and sparsity
@@ -248,6 +250,6 @@ void mexFunction
 
     pargout [0] = gb_export (&C, kind) ;
     pargout [1] = mxCreateDoubleScalar (kind) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

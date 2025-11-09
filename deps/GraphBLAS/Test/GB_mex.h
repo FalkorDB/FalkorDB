@@ -2,7 +2,7 @@
 // GB_mex.h: definitions for the Test interface to GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -10,19 +10,19 @@
 #ifndef GB_MEXH
 #define GB_MEXH
 
-#include "GB_mxm.h"
-#include "GB_Pending.h"
-#include "GB_add.h"
-#include "GB_subref.h"
-#include "GB_transpose.h"
-#include "GB_sort.h"
-#include "GB_apply.h"
+#include "../Source/mxm/GB_mxm.h"
+#include "../Source/pending/GB_Pending.h"
+#include "../Source/add/GB_add.h"
+#include "../Source/extract/GB_subref.h"
+#include "../Source/transpose/GB_transpose.h"
+#include "../Source/sort/GB_sort.h"
+#include "../Source/apply/GB_apply.h"
 #include "GB_mex_generic.h"
 #undef OK
 #include "GB_mx_usercomplex.h"
 #include "mex.h"
 #include "matrix.h"
-#include "GB_dev.h"
+#include "../Source/include/GB_dev.h"
 
 #define SIMPLE_RAND_MAX 32767
 uint64_t simple_rand (void) ;
@@ -193,11 +193,14 @@ GrB_Monoid GB_mx_BinaryOp_to_Monoid // monoid, or NULL if error
 
 bool GB_mx_mxArray_to_indices       // true if successful, false otherwise
 (
-    GrB_Index **handle,             // index array returned
+    // input:
     const mxArray *I_builtin,       // built-in mxArray to get
-    GrB_Index *ni,                  // length of I, or special
-    GrB_Index Icolon [3],           // for all but GB_LIST
-    bool *I_is_list                 // true if I is an explicit list
+    // output:
+    uint64_t **I_handle,              // index array
+    uint64_t *ni,                   // length of I, or special
+    uint64_t Icolon [3],            // for all but GB_LIST
+    bool *I_is_list,                // true if GB_LIST
+    GrB_Vector *I_vector            // non-NULL if found
 ) ;
 
 bool GB_mx_Monoid               // true if successful, false otherwise
@@ -275,8 +278,8 @@ GrB_Matrix GB_mx_alias      // output matrix (NULL if no match found)
 
 mxArray *GB_mx_create_full      // return new built-in full matrix
 (
-    const GrB_Index nrows,
-    const GrB_Index ncols,
+    const uint64_t nrows,
+    const uint64_t ncols,
     GrB_Type type               // type of the matrix to create
 ) ;
 
@@ -314,9 +317,9 @@ GrB_Scalar GB_mx_get_Scalar
 
 #define METHOD_START(OP) \
     printf ("\n================================================================================\n") ; \
-    printf ("method: [%s] start: "GBd" \n", #OP, \
-        GB_Global_nmalloc_get ( )) ; \
-    printf ("================================================================================\n") ;
+    printf ("method: [%s] start: "GBd" \n", #OP, GB_Global_nmalloc_get ( )) ; \
+    printf ("================================================================================\n") ; \
+    GB_Global_memtable_dump ( ) ;
 
 #define METHOD_TRY \
     printf ("\n--------------------------------------------------------------------- try %d\n", tries) ;

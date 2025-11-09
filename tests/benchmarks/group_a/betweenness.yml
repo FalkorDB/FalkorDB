@@ -1,0 +1,22 @@
+name: betweenness
+description: "
+  1000 nodes -> S0 -> 1000 nodes 
+  1000 nodes -> S1 -> S0
+  "
+db_config:
+  init_commands:
+    - ["GRAPH.QUERY", "graph", "LOAD CSV FROM 'https://raw.githubusercontent.com/memgraph/jupyter-memgraph-tutorials/refs/heads/main/getting_started/karate-club.csv' AS row MERGE (src:Node {id:row[0]}) MERGE (dest:Node {id:row[1]}) MERGE (src)-[:R]->(dest)"]
+
+parameters:
+  num_clients: 32
+  num_requests: 128000
+  random_int_max: 262016
+  random_seed: 12345
+  queries:
+    - query: 'CYPHER Id1=__rand_int__ CALL algo.betweenness({samplingSeed: $Id1, 
+              samplingSize: 10}) YIELD node, score RETURN node.name, score'
+      ratio: 1.0
+kpis:
+  - key: '$.OverallClientLatencies.Total.q50'
+    max_value: 2
+

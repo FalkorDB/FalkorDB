@@ -5,13 +5,18 @@
  */
 
 #include "globals.h"
-#include "util/thpool/pools.h"
+#include "util/arr.h"
+#include "util/thpool/pool.h"
+#include "configuration/config.h"
+#include "string_pool/string_pool.h"
 
 struct Globals {
 	pthread_rwlock_t lock;              // READ/WRITE lock
 	bool process_is_child;              // running process is a child process
 	CommandCtx **command_ctxs;          // list of CommandCtxs
 	GraphContext **graphs_in_keyspace;  // list of graphs in keyspace
+	StringPool string_pool;             // pool of reusable strings
+	pthread_t main_thread_id;           // process main thread id
 };
 
 struct Globals _globals = {0};
@@ -22,13 +27,18 @@ void Globals_Init(void) {
 	ASSERT(_globals.graphs_in_keyspace == NULL);
 
 	// initialize
-	_globals.process_is_child = false;
+	_globals.process_is_child   = false;
+	_globals.string_pool        = StringPool_create();
 	_globals.graphs_in_keyspace = array_new(GraphContext*, 1);
-	_globals.command_ctxs = rm_calloc(ThreadPools_ThreadCount() + 1,
+	_globals.command_ctxs       = rm_calloc(ThreadPool_ThreadCount() + 1,
 			sizeof(CommandCtx *));
 
 	int res = pthread_rwlock_init(&_globals.lock, NULL);
 	ASSERT(res == 0);
+}
+
+StringPool Globals_Get_StringPool(void) {
+	return _globals.string_pool;
 }
 
 // read global variable 'process_is_child'
@@ -54,6 +64,11 @@ void Globals_Set_ProcessIsChild
 	_globals.process_is_child =	process_is_child;
 
 	pthread_rwlock_unlock(&_globals.lock);
+}
+
+// get main thread id
+pthread_t Globals_Get_MainThreadId(void) {
+	return _globals.main_thread_id;
 }
 
 // get direct access to 'graphs_in_keyspace'
@@ -187,7 +202,7 @@ void Globals_TrackCommandCtx
 	ASSERT(ctx != NULL);
 	ASSERT(_globals.command_ctxs != NULL);
 
-	int tid = ThreadPools_GetThreadID();
+	int tid = ThreadPool_GetThreadID();
 
 	// acuire read lock
 	pthread_rwlock_rdlock(&_globals.lock);
@@ -213,7 +228,7 @@ void Globals_UntrackCommandCtx
 	ASSERT(ctx != NULL);
 	ASSERT(_globals.command_ctxs != NULL);
 
-	int tid = ThreadPools_GetThreadID();
+	int tid = ThreadPool_GetThreadID();
 
 	// acuire read lock
 	pthread_rwlock_rdlock(&_globals.lock);
@@ -239,7 +254,7 @@ void Globals_GetCommandCtxs
 	ASSERT(_globals.command_ctxs != NULL);
 
 	// make a copy of the command contexts
-	uint32_t nthreads = ThreadPools_ThreadCount() + 1;
+	uint32_t nthreads = ThreadPool_ThreadCount() + 1;
 	uint32_t cap = *count;  // capacity of 'commands'
 	uint32_t found = 0;     // number of command contexts found
 
@@ -260,13 +275,6 @@ void Globals_GetCommandCtxs
 
 	// update number of command contexts found
 	*count = found;
-}
-
-// free globals
-void Globals_Free(void) {
-	rm_free(_globals.command_ctxs);
-	array_free(_globals.graphs_in_keyspace);
-	pthread_rwlock_destroy(&_globals.lock);
 }
 
 //------------------------------------------------------------------------------
@@ -313,5 +321,13 @@ GraphContext *GraphIterator_Next
 	pthread_rwlock_unlock(&_globals.lock);
 
 	return gc;
+}
+
+// free globals
+void Globals_Free(void) {
+	rm_free(_globals.command_ctxs);
+	array_free(_globals.graphs_in_keyspace);
+	StringPool_free(&_globals.string_pool);
+	pthread_rwlock_destroy(&_globals.lock);
 }
 

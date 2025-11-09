@@ -2,7 +2,7 @@
 // gbsize: dimension and type of a GraphBLAS or built-in matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -38,7 +38,7 @@ void mexFunction
     // get the # of rows and columns of a GraphBLAS or built-in matrix
     //--------------------------------------------------------------------------
 
-    GrB_Index nrows, ncols ;
+    uint64_t nrows, ncols ;
     int typecode = -1 ;
 
     if (mxIsStruct (pargin [0]))
@@ -49,7 +49,12 @@ void mexFunction
         //----------------------------------------------------------------------
 
         // get the type
-        mxArray *mx_type = mxGetField (pargin [0], 0, "GraphBLASv7_3") ;
+        mxArray *mx_type = mxGetField (pargin [0], 0, "GraphBLASv10") ;
+        if (mx_type == NULL)
+        {
+            // check if it is a GraphBLASv7_3 struct
+            mx_type = mxGetField (pargin [0], 0, "GraphBLASv7_3") ;
+        }
         if (mx_type == NULL)
         {
             // check if it is a GraphBLASv5_1 struct
@@ -102,8 +107,8 @@ void mexFunction
         // get the size of a built-in matrix
         //----------------------------------------------------------------------
 
-        nrows = (GrB_Index) mxGetM (pargin [0]) ;
-        ncols = (GrB_Index) mxGetN (pargin [0]) ;
+        nrows = (uint64_t) mxGetM (pargin [0]) ;
+        ncols = (uint64_t) mxGetN (pargin [0]) ;
 
         //----------------------------------------------------------------------
         // get the type of a built-in matrix, if requested
@@ -140,6 +145,6 @@ void mexFunction
         pargout [1] = mxCreateDoubleScalar ((double) ncols) ;
     }
 
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

@@ -55,6 +55,7 @@ uint64_t GraphStatistics_NodeCount
 	ASSERT(stats != NULL);
 	ASSERT(l < ((LabelID)array_len(stats->node_count)));
 
+	// none existing / unknown label id
 	if(l < 0) {
 		return 0;
 	}
@@ -70,4 +71,3 @@ void GraphStatistics_FreeInternals
 	if(stats->node_count) array_free(stats->node_count);
 	if(stats->edge_count) array_free(stats->edge_count);
 }
-

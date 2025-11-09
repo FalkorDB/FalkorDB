@@ -1,9 +1,9 @@
 //------------------------------------------------------------------------------
-// GraphBLAS/CUDA/JitKernels/GB_cuda_jit_GB_AxB_dot3_phase2.cuh
+// GraphBLAS/CUDA/template/GB_cuda_jit_GB_AxB_dot3_phase2.cuh
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
-// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// This file: Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -140,7 +140,7 @@ __global__ void GB_cuda_AxB_dot3_phase2_kernel
         }
         this_thread_block().sync(); 
 
-        s [b] = GB_cuda_warp_sum_uint64 (tile, s [b]) ;
+        s [b] = GB_cuda_tile_sum_uint64 (tile, s [b]) ;
      }
 
     if (threadIdx.x == 0)

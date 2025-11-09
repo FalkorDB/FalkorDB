@@ -1,7 +1,7 @@
 function z = GB_spec_binop_positional (op, ia, ja, ib, jb)
 %GB_SPEC_BINOP_POSITIONAL compute a binary positional op
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 switch (op)
