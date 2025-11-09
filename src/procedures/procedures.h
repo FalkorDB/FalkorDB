@@ -16,6 +16,7 @@
 #include "proc_ss_paths.h"
 #include "proc_relations.h"
 #include "proc_procedures.h"
+#include "proc_meta_stats.h"
 #include "proc_betweenness.h"
 #include "proc_list_indexes.h"
 #include "proc_vector_query.h"
@@ -24,3 +25,4 @@
 #include "proc_list_constraints.h"
 #include "proc_fulltext_drop_index.h"
 #include "proc_fulltext_create_index.h"
+
