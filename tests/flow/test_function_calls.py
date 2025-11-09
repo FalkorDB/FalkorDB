@@ -2802,3 +2802,15 @@ class testFunctionCallsFlow(FlowTestsBase):
 
         res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(tostring(x) + tostring(x))")
         self.env.assertEquals(res.result_set, [[None], ['11'], ['22'], ['33'], ['44']])
+
+    def test96_keys_with_intermediate_entity(self):
+        # Test keys() function with intermediate entities (GitHub issue #415)
+        # This query previously caused a segfault due to null pointer dereference
+        # when calling keys() on an entity with unallocated attributes
+        query = """CREATE (root:Root {name: 'x'}), (child1:TextNode
+{var: floor(any(v4 IN [2] WHERE child1 = [root IN keys(root) ]))}),
+(child2:IntNode {v0: 0})"""
+        # The query should not crash and should complete successfully
+        res = self.graph.query(query)
+        # Verify that nodes were created
+        self.env.assertEquals(res.nodes_created, 3)

@@ -49,6 +49,12 @@ SIValue GraphEntity_Keys
 (
 	const GraphEntity *e
 ) {
+	// e->attributes is NULL when dealing with an "intermediate" entity,
+	// one which didn't had its attribute-set allocated within the graph datablock.
+	if(e->attributes == NULL) {
+		return SIArray_New(0);
+	}
+
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	const AttributeSet set = GraphEntity_GetAttributes(e);
 	int prop_count = AttributeSet_Count(set);
@@ -67,6 +73,12 @@ SIValue GraphEntity_Properties
 (
 	const GraphEntity *e
 ) {
+	// e->attributes is NULL when dealing with an "intermediate" entity,
+	// one which didn't had its attribute-set allocated within the graph datablock.
+	if(e->attributes == NULL) {
+		return SI_Map(0);
+	}
+
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	const AttributeSet set = GraphEntity_GetAttributes(e);
 	int propCount = AttributeSet_Count(set);
@@ -97,6 +109,19 @@ size_t GraphEntity_PropertiesToString
 		*buffer = rm_realloc(*buffer, *bufferLen);
 	}
 	*bytesWritten += snprintf(*buffer, *bufferLen, "{");
+
+	// e->attributes is NULL when dealing with an "intermediate" entity,
+	// one which didn't had its attribute-set allocated within the graph datablock.
+	if(e->attributes == NULL) {
+		// close with "}\0"
+		if(*bufferLen - *bytesWritten < 2) {
+			*bufferLen += 2;
+			*buffer = rm_realloc(*buffer, *bufferLen);
+		}
+		*bytesWritten += snprintf(*buffer + *bytesWritten, *bufferLen, "}");
+		return *bytesWritten;
+	}
+
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	const AttributeSet set = GraphEntity_GetAttributes(e);
 	int propCount = AttributeSet_Count(set);
