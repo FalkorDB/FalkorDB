@@ -688,14 +688,16 @@ Node Graph_ReserveNode
 ) {
 	ASSERT(g != NULL);
 
-	// reserve node ID
+	// reserve node ID and allocate attribute storage
 	NodeID id = DataBlock_GetReservedIdx(g->nodes, g->reserved_node_count);
+	AttributeSet *attributes = DataBlock_AllocateItem(g->nodes, &id);
+	*attributes = NULL;  // initialize attributes to empty
 
 	// increment reserved node count
 	g->reserved_node_count++;
 
-	// create node
-	Node n = (Node) { .attributes = NULL, .id = id };
+	// create node with allocated attribute storage
+	Node n = (Node) { .attributes = attributes, .id = id };
 
 	return n;
 }
@@ -713,11 +715,16 @@ void Graph_CreateNode
 	ASSERT(n != NULL);
 	ASSERT(label_count == 0 || (label_count > 0 && labels != NULL));
 
-	NodeID id      = n->id;  // save node ID
-	n->attributes  = DataBlock_AllocateItem(g->nodes, &n->id);
-	*n->attributes = NULL;   // initialize attributes to NULL
+	NodeID id = n->id;  // save node ID
 
-	// node ID was reserved, make reserved ID was assigned
+	// if attributes were not already allocated (e.g., via Graph_ReserveNode),
+	// allocate them now
+	if(n->attributes == NULL) {
+		n->attributes  = DataBlock_AllocateItem(g->nodes, &n->id);
+		*n->attributes = NULL;   // initialize attributes to NULL
+	}
+
+	// node ID was reserved, make sure reserved ID was assigned
 	if(id != INVALID_ENTITY_ID) {
 		ASSERT(id == n->id);
 		g->reserved_node_count--;
@@ -758,14 +765,17 @@ void Graph_CreateNodes
 		Node *n = nodes[i] ;
 		NodeID id = n->id ;  // save node ID
 
-		// set attributes
-		n->attributes  = DataBlock_AllocateItem (g->nodes, &n->id) ;
+		// if attributes were not already allocated (e.g., via Graph_ReserveNode),
+		// allocate them now
+		if (n->attributes == NULL) {
+			n->attributes  = DataBlock_AllocateItem (g->nodes, &n->id) ;
+		}
 		*n->attributes = (sets == NULL) ? NULL : sets[i] ;
 
 		// node ID was reserved, make sure reserved ID was assigned
 		if (id != INVALID_ENTITY_ID) {
 			// NodeID was preallocated via reservation
-			// so now that it’s used we decrement the counter
+			// so now that it's used we decrement the counter
 			ASSERT (id == n->id) ;
 			g->reserved_node_count-- ;
 			ASSERT (g->reserved_node_count >= 0) ;
@@ -1085,10 +1095,9 @@ inline bool Graph_EntityIsDeleted
 (
 	const GraphEntity *e
 ) {
-	if(e->attributes == NULL) {
-		// most likely an entity which wasn't created just yet (reserved)
-		return false;
-	}
+	// with the fix to allocate attributes immediately upon reservation,
+	// attributes should never be NULL for valid entities
+	ASSERT(e->attributes != NULL);
 
 	return DataBlock_ItemIsDeleted(e->attributes);
 }

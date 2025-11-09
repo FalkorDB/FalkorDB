@@ -32,14 +32,7 @@ SIValue *GraphEntity_GetProperty
 	AttributeID attr_id
 ) {
 	ASSERT(e);
-
-	// e->attributes is NULL when dealing with an "intermediate" entity,
-	// one which didn't had its attribute-set allocated within the graph datablock.
-	if(e->attributes == NULL) {
- 		// note that this exception may cause memory to be leaked in the caller
- 		ErrorCtx_SetError(EMSG_ACCESS_UNDEFINED_ATTRIBUTE);
- 		return ATTRIBUTE_NOTFOUND;
- 	}
+	ASSERT(e->attributes != NULL);
 
 	return AttributeSet_Get(*e->attributes, attr_id);
 }
@@ -49,11 +42,8 @@ SIValue GraphEntity_Keys
 (
 	const GraphEntity *e
 ) {
-	// e->attributes is NULL when dealing with an "intermediate" entity,
-	// one which didn't had its attribute-set allocated within the graph datablock.
-	if(e->attributes == NULL) {
-		return SIArray_New(0);
-	}
+	ASSERT(e != NULL);
+	ASSERT(e->attributes != NULL);
 
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	const AttributeSet set = GraphEntity_GetAttributes(e);
@@ -73,11 +63,8 @@ SIValue GraphEntity_Properties
 (
 	const GraphEntity *e
 ) {
-	// e->attributes is NULL when dealing with an "intermediate" entity,
-	// one which didn't had its attribute-set allocated within the graph datablock.
-	if(e->attributes == NULL) {
-		return SI_Map(0);
-	}
+	ASSERT(e != NULL);
+	ASSERT(e->attributes != NULL);
 
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	const AttributeSet set = GraphEntity_GetAttributes(e);
@@ -103,24 +90,15 @@ size_t GraphEntity_PropertiesToString
 	size_t *bufferLen,
 	size_t *bytesWritten
 ) {
+	ASSERT(e != NULL);
+	ASSERT(e->attributes != NULL);
+
 	// make sure there is enough space for "{...}\0"
 	if(*bufferLen - *bytesWritten < 64) {
 		*bufferLen += 64;
 		*buffer = rm_realloc(*buffer, *bufferLen);
 	}
 	*bytesWritten += snprintf(*buffer, *bufferLen, "{");
-
-	// e->attributes is NULL when dealing with an "intermediate" entity,
-	// one which didn't had its attribute-set allocated within the graph datablock.
-	if(e->attributes == NULL) {
-		// close with "}\0"
-		if(*bufferLen - *bytesWritten < 2) {
-			*bufferLen += 2;
-			*buffer = rm_realloc(*buffer, *bufferLen);
-		}
-		*bytesWritten += snprintf(*buffer + *bytesWritten, *bufferLen, "}");
-		return *bytesWritten;
-	}
 
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	const AttributeSet set = GraphEntity_GetAttributes(e);
