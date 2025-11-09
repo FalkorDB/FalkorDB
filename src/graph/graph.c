@@ -802,30 +802,31 @@ void Graph_RemoveNodeLabels(Graph *g,      // graph to operate against
 
 // update ADJ and relation matrices with a new entry
 // ADJ[src, dest] = true & R[src, dest] = edge_id
-void Graph_FormConnection(Graph *g,       // graph
-                          NodeID src,     // src node id
-                          NodeID dest,    // dest node id
-                          EdgeID edge_id, // edge id
-                          RelationID r    // relation id
+void Graph_FormConnection
+(
+	Graph *g,        // graph
+	NodeID src,      // src node id
+	NodeID dest,     // dest node id
+	EdgeID edge_id,  // edge id
+	RelationID r     // relation id
 ) {
-  ASSERT(g != NULL);
+  ASSERT (g != NULL) ;
 
-  GrB_Info info;
-  UNUSED(info);
+  GrB_Info info ;
+  UNUSED (info) ;
 
   // sync matrices
-  Tensor R = Graph_GetRelationMatrix(g, r, false);
-  Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
+  Tensor R = Graph_GetRelationMatrix (g, r, false) ;
+  Delta_Matrix adj = Graph_GetAdjacencyMatrix (g, false) ;
 
   // rows represent source nodes, columns represent destination nodes
-  info = Delta_Matrix_Assign_Element_UINT64(adj, GrB_PLUS_UINT64, 1, src, dest);
-  ASSERT(info == GrB_SUCCESS);
+  GrB_OK (Delta_Matrix_Assign_Scalar (adj, GrB_PLUS_UINT64, 1, src, dest)) ;
 
   // add entry to relation tensor
-  Tensor_SetElement(R, src, dest, edge_id);
+  Tensor_SetElement (R, src, dest, edge_id) ;
 
   // an edge of type r has just been created, update statistics
-  GraphStatistics_IncEdgeCount(&g->stats, r, 1);
+  GraphStatistics_IncEdgeCount (&g->stats, r, 1) ;
 }
 
 // connects source node to destination node
@@ -887,78 +888,78 @@ static int _edge_src_dest_cmp(const void *a, const void *b) {
 }
 
 // create multiple edges
-void Graph_CreateEdges(Graph *g,          // graph on which to operate
-                       RelationID r,      // relationship type
-                       Edge **edges,      // edges to create
-                       AttributeSet *sets // [optional] attribute sets
+void Graph_CreateEdges
+(
+	Graph *g,           // graph on which to operate
+	RelationID r,       // relationship type
+	Edge **edges,       // edges to create
+	AttributeSet *sets  // [optional] attribute sets
 ) {
-  ASSERT(g != NULL);
-  ASSERT(r < Graph_RelationTypeCount(g));
-  ASSERT(r != GRAPH_NO_RELATION && r != GRAPH_UNKNOWN_RELATION);
+  ASSERT (g != NULL) ;
+  ASSERT (r < Graph_RelationTypeCount (g)) ;
+  ASSERT (r != GRAPH_NO_RELATION && r != GRAPH_UNKNOWN_RELATION) ;
 
-  if (sets != NULL) {
-    ASSERT(array_len(edges) == array_len(sets));
-  }
+	if (sets != NULL) {
+		ASSERT (array_len (edges) == array_len (sets)) ;
+	}
 
-  uint edge_count = array_len(edges);
-  Edge **edges_copy = rm_malloc(sizeof(Edge *) * edge_count);
-  memcpy(edges_copy, edges, sizeof(Edge *) * edge_count);
+	uint edge_count = array_len (edges) ;
+	Edge **edges_copy = rm_malloc (sizeof (Edge *) * edge_count) ;
+	memcpy (edges_copy, edges, sizeof (Edge *) * edge_count) ;
 
-  // sort edges by src & dest IDs
-  // qsort(edges, edge_count, sizeof(Edge *), _edge_src_dest_cmp);
+	// sort edges by src & dest IDs
+	// qsort(edges, edge_count, sizeof(Edge *), _edge_src_dest_cmp);
 
 #ifdef RG_DEBUG
-  // make sure both src and destination nodes exists
-  for (uint i = 0; i < edge_count; i++) {
-    Edge *e = edges[i];
-    NodeID src = e->src_id;
-    NodeID dest = e->dest_id;
-    Node node = GE_NEW_NODE();
-    ASSERT(Graph_GetNode(g, src, &node) == true);
-    ASSERT(Graph_GetNode(g, dest, &node) == true);
-  }
+	// make sure both src and destination nodes exists
+	for (uint i = 0; i < edge_count; i++) {
+		Edge *e = edges[i] ;
+		NodeID src = e->src_id ;
+		NodeID dest = e->dest_id ;
+		Node node = GE_NEW_NODE () ;
+		ASSERT (Graph_GetNode (g, src, &node) == true) ;
+		ASSERT (Graph_GetNode (g, dest, &node) == true) ;
+	}
 #endif
 
-  // make sure we have room for 'edge_count' edges
-  DataBlock_Accommodate(g->edges, edge_count);
+	// make sure we have room for 'edge_count' edges
+	DataBlock_Accommodate (g->edges, edge_count) ;
 
-  // sync matrices
-  Tensor R = Graph_GetRelationMatrix(g, r, false);
-  Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
+	// sync matrices
+	Tensor R = Graph_GetRelationMatrix (g, r, false) ;
+	Delta_Matrix adj = Graph_GetAdjacencyMatrix (g, false) ;
 
-  // in case R is empty switch to a more optimize construction approach
-  // using GrB_Matrix_Build to build R
+	// in case R is empty switch to a more optimize construction approach
+	// using GrB_Matrix_Build to build R
 
-  // allocate edges and update ADJ matrix
-  for (uint i = 0; i < edge_count; i++) {
-    Edge *e = edges_copy[i];
+	// allocate edges and update ADJ matrix
+	for (uint i = 0; i < edge_count; i++) {
+		Edge *e = edges_copy[i] ;
 
-    // TODO: switch to batch allocation of items
-    AttributeSet *set = DataBlock_AllocateItem(g->edges, &e->id);
-    *set = (sets != NULL) ? sets[i] : NULL;
+		// TODO: switch to batch allocation of items
+		AttributeSet *set = DataBlock_AllocateItem (g->edges, &e->id) ;
+		*set = (sets != NULL) ? sets[i] : NULL ;
 
-    e->relationID = r;
-    e->attributes = set;
+		e->relationID = r ;
+		e->attributes = set ;
 
-    NodeID src = e->src_id;
-    NodeID dest = e->dest_id;
+		NodeID src = e->src_id ;
+		NodeID dest = e->dest_id ;
 
-    // TODO: introduce batch version of setElement, e.g. GrB_Matrix_build
-    GrB_Info info =
-        Delta_Matrix_Assign_Element_UINT64(adj, GrB_PLUS_UINT64, 1, src, dest);
-    ASSERT(info == GrB_SUCCESS);
-  }
+		// TODO: introduce batch version of setElement, e.g. GrB_Matrix_build
+		GrB_OK (Delta_Matrix_Assign_Scalar (adj, GrB_PLUS_UINT64, 1, src, dest)) ;
+	}
 
-  // sort edges by src & dest IDs
-  qsort(edges_copy, edge_count, sizeof(Edge *), _edge_src_dest_cmp);
+	// sort edges by src & dest IDs
+	qsort (edges_copy, edge_count, sizeof (Edge *), _edge_src_dest_cmp) ;
 
-  // update R tensor
-  Tensor_SetEdges(R, (const Edge **)edges_copy, edge_count);
+	// update R tensor
+	Tensor_SetEdges (R, (const Edge **)edges_copy, edge_count) ;
 
-  // update graph statistics
-  GraphStatistics_IncEdgeCount(&g->stats, r, edge_count);
+	// update graph statistics
+	GraphStatistics_IncEdgeCount (&g->stats, r, edge_count) ;
 
-  rm_free(edges_copy);
+	rm_free (edges_copy) ;
 }
 
 // forward declaration
