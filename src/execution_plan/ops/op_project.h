@@ -12,15 +12,20 @@
 
 typedef struct {
 	OpBase op;
-	Record r;                       // Input Record being read from (stored to free if we encounter an error).
-	Record projection;              // Record projected by this operation (stored to free if we encounter an error).
-	AR_ExpNode **exps;              // Projected expressions (including order exps).
-	uint *record_offsets;           // Record IDs corresponding to each projection (including order exps).
-	bool singleResponse;            // When no child operations, return NULL after a first response.
-	uint exp_count;                 // Number of projected expressions.
+	Record r;                // input Record being read from (stored to free if we encounter an error).
+	Record projection;       // record projected by this operation (stored to free if we encounter an error).
+	AR_ExpNode **exps;       // projected expressions (including order exps).
+	uint *record_offsets;    // record IDs corresponding to each projection (including order exps).
+	bool singleResponse;     // when no child operations, return NULL after a first response.
+	uint exp_count;          // number of projected expressions.
 } OpProject;
 
-OpBase *NewProjectOp(const ExecutionPlan *plan, AR_ExpNode **exps);
+// create a new projection operation
+OpBase *NewProjectOp
+(
+	const ExecutionPlan *plan,  // op's plan
+	AR_ExpNode **exps           // projection expression
+);
 
 // binds a Project op to an ExecutionPlan
 void ProjectBindToPlan
@@ -28,3 +33,4 @@ void ProjectBindToPlan
 	OpBase *opBase,            // op to bind
 	const ExecutionPlan *plan  // plan to bind the op to
 );
+
