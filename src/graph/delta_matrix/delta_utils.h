@@ -59,3 +59,4 @@ void Delta_Matrix_validate
 	const Delta_Matrix C,
 	bool check_transpose
 ) ;
+

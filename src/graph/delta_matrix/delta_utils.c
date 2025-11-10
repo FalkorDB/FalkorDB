@@ -224,7 +224,7 @@ void Delta_Matrix_validate
 	ty = ty_m;
 	ASSERT(ty == ty_m);
 	ASSERT(ty == ty_dp);
-	ASSERT(ty == GrB_BOOL || ty == GrB_UINT64);
+	ASSERT(ty == GrB_BOOL || ty == GrB_UINT64 || ty == GrB_UINT16);
 
 	//--------------------------------------------------------------------------
 	// check sparcity control

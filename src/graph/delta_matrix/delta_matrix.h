@@ -206,10 +206,10 @@ GrB_Info Delta_Matrix_setElement_UINT64  // C (i,j) = x
 );
 
 // C (i,j) = accum(C(i,j), x)
-GrB_Info Delta_Matrix_Assign_Scalar
+GrB_Info Delta_Matrix_assign_scalar_UINT64
 (
-    Delta_Matrix C,            // input/output matrix for results
-    const GrB_BinaryOp accum,  // optional accum for Z=accum(C(I,J),x)
+	Delta_Matrix C,            // input/output matrix for results
+	const GrB_BinaryOp accum,  // optional accum for Z=accum(C(I,J),x)
 	uint64_t x,                // scalar to assign to C(i,j)
 	GrB_Index i,               // row index
 	GrB_Index j                // column index
