@@ -330,7 +330,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'release'
     steps:
-      - name: Trigger testflight enterprise tests in FalkorDB/testflight
+      - name: Trigger Redis Enterprise tests in FalkorDB/testflight
         uses: peter-evans/repository-dispatch@v4
         with:
           token: ${{ secrets.GH_TESTFLIGHT_TOKEN }}
