@@ -7,6 +7,11 @@ services:
     networks:
       - falkordb-network
     restart: unless-stopped
+    environment:
+      - REDIS_ARGS=/etc/falkordb/falkordb.conf
+    volumes:
+      - falkordb-data:/data
+      - ./falkordb.conf:/etc/falkordb/falkordb.conf:ro
 
   falkordb-browser:
     image: falkordb/falkordb-browser:latest
@@ -22,3 +27,7 @@ services:
 networks:
   falkordb-network:
     driver: bridge
+
+volumes:
+  falkordb-data:
+    driver: local
