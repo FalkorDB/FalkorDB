@@ -55,7 +55,7 @@ jobs:
   build:
     needs: create-runners
     runs-on: ${{ matrix.platform.machine_label }}
-    container: falkordb/falkordb-build:latest
+    container: falkordb/falkordb-build:${{ matrix.platform.os }}
     services:
       registry:
         image: registry:2
