@@ -14,39 +14,50 @@
 #include "../graph/graphcontext.h"
 #include <string.h>
 
+typedef float (*distance_fp_t)
+(
+	SIValue a,  // first vector
+	SIValue b   // second vector
+);
+
 // KNN context
 typedef struct {
-	Node n;                   // retrieved node
-	Edge e;                   // retrieved edge
-	GraphEntityType t;        // entity type
-	Graph *g;                 // graph
-	RSIndex *idx;             // vector index
-	RSResultsIterator *iter;  // iterator over query results
-	SIValue q;                // query vector
-	AttributeID attr_id;      // vector attribute ID
-	SIValue output[2];        // yield array
-	SIValue *yield_entity;    // yield node
-	SIValue *yield_score;     // yield score
+	Node n;                     // retrieved node
+	Edge e;                     // retrieved edge
+	GraphEntityType t;          // entity type
+	Graph *g;                   // graph
+	RSIndex *idx;               // vector index
+	RSResultsIterator *iter;    // iterator over query results
+	SIValue q;                  // query vector
+	AttributeID attr_id;        // vector attribute ID
+	distance_fp_t distance_fp;  // similarity function
+	SIValue output[2];          // yield array
+	SIValue *yield_entity;      // yield node
+	SIValue *yield_score;       // yield score
 } VectorKNNCtx;
 
 // create procedure private data
 static VectorKNNCtx *_create_private_data
 (
-	GraphContext *gc,     // graph context
-	SIValue q,            // query vector
-	AttributeID attr_id,  // vector attribute ID
-	RSIndex *idx,         // index
-	RSQNode *root,        // RediSearch query
-	GraphEntityType t     // entity type
+	GraphContext *gc,      // graph context
+	SIValue q,             // query vector
+	AttributeID attr_id,   // vector attribute ID
+	RSIndex *idx,          // index
+	RSQNode *root,         // RediSearch query
+	GraphEntityType t,     // entity type
+	VecSimMetric sim_func  // similarity function
 ) {
 	VectorKNNCtx *ctx = (VectorKNNCtx*)rm_calloc(1, sizeof(VectorKNNCtx));
 
-	ctx->t       = t;
-	ctx->q       = q;
-	ctx->g       = gc->g;
-	ctx->idx     = idx;
-	ctx->iter    = RediSearch_GetResultsIterator(root, idx);
-	ctx->attr_id = attr_id;
+	ctx->t           = t;
+	ctx->q           = q;
+	ctx->g           = gc->g;
+	ctx->idx         = idx;
+	ctx->iter        = RediSearch_GetResultsIterator(root, idx);
+	ctx->attr_id     = attr_id;
+	ctx->distance_fp = sim_func == VecSimMetric_L2
+			? SIVector_EuclideanDistance
+			: SIVector_CosineDistance;
 
 	ASSERT(ctx->iter != NULL);
 
@@ -137,7 +148,7 @@ static SIValue *Proc_NodeStep
 		SIValue *v = GraphEntity_GetProperty((GraphEntity*)n, pdata->attr_id);
 		ASSERT(v != ATTRIBUTE_NOTFOUND);
 
-		SIValue distance = SI_DoubleVal(SIVector_EuclideanDistance(pdata->q, *v));
+		SIValue distance = SI_DoubleVal(pdata->distance_fp(pdata->q, *v));
 		*pdata->yield_score = distance;
 	}
 
@@ -181,7 +192,7 @@ static SIValue *Proc_EdgeStep
 		SIValue *v = GraphEntity_GetProperty((GraphEntity*)e, pdata->attr_id);
 		ASSERT(v != ATTRIBUTE_NOTFOUND);
 
-		SIValue distance = SI_DoubleVal(SIVector_EuclideanDistance(pdata->q, *v));
+		SIValue distance = SI_DoubleVal(pdata->distance_fp(pdata->q, *v));
 		*pdata->yield_score = distance;
 	}
 
@@ -254,6 +265,8 @@ static ProcedureResult Proc_VectorQueryInvoke
 		return PROCEDURE_ERR;
 	}
 
+	VecSimMetric sim_func = IndexField_OptionsGetSimFunc(f);
+
 	//--------------------------------------------------------------------------
 	// construct a vector query
 	//--------------------------------------------------------------------------
@@ -268,7 +281,7 @@ static ProcedureResult Proc_VectorQueryInvoke
 	// create procedure private data
 	RSIndex *rsIdx = Index_RSIndex(idx);
 	ctx->privateData = _create_private_data(gc, query_vector, attr_id, rsIdx,
-			root, et);
+			root, et, sim_func);
 
 	return PROCEDURE_OK;
 }
