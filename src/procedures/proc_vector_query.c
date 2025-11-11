@@ -192,7 +192,7 @@ static SIValue *Proc_EdgeStep
 		SIValue *v = GraphEntity_GetProperty((GraphEntity*)e, pdata->attr_id);
 		ASSERT(v != ATTRIBUTE_NOTFOUND);
 
-		SIValue distance = SI_DoubleVal(SIVector_EuclideanDistance(pdata->q, *v));
+		SIValue distance = SI_DoubleVal(pdata->distance_fp(pdata->q, *v));
 		*pdata->yield_score = distance;
 	}
 
