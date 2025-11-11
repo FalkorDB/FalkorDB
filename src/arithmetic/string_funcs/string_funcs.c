@@ -267,7 +267,7 @@ SIValue AR_JOIN
 	size_t delimeter_len = strlen(delimiter);  // length of the delimiter
 
 	// empty list
-	if(unlikely(n) == 0) {
+	if(unlikely(n == 0)) {
 		return SI_ConstStringVal("");
 	}
 
@@ -283,7 +283,7 @@ SIValue AR_JOIN
 		}
 	}
 
-	// acount for each string length
+	// account for each string length
 	for(uint i = 0; i < n; i++) {
 		SIValue str = SIArray_Get(list, i);
 		if(!(SI_TYPE(str) & T_STRING)) {
@@ -298,7 +298,7 @@ SIValue AR_JOIN
 		}
 	}
 
-	// acoun for null terminator
+	// account for null terminator
 	if(safe_add(str_len, 1, &str_len)) {
 		ErrorCtx_SetError(EMSG_STRING_OVERFLOW);
 		return SI_NullVal();
@@ -765,7 +765,7 @@ SIValue AR_REPLACE
 		// move forward to copy more data to the buffer
 		buffer_ptr += new_string_len;
 
-		// move forwart to copy more data from the original string
+		// move forward to copy more data from the original string
 		ptr = arr[i] + old_string_len;
 	}
 
