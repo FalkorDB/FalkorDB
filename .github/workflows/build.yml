@@ -202,6 +202,14 @@ jobs:
           set-safe-directory: "*"
           submodules: recursive
 
+      # Make sure the working directory is static between runs
+      # and always the same for the CMake cache
+      - name: Relocate source
+        run: |
+          sudo mkdir -p /FalkorDB
+          sudo cp -r $GITHUB_WORKSPACE/. /FalkorDB/
+          sudo chown -R $(whoami) /FalkorDB
+
       - name: Set cache keys
         run: |
           echo "CACHE_KEY_GRAPHBLAS=graphblas-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}" >> $GITHUB_ENV
@@ -258,14 +266,6 @@ jobs:
           path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/LAGraph
           key: ${{ env.CACHE_KEY_LAGRAPH }}
           enableCrossOsArchive: true
-
-      # Make sure the working directory is static between runs
-      # and always the same for the CMake cache
-      - name: Relocate source
-        run: |
-          sudo mkdir -p /FalkorDB
-          sudo cp -r $GITHUB_WORKSPACE/. /FalkorDB/
-          sudo chown -R $(whoami) /FalkorDB
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
