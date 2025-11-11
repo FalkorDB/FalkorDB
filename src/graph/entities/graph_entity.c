@@ -49,6 +49,13 @@ SIValue GraphEntity_Keys
 (
 	const GraphEntity *e
 ) {
+	// FIX for Issue #415: Add NULL check to prevent crash
+	// When entity is NULL (e.g., in self-referencing queries during CREATE),
+	// return an empty array instead of crashing
+	if (e == NULL || e->attributes == NULL) {
+		return SIArray_New(0);  // Return empty array
+	}
+
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	const AttributeSet set = GraphEntity_GetAttributes(e);
 	int prop_count = AttributeSet_Count(set);
