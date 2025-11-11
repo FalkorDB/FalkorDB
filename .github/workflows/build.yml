@@ -197,6 +197,11 @@ jobs:
             cache_path: linux-x64
             is_debug: "1"
     steps:
+      - name: Install Git
+        if: ${{ matrix.platform.os == 'rhel' || matrix.platform.os == 'rhel8' }}
+        run: |
+          sudo dnf install -y git
+
       - uses: actions/checkout@v5
         with:
           set-safe-directory: "*"
