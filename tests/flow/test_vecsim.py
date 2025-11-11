@@ -16,7 +16,7 @@ class testVecsim():
         # introduce Person nodes
         n = 1000 # number of Person nodes
         q = """UNWIND range(0, $n) AS i
-               CREATE (:Person {embeddings: vecf32([i,i])})"""
+               CREATE (:Person {embeddings: vecf32([i,i]), embedding2: vecf32([i,(i + 1) * 2])})"""
 
         self.graph.query(q, params={'n': n})
 
@@ -31,6 +31,8 @@ class testVecsim():
         # index nodes
         # create vector index over Person:embeddings
         self.graph.create_node_vector_index("Person", "embeddings", dim=2, similarity_function="euclidean")
+
+        self.graph.create_node_vector_index("Person", "embedding2", dim=2, similarity_function="cosine")
 
         # index edges
         # create vector index over Points::embeddings
@@ -127,6 +129,19 @@ class testVecsim():
                CALL db.idx.vector.queryNodes('Person', 'embeddings', $k, v)
                YIELD node, score
                RETURN score, vec.euclideanDistance(node.embeddings, v) AS dist"""
+        res = self.graph.ro_query(q, params={'k':k, 'q': [x, y]}).result_set
+
+        prev_score = float('-inf')
+        for row in res:
+            score, dist = row
+            self.env.assertEqual(round(score, 3), round(dist, 3))
+            self.env.assertGreaterEqual(score, prev_score)
+            prev_score = score
+
+        q = """WITH vecf32($q) as v
+               CALL db.idx.vector.queryNodes('Person', 'embedding2', $k, v)
+               YIELD node, score
+               RETURN score, vec.cosineDistance(node.embedding2, v) AS dist"""
         res = self.graph.ro_query(q, params={'k':k, 'q': [x, y]}).result_set
 
         prev_score = float('-inf')
