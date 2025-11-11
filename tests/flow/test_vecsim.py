@@ -16,7 +16,7 @@ class testVecsim():
         # introduce Person nodes
         n = 1000 # number of Person nodes
         q = """UNWIND range(0, $n) AS i
-               CREATE (:Person {embeddings: vecf32([i,i]), embedding2: vecf32([i,(i + 1) * 2])})"""
+               CREATE (:Person {embeddings: vecf32([i,i]), embedding2: vecf32([i,sin(i + 1)])})"""
 
         self.graph.query(q, params={'n': n})
 
