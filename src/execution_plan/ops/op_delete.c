@@ -66,11 +66,28 @@ static void _DeleteEntities
 			continue;
 		}
 
+		// NODETACH DELETE logic: check if node has relationships
+		if(op->delete_mode == CYPHER_AST_DELETE_MODE_NODETACH) {
+			Edge *node_edges = array_new(Edge, 0);
+			Graph_GetNodeEdges(g, n, GRAPH_EDGE_DIR_BOTH, GRAPH_NO_RELATION, &node_edges);
+			uint edge_count = array_len(node_edges);
+			array_free(node_edges);
+			
+			if(edge_count > 0) {
+				// node has relationships, NODETACH DELETE should fail
+				ErrorCtx_RaiseRuntimeException("Cannot delete node in NODETACH DELETE mode: node has relationships. Use DETACH DELETE to delete a node and its relationships.");
+				array_free(distinct_nodes);
+				return;
+			}
+		}
+
 		array_append(distinct_nodes, *n);
 
-		// mark node's edges for deletion
-		Graph_GetNodeEdges(g, n, GRAPH_EDGE_DIR_BOTH, GRAPH_NO_RELATION,
-				&op->deleted_edges);
+		// for DELETE and DETACH DELETE modes, mark node's edges for deletion
+		if(op->delete_mode != CYPHER_AST_DELETE_MODE_NODETACH) {
+			Graph_GetNodeEdges(g, n, GRAPH_EDGE_DIR_BOTH, GRAPH_NO_RELATION,
+					&op->deleted_edges);
+		}
 	}
 
 	node_count = array_len(distinct_nodes);
@@ -133,13 +150,15 @@ static void _DeleteEntities
 OpBase *NewDeleteOp
 (
 	const ExecutionPlan *plan,
-	AR_ExpNode **exps
+	AR_ExpNode **exps,
+	cypher_ast_delete_mode_t delete_mode
 ) {
 	OpDelete *op = rm_calloc(1, sizeof(OpDelete));
 
 	op->gc            = QueryCtx_GetGraphCtx();
 	op->exps          = exps;
 	op->exp_count     = array_len(exps);
+	op->delete_mode   = delete_mode;
 	op->deleted_nodes = array_new(Node, 32);
 	op->deleted_edges = array_new(Edge, 32);
 
@@ -262,7 +281,7 @@ static OpBase *DeleteClone
 	OpDelete *op = (OpDelete *)opBase;
 	AR_ExpNode **exps;
 	array_clone_with_cb(exps, op->exps, AR_EXP_Clone);
-	return NewDeleteOp(plan, exps);
+	return NewDeleteOp(plan, exps, op->delete_mode);
 }
 
 static void DeleteFree
