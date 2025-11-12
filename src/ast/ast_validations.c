@@ -249,50 +249,12 @@ static AST_Validation _ValidateMultiHopTraversal
 		end = AST_ParseIntegerNode(range_end);
 	}
 
-	// Validate specified range
+	// validate specified range
 	if(start > end) {
 		ErrorCtx_SetError(EMSG_VAR_LEN_INVALID_RANGE);
 		return AST_INVALID;
 	}
 	
-	return AST_VALID;
-}
-
-// Verify that MERGE doesn't redeclare bound relations, that one reltype is specified for unbound relations, 
-// and that the entity is not a variable length pattern
-static AST_Validation _ValidateMergeRelation
-(
-	const cypher_astnode_t *entity,  // ast-node (rel-pattern)
-	validations_ctx *vctx
-) {
-	// Verify that this is not a variable length relationship
-	const cypher_astnode_t *range = cypher_ast_rel_pattern_get_varlength(entity);
-	if(range) {
-		ErrorCtx_SetError(EMSG_VAR_LEN, "MERGE");
-		return AST_INVALID;
-	}
-
-	const cypher_astnode_t *identifier = cypher_ast_rel_pattern_get_identifier(entity);
-	const char *alias = NULL;
-	if(identifier) {
-		alias = cypher_ast_identifier_get_name(identifier);
-		// verify that we're not redeclaring a bound variable
-		if(_IdentifiersFind(vctx, alias) != raxNotFound) {
-			ErrorCtx_SetError(EMSG_REDECLARE, "variable", alias, "MERGE");
-			return AST_INVALID;
-		}
-	}
-
-	// Exactly one reltype should be specified for the introduced edge
-	uint reltype_count = cypher_ast_rel_pattern_nreltypes(entity);
-	if(reltype_count != 1) {
-		ErrorCtx_SetError(EMSG_ONE_RELATIONSHIP_TYPE, "MERGE");
-		return AST_INVALID;
-	}
-
-	// We don't need to validate the MERGE edge's direction, as an undirected edge
-	// in MERGE should result a single outgoing edge to be created.
-
 	return AST_VALID;
 }
 
@@ -322,24 +284,6 @@ static AST_Validation _ValidateMergeNode
 	   cypher_ast_node_pattern_get_properties(entity)) {
 		ErrorCtx_SetError(EMSG_REDECLARE, "node", alias, "MERGE");
 		return AST_INVALID;
-	}
-
-	return AST_VALID;
-}
-
-// validate that the relation alias of an edge is not bound
-static AST_Validation _ValidateCreateRelation
-(
-	const cypher_astnode_t *entity,  // ast-node
-	validations_ctx *vctx
-) {
-	const cypher_astnode_t *identifier = cypher_ast_rel_pattern_get_identifier(entity);
-	if(identifier) {
-		const char *alias = cypher_ast_identifier_get_name(identifier);
-		if(_IdentifiersFind(vctx, alias) != raxNotFound) {
-			ErrorCtx_SetError(EMSG_REDECLARE, "variable", alias, "CREATE");
-			return AST_INVALID;
-		}
 	}
 
 	return AST_VALID;
@@ -808,67 +752,60 @@ static VISITOR_STRATEGY _Validate_rel_pattern
 		return VISITOR_CONTINUE;
 	}
 
+	uint reltype_count = cypher_ast_rel_pattern_nreltypes(n);
+	enum cypher_rel_direction dir = cypher_ast_rel_pattern_get_direction(n);
 	const cypher_astnode_t *range = cypher_ast_rel_pattern_get_varlength(n);
-	if(vctx->clause == CYPHER_AST_CREATE) {
-		// validate that the relation alias is not bound
-		if(_ValidateCreateRelation(n, vctx) == AST_INVALID) {
-			return VISITOR_BREAK;
-		}
 
-		// Validate that each relation has exactly one type
-		uint reltype_count = cypher_ast_rel_pattern_nreltypes(n);
+	// clause name used for error reporting
+	const char *clause_name = (vctx->clause == CYPHER_AST_CREATE) ?
+		"CREATE" :
+		"MERGE";
+
+	// extra validation when in a CREATE / MERGE clause
+	if(vctx->clause == CYPHER_AST_CREATE || vctx->clause == CYPHER_AST_MERGE) {
+
+		// validate that each relation has exactly one type
 		if(reltype_count != 1) {
-			ErrorCtx_SetError(EMSG_ONE_RELATIONSHIP_TYPE, "CREATE");
+			// CREATE ()-[:A:B]->()
+			ErrorCtx_SetError(EMSG_ONE_RELATIONSHIP_TYPE, clause_name);
 			return VISITOR_BREAK;
 		}
 
-		// Validate that each relation being created is directed
-		if(cypher_ast_rel_pattern_get_direction(n) == CYPHER_REL_BIDIRECTIONAL) {
+		// validate that each relation being created is directed
+		// CREATE ()-[]-()
+		if(dir == CYPHER_REL_BIDIRECTIONAL) {
 			ErrorCtx_SetError(EMSG_CREATE_DIRECTED_RELATIONSHIP);
 			return VISITOR_BREAK;
 		}
 
-		// Validate that each relation being created is not variable length relationship
+		// validate that each relation being created is not of variable length
+		// CREATE ()-[*2..4]->()
 		if(range) {
-			ErrorCtx_SetError(EMSG_VAR_LEN, "CREATE");
+			ErrorCtx_SetError(EMSG_VAR_LEN, clause_name);
 			return VISITOR_BREAK;
 		}
 	}
 
-	if(_ValidateInlinedProperties(cypher_ast_rel_pattern_get_properties(n)) == AST_INVALID) {
-		return VISITOR_BREAK;
-	}
-
-	if(vctx->clause == CYPHER_AST_MERGE &&
-		_ValidateMergeRelation(n, vctx) == AST_INVALID) {
+	const cypher_astnode_t *props = cypher_ast_rel_pattern_get_properties(n);
+	if(_ValidateInlinedProperties(props) == AST_INVALID) {
 		return VISITOR_BREAK;
 	}
 
 	const cypher_astnode_t *alias_node = cypher_ast_rel_pattern_get_identifier(n);
 	if(!alias_node && !range) {
-		return VISITOR_RECURSE; // Skip unaliased, single-hop entities.
+		return VISITOR_RECURSE; // skip unaliased, single-hop entities
 	}
 
-	// If this is a multi-hop traversal, validate it accordingly
+	// if this is a multi-hop traversal, validate it accordingly
 	if(range && _ValidateMultiHopTraversal(n, range) == AST_INVALID) {
 		return VISITOR_BREAK;
 	}
 
 	if(alias_node) {
 		const char *alias = cypher_ast_identifier_get_name(alias_node);
-		void *alias_type = _IdentifiersFind(vctx, alias);
-		if(alias_type == raxNotFound) {
-			_IdentifierAdd(vctx, alias, (void*)T_EDGE);
-			return VISITOR_RECURSE;
-		}
-			
-		if(alias_type != (void *)T_EDGE && alias_type != NULL) {
-			ErrorCtx_SetError(EMSG_SAME_ALIAS_NODE_RELATIONSHIP, alias);
-			return VISITOR_BREAK;
-		}
-
-		if(vctx->clause == CYPHER_AST_MATCH && alias_type != NULL) {
-			ErrorCtx_SetError(EMSG_SAME_ALIAS_MULTIPLE_PATTERNS, alias);
+		// edge can not be redeclared
+		if(_IdentifierAdd(vctx, alias, (void*)T_EDGE) == 0) {
+			ErrorCtx_SetError(EMSG_REDECLARE, "edge", alias, clause_name);
 			return VISITOR_BREAK;
 		}
 	}
@@ -1754,7 +1691,7 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 
 		// fail on duplicate identifier
 		if(_IdentifierAdd(vctx, alias, (void*)t) == 0 && t == T_EDGE) {
-			ErrorCtx_SetError(EMSG_VAIABLE_ALREADY_DECLARED, alias);
+			ErrorCtx_SetError(EMSG_REDECLARE, "edge", alias, "CREATE");
 			res = VISITOR_BREAK;
 			break;
 		}
