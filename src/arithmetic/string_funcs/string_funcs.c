@@ -9,6 +9,7 @@
 #include "../../util/arr.h"
 #include "../../util/uuid.h"
 #include "utf8proc/utf8proc.h"
+#include "../../util/lz4/lz4.h"
 #include "../../util/rmalloc.h"
 #include "../../util/strutil.h"
 #include "../../errors/errors.h"
@@ -863,6 +864,46 @@ SIValue AR_INTERN
 	return SI_InternStringVal(str);
 }
 
+// compress string
+SIValue AR_COMPRESS
+(
+	SIValue *argv,      // arguments
+	int argc,           // number of arguments
+	void *private_data  // private data
+) {
+	// in case of a NULL value, return NULL
+	if (SIValue_IsNull (argv[0])) {
+		return SI_NullVal () ;
+	}
+
+	// compress input string
+	char  *s = argv[0].stringval ;
+	size_t l = strlen (s) ;
+
+	// get max compressed size
+	// allocate required size + space to save original string length
+	// this is needed for decompression
+    int max_dst_size = LZ4_compressBound (l) ;
+	max_dst_size += sizeof (size_t) ;
+    char *compressed = rm_malloc (max_dst_size) ;
+
+    // perform compression
+    int compressed_size = LZ4_compress_default (s, compressed + sizeof (size_t),
+			l, max_dst_size) ;
+	ASSERT (compressed_size > 0) ;
+	compressed_size += sizeof (size_t) ;
+
+	// save original string length
+	((size_t *)compressed)[0] = l ;
+
+	// shrink
+	if (max_dst_size > compressed_size) {
+		compressed = rm_realloc (compressed, compressed_size) ;
+	}
+
+	return SI_TransferStringVal (compressed) ;
+}
+
 //------------------------------------------------------------------------------
 // Scalar functions
 //------------------------------------------------------------------------------
@@ -1026,5 +1067,12 @@ void Register_StringFuncs() {
 	ret_type = T_INTERN_STRING | T_NULL;
 	func_desc = AR_FuncDescNew("intern", AR_INTERN, 1, 1, types, ret_type, false, false);
 	AR_RegFunc(func_desc);
+
+	types = array_new (SIType, 1) ;
+	array_append (types, (T_STRING | T_NULL)) ;
+	ret_type = T_STRING | T_NULL ;
+	func_desc = AR_FuncDescNew ("compress", AR_COMPRESS, 1, 1, types, ret_type,
+			false, false) ;
+	AR_RegFunc (func_desc) ;
 }
 
