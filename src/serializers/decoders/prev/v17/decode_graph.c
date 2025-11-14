@@ -336,6 +336,9 @@ GraphContext *RdbLoadGraphContext_v17
 		// flush graph matrices
 		Graph_ApplyAllPending(g, true);
 
+		// make sure adjacency matrix is numeric
+		RdbNormalizeAdjMatrix (g) ;
+
 		// revert to default synchronization behavior
 		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
 

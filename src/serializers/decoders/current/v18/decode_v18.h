@@ -6,6 +6,7 @@
 #pragma once
 
 #include "../../../serializers_include.h"
+#include "../../decode_utilies.h"
 
 GraphContext *RdbLoadGraphContext_latest
 (
@@ -62,14 +63,6 @@ void RdbLoadRelationMatrices_v18
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc   // graph context
-);
-
-// if the rdb we are loading is old, then we must recalculate the number of
-// edges connecting ech pair of nodes
-// precondition: relation matricies have been calculated and fully synced
-void RdbNormalizeAdjMatrix
-(
-	const Graph *g  // graph
 );
 
 // decode adjacency matrix

@@ -896,8 +896,8 @@ void Graph_FormConnection
 	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
 
 	// rows represent source nodes, columns represent destination nodes
-	GrB_OK (Delta_Matrix_assign_scalar_UINT64(
-		adj, GrB_PLUS_UINT16, 1, src, dest));
+	GrB_OK (Delta_Matrix_assign_scalar_UINT16(
+		adj, GrB_PLUS_UINT16, (uint16_t) 1, src, dest));
 
 	// add entry to relation tensor
 	Tensor_SetElement(R, src, dest, edge_id);
@@ -1030,8 +1030,8 @@ void Graph_CreateEdges
 		NodeID dest = e->dest_id ;
 
 		// TODO: introduce batch version of setElement, e.g. GrB_Matrix_build
-		GrB_OK (Delta_Matrix_assign_scalar_UINT64(
-			adj, GrB_PLUS_UINT16, 1, src, dest));
+		GrB_OK (Delta_Matrix_assign_scalar(
+			adj, GrB_PLUS_UINT16, (uint16_t) 1, src, dest));
 	}
 
 	// sort edges by src & dest IDs

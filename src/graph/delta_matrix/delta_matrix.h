@@ -197,12 +197,31 @@ GrB_Info Delta_Matrix_setElement_BOOL   // C (i,j) = x
 	GrB_Index j                         // column index
 );
 
+// C (i,j) = x
+GrB_Info Delta_Matrix_setElement_UINT16
+(
+    Delta_Matrix C,  // matrix to modify
+    uint16_t x,      // scalar to assign to C(i,j)
+    GrB_Index i,     // row index
+    GrB_Index j      // column index
+);
+
 GrB_Info Delta_Matrix_setElement_UINT64  // C (i,j) = x
 (
 	Delta_Matrix C,                      // matrix to modify
 	uint64_t x,                          // value
 	GrB_Index i,                         // row index
 	GrB_Index j                          // column index
+);
+
+// C (i,j) = accum(C(i,j), x)
+GrB_Info Delta_Matrix_assign_scalar_UINT16
+(
+	Delta_Matrix C,            // input/output matrix for results
+	const GrB_BinaryOp accum,  // optional accum for Z=accum(C(I,J),x)
+	uint16_t x,                // scalar to assign to C(i,j)
+	GrB_Index i,               // row index
+	GrB_Index j                // column index
 );
 
 // C (i,j) = accum(C(i,j), x)
@@ -214,6 +233,14 @@ GrB_Info Delta_Matrix_assign_scalar_UINT64
 	GrB_Index i,               // row index
 	GrB_Index j                // column index
 );
+
+GrB_Info Delta_Matrix_extractElement_UINT16  // x = A(i,j)
+(
+	uint16_t *x,                             // extracted scalar
+	const Delta_Matrix A,                    // matrix to extract a scalar from
+	GrB_Index i,                             // row index
+	GrB_Index j                              // column index
+) ;
 
 GrB_Info Delta_Matrix_extractElement_UINT64  // x = A(i,j)
 (
@@ -341,3 +368,18 @@ void Delta_Matrix_free
 (
 	Delta_Matrix *C
 );
+
+// -----------------------------------------------------------------------------
+// Generic declorations
+// -----------------------------------------------------------------------------
+#define Delta_Matrix_extractElement(C, accum, x, i, j) \
+	_Generic((x),                                      \
+		uint16_t: Delta_Matrix_setElement_UINT16,      \
+		uint64_t: Delta_Matrix_setElement_UINT64       \
+	)(C, accum, x, i, j)
+
+#define Delta_Matrix_assign_scalar(C, accum, x, i, j) \
+	_Generic((x),                                     \
+		uint16_t: Delta_Matrix_assign_scalar_UINT16,  \
+		uint64_t: Delta_Matrix_assign_scalar_UINT64   \
+	)(C, accum, x, i, j)

@@ -3,14 +3,13 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "GraphBLAS.h"
 #include "RG.h"
 #include "delta_utils.h"
 #include "delta_matrix.h"
 #include "../../util/arr.h"
 
 #define DM_setElement                                                          \
-{                                                                              \
-	ASSERT(C != NULL);                                                         \
 	Delta_Matrix_checkBounds(C, i, j);                                         \
                                                                                \
 	GrB_Info info;                                                             \
@@ -59,8 +58,7 @@
 	}                                                                          \
                                                                                \
 	Delta_Matrix_setDirty(C);                                                  \
-	return info;                                                               \
-}
+	return info;
 
 // C (i,j) = x
 GrB_Info Delta_Matrix_setElement_UINT64
@@ -69,15 +67,37 @@ GrB_Info Delta_Matrix_setElement_UINT64
     uint64_t x,      // scalar to assign to C(i,j)
     GrB_Index i,     // row index
     GrB_Index j      // column index
-)
-DM_setElement
+) {
+	// validate
+	ASSERT(C);
+	GrB_Type ty = NULL;
+	GrB_OK(GxB_Matrix_type(&ty, DELTA_MATRIX_M(C)));
+	ASSERT(ty == GrB_UINT64);
+
+	// This macro contains the full function definition which does not change
+	// with the type. This is because the GraphBLAS generic macro will chose the
+	// right function given the C type of x.
+	DM_setElement
+}
 
 // C (i,j) = x
 GrB_Info Delta_Matrix_setElement_UINT16
 (
     Delta_Matrix C,  // matrix to modify
-    uint64_t x,      // scalar to assign to C(i,j)
+    uint16_t x,      // scalar to assign to C(i,j)
     GrB_Index i,     // row index
     GrB_Index j      // column index
-)
-DM_setElement
+) {
+	// validate
+	ASSERT(C);
+	GrB_Type ty = NULL;
+	GrB_OK(GxB_Matrix_type(&ty, DELTA_MATRIX_M(C)));
+	ASSERT(ty == GrB_UINT16);
+
+	// This macro contains the full function definition which does not change
+	// with the type. This is because the GraphBLAS generic macro will chose the
+	// right function given the C type of x.
+	DM_setElement
+}
+
+
