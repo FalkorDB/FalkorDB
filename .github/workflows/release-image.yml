@@ -324,3 +324,16 @@ jobs:
             {
               "new_version": "${{ github.event.release.tag_name }}"
             }
+  
+  trigger-testflight-workflow:
+    needs: release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    steps:
+      - name: Trigger Redis Enterprise tests in FalkorDB/testflight
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.GH_TESTFLIGHT_TOKEN }}
+          repository: FalkorDB/testflight
+          event-type: release-created
+          client-payload: '{"tag_name": "${{ github.event.release.tag_name }}"}'
