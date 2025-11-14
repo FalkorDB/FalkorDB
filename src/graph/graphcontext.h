@@ -16,8 +16,12 @@
 #include "../serializers/encode_context.h"
 #include "../serializers/decode_context.h"
 
+#ifdef __cplusplus
+#include <atomic>
+using std::atomic_bool;
+#else
 #include <stdatomic.h>
-
+#endif
 // GraphContext holds refrences to various elements of a graph object
 // it is the value sitting behind a Redis graph key
 //

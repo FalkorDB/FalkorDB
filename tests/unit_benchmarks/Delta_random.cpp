@@ -1,6 +1,4 @@
 #include "create_random.h"
-#define U64_ZOMBIE ((uint64_t) 0x8000000000000000ull)
-#define BOOL_ZOMBIE ((bool) false)
 void Delta_Random_Matrix
 (
 	Delta_Matrix *A,
@@ -15,12 +13,13 @@ void Delta_Random_Matrix
 	ASSERT(type == GrB_BOOL || type == GrB_UINT64);
 	Delta_Matrix mtx = NULL;
 	GrB_OK(Delta_Matrix_new(&mtx, type, n, n, false));
-	GrB_Matrix M    = NULL;
-	GrB_Matrix DP   = NULL;
-	GrB_Matrix DM   = NULL;
+	GrB_Matrix M     = NULL;
+	GrB_Matrix DP    = NULL;
+	GrB_Matrix DM    = NULL;
 	GrB_Scalar empty = NULL;
 
     GrB_OK(GrB_Scalar_new(&empty, GrB_BOOL));
+	
 	
 	// LAGraph does not give good spread if random seeds are consecutive, so we
 	// randomize the seed before using it.
@@ -33,20 +32,19 @@ void Delta_Random_Matrix
 	if(add_density > 0) {
 		GrB_OK(LAGraph_Random_Matrix(&DP, type, n, n, add_density, seed, NULL));
 		simple_rand(&seed);
-		GrB_OK(GrB_Matrix_set_INT32(DP, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
 	} else {
-		GrB_OK(GrB_Matrix_new(&DP, type, n, n));
+		GrB_OK (GrB_Matrix_new(&DP, type, n, n));
 	}
 
 	if(del_density > 0) {
 		GrB_OK(LAGraph_Random_Matrix(&DM, GrB_BOOL, n, n, del_density, seed, NULL));
-		GrB_OK(GrB_Matrix_set_INT32(DM, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
+		// Set all entries to true
+		GrB_OK(GrB_Matrix_assign_BOOL(DM, DM, NULL, true, GrB_ALL, n, GrB_ALL, 
+			n, GrB_DESC_S));
 	} else {
-		GrB_OK(GrB_Matrix_new(&DM, GrB_BOOL, n, n));
+		GrB_OK (GrB_Matrix_new(&DM, type, n, n));
 	}
 
-	GrB_OK(GrB_Matrix_assign_BOOL(DM, DM, NULL, true, GrB_ALL, n, GrB_ALL, 
-		n, GrB_DESC_S));
 
 	if(type == GrB_BOOL){
 		// Set all entries to true
@@ -55,12 +53,9 @@ void Delta_Random_Matrix
 		GrB_OK(GrB_Matrix_assign_BOOL(DP, DP, NULL, true, GrB_ALL, n, GrB_ALL, 
 			n, GrB_DESC_S));
 
-		// M <DM> = 0 
-		GrB_OK(GrB_Matrix_assign_BOOL(M, DM, NULL, false, GrB_ALL, n, GrB_ALL, 
+		// set DM's entries in M
+		GrB_OK(GrB_Matrix_assign_BOOL(M, DM, NULL, true, GrB_ALL, n, GrB_ALL, 
 			n, GrB_DESC_S));
-	} else {
-		GrB_OK(GrB_Matrix_assign_UINT64(M, DM, NULL, U64_ZOMBIE, GrB_ALL, n, 
-			GrB_ALL, n, GrB_DESC_S));
 	}
 
 	// DP = DP - M
@@ -68,42 +63,12 @@ void Delta_Random_Matrix
 		n, GrB_DESC_S));
 	GrB_OK(GrB_Matrix_apply(DP, NULL, NULL, GxB_ONE_BOOL, DP, NULL));
 
-
-	Delta_Matrix_setMatrices(mtx, M, DP, DM);
-	GrB_OK (Delta_Matrix_wait(mtx, false));
+	Delta_Matrix_setMatrices(mtx, &M, &DP, &DM);
+	Delta_Matrix_wait(mtx, false);
+	Delta_Matrix_validate(mtx, true);
 
 	*A = mtx;
 	GrB_OK(GrB_Scalar_free(&empty));
-
-	GrB_Index nvals = 0;
-	if (add_density > 0) {
-		GrB_Matrix_nvals(&nvals, DP);
-		ASSERT(nvals > 0);
-	}
-	if (del_density > 0) {
-		GrB_Matrix_nvals(&nvals, DM);
-		ASSERT(nvals > 0);
-	}
-}
-
-static void _push_element
-(
-    uint64_t *z,
-    const uint64_t *x,
-    const uint64_t *y
-) {
-    ASSERT(SCALAR_ENTRY(*y));
-    if(SCALAR_ENTRY(*x)){
-        GrB_Vector v = NULL;
-		GrB_Vector_new(&v, GrB_BOOL, GrB_INDEX_MAX);
-        GrB_Vector_setElement_BOOL(v, true, *x);
-        GrB_Vector_setElement_BOOL(v, true, *y);
-        *z = SET_MSB((uint64_t) v);
-    } else {
-        ASSERT(*z == *x);
-        GrB_Vector v = AS_VECTOR(*z);
-        GrB_Vector_setElement_BOOL(v, true, *y);
-    }
 }
 
 static void _mod_function
@@ -130,17 +95,6 @@ static void _select_random(
 	*z    = rand < (*t) * UINT64_MAX;
 }
 
-static void _set_zombie_and_free(
-	bool *z,
-	uint64_t *x
-) {
-	if(!SCALAR_ENTRY(*x)) {
-		GrB_Vector v = AS_VECTOR(*x);
-		GrB_Vector_free(&v);
-	}
-	*z = U64_ZOMBIE;
-}
-
 void _make_single_tensor
 (
 	GrB_Matrix A,
@@ -160,13 +114,13 @@ void _make_single_tensor
 	GrB_OK(GrB_Vector_assign_UINT64(i_v, NULL, NULL, 0, GrB_ALL, e, NULL));
 	GrB_OK(GrB_Vector_assign_UINT64(j_v, NULL, NULL, 0, GrB_ALL, e, NULL));
 
-    GrB_OK((GrB_Info) LAGraph_Random_Seed(i_v, seed, NULL));
-    GrB_OK((GrB_Info) LAGraph_Random_Seed(j_v, seed + e, NULL));
+	GrB_OK((GrB_Info) LAGraph_Random_Seed(i_v, seed, NULL));
+	GrB_OK((GrB_Info) LAGraph_Random_Seed(j_v, seed + e, NULL));
 
-    GrB_OK(GrB_Vector_apply_BinaryOp2nd_UINT64(i_v, NULL, NULL, mod_op, i_v, n, 
+	GrB_OK(GrB_Vector_apply_BinaryOp2nd_UINT64(i_v, NULL, NULL, mod_op, i_v, n, 
 		NULL));
 
-    GrB_OK(GrB_Vector_apply_BinaryOp2nd_UINT64(j_v, NULL, NULL, mod_op, j_v, n, 
+	GrB_OK(GrB_Vector_apply_BinaryOp2nd_UINT64(j_v, NULL, NULL, mod_op, j_v, n, 
 		NULL));
 	
 	// Want to build a tensor
@@ -189,28 +143,24 @@ void Random_Tensor
 	ASSERT(A != NULL);
 
 	GrB_BinaryOp     mod_op      = NULL;
-	GrB_BinaryOp     dup_handler = NULL;
-	GrB_UnaryOp      free_entry  = NULL;
+	GrB_BinaryOp     dup_handler = Global_GrB_Ops_Get()->push_id;
+	GrB_UnaryOp      free_entry  = Global_GrB_Ops_Get()->free_tensors;
 	GrB_IndexUnaryOp select_op   = NULL;
 	GrB_Descriptor   desc        = NULL;
 
 	GrB_OK(GrB_BinaryOp_new(&mod_op, (GxB_binary_function) _mod_function, 
 		GrB_UINT64, GrB_UINT64, GrB_UINT64));
-	GrB_OK(GrB_BinaryOp_new(&dup_handler, (GxB_binary_function) _push_element, 
-		GrB_UINT64, GrB_UINT64, GrB_UINT64));
 	GrB_OK(GrB_IndexUnaryOp_new(
 		&select_op, (GxB_index_unary_function) _select_random, 
 		GrB_BOOL, GrB_UINT64, GrB_FP64));
-	GrB_OK(GrB_UnaryOp_new(&free_entry, (GxB_unary_function) _set_zombie_and_free, 
-		GrB_UINT64, GrB_UINT64));
 
 	GrB_OK(GrB_Descriptor_new(&desc));
 	GrB_OK(GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_VALUE_LIST));
 
 	Delta_Matrix_new(A, GrB_UINT64, n, n, false);
-	GrB_Matrix M    = Delta_Matrix_M(*A);
-	GrB_Matrix DP   = Delta_Matrix_DP(*A);
-	GrB_Matrix DM   = Delta_Matrix_DM(*A);
+	GrB_Matrix M    = DELTA_MATRIX_M(*A);
+	GrB_Matrix DP   = DELTA_MATRIX_DELTA_PLUS(*A);
+	GrB_Matrix DM   = DELTA_MATRIX_DELTA_MINUS(*A);
 	GrB_Matrix temp = NULL;
 	GrB_Index nvals = 0;
 
@@ -232,22 +182,24 @@ void Random_Tensor
 	//--------------------------------------------------------------------------
 	// Make M and DP disjoint
 	//--------------------------------------------------------------------------
-	GrB_OK(GrB_Matrix_new(&temp, GrB_UINT64, n, n));
-	GrB_OK(GrB_Matrix_eWiseMult_BinaryOp(temp, NULL, NULL, GrB_SECOND_UINT64, M, DP, NULL));
-	GrB_OK(GrB_Matrix_apply(temp, NULL, NULL, free_entry, temp, NULL));
-	GrB_OK(GrB_Matrix_assign(DP, temp, NULL, DP, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_RSC));
+	GrB_OK (GrB_Matrix_apply(DP, M, NULL, free_entry, DP, GrB_DESC_S)); 
+	GrB_OK (GrB_Matrix_select_UINT64(DP, NULL, NULL, GrB_VALUENE_UINT64, DP, 
+		MSB_MASK, NULL));
 
 
 	//--------------------------------------------------------------------------
 	// Create DM
 	//--------------------------------------------------------------------------
-	GrB_OK(GrB_Matrix_select_FP64(temp, NULL, NULL, select_op, M, 
+	GrB_OK (GrB_Matrix_new(&temp, GrB_BOOL, n, n));
+	GrB_OK (GrB_Matrix_select_FP64(temp, NULL, NULL, select_op, M, 
 		del_density / density, NULL));
-	GrB_OK(GrB_Matrix_apply(temp, NULL, NULL, free_entry, temp, GrB_DESC_S));
-	GrB_OK(GrB_Matrix_assign_BOOL(DM, temp, NULL, true, GrB_ALL, n, 
+	GrB_OK (GrB_Matrix_apply(temp, NULL, NULL, free_entry, temp, GrB_DESC_S));
+	GrB_OK (GrB_Matrix_assign_BOOL(DM, temp, NULL, true, GrB_ALL, n, 
 		GrB_ALL, n, GrB_DESC_S));
-	GrB_OK(GrB_Matrix_free(&temp));
-	
-	GrB_OK(GrB_Matrix_assign_UINT64(M, DM, NULL, MSB_MASK, GrB_ALL, n, 
-		GrB_ALL, n, GrB_DESC_S));
+
+	GrB_OK (GrB_Matrix_free(&temp));
+	GrB_OK (GrB_BinaryOp_free(&dup_handler));
+	GrB_OK (GrB_BinaryOp_free(&mod_op));
+	GrB_OK (GrB_IndexUnaryOp_free(&select_op));
+	GrB_OK (GrB_Descriptor_free(&desc));
 }

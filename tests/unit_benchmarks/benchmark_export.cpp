@@ -1,5 +1,4 @@
 #include "tests/unit_benchmarks/create_random.h"
-#include <benchmark/benchmark.h>
 
 void rg_setup(const benchmark::State &state) {
 	// Initialize GraphBLAS.
@@ -15,9 +14,11 @@ void rg_setup(const benchmark::State &state) {
     GrB_Global_set_INT32(GrB_GLOBAL, GxB_JIT_OFF, GxB_JIT_C_CONTROL);
     GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
 	GxB_Global_Option_set(GxB_FORMAT, GxB_BY_ROW); // all matrices in CSR format
+	Global_GrB_Ops_Init();
 }
 
 void rg_teardown(const benchmark::State &state) {
+	Global_GrB_Ops_Free();
     GrB_finalize();
     // GrB_OK((GrB_Info) LAGraph_Finalize(NULL));
 }
