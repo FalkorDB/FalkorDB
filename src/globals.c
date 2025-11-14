@@ -17,6 +17,7 @@ struct Globals {
 	GraphContext **graphs_in_keyspace;  // list of graphs in keyspace
 	StringPool string_pool;             // pool of reusable strings
 	pthread_t main_thread_id;           // process main thread id
+	struct GrB_ops ops;                 // global GraphBLAS objects
 };
 
 struct Globals _globals = {0};
@@ -35,6 +36,9 @@ void Globals_Init(void) {
 
 	int res = pthread_rwlock_init(&_globals.lock, NULL);
 	ASSERT(res == 0);
+
+	// initialize GraphBLAS operators
+	Global_GrB_Ops_Init();
 }
 
 StringPool Globals_Get_StringPool(void) {
@@ -61,7 +65,7 @@ void Globals_Set_ProcessIsChild
 ) {
 	pthread_rwlock_wrlock(&_globals.lock);
 
-	_globals.process_is_child =	process_is_child;
+	_globals.process_is_child = process_is_child;
 
 	pthread_rwlock_unlock(&_globals.lock);
 }
@@ -329,5 +333,57 @@ void Globals_Free(void) {
 	array_free(_globals.graphs_in_keyspace);
 	StringPool_free(&_globals.string_pool);
 	pthread_rwlock_destroy(&_globals.lock);
+	Global_GrB_Ops_Free();
 }
 
+#include "graph/tensor/tensor_grb_functions.h"
+
+void Global_GrB_Ops_Init(void) {
+	struct GrB_ops *ops = &_globals.ops;
+	// initialize global GraphBLAS objects
+
+	//--------------------------------------------------------------------------
+	// initialize operators for zombie handling
+	//--------------------------------------------------------------------------
+	GrB_OK (GrB_BinaryOp_new( &ops->push_id, (GxB_binary_function) _push_element, 
+		GrB_UINT64, GrB_UINT64, GrB_UINT64));
+	
+	//--------------------------------------------------------------------------
+	// initialize operators for freeing
+	//--------------------------------------------------------------------------
+	GrB_OK (GrB_UnaryOp_new(
+		&ops->free_tensors, (GxB_unary_function) _free_vectors, 
+		GrB_UINT64, GrB_UINT64));
+
+	//--------------------------------------------------------------------------
+	// initialize scalars
+	//--------------------------------------------------------------------------
+	GrB_OK (GrB_Scalar_new(&ops->empty, GrB_BOOL));
+}
+
+void Global_GrB_Ops_Free(void) {
+	struct GrB_ops *ops = &_globals.ops;
+
+	//--------------------------------------------------------------------------
+	// free everything
+	//--------------------------------------------------------------------------
+	GrB_free(&ops->free_tensors);
+	GrB_free(&ops->push_id);
+	GrB_free(&ops->empty);
+}
+
+const struct GrB_ops *Global_GrB_Ops_Get(void) {
+	struct GrB_ops *ops = &_globals.ops;
+
+	// // Lazy initialization
+	// if (unlikely(ops->free_tensors == NULL)){
+	// 	// if one pointer is NULL, then all operations are uninitialized
+	// 	const char *data = (const char *) ops;
+	// 	for(int i = 0; i < sizeof(struct GrB_ops); ++i) {
+	// 		ASSERT(data[0] == 0);
+	// 	}
+	// 	Global_GrB_Ops_Init();
+	// }
+
+	return ops;
+}
