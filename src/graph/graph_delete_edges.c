@@ -113,11 +113,11 @@ void Graph_ClearConnections
 		// NOTE: nothing in this for loop actually causes pending changes
 		for (uint k = 0; k < d; k++) {
 			e = edges + (i + k);
-			uint64_t v = 0;
+			uint16_t v = 0;
 
 			NodeID src  = Edge_GetSrcNodeID  (e) ;
 			NodeID dest = Edge_GetDestNodeID (e) ;
-			GrB_OK (Delta_Matrix_extractElement_UINT64 (&v, ADJ, src, dest)) ;
+			GrB_OK (Delta_Matrix_extractElement_UINT16 (&v, ADJ, src, dest)) ;
 			ASSERT (v > 0) ;
 
 			if (--v == 0) {
@@ -125,7 +125,7 @@ void Graph_ClearConnections
 				array_append (deleted_entries, (uint64_t) dest) ;
 			}
 
-			GrB_OK (Delta_Matrix_setElement_UINT64 (ADJ, v, src, dest)) ;
+			GrB_OK (Delta_Matrix_setElement_UINT16 (ADJ, v, src, dest)) ;
 		}
 
 		i = j ;  // skip processed batch

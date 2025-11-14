@@ -9,8 +9,6 @@
 #include "delta_matrix.h"
 
 #define DM_assign_scalar                                                       \
-{                                                                              \
-	ASSERT (C != NULL) ;                                                       \
 	Delta_Matrix_checkBounds (C, i, j) ;                                       \
                                                                                \
 	uint64_t v ;                                                               \
@@ -63,7 +61,6 @@
                                                                                \
 	Delta_Matrix_setDirty (C) ;                                                \
 	return GrB_SUCCESS ;                                                       \
-}
 
 // C (i,j) = accum(C(i,j), x)
 GrB_Info Delta_Matrix_assign_scalar_UINT64
@@ -73,8 +70,18 @@ GrB_Info Delta_Matrix_assign_scalar_UINT64
 	uint64_t x,                // scalar to assign to C(i,j)
 	GrB_Index i,               // row index
 	GrB_Index j                // column index
-)
-DM_assign_scalar
+) {
+	// validate
+	ASSERT(C != NULL);
+	GrB_Type ty = NULL;
+	GrB_OK(GxB_Matrix_type(&ty, DELTA_MATRIX_M(C)));
+	ASSERT(ty == GrB_UINT64);
+
+	// This macro contains the full function definition which does not change
+	// with the type. This is because the GraphBLAS generic macro will chose the
+	// right function given the C type of x.
+	DM_assign_scalar
+}
 
 // C (i,j) = accum(C(i,j), x)
 GrB_Info Delta_Matrix_assign_scalar_UINT16
@@ -84,5 +91,15 @@ GrB_Info Delta_Matrix_assign_scalar_UINT16
 	uint16_t x,                // scalar to assign to C(i,j)
 	GrB_Index i,               // row index
 	GrB_Index j                // column index
-)
-DM_assign_scalar
+) {
+	// validate
+	ASSERT(C != NULL);
+	GrB_Type ty = NULL;
+	GrB_OK(GxB_Matrix_type(&ty, DELTA_MATRIX_M(C)));
+	ASSERT(ty == GrB_UINT16);
+
+	// This macro contains the full function definition which does not change
+	// with the type. This is because the GraphBLAS generic macro will chose the
+	// right function given the C type of x.
+	DM_assign_scalar
+}
