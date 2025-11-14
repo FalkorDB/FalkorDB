@@ -5,6 +5,7 @@
 
 #include "decode_v18.h"
 #include "../../../../index/indexer.h"
+#include "graph/delta_matrix/delta_matrix.h"
 
 // TODO: have the delta matrix upon setting M, incase the matrix
 // contains a transpose, we should overwrite it with MT
@@ -347,6 +348,9 @@ GraphContext *RdbLoadGraphContext_latest
 	if(GraphDecodeContext_Finished(gc->decoding_context)) {
 		// flush graph matrices
 		Graph_ApplyAllPending(g, true);
+
+		// make sure adjacency matrix is numeric
+		RdbNormalizeAdjMatrix (g) ;
 
 		// compute transposes
 		_ComputeTransposeMatrices(g);

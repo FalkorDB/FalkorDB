@@ -4,13 +4,14 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "GraphBLAS.h"
 #include "RG.h"
 #include "graph.h"
 #include "../util/arr.h"
 #include "../util/rwlock.h"
 #include "../util/rmalloc.h"
 #include "delta_matrix/delta_matrix_iter.h"
-#include "../util/datablock/oo_datablock.h"
+#include "graph/delta_matrix/delta_matrix.h"
 
 //------------------------------------------------------------------------------
 // Synchronization functions
@@ -475,7 +476,7 @@ Graph *Graph_New
 
 	GrB_Index n = Graph_RequiredMatrixDim(g);
 	Delta_Matrix_new(&g->node_labels, GrB_BOOL, n, n, false);
-	Delta_Matrix_new(&g->adjacency_matrix, GrB_BOOL, n, n, true);
+	Delta_Matrix_new(&g->adjacency_matrix, GrB_UINT16, n, n, true);
 	Delta_Matrix_new(&g->_zero_matrix, GrB_BOOL, n, n, false);
 
 	// init graph statistics
@@ -896,8 +897,8 @@ void Graph_FormConnection
 	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
 
 	// rows represent source nodes, columns represent destination nodes
-	info = Delta_Matrix_setElement_BOOL(adj, src, dest);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (Delta_Matrix_assign_scalar_UINT16(
+		adj, GrB_PLUS_UINT16, (uint16_t) 1, src, dest));
 
 	// add entry to relation tensor
 	Tensor_SetElement(R, src, dest, edge_id);
@@ -1030,8 +1031,8 @@ void Graph_CreateEdges
 		NodeID dest = e->dest_id ;
 
 		// TODO: introduce batch version of setElement, e.g. GrB_Matrix_build
-		GrB_Info info = Delta_Matrix_setElement_BOOL (adj, src, dest) ;
-		ASSERT (info == GrB_SUCCESS) ;
+		GrB_OK (Delta_Matrix_assign_scalar(
+			adj, GrB_PLUS_UINT16, (uint16_t) 1, src, dest));
 	}
 
 	// sort edges by src & dest IDs
@@ -1472,21 +1473,11 @@ uint64_t Graph_GetNodeDegree
 
 	if(r != GRAPH_NO_RELATION) {
 		// consider only specified relationship
-		start_rel = r;
-		end_rel = start_rel + 1;
-	} else {
-		// consider all relationship types
-		start_rel = 0;
-		end_rel = Graph_RelationTypeCount(g);
-	}
-
-	// for each relationship type to consider
-	for(RelationID edgeType = start_rel; edgeType < end_rel; edgeType++) {
 		//----------------------------------------------------------------------
 		// outgoing edges
 		//----------------------------------------------------------------------
 
-		Tensor R = Graph_GetRelationMatrix(g, edgeType, false);
+		Tensor R = Graph_GetRelationMatrix(g, r, false);
 
 		if(outgoing) {
 			edge_count += Tensor_RowDegree(R, srcID);
@@ -1498,6 +1489,50 @@ uint64_t Graph_GetNodeDegree
 
 		if(incoming) {
 			edge_count += Tensor_ColDegree(R, srcID);
+		}
+	} else {
+		// use the adj matrix
+		Delta_Matrix ADJ = Graph_GetRelationMatrix(g, GRAPH_NO_RELATION, false);
+		struct GB_Iterator_opaque _i = {0};
+		GxB_Iterator i = &_i;
+
+		if (outgoing) {
+			// iterate and add M and DP (any entries in DM are neccessarily 0 in
+			// M, so adding them with not affect the count)
+			GrB_OK (GxB_rowIterator_attach(i, Delta_Matrix_M(ADJ), GrB_NULL));
+			GrB_Info info = GxB_rowIterator_seekRow(i, srcID);
+			while(info == GrB_SUCCESS) {
+				edge_count += GxB_Iterator_get_UINT16(i);
+				info = GxB_rowIterator_nextCol(i);
+			}
+
+			GrB_OK (GxB_rowIterator_attach(i, Delta_Matrix_DP(ADJ), GrB_NULL));
+			info = GxB_rowIterator_seekRow(i, srcID);
+			while(info == GrB_SUCCESS) {
+				edge_count += GxB_Iterator_get_UINT16(i);
+				info = GxB_rowIterator_nextCol(i);
+			}
+		}
+
+		if (incoming){
+			Delta_MatrixTupleIter it;
+
+			// scan transpose matrix
+			Delta_Matrix ADJT = Delta_Matrix_getTranspose(ADJ);
+
+			// iterate over T[col:]
+			GrB_OK (Delta_MatrixTupleIter_attach(&it, ADJT));
+
+			GrB_OK (Delta_MatrixTupleIter_iterate_row(&it, srcID));
+
+			// scan ADJT[col:]
+			while(Delta_MatrixTupleIter_next_BOOL(&it, NULL, &destID, NULL) == GrB_SUCCESS) {
+				uint16_t x;
+				// inspect ADJ[row, col]
+				GrB_OK (Delta_Matrix_extractElement_UINT16(
+					&x, ADJ, destID, srcID));
+				edge_count += x;
+			}
 		}
 	}
 
