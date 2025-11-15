@@ -8,20 +8,25 @@
 #include "RG.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
-#include "../../errors/errors.h"
+#include "../../datatypes/path/sipath_builder.h"
+#include "../../value.h"
 
 // forward declarations
-static Record CreateConsume (OpBase *opBase) ;
+static Record CreateConsume(OpBase *opBase);
+static Record _handoff(OpCreate *op);
+static void _BindNamedPathsToRecord(OpCreate *op, Record r);
 static OpResult CreateReset(OpBase *opBase);
-static OpBase *CreateClone (const ExecutionPlan *plan, const OpBase *opBase) ;
-static void CreateFree (OpBase *opBase) ;
-static void FreeInternals (OpCreate *op) ;
+static OpBase *CreateClone(const ExecutionPlan *plan, const OpBase *opBase);
+static void CreateFree(OpBase *opBase);
+static void FreeInternals(OpCreate *op);
 
 OpBase *NewCreateOp
 (
 	const ExecutionPlan *plan,
 	NodeCreateCtx *nodes,
-	EdgeCreateCtx *edges
+	EdgeCreateCtx *edges,
+	const char **named_paths_aliases,
+	const char ***named_paths_elements
 ) {
 	OpCreate *op = rm_calloc(1, sizeof(OpCreate));
 
@@ -50,7 +55,17 @@ OpBase *NewCreateOp
 	}
 
 	// prepare all creation variables
-	NewPendingCreationsContainer(&op->pending, nodes, edges); 
+	NewPendingCreationsContainer(&op->pending, nodes, edges);
+
+	// store named paths information
+	op->named_paths_aliases = named_paths_aliases;
+	op->named_paths_elements = named_paths_elements;
+
+	// register named path aliases so they can be referenced in RETURN clause
+	uint named_paths_count = array_len(named_paths_aliases);
+	for(uint i = 0; i < named_paths_count; i++) {
+		OpBase_Modifies((OpBase *)op, named_paths_aliases[i]);
+	}
 
 	return (OpBase *)op;
 }
@@ -151,6 +166,49 @@ static Record _handoff
 	}
 }
 
+// bind named paths to the record after entities are created
+static void _BindNamedPathsToRecord
+(
+	OpCreate *op,
+	Record r
+) {
+	uint named_paths_count = array_len(op->named_paths_aliases);
+	for(uint i = 0; i < named_paths_count; i++) {
+		const char *path_alias = op->named_paths_aliases[i];
+		const char **elements = op->named_paths_elements[i];
+
+		// get the record index for this path alias
+		int path_idx = OpBase_Modifies((OpBase *)op, path_alias);
+
+		// collect the entities in order for this path
+		uint elem_count = array_len(elements);
+		SIValue path = SIPathBuilder_New(elem_count);
+
+		for(uint j = 0; j < elem_count; j++) {
+			const char *elem_alias = elements[j];
+			// check if this is a node (even index) or edge (odd index)
+			if(j % 2 == 0) {
+				// node
+				Node *node = Record_GetNode(r, OpBase_Modifies((OpBase *)op, elem_alias));
+				if(node != NULL) {
+					SIPathBuilder_AppendNode(path, SI_Node(node));
+				}
+			} else {
+				// edge
+				Edge *edge = Record_GetEdge(r, OpBase_Modifies((OpBase *)op, elem_alias));
+				if(edge != NULL) {
+					SIPathBuilder_AppendEdge(path, SI_Edge(edge), false);
+				}
+			}
+		}
+
+		// set the path in the record (record takes ownership)
+		Record_Add(r, path_idx, path);
+
+		// DO NOT free the path - record takes ownership
+	}
+}
+
 static Record CreateConsume
 (
 	OpBase *opBase
@@ -199,9 +257,17 @@ static Record CreateConsume
 	// create entities
 	CommitNewEntities(&op->pending);
 
+	// bind named paths to record if we have any
+	if(op->records && array_len(op->records) > 0) {
+		uint rec_count = array_len(op->records);
+		for(uint i = 0; i < rec_count; i++) {
+			_BindNamedPathsToRecord(op, op->records[i]);
+		}
+	}
+
 	// no one consumes our output, return NULL
-	if (opBase->parent == NULL) {
-		return NULL ;
+	if(opBase->parent == NULL) {
+		return NULL;
 	}
 
 	// return record
@@ -240,7 +306,22 @@ static OpBase *CreateClone
 		array_append(edges, ctx);
 	}
 
-	return NewCreateOp(plan, nodes, edges);
+	// clone named paths information
+	const char **named_paths_aliases = array_new(const char *, array_len(op->named_paths_aliases));
+	const char ***named_paths_elements = array_new(const char **, array_len(op->named_paths_elements));
+
+	for(uint i = 0; i < array_len(op->named_paths_aliases); i++) {
+		const char *alias = op->named_paths_aliases[i];
+		array_append(named_paths_aliases, alias);
+
+		const char **elements = array_new(const char *, array_len(op->named_paths_elements[i]));
+		for(uint j = 0; j < array_len(op->named_paths_elements[i]); j++) {
+			array_append(elements, op->named_paths_elements[i][j]);
+		}
+		array_append(named_paths_elements, elements);
+	}
+
+	return NewCreateOp(plan, nodes, edges, named_paths_aliases, named_paths_elements);
 }
 
 static void FreeInternals
@@ -263,10 +344,25 @@ static void CreateFree
 (
 	OpBase *ctx
 ) {
-	OpCreate *op = (OpCreate *)ctx ;
+	OpCreate *op = (OpCreate *)ctx;
 
-	FreeInternals (op) ;
+	FreeInternals(op);
 
-	PendingCreationsFree (&op->pending) ;
+	// free named paths information
+	if(op->named_paths_aliases) {
+		array_free(op->named_paths_aliases);
+		op->named_paths_aliases = NULL;
+	}
+
+	if(op->named_paths_elements) {
+		uint named_paths_count = array_len(op->named_paths_elements);
+		for(uint i = 0; i < named_paths_count; i++) {
+			array_free(op->named_paths_elements[i]);
+		}
+		array_free(op->named_paths_elements);
+		op->named_paths_elements = NULL;
+	}
+
+	PendingCreationsFree(&op->pending);
 }
 
