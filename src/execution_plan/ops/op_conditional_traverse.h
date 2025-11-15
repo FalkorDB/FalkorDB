@@ -29,6 +29,14 @@ typedef struct {
 	uint64_t record_cap;         // max number of records to process
 	Record *records;             // array of records
 	Record r;                    // currently selected record
+
+	// optional conditional traversal fields
+	bool optional;               // true if traversal is optional
+	Record *optional_records;    // optional records
+	GrB_Vector w;                // track src node with neighbors
+	GrB_Vector e;                // track src nodes without neighbors
+	GrB_Scalar s;                // GraphBLAS true scalar
+
 } OpCondTraverse;
 
 // creates a new Traverse operation
@@ -37,5 +45,13 @@ OpBase *NewCondTraverseOp
 	const ExecutionPlan *plan,
 	Graph *g,
 	AlgebraicExpression *ae
+);
+
+// make traversal optional
+// OPTIONAL MATCH (a)-[]->(b)
+// `a` will be passed onwards even if it doesn't have any neighbors
+void CondTraverse_MakeOptional
+(
+	OpCondTraverse *op
 );
 

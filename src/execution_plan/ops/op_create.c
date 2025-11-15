@@ -15,8 +15,10 @@
 static Record CreateConsume(OpBase *opBase);
 static Record _handoff(OpCreate *op);
 static void _BindNamedPathsToRecord(OpCreate *op, Record r);
+static OpResult CreateReset(OpBase *opBase);
 static OpBase *CreateClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void CreateFree(OpBase *opBase);
+static void FreeInternals(OpCreate *op);
 
 OpBase *NewCreateOp
 (
@@ -30,7 +32,7 @@ OpBase *NewCreateOp
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_CREATE, "Create", NULL, CreateConsume,
-				NULL, NULL, CreateClone, CreateFree, true, plan);
+				CreateReset, NULL, CreateClone, CreateFree, true, plan);
 
 	uint node_blueprint_count = array_len(nodes);
 	uint edge_blueprint_count = array_len(edges);
@@ -58,6 +60,12 @@ OpBase *NewCreateOp
 	// store named paths information
 	op->named_paths_aliases = named_paths_aliases;
 	op->named_paths_elements = named_paths_elements;
+
+	// register named path aliases so they can be referenced in RETURN clause
+	uint named_paths_count = array_len(named_paths_aliases);
+	for(uint i = 0; i < named_paths_count; i++) {
+		OpBase_Modifies((OpBase *)op, named_paths_aliases[i]);
+	}
 
 	return (OpBase *)op;
 }
@@ -251,12 +259,34 @@ static Record CreateConsume
 
 	// bind named paths to record if we have any
 	if(op->records && array_len(op->records) > 0) {
-		Record last_record = op->records[array_len(op->records) - 1];
-		_BindNamedPathsToRecord(op, last_record);
+		uint rec_count = array_len(op->records);
+		for(uint i = 0; i < rec_count; i++) {
+			_BindNamedPathsToRecord(op, op->records[i]);
+		}
+	}
+
+	// no one consumes our output, return NULL
+	if(opBase->parent == NULL) {
+		return NULL;
 	}
 
 	// return record
 	return _handoff(op);
+}
+
+static OpResult CreateReset
+(
+	OpBase *opBase
+) {
+	OpCreate *op = (OpCreate*) opBase ;
+
+	FreeInternals (op) ;
+	op->rec_idx = 0 ;
+
+	// reset PendingCreations
+	PendingCreations_Reset (&op->pending) ;
+
+	return OP_OK ;
 }
 
 static OpBase *CreateClone
@@ -294,22 +324,29 @@ static OpBase *CreateClone
 	return NewCreateOp(plan, nodes, edges, named_paths_aliases, named_paths_elements);
 }
 
+static void FreeInternals
+(
+	OpCreate *op
+) {
+	if (op->records) {
+		uint rec_count = array_len (op->records) ;
+		// records[0..rec_idx-1] had already been emitted, skip them
+		for (uint i = op->rec_idx; i < rec_count; i++) {
+			OpBase_DeleteRecord (op->records+i) ;
+		}
+
+		array_free (op->records) ;
+		op->records = NULL ;
+	}
+}
+
 static void CreateFree
 (
 	OpBase *ctx
 ) {
 	OpCreate *op = (OpCreate *)ctx;
 
-	if(op->records) {
-		uint rec_count = array_len(op->records);
-		// records[0..op->rec_idx] had already been emitted, skip them
-		for(uint i = op->rec_idx; i < rec_count; i++) {
-			OpBase_DeleteRecord(op->records+i);
-		}
-
-		array_free(op->records);
-		op->records = NULL;
-	}
+	FreeInternals(op);
 
 	// free named paths information
 	if(op->named_paths_aliases) {

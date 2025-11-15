@@ -227,7 +227,7 @@ class testBFS(FlowTestsBase):
                    MATCH (b {v: 'd'})
                    CALL algo.BFS(b, 1, NULL) YIELD nodes as n2
                    RETURN [n IN n1 | n.v] AS x, [n IN n2 | n.v] AS y
-                   ORDER BY x.v"""
+                   ORDER BY x"""
 
         actual_result = self.graph.query(query)
         expected_result = [[['b'], ['e']]]

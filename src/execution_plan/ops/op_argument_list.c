@@ -36,11 +36,14 @@ OpBase *NewArgumentListOp
 void ArgumentList_AddRecordList
 (
 	ArgumentList *op,
-	Record *records
+	Record **records
 ) {
-	ASSERT(op->records == NULL && "insert into a populated ArgumentList");
-	op->records = records;
-	op->rec_len = array_len(op->records);
+	ASSERT (op->records == NULL && "insert into a populated ArgumentList") ;
+
+	// take ownership over the records array
+	op->records = *records ;
+	*records = NULL ;
+	op->rec_len = array_len (op->records) ;
 }
 
 static Record ArgumentListConsume
