@@ -55,7 +55,6 @@ jobs:
   build:
     needs: create-runners
     runs-on: ${{ matrix.platform.machine_label }}
-    container: falkordb/falkordb-build:latest
     services:
       registry:
         image: registry:2
@@ -198,13 +197,23 @@ jobs:
             cache_path: linux-x64
             is_debug: "1"
     steps:
-      - name: Safe dir
-        run: git config --global --add safe.directory '*'
+      - name: Install Git
+        if: ${{ matrix.platform.os == 'rhel' || matrix.platform.os == 'rhel8' }}
+        run: |
+          sudo dnf install -y git
 
       - uses: actions/checkout@v5
         with:
           set-safe-directory: "*"
           submodules: recursive
+
+      # Make sure the working directory is static between runs
+      # and always the same for the CMake cache
+      - name: Relocate source
+        run: |
+          sudo mkdir -p /FalkorDB
+          sudo cp -r $GITHUB_WORKSPACE/. /FalkorDB/
+          sudo chown -R $(whoami) /FalkorDB
 
       - name: Set cache keys
         run: |
@@ -262,13 +271,6 @@ jobs:
           path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/LAGraph
           key: ${{ env.CACHE_KEY_LAGRAPH }}
           enableCrossOsArchive: true
-
-      # Make sure the working directory is static between runs
-      # and always the same for the CMake cache
-      - name: Relocate source
-        run: |
-          mkdir -p /FalkorDB
-          mv $GITHUB_WORKSPACE/* /FalkorDB
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

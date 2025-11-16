@@ -281,11 +281,12 @@ bool CronTask_streamFinishedQueries
 			RedisModule_StreamTrimByLength(key,
 					REDISMODULE_STREAM_TRIM_APPROX, max_query_count);
 
+			// setting telemetry TTL seems to be crashing replicas
 			// set stream TTL
-			if (key_type == REDISMODULE_KEYTYPE_EMPTY) {
-				int res = RedisModule_SetExpire (key, TELEMETRY_STREAM_TTL) ;
-				ASSERT (res == REDISMODULE_OK) ;
-			}
+			//if (key_type == REDISMODULE_KEYTYPE_EMPTY) {
+			//	int res = RedisModule_SetExpire (key, TELEMETRY_STREAM_TTL) ;
+			//	ASSERT (res == REDISMODULE_OK) ;
+			//}
 		} else {
 			// TODO: decide how to handle this...
 		}
