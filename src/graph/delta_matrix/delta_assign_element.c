@@ -3,8 +3,8 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "GraphBLAS.h"
 #include "RG.h"
+#include "GraphBLAS.h"
 #include "delta_utils.h"
 #include "delta_matrix.h"
 
@@ -19,11 +19,13 @@ GrB_Info Delta_Matrix_assign_scalar_##TYPE_SUFFIX                              \
 	GrB_Index j                /* column index                         */      \
 ) {                                                                            \
 	/* validate */                                                             \
-	ASSERT(C != NULL);                                                         \
-	ASSERT(accum != NULL);                                                     \
-	GrB_Type ty = NULL;                                                        \
-	GrB_OK(GxB_Matrix_type(&ty, DELTA_MATRIX_M(C)));                           \
-	ASSERT(ty == GrB_##TYPE_SUFFIX);                                           \
+	ASSERT (C     != NULL) ;                                                   \
+	ASSERT (accum != NULL) ;                                                   \
+                                                                               \
+	GrB_Type ty = NULL ;                                                       \
+	GrB_OK (GxB_Matrix_type (&ty, DELTA_MATRIX_M(C))) ;                        \
+                                                                               \
+	ASSERT (ty == GrB_##TYPE_SUFFIX) ;                                         \
 	Delta_Matrix_checkBounds (C, i, j) ;                                       \
                                                                                \
 	uint64_t v ;                                                               \
@@ -42,11 +44,9 @@ GrB_Info Delta_Matrix_assign_scalar_##TYPE_SUFFIX                              \
 	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS (C) ;                              \
 	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS (C) ;                             \
                                                                                \
-	/*-------------------------------------------------------------------------\
-	// check deleted                                                           \
-	//-----------------------------------------------------------------------*/\
+	/* check deleted */                                                        \
                                                                                \
-	info = GxB_Matrix_isStoredElement(dm, i, j) ;                              \
+	info = GxB_Matrix_isStoredElement (dm, i, j) ;                             \
 	mark_for_deletion = (info == GrB_SUCCESS) ;                                \
                                                                                \
 	if (mark_for_deletion) { /* m contains single edge, simple replace */      \
@@ -57,13 +57,13 @@ GrB_Info Delta_Matrix_assign_scalar_##TYPE_SUFFIX                              \
 		GrB_OK (GrB_Matrix_setElement (m, x, i, j)) ;                          \
 	} else {                                                                   \
 		/* entry isn't marked for deletion                                     \
-		// see if entry already exists in 'm'                                  \
-		// we'll prefer setting entry in 'm' incase it already exists          \
-		// otherwise we'll set the entry in 'delta-plus' */                    \
-		info = GxB_Matrix_isStoredElement(m, i, j) ;                           \
+		   see if entry already exists in 'm'                                  \
+		   we'll prefer setting entry in 'm' incase it already exists          \
+		   otherwise we'll set the entry in 'delta-plus' */                    \
+		info = GxB_Matrix_isStoredElement (m, i, j) ;                          \
 		entry_exists = (info == GrB_SUCCESS) ;                                 \
                                                                                \
-		if(entry_exists) {                                                     \
+		if (entry_exists) {                                                    \
 			/* update entry at m[i,j] */                                       \
 			GrB_OK (GrB_assign (m, NULL, accum, x, &i, 1, &j, 1,               \
 				NULL)) ;                                                       \
@@ -87,3 +87,4 @@ DM_assign_scalar(UINT64, uint64_t)
 
 // uint16 type
 DM_assign_scalar(UINT16, uint16_t)
+
