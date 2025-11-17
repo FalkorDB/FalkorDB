@@ -67,7 +67,7 @@ typedef struct {
 	int record_idx;              // record offset this entity is stored at
 	const char *alias;           // access-safe alias of the entity being updated
 	const char **add_labels;     // labels to add to the node
-	const char **remove_labels;  // labels to add to the node
+	const char **remove_labels;  // labels to remove from the node
 	PropertySetCtx *properties;  // properties to set
 } EntityUpdateEvalCtx;
 

@@ -129,8 +129,6 @@ void EvalEntityUpdates
 	const EntityUpdateEvalCtx *ctx,
 	bool allow_null
 ) {
-	Schema *s = NULL ;
-
 	//--------------------------------------------------------------------------
 	// validate entity type
 	//--------------------------------------------------------------------------
@@ -237,7 +235,6 @@ void EvalEntityUpdates
 	//
 	// collect all updates into a single attribute-set
 
-	QueryCtx *query_ctx = QueryCtx_GetQueryCtx () ;
 	for (uint i = 0; i < exp_count && !error; i++) {
 		PropertySetCtx *property = ctx->properties + i ;
 

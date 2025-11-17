@@ -825,6 +825,11 @@ RSQNode *Index_BuildUniqueConstraintQuery
 	AttributeID *attr_ids,     // constraint attribute ids
 	uint8_t n                  // number of constraint attributes
 ) {
+	ASSERT (n         > 0) ;
+	ASSERT (idx       != NULL) ;
+	ASSERT (attr_vals != NULL) ;
+	ASSERT (attr_ids  != NULL) ;
+
 	RSQNode *node;
 	RSQNode *nodes[n];
 	RSIndex *rsIdx = Index_RSIndex(idx);

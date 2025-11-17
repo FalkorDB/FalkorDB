@@ -11,7 +11,7 @@
 #include "../../util/rmalloc.h"
 #include "../../errors/errors.h"
 
-#define COMPRESS_THRESHOLD 100
+#define COMPRESS_THRESHOLD 50
 
 // check if attribute-set is read-only
 #define ATTRIBUTE_SET_IS_READONLY(set) ((intptr_t)(set) & MSB_MASK)
@@ -130,43 +130,45 @@ static const AttrType_t SIType_to_AttrType[20] = {
 };
 
 // map between AttrType_t to SIType
-static const SIType AttrType_to_SIType[16] = {
-	[ATTR_TYPE_MAP]           = T_MAP,
-	[ATTR_TYPE_ARRAY]         = T_ARRAY,
-	[ATTR_TYPE_DATETIME]      = T_DATETIME,
-	[ATTR_TYPE_LOCALDATETIME] = T_LOCALDATETIME,
-	[ATTR_TYPE_DATE]          = T_DATE,
-	[ATTR_TYPE_TIME]          = T_TIME,
-	[ATTR_TYPE_LOCALTIME]     = T_LOCALTIME,
-	[ATTR_TYPE_DURATION]      = T_DURATION,
-	[ATTR_TYPE_STRING]        = T_STRING,
-	[ATTR_TYPE_BOOL]          = T_BOOL,
-	[ATTR_TYPE_INT64]         = T_INT64,
-	[ATTR_TYPE_DOUBLE]        = T_DOUBLE,
-	[ATTR_TYPE_NULL]          = T_NULL,
-	[ATTR_TYPE_POINT]         = T_POINT,
-	[ATTR_TYPE_VECTOR_F32]    = T_VECTOR_F32,
-	[ATTR_TYPE_INTERN_STRING] = T_INTERN_STRING
+static const SIType AttrType_to_SIType[17] = {
+	[ATTR_TYPE_MAP]               = T_MAP,
+	[ATTR_TYPE_ARRAY]             = T_ARRAY,
+	[ATTR_TYPE_DATETIME]          = T_DATETIME,
+	[ATTR_TYPE_LOCALDATETIME]     = T_LOCALDATETIME,
+	[ATTR_TYPE_DATE]              = T_DATE,
+	[ATTR_TYPE_TIME]              = T_TIME,
+	[ATTR_TYPE_LOCALTIME]         = T_LOCALTIME,
+	[ATTR_TYPE_DURATION]          = T_DURATION,
+	[ATTR_TYPE_STRING]            = T_STRING,
+	[ATTR_TYPE_BOOL]              = T_BOOL,
+	[ATTR_TYPE_INT64]             = T_INT64,
+	[ATTR_TYPE_DOUBLE]            = T_DOUBLE,
+	[ATTR_TYPE_NULL]              = T_NULL,
+	[ATTR_TYPE_POINT]             = T_POINT,
+	[ATTR_TYPE_VECTOR_F32]        = T_VECTOR_F32,
+	[ATTR_TYPE_INTERN_STRING]     = T_INTERN_STRING,
+	[ATTR_TYPE_COMPRESSED_STRING] = T_STRING,
 };
 
 // map between AttrType_t to SIValue allocation type
-static const SIAllocation AttrType_to_Allocation[16] = {
-	[ATTR_TYPE_MAP]           = M_VOLATILE,
-	[ATTR_TYPE_ARRAY]         = M_VOLATILE,
-	[ATTR_TYPE_DATETIME]      = M_NONE,
-	[ATTR_TYPE_LOCALDATETIME] = M_NONE,
-	[ATTR_TYPE_DATE]          = M_NONE,
-	[ATTR_TYPE_TIME]          = M_NONE,
-	[ATTR_TYPE_LOCALTIME]     = M_NONE,
-	[ATTR_TYPE_DURATION]      = M_NONE,
-	[ATTR_TYPE_STRING]        = M_VOLATILE,
-	[ATTR_TYPE_BOOL]          = M_NONE,
-	[ATTR_TYPE_INT64]         = M_NONE,
-	[ATTR_TYPE_DOUBLE]        = M_NONE,
-	[ATTR_TYPE_NULL]          = M_NONE,
-	[ATTR_TYPE_POINT]         = M_NONE,
-	[ATTR_TYPE_VECTOR_F32]    = M_VOLATILE,
-	[ATTR_TYPE_INTERN_STRING] = M_VOLATILE
+static const SIAllocation AttrType_to_Allocation[17] = {
+	[ATTR_TYPE_MAP]               = M_VOLATILE,
+	[ATTR_TYPE_ARRAY]             = M_VOLATILE,
+	[ATTR_TYPE_DATETIME]          = M_NONE,
+	[ATTR_TYPE_LOCALDATETIME]     = M_NONE,
+	[ATTR_TYPE_DATE]              = M_NONE,
+	[ATTR_TYPE_TIME]              = M_NONE,
+	[ATTR_TYPE_LOCALTIME]         = M_NONE,
+	[ATTR_TYPE_DURATION]          = M_NONE,
+	[ATTR_TYPE_STRING]            = M_VOLATILE,
+	[ATTR_TYPE_BOOL]              = M_NONE,
+	[ATTR_TYPE_INT64]             = M_NONE,
+	[ATTR_TYPE_DOUBLE]            = M_NONE,
+	[ATTR_TYPE_NULL]              = M_NONE,
+	[ATTR_TYPE_POINT]             = M_NONE,
+	[ATTR_TYPE_VECTOR_F32]        = M_VOLATILE,
+	[ATTR_TYPE_INTERN_STRING]     = M_VOLATILE,
+	[ATTR_TYPE_COMPRESSED_STRING] = M_VOLATILE
 };
 
 // returns the AttributeID of the ith attribute
@@ -200,15 +202,15 @@ static inline void _AttrValueFromSIValue
 	ASSERT (v    != NULL) ;
 	ASSERT (attr != NULL) ;
 
-    //int bit_idx = __builtin_ctz (v->type);  // right most active bit position
-    int bit_idx = __builtin_clz (v->type);  // left most active bit position
+	// left most active bit position
+    int bit_idx = __builtin_clz (v->type) ;
 	bit_idx = (sizeof (SIType) * 8) - 1 - bit_idx ;
 
 	attr->t = SIType_to_AttrType[bit_idx] ;  // attribute type
 	attr->ptrval = v->ptrval ;               // attribute value
 }
 
-static void _AttrValueFromLongString
+static bool _AttrValueFromLongString
 (
 	AttrValue_t* restrict attr,
 	const char* restrict str
@@ -234,9 +236,18 @@ static void _AttrValueFromLongString
 	// actual required size = header + compressed payload
 	const size_t actual_size = 8 + comp_len ;
 
+	// check if compression ratio isn't that great e.g. less then 20%
+	// store original string
+	if (actual_size >= orig_len * 0.8) {
+		rm_free (buf) ;
+		return false ;
+	}
+
 	// shrink buffer to actual size
-	buf = rm_realloc (buf, actual_size) ;
-	ASSERT(buf != NULL);
+	if (alloc_size > actual_size) {
+		buf = rm_realloc (buf, actual_size) ;
+		ASSERT(buf != NULL);
+	}
 
 	uint32_t *header = (uint32_t*)buf ;
 	header[0] = comp_len ;  // write compressed length
@@ -244,6 +255,8 @@ static void _AttrValueFromLongString
 
 	attr->t      = ATTR_TYPE_COMPRESSED_STRING ;
 	attr->ptrval = buf ;
+
+	return true ;
 }
 
 static char *DecompressLongString
@@ -632,15 +645,16 @@ void AttributeSet_Add
 		SIValue *v = values + i ;
 
 		// compress string if:
-		// 1. the string is not interned
-		// 2. the string is long enough
-		// 3. TODO: compress ratio is good enough
+		// 1. string is not interned
+		// 2. string is long enough
+		// 3. compress ratio is good enough
 		if (SI_TYPE (*v)  & T_STRING   &&
 			!(SI_TYPE (*v) & T_INTERN) &&
 			strnlen (v->stringval, COMPRESS_THRESHOLD) == COMPRESS_THRESHOLD) {
 			// TODO: store compressed string
-			_AttrValueFromLongString (attr, v->stringval) ;
-			continue ;
+			if (_AttrValueFromLongString (attr, v->stringval)) {
+				continue ;
+			}
 		}
 
 		if (clone) {
@@ -781,9 +795,10 @@ XXH64_hash_t AttributeSet_HashCode
 	const AttributeSet set  // attribute-set to compute hash of
 ) {
 	XXH64_state_t *hash = XXH64_createState ();  // create a hash state
+	XXH_errorcode res = XXH64_reset (hash, 0) ;
+	ASSERT (res != XXH_ERROR) ;
 
 	if (set != NULL) {
-		XXH_errorcode res ;
 		uint16_t n = AttributeSet_Count (set) ;
 		res = XXH64_update (hash, &n, sizeof (n)) ;
 		ASSERT(res != XXH_ERROR);
