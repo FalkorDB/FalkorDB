@@ -7,8 +7,11 @@
 
 #include "RG.h"
 #include "attribute_set.h"
+#include "../../util/lz4/lz4.h"
 #include "../../util/rmalloc.h"
 #include "../../errors/errors.h"
+
+#define COMPRESS_THRESHOLD 100
 
 // check if attribute-set is read-only
 #define ATTRIBUTE_SET_IS_READONLY(set) ((intptr_t)(set) & MSB_MASK)
@@ -56,23 +59,24 @@
 
 typedef uint8_t AttrType_t;  // 1 byte attribute type
 typedef enum {
-	ATTR_TYPE_MAP           = 0,
-	ATTR_TYPE_ARRAY         = 1,
-	ATTR_TYPE_DATETIME      = 2,
-	ATTR_TYPE_LOCALDATETIME = 3,
-	ATTR_TYPE_DATE          = 4,
-	ATTR_TYPE_TIME          = 5,
-	ATTR_TYPE_LOCALTIME     = 6,
-	ATTR_TYPE_DURATION      = 7,
-	ATTR_TYPE_STRING        = 8,
-	ATTR_TYPE_BOOL          = 9,
-	ATTR_TYPE_INT64         = 10,
-	ATTR_TYPE_DOUBLE        = 11,
-	ATTR_TYPE_NULL          = 12,
-	ATTR_TYPE_POINT         = 13,
-	ATTR_TYPE_VECTOR_F32    = 14,
-	ATTR_TYPE_INTERN_STRING = 15,
-	ATTR_TYPE_INVALID	    = UINT8_MAX,
+	ATTR_TYPE_MAP               = 0,
+	ATTR_TYPE_ARRAY             = 1,
+	ATTR_TYPE_DATETIME          = 2,
+	ATTR_TYPE_LOCALDATETIME     = 3,
+	ATTR_TYPE_DATE              = 4,
+	ATTR_TYPE_TIME              = 5,
+	ATTR_TYPE_LOCALTIME         = 6,
+	ATTR_TYPE_DURATION          = 7,
+	ATTR_TYPE_STRING            = 8,
+	ATTR_TYPE_BOOL              = 9,
+	ATTR_TYPE_INT64             = 10,
+	ATTR_TYPE_DOUBLE            = 11,
+	ATTR_TYPE_NULL              = 12,
+	ATTR_TYPE_POINT             = 13,
+	ATTR_TYPE_VECTOR_F32        = 14,
+	ATTR_TYPE_INTERN_STRING     = 15,
+	ATTR_TYPE_COMPRESSED_STRING = 16,
+	ATTR_TYPE_INVALID           = UINT8_MAX,
 } _AttrType_t;
 
 //------------------------------------------------------------------------------
@@ -204,6 +208,71 @@ static inline void _AttrValueFromSIValue
 	attr->ptrval = v->ptrval ;               // attribute value
 }
 
+static void _AttrValueFromLongString
+(
+	AttrValue_t* restrict attr,
+	const char* restrict str
+) {
+	ASSERT (str  != NULL) ;
+	ASSERT (attr != NULL) ;
+
+	const size_t orig_len = strlen (str) ;
+	ASSERT (orig_len >= COMPRESS_THRESHOLD) ;
+
+	const int max_comp = LZ4_compressBound (orig_len) ;
+
+	// allocate worst-case buffer + 8-byte header
+	size_t alloc_size = 8 + max_comp ;
+	uint8_t *buf = rm_malloc (alloc_size) ;
+
+	// compress into buf + 8
+	const uint32_t comp_len = LZ4_compress_default ( str, (char *)(buf + 8),
+			orig_len, max_comp) ;
+
+	ASSERT (comp_len > 0) ;
+
+	// actual required size = header + compressed payload
+	const size_t actual_size = 8 + comp_len ;
+
+	// shrink buffer to actual size
+	buf = rm_realloc (buf, actual_size) ;
+	ASSERT(buf != NULL);
+
+	uint32_t *header = (uint32_t*)buf ;
+	header[0] = comp_len ;  // write compressed length
+	header[1] = orig_len ;  // write original length
+
+	attr->t      = ATTR_TYPE_COMPRESSED_STRING ;
+	attr->ptrval = buf ;
+}
+
+static char *DecompressLongString
+(
+	const AttrValue_t *attr
+) {
+    ASSERT (attr         != NULL) ;
+    ASSERT (attr->t      == ATTR_TYPE_COMPRESSED_STRING) ;
+    ASSERT (attr->ptrval != NULL) ;
+
+    const uint8_t  *buf    = (const uint8_t *) attr->ptrval ;
+	const uint32_t *header = (const uint32_t*) buf ;
+
+    uint32_t comp_len = header[0] ;  // read compressed size
+    uint32_t orig_len = header[1] ;  // read original size
+
+    const char *comp_data = (const char *) (buf + 8) ;
+
+    // allocate output string (+1 for NULL terminator)
+    char *out = rm_malloc (orig_len + 1) ;
+    int decompressed = LZ4_decompress_safe (comp_data, out, comp_len, orig_len) ;
+
+	ASSERT (decompressed == orig_len) ;
+	ASSERT (decompressed > COMPRESS_THRESHOLD) ;
+
+    out[orig_len] = '\0';  // safe—it’s a real C string now
+    return out;
+}
+
 // converts AttrValue_t to SIValue
 static inline void _AttrValueToSIValue
 (
@@ -215,6 +284,15 @@ static inline void _AttrValueToSIValue
 
 	// get attribute type
 	AttrType_t t = AttrValue_Type (attr) ;
+
+	if (unlikely (t == ATTR_TYPE_COMPRESSED_STRING)) {
+		// decompress string
+		v->ptrval     = DecompressLongString (attr) ;  // set value
+		v->type       = T_STRING ;                     // set type
+		v->allocation = M_SELF ;                       // set allocation type
+
+		return ;
+	}
 
 	// construct SIValue
 	v->ptrval     = attr->ptrval ;                // set value
@@ -551,11 +629,25 @@ void AttributeSet_Add
 
 	for (uint16_t i = 0; i < n; i++) {
 		AttrValue_t *attr = set_vals + i ;
+		SIValue *v = values + i ;
+
+		// compress string if:
+		// 1. the string is not interned
+		// 2. the string is long enough
+		// 3. TODO: compress ratio is good enough
+		if (SI_TYPE (*v)  & T_STRING   &&
+			!(SI_TYPE (*v) & T_INTERN) &&
+			strnlen (v->stringval, COMPRESS_THRESHOLD) == COMPRESS_THRESHOLD) {
+			// TODO: store compressed string
+			_AttrValueFromLongString (attr, v->stringval) ;
+			continue ;
+		}
+
 		if (clone) {
-			SIValue v = SI_CloneValue (values[i]) ;
-			_AttrValueFromSIValue (attr, &v) ;
+			SIValue v_clone = SI_CloneValue (*v) ;
+			_AttrValueFromSIValue (attr, &v_clone) ;
 		} else {
-			_AttrValueFromSIValue (attr, values + i) ;
+			_AttrValueFromSIValue (attr, v) ;
 		}
 	}
 }
