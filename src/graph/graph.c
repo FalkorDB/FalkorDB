@@ -776,11 +776,12 @@ void Graph_CreateNodes
 		for (uint j = 0; j < label_count; j++) {
 			// set matrix at position [id, id]
 			Delta_Matrix L = lbl_matrices[j] ;
-			GrB_OK (Delta_Matrix_setElement_BOOL (L, n->id, n->id)) ;
+			GrB_OK (Delta_Matrix_setElement_BOOL (L, true, n->id, n->id)) ;
 
 			// map this label in this node's set of labels
 			LabelID l = labels[j] ;
-			GrB_OK (Delta_Matrix_setElement_BOOL (node_label_matrix, n->id, l)) ;
+			GrB_OK (Delta_Matrix_setElement_BOOL (
+				node_label_matrix, true, n->id, l)) ;
 		}
 	}
 
@@ -814,11 +815,11 @@ void Graph_LabelNode
 		Delta_Matrix L = Graph_GetLabelMatrix(g, l);
 
 		// set matrix at position [id, id]
-		info = Delta_Matrix_setElement_BOOL(L, id, id);
+		info = Delta_Matrix_setElement_BOOL(L, true, id, id);
 		ASSERT(info == GrB_SUCCESS);
 
 		// map this label in this node's set of labels
-		info = Delta_Matrix_setElement_BOOL(nl, id, l);
+		info = Delta_Matrix_setElement_BOOL(nl, true, id, l);
 		ASSERT(info == GrB_SUCCESS);
 
 		// update labels statistics

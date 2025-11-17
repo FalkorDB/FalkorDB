@@ -7,9 +7,21 @@
 #include "RG.h"
 #include "delta_utils.h"
 #include "delta_matrix.h"
-#include "../../util/arr.h"
 
-#define DM_setElement                                                          \
+#define DM_setElement(TYPE_SUFFIX, CTYPE)                                      \
+GrB_Info Delta_Matrix_setElement_##TYPE_SUFFIX                                 \
+(                                                                              \
+    Delta_Matrix C,  /* matrix to modify           */                          \
+    CTYPE x,         /* scalar to assign to C(i,j) */                          \
+    GrB_Index i,     /* row index                  */                          \
+    GrB_Index j      /* column index               */                          \
+) {                                                                            \
+	/* validate */                                                             \
+	ASSERT(C);                                                                 \
+	GrB_Type ty = NULL;                                                        \
+	GrB_OK(GxB_Matrix_type(&ty, DELTA_MATRIX_M(C)));                           \
+	ASSERT(ty == GrB_##TYPE_SUFFIX);                                           \
+                                                                               \
 	Delta_Matrix_checkBounds(C, i, j);                                         \
                                                                                \
 	GrB_Info info;                                                             \
@@ -17,7 +29,7 @@
 	bool mark_for_deletion = false;  /*  dm[i,j] exists */                     \
                                                                                \
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {                                   \
-		info =  Delta_Matrix_setElement_BOOL(C->transposed, j, i);             \
+		info =  Delta_Matrix_setElement_BOOL(C->transposed, true, j, i);       \
 		if(info != GrB_SUCCESS) {                                              \
 			return info;                                                       \
 		}                                                                      \
@@ -58,46 +70,14 @@
 	}                                                                          \
                                                                                \
 	Delta_Matrix_setDirty(C);                                                  \
-	return info;
-
-// C (i,j) = x
-GrB_Info Delta_Matrix_setElement_UINT64
-(
-    Delta_Matrix C,  // matrix to modify
-    uint64_t x,      // scalar to assign to C(i,j)
-    GrB_Index i,     // row index
-    GrB_Index j      // column index
-) {
-	// validate
-	ASSERT(C);
-	GrB_Type ty = NULL;
-	GrB_OK(GxB_Matrix_type(&ty, DELTA_MATRIX_M(C)));
-	ASSERT(ty == GrB_UINT64);
-
-	// This macro contains the full function definition which does not change
-	// with the type. This is because the GraphBLAS generic macro will chose the
-	// right function given the C type of x.
-	DM_setElement
+	return info;                                                               \
 }
 
-// C (i,j) = x
-GrB_Info Delta_Matrix_setElement_UINT16
-(
-    Delta_Matrix C,  // matrix to modify
-    uint16_t x,      // scalar to assign to C(i,j)
-    GrB_Index i,     // row index
-    GrB_Index j      // column index
-) {
-	// validate
-	ASSERT(C);
-	GrB_Type ty = NULL;
-	GrB_OK(GxB_Matrix_type(&ty, DELTA_MATRIX_M(C)));
-	ASSERT(ty == GrB_UINT16);
+//------------------------------------------------------------------------------
+// Function definitions (contained entirely within the following macros)
+//------------------------------------------------------------------------------
 
-	// This macro contains the full function definition which does not change
-	// with the type. This is because the GraphBLAS generic macro will chose the
-	// right function given the C type of x.
-	DM_setElement
-}
-
+DM_setElement(BOOL, bool)
+DM_setElement(UINT64, uint64_t)
+DM_setElement(UINT16, uint16_t)
 

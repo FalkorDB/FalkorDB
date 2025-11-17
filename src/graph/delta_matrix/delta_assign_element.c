@@ -8,7 +8,22 @@
 #include "delta_utils.h"
 #include "delta_matrix.h"
 
-#define DM_assign_scalar                                                       \
+// C (i,j) = accum(C(i,j), x)
+#define DM_assign_scalar(TYPE_SUFFIX, CTYPE)                                   \
+GrB_Info Delta_Matrix_assign_scalar_##TYPE_SUFFIX                              \
+(                                                                              \
+	Delta_Matrix C,            /* input/output matrix for results      */      \
+	const GrB_BinaryOp accum,  /* optional accum for Z=accum(C(I,J),x) */      \
+	CTYPE x,                   /* scalar to assign to C(i,j)           */      \
+	GrB_Index i,               /* row index                            */      \
+	GrB_Index j                /* column index                         */      \
+) {                                                                            \
+	/* validate */                                                             \
+	ASSERT(C != NULL);                                                         \
+	ASSERT(accum != NULL);                                                     \
+	GrB_Type ty = NULL;                                                        \
+	GrB_OK(GxB_Matrix_type(&ty, DELTA_MATRIX_M(C)));                           \
+	ASSERT(ty == GrB_##TYPE_SUFFIX);                                           \
 	Delta_Matrix_checkBounds (C, i, j) ;                                       \
                                                                                \
 	uint64_t v ;                                                               \
@@ -17,7 +32,7 @@
 	bool     mark_for_deletion = false ;  /* dm[i,j] exists */                 \
                                                                                \
 	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE (C)) {                                 \
-		info = Delta_Matrix_setElement_BOOL (C->transposed, j, i) ;            \
+		info = Delta_Matrix_setElement_BOOL (C->transposed, true, j, i) ;      \
 		if (info != GrB_SUCCESS) {                                             \
 			return info ;                                                      \
 		}                                                                      \
@@ -61,45 +76,14 @@
                                                                                \
 	Delta_Matrix_setDirty (C) ;                                                \
 	return GrB_SUCCESS ;                                                       \
-
-// C (i,j) = accum(C(i,j), x)
-GrB_Info Delta_Matrix_assign_scalar_UINT64
-(
-    Delta_Matrix C,            // input/output matrix for results
-    const GrB_BinaryOp accum,  // optional accum for Z=accum(C(I,J),x)
-	uint64_t x,                // scalar to assign to C(i,j)
-	GrB_Index i,               // row index
-	GrB_Index j                // column index
-) {
-	// validate
-	ASSERT(C != NULL);
-	GrB_Type ty = NULL;
-	GrB_OK(GxB_Matrix_type(&ty, DELTA_MATRIX_M(C)));
-	ASSERT(ty == GrB_UINT64);
-
-	// This macro contains the full function definition which does not change
-	// with the type. This is because the GraphBLAS generic macro will chose the
-	// right function given the C type of x.
-	DM_assign_scalar
 }
 
-// C (i,j) = accum(C(i,j), x)
-GrB_Info Delta_Matrix_assign_scalar_UINT16
-(
-    Delta_Matrix C,            // input/output matrix for results
-    const GrB_BinaryOp accum,  // optional accum for Z=accum(C(I,J),x)
-	uint16_t x,                // scalar to assign to C(i,j)
-	GrB_Index i,               // row index
-	GrB_Index j                // column index
-) {
-	// validate
-	ASSERT(C != NULL);
-	GrB_Type ty = NULL;
-	GrB_OK(GxB_Matrix_type(&ty, DELTA_MATRIX_M(C)));
-	ASSERT(ty == GrB_UINT16);
+//------------------------------------------------------------------------------
+// Function definitions (contained entirely within the following macros)
+//------------------------------------------------------------------------------
 
-	// This macro contains the full function definition which does not change
-	// with the type. This is because the GraphBLAS generic macro will chose the
-	// right function given the C type of x.
-	DM_assign_scalar
-}
+// uint64 type
+DM_assign_scalar(UINT64, uint64_t)
+
+// uint16 type
+DM_assign_scalar(UINT16, uint16_t)

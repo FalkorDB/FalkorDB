@@ -276,8 +276,8 @@ GrB_Info Delta_MatrixTupleIter_next_UINT64
 ) {
 	if(IS_DETACHED(iter)) return GrB_NULL_POINTER ;
 
-	GrB_Info      info   =  GrB_SUCCESS                    ;
-	GxB_Iterator  dp_it  =  &iter->dp_it                    ;
+	GrB_Info      info   =  GrB_SUCCESS ;
+	GxB_Iterator  dp_it  =  &iter->dp_it ;
 
 	if(!iter->m_depleted) {
 		info = _next_m_iter_uint64(iter, row, col, val, &iter->m_depleted) ;

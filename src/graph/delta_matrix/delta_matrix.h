@@ -193,17 +193,18 @@ GrB_Info Delta_Matrix_resize  // change the size of a matrix
 GrB_Info Delta_Matrix_setElement_BOOL   // C (i,j) = x
 (
 	Delta_Matrix C,                     // matrix to modify
+	bool x,                             // scalar to assign to C(i,j)
 	GrB_Index i,                        // row index
 	GrB_Index j                         // column index
 );
 
 // C (i,j) = x
-GrB_Info Delta_Matrix_setElement_UINT16
+GrB_Info Delta_Matrix_setElement_UINT16   // C (i,j) = x
 (
-    Delta_Matrix C,  // matrix to modify
-    uint16_t x,      // scalar to assign to C(i,j)
-    GrB_Index i,     // row index
-    GrB_Index j      // column index
+	Delta_Matrix C,                       // matrix to modify
+	uint16_t x,                           // scalar to assign to C(i,j)
+	GrB_Index i,                          // row index
+	GrB_Index j                           // column index
 );
 
 GrB_Info Delta_Matrix_setElement_UINT64  // C (i,j) = x
@@ -213,6 +214,13 @@ GrB_Info Delta_Matrix_setElement_UINT64  // C (i,j) = x
 	GrB_Index i,                         // row index
 	GrB_Index j                          // column index
 );
+
+#define Delta_Matrix_setElement(C, x, i, j)            \
+	_Generic((x),                                      \
+		bool:     Delta_Matrix_assign_scalar_BOOL,     \
+		uint16_t: Delta_Matrix_assign_scalar_UINT16,   \
+		uint64_t: Delta_Matrix_assign_scalar_UINT64    \
+	)(C, x, i, j)
 
 // C (i,j) = accum(C(i,j), x)
 GrB_Info Delta_Matrix_assign_scalar_UINT16
@@ -234,6 +242,12 @@ GrB_Info Delta_Matrix_assign_scalar_UINT64
 	GrB_Index j                // column index
 );
 
+#define Delta_Matrix_assign_scalar(C, accum, x, i, j)  \
+	_Generic((x),                                      \
+		uint16_t: Delta_Matrix_assign_scalar_UINT16,   \
+		uint64_t: Delta_Matrix_assign_scalar_UINT64    \
+	)(C, accum, x, i, j)
+
 GrB_Info Delta_Matrix_extractElement_UINT16  // x = A(i,j)
 (
 	uint16_t *x,                             // extracted scalar
@@ -249,6 +263,12 @@ GrB_Info Delta_Matrix_extractElement_UINT64  // x = A(i,j)
 	GrB_Index i,                             // row index
 	GrB_Index j                              // column index
 ) ;
+
+#define Delta_Matrix_extractElement(C, x, i, j)        \
+	_Generic((x),                                      \
+		uint16_t: Delta_Matrix_setElement_UINT16,      \
+		uint64_t: Delta_Matrix_setElement_UINT64       \
+	)(C, x, i, j)
 
 // check if element A(i,j) is stored in the delta matrix
 GrB_Info Delta_Matrix_isStoredElement
@@ -369,17 +389,3 @@ void Delta_Matrix_free
 	Delta_Matrix *C
 );
 
-// -----------------------------------------------------------------------------
-// Generic declorations
-// -----------------------------------------------------------------------------
-#define Delta_Matrix_extractElement(C, accum, x, i, j) \
-	_Generic((x),                                      \
-		uint16_t: Delta_Matrix_setElement_UINT16,      \
-		uint64_t: Delta_Matrix_setElement_UINT64       \
-	)(C, accum, x, i, j)
-
-#define Delta_Matrix_assign_scalar(C, accum, x, i, j) \
-	_Generic((x),                                     \
-		uint16_t: Delta_Matrix_assign_scalar_UINT16,  \
-		uint64_t: Delta_Matrix_assign_scalar_UINT64   \
-	)(C, accum, x, i, j)
