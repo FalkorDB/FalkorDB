@@ -5,13 +5,9 @@
 
 #include "RG.h"
 #include "graph.h"
-#include "GraphBLAS.h"
 #include "../util/arr.h"
 #include "tensor/tensor.h"
 #include "delta_matrix/delta_matrix_iter.h"
-#include "graph/delta_matrix/delta_matrix.h"
-
-#include <stdint.h>
 
 // qsort compare function
 // compare edges by relationship-type, src ID and dest ID
