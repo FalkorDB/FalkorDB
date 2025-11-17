@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Spellcheck
-        uses: rojopolis/spellcheck-github-actions@0.53.0
+        uses: rojopolis/spellcheck-github-actions@0.54.0
         with:
           config_path: .github/spellcheck-settings.yml
           task_name: Markdown
