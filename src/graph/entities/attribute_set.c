@@ -1,7 +1,6 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #include <limits.h>
@@ -11,180 +10,505 @@
 #include "../../util/rmalloc.h"
 #include "../../errors/errors.h"
 
-// compute size of attribute set in bytes
-#define ATTRIBUTESET_BYTE_SIZE(set) ((set) == NULL ? \
-		sizeof(_AttributeSet) :                      \
-		sizeof(_AttributeSet) + sizeof(Attribute) * (set)->attr_count)
+// check if attribute-set is read-only
+#define ATTRIBUTE_SET_IS_READONLY(set) ((intptr_t)(set) & MSB_MASK)
 
-// mark attribute-set as mutable
-#define ATTRIBUTE_SET_CLEAR_MSB(set) (CLEAR_MSB((intptr_t)set))
+// returns true if attribute_id is valid
+#define VALID_ATTRIBUTE_ID(attr_id)                   \
+	((attr_id) != ATTRIBUTE_ID_NONE && (attr_id) != ATTRIBUTE_ID_ALL)
 
-// returned value for a missing attribute
-SIValue *ATTRIBUTE_NOTFOUND = &(SIValue) {
-	.longval = 0, .type = T_NULL
+// compute size in bytes of attribute set in bytes
+// attribute-set size =
+//    sizeof(AttributeSet) +
+//    number of attributes * (sizeof(AttributeID) + sizeof(AttrValue_t))
+#define ATTRIBUTESET_BYTE_SIZE(set) ((set) == NULL ?  \
+		sizeof (_AttributeSet) :                      \
+		sizeof (_AttributeSet) +                      \
+		(sizeof (AttributeID)  + sizeof (AttrValue_t)) * (set)->attr_count)
+
+// pointer to the begining of the attribute-set attribute ids
+#define ATTRIBUTE_SET_IDS(set)                        \
+			(AttributeID*)((set)->attributes)
+
+// pointer to the begining of the attribute-set values
+#define ATTRIBUTE_SET_VALS(set)                       \
+			(AttrValue_t*)((set)->attributes +        \
+					(sizeof(AttributeID) * (set)->attr_count))
+
+//------------------------------------------------------------------------------
+// attribute type
+//------------------------------------------------------------------------------
+
+#define ATTRTYPE_FLAG  0x80  // 1000 0000
+#define ATTRTYPE_MASK  0x7F  // 0111 1111 (mask to extract base type)
+
+// returns true if the value is marked as shared
+#define AttrValue_Shared(v)      (((v)->t & ATTRTYPE_FLAG) != 0)
+
+// mark the value as shared
+#define AttrValue_SetShared(v)   ((v)->t |= ATTRTYPE_FLAG)
+
+// clear the shared mark
+#define AttrValue_ClearShared(v) ((v)->t &= ATTRTYPE_MASK)
+
+// return the base type (without shared flag)
+#define AttrValue_Type(v)        ((v)->t & ATTRTYPE_MASK)
+
+typedef uint8_t AttrType_t;  // 1 byte attribute type
+typedef enum {
+	ATTR_TYPE_MAP           = 0,
+	ATTR_TYPE_ARRAY         = 1,
+	ATTR_TYPE_DATETIME      = 2,
+	ATTR_TYPE_LOCALDATETIME = 3,
+	ATTR_TYPE_DATE          = 4,
+	ATTR_TYPE_TIME          = 5,
+	ATTR_TYPE_LOCALTIME     = 6,
+	ATTR_TYPE_DURATION      = 7,
+	ATTR_TYPE_STRING        = 8,
+	ATTR_TYPE_BOOL          = 9,
+	ATTR_TYPE_INT64         = 10,
+	ATTR_TYPE_DOUBLE        = 11,
+	ATTR_TYPE_NULL          = 12,
+	ATTR_TYPE_POINT         = 13,
+	ATTR_TYPE_VECTOR_F32    = 14,
+	ATTR_TYPE_INTERN_STRING = 15,
+	ATTR_TYPE_INVALID	    = UINT8_MAX,
+} _AttrType_t;
+
+//------------------------------------------------------------------------------
+// attribute value
+//------------------------------------------------------------------------------
+
+#pragma pack(push, 1)
+typedef struct {
+	union {
+		Point point;         // point value
+		void *ptrval;        // pointer value (string, map, array)
+		int64_t longval;     // integer value
+		time_t datetimeval;  // datetime value
+		double doubleval;    // floating point value
+	} ;
+	AttrType_t t;            // attribute type
+} AttrValue_t ;
+#pragma pack(pop)
+
+//------------------------------------------------------------------------------
+// attribute-set
+//------------------------------------------------------------------------------
+
+struct _AttributeSet {
+	uint16_t attr_count;         // number of attributes
+	unsigned char attributes[];  // AttributeID * n, AttrValue_t * n
+} ;
+
+// map between SIValue type to Attribute type
+static const AttrType_t SIType_to_AttrType[20] = {
+	ATTR_TYPE_MAP,            // T_MAP           -> MAP
+	ATTR_TYPE_INVALID,        // T_NODE          -> INVALID
+	ATTR_TYPE_INVALID,        // T_EDGE          -> INVALID
+	ATTR_TYPE_ARRAY,          // T_ARRAY         -> ARRAY
+	ATTR_TYPE_INVALID,        // T_PATH          -> INVALID
+	ATTR_TYPE_DATETIME,       // T_DATETIME      -> DATETIME
+	ATTR_TYPE_LOCALDATETIME,  // T_LOCALDATETIME -> LOCALDATETIME
+	ATTR_TYPE_DATE,           // T_DATE          -> DATE
+	ATTR_TYPE_TIME,           // T_TIME          -> TIME
+	ATTR_TYPE_LOCALTIME,      // T_LOCALTIME     -> LOCALTIME
+	ATTR_TYPE_DURATION,       // T_DURATION      -> DURATION
+	ATTR_TYPE_STRING,         // T_STRING        -> STRING
+	ATTR_TYPE_BOOL,           // T_BOOL          -> BOOL
+	ATTR_TYPE_INT64,          // T_INT64         -> INT64
+	ATTR_TYPE_DOUBLE,         // T_DOUBLE        -> DOBULE
+	ATTR_TYPE_NULL,           // T_NULL          -> NULL
+	ATTR_TYPE_INVALID,        // T_PTR           -> INVALID
+	ATTR_TYPE_POINT,          // T_POINT         -> POINT
+	ATTR_TYPE_VECTOR_F32,     // T_VECTOR_F32    -> VECF32
+	ATTR_TYPE_INTERN_STRING   // T_INTERN_STRING -> INTERN_STRING
 };
 
-// removes an attribute from set
-// returns true if attribute was removed false otherwise
-static bool _AttributeSet_Remove
+// map between AttrType_t to SIType
+static const SIType AttrType_to_SIType[16] = {
+	[ATTR_TYPE_MAP]           = T_MAP,
+	[ATTR_TYPE_ARRAY]         = T_ARRAY,
+	[ATTR_TYPE_DATETIME]      = T_DATETIME,
+	[ATTR_TYPE_LOCALDATETIME] = T_LOCALDATETIME,
+	[ATTR_TYPE_DATE]          = T_DATE,
+	[ATTR_TYPE_TIME]          = T_TIME,
+	[ATTR_TYPE_LOCALTIME]     = T_LOCALTIME,
+	[ATTR_TYPE_DURATION]      = T_DURATION,
+	[ATTR_TYPE_STRING]        = T_STRING,
+	[ATTR_TYPE_BOOL]          = T_BOOL,
+	[ATTR_TYPE_INT64]         = T_INT64,
+	[ATTR_TYPE_DOUBLE]        = T_DOUBLE,
+	[ATTR_TYPE_NULL]          = T_NULL,
+	[ATTR_TYPE_POINT]         = T_POINT,
+	[ATTR_TYPE_VECTOR_F32]    = T_VECTOR_F32,
+	[ATTR_TYPE_INTERN_STRING] = T_INTERN_STRING
+};
+
+// map between AttrType_t to SIValue allocation type
+static const SIAllocation AttrType_to_Allocation[16] = {
+	[ATTR_TYPE_MAP]           = M_VOLATILE,
+	[ATTR_TYPE_ARRAY]         = M_VOLATILE,
+	[ATTR_TYPE_DATETIME]      = M_NONE,
+	[ATTR_TYPE_LOCALDATETIME] = M_NONE,
+	[ATTR_TYPE_DATE]          = M_NONE,
+	[ATTR_TYPE_TIME]          = M_NONE,
+	[ATTR_TYPE_LOCALTIME]     = M_NONE,
+	[ATTR_TYPE_DURATION]      = M_NONE,
+	[ATTR_TYPE_STRING]        = M_VOLATILE,
+	[ATTR_TYPE_BOOL]          = M_NONE,
+	[ATTR_TYPE_INT64]         = M_NONE,
+	[ATTR_TYPE_DOUBLE]        = M_NONE,
+	[ATTR_TYPE_NULL]          = M_NONE,
+	[ATTR_TYPE_POINT]         = M_NONE,
+	[ATTR_TYPE_VECTOR_F32]    = M_VOLATILE,
+	[ATTR_TYPE_INTERN_STRING] = M_VOLATILE
+};
+
+// returns the AttributeID of the ith attribute
+static inline AttributeID _GetAttrID
 (
-	AttributeSet *set,
-	AttributeID attr_id
+	const AttributeSet set,  // attribute-set
+	uint16_t i               // attribute index
 ) {
-	AttributeSet _set = *set;
-	const uint16_t attr_count = _set->attr_count;
+	ASSERT (i < AttributeSet_Count (set)) ;
 
-	// attribute-set can't be read-only
-	ASSERT(ATTRIBUTE_SET_IS_READONLY(_set) == false);
+	return (ATTRIBUTE_SET_IDS (set))[i] ;
+}
 
-	// locate attribute position
-	for (uint16_t i = 0; i < attr_count; ++i) {
-		if(attr_id != _set->attributes[i].id) {
-			continue;
-		}
+// returns the value of the ith attribute
+static inline AttrValue_t *_GetAttrVal
+(
+	const AttributeSet set,  // attribute-set
+	uint16_t i               // attribute index
+) {
+	ASSERT (i < AttributeSet_Count (set)) ;
 
-		// if this is the last attribute free the attribute-set
-		if(_set->attr_count == 1) {
-			AttributeSet_Free(set);
-			return true;
-		}
+	return ATTRIBUTE_SET_VALS (set) + i ;
+}
 
-		// attribute located
-		// free attribute value
-		SIValue_Free(_set->attributes[i].value);
+// convert SIValue to AttrValue_t
+static inline void _AttrValueFromSIValue
+(
+	AttrValue_t* restrict attr,  // [output] attribute to set
+	SIValue* restrict v          // value to convert
+) {
+	ASSERT (v    != NULL) ;
+	ASSERT (attr != NULL) ;
 
-		// overwrite deleted attribute with the last
-		// attribute and shrink set
-		_set->attributes[i] = _set->attributes[attr_count - 1];
+    //int bit_idx = __builtin_ctz (v->type);  // right most active bit position
+    int bit_idx = __builtin_clz (v->type);  // left most active bit position
+	bit_idx = (sizeof (SIType) * 8) - 1 - bit_idx ;
 
-		// update attribute count
-		_set->attr_count--;
+	attr->t = SIType_to_AttrType[bit_idx] ;  // attribute type
+	attr->ptrval = v->ptrval ;               // attribute value
+}
 
-		// compute new set size
-		size_t n = ATTRIBUTESET_BYTE_SIZE(_set);
-		*set = rm_realloc(_set, n);
+// converts AttrValue_t to SIValue
+static inline void _AttrValueToSIValue
+(
+	SIValue* restrict v,              // [output] SIValue
+	const AttrValue_t* restrict attr  // attribute to convert
+) {
+	ASSERT (v    != NULL) ;
+	ASSERT (attr != NULL) ;
 
-		// attribute removed
-		return true;
+	// get attribute type
+	AttrType_t t = AttrValue_Type (attr) ;
+
+	// construct SIValue
+	v->ptrval     = attr->ptrval ;                // set value
+	v->type       = AttrType_to_SIType     [t] ;  // set type
+	v->allocation = AttrType_to_Allocation [t] ;  // set allocation type
+}
+
+// free AttrValue_t
+static void _AttrValue_Free
+(
+	AttrValue_t **attr  // attribute to free
+) {
+	ASSERT (attr != NULL && *attr != NULL) ;
+
+	AttrValue_t *_attr = *attr ;
+
+	// do not free shared attribute
+	if (unlikely (AttrValue_Shared (_attr))) {
+		*attr = NULL ;
+		return ;
 	}
 
-	// unable to locate attribute
-	return false;
+	switch (AttrValue_Type (_attr)) {
+		// direct free
+		case ATTR_TYPE_STRING:
+		case ATTR_TYPE_VECTOR_F32:
+			rm_free (_attr->ptrval) ;
+			break ;
+
+		// indirect free via SIValue_Free
+		case ATTR_TYPE_MAP:
+		case ATTR_TYPE_ARRAY:
+		case ATTR_TYPE_INTERN_STRING:
+			{
+				SIValue v ;
+				_AttrValueToSIValue (&v, _attr) ;
+				v.allocation = M_SELF ;
+				SIValue_Free (v) ;
+				break ;
+			}
+
+		// nothing to free
+		default:
+			break ;
+	}
+
+	*attr = NULL ;
+}
+
+// expand attribute-set by n attributes
+static AttributeSet AttributeSet_Accommodate
+(
+	AttributeSet *set,  // attribute-set to expand
+	uint16_t n          // number of attributes to add
+) {
+	ASSERT (set != NULL) ;
+
+	AttributeSet _set = *set ;
+
+	// assert overflow
+	ASSERT (AttributeSet_Count (_set) <= UINT16_MAX - n) ;
+
+	// allocate room for new attribute
+	if (_set == NULL) {
+		_set = rm_calloc (1, sizeof(_AttributeSet) +
+				n * (sizeof (AttributeID) + sizeof (AttrValue_t))) ;
+		_set->attr_count = n ;
+	} else {
+		uint16_t prev_n = _set->attr_count ;
+		_set->attr_count += n ;
+		_set = rm_realloc (_set, ATTRIBUTESET_BYTE_SIZE (_set)) ;
+
+		// shift values to the right
+		void *dst = ATTRIBUTE_SET_VALS (_set) ;
+		void *src = _set->attributes + (prev_n * sizeof (AttributeID)) ;
+		memmove (dst, src, sizeof (AttrValue_t) * prev_n) ;
+	}
+
+	*set = _set ;
+	return _set ;
+}
+
+// removes the ith attribute from the attribute-set
+static void AttributeSet_RemoveIdx
+(
+	AttributeSet *set,  // attribute-set
+	uint16_t i          // attribute index
+) {
+	ASSERT (set != NULL) ;
+	ASSERT (i < AttributeSet_Count(*set)) ;
+
+	AttributeSet _set = *set ;
+
+	// if this is the last attribute, free the attribute-set
+	const uint16_t n = _set->attr_count ;
+	if (n == 1) {
+		AttributeSet_Free (set) ;
+		return ;
+	}
+
+	// free attribute
+	AttrValue_t *attrs = ATTRIBUTE_SET_VALS (_set) ;
+	AttrValue_t *attr = attrs + i ;
+	_AttrValue_Free (&attr) ;
+
+	//--------------------------------------------------------------------------
+	// shrink attribute-set
+	//--------------------------------------------------------------------------
+
+	AttributeID *ids = ATTRIBUTE_SET_IDS(_set) ;
+
+	// overwrite deleted attribute with last attribute
+	ids[i]   = ids[n-1]   ;
+	attrs[i] = attrs[n-1] ;
+
+	_set->attr_count-- ;  // update attribute count
+
+	// shrink
+	memmove (&ids[n-1], attrs, sizeof (AttrValue_t) * (_set->attr_count)) ;
+	*set = rm_realloc (_set, ATTRIBUTESET_BYTE_SIZE (_set)) ;
+}
+
+// replace the ith attribute with value
+static bool AttributeSet_Replace
+(
+	AttributeSet set,  // attribute-set
+	uint16_t i,        // attribute index
+	SIValue *value,    // new value
+	bool clone         // clone value
+) {
+	ASSERT (set   != NULL) ;
+	ASSERT (value != NULL) ;
+	ASSERT (i     < AttributeSet_Count (set)) ;
+
+	SIValue current ;
+	AttributeID attr_id ;
+	AttributeSet_GetIdx (set, i, &attr_id, &current) ;
+
+	// compare current value to new value, only update if current != new
+	if (unlikely (SIValue_Compare (current, *value, NULL) == 0)) {
+		return false ;
+	}
+
+	// value != current, update entity
+	AttrValue_t *attr = ATTRIBUTE_SET_VALS (set) + i ;
+	_AttrValue_Free (&attr) ;
+
+	attr = ATTRIBUTE_SET_VALS (set) + i ;
+
+	if (clone) {
+		SIValue v = SI_CloneValue (*value) ;
+		_AttrValueFromSIValue (attr, &v) ;
+	} else {
+		ASSERT (SI_ALLOCATION (value) != M_VOLATILE) ;
+		_AttrValueFromSIValue (attr, value) ;
+	}
+
+	return true ;
 }
 
 // returns number of attributes within the set
-uint16_t AttributeSet_Count
+inline uint16_t AttributeSet_Count
 (
-	const AttributeSet set  // set to query
+	const AttributeSet set  // attribute-set
 ) {
-	// in case attribute-set is marked as read-only, clear marker
-	AttributeSet _set = (AttributeSet)ATTRIBUTE_SET_CLEAR_MSB(set);
-
-	return (_set == NULL) ? 0 : _set->attr_count;
+	return (set == NULL) ? 0 : set->attr_count ;
 }
 
-// retrieves a value from set
-// NOTE: if the key does not exist
-// we return the special constant value ATTRIBUTE_NOTFOUND
-SIValue *AttributeSet_Get
+// checks if attribute-set contains attribute
+bool AttributeSet_Contains
 (
-	const AttributeSet set,  // set to retieve attribute from
-	AttributeID attr_id      // attribute identifier
+	const AttributeSet set,  // attribute-set
+	AttributeID id,          // attribute id to lookup
+	uint16_t *idx            // [optional][output] attribute index
 ) {
-	// in case attribute-set is marked as read-only, clear marker
-	AttributeSet _set = (AttributeSet)ATTRIBUTE_SET_CLEAR_MSB(set);
+	ASSERT (VALID_ATTRIBUTE_ID (id)) ;
 
-	if(_set == NULL) {
-		return ATTRIBUTE_NOTFOUND;
+	if (set == NULL) {
+		return false ;
 	}
 
-	if(attr_id == ATTRIBUTE_ID_NONE) {
-		return ATTRIBUTE_NOTFOUND;
-	}
+	uint16_t n = set->attr_count ;
+	AttributeID *attrs = ATTRIBUTE_SET_IDS (set) ;
 
-	// TODO: benchmark, consider alternatives:
-	// sorted set
-	// array divided in two:
-	// [attr_id_0, attr_id_1, attr_id_2, value_0, value_1, value_2]
-	for (uint16_t i = 0; i < _set->attr_count; ++i) {
-		Attribute *attr = _set->attributes + i;
-		if(attr_id == attr->id) {
-			// note, unsafe as attribute-set can get reallocated
-			// TODO: why do we return a pointer to value instead of a copy ?
-			// especially when AttributeSet_GetIdx returns SIValue
-			// note AttributeSet_Update operate on this pointer
-			return &attr->value;
+	// TODO: use SIMD or support sort
+	for (uint16_t i = 0; i < n; i++) {
+		if (attrs[i] == id) {
+			if (idx != NULL) {
+				*idx = i ;
+			}
+			return true ;
 		}
 	}
 
-	return ATTRIBUTE_NOTFOUND;
+	return false ;
 }
 
-// retrieves a reference to value from set by index
-SIValue *AttributeSet_GetIdxRef
+// removes an attribute from set
+// returns true if attribute was removed false otherwise
+bool AttributeSet_Remove
 (
-	const AttributeSet set,  // set to retieve attribute from
-	uint16_t i,              // index of the property
-	AttributeID *attr_id     // attribute identifier
+	AttributeSet *set,   // attribute-set
+	AttributeID attr_id  // attribute ID to remove
 ) {
-	// in case attribute-set is marked as read-only, clear marker
-	AttributeSet _set = (AttributeSet)ATTRIBUTE_SET_CLEAR_MSB (set) ;
+	ASSERT (set != NULL) ;
+	ASSERT (VALID_ATTRIBUTE_ID (attr_id)) ;
 
-	ASSERT (_set != NULL) ;
+	AttributeSet _set = *set ;
 
-	ASSERT (i < _set->attr_count) ;
-
-	Attribute *attr = _set->attributes + i;
-	if (attr_id != NULL) {
-		*attr_id = attr->id;
+	// locate attribute position
+	uint16_t i;
+	if (!AttributeSet_Contains (*set, attr_id, &i)) {
+		// attribute is missing from the set, nothing to remove
+		return false ;
 	}
 
-	return &attr->value;
+	AttributeSet_RemoveIdx (set, i) ;
+	return true ;
 }
 
-// retrieves a value from set by index
-SIValue AttributeSet_GetIdx
+// returns the ith attribute ID
+AttributeID AttributeSet_GetKey
+(
+	const AttributeSet set,  // attribute-set
+	int16_t i                // i
+) {
+	ASSERT (set != NULL) ;
+	ASSERT (i < AttributeSet_Count (set)) ;
+
+	return *(ATTRIBUTE_SET_IDS(set) + i) ;
+}
+
+// retrieves a value from set
+// if attr_id isn't in the set returns false
+bool AttributeSet_Get
 (
 	const AttributeSet set,  // set to retieve attribute from
-	uint16_t i,              // index of the property
-	AttributeID *attr_id     // attribute identifier
+	AttributeID attr_id,     // attribute id
+	SIValue *v               // [output] value
 ) {
-	SIValue *v = AttributeSet_GetIdxRef (set, i, attr_id) ;
-	return *v ;
-}
+	ASSERT (v != NULL) ;
 
-static AttributeSet AttributeSet_AddPrepare
-(
-	AttributeSet *set,  // set to update
-	ushort n            // number of attributes to add
-) {
-	ASSERT(set != NULL);
-
-	AttributeSet _set = *set;
-
-	// attribute-set can't be read-only
-	ASSERT(ATTRIBUTE_SET_IS_READONLY(_set) == false);
-
-	// allocate room for new attribute
-	if(_set == NULL) {
-		_set = rm_malloc(sizeof(_AttributeSet) + n * sizeof(Attribute));
-		_set->attr_count = n;
-	} else {
-		_set->attr_count += n;
-		_set = rm_realloc(_set, ATTRIBUTESET_BYTE_SIZE(_set));
+	// empty set / unknown attribute id
+	if (unlikely (set == NULL || !VALID_ATTRIBUTE_ID (attr_id))) {
+		*v = SI_NullVal () ;
+		return false ;
 	}
 
-	return _set;
+	//--------------------------------------------------------------------------
+	// search for attribute
+	//--------------------------------------------------------------------------
+
+	uint16_t i;  // attribute index
+
+	if (AttributeSet_Contains (set, attr_id, &i)) {
+		AttrValue_t *attr = _GetAttrVal (set, i) ;
+		_AttrValueToSIValue (v, attr) ;
+		return true ;
+	}
+
+	*v = SI_NullVal () ;
+	return false ;
 }
 
-// adds an attribute to the set without cloning the SIvalue
-void AttributeSet_AddNoClone
+// retrieves the ith attribute from attribute-set
+void AttributeSet_GetIdx
 (
-	AttributeSet *set,  // set to update
-	AttributeID *ids,   // identifiers
-	SIValue *values,    // values
-	uint16_t n,         // number of values to add
-	bool allowNull      // accept NULLs
+	const AttributeSet set,  // attribute-set to retieve attribute from
+	uint16_t i,              // index of attribute
+	AttributeID *attr_id,    // [output] attribute ID
+	SIValue *v               // [output] value
+) {
+	ASSERT (i       < set->attr_count) ;
+	ASSERT (v       != NULL) ;
+	ASSERT (set     != NULL) ;
+	ASSERT (attr_id != NULL) ;
+
+	// set attribute id
+	*attr_id = _GetAttrID (set, i) ;
+
+	// extract attribute value
+	_AttrValueToSIValue (v, _GetAttrVal (set, i)) ;
+}
+
+// adds new attributes to the attribute-set
+// all attributes MUST NOT be in the set
+void AttributeSet_Add
+(
+	AttributeSet *set,  // attribute-set to update
+	AttributeID *ids,   // attribute ids
+	SIValue *values,    // attribute values
+	uint16_t n,         // number of attributes
+	bool allowNull,     // accept NULLs
+	bool clone          // clone values
 ) {
 	ASSERT (set != NULL) ;
 
@@ -192,25 +516,21 @@ void AttributeSet_AddNoClone
 		return ;
 	}
 
-	// return if set is read-only
-	if(unlikely (ATTRIBUTE_SET_IS_READONLY(*set))) {
-		return ;
-	}
-
-	// validate value type
-	// value must be a valid property type
+	// validate values type, values must be a valid property type
 #ifdef RG_DEBUG
-	SIType t = SI_VALID_PROPERTY_VALUE;
+	SIType t = SI_VALID_PROPERTY_VALUE ;
 	if (allowNull == true) {
 		t |= T_NULL ;
 	}
 
-	for (ushort i = 0; i < n; i++) {
+	for (uint16_t i = 0; i < n; i++) {
 		ASSERT (SI_TYPE (values[i]) & t) ;
+
 		// make sure attribute isn't already in set
-		ASSERT (AttributeSet_Get (*set, ids[i]) == ATTRIBUTE_NOTFOUND) ;
-		// make sure value isn't volotile
-		ASSERT (SI_ALLOCATION (values + i) != M_VOLATILE) ;
+		ASSERT (AttributeSet_Contains (*set, ids[i], NULL) == false) ;
+
+		// if clone == false make sure value isn't volatile
+		ASSERT (clone || SI_ALLOCATION (values + i) != M_VOLATILE) ;
 
 		// ensure no duplicate attribute IDs within this batch
 		for (ushort j = i + 1; j < n; j++) {
@@ -219,217 +539,182 @@ void AttributeSet_AddNoClone
 	}
 #endif
 
+	// make sure attribute-set has enough space to accommodate all attributes
 	ushort prev_count = AttributeSet_Count (*set) ;
-	AttributeSet _set = AttributeSet_AddPrepare (set, n) ;
-	Attribute *attrs  = _set->attributes + prev_count ;
+	AttributeSet _set = AttributeSet_Accommodate (set, n) ;
 
-	// add attributes to set
-	for (ushort i = 0; i < n; i++) {
-		Attribute *attr = attrs + i ;
-		attr->id        = ids[i] ;
-		attr->value     = values[i] ;
+	AttributeID *set_ids  = ATTRIBUTE_SET_IDS (_set)  + prev_count ;
+	AttrValue_t *set_vals = ATTRIBUTE_SET_VALS (_set) + prev_count ;
+
+	// add attributes
+	memcpy (set_ids, ids, n * sizeof (AttributeID)) ;
+
+	for (uint16_t i = 0; i < n; i++) {
+		AttrValue_t *attr = set_vals + i ;
+		if (clone) {
+			SIValue v = SI_CloneValue (values[i]) ;
+			_AttrValueFromSIValue (attr, &v) ;
+		} else {
+			_AttrValueFromSIValue (attr, values + i) ;
+		}
 	}
-
-	// update pointer
-	*set = _set ;
-}
-
-// adds an attribute to the set
-void AttributeSet_Add
-(
-	AttributeSet *set,    // set to update
-	AttributeID attr_id,  // attribute identifier
-	SIValue value         // attribute value
-) {
-	ASSERT(set != NULL);
-
-	// return if set is read-only
-	if(unlikely(ATTRIBUTE_SET_IS_READONLY(*set))) {
-		return;
-	}
-
-#ifdef RG_DEBUG
-	// value must be a valid property type
-	ASSERT(SI_TYPE(value) & SI_VALID_PROPERTY_VALUE);
-	// make sure attribute isn't already in set
-	ASSERT(AttributeSet_Get(*set, attr_id) == ATTRIBUTE_NOTFOUND);
-#endif
-
-	AttributeSet _set = AttributeSet_AddPrepare(set, 1);
-
-	// set attribute
-	Attribute *attr = _set->attributes + _set->attr_count - 1;
-	attr->id = attr_id;
-	attr->value = SI_CloneValue(value);
-
-	// update pointer
-	*set = _set;
 }
 
 // add, remove or update an attribute
-// this function allows NULL value to be added to the set
 // returns the type of change performed
-AttributeSetChangeType AttributeSet_Set_Allow_Null
+AttributeSetChangeType AttributeSet_Update
 (
 	AttributeSet *set,    // set to update
 	AttributeID attr_id,  // attribute identifier
-	SIValue value         // attribute value
+	SIValue value,        // new value
+	bool allowNull,       // accept NULLs
+	bool clone            // clone value
 ) {
-	ASSERT(set != NULL);
-	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
+	ASSERT (set     != NULL) ;
+	ASSERT (VALID_ATTRIBUTE_ID (attr_id)) ;
 
-	AttributeSet _set = *set;
-
-	// return if set is read-only
-	if(unlikely(ATTRIBUTE_SET_IS_READONLY(_set))) {
-		return CT_NONE;
-	}
+	AttributeSet _set = *set ;
 
 	// validate value type
-	ASSERT(SI_TYPE(value) & (SI_VALID_PROPERTY_VALUE | T_NULL));
+	SIType t = SI_VALID_PROPERTY_VALUE ;
+	if (allowNull) {
+		t |= T_NULL ;
+	}
+	ASSERT (SI_TYPE (value) & t) ;
 
-	// update the attribute if it is already presented in the set
-	if(AttributeSet_Get(_set, attr_id) != ATTRIBUTE_NOTFOUND) {
-		if(AttributeSet_Update(&_set, attr_id, value)) {
-			// update pointer
-			*set = _set;
-			// if value is NULL, indicate attribute removal
-			// otherwise indicate attribute update
-			return SIValue_IsNull(value) ? CT_DEL : CT_UPDATE;
+	uint16_t i;
+	bool remove   = SIValue_IsNull (value) ;
+	bool contains = AttributeSet_Contains (_set, attr_id, &i) ;
+
+	// trying to remove a nonexisting attribuet
+	if (unlikely (!contains && remove)) {
+		return CT_NONE ;
+	}
+
+	if (contains) {
+
+		//----------------------------------------------------------------------
+		// remove attribute
+		//----------------------------------------------------------------------
+
+		if (remove) {
+			AttributeSet_RemoveIdx (set, i) ;
+			return CT_DEL ;
+		}
+
+		//----------------------------------------------------------------------
+		// update attribute
+		//----------------------------------------------------------------------
+
+		if (AttributeSet_Replace (_set, i, &value, clone)) {
+			return CT_UPDATE ;
 		}
 
 		// value did not change, indicate no modification
-		return CT_NONE;
+		return CT_NONE ;
 	}
 
-	// can't remove a none existing attribute, indicate no modification
-	if(SIValue_IsNull(value)) return CT_NONE;
+	//--------------------------------------------------------------------------
+	// add attribute
+	//--------------------------------------------------------------------------
 
-	// allocate room for new attribute
-	_set = AttributeSet_AddPrepare(set, 1);
+	ASSERT (!contains && !remove) ;
 
-	// set attribute
-	Attribute *attr = _set->attributes + _set->attr_count - 1;
-	attr->id = attr_id;
-	attr->value = SI_CloneValue(value);
-
-	// update pointer
-	*set = _set;
+	AttributeSet_Add (set, &attr_id, &value, 1, allowNull, clone) ;
 
 	// new attribute added, indicate attribute addition
-	return CT_ADD;
+	return CT_ADD ;
 }
 
-// updates existing attribute, return true if attribute been updated
-bool AttributeSet_UpdateNoClone
-(
-	AttributeSet *set,     // set to update
-	AttributeID attr_id,   // attribute identifier
-	SIValue value          // new value
-) {
-	ASSERT(set != NULL);
-	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
-
-	// return if set is read-only
-	if(unlikely(ATTRIBUTE_SET_IS_READONLY(*set))) {
-		return false;
-	}
-
-	// setting an attribute value to NULL removes that attribute
-	if(unlikely(SIValue_IsNull(value))) {
-		return _AttributeSet_Remove(set, attr_id);
-	}
-
-	SIValue *current = AttributeSet_Get(*set, attr_id);
-	ASSERT(current != ATTRIBUTE_NOTFOUND);
-	ASSERT(SIValue_Compare(*current, value, NULL) != 0);
-
-	// value != current, update entity
-	SIValue_Free(*current);  // free previous value
-	*current = value;
-
-	return true;
-}
-
-// updates existing attribute, return true if attribute been updated
-bool AttributeSet_Update
-(
-	AttributeSet *set,     // set to update
-	AttributeID attr_id,   // attribute identifier
-	SIValue value          // new value
-) {
-	ASSERT(set != NULL);
-	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
-
-	AttributeSet _set = *set;
-
-	// return if set is read-only
-	if(unlikely(ATTRIBUTE_SET_IS_READONLY(_set))) {
-		return false;
-	}
-
-	ASSERT(_set != NULL);
-
-	// setting an attribute value to NULL removes that attribute
-	if(unlikely(SIValue_IsNull(value))) {
-		return _AttributeSet_Remove(set, attr_id);
-	}
-
-	SIValue *current = AttributeSet_Get(_set, attr_id);
-	ASSERT(current != ATTRIBUTE_NOTFOUND);
-
-	// compare current value to new value, only update if current != new
-	if(unlikely(SIValue_Compare(*current, value, NULL) == 0)) {
-		return false;
-	}
-
-	// value != current, update entity
-	SIValue_Free(*current);  // free previous value
-	*current = SI_CloneValue(value);
-
-	return true;
-}
-
-// clones attribute-set without SI values
+// shallow clones attribute-set
 AttributeSet AttributeSet_ShallowClone
 (
 	const AttributeSet set  // set to clone
 ) {
-	// in case attribute-set is marked as read-only, clear marker
-	AttributeSet _set = (AttributeSet)ATTRIBUTE_SET_CLEAR_MSB(set);
-
-	if(_set == NULL) return NULL;
-
-	size_t n = ATTRIBUTESET_BYTE_SIZE(set);
-	AttributeSet clone = rm_malloc(n);
-	clone->attr_count  = _set->attr_count;
-
-	for(uint16_t i = 0; i < _set->attr_count; ++i) {
-		Attribute *attr       = _set->attributes  + i;
-		Attribute *clone_attr = clone->attributes + i;
-
-		clone_attr->id = attr->id;
-		clone_attr->value = SI_ShareValue(attr->value);
+	if (set == NULL) {
+		return NULL ;
 	}
 
-    return clone;
+	size_t n = ATTRIBUTESET_BYTE_SIZE (set) ;
+	AttributeSet clone = rm_malloc (n) ;
+
+	// copy attribute set
+	memcpy (clone, set, n) ;
+
+	// mark each attribute as shared
+	// the clone won't be able to free values
+	uint16_t l = AttributeSet_Count (set) ;
+	AttrValue_t *vals = ATTRIBUTE_SET_VALS (clone) ;
+
+	for (uint16_t i = 0; i < l; i++) {
+		AttrValue_SetShared (vals + i) ;
+	}
+
+	return clone ;
 }
 
-// persists all attributes within given set
+//
 void AttributeSet_PersistValues
 (
-	const AttributeSet set  // set to persist
+	AttributeSet set  // attribute-set to persist
 ) {
-	// return if set is read-only
-	ASSERT(ATTRIBUTE_SET_IS_READONLY(set) == false);
-
-	if(set == NULL) return;
-
-	for (uint16_t i = 0; i < set->attr_count; ++i) {
-		Attribute *attr = set->attributes + i;
-
-		SIValue_Persist(&attr->value);
+	if (set == NULL) {
+		return ;
 	}
+
+	uint16_t n = AttributeSet_Count (set) ;
+	AttrValue_t *attrs = ATTRIBUTE_SET_VALS (set) ;
+
+	for (uint16_t i = 0; i < n; i++) {
+		AttrValue_t *attr = attrs + i;
+
+		if (AttrValue_Shared (attr)) {
+			AttrValue_ClearShared (attr) ;
+
+			// get attribute type
+			AttrType_t t = AttrValue_Type (attr) ;
+			if (AttrType_to_Allocation[t] == M_VOLATILE) {
+				SIValue v ;
+				_AttrValueToSIValue (&v, attr) ;
+				v = SI_CloneValue (v) ;
+				_AttrValueFromSIValue (attr, &v) ;
+			}
+		}
+	}
+}
+
+// compute hash for attribute-set
+XXH64_hash_t AttributeSet_HashCode
+(
+	const AttributeSet set  // attribute-set to compute hash of
+) {
+	XXH64_state_t *hash = XXH64_createState ();  // create a hash state
+
+	if (set != NULL) {
+		XXH_errorcode res ;
+		uint16_t n = AttributeSet_Count (set) ;
+		res = XXH64_update (hash, &n, sizeof (n)) ;
+		ASSERT(res != XXH_ERROR);
+
+		AttributeID *attr_ids = ATTRIBUTE_SET_IDS (set) ;
+		res = XXH64_update (hash, attr_ids, sizeof (AttributeID) * n) ;
+		ASSERT(res != XXH_ERROR);
+
+		for (uint16_t i = 0; i < n; i++) {
+			SIValue v ;
+			_AttrValueToSIValue (&v, _GetAttrVal (set, i)) ;
+
+			// update hash with the hashval of the associated SIValue
+			XXH64_hash_t value_hash = SIValue_HashCode (v) ;
+			res = XXH64_update (hash, &value_hash, sizeof (value_hash)) ;
+			ASSERT (res != XXH_ERROR) ;
+		}
+	}
+
+	XXH64_hash_t const digest = XXH64_digest (hash) ;
+	XXH64_freeState (hash) ;
+
+	return digest ;
 }
 
 // get attributeset's memory usage
@@ -437,24 +722,60 @@ size_t AttributeSet_memoryUsage
 (
 	const AttributeSet set  // set to compute memory consumption of
 ) {
-	if(set == NULL) {
-		return 0;
+	if (set == NULL) {
+		return 0 ;
 	}
 
-	size_t   n = 0;  // memory consumption
-	uint16_t l = AttributeSet_Count(set);
+	size_t   n = 0 ;  // memory consumption
+	uint16_t l = AttributeSet_Count (set) ;
 
 	// count memory consumption of each attribute
-	for(int i = 0; i < l; i++) {
-		Attribute *attr = set->attributes + i;
-		SIValue v = attr->value;
-		n += SIValue_memoryUsage(v);
+	for (uint16_t i = 0; i < l; i++) {
+		SIValue v ;
+		AttributeID attr_id ;
+		AttributeSet_GetIdx (set, i, &attr_id, &v) ;
+		n += SIValue_memoryUsage (v) ;
 	}
 
 	// account for AttributeIDs
-	n += (l * sizeof(AttributeID)) + sizeof(set->attr_count);
+	n += (l * sizeof (AttributeID)) + sizeof (set->attr_count) ;
 
-	return n;
+	return n ;
+}
+
+// defrag attribute-set
+// present each heap allocated attribute to the allocator in the hope
+// it will be able reduce fragmentation by relocating the memory
+void AttributeSet_Defrag
+(
+	AttributeSet set,          // attribute-set
+	RedisModuleDefragCtx *ctx  // defrag context
+) {
+	ASSERT (set != NULL) ;
+	ASSERT (ctx != NULL) ;
+
+	uint16_t n = AttributeSet_Count (set) ;
+	AttrValue_t *attrs = ATTRIBUTE_SET_VALS (set) ;
+
+	for (uint16_t i = 0; i < n ; i++) {
+		AttrValue_t *attr = attrs + i ;
+		switch (AttrValue_Type(attr)) {
+			case ATTR_TYPE_MAP:
+			case ATTR_TYPE_ARRAY:
+			case ATTR_TYPE_STRING:
+			case ATTR_TYPE_VECTOR_F32:
+			{
+				void *moved = RedisModule_DefragAlloc (ctx, attr->ptrval) ;
+				if (moved != NULL) {
+					attr->ptrval = moved ;
+				}
+				break ;
+			}
+
+			default:
+				break ;
+		}
+	}
 }
 
 // free attribute set
@@ -466,22 +787,23 @@ void AttributeSet_Free
 
 	AttributeSet _set = *set;
 
-	// return if set is read-only
-	if(unlikely(ATTRIBUTE_SET_IS_READONLY(_set))) {
-		return;
+	// do not free if attribute-set is read-only
+	if (unlikely (ATTRIBUTE_SET_IS_READONLY (_set))) {
+		return ;
 	}
 
 	// return if set is NULL
-	if(_set == NULL) {
-		return;
+	if (_set == NULL) {
+		return ;
 	}
 
 	// free all allocated properties
-	for(uint16_t i = 0; i < _set->attr_count; ++i) {
-		SIValue_Free(_set->attributes[i].value);
+	for(uint16_t i = 0; i < _set->attr_count; i++) {
+		AttrValue_t *attr = ATTRIBUTE_SET_VALS (_set) + i;
+		_AttrValue_Free (&attr) ;
 	}
 
-	rm_free(_set);
-	*set = NULL;
+	rm_free (_set) ;
+	*set = NULL ;
 }
 

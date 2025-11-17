@@ -370,9 +370,9 @@ RSDoc *Index_IndexGraphEntity
 	ASSERT(doc_field_count != NULL);
 	ASSERT(key_len         >  0);
 
+	SIValue    v;                   // current indexed value
 	double     score       = 1;     // default score
 	IndexField *field      = NULL;  // current indexed field
-	SIValue    *v          = NULL;  // current indexed value
 	uint       field_count = array_len(idx->fields);
 
 	*doc_field_count = 0;  // number of indexed fields
@@ -390,14 +390,12 @@ RSDoc *Index_IndexGraphEntity
 		field = idx->fields + i;
 
 		// try to get attribute value
-		v = GraphEntity_GetProperty(e, field->id);
-
-		// entity does not have this attribute
-		if(v == ATTRIBUTE_NOTFOUND) {
+		if (!GraphEntity_GetProperty (e, field->id, &v)) {
+			// entity does not have this attribute
 			continue;
 		}
 
-		SIType t = SI_TYPE(*v);
+		SIType t = SI_TYPE (v) ;
 
 		//----------------------------------------------------------------------
 		// fulltext field
@@ -409,7 +407,7 @@ RSDoc *Index_IndexGraphEntity
 				*doc_field_count += 1;
 
 				RediSearch_DocumentAddFieldCString(doc, field->fulltext_name,
-						v->stringval, RSFLDTYPE_FULLTEXT);
+						v.stringval, RSFLDTYPE_FULLTEXT);
 			}
 		}
 
@@ -427,13 +425,13 @@ RSDoc *Index_IndexGraphEntity
 			switch(t) {
 				case T_STRING:
 				case T_INTERN_STRING:
-					_addStringField(doc, field->range_name, v->stringval);
+					_addStringField(doc, field->range_name, v.stringval);
 					break;
 
 				case T_BOOL:
 				case T_INT64:
 				case T_DOUBLE:
-					_addNumericField(doc, field->range_name, SI_GET_NUMERIC(*v));
+					_addNumericField(doc, field->range_name, SI_GET_NUMERIC(v));
 					break;
 
 				//case T_TIME:
@@ -448,11 +446,11 @@ RSDoc *Index_IndexGraphEntity
 				//}
 
 				case T_POINT:
-					_addPointField(doc, field->range_name, *v);
+					_addPointField(doc, field->range_name, v);
 					break;
 
 				case T_ARRAY:
-					_addArrayField(doc, field, *v);
+					_addArrayField(doc, field, v);
 					// do NOT break, we want to add array field as
 					// 'non indexable' to be able to answer queries
 					// such as n.v = [1]
@@ -471,16 +469,16 @@ RSDoc *Index_IndexGraphEntity
 
 		if(field->type & INDEX_FLD_VECTOR && (t & T_VECTOR)) {
 			// make sure entity vector dimension matches index vector dimension
-			if(IndexField_OptionsGetDimension(field) != SIVector_Dim(*v)) {
+			if(IndexField_OptionsGetDimension(field) != SIVector_Dim(v)) {
 				// vector dimension mis-match, can't index this vector
 				continue;
 			}
 
 			*doc_field_count += 1;
 
-			size_t   n        = SIVector_ElementsByteSize(*v);
-			uint32_t dim      = SIVector_Dim(*v);
-			void*    elements = SIVector_Elements(*v);
+			size_t   n        = SIVector_ElementsByteSize(v);
+			uint32_t dim      = SIVector_Dim(v);
+			void*    elements = SIVector_Elements(v);
 
 			// value must be of type array
 			RediSearch_DocumentAddFieldVector(doc, field->vector_name, elements,

@@ -47,28 +47,28 @@ typedef struct {
 	struct AR_ExpNode **values;
 } PropertyMap;
 
-// Enum describing how a SET directive should treat pre-existing properties
+// enum describing how a SET directive should treat pre-existing properties
 typedef enum {
-	UPDATE_UNSET   = 0,    // default, should not be encountered
-	UPDATE_MERGE   = 1,    // merge new properties into existing property map
-	UPDATE_REPLACE = 2,    // replace existing property map with new properties
+	UPDATE_UNSET   = 0,  // default, should not be encountered
+	UPDATE_MERGE   = 1,  // merge new properties into existing property map
+	UPDATE_REPLACE = 2,  // replace existing property map with new properties
 } UPDATE_MODE;
 
-// Key-value pair of an attribute ID and the value to be associated with it
-// TODO Consider replacing contents of PropertyMap (for ops like Create) with this
+// key-value pair of an attribute ID and the value to be associated with it
+// TODO: consider replacing contents of PropertyMap (for ops like Create) with this
 typedef struct {
 	const char *attribute;
 	struct AR_ExpNode *exp;
 	UPDATE_MODE mode;
 } PropertySetCtx;
 
-// Context describing an update expression.
+// context describing an update expression
 typedef struct {
-	int record_idx;             // record offset this entity is stored at
-	const char *alias;          // access-safe alias of the entity being updated
-	const char **add_labels;    // labels to add to the node
-	const char **remove_labels; // labels to add to the node
-	PropertySetCtx *properties; // properties to set
+	int record_idx;              // record offset this entity is stored at
+	const char *alias;           // access-safe alias of the entity being updated
+	const char **add_labels;     // labels to add to the node
+	const char **remove_labels;  // labels to add to the node
+	PropertySetCtx *properties;  // properties to set
 } EntityUpdateEvalCtx;
 
 // Context describing a node in a CREATE or MERGE clause

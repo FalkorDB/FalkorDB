@@ -53,6 +53,7 @@ class testEntityUpdate():
         self.env.assertEqual(result.properties_set, 2)
         expected_result = [[{'id': 1, 'aField': 'withValue'}]]
         self.env.assertEqual(result.result_set, expected_result)
+
         result = self.graph.query("MATCH (m:X) DELETE(m)")
         self.env.assertEqual(result.nodes_deleted, 1)
 

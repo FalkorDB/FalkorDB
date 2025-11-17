@@ -394,7 +394,7 @@ void ConvertPropertyMap
 		vals[attrs_count++] = SI_CloneValue(val);
 		SIValue_Free(val);
 	}
-	AttributeSet_AddNoClone(attributes, ids, vals, attrs_count, false);
+	AttributeSet_Add (attributes, ids, vals, attrs_count, false, false) ;
 }
 
 // free all data associated with a completed create operation
