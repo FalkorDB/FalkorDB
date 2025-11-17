@@ -62,6 +62,7 @@ jobs:
           machine_type: n4-highcpu-8
           network: gh-runner
           runner_label: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
+          disk_size: 50Gi
 
   run-benchmarks:
     needs:
