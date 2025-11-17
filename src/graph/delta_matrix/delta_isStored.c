@@ -25,17 +25,18 @@ GrB_Info Delta_Matrix_isStoredElement
 	// if dp[i,j] exists return it
 	GrB_OK (info = GxB_Matrix_isStoredElement(dp, i, j));
 	if(info == GrB_SUCCESS) {
-		return info;
+		return GrB_SUCCESS;
 	}
 
-	// if dm[i,j] exists, return no value
-	GrB_OK (info = GxB_Matrix_isStoredElement(dm, i, j));
-	if(info == GrB_SUCCESS) {
-		// entry marked for deletion
+	// see if entry exists in m
+	GrB_OK (info = GxB_Matrix_isStoredElement(m, i, j));
+	if(info == GrB_NO_VALUE) { // if it is not in dp or m, it does not exist
 		return GrB_NO_VALUE;
 	}
 
-	// entry isn't marked for deletion, see if it exists in 'm'
-	GrB_OK (info = GxB_Matrix_isStoredElement(m, i, j));
-	return info;
+
+	// if dm[i,j] exists, return no value
+	GrB_OK (info = GxB_Matrix_isStoredElement(dm, i, j));
+
+	return (info == GrB_NO_VALUE) ? GrB_SUCCESS : GrB_NO_VALUE;
 }

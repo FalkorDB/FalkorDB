@@ -21,11 +21,6 @@ GrB_Info Delta_Matrix_assign_scalar_##TYPE_SUFFIX                              \
 	/* validate */                                                             \
 	ASSERT (C     != NULL) ;                                                   \
 	ASSERT (accum != NULL) ;                                                   \
-                                                                               \
-	GrB_Type ty = NULL ;                                                       \
-	GrB_OK (GxB_Matrix_type (&ty, DELTA_MATRIX_M(C))) ;                        \
-                                                                               \
-	ASSERT (ty == GrB_##TYPE_SUFFIX) ;                                         \
 	Delta_Matrix_checkBounds (C, i, j) ;                                       \
                                                                                \
 	uint64_t v ;                                                               \
@@ -44,8 +39,9 @@ GrB_Info Delta_Matrix_assign_scalar_##TYPE_SUFFIX                              \
 	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS (C) ;                              \
 	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS (C) ;                             \
                                                                                \
-	/* check deleted */                                                        \
+	GRB_MATRIX_TYPE_ASSERT(m, GrB_##TYPE_SUFFIX) ;                             \
                                                                                \
+	/* check deleted */                                                        \
 	info = GxB_Matrix_isStoredElement (dm, i, j) ;                             \
 	mark_for_deletion = (info == GrB_SUCCESS) ;                                \
                                                                                \
