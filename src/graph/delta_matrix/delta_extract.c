@@ -3,8 +3,8 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "GraphBLAS.h"
 #include "RG.h"
+#include "GraphBLAS.h"
 #include "delta_matrix.h"
 #include "graph/delta_matrix/delta_utils.h"
 
@@ -17,8 +17,8 @@ GrB_Info Delta_Matrix_extractElement_##TYPE_SUFFIX                             \
 	GrB_Index j            /* column index                    */               \
 ) {                                                                            \
 	/* validate */                                                             \
-	ASSERT(x != NULL);                                                         \
-	ASSERT(A != NULL);                                                         \
+	ASSERT (x != NULL) ;                                                       \
+	ASSERT (A != NULL) ;                                                       \
                                                                                \
 	CTYPE      _x ;                                                            \
 	GrB_Info   info;                                                           \
@@ -28,25 +28,22 @@ GrB_Info Delta_Matrix_extractElement_##TYPE_SUFFIX                             \
                                                                                \
 	GRB_MATRIX_TYPE_ASSERT(m, GrB_##TYPE_SUFFIX)                               \
                                                                                \
-	/* if dp[i,j] exists return it */                                          \
-	GrB_OK (info = GrB_Matrix_extractElement (x, dp, i, j)) ;                  \
-	if (info == GrB_SUCCESS) {                                                 \
-		return GrB_SUCCESS ;                                                   \
-	}                                                                          \
-                                                                               \
 	/* see if entry exists in 'm' */                                           \
 	GrB_OK (info = GrB_Matrix_extractElement (&_x, m, i, j)) ;                 \
-	if (info == GrB_NO_VALUE) {                                                \
-		return GrB_NO_VALUE;                                                   \
+	if (info == GrB_SUCCESS) {                                                 \
+		/* if dm[i,j] exists, return no value and do not set *x */             \
+		GrB_OK (info = GxB_Matrix_isStoredElement (dm, i, j)) ;                \
+		if (info == GrB_NO_VALUE) {                                            \
+			*x = _x;                                                           \
+			return GrB_SUCCESS ;                                               \
+		}                                                                      \
+		return GrB_NO_VALUE ;                                                  \
 	}                                                                          \
                                                                                \
-	/* if dm[i,j] exists, return no value and do not set *x */                 \
-	GrB_OK (info = GxB_Matrix_isStoredElement (dm, i, j)) ;                    \
-	if (info == GrB_NO_VALUE) {                                                \
-		*x = _x;                                                               \
-	}                                                                          \
+	/* if dp[i,j] exists return it */                                          \
+	GrB_OK (info = GrB_Matrix_extractElement (x, dp, i, j)) ;                  \
                                                                                \
-	return (info == GrB_NO_VALUE) ? GrB_SUCCESS : GrB_NO_VALUE ;               \
+	return info ;                                                              \
 }
 
 //------------------------------------------------------------------------------

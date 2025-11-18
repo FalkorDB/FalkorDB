@@ -4,14 +4,14 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "GraphBLAS.h"
 #include "RG.h"
 #include "graph.h"
+#include "GraphBLAS.h"
 #include "../util/arr.h"
 #include "../util/rwlock.h"
 #include "../util/rmalloc.h"
+#include "delta_matrix/delta_matrix.h"
 #include "delta_matrix/delta_matrix_iter.h"
-#include "graph/delta_matrix/delta_matrix.h"
 
 //------------------------------------------------------------------------------
 // Synchronization functions
@@ -1474,22 +1474,23 @@ uint64_t Graph_GetNodeDegree
 
 	if(r != GRAPH_NO_RELATION) {
 		// consider only specified relationship
+
 		//----------------------------------------------------------------------
 		// outgoing edges
 		//----------------------------------------------------------------------
 
-		Tensor R = Graph_GetRelationMatrix(g, r, false);
+		Tensor R = Graph_GetRelationMatrix (g, r, false) ;
 
-		if(outgoing) {
-			edge_count += Tensor_RowDegree(R, srcID);
+		if (outgoing) {
+			edge_count += Tensor_RowDegree (R, srcID) ;
 		}
 
 		//----------------------------------------------------------------------
 		// incoming edges
 		//----------------------------------------------------------------------
 
-		if(incoming) {
-			edge_count += Tensor_ColDegree(R, srcID);
+		if (incoming) {
+			edge_count += Tensor_ColDegree (R, srcID) ;
 		}
 	} else {
 		// use the adj matrix
@@ -1515,7 +1516,7 @@ uint64_t Graph_GetNodeDegree
 			}
 		}
 
-		if (incoming){
+		if (incoming) {
 			Delta_MatrixTupleIter it;
 
 			// scan transpose matrix

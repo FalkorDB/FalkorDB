@@ -3,8 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "current/v18/decode_v18.h"
-#include "graph/delta_matrix/delta_matrix.h"
+#include "../../graph/graph.h"
 
 // unary op, determines the number of edges represented by an entry:
 // 1 if the entry is scalar
@@ -25,7 +24,7 @@ static void _vector_size
 }
 
 // if the rdb we are loading is old, then we must recalculate the number of
-// edges connecting ech pair of nodes
+// edges connecting each pair of nodes
 // precondition: relation matricies have been calculated and fully synced
 void RdbNormalizeAdjMatrix
 (
