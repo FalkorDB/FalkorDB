@@ -6,17 +6,6 @@
 #include "RG.h"
 #include "delta_matrix.h"
 
-#if RG_DEBUG
-#define GRB_MATRIX_TYPE_ASSERT(M, TYPE)  \
-do {                                     \
-	GrB_Type _ty = NULL;                 \
-	GrB_OK(GxB_Matrix_type(&_ty, M));    \
-	ASSERT(_ty == TYPE);                 \
-} while(0);
-#else
-#define GRB_MATRIX_TYPE_ASSERT(M, TYPE)
-#endif
-
 // check if i and j are within matrix boundries
 // i < nrows
 // j < ncols

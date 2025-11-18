@@ -16,11 +16,11 @@ GrB_Info Delta_Matrix_isStoredElement
 	ASSERT(A != NULL);
 
 	GrB_Info info;
+	bool in_M  = false;
+	bool in_DM = false;
 	GrB_Matrix m  = DELTA_MATRIX_M(A);
 	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(A);
 	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(A);
-	bool in_M = false;
-	bool in_DM = false;
 
 	// if dp[i,j] exists return it
 	GrB_OK (info = GxB_Matrix_isStoredElement(dp, i, j));
@@ -34,9 +34,9 @@ GrB_Info Delta_Matrix_isStoredElement
 		return GrB_NO_VALUE;
 	}
 
-
 	// if dm[i,j] exists, return no value
 	GrB_OK (info = GxB_Matrix_isStoredElement(dm, i, j));
 
 	return (info == GrB_NO_VALUE) ? GrB_SUCCESS : GrB_NO_VALUE;
 }
+

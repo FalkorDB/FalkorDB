@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "RG.h"
 #include "delta_matrix.h"
 
 #if RG_DEBUG
