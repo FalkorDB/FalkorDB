@@ -667,8 +667,11 @@ void AttributeSet_Add
 		if (SI_TYPE (*v)  & T_STRING   &&
 			!(SI_TYPE (*v) & T_INTERN) &&
 			strnlen (v->stringval, COMPRESS_THRESHOLD) == COMPRESS_THRESHOLD) {
-			// TODO: store compressed string
 			if (_AttrValueFromLongString (attr, v->stringval)) {
+				// free string if we're suppose to take ownership
+				if (!clone) {
+					SIValue_Free (*v) ;
+				}
 				continue ;
 			}
 		}
@@ -857,21 +860,52 @@ size_t AttributeSet_memoryUsage
 		return 0 ;
 	}
 
-	size_t   n = 0 ;  // memory consumption
-	uint16_t l = AttributeSet_Count (set) ;
+	size_t total = 0 ;  // memory consumption
+	uint16_t n = AttributeSet_Count (set) ;
 
 	// count memory consumption of each attribute
-	for (uint16_t i = 0; i < l; i++) {
-		SIValue v ;
-		AttributeID attr_id ;
-		AttributeSet_GetIdx (set, i, &attr_id, &v) ;
-		n += SIValue_memoryUsage (v) ;
+	for (uint16_t i = 0; i < n; i++) {
+		AttrValue_t *attr = _GetAttrVal (set, i) ;
+		AttrType_t t = attr->t ;
+
+		if (AttrType_to_Allocation[t] == M_NONE) {
+			// attribute is a "simple" primitive,  e.g. int64_t
+			// no extra memory is allocated elsewhere
+			total += sizeof (AttrValue_t) ;
+			continue ;
+		}
+
+		switch (attr->t) {
+			case ATTR_TYPE_STRING:
+			case ATTR_TYPE_INTERN_STRING:
+				total += strlen (attr->ptrval) ;  // misleading for intern
+				break ;
+
+			case ATTR_TYPE_COMPRESSED_STRING:
+				// header + compressed length
+				total += 8 + ((size_t*)attr->ptrval)[0] ;
+				break ;
+
+			case ATTR_TYPE_MAP:
+			case ATTR_TYPE_ARRAY:
+			case ATTR_TYPE_VECTOR_F32:
+			{
+				SIValue v ;
+				AttributeID attr_id ;
+				AttributeSet_GetIdx (set, i, &attr_id, &v) ;
+				total += SIValue_memoryUsage (v) ;
+				break ;
+			}
+
+			default:
+				assert (false && "unhandeled attribute type") ;
+		}
 	}
 
 	// account for AttributeIDs
-	n += (l * sizeof (AttributeID)) + sizeof (set->attr_count) ;
+	total += (n * sizeof (AttributeID)) + sizeof (set->attr_count) ;
 
-	return n ;
+	return total ;
 }
 
 // defrag attribute-set
