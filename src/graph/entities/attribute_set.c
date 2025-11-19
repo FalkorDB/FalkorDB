@@ -249,7 +249,7 @@ static bool _AttrValueFromLongString
 	// shrink buffer to actual size
 	if (alloc_size > actual_size) {
 		buf = rm_realloc (buf, actual_size) ;
-		ASSERT(buf != NULL);
+		ASSERT (buf != NULL) ;
 	}
 
 	uint32_t *header = (uint32_t*)buf ;
@@ -335,6 +335,7 @@ static void _AttrValue_Free
 		// direct free
 		case ATTR_TYPE_STRING:
 		case ATTR_TYPE_VECTOR_F32:
+		case ATTR_TYPE_COMPRESSED_STRING:
 			rm_free (_attr->ptrval) ;
 			break ;
 
