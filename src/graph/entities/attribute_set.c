@@ -16,6 +16,9 @@
 // check if attribute-set is read-only
 #define ATTRIBUTE_SET_IS_READONLY(set) ((intptr_t)(set) & MSB_MASK)
 
+// mark attribute-set as mutable
+#define ATTRIBUTE_SET_CLEAR_MSB(set) (AttributeSet)(CLEAR_MSB((intptr_t)set))
+
 // returns true if attribute_id is valid
 #define VALID_ATTRIBUTE_ID(attr_id)                   \
 	((attr_id) != ATTRIBUTE_ID_NONE && (attr_id) != ATTRIBUTE_ID_ALL)
@@ -471,7 +474,8 @@ inline uint16_t AttributeSet_Count
 (
 	const AttributeSet set  // attribute-set
 ) {
-	return (set == NULL) ? 0 : set->attr_count ;
+	const AttributeSet _set = ATTRIBUTE_SET_CLEAR_MSB (set) ;
+	return (_set == NULL) ? 0 : _set->attr_count ;
 }
 
 // checks if attribute-set contains attribute
@@ -482,13 +486,14 @@ bool AttributeSet_Contains
 	uint16_t *idx            // [optional][output] attribute index
 ) {
 	ASSERT (VALID_ATTRIBUTE_ID (id)) ;
+	const AttributeSet _set = ATTRIBUTE_SET_CLEAR_MSB (set) ;
 
-	if (set == NULL) {
+	if (_set == NULL) {
 		return false ;
 	}
 
-	uint16_t n = set->attr_count ;
-	AttributeID *attrs = ATTRIBUTE_SET_IDS (set) ;
+	uint16_t n = _set->attr_count ;
+	AttributeID *attrs = ATTRIBUTE_SET_IDS (_set) ;
 
 	// TODO: use SIMD or support sort
 	for (uint16_t i = 0; i < n; i++) {
@@ -511,6 +516,7 @@ bool AttributeSet_Remove
 	AttributeID attr_id  // attribute ID to remove
 ) {
 	ASSERT (set != NULL) ;
+	ASSERT (!ATTRIBUTE_SET_IS_READONLY (*set)) ;
 	ASSERT (VALID_ATTRIBUTE_ID (attr_id)) ;
 
 	AttributeSet _set = *set ;
@@ -535,7 +541,10 @@ AttributeID AttributeSet_GetKey
 	ASSERT (set != NULL) ;
 	ASSERT (i < AttributeSet_Count (set)) ;
 
-	return *(ATTRIBUTE_SET_IDS(set) + i) ;
+	// in case attribute-set is marked as read-only, clear marker
+	const AttributeSet _set = ATTRIBUTE_SET_CLEAR_MSB (set) ;
+
+	return *(ATTRIBUTE_SET_IDS(_set) + i) ;
 }
 
 // retrieves a value from set
@@ -548,8 +557,11 @@ bool AttributeSet_Get
 ) {
 	ASSERT (v != NULL) ;
 
+	// in case attribute-set is marked as read-only, clear marker
+	const AttributeSet _set = ATTRIBUTE_SET_CLEAR_MSB (set) ;
+
 	// empty set / unknown attribute id
-	if (unlikely (set == NULL || !VALID_ATTRIBUTE_ID (attr_id))) {
+	if (unlikely (_set == NULL || !VALID_ATTRIBUTE_ID (attr_id))) {
 		*v = SI_NullVal () ;
 		return false ;
 	}
@@ -560,8 +572,8 @@ bool AttributeSet_Get
 
 	uint16_t i;  // attribute index
 
-	if (AttributeSet_Contains (set, attr_id, &i)) {
-		AttrValue_t *attr = _GetAttrVal (set, i) ;
+	if (AttributeSet_Contains (_set, attr_id, &i)) {
+		AttrValue_t *attr = _GetAttrVal (_set, i) ;
 		_AttrValueToSIValue (v, attr) ;
 		return true ;
 	}
@@ -578,16 +590,19 @@ void AttributeSet_GetIdx
 	AttributeID *attr_id,    // [output] attribute ID
 	SIValue *v               // [output] value
 ) {
-	ASSERT (i       < set->attr_count) ;
 	ASSERT (v       != NULL) ;
 	ASSERT (set     != NULL) ;
 	ASSERT (attr_id != NULL) ;
 
+	// in case attribute-set is marked as read-only, clear marker
+	const AttributeSet _set = ATTRIBUTE_SET_CLEAR_MSB (set) ;
+	ASSERT (i < _set->attr_count) ;
+
 	// set attribute id
-	*attr_id = _GetAttrID (set, i) ;
+	*attr_id = _GetAttrID (_set, i) ;
 
 	// extract attribute value
-	_AttrValueToSIValue (v, _GetAttrVal (set, i)) ;
+	_AttrValueToSIValue (v, _GetAttrVal (_set, i)) ;
 }
 
 // adds new attributes to the attribute-set
@@ -601,6 +616,7 @@ void AttributeSet_Add
 	bool allowNull,     // accept NULLs
 	bool clone          // clone values
 ) {
+	ASSERT (!ATTRIBUTE_SET_IS_READONLY (*set)) ;
 	ASSERT (set != NULL) ;
 
 	if (unlikely (n == 0)) {
@@ -676,6 +692,7 @@ AttributeSetChangeType AttributeSet_Update
 	bool allowNull,       // accept NULLs
 	bool clone            // clone value
 ) {
+	ASSERT (!ATTRIBUTE_SET_IS_READONLY (set)) ;
 	ASSERT (set     != NULL) ;
 	ASSERT (VALID_ATTRIBUTE_ID (attr_id)) ;
 
@@ -737,6 +754,8 @@ AttributeSet AttributeSet_ShallowClone
 (
 	const AttributeSet set  // set to clone
 ) {
+	ASSERT (!ATTRIBUTE_SET_IS_READONLY (set)) ;
+
 	if (set == NULL) {
 		return NULL ;
 	}
@@ -764,6 +783,7 @@ void AttributeSet_PersistValues
 (
 	AttributeSet set  // attribute-set to persist
 ) {
+	ASSERT (!ATTRIBUTE_SET_IS_READONLY (set)) ;
 	if (set == NULL) {
 		return ;
 	}
@@ -794,22 +814,24 @@ XXH64_hash_t AttributeSet_HashCode
 (
 	const AttributeSet set  // attribute-set to compute hash of
 ) {
+	const AttributeSet _set = ATTRIBUTE_SET_CLEAR_MSB (set) ;
+
 	XXH64_state_t *hash = XXH64_createState ();  // create a hash state
 	XXH_errorcode res = XXH64_reset (hash, 0) ;
 	ASSERT (res != XXH_ERROR) ;
 
-	if (set != NULL) {
-		uint16_t n = AttributeSet_Count (set) ;
+	if (_set != NULL) {
+		uint16_t n = AttributeSet_Count (_set) ;
 		res = XXH64_update (hash, &n, sizeof (n)) ;
 		ASSERT(res != XXH_ERROR);
 
-		AttributeID *attr_ids = ATTRIBUTE_SET_IDS (set) ;
+		AttributeID *attr_ids = ATTRIBUTE_SET_IDS (_set) ;
 		res = XXH64_update (hash, attr_ids, sizeof (AttributeID) * n) ;
 		ASSERT(res != XXH_ERROR);
 
 		for (uint16_t i = 0; i < n; i++) {
 			SIValue v ;
-			_AttrValueToSIValue (&v, _GetAttrVal (set, i)) ;
+			_AttrValueToSIValue (&v, _GetAttrVal (_set, i)) ;
 
 			// update hash with the hashval of the associated SIValue
 			XXH64_hash_t value_hash = SIValue_HashCode (v) ;
@@ -829,6 +851,8 @@ size_t AttributeSet_memoryUsage
 (
 	const AttributeSet set  // set to compute memory consumption of
 ) {
+	ASSERT (!ATTRIBUTE_SET_IS_READONLY (set)) ;
+
 	if (set == NULL) {
 		return 0 ;
 	}
@@ -860,6 +884,7 @@ void AttributeSet_Defrag
 ) {
 	ASSERT (set != NULL) ;
 	ASSERT (ctx != NULL) ;
+	ASSERT (!ATTRIBUTE_SET_IS_READONLY (set)) ;
 
 	uint16_t n = AttributeSet_Count (set) ;
 	AttrValue_t *attrs = ATTRIBUTE_SET_VALS (set) ;
