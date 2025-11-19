@@ -290,6 +290,9 @@ static void EffectsBuffer_WriteAttributeSet
 
 		// write attribute value
 		EffectsBuffer_WriteSIValue (&attr, buff) ;
+
+		// free attribute
+		SIValue_Free (attr) ;
 	}
 }
 
