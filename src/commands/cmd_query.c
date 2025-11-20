@@ -252,11 +252,15 @@ static void _ExecuteQuery(void *args) {
 			query_ctx->status = QueryExecutionStatus_FAILURE;
 		}
 	} else {
-		// replicate if graph was modified
-		if(ResultSetStat_IndicateModification(&result_set->stats)) {
+		// replicate if graph was modified or there are effects to replicate
+		// effects may include schema changes (e.g. new attributes) that don't
+		// update traditional statistics but still need to be replicated
+		bool has_effects = EffectsBuffer_Length(QueryCtx_GetEffectsBuffer()) > 0;
+		bool has_modifications = ResultSetStat_IndicateModification(&result_set->stats);
+		
+		if(has_modifications || has_effects) {
 			// determine rather or not to replicate via effects
-			if(EffectsBuffer_Length(QueryCtx_GetEffectsBuffer()) > 0 &&
-			   _should_replicate_effects()) {
+			if(has_effects && _should_replicate_effects()) {
 				// compute effects buffer
 				size_t effects_len = 0;
 				u_char *effects = EffectsBuffer_Buffer(

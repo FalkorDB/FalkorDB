@@ -224,3 +224,42 @@ class testReplication(FlowTestsBase):
         replica_result = list_constraints(replica)
         env.assertEquals(replica_result, origin_result)
 
+    def test_schema_replication(self):
+        # Test that schema changes (new attributes) are replicated
+        # when setting properties to null
+        env = self.env
+        source_con = env.getConnection()
+        replica_con = env.getSlaveConnection()
+
+        # enable write commands on slave
+        replica_con.config_set("slave-read-only", "no")
+
+        # the WAIT command forces master slave sync to complete
+        source_con.execute_command("WAIT", "1", "0")
+
+        # create a new graph for this test
+        graph_id = "schema_replication_test"
+        src = Graph(source_con, graph_id)
+        replica = Graph(replica_con, graph_id)
+
+        # create a node without any properties
+        result = src.query("CREATE ()")
+        env.assertEquals(result.nodes_created, 1)
+
+        # set a property to null on a node that doesn't have that property
+        # this should add the property key to the schema
+        result = src.query("MATCH (n) SET n.v = null")
+        
+        # force replication
+        source_con.execute_command("WAIT", "1", "0")
+
+        # verify that both master and replica have the property key in schema
+        master_props = src.query("CALL db.propertyKeys()").result_set
+        replica_props = replica.query("CALL db.propertyKeys()").result_set
+
+        # both should have the 'v' property key
+        env.assertEquals(len(master_props), 1)
+        env.assertEquals(master_props[0][0], "v")
+        env.assertEquals(len(replica_props), 1)
+        env.assertEquals(replica_props[0][0], "v")
+
