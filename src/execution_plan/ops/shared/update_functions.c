@@ -117,6 +117,225 @@ void CommitUpdates
 	HashTableReleaseIterator(it);
 }
 
+static void _WriteUpdatesToEffectsBuffer
+(
+	EffectsBuffer *eb,                // effects buffer
+	GraphEntity *e,                   // updated entity
+	GraphEntityType et,               // entity type
+	AttributeID *attr_ids,            // attribute ids
+	SIValue *attr_vals,               // attribute values
+	AttributeSetChangeType *changes,  // changes
+	uint16_t n                        // number of changes
+) {
+	// add changes to effects buffer
+	for (uint i = 0; i < n; i++) {
+		SIValue     v  = attr_vals[i] ;
+		AttributeID id = attr_ids [i] ;
+
+		switch (changes[i]) {
+			case CT_DEL:
+				// attribute removed
+				EffectsBuffer_AddEntityRemoveAttributeEffect (eb, e, id, et) ;
+				break;
+
+			case CT_ADD:
+				// attribute added
+				EffectsBuffer_AddEntityAddAttributeEffect (eb, e, id, v, et) ;
+				break;
+
+			case CT_UPDATE:
+				// attribute update
+				EffectsBuffer_AddEntityUpdateAttributeEffect (eb, e, id, v, et) ;
+				break;
+
+			case CT_NONE:
+				// no change
+				break;
+
+			default:
+				assert ("unknown change type value" && false) ;
+				break;
+		}
+	}
+}
+
+static void _AttributeSetUpdate
+(
+	GraphEntity *e,         // updated entity
+	GraphEntityType et,     // entity type
+	AttributeID *attr_ids,  // attribute ids
+	SIValue *attr_vals,     // attribute values
+	uint16_t n,             // number of attributes
+	UPDATE_MODE mode,       // update mode replace / add
+	EffectsBuffer *eb       // effects buffer
+) {
+	ASSERT (n         > 0) ;
+	ASSERT (e         != NULL) ;
+	ASSERT (eb        != NULL) ;
+	ASSERT (attr_ids  != NULL) ;
+	ASSERT (attr_vals != NULL) ;
+
+	if (mode == UPDATE_REPLACE) {
+		// set should have been cleared
+		ASSERT (GraphEntity_GetAttributes (e) == NULL) ;
+
+		// add all attributes in one go
+		AttributeSet_Add (e->attributes, attr_ids, attr_vals, n, false, true) ;
+
+		// create effects
+		for (uint i = 0; i < n; i++) {
+			// attribute added effect
+			EffectsBuffer_AddEntityAddAttributeEffect (eb, e, attr_ids[i],
+					attr_vals[i], et) ;
+		}
+
+		// done
+		return ;
+	}
+
+	//--------------------------------------------------------------------------
+	// merge map attribute's into entity's attribute-set
+	//--------------------------------------------------------------------------
+
+	AttributeSetChangeType changes[n] ;
+	AttributeSet_Update (changes, e->attributes, attr_ids, attr_vals, n, true,
+			true) ;
+
+	// write changes to effects buffer
+	_WriteUpdatesToEffectsBuffer (eb, e, et, attr_ids, attr_vals, changes, n) ;
+}
+
+static void _FlushAccumulatedUpdates
+(
+	EffectsBuffer *eb,      // effects buffer
+	GraphEntity *e,         // entity
+	GraphEntityType et,     // entity type
+	SIValue *attr_vals,     // attribute values
+	AttributeID *attr_ids,  // attribute ids
+	uint16_t *n             // number of updates
+) {
+	ASSERT (n         != NULL) ;
+	ASSERT (e         != NULL) ;
+	ASSERT (eb        != NULL) ;
+	ASSERT (attr_ids  != NULL) ;
+	ASSERT (attr_vals != NULL) ;
+
+	if (*n == 0) {
+		return ;
+	}
+
+	// update cloned attribute set, original remained untouched!
+	AttributeSetChangeType changes[*n] ;
+	AttributeSet_Update (changes, e->attributes, attr_ids, attr_vals, *n, true,
+			true) ;
+
+	// write changes to effects buffer
+	_WriteUpdatesToEffectsBuffer (eb, e, et, attr_ids, attr_vals, changes, *n) ;
+
+	// free values
+	for (uint16_t i = 0; i < *n; i++) {
+		SIValue_Free (attr_vals[i]) ;
+	}
+
+	*n = 0 ;
+}
+
+// update e's attribute-set from a map
+static void _UpdateSetFromMap
+(
+	GraphContext *gc,       // graph context
+	GraphEntity *e,         // entity
+	GraphEntityType et,     // entity type
+	UPDATE_MODE mode,       // update mode replace / merge
+	EffectsBuffer *eb,      // effects buffer
+	SIValue map,            // map to turn into attribute-set
+	SIType accepted_types,  // accepted attribute types
+	bool *error             // [output] error
+) {
+	ASSERT (e     != NULL) ;
+	ASSERT (gc    != NULL) ;
+	ASSERT (eb    != NULL) ;
+	ASSERT (error != NULL) ;
+	ASSERT (SI_TYPE (map) == T_MAP) ;
+
+	// value is of type map e.g.
+	// e =  {a:1, b:2}
+	// e += {a:1, b:2}
+
+	uint n = Map_KeyCount (map) ;
+	if (unlikely (n) == 0) {
+		return ;
+	}
+
+	AttributeID attr_ids  [n] ;
+	SIValue     attr_vals [n] ;
+
+	//--------------------------------------------------------------------------
+	// collect attributes from map
+	//--------------------------------------------------------------------------
+
+	for (uint i = 0; i < n; i++) {
+		SIValue key ;
+		Map_GetIdx (map, i, &key, attr_vals + i) ;
+
+		if (!_ValidateAttrType (accepted_types, attr_vals[i])) {
+			*error = true ;
+			Error_InvalidPropertyValue() ;
+			return ;
+		}
+
+		attr_ids[i] = GraphHub_FindOrAddAttribute (gc, key.stringval, true) ;
+	}
+
+	_AttributeSetUpdate (e, et, attr_ids, attr_vals, n , mode, eb) ;
+}
+
+// update e's attribute-set from e's
+static void _UpdateSetFromEntity
+(
+	GraphEntity *s,      // entity to extract attributes from
+	GraphEntity *e,      // entity to update
+	GraphEntityType et,  // entity type
+	UPDATE_MODE mode,    // update mode replace / merge
+	EffectsBuffer *eb    // effects buffer
+) {
+	AttributeSet set = GraphEntity_GetAttributes (s) ;
+
+	if (mode == UPDATE_REPLACE) {
+		// e's attribute-set should have been cleared
+		ASSERT (*e->attributes == NULL) ;
+
+		// set e's attribute-set with a clone of s
+		*e->attributes = AttributeSet_Clone (set) ;
+		set = GraphEntity_GetAttributes (e) ;
+		uint16_t n = AttributeSet_Count (set) ;
+
+		// create effects
+		for (uint i = 0; i < n; i++) {
+			// attribute added effect
+			SIValue v ;
+			AttributeID attr ;
+			AttributeSet_GetIdx (set, i, &attr, &v) ;
+			EffectsBuffer_AddEntityAddAttributeEffect (eb, e, attr,
+					v, et) ;
+		}
+
+		return ;
+	}
+
+	uint16_t n = AttributeSet_Count (set) ;
+
+	AttributeID attr_ids  [n] ;
+	SIValue     attr_vals [n] ;
+
+	// collect attributes
+	for (uint i = 0; i < n; i++) {
+		AttributeSet_GetIdx (set, i, attr_ids + i, attr_vals + i) ;
+	}
+
+	_AttributeSetUpdate (e, et, attr_ids, attr_vals, n , mode, eb) ;
+}
+
 // build pending updates in the 'updates' array to match all
 // AST-level updates described in the context
 // NULL values are allowed in SET clauses but not in MERGE clauses
@@ -235,134 +454,76 @@ void EvalEntityUpdates
 	//
 	// collect all updates into a single attribute-set
 
+	// accumulated updates
+	uint16_t n_updates = 0 ;            // number of updates
+	SIValue attr_vals    [exp_count] ;  // attribute values
+	AttributeID attr_ids [exp_count] ;  // attribute ids
+
 	for (uint i = 0; i < exp_count && !error; i++) {
 		PropertySetCtx *property = ctx->properties + i ;
 
 		SIValue     v         = AR_EXP_Evaluate (property->exp, r) ;
 		SIType      t         = SI_TYPE (v) ;
 		UPDATE_MODE mode      = property->mode ;
-		const char* attribute = property->attribute ;
+		const char* attribute = property->attr_name ;
 
 		//----------------------------------------------------------------------
 		// n.v = 2
 		//----------------------------------------------------------------------
 
 		if (attribute != NULL) {
-			// a specific attribute is set, validate the value type
+
+			// resolve attribute id
+			if (property->attr_id == ATTRIBUTE_ID_NONE) {
+				property->attr_id =
+					GraphHub_FindOrAddAttribute (gc, attribute, true) ;
+			}
+			AttributeID attr_id = property->attr_id ;
+
+			// accumulate update
+			attr_vals [n_updates] = v;
+			attr_ids  [n_updates] = attr_id;
+			n_updates++ ;
+
+			// validate attribute's type
 			if (!_ValidateAttrType (accepted_properties, v)) {
 				error = true ;
-				SIValue_Free (v) ;
+				// TODO: free accumulated updates
 				Error_InvalidPropertyValue () ;
 				break ;
 			}
-
-			// TODO: save attr_id in property, no need to look it up every time
-			AttributeID attr_id =
-				GraphHub_FindOrAddAttribute (gc, attribute, true) ;
-
-			// update cloned attribute set, original remained untouched!
-			switch (AttributeSet_Update (entity->attributes, attr_id, v, true,
-						true)) {
-				case CT_DEL:
-					// attribute removed
-					EffectsBuffer_AddEntityRemoveAttributeEffect (eb, entity,
-							attr_id, entity_type) ;
-					continue ;
-
-				case CT_ADD:
-					// attribute added
-					EffectsBuffer_AddEntityAddAttributeEffect (eb, entity,
-							attr_id, v, entity_type) ;
-					break;
-
-				case CT_UPDATE:
-					// attribute update
-					EffectsBuffer_AddEntityUpdateAttributeEffect(eb, entity,
-							attr_id, v, entity_type);
-					break;
-				case CT_NONE:
-					// no change
-					break;
-				default:
-					assert("unknown change type value" && false);
-					break;
-			}
-
-			SIValue_Free (v) ;
 			continue ;
 		}
+
+		_FlushAccumulatedUpdates (eb, entity, entity_type, attr_vals, attr_ids,
+				&n_updates) ;
 
 		//----------------------------------------------------------------------
 		// n = {v:2}, n = m
 		//----------------------------------------------------------------------
 
-		if(!(t & (T_NODE | T_EDGE | T_MAP))) {
-			error = true;
-			SIValue_Free(v);
-			Error_InvalidPropertyValue();
-			break;
+		if (!(t & (T_NODE | T_EDGE | T_MAP))) {
+			error = true ;
+			SIValue_Free (v) ;
+			Error_InvalidPropertyValue () ;
+			break ;
 		}
 
-		if(mode == UPDATE_REPLACE) {
+		if (mode == UPDATE_REPLACE) {
 			// if this update replaces all existing properties
 			// enqueue a 'clear' update to do so
-			EffectsBuffer_AddEntityRemoveAttributeEffect(eb, entity,
-							ATTRIBUTE_ID_ALL, entity_type);
-			AttributeSet_Free(entity->attributes);
+			EffectsBuffer_AddEntityRemoveAttributeEffect (eb, entity,
+							ATTRIBUTE_ID_ALL, entity_type) ;
+			AttributeSet_Free (entity->attributes) ;
 		}
 
 		//----------------------------------------------------------------------
 		// n = {v:2}
 		//----------------------------------------------------------------------
 
-		if(t == T_MAP) {
-			// value is of type map e.g. n.v = {a:1, b:2}
-			// iterate over all map elements to build updates
-			uint map_size = Map_KeyCount (v) ;
-			for (uint j = 0; j < map_size; j ++) {
-				SIValue key ;
-				SIValue value ;
-
-				Map_GetIdx (v, j, &key, &value) ;
-
-				if (!_ValidateAttrType (accepted_properties, value)) {
-					error = true ;
-					Error_InvalidPropertyValue() ;
-					break ;
-				}
-
-				AttributeID attr_id = GraphHub_FindOrAddAttribute (gc,
-						key.stringval, true) ;
-				// TODO: would have been nice we just sent n = {v:2}
-				switch (AttributeSet_Update (entity->attributes, attr_id, value, true, true))
-				{
-					case CT_DEL:
-						// attribute removed
-						EffectsBuffer_AddEntityRemoveAttributeEffect (eb, entity,
-								attr_id, entity_type) ;
-						break;
-
-					case CT_ADD:
-						// attribute added
-						EffectsBuffer_AddEntityAddAttributeEffect (eb, entity,
-								attr_id, value, entity_type) ;
-						break;
-
-					case CT_UPDATE:
-						// attribute update
-						EffectsBuffer_AddEntityUpdateAttributeEffect (eb, entity,
-								attr_id, value, entity_type) ;
-						break;
-
-					case CT_NONE:
-						// no change
-						break;
-
-					default:
-						assert ("unknown change type value" && false) ;
-						break;
-				}
-			}
+		if (t == T_MAP) {
+			_UpdateSetFromMap (gc, entity, entity_type, mode, eb, v,
+					accepted_properties, &error) ;
 
 			// free map
 			SIValue_Free (v) ;
@@ -378,33 +539,13 @@ void EvalEntityUpdates
 
 		GraphEntity *ge = v.ptrval ;
 
-		// iterate over all entity properties to build updates
-		const AttributeSet set = GraphEntity_GetAttributes (ge) ;
-
-		for (uint j = 0; j < AttributeSet_Count (set); j++) {
-			SIValue v;
-			AttributeID attr_id ;
-			AttributeSet_GetIdx (set, j, &attr_id, &v) ;
-
-			// simple assignment, no need to validate value
-			switch (AttributeSet_Update (entity->attributes, attr_id, v, false, true))
-			{
-				case CT_ADD:
-					// attribute added
-					EffectsBuffer_AddEntityAddAttributeEffect (eb, entity,
-							attr_id, v, entity_type) ;
-					break ;
-
-				case CT_UPDATE:
-					// attribute update
-					EffectsBuffer_AddEntityUpdateAttributeEffect (eb, entity,
-							attr_id, v, entity_type) ;
-					break ;
-				default:
-					break ;
-			}
-		}
+		_UpdateSetFromEntity (ge, entity, entity_type, mode, eb) ;
 	} // for loop end
+
+	if (!error) {
+		_FlushAccumulatedUpdates (eb, entity, entity_type, attr_vals, attr_ids,
+				&n_updates) ;
+	}
 
 	// restore original attribute-set
 	// changes should not be visible prior to the commit phase
@@ -426,3 +567,4 @@ void PendingUpdateCtx_Free
 	array_free(ctx->remove_labels);
 	rm_free(ctx);
 }
+

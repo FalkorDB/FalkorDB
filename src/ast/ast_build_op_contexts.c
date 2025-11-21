@@ -226,7 +226,14 @@ static void _ConvertUpdateItem
 			// this is done by performing a.v = NULL
 			exp = AR_EXP_NewConstOperandNode(SI_NullVal());
 		}
-		PropertySetCtx update = { .attribute  = attribute, .exp = exp, .mode = update_mode };
+
+		PropertySetCtx update = {
+			.attr_name  = attribute,
+			.attr_id = ATTRIBUTE_ID_NONE,
+			.exp = exp,
+			.mode = update_mode
+		};
+
 		array_append(ctx->properties, update);
 	}
 }

@@ -322,7 +322,7 @@ void GraphHub_UpdateNodeProperty
 	if(attr_id == ATTRIBUTE_ID_ALL) {
 		AttributeSet_Free(n.attributes);
 	} else {
-		AttributeSet_Update (n.attributes, attr_id, v, true, false) ;
+		AttributeSet_Update (NULL, n.attributes, &attr_id, &v, 1, true, false) ;
 	}
 
 	// retrieve node labels
@@ -389,8 +389,9 @@ void GraphHub_UpdateEdgeProperty
 
 	GraphEntity *ge = (GraphEntity *)&e;
 
-	bool update_idx =
-		AttributeSet_Update (e.attributes, attr_id, v, true, false) != CT_NONE ;
+	AttributeSetChangeType change ;
+	AttributeSet_Update (&change, e.attributes, &attr_id, &v, 1, true, false) ;
+	bool update_idx = (change != CT_NONE) ;
 
 	// update index if
 	// 1. attribute was set/updated

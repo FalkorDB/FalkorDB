@@ -163,7 +163,9 @@ void test_attributeset_update() {
 	TEST_ASSERT (SIValue_IsFalse (v) == false) ;
 
 	// update boolean attribute
-	AttributeSet_Update (&set, 1, SI_BoolVal (false), false, true) ;
+	AttributeID attr_id = 1 ;
+	SIValue attr_val = SI_BoolVal (false) ;
+	AttributeSet_Update (NULL, &set, &attr_id, &attr_val, 1, false, true) ;
 
 	AttributeSet_Get (set, 1, &v) ;
 	TEST_ASSERT (SIValue_IsFalse (v) == true) ;
@@ -176,8 +178,9 @@ void test_attributeset_update() {
 	TEST_ASSERT (SIValue_Compare (v, values[0], NULL) == 0) ;
 
 	// update string attribute
+	attr_id = 0 ;
 	SIValue x = SI_DuplicateStringVal ("E4, D6") ;
-	AttributeSet_Update (&set, 0, x, false, true) ;
+	AttributeSet_Update (NULL, &set, &attr_id, &x, 1, false, true) ;
 
 	AttributeSet_Get (set, 0, &v) ;
 	TEST_ASSERT (SIValue_Compare (v, values[0], NULL) != 0) ;
@@ -190,10 +193,10 @@ void test_attributeset_update() {
 	TEST_ASSERT (AttributeSet_Count (set) == 3) ;
 
 	x = SI_LongVal (99) ;
-	AttributeID attr_id = 3 ;
+	attr_id = 3 ;
 
 	// update should add missing attribute
-	AttributeSet_Update (&set, attr_id, x, false, false) ;
+	AttributeSet_Update (NULL, &set, &attr_id, &x, 1, false, false) ;
 
 	TEST_ASSERT (AttributeSet_Count (set) == 4) ;
 
@@ -297,8 +300,10 @@ void test_attributeset_remove() {
 	TEST_ASSERT (AttributeSet_Count (set) == n) ;
 
 	for (uint16_t i = 0; i < n; i++) {
-		TEST_ASSERT (AttributeSet_Update
-				(&set, attr_ids[i], SI_NullVal (), true, false) == CT_DEL) ;
+		SIValue v = SI_NullVal () ;
+		AttributeSetChangeType change ;
+		AttributeSet_Update (&change, &set, attr_ids + i, &v, 1, true, false) ;
+		TEST_ASSERT (change == CT_DEL) ;
 		TEST_ASSERT (AttributeSet_Count (set) == n - i - 1) ;
 
 		for (uint16_t j = i+1; j < n; j++) {

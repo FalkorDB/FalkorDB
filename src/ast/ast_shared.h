@@ -57,9 +57,10 @@ typedef enum {
 // key-value pair of an attribute ID and the value to be associated with it
 // TODO: consider replacing contents of PropertyMap (for ops like Create) with this
 typedef struct {
-	const char *attribute;
-	struct AR_ExpNode *exp;
-	UPDATE_MODE mode;
+	AttributeID attr_id;     // updated attribute id
+	const char *attr_name;   // updated attribute name
+	struct AR_ExpNode *exp;  // value expression
+	UPDATE_MODE mode;        // update mode
 } PropertySetCtx;
 
 // context describing an update expression

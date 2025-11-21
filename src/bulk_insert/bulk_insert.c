@@ -358,7 +358,7 @@ static int _BulkInsert_ProcessEdgeFile
 		Edge_SetDestNodeID (&e, dest) ;
 		array_append (edges, e) ;
 
-		uint idx = 0 ;
+		uint n = 0 ;
 		// read edge properties
 		for (uint i = 0; i < prop_count; i++) {
 			SIValue v = _BulkInsert_ReadProperty (data, &data_idx) ;
@@ -369,14 +369,14 @@ static int _BulkInsert_ProcessEdgeFile
 			}
 
 			// accumulate attributes
-			props[idx] = v ;
-			prop_attr_ids[idx] = prop_indices[i] ;
-			idx++ ;
+			props[n] = v ;
+			prop_attr_ids[n] = prop_indices[i] ;
+			n++ ;
 		}
 
 		// assign properties
 		AttributeSet set = NULL ;
-		AttributeSet_Add (&set, prop_attr_ids, props, idx, false, false) ;
+		AttributeSet_Add (&set, prop_attr_ids, props, n, false, false) ;
 		array_append (sets, set) ;
 
 		// yield every 500000 iterations

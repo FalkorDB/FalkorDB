@@ -43,14 +43,6 @@ bool AttributeSet_Contains
 	uint16_t *idx            // [optional][output] attribute index
 );
 
-// removes an attribute from set
-// returns true if attribute was removed false otherwise
-bool AttributeSet_Remove
-(
-	AttributeSet *set,   // attribute-set
-	AttributeID attr_id  // attribute ID to remove
-);
-
 // returns the ith attribute ID
 AttributeID AttributeSet_GetKey
 (
@@ -90,13 +82,29 @@ void AttributeSet_Add
 
 // add, remove or update an attribute
 // returns the type of change performed
-AttributeSetChangeType AttributeSet_Update
+void AttributeSet_Update
 (
-	AttributeSet *set,    // set to update
-	AttributeID attr_id,  // attribute identifier
-	SIValue value,        // new value
-	bool allowNull,       // accept NULLs
-	bool clone            // clone value
+	AttributeSetChangeType *change,  // [output] changes
+	AttributeSet *set,               // set to update
+	AttributeID *ids,                // attribute identifier
+	SIValue *vals,                   // new value
+	uint16_t n,                      // number of attributes
+	bool allowNull,                  // accept NULLs
+	bool clone                       // clone value
+);
+
+// removes an attribute from set
+// returns true if attribute was removed false otherwise
+bool AttributeSet_Remove
+(
+	AttributeSet *set,   // attribute-set
+	AttributeID attr_id  // attribute ID to remove
+);
+
+// clones attribute-set
+AttributeSet AttributeSet_Clone
+(
+	const AttributeSet set  // attribute-set to clone
 );
 
 // shallow clones attribute-set

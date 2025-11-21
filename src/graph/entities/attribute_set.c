@@ -374,7 +374,7 @@ static AttributeSet AttributeSet_Accommodate
 
 	// allocate room for new attribute
 	if (_set == NULL) {
-		_set = rm_calloc (1, sizeof(_AttributeSet) +
+		_set = rm_malloc (sizeof(_AttributeSet) +
 				n * (sizeof (AttributeID) + sizeof (AttrValue_t))) ;
 		_set->attr_count = n ;
 	} else {
@@ -392,43 +392,73 @@ static AttributeSet AttributeSet_Accommodate
 	return _set ;
 }
 
-// removes the ith attribute from the attribute-set
+static int cmp_desc
+(
+	const void *a,
+	const void *b
+) {
+    uint16_t x = *(const uint16_t *)a ;
+    uint16_t y = *(const uint16_t *)b ;
+
+    // descending order
+    if (x < y) {
+		return 1 ;
+	}
+
+    if (x > y) {
+		return -1 ;
+	}
+
+    return 0 ;
+}
+
+// removes attribute(s) from the attribute-set
 static void AttributeSet_RemoveIdx
 (
 	AttributeSet *set,  // attribute-set
-	uint16_t i          // attribute index
+	uint16_t *indices,  // attribute indices
+	uint16_t n          // number of attributes to remove
 ) {
-	ASSERT (set != NULL) ;
-	ASSERT (i < AttributeSet_Count(*set)) ;
+	ASSERT (n       > 0) ;
+	ASSERT (set     != NULL) ;
+	ASSERT (indices != NULL) ;
 
 	AttributeSet _set = *set ;
+	ASSERT (n <= AttributeSet_Count(_set)) ;
 
 	// if this is the last attribute, free the attribute-set
-	const uint16_t n = _set->attr_count ;
-	if (n == 1) {
+	uint16_t l = _set->attr_count ;
+	if (l == 1) {
 		AttributeSet_Free (set) ;
 		return ;
 	}
 
-	// free attribute
+	// sort indices
+	qsort (indices, n, sizeof(uint16_t), cmp_desc) ;
+
+	AttributeID *ids   = ATTRIBUTE_SET_IDS  (_set) ;
 	AttrValue_t *attrs = ATTRIBUTE_SET_VALS (_set) ;
-	AttrValue_t *attr = attrs + i ;
-	_AttrValue_Free (&attr) ;
+
+	for (int16_t i = n-1; i >= 0; i--) {
+		// free attribute
+		uint16_t idx = indices[i] ;
+		AttrValue_t *attr = attrs + idx ;
+		_AttrValue_Free (&attr) ;
+
+		// overwrite deleted attribute with last attribute
+		l--;
+		ids  [idx] = ids   [l] ;
+		attrs[idx] = attrs [l] ;
+	}
+	_set->attr_count -= n ;  // update attribute count
 
 	//--------------------------------------------------------------------------
 	// shrink attribute-set
 	//--------------------------------------------------------------------------
 
-	AttributeID *ids = ATTRIBUTE_SET_IDS(_set) ;
-
-	// overwrite deleted attribute with last attribute
-	ids[i]   = ids[n-1]   ;
-	attrs[i] = attrs[n-1] ;
-
-	_set->attr_count-- ;  // update attribute count
-
 	// shrink
-	memmove (&ids[n-1], attrs, sizeof (AttrValue_t) * (_set->attr_count)) ;
+	memmove (&ids[_set->attr_count], attrs,
+			sizeof (AttrValue_t) * (_set->attr_count)) ;
 	*set = rm_realloc (_set, ATTRIBUTESET_BYTE_SIZE (_set)) ;
 }
 
@@ -509,30 +539,6 @@ bool AttributeSet_Contains
 	return false ;
 }
 
-// removes an attribute from set
-// returns true if attribute was removed false otherwise
-bool AttributeSet_Remove
-(
-	AttributeSet *set,   // attribute-set
-	AttributeID attr_id  // attribute ID to remove
-) {
-	ASSERT (set != NULL) ;
-	ASSERT (!ATTRIBUTE_SET_IS_READONLY (*set)) ;
-	ASSERT (VALID_ATTRIBUTE_ID (attr_id)) ;
-
-	AttributeSet _set = *set ;
-
-	// locate attribute position
-	uint16_t i;
-	if (!AttributeSet_Contains (*set, attr_id, &i)) {
-		// attribute is missing from the set, nothing to remove
-		return false ;
-	}
-
-	AttributeSet_RemoveIdx (set, i) ;
-	return true ;
-}
-
 // returns the ith attribute ID
 AttributeID AttributeSet_GetKey
 (
@@ -610,12 +616,12 @@ void AttributeSet_GetIdx
 // all attributes MUST NOT be in the set
 void AttributeSet_Add
 (
-	AttributeSet *set,  // attribute-set to update
-	AttributeID *ids,   // attribute ids
-	SIValue *values,    // attribute values
-	uint16_t n,         // number of attributes
-	bool allowNull,     // accept NULLs
-	bool clone          // clone values
+	AttributeSet *set,      // attribute-set to update
+	AttributeID *attr_ids,  // attribute ids
+	SIValue *attr_vals,     // attribute values
+	uint16_t n,             // number of attributes
+	bool allow_null,        // accept NULLs
+	bool clone              // clone values
 ) {
 	ASSERT (!ATTRIBUTE_SET_IS_READONLY (*set)) ;
 	ASSERT (set != NULL) ;
@@ -627,39 +633,39 @@ void AttributeSet_Add
 	// validate values type, values must be a valid property type
 #ifdef RG_DEBUG
 	SIType t = SI_VALID_PROPERTY_VALUE ;
-	if (allowNull == true) {
+	if (allow_null == true) {
 		t |= T_NULL ;
 	}
 
 	for (uint16_t i = 0; i < n; i++) {
-		ASSERT (SI_TYPE (values[i]) & t) ;
+		ASSERT (SI_TYPE (attr_vals[i]) & t) ;
 
 		// make sure attribute isn't already in set
-		ASSERT (AttributeSet_Contains (*set, ids[i], NULL) == false) ;
+		ASSERT (AttributeSet_Contains (*set, attr_ids[i], NULL) == false) ;
 
 		// if clone == false make sure value isn't volatile
-		ASSERT (clone || SI_ALLOCATION (values + i) != M_VOLATILE) ;
+		ASSERT (clone || SI_ALLOCATION (attr_vals + i) != M_VOLATILE) ;
 
 		// ensure no duplicate attribute IDs within this batch
-		for (ushort j = i + 1; j < n; j++) {
-			ASSERT (ids[i] != ids[j]) ;
+		for (uint16_t j = i + 1; j < n; j++) {
+			ASSERT (attr_ids[i] != attr_ids[j]) ;
 		}
 	}
 #endif
 
 	// make sure attribute-set has enough space to accommodate all attributes
-	ushort prev_count = AttributeSet_Count (*set) ;
+	uint16_t prev_count = AttributeSet_Count (*set) ;
 	AttributeSet _set = AttributeSet_Accommodate (set, n) ;
 
 	AttributeID *set_ids  = ATTRIBUTE_SET_IDS (_set)  + prev_count ;
 	AttrValue_t *set_vals = ATTRIBUTE_SET_VALS (_set) + prev_count ;
 
 	// add attributes
-	memcpy (set_ids, ids, n * sizeof (AttributeID)) ;
+	memcpy (set_ids, attr_ids, n * sizeof (AttributeID)) ;
 
 	for (uint16_t i = 0; i < n; i++) {
 		AttrValue_t *attr = set_vals + i ;
-		SIValue *v = values + i ;
+		SIValue *v = attr_vals + i ;
 
 		// compress string if:
 		// 1. string is not interned
@@ -686,71 +692,233 @@ void AttributeSet_Add
 	}
 }
 
-// add, remove or update an attribute
-// returns the type of change performed
-AttributeSetChangeType AttributeSet_Update
+// add, remove or update multiple attributes
+void AttributeSet_Update
 (
-	AttributeSet *set,    // set to update
-	AttributeID attr_id,  // attribute identifier
-	SIValue value,        // new value
-	bool allowNull,       // accept NULLs
-	bool clone            // clone value
+	AttributeSetChangeType *change,  // [optional] [output] changes
+	AttributeSet *set,               // set to update
+	AttributeID *ids,                // attribute identifier
+	SIValue *vals,                   // new value
+	uint16_t n,                      // number of attributes
+	bool allow_null,                 // accept NULLs
+	bool clone                       // clone value
 ) {
+	// expecting at least one attribute
+	ASSERT (n > 0) ;
+
+	// attribute-set can't be readonly
 	ASSERT (!ATTRIBUTE_SET_IS_READONLY (set)) ;
-	ASSERT (set     != NULL) ;
+	ASSERT (set != NULL) ;
+
+	// validate attribute ids
+#ifdef RG_DEBUG
+	for (uint16_t i = 0; i < n; i++) {
+		ASSERT (VALID_ATTRIBUTE_ID (ids[i])) ;
+	}
+#endif
+
+	// allowed value type
+	SIType t = SI_VALID_PROPERTY_VALUE ;
+	if (allow_null) {
+		t |= T_NULL ;
+	}
+
+	AttributeSet _set = *set ;
+
+	// in _set is null there's nothing to update / remove
+	// treat this update as an addition
+	bool only_additions = (_set == NULL) ;
+	if (only_additions) {
+		uint16_t    m = 0 ;     // number of attributes to add
+		SIValue     _vals[n] ;  // attribute values
+		AttributeID _ids [n] ;  // attribute ids
+
+		for (uint16_t i = 0; i < n; i++) {
+			SIValue     v       = vals[i] ;
+			AttributeID attr_id = ids [i] ;
+
+			ASSERT (SI_TYPE (v) & t) ;
+
+			if (SIValue_IsNull (v)) {
+				// can't add nulls, skip
+				if(change) {
+					change[i] = CT_NONE ;
+				}
+			} else {
+				_ids [m]   = ids [i] ;
+				_vals[m]   = vals[i] ;
+				m++ ;
+
+				if (change) {
+					change[i] = CT_ADD ;
+				}
+			}
+		}
+
+		AttributeSet_Add (set, _ids, _vals, m, false, clone) ;
+		return ;
+	}
+
+	//--------------------------------------------------------------------------
+	// categorized attributes
+	//--------------------------------------------------------------------------
+
+	// each attribute is either: updated, removed or added
+	// updates are performed first as they do not require memory movement
+
+	uint16_t n_add = 0 ;     // number of attributes to add
+	uint16_t add_idx[n*2] ;  // [(input idx, set idx),...]
+
+	uint16_t n_remove = 0 ;   // number of attributes to remove
+	uint16_t remove_idx[n] ;  // attribute-set indicies to remove
+
+	for(uint16_t i = 0; i < n; i++) {
+		uint16_t idx ;
+		SIValue     v       = vals[i] ;
+		AttributeID attr_id = ids [i] ;
+
+		ASSERT (SI_TYPE (v) & t) ;
+
+		bool remove   = SIValue_IsNull (v) ;
+		bool contains = AttributeSet_Contains (_set, attr_id, &idx) ;
+
+		// trying to remove a nonexisting attribuet
+		if (unlikely (!contains && remove && change)) {
+			change[i] = CT_NONE ;
+			continue ;
+		}
+
+		if (contains) {
+			if (remove) {
+				remove_idx[n_remove++] = idx ;
+				if (change) {
+					change[i] = CT_DEL ;
+				}
+			} else {
+				bool replaced = AttributeSet_Replace (_set, idx, &v, clone) ;
+				if (change) {
+					change[i] = replaced ? CT_UPDATE : CT_NONE ;
+				}
+			}
+		} else {
+			add_idx[n_add * 2]     = i ;
+			add_idx[n_add * 2 + 1] = idx ;
+			n_add++ ;
+			if (change) {
+				change[i] = CT_ADD ;
+			}
+		}
+	}
+
+	// pointers into attribute-set attr-ids and attr-vals
+	AttributeID *_ids  = ATTRIBUTE_SET_IDS  (_set) ;
+	AttrValue_t *_vals = ATTRIBUTE_SET_VALS (_set) ;
+
+	//--------------------------------------------------------------------------
+	// overwrite
+	//--------------------------------------------------------------------------
+
+	uint16_t overlap = (n_add < n_remove) ? n_add : n_remove ;
+	for (uint16_t i = 0; i < overlap; i++) {
+		uint16_t idx           = add_idx    [i * 2] ;
+		uint16_t overwrite_idx = remove_idx [i] ;
+
+		// free attribute
+		AttrValue_t *attr = _vals + overwrite_idx ;
+		_AttrValue_Free (&attr) ;
+
+		// overwrite deleted attribute with last attribute
+		_ids  [overwrite_idx] = ids [idx] ;
+
+		SIValue v = (clone) ? SI_CloneValue (vals[idx]) : vals[idx] ;
+		_AttrValueFromSIValue (_vals + overwrite_idx, &v) ;
+	}
+
+	//remove_idx += overlap ;
+	//add_idx    += overlap * 2 ;
+
+	n_add    -= overlap ;
+	n_remove -= overlap ;
+
+	ASSERT (n_add == 0 || n_remove == 0) ;
+
+	if (n_remove > 0) {
+		// remove
+		AttributeSet_RemoveIdx (set,  remove_idx + overlap, n_remove) ;
+	} else {
+		// add
+		AttributeID _ids [n_add] ;
+		SIValue     _vals[n_add] ;
+
+		for (uint16_t i = 0; i < n_add; i++) {
+			uint16_t j = overlap * 2 + i * 2 ;
+			_ids  [i] = ids [add_idx[j]] ;
+			_vals [i] = vals[add_idx[j]] ;
+		}
+
+		AttributeSet_Add (set, _ids, _vals, n_add, false, clone) ;
+	}
+}
+
+// removes an attribute from set
+// returns true if attribute was removed false otherwise
+bool AttributeSet_Remove
+(
+	AttributeSet *set,   // attribute-set
+	AttributeID attr_id  // attribute ID to remove
+) {
+	ASSERT (set != NULL) ;
+	ASSERT (!ATTRIBUTE_SET_IS_READONLY (*set)) ;
 	ASSERT (VALID_ATTRIBUTE_ID (attr_id)) ;
 
 	AttributeSet _set = *set ;
 
-	// validate value type
-	SIType t = SI_VALID_PROPERTY_VALUE ;
-	if (allowNull) {
-		t |= T_NULL ;
-	}
-	ASSERT (SI_TYPE (value) & t) ;
-
+	// locate attribute position
 	uint16_t i;
-	bool remove   = SIValue_IsNull (value) ;
-	bool contains = AttributeSet_Contains (_set, attr_id, &i) ;
-
-	// trying to remove a nonexisting attribuet
-	if (unlikely (!contains && remove)) {
-		return CT_NONE ;
+	if (!AttributeSet_Contains (*set, attr_id, &i)) {
+		// attribute is missing from the set, nothing to remove
+		return false ;
 	}
 
-	if (contains) {
+	AttributeSet_RemoveIdx (set, &i, 1) ;
+	return true ;
+}
 
-		//----------------------------------------------------------------------
-		// remove attribute
-		//----------------------------------------------------------------------
+// clones attribute-set
+AttributeSet AttributeSet_Clone
+(
+	const AttributeSet set  // attribute-set to clone
+) {
+	const AttributeSet _set = ATTRIBUTE_SET_CLEAR_MSB (set) ;
 
-		if (remove) {
-			AttributeSet_RemoveIdx (set, i) ;
-			return CT_DEL ;
-		}
-
-		//----------------------------------------------------------------------
-		// update attribute
-		//----------------------------------------------------------------------
-
-		if (AttributeSet_Replace (_set, i, &value, clone)) {
-			return CT_UPDATE ;
-		}
-
-		// value did not change, indicate no modification
-		return CT_NONE ;
+	if (_set == NULL) {
+		return NULL ;
 	}
 
-	//--------------------------------------------------------------------------
-	// add attribute
-	//--------------------------------------------------------------------------
+	size_t n = ATTRIBUTESET_BYTE_SIZE (_set) ;
+	AttributeSet clone = rm_malloc (n) ;
 
-	ASSERT (!contains && !remove) ;
+	// copy attribute set
+	memcpy (clone, _set, n) ;
 
-	AttributeSet_Add (set, &attr_id, &value, 1, allowNull, clone) ;
+	uint16_t l = AttributeSet_Count (clone) ;
+	AttrValue_t *attrs = ATTRIBUTE_SET_VALS (clone) ;
 
-	// new attribute added, indicate attribute addition
-	return CT_ADD ;
+	for (uint16_t i = 0; i < l; i++) {
+		AttrValue_t *attr = attrs + i;
+
+		// get attribute type
+		AttrType_t t = AttrValue_Type (attr) ;
+		if (AttrType_to_Allocation[t] == M_VOLATILE) {
+			SIValue v ;
+			_AttrValueToSIValue (&v, attr) ;
+
+			v = SI_CloneValue (v) ;
+			_AttrValueFromSIValue (attr, &v) ;
+		}
+	}
+
+	return clone ;
 }
 
 // shallow clones attribute-set
