@@ -3,6 +3,8 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "graph/delta_matrix/delta_utils.h"
+#include "GraphBLAS.h"
 #include "RG.h"
 #include "delta_matrix.h"
 
@@ -124,12 +126,100 @@ void Delta_Matrix_mulCompatible
 #endif
 }
 
+// Returns true if the transpose may be equal (heuristic)
+bool _transpose_eq (
+	const GrB_Matrix A,
+	const GrB_Matrix B,
+	DM_validation_level lvl
+) {
+	ASSERT (A != NULL) ;
+	ASSERT (B != NULL) ;
+	GrB_Matrix C       = NULL;
+	GrB_Vector deg     = NULL;
+	GrB_Vector x       = NULL;
+	GrB_Index  a_nvals = 0;
+	GrB_Index  b_nvals = 0;
+	GrB_Index  a_nrows = 0;
+	GrB_Index  a_ncols = 0;
+	GrB_Index  b_nrows = 0;
+	GrB_Index  b_ncols = 0;
+	uint64_t   res     = 0;
+	bool       is_eq   = 0;
+
+	GrB_OK (GrB_Matrix_nrows(&a_nrows, A));
+	GrB_OK (GrB_Matrix_ncols(&a_ncols, A));
+	GrB_OK (GrB_Matrix_nrows(&b_nrows, B));
+	GrB_OK (GrB_Matrix_ncols(&b_ncols, B));
+	GrB_OK (GrB_Matrix_nvals(&a_nvals, A));
+	GrB_OK (GrB_Matrix_nvals(&b_nvals, B));
+
+	// Only square matricies implemented
+	ASSERT(a_nrows == a_ncols);
+	ASSERT(b_nrows == b_ncols);
+
+	if (a_nrows != b_ncols || b_nrows != a_ncols || a_nvals != b_nvals){
+		return false;
+	}
+
+	switch (lvl) {
+		case VAL_BASIC:
+			is_eq = true;
+			break;
+		case VAL_T_SHORT:
+			GrB_OK (GrB_Vector_new(&deg, GrB_UINT64, a_nrows));
+			GrB_OK (GrB_Vector_new(&x, GrB_UINT64, a_ncols));
+
+			// fill all the vectors (filling odeg and ideg helps computations
+			// with random lookups)
+			GrB_OK(GrB_Vector_assign_UINT64(
+				deg, NULL, NULL, (uint64_t)0, GrB_ALL, 0, NULL));
+			GrB_OK(GrB_Vector_assign_UINT64(
+				x, NULL, NULL, (uint64_t)0, GrB_ALL, 0, NULL));
+
+			// Get the row degree of A and XOR with the col degree of B
+			// if they are equal, the result will be zero
+			// TODO: check the order so the right GrB kernel is used.
+			GrB_OK (GrB_mxv (
+				deg, NULL, NULL, GxB_PLUS_PAIR_UINT64, A, x, NULL));
+			GrB_OK (GrB_mxv (deg, NULL, GrB_BXOR_UINT64, GxB_PLUS_PAIR_UINT64,
+				B, x, GrB_DESC_T0));
+
+			// if all degrees are equal, res will be 0
+			GrB_OK (GrB_Vector_reduce_UINT64 (
+				&res, NULL, GxB_BOR_UINT64_MONOID, deg, NULL));
+
+			// NOTE: don't assign zero to deg, it will already be zero if
+			// the matricies are equal.
+			GrB_OK (GrB_mxv (
+				deg, NULL, NULL, GxB_PLUS_PAIR_UINT64, B, x, NULL));
+			GrB_OK (GrB_mxv (deg, NULL, GrB_BXOR_UINT64, GxB_PLUS_PAIR_UINT64,
+				A, x, GrB_DESC_T0));
+
+			// if all degrees are equal, res will be 0
+			GrB_OK (GrB_Vector_reduce_UINT64 (
+				&res, GrB_BXOR_UINT64, GxB_BOR_UINT64_MONOID, deg, NULL));
+
+			is_eq = res == 0;
+			break;
+		case VAL_T_FULL:
+			GrB_OK (GrB_Matrix_new(&C, GrB_UINT64, a_nrows, a_ncols));
+			GrB_OK (GrB_transpose(C, A, NULL, B, GrB_DESC_SC));
+			GrB_OK (GrB_Matrix_nvals(&res, C));
+			is_eq = res == 0;
+			break;
+	}
+
+	GrB_free(&deg);
+	GrB_free(&x);
+	GrB_free(&C);
+	return res == 0;
+}
+
 bool _matrix_leq
 (
 	const GrB_BinaryOp leq,
 	const GrB_Matrix A,
-	const GrB_Matrix B,
-	bool transpose
+	const GrB_Matrix B
 ) {
 	GrB_Index      a_nvals = 0;
 	GrB_Index      b_nvals = 0;
@@ -138,7 +228,6 @@ bool _matrix_leq
 	GrB_Index      ncols   = 0;
 	GrB_Index      brows   = 0;
 	GrB_Index      bcols   = 0;
-	GrB_Descriptor desc = transpose ? GrB_DESC_T1 : NULL;
 	
 	GrB_OK (GrB_Matrix_nvals(&a_nvals, A));
 	GrB_OK (GrB_Matrix_nvals(&b_nvals, B));
@@ -151,19 +240,13 @@ bool _matrix_leq
 	GrB_OK (GrB_Matrix_nrows(&brows, B));
 	GrB_OK (GrB_Matrix_ncols(&bcols, B));
 
-	if (transpose) {
-		GrB_Index temp = brows;
-		brows = bcols;
-		bcols = temp;
-	}
-
 	if(nrows != brows || ncols != bcols) {
 		return false;
 	}
 
 	GrB_Matrix C = NULL;
 	GrB_OK (GrB_Matrix_new(&C, GrB_BOOL, nrows, ncols));
-	GrB_OK (GrB_eWiseMult(C, NULL, NULL, leq, A, B, desc));
+	GrB_OK (GrB_eWiseMult(C, NULL, NULL, leq, A, B, NULL));
 	GrB_OK (GrB_Matrix_nvals(&c_nvals, C));
 
 	bool result = true;
@@ -188,7 +271,7 @@ bool _matrix_leq
 void Delta_Matrix_validate
 (
 	const Delta_Matrix C,
-	bool check_transpose
+	DM_validation_level lvl
 ) {
 #ifdef RG_DEBUG
 	ASSERT (C != NULL);
@@ -265,25 +348,10 @@ void Delta_Matrix_validate
 	//--------------------------------------------------------------------------
 	// Check the transpose
 	//--------------------------------------------------------------------------
-	if(check_transpose && DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) { 
-		// this may to too strict
-		// the transpose should be structually the transpose
-		// however doesn't need to have all pending changes be equal.
-		GrB_Matrix tm        = DELTA_MATRIX_TM(C);
-		GrB_Matrix tdp       = DELTA_MATRIX_TDELTA_PLUS(C);
-		GrB_Matrix tdm       = DELTA_MATRIX_TDELTA_MINUS(C);
-
-		// m = tm^t
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, m, tm, true));
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tm, m, true));
-
-		// dp = tdp^t
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, dp, tdp, true));
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tdp, dp, true));
-
-		// dm = tdm^t
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, dm, tdm, true));
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tdm, dm, true));
+	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)){
+		_transpose_eq(m,  DELTA_MATRIX_TM(C),           lvl);
+		_transpose_eq(dp, DELTA_MATRIX_TDELTA_PLUS(C),  lvl);
+		_transpose_eq(dm, DELTA_MATRIX_TDELTA_MINUS(C), lvl);
 	}
 	
 	//--------------------------------------------------------------------------
@@ -306,7 +374,7 @@ void Delta_Matrix_validate
 	// 	GxB_Matrix_fprint(temp, "dp&dm",GxB_SHORT, stdout);
 
 	// m \superset dm
-	ASSERT(_matrix_leq(GrB_ONEB_BOOL, dm, m, false));
+	ASSERT(_matrix_leq(GrB_ONEB_BOOL, dm, m));
 
 	ASSERT(m_dp_disjoint);
 	ASSERT(dp_dm_disjoint);

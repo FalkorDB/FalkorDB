@@ -149,6 +149,7 @@ GrB_Matrix Delta_Matrix_DM
 
 // set the internal matrix M
 // the operation can only succeed if C's interal matrices are all empty
+// WARNING: This function may put the transpose into an inconsistent state.
 GrB_Info Delta_Matrix_setM
 (
 	Delta_Matrix C,  // delta matrix
@@ -157,6 +158,7 @@ GrB_Info Delta_Matrix_setM
 
 // Set the internal matricies of C
 // the operation can only succeed if C's interal matrices are all empty
+// WARNING: This function may put the transpose into an inconsistent state.
 GrB_Info Delta_Matrix_setMatrices
 (
 	Delta_Matrix C,  // delta matrix

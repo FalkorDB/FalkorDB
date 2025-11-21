@@ -19,6 +19,12 @@ do {                                     \
 #define GRB_MATRIX_TYPE_ASSERT(M, TYPE)
 #endif
 
+typedef enum
+{
+	VAL_BASIC,
+	VAL_T_SHORT,
+	VAL_T_FULL
+} DM_validation_level;
 
 void Delta_Matrix_checkBounds
 (
@@ -70,6 +76,6 @@ void Delta_Matrix_validateState
 void Delta_Matrix_validate
 (
 	const Delta_Matrix C,
-	bool check_transpose
+	DM_validation_level lvl
 ) ;
 

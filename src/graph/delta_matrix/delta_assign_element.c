@@ -8,6 +8,9 @@
 #include "delta_utils.h"
 #include "delta_matrix.h"
 
+// TODO: ensure that reading dm before removing its value does not cause a
+// significant slowdown in this function
+
 // C (i,j) = accum(C(i,j), x)
 #define DM_assign_scalar(TYPE_SUFFIX, CTYPE)                                   \
 GrB_Info Delta_Matrix_assign_scalar_##TYPE_SUFFIX                              \
@@ -25,8 +28,8 @@ GrB_Info Delta_Matrix_assign_scalar_##TYPE_SUFFIX                              \
                                                                                \
 	uint64_t v ;                                                               \
 	GrB_Info info ;                                                            \
-	bool     entry_exists      = false ;  /* M[i,j] exists  */                 \
-	bool     mark_for_deletion = false ;  /* dm[i,j] exists */                 \
+	bool     in_M  = false ;  /* M[i,j] exists  */                             \
+	bool     in_DM = false ;  /* dm[i,j] exists */                             \
                                                                                \
 	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE (C)) {                                 \
 		info = Delta_Matrix_setElement_BOOL (C->transposed, true, j, i) ;      \
@@ -41,33 +44,27 @@ GrB_Info Delta_Matrix_assign_scalar_##TYPE_SUFFIX                              \
                                                                                \
 	GRB_MATRIX_TYPE_ASSERT(m, GrB_##TYPE_SUFFIX) ;                             \
                                                                                \
-	/* check deleted */                                                        \
-	info = GxB_Matrix_isStoredElement (dm, i, j) ;                             \
-	mark_for_deletion = (info == GrB_SUCCESS) ;                                \
+	/* check in m */                                                           \
+	info = GxB_Matrix_isStoredElement (m, i, j) ;                              \
+	in_M = (info == GrB_SUCCESS) ;                                             \
                                                                                \
-	if (mark_for_deletion) { /* m contains single edge, simple replace */      \
-		/* clear dm[i,j] */                                                    \
-		GrB_OK (GrB_Matrix_removeElement (dm, i, j)) ;                         \
+	if (in_M) {                                                                \
+		info = GxB_Matrix_isStoredElement (dm, i, j) ;                         \
+		in_DM = (info == GrB_SUCCESS) ;                                        \
                                                                                \
-		/* overwrite m[i,j] */                                                 \
-		GrB_OK (GrB_Matrix_setElement (m, x, i, j)) ;                          \
-	} else {                                                                   \
-		/* entry isn't marked for deletion                                     \
-		   see if entry already exists in 'm'                                  \
-		   we'll prefer setting entry in 'm' incase it already exists          \
-		   otherwise we'll set the entry in 'delta-plus' */                    \
-		info = GxB_Matrix_isStoredElement (m, i, j) ;                          \
-		entry_exists = (info == GrB_SUCCESS) ;                                 \
+		if (in_DM) { /* if deleted, simply set in M (no accum) */              \
+			/* clear dm[i,j] */                                                \
+			GrB_OK (GrB_Matrix_removeElement (dm, i, j)) ;                     \
                                                                                \
-		if (entry_exists) {                                                    \
-			/* update entry at m[i,j] */                                       \
-			GrB_OK (GrB_assign (m, NULL, accum, x, &i, 1, &j, 1,               \
-				NULL)) ;                                                       \
+			/* overwrite m[i,j] */                                             \
+			GrB_OK (GrB_Matrix_setElement (m, x, i, j)) ;                      \
 		} else {                                                               \
-			/* update entry at dp[i,j] */                                      \
-			GrB_OK (GrB_assign (dp, NULL, accum, x, &i, 1, &j, 1,              \
-				NULL)) ;                                                       \
+			/* update entry at m[i,j] */                                       \
+			GrB_OK (GrB_assign (m, NULL, accum, x, &i, 1, &j, 1, NULL)) ;      \
 		}                                                                      \
+	} else {                                                                   \
+		/* update entry at dp[i,j] */                                          \
+		GrB_OK (GrB_assign (dp, NULL, accum, x, &i, 1, &j, 1, NULL)) ;         \
 	}                                                                          \
                                                                                \
 	Delta_Matrix_setDirty (C) ;                                                \
@@ -78,9 +75,6 @@ GrB_Info Delta_Matrix_assign_scalar_##TYPE_SUFFIX                              \
 // Function definitions (contained entirely within the following macros)
 //------------------------------------------------------------------------------
 
-// uint64 type
 DM_assign_scalar(UINT64, uint64_t)
-
-// uint16 type
 DM_assign_scalar(UINT16, uint16_t)
 

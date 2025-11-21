@@ -9,6 +9,7 @@
 
 // Set the internal matricies of C
 // the operation can only succeed if C's internal matrices are all empty
+// WARNING: This function may put the transpose into an inconsistent state.
 GrB_Info Delta_Matrix_setMatrices
 (
 	Delta_Matrix C,  // delta matrix
@@ -49,13 +50,13 @@ GrB_Info Delta_Matrix_setMatrices
 	*DP = NULL ;
 	*DM = NULL ;
 
-	Delta_Matrix_validate (C, false) ;
-
+	Delta_Matrix_validate (C, VAL_BASIC) ;
 	return GrB_SUCCESS ;
 }
 
 // set the internal matrix M
 // the operation can only succeed if C's internal matrices are all empty
+// WARNING: This function may put the transpose into an inconsistent state.
 GrB_Info Delta_Matrix_setM
 (
 	Delta_Matrix C,  // delta matrix

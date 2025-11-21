@@ -21,6 +21,7 @@ GrB_Info Delta_Matrix_extractElement_##TYPE_SUFFIX                             \
 	ASSERT (A != NULL) ;                                                       \
                                                                                \
 	CTYPE      _x ;                                                            \
+	bool       in_M;                                                           \
 	GrB_Info   info;                                                           \
 	GrB_Matrix m  = DELTA_MATRIX_M (A) ;                                       \
 	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS (A) ;                              \
@@ -30,18 +31,18 @@ GrB_Info Delta_Matrix_extractElement_##TYPE_SUFFIX                             \
                                                                                \
 	/* see if entry exists in 'm' */                                           \
 	GrB_OK (info = GrB_Matrix_extractElement (&_x, m, i, j)) ;                 \
-	if (info == GrB_SUCCESS) {                                                 \
+	in_M = info == GrB_SUCCESS;                                                \
+	if (in_M) {                                                                \
 		/* if dm[i,j] exists, return no value and do not set *x */             \
 		GrB_OK (info = GxB_Matrix_isStoredElement (dm, i, j)) ;                \
 		if (info == GrB_NO_VALUE) {                                            \
 			*x = _x;                                                           \
-			return GrB_SUCCESS ;                                               \
 		}                                                                      \
-		return GrB_NO_VALUE ;                                                  \
+		info = (info == GrB_NO_VALUE) ? GrB_SUCCESS : GrB_NO_VALUE ;           \
+	} else {                                                                   \
+		/* if dp[i,j] exists return it */                                      \
+		GrB_OK (info = GrB_Matrix_extractElement (x, dp, i, j)) ;              \
 	}                                                                          \
-                                                                               \
-	/* if dp[i,j] exists return it */                                          \
-	GrB_OK (info = GrB_Matrix_extractElement (x, dp, i, j)) ;                  \
                                                                                \
 	return info ;                                                              \
 }
