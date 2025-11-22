@@ -1442,6 +1442,7 @@ void Graph_GetNodeEdges
 	}
 }
 
+
 // returns node incoming/outgoing degree
 uint64_t Graph_GetNodeDegree
 (
@@ -1452,6 +1453,9 @@ uint64_t Graph_GetNodeDegree
 ) {
 	ASSERT(g != NULL);
 	ASSERT(n != NULL);
+
+	// FIXME: enable once self loops are not double counted
+	ASSERT (dir != GRAPH_EDGE_DIR_BOTH);
 
 	NodeID   srcID      = ENTITY_GET_ID(n);
 	NodeID   destID     = INVALID_ENTITY_ID;
@@ -1495,6 +1499,8 @@ uint64_t Graph_GetNodeDegree
 	} else {
 		// use the adj matrix
 		Delta_Matrix ADJ = Graph_GetRelationMatrix(g, GRAPH_NO_RELATION, false);
+		Delta_Matrix ADJT = Delta_Matrix_getTranspose(ADJ);
+		#if 1
 		struct GB_Iterator_opaque _i = {0};
 		GxB_Iterator i = &_i;
 
@@ -1519,9 +1525,6 @@ uint64_t Graph_GetNodeDegree
 		if (incoming) {
 			Delta_MatrixTupleIter it;
 
-			// scan transpose matrix
-			Delta_Matrix ADJT = Delta_Matrix_getTranspose(ADJ);
-
 			// iterate over T[col:]
 			GrB_OK (Delta_MatrixTupleIter_attach(&it, ADJT));
 
@@ -1536,6 +1539,48 @@ uint64_t Graph_GetNodeDegree
 				edge_count += x;
 			}
 		}
+		#else
+		// alternative implementation
+		// might work better for batch degree queries
+
+		GrB_Matrix m    = Delta_Matrix_M(ADJ);
+		GrB_Matrix dp   = Delta_Matrix_DP(ADJ);
+		GrB_Matrix m_t  = Delta_Matrix_M(ADJT);
+		GrB_Matrix dp_t = Delta_Matrix_DP(ADJT);
+		uint64_t   n    = Graph_RequiredMatrixDim(g);
+		GrB_Vector x    = NULL;
+		GrB_Vector deg  = NULL;
+
+		GrB_OK (GrB_Vector_new(&x, GrB_BOOL, n));
+		GrB_OK (GrB_Vector_new(&deg, GrB_UINT64, n));
+		GrB_OK (GrB_Vector_setElement_UINT64(deg, 0, srcID));
+
+		GrB_set(GrB_GLOBAL, true, GxB_BURBLE);
+		if (outgoing) {
+			GrB_OK (GrB_Vector_assign_BOOL(x, NULL, NULL, true, GrB_ALL, 0, NULL));
+			GrB_OK (GrB_mxv(deg, deg, GrB_PLUS_UINT64, GxB_PLUS_FIRST_UINT64,
+				m, x, GrB_DESC_S));
+			GrB_OK (GrB_mxv(deg, deg, GrB_PLUS_UINT64, GxB_PLUS_FIRST_UINT64,
+				dp, x, GrB_DESC_S));
+		}
+
+		if (incoming) {
+			// check the transpose matrices to hint to GBLAS where it should sum
+			GrB_OK (GrB_Col_extract(x, NULL, NULL, m_t, GrB_ALL, 0, srcID,
+				GrB_DESC_T0));
+			GrB_OK (GrB_mxv(deg, deg, GrB_PLUS_UINT64, GxB_PLUS_FIRST_UINT64, m,
+				x, GrB_DESC_ST0));
+			GrB_OK (GrB_Col_extract(x, NULL, NULL, dp_t, GrB_ALL, 0,
+				srcID, GrB_DESC_T0));
+			GrB_OK (GrB_mxv(deg, deg, GrB_PLUS_UINT64, GxB_PLUS_FIRST_UINT64,
+				dp, x, GrB_DESC_ST0));
+		}
+		GrB_set(GrB_GLOBAL, false, GxB_BURBLE);
+
+		GrB_OK (GrB_Vector_extractElement_UINT64(&edge_count, deg, srcID));
+		GrB_free(&x);
+		GrB_free(&deg);
+		#endif
 	}
 
 	return edge_count;

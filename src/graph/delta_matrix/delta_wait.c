@@ -135,7 +135,6 @@ GrB_Info Delta_Matrix_wait
 	Delta_Matrix_sync(A, force_sync, delta_max_pending_changes);
 
 	_SetUndirty(A);
-	Delta_Matrix_validate(A, VAL_T_SHORT);
 
 	return GrB_SUCCESS;
 }

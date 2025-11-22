@@ -212,7 +212,7 @@ bool _transpose_eq (
 	GrB_free(&deg);
 	GrB_free(&x);
 	GrB_free(&C);
-	return res == 0;
+	return is_eq;
 }
 
 bool _matrix_leq
@@ -301,7 +301,6 @@ void Delta_Matrix_validate
 	// Check type is allowed
 	//--------------------------------------------------------------------------
 
-	// GrB_OK (Delta_Matrix_type(&ty, C));
 	GrB_OK (GxB_Matrix_type(&ty_m, m));
 	GrB_OK (GxB_Matrix_type(&ty_dp, dp));
 	ty = ty_m;

@@ -5,6 +5,7 @@
 
 #include "decode_v17.h"
 #include "../../../../index/indexer.h"
+#include "src/graph/delta_matrix/delta_utils.h"
 
 // TODO: have the delta matrix upon setting M, incase the matrix
 // contains a transpose, we should overwrite it with MT
@@ -44,11 +45,13 @@ static void _ComputeTransposeMatrices
 	for(RelationID r = 0; r < n; r++) {
 		Delta_Matrix R = Graph_GetRelationMatrix(g, r, false);
 		_ComputeTransposeMatrix(R);
+		Delta_Matrix_validate(R, VAL_T_FULL);
 	}
 
 	// compute transpose for the adjacency matrix
 	Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
 	_ComputeTransposeMatrix(ADJ);
+	Delta_Matrix_validate(ADJ, VAL_T_FULL);
 }
 
 static GraphContext *_GetOrCreateGraphContext
@@ -328,16 +331,17 @@ GraphContext *RdbLoadGraphContext_v17
 	}
 
 	if(GraphDecodeContext_Finished(gc->decoding_context)) {
-		// compute transposes
-		_ComputeTransposeMatrices(g);
-
-		Graph *g = gc->g;
-
 		// flush graph matrices
 		Graph_ApplyAllPending(g, true);
 
 		// make sure adjacency matrix is numeric
 		RdbNormalizeAdjMatrix (g) ;
+
+		// compute transposes
+		_ComputeTransposeMatrices(g);
+
+		Graph *g = gc->g;
+
 
 		// revert to default synchronization behavior
 		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);

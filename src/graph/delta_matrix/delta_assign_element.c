@@ -22,8 +22,7 @@ GrB_Info Delta_Matrix_assign_scalar_##TYPE_SUFFIX                              \
 	GrB_Index j                /* column index                         */      \
 ) {                                                                            \
 	/* validate */                                                             \
-	ASSERT (C     != NULL) ;                                                   \
-	ASSERT (accum != NULL) ;                                                   \
+	ASSERT (C != NULL) ;                                                       \
 	Delta_Matrix_checkBounds (C, i, j) ;                                       \
                                                                                \
 	uint64_t v ;                                                               \

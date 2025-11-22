@@ -192,6 +192,7 @@ GrB_Info Delta_Matrix_resize  // change the size of a matrix
 	GrB_Index ncols_new       // new number of columns in matrix
 );
 
+
 GrB_Info Delta_Matrix_setElement_BOOL   // C (i,j) = x
 (
 	Delta_Matrix C,                     // matrix to modify
@@ -200,7 +201,6 @@ GrB_Info Delta_Matrix_setElement_BOOL   // C (i,j) = x
 	GrB_Index j                         // column index
 );
 
-// C (i,j) = x
 GrB_Info Delta_Matrix_setElement_UINT16   // C (i,j) = x
 (
 	Delta_Matrix C,                       // matrix to modify
@@ -306,7 +306,7 @@ GrB_Info Delta_mxm
 	const Delta_Matrix B          // second input: matrix B
 );
 
-// C = A + B 
+// C = A + B
 // C is fully synced on output
 GrB_Info Delta_eWiseAdd
 (
