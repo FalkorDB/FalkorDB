@@ -162,6 +162,7 @@ bool _transpose_eq (
 	}
 
 	switch (lvl) {
+		case VAL_NO_T:
 		case VAL_BASIC:
 			is_eq = true;
 			break;
@@ -178,11 +179,10 @@ bool _transpose_eq (
 
 			// Get the row degree of A and XOR with the col degree of B
 			// if they are equal, the result will be zero
-			// TODO: check the order so the right GrB kernel is used.
+			GrB_OK (GrB_vxm (deg, NULL, GrB_PLUS_UINT64, GxB_PLUS_PAIR_UINT64,
+				x, B, NULL));
 			GrB_OK (GrB_mxv (
-				deg, NULL, NULL, GxB_PLUS_PAIR_UINT64, A, x, NULL));
-			GrB_OK (GrB_mxv (deg, NULL, GrB_BXOR_UINT64, GxB_PLUS_PAIR_UINT64,
-				B, x, GrB_DESC_T0));
+				deg, NULL, GrB_BXOR_UINT64, GxB_PLUS_PAIR_UINT64, A, x, NULL));
 
 			// if all degrees are equal, res will be 0
 			GrB_OK (GrB_Vector_reduce_UINT64 (
@@ -190,10 +190,10 @@ bool _transpose_eq (
 
 			// NOTE: don't assign zero to deg, it will already be zero if
 			// the matricies are equal.
+			GrB_OK (GrB_vxm (deg, NULL, GrB_PLUS_UINT64, GxB_PLUS_PAIR_UINT64,
+				x, A, NULL));
 			GrB_OK (GrB_mxv (
-				deg, NULL, NULL, GxB_PLUS_PAIR_UINT64, B, x, NULL));
-			GrB_OK (GrB_mxv (deg, NULL, GrB_BXOR_UINT64, GxB_PLUS_PAIR_UINT64,
-				A, x, GrB_DESC_T0));
+				deg, NULL, GrB_BXOR_UINT64, GxB_PLUS_PAIR_UINT64, B, x, NULL));
 
 			// if all degrees are equal, res will be 0
 			GrB_OK (GrB_Vector_reduce_UINT64 (
@@ -347,10 +347,10 @@ void Delta_Matrix_validate
 	//--------------------------------------------------------------------------
 	// Check the transpose
 	//--------------------------------------------------------------------------
-	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)){
-		_transpose_eq(m,  DELTA_MATRIX_TM(C),           lvl);
-		_transpose_eq(dp, DELTA_MATRIX_TDELTA_PLUS(C),  lvl);
-		_transpose_eq(dm, DELTA_MATRIX_TDELTA_MINUS(C), lvl);
+	if (lvl != VAL_NO_T && DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)){
+		ASSERT (_transpose_eq(m,  DELTA_MATRIX_TM(C),           lvl));
+		ASSERT (_transpose_eq(dp, DELTA_MATRIX_TDELTA_PLUS(C),  lvl));
+		ASSERT (_transpose_eq(dm, DELTA_MATRIX_TDELTA_MINUS(C), lvl));
 	}
 	
 	//--------------------------------------------------------------------------

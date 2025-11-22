@@ -21,6 +21,7 @@ do {                                     \
 
 typedef enum
 {
+	VAL_NO_T,
 	VAL_BASIC,
 	VAL_T_SHORT,
 	VAL_T_FULL

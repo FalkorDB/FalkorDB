@@ -50,7 +50,7 @@ GrB_Info Delta_Matrix_setMatrices
 	*DP = NULL ;
 	*DM = NULL ;
 
-	Delta_Matrix_validate (C, VAL_BASIC) ;
+	Delta_Matrix_validate (C, VAL_NO_T) ;
 	return GrB_SUCCESS ;
 }
 
@@ -87,6 +87,7 @@ GrB_Info Delta_Matrix_setM
 
 	*M = NULL;
 
+	// Delta_Matrix_validate (C, VAL_NO_T) ;
 	return GrB_SUCCESS;
 }
 
