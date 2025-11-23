@@ -159,6 +159,20 @@ static void _WriteUpdatesToEffectsBuffer
 	}
 }
 
+static void _ClearAttributeSet
+(
+	GraphEntity *e,
+	GraphEntityType t,
+	EffectsBuffer *eb
+) {
+	ASSERT (e  != NULL) ;
+	ASSERT (eb != NULL) ;
+
+	// free attribute-set and enqueue a 'clear' update
+	EffectsBuffer_AddEntityRemoveAttributeEffect (eb, e, ATTRIBUTE_ID_ALL, t) ;
+	AttributeSet_Free (e->attributes) ;
+}
+
 static void _AttributeSetUpdate
 (
 	GraphEntity *e,         // updated entity
@@ -175,9 +189,7 @@ static void _AttributeSetUpdate
 	ASSERT (attr_ids  != NULL) ;
 	ASSERT (attr_vals != NULL) ;
 
-	if (mode == UPDATE_REPLACE) {
-		// set should have been cleared
-		ASSERT (GraphEntity_GetAttributes (e) == NULL) ;
+	if (GraphEntity_GetAttributes (e) == NULL) {
 
 		// add all attributes in one go
 		AttributeSet_Add (e->attributes, attr_ids, attr_vals, n, false, true) ;
@@ -267,6 +279,7 @@ static void _UpdateSetFromMap
 		return ;
 	}
 
+	uint16_t idx = 0;
 	AttributeID attr_ids  [n] ;
 	SIValue     attr_vals [n] ;
 
@@ -274,20 +287,29 @@ static void _UpdateSetFromMap
 	// collect attributes from map
 	//--------------------------------------------------------------------------
 
+	// if entity has no attributes treat update as an add
+	bool add = (GraphEntity_GetAttributes (e) == NULL) ;
+
 	for (uint i = 0; i < n; i++) {
 		SIValue key ;
-		Map_GetIdx (map, i, &key, attr_vals + i) ;
+		Map_GetIdx (map, i, &key, attr_vals + idx) ;
 
-		if (!_ValidateAttrType (accepted_types, attr_vals[i])) {
+		// in "add" mode skip NULLs
+		if (unlikely (add && SIValue_IsNull (attr_vals[idx]))) {
+			continue ;
+		}
+
+		if (!_ValidateAttrType (accepted_types, attr_vals[idx])) {
 			*error = true ;
 			Error_InvalidPropertyValue() ;
 			return ;
 		}
 
-		attr_ids[i] = GraphHub_FindOrAddAttribute (gc, key.stringval, true) ;
+		attr_ids[idx] = GraphHub_FindOrAddAttribute (gc, key.stringval, true) ;
+		idx++ ;
 	}
 
-	_AttributeSetUpdate (e, et, attr_ids, attr_vals, n , mode, eb) ;
+	_AttributeSetUpdate (e, et, attr_ids, attr_vals, idx , mode, eb) ;
 }
 
 // update e's attribute-set from e's
@@ -300,6 +322,10 @@ static void _UpdateSetFromEntity
 	EffectsBuffer *eb    // effects buffer
 ) {
 	AttributeSet set = GraphEntity_GetAttributes (s) ;
+	uint16_t n = AttributeSet_Count (set) ;
+	if (unlikely (n == 0)) {
+		return ;
+	}
 
 	if (mode == UPDATE_REPLACE) {
 		// e's attribute-set should have been cleared
@@ -308,7 +334,6 @@ static void _UpdateSetFromEntity
 		// set e's attribute-set with a clone of s
 		*e->attributes = AttributeSet_Clone (set) ;
 		set = GraphEntity_GetAttributes (e) ;
-		uint16_t n = AttributeSet_Count (set) ;
 
 		// create effects
 		for (uint i = 0; i < n; i++) {
@@ -322,8 +347,6 @@ static void _UpdateSetFromEntity
 
 		return ;
 	}
-
-	uint16_t n = AttributeSet_Count (set) ;
 
 	AttributeID attr_ids  [n] ;
 	SIValue     attr_vals [n] ;
@@ -509,19 +532,15 @@ void EvalEntityUpdates
 			break ;
 		}
 
-		if (mode == UPDATE_REPLACE) {
-			// if this update replaces all existing properties
-			// enqueue a 'clear' update to do so
-			EffectsBuffer_AddEntityRemoveAttributeEffect (eb, entity,
-							ATTRIBUTE_ID_ALL, entity_type) ;
-			AttributeSet_Free (entity->attributes) ;
-		}
-
 		//----------------------------------------------------------------------
 		// n = {v:2}
 		//----------------------------------------------------------------------
 
 		if (t == T_MAP) {
+			if (mode == UPDATE_REPLACE) {
+				_ClearAttributeSet (entity, entity_type, eb) ;
+			}
+
 			_UpdateSetFromMap (gc, entity, entity_type, mode, eb, v,
 					accepted_properties, &error) ;
 
@@ -539,6 +558,17 @@ void EvalEntityUpdates
 
 		GraphEntity *ge = v.ptrval ;
 
+		// incase SET n = n / SET n += n
+		if (unlikely (ENTITY_GET_ID (ge) == ENTITY_GET_ID (entity) &&
+					 (t == T_NODE && entity_type == GETYPE_NODE)   ||
+					 (t == T_EDGE && entity_type == GETYPE_EDGE))
+		) {
+			continue ;
+		}
+
+		if (mode == UPDATE_REPLACE) {
+			_ClearAttributeSet (entity, entity_type, eb) ;
+		}
 		_UpdateSetFromEntity (ge, entity, entity_type, mode, eb) ;
 	} // for loop end
 

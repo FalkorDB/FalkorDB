@@ -558,3 +558,192 @@ class testEntityUpdate():
 
         # assert results
         self.env.assertEquals(res.result_set[0][0], Node(properties={'v': 7}))
+
+    # Set the entity's properties to itself
+    def test39_assign_self(self):
+        self.graph.delete()
+
+        empty_node  = self.graph.query("CREATE (n) RETURN n").result_set[0][0]
+
+        queries = ["MATCH (n) SET n = n RETURN n",
+                   "MATCH (n) SET n += n RETURN n"]
+
+        for q in queries:
+            result = self.graph.query(q)
+            actual_node = result.result_set[0][0]
+
+            self.env.assertEqual(result.properties_set, 0)
+            self.env.assertEqual(result.properties_removed, 0)
+            self.env.assertEqual(empty_node, actual_node)
+
+        #-----------------------------------------------------------------------
+
+        empty_edge = self.graph.query("CREATE ()-[e:R]->() RETURN e").result_set[0][0]
+
+        queries = ["MATCH ()-[e]->() SET e = e RETURN e",
+                   "MATCH ()-[e]->() SET e += e RETURN e"]
+
+        for q in queries:
+            result = self.graph.query(q)
+            actual_edge = result.result_set[0][0]
+
+            self.env.assertEqual(result.properties_set, 0)
+            self.env.assertEqual(result.properties_removed, 0)
+            self.env.assertEqual(empty_edge, actual_edge)
+
+        self.graph.delete()
+
+        #-----------------------------------------------------------------------
+
+        node = self.graph.query("CREATE (n {a:1, b:'str', c:vecf32([1,2,3])}) RETURN n").result_set[0][0]
+
+        queries = ["MATCH (n) SET n = n RETURN n",
+                   "MATCH (n) SET n += n RETURN n"]
+
+        for q in queries:
+            result = self.graph.query(q)
+            actual_node = result.result_set[0][0]
+
+            self.env.assertEqual(result.properties_set, 0)
+            self.env.assertEqual(result.properties_removed, 0)
+            self.env.assertEqual(node, actual_node)
+
+        #-----------------------------------------------------------------------
+
+        edge = self.graph.query("CREATE ()-[e:R {a:1, b:'str', c:vecf32([1,2,3])}]->() RETURN e").result_set[0][0]
+
+        queries = ["MATCH ()-[e]->() SET e = e RETURN e",
+                   "MATCH ()-[e]->() SET e += e RETURN e"]
+
+        for q in queries:
+            result = self.graph.query(q)
+            actual_edge = result.result_set[0][0]
+
+            self.env.assertEqual(result.properties_set, 0)
+            self.env.assertEqual(result.properties_removed, 0)
+            self.env.assertEqual(edge, actual_edge)
+
+    # Clear attributes via map
+    def test40_remove_by_map(self):
+        self.graph.delete()
+
+        node  = self.graph.query("CREATE (n {a:1, b:2, c: 'str'}) RETURN n").result_set[0][0]
+
+        update_map = {'a': 2, 'b':None, 'c':'str'}
+        q = "MATCH (n) SET n = $map RETURN n"
+
+        result = self.graph.query(q, {'map': update_map})
+        actual_node = result.result_set[0][0]
+
+        self.env.assertEqual(result.properties_set, 2)
+        self.env.assertEqual(result.properties_removed, 3)
+
+        self.env.assertEqual(len(actual_node.properties), 2)
+        self.env.assertEqual(actual_node.properties['a'], 2)
+        self.env.assertEqual(actual_node.properties['c'], 'str')
+
+        #-----------------------------------------------------------------------
+
+        self.graph.delete()
+
+        node  = self.graph.query("CREATE (n {a:1, b:2, c: 'str'}) RETURN n").result_set[0][0]
+
+        update_map = {'a': 2, 'b':None, 'c':'str'}
+        q = "MATCH (n) SET n += $map RETURN n"
+
+        result = self.graph.query(q, {'map': update_map})
+        actual_node = result.result_set[0][0]
+
+        self.env.assertEqual(result.properties_set, 1)
+        self.env.assertEqual(result.properties_removed, 2)
+
+        self.env.assertEqual(len(actual_node.properties), 2)
+        self.env.assertEqual(actual_node.properties['a'], 2)
+        self.env.assertEqual(actual_node.properties['c'], 'str')
+
+    # multiple updates to the same entity
+    def test41_last_update_persists(self):
+        self.graph.delete()
+
+        node  = self.graph.query("CREATE (n) RETURN n").result_set[0][0]
+
+        update_map_1 = {'a': 2, 'b':None, 'c':'str'}
+        update_map_2 = {'a': None, 'b':None, 'c':'str1'}
+        update_map_3 = {'a': 4, 'b':None, 'c':'str'}
+        q = "MATCH (n) SET n = $map1, n = $map2, n = $map3 RETURN n"
+
+        result = self.graph.query(q, {'map1': update_map_1,
+                                      'map2': update_map_2,
+                                      'map3': update_map_3})
+        actual_node = result.result_set[0][0]
+
+        self.env.assertEqual(result.properties_set, 2)
+        self.env.assertEqual(result.properties_removed, 0)
+
+        self.env.assertEqual(len(actual_node.properties), 2)
+        self.env.assertEqual(actual_node.properties['a'], 4)
+        self.env.assertEqual(actual_node.properties['c'], 'str')
+
+        #-----------------------------------------------------------------------
+
+        self.graph.delete()
+
+        node  = self.graph.query("CREATE (n) RETURN n").result_set[0][0]
+
+        update_map_1 = {'a': 2, 'b':None, 'c':'str'}
+        update_map_2 = {'a': None, 'b':None, 'c':'str1'}
+        update_map_3 = {'a': 4, 'b':None, 'c':'str'}
+        q = "MATCH (n) SET n += $map1, n += $map2, n += $map3 RETURN n"
+
+        result = self.graph.query(q, {'map1': update_map_1,
+                                      'map2': update_map_2,
+                                      'map3': update_map_3})
+        actual_node = result.result_set[0][0]
+
+        self.env.assertEqual(len(actual_node.properties), 2)
+        self.env.assertEqual(actual_node.properties['a'], 4)
+        self.env.assertEqual(actual_node.properties['c'], 'str')
+
+        #-----------------------------------------------------------------------
+
+        self.graph.delete()
+
+        node  = self.graph.query("CREATE (n {a:1, b:2, c: 'str'}) RETURN n").result_set[0][0]
+
+        update_map_1 = {'a': 2, 'b':None, 'c':'str'}
+        update_map_2 = {'a': None, 'b':None, 'c':'str1'}
+        update_map_3 = {'a': 4, 'b':None, 'c':'str'}
+        q = "MATCH (n) SET n = $map1, n = $map2, n = $map3 RETURN n"
+
+        result = self.graph.query(q, {'map1': update_map_1,
+                                      'map2': update_map_2,
+                                      'map3': update_map_3})
+        actual_node = result.result_set[0][0]
+
+        self.env.assertEqual(result.properties_set, 2)
+        self.env.assertEqual(result.properties_removed, 3)
+
+        self.env.assertEqual(len(actual_node.properties), 2)
+        self.env.assertEqual(actual_node.properties['a'], 4)
+        self.env.assertEqual(actual_node.properties['c'], 'str')
+
+        #-----------------------------------------------------------------------
+
+        self.graph.delete()
+
+        node  = self.graph.query("CREATE (n {a:1, b:2, c: 'str'}) RETURN n").result_set[0][0]
+
+        update_map_1 = {'a': 2, 'b':None, 'c':'str'}
+        update_map_2 = {'a': None, 'b':None, 'c':'str1'}
+        update_map_3 = {'a': 4, 'b':None, 'c':'str'}
+        q = "MATCH (n) SET n += $map1, n += $map2, n += $map3 RETURN n"
+
+        result = self.graph.query(q, {'map1': update_map_1,
+                                      'map2': update_map_2,
+                                      'map3': update_map_3})
+        actual_node = result.result_set[0][0]
+
+        self.env.assertEqual(len(actual_node.properties), 2)
+        self.env.assertEqual(actual_node.properties['a'], 4)
+        self.env.assertEqual(actual_node.properties['c'], 'str')
+

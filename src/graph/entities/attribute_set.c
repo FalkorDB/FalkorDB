@@ -7,11 +7,11 @@
 
 #include "RG.h"
 #include "attribute_set.h"
-#include "../../util/lz4/lz4.h"
 #include "../../util/rmalloc.h"
 #include "../../errors/errors.h"
 
-#define COMPRESS_THRESHOLD 50
+// check if attribute-set is empty i.e. NULL
+#define ATTRIBUTE_SET_EMPTY(set) ((set) == NULL)
 
 // check if attribute-set is read-only
 #define ATTRIBUTE_SET_IS_READONLY(set) ((intptr_t)(set) & MSB_MASK)
@@ -78,7 +78,6 @@ typedef enum {
 	ATTR_TYPE_POINT             = 13,
 	ATTR_TYPE_VECTOR_F32        = 14,
 	ATTR_TYPE_INTERN_STRING     = 15,
-	ATTR_TYPE_COMPRESSED_STRING = 16,
 	ATTR_TYPE_INVALID           = UINT8_MAX,
 } _AttrType_t;
 
@@ -133,45 +132,43 @@ static const AttrType_t SIType_to_AttrType[20] = {
 };
 
 // map between AttrType_t to SIType
-static const SIType AttrType_to_SIType[17] = {
-	[ATTR_TYPE_MAP]               = T_MAP,
-	[ATTR_TYPE_ARRAY]             = T_ARRAY,
-	[ATTR_TYPE_DATETIME]          = T_DATETIME,
-	[ATTR_TYPE_LOCALDATETIME]     = T_LOCALDATETIME,
-	[ATTR_TYPE_DATE]              = T_DATE,
-	[ATTR_TYPE_TIME]              = T_TIME,
-	[ATTR_TYPE_LOCALTIME]         = T_LOCALTIME,
-	[ATTR_TYPE_DURATION]          = T_DURATION,
-	[ATTR_TYPE_STRING]            = T_STRING,
-	[ATTR_TYPE_BOOL]              = T_BOOL,
-	[ATTR_TYPE_INT64]             = T_INT64,
-	[ATTR_TYPE_DOUBLE]            = T_DOUBLE,
-	[ATTR_TYPE_NULL]              = T_NULL,
-	[ATTR_TYPE_POINT]             = T_POINT,
-	[ATTR_TYPE_VECTOR_F32]        = T_VECTOR_F32,
-	[ATTR_TYPE_INTERN_STRING]     = T_INTERN_STRING,
-	[ATTR_TYPE_COMPRESSED_STRING] = T_STRING,
+static const SIType AttrType_to_SIType[16] = {
+	[ATTR_TYPE_MAP]           = T_MAP,
+	[ATTR_TYPE_ARRAY]         = T_ARRAY,
+	[ATTR_TYPE_DATETIME]      = T_DATETIME,
+	[ATTR_TYPE_LOCALDATETIME] = T_LOCALDATETIME,
+	[ATTR_TYPE_DATE]          = T_DATE,
+	[ATTR_TYPE_TIME]          = T_TIME,
+	[ATTR_TYPE_LOCALTIME]     = T_LOCALTIME,
+	[ATTR_TYPE_DURATION]      = T_DURATION,
+	[ATTR_TYPE_STRING]        = T_STRING,
+	[ATTR_TYPE_BOOL]          = T_BOOL,
+	[ATTR_TYPE_INT64]         = T_INT64,
+	[ATTR_TYPE_DOUBLE]        = T_DOUBLE,
+	[ATTR_TYPE_NULL]          = T_NULL,
+	[ATTR_TYPE_POINT]         = T_POINT,
+	[ATTR_TYPE_VECTOR_F32]    = T_VECTOR_F32,
+	[ATTR_TYPE_INTERN_STRING] = T_INTERN_STRING,
 };
 
 // map between AttrType_t to SIValue allocation type
-static const SIAllocation AttrType_to_Allocation[17] = {
-	[ATTR_TYPE_MAP]               = M_VOLATILE,
-	[ATTR_TYPE_ARRAY]             = M_VOLATILE,
-	[ATTR_TYPE_DATETIME]          = M_NONE,
-	[ATTR_TYPE_LOCALDATETIME]     = M_NONE,
-	[ATTR_TYPE_DATE]              = M_NONE,
-	[ATTR_TYPE_TIME]              = M_NONE,
-	[ATTR_TYPE_LOCALTIME]         = M_NONE,
-	[ATTR_TYPE_DURATION]          = M_NONE,
-	[ATTR_TYPE_STRING]            = M_VOLATILE,
-	[ATTR_TYPE_BOOL]              = M_NONE,
-	[ATTR_TYPE_INT64]             = M_NONE,
-	[ATTR_TYPE_DOUBLE]            = M_NONE,
-	[ATTR_TYPE_NULL]              = M_NONE,
-	[ATTR_TYPE_POINT]             = M_NONE,
-	[ATTR_TYPE_VECTOR_F32]        = M_VOLATILE,
-	[ATTR_TYPE_INTERN_STRING]     = M_VOLATILE,
-	[ATTR_TYPE_COMPRESSED_STRING] = M_VOLATILE
+static const SIAllocation AttrType_to_Allocation[16] = {
+	[ATTR_TYPE_MAP]           = M_VOLATILE,
+	[ATTR_TYPE_ARRAY]         = M_VOLATILE,
+	[ATTR_TYPE_DATETIME]      = M_NONE,
+	[ATTR_TYPE_LOCALDATETIME] = M_NONE,
+	[ATTR_TYPE_DATE]          = M_NONE,
+	[ATTR_TYPE_TIME]          = M_NONE,
+	[ATTR_TYPE_LOCALTIME]     = M_NONE,
+	[ATTR_TYPE_DURATION]      = M_NONE,
+	[ATTR_TYPE_STRING]        = M_VOLATILE,
+	[ATTR_TYPE_BOOL]          = M_NONE,
+	[ATTR_TYPE_INT64]         = M_NONE,
+	[ATTR_TYPE_DOUBLE]        = M_NONE,
+	[ATTR_TYPE_NULL]          = M_NONE,
+	[ATTR_TYPE_POINT]         = M_NONE,
+	[ATTR_TYPE_VECTOR_F32]    = M_VOLATILE,
+	[ATTR_TYPE_INTERN_STRING] = M_VOLATILE
 };
 
 // returns the AttributeID of the ith attribute
@@ -213,82 +210,6 @@ static inline void _AttrValueFromSIValue
 	attr->ptrval = v->ptrval ;               // attribute value
 }
 
-static bool _AttrValueFromLongString
-(
-	AttrValue_t* restrict attr,
-	const char* restrict str
-) {
-	ASSERT (str  != NULL) ;
-	ASSERT (attr != NULL) ;
-
-	const size_t orig_len = strlen (str) ;
-	ASSERT (orig_len >= COMPRESS_THRESHOLD) ;
-
-	const int max_comp = LZ4_compressBound (orig_len) ;
-
-	// allocate worst-case buffer + 8-byte header
-	size_t alloc_size = 8 + max_comp ;
-	uint8_t *buf = rm_malloc (alloc_size) ;
-
-	// compress into buf + 8
-	const uint32_t comp_len = LZ4_compress_default ( str, (char *)(buf + 8),
-			orig_len, max_comp) ;
-
-	ASSERT (comp_len > 0) ;
-
-	// actual required size = header + compressed payload
-	const size_t actual_size = 8 + comp_len ;
-
-	// check if compression ratio isn't that great e.g. less then 20%
-	// store original string
-	if (actual_size >= orig_len * 0.8) {
-		rm_free (buf) ;
-		return false ;
-	}
-
-	// shrink buffer to actual size
-	if (alloc_size > actual_size) {
-		buf = rm_realloc (buf, actual_size) ;
-		ASSERT (buf != NULL) ;
-	}
-
-	uint32_t *header = (uint32_t*)buf ;
-	header[0] = comp_len ;  // write compressed length
-	header[1] = orig_len ;  // write original length
-
-	attr->t      = ATTR_TYPE_COMPRESSED_STRING ;
-	attr->ptrval = buf ;
-
-	return true ;
-}
-
-static char *DecompressLongString
-(
-	const AttrValue_t *attr
-) {
-    ASSERT (attr         != NULL) ;
-    ASSERT (attr->t      == ATTR_TYPE_COMPRESSED_STRING) ;
-    ASSERT (attr->ptrval != NULL) ;
-
-    const uint8_t  *buf    = (const uint8_t *) attr->ptrval ;
-	const uint32_t *header = (const uint32_t*) buf ;
-
-    uint32_t comp_len = header[0] ;  // read compressed size
-    uint32_t orig_len = header[1] ;  // read original size
-
-    const char *comp_data = (const char *) (buf + 8) ;
-
-    // allocate output string (+1 for NULL terminator)
-    char *out = rm_malloc (orig_len + 1) ;
-    int decompressed = LZ4_decompress_safe (comp_data, out, comp_len, orig_len) ;
-
-	ASSERT (decompressed == orig_len) ;
-	ASSERT (decompressed > COMPRESS_THRESHOLD) ;
-
-    out[orig_len] = '\0';  // safe—it’s a real C string now
-    return out;
-}
-
 // converts AttrValue_t to SIValue
 static inline void _AttrValueToSIValue
 (
@@ -300,15 +221,6 @@ static inline void _AttrValueToSIValue
 
 	// get attribute type
 	AttrType_t t = AttrValue_Type (attr) ;
-
-	if (unlikely (t == ATTR_TYPE_COMPRESSED_STRING)) {
-		// decompress string
-		v->ptrval     = DecompressLongString (attr) ;  // set value
-		v->type       = T_STRING ;                     // set type
-		v->allocation = M_SELF ;                       // set allocation type
-
-		return ;
-	}
 
 	// construct SIValue
 	v->ptrval     = attr->ptrval ;                // set value
@@ -335,7 +247,6 @@ static void _AttrValue_Free
 		// direct free
 		case ATTR_TYPE_STRING:
 		case ATTR_TYPE_VECTOR_F32:
-		case ATTR_TYPE_COMPRESSED_STRING:
 			rm_free (_attr->ptrval) ;
 			break ;
 
@@ -392,6 +303,7 @@ static AttributeSet AttributeSet_Accommodate
 	return _set ;
 }
 
+// qsort compare function
 static int cmp_desc
 (
 	const void *a,
@@ -428,7 +340,7 @@ static void AttributeSet_RemoveIdx
 
 	// if this is the last attribute, free the attribute-set
 	uint16_t l = _set->attr_count ;
-	if (l == 1) {
+	if (l == n) {
 		AttributeSet_Free (set) ;
 		return ;
 	}
@@ -436,19 +348,19 @@ static void AttributeSet_RemoveIdx
 	// sort indices
 	qsort (indices, n, sizeof(uint16_t), cmp_desc) ;
 
-	AttributeID *ids   = ATTRIBUTE_SET_IDS  (_set) ;
-	AttrValue_t *attrs = ATTRIBUTE_SET_VALS (_set) ;
+	AttributeID *ids  = ATTRIBUTE_SET_IDS  (_set) ;
+	AttrValue_t *vals = ATTRIBUTE_SET_VALS (_set) ;
 
 	for (int16_t i = n-1; i >= 0; i--) {
 		// free attribute
 		uint16_t idx = indices[i] ;
-		AttrValue_t *attr = attrs + idx ;
+		AttrValue_t *attr = vals + idx ;
 		_AttrValue_Free (&attr) ;
 
 		// overwrite deleted attribute with last attribute
 		l--;
-		ids  [idx] = ids   [l] ;
-		attrs[idx] = attrs [l] ;
+		ids  [idx] = ids  [l] ;
+		vals [idx] = vals [l] ;
 	}
 	_set->attr_count -= n ;  // update attribute count
 
@@ -457,7 +369,7 @@ static void AttributeSet_RemoveIdx
 	//--------------------------------------------------------------------------
 
 	// shrink
-	memmove (&ids[_set->attr_count], attrs,
+	memmove (&ids[_set->attr_count], vals,
 			sizeof (AttrValue_t) * (_set->attr_count)) ;
 	*set = rm_realloc (_set, ATTRIBUTESET_BYTE_SIZE (_set)) ;
 }
@@ -519,16 +431,16 @@ bool AttributeSet_Contains
 	ASSERT (VALID_ATTRIBUTE_ID (id)) ;
 	const AttributeSet _set = ATTRIBUTE_SET_CLEAR_MSB (set) ;
 
-	if (_set == NULL) {
+	if (ATTRIBUTE_SET_EMPTY (_set)) {
 		return false ;
 	}
 
 	uint16_t n = _set->attr_count ;
-	AttributeID *attrs = ATTRIBUTE_SET_IDS (_set) ;
+	AttributeID *ids = ATTRIBUTE_SET_IDS (_set) ;
 
 	// TODO: use SIMD or support sort
 	for (uint16_t i = 0; i < n; i++) {
-		if (attrs[i] == id) {
+		if (ids[i] == id) {
 			if (idx != NULL) {
 				*idx = i ;
 			}
@@ -551,7 +463,7 @@ AttributeID AttributeSet_GetKey
 	// in case attribute-set is marked as read-only, clear marker
 	const AttributeSet _set = ATTRIBUTE_SET_CLEAR_MSB (set) ;
 
-	return *(ATTRIBUTE_SET_IDS(_set) + i) ;
+	return ATTRIBUTE_SET_IDS (_set)[i] ;
 }
 
 // retrieves a value from set
@@ -568,7 +480,7 @@ bool AttributeSet_Get
 	const AttributeSet _set = ATTRIBUTE_SET_CLEAR_MSB (set) ;
 
 	// empty set / unknown attribute id
-	if (unlikely (_set == NULL || !VALID_ATTRIBUTE_ID (attr_id))) {
+	if (unlikely (ATTRIBUTE_SET_EMPTY(_set) || !VALID_ATTRIBUTE_ID (attr_id))) {
 		*v = SI_NullVal () ;
 		return false ;
 	}
@@ -667,22 +579,6 @@ void AttributeSet_Add
 		AttrValue_t *attr = set_vals + i ;
 		SIValue *v = attr_vals + i ;
 
-		// compress string if:
-		// 1. string is not interned
-		// 2. string is long enough
-		// 3. compress ratio is good enough
-		if (SI_TYPE (*v)  & T_STRING   &&
-			!(SI_TYPE (*v) & T_INTERN) &&
-			strnlen (v->stringval, COMPRESS_THRESHOLD) == COMPRESS_THRESHOLD) {
-			if (_AttrValueFromLongString (attr, v->stringval)) {
-				// free string if we're suppose to take ownership
-				if (!clone) {
-					SIValue_Free (*v) ;
-				}
-				continue ;
-			}
-		}
-
 		if (clone) {
 			SIValue v_clone = SI_CloneValue (*v) ;
 			_AttrValueFromSIValue (attr, &v_clone) ;
@@ -727,7 +623,7 @@ void AttributeSet_Update
 
 	// in _set is null there's nothing to update / remove
 	// treat this update as an addition
-	bool only_additions = (_set == NULL) ;
+	bool only_additions = ATTRIBUTE_SET_EMPTY (_set) ;
 	if (only_additions) {
 		uint16_t    m = 0 ;     // number of attributes to add
 		SIValue     _vals[n] ;  // attribute values
@@ -739,14 +635,15 @@ void AttributeSet_Update
 
 			ASSERT (SI_TYPE (v) & t) ;
 
+			// TODO: what if allow_null ?
 			if (SIValue_IsNull (v)) {
 				// can't add nulls, skip
-				if(change) {
+				if (change) {
 					change[i] = CT_NONE ;
 				}
 			} else {
-				_ids [m]   = ids [i] ;
-				_vals[m]   = vals[i] ;
+				_ids [m] = ids [i] ;
+				_vals[m] = vals[i] ;
 				m++ ;
 
 				if (change) {
