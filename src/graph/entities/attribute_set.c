@@ -463,7 +463,7 @@ AttributeID AttributeSet_GetKey
 	// in case attribute-set is marked as read-only, clear marker
 	const AttributeSet _set = ATTRIBUTE_SET_CLEAR_MSB (set) ;
 
-	return ATTRIBUTE_SET_IDS (_set)[i] ;
+	return (ATTRIBUTE_SET_IDS (_set))[i] ;
 }
 
 // retrieves a value from set
@@ -599,6 +599,9 @@ void AttributeSet_Update
 	bool allow_null,                 // accept NULLs
 	bool clone                       // clone value
 ) {
+	// TODO: probably remove allow_null
+	ASSERT (allow_null == true) ;
+
 	// expecting at least one attribute
 	ASSERT (n > 0) ;
 
@@ -624,6 +627,9 @@ void AttributeSet_Update
 	// in _set is null there's nothing to update / remove
 	// treat this update as an addition
 	bool only_additions = ATTRIBUTE_SET_EMPTY (_set) ;
+	// TODO: remove any redundant update expressions
+	// e.g. SET n.v = 2, n.v = null ->
+	// -> SET n.v = null
 	if (only_additions) {
 		uint16_t    m = 0 ;     // number of attributes to add
 		SIValue     _vals[n] ;  // attribute values
@@ -663,8 +669,8 @@ void AttributeSet_Update
 	// each attribute is either: updated, removed or added
 	// updates are performed first as they do not require memory movement
 
-	uint16_t n_add = 0 ;     // number of attributes to add
-	uint16_t add_idx[n*2] ;  // [(input idx, set idx),...]
+	uint16_t n_add = 0 ;   // number of attributes to add
+	uint16_t add_idx[n] ;  // [input idx...]
 
 	uint16_t n_remove = 0 ;   // number of attributes to remove
 	uint16_t remove_idx[n] ;  // attribute-set indicies to remove
@@ -698,9 +704,7 @@ void AttributeSet_Update
 				}
 			}
 		} else {
-			add_idx[n_add * 2]     = i ;
-			add_idx[n_add * 2 + 1] = idx ;
-			n_add++ ;
+			add_idx[n_add++] = i ;
 			if (change) {
 				change[i] = CT_ADD ;
 			}
@@ -717,7 +721,7 @@ void AttributeSet_Update
 
 	uint16_t overlap = (n_add < n_remove) ? n_add : n_remove ;
 	for (uint16_t i = 0; i < overlap; i++) {
-		uint16_t idx           = add_idx    [i * 2] ;
+		uint16_t idx           = add_idx    [i] ;
 		uint16_t overwrite_idx = remove_idx [i] ;
 
 		// free attribute
@@ -725,14 +729,14 @@ void AttributeSet_Update
 		_AttrValue_Free (&attr) ;
 
 		// overwrite deleted attribute with last attribute
-		_ids  [overwrite_idx] = ids [idx] ;
+		_ids [overwrite_idx] = ids [idx] ;
 
 		SIValue v = (clone) ? SI_CloneValue (vals[idx]) : vals[idx] ;
 		_AttrValueFromSIValue (_vals + overwrite_idx, &v) ;
 	}
 
 	//remove_idx += overlap ;
-	//add_idx    += overlap * 2 ;
+	//add_idx    += overlap ;
 
 	n_add    -= overlap ;
 	n_remove -= overlap ;
@@ -748,7 +752,7 @@ void AttributeSet_Update
 		SIValue     _vals[n_add] ;
 
 		for (uint16_t i = 0; i < n_add; i++) {
-			uint16_t j = overlap * 2 + i * 2 ;
+			uint16_t j = overlap + i ;
 			_ids  [i] = ids [add_idx[j]] ;
 			_vals [i] = vals[add_idx[j]] ;
 		}
@@ -926,8 +930,11 @@ size_t AttributeSet_memoryUsage
 		return 0 ;
 	}
 
-	size_t total = 0 ;  // memory consumption
 	uint16_t n = AttributeSet_Count (set) ;
+
+	// initial memory consumption
+	size_t total = sizeof (set->attr_count)  +
+				   n * (sizeof (AttributeID) + sizeof (AttrValue_t)) ;
 
 	// count memory consumption of each attribute
 	for (uint16_t i = 0; i < n; i++) {
@@ -937,7 +944,6 @@ size_t AttributeSet_memoryUsage
 		if (AttrType_to_Allocation[t] == M_NONE) {
 			// attribute is a "simple" primitive,  e.g. int64_t
 			// no extra memory is allocated elsewhere
-			total += sizeof (AttrValue_t) ;
 			continue ;
 		}
 
@@ -945,11 +951,6 @@ size_t AttributeSet_memoryUsage
 			case ATTR_TYPE_STRING:
 			case ATTR_TYPE_INTERN_STRING:
 				total += strlen (attr->ptrval) ;  // misleading for intern
-				break ;
-
-			case ATTR_TYPE_COMPRESSED_STRING:
-				// header + compressed length
-				total += 8 + ((size_t*)attr->ptrval)[0] ;
 				break ;
 
 			case ATTR_TYPE_MAP:
@@ -967,9 +968,6 @@ size_t AttributeSet_memoryUsage
 				assert (false && "unhandeled attribute type") ;
 		}
 	}
-
-	// account for AttributeIDs
-	total += (n * sizeof (AttributeID)) + sizeof (set->attr_count) ;
 
 	return total ;
 }
