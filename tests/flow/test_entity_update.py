@@ -81,6 +81,13 @@ class testEntityUpdate():
         self.env.assertEqual(result.properties_removed, 2)
         self.env.assertEqual(result.result_set, expected_result)
 
+        # similarly updateing an "empty" node with a map containing only nulls
+        result = self.graph.query("CREATE (n) SET n = {v:null} DELETE n RETURN n")
+        n = result.result_set[0][0]
+        self.env.assertEqual(result.properties_set, 0)
+        self.env.assertEqual(result.properties_removed, 0)
+        self.env.assertEqual(len(n.properties), 0)
+
     # Update the entity's properties by setting a specific property and merging property maps
     def test07_update_property_map(self):
         node = Node(properties={"v": 1, "v2": 2})
@@ -627,7 +634,7 @@ class testEntityUpdate():
     def test40_remove_by_map(self):
         self.graph.delete()
 
-        node  = self.graph.query("CREATE (n {a:1, b:2, c: 'str'}) RETURN n").result_set[0][0]
+        self.graph.query("CREATE (n {a:1, b:2, c: 'str'}) RETURN n").result_set[0][0]
 
         update_map = {'a': 2, 'b':None, 'c':'str'}
         q = "MATCH (n) SET n = $map RETURN n"
@@ -646,7 +653,7 @@ class testEntityUpdate():
 
         self.graph.delete()
 
-        node  = self.graph.query("CREATE (n {a:1, b:2, c: 'str'}) RETURN n").result_set[0][0]
+        self.graph.query("CREATE (n {a:1, b:2, c: 'str'}) RETURN n").result_set[0][0]
 
         update_map = {'a': 2, 'b':None, 'c':'str'}
         q = "MATCH (n) SET n += $map RETURN n"
@@ -684,7 +691,7 @@ class testEntityUpdate():
 
         self.graph.delete()
 
-        node  = self.graph.query("CREATE (n) RETURN n").result_set[0][0]
+        self.graph.query("CREATE (n) RETURN n").result_set[0][0]
 
         update_map_1 = {'a': 2, 'b':None, 'c':'str'}
         update_map_2 = {'a': None, 'b':None, 'c':'str1'}
@@ -707,7 +714,7 @@ class testEntityUpdate():
 
         self.graph.delete()
 
-        node  = self.graph.query("CREATE (n) RETURN n").result_set[0][0]
+        self.graph.query("CREATE (n) RETURN n").result_set[0][0]
 
         update_map_1 = {'a': 2, 'b':None, 'c':'str'}
         update_map_2 = {'a': None, 'b':None, 'c':'str1'}
@@ -727,7 +734,7 @@ class testEntityUpdate():
 
         self.graph.delete()
 
-        node  = self.graph.query("CREATE (n {a:1, b:2, c: 'str'}) RETURN n").result_set[0][0]
+        self.graph.query("CREATE (n {a:1, b:2, c: 'str'}) RETURN n").result_set[0][0]
 
         update_map_1 = {'a': 2, 'b':None, 'c':'str'}
         update_map_2 = {'a': None, 'b':None, 'c':'str1'}
@@ -750,7 +757,7 @@ class testEntityUpdate():
 
         self.graph.delete()
 
-        node  = self.graph.query("CREATE (n {a:1, b:2, c: 'str'}) RETURN n").result_set[0][0]
+        self.graph.query("CREATE (n {a:1, b:2, c: 'str'}) RETURN n").result_set[0][0]
 
         update_map_1 = {'a': 2, 'b':None, 'c':'str'}
         update_map_2 = {'a': None, 'b':None, 'c':'str1'}

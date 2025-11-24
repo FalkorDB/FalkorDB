@@ -205,6 +205,7 @@ static inline void _AttrValueFromSIValue
 	// left most active bit position
     int bit_idx = __builtin_clz (v->type) ;
 	bit_idx = (sizeof (SIType) * 8) - 1 - bit_idx ;
+	ASSERT (bit_idx < 20) ;
 
 	attr->t = SIType_to_AttrType[bit_idx] ;  // attribute type
 	attr->ptrval = v->ptrval ;               // attribute value
@@ -927,7 +928,7 @@ size_t AttributeSet_memoryUsage
 	// count memory consumption of each attribute
 	for (uint16_t i = 0; i < n; i++) {
 		AttrValue_t *attr = _GetAttrVal (set, i) ;
-		AttrType_t t = attr->t ;
+		AttrType_t t = AttrValue_Type (attr) ;
 
 		if (AttrType_to_Allocation[t] == M_NONE) {
 			// attribute is a "simple" primitive,  e.g. int64_t
@@ -935,7 +936,7 @@ size_t AttributeSet_memoryUsage
 			continue ;
 		}
 
-		switch (attr->t) {
+		switch (t) {
 			case ATTR_TYPE_STRING:
 			case ATTR_TYPE_INTERN_STRING:
 				total += strlen (attr->ptrval) ;  // misleading for intern

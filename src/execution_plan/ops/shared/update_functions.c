@@ -183,11 +183,14 @@ static void _AttributeSetUpdate
 	UPDATE_MODE mode,       // update mode replace / add
 	EffectsBuffer *eb       // effects buffer
 ) {
-	ASSERT (n         > 0) ;
 	ASSERT (e         != NULL) ;
 	ASSERT (eb        != NULL) ;
 	ASSERT (attr_ids  != NULL) ;
 	ASSERT (attr_vals != NULL) ;
+
+	if (unlikely (n == 0)) {
+		return ;
+	}
 
 	if (GraphEntity_GetAttributes (e) == NULL) {
 
@@ -573,6 +576,11 @@ void EvalEntityUpdates
 	if (!error) {
 		_FlushAccumulatedUpdates (eb, entity, entity_type, attr_vals, attr_ids,
 				&n_updates) ;
+	} else {
+		// free accumulated updates
+		for (uint16_t i = 0; i < n_updates; i++) {
+			SIValue_Free (attr_vals[i]) ;
+		}
 	}
 
 	// restore original attribute-set
