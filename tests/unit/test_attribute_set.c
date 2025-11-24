@@ -51,7 +51,7 @@ void test_attributeset_add() {
 	// add and validate a single attribute
 	//--------------------------------------------------------------------------
 
-	AttributeSet_Add (&set, &attr_id, &v, 1, false, false) ;
+	AttributeSet_Add (&set, &attr_id, &v, 1, false) ;
 	TEST_ASSERT (set != NULL) ;
 
 	TEST_ASSERT (AttributeSet_Count(set) == 1) ;
@@ -85,7 +85,7 @@ void test_attributeset_add() {
 		SI_Point(21, 12.5) 
 	} ;
 
-	AttributeSet_Add (&set, attr_ids, values, 3, true, true) ;
+	AttributeSet_Add (&set, attr_ids, values, 3, true) ;
 	TEST_ASSERT (set != NULL) ;
 
 	TEST_ASSERT (AttributeSet_Count(set) == 3) ;
@@ -122,7 +122,7 @@ void test_attributeset_add() {
 
 	attr_id = 8 ;
 	x = SI_DuplicateStringVal ("no-clone") ;
-	AttributeSet_Add (&set, &attr_id, &x, 1, false, false) ;
+	AttributeSet_Add (&set, &attr_id, &x, 1, false) ;
 
 	// attribute-set should NOT duplicate heap allocated values
 	AttributeSet_Get (set, attr_id, &v) ;
@@ -153,7 +153,7 @@ void test_attributeset_update() {
 		SI_Point(21, 12.5) 
 	} ;
 
-	AttributeSet_Add (&set, attr_ids, values, 3, false, true) ;
+	AttributeSet_Add (&set, attr_ids, values, 3, true) ;
 
 	//--------------------------------------------------------------------------
 	// update boolean attribute
@@ -165,7 +165,7 @@ void test_attributeset_update() {
 	// update boolean attribute
 	AttributeID attr_id = 1 ;
 	SIValue attr_val = SI_BoolVal (false) ;
-	AttributeSet_Update (NULL, &set, &attr_id, &attr_val, 1, false, true) ;
+	AttributeSet_Update (NULL, &set, &attr_id, &attr_val, 1, true) ;
 
 	AttributeSet_Get (set, 1, &v) ;
 	TEST_ASSERT (SIValue_IsFalse (v) == true) ;
@@ -180,7 +180,7 @@ void test_attributeset_update() {
 	// update string attribute
 	attr_id = 0 ;
 	SIValue x = SI_DuplicateStringVal ("E4, D6") ;
-	AttributeSet_Update (NULL, &set, &attr_id, &x, 1, false, true) ;
+	AttributeSet_Update (NULL, &set, &attr_id, &x, 1, true) ;
 
 	AttributeSet_Get (set, 0, &v) ;
 	TEST_ASSERT (SIValue_Compare (v, values[0], NULL) != 0) ;
@@ -196,7 +196,7 @@ void test_attributeset_update() {
 	attr_id = 3 ;
 
 	// update should add missing attribute
-	AttributeSet_Update (NULL, &set, &attr_id, &x, 1, false, false) ;
+	AttributeSet_Update (NULL, &set, &attr_id, &x, 1, false) ;
 
 	TEST_ASSERT (AttributeSet_Count (set) == 4) ;
 
@@ -242,7 +242,7 @@ void test_attributeset_remove() {
 	SIValue     values[6]   = {t, a, p, l, d, v} ;
 	AttributeID attr_ids[6] = {0, 1, 2, 3, 4, 5} ;
 
-	AttributeSet_Add (&set, attr_ids, values, n, true, true) ;
+	AttributeSet_Add (&set, attr_ids, values, n, true) ;
 	TEST_ASSERT (AttributeSet_Count (set) == n) ;
 
 	for (uint16_t i = 0; i < n; i++) {
@@ -275,7 +275,7 @@ void test_attributeset_remove() {
 	// remove elements in reverse order
 	//--------------------------------------------------------------------------
 
-	AttributeSet_Add (&set, attr_ids, values, n, true, true) ;
+	AttributeSet_Add (&set, attr_ids, values, n, true) ;
 	TEST_ASSERT (AttributeSet_Count (set) == n) ;
 
 	for (int16_t i = n-1; i >= 0; i--) {
@@ -296,13 +296,13 @@ void test_attributeset_remove() {
 	// remove elements via AttributeSet_Update
 	//--------------------------------------------------------------------------
 
-	AttributeSet_Add (&set, attr_ids, values, n, true, true) ;
+	AttributeSet_Add (&set, attr_ids, values, n, true) ;
 	TEST_ASSERT (AttributeSet_Count (set) == n) ;
 
 	for (uint16_t i = 0; i < n; i++) {
 		SIValue v = SI_NullVal () ;
 		AttributeSetChangeType change ;
-		AttributeSet_Update (&change, &set, attr_ids + i, &v, 1, true, false) ;
+		AttributeSet_Update (&change, &set, attr_ids + i, &v, 1, false) ;
 		TEST_ASSERT (change == CT_DEL) ;
 		TEST_ASSERT (AttributeSet_Count (set) == n - i - 1) ;
 
@@ -327,7 +327,7 @@ void test_attributeset_shallowClone() {
 	SIValue     values[2] = {str, num} ;
 	AttributeID ids   [2] = {0, 1} ;
 
-	AttributeSet_Add (&set, ids, values, n, false, true) ;
+	AttributeSet_Add (&set, ids, values, n, true) ;
 	AttributeSet clone = AttributeSet_ShallowClone (set) ;
 
 	TEST_ASSERT (clone != set) ;

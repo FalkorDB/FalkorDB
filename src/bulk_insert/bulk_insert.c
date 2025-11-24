@@ -258,7 +258,7 @@ static int _BulkInsert_ProcessNodeFile
 
 		// assign properties
 		AttributeSet set = NULL ;
-		AttributeSet_Add (&set, prop_attr_ids, props, idx, false, false) ;
+		AttributeSet_Add (&set, prop_attr_ids, props, idx, false) ;
 		sets[batch_size] = set ;
 
 		batch_size++ ;
@@ -376,7 +376,7 @@ static int _BulkInsert_ProcessEdgeFile
 
 		// assign properties
 		AttributeSet set = NULL ;
-		AttributeSet_Add (&set, prop_attr_ids, props, n, false, false) ;
+		AttributeSet_Add (&set, prop_attr_ids, props, n, false) ;
 		array_append (sets, set) ;
 
 		// yield every 500000 iterations

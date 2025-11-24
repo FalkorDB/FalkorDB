@@ -76,7 +76,6 @@ void AttributeSet_Add
 	AttributeID *ids,   // attribute ids
 	SIValue *values,    // attribute values
 	uint16_t n,         // number of attributes
-	bool allowNull,     // accept NULLs
 	bool clone          // clone values
 );
 
@@ -89,7 +88,6 @@ void AttributeSet_Update
 	AttributeID *ids,                // attribute identifier
 	SIValue *vals,                   // new value
 	uint16_t n,                      // number of attributes
-	bool allowNull,                  // accept NULLs
 	bool clone                       // clone value
 );
 

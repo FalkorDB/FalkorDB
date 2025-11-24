@@ -532,7 +532,6 @@ void AttributeSet_Add
 	AttributeID *attr_ids,  // attribute ids
 	SIValue *attr_vals,     // attribute values
 	uint16_t n,             // number of attributes
-	bool allow_null,        // accept NULLs
 	bool clone              // clone values
 ) {
 	ASSERT (!ATTRIBUTE_SET_IS_READONLY (*set)) ;
@@ -545,10 +544,6 @@ void AttributeSet_Add
 	// validate values type, values must be a valid property type
 #ifdef RG_DEBUG
 	SIType t = SI_VALID_PROPERTY_VALUE ;
-	if (allow_null == true) {
-		t |= T_NULL ;
-	}
-
 	for (uint16_t i = 0; i < n; i++) {
 		ASSERT (SI_TYPE (attr_vals[i]) & t) ;
 
@@ -596,12 +591,8 @@ void AttributeSet_Update
 	AttributeID *ids,                // attribute identifier
 	SIValue *vals,                   // new value
 	uint16_t n,                      // number of attributes
-	bool allow_null,                 // accept NULLs
 	bool clone                       // clone value
 ) {
-	// TODO: probably remove allow_null
-	ASSERT (allow_null == true) ;
-
 	// expecting at least one attribute
 	ASSERT (n > 0) ;
 
@@ -617,10 +608,7 @@ void AttributeSet_Update
 #endif
 
 	// allowed value type
-	SIType t = SI_VALID_PROPERTY_VALUE ;
-	if (allow_null) {
-		t |= T_NULL ;
-	}
+	SIType t = SI_VALID_PROPERTY_VALUE | T_NULL ;
 
 	AttributeSet _set = *set ;
 
@@ -635,13 +623,13 @@ void AttributeSet_Update
 		SIValue     _vals[n] ;  // attribute values
 		AttributeID _ids [n] ;  // attribute ids
 
+		// discard NULLs
 		for (uint16_t i = 0; i < n; i++) {
 			SIValue     v       = vals[i] ;
 			AttributeID attr_id = ids [i] ;
 
 			ASSERT (SI_TYPE (v) & t) ;
 
-			// TODO: what if allow_null ?
 			if (SIValue_IsNull (v)) {
 				// can't add nulls, skip
 				if (change) {
@@ -658,7 +646,7 @@ void AttributeSet_Update
 			}
 		}
 
-		AttributeSet_Add (set, _ids, _vals, m, false, clone) ;
+		AttributeSet_Add (set, _ids, _vals, m, clone) ;
 		return ;
 	}
 
@@ -757,7 +745,7 @@ void AttributeSet_Update
 			_vals [i] = vals[add_idx[j]] ;
 		}
 
-		AttributeSet_Add (set, _ids, _vals, n_add, false, clone) ;
+		AttributeSet_Add (set, _ids, _vals, n_add, clone) ;
 	}
 }
 

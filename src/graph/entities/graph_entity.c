@@ -21,7 +21,7 @@ bool GraphEntity_AddProperty
 ) {
 	ASSERT(e);
 
-	AttributeSet_Add (e->attributes, &attr_id, &value, 1, false, true) ;
+	AttributeSet_Add (e->attributes, &attr_id, &value, 1, true) ;
 
 	return true;
 }

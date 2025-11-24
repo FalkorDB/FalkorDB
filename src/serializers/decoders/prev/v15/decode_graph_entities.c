@@ -124,7 +124,7 @@ static void _RdbLoadEntity
 		vals[i] = _RdbLoadSIValue(rdb);
 	}
 
-	AttributeSet_Add (e->attributes, ids, vals, n, false, false) ;
+	AttributeSet_Add (e->attributes, ids, vals, n, false) ;
 }
 
 void RdbLoadNodes_v15

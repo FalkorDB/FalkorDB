@@ -192,7 +192,7 @@ static void _AttributeSetUpdate
 	if (GraphEntity_GetAttributes (e) == NULL) {
 
 		// add all attributes in one go
-		AttributeSet_Add (e->attributes, attr_ids, attr_vals, n, false, true) ;
+		AttributeSet_Add (e->attributes, attr_ids, attr_vals, n, true) ;
 
 		// create effects
 		for (uint i = 0; i < n; i++) {
@@ -210,8 +210,7 @@ static void _AttributeSetUpdate
 	//--------------------------------------------------------------------------
 
 	AttributeSetChangeType changes[n] ;
-	AttributeSet_Update (changes, e->attributes, attr_ids, attr_vals, n, true,
-			true) ;
+	AttributeSet_Update (changes, e->attributes, attr_ids, attr_vals, n, true) ;
 
 	// write changes to effects buffer
 	_WriteUpdatesToEffectsBuffer (eb, e, et, attr_ids, attr_vals, changes, n) ;
@@ -238,8 +237,7 @@ static void _FlushAccumulatedUpdates
 
 	// update cloned attribute set, original remained untouched!
 	AttributeSetChangeType changes[*n] ;
-	AttributeSet_Update (changes, e->attributes, attr_ids, attr_vals, *n, true,
-			true) ;
+	AttributeSet_Update (changes, e->attributes, attr_ids, attr_vals, *n, true) ;
 
 	// write changes to effects buffer
 	_WriteUpdatesToEffectsBuffer (eb, e, et, attr_ids, attr_vals, changes, *n) ;
@@ -560,8 +558,8 @@ void EvalEntityUpdates
 
 		// incase SET n = n / SET n += n
 		if (unlikely (ENTITY_GET_ID (ge) == ENTITY_GET_ID (entity) &&
-					 (t == T_NODE && entity_type == GETYPE_NODE)   ||
-					 (t == T_EDGE && entity_type == GETYPE_EDGE))
+					 ((t == T_NODE && entity_type == GETYPE_NODE)   ||
+					 (t == T_EDGE && entity_type == GETYPE_EDGE)))
 		) {
 			continue ;
 		}
