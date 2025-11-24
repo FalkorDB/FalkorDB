@@ -665,6 +665,25 @@ class testEntityUpdate():
     def test41_last_update_persists(self):
         self.graph.delete()
 
+        v = self.graph.query("""CREATE (n)
+                                WITH n AS n, n AS m
+                                SET n.v = 1,
+                                    m.v = 3,
+                                    n.v = 2,
+                                    m.v = null,
+                                    m.v = 2,
+                                    n.v = null,
+                                    m.v = 1,
+                                    n.v = 3,
+                                    m.v = 4,
+                                    n.v = 4
+                                RETURN n.v""").result_set[0][0]
+        self.env.assertEqual(v, 4)
+
+        #-----------------------------------------------------------------------
+
+        self.graph.delete()
+
         node  = self.graph.query("CREATE (n) RETURN n").result_set[0][0]
 
         update_map_1 = {'a': 2, 'b':None, 'c':'str'}
