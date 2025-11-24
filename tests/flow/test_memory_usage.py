@@ -522,3 +522,27 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.env.assertGreater(res.edge_block_storage_sz_mb, 0)
         self.env.assertGreater(res.edge_attributes_by_type_storage_sz_mb[1], 0)
 
+    def test_graph_with_empty_relationship_type(self):
+        """test memory consumption of a graph containing an empty relationship-type"""
+
+        # create a graph with an empty relationship-type
+        q = "CREATE ()-[:R]->()"
+        self.graph.query(q)
+
+        # delete the only edge
+        q = """MATCH ()-[e:R]->()
+               DELETE e"""
+        self.graph.query(q)
+
+        # compute graph memory consumption
+        res = self._graph_memory_usage()
+
+        # validate graph's memory consumption
+        self.env.assertEquals(res.indices_sz_mb, 0)
+        self.env.assertEquals(res.edge_block_storage_sz_mb, 0)
+        self.env.assertEquals(res.label_matrices_sz_mb, 0)
+        self.env.assertEquals(res.relation_matrices_sz_mb, 0)
+        self.env.assertEquals(res.total_graph_sz_mb, 0)
+        self.env.assertEquals(res.node_block_storage_sz_mb, 0)
+        self.env.assertEquals(res.unlabeled_node_attributes_sz_mb, 0)
+
