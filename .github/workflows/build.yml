@@ -202,7 +202,7 @@ jobs:
         run: |
           sudo dnf install -y git
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           set-safe-directory: "*"
           submodules: recursive
@@ -447,7 +447,7 @@ jobs:
         platform:
           - machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/cleanup-runner
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
@@ -675,7 +675,7 @@ jobs:
   #  needs: upgrade-tests
   #  runs-on: ubuntu-latest
   #  steps:
-  #    - uses: actions/checkout@v5
+  #    - uses: actions/checkout@v6
   #    - uses: ./.github/actions/cleanup-runner
   #      with:
   #        service_account_key: ${{ secrets.GCP_SA_KEY }}
@@ -749,7 +749,7 @@ jobs:
             machine_label: macos-latest
             is_debug: "1"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
 

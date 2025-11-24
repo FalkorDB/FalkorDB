@@ -75,7 +75,7 @@ jobs:
       - name: Safe dir
         run: git config --global --add safe.directory '*'
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           set-safe-directory: '*'
           submodules: recursive
@@ -151,7 +151,7 @@ jobs:
         benchmark_group: [ a, b ]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/cleanup-runner
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
@@ -182,7 +182,7 @@ jobs:
     if: ${{ github.event_name == 'pull_request' }} # No need to run this job for branches and tags
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Create paths
         run: |
           mkdir -p tests/benchmarks/compare/${{ github.head_ref }}
