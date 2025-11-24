@@ -78,3 +78,6 @@ perm.sh
 
 # ctags
 tags
+
+# pyspelling
+wordlist.dic
