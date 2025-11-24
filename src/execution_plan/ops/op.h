@@ -17,6 +17,11 @@
 
 #define OP_REQUIRE_NEW_DATA(opRes) (opRes & (OP_DEPLETED | OP_REFRESH)) > 0
 
+#define OP_JOIN_MULTIPLE_STREAMS(op)                     \
+	(OpBase_Type((op)) == OPType_JOIN            ||      \
+	 OpBase_Type((op)) == OPType_VALUE_HASH_JOIN ||      \
+	 OpBase_Type((op)) == OPType_CARTESIAN_PRODUCT)
+
 typedef enum {
 	OPType_ALL_NODE_SCAN,
 	OPType_NODE_BY_LABEL_SCAN,
@@ -27,6 +32,7 @@ typedef enum {
 	OPType_EXPAND_INTO,
 	OPType_CONDITIONAL_TRAVERSE,
 	OPType_CONDITIONAL_VAR_LEN_TRAVERSE,
+	OPType_OPTIONAL_CONDITIONAL_TRAVERSE,
 	OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO,
 	OPType_RESULTS,
 	OPType_PROJECT,
@@ -44,7 +50,6 @@ typedef enum {
 	OPType_UNWIND,
 	OPType_FOREACH,
 	OPType_PROC_CALL,
-	OPType_CALLSUBQUERY,
 	OPType_ARGUMENT,
 	OPType_ARGUMENT_LIST,
 	OPType_CARTESIAN_PRODUCT,
@@ -57,6 +62,9 @@ typedef enum {
 	OPType_AND_APPLY_MULTIPLEXER,
 	OPType_OPTIONAL,
 	OPType_LOAD_CSV,
+	OPType_SUBQUERY_FOREACH,
+	OPType_EMPTY_ROW,
+	OPType_EAGER
 } OPType;
 
 typedef enum {
@@ -75,6 +83,8 @@ static const OPType PROJECT_OPS[] = {
 	OPType_AGGREGATE
 };
 
+// TODO: add OPType_OPTIONAL_CONDITIONAL_TRAVERSE to TRAVERSE_OPS
+// and adjust relevent optimizations accordingly
 #define TRAVERSE_OP_COUNT 2
 static const OPType TRAVERSE_OPS[] = {
 	OPType_CONDITIONAL_TRAVERSE,
@@ -97,7 +107,7 @@ static const OPType FILTER_RECURSE_BLACKLIST[] = {
 	OPType_MERGE
 };
 
-#define EAGER_OP_COUNT 7
+#define EAGER_OP_COUNT 8
 static const OPType EAGER_OPERATIONS[] = {
 	OPType_AGGREGATE,
 	OPType_CREATE,
@@ -105,7 +115,8 @@ static const OPType EAGER_OPERATIONS[] = {
 	OPType_UPDATE,
 	OPType_MERGE,
 	OPType_FOREACH,
-	OPType_SORT
+	OPType_SORT,
+	OPType_EAGER
 };
 
 #define MODIFYING_OP_COUNT 4
@@ -216,6 +227,12 @@ OpBase *OpBase_GetChild
 (
 	const OpBase *op,  // op
 	uint i             // child index
+);
+
+// returns op's parent
+OpBase *OpBase_Parent
+(
+	const OpBase *op  // op
 );
 
 // returns true if operation is aware of all aliases

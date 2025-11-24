@@ -36,6 +36,9 @@ static void Delta_Matrix_sync_deletions
 	GrB_OK (GrB_Matrix_nvals(&nvals, dm));
 
 	if(nvals > 0) { //shortcut if no vals
+		// turn on burble and look for: "alias duplicate"
+		// in that case replace with: asign
+		// or assign an empty scalar with a struct mask
 		GrB_OK (GrB_transpose(m, dm, NULL, m, GrB_DESC_RSCT0));
 	}
 
@@ -56,6 +59,8 @@ static void Delta_Matrix_sync_additions
 	GrB_OK (GrB_Matrix_nvals(&nvals, dp));
 
 	if(nvals > 0) { //shortcut if no vals
+		// TODO: turn on burble, see if "wait add pending tuples into existing A" shows up
+		// in that case change to ewiseadd
 		GrB_OK (GrB_Matrix_assign(m, dp, NULL, dp, GrB_ALL, 0, GrB_ALL, 0,
 			GrB_DESC_S));
 	}

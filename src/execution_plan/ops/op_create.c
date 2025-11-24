@@ -11,9 +11,11 @@
 #include "../../errors/errors.h"
 
 // forward declarations
-static Record CreateConsume(OpBase *opBase);
-static OpBase *CreateClone(const ExecutionPlan *plan, const OpBase *opBase);
-static void CreateFree(OpBase *opBase);
+static Record CreateConsume (OpBase *opBase) ;
+static OpResult CreateReset(OpBase *opBase);
+static OpBase *CreateClone (const ExecutionPlan *plan, const OpBase *opBase) ;
+static void CreateFree (OpBase *opBase) ;
+static void FreeInternals (OpCreate *op) ;
 
 OpBase *NewCreateOp
 (
@@ -25,7 +27,7 @@ OpBase *NewCreateOp
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_CREATE, "Create", NULL, CreateConsume,
-				NULL, NULL, CreateClone, CreateFree, true, plan);
+				CreateReset, NULL, CreateClone, CreateFree, true, plan);
 
 	uint node_blueprint_count = array_len(nodes);
 	uint edge_blueprint_count = array_len(edges);
@@ -197,8 +199,28 @@ static Record CreateConsume
 	// create entities
 	CommitNewEntities(&op->pending);
 
+	// no one consumes our output, return NULL
+	if (opBase->parent == NULL) {
+		return NULL ;
+	}
+
 	// return record
 	return _handoff(op);
+}
+
+static OpResult CreateReset
+(
+	OpBase *opBase
+) {
+	OpCreate *op = (OpCreate*) opBase ;
+
+	FreeInternals (op) ;
+	op->rec_idx = 0 ;
+
+	// reset PendingCreations
+	PendingCreations_Reset (&op->pending) ;
+
+	return OP_OK ;
 }
 
 static OpBase *CreateClone
@@ -221,23 +243,30 @@ static OpBase *CreateClone
 	return NewCreateOp(plan, nodes, edges);
 }
 
+static void FreeInternals
+(
+	OpCreate *op
+) {
+	if (op->records) {
+		uint rec_count = array_len (op->records) ;
+		// records[0..rec_idx-1] had already been emitted, skip them
+		for (uint i = op->rec_idx; i < rec_count; i++) {
+			OpBase_DeleteRecord (op->records+i) ;
+		}
+
+		array_free (op->records) ;
+		op->records = NULL ;
+	}
+}
+
 static void CreateFree
 (
 	OpBase *ctx
 ) {
-	OpCreate *op = (OpCreate *)ctx;
+	OpCreate *op = (OpCreate *)ctx ;
 
-	if(op->records) {
-		uint rec_count = array_len(op->records);
-		// records[0..op->rec_idx] had already been emitted, skip them
-		for(uint i = op->rec_idx; i < rec_count; i++) {
-			OpBase_DeleteRecord(op->records+i);
-		}
+	FreeInternals (op) ;
 
-		array_free(op->records);
-		op->records = NULL;
-	}
-
-	PendingCreationsFree(&op->pending);
+	PendingCreationsFree (&op->pending) ;
 }
 
