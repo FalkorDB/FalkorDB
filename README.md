@@ -6,7 +6,6 @@
   <h2>Ultra-fast, Multi-tenant Graph Database</h2>
   <h3>Powering Generative AI, Agent Memory, Cloud Security, and Fraud Detection</h3>
 </div>
-
 <div align="center">
   <a href="https://app.falkordb.cloud/signup">
     <img src="https://img.shields.io/badge/Try%20Free-FalkorDB%20Cloud-FF8101?labelColor=FDE900&style=for-the-badge" alt="Try Free" />
@@ -28,7 +27,11 @@
   </a>
 </div>
 
----
+<div align="center">
+
+![FalkorDB GitHub Repo - Video - 640x365](https://github.com/user-attachments/assets/131867d4-fa2b-41f8-ac72-5c5f6eaf4e12)
+
+</div>
 
 ## UNIQUE FEATURES
 
