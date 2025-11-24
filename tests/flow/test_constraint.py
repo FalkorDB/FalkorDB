@@ -585,7 +585,7 @@ class testConstraintNodes():
         res = self.g.query("CREATE (:Author {nickname: 'abcd'})")
         self.env.assertEqual(res.nodes_created, 1)
 
-        self.g.query("CREATE (:Author {nickname: '   abcd   '})")
+        res = self.g.query("CREATE (:Author {nickname: '   abcd   '})")
         self.env.assertEqual(res.nodes_created, 1)
 
 class testConstraintEdges():
