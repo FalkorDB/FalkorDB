@@ -4,7 +4,7 @@
 <div align="center">
   <h1>FalkorDB</h1>
   <h2>Ultra-fast, Multi-tenant Graph Database</h2>
-  <h3>Powering Generative AI, Agent Memory, Cloud Security, and Fraud Detection</h3>	
+  <h3>Powering Generative AI, Agent Memory, Cloud Security, and Fraud Detection</h3>
 </div>
 <div align="center">
   <a href="https://app.falkordb.cloud/signup">
