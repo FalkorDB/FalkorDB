@@ -276,7 +276,7 @@ static void _UpdateSetFromMap
 	// e += {a:1, b:2}
 
 	uint n = Map_KeyCount (map) ;
-	if (unlikely (n) == 0) {
+	if (unlikely (n == 0)) {
 		return ;
 	}
 
@@ -570,6 +570,7 @@ void EvalEntityUpdates
 		if (mode == UPDATE_REPLACE) {
 			_ClearAttributeSet (entity, entity_type, eb) ;
 		}
+
 		_UpdateSetFromEntity (ge, entity, entity_type, mode, eb) ;
 	} // for loop end
 

@@ -44,6 +44,7 @@ typedef enum {
 
 typedef struct {
 	const char **keys;
+	AttributeID **attr_ids; TODO: implement
 	struct AR_ExpNode **values;
 } PropertyMap;
 
