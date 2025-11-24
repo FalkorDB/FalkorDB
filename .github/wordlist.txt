@@ -96,6 +96,7 @@ CVSS
 md
 LLM
 Github
+github
 txt
 GenAI
 GraphRAG
@@ -108,3 +109,5 @@ html
 https
 www
 faq
+Repo
+eaf
