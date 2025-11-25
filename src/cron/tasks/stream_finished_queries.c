@@ -339,7 +339,7 @@ bool CronTask_streamFinishedQueries
 
 			// XTRIM expect count to be a string
 			char buf[32] ;
-			snprintf (buf, sizeof(buf), "%lld", max_query_count) ;
+			snprintf (buf, sizeof(buf), "%" PRIu64, max_query_count);
 
 			RedisModuleCallReply *reply = RedisModule_Call (rm_ctx, "XTRIM",
 					"scc!", keyname, "MAXLEN", buf) ;

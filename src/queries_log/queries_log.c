@@ -67,6 +67,8 @@ void QueriesLog_AddQuery
 	const char *params,         // query parameters
 	const char *query           // query string
 ) {
+	ASSERT (query != NULL) ;
+
 	//--------------------------------------------------------------------------
 	// add query stats to buffer
 	//--------------------------------------------------------------------------
@@ -76,15 +78,16 @@ void QueriesLog_AddQuery
 	if (strnlen (query, 2048) >= 2048) {
 		asprintf (&truncated_query, "%.*s...", 2048, query);
 	} else {
-		truncated_query = rm_strdup (query) ;
+		truncated_query = strdup (query) ;
 	}
 
+	// truncate long parameters
 	char *truncated_params = NULL ;
 	if (params != NULL) {
 		if (strnlen (params, 2048) >= 2048) {
 			asprintf (&truncated_params, "%.*s...", 2048, params);
 		} else {
-			truncated_params = rm_strdup (params) ;
+			truncated_params = strdup (params) ;
 		}
 	}
 
@@ -159,7 +162,11 @@ void LoggedQuery_Free
 ) {
 	ASSERT (q != NULL) ;
 
-	rm_free (q->query) ;
+	free (q->query) ;
+
+	if (q->params != NULL) {
+		free (q->params) ;
+	}
 }
 
 // free the QueriesLog structure's content
