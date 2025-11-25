@@ -64,9 +64,29 @@ void QueriesLog_AddQuery
 	bool utilized_cache,        // utilized cache
 	bool write,                 // write query
 	bool timeout,               // timeout query
+	const char *params,         // query parameters
 	const char *query           // query string
 ) {
+	//--------------------------------------------------------------------------
 	// add query stats to buffer
+	//--------------------------------------------------------------------------
+
+	// truncate long queries
+	char *truncated_query;
+	if (strnlen (query, 2048) >= 2048) {
+		asprintf (&truncated_query, "%.*s...", 2048, query);
+	} else {
+		truncated_query = rm_strdup (query) ;
+	}
+
+	char *truncated_params = NULL ;
+	if (params != NULL) {
+		if (strnlen (params, 2048) >= 2048) {
+			asprintf (&truncated_params, "%.*s...", 2048, params);
+		} else {
+			truncated_params = rm_strdup (params) ;
+		}
+	}
 
 	LoggedQuery q = {
 		. received           = received,
@@ -77,7 +97,8 @@ void QueriesLog_AddQuery
 		. utilized_cache     = utilized_cache,
 		. write              = write,
 		. timeout            = timeout,
-		. query              = rm_strdup (query)
+		. params             = truncated_params,
+		. query              = truncated_query
 	} ;
 
 	// try adding query to buffer

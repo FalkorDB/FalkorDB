@@ -929,14 +929,15 @@ void GraphContext_LogQuery
 	bool utilized_cache,          // utilized cache
 	bool write,                   // write query
 	bool timeout,                 // timeout query
+	const char *params,           // query parameters
 	const char *query             // query string
 ) {
-	ASSERT(gc != NULL);
-	ASSERT(query != NULL);
+	ASSERT (gc    != NULL) ;
+	ASSERT (query != NULL) ;
 
-	QueriesLog_AddQuery(gc->queries_log, received, wait_duration,
+	QueriesLog_AddQuery (gc->queries_log, received, wait_duration,
 			execution_duration, report_duration, parameterized, utilized_cache,
-			write, timeout, query);
+			write, timeout, params, query);
 }
 
 //------------------------------------------------------------------------------

@@ -307,22 +307,32 @@ static void _ReplicationRoleChangedEventHandler
 	uint64_t subevent,
 	void *data
 ) {
-	KeySpaceGraphIterator it;
-	GraphContext *gc = NULL;
-	Globals_ScanGraphs(&it);
 	if(subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_MASTER) {
-		// now master enable constraints
-		while((gc = GraphIterator_Next(&it)) != NULL) {
-			GraphContext_EnableConstrains(gc);
-			GraphContext_DecreaseRefCount(gc);
-		}
+		// add cron's stream finished queries task
+		CronTask_AddStreamFinishedQueries () ;
 	} else if (subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA) {
-		// now slave disable constraints
-		while((gc = GraphIterator_Next(&it)) != NULL) {
-			GraphContext_DisableConstrains(gc);
-			GraphContext_DecreaseRefCount(gc);
-		}
+		// no need to manually remove the task
+		// the stream-finished-queries task is removed automaticlly
+		// by the cron's recurring tasks mechanism which checks the re-enter
+		// conditions before enqueue a task to its queue
 	}
+
+	//KeySpaceGraphIterator it;
+	//GraphContext *gc = NULL;
+	//Globals_ScanGraphs(&it);
+	//if(subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_MASTER) {
+	//	// now master enable constraints
+	//	while((gc = GraphIterator_Next(&it)) != NULL) {
+	//		GraphContext_EnableConstrains(gc);
+	//		GraphContext_DecreaseRefCount(gc);
+	//	}
+	//} else if (subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA) {
+	//	// now slave disable constraints
+	//	while((gc = GraphIterator_Next(&it)) != NULL) {
+	//		GraphContext_DisableConstrains(gc);
+	//		GraphContext_DecreaseRefCount(gc);
+	//	}
+	//}
 }
 
 // server persistence event handler
@@ -438,9 +448,9 @@ static void _RegisterServerEvents
 	//		_ModuleLoadedHandler);
 	//ASSERT(res == REDISMODULE_OK);
 
-	//	RedisModule_SubscribeToServerEvent(ctx,
-	//			RedisModuleEvent_ReplicationRoleChanged,
-	//			_ReplicationRoleChangedEventHandler);
+	RedisModule_SubscribeToServerEvent (ctx,
+			RedisModuleEvent_ReplicationRoleChanged,
+			_ReplicationRoleChangedEventHandler) ;
 
 	RedisModule_SubscribeToKeyspaceEvents(ctx,
 			REDISMODULE_NOTIFY_GENERIC,

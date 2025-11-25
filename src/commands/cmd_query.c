@@ -386,6 +386,9 @@ void _query
 	exec_ctx = ExecutionCtx_FromQuery(command_ctx);
 	if(exec_ctx == NULL) goto cleanup;
 
+	// save params string in query context
+	query_ctx->query_data.params_str = command_ctx->params ;
+
 	// update cached flag
 	QueryCtx_SetUtilizedCache(query_ctx, exec_ctx->cached);
 

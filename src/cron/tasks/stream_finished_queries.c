@@ -14,12 +14,13 @@
 #include "stream_finished_queries.h"
 
 // event fields count
-#define FLD_COUNT 9
+#define FLD_COUNT 10
 
 // field names
 #define FLD_WRITE                    "Write"
 #define FLD_TIMEOUT                  "Timeout"
 #define FLD_NAME_QUERY               "Query"
+#define FLD_NAME_QUERY_PARAMS        "Query params"
 #define FLD_NAME_UTILIZED_CACHE      "Utilized cache"
 #define FLD_NAME_WAIT_DURATION       "Wait duration"
 #define FLD_NAME_TOTAL_DURATION      "Total duration"
@@ -59,41 +60,47 @@ static void _initEventTemplate
 
 	_event[4]  = RedisModule_CreateString(
 					ctx,
+					FLD_NAME_QUERY_PARAMS,
+					strlen(FLD_NAME_QUERY_PARAMS)
+				 );
+
+	_event[6]  = RedisModule_CreateString(
+					ctx,
 					FLD_NAME_TOTAL_DURATION,
 					strlen(FLD_NAME_TOTAL_DURATION)
 				 );
 
-	_event[6] = RedisModule_CreateString(
+	_event[8] = RedisModule_CreateString(
 					ctx,
 					FLD_NAME_WAIT_DURATION,
 					strlen(FLD_NAME_WAIT_DURATION)
 				 );
 
-	_event[8] = RedisModule_CreateString(
+	_event[10] = RedisModule_CreateString(
 					ctx,
 					FLD_NAME_EXECUTION_DURATION,
 					strlen(FLD_NAME_EXECUTION_DURATION)
 				 );
 
-	_event[10] = RedisModule_CreateString(
+	_event[12] = RedisModule_CreateString(
 					ctx,
 					FLD_NAME_REPORT_DURATION,
 					strlen(FLD_NAME_REPORT_DURATION)
 				 );
 
-	_event[12] = RedisModule_CreateString(
+	_event[14] = RedisModule_CreateString(
 					ctx,
 					FLD_NAME_UTILIZED_CACHE,
 					strlen(FLD_NAME_UTILIZED_CACHE)
 				 );
 
-	_event[14] = RedisModule_CreateString(
+	_event[16] = RedisModule_CreateString(
 					ctx,
 					FLD_WRITE,
 					strlen(FLD_WRITE)
 				 );
 
-	_event[16] = RedisModule_CreateString(
+	_event[18] = RedisModule_CreateString(
 					ctx,
 					FLD_TIMEOUT,
 					strlen(FLD_TIMEOUT)
@@ -120,30 +127,37 @@ static void _populateEvent
 	// FLD_NAME_QUERY
 	_event[3] = RedisModule_CreateString(ctx, q->query, strlen(q->query));
 
+	// FLD_NAME_QUERY_PARAMS
+	if (q->params != NULL) {
+		_event[5] = RedisModule_CreateString (ctx, q->params, strlen (q->params)) ;
+	} else {
+		_event[5] = RedisModule_CreateString (ctx, "", 0) ;
+	}
+
 	// FLD_NAME_TOTAL_DURATION
 	l = sprintf(buff, "%.6f", total_duration);
-	_event[5] = RedisModule_CreateString(ctx, buff, l);
+	_event[7] = RedisModule_CreateString(ctx, buff, l);
 
 	// FLD_NAME_WAIT_DURATION
 	l = sprintf(buff, "%.6f", q->wait_duration);
-	_event[7] = RedisModule_CreateString(ctx, buff, l);
+	_event[9] = RedisModule_CreateString(ctx, buff, l);
 
 	// FLD_NAME_EXECUTION_DURATION
 	l = sprintf(buff, "%.6f", q->execution_duration);
-	_event[9] = RedisModule_CreateString(ctx, buff, l);
+	_event[11] = RedisModule_CreateString(ctx, buff, l);
 
 	// FLD_NAME_REPORT_DURATION
 	l = sprintf(buff, "%.6f", q->report_duration);
-	_event[11] = RedisModule_CreateString(ctx, buff, l);
+	_event[13] = RedisModule_CreateString(ctx, buff, l);
 
 	// FLD_NAME_UTILIZED_CACHE
-	_event[13] = RedisModule_CreateStringFromLongLong(ctx, q->utilized_cache);
+	_event[15] = RedisModule_CreateStringFromLongLong(ctx, q->utilized_cache);
 
 	// FLD_WRITE
-	_event[15] = RedisModule_CreateStringFromLongLong(ctx, q->write);
+	_event[17] = RedisModule_CreateStringFromLongLong(ctx, q->write);
 
 	// FLD_TIMEOUT
-	_event[17] = RedisModule_CreateStringFromLongLong(ctx, q->timeout);
+	_event[19] = RedisModule_CreateStringFromLongLong(ctx, q->timeout);
 }
 
 // free event values
@@ -161,17 +175,37 @@ static void _clearEvent
 // add queries to stream
 static void _stream_queries
 (
-	RedisModuleCtx *ctx,    // redis module context
-	RedisModuleKey *key,    // stream key
-	CircularBuffer queries  // queries to stream
+	RedisModuleCtx *ctx,         // redis module context
+	const RedisModuleString *k,  // stream key name
+	CircularBuffer queries       // queries to stream
 ) {
 	LoggedQuery q ;
 
 	while (CircularBuffer_Read (queries, &q)) {
 		_populateEvent (ctx, &q) ;
 
-		RedisModule_StreamAdd (key, REDISMODULE_STREAM_ADD_AUTOID, NULL,
-				_event, FLD_COUNT) ;
+		const char *f = "s"   // stream key name
+						"c"   // auto-generate event id
+						"ss"  // received timestamp
+						"ss"  // query
+						"ss"  // query params
+						"ss"  // total duration
+						"ss"  // wait duration
+						"ss"  // execution duration
+						"ss"  // report duration
+						"ss"  // utilized cache
+						"ss"  // write query
+						"ss"  // timeout
+						"!";  // replicate command
+
+		RedisModuleCallReply *reply = RedisModule_Call (ctx, "XADD", f, k, "*",
+				_event[0],  _event[1],  _event[2],  _event[3],  _event[4],
+				_event[5],  _event[6],  _event[7],  _event[8],  _event[9],
+				_event[10], _event[11], _event[12], _event[13], _event[14],
+				_event[15], _event[16], _event[17], _event[18], _event[19]) ;
+
+		ASSERT (reply != NULL) ;
+		RedisModule_FreeCallReply (reply) ;
 
 		// clean up
 		LoggedQuery_Free (&q) ;
@@ -193,6 +227,20 @@ void *CronTask_newStreamFinishedQueries
 	new_ctx->graph_idx = ctx->graph_idx;
 
 	return new_ctx;
+}
+
+bool CronTask_reenterStreamFinishedQueries(void) {
+	// is cmd info turned on ?
+	bool info_enabled = false;
+	if (Config_Option_get (Config_CMD_INFO, &info_enabled) && info_enabled) {
+		// only master should stream finished queries
+		int flags = RedisModule_GetContextFlags (NULL) ;
+		if (flags & REDISMODULE_CTX_FLAGS_MASTER) {
+			return true ;
+		}
+	}
+
+	return false ;
 }
 
 // cron task
@@ -258,6 +306,14 @@ bool CronTask_streamFinishedQueries
 			break;
 		}
 
+		// only master should stream finished queries
+		// it is possible for this cron task to start running while this Redis
+		// process was a master but during the run its role had changed
+		int flags = RedisModule_GetContextFlags (NULL) ;
+		if (!(flags & REDISMODULE_CTX_FLAGS_MASTER)) {
+			break ;
+		}
+
 		CircularBuffer queries = QueriesLog_ResetQueries(queries_log);
 
 		//----------------------------------------------------------------------
@@ -268,25 +324,28 @@ bool CronTask_streamFinishedQueries
 			(RedisModuleString*)GraphContext_GetTelemetryStreamName(gc);
 
 		RedisModuleKey *key = RedisModule_OpenKey(rm_ctx, keyname,
-			REDISMODULE_WRITE);
+			REDISMODULE_READ);
 
 		// make sure key is of type stream
 		int key_type = RedisModule_KeyType(key);
 		if(key_type == REDISMODULE_KEYTYPE_STREAM ||
 			key_type == REDISMODULE_KEYTYPE_EMPTY) {
 			// add queries to stream
-			_stream_queries(rm_ctx, key, queries);
+			_stream_queries(rm_ctx, keyname, queries);
 
+			//------------------------------------------------------------------
 			// cap stream
-			RedisModule_StreamTrimByLength(key,
-					REDISMODULE_STREAM_TRIM_APPROX, max_query_count);
+			//------------------------------------------------------------------
 
-			// setting telemetry TTL seems to be crashing replicas
-			// set stream TTL
-			//if (key_type == REDISMODULE_KEYTYPE_EMPTY) {
-			//	int res = RedisModule_SetExpire (key, TELEMETRY_STREAM_TTL) ;
-			//	ASSERT (res == REDISMODULE_OK) ;
-			//}
+			// XTRIM expect count to be a string
+			char buf[32] ;
+			snprintf (buf, sizeof(buf), "%lld", max_query_count) ;
+
+			RedisModuleCallReply *reply = RedisModule_Call (rm_ctx, "XTRIM",
+					"scc!", keyname, "MAXLEN", buf) ;
+
+			ASSERT (reply != NULL) ;
+			RedisModule_FreeCallReply (reply) ;
 		} else {
 			// TODO: decide how to handle this...
 		}

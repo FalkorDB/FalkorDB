@@ -49,10 +49,11 @@ typedef enum QueryStage {
 } QueryStage;
 
 typedef struct {
-	AST *ast;                              // the scoped AST associated with this query
-	dict *params;                          // query parameters
-	const char *query;                     // query string
-	const char *query_no_params;           // query string without parameters part
+	AST *ast;                     // the scoped AST associated with this query
+	dict *params;                 // dict [param_name, param_value]
+	const char *query;            // query string
+	const char *params_str;       // query parameters
+	const char *query_no_params;  // query string without parameters part
 } QueryCtx_QueryData;
 
 typedef struct {

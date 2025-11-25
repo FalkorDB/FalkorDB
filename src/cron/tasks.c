@@ -18,23 +18,29 @@ typedef struct RecurringTaskCtx {
 	bool (*task)(void*);
 	void *(*new)(void*);
 	void (*free)(void*);
+	bool (*reenter)(void);  // return true if task should re-enter the queue
 	void *ctx;
 } RecurringTaskCtx;
 
-void CronTask_RecurringTaskFree(void *pdata) {
+void CronTask_RecurringTaskFree
+(
+	void *pdata
+) {
 	ASSERT(pdata != NULL);
 	RecurringTaskCtx *current_ctx = (RecurringTaskCtx*)pdata;
 	current_ctx->free(current_ctx->ctx);
 	rm_free(current_ctx);
 }
 
-void CronTask_RecurringTask(void *pdata) {
+void CronTask_RecurringTask
+(
+	void *pdata
+) {
 	ASSERT(pdata != NULL);
 	RecurringTaskCtx *current_ctx = (RecurringTaskCtx*)pdata;
 	bool speed_up = current_ctx->task(current_ctx->ctx);	
 
-	bool info_enabled = false;
-	if(Config_Option_get(Config_CMD_INFO, &info_enabled) && info_enabled) {
+	if (current_ctx->reenter ()) {
 		RecurringTaskCtx *re_ctx = rm_malloc(sizeof(RecurringTaskCtx));
 		*re_ctx = *current_ctx;
 		re_ctx->ctx = re_ctx->new(re_ctx->ctx);
@@ -49,11 +55,18 @@ void CronTask_RecurringTask(void *pdata) {
 		}
 
 		// re-add task to CRON
-		Cron_AddTask(re_ctx->when, CronTask_RecurringTask, CronTask_RecurringTaskFree, (void*)re_ctx);
+		Cron_AddTask (re_ctx->when, CronTask_RecurringTask,
+				CronTask_RecurringTaskFree, (void*)re_ctx) ;
 	}
 }
 
 void CronTask_AddStreamFinishedQueries() {
+	// only master should stream finished queries
+	int flags = RedisModule_GetContextFlags (NULL) ;
+	if (!(flags & REDISMODULE_CTX_FLAGS_MASTER)) {
+		return ;
+	}
+
 	//--------------------------------------------------------------------------
 	// add query logging task
 	//--------------------------------------------------------------------------
@@ -65,6 +78,7 @@ void CronTask_AddStreamFinishedQueries() {
 		re_ctx->new          = CronTask_newStreamFinishedQueries;
 		re_ctx->task         = CronTask_streamFinishedQueries;
 		re_ctx->free		 = rm_free;
+		re_ctx->reenter      = CronTask_reenterStreamFinishedQueries;
 		re_ctx->when         = 10;   // 10ms from now
 		re_ctx->min_interval = 250;  // 250ms
 		re_ctx->max_interval = 3000; // 3s

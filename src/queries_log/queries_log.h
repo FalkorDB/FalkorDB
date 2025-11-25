@@ -18,6 +18,7 @@ typedef struct QueryStats {
 	bool utilized_cache;        // utilized cache
 	bool write;    		        // write query
 	bool timeout;    		    // timeout query
+	char *params;               // query parameters
 	char *query;                // query string
 } LoggedQuery;
 
@@ -39,6 +40,7 @@ void QueriesLog_AddQuery
 	bool utilized_cache,        // utilized cache
 	bool write,    		        // write query
 	bool timeout,    		    // timeout query
+	const char *params,         // query parameters
 	const char *query           // query string
 );
 

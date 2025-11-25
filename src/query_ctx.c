@@ -127,7 +127,8 @@ void QueryCtx_AdvanceStage
 				ctx->stats.utilized_cache,
 				ctx->flags & QueryExecutionTypeFlag_WRITE,
 				ctx->status == QueryExecutionStatus_TIMEDOUT,
-				ctx->query_data.query);
+				ctx->query_data.params_str,
+				ctx->query_data.query_no_params);
 	}
 
 	// advance to next stage

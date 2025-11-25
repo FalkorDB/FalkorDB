@@ -408,6 +408,7 @@ void GraphContext_LogQuery
 	bool utilized_cache,          // utilized cache
 	bool write,                   // write query
 	bool timeout,                 // timeout query
+	const char *params,           // query parameters
 	const char *query             // query string
 );
 
