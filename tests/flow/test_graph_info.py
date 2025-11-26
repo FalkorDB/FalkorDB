@@ -440,6 +440,11 @@ class testGraphInfo():
 class testGraphInfoReplication():
     def __init__(self):
         self.env, self.db = Env(env='oss', useSlaves=True)
+
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
         self.env.flush()  # clean slate
 
         self.master  = self.env.getConnection()
