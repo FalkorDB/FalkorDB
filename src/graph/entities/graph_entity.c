@@ -49,6 +49,11 @@ SIValue GraphEntity_Keys
 (
 	const GraphEntity *e
 ) {
+		// return empty array if entity is NULL
+		if(e == NULL) {
+					return SIArray_New(0);
+				}
+	
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	const AttributeSet set = GraphEntity_GetAttributes(e);
 	int prop_count = AttributeSet_Count(set);
@@ -67,6 +72,11 @@ SIValue GraphEntity_Properties
 (
 	const GraphEntity *e
 ) {
+		// return empty map if entity is NULL
+		if(e == NULL) {
+					return SI_Map(0);
+				}
+	
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	const AttributeSet set = GraphEntity_GetAttributes(e);
 	int propCount = AttributeSet_Count(set);
