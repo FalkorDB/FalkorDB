@@ -37,7 +37,7 @@ or
 $ brew install cleishm/neo4j/cypher-lint
 ```
 
-If you're using Ubuntu, libcypher-parser can be install using APT:
+If you're using Ubuntu, libcypher-parser can be installed using APT:
 
 ```console
 $ sudo add-apt-repository ppa:cleishm/neo4j

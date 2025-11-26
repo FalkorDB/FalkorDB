@@ -817,7 +817,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         self.env.assertIn(f'{node_lbl_count} nodes created', res.output)
         self.env.assertIn(f'{edge_count} relations created', res.output)
 
-        # make sure load time did not exceeds 80 seconds
+        # make sure load time did not exceed 80 seconds
         self.env.assertLess(execution_time, 80)
 
         # validate graph node / edge count

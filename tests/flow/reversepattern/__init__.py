@@ -92,7 +92,7 @@ class ReversePattern(object):
                     reversed_query = entity + reversed_query
                     break
             
-            # Did not managed to progress.
+            # Did not manage to progress.
             if entity == None:
                 break
 

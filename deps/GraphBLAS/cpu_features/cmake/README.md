@@ -11,7 +11,7 @@ This is similar to the recommended usage of the googletest framework
 Build and use step-by-step
 
 
-1- Download cpu_features and copy it in a sub-directory in your project.
+1- Download cpu_features and copy it in a subdirectory in your project.
 or add cpu_features as a git-submodule in your project
 
 2- You can then use the cmake command `add_subdirectory()` to include

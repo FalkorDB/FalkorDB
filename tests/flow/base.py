@@ -61,7 +61,7 @@ class FlowTestsBase(object):
         actual_result_set = actual_result.result_set or []
         self.env.assertEqual(actual_result_set, query_info.expected_result)
 
-    # function which run the query and expects an specific error message
+    # function which run the query and expects a specific error message
     def _assert_exception(self, graph, query, expected_err_msg):
         try:
             graph.query(query)

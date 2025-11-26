@@ -54,7 +54,7 @@ lagraph-grapl19.pdf         "LAGraph: a community effort to collect graph
 
     T. Mattson, T. A. Davis, M. Kumar, A. Buluç, S. McMillan, J. Moreira, and
     C. Yang. LAGraph: a community effort to collect graph algorithms built on
-    top of the GraphBLAS.  In GrAPL’19: Work- shop on Graphs, Architectures,
+    top of the GraphBLAS.  In GrAPL’19: Workshop on Graphs, Architectures,
     Programming, and Learning. IEEE, May 2019.
     https://hpc.pnl.gov/grapl/previous/2019, part of IPDPS’19, at
     http://www.ipdps.org/ipdps2019.

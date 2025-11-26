@@ -41,7 +41,7 @@ def populate_graph(db, graph):
             name        = row[0]
             yearOfBirth = int(row[1])
             movie       = row[2]
-            # All age calculations are done where 2019 is the the current year. 
+            # All age calculations are done where 2019 is the current year.
             age         = 2019 - yearOfBirth
 
             if name not in actors:
