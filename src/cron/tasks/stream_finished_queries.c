@@ -20,7 +20,7 @@
 #define FLD_WRITE                    "Write"
 #define FLD_TIMEOUT                  "Timeout"
 #define FLD_NAME_QUERY               "Query"
-#define FLD_NAME_QUERY_PARAMS        "Query params"
+#define FLD_NAME_QUERY_PARAMS        "Query parameters"
 #define FLD_NAME_UTILIZED_CACHE      "Utilized cache"
 #define FLD_NAME_WAIT_DURATION       "Wait duration"
 #define FLD_NAME_TOTAL_DURATION      "Total duration"

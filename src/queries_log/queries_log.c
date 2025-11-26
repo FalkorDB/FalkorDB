@@ -81,6 +81,12 @@ void QueriesLog_AddQuery
 		truncated_query = strdup (query) ;
 	}
 
+	// in case params & query points to the same address
+	// query doesn't have any parameters
+	if (params == query) {
+		params = NULL ;
+	}
+
 	// truncate long parameters
 	char *truncated_params = NULL ;
 	if (params != NULL) {
