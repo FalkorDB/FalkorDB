@@ -48,7 +48,7 @@ make --directory=ci
 ```
 
 ### Example
-For example to test mips32 inside an container:
+For example to test mips32 inside a container:
 ```sh
 make mips32_test
 ```
