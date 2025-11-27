@@ -25,16 +25,31 @@ jobs:
     strategy:
       matrix:
         machines:
-          - name: rhel-build
+          - name: rhel-9-build
             machine_type: e2-standard-4
-            runner_label: rhel-build-${{ github.run_id }}-${{ github.run_number }}
+            runner_label: rhel-9-build-${{ github.run_id }}-${{ github.run_number }}
             arm: false
             image: projects/rhel-cloud/global/images/rhel-9-v20241210
-          - name: rhel8-build
+          - name: rhel-8-build
             machine_type: e2-standard-4
-            runner_label: rhel8-build-${{ github.run_id }}-${{ github.run_number }}
+            runner_label: rhel-8-build-${{ github.run_id }}-${{ github.run_number }}
             arm: false
-            image: projects/rhel-cloud/global/images/rhel-9-v20241210
+            image: projects/rhel-cloud/global/images/rhel-8-v20241210
+          - name: ubuntu-20-build
+            machine_type: e2-standard-4
+            runner_label: ubuntu-20-build-${{ github.run_id }}-${{ github.run_number }}
+            arm: false
+            image: projects/ubuntu-os-cloud/global/images/ubuntu-2004-focal-v20241115
+          - name: ubuntu-22-build
+            machine_type: e2-standard-4
+            runner_label: ubuntu-22-build-${{ github.run_id }}-${{ github.run_number }}
+            arm: false
+            image: projects/ubuntu-os-cloud/global/images/ubuntu-2204-jammy-v20241119
+          - name: amazonlinux-2023-build
+            machine_type: e2-standard-4
+            runner_label: amazonlinux-2023-build-${{ github.run_id }}-${{ github.run_number }}
+            arm: false
+            image: projects/amazon-linux-cloud/global/images/amzn2023-ami-minimal-2023-5-20241126-0-x86-64
     runs-on: ubuntu-latest
     steps:
       - name: Create runners
@@ -126,19 +141,48 @@ jobs:
             test_dockerfile: Dockerfile.alpine
             cache_path: linux-arm64v8
             is_debug: "0"
-          - name: rhel/amd64
+          - name: rhel-9/amd64
             platform: linux/amd64
-            suffix: rhel-x64
+            suffix: rhel-9-x64
             os: rhel
-            machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
+            os_version: rhel-9
+            machine_label: ${{ format('rhel-9-build-{0}-{1}', github.run_id, github.run_number) }}
             build_test_image: false
             cache_path: linux-x64
             is_debug: "0"
-          - name: rhel8/amd64
+          - name: rhel-8/amd64
             platform: linux/amd64
-            suffix: rhel8-x64
+            suffix: rhel-8-x64
             os: rhel8
-            machine_label: ${{ format('rhel8-build-{0}-{1}', github.run_id, github.run_number) }}
+            os_version: rhel-8
+            machine_label: ${{ format('rhel-8-build-{0}-{1}', github.run_id, github.run_number) }}
+            build_test_image: false
+            cache_path: linux-x64
+            is_debug: "0"
+          - name: ubuntu-20/amd64
+            platform: linux/amd64
+            suffix: ubuntu-20-x64
+            os: ubuntu
+            os_version: ubuntu-20
+            machine_label: ${{ format('ubuntu-20-build-{0}-{1}', github.run_id, github.run_number) }}
+            build_test_image: false
+            cache_path: linux-x64
+            is_debug: "0"
+          - name: ubuntu-22/amd64
+            platform: linux/amd64
+            suffix: ubuntu-22-x64
+            os: ubuntu
+            os_version: ubuntu-22
+            machine_label: ${{ format('ubuntu-22-build-{0}-{1}', github.run_id, github.run_number) }}
+            build_test_image: false
+            cache_path: linux-x64
+            is_debug: "0"
+          - name: amazonlinux-2023/amd64
+            platform: linux/amd64
+            suffix: amazonlinux-2023-x64
+            os: amazonlinux
+            os_version: amazonlinux-2023
+            machine_label: ${{ format('amazonlinux-2023-build-{0}-{1}', github.run_id, github.run_number) }}
             build_test_image: false
             cache_path: linux-x64
             is_debug: "0"
@@ -180,27 +224,62 @@ jobs:
             test_dockerfile: Dockerfile.debian
             cache_path: linux-arm64v8
             is_debug: "1"
-          - name: rhel/amd64
+          - name: rhel-9/amd64
             platform: linux/amd64
-            suffix: rhel-x64
+            suffix: rhel-9-x64
             os: rhel
-            machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
+            os_version: rhel-9
+            machine_label: ${{ format('rhel-9-build-{0}-{1}', github.run_id, github.run_number) }}
             build_test_image: false
             cache_path: linux-x64
             is_debug: "1"
-          - name: rhel8/amd64
+          - name: rhel-8/amd64
             platform: linux/amd64
-            suffix: rhel8-x64
+            suffix: rhel-8-x64
             os: rhel8
-            machine_label: ${{ format('rhel8-build-{0}-{1}', github.run_id, github.run_number) }}
+            os_version: rhel-8
+            machine_label: ${{ format('rhel-8-build-{0}-{1}', github.run_id, github.run_number) }}
+            build_test_image: false
+            cache_path: linux-x64
+            is_debug: "1"
+          - name: ubuntu-20/amd64
+            platform: linux/amd64
+            suffix: ubuntu-20-x64
+            os: ubuntu
+            os_version: ubuntu-20
+            machine_label: ${{ format('ubuntu-20-build-{0}-{1}', github.run_id, github.run_number) }}
+            build_test_image: false
+            cache_path: linux-x64
+            is_debug: "1"
+          - name: ubuntu-22/amd64
+            platform: linux/amd64
+            suffix: ubuntu-22-x64
+            os: ubuntu
+            os_version: ubuntu-22
+            machine_label: ${{ format('ubuntu-22-build-{0}-{1}', github.run_id, github.run_number) }}
+            build_test_image: false
+            cache_path: linux-x64
+            is_debug: "1"
+          - name: amazonlinux-2023/amd64
+            platform: linux/amd64
+            suffix: amazonlinux-2023-x64
+            os: amazonlinux
+            os_version: amazonlinux-2023
+            machine_label: ${{ format('amazonlinux-2023-build-{0}-{1}', github.run_id, github.run_number) }}
             build_test_image: false
             cache_path: linux-x64
             is_debug: "1"
     steps:
-      - name: Install Git
-        if: ${{ matrix.platform.os == 'rhel' || matrix.platform.os == 'rhel8' }}
+      - name: Install Git and dependencies for RHEL/Amazon Linux
+        if: ${{ matrix.platform.os == 'rhel' || matrix.platform.os == 'rhel8' || matrix.platform.os == 'amazonlinux' }}
         run: |
-          sudo dnf install -y git
+          sudo dnf install -y git python3 python3-pip redis
+
+      - name: Install dependencies for Ubuntu
+        if: ${{ matrix.platform.os == 'ubuntu' && (matrix.platform.os_version == 'ubuntu-20' || matrix.platform.os_version == 'ubuntu-22') }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git python3 python3-pip redis-server
 
       - uses: actions/checkout@v6
         with:
@@ -439,13 +518,48 @@ jobs:
           name: falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
           path: /tmp/falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
           if-no-files-found: error
+
+      - name: Install RAMP packaging tool
+        if: ${{ matrix.platform.is_debug == '0' && (matrix.platform.os_version == 'rhel-8' || matrix.platform.os_version == 'rhel-9' || matrix.platform.os_version == 'ubuntu-20' || matrix.platform.os_version == 'ubuntu-22' || matrix.platform.os_version == 'amazonlinux-2023') }}
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install git+https://github.com/RedisLabsModules/RAMP.git
+
+      - name: Create RAMP package
+        if: ${{ matrix.platform.is_debug == '0' && (matrix.platform.os_version == 'rhel-8' || matrix.platform.os_version == 'rhel-9' || matrix.platform.os_version == 'ubuntu-20' || matrix.platform.os_version == 'ubuntu-22' || matrix.platform.os_version == 'amazonlinux-2023') }}
+        working-directory: /FalkorDB
+        run: |
+          # Get version info
+          NUMVER=$(NUMERIC=1 ./sbin/getver)
+          SEMVER=$(./sbin/getver)
+          
+          # Prepare ramp.yml with version
+          sed "s/\${SEMVER}/${SEMVER}/g; s/\${NUMVER}/${NUMVER}/g" ramp.yml > /tmp/ramp.yml
+          
+          # Create RAMP package
+          python3 -m RAMP.ramp pack \
+            -m /tmp/ramp.yml \
+            -o /tmp/falkordb-${{ matrix.platform.suffix }}.zip \
+            /tmp/falkordb-${{ matrix.platform.suffix }}.so
+
+      - name: Upload RAMP package
+        if: ${{ matrix.platform.is_debug == '0' && (matrix.platform.os_version == 'rhel-8' || matrix.platform.os_version == 'rhel-9' || matrix.platform.os_version == 'ubuntu-20' || matrix.platform.os_version == 'ubuntu-22' || matrix.platform.os_version == 'amazonlinux-2023') }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: falkordb-${{ matrix.platform.suffix }}.zip
+          path: /tmp/falkordb-${{ matrix.platform.suffix }}.zip
+          if-no-files-found: error
   cleanup-build:
     needs: build
     runs-on: ubuntu-latest
     strategy:
       matrix:
         platform:
-          - machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
+          - machine_label: ${{ format('rhel-9-build-{0}-{1}', github.run_id, github.run_number) }}
+          - machine_label: ${{ format('rhel-8-build-{0}-{1}', github.run_id, github.run_number) }}
+          - machine_label: ${{ format('ubuntu-20-build-{0}-{1}', github.run_id, github.run_number) }}
+          - machine_label: ${{ format('ubuntu-22-build-{0}-{1}', github.run_id, github.run_number) }}
+          - machine_label: ${{ format('amazonlinux-2023-build-{0}-{1}', github.run_id, github.run_number) }}
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/cleanup-runner

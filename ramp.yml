@@ -1,0 +1,20 @@
+---
+module-name: FalkorDB
+module-type: database
+architecture: x86_64
+version: ${SEMVER}
+semantic-version: ${SEMVER}
+display-name: FalkorDB
+author: FalkorDB
+email: info@falkordb.com
+description: A low-latency, high-throughput graph database
+homepage: https://falkordb.com
+license: SSPL
+command-line-args: ""
+min-redis-version: "7.2.0"
+min-redis-pack-version: "6.0.0"
+capabilities:
+  - types
+  - replica_of
+ramp-format-version: 1
+is-bundled: false
