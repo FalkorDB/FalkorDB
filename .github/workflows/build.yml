@@ -529,18 +529,17 @@ jobs:
         if: ${{ matrix.platform.is_debug == '0' && (matrix.platform.os_version == 'rhel-8' || matrix.platform.os_version == 'rhel-9' || matrix.platform.os_version == 'ubuntu-20' || matrix.platform.os_version == 'ubuntu-22' || matrix.platform.os_version == 'amazonlinux-2023') }}
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install git+https://github.com/RedisLabsModules/RAMP.git
+          python3 -m pip install git+https://github.com/RedisLabsModules/RAMP.git@71ab0ea1913fa2880b7e9ca0fd7ee4ef2fde2875
 
       - name: Create RAMP package
         if: ${{ matrix.platform.is_debug == '0' && (matrix.platform.os_version == 'rhel-8' || matrix.platform.os_version == 'rhel-9' || matrix.platform.os_version == 'ubuntu-20' || matrix.platform.os_version == 'ubuntu-22' || matrix.platform.os_version == 'amazonlinux-2023') }}
         working-directory: /FalkorDB
         run: |
           # Get version info
-          NUMVER=$(NUMERIC=1 ./sbin/getver)
           SEMVER=$(./sbin/getver)
 
           # Prepare ramp.yml with version
-          sed "s/\${SEMVER}/${SEMVER}/g; s/\${NUMVER}/${NUMVER}/g" ramp.yml > /tmp/ramp.yml
+          sed "s/\${SEMVER}/${SEMVER}/g" ramp.yml > /tmp/ramp.yml
 
           # Create RAMP package
           python3 -m RAMP.ramp pack \
