@@ -81,8 +81,9 @@ jobs:
         platform:
           - name: linux/amd64
             platform: linux/amd64
-            suffix: x64
+            suffix: ubuntu-24-x64
             os: ubuntu
+            os_version: ubuntu-24
             machine_label: ubuntu-latest
             build_test_image: true
             test_dockerfile: Dockerfile.debian
@@ -90,8 +91,9 @@ jobs:
             is_debug: "0"
           - name: linux/arm64
             platform: linux/arm64
-            suffix: arm64v8
+            suffix: ubuntu-24-arm64v8
             os: ubuntu
+            os_version: ubuntu-24
             machine_label: ubuntu-24.04-arm
             build_test_image: true
             test_dockerfile: Dockerfile.debian
@@ -188,8 +190,9 @@ jobs:
             is_debug: "0"
           - name: linux/amd64
             platform: linux/amd64
-            suffix: server-x64
+            suffix: server-ubuntu-24-x64
             os: ubuntu
+            os_version: ubuntu-24
             machine_label: ubuntu-latest
             build_test_image: true
             dockerfile: Dockerfile.server
@@ -198,8 +201,9 @@ jobs:
             is_debug: "0"
           - name: linux/arm64
             platform: linux/arm64
-            suffix: server-arm64v8
+            suffix: server-ubuntu-24-arm64v8
             os: ubuntu
+            os_version: ubuntu-24
             machine_label: ubuntu-24.04-arm
             build_test_image: true
             dockerfile: Dockerfile.server
@@ -208,8 +212,9 @@ jobs:
             is_debug: "0"
           - name: linux/amd64
             platform: linux/amd64
-            suffix: x64
+            suffix: ubuntu-24-x64
             os: ubuntu
+            os_version: ubuntu-24
             machine_label: ubuntu-latest
             build_test_image: false
             test_dockerfile: Dockerfile.debian
@@ -217,8 +222,9 @@ jobs:
             is_debug: "1"
           - name: linux/arm64
             platform: linux/arm64
-            suffix: arm64v8
+            suffix: ubuntu-24-arm64v8
             os: ubuntu
+            os_version: ubuntu-24
             machine_label: ubuntu-24.04-arm
             build_test_image: false
             test_dockerfile: Dockerfile.debian
@@ -356,7 +362,7 @@ jobs:
         with:
           # network=host driver-opt needed to push to local registry
           driver-opts: network=host
-      
+
       - name: Ignore Errors if os is rhel8
         if: ${{ matrix.platform.os == 'rhel8' }}
         run: sed -i 's/-Werror//g' /FalkorDB/deps/RediSearch/deps/VectorSimilarity/src/VecSim/CMakeLists.txt
@@ -532,10 +538,10 @@ jobs:
           # Get version info
           NUMVER=$(NUMERIC=1 ./sbin/getver)
           SEMVER=$(./sbin/getver)
-          
+
           # Prepare ramp.yml with version
           sed "s/\${SEMVER}/${SEMVER}/g; s/\${NUMVER}/${NUMVER}/g" ramp.yml > /tmp/ramp.yml
-          
+
           # Create RAMP package
           python3 -m RAMP.ramp pack \
             -m /tmp/ramp.yml \
@@ -577,11 +583,11 @@ jobs:
       matrix:
         platform:
           - name: linux/amd64
-            suffix: x64
+            suffix: ubuntu-24-x64
             os: ubuntu
             machine_label: ubuntu-latest
           - name: linux/arm64
-            suffix: arm64v8
+            suffix: ubuntu-24-arm64v8
             os: ubuntu
             machine_label: ubuntu-24.04-arm
           - name: linux/x86_64
@@ -623,11 +629,11 @@ jobs:
       matrix:
         platform:
           - name: linux/amd64
-            suffix: x64
+            suffix: ubuntu-24-x64
             os: ubuntu
             machine_label: ubuntu-latest
           - name: linux/arm64
-            suffix: arm64v8
+            suffix: ubuntu-24-arm64v8
             os: ubuntu
             machine_label: ubuntu-24.04-arm
           - name: linux/x86_64
@@ -670,11 +676,11 @@ jobs:
       matrix:
         platform:
           - name: linux/amd64
-            suffix: x64
+            suffix: ubuntu-24-x64
             os: ubuntu
             machine_label: ubuntu-latest
           - name: linux/arm64
-            suffix: arm64v8
+            suffix: ubuntu-24-arm64v8
             os: ubuntu
             machine_label: ubuntu-24.04-arm
           - name: linux/x86_64
@@ -716,11 +722,11 @@ jobs:
       matrix:
         platform:
           - name: linux/amd64
-            suffix: x64
+            suffix: ubuntu-24-x64
             os: ubuntu
             machine_label: ubuntu-latest
           - name: linux/arm64
-            suffix: arm64v8
+            suffix: ubuntu-24-arm64v8
             os: ubuntu
             machine_label: ubuntu-24.04-arm
           - name: linux/x86_64
@@ -805,11 +811,11 @@ jobs:
       matrix:
         platform:
           - name: linux/amd64
-            suffix: x64
+            suffix: ubuntu-24-x64
             os: ubuntu
             machine_label: ubuntu-latest
           - name: linux/arm64
-            suffix: arm64v8
+            suffix: ubuntu-24-arm64v8
             os: ubuntu
             machine_label: ubuntu-24.04-arm
           - name: linux/x86_64
