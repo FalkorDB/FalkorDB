@@ -12,6 +12,9 @@
 #include <pthread.h>
 #include <stdatomic.h>
 
+#define QUERIES_LOG_QUERY_MAX_LEN   2048  // query max len
+#define QUERIES_LOG_PARAMS_MAX_LEN  2048  // param max len
+
 // holds query statistics per graph
 typedef struct QueriesCounters {
     _Atomic uint64_t ro_succeeded_n;     // # read-only queries succeeded
@@ -64,38 +67,35 @@ void QueriesLog_AddQuery
 	bool utilized_cache,        // utilized cache
 	bool write,                 // write query
 	bool timeout,               // timeout query
-	const char *params,         // query parameters
+	uint params_len,            // length of parameters
 	const char *query           // query string
 ) {
 	ASSERT (query != NULL) ;
 
+	// cap query lenght
+	const char *_query = query + params_len ;
+
+	char *truncated_query;
+	size_t n = strnlen (_query, QUERIES_LOG_QUERY_MAX_LEN) ;
+	if (n >= QUERIES_LOG_QUERY_MAX_LEN) {
+		asprintf (&truncated_query, "%.*s...", QUERIES_LOG_QUERY_MAX_LEN, _query) ;
+	} else {
+		truncated_query = strndup (_query, n) ;
+	}
+
+	// cap parameters lenght
+	char *truncated_params = NULL ;
+	if (params_len > 0) {
+		if (params_len >= QUERIES_LOG_PARAMS_MAX_LEN) {
+			asprintf (&truncated_params, "%.*s...", QUERIES_LOG_PARAMS_MAX_LEN, query) ;
+		} else {
+			truncated_params = strndup (query, params_len) ;
+		}
+	}
+
 	//--------------------------------------------------------------------------
 	// add query stats to buffer
 	//--------------------------------------------------------------------------
-
-	// truncate long queries
-	char *truncated_query;
-	if (strnlen (query, 2048) >= 2048) {
-		asprintf (&truncated_query, "%.*s...", 2048, query);
-	} else {
-		truncated_query = strdup (query) ;
-	}
-
-	// in case params & query points to the same address
-	// query doesn't have any parameters
-	if (params == query) {
-		params = NULL ;
-	}
-
-	// truncate long parameters
-	char *truncated_params = NULL ;
-	if (params != NULL) {
-		if (strnlen (params, 2048) >= 2048) {
-			asprintf (&truncated_params, "%.*s...", 2048, params);
-		} else {
-			truncated_params = strdup (params) ;
-		}
-	}
 
 	LoggedQuery q = {
 		. received           = received,

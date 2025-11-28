@@ -175,37 +175,17 @@ static void _clearEvent
 // add queries to stream
 static void _stream_queries
 (
-	RedisModuleCtx *ctx,         // redis module context
-	const RedisModuleString *k,  // stream key name
-	CircularBuffer queries       // queries to stream
+	RedisModuleCtx *ctx,    // redis module context
+	RedisModuleKey *key,    // stream key
+	CircularBuffer queries  // queries to stream
 ) {
 	LoggedQuery q ;
 
 	while (CircularBuffer_Read (queries, &q)) {
 		_populateEvent (ctx, &q) ;
 
-		const char *f = "s"   // stream key name
-						"c"   // auto-generate event id
-						"ss"  // received timestamp
-						"ss"  // query
-						"ss"  // query params
-						"ss"  // total duration
-						"ss"  // wait duration
-						"ss"  // execution duration
-						"ss"  // report duration
-						"ss"  // utilized cache
-						"ss"  // write query
-						"ss"  // timeout
-						"!";  // replicate command
-
-		RedisModuleCallReply *reply = RedisModule_Call (ctx, "XADD", f, k, "*",
-				_event[0],  _event[1],  _event[2],  _event[3],  _event[4],
-				_event[5],  _event[6],  _event[7],  _event[8],  _event[9],
-				_event[10], _event[11], _event[12], _event[13], _event[14],
-				_event[15], _event[16], _event[17], _event[18], _event[19]) ;
-
-		ASSERT (reply != NULL) ;
-		RedisModule_FreeCallReply (reply) ;
+		RedisModule_StreamAdd (key, REDISMODULE_STREAM_ADD_AUTOID, NULL,
+				_event, FLD_COUNT) ;
 
 		// clean up
 		LoggedQuery_Free (&q) ;
@@ -227,20 +207,6 @@ void *CronTask_newStreamFinishedQueries
 	new_ctx->graph_idx = ctx->graph_idx;
 
 	return new_ctx;
-}
-
-bool CronTask_reenterStreamFinishedQueries(void) {
-	// is cmd info turned on ?
-	bool info_enabled = false;
-	if (Config_Option_get (Config_CMD_INFO, &info_enabled) && info_enabled) {
-		// only master should stream finished queries
-		int flags = RedisModule_GetContextFlags (NULL) ;
-		if (flags & REDISMODULE_CTX_FLAGS_MASTER) {
-			return true ;
-		}
-	}
-
-	return false ;
 }
 
 // cron task
@@ -306,14 +272,6 @@ bool CronTask_streamFinishedQueries
 			break;
 		}
 
-		// only master should stream finished queries
-		// it is possible for this cron task to start running while this Redis
-		// process was a master but during the run its role had changed
-		int flags = RedisModule_GetContextFlags (NULL) ;
-		if (!(flags & REDISMODULE_CTX_FLAGS_MASTER)) {
-			break ;
-		}
-
 		CircularBuffer queries = QueriesLog_ResetQueries(queries_log);
 
 		//----------------------------------------------------------------------
@@ -324,28 +282,18 @@ bool CronTask_streamFinishedQueries
 			(RedisModuleString*)GraphContext_GetTelemetryStreamName(gc);
 
 		RedisModuleKey *key = RedisModule_OpenKey(rm_ctx, keyname,
-			REDISMODULE_READ);
+			REDISMODULE_WRITE);
 
 		// make sure key is of type stream
 		int key_type = RedisModule_KeyType(key);
 		if(key_type == REDISMODULE_KEYTYPE_STREAM ||
 			key_type == REDISMODULE_KEYTYPE_EMPTY) {
 			// add queries to stream
-			_stream_queries(rm_ctx, keyname, queries);
+			_stream_queries (rm_ctx, key, queries) ;
 
-			//------------------------------------------------------------------
 			// cap stream
-			//------------------------------------------------------------------
-
-			// XTRIM expect count to be a string
-			char buf[32] ;
-			snprintf (buf, sizeof(buf), "%" PRIu64, max_query_count);
-
-			RedisModuleCallReply *reply = RedisModule_Call (rm_ctx, "XTRIM",
-					"scc!", keyname, "MAXLEN", buf) ;
-
-			ASSERT (reply != NULL) ;
-			RedisModule_FreeCallReply (reply) ;
+			RedisModule_StreamTrimByLength (key,
+					REDISMODULE_STREAM_TRIM_APPROX, max_query_count) ;
 		} else {
 			// TODO: decide how to handle this...
 		}

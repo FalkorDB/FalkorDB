@@ -18,7 +18,6 @@ typedef struct RecurringTaskCtx {
 	bool (*task)(void*);
 	void *(*new)(void*);
 	void (*free)(void*);
-	bool (*reenter)(void);  // return true if task should re-enter the queue
 	void *ctx;
 } RecurringTaskCtx;
 
@@ -40,33 +39,25 @@ void CronTask_RecurringTask
 	RecurringTaskCtx *current_ctx = (RecurringTaskCtx*)pdata;
 	bool speed_up = current_ctx->task(current_ctx->ctx);	
 
-	if (current_ctx->reenter ()) {
-		RecurringTaskCtx *re_ctx = rm_malloc(sizeof(RecurringTaskCtx));
-		*re_ctx = *current_ctx;
-		re_ctx->ctx = re_ctx->new(re_ctx->ctx);
+	RecurringTaskCtx *re_ctx = rm_malloc(sizeof(RecurringTaskCtx));
+	*re_ctx = *current_ctx;
+	re_ctx->ctx = re_ctx->new(re_ctx->ctx);
 
-		// determine next invocation
-		if(speed_up) {
-			// reduce delay, lower limit: 250ms
-			re_ctx->when = (re_ctx->min_interval + re_ctx->when) / 2;
-		} else {
-			// increase delay, upper limit: 3sec
-			re_ctx->when = (re_ctx->max_interval + re_ctx->when) / 2;
-		}
-
-		// re-add task to CRON
-		Cron_AddTask (re_ctx->when, CronTask_RecurringTask,
-				CronTask_RecurringTaskFree, (void*)re_ctx) ;
+	// determine next invocation
+	if(speed_up) {
+		// reduce delay, lower limit: 250ms
+		re_ctx->when = (re_ctx->min_interval + re_ctx->when) / 2;
+	} else {
+		// increase delay, upper limit: 3sec
+		re_ctx->when = (re_ctx->max_interval + re_ctx->when) / 2;
 	}
+
+	// re-add task to CRON
+	Cron_AddTask (re_ctx->when, CronTask_RecurringTask,
+			CronTask_RecurringTaskFree, (void*)re_ctx) ;
 }
 
 void CronTask_AddStreamFinishedQueries() {
-	// only master should stream finished queries
-	int flags = RedisModule_GetContextFlags (NULL) ;
-	if (!(flags & REDISMODULE_CTX_FLAGS_MASTER)) {
-		return ;
-	}
-
 	//--------------------------------------------------------------------------
 	// add query logging task
 	//--------------------------------------------------------------------------
@@ -78,7 +69,6 @@ void CronTask_AddStreamFinishedQueries() {
 		re_ctx->new          = CronTask_newStreamFinishedQueries;
 		re_ctx->task         = CronTask_streamFinishedQueries;
 		re_ctx->free		 = rm_free;
-		re_ctx->reenter      = CronTask_reenterStreamFinishedQueries;
 		re_ctx->when         = 10;   // 10ms from now
 		re_ctx->min_interval = 250;  // 250ms
 		re_ctx->max_interval = 3000; // 3s

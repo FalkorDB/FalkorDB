@@ -307,16 +307,6 @@ static void _ReplicationRoleChangedEventHandler
 	uint64_t subevent,
 	void *data
 ) {
-	if(subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_MASTER) {
-		// add cron's stream finished queries task
-		CronTask_AddStreamFinishedQueries () ;
-	} else if (subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA) {
-		// no need to manually remove the task
-		// the stream-finished-queries task is removed automaticlly
-		// by the cron's recurring tasks mechanism which checks the re-enter
-		// conditions before enqueue a task to its queue
-	}
-
 	//KeySpaceGraphIterator it;
 	//GraphContext *gc = NULL;
 	//Globals_ScanGraphs(&it);
@@ -448,14 +438,13 @@ static void _RegisterServerEvents
 	//		_ModuleLoadedHandler);
 	//ASSERT(res == REDISMODULE_OK);
 
-	RedisModule_SubscribeToServerEvent (ctx,
-			RedisModuleEvent_ReplicationRoleChanged,
-			_ReplicationRoleChangedEventHandler) ;
+//	RedisModule_SubscribeToServerEvent (ctx,
+//			RedisModuleEvent_ReplicationRoleChanged,
+//			_ReplicationRoleChangedEventHandler) ;
 
 	RedisModule_SubscribeToKeyspaceEvents(ctx,
 			REDISMODULE_NOTIFY_GENERIC,
 			_GenericKeyspaceHandler);
-
 }
 
 //------------------------------------------------------------------------------

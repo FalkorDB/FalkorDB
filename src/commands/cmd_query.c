@@ -289,10 +289,18 @@ static void _ExecuteQuery(void *args) {
 
 	if(readonly) Graph_ReleaseLock(gc->g); // release read lock
 
+	//--------------------------------------------------------------------------
 	// log query to slowlog
-	SlowLog *slowlog = GraphContext_GetSlowLog(gc);
-	SlowLog_Add(slowlog, command_ctx->command_name, command_ctx->query,
-				QueryCtx_GetRuntime(), NULL);
+	//--------------------------------------------------------------------------
+
+	SlowLog *slowlog = GraphContext_GetSlowLog (gc) ;
+	SlowLog_Add (slowlog,
+			command_ctx->command_name,              // command
+			query_ctx->query_data.query,            // query
+			query_ctx->query_data.query_params_len, // params length
+			QueryCtx_GetRuntime (),                 // latency
+			QueryCtx_GetReceivedTS ()               // receive time
+		) ;
 
 	// clean up
 	ExecutionCtx_Free(exec_ctx);
@@ -385,9 +393,6 @@ void _query
 	// or retrieve it from the cache
 	exec_ctx = ExecutionCtx_FromQuery(command_ctx);
 	if(exec_ctx == NULL) goto cleanup;
-
-	// save params string in query context
-	query_ctx->query_data.params_str = command_ctx->params ;
 
 	// update cached flag
 	QueryCtx_SetUtilizedCache(query_ctx, exec_ctx->cached);

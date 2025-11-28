@@ -241,7 +241,7 @@ class testSlowLog():
         slowlog = self.graph.slowlog()
         self.env.assertEquals(len(slowlog), 0)
 
-    def test06_forct_replace(self):
+    def test06_force_replace(self):
         # make sure slowlog entries get replcaed
 
         # clear slowlog
@@ -260,7 +260,7 @@ class testSlowLog():
         q0 = "UNWIND range(0, 200000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
         self.graph.query(q0)
 
-        q1 = "UNWIND range(0, 250000) AS x WITH x WHERE x % 2 = 0 RETURN count(x)"
+        q1 = "UNWIND range(0, 250000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
         self.graph.query(q1)
 
         entries = self.graph.slowlog()

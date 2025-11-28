@@ -118,7 +118,7 @@ void QueryCtx_AdvanceStage
 
 	if(ctx->stage == QueryStage_REPORTING) {
 		// done reporting, log query
-		GraphContext_LogQuery(ctx->gc,
+		GraphContext_LogQuery (ctx->gc,
 				ctx->stats.received_ts,
 				ctx->stats.durations[QueryStage_WAITING],
 				ctx->stats.durations[QueryStage_EXECUTING],
@@ -127,8 +127,8 @@ void QueryCtx_AdvanceStage
 				ctx->stats.utilized_cache,
 				ctx->flags & QueryExecutionTypeFlag_WRITE,
 				ctx->status == QueryExecutionStatus_TIMEDOUT,
-				ctx->query_data.params_str,
-				ctx->query_data.query_no_params);
+				ctx->query_data.query_params_len,
+				ctx->query_data.query) ;
 	}
 
 	// advance to next stage
@@ -470,6 +470,14 @@ double QueryCtx_GetRuntime(void) {
 
 	return ctx->stats.durations[QueryStage_EXECUTING] +
 		ctx->stats.durations[QueryStage_REPORTING];
+}
+
+// returns query received timestamp
+uint64_t QueryCtx_GetReceivedTS (void) {
+	QueryCtx *ctx = _QueryCtx_GetCtx();
+	ASSERT(ctx != NULL);
+
+	return ctx->stats.received_ts ;
 }
 
 // free the allocations within the QueryCtx and reset it for the next query

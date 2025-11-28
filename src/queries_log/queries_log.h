@@ -40,7 +40,7 @@ void QueriesLog_AddQuery
 	bool utilized_cache,        // utilized cache
 	bool write,    		        // write query
 	bool timeout,    		    // timeout query
-	const char *params,         // query parameters
+	uint params_len,            // length of parameters
 	const char *query           // query string
 );
 
