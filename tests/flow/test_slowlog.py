@@ -212,7 +212,7 @@ class testSlowLog():
 
         # re-issue the same query but with different params
         query = f"UNWIND range(0, $i) AS x RETURN count(x)"
-        self.graph.query(query, {'i': 250000})
+        self.graph.query(query, {'i': 400000})
 
         slowlog = self.graph.slowlog()
         self.env.assertEquals(len(slowlog), 1)
@@ -226,7 +226,7 @@ class testSlowLog():
 
         # expecting params to update
         self.env.assertNotEqual(p0, p1)
-        self.env.assertIn('250000', p1)
+        self.env.assertIn('400000', p1)
 
     def test05_fast_queries(self):
         # make sure fast queries do not enter the slowlog

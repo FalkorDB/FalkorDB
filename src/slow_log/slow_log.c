@@ -14,8 +14,7 @@
 #include "../util/rmalloc.h"
 #include "../util/thpool/pool.h"
 
-#define SLOW_LOG_QUERY_MAX_LEN   2048  // query max len
-#define SLOW_LOG_PARAMS_MAX_LEN  2048  // param max len
+#define SLOW_LOG_STR_MAX_LEN     2048  // string max len
 #define SLOW_LOG_MIN_REQ_LATENCY 10    // 10ms
 
 #define SLOW_LOG_SIZE 10
@@ -70,7 +69,7 @@ static inline XXH64_hash_t _compute_key
 	ASSERT (res != XXH_ERROR) ;
 
 	XXH64_update (&state, cmd, strlen (cmd)) ;
-	XXH64_update (&state, query, strnlen (query, SLOW_LOG_QUERY_MAX_LEN)) ;
+	XXH64_update (&state, query, strnlen (query, SLOW_LOG_STR_MAX_LEN)) ;
 
 	return XXH64_digest (&state) ;
 }
@@ -95,8 +94,8 @@ static void _SlowLogItem_New
 	char *_params = *params ;
 
 	// assert query and params are capped
-	ASSERT (strlen (_query) <= SLOW_LOG_QUERY_MAX_LEN + 3) ;
-	ASSERT (_params == NULL || strlen (_params) <= SLOW_LOG_PARAMS_MAX_LEN + 3) ;
+	ASSERT (strlen (_query) <= SLOW_LOG_STR_MAX_LEN + 3) ;
+	ASSERT (_params == NULL || strlen (_params) <= SLOW_LOG_STR_MAX_LEN + 3) ;
 
 	item->cmd     = rm_strdup (cmd) ;
 	item->time    = t ;
@@ -140,7 +139,7 @@ static void _SlowLogItem_Update
 
 	char *_params = *params ;
 	// assert params are capped
-	ASSERT (_params == NULL || strlen (_params) <= SLOW_LOG_PARAMS_MAX_LEN + 3) ;
+	ASSERT (_params == NULL || strlen (_params) <= SLOW_LOG_STR_MAX_LEN + 3) ;
 
 	// free old params
 	if (item->params != NULL) {
@@ -186,32 +185,20 @@ SlowLog *SlowLog_New (void) {
 	return slowlog ;
 }
 
-// truncate query & parameters
+// truncate string
 static void truncate_string
 (
-	const char *query,
-	int params_len,
-	char **truncated_query,
-	char **truncated_params
+	const char *str,
+	size_t n,
+	char **truncated_str
 ) {
-	*truncated_query  = NULL ;
-	*truncated_params = NULL ;
+	ASSERT (str           != NULL) ;
+	ASSERT (truncated_str != NULL) ;
 
-	const char *_query = query + params_len ;
-
-	if (strnlen (_query, SLOW_LOG_QUERY_MAX_LEN) >= SLOW_LOG_QUERY_MAX_LEN) {
-		asprintf (truncated_query, "%.*s...", SLOW_LOG_QUERY_MAX_LEN, _query) ;
+	if (n >= SLOW_LOG_STR_MAX_LEN) {
+		asprintf (truncated_str, "%.*s...", SLOW_LOG_STR_MAX_LEN, str) ;
 	} else {
-		*truncated_query = strdup (_query) ;
-	}
-
-	if (params_len > 0) {
-		if (params_len >= SLOW_LOG_PARAMS_MAX_LEN) {
-			asprintf (truncated_params, "%.*s...", SLOW_LOG_PARAMS_MAX_LEN,
-					query) ;
-		} else {
-			*truncated_params = strndup (query, params_len) ;
-		}
+		*truncated_str = strdup (str) ;
 	}
 }
 
@@ -277,8 +264,10 @@ void SlowLog_Add
 
 	char *truncated_query  = NULL ;
 	char *truncated_params = NULL ;
-	truncate_string (query, params_len, &truncated_query, &truncated_params) ;
-	ASSERT (truncated_query != NULL) ;
+
+	if (params_len > 0) {
+		truncate_string (query, params_len, &truncated_params) ;
+	}
 
 	if (existing_item != NULL) {
 		_SlowLogItem_Update (existing_item, &truncated_params, latency, time) ;
@@ -288,6 +277,10 @@ void SlowLog_Add
 	//--------------------------------------------------------------------------
 	// add a new item
 	//--------------------------------------------------------------------------
+
+	truncate_string (query + params_len,
+			strnlen(query + params_len, SLOW_LOG_STR_MAX_LEN),
+			&truncated_query) ;
 
 	if (slowlog->count < SLOW_LOG_SIZE) {
 		_SlowLogItem_New (slowlog->items + slowlog->count, cmd,
