@@ -312,14 +312,18 @@ $(ONIGURUMA):
 
 redisearch: $(REDISEARCH_LIBS)
 
+# Disable debug build when building for coverage
 DEBUG.search=$(DEBUG)
 ifeq ($(COV), 1)
 DEBUG.search=0
 endif
 
+# Set extra flags for RediSearch build based on OS
+REDISEARCH_IGNORE_MISSING_DEPS=$(if $(filter rhel redhat,$(OS)),1,0)
+
 $(REDISEARCH_LIBS):
-	@echo Building $@ ...
-	$(SHOW)$(MAKE) -C $(REDISEARCH_DIR) COV=$(COV) DEBUG=$(DEBUG.search) STATIC=1 CC=$(CC) CXX=$(CXX) IGNORE_MISSING_DEPS=1
+	@echo Building $@...
+	$(SHOW)$(MAKE) -C $(REDISEARCH_DIR) COV=$(COV) DEBUG=$(DEBUG.search) STATIC=1 CC=$(CC) CXX=$(CXX) IGNORE_MISSING_DEPS=$(REDISEARCH_IGNORE_MISSING_DEPS)
 
 
 ifneq ($(DEBUG),1)
