@@ -319,12 +319,11 @@ DEBUG.search=0
 endif
 
 # Set extra flags for RediSearch build based on OS
-REDISEARCH_IGNORE_MISSING_DEPS=$(if $(filter rhel redhat,$(OS)),1,0)
+REDISEARCH_IGNORE_MISSING_DEPS=$(shell if [ -f /etc/os-release ]; then . /etc/os-release && echo "$$ID" | grep -qE "rhel|redhat" && echo 1 || echo 0; else echo 0; fi)
 
 $(REDISEARCH_LIBS):
 	@echo Building $@...
 	$(SHOW)$(MAKE) -C $(REDISEARCH_DIR) COV=$(COV) DEBUG=$(DEBUG.search) STATIC=1 CC=$(CC) CXX=$(CXX) IGNORE_MISSING_DEPS=$(REDISEARCH_IGNORE_MISSING_DEPS)
-
 
 ifneq ($(DEBUG),1)
 CARGO_FLAGS=--release
