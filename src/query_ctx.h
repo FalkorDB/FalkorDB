@@ -82,6 +82,7 @@ typedef struct QueryCtx {
 	GraphContext *gc;                            // GraphContext associated with this query's graph
 	UndoLog undo_log;                            // undo-log in case rollback is needed
 	QueryStage stage;                            // query execution stage
+	bool deterministic;                          // false if query contains a non deterministic element
 	QueryExecutionStatus status;                 // query execution status
 	QueryExecutionTypeFlag flags;                // execution flags
 	EffectsBuffer *effects_buffer;               // effects-buffer for replication, used when write query succeed and replication is needed
@@ -165,6 +166,12 @@ void QueryCtx_SetParams
 (
 	dict *params
 );
+
+// mark query context as not deterministic
+void QueryCtx_SetNonDeterministic (void) ;
+
+// returns true if query is deterministic
+bool QueryCtx_IsDeterministic (void) ;
 
 //------------------------------------------------------------------------------
 // getters
