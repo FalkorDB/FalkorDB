@@ -255,8 +255,10 @@ static void _ExecuteQuery(void *args) {
 		// replicate if graph was modified
 		if(ResultSetStat_IndicateModification(&result_set->stats)) {
 			// determine rather or not to replicate via effects
-			if(EffectsBuffer_Length(QueryCtx_GetEffectsBuffer()) > 0 &&
-			   _should_replicate_effects()) {
+			// effect replication is mandatory if query is non deterministic
+			if (EffectsBuffer_Length (QueryCtx_GetEffectsBuffer()) > 0 &&
+			    (!exec_ctx->deterministic || _should_replicate_effects()))
+			{
 				// compute effects buffer
 				size_t effects_len = 0;
 				u_char *effects = EffectsBuffer_Buffer(

@@ -26,9 +26,10 @@ static inline QueryCtx *_QueryCtx_GetCreateCtx(void) {
 		ctx = rm_calloc(1, sizeof(QueryCtx));
 
 		// created lazily only when needed
-		ctx->undo_log       = NULL;
-		ctx->effects_buffer = NULL;
-		ctx->stage          = QueryStage_WAITING;  // initial query stage
+		ctx->undo_log       = NULL ;
+		ctx->effects_buffer = NULL ;
+		ctx->stage          = QueryStage_WAITING ;  // initial query stage
+		ctx->deterministic  = true ;                // assuming deterministic
 
 		pthread_setspecific(_tlsQueryCtxKey, ctx);
 	}
@@ -225,6 +226,18 @@ void QueryCtx_SetParams
 
 	QueryCtx *ctx = _QueryCtx_GetCreateCtx();
 	ctx->query_data.params = params;
+}
+
+// mark query context as not deterministic
+void QueryCtx_SetNoneDeterministic (void) {
+	QueryCtx *ctx = _QueryCtx_GetCreateCtx () ;
+	ctx->deterministic = false ;
+}
+
+// returns true if query is deterministic
+bool QueryCtx_IsDeterministic (void) {
+	QueryCtx *ctx = _QueryCtx_GetCreateCtx () ;
+	return ctx->deterministic ;
 }
 
 // retrieve the AST
