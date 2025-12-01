@@ -222,7 +222,7 @@ AR_ExpNode *AR_EXP_NewOpNode
 
 	// mark query as non deterministic if function is non deterministic
 	if (unlikely (!func->deterministic)) {
-		QueryCtx_SetNoneDeterministic () ;
+		QueryCtx_SetNonDeterministic () ;
 	}
 
 	return node;

@@ -229,7 +229,7 @@ void QueryCtx_SetParams
 }
 
 // mark query context as not deterministic
-void QueryCtx_SetNoneDeterministic (void) {
+void QueryCtx_SetNonDeterministic (void) {
 	QueryCtx *ctx = _QueryCtx_GetCreateCtx () ;
 	ctx->deterministic = false ;
 }

@@ -168,9 +168,9 @@ void QueryCtx_SetParams
 );
 
 // mark query context as not deterministic
-void QueryCtx_SetNoneDeterministic (void) ;
+void QueryCtx_SetNonDeterministic (void) ;
 
-// returns true if query is not deterministic
+// returns true if query is deterministic
 bool QueryCtx_IsDeterministic (void) ;
 
 //------------------------------------------------------------------------------
