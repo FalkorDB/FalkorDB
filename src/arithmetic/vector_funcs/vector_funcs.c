@@ -134,7 +134,7 @@ void Register_VectorFuncs() {
 	array_append(types, T_NULL | T_ARRAY);
 	ret_type = T_NULL | T_VECTOR;
 	func_desc = AR_FuncDescNew("vecf32", AR_VECTOR32F, 1, 1, types, ret_type,
-			false, true);
+			false, true, true);
 	AR_RegFunc(func_desc);
 
 	// euclidean distance between two vectors
@@ -143,7 +143,7 @@ void Register_VectorFuncs() {
 	array_append(types, T_NULL | T_VECTOR);
 	ret_type = T_NULL | T_DOUBLE;
 	func_desc = AR_FuncDescNew("vec.euclideanDistance", AR_EUCLIDEAN_DISTANCE, 2, 2, types, ret_type,
-			false, true);
+			false, true, true);
 	AR_RegFunc(func_desc);
 
 	// cosine distance between two vectors
@@ -152,7 +152,7 @@ void Register_VectorFuncs() {
 	array_append(types, T_NULL | T_VECTOR);
 	ret_type = T_NULL | T_DOUBLE;
 	func_desc = AR_FuncDescNew("vec.cosineDistance", AR_COSINE_DISTANCE, 2, 2, types, ret_type,
-			false, true);
+			false, true, true);
 	AR_RegFunc(func_desc);
 }
 
