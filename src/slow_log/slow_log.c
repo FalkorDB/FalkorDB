@@ -84,10 +84,10 @@ static void _SlowLogItem_New
 	double latency,     // query latency
 	time_t t            // query receive time
 ) {
-	ASSERT (cmd    != NULL) ;
-	ASSERT (item   != NULL) ;
-	ASSERT (params != NULL) ;
-	ASSERT (query  != NULL && *query != NULL) ;
+	ASSERT (cmd     != NULL) ;
+	ASSERT (item    != NULL) ;
+	ASSERT (params  != NULL) ;
+	ASSERT (query   != NULL && *query != NULL) ;
 	ASSERT (latency >= SLOW_LOG_MIN_REQ_LATENCY) ;
 
 	char *_query  = *query  ;
@@ -218,14 +218,14 @@ void SlowLog_Add
 	ASSERT (slowlog  != NULL) ;
 
 	// slow enough ?
-	if (latency < SLOW_LOG_MIN_REQ_LATENCY) {
+	if (likely (latency < SLOW_LOG_MIN_REQ_LATENCY)) {
 		return ;
 	}
 
 	bool add = (slowlog->min_latency < latency ||
 				slowlog->count < SLOW_LOG_SIZE) ;
 
-	if (!add) {
+	if (likely (!add)) {
 		return ;
 	}
 
@@ -254,7 +254,7 @@ void SlowLog_Add
 
 	bool exists = _SlowLog_Contains (slowlog, cmd, query + params_len, &key,
 			&existing_item) ;
-	if (exists && latency < existing_item->latency) {
+	if (exists && latency <= existing_item->latency) {
 			goto unlock ;
 	}
 
@@ -295,13 +295,14 @@ void SlowLog_Add
 	//--------------------------------------------------------------------------
 
 	// locate fastest item
-	int idx = 0 ;
+	int idx = -1 ;
 	for (int i = 0; i < slowlog->count; i++) {
 		if (slowlog->items[i].latency == slowlog->min_latency) {
 			idx = i ;
 			break ;
 		}
 	}
+	ASSERT (idx != -1) ;
 
 	// remove fastest
 	_SlowLog_Item_Free (slowlog->items + idx) ;
@@ -312,10 +313,11 @@ void SlowLog_Add
 
 cleanup:
 	// update min latency
-	slowlog->min_latency = DBL_MAX ;
+	double min_latency = DBL_MAX ;
 	for (int i = 0; i < slowlog->count; i++) {
-		slowlog->min_latency = MIN (slowlog->min_latency, slowlog->items[i].latency) ;
+		min_latency = MIN (min_latency, slowlog->items[i].latency) ;
 	}
+	slowlog->min_latency = min_latency ;
 
 unlock:
 	pthread_mutex_unlock (&slowlog->lock) ;
