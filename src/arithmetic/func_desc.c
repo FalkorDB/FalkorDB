@@ -25,7 +25,7 @@ AR_FuncDesc *AR_FuncDescNew
 	SIType *types,      // types of arguments
 	SIType ret_type,    // return type
 	bool internal,      // is function internal
-	bool reducible,     // true if function is reducible (deterministic)
+	bool reducible,     // true if function is reducible
 	bool deterministic  // true if return value is predictable
 ) {
 	AR_FuncDesc *desc = rm_calloc(1, sizeof(AR_FuncDesc));
