@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Retrieve built image AMD
         uses: dawidd6/action-download-artifact@v11
@@ -180,6 +180,26 @@ jobs:
           path: /tmp
           if_no_artifact_found: error
 
+      - name: Retrieve built .so macOS ARM64
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-macos-arm64v8.so
+          path: /tmp
+          if_no_artifact_found: ignore
+
+      - name: Retrieve built debug.so macOS ARM64
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-macos-arm64v8.so
+          path: /tmp
+          if_no_artifact_found: ignore
+
       - name: Load image
         run: |
           docker load -i /tmp/falkordb-x64.tar
@@ -285,6 +305,13 @@ jobs:
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-x64.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-arm64v8.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-rhel-x64.so
+          # Upload macOS binaries if they exist
+          if [ -f /tmp/falkordb-macos-arm64v8.so ]; then
+            gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-macos-arm64v8.so
+          fi
+          if [ -f /tmp/falkordb-debug-macos-arm64v8.so ]; then
+            gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-macos-arm64v8.so
+          fi
 
       - name: Trigger FalkorDB Cloud Version Update
         if: github.event_name == 'release'
@@ -297,3 +324,16 @@ jobs:
             {
               "new_version": "${{ github.event.release.tag_name }}"
             }
+  
+  trigger-testflight-workflow:
+    needs: release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    steps:
+      - name: Trigger Redis Enterprise tests in FalkorDB/testflight
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.GH_TESTFLIGHT_TOKEN }}
+          repository: FalkorDB/testflight
+          event-type: release-created
+          client-payload: '{"tag_name": "${{ github.event.release.tag_name }}"}'

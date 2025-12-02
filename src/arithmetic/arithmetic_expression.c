@@ -206,7 +206,7 @@ AR_ExpNode *AR_EXP_NewOpNode
 ) {
 	// retrieve function
 	AR_FuncDesc *func = AR_GetFunc(func_name, include_internal);
-	AR_ExpNode *node = _AR_EXP_NewOpNode(child_count);
+	AR_ExpNode  *node = _AR_EXP_NewOpNode(child_count);
 
 	if(!func->internal) _AR_EXP_ValidateArgsCount(func, child_count);
 
@@ -218,6 +218,11 @@ AR_ExpNode *AR_EXP_NewOpNode
 		// generate aggregation context and store it in node's private data
 		ASSERT(func->callbacks.private_data != NULL);
 		node->op.private_data = func->callbacks.private_data();
+	}
+
+	// mark query as non deterministic if function is non deterministic
+	if (unlikely (!func->deterministic)) {
+		QueryCtx_SetNonDeterministic () ;
 	}
 
 	return node;
