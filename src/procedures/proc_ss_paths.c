@@ -8,6 +8,7 @@
 #include "proc_ss_paths.h"
 #include "../value.h"
 #include "../util/arr.h"
+#include "../util/heap.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
