@@ -19,11 +19,6 @@ void *CronTask_newStreamFinishedQueries
 	void *pdata  // task context
 );
 
-// task re-enter check
-// cron calls this function to determine if it should enqueue the task
-// once it's finished
-bool CronTask_reenterStreamFinishedQueries(void);
-
 // cron task
 // stream finished queries for each graph in the keyspace
 bool CronTask_streamFinishedQueries

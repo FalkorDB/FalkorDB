@@ -11,6 +11,7 @@
 #include "./slow_log.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
+#include "../util/strutil.h"
 #include "../util/rmalloc.h"
 #include "../util/thpool/pool.h"
 
@@ -185,23 +186,6 @@ SlowLog *SlowLog_New (void) {
 	return slowlog ;
 }
 
-// truncate string
-static void truncate_string
-(
-	const char *str,
-	size_t n,
-	char **truncated_str
-) {
-	ASSERT (str           != NULL) ;
-	ASSERT (truncated_str != NULL) ;
-
-	if (n >= SLOW_LOG_STR_MAX_LEN) {
-		asprintf (truncated_str, "%.*s...", SLOW_LOG_STR_MAX_LEN, str) ;
-	} else {
-		*truncated_str = strdup (str) ;
-	}
-}
-
 // introduce item to slow log
 void SlowLog_Add
 (
@@ -216,6 +200,8 @@ void SlowLog_Add
 	ASSERT (cmd      != NULL) ;
 	ASSERT (query    != NULL) ;
 	ASSERT (slowlog  != NULL) ;
+
+	double min_latency = DBL_MAX ;
 
 	// slow enough ?
 	if (likely (latency < SLOW_LOG_MIN_REQ_LATENCY)) {
@@ -266,7 +252,7 @@ void SlowLog_Add
 	char *truncated_params = NULL ;
 
 	if (params_len > 0) {
-		truncate_string (query, params_len, &truncated_params) ;
+		str_truncate (&truncated_params, query, params_len, SLOW_LOG_STR_MAX_LEN) ;
 	}
 
 	if (existing_item != NULL) {
@@ -277,10 +263,8 @@ void SlowLog_Add
 	//--------------------------------------------------------------------------
 	// add a new item
 	//--------------------------------------------------------------------------
-
-	truncate_string (query + params_len,
-			strnlen(query + params_len, SLOW_LOG_STR_MAX_LEN),
-			&truncated_query) ;
+	size_t n = strnlen (query + params_len, SLOW_LOG_STR_MAX_LEN) ;
+	str_truncate (&truncated_query, query + params_len, n, SLOW_LOG_STR_MAX_LEN) ;
 
 	if (slowlog->count < SLOW_LOG_SIZE) {
 		_SlowLogItem_New (slowlog->items + slowlog->count, cmd,
@@ -313,7 +297,6 @@ void SlowLog_Add
 
 cleanup:
 	// update min latency
-	double min_latency = DBL_MAX ;
 	for (int i = 0; i < slowlog->count; i++) {
 		min_latency = MIN (min_latency, slowlog->items[i].latency) ;
 	}

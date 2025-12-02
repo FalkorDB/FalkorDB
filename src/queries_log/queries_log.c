@@ -7,13 +7,13 @@
 #include "RG.h"
 #include "queries_log.h"
 #include "util/rmalloc.h"
+#include "util/strutil.h"
 #include "configuration/config.h"
 
 #include <pthread.h>
 #include <stdatomic.h>
 
-#define QUERIES_LOG_QUERY_MAX_LEN   2048  // query max len
-#define QUERIES_LOG_PARAMS_MAX_LEN  2048  // param max len
+#define QUERIES_LOG_STR_MAX_LEN   2048  // string max len
 
 // holds query statistics per graph
 typedef struct QueriesCounters {
@@ -76,21 +76,14 @@ void QueriesLog_AddQuery
 	const char *_query = query + params_len ;
 
 	char *truncated_query;
-	size_t n = strnlen (_query, QUERIES_LOG_QUERY_MAX_LEN) ;
-	if (n >= QUERIES_LOG_QUERY_MAX_LEN) {
-		asprintf (&truncated_query, "%.*s...", QUERIES_LOG_QUERY_MAX_LEN, _query) ;
-	} else {
-		truncated_query = strndup (_query, n) ;
-	}
+	size_t n = strnlen (_query, QUERIES_LOG_STR_MAX_LEN) ;
+	str_truncate (&truncated_query, _query, n, QUERIES_LOG_STR_MAX_LEN) ;
 
 	// cap parameters lenght
 	char *truncated_params = NULL ;
 	if (params_len > 0) {
-		if (params_len >= QUERIES_LOG_PARAMS_MAX_LEN) {
-			asprintf (&truncated_params, "%.*s...", QUERIES_LOG_PARAMS_MAX_LEN, query) ;
-		} else {
-			truncated_params = strndup (query, params_len) ;
-		}
+		str_truncate (&truncated_params, query, params_len,
+				QUERIES_LOG_STR_MAX_LEN) ;
 	}
 
 	//--------------------------------------------------------------------------

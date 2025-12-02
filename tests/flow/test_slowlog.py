@@ -112,7 +112,7 @@ class testSlowLog():
         self.env.assertGreater(len(slowlog), 0)
 
     def test03_cap_entry(self):
-        # make sure slowlog entry are capped
+        # make sure slowlog entries are capped
 
         # clear slowlog
         self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID, "RESET")
@@ -127,11 +127,9 @@ class testSlowLog():
 
         slowlog = self.graph.slowlog()
         entry = slowlog[0]
-        ts      = entry[0]
         cmd     = entry[1]
         q       = entry[2]
         params  = entry[3]
-        latency = entry[4]
 
         self.env.assertEquals(cmd, "GRAPH.QUERY")
         self.env.assertEquals(params, None)
@@ -152,11 +150,9 @@ class testSlowLog():
 
         slowlog = self.graph.slowlog()
         entry = slowlog[0]
-        ts      = entry[0]
         cmd     = entry[1]
         q       = entry[2]
         params  = entry[3]
-        latency = entry[4]
 
         self.env.assertEquals(cmd, "GRAPH.QUERY")
         self.env.assertEquals(query, q)
@@ -177,11 +173,9 @@ class testSlowLog():
 
         slowlog = self.graph.slowlog()
         entry = slowlog[0]
-        ts      = entry[0]
         cmd     = entry[1]
         q       = entry[2]
         params  = entry[3]
-        latency = entry[4]
 
         self.env.assertEquals(cmd, "GRAPH.QUERY")
 
