@@ -21,36 +21,40 @@ typedef struct RecurringTaskCtx {
 	void *ctx;
 } RecurringTaskCtx;
 
-void CronTask_RecurringTaskFree(void *pdata) {
+void CronTask_RecurringTaskFree
+(
+	void *pdata
+) {
 	ASSERT(pdata != NULL);
 	RecurringTaskCtx *current_ctx = (RecurringTaskCtx*)pdata;
 	current_ctx->free(current_ctx->ctx);
 	rm_free(current_ctx);
 }
 
-void CronTask_RecurringTask(void *pdata) {
+void CronTask_RecurringTask
+(
+	void *pdata
+) {
 	ASSERT(pdata != NULL);
 	RecurringTaskCtx *current_ctx = (RecurringTaskCtx*)pdata;
 	bool speed_up = current_ctx->task(current_ctx->ctx);	
 
-	bool info_enabled = false;
-	if(Config_Option_get(Config_CMD_INFO, &info_enabled) && info_enabled) {
-		RecurringTaskCtx *re_ctx = rm_malloc(sizeof(RecurringTaskCtx));
-		*re_ctx = *current_ctx;
-		re_ctx->ctx = re_ctx->new(re_ctx->ctx);
+	RecurringTaskCtx *re_ctx = rm_malloc(sizeof(RecurringTaskCtx));
+	*re_ctx = *current_ctx;
+	re_ctx->ctx = re_ctx->new(re_ctx->ctx);
 
-		// determine next invocation
-		if(speed_up) {
-			// reduce delay, lower limit: 250ms
-			re_ctx->when = (re_ctx->min_interval + re_ctx->when) / 2;
-		} else {
-			// increase delay, upper limit: 3sec
-			re_ctx->when = (re_ctx->max_interval + re_ctx->when) / 2;
-		}
-
-		// re-add task to CRON
-		Cron_AddTask(re_ctx->when, CronTask_RecurringTask, CronTask_RecurringTaskFree, (void*)re_ctx);
+	// determine next invocation
+	if(speed_up) {
+		// reduce delay, lower limit: 250ms
+		re_ctx->when = (re_ctx->min_interval + re_ctx->when) / 2;
+	} else {
+		// increase delay, upper limit: 3sec
+		re_ctx->when = (re_ctx->max_interval + re_ctx->when) / 2;
 	}
+
+	// re-add task to CRON
+	Cron_AddTask (re_ctx->when, CronTask_RecurringTask,
+			CronTask_RecurringTaskFree, (void*)re_ctx) ;
 }
 
 void CronTask_AddStreamFinishedQueries() {
