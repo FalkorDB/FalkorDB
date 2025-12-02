@@ -9,15 +9,11 @@ export REDISEARCH_LIBS=$(REDISEARCH)
 
 VECSIM_BINDIR=$(REDISEARCH_BINROOT)/deps/VectorSimilarity/src/VecSim
 
-ifeq ($(ARCH),x64)
-VECSIM_SPACES=sse avx avx512 avx512dq no_optimization
-else
-VECSIM_SPACES=no_optimization
-endif
-
+# VectorSimilarity now builds all optimizations into a single library
+# with runtime CPU feature detection instead of separate libraries per optimization
 VECSIM_LIBS=\
 	$(VECSIM_BINDIR)/libVectorSimilarity.a \
 	$(VECSIM_BINDIR)/spaces/libVectorSimilaritySpaces.a \
-	$(foreach f,$(VECSIM_SPACES),$(VECSIM_BINDIR)/spaces/libVectorSimilaritySpaces_$(f).a)
+	$(VECSIM_BINDIR)/spaces/libVectorSimilaritySpaces_no_optimization.a
 
 export REDISEARCH_LIBS=$(REDISEARCH) $(VECSIM_LIBS) $(UTILS_LIBS)
