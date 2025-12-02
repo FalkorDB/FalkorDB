@@ -10,7 +10,7 @@ export REDISEARCH_LIBS=$(REDISEARCH)
 VECSIM_BINDIR=$(REDISEARCH_BINROOT)/deps/VectorSimilarity/src/VecSim
 
 ifeq ($(ARCH),x64)
-VECSIM_SPACES=no_optimization
+VECSIM_SPACES=sse avx avx512 avx512dq no_optimization
 else
 VECSIM_SPACES=no_optimization
 endif
