@@ -1793,6 +1793,18 @@ void test_LocateOperand() {
 	AlgebraicExpression_Free(r);
 }
 
+void test_AlgebraicExpression_NewOperation_SupportedOps() {
+	AL_EXP_OP ops[] = {AL_EXP_ADD, AL_EXP_MUL, AL_EXP_TRANSPOSE};
+	for(int i = 0; i < 3; i++) {
+		AlgebraicExpression *operation = AlgebraicExpression_NewOperation(ops[i]);
+		TEST_ASSERT(operation != NULL);
+		TEST_ASSERT(operation->type == AL_OPERATION);
+		TEST_ASSERT(operation->operation.op == ops[i]);
+		TEST_ASSERT(array_len(operation->operation.children) == 0);
+		AlgebraicExpression_Free(operation);
+	}
+}
+
 TEST_LIST = {
 	{"algebraicExpression", test_algebraicExpression},
 	{"algebraicExpression_domains", test_algebraicExpression_domains},
@@ -1817,6 +1829,7 @@ TEST_LIST = {
 	{"ExpressionExecute", test_ExpressionExecute},
 	{"RemoveOperand", test_RemoveOperand},
 	{"LocateOperand", test_LocateOperand},
+	{"AlgebraicExpression_NewOperation_SupportedOps", test_AlgebraicExpression_NewOperation_SupportedOps},
 	{NULL, NULL}
 };
 
