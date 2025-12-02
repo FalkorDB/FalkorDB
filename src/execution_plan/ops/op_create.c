@@ -9,6 +9,7 @@
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
 #include "../../errors/errors.h"
+#include "../../util/datablock/oo_datablock.h"
 
 // forward declarations
 static Record CreateConsume (OpBase *opBase) ;
@@ -69,6 +70,10 @@ static void _CreateNodes
 
 		// create a new node
 		Node newNode = Graph_ReserveNode(gc->g);
+
+		// allocate attributes to allow property expressions to reference the node
+		newNode.attributes = DataBlock_AllocateItemOutOfOrder(gc->g->nodes, newNode.id);
+		*newNode.attributes = NULL;
 
 		// add new node to Record and save a reference to it
 		Node *node_ref = Record_AddNode(r, n->node_idx, newNode);
