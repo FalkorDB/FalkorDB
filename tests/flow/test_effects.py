@@ -802,7 +802,7 @@ class testEffects():
         GRAPH_ID = "effects_disabled"
 
         # update graph objects to use new graph key
-        self.master_graph = Graph(self.master, GRAPH_ID)
+        self.master_graph  = Graph(self.master,  GRAPH_ID)
         self.replica_graph = Graph(self.replica, GRAPH_ID)
 
         # disable effects replication
@@ -823,7 +823,7 @@ class testEffects():
         self.test12_merge_node(False)
         self.test13_merge_edge(False)
         self.test14_empty_vector(False)
-        self.test15_create_node_with_random_and_timestamp_effect(False)
+        self.test15_create_node_with_random_and_timestamp_effect(True) # non deterministic
 
         # make sure no effects had been recieved
         self.env.assertFalse(self.monitor_containt_effect())
@@ -1028,4 +1028,51 @@ class testEffects():
         master_edge_count = self.master_graph.query(q).result_set[0][0]
         self.env.assertEquals(master_edge_count, 0)
         self.env.assertEquals(replica_edge_count, master_edge_count)
+
+    def test21_mandatory_effects(self):
+        """Make sure non deterministic queries always uses effects"""
+
+        self.env.flush()        # clean slate
+        self.effects_disable()  # disable effects
+
+        # each of the following queries contains a non deterministic element
+        queries = [
+            "WITH date()                  AS x CREATE ()",
+            "WITH rand()                  AS x CREATE ()",
+            "WITH timestamp()             AS x CREATE ()",
+            "WITH localtime()             AS x CREATE ()",
+            "WITH randomuuid()            AS x CREATE ()",
+            "WITH localdatetime()         AS x CREATE ()",
+            "WITH date.transaction()      AS x CREATE ()",
+            "WITH localtime.transaction() AS x CREATE ()",
+
+            "CREATE ({v:date()})",
+            "CREATE ({v:rand()})",
+            "CREATE ({v:timestamp()})",
+            "CREATE ({v:localtime()})",
+            "CREATE ({v:randomuuid()})",
+            "CREATE ({v:localdatetime()})",
+            "CREATE ({v:date.transaction()})",
+            "CREATE ({v:localtime.transaction()})",
+
+            # duplicated query for DB internal execution-plan cache utilization
+            "CREATE ({v:date()})",
+            "CREATE ({v:rand()})",
+            "CREATE ({v:timestamp()})",
+            "CREATE ({v:localtime()})",
+            "CREATE ({v:randomuuid()})",
+            "CREATE ({v:localdatetime()})",
+            "CREATE ({v:date.transaction()})",
+            "CREATE ({v:localtime.transaction()})",
+            ]
+
+        for q in queries:
+            self.master_graph.query(q)
+
+            # although effects are disabled
+            # we're still expecting replication to use effect
+            self.wait_for_effect()
+
+        # make sure graphs are the same!
+        self.assert_graph_eq()
 
