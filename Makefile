@@ -147,7 +147,7 @@ export ONIGURUMA_BINDIR=$(DEPS_BINDIR)/oniguruma
 include $(ROOT)/build/oniguruma/Makefile.defs
 
 REDISEARCH_DIR = $(ROOT)/deps/RediSearch
-export REDISEARCH_BINROOT=$(REDISEARCH_DIR)/bin/$(FULL_VARIANT)/search-static
+export REDISEARCH_BINROOT=$(REDISEARCH_DIR)/bin/$(FULL_VARIANT)/search
 include $(ROOT)/build/RediSearch/Makefile.defs
 
 FalkorDBRS_DIR = $(ROOT)/deps/FalkorDB-core-rs
