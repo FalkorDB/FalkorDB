@@ -49,10 +49,11 @@ typedef enum QueryStage {
 } QueryStage;
 
 typedef struct {
-	AST *ast;                              // the scoped AST associated with this query
-	dict *params;                          // query parameters
-	const char *query;                     // query string
-	const char *query_no_params;           // query string without parameters part
+	AST *ast;                     // the scoped AST associated with this query
+	dict *params;                 // dict [param_name, param_value]
+	const char *query;            // query string
+	uint query_params_len;        // length of query parameters
+	const char *query_no_params;  // query string without parameters part
 } QueryCtx_QueryData;
 
 typedef struct {
@@ -244,6 +245,9 @@ void QueryCtx_Replicate
 
 // compute and return elapsed query execution time
 double QueryCtx_GetRuntime(void);
+
+// returns query received timestamp
+uint64_t QueryCtx_GetReceivedTS (void) ;
 
 // free the allocations within the QueryCtx and reset it for the next query
 void QueryCtx_Free(void);

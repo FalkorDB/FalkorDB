@@ -53,3 +53,18 @@ bool str_MatchRegex
 	const char* regex,   // regex pattern to match with
 	const char* str      // string to match
 );
+
+// truncate string to max_len
+// truncated = str[:min (n, max_len)]
+//
+// create a newly allocated truncated copy of `str`
+// copies at most `max_len` bytes from `str` (not including null terminator)
+// the returned string is always null-terminated
+void str_truncate
+(
+	char **truncated,  // [output] truncated string
+	const char *str,   // string to truncate
+	uint len,          // string length
+	uint max_len       // string max length
+);
+

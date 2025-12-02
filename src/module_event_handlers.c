@@ -307,22 +307,22 @@ static void _ReplicationRoleChangedEventHandler
 	uint64_t subevent,
 	void *data
 ) {
-	KeySpaceGraphIterator it;
-	GraphContext *gc = NULL;
-	Globals_ScanGraphs(&it);
-	if(subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_MASTER) {
-		// now master enable constraints
-		while((gc = GraphIterator_Next(&it)) != NULL) {
-			GraphContext_EnableConstrains(gc);
-			GraphContext_DecreaseRefCount(gc);
-		}
-	} else if (subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA) {
-		// now slave disable constraints
-		while((gc = GraphIterator_Next(&it)) != NULL) {
-			GraphContext_DisableConstrains(gc);
-			GraphContext_DecreaseRefCount(gc);
-		}
-	}
+	//KeySpaceGraphIterator it;
+	//GraphContext *gc = NULL;
+	//Globals_ScanGraphs(&it);
+	//if(subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_MASTER) {
+	//	// now master enable constraints
+	//	while((gc = GraphIterator_Next(&it)) != NULL) {
+	//		GraphContext_EnableConstrains(gc);
+	//		GraphContext_DecreaseRefCount(gc);
+	//	}
+	//} else if (subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA) {
+	//	// now slave disable constraints
+	//	while((gc = GraphIterator_Next(&it)) != NULL) {
+	//		GraphContext_DisableConstrains(gc);
+	//		GraphContext_DecreaseRefCount(gc);
+	//	}
+	//}
 }
 
 // server persistence event handler
@@ -438,14 +438,13 @@ static void _RegisterServerEvents
 	//		_ModuleLoadedHandler);
 	//ASSERT(res == REDISMODULE_OK);
 
-	//	RedisModule_SubscribeToServerEvent(ctx,
-	//			RedisModuleEvent_ReplicationRoleChanged,
-	//			_ReplicationRoleChangedEventHandler);
+//	RedisModule_SubscribeToServerEvent (ctx,
+//			RedisModuleEvent_ReplicationRoleChanged,
+//			_ReplicationRoleChangedEventHandler) ;
 
 	RedisModule_SubscribeToKeyspaceEvents(ctx,
 			REDISMODULE_NOTIFY_GENERIC,
 			_GenericKeyspaceHandler);
-
 }
 
 //------------------------------------------------------------------------------
