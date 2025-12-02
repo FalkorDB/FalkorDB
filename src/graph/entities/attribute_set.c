@@ -840,34 +840,84 @@ AttributeSet AttributeSet_ShallowClone
 	return clone ;
 }
 
-//
-void AttributeSet_PersistValues
+// ensure that `set` owns all its attribute values
+// after this operation all attributes in `set` are owned by it
+// this function is currently called by the undolog rollback operation
+// restoring an entity former attribute-set
+void AttributeSet_EnsureOwnership
 (
-	AttributeSet set  // attribute-set to persist
+	AttributeSet set
 ) {
-	ASSERT (!ATTRIBUTE_SET_IS_READONLY (set)) ;
-	if (set == NULL) {
+	if (unlikely (ATTRIBUTE_SET_EMPTY (set))) {
 		return ;
 	}
 
+	// remove shared flag from each attribute
 	uint16_t n = AttributeSet_Count (set) ;
-	AttrValue_t *attrs = ATTRIBUTE_SET_VALS (set) ;
-
 	for (uint16_t i = 0; i < n; i++) {
-		AttrValue_t *attr = attrs + i;
+		AttrValue_t *attr_val = _GetAttrVal (set, i) ;
+		AttrValue_ClearShared (attr_val) ;
+	}
+}
 
-		if (AttrValue_Shared (attr)) {
-			AttrValue_ClearShared (attr) ;
+// merge `src` into an existing clone, producing a merged result
+// if x is in clone but not in src, no modification
+// if x is in src but not in clone, x is freed
+// if x is in both clone and src, x is removed from src
+void AttributeSet_Merge
+(
+	AttributeSet src,   // source set
+	AttributeSet clone  // clone of set
+) {
+	// clone was created from an empty set
+	if (unlikely (ATTRIBUTE_SET_EMPTY (src))) {
+		return ;
+	}
 
-			// get attribute type
-			AttrType_t t = AttrValue_Type (attr) ;
-			if (AttrType_to_Allocation[t] == M_VOLATILE) {
-				SIValue v ;
-				_AttrValueToSIValue (&v, attr) ;
-				v = SI_CloneValue (v) ;
-				_AttrValueFromSIValue (attr, &v) ;
+	// clone is empty
+	if (unlikely (ATTRIBUTE_SET_EMPTY (clone))) {
+		return ;
+	}
+
+	uint16_t m = AttributeSet_Count (src) ;
+	uint16_t n = AttributeSet_Count (clone) ;
+
+	for (uint16_t i = 0 ; i < n; i++) {
+		AttributeID attr_id   = _GetAttrID  (clone, i) ;
+		AttrValue_t *attr_val = _GetAttrVal (clone, i) ;
+
+		//----------------------------------------------------------------------
+		// shared attribute
+		//----------------------------------------------------------------------
+
+		if (AttrValue_Shared (attr_val)) {
+			// shared attributes are from now on owned by clone
+			AttrValue_ClearShared (attr_val) ;
+
+			// mark attribute as shared in src
+			uint16_t idx = i ;
+			AttributeID src_attr_id = ATTRIBUTE_ID_NONE ;
+
+			if (idx < m) {
+				// assuming attribute is at the same location
+				src_attr_id = _GetAttrID (src, idx) ;
 			}
+
+			if (src_attr_id != attr_id) {
+				// not at the same location, search for it
+				bool contains = AttributeSet_Contains (src, attr_id, &idx) ;
+				ASSERT (contains) ;
+			}
+
+			// protect from free
+			AttrValue_t *src_attr_val = _GetAttrVal (src, idx) ;
+			AttrValue_SetShared (src_attr_val) ;
 		}
+
+		ASSERT (!AttrValue_Shared (attr_val)) ;
+
+		// attributes which are owned by clone should remain as such
+		// attributes which are unique to src should be freed
 	}
 }
 

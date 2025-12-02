@@ -33,9 +33,6 @@ void test_null_attributeset() {
 
 	TEST_ASSERT (AttributeSet_memoryUsage (set) == 0) ;
 
-	// try to persist a NULL set
-	AttributeSet_PersistValues (set) ;
-
 	// try to free a NULL set
 	AttributeSet_Free (&set) ;
 }
