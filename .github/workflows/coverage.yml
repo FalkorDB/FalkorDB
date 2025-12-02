@@ -64,33 +64,36 @@ jobs:
 
     - name: Build
       run: |
-        rustup default 1.76.0
+        rustup update
+        rustup default stable
         apt-get update
-        apt-get install -y lsb-release wget software-properties-common gnupg
+        apt-get install -y lsb-release wget software-properties-common gnupg wget
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
-        ./llvm.sh 17
+        ./llvm.sh 21
         apt-get update
-        apt-get install -y libomp-17-dev libc6-dbg python3-venv
+        apt-get install -y libomp-21-dev libc6-dbg python3-venv
         python3 -m venv venv
         . venv/bin/activate
         pip install -r tests/requirements.txt
         curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
         echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
         apt update && apt install redis -y
+        chmod +x ./deps/RediSearch/.install/install_cmake.sh
+        ./deps/RediSearch/.install/install_cmake.sh
         update-alternatives \
           --verbose \
-          --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
-          --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17 \
-          --slave   /usr/bin/llvm-profdata        llvm-profdata        /usr/bin/llvm-profdata-17 \
-          --slave   /usr/bin/llvm-cov             llvm-cov             /usr/bin/llvm-cov-17
+          --install /usr/bin/clang                clang                /usr/bin/clang-21 100 \
+          --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-21 \
+          --slave   /usr/bin/llvm-profdata        llvm-profdata        /usr/bin/llvm-profdata-21 \
+          --slave   /usr/bin/llvm-cov             llvm-cov             /usr/bin/llvm-cov-21
         make coverage NPROC=16 CLANG=1 || true
 
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v5.5.1
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
-        file: codecov.txt
-        plugin: noop
+        files: codecov.txt
+        plugins: noop
         disable_search: true
         verbose: true

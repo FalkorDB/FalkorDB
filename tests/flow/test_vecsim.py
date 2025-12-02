@@ -98,7 +98,7 @@ class testVecsim():
         result = query_node_vector_index(self.graph, "Person", "embeddings", k,
                                          [x,y]).result_set
 
-        assert len(result) == 3
+        self.env.assertEqual(len(result), 3)
         for row in result:
             embeddings = row[0].properties['embeddings']
             self.env.assertLess(abs(embeddings[0] - x), k)
@@ -111,7 +111,7 @@ class testVecsim():
         result = query_edge_vector_index(self.graph, "Points", "embeddings", k,
                                          [x,y]).result_set
 
-        assert len(result) == 3
+        self.env.assertEqual(len(result), 3)
         for row in result:
             embeddings = row[0].properties['embeddings']
             self.env.assertLess(abs(embeddings[0] - x), k)
