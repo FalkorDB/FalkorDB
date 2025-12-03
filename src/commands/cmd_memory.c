@@ -421,7 +421,7 @@ static void _EstimateEdgeAttributeMemory
 		}
 
 		// set number of sampled edges
-		int64_t n_sampled_edges = sample_size - edges_sample_size;
+		int64_t n_sampled_edges = MAX (1, sample_size - edges_sample_size) ;
 
 		// compute weighted average
 		edge_memory_usage = (relation_memory_usage / n_sampled_edges)
@@ -441,9 +441,9 @@ static void _estimate_memory_consumption
 	double samples,            // random set size
 	MemoryUsageResult *result  // [output] memory usage
 ) {
-	ASSERT(gc       != NULL);
-	ASSERT(samples  >= 0);
-	ASSERT(result   != NULL);
+	ASSERT(gc      != NULL);
+	ASSERT(samples >= 0);
+	ASSERT(result  != NULL);
 
 	// a graph memory consumption is spread across multiple components:
 	// 1. matrices
@@ -716,7 +716,7 @@ int Graph_Memory
 		}
 
 		// restrict number of samples to max 10,000
-		samples = MIN(samples, 10000);
+		samples = MAX(1, MIN(samples, 10000)) ;
 	}
 
 	//--------------------------------------------------------------------------

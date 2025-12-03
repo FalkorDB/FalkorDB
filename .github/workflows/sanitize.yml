@@ -22,7 +22,7 @@ jobs:
     - name: Safe dir
       run: git config --global --add safe.directory '*'
 
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
       with:
         set-safe-directory: '*'
         submodules: recursive
@@ -86,7 +86,7 @@ jobs:
       run: make unit-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v5
       with:
         name: Upload unit tests logs
         path: ${{ github.workspace }}/tests/unit/logs/
@@ -99,7 +99,7 @@ jobs:
         make flow-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v5
       with:
         name: Upload flow tests logs
         path: ${{ github.workspace }}/tests/flow/logs/
@@ -112,7 +112,7 @@ jobs:
         make tck-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v5
       with:
         name: Upload TCK tests logs
         path: ${{ github.workspace }}/tests/tck/logs/

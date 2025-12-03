@@ -4,10 +4,10 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "RG.h"
+#include "rax.h"
 #include "./procedure.h"
 #include "procedures.h"
-#include "rax.h"
-#include "../RG.h"
 #include "../util/arr.h"
 #include "../util/rmalloc.h"
 #include "../util/strutil.h"
@@ -57,6 +57,9 @@ void Proc_Register() {
 	// register vector search generator
 	_procRegister("db.idx.vector.queryNodes",         Proc_VectorQueryNodeCtx);
 	_procRegister("db.idx.vector.queryRelationships", Proc_VectorQueryRelCtx);
+
+	// register db metadata statistics
+	_procRegister("db.meta.stats", Proc_MetaStatsCtx);
 }
 
 ProcedureCtx *ProcCtxNew

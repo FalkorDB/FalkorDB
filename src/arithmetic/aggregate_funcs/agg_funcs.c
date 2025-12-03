@@ -26,6 +26,8 @@ AR_FuncDesc *AR_AggFuncDescNew
 			ret_type, false, false) ;
 
 	desc->aggregate              = true;
+	desc->reducible              = false;
+	desc->deterministic          = true;
 	desc->callbacks.free         = free;
 	desc->callbacks.finalize     = finalize;
 	desc->callbacks.private_data = private_data;

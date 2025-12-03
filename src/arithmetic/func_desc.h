@@ -54,6 +54,7 @@ typedef struct {
 	bool reducible;        // can be reduced using static evaluation
 	bool aggregate;        // true if the function is an aggregation
 	bool udf;              // user define function
+	bool deterministic;    // true if return value is predictable
 	const char *name;      // function name
 	AR_FuncCBs callbacks;  // aggregation callbacks
 } AR_FuncDesc;
@@ -67,14 +68,15 @@ void AR_FinalizeFuncsRepo(void) ;
 // create a new function descriptor
 AR_FuncDesc *AR_FuncDescNew
 (
-	const char *name,  // function name
-	AR_Func func,      // pointer to function
-	uint min_argc,     // minimum number of arguments
-	uint max_argc,     // maximum number of arguments
-	SIType *types,     // acceptable types
-	SIType ret_type,   // return type
-	bool internal,     // is function internal
-	bool reducible     // is function reducible
+	const char *name,   // function name
+	AR_Func func,       // pointer to function
+	uint min_argc,      // minimum number of arguments
+	uint max_argc,      // maximum number of arguments
+	SIType *types,      // acceptable types
+	SIType ret_type,    // return type
+	bool internal,      // is function internal
+	bool reducible,     // is function reducible
+  bool deterministic  // true if return value is predictable
 );
 
 // register function to repository
@@ -138,4 +140,3 @@ void AR_FuncFree
 (
 	AR_FuncDesc *f
 );
-

@@ -4,12 +4,13 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "op_project.h"
 #include "RG.h"
-#include "op_sort.h"
+#include "op_project.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
 #include "../../util/rmalloc.h"
+#include "../../../deps/rax/rax.h"
+#include "../../util/rax_extensions.h"
 
 // forward declarations
 static Record ProjectConsume(OpBase *opBase);
@@ -17,27 +18,28 @@ static OpResult ProjectReset(OpBase *opBase);
 static OpBase *ProjectClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void ProjectFree(OpBase *opBase);
 
+// create a new projection operation
 OpBase *NewProjectOp
 (
-	const ExecutionPlan *plan,
-	AR_ExpNode **exps
+	const ExecutionPlan *plan,  // op's plan
+	AR_ExpNode **exps           // projection expression
 ) {
-	OpProject *op = rm_calloc (1, sizeof(OpProject)) ;
+	OpProject *op = rm_calloc (1, sizeof (OpProject)) ;
 
-	op->exps           = exps;
-	op->exp_count      = array_len(exps);
-	op->record_offsets = array_new(uint, op->exp_count);
+	op->exps           = exps ;
+	op->exp_count      = array_len (exps) ;
+	op->record_offsets = array_new (uint, op->exp_count) ;
 
 	// set our Op operations
-	OpBase_Init((OpBase *)op, OPType_PROJECT, "Project", NULL, ProjectConsume,
-				ProjectReset, NULL, ProjectClone, ProjectFree, false, plan);
+	OpBase_Init ((OpBase *)op, OPType_PROJECT, "Project", NULL, ProjectConsume,
+				ProjectReset, NULL, ProjectClone, ProjectFree, false, plan) ;
 
 	for(uint i = 0; i < op->exp_count; i ++) {
 		// the projected record will associate values with their resolved name
 		// to ensure that space is allocated for each entry
-		int record_idx = OpBase_Modifies((OpBase *)op,
-				op->exps[i]->resolved_name);
-		array_append(op->record_offsets, record_idx);
+		int record_idx = OpBase_Modifies ((OpBase *)op,
+				op->exps[i]->resolved_name) ;
+		array_append (op->record_offsets, record_idx) ;
 	}
 
 	return (OpBase *)op;
@@ -118,7 +120,7 @@ static OpBase *ProjectClone
 	OpProject *op = (OpProject *)opBase;
 	AR_ExpNode **exps;
 	array_clone_with_cb(exps, op->exps, AR_EXP_Clone);
-	return NewProjectOp(plan, exps);
+	return NewProjectOp (plan, exps) ;
 }
 
 void ProjectBindToPlan

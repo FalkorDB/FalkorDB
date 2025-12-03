@@ -48,6 +48,8 @@ static void _AR_EXP_ResolveVariables(AR_ExpNode *root, const Record r);
 // Clear an op node internals, without freeing the node allocation itself.
 static void _AR_EXP_FreeOpInternals(AR_ExpNode *op_node);
 
+static void _AR_EXP_FreeInternals (AR_ExpNode *node) ;
+
 inline bool AR_EXP_IsConstant(const AR_ExpNode *exp) {
 	return exp->type == AR_EXP_OPERAND && exp->operand.type == AR_EXP_CONSTANT;
 }
@@ -84,6 +86,15 @@ bool AR_EXP_IsAttribute(const AR_ExpNode *exp, char **attr) {
 	}
 
 	return true;
+}
+
+// returns true if `exp` is an aggregation
+bool AR_EXP_IsAggregation
+(
+	const AR_ExpNode *exp  // expression to inspect
+) {
+	ASSERT (exp != NULL) ;
+	return AGGREGATION_NODE (exp) ;
 }
 
 bool AR_EXP_PerformsDistinct(AR_ExpNode *exp) {
@@ -137,9 +148,9 @@ static AR_ExpNode *_AR_EXP_CloneOperand
 static AR_ExpNode *_AR_EXP_NewOpNode(uint child_count) {
 	AR_ExpNode *node = rm_calloc(1, sizeof(AR_ExpNode));
 
-	node->type            =  AR_EXP_OP;
-	node->op.children     =  rm_malloc(child_count * sizeof(AR_ExpNode *));
-	node->op.child_count  =  child_count;
+	node->type           = AR_EXP_OP;
+	node->op.children    = rm_calloc (child_count, sizeof (AR_ExpNode *)) ;
+	node->op.child_count = child_count;
 
 	return node;
 }
@@ -230,7 +241,12 @@ AR_ExpNode *AR_EXP_NewOpNode
 		node->op.private_data = func->callbacks.private_data () ;
 	}
 
-	return node ;
+	// mark query as non deterministic if function is non deterministic
+	if (unlikely (!func->deterministic)) {
+		QueryCtx_SetNonDeterministic () ;
+	}
+
+	return node;
 }
 
 static inline AR_ExpNode *_AR_EXP_InitializeOperand(AR_OperandNodeType type) {
@@ -783,6 +799,27 @@ SIValue AR_EXP_FinalizeAggregations
 	}
 }
 
+// set the ith child of parent
+// asserts if idx is out of bounds
+// returns previous child at `idx` position
+AR_ExpNode *AR_EXP_setChild
+(
+	AR_ExpNode *parent,  // parent node
+	AR_ExpNode *child,   // child to add
+	uint idx             // child index
+) {
+	ASSERT (parent       != NULL) ;
+	ASSERT (child        != NULL) ;
+	ASSERT (child        != parent) ;
+	ASSERT (parent->type == AR_EXP_OP) ;
+	ASSERT (idx < parent->op.child_count) ;
+
+	AR_ExpNode *prev_child = parent->op.children[idx] ;
+	parent->op.children[idx] = child ;
+
+	return prev_child ;
+}
+
 // get the ith child of root
 // in case root isn't a parent or idx > number of children NULL is returned
 AR_ExpNode *AR_EXP_getChild
@@ -801,11 +838,15 @@ AR_ExpNode *AR_EXP_getChild
 	return NULL;
 }
 
+// traverse an expression tree and add all entity aliases to a rax
 void AR_EXP_CollectEntities
 (
-	AR_ExpNode *root,
-	rax *aliases
+	const AR_ExpNode *root,  // expression root node
+	rax *aliases             // collected aliases
 ) {
+	ASSERT (root    != NULL) ;
+	ASSERT (aliases != NULL) ;
+
 	if(AR_EXP_IsOperation(root)) {
 		for(int i = 0; i < root->op.child_count; i++) {
 			AR_EXP_CollectEntities(root->op.children[i], aliases);
@@ -866,17 +907,151 @@ void AR_EXP_CollectAttributes
 	}
 }
 
-bool AR_EXP_ContainsAggregation(AR_ExpNode *root) {
-	if(AGGREGATION_NODE(root)) return true;
+// collect each variable operand node expands from root
+AR_ExpNode **AR_EXP_CollectVariableOperands
+(
+	AR_ExpNode *root  // expression root
+) {
+	ASSERT (root != NULL) ;
+	uint i = 0 ;
+	AR_ExpNode **nodes = array_new (AR_ExpNode*, 1) ;
 
-	if(AR_EXP_IsOperation(root)) {
-		for(int i = 0; i < root->op.child_count; i++) {
-			AR_ExpNode *child = root->op.children[i];
-			if(AR_EXP_ContainsAggregation(child)) return true;
+	array_append (nodes, root) ;
+	while (i < array_len(nodes)) {
+		AR_ExpNode *node = nodes[i] ;
+
+		switch (node->type) {
+			case AR_EXP_OPERAND:
+				switch (node->operand.type) {
+					case AR_EXP_PARAM:
+					case AR_EXP_CONSTANT:
+					case AR_EXP_BORROW_RECORD:
+						array_del_fast (nodes, i) ;
+						break ;
+
+					case AR_EXP_VARIADIC:
+						i++ ;
+						break;
+
+					default:
+						ASSERT (false) ;
+						break ;
+				}
+				break;
+
+			case AR_EXP_OP:
+				for (uint j = 0; j < node->op.child_count; j++) {
+					AR_ExpNode *child = node->op.children[j] ;
+
+					if (AR_EXP_IsConstant (child) ||
+						AR_EXP_IsParameter (child) ) {
+						continue ;
+					}
+
+					array_append (nodes, child) ;
+				}
+
+				array_del_fast (nodes, i) ;
+				break;
+
+			default:
+				ASSERT(false);
+				break;
 		}
 	}
 
-	return false;
+	return nodes ;
+}
+
+AR_ExpNode **AR_EXP_CollectFunctions
+(
+	AR_ExpNode *root
+) {
+	ASSERT (root != NULL) ;
+
+	AR_ExpNode **funcs = array_new (AR_ExpNode*, 0) ;
+	AR_ExpNode **nodes = array_new (AR_ExpNode*, 1) ;
+
+	array_append (nodes, root) ;
+
+	while (array_len (nodes) > 0) {
+		AR_ExpNode *node = array_pop (nodes) ;
+
+		if (node->type == AR_EXP_OP) {
+			array_append (funcs, node) ;
+
+			for (int i = 0; i < NODE_CHILD_COUNT (node); i++) {
+				AR_ExpNode *child = NODE_CHILD (node, i) ;
+				if (child->type == AR_EXP_OP) {
+					array_append (nodes, child) ;
+				}
+			}
+		}
+	}
+
+	array_free (nodes) ;
+
+	return funcs ;
+}
+
+// collect every aggregation node within expression tree
+// returns: dynamically allocated array of AR_ExpNode pointers caller must free
+// with array_free()
+AR_ExpNode **AR_EXP_CollectAggregations
+(
+	AR_ExpNode *root  // expression root node
+) {
+	ASSERT (root != NULL) ;
+
+	AR_ExpNode **nodes        = array_new (AR_ExpNode*, 1) ;
+	AR_ExpNode **aggregations = array_new (AR_ExpNode*, 1) ;
+
+	array_append (nodes, root) ;
+
+	while (array_len (nodes) > 0) {
+		AR_ExpNode *node = array_pop (nodes) ;
+
+		if (AGGREGATION_NODE (node)) {
+			// found an aggregation node, as aggregation functions can not be
+			// nested, we can simply continue
+			array_append (aggregations, node) ;
+			continue ;
+		}
+
+		// inspect only operation nodes
+		if (node->type == AR_EXP_OP) {
+			for (uint i = 0; i < NODE_CHILD_COUNT (node); i++) {
+				AR_ExpNode *child = NODE_CHILD (node, i) ;
+				if (child->type == AR_EXP_OP) {
+					array_append (nodes, child) ;
+				}
+			}
+		}
+	}
+
+	array_free (nodes) ;
+
+	return aggregations ;
+}
+
+bool AR_EXP_ContainsAggregation
+(
+	const AR_ExpNode *root
+) {
+	if (AGGREGATION_NODE (root)) {
+		return true;
+	}
+
+	if (AR_EXP_IsOperation (root)) {
+		for (int i = 0; i < root->op.child_count; i++) {
+			AR_ExpNode *child = root->op.children[i] ;
+			if (AR_EXP_ContainsAggregation (child)) {
+				return true ;
+			}
+		}
+	}
+
+	return false ;
 }
 
 bool AR_EXP_ContainsFunc(const AR_ExpNode *root, const char *func) {
@@ -1033,10 +1208,10 @@ inline const char *AR_EXP_GetFuncName(const AR_ExpNode *exp) {
 
 AR_ExpNode *AR_EXP_Clone
 (
-	AR_ExpNode *exp
+	const AR_ExpNode *exp
 ) {
-	if (unlikely (exp == NULL)) {
-		return NULL;
+	if (exp == NULL) {
+		return NULL ;
 	}
 
 	AR_ExpNode *clone = NULL;
@@ -1058,6 +1233,29 @@ AR_ExpNode *AR_EXP_Clone
 	clone->resolved_name = exp->resolved_name ;
 
 	return clone ;
+}
+
+// copies the content of `src` into `dest`
+void AR_EXP_Overwrite
+(
+	AR_ExpNode *dest,      // node whose content will be replaced
+	const AR_ExpNode *src  // node to overwrite with
+) {
+	ASSERT (src  != NULL) ;
+	ASSERT (dest != NULL) ;
+
+	// free any dynamically allocated internals within dest
+	_AR_EXP_FreeInternals (dest) ;
+
+	// create a deep copy of src
+	AR_ExpNode *clone = AR_EXP_Clone (src) ;
+
+	// copy the cloned content into dest's memory location
+	*dest = *clone ;
+
+	// free the clone's outer shell without freeing its internals
+	// (since those internals now belong to dest)
+	rm_free (clone) ;
 }
 
 static inline void _AR_EXP_FreeOpInternals
@@ -1082,16 +1280,22 @@ static inline void _AR_EXP_FreeOpInternals
 	rm_free(op_node->op.children);
 }
 
+static void _AR_EXP_FreeInternals
+(
+	AR_ExpNode *node
+) {
+	if (AR_EXP_IsOperation (node)) {
+		_AR_EXP_FreeOpInternals (node) ;
+	} else if (AR_EXP_IsConstant (node)) {
+		SIValue_Free (node->operand.constant) ;
+	}
+}
+
 inline void AR_EXP_Free
 (
 	AR_ExpNode *root
 ) {
-	if(AR_EXP_IsOperation(root)) {
-		_AR_EXP_FreeOpInternals(root);
-	} else if(AR_EXP_IsConstant(root)) {
-		SIValue_Free(root->operand.constant);
-	}
-
-	rm_free(root);
+	_AR_EXP_FreeInternals (root) ;
+	rm_free (root) ;
 }
 

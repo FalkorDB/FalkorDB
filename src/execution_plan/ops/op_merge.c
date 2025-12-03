@@ -404,6 +404,7 @@ static Record MergeConsume
 		// reset match stream, required as we've commited data to the graph
 		OpBase_PropagateReset(op->match_stream);
 		_processPostponedRecords(op, match_count, create_count);
+		OpBase_PropagateReset(op->match_stream);
 	}
 
 	//--------------------------------------------------------------------------

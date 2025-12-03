@@ -23,17 +23,10 @@ void Register_PlaceholderFuncs() {
 	SIType ret_type ;
 	AR_FuncDesc *func_desc ;
 
-	types = array_new (SIType, 0) ;
-	ret_type = T_NULL ;
-	func_desc = AR_FuncDescNew ("path_filter", AR_NOP, 0, 0, types, ret_type,
-			true, false) ;
-	AR_FuncRegister (func_desc) ;
-
-	// NOP func
-	types = array_new (SIType, 0) ;
-	ret_type = T_NULL ;
-	func_desc = AR_FuncDescNew ("nop", AR_NOP, 0, 0, types, ret_type, true,
-			false) ;
-	AR_FuncRegister (func_desc) ;
+	types = array_new(SIType, 0);
+	ret_type = T_NULL;
+	func_desc = AR_FuncDescNew("path_filter", AR_PATH_FILTER, 0, 0, types,
+			ret_type, true, false, true);
+	AR_RegFunc(func_desc);
 }
 

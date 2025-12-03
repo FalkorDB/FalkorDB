@@ -75,7 +75,7 @@ jobs:
       - name: Safe dir
         run: git config --global --add safe.directory '*'
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           set-safe-directory: '*'
           submodules: recursive
@@ -138,7 +138,7 @@ jobs:
           python3 run_benchmarks.py group_${{ matrix.benchmark_group }}
 
       - name: Upload results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ github.head_ref || github.ref_name }}-benchmark-group_${{ matrix.benchmark_group }}-results
           path: tests/benchmarks/*-results.json
@@ -151,7 +151,7 @@ jobs:
         benchmark_group: [ a, b ]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/cleanup-runner
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
@@ -165,13 +165,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           # change this so it uses a pattern to download all group_* artifacts
           pattern: ${{ github.head_ref || github.ref_name }}-benchmark-group_*-results
           merge-multiple: true
       - name: Upload merged results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ github.head_ref || github.ref_name }}-benchmark-results
           path: ./*-results.json
@@ -182,14 +182,14 @@ jobs:
     if: ${{ github.event_name == 'pull_request' }} # No need to run this job for branches and tags
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Create paths
         run: |
           mkdir -p tests/benchmarks/compare/${{ github.head_ref }}
           mkdir -p tests/benchmarks/compare/master
 
       - name: Download artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: ${{ github.head_ref }}-benchmark-results
           path: tests/benchmarks/compare/${{ github.head_ref }}

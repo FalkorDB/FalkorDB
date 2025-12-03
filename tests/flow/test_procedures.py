@@ -362,6 +362,7 @@ class testProcedures(FlowTestsBase):
                            ["READ",  "db.idx.vector.queryRelationships"],
                            ["READ",  "db.indexes"],
                            ["READ",  "db.labels"],
+                           ["READ", "db.meta.stats"],
                            ["READ",  "db.propertyKeys"],
                            ["READ",  "db.relationshipTypes"],
                            ["READ",  "dbms.functions"],
