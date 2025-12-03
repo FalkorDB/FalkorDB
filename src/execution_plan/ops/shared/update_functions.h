@@ -11,10 +11,10 @@
 
 // context representing a single update to perform on an entity
 typedef struct {
-	GraphEntity *ge;            // entity to be updated
-	AttributeSet attributes;    // attributes to update
-	const char **add_labels;    // labels to add to the node
-	const char **remove_labels; // labels to remove from the node
+	GraphEntity *ge;             // entity to be updated
+	AttributeSet attributes;     // attributes to update
+	const char **add_labels;     // labels to add to the node
+	const char **remove_labels;  // labels to remove from the node
 } PendingUpdateCtx;
 
 // commit all updates described in the array of pending updates

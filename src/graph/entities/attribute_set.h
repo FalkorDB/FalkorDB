@@ -6,8 +6,8 @@
 
 #pragma once
 
-#include "RG.h"
 #include "../../value.h"
+#include "../../redismodule.h"
 
 // indicates a none existing attribute ID
 #define ATTRIBUTE_ID_NONE USHRT_MAX
@@ -15,13 +15,11 @@
 // indicates all attributes for SET clauses that replace a property map
 #define ATTRIBUTE_ID_ALL USHRT_MAX - 1
 
-// mark attribute-set as read-only
-#define ATTRIBUTE_SET_MARK_READONLY(set) ((intptr_t)SET_MSB((intptr_t)(set)))
+typedef uint16_t AttributeID;
 
-// check if attribute-set is read-only
-#define ATTRIBUTE_SET_IS_READONLY(set) ((intptr_t)(set) & MSB_MASK)
-
-typedef unsigned short AttributeID;
+// forward-declare the struct, without defining it
+typedef struct _AttributeSet _AttributeSet;
+typedef _AttributeSet* AttributeSet;
 
 // type of change performed on the attribute-set
 typedef enum {
@@ -31,105 +29,102 @@ typedef enum {
 	CT_DEL      // attribute been deleted
 } AttributeSetChangeType;
 
-typedef struct {
-	AttributeID id;  // attribute identifier
-	SIValue value;   // attribute value
-} Attribute;
-
-typedef struct {
-	uint16_t attr_count;     // number of attributes
-	Attribute attributes[];  // key value pair of attributes
-} _AttributeSet;
-
-typedef _AttributeSet* AttributeSet;
-
 // returns number of attributes within the set
 uint16_t AttributeSet_Count
 (
-	const AttributeSet set  // set to query
+	const AttributeSet set  // attribute-set
+);
+
+// checks if attribute-set contains attribute
+bool AttributeSet_Contains
+(
+	const AttributeSet set,  // attribute-set
+	AttributeID id,          // attribute id to lookup
+	uint16_t *idx            // [optional][output] attribute index
+);
+
+// returns the ith attribute ID
+AttributeID AttributeSet_GetKey
+(
+	const AttributeSet set,  // attribute-set
+	int16_t i                // i
 );
 
 // retrieves a value from set
-// NOTE: if the key does not exist
-//       we return the special constant value ATTRIBUTE_NOTFOUND
-SIValue *AttributeSet_Get
+// if attr_id isn't in the set returns false
+bool AttributeSet_Get
 (
 	const AttributeSet set,  // set to retieve attribute from
-	AttributeID attr_id      // attribute identifier
+	AttributeID attr_id,     // attribute id
+	SIValue *v               // [output] value
 );
 
-// retrieves a reference to value from set by index
-SIValue *AttributeSet_GetIdxRef
+// retrieves the ith attribute from attribute-set
+void AttributeSet_GetIdx
 (
-	const AttributeSet set,  // set to retieve attribute from
-	uint16_t i,              // index of the property
-	AttributeID *attr_id     // attribute identifier
+	const AttributeSet set,  // attribute-set to retieve attribute from
+	uint16_t i,              // index of attribute
+	AttributeID *attr_id,    // [output] attribute ID
+	SIValue *v               // [output] value
 );
 
-// retrieves a value from set by index
-SIValue AttributeSet_GetIdx
-(
-	const AttributeSet set,  // set to retieve attribute from
-	uint16_t i,              // index of the property
-	AttributeID *attr_id     // attribute identifier
-);
-
-// adds an attribute to the set without cloning the SIValue
-void AttributeSet_AddNoClone
-(
-	AttributeSet *set,  // set to update
-	AttributeID *ids,   // identifiers
-	SIValue *values,    // values
-	uint16_t n,         // number of values to add
-	bool allowNull		// accept NULLs
-);
-
-// adds an attribute to the set (clones the value)
+// adds new attributes to the attribute-set
+// all attributes MUST NOT be in the set
 void AttributeSet_Add
 (
-	AttributeSet *set,     // set to update
-	AttributeID attr_id,   // attribute identifier
-	SIValue value          // attribute value
+	AttributeSet *set,  // attribute-set to update
+	AttributeID *ids,   // attribute ids
+	SIValue *values,    // attribute values
+	uint16_t n,         // number of attributes
+	bool clone          // clone values
 );
 
 // add, remove or update an attribute
-// this function allows NULL value to be added to the set
 // returns the type of change performed
-AttributeSetChangeType AttributeSet_Set_Allow_Null
+void AttributeSet_Update
 (
-	AttributeSet *set,     // set to update
-	AttributeID attr_id,   // attribute identifier
-	SIValue value          // attribute value
+	AttributeSetChangeType *change,  // [output] changes
+	AttributeSet *set,               // set to update
+	AttributeID *ids,                // attribute identifier
+	SIValue *vals,                   // new value
+	uint16_t n,                      // number of attributes
+	bool clone                       // clone value
 );
 
-// updates existing attribute (without cloning)
-// return true if attribute been updated
-bool AttributeSet_UpdateNoClone
+// removes an attribute from set
+// returns true if attribute was removed false otherwise
+bool AttributeSet_Remove
 (
-	AttributeSet *set,     // set to update
-	AttributeID attr_id,   // attribute identifier
-	SIValue value          // new value
+	AttributeSet *set,   // attribute-set
+	AttributeID attr_id  // attribute ID to remove
 );
 
-// updates existing attribute
-// return true if attribute been updated
-bool AttributeSet_Update
+// clones attribute-set
+AttributeSet AttributeSet_Clone
 (
-	AttributeSet *set,     // set to update
-	AttributeID attr_id,   // attribute identifier
-	SIValue value          // new value
+	const AttributeSet set  // attribute-set to clone
 );
 
-// clones attribute set without si values
+// shallow clones attribute-set
 AttributeSet AttributeSet_ShallowClone
 (
 	const AttributeSet set  // set to clone
 );
 
-// persists all attributes within given set
-void AttributeSet_PersistValues
+// transfer attribute ownership from `src` set to `dst`
+// if x is in src but not in dst, x ownership remains in src
+// if x is in dst but not in src, x ownership remains in dst
+// if x is in both, x ownership is transfered to dst
+void AttributeSet_TransferOwnership
 (
-	const AttributeSet set  // set to persist
+	AttributeSet src,  // set losing ownership
+	AttributeSet dst   // set receiving ownership
+);
+
+// compute hash for attribute-set
+XXH64_hash_t AttributeSet_HashCode
+(
+	const AttributeSet set  // attribute-set to compute hash of
 );
 
 // get attributeset's memory usage
@@ -138,7 +133,16 @@ size_t AttributeSet_memoryUsage
 	const AttributeSet set  // set to compute memory consumption of
 );
 
-// free attribute set
+// defrag attribute-set
+// present each heap allocated attribute to the allocator in the hope
+// it will be able reduce fragmentation by relocating the memory
+void AttributeSet_Defrag
+(
+	AttributeSet set,          // attribute-set
+	RedisModuleDefragCtx *ctx  // defrag context
+);
+
+// free attribute-set
 void AttributeSet_Free
 (
 	AttributeSet *set  // set to be freed

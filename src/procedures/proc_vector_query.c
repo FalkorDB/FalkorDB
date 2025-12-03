@@ -120,39 +120,41 @@ static SIValue *Proc_NodeStep
 (
 	ProcedureCtx *ctx
 ) {
-	VectorKNNCtx *pdata = (VectorKNNCtx *)ctx->privateData;
+	VectorKNNCtx *pdata = (VectorKNNCtx *)ctx->privateData ;
 
-	ASSERT(pdata != NULL);
+	ASSERT (pdata != NULL) ;
 
 	// try to get a result out of the iterator
 	// NULL is returned if iterator id depleted
-	size_t len = 0;
-	const NodeID *id = (NodeID*)RediSearch_ResultsIteratorNext(pdata->iter,
-			pdata->idx, &len);
+	size_t len = 0 ;
+	const NodeID *id = (NodeID*)RediSearch_ResultsIteratorNext (pdata->iter,
+			pdata->idx, &len) ;
 
 	// depleted
-	if(!id) {
-		return NULL;
+	if (!id) {
+		return NULL ;
 	}
 
-	Node *n  = &pdata->n;
-	bool res = Graph_GetNode(pdata->g, *(NodeID*)id, n);
-	ASSERT(res == true);
+	Node *n  = &pdata->n ;
+	bool res = Graph_GetNode (pdata->g, *(NodeID*)id, n) ;
+	ASSERT (res == true) ;
 
 	// yield graph entity
-	if(pdata->yield_entity) {
-		*pdata->yield_entity = SI_Node(n);
+	if (pdata->yield_entity) {
+		*pdata->yield_entity = SI_Node (n) ;
 	}
 
-	if(pdata->yield_score) {
-		SIValue *v = GraphEntity_GetProperty((GraphEntity*)n, pdata->attr_id);
-		ASSERT(v != ATTRIBUTE_NOTFOUND);
+	if (pdata->yield_score) {
+		SIValue v ;
+		bool found =
+			GraphEntity_GetProperty((GraphEntity*)n, pdata->attr_id, &v);
+		ASSERT (found) ;
 
-		SIValue distance = SI_DoubleVal(pdata->distance_fp(pdata->q, *v));
+		SIValue distance = SI_DoubleVal(pdata->distance_fp(pdata->q, v));
 		*pdata->yield_score = distance;
 	}
 
-	return pdata->output;
+	return pdata->output ;
 }
 
 // edge iterator step function
@@ -189,14 +191,16 @@ static SIValue *Proc_EdgeStep
 	}
 
 	if(pdata->yield_score) {
-		SIValue *v = GraphEntity_GetProperty((GraphEntity*)e, pdata->attr_id);
-		ASSERT(v != ATTRIBUTE_NOTFOUND);
+		SIValue v ;
+		bool found =
+			GraphEntity_GetProperty ((GraphEntity*)e, pdata->attr_id, &v) ;
+		ASSERT (found) ;
 
-		SIValue distance = SI_DoubleVal(pdata->distance_fp(pdata->q, *v));
+		SIValue distance = SI_DoubleVal(pdata->distance_fp(pdata->q, v));
 		*pdata->yield_score = distance;
 	}
 
-	return pdata->output;
+	return pdata->output ;
 }
 
 // procedure invocation

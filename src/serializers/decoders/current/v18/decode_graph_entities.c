@@ -150,7 +150,7 @@ static void _RdbLoadEntity
 		vals[i] = _RdbLoadSIValue(rdb);
 	}
 
-	AttributeSet_AddNoClone(e->attributes, ids, vals, n, false);
+	AttributeSet_Add (e->attributes, ids, vals, n, false) ;
 }
 
 // decode nodes

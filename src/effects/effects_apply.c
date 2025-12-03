@@ -59,7 +59,7 @@ static AttributeSet ReadAttributeSet
 	}
 
 	AttributeSet attr_set = NULL;
-	AttributeSet_AddNoClone(&attr_set, ids, values, attr_count, false);
+	AttributeSet_Add (&attr_set, ids, values, attr_count, false) ;
 
 	return attr_set;
 }

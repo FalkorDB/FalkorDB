@@ -419,12 +419,17 @@ static inline SIValue _get_value_or_default
 	AttributeID id,
 	SIValue default_value
 ) {
-	SIValue *v = GraphEntity_GetProperty(ge, id);
-	if(v == ATTRIBUTE_NOTFOUND) return default_value;
+	SIValue v ;
 
-	if(SI_TYPE(*v) & SI_NUMERIC) return *v;
+	if (!GraphEntity_GetProperty (ge, id, &v)) {
+		return default_value ;
+	}
 
-	return default_value;
+	if (SI_TYPE(v) & SI_NUMERIC) {
+		return v ;
+	}
+
+	return default_value ;
 }
 
 // use DFS to find all paths from src tracking cost and weight

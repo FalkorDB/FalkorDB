@@ -70,73 +70,6 @@ static void _save_stage
 	RedisModule_DefragCursorSet (ctx, raw) ;
 }
 
-static void defrag_value
-(
-	RedisModuleDefragCtx *ctx,
-	SIValue *v
-) {
-	SIType t = SI_TYPE (*v) ;
-
-	// skip non-heap values quickly
-	if (!SI_HEAP_ALLOCATED (*v)) {
-		return ;
-	}
-
-	void *p = NULL ;
-	void **ref_p = NULL ;
-
-	switch (t) {
-		case T_ARRAY:
-			defrag_array (ctx, v) ;
-			return ;
-
-		case T_VECTOR_F32:
-			p = v->ptrval ;
-			ref_p = &v->ptrval ;
-			break ;
-
-		case T_INTERN_STRING:
-			// do not defrag interned strings, as these are managed
-			// by a string pool
-			return ;
-
-		case T_STRING:
-			p     = v->stringval ;
-			ref_p = (void**)&v->stringval ;
-			break ;
-
-		default :
-			RedisModule_Log (NULL, "notice", "Unexpected defrag value type: %s",
-					SIType_ToString (t)) ;
-			return ;
-	}
-
-	ASSERT (p     != NULL) ;
-	ASSERT (ref_p != NULL) ;
-
-	void *moved = RedisModule_DefragAlloc (ctx, p) ;
-	if (moved != NULL) {
-		*ref_p = moved ;
-	}
-}
-
-static void defrag_array
-(
-	RedisModuleDefragCtx *ctx,
-	SIValue *arr
-) {
-	SIValue _arr = *arr ;
-	if (!SIArray_ContainsType (_arr, SI_HEAP)) {
-		return ;
-	}
-
-	u_int32_t l = SIArray_Length (_arr) ;
-	for (u_int32_t i = 0; i < l; i++) {
-		SIValue *v = SIArray_GetRef (_arr, i) ;
-		defrag_value (ctx, v) ;
-	}
-}
-
 // defrag an AttributeSet
 // ensure any heap pointers are moved using RedisModule_DefragAlloc
 static void defrag_attributeset
@@ -156,11 +89,7 @@ static void defrag_attributeset
 	}
 
 	// defrag attributes
-	for (uint16_t i = 0; i < n ; i++) {
-		// read current SIValue
-		SIValue *v = AttributeSet_GetIdxRef (_set, i, NULL) ;
-		defrag_value (ctx, v) ;
-	}
+	AttributeSet_Defrag (_set, ctx) ;
 }
 
 // defrag entities (both nodes and edges)

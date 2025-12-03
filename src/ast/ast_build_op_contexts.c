@@ -68,7 +68,9 @@ static void _ConvertUpdateItem
 
 	bool         set_labels    = false;
 	bool         remove_labels = false;
+	bool         remove_attr   = false;  // REMOVE n.v
 	UPDATE_MODE  update_mode   = UPDATE_MERGE;
+
 	//--------------------------------------------------------------------------
 	// determine the type of assignment
 	//--------------------------------------------------------------------------
@@ -129,6 +131,7 @@ static void _ConvertUpdateItem
 		remove_labels = true;
 	} else if(type == CYPHER_AST_REMOVE_PROPERTY) {
 		// MATCH (a) REMOVE a.v
+		remove_attr = true ;
 
 		// alias
 		ast_prop = cypher_ast_remove_property_get_property(update_item);
@@ -214,20 +217,44 @@ static void _ConvertUpdateItem
 
 		raxFree(labels);
 	} else {
-		if(update_mode == UPDATE_REPLACE) {
-			UpdateCtx_Clear(ctx);
+		if (update_mode == UPDATE_REPLACE) {
+			UpdateCtx_Clear (ctx) ;
 		}
+
 		// updated value
-		AR_ExpNode *exp;
-		if(ast_value != NULL) {
-			exp = AR_EXP_FromASTNode(ast_value);
+		AR_ExpNode *exp ;
+
+		if (ast_value != NULL) {
+			// remove redundant updates
+			// e.g. SET n.v = 1, n.v = 2
+			if (attribute != NULL) {
+				for (int i = 0; i < array_len (ctx->properties); i++) {
+					const char *updated_attr = ctx->properties[i].attr_name ;
+					if (updated_attr != NULL &&
+						strcmp (updated_attr, attribute) == 0) {
+						AR_EXP_Free (ctx->properties[i].exp) ;
+						array_del_fast (ctx->properties, i) ;
+						break ;
+					}
+				}
+			}
+
+			exp = AR_EXP_FromASTNode (ast_value) ;
 		} else {
+			ASSERT (remove_attr == true) ;
 			// remove an attribute e.g. REMOVE a.v
 			// this is done by performing a.v = NULL
-			exp = AR_EXP_NewConstOperandNode(SI_NullVal());
+			exp = AR_EXP_NewConstOperandNode (SI_NullVal ()) ;
 		}
-		PropertySetCtx update = { .attribute  = attribute, .exp = exp, .mode = update_mode };
-		array_append(ctx->properties, update);
+
+		PropertySetCtx update = {
+			.exp       = exp,
+			.mode      = update_mode,
+			.attr_id   = ATTRIBUTE_ID_NONE,
+			.attr_name = attribute
+		};
+
+		array_append (ctx->properties, update) ;
 	}
 }
 

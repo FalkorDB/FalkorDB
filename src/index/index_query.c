@@ -820,65 +820,72 @@ RSQNode *Index_BuildVectorQueryTree
 // construct a unique constraint query tree
 RSQNode *Index_BuildUniqueConstraintQuery
 (
-	const Index idx,       // index to query
-	const GraphEntity *e,  // entity being validated
-	AttributeID *attrs,    // constraint attributes
-	uint8_t n              // number of constraint attributes
+	const Index idx,           // index to query
+	const SIValue *attr_vals,  // entity attributes to query
+	AttributeID *attr_ids,     // constraint attribute ids
+	uint8_t n                  // number of constraint attributes
 ) {
+	ASSERT (n         > 0) ;
+	ASSERT (idx       != NULL) ;
+	ASSERT (attr_vals != NULL) ;
+	ASSERT (attr_ids  != NULL) ;
+
 	RSQNode *node;
 	RSQNode *nodes[n];
 	RSIndex *rsIdx = Index_RSIndex(idx);
-	AttributeSet attr_set = GraphEntity_GetAttributes(e);
 
 	//--------------------------------------------------------------------------
 	// construct query nodes
 	//--------------------------------------------------------------------------
 
 	for(uint8_t i = 0; i < n; i++) {
-		AttributeID attr_id = attrs[i];
-		const IndexField *f = Index_GetField(NULL, idx, attr_id);
+		AttributeID attr_id = attr_ids[i] ;
+		const IndexField *f = Index_GetField (NULL, idx, attr_id) ;
 
 		// field must exist and be of type INDEX_FLD_RANGE
-		ASSERT(f != NULL);
-		ASSERT(IndexField_GetType(f) & INDEX_FLD_RANGE);
+		ASSERT (f != NULL) ;
+		ASSERT (IndexField_GetType (f) & INDEX_FLD_RANGE) ;
 
 		// use internal range field name
-		const char *field = f->range_name;
+		const char *field = f->range_name ;
 
 		// get current attribute from entity
-		SIValue *v = AttributeSet_Get(attr_set, attr_id);
-		ASSERT(v != NULL);
+		SIValue v = attr_vals[i] ;
 
 		// create RediSearch query node according to entity attr type
-		SIType t = SI_TYPE(*v);
-		ASSERT(t & (T_STRING | SI_NUMERIC | T_BOOL));
+		SIType t = SI_TYPE (v) ;
+		ASSERT (t & (T_STRING | SI_NUMERIC | T_BOOL)) ;
 
-		if(t & T_STRING) {
-			node  = RediSearch_CreateTagNode(rsIdx, field);
-			RSQNode *child = RediSearch_CreateTagTokenNode(rsIdx, v->stringval);
-			RediSearch_QueryNodeAddChild(node, child);
+		if (t & T_STRING) {
+			node =
+				RediSearch_CreateTagNode (rsIdx, field) ;
+			RSQNode *child =
+				RediSearch_CreateTagTokenNode (rsIdx, v.stringval) ;
+
+			RediSearch_QueryNodeAddChild (node, child) ;
 		} else {
-			double d = SI_GET_NUMERIC((*v));
-			node = RediSearch_CreateNumericNode(rsIdx, field, d, d, true, true);
+			double d = SI_GET_NUMERIC (v) ;
+			node =
+				RediSearch_CreateNumericNode (rsIdx, field, d, d, true, true) ;
 		}
 
-		ASSERT(node != NULL);
-		nodes[i] = node;
+		ASSERT (node != NULL) ;
+		nodes[i] = node ;
 	}
 
 	//--------------------------------------------------------------------------
 	// cancat filters
 	//--------------------------------------------------------------------------
 
-	RSQNode *root = node;
-	if(n > 1) {
+	RSQNode *root = node ;
+	if (n > 1) {
 		// intersection query node
-		root = RediSearch_CreateIntersectNode(rsIdx, false);
-		for(uint8_t i = 0; i < n; i++) {
-			RediSearch_QueryNodeAddChild(root, nodes[i]);
+		root = RediSearch_CreateIntersectNode (rsIdx, false) ;
+		for (uint8_t i = 0; i < n; i++) {
+			RediSearch_QueryNodeAddChild (root, nodes[i]) ;
 		}
 	}
 
-	return root;
+	return root ;
 }
 

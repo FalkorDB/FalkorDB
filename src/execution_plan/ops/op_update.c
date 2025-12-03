@@ -90,14 +90,17 @@ static Record UpdateConsume
 	Record r;
 
 	// updates already performed
-	if(array_len(op->records) > 0) return _handoff(op);
+	if (array_len (op->records) > 0) {
+		return _handoff (op) ;
+	}
 
-	while((r = OpBase_Consume(child))) {
+	while ((r = OpBase_Consume (child))) {
 		// evaluate update expressions
-		raxSeek(&op->it, "^", NULL, 0);
-		while(raxNext(&op->it)) {
+		raxSeek (&op->it, "^", NULL, 0) ;
+		while (raxNext (&op->it)) {
 			EntityUpdateEvalCtx *ctx = op->it.data;
-			EvalEntityUpdates(op->gc, op->node_updates, op->edge_updates, r, ctx, true);
+			EvalEntityUpdates (op->gc, op->node_updates, op->edge_updates, r,
+					ctx, true) ;
 		}
 
 		array_append(op->records, r);

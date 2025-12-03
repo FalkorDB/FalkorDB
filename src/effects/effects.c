@@ -281,14 +281,18 @@ static void EffectsBuffer_WriteAttributeSet
 
 	for(ushort i = 0; i < attr_count; i++) {
 		// get current attribute name and value
-		AttributeID attr_id;
-		SIValue attr = AttributeSet_GetIdx(attrs, i, &attr_id);
+		SIValue attr ;
+		AttributeID attr_id ;
+		AttributeSet_GetIdx (attrs, i, &attr_id, &attr) ;
 
 		// write attribute ID
-		EffectsBuffer_WriteBytes(&attr_id, sizeof(AttributeID), buff);
+		EffectsBuffer_WriteBytes (&attr_id, sizeof (AttributeID), buff) ;
 
 		// write attribute value
-		EffectsBuffer_WriteSIValue(&attr, buff);
+		EffectsBuffer_WriteSIValue (&attr, buff) ;
+
+		// free attribute
+		SIValue_Free (attr) ;
 	}
 }
 

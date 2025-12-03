@@ -1243,8 +1243,6 @@ void SIValue_Free
 (
 	SIValue v
 ) {
-	StringPool pool;
-
 	if(v.allocation != M_SELF) {
 		return;
 	}
