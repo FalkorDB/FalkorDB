@@ -177,7 +177,7 @@ void test_attributeset_update() {
 	// update string attribute
 	attr_id = 0 ;
 	SIValue x = SI_DuplicateStringVal ("E4, D6") ;
-	AttributeSet_Update (NULL, &set, &attr_id, &x, 1, true) ;
+	AttributeSet_Update (NULL, &set, &attr_id, &x, 1, false) ;
 
 	AttributeSet_Get (set, 0, &v) ;
 	TEST_ASSERT (SIValue_Compare (v, values[0], NULL) != 0) ;
@@ -312,6 +312,11 @@ void test_attributeset_remove() {
 		}
 	}
 	TEST_ASSERT (set == NULL) ;
+
+	// free values
+	for (uint16_t i = 0; i < n; i++) {
+		SIValue_Free (values[i]) ;
+	}
 }
 
 void test_attributeset_shallowClone() {
@@ -348,6 +353,10 @@ void test_attributeset_shallowClone() {
 					 SI_ALLOCATION (&clone_v) == M_NONE) ;
 
 		TEST_ASSERT (v.ptrval == clone_v.ptrval) ;
+	}
+
+	for (uint16_t i = 0; i < n; i++) {
+		SIValue_Free (values[i]) ;
 	}
 
 	AttributeSet_Free (&set) ;
