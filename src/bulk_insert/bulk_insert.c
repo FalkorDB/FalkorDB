@@ -197,8 +197,10 @@ static SIValue _BulkInsert_ReadProperty
 			
 			// validate dimension to prevent integer overflow
 			// limit to 100K dimensions (400KB of data per vector)
+			// this check is always active, even in release builds
 			if (dim > 100000) {
-				ASSERT (false && "vector dimension too large") ;
+				// return NULL for invalid dimension
+				// this will be skipped during property assignment (line 269-271)
 				return SI_NullVal () ;
 			}
 			
