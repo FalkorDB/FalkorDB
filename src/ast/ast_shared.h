@@ -77,7 +77,7 @@ typedef struct {
 	PropertySetCtx *properties;  // properties to set
 } EntityUpdateEvalCtx;
 
-// Context describing a node in a CREATE or MERGE clause
+// context describing a relationship in a CREATE or MERGE clause
 typedef struct {
 	int src_idx;              // source node record index
 	int dest_idx;             // destination node record index
@@ -90,7 +90,7 @@ typedef struct {
 	PropertyMap *properties;  // edge properties set
 } EdgeCreateCtx;
 
-// context describing a relationship in a CREATE or MERGE clause
+// context describing a node in a CREATE or MERGE clause
 typedef struct {
 	int node_idx;             // node record index
 	int *labelsId;            // array of node labels id

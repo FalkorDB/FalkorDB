@@ -222,11 +222,11 @@ void test_attributeset_remove() {
 	SIValue d = SI_DoubleVal (859);
 	SIValue v = SI_Vectorf32 (12);
 
-	//Map_Add (&m, SI_DuplicateStringVal ("k0"), SI_DuplicateStringVal ("v")) ;
-	//Map_Add (&m, SI_DuplicateStringVal ("k1"), SI_LongVal (1)) ;
+	//Map_Add (&m, SI_ConstStringVal ("k0"), SI_ConstStringVal ("v")) ;
+	//Map_Add (&m, SI_ConstStringVal ("k1"), SI_LongVal (1)) ;
 
-	SIArray_Append (&a, SI_DuplicateStringVal ("A")) ;
-	SIArray_Append (&a, SI_DuplicateStringVal ("B")) ;
+	SIArray_Append (&a, SI_ConstStringVal ("A")) ;
+	SIArray_Append (&a, SI_ConstStringVal ("B")) ;
 	SIArray_Append (&a, SI_LongVal (-1)) ;
 	SIArray_Append (&a, SI_DoubleVal (-2)) ;
 
@@ -323,7 +323,7 @@ void test_attributeset_shallowClone() {
 	AttributeSet set = NULL ;
 
 	uint16_t n = 2 ;
-	SIValue str = SI_DuplicateStringVal ("abc") ;
+	SIValue str = SI_ConstStringVal ("abc") ;
 	SIValue num = SI_LongVal (23) ;
 
 	SIValue     values[2] = {str, num} ;
