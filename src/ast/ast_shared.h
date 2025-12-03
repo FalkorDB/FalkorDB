@@ -42,10 +42,14 @@ typedef enum {
 	OP_XNOR = 24
 } AST_Operator;
 
+// describe a set of attributes and their associated expressions
+// used in CREATE context to describe the new entity attributes
+// e.g.
+// CREATE (n {v: n.x * 2, x: $k})
 typedef struct {
-	const char **keys;
-	AttributeID **attr_ids; TODO: implement
-	struct AR_ExpNode **values;
+	const char **keys;           // properties
+	AttributeID *attr_ids;       // ids
+	struct AR_ExpNode **values;  // values
 } PropertyMap;
 
 // enum describing how a SET directive should treat pre-existing properties
@@ -75,15 +79,15 @@ typedef struct {
 
 // Context describing a node in a CREATE or MERGE clause
 typedef struct {
-	int src_idx;                // source node record index
-	int dest_idx;               // destination node record index
-	int edge_idx;               // edge record index
-	int reltypeId;              // edge relationship type id
-	const char *src;            // source node alias
-	const char *dest;           // destination node alias
-	const char *alias;          // edge alias
-	const char *relation;       // edge relationship type
-	PropertyMap *properties;    // edge properties set
+	int src_idx;              // source node record index
+	int dest_idx;             // destination node record index
+	int edge_idx;             // edge record index
+	int reltypeId;            // edge relationship type id
+	const char *src;          // source node alias
+	const char *dest;         // destination node alias
+	const char *alias;        // edge alias
+	const char *relation;     // edge relationship type
+	PropertyMap *properties;  // edge properties set
 } EdgeCreateCtx;
 
 // context describing a relationship in a CREATE or MERGE clause
@@ -97,8 +101,12 @@ typedef struct {
 
 AST_Operator AST_ConvertOperatorNode(const cypher_operator_t *op);
 
-// Convert a map of properties from the AST into a set of attribute ID keys and AR_ExpNode values.
-PropertyMap *PropertyMap_New(const cypher_astnode_t *props);
+// convert a map of properties from the AST into a set of attribute ID keys
+// and AR_ExpNode values
+PropertyMap *PropertyMap_New
+(
+	const cypher_astnode_t *props  // AST properties
+);
 
 // Clone NodeCreateCtx.
 NodeCreateCtx NodeCreateCtx_Clone(NodeCreateCtx ctx);
