@@ -195,6 +195,13 @@ static SIValue _BulkInsert_ReadProperty
 			uint32_t dim = *(uint32_t*)&data[*data_idx] ;
 			*data_idx += sizeof (uint32_t) ;
 			
+			// validate dimension to prevent integer overflow
+			// limit to 100K dimensions (400KB of data per vector)
+			if (dim > 100000) {
+				ASSERT (false && "vector dimension too large") ;
+				return SI_NullVal () ;
+			}
+			
 			// create vector
 			SIValue v = SIVectorf32_New (dim) ;
 			
