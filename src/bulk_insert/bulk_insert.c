@@ -15,6 +15,10 @@
 
 #include <string.h>
 
+// maximum vector dimension to prevent integer overflow
+// 100K dimensions = 400KB of data per vector
+#define MAX_VECTOR_DIMENSION 100000
+
 // the first byte of each property in the binary stream
 // is used to indicate the type of the subsequent SIValue
 typedef enum {
@@ -196,11 +200,10 @@ static SIValue _BulkInsert_ReadProperty
 			*data_idx += sizeof (uint32_t) ;
 			
 			// validate dimension to prevent integer overflow
-			// limit to 100K dimensions (400KB of data per vector)
 			// this check is always active, even in release builds
-			if (dim > 100000) {
+			if (dim > MAX_VECTOR_DIMENSION) {
 				// return NULL for invalid dimension
-				// this will be skipped during property assignment (line 269-271)
+				// null values are skipped during property assignment
 				return SI_NullVal () ;
 			}
 			
