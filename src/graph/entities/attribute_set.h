@@ -111,23 +111,14 @@ AttributeSet AttributeSet_ShallowClone
 	const AttributeSet set  // set to clone
 );
 
-// ensure that `set` owns all its attribute values
-// after this operation all attributes in `set` are owned by it
-// this function is currently called by the undolog rollback operation
-// restoring an entity former attribute-set
-void AttributeSet_EnsureOwnership
+// transfer attribute ownership from `src` set to `dst`
+// if x is in src but not in dst, x ownership remains in src
+// if x is in dst but not in src, x ownership remains in dst
+// if x is in both, x ownership is transfered to dst
+void AttributeSet_TransferOwnership
 (
-	AttributeSet set
-);
-
-// merge `src` into clone, producing a merged result
-// if x is in clone but not in src, no modification
-// if x is in src but not in clone
-// if x is in both clone and src,
-void AttributeSet_Merge
-(
-	AttributeSet src,   // source set
-	AttributeSet clone  // clone of set
+	AttributeSet src,  // set losing ownership
+	AttributeSet dst   // set receiving ownership
 );
 
 // compute hash for attribute-set

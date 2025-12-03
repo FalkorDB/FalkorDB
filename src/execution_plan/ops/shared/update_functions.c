@@ -69,7 +69,7 @@ void CommitUpdates
 		}
 
 		AttributeSet old_set = GraphEntity_GetAttributes (update->ge) ;
-		AttributeSet_Merge (old_set, update->attributes) ;
+		AttributeSet_TransferOwnership (old_set, update->attributes) ;
 
 		// update the attributes on the graph entity
 		GraphHub_UpdateEntityProperties(gc, update->ge, update->attributes,

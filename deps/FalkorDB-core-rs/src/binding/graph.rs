@@ -49,7 +49,7 @@ impl Node {
         unsafe {
             let old_attributes_handle = read_unaligned(self.attributes);
             let new_attributes_handle = read_unaligned(set);
-            AttributeSet_Merge (old_attributes_handle, new_attributes_handle) ;
+            AttributeSet_TransferOwnership (old_attributes_handle, new_attributes_handle) ;
             AttributeSet_Free(self.attributes);
             self.attributes.write(*set);
         }
@@ -75,7 +75,7 @@ impl Edge {
         unsafe {
             let old_attributes_handle = read_unaligned(self.attributes);
             let new_attributes_handle = read_unaligned(set);
-            AttributeSet_Merge (old_attributes_handle, new_attributes_handle) ;
+            AttributeSet_TransferOwnership(old_attributes_handle, new_attributes_handle) ;
             AttributeSet_Free(self.attributes);
             self.attributes.write(*set);
         }
@@ -184,7 +184,7 @@ extern "C" {
     );
 
     pub fn AttributeSet_Free(set: *mut AttributeSet);
-    pub fn AttributeSet_Merge(src:AttributeSet, clone:AttributeSet);
+    pub fn AttributeSet_TransferOwnership(src:AttributeSet, clone:AttributeSet);
 
     pub fn Config_Option_get(
         field: ConfigOptionField,

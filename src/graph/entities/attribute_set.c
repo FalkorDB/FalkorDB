@@ -840,58 +840,38 @@ AttributeSet AttributeSet_ShallowClone
 	return clone ;
 }
 
-// ensure that `set` owns all its attribute values
-// after this operation all attributes in `set` are owned by it
-// this function is currently called by the undolog rollback operation
-// restoring an entity former attribute-set
-void AttributeSet_EnsureOwnership
+// transfer attribute ownership from `src` set to `dst`
+// if x is in src but not in dst, x ownership remains in src
+// if x is in dst but not in src, x ownership remains in dst
+// if x is in both, x ownership is transfered to dst
+void AttributeSet_TransferOwnership
 (
-	AttributeSet set
+	AttributeSet src,  // set losing ownership
+	AttributeSet dst   // set receiving ownership
 ) {
-	if (unlikely (ATTRIBUTE_SET_EMPTY (set))) {
-		return ;
-	}
-
-	// remove shared flag from each attribute
-	uint16_t n = AttributeSet_Count (set) ;
-	for (uint16_t i = 0; i < n; i++) {
-		AttrValue_t *attr_val = _GetAttrVal (set, i) ;
-		AttrValue_ClearShared (attr_val) ;
-	}
-}
-
-// merge `src` into an existing clone, producing a merged result
-// if x is in clone but not in src, no modification
-// if x is in src but not in clone, x is freed
-// if x is in both clone and src, x is removed from src
-void AttributeSet_Merge
-(
-	AttributeSet src,   // source set
-	AttributeSet clone  // clone of set
-) {
-	// clone was created from an empty set
+	// src is empty, nothing to transfer
 	if (unlikely (ATTRIBUTE_SET_EMPTY (src))) {
 		return ;
 	}
 
-	// clone is empty
-	if (unlikely (ATTRIBUTE_SET_EMPTY (clone))) {
+	// dst is empty, nowhere to receive
+	if (unlikely (ATTRIBUTE_SET_EMPTY (dst))) {
 		return ;
 	}
 
 	uint16_t m = AttributeSet_Count (src) ;
-	uint16_t n = AttributeSet_Count (clone) ;
+	uint16_t n = AttributeSet_Count (dst) ;
 
 	for (uint16_t i = 0 ; i < n; i++) {
-		AttributeID attr_id   = _GetAttrID  (clone, i) ;
-		AttrValue_t *attr_val = _GetAttrVal (clone, i) ;
+		AttributeID attr_id   = _GetAttrID  (dst, i) ;
+		AttrValue_t *attr_val = _GetAttrVal (dst, i) ;
 
 		//----------------------------------------------------------------------
 		// shared attribute
 		//----------------------------------------------------------------------
 
 		if (AttrValue_Shared (attr_val)) {
-			// shared attributes are from now on owned by clone
+			// dst gains ownership
 			AttrValue_ClearShared (attr_val) ;
 
 			// mark attribute as shared in src
@@ -909,15 +889,23 @@ void AttributeSet_Merge
 				ASSERT (contains) ;
 			}
 
-			// protect from free
+			//------------------------------------------------------------------
+			// src lose ownership
+			//------------------------------------------------------------------
+
 			AttrValue_t *src_attr_val = _GetAttrVal (src, idx) ;
+
+			// expecting the same attribute
+			ASSERT (memcmp (attr_val, src_attr_val, sizeof (AttrValue_t)) == 0) ;
+
 			AttrValue_SetShared (src_attr_val) ;
 		}
 
+		// dst attribute is no longer shared
 		ASSERT (!AttrValue_Shared (attr_val)) ;
 
-		// attributes which are owned by clone should remain as such
-		// attributes which are unique to src should be freed
+		// attributes which are owned by dst should remain as such
+		// attributes which are unique to src will eventually be freed
 	}
 }
 
