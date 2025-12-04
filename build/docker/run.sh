@@ -1,11 +1,5 @@
 #!/bin/sh
 
-if [ "${BROWSER:-1}" -eq "1" ]; then
-    if [ -d "${FALKORDB_BROWSER_PATH}" ]; then
-        cd "${FALKORDB_BROWSER_PATH}" && HOSTNAME="0.0.0.0" node server.js &
-    fi
-fi
-
 # Create /var/lib/falkordb/data directory if it does not exist
 if [ ! -d "${FALKORDB_DATA_PATH}" ]; then
     mkdir "${FALKORDB_DATA_PATH}"
