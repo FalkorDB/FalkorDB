@@ -73,8 +73,8 @@ make upgrade-tests  # Run upgrade tests
 make fuzz-tests     # Run fuzz tester
   TIMEOUT=secs      # Timeout in `secs`
 
-make benchmark       # Run benchmarks
-make unit-benchmarks # Run C++ benchmarks
+make benchmark      # Run benchmarks
+make cpp-benchmarks # Run C++ benchmarks
 
 make coverage     # Perform coverage analysis (build & test)
 make cov-upload   # Upload coverage data to codecov.io
@@ -175,8 +175,8 @@ ifeq ($(UNIT_TESTS),1)
 CMAKE_DEFS += UNIT_TESTS:BOOL=on
 endif
 
-ifeq ($(UNIT_BENCHMARKS),1)
-CMAKE_DEFS += UNIT_BENCHMARKS:BOOL=on
+ifeq ($(CPP_BENCHMARKS),1)
+CMAKE_DEFS += CPP_BENCHMARKS:BOOL=on
 endif
 #----------------------------------------------------------------------------------------------
 
@@ -452,11 +452,11 @@ fuzz fuzz-tests: $(TARGET)
 benchmark: $(TARGET)
 	$(SHOW)cd tests/benchmarks && python3 -m venv venv && source venv/bin/activate && pip install -r benchmarks_requirements.txt && python3 run_benchmarks.py group_a && python3 run_benchmarks.py group_b
 
-unit-benchmarks:
+cpp-benchmarks:
 ifneq ($(BUILD),0)
-	$(SHOW)$(MAKE) build FORCE=1 UNIT_BENCHMARKS=1
+	$(SHOW)$(MAKE) build FORCE=1 CPP_BENCHMARKS=1
 endif
-	$(SHOW)BINROOT=$(BINROOT) ./tests/unit_benchmarks/benchmarks.sh
+	$(SHOW)BINROOT=$(BINROOT) ./tests/cpp_benchmarks/benchmarks.sh
 
 .PHONY: benchmark
 

@@ -1,4 +1,4 @@
-#include "tests/unit_benchmarks/create_random.h"
+#include "tests/cpp_benchmarks/create_random.h"
 
 void rg_setup(const benchmark::State &state) {
 	// Initialize GraphBLAS.

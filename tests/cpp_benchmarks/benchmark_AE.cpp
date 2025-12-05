@@ -1,4 +1,4 @@
-#include "tests/unit_benchmarks/create_random.h"
+#include "tests/cpp_benchmarks/create_random.h"
 
 static void _fake_graph_context() {
 	GraphContext *gc = (GraphContext *)calloc(1, sizeof(GraphContext));
@@ -22,7 +22,8 @@ static void _fake_graph_context() {
 	GraphContext_AddSchema(gc, "visit", SCHEMA_EDGE);
 	GraphContext_AddSchema(gc, "war", SCHEMA_EDGE);
 
-	ASSERT(QueryCtx_Init());
+	int res = QueryCtx_Init();
+	ASSERT(res);
 	QueryCtx_SetGraphCtx(gc);
 }
 
@@ -146,12 +147,12 @@ void BM_eval(benchmark::State &state, const char *expression) {
 
 void BM_eval_mul_chain(benchmark::State &state) {
 	Delta_Matrix C;
-	rax			 *matrices = raxNew();
-	Delta_Matrix F		   = NULL;
-	uint64_t	 n		   = 10000000;
-	uint64_t	 m		   = 16;
-	uint64_t	 seed	   = 870713428976ul;	
-	Delta_Matrix res	   = NULL;
+	rax          *matrices = raxNew();
+	Delta_Matrix F         = NULL;
+	uint64_t     n         = 10000000;
+	uint64_t     m         = 16;
+	uint64_t     seed      = 870713428976ul;
+	Delta_Matrix res       = NULL;
 
 	int    additions   = state.range(0);
 	int    deletions   = state.range(1);

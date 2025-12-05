@@ -9,16 +9,13 @@ extern "C" {
 	#include "LAGraph.h"
 	#include "LAGraphX.h"
 	#include "src/globals.h"
+	#include "src/query_ctx.h"
 	#include "util/simple_rand.h"
 	#include "src/graph/graphcontext.h"
 	#include "src/graph/tensor/tensor.h"
 	#include "src/configuration/config.h"
 	#include "src/graph/delta_matrix/delta_utils.h"
 	#include "src/arithmetic/algebraic_expression.h"
-
-	bool QueryCtx_Init(void) ;
-	void QueryCtx_Free(void) ;
-	void QueryCtx_SetGraphCtx (GraphContext *gc) ;
 }
 #undef restrict
 

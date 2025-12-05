@@ -9,15 +9,15 @@
 #include "../util/circular_buffer.h"
 
 // query statistics
-typedef struct QueryStats {
+typedef struct {
 	uint64_t received;          // query received timestamp
 	double wait_duration;       // waiting time
 	double execution_duration;  // executing time
 	double report_duration;     // reporting time
 	bool parameterized;         // uses parameters
 	bool utilized_cache;        // utilized cache
-	bool write;    		        // write query
-	bool timeout;    		    // timeout query
+	bool write;                 // write query
+	bool timeout;               // timeout query
 	char *query;                // query string
 } LoggedQuery;
 
@@ -37,8 +37,8 @@ void QueriesLog_AddQuery
 	double report_duration,     // reporting time
 	bool parameterized,         // uses parameters
 	bool utilized_cache,        // utilized cache
-	bool write,    		        // write query
-	bool timeout,    		    // timeout query
+	bool write,                 // write query
+	bool timeout,               // timeout query
 	const char *query           // query string
 );
 

@@ -12,9 +12,9 @@ cd $HERE
 
 help() {
     cat <<-'END'
-        Run unit benchmarks
+        Run cpp-benchmarks
 
-        [ARGVARS...] unit-benchmarks [--help|help]
+        [ARGVARS...] cpp-benchmarks [--help|help]
 
         Argument variables:
         BINROOT=path   Path to repo binary root dir
@@ -85,7 +85,7 @@ OP=
 
 LEAK=${LEAK:-0}
 
-export LOGS_DIR=$ROOT/tests/unit-benchmarks/logs
+export LOGS_DIR=$ROOT/tests/cpp_benchmarks/logs
 
 if [[ $GDB == 1 ]]; then
     if [[ $CLANG == 1 ]]; then
@@ -100,7 +100,7 @@ fi
 VG_OP=
 if [[ $VG == 1 ]]; then
     VG_OP=valgrind
-    VG_SUPRESSIONS=$ROOT/tests/unit_benchmarks/unitbench.supp
+    VG_SUPRESSIONS=$ROOT/tests/cpp_benchmarks/cppbench.supp
     VG_OPTIONS="\
         --error-exitcode=0 \
         --leak-check=full \
@@ -136,9 +136,9 @@ fi
 E=0
 
 $READIES/bin/sep
-echo "# Running unit benchmarks"
-BENCHS_DIR="$(cd $BINROOT/src/tests/unit_benchmarks; pwd)"
-cd $ROOT/tests/unit_benchmarks
+echo "# Running cpp benchmarks"
+BENCHS_DIR="$(cd $BINROOT/src/tests/cpp_benchmarks; pwd)"
+cd $ROOT/tests/cpp_benchmarks
 if [[ -z $BENCH ]]; then
     for bench in $(find $BENCHS_DIR -type f -executable -name "benchmark_*"); do
         if [[ ! -x $bench ]]; then
