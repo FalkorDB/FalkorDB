@@ -37,7 +37,7 @@ uint64_t GB_encodify_user_type      // encode a user defined type
     // primary encoding of the user type
     //--------------------------------------------------------------------------
 
-    encoding->kcode = GB_JIT_KERNEL_USERTYPE ;
+    GB_encodify_kcode (encoding, GB_JIT_KERNEL_USERTYPE) ;
     encoding->code = 0 ;
 
     //--------------------------------------------------------------------------

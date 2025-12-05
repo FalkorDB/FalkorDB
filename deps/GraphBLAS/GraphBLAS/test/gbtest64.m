@@ -4,9 +4,9 @@ function gbtest64
 % SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-% load west0479 ; %#ok<*LOAD>
-load west0479_correct ; %#ok<*LOAD>
-west0479 = Problem.A ;
+load west0479_correct.txt
+west0479 = spconvert (west0479_correct) ;
+
 W = abs (west0479) ;
 W (1,:) = 0 ;
 

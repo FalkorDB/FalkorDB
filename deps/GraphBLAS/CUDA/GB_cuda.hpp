@@ -28,6 +28,10 @@ extern "C"
 #include <limits>
 #include <iostream>
 #include <cstdint>
+#include <thread>
+#include <array>
+#include <vector>
+
 #include <stdint.h>
 #include <stdio.h>
 
@@ -81,6 +85,13 @@ void GB_cuda_upscale_identity
     GB_void *identity_upscaled,     // output: at least sizeof (uint32_t)
     GrB_Monoid monoid               // input: monoid to upscale
 ) ;
+
+//------------------------------------------------------------------------------
+// stream pool
+//------------------------------------------------------------------------------
+
+GrB_Info GB_cuda_stream_pool_acquire (cudaStream_t *stream) ;
+GrB_Info GB_cuda_stream_pool_release (cudaStream_t *stream) ;
 
 #endif
 

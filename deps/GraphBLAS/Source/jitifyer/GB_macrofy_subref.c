@@ -24,9 +24,13 @@ void GB_macrofy_subref          // construct all macros for GrB_extract
     // extract the subref method_code
     //--------------------------------------------------------------------------
 
-    // C, A integer sizes (2 hex digits)
-    bool Ihead_is_32 = GB_RSHIFT (method_code, 22, 1) ;
+    // R integer sizes and sparsity
+    bool Rp_is_32    = GB_RSHIFT (method_code, 27, 1) ;
+    bool Rj_is_32    = GB_RSHIFT (method_code, 26, 1) ;
+    bool Ri_is_32    = GB_RSHIFT (method_code, 25, 1) ;
+    int rsparsity    = GB_RSHIFT (method_code, 23, 2) ;
 
+    // C, A integer sizes (2 hex digits)
     bool Cp_is_32    = GB_RSHIFT (method_code, 21, 1) ;
     bool Cj_is_32    = GB_RSHIFT (method_code, 20, 1) ;
     bool Ci_is_32    = GB_RSHIFT (method_code, 19, 1) ;
@@ -35,10 +39,10 @@ void GB_macrofy_subref          // construct all macros for GrB_extract
     bool Aj_is_32    = GB_RSHIFT (method_code, 17, 1) ;
     bool Ai_is_32    = GB_RSHIFT (method_code, 16, 1) ;
 
-    // need_qsort, I_has_duplicates, I and J bits (1 hex digit)
+    // need_qsort, I and J bits (1 hex digit)
     bool I_is_32     = GB_RSHIFT (method_code, 15, 1) ;
     bool J_is_32     = GB_RSHIFT (method_code, 14, 1) ;
-    int ihasdupl     = GB_RSHIFT (method_code, 13, 1) ;
+    // 13: unused
     int needqsort    = GB_RSHIFT (method_code, 12, 1) ;
 
     // Ikind, Jkind (1 hex digit)
@@ -74,12 +78,11 @@ void GB_macrofy_subref          // construct all macros for GrB_extract
         // C and A are sparse/hypersparse
         // Jkind not needed for sparse subsref
         fprintf (fp, "#define GB_NEED_QSORT %d\n", needqsort) ;
-        fprintf (fp, "#define GB_I_HAS_DUPLICATES %d\n", ihasdupl) ;
     }
     else
     { 
         // C and A are bitmap/full
-        // need_qsort, I_has_duplicates not needed for bitmap subsref
+        // need_qsort not needed for bitmap subsref
         fprintf (fp, "#define GB_J_KIND ") ;
         switch (Jkind)
         {
@@ -92,16 +95,14 @@ void GB_macrofy_subref          // construct all macros for GrB_extract
         fprintf (fp, "#define GB_J_TYPE uint%d_t\n", J_is_32 ? 32 : 64) ;
     }
 
-    fprintf (fp, "#define GB_IHEAD_TYPE uint%d_t\n", Ihead_is_32 ? 32 : 64) ;
-
     //--------------------------------------------------------------------------
     // construct the typedefs
     //--------------------------------------------------------------------------
 
-    GB_macrofy_typedefs (fp, ctype, NULL, NULL, NULL, NULL, NULL) ;
+    GB_macrofy_typedefs (fp, ctype, NULL, NULL, NULL, NULL, NULL, NULL) ;
 
     //--------------------------------------------------------------------------
-    // construct the macros for C and A
+    // construct the macros for C, A, and R
     //--------------------------------------------------------------------------
 
     GB_macrofy_sparsity (fp, "C", csparsity) ;
@@ -114,6 +115,11 @@ void GB_macrofy_subref          // construct all macros for GrB_extract
     GB_macrofy_nvals (fp, "A", asparsity, false) ;
     GB_macrofy_type (fp, "A", "_", atype->name) ;
     GB_macrofy_bits (fp, "A", Ap_is_32, Aj_is_32, Ai_is_32) ;
+
+    // R is always GrB_UINT64, and iso-valued (its values are not used)
+    GB_macrofy_sparsity (fp, "R", rsparsity) ;
+    GB_macrofy_nvals (fp, "R", rsparsity, false) ;
+    GB_macrofy_bits (fp, "R", Rp_is_32, Rj_is_32, Ri_is_32) ;
 
     //--------------------------------------------------------------------------
     // include the final default definitions

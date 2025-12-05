@@ -106,8 +106,8 @@ vector, use \verb'GrB_*_extractTuples' or the import/export methods instead.
 GraphBLAS matrices and vectors are zero-based, where indices of an $n$-by-$n$
 matrix are in the range 0 to $n-1$.  However, MATLAB, Octave, and Julia prefer
 to print their matrices and vectors as one-based.  To enable 1-based printing,
-use \verb'GrB_set (GrB_GLOBAL, true, GxB_PRINT_1BASED)'.  Printing is done as zero-based by
-default.
+use \verb'GrB_set (GrB_GLOBAL, true, GxB_PRINT_1BASED)'.  Printing is done as
+zero-based by default.
 
 % \newpage
 %===============================================================================
@@ -392,6 +392,89 @@ GrB_Info GxB_Scalar_fprint          // print and check a GrB_Scalar
 
 For example, \verb'GxB_Scalar_fprint (s, "my scalar", GxB_SHORT, f)'
 prints a short description of the scalar \verb's' to the file \verb'f'.
+
+%===============================================================================
+\newpage
+\subsection{Printing user-defined types}
+\label{fprint_user}
+%===============================================================================
+
+SuiteSparse:GraphBLAS v10.2.0 adds a feature that allows these methods to print
+the values of user-defined types.  \verb'GrB_Type_set_VOID' and
+\verb'GrB_Type_get_VOID' can be used to set/get a pointer to a function that
+prints a single scalar value of that type.  The function, provided by the user
+application, must have the signature shown below.
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+typedef int64_t (*GxB_print_function)
+(
+    // output:
+    char *string,           // value is printed to the string
+    // input:
+    size_t string_size,     // size of the string array
+    const void *value,      // value to print
+    int verbose             // if >0, print verbosely; else tersely
+) ;
+\end{verbatim} } \end{mdframed}
+
+It is called for each entry to be printed.  It is given a character
+\verb'string' of size \verb'string_size', to which the value should be printed.
+The value is provided as a \verb'void * value' parameter; its size is the size
+of the given type.  The last parameter \verb'int verbose' is optional.  If
+zero, the intent is to print a terse form of the scalar (just a few digits of a
+floating-point value, for example).  If nonzero, all digits should be printed.
+An example can be found in the \verb'Demo/Include/usercomplex.c' file
+(summarized below), which creates a user-defined complex value.
+
+{\footnotesize
+\begin{verbatim}
+     typedef struct { double re ; double im ; } mycx ;
+    #define MYCX_DEFN \
+    "typedef struct { double re ; double im ; } mycx ;"
+
+    int64_t mycx_print
+    (
+        // output:
+        char *string,           // value is printed to the string
+        // input:
+        size_t string_size,     // size of the string array
+        const void *value,      // value to print
+        int verbose             // if >0, print verbosely; else tersely
+    )
+    {
+        mycx *x = (mycx *) value ;
+        return ((int64_t) snprintf (string, string_size,
+                verbose ? "(real: %.16g, imag: %.16g)" : "(real: %g, imag: %g)",
+                x->re, x->im)) ;
+    }
+
+    ...
+
+    GrB_Type MyComplex = NULL ;
+    GxB_Type_new (&MyComplex, sizeof (mycx), "mycx", MYCX_DEFN) ;
+    // register the function to print a single mycx scalar
+    GrB_Type_set_VOID (MyComplex, &mycx_print, GxB_PRINT_FUNCTION,
+        sizeof (&mycx_print)) ;
+\end{verbatim} }
+
+The return value of the print function is the same as \verb'snprintf'.
+Negative values denote an error, in which case the corresponding operation
+(\verb'GxB_Matrix_fprint' for example) halts any further printing and returns
+\verb'GrB_INVALID_VALUE'.  If zero to \verb'string_size-1', the return value is
+normally the number of characters printed to the string (excluding the null
+byte), but GraphBLAS ignores the actual value and only checks if it is in this
+range; in this case, the value was successfully printed to the string.  If the
+return value is greater than or equal to \verb'string_size', then the
+\verb'string' is too small, and the value is assumed not to have been printed
+to the string.  In this case, GraphBLAS reallocates the string and calls the
+method again, until it succeeds or runs out of memory.
+
+The \verb'GrB_Type_get_VOID' method returns the pointer to the function
+provided by the call to \verb'GrB_Type_set_VOID' for a user-defined type.
+Built-in types cannot be given a print function pointer; the get/set functions
+return \verb'GrB_INVALID_VALUE' in this case.
 
 %===============================================================================
 \subsection{Performance and portability considerations}

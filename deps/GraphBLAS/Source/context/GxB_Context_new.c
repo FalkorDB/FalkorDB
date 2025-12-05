@@ -32,7 +32,7 @@ GrB_Info GxB_Context_new            // create a new Context
 
     // allocate the Context
     size_t header_size ;
-    Context = GB_MALLOC_MEMORY (1, sizeof (struct GB_Context_opaque),
+    Context = GB_CALLOC_MEMORY (1, sizeof (struct GB_Context_opaque),
         &header_size);
     if (Context == NULL)
     { 
@@ -48,7 +48,18 @@ GrB_Info GxB_Context_new            // create a new Context
     // initialize the Context with the same settings as GxB_CONTEXT_WORLD
     Context->nthreads_max = GB_Context_nthreads_max_get (NULL) ;
     Context->chunk = GB_Context_chunk_get (NULL) ;
-    Context->gpu_id = GB_Context_gpu_id_get (NULL) ;
+    int32_t gpu_ids [GB_MAX_NGPUS] ;
+    int32_t ngpus = GB_Context_gpu_ids_get (NULL, gpu_ids) ;
+    GrB_Info info = GB_Context_gpu_ids_set (Context, gpu_ids, ngpus) ;
+    if (info != GrB_SUCCESS)
+    {
+        // This "cannot" fail since the global settings have already been
+        // checked, so the inputs to the call to GB_Context_gpu_ids_set will
+        // always be valid.  As a result, the test coverage cannot test this
+        // case.
+        GxB_Context_free (&Context) ;
+        return (info) ;
+    }
 
     // return the result
     (*Context_handle) = Context ;

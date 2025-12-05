@@ -86,6 +86,7 @@ GrB_Info GxB_Type_new
     memset (t->name, 0, GxB_MAX_NAME_LEN) ;   // no name yet
     t->defn = NULL ;                // no definition yet
     t->defn_size = 0 ;
+    t->print_function = NULL ;      // no function to print type
 
     //--------------------------------------------------------------------------
     // get the name
