@@ -25,8 +25,8 @@ void AUXLoadUDF_latest
 	uint64_t n = RedisModule_LoadUnsigned (io) ;
 
 	for (unsigned int i = 0; i < n; i++) {
-		size_t script_len ;
 		size_t lib_len ;
+		size_t script_len ;
 		const char *lib    = RedisModule_LoadStringBuffer (io, &lib_len) ;
 		const char *script = RedisModule_LoadStringBuffer (io, &script_len) ; 
 

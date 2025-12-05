@@ -17,46 +17,97 @@ static pthread_key_t _tlsUDFCtx;  // thread local storage UDF context key
 
 // UDF function desc
 typedef struct {
+	char *name;         // function name
 	JSValueConst func;  // javascript UDF function 
-	const char *name;   // function name
 } UDFFunc ;
+
+// UDF library desc
+typedef struct {
+	const char *name;  // library name
+	UDFFunc *funcs;    // library's functions
+} UDFLib ;
 
 // TLS UDF context
 typedef struct {
 	JSRuntime *js_rt;   // javascript runtime
     JSContext *js_ctx;  // javascript context
 	UDF_RepoVersion v;  // UDF repository version
-	UDFFunc *funcs;     // list of UDF functions
+	UDFLib *libs;       // list of UDF libraries
 } UDFCtx ;
 
-// instantiate the thread-local UDFCtx on module load
-bool UDFCtx_Init(void) {
-	return (pthread_key_create(&_tlsUDFCtx, NULL) == 0);
+// get library
+static UDFLib *_UDFCtx_GetLib
+(
+	UDFCtx *ctx,          // UDF context
+	const char *lib_name  // library to get
+) {
+	ASSERT (ctx      != NULL) ;
+	ASSERT (lib_name != NULL) ;
+
+	int16_t n = array_len (ctx->libs) ;
+	for (int16_t i = 0; i < n; i++) {
+		UDFLib *l = ctx->libs + i ;
+		if (strcmp (l->name, lib_name) == 0) {
+			return l ;
+		}
+	}
+
+	return NULL ;
 }
 
-static void _UDFCtx_ClearFuncs
+// get function
+static UDFFunc *_UDFCtx_GetFunc
 (
-	UDFCtx *ctx
+	const UDFLib *lib,     // lib to search function in
+	const char *func_name  // function name to retrieve
+) {
+	ASSERT (lib       != NULL) ;
+	ASSERT (func_name != NULL) ;
+
+	int16_t n = array_len (lib->funcs) ;
+	for (int16_t i = 0; i < n; i++) {
+		UDFFunc *f = lib->funcs + i ;
+		if (strcmp (f->name, func_name) == 0) {
+			return f ;
+		}
+	}
+
+	return NULL ;
+}
+
+// clear libraries
+static void _UDFCtx_ClearLibs
+(
+	UDFCtx *ctx  // UDF context
 ) {
 	ASSERT (ctx != NULL) ;
 
-	int n = array_len (ctx->funcs) ;
-	for (int i = 0; i < n; i++) {
-		UDFFunc *f = ctx->funcs + i ;
-		JS_FreeValue (ctx->js_ctx, f->func) ;
+	int16_t n = array_len (ctx->libs) ;
+	for (int16_t i = 0; i < n; i++) {
+		UDFLib *l = ctx->libs + i ;
+		UDFFunc *funcs = l->funcs ;
+
+		int16_t m = array_len (funcs) ;
+		for (int16_t j = 0; j < m; j++) {
+			UDFFunc *f = funcs + j ;
+			JS_FreeValue (ctx->js_ctx, f->func) ;
+			rm_free (f->name) ;
+		}
+
+		array_free (l->funcs) ;
 	}
 
-	array_clear (ctx->funcs) ;
+	array_clear (ctx->libs) ;
 }
 
 // retrieve UDFCtx from TLS
 static UDFCtx *_UDFCtx_GetCtx(void) {
-	UDFCtx *ctx = pthread_getspecific(_tlsUDFCtx);
+	UDFCtx *ctx = pthread_getspecific (_tlsUDFCtx) ;
 
-	if (ctx == NULL) {
+	if (unlikely (ctx == NULL)) {
 		ctx = rm_calloc (1, sizeof(UDFCtx)) ;
 
-		ctx->funcs = array_new (UDFFunc, 0) ;
+		ctx->libs = array_new (UDFLib, 0) ;
 
 		// create js runtime & context
 		ctx->js_rt  = UDF_GetJSRuntime() ;
@@ -69,29 +120,27 @@ static UDFCtx *_UDFCtx_GetCtx(void) {
 		UDF_RepoPopulateJSContext (ctx->js_ctx, &ctx->v) ;
 	}
 
-	// validate UDF context version against UDF repository version
-	if (unlikely (ctx->v < UDF_RepoGetVersion())) {
-		// free registered functions
-		_UDFCtx_ClearFuncs (ctx) ;
-
-		// UDF context is outdated, reconstruct JSContext
-		JS_FreeContext (ctx->js_ctx) ;  // free outdated js context
-
-		// create js context
-		ctx->js_ctx = UDF_GetExecutionJSContext (ctx->js_rt) ;
-
-		UDF_RepoPopulateJSContext (ctx->js_ctx, &ctx->v) ;
-	}
-
 	return ctx;
+}
+
+// instantiate the thread-local UDFCtx on module load
+bool UDFCtx_Init(void) {
+	return (pthread_key_create (&_tlsUDFCtx, NULL) == 0) ;
+}
+
+// get number of libraries in TLS UDF context
+uint16_t UDFCtx_LibCount(void) {
+	UDFCtx *ctx = _UDFCtx_GetCtx () ;
+	return array_len (ctx->libs) ;
 }
 
 // retrive thread's javascript runtime
 JSRuntime *UDFCtx_GetJSRuntime(void) {
 	UDFCtx *ctx = _UDFCtx_GetCtx () ;
 
-	ASSERT (ctx         != NULL) ;
-	ASSERT (ctx->js_rt  != NULL) ;
+	ASSERT (ctx        != NULL) ;
+	ASSERT (ctx->v     == UDF_RepoGetVersion ()) ;
+	ASSERT (ctx->js_rt != NULL) ;
 
 	return ctx->js_rt ;
 }
@@ -101,10 +150,50 @@ JSContext *UDFCtx_GetJSContext(void) {
 	UDFCtx *ctx = _UDFCtx_GetCtx () ;
 
 	ASSERT (ctx         != NULL) ;
+	ASSERT (ctx->v      == UDF_RepoGetVersion ()) ;
 	ASSERT (ctx->js_rt  != NULL) ;
 	ASSERT (ctx->js_ctx != NULL) ;
 
 	return ctx->js_ctx ;
+}
+
+// make sure the UDF context is up to date
+void UDFCtx_Update(void) {
+	UDFCtx *ctx = _UDFCtx_GetCtx () ;
+
+	ASSERT (ctx         != NULL) ;
+	ASSERT (ctx->js_rt  != NULL) ;
+	ASSERT (ctx->js_ctx != NULL) ;
+
+	// validate UDF context version against UDF repository version
+	if (unlikely (ctx->v < UDF_RepoGetVersion ())) {
+		// free registered functions
+		_UDFCtx_ClearLibs (ctx) ;
+
+		// UDF context is outdated, reconstruct JSContext
+		JS_FreeContext (ctx->js_ctx) ;  // free outdated js context
+
+		// create js context
+		ctx->js_ctx = UDF_GetExecutionJSContext (ctx->js_rt) ;
+
+		UDF_RepoPopulateJSContext (ctx->js_ctx, &ctx->v) ;
+	}
+}
+
+// register a new UDF library with TLS UDF context
+void UDFCtx_RegisterLibrary
+(
+	const char *lib_name  // library name
+) {
+	ASSERT (lib_name != NULL) ;
+	UDFCtx *ctx = _UDFCtx_GetCtx () ;
+
+	// make sure lib doesn't already exists
+	ASSERT (_UDFCtx_GetLib (ctx, lib_name) == NULL) ;
+
+	// add new library
+	UDFLib l = {.name = lib_name, .funcs = array_new (UDFFunc, 0)} ;
+	array_append (ctx->libs, l) ;
 }
 
 // register a UDF function with TLS UDF context
@@ -115,54 +204,52 @@ void UDFCtx_RegisterFunction
 ) {
 	UDFCtx *ctx = _UDFCtx_GetCtx () ;
 
-#ifdef RG_DEBUG
-	// make sure function isn't already registered
-	int n = array_len (ctx->funcs) ;
-	for (int i = 0; i < n; i++) {
-		UDFFunc *f = ctx->funcs + i ;
-		if (strcmp (f->name, func_name) == 0) {
-			ASSERT (false && "duplicated UDF") ; 
-		}
-	}
-#endif
+	// functions are added to the last library
+	int n = array_len(ctx->libs) ;
+	ASSERT (n > 0) ;
 
-	UDFFunc f = (UDFFunc) {.func = func, .name = (rm_strdup (func_name))} ;
-	array_append (ctx->funcs, f) ;
+	UDFLib  *l = ctx->libs + (n - 1) ;
+	UDFFunc *f = _UDFCtx_GetFunc (l, func_name) ;
+
+	if (unlikely (f != NULL)) {
+		// replace existing function pointer
+		JS_FreeValue (ctx->js_ctx, f->func) ;
+		f->func = func ;
+	} else {
+		// add a new function
+		UDFFunc _f = (UDFFunc) {.func = func, .name = (rm_strdup (func_name))} ;
+		array_append (l->funcs, _f) ;
+	}
 }
 
 // get UDF function
 JSValueConst *UDFCtx_GetFunction
 (
+	const char *lib_name,  // lib to search function in
 	const char *func_name  // function to retrieve
 ) {
+	ASSERT (lib_name  != NULL) ;
 	ASSERT (func_name != NULL) ;
 
 	UDFCtx *ctx = _UDFCtx_GetCtx () ;
-	int n = array_len (ctx->funcs) ;
+	ASSERT (ctx != NULL) ;
 
-	// search for function
-	for (int i = 0; i < n; i++) {
-		UDFFunc *f = ctx->funcs + i ;
-		if (strcmp (f->name, func_name) == 0) {
-			return &(f->func) ;
-		}
+	UDFLib *lib = _UDFCtx_GetLib (ctx, lib_name) ;
+	if (lib == NULL) {
+		return NULL ;
 	}
 
-	// couldn't find function
-	return NULL ;
+	UDFFunc *f = _UDFCtx_GetFunc (lib, func_name) ;
+	return (f != NULL) ? &f->func : NULL ;
 }
 
 // free UDF context
 void UDFCtx_Free(void) {
 	UDFCtx *ctx = _UDFCtx_GetCtx () ;
 
-	if (ctx == NULL) {
-		return ;
-	}
-
+	_UDFCtx_ClearLibs (ctx) ;
     JS_FreeContext (ctx->js_ctx) ;
     JS_FreeRuntime (ctx->js_rt) ;
-
 	rm_free (ctx) ;
 
 	// NULL-set the context

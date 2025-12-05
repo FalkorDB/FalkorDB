@@ -48,7 +48,14 @@ const char *UDF_RepoGetScript
 	const char *lib  // UDF library
 );
 
-// checks if UDF repository contains script
+// checks if UDF repository contains function
+bool UDF_RepoContainsFunc
+(
+	const char *lib,  // UDF library
+	const char *func  // UDF function
+);
+
+// checks if UDF repository contains lib
 bool UDF_RepoContainsLib
 (
 	const char *lib,   // UDF library

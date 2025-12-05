@@ -55,7 +55,7 @@ typedef struct {
 	bool aggregate;        // true if the function is an aggregation
 	bool udf;              // user define function
 	bool deterministic;    // true if return value is predictable
-	const char *name;      // function name
+	char *name;            // function name
 	AR_FuncCBs callbacks;  // aggregation callbacks
 } AR_FuncDesc;
 
@@ -68,14 +68,14 @@ void AR_FinalizeFuncsRepo(void) ;
 // create a new function descriptor
 AR_FuncDesc *AR_FuncDescNew
 (
-	const char *name,   // function name
-	AR_Func func,       // pointer to function
-	uint min_argc,      // minimum number of arguments
-	uint max_argc,      // maximum number of arguments
-	SIType *types,      // acceptable types
-	SIType ret_type,    // return type
-	bool internal,      // is function internal
-	bool reducible,     // is function reducible
+	char *name,       // function name
+	AR_Func func,     // pointer to function
+	uint min_argc,    // minimum number of arguments
+	uint max_argc,    // maximum number of arguments
+	SIType *types,    // acceptable types
+	SIType ret_type,  // return type
+	bool internal,    // is function internal
+	bool reducible,   // is function reducible
   bool deterministic  // true if return value is predictable
 );
 
@@ -85,21 +85,16 @@ void AR_FuncRegister
 	AR_FuncDesc *func  // function to register
 );
 
+// register a new UDF function
 void AR_FuncRegisterUDF
 (
-	const char *name
+	char *func_name  // function name
 );
 
 // unregister function to repository
 bool AR_FuncRemoveUDF
 (
-	const char *func_name  // function name to remove from repository
-);
-
-// mark function as a user defined function
-void AR_SetUDF
-(
-	AR_FuncDesc *func_desc  // function to mark as UDF
+	char *func_name  // function name to remove from repository
 );
 
 // set the function pointers for cloning and freeing a function's private data
@@ -136,7 +131,9 @@ bool AR_FuncIsAggregate
 	const char *func_name
 );
 
+// free function descriptor
 void AR_FuncFree
 (
-	AR_FuncDesc *f
+	AR_FuncDesc *f  // function descriptor
 );
+

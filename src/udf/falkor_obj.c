@@ -49,10 +49,23 @@ static JSValue validate_register_udf
 	JSValue res;
 	const char *func_name = JS_ToCString(js_ctx, argv[0]) ;
 
+	//--------------------------------------------------------------------------
 	// fail if UDF is a registered function
-	if (AR_FuncExists (func_name)) {
+	//--------------------------------------------------------------------------
+
+	// check both UDF repository & general functions repo
+	if (UDF_RepoContainsFunc (UDF_LIB, func_name)) {
+		res = JS_ThrowTypeError (js_ctx, "function: '%s.%s' already registered",
+				UDF_LIB, func_name) ;
+
+		goto cleanup ;
+	}
+
+	char *fullname = NULL ;
+	asprintf (&fullname, "%s.%s", UDF_LIB, func_name) ;
+	if (AR_FuncExists (fullname)) {
 		res = JS_ThrowTypeError (js_ctx, "function: '%s' already registered",
-				func_name) ;
+				fullname) ;
 
 		goto cleanup ;
 	}
@@ -60,6 +73,9 @@ static JSValue validate_register_udf
 	res = JS_NewBool (js_ctx, true) ;
 
 cleanup:
+	if (fullname != NULL) {
+		free (fullname) ;
+	}
 	JS_FreeCString (js_ctx, func_name) ;
 
 	return res ;
@@ -131,8 +147,8 @@ static JSValue global_register_udf
 				"second argument must be a function") ;
 	}
 
-	JSValue res;
-	const char *func_name = JS_ToCString(js_ctx, argv[0]) ;
+	JSValue res ;
+	const char *func_name = JS_ToCString (js_ctx, argv[0]) ;
 
 	if (!UDF_RepoRegisterFunc (UDF_LIB, func_name)) {
 		res = JS_ThrowTypeError (js_ctx, "function: '%s' already registered",

@@ -12,6 +12,7 @@
 #include "../globals.h"
 #include "../query_ctx.h"
 #include "execution_ctx.h"
+#include "../udf/udf_ctx.h"
 #include "../graph/graph.h"
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
@@ -171,9 +172,10 @@ static void _ExecuteQuery(void *args) {
 	// update thread-local storage and track the CommandCtx
 	if (command_ctx->thread == EXEC_THREAD_WRITER) {
 		// transition the query from waiting to executing
-		QueryCtx_AdvanceStage(query_ctx);
-		QueryCtx_SetTLS(query_ctx);
-		Globals_TrackCommandCtx(command_ctx);
+		QueryCtx_AdvanceStage (query_ctx) ;
+		QueryCtx_SetTLS (query_ctx) ;
+		Globals_TrackCommandCtx (command_ctx) ;
+		UDFCtx_Update () ;  // make sure thread's UDFs are up to date
 	}
 
 	// instantiate the query ResultSet
@@ -387,6 +389,7 @@ void _query
 
 	Globals_TrackCommandCtx(command_ctx);
 	QueryCtx_SetGlobalExecutionCtx(command_ctx);
+	UDFCtx_Update () ;  // make sure thread's UDFs are up to date
 
 	// transition the query from waiting to executing
 	QueryCtx_AdvanceStage(query_ctx);

@@ -4,6 +4,7 @@
 */
 
 #include "RG.h"
+#include "udf_ctx.h"
 #include "classes.h"
 #include "repository.h"
 #include "../util/arr.h"
@@ -22,19 +23,19 @@ typedef struct {
 typedef struct {
 	pthread_rwlock_t rwlock;  // read/write lock
 	UDF_RepoVersion	v;        // repository version
-	UDF_Lib *libs;            // array of registered UDF libs
+	UDF_Lib *libs;            // array of UDF libs
 } UDF_Repository;
 
 static UDF_Repository *udf_repo = NULL ;
 
-// free a registered library
+// free library
 void static UDF_Lib_Free
 (
 	UDF_Lib *lib  // library to free
 ) {
 	ASSERT (lib != NULL) ;
 
-	// free each registered function
+	// free each function
 	if (lib->functions != NULL) {
 		int n = array_len (lib->functions) ;
 
@@ -49,6 +50,51 @@ void static UDF_Lib_Free
 	}
 
 	rm_free (lib->name) ;
+}
+
+// check if lib contains function
+static bool _lib_contains_func
+(
+	UDF_Lib *l,        // library to search
+	const char *func  // function to lookup
+) {
+	ASSERT (l    != NULL) ;
+	ASSERT (func != NULL) ;
+
+	// make sure function isn't already registered
+	int n = array_len (l->functions) ;
+	for (int i = 0; i < n; i++) {
+		const char *_func = l->functions[i] ;
+		if (strcmp (_func, func) == 0) {
+			return true ;
+		}
+	}
+
+	return false ;
+}
+
+static UDF_Lib *_UDF_RepoGetLib
+(
+	const char *lib,   // library name
+	unsigned int *idx  // [optional] [output] lib index
+) {
+	ASSERT (lib      != NULL) ;
+	ASSERT (udf_repo != NULL) ;
+
+	int n = array_len (udf_repo->libs) ;
+	for (int i = 0; i < n; i++) {
+		UDF_Lib *_lib = udf_repo->libs + i ;
+
+		if (strcmp (lib, _lib->name) == 0) {
+			if (idx != NULL) {
+				*idx = i ;
+			}
+
+			return _lib ;
+		}
+	}
+
+	return NULL ;
 }
 
 // initialize UDF repository
@@ -85,16 +131,22 @@ void UDF_RepoPopulateJSContext
 	ASSERT (js_ctx   != NULL) ;
 	ASSERT (udf_repo != NULL) ;
 
-	// set version
-	*v = udf_repo->v ;
+	// make sure context being populated is clear
+	ASSERT (UDFCtx_LibCount () == 0) ;
 
 	// lock under READ
 	pthread_rwlock_rdlock (&udf_repo->rwlock) ;
 
+	// set version
+	*v = udf_repo->v ;
+
 	// load each registered library
 	int n = array_len (udf_repo->libs) ;
 	for (int i = 0; i < n; i++) {
-		const char *script = udf_repo->libs[i].script ;
+		const char *script   = udf_repo->libs[i].script ;
+		const char *lib_name = udf_repo->libs[i].name ;
+
+		UDFCtx_RegisterLibrary (lib_name) ;
 
 		// evalute script
 		JSValue val = JS_Eval (js_ctx, script, strlen (script), "<input>",
@@ -183,6 +235,23 @@ const char *UDF_RepoGetScript
 	return script ;
 }
 
+// checks if UDF repository contains function
+bool UDF_RepoContainsFunc
+(
+	const char *lib,  // UDF library
+	const char *func  // UDF function
+) {
+	ASSERT (lib  != NULL) ;
+	ASSERT (func != NULL) ;
+
+	UDF_Lib *l = _UDF_RepoGetLib (lib, NULL) ;
+	if (l == NULL) {
+		return false ;
+	}
+
+	return _lib_contains_func (l, func) ;
+}
+
 // checks if UDF repository contains library
 bool UDF_RepoContainsLib
 (
@@ -233,30 +302,6 @@ bool UDF_RepoRegisterLib
 	pthread_rwlock_unlock (&udf_repo->rwlock) ;
 
 	return true ;
-}
-
-static UDF_Lib *_UDF_RepoGetLib
-(
-	const char *lib,   // library name
-	unsigned int *idx  // [optional] [output] lib index
-) {
-	ASSERT (lib      != NULL) ;	
-	ASSERT (udf_repo != NULL) ;	
-
-	int n = array_len (udf_repo->libs) ;
-	for (int i = 0; i < n; i++) {
-		UDF_Lib *_lib = udf_repo->libs + i ;
-
-		if (strcmp (lib, _lib->name) == 0) {
-			if (idx != NULL) {
-				*idx = i ;
-			}
-
-			return _lib ;
-		}
-	}
-
-	return NULL ;
 }
 
 // register a new function for library
@@ -350,8 +395,12 @@ void UDF_RepoExposeLib
 
 	int n = array_len (_lib->functions) ;
 	for (int i = 0; i < n ; i++) {
-		const char *func_name = _lib->functions[i] ;
-		AR_FuncRegisterUDF (func_name) ;
+		char *fullname ;
+		const char *func = _lib->functions[i] ;
+
+		asprintf (&fullname, "%s.%s", lib, func) ;
+
+		AR_FuncRegisterUDF (fullname) ;
 	}
 }
 

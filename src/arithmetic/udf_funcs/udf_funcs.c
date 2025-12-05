@@ -45,7 +45,7 @@ static int js_interrupt_handler
 }
 
 // execute a JavaScript UDF function
-// the function is execute is specified as a string at argv[0]
+// the executed function is specified as a string at argv[0]
 SIValue AR_UDF
 (
 	SIValue *argv,
@@ -53,11 +53,12 @@ SIValue AR_UDF
 	void *private_data
 ) {
 	ASSERT (argv != NULL) ;
-	ASSERT (argc >= 1) ;
+	ASSERT (argc >= 2) ;
 	ASSERT (private_data == NULL) ;
 
-	const char *func_name = argv[0].stringval ;
-	SIValue *args = argv + 1 ;
+	const char *lib_name  = argv[0].stringval ;
+	const char *func_name = argv[1].stringval ;
+	SIValue *args = argv + 2 ;
 
 	//--------------------------------------------------------------------------
 	// locate function
@@ -69,12 +70,16 @@ SIValue AR_UDF
 	ASSERT (js_ctx != NULL) ;
 
 	// locate function
-	JSValueConst *fn = UDFCtx_GetFunction (func_name) ;
+	JSValueConst *fn = UDFCtx_GetFunction (lib_name, func_name) ;
 	if (fn == NULL) {
 		// it is possible for the function to be missing
 		// this can happen if a query is trying to access a UDF as it is being
 		// removed via GRAPH.UDF DELETE
-		ErrorCtx_SetError(EMSG_UNKNOWN_FUNCTION, func_name) ; 	
+		char *concat ;
+		asprintf (&concat, "%s.%s", lib_name, func_name) ;
+		ErrorCtx_SetError (EMSG_UNKNOWN_FUNCTION, concat) ;
+		free (concat) ;
+
 		return SI_NullVal() ;
 	}
 
@@ -82,9 +87,9 @@ SIValue AR_UDF
 	// convert arguments
 	//--------------------------------------------------------------------------
 
-	JSValue js_argv[argc - 1] ;
+	JSValue js_argv[argc - 2] ;
 
-	for (int i = 0; i < argc - 1; i++) {
+	for (int i = 0; i < argc - 2; i++) {
 		js_argv[i] = UDF_SIValueToJS (js_ctx, args[i]) ;
 	}
 
@@ -93,13 +98,13 @@ SIValue AR_UDF
 	JS_SetInterruptHandler(js_rt, js_interrupt_handler, &deadline_ms) ;
 
 	// invoke UDF
-	JSValue res = JS_Call (js_ctx, *fn, JS_UNDEFINED, argc-1, js_argv) ;
+	JSValue res = JS_Call (js_ctx, *fn, JS_UNDEFINED, argc-2, js_argv) ;
 
 	// disable the interrupt handler
 	JS_SetInterruptHandler(js_rt, NULL, NULL);
 
 	// free args
-	for (int i = 0; i < argc - 1; i++) {
+	for (int i = 0; i < argc - 2; i++) {
 		JS_FreeValue (js_ctx, js_argv[i]) ;
 	}
 

@@ -94,9 +94,31 @@ static AR_ExpNode *_AR_EXP_FromApplyExpression
 	unsigned int offset = 0 ;
 
 	if (unlikely (op->op.f->udf)) {
+		// split function name into:
+		// 1. lib name
+		// 2. func name
+
+		char *dot_ptr = strchr (func_name, '.') ;
+		ASSERT (dot_ptr != NULL) ;
+
+		int lib_len  = dot_ptr - func_name + 1 ;
+		int func_len = strlen (func_name) - lib_len + 1;
+
+		char *lib  = rm_malloc (lib_len)  ;
+		char *func = rm_malloc (func_len) ;
+
+		memcpy (lib, func_name, lib_len) ;
+		memcpy (func, func_name + lib_len, func_len) ;
+
+		lib [lib_len  - 1] = '\0' ;
+		func[func_len - 1] = '\0' ;
+
+		// break function name into: lib, func
 		op->op.children[0] =
-			AR_EXP_NewConstOperandNode ( SI_ConstStringVal(func_name)) ;
-		offset++ ;
+			AR_EXP_NewConstOperandNode ( SI_TransferStringVal (lib)) ;
+		op->op.children[1] =
+			AR_EXP_NewConstOperandNode ( SI_TransferStringVal (func)) ;
+		offset+= 2 ;
 	}
 
 	for(unsigned int i = 0; i < arg_count; i ++) {

@@ -44,7 +44,7 @@ JSContext *UDF_GetValidationJSContext
 ) {
 	ASSERT (js_rt != NULL) ;
 
-	JSContext *js_ctx = JS_NewContext(js_rt) ;
+	JSContext *js_ctx = JS_NewContext (js_rt) ;
 	ASSERT (js_ctx != NULL) ;
 
 	// provide validation-only register() hook
@@ -144,8 +144,14 @@ bool UDF_Delete
 	bool removed ;
 	int n = array_len (functions) ;
 	for (int i = 0; i < n; i++) {
-		removed = AR_FuncRemoveUDF (functions[i]) ;
+		// concat lib and function name
+		char *udf;
+		asprintf (&udf, "%s.%s", lib, functions[i]) ;
+
+		removed = AR_FuncRemoveUDF (udf) ;
 		ASSERT (removed == true) ;
+
+		free (udf) ;
 	}
 
 	// remove library from UDF repo
@@ -235,7 +241,7 @@ bool UDF_Load
 	// create dedicated js runtime
 	//--------------------------------------------------------------------------
 
-	JSRuntime *js_rt  = UDF_GetJSRuntime() ;
+	JSRuntime *js_rt  = UDF_GetJSRuntime () ;
 	JSContext *js_ctx = UDF_GetValidationJSContext (js_rt) ;
 
 	JSValue val = JS_Eval (js_ctx, script, script_len, "<input>",

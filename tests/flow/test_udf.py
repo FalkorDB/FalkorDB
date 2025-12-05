@@ -96,30 +96,30 @@ class testUDF():
         self.db.udf_load("ReturnTypes", script, True)
 
         # int
-        v = self.graph.query("RETURN ReturnInt()").result_set[0][0]
+        v = self.graph.query("RETURN ReturnTypes.ReturnInt()").result_set[0][0]
         self.env.assertEqual(v, 12)
 
         # float
-        v = self.graph.query("RETURN ReturnFloat()").result_set[0][0]
+        v = self.graph.query("RETURN ReturnTypes.ReturnFloat()").result_set[0][0]
         self.env.assertEqual(v, 3.14)
 
         # string
-        v = self.graph.query("RETURN ReturnString()").result_set[0][0]
+        v = self.graph.query("RETURN ReturnTypes.ReturnString()").result_set[0][0]
         self.env.assertEqual(v, "hello")
 
         # boolean
-        v = self.graph.query("RETURN ReturnTrue()").result_set[0][0]
+        v = self.graph.query("RETURN ReturnTypes.ReturnTrue()").result_set[0][0]
         self.env.assertEqual(v, True)
 
-        v = self.graph.query("RETURN ReturnFalse()").result_set[0][0]
+        v = self.graph.query("RETURN ReturnTypes.ReturnFalse()").result_set[0][0]
         self.env.assertEqual(v, False)
 
         # null
-        v = self.graph.query("RETURN ReturnNull()").result_set[0][0]
+        v = self.graph.query("RETURN ReturnTypes.ReturnNull()").result_set[0][0]
         self.env.assertEqual(v, None)
 
         # undefined → maps to NULL
-        v = self.graph.query("RETURN ReturnUndefined()").result_set[0][0]
+        v = self.graph.query("RETURN ReturnTypes.ReturnUndefined()").result_set[0][0]
         self.env.assertEqual(v, None)
 
     def test_return_collections(self):
@@ -136,15 +136,15 @@ class testUDF():
         self.db.udf_load("ReturnCollections", script, True)
 
         # array
-        v = self.graph.query("RETURN ReturnArray()").result_set[0][0]
+        v = self.graph.query("RETURN ReturnCollections.ReturnArray()").result_set[0][0]
         self.env.assertEqual(v, [1, None, "str", [42]])
 
         # object (map)
-        v = self.graph.query("RETURN ReturnObject()").result_set[0][0]
+        v = self.graph.query("RETURN ReturnCollections.ReturnObject()").result_set[0][0]
         self.env.assertEqual(v, {"x": 1, "y": "val", "z": [True, False]})
 
         # nested structures
-        v = self.graph.query("RETURN ReturnNested()").result_set[0][0]
+        v = self.graph.query("RETURN ReturnCollections.ReturnNested()").result_set[0][0]
         self.env.assertEqual(v, {"nested": [1, {"k": "v"}, [True, None]]})
 
     def test_return_specials(self):
@@ -165,20 +165,20 @@ class testUDF():
         self.db.udf_load("ReturnSpecials", script, True)
 
         # BigInt → maps to INT64
-        v = self.graph.query("RETURN ReturnBigInt()").result_set[0][0]
+        v = self.graph.query("RETURN ReturnSpecials.ReturnBigInt()").result_set[0][0]
         self.env.assertEqual(v, 1234567890123456789)
 
         # Date → maps to DATETIME
-        v = self.graph.query("RETURN ReturnDate()").result_set[0][0]
+        v = self.graph.query("RETURN ReturnSpecials.ReturnDate()").result_set[0][0]
         self.env.assertTrue(v is not None)
 
         # RegExp → converted to string
-        v = self.graph.query("RETURN ReturnRegExp()").result_set[0][0]
+        v = self.graph.query("RETURN ReturnSpecials.ReturnRegExp()").result_set[0][0]
         self.env.assertEqual(v, "/abc.*/")
 
         # Symbol is not supported
         try:
-            v = self.graph.query("RETURN ReturnSymbol()").result_set[0][0]
+            v = self.graph.query("RETURN ReturnSpecials.ReturnSymbol()").result_set[0][0]
             self.env.assertTrue(False)
         except Exception:
             pass
@@ -201,7 +201,7 @@ class testUDF():
 
         self.db.udf_load("Echo", script, True)
 
-        q = "RETURN $item, Echo($item)"
+        q = "RETURN $item, Echo.Echo($item)"
 
         #-----------------------------------------------------------------------
         # NULL
@@ -246,12 +246,12 @@ class testUDF():
         # Spatial + Vector
         #-----------------------------------------------------------------------
 
-        q = "WITH point({latitude: 25.21, longitude: 31.7}) AS p RETURN p, Echo(p)"
+        q = "WITH point({latitude: 25.21, longitude: 31.7}) AS p RETURN p, Echo.Echo(p)"
         result_set = self.graph.query(q).result_set
         p, echo_p = result_set[0]
         self.env.assertEqual(p, echo_p)
 
-        q = "WITH vecf32([2.1, 0.82, 1.3]) AS vec RETURN vec, Echo(vec)"
+        q = "WITH vecf32([2.1, 0.82, 1.3]) AS vec RETURN vec, Echo.Echo(vec)"
         v, echo_v = self.graph.query(q).result_set[0]
 
         EPSILON = 1e-5
@@ -266,17 +266,17 @@ class testUDF():
         self.graph.query("CREATE (a:Person {name:'Alice'})-[r:KNOWS {since:2020}]-> (b:Person {name:'Bob'})")
 
         # Node
-        q = "MATCH (n:Person {name:'Alice'}) RETURN n, Echo(n)"
+        q = "MATCH (n:Person {name:'Alice'}) RETURN n, Echo.Echo(n)"
         n, echo_n = self.graph.query(q).result_set[0]
         self.env.assertEqual(n, echo_n)
 
         # Edge
-        q = "MATCH ()-[e:KNOWS]->() RETURN e, Echo(e)"
+        q = "MATCH ()-[e:KNOWS]->() RETURN e, Echo.Echo(e)"
         e, echo_e = self.graph.query(q).result_set[0]
         self.env.assertEqual(e, echo_e)
 
         # Path
-        q = "MATCH p=(a:Person {name:'Alice'})-[:KNOWS]->(b:Person {name:'Bob'}) RETURN p, Echo(p)"
+        q = "MATCH p=(a:Person {name:'Alice'})-[:KNOWS]->(b:Person {name:'Bob'}) RETURN p, Echo.Echo(p)"
         p, echo_p = self.graph.query(q).result_set[0]
         self.env.assertEqual(p, echo_p)
 
@@ -285,8 +285,8 @@ class testUDF():
         #-----------------------------------------------------------------------
 
         unsupported_temporal_types = [
-            "WITH duration('P2DT3H4M')  AS x RETURN x, Echo(x)",
-            "WITH localtime('13:37:00') AS x RETURN x, Echo(x)",
+            "WITH duration('P2DT3H4M')  AS x RETURN x, Echo.Echo(x)",
+            "WITH localtime('13:37:00') AS x RETURN x, Echo.Echo(x)",
         ]
 
         for q in unsupported_temporal_types:
@@ -298,13 +298,13 @@ class testUDF():
 
         temporal_queries = [
             """WITH date('2025-08-22') AS x
-               WITH x, Echo(x) AS echo_x
+               WITH x, Echo.Echo(x) AS echo_x
                RETURN x.year  = echo_x.year  AND
                       x.month = echo_x.month AND
                       x.day   = echo_x.day""",
 
             """WITH localdatetime('2025-08-22T13:37:00') AS x
-               WITH x, Echo(x) AS echo_x
+               WITH x, Echo.Echo(x) AS echo_x
                RETURN x.year  = echo_x.year  AND
                       x.month = echo_x.month AND
                       x.day   = echo_x.day"""
@@ -332,7 +332,7 @@ class testUDF():
         self.db.udf_load("InspectNode", script, True)
 
         # 1. Node with no labels
-        q = "CREATE (n {height:180}) RETURN InspectNode(n)"
+        q = "CREATE (n {height:180}) RETURN InspectNode.InspectNode(n)"
         res = self.graph.query(q).result_set[0][0]
 
         self.env.assertEqual(res['internal_id'], 0)
@@ -340,7 +340,7 @@ class testUDF():
         self.env.assertEqual(res["attributes"], {'height': 180})
 
         # 2. Node with a single label
-        q = "CREATE (n:Person {height:175}) RETURN InspectNode(n)"
+        q = "CREATE (n:Person {height:175}) RETURN InspectNode.InspectNode(n)"
         res = self.graph.query(q).result_set[0][0]
 
         self.env.assertEqual(res['internal_id'], 1)
@@ -348,7 +348,7 @@ class testUDF():
         self.env.assertEqual(res["attributes"], {'height': 175})
 
         # 3. Node with multiple labels
-        q = "CREATE (n:Person:Employee {height:190}) RETURN InspectNode(n)"
+        q = "CREATE (n:Person:Employee {height:190}) RETURN InspectNode.InspectNode(n)"
         res = self.graph.query(q).result_set[0][0]
 
         self.env.assertEqual(res['internal_id'], 2)
@@ -356,7 +356,7 @@ class testUDF():
         self.env.assertEqual(res["attributes"], {'height': 190})
 
         # 4. Node with conflicting "id" property
-        q = "CREATE (n:Test {id:'user_defined_id', height:160}) RETURN InspectNode(n)"
+        q = "CREATE (n:Test {id:'user_defined_id', height:160}) RETURN InspectNode.InspectNode(n)"
         res = self.graph.query(q).result_set[0][0]
 
         # User-defined "id" attribute accessible via n.attributes.id
@@ -386,7 +386,7 @@ class testUDF():
         # 1. Simple edge with attributes
         q = """
         CREATE (a:Person {name:'Alice'})-[e:KNOWS {since:2020}]->(b:Person {name:'Bob'})
-        RETURN InspectEdge(e)
+        RETURN InspectEdge.InspectEdge(e)
         """
         res = self.graph.query(q).result_set[0][0]
 
@@ -407,7 +407,7 @@ class testUDF():
         q = """
         MATCH (a:Person {name:'Alice'}), (b:Person {name:'Bob'})
         CREATE (a)-[e:WORKS_WITH {id:'edge_custom_id', role:'dev'}]->(b)
-        RETURN InspectEdge(e)
+        RETURN InspectEdge.InspectEdge(e)
         """
         res = self.graph.query(q).result_set[0][0]
 
@@ -460,10 +460,10 @@ class testUDF():
 
         self._assert_udf_exists("mylib", ["Foo", "Bar"])
 
-        v = self.graph.query("RETURN Foo()").result_set[0][0]
+        v = self.graph.query("RETURN mylib.Foo()").result_set[0][0]
         self.env.assertEqual(v, 123)
 
-        v = self.graph.query("RETURN Bar(41)").result_set[0][0]
+        v = self.graph.query("RETURN mylib.Bar(41)").result_set[0][0]
         self.env.assertEqual(v, 42)
 
     def test_replace_library(self):
@@ -485,11 +485,11 @@ class testUDF():
         """
 
         self.db.udf_load("replace_lib", script1)
-        v = self.graph.query("RETURN X()").result_set[0][0]
+        v = self.graph.query("RETURN replace_lib.X()").result_set[0][0]
         self.env.assertEqual(v, "one")
 
         self.db.udf_load("replace_lib", script2, True)
-        v = self.graph.query("RETURN X()").result_set[0][0]
+        v = self.graph.query("RETURN replace_lib.X()").result_set[0][0]
         self.env.assertEqual(v, "two")
 
     def test_conflict_on_existing_lib(self):
@@ -512,7 +512,7 @@ class testUDF():
         except ResponseError as e:
             self.env.assertIn("already registered", str(e).lower())
 
-        y = self.graph.query("RETURN Y()").result_set[0][0]
+        y = self.graph.query("RETURN conflict_lib.Y()").result_set[0][0]
         self.env.assertEqual(y, 1)
 
     def test_load_large_script(self):
@@ -542,7 +542,7 @@ class testUDF():
         self.env.assertEqual(res, "OK")
 
         # try calling one of large_lib functions
-        res = self.graph.query("RETURN proxy_func_515()").result_set[0][0]
+        res = self.graph.query("RETURN proxy_lib.proxy_func_515()").result_set[0][0]
         self.env.assertEqual(res, 515)
 
     def test_invalid_js_script(self):
@@ -579,7 +579,7 @@ class testUDF():
         self.env.restart_and_reload()
 
         self._assert_udf_exists("persist_lib", ["Persist"])
-        v = self.graph.query("RETURN Persist()").result_set[0][0]
+        v = self.graph.query("RETURN persist_lib.Persist()").result_set[0][0]
         self.env.assertEqual(v, "I persist")
 
     def test_delete_invalid_invocations(self):
@@ -617,7 +617,7 @@ class testUDF():
         self.db.udf_load("del_lib", script)
         self._assert_udf_exists("del_lib", ["DelTest"])
 
-        v = self.graph.query("RETURN DelTest()").result_set[0][0]
+        v = self.graph.query("RETURN del_lib.DelTest()").result_set[0][0]
         self.env.assertEqual(v, "bye")
 
         # delete the library
@@ -629,10 +629,11 @@ class testUDF():
 
         # function should now error
         try:
-            self.graph.query("RETURN DelTest()")
+            self.graph.query("RETURN del_lib.DelTest()")
             assert False, "Expected failure calling deleted function"
         except ResponseError as e:
-            self.env.assertIn("undefined function", str(e).lower())
+            print (f"str(e).lower(): {str(e).lower()}")
+            self.env.assertIn("unknown function 'del_lib.deltest'", str(e).lower())
 
     def test_delete_nonexistent_library(self):
         """
@@ -667,7 +668,7 @@ class testUDF():
         self._assert_udf_exists("lib2", ["F2"])
 
         # verify lib2 still works
-        v = self.graph.query("RETURN F2()").result_set[0][0]
+        v = self.graph.query("RETURN lib2.F2()").result_set[0][0]
         self.env.assertEqual(v, "f2")
 
     def test_persistence_delete(self):
@@ -698,6 +699,13 @@ class testUDF():
         # confirm library did not come back
         self._assert_udf_missing("persist_del_lib")
 
+        # confirm removed function isn't callable
+        try:
+            self.graph.query ("RETURN persist_del_lib.PersistDel()")
+            assert False, f"Expected failure calling deleted function {f}"
+        except ResponseError as e:
+            self.env.assertIn("unknown function", str(e).lower())
+
     def test_delete_library_with_multiple_functions(self):
         """
         Test deleting a library with multiple functions:
@@ -723,7 +731,7 @@ class testUDF():
         # calling functions should fail
         for f in ["F3", "F4"]:
             try:
-                self.graph.query(f"RETURN {f}()")
+                self.graph.query(f"RETURN multi_func_lib.{f}()")
                 assert False, f"Expected failure calling deleted function {f}"
             except ResponseError as e:
                 self.env.assertIn("unknown function", str(e).lower())
@@ -769,7 +777,7 @@ class testUDF():
         self._assert_any_udfs_missing()
 
         # functions should now fail
-        for f in ["A", "B"]:
+        for f in ["lib1.A", "lib2.B"]:
             try:
                 self.graph.query(f"RETURN {f}()")
                 assert False, f"Expected failure calling flushed function {f}"
@@ -870,17 +878,16 @@ class test_udf_javascript():
         """
         self.db.udf_load("lib1", script)
 
-        # redeclare same function name
+        # redeclare same function name under a different lib
         script2 = """
         function f() { return 2; }
         falkor.register('f', f);
         """
+        self.db.udf_load("lib1_dup", script2)
 
-        try:
-            self.db.udf_load("lib1_dup", script2)
-            assert False, "Expected duplicate registration to fail"
-        except ResponseError as e:
-            self.env.assertIn("already registered", str(e).lower())
+        # call both libs
+        result = self.graph.query("RETURN lib1.f() + lib1_dup.f()").result_set[0][0]
+        self.env.assertEqual(result, 3)
 
     def test_call_non_existing_function(self):
         """
@@ -889,10 +896,10 @@ class test_udf_javascript():
 
         self.db.udf_flush()
         try:
-            self.graph.query("RETURN DoesNotExist()")
+            self.graph.query("RETURN lib.DoesNotExist()")
             assert False, "Expected error when calling unknown UDF"
         except ResponseError as e:
-            self.env.assertIn("unknown function 'doesnotexist'", str(e).lower())
+            self.env.assertIn("unknown function 'lib.doesnotexist'", str(e).lower())
 
     def test_redeclaration_non_exposed_function(self):
         """
@@ -908,7 +915,7 @@ class test_udf_javascript():
         """
 
         self.db.udf_load("lib_redecl", script)
-        v = self.graph.query("RETURN exposed()").result_set[0][0]
+        v = self.graph.query("RETURN lib_redecl.exposed()").result_set[0][0]
         self.env.assertEqual(v, 2)
 
         #-----------------------------------------------------------------------
@@ -919,7 +926,7 @@ class test_udf_javascript():
         """
 
         self.db.udf_load("lib_redecl_new", script)
-        v = self.graph.query("RETURN exposed()").result_set[0][0]
+        v = self.graph.query("RETURN lib_redecl.exposed()").result_set[0][0]
         self.env.assertEqual(v, 3)
 
     def test_cross_library_calls(self):
@@ -942,7 +949,7 @@ class test_udf_javascript():
         """
 
         self.db.udf_load("lib_wrapper", script2, replace=True)
-        res = self.graph.query("RETURN wrapper()").result_set[0][0]
+        res = self.graph.query("RETURN lib_wrapper.wrapper()").result_set[0][0]
         self.env.assertEqual(res, 100)
 
     def test_invalid_function_access(self):
@@ -958,7 +965,7 @@ class test_udf_javascript():
 
         self.db.udf_load("lib_invalid", script)
         try:
-            res = self.graph.query("RETURN bad()").result_set
+            res = self.graph.query("RETURN lib_invalid.bad()").result_set
             assert False, "Expected error when calling unknown UDF"
         except ResponseError as e:
             self.env.assertIn("udf exception: 'console' is not defined", str(e).lower())
@@ -975,8 +982,8 @@ class test_udf_javascript():
         """
         self.db.udf_load("lib_globals", script)
 
-        v1 = self.graph.query("RETURN inc()").result_set[0][0]
-        v2 = self.graph.query("RETURN inc()").result_set[0][0]
+        v1 = self.graph.query("RETURN lib_globals.inc()").result_set[0][0]
+        v2 = self.graph.query("RETURN lib_globals.inc()").result_set[0][0]
         self.env.assertEqual(v1, 1)
         self.env.assertGreaterEqual(v2, 1) # depending on the executing thread and it's js context
 
@@ -990,7 +997,7 @@ class test_udf_javascript():
         """
         self.db.udf_load("lib_anon", script)
 
-        v = self.graph.query("RETURN anon(5)").result_set[0][0]
+        v = self.graph.query("RETURN lib_anon.anon(5)").result_set[0][0]
         self.env.assertEqual(v, 10)
 
     def test_exception_propagation(self):
@@ -1005,7 +1012,7 @@ class test_udf_javascript():
         self.db.udf_load("lib_fail", script)
 
         try:
-            self.graph.query("RETURN fail()")
+            self.graph.query("RETURN lib_fail.fail()")
             assert False, "Expected JS exception to propagate"
         except ResponseError as e:
             self.env.assertIn("boom", str(e).lower())
@@ -1023,10 +1030,10 @@ class test_udf_javascript():
         """
         self.db.udf_load("lib_args", script)
 
-        v1 = self.graph.query("RETURN f(1)").result_set[0][0]
+        v1 = self.graph.query("RETURN lib_args.f(1)").result_set[0][0]
         self.env.assertEqual(v1, [1, None])
 
-        v2 = self.graph.query("RETURN f(1, 2, 3)").result_set[0][0]
+        v2 = self.graph.query("RETURN lib_args.f(1, 2, 3)").result_set[0][0]
         self.env.assertEqual(v2, [1, 2])
 
     def test_returning_undefined(self):
@@ -1040,7 +1047,7 @@ class test_udf_javascript():
         """
         self.db.udf_load("lib_undef", script)
 
-        v = self.graph.query("RETURN undef()").result_set[0][0]
+        v = self.graph.query("RETURN lib_undef.undef()").result_set[0][0]
         self.env.assertEqual(v, None)
 
     def test_runtime_interrupt(self):
@@ -1063,7 +1070,7 @@ class test_udf_javascript():
         self.db.udf_load("infinity", script)
 
         try:
-            v = self.graph.query("RETURN infinity()")
+            v = self.graph.query("RETURN infinity.infinity()")
             assert False, "Expected JS exception to propagate"
         except ResponseError as e:
             self.env.assertIn("UDF Exception: interrupted", str(e))

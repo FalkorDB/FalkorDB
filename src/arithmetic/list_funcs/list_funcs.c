@@ -757,35 +757,35 @@ void Register_ListFuncs() {
 	ret_type = T_ARRAY;
 	func_desc = AR_FuncDescNew("tolist", AR_TOLIST, 0, VAR_ARG_LEN, types,
 			ret_type, true, true, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_ARRAY | T_NULL);
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("toBooleanList", AR_TOBOOLEANLIST, 1, 1, types,
 			ret_type, false, true, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_ARRAY | T_NULL);
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("toFloatList", AR_TOFLOATLIST, 1, 1, types,
 			ret_type, false, true, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_ARRAY | T_NULL);
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("toIntegerList", AR_TOINTEGERLIST, 1, 1, types,
 			ret_type, false, true, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_ARRAY | T_NULL);
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("toStringList", AR_TOSTRINGLIST, 1, 1, types,
 			ret_type, false, true, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, T_ARRAY | T_MAP | SI_GRAPHENTITY | T_NULL);
@@ -793,7 +793,7 @@ void Register_ListFuncs() {
 	ret_type = SI_ALL;
 	func_desc = AR_FuncDescNew("subscript", AR_SUBSCRIPT, 2, 2, types, ret_type,
 			true, true, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 3);
 	array_append(types, T_ARRAY | T_NULL);
@@ -802,7 +802,7 @@ void Register_ListFuncs() {
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("slice", AR_SLICE, 3, 3, types, ret_type, true,
 			true, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 3);
 	array_append(types, T_INT64);
@@ -811,7 +811,7 @@ void Register_ListFuncs() {
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("range", AR_RANGE, 2, 3, types, ret_type, false,
 			true, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, SI_ALL);
@@ -819,35 +819,35 @@ void Register_ListFuncs() {
 	ret_type = T_NULL | T_BOOL;
 	func_desc = AR_FuncDescNew("in", AR_IN, 2, 2, types, ret_type, true, true,
 			true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_STRING | T_ARRAY | T_NULL);
 	ret_type = T_NULL | T_INT64;
 	func_desc = AR_FuncDescNew("size", AR_SIZE, 1, 1, types, ret_type, false,
 			true, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_ARRAY | T_NULL);
 	ret_type = SI_ALL;
 	func_desc = AR_FuncDescNew("head", AR_HEAD, 1, 1, types, ret_type, false,
 			true, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_ARRAY | T_NULL);
 	ret_type = SI_ALL;
 	func_desc = AR_FuncDescNew("last", AR_LAST, 1, 1, types, ret_type, false,
 			true, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_ARRAY | T_NULL);
 	ret_type = SI_ALL;
 	func_desc = AR_FuncDescNew("tail", AR_TAIL, 1, 1, types, ret_type, false,
 			true, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 3);
 	array_append(types, T_ARRAY | T_NULL);
@@ -856,7 +856,7 @@ void Register_ListFuncs() {
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("list.remove", AR_REMOVE, 2, 3, types, ret_type,
 			false, true, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, T_ARRAY | T_NULL);
@@ -864,7 +864,7 @@ void Register_ListFuncs() {
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("list.sort", AR_SORT, 1, 2, types, ret_type,
 			false, true, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 4);
 	array_append(types, T_ARRAY | T_NULL);
@@ -874,7 +874,7 @@ void Register_ListFuncs() {
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("list.insert", AR_INSERT, 3, 4, types, ret_type,
 			false, true, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 4);
 	array_append(types, T_ARRAY | T_NULL);
@@ -884,14 +884,14 @@ void Register_ListFuncs() {
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("list.insertListElements", AR_INSERTLISTELEMENTS,
 			3, 4, types, ret_type, false, true, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_ARRAY | T_NULL);
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("list.dedup", AR_DEDUP, 1, 1, types, ret_type,
 			false, true, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
 	types = array_new(SIType, 4);
 	array_append(types, SI_ALL);            // accumulator initial value
