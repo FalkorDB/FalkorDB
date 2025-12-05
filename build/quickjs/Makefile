@@ -30,7 +30,9 @@ $(TARGET): | $(BINDIR)
 		done
 	# Rename the conflicting function in all C and header files
 	$(SHOW)cd $(SRCDIR) && \
-		find . -name "*.c" -o -name "*.h" | xargs sed -i '' 's/unicode_to_utf8/quickjs_unicode_to_utf8/g'
+        find . -type f \( -name "*.c" -o -name "*.h" \) \
+            -exec sed -i.tmp 's/unicode_to_utf8/quickjs_unicode_to_utf8/g' {} + \
+            -exec rm -f {}.tmp \;
 	# Build the library
 	$(SHOW)$(MAKE) -C $(SRCDIR) libquickjs.a
 	$(SHOW)cp $(SRCDIR)/libquickjs.a $(TARGET)
