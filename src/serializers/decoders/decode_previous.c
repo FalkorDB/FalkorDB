@@ -5,7 +5,7 @@
  */
 
 #include "decode_previous.h"
-#include "prev/decoders.h"
+#include "decoders.h"
 
 GraphContext *Decode_Previous
 (
