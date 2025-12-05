@@ -1,7 +1,11 @@
-
 ROOT=../..
 
 MK.cmake=1
+
+# Set CMAKE_DEFS before including readies makefiles so they get processed correctly
+
+# Define the necessary CMake policy flag
+CMAKE_DEFS += CMAKE_POLICY_VERSION_MINIMUM=3.5
 
 include $(ROOT)/deps/readies/mk/main
 

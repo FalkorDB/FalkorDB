@@ -33,6 +33,7 @@ void Proc_Register() {
 	_procRegister("db.labels",            Proc_LabelsCtx);
 	_procRegister("db.indexes",           Proc_IndexesCtx);
 	_procRegister("db.constraints",       Proc_ConstraintsCtx);
+	_procRegister("dbms.functions",       Proc_FunctionsCtx);
 	_procRegister("db.propertyKeys",      Proc_PropKeysCtx);
 	_procRegister("dbms.procedures",      Proc_ProceduresCtx);
 	_procRegister("db.relationshipTypes", Proc_RelationsCtx);

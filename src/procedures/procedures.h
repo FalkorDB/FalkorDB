@@ -14,6 +14,7 @@
 #include "proc_pagerank.h"
 #include "proc_sp_paths.h"
 #include "proc_ss_paths.h"
+#include "proc_functions.h"
 #include "proc_relations.h"
 #include "proc_procedures.h"
 #include "proc_meta_stats.h"
