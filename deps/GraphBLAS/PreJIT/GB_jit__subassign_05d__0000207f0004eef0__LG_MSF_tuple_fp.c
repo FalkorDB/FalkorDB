@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_fp.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.0.2, Timothy A. Davis, (c) 2017-2025,
+// SuiteSparse:GraphBLAS v10.3.0, Timothy A. Davis, (c) 2017-2025,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -55,6 +55,7 @@ typedef struct
 #define GB_PUTC(cwork,Cx,p) Cx [p] = cwork
 #define GB_Cp_TYPE uint64_t
 #define GB_Cj_TYPE uint64_t
+#define GB_Cj_SIGNED_TYPE int64_t
 #define GB_Ci_TYPE uint64_t
 #define GB_Ci_SIGNED_TYPE int64_t
 #define GB_Cp_BITS 64
@@ -85,6 +86,7 @@ typedef struct
 #define GB_M_NHELD(e) GB_M_NVALS(e)
 #define GB_Mp_TYPE uint64_t
 #define GB_Mj_TYPE uint64_t
+#define GB_Mj_SIGNED_TYPE int64_t
 #define GB_Mi_TYPE uint64_t
 #define GB_Mi_SIGNED_TYPE int64_t
 #define GB_Mp_BITS 64
@@ -107,6 +109,7 @@ typedef struct
 #define GB_A_NHELD(e) int64_t e = 1 ; /* unused */
 #define GB_Ap_TYPE uint64_t
 #define GB_Aj_TYPE uint64_t
+#define GB_Aj_SIGNED_TYPE int64_t
 #define GB_Ai_TYPE uint64_t
 #define GB_Ai_SIGNED_TYPE int64_t
 #define GB_Ap_BITS 64
@@ -127,8 +130,8 @@ typedef struct
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0x60b2c4458a7637a0 ;
-    v [0] = 10 ; v [1] = 0 ; v [2] = 2 ;
+    (*hash) = 0x7cc8750a058cad92 ;
+    v [0] = 10 ; v [1] = 3 ; v [2] = 0 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = GB_LG_MSF_tuple_fp_USER_DEFN ;

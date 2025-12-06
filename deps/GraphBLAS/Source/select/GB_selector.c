@@ -193,7 +193,7 @@ GrB_Info GB_selector
         // the use_select_bitmap test above (the DIAG operator). The CUDA
         // select_sparse kernel will not work in this case, so make this go to
         // the CPU.
-        // Fixme CUDA: put the test of sparse(A) or hypersparse(A) in
+        // FIXME CUDA: put the test of sparse(A) or hypersparse(A) in
         // GB_cuda_select_branch.
         info = GB_cuda_select_sparse (C, C_iso, op, flipij, A, athunk, ythunk,
             Werk) ;

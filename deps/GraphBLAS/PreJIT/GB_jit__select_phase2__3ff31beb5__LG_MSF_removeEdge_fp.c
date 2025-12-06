@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_fp.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.0.2, Timothy A. Davis, (c) 2017-2025,
+// SuiteSparse:GraphBLAS v10.3.0, Timothy A. Davis, (c) 2017-2025,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -98,6 +98,7 @@ void LG_MSF_removeEdge_fp
 #define GB_PUTC(c,Cx,p)
 #define GB_Cp_TYPE uint32_t
 #define GB_Cj_TYPE uint32_t
+#define GB_Cj_SIGNED_TYPE int32_t
 #define GB_Ci_TYPE uint32_t
 #define GB_Ci_SIGNED_TYPE int32_t
 #define GB_Cp_BITS 32
@@ -122,6 +123,7 @@ void LG_MSF_removeEdge_fp
 #define GB_GETA(a,Ax,p,iso) a = Ax [0]
 #define GB_Ap_TYPE uint32_t
 #define GB_Aj_TYPE uint32_t
+#define GB_Aj_SIGNED_TYPE int32_t
 #define GB_Ai_TYPE uint32_t
 #define GB_Ai_SIGNED_TYPE int32_t
 #define GB_Ap_BITS 32
@@ -137,8 +139,8 @@ void LG_MSF_removeEdge_fp
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0xa7c80daf8c3946b1 ;
-    v [0] = 10 ; v [1] = 0 ; v [2] = 2 ;
+    (*hash) = 0x4d0915fa03553162 ;
+    v [0] = 10 ; v [1] = 3 ; v [2] = 0 ;
     defn [0] = GB_LG_MSF_removeEdge_fp_USER_DEFN ;
     defn [1] = NULL ;
     defn [2] = NULL ;

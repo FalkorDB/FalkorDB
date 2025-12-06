@@ -52,7 +52,7 @@ void GB_macrofy_sort            // construct all macros for GxB_sort
     // construct the typedefs
     //--------------------------------------------------------------------------
 
-    GB_macrofy_typedefs (fp, ctype, xtype, NULL, NULL, NULL, NULL) ;
+    GB_macrofy_typedefs (fp, ctype, xtype, NULL, NULL, NULL, NULL, NULL) ;
 
     fprintf (fp, "// comparator input type:\n") ;
     GB_macrofy_type (fp, "X", "_", xtype_name) ;

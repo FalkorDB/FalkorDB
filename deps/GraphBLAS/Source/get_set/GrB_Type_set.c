@@ -42,7 +42,7 @@ GrB_Info GrB_Type_set_String
     GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (type) ;
     GB_RETURN_IF_NULL (value) ;
-    ASSERT_TYPE_OK (type, "unaryop for get", GB0) ;
+    ASSERT_TYPE_OK (type, "type for get", GB0) ;
 
     //--------------------------------------------------------------------------
     // set the name or defn of a user-defined type
@@ -82,6 +82,27 @@ GrB_Info GrB_Type_set_VOID
     size_t size
 )
 { 
+
+    //--------------------------------------------------------------------------
+    // check inputs
+    //--------------------------------------------------------------------------
+
+    GB_CHECK_INIT ;
+    GB_RETURN_IF_NULL_OR_FAULTY (type) ;
+    GB_RETURN_IF_NULL (value) ;
+    ASSERT_TYPE_OK (type, "type for get", GB0) ;
+
+    //--------------------------------------------------------------------------
+    // set the print function for a user-defined type
+    //--------------------------------------------------------------------------
+
+    if (field == GxB_PRINT_FUNCTION && type->code == GB_UDT_code &&
+        size == sizeof (GxB_print_function))
+    { 
+        type->print_function = (GxB_print_function *) value ;
+        return (GrB_SUCCESS) ;
+    }
+
     return (GrB_INVALID_VALUE) ;
 }
 

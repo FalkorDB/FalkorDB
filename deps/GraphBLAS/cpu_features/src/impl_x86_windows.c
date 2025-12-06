@@ -24,7 +24,7 @@ static void OverrideOsPreserves(OsPreserves* os_preserves) {
   // No override
 }
 
-#include <windows.h>  // IsProcessorFeaturePresent
+#include "internal/windows_utils.h"
 
 #if defined(CPU_FEATURES_MOCK_CPUID_X86)
 extern bool GetWindowsIsProcessorFeaturePresent(DWORD);
@@ -34,7 +34,7 @@ static bool GetWindowsIsProcessorFeaturePresent(DWORD ProcessorFeature) {
 }
 #endif
 
-static void DetectFeaturesFromOs(X86Features* features) {
+static void DetectFeaturesFromOs(X86Info* info, X86Features* features) {
   // Handling Windows platform through IsProcessorFeaturePresent.
   // https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-isprocessorfeaturepresent
   features->sse =
@@ -43,6 +43,15 @@ static void DetectFeaturesFromOs(X86Features* features) {
       GetWindowsIsProcessorFeaturePresent(PF_XMMI64_INSTRUCTIONS_AVAILABLE);
   features->sse3 =
       GetWindowsIsProcessorFeaturePresent(PF_SSE3_INSTRUCTIONS_AVAILABLE);
+  features->ssse3 =
+      GetWindowsIsProcessorFeaturePresent(PF_SSSE3_INSTRUCTIONS_AVAILABLE);
+  features->sse4_1 =
+      GetWindowsIsProcessorFeaturePresent(PF_SSE4_1_INSTRUCTIONS_AVAILABLE);
+  features->sse4_2 =
+      GetWindowsIsProcessorFeaturePresent(PF_SSE4_2_INSTRUCTIONS_AVAILABLE);
+
+// do not bother checking PF_AVX*
+// cause AVX enabled processor will have XCR0 be exposed and this function will be skipped at all
 }
 
 #endif  // CPU_FEATURES_OS_WINDOWS

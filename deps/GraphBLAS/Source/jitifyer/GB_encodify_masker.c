@@ -49,7 +49,7 @@ uint64_t GB_encodify_masker     // encode a masker problem
     // primary encoding of the problem
     //--------------------------------------------------------------------------
 
-    encoding->kcode = kcode ;
+    GB_encodify_kcode (encoding, kcode) ;
     GB_enumify_masker (&encoding->code, R, Rp_is_32, Rj_is_32, Ri_is_32,
         M, Mask_struct, Mask_comp, C, Z) ;
 

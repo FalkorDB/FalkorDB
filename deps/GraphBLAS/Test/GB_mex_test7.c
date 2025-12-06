@@ -132,8 +132,8 @@ void mexFunction
         "B valid (shallow hypersparse: stats_mem_shallow false)", 3, NULL)) ;
 
     expected = GrB_INVALID_OBJECT ;
-    B->jumbled = true ;
-    ERR (GxB_Matrix_fprint (B, "B invalid; jumbled and shallow", 3, NULL)) ;
+//  B->jumbled = true ;
+//  ERR (GxB_Matrix_fprint (B, "B invalid; jumbled and shallow", 3, NULL)) ;
     B->jumbled = false ;
 
     OK (GxB_print (A,3)) ;

@@ -16,23 +16,23 @@
 #define GET_DEEP_COPY ;
 #define FREE_DEEP_COPY ;
 
-void myplus (float *z, const float *x, const float *y) ;
-void myplus (float *z, const float *x, const float *y) { (*z) = (*x)+(*y) ; }
+void gb_myplus_11 (float *z, const float *x, const float *y) ;
+void gb_myplus_11 (float *z, const float *x, const float *y) { (*z) = (*x)+(*y) ; }
 #define MYPLUS_DEFN \
-"void myplus (float *z, const float *x, const float *y) { (*z) = (*x)+(*y) ; }"
+"void gb_myplus_11 (float *z, const float *x, const float *y) { (*z) = (*x)+(*y) ; }"
 
-void myinc (float *z, const float *x) ;
-void myinc (float *z, const float *x) { (*z) = (*x)+1 ; }
+void gb_myinc_11 (float *z, const float *x) ;
+void gb_myinc_11 (float *z, const float *x) { (*z) = (*x)+1 ; }
 #define MYINC_DEFN \
-"void myinc (float *z, const float *x) { (*z) = (*x)+1 ; }"
+"void gb_myinc_11 (float *z, const float *x) { (*z) = (*x)+1 ; }"
 
-void myidx (int64_t *z, const void *x, uint64_t i, uint64_t j, const void *y);
-void myidx (int64_t *z, const void *x, uint64_t i, uint64_t j, const void *y)
+void gb_myidx_11 (int64_t *z, const void *x, uint64_t i, uint64_t j, const void *y);
+void gb_myidx_11 (int64_t *z, const void *x, uint64_t i, uint64_t j, const void *y)
 {
     (*z) = i + j ;
 }
 #define MYIDX_DEFN \
-"void myidx (int64_t *z, const void *x, uint64_t i, uint64_t j," \
+"void gb_myidx_11 (int64_t *z, const void *x, uint64_t i, uint64_t j," \
 " const void *y)\n" \
 "{ \n" \
 "    (*z) = (int64_t) (i + j) ; \n" \
@@ -144,14 +144,14 @@ if (jit_enabled)
     CHECK (use_cmake_int == 1) ;
 
     GrB_Type MyType = NULL ;
-    info = GxB_Type_new (&MyType, 0, "mytype", "typedef double mytype ;") ;
+    info = GxB_Type_new (&MyType, 0, "gb_mytype", "typedef double gb_mytype ;") ;
     if (info != GrB_SUCCESS || MyType->size != sizeof (double))
     {
         // cmake didn't work
         OK (GrB_free (&MyType)) ;
         OK (GxB_set (GxB_JIT_C_CONTROL, GxB_JIT_ON)) ;
         OK (GxB_Global_Option_set_INT32 (GxB_JIT_USE_CMAKE, false)) ;
-        OK (GxB_Type_new (&MyType, 0, "mytype", "typedef double mytype ;")) ;
+        OK (GxB_Type_new (&MyType, 0, "gb_mytype", "typedef double gb_mytype ;")) ;
     }
     OK (GxB_Type_size (&mysize, MyType)) ;
     CHECK (mysize == sizeof (double)) ;
@@ -232,7 +232,7 @@ if (jit_enabled)
     // test new type
     //--------------------------------------------------------------------------
 
-    OK (GxB_Type_new (&MyType, 0, "mytype", "typedef int32_t mytype ;")) ;
+    OK (GxB_Type_new (&MyType, 0, "gb_mytype", "typedef int32_t gb_mytype ;")) ;
     OK (GxB_Type_size (&mysize, MyType)) ;
     CHECK (mysize == sizeof (int32_t)) ;
     OK (GrB_free (&MyType)) ;
@@ -342,12 +342,12 @@ if (jit_enabled)
     // test JIT error handling
     //--------------------------------------------------------------------------
 
-    OK (GxB_Type_new (&MyType, 0, "mytype", "typedef double mytype ;")) ;
+    OK (GxB_Type_new (&MyType, 0, "gb_mytype", "typedef double gb_mytype ;")) ;
     OK (GxB_Type_size (&mysize, MyType)) ;
     CHECK (mysize == sizeof (double)) ;
     OK (GrB_free (&MyType)) ;
 
-    OK (GxB_Type_new (&MyType, 0, "mytype", "typedef int32_t mytype ;")) ;
+    OK (GxB_Type_new (&MyType, 0, "gb_mytype", "typedef int32_t gb_mytype ;")) ;
     OK (GxB_Type_size (&mysize, MyType)) ;
     CHECK (mysize == sizeof (int32_t)) ;
     OK (GrB_free (&MyType)) ;
@@ -355,7 +355,7 @@ if (jit_enabled)
     printf ("\n--------------------------- intentional compile errors:\n") ;
 
     expected = GxB_JIT_ERROR ;
-    ERR (GxB_Type_new (&MyType, 0, "mytype2_crud", "garbage")) ;
+    ERR (GxB_Type_new (&MyType, 0, "gb_mytype2_crud", "garbage")) ;
     CHECK (MyType == NULL) ;
     printf ("\n-------------------------------------------------------\n\n") ;
 
@@ -372,7 +372,7 @@ if (jit_enabled)
     printf ("new error log: [%s]\n", t) ;
     CHECK (MATCH (t, "/tmp/grb_error_log.txt")) ;
 
-    ERR (GxB_Type_new (&MyType, 0, "mytype2_crud", "garbage")) ;
+    ERR (GxB_Type_new (&MyType, 0, "gb_mytype2_crud", "garbage")) ;
     CHECK (MyType == NULL) ;
 
     printf ("\n------------------------ compile error log (intentional):\n") ;
@@ -387,7 +387,7 @@ if (jit_enabled)
     CHECK (MATCH (s, "/tmp/grberr2.txt")) ;
 
     OK (GxB_set (GxB_JIT_C_CONTROL, GxB_JIT_ON)) ;
-    ERR (GxB_Type_new (&MyType, 0, "mytype2_crud", "more garbage")) ;
+    ERR (GxB_Type_new (&MyType, 0, "gb_mytype2_crud", "more garbage")) ;
     CHECK (MyType == NULL) ;
 
     printf ("\n------------------------ compile error log (intentional):\n") ;
@@ -418,12 +418,12 @@ if (jit_enabled)
 
     OK (GxB_set (GxB_JIT_C_CONTROL, GxB_JIT_OFF)) ;
     OK (GxB_set (GxB_JIT_C_CONTROL, GxB_JIT_ON)) ;
-    OK (GxB_Type_new (&MyType, 0, "mytype", "typedef double mytype ;")) ;
+    OK (GxB_Type_new (&MyType, 0, "gb_mytype", "typedef double gb_mytype ;")) ;
     OK (GxB_Type_size (&mysize, MyType)) ;
     CHECK (mysize == sizeof (double)) ;
     OK (GrB_free (&MyType)) ;
 
-    OK (GxB_Type_new (&MyType, 0, "mytype", "typedef int32_t mytype ;")) ;
+    OK (GxB_Type_new (&MyType, 0, "gb_mytype", "typedef int32_t gb_mytype ;")) ;
     OK (GxB_Type_size (&mysize, MyType)) ;
     CHECK (mysize == sizeof (int32_t)) ;
 
@@ -436,8 +436,8 @@ if (jit_enabled)
 
     expected = GrB_INVALID_VALUE ;
     ERR (GxB_Type_new (&MyType, 0, NULL, NULL)) ;
-    ERR (GxB_Type_new (&MyType, 0, NULL, "typedef int32_t mytype ;")) ;
-    ERR (GxB_Type_new (&MyType, 0, "mytype", NULL)) ;
+    ERR (GxB_Type_new (&MyType, 0, NULL, "typedef int32_t gb_mytype ;")) ;
+    ERR (GxB_Type_new (&MyType, 0, "gb_mytype", NULL)) ;
 
     printf ("\nhere %d control is now: %d\n", __LINE__,
         GB_jitifyer_get_control ( )) ;
@@ -473,8 +473,8 @@ if (jit_enabled)
     OK (GxB_print (sr, 3)) ;
     GrB_free (&sr) ;
 
-    OK (GxB_BinaryOp_new (&op, (GxB_binary_function) myplus,
-        GrB_FP32, GrB_FP32, GrB_FP32, "myplus", MYPLUS_DEFN)) ;
+    OK (GxB_BinaryOp_new (&op, (GxB_binary_function) gb_myplus_11,
+        GrB_FP32, GrB_FP32, GrB_FP32, "gb_myplus_11", MYPLUS_DEFN)) ;
     float zero = 0 ;
     OK (GrB_Monoid_new (&monoid, op, zero)) ;
     OK (GxB_print (op, 3)) ;
@@ -543,7 +543,7 @@ if (jit_enabled)
     GrB_IndexUnaryOp MyIdxOp = NULL ;
     #undef GrB_IndexUnaryOp_new
     #undef GrM_IndexUnaryOp_new
-    OK (GrM_IndexUnaryOp_new (&MyIdxOp, (GxB_index_unary_function) myidx,
+    OK (GrM_IndexUnaryOp_new (&MyIdxOp, (GxB_index_unary_function) gb_myidx_11,
         GrB_INT64, GrB_INT64, GrB_INT64)) ;
     OK (GxB_print (MyIdxOp, 3)) ;
     OK (GrB_apply (A, NULL, NULL, MyIdxOp, A, 0, NULL)) ;
@@ -556,7 +556,7 @@ if (jit_enabled)
     GrB_free (&MyIdxOp) ;
 
     GrB_UnaryOp MyUnOp = NULL ;
-    OK (GrB_UnaryOp_new (&MyUnOp, (GxB_unary_function) myinc, GrB_FP32, GrB_FP32)) ;
+    OK (GrB_UnaryOp_new (&MyUnOp, (GxB_unary_function) gb_myinc_11, GrB_FP32, GrB_FP32)) ;
     OK (GxB_print (MyUnOp, 3)) ;
     OK (GrB_apply (A, NULL, NULL, MyUnOp, A, NULL)) ;
     OK (GxB_print (A, 3)) ;
@@ -574,25 +574,12 @@ if (jit_enabled)
     // GB_file tests
     //--------------------------------------------------------------------------
 
-if (jit_enabled)
-{
-    printf ("JIT enabled:\n") ;
-
-    bool ok = GB_file_mkdir (NULL) ;
-    CHECK (!ok) ;
-    ok = GB_file_unlock_and_close (NULL, NULL) ;
-    CHECK (!ok) ;
-    FILE *fp = NULL ;
-    int fd = -1 ;
-    ok = GB_file_unlock_and_close (&fp, &fd) ;
-    CHECK (!ok) ;
-
-    ok = GB_file_open_and_lock (NULL, NULL, NULL) ;
-    CHECK (!ok) ;
-
-    ok = GB_file_open_and_lock ("/nopermission", &fp, &fd) ;
-    CHECK (!ok) ;
-}
+    if (jit_enabled)
+    {
+        printf ("JIT enabled:\n") ;
+        bool ok = GB_file_mkdir (NULL) ;
+        CHECK (!ok) ;
+    }
 
     //--------------------------------------------------------------------------
     // GxB_Context
@@ -608,11 +595,6 @@ if (jit_enabled)
     double chunk = 0 ;
     OK (GxB_Context_get (context1, GxB_CHUNK, &chunk)) ;
     CHECK (chunk == GB_CHUNK_DEFAULT) ;
-    int id1 = 0 ;
-    OK (GxB_Context_set (context1, GxB_GPU_ID, 3)) ;
-    OK (GxB_Context_get (context1, GxB_GPU_ID, &id1)) ;
-    int id2 = GB_Context_gpu_id ( ) ;
-    CHECK (id1 == id2) ;
 
     int nth ;
     OK (GxB_Context_set_INT32 (context1, GxB_CONTEXT_NTHREADS, 33)) ;
@@ -622,9 +604,6 @@ if (jit_enabled)
     OK (GxB_Context_set_FP64 (context1, GxB_CONTEXT_CHUNK, 1234)) ;
     OK (GxB_Context_get_FP64 (context1, GxB_CONTEXT_CHUNK, &chunk)) ;
     CHECK (chunk == 1234) ;
-
-    OK (GxB_Context_set_INT32 (context1, GxB_CONTEXT_GPU_ID, 40)) ;
-    OK (GxB_Context_get_INT32 (context1, GxB_CONTEXT_GPU_ID, &id1)) ;
 
     OK (GxB_Context_disengage (NULL)) ;
     GrB_free (&context1) ;

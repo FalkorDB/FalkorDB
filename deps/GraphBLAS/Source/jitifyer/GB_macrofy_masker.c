@@ -70,7 +70,7 @@ void GB_macrofy_masker          // construct all macros for GrB_eWise
         // construct the typedefs
         //----------------------------------------------------------------------
 
-        GB_macrofy_typedefs (fp, rtype, NULL, NULL, NULL, NULL, NULL) ;
+        GB_macrofy_typedefs (fp, rtype, NULL, NULL, NULL, NULL, NULL, NULL) ;
         GB_macrofy_type (fp, "R", "_", rtype->name) ;
 
         //----------------------------------------------------------------------

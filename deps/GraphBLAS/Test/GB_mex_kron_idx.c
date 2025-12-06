@@ -12,12 +12,12 @@
 
 #define USAGE "C = GB_mex_kron_idx (A, B, atrans, btrans, C_is_csc)"
 
-void mykronidx (double *z,
+void gb_mykronidx (double *z,
     const void *x, uint64_t ix, uint64_t jx,
     const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta) ;
 
-void mykronidx (double *z,
+void gb_mykronidx (double *z,
     const void *x, uint64_t ix, uint64_t jx,
     const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta)
@@ -30,7 +30,7 @@ void mykronidx (double *z,
 }
 
 #define MYKRONIDX_DEFN                              \
-"void mykronidx (double *z,                     \n" \
+"void gb_mykronidx (double *z,                     \n" \
 "   const void *x, uint64_t ix, uint64_t jx,    \n" \
 "   const void *y, uint64_t iy, uint64_t jy,    \n" \
 "   const int64_t *theta)                       \n" \
@@ -129,9 +129,9 @@ void mexFunction
 
     // create the index binary op
     OK (GxB_IndexBinaryOp_new (&Iop,
-        (GxB_index_binary_function) mykronidx,
+        (GxB_index_binary_function) gb_mykronidx,
         GrB_FP64, GrB_FP64, GrB_FP64, GrB_INT64,
-        "mykronidx", MYKRONIDX_DEFN)) ;
+        "gb_mykronidx", MYKRONIDX_DEFN)) ;
 
     // create the mult binary op
     int64_t theta = 0 ;

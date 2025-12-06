@@ -55,8 +55,8 @@ int rmm_wrap_initialize
     uint32_t device_id,
     RMM_MODE mode,
     size_t init_pool_size,
-    size_t max_pool_size,
-    size_t stream_pool_size
+    size_t max_pool_size
+    // , size_t stream_pool_size
 ) ;
 
 // initialize rmm_wrap_contexts for each device in CUDA_VISIBLE_DEVICES
@@ -65,8 +65,8 @@ int rmm_wrap_initialize_all_same
 (
     RMM_MODE mode,
     size_t init_pool_size,
-    size_t max_pool_size,
-    size_t stream_pool_size
+    size_t max_pool_size
+    // , size_t stream_pool_size
 ) ;
 
 // destroy an RMM resource
@@ -83,9 +83,9 @@ void *rmm_wrap_realloc (void *p, size_t newsize) ;
 void  rmm_wrap_free (void *p) ;
 
 // Get streams from context (based on current device_id):
-void* rmm_wrap_get_next_stream_from_pool(void);
-void* rmm_wrap_get_stream_from_pool(size_t stream_id);
-void* rmm_wrap_get_main_stream(void);
+// void* rmm_wrap_get_next_stream_from_pool(void);
+// void* rmm_wrap_get_stream_from_pool(size_t stream_id);
+// void* rmm_wrap_get_main_stream(void);
 
 #ifdef __cplusplus
 }

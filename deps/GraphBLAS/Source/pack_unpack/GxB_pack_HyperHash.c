@@ -116,7 +116,7 @@ GrB_Info GxB_pack_HyperHash         // move Y into A->Y
     (*Y) = NULL ;
     A->Y_shallow = false ;
     A->no_hyper_hash = false ;  // A now has a hyper_hash matrix A->Y
-    ASSERT_MATRIX_OK (A, "A with new hyperhash", GB0) ;
+    ASSERT_MATRIX_OK (A, "A with new hyper_hash", GB0) ;
     return (GrB_SUCCESS) ;
 }
 

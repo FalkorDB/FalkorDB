@@ -5,6 +5,92 @@
 
 \begin{itemize}
 
+\item Dec 3, 2025: version 10.3.0
+
+    \begin{itemize}
+    \item \verb'GrB_extract': performance improvement for \verb'C=A(I,J)' when
+        \verb'A' is very large and (typically) hypersparse, and \verb'I' is an
+        explicit list and also large.
+    \item \verb'GrB_(Matrix,Vector,Scalar)_dup':  pending work is now left
+        unfinished; any pending work in the input matrix will appear in the
+        copy.  In v10.2.0 and earlier, all pending work in the input matrix was
+        finished first.  To obtain the behavior in v10.2.0 and earlier, simply
+        call \verb'GrB_*_wait' on the input matrix before calling
+        \verb'GrB_*_dup'.
+    \end{itemize}
+
+\item Nov 1, 2025: version 10.2.0
+
+    \begin{itemize}
+    \item printing of user-defined types: get/set with
+        \verb'GxB_PRINT_FUNCTION'.
+    \item doc: documentation of \verb'GrB_Matrix_import/export' was backwards.
+    \item performance: new \verb'GrB_assign' kernel for \verb'C<C,struct>+=A'
+        added.
+    \end{itemize}
+
+\item July 25, 2025: version 10.1.1
+
+    \begin{itemize}
+    \item gcc can now be used the Power or s390:  workaround added;
+        see \verb'Source/mxm/factory/GB_AxB_saxpy3_symbolic_fine_template.c.'
+	This resolves the issue found in v10.1.0.
+    \item OpenMP usage: replace \verb'omp critical' with lock/unlock.
+    \item MATLAB: added method for getting/setting the JIT cache path.
+    \item JIT file lock/unlock: removed; if multiple user processes use
+        GraphBLAS at the same time, each must set their own unique JIT cache.
+    \item (65) bug fix: theta type definitions for user-defined index
+        binary ops were incorrectly typedef'd in the JIT kernels.
+    \end{itemize}
+
+\item June 1, 2025: version 10.1.0
+
+    \begin{itemize}
+    \item add support for RISC-V vectorization: contributed by Rodion Suvorov
+    \item added \verb'GRAPHBLAS_VANILLA': compile-time flag that disables all
+        GxB methods.
+    \item gcc and the Power or s390 processors:  using gcc on the Power or s390
+        processors leads to a failure in the OpenMP atomic capture intrinsic.
+        See \verb'Source/mxm/factory/GB_AxB_saxpy3_symbolic_template.c.'  The
+        cmake build system has been revised so that it refuses to use gcc on
+        these systems system.  Use clang or the IBM xlc compiler instead, which
+        do not trigger this error.
+    \item \verb'GxB_STDC_VERSION': this is normally equal to
+        \verb'__STDC_VERSION__' and is determined automatically in GraphBLAS.h.
+        If it is $\ge$ 201112L, then C11 is being used and the polymorphic
+        functions (based on \verb'_Generic') are available.  It can now be
+        \verb'#define'd by the user application prior to its
+        \verb'#include "GraphBLAS.h"' statement.  If a C++ compiler is used to
+        compile the user application then \verb'GxB_STDC_VERSION' is set to
+        199001L to denote C90 (and no \verb'_Generic' keyword is used).
+
+        See \verb'GraphBLAS/Demo/Include/graphblas_demo.h' for an example usage.
+    \item minor updates to build system
+    \item iterator methods: revised so they do not conflict with the copy of
+        GraphBLAS v7.4.4 used inside MATLAB R2024b.  No effect on normal
+        C API, so no change in major SO number for this release.
+    \end{itemize}
+
+\item May 5, 2025: version 10.0.5
+
+    \begin{itemize}
+    \item revised cmake build system
+    \item (64) bug fix: \verb'GrB_assign', \verb'C<M>+=A',
+        method 08n, when A is full.  Caught by Gabe Gomez.
+    \item (63) bug fix: \verb'GrB_mxm' when using the masked dot-product
+        and the output matrix is iso-valued.
+    \end{itemize}
+
+\item Apr 7, 2025: version 10.0.3
+
+    \begin{itemize}
+    \item upgrade \verb'xxHash' to 0.8.3: contributed by Christoph Gr\"uninger.
+    \item upgrade \verb'cpu_features' to 0.9.0: contributed by Christoph
+        Gr\"uninger.
+    \item Octave interface: revised for the recent MacOS (15.3.2), assuming
+        that both Octave and OpenMP are installed via homebrew.
+    \end{itemize}
+
 \item Mar 20, 2025: version 10.0.2
 
     \begin{itemize}

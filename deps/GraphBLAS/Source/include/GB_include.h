@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GB_include.h: internal definitions for GraphBLAS, including JIT kernels
+// GB_include.h: internal definitions for GraphBLAS, including CPU JIT kernels
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
@@ -13,6 +13,8 @@
 //------------------------------------------------------------------------------
 // definitions that modify GraphBLAS.h
 //------------------------------------------------------------------------------
+
+#undef GRAPHBLAS_VANILLA
 
 #include "include/GB_dev.h"
 #include "include/GB_compiler.h"
@@ -94,6 +96,7 @@
     #include "include/GB_callback.h"
     #include "include/GB_hyper_hash_lookup.h"
     #include "include/GB_ok.h"
+    #include "include/GB_omp_kernels.h"
 
     // not used by CUDA
     #include "include/GB_ijlist.h"
@@ -105,7 +108,6 @@
     #include "include/GB_AxB_macros.h"
     #include "include/GB_ek_slice_kernels.h"
     #include "include/GB_bitmap_scatter.h"
-    #include "include/GB_omp_kernels.h"
 
 #else
 
@@ -137,6 +139,7 @@
     #include "callback/include/GB_callback.h"
     #include "hyper/include/GB_hyper_hash_lookup.h"
     #include "ok/include/GB_ok.h"
+    #include "omp/include/GB_omp_kernels.h"
 
     // not used by CUDA
     #include "ij/include/GB_ijlist.h"
@@ -148,7 +151,6 @@
     #include "mxm/include/GB_AxB_macros.h"
     #include "slice/include/GB_ek_slice_kernels.h"
     #include "assign/include/GB_bitmap_scatter.h"
-    #include "omp/include/GB_omp_kernels.h"
 
 #endif
 

@@ -86,7 +86,7 @@ GrB_Info GB_select_bitmap
     else
     { 
         // Cx [0:anz-1] = Ax [0:anz-1]
-        // Fixme for CUDA: do this on the GPU if appropriate
+        // FIXME for CUDA: do this on the GPU if appropriate
         GB_memcpy (C->x, A->x, anz * asize, nthreads) ;
     }
 

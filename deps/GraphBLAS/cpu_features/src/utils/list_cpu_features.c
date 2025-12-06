@@ -35,6 +35,12 @@
 #include "cpuinfo_mips.h"
 #elif defined(CPU_FEATURES_ARCH_PPC)
 #include "cpuinfo_ppc.h"
+#elif defined(CPU_FEATURES_ARCH_S390X)
+#include "cpuinfo_s390x.h"
+#elif defined(CPU_FEATURES_ARCH_RISCV)
+#include "cpuinfo_riscv.h"
+#elif defined(CPU_FEATURES_ARCH_LOONGARCH)
+#include "cpuinfo_loongarch.h"
 #endif
 
 // Design principles
@@ -54,18 +60,18 @@ char gGlobalBuffer[64 * 1024];
 BumpAllocator gBumpAllocator = {.ptr = gGlobalBuffer,
                                 .size = sizeof(gGlobalBuffer)};
 
-static void internal_error() {
+static void internal_error(void) {
   fputs("internal error\n", stderr);
   exit(EXIT_FAILURE);
 }
 
 #define ALIGN 8
 
-static void assertAligned() {
+static void assertAligned(void) {
   if ((uintptr_t)(gBumpAllocator.ptr) % ALIGN) internal_error();
 }
 
-static void BA_Align() {
+static void BA_Align(void) {
   while (gBumpAllocator.size && (uintptr_t)(gBumpAllocator.ptr) % ALIGN) {
     --gBumpAllocator.size;
     ++gBumpAllocator.ptr;
@@ -129,10 +135,10 @@ static Node* CreateConstantString(const char* value) {
 }
 
 // Adds a map node.
-static Node* CreateMap() { return BA_CreateNode(NT_MAP); }
+static Node* CreateMap(void) { return BA_CreateNode(NT_MAP); }
 
 // Adds an array node.
-static Node* CreateArray() { return BA_CreateNode(NT_ARRAY); }
+static Node* CreateArray(void) { return BA_CreateNode(NT_ARRAY); }
 
 // Adds a formatted string node.
 static Node* CreatePrintfString(const char* format, ...) {
@@ -205,6 +211,15 @@ DEFINE_ADD_FLAGS(GetMipsFeaturesEnumValue, GetMipsFeaturesEnumName,
 #elif defined(CPU_FEATURES_ARCH_PPC)
 DEFINE_ADD_FLAGS(GetPPCFeaturesEnumValue, GetPPCFeaturesEnumName, PPCFeatures,
                  PPC_LAST_)
+#elif defined(CPU_FEATURES_ARCH_S390X)
+DEFINE_ADD_FLAGS(GetS390XFeaturesEnumValue, GetS390XFeaturesEnumName, S390XFeatures,
+                 S390X_LAST_)
+#elif defined(CPU_FEATURES_ARCH_RISCV)
+DEFINE_ADD_FLAGS(GetRiscvFeaturesEnumValue, GetRiscvFeaturesEnumName, RiscvFeatures,
+                 RISCV_LAST_)
+#elif defined(CPU_FEATURES_ARCH_LOONGARCH)
+DEFINE_ADD_FLAGS(GetLoongArchFeaturesEnumValue, GetLoongArchFeaturesEnumName, LoongArchFeatures,
+                 LOONGARCH_LAST_)
 #endif
 
 // Prints a json string with characters escaping.
@@ -340,7 +355,7 @@ static Node* GetCacheTypeString(CacheType cache_type) {
     case CPU_FEATURE_CACHE_PREFETCH:
       return CreateConstantString("prefetch");
   }
-  UNREACHABLE();
+  CPU_FEATURES_UNREACHABLE();
 }
 
 static void AddCacheInfo(Node* root, const CacheInfo* cache_info) {
@@ -360,15 +375,13 @@ static void AddCacheInfo(Node* root, const CacheInfo* cache_info) {
   AddMapEntry(root, "cache_info", array);
 }
 
-static Node* CreateTree() {
+static Node* CreateTree(void) {
   Node* root = CreateMap();
 #if defined(CPU_FEATURES_ARCH_X86)
-  char brand_string[49];
   const X86Info info = GetX86Info();
   const CacheInfo cache_info = GetX86CacheInfo();
-  FillX86BrandString(brand_string);
   AddMapEntry(root, "arch", CreateString("x86"));
-  AddMapEntry(root, "brand", CreateString(brand_string));
+  AddMapEntry(root, "brand", CreateString(info.brand_string));
   AddMapEntry(root, "family", CreateInt(info.family));
   AddMapEntry(root, "model", CreateInt(info.model));
   AddMapEntry(root, "stepping", CreateInt(info.stepping));
@@ -410,6 +423,24 @@ static Node* CreateTree() {
   AddMapEntry(root, "microarchitecture",
               CreateString(strings.type.base_platform));
   AddFlags(root, &info.features);
+#elif defined(CPU_FEATURES_ARCH_S390X)
+  const S390XInfo info = GetS390XInfo();
+  const S390XPlatformStrings strings = GetS390XPlatformStrings();
+  AddMapEntry(root, "arch", CreateString("s390x"));
+  AddMapEntry(root, "platform", CreateString("zSeries"));
+  AddMapEntry(root, "model", CreateString(strings.type.platform));
+  AddMapEntry(root, "# processors", CreateInt(strings.num_processors));
+  AddFlags(root, &info.features);
+#elif defined(CPU_FEATURES_ARCH_RISCV)
+  const RiscvInfo info = GetRiscvInfo();
+  AddMapEntry(root, "arch", CreateString("risc-v"));
+  AddMapEntry(root, "vendor", CreateString(info.vendor));
+  AddMapEntry(root, "microarchitecture", CreateString(info.uarch));
+  AddFlags(root, &info.features); 
+#elif defined(CPU_FEATURES_ARCH_LOONGARCH)
+  const LoongArchInfo info = GetLoongArchInfo();
+  AddMapEntry(root, "arch", CreateString("loongarch"));
+  AddFlags(root, &info.features); 
 #endif
   return root;
 }

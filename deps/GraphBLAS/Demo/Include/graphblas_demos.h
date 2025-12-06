@@ -56,6 +56,9 @@
 // do not use any historical methods in GraphBLAS.h
 #define NHISTORICAL
 
+// do not use any _Generic macros
+#define GxB_STDC_VERSION 199001L
+
 #include "GraphBLAS.h"
 #include "simple_rand.h"
 #undef I

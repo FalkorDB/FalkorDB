@@ -119,6 +119,10 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
     // Hi and Hx are not initialized.
 
     int taskid ;
+    #if defined ( GCC_PPC_BUG ) && ( !GB_NO_MASK )
+    bool punt = false ;
+    #endif
+
     #pragma omp parallel for num_threads(nthreads) schedule(static,1)
     for (taskid = 0 ; taskid < ntasks ; taskid++)
     {
@@ -183,51 +187,20 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
 
                 }
                 else if (!M_in_place)
-                {
+                { 
 
                     //----------------------------------------------------------
-                    // phase1: fine hash task, C<M>=A*B or C<!M>=A*B
+                    // phase1: fine hash task, C<M>=A*B or C<!M>=A*B (parallel)
                     //----------------------------------------------------------
 
-                    // If M_in_place is true, this is skipped.  The mask
-                    // M is dense, and is used in-place.
-
-                    // The least significant 2 bits of Hf [hash] is the flag f,
-                    // and the upper bits contain h, as (h,f).  After this
-                    // phase1, if M(i,j)=1 then the hash table contains
-                    // ((i+1),1) in Hf [hash] at some location.
-
-                    // Later, the flag values of f = 2 and 3 are also used.
-                    // Only f=1 is set in this phase.
-
-                    // h == 0,   f == 0: unoccupied and unlocked
-                    // h == i+1, f == 1: occupied with M(i,j)=1
-
-                    uint64_t *restrict
-                        Hf = (uint64_t *restrict) SaxpyTasks [taskid].Hf ;
-                    uint64_t hash_bits = (hash_size-1) ;
-                    // scan this task's M(:,j)
-                    for (int64_t pM = mystart ; pM < myend ; pM++)
-                    {
-                        GB_GET_M_ij (pM) ;              // get M(i,j)
-                        if (!mij) continue ;            // skip if M(i,j)=0
-                        uint64_t i = GBi_M (Mi, pM, mvlen) ;
-                        uint64_t i_mine = ((i+1) << 2) + 1 ;  // ((i+1),1)
-                        for (GB_HASH (i))
-                        { 
-                            uint64_t hf ;
-                            // swap this task's hash entry into the hash table;
-                            // does the following using an atomic capture:
-                            // { hf = Hf [hash] ; Hf [hash] = i_mine ; }
-                            GB_ATOMIC_CAPTURE_UINT64 (hf, Hf [hash], i_mine) ;
-                            if (hf == 0) break ;        // success
-                            // i_mine has been inserted, but a prior entry was
-                            // already there.  It needs to be replaced, so take
-                            // ownership of this displaced entry, and keep
-                            // looking until a new empty slot is found for it.
-                            i_mine = hf ;
-                        }
-                    }
+                    #ifdef GCC_PPC_BUG
+                    // This fine hash task is skipped and done below, outside
+                    // of this parallel region.
+                    GB_ATOMIC_WRITE
+                    punt = true ;
+                    #else
+                    #include "mxm/factory/GB_AxB_saxpy3_symbolic_fine_template.c"
+                    #endif
                 }
             }
             #endif
@@ -445,6 +418,60 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
             }
         }
     }
+
+    //==========================================================================
+    // phase 1: punt, for gcc on Power8 or s390x
+    //==========================================================================
+
+    // A single thread is used to do all fine hash tasks, when M_in_place
+    // is false.
+
+    #if defined ( GCC_PPC_BUG ) && ( !GB_NO_MASK )
+    if (punt)
+    {
+        for (taskid = 0 ; taskid < nfine ; taskid++)
+        {
+
+            //------------------------------------------------------------------
+            // get the task descriptor
+            //------------------------------------------------------------------
+
+            uint64_t hash_size = SaxpyTasks [taskid].hsize ;
+            bool use_Gustavson = (hash_size == cvlen) ;
+
+            if (!use_Gustavson && !M_in_place)
+            {
+
+                //--------------------------------------------------------------
+                // get the task descriptor
+                //--------------------------------------------------------------
+
+                int64_t kk = SaxpyTasks [taskid].vector ;
+                int64_t bjnz = (Bp == NULL) ? bvlen :
+                    (GB_IGET (Bp, kk+1) - GB_IGET (Bp, kk)) ;
+                // no work to do if B(:,j) is empty
+                if (bjnz == 0) continue ;
+
+                // partition M(:,j)
+                GB_GET_M_j ;        // get M(:,j)
+
+                int team_size = SaxpyTasks [taskid].team_size ;
+                int leader    = SaxpyTasks [taskid].leader ;
+                int my_teamid = taskid - leader ;
+                int64_t mystart, myend ;
+                GB_PARTITION (mystart, myend, mjnz, my_teamid, team_size) ;
+                mystart += pM_start ;
+                myend   += pM_start ;
+
+                //----------------------------------------------------------
+                // phase1: fine hash task, C<M>=A*B or C<!M>=A*B (1 thread)
+                //----------------------------------------------------------
+
+                #include "mxm/factory/GB_AxB_saxpy3_symbolic_fine_template.c"
+            }
+        }
+    }
+    #endif
 
     //--------------------------------------------------------------------------
     // check result for phase1 for fine tasks

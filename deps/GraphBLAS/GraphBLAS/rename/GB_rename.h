@@ -155,6 +155,7 @@
 #define GB_bitmap_expand_to_hyper GM_bitmap_expand_to_hyper
 #define GB_bitmap_M_scatter_whole GM_bitmap_M_scatter_whole
 #define GB_bitmap_subref GM_bitmap_subref
+#define GB_bitonic GM_bitonic
 #define GB_bitset_int16 GM_bitset_int16
 #define GB_bitset_int32 GM_bitset_int32
 #define GB_bitset_int64 GM_bitset_int64
@@ -214,7 +215,6 @@
 #define GB_clog1p GM_clog1p
 #define GB_clog2f GM_clog2f
 #define GB_clog2 GM_clog2
-#define GB_code_check GM_code_check
 #define GB_code_name_get GM_code_name_get
 #define GB_code_size GM_code_size
 #define GB_code_string GM_code_string
@@ -241,9 +241,9 @@
 #define GB_Context_chunk_set GM_Context_chunk_set
 #define GB_Context_disengage GM_Context_disengage
 #define GB_Context_engage GM_Context_engage
-#define GB_Context_gpu_id_get GM_Context_gpu_id_get
-#define GB_Context_gpu_id GM_Context_gpu_id
-#define GB_Context_gpu_id_set GM_Context_gpu_id_set
+#define GB_Context_gpu_ids_get GM_Context_gpu_ids_get
+#define GB_Context_gpu_ids GM_Context_gpu_ids
+#define GB_Context_gpu_ids_set GM_Context_gpu_ids_set
 #define GB_Context_nthreads_max_get GM_Context_nthreads_max_get
 #define GB_Context_nthreads_max GM_Context_nthreads_max
 #define GB_Context_nthreads_max_set GM_Context_nthreads_max_set
@@ -355,8 +355,6 @@
 #define GB_file_dlopen GM_file_dlopen
 #define GB_file_dlsym GM_file_dlsym
 #define GB_file_mkdir GM_file_mkdir
-#define GB_file_open_and_lock GM_file_open_and_lock
-#define GB_file_unlock_and_close GM_file_unlock_and_close
 #define GB_flip_binop GM_flip_binop
 #define GB_free_memory GM_free_memory
 #define GB_frexpef GM_frexpef
@@ -391,11 +389,14 @@
 #define GB_Global_cpu_features_avx2 GM_Global_cpu_features_avx2
 #define GB_Global_cpu_features_avx512f GM_Global_cpu_features_avx512f
 #define GB_Global_cpu_features_query GM_Global_cpu_features_query
+#define GB_Global_cpu_features_rvv_1_0 GM_Global_cpu_features_rvv_1_0
 #define GB_Global_flush_get GM_Global_flush_get
 #define GB_Global_flush_set GM_Global_flush_set
 #define GB_Global_free_function_get GM_Global_free_function_get
 #define GB_Global_free_function GM_Global_free_function
 #define GB_Global_free_function_set GM_Global_free_function_set
+#define GB_Global_gpu_compute_capability_major_get GM_Global_gpu_compute_capability_major_get
+#define GB_Global_gpu_compute_capability_minor_get GM_Global_gpu_compute_capability_minor_get
 #define GB_Global_gpu_count_get GM_Global_gpu_count_get
 #define GB_Global_gpu_count_set GM_Global_gpu_count_set
 #define GB_Global_gpu_device_max_pool_size_set GM_Global_gpu_device_max_pool_size_set
@@ -420,6 +421,10 @@
 #define GB_Global_is_csc_set GM_Global_is_csc_set
 #define GB_Global_j_control_get GM_Global_j_control_get
 #define GB_Global_j_control_set GM_Global_j_control_set
+#define GB_Global_lock_destroy GM_Global_lock_destroy
+#define GB_Global_lock_init GM_Global_lock_init
+#define GB_Global_lock_set GM_Global_lock_set
+#define GB_Global_lock_unset GM_Global_lock_unset
 #define GB_Global_make_persistent GM_Global_make_persistent
 #define GB_Global_malloc_debug_count_decrement GM_Global_malloc_debug_count_decrement
 #define GB_Global_malloc_debug_count_set GM_Global_malloc_debug_count_set
@@ -475,6 +480,7 @@
 #define GB_HIST_count_wksp GM_HIST_count_wksp
 #define GB_HIST_isError GM_HIST_isError
 #define GB_HUF_buildCTable_wksp GM_HUF_buildCTable_wksp
+#define GB_HUF_cardinality GM_HUF_cardinality
 #define GB_HUF_compress1X_repeat GM_HUF_compress1X_repeat
 #define GB_HUF_compress1X_usingCTable GM_HUF_compress1X_usingCTable
 #define GB_HUF_compress4X_repeat GM_HUF_compress4X_repeat
@@ -489,6 +495,7 @@
 #define GB_HUF_estimateCompressedSize GM_HUF_estimateCompressedSize
 #define GB_HUF_getErrorName GM_HUF_getErrorName
 #define GB_HUF_getNbBitsFromCTable GM_HUF_getNbBitsFromCTable
+#define GB_HUF_minTableLog GM_HUF_minTableLog
 #define GB_HUF_optimalTableLog GM_HUF_optimalTableLog
 #define GB_HUF_readCTable GM_HUF_readCTable
 #define GB_HUF_readDTableX1_wksp GM_HUF_readDTableX1_wksp
@@ -864,6 +871,11 @@
 #define GB_JITpackage_352 GM_JITpackage_352
 #define GB_JITpackage_353 GM_JITpackage_353
 #define GB_JITpackage_354 GM_JITpackage_354
+#define GB_JITpackage_355 GM_JITpackage_355
+#define GB_JITpackage_356 GM_JITpackage_356
+#define GB_JITpackage_357 GM_JITpackage_357
+#define GB_JITpackage_358 GM_JITpackage_358
+#define GB_JITpackage_359 GM_JITpackage_359
 #define GB_JITpackage_35 GM_JITpackage_35
 #define GB_JITpackage_36 GM_JITpackage_36
 #define GB_JITpackage_37 GM_JITpackage_37
@@ -1262,6 +1274,7 @@
 #define GB_subassign_24 GM_subassign_24
 #define GB_subassign_25 GM_subassign_25
 #define GB_subassign_26 GM_subassign_26
+#define GB_subassign_27 GM_subassign_27
 #define GB_subassigner GM_subassigner
 #define GB_subassigner_method GM_subassigner_method
 #define GB_subassign GM_subassign
@@ -1339,8 +1352,11 @@
 #define GB_ZSTD_CCtx_refPrefix GM_ZSTD_CCtx_refPrefix
 #define GB_ZSTD_CCtx_refThreadPool GM_ZSTD_CCtx_refThreadPool
 #define GB_ZSTD_CCtx_reset GM_ZSTD_CCtx_reset
+#define GB_ZSTD_CCtx_setCParams GM_ZSTD_CCtx_setCParams
+#define GB_ZSTD_CCtx_setFParams GM_ZSTD_CCtx_setFParams
 #define GB_ZSTD_CCtx_setParameter GM_ZSTD_CCtx_setParameter
 #define GB_ZSTD_CCtx_setParametersUsingCCtxParams GM_ZSTD_CCtx_setParametersUsingCCtxParams
+#define GB_ZSTD_CCtx_setParams GM_ZSTD_CCtx_setParams
 #define GB_ZSTD_CCtx_setPledgedSrcSize GM_ZSTD_CCtx_setPledgedSrcSize
 #define GB_ZSTD_CCtx_trace GM_ZSTD_CCtx_trace
 #define GB_ZSTD_checkContinuity GM_ZSTD_checkContinuity
@@ -1352,6 +1368,7 @@
 #define GB_ZSTD_compressBegin_advanced_internal GM_ZSTD_compressBegin_advanced_internal
 #define GB_ZSTD_compressBegin GM_ZSTD_compressBegin
 #define GB_ZSTD_compressBegin_usingCDict_advanced GM_ZSTD_compressBegin_usingCDict_advanced
+#define GB_ZSTD_compressBegin_usingCDict_deprecated GM_ZSTD_compressBegin_usingCDict_deprecated
 #define GB_ZSTD_compressBegin_usingCDict GM_ZSTD_compressBegin_usingCDict
 #define GB_ZSTD_compressBegin_usingDict GM_ZSTD_compressBegin_usingDict
 #define GB_ZSTD_compressBlock_btlazy2_dictMatchState GM_ZSTD_compressBlock_btlazy2_dictMatchState
@@ -1364,6 +1381,7 @@
 #define GB_ZSTD_compressBlock_btultra_dictMatchState GM_ZSTD_compressBlock_btultra_dictMatchState
 #define GB_ZSTD_compressBlock_btultra_extDict GM_ZSTD_compressBlock_btultra_extDict
 #define GB_ZSTD_compressBlock_btultra GM_ZSTD_compressBlock_btultra
+#define GB_ZSTD_compressBlock_deprecated GM_ZSTD_compressBlock_deprecated
 #define GB_ZSTD_compressBlock_doubleFast_dictMatchState GM_ZSTD_compressBlock_doubleFast_dictMatchState
 #define GB_ZSTD_compressBlock_doubleFast_extDict GM_ZSTD_compressBlock_doubleFast_extDict
 #define GB_ZSTD_compressBlock_doubleFast GM_ZSTD_compressBlock_doubleFast
@@ -1398,7 +1416,9 @@
 #define GB_ZSTD_compressBound GM_ZSTD_compressBound
 #define GB_ZSTD_compressCCtx GM_ZSTD_compressCCtx
 #define GB_ZSTD_compressContinue GM_ZSTD_compressContinue
+#define GB_ZSTD_compressContinue_public GM_ZSTD_compressContinue_public
 #define GB_ZSTD_compressEnd GM_ZSTD_compressEnd
+#define GB_ZSTD_compressEnd_public GM_ZSTD_compressEnd_public
 #define GB_ZSTD_compress GM_ZSTD_compress
 #define GB_ZSTD_compressLiterals GM_ZSTD_compressLiterals
 #define GB_ZSTD_compressRleLiteralsBlock GM_ZSTD_compressRleLiteralsBlock
@@ -1413,6 +1433,8 @@
 #define GB_ZSTD_copyCCtx GM_ZSTD_copyCCtx
 #define GB_ZSTD_copyDCtx GM_ZSTD_copyDCtx
 #define GB_ZSTD_copyDDictParameters GM_ZSTD_copyDDictParameters
+#define GB_ZSTD_copySequencesToSeqStoreExplicitBlockDelim GM_ZSTD_copySequencesToSeqStoreExplicitBlockDelim
+#define GB_ZSTD_copySequencesToSeqStoreNoBlockDelim GM_ZSTD_copySequencesToSeqStoreNoBlockDelim
 #define GB_ZSTD_cParam_getBounds GM_ZSTD_cParam_getBounds
 #define GB_ZSTD_createCCtx_advanced GM_ZSTD_createCCtx_advanced
 #define GB_ZSTD_createCCtx GM_ZSTD_createCCtx
@@ -1453,12 +1475,14 @@
 #define GB_ZSTD_decompressBegin GM_ZSTD_decompressBegin
 #define GB_ZSTD_decompressBegin_usingDDict GM_ZSTD_decompressBegin_usingDDict
 #define GB_ZSTD_decompressBegin_usingDict GM_ZSTD_decompressBegin_usingDict
+#define GB_ZSTD_decompressBlock_deprecated GM_ZSTD_decompressBlock_deprecated
 #define GB_ZSTD_decompressBlock GM_ZSTD_decompressBlock
 #define GB_ZSTD_decompressBlock_internal GM_ZSTD_decompressBlock_internal
 #define GB_ZSTD_decompressBound GM_ZSTD_decompressBound
 #define GB_ZSTD_decompressContinue GM_ZSTD_decompressContinue
 #define GB_ZSTD_decompressDCtx GM_ZSTD_decompressDCtx
 #define GB_ZSTD_decompress GM_ZSTD_decompress
+#define GB_ZSTD_decompressionMargin GM_ZSTD_decompressionMargin
 #define GB_ZSTD_decompressStream GM_ZSTD_decompressStream
 #define GB_ZSTD_decompressStream_simpleArgs GM_ZSTD_decompressStream_simpleArgs
 #define GB_ZSTD_decompress_usingDDict GM_ZSTD_decompress_usingDDict
@@ -1566,6 +1590,7 @@
 #define GB_ZSTD_noCompressLiterals GM_ZSTD_noCompressLiterals
 #define GB_ZSTD_readSkippableFrame GM_ZSTD_readSkippableFrame
 #define GB_ZSTD_referenceExternalSequences GM_ZSTD_referenceExternalSequences
+#define GB_ZSTD_registerSequenceProducer GM_ZSTD_registerSequenceProducer
 #define GB_ZSTD_reset_compressedBlockState GM_ZSTD_reset_compressedBlockState
 #define GB_ZSTD_resetCStream GM_ZSTD_resetCStream
 #define GB_ZSTD_resetDStream GM_ZSTD_resetDStream
@@ -1574,6 +1599,7 @@
 #define GB_ZSTD_selectBlockCompressor GM_ZSTD_selectBlockCompressor
 #define GB_ZSTD_selectEncodingType GM_ZSTD_selectEncodingType
 #define GB_ZSTD_seqToCodes GM_ZSTD_seqToCodes
+#define GB_ZSTD_sequenceBound GM_ZSTD_sequenceBound
 #define GB_ZSTD_sizeof_CCtx GM_ZSTD_sizeof_CCtx
 #define GB_ZSTD_sizeof_CDict GM_ZSTD_sizeof_CDict
 #define GB_ZSTD_sizeof_CStream GM_ZSTD_sizeof_CStream
@@ -3466,6 +3492,8 @@
 #define GxB_ISNE_UINT32 GxM_ISNE_UINT32
 #define GxB_ISNE_UINT64 GxM_ISNE_UINT64
 #define GxB_ISNE_UINT8 GxM_ISNE_UINT8
+#define GxB_Iterator_free GxM_Iterator_free
+#define GxB_Iterator_new GxM_Iterator_new
 #define GxB_kron GxM_kron
 #define GxB_LAND_BOOL GxM_LAND_BOOL
 #define GxB_LAND_BOOL_MONOID GxM_LAND_BOOL_MONOID
@@ -3804,6 +3832,12 @@
 #define GxB_Matrix_import_HyperCSR GxM_Matrix_import_HyperCSR
 #define GxB_Matrix_iso GxM_Matrix_iso
 #define GxB_Matrix_isStoredElement GxM_Matrix_isStoredElement
+#define GxB_Matrix_Iterator_attach GxM_Matrix_Iterator_attach
+#define GxB_Matrix_Iterator_getIndex GxM_Matrix_Iterator_getIndex
+#define GxB_Matrix_Iterator_getp GxM_Matrix_Iterator_getp
+#define GxB_Matrix_Iterator_getpmax GxM_Matrix_Iterator_getpmax
+#define GxB_Matrix_Iterator_next GxM_Matrix_Iterator_next
+#define GxB_Matrix_Iterator_seek GxM_Matrix_Iterator_seek
 #define GxB_Matrix_memoryUsage GxM_Matrix_memoryUsage
 #define GxB_Matrix_Option_get_FP64 GxM_Matrix_Option_get_FP64
 #define GxB_Matrix_Option_get GxM_Matrix_Option_get
@@ -5069,6 +5103,7 @@
 #define GxB_Vector_import_Full GxM_Vector_import_Full
 #define GxB_Vector_iso GxM_Vector_iso
 #define GxB_Vector_isStoredElement GxM_Vector_isStoredElement
+#define GxB_Vector_Iterator_attach GxM_Vector_Iterator_attach
 #define GxB_Vector_load GxM_Vector_load
 #define GxB_Vector_memoryUsage GxM_Vector_memoryUsage
 #define GxB_Vector_Option_get_FP64 GxM_Vector_Option_get_FP64

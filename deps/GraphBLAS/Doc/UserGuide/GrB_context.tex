@@ -6,8 +6,8 @@
 \label{context}
 
 SuiteSparse:GraphBLAS v8.0.0 adds a new object, the \verb'GxB_Context', which
-controls the number of threads used by OpenMP.  In the future, this same object
-will control the number of GPUs used.
+controls the number of threads used by OpenMP and the GPUs used (if
+available).
 
 The \verb'GxB_Context' object is not needed if the user application is itself
 single threaded, with all parallelism is inside GraphBLAS itself.  The object
@@ -130,7 +130,8 @@ GrB_Info GxB_Context_new        // create a new context
 \end{verbatim} } \end{mdframed}
 
 A new context is created and initialized with the current global settings for
-\verb'GxB_NTHREADS' and \verb'GxB_CHUNK'.  See \verb'GrB_get'.
+\verb'GxB_NTHREADS', \verb'GxB_CHUNK',
+\verb'GxB_NGPUS', and \verb'GxB_GPU_IDS'.  See \verb'GrB_get'.
 The context object will not have an effect on any calls to GraphBLAS until it
 is {\em engaged} by a user thread.
 

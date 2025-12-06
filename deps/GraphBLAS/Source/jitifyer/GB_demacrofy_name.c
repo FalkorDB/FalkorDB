@@ -18,8 +18,8 @@
 // where "012345" is a hexadecimal printing of the method_code.  Note the double
 // underscores that precede the method_code and the suffix.
 //
-// GB_demacrofy_name parses the kernel_name of a PreJIT kernel, extracting
-// the namespace, kname, method_code (as a uint64_t), and suffix.  NUL characters
+// GB_demacrofy_name parses the kernel_name of a PreJIT kernel, extracting the
+// namespace, kname, method_code (as a uint64_t), and suffix.  NUL characters
 // are inserted into kernel_name where the dots appear:
 //
 //      namespace._kname._012345._suffix
@@ -27,6 +27,8 @@
 //      namespace._kname._012345.
 //
 // The suffix is used only for user-defined types and operators.
+//
+// CUDA kernels are not supported.
 
 #include "GB.h"
 #include "jitifyer/GB_stringify.h"
@@ -39,7 +41,7 @@ GrB_Info GB_demacrofy_name
     // output
     char **name_space,      // namespace for the kernel_name
     char **kname,           // kname for the kernel_name
-    uint64_t *method_code,        // enumify'd code of the kernel
+    uint64_t *method_code,  // enumify'd code of the kernel
     char **suffix           // suffix for the kernel_name (NULL if none)
 )
 {
@@ -115,6 +117,11 @@ GrB_Info GB_demacrofy_name
     //--------------------------------------------------------------------------
     // parse the method_code_string
     //--------------------------------------------------------------------------
+
+    // If this is a CUDA kernel, the method_code_string has the form 012345_72,
+    // where 012345 is the method_code and 72 denotes the sm_72 CUDA
+    // architecture.  The sscanf will return the method_code and the CUDA
+    // architecture will be ignored.
 
     uint64_t method_code_result = 0 ;
     if (sscanf (method_code_string, "%" SCNx64, &method_code_result) != 1)

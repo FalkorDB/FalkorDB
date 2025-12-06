@@ -36,12 +36,12 @@
 // user-defined index binary operators
 //------------------------------------------------------------------------------
 
-void firsti_theta (int64_t *z,
+void gb_firsti_theta (int64_t *z,
     const void *x, uint64_t ix, uint64_t jx,
     const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta) ;
 
-void firsti_theta (int64_t *z,
+void gb_firsti_theta (int64_t *z,
     const void *x, uint64_t ix, uint64_t jx,
     const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta)
@@ -50,7 +50,7 @@ void firsti_theta (int64_t *z,
 }
 
 #define FIRSTI_THETA_DEFN                               \
-"void firsti_theta (int64_t *z,                     \n" \
+"void gb_firsti_theta (int64_t *z,                     \n" \
 "    const void *x, uint64_t ix, uint64_t jx,       \n" \
 "    const void *y, uint64_t iy, uint64_t jy,       \n" \
 "    const int64_t *theta)                          \n" \
@@ -58,12 +58,12 @@ void firsti_theta (int64_t *z,
 "    (*z) = ix + (*theta) ;                         \n" \
 "}"
 
-void secondi_theta (int64_t *z,
+void gb_secondi_theta (int64_t *z,
     const void *x, uint64_t ix, uint64_t jx,
     const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta) ;
 
-void secondi_theta (int64_t *z,
+void gb_secondi_theta (int64_t *z,
     const void *x, uint64_t ix, uint64_t jx,
     const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta)
@@ -72,7 +72,7 @@ void secondi_theta (int64_t *z,
 }
 
 #define SECONDI_THETA_DEFN                              \
-"void secondi_theta (int64_t *z,                    \n" \
+"void gb_secondi_theta (int64_t *z,                    \n" \
 "    const void *x, uint64_t ix, uint64_t jx,       \n" \
 "    const void *y, uint64_t iy, uint64_t jy,       \n" \
 "    const int64_t *theta)                          \n" \
@@ -80,12 +80,12 @@ void secondi_theta (int64_t *z,
 "    (*z) = iy + (*theta) ;                         \n" \
 "}"
 
-void firstj_theta (int64_t *z,
+void gb_firstj_theta (int64_t *z,
     const void *x, uint64_t ix, uint64_t jx,
     const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta) ;
 
-void firstj_theta (int64_t *z,
+void gb_firstj_theta (int64_t *z,
     const void *x, uint64_t ix, uint64_t jx,
     const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta)
@@ -94,7 +94,7 @@ void firstj_theta (int64_t *z,
 }
 
 #define FIRSTJ_THETA_DEFN                               \
-"void firstj_theta (int64_t *z,                     \n" \
+"void gb_firstj_theta (int64_t *z,                     \n" \
 "    const void *x, uint64_t ix, uint64_t jx,       \n" \
 "    const void *y, uint64_t iy, uint64_t jy,       \n" \
 "    const int64_t *theta)                          \n" \
@@ -102,12 +102,12 @@ void firstj_theta (int64_t *z,
 "    (*z) = jx + (*theta) ;                         \n" \
 "}"
 
-void secondj_theta (int64_t *z,
+void gb_secondj_theta (int64_t *z,
     const void *x, uint64_t ix, uint64_t jx,
     const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta) ;
 
-void secondj_theta (int64_t *z,
+void gb_secondj_theta (int64_t *z,
     const void *x, uint64_t ix, uint64_t jx,
     const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta)
@@ -116,7 +116,7 @@ void secondj_theta (int64_t *z,
 }
 
 #define SECONDJ_THETA_DEFN                              \
-"void secondj_theta (int64_t *z,                    \n" \
+"void gb_secondj_theta (int64_t *z,                    \n" \
 "    const void *x, uint64_t ix, uint64_t jx,       \n" \
 "    const void *y, uint64_t iy, uint64_t jy,       \n" \
 "    const int64_t *theta)                          \n" \
@@ -267,65 +267,65 @@ void mexFunction
         {
             theta = 0 ;
             OK (GxB_IndexBinaryOp_new (&Iop,
-                (GxB_index_binary_function) firsti_theta,
+                (GxB_index_binary_function) gb_firsti_theta,
                 GrB_INT64, GrB_FP64, GrB_FP64, GrB_INT64,
-                "firsti_theta", FIRSTI_THETA_DEFN)) ;
+                "gb_firsti_theta", FIRSTI_THETA_DEFN)) ;
         }
         else if (MATCH (multname, "firsti1"))
         {
             theta = 1 ;
             OK (GxB_IndexBinaryOp_new (&Iop,
-                (GxB_index_binary_function) firsti_theta,
+                (GxB_index_binary_function) gb_firsti_theta,
                 GrB_INT64, GrB_FP64, GrB_FP64, GrB_INT64,
-                "firsti_theta", FIRSTI_THETA_DEFN)) ;
+                "gb_firsti_theta", FIRSTI_THETA_DEFN)) ;
         }
         else if (MATCH (multname, "firstj" ))
         {
             theta = 0 ;
             OK (GxB_IndexBinaryOp_new (&Iop,
-                (GxB_index_binary_function) firstj_theta,
+                (GxB_index_binary_function) gb_firstj_theta,
                 GrB_INT64, GrB_FP64, GrB_FP64, GrB_INT64,
-                "firstj_theta", FIRSTJ_THETA_DEFN)) ;
+                "gb_firstj_theta", FIRSTJ_THETA_DEFN)) ;
         }
         else if (MATCH (multname, "firstj1"))
         {
             theta = 1 ;
             OK (GxB_IndexBinaryOp_new (&Iop,
-                (GxB_index_binary_function) firstj_theta,
+                (GxB_index_binary_function) gb_firstj_theta,
                 GrB_INT64, GrB_FP64, GrB_FP64, GrB_INT64,
-                "firstj_theta", FIRSTJ_THETA_DEFN)) ;
+                "gb_firstj_theta", FIRSTJ_THETA_DEFN)) ;
         }
         else if (MATCH (multname, "secondi" ))
         {
             theta = 0 ;
             OK (GxB_IndexBinaryOp_new (&Iop,
-                (GxB_index_binary_function) secondi_theta,
+                (GxB_index_binary_function) gb_secondi_theta,
                 GrB_INT64, GrB_FP64, GrB_FP64, GrB_INT64,
-                "secondi_theta", SECONDI_THETA_DEFN)) ;
+                "gb_secondi_theta", SECONDI_THETA_DEFN)) ;
         }
         else if (MATCH (multname, "secondi1"))
         {
             theta = 1 ;
             OK (GxB_IndexBinaryOp_new (&Iop,
-                (GxB_index_binary_function) secondi_theta,
+                (GxB_index_binary_function) gb_secondi_theta,
                 GrB_INT64, GrB_FP64, GrB_FP64, GrB_INT64,
-                "secondi_theta", SECONDI_THETA_DEFN)) ;
+                "gb_secondi_theta", SECONDI_THETA_DEFN)) ;
         }
         else if (MATCH (multname, "secondj" ))
         {
             theta = 0 ;
             OK (GxB_IndexBinaryOp_new (&Iop,
-                (GxB_index_binary_function) secondj_theta,
+                (GxB_index_binary_function) gb_secondj_theta,
                 GrB_INT64, GrB_FP64, GrB_FP64, GrB_INT64,
-                "secondj_theta", SECONDJ_THETA_DEFN)) ;
+                "gb_secondj_theta", SECONDJ_THETA_DEFN)) ;
         }
         else if (MATCH (multname, "secondj1"))
         {
             theta = 1 ;
             OK (GxB_IndexBinaryOp_new (&Iop,
-                (GxB_index_binary_function) secondj_theta,
+                (GxB_index_binary_function) gb_secondj_theta,
                 GrB_INT64, GrB_FP64, GrB_FP64, GrB_INT64,
-                "secondj_theta", SECONDJ_THETA_DEFN)) ;
+                "gb_secondj_theta", SECONDJ_THETA_DEFN)) ;
         }
         else
         {

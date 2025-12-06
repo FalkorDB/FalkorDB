@@ -235,6 +235,7 @@ GrB_Info GB_assign_prep
 #define GB_SUBASSIGN_METHOD_24  24     // C = A
 #define GB_SUBASSIGN_METHOD_25  25     // C(:,:)<M,struct> = A ; C empty
 #define GB_SUBASSIGN_METHOD_26  26     // C(:,j) = A ; append column to C
+#define GB_SUBASSIGN_METHOD_27  27     // C<C,s> += A
 #define GB_SUBASSIGN_METHOD_BITMAP 999 // bitmap assignment
 
 #endif

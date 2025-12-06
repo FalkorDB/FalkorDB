@@ -40,10 +40,9 @@
 #define GB_FREE_ALL                             \
 {                                               \
     GB_FREE_WORKSPACE ;                         \
-    GB_FREE_MEMORY (&Cwork, Cwork_size) ;         \
-    GB_FREE_MEMORY (&TaskList, TaskList_size) ;   \
-    GB_FREE_MEMORY (&Ihead, Ihead_size) ;         \
-    GB_FREE_MEMORY (&Inext, Inext_size) ;         \
+    GB_FREE_MEMORY (&Cwork, Cwork_size) ;       \
+    GB_FREE_MEMORY (&TaskList, TaskList_size) ; \
+    GB_Matrix_free (&R) ;                       \
 }
 
 #define GB_RETURN_RESULTS                   \
@@ -53,12 +52,7 @@
     (*p_ntasks       ) = ntasks ;           \
     (*p_nthreads     ) = nthreads ;         \
     (*p_post_sort    ) = post_sort ;        \
-    (*p_Ihead        ) = Ihead ;            \
-    (*p_Ihead_size   ) = Ihead_size ;       \
-    (*p_Inext        ) = Inext ;            \
-    (*p_Inext_size   ) = Inext_size ;       \
-    (*p_Ihead_is_32  ) = Ihead_is_32 ;      \
-    (*p_nduplicates  ) = nduplicates ;      \
+    (*R_handle       ) = R ;                \
     (*p_Cwork        ) = Cwork ;            \
     (*p_Cwork_size   ) = Cwork_size ;       \
 }
@@ -73,12 +67,7 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     int *p_ntasks,              // # of tasks constructed
     int *p_nthreads,            // # of threads for subref operation
     bool *p_post_sort,          // true if a final post-sort is needed
-    void **p_Ihead,             // for I inverse, if needed; size avlen
-    size_t *p_Ihead_size,
-    void **p_Inext,             // for I inverse, if needed; size nI
-    size_t *p_Inext_size,
-    bool *p_Ihead_is_32,        // if true, Ihead and Inext are 32-bit; else 64
-    int64_t *p_nduplicates,     // # of duplicates, if I inverse computed
+    GrB_Matrix *R_handle,       // R = inverse (I), if needed
     uint64_t **p_Cwork,         // workspace of size max(2,C->nvec+1)
     size_t *p_Cwork_size,
     // from phase0:
@@ -108,34 +97,22 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     ASSERT (p_ntasks != NULL) ;
     ASSERT (p_nthreads != NULL) ;
     ASSERT (p_post_sort != NULL) ;
-    ASSERT (p_Ihead != NULL) ;
-    ASSERT (p_Ihead_size != NULL) ;
-    ASSERT (p_Inext != NULL) ;
-    ASSERT (p_Inext_size != NULL) ;
-    ASSERT (p_nduplicates != NULL) ;
     ASSERT (p_Cwork != NULL) ;
     ASSERT (p_Cwork_size != NULL) ;
+    ASSERT (R_handle != NULL) ;
 
     ASSERT ((Cnvec > 0) == (Ap_start != NULL)) ;
     ASSERT ((Cnvec > 0) == (Ap_end != NULL)) ;
 
     (*p_TaskList) = NULL ;
     (*p_TaskList_size) = 0 ;
-    (*p_Ihead) = NULL ;
-    (*p_Inext) = NULL ;
-    (*p_Ihead_is_32) = false ;
     (*p_Cwork) = NULL ;
-    (*p_Ihead_size) = 0 ;
-    (*p_Inext_size) = 0 ;
     (*p_Cwork_size) = 0 ;
-    (*p_nduplicates) = 0 ;
 
-    void *Ihead = NULL ; size_t Ihead_size = 0 ;
-    void *Inext = NULL ; size_t Inext_size = 0 ;
-    bool Ihead_is_32 = false ;
     uint64_t *restrict Cwork = NULL ; size_t Cwork_size = 0 ;
     GB_WERK_DECLARE (Coarse, int64_t) ;     // size ntasks1+1
     int ntasks1 = 0 ;
+    GrB_Matrix R = NULL ;
 
     GrB_Info info ;
 
@@ -167,22 +144,9 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     GB_REALLOC_TASK_WORK (TaskList, ntasks0, max_ntasks) ;
 
     //--------------------------------------------------------------------------
-    // determine if I_inverse can be constructed
+    // to determine if R needs to be constructed
     //--------------------------------------------------------------------------
 
-    // I_inverse_ok is true if I might be inverted.  If false, then I will not
-    // be inverted.  I can be inverted only if the workspace for the inverse
-    // does not exceed nnz(A).  Note that if I was provided on input as an
-    // explicit list, but consists of a contiguous range imin:imax, then Ikind
-    // is now GB_LIST and the list I is ignored.
-
-    // If I_inverse_ok is true, the inverse of I might still not be needed.
-    // need_I_inverse becomes true if any C(:,kC) = A (I,kA) computation
-    // requires I inverse.
-
-    int64_t I_inverse_limit = GB_IMAX (4096, anz) ;
-    bool I_inverse_ok = (Ikind == GB_LIST &&
-        ((nI > avlen / 256) || ((nI + avlen) < I_inverse_limit))) ;
     bool need_I_inverse = false ;
     bool post_sort = false ;
     int64_t iinc = Icolon [GxB_INC] ;
@@ -221,7 +185,7 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
         bool this_needs_I_inverse ; // true if this vector needs I inverse
         // amount of work for C(:,kC) = A (I,kA):
         int64_t work = GB_subref_work (&this_needs_I_inverse, alen, avlen,
-            Ikind, nI, I_inverse_ok, need_qsort, iinc) ;
+            Ikind, nI, need_qsort, iinc) ;
 
         // log the result
         need_I_inverse = need_I_inverse || this_needs_I_inverse ;
@@ -251,13 +215,9 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     // invert I if required
     //--------------------------------------------------------------------------
 
-    int64_t nduplicates = 0 ;
     if (need_I_inverse)
     { 
-        GB_OK (GB_I_inverse (I, I_is_32, nI, avlen, &Ihead, &Ihead_size,
-            &Inext, &Inext_size, &Ihead_is_32, &nduplicates, Werk)) ;
-        ASSERT (Ihead != NULL) ;
-        ASSERT (Inext != NULL) ;
+        GB_OK (GB_I_inverse (I, I_is_32, nI, avlen, &R, Werk)) ;
     }
 
     //--------------------------------------------------------------------------
@@ -294,8 +254,6 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     //--------------------------------------------------------------------------
     // construct all tasks, both coarse and fine
     //--------------------------------------------------------------------------
-
-    bool I_has_duplicates = (nduplicates > 0) ;
 
     for (int t = 0 ; t < ntasks1 ; t++)
     {
@@ -404,7 +362,7 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
                 int64_t alen = pA_end - pA ;      // nnz (A (imin:imax,j))
 
                 int method = GB_subref_method (alen, avlen, Ikind, nI,
-                    I_inverse_ok, need_qsort, iinc, I_has_duplicates) ;
+                    need_qsort, iinc) ;
 
                 if (method == 10)
                 { 

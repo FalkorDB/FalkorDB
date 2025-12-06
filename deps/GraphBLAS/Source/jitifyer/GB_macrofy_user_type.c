@@ -39,7 +39,7 @@ void GB_macrofy_user_type       // construct a user-defined type
     // construct the typedef
     //--------------------------------------------------------------------------
 
-    GB_macrofy_typedefs (fp, NULL, NULL, NULL, type, NULL, NULL) ;
+    GB_macrofy_typedefs (fp, NULL, NULL, NULL, type, NULL, NULL, NULL) ;
     fprintf (fp, "#define GB_USER_TYPE_DEFN GB_%s_USER_DEFN\n", type->name) ;
 }
 

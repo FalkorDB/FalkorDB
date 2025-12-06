@@ -156,6 +156,13 @@ same set of values, but they do not depend on each other.  Modifying one has
 no effect on the other.
 The \verb'GrB_NAME' is copied into the new vector.
 
+In GraphBLAS v10.2.0 and earlier, a call to \verb'GrB_Vector_dup' triggered
+a internal call to \verb'GrB_Vector_wait' on the input vector \verb'u'.  In
+v10.3.0 and later, this call is removed.  To obtain the old behavior of
+v10.2.0 and earlier, simply call \verb'GrB_Vector_wait' on the input vector
+\verb'u' prior to calling \verb'GrB_Vector_dup(&w,u)'.
+
+\newpage
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GrB\_Vector\_clear:}         clear a vector of all entries}
 %-------------------------------------------------------------------------------
@@ -178,7 +185,6 @@ empty, just as if it were created fresh with \verb'GrB_Vector_new'.  Analogous
 with \verb'v (:) = sparse(0)' in MATLAB.  The type and dimension of \verb'v' do
 not change.  Any pending updates to the vector are discarded.
 
-\newpage
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GrB\_Vector\_size:}          return the size of a vector}
 %-------------------------------------------------------------------------------
@@ -219,6 +225,7 @@ analogous to \verb'nvals = nnz(v)' in MATLAB, except that the implicit value in
 GraphBLAS need not be zero and \verb'nnz' (short for ``number of nonzeros'') in
 MATLAB is better described as ``number of entries'' in GraphBLAS.
 
+\newpage
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GrB\_Vector\_build:}         build a vector from a set of tuples}
 %-------------------------------------------------------------------------------
@@ -364,7 +371,6 @@ matrix, \verb'A(i,0) = x', where the column index for a vector is implicitly
 \verb'GrB_Matrix_setElement' in Section~\ref{matrix_setElement}.
 If an error occurs, \verb'GrB_error(&err,w)' returns details about the error.
 
-\newpage
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GrB\_Vector\_extractElement:} get an entry from a vector}
 %-------------------------------------------------------------------------------

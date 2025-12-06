@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__apply_unop__03c005bb0bbd.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.0.2, Timothy A. Davis, (c) 2017-2025,
+// SuiteSparse:GraphBLAS v10.3.0, Timothy A. Davis, (c) 2017-2025,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -32,6 +32,7 @@
 #define GB_C_TYPE double
 #define GB_Cp_TYPE uint64_t
 #define GB_Cj_TYPE uint64_t
+#define GB_Cj_SIGNED_TYPE int64_t
 #define GB_Ci_TYPE uint64_t
 #define GB_Ci_SIGNED_TYPE int64_t
 #define GB_Cp_BITS 64
@@ -57,6 +58,7 @@
 #define GB_GETA(a,Ax,p,iso) a = Ax [p]
 #define GB_Ap_TYPE uint32_t
 #define GB_Aj_TYPE uint32_t
+#define GB_Aj_SIGNED_TYPE int32_t
 #define GB_Ai_TYPE uint32_t
 #define GB_Ai_SIGNED_TYPE int32_t
 #define GB_Ap_BITS 32
@@ -72,8 +74,8 @@
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0x0a42089ee55285c2 ;
-    v [0] = 10 ; v [1] = 0 ; v [2] = 2 ;
+    (*hash) = 0x6d169100a5f5d330 ;
+    v [0] = 10 ; v [1] = 3 ; v [2] = 0 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = NULL ;

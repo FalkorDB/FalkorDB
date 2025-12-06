@@ -41,11 +41,6 @@ GrB_Info GxB_Context_get_INT32      // get a parameter of a Context
             (*value) = GB_Context_nthreads_max_get (Context) ;
             break ;
 
-        case GxB_CONTEXT_GPU_ID :           // same as GxB_GPU_ID
-
-            (*value) = GB_Context_gpu_id_get (Context) ;
-            break ;
-
         default : 
 
             return (GrB_INVALID_VALUE) ;
@@ -132,17 +127,6 @@ GrB_Info GxB_Context_get            // get a parameter in a Context
                 va_end (ap) ;
                 GB_RETURN_IF_NULL (value) ;
                 (*value) = GB_Context_nthreads_max_get (Context) ;
-            }
-            break ;
-
-        case GxB_CONTEXT_GPU_ID :           // same as GxB_GPU_ID
-
-            {
-                va_start (ap, field) ;
-                int *value = va_arg (ap, int *) ;
-                va_end (ap) ;
-                GB_RETURN_IF_NULL (value) ;
-                (*value) = GB_Context_gpu_id_get (Context) ;
             }
             break ;
 
