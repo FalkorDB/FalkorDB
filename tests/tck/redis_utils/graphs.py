@@ -2,9 +2,7 @@ import os
 import sys
 from RLTest import Env
 
-from redis.commands.graph import Graph
-from redis.commands.graph.node import Node
-from redis.commands.graph.edge import Edge
+from falkordb import Graph, Node, Edge
 
 r = None
 graph_name = "G"

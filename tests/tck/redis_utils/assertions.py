@@ -2,10 +2,7 @@ from numbers import Number
 from collections import Counter
 from RLTest import Env
 
-from redis.commands.graph import Graph
-from redis.commands.graph.node import Node
-from redis.commands.graph.edge import Edge
-from redis.commands.graph.path import Path
+from falkordb import Graph, Node, Edge, Path
 
 
 def nodeToString(value):

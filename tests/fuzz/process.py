@@ -8,7 +8,7 @@ import subprocess
 from time import time
 from RLTest import Env
 from redis import ResponseError
-from redis.commands.graph import Graph
+from falkordb import Graph
 
 HERE = os.path.abspath(os.path.dirname(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "../.."))
@@ -17,9 +17,8 @@ import paella
 
 
 def make_connection(module):
-    env = Env(decodeResponses=True, module=module, logDir="logs")
-    redis_con = env.getConnection()
-    return Graph(redis_con, "G")
+    env, db = Env(decodeResponses=True, module=module, logDir="logs")
+    return db.select_graph("G")
 
 
 def issue_queries(graph, timeout):
