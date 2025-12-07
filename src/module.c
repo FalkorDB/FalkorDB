@@ -22,6 +22,7 @@
 #include "bolt/bolt_api.h"
 #include "index/indexer.h"
 #include "udf/repository.h"
+#include "udf/replication.h"
 #include "redisearch_api.h"
 #include "commands/cmd_acl.h"
 #include "arithmetic/funcs.h"
@@ -170,9 +171,11 @@ int RedisModule_OnLoad
 	if(!_Cron_Start())                return REDISMODULE_ERR;
 	if(!QueryCtx_Init())              return REDISMODULE_ERR;
 
-	if(!UDFCtx_Init())                return REDISMODULE_ERR;
-	if(!UDF_RepoInit())               return REDISMODULE_ERR;
+	// UDFs
+	if (!UDFCtx_Init())  return REDISMODULE_ERR ;
+	if (!UDF_RepoInit()) return REDISMODULE_ERR ;
 	UDF_InitClasses () ;
+	UDF_ReplicationRegisterReceiver (ctx) ;
 
 	if(!ErrorCtx_Init())              return REDISMODULE_ERR;
 	if(!ThreadPool_Init())            return REDISMODULE_ERR;

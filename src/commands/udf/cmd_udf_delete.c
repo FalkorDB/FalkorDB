@@ -15,10 +15,14 @@ int Graph_UDF_Delete
 (
 	RedisModuleCtx *ctx,       // redis module context
 	RedisModuleString **argv,  // command args
-	int argc                   // number of arguments
+	int argc,                  // number of arguments
+	bool *success              // rather or not operation succeeded
 ) {
-	ASSERT (ctx  != NULL) ;
-	ASSERT (argv != NULL) ;
+	ASSERT (ctx     != NULL) ;
+	ASSERT (argv    != NULL) ;
+	ASSERT (success != NULL) ;
+
+	*success = false ; // default to false
 
 	// expecting a single argument
 	if (argc != 1) {
@@ -30,6 +34,7 @@ int Graph_UDF_Delete
 
 	char *err = NULL;
 	if (UDF_Delete (lib, NULL, &err)) {
+		*success = true ;
 		RedisModule_ReplyWithSimpleString (ctx, "OK") ;
 	} else {
 		ASSERT (err != NULL) ;

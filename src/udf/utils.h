@@ -78,6 +78,11 @@ bool UDF_Delete
 						  // the issue, caller must free the string using free()
 );
 
+// remove all registered UDF libraries from the repository
+// deletes in reverse order (last → first) to avoid index shifting
+// this is an internal helper; errors will trigger ASSERT failures
+void UDF_Flush (void) ;
+
 // load and register a UDF library
 //   1. validates the provided script in a temporary JS context
 //   2. ensures the library does not already exist (unless REPLACE is set)

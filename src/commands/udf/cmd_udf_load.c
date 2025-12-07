@@ -26,10 +26,14 @@ int Graph_UDF_Load
 (
 	RedisModuleCtx *ctx,       // redis module context
 	RedisModuleString **argv,  // command args
-	int argc                   // number of arguments
+	int argc,                  // number of arguments
+	bool *success              // rather or not UDF was loaded
 ) {
-	ASSERT (ctx  != NULL) ;
-	ASSERT (argv != NULL) ;
+	ASSERT (ctx     != NULL) ;
+	ASSERT (argv    != NULL) ;
+	ASSERT (success != NULL) ;
+
+	*success = false ;  // default to false
 
 	// expect 2 or 3 arguments: [REPLACE] <LIBNAME> <SCRIPT>
 	if (argc < 2 || argc > 3) {
@@ -92,6 +96,7 @@ int Graph_UDF_Load
 		return REDISMODULE_OK ;
 	}
 
+	*success = true ;  // succeeded to load UDF
 	RedisModule_ReplyWithSimpleString (ctx, "OK") ;
 
 	return REDISMODULE_OK ;

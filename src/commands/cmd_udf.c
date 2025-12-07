@@ -9,15 +9,41 @@
 #include "../udf/utils.h"
 #include "../udf/udf_ctx.h"
 #include "../udf/repository.h"
+#include "../udf/replication.h"
 #include "../arithmetic/func_desc.h"
 #include "../arithmetic/udf_funcs/udf_funcs.h"
 
 // forward declarations
-int Graph_UDF_Load   (RedisModuleCtx *ctx, RedisModuleString **argv, int argc) ;
-int Graph_UDF_List   (RedisModuleCtx *ctx, RedisModuleString **argv, int argc) ;
-int Graph_UDF_Flush  (RedisModuleCtx *ctx, RedisModuleString **argv, int argc) ;
-int Graph_UDF_Delete (RedisModuleCtx *ctx, RedisModuleString **argv, int argc) ;
+int Graph_UDF_List
+(
+	RedisModuleCtx *ctx,
+	RedisModuleString **argv,
+	int argc
+) ;
 
+int Graph_UDF_Load
+(
+	RedisModuleCtx *ctx,
+	RedisModuleString **argv,
+	int argc,
+	bool *success
+) ;
+
+int Graph_UDF_Flush
+(
+	RedisModuleCtx *ctx,
+	RedisModuleString **argv,
+	int argc,
+	bool *success
+) ;
+
+int Graph_UDF_Delete
+(
+	RedisModuleCtx *ctx,
+	RedisModuleString **argv,
+	int argc,
+	bool *success
+) ;
 
 // GRAPH.UDF * command handler
 // sub commands:
@@ -40,23 +66,24 @@ int Graph_UDF
 	}
 
 	int res;
-	bool modify = false ;
+	bool modify  = false ;
+	bool success = false ;
 	RedisModuleString *rm_sub_cmd = argv[1] ;
 	const char *sub_cmd = RedisModule_StringPtrLen (rm_sub_cmd, NULL) ;
 
 	if (strcasecmp (sub_cmd, "load") == 0) {
 		modify = true ;
-		res = Graph_UDF_Load (ctx, argv+2, argc-2) ;
+		res = Graph_UDF_Load (ctx, argv+2, argc-2, &success) ;
 	}
 
 	else if (strcasecmp (sub_cmd, "delete") == 0) {
 		modify = true ;
-		res = Graph_UDF_Delete (ctx, argv+2, argc-2) ;
+		res = Graph_UDF_Delete (ctx, argv+2, argc-2, &success) ;
 	}
 
 	else if (strcasecmp (sub_cmd, "flush") == 0) {
 		modify = true ;
-		res = Graph_UDF_Flush (ctx, argv+2, argc-2) ;
+		res = Graph_UDF_Flush (ctx, argv+2, argc-2, &success) ;
 	}
 
 	else if (strcasecmp (sub_cmd, "list") == 0) {
@@ -68,8 +95,11 @@ int Graph_UDF
 				"Unknown GRAPH.UDF sub command %s", sub_cmd) ;
 	}
 
-	if (modify == true && res == REDISMODULE_OK) {
+	if (modify == true && success == true) {
 		RedisModule_ReplicateVerbatim (ctx) ;
+
+		// replicate command to the rest of the cluster
+		UDF_ReplicationSendCmd (ctx, argv, argc) ;
 	}
 
 	return res ;

@@ -7,25 +7,6 @@
 #include "../../udf/utils.h"
 #include "../../udf/repository.h"
 
-// remove all registered UDF libraries from the repository
-// deletes in reverse order (last → first) to avoid index shifting
-// this is an internal helper; errors will trigger ASSERT failures
-static void _UDF_Flush (void) {
-	// get the number of UDF libraries
-	int n = UDF_RepoLibsCount () ;
-
-	for (int i = n-1; i >= 0; i--) {
-		const char *lib = NULL ;
-		UDF_RepoGetLibIdx (i, &lib, NULL, NULL) ;
-		ASSERT (lib != NULL) ;
-
-		char *err = NULL ;
-		bool removed = UDF_Delete (lib, NULL, &err) ;
-		ASSERT (err     == NULL) ;
-		ASSERT (removed == true) ;
-	}
-}
-
 // syntax:
 //   GRAPH.UDF FLUSH
 //
@@ -39,10 +20,14 @@ int Graph_UDF_Flush
 (
 	RedisModuleCtx *ctx,       // redis module context
 	RedisModuleString **argv,  // command arguments (must be empty)
-	int argc                   // number of arguments
+	int argc,                  // number of arguments
+	bool *success              // rather or not operation succeeded
 ) {
-	ASSERT (ctx  != NULL) ;
-	ASSERT (argv != NULL) ;
+	ASSERT (ctx     != NULL) ;
+	ASSERT (argv    != NULL) ;
+	ASSERT (success != NULL) ;
+
+	*success = false ;  // default to false
 
 	// GRAPH.UDF FLUSH takes no arguments
 	if (argc != 0) {
@@ -50,8 +35,9 @@ int Graph_UDF_Flush
 		return REDISMODULE_OK ;
 	}
 
-	_UDF_Flush() ;
+	UDF_Flush() ;
 
+	*success = true ;
 	RedisModule_ReplyWithSimpleString (ctx, "OK") ;
 	return REDISMODULE_OK ;
 }

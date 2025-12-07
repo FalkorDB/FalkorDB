@@ -161,6 +161,25 @@ bool UDF_Delete
 	return true ;
 }
 
+// remove all registered UDF libraries from the repository
+// deletes in reverse order (last → first) to avoid index shifting
+// this is an internal helper; errors will trigger ASSERT failures
+void UDF_Flush (void) {
+	// get the number of UDF libraries
+	int n = UDF_RepoLibsCount () ;
+
+	for (int i = n-1; i >= 0; i--) {
+		const char *lib = NULL ;
+		UDF_RepoGetLibIdx (i, &lib, NULL, NULL) ;
+		ASSERT (lib != NULL) ;
+
+		char *err = NULL ;
+		bool removed = UDF_Delete (lib, NULL, &err) ;
+		ASSERT (err     == NULL) ;
+		ASSERT (removed == true) ;
+	}
+}
+
 // load and register a UDF library
 //   1. validates the provided script in a temporary JS context
 //   2. ensures the library does not already exist (unless REPLACE is set)

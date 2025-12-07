@@ -2,31 +2,28 @@ from common import *
 
 GRAPH_ID = "udfs"
 
+def udf_list(db, lib=None, with_code=None):
+    libs = []
+    res = db.udf_list(lib, with_code)
+
+    for l in res:
+        lib_name  = l[1]
+        lib_funcs = l[3]
+
+        lib_script = None
+        if with_code:
+            lib_script = l[5]
+
+        libs.append({'library_name': lib_name, 'functions': lib_funcs, 'library_code': lib_script })
+
+    return libs
+
 class testUDF():
     def __init__(self):
         self.env, self.db = Env()
         self.graph = self.db.select_graph(GRAPH_ID)
         self.conn = self.env.getConnection()
 
-    def udf_list(self, lib=None, with_code=None):
-        libs = []
-        res = self.db.udf_list(lib, with_code)
-
-        for l in res:
-            self.env.assertEqual(l[0], "library_name")
-            lib_name = l[1]
-
-            self.env.assertEqual(l[2], "functions")
-            lib_funcs = l[3]
-
-            lib_script = None
-            if with_code:
-                self.env.assertEqual(l[4], "library_code")
-                lib_script = l[5]
-
-            libs.append({'library_name': lib_name, 'functions': lib_funcs, 'library_code': lib_script })
-
-        return libs
 
     def _assert_udf_exists(self, lib, funcs, with_code=False, script=None):
         """
@@ -39,7 +36,7 @@ class testUDF():
             script (str|None): Optional script to compare against if with_code is True.
         """
 
-        res = self.udf_list(lib, with_code)
+        res = udf_list(self.db, lib, with_code)
         self.env.assertEqual(len(res), 1)
 
         res = res[0]
@@ -57,13 +54,13 @@ class testUDF():
     def _assert_any_udfs_missing(self):
         """Helper to assert that no UDF libraries are loaded at all."""
 
-        res = self.udf_list()
+        res = udf_list(self.db)
         self.env.assertEqual(len(res), 0)
 
     def _assert_udf_missing(self, lib):
         """Helper to assert that a UDF library does not exist."""
 
-        res = self.udf_list(lib)
+        res = udf_list(self.db, lib)
         self.env.assertEqual(len(res), 0)
 
     def tearDown(self):
@@ -565,7 +562,6 @@ class testUDF():
         - Load a UDF library.
         - Restart the server (simulate persistency check).
         - Ensure the UDF is still available and functional.
-        - If running in a cluster, ensure replicas have the UDF too.
         """
 
         script = """
@@ -764,7 +760,7 @@ class testUDF():
         self.db.udf_load("lib2", script2)
 
         # sanity check they exist
-        res = self.udf_list()
+        res = udf_list(self.db)
         libs = [r["library_name"] for r in res]
         self.env.assertIn("lib1", libs)
         self.env.assertIn("lib2", libs)
@@ -1074,4 +1070,161 @@ class test_udf_javascript():
             assert False, "Expected JS exception to propagate"
         except ResponseError as e:
             self.env.assertIn("UDF Exception: interrupted", str(e))
+
+class testUDFCluster():
+    def __init__(self):
+        self.env, self.db = Env(env='oss-cluster', shardsCount=3)
+        self.master_1 = self.env.getConnection(shardId=1)
+        self.master_2 = self.env.getConnection(shardId=2)
+        self.master_3 = self.env.getConnection(shardId=3)
+        self.shards = [self.master_1, self.master_2, self.master_3]
+
+    def tearDown(self):
+        for shard in self.shards:
+            shard.execute_command("FLUSHALL")
+            shard.execute_command("GRAPH.UDF", "FLUSH")
+
+    def test_udf_load_propagation(self):
+        """
+        load UDF to one master shard and make sure
+        that on success the UDF is propagated to the rest of the cluster
+        """
+
+        # make sure all shards are clean
+        for shard in self.shards:
+            udfs = shard.execute_command("GRAPH.UDF", "LIST")
+            self.env.assertEqual(len(udfs), 0)
+
+        # load UDF to master_1
+        script = """
+        falkor.register('add', function(a,b) {return a + b;});
+        """
+
+        res = self.master_1.execute_command("GRAPH.UDF", "LOAD", "math", script)
+        self.env.assertEqual(res, "OK")
+
+        # collect UDFs from master_1
+        master_1_udfs = self.master_1.execute_command("GRAPH.UDF", "LIST")
+        self.env.assertNotEqual(len(master_1_udfs), 0)
+
+        # make sure UDFs been propagated to the rest of the cluster
+        for shard in self.shards:
+            udfs = shard.execute_command("GRAPH.UDF", "LIST")
+            self.env.assertEqual(master_1_udfs, udfs)
+
+        # update UDFs on master_2
+        script = """
+        falkor.register('add', function(a,b) {return a + b;});
+        falkor.register('sub', function(a,b) {return a - b;});
+        """
+
+        res = self.master_2.execute_command("GRAPH.UDF", "LOAD", "REPLACE", "math", script)
+        self.env.assertEqual(res, "OK")
+
+        # collect UDFs from master_2
+        master_2_udfs = self.master_2.execute_command("GRAPH.UDF", "LIST")
+        self.env.assertNotEqual(len(master_2_udfs), 0)
+
+        # make sure UDFs been propagated to the rest of the cluster
+        for shard in self.shards:
+            udfs = shard.execute_command("GRAPH.UDF", "LIST")
+            self.env.assertEqual(master_2_udfs, udfs)
+
+        # make sure a failed load doesn't effects the cluster
+        try:
+            # LOAD should fail as 'math' lib already exists and we did not
+            # specified REPLACE
+            res = self.master_3.execute_command("GRAPH.UDF", "LOAD", "math", script)
+            self.env.assertFalse(True)
+        except Exception:
+            pass
+
+        # make sure UDFs remaind as before the failed call
+        for shard in self.shards:
+            udfs = shard.execute_command("GRAPH.UDF", "LIST")
+            self.env.assertEqual(master_2_udfs, udfs)
+
+    def test_udf_delete_propagation(self):
+        """
+        delete UDF from one master shard and make sure
+        that on success the UDF is deleted from the rest of the cluster
+        """
+
+        # load 3 libraries
+        libs    = ["A", "B", "C"]
+        scripts = ["falkor.register('a', function(a) {return a;});",
+                   "falkor.register('b', function(b) {return b;});",
+                   "falkor.register('c', function(c) {return c;});"]
+
+        for i in range(0, 3):
+            lib    = libs[i]
+            script = scripts[i]
+
+            res = self.master_1.execute_command("GRAPH.UDF", "LOAD", lib, script)
+            self.env.assertEqual(res, "OK")
+
+        # make sure all 3 libs are available throughout the cluster
+        master_1_udfs = self.master_1.execute_command("GRAPH.UDF", "LIST")
+        self.env.assertEqual(len(master_1_udfs), 3)
+
+        # make sure UDFs been propagated to the rest of the cluster
+        for shard in self.shards:
+            udfs = shard.execute_command("GRAPH.UDF", "LIST")
+            self.env.assertEqual(master_1_udfs, udfs)
+
+        # start removing libs
+        remove_sequance = [(self.master_2, "B"),  # remove B from master 2
+                           (self.master_3, "A"),  # remove A from master 3
+                           (self.master_1, "C")]  # remove C from master 1
+
+        for shard, lib in remove_sequance:
+            res = shard.execute_command("GRAPH.UDF", "DELETE", lib)
+            self.env.assertEqual(res, "OK")
+
+            # make sure all nodes in the cluster has the same view over UDFs
+            udfs = shard.execute_command("GRAPH.UDF", "LIST")
+            for s in self.shards:
+                s_udfs = s.execute_command("GRAPH.UDF", "LIST")
+                self.env.assertEqual(udfs, s_udfs)
+
+        # all shards should have no UDFs
+        for s in self.shards:
+            udfs = s.execute_command("GRAPH.UDF", "LIST")
+            self.env.assertEqual(len(udfs), 0)
+
+    def test_udf_flush_propagation(self):
+        """
+        flush UDFs from one master shard and make sure
+        that on success the UDFs been flushed from the rest of the cluster
+        """
+        # load 3 libraries
+        libs    = ["A", "B", "C"]
+        scripts = ["falkor.register('a', function(a) {return a;});",
+                   "falkor.register('b', function(b) {return b;});",
+                   "falkor.register('c', function(c) {return c;});"]
+
+        for i in range(0, 3):
+            lib    = libs[i]
+            script = scripts[i]
+
+            res = self.master_1.execute_command("GRAPH.UDF", "LOAD", lib, script)
+            self.env.assertEqual(res, "OK")
+
+        # make sure all 3 libs are available throughout the cluster
+        master_1_udfs = self.master_1.execute_command("GRAPH.UDF", "LIST")
+        self.env.assertEqual(len(master_1_udfs), 3)
+
+        # make sure UDFs been propagated to the rest of the cluster
+        for shard in self.shards:
+            udfs = shard.execute_command("GRAPH.UDF", "LIST")
+            self.env.assertEqual(master_1_udfs, udfs)
+
+        # flush UDFs
+        res = self.master_2.execute_command("GRAPH.UDF", "FLUSH")
+        self.env.assertEqual(res, "OK")
+
+        # all shards should have no UDFs
+        for s in self.shards:
+            udfs = s.execute_command("GRAPH.UDF", "LIST")
+            self.env.assertEqual(len(udfs), 0)
 
