@@ -2,7 +2,7 @@ from numbers import Number
 from collections import Counter
 from RLTest import Env
 
-from falkordb import Graph, Node, Edge, Path
+from falkordb import Node, Edge, Path
 
 
 def nodeToString(value):
