@@ -175,7 +175,7 @@ int RedisModule_OnLoad
 	if (!UDFCtx_Init())  return REDISMODULE_ERR ;
 	if (!UDF_RepoInit()) return REDISMODULE_ERR ;
 	UDF_InitClasses () ;
-	UDF_ReplicationRegisterReceiver (ctx) ;
+	//UDF_ReplicationRegisterReceiver (ctx) ; // disable UDF DB replication
 
 	if(!ErrorCtx_Init())              return REDISMODULE_ERR;
 	if(!ThreadPool_Init())            return REDISMODULE_ERR;

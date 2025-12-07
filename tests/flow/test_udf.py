@@ -1100,7 +1100,7 @@ class testUDFCluster():
         falkor.register('add', function(a,b) {return a + b;});
         """
 
-        res = self.master_1.execute_command("GRAPH.UDF", "LOAD", "math", script)
+        res = self.db.udf_load("math", script)
         self.env.assertEqual(res, "OK")
 
         # collect UDFs from master_1
@@ -1118,7 +1118,7 @@ class testUDFCluster():
         falkor.register('sub', function(a,b) {return a - b;});
         """
 
-        res = self.master_2.execute_command("GRAPH.UDF", "LOAD", "REPLACE", "math", script)
+        res = self.db.udf_load("math", script, replace=True)
         self.env.assertEqual(res, "OK")
 
         # collect UDFs from master_2
@@ -1134,7 +1134,7 @@ class testUDFCluster():
         try:
             # LOAD should fail as 'math' lib already exists and we did not
             # specified REPLACE
-            res = self.master_3.execute_command("GRAPH.UDF", "LOAD", "math", script)
+            self.db.udf_load("math", script)
             self.env.assertFalse(True)
         except Exception:
             pass
@@ -1160,7 +1160,7 @@ class testUDFCluster():
             lib    = libs[i]
             script = scripts[i]
 
-            res = self.master_1.execute_command("GRAPH.UDF", "LOAD", lib, script)
+            res = self.db.udf_load(lib, script)
             self.env.assertEqual(res, "OK")
 
         # make sure all 3 libs are available throughout the cluster
@@ -1178,7 +1178,7 @@ class testUDFCluster():
                            (self.master_1, "C")]  # remove C from master 1
 
         for shard, lib in remove_sequance:
-            res = shard.execute_command("GRAPH.UDF", "DELETE", lib)
+            res = self.db.udf_delete(lib)
             self.env.assertEqual(res, "OK")
 
             # make sure all nodes in the cluster has the same view over UDFs
@@ -1207,7 +1207,7 @@ class testUDFCluster():
             lib    = libs[i]
             script = scripts[i]
 
-            res = self.master_1.execute_command("GRAPH.UDF", "LOAD", lib, script)
+            res = self.db.udf_load(lib, script)
             self.env.assertEqual(res, "OK")
 
         # make sure all 3 libs are available throughout the cluster
@@ -1220,7 +1220,7 @@ class testUDFCluster():
             self.env.assertEqual(master_1_udfs, udfs)
 
         # flush UDFs
-        res = self.master_2.execute_command("GRAPH.UDF", "FLUSH")
+        res = self.db.udf_flush()
         self.env.assertEqual(res, "OK")
 
         # all shards should have no UDFs

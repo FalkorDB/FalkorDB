@@ -98,8 +98,11 @@ int Graph_UDF
 	if (modify == true && success == true) {
 		RedisModule_ReplicateVerbatim (ctx) ;
 
+		// UDF replication responsibility had been migrated to
+		// the client libraries
+		//
 		// replicate command to the rest of the cluster
-		UDF_ReplicationSendCmd (ctx, argv, argc) ;
+		// UDF_ReplicationSendCmd (ctx, argv, argc) ;
 	}
 
 	return res ;
