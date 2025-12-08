@@ -135,10 +135,6 @@ jobs:
         exclude:
           # Don't build debug versions for variants (server)
           - build_type: debug
-          # Don't build RHEL on PR unless labeled
-          - platform:
-              requires_runner: true
-            build_type: release
     steps:
       - name: Check if should skip
         id: should_skip
@@ -177,17 +173,9 @@ jobs:
         id: cache-keys
         working-directory: /FalkorDB
         run: |
-          echo "graphblas=deps-graphblas-${{ matrix.platform.cache_path }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}" >> $GITHUB_OUTPUT
-          echo "parser=deps-parser-${{ matrix.platform.cache_path }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}" >> $GITHUB_OUTPUT
-          echo "search=deps-search-${{ matrix.platform.cache_path }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}" >> $GITHUB_OUTPUT
-          echo "libcurl=deps-libcurl-${{ matrix.platform.cache_path }}-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}" >> $GITHUB_OUTPUT
-          echo "libcsv=deps-libcsv-${{ matrix.platform.cache_path }}-${{ hashFiles('./deps/libcsv/ChangeLog') }}" >> $GITHUB_OUTPUT
-          echo "lagraph=deps-lagraph-${{ matrix.platform.cache_path }}-${{ hashFiles('./deps/LAGraph/include/LAGraph.h') }}" >> $GITHUB_OUTPUT
-          echo "rax=deps-rax-${{ matrix.platform.cache_path }}-${{ hashFiles('./deps/rax/rax.h') }}" >> $GITHUB_OUTPUT
-          echo "xxhash=deps-xxhash-${{ matrix.platform.cache_path }}-${{ hashFiles('./deps/xxHash/xxhash.h') }}" >> $GITHUB_OUTPUT
-          echo "utf8proc=deps-utf8proc-${{ matrix.platform.cache_path }}-${{ hashFiles('./deps/utf8proc/utf8proc.h') }}" >> $GITHUB_OUTPUT
-          echo "oniguruma=deps-oniguruma-${{ matrix.platform.cache_path }}-${{ hashFiles('./deps/oniguruma/src/oniguruma.h') }}" >> $GITHUB_OUTPUT
-          echo "corers=deps-corers-${{ matrix.platform.cache_path }}-${{ hashFiles('./deps/FalkorDB-core-rs/Cargo.toml') }}" >> $GITHUB_OUTPUT
+          # Generate a single combined hash of all dependencies to avoid 512 char key limit
+          DEPS_HASH=$(cat ./deps/GraphBLAS/Include/GraphBLAS.h ./deps/GraphBLAS/Config/GB_prejit.c ./deps/libcypher-parser/lib/src/parser.c ./deps/RediSearch/src/version.h ./deps/libcurl/RELEASE-NOTES ./deps/libcsv/ChangeLog ./deps/LAGraph/include/LAGraph.h ./deps/rax/rax.h ./deps/xxHash/xxhash.h ./deps/utf8proc/utf8proc.h ./deps/oniguruma/src/oniguruma.h ./deps/FalkorDB-core-rs/Cargo.toml 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "no-hash")
+          echo "combined=${DEPS_HASH}" >> $GITHUB_OUTPUT
 
       - name: Generate cache key (macOS)
         if: steps.should_skip.outputs.skip != 'true' && matrix.platform.os == 'macos'
@@ -213,9 +201,9 @@ jobs:
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/utf8proc
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/oniguruma
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/FalkorDB-core-rs
-          key: deps-all-${{ matrix.platform.cache_path }}-${{ steps.cache-keys.outputs.graphblas }}-${{ steps.cache-keys.outputs.parser }}-${{ steps.cache-keys.outputs.search }}-${{ steps.cache-keys.outputs.libcurl }}-${{ steps.cache-keys.outputs.libcsv }}-${{ steps.cache-keys.outputs.lagraph }}-${{ steps.cache-keys.outputs.rax }}-${{ steps.cache-keys.outputs.xxhash }}-${{ steps.cache-keys.outputs.utf8proc }}-${{ steps.cache-keys.outputs.oniguruma }}-${{ steps.cache-keys.outputs.corers }}
+          key: deps-${{ matrix.platform.cache_path }}-${{ steps.cache-keys.outputs.combined }}
           restore-keys: |
-            deps-all-${{ matrix.platform.cache_path }}-
+            deps-${{ matrix.platform.cache_path }}-
           enableCrossOsArchive: true
 
       - name: Restore dependency cache (macOS)
@@ -335,7 +323,7 @@ jobs:
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/utf8proc
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/oniguruma
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/FalkorDB-core-rs
-          key: deps-all-${{ matrix.platform.cache_path }}-${{ steps.cache-keys.outputs.graphblas }}-${{ steps.cache-keys.outputs.parser }}-${{ steps.cache-keys.outputs.search }}-${{ steps.cache-keys.outputs.libcurl }}-${{ steps.cache-keys.outputs.libcsv }}-${{ steps.cache-keys.outputs.lagraph }}-${{ steps.cache-keys.outputs.rax }}-${{ steps.cache-keys.outputs.xxhash }}-${{ steps.cache-keys.outputs.utf8proc }}-${{ steps.cache-keys.outputs.oniguruma }}-${{ steps.cache-keys.outputs.corers }}
+          key: deps-${{ matrix.platform.cache_path }}-${{ steps.cache-keys.outputs.combined }}
           enableCrossOsArchive: true
 
       - name: Set browser tag
