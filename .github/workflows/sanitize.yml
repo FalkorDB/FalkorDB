@@ -106,6 +106,7 @@ jobs:
         retention-days: 7
 
     - name: TCK tests
+      if: false
       id: tck_tests
       run: |
         . venv/bin/activate

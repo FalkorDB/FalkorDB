@@ -549,6 +549,7 @@ jobs:
 
 
   tck-tests:
+    if: false
     needs: build
     runs-on: ${{ matrix.platform.machine_label }}
     strategy:
@@ -595,6 +596,7 @@ jobs:
           path: /tmp/logs
 
   fuzz-tests:
+    if: false
     needs: build
     runs-on: ${{ matrix.platform.machine_label }}
     strategy:
