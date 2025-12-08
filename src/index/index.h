@@ -193,10 +193,10 @@ RSQNode *Index_BuildVectorQueryTree
 // construct a unique constraint query tree
 RSQNode *Index_BuildUniqueConstraintQuery
 (
-	const Index idx,       // index to query
-	const GraphEntity *e,  // entity being validated
-	AttributeID *attrs,    // constraint attributes
-	uint8_t n              // number of constraint attributes
+	const Index idx,           // index to query
+	const SIValue *attr_vals,  // entity attributes to query
+	AttributeID *attr_ids,     // constraint attribute ids
+	uint8_t n                  // number of constraint attributes
 );
 
 // query an index
