@@ -230,7 +230,8 @@ jobs:
         env:
           OSX_MIN_SDK_VER: "15.0"
         run: |
-          if [ -d "./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/src" ]; then
+          # Skip clean if we have cached dependencies - they're already clean
+          if [ "${{ steps.restore-deps-macos.outputs.cache-hit }}" != "true" ] && [ -d "./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/src" ]; then
             make clean
           fi
           make DEBUG=${{ matrix.build_type == 'debug' && '1' || '0' }} CXXFLAGS="-Wno-error=vla-cxx-extension"
