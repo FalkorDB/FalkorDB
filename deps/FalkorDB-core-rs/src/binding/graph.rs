@@ -4,6 +4,7 @@
  */
 
 use std::ffi::{c_char, c_void};
+use core::ptr::{read_unaligned, write_unaligned};
 
 pub type NodeID = i64;
 pub type EntityID = i64;
@@ -46,6 +47,9 @@ impl Node {
         set: *mut AttributeSet,
     ) {
         unsafe {
+            let old_attributes_handle = read_unaligned(self.attributes);
+            let new_attributes_handle = read_unaligned(set);
+            AttributeSet_TransferOwnership (old_attributes_handle, new_attributes_handle) ;
             AttributeSet_Free(self.attributes);
             self.attributes.write(*set);
         }
@@ -69,6 +73,9 @@ impl Edge {
         set: *mut AttributeSet,
     ) {
         unsafe {
+            let old_attributes_handle = read_unaligned(self.attributes);
+            let new_attributes_handle = read_unaligned(set);
+            AttributeSet_TransferOwnership(old_attributes_handle, new_attributes_handle) ;
             AttributeSet_Free(self.attributes);
             self.attributes.write(*set);
         }
@@ -175,7 +182,10 @@ extern "C" {
         gc: *mut GraphContext,
         e: *mut Edge,
     );
+
     pub fn AttributeSet_Free(set: *mut AttributeSet);
+    pub fn AttributeSet_TransferOwnership(src:AttributeSet, clone:AttributeSet);
+
     pub fn Config_Option_get(
         field: ConfigOptionField,
         ...

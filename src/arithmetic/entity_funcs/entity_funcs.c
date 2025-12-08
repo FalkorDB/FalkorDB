@@ -265,7 +265,7 @@ SIValue AR_PROPERTY
 	//--------------------------------------------------------------------------
 
 	SIValue val;
-	SIValue *p_val;
+	SIValue p_val;
 	SIValue obj = argv[0];
 	SIValue key = argv[1];
 	const char *key_str = key.stringval;
@@ -287,8 +287,8 @@ SIValue AR_PROPERTY
 			}
 
 			// retrieve the property
-			p_val = GraphEntity_GetProperty(graph_entity, prop_idx);
-			return SI_ConstValue(p_val);
+			GraphEntity_GetProperty (graph_entity, prop_idx, &p_val) ;
+			return SI_ConstValue (&p_val) ;
 		}
 
 		case T_MAP:
