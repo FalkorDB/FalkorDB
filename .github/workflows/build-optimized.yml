@@ -91,7 +91,7 @@ jobs:
             os: alpine
             arch: amd64
             machine_label: ubuntu-latest
-            cache_path: linux-x64
+            cache_path: alpine-x64
             build_variants: [release, server]
             use_docker: true
           - name: alpine-arm64
@@ -99,7 +99,7 @@ jobs:
             os: alpine
             arch: arm64
             machine_label: ubuntu-24.04-arm
-            cache_path: linux-arm64v8
+            cache_path: alpine-arm64v8
             build_variants: [release, server]
             use_docker: true
           # RHEL builds (conditional)
