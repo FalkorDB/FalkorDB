@@ -10,7 +10,7 @@ on:
         description: "Commit SHA"
         required: true
   workflow_run:
-    workflows: ["Build on ubuntu"]
+    workflows: ["Build"]
     types:
       - completed
     branches: [master, "v[0-9]+.[0-9]+"]
@@ -152,6 +152,37 @@ jobs:
           name: falkordb-rhel-x64.so
           path: /tmp
           if_no_artifact_found: error
+
+      - name: Retrieve built .so RHEL8 AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-rhel8-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so Alpine AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-alpine-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so Alpine ARM
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-alpine-arm64v8.so
+          path: /tmp
+          if_no_artifact_found: error
+
       - name: Retrieve built debug.so AMD
         uses: dawidd6/action-download-artifact@v11
         with:
@@ -177,6 +208,36 @@ jobs:
           commit: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
           name: falkordb-debug-rhel-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built debug.so RHEL8 AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-rhel8-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built debug.so Alpine AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-alpine-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built debug.so Alpine ARM
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-alpine-arm64v8.so
           path: /tmp
           if_no_artifact_found: error
 
@@ -299,13 +360,25 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Ubuntu binaries
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-x64.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-arm64v8.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-rhel-x64.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-x64.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-arm64v8.so
+          
+          # RHEL binaries
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-rhel-x64.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-rhel-x64.so
-          # Upload macOS binaries if they exist
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-rhel8-x64.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-rhel8-x64.so
+          
+          # Alpine binaries
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-alpine-x64.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-alpine-arm64v8.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-alpine-x64.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-alpine-arm64v8.so
+          
+          # macOS binaries (if they exist)
           if [ -f /tmp/falkordb-macos-arm64v8.so ]; then
             gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-macos-arm64v8.so
           fi
