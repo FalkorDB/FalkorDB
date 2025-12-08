@@ -27,7 +27,6 @@ concurrency:
 
 jobs:
   create-runners:
-    if: contains(fromJSON('["push", "workflow_dispatch"]'), github.event_name) || contains(github.event.pull_request.labels.*.name, 'test-rhel')
     strategy:
       matrix:
         machines:
