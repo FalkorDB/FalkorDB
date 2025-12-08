@@ -55,6 +55,8 @@ typedef struct {
 	char buf[];
 } array_hdr_t;
 
+#define arrayof(T) T *
+
 typedef void *array_t;
 /* Internal - calculate the array size for allocations */
 #define array_sizeof(hdr) (sizeof(array_hdr_t) + (uint64_t)hdr->cap * hdr->elem_sz)

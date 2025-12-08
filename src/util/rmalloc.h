@@ -1,5 +1,5 @@
-#ifndef __REDISGRAPH_ALLOC__
-#define __REDISGRAPH_ALLOC__
+#ifndef __REDISEARCH_ALLOC__
+#define __REDISEARCH_ALLOC__
 
 #include <stdlib.h>
 #include <string.h>
