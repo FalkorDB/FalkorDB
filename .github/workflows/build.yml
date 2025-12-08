@@ -131,9 +131,6 @@ jobs:
             build_variants: [release]
             use_docker: false
         build_type: [release, debug]
-        exclude:
-          # Don't build debug versions for variants (server)
-          - build_type: debug
     steps:
       - name: Check if should skip
         id: should_skip
