@@ -147,12 +147,15 @@ static void _ResultSet_BoltReplyWithNode
 	bolt_reply_map(client, prop_count);
 	// Iterate over all properties stored on entity
 	for(int i = 0; i < prop_count; i ++) {
-		AttributeID attr_id;
-		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
-		// Emit the actual string
+		SIValue value ;
+		AttributeID attr_id ;
+		AttributeSet_GetIdx (set, i, &attr_id, &value) ;
+
+		// emit the actual string
 		const char *prop_str = GraphContext_GetAttributeString(gc, attr_id);
 		bolt_reply_string(client, prop_str, strlen(prop_str));
-		// Emit the value
+
+		// emit the value
 		_ResultSet_BoltReplyWithSIValue(client, gc, value);
 	}
 	_ResultSet_BoltReplyWithElementID(client, n->id, "node");
@@ -202,12 +205,15 @@ static void _ResultSet_BoltReplyWithEdge
 	bolt_reply_map(client, prop_count);
 	// Iterate over all properties stored on entity
 	for(int i = 0; i < prop_count; i ++) {
-		AttributeID attr_id;
-		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
-		// Emit the actual string
+		SIValue value ;
+		AttributeID attr_id ;
+		AttributeSet_GetIdx (set, i, &attr_id, &value) ;
+
+		// emit the actual string
 		const char *prop_str = GraphContext_GetAttributeString(gc, attr_id);
 		bolt_reply_string(client, prop_str, strlen(prop_str));
-		// Emit the value
+
+		// emit the value
 		_ResultSet_BoltReplyWithSIValue(client, gc, value);
 	}
 	_ResultSet_BoltReplyWithElementID(client, e->id, "relationship");

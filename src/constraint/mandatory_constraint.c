@@ -45,10 +45,9 @@ bool Constraint_EnforceMandatory
 ) {
 	MandatoryConstraint _c = (MandatoryConstraint)(c);
 
-	// TODO: switch to attribute matrix
 	for(uint8_t i = 0; i < _c->n_attr; i++) {
 		AttributeID attr_id = _c->attrs[i];
-		if(GraphEntity_GetProperty(e, attr_id) == ATTRIBUTE_NOTFOUND) {
+		if (!GraphEntity_ContainsProperty (e, attr_id)) {
 			// entity violates constraint
 			if(err_msg != NULL) {
 				// compose error message
