@@ -1,3 +1,5 @@
+# Define the necessary CMake policy flag
+CMAKE_DEFS += CMAKE_POLICY_VERSION_MINIMUM=3.5
 
 REDISEARCH=$(REDISEARCH_BINROOT)/search-static/libredisearch-static.a
 
