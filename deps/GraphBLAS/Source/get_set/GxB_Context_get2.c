@@ -38,7 +38,7 @@ GrB_Info GxB_Context_get_Scalar
     double dvalue = 0 ;
     int32_t ivalue = 0 ;
 
-    switch ((int) field)
+    switch (field)
     {
 
         case GxB_CONTEXT_CHUNK :         // same as GxB_CHUNK
@@ -51,9 +51,9 @@ GrB_Info GxB_Context_get_Scalar
             ivalue = GB_Context_nthreads_max_get (Context) ;
             break ;
 
-        case GxB_CONTEXT_GPU_ID :           // same as GxB_GPU_ID
+        case GxB_CONTEXT_NGPUS : 
 
-            ivalue= GB_Context_gpu_id_get (Context) ;
+            ivalue = GB_Context_gpu_ids_get (Context, NULL) ;
             break ;
 
         default : 
@@ -61,7 +61,7 @@ GrB_Info GxB_Context_get_Scalar
             return (GrB_INVALID_VALUE) ;
     }
 
-    switch ((int) field)
+    switch (field)
     {
 
         case GxB_CONTEXT_CHUNK :         // same as GxB_CHUNK
@@ -150,7 +150,7 @@ GrB_Info GxB_Context_get_INT
     // get the field
     //--------------------------------------------------------------------------
 
-    switch ((int) field)
+    switch (field)
     {
 
         case GxB_CONTEXT_NTHREADS :         // same as GxB_NTHREADS
@@ -158,9 +158,9 @@ GrB_Info GxB_Context_get_INT
             (*value) = GB_Context_nthreads_max_get (Context) ;
             break ;
 
-        case GxB_CONTEXT_GPU_ID :           // same as GxB_GPU_ID
+        case GxB_CONTEXT_NGPUS : 
 
-            (*value) = GB_Context_gpu_id_get (Context) ;
+            (*value) = GB_Context_gpu_ids_get (Context, NULL) ;
             break ;
 
         default : 
@@ -197,20 +197,27 @@ GrB_Info GxB_Context_get_SIZE
     // get the field
     //--------------------------------------------------------------------------
 
-    if (field != GrB_NAME)
-    { 
-        return (GrB_INVALID_VALUE) ;
+    if (field == GxB_CONTEXT_GPU_IDS)
+    {
+        (*value) = sizeof (int32_t) * GB_MAX_NGPUS ;
+        return (GrB_SUCCESS) ;
     }
-
-    if (Context->user_name != NULL)
+    else if (field == GrB_NAME)
     { 
-        (*value) = Context->user_name_size ;
+        if (Context->user_name != NULL)
+        { 
+            (*value) = Context->user_name_size ;
+        }
+        else
+        { 
+            (*value) = GxB_MAX_NAME_LEN ;
+        }
+        return (GrB_SUCCESS) ;
     }
     else
     { 
-        (*value) = GxB_MAX_NAME_LEN ;
+        return (GrB_INVALID_VALUE) ;
     }
-    return (GrB_SUCCESS) ;
 }
 
 //------------------------------------------------------------------------------
@@ -224,6 +231,13 @@ GrB_Info GxB_Context_get_VOID
     int field
 )
 { 
-    return (GrB_INVALID_VALUE) ;
+    if (field == GxB_CONTEXT_GPU_IDS)
+    {
+        return (GB_Context_gpu_ids_get (Context, (int32_t *) value)) ;
+    }
+    else
+    { 
+        return (GrB_INVALID_VALUE) ;
+    }
 }
 

@@ -41,7 +41,7 @@ uint64_t GB_encodify_sort       // encode a sort problem
     // primary encoding of the problem
     //--------------------------------------------------------------------------
 
-    encoding->kcode = kcode ;
+    GB_encodify_kcode (encoding, kcode) ;
     GB_enumify_sort (&encoding->code, C, binaryop) ;
 
     //--------------------------------------------------------------------------

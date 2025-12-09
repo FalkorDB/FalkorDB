@@ -61,7 +61,7 @@ uint64_t GB_encodify_ewise      // encode an ewise problem
     bool is_eWiseUnion = (kcode == GB_JIT_KERNEL_UNION) ;
     bool is_kron       = (kcode == GB_JIT_KERNEL_KRONER) ;
 
-    encoding->kcode = kcode ;
+    GB_encodify_kcode (encoding, kcode) ;
     GB_enumify_ewise (&encoding->code, is_eWiseMult, is_eWiseUnion, is_kron,
         is_eWiseAdd, C_iso, C_in_iso, C_sparsity, ctype,
         Cp_is_32, Cj_is_32, Ci_is_32,

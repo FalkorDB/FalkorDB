@@ -195,11 +195,7 @@ void mexFunction
         {
             cast_X (xwork, X +(k*X_size), X_size) ;
             cast_Y (ywork, Y +(k*Y_size), Y_size) ;
-            // printf ("x: ")   ; GB_code_check (op_xtype->code,xwork,3,NULL) ;
-            // printf ("\ny: ") ; GB_code_check (op_ytype->code,ywork,3,NULL) ;
             f_binary (Z +(k*op_zsize), xwork, ywork) ;
-            // printf ("\nz: ") ; GB_code_check (op_ztype->code,
-            //                    Z +(k*op_zsize), 3, NULL) ; printf ("\n") ;
         }
 
     }

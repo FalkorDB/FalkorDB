@@ -20,10 +20,15 @@
 ////////////////////////////////////////////////////////////////////////////////
 // Definitions for introspection.
 ////////////////////////////////////////////////////////////////////////////////
-#define INTROSPECTION_TABLE                     \
-  LINE(MIPS_MSA, msa, "msa", MIPS_HWCAP_MSA, 0) \
-  LINE(MIPS_EVA, eva, "eva", 0, 0)              \
-  LINE(MIPS_R6, r6, "r6", MIPS_HWCAP_R6, 0)
+#define INTROSPECTION_TABLE                                     \
+  LINE(MIPS_MSA, msa, "msa", MIPS_HWCAP_MSA, 0)                 \
+  LINE(MIPS_EVA, eva, "eva", 0, 0)                              \
+  LINE(MIPS_R6, r6, "r6", MIPS_HWCAP_R6, 0)                     \
+  LINE(MIPS_MIPS16, mips16, "mips16", MIPS_HWCAP_MIPS16, 0)     \
+  LINE(MIPS_MDMX, mdmx, "mdmx", MIPS_HWCAP_MDMX, 0)             \
+  LINE(MIPS_MIPS3D, mips3d, "mips3d", MIPS_HWCAP_MIPS3D, 0)     \
+  LINE(MIPS_SMART, smart, "smartmips", MIPS_HWCAP_SMARTMIPS, 0) \
+  LINE(MIPS_DSP, dsp, "dsp", MIPS_HWCAP_DSP, 0)
 #define INTROSPECTION_PREFIX Mips
 #define INTROSPECTION_ENUM_PREFIX MIPS
 #include "define_introspection_and_hwcaps.inl"
