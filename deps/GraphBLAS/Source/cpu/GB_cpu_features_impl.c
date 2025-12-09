@@ -36,13 +36,15 @@
 #if !defined ( GBNCPUFEAT )
 
     // include the implementation files from cpu_features/src/impl_*.c
-    #include "src/impl_aarch64.c"
+    #include "src/impl_aarch64_linux_or_android.c"
+    #include "src/impl_aarch64_windows.c"
     #include "src/impl_arm_linux_or_android.c"
     #include "src/impl_mips_linux_or_android.c"
     #include "src/impl_ppc_linux.c"
     #include "src/impl_x86_freebsd.c"
     #include "src/impl_x86_linux_or_android.c"
     #include "src/impl_x86_windows.c"
+    #include "src/impl_riscv_linux.c"
     #if GBX86
         #if (defined(__apple__) || defined(__APPLE__) || defined(__MACH__))
         // needed for src/impl_x86_macos.c:

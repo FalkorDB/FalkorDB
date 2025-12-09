@@ -298,6 +298,7 @@ if (is_plus_times_fp)
     % enable the avx-based methods.  only two semirings (plus_times_fp32 and
     % plus_times_fp64) are accelerated with AVX2 or AVX512f instructions.  More
     % semirings will be accelerated in the future.
+    % This flag is also used to trigger the RISC-V RVV1.0 vectorization
     fprintf (f, 'm4_define(`if_semiring_has_avx'', `0'')\n') ;
     fprintf (f, 'm4_define(`GB_semiring_has_avx'', `#define GB_SEMIRING_HAS_AVX_IMPLEMENTATION 1'')\n') ;
 else

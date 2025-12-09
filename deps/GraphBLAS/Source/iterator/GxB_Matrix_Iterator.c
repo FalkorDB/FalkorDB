@@ -37,7 +37,7 @@ GrB_Info GxB_Matrix_Iterator_attach
     GrB_Descriptor desc
 )
 { 
-    return (GB_Iterator_attach (iterator, A, GxB_NO_FORMAT, desc)) ;
+    return (GB(Iterator_attach)(iterator, A, GxB_NO_FORMAT, desc)) ;
 }
 
 //------------------------------------------------------------------------------

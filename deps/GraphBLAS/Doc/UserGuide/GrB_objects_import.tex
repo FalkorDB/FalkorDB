@@ -50,8 +50,8 @@ GrB_Info GrB_Matrix_import  // import a matrix
     GrB_Type type,          // type of matrix to create
     GrB_Index nrows,        // number of rows of the matrix
     GrB_Index ncols,        // number of columns of the matrix
-    const GrB_Index *Ap,    // pointers for CSR, CSC, column indices for COO
-    const GrB_Index *Ai,    // row indices for CSR, CSC
+    const GrB_Index *Ap,    // pointers for CSR,CSC; row indices for COO
+    const GrB_Index *Ai,    // row indices for CSC; col indices for COO,CSR
     const <type> *Ax,       // values
     GrB_Index Ap_len,       // number of entries in Ap (not # of bytes)
     GrB_Index Ai_len,       // number of entries in Ai (not # of bytes)
@@ -131,8 +131,8 @@ The matrix can be imported in one of three different formats:
 \begin{verbatim}
 GrB_Info GrB_Matrix_export  // export a matrix
 (
-    GrB_Index *Ap,          // pointers for CSR, CSC, column indices for COO
-    GrB_Index *Ai,          // col indices for CSR/COO, row indices for CSC
+    GrB_Index *Ap,          // pointers for CSR,CSC; row indices for COO
+    GrB_Index *Ai,          // row indices for CSC; col indices for COO,CSR
     <type> *Ax,             // values (must match the type of A_input)
     GrB_Index *Ap_len,      // number of entries in Ap (not # of bytes)
     GrB_Index *Ai_len,      // number of entries in Ai (not # of bytes)

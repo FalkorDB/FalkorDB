@@ -4,7 +4,7 @@ SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 
 SPDX-License-Identifier: Apache-2.0
 
-VERSION 10.0.2, Mar 20, 2025
+VERSION 10.3.0, Dec 3, 2025
 
 SuiteSparse:GraphBLAS is a complete implementation of the GraphBLAS standard,
 which defines a set of sparse matrix operations on an extended algebra of

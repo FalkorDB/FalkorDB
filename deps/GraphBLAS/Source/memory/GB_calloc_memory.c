@@ -38,6 +38,7 @@ static inline void *GB_calloc_helper
     { 
         // clear the block of memory with a parallel memset
         int nthreads_max = GB_Context_nthreads_max ( ) ;
+        // FIXME for CUDA: need to know if this is on the GPU or CPU
         GB_memset (p, 0, (*size), nthreads_max) ;
     }
 

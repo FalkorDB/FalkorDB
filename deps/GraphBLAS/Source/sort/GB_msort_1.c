@@ -63,6 +63,15 @@ GrB_Info GB_msort_1     // sort array A of size 1-by-n
     //--------------------------------------------------------------------------
 
     int nthreads = GB_nthreads (n, GB_MSORT_BASECASE, nthreads_max) ;
+
+#if 0
+    // HACK: to test GB_bitonic:
+    if (A0_is_32)
+    {
+        return (GB_bitonic (A_0, n, nthreads)) ;
+    }
+#endif
+
     if (nthreads <= 1 || n <= GB_MSORT_BASECASE)
     { 
         // sequential quicksort

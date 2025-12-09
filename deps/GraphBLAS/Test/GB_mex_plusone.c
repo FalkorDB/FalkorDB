@@ -27,10 +27,10 @@
     GB_mx_put_global (true) ;                       \
 }
 
-void myplus64 (double *z, const double *x, const double *y) ;
-void myplus64 (double *z, const double *x, const double *y) { (*z) = (*x)+(*y) ; }
+void gb_myplus64 (double *z, const double *x, const double *y) ;
+void gb_myplus64 (double *z, const double *x, const double *y) { (*z) = (*x)+(*y) ; }
 #define MYPLUS64_DEFN \
-"void myplus64 (double *z, const double *x, const double *y) { (*z) = (*x)+(*y) ; }"
+"void gb_myplus64 (double *z, const double *x, const double *y) { (*z) = (*x)+(*y) ; }"
 
 void mexFunction
 (
@@ -94,8 +94,8 @@ void mexFunction
     }
 
     // create the semiring
-    OK (GxB_BinaryOp_new (&MyPlus, (GxB_binary_function) myplus64,
-        GrB_FP64, GrB_FP64, GrB_FP64, "myplus64", MYPLUS64_DEFN)) ;
+    OK (GxB_BinaryOp_new (&MyPlus, (GxB_binary_function) gb_myplus64,
+        GrB_FP64, GrB_FP64, GrB_FP64, "gb_myplus64", MYPLUS64_DEFN)) ;
     double zero = 0 ;
     OK (GrB_Monoid_new_FP64 (&MyAdd, MyPlus, zero)) ;
     OK (GrB_Semiring_new (&MyPlusOne, MyAdd, GrB_ONEB_FP64)) ;

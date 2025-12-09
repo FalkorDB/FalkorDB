@@ -17,9 +17,22 @@ for m = [0 1 5 100]
         for d = [0 0.1 0.5 inf]
             A = GB_spec_random (m, n, d) ;
             nz = nnz (A.pattern) ;
+            if (nz > 0 & nz < 20)
+                fprintf ('\ninput matrix format:\n') ;
+                display (A.matrix) ;
+            end
             is_sparse = (nz < m*n) ;
             fprintf ('.') ;
             for fmat = fmts
+                if (nz > 0 & nz < 20)
+                    if (fmat == 1 || fmat == 3 || fmat == 5 || fmat == 7)
+                        fprintf ('---------- row-wise format: %d\n', fmat) ;
+                        display (A.matrix) ;
+                    elseif (fmat == 2 || fmat == 4 || fmat == 6 || fmat == 8)
+                        fprintf ('---------- col-wise format: %d\n', fmat) ;
+                        display (A.matrix) ;
+                    end
+                end
                 for fexport = 0:14
                     try
                         C1 = GB_mex_export_import (A, fmat, fexport) ;
