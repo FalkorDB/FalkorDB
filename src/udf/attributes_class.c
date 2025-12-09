@@ -83,15 +83,15 @@ static int js_attributes_get_property
     }
 
     // get attribute from node object
-    SIValue *v = GraphEntity_GetProperty(e, attr_id);
-	if (v == ATTRIBUTE_NOTFOUND) {
+    SIValue v ;
+	if (!GraphEntity_GetProperty (e, attr_id, &v)) {
 		return 0 ; // attribute not set
 	}
 
 	// key found -> convert to JSValue
 	if (desc) {
 		desc->flags  = JS_PROP_ENUMERABLE ;  // configurable, etc. as needed
-		desc->value  = UDF_SIValueToJS (js_ctx, *v) ;
+		desc->value  = UDF_SIValueToJS (js_ctx, v) ;
 		desc->getter = JS_UNDEFINED ;
 		desc->setter = JS_UNDEFINED ;
 	}

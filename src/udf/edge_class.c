@@ -84,16 +84,15 @@ static int js_edge_get_property
     }
 
     // fetch property from edge
-    SIValue *v = GraphEntity_GetProperty (e, attr_id) ;
-
-	if (v == ATTRIBUTE_NOTFOUND) {
+    SIValue v ;
+	if (!GraphEntity_GetProperty (e, attr_id, &v)) {
 		return 0;  // not set
     }
 
 	// key found -> convert to JSValue
 	if (desc) {
 		desc->flags  = JS_PROP_ENUMERABLE ;  // configurable, etc. as needed
-		desc->value  = UDF_SIValueToJS (js_ctx, *v) ;
+		desc->value  = UDF_SIValueToJS (js_ctx, v) ;
 		desc->getter = JS_UNDEFINED ;
 		desc->setter = JS_UNDEFINED ;
 	}

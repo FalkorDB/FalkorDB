@@ -8,6 +8,8 @@
 #include "../value.h"
 #include "../datatypes/datatypes.h"
 
+#include <assert.h>
+
 // convert a FalkorDB SIValue to a QuickJS value
 //
 // this function maps internal database types to their JavaScript equivalents

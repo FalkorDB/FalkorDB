@@ -3,6 +3,7 @@
 * Licensed under the Server Side Public License v1 (SSPLv1).
 */
 
+#include "RG.h"
 #include "classes.h"
 
 JSClassID js_node_class_id;        // JS node class
