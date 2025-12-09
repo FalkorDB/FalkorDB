@@ -135,7 +135,8 @@ void Serializer_OptimizedFormConnections
 		// update adjacency matrix
 		//----------------------------------------------------------------------
 
-		info = GrB_Matrix_setElement_BOOL(adj_m, true, row, col);
+		info = GrB_Matrix_assign_UINT16(adj_m, NULL, GrB_PLUS_UINT16,
+			(uint16_t) 1, &row, 1, &col, 1, NULL);
 		ASSERT(info == GrB_SUCCESS);
 
 		// TODO: might be better to compute transposes at the very end of the load

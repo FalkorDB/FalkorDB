@@ -448,7 +448,7 @@ void Graph_GetEdgesConnectingNodes
 bool Graph_LookupEdgeRelationID
 (
 	const Graph *g,          // graph to get edges from
-	Edge *edge,    	         // edge to check
+	Edge *edge,              // edge to check
 	const RelationID *rels,  // relationships (can't contain unknown relations)
 	int n_rels               // the number of relations
 );
