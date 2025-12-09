@@ -23,12 +23,15 @@ ENV FALKORDB_TLS_PATH=${FALKORDB_HOME}/tls
 ENV FALKORDB_BROWSER_PATH=${FALKORDB_HOME}/browser
 
 # Install runtime dependencies using Alpine packages (equivalent to Debian version)
-RUN apk add --no-cache libgomp openssl nodejs npm
+RUN apk add --no-cache libgomp openssl nodejs npm supervisor bash && \
+    mkdir -p /etc/supervisor/conf.d /var/log/supervisor
 
 WORKDIR ${FALKORDB_HOME}
 
 COPY ./build/docker/run.sh ${FALKORDB_BIN_PATH}/run.sh
 COPY ./build/docker/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
+COPY ./build/docker/entrypoint.sh ${FALKORDB_BIN_PATH}/entrypoint.sh
+COPY ./build/docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Copy the compiled FalkorDB module from the Alpine compiler
 COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
@@ -36,16 +39,29 @@ COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so ${FALKORDB_BIN_PATH}/f
 # Copy browser files from the Alpine-based browser image
 COPY --from=browser /app ${FALKORDB_BROWSER_PATH}
 
+RUN adduser -D -s /bin/bash -u 1001 falkordb && \
+    chown -R falkordb:falkordb ${FALKORDB_HOME} && \
+    chmod -R 755 ${FALKORDB_HOME} && \
+    adduser -D -s /bin/bash -u 1002 nextjs && \
+    chown -R nextjs:nextjs ${FALKORDB_BROWSER_PATH} && \
+    chmod -R 755 ${FALKORDB_BROWSER_PATH}
+
 ENV ARCH=${TARGETPLATFORM}
 
 ENV TLS=0
 
 ENV BROWSER=1
+ENV REST_PORT=8080
+ENV MCP_PORT=3001
+ENV PORT=3000
+ENV CYPHER=1
 
-EXPOSE 6379/tcp
+EXPOSE 6379/tcp 3001/tcp 8080/tcp 3000/tcp
 
 ENV FALKORDB_ARGS="MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000"
 
-ENTRYPOINT ["/var/lib/falkordb/bin/run.sh"]
+USER root
+
+ENTRYPOINT ["/var/lib/falkordb/bin/entrypoint.sh"]
 
 CMD [ "redis-server", "--loadmodule", "/var/lib/falkordb/bin/falkordb.so" ]
