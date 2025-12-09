@@ -105,7 +105,7 @@ int main (void)
                         // kth user thread builds kth matrix with ninner threads
                         GrB_Matrix A = NULL ;
                         TRY (GrB_Matrix_new (&A, GrB_FP64, n, n)) ;
-                        TRY (GrB_Matrix_build (A, I, J, X, nvals,
+                        TRY (GrB_Matrix_build_FP64 (A, I, J, X, nvals,
                             GrB_PLUS_FP64)) ;
 
                         // free the matrix just built

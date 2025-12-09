@@ -50,11 +50,6 @@ GrB_Info GxB_Global_Option_get_INT32    // gets the current global option
             (*value) = (int32_t) GB_Context_nthreads_max_get (NULL) ;
             break ;
 
-        case GxB_GLOBAL_GPU_ID :            // same as GxB_GPU_ID
-
-            (*value) = (int32_t) GB_Context_gpu_id_get (NULL) ;
-            break ;
-
         case GxB_API_VERSION : 
 
             value [0] = GxB_SPEC_MAJOR ;
@@ -519,17 +514,6 @@ GrB_Info GxB_Global_Option_get      // gets the current global option
                 va_end (ap) ;
                 GB_RETURN_IF_NULL (nthreads_max) ;
                 (*nthreads_max) = GB_Context_nthreads_max_get (NULL) ;
-            }
-            break ;
-
-        case GxB_GLOBAL_GPU_ID :            // same as GxB_GPU_ID
-
-            {
-                va_start (ap, field) ;
-                int *value = va_arg (ap, int *) ;
-                va_end (ap) ;
-                GB_RETURN_IF_NULL (value) ;
-                (*value) = GB_Context_gpu_id_get (NULL) ;
             }
             break ;
 

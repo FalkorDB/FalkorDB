@@ -91,7 +91,7 @@ void GB_macrofy_apply           // construct all macros for GrB_apply
     //--------------------------------------------------------------------------
 
     GB_macrofy_typedefs (fp, ctype, (acode == 0) ? NULL : atype, NULL,
-        xtype, ytype, ztype) ;
+        xtype, ytype, ztype, NULL) ;
 
     fprintf (fp, "// unary operator types:\n") ;
     GB_macrofy_type (fp, "Z", "_", ztype_name) ;

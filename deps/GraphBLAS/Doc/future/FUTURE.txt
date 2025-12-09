@@ -1,0 +1,93 @@
+FUTURE plans for GraphBLAS:
+
+    JIT package: don't just check 1st line of GraphBLAS.h when deciding to
+        unpack the src in user cache folder. Use a crc test.
+
+    cumulative sum (or other monoid)
+
+    Raye: link-time optimization with binary for operators, for Julia
+
+    pack/unpack COO
+
+    kernel fusion
+
+    CUDA kernels
+        CUDA: finding src
+        CUDA: kernel source location, and name
+
+    distributed framework
+
+    fine-grain parallelism for dot-product based mxm, mxv, vxm,
+        then add GxB_vxvt (outer product) and GxB_vtxv (inner product)
+        (or call them GxB_outerProduct and GxB_innerProduct?)
+
+    aggregators
+
+    GrB_extract with GrB_Vectors instead of (GrB_Index *) arrays for I and J
+
+    iso: set a flag with GrB_get/set to disable iso.  useful if the matrix is
+    about to become non-iso anyway. Pagerank does:
+
+        r = teleport (becomes iso)
+        r += A*x     (becomes non-iso)
+
+    apply: C = f(A), A dense, no mask or accum, C already dense: do in place
+
+    JIT: allow a flag to be set in a type or operator to selectively control
+        the JIT
+
+    JIT: requires GxB_BinaryOp_new to give the string that defines the op.
+    Allow use of
+        GrB_BinaryOp_new (...)
+        GrB_set (op, GxB_DEFN, "string")
+    also for all ops
+
+    monoids with terminal conditions (as a function), not just a terminal
+        value
+
+    candidates for kernel fusion:
+        * triangle counting: mxm then reduce to scalar
+        * lcc: mxm then reduce to vector
+        * FusedMM: see https://arxiv.org/pdf/2011.06391.pdf
+
+    more:
+        * consider algorithms where fusion can occur
+        * performance monitor, or revised burble, to detect generic cases
+        * check if vectorization of GrB_mxm is effective when using clang
+        * see how HNSW vector search could be implemented in GraphBLAS
+
+    Support for COO / Tuple formats:
+
+        The Container method could be extended to the COO / Tuples format.  It
+        would be like GrB_Matrix_build when moving the tuples to a matrix, but
+        the method would be faster than GrB_Matrix_build /
+        GrB_Matrix_extractTuples.  The row indices, column indices, and values
+        in the Container could be moved into the matrix, saving time and space.
+        I already have this capability in my internal methods but there is no
+        user interface for it.
+
+        The Container could include a binary operator, which would be used to
+        combine duplicate entries.
+
+        The COO -> Container -> GrB_Matrix construction would not take O(1)
+        time and space, but it would be faster and take less memory than
+        the existing GrB_Matrix_build.
+
+        I think this option would be important for the SparseBLAS, to allow for
+        fast load/unload of COO matrices into/from a GrB_Matrix or GrB_Vector.
+        They anticipate supportng a COO matrix format, with the option of
+        creating a corresponding matrix_handle for the data (for GraphBLAS,
+        the matrix_handle would be the GrB_Matrix).
+
+        Alternatively, I could create new GrB_build variants (or variant
+        behavior via the descriptor) that "ingest" the input GrB_Vectors I,J,
+        and X, and I could create a GrB_extractTuples variant that moves its
+        data into GrB_Vectors I,J, and X, returning the GrB_Matrix as empty
+        with no content.  This could be done via the descriptor, using the new
+        GxB_*_build*_Vector methods described above.
+
+        Lots to work out for this, and it's unrelated to the 32/64 bit issue
+        (except that the introduction of GrB_Vectors I,J,X to GrB_build and
+        extractTuples makes this feature more feasible).  Thus, I don't expect
+        to add it to GraphBLAS v10.0.0.
+

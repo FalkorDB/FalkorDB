@@ -245,6 +245,41 @@
 
 #endif
 
+#if !defined ( GBRISCV64 )
+
+    #if defined(__riscv)
+    #define GBRISCV64 1
+    #else
+    #define GBRISCV64 0
+    #endif
+
+#endif
+
+#if !defined ( GBPPC )
+
+    // detect any Power architecture
+    #if defined (__powerpc) || defined (__powerpc__) || \
+        defined (__powerpc64__) || defined (__POWERPC__) || \
+        defined (__ppc__) || defined (__PPC__) || defined (_ARCH_PPC) || \
+        defined (__PPC64__) || defined (__ppc64__) || defined (_ARCH_PPC64)
+        #define GBPPC 1
+        #else
+        #define GBPPC 0
+    #endif
+
+#endif
+
+#if !defined ( GBS390X )
+
+    // detect the s390x architecture
+    #if defined (__s390x__)
+        #define GBS390X 1
+        #else
+        #define GBS390X 0
+    #endif
+
+#endif
+
 //------------------------------------------------------------------------------
 // AVX2 and AVX512F support for the x86_64 architecture
 //------------------------------------------------------------------------------
@@ -307,6 +342,31 @@
 #endif
 
 //------------------------------------------------------------------------------
+// RVV1.0 support for the RISC-V architecture
+//------------------------------------------------------------------------------
+
+#if GBRISCV64
+    #if GB_COMPILER_GCC
+    // TODO: add other compilers
+        #if __GNUC__ >= 14
+            #define GB_COMPILER_SUPPORTS_RVV1 1
+        #else
+            #define GB_COMPILER_SUPPORTS_RVV1 0
+        #endif
+    #endif
+#else
+    // non-RISC-V architecture
+    #define GB_COMPILER_SUPPORTS_RVV1 0
+#endif
+
+// prefix for function with target rvv1.0
+#if GB_COMPILER_SUPPORTS_RVV1
+    #define GB_TARGET_RVV1 __attribute__ ((target ("arch=+v")))
+#else
+    #define GB_TARGET_RVV1
+#endif
+
+//------------------------------------------------------------------------------
 // disable Google's cpu_featgures on some compilers
 //------------------------------------------------------------------------------
 
@@ -316,6 +376,16 @@
     #undef  GBNCPUFEAT
     #define GBNCPUFEAT 1
 
+#endif
+
+//------------------------------------------------------------------------------
+// workaround for a bug in gcc for Power and s390x
+//------------------------------------------------------------------------------
+
+#if ( GB_COMPILER_GCC && ( GBPPC || GBS390X ) )
+    #ifndef GCC_PPC_BUG
+    #define GCC_PPC_BUG
+    #endif
 #endif
 
 #endif

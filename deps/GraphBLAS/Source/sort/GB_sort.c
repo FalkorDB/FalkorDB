@@ -50,94 +50,94 @@
 #define GB_Ci_TYPE          uint32_t
 
 #define GB_C_TYPE           bool
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _ascend_BOOL)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _ascend_BOOL)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           int8_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _ascend_INT8)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _ascend_INT8)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           int16_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _ascend_INT16)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _ascend_INT16)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           int32_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _ascend_INT32)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _ascend_INT32)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           int64_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _ascend_INT64)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _ascend_INT64)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           uint8_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _ascend_UINT8)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _ascend_UINT8)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           uint16_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _ascend_UINT16)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _ascend_UINT16)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           uint32_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _ascend_UINT32)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _ascend_UINT32)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           uint64_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _ascend_UINT64)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _ascend_UINT64)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           float
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _ascend_FP32)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _ascend_FP32)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           double
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _ascend_FP64)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _ascend_FP64)
 #include "sort/template/GB_sort_template.c"
 
 #undef  GB_Ci_TYPE
 #define GB_Ci_TYPE          uint64_t
 
 #define GB_C_TYPE           bool
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _ascend_BOOL)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _ascend_BOOL)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           int8_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _ascend_INT8)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _ascend_INT8)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           int16_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _ascend_INT16)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _ascend_INT16)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           int32_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _ascend_INT32)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _ascend_INT32)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           int64_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _ascend_INT64)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _ascend_INT64)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           uint8_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _ascend_UINT8)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _ascend_UINT8)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           uint16_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _ascend_UINT16)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _ascend_UINT16)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           uint32_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _ascend_UINT32)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _ascend_UINT32)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           uint64_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _ascend_UINT64)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _ascend_UINT64)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           float
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _ascend_FP32)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _ascend_FP32)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           double
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _ascend_FP64)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _ascend_FP64)
 #include "sort/template/GB_sort_template.c"
 
 
@@ -153,94 +153,94 @@
 #define GB_Ci_TYPE          uint32_t
 
 #define GB_C_TYPE           bool
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _descend_BOOL)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _descend_BOOL)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           int8_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _descend_INT8)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _descend_INT8)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           int16_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _descend_INT16)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _descend_INT16)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           int32_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _descend_INT32)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _descend_INT32)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           int64_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _descend_INT64)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _descend_INT64)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           uint8_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _descend_UINT8)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _descend_UINT8)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           uint16_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _descend_UINT16)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _descend_UINT16)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           uint32_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _descend_UINT32)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _descend_UINT32)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           uint64_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _descend_UINT64)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _descend_UINT64)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           float
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _descend_FP32)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _descend_FP32)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           double
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _descend_FP64)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _descend_FP64)
 #include "sort/template/GB_sort_template.c"
 
 #undef  GB_Ci_TYPE
 #define GB_Ci_TYPE          uint64_t
 
 #define GB_C_TYPE           bool
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _descend_BOOL)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _descend_BOOL)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           int8_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _descend_INT8)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _descend_INT8)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           int16_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _descend_INT16)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _descend_INT16)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           int32_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _descend_INT32)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _descend_INT32)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           int64_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _descend_INT64)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _descend_INT64)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           uint8_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _descend_UINT8)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _descend_UINT8)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           uint16_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _descend_UINT16)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _descend_UINT16)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           uint32_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _descend_UINT32)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _descend_UINT32)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           uint64_t
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _descend_UINT64)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _descend_UINT64)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           float
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _descend_FP32)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _descend_FP32)
 #include "sort/template/GB_sort_template.c"
 
 #define GB_C_TYPE           double
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _descend_FP64)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _descend_FP64)
 #include "sort/template/GB_sort_template.c"
 
 //------------------------------------------------------------------------------
@@ -286,13 +286,13 @@
 #undef  GB_Ci_TYPE
 #define GB_Ci_TYPE          uint32_t
 #define GB_C_TYPE           GB_void
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_32_), func, _UDT)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_32_), func, _UDT)
 #include "sort/template/GB_sort_template.c"
 
 #undef  GB_Ci_TYPE
 #define GB_Ci_TYPE          uint64_t
 #define GB_C_TYPE           GB_void
-#define GB_SORT(func)       GB_EVAL3 (GB(sort_64_), func, _UDT)
+#define GB_SORT(func)       GB_EVAL3 (GB (sort_64_), func, _UDT)
 #include "sort/template/GB_sort_template.c"
 
 //------------------------------------------------------------------------------
@@ -515,37 +515,37 @@ GrB_Info GB_sort
             switch (acode)
             {
                 case GB_BOOL_code : 
-                    GB_OK (GB(sort_32_mtx_ascend_BOOL   )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_ascend_BOOL   )(C, nthreads, Werk)) ;
                     break ;
                 case GB_INT8_code : 
-                    GB_OK (GB(sort_32_mtx_ascend_INT8   )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_ascend_INT8   )(C, nthreads, Werk)) ;
                     break ;
                 case GB_INT16_code : 
-                    GB_OK (GB(sort_32_mtx_ascend_INT16  )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_ascend_INT16  )(C, nthreads, Werk)) ;
                     break ;
                 case GB_INT32_code : 
-                    GB_OK (GB(sort_32_mtx_ascend_INT32  )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_ascend_INT32  )(C, nthreads, Werk)) ;
                     break ;
                 case GB_INT64_code : 
-                    GB_OK (GB(sort_32_mtx_ascend_INT64  )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_ascend_INT64  )(C, nthreads, Werk)) ;
                     break ;
                 case GB_UINT8_code : 
-                    GB_OK (GB(sort_32_mtx_ascend_UINT8  )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_ascend_UINT8  )(C, nthreads, Werk)) ;
                     break ;
                 case GB_UINT16_code : 
-                    GB_OK (GB(sort_32_mtx_ascend_UINT16 )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_ascend_UINT16 )(C, nthreads, Werk)) ;
                     break ;
                 case GB_UINT32_code : 
-                    GB_OK (GB(sort_32_mtx_ascend_UINT32 )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_ascend_UINT32 )(C, nthreads, Werk)) ;
                     break ;
                 case GB_UINT64_code : 
-                    GB_OK (GB(sort_32_mtx_ascend_UINT64 )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_ascend_UINT64 )(C, nthreads, Werk)) ;
                     break ;
                 case GB_FP32_code : 
-                    GB_OK (GB(sort_32_mtx_ascend_FP32   )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_ascend_FP32   )(C, nthreads, Werk)) ;
                     break ;
                 case GB_FP64_code : 
-                    GB_OK (GB(sort_32_mtx_ascend_FP64   )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_ascend_FP64   )(C, nthreads, Werk)) ;
                     break ;
                 default:;
             }
@@ -556,37 +556,37 @@ GrB_Info GB_sort
             switch (acode)
             {
                 case GB_BOOL_code : 
-                    GB_OK (GB(sort_32_mtx_descend_BOOL  )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_descend_BOOL  )(C, nthreads, Werk)) ;
                     break ;
                 case GB_INT8_code : 
-                    GB_OK (GB(sort_32_mtx_descend_INT8  )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_descend_INT8  )(C, nthreads, Werk)) ;
                     break ;
                 case GB_INT16_code : 
-                    GB_OK (GB(sort_32_mtx_descend_INT16 )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_descend_INT16 )(C, nthreads, Werk)) ;
                     break ;
                 case GB_INT32_code : 
-                    GB_OK (GB(sort_32_mtx_descend_INT32 )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_descend_INT32 )(C, nthreads, Werk)) ;
                     break ;
                 case GB_INT64_code : 
-                    GB_OK (GB(sort_32_mtx_descend_INT64 )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_descend_INT64 )(C, nthreads, Werk)) ;
                     break ;
                 case GB_UINT8_code : 
-                    GB_OK (GB(sort_32_mtx_descend_UINT8 )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_descend_UINT8 )(C, nthreads, Werk)) ;
                     break ;
                 case GB_UINT16_code : 
-                    GB_OK (GB(sort_32_mtx_descend_UINT16)(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_descend_UINT16)(C, nthreads, Werk)) ;
                     break ;
                 case GB_UINT32_code : 
-                    GB_OK (GB(sort_32_mtx_descend_UINT32)(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_descend_UINT32)(C, nthreads, Werk)) ;
                     break ;
                 case GB_UINT64_code : 
-                    GB_OK (GB(sort_32_mtx_descend_UINT64)(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_descend_UINT64)(C, nthreads, Werk)) ;
                     break ;
                 case GB_FP32_code : 
-                    GB_OK (GB(sort_32_mtx_descend_FP32  )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_descend_FP32  )(C, nthreads, Werk)) ;
                     break ;
                 case GB_FP64_code : 
-                    GB_OK (GB(sort_32_mtx_descend_FP64  )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_32_mtx_descend_FP64  )(C, nthreads, Werk)) ;
                     break ;
                 default:;
             }
@@ -597,37 +597,37 @@ GrB_Info GB_sort
             switch (acode)
             {
                 case GB_BOOL_code : 
-                    GB_OK (GB(sort_64_mtx_ascend_BOOL   )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_ascend_BOOL   )(C, nthreads, Werk)) ;
                     break ;
                 case GB_INT8_code : 
-                    GB_OK (GB(sort_64_mtx_ascend_INT8   )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_ascend_INT8   )(C, nthreads, Werk)) ;
                     break ;
                 case GB_INT16_code : 
-                    GB_OK (GB(sort_64_mtx_ascend_INT16  )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_ascend_INT16  )(C, nthreads, Werk)) ;
                     break ;
                 case GB_INT32_code : 
-                    GB_OK (GB(sort_64_mtx_ascend_INT32  )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_ascend_INT32  )(C, nthreads, Werk)) ;
                     break ;
                 case GB_INT64_code : 
-                    GB_OK (GB(sort_64_mtx_ascend_INT64  )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_ascend_INT64  )(C, nthreads, Werk)) ;
                     break ;
                 case GB_UINT8_code : 
-                    GB_OK (GB(sort_64_mtx_ascend_UINT8  )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_ascend_UINT8  )(C, nthreads, Werk)) ;
                     break ;
                 case GB_UINT16_code : 
-                    GB_OK (GB(sort_64_mtx_ascend_UINT16 )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_ascend_UINT16 )(C, nthreads, Werk)) ;
                     break ;
                 case GB_UINT32_code : 
-                    GB_OK (GB(sort_64_mtx_ascend_UINT32 )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_ascend_UINT32 )(C, nthreads, Werk)) ;
                     break ;
                 case GB_UINT64_code : 
-                    GB_OK (GB(sort_64_mtx_ascend_UINT64 )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_ascend_UINT64 )(C, nthreads, Werk)) ;
                     break ;
                 case GB_FP32_code : 
-                    GB_OK (GB(sort_64_mtx_ascend_FP32   )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_ascend_FP32   )(C, nthreads, Werk)) ;
                     break ;
                 case GB_FP64_code : 
-                    GB_OK (GB(sort_64_mtx_ascend_FP64   )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_ascend_FP64   )(C, nthreads, Werk)) ;
                     break ;
                 default:;
             }
@@ -638,37 +638,37 @@ GrB_Info GB_sort
             switch (acode)
             {
                 case GB_BOOL_code : 
-                    GB_OK (GB(sort_64_mtx_descend_BOOL  )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_descend_BOOL  )(C, nthreads, Werk)) ;
                     break ;
                 case GB_INT8_code : 
-                    GB_OK (GB(sort_64_mtx_descend_INT8  )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_descend_INT8  )(C, nthreads, Werk)) ;
                     break ;
                 case GB_INT16_code : 
-                    GB_OK (GB(sort_64_mtx_descend_INT16 )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_descend_INT16 )(C, nthreads, Werk)) ;
                     break ;
                 case GB_INT32_code : 
-                    GB_OK (GB(sort_64_mtx_descend_INT32 )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_descend_INT32 )(C, nthreads, Werk)) ;
                     break ;
                 case GB_INT64_code : 
-                    GB_OK (GB(sort_64_mtx_descend_INT64 )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_descend_INT64 )(C, nthreads, Werk)) ;
                     break ;
                 case GB_UINT8_code : 
-                    GB_OK (GB(sort_64_mtx_descend_UINT8 )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_descend_UINT8 )(C, nthreads, Werk)) ;
                     break ;
                 case GB_UINT16_code : 
-                    GB_OK (GB(sort_64_mtx_descend_UINT16)(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_descend_UINT16)(C, nthreads, Werk)) ;
                     break ;
                 case GB_UINT32_code : 
-                    GB_OK (GB(sort_64_mtx_descend_UINT32)(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_descend_UINT32)(C, nthreads, Werk)) ;
                     break ;
                 case GB_UINT64_code : 
-                    GB_OK (GB(sort_64_mtx_descend_UINT64)(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_descend_UINT64)(C, nthreads, Werk)) ;
                     break ;
                 case GB_FP32_code : 
-                    GB_OK (GB(sort_64_mtx_descend_FP32  )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_descend_FP32  )(C, nthreads, Werk)) ;
                     break ;
                 case GB_FP64_code : 
-                    GB_OK (GB(sort_64_mtx_descend_FP64  )(C, nthreads, Werk)) ;
+                    GB_OK (GB (sort_64_mtx_descend_FP64  )(C, nthreads, Werk)) ;
                     break ;
                 default:;
             }
