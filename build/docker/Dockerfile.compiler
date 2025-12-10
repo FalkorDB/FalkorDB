@@ -4,12 +4,30 @@ ARG OS=ubuntu
 
 FROM falkordb/falkordb-build:$OS AS builder
 
+ARG OS
+
 ARG DEBUG=0
 
 WORKDIR /FalkorDB
 
 COPY . /FalkorDB
 
+ENV PATH=/opt/rh/gcc-toolset-12/root/usr/bin:$PATH \
+    LD_LIBRARY_PATH=/opt/rh/gcc-toolset-12/root/usr/lib64:$LD_LIBRARY_PATH
+
+# if $OS is rhel8 install gcc 12
+RUN if [ "$OS" = "rhel8" ]; then \
+        yum install -y gcc-toolset-12 && \
+        gcc --version; \
+    else \
+        echo "Not RHEL8, skipping gcc 12 installation"; \
+    fi
+
+RUN chmod +x ./deps/RediSearch/.install/install_script.sh
+
+RUN cd deps/RediSearch/.install/ && ./install_script.sh
+
 RUN make DEBUG=$DEBUG
 
-RUN mkdir -p /FalkorDB/bin/src && cp -r /FalkorDB/bin/linux*/src/falkordb.so /FalkorDB/bin/src/falkordb.so
+RUN mkdir -p /FalkorDB/bin/src \
+ && find /FalkorDB/bin -type f -path "/FalkorDB/bin/linux*/src/falkordb.so" -exec cp {} /FalkorDB/bin/src/ \;
