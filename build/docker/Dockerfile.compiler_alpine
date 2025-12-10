@@ -31,6 +31,8 @@ ARG DEBUG=0
 # Install Python packages for FalkorDB's build system
 RUN pip install --disable-pip-version-check setuptools --upgrade
 
+RUN pip install --break-system-packages cmake==3.25.2
+
 RUN apk add --no-cache minipeg
 
 RUN ln -s $(which minipeg) /usr/local/bin/leg || ln -s $(which minipeg) /usr/bin/leg || echo "Could not create symlink for leg. Check minipeg path."
