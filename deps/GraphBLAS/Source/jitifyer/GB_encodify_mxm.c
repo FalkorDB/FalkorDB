@@ -55,7 +55,7 @@ uint64_t GB_encodify_mxm        // encode a GrB_mxm problem
     // primary encoding of the problem
     //--------------------------------------------------------------------------
 
-    encoding->kcode = kcode ;
+    GB_encodify_kcode (encoding, kcode) ;
     GB_enumify_mxm (&encoding->code, C_iso, C_in_iso, C_sparsity, ctype,
         Cp_is_32, Cj_is_32, Ci_is_32, M, Mask_struct, Mask_comp, semiring,
         flipxy, A, B) ;

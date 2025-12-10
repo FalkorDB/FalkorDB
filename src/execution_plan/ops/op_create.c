@@ -63,7 +63,7 @@ static void _CreateNodes
 	GraphContext *gc
 ) {
 	uint nodes_to_create_count = array_len(op->pending.nodes.nodes_to_create);
-	for(uint i = 0; i < nodes_to_create_count; i++) {
+	for (uint i = 0; i < nodes_to_create_count; i++) {
 		// get specified node to create
 		NodeCreateCtx *n = op->pending.nodes.nodes_to_create + i;
 

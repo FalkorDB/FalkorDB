@@ -7,5 +7,6 @@ To create the GB_rename.h file, first compile libgraphblas.so
 Then type "make" in this folder.  This should only be required to develop
 GraphBLAS since the GB_rename.h file is included in the source distribution.
 
-Linux is required, but the resulting GB_rename.h is then used by all platforms.
+Linux or Mac is required, but the resulting GB_rename.h is then used by all
+platforms.
 

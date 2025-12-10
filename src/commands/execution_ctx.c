@@ -59,16 +59,18 @@ static ExecutionCtx *_ExecutionCtx_New
 (
 	AST *ast,
 	ExecutionPlan *plan,
-	ExecutionType exec_type
+	ExecutionType exec_type,
+	bool deterministic
 ) {
-	ExecutionCtx *exec_ctx = rm_malloc(sizeof(ExecutionCtx));
+	ExecutionCtx *exec_ctx = rm_malloc (sizeof (ExecutionCtx)) ;
 
-	exec_ctx->ast       = ast;
-	exec_ctx->plan      = plan;
-	exec_ctx->cached    = false;
-	exec_ctx->exec_type = exec_type;
+	exec_ctx->ast           = ast ;
+	exec_ctx->plan          = plan ;
+	exec_ctx->cached        = false ;
+	exec_ctx->exec_type     = exec_type ;
+	exec_ctx->deterministic = deterministic ;
 
-	return exec_ctx;
+	return exec_ctx ;
 }
 
 // clone the execution ctx and return a shallow copy for the ast
@@ -77,18 +79,19 @@ ExecutionCtx *ExecutionCtx_Clone
 (
 	const ExecutionCtx *ctx  // execution context to clone
 ) {
-	ExecutionCtx *clone = rm_malloc(sizeof(ExecutionCtx));
+	ExecutionCtx *clone = rm_malloc (sizeof (ExecutionCtx)) ;
 
-	clone->ast = AST_ShallowCopy(ctx->ast);
+	clone->ast = AST_ShallowCopy (ctx->ast) ;
 
 	// set the AST copy in thread local storage
-	QueryCtx_SetAST(clone->ast);
+	QueryCtx_SetAST (clone->ast) ;
 
-	clone->plan      = ExecutionPlan_Clone(ctx->plan);
-	clone->cached    = ctx->cached;
-	clone->exec_type = ctx->exec_type;
+	clone->plan          = ExecutionPlan_Clone (ctx->plan) ;
+	clone->cached        = ctx->cached ;
+	clone->exec_type     = ctx->exec_type ;
+	clone->deterministic = ctx->deterministic ;
 
-	return clone;
+	return clone ;
 }
 
 // returns the objects and information required for query execution
@@ -130,7 +133,8 @@ ExecutionCtx *ExecutionCtx_FromQuery
 	// update query context with the query
 	// (here the QueryInfo is created as well, starting the stage timer)
 	QueryCtx *ctx = QueryCtx_GetQueryCtx () ;
-	ctx->query_data.query_no_params = query_no_params ;
+	ctx->query_data.query_no_params  = query_no_params ;
+	ctx->query_data.query_params_len = query_no_params - cmd_ctx->params ;
 
 	// get cache
 	Cache *cache = GraphContext_GetCache(QueryCtx_GetGraphCtx());
@@ -192,10 +196,12 @@ ExecutionCtx *ExecutionCtx_FromQuery
 		// apply compile time optimizations
 		Optimizer_CompileTimeOptimize (plan) ;
 
-		ExecutionCtx *exec_ctx = _ExecutionCtx_New (ast, plan, exec_type) ;
+		// remember if query is deterministic
+		ExecutionCtx *exec_ctx = _ExecutionCtx_New (ast, plan, exec_type,
+				QueryCtx_IsDeterministic ()) ;
 		ret = Cache_SetGetValue (cache, query_no_params, exec_ctx) ;
 	} else {
-		ret = _ExecutionCtx_New (ast, NULL, exec_type) ;
+		ret = _ExecutionCtx_New (ast, NULL, exec_type, true) ;
 	}
 
 	return ret ;

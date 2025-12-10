@@ -992,7 +992,8 @@ GrB_Info GB_assign_prep
     // TODO: bitmap assign can handle C==M and C==A aliasing in some cases
 
     // If C is aliased to A and/or M, a copy of C typically must be made.
-    bool C_aliased = GB_any_aliased (C, A) || GB_any_aliased (C, M) ;
+    bool C_any_alias_with_A = GB_any_aliased (C, A) ;
+    bool C_aliased = C_any_alias_with_A || GB_any_aliased (C, M) ;
 
     // However, if C == M is aliased, M is structural and not complemented, I
     // and J are both ":", and scalar assignment is being done, then the alias
@@ -1004,8 +1005,17 @@ GrB_Info GB_assign_prep
         && Mask_struct          // mask is structural
         && !Mask_comp           // and not complemented
         && whole_C_matrix       // C(:,:) is being assigned to
-        && (accum == NULL)      // no accum (accum can be handled in the future)
-        && scalar_expansion) ;  // C<C,s> = scalar assignment
+        &&
+        (
+            // C<C,s> = scalar assignment (method 05f)
+            // no accum (accum can be handled in the future)
+            ((accum == NULL) && scalar_expansion)
+        ||
+            // C<C,s> += A, matrix update (method 27)
+            // C and A cannot be aliased in any way and cannot be bitmap
+            ((accum != NULL) && !scalar_expansion && !C_any_alias_with_A
+            && !GB_IS_BITMAP (A) && !C_is_bitmap && !use_bitmap_assign)
+        )) ;
 
     // GB_assign cannot tolerate any alias with the input mask,
     // if the C_replace phase will be performed.
@@ -1017,9 +1027,10 @@ GrB_Info GB_assign_prep
 
     if (C_exploit_alias_with_M)
     {
-        // C<C,s>=scalar, and C_replace can be ignored.
+        // C<C,s>=scalar (method 05f) or C<C,s>+=A (method 27):
+        // C_replace can be ignored.
         ASSERT (C_aliased) ;            // C is aliased with M, but this is OK
-        ASSERT (!GB_any_aliased (C, A)) ;   // A is not present so C != A
+        ASSERT (!C_any_alias_with_A) ;  // no A matrix, or C not aliased with A
         if (*C_replace)
         { 
             GBURBLE ("(C_replace ignored) ") ;
@@ -1044,8 +1055,32 @@ GrB_Info GB_assign_prep
         else
         { 
             // finish any computations in C, but leave it jumbled
-            // TODO:: keep zombies in C
+            // FUTURE:: keep zombies in C, and avoid making a copy of C
             GBURBLE ("(%sC alias: duplicate) ", C->iso ? "iso " : "") ;
+
+#if 0
+if (C==M && !GB_any_aliased (C, A) && Mask_struct && !Mask_comp && whole_C_matrix)
+{
+    // C<C,struct> = A or scalar, with or without accum
+    printf ("\nhack1 accum: %d, scalar: %d\n", accum != NULL,
+        scalar_expansion) ;
+    // abort ( ) ;
+}
+if (C==A && !GB_any_aliased (C, M) && Mask_struct && !Mask_comp && whole_C_matrix)
+{
+    // C<A,struct> = A
+    printf ("\nhack2 accum: %d, scalar: %d\n", accum != NULL, scalar_expansion) ;
+    // abort ( ) ;
+}
+if (C==A && !GB_any_aliased (C, M) && Mask_struct && Mask_comp && whole_C_matrix)
+{
+    // C<not A,struct> = A
+    // only in LAGr_MaximumMatching.c:848
+    printf ("\nhack3 accum: %d, scalar: %d\n", accum != NULL, scalar_expansion) ;
+    // abort ( ) ;
+}
+#endif
+
             GB_MATRIX_WAIT_IF_PENDING_OR_ZOMBIES (C) ;
             ASSERT (!GB_ZOMBIES (C)) ;
             ASSERT (GB_JUMBLED_OK (C)) ;
@@ -1280,11 +1315,15 @@ GrB_Info GB_assign_prep
         // C is non-iso on input, but iso on output
         // copy the cout scalar into C->x
         // set C->iso = true
+        // C<C,struct>=scalar (method 05f) uses this, if C is not iso on input;
+        // it always becomes iso on output.
         GB_OK (GB_convert_any_to_iso (C, cout)) ;
     }
     else if (C->iso && C_iso_out)
     { 
-        // the iso status of C is unchanged; set its new iso value
+        // The iso status of C is unchanged; set its new iso value.
+        // C<C,struct>=scalar (method 05f) uses this, if C is iso on input; it
+        // always stays iso on output.
         memcpy (C->x, cout, csize) ;
     }
     ASSERT_MATRIX_OK (C, "C output from GB_assign_prep", GB0) ;

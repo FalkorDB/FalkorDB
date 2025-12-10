@@ -22,7 +22,7 @@ jobs:
     - name: Safe dir
       run: git config --global --add safe.directory '*'
 
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
       with:
         set-safe-directory: '*'
         submodules: recursive
@@ -87,7 +87,7 @@ jobs:
         make coverage NPROC=16 CLANG=1 || true
 
     - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v5.5.0
+      uses: codecov/codecov-action@v5.5.1
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         file: codecov.txt

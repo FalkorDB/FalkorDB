@@ -1,17 +1,42 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #include <stdio.h>
+#include <float.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "./slow_log.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
+#include "../util/strutil.h"
 #include "../util/rmalloc.h"
 #include "../util/thpool/pool.h"
+
+#define SLOW_LOG_STR_MAX_LEN     2048  // string max len
+#define SLOW_LOG_MIN_REQ_LATENCY 10    // 10ms
+
+#define SLOW_LOG_SIZE 10
+
+// slowlog item
+typedef struct {
+	char *cmd;          // command
+	time_t time;        // item creation time
+	char *query;        // query
+	char *params;       // query parameters
+	double latency;     // how much time query was processed
+	XXH64_hash_t hash;  // item hash
+} SlowLogItem ;
+
+// slowlog, maintains N slowest queries
+struct SlowLog {
+	uint count;                         // number of items <= SLOW_LOG_SIZE
+	double min_latency;                 // lowest stored latency
+	pthread_mutex_t lock;               // lock
+	SlowLogItem items[SLOW_LOG_SIZE] ;  // entries
+} ;
 
 // redis prints doubles with up to 17 digits of precision, which captures
 // the inaccuracy of many floating-point numbers (such as 0.1)
@@ -24,200 +49,261 @@ static inline void _ReplyWithRoundedDouble
 	double d
 ) {
 	// get length required to print number
-	int len = snprintf(NULL, 0, "%.5g", d);
-	char str[len + 1];
-	sprintf(str, "%.5g", d);
+	int len = snprintf (NULL, 0, "%.5g", d) ;
+	char str[len + 1] ;
+	sprintf (str, "%.5g", d) ;
 	// output string-formatted number
-	RedisModule_ReplyWithStringBuffer(ctx, str, len);
+	RedisModule_ReplyWithStringBuffer (ctx, str, len) ;
 }
 
-static SlowLogItem *_SlowLogItem_New
+// compute (cmd, query) hash
+static inline XXH64_hash_t _compute_key
 (
-	const char *cmd,
-	const char *query,
-	double latency,
-	time_t t
+	const char *cmd,   // command
+	const char *query  // query
 ) {
-	SlowLogItem *item = rm_malloc(sizeof(SlowLogItem));
+	ASSERT (cmd   != NULL) ;
+	ASSERT (query != NULL) ;
 
-	item->time    = t;
-	item->cmd     = rm_strdup(cmd);
-	item->query   = rm_strdup(query);
-	item->latency = latency;
+	XXH64_state_t state ;
+	XXH_errorcode res = XXH64_reset (&state, 0) ;
+	ASSERT (res != XXH_ERROR) ;
 
-	return item;
+	XXH64_update (&state, cmd, strlen (cmd)) ;
+	XXH64_update (&state, query, strnlen (query, SLOW_LOG_STR_MAX_LEN)) ;
+
+	return XXH64_digest (&state) ;
+}
+
+// create a new slowlog item
+static void _SlowLogItem_New
+(
+	SlowLogItem *item,  // item to populate
+	const char *cmd,    // command
+	char **query,       // query
+	char **params,      // params byte length
+	double latency,     // query latency
+	time_t t            // query receive time
+) {
+	ASSERT (cmd     != NULL) ;
+	ASSERT (item    != NULL) ;
+	ASSERT (params  != NULL) ;
+	ASSERT (query   != NULL && *query != NULL) ;
+	ASSERT (latency >= SLOW_LOG_MIN_REQ_LATENCY) ;
+
+	char *_query  = *query  ;
+	char *_params = *params ;
+
+	// assert query and params are capped
+	ASSERT (strlen (_query) <= SLOW_LOG_STR_MAX_LEN + 3) ;
+	ASSERT (_params == NULL || strlen (_params) <= SLOW_LOG_STR_MAX_LEN + 3) ;
+
+	item->cmd     = rm_strdup (cmd) ;
+	item->time    = t ;
+	item->hash    = _compute_key (item->cmd, _query) ;
+	item->query   = _query ;
+	item->params  = _params ;
+	item->latency = latency ;
+
+	// own query and params
+	*query  = NULL ;
+	*params = NULL ;
 }
 
 static void _SlowLog_Item_Free
 (
 	SlowLogItem *item
 ) {
-	ASSERT(item);
+	ASSERT (item        != NULL) ;
+	ASSERT (item->cmd   != NULL) ;
+	ASSERT (item->query != NULL) ;
 
-	rm_free(item->cmd);
-	rm_free(item->query);
-	rm_free(item);
+	if (item->params != NULL) {
+		free (item->params) ;
+	}
+
+	free    (item->query)  ;
+	rm_free (item->cmd)    ;
 }
 
-// Compares two heap record nodes.
-static int _slowlog_elem_compare
+static void _SlowLogItem_Update
 (
-	const void *A,
-	const void *B,
-	void *udata
+	SlowLogItem *item,  // item to update
+	char **params,      // params
+	double latency,     // query latency
+	time_t t            // query receive time
 ) {
-	SlowLogItem *a = (SlowLogItem *)A;
-	SlowLogItem *b = (SlowLogItem *)B;
+	ASSERT (item        != NULL) ;
+	ASSERT (params      != NULL) ;
+	ASSERT (item->query != NULL) ;
+	ASSERT (latency >= SLOW_LOG_MIN_REQ_LATENCY) ;
 
-	return b->latency - a->latency;
+	char *_params = *params ;
+	// assert params are capped
+	ASSERT (_params == NULL || strlen (_params) <= SLOW_LOG_STR_MAX_LEN + 3) ;
+
+	// free old params
+	if (item->params != NULL) {
+		free (item->params) ;
+	}
+
+	item->time    = t ;
+	item->params  = _params ;
+	item->latency = latency ;
+
+	*params = NULL ;
 }
 
-static inline size_t _compute_key
-(
-	char **s,
-	const char *cmd,
-	const char *query
-) {
-	return asprintf(s, "%s %s", cmd, query);
-}
-
-static size_t _SlowLogItem_ToString
-(
-	const SlowLogItem *item,
-	char **s
-) {
-	ASSERT(item);
-	return _compute_key(s, item->cmd, item->query);
-}
-
-static void _SlowLog_RemoveItemFromLookup
-(
-	SlowLog *slowlog,
-	int t_id,
-	const SlowLogItem *item
-) {
-	char *key;
-	rax *lookup = slowlog->lookup[t_id];
-	size_t key_len = _SlowLogItem_ToString(item, &key);
-	int removed = raxRemove(lookup, (unsigned char *)key, key_len, NULL);
-	ASSERT(removed == 1);
-	free(key);
-}
-
+// lookup entry
 static bool _SlowLog_Contains
 (
-	const SlowLog *slowlog,
-	int t_id,
-	const char *cmd,
-	const char *query,
-	char **key,
-	SlowLogItem **item
+	SlowLog *slowlog,   // slowlog
+	const char *cmd,    // command
+	const char *query,  // query
+	XXH64_hash_t *key,  // [output] item key
+	SlowLogItem **item  // [output] located entry
 ) {
-	size_t len = _compute_key(key, cmd, query);
-	rax *lookup = slowlog->lookup[t_id];
-	*item = (SlowLogItem *)raxFind(lookup, (unsigned char *)*key, len);
-	if(*item == raxNotFound) {
-		*item = NULL;
+
+	*key = _compute_key (cmd, query) ;
+
+	for (int i = 0; i < slowlog->count; i++) {
+		if (slowlog->items[i].hash == *key) {
+			*item = slowlog->items + i ;
+			return true ;
+		}
 	}
 
-	return (*item != NULL);
+	return false ;
 }
 
-SlowLog *SlowLog_New(void) {
-	SlowLog *slowlog = rm_malloc(sizeof(SlowLog));
+// create a new slowlog
+SlowLog *SlowLog_New (void) {
+	SlowLog *slowlog = rm_calloc (1, sizeof (SlowLog)) ;
 
-	// Redis main thread + worker threads
-	int thread_count = ThreadPool_ThreadCount() + 1;
+	int res = pthread_mutex_init (&slowlog->lock, NULL) ;
+	ASSERT (res == 0) ;
 
-	slowlog->count    = thread_count;
-	slowlog->locks    = rm_malloc(sizeof(pthread_mutex_t) * thread_count);
-	slowlog->lookup   = rm_malloc(sizeof(rax*) * thread_count);
-	slowlog->min_heap = rm_malloc(sizeof(heap_t*) * thread_count);
-
-	for(int i = 0; i < thread_count; i++) {
-		slowlog->lookup[i] = raxNew();
-		slowlog->min_heap[i] = Heap_new(_slowlog_elem_compare, NULL);
-		int res = pthread_mutex_init(slowlog->locks + i, NULL);
-		ASSERT(res == 0);
-	}
-
-	return slowlog;
+	return slowlog ;
 }
 
+// introduce item to slow log
 void SlowLog_Add
 (
-	SlowLog *slowlog,
-	const char *cmd,
-	const char *query,
-	double latency,
-	time_t *t
+	SlowLog *slowlog,   // slowlog to add entry to
+	const char *cmd,    // command
+	const char *query,  // query being logged
+	int params_len,     // params byte length
+	double latency,     // command latency
+	uint64_t time       // seconds since UNIX epoch
 ) {
-	ASSERT(latency >= 0);
-	ASSERT(cmd     != NULL);
-	ASSERT(query   != NULL);
-	ASSERT(slowlog != NULL);
+	ASSERT (latency  >= 0) ;
+	ASSERT (cmd      != NULL) ;
+	ASSERT (query    != NULL) ;
+	ASSERT (slowlog  != NULL) ;
 
-	int res;
-	UNUSED(res);
-	char *key;
-	time_t _time;
-	SlowLogItem *existing_item;
-	int t_id = ThreadPool_GetThreadID();
-	rax *lookup = slowlog->lookup[t_id];
-	heap_t *heap = slowlog->min_heap[t_id];
-	pthread_mutex_t *lock = slowlog->locks + t_id;
+	double min_latency = DBL_MAX ;
 
-	// initialise time
-	(t) ? _time = *t : time(&_time);
-
-	if(pthread_mutex_lock(lock) != 0) {
-		// failed to lock, skip logging
-		return;
+	// slow enough ?
+	if (likely (latency < SLOW_LOG_MIN_REQ_LATENCY)) {
+		return ;
 	}
 
-	{
-		// in critical section
-		bool exists = _SlowLog_Contains(slowlog, t_id, cmd, query, &key,
-				&existing_item);
-		size_t key_len = strlen(key);
+	bool add = (slowlog->min_latency < latency ||
+				slowlog->count < SLOW_LOG_SIZE) ;
 
-		if(exists) {
-			// a similar item already exists
-			// see if we need to update its latency
-			if(existing_item->latency < latency) {
-				existing_item->time = _time;
-				existing_item->latency = latency;
-			}
-			goto cleanup;
-		}
+	if (likely (!add)) {
+		return ;
+	}
 
-		// similar item does not exist in the log
-		// check if there's enough room to store item
-		int introduce_item = 0;
-		if(Heap_count(heap) < SLOW_LOG_SIZE) {
-			introduce_item = 1;
-		} else {
-			// not enough room, see if item should be tracked
-			SlowLogItem *top = Heap_peek(heap);
-			if(top->latency < latency) {
-				top = Heap_poll(heap);
-				_SlowLog_RemoveItemFromLookup(slowlog, t_id, top);
-				_SlowLog_Item_Free(top);
-				introduce_item = 1;
-			}
-		}
+	//--------------------------------------------------------------------------
+	// lock slowlog
+	//--------------------------------------------------------------------------
 
-		if(introduce_item) {
-			SlowLogItem *item = _SlowLogItem_New(cmd, query, latency, _time);
-			Heap_offer(slowlog->min_heap + t_id, item);
-			raxInsert(lookup, (unsigned char *)key, key_len, item, NULL);
+	if (pthread_mutex_lock (&slowlog->lock) != 0) {
+		// failed to lock, skip logging
+		return ;
+	}
+
+	// recheck under lock
+	add = (slowlog->count < SLOW_LOG_SIZE || slowlog->min_latency < latency) ;
+	if (!add) {
+		goto unlock ;
+	}
+
+	// check if we query is alreay in log?
+	XXH64_hash_t key ;
+	SlowLogItem *existing_item = NULL;
+
+	//--------------------------------------------------------------------------
+	// update existing item
+	//--------------------------------------------------------------------------
+
+	bool exists = _SlowLog_Contains (slowlog, cmd, query + params_len, &key,
+			&existing_item) ;
+	if (exists && latency <= existing_item->latency) {
+			goto unlock ;
+	}
+
+	//--------------------------------------------------------------------------
+	// truncate query & parameters
+	//--------------------------------------------------------------------------
+
+	char *truncated_query  = NULL ;
+	char *truncated_params = NULL ;
+
+	if (params_len > 0) {
+		str_truncate (&truncated_params, query, params_len, SLOW_LOG_STR_MAX_LEN) ;
+	}
+
+	if (existing_item != NULL) {
+		_SlowLogItem_Update (existing_item, &truncated_params, latency, time) ;
+		goto cleanup ;
+	}
+
+	//--------------------------------------------------------------------------
+	// add a new item
+	//--------------------------------------------------------------------------
+	size_t n = strnlen (query + params_len, SLOW_LOG_STR_MAX_LEN) ;
+	str_truncate (&truncated_query, query + params_len, n, SLOW_LOG_STR_MAX_LEN) ;
+
+	if (slowlog->count < SLOW_LOG_SIZE) {
+		_SlowLogItem_New (slowlog->items + slowlog->count, cmd,
+				&truncated_query, &truncated_params, latency, time) ;
+
+		slowlog->count++ ;
+		goto cleanup ;
+	}
+
+	//--------------------------------------------------------------------------
+	// replace fastest item
+	//--------------------------------------------------------------------------
+
+	// locate fastest item
+	int idx = -1 ;
+	for (int i = 0; i < slowlog->count; i++) {
+		if (slowlog->items[i].latency == slowlog->min_latency) {
+			idx = i ;
+			break ;
 		}
-	}   // end of critical section
+	}
+	ASSERT (idx != -1) ;
+
+	// remove fastest
+	_SlowLog_Item_Free (slowlog->items + idx) ;
+
+	// add new
+	_SlowLogItem_New (slowlog->items + idx, cmd, &truncated_query,
+			&truncated_params, latency, time) ;
+
 cleanup:
+	// update min latency
+	for (int i = 0; i < slowlog->count; i++) {
+		min_latency = MIN (min_latency, slowlog->items[i].latency) ;
+	}
+	slowlog->min_latency = min_latency ;
 
-	res = pthread_mutex_unlock(lock);
-	ASSERT(res == 0);
-	free(key);
+unlock:
+	pthread_mutex_unlock (&slowlog->lock) ;
 }
 
 // clear all entries from slowlog
@@ -225,115 +311,78 @@ void SlowLog_Clear
 (
 	SlowLog *slowlog  // slowlog to clear
 ) {
-	ASSERT(slowlog != NULL);
+	ASSERT (slowlog != NULL) ;
 
-	for(int t_id = 0; t_id < slowlog->count; t_id++) {
-		raxIterator iter;
-		rax *lookup = slowlog->lookup[t_id];
-		heap_t *heap = slowlog->min_heap[t_id];
-
-		// enter critical section
-		if(pthread_mutex_lock(slowlog->locks + t_id) != 0) {
-			// failed to lock, skip logging
-			break;
-		}
-
-		//----------------------------------------------------------------------
-		// free sloglog items
-		//----------------------------------------------------------------------
-
-		raxStart(&iter, lookup);
-		raxSeek(&iter, "^", NULL, 0);
-		while(raxNext(&iter)) {
-			SlowLogItem *item = iter.data;
-			_SlowLog_Item_Free(item);
-		}
-
-		// clear lookup and heap
-		raxFree(lookup);
-		slowlog->lookup[t_id] = raxNew();
-		Heap_clear(heap);
-
-		// end of critical section
-		pthread_mutex_unlock(slowlog->locks + t_id);
-
-		raxStop(&iter);
+	// lock slowlog
+	if (pthread_mutex_lock (&slowlog->lock) != 0) {
+		// failed to lock, skip logging
+		return ;
 	}
+
+	// free items
+	for(int i = 0; i < slowlog->count; i++) {
+		_SlowLog_Item_Free (slowlog->items + i) ;
+	}
+	memset (slowlog->items, 0, sizeof (SlowLogItem) * SLOW_LOG_SIZE) ;
+
+	slowlog->count       = 0 ;
+	slowlog->min_latency = 0 ;
+
+	// unlock
+	pthread_mutex_unlock (&slowlog->lock) ;
 }
 
+// reports slowlog content
 void SlowLog_Replay
 (
-	const SlowLog *slowlog,
-	RedisModuleCtx *ctx
+	SlowLog *slowlog,    // slowlog
+	RedisModuleCtx *ctx  // redis module context
 ) {
-	int my_t_id = ThreadPool_GetThreadID();
-	SlowLog *aggregated_slowlog = SlowLog_New();
+	// enter critical section
+	bool locked = pthread_mutex_lock (&slowlog->lock) ;
+	ASSERT (locked == 0) ;
 
-	for(int t_id = 0; t_id < slowlog->count; t_id++) {
-		// don't lock ourselves
-		if(my_t_id != t_id) {
-			if(pthread_mutex_lock(slowlog->locks + t_id) != 0) {
-				// failed to lock, skip aggregating this thread slowlog entries
-				continue;
-			}
+	RedisModule_ReplyWithArray (ctx, slowlog->count) ;
+
+	for (int i = 0; i < slowlog->count; i++) {
+		SlowLogItem *item = slowlog->items + i ;
+
+		RedisModule_ReplyWithArray (ctx, 5) ;
+
+		RedisModule_ReplyWithDouble (ctx, item->time) ;
+
+		RedisModule_ReplyWithStringBuffer (ctx, (const char *)item->cmd,
+				strlen (item->cmd)) ;
+
+		RedisModule_ReplyWithStringBuffer (ctx, (const char *)item->query,
+				strlen (item->query)) ;
+
+		if (item->params != NULL) {
+			RedisModule_ReplyWithStringBuffer (ctx, (const char *)item->params,
+					strlen (item->params)) ;
+		} else {
+			RedisModule_ReplyWithNull (ctx) ;
 		}
-		{
-			// critical section
-			rax *lookup = slowlog->lookup[t_id];
-			raxIterator iter;
-			raxStart(&iter, lookup);
-			raxSeek(&iter, "^", NULL, 0);
-			while(raxNext(&iter)) {
-				SlowLogItem *item = iter.data;
-				SlowLog_Add(aggregated_slowlog, item->cmd, item->query,
-							item->latency, &item->time);
-			}
-			raxStop(&iter);
-			// end of critical section
-		}
-		if(my_t_id != t_id) {
-			pthread_mutex_unlock(slowlog->locks + t_id);
-		}
+
+		_ReplyWithRoundedDouble (ctx, item->latency) ;
 	}
 
-	heap_t *heap = aggregated_slowlog->min_heap[my_t_id];
-	RedisModule_ReplyWithArray(ctx, Heap_count(heap));
-
-	while(Heap_count(heap)) {
-		SlowLogItem *item = Heap_poll(heap);
-		RedisModule_ReplyWithArray(ctx, 4);
-		RedisModule_ReplyWithDouble(ctx, item->time);
-		RedisModule_ReplyWithStringBuffer(ctx, (const char *)item->cmd, strlen(item->cmd));
-		RedisModule_ReplyWithStringBuffer(ctx, (const char *)item->query, strlen(item->query));
-		_ReplyWithRoundedDouble(ctx, item->latency);
-	}
-
-	SlowLog_Free(aggregated_slowlog);
+	// exit critical section
+	pthread_mutex_unlock (&slowlog->lock) ;
 }
 
-void SlowLog_Free(SlowLog *slowlog) {
-	for(int i = 0; i < slowlog->count; i++) {
-		rax *lookup = slowlog->lookup[i];
-		heap_t *heap = slowlog->min_heap[i];
-
-		raxIterator iter;
-		raxStart(&iter, lookup);
-		raxSeek(&iter, "^", NULL, 0);
-		while(raxNext(&iter)) {
-			SlowLogItem *item = iter.data;
-			_SlowLog_Item_Free(item);
-		}
-		raxStop(&iter);
-
-		raxFree(lookup);
-		Heap_free(heap);
-		int res = pthread_mutex_destroy(slowlog->locks + i);
-		ASSERT(res == 0);
+// free slowlog
+void SlowLog_Free
+(
+	SlowLog *slowlog  // slowlog to free
+) {
+	for (int i = 0; i < slowlog->count; i++) {
+		_SlowLog_Item_Free (slowlog->items + i) ;
 	}
 
-	rm_free(slowlog->locks);
-	rm_free(slowlog->lookup);
-	rm_free(slowlog->min_heap);
-	rm_free(slowlog);
+	int res = pthread_mutex_destroy (&slowlog->lock) ;
+	ASSERT (res == 0) ;
+
+	rm_free (slowlog) ;
 }
 

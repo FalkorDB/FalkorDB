@@ -67,7 +67,7 @@ for trial = 1:10
                 assert (gbtest_eq (L, GL)) ;
                 assert (gbtest_eq (U, GU)) ;
                 assert (gbtest_eq (D, GD)) ;
-                assert (gbtest_eq (C, GC)) ;
+                assert (gbtest_err (C, GC) < 1e-14) ;
 
                 if (~islogical (A))
                     % built-in istril, istriu, and isdiag

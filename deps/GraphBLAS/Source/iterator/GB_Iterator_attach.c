@@ -10,7 +10,7 @@
 #include "GB.h"
 #define GB_FREE_ALL ;
 
-GrB_Info GB_Iterator_attach
+GrB_Info GB(Iterator_attach)
 (
     // input/output:
     GxB_Iterator iterator,  // iterator to attach to the matrix A
