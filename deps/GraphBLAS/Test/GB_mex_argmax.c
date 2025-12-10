@@ -12,15 +12,15 @@
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
 
- typedef struct { int64_t k ; double v ; } tuple_kv ;
+ typedef struct { int64_t k ; double v ; } gb_tuple_kv ;
 #define TUPLE_KV \
-"typedef struct { int64_t k ; double v ; } tuple_kv ;"
+"typedef struct { int64_t k ; double v ; } gb_tuple_kv ;"
 
-void make_tuple_kv (tuple_kv *z,
+void gb_make_tuple_kv (gb_tuple_kv *z,
     const double *x, uint64_t ix, uint64_t jx,
     const void   *y, uint64_t iy, uint64_t jy,
     const void *theta) ;
-void make_tuple_kv (tuple_kv *z,
+void gb_make_tuple_kv (gb_tuple_kv *z,
     const double *x, uint64_t ix, uint64_t jx,
     const void   *y, uint64_t iy, uint64_t jy,
     const void *theta)
@@ -30,7 +30,7 @@ void make_tuple_kv (tuple_kv *z,
 }
 
 #define MAKE_TUPLE_KV_DEFN \
-"void make_tuple_kv (tuple_kv *z,                    \n" \
+"void gb_make_tuple_kv (gb_tuple_kv *z,              \n" \
 "    const double *x, uint64_t ix, uint64_t jx,      \n" \
 "    const void   *y, uint64_t iy, uint64_t jy,      \n" \
 "    const void *theta)                              \n" \
@@ -39,18 +39,18 @@ void make_tuple_kv (tuple_kv *z,
 "    z->v = (*x) ;                                   \n" \
 "}                                                   \n"
 
- void getv_tuple_kv (double *z, const tuple_kv *x) ;
- void getv_tuple_kv (double *z, const tuple_kv *x) { (*z) = x->v ; }
+ void gb_getv_tuple_kv (double *z, const gb_tuple_kv *x) ;
+ void gb_getv_tuple_kv (double *z, const gb_tuple_kv *x) { (*z) = x->v ; }
 #define GETV_TUPLE_KV \
-"void getv_tuple_kv (double *z, const tuple_kv *x) { (*z) = x->v ; }"
+"void gb_getv_tuple_kv (double *z, const gb_tuple_kv *x) { (*z) = x->v ; }"
 
- void getk_tuple_kv (int64_t *z, const tuple_kv *x) ;
- void getk_tuple_kv (int64_t *z, const tuple_kv *x) { (*z) = x->k ; }
+ void gb_getk_tuple_kv (int64_t *z, const gb_tuple_kv *x) ;
+ void gb_getk_tuple_kv (int64_t *z, const gb_tuple_kv *x) { (*z) = x->k ; }
 #define GETK_TUPLE_KV \
-"void getk_tuple_kv (int64_t *z, const tuple_kv *x) { (*z) = x->k ; }"
+"void gb_getk_tuple_kv (int64_t *z, const gb_tuple_kv *x) { (*z) = x->k ; }"
 
-void max_tuple_kv (tuple_kv *z, const tuple_kv *x, const tuple_kv *y) ;
-void max_tuple_kv (tuple_kv *z, const tuple_kv *x, const tuple_kv *y)
+void gb_max_tuple_kv (gb_tuple_kv *z, const gb_tuple_kv *x, const gb_tuple_kv *y) ;
+void gb_max_tuple_kv (gb_tuple_kv *z, const gb_tuple_kv *x, const gb_tuple_kv *y)
 {
     if (x->v > y->v || (x->v == y->v && x->k < y->k))
     {
@@ -65,7 +65,7 @@ void max_tuple_kv (tuple_kv *z, const tuple_kv *x, const tuple_kv *y)
 }
 
 #define MAX_TUPLE_KV \
-"void max_tuple_kv (tuple_kv *z, const tuple_kv *x, const tuple_kv *y)\n" \
+"void gb_max_tuple_kv (gb_tuple_kv *z, const gb_tuple_kv *x, const gb_tuple_kv *y)\n" \
 "{                                                                   \n" \
 "    if (x->v > y->v || (x->v == y->v && x->k < y->k))               \n" \
 "    {                                                               \n" \
@@ -176,17 +176,17 @@ void mexFunction
     OK (GrB_Scalar_setElement_BOOL (Theta, 1)) ;
     if (jit)
     {
-        OK (GxB_Type_new (&Tuple, sizeof (tuple_kv), "tuple_kv", TUPLE_KV)) ;
+        OK (GxB_Type_new (&Tuple, sizeof (gb_tuple_kv), "gb_tuple_kv", TUPLE_KV)) ;
         METHOD (GxB_IndexBinaryOp_new (&Iop,
-            (GxB_index_binary_function) make_tuple_kv,
+            (GxB_index_binary_function) gb_make_tuple_kv,
             Tuple, GrB_FP64, GrB_BOOL, GrB_BOOL,
-            "make_tuple_kv", MAKE_TUPLE_KV_DEFN)) ;
+            "gb_make_tuple_kv", MAKE_TUPLE_KV_DEFN)) ;
     }
     else
     {
-        OK (GrB_Type_new (&Tuple, sizeof (tuple_kv))) ;
+        OK (GrB_Type_new (&Tuple, sizeof (gb_tuple_kv))) ;
         METHOD (GxB_IndexBinaryOp_new (&Iop,
-            (GxB_index_binary_function) make_tuple_kv,
+            (GxB_index_binary_function) gb_make_tuple_kv,
             Tuple, GrB_FP64, GrB_BOOL, GrB_BOOL,
             NULL, NULL)) ;
     }
@@ -201,22 +201,22 @@ void mexFunction
     if (pr)
     {
         // printf ("\njit enabled: %d\n", jit) ;
-        OK (GxB_IndexBinaryOp_fprint (Iop, "make_tuple_kv idx", 5, stdout)) ;
+        OK (GxB_IndexBinaryOp_fprint (Iop, "gb_make_tuple_kv idx", 5, stdout)) ;
     }
 
-    tuple_kv id ;
-    memset (&id, 0, sizeof (tuple_kv)) ;
+    gb_tuple_kv id ;
+    memset (&id, 0, sizeof (gb_tuple_kv)) ;
     id.k = INT64_MAX ;
     id.v = (double) (-INFINITY) ;
 
     if (jit)
     {
-        OK (GxB_BinaryOp_new (&MonOp, (GxB_binary_function) max_tuple_kv,
-            Tuple, Tuple, Tuple, "max_tuple_kv", MAX_TUPLE_KV)) ;
+        OK (GxB_BinaryOp_new (&MonOp, (GxB_binary_function) gb_max_tuple_kv,
+            Tuple, Tuple, Tuple, "gb_max_tuple_kv", MAX_TUPLE_KV)) ;
     }
     else
     {
-        OK (GrB_BinaryOp_new (&MonOp, (GxB_binary_function) max_tuple_kv,
+        OK (GrB_BinaryOp_new (&MonOp, (GxB_binary_function) gb_max_tuple_kv,
             Tuple, Tuple, Tuple)) ;
     }
 
@@ -236,16 +236,16 @@ void mexFunction
 
     if (jit)
     {
-        OK (GxB_UnaryOp_new (&Getk, (GxB_unary_function) getk_tuple_kv,
-            GrB_INT64, Tuple, "getk_tuple_kv", GETK_TUPLE_KV)) ;
-        OK (GxB_UnaryOp_new (&Getv, (GxB_unary_function) getv_tuple_kv,
-            GrB_FP64, Tuple, "getv_tuple_kv", GETV_TUPLE_KV)) ;
+        OK (GxB_UnaryOp_new (&Getk, (GxB_unary_function) gb_getk_tuple_kv,
+            GrB_INT64, Tuple, "gb_getk_tuple_kv", GETK_TUPLE_KV)) ;
+        OK (GxB_UnaryOp_new (&Getv, (GxB_unary_function) gb_getv_tuple_kv,
+            GrB_FP64, Tuple, "gb_getv_tuple_kv", GETV_TUPLE_KV)) ;
     }
     else
     {
-        OK (GrB_UnaryOp_new (&Getk, (GxB_unary_function) getk_tuple_kv,
+        OK (GrB_UnaryOp_new (&Getk, (GxB_unary_function) gb_getk_tuple_kv,
             GrB_INT64, Tuple)) ;
-        OK (GrB_UnaryOp_new (&Getv, (GxB_unary_function) getv_tuple_kv,
+        OK (GrB_UnaryOp_new (&Getv, (GxB_unary_function) gb_getv_tuple_kv,
             GrB_FP64, Tuple)) ;
     }
 

@@ -40,9 +40,9 @@ int myflush (void)
 typedef int (* printf_func_t) (const char *restrict format, ...) ;
 typedef int (* flush_func_t)  (void) ;
 
- typedef struct { int64_t stuff [4] ; } my4x64 ;
+ typedef struct { int64_t stuff [4] ; } gb_my4x64 ;
 #define MY4X64 \
-"typedef struct { int64_t stuff [4] ; } my4x64 ;"
+"typedef struct { int64_t stuff [4] ; } gb_my4x64 ;"
 
 void mexFunction
 (
@@ -404,9 +404,9 @@ void mexFunction
 
     CHECK (sizeof (GB_blob16) == 2 * sizeof (uint64_t)) ;
 
-    OK (GxB_Type_new (&My4x64, sizeof (my4x64), "my4x64", MY4X64)) ;
+    OK (GxB_Type_new (&My4x64, sizeof (gb_my4x64), "gb_my4x64", MY4X64)) ;
     OK (GxB_Type_fprint (My4x64, "My4x64", GxB_COMPLETE, NULL)) ;
-    my4x64 my4x64_scalar ;
+    gb_my4x64 my4x64_scalar ;
     OK (GrB_Matrix_new (&C, My4x64, 4, 4)) ;
 
     GrB_Matrix Tiles [4]  = { NULL, NULL, NULL, NULL} ;

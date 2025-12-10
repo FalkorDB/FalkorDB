@@ -152,13 +152,14 @@ static void FixErrors(ArmInfo* const info,
       // https://crbug.com/341598.
       info->features.neon = false;
       break;
-    case 0x510006F2:
-    case 0x510006F3:
-      // The Nexus 4 (Qualcomm Krait) kernel configuration forgets to report
-      // IDIV support.
-      info->features.idiva = true;
-      info->features.idivt = true;
-      break;
+  }
+
+  // Some Qualcomm Krait kernels forget to report IDIV support.
+  // https://github.com/torvalds/linux/commit/120ecfafabec382c4feb79ff159ef42a39b6d33b
+  if (info->implementer == 0x51 && info->architecture == 7 &&
+      (info->part == 0x4d || info->part == 0x6f)) {
+    info->features.idiva = true;
+    info->features.idivt = true;
   }
 
   // Propagate cpu features.

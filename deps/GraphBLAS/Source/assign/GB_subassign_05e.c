@@ -79,7 +79,7 @@ GrB_Info GB_subassign_05e
     bool C_is_csc = C->is_csc ;
     GB_phybix_free (C) ;
     // set C->iso = true    OK
-    GB_OK (GB_dup_worker (&C, true, M, false, C->type)) ;
+    GB_OK (GB_dup_worker (&C, true, M, false, C->type)) ;   // OK: C is empty
     C->is_csc = C_is_csc ;
     GB_cast_scalar (C->x, C->type->code, scalar, scalar_type->code,
         scalar_type->size) ;

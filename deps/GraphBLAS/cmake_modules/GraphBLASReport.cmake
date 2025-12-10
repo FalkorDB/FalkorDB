@@ -28,4 +28,13 @@ else ( )
 endif ( )
 get_property ( CDEFN DIRECTORY PROPERTY COMPILE_DEFINITIONS )
 message ( STATUS "compile definitions:  ${CDEFN}")
+message ( STATUS "GraphBLAS has CUDA:   ${GRAPHBLAS_HAS_CUDA}")
+
+if ( GRAPHBLAS_HAS_CUDA )
+    message ( STATUS "CUDA compiler:        ${CMAKE_CUDA_COMPILER} ")
+    message ( STATUS "CUDA flags:           ${CMAKE_CUDA_FLAGS} ")
+    message ( STATUS "CUDA release:         ${CMAKE_CUDA_FLAGS_RELEASE} ")
+    message ( STATUS "CUDA flags debug:     ${CMAKE_CUDA_FLAGS_DEBUG} ")
+endif ( )
+
 message ( STATUS "------------------------------------------------------------------------" )

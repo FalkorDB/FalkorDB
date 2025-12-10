@@ -1,4 +1,4 @@
-name: Build on ubuntu
+name: Build
 
 on:
   workflow_dispatch:
@@ -7,6 +7,11 @@ on:
         description: "Browser tag"
         required: false
         default: "latest"
+      skip_tests:
+        description: "Skip tests"
+        required: false
+        type: boolean
+        default: false
   pull_request:
     branches: [master, "[0-9]+.[0-9]+"]
   push:
@@ -53,399 +58,383 @@ jobs:
           image: ${{ matrix.machines.image }}
 
   build:
-    needs: create-runners
     runs-on: ${{ matrix.platform.machine_label }}
     services:
       registry:
-        image: registry:2
+        image: ${{ matrix.platform.os != 'macos' && 'registry:2' || '' }}
         ports:
           - 5000:5000
     strategy:
       fail-fast: false
       matrix:
         platform:
-          - name: linux/amd64
-            platform: linux/amd64
+          # Ubuntu builds
+          - name: ubuntu-x64
             suffix: x64
             os: ubuntu
+            arch: amd64
             machine_label: ubuntu-latest
-            build_test_image: true
-            test_dockerfile: Dockerfile.debian
             cache_path: linux-x64
-            is_debug: "0"
-          - name: linux/arm64
-            platform: linux/arm64
+            build_variants: [release, server]
+            use_docker: true
+          - name: ubuntu-arm64
             suffix: arm64v8
             os: ubuntu
+            arch: arm64
             machine_label: ubuntu-24.04-arm
-            build_test_image: true
-            test_dockerfile: Dockerfile.debian
             cache_path: linux-arm64v8
-            is_debug: "0"
-          - name: linux/x86_64
-            platform: linux/amd64
+            build_variants: [release, server]
+            use_docker: true
+          # Alpine builds
+          - name: alpine-x64
             suffix: alpine-x64
             os: alpine
+            arch: amd64
             machine_label: ubuntu-latest
-            build_test_image: true
-            dockerfile: Dockerfile.alpine
-            compiler_dockerfile: Dockerfile.compiler_alpine
-            test_dockerfile: Dockerfile.alpine
-            cache_path: linux-x64
-            is_debug: "0"
-          - name: linux/x86_64
-            platform: linux/amd64
-            suffix: server-alpine-x64
-            os: alpine
-            machine_label: ubuntu-latest
-            build_test_image: true
-            dockerfile: Dockerfile.alpine-server
-            compiler_dockerfile: Dockerfile.compiler_alpine
-            test_dockerfile: Dockerfile.alpine
-            cache_path: linux-x64
-            is_debug: "0"
-          - name: linux/arm64
-            platform: linux/arm64
+            cache_path: alpine-x64
+            build_variants: [release, server]
+            use_docker: true
+          - name: alpine-arm64
             suffix: alpine-arm64v8
             os: alpine
+            arch: arm64
             machine_label: ubuntu-24.04-arm
-            build_test_image: true
-            dockerfile: Dockerfile.alpine
-            compiler_dockerfile: Dockerfile.compiler_alpine
-            test_dockerfile: Dockerfile.alpine
-            cache_path: linux-arm64v8
-            is_debug: "0"
-          - name: linux/arm64
-            platform: linux/arm64
-            suffix: server-alpine-arm64v8
-            os: alpine
-            machine_label: ubuntu-24.04-arm
-            build_test_image: true
-            dockerfile: Dockerfile.alpine-server
-            compiler_dockerfile: Dockerfile.compiler_alpine
-            test_dockerfile: Dockerfile.alpine
-            cache_path: linux-arm64v8
-            is_debug: "0"
-          - name: rhel/amd64
-            platform: linux/amd64
+            cache_path: alpine-arm64v8
+            build_variants: [release, server]
+            use_docker: true
+          # RHEL builds (conditional)
+          - name: rhel-x64
             suffix: rhel-x64
             os: rhel
+            arch: amd64
             machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
-            build_test_image: false
-            cache_path: linux-x64
-            is_debug: "0"
-          - name: rhel8/amd64
-            platform: linux/amd64
+            cache_path: rhel-x64
+            build_variants: [release]
+            requires_runner: true
+            use_docker: true
+          - name: rhel8-x64
             suffix: rhel8-x64
             os: rhel8
+            arch: amd64
             machine_label: ${{ format('rhel8-build-{0}-{1}', github.run_id, github.run_number) }}
-            build_test_image: false
-            cache_path: linux-x64
-            is_debug: "0"
-          - name: linux/amd64
-            platform: linux/amd64
-            suffix: server-x64
-            os: ubuntu
-            machine_label: ubuntu-latest
-            build_test_image: true
-            dockerfile: Dockerfile.server
-            test_dockerfile: Dockerfile.debian
-            cache_path: linux-x64
-            is_debug: "0"
-          - name: linux/arm64
-            platform: linux/arm64
-            suffix: server-arm64v8
-            os: ubuntu
-            machine_label: ubuntu-24.04-arm
-            build_test_image: true
-            dockerfile: Dockerfile.server
-            test_dockerfile: Dockerfile.debian
-            cache_path: linux-arm64v8
-            is_debug: "0"
-          - name: linux/amd64
-            platform: linux/amd64
-            suffix: x64
-            os: ubuntu
-            machine_label: ubuntu-latest
-            build_test_image: false
-            test_dockerfile: Dockerfile.debian
-            cache_path: linux-x64
-            is_debug: "1"
-          - name: linux/arm64
-            platform: linux/arm64
-            suffix: arm64v8
-            os: ubuntu
-            machine_label: ubuntu-24.04-arm
-            build_test_image: false
-            test_dockerfile: Dockerfile.debian
-            cache_path: linux-arm64v8
-            is_debug: "1"
-          - name: rhel/amd64
-            platform: linux/amd64
-            suffix: rhel-x64
-            os: rhel
-            machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
-            build_test_image: false
-            cache_path: linux-x64
-            is_debug: "1"
-          - name: rhel8/amd64
-            platform: linux/amd64
-            suffix: rhel8-x64
-            os: rhel8
-            machine_label: ${{ format('rhel8-build-{0}-{1}', github.run_id, github.run_number) }}
-            build_test_image: false
-            cache_path: linux-x64
-            is_debug: "1"
+            cache_path: rhel8-x64
+            build_variants: [release]
+            requires_runner: true
+            use_docker: true
+          # macOS builds
+          - name: macos-arm64
+            suffix: macos-arm64v8
+            os: macos
+            arch: arm64
+            machine_label: macos-latest
+            cache_path: macos-arm64v8
+            build_variants: [release]
+            use_docker: false
+        build_type: [release, debug]
     steps:
-      - name: Install Git
-        if: ${{ matrix.platform.os == 'rhel' || matrix.platform.os == 'rhel8' }}
+      - name: Check if should skip
+        id: should_skip
         run: |
-          sudo dnf install -y git
+          SHOULD_SKIP="false"
+          if [[ "${{ matrix.platform.requires_runner }}" == "true" ]] && [[ "${{ github.event_name }}" == "pull_request" ]] && ! [[ "${{ contains(github.event.pull_request.labels.*.name, 'test-rhel') }}" == "true" ]]; then
+            SHOULD_SKIP="true"
+          fi
+          echo "skip=$SHOULD_SKIP" >> $GITHUB_OUTPUT
+
+      - name: Install Git (RHEL)
+        if: steps.should_skip.outputs.skip != 'true' && (matrix.platform.os == 'rhel' || matrix.platform.os == 'rhel8')
+        run: sudo dnf install -y git
 
       - uses: actions/checkout@v6
+        if: steps.should_skip.outputs.skip != 'true'
         with:
           set-safe-directory: "*"
           submodules: recursive
 
-      # Make sure the working directory is static between runs
-      # and always the same for the CMake cache
+      - name: Setup macOS dependencies
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.os == 'macos'
+        run: |
+          brew install m4 automake peg libtool autoconf python3 gcc make zlib libiconv libomp cmake
+          echo "/opt/homebrew/opt/make/libexec/gnubin" >> $GITHUB_PATH
+
       - name: Relocate source
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker
         run: |
           sudo mkdir -p /FalkorDB
           sudo cp -r $GITHUB_WORKSPACE/. /FalkorDB/
           sudo chown -R $(whoami) /FalkorDB
 
-      - name: Set cache keys
+      - name: Generate cache keys (Docker)
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker
+        id: cache-keys
+        working-directory: /FalkorDB
         run: |
-          echo "CACHE_KEY_GRAPHBLAS=graphblas-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}" >> $GITHUB_ENV
-          echo "CACHE_KEY_PARSER=parser-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}" >> $GITHUB_ENV
-          echo "CACHE_KEY_SEARCH=search-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}" >> $GITHUB_ENV
-          echo "CACHE_KEY_LIBCURL=libcurl-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}" >> $GITHUB_ENV
-          echo "CACHE_KEY_LIBCSV=libcsv-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/libcsv/ChangeLog') }}" >> $GITHUB_ENV
-          echo "CACHE_KEY_LAGRAPH=lagraph-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/LAGraph/include/LAGraph.h') }}" >> $GITHUB_ENV
+          # Generate a single combined hash of all dependencies to avoid 512 char key limit
+          DEPS_HASH=$(cat ./deps/GraphBLAS/Include/GraphBLAS.h ./deps/GraphBLAS/Config/GB_prejit.c ./deps/libcypher-parser/lib/src/parser.c ./deps/RediSearch/src/version.h ./deps/libcurl/RELEASE-NOTES ./deps/libcsv/ChangeLog ./deps/LAGraph/include/LAGraph.h ./deps/rax/rax.h ./deps/xxHash/xxhash.h ./deps/utf8proc/utf8proc.h ./deps/oniguruma/src/oniguruma.h ./deps/FalkorDB-core-rs/Cargo.toml 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "no-hash")
+          echo "combined=${DEPS_HASH}" >> $GITHUB_OUTPUT
 
-      - name: Cache GraphBLAS ${{ matrix.platform.suffix }}
-        id: cache_graphblas
+      - name: Generate cache key (macOS)
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.os == 'macos'
+        id: cache-key-macos
+        run: |
+          DEPS_HASH=$(cat deps/GraphBLAS/Include/GraphBLAS.h deps/libcypher-parser/lib/src/parser.c deps/RediSearch/src/version.h deps/libcurl/RELEASE-NOTES deps/libcsv/ChangeLog deps/LAGraph/include/LAGraph.h deps/rax/rax.h deps/xxHash/xxhash.h deps/utf8proc/utf8proc.h deps/oniguruma/src/oniguruma.h deps/FalkorDB-core-rs/Cargo.toml | shasum -a 256 | cut -d' ' -f1)
+          echo "key=macos-deps-${{ matrix.build_type }}-${DEPS_HASH}" >> $GITHUB_OUTPUT
+
+      - name: Restore dependency caches (Docker)
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker
+        id: restore-deps
         uses: actions/cache/restore@v4
         with:
-          path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
-          key: ${{ env.CACHE_KEY_GRAPHBLAS }}
+          path: |
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcypher-parser
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/search-static
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcurl
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcsv
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/LAGraph
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/rax
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/xxHash
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/utf8proc
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/oniguruma
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/FalkorDB-core-rs
+          key: deps-${{ matrix.platform.cache_path }}-${{ steps.cache-keys.outputs.combined }}
+          restore-keys: |
+            deps-${{ matrix.platform.cache_path }}-
           enableCrossOsArchive: true
 
-      - name: Cache parser ${{ matrix.platform.suffix }}
-        id: cache_parser
+      - name: Restore dependency cache (macOS)
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.os == 'macos'
+        id: restore-deps-macos
         uses: actions/cache/restore@v4
         with:
-          path: /FalkorDB/bin/${{ matrix.platform.cache_path  }}-release/libcypher-parser
-          key: ${{ env.CACHE_KEY_PARSER }}
-          enableCrossOsArchive: true
-
-      - name: Cache search ${{ matrix.platform.suffix }}
-        id: cache_search
-        uses: actions/cache/restore@v4
-        with:
-          path: /FalkorDB/bin/${{ matrix.platform.cache_path  }}-release/search-static
-          key: ${{ env.CACHE_KEY_SEARCH }}
-          enableCrossOsArchive: true
-
-      - name: Cache libcurl ${{ matrix.platform.suffix }}
-        id: cache_libcurl
-        uses: actions/cache/restore@v4
-        with:
-          path: /FalkorDB/bin/${{ matrix.platform.cache_path  }}-release/libcurl
-          key: ${{ env.CACHE_KEY_LIBCURL }}
-          enableCrossOsArchive: true
-
-      - name: Cache libcsv ${{ matrix.platform.suffix }}
-        id: cache_libcsv
-        uses: actions/cache/restore@v4
-        with:
-          path: /FalkorDB/bin/${{ matrix.platform.cache_path  }}-release/libcsv
-          key: ${{ env.CACHE_KEY_LIBCSV }}
-          enableCrossOsArchive: true
-
-      - name: Cache LAGraph ${{ matrix.platform.suffix }}
-        id: cache_lagraph
-        uses: actions/cache/restore@v4
-        with:
-          path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/LAGraph
-          key: ${{ env.CACHE_KEY_LAGRAPH }}
-          enableCrossOsArchive: true
+          path: ./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          key: ${{ steps.cache-key-macos.outputs.key }}
+          restore-keys: |
+            macos-deps-${{ matrix.build_type }}-
 
       - name: Set up Docker Buildx
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker
         uses: docker/setup-buildx-action@v3
         with:
-          # network=host driver-opt needed to push to local registry
           driver-opts: network=host
-      
-      - name: Ignore Errors if os is rhel8
-        if: ${{ matrix.platform.os == 'rhel8' }}
+
+      - name: Ignore Errors (RHEL8)
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.os == 'rhel8'
         run: sed -i 's/-Werror//g' /FalkorDB/deps/RediSearch/deps/VectorSimilarity/src/VecSim/CMakeLists.txt
 
+      - name: Build macOS native
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.os == 'macos'
+        env:
+          OSX_MIN_SDK_VER: "15.0"
+        run: |
+          # Skip clean if we have cached dependencies - they're already clean
+          if [ "${{ steps.restore-deps-macos.outputs.cache-hit }}" != "true" ] && [ -d "./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/src" ]; then
+            make clean
+          fi
+          make DEBUG=${{ matrix.build_type == 'debug' && '1' || '0' }} CXXFLAGS="-Wno-error=vla-cxx-extension"
+
+      - name: Save dependency cache (macOS)
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.os == 'macos' && steps.restore-deps-macos.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          key: ${{ steps.cache-key-macos.outputs.key }}
+
+      - name: Extract .so file (macOS)
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.os == 'macos'
+        run: |
+          SO_FILE=$(find ./bin -name "falkordb.so" -type f | head -1)
+          if [ -z "$SO_FILE" ]; then
+            echo "Error: falkordb.so not found"
+            exit 1
+          fi
+          mkdir -p /tmp
+          cp "$SO_FILE" /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
+
+      - name: Determine Dockerfile
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker
+        id: dockerfile
+        run: |
+          # All platforms use same compiler dockerfile with OS parameter
+          echo "compiler=Dockerfile.compiler" >> $GITHUB_OUTPUT
+          
+          # Final image dockerfile
+          if [[ "${{ matrix.platform.os }}" == "alpine" ]]; then
+            echo "final=Dockerfile.alpine" >> $GITHUB_OUTPUT
+            echo "test=Dockerfile.alpine" >> $GITHUB_OUTPUT
+          else
+            echo "final=Dockerfile" >> $GITHUB_OUTPUT
+            echo "test=Dockerfile.debian" >> $GITHUB_OUTPUT
+          fi
+
+          # Check if building server variant
+          if [[ " ${{ join(matrix.platform.build_variants, ' ') }} " =~ " server " ]] && [[ "${{ matrix.build_type }}" == "release" ]]; then
+            echo "build_server=true" >> $GITHUB_OUTPUT
+            if [[ "${{ matrix.platform.os }}" == "alpine" ]]; then
+              echo "server_dockerfile=Dockerfile.alpine-server" >> $GITHUB_OUTPUT
+            else
+              echo "server_dockerfile=Dockerfile.server" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "build_server=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build compiler image
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker
         id: build_compiler
         uses: docker/build-push-action@v6
         with:
           context: /FalkorDB
-          file: /FalkorDB/build/docker/${{ matrix.platform.compiler_dockerfile || 'Dockerfile.compiler' }}
-          platforms: ${{ matrix.platform.platform }}
-          tags: localhost:5000/falkordb/falkordb-compiler
-          # outputs: type=docker,dest=/tmp/falkordb-compiler.tar
+          file: /FalkorDB/build/docker/${{ steps.dockerfile.outputs.compiler }}
+          platforms: linux/${{ matrix.platform.arch }}
+          tags: localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
           push: true
+          cache-from: type=gha,scope=compiler-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          cache-to: type=gha,mode=max,scope=compiler-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
-            TARGETPLATFORM=${{ matrix.platform.platform }}
+            TARGETPLATFORM=linux/${{ matrix.platform.arch }}
             OS=${{ matrix.platform.os }}
-            DEBUG=${{ matrix.platform.is_debug }}
+            DEBUG=${{ matrix.build_type == 'debug' && '1' || '0' }}
 
-      - name: Copy bin from docker for caching
+      - name: Copy artifacts from compiler image
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && steps.restore-deps.outputs.cache-hit != 'true'
         working-directory: /FalkorDB
-        if: steps.cache_lagraph.outputs.cache-hit == false || steps.cache_graphblas.outputs.cache-hit == false || steps.cache_parser.outputs.cache-hit == false || steps.cache_search.outputs.cache-hit == false || steps.cache_libcurl.outputs.cache-hit == false || steps.cache_libcsv.outputs.cache-hit == false
         run: |
-          id=$(docker create --platform=${{ matrix.platform.platform }} localhost:5000/falkordb/falkordb-compiler)
-          docker cp $id:/FalkorDB/bin .
+          id=$(docker create --platform=linux/${{ matrix.platform.arch }} localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }})
+          docker cp $id:/FalkorDB/bin ./bin
           docker rm -v $id
-          ls -l -R /FalkorDB/bin
 
-      - name: Save cache for GraphBLAS
-        if: always() && steps.cache_graphblas.outputs.cache-hit == false && steps.build_compiler.outcome == 'success'
+      - name: Save dependency cache (Docker)
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && steps.restore-deps.outputs.cache-hit != 'true' && steps.build_compiler.outcome == 'success'
         uses: actions/cache/save@v4
         with:
-          path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
-          key: ${{ env.CACHE_KEY_GRAPHBLAS }}
-          enableCrossOsArchive: true
-
-      - name: Save cache for parser
-        if: always() && steps.cache_parser.outputs.cache-hit == false && steps.build_compiler.outcome == 'success'
-        uses: actions/cache/save@v4
-        with:
-          path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcypher-parser
-          key: ${{ env.CACHE_KEY_PARSER }}
-          enableCrossOsArchive: true
-
-      - name: Save cache for search
-        if: always() && steps.cache_search.outputs.cache-hit == false && steps.build_compiler.outcome == 'success'
-        uses: actions/cache/save@v4
-        with:
-          path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/search-static
-          key: ${{ env.CACHE_KEY_SEARCH }}
-          enableCrossOsArchive: true
-
-      - name: Save cache for libcurl
-        if: always() && steps.cache_libcurl.outputs.cache-hit == false && steps.build_compiler.outcome == 'success'
-        uses: actions/cache/save@v4
-        with:
-          path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcurl
-          key: ${{ env.CACHE_KEY_LIBCURL }}
-          enableCrossOsArchive: true
-
-      - name: Save cache for libcsv
-
-        if: always() && steps.cache_libcsv.outputs.cache-hit == false && steps.build_compiler.outcome == 'success'
-        uses: actions/cache/save@v4
-        with:
-          path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcsv
-          key: ${{ env.CACHE_KEY_LIBCSV }}
-          enableCrossOsArchive: true
-
-      - name: Save cache for LAGraph
-        if: always() && steps.cache_lagraph.outputs.cache-hit == false && steps.build_compiler.outcome == 'success'
-        uses: actions/cache/save@v4
-        with:
-          path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/LAGraph
-          key: ${{ env.CACHE_KEY_LAGRAPH }}
+          path: |
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcypher-parser
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/search-static
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcurl
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcsv
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/LAGraph
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/rax
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/xxHash
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/utf8proc
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/oniguruma
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/FalkorDB-core-rs
+          key: deps-${{ matrix.platform.cache_path }}-${{ steps.cache-keys.outputs.combined }}
           enableCrossOsArchive: true
 
       - name: Set browser tag
-        if: ${{ matrix.platform.is_debug == '0' }}
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && matrix.build_type == 'release'
         id: set_browser_tag
         run: |
           BROWSER_TAG="latest"
-
-          # If the event is a workflow_dispatch, use the input value
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             BROWSER_TAG=${{ github.event.inputs.browser_tag }}
-          fi
-
-          # If the branch is master, set to "edge"
-          if [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
+          elif [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
             BROWSER_TAG="edge"
           fi
-
-          # If the branch is not master, set to 'latest'
-          if [[ "${{ github.ref }}" != "refs/heads/master" ]]; then
-            BROWSER_TAG="latest"
-          fi
-
-
           echo "BROWSER_TAG=${BROWSER_TAG}" >> $GITHUB_ENV
 
-      - name: Build tests image
-        uses: docker/build-push-action@v6
-        if: ${{ matrix.platform.build_test_image }}
-        with:
-          context: .
-          file: /FalkorDB/tests/${{ matrix.platform.test_dockerfile }}
-          outputs: type=docker,dest=/tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
-          tags: falkordb/falkordb-tests
-          platforms: ${{ matrix.platform.platform }}
-          build-args: |
-            BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
-            TARGETPLATFORM=${{ matrix.platform.platform }}
-
-      - name: Upload tests image
-        uses: actions/upload-artifact@v5
-        if: ${{ matrix.platform.build_test_image }}
-        with:
-          name: falkordb-tests-${{ matrix.platform.suffix }}
-          path: /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
-          if-no-files-found: error
-
-      - name: Build base image
-        if: ${{ matrix.platform.is_debug == '0' }}
-        id: build
+      - name: Build test image
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && matrix.build_type == 'release' && matrix.platform.os != 'rhel' && matrix.platform.os != 'rhel8'
         uses: docker/build-push-action@v6
         with:
           context: /FalkorDB
-          file: /FalkorDB/build/docker/${{ matrix.platform.dockerfile || 'Dockerfile' }}
-          platforms: ${{ matrix.platform.platform }}
+          file: /FalkorDB/tests/${{ steps.dockerfile.outputs.test }}
+          outputs: type=docker,dest=/tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
+          tags: falkordb/falkordb-tests-${{ matrix.platform.suffix }}
+          platforms: linux/${{ matrix.platform.arch }}
+          cache-from: type=gha,scope=tests-${{ matrix.platform.cache_path }}
+          cache-to: type=gha,mode=max,scope=tests-${{ matrix.platform.cache_path }}
+          build-args: |
+            BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
+            TARGETPLATFORM=linux/${{ matrix.platform.arch }}
+
+      - name: Upload test image
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && matrix.build_type == 'release' && matrix.platform.os != 'rhel' && matrix.platform.os != 'rhel8'
+        uses: actions/upload-artifact@v5
+        with:
+          name: falkordb-tests-${{ matrix.platform.suffix }}
+          path: /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
+          retention-days: 1
+          compression-level: 0
+
+      - name: Build base image
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && matrix.build_type == 'release'
+        id: build_base
+        uses: docker/build-push-action@v6
+        with:
+          context: /FalkorDB
+          file: /FalkorDB/build/docker/${{ steps.dockerfile.outputs.final }}
+          platforms: linux/${{ matrix.platform.arch }}
           outputs: type=docker,dest=/tmp/falkordb-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-${{ matrix.platform.suffix }}
+          cache-from: type=gha,scope=base-${{ matrix.platform.cache_path }}
+          cache-to: type=gha,mode=max,scope=base-${{ matrix.platform.cache_path }}
           build-args: |
-            BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
-            TARGETPLATFORM=${{ matrix.platform.platform }}
+            BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
+            TARGETPLATFORM=linux/${{ matrix.platform.arch }}
             BROWSER_TAG=${{ env.BROWSER_TAG }}
 
       - name: Load base image
-        if: ${{ matrix.platform.is_debug == '0' }}
-        id: load_base_image
-        run: |
-          docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && matrix.build_type == 'release'
+        run: docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
 
-      - name: Upload image
-        if: ${{ matrix.platform.is_debug == '0' }}
+      - name: Upload base image
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && matrix.build_type == 'release'
         uses: actions/upload-artifact@v5
         with:
           name: falkordb-${{ matrix.platform.suffix }}
           path: /tmp/falkordb-${{ matrix.platform.suffix }}.tar
-          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
 
-      - name: Copy .so from image
-        run: |
-          docker run --rm --entrypoint cat localhost:5000/falkordb/falkordb-compiler /FalkorDB/bin/src/falkordb.so > /tmp/falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
+      - name: Build server image
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && steps.dockerfile.outputs.build_server == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: /FalkorDB
+          file: /FalkorDB/build/docker/${{ steps.dockerfile.outputs.server_dockerfile }}
+          platforms: linux/${{ matrix.platform.arch }}
+          outputs: type=docker,dest=/tmp/falkordb-server-${{ matrix.platform.suffix }}.tar
+          tags: falkordb/falkordb-server-${{ matrix.platform.suffix }}
+          cache-from: type=gha,scope=server-${{ matrix.platform.cache_path }}
+          cache-to: type=gha,mode=max,scope=server-${{ matrix.platform.cache_path }}
+          build-args: |
+            BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
+            TARGETPLATFORM=linux/${{ matrix.platform.arch }}
+            BROWSER_TAG=${{ env.BROWSER_TAG }}
 
-      - name: Upload .so
+      - name: Upload server image
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && steps.dockerfile.outputs.build_server == 'true'
         uses: actions/upload-artifact@v5
         with:
-          name: falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
-          path: /tmp/falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
-          if-no-files-found: error
-  cleanup-build:
+          name: falkordb-server-${{ matrix.platform.suffix }}
+          path: /tmp/falkordb-server-${{ matrix.platform.suffix }}.tar
+          retention-days: 1
+          compression-level: 0
+
+      - name: Extract .so file (Docker)
+        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker
+        run: |
+          docker run --rm --entrypoint cat localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }} /FalkorDB/bin/src/falkordb.so > /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
+
+      - name: Upload .so file
+        if: steps.should_skip.outputs.skip != 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
+          path: /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
+          retention-days: 7
+
+  cleanup-rhel-runners:
     needs: build
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        platform:
-          - machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
+        runner:
+          - rhel-build-${{ github.run_id }}-${{ github.run_number }}
+          - rhel8-build-${{ github.run_id }}-${{ github.run_number }}
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/cleanup-runner
@@ -453,258 +442,76 @@ jobs:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           zone: ${{ vars.GCP_ZONE }}
-          instance_label: ${{ matrix.platform.machine_label }}
+          instance_label: ${{ matrix.runner }}
 
-  unit-tests:
+  test:
     needs: build
+    if: ${{ !inputs.skip_tests && (needs.build.result == 'success') }}
     runs-on: ${{ matrix.platform.machine_label }}
     strategy:
       fail-fast: false
       matrix:
         platform:
-          - name: linux/amd64
-            suffix: x64
-            os: ubuntu
+          - suffix: x64
             machine_label: ubuntu-latest
-          - name: linux/arm64
-            suffix: arm64v8
-            os: ubuntu
+          - suffix: arm64v8
             machine_label: ubuntu-24.04-arm
-          - name: linux/x86_64
-            suffix: alpine-x64
-            os: alpine
+          - suffix: alpine-x64
             machine_label: ubuntu-latest
-          - name: linux/arm64
-            suffix: alpine-arm64v8
-            os: alpine
+          - suffix: alpine-arm64v8
             machine_label: ubuntu-24.04-arm
+        test_type: [unit, flow, tck, fuzz]
     steps:
-      - name: Download image
+      - name: Download test image
         uses: actions/download-artifact@v6
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp
 
-      - name: Load image
-        id: load_image
-        run: |
-          docker load --input /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
+      - name: Load test image
+        run: docker load --input /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
 
-      - name: Unit tests
+      - name: Run ${{ matrix.test_type }} tests
         run: |
           mkdir -p /tmp/logs
-          docker run --rm -i -v /tmp/logs:/FalkorDB/tests/unit/logs falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
+          case "${{ matrix.test_type }}" in
+            unit)
+              docker run --rm -v /tmp/logs:/FalkorDB/tests/unit/logs falkordb/falkordb-tests-${{ matrix.platform.suffix }} make CLEAR_LOGS=0 unit-tests
+              ;;
+            flow)
+              docker run --rm -v /tmp/logs:/FalkorDB/tests/flow/logs falkordb/falkordb-tests-${{ matrix.platform.suffix }} make CLEAR_LOGS=0 PARALLEL=2 flow-tests
+              ;;
+            tck)
+              docker run --rm -v /tmp/logs:/FalkorDB/tests/tck/logs falkordb/falkordb-tests-${{ matrix.platform.suffix }} make CLEAR_LOGS=0 tck-tests
+              ;;
+            fuzz)
+              docker run --rm -v /tmp/logs:/FalkorDB/tests/fuzz/logs falkordb/falkordb-tests-${{ matrix.platform.suffix }} make fuzz TIMEOUT=180
+              ;;
+          esac
 
-      - name: Upload unit test logs
+      - name: Upload test logs
+        if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: unit-test-logs-${{ matrix.platform.suffix }}
+          name: ${{ matrix.test_type }}-test-logs-${{ matrix.platform.suffix }}
           path: /tmp/logs
+          retention-days: 7
 
-  flow-tests:
+  security-scan:
     needs: build
+    if: needs.build.result == 'success'
     runs-on: ${{ matrix.platform.machine_label }}
     strategy:
       fail-fast: false
       matrix:
         platform:
-          - name: linux/amd64
-            suffix: x64
-            os: ubuntu
+          - suffix: x64
             machine_label: ubuntu-latest
-          - name: linux/arm64
-            suffix: arm64v8
-            os: ubuntu
+          - suffix: arm64v8
             machine_label: ubuntu-24.04-arm
-          - name: linux/x86_64
-            suffix: alpine-x64
-            os: alpine
+          - suffix: alpine-x64
             machine_label: ubuntu-latest
-          - name: linux/arm64
-            suffix: alpine-arm64v8
-            os: alpine
-            machine_label: ubuntu-24.04-arm
-    steps:
-      - name: Download image
-        uses: actions/download-artifact@v6
-        with:
-          name: falkordb-tests-${{ matrix.platform.suffix }}
-          path: /tmp
-
-      - name: Load image
-        id: load_image
-        run: |
-          docker load --input /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
-
-      - name: Flow tests
-        run: |
-          mkdir -p /tmp/logs
-          docker run --rm -i -v /tmp/logs:/FalkorDB/tests/flow/logs falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
-
-      - name: Upload flow test logs
-        uses: actions/upload-artifact@v5
-        with:
-          name: flow-test-logs-${{ matrix.platform.suffix }}
-          path: /tmp/logs
-
-
-  tck-tests:
-    needs: build
-    runs-on: ${{ matrix.platform.machine_label }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - name: linux/amd64
-            suffix: x64
-            os: ubuntu
-            machine_label: ubuntu-latest
-          - name: linux/arm64
-            suffix: arm64v8
-            os: ubuntu
-            machine_label: ubuntu-24.04-arm
-          - name: linux/x86_64
-            suffix: alpine-x64
-            os: alpine
-            machine_label: ubuntu-latest
-          - name: linux/arm64
-            suffix: alpine-arm64v8
-            os: alpine
-            machine_label: ubuntu-24.04-arm
-    steps:
-      - name: Download image
-        uses: actions/download-artifact@v6
-        with:
-          name: falkordb-tests-${{ matrix.platform.suffix }}
-          path: /tmp
-
-      - name: Load image
-        id: load_image
-        run: |
-          docker load --input /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
-
-      - name: TCK tests
-        run: |
-          mkdir -p /tmp/logs
-          docker run --rm -i -v /tmp/logs:/FalkorDB/tests/tck/logs falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
-
-      - name: Upload TCK test logs
-        uses: actions/upload-artifact@v5
-        with:
-          name: tck-test-logs-${{ matrix.platform.suffix }}
-          path: /tmp/logs
-
-  fuzz-tests:
-    needs: build
-    runs-on: ${{ matrix.platform.machine_label }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - name: linux/amd64
-            suffix: x64
-            os: ubuntu
-            machine_label: ubuntu-latest
-          - name: linux/arm64
-            suffix: arm64v8
-            os: ubuntu
-            machine_label: ubuntu-24.04-arm
-          - name: linux/x86_64
-            suffix: alpine-x64
-            os: alpine
-            machine_label: ubuntu-latest
-          - name: linux/arm64
-            suffix: alpine-arm64v8
-            os: alpine
-            machine_label: ubuntu-24.04-arm
-    steps:
-      - name: Download image
-        uses: actions/download-artifact@v6
-        with:
-          name: falkordb-tests-${{ matrix.platform.suffix }}
-          path: /tmp
-
-      - name: Load image
-        id: load_image
-        run: |
-          docker load --input /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
-
-      - name: Fuzz tests
-        run: |
-          mkdir -p /tmp/logs
-          docker run --rm -i -v /tmp/logs:/FalkorDB/tests/fuzz/logs falkordb/falkordb-tests make fuzz TIMEOUT=180
-
-      - name: Upload fuzz test logs
-        uses: actions/upload-artifact@v5
-        with:
-          name: fuzz-test-logs-${{ matrix.platform.suffix }}
-          path: /tmp/logs
-
-  #upgrade-tests:
-  #  needs: build
-  #  runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' ||  format('upgrade-tests-{0}-{1}', github.run_id, github.run_number) }}
-  #  strategy:
-  #    fail-fast: false
-  #    matrix:
-  #      platform:
-  #        - linux/amd64
-  #        - linux/arm64
-  #  env:
-  #    ARCH: ${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}
-  #  steps:
-  #    - name: Download image
-  #      uses: actions/download-artifact@v6
-  #      with:
-  #        name: falkordb-tests-${{ matrix.platform.suffix }}
-  #        path: /tmp
-
-  #    - name: Load image
-  #      id: load_image
-  #      run: |
-  #        docker load --input /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
-
-  #    - name: Upgrade tests
-  #      env:
-  #        DOCKER_NETWORK: falkordb-network
-  #      run: |
-  #        sudo chmod 666 /var/run/docker.sock
-  #        docker network create --driver bridge $DOCKER_NETWORK
-  #        docker run -i --rm --privileged -v /var/run/docker.sock:/var/run/docker.sock --network $DOCKER_NETWORK -e DOCKER_NETWORK=$DOCKER_NETWORK falkordb/falkordb-tests make upgrade-tests TIMEOUT=180
-
-  #cleanup-upgrade-tests:
-  #  needs: upgrade-tests
-  #  runs-on: ubuntu-latest
-  #  steps:
-  #    - uses: actions/checkout@v6
-  #    - uses: ./.github/actions/cleanup-runner
-  #      with:
-  #        service_account_key: ${{ secrets.GCP_SA_KEY }}
-  #        project_id: ${{ secrets.GCP_PROJECT_ID }}
-  #        zone: ${{ vars.GCP_ZONE }}
-  #        instance_label: upgrade-tests-${{ github.run_id }}-${{ github.run_number }}
-
-  trivy:
-    needs: build
-    runs-on: ${{ matrix.platform.machine_label }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - name: linux/amd64
-            suffix: x64
-            os: ubuntu
-            machine_label: ubuntu-latest
-          - name: linux/arm64
-            suffix: arm64v8
-            os: ubuntu
-            machine_label: ubuntu-24.04-arm
-          - name: linux/x86_64
-            suffix: alpine-x64
-            os: alpine
-            machine_label: ubuntu-latest
-          - name: linux/arm64
-            suffix: alpine-arm64v8
-            os: alpine
+          - suffix: alpine-arm64v8
             machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
@@ -714,10 +521,9 @@ jobs:
           path: /tmp
 
       - name: Load image
-        id: load_image
-        run: |
-          docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
-      - name: Set up Trivy
+        run: docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
+
+      - name: Run Trivy scan
         uses: aquasecurity/trivy-action@0.33.0
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
@@ -726,182 +532,10 @@ jobs:
           output: trivy-results.sarif
           ignore-unfixed: true
           scan-type: image
-          # ignore-policy: .github/trivy-ignore-policy.json
-      - name: Upload Trivy scan results to GitHub Security tab
+
+      - name: Upload scan results
         uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: 'trivy-results.sarif'
+          sarif_file: trivy-results.sarif
 
-  build-macos:
-    runs-on: ${{ matrix.platform.machine_label }}
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - name: macos/arm64
-            suffix: macos-arm64v8
-            machine_label: macos-latest
-            is_debug: "0"
-          - name: macos/arm64
-            suffix: macos-arm64v8
-            machine_label: macos-latest
-            is_debug: "1"
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
 
-      - name: Setup CMake
-        uses: jwlawson/actions-setup-cmake@v2
-        with:
-          cmake-version: '3.27.x'
-
-      - name: Install dependencies
-        run: |
-          brew install m4 automake peg libtool autoconf python3 gcc make zlib libiconv libomp
-          # Add GNU make to PATH (installed as gmake)
-          echo "/opt/homebrew/opt/make/libexec/gnubin" >> $GITHUB_PATH
-
-      # TODO: remove comment after working again
-      #  temporarily work around https://github.com/actions/runner-images/issues/13341
-      # - name: Set cache keys
-      #   run: |
-      #     echo "CACHE_KEY_GRAPHBLAS=graphblas-${{ matrix.platform.suffix }}-${{ matrix.platform.is_debug }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}" >> $GITHUB_ENV
-      #     echo "CACHE_KEY_PARSER=parser-${{ matrix.platform.suffix }}-${{ matrix.platform.is_debug }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}" >> $GITHUB_ENV
-      #     echo "CACHE_KEY_SEARCH=search-${{ matrix.platform.suffix }}-${{ matrix.platform.is_debug }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}" >> $GITHUB_ENV
-      #     echo "CACHE_KEY_LIBCURL=libcurl-${{ matrix.platform.suffix }}-${{ matrix.platform.is_debug }}-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}" >> $GITHUB_ENV
-      #     echo "CACHE_KEY_LIBCSV=libcsv-${{ matrix.platform.suffix }}-${{ matrix.platform.is_debug }}-${{ hashFiles('./deps/libcsv/ChangeLog') }}" >> $GITHUB_ENV
-      #     echo "CACHE_KEY_LAGRAPH=lagraph-${{ matrix.platform.suffix }}-${{ matrix.platform.is_debug }}-${{ hashFiles('./deps/LAGraph/include/LAGraph.h') }}" >> $GITHUB_ENV
-
-      # - name: Cache GraphBLAS ${{ matrix.platform.suffix }}
-      #   id: cache_graphblas
-      #   uses: actions/cache/restore@v4
-      #   with:
-      #     path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/GraphBLAS
-      #     key: ${{ env.CACHE_KEY_GRAPHBLAS }}
-      #     enableCrossOsArchive: true
-
-      # - name: Cache parser ${{ matrix.platform.suffix }}
-      #   id: cache_parser
-      #   uses: actions/cache/restore@v4
-      #   with:
-      #     path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcypher-parser
-      #     key: ${{ env.CACHE_KEY_PARSER }}
-      #     enableCrossOsArchive: true
-
-      # - name: Cache search ${{ matrix.platform.suffix }}
-      #   id: cache_search
-      #   uses: actions/cache/restore@v4
-      #   with:
-      #     path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/search-static
-      #     key: ${{ env.CACHE_KEY_SEARCH }}
-      #     enableCrossOsArchive: true
-
-      # - name: Cache libcurl ${{ matrix.platform.suffix }}
-      #   id: cache_libcurl
-      #   uses: actions/cache/restore@v4
-      #   with:
-      #     path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcurl
-      #     key: ${{ env.CACHE_KEY_LIBCURL }}
-      #     enableCrossOsArchive: true
-
-      # - name: Cache libcsv ${{ matrix.platform.suffix }}
-      #   id: cache_libcsv
-      #   uses: actions/cache/restore@v4
-      #   with:
-      #     path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcsv
-      #     key: ${{ env.CACHE_KEY_LIBCSV }}
-      #     enableCrossOsArchive: true
-
-      # - name: Cache LAGraph ${{ matrix.platform.suffix }}
-      #   id: cache_lagraph
-      #   uses: actions/cache/restore@v4
-      #   with:
-      #     path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/LAGraph
-      #     key: ${{ env.CACHE_KEY_LAGRAPH }}
-      #     enableCrossOsArchive: true
-
-      - name: Build FalkorDB
-        env:
-          OSX_MIN_SDK_VER: "15.0"
-        run: |
-          # Skip clean on first build or if build directory doesn't exist
-          if [ -d "./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/src" ]; then
-            make clean
-          elif [ -d "./bin" ]; then
-            # If bin exists but not the specific build dir, clean everything
-            make clean ALL=1 || true
-          fi
-          # Build with detailed error capture
-          set -o pipefail
-          make DEBUG=${{ matrix.platform.is_debug }} CXXFLAGS="-Wno-error=vla-cxx-extension" -j1
-
-      # - name: Save cache for GraphBLAS
-      #   if: always() && steps.cache_graphblas.outputs.cache-hit == false
-      #   uses: actions/cache/save@v4
-      #   with:
-      #     path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/GraphBLAS
-      #     key: ${{ env.CACHE_KEY_GRAPHBLAS }}
-      #     enableCrossOsArchive: true
-
-      # - name: Save cache for parser
-      #   if: always() && steps.cache_parser.outputs.cache-hit == false
-      #   uses: actions/cache/save@v4
-      #   with:
-      #     path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcypher-parser
-      #     key: ${{ env.CACHE_KEY_PARSER }}
-      #     enableCrossOsArchive: true
-
-      # - name: Save cache for search
-      #   if: always() && steps.cache_search.outputs.cache-hit == false
-      #   uses: actions/cache/save@v4
-      #   with:
-      #     path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/search-static
-      #     key: ${{ env.CACHE_KEY_SEARCH }}
-      #     enableCrossOsArchive: true
-
-      # - name: Save cache for libcurl
-      #   if: always() && steps.cache_libcurl.outputs.cache-hit == false
-      #   uses: actions/cache/save@v4
-      #   with:
-      #     path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcurl
-      #     key: ${{ env.CACHE_KEY_LIBCURL }}
-      #     enableCrossOsArchive: true
-
-      # - name: Save cache for libcsv
-      #   if: always() && steps.cache_libcsv.outputs.cache-hit == false
-      #   uses: actions/cache/save@v4
-      #   with:
-      #     path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/libcsv
-      #     key: ${{ env.CACHE_KEY_LIBCSV }}
-      #     enableCrossOsArchive: true
-
-      # - name: Save cache for LAGraph
-      #   if: always() && steps.cache_lagraph.outputs.cache-hit == false
-      #   uses: actions/cache/save@v4
-      #   with:
-      #     path: ./bin/macos-arm64v8-${{ matrix.platform.is_debug == '0' && 'release' || 'debug' }}/LAGraph
-      #     key: ${{ env.CACHE_KEY_LAGRAPH }}
-      #     enableCrossOsArchive: true
-
-      - name: Find and upload .so file
-        run: |
-          # Find the built .so file
-          SO_FILE=$(find ./bin -name "falkordb.so" -type f | head -1)
-          if [ -z "$SO_FILE" ]; then
-            echo "Error: falkordb.so not found"
-            exit 1
-          fi
-          echo "Found .so file at: $SO_FILE"
-          mkdir -p /tmp
-          cp "$SO_FILE" /tmp/falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
-          ls -lh /tmp/falkordb-*.so
-
-      - name: Upload .so
-        uses: actions/upload-artifact@v5
-        with:
-          name: falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
-          path: /tmp/falkordb-${{ matrix.platform.is_debug == '0' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
-          if-no-files-found: error

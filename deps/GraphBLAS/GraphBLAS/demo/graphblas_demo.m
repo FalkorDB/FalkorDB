@@ -635,30 +635,14 @@ end
 
 %% Iterative solvers work as-is
 % Many built-in functions work with GraphBLAS matrices unmodified.
-
-if (~demo_octave)
-    % Octave7: gmres does not yet work for @GrB input matrices
-    A = sparse (rand (4)) ;
-    b = sparse (rand (4,1)) ;
-    x = gmres (A,b)
-    norm (A*x-b)
-    x = gmres (GrB(A), GrB(b))
-    norm (A*x-b)
-end
-
-%% ... even in single precision
-if (~demo_octave)
-    % Octave7: gmres does not yet work for @GrB input matrices
-    x = gmres (GrB(A,'single'), GrB(b,'single'))
-    norm (A*x-b)
-end
-
-%%
+%
 % Both of the following uses of minres (A,b) fail to converge because A
 % is not symmetric, as the method requires.  Both failures are correctly
 % reported, and both the MATLAB version and the GraphBLAS version return
 % the same incorrect vector x.
 
+A = sparse (rand (4)) ;
+b = sparse (rand (4,1)) ;
 if (exist ('minres'))
     x = minres (A, b)
     x = minres (GrB(A), GrB(b))

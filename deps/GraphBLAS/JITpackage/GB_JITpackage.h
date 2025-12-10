@@ -7,6 +7,7 @@
 
 //------------------------------------------------------------------------------
 
+#undef GRAPHBLAS_VANILLA
 #include "GraphBLAS.h"
 
 typedef struct

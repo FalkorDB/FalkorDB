@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__AxB_dot2__0004000bba0bbac7__plus_my_rdiv2.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.0.0, Timothy A. Davis, (c) 2017-2025,
+// SuiteSparse:GraphBLAS v10.1.0, Timothy A. Davis, (c) 2017-2025,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -74,10 +74,13 @@ void my_rdiv2 (double *z, const double *x, const float *y)
 #define GB_C_IN_ISO 0
 #define GB_C_TYPE double
 #define GB_PUTC(c,Cx,p) Cx [p] = c
+#define GB_Cp_TYPE uint64_t
+#define GB_Cj_TYPE uint64_t
+#define GB_Ci_TYPE uint64_t
+#define GB_Ci_SIGNED_TYPE int64_t
 #define GB_Cp_BITS 64
 #define GB_Cj_BITS 64
 #define GB_Ci_BITS 64
-#define GB_Ci_TYPE uint64_t
 
 // M matrix: none
 #define GB_M_TYPE void
@@ -85,6 +88,10 @@ void my_rdiv2 (double *z, const double *x, const float *y)
 #define GB_MASK_STRUCT 1
 #define GB_MASK_COMP   0
 #define GB_NO_MASK     1
+#define GB_Mp_TYPE uint64_t
+#define GB_Mj_TYPE uint64_t
+#define GB_Mi_TYPE uint64_t
+#define GB_Mi_SIGNED_TYPE int64_t
 #define GB_Mp_BITS 64
 #define GB_Mj_BITS 64
 #define GB_Mi_BITS 64
@@ -105,6 +112,10 @@ void my_rdiv2 (double *z, const double *x, const float *y)
 #define GB_A2TYPE double
 #define GB_DECLAREA(a) double a
 #define GB_GETA(a,Ax,p,iso) a = Ax [p]
+#define GB_Ap_TYPE uint64_t
+#define GB_Aj_TYPE uint64_t
+#define GB_Ai_TYPE uint64_t
+#define GB_Ai_SIGNED_TYPE int64_t
 #define GB_Ap_BITS 64
 #define GB_Aj_BITS 64
 #define GB_Ai_BITS 64
@@ -125,6 +136,10 @@ void my_rdiv2 (double *z, const double *x, const float *y)
 #define GB_B2TYPE float
 #define GB_DECLAREB(b) float b
 #define GB_GETB(b,Bx,p,iso) b = Bx [p]
+#define GB_Bp_TYPE uint64_t
+#define GB_Bj_TYPE uint64_t
+#define GB_Bi_TYPE uint64_t
+#define GB_Bi_SIGNED_TYPE int64_t
 #define GB_Bp_BITS 64
 #define GB_Bj_BITS 64
 #define GB_Bi_BITS 64
@@ -138,7 +153,7 @@ void my_rdiv2 (double *z, const double *x, const float *y)
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0xd4163d6cf4f3dd37 ;
+    (*hash) = 0x0b5fdc1b47354fa3 ;
     v [0] = 9 ; v [1] = 9 ; v [2] = 9 ; // intentionally stale version
     defn [0] = NULL ;
     defn [1] = GB_my_rdiv2_USER_DEFN ;

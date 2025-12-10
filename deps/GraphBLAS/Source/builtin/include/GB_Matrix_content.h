@@ -391,32 +391,6 @@ GB_Pending Pending ;        // list of pending tuples
 uint64_t nzombies ;     // number of zombies marked for deletion
 
 //------------------------------------------------------------------------------
-// CUDA memory distribution
-//------------------------------------------------------------------------------
-
-#if 0
-// IN PROGRESS ...
-
-int64_t cuda_memory_hints [4] ; // handle up to 255 GPUs, one bit per GPU,
-    // and one bit for the CPU memory.  If a bit is one, the matrix can reside
-    // on that particular memory space.  Default: all ones (the matrix can
-    // be anywhere).  The A->cuda_memory_hints [...] field would only change
-    // via GrB_set, and not changed as the matrix moves from memory space to
-    // memory space.  A call to GrB_set would trigger a cudaMemAdvise.
-
-// *_memory_location: GraphBLAS' current notion of where the memory space
-// is currently.  If GPU 4 touches p, h, and i, for example, but not b or x,
-// then [phi]_memory_location would all be set to 4.  It the CPU touches the
-// space then it gets set to -1.
-
-int32_t p_memory_location ; // -1: on CPU, k if on GPU k
-int32_t h_memory_location ;
-int32_t b_memory_location ;
-int32_t i_memory_location ;
-int32_t x_memory_location ;
-#endif
-
-//------------------------------------------------------------------------------
 // sparsity control
 //------------------------------------------------------------------------------
 

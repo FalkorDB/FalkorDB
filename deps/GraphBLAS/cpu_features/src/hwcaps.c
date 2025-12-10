@@ -68,13 +68,7 @@ static unsigned long GetElfHwcapFromGetauxval(uint32_t hwcap_type) {
 #elif defined(HAVE_DLFCN_H)
 // On Android we probe the system's C library for a 'getauxval' function and
 // call it if it exits, or return 0 for failure. This function is available
-// since API level 20.
-//
-// This code does *NOT* check for '__ANDROID_API__ >= 20' to support the edge
-// case where some NDK developers use headers for a platform that is newer than
-// the one really targetted by their application. This is typically done to use
-// newer native APIs only when running on more recent Android versions, and
-// requires careful symbol management.
+// since API level 18.
 //
 // Note that getauxval() can't really be re-implemented here, because its
 // implementation does not parse /proc/self/auxv. Instead it depends on values

@@ -14,19 +14,19 @@
 #define GET_DEEP_COPY ;
 #define FREE_DEEP_COPY ;
 
- typedef struct { int32_t re ; int32_t im ; } mygauss ;
+ typedef struct { int32_t re ; int32_t im ; } gb_mygauss ;
 #define MYGAUSS_DEFN \
-"typedef struct { int32_t re ; int32_t im ; } mygauss ;"
+"typedef struct { int32_t re ; int32_t im ; } gb_mygauss ;"
 
-void myadd (mygauss *z, const mygauss *x, const mygauss *y) ;
-void myadd (mygauss *z, const mygauss *x, const mygauss *y)
+void gb_myadd_17 (gb_mygauss *z, const gb_mygauss *x, const gb_mygauss *y) ;
+void gb_myadd_17 (gb_mygauss *z, const gb_mygauss *x, const gb_mygauss *y)
 {
     z->re = x->re + y->re ;
     z->im = x->im + y->im ;
 }
 
 #define MYADD_DEFN \
-"void myadd (mygauss *z, const mygauss *x, const mygauss *y)    \n" \
+"void gb_myadd_17 (gb_mygauss *z, const gb_mygauss *x, const gb_mygauss *y)    \n" \
 "{                                                              \n" \
 "    z->re = x->re + y->re ;                                    \n" \
 "    z->im = x->im + y->im ;                                    \n" \
@@ -54,14 +54,14 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     GrB_Type Gauss = NULL ;
-    OK (GxB_Type_new (&Gauss, sizeof (mygauss), "mygauss", MYGAUSS_DEFN)) ;
+    OK (GxB_Type_new (&Gauss, sizeof (gb_mygauss), "gb_mygauss", MYGAUSS_DEFN)) ;
     OK (GxB_print (Gauss, 3)) ;
     GrB_BinaryOp MyAdd = NULL ;
-    OK (GxB_BinaryOp_new (&MyAdd, (GxB_binary_function) myadd,
-        Gauss, Gauss, Gauss, "myadd", MYADD_DEFN)) ;
+    OK (GxB_BinaryOp_new (&MyAdd, (GxB_binary_function) gb_myadd_17,
+        Gauss, Gauss, Gauss, "gb_myadd_17", MYADD_DEFN)) ;
     OK (GxB_print (MyAdd, 3)) ;
 
-    mygauss zero ;
+    gb_mygauss zero ;
     zero.re = 0 ;
     zero.im = 0 ;
     GrB_Monoid Monoid = NULL ;
@@ -77,7 +77,7 @@ void mexFunction
     GrB_Vector v = NULL ;
     OK (GrB_Matrix_new (&A, Gauss, n, n)) ;
     OK (GrB_Vector_new (&v, Gauss, n)) ;
-    mygauss z ;
+    gb_mygauss z ;
     int k = 1 ;
     for (int i = 0 ; i < n ; i++)
     {
@@ -103,7 +103,7 @@ void mexFunction
     printf ("\nvector v:\n") ;
     for (int i = 0 ; i < n ; i++)
     {
-        mygauss t ;
+        gb_mygauss t ;
         info = GrB_Vector_extractElement_UDT ((void *) &t, v, i) ;
         printf ("v (%d) ", i) ;
         if (info == GrB_NO_VALUE)
@@ -135,7 +135,7 @@ void mexFunction
 
     for (int i = 0 ; i < n ; i++)
     {
-        mygauss t ;
+        gb_mygauss t ;
         t.re = -999 ;
         t.im = -999 ;
         info = GrB_Vector_extractElement_UDT ((void *) &t, v, i) ;
