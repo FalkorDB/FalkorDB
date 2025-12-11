@@ -552,7 +552,7 @@ class testGraphMemoryUsage(FlowTestsBase):
            consumption should be similar to the original state"""
 
         #-----------------------------------------------------------------------
-        # create a graph with 2500K nodes and 500K edges
+        # create a graph with 250K nodes and 500K edges
         #-----------------------------------------------------------------------
 
         node_count = 250000
@@ -564,10 +564,9 @@ class testGraphMemoryUsage(FlowTestsBase):
         res = self.graph.query(q, {'node_count': node_count})
         self.env.assertEquals(res.nodes_created, node_count)
 
-        q = """UNWIND range (0, $node_count) AS x
-               MATCH (a)
-               WHERE ID(a) = x
-               WITH a, x, x+1 AS b_id
+        # create edges
+        q = """MATCH (a)
+               WITH a, ID(a) + 1 AS b_id
                MATCH (b)
                WHERE ID(b) = b_id
                CREATE (a)-[:R]->(a), (a)-[:R]->(b)"""

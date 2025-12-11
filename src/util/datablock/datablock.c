@@ -210,11 +210,12 @@ void *DataBlock_AllocateItem
 		pos = array_pop (dataBlock->deletedIdx) ;
 
 		// trim array if number of free entries is greater than 20%
-		if (unlikely (array_len (dataBlock->deletedIdx) /
-					  array_cap (dataBlock->deletedIdx)) <= 0.8) {
-			dataBlock->deletedIdx =
-				array_trimm_cap (dataBlock->deletedIdx,
-						array_len (dataBlock->deletedIdx)) ;
+		if (unlikely (
+			(float)array_len (dataBlock->deletedIdx) /
+			(float)array_cap (dataBlock->deletedIdx) <= 0.8)
+		) {
+			dataBlock->deletedIdx = array_trimm_cap (dataBlock->deletedIdx,
+					array_len (dataBlock->deletedIdx)) ;
 		}
 	}
 
