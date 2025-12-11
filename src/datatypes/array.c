@@ -310,6 +310,31 @@ SIValue SIArray_FromBinary
 	return arr;
 }
 
+// defrag array
+// returns true if array memory been relocated
+bool SIArray_Defrag
+(
+	SIValue *arr,              // array to defrag
+	RedisModuleDefragCtx *ctx  // redis defrag context
+) {
+	ASSERT (arr != NULL) ;
+	ASSERT (ctx != NULL) ;
+
+	// pointer to arr's elements
+	void *p     = array_hdr (arr->array) ;  // array header points to allocation
+	void *moved = RedisModule_DefragAlloc (ctx, p) ;
+
+	// update arr if p been relocated
+	if (moved != NULL) {
+		// assign back array's buffer
+		arr->array = (struct SIValue *) (((array_hdr_t *)moved)->buf) ;
+		return true ;
+	}
+
+	return false ;
+
+}
+
 // free an array
 void SIArray_Free
 (
