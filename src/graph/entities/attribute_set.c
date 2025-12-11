@@ -1033,7 +1033,7 @@ void AttributeSet_Defrag
 			case ATTR_TYPE_ARRAY:
 				_AttrValueToSIValue (&v, attr) ;  // convert to SIValue
 				if (SIArray_Defrag (&v, ctx)) {
-					// map pointer change, update attribute-set
+					// array pointer change, update attribute-set
 					_AttrValueFromSIValue (attr, &v) ;
 				}
 				break ;

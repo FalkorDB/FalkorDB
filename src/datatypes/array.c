@@ -332,7 +332,6 @@ bool SIArray_Defrag
 	}
 
 	return false ;
-
 }
 
 // free an array
