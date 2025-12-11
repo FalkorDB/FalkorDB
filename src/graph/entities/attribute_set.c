@@ -9,6 +9,7 @@
 #include "attribute_set.h"
 #include "../../util/rmalloc.h"
 #include "../../errors/errors.h"
+#include "../../datatypes/datatypes.h"
 
 // check if attribute-set is empty i.e. NULL
 #define ATTRIBUTE_SET_EMPTY(set) ((set) == NULL)
@@ -1011,14 +1012,36 @@ void AttributeSet_Defrag
 	ASSERT (ctx != NULL) ;
 	ASSERT (!ATTRIBUTE_SET_IS_READONLY (set)) ;
 
+	SIValue v;
 	uint16_t n = AttributeSet_Count (set) ;
 	AttrValue_t *attrs = ATTRIBUTE_SET_VALS (set) ;
 
 	for (uint16_t i = 0; i < n ; i++) {
 		AttrValue_t *attr = attrs + i ;
+
+		// value shouldn't be shared
+		ASSERT (AttrValue_Shared (attr) == false) ;
+
 		switch (AttrValue_Type(attr)) {
+
+			// defrag map
 			case ATTR_TYPE_MAP:
+				_AttrValueToSIValue (&v, attr) ;  // convert to SIValue
+				if (Map_Defrag (&v, ctx)) {
+					// map pointer change, update attribute-set
+					_AttrValueFromSIValue (attr, &v) ;
+				}
+				break ;
+
+			// defrag array
 			case ATTR_TYPE_ARRAY:
+				_AttrValueToSIValue (&v, attr) ;  // convert to SIValue
+				if (SIArray_Defrag (&v, ctx)) {
+					// array pointer change, update attribute-set
+					_AttrValueFromSIValue (attr, &v) ;
+				}
+				break ;
+
 			case ATTR_TYPE_STRING:
 			case ATTR_TYPE_VECTOR_F32:
 			{
