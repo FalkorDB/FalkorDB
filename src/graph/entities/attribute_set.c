@@ -1018,6 +1018,10 @@ void AttributeSet_Defrag
 
 	for (uint16_t i = 0; i < n ; i++) {
 		AttrValue_t *attr = attrs + i ;
+
+		// value shouldn't be shared
+		ASSERT (AttrValue_Shared (attr) == false) ;
+
 		switch (AttrValue_Type(attr)) {
 
 			// defrag map
