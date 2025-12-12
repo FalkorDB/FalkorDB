@@ -29,15 +29,27 @@ static void _reduceOptionalMatch
 	rhs = OpBase_GetChild (rhs, 0) ;
 	t = OpBase_Type (rhs) ;
 	if (t != OPType_CONDITIONAL_TRAVERSE) {
+		// Skip optimization if the RHS doesn't start with ConditionalTraverse.
+		// This can happen when the OPTIONAL MATCH clause contains multiple
+		// comma-separated patterns (e.g., "p0 = (n1), p1 = (n0)"), which may
+		// produce a CartesianProduct or other non-ConditionalTraverse subtree.
+		// The optimization assumes a strict pattern:
+		// Apply → Optional → ConditionalTraverse* → Argument
+		// and is not safe to apply to other tree shapes.
 		return ;
 	}
 
+	// Traverse down the chain of ConditionalTraverse operations,
+	// ensuring we only have ConditionalTraverse nodes until we reach Argument
 	while (t == OPType_CONDITIONAL_TRAVERSE) {
 		rhs = OpBase_GetChild (rhs, 0) ;
 		t = OpBase_Type (rhs) ;
 	}
 
 	if (t != OPType_ARGUMENT) {
+		// Skip optimization if we encounter any operation type other than
+		// ConditionalTraverse before reaching the Argument.
+		// This ensures we only optimize the supported pattern.
 		return ;
 	}
 

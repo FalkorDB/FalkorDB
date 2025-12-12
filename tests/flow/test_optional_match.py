@@ -315,3 +315,36 @@ class testOptionalFlow(FlowTestsBase):
         self.env.assertIn("Optional Conditional Traverse | (a)->(b)", plan)
         self.env.assertIn("Optional Conditional Traverse | (b)->(c)", plan)
 
+    # Test multiple named paths in a single OPTIONAL MATCH clause (regression test for issue #1353)
+    def test27_multiple_named_paths_in_optional_match(self):
+        # This query should not crash - it has multiple comma-separated patterns in OPTIONAL MATCH
+        # The batch optimization should skip this pattern as it produces a CartesianProduct
+        query = """OPTIONAL MATCH (n0)--(n1)
+                   OPTIONAL MATCH p0 = (n1), p1 = (n0)
+                   RETURN *"""
+        
+        # Query should complete without crashing
+        try:
+            actual_result = self.graph.query(query)
+            # Verify the query completes and returns results
+            # With our test graph: 4 nodes (v1, v2, v3, v4), edges: v1->v2, v2->v3
+            # First OPTIONAL MATCH produces pairs: (v1,v2), (v2,v1), (v2,v3), (v3,v2)
+            # Second OPTIONAL MATCH creates cartesian product of named paths
+            # We just verify it doesn't crash and returns some results
+            self.env.assertTrue(actual_result.result_set is not None)
+        except Exception as e:
+            self.env.fail(f"Query crashed with error: {e}")
+
+    # Test simpler case: multiple named paths without traversal
+    def test28_named_paths_without_traversal(self):
+        # Multiple named node patterns in a single OPTIONAL MATCH
+        query = """MATCH (a {v: 'v1'})
+                   OPTIONAL MATCH p0 = (a), p1 = (b {v: 'v2'})
+                   RETURN a.v, b.v, length(p0), length(p1)
+                   ORDER BY a.v, b.v"""
+        
+        actual_result = self.graph.query(query)
+        # p0 and p1 are single-node paths (length 0)
+        expected_result = [['v1', 'v2', 0, 0]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
+
