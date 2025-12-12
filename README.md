@@ -5,6 +5,7 @@
   <h1>FalkorDB</h1>
   <h2>Ultra-fast, Multi-tenant Graph Database</h2>
   <h3>Powering Generative AI, Agent Memory, Cloud Security, and Fraud Detection</h3>
+<a href="https://trendshift.io/repositories/14787" target="_blank"><img src="https://trendshift.io/api/badge/repositories/14787" alt="FalkorDB%2FFalkorDB | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 </div>
 <div align="center">
   <a href="https://app.falkordb.cloud/signup">
