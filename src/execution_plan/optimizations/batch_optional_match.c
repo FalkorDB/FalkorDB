@@ -26,6 +26,11 @@ static void _reduceOptionalMatch
 		return ;
 	}
 
+	// Ensure Optional has at least one child before attempting to access it
+	if (rhs->childCount == 0) {
+		return ;
+	}
+
 	rhs = OpBase_GetChild (rhs, 0) ;
 	t = OpBase_Type (rhs) ;
 	if (t != OPType_CONDITIONAL_TRAVERSE) {
@@ -42,6 +47,10 @@ static void _reduceOptionalMatch
 	// Traverse down the chain of ConditionalTraverse operations,
 	// ensuring we only have ConditionalTraverse nodes until we reach Argument
 	while (t == OPType_CONDITIONAL_TRAVERSE) {
+		// Ensure the ConditionalTraverse has a child before accessing it
+		if (rhs->childCount == 0) {
+			return ;
+		}
 		rhs = OpBase_GetChild (rhs, 0) ;
 		t = OpBase_Type (rhs) ;
 	}
