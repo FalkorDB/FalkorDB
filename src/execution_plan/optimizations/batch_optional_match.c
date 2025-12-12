@@ -27,6 +27,7 @@ static void _reduceOptionalMatch
 	}
 
 	// Ensure Optional has at least one child before attempting to access it
+	// An Optional operation should have exactly one child in the expected pattern
 	if (rhs->childCount == 0) {
 		return ;
 	}
