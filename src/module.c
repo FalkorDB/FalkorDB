@@ -85,30 +85,36 @@ static void _Print_Config
 	}
 }
 
-static int GraphBLAS_Init(RedisModuleCtx *ctx) {
+static int GraphBLAS_Init (RedisModuleCtx *ctx) {
 	// GraphBLAS should use Redis allocator
-	GrB_Info res = GxB_init(GrB_NONBLOCKING, RedisModule_Alloc,
+	GrB_Info info = GxB_init (GrB_NONBLOCKING, RedisModule_Alloc,
 			RedisModule_Calloc, RedisModule_Realloc, RedisModule_Free);
 
-	if(res != GrB_SUCCESS) {
-		RedisModule_Log(ctx, "warning", "Encountered error initializing GraphBLAS");
-		return REDISMODULE_ERR;
+	if (info != GrB_SUCCESS) {
+		RedisModule_Log (ctx, "warning", "Encountered error initializing GraphBLAS") ;
+		return REDISMODULE_ERR ;
 	}
 
 	// all matrices in CSR format
-	GxB_set(GxB_FORMAT, GxB_BY_ROW);
+	GrB_OK (GxB_set (GxB_FORMAT, GxB_BY_ROW)) ;
+
+	// alow only baked-in JIT kernels (pre-jit)
+    GrB_OK (GrB_set (GrB_GLOBAL, GxB_JIT_RUN, GxB_JIT_C_CONTROL)) ;
+	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+			"GraphBLAS JIT restrict to pre-jit kernels") ;
 
 	// initialize LAGraph
-	char msg [LAGRAPH_MSG_LEN];
-	res = LAGr_Init(GrB_NONBLOCKING, RedisModule_Alloc, RedisModule_Calloc,
-			RedisModule_Realloc, RedisModule_Free, msg);
+	char msg [LAGRAPH_MSG_LEN] ;
+	info = LAGr_Init (GrB_NONBLOCKING, RedisModule_Alloc, RedisModule_Calloc,
+			RedisModule_Realloc, RedisModule_Free, msg) ;
 
-	if(res != GrB_SUCCESS) {
-		RedisModule_Log(ctx, "warning", "Encountered error initializing LAGraph: %s", msg);
-		return REDISMODULE_ERR;
+	if (info != GrB_SUCCESS) {
+		RedisModule_Log (ctx, "warning",
+				"Encountered error initializing LAGraph: %s", msg) ;
+		return REDISMODULE_ERR ;
 	}
 
-	return REDISMODULE_OK;
+	return REDISMODULE_OK ;
 }
 
 int RedisModule_OnLoad
