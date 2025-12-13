@@ -129,7 +129,8 @@ class testSlowLog():
         entry = slowlog[0]
         cmd     = entry[1]
         q       = entry[2]
-        params  = entry[3]
+        latency = entry[3]
+        params  = entry[4]
 
         self.env.assertEquals(cmd, "GRAPH.QUERY")
         self.env.assertEquals(params, None)
@@ -152,7 +153,8 @@ class testSlowLog():
         entry = slowlog[0]
         cmd     = entry[1]
         q       = entry[2]
-        params  = entry[3]
+        latency = entry[3]
+        params  = entry[4]
 
         self.env.assertEquals(cmd, "GRAPH.QUERY")
         self.env.assertEquals(query, q)
@@ -175,7 +177,8 @@ class testSlowLog():
         entry = slowlog[0]
         cmd     = entry[1]
         q       = entry[2]
-        params  = entry[3]
+        latency = entry[3]
+        params  = entry[4]
 
         self.env.assertEquals(cmd, "GRAPH.QUERY")
 
@@ -202,7 +205,8 @@ class testSlowLog():
 
         entry = slowlog[0]
         q0 = entry[2]
-        p0 = entry[3]
+        latency0 = entry[3]
+        p0 = entry[4]
 
         # re-issue the same query but with different params
         query = f"UNWIND range(0, $i) AS x RETURN count(x)"
@@ -213,7 +217,8 @@ class testSlowLog():
 
         entry = slowlog[0]
         q1 = entry[2]
-        p1 = entry[3]
+        latency1 = entry[3]
+        p1 = entry[4]
 
         # expecting the same query
         self.env.assertEquals(q0, q1)
