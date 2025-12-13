@@ -23,9 +23,10 @@ OS     = paella.Platform().os
 ARCH   = paella.Platform().arch
 OSNICK = paella.Platform().osnick
 
-def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False):
+def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, shardsCount=None):
     env = Environment(decodeResponses=True, moduleArgs=moduleArgs, env=env,
-                      useSlaves=useSlaves, enableDebugCommand=enableDebugCommand)
+                      useSlaves=useSlaves, enableDebugCommand=enableDebugCommand,
+                      shardsCount=shardsCount)
     db  = FalkorDB("localhost", env.port)
     return (env, db)
 

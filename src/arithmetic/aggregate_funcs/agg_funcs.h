@@ -16,15 +16,15 @@ AggregateResult AGGREGATE_OK;
 // create a new aggregation function descriptor
 AR_FuncDesc *AR_AggFuncDescNew
 (
-	const char *name,                   // function name
-	AR_Func func,                       // pointer to function
-	uint min_argc,                      // minimum number of arguments
-	uint max_argc,                      // maximum number of arguments
-	SIType *types,                      // acceptable types
-	SIType ret_type,                    // return type
-	AR_Func_Free free,                  // free aggregation callback
-	AR_Func_Finalize finalize,          // finalize aggregation callback
-	AR_Func_PrivateData private_data    // generate private data
+	char *name,                       // function name
+	AR_Func func,                     // pointer to function
+	uint min_argc,                    // minimum number of arguments
+	uint max_argc,                    // maximum number of arguments
+	SIType *types,                    // acceptable types
+	SIType ret_type,                  // return type
+	AR_Func_Free free,                // free aggregation callback
+	AR_Func_Finalize finalize,        // finalize aggregation callback
+	AR_Func_PrivateData private_data  // generate private data
 );
 
 // register all aggregation funcitons
