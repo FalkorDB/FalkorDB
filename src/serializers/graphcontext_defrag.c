@@ -79,7 +79,6 @@ static void defrag_attributeset
 ) {
 	void *moved = NULL ;
 	AttributeSet _set = *set ;
-	uint16_t n = AttributeSet_Count (_set) ;
 
 	// defrag set
 	moved = RedisModule_DefragAlloc (ctx, _set) ;
