@@ -1032,7 +1032,7 @@ class testEffects():
     def test21_mandatory_effects(self):
         """Make sure non deterministic queries always uses effects"""
 
-        self.env.flush()        # clean slate
+        #self.env.flush()        # clean slate
         self.effects_disable()  # disable effects
 
         # each of the following queries contains a non deterministic element
