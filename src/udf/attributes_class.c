@@ -24,6 +24,8 @@ extern JSClassID js_attributes_class_id;  // QuickJS class ID for Attributes
 static int js_attributes_get_property (JSContext *js_ctx,
 		JSPropertyDescriptor *desc, JSValueConst obj, JSAtom prop) ;
 
+static void js_attributes_finalizer ( JSRuntime *rt, JSValue val) ;
+
 static JSClassExoticMethods js_attributes_exotic = {
     .get_own_property = js_attributes_get_property,
 };
@@ -35,6 +37,7 @@ static JSClassExoticMethods js_attributes_exotic = {
 static JSClassDef js_attributes_class = {
     "Attributes",
 	.exotic = &js_attributes_exotic,
+	.finalizer = js_attributes_finalizer
 };
 
 //------------------------------------------------------------------------------
@@ -119,9 +122,26 @@ JSValue UDF_EntityGetAttributes
 	}
 
     JSValue obj = JS_NewObjectClass (js_ctx, js_attributes_class_id) ;
-    JS_SetOpaque (obj, entity) ;
+
+	GraphEntity *_entity = rm_malloc (sizeof (GraphEntity)) ;
+	memcpy (_entity, entity, sizeof (GraphEntity)) ;
+	JS_SetOpaque (obj, _entity) ;
 
     return obj;
+}
+
+static void js_attributes_finalizer
+(
+	JSRuntime *rt,
+	JSValue val
+) {
+    // get the opaque pointer
+    GraphEntity *entity = JS_GetOpaque (val, js_attributes_class_id) ;
+
+    // check if the pointer exists and free the native object
+    if (entity) {
+		rm_free (entity) ;
+    }
 }
 
 //------------------------------------------------------------------------------

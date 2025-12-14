@@ -364,7 +364,7 @@ class testUDF():
     # Test that FalkorDB’s JavaScript Edge object exposes:
     # - `id`: internal edge ID
     # - `type`: relationship type string
-    # - `startNode` / `endNode`: node IDs
+    # - `source` / `target`: node IDs
     # - `attributes`: dictionary of properties
     # and handles conflict between internal id vs. user property "id".
     def test_edge_object(self):
@@ -372,6 +372,8 @@ class testUDF():
         script ="""
         function InspectEdge(e) { return {internal_id: e.id,
                                          type: e.type,
+                                         source: e.source,
+                                         target: e.target,
                                          attributes: e.attributes}; }
 
         falkor.register ('InspectEdge', InspectEdge);
@@ -383,22 +385,25 @@ class testUDF():
         # 1. Simple edge with attributes
         q = """
         CREATE (a:Person {name:'Alice'})-[e:KNOWS {since:2020}]->(b:Person {name:'Bob'})
-        RETURN InspectEdge.InspectEdge(e)
+        RETURN InspectEdge.InspectEdge(e) AS inspect, a AS source, b AS target
         """
-        res = self.graph.query(q).result_set[0][0]
+        res = self.graph.query(q).result_set[0]
+        inspect = res[0]
+        source  = res[1]
+        target  = res[2]
 
         # Internal edge ID
-        self.env.assertEqual(res["internal_id"], 0)
+        self.env.assertEqual(inspect["internal_id"], 0)
 
         # Relationship type
-        self.env.assertEqual(res["type"], "KNOWS")
+        self.env.assertEqual(inspect["type"], "KNOWS")
 
-        # Start/end node IDs must be integers
-        #self.env.assertTrue(res["start"], 0)
-        #self.env.assertTrue(res["end"], 1)
+        # source/target node IDs must be integers
+        self.env.assertEqual(inspect["source"], source)
+        self.env.assertEqual(inspect["target"], target)
 
-        # Attribute check
-        self.env.assertEqual(res["attributes"]["since"], 2020)
+        # attribute check
+        self.env.assertEqual(inspect["attributes"]["since"], 2020)
 
         # 2. Edge with conflicting "id" property
         q = """

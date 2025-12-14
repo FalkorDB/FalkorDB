@@ -12,9 +12,14 @@
 
 extern JSClassID js_node_class_id ;  // JS node class
 
+//------------------------------------------------------------------------------
 // forward declaration
+//------------------------------------------------------------------------------
+
 static int js_node_get_property (JSContext *js_ctx, JSPropertyDescriptor *desc,
 		JSValueConst obj, JSAtom prop) ;
+
+static void js_node_finalizer (JSRuntime *rt, JSValue val) ;
 
 static JSClassExoticMethods js_node_exotic = {
 	.get_own_property = js_node_get_property,
@@ -23,7 +28,8 @@ static JSClassExoticMethods js_node_exotic = {
 // Define class + prototype
 static JSClassDef js_node_class = {
     "Node",
-	.exotic = &js_node_exotic
+	.exotic = &js_node_exotic,
+	.finalizer = js_node_finalizer
 } ;
 
 // property accessor for Node attributes
@@ -138,6 +144,232 @@ static JSValue js_entity_get_labels
     return obj ;
 }
 
+// converts a JavaScript array of strings (JSValueConst) into a dynamically
+// allocated C array of strings (char**).
+//
+// this function handles error cases (e.g., input is not an array, or elements
+// are not strings) and throws a JS exception on failure
+// returns 0 on success, -1 on failure (exception thrown)
+static int js_array_to_c_strings
+(
+    JSContext *js_ctx,      // js_ctx The QuickJS context
+    JSValueConst js_array,  // js_array The JSValueConst representing the array
+    char ***c_strings_out   // c_strings_out Pointer to the output char**
+) {
+    JSValue len_val = JS_UNDEFINED ;
+    uint32_t len ;
+    int ret = -1 ; // default return is failure
+
+    // check if it's an array
+    if (!JS_IsArray (js_ctx, js_array)) {
+        JS_ThrowTypeError (js_ctx, "Expected an array of strings.") ;
+        return -1 ;
+    }
+
+    // get the array length
+    len_val = JS_GetPropertyStr (js_ctx, js_array, "length") ;
+    if (JS_IsException (len_val) || JS_ToUint32 (js_ctx, &len, len_val)) {
+        // error getting length or converting to uint32
+        goto cleanup ;
+    }
+
+	*c_strings_out = array_new (char *, len) ;
+
+    // initialize output count
+    if (len == 0) {
+        ret = 0 ; // success for empty array
+        goto cleanup ;
+    }
+
+    // iterate and convert each element
+    for (uint32_t i = 0; i < len; i++) {
+        JSValue js_element = JS_GetPropertyUint32 (js_ctx, js_array, i) ;
+        if (JS_IsException (js_element)) {
+            // error getting property
+            goto error_free_strings ;
+        }
+
+        // ensure element is a string before converting
+        if (!JS_IsString (js_element)) {
+            JS_FreeValue (js_ctx, js_element) ;
+            JS_ThrowTypeError (js_ctx,
+					"Array element at index %d is not a string.", i) ;
+            goto error_free_strings ;
+        }
+
+        // convert to C string (copy is made)
+        const char *c_str = JS_ToCString (js_ctx, js_element) ;
+        JS_FreeValue (js_ctx, js_element) ; // free the JS string value
+
+        if (!c_str) {
+            // memory error or exception during conversion
+            goto error_free_strings ;
+        }
+
+        // must allocate a copy to persist the string after JS_FreeCString
+        array_append (*c_strings_out, strdup (c_str)) ;
+        JS_FreeCString (js_ctx, c_str) ; // free the temp C string
+    }
+
+    // success
+    ret = 0 ;
+    goto cleanup ;
+
+error_free_strings:
+    // if an error occurred mid-loop, free the strings allocated so far
+	uint32_t l = array_len (*c_strings_out) ;
+    for (uint32_t i = 0; i < l; i++) {
+        free (*c_strings_out[i]) ;
+    }
+    array_free (*c_strings_out) ;
+
+cleanup:
+    JS_FreeValue (js_ctx, len_val) ;
+    return ret ;
+}
+
+// collect node's labels['Person', 'City'],neighbors
+//
+// example:
+// let nodes = n.getNeighbors();
+//
+// accepts an optional config map:
+// {
+//   direction: string   - 'incoming' / 'outgoing' / 'both',
+//   types:     string[] - ['KNOWS', 'WORKS_AT'],
+//   labels:    string[] - ['Person', 'City'],
+//   distance:  number   - traversal depth
+// }
+//
+// all fields in map are optional
+//
+// returns an array of Nodes
+static JSValue js_node_get_neighbors
+(
+	JSContext *js_ctx,
+	JSValueConst this_val,
+	int argc,
+	JSValueConst *argv
+) {
+	ASSERT (js_ctx != NULL) ;
+
+	// get the native Node pointer from this_val
+    Node *node = JS_GetOpaque2 (js_ctx, this_val, js_node_class_id) ;
+    if (!node) {
+        return JS_EXCEPTION ;
+    }
+
+	//--------------------------------------------------------------------------
+	// default config
+	//--------------------------------------------------------------------------
+
+	uint distance      = 1 ;                    // direct neighbors
+	char **labels      = NULL ;                 // neighbors labels
+	char **rel_types   = NULL ;                 // edge types to consider
+	GRAPH_EDGE_DIR dir = GRAPH_EDGE_DIR_BOTH ;  // edge direction
+
+	const char *err_msg = NULL ;
+
+	if (argc > 0) {
+		JSValueConst options_obj = argv[0] ;
+
+		// check if argument is an object
+		if (!JS_IsObject (options_obj)) {
+			return JS_ThrowTypeError (js_ctx,
+					"argument must be an object or omitted") ;
+		}
+
+		//----------------------------------------------------------------------
+		// parse the provided options object
+		//----------------------------------------------------------------------
+
+		//----------------------------------------------------------------------
+		// parse direction
+		//----------------------------------------------------------------------
+
+		JSValue dir_val = JS_GetPropertyStr (js_ctx, options_obj, "direction") ;
+		if (!JS_IsUndefined (dir_val)) {
+			const char *dir_str = JS_ToCString (js_ctx, dir_val) ;
+
+			if (dir_str != NULL) {
+				if (strcmp (dir_str, "outgoing") == 0) {
+					dir = GRAPH_EDGE_DIR_OUTGOING ;
+				}
+
+				else if (strcmp (dir_str, "incoming") == 0) {
+					dir = GRAPH_EDGE_DIR_INCOMING ;
+				}
+
+				// 'both' is default, but validate if provided
+				else if (strcmp (dir_str, "both") != 0) {
+					err_msg = "'direction' must be 'incoming', 'outgoing', or 'both'." ;
+				}
+				JS_FreeCString (js_ctx, dir_str) ;
+			}
+		}
+		JS_FreeValue (js_ctx, dir_val) ;
+
+		//----------------------------------------------------------------------
+		// parse relationship-types
+		//----------------------------------------------------------------------
+
+		JSValue types_val = JS_GetPropertyStr (js_ctx, options_obj, "types") ;
+		if (!JS_IsUndefined (types_val)) {
+			if (js_array_to_c_strings (js_ctx, types_val, &rel_types)) {
+				// error occurred during conversion
+				// (e.g., not an array, or elements aren't strings)
+				err_msg = "'types' must be an array of strings" ;
+			}
+		}
+		JS_FreeValue (js_ctx, types_val) ;
+
+		//----------------------------------------------------------------------
+		// parse labels
+		//----------------------------------------------------------------------
+
+		JSValue labels_val = JS_GetPropertyStr (js_ctx, options_obj, "labels") ;
+		if (!JS_IsUndefined (labels_val)) {
+			if (js_array_to_c_strings (js_ctx, labels_val, &labels)) {
+				// error occurred during conversion
+				// (e.g., not an array, or elements aren't strings)
+				err_msg = "'labels' must be an array of strings" ;
+			}
+		}
+		JS_FreeValue (js_ctx, labels_val) ;
+
+		//----------------------------------------------------------------------
+		// parse distance
+		//----------------------------------------------------------------------
+
+		JSValue dist_val = JS_GetPropertyStr (js_ctx, options_obj, "distance") ;
+		if (!JS_IsUndefined (dist_val)) {
+			int64_t dist_long;
+			if (JS_ToInt64 (js_ctx, &dist_long, dist_val)) {
+				err_msg =  "'distance' must be a positive integer." ;
+			}
+
+			distance = (int)dist_long ;
+			if (distance <= 0) {
+				err_msg =  "'distance' must be a positive integer." ;
+			}
+		}
+		JS_FreeValue(js_ctx, dist_val);
+
+		//----------------------------------------------------------------------
+		// done parsing
+		//----------------------------------------------------------------------
+
+		// check for error
+		if (err_msg != NULL) {
+			return JS_ThrowTypeError (js_ctx, "%s", err_msg) ;
+		}
+	}
+
+	// collect neighbors
+
+	return JS_NewArray (js_ctx) ;
+}
+
 // create a JavaScript Node object from a FalkorDB Node
 // wraps a native FalkorDB Node into a QuickJS JSValue instance
 // return JSValue representing the Node in QuickJS
@@ -146,14 +378,37 @@ JSValue UDF_CreateNode
 	JSContext *js_ctx,  // JavaScript context
 	const Node *node    // pointer to the native FalkorDB Node
 ) {
+	ASSERT (node   != NULL) ;
+	ASSERT (js_ctx != NULL) ;
+
+	// clone node
+	Node *_node = rm_malloc (sizeof (Node)) ;
+	memcpy (_node, node, sizeof (Node)) ;
+
     JSValue obj = JS_NewObjectClass (js_ctx, js_node_class_id) ;
     if (JS_IsException (obj)) {
         return obj ;
     }
 
-    JS_SetOpaque (obj, (void*) node) ;
+    JS_SetOpaque (obj, (void*) _node) ;
 
     return obj ;
+}
+
+// destructor for the Node JS object
+// frees the underlying native Node when the JS object is garbage collected
+static void js_node_finalizer
+(
+	JSRuntime *rt,
+	JSValue val
+) {
+    // get the opaque pointer
+    GraphEntity *node = JS_GetOpaque (val, js_node_class_id) ;
+
+    // check if the pointer exists and free the native object
+    if (node) {
+		rm_free (node) ;
+    }
 }
 
 // register the Node class with a JavaScript runtime
@@ -171,6 +426,13 @@ void UDF_RegisterNodeClass
 
 // register the Node class with a JavaScript context
 // makes the Node class available within the provided QuickJS context
+static const JSCFunctionListEntry node_proto_func_list[] = {
+	JS_CGETSET_DEF ("id", js_entity_get_id, NULL),
+	JS_CGETSET_DEF ("labels", js_entity_get_labels, NULL),
+	JS_CGETSET_DEF ("attributes", UDF_EntityGetAttributes, NULL),
+	JS_CFUNC_DEF   ("getNeighbors", 1, js_node_get_neighbors),
+};
+
 void UDF_RegisterNodeProto
 (
 	JSContext *js_ctx  // JavaScript context
@@ -180,14 +442,8 @@ void UDF_RegisterNodeProto
 	// prototype object
     JSValue proto = JS_NewObject (js_ctx) ;
 
-    int res = JS_SetPropertyFunctionList (js_ctx, proto,
-			(JSCFunctionListEntry[]) {
-            JS_CGETSET_DEF ("id", js_entity_get_id, NULL),
-            JS_CGETSET_DEF ("labels", js_entity_get_labels, NULL),
-            JS_CGETSET_DEF ("attributes", UDF_EntityGetAttributes, NULL)
-        },
-        3
-    ) ;
+    int res =
+		JS_SetPropertyFunctionList (js_ctx, proto, node_proto_func_list, 4) ;
 	ASSERT (res == 0) ;
 
     JS_SetClassProto (js_ctx, js_node_class_id, proto) ;

@@ -112,6 +112,13 @@ void UDF_RegisterPathClass
 
 // register the Path class with a QuickJS context
 // makes the Path class available within the provided QuickJS context
+
+static const JSCFunctionListEntry path_proto_func_list[] = {
+	JS_CGETSET_DEF ("nodes", js_path_nodes, NULL),
+	JS_CGETSET_DEF ("length", js_path_length, NULL),
+	JS_CGETSET_DEF ("relationships", js_path_relationships, NULL)
+} ;
+
 void UDF_RegisterPathProto
 (
 	JSContext *js_ctx  // JavaScript context
@@ -121,14 +128,8 @@ void UDF_RegisterPathProto
 	// prototype object
     JSValue proto = JS_NewObject (js_ctx) ;
 
-    int res = JS_SetPropertyFunctionList (js_ctx, proto,
-			(JSCFunctionListEntry[]) {
-            JS_CGETSET_DEF ("nodes", js_path_nodes, NULL),
-            JS_CGETSET_DEF ("length", js_path_length, NULL),
-            JS_CGETSET_DEF ("relationships", js_path_relationships, NULL)
-        },
-        3
-    ) ;
+    int res =
+		JS_SetPropertyFunctionList (js_ctx, proto, path_proto_func_list, 3) ;
 	ASSERT (res == 0) ;
 
     JS_SetClassProto (js_ctx, js_path_class_id, proto) ;

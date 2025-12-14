@@ -65,7 +65,8 @@ static SIValue _JSArrayToSIValue
 
 	for (uint32_t i = 0; i < len; i++) {
 		JSValue elem = JS_GetPropertyUint32 (js_ctx, js_arr, i) ;
-		SIArray_Append (&arr, UDF_JSToSIValue (js_ctx, elem)) ;
+		SIValue v = UDF_JSToSIValue (js_ctx, elem) ;
+		SIArray_AppendAsOwner (&arr, &v) ;
 		JS_FreeValue (js_ctx, elem) ;
 	}
 
@@ -191,12 +192,26 @@ SIValue UDF_JSToSIValue
 
 				if (cid == js_node_class_id) {
 					Node *n = JS_GetOpaque (val, js_node_class_id) ;
-					ret = SI_Node (n) ;
+
+					// clone node
+					Node *_n = rm_malloc (sizeof (Node)) ;
+					memcpy (_n, n, sizeof (Node)) ;
+
+					// wrap in SIValue
+					ret = SI_Node (_n) ;
+					SIValue_SetAllocationType (&ret, M_SELF) ;
 				}
 
 				else if (cid == js_edge_class_id) {
 					Edge *e = JS_GetOpaque (val, js_edge_class_id) ;
+
+					// clone edge
+					Edge *_e = rm_malloc (sizeof (Edge)) ;
+					memcpy (_e, e, sizeof (Edge)) ;
+
+					// wrap in SIValue
 					ret = SI_Edge (e) ;
+					SIValue_SetAllocationType (&ret, M_SELF) ;
 				}
 
 				else if (cid == js_path_class_id) {

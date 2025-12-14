@@ -12,9 +12,14 @@
 
 extern JSClassID js_edge_class_id ;  // QuickJS class ID for Edge
 
+//------------------------------------------------------------------------------
 // forward declaration
+//------------------------------------------------------------------------------
+
 static int js_edge_get_property (JSContext *js_ctx, JSPropertyDescriptor *desc,
 		JSValueConst obj, JSAtom prop) ;
+
+static void js_edge_finalizer (JSRuntime *rt, JSValue val) ;
 
 //------------------------------------------------------------------------------
 // class definition
@@ -26,7 +31,8 @@ static JSClassExoticMethods js_edge_exotic = {
 
 static JSClassDef js_edge_class = {
     "Edge",
-	.exotic = &js_edge_exotic
+	.exotic = &js_edge_exotic,
+	.finalizer = js_edge_finalizer
 };
 
 //------------------------------------------------------------------------------
@@ -59,8 +65,8 @@ static int js_edge_get_property
 	// reject built-in edge attributes, which are exposed via dedicated accessors
 	if (strcmp (key, "id")         == 0 ||
 		strcmp (key, "type")       == 0 ||
-		strcmp (key, "endNode")    == 0 ||
-		strcmp (key, "startNode")  == 0 ||
+		strcmp (key, "target")     == 0 ||
+		strcmp (key, "source")     == 0 ||
 		strcmp (key, "attributes") == 0 ) {
 		// reject direct access to edge native properties
 		// e.g. e.id
@@ -137,9 +143,9 @@ static JSValue js_edge_type
     return JS_NewString (js_ctx, Schema_GetName (s)) ;
 }
 
-// return the destination (end) node of the edge
+// return the target (destination) node of the edge
 // todo: implement proper Node wrapping (currently returns JS_NULL)
-static JSValue js_edge_endNode
+static JSValue js_edge_target
 (
 	JSContext *js_ctx,
 	JSValueConst this_val
@@ -156,12 +162,12 @@ static JSValue js_edge_endNode
 	bool found = Graph_GetNode (g, n_id, &n) ;
 	ASSERT (found) ;
 
-	return JS_NULL ;  // TODO: wrap `n` as a Node JS object
+	return UDF_CreateNode (js_ctx, &n) ;
 }
 
-// return the source (start) node of the edge
+// return the source node of the edge
 // todo: implement proper Node wrapping (currently returns JS_NULL)
-static JSValue js_edge_startNode
+static JSValue js_edge_source
 (
 	JSContext *js_ctx,
 	JSValueConst this_val
@@ -178,7 +184,7 @@ static JSValue js_edge_startNode
 	bool found = Graph_GetNode (g, n_id, &n) ;
 	ASSERT (found) ;
 
-	return JS_NULL ;  // TODO: wrap `n` as a Node JS object
+	return UDF_CreateNode (js_ctx, &n) ;
 }
 
 //------------------------------------------------------------------------------
@@ -193,14 +199,37 @@ JSValue UDF_CreateEdge
 	JSContext *js_ctx,  // JavaScript context
 	const Edge *edge    // pointer to the native FalkorDB Edge
 ) {
+	ASSERT (edge   != NULL) ;
+	ASSERT (js_ctx != NULL) ;
+
+	// clone edge
+	Edge *_edge = rm_malloc (sizeof (Edge)) ;
+	memcpy (_edge, edge, sizeof (Edge)) ;
+
     JSValue obj = JS_NewObjectClass (js_ctx, js_edge_class_id) ;
     if (JS_IsException (obj)) {
         return obj ;
     }
 
-    JS_SetOpaque (obj, (void*) edge) ;
+    JS_SetOpaque (obj, (void*) _edge) ;
 
     return obj ;
+}
+
+// destructor for the Edge JS object
+// frees the underlying native Edge when the JS object is garbage collected
+static void js_edge_finalizer
+(
+	JSRuntime *rt,
+	JSValue val
+) {
+    // get the opaque pointer
+    GraphEntity *edge = JS_GetOpaque (val, js_edge_class_id) ;
+
+    // check if the pointer exists and free the native object
+    if (edge) {
+		rm_free (edge) ;
+    }
 }
 
 //------------------------------------------------------------------------------
@@ -222,6 +251,14 @@ void UDF_RegisterEdgeClass
 
 // register the Edge class with a JavaScript context
 // makes the Edge class available within the provided QuickJS context
+static const JSCFunctionListEntry edge_proto_func_list[] = {
+	JS_CGETSET_DEF ("id",         js_edge_id,              NULL),
+	JS_CGETSET_DEF ("type",       js_edge_type,            NULL),
+	JS_CGETSET_DEF ("source",     js_edge_source,          NULL),
+	JS_CGETSET_DEF ("target",     js_edge_target,          NULL),
+	JS_CGETSET_DEF ("attributes", UDF_EntityGetAttributes, NULL)
+} ;
+
 void UDF_RegisterEdgeProto
 (
 	JSContext *js_ctx  // JavaScript context
@@ -231,16 +268,8 @@ void UDF_RegisterEdgeProto
 	// prototype object
     JSValue proto = JS_NewObject (js_ctx) ;
 
-    int res = JS_SetPropertyFunctionList (js_ctx, proto,
-			(JSCFunctionListEntry[]) {
-            JS_CGETSET_DEF ("id",         js_edge_id,              NULL),
-            JS_CGETSET_DEF ("type",       js_edge_type,            NULL),
-            JS_CGETSET_DEF ("endNode",    js_edge_endNode,         NULL),
-            JS_CGETSET_DEF ("startNode",  js_edge_startNode,       NULL),
-            JS_CGETSET_DEF ("attributes", UDF_EntityGetAttributes, NULL)
-        },
-        5
-    ) ;
+    int res =
+		JS_SetPropertyFunctionList (js_ctx, proto, edge_proto_func_list, 5) ;
 	ASSERT (res == 0) ;
 
     JS_SetClassProto (js_ctx, js_edge_class_id, proto) ;
