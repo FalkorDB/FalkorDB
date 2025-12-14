@@ -126,7 +126,11 @@ Make sure to complete these requirements:
 
 1️⃣ The FalkorDB repository: `git clone --recurse-submodules -j8 https://github.com/FalkorDB/FalkorDB.git`
 
->On Ubuntu Linux, run: `apt-get install build-essential cmake m4 automake peg libtool autoconf python3 python3-pip`
+>On Ubuntu Linux, run: `apt-get install build-essential cmake m4 automake peg libtool autoconf python3 python3-pip libssl-dev`
+>
+>when your python3 --version says < 3.7 write:
+>
+>python3 -m pip install dataclasses
 	
 >On OS X, verify that `homebrew` is installed and run: `brew install cmake m4 automake peg libtool autoconf`.
 >>The version of Clang that ships with the OS X toolchain does not support OpenMP, which is a requirement for FalkorDB. One way to resolve this is to run `brew install gcc g++` and follow the on-screen instructions to update the symbolic links. Note that this is a system-wide change - setting the environment variables for `CC` and `CXX` will work if that is not an option.
