@@ -126,8 +126,8 @@ class testGraphCopy():
             self.env.skip()
 
         # make sure copying of a random graph is working as expected
-        src = 'a'
-        dest = 'z'
+        src = 'n'
+        dest = 'm'
 
         src_graph = self.db.select_graph(src)
         nodes, edges = create_random_schema()
