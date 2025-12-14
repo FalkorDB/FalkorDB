@@ -33,6 +33,10 @@ class testGraphCopy():
         raise RuntimeError("Redis not loaded after 20 seconds")
 
     def test_01_invalid_invocation(self):
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
         # validate invalid invocations of the GRAPH.COPY command
 
         # missing src graph
@@ -85,6 +89,10 @@ class testGraphCopy():
         self.conn.delete(src, dest)
 
     def test_02_copy_empty_graph(self):
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
         # src is an empty graph
         src = 'a'
         dest = 'z'
@@ -113,6 +121,10 @@ class testGraphCopy():
         dest_graph.delete()
 
     def test_03_copy_random_graph(self):
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
         # make sure copying of a random graph is working as expected
         src = 'a'
         dest = 'z'
@@ -133,6 +145,10 @@ class testGraphCopy():
         dest_graph.delete()
 
     def test_04_copy_constraints(self):
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
         # make sure constrains and indexes are copied
 
         src_id = GRAPH_ID
@@ -157,6 +173,10 @@ class testGraphCopy():
         clone_graph.delete()
 
     def test_05_chain_of_copies(self):
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
         # make multiple copies of essentially the same graph
         # start with graph A
         # copy A to B, copy B to C and C to D
@@ -186,6 +206,10 @@ class testGraphCopy():
             graph.delete()
 
     def test_06_write_to_copy(self):
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
         # make sure copied graph is writeable and loadable
         src_graph_id = GRAPH_ID
         copy_graph_id = GRAPH_ID + "_copy"
@@ -213,6 +237,10 @@ class testGraphCopy():
         copy_graph.delete()
 
     def test_07_copy_uneffected_by_vkey_size(self):
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
         # set size of virtual key to 1
         # i.e. number of entities per virtual key is 1.
         vkey_max_entity_count = self.db.config_get("VKEY_MAX_ENTITY_COUNT")
