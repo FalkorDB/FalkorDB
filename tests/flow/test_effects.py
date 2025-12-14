@@ -1074,5 +1074,6 @@ class testEffects():
             self.wait_for_effect()
 
         # make sure graphs are the same!
+        self.master.execute_command("WAIT", 1, 0)
         self.assert_graph_eq()
 
