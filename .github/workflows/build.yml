@@ -463,7 +463,7 @@ jobs:
         test_type: [unit, flow, tck, fuzz]
     steps:
       - name: Download test image
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp
@@ -515,7 +515,7 @@ jobs:
             machine_label: ubuntu-24.04-arm
     steps:
       - name: Download image
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: falkordb-${{ matrix.platform.suffix }}
           path: /tmp
