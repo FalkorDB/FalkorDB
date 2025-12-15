@@ -1035,6 +1035,9 @@ class testEffects():
         self.env.flush()        # clean slate
         self.effects_disable()  # disable effects
 
+        self.master_graph  = Graph(self.master, GRAPH_ID)
+        self.replica_graph = Graph(self.replica, GRAPH_ID)
+
         # each of the following queries contains a non deterministic element
         queries = [
             "WITH date()                  AS x CREATE ()",
@@ -1074,5 +1077,6 @@ class testEffects():
             self.wait_for_effect()
 
         # make sure graphs are the same!
+        self.master.execute_command("WAIT", 1, 0)
         self.assert_graph_eq()
 
