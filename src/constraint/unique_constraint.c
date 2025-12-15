@@ -71,46 +71,46 @@ bool EnforceUniqueEntity
 	char **err_msg         // report error message
 ) {
 	// validations
-	ASSERT(c != NULL);
-	ASSERT(e != NULL);
+	ASSERT (c != NULL) ;
+	ASSERT (e != NULL) ;
 
-	UniqueConstraint _c = (UniqueConstraint)c;
+	UniqueConstraint _c = (UniqueConstraint)c ;
 
 	//--------------------------------------------------------------------------
 	// validate entity has all required attributes
 	//--------------------------------------------------------------------------
 
-	const AttributeSet attributes = GraphEntity_GetAttributes(e);
+	const AttributeSet attributes = GraphEntity_GetAttributes (e) ;
+	SIValue attrs[_c->n_attr] ;
 
-	for(uint8_t i = 0; i < _c->n_attr; i++) {
-		AttributeID attr_id = _c->attrs[i];
+	for (uint8_t i = 0; i < _c->n_attr; i++) {
+		AttributeID attr_id = _c->attrs[i] ;
 
 		// make sure entity possesses attribute
-		SIValue *v = AttributeSet_Get(attributes, attr_id);
-		if(v == ATTRIBUTE_NOTFOUND) {
+		if (!AttributeSet_Get (attributes, attr_id, attrs + i)) {
 			// entity satisfies constraint in a vacuous truth manner
 			return true;
 		}
 
 		// validate attribute type
-		SIType t = SI_TYPE(*v);
-		if(t & ~(T_STRING | T_BOOL | SI_NUMERIC)) {
-			// TODO: see RediSearch MULTI-VALUE index.
-			// TODO: RediSearch exact match for point.
-			return true;
+		SIType t = SI_TYPE (attrs[i]) ;
+		if (t & ~(T_STRING | T_BOOL | SI_NUMERIC)) {
+			// TODO: see RediSearch MULTI-VALUE index
+			// TODO: RediSearch exact match for point
+			return true ;
 		}
 	}
+
+	//--------------------------------------------------------------------------
+	// query RediSearch index
+	//--------------------------------------------------------------------------
 
 	// construct a unique constraint query tree
 	// TODO: prefer to have the RediSearch query "template" constructed
 	// once and reused for each entity
 	Index idx = _c->idx;
-	RSQNode *root = Index_BuildUniqueConstraintQuery(idx, e, _c->attrs,
+	RSQNode *root = Index_BuildUniqueConstraintQuery (idx, attrs, _c->attrs,
 			_c->n_attr);
-
-	//--------------------------------------------------------------------------
-	// query RediSearch index
-	//--------------------------------------------------------------------------
 
 	bool holds = false;  // return value none-optimistic
 

@@ -13,7 +13,7 @@ function graphblas_install (cmake_options)
 % SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-% make sure we
+% make sure we are in the right place
 here = pwd ;
 my_fullpath = mfilename ('fullpath') ;
 slash = strfind (my_fullpath, filesep) ;
@@ -55,16 +55,27 @@ end
 % by default, use OpenMP as found by cmake
 openmp_library = '${OpenMP_C_LIBRARIES}' ;
 if (ismac)
-    % use the OpenMP library inside MATLAB
-    % look for libomp.dylib for Apple Silicon Macs
-    o = [matlabroot '/bin/maca64/libomp.dylib'] ;
-    if (isfile (o))
-        openmp_library = o ;
+    if (have_octave)
+        % assume octave uses the homebrew version of libomp
+        [~, brew] = system ('brew --prefix') ;
+        if (brew (end) == 10)
+            % remove the trailing newline
+            brew = brew (1:end-1) ;
+        end
+        brew_flag = sprintf (' -DOpenMP_ROOT=%s/opt/libomp', brew) ;
+        cmake_options = [cmake_options brew_flag] ;
     else
-        % look for libiomp5.dylib for Intel Macs
-        o = [matlabroot '/sys/os/maci64/libiomp5.dylib'] ;
+        % use the OpenMP library inside MATLAB
+        % look for libomp.dylib for Apple Silicon Macs
+        o = [matlabroot '/bin/maca64/libomp.dylib'] ;
         if (isfile (o))
             openmp_library = o ;
+        else
+            % look for libiomp5.dylib for Intel Macs
+            o = [matlabroot '/sys/os/maci64/libiomp5.dylib'] ;
+            if (isfile (o))
+                openmp_library = o ;
+            end
         end
     end
 end
@@ -74,6 +85,12 @@ f = fopen ('GraphBLAS_MATLAB_OpenMP.cmake', 'w') ;
 fprintf (f, 'target_link_libraries ( graphblas_matlab PRIVATE %s )\n', ...
     openmp_library) ;
 fclose (f) ;
+
+% use the default system library for MATLAB on Linux
+ld_path = '' ;
+if (~have_octave && isunix && ~ismac)
+    ld_path = 'LD_LIBRARY_PATH=;' ;
+end
 
 % build the GraphBLAS library
 threads = maxNumCompThreads * 2 ;
@@ -91,15 +108,20 @@ try
 
     % cmd1: configure with cmake
     build_folder = pwd ;
-    cmd1 = sprintf ('cmake %s ..', cmake_options) ;
+    cmd1 = sprintf ('%s cmake %s ..', ld_path, cmake_options) ;
 
     % build the GraphBLAS library
-    cmd2 = sprintf ('cmake --build . --config Release -j%d', threads) ;
+    cmd2 = sprintf ('%s cmake --build . --config Release -j%d', ...
+        ld_path, threads) ;
 
     % execute cmd1: configure with cmake
     clear mex
     fprintf ('\n================================\n%s\n', cmd1) ;
+
     [status, result] = system (cmd1, '-echo') ;
+    if (have_octave)
+        disp (result)
+    end
     if (status ~= 0)
         cd (here) ;
         error ('GrB:mex', 'GraphBLAS library not compiled') ;
@@ -107,7 +129,16 @@ try
 
     % execute cmd2: build the GraphBLAS library
     fprintf ('\n================================\n%s\n', cmd2) ;
+    fprintf ('Now building GraphBLAS.  Please wait\n') ;
+    if (have_octave)
+        fprintf ('When using octave, intermediate progress is not displayed.\n') ;
+        fprintf ('Be assured that the GraphBLAS library is now being compiled ...\n') ;
+    end
     [status, result] = system (cmd2, '-echo') ;
+    if (have_octave)
+        % display all progress, all at once
+        disp (result)
+    end
     cd (here) ;
     if (status ~= 0)
         error ('GrB:mex', 'GraphBLAS library not compiled') ;
@@ -119,14 +150,18 @@ catch me
     fprintf ('\n    cd %s\n    %s\n    %s\n', build_folder, cmd1, cmd2) ;
     cd (here) ;
 
-    fprintf ('\nThen do this inside MATLAB:\n\n') ;
+    fprintf ('\nThen do this inside MATLAB/Octave:\n\n') ;
     fprintf ('    cd %s/@GrB/private\n    gbmake\n', here) ;
     return ;
 end
 
 % build the GraphBLAS MATLAB interface
-cd '@GrB/private'
-gbmake
+try
+    cd '@GrB/private'
+    gbmake
+catch me
+    fprintf ('Building GraphBLAS @GrB interface failed\n') ;
+end
 
 cd (here) ;
 

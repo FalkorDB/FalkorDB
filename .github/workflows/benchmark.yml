@@ -165,7 +165,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           # change this so it uses a pattern to download all group_* artifacts
           pattern: ${{ github.head_ref || github.ref_name }}-benchmark-group_*-results
@@ -189,7 +189,7 @@ jobs:
           mkdir -p tests/benchmarks/compare/master
 
       - name: Download artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: ${{ github.head_ref }}-benchmark-results
           path: tests/benchmarks/compare/${{ github.head_ref }}

@@ -150,14 +150,6 @@ void mexFunction
     CHECK (i == 2) ;
     OK (GrB_Global_set_INT32_ (GrB_GLOBAL, nth, GxB_GLOBAL_NTHREADS)) ;
 
-    int32_t gpu ;
-    OK (GrB_Global_get_INT32_ (GrB_GLOBAL, &gpu, GxB_GLOBAL_GPU_ID)) ;
-    printf ("gpu id:   %d\n", gpu) ;
-    OK (GrB_Global_set_INT32_ (GrB_GLOBAL, 2, GxB_GLOBAL_GPU_ID)) ;
-    OK (GrB_Global_get_INT32_ (GrB_GLOBAL, &i, GxB_GLOBAL_GPU_ID)) ;
-    CHECK (i == -1) ;
-    OK (GrB_Global_set_INT32_ (GrB_GLOBAL, gpu, GxB_GLOBAL_GPU_ID)) ;
-
     OK (GrB_Global_get_INT32_ (GrB_GLOBAL, &i, GxB_BURBLE)) ;
     printf ("burble:   %d\n", i) ;
     OK (GrB_Global_set_INT32_ (GrB_GLOBAL, 1, GxB_BURBLE)) ;
@@ -168,7 +160,7 @@ void mexFunction
     OK (GxB_print (A, 2)) ;
 
     OK (GrB_Global_get_INT32_ (GrB_GLOBAL, &i, GxB_LIBRARY_OPENMP)) ;
-    CHECK (i == 1) ;
+    printf ("GraphBLAS compiled with OpenMP: %d\n", i) ;
 
     int32_t onebase ;
     OK (GrB_Global_get_INT32_ (GrB_GLOBAL, &onebase, GxB_PRINT_1BASED)) ;

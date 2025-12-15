@@ -569,5 +569,18 @@ GrB_Info GB_subassign_26
     GB_Werk Werk
 ) ;
 
+//------------------------------------------------------------------------------
+// GB_subassign_27: C<C,struct> += A
+//------------------------------------------------------------------------------
+
+GrB_Info GB_subassign_27
+(
+    GrB_Matrix C,
+    // input:
+    const GrB_BinaryOp accum,
+    const GrB_Matrix A,
+    GB_Werk Werk
+) ;
+
 #endif
 

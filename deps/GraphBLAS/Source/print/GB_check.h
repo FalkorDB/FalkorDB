@@ -31,15 +31,10 @@ GrB_Info GB_entry_check     // print a single value
     const GrB_Type type,    // type of value to print
     const void *x,          // value to print
     int pr,                 // print level
-    FILE *f                 // file to print to
-) ;
-
-GrB_Info GB_code_check          // print and check an entry using a type code
-(
-    const GB_Type_code code,    // type code of value to print
-    const void *x,              // entry to print
-    int pr,                     // print level
-    FILE *f                     // file to print to
+    FILE *f,                // file to print to
+    // for user-defined types only:
+    char **string_handle,   // string buffer for printing
+    size_t *string_size     // size of the string buffer
 ) ;
 
 GrB_Info GB_Type_check      // check a GraphBLAS Type

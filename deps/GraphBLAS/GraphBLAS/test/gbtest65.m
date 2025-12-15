@@ -5,9 +5,9 @@ function gbtest65
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
-% load west0479 ; %#ok<LOAD>
-load west0479_correct ; %#ok<*LOAD>
-west0479 = Problem.A ;
+
+load west0479_correct.txt
+west0479 = spconvert (west0479_correct) ;
 
 A = GrB.offdiag (spones (west0479)) ;
 A = A+A' ;

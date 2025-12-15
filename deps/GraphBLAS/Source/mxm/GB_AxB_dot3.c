@@ -23,8 +23,8 @@
 
 #define GB_FREE_WORKSPACE                       \
 {                                               \
-    GB_FREE_MEMORY (&Cwork,    Cwork_size) ;      \
-    GB_FREE_MEMORY (&TaskList, TaskList_size) ;   \
+    GB_FREE_MEMORY (&Cwork,    Cwork_size) ;    \
+    GB_FREE_MEMORY (&TaskList, TaskList_size) ; \
 }
 
 #define GB_FREE_ALL                             \
@@ -328,6 +328,8 @@ GrB_Info GB_AxB_dot3                // C<M> = A'*B using dot product method
         GB_FREE_ALL ;
         return (GrB_OUT_OF_MEMORY) ;
     }
+
+    C->iso = C_iso ;
 
     //--------------------------------------------------------------------------
     // phase2: C<M> = A'*B, via masked dot product method and built-in semiring
