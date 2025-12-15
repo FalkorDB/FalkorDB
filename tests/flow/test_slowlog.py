@@ -20,7 +20,7 @@ class testSlowLog():
 
             tasks = []
             for i in range(1, n):
-                q = f"""UNWIND range(0, 100000) AS x
+                q = f"""UNWIND range(0, 250000) AS x
                        WITH x
                        WHERE x % {i} = 0
                        RETURN count(x)"""
@@ -256,10 +256,10 @@ class testSlowLog():
         # issue 2 slower queries
         # expecting to have them replace existing entries
 
-        q0 = "UNWIND range(0, 200000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
+        q0 = "UNWIND range(0, 450000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
         self.graph.query(q0)
 
-        q1 = "UNWIND range(0, 250000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
+        q1 = "UNWIND range(0, 500000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
         self.graph.query(q1)
 
         entries = self.graph.slowlog()
