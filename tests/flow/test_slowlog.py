@@ -20,7 +20,7 @@ class testSlowLog():
 
             tasks = []
             for i in range(1, n):
-                q = f"""UNWIND range(0, 100000) AS x
+                q = f"""UNWIND range(0, 250000) AS x
                        WITH x
                        WHERE x % {i} = 0
                        RETURN count(x)"""
@@ -129,7 +129,8 @@ class testSlowLog():
         entry = slowlog[0]
         cmd     = entry[1]
         q       = entry[2]
-        params  = entry[3]
+        latency = entry[3]
+        params  = entry[4]
 
         self.env.assertEquals(cmd, "GRAPH.QUERY")
         self.env.assertEquals(params, None)
@@ -152,7 +153,8 @@ class testSlowLog():
         entry = slowlog[0]
         cmd     = entry[1]
         q       = entry[2]
-        params  = entry[3]
+        latency = entry[3]
+        params  = entry[4]
 
         self.env.assertEquals(cmd, "GRAPH.QUERY")
         self.env.assertEquals(query, q)
@@ -175,7 +177,8 @@ class testSlowLog():
         entry = slowlog[0]
         cmd     = entry[1]
         q       = entry[2]
-        params  = entry[3]
+        latency = entry[3]
+        params  = entry[4]
 
         self.env.assertEquals(cmd, "GRAPH.QUERY")
 
@@ -202,7 +205,8 @@ class testSlowLog():
 
         entry = slowlog[0]
         q0 = entry[2]
-        p0 = entry[3]
+        latency0 = entry[3]
+        p0 = entry[4]
 
         # re-issue the same query but with different params
         query = f"UNWIND range(0, $i) AS x RETURN count(x)"
@@ -213,7 +217,8 @@ class testSlowLog():
 
         entry = slowlog[0]
         q1 = entry[2]
-        p1 = entry[3]
+        latency1 = entry[3]
+        p1 = entry[4]
 
         # expecting the same query
         self.env.assertEquals(q0, q1)
@@ -251,10 +256,10 @@ class testSlowLog():
         # issue 2 slower queries
         # expecting to have them replace existing entries
 
-        q0 = "UNWIND range(0, 200000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
+        q0 = "UNWIND range(0, 450000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
         self.graph.query(q0)
 
-        q1 = "UNWIND range(0, 250000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
+        q1 = "UNWIND range(0, 500000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
         self.graph.query(q1)
 
         entries = self.graph.slowlog()

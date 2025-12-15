@@ -357,14 +357,14 @@ void SlowLog_Replay
 		RedisModule_ReplyWithStringBuffer (ctx, (const char *)item->query,
 				strlen (item->query)) ;
 
+		_ReplyWithRoundedDouble (ctx, item->latency) ;
+
 		if (item->params != NULL) {
 			RedisModule_ReplyWithStringBuffer (ctx, (const char *)item->params,
 					strlen (item->params)) ;
 		} else {
 			RedisModule_ReplyWithNull (ctx) ;
 		}
-
-		_ReplyWithRoundedDouble (ctx, item->latency) ;
 	}
 
 	// exit critical section

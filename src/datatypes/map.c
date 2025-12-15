@@ -464,6 +464,30 @@ void Map_ToString
 	*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "}");
 }
 
+// defrag map
+// returns true if map memory been relocated
+bool Map_Defrag
+(
+	SIValue *map,              // map to defrag
+	RedisModuleDefragCtx *ctx  // redis defrag context
+) {
+	ASSERT (map != NULL) ;
+	ASSERT (ctx != NULL) ;
+
+	// pointer to map's elements
+	void *p     = array_hdr (map->map) ;  // array header points to allocation
+	void *moved = RedisModule_DefragAlloc (ctx, p) ;
+
+	// update map if p been relocated
+	if (moved != NULL) {
+		// assign back array's buffer
+		map->map = (struct Pair *) (((array_hdr_t *)moved)->buf) ;
+		return true ;
+	}
+
+	return false ;
+}
+
 // free map
 void Map_Free
 (
