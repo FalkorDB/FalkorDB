@@ -34,12 +34,12 @@ jobs:
             machine_type: e2-standard-4
             runner_label: rhel-build-${{ github.run_id }}-${{ github.run_number }}
             arm: false
-            image: projects/rhel-cloud/global/images/rhel-9-v20241210
+            image: projects/rhel-cloud/global/images/rhel-9-v20251209
           - name: rhel8-build
             machine_type: e2-standard-4
             runner_label: rhel8-build-${{ github.run_id }}-${{ github.run_number }}
             arm: false
-            image: projects/rhel-cloud/global/images/rhel-9-v20241210
+            image: projects/rhel-cloud/global/images/rhel-9-v20251209
     runs-on: ubuntu-latest
     steps:
       - name: Create runners
@@ -51,7 +51,7 @@ jobs:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           machine_zone: ${{ vars.GCP_ZONE }}
           network: gh-runner
-          disk_size: 100
+          disk_size: 200
           machine_type: ${{ matrix.machines.machine_type }}
           runner_label: ${{ matrix.machines.runner_label }}
           arm: ${{ matrix.machines.arm }}
