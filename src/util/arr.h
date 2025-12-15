@@ -218,6 +218,14 @@ static inline uint32_t array_len(const array_t arr) {
 	return arr ? array_hdr(arr)->len : 0;
 }
 
+// get array's cap
+static inline uint32_t array_cap
+(
+	const array_t arr
+) {
+	return array_hdr(arr)->cap ;
+}
+
 #define ARR_CAP_NOSHRINK ((uint32_t)-1)
 static inline void *array_trimm(array_t arr, uint32_t len, uint32_t cap) {
 	array_hdr_t *arr_hdr = array_hdr(arr);

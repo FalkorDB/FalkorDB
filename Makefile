@@ -169,6 +169,15 @@ CC_COMMON_H=$(SRCDIR)/src/common.h
 CC_C_STD=gnu11
 CC_OPENMP=1
 
+# Add zstd library for Alpine/musl builds (libcurl dependency)
+# Detect via OSNICK and libc probe; allow manual override.
+USING_MUSL ?= $(shell ldd 2>&1 | head -1 | grep -qi musl && echo 1 || echo 0)
+ifeq ($(USING_MUSL),1)
+LD_LIBS.ext += zstd
+else ifeq ($(findstring alpine,$(OSNICK)),alpine)
+LD_LIBS.ext += zstd
+endif
+
 include $(MK)/defs
 
 $(info # Building into $(BINDIR))
