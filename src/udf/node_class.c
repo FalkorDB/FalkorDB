@@ -219,8 +219,7 @@ static int js_array_to_c_strings
 
 error_free_strings:
     // if an error occurred mid-loop, free the strings allocated so far
-	uint32_t l = array_len (*c_strings_out) ;
-    for (uint32_t i = 0; i < l; i++) {
+    for (uint32_t i = 0; i < array_len (*c_strings_out) ; i++) {
         free (*c_strings_out[i]) ;
     }
     array_free (*c_strings_out) ;
