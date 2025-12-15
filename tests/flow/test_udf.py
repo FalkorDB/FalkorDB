@@ -361,6 +361,244 @@ class testUDF():
         self.env.assertEqual(res["labels"], ["Test"])
         self.env.assertEqual(res["attributes"], {'id': "user_defined_id", 'height': 160})
 
+    # Test node's get neighbors function
+    def test_node_get_neighbors(self):
+        """
+        The node get neighbors function is quite versatile this test
+        validates its correctness
+        """
+
+        self.graph = self.db.select_graph("neighbors")
+
+        # Helper function for sorting and comparison
+        def sort_entities(entities):
+            # Sort by ID for stable comparison
+            return sorted(entities, key=lambda x: x.id)
+
+        script = """
+        function collect_neighbors(n, config) {
+            const actualConfig = config || {};
+            return n.getNeighbors(actualConfig) ;
+        }
+
+        falkor.register('collect_neighbors', collect_neighbors) ;
+        """
+
+        self.db.udf_load("Traversal", script, True)
+
+        # create graph
+        q = """CREATE (Alice:Person {name: 'Alice', age: 30}),
+        (Bob:Person {name: 'Bob', age: 25}),
+        (Charlie:Person {name: 'Charlie', age: 40}),
+        (David:Person {name: 'David', age: 22}),
+        (Eve:Person {name: 'Eve', age: 28}),
+
+        (London:City {name: 'London', country: 'UK'}),
+        (Paris:City {name: 'Paris', country: 'France'}),
+        (FalkorDB:Company {name: 'FalkorDB', type: 'Tech'}),
+
+        (Alice)-[alice_knows_bob:KNOWS {since: 2018}]->(Bob),
+        (Bob)-[bob_knows_alice:KNOWS {since: 2018}]->(Alice),
+        (Bob)-[bob_knows_charlie:KNOWS {since: 2020}]->(Charlie),
+
+        (Alice)-[alice_works_falkor:WORKS_AT {role: 'Engineer'}]->(FalkorDB),
+        (Alice)-[alice_lives_london:LIVES_IN]->(London),
+        (Bob)-[bob_lives_paris:LIVES_IN]->(Paris),
+
+        (Charlie)-[charlie_visited_london:VISITED {year: 2023}]->(London),
+        (product:Item {name: 'Graph Product', version: 1}),
+        (Alice)-[alice_uses_product:USES]->(product)
+
+        RETURN Alice, Bob, Charlie, David, Eve, London, Paris, FalkorDB, product,
+        alice_knows_bob, bob_knows_alice, bob_knows_charlie, alice_works_falkor,
+        alice_lives_london, bob_lives_paris, charlie_visited_london, alice_uses_product
+        """
+
+        res = self.graph.query(q).result_set[0]
+        alice                  = res[0]
+        bob                    = res[1]
+        charlie                = res[2]
+        david                  = res[3]
+        eve                    = res[4]
+        london                 = res[5]
+        paris                  = res[6]
+        falkorDB               = res[7]
+        product                = res[8]
+        alice_knows_bob        = res[9]
+        bob_knows_alice        = res[10]
+        bob_knows_charlie      = res[11]
+        alice_works_falkor     = res[12]
+        alice_lives_london     = res[13]
+        bob_lives_paris        = res[14]
+        charlie_visited_london = res[15]
+        alice_uses_product     = res[16]
+
+        # 1. Default Behavior: outgoing, all types, all relations, one hop, return nodes
+        # Expected: Bob (KNOWS), FalkorDB (WORKS_AT), London (LIVES_IN), Product (USES)
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a)"
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [bob, falkorDB, london, product]
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        self.env.assertEqual(actual, expected)
+
+        # 2. Filter by `direction: 'incoming'`
+        # Expected: Bob (KNOWS)
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {direction: 'incoming'})"
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [bob]
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        self.env.assertEqual(actual, expected)
+
+        # 3. Filter by `direction: 'both'`
+        # Expected: Bob, FalkorDB, London, Product (outgoing)
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {direction: 'both'})"
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [bob, falkorDB, london, product]
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        self.env.assertEqual(actual, expected)
+
+        # 4. Filter by `direction: 'incoming'` (Testing Charlie)
+        # Expected: Bob (KNOWS)
+        q = "MATCH (c:Person {name: 'Charlie'}) RETURN Traversal.collect_neighbors(c, {direction: 'incoming'})"
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [bob]
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        self.env.assertEqual(actual, expected)
+
+        # 5. Filter by `types: ['KNOWS', 'VISITED']`
+        # Expected: London (VISITED)
+        q = "MATCH (c:Person {name: 'Charlie'}) RETURN Traversal.collect_neighbors(c, {types: ['KNOWS', 'VISITED']})"
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [london]
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        self.env.assertEqual(actual, expected)
+
+        # 6. Filter by `labels: ['City']`
+        # Expected: London
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {labels: ['City']})"
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [london]
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        self.env.assertEqual(actual, expected)
+
+        # 7. Filter by both `types` and `labels` (Alice -> FalkorDB)
+        q = """MATCH (a:Person {name: 'Alice'})
+               RETURN Traversal.collect_neighbors(a, {types: ['WORKS_AT'], labels: ['Company']})"""
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [falkorDB]
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        self.env.assertEqual(actual, expected)
+
+        # 8. Filter by `returnType: 'edges'` (Testing relationship object return)
+        # Expected: Edges (KNOWS, WORKS_AT, LIVES_IN, USES)
+        q = """MATCH (a:Person {name: 'Alice'})
+               RETURN Traversal.collect_neighbors(a, {direction: 'outgoing', returnType: 'edges'})"""
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [alice_knows_bob, alice_works_falkor, alice_lives_london, alice_uses_product]
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        self.env.assertEqual(actual, expected)
+
+        # 9. No Neighbors Test
+        q = "MATCH (e:Person {name: 'Eve'}) RETURN Traversal.collect_neighbors(e)"
+        actual = self.graph.query(q).result_set[0][0]
+        self.env.assertEqual(actual, [])
+
+        # 10. Non-existent relationship-type, collect nodes
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {types: ['NON_EXISTING']})"
+        actual = self.graph.query(q).result_set[0][0]
+        self.env.assertEqual(actual, [])
+
+        # 11. Non-existent relationship-type, collect edges
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {types: ['NON_EXISTING'], returnType: 'edges'})"
+        actual = self.graph.query(q).result_set[0][0]
+        self.env.assertEqual(actual, [])
+
+        # restore original graph
+        self.graph = self.db.select_graph(GRAPH_ID)
+
+    # Test node's get neighbors function edge cases
+    def test_node_get_neighbors_edge_cases(self):
+        """
+        Tests edge cases for the getNeighbors function, ensuring the DB
+        does not crash and reports an error (exception) upon miss-use.
+        """
+
+        self.graph = self.db.select_graph("neighbors_errors")
+
+        script = """
+        function collect_neighbors(n, config) {
+            // We still provide a default object to test the API's internal validation of fields
+            const actualConfig = config || {};
+            return n.getNeighbors(actualConfig) ;
+        }
+
+        falkor.register('collect_neighbors', collect_neighbors) ;
+        """
+        self.db.udf_load("Traversal", script, True)
+
+        # MINIMAL graph setup to get an existing node 'Alice'
+        q_setup = "CREATE (Alice:Person {name: 'Alice', age: 30}) RETURN Alice"
+        res = self.graph.query(q_setup).result_set[0]
+        alice = res[0] # Get the Alice node object
+
+        # Define a helper function to check for query failure (expected behavior for miss-use)
+        def assert_query_fails(query):
+            try:
+                self.graph.query(query)
+                # Fail if no exception was raised
+                print(f"query: {query}")
+                self.env.assertFalse(True and "Query should have failed but succeeded")
+            except Exception as e:
+                # Success: An exception was caught. Check if the error message is relevant.
+                # (Note: Specific error message checking depends on your DB implementation)
+                self.env.assertIn('Exception', str(e))
+
+        #-----------------------------------------------------------------------
+        # Invalid Inputs
+        #-----------------------------------------------------------------------
+
+        queries = [
+            # 1. Invalid `direction` value (unsupported string)
+            "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {direction: 'sideways'})",
+
+            # 2. Invalid `distance` value (negative)
+            "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {distance: -2})",
+
+            # 3. Invalid `distance` value (non-numeric string)
+            "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {distance: 'two'})",
+
+            # 4. Invalid `labels` type (passing a string instead of an array)
+            "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {labels: 'Person'})",
+
+            # 5. Invalid `types` type (passing a number instead of an array)
+            "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {types: 123})",
+
+            # 6. Invalid `returnType` value (unsupported string)
+            "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {returnType: 'properties'})"
+        ]
+
+        for q in queries:
+            assert_query_fails(q)
+
+        # restore original graph
+        self.graph = self.db.select_graph(GRAPH_ID)
+
     # Test that FalkorDB’s JavaScript Edge object exposes:
     # - `id`: internal edge ID
     # - `type`: relationship type string

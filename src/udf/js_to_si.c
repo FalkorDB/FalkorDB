@@ -210,7 +210,7 @@ SIValue UDF_JSToSIValue
 					memcpy (_e, e, sizeof (Edge)) ;
 
 					// wrap in SIValue
-					ret = SI_Edge (e) ;
+					ret = SI_Edge (_e) ;
 					SIValue_SetAllocationType (&ret, M_SELF) ;
 				}
 
