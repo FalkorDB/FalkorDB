@@ -56,6 +56,7 @@
 #include "RG.h"
 #include "../cron/cron.h"
 #include "../util/uuid.h"
+#include "../util/path_utils.h"
 #include "../redismodule.h"
 #include "../graph/graphcontext.h"
 #include "../serializers/serializer_io.h"
@@ -85,22 +86,23 @@ typedef struct {
 static char *_temp_file(void) {
 	char *uuid = UUID_New();
 	char *path;
-
+	char full_path[PATH_MAX];
 	const char *temp_folder = NULL;
 	Config_Option_get(Config_TEMP_FOLDER, &temp_folder);
 
-	int n = asprintf(&path, "%s/%s.dump", temp_folder, uuid);
-	
-	// ensure path is safe to access
-	if(!is_safe_path(path)) {
+	// construct the full path
+	snprintf(full_path, sizeof(full_path), "%s/%s.dump", temp_folder, uuid);
+
+	if(!is_safe_path(temp_folder, full_path)) {
+		// log file access
 		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING,
-				"GRAPH.COPY unsafe temp file path: %s", path);
-		free(path);
+				"attempt to access unauthorized path %s", full_path);
 		rm_free(uuid);
 		return NULL;
 	}
 
-	assert (n == 36 + 10) ;
+	// allocate and copy the path
+	path = rm_strdup(full_path);
 
 	rm_free(uuid);
 

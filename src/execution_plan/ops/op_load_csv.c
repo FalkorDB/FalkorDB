@@ -8,6 +8,7 @@
 #include "../../datatypes/map.h"
 #include "../../datatypes/array.h"
 #include "../../configuration/config.h"
+#include "../../util/path_utils.h"
 
 // forward declarations
 static OpResult LoadCSVInit(OpBase *opBase);
@@ -91,27 +92,7 @@ static FILE *_getRemoteURIReadStream
 // user's relative path:   /../../unauthorized/access.pem
 // if were to access /var/lib/FalkorDB/import/../../unauthorized/access.pem
 // malicious actor whould have gain access to restricted data
-bool is_safe_path
-(
-	const char *base,  // configuration import dir e.g. /var/lib/FalkorDB/import
-	const char *path   // path being accessed
-) {
-    char resolved_path[PATH_MAX];
-
-    // resolve the full path to absolute canonical paths
-    if(realpath(path, resolved_path) == NULL) {
-		if(errno == ENOENT) {
-			// part of the path doesn't exists
-			// return true as we're going to fail opening a non existing file
-			return true;
-		}
-
-        return false;
-    }
-
-    // ensure the resolved_full starts with base
-    return (strncmp(base, resolved_path, strlen(base)) == 0);
-}
+// is_safe_path moved to src/util/path_utils.{h,c}
 
 // initialize CSV reader from a local file URI file://
 static FILE *_getLocalURIReadStream
