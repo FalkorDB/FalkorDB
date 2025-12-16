@@ -3,6 +3,7 @@
    Memcheck:Leak
    ...
    fun:AR_RegisterFuncs
+   fun:_UDFCtx_GetCtx
    fun:RedisModule_OnLoad
    fun:moduleLoad
    fun:moduleLoadFromQueue
