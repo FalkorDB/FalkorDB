@@ -75,6 +75,9 @@
 // import folder
 #define IMPORT_FOLDER "IMPORT_FOLDER"
 
+// temp folder
+#define TEMP_FOLDER "TEMP_FOLDER"
+
 //------------------------------------------------------------------------------
 // Configuration defaults
 //------------------------------------------------------------------------------
@@ -87,6 +90,7 @@
 #define BOLT_PROTOCOL_PORT_DEFAULT         -1  // disabled by default
 #define DELAY_INDEXING_DEFAULT             false
 #define IMPORT_DIR_DEFAULT                 "/var/lib/FalkorDB/import/"
+#define TEMP_DIR_DEFAULT                   "/tmp/"
 
 // configuration object
 typedef struct {
@@ -109,6 +113,7 @@ typedef struct {
 	int16_t bolt_port;                 // bolt protocol port
 	bool delay_indexing;               // delay index construction when decoding
 	char *import_folder;               // path to import folder, used for CSV loading
+	char *temp_folder;                 // path to temp folder, used for storing temporary files
 	Config_on_change cb;               // callback function which being called when config param changed
 } RG_Config;
 
@@ -497,11 +502,41 @@ static void Config_import_folder_set
 	rm_free(config.import_folder);
 
 	// copy new path
-	config.import_folder = rm_strdup(path);
+	size_t len = strlen(path);
+	
+	// check if path ends with "/"
+	if(len > 0 && path[len - 1] == '/') {
+		// allocate and copy without trailing "/"
+		config.import_folder = rm_malloc(len);
+		memcpy(config.import_folder, path, len - 1);
+		config.import_folder[len - 1] = '\0';
+	} else {
+		config.import_folder = rm_strdup(path);
+	}
 }
 
 static const char *Config_import_folder_get(void) {
 	return config.import_folder;
+}
+
+//------------------------------------------------------------------------------
+// temp folder
+//------------------------------------------------------------------------------
+static void Config_temp_folder_set
+(
+	const char *path
+) {
+	ASSERT(path != NULL);
+
+	// free previous value
+	rm_free(config.temp_folder);
+
+	// copy new path
+	config.temp_folder = rm_strdup(path);
+}
+
+static const char *Config_temp_folder_get(void) {
+	return config.temp_folder;
 }
 
 // check if field is a valid configuration option
@@ -552,6 +587,8 @@ bool Config_Contains_field
 		f = Config_DELAY_INDEXING;
 	} else if (!(strcasecmp(field_str, IMPORT_FOLDER))) {
 		f = Config_IMPORT_FOLDER;
+	} else if (!(strcasecmp(field_str, TEMP_FOLDER))) {
+		f = Config_TEMP_FOLDER;
 	} else {
 		return false;
 	}
@@ -621,6 +658,9 @@ SIType Config_Field_type
 			return T_BOOL;
 
 		case Config_IMPORT_FOLDER:
+			return T_STRING;
+
+		case Config_TEMP_FOLDER:
 			return T_STRING;
 
 		//----------------------------------------------------------------------
@@ -717,6 +757,10 @@ const char *Config_Field_name
 			name = IMPORT_FOLDER;
 			break;
 
+		case Config_TEMP_FOLDER:
+			name = TEMP_FOLDER;
+			break;
+
 		//----------------------------------------------------------------------
 		// invalid option
 		//----------------------------------------------------------------------
@@ -793,6 +837,9 @@ static void _Config_SetToDefaults(void) {
 
 	// set default import folder path
 	config.import_folder = rm_strdup(IMPORT_DIR_DEFAULT);
+
+	// set default temp folder path
+	config.temp_folder = rm_strdup(TEMP_DIR_DEFAULT);
 }
 
 int Config_Init
@@ -1145,6 +1192,20 @@ bool Config_Option_get
 		break;
 
 		//----------------------------------------------------------------------
+		// temp folder path
+		//----------------------------------------------------------------------
+
+		case Config_TEMP_FOLDER: {
+			va_start(ap, field);
+			const char **temp_folder = va_arg(ap, const char **);
+			va_end(ap);
+
+			ASSERT(temp_folder != NULL);
+			(*temp_folder) = Config_temp_folder_get();
+		}
+		break;
+
+		//----------------------------------------------------------------------
 		// invalid option
 		//----------------------------------------------------------------------
 
@@ -1418,6 +1479,15 @@ bool Config_Option_set
 			Config_import_folder_set(val);
 		}
 		break;
+
+		//----------------------------------------------------------------------
+		// temp folder path
+		//----------------------------------------------------------------------
+
+		case Config_TEMP_FOLDER: {
+			ASSERT(val != NULL);
+			Config_temp_folder_set(val);
+		}
 
 		//----------------------------------------------------------------------
 		// invalid option

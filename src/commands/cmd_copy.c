@@ -86,7 +86,20 @@ static char *_temp_file(void) {
 	char *uuid = UUID_New();
 	char *path;
 
-	int n = asprintf(&path, "/tmp/%s.dump", uuid);
+	const char *temp_folder = NULL;
+	Config_Option_get(Config_TEMP_FOLDER, &temp_folder);
+
+	int n = asprintf(&path, "%s/%s.dump", temp_folder, uuid);
+	
+	// ensure path is safe to access
+	if(!is_safe_path(path)) {
+		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING,
+				"GRAPH.COPY unsafe temp file path: %s", path);
+		free(path);
+		rm_free(uuid);
+		return NULL;
+	}
+
 	assert (n == 36 + 10) ;
 
 	rm_free(uuid);
@@ -113,6 +126,11 @@ static GraphCopyContext *GraphCopyContext_New
 	ctx->rm_dest = dest;
 	ctx->src     = RedisModule_StringPtrLen(src, NULL);
 	ctx->dest    = RedisModule_StringPtrLen(dest, NULL);
+
+	if(ctx->path == NULL) {
+		rm_free(ctx);
+		return NULL;
+	}
 
 	return ctx;
 }
@@ -527,6 +545,11 @@ int Graph_Copy
 
 	// create command context
 	GraphCopyContext *context = GraphCopyContext_New(bc, argv[1], argv[2]);
+
+	if(context == NULL) {
+		RedisModule_UnblockClient(bc, NULL);
+		return RedisModule_ReplyWithError(ctx, "Failed to create copy context");
+	}
 
 	// add GRAPH.COPY as a cron task to run as soon as possible
 	Cron_AddTask(0, _Graph_Copy, NULL, context);
