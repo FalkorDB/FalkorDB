@@ -81,13 +81,6 @@ void mexFunction
     OK (GxB_Context_set (Context, GxB_CHUNK, -1)) ;
     OK (GxB_Context_get (Context, GxB_CHUNK, &chunk)) ;
     OK (chunk == GB_CHUNK_DEFAULT) ;
-    int gpu = 9 ;
-    OK (GxB_Context_get (Context, GxB_CONTEXT_GPU_ID, &gpu)) ;
-    CHECK (gpu == -1) ;
-    OK (GxB_Context_set (Context, GxB_CONTEXT_GPU_ID, 3)) ;
-    OK (GxB_Context_get (Context, GxB_CONTEXT_GPU_ID, &gpu)) ;
-    printf ("gpu now %d\n", gpu) ;
-    CHECK (gpu == -1) ;
     OK (GxB_Context_engage (GxB_CONTEXT_WORLD)) ;
 
     OK (GxB_Context_fprint (Context, "context", 3, stdout)) ;

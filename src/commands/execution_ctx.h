@@ -21,6 +21,7 @@ typedef enum {
 typedef struct {
 	AST *ast;                 // AST
 	bool cached;              // cache hit/miss
+	bool deterministic;       // false if query contains a non deterministic exp
 	ExecutionPlan *plan;      // execution plan
 	ExecutionType exec_type;  // execution type: query, index create/delete
 } ExecutionCtx;

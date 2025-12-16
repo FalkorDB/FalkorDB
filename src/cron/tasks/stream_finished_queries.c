@@ -14,12 +14,13 @@
 #include "stream_finished_queries.h"
 
 // event fields count
-#define FLD_COUNT 9
+#define FLD_COUNT 10
 
 // field names
 #define FLD_WRITE                    "Write"
 #define FLD_TIMEOUT                  "Timeout"
 #define FLD_NAME_QUERY               "Query"
+#define FLD_NAME_QUERY_PARAMS        "Query parameters"
 #define FLD_NAME_UTILIZED_CACHE      "Utilized cache"
 #define FLD_NAME_WAIT_DURATION       "Wait duration"
 #define FLD_NAME_TOTAL_DURATION      "Total duration"
@@ -59,41 +60,47 @@ static void _initEventTemplate
 
 	_event[4]  = RedisModule_CreateString(
 					ctx,
+					FLD_NAME_QUERY_PARAMS,
+					strlen(FLD_NAME_QUERY_PARAMS)
+				 );
+
+	_event[6]  = RedisModule_CreateString(
+					ctx,
 					FLD_NAME_TOTAL_DURATION,
 					strlen(FLD_NAME_TOTAL_DURATION)
 				 );
 
-	_event[6] = RedisModule_CreateString(
+	_event[8] = RedisModule_CreateString(
 					ctx,
 					FLD_NAME_WAIT_DURATION,
 					strlen(FLD_NAME_WAIT_DURATION)
 				 );
 
-	_event[8] = RedisModule_CreateString(
+	_event[10] = RedisModule_CreateString(
 					ctx,
 					FLD_NAME_EXECUTION_DURATION,
 					strlen(FLD_NAME_EXECUTION_DURATION)
 				 );
 
-	_event[10] = RedisModule_CreateString(
+	_event[12] = RedisModule_CreateString(
 					ctx,
 					FLD_NAME_REPORT_DURATION,
 					strlen(FLD_NAME_REPORT_DURATION)
 				 );
 
-	_event[12] = RedisModule_CreateString(
+	_event[14] = RedisModule_CreateString(
 					ctx,
 					FLD_NAME_UTILIZED_CACHE,
 					strlen(FLD_NAME_UTILIZED_CACHE)
 				 );
 
-	_event[14] = RedisModule_CreateString(
+	_event[16] = RedisModule_CreateString(
 					ctx,
 					FLD_WRITE,
 					strlen(FLD_WRITE)
 				 );
 
-	_event[16] = RedisModule_CreateString(
+	_event[18] = RedisModule_CreateString(
 					ctx,
 					FLD_TIMEOUT,
 					strlen(FLD_TIMEOUT)
@@ -120,30 +127,37 @@ static void _populateEvent
 	// FLD_NAME_QUERY
 	_event[3] = RedisModule_CreateString(ctx, q->query, strlen(q->query));
 
+	// FLD_NAME_QUERY_PARAMS
+	if (q->params != NULL) {
+		_event[5] = RedisModule_CreateString (ctx, q->params, strlen (q->params)) ;
+	} else {
+		_event[5] = RedisModule_CreateString (ctx, "", 0) ;
+	}
+
 	// FLD_NAME_TOTAL_DURATION
 	l = sprintf(buff, "%.6f", total_duration);
-	_event[5] = RedisModule_CreateString(ctx, buff, l);
+	_event[7] = RedisModule_CreateString(ctx, buff, l);
 
 	// FLD_NAME_WAIT_DURATION
 	l = sprintf(buff, "%.6f", q->wait_duration);
-	_event[7] = RedisModule_CreateString(ctx, buff, l);
+	_event[9] = RedisModule_CreateString(ctx, buff, l);
 
 	// FLD_NAME_EXECUTION_DURATION
 	l = sprintf(buff, "%.6f", q->execution_duration);
-	_event[9] = RedisModule_CreateString(ctx, buff, l);
+	_event[11] = RedisModule_CreateString(ctx, buff, l);
 
 	// FLD_NAME_REPORT_DURATION
 	l = sprintf(buff, "%.6f", q->report_duration);
-	_event[11] = RedisModule_CreateString(ctx, buff, l);
+	_event[13] = RedisModule_CreateString(ctx, buff, l);
 
 	// FLD_NAME_UTILIZED_CACHE
-	_event[13] = RedisModule_CreateStringFromLongLong(ctx, q->utilized_cache);
+	_event[15] = RedisModule_CreateStringFromLongLong(ctx, q->utilized_cache);
 
 	// FLD_WRITE
-	_event[15] = RedisModule_CreateStringFromLongLong(ctx, q->write);
+	_event[17] = RedisModule_CreateStringFromLongLong(ctx, q->write);
 
 	// FLD_TIMEOUT
-	_event[17] = RedisModule_CreateStringFromLongLong(ctx, q->timeout);
+	_event[19] = RedisModule_CreateStringFromLongLong(ctx, q->timeout);
 }
 
 // free event values
@@ -275,18 +289,11 @@ bool CronTask_streamFinishedQueries
 		if(key_type == REDISMODULE_KEYTYPE_STREAM ||
 			key_type == REDISMODULE_KEYTYPE_EMPTY) {
 			// add queries to stream
-			_stream_queries(rm_ctx, key, queries);
+			_stream_queries (rm_ctx, key, queries) ;
 
 			// cap stream
-			RedisModule_StreamTrimByLength(key,
-					REDISMODULE_STREAM_TRIM_APPROX, max_query_count);
-
-			// setting telemetry TTL seems to be crashing replicas
-			// set stream TTL
-			//if (key_type == REDISMODULE_KEYTYPE_EMPTY) {
-			//	int res = RedisModule_SetExpire (key, TELEMETRY_STREAM_TTL) ;
-			//	ASSERT (res == REDISMODULE_OK) ;
-			//}
+			RedisModule_StreamTrimByLength (key,
+					REDISMODULE_STREAM_TRIM_APPROX, max_query_count) ;
 		} else {
 			// TODO: decide how to handle this...
 		}

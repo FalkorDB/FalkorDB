@@ -14,13 +14,17 @@ This folder contains the following files:
     GraphBLAS_UserGuide.tex     LaTeX source of the User Guide
     GraphBLAS_UserGuide.bib
     Makefile                    to create the User Gude
+    UserGuide/                  individual sections of the User Guide
 
     GraphBLAS_version.tex       this version of SuiteSparse:GraphBLAS
     License.txt                 SPDX-License-Identifier: Apache-2.0
     README_Doc.txt              this file
 
+    papers/                     see below
+    future/                     notes for future development
+
 --------------------------------------------------------------------------------
-Papers on SuiteSparse:GraphBLAS:
+Papers on SuiteSparse:GraphBLAS (in the papers/ folder)
 --------------------------------------------------------------------------------
 
 toms_graphblas.pdf

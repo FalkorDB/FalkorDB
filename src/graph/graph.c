@@ -1085,12 +1085,12 @@ inline bool Graph_EntityIsDeleted
 (
 	const GraphEntity *e
 ) {
-	if(e->attributes == NULL) {
+	if (e->attributes == NULL) {
 		// most likely an entity which wasn't created just yet (reserved)
 		return false;
 	}
 
-	return DataBlock_ItemIsDeleted(e->attributes);
+	return DataBlock_ItemIsDeleted (e->attributes) ;
 }
 
 // populate 'nodes' with deleted node ids

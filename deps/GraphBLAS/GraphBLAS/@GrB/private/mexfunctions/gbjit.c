@@ -10,11 +10,11 @@
 // Usage:
 
 // [status] = gbjit
-// [status] = gbjit (status)
+// [status, path] = gbjit (status, path)
 
 #include "gb_interface.h"
 
-#define USAGE "usage: [status] = GrB.jit (status) ;"
+#define USAGE "usage: [status, path] = GrB.jit (status, path) ;"
 
 void mexFunction
 (
@@ -29,7 +29,7 @@ void mexFunction
     // check inputs
     //--------------------------------------------------------------------------
 
-    gb_usage (nargin <= 1 && nargout <= 1, USAGE) ;
+    gb_usage (nargin <= 2 && nargout <= 2, USAGE) ;
 
     //--------------------------------------------------------------------------
     // set the JIT control, if requested
@@ -96,6 +96,39 @@ void mexFunction
             default           : pargout [0] = mxCreateString ("unknown") ;
                                 break ;
         }
+    }
+
+    //--------------------------------------------------------------------------
+    // set the JIT cache path, if requested
+    //--------------------------------------------------------------------------
+
+    if (nargin > 1)
+    {
+        if (!mxIsChar (pargin[1]))
+        {
+            ERROR ("path must be a string") ;
+        }
+        size_t pathlen = mxGetNumberOfElements (pargin [1]) + 2 ;
+        char *path = mxMalloc (pathlen + 2) ;
+        path [0] = '\0' ;
+        mxGetString (pargin [1], path, pathlen) ;
+        OK (GrB_Global_set_String (GrB_GLOBAL, path, GxB_JIT_CACHE_PATH)) ;
+        mxFree (path) ;
+    }
+
+    //--------------------------------------------------------------------------
+    // get the JIT cache path, if requested
+    //--------------------------------------------------------------------------
+
+    if (nargout > 1)
+    {
+        size_t pathlen = 0 ;
+        OK (GrB_Global_get_SIZE (GrB_GLOBAL, &pathlen, GxB_JIT_CACHE_PATH)) ;
+        char *path = mxMalloc (pathlen + 2) ;
+        path [0] = '\0' ;
+        OK (GrB_Global_get_String (GrB_GLOBAL, path, GxB_JIT_CACHE_PATH)) ;
+        pargout [1] = mxCreateString (path) ;
+        mxFree (path) ;
     }
 
     //--------------------------------------------------------------------------

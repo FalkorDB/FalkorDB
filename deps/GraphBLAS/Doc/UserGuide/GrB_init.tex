@@ -79,14 +79,14 @@ in the specification.  If the user application wishes to use these in any
 GraphBLAS implementation, an \verb'#ifdef' can control when they are used.
 Refer to the examples in the \verb'GraphBLAS/Demo' folder.
 
-As another example, the GraphBLAS API states that an
-implementation need not define the order in which \verb'GrB_Matrix_build'
-assembles duplicate tuples in its \verb'[I,J,X]' input arrays.  As a result, no
-particular ordering should be relied upon in general.  However,
-SuiteSparse:GraphBLAS does guarantee an ordering, and this guarantee will be
-kept in future versions of SuiteSparse:GraphBLAS as well.  Since not all
-implementations will ensure a particular ordering, the following can be used to
-exploit the ordering returned by SuiteSparse:GraphBLAS.
+As another example, the GraphBLAS API states that an implementation need not
+define the order in which \verb'GrB_Matrix_build' assembles duplicate tuples in
+its \verb'[I,J,X]' input arrays.  As a result, no particular ordering should be
+relied upon in general.  However, SuiteSparse:GraphBLAS does guarantee an
+ordering, and this guarantee will be kept in future versions of
+SuiteSparse:GraphBLAS as well.  Since not all implementations will ensure a
+particular ordering, the following can be used to exploit the ordering returned
+by SuiteSparse:GraphBLAS.
 
     {\footnotesize
     \begin{verbatim}
@@ -100,8 +100,43 @@ exploit the ordering returned by SuiteSparse:GraphBLAS.
     GrB_Matrix_build (C, I, J, X, nvals, op) ;
     #endif \end{verbatim}}
 
-The remainder of this section describes GraphBLAS functions that start or finalize GraphBLAS,
-error handling, and the GraphBLAS integer.
+%===============================================================================
+\subsection{Definitions that modify how GraphBLAS.h behaves}
+%===============================================================================
+
+The GxB extensions defined by \verb'GraphBLAS.h' can be disabled
+by defining the \verb'GRAPHBLAS_VANILLA' token prior to including it:
+
+\begin{verbatim}
+    #define GRAPHBLAS_VANILLA
+    #include "GraphBLAS.h"
+\end{verbatim}
+
+If this is done, all uses of \verb'GxB_*' methods, objects, and
+macros will result in a compile-time error when compiling an application
+that uses SuiteSparse:GraphBLAS.  This flag has no effect on the compilation
+of SuiteSparse:GraphBLAS itself.  It will still include all of its GxB methods
+and its extended behavior (highlighted in yellow in this document).
+
+The GraphBLAS C API defines a set of polymorphic methods based on the
+\verb'_Generic' keyword in the C11 language.  \verb'GraphBLAS.h'
+normally defines a token \verb'GxB_STDC_VERSION', which is by default equal to
+        \verb'__STDC_VERSION__' and is determined automatically in \verb'GraphBLAS.h'.
+        If it is $\ge$ 201112L, then C11 is being used and the polymorphic
+        functions (based on \verb'_Generic') are available.  It can also be
+        \verb'#define'd by the user application prior to its
+        \verb'#include "GraphBLAS.h"' statement.  If a C++ compiler is used to
+        compile the user application then \verb'GxB_STDC_VERSION' is set to
+        199001L to denote C90 (and no \verb'_Generic' keyword is used).
+
+See \verb'GraphBLAS/Demo/Include/graphblas_demo.h' for an example usage.
+
+%===============================================================================
+\subsection{Overview of GraphBLAS initialization and finalization methods}
+%===============================================================================
+
+The remainder of this section describes GraphBLAS functions that start or
+finalize GraphBLAS, error handling, and the GraphBLAS integer.
 
 \vspace{0.2in}
 {\footnotesize
@@ -164,6 +199,8 @@ typedef enum
 {
     GrB_NONBLOCKING = 0,    // methods may return with pending computations
     GrB_BLOCKING = 1        // no computations are ever left pending
+    GxB_NONBLOCKING_GPU = 7099, // non-blocking mode, allow use of GPU(s)
+    GxB_BLOCKING_GPU = 7098,    // blocking mode, allow use of GPU(s)
 }
 GrB_Mode ;
 \end{verbatim}
@@ -188,6 +225,10 @@ when needed.  Non-blocking mode can be much faster than blocking mode, by many
 orders of magnitude in extreme cases.  Blocking mode should be used only when
 debugging a user application.  The mode cannot be changed once it is set by
 \verb'GrB_init'.
+
+To use the GPU, set the mode to \verb'GxB_NONBLOCKING_GPU' or
+\verb'GxB_BLOCKING_GPU'.  In this case, the memory manager functions will
+be based on the Rapids Memory Manager (RMM), with unified shared memory.
 
 GraphBLAS objects are opaque.  This allows GraphBLAS to
 postpone operations and then do them later in a more efficient manner by
@@ -231,6 +272,7 @@ When the user application is finished, exactly one user thread must call
 The mode of a GraphBLAS session can be queried with \verb'GrB_get';
 see Section~\ref{options} for details.
 
+\newpage
 %===============================================================================
 \subsection{{\sf GrB\_getVersion:} determine the C API Version} %===============
 %===============================================================================
@@ -283,21 +325,21 @@ the user application control over this is particularly important when using the
 \verb'GxB_*serialize' and \verb'GxB_Container' methods described in Section
 \ref{serialize_deserialize} and \ref{container}, since they require the user
 application and GraphBLAS to use the same memory manager.
-\verb'user_calloc_func' and \verb'user_realloc_func' are optional, and
-may be \verb'NULL'.  If \verb'NULL', then the \verb'user_malloc_func' is
-relied on instead, for all memory allocations.
-These functions can only be set once, when GraphBLAS starts.
-They can be queried using \verb'GrB_get' (see
-Section~\ref{get_set_global}).
-Either
-\verb'GrB_init' or \verb'GxB_init' must be called before any other GraphBLAS
-operation, but not both.  The functions passed to \verb'GxB_init' must be
-thread-safe.
-The following usage is identical to \verb'GrB_init(mode)':
+\verb'user_calloc_func' and \verb'user_realloc_func' are optional, and may be
+\verb'NULL'.  If \verb'NULL', then the \verb'user_malloc_func' is relied on
+instead, for all memory allocations.  These functions can only be set once,
+when GraphBLAS starts.  They can be queried using \verb'GrB_get' (see
+Section~\ref{get_set_global}).  Either \verb'GrB_init' or \verb'GxB_init' must
+be called before any other GraphBLAS operation, but not both.  The functions
+passed to \verb'GxB_init' must be thread-safe.  The following usage is
+identical to \verb'GrB_init(mode)':
 
     {\footnotesize
     \begin{verbatim}
     GxB_init (mode, malloc, calloc, realloc, free) ; \end{verbatim}}
+
+If a GPU mode is used, the memory manager functions are ignored, and
+the Rapids Memory Manager (RMM) versions are used instead.
 
 %===============================================================================
 \subsection{{\sf GrB\_Info:} status code returned by GraphBLAS} %===============
@@ -380,7 +422,7 @@ string must not be freed or modified.
     info = GrB_some_method_here (C, ...) ;
     if (! (info == GrB_SUCCESS || info == GrB_NO_VALUE))
     {
-        char *err ;
+        const char *err ;
         GrB_error (&err, C) ;
         printf ("info: %d error: %s\n", info, err) ;
     } \end{verbatim}}

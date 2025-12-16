@@ -1,7 +1,7 @@
 behave
 click
 docker
-FalkorDB
+falkordb==1.2.2
 falkordb-bulk-loader
 neo4j
 grammarinator

@@ -56,7 +56,7 @@ GrB_BinaryOp My_rdiv = NULL ;
 "{\n"                                                           \
 "    // escape this quote: \"\n"                                \
 "    /* escape this backslash \\ */\n"                          \
-"    /* revised for GrB 10.0.0 */\n"                            \
+"    /* revised for GrB 10.1.0 */\n"                            \
 "    (*z) = (*y) / (*x) ;\n"                                    \
 "}"
 
