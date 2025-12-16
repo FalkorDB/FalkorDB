@@ -371,28 +371,30 @@ static void _ShutdownEventHandler
 	}
 
 	// stop cron
-	Cron_Stop();
+	Cron_Stop () ;
 
 	// stop indexer
 	Indexer_Stop () ;
 
 	// stop threads before finalize GraphBLAS
-	ThreadPool_Destroy();
+	ThreadPool_Destroy () ;
 
 	// server is shutting down, finalize GraphBLAS
-	LAGraph_Finalize(NULL);
+	LAGraph_Finalize (NULL) ;
 
-	free_cmd_acl();
-	free_run_cmd_as();
+	free_cmd_acl () ;
+	free_run_cmd_as () ;
 
-	BoltApi_Unregister();
+	BoltApi_Unregister () ;
 
 	// free global variables
-	Globals_Free();
+	Globals_Free () ;
 
-	RedisModule_Log(ctx, "notice", "%s", "Clearing RediSearch resources on shutdown");
-	void RediSearch_CleanupModule();  // forward declaration
-	RediSearch_CleanupModule();
+	RedisModule_Log (ctx, "notice", "%s",
+			"Clearing RediSearch resources on shutdown") ;
+
+	void RediSearch_CleanupModule () ;  // forward declaration
+	RediSearch_CleanupModule () ;
 }
 
 static void _ModuleLoadedHandler

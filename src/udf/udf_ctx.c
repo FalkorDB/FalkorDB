@@ -123,9 +123,37 @@ static UDFCtx *_UDFCtx_GetCtx(void) {
 	return ctx;
 }
 
+// TLS destructor callback
+static void UDFCtx_FreeTLSData
+(
+	void *data
+) {
+	if (data == NULL) {
+		return ;
+	}
+
+	UDFCtx *ctx = (UDFCtx*) data ;
+
+	//--------------------------------------------------------------------------
+	// free UDF context
+	//--------------------------------------------------------------------------
+
+	_UDFCtx_ClearLibs (ctx) ;
+
+	if (ctx->js_ctx != NULL) {
+		JS_FreeContext (ctx->js_ctx) ;
+	}
+
+	if (ctx->js_rt) {
+		JS_FreeRuntime (ctx->js_rt) ;
+	}
+
+	rm_free (ctx) ;
+}
+
 // instantiate the thread-local UDFCtx on module load
 bool UDFCtx_Init(void) {
-	return (pthread_key_create (&_tlsUDFCtx, NULL) == 0) ;
+	return (pthread_key_create (&_tlsUDFCtx, UDFCtx_FreeTLSData) == 0) ;
 }
 
 // get number of libraries in TLS UDF context
@@ -241,18 +269,5 @@ JSValueConst *UDFCtx_GetFunction
 
 	UDFFunc *f = _UDFCtx_GetFunc (lib, func_name) ;
 	return (f != NULL) ? &f->func : NULL ;
-}
-
-// free UDF context
-void UDFCtx_Free(void) {
-	UDFCtx *ctx = _UDFCtx_GetCtx () ;
-
-	_UDFCtx_ClearLibs (ctx) ;
-    JS_FreeContext (ctx->js_ctx) ;
-    JS_FreeRuntime (ctx->js_rt) ;
-	rm_free (ctx) ;
-
-	// NULL-set the context
-	pthread_setspecific (_tlsUDFCtx, NULL) ;
 }
 
