@@ -27,6 +27,13 @@ void Globals_Set_ProcessIsChild
 	bool process_is_child
 );
 
+// set global variable 'process_is_child' without locking
+// IMPORTANT: This function must only be called from pthread_atfork handlers
+void Globals_Set_ProcessIsChild_NoLock
+(
+	bool process_is_child
+);
+
 // get process main thread id
 pthread_t Globals_Get_MainThreadId(void);
 

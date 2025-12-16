@@ -562,7 +562,9 @@ static void RG_AfterForkParent() {
 static void RG_AfterForkChild() {
 	// mark that the child is a forked process so that it doesn't
 	// attempt invalid accesses of POSIX primitives it doesn't own
-	Globals_Set_ProcessIsChild(true);
+	// NOTE: We use the lock-free version here because pthread_rwlock is in an
+	// undefined state after fork() and attempting to acquire it will cause deadlock.
+	Globals_Set_ProcessIsChild_NoLock(true);
 
 	// restrict GraphBLAS to use a single thread this is done for 2 reasons:
 	// 1. save resources

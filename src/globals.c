@@ -66,6 +66,16 @@ void Globals_Set_ProcessIsChild
 	pthread_rwlock_unlock(&_globals.lock);
 }
 
+// set global variable 'process_is_child' without locking
+// IMPORTANT: This function must only be called from pthread_atfork handlers
+// where locks cannot be acquired safely in the forked child process.
+void Globals_Set_ProcessIsChild_NoLock
+(
+	bool process_is_child
+) {
+	_globals.process_is_child = process_is_child;
+}
+
 // get main thread id
 pthread_t Globals_Get_MainThreadId(void) {
 	return _globals.main_thread_id;
