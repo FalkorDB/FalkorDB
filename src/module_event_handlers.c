@@ -366,7 +366,6 @@ static void _ShutdownEventHandler
 	uint64_t subevent,
 	void *data
 ) {
-	void RediSearch_CleanupModule();
 	if (!getenv("RS_GLOBAL_DTORS")) {  // used only with sanitizer or valgrind
 		return; 
 	}
@@ -383,9 +382,6 @@ static void _ShutdownEventHandler
 	// server is shutting down, finalize GraphBLAS
 	LAGraph_Finalize(NULL);
 
-	RedisModule_Log(ctx, "notice", "%s", "Clearing RediSearch resources on shutdown");
-	RediSearch_CleanupModule();
-
 	free_cmd_acl();
 	free_run_cmd_as();
 
@@ -393,6 +389,10 @@ static void _ShutdownEventHandler
 
 	// free global variables
 	Globals_Free();
+
+	RedisModule_Log(ctx, "notice", "%s", "Clearing RediSearch resources on shutdown");
+	void RediSearch_CleanupModule();  // forward declaration
+	RediSearch_CleanupModule();
 }
 
 static void _ModuleLoadedHandler

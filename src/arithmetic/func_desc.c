@@ -84,14 +84,14 @@ void AR_FinalizeFuncsRepo(void) {
 	raxSeek (&it, "^", NULL, 0);
 	while (raxNext (&it)) {
 		AR_FuncDesc *f = it.data ;
-		rm_free ((void*)f->name) ;
+		rm_free ((void*)f->name) ;  // free function name
 		AR_FuncFree (f) ;
 	}
 
-	pthread_rwlock_destroy (&__udfs->lock) ;
-
 	raxStop (&it);
 	raxFree (__udfs->repo) ;
+
+	pthread_rwlock_destroy (&__udfs->lock) ;
 }
 
 // create a new function descriptor
@@ -315,6 +315,10 @@ void AR_FuncFree
 	AR_FuncDesc *f  // function descriptor
 ) {
 	ASSERT (f != NULL) ;
+
+	if (f->types != NULL) {
+		array_free (f->types) ;
+	}
 
 	rm_free (f) ;
 }

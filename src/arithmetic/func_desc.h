@@ -62,9 +62,6 @@ typedef struct {
 // initialize functions repository
 void AR_InitFuncsRepo(void) ;
 
-// finalize functions repository
-void AR_FinalizeFuncsRepo(void) ;
-
 // create a new function descriptor
 AR_FuncDesc *AR_FuncDescNew
 (
@@ -136,4 +133,7 @@ void AR_FuncFree
 (
 	AR_FuncDesc *f  // function descriptor
 );
+
+// finalize functions repository
+void AR_FinalizeFuncsRepo (void) ;
 
