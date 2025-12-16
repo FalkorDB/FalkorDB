@@ -27,7 +27,8 @@ static void OverrideOsPreserves(OsPreserves* os_preserves) {
 #include "internal/filesystem.h"
 #include "internal/stack_line_reader.h"
 #include "internal/string_view.h"
-static void DetectFeaturesFromOs(X86Features* features) {
+static void DetectFeaturesFromOs(X86Info* info, X86Features* features) {
+  (void)info;
   // Handling Linux platform through /proc/cpuinfo.
   const int fd = CpuFeatures_OpenFile("/proc/cpuinfo");
   if (fd >= 0) {
@@ -43,7 +44,7 @@ static void DetectFeaturesFromOs(X86Features* features) {
       if (!CpuFeatures_StringView_IsEquals(key, str("flags"))) continue;
       features->sse = CpuFeatures_StringView_HasWord(value, "sse", ' ');
       features->sse2 = CpuFeatures_StringView_HasWord(value, "sse2", ' ');
-      features->sse3 = CpuFeatures_StringView_HasWord(value, "sse3", ' ');
+      features->sse3 = CpuFeatures_StringView_HasWord(value, "pni", ' ');
       features->ssse3 = CpuFeatures_StringView_HasWord(value, "ssse3", ' ');
       features->sse4_1 = CpuFeatures_StringView_HasWord(value, "sse4_1", ' ');
       features->sse4_2 = CpuFeatures_StringView_HasWord(value, "sse4_2", ' ');

@@ -7,12 +7,12 @@ import threading
 import multiprocessing
 from common import *
 
-GRAPH_ID ="info"
+GRAPH_ID = "info"
 
 class LoggedQuery:
     def __init__(self, event):
         # make sure event contains all expected fields
-        fields = ["Received at", "Query", "Total duration", "Wait duration",
+        fields = ["Received at", "Query", "Query parameters", "Total duration", "Wait duration",
                   "Execution duration", "Report duration", "Utilized cache",
                   "Write", "Timeout"]
         assert(all(field in event for field in fields))
@@ -20,6 +20,7 @@ class LoggedQuery:
         # cast and initialize
         self.received_at        = datetime.datetime.fromtimestamp(int(event['Received at']))
         self.query              = event['Query']
+        self.params             = event['Query parameters']
         self.total_duration     = float(event['Total duration'])
         self.wait_duration      = float(event['Wait duration'])
         self.execution_duration = float(event['Execution duration'])
@@ -31,6 +32,7 @@ class LoggedQuery:
     def __str__(self):
         return f"""ReceivedAt: {self.ReceivedAt}
                  Query: {self.Query}
+                 Parameters: {self.params}
                  TotalDuration: {self.TotalDuration}
                  WaitDuration: {self.WaitDuration}
                  ExecutionDuration: {self.ExecutionDuration}
@@ -44,6 +46,10 @@ class LoggedQuery:
     @property
     def Query(self):
         return self.query
+
+    @property
+    def Parameters(self):
+        return self.params
 
     @property
     def TotalDuration(self):
@@ -68,50 +74,51 @@ class LoggedQuery:
 def StreamName(graph):
     return f"telemetry{{{graph.name}}}"
 
-class testGraphInfo(FlowTestsBase):
+def consumeStream(conn, env, stream, drop=True, n_items=1):
+    # wait for telemetry stream to be created
+    t = 'none' # type of stream_key
+
+    while t == 'none':
+        time.sleep(0.2)
+        t = conn.type(stream)
+
+    env.assertEquals(t, "stream")
+
+    # convert stream events to LoggedQueries
+    logged_queries = []
+    streams = {stream: '0-0'}
+
+    elapsed = 10
+    while len(logged_queries) < n_items and elapsed > 0:
+        # read messages from the stream
+        messages = conn.xread(streams, block=0)
+
+        if len(messages) > 0:
+            # process each message received
+            stream_messages = messages[0][1]
+            for message_id, message_payload in stream_messages:
+                logged_queries.append(LoggedQuery(message_payload))
+
+            # update stream last ID
+            streams[stream] = stream_messages[-1][0]
+
+        time.sleep(0.2)
+        elapsed -= 0.2
+
+    # drop stream
+    if drop:
+        conn.delete(stream)
+
+    # reverse order to match expected order of events
+    logged_queries.reverse()
+
+    return logged_queries
+
+class testGraphInfo():
     def __init__(self):
         self.env, self.db = Env()
         self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
-
-    def consumeStream(self, stream, drop=True, n_items=1):
-        # wait for telemetry stream to be created
-        t = 'none' # type of stream_key
-
-        while t == 'none':
-            t = self.conn.type(stream)
-
-        self.env.assertEquals(t, "stream")
-
-        # convert stream events to LoggedQueries
-        logged_queries = []
-        streams = {stream: '0-0'}
-
-        elapsed = 10
-        while len(logged_queries) < n_items and elapsed > 0:
-            # read messages from the stream
-            messages = self.conn.xread(streams, block=0)
-
-            if len(messages) > 0:
-                # process each message received
-                stream_messages = messages[0][1]
-                for message_id, message_payload in stream_messages:
-                    logged_queries.append(LoggedQuery(message_payload))
-
-                # update stream last ID
-                streams[stream] = stream_messages[-1][0]
-
-            time.sleep(0.2)
-            elapsed -= 0.2
-
-        # drop stream
-        if drop:
-            self.conn.delete(stream)
-
-        # reverse order to match expected order of events
-        logged_queries.reverse()
-
-        return logged_queries
 
     def assertLoggedQuery(self, logged_query, query, utilized_cache):
         # validate event values
@@ -132,7 +139,7 @@ class testGraphInfo(FlowTestsBase):
             self.graph.query(q)
 
         # read stream
-        logged_queries = self.consumeStream(StreamName(self.graph), n_items=3)
+        logged_queries = consumeStream(self.conn, self.env, StreamName(self.graph), n_items=3)
 
         # validate events
         self.env.assertEquals(len(logged_queries), 3)
@@ -150,7 +157,7 @@ class testGraphInfo(FlowTestsBase):
                 self.graph.query(q)
 
         # read stream
-        logged_queries = self.consumeStream(StreamName(self.graph), n_items=6)
+        logged_queries = consumeStream(self.conn, self.env, StreamName(self.graph), n_items=6)
 
         # validate events
         self.env.assertEquals(len(logged_queries), 6)
@@ -192,7 +199,7 @@ class testGraphInfo(FlowTestsBase):
             t.join()
 
         # read stream
-        logged_queries = self.consumeStream(StreamName(self.graph))
+        logged_queries = consumeStream(self.conn, self.env, StreamName(self.graph))
 
         # make sure number of logged queries is capped
         self.env.assertLess(len(logged_queries), 1200)
@@ -204,15 +211,35 @@ class testGraphInfo(FlowTestsBase):
         length = 4000
         long_str = ''.join(random.choice(string.ascii_lowercase) for _ in range(length))
 
-        q = f"RETURN '{long_str}'"
-        self.graph.query(q)
+        long_query       = f"RETURN '{long_str}'"
+        long_param       = "RETURN $i"
+        long_param_query = f"RETURN $i, '{long_str}'"
+
+        self.graph.query(long_query)
+        self.graph.query(long_param, {'i': long_str})
+        self.graph.query(long_param_query, {'i': long_str})
 
         # read stream
-        logged_queries = self.consumeStream(StreamName(self.graph), drop=False)
+        logged_queries = consumeStream(self.conn, self.env, StreamName(self.graph), drop=False)
 
+        # assert long query
+        logged_query = logged_queries[2]
+        self.env.assertLess(len(logged_query.Query), 4000)
+        self.env.assertEquals(logged_query.Query[:2000], long_query[:2000])
+        self.env.assertEquals(logged_query.Query[-3:], "...")
+
+        # assert long param
+        logged_query = logged_queries[1]
+        self.env.assertLess(len(logged_query.Parameters), 4000)
+        self.env.assertEquals(logged_query.Parameters[-3:], "...")
+
+        # assert long param and query
         logged_query = logged_queries[0]
-
-        self.env.assertEquals(logged_query.Query, q)
+        self.env.assertLess(len(logged_query.Query), 4000)
+        self.env.assertEquals(logged_query.Query[:2000], long_param_query[:2000])
+        self.env.assertEquals(logged_query.Query[-3:], "...")
+        self.env.assertLess(len(logged_query.Parameters), 4000)
+        self.env.assertEquals(logged_query.Parameters[-3:], "...")
 
     def test04_delete_graph(self):
         """make sure reporting stream is deleted when graph is deleted"""
@@ -245,7 +272,7 @@ class testGraphInfo(FlowTestsBase):
         old_graph.query("RETURN 1")
 
         # wait for stream to be created
-        logged_queries = self.consumeStream(StreamName(old_graph), drop=False)
+        logged_queries = consumeStream(self.conn, self.env, StreamName(old_graph), drop=False)
         self.env.assertEquals(len(logged_queries), 1)
 
         # validate that stream exists
@@ -258,7 +285,7 @@ class testGraphInfo(FlowTestsBase):
         new_graph.query("RETURN 1")
 
         # wait for stream to be created
-        logged_queries = self.consumeStream(StreamName(new_graph), drop=False)
+        logged_queries = consumeStream(self.conn, self.env, StreamName(new_graph), drop=False)
         self.env.assertEquals(len(logged_queries), 1)
 
         # validate that stream was renamed
@@ -434,24 +461,89 @@ class testGraphInfo(FlowTestsBase):
         for t in threads:
             t.join()
 
-    # disabled, telemetry ttl crashes replicas
-    def _test08_telemetry_ttl(self):
-        """make sure telemetry keys have ttl"""
-
-        # make sure graph exists
-        self.graph.query("RETURN 1")
-
-        # wait for telemetry stream to be created
-        key_type = 'none' # type of stream_key
-        telemetry_key = StreamName(self.graph)
-
-        while key_type == 'none':
-            key_type = self.conn.type(telemetry_key)
-
-        # make sure we're dealing with a telemetry stream
-        self.env.assertEquals(key_type, "stream")
-
-        # make sure stream is associated with TTL
-        ttl = self.conn.ttl(telemetry_key)
-        self.env.assertGreater(ttl, 0)
-
+#class testGraphInfoReplication():
+#    def __init__(self):
+#        self.env, self.db = Env(env='oss', useSlaves=True)
+#
+#        # skip test if we're running under Sanitizer
+#        if SANITIZER:
+#            self.env.skip()
+#
+#        self.env.flush()  # clean slate
+#
+#        self.master  = self.env.getConnection()
+#        self.replica = self.env.getSlaveConnection()
+#        self.master_graph  = Graph(self.master, GRAPH_ID)
+#        self.replica_graph = Graph(self.replica, GRAPH_ID)
+#
+#        self.master_host = self.master.connection_pool.connection_kwargs['host']
+#        self.master_port = self.master.connection_pool.connection_kwargs['port']
+#        self.replica_host  = self.replica.connection_pool.connection_kwargs['host']
+#        self.replica_port  = self.replica.connection_pool.connection_kwargs['port']
+#
+#    def test01_stream_replication(self):
+#        """validate telemetry stream writer in the event of a failover
+#           only the master should be writing data to the telemetry stream
+#           and stream right should be replicated"""
+#
+#        # test flow:
+#        # 1. write to replica, expect no telemetry
+#        # 2. write to master, expect telemetry on both master & replica
+#        # 3. failover
+#        # 4. write to new replica, expect no telemetry
+#        # 5. write to new master, expect telemetry on both master & replica
+#
+#        performed_failover = False
+#        self.master_graph  = Graph(self.master, "start")
+#        self.replica_graph = Graph(self.replica, "start")
+#
+#        for i in range(2):
+#            # alow writes on replica
+#            self.replica.config_set("replica-read-only", "no")
+#
+#            # write some queries directly on the replica
+#            # assert that a telemetry stream is NOT created
+#            for _ in range(0, 20):
+#                self.replica_graph.query("CREATE ()")
+#
+#            # wait a bit before checking if a telemetry stream been created
+#            time.sleep(4)
+#
+#            # telemetry key shouldn't exists
+#            self.env.assertFalse(self.replica.exists(StreamName(self.replica_graph)))
+#
+#            # write some queries to the master and validate that a telemetry stream
+#            # is created
+#            for _ in range(20):
+#                self.master_graph.query("CREATE ()")
+#
+#            # ensure replication is caught up
+#            self.master.wait(1, 2000)
+#
+#            # read stream from master
+#            logged_queries = consumeStream(self.master, self.env, StreamName(self.master_graph), drop=False, n_items=20)
+#            self.env.assertEquals(len(logged_queries), 20)
+#
+#            # ensure stream replicated to replica
+#            logged_queries = consumeStream(self.replica, self.env, StreamName(self.replica_graph), drop=False, n_items=20)
+#            self.env.assertEquals(len(logged_queries), 20)
+#
+#            if performed_failover:
+#                return
+#
+#            # Trigger failover
+#            # make replica become master
+#            self.replica.execute_command("REPLICAOF", "NO", "ONE")
+#
+#            # make old master a replica of new master
+#            self.master.execute_command("REPLICAOF", self.replica_host, self.replica_port)
+#
+#            performed_failover = True
+#
+#            # reset variables
+#            t = self.master
+#            self.master  = self.replica
+#            self.replica = t
+#            self.master_graph  = Graph(self.master, "after_failover")
+#            self.replica_graph = Graph(self.replica, "after_failover")
+#

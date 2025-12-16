@@ -10,9 +10,8 @@ rng ('default') ;
 % by reducing the precision of its entries, and dropping one entry.
 % The correct version is in the HB/west0479 matrix at sparse.tamu.edu.
 
-% load west0479 ; %#ok<*LOAD>
-load west0479_correct ; %#ok<*LOAD>
-west0479 = Problem.A ;
+load west0479_correct.txt
+west0479 = spconvert (west0479_correct) ;
 
 A = GrB.offdiag (west0479) ;
 A = A+A' ;

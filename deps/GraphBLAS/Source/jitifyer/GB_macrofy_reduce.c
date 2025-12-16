@@ -54,7 +54,8 @@ void GB_macrofy_reduce      // construct all macros for GrB_reduce to scalar
     // construct the typedefs
     //--------------------------------------------------------------------------
 
-    GB_macrofy_typedefs (fp, NULL, atype, NULL, NULL, NULL, monoid->op->ztype) ;
+    GB_macrofy_typedefs (fp, NULL, atype, NULL, NULL, NULL, monoid->op->ztype,
+        NULL) ;
 
     //--------------------------------------------------------------------------
     // construct the monoid macros

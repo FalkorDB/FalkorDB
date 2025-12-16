@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__AxB_dot2__038120f1100110c7.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.0.2, Timothy A. Davis, (c) 2017-2025,
+// SuiteSparse:GraphBLAS v10.3.0, Timothy A. Davis, (c) 2017-2025,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -57,6 +57,7 @@
 #define GB_PUTC(c,Cx,p) Cx [p] = c
 #define GB_Cp_TYPE uint64_t
 #define GB_Cj_TYPE uint64_t
+#define GB_Cj_SIGNED_TYPE int64_t
 #define GB_Ci_TYPE uint64_t
 #define GB_Ci_SIGNED_TYPE int64_t
 #define GB_Cp_BITS 64
@@ -71,6 +72,7 @@
 #define GB_NO_MASK     1
 #define GB_Mp_TYPE uint64_t
 #define GB_Mj_TYPE uint64_t
+#define GB_Mj_SIGNED_TYPE int64_t
 #define GB_Mi_TYPE uint64_t
 #define GB_Mi_SIGNED_TYPE int64_t
 #define GB_Mp_BITS 64
@@ -95,6 +97,7 @@
 #define GB_GETA(a,Ax,p,iso) a = Ax [p]
 #define GB_Ap_TYPE uint32_t
 #define GB_Aj_TYPE uint32_t
+#define GB_Aj_SIGNED_TYPE int32_t
 #define GB_Ai_TYPE uint32_t
 #define GB_Ai_SIGNED_TYPE int32_t
 #define GB_Ap_BITS 32
@@ -120,6 +123,7 @@
 #define GB_GETB(b,Bx,p,iso)
 #define GB_Bp_TYPE uint64_t
 #define GB_Bj_TYPE uint64_t
+#define GB_Bj_SIGNED_TYPE int64_t
 #define GB_Bi_TYPE uint64_t
 #define GB_Bi_SIGNED_TYPE int64_t
 #define GB_Bp_BITS 64
@@ -135,8 +139,8 @@
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0x5d980f84a2c855a8 ;
-    v [0] = 10 ; v [1] = 0 ; v [2] = 2 ;
+    (*hash) = 0xc5776312ba187d12 ;
+    v [0] = 10 ; v [1] = 3 ; v [2] = 0 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = NULL ;

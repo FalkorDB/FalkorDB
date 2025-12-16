@@ -7,6 +7,8 @@
 
 //------------------------------------------------------------------------------
 
+// FUTURE: allow C=C*D to be done without making a copy of C
+
 #include "mxm/GB_mxm.h"
 #include "binaryop/GB_binop.h"
 #include "apply/GB_apply.h"
@@ -214,6 +216,20 @@ GrB_Info GB_colscale                // C = A*D, column scale with diagonal D
         if (GB_cuda_colscale_branch (A, D, semiring, flipxy))
         {
             info = GB_cuda_colscale (C, A, D, semiring, flipxy) ;
+            if (info == GrB_SUCCESS)
+            {
+                // CUDA succeeded
+                GB_FREE_WORKSPACE ;
+                return (GrB_SUCCESS) ;
+            }
+            if (info < GrB_SUCCESS)
+            {
+                // CUDA tried but failed
+                GB_FREE_ALL ;
+                return (info) ;
+            }
+            // otherwise, CUDA was not tried (JIT disabled or failed)
+            ASSERT (info == GrB_NO_VALUE) ;
         }
         #endif
 

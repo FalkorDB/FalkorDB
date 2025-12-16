@@ -24,11 +24,8 @@ static inline int GB_subref_method  // return the method to use (1 to 12)
     const int64_t avlen,            // A->vlen
     const int Ikind,                // GB_ALL, GB_RANGE, GB_STRIDE, or GB_LIST
     const int64_t nI,               // length of I
-    const bool I_inverse_ok,        // true if I is invertable
     const bool need_qsort,          // true if C(:,k) requires sorting
-    const int64_t iinc,             // increment for GB_STRIDE
-    const bool I_has_duplicates     // true if duplicates in I
-                                    // (false if not yet known)
+    const int64_t iinc              // increment for GB_STRIDE
 )
 {
 
@@ -68,8 +65,7 @@ static inline int GB_subref_method  // return the method to use (1 to 12)
         // Case 5: C (:,k) = A (ibegin:iend,j)
         method = 5 ;
     }
-    else if ((Ikind == GB_LIST && !I_inverse_ok) ||  // must do Case 6
-        (64 * nI < ajnz))    // Case 6 faster
+    else if (64 * nI < ajnz)    // Case 6 faster in this case
     { 
         // Case 6: nI not large; binary search of A(:,j) for each i in I
         method = 6 ;
@@ -92,9 +88,9 @@ static inline int GB_subref_method  // return the method to use (1 to 12)
             method = 9 ;
         }
     }
-    else // Ikind == GB_LIST, and I inverse buckets will be used
+    else // Ikind == GB_LIST, and R = inverse(I) will be used
     {
-        // construct the I inverse buckets
+        // construct the R matrix
         if (need_qsort)
         { 
             // Case 10: nI large, need qsort
@@ -102,20 +98,10 @@ static inline int GB_subref_method  // return the method to use (1 to 12)
             // use this method, a post sort is needed when all tasks are done.
             method = 10 ;
         }
-        else if (I_has_duplicates)
-        { 
-            // Case 11: nI large, no qsort, with duplicates
-            // duplicates are possible so cjnz > ajnz can hold.  Note that the
-            // # of duplicates is only known after I is inverted, which might
-            // not yet be done.  In that case, nuplicates is assumed to be
-            // zero, and Case 12 is assumed to be used instead.  This is
-            // revised after I is inverted.
-            method = 11 ;
-        }
         else
-        { 
-            // Case 12: nI large, no qsort, no duplicates
-            method = 12 ;
+        {
+            // Case 11: nI large, no qsort, duplicates are OK
+            method = 11 ;
         }
     }
 
@@ -139,7 +125,6 @@ static inline int64_t GB_subref_work   // return the work for a subref method
     const int64_t avlen,            // A->vlen
     const int Ikind,                // GB_ALL, GB_RANGE, GB_STRIDE, or GB_LIST
     const int64_t nI,               // length of I
-    const bool I_inverse_ok,        // true if I is invertable
     const bool need_qsort,          // true if C(:,k) requires sorting
     const int64_t iinc              // increment for GB_STRIDE
 )
@@ -149,17 +134,7 @@ static inline int64_t GB_subref_work   // return the work for a subref method
     // get the method
     //--------------------------------------------------------------------------
 
-    // nduplicates in I not yet known; it is found when I is inverted.  For
-    // now, assume I has no duplicate entries.  All that is needed for now is
-    // the work required for each C(:,k), and whether or not I inverse must be
-    // created.  The # of duplicates has no impact on the I inverse decision,
-    // and a minor effect on the work (which is ignored).  Method 11 is only
-    // used if I_has_duplicates is true.
-
-    const bool I_has_duplicates = false ;   // not yet known
-
-    int method = GB_subref_method (ajnz, avlen, Ikind, nI, I_inverse_ok,
-        need_qsort, iinc, I_has_duplicates) ;
+    int method = GB_subref_method (ajnz, avlen, Ikind, nI, need_qsort, iinc) ;
 
     //--------------------------------------------------------------------------
     // get the work
@@ -178,10 +153,8 @@ static inline int64_t GB_subref_work   // return the work for a subref method
         case  8 : work = ajnz ;         break ;
         case  9 : work = ajnz ;         break ;
         case 10 : work = ajnz * 32 ;    break ;
-//      case 11 :
-//                work = ajnz * 2 ;     break ; // case not determined yet
         default :
-        case 12 : work = ajnz ;         break ;
+        case 11 : work = ajnz * 2 ;     break ;
     }
 
     //--------------------------------------------------------------------------

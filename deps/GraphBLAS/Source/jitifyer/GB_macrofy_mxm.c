@@ -129,7 +129,7 @@ void GB_macrofy_mxm         // construct all macros for GrB_mxm
             (ccode == 0) ? NULL : ctype,
             (acode == 0) ? NULL : atype,
             (bcode == 0) ? NULL : btype,
-            xtype, ytype, ztype) ;
+            xtype, ytype, ztype, mult->theta_type) ;
     }
 
     //--------------------------------------------------------------------------
@@ -157,6 +157,12 @@ void GB_macrofy_mxm         // construct all macros for GrB_mxm
     const char *f_expr ;
     GB_macrofy_type (fp, "X", "_", (xcode == 0) ? "GB_void" : xtype->name) ;
     GB_macrofy_type (fp, "Y", "_", (ycode == 0) ? "GB_void" : ytype->name) ;
+    if (GB_IS_INDEXBINARYOP_CODE (mult_opcode))
+    {
+        char *theta_type_name = (mult->theta_type == NULL) ?
+            "void" : mult->theta_type->name ;
+        GB_macrofy_type (fp, "THETA", "_", theta_type_name) ;
+    }
     GB_macrofy_binop (fp, "GB_MULT", false, flipxy, false, false, false,
         mult_ecode, C_iso, mult, &f_expr, NULL, NULL) ;
 

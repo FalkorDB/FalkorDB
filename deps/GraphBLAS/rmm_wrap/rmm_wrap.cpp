@@ -31,6 +31,7 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <cstring>
 
 //------------------------------------------------------------------------------
 // RMM_Wrap_Handle: a global object containing the RMM context
@@ -49,8 +50,8 @@ typedef struct
     std::shared_ptr<rmm::mr::device_memory_resource>   resource;
     std::shared_ptr<std::pmr::memory_resource>         host_resource;
     std::shared_ptr<alloc_map>                         size_map ;
-    std::shared_ptr<cuda_stream_pool>                  stream_pool;
-    cudaStream_t                                       main_stream;
+//  std::shared_ptr<cuda_stream_pool>                  stream_pool;
+//  cudaStream_t                                       main_stream;
 }
 RMM_Wrap_Handle ;
 
@@ -143,6 +144,7 @@ inline auto make_and_set_managed_pool
     return resource;
 }
 
+#if 0
 inline std::shared_ptr<rmm::cuda_stream_pool> make_and_set_cuda_stream_pool
 (
     std::size_t num_streams
@@ -150,6 +152,7 @@ inline std::shared_ptr<rmm::cuda_stream_pool> make_and_set_cuda_stream_pool
 {
     return std::make_shared<rmm::cuda_stream_pool>(num_streams);
 }
+#endif
 
 //------------------------------------------------------------------------------
 // rmm_wrap_is_initialized: determine if rmm_wrap_context exists
@@ -168,6 +171,8 @@ bool rmm_wrap_is_initialized (void)
 // the rmm_wrap_context:  the memory resource (host or device) and the
 // alloc_map.
 
+// FIXME: GraphBLAS currently does not call this method ...
+
 void rmm_wrap_finalize (void)
 {
     try
@@ -176,7 +181,7 @@ void rmm_wrap_finalize (void)
         {
             for (int device_id = 0; device_id < devices.size(); ++device_id)
             {
-                RMM_WRAP_CHECK_CUDA(cudaStreamDestroy(rmm_wrap_context[device_id]->main_stream));
+//              RMM_WRAP_CHECK_CUDA(cudaStreamDestroy(rmm_wrap_context[device_id]->main_stream));
                 delete rmm_wrap_context[device_id];
             }
             delete rmm_wrap_context ;
@@ -208,11 +213,11 @@ int get_current_device(void)
 
 int rmm_wrap_initialize     // returns -1 on error, 0 on success
 (
-    uint32_t device_id,     // 2, 5, or 7
+    uint32_t device_id,     // GPU device id, for cudaSetDevice
     RMM_MODE mode,          // TODO: describe. Should we default this?
     size_t init_pool_size,  // TODO: describe. Should we default this?
-    size_t max_pool_size,   // TODO: describe. Should we default this?
-    size_t stream_pool_size // TODO: describe. Should we default this?
+    size_t max_pool_size    // TODO: describe. Should we default this?
+//  , size_t stream_pool_size // TODO: describe. Should we default this?
 )
 {
     
@@ -228,12 +233,16 @@ int rmm_wrap_initialize     // returns -1 on error, 0 on success
             return (-1) ;
         }
 
+#if 0
         if(stream_pool_size <= 0)
         {
             // std::cout << "Stream pool size must be >=0" << std::endl;
             // failed to create the alloc_map
             return (-1) ;
         }
+#endif
+
+        RMM_WRAP_CHECK_CUDA (cudaSetDevice (device_id)) ;
 
         // create the RMM wrap handle and save it as a global pointer.
         rmm_wrap_context [device_id] = new RMM_Wrap_Handle() ;
@@ -246,10 +255,12 @@ int rmm_wrap_initialize     // returns -1 on error, 0 on success
         // Construct a resource that uses a coalescing best-fit pool allocator
         //----------------------------------------------------------------------
 
+#if 0
         // Set CUDA stream pool
         // std::cout << "Creating rmm_wrap stream pool" << std::endl;
         rmm_wrap_context[device_id]->stream_pool = make_and_set_cuda_stream_pool(stream_pool_size);
         RMM_WRAP_CHECK_CUDA(cudaStreamCreate(&(rmm_wrap_context[device_id]->main_stream)));
+#endif
 
         if (mode == rmm_wrap_host )
         {
@@ -315,8 +326,8 @@ int rmm_wrap_initialize_all_same
 (
     RMM_MODE mode,              // TODO: describe. Should we default this?
     size_t init_pool_size,      // TODO: describe. Should we default this?
-    size_t max_pool_size,       // TODO: describe. Should we default this?
-    size_t stream_pool_size     // TODO: describe. Should we default this?
+    size_t max_pool_size        // TODO: describe. Should we default this?
+//  , size_t stream_pool_size     // TODO: describe. Should we default this?
 )
 {
     try
@@ -344,10 +355,20 @@ int rmm_wrap_initialize_all_same
             std::stringstream check1;
             check1 << cuda_visible_devices;
             std::string intermediate;
-            while(getline(check1, intermediate, ','))
+            for (int i = 0; getline(check1, intermediate, ','); ++i)
             {
-
                 intermediate.erase(std::remove_if(intermediate.begin(), intermediate.end(), ::isspace), intermediate.end());
+
+                // GPUs represented by UUIDs from "nvidia-smi -L" or MIG
+                if (std::strncmp("GPU-", intermediate.c_str(), 4) == 0 ||
+                    std::strncmp("MIG-GPU-", intermediate.c_str(), 8) == 0)
+                {
+                    // device IDs must work with cudaSetDevice() and
+                    // as indices for rmm_wrap_context[]
+                    devices.push_back(i);
+                    continue;
+                }
+
                 uint32_t device_id = static_cast<uint32_t>(stoi(intermediate));
                 std::cout << "Found device_id " << device_id << std::endl;
                 devices.push_back(device_id);
@@ -374,7 +395,7 @@ int rmm_wrap_initialize_all_same
             rmm_wrap_context[i] = NULL;
             uint32_t device_id = devices[i];
             // std::cout << "Creating rmm_wrap_context for device_id " << device_id << std::endl;
-            int ret = rmm_wrap_initialize(device_id, mode, init_pool_size, max_pool_size, stream_pool_size);
+            int ret = rmm_wrap_initialize(device_id, mode, init_pool_size, max_pool_size ) ; // , stream_pool_size);
             if(ret < 0) {
                 return ret;
             }
@@ -385,10 +406,12 @@ int rmm_wrap_initialize_all_same
     catch (...)
     {
         // something failed; return an error state
+        printf ("rmm_wrap_initialize_all_same failed!\n") ;
         return (-1) ;
     }
 }
 
+#if 0
 //------------------------------------------------------------------------------
 // rmm_wrap_get_next_stream_from_pool: return the next available stream from
 // the pool Output is cudaStream_t
@@ -420,6 +443,8 @@ void* rmm_wrap_get_main_stream(void)
     // FIXME: check for errors
     return rmm_wrap_context[get_current_device()]->main_stream;
 }
+#endif
+
 //------------------------------------------------------------------------------
 // rmm_wrap_malloc: malloc-equivalent method using RMM
 //------------------------------------------------------------------------------

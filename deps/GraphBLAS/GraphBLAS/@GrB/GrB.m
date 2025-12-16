@@ -363,7 +363,7 @@ classdef GrB
 %   operations:
 %   C = GrB.build (I,J,X,m,n,dup,type,desc) build a GrB matrix from
 %                                list of entries (like C=sparse(I,J,X...))
-%   [C,I,J] = GrB.compact (A,id) remove empty rows and columns
+%   [C,I,J] = GrB.compact (A,id,s) remove empty rows and columns
 %   c = GrB.entries (A,...)      count or query entries in a matrix
 %   C = GrB.expand (scalar, A)   expand a scalar (C = scalar*spones(A))
 %   [I,J,X] = GrB.extracttuples (A,desc) extract all entries (like 'find')
@@ -996,7 +996,7 @@ methods (Static)
     C = cell2mat (A) ;
     c = chunk (c) ;
     clear ;
-    [C, I, J] = compact (A, id) ;
+    [C, I, J] = compact (A, id, symmetric) ;
     descriptorinfo (d) ;
     C = deserialize (blob, mode, arg3) ;        % arg3 for testing only
     Y = dnn (W, bias, Y0) ;                     % uses GrB matrices
