@@ -4,6 +4,9 @@
    ...
    fun:AR_RegisterFuncs
    fun:_UDFCtx_GetCtx
+   func:AR_FuncRegisterUDF
+   func:UDFCtx_RegisterLibrary
+   func:UDFCtx_RegisterFunction
    fun:RedisModule_OnLoad
    fun:moduleLoad
    fun:moduleLoadFromQueue
