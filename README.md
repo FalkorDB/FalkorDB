@@ -5,6 +5,7 @@
   <h1>FalkorDB</h1>
   <h2>Ultra-fast, Multi-tenant Graph Database</h2>
   <h3>Powering Generative AI, Agent Memory, Cloud Security, and Fraud Detection</h3>
+<a href="https://trendshift.io/repositories/14787" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/14787" alt="FalkorDB%2FFalkorDB | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 </div>
 <div align="center">
   <a href="https://app.falkordb.cloud/signup">
@@ -125,10 +126,10 @@ Make sure to complete these requirements:
 
 1️⃣ The FalkorDB repository: `git clone --recurse-submodules -j8 https://github.com/FalkorDB/FalkorDB.git`
 
->On Ubuntu Linux, run: `apt-get install build-essential cmake m4 automake peg libtool autoconf python3 python3-pip`
-	
->On OS X, verify that `homebrew` is installed and run: `brew install cmake m4 automake peg libtool autoconf`.
->>The version of Clang that ships with the OS X toolchain does not support OpenMP, which is a requirement for FalkorDB. One way to resolve this is to run `brew install gcc g++` and follow the on-screen instructions to update the symbolic links. Note that this is a system-wide change - setting the environment variables for `CC` and `CXX` will work if that is not an option.
+* Ubuntu, install: `apt-get install build-essential cmake m4 automake peg libtool autoconf python3 python3-pip`
+* Alpine, install: `apk add build-base cmake m4 automake libtool autoconf python3 py3-pip peg git libgomp openssl-dev`
+* OS X, verify that `homebrew` is installed and run: `brew install cmake m4 automake peg libtool autoconf`.
+	* The version of Clang that ships with the OS X toolchain does not support OpenMP, which is a requirement for FalkorDB. One way to resolve this is to run `brew install gcc g++` and follow the on-screen instructions to update the symbolic links. Note that this is a system-wide change - setting the environment variables for `CC` and `CXX` will work if that is not an option.
 
 2️⃣ Build by running `make` in the project's directory.
 
