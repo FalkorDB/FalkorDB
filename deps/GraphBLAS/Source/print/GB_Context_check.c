@@ -52,8 +52,18 @@ GrB_Info GB_Context_check       // check a GraphBLAS Context
     double chunk = GB_Context_chunk_get (Context) ;
     GBPR0 ("    Context.chunk:    %g\n", chunk) ;
 
-    int gpu_id = GB_Context_gpu_id_get (Context) ;
-    if (gpu_id >= 0) GBPR0 ("    Context.gpu_id:   %d\n", gpu_id) ;
+    int32_t ngpus, gpu_ids [GB_MAX_NGPUS] ;
+    ngpus = GB_Context_gpu_ids_get (Context, gpu_ids) ;
+    if (ngpus >= 0)
+    {
+        GBPR0 ("    Context.ngpus:    %d\n", ngpus) ;
+        GBPR0 ("    Context.gpu_ids:  [") ;
+        for (int k = 0 ; k < ngpus ; k++)
+        { 
+            GBPR0 (" %d ", gpu_ids [k]) ;
+        }
+        GBPR0 ("]\n") ;
+    }
 
     return (GrB_SUCCESS) ;
 }

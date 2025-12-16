@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__masker_phase2__fff03900.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.0.2, Timothy A. Davis, (c) 2017-2025,
+// SuiteSparse:GraphBLAS v10.3.0, Timothy A. Davis, (c) 2017-2025,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -39,6 +39,7 @@
 #define GB_R_ISO 0
 #define GB_Rp_TYPE uint32_t
 #define GB_Rj_TYPE uint32_t
+#define GB_Rj_SIGNED_TYPE int32_t
 #define GB_Ri_TYPE uint32_t
 #define GB_Ri_SIGNED_TYPE int32_t
 #define GB_Rp_BITS 32
@@ -59,6 +60,7 @@
 #define GB_C_ISO 0
 #define GB_Cp_TYPE uint32_t
 #define GB_Cj_TYPE uint32_t
+#define GB_Cj_SIGNED_TYPE int32_t
 #define GB_Ci_TYPE uint32_t
 #define GB_Ci_SIGNED_TYPE int32_t
 #define GB_Cp_BITS 32
@@ -84,6 +86,7 @@
 #define GB_M_NHELD(e) GB_M_NVALS(e)
 #define GB_Mp_TYPE uint32_t
 #define GB_Mj_TYPE uint32_t
+#define GB_Mj_SIGNED_TYPE int32_t
 #define GB_Mi_TYPE uint32_t
 #define GB_Mi_SIGNED_TYPE int32_t
 #define GB_Mp_BITS 32
@@ -104,6 +107,7 @@
 #define GB_Z_ISO 0
 #define GB_Zp_TYPE uint32_t
 #define GB_Zj_TYPE uint32_t
+#define GB_Zj_SIGNED_TYPE int32_t
 #define GB_Zi_TYPE uint32_t
 #define GB_Zi_SIGNED_TYPE int32_t
 #define GB_Zp_BITS 32
@@ -119,8 +123,8 @@
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0xc158342a7f0a828c ;
-    v [0] = 10 ; v [1] = 0 ; v [2] = 2 ;
+    (*hash) = 0xa9491a5ab9d55e4a ;
+    v [0] = 10 ; v [1] = 3 ; v [2] = 0 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = NULL ;

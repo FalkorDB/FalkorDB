@@ -339,7 +339,7 @@ GrB_Info GB_wait                // finish all pending computations
     ASSERT_MATRIX_OK (S, "S after GB_wait:add", GB0) ;
 
     //--------------------------------------------------------------------------
-    // check if the A->Y hyper-hash can be kept
+    // check if the A->Y hyper_hash can be kept
     //--------------------------------------------------------------------------
 
     if (A->no_hyper_hash)

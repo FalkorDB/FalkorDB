@@ -19,12 +19,11 @@ monoid, or semiring was disabled when GraphBLAS was compiled.
 \subsection{Using the JIT}
 
 Using the JIT in a user application is simple:  by default, there is nothing to
-do.  The current release, LAGraph v1.1.4, can use the JIT (and PreJIT) kernels
-without changing a single line of code.
+do.  LAGraph can use the JIT (and PreJIT) kernels without changing a single
+line of code, for example.
 
-Currently, the JIT compiles kernels for the CPU only, but a CUDA JIT is in
-progress to exploit NVIDIA GPUs, in collaboration with Joe Eaton and
-Corey Nolet, with NVIDIA.
+The JIT compiles kernels for the CPU, using OpenMP if available,
+and CUDA kernels if one or more NVIDIA GPUs are available.
 
 When GraphBLAS is compiled, the \verb'cmake' build system creates a {\em cache}
 folder where it will keep any kernels created and compiled by the JIT
@@ -38,9 +37,9 @@ compiled, that variable defines the folder.  If the user's home directory
 cannot be determined and the \verb'GRAPHBLAS_CACHE_PATH' environment variable
 is not set, then JIT compilation is disabled and only PreJIT kernels can be
 used.  The optional environment variable, \verb'GRAPHBLAS_CACHE_PATH', is also
-read by \verb'GrB_init' when the user application runs.  The filesystem holding
-the cache folder must support file locking.  See Section~\ref{cache_path} for a
-description of the valid characters that can appear in the cache path.
+read by \verb'GrB_init' when the user application runs.  See
+Section~\ref{cache_path} for a description of the valid characters that can
+appear in the cache path.
 
 The user application can modify the location of the cache folder after calling
 \verb'GrB_init'.  It can also modify the C compiler and its flags, and can
@@ -330,6 +329,16 @@ In addition, the second character in the string is allowed to be the colon
 character (\verb':') to allow for the use of Windows drive letters.  Any
 character outside of these rules is converted into an underscore (\verb'_').
 
+If your run multiple user applications that each use the same version of
+GraphBLAS, then each of your applications must set their own unique JIT cache
+path.  Only one user application at a time may use the default JIT cache path.
+Prior versions of SuiteSparse:GraphBLAS used file locking to try to allow the
+sharing of the JIT cache, but this came with performance issues, and limits the
+cache folder to file systems that support file locking.  Those constraints are
+now removed in this version of GraphBLAS.  Instead, it is now the
+responsibility of the user application to ensure each one uses their own cache,
+if the user runs multiple applications simultaneously.
+
 %-------------------------------------------------------------------------------
 \subsection{Compilation options: {\sf GRAPHBLAS\_USE\_JIT} and {\sf GRAPHBLAS\_COMPACT}}
 %-------------------------------------------------------------------------------
@@ -549,8 +558,8 @@ might be needed later for larger problems.
 \subsubsection{CUDA / SYCL / OpenCL kernels}
 The CUDA JIT will enable NVIDIA GPUs to be exploited.  There are simply too
 many kernels to create at compile time as the ``factory kernels.''  This CUDA
-JIT is in progress.  A related JIT for SYCL / OpenCL kernels is under
-consideration.
+JIT is in progress. % , but some kernels are already available for production use.
+A related JIT for SYCL / OpenCL kernels is under consideration.
 
 \subsubsection{Better performance for multithreaded user programs:}
 This version is thread-safe when used in a multithread user application, but a

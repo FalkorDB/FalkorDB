@@ -40,27 +40,6 @@ set ( GRAPHBLAS_VERSION "@GraphBLAS_VERSION_MAJOR@.@GraphBLAS_VERSION_MINOR@.@Gr
 include ( CMakeFindDependencyMacro )
 set ( _dependencies_found ON )
 
-if ( @GRAPHBLAS_HAS_CUDA@ )
-    # Look for imported targets of additional dependency if GraphBLAS was built with CUDA
-
-    if ( NOT GraphBLAS_CUDA_FOUND )
-        if ( @SUITESPARSE_IN_BUILD_TREE@ )
-            # First check in a common build tree
-            find_dependency ( GraphBLAS_CUDA @GraphBLAS_VERSION_MAJOR@.@GraphBLAS_VERSION_MINOR@.@GraphBLAS_VERSION_SUB@
-                PATHS ${CMAKE_SOURCE_DIR}/../GraphBLAS/build/CUDA NO_DEFAULT_PATH )
-            # Then, check in the currently active CMAKE_MODULE_PATH
-            if ( NOT GraphBLAS_CUDA_FOUND )
-                find_dependency ( GraphBLAS_CUDA @GraphBLAS_VERSION_MAJOR@.@GraphBLAS_VERSION_MINOR@.@GraphBLAS_VERSION_SUB@ )
-            endif ( )
-        else ( )
-            find_dependency ( GraphBLAS_CUDA @GraphBLAS_VERSION_MAJOR@.@GraphBLAS_VERSION_MINOR@.@GraphBLAS_VERSION_SUB@ )
-        endif ( )
-    endif ( )
-    if ( NOT GraphBLAS_CUDA_FOUND )
-        set ( _dependencies_found OFF )
-    endif ( )
-endif ( )
-
 # Look for OpenMP
 if ( @GRAPHBLAS_HAS_OPENMP@ AND NOT OpenMP_C_FOUND )
     find_dependency ( OpenMP COMPONENTS C )
@@ -75,7 +54,12 @@ if ( NOT _dependencies_found )
 endif ( )
 
 # Import target
-include ( ${CMAKE_CURRENT_LIST_DIR}/GraphBLASTargets.cmake )
+if ( @BUILD_SHARED_LIBS@ )
+    include ( ${CMAKE_CURRENT_LIST_DIR}/GraphBLASTargets.cmake )
+endif ( )
+if ( @BUILD_STATIC_LIBS@ )
+    include ( ${CMAKE_CURRENT_LIST_DIR}/GraphBLASTargets_static.cmake )
+endif ( )
 
 if ( @GRAPHBLAS_HAS_OPENMP@ )
     if ( TARGET SuiteSparse::GraphBLAS )
@@ -250,3 +234,4 @@ if ( GRAPHBLAS_STATIC )
     set_target_properties ( SuiteSparse::GraphBLAS_static PROPERTIES
         OUTPUT_NAME ${_graphblas_library_name} )
 endif ( )
+

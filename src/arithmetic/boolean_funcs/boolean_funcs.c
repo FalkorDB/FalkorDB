@@ -226,86 +226,101 @@ void Register_BooleanFuncs() {
 	types = array_new(SIType, 2);
 	array_append(types, T_BOOL | T_NULL);
 	array_append(types, T_BOOL | T_NULL);
-	func_desc = AR_FuncDescNew("and", AR_AND, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("and", AR_AND, 2, 2, types, ret_type, true, true,
+			true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, T_BOOL | T_NULL);
 	array_append(types, T_BOOL | T_NULL);
-	func_desc = AR_FuncDescNew("or", AR_OR, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("or", AR_OR, 2, 2, types, ret_type, true, true,
+			true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, T_BOOL | T_NULL);
 	array_append(types, T_BOOL | T_NULL);
-	func_desc = AR_FuncDescNew("xor", AR_XOR, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("xor", AR_XOR, 2, 2, types, ret_type, true, true,
+			true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_BOOL | T_NULL);
-	func_desc = AR_FuncDescNew("not", AR_NOT, 1, 1, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("not", AR_NOT, 1, 1, types, ret_type, true, true,
+			true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, SI_ALL);
 	array_append(types, SI_ALL);
-	func_desc = AR_FuncDescNew("gt", AR_GT, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("gt", AR_GT, 2, 2, types, ret_type, true, true,
+			true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, SI_ALL);
 	array_append(types, SI_ALL);
-	func_desc = AR_FuncDescNew("ge", AR_GE, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("ge", AR_GE, 2, 2, types, ret_type, true, true,
+			true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, SI_ALL);
 	array_append(types, SI_ALL);
-	func_desc = AR_FuncDescNew("lt", AR_LT, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("lt", AR_LT, 2, 2, types, ret_type, true, true,
+			true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, SI_ALL);
 	array_append(types, SI_ALL);
-	func_desc = AR_FuncDescNew("le", AR_LE, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("le", AR_LE, 2, 2, types, ret_type, true, true,
+			true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, SI_ALL);
 	array_append(types, SI_ALL);
-	func_desc = AR_FuncDescNew("eq", AR_EQ, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("eq", AR_EQ, 2, 2, types, ret_type, true, true,
+			true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, SI_ALL);
 	array_append(types, SI_ALL);
-	func_desc = AR_FuncDescNew("neq", AR_NE, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("neq", AR_NE, 2, 2, types, ret_type, true, true,
+			true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, SI_ALL);
-	func_desc = AR_FuncDescNew("is null", AR_IS_NULL, 1, 1, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("is null", AR_IS_NULL, 1, 1, types, ret_type,
+			true, true, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, SI_ALL);
-	func_desc = AR_FuncDescNew("is not null", AR_IS_NOT_NULL, 1, 1, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("is not null", AR_IS_NOT_NULL, 1, 1, types,
+			ret_type, true, true, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_BOOL | T_INT64 | T_STRING | T_NULL);
-	func_desc = AR_FuncDescNew("toBoolean", AR_TO_BOOLEAN, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("toBoolean", AR_TO_BOOLEAN, 1, 1, types,
+			ret_type, false, true, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, SI_ALL);
-	func_desc = AR_FuncDescNew("toBooleanOrNull", AR_TO_BOOLEAN, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("toBooleanOrNull", AR_TO_BOOLEAN, 1, 1, types,
+			ret_type, false, true, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_ARRAY | T_MAP | T_NULL | T_STRING);
 	ret_type = T_BOOL | T_NULL;
-	func_desc = AR_FuncDescNew("isempty", AR_ISEMPTY, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("isempty", AR_ISEMPTY, 1, 1, types, ret_type,
+			false, true, true);
 	AR_RegFunc(func_desc);
 }
 

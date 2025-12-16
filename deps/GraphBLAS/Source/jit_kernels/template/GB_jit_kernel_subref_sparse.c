@@ -37,9 +37,20 @@ GB_JIT_GLOBAL GB_JIT_KERNEL_SUBREF_SPARSE_PROTO (GB_jit_kernel)
     // get I
     const GB_I_TYPE *restrict I = I_input ;
 
-    // get I inverse lists
-    const GB_IHEAD_TYPE *restrict Ihead = Ihead_input ;
-    const GB_IHEAD_TYPE *restrict Inext = Inext_input ;
+    // get R for the I inverse data structure
+    GB_Rp_DECLARE   (Rp, const) ; GB_Rp_PTR (Rp, R) ;
+    GB_Rh_DECLARE   (Rh, const) ; GB_Rh_PTR (Rh, R) ;
+    GB_Ri_DECLARE_U (Ri, const) ; GB_Ri_PTR (Ri, R) ;
+    GrB_Matrix R_Y = (R == NULL) ? NULL : R->Y ;
+    const void *R_Yp = (R_Y == NULL) ? NULL : R_Y->p ;
+    const void *R_Yi = (R_Y == NULL) ? NULL : R_Y->i ;
+    const void *R_Yx = (R_Y == NULL) ? NULL : R_Y->x ;
+    const int64_t R_hash_bits = (R_Y == NULL) ? 0 : (R_Y->vdim - 1) ;
+    #define R_is_hyper GB_R_IS_HYPER
+    #define Rp_is_32   GB_Rp_IS_32
+    #define Rj_is_32   GB_Rj_IS_32
+    #define Ri_is_32   GB_Ri_IS_32
+    int64_t rnvec = (R == NULL) ? 0 : R->nvec ;
 
     #ifndef GB_Ai_IS_32
     #define GB_Ai_IS_32 (GB_Ai_BITS == 32)

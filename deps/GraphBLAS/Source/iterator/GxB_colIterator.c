@@ -18,9 +18,15 @@
 #undef GxB_colIterator_getColIndex
 #undef GxB_colIterator_getRowIndex
 
+#if !defined ( GBMATLAB )
+
 //------------------------------------------------------------------------------
 
 // The column iterator is analoguous to the row iterator.
+
+// These methods are not tested by the GraphBLAS/Test or GraphBLAS/Tcov
+// test coverage suite, because the conflict with libmwgraphblas.so inside
+// MATLAB.
 
 GrB_Info GxB_colIterator_attach
 (
@@ -28,52 +34,54 @@ GrB_Info GxB_colIterator_attach
     GrB_Matrix A,
     GrB_Descriptor desc
 )
-{ 
+{
     // attach a column iterator to a matrix
-    return (GB_Iterator_attach (iterator, A, GxB_BY_COL, desc)) ;
+    return (GB(Iterator_attach)(iterator, A, GxB_BY_COL, desc)) ;
 }
 
 uint64_t GxB_colIterator_kount (GxB_Iterator iterator)
-{ 
+{
     // return # of nonempty columns of the matrix
     return (iterator->anvec) ;
 }
 
 GrB_Info GxB_colIterator_seekCol (GxB_Iterator iterator, uint64_t col)
-{ 
+{
     // move a column iterator that is already attached to A, to the first
     // entry of A(:,col)
-    return (GB_Iterator_rc_seek (iterator, col, false)) ;
+    return (GB(Iterator_rc_seek)(iterator, col, false)) ;
 }
 
 GrB_Info GxB_colIterator_kseek (GxB_Iterator iterator, uint64_t k)
-{ 
+{
     // move a column iterator that is already attached to A, to the first
     // entry of the kth non-empty column of A
-    return (GB_Iterator_rc_seek (iterator, k, true)) ;
+    return (GB(Iterator_rc_seek)(iterator, k, true)) ;
 }
 
 GrB_Info GxB_colIterator_nextCol (GxB_Iterator iterator)
-{ 
+{
     // move a column iterator to the first entry of the next column
     return (GB_Iterator_rc_knext (iterator)) ;
 }
 
 GrB_Info GxB_colIterator_nextRow (GxB_Iterator iterator)
-{ 
+{
     // move a column iterator to the next row in the same column
     return (GB_Iterator_rc_inext (iterator)) ;
 }
 
 uint64_t GxB_colIterator_getColIndex (GxB_Iterator iterator)
-{ 
+{
     // return the column index of the current entry for a column iterator
     return (GB_Iterator_rc_getj (iterator)) ;
 }
 
 uint64_t GxB_colIterator_getRowIndex (GxB_Iterator iterator)
-{ 
+{
     // return the row index of the current entry for a column iterator
     return (GB_Iterator_rc_geti (iterator)) ;
 }
+
+#endif
 
