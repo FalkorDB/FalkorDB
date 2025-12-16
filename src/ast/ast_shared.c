@@ -4,10 +4,12 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "RG.h"
 #include "ast_shared.h"
-#include "../RG.h"
 #include "../util/arr.h"
+#include "../query_ctx.h"
 #include "../util/rmalloc.h"
+#include "../graph/graph_hub.h"
 #include "../util/rax_extensions.h"
 #include "../arithmetic/arithmetic_expression_construct.h"
 
@@ -67,96 +69,147 @@ AST_Operator AST_ConvertOperatorNode
 	return -1;
 }
 
+// convert a map of properties from the AST into a set of attribute ID keys
+// and AR_ExpNode values
 PropertyMap *PropertyMap_New
 (
-	const cypher_astnode_t *props
+	const cypher_astnode_t *props  // AST properties
 ) {
-	if(props == NULL) return NULL;
-	ASSERT(cypher_astnode_type(props) == CYPHER_AST_MAP); // TODO add parameter support
+	// no properties
+	if (props == NULL) {
+		return NULL;
+	}
 
-	uint prop_count = cypher_ast_map_nentries(props);
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
 
-	PropertyMap *map = rm_malloc(sizeof(PropertyMap));
-	map->keys = array_new(const char *, prop_count);
-	map->values = array_new(AR_ExpNode *, prop_count);
+	// TODO: add parameter support
+	ASSERT (cypher_astnode_type (props) == CYPHER_AST_MAP) ;
 
-	for(uint prop_idx = 0; prop_idx < prop_count; prop_idx++) {
-		uint insert_idx                   = prop_idx;
-		const cypher_astnode_t *ast_key   = cypher_ast_map_get_key(props, prop_idx);
-		const char *attribute             = cypher_ast_prop_name_get_value(ast_key);
-		const cypher_astnode_t *ast_value = cypher_ast_map_get_value(props, prop_idx);
-		AR_ExpNode *value                 = AR_EXP_FromASTNode(ast_value);
+	uint prop_count = cypher_ast_map_nentries (props) ;
 
-		// search for duplicate attributes
-		uint count = array_len(map->keys);
+	PropertyMap *m = rm_malloc (sizeof (PropertyMap)) ;
+
+	// allocate arrays
+	m->keys     = array_new (const char *, prop_count) ;
+	m->values   = array_new (AR_ExpNode *, prop_count) ;
+	m->attr_ids = array_new (AttributeID,  prop_count) ;
+
+	//--------------------------------------------------------------------------
+	// process AST props
+	//--------------------------------------------------------------------------
+
+	for (uint prop_idx = 0; prop_idx < prop_count; prop_idx++) {
+		uint insert_idx = prop_idx;
+
+		const cypher_astnode_t *ast_key =
+			cypher_ast_map_get_key (props, prop_idx) ;
+
+		const char *attr =
+			cypher_ast_prop_name_get_value (ast_key) ;
+
+		const cypher_astnode_t *ast_value =
+			cypher_ast_map_get_value (props, prop_idx) ;
+
+		AR_ExpNode *exp =
+			AR_EXP_FromASTNode (ast_value) ;
+
+		//----------------------------------------------------------------------
+		// handle duplicates
+		//----------------------------------------------------------------------
+
+		uint count = array_len (m->keys) ;
 		for (uint i = 0; i < count; i++) {
-			if(strcmp(attribute, map->keys[i]) == 0) {
-				insert_idx = i;
-				break;
+			if (strcmp (attr, m->keys[i]) == 0) {
+				// duplicate!
+				insert_idx = i ;
+				break ;
 			}
 		}
 
-		if(insert_idx == prop_idx) {
-			array_append(map->keys, attribute);			
-			array_append(map->values, value);
+		if (insert_idx == prop_idx) {
+			// new entry
+			array_append (m->keys, attr) ;
+			array_append (m->values, exp) ;
+			//array_append (m->attr_ids, GraphContext_GetAttributeID (gc, attr)) ;
+
+			// NOTE: might introduce a change to the graph schema!
+			array_append (m->attr_ids,
+					GraphHub_FindOrAddAttribute (gc, attr, true)) ;
+
 		} else {
-			AR_EXP_Free(map->values[insert_idx]);
-			map->values[insert_idx] = value;
+			// replace duplicate
+			AR_EXP_Free (m->values[insert_idx]) ;
+			m->values[insert_idx] = exp ;
 		}
 	}
 
-	return map;
+	return m ;
 }
 
+// clone a property map
 static PropertyMap *_PropertyMap_Clone
 (
-	PropertyMap *map
+	const PropertyMap *map
 ) {
-	PropertyMap *clone = rm_malloc(sizeof(PropertyMap));
-	array_clone(clone->keys, map->keys);
-	array_clone_with_cb(clone->values, map->values, AR_EXP_Clone);
+	PropertyMap *clone = rm_malloc (sizeof (PropertyMap)) ;
 
-	return clone;
+	array_clone (clone->keys, map->keys) ;
+	array_clone (clone->attr_ids, map->attr_ids) ;
+	array_clone_with_cb (clone->values, map->values, AR_EXP_Clone) ;
+
+	return clone ;
 }
 
 void PropertyMap_Free
 (
 	PropertyMap *map
 ) {
-	if(map == NULL) return;
+	if (map == NULL) {
+		return ;
+	}
 
-	array_free(map->keys);
-	array_free_cb(map->values, AR_EXP_Free);
-	rm_free(map);
+	array_free (map->keys) ;
+	array_free (map->attr_ids) ;
+	array_free_cb (map->values, AR_EXP_Free) ;
+
+	rm_free (map) ;
 }
 
 NodeCreateCtx NodeCreateCtx_Clone
 (
 	NodeCreateCtx ctx
 ) {
-	NodeCreateCtx clone = ctx;
-	array_clone(clone.labels, ctx.labels);
-	array_clone(clone.labelsId, ctx.labelsId);
-	if(ctx.properties) clone.properties = _PropertyMap_Clone(ctx.properties);
-	return clone;
+	NodeCreateCtx clone = ctx ;
+	array_clone (clone.labels, ctx.labels) ;
+	array_clone (clone.labelsId, ctx.labelsId) ;
+
+	if (ctx.properties != NULL) {
+		clone.properties = _PropertyMap_Clone (ctx.properties) ;
+	}
+
+	return clone ;
 }
 
 void NodeCreateCtx_Free
 (
 	NodeCreateCtx ctx
 ) {
-	array_free(ctx.labels);
-	array_free(ctx.labelsId);
-	PropertyMap_Free(ctx.properties);
+	array_free (ctx.labels) ;
+	array_free (ctx.labelsId) ;
+	PropertyMap_Free (ctx.properties) ;
 }
 
 EdgeCreateCtx EdgeCreateCtx_Clone
 (
 	EdgeCreateCtx ctx
 ) {
-	EdgeCreateCtx clone = ctx;
-	if(ctx.properties) clone.properties = _PropertyMap_Clone(ctx.properties);
-	return clone;
+	EdgeCreateCtx clone = ctx ;
+
+	if(ctx.properties != NULL) {
+		clone.properties = _PropertyMap_Clone (ctx.properties) ;
+	}
+
+	return clone ;
 }
 
 EntityUpdateEvalCtx *UpdateCtx_New
@@ -196,9 +249,10 @@ EntityUpdateEvalCtx *UpdateCtx_Clone
 
 	for(uint i = 0; i < count; i ++) {
 		PropertySetCtx update = {
-			.attribute = orig->properties[i].attribute,
-			.exp = AR_EXP_Clone(orig->properties[i].exp),
-			.mode = orig->properties[i].mode,
+			.exp       = AR_EXP_Clone(orig->properties[i].exp),
+			.mode      = orig->properties[i].mode,
+			.attr_id   = orig->properties[i].attr_id,
+			.attr_name = orig->properties[i].attr_name,
 		};
 		array_append(clone->properties, update);
 	}

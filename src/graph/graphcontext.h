@@ -399,16 +399,17 @@ SlowLog *GraphContext_GetSlowLog
 
 void GraphContext_LogQuery
 (
-	const GraphContext *gc,       // graph context
-	uint64_t received,            // query received timestamp
-	double wait_duration,         // waiting time
-	double execution_duration,    // executing time
-	double report_duration,       // reporting time
-	bool parameterized,           // uses parameters
-	bool utilized_cache,          // utilized cache
-	bool write,                   // write query
-	bool timeout,                 // timeout query
-	const char *query             // query string
+	const GraphContext *gc,     // graph context
+	uint64_t received,          // query received timestamp
+	double wait_duration,       // waiting time
+	double execution_duration,  // executing time
+	double report_duration,     // reporting time
+	bool parameterized,         // uses parameters
+	bool utilized_cache,        // utilized cache
+	bool write,                 // write query
+	bool timeout,               // timeout query
+	uint params_len,            // length of parameters
+	const char *query           // query string
 );
 
 //------------------------------------------------------------------------------

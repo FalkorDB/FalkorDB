@@ -167,3 +167,171 @@ Table~\ref{tab:maskaccum_nomask_1st}.
 \end{center}
 \end{table}
 
+\newpage
+If C and M are aliased (and C and A are not aliased) and the mask is structural
+and not complemented, then only a subset of the actions in the table are taken,
+as shown in Table~\ref{tab:hack1}.  The results are the same regardless of
+whether replace is true or false.  
+
+\begin{table}
+{\small
+\begin{tabular}{lllll|l}
+\hline
+repl & accum & ${\bf C}$ & ${\bf T}$ & mask & action taken by ${\bf C \langle C,struct \rangle = C \odot T}$ \\
+\hline
+    -  &-   & $c_{ij}$ & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, update \\
+%   -  &-   &  -       & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, insert \\
+    -  &-   & $c_{ij}$ &  -        & 1    &  delete $c_{ij}$ because $t_{ij}$ not present \\
+%   -  &-   &  -       &  -        & 1    &   \\
+%   -  &-   & $c_{ij}$ & $t_{ij}$  & 0    &   \\
+    -  &-   &  -       & $t_{ij}$  & 0    &   \\
+%   -  &-   & $c_{ij}$ &  -        & 0    &   \\
+    -  &-   &  -       &  -        & 0    &   \\
+\hline
+  % yes&-   & $c_{ij}$ & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, update \\
+% % yes&-   &  -       & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, insert \\
+  % yes&-   & $c_{ij}$ &  -        & 1    &  delete $c_{ij}$ because $t_{ij}$ not present \\
+% % yes&-   &  -       &  -        & 1    &   \\
+% % yes&-   & $c_{ij}$ & $t_{ij}$  & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+  % yes&-   &  -       & $t_{ij}$  & 0    &   \\
+% % yes&-   & $c_{ij}$ &  -        & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+  % yes&-   &  -       &  -        & 0    &   \\
+\hline
+    -  &yes & $c_{ij}$ & $t_{ij}$  & 1    &  $c_{ij} = c_{ij} \odot t_{ij}$, apply accumulator \\
+%   -  &yes &  -       & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, insert \\
+    -  &yes & $c_{ij}$ &  -        & 1    &   \\
+%   -  &yes &  -       &  -        & 1    &   \\
+%   -  &yes & $c_{ij}$ & $t_{ij}$  & 0    &   \\
+    -  &yes &  -       & $t_{ij}$  & 0    &   \\
+%   -  &yes & $c_{ij}$ &  -        & 0    &   \\
+    -  &yes &  -       &  -        & 0    &   \\
+\hline
+  % yes&yes & $c_{ij}$ & $t_{ij}$  & 1    &  $c_{ij} = c_{ij} \odot t_{ij}$, apply accumulator \\
+% % yes&yes &  -       & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, insert \\
+  % yes&yes & $c_{ij}$ &  -        & 1    &   \\
+% % yes&yes &  -       &  -        & 1    &   \\
+% % yes&yes & $c_{ij}$ & $t_{ij}$  & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+  % yes&yes &  -       & $t_{ij}$  & 0    &   \\
+% % yes&yes & $c_{ij}$ &  -        & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+  % yes&yes &  -       &  -        & 0    &   \\
+\hline
+\end{tabular}
+}
+\caption{Results of the mask/accumulator phase (C==M aliased, mask structural and
+not complemented; replace is anything). \label{tab:hack1} }
+\end{table}
+
+\newpage
+If M and T are aliased with each other (but not with C), 
+the mask is structural and NOT complemented, then
+the table simplies as given in \ref{tab:hack2}.
+% This table does not look like a special case that is worth exploiting in general,
+% but the replace=false case looks interesting.
+
+\begin{table}
+{\small
+\begin{tabular}{lllll|l}
+\hline
+repl & accum & ${\bf C}$ & ${\bf T}$ & mask & action taken by ${\bf C \langle T, struct \rangle = C \odot T}$ \\
+\hline
+    -  &-   & $c_{ij}$ & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, update \\
+    -  &-   &  -       & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, insert \\
+%   -  &-   & $c_{ij}$ &  -        & 1    &  delete $c_{ij}$ because $t_{ij}$ not present \\
+%   -  &-   &  -       &  -        & 1    &   \\
+%   -  &-   & $c_{ij}$ & $t_{ij}$  & 0    &   \\
+%   -  &-   &  -       & $t_{ij}$  & 0    &   \\
+    -  &-   & $c_{ij}$ &  -        & 0    &   \\
+    -  &-   &  -       &  -        & 0    &   \\
+\hline
+    yes&-   & $c_{ij}$ & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, update \\
+    yes&-   &  -       & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, insert \\
+%   yes&-   & $c_{ij}$ &  -        & 1    &  delete $c_{ij}$ because $t_{ij}$ not present \\
+%   yes&-   &  -       &  -        & 1    &   \\
+%   yes&-   & $c_{ij}$ & $t_{ij}$  & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+%   yes&-   &  -       & $t_{ij}$  & 0    &   \\
+    yes&-   & $c_{ij}$ &  -        & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+    yes&-   &  -       &  -        & 0    &   \\
+\hline
+    -  &yes & $c_{ij}$ & $t_{ij}$  & 1    &  $c_{ij} = c_{ij} \odot t_{ij}$, apply accumulator \\
+    -  &yes &  -       & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, insert \\
+%   -  &yes & $c_{ij}$ &  -        & 1    &   \\
+%   -  &yes &  -       &  -        & 1    &   \\
+%   -  &yes & $c_{ij}$ & $t_{ij}$  & 0    &   \\
+%   -  &yes &  -       & $t_{ij}$  & 0    &   \\
+    -  &yes & $c_{ij}$ &  -        & 0    &   \\
+    -  &yes &  -       &  -        & 0    &   \\
+\hline
+    yes&yes & $c_{ij}$ & $t_{ij}$  & 1    &  $c_{ij} = c_{ij} \odot t_{ij}$, apply accumulator \\
+    yes&yes &  -       & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, insert \\
+%   yes&yes & $c_{ij}$ &  -        & 1    &   \\
+%   yes&yes &  -       &  -        & 1    &   \\
+%   yes&yes & $c_{ij}$ & $t_{ij}$  & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+%   yes&yes &  -       & $t_{ij}$  & 0    &   \\
+    yes&yes & $c_{ij}$ &  -        & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+    yes&yes &  -       &  -        & 0    &   \\
+\hline
+\end{tabular}
+}
+\caption{Results of the mask/accumulator phase (M==T aliased, mask structural and
+not complemented). \label{tab:hack2}}
+\end{table}
+
+\newpage
+If M and T are aliased with each other (but not with C), 
+the mask is structural AND complemented, then
+the table simplies as given in \ref{tab:hack3}.
+Note that the accumulator is never actually applied, even though
+this table would require it to be present.
+This table looks interesting, because in the case where replace is true
+and accum is present, the structure of T tells where zombies should be inserted
+into C (and there are no other changes to make).
+
+\begin{table}
+{\small
+\begin{tabular}{lllll|l}
+\hline
+repl & accum & ${\bf C}$ & ${\bf T}$ & mask & action taken by
+${\bf C \langle \lnot T, struct \rangle = C \odot T}$ \\
+\hline
+%   -  &-   & $c_{ij}$ & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, update \\
+%   -  &-   &  -       & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, insert \\
+    -  &-   & $c_{ij}$ &  -        & 1    &  delete $c_{ij}$ because $t_{ij}$ not present \\
+    -  &-   &  -       &  -        & 1    &   \\
+    -  &-   & $c_{ij}$ & $t_{ij}$  & 0    &   \\
+    -  &-   &  -       & $t_{ij}$  & 0    &   \\
+%   -  &-   & $c_{ij}$ &  -        & 0    &   \\
+%   -  &-   &  -       &  -        & 0    &   \\
+\hline
+%   yes&-   & $c_{ij}$ & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, update \\
+%   yes&-   &  -       & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, insert \\
+    yes&-   & $c_{ij}$ &  -        & 1    &  delete $c_{ij}$ because $t_{ij}$ not present \\
+    yes&-   &  -       &  -        & 1    &   \\
+    yes&-   & $c_{ij}$ & $t_{ij}$  & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+    yes&-   &  -       & $t_{ij}$  & 0    &   \\
+%   yes&-   & $c_{ij}$ &  -        & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+%   yes&-   &  -       &  -        & 0    &   \\
+\hline
+%   -  &yes & $c_{ij}$ & $t_{ij}$  & 1    &  $c_{ij} = c_{ij} \odot t_{ij}$, apply accumulator \\
+%   -  &yes &  -       & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, insert \\
+    -  &yes & $c_{ij}$ &  -        & 1    &   \\
+    -  &yes &  -       &  -        & 1    &   \\
+    -  &yes & $c_{ij}$ & $t_{ij}$  & 0    &   \\
+    -  &yes &  -       & $t_{ij}$  & 0    &   \\
+%   -  &yes & $c_{ij}$ &  -        & 0    &   \\
+%   -  &yes &  -       &  -        & 0    &   \\
+\hline
+%   yes&yes & $c_{ij}$ & $t_{ij}$  & 1    &  $c_{ij} = c_{ij} \odot t_{ij}$, apply accumulator \\
+%   yes&yes &  -       & $t_{ij}$  & 1    &  $c_{ij} = t_{ij}$, insert \\
+    yes&yes & $c_{ij}$ &  -        & 1    &   \\
+    yes&yes &  -       &  -        & 1    &   \\
+    yes&yes & $c_{ij}$ & $t_{ij}$  & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+    yes&yes &  -       & $t_{ij}$  & 0    &   \\
+%   yes&yes & $c_{ij}$ &  -        & 0    &  delete $c_{ij}$  (because of \verb'GrB_REPLACE') \\
+%   yes&yes &  -       &  -        & 0    &   \\
+\hline
+\end{tabular}
+}
+\caption{Results of the mask/accumulator phase (M==T aliased, mask structural and
+complemented). \label{tab:hack3}}
+\end{table}
+

@@ -394,7 +394,6 @@ GrB_Info GB_accum_mask          // C<M> = accum (C,T)
             GB_MATRIX_WAIT (T) ;
 
             bool apply_mask ;
-            // int Z_sparsity =
             GB_add_sparsity (&apply_mask, M, Mask_struct, Mask_comp, C, T) ;
 
             // whether or not GB_add chooses to exploit the mask, it must still

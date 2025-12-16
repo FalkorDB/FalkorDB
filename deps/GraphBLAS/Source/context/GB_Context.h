@@ -21,8 +21,24 @@ double GB_Context_chunk (void) ;
 double GB_Context_chunk_get (GxB_Context Context) ;
 void   GB_Context_chunk_set (GxB_Context Context, double chunk) ;
 
-int    GB_Context_gpu_id (void) ;
-int    GB_Context_gpu_id_get (GxB_Context Context) ;
-void   GB_Context_gpu_id_set (GxB_Context Context, int gpu_id) ;
+int32_t GB_Context_gpu_ids_get          // return # of GPUs to use
+(
+    GxB_Context Context,
+    int32_t gpu_ids [GB_MAX_NGPUS]      // list of GPU ids to use
+) ;
+
+int32_t GB_Context_gpu_ids              // return # of GPUs to use
+(
+    int32_t gpu_ids [GB_MAX_NGPUS]      // list of GPU ids to use
+) ;
+
+GrB_Info GB_Context_gpu_ids_set
+(
+    GxB_Context Context,
+    int32_t gpu_ids [GB_MAX_NGPUS],     // list of GPU ids to use
+    int32_t ngpus                       // # of GPUs to use
+) ;
 
 #endif
+
+

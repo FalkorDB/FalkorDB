@@ -42,7 +42,7 @@ GrB_Info GB_subref_bitmap_jit
     char *suffix ;
     uint64_t hash = GB_encodify_subref (&encoding, &suffix,
         GB_JIT_KERNEL_BITMAP_SUBREF, C, I_is_32, J_is_32,
-        Ikind, Jkind, false, false, false, A) ;
+        Ikind, Jkind, false, NULL, A) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed

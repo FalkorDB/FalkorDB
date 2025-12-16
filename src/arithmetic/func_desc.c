@@ -15,28 +15,31 @@
 // Arithmetic function repository
 rax *__aeRegisteredFuncs = NULL;
 
+// create a new function descriptor
 AR_FuncDesc *AR_FuncDescNew
 (
-	const char *name,
-	AR_Func func,
-	uint min_argc,
-	uint max_argc,
-	SIType *types,
-	SIType ret_type,
-	bool internal,
-	bool reducible
+	const char *name,   // function name
+	AR_Func func,       // pointer to function routine
+	uint min_argc,      // minimal number of arguments
+	uint max_argc,      // maximal number of arguments
+	SIType *types,      // types of arguments
+	SIType ret_type,    // return type
+	bool internal,      // is function internal
+	bool reducible,     // true if function is reducible
+	bool deterministic  // true if return value is predictable
 ) {
 	AR_FuncDesc *desc = rm_calloc(1, sizeof(AR_FuncDesc));
 
-	desc->name      =  name;
-	desc->func      =  func;
-	desc->types     =  types;
-	desc->ret_type  =  ret_type;
-	desc->min_argc  =  min_argc;
-	desc->max_argc  =  max_argc;
-	desc->internal  =  internal;
-	desc->aggregate =  false;
-	desc->reducible =  reducible;
+	desc->name          = name;
+	desc->func          = func;
+	desc->types         = types;
+	desc->ret_type      = ret_type;
+	desc->min_argc      = min_argc;
+	desc->max_argc      = max_argc;
+	desc->internal      = internal;
+	desc->aggregate     = false;
+	desc->reducible     = reducible;
+	desc->deterministic = deterministic;
 
 	return desc;
 }

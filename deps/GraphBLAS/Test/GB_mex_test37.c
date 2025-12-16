@@ -59,15 +59,15 @@ bool isequal (GrB_Matrix C1, GrB_Matrix C2)
 }
 
 //------------------------------------------------------------------------------
-// test37_idxbinop
+// gb_test37_idxbinop
 //------------------------------------------------------------------------------
 
-void test37_idxbinop (double *z,
+void gb_test37_idxbinop (double *z,
     const double *x, uint64_t ix, uint64_t jx,
     const double *y, uint64_t iy, uint64_t jy,
     const double *theta) ;
 
-void test37_idxbinop (double *z,
+void gb_test37_idxbinop (double *z,
     const double *x, uint64_t ix, uint64_t jx,
     const double *y, uint64_t iy, uint64_t jy,
     const double *theta)
@@ -76,7 +76,7 @@ void test37_idxbinop (double *z,
 }
 
 #define TEST37_IDXBINOP_DEFN                                                \
-"void test37_idxbinop (double *z,                                       \n" \
+"void gb_test37_idxbinop (double *z,                                       \n" \
 "    const double *x, uint64_t ix, uint64_t jx,                         \n" \
 "    const double *y, uint64_t iy, uint64_t jy,                         \n" \
 "    const double *theta)                                               \n" \
@@ -205,7 +205,7 @@ GrB_Info ewise
             if (ab && bb)
             {
                 // both A(i,j) and B(i,j) are present: apply the operator
-                test37_idxbinop (&tx, &ax, i, j, &bx, i, j, theta) ;
+                gb_test37_idxbinop (&tx, &ax, i, j, &bx, i, j, theta) ;
                 tb = 1 ;
             }
             else if (ab && !bb)
@@ -218,7 +218,7 @@ GrB_Info ewise
                         tb = 1 ;
                         break ;
                     case 1 :    // union
-                        test37_idxbinop (&tx, &ax, i, j, beta, i, j, theta) ;
+                        gb_test37_idxbinop (&tx, &ax, i, j, beta, i, j, theta) ;
                         tb = 1 ;
                         break ;
                     default :   // emult
@@ -235,7 +235,7 @@ GrB_Info ewise
                         tb = 1 ;
                         break ;
                     case 1 :    // union
-                        test37_idxbinop (&tx, alpha, i, j, &bx, i, j, theta) ;
+                        gb_test37_idxbinop (&tx, alpha, i, j, &bx, i, j, theta) ;
                         tb = 1 ;
                         break ;
                     default:
@@ -380,9 +380,9 @@ void mexFunction
     OK (GrB_Scalar_setElement_FP64 (Theta, theta)) ;
 
     OK (GxB_IndexBinaryOp_new (&Iop,
-        (GxB_index_binary_function) test37_idxbinop,
+        (GxB_index_binary_function) gb_test37_idxbinop,
         GrB_FP64, GrB_FP64, GrB_FP64, GrB_FP64,
-        "test37_idxbinop", TEST37_IDXBINOP_DEFN)) ;
+        "gb_test37_idxbinop", TEST37_IDXBINOP_DEFN)) ;
 
     OK (GxB_IndexBinaryOp_set_String (Iop, "test37 idx binop", GrB_NAME)) ;
     OK (GxB_print (Iop, 5)) ;
@@ -651,7 +651,7 @@ void mexFunction
     printf ("\n\n-------------- lots of compiler errors expected here:\n") ;
 
     #define CRUD_IDXBINOP_DEFN                          \
-    "void crud_idxbinop (double *z, "                   \
+    "void gb_crud_idxbinop (double *z, "                \
     " const double *x, uint64_t ix, uint64_t jx, "      \
     " const double *y, uint64_t iy, uint64_t jy, "      \
     " const double *theta) "                            \
@@ -671,7 +671,7 @@ void mexFunction
     expected = GxB_JIT_ERROR ;
     ERR (GxB_IndexBinaryOp_new (&Crud_Iop, NULL,
         GrB_FP64, GrB_FP64, GrB_FP64, GrB_FP64,
-        "crud_idxbinop", CRUD_IDXBINOP_DEFN)) ;
+        "gb_crud_idxbinop", CRUD_IDXBINOP_DEFN)) ;
 
     // restore the JIT control and the burble
     OK (GxB_set (GxB_JIT_C_CONTROL, save_jit)) ;

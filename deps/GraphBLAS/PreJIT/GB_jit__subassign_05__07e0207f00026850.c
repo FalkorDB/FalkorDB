@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__subassign_05__07e0207f00026850.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.0.2, Timothy A. Davis, (c) 2017-2025,
+// SuiteSparse:GraphBLAS v10.3.0, Timothy A. Davis, (c) 2017-2025,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -43,6 +43,7 @@
 #define GB_PUTC(cwork,Cx,p) Cx [p] = cwork
 #define GB_Cp_TYPE uint32_t
 #define GB_Cj_TYPE uint32_t
+#define GB_Cj_SIGNED_TYPE int32_t
 #define GB_Ci_TYPE uint32_t
 #define GB_Ci_SIGNED_TYPE int32_t
 #define GB_Cp_BITS 32
@@ -74,6 +75,7 @@
 #define GB_M_NHELD(e) GB_M_NVALS(e)
 #define GB_Mp_TYPE uint32_t
 #define GB_Mj_TYPE uint32_t
+#define GB_Mj_SIGNED_TYPE int32_t
 #define GB_Mi_TYPE uint32_t
 #define GB_Mi_SIGNED_TYPE int32_t
 #define GB_Mp_BITS 32
@@ -96,6 +98,7 @@
 #define GB_A_NHELD(e) int64_t e = 1 ; /* unused */
 #define GB_Ap_TYPE uint64_t
 #define GB_Aj_TYPE uint64_t
+#define GB_Aj_SIGNED_TYPE int64_t
 #define GB_Ai_TYPE uint64_t
 #define GB_Ai_SIGNED_TYPE int64_t
 #define GB_Ap_BITS 64
@@ -116,8 +119,8 @@
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0xb3e8bcfa47607ae0 ;
-    v [0] = 10 ; v [1] = 0 ; v [2] = 2 ;
+    (*hash) = 0x8efc9a001987fa26 ;
+    v [0] = 10 ; v [1] = 3 ; v [2] = 0 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = NULL ;
