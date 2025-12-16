@@ -220,7 +220,7 @@ static int js_array_to_c_strings
 error_free_strings:
     // if an error occurred mid-loop, free the strings allocated so far
     for (uint32_t i = 0; i < array_len (*c_strings_out) ; i++) {
-        free (*c_strings_out[i]) ;
+        free ((*c_strings_out)[i]) ;
     }
     array_free (*c_strings_out) ;
 
@@ -586,17 +586,23 @@ static JSValue js_node_get_neighbors
 		JSValue dist_val = JS_GetPropertyStr (js_ctx, options_obj, "distance") ;
 		if (!JS_IsUndefined (dist_val)) {
 			int64_t dist_long;
+
+			// failed to get int64
 			if (JS_ToInt64 (js_ctx, &dist_long, dist_val)) {
-				err_msg =  "'distance' must be a positive integer." ;
+				err_msg = "'distance' must be a positive integer." ;
 			}
 
-			if (dist_long <= 0) {
-				err_msg =  "'distance' must be a positive integer." ;
+			// check for negative value
+			else if (dist_long <= 0) {
+				err_msg = "'distance' must be a positive integer." ;
 			}
 
-			distance = (int)dist_long ;
+			// cast to int
+			else {
+				distance = (int)dist_long ;
+			}
 		}
-		JS_FreeValue(js_ctx, dist_val);
+		JS_FreeValue (js_ctx, dist_val) ;
 
 		//----------------------------------------------------------------------
 		// parse returnType

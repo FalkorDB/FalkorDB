@@ -36,6 +36,9 @@ void AUXLoadUDF_latest
 
 		bool res = UDF_Load (script, script_len, lib, lib_len, false, NULL) ;
 		ASSERT (res == true) ;
+
+		RedisModule_Free ((void*)lib) ;
+		RedisModule_Free ((void*)script) ;
 	}
 }
 

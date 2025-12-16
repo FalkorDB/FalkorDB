@@ -156,7 +156,7 @@ void AR_FuncRegisterUDF
 	_NormalizeFunctionName (name, _name, &len) ;
 
 	SIType ret_type = SI_ALL ;
-	SIType *types = array_new (SIType, 2) ;
+	SIType *types = array_new (SIType, 3) ;
 	array_append (types, T_STRING) ;
 	array_append (types, T_STRING) ;
 	array_append (types, SI_ALL) ;
