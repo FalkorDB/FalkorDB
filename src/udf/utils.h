@@ -67,15 +67,15 @@ JSContext *UDF_GetExecutionJSContext
 //     to the caller
 bool UDF_Delete
 (
-	const char *lib,      // the name of the UDF library to delete
+	const char *lib,  // the name of the UDF library to delete
 
-	const char **script,  // optional output pointer
-						  // if not NULL, set to the original JS source
-						  // caller owns the returned string
+	char **script,    // optional output pointer
+					  // if not NULL, set to the original JS source
+					  // caller owns the returned string
 
-	char **err            // output pointer for an error message
-						  // on error, set to a heap-allocated string describing
-						  // the issue, caller must free the string using free()
+	char **err        // output pointer for an error message
+					  // on error, set to a heap-allocated string describing
+					  // the issue, caller must free the string using free()
 );
 
 // remove all registered UDF libraries from the repository

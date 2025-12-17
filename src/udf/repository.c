@@ -338,8 +338,8 @@ bool UDF_RepoRegisterFunc
 // removes a UDF library from repository
 bool UDF_RepoRemoveLib
 (
-	const char *lib,     // UDF library
-	const char **script  // [optional] [output] removed script
+	const char *lib,  // UDF library
+	char **script     // [optional] [output] removed script
 ) {
 	ASSERT (lib      != NULL) ;
 	ASSERT (udf_repo != NULL) ;

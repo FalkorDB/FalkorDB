@@ -117,15 +117,15 @@ JSContext *UDF_GetExecutionJSContext
 //     to the caller
 bool UDF_Delete
 (
-	const char *lib,      // the name of the UDF library to delete
+	const char *lib,  // the name of the UDF library to delete
 
-	const char **script,  // optional output pointer
-						  // if not NULL, set to the original JS source
-						  // caller owns the returned string
+	char **script,    // optional output pointer
+					  // if not NULL, set to the original JS source
+					  // caller owns the returned string
 
-	char **err            // output pointer for an error message
-						  // on error, set to a heap-allocated string describing
-						  // the issue, caller must free the string using free()
+	char **err        // output pointer for an error message
+					  // on error, set to a heap-allocated string describing
+					  // the issue, caller must free the string using free()
 ) {
 	ASSERT (lib != NULL) ;
 	ASSERT (err != NULL) ;
@@ -234,7 +234,7 @@ bool UDF_Load
 	// remove previous version of the lib
 	//--------------------------------------------------------------------------
 	
-	const char *prev_script = NULL ;
+	char *prev_script = NULL ;
 	if (replace) {
 		// back up prev version script
 		// we'll use this script to restore the previous version in case
