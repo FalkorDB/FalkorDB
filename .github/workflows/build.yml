@@ -36,12 +36,12 @@ jobs:
             machine_type: e2-standard-4
             runner_label: rhel-build-${{ github.run_id }}-${{ github.run_number }}
             arm: false
-            image: projects/rhel-cloud/global/images/rhel-9-v20241210
+            image: projects/rhel-cloud/global/images/rhel-9-v20251209
           - name: rhel8-build
             machine_type: e2-standard-4
             runner_label: rhel8-build-${{ github.run_id }}-${{ github.run_number }}
             arm: false
-            image: projects/rhel-cloud/global/images/rhel-9-v20241210
+            image: projects/rhel-cloud/global/images/rhel-9-v20251209
     runs-on: ubuntu-latest
     steps:
       - name: Create runners
