@@ -90,7 +90,7 @@
 #define BOLT_PROTOCOL_PORT_DEFAULT         -1  // disabled by default
 #define DELAY_INDEXING_DEFAULT             false
 #define IMPORT_DIR_DEFAULT                 "/var/lib/FalkorDB/import/"
-#define TEMP_DIR_DEFAULT                   "/tmp/"
+#define TEMP_DIR_DEFAULT                   "/tmp"
 
 // configuration object
 typedef struct {
