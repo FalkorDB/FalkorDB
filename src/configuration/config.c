@@ -501,18 +501,7 @@ static void Config_import_folder_set
 	// free previous value
 	rm_free(config.import_folder);
 
-	// copy new path
-	size_t len = strlen(path);
-	
-	// check if path ends with "/"
-	if(len > 0 && path[len - 1] == '/') {
-		// allocate and copy without trailing "/"
-		config.import_folder = rm_malloc(len);
-		memcpy(config.import_folder, path, len - 1);
-		config.import_folder[len - 1] = '\0';
-	} else {
-		config.import_folder = rm_strdup(path);
-	}
+	config.import_folder = rm_strdup(path);
 }
 
 static const char *Config_import_folder_get(void) {
@@ -532,7 +521,17 @@ static void Config_temp_folder_set
 	rm_free(config.temp_folder);
 
 	// copy new path
-	config.temp_folder = rm_strdup(path);
+	size_t len = strlen(path);
+	
+	// check if path ends with "/"
+	if(len > 0 && path[len - 1] == '/') {
+		// allocate and copy without trailing "/"
+		config.temp_folder = rm_malloc(len);
+		memcpy(config.temp_folder, path, len - 1);
+		config.temp_folder[len - 1] = '\0';
+	} else {
+		config.temp_folder = rm_strdup(path);
+	}
 }
 
 static const char *Config_temp_folder_get(void) {
