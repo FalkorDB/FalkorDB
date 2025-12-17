@@ -149,7 +149,7 @@ static void GraphCopyContext_Free
 			"deleting dumped graph file: %s", copy_ctx->path);
 	remove(copy_ctx->path);
 
-	free(copy_ctx->path);
+	rm_free(copy_ctx->path);
 
 	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(copy_ctx->bc);
 	RedisModule_FreeString(ctx, copy_ctx->rm_src);
