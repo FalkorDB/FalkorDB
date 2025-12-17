@@ -140,6 +140,7 @@ static void UDFCtx_FreeTLSData
 	//--------------------------------------------------------------------------
 
 	_UDFCtx_ClearLibs (ctx) ;
+	array_free (ctx->libs) ;
 
 	// free order is important, start with context and follow with runtime
 
