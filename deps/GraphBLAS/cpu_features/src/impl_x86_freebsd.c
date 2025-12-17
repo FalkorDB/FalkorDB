@@ -28,7 +28,8 @@ static void OverrideOsPreserves(OsPreserves* os_preserves) {
 #include "internal/stack_line_reader.h"
 #include "internal/string_view.h"
 
-static void DetectFeaturesFromOs(X86Features* features) {
+static void DetectFeaturesFromOs(X86Info* info, X86Features* features) {
+  (void)info;
   // Handling FreeBSD platform through parsing /var/run/dmesg.boot.
   const int fd = CpuFeatures_OpenFile("/var/run/dmesg.boot");
   if (fd >= 0) {

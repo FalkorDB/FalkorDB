@@ -51,6 +51,7 @@ typedef struct {
 	bool internal;         // is function internal
 	bool reducible;        // can be reduced using static evaluation
 	bool aggregate;        // true if the function is an aggregation
+	bool deterministic;    // true if return value is predictable
 	const char *name;      // function name
 	AR_FuncCBs callbacks;  // aggregation callbacks
 } AR_FuncDesc;
@@ -58,14 +59,15 @@ typedef struct {
 // create a new function descriptor
 AR_FuncDesc *AR_FuncDescNew
 (
-	const char *name,     // function name
-	AR_Func func,         // pointer to function
-	uint min_argc,        // minimum number of arguments
-	uint max_argc,        // maximum number of arguments
-	SIType *types,        // acceptable types
-	SIType ret_type,      // return type
-	bool internal,        // is function internal
-	bool reducible        // is function reducible
+	const char *name,   // function name
+	AR_Func func,       // pointer to function routine
+	uint min_argc,      // minimal number of arguments
+	uint max_argc,      // maximal number of arguments
+	SIType *types,      // types of arguments
+	SIType ret_type,    // return type
+	bool internal,      // is function internal
+	bool reducible,     // true if function is reducible
+	bool deterministic  // true if return value is predictable
 );
 
 // register arithmetic function to repository

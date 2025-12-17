@@ -56,9 +56,9 @@
 		if (!(X))                                                   \
 		{                                                           \
 			if(RedisModule__Assert != NULL) {                       \
-				RedisModule_Assert(X);				                \
+				RedisModule_Assert(X);                              \
 			} else {                                                \
-				printf("assert(%s) failed in %s line %d\n",         \
+				printf ("assert(%s) failed: %s line %d\n",          \
 				#X, __FILE__, __LINE__);                            \
 				/* force crash */                                   \
 				char x = *((char*)NULL); /* produce stack trace */  \

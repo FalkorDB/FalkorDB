@@ -95,7 +95,6 @@
             if (Mask_comp) mij = !mij ;
             if (mij)
             {
-
                 // find i in B(:,j)
                 int64_t pright = pB_end - 1 ;
                 bool found ;

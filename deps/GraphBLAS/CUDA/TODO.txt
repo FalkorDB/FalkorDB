@@ -8,7 +8,6 @@ TODO (Mar 2024):
     CUDA PreJIT kernels
     GB_cuda_matrix_advise:  write it
     dot3: allow iso
-    use a stream pool (from RMM)
     can rmm_wrap be thread safe?
     set/get which GPU(s) to use
     handling nvcc compiler errors
@@ -24,8 +23,6 @@ all the FIXMEs
 clean up comments and code style
 
 hexadecimal
-
-stream pool
 
 test complex
 

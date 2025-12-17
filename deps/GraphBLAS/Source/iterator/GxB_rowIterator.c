@@ -18,6 +18,12 @@
 #undef GxB_rowIterator_getRowIndex
 #undef GxB_rowIterator_getColIndex
 
+#if !defined ( GBMATLAB )
+
+// These methods are not tested by the GraphBLAS/Test or GraphBLAS/Tcov
+// test coverage suite, because the conflict with libmwgraphblas.so inside
+// MATLAB.
+
 //------------------------------------------------------------------------------
 // GxB_rowIterator_attach: attach a row iterator to a matrix
 //------------------------------------------------------------------------------
@@ -44,8 +50,8 @@ GrB_Info GxB_rowIterator_attach
     GrB_Matrix A,
     GrB_Descriptor desc
 )
-{ 
-    return (GB_Iterator_attach (iterator, A, GxB_BY_ROW, desc)) ;
+{
+    return (GB(Iterator_attach)(iterator, A, GxB_BY_ROW, desc)) ;
 }
 
 //------------------------------------------------------------------------------
@@ -66,7 +72,7 @@ GrB_Info GxB_rowIterator_attach
 // structure for the matrix, some of which may be empty, and kount <= m.
 
 uint64_t GxB_rowIterator_kount (GxB_Iterator iterator)
-{ 
+{
     return (iterator->anvec) ;
 }
 
@@ -84,7 +90,7 @@ uint64_t GxB_rowIterator_kount (GxB_Iterator iterator)
 
 // For SuiteSparse:GraphBLAS: If the matrix is hypersparse, and the row
 // does not appear in the hyperlist, then the iterator is moved to the first
-// row after the given row that does appear in the hyperlist.  
+// row after the given row that does appear in the hyperlist.
 
 // The method is always successful; the following are conditions are returned:
 // GxB_EXHAUSTED:   if the row index is >= nrows(A); the row iterator is
@@ -98,8 +104,8 @@ uint64_t GxB_rowIterator_kount (GxB_Iterator iterator)
 //                  return its value.
 
 GrB_Info GxB_rowIterator_seekRow (GxB_Iterator iterator, uint64_t row)
-{ 
-    return (GB_Iterator_rc_seek (iterator, row, false)) ;
+{
+    return (GB(Iterator_rc_seek)(iterator, row, false)) ;
 }
 
 //------------------------------------------------------------------------------
@@ -115,8 +121,8 @@ GrB_Info GxB_rowIterator_seekRow (GxB_Iterator iterator, uint64_t row)
 // returned by GxB_rowIterator_kount.
 
 GrB_Info GxB_rowIterator_kseek (GxB_Iterator iterator, uint64_t k)
-{ 
-    return (GB_Iterator_rc_seek (iterator, k, true)) ;
+{
+    return (GB(Iterator_rc_seek)(iterator, k, true)) ;
 }
 
 //------------------------------------------------------------------------------
@@ -136,7 +142,7 @@ GrB_Info GxB_rowIterator_kseek (GxB_Iterator iterator, uint64_t k)
 // the return conditions of GxB_rowIterator_seekRow.
 
 GrB_Info GxB_rowIterator_nextRow (GxB_Iterator iterator)
-{ 
+{
     return (GB_Iterator_rc_knext (iterator)) ;
 }
 
@@ -156,7 +162,7 @@ GrB_Info GxB_rowIterator_nextRow (GxB_Iterator iterator)
 //                  A(row,:).
 
 GrB_Info GxB_rowIterator_nextCol (GxB_Iterator iterator)
-{ 
+{
     return (GB_Iterator_rc_inext (iterator)) ;
 }
 
@@ -174,7 +180,7 @@ GrB_Info GxB_rowIterator_nextCol (GxB_Iterator iterator)
 // iterator is positioned at row zero.
 
 uint64_t GxB_rowIterator_getRowIndex (GxB_Iterator iterator)
-{ 
+{
     return (GB_Iterator_rc_getj (iterator)) ;
 }
 
@@ -189,7 +195,9 @@ uint64_t GxB_rowIterator_getRowIndex (GxB_Iterator iterator)
 // GrB_SUCCESS.  Results are undefined if this condition is not met.
 
 uint64_t GxB_rowIterator_getColIndex (GxB_Iterator iterator)
-{ 
+{
     return (GB_Iterator_rc_geti (iterator)) ;
 }
+
+#endif
 

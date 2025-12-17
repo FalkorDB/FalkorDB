@@ -121,6 +121,13 @@ the same value, but they do not depend on each other.  Modifying one has no
 effect on the other.
 The \verb'GrB_NAME' is copied into the new scalar.
 
+In GraphBLAS v10.2.0 and earlier, a call to \verb'GrB_Scalar_dup' triggered
+a internal call to \verb'GrB_Scalar_wait' on the input scalar \verb't'.  In
+v10.3.0 and later, this call is removed.  To obtain the old behavior of
+v10.2.0 and earlier, simply call \verb'GrB_Scalar_wait' on the input scalar
+\verb't' prior to calling \verb'GrB_Scalar_dup(&s,t)'.
+
+\newpage
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GrB\_Scalar\_clear:} clear a scalar of its entry}
 %-------------------------------------------------------------------------------

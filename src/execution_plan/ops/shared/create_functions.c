@@ -337,64 +337,74 @@ void ConvertPropertyMap
 	PropertyMap *map,
 	bool fail_on_null
 ) {
-	uint property_count = array_len(map->keys);
-	SIValue vals[property_count];
-	AttributeID ids[property_count];
-	uint attrs_count = 0;
-	for(int i = 0; i < property_count; i++) {
+	uint property_count = array_len (map->keys) ;
+	uint attrs_count    = 0;
+
+	SIValue     vals[property_count] ;
+	AttributeID ids [property_count] ;
+
+	for (int i = 0; i < property_count; i++) {
 		// note that AR_EXP_Evaluate may raise a run-time exception
 		// in which case the allocations in this function will leak
 		// for example, this occurs in the query:
 		// CREATE (a {val: 2}), (b {val: a.val})
-		SIValue val = AR_EXP_Evaluate(map->values[i], r);
-		if(!(SI_TYPE(val) & SI_VALID_PROPERTY_VALUE)) {
+		SIValue val = AR_EXP_Evaluate (map->values[i], r) ;
+
+		if (!(SI_TYPE(val) & SI_VALID_PROPERTY_VALUE)) {
 			// this value is of an invalid type
-			if(!SIValue_IsNull(val)) {
+			if (!SIValue_IsNull(val)) {
 				// if the value was a complex type, emit an exception
-				SIValue_Free(val);
-				for(int j = 0; j < i; j++) {
-					SIValue_Free(vals[j]);
+				SIValue_Free (val) ;
+				for (int j = 0; j < i; j++) {
+					SIValue_Free (vals[j]) ;
 				}
-				Error_InvalidPropertyValue();
-				ErrorCtx_RaiseRuntimeException(NULL);
+
+				Error_InvalidPropertyValue () ;
+				ErrorCtx_RaiseRuntimeException (NULL) ;
 			}
+
 			// the value was NULL
 			// if this was prohibited in this context, raise an exception,
 			// otherwise skip this value
-			if(fail_on_null) {
+			if (fail_on_null) {
 				// emit an error and exit
-				for(int j = 0; j < i; j++) {
-					SIValue_Free(vals[j]);
+				for (int j = 0; j < i; j++) {
+					SIValue_Free (vals[j]) ;
 				}
-				ErrorCtx_RaiseRuntimeException("Cannot merge node using null property value");
+
+				ErrorCtx_RaiseRuntimeException ("Cannot merge node using null property value") ;
 			}
 
 			// don't add null to attrribute set
-			continue;
+			continue ;
 		}
 
 		// emit an error and exit if we're trying to add
 		// an array containing an invalid type
-		if(SI_TYPE(val) == T_ARRAY) {
-			SIType invalid_properties = ~SI_VALID_PROPERTY_VALUE;
-			bool res = SIArray_ContainsType(val, invalid_properties);
-			if(res) {
+		if (unlikely (SI_TYPE(val) == T_ARRAY)) {
+			SIType invalid_properties = ~SI_VALID_PROPERTY_VALUE ;
+			bool res = SIArray_ContainsType (val, invalid_properties) ;
+			if (res) {
 				// validation failed
-				SIValue_Free(val);
-				for(int j = 0; j < i; j++) {
-					SIValue_Free(vals[j]);
+				SIValue_Free (val) ;
+				for (int j = 0; j < i; j++) {
+					SIValue_Free (vals[j]) ;
 				}
-				Error_InvalidPropertyValue();
-				ErrorCtx_RaiseRuntimeException(NULL);
+
+				Error_InvalidPropertyValue () ;
+				ErrorCtx_RaiseRuntimeException (NULL) ;
 			}
 		}
 
 		// set the converted attribute
-		ids[attrs_count] = GraphHub_FindOrAddAttribute(gc, map->keys[i], true);
-		vals[attrs_count++] = SI_CloneValue(val);
-		SIValue_Free(val);
+		ids [attrs_count] = map->attr_ids[i] ;
+		vals[attrs_count] = SI_CloneValue (val) ;
+		attrs_count++ ;
+		SIValue_Free (val) ;
 	}
-	AttributeSet_AddNoClone(attributes, ids, vals, attrs_count, false);
+
+	// batch add
+	AttributeSet_Add (attributes, ids, vals, attrs_count, false) ;
 }
 
 // free all data associated with a completed create operation

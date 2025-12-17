@@ -16,7 +16,9 @@ void GB_macrofy_preface
     char *kernel_name,      // name of the kernel
     char *C_preface,        // user-provided preface for CPU JIT kernels
     char *CUDA_preface,     // user-provided preface for CUDA JIT kernels
-    GB_jit_kcode kcode
+    GB_jit_kcode kcode,
+    uint8_t major,          // CUDA compute capability
+    uint8_t minor
 )
 { 
 
@@ -44,6 +46,8 @@ void GB_macrofy_preface
     if (kcode >= GB_JIT_CUDA_KERNEL)
     {
         // for CUDA JIT kernels
+        fprintf (fp, "#define GB_CUDA_COMPUTE_MAJOR %d\n", major) ;
+        fprintf (fp, "#define GB_CUDA_COMPUTE_MINOR %d\n", minor) ;
         fprintf (fp, "#define GB_CUDA_KERNEL\n%s\n", CUDA_preface) ;
     }
     else

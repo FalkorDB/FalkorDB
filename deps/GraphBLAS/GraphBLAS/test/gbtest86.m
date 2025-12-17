@@ -35,7 +35,7 @@ b = double (B) ;
 
 C2 = A*B ;
 c2 = a*b ;
-assert (isequal (c2, C2)) ;
+assert (gbtest_err (c2, C2) < 1e-14) ;
 
 C1 = GrB.mxm (semiring, A, B) ; assert (isequal (C1, C2)) ;
 C1 = GrB.mxm (A, semiring, B) ; assert (isequal (C1, C2)) ;
@@ -54,7 +54,7 @@ C1 = GrB.mxm (a, b, semiring) ; assert (isequal (C1, C2)) ;
 
 C2 = A*B ;
 c2 = a*b ;
-assert (isequal (c2, C2)) ;
+assert (gbtest_err (c2, C2) < 1e-14) ;
 
 C1 = GrB.mxm (semiring, A, B, desc) ; assert (isequal (C1, C2)) ;
 C1 = GrB.mxm (A, semiring, B, desc) ; assert (isequal (C1, C2)) ;
@@ -75,7 +75,7 @@ C1 = GrB.mxm (a, b, semiring, desc) ; assert (isequal (C1, C2)) ;
 
 C2 = C + A*B ;
 c2 = c + a*b ;
-assert (isequal (c2, C2)) ;
+assert (gbtest_err (c2, C2) < 1e-14) ;
 
 C1 = GrB.mxm (C, accum, semiring, A, B, desc) ; assert (isequal (C1, C2)) ;
 C1 = GrB.mxm (C, accum, A, semiring, B, desc) ; assert (isequal (C1, C2)) ;
@@ -107,7 +107,7 @@ C2 (M) = T (M) ;
 t = a*b ;
 c2 = c ;
 c2 (m) = t (m) ;
-assert (isequal (c2, C2)) ;
+assert (gbtest_err (c2, C2) < 1e-14) ;
 
 C1 = GrB.mxm (semiring, C, M, A, B, desc) ; assert (isequal (C1, C2)) ;
 C1 = GrB.mxm (C, M, semiring, A, B, desc) ; assert (isequal (C1, C2)) ;
@@ -135,7 +135,7 @@ C2 (M) = T (M) ;
 t = c + a*b ;
 c2 = c ;
 c2 (m) = t (m) ;
-assert (isequal (c2, C2)) ;
+assert (gbtest_err (c2, C2) < 1e-14) ;
 
 C1 = GrB.mxm (C, M, accum, semiring, A, B, desc) ; assert (isequal (C1, C2)) ;
 C1 = GrB.mxm (C, M, accum, A, semiring, B, desc) ; assert (isequal (C1, C2)) ;

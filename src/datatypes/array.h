@@ -7,6 +7,7 @@
 #pragma once
 
 #include "../value.h"
+#include "../redismodule.h"
 
 // initialize a new SIValue array type with given capacity
 // returns initialized array
@@ -122,6 +123,14 @@ XXH64_hash_t SIArray_HashCode
 SIValue SIArray_FromBinary
 (
 	FILE *stream  // stream containing binary representation of an array
+);
+
+// defrag array
+// returns true if array memory been relocated
+bool SIArray_Defrag
+(
+	SIValue *arr,              // array to defrag
+	RedisModuleDefragCtx *ctx  // redis defrag context
 );
 
 // free an array

@@ -142,6 +142,14 @@
                         return (GrB_SUCCESS) ;
                     }
                     #endif
+                    #if GB_COMPILER_SUPPORTS_RVV1
+                    if (GB_Global_cpu_features_rvv_1_0 ( ))
+                    {
+                        GB_AxB_saxpy5_unrolled_rvv (C, A, B,
+                            ntasks, nthreads, B_slice) ;
+                        return (GrB_SUCCESS) ;
+                    }
+                    #endif
                 #endif
                 // any architecture and any built-in semiring
                 GB_AxB_saxpy5_unrolled_vanilla (C, A, B,

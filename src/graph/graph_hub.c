@@ -272,8 +272,7 @@ void GraphHub_DeleteEdges
 	Graph_DeleteEdges(gc->g, edges, n);
 }
 
-// updates a graph entity attribute set. Returns as out params the number
-// of properties set and removed.
+// updates a graph entity attribute set
 void GraphHub_UpdateEntityProperties
 (
 	GraphContext *gc,             // graph context
@@ -282,26 +281,26 @@ void GraphHub_UpdateEntityProperties
 	GraphEntityType entity_type,  // entity type
 	bool log                      // log update in undo-log
 ) {
-	ASSERT(gc != NULL);
-	ASSERT(ge != NULL);
+	ASSERT (gc != NULL) ;
+	ASSERT (ge != NULL) ;
 
-	AttributeSet old_set = GraphEntity_GetAttributes(ge);
+	AttributeSet old_set = GraphEntity_GetAttributes (ge) ;
 
-	if(log == true) {
-		UndoLog log = QueryCtx_GetUndoLog();
-		if(entity_type == GETYPE_NODE) {
-			UndoLog_UpdateNode(log, (Node *)ge, old_set);
+	if (log == true) {
+		UndoLog log = QueryCtx_GetUndoLog () ;
+		if (entity_type == GETYPE_NODE) {
+			UndoLog_UpdateNode (log, (Node *)ge, old_set) ;
 		} else {
-			UndoLog_UpdateEdge(log, (Edge *)ge, old_set);
+			UndoLog_UpdateEdge (log, (Edge *)ge, old_set) ;
 		}
 	}
 
-	*ge->attributes = set;
+	*ge->attributes = set ;
 
-	if(entity_type == GETYPE_NODE) {
-		GraphContext_AddNodeToIndices(gc, (Node *)ge);
+	if (entity_type == GETYPE_NODE) {
+		GraphContext_AddNodeToIndices (gc, (Node *)ge) ;
 	} else {
-		GraphContext_AddEdgeToIndices(gc, (Edge *)ge);
+		GraphContext_AddEdgeToIndices (gc, (Edge *)ge) ;
 	}
 }
 
@@ -322,10 +321,8 @@ void GraphHub_UpdateNodeProperty
 
 	if(attr_id == ATTRIBUTE_ID_ALL) {
 		AttributeSet_Free(n.attributes);
-	} else if(GraphEntity_GetProperty((GraphEntity *)&n, attr_id) == ATTRIBUTE_NOTFOUND) {
-		AttributeSet_AddNoClone(n.attributes, &attr_id, &v, 1, true);
 	} else {
-		AttributeSet_UpdateNoClone(n.attributes, attr_id, v);
+		AttributeSet_Update (NULL, n.attributes, &attr_id, &v, 1, false) ;
 	}
 
 	// retrieve node labels
@@ -390,14 +387,11 @@ void GraphHub_UpdateEdgeProperty
 		return;
 	}
 
-	bool update_idx = true;
 	GraphEntity *ge = (GraphEntity *)&e;
 
-	if(GraphEntity_GetProperty(ge, attr_id) == ATTRIBUTE_NOTFOUND) {
-		AttributeSet_AddNoClone(e.attributes, &attr_id, &v, 1, true);
-	} else {
-		update_idx = AttributeSet_UpdateNoClone(e.attributes, attr_id, v);
-	}
+	AttributeSetChangeType change ;
+	AttributeSet_Update (&change, e.attributes, &attr_id, &v, 1, false) ;
+	bool update_idx = (change != CT_NONE) ;
 
 	// update index if
 	// 1. attribute was set/updated

@@ -87,8 +87,8 @@ void GB_macrofy_ewise           // construct all macros for GrB_eWise
     // describe the operator
     //--------------------------------------------------------------------------
 
-    GrB_Type xtype, ytype, ztype ;
-    const char *xtype_name, *ytype_name, *ztype_name ;
+    GrB_Type xtype, ytype, ztype, theta_type ;
+    const char *xtype_name, *ytype_name, *ztype_name, *theta_type_name ;
     ASSERT_BINARYOP_OK (binaryop, "binaryop to macrofy", GB0) ;
 
     GB_Opcode opcode ;
@@ -99,9 +99,11 @@ void GB_macrofy_ewise           // construct all macros for GrB_eWise
         xtype_name = "GB_void" ;
         ytype_name = "GB_void" ;
         ztype_name = "GB_void" ;
+        theta_type_name = "void" ;
         xtype = NULL ;
         ytype = NULL ;
         ztype = NULL ;
+        theta_type = NULL ;
         fprintf (fp, "// op: symbolic only (C is iso)\n\n") ;
     }
     else
@@ -116,9 +118,11 @@ void GB_macrofy_ewise           // construct all macros for GrB_eWise
         xtype = binaryop->xtype ;
         ytype = binaryop->ytype ;
         ztype = binaryop->ztype ;
+        theta_type = binaryop->theta_type ;
         xtype_name = xtype->name ;
         ytype_name = ytype->name ;
         ztype_name = ztype->name ;
+        theta_type_name = (theta_type == NULL) ? "void" : theta_type->name ;
         if (binaryop->hash == 0)
         { 
             // builtin operator
@@ -152,13 +156,17 @@ void GB_macrofy_ewise           // construct all macros for GrB_eWise
         GB_macrofy_typedefs (fp, ctype,
             (acode == 0 || acode == 15) ? NULL : atype,
             (bcode == 0 || bcode == 15) ? NULL : btype,
-            xtype, ytype, ztype) ;
+            xtype, ytype, ztype, theta_type) ;
     }
 
     fprintf (fp, "// binary operator types:\n") ;
     GB_macrofy_type (fp, "Z", "_", ztype_name) ;
     GB_macrofy_type (fp, "X", "_", xtype_name) ;
     GB_macrofy_type (fp, "Y", "_", ytype_name) ;
+    if (GB_IS_INDEXBINARYOP_CODE (opcode))
+    {
+        GB_macrofy_type (fp, "THETA", "_", theta_type_name) ;
+    }
 
     //--------------------------------------------------------------------------
     // construct macros for the binary operator
