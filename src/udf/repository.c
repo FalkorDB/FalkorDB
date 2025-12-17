@@ -195,6 +195,9 @@ void UDF_RepoGetLibIdx
 	const char ***functions,  // [optional] [output] lib's functions
 	const char **script       // [optional] [output] lib's script
 ) {
+	// lock under READ
+	pthread_rwlock_rdlock (&udf_repo->rwlock) ;
+
 	ASSERT (idx < UDF_RepoLibsCount()) ;
 
 	UDF_Lib *lib = udf_repo->libs + idx ;
@@ -206,6 +209,9 @@ void UDF_RepoGetLibIdx
 	if (name)      *name      = lib->name ;
 	if (script)    *script    = lib->script ;
 	if (functions) *functions = (const char**) lib->functions ;
+
+	// unlock
+	pthread_rwlock_unlock (&udf_repo->rwlock) ;
 }
 
 // returns script from UDF repository
@@ -261,6 +267,11 @@ bool UDF_RepoContainsLib
 	ASSERT (lib      != NULL) ;
 	ASSERT (udf_repo != NULL) ;
 
+	bool contains = false ;
+
+	// lock under READ
+	pthread_rwlock_rdlock (&udf_repo->rwlock) ;
+
 	int n = array_len (udf_repo->libs) ;
 
 	for (int i = 0; i < n; i++) {
@@ -268,11 +279,15 @@ bool UDF_RepoContainsLib
 			if (idx != NULL) {
 				*idx = i ;
 			}	
-			return true ;
+			contains = true ;
+			break ;
 		}
 	}
 
-	return false ;
+	// unlock
+	pthread_rwlock_unlock (&udf_repo->rwlock) ;
+
+	return contains ;
 }
 
 // register a new UDF library
@@ -400,6 +415,7 @@ void UDF_RepoExposeLib
 
 		asprintf (&fullname, "%s.%s", lib, func) ;
 
+		// the newly registered function owns the name
 		AR_FuncRegisterUDF (fullname) ;
 	}
 }
