@@ -23,8 +23,8 @@ typedef struct {
 
 // UDF library desc
 typedef struct {
-	const char *name;  // library name
-	UDFFunc *funcs;    // library's functions
+	char *name;      // library name
+	UDFFunc *funcs;  // library's functions
 } UDFLib ;
 
 // TLS UDF context
@@ -94,6 +94,7 @@ static void _UDFCtx_ClearLibs
 			rm_free (f->name) ;
 		}
 
+		rm_free    (l->name)  ;
 		array_free (l->funcs) ;
 	}
 
@@ -222,7 +223,7 @@ void UDFCtx_RegisterLibrary
 	ASSERT (_UDFCtx_GetLib (ctx, lib_name) == NULL) ;
 
 	// add new library
-	UDFLib l = {.name = lib_name, .funcs = array_new (UDFFunc, 0)} ;
+	UDFLib l = {.name = rm_strdup (lib_name), .funcs = array_new (UDFFunc, 0)} ;
 	array_append (ctx->libs, l) ;
 }
 

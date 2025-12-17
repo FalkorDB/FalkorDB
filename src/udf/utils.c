@@ -69,7 +69,6 @@ JSContext *UDF_GetRegistrationJSContext
 	JSContext *js_ctx = JS_NewContext(js_rt) ;
 	ASSERT (js_ctx != NULL) ;
 
-	// provide validation-only register() hook
 	UDF_RegisterFalkorObject (js_ctx) ;
 	UDF_SetFalkorRegisterImpl (js_ctx, UDF_FUNC_REG_MODE_GLOBAL) ;
 
@@ -91,7 +90,6 @@ JSContext *UDF_GetExecutionJSContext
 	JSContext *js_ctx = JS_NewContext(js_rt) ;
 	ASSERT (js_ctx != NULL) ;
 
-	// provide validation-only register() hook
 	UDF_CTX_RegisterClasses (js_ctx) ;
 	UDF_SetFalkorRegisterImpl (js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
 
@@ -302,7 +300,7 @@ bool UDF_Load
 	// adding UDF functions to the UDF repository
 	val = JS_Eval (js_ctx, script, script_len, "<input>", JS_EVAL_TYPE_GLOBAL) ;
 
-	// although we've passed validation we can still fail registrating the lib
+	// although we've passed validation we can still fail registering the lib
 	// this can happen if the scripts tried to register the same function
 	// multiple times e.g. falkor.register('a', A); falkor.register('a', B);
 	if (JS_IsException (val)) {

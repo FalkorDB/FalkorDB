@@ -90,8 +90,12 @@ void AR_FinalizeFuncsRepo(void) {
 
 	raxStop (&it);
 	raxFree (__udfs->repo) ;
+	rm_free (__udfs) ;
 
 	pthread_rwlock_destroy (&__udfs->lock) ;
+
+	__udfs              = NULL ;
+	__aeRegisteredFuncs = NULL ;
 }
 
 // create a new function descriptor

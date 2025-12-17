@@ -148,7 +148,7 @@ void UDF_RepoPopulateJSContext
 
 		UDFCtx_RegisterLibrary (lib_name) ;
 
-		// evalute script
+		// evaluate script
 		JSValue val = JS_Eval (js_ctx, script, strlen (script), "<input>",
 				JS_EVAL_TYPE_GLOBAL) ;
 
@@ -250,12 +250,20 @@ bool UDF_RepoContainsFunc
 	ASSERT (lib  != NULL) ;
 	ASSERT (func != NULL) ;
 
+	bool contains = false ;
+
+	// lock under READ
+	pthread_rwlock_rdlock (&udf_repo->rwlock) ;
+
 	UDF_Lib *l = _UDF_RepoGetLib (lib, NULL) ;
-	if (l == NULL) {
-		return false ;
+	if (l != NULL) {
+		contains = _lib_contains_func (l, func) ;
 	}
 
-	return _lib_contains_func (l, func) ;
+	// unlock
+	pthread_rwlock_unlock (&udf_repo->rwlock) ;
+
+	return contains ;
 }
 
 // checks if UDF repository contains library
@@ -336,16 +344,18 @@ bool UDF_RepoRegisterFunc
 	}
 
 	// make sure function isn't already registered
-	int n = array_len (_lib->functions) ;
-	for (int i = 0; i < n; i++) {
-		const char *_func = _lib->functions[i] ;
-		if (strcmp (_func, func) == 0) {
-			return false ;
-		}
+	if (UDF_RepoContainsFunc (lib, func)) {
+		return false ;
 	}
+
+	// lock under WRITE
+	pthread_rwlock_wrlock (&udf_repo->rwlock) ;
 
 	// new function
 	array_append (_lib->functions, rm_strdup (func)) ;
+
+	// unlock
+	pthread_rwlock_unlock (&udf_repo->rwlock) ;
 
 	return true ;
 }

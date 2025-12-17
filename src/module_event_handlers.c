@@ -24,6 +24,9 @@
 #include <pthread.h>
 #include <stdbool.h>
 
+// forward declaration
+void RediSearch_CleanupModule();
+
 // indicates the possibility of half-baked graphs in the keyspace
 #define INTERMEDIATE_GRAPHS (aux_field_counter > 0)
 
@@ -393,7 +396,6 @@ static void _ShutdownEventHandler
 	RedisModule_Log (ctx, "notice", "%s",
 			"Clearing RediSearch resources on shutdown") ;
 
-	void RediSearch_CleanupModule () ;  // forward declaration
 	RediSearch_CleanupModule () ;
 }
 
