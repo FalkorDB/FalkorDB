@@ -25,6 +25,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  BASE_IMAGE_VERSION: 1.0.0
 jobs:
   create-runners:
     strategy:
@@ -257,7 +259,7 @@ jobs:
         run: |
           # All platforms use same compiler dockerfile with OS parameter
           echo "compiler=Dockerfile.compiler" >> $GITHUB_OUTPUT
-          
+
           # Final image dockerfile
           if [[ "${{ matrix.platform.os }}" == "alpine" ]]; then
             echo "final=Dockerfile.alpine" >> $GITHUB_OUTPUT
@@ -294,6 +296,7 @@ jobs:
           build-args: |
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
             OS=${{ matrix.platform.os }}
+            BASE_IMAGE_VERSION=${{ env.BASE_IMAGE_VERSION }}
             DEBUG=${{ matrix.build_type == 'debug' && '1' || '0' }}
 
       - name: Copy artifacts from compiler image
@@ -537,5 +540,3 @@ jobs:
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results.sarif
-
-
