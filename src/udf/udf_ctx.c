@@ -140,6 +140,8 @@ static void UDFCtx_FreeTLSData
 
 	_UDFCtx_ClearLibs (ctx) ;
 
+	// free order is important, start with context and follow with runtime
+
 	if (ctx->js_ctx != NULL) {
 		JS_FreeContext (ctx->js_ctx) ;
 	}

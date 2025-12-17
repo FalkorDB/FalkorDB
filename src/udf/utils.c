@@ -241,9 +241,9 @@ bool UDF_Load
 		// the new library fails to load
 		bool deleted = UDF_Delete (lib, &prev_script, err) ;
 
-		ASSERT (*err         == NULL) ;
-		ASSERT (deleted      == true) ;
-		ASSERT (prev_script  != NULL) ;
+		ASSERT (*err        == NULL) ;
+		ASSERT (deleted     == true) ;
+		ASSERT (prev_script != NULL) ;
 	}
 
 	// set global library name
@@ -332,6 +332,10 @@ cleanup:
 	}
 
 	UDF_LIB = NULL ;
+
+	if (prev_script != NULL) {
+		rm_free (prev_script) ;
+	}
 
 	JS_FreeContext (js_ctx) ;
 	JS_FreeRuntime (js_rt) ;
