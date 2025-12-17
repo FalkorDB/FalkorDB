@@ -34,6 +34,7 @@ int Graph_UDF_Delete
 
 	char *err = NULL;
 	if (UDF_Delete (lib, NULL, &err)) {
+		ASSERT (err == NULL) ;
 		*success = true ;
 		RedisModule_ReplyWithSimpleString (ctx, "OK") ;
 	} else {

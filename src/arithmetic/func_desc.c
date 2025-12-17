@@ -152,8 +152,7 @@ void AR_FuncRegisterUDF
 	ASSERT (name != NULL) ;
 
 	size_t len;
-	char *_name = rm_strdup (name) ;
-	_NormalizeFunctionName (name, _name, &len) ;
+	_NormalizeFunctionName (name, name, &len) ;
 
 	SIType ret_type = SI_ALL ;
 	SIType *types = array_new (SIType, 3) ;
@@ -161,7 +160,7 @@ void AR_FuncRegisterUDF
 	array_append (types, T_STRING) ;
 	array_append (types, SI_ALL) ;
 
-	AR_FuncDesc *func = AR_FuncDescNew (_name, AR_UDF, 2, VAR_ARG_LEN, types,
+	AR_FuncDesc *func = AR_FuncDescNew (name, AR_UDF, 2, VAR_ARG_LEN, types,
 			ret_type, false, false, false) ;
 
 	func->udf = true ;
@@ -171,7 +170,7 @@ void AR_FuncRegisterUDF
 	ASSERT (res == 0) ;
 
 	// add UDF to repo
-	res = raxInsert (__udfs->repo, (unsigned char *)_name, len, func, NULL) ;
+	res = raxInsert (__udfs->repo, (unsigned char *)name, len, func, NULL) ;
 	ASSERT (res == 1) ;
 
 	// unlock
@@ -199,7 +198,7 @@ bool AR_FuncRemoveUDF
 			(void**)&func) ;
 	ASSERT (removed == 1) ;
 
-	rm_free (func->name) ;
+	free (func->name) ;
 	// leaking func, as there might be cached arithmetic expression
 	// which still refer to it
 	// AR_FuncFree (func) ;
