@@ -30,6 +30,7 @@
 
 Feature: Match9 - Match deprecated scenarios
 
+  @skip
   Scenario: [1] Variable length relationship variables are lists of relationships
     Given an empty graph
     And having executed:

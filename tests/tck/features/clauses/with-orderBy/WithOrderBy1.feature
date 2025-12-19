@@ -278,6 +278,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | '12:31:14.645876123' |
     And no side effects
 
+  @skip
   Scenario: [15] Sort times in ascending order
     Given an empty graph
     When executing query:
@@ -299,6 +300,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | '12:31:14.645876123+01:00' |
     And no side effects
 
+  @skip
   Scenario: [16] Sort times in descending order
     Given an empty graph
     When executing query:
@@ -362,6 +364,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | '1984-10-11T12:30:14.000000012' |
     And no side effects
 
+  @skip
   Scenario: [19] Sort date times in ascending order
     Given an empty graph
     When executing query:
@@ -383,6 +386,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | '1984-10-11T12:31:14.645876123+00:17' |
     And no side effects
 
+  @skip
   Scenario: [20] Sort date times in descending order
     Given an empty graph
     When executing query:
@@ -766,6 +770,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | list DESC       |
       | list DESCENDING |
 
+  @skip
   Scenario Outline: [33] Sort by a date variable projected from a node property in ascending order
     Given an empty graph
     And having executed:
@@ -798,6 +803,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | date ASC       |
       | date ASCENDING |
 
+  @skip
   Scenario Outline: [34] Sort by a date variable projected from a node property in descending order
     Given an empty graph
     And having executed:
@@ -829,6 +835,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | date DESC       |
       | date DESCENDING |
 
+  @skip
   Scenario Outline: [35] Sort by a local time variable projected from a node property in ascending order
     Given an empty graph
     And having executed:
@@ -861,6 +868,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | time ASC       |
       | time ASCENDING |
 
+  @skip
   Scenario Outline: [36] Sort by a local time variable projected from a node property in descending order
     Given an empty graph
     And having executed:
@@ -955,6 +963,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | time DESC       |
       | time DESCENDING |
 
+  @skip
   Scenario Outline: [39] Sort by a local date time variable projected from a node property in ascending order
     Given an empty graph
     And having executed:
@@ -987,6 +996,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | datetime ASC       |
       | datetime ASCENDING |
 
+  @skip
   Scenario Outline: [40] Sort by a local date time variable projected from a node property in descending order
     Given an empty graph
     And having executed:

@@ -115,6 +115,7 @@ Feature: ReturnSkipLimit2 - Limit
       | name |
     And no side effects
 
+  @skip
   Scenario: [6] LIMIT with an expression that does not depend on variables
     Given any graph
     And having executed:

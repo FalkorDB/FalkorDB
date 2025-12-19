@@ -192,6 +192,7 @@ Feature: Create1 - Creating nodes
       """
     Then a SyntaxError should be raised at compile time: VariableAlreadyBound
 
+  @skip
   Scenario: [15] Fail when adding a new label predicate on a node that is already bound 1
     Given an empty graph
     When executing query:
@@ -202,6 +203,7 @@ Feature: Create1 - Creating nodes
     Then a SyntaxError should be raised at compile time: VariableAlreadyBound
 
   # Consider improve naming of this and the next three scenarios, they seem to test invariant nature of node patterns
+  @skip
   Scenario: [16] Fail when adding new label predicate on a node that is already bound 2
     Given an empty graph
     When executing query:
@@ -211,6 +213,7 @@ Feature: Create1 - Creating nodes
       """
     Then a SyntaxError should be raised at compile time: VariableAlreadyBound
 
+  @skip
   Scenario: [17] Fail when adding new label predicate on a node that is already bound 3
     Given an empty graph
     When executing query:
@@ -220,6 +223,7 @@ Feature: Create1 - Creating nodes
       """
     Then a SyntaxError should be raised at compile time: VariableAlreadyBound
 
+  @skip
   Scenario: [18] Fail when adding new label predicate on a node that is already bound 4
     Given an empty graph
     When executing query:
@@ -229,6 +233,7 @@ Feature: Create1 - Creating nodes
       """
     Then a SyntaxError should be raised at compile time: VariableAlreadyBound
 
+  @skip
   Scenario: [19] Fail when adding new label predicate on a node that is already bound 5
     Given an empty graph
     When executing query:

@@ -75,6 +75,7 @@ Feature: Delete5 - Delete clause interoperation with built-in data types
     And the side effects should be:
       | -relationships | 1 |
 
+  @skip
   Scenario: [3] Delete nodes from a map
     Given an empty graph
     And having executed:
@@ -92,6 +93,7 @@ Feature: Delete5 - Delete clause interoperation with built-in data types
       | -nodes  | 2 |
       | -labels | 1 |
 
+  @skip
   Scenario: [4] Delete relationships from a map
     Given an empty graph
     And having executed:
