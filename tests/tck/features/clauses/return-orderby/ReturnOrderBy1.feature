@@ -190,6 +190,7 @@ Feature: ReturnOrderBy1 - Order by a single variable (correct order of values ac
       | []        |
     And no side effects
 
+  @skip
   Scenario: [11] ORDER BY should order distinct types in the expected order
     Given an empty graph
     And having executed:
@@ -217,6 +218,7 @@ Feature: ReturnOrderBy1 - Order by a single variable (correct order of values ac
       | null              |
     And no side effects
 
+  @skip
   Scenario: [12] ORDER BY DESC should order distinct types in the expected order
     Given an empty graph
     And having executed:

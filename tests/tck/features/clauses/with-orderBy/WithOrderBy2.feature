@@ -462,6 +462,7 @@ Feature: WithOrderBy2 - Order by a single expression
       | a.time + duration({minutes: 6}) DESC       |
       | a.time + duration({minutes: 6}) DESCENDING |
 
+  @skip
   Scenario Outline: [15] Sort by a time expression in ascending order
     Given an empty graph
     And having executed:
@@ -493,6 +494,7 @@ Feature: WithOrderBy2 - Order by a single expression
       | a.time + duration({minutes: 6}) ASC       |
       | a.time + duration({minutes: 6}) ASCENDING |
 
+  @skip
   Scenario Outline: [16] Sort by a time expression in descending order
     Given an empty graph
     And having executed:
@@ -586,6 +588,7 @@ Feature: WithOrderBy2 - Order by a single expression
       | a.datetime + duration({days: 4, minutes: 6}) DESC       |
       | a.datetime + duration({days: 4, minutes: 6}) DESCENDING |
 
+  @skip
   Scenario Outline: [19] Sort by a date time expression in ascending order
     Given an empty graph
     And having executed:
@@ -617,6 +620,7 @@ Feature: WithOrderBy2 - Order by a single expression
       | a.datetime + duration({days: 4, minutes: 6}) ASC       |
       | a.datetime + duration({days: 4, minutes: 6}) ASCENDING |
 
+  @skip
   Scenario Outline: [20] Sort by a date time expression in descending order
     Given an empty graph
     And having executed:

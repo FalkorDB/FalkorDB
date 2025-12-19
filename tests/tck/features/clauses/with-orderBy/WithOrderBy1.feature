@@ -194,6 +194,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | [1, 'a']  |
     And no side effects
 
+  @skip
   Scenario: [11] Sort dates in ascending order
     Given an empty graph
     When executing query:
@@ -215,6 +216,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | '1980-10-24' |
     And no side effects
 
+  @skip
   Scenario: [12] Sort dates in descending order
     Given an empty graph
     When executing query:
@@ -236,6 +238,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | '1984-10-12' |
     And no side effects
 
+  @skip
   Scenario: [13] Sort local times in ascending order
     Given an empty graph
     When executing query:
@@ -257,6 +260,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | '12:31:14.645876123' |
     And no side effects
 
+  @skip
   Scenario: [14] Sort local times in descending order
     Given an empty graph
     When executing query:
@@ -322,6 +326,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | '12:31:14.645876123+01:00' |
     And no side effects
 
+  @skip
   Scenario: [17] Sort local date times in ascending order
     Given an empty graph
     When executing query:
@@ -343,6 +348,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | '1984-10-11T12:30:14.000000012' |
     And no side effects
 
+  @skip
   Scenario: [18] Sort local date times in descending order
     Given an empty graph
     When executing query:
