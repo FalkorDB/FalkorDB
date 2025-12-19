@@ -211,11 +211,16 @@ jobs:
         id: dockerfile
         run: |
           # RHEL platforms use Rocky Linux based dockerfile
-          if [[ "${{ matrix.platform.os }}" == "rhel" ]] || [[ "${{ matrix.platform.os }}" == "rhel8" ]]; then
+          if [[ "${{ matrix.platform.os }}" == "rhel" ]]; then
             echo "compiler=Dockerfile.compiler.rocky" >> $GITHUB_OUTPUT
+            echo "rocky_version=9" >> $GITHUB_OUTPUT
+          elif [[ "${{ matrix.platform.os }}" == "rhel8" ]]; then
+            echo "compiler=Dockerfile.compiler.rocky" >> $GITHUB_OUTPUT
+            echo "rocky_version=8" >> $GITHUB_OUTPUT
           else
             # All other platforms use same compiler dockerfile with OS parameter
             echo "compiler=Dockerfile.compiler" >> $GITHUB_OUTPUT
+            echo "rocky_version=" >> $GITHUB_OUTPUT
           fi
 
           # Final image dockerfile
@@ -256,7 +261,7 @@ jobs:
             OS=${{ matrix.platform.os }}
             BASE_IMAGE_VERSION=${{ env.BASE_IMAGE_VERSION }}
             DEBUG=${{ matrix.build_type == 'debug' && '1' || '0' }}
-            ROCKY_VERSION=${{ matrix.platform.os == 'rhel' && '9' || matrix.platform.os == 'rhel8' && '8' || '' }}
+            ROCKY_VERSION=${{ steps.dockerfile.outputs.rocky_version }}
 
       - name: Copy artifacts from compiler image
         if: matrix.platform.use_docker && steps.restore-deps.outputs.cache-hit != 'true'
