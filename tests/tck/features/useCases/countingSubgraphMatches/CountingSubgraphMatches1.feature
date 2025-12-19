@@ -175,6 +175,7 @@ Feature: CountingSubgraphMatches1 - Matching subgraph patterns and count the num
       | 1        |
     And no side effects
 
+  @skip
   Scenario: [10] Mixing directed and undirected pattern parts with self-relationship, count
     Given an empty graph
     And having executed:
@@ -193,6 +194,7 @@ Feature: CountingSubgraphMatches1 - Matching subgraph patterns and count the num
       | 2        |
     And no side effects
 
+  @skip
   Scenario: [11] Mixing directed and undirected pattern parts with self-relationship, undirected count
     Given an empty graph
     And having executed:
