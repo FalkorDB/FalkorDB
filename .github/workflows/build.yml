@@ -74,6 +74,7 @@ jobs:
           - name: ubuntu-x64
             suffix: x64
             os: ubuntu
+            build_os: linux
             arch: amd64
             machine_label: ubuntu-latest
             cache_path: linux-x64
@@ -82,6 +83,7 @@ jobs:
           - name: ubuntu-arm64
             suffix: arm64v8
             os: ubuntu
+            build_os: linux
             arch: arm64
             machine_label: ubuntu-24.04-arm
             cache_path: linux-arm64v8
@@ -91,6 +93,7 @@ jobs:
           - name: alpine-x64
             suffix: alpine-x64
             os: alpine
+            build_os: alpine
             arch: amd64
             machine_label: ubuntu-latest
             cache_path: alpine-x64
@@ -99,6 +102,7 @@ jobs:
           - name: alpine-arm64
             suffix: alpine-arm64v8
             os: alpine
+            build_os: alpine
             arch: arm64
             machine_label: ubuntu-24.04-arm
             cache_path: alpine-arm64v8
@@ -108,6 +112,7 @@ jobs:
           - name: rhel-x64
             suffix: rhel-x64
             os: rhel
+            build_os: rhel
             arch: amd64
             machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
             cache_path: rhel-x64
@@ -117,6 +122,7 @@ jobs:
           - name: rhel8-x64
             suffix: rhel8-x64
             os: rhel8
+            build_os: rhel8
             arch: amd64
             machine_label: ${{ format('rhel8-build-{0}-{1}', github.run_id, github.run_number) }}
             cache_path: rhel8-x64
@@ -296,6 +302,7 @@ jobs:
           build-args: |
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
             OS=${{ matrix.platform.os }}
+            BUILD_OS=${{ matrix.platform.build_os || matrix.platform.os }}
             BASE_IMAGE_VERSION=${{ env.BASE_IMAGE_VERSION }}
             DEBUG=${{ matrix.build_type == 'debug' && '1' || '0' }}
 

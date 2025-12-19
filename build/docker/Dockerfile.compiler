@@ -8,14 +8,16 @@ FROM falkordb/falkordb-build:$OS-${BASE_IMAGE_VERSION} AS builder
 
 ARG DEBUG=0
 ARG OS=ubuntu
+ARG BUILD_OS=linux
 
 WORKDIR /FalkorDB
 
 COPY . /FalkorDB
 
-# Pass OS to make to override platform detection
-# This ensures Alpine builds output to alpine-x64-release instead of linux-x64-release
-RUN make DEBUG=$DEBUG OS=$OS
+# Pass BUILD_OS to make to override platform detection
+# For Ubuntu: BUILD_OS=linux (matches cache_path linux-x64)
+# For Alpine: BUILD_OS=alpine (matches cache_path alpine-x64)
+RUN make DEBUG=$DEBUG OS=$BUILD_OS
 
 RUN mkdir -p /FalkorDB/bin/src \
  && find /FalkorDB/bin -type f \( -path "/FalkorDB/bin/linux*/src/falkordb.so" -o -path "/FalkorDB/bin/alpine*/src/falkordb.so" \) -exec cp {} /FalkorDB/bin/src/ \;
