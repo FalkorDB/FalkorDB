@@ -30,7 +30,6 @@
 
 Feature: Set6 - Persistence of set clause side effects
 
-  @skip
   Scenario: [1] Limiting to zero results after setting a property on nodes affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -122,7 +121,6 @@ Feature: Set6 - Persistence of set clause side effects
       | +properties | 5 |
       | -properties | 5 |
 
-  @skip
   Scenario: [5] Filtering after setting a property on nodes affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -197,7 +195,6 @@ Feature: Set6 - Persistence of set clause side effects
       | +properties | 5 |
       | -properties | 5 |
 
-  @skip
   Scenario: [8] Limiting to zero results after adding a label on nodes affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -234,7 +231,6 @@ Feature: Set6 - Persistence of set clause side effects
     And the side effects should be:
       | +labels | 1 |
 
-  @skip
   Scenario: [10] Skipping and limiting to a few results after adding a label on nodes affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -287,7 +283,6 @@ Feature: Set6 - Persistence of set clause side effects
     And the side effects should be:
       | +labels | 1 |
 
-  @skip
   Scenario: [12] Filtering after adding a label on nodes affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -360,7 +355,6 @@ Feature: Set6 - Persistence of set clause side effects
     And the side effects should be:
       | +labels | 1 |
 
-  @skip
   Scenario: [15] Limiting to zero results after setting a property on relationships affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -452,7 +446,6 @@ Feature: Set6 - Persistence of set clause side effects
       | +properties | 5 |
       | -properties | 5 |
 
-  @skip
   Scenario: [19] Filtering after setting a property on relationships affects the result set but not the side effects
     Given an empty graph
     And having executed:
