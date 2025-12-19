@@ -7,12 +7,15 @@ ARG BASE_IMAGE_VERSION=1.0.0
 FROM falkordb/falkordb-build:$OS-${BASE_IMAGE_VERSION} AS builder
 
 ARG DEBUG=0
+ARG OS=ubuntu
 
 WORKDIR /FalkorDB
 
 COPY . /FalkorDB
 
-RUN make DEBUG=$DEBUG
+# Pass OS to make to override platform detection
+# This ensures Alpine builds output to alpine-x64-release instead of linux-x64-release
+RUN make DEBUG=$DEBUG OS=$OS
 
 RUN mkdir -p /FalkorDB/bin/src \
- && find /FalkorDB/bin -type f -path "/FalkorDB/bin/linux*/src/falkordb.so" -exec cp {} /FalkorDB/bin/src/ \;
+ && find /FalkorDB/bin -type f -name "falkordb.so" -path "*/src/falkordb.so" -exec cp {} /FalkorDB/bin/src/ \;
