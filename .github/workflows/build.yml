@@ -302,7 +302,7 @@ jobs:
           build-args: |
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
             OS=${{ matrix.platform.os }}
-            BUILD_OS=${{ matrix.platform.build_os || matrix.platform.os }}
+            BUILD_OS=${{ matrix.platform.build_os }}
             BASE_IMAGE_VERSION=${{ env.BASE_IMAGE_VERSION }}
             DEBUG=${{ matrix.build_type == 'debug' && '1' || '0' }}
 
