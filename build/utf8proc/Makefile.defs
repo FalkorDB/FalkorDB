@@ -1,2 +1,0 @@
-
-export UTF8PROC=$(UTF8PROC_BINDIR)/libutf8proc.a
