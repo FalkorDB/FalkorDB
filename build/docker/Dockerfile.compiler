@@ -1,0 +1,18 @@
+ARG TARGETPLATFORM=linux/amd64
+
+ARG OS=ubuntu
+
+ARG BASE_IMAGE_VERSION=1.0.0
+
+FROM falkordb/falkordb-build:$OS-${BASE_IMAGE_VERSION} AS builder
+
+ARG DEBUG=0
+
+WORKDIR /FalkorDB
+
+COPY . /FalkorDB
+
+RUN make DEBUG=$DEBUG
+
+RUN mkdir -p /FalkorDB/bin/src \
+ && find /FalkorDB/bin -type f -path "/FalkorDB/bin/linux*/src/falkordb.so" -exec cp {} /FalkorDB/bin/src/ \;
