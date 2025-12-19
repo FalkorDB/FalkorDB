@@ -3,7 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "encode_v18.h"
+#include "encode_v19.h"
 #include "../../../globals.h"
 
 // Determine whether we are in the context of a bgsave, in which case
@@ -64,7 +64,7 @@ static void _RdbSaveHeader
 	SerializerIO_WriteUnsigned(rdb, header->key_count);
 
 	// save graph schemas
-	RdbSaveGraphSchema_v18(rdb, gc);
+	RdbSaveGraphSchema_v19(rdb, gc);
 }
 
 // returns a state information regarding the number of entities required
@@ -258,39 +258,39 @@ void RdbSaveGraph_latest
 
 		switch(payload->state) {
 			case ENCODE_STATE_NODES:
-				RdbSaveNodes_v18(rdb, gc, payload->offset,
+				RdbSaveNodes_v19(rdb, gc, payload->offset,
 						payload->entities_count);
 				break;
 
 			case ENCODE_STATE_DELETED_NODES:
-				RdbSaveDeletedNodes_v18(rdb, gc, payload->offset,
+				RdbSaveDeletedNodes_v19(rdb, gc, payload->offset,
 						payload->entities_count);
 				break;
 
 			case ENCODE_STATE_EDGES:
-				RdbSaveEdges_v18(rdb, gc, payload->offset,
+				RdbSaveEdges_v19(rdb, gc, payload->offset,
 						payload->entities_count);
 				break;
 
 			case ENCODE_STATE_DELETED_EDGES:
-				RdbSaveDeletedEdges_v18(rdb, gc, payload->offset,
+				RdbSaveDeletedEdges_v19(rdb, gc, payload->offset,
 						payload->entities_count);
 				break;
 
 			case ENCODE_STATE_LABELS_MATRICES:
-				RdbSaveLabelMatrices_v18(rdb, g);
+				RdbSaveLabelMatrices_v19(rdb, g);
 				break;
 
 			case ENCODE_STATE_RELATION_MATRICES:
-				RdbSaveRelationMatrices_v18(rdb, g);
+				RdbSaveRelationMatrices_v19(rdb, g);
 				break;
 
 			case ENCODE_STATE_ADJ_MATRIX:
-				RdbSaveAdjMatrix_v18(rdb, g);
+				RdbSaveAdjMatrix_v19(rdb, g);
 				break;
 
 			case ENCODE_STATE_LBLS_MATRIX:
-				RdbSaveLblsMatrix_v18(rdb, g);
+				RdbSaveLblsMatrix_v19(rdb, g);
 				break;
 
 			default:

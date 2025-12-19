@@ -11,69 +11,13 @@
 #include "../../../graph/tensor/tensor.h"
 #include "../../../graph/delta_matrix/delta_matrix.h"
 
-// extract D's tensors
-static void _ExtractTensors
-(
-	Delta_Matrix D,    // matrix from which to extract tensors
-	GrB_Matrix *TM,    // M's tensors
-	GrB_Matrix *TDP    // DP's tensors
-) {
-	ASSERT(D   != NULL);
-	ASSERT(TM  != NULL);
-	ASSERT(TDP != NULL);
-
-	GrB_Info info;
-	GrB_Matrix M  = Delta_Matrix_M  (D) ;
-	GrB_Matrix DP = Delta_Matrix_DP (D) ;
-	GrB_Matrix DM = Delta_Matrix_DM (D) ;
-
-	// create a temporary matrix which will contain A's tensors
-	GrB_Index nrows;
-	GrB_Index ncols;
-
-	info = GrB_Matrix_nrows (&nrows, M) ;
-	ASSERT (info == GrB_SUCCESS) ;
-
-	info = GrB_Matrix_ncols (&ncols, M) ;
-	ASSERT (info == GrB_SUCCESS) ;
-
-	// tensors only matrix
-	info = GrB_Matrix_new (TM, GrB_UINT64, nrows, ncols) ;
-	ASSERT (info == GrB_SUCCESS) ;
-
-	info = GrB_Matrix_new (TDP, GrB_UINT64, nrows, ncols) ;
-	ASSERT (info == GrB_SUCCESS) ;
-
-	// extract A's tensors
-	// keep entries A[i,j] with MSB on
-	// copy tensor entries from A to T
-	info = GrB_Matrix_select_UINT64(*TM, DM, NULL, GrB_VALUEGT_UINT64, M,
-			MSB_MASK, GrB_DESC_SC) ;
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Matrix_select_UINT64(*TDP, DM, NULL, GrB_VALUEGT_UINT64, DP,
-			MSB_MASK, GrB_DESC_SC) ;
-	ASSERT(info == GrB_SUCCESS);
-
-	// expecting at least a single tensor was extracted
-	GrB_Index tm_nvals;
-	GrB_Index tdp_nvals;
-
-	info = GrB_Matrix_nvals (&tm_nvals, *TM) ;
-	ASSERT (info == GrB_SUCCESS) ;
-
-	info = GrB_Matrix_nvals (&tdp_nvals, *TDP) ;
-	ASSERT (info == GrB_SUCCESS) ;
-
-	ASSERT ((tm_nvals + tdp_nvals) > 0) ;
-}
-
 // encode tensors
 static void _EncodeTensors
 (
-	SerializerIO rdb,  // RDB
-	GrB_Matrix TM,     // M's tensors
-	GrB_Matrix TDP     // DP's tensors
+	SerializerIO rdb,    // RDB
+	Delta_Matrix R,
+	uint64_t n_vectors,  // number of multi edge entries in R
+	bool reload
 ) {
 	// format:
 	//  total number of tensors
@@ -91,43 +35,26 @@ static void _EncodeTensors
 	//   tensor
 
 	// either both matrices are specified or both are NULL
-	ASSERT ( (TM == NULL && TDP == NULL) || (TM != NULL && TDP != NULL)) ;
-
-	if (TM == NULL && TDP == NULL) {
-		// no tensors
-		SerializerIO_WriteUnsigned (rdb, 0) ;
-		return;
-	}
-
+	ASSERT (R != NULL) ;
 	GrB_Info info;
+	GrB_Matrix M  = Delta_Matrix_M  (R) ;
+	GrB_Matrix DP = Delta_Matrix_DP (R) ;
 
 	//--------------------------------------------------------------------------
 	// encode total number of tensors
 	//--------------------------------------------------------------------------
 
-	GrB_Index tm_nvals;
-	info = GrB_Matrix_nvals (&tm_nvals, TM) ;
-	ASSERT (info == GrB_SUCCESS) ;
-
-	GrB_Index tdp_nvals;
-	info = GrB_Matrix_nvals (&tdp_nvals, TDP) ;
-	ASSERT (info == GrB_SUCCESS) ;
-
-	GrB_Index nvals = tm_nvals + tdp_nvals ;
-	ASSERT (nvals > 0) ;
 
 	// encode number of tensors in matrix R
 	SerializerIO_WriteUnsigned (rdb, nvals) ;
 
-	GrB_Matrix matrices[2] = { TM, TDP } ;
+	GrB_Matrix matrices[2] = { M, DP } ;
 
 	for (int l = 0; l < 2; l++) {
 		GrB_Matrix T = matrices[l];
 
 		// how many tensors are there?
-		GrB_Index nvals;
-		info = GrB_Matrix_nvals (&nvals, T) ;
-		ASSERT (info == GrB_SUCCESS) ;
+		GrB_Index nvals = Graph_;
 
 		// encode number of tensors
 		SerializerIO_WriteUnsigned (rdb, nvals) ;
@@ -137,52 +64,40 @@ static void _EncodeTensors
 		}
 
 		// encode each tensor
-		GxB_Iterator it;
-		info = GxB_Iterator_new (&it) ;
-		ASSERT (info == GrB_SUCCESS) ;
+		GB_Iterator_opaque _it = {0};
+		GxB_Iterator it = &_it;
 
 		info = GxB_Matrix_Iterator_attach (it, T, NULL) ;
 		ASSERT (info == GrB_SUCCESS) ;
 
 		info = GxB_Matrix_Iterator_seek (it, 0) ;
 		while (info != GxB_EXHAUSTED) {
+			// get the entry T(i,j)
+			uint64_t aij = GxB_Iterator_get_UINT64 (it) ;
+			if (aij & MSB_MASK) continue;
+
 			// iterate over entries
 			GrB_Index i ;
 			GrB_Index j ;
 			GxB_Matrix_Iterator_getIndex (it, &i, &j) ;
 
-			// get the entry T(i,j)
-			uint64_t aij = GxB_Iterator_get_UINT64 (it) ;
-			ASSERT (aij & MSB_MASK) ;
-
 			GrB_Vector u = AS_VECTOR (aij) ;  // treat entry as a vector
 			ASSERT (info == GrB_SUCCESS) ;
 
 			//--------------------------------------------------------------
-			// serialize the tensor
+			// Write the vector
 			//--------------------------------------------------------------
-
-			void *blob;           // the blob
-			GrB_Index blob_size;  // size of the blob
-
-			info = GxB_Vector_serialize (&blob, &blob_size, u, NULL) ;
-			ASSERT (info == GrB_SUCCESS) ;
 
 			// write tensor i,j position
 			SerializerIO_WriteUnsigned (rdb, i) ;
 			SerializerIO_WriteUnsigned (rdb, j) ;
 
-			// write blob to rdb
-			SerializerIO_WriteBuffer (rdb, blob, blob_size) ;
-
-			rm_free (blob) ;
+			// write vector to rdb
+			_unload_and_encode_vector (rdb, u, reload);
 
 			// move to the next entry
 			info = GxB_Matrix_Iterator_next (it) ;
 		}
-
-		// clean up
-		GrB_free (&it) ;
 	}
 }
 
@@ -261,7 +176,7 @@ static void _Encode_GrB_Matrix
 
 	GrB_Info info;
 
-    GxB_Container container;
+	GxB_Container container;
 	info = GxB_Container_new (&container) ;
 	ASSERT (info == GrB_SUCCESS);
 
@@ -320,7 +235,7 @@ static void _Encode_Delta_Matrix
 }
 
 // encode label matrices to rdb
-void RdbSaveLabelMatrices_v18
+void RdbSaveLabelMatrices_v19
 (
 	SerializerIO rdb,  // RDB
 	Graph *g           // graph
@@ -352,7 +267,7 @@ void RdbSaveLabelMatrices_v18
 }
 
 // encode relationship matrices to rdb
-void RdbSaveRelationMatrices_v18
+void RdbSaveRelationMatrices_v19
 (
 	SerializerIO rdb,  // RDB
 	Graph *g           // graph
@@ -360,7 +275,7 @@ void RdbSaveRelationMatrices_v18
 	// format:
 	//   relation id   X N
 	//   matrix        X N
-	//   tensors count X N
+	//   v18 count X N
 	//   tensors
 
 	ASSERT(g   != NULL);
@@ -376,27 +291,17 @@ void RdbSaveRelationMatrices_v18
 
 		// dump matrix to rdb
 		Delta_Matrix R   = Graph_GetRelationMatrix (g, i, false) ;
-		GrB_Matrix   TM  = NULL ;  // R's M's tensors
-		GrB_Matrix   TDP = NULL ;  // R's DP's tensors
-
-		bool encode_tensors = Graph_RelationshipContainsMultiEdge (g, i) ;
-		if (encode_tensors) {
-			_ExtractTensors (R, &TM, &TDP) ;
-		}
 
 		_Encode_Delta_Matrix (rdb, R, reload) ;
 
-		_EncodeTensors (rdb, TM, TDP) ;
+		uint64_t n_vectors = Graph_RelationshipMultiEdgeCount(g, r);
 
-		if (encode_tensors) {
-			GrB_free (&TM) ;
-			GrB_free (&TDP) ;
-		}
+		_EncodeTensors (rdb, R, n_vectors, reload) ;
 	}
 }
 
 // encode graph's adjacency matrix
-void RdbSaveAdjMatrix_v18
+void RdbSaveAdjMatrix_v19
 (
 	SerializerIO rdb,  // RDB
 	Graph *g           // graph
@@ -415,7 +320,7 @@ void RdbSaveAdjMatrix_v18
 }
 
 // encode graph's node labels matrix
-void RdbSaveLblsMatrix_v18
+void RdbSaveLblsMatrix_v19
 (
 	SerializerIO rdb,  // RDB
 	Graph *g           // graph

@@ -1228,9 +1228,8 @@ int Graph_LabelTypeCount
 	return array_len(g->labels);
 }
 
-// returns true if relationship matrix 'r' contains multi-edge entries,
-// false otherwise
-bool Graph_RelationshipContainsMultiEdge
+// returns the number of multiedge entries in a graph
+uint64_t Graph_RelationshipMultiEdgeCount
 (
 	const Graph *g,
 	RelationID r
@@ -1247,7 +1246,19 @@ bool Graph_RelationshipContainsMultiEdge
 
 	// a tensor has Vector entries if
 	// the number of active entries != number of edges of type 'r'
-	return nvals != Graph_RelationEdgeCount(g, r);
+	return Graph_RelationEdgeCount(g, r) - nvals;
+}
+
+// returns true if relationship matrix 'r' contains multi-edge entries,
+// false otherwise
+bool Graph_RelationshipContainsMultiEdge
+(
+	const Graph *g,
+	RelationID r
+) {
+	// a tensor has Vector entries if
+	// the number of active entries != number of edges of type 'r'
+	return 0 == Graph_RelationshipMultiEdgeCount(g,r);
 }
 
 // retrieves node with given id from graph,

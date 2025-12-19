@@ -14,7 +14,7 @@ GraphContext *RdbLoadGraphContext_latest
 );
 
 // decode nodes
-void RdbLoadNodes_v18
+void RdbLoadNodes_v19
 (
 	SerializerIO rdb,          // RDB
 	Graph *g,                  // graph context
@@ -22,7 +22,7 @@ void RdbLoadNodes_v18
 );
 
 // decode deleted nodes
-void RdbLoadDeletedNodes_v18
+void RdbLoadDeletedNodes_v19
 (
 	SerializerIO rdb,                  // RDB
 	Graph *g,                          // graph context
@@ -30,7 +30,7 @@ void RdbLoadDeletedNodes_v18
 );
 
 // decode edges
-void RdbLoadEdges_v18
+void RdbLoadEdges_v19
 (
 	SerializerIO rdb,  // RDB
 	Graph *g,          // graph context
@@ -38,40 +38,40 @@ void RdbLoadEdges_v18
 );
 
 // decode deleted edges
-void RdbLoadDeletedEdges_v18
+void RdbLoadDeletedEdges_v19
 (
 	SerializerIO rdb,                  // RDB
 	Graph *g,                          // graph context
 	const uint64_t deleted_edge_count  // number of deleted edges
 );
 
-void RdbLoadGraphSchema_v18
+void RdbLoadGraphSchema_v19
 (
 	SerializerIO rdb,
 	GraphContext *gc,
 	bool already_loaded
 );
 
-void RdbLoadLabelMatrices_v18
+void RdbLoadLabelMatrices_v19
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc   // graph context
 );
 
-void RdbLoadRelationMatrices_v18
+void RdbLoadRelationMatrices_v19
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc   // graph context
 );
 
 // decode adjacency matrix
-void RdbLoadAdjMatrix_v18
+void RdbLoadAdjMatrix_v19
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc   // graph context
 );
 
-void RdbLoadLblsMatrix_v18
+void RdbLoadLblsMatrix_v19
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc   // graph context
