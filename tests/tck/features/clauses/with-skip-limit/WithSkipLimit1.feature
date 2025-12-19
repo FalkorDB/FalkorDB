@@ -59,7 +59,6 @@
 
 Feature: WithSkipLimit1 - Skip
 
-  @skip
   Scenario: [1] Handle dependencies across WITH with SKIP
     Given an empty graph
     And having executed:

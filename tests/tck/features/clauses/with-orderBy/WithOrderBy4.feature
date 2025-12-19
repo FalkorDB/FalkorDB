@@ -260,7 +260,6 @@ Feature: WithOrderBy4 - Order by in combination with projection and aliasing
       | 1 |
     And no side effects
 
-  @skip
   Scenario: [10] Sort by a non-projected expression containing an alias of a projected expression containing the variable shadowed by the alias
     Given an empty graph
     And having executed:
@@ -378,7 +377,6 @@ Feature: WithOrderBy4 - Order by in combination with projection and aliasing
       """
     Then a SyntaxError should be raised at compile time: AmbiguousAggregationExpression
 
-  @skip
   Scenario: [15] Sort by an aliased aggregate projection does allow subsequent matching
     Given an empty graph
     And having executed:

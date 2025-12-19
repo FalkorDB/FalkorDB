@@ -144,7 +144,6 @@ Feature: Match6 - Match named paths scenarios
       | <({name: 'a'})-[:T]->({name: 'b'})> |
     And no side effects
 
-  @skip
   Scenario: [8] Respecting direction when matching non-existent path with multiple directions
     Given an empty graph
     And having executed:
@@ -162,7 +161,6 @@ Feature: Match6 - Match named paths scenarios
       | p |
     And no side effects
 
-  @skip
   Scenario: [9] Longer path query should return results in written order
     Given an empty graph
     And having executed:
@@ -179,7 +177,6 @@ Feature: Match6 - Match named paths scenarios
       | <(:Label1)<-[:T1]-(:Label2)-[:T2]->(:Label3)> |
     And no side effects
 
-  @skip
   Scenario: [10] Named path with alternating directed/undirected relationships
     Given an empty graph
     And having executed:
@@ -198,7 +195,6 @@ Feature: Match6 - Match named paths scenarios
       | <(:C)-[:T]->(:B)-[:T]->(:A)> |
     And no side effects
 
-  @skip
   Scenario: [11] Named path with multiple alternating directed/undirected relationships
     Given an empty graph
     And having executed:
@@ -218,7 +214,6 @@ Feature: Match6 - Match named paths scenarios
       | <(:D)-[:T]->(:C)-[:T]->(:B)-[:T]->(:A)> |
     And no side effects
 
-  @skip
   Scenario: [12] Matching path with multiple bidirectional relationships
     Given an empty graph
     And having executed:
@@ -240,7 +235,6 @@ Feature: Match6 - Match named paths scenarios
       | <(:B)-[:T2]->(:A)-[:T1]->(:B)> |
     And no side effects
 
-  @skip
   Scenario: [13] Matching path with both directions should respect other directions
     Given an empty graph
     And having executed:

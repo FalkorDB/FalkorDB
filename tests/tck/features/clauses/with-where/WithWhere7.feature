@@ -70,7 +70,6 @@ Feature: WithWhere7 - Variable visibility under aliasing
       | 'B'  |
     And no side effects
 
-  @skip
   Scenario: [3] WHERE sees both, variable bound before but not after WITH and variable bound after but not before WITH
     Given an empty graph
     And having executed:

@@ -79,7 +79,6 @@ Feature: Return6 - Implicit grouping with aggregates
       | 2     |
     And no side effects
 
-  @skip
   Scenario: [4] Support multiple divisions in aggregate function
     Given an empty graph
     And having executed:
@@ -114,7 +113,6 @@ Feature: Return6 - Implicit grouping with aggregates
       | 11               |
     And no side effects
 
-  @skip
   Scenario: [6] Handle aggregates inside non-aggregate expressions
     Given an empty graph
     When executing query:
@@ -268,7 +266,6 @@ Feature: Return6 - Implicit grouping with aggregates
       """
     Then a SyntaxError should be raised at compile time: NonConstantExpression
 
-  @skip
   Scenario: [16] Aggregation on complex expressions
     Given an empty graph
     And having executed:

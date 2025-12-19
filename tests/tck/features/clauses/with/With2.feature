@@ -31,7 +31,6 @@
 Feature: With2 - Forward single expression
   # correctly projecting an expression, no other effects
 
-  @skip
   Scenario: [1] Forwarding a property to express a join
     Given an empty graph
     And having executed:

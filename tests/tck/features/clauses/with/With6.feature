@@ -50,7 +50,6 @@ Feature: With6 - Implicit grouping with aggregates
       | 'B'  | 1        |
     And no side effects
 
-  @skip
   Scenario: [2] Implicit grouping with single relationship variable as grouping key and single aggregation
     Given an empty graph
     And having executed:
