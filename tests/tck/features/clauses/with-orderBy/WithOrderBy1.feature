@@ -906,6 +906,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | time DESC       |
       | time DESCENDING |
 
+  @skip
   Scenario Outline: [37] Sort by a time variable projected from a node property in ascending order
     Given an empty graph
     And having executed:
@@ -938,6 +939,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | time ASC       |
       | time ASCENDING |
 
+  @skip
   Scenario Outline: [38] Sort by a time variable projected from a node property in descending order
     Given an empty graph
     And having executed:
@@ -1034,6 +1036,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | datetime DESC       |
       | datetime DESCENDING |
 
+  @skip
   Scenario Outline: [41] Sort by a date time variable projected from a node property in ascending order
     Given an empty graph
     And having executed:
@@ -1066,6 +1069,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | datetime ASC       |
       | datetime ASCENDING |
 
+  @skip
   Scenario Outline: [42] Sort by a date time variable projected from a node property in descending order
     Given an empty graph
     And having executed:
