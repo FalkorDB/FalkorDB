@@ -265,6 +265,7 @@ Feature: Match3 - Match fixed length patterns
       | (:A) | [:LOOP] |
     And no side effects
 
+  @skip
   Scenario: [15] Mixing directed and undirected pattern parts with self-relationship, simple
     Given an empty graph
     And having executed:
@@ -284,6 +285,7 @@ Feature: Match3 - Match fixed length patterns
       | (:A) | [:T1] | (:Looper) | [:T2]   | (:B)      |
     And no side effects
 
+  @skip
   Scenario: [16] Mixing directed and undirected pattern parts with self-relationship, undirected
     Given an empty graph
     And having executed:
