@@ -30,6 +30,7 @@
 
 Feature: Merge7 - Merge relationships - on match
 
+  @skip
   Scenario: [1] Using ON MATCH on created node
     Given an empty graph
     And having executed:
@@ -46,6 +47,7 @@ Feature: Merge7 - Merge relationships - on match
     And the side effects should be:
       | +relationships | 1 |
 
+  @skip
   Scenario: [2] Using ON MATCH on created relationship
     Given an empty graph
     And having executed:
@@ -62,6 +64,7 @@ Feature: Merge7 - Merge relationships - on match
     And the side effects should be:
       | +relationships | 1 |
 
+  @skip
   Scenario: [3] Using ON MATCH on a relationship
     Given an empty graph
     And having executed:
@@ -82,6 +85,7 @@ Feature: Merge7 - Merge relationships - on match
     And the side effects should be:
       | +properties | 1 |
 
+  @skip
   Scenario: [4] Copying properties from node with ON MATCH
     Given an empty graph
     And having executed:

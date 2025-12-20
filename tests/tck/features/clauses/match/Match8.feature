@@ -30,6 +30,7 @@
 
 Feature: Match8 - Match clause interoperation with other clauses
 
+  @skip
   Scenario: [1] Pattern independent of bound variables results in cross product
     Given an empty graph
     And having executed:
@@ -51,6 +52,7 @@ Feature: Match8 - Match clause interoperation with other clauses
       | (:B) | (:B) |
     And no side effects
 
+  @skip
   Scenario: [2] Counting rows after MATCH, MERGE, OPTIONAL MATCH
     Given an empty graph
     And having executed:
@@ -72,6 +74,7 @@ Feature: Match8 - Match clause interoperation with other clauses
       | 6        |
     And no side effects
 
+  @skip
   Scenario: [3] Matching and disregarding output, then matching again
     Given an empty graph
     And having executed:

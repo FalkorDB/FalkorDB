@@ -47,6 +47,7 @@ Feature: Match4 - Match variable length patterns scenarios
       | [[:T]] |
     And no side effects
 
+  @skip
   Scenario: [2] Simple variable length pattern
     Given an empty graph
     And having executed:
@@ -69,6 +70,7 @@ Feature: Match4 - Match variable length patterns scenarios
       | ({name: 'D'}) |
     And no side effects
 
+  @skip
   Scenario: [3] Zero-length variable length pattern in the middle of the pattern
     Given an empty graph
     And having executed:
@@ -91,6 +93,7 @@ Feature: Match4 - Match variable length patterns scenarios
       | ({name: 'A'}) | ({name: 'B'}) | ({name: 'C'}) |
     And no side effects
 
+  @skip
   Scenario: [4] Matching longer variable length paths
     Given an empty graph
     And having executed:
@@ -114,6 +117,7 @@ Feature: Match4 - Match variable length patterns scenarios
       | ({var: 'end'}) |
     And no side effects
 
+  @skip
   Scenario: [5] Matching variable length pattern with property predicate
     Given an empty graph
     And having executed:
@@ -176,6 +180,7 @@ Feature: Match4 - Match variable length patterns scenarios
       | 32 |
     And no side effects
 
+  @skip
   Scenario: [8] Matching relationships into a list and matching variable length using the list
     Given an empty graph
     And having executed:

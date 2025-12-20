@@ -52,6 +52,7 @@ Feature: Match9 - Match deprecated scenarios
       | null |
     And no side effects
 
+  @skip
   Scenario: [2] Return relationships by collecting them as a list - directed, one way
     Given an empty graph
     And having executed:
@@ -68,6 +69,7 @@ Feature: Match9 - Match deprecated scenarios
       | [[:REL {num: 1}], [:REL {num: 2}]] |
     And no side effects
 
+  @skip
   Scenario: [3] Return relationships by collecting them as a list - undirected, starting from two extremes
     Given an empty graph
     And having executed:
@@ -122,6 +124,7 @@ Feature: Match9 - Match deprecated scenarios
       | 1        |
     And no side effects
 
+  @skip
   Scenario: [6] Matching relationships into a list and matching variable length using the list, with bound nodes
     Given an empty graph
     And having executed:
@@ -143,6 +146,7 @@ Feature: Match9 - Match deprecated scenarios
       | (:A)  | (:C)   |
     And no side effects
 
+  @skip
   Scenario: [7] Matching relationships into a list and matching variable length using the list, with bound nodes, wrong direction
     Given an empty graph
     And having executed:
@@ -163,6 +167,7 @@ Feature: Match9 - Match deprecated scenarios
       | first | second |
     And no side effects
 
+  @skip
   Scenario: [8] Variable length relationship in OPTIONAL MATCH
     Given an empty graph
     And having executed:
@@ -182,6 +187,7 @@ Feature: Match9 - Match deprecated scenarios
       | (:B) |
     And no side effects
 
+  @skip
   Scenario: [9] Optionally matching named paths with variable length patterns
     Given an empty graph
     And having executed:

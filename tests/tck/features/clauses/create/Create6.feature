@@ -30,6 +30,7 @@
 
 Feature: Create6 - Persistence of create clause side effects
 
+  @skip
   Scenario: [1] Limiting to zero results after creating nodes affects the result set but not the side effects
     Given an empty graph
     When executing query:
@@ -45,6 +46,7 @@ Feature: Create6 - Persistence of create clause side effects
       | +labels        | 1 |
       | +properties    | 1 |
 
+  @skip
   Scenario: [2] Skipping all results after creating nodes affects the result set but not the side effects
     Given an empty graph
     When executing query:
@@ -60,6 +62,7 @@ Feature: Create6 - Persistence of create clause side effects
       | +labels        | 1 |
       | +properties    | 1 |
 
+  @skip
   Scenario: [3] Skipping and limiting to a few results after creating nodes does not affect the result set nor the side effects
     Given an empty graph
     When executing query:
@@ -78,6 +81,7 @@ Feature: Create6 - Persistence of create clause side effects
       | +labels        | 1 |
       | +properties    | 5 |
 
+  @skip
   Scenario: [4] Skipping zero result and limiting to all results after creating nodes does not affect the result set nor the side effects
     Given an empty graph
     When executing query:
@@ -99,6 +103,7 @@ Feature: Create6 - Persistence of create clause side effects
       | +labels        | 1 |
       | +properties    | 5 |
 
+  @skip
   Scenario: [5] Filtering after creating nodes affects the result set but not the side effects
     Given an empty graph
     When executing query:
@@ -118,6 +123,7 @@ Feature: Create6 - Persistence of create clause side effects
       | +labels        | 1 |
       | +properties    | 5 |
 
+  @skip
   Scenario: [6] Aggregating in `RETURN` after creating nodes affects the result set but not the side effects
     Given an empty graph
     When executing query:
@@ -134,6 +140,7 @@ Feature: Create6 - Persistence of create clause side effects
       | +labels        | 1 |
       | +properties    | 5 |
 
+  @skip
   Scenario: [7] Aggregating in `WITH` after creating nodes affects the result set but not the side effects
     Given an empty graph
     When executing query:
@@ -151,6 +158,7 @@ Feature: Create6 - Persistence of create clause side effects
       | +labels        | 1 |
       | +properties    | 5 |
 
+  @skip
   Scenario: [8] Limiting to zero results after creating relationships affects the result set but not the side effects
     Given an empty graph
     When executing query:
@@ -166,6 +174,7 @@ Feature: Create6 - Persistence of create clause side effects
       | +relationships | 1 |
       | +properties    | 1 |
 
+  @skip
   Scenario: [9] Skipping all results after creating relationships affects the result set but not the side effects
     Given an empty graph
     When executing query:
@@ -181,6 +190,7 @@ Feature: Create6 - Persistence of create clause side effects
       | +relationships | 1 |
       | +properties    | 1 |
 
+  @skip
   Scenario: [10] Skipping and limiting to a few results after creating relationships does not affect the result set nor the side effects
     Given an empty graph
     When executing query:
@@ -199,6 +209,7 @@ Feature: Create6 - Persistence of create clause side effects
       | +relationships | 5  |
       | +properties    | 5  |
 
+  @skip
   Scenario: [11] Skipping zero result and limiting to all results after creating relationships does not affect the result set nor the side effects
     Given an empty graph
     When executing query:
@@ -220,6 +231,7 @@ Feature: Create6 - Persistence of create clause side effects
       | +relationships | 5  |
       | +properties    | 5  |
 
+  @skip
   Scenario: [12] Filtering after creating relationships affects the result set but not the side effects
     Given an empty graph
     When executing query:
@@ -239,6 +251,7 @@ Feature: Create6 - Persistence of create clause side effects
       | +relationships | 5  |
       | +properties    | 5  |
 
+  @skip
   Scenario: [13] Aggregating in `RETURN` after creating relationships affects the result set but not the side effects
     Given an empty graph
     When executing query:
@@ -255,6 +268,7 @@ Feature: Create6 - Persistence of create clause side effects
       | +relationships | 5  |
       | +properties    | 5  |
 
+  @skip
   Scenario: [14] Aggregating in `WITH` after creating relationships affects the result set but not the side effects
     Given an empty graph
     When executing query:

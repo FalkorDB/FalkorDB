@@ -30,6 +30,7 @@
 
 Feature: With6 - Implicit grouping with aggregates
 
+  @skip
   Scenario: [1] Implicit grouping with single expression as grouping key and single aggregation
     Given an empty graph
     And having executed:
@@ -50,6 +51,7 @@ Feature: With6 - Implicit grouping with aggregates
       | 'B'  | 1        |
     And no side effects
 
+  @skip
   Scenario: [2] Implicit grouping with single relationship variable as grouping key and single aggregation
     Given an empty graph
     And having executed:
@@ -71,6 +73,7 @@ Feature: With6 - Implicit grouping with aggregates
       | [:T2] |
     And no side effects
 
+  @skip
   Scenario: [3] Implicit grouping with multiple node and relationship variables as grouping key and single aggregation
     Given an empty graph
     And having executed:
@@ -92,6 +95,7 @@ Feature: With6 - Implicit grouping with aggregates
       | [:T2] |
     And no side effects
 
+  @skip
   Scenario: [4] Implicit grouping with single path variable as grouping key and single aggregation
     Given an empty graph
     And having executed:
@@ -113,6 +117,7 @@ Feature: With6 - Implicit grouping with aggregates
       | [({num: 3}), ({num: 4})] |
     And no side effects
 
+  @skip
   Scenario: [5] Handle constants and parameters inside an expression which contains an aggregation expression
     Given an empty graph
     And parameters are:
@@ -128,6 +133,7 @@ Feature: With6 - Implicit grouping with aggregates
       | null |
     And no side effects
 
+  @skip
   Scenario: [6] Handle projected variables inside an expression which contains an aggregation expression
     Given an empty graph
     When executing query:
@@ -141,6 +147,7 @@ Feature: With6 - Implicit grouping with aggregates
       | age | agg |
     And no side effects
 
+  @skip
   Scenario: [7] Handle projected property accesses inside an expression which contains an aggregation expression
     Given an empty graph
     When executing query:

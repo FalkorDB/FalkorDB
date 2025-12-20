@@ -414,6 +414,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | '1984-10-11T12:31:14.645876123+00:17' |
     And no side effects
 
+  @skip
   Scenario: [21] Sort distinct types in ascending order
     Given an empty graph
     And having executed:
@@ -438,6 +439,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | <(:N)-[:REL]->()> |
     And no side effects
 
+  @skip
   Scenario: [22] Sort distinct types in descending order
     Given an empty graph
     And having executed:

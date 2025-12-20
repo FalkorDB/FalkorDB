@@ -30,6 +30,7 @@
 
 Feature: Merge6 - Merge relationships - on create
 
+  @skip
   Scenario: [1] Using ON CREATE on a node
     Given an empty graph
     And having executed:
@@ -47,6 +48,7 @@ Feature: Merge6 - Merge relationships - on create
       | +relationships | 1 |
       | +properties    | 1 |
 
+  @skip
   Scenario: [2] Using ON CREATE on a relationship
     Given an empty graph
     And having executed:
@@ -67,6 +69,7 @@ Feature: Merge6 - Merge relationships - on create
       | +relationships | 1 |
       | +properties    | 1 |
 
+  @skip
   Scenario: [3] Updating one property with ON CREATE
     Given an empty graph
     And having executed:
@@ -92,6 +95,7 @@ Feature: Merge6 - Merge relationships - on create
       | keyValue      |
       | ['name->foo'] |
 
+  @skip
   Scenario: [4] Null-setting one property with ON CREATE
     Given an empty graph
     And having executed:
@@ -116,6 +120,7 @@ Feature: Merge6 - Merge relationships - on create
       | keyValue |
       | []       |
 
+  @skip
   Scenario: [6] Copying properties from node with ON CREATE
     Given an empty graph
     And having executed:

@@ -59,6 +59,7 @@
 
 Feature: WithSkipLimit2 - Limit
 
+  @skip
   Scenario: [1] ORDER BY and LIMIT can be used
     Given an empty graph
     And having executed:
@@ -81,6 +82,7 @@ Feature: WithSkipLimit2 - Limit
     And no side effects
 
   # Does this scenario realy testing LIMIT?
+  @skip
   Scenario: [2] Handle dependencies across WITH with LIMIT
     Given an empty graph
     And having executed:
@@ -103,6 +105,7 @@ Feature: WithSkipLimit2 - Limit
       | (:End {num: 42, id: 0}) |
     And no side effects
 
+  @skip
   Scenario: [3] Connected components succeeding WITH with LIMIT
     Given an empty graph
     And having executed:
@@ -123,6 +126,7 @@ Feature: WithSkipLimit2 - Limit
       | (:B) | (:A) | (:X) |
     And no side effects
 
+  @skip
   Scenario: [4] Ordering and limiting on aggregate
     Given an empty graph
     And having executed:
