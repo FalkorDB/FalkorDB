@@ -28,37 +28,6 @@ concurrency:
 env:
   BASE_IMAGE_VERSION: 1.0.0
 jobs:
-  create-runners:
-    strategy:
-      matrix:
-        machines:
-          - name: rhel-build
-            machine_type: e2-standard-4
-            runner_label: rhel-build-${{ github.run_id }}-${{ github.run_number }}
-            arm: false
-            image: projects/rhel-cloud/global/images/rhel-9-v20251209
-          - name: rhel8-build
-            machine_type: e2-standard-4
-            runner_label: rhel8-build-${{ github.run_id }}-${{ github.run_number }}
-            arm: false
-            image: projects/rhel-cloud/global/images/rhel-9-v20251209
-    runs-on: ubuntu-latest
-    steps:
-      - name: Create runners
-        id: create-runner
-        uses: FalkorDB/gce-github-runner@install_docker
-        with:
-          token: ${{ secrets.GH_SA_TOKEN }}
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
-          machine_zone: ${{ vars.GCP_ZONE }}
-          network: gh-runner
-          disk_size: 200
-          machine_type: ${{ matrix.machines.machine_type }}
-          runner_label: ${{ matrix.machines.runner_label }}
-          arm: ${{ matrix.machines.arm }}
-          image: ${{ matrix.machines.image }}
-
   build:
     runs-on: ${{ matrix.platform.machine_label }}
     services:
@@ -104,24 +73,22 @@ jobs:
             cache_path: linux-arm64v8
             build_variants: [release, server]
             use_docker: true
-          # RHEL builds (conditional)
+          # RHEL builds
           - name: rhel-x64
             suffix: rhel-x64
             os: rhel
             arch: amd64
-            machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
+            machine_label: ubuntu-latest
             cache_path: rhel-x64
             build_variants: [release]
-            requires_runner: true
             use_docker: true
           - name: rhel8-x64
             suffix: rhel8-x64
             os: rhel8
             arch: amd64
-            machine_label: ${{ format('rhel8-build-{0}-{1}', github.run_id, github.run_number) }}
+            machine_label: ubuntu-latest
             cache_path: rhel8-x64
             build_variants: [release]
-            requires_runner: true
             use_docker: true
           # macOS builds
           - name: macos-arm64
@@ -134,40 +101,26 @@ jobs:
             use_docker: false
         build_type: [release, debug]
     steps:
-      - name: Check if should skip
-        id: should_skip
-        run: |
-          SHOULD_SKIP="false"
-          if [[ "${{ matrix.platform.requires_runner }}" == "true" ]] && [[ "${{ github.event_name }}" == "pull_request" ]] && ! [[ "${{ contains(github.event.pull_request.labels.*.name, 'test-rhel') }}" == "true" ]]; then
-            SHOULD_SKIP="true"
-          fi
-          echo "skip=$SHOULD_SKIP" >> $GITHUB_OUTPUT
-
-      - name: Install Git (RHEL)
-        if: steps.should_skip.outputs.skip != 'true' && (matrix.platform.os == 'rhel' || matrix.platform.os == 'rhel8')
-        run: sudo dnf install -y git
-
       - uses: actions/checkout@v6
-        if: steps.should_skip.outputs.skip != 'true'
         with:
           set-safe-directory: "*"
           submodules: recursive
 
       - name: Setup macOS dependencies
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.os == 'macos'
+        if: matrix.platform.os == 'macos'
         run: |
           brew install m4 automake peg libtool autoconf python3 gcc make zlib libiconv libomp cmake
           echo "/opt/homebrew/opt/make/libexec/gnubin" >> $GITHUB_PATH
 
       - name: Relocate source
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker
+        if: matrix.platform.use_docker
         run: |
           sudo mkdir -p /FalkorDB
           sudo cp -r $GITHUB_WORKSPACE/. /FalkorDB/
           sudo chown -R $(whoami) /FalkorDB
 
       - name: Generate cache keys (Docker)
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker
+        if: matrix.platform.use_docker
         id: cache-keys
         working-directory: /FalkorDB
         run: |
@@ -176,14 +129,14 @@ jobs:
           echo "combined=${DEPS_HASH}" >> $GITHUB_OUTPUT
 
       - name: Generate cache key (macOS)
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.os == 'macos'
+        if: matrix.platform.os == 'macos'
         id: cache-key-macos
         run: |
           DEPS_HASH=$(cat deps/GraphBLAS/Include/GraphBLAS.h deps/libcypher-parser/lib/src/parser.c deps/RediSearch/src/version.h deps/libcurl/RELEASE-NOTES deps/libcsv/ChangeLog deps/LAGraph/include/LAGraph.h deps/rax/rax.h deps/xxHash/xxhash.h deps/utf8proc/utf8proc.h deps/oniguruma/src/oniguruma.h deps/FalkorDB-core-rs/Cargo.toml | shasum -a 256 | cut -d' ' -f1)
           echo "key=macos-deps-${{ matrix.build_type }}-${DEPS_HASH}" >> $GITHUB_OUTPUT
 
       - name: Restore dependency caches (Docker)
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker
+        if: matrix.platform.use_docker
         id: restore-deps
         uses: actions/cache/restore@v4
         with:
@@ -206,7 +159,7 @@ jobs:
           enableCrossOsArchive: true
 
       - name: Restore dependency cache (macOS)
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.os == 'macos'
+        if: matrix.platform.os == 'macos'
         id: restore-deps-macos
         uses: actions/cache/restore@v4
         with:
@@ -216,17 +169,17 @@ jobs:
             macos-deps-${{ matrix.build_type }}-
 
       - name: Set up Docker Buildx
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker
+        if: matrix.platform.use_docker
         uses: docker/setup-buildx-action@v3
         with:
           driver-opts: network=host
 
       - name: Ignore Errors (RHEL8)
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.os == 'rhel8'
+        if: matrix.platform.os == 'rhel8'
         run: sed -i 's/-Werror//g' /FalkorDB/deps/RediSearch/deps/VectorSimilarity/src/VecSim/CMakeLists.txt
 
       - name: Build macOS native
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.os == 'macos'
+        if: matrix.platform.os == 'macos'
         env:
           OSX_MIN_SDK_VER: "15.0"
         run: |
@@ -237,14 +190,14 @@ jobs:
           make DEBUG=${{ matrix.build_type == 'debug' && '1' || '0' }} CXXFLAGS="-Wno-error=vla-cxx-extension"
 
       - name: Save dependency cache (macOS)
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.os == 'macos' && steps.restore-deps-macos.outputs.cache-hit != 'true'
+        if: matrix.platform.os == 'macos' && steps.restore-deps-macos.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           key: ${{ steps.cache-key-macos.outputs.key }}
 
       - name: Extract .so file (macOS)
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.os == 'macos'
+        if: matrix.platform.os == 'macos'
         run: |
           SO_FILE=$(find ./bin -name "falkordb.so" -type f | head -1)
           if [ -z "$SO_FILE" ]; then
@@ -255,7 +208,7 @@ jobs:
           cp "$SO_FILE" /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
 
       - name: Determine Dockerfile
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker
+        if: matrix.platform.use_docker
         id: dockerfile
         run: |
           # All platforms use same compiler dockerfile with OS parameter
@@ -265,6 +218,9 @@ jobs:
           if [[ "${{ matrix.platform.os }}" == "alpine" ]]; then
             echo "final=Dockerfile.alpine" >> $GITHUB_OUTPUT
             echo "test=Dockerfile.alpine" >> $GITHUB_OUTPUT
+          elif [[ "${{ matrix.platform.os }}" == "rhel" ]] || [[ "${{ matrix.platform.os }}" == "rhel8" ]]; then
+            echo "final=Dockerfile" >> $GITHUB_OUTPUT
+            echo "test=Dockerfile.rhel" >> $GITHUB_OUTPUT
           else
             echo "final=Dockerfile" >> $GITHUB_OUTPUT
             echo "test=Dockerfile.debian" >> $GITHUB_OUTPUT
@@ -283,7 +239,7 @@ jobs:
           fi
 
       - name: Build compiler image
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker
+        if: matrix.platform.use_docker
         id: build_compiler
         uses: docker/build-push-action@v6
         with:
@@ -301,7 +257,7 @@ jobs:
             DEBUG=${{ matrix.build_type == 'debug' && '1' || '0' }}
 
       - name: Copy artifacts from compiler image
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && steps.restore-deps.outputs.cache-hit != 'true'
+        if: matrix.platform.use_docker && steps.restore-deps.outputs.cache-hit != 'true'
         working-directory: /FalkorDB
         run: |
           id=$(docker create --platform=linux/${{ matrix.platform.arch }} localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }})
@@ -309,7 +265,7 @@ jobs:
           docker rm -v $id
 
       - name: Save dependency cache (Docker)
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && steps.restore-deps.outputs.cache-hit != 'true' && steps.build_compiler.outcome == 'success'
+        if: matrix.platform.use_docker && steps.restore-deps.outputs.cache-hit != 'true' && steps.build_compiler.outcome == 'success'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -328,7 +284,7 @@ jobs:
           enableCrossOsArchive: true
 
       - name: Set browser tag
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && matrix.build_type == 'release'
+        if: matrix.platform.use_docker && matrix.build_type == 'release'
         id: set_browser_tag
         run: |
           BROWSER_TAG="latest"
@@ -340,7 +296,7 @@ jobs:
           echo "BROWSER_TAG=${BROWSER_TAG}" >> $GITHUB_ENV
 
       - name: Build test image
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && matrix.build_type == 'release' && matrix.platform.os != 'rhel' && matrix.platform.os != 'rhel8'
+        if: matrix.platform.use_docker && matrix.build_type == 'release'
         uses: docker/build-push-action@v6
         with:
           context: /FalkorDB
@@ -355,7 +311,7 @@ jobs:
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
 
       - name: Upload test image
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && matrix.build_type == 'release' && matrix.platform.os != 'rhel' && matrix.platform.os != 'rhel8'
+        if: matrix.platform.use_docker && matrix.build_type == 'release'
         uses: actions/upload-artifact@v5
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
@@ -364,7 +320,7 @@ jobs:
           compression-level: 0
 
       - name: Build base image
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && matrix.build_type == 'release'
+        if: matrix.platform.use_docker && matrix.build_type == 'release'
         id: build_base
         uses: docker/build-push-action@v6
         with:
@@ -381,11 +337,11 @@ jobs:
             BROWSER_TAG=${{ env.BROWSER_TAG }}
 
       - name: Load base image
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && matrix.build_type == 'release'
+        if: matrix.platform.use_docker && matrix.build_type == 'release'
         run: docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
 
       - name: Upload base image
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && matrix.build_type == 'release'
+        if: matrix.platform.use_docker && matrix.build_type == 'release'
         uses: actions/upload-artifact@v5
         with:
           name: falkordb-${{ matrix.platform.suffix }}
@@ -394,7 +350,7 @@ jobs:
           compression-level: 0
 
       - name: Build server image
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && steps.dockerfile.outputs.build_server == 'true'
+        if: matrix.platform.use_docker && steps.dockerfile.outputs.build_server == 'true'
         uses: docker/build-push-action@v6
         with:
           context: /FalkorDB
@@ -410,7 +366,7 @@ jobs:
             BROWSER_TAG=${{ env.BROWSER_TAG }}
 
       - name: Upload server image
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && steps.dockerfile.outputs.build_server == 'true'
+        if: matrix.platform.use_docker && steps.dockerfile.outputs.build_server == 'true'
         uses: actions/upload-artifact@v5
         with:
           name: falkordb-server-${{ matrix.platform.suffix }}
@@ -419,34 +375,16 @@ jobs:
           compression-level: 0
 
       - name: Extract .so file (Docker)
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker
+        if: matrix.platform.use_docker
         run: |
           docker run --rm --entrypoint cat localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }} /FalkorDB/bin/src/falkordb.so > /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
 
       - name: Upload .so file
-        if: steps.should_skip.outputs.skip != 'true'
         uses: actions/upload-artifact@v5
         with:
           name: falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
           path: /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
           retention-days: 7
-
-  cleanup-rhel-runners:
-    needs: build
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        runner:
-          - rhel-build-${{ github.run_id }}-${{ github.run_number }}
-          - rhel8-build-${{ github.run_id }}-${{ github.run_number }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/cleanup-runner
-        with:
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
-          zone: ${{ vars.GCP_ZONE }}
-          instance_label: ${{ matrix.runner }}
 
   test:
     needs: build
@@ -464,6 +402,8 @@ jobs:
             machine_label: ubuntu-latest
           - suffix: alpine-arm64v8
             machine_label: ubuntu-24.04-arm
+          - suffix: rhel-x64
+            machine_label: ubuntu-latest
         test_type: [unit, flow, tck, fuzz]
     steps:
       - name: Download test image
