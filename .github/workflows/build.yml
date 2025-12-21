@@ -217,6 +217,9 @@ jobs:
           if [[ "${{ matrix.platform.os }}" == "alpine" ]]; then
             echo "final=Dockerfile.alpine" >> $GITHUB_OUTPUT
             echo "test=Dockerfile.alpine" >> $GITHUB_OUTPUT
+          elif [[ "${{ matrix.platform.os }}" == "rhel" ]] || [[ "${{ matrix.platform.os }}" == "rhel8" ]]; then
+            echo "final=Dockerfile" >> $GITHUB_OUTPUT
+            echo "test=Dockerfile.rhel" >> $GITHUB_OUTPUT
           else
             echo "final=Dockerfile" >> $GITHUB_OUTPUT
             echo "test=Dockerfile.debian" >> $GITHUB_OUTPUT
