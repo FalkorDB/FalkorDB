@@ -220,7 +220,7 @@ Feature: Literals7 - List
       | [null, [' a ', ' '], ' [ a ', ' [ ], ] ', ' [ ', [' '], ' ] '] |
     And no side effects
 
-  StyleCheck
+  @skipStyleCheck
   Scenario: [18] Return a complex list containing multiple mixed and nested values
     Given any graph
     When executing query:

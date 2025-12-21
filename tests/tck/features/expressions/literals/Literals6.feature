@@ -75,8 +75,7 @@ Feature: Literals6 - String
       | '\''    |
     And no side effects
 
-  StyleCheck
-  
+  @skipStyleCheck
   Scenario: [5] Return a single-quoted string with escaped characters
     Given any graph
     When executing query:
@@ -145,7 +144,7 @@ Feature: Literals6 - String
       | 'ǿ' |
     And no side effects
 
-  StyleCheck
+  @skipStyleCheck
   Scenario: [11] Return a double-quoted string with one character
     Given any graph
     When executing query:
@@ -157,7 +156,7 @@ Feature: Literals6 - String
       | 'a'     |
     And no side effects
 
-  StyleCheck
+  @skipStyleCheck
   Scenario: [12] Return a double-quoted string with uft-8 characters
     Given any graph
     When executing query:

@@ -114,7 +114,7 @@ Feature: Null1 - IS NULL validation
       | {}                              | name  | true   |
       | null                            | name  | true   |
 
-  StyleCheck
+  @skipStyleCheck
   Scenario: [6] IS NULL is case insensitive
     Given an empty graph
     And having executed:

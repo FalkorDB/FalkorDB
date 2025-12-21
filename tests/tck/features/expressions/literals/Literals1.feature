@@ -41,7 +41,7 @@ Feature: Literals1 - Boolean and Null
       | true    |
     And no side effects
 
-  StyleCheck
+  @skipStyleCheck
   Scenario: [2] Return a boolean true upper case
     Given any graph
     When executing query:
@@ -64,7 +64,7 @@ Feature: Literals1 - Boolean and Null
       | false   |
     And no side effects
 
-  StyleCheck
+  @skipStyleCheck
   Scenario: [4] Return a boolean false upper case
     Given any graph
     When executing query:
@@ -87,7 +87,7 @@ Feature: Literals1 - Boolean and Null
       | null    |
     And no side effects
 
-  StyleCheck
+  @skipStyleCheck
   Scenario: [6] Return null upper case
     Given any graph
     When executing query:
