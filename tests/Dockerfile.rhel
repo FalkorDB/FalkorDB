@@ -20,17 +20,16 @@ RUN set -ex ;\
     python3 --version ;\
     pip3 --version
 
-# Build and install valgrind from source
+# Build and install redis from source
 RUN set -ex ;\
     cd /tmp ;\
-    curl -LO https://sourceware.org/pub/valgrind/valgrind-3.22.0.tar.bz2 ;\
-    tar -xjf valgrind-3.22.0.tar.bz2 ;\
-    cd valgrind-3.22.0 ;\
-    ./configure ;\
+    curl -LO http://download.redis.io/redis-stable.tar.gz ;\
+    tar -xzf redis-stable.tar.gz ;\
+    cd redis-stable ;\
     make -j$(nproc) ;\
     make install ;\
     cd / ;\
-    rm -rf /tmp/valgrind-3.22.0 /tmp/valgrind-3.22.0.tar.bz2
+    rm -rf /tmp/redis-stable /tmp/redis-stable.tar.gz
 
 # Create virtual environment
 RUN set -ex ;\
