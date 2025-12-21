@@ -13,11 +13,7 @@ RUN set -ex ;\
     dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${RHEL_VERSION}.noarch.rpm; \
     yum update -y ;\
     yum install -y $YUM_DEPS ;\
-    if [ "$RHEL_VERSION" = "8" ]; then \
-        yum install -y redhat-lsb-core valgrind; \
-    else \
-        dnf install -y lsb-release valgrind; \
-    fi
+    dnf install -y lsb-release valgrind;
 
 RUN alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1; \
     alternatives --auto python3
