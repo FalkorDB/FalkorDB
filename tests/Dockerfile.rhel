@@ -5,23 +5,31 @@ ARG TARGETPLATFORM=linux/amd64
 FROM $BASE_IMAGE AS compiler
 
 # Define dependencies
-ENV YUM_DEPS "automake libtool autoconf 2to3 python3-pip wget gcc python3.11 python3.11-pip python3-devel m4 git valgrind cmake"
-
-ENV DNF_DEPS "lsb-release"
+ENV YUM_DEPS "automake libtool autoconf 2to3 python3-pip wget gcc make python3.11 python3.11-pip python3-devel m4 git cmake"
 
 # Set up a build environment
 RUN set -ex ;\
-    deps="$YUM_DEPS ";\
+    RHEL_VERSION=$(rpm -E '%{rhel}') ;\
+    dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${RHEL_VERSION}.noarch.rpm; \
     yum update -y ;\
-    yum install -y $deps ;
+    yum install -y $YUM_DEPS ;\
+    dnf install -y bzip2 glibc-devel ;\
+    rm -f /usr/bin/python3 /usr/bin/pip3 ;\
+    ln -s /usr/bin/python3.11 /usr/bin/python3 ;\
+    ln -s /usr/bin/pip3.11 /usr/bin/pip3 ;\
+    python3 --version ;\
+    pip3 --version
 
+# Build and install redis from source
 RUN set -ex ;\
-    deps="$DNF_DEPS ";\
-    dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm; \
-    dnf install -y $deps
-
-RUN alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1; \
-    alternatives --auto python3
+    cd /tmp ;\
+    curl -LO http://download.redis.io/redis-stable.tar.gz ;\
+    tar -xzf redis-stable.tar.gz ;\
+    cd redis-stable ;\
+    make -j$(nproc) ;\
+    make install ;\
+    cd / ;\
+    rm -rf /tmp/redis-stable /tmp/redis-stable.tar.gz
 
 # Create virtual environment
 RUN set -ex ;\
