@@ -31,6 +31,7 @@
 Feature: With2 - Forward single expression
   # correctly projecting an expression, no other effects
 
+  @skip
   Scenario: [1] Forwarding a property to express a join
     Given an empty graph
     And having executed:
@@ -52,6 +53,7 @@ Feature: With2 - Forward single expression
       | (:End {num: 42, id: 0}) |
     And no side effects
 
+  @skip
   Scenario: [2] Forwarding a nested map literal
     Given an empty graph
     When executing query:

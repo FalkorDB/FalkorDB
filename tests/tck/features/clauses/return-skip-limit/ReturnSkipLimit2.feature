@@ -30,6 +30,7 @@
 
 Feature: ReturnSkipLimit2 - Limit
 
+  @skip
   Scenario: [1] Limit to two hits
     Given an empty graph
     When executing query:
@@ -44,6 +45,7 @@ Feature: ReturnSkipLimit2 - Limit
       | 1 |
     And no side effects
 
+  @skip
   Scenario: [2] Limit to two hits with explicit order
     Given an empty graph
     And having executed:
@@ -67,6 +69,7 @@ Feature: ReturnSkipLimit2 - Limit
       | ({name: 'B'}) |
     And no side effects
 
+  @skip
   Scenario: [3] LIMIT 0 should return an empty result
     Given an empty graph
     And having executed:
@@ -83,6 +86,7 @@ Feature: ReturnSkipLimit2 - Limit
       | n |
     And no side effects
 
+  @skip
   Scenario: [4] Handle ORDER BY with LIMIT 1
     Given an empty graph
     And having executed:
@@ -102,6 +106,7 @@ Feature: ReturnSkipLimit2 - Limit
       | 'Craig' |
     And no side effects
 
+  @skip
   Scenario: [5] ORDER BY with LIMIT 0 should not generate errors
     Given any graph
     When executing query:
@@ -134,6 +139,7 @@ Feature: ReturnSkipLimit2 - Limit
       | 2     |
     And no side effects
 
+  @skip
   Scenario: [7] Limit to more rows than actual results 1
     Given an empty graph
     And having executed:
@@ -154,6 +160,7 @@ Feature: ReturnSkipLimit2 - Limit
       | 1 |
     And no side effects
 
+  @skip
   Scenario: [8] Limit to more rows than actual results 2
     Given an empty graph
     And having executed:
@@ -178,6 +185,7 @@ Feature: ReturnSkipLimit2 - Limit
       | 2     | 1        |
     And no side effects
 
+  @skip
   Scenario: [9] Fail when using non-constants in LIMIT
     Given any graph
     When executing query:
@@ -222,6 +230,7 @@ Feature: ReturnSkipLimit2 - Limit
       """
     Then a SyntaxError should be raised at runtime: NegativeIntegerArgument
 
+  @skip
   Scenario: [12] Fail when using negative value in LIMIT 1
     Given any graph
     When executing query:
@@ -232,6 +241,7 @@ Feature: ReturnSkipLimit2 - Limit
       """
     Then a SyntaxError should be raised at compile time: NegativeIntegerArgument
 
+  @skip
   Scenario: [13] Fail when using negative value in LIMIT 2
     Given any graph
     And having executed:

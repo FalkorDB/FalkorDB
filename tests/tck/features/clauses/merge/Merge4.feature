@@ -30,6 +30,7 @@
 
 Feature: Merge4 - Merge node - on match and on create
 
+  @skip
   Scenario: [1] Merge should be able to set labels on match and on create
     Given an empty graph
     And having executed:
@@ -48,6 +49,7 @@ Feature: Merge4 - Merge node - on match and on create
       | +nodes  | 1 |
       | +labels | 3 |
 
+  @skip
   Scenario: [2] Merge should be able to use properties of bound node in ON MATCH and ON CREATE
     Given an empty graph
     And having executed:

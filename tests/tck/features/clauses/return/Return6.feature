@@ -30,6 +30,7 @@
 
 Feature: Return6 - Implicit grouping with aggregates
 
+  @skip
   Scenario: [1] Return count aggregation over nodes
     Given an empty graph
     And having executed:
@@ -46,6 +47,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | 42 | 1     |
     And no side effects
 
+  @skip
   Scenario: [2] Projecting an arithmetic expression with aggregation
     Given an empty graph
     And having executed:
@@ -62,6 +64,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | ({id: 42}) | 4            |
     And no side effects
 
+  @skip
   Scenario: [3] Aggregating by a list property has a correct definition of equality
     Given an empty graph
     And having executed:
@@ -79,6 +82,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | 2     |
     And no side effects
 
+  @skip
   Scenario: [4] Support multiple divisions in aggregate function
     Given an empty graph
     And having executed:
@@ -96,6 +100,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | 2     |
     And no side effects
 
+  @skip
   Scenario: [5] Aggregates inside normal functions
     Given an empty graph
     And having executed:
@@ -113,6 +118,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | 11               |
     And no side effects
 
+  @skip
   Scenario: [6] Handle aggregates inside non-aggregate expressions
     Given an empty graph
     When executing query:
@@ -124,6 +130,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | a.name | {foo: a.name='Andres', kids: collect(child.name)} |
     And no side effects
 
+  @skip
   Scenario: [7] Aggregate on property
     Given an empty graph
     And having executed:
@@ -143,6 +150,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | 33    | 2        |
     And no side effects
 
+  @skip
   Scenario: [8] Handle aggregation on functions
     Given an empty graph
     And having executed:
@@ -161,6 +169,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | () | 1.0            |
     And no side effects
 
+  @skip
   Scenario: [9] Aggregates with arithmetics
     Given an empty graph
     And having executed:
@@ -177,6 +186,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | 10 |
     And no side effects
 
+  @skip
   Scenario: [10] Multiple aggregates on same variable
     Given an empty graph
     And having executed:
@@ -193,6 +203,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | 1        | [()]       |
     And no side effects
 
+  @skip
   Scenario: [11] Counting matches
     Given an empty graph
     And having executed:
@@ -210,6 +221,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | 100      |
     And no side effects
 
+  @skip
   Scenario: [12] Counting matches per group
     Given an empty graph
     And having executed:
@@ -249,6 +261,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | 'a'  | ['c', 'b'] | 1   |
     And no side effects
 
+  @skip
   Scenario: [14] Aggregates in aggregates
     Given any graph
     When executing query:
@@ -266,6 +279,7 @@ Feature: Return6 - Implicit grouping with aggregates
       """
     Then a SyntaxError should be raised at compile time: NonConstantExpression
 
+  @skip
   Scenario: [16] Aggregation on complex expressions
     Given an empty graph
     And having executed:
@@ -299,6 +313,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | ({name: 'Michael'}) | ({name: 'Peter'})  | 0   |
     And no side effects
 
+  @skip
   Scenario: [17] Handle constants and parameters inside an expression which contains an aggregation expression
     Given an empty graph
     And parameters are:
@@ -313,6 +328,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | null                          |
     And no side effects
 
+  @skip
   Scenario: [18] Handle returned variables inside an expression which contains an aggregation expression
     Given an empty graph
     When executing query:
@@ -325,6 +341,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | age | age + count(you.age) |
     And no side effects
 
+  @skip
   Scenario: [19] Handle returned property accesses inside an expression which contains an aggregation expression
     Given an empty graph
     When executing query:

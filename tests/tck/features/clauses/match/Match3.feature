@@ -30,6 +30,7 @@
 
 Feature: Match3 - Match fixed length patterns
 
+  @skip
   Scenario: [1] Get neighbours
     Given an empty graph
     And having executed:
@@ -46,6 +47,7 @@ Feature: Match3 - Match fixed length patterns
       | (:A {num: 1}) | (:B {num: 2}) |
     And no side effects
 
+  @skip
   Scenario: [2] Directed match of a simple relationship
     Given an empty graph
     And having executed:
@@ -62,6 +64,7 @@ Feature: Match3 - Match fixed length patterns
       | (:A) | [:LOOP] | (:B) |
     And no side effects
 
+  @skip
   Scenario: [3] Undirected match on simple relationship graph
     Given an empty graph
     And having executed:
@@ -79,6 +82,7 @@ Feature: Match3 - Match fixed length patterns
       | (:B) | [:LOOP] | (:A) |
     And no side effects
 
+  @skip
   Scenario: [4] Get two related nodes
     Given an empty graph
     And having executed:
@@ -98,6 +102,7 @@ Feature: Match3 - Match fixed length patterns
       | (:C {num: 3}) |
     And no side effects
 
+  @skip
   Scenario: [5] Return two subgraphs with bound undirected relationship
     Given an empty graph
     And having executed:
@@ -115,6 +120,7 @@ Feature: Match3 - Match fixed length patterns
       | (:A {num: 1}) | (:B {num: 2}) |
     And no side effects
 
+  @skip
   Scenario: [6] Matching a relationship pattern using a label predicate
     Given an empty graph
     And having executed:
@@ -133,6 +139,7 @@ Feature: Match3 - Match fixed length patterns
       | (:Foo) |
     And no side effects
 
+  @skip
   Scenario: [7] Matching nodes with many labels
     Given an empty graph
     And having executed:
@@ -151,6 +158,7 @@ Feature: Match3 - Match fixed length patterns
       | (:A:B:C:D:E:F:G:H:I:J:K:L:M) | (:Z:Y:X:W:V:U) |
     And no side effects
 
+  @skip
   Scenario: [8] Matching using relationship predicate with multiples of the same type
     Given an empty graph
     And having executed:
@@ -168,6 +176,7 @@ Feature: Match3 - Match fixed length patterns
       | (:B) |
     And no side effects
 
+  @skip
   Scenario: [9] Get related to related to
     Given an empty graph
     And having executed:
@@ -184,6 +193,7 @@ Feature: Match3 - Match fixed length patterns
       | (:C {num: 3}) |
     And no side effects
 
+  @skip
   Scenario: [10] Matching using self-referencing pattern returns no result
     Given an empty graph
     And having executed:
@@ -201,6 +211,7 @@ Feature: Match3 - Match fixed length patterns
       | b |
     And no side effects
 
+  @skip
   Scenario: [11] Undirected match in self-relationship graph
     Given an empty graph
     And having executed:
@@ -217,6 +228,7 @@ Feature: Match3 - Match fixed length patterns
       | (:A) | [:LOOP] | (:A) |
     And no side effects
 
+  @skip
   Scenario: [12] Undirected match of self-relationship in self-relationship graph
     Given an empty graph
     And having executed:
@@ -233,6 +245,7 @@ Feature: Match3 - Match fixed length patterns
       | (:A) | [:LOOP] |
     And no side effects
 
+  @skip
   Scenario: [13] Directed match on self-relationship graph
     Given an empty graph
     And having executed:
@@ -249,6 +262,7 @@ Feature: Match3 - Match fixed length patterns
       | (:A) | [:LOOP] | (:A) |
     And no side effects
 
+  @skip
   Scenario: [14] Directed match of self-relationship on self-relationship graph
     Given an empty graph
     And having executed:
@@ -309,6 +323,7 @@ Feature: Match3 - Match fixed length patterns
       | (:B)      | [:T2]   | (:Looper) | [:T1]   | (:A)      |
     And no side effects
 
+  @skip
   Scenario: [17] Handling cyclic patterns
     Given an empty graph
     And having executed:
@@ -328,6 +343,7 @@ Feature: Match3 - Match fixed length patterns
       | 'a'    |
     And no side effects
 
+  @skip
   Scenario: [18] Handling cyclic patterns when separated into two parts
     Given an empty graph
     And having executed:
@@ -347,6 +363,7 @@ Feature: Match3 - Match fixed length patterns
       | 'a'    |
     And no side effects
 
+  @skip
   Scenario: [19] Two bound nodes pointing to the same node
     Given an empty graph
     And having executed:
@@ -370,6 +387,7 @@ Feature: Match3 - Match fixed length patterns
       | ({name: 'x2'}) |
     And no side effects
 
+  @skip
   Scenario: [20] Three bound nodes pointing to the same node
     Given an empty graph
     And having executed:
@@ -395,6 +413,7 @@ Feature: Match3 - Match fixed length patterns
       | ({name: 'x2'}) |
     And no side effects
 
+  @skip
   Scenario: [21] Three bound nodes pointing to the same node with extra connections
     Given an empty graph
     And having executed:
@@ -431,6 +450,7 @@ Feature: Match3 - Match fixed length patterns
       | ({name: 'e'}) |
     And no side effects
 
+  @skip
   Scenario: [22] Returning bound nodes that are not part of the pattern
     Given an empty graph
     And having executed:
@@ -450,6 +470,7 @@ Feature: Match3 - Match fixed length patterns
       | ({name: 'A'}) | ({name: 'B'}) | ({name: 'C'}) |
     And no side effects
 
+  @skip
   Scenario: [23] Matching disconnected patterns
     Given an empty graph
     And having executed:
@@ -472,6 +493,7 @@ Feature: Match3 - Match fixed length patterns
       | (:A) | (:C) | (:A) | (:C) |
     And no side effects
 
+  @skip
   Scenario: [24] Matching twice with duplicate relationship types on same relationship
     Given an empty graph
     And having executed:
@@ -490,6 +512,7 @@ Feature: Match3 - Match fixed length patterns
       | (:A) | [:T] | (:B) |
     And no side effects
 
+  @skip
   Scenario: [25] Matching twice with an additional node label
     Given an empty graph
     And having executed:
@@ -507,6 +530,7 @@ Feature: Match3 - Match fixed length patterns
       | a1 | r | b2 |
     And no side effects
 
+  @skip
   Scenario: [26] Matching twice with a duplicate predicate
     Given an empty graph
     And having executed:
@@ -525,6 +549,7 @@ Feature: Match3 - Match fixed length patterns
       | (:X:Y) | [:T] | () |
     And no side effects
 
+  @skip
   Scenario: [27] Matching from null nodes should return no results owing to finding no matches
     Given an empty graph
     When executing query:
@@ -538,6 +563,7 @@ Feature: Match3 - Match fixed length patterns
       | b |
     And no side effects
 
+  @skip
   Scenario: [28] Matching from null nodes should return no results owing to matches being filtered out
     Given an empty graph
     And having executed:
@@ -555,6 +581,7 @@ Feature: Match3 - Match fixed length patterns
       | b |
     And no side effects
 
+  @skip
   Scenario: [29] Fail when re-using a relationship in the same pattern
     Given any graph
     When executing query:

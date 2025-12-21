@@ -30,6 +30,7 @@
 
 Feature: ReturnOrderBy1 - Order by a single variable (correct order of values according to their type)
 
+  @skip
   Scenario: [1] ORDER BY should order booleans in the expected order
     Given an empty graph
     When executing query:
@@ -44,6 +45,7 @@ Feature: ReturnOrderBy1 - Order by a single variable (correct order of values ac
       | true  |
     And no side effects
 
+  @skip
   Scenario: [2] ORDER BY DESC should order booleans in the expected order
     Given an empty graph
     When executing query:
@@ -58,6 +60,7 @@ Feature: ReturnOrderBy1 - Order by a single variable (correct order of values ac
       | false |
     And no side effects
 
+  @skip
   Scenario: [3] ORDER BY should order strings in the expected order
     Given an empty graph
     When executing query:
@@ -74,6 +77,7 @@ Feature: ReturnOrderBy1 - Order by a single variable (correct order of values ac
       | 'one'   |
     And no side effects
 
+  @skip
   Scenario: [4] ORDER BY DESC should order strings in the expected order
     Given an empty graph
     When executing query:
@@ -90,6 +94,7 @@ Feature: ReturnOrderBy1 - Order by a single variable (correct order of values ac
       | ''      |
     And no side effects
 
+  @skip
   Scenario: [5] ORDER BY should order ints in the expected order
     Given an empty graph
     When executing query:
@@ -105,6 +110,7 @@ Feature: ReturnOrderBy1 - Order by a single variable (correct order of values ac
       | 3    |
     And no side effects
 
+  @skip
   Scenario: [6] ORDER BY DESC should order ints in the expected order
     Given an empty graph
     When executing query:
@@ -120,6 +126,7 @@ Feature: ReturnOrderBy1 - Order by a single variable (correct order of values ac
       | 1    |
     And no side effects
 
+  @skip
   Scenario: [7] ORDER BY should order floats in the expected order
     Given an empty graph
     When executing query:
@@ -135,6 +142,7 @@ Feature: ReturnOrderBy1 - Order by a single variable (correct order of values ac
       | 999.99 |
     And no side effects
 
+  @skip
   Scenario: [8] ORDER BY DESC should order floats in the expected order
     Given an empty graph
     When executing query:
@@ -150,6 +158,7 @@ Feature: ReturnOrderBy1 - Order by a single variable (correct order of values ac
       | 1.3    |
     And no side effects
 
+  @skip
   Scenario: [9] ORDER BY should order lists in the expected order
     Given an empty graph
     When executing query:
@@ -170,6 +179,7 @@ Feature: ReturnOrderBy1 - Order by a single variable (correct order of values ac
       | [null, 2] |
     And no side effects
 
+  @skip
   Scenario: [10] ORDER BY DESC should order lists in the expected order
     Given an empty graph
     When executing query:

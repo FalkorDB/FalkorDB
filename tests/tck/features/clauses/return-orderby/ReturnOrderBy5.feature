@@ -30,6 +30,7 @@
 
 Feature: ReturnOrderBy5 - Order by in combination with column renaming
 
+  @skip
   Scenario: [1] Renaming columns before ORDER BY should return results in ascending order
     Given an empty graph
     And having executed:

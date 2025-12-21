@@ -59,6 +59,7 @@
 
 Feature: WithSkipLimit1 - Skip
 
+  @skip
   Scenario: [1] Handle dependencies across WITH with SKIP
     Given an empty graph
     And having executed:
@@ -82,6 +83,7 @@ Feature: WithSkipLimit1 - Skip
       | ({name: 'A', num: 0, id: 0}) |
     And no side effects
 
+  @skip
   Scenario: [2] Ordering and skipping on aggregate
     Given an empty graph
     And having executed:

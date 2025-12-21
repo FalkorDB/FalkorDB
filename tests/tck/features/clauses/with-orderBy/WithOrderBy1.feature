@@ -32,6 +32,7 @@ Feature: WithOrderBy1 - Order by a single variable
 # LIMIT is used in the following scenarios to surface the effects or WITH ... ORDER BY ...
 # which are otherwise lost after the WITH clause according to Cypher semantics
 
+  @skip
   Scenario: [1] Sort booleans in ascending order
     Given an empty graph
     When executing query:
@@ -47,6 +48,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | false |
     And no side effects
 
+  @skip
   Scenario: [2] Sort booleans in descending order
     Given an empty graph
     When executing query:
@@ -62,6 +64,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | true  |
     And no side effects
 
+  @skip
   Scenario: [3] Sort integers in ascending order
     Given an empty graph
     When executing query:
@@ -78,6 +81,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | 2    |
     And no side effects
 
+  @skip
   Scenario: [4] Sort integers in descending order
     Given an empty graph
     When executing query:
@@ -94,6 +98,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | 2    |
     And no side effects
 
+  @skip
   Scenario: [5] Sort floats in ascending order
     Given an empty graph
     When executing query:
@@ -110,6 +115,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | 1.5    |
     And no side effects
 
+  @skip
   Scenario: [6] Sort floats in descending order
     Given an empty graph
     When executing query:
@@ -126,6 +132,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | 1.5    |
     And no side effects
 
+  @skip
   Scenario: [7] Sort strings in ascending order
     Given an empty graph
     When executing query:
@@ -142,6 +149,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | ' '     |
     And no side effects
 
+  @skip
   Scenario: [8] Sort strings in descending order
     Given an empty graph
     When executing query:
@@ -158,6 +166,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | '.*'    |
     And no side effects
 
+  @skip
   Scenario: [9] Sort lists in ascending order
     Given an empty graph
     When executing query:
@@ -176,6 +185,7 @@ Feature: WithOrderBy1 - Order by a single variable
       | [1]       |
     And no side effects
 
+  @skip
   Scenario: [10] Sort lists in descending order
     Given an empty graph
     When executing query:

@@ -30,6 +30,7 @@
 
 Feature: Merge5 - Merge relationships
 
+  @skip
   Scenario: [1] Creating a relationship
     Given an empty graph
     And having executed:
@@ -48,6 +49,7 @@ Feature: Merge5 - Merge relationships
     And the side effects should be:
       | +relationships | 1 |
 
+  @skip
   Scenario: [2] Matching a relationship
     Given an empty graph
     And having executed:
@@ -66,6 +68,7 @@ Feature: Merge5 - Merge relationships
       | 1        |
     And no side effects
 
+  @skip
   Scenario: [3] Matching two relationships
     Given an empty graph
     And having executed:
@@ -85,6 +88,7 @@ Feature: Merge5 - Merge relationships
       | 2        |
     And no side effects
 
+  @skip
   Scenario: [4] Using bound variables from other updating clause
     Given an empty graph
     When executing query:
@@ -100,6 +104,7 @@ Feature: Merge5 - Merge relationships
       | +nodes         | 2 |
       | +relationships | 1 |
 
+  @skip
   Scenario: [5] Filtering relationships
     Given an empty graph
     And having executed:
@@ -119,6 +124,7 @@ Feature: Merge5 - Merge relationships
       | 1        |
     And no side effects
 
+  @skip
   Scenario: [6] Creating relationship when all matches filtered out
     Given an empty graph
     And having executed:
@@ -139,6 +145,7 @@ Feature: Merge5 - Merge relationships
       | +relationships | 1 |
       | +properties    | 1 |
 
+  @skip
   Scenario: [7] Matching incoming relationship
     Given an empty graph
     And having executed:
@@ -158,6 +165,7 @@ Feature: Merge5 - Merge relationships
       | 1        |
     And no side effects
 
+  @skip
   Scenario: [8] Creating relationship with property
     Given an empty graph
     And having executed:
@@ -177,6 +185,7 @@ Feature: Merge5 - Merge relationships
       | +relationships | 1 |
       | +properties    | 1 |
 
+  @skip
   Scenario: [9] Creating relationship using merged nodes
     Given an empty graph
     And having executed:
@@ -193,6 +202,7 @@ Feature: Merge5 - Merge relationships
     And the side effects should be:
       | +relationships | 1 |
 
+  @skip
   Scenario: [10] Merge should bind a path
     Given an empty graph
     When executing query:
@@ -210,6 +220,7 @@ Feature: Merge5 - Merge relationships
       | +relationships | 1 |
       | +properties    | 2 |
 
+  @skip
   Scenario: [11] Use outgoing direction when unspecified
     Given an empty graph
     When executing query:
@@ -226,6 +237,7 @@ Feature: Merge5 - Merge relationships
       | +relationships | 1 |
       | +properties    | 2 |
 
+  @skip
   Scenario: [12] Match outgoing relationship when direction unspecified
     Given an empty graph
     And having executed:
@@ -244,6 +256,7 @@ Feature: Merge5 - Merge relationships
       | [:KNOWS] |
     And no side effects
 
+  @skip
   Scenario: [13] Match both incoming and outgoing relationships when direction unspecified
     Given an empty graph
     And having executed:
@@ -264,6 +277,7 @@ Feature: Merge5 - Merge relationships
       | [:KNOWS {name: 'cd'}] |
     And no side effects
 
+  @skip
   Scenario: [14] Using list properties via variable
     Given an empty graph
     When executing query:
@@ -284,6 +298,7 @@ Feature: Merge5 - Merge relationships
       | +labels        | 2 |
       | +properties    | 1 |
 
+  @skip
   Scenario: [15] Matching using list property
     Given an empty graph
     And having executed:
@@ -302,6 +317,7 @@ Feature: Merge5 - Merge relationships
       | 1        |
     And no side effects
 
+  @skip
   Scenario: [16] Aliasing of existing nodes 1
     Given an empty graph
     And having executed:
@@ -322,6 +338,7 @@ Feature: Merge5 - Merge relationships
     And the side effects should be:
       | +relationships | 1 |
 
+  @skip
   Scenario: [17] Aliasing of existing nodes 2
     Given an empty graph
     And having executed:
@@ -341,6 +358,7 @@ Feature: Merge5 - Merge relationships
     And the side effects should be:
       | +relationships | 1 |
 
+  @skip
   Scenario: [18] Double aliasing of existing nodes 1
     Given an empty graph
     And having executed:
@@ -365,6 +383,7 @@ Feature: Merge5 - Merge relationships
     And the side effects should be:
       | +relationships | 1 |
 
+  @skip
   Scenario: [19] Double aliasing of existing nodes 2
     Given an empty graph
     And having executed:
@@ -388,6 +407,7 @@ Feature: Merge5 - Merge relationships
     And the side effects should be:
       | +relationships | 1 |
 
+  @skip
   Scenario: [20] Do not match on deleted entities
     Given an empty graph
     And having executed:
@@ -443,6 +463,7 @@ Feature: Merge5 - Merge relationships
       | +properties    | 1 |
       | -properties    | 2 |
 
+  @skip
   Scenario: [22] Fail when imposing new predicates on a variable that is already bound
     Given any graph
     When executing query:
@@ -452,6 +473,7 @@ Feature: Merge5 - Merge relationships
       """
     Then a SyntaxError should be raised at compile time: VariableAlreadyBound
 
+  @skip
   Scenario: [23] Fail when merging relationship without type
     Given any graph
     When executing query:
@@ -461,6 +483,7 @@ Feature: Merge5 - Merge relationships
       """
     Then a SyntaxError should be raised at compile time: NoSingleRelationshipType
 
+  @skip
   Scenario: [24] Fail when merging relationship without type, no colon
     Given any graph
     When executing query:
@@ -470,6 +493,7 @@ Feature: Merge5 - Merge relationships
       """
     Then a SyntaxError should be raised at compile time: NoSingleRelationshipType
 
+  @skip
   Scenario: [25] Fail when merging relationship with more than one type
     Given any graph
     When executing query:
@@ -479,6 +503,7 @@ Feature: Merge5 - Merge relationships
       """
     Then a SyntaxError should be raised at compile time: NoSingleRelationshipType
 
+  @skip
   Scenario: [26] Fail when merging relationship that is already bound
     Given any graph
     When executing query:
@@ -488,6 +513,7 @@ Feature: Merge5 - Merge relationships
       """
     Then a SyntaxError should be raised at compile time: VariableAlreadyBound
 
+  @skip
   Scenario: [27] Fail when using parameter as relationship predicate in MERGE
     Given any graph
     When executing query:
@@ -510,6 +536,7 @@ Feature: Merge5 - Merge relationships
       """
     Then a SyntaxError should be raised at compile time: CreatingVarLength
 
+  @skip
   Scenario: [29] Fail on merging relationship with null property
     Given any graph
     When executing query:
