@@ -31,7 +31,7 @@ COPY ./build/docker/run.sh ${FALKORDB_BIN_PATH}/run.sh
 COPY ./build/docker/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 
 # Copy the compiled FalkorDB module from the Alpine compiler
-COPY --from=compiler /FalkorDB/bin/alpine*/src/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
+COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
 # Copy browser files from the Alpine-based browser image
 COPY --from=browser /app ${FALKORDB_BROWSER_PATH}
