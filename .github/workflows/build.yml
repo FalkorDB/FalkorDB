@@ -348,8 +348,8 @@ jobs:
           outputs: type=docker,dest=/tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-tests-${{ matrix.platform.suffix }}
           platforms: linux/${{ matrix.platform.arch }}
-          cache-from: type=gha,scope=tests-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}
-          cache-to: type=gha,mode=max,scope=tests-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}
+          cache-from: type=gha,scope=tests-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          cache-to: type=gha,mode=max,scope=tests-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
@@ -373,8 +373,8 @@ jobs:
           platforms: linux/${{ matrix.platform.arch }}
           outputs: type=docker,dest=/tmp/falkordb-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-${{ matrix.platform.suffix }}
-          cache-from: type=gha,scope=base-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}
-          cache-to: type=gha,mode=max,scope=base-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}
+          cache-from: type=gha,scope=base-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          cache-to: type=gha,mode=max,scope=base-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
@@ -402,8 +402,8 @@ jobs:
           platforms: linux/${{ matrix.platform.arch }}
           outputs: type=docker,dest=/tmp/falkordb-server-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-server-${{ matrix.platform.suffix }}
-          cache-from: type=gha,scope=server-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}
-          cache-to: type=gha,mode=max,scope=server-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}
+          cache-from: type=gha,scope=server-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          cache-to: type=gha,mode=max,scope=server-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
