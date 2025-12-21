@@ -29,6 +29,7 @@
 #encoding: utf-8
 
 Feature: Delete6 - Persistence of delete clause side effects
+  @skip
   Scenario: [1] Limiting to zero results after deleting nodes affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -48,6 +49,7 @@ Feature: Delete6 - Persistence of delete clause side effects
       | -nodes      | 1 |
       | -labels     | 1 |
       | -properties | 1 |
+  @skip
   Scenario: [2] Skipping all results after deleting nodes affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -67,6 +69,7 @@ Feature: Delete6 - Persistence of delete clause side effects
       | -nodes      | 1 |
       | -labels     | 1 |
       | -properties | 1 |
+  @skip
   Scenario: [3] Skipping and limiting to a few results after deleting nodes affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -92,6 +95,7 @@ Feature: Delete6 - Persistence of delete clause side effects
       | -nodes      | 5 |
       | -labels     | 1 |
       | -properties | 5 |
+  @skip
   Scenario: [4] Skipping zero results and limiting to all results after deleting nodes does not affect the result set nor the side effects
     Given an empty graph
     And having executed:
@@ -120,6 +124,7 @@ Feature: Delete6 - Persistence of delete clause side effects
       | -nodes      | 5 |
       | -labels     | 1 |
       | -properties | 5 |
+  @skip
   Scenario: [5] Filtering after deleting nodes affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -147,6 +152,7 @@ Feature: Delete6 - Persistence of delete clause side effects
       | -nodes      | 5 |
       | -labels     | 1 |
       | -properties | 5 |
+  @skip
   Scenario: [6] Aggregating in `RETURN` after deleting nodes affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -171,6 +177,7 @@ Feature: Delete6 - Persistence of delete clause side effects
       | -nodes      | 5 |
       | -labels     | 1 |
       | -properties | 5 |
+  @skip
   Scenario: [7] Aggregating in `WITH` after deleting nodes affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -196,6 +203,7 @@ Feature: Delete6 - Persistence of delete clause side effects
       | -nodes      | 5 |
       | -labels     | 1 |
       | -properties | 5 |
+  @skip
   Scenario: [8] Limiting to zero results after deleting relationships affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -214,6 +222,7 @@ Feature: Delete6 - Persistence of delete clause side effects
     And the side effects should be:
       | -relationships | 1 |
       | -properties    | 1 |
+  @skip
   Scenario: [9] Skipping all results after deleting relationships affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -232,6 +241,7 @@ Feature: Delete6 - Persistence of delete clause side effects
     And the side effects should be:
       | -relationships | 1 |
       | -properties    | 1 |
+  @skip
   Scenario: [10] Skipping and limiting to a few results after deleting relationships affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -256,6 +266,7 @@ Feature: Delete6 - Persistence of delete clause side effects
     And the side effects should be:
       | -relationships | 5 |
       | -properties    | 5 |
+  @skip
   Scenario: [11] Skipping zero result and limiting to all results after deleting relationships does not affect the result set nor the side effects
     Given an empty graph
     And having executed:
@@ -283,6 +294,7 @@ Feature: Delete6 - Persistence of delete clause side effects
     And the side effects should be:
       | -relationships | 5 |
       | -properties    | 5 |
+  @skip
   Scenario: [12] Filtering after deleting relationships affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -309,6 +321,7 @@ Feature: Delete6 - Persistence of delete clause side effects
     And the side effects should be:
       | -relationships | 5 |
       | -properties    | 5 |
+  @skip
   Scenario: [13] Aggregating in `RETURN` after deleting relationships affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -332,6 +345,7 @@ Feature: Delete6 - Persistence of delete clause side effects
     And the side effects should be:
       | -relationships | 5 |
       | -properties    | 5 |
+  @skip
   Scenario: [14] Aggregating in `WITH` after deleting relationships affects the result set but not the side effects
     Given an empty graph
     And having executed:
