@@ -50,6 +50,8 @@ COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so ${FALKORDB_BIN_PATH}/f
 
 COPY --from=browser /app ${FALKORDB_BROWSER_PATH}
 
+RUN rm ${FALKORDB_BROWSER_PATH}/text-to-cypher && rm -rf ${FALKORDB_BROWSER_PATH}/templates
+
 ENV ARCH=${TARGETPLATFORM}
 
 ENV TLS=0
