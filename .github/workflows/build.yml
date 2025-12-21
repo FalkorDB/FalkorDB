@@ -292,7 +292,7 @@ jobs:
           echo "BROWSER_TAG=${BROWSER_TAG}" >> $GITHUB_ENV
 
       - name: Build test image
-        if: matrix.platform.use_docker && matrix.build_type == 'release' && matrix.platform.os != 'rhel' && matrix.platform.os != 'rhel8'
+        if: matrix.platform.use_docker && matrix.build_type == 'release'
         uses: docker/build-push-action@v6
         with:
           context: /FalkorDB
@@ -307,7 +307,7 @@ jobs:
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
 
       - name: Upload test image
-        if: matrix.platform.use_docker && matrix.build_type == 'release' && matrix.platform.os != 'rhel' && matrix.platform.os != 'rhel8'
+        if: matrix.platform.use_docker && matrix.build_type == 'release'
         uses: actions/upload-artifact@v5
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
@@ -398,6 +398,8 @@ jobs:
             machine_label: ubuntu-latest
           - suffix: alpine-arm64v8
             machine_label: ubuntu-24.04-arm
+          - suffix: rhel-x64
+            machine_label: ubuntu-latest
         test_type: [unit, flow, tck, fuzz]
     steps:
       - name: Download test image
