@@ -13,7 +13,12 @@ RUN set -ex ;\
     dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${RHEL_VERSION}.noarch.rpm; \
     yum update -y ;\
     yum install -y $YUM_DEPS ;\
-    dnf install -y bzip2 glibc-devel
+    dnf install -y bzip2 glibc-devel ;\
+    rm -f /usr/bin/python3 /usr/bin/pip3 ;\
+    ln -s /usr/bin/python3.11 /usr/bin/python3 ;\
+    ln -s /usr/bin/pip3.11 /usr/bin/pip3 ;\
+    python3 --version ;\
+    pip3 --version
 
 # Build and install valgrind from source
 RUN set -ex ;\
@@ -26,9 +31,6 @@ RUN set -ex ;\
     make install ;\
     cd / ;\
     rm -rf /tmp/valgrind-3.22.0 /tmp/valgrind-3.22.0.tar.bz2
-
-RUN alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1; \
-    alternatives --auto python3
 
 # Create virtual environment
 RUN set -ex ;\
