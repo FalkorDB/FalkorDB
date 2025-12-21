@@ -93,7 +93,7 @@ jobs:
             os: alpine
             arch: amd64
             machine_label: ubuntu-latest
-            cache_path: alpine-x64
+            cache_path: linux-x64
             build_variants: [release, server]
             use_docker: true
           - name: alpine-arm64
@@ -101,7 +101,7 @@ jobs:
             os: alpine
             arch: arm64
             machine_label: ubuntu-24.04-arm
-            cache_path: alpine-arm64v8
+            cache_path: linux-arm64v8
             build_variants: [release, server]
             use_docker: true
           # RHEL builds (conditional)
@@ -199,9 +199,10 @@ jobs:
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/utf8proc
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/oniguruma
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/FalkorDB-core-rs
-          key: deps-${{ matrix.platform.cache_path }}-${{ steps.cache-keys.outputs.combined }}
+          key: deps-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}-${{ steps.cache-keys.outputs.combined }}
           restore-keys: |
-            deps-${{ matrix.platform.cache_path }}-
+            deps-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}-
+            deps-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-
           enableCrossOsArchive: true
 
       - name: Restore dependency cache (macOS)
@@ -323,7 +324,7 @@ jobs:
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/utf8proc
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/oniguruma
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/FalkorDB-core-rs
-          key: deps-${{ matrix.platform.cache_path }}-${{ steps.cache-keys.outputs.combined }}
+          key: deps-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}-${{ steps.cache-keys.outputs.combined }}
           enableCrossOsArchive: true
 
       - name: Set browser tag
