@@ -30,7 +30,7 @@
 
 Feature: Temporal1 - Create Temporal Values from a Map
 
-  @skip
+  
   Scenario Outline: [1] Should construct week date
     Given any graph
     When executing query:
@@ -60,7 +60,7 @@ Feature: Temporal1 - Create Temporal Values from a Map
       | {date: date('1816-12-31'), week: 2}               | '1817-01-07' |
       | {date: date('1816-12-31'), year: 1817, week: 2}   | '1817-01-07' |
 
-  @skip
+  
   Scenario Outline: [2] Should construct week localdatetime
     Given any graph
     When executing query:
@@ -90,7 +90,7 @@ Feature: Temporal1 - Create Temporal Values from a Map
       | {date: date('1816-12-31'), week: 2}               | '1817-01-07T00:00' |
       | {date: date('1816-12-31'), year: 1817, week: 2}   | '1817-01-07T00:00' |
 
-  @skip
+  
   Scenario Outline: [3] Should construct week datetime
     Given any graph
     When executing query:
@@ -120,7 +120,7 @@ Feature: Temporal1 - Create Temporal Values from a Map
       | {date: date('1816-12-31'), week: 2}               | '1817-01-07T00:00Z' |
       | {date: date('1816-12-31'), year: 1817, week: 2}   | '1817-01-07T00:00Z' |
 
-  @skip
+  
   Scenario Outline: [4] Should construct date
     Given any graph
     When executing query:
@@ -143,7 +143,7 @@ Feature: Temporal1 - Create Temporal Values from a Map
       | {year: 1984, quarter: 3, dayOfQuarter: 45} | '1984-08-14' |
       | {year: 1984, quarter: 3}                   | '1984-07-01' |
 
-  @skip
+  
   Scenario Outline: [5] Should construct local time
     Given any graph
     When executing query:
@@ -165,7 +165,7 @@ Feature: Temporal1 - Create Temporal Values from a Map
       | {hour: 12, minute: 31}                                                                  | '12:31'              |
       | {hour: 12}                                                                              | '12:00'              |
 
-  @skip
+  
   Scenario Outline: [6] Should construct time
     Given any graph
     When executing query:
@@ -194,7 +194,7 @@ Feature: Temporal1 - Create Temporal Values from a Map
       | {hour: 12, minute: 31, timezone: '+01:00'}                                              | '12:31+01:00'              |
       | {hour: 12, timezone: '+01:00'}                                                          | '12:00+01:00'              |
 
-  @skip
+  
   Scenario Outline: [7] Should construct local date time
     Given any graph
     When executing query:
@@ -240,7 +240,7 @@ Feature: Temporal1 - Create Temporal Values from a Map
       | {year: 1984, quarter: 3, dayOfQuarter: 45}                                                                              | '1984-08-14T00:00'              |
       | {year: 1984}                                                                                                            | '1984-01-01T00:00'              |
 
-  @skip
+  
   Scenario Outline: [8] Should construct date time with default time zone
     Given any graph
     When executing query:
@@ -285,7 +285,7 @@ Feature: Temporal1 - Create Temporal Values from a Map
       | {year: 1984, quarter: 3, dayOfQuarter: 45}                                                                              | '1984-08-14T00:00Z'              |
       | {year: 1984}                                                                                                            | '1984-01-01T00:00Z'              |
 
-  @skip
+  
   Scenario Outline: [9] Should construct date time with offset time zone
     Given any graph
     When executing query:
@@ -329,7 +329,7 @@ Feature: Temporal1 - Create Temporal Values from a Map
       | {year: 1984, quarter: 3, dayOfQuarter: 45, timezone: '+01:00'}                                                          | '1984-08-14T00:00+01:00'              |
       | {year: 1984, timezone: '+01:00'}                                                                                        | '1984-01-01T00:00+01:00'              |
 
-  @skip
+  
   Scenario Outline: [10] Should construct date time with named time zone
     Given any graph
     When executing query:
@@ -373,7 +373,7 @@ Feature: Temporal1 - Create Temporal Values from a Map
       | {year: 1984, quarter: 3, dayOfQuarter: 45, timezone: 'Europe/Stockholm'}                                                          | '1984-08-14T00:00+02:00[Europe/Stockholm]'              |
       | {year: 1984, timezone: 'Europe/Stockholm'}                                                                                        | '1984-01-01T00:00+01:00[Europe/Stockholm]'              |
 
-  @skip
+  
   Scenario: [11] Should construct date time from epoch
     Given any graph
     When executing query:
@@ -386,7 +386,7 @@ Feature: Temporal1 - Create Temporal Values from a Map
       | '1970-01-05T19:46:19.999999999Z' | '1977-07-15T13:34:33.987Z' |
     And no side effects
 
-  @skip
+  
   Scenario Outline: [12] Should construct duration
     Given any graph
     When executing query:
@@ -410,7 +410,7 @@ Feature: Temporal1 - Create Temporal Values from a Map
       | {days: 14, seconds: 70, nanoseconds: 1}                               | 'P14DT1M10.000000001S' |
       | {minutes: 1.5, seconds: 1}                                            | 'PT1M31S'              |
 
-  @skip
+  
   Scenario Outline: [13] Should construct temporal with time offset with second precision
     Given any graph
     When executing query:

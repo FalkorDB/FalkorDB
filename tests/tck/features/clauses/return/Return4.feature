@@ -110,7 +110,7 @@ Feature: Return4 - Column renaming
       | nOdEs( p ) |
     And no side effects
 
-  @skipStyleCheck
+  StyleCheck
   Scenario: [6] Keeping used expression 3
     Given an empty graph
     And having executed:

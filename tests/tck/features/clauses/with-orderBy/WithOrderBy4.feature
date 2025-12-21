@@ -260,7 +260,7 @@ Feature: WithOrderBy4 - Order by in combination with projection and aliasing
       | 1 |
     And no side effects
 
-  @skip
+  
   Scenario: [10] Sort by a non-projected expression containing an alias of a projected expression containing the variable shadowed by the alias
     Given an empty graph
     And having executed:
@@ -335,7 +335,7 @@ Feature: WithOrderBy4 - Order by in combination with projection and aliasing
       | 1   | 13.0  |
     And no side effects
 
-  @skip
+  
   Scenario: [13] Fail on sorting by a non-projected aggregation on a variable
     Given an empty graph
     And having executed:
@@ -357,7 +357,7 @@ Feature: WithOrderBy4 - Order by in combination with projection and aliasing
       """
     Then a SyntaxError should be raised at compile time: AmbiguousAggregationExpression
 
-  @skip
+  
   Scenario: [14] Fail on sorting by a non-projected aggregation on an expression
     Given an empty graph
     And having executed:
@@ -378,7 +378,7 @@ Feature: WithOrderBy4 - Order by in combination with projection and aliasing
       """
     Then a SyntaxError should be raised at compile time: AmbiguousAggregationExpression
 
-  @skip
+  
   Scenario: [15] Sort by an aliased aggregate projection does allow subsequent matching
     Given an empty graph
     And having executed:
@@ -444,7 +444,7 @@ Feature: WithOrderBy4 - Order by in combination with projection and aliasing
       | age |
     And no side effects
 
-  @skip
+  
   Scenario: [19] Fail if not projected variables are used inside an order by item which contains an aggregation expression
     Given an empty graph
     When executing query:
@@ -456,7 +456,7 @@ Feature: WithOrderBy4 - Order by in combination with projection and aliasing
       """
     Then a SyntaxError should be raised at compile time: AmbiguousAggregationExpression
 
-  @skip
+  
   Scenario: [20] Fail if more complex expressions, even if projected, are used inside an order by item which contains an aggregation expression
     Given an empty graph
     When executing query:

@@ -153,7 +153,7 @@ Feature: Match1 - Match nodes
       | ()-[]-()-[]-(), (), ()-[r]-()               |
       | (x), (a)-[q]-(b), (s), (s)-[r]->(t)<-[]-(b) |
 
-  @skip
+  
   Scenario Outline: [8] Fail when a path has the same variable in a preceding MATCH
     Given any graph
     When executing query:
@@ -220,7 +220,7 @@ Feature: Match1 - Match nodes
       | ()-[*]-()-[r]-(), (), ()-[*]-(r)                |
       | (x), (a)-[r]-(b), (s), (s)-[]->(r)<-[]-(b)      |
 
-  @skip
+  
   Scenario Outline: [10] Fail when a path has the same variable in the same pattern
     Given any graph
     When executing query:
@@ -253,7 +253,7 @@ Feature: Match1 - Match nodes
       | (x), r = (s)-[p]-(t)-[]-(b), (a)-[q]-(r)        |
       | (x), r = (s)-[p]->(t)<-[]-(b), (r)-[q]-(b)      |
 
-  @skip
+  
   Scenario Outline: [11] Fail when matching a node variable bound to a value
     Given any graph
     When executing query:

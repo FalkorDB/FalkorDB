@@ -79,7 +79,7 @@ Feature: ReturnOrderBy6 - Aggregation expressions in order by
       """
     Then a SyntaxError should be raised at compile time: AmbiguousAggregationExpression
 
-  @skip
+  
   Scenario: [5] Fail if more complex expressions, even if returned, are used inside an order by item which contains an aggregation expression
     Given an empty graph
     When executing query:

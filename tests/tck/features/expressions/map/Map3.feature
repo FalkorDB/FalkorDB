@@ -30,7 +30,7 @@
 
 Feature: Map3 - Keys function
 
-  @skip
+  
   Scenario: [1] Using `keys()` on a literal map
     Given any graph
     When executing query:
@@ -42,7 +42,7 @@ Feature: Map3 - Keys function
       | ['name', 'age', 'address'] |
     And no side effects
 
-  @skip
+  
   Scenario: [2] Using `keys()` on a parameter map
     Given any graph
     And parameters are:
@@ -68,7 +68,7 @@ Feature: Map3 - Keys function
       | null    | null       |
     And no side effects
 
-  @skip
+  
   Scenario Outline: [4] Using `keys()` on map with null values
     Given any graph
     When executing query:
@@ -90,7 +90,7 @@ Feature: Map3 - Keys function
       | {k: null, l: null}    | ['k', 'l']      |
       | {k: 1, l: null, m: 1} | ['k', 'l', 'm'] |
 
-  @skip
+  
   Scenario: [5] Using `keys()` and `IN` to check field existence
     Given any graph
     When executing query:

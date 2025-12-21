@@ -30,7 +30,7 @@
 
 Feature: Comparison4 - Combination of Comparisons
 
-  @skip
+  
   Scenario: [1] Handling long chains of operators
     Given an empty graph
     And having executed:

@@ -113,7 +113,7 @@ Feature: String10 - Exact Substring Search
       | 'Foo Foo' |
     And no side effects
 
-  @skip
+  
   Scenario: [5] Finding strings containing newline
     Given an empty graph
     And having executed:
@@ -172,7 +172,7 @@ Feature: String10 - Exact Substring Search
       | a |
     And no side effects
 
-  @skip
+  
   Scenario: [8] Handling non-string operands for CONTAINS
     Given an empty graph
     And having executed:

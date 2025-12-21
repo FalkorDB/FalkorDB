@@ -75,7 +75,7 @@ Feature: Delete5 - Delete clause interoperation with built-in data types
     And the side effects should be:
       | -relationships | 1 |
 
-  @skip
+  
   Scenario: [3] Delete nodes from a map
     Given an empty graph
     And having executed:
@@ -93,7 +93,7 @@ Feature: Delete5 - Delete clause interoperation with built-in data types
       | -nodes  | 2 |
       | -labels | 1 |
 
-  @skip
+  
   Scenario: [4] Delete relationships from a map
     Given an empty graph
     And having executed:
@@ -149,7 +149,7 @@ Feature: Delete5 - Delete clause interoperation with built-in data types
     And the side effects should be:
       | -relationships | 1 |
 
-  @skip
+  
   Scenario: [7] Delete paths from nested map/list
     Given an empty graph
     And having executed:
@@ -179,7 +179,7 @@ Feature: Delete5 - Delete clause interoperation with built-in data types
       """
     Then a SyntaxError should be raised at compile time: UndefinedVariable
 
-  @skip
+  
   Scenario: [9] Failing when deleting an integer expression
     Given any graph
     When executing query:

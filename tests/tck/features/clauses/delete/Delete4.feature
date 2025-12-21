@@ -70,7 +70,7 @@ Feature: Delete4 - Delete clause interoperation with other clauses
       | -nodes         | 3 |
       | -relationships | 2 |
 
-  @skip
+  
   Scenario: [3] Create and delete in same query
     Given an empty graph
     And having executed:

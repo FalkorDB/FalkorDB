@@ -81,7 +81,7 @@ Feature: WithSkipLimit2 - Limit
     And no side effects
 
   # Does this scenario realy testing LIMIT?
-  @skip
+  
   Scenario: [2] Handle dependencies across WITH with LIMIT
     Given an empty graph
     And having executed:

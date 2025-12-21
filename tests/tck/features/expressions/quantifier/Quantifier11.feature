@@ -30,7 +30,7 @@
 
 Feature: Quantifier11 - Any quantifier invariants
 
-  @skip
+  
   Scenario: [1] Any quantifier is always false if the predicate is statically false and the list is not empty
     Given any graph
     When executing query:
@@ -54,7 +54,7 @@ Feature: Quantifier11 - Any quantifier invariants
       | false  |
     And no side effects
 
-  @skip
+  
   Scenario: [2] Any quantifier is always true if the predicate is statically true and the list is not empty
     Given any graph
     When executing query:

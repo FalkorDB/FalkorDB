@@ -141,7 +141,7 @@ Feature: Merge6 - Merge relationships - on create
       | keyValue    |
       | ['name->A'] |
 
-  @skip
+  
   Scenario: [7] Copying properties from literal map with ON CREATE
     Given an empty graph
     And having executed:

@@ -113,7 +113,7 @@ Feature: String9 - Exact String Suffix Search
       | ' Foo ' |
     And no side effects
 
-  @skip
+  
   Scenario: [5] Finding strings ending with newline
     Given an empty graph
     And having executed:
@@ -172,7 +172,7 @@ Feature: String9 - Exact String Suffix Search
       | a |
     And no side effects
 
-  @skip
+  
   Scenario: [8] Handling non-string operands for ENDS WITH
     Given an empty graph
     And having executed:

@@ -151,7 +151,7 @@ Feature: Literals3 - Hexadecimal integer
       | 460367961908983 |
     And no side effects
 
-  @skipGrammarCheck
+  
   Scenario: [12] Fail on an incomplete hexadecimal integer
     Given any graph
     When executing query:
@@ -160,7 +160,7 @@ Feature: Literals3 - Hexadecimal integer
       """
     Then a SyntaxError should be raised at compile time: InvalidNumberLiteral
 
-  @skipGrammarCheck
+  
   Scenario: [13] Fail on an hexadecimal literal containing a lower case invalid alphanumeric character
     Given any graph
     When executing query:
@@ -169,7 +169,7 @@ Feature: Literals3 - Hexadecimal integer
       """
     Then a SyntaxError should be raised at compile time: InvalidNumberLiteral
 
-  @skipGrammarCheck
+  
   Scenario: [14] Fail on an hexadecimal literal containing a upper case invalid alphanumeric character
     Given any graph
     When executing query:

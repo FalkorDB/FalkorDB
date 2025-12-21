@@ -30,7 +30,7 @@
 
 Feature: Call2 - Procedure arguments
 
-  @skip
+  
   Scenario: [1] In-query call to procedure with explicit arguments
     Given an empty graph
     And there exists a procedure test.my.proc(name :: STRING?, id :: INTEGER?) :: (city :: STRING?, country_code :: INTEGER?):
@@ -51,7 +51,7 @@ Feature: Call2 - Procedure arguments
       | 'Berlin' | 49           |
     And no side effects
 
-  @skip
+  
   Scenario: [2] Standalone call to procedure with explicit arguments
     Given an empty graph
     And there exists a procedure test.my.proc(name :: STRING?, id :: INTEGER?) :: (city :: STRING?, country_code :: INTEGER?):
@@ -71,7 +71,7 @@ Feature: Call2 - Procedure arguments
       | 'Berlin' | 49           |
     And no side effects
 
-  @skip
+  
   Scenario: [3] Standalone call to procedure with implicit arguments
     Given an empty graph
     And there exists a procedure test.my.proc(name :: STRING?, id :: INTEGER?) :: (city :: STRING?, country_code :: INTEGER?):
@@ -94,8 +94,8 @@ Feature: Call2 - Procedure arguments
       | 'Berlin' | 49           |
     And no side effects
 
-  @skipGrammarCheck
-  @skip
+  
+  
   Scenario: [4] In-query call to procedure that takes arguments fails when trying to pass them implicitly
     Given an empty graph
     And there exists a procedure test.my.proc(in :: INTEGER?) :: (out :: INTEGER?):
@@ -107,7 +107,7 @@ Feature: Call2 - Procedure arguments
       """
     Then a SyntaxError should be raised at compile time: InvalidArgumentPassingMode
 
-  @skip
+  
   Scenario: [5] Standalone call to procedure should fail if input type is wrong
     Given an empty graph
     And there exists a procedure test.my.proc(in :: INTEGER?) :: (out :: INTEGER?):
@@ -118,7 +118,7 @@ Feature: Call2 - Procedure arguments
       """
     Then a SyntaxError should be raised at compile time: InvalidArgumentType
 
-  @skip
+  
   Scenario: [6] In-query call to procedure should fail if input type is wrong
     Given an empty graph
     And there exists a procedure test.my.proc(in :: INTEGER?) :: (out :: INTEGER?):

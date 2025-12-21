@@ -30,7 +30,7 @@
 
 Feature: Path2 - Relationships of a path
 
-  @skip
+  
   Scenario: [1] Return relationships by fetching them from the path
     Given an empty graph
     And having executed:
@@ -48,7 +48,7 @@ Feature: Path2 - Relationships of a path
     And no side effects
 
 
-  @skip
+  
   Scenario: [2] Return relationships by fetching them from the path - starting from the end
     Given an empty graph
     And having executed:

@@ -269,7 +269,7 @@ Feature: MatchWhere1 - Filter single variable
       | x |
     And no side effects
 
-  @skip
+  
   Scenario: [14] Fail when filtering path with property predicate
     Given any graph
     When executing query:

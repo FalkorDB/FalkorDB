@@ -178,7 +178,7 @@ Feature: Pattern1 - Pattern predicate
       | (:D) |
     And no side effects
 
-  @skip
+  
   Scenario: [10] Matching on a specific type of undirected connection with length 2
     Given an empty graph
     And having executed:
@@ -195,7 +195,7 @@ Feature: Pattern1 - Pattern predicate
       | (:D) |
     And no side effects
 
-  @skip
+  
   Scenario Outline: [10] Fail on introducing unbounded variables in pattern
     Given any graph
     When executing query:
@@ -222,7 +222,7 @@ Feature: Pattern1 - Pattern predicate
       | (n)-[r:REL*0..2]->(a {num: 5})          |
       | (n)-[r:REL]->(:C)<-[s:REL]-(a {num: 5}) |
 
-  @skip
+  
   Scenario: [11] Fail on checking self pattern
     Given any graph
     When executing query:
@@ -339,7 +339,7 @@ Feature: Pattern1 - Pattern predicate
       | (:D) | (:B) |
     And no side effects
 
-  @skip
+  
   Scenario: [18] Matching two nodes on a specific type of undirected connection with length 2
     Given an empty graph
     And having executed:
@@ -405,7 +405,7 @@ Feature: Pattern1 - Pattern predicate
       | (:D) |
     And no side effects
 
-  @skip
+  
   Scenario: [22] Fail on using pattern in RETURN projection
     Given any graph
     When executing query:
@@ -414,7 +414,7 @@ Feature: Pattern1 - Pattern predicate
 	"""
     Then a SyntaxError should be raised at compile time: UnexpectedSyntax
 
-  @skip
+  
   Scenario: [23] Fail on using pattern in WITH projection
     Given any graph
     When executing query:
@@ -423,7 +423,7 @@ Feature: Pattern1 - Pattern predicate
 	"""
     Then a SyntaxError should be raised at compile time: UnexpectedSyntax
 
-  @skip
+  
   Scenario: [24] Fail on using pattern in right-hand side of SET
     Given any graph
     When executing query:

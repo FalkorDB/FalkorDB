@@ -50,7 +50,7 @@ Feature: With6 - Implicit grouping with aggregates
       | 'B'  | 1        |
     And no side effects
 
-  @skip
+  
   Scenario: [2] Implicit grouping with single relationship variable as grouping key and single aggregation
     Given an empty graph
     And having executed:
@@ -154,7 +154,7 @@ Feature: With6 - Implicit grouping with aggregates
       | age | agg |
     And no side effects
 
-  @skip
+  
   Scenario: [8] Fail if not projected variables are used inside an expression which contains an aggregation expression
     Given an empty graph
     When executing query:
@@ -165,7 +165,7 @@ Feature: With6 - Implicit grouping with aggregates
       """
     Then a SyntaxError should be raised at compile time: AmbiguousAggregationExpression
 
-  @skip
+  
   Scenario: [9] Fail if more complex expression, even if projected, are used inside expression which contains an aggregation expression
     Given an empty graph
     When executing query:

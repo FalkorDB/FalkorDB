@@ -82,7 +82,7 @@ Feature: List6 - List size
       | null    | null       |
     And no side effects
 
-  @skip
+  
   Scenario: [5] Fail for `size()` on paths
     Given any graph
     When executing query:
@@ -92,7 +92,7 @@ Feature: List6 - List size
       """
     Then a SyntaxError should be raised at compile time: InvalidArgumentType
 
-  @skip
+  
   Scenario Outline: [6] Fail for `size()` on pattern predicates
     Given any graph
     When executing query:

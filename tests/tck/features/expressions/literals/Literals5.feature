@@ -52,7 +52,7 @@ Feature: Literals5 - Float
       | 0.1     |
     And no side effects
 
-  @skip
+  
   Scenario: [3] Return a long positive float
     Given any graph
     When executing query:
@@ -75,7 +75,7 @@ Feature: Literals5 - Float
       | 0.3405892687 |
     And no side effects
 
-  @skip
+  
   Scenario: [5] Return a very long positive float
     Given any graph
     When executing query:
@@ -142,7 +142,7 @@ Feature: Literals5 - Float
       | 0.0     |
     And no side effects
 
-  @skip
+  
   Scenario: [11] Return a very long negative float
     Given any graph
     When executing query:
@@ -209,7 +209,7 @@ Feature: Literals5 - Float
       | 0.00001 |
     And no side effects
 
-  @skip
+  
   Scenario: [17] Return a positive float with negative lower case exponent without integer digits
     Given any graph
     When executing query:
@@ -221,7 +221,7 @@ Feature: Literals5 - Float
       | 0.000001 |
     And no side effects
 
-  @skip
+  
   Scenario: [18] Return a positive float with negative upper case exponent without integer digits
     Given any graph
     When executing query:
@@ -277,7 +277,7 @@ Feature: Literals5 - Float
       | -0.00001 |
     And no side effects
 
-  @skip
+  
   Scenario: [23] Return a negative float with negative lower case exponent without integer digits
     Given any graph
     When executing query:
@@ -289,7 +289,7 @@ Feature: Literals5 - Float
       | -0.000001 |
     And no side effects
 
-  @skip
+  
   Scenario: [24] Return a negative float with negative upper case exponent without integer digits
     Given any graph
     When executing query:

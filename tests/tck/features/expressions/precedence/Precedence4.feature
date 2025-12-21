@@ -86,7 +86,7 @@ Feature: Precedence4 - On null value
       | true   | XOR | null   | NOT NULL | true  | false |
       | true   | XOR | false  | NULL     | true  | false |
 
-  @skip
+  
   Scenario: [4] String predicate takes precedence over binary boolean operator
     Given an empty graph
     When executing query:

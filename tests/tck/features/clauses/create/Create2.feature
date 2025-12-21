@@ -327,7 +327,7 @@ Feature: Create2 - Creating relationships
       """
     Then a SyntaxError should be raised at compile time: NoSingleRelationshipType
 
-  @skip
+  
   Scenario: [22] Fail when creating a variable-length relationship
     Given any graph
     When executing query:

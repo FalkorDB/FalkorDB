@@ -30,7 +30,7 @@
 
 Feature: Call6 - Call clause interoperation with other clauses
 
-  @skip
+  
   Scenario: [1] Calling the same STRING procedure twice using the same outputs in each call
     Given an empty graph
     And there exists a procedure test.labels() :: (label :: STRING?):
@@ -52,7 +52,7 @@ Feature: Call6 - Call clause interoperation with other clauses
       | 3 | 'C'   |
     And no side effects
 
-  @skip
+  
   Scenario: [2] Project procedure results between query scopes with WITH clause
     Given an empty graph
     And there exists a procedure test.my.proc(in :: INTEGER?) :: (out :: STRING?):
@@ -68,7 +68,7 @@ Feature: Call6 - Call clause interoperation with other clauses
       | 'nix' |
     And no side effects
 
-  @skip
+  
   Scenario: [3] Project procedure results between query scopes with WITH clause and rename the projection
     Given an empty graph
     And there exists a procedure test.my.proc(in :: INTEGER?) :: (out :: STRING?):

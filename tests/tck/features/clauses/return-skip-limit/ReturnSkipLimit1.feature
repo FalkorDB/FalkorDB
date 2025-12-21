@@ -80,7 +80,7 @@ Feature: ReturnSkipLimit1 - Skip
       | ({name: 'E'}) |
     And no side effects
 
-  @skip
+  
   Scenario: [3] SKIP with an expression that does not depend on variables
     Given any graph
     And having executed:
@@ -120,7 +120,7 @@ Feature: ReturnSkipLimit1 - Skip
       """
     Then a SyntaxError should be raised at compile time: NonConstantExpression
 
-  @skip
+  
   Scenario: [6] Negative parameter for SKIP should fail
     Given any graph
     And having executed:
@@ -153,7 +153,7 @@ Feature: ReturnSkipLimit1 - Skip
       """
     Then a SyntaxError should be raised at compile time: NegativeIntegerArgument
 
-  @skip
+  
   Scenario: [8] Floating point parameter for SKIP should fail
     Given any graph
     And having executed:
@@ -171,7 +171,7 @@ Feature: ReturnSkipLimit1 - Skip
       """
     Then a SyntaxError should be raised at runtime: InvalidArgumentType
 
-  @skip
+  
   Scenario: [9] Floating point SKIP should fail
     Given any graph
     And having executed:

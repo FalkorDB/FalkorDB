@@ -30,7 +30,7 @@
 
 Feature: Create6 - Persistence of create clause side effects
 
-  @skip
+  
   Scenario: [1] Limiting to zero results after creating nodes affects the result set but not the side effects
     Given an empty graph
     When executing query:
@@ -152,7 +152,7 @@ Feature: Create6 - Persistence of create clause side effects
       | +labels        | 1 |
       | +properties    | 5 |
 
-  @skip
+  
   Scenario: [8] Limiting to zero results after creating relationships affects the result set but not the side effects
     Given an empty graph
     When executing query:
