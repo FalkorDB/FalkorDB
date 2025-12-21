@@ -79,7 +79,7 @@ jobs:
             os: rhel
             arch: amd64
             machine_label: ubuntu-latest
-            cache_path: rhel-x64
+            cache_path: linux-x64
             build_variants: [release]
             use_docker: true
           - name: rhel8-x64
@@ -87,7 +87,7 @@ jobs:
             os: rhel8
             arch: amd64
             machine_label: ubuntu-latest
-            cache_path: rhel8-x64
+            cache_path: linux-x64
             build_variants: [release]
             use_docker: true
           # macOS builds
@@ -141,17 +141,17 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/GraphBLAS
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/libcypher-parser
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/search-static
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/libcurl
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/libcsv
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/LAGraph
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/rax
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/xxHash
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/utf8proc
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/oniguruma
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/FalkorDB-core-rs
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcypher-parser
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/search-static
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcurl
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcsv
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/LAGraph
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/rax
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/xxHash
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/utf8proc
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/oniguruma
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/FalkorDB-core-rs
           key: deps-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}-${{ steps.cache-keys.outputs.combined }}
           restore-keys: |
             deps-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}-
@@ -184,7 +184,7 @@ jobs:
           OSX_MIN_SDK_VER: "15.0"
         run: |
           # Skip clean if we have cached dependencies - they're already clean
-          if [ "${{ steps.restore-deps-macos.outputs.cache-hit }}" != "true" ] && [ -d "./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/src" ]; then
+          if [ "${{ steps.restore-deps-macos.outputs.cache-hit }}" != "true" ] && [ -d "./bin/${{ matrix.platform.cache_path }}-release/src" ]; then
             make clean
           fi
           make DEBUG=${{ matrix.build_type == 'debug' && '1' || '0' }} CXXFLAGS="-Wno-error=vla-cxx-extension"
@@ -269,17 +269,17 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/GraphBLAS
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/libcypher-parser
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/search-static
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/libcurl
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/libcsv
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/LAGraph
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/rax
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/xxHash
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/utf8proc
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/oniguruma
-            /FalkorDB/bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}/FalkorDB-core-rs
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcypher-parser
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/search-static
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcurl
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/libcsv
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/LAGraph
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/rax
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/xxHash
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/utf8proc
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/oniguruma
+            /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/FalkorDB-core-rs
           key: deps-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}-${{ steps.cache-keys.outputs.combined }}
           enableCrossOsArchive: true
 
