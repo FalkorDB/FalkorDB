@@ -5,7 +5,7 @@ ARG TARGETPLATFORM=linux/amd64
 FROM $BASE_IMAGE AS compiler
 
 # Define dependencies
-ENV YUM_DEPS "automake libtool autoconf 2to3 python3-pip wget gcc python3.11 python3.11-pip python3-devel m4 git cmake"
+ENV YUM_DEPS "automake libtool autoconf 2to3 python3-pip wget gcc make python3.11 python3.11-pip python3-devel m4 git cmake"
 
 # Set up a build environment
 RUN set -ex ;\
@@ -13,7 +13,19 @@ RUN set -ex ;\
     dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${RHEL_VERSION}.noarch.rpm; \
     yum update -y ;\
     yum install -y $YUM_DEPS ;\
-    dnf install -y lsb-release valgrind;
+    dnf install -y bzip2 glibc-devel
+
+# Build and install valgrind from source
+RUN set -ex ;\
+    cd /tmp ;\
+    curl -LO https://sourceware.org/pub/valgrind/valgrind-3.22.0.tar.bz2 ;\
+    tar -xjf valgrind-3.22.0.tar.bz2 ;\
+    cd valgrind-3.22.0 ;\
+    ./configure ;\
+    make -j$(nproc) ;\
+    make install ;\
+    cd / ;\
+    rm -rf /tmp/valgrind-3.22.0 /tmp/valgrind-3.22.0.tar.bz2
 
 RUN alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1; \
     alternatives --auto python3
