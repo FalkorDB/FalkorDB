@@ -79,7 +79,7 @@ jobs:
             os: rhel
             arch: amd64
             machine_label: ubuntu-latest
-            cache_path: rhel-x64
+            cache_path: linux-x64
             build_variants: [release]
             use_docker: true
           - name: rhel8-x64
@@ -87,7 +87,7 @@ jobs:
             os: rhel8
             arch: amd64
             machine_label: ubuntu-latest
-            cache_path: rhel8-x64
+            cache_path: linux-x64
             build_variants: [release]
             use_docker: true
           # macOS builds
