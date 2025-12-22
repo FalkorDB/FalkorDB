@@ -149,7 +149,17 @@ jobs:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
-          name: falkordb-rhel-x64.so
+          name: falkordb-rhel9-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so RHEL8 AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-rhel8-x64.so
           path: /tmp
           if_no_artifact_found: error
 
@@ -207,7 +217,17 @@ jobs:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
-          name: falkordb-debug-rhel-x64.so
+          name: falkordb-debug-rhel9-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built debug.so RHEL8 AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-rhel8-x64.so
           path: /tmp
           if_no_artifact_found: error
 
@@ -365,19 +385,19 @@ jobs:
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-arm64v8.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-x64.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-arm64v8.so
-          
+
           # RHEL binaries
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-rhel-x64.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-rhel-x64.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-rhel9-x64.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-rhel9-x64.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-rhel8-x64.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-rhel8-x64.so
-          
+
           # Alpine binaries
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-alpine-x64.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-alpine-arm64v8.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-alpine-x64.so
           gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-alpine-arm64v8.so
-          
+
           # macOS binaries (if they exist)
           if [ -f /tmp/falkordb-macos-arm64v8.so ]; then
             gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-macos-arm64v8.so
@@ -386,18 +406,97 @@ jobs:
             gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-macos-arm64v8.so
           fi
 
-      - name: Trigger FalkorDB Cloud Version Update
-        if: github.event_name == 'release'
+  upload-ramp-files:
+    needs: release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set SEMVER
+        id: set_semver
+        run: |
+          SEMVER=$(./sbin/getver)
+          echo "SEMVER=${SEMVER}" >> $GITHUB_OUTPUT
+
+      - name: Download rhel8 ramp file
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-ramp-rhel8-${{ steps.set_semver.outputs.SEMVER }}.zip
+          if_no_artifact_found: error
+
+      - name: Download rhel9 ramp file
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-ramp-rhel9-${{ steps.set_semver.outputs.SEMVER }}.zip
+          if_no_artifact_found: error
+
+      - name: Download amazonlinux2 ramp file
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-ramp-amazonlinux2-${{ steps.set_semver.outputs.SEMVER }}.zip
+          if_no_artifact_found: error
+
+      - name: Download amazonlinux2023 ramp file
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-ramp-amazonlinux2023-${{ steps.set_semver.outputs.SEMVER }}.zip
+          if_no_artifact_found: error
+
+      - name: Download linux x64 ramp file
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-ramp-linux-${{ steps.set_semver.outputs.SEMVER }}.zip
+          if_no_artifact_found: error
+
+      - name: Download linux arm64v8 ramp file
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-ramp-linux-${{ steps.set_semver.outputs.SEMVER }}.zip
+          if_no_artifact_found: error
+
+      - name: Upload ramp files to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.event.release.tag_name }} falkordb-ramp-rhel8-${{ steps.set_semver.outputs.SEMVER }}.zip
+          gh release upload ${{ github.event.release.tag_name }} falkordb-ramp-rhel9-${{ steps.set_semver.outputs.SEMVER }}.zip
+          gh release upload ${{ github.event.release.tag_name }} falkordb-ramp-amazonlinux2-${{ steps.set_semver.outputs.SEMVER }}.zip
+          gh release upload ${{ github.event.release.tag_name }} falkordb-ramp-amazonlinux2023-${{ steps.set_semver.outputs.SEMVER }}.zip
+          gh release upload ${{ github.event.release.tag_name }} falkordb-ramp-linux-${{ steps.set_semver.outputs.SEMVER }}.zip
+
+  trigger-falkordb-cloud-update:
+    needs: release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    steps:
+      - name: Trigger FalkorDB Cloud version update
         uses: peter-evans/repository-dispatch@v4
         with:
           token: ${{ secrets.FALKORDB_OMNISTRATE_PAT }}
           repository: FalkorDB/falkordb-omnistrate
           event-type: bump-falkordb-version
-          client-payload: |
-            {
-              "new_version": "${{ github.event.release.tag_name }}"
-            }
-  
+          client-payload: '{"new_version": "${{ github.event.release.tag_name }}"}'
+
   trigger-testflight-workflow:
     needs: release
     runs-on: ubuntu-latest

@@ -26,7 +26,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BASE_IMAGE_VERSION: 1.0.0
+  BASE_IMAGE_VERSION: 1.1.0
 jobs:
   build:
     runs-on: ${{ matrix.platform.machine_label }}
@@ -74,9 +74,9 @@ jobs:
             build_variants: [release, server]
             use_docker: true
           # RHEL builds
-          - name: rhel-x64
-            suffix: rhel-x64
-            os: rhel
+          - name: rhel9-x64
+            suffix: rhel9-x64
+            os: rhel9
             arch: amd64
             machine_label: ubuntu-latest
             cache_path: linux-x64
@@ -85,6 +85,22 @@ jobs:
           - name: rhel8-x64
             suffix: rhel8-x64
             os: rhel8
+            arch: amd64
+            machine_label: ubuntu-latest
+            cache_path: linux-x64
+            build_variants: [release]
+            use_docker: true
+          - name: amazonlinux2-x64
+            suffix: amazonlinux2-x64
+            os: amazonlinux2
+            arch: amd64
+            machine_label: ubuntu-latest
+            cache_path: linux-x64
+            build_variants: [release]
+            use_docker: true
+          - name: amazonlinux2023-x64
+            suffix: amazonlinux2023-x64
+            os: amazonlinux2023
             arch: amd64
             machine_label: ubuntu-latest
             cache_path: linux-x64
@@ -402,7 +418,7 @@ jobs:
             machine_label: ubuntu-latest
           - suffix: alpine-arm64v8
             machine_label: ubuntu-24.04-arm
-          - suffix: rhel-x64
+          - suffix: rhel9-x64
             machine_label: ubuntu-latest
         test_type: [unit, flow, tck, fuzz]
     steps:
@@ -481,3 +497,101 @@ jobs:
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results.sarif
+
+  ramp-package:
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - ramp_os: rhel8
+            suffix: rhel8-x64
+            arch: amd64
+          - ramp_os: rhel9
+            suffix: rhel9-x64
+            arch: amd64
+          - ramp_os: amazonlinux2
+            suffix: amazonlinux2-x64
+            arch: amd64
+          - ramp_os: amazonlinux2023
+            suffix: amazonlinux2023-x64
+            arch: amd64
+          - ramp_os: linux
+            suffix: x64
+            arch: amd64
+          - ramp_os: linux
+            suffix: arm64v8
+            arch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          set-safe-directory: "*"
+
+      - name: Download .so files
+        uses: actions/download-artifact@v7
+        with:
+          name: falkordb-${{ matrix.platform.suffix }}.so
+
+      - name: Install ramp dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip python3-setuptools redis
+          python3 -m pip install --upgrade pip
+          python3 -m pip install git+https://github.com/RedisLabsModules/RAMP.git@71ab0ea1913fa2880b7e9ca0fd7ee4ef2fde2875
+
+      - name: Create RAMP package
+        id: create_ramp
+        run: |
+          SEMVER=$(./sbin/getver)
+          mkdir -p /tmp/ramp
+          cp falkordb-${{ matrix.platform.suffix }}.so /tmp/ramp/falkordb.so
+          
+          cat > /tmp/ramp/ramp.yml << EOL
+          ---
+          module-name: FalkorDB
+          module-type: database
+          architecture: ${{ matrix.platform.arch }}
+          os: ${{ matrix.platform.ramp_os }}
+          version: ${SEMVER}
+          semantic-version: ${SEMVER}
+          display-name: FalkorDB
+          author: FalkorDB
+          email: info@falkordb.com
+          description: A low-latency, high-throughput graph database
+          homepage: https://falkordb.com
+          license: SSPL
+          command-line-args: ""
+          min-redis-version: "7.2.0"
+          min-redis-pack-version: "6.0.0"
+          capabilities:
+            - types
+            - no_multi_key
+            - replica_of
+            - backup_restore
+            - reshard_rebalance
+            - failover_migrate
+            - persistence_aof
+            - persistence_rdb
+            - hash_policy
+            - clustering
+            - intershard_tls
+            - intershard_tls_pass
+            - ipv6
+          ramp-format-version: 1
+          is-bundled: false
+          EOL
+          cd /tmp/ramp
+          sed -i "s/\${SEMVER}/$SEMVER/g" ramp.yml
+          file_name=falkordb-ramp-${{ matrix.platform.ramp_os }}-${SEMVER}.zip
+          python3 -m RAMP.ramp pack -m ramp.yml -o $file_name falkordb.so
+          echo "file_name=${file_name}" >> $GITHUB_OUTPUT
+
+      - name: Upload RAMP package
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ steps.create_ramp.outputs.file_name }}
+          path: /tmp/ramp/${{ steps.create_ramp.outputs.file_name }}
+          retention-days: 7
