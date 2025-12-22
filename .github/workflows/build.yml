@@ -26,7 +26,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BASE_IMAGE_VERSION: 1.1.0
+  BASE_IMAGE_VERSION: 1.1.1
 jobs:
   build:
     runs-on: ${{ matrix.platform.machine_label }}
@@ -48,6 +48,7 @@ jobs:
             cache_path: linux-x64
             build_variants: [release, server]
             use_docker: true
+            build_test_image: true
           - name: ubuntu-arm64
             suffix: arm64v8
             os: ubuntu
@@ -56,6 +57,7 @@ jobs:
             cache_path: linux-arm64v8
             build_variants: [release, server]
             use_docker: true
+            build_test_image: true
           # Alpine builds
           - name: alpine-x64
             suffix: alpine-x64
@@ -65,6 +67,7 @@ jobs:
             cache_path: linux-x64
             build_variants: [release, server]
             use_docker: true
+            build_test_image: true
           - name: alpine-arm64
             suffix: alpine-arm64v8
             os: alpine
@@ -73,6 +76,7 @@ jobs:
             cache_path: linux-arm64v8
             build_variants: [release, server]
             use_docker: true
+            build_test_image: true
           # RHEL builds
           - name: rhel9-x64
             suffix: rhel9-x64
@@ -82,6 +86,7 @@ jobs:
             cache_path: linux-x64
             build_variants: [release]
             use_docker: true
+            build_test_image: true
           - name: rhel8-x64
             suffix: rhel8-x64
             os: rhel8
@@ -90,6 +95,7 @@ jobs:
             cache_path: linux-x64
             build_variants: [release]
             use_docker: true
+            build_test_image: false
           - name: amazonlinux2-x64
             suffix: amazonlinux2-x64
             os: amazonlinux2
@@ -98,6 +104,7 @@ jobs:
             cache_path: linux-x64
             build_variants: [release]
             use_docker: true
+            build_test_image: false
           - name: amazonlinux2023-x64
             suffix: amazonlinux2023-x64
             os: amazonlinux2023
@@ -106,6 +113,7 @@ jobs:
             cache_path: linux-x64
             build_variants: [release]
             use_docker: true
+            build_test_image: true
           # macOS builds
           - name: macos-arm64
             suffix: macos-arm64v8
@@ -115,6 +123,7 @@ jobs:
             cache_path: macos-arm64v8
             build_variants: [release]
             use_docker: false
+            build_test_image: false
         build_type: [release, debug]
     steps:
       - uses: actions/checkout@v6
@@ -234,7 +243,7 @@ jobs:
           if [[ "${{ matrix.platform.os }}" == "alpine" ]]; then
             echo "final=Dockerfile.alpine" >> $GITHUB_OUTPUT
             echo "test=Dockerfile.alpine" >> $GITHUB_OUTPUT
-          elif [[ "${{ matrix.platform.os }}" == "rhel" ]] || [[ "${{ matrix.platform.os }}" == "rhel8" ]]; then
+          elif [[ "${{ matrix.platform.os }}" == rhel* ]] || [[ "${{ matrix.platform.os }}" == amazonlinux* ]]; then
             echo "final=Dockerfile" >> $GITHUB_OUTPUT
             echo "test=Dockerfile.rhel" >> $GITHUB_OUTPUT
           else
@@ -312,7 +321,7 @@ jobs:
           echo "BROWSER_TAG=${BROWSER_TAG}" >> $GITHUB_ENV
 
       - name: Build test image
-        if: matrix.platform.use_docker && matrix.build_type == 'release'
+        if: matrix.platform.build_test_image && matrix.platform.use_docker && matrix.build_type == 'release'
         uses: docker/build-push-action@v6
         with:
           context: /FalkorDB
@@ -420,6 +429,8 @@ jobs:
             machine_label: ubuntu-24.04-arm
           - suffix: rhel9-x64
             machine_label: ubuntu-latest
+          - suffix: amazonlinux2023-x64
+            machine_label: ubuntu-latest
         test_type: [unit, flow, tck, fuzz]
     steps:
       - name: Download test image
@@ -473,6 +484,10 @@ jobs:
             machine_label: ubuntu-latest
           - suffix: alpine-arm64v8
             machine_label: ubuntu-24.04-arm
+          - suffix: rhel9-x64
+            machine_label: ubuntu-latest
+          - suffix: amazonlinux2023-x64
+            machine_label: ubuntu-latest
     steps:
       - name: Download image
         uses: actions/download-artifact@v7
