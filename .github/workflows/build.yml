@@ -26,7 +26,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BASE_IMAGE_VERSION: 1.1.1
+  BASE_IMAGE_VERSION: 1.1.2
 jobs:
   build:
     runs-on: ${{ matrix.platform.machine_label }}
