@@ -554,8 +554,20 @@ jobs:
 
       - name: Install ramp dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-pip python3-setuptools redis
+          if [[ "${{ matrix.platform.ramp_os }}" == rhel8 || "${{ matrix.platform.ramp_os }}" == rhel9 ]]; then
+            # RHEL/UBI
+            yum update -y
+            yum install -y python3-pip python3-setuptools redis
+          elif [[ "${{ matrix.platform.ramp_os }}" == amazonlinux2023 ]]; then
+            # Amazon Linux 2023
+            yum update -y
+            yum install -y python3-pip python3-setuptools redis
+          else
+            # Ubuntu/Debian base
+            apt-get update
+            apt-get install -y python3-pip python3-setuptools redis
+          fi
+
           python3 -m pip install --upgrade pip
           python3 -m pip install git+https://github.com/RedisLabsModules/RAMP.git@71ab0ea1913fa2880b7e9ca0fd7ee4ef2fde2875
 
