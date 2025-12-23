@@ -558,7 +558,6 @@ jobs:
           cat > /tmp/ramp/ramp.yml << EOL
           ---
           module_name: FalkorDB
-          module_type: database
           architecture: ${{ matrix.platform.arch }}
           os: ${{ matrix.platform.ramp_os }}
           version: ${SEMVER}
@@ -587,7 +586,6 @@ jobs:
             - intershard_tls_pass
             - ipv6
           ramp_format_version: 1
-          is_bundled: false
           EOL
           cd /tmp/ramp
           sed -i "s/\${SEMVER}/$SEMVER/g" ramp.yml
