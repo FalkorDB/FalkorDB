@@ -16,9 +16,13 @@
 #include "util/arr.h"
 #include "cron/cron.h"
 #include "query_ctx.h"
+#include "udf/udf_ctx.h"
+#include "udf/classes.h"
 #include "util/roaring.h"
 #include "bolt/bolt_api.h"
 #include "index/indexer.h"
+#include "udf/repository.h"
+#include "udf/replication.h"
 #include "redisearch_api.h"
 #include "commands/cmd_acl.h"
 #include "arithmetic/funcs.h"
@@ -172,6 +176,13 @@ int RedisModule_OnLoad
 	// create thread local storage keys for query and error contexts
 	if(!_Cron_Start())                return REDISMODULE_ERR;
 	if(!QueryCtx_Init())              return REDISMODULE_ERR;
+
+	// UDFs
+	if (!UDFCtx_Init())  return REDISMODULE_ERR ;
+	if (!UDF_RepoInit()) return REDISMODULE_ERR ;
+	UDF_InitClasses () ;
+	//UDF_ReplicationRegisterReceiver (ctx) ; // disable UDF DB replication
+
 	if(!ErrorCtx_Init())              return REDISMODULE_ERR;
 	if(!ThreadPool_Init())            return REDISMODULE_ERR;
 	if(!Indexer_Init())               return REDISMODULE_ERR;
@@ -319,7 +330,7 @@ int RedisModule_OnLoad
 	if(init_cmd_acl(ctx) == REDISMODULE_OK) {
 		if(RedisModule_CreateCommand(ctx,
 					"graph.ACL",
-					graph_acl_cmd,
+					Graph_ACL,
 					"write deny-oom deny-script",
 					0, 0, 0) == REDISMODULE_ERR) {
 			return REDISMODULE_ERR;
@@ -339,6 +350,14 @@ int RedisModule_OnLoad
 				Graph_Memory,
 				"readonly deny-script",
 				2, 2, 1) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_CreateCommand(ctx,
+				"graph.UDF",
+				Graph_UDF,
+				"deny-script",
+				0, 0, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 

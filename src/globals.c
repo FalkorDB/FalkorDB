@@ -6,6 +6,7 @@
 
 #include "globals.h"
 #include "util/arr.h"
+#include "udf/repository.h"
 #include "util/thpool/pool.h"
 #include "configuration/config.h"
 #include "string_pool/string_pool.h"
@@ -356,5 +357,11 @@ void Globals_Free(void) {
 	array_free(_globals.graphs_in_keyspace);
 	StringPool_free(&_globals.string_pool);
 	pthread_rwlock_destroy(&_globals.lock);
+
+	// free registered functions
+	AR_FinalizeFuncsRepo () ;
+
+	// free UDF related data
+	UDF_RepoFree () ;  // UDF repository
 }
 

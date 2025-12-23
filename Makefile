@@ -138,6 +138,10 @@ LAGRAPH_DIR = $(ROOT)/deps/LAGraph
 export LAGRAPH_BINDIR=$(DEPS_BINDIR)/LAGraph
 include $(ROOT)/build/LAGraph/Makefile.defs
 
+QUICKJS_DIR = $(ROOT)/deps/quickjs
+export QUICKJS_BINDIR=$(DEPS_BINDIR)/quickjs
+include $(ROOT)/build/quickjs/Makefile.defs
+
 UTF8PROC_DIR = $(ROOT)/deps/utf8proc
 export UTF8PROC_BINDIR=$(DEPS_BINDIR)/utf8proc
 include $(ROOT)/build/utf8proc/Makefile.defs
@@ -156,7 +160,7 @@ include $(ROOT)/build/FalkorDB-core-rs/Makefile.defs
 
 BIN_DIRS += $(REDISEARCH_BINROOT)/search-static
 
-LIBS=$(RAX) $(LIBXXHASH) $(GRAPHBLAS) $(LAGRAPH) $(REDISEARCH_LIBS) $(LIBCURL) $(LIBCSV) $(LIBCYPHER_PARSER) $(UTF8PROC) $(ONIGURUMA) $(FalkorDBRS)
+LIBS=$(RAX) $(LIBXXHASH) $(GRAPHBLAS) $(LAGRAPH) $(REDISEARCH_LIBS) $(QUICKJS) $(LIBCURL) $(LIBCSV) $(LIBCYPHER_PARSER) $(UTF8PROC) $(ONIGURUMA) $(FalkorDBRS)
 
 #----------------------------------------------------------------------------------------------
 
@@ -211,6 +215,10 @@ ifeq ($(wildcard $(LAGRAPH)),)
 MISSING_DEPS += $(LAGRAPH)
 endif
 
+ifeq ($(wildcard $(QUICKJS)),)
+MISSING_DEPS += $(QUICKJS)
+endif
+
 ifeq ($(wildcard $(LIBCYPHER_PARSER)),)
 MISSING_DEPS += $(LIBCYPHER_PARSER)
 endif
@@ -233,7 +241,7 @@ ifneq ($(MISSING_DEPS),)
 DEPS=1
 endif
 
-DEPENDENCIES=libcypher-parser graphblas lagraph libcurl libcsv redisearch rax libxxhash utf8proc oniguruma falkordbrs
+DEPENDENCIES=libcypher-parser graphblas lagraph libcurl libcsv redisearch quickjs rax libxxhash utf8proc oniguruma falkordbrs
 
 ifneq ($(filter all deps $(DEPENDENCIES) pack,$(MAKECMDGOALS)),)
 DEPS=1
@@ -259,7 +267,7 @@ include $(MK)/rules
 
 ifeq ($(DEPS),1)
 
-deps: $(LIBCURL) $(LIBCSV) $(LIBCYPHER_PARSER) $(GRAPHBLAS) $(LAGRAPH) $(LIBXXHASH) $(RAX) $(REDISEARCH_LIBS) $(UTF8PROC) $(ONIGURUMA) falkordbrs
+deps: $(LIBCURL) $(LIBCSV) $(LIBCYPHER_PARSER) $(GRAPHBLAS) $(LAGRAPH) $(LIBXXHASH) $(RAX) $(REDISEARCH_LIBS) $(QUICKJS) $(UTF8PROC) $(ONIGURUMA) falkordbrs
 
 libxxhash: $(LIBXXHASH)
 
@@ -286,6 +294,12 @@ lagraph: $(LAGRAPH)
 $(LAGRAPH):
 	@echo Building $@ ...
 	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/LAGraph DEBUG=$(DEPS_DEBUG) $(LAGRAPH_MAKE_FLAGS.$(OSNICK)-$(ARCH))
+
+quickjs: $(QUICKJS)
+
+$(QUICKJS):
+	@echo Building $@ ...
+	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/quickjs DEBUG=$(DEPS_DEBUG)
 
 libcypher-parser: $(LIBCYPHER_PARSER)
 
@@ -343,7 +357,7 @@ falkordbrs:
 	@echo Building $@ ...
 	cd deps/FalkorDB-core-rs && cargo build $(CARGO_FLAGS) --features falkordb_allocator --target-dir $(FalkorDBRS_BINDIR)
 
-.PHONY: libcypher-parser graphblas lagraph libcurl libcsv redisearch libxxhash rax utf8proc oniguruma falkordbrs
+.PHONY: libcypher-parser graphblas lagraph libcurl libcsv redisearch quickjs libxxhash rax utf8proc oniguruma falkordbrs
 
 #----------------------------------------------------------------------------------------------
 
@@ -375,6 +389,7 @@ ifeq ($(DEPS),1)
 	$(SHOW)$(MAKE) -C $(ROOT)/build/oniguruma clean DEBUG=$(DEPS_DEBUG)
 	$(SHOW)$(MAKE) -C $(ROOT)/build/GraphBLAS clean DEBUG=$(DEPS_DEBUG)
 	$(SHOW)$(MAKE) -C $(ROOT)/build/LAGraph clean DEBUG=$(DEPS_DEBUG)
+	$(SHOW)$(MAKE) -C $(ROOT)/build/quickjs clean DEBUG=$(DEPS_DEBUG)
 	$(SHOW)$(MAKE) -C $(ROOT)/build/libcurl clean DEBUG=$(DEPS_DEBUG)
 	$(SHOW)$(MAKE) -C $(ROOT)/build/libcsv clean DEBUG=$(DEPS_DEBUG)
 	$(SHOW)$(MAKE) -C $(ROOT)/build/libcypher-parser clean DEBUG=$(DEPS_DEBUG)
@@ -464,6 +479,7 @@ benchmark: $(TARGET)
 COV_EXCLUDE_DIRS += \
 	deps/GraphBLAS \
 	deps/LAGraph \
+	deps/quickjs \
 	deps/libcurl \
 	deps/libcsv \
 	deps/libcypher-parser \

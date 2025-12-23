@@ -44,11 +44,14 @@ void Register_MAX(void) {
 	SIType ret_type;
 	AR_FuncDesc *func_desc;
 
-	types = array_new(SIType, 1);
-	array_append(types, SI_ALL);
-	ret_type = SI_ALL;
-	func_desc = AR_AggFuncDescNew("max", AGG_MAX, 1, 1, types, ret_type, NULL,
-			NULL, Max_PrivateData);
-	AR_RegFunc(func_desc);
+	types = array_new (SIType, 1) ;
+	array_append (types, SI_ALL) ;
+
+	ret_type  = SI_ALL ;
+
+	func_desc = AR_AggFuncDescNew ("max", AGG_MAX, 1, 1, types, ret_type, NULL,
+			NULL, Max_PrivateData) ;
+
+	AR_FuncRegister (func_desc) ;
 }
 

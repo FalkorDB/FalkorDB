@@ -98,7 +98,17 @@ static bool _parse_week_date
 
 // create a new date object representing the current date
 SIValue Date_now(void) {
-	return SI_Date(time(NULL));
+	time_t now = time (NULL) ;
+
+	// remove time component
+	struct tm t;
+	gmtime_r (&now, &t) ;
+	t.tm_hour = 0 ;
+	t.tm_min  = 0 ;
+	t.tm_sec  = 0 ;
+
+	time_t midnight = mktime (&t) ;  // back to time_t
+	return SI_Date (midnight) ;
 }
 
 // create a new date object from a ISO-8601 string time representation
