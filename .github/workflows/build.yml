@@ -510,7 +510,8 @@ jobs:
   ramp-package:
     needs: build
     if: needs.build.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.platform.machine_label }}
+    container: ${{ matrix.platform.container_image }}
     strategy:
       fail-fast: false
       matrix:
@@ -518,18 +519,28 @@ jobs:
           - ramp_os: rhel8
             suffix: rhel8-x64
             arch: amd64
+            container_image: "registry.access.redhat.com/ubi8/ubi:latest"
+            machine_label: ubuntu-latest
           - ramp_os: rhel9
             suffix: rhel9-x64
             arch: amd64
+            container_image: "registry.access.redhat.com/ubi9/ubi:latest"
+            machine_label: ubuntu-latest
           - ramp_os: amazonlinux2023
             suffix: amazonlinux2023-x64
             arch: amd64
+            container_image: "public.ecr.aws/amazonlinux/amazonlinux:2023"
+            machine_label: ubuntu-latest
           - ramp_os: linux
             suffix: x64
             arch: amd64
+            container_image: "ubuntu:24.04"
+            machine_label: ubuntu-latest
           - ramp_os: linux
             suffix: arm64v8
             arch: arm64
+            container_image: "ubuntu:24.04"
+            machine_label: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -554,7 +565,7 @@ jobs:
           SEMVER=$(./sbin/getver)
           mkdir -p /tmp/ramp
           cp falkordb-${{ matrix.platform.suffix }}.so /tmp/ramp/falkordb.so
-          
+
           cat > /tmp/ramp/ramp.yml << EOL
           ---
           module_name: FalkorDB
