@@ -26,7 +26,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BASE_IMAGE_VERSION: 1.1.3
+  BASE_IMAGE_VERSION: 1.1.2
 jobs:
   build:
     runs-on: ${{ matrix.platform.machine_label }}
@@ -90,15 +90,6 @@ jobs:
           - name: rhel8-x64
             suffix: rhel8-x64
             os: rhel8
-            arch: amd64
-            machine_label: ubuntu-latest
-            cache_path: linux-x64
-            build_variants: [release]
-            use_docker: true
-            build_test_image: false
-          - name: amazonlinux2-x64
-            suffix: amazonlinux2-x64
-            os: amazonlinux2
             arch: amd64
             machine_label: ubuntu-latest
             cache_path: linux-x64
@@ -529,9 +520,6 @@ jobs:
             arch: amd64
           - ramp_os: rhel9
             suffix: rhel9-x64
-            arch: amd64
-          - ramp_os: amazonlinux2
-            suffix: amazonlinux2-x64
             arch: amd64
           - ramp_os: amazonlinux2023
             suffix: amazonlinux2023-x64
