@@ -64,7 +64,7 @@ Feature: Precedence2 - On numeric values
       | %     | -   | /     | -1    | 0     |
       | %     | -   | %     | -1    | 0     |
 
-  @skip
+  
   Scenario Outline: [2] Exponentiation takes precedence over numeric multiplicative operations
     Given an empty graph
     When executing query:
@@ -84,7 +84,7 @@ Feature: Precedence2 - On numeric values
       | /    | 8.0   | 64.0          |
       | %    | 0.0   | 64.0          |
 
-  @skip
+  
   Scenario Outline: [3] Exponentiation takes precedence over numeric additive operations
     Given an empty graph
     When executing query:

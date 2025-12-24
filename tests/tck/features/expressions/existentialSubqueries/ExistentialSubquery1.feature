@@ -30,7 +30,7 @@
 
 Feature: ExistentialSubquery1 - Simple existential subquery
 
-  @skip
+  
   Scenario: [1] Simple subquery without WHERE clause
     Given an empty graph
     And having executed:
@@ -51,7 +51,7 @@ Feature: ExistentialSubquery1 - Simple existential subquery
       | (:A {prop:1}) |
     And no side effects
 
-  @skip
+  
   Scenario: [2] Simple subquery with WHERE clause
     Given an empty graph
     And having executed:
@@ -73,7 +73,7 @@ Feature: ExistentialSubquery1 - Simple existential subquery
       | (:A {prop:1}) |
     And no side effects
 
-  @skip
+  
   Scenario: [3] Simple subquery without WHERE clause, not existing pattern
     Given an empty graph
     And having executed:
@@ -93,7 +93,7 @@ Feature: ExistentialSubquery1 - Simple existential subquery
       | n |
     And no side effects
 
-  @skip
+  
   Scenario: [4] Simple subquery with WHERE clause, not existing pattern
     Given an empty graph
     And having executed:

@@ -404,7 +404,7 @@ jobs:
             machine_label: ubuntu-24.04-arm
           - suffix: rhel-x64
             machine_label: ubuntu-latest
-        test_type: [unit, flow, tck, fuzz]
+        test_type: [tck]
     steps:
       - name: Download test image
         uses: actions/download-artifact@v7

@@ -29,7 +29,7 @@
 #encoding: utf-8
 Feature: Temporal3 - Project Temporal Values from other Temporal Values
 
-  @skip
+  
   Scenario Outline: [1] Should select date
     Given any graph
     When executing query:
@@ -66,7 +66,7 @@ Feature: Temporal3 - Project Temporal Values from other Temporal Values
       | datetime({year: 1984, month: 11, day: 11, hour: 12, timezone: '+01:00'})                                 | {date: other, ordinalDay: 28} | '1984-01-28' |
       | datetime({year: 1984, month: 11, day: 11, hour: 12, timezone: '+01:00'})                                 | {date: other, quarter: 3}     | '1984-08-11' |
 
-  @skip
+  
   Scenario Outline: [2] Should select local time
     Given any graph
     When executing query:
@@ -94,7 +94,7 @@ Feature: Temporal3 - Project Temporal Values from other Temporal Values
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: '+01:00'})                                | {time: other}             | '12:00'              |
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: '+01:00'})                                | {time: other, second: 42} | '12:00:42'           |
 
-  @skip
+  
   Scenario Outline: [3] Should select time
     Given any graph
     When executing query:
@@ -130,7 +130,7 @@ Feature: Temporal3 - Project Temporal Values from other Temporal Values
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: 'Europe/Stockholm'})                      | {time: other, second: 42}                     | '12:00:42+01:00'           |
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: 'Europe/Stockholm'})                      | {time: other, second: 42, timezone: '+05:00'} | '16:00:42+05:00'           |
 
-  @skip
+  
   Scenario Outline: [4] Should select date into local date time
     Given any graph
     When executing query:
@@ -152,7 +152,7 @@ Feature: Temporal3 - Project Temporal Values from other Temporal Values
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: '+01:00'})                                | {date: other, hour: 10, minute: 10, second: 10}          | '1984-10-11T10:10:10' |
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: '+01:00'})                                | {date: other, day: 28, hour: 10, minute: 10, second: 10} | '1984-10-28T10:10:10' |
 
-  @skip
+  
   Scenario Outline: [5] Should select time into local date time
     Given any graph
     When executing query:
@@ -176,7 +176,7 @@ Feature: Temporal3 - Project Temporal Values from other Temporal Values
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: '+01:00'})                                | {year: 1984, month: 10, day: 11, time: other}             | '1984-10-11T12:00'              |
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: '+01:00'})                                | {year: 1984, month: 10, day: 11, time: other, second: 42} | '1984-10-11T12:00:42'           |
 
-  @skip
+  
   Scenario Outline: [6] Should select date and time into local date time
     Given any graph
     When executing query:
@@ -216,7 +216,7 @@ Feature: Temporal3 - Project Temporal Values from other Temporal Values
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: '+01:00'})                                | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: '+01:00'})                                | {date: otherDate, time: otherTime}                      | '1984-10-11T12:00'              |
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: '+01:00'})                                | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: '+01:00'})                                | {date: otherDate, time: otherTime, day: 28, second: 42} | '1984-10-28T12:00:42'           |
 
-  @skip
+  
   Scenario Outline: [7] Should select datetime into local date time
     Given any graph
     When executing query:
@@ -238,7 +238,7 @@ Feature: Temporal3 - Project Temporal Values from other Temporal Values
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: '+01:00'})                                | {datetime: other}                      | '1984-10-11T12:00'        |
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: '+01:00'})                                | {datetime: other, day: 28, second: 42} | '1984-10-28T12:00:42'     |
 
-  @skip
+  
   Scenario Outline: [8] Should select date into date time
     Given any graph
     When executing query:
@@ -266,7 +266,7 @@ Feature: Temporal3 - Project Temporal Values from other Temporal Values
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: '+01:00'})                                | {date: other, day: 28, hour: 10, minute: 10, second: 10}                               | '1984-10-28T10:10:10Z'                        |
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: '+01:00'})                                | {date: other, day: 28, hour: 10, minute: 10, second: 10, timezone: 'Pacific/Honolulu'} | '1984-10-28T10:10:10-10:00[Pacific/Honolulu]' |
 
-  @skip
+  
   Scenario Outline: [9] Should select time into date time
     Given any graph
     When executing query:
@@ -298,7 +298,7 @@ Feature: Temporal3 - Project Temporal Values from other Temporal Values
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: 'Europe/Stockholm'})                      | {year: 1984, month: 10, day: 11, time: other, second: 42}                               | '1984-10-11T12:00:42+01:00[Europe/Stockholm]'           |
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: 'Europe/Stockholm'})                      | {year: 1984, month: 10, day: 11, time: other, second: 42, timezone: 'Pacific/Honolulu'} | '1984-10-11T01:00:42-10:00[Pacific/Honolulu]'           |
 
-  @skip
+  
   Scenario Outline: [10] Should select date and time into date time
     Given any graph
     When executing query:
@@ -362,7 +362,7 @@ Feature: Temporal3 - Project Temporal Values from other Temporal Values
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: '+01:00'})                                | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: 'Europe/Stockholm'})                      | {date: otherDate, time: otherTime, day: 28, second: 42}                               | '1984-10-28T12:00:42+01:00[Europe/Stockholm]'           |
       | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: '+01:00'})                                | datetime({year: 1984, month: 10, day: 11, hour: 12, timezone: 'Europe/Stockholm'})                      | {date: otherDate, time: otherTime, day: 28, second: 42, timezone: 'Pacific/Honolulu'} | '1984-10-28T01:00:42-10:00[Pacific/Honolulu]'           |
 
-  @skip
+  
   Scenario Outline: [11] Should datetime into date time
     Given any graph
     When executing query:

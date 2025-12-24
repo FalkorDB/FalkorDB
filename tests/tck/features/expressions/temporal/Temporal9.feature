@@ -30,7 +30,7 @@
 
 Feature: Temporal9 - Truncate Temporal Values
 
-  @skip
+  
   Scenario Outline: [1] Should truncate date
     Given any graph
     When executing query:
@@ -96,7 +96,7 @@ Feature: Temporal9 - Truncate Temporal Values
       | 'day'         | datetime({year: 1984, month: 10, day: 11, hour: 12, minute: 31, second: 14, nanosecond: 645876123, timezone: '+01:00'}) | {}                             | '1984-10-11'                               |
       | 'day'         | localdatetime({year: 1984, month: 10, day: 11, hour: 12, minute: 31, second: 14, nanosecond: 645876123})                | {}                             | '1984-10-11'                               |
 
-  @skip
+  
   Scenario Outline: [2] Should truncate datetime
     Given any graph
     When executing query:
@@ -216,7 +216,7 @@ Feature: Temporal9 - Truncate Temporal Values
       | 'microsecond' | localdatetime({year: 1984, month: 10, day: 11, hour: 12, minute: 31, second: 14, nanosecond: 645876123})                | {nanosecond: 2}                | '1984-10-11T12:31:14.645876002Z'           |
       | 'microsecond' | localdatetime({year: 1984, month: 10, day: 11, hour: 12, minute: 31, second: 14, nanosecond: 645876123})                | {}                             | '1984-10-11T12:31:14.645876Z'              |
 
-  @skip
+  
   Scenario Outline: [3] Should truncate localdatetime
     Given any graph
     When executing query:
@@ -305,7 +305,7 @@ Feature: Temporal9 - Truncate Temporal Values
       | 'microsecond' | localdatetime({year: 1984, month: 10, day: 11, hour: 12, minute: 31, second: 14, nanosecond: 645876123})                | {nanosecond: 2}                | '1984-10-11T12:31:14.645876002'            |
       | 'microsecond' | localdatetime({year: 1984, month: 10, day: 11, hour: 12, minute: 31, second: 14, nanosecond: 645876123})                | {}                             | '1984-10-11T12:31:14.645876'               |
 
-  @skip
+  
   Scenario Outline: [4] Should truncate localtime
     Given any graph
     When executing query:
@@ -364,7 +364,7 @@ Feature: Temporal9 - Truncate Temporal Values
       | 'microsecond' | time({hour: 12, minute: 31, second: 14, nanosecond: 645876123, timezone: '+01:00'})                                     | {nanosecond: 2}                | '12:31:14.645876002'                       |
       | 'microsecond' | time({hour: 12, minute: 31, second: 14, nanosecond: 645876123, timezone: '+01:00'})                                     | {}                             | '12:31:14.645876'                          |
 
-  @skip
+  
   Scenario Outline: [5] Should truncate time
     Given any graph
     When executing query:

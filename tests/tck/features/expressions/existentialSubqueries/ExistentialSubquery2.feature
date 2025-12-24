@@ -30,7 +30,7 @@
 
 Feature: ExistentialSubquery2 - Full existential subquery
 
-  @skip
+  
   Scenario: [1] Full existential subquery
     Given an empty graph
     And having executed:
@@ -52,7 +52,7 @@ Feature: ExistentialSubquery2 - Full existential subquery
       | (:A {prop:1}) |
     And no side effects
 
-  @skip
+  
   Scenario: [2] Full existential subquery with aggregation
     Given an empty graph
     And having executed:
@@ -77,7 +77,7 @@ Feature: ExistentialSubquery2 - Full existential subquery
       | (:A {prop:1}) |
     And no side effects
 
-  @skip
+  
   Scenario: [3] Full existential subquery with update clause should fail
     Given any graph
     When executing query:

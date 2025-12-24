@@ -32,7 +32,7 @@ Feature: WithOrderBy3 - Order by multiple expressions
 # LIMIT is used in the following scenarios to surface the effects or WITH ... ORDER BY ...
 # which are otherwise lost after the WITH clause according to Cypher semantics
 
-  @skip
+  
   Scenario Outline: [1] Sort by two expressions, both in ascending order
     Given an empty graph
     And having executed:
@@ -71,7 +71,7 @@ Feature: WithOrderBy3 - Order by multiple expressions
       | a.bool ASCENDING, a.num ASC       |
       | a.bool ASCENDING, a.num ASCENDING |
 
-  @skip
+  
   Scenario Outline: [2] Sort by two expressions, first in ascending order, second in descending order
     Given an empty graph
     And having executed:
@@ -107,7 +107,7 @@ Feature: WithOrderBy3 - Order by multiple expressions
       | a.bool ASCENDING, a.num DESC       |
       | a.bool ASCENDING, a.num DESCENDING |
 
-  @skip
+  
   Scenario Outline: [3] Sort by two expressions, first in descending order, second in ascending order
     Given an empty graph
     And having executed:
@@ -143,7 +143,7 @@ Feature: WithOrderBy3 - Order by multiple expressions
       | a.bool DESCENDING, a.num ASC       |
       | a.bool DESCENDING, a.num ASCENDING |
 
-  @skip
+  
   Scenario Outline: [4] Sort by two expressions, both in descending order
     Given an empty graph
     And having executed:
@@ -177,7 +177,7 @@ Feature: WithOrderBy3 - Order by multiple expressions
       | a.bool DESCENDING, a.num DESC       |
       | a.bool DESCENDING, a.num DESCENDING |
 
-  @skip
+  
   Scenario Outline: [5] An expression without explicit sort direction is sorted in ascending order
     Given an empty graph
     And having executed:
@@ -211,7 +211,7 @@ Feature: WithOrderBy3 - Order by multiple expressions
       | DESC | DESC | 1   | b    |
       | DESC | ASC  | 1   | a    |
 
-  @skip
+  
   Scenario Outline: [6] An constant expression does not influence the order determined by other expression before and after the constant expression
     Given an empty graph
     And having executed:
@@ -265,7 +265,7 @@ Feature: WithOrderBy3 - Order by multiple expressions
       | a.num DESC, a.text ASC, 4 + ((a.num * 2) % 2) ASC   | 4   | a    |
       | a.num DESC, a.text ASC, 4 + ((a.num * 2) % 2) DESC  | 4   | a    |
 
-  @skip
+  
   Scenario Outline: [7] The order direction cannot be overwritten
     Given any graph
     When executing query:
@@ -294,7 +294,7 @@ Feature: WithOrderBy3 - Order by multiple expressions
       | a DESC, -1 * a DESC   | 3     |
       | -1 * a ASC, a DESC    | 3     |
 
-  @skip
+  
   Scenario Outline: [8] Fail on sorting by any number of undefined variables in any position #Example: <exampleName>
     Given any graph
     When executing query:

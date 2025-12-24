@@ -30,7 +30,7 @@
 
 Feature: Quantifier9 - None quantifier invariants
 
-  @skip
+  
   Scenario: [1] None quantifier is always true if the predicate is statically false and the list is not empty
     Given any graph
     When executing query:
@@ -54,7 +54,7 @@ Feature: Quantifier9 - None quantifier invariants
       | true   |
     And no side effects
 
-  @skip
+  
   Scenario: [2] None quantifier is always false if the predicate is statically true and the list is not empty
     Given any graph
     When executing query:

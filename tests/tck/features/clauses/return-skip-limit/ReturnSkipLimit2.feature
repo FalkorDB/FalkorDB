@@ -115,7 +115,7 @@ Feature: ReturnSkipLimit2 - Limit
       | name |
     And no side effects
 
-  @skip
+  
   Scenario: [6] LIMIT with an expression that does not depend on variables
     Given any graph
     And having executed:
@@ -186,7 +186,7 @@ Feature: ReturnSkipLimit2 - Limit
       """
     Then a SyntaxError should be raised at compile time: NonConstantExpression
 
-  @skip
+  
   Scenario: [10] Negative parameter for LIMIT should fail
     Given any graph
     And having executed:
@@ -204,7 +204,7 @@ Feature: ReturnSkipLimit2 - Limit
       """
     Then a SyntaxError should be raised at runtime: NegativeIntegerArgument
 
-  @skip
+  
   Scenario: [11] Negative parameter for LIMIT with ORDER BY should fail
     Given any graph
     And having executed:
@@ -247,7 +247,7 @@ Feature: ReturnSkipLimit2 - Limit
       """
     Then a SyntaxError should be raised at compile time: NegativeIntegerArgument
 
-  @skip
+  
   Scenario: [14] Floating point parameter for LIMIT should fail
     Given any graph
     And having executed:
@@ -265,7 +265,7 @@ Feature: ReturnSkipLimit2 - Limit
       """
     Then a SyntaxError should be raised at runtime: InvalidArgumentType
 
-  @skip
+  
   Scenario: [15] Floating point parameter for LIMIT with ORDER BY should fail
     Given any graph
     And having executed:
@@ -283,7 +283,7 @@ Feature: ReturnSkipLimit2 - Limit
       """
     Then a SyntaxError should be raised at runtime: InvalidArgumentType
 
-  @skip
+  
   Scenario: [16] Fail when using floating point in LIMIT 1
     Given any graph
     When executing query:
@@ -294,7 +294,7 @@ Feature: ReturnSkipLimit2 - Limit
       """
     Then a SyntaxError should be raised at compile time: InvalidArgumentType
 
-  @skip
+  
   Scenario: [17] Fail when using floating point in LIMIT 2
     Given any graph
     And having executed:

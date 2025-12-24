@@ -30,7 +30,7 @@
 
 Feature: Mathematical3 - Subtraction
 
-  @skipGrammarCheck
+  
   @boltSkip
   Scenario: [1] Fail for invalid Unicode hyphen in subtraction
     Given any graph

@@ -140,7 +140,7 @@ Feature: Literals8 - Maps
       | {k: 372036854} |
     And no side effects
 
-  @skip
+  
   Scenario: [11] Return a map containing a float
     Given any graph
     When executing query:
@@ -298,7 +298,7 @@ Feature: Literals8 - Maps
       | {data: [{id: '0001', type: 'donut', name: 'Cake', ppu: 0.55, batters: {batter: [{id: '1001', type: 'Regular'}, {id: '1002', type: 'Chocolate'}, {id: '1003', type: 'Blueberry'}, {id: '1004', type: 'Devils Food'}]}, topping: [{id: '5001', type: 'None'}, {id: '5002', type: 'Glazed'}, {id: '5005', type: 'Sugar'}, {id: '5007', type: 'Powdered Sugar'}, {id: '5006', type: 'Chocolate Sprinkles'}, {id: '5003', type: 'Chocolate'}, {id: '5004', type: 'Maple'}]}, {id: '0002', type: 'donut', name: 'Raised', ppu: 0.55, batters: {batter: [{id: '1001', type: 'Regular'}]}, topping: [{id: '5001', type: 'None'}, {id: '5002', type: 'Glazed'}, {id: '5005', type: 'Sugar'}, {id: '5003', type: 'Chocolate'}, {id: '5004', type: 'Maple'}]}, {id: '0003', type: 'donut', name: 'Old Fashioned', ppu: 0.55, batters: {batter: [{id: '1001', type: 'Regular'}, {id: '1002', type: 'Chocolate'}]}, topping: [{id: '5001', type: 'None'}, {id: '5002', type: 'Glazed'}, {id: '5003', type: 'Chocolate'}, {id: '5004', type: 'Maple'}]}]} |
     And no side effects
 
-  @skipGrammarCheck
+  
   Scenario: [19] Fail on a map containing key starting with a number
     Given any graph
     When executing query:
@@ -307,7 +307,7 @@ Feature: Literals8 - Maps
       """
     Then a SyntaxError should be raised at compile time: UnexpectedSyntax
 
-  @skipGrammarCheck
+  
   Scenario: [20] Fail on a map containing key with symbol
     Given any graph
     When executing query:
@@ -316,7 +316,7 @@ Feature: Literals8 - Maps
       """
     Then a SyntaxError should be raised at compile time: UnexpectedSyntax
 
-  @skipGrammarCheck
+  
   Scenario: [21] Fail on a map containing key with dot
     Given any graph
     When executing query:
@@ -333,7 +333,7 @@ Feature: Literals8 - Maps
       """
     Then a SyntaxError should be raised at compile time: UndefinedVariable
 
-  @skipGrammarCheck
+  
   Scenario: [23] Fail on a map containing only a comma
     Given any graph
     When executing query:
@@ -342,7 +342,7 @@ Feature: Literals8 - Maps
       """
     Then a SyntaxError should be raised at compile time: UnexpectedSyntax
 
-  @skipGrammarCheck
+  
   Scenario: [24] Fail on a map containing a value without key
     Given any graph
     When executing query:
@@ -351,7 +351,7 @@ Feature: Literals8 - Maps
       """
     Then a SyntaxError should be raised at compile time: UnexpectedSyntax
 
-  @skipGrammarCheck
+  
   Scenario: [25] Fail on a map containing a list without key
     Given any graph
     When executing query:
@@ -360,7 +360,7 @@ Feature: Literals8 - Maps
       """
     Then a SyntaxError should be raised at compile time: UnexpectedSyntax
 
-  @skipGrammarCheck
+  
   Scenario: [26] Fail on a map containing a map without key
     Given any graph
     When executing query:
@@ -369,7 +369,7 @@ Feature: Literals8 - Maps
       """
     Then a SyntaxError should be raised at compile time: UnexpectedSyntax
 
-  @skipGrammarCheck
+  
   Scenario: [27] Fail on a nested map with non-matching braces
     Given any graph
     When executing query:

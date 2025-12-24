@@ -68,7 +68,7 @@ Feature: With1 - Forward single variable
       | (:A) | (:B) | (:X) |
     And no side effects
 
-  @skip
+  
   Scenario: [3] Forwarding a relationship variable
     Given an empty graph
     And having executed:

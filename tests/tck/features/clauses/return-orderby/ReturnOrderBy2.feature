@@ -263,7 +263,7 @@ Feature: ReturnOrderBy2 - Order by a single expression (order of projection)
       | [[(:C), (:D), (:E), (:F)]]                               | 3 |
     And no side effects
 
-  @skip
+  
   Scenario: [13] Fail when sorting on variable removed by DISTINCT
     Given an empty graph
     And having executed:
@@ -278,7 +278,7 @@ Feature: ReturnOrderBy2 - Order by a single expression (order of projection)
       """
     Then a SyntaxError should be raised at compile time: UndefinedVariable
 
-  @skip
+  
   Scenario: [14] Fail on aggregation in ORDER BY after RETURN
     Given any graph
     When executing query:

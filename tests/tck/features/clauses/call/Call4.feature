@@ -30,7 +30,7 @@
 
 Feature: Call4 - Null Arguments
 
-  @skip
+  
   Scenario: [1] Standalone call to procedure with null argument
     Given an empty graph
     And there exists a procedure test.my.proc(in :: INTEGER?) :: (out :: STRING?):
@@ -45,7 +45,7 @@ Feature: Call4 - Null Arguments
       | 'nix' |
     And no side effects
 
-  @skip
+  
   Scenario: [2] In-query call to procedure with null argument
     Given an empty graph
     And there exists a procedure test.my.proc(in :: INTEGER?) :: (out :: STRING?):

@@ -86,7 +86,7 @@ Feature: Pattern2 - Pattern Comprehension
       | [<(:A)-[:T]->(:B)>] |
     And no side effects
 
-  @skip
+  
   Scenario: [4] Introduce a new node variable in pattern comprehension
     Given an empty graph
     And having executed:
@@ -107,7 +107,7 @@ Feature: Pattern2 - Pattern Comprehension
       | []      |
     And no side effects
 
-  @skip
+  
   Scenario: [5] Introduce a new relationship variable in pattern comprehension
     Given an empty graph
     And having executed:
@@ -145,7 +145,7 @@ Feature: Pattern2 - Pattern Comprehension
       | 3 |
     And no side effects
 
-  @skip
+  
   Scenario: [7] Use a pattern comprehension inside a list comprehension
     Given an empty graph
     And having executed:

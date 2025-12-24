@@ -143,7 +143,7 @@ Feature: List12 - List Comprehension
       | (:C) |
     And no side effects
 
-  @skip
+  
   Scenario: [7] Fail when using aggregation in list comprehension
     Given any graph
     When executing query:

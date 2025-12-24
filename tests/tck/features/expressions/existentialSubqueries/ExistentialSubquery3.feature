@@ -30,7 +30,7 @@
 
 Feature: ExistentialSubquery3 - Nested existential subquery
 
-  @skip
+  
   Scenario: [1] Nested simple existential subquery
     Given an empty graph
     And having executed:
@@ -54,7 +54,7 @@ Feature: ExistentialSubquery3 - Nested existential subquery
       | (:A {prop:1}) |
     And no side effects
 
-  @skip
+  
   Scenario: [2] Nested full existential subquery
     Given an empty graph
     And having executed:
@@ -78,7 +78,7 @@ Feature: ExistentialSubquery3 - Nested existential subquery
       | (:A {prop:1}) |
     And no side effects
   
-  @skip
+  
   Scenario: [3] Nested full existential subquery with pattern predicate
     Given an empty graph
     And having executed:

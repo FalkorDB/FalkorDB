@@ -107,7 +107,7 @@ Feature: Graph3 - Node labels
       | []        |
     And no side effects
 
-  @skip
+  
   Scenario: [6] `labels()` should accept type Any
     Given an empty graph
     And having executed:

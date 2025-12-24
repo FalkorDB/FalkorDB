@@ -256,7 +256,7 @@ Feature: Merge1 - Merge node
       | +nodes      | 1 |
       | +properties | 1 |
 
-  @skip
+  
   Scenario: [14] Merges should not be able to match on deleted nodes
     Given an empty graph
     And having executed:
@@ -280,7 +280,7 @@ Feature: Merge1 - Merge node
       | -nodes      | 2 |
       | -properties | 2 |
 
-  @skip
+  
   Scenario: [15] Fail when merge a node that is already bound
     Given any graph
     When executing query:

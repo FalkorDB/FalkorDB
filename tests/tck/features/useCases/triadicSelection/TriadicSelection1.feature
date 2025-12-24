@@ -47,7 +47,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | 'c22'  |
     And no side effects
 
-  @skip
+  
   Scenario: [2] Handling triadic friend of a friend that is not a friend
     Given the binary-tree-1 graph
     When executing query:
@@ -66,7 +66,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | 'c22'  |
     And no side effects
 
-  @skip
+  
   Scenario: [3] Handling triadic friend of a friend that is not a friend with different relationship type
     Given the binary-tree-1 graph
     When executing query:
@@ -85,7 +85,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | 'c22'  |
     And no side effects
 
-  @skip
+  
   Scenario: [4] Handling triadic friend of a friend that is not a friend with superset of relationship type
     Given the binary-tree-1 graph
     When executing query:
@@ -103,7 +103,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | 'c22'  |
     And no side effects
 
-  @skip
+  
   Scenario: [5] Handling triadic friend of a friend that is not a friend with implicit subset of relationship type
     Given the binary-tree-1 graph
     When executing query:
@@ -127,7 +127,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | 'c42'  |
     And no side effects
 
-  @skip
+  
   Scenario: [6] Handling triadic friend of a friend that is not a friend with explicit subset of relationship type
     Given the binary-tree-1 graph
     When executing query:
@@ -151,7 +151,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | 'c42'  |
     And no side effects
 
-  @skip
+  
   Scenario: [7] Handling triadic friend of a friend that is not a friend with same labels
     Given the binary-tree-2 graph
     When executing query:
@@ -168,7 +168,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | 'c21'  |
     And no side effects
 
-  @skip
+  
   Scenario: [8] Handling triadic friend of a friend that is not a friend with different labels
     Given the binary-tree-2 graph
     When executing query:
@@ -184,7 +184,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | 'c22'  |
     And no side effects
 
-  @skip
+  
   Scenario: [9] Handling triadic friend of a friend that is not a friend with implicit subset of labels
     Given the binary-tree-2 graph
     When executing query:
@@ -201,7 +201,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | 'c21'  |
     And no side effects
 
-  @skip
+  
   Scenario: [10] Handling triadic friend of a friend that is not a friend with implicit superset of labels
     Given the binary-tree-2 graph
     When executing query:
@@ -220,7 +220,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | 'c22'  |
     And no side effects
 
-  @skip
+  
   Scenario: [11] Handling triadic friend of a friend that is a friend
     Given the binary-tree-2 graph
     When executing query:
@@ -235,7 +235,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | 'b2'   |
     And no side effects
 
-  @skip
+  
   Scenario: [12] Handling triadic friend of a friend that is a friend with different relationship type
     Given the binary-tree-1 graph
     When executing query:
@@ -250,7 +250,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | 'b3'   |
     And no side effects
 
-  @skip
+  
   Scenario: [13] Handling triadic friend of a friend that is a friend with superset of relationship type
     Given the binary-tree-1 graph
     When executing query:
@@ -266,7 +266,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | 'b3'   |
     And no side effects
 
-  @skip
+  
   Scenario: [14] Handling triadic friend of a friend that is a friend with implicit subset of relationship type
     Given the binary-tree-1 graph
     When executing query:
@@ -282,7 +282,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | 'b2'   |
     And no side effects
 
-  @skip
+  
   Scenario: [15] Handling triadic friend of a friend that is a friend with explicit subset of relationship type
     Given the binary-tree-1 graph
     When executing query:
@@ -298,7 +298,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | 'b2'   |
     And no side effects
 
-  @skip
+  
   Scenario: [16] Handling triadic friend of a friend that is a friend with same labels
     Given the binary-tree-2 graph
     When executing query:
@@ -313,7 +313,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | 'b2'   |
     And no side effects
 
-  @skip
+  
   Scenario: [17] Handling triadic friend of a friend that is a friend with different labels
     Given the binary-tree-2 graph
     When executing query:
@@ -327,7 +327,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | c.name |
     And no side effects
 
-  @skip
+  
   Scenario: [18] Handling triadic friend of a friend that is a friend with implicit subset of labels
     Given the binary-tree-2 graph
     When executing query:
@@ -342,7 +342,7 @@ Feature: TriadicSelection1 - Query three related nodes on binary-tree graphs
       | 'b2'   |
     And no side effects
 
-  @skip
+  
   Scenario: [19] Handling triadic friend of a friend that is a friend with implicit superset of labels
     Given the binary-tree-2 graph
     When executing query:

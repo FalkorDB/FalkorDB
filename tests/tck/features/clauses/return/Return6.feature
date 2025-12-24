@@ -79,7 +79,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | 2     |
     And no side effects
 
-  @skip
+  
   Scenario: [4] Support multiple divisions in aggregate function
     Given an empty graph
     And having executed:
@@ -114,7 +114,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | 11               |
     And no side effects
 
-  @skip
+  
   Scenario: [6] Handle aggregates inside non-aggregate expressions
     Given an empty graph
     When executing query:
@@ -229,7 +229,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | (:L) | 2        |
     And no side effects
 
-  @skip
+  
   Scenario: [13] Returning the minimum length of paths
     Given an empty graph
     And having executed:
@@ -259,7 +259,7 @@ Feature: Return6 - Implicit grouping with aggregates
       """
     Then a SyntaxError should be raised at compile time: NestedAggregation
 
-  @skip
+  
   Scenario: [15] Using `rand()` in aggregations
     Given any graph
     When executing query:
@@ -268,7 +268,7 @@ Feature: Return6 - Implicit grouping with aggregates
       """
     Then a SyntaxError should be raised at compile time: NonConstantExpression
 
-  @skip
+  
   Scenario: [16] Aggregation on complex expressions
     Given an empty graph
     And having executed:
@@ -339,7 +339,7 @@ Feature: Return6 - Implicit grouping with aggregates
       | me.age | me.age + count(you.age) |
     And no side effects
 
-  @skip
+  
   Scenario: [20] Fail if not returned variables are used inside an expression which contains an aggregation expression
     Given an empty graph
     When executing query:
@@ -349,7 +349,7 @@ Feature: Return6 - Implicit grouping with aggregates
       """
     Then a SyntaxError should be raised at compile time: AmbiguousAggregationExpression
 
-  @skip
+  
   Scenario: [21] Fail if more complex expressions, even if returned, are used inside expression which contains an aggregation expression
     Given an empty graph
     When executing query:
