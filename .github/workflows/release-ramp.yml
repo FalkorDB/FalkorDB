@@ -86,8 +86,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ steps.set_semver.outputs.TAG_NAME }} falkordb-ramp-rhel8-x64-${{ steps.set_semver.outputs.SEMVER }}.zip
-          gh release upload ${{ steps.set_semver.outputs.TAG_NAME }} falkordb-ramp-rhel9-x64-${{ steps.set_semver.outputs.SEMVER }}.zip
-          gh release upload ${{ steps.set_semver.outputs.TAG_NAME }} falkordb-ramp-amazonlinux2023-x64-${{ steps.set_semver.outputs.SEMVER }}.zip
-          gh release upload ${{ steps.set_semver.outputs.TAG_NAME }} falkordb-ramp-x64-${{ steps.set_semver.outputs.SEMVER }}.zip
-          gh release upload ${{ steps.set_semver.outputs.TAG_NAME }} falkordb-ramp-arm64v8-${{ steps.set_semver.outputs.SEMVER }}.zip
+          gh release upload ${{ steps.set_semver.outputs.TAG_NAME }} \
+            falkordb-ramp-rhel8-x64-${{ steps.set_semver.outputs.SEMVER }}.zip \
+            falkordb-ramp-rhel9-x64-${{ steps.set_semver.outputs.SEMVER }}.zip \
+            falkordb-ramp-amazonlinux2023-x64-${{ steps.set_semver.outputs.SEMVER }}.zip \
+            falkordb-ramp-x64-${{ steps.set_semver.outputs.SEMVER }}.zip \
+            falkordb-ramp-arm64v8-${{ steps.set_semver.outputs.SEMVER }}.zip
