@@ -21,7 +21,7 @@ RUN set -ex ;\
 # Build and install redis from source
 RUN set -ex ;\
     cd /tmp ;\
-    curl -LO http://download.redis.io/redis-stable.tar.gz ;\
+    curl -LO https://download.redis.io/redis-stable.tar.gz ;\
     tar -xzf redis-stable.tar.gz ;\
     cd redis-stable ;\
     make -j$(nproc) ;\
