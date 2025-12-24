@@ -12,6 +12,11 @@ on:
         required: false
         type: boolean
         default: false
+      build_ramp_packages:
+        description: "Build RAMP packages"
+        required: false
+        type: boolean
+        default: true
   pull_request:
     branches: [master, "[0-9]+.[0-9]+"]
   push:
@@ -509,7 +514,7 @@ jobs:
 
   ramp-package:
     needs: build
-    if: needs.build.result == 'success'
+    if: needs.build.result == 'success' && (startsWith(github.ref, 'refs/tags/') || github.event.inputs.build_ramp_packages == 'true')
     runs-on: ${{ matrix.platform.machine_label }}
     strategy:
       fail-fast: false
@@ -536,12 +541,6 @@ jobs:
             arch: arm64
             machine_label: ubuntu-24.04-arm
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          set-safe-directory: "*"
-          submodules: recursive
-
       - name: Download test image
         uses: actions/download-artifact@v7
         with:
@@ -554,7 +553,7 @@ jobs:
       - name: Create RAMP package (in test image)
         id: create_ramp
         run: |
-          SEMVER=${SEMVER:-$(./sbin/getver)}
+          SEMVER=$(echo "${{ github.ref }}" | sed 's|refs/tags/v||')
           mkdir -p /tmp/ramp
 
           cat > /tmp/ramp/ramp.yml << EOL
