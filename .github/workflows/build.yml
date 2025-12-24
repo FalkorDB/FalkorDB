@@ -553,7 +553,7 @@ jobs:
       - name: Create RAMP package (in test image)
         id: create_ramp
         run: |
-          SEMVER=$(echo "${{ github.ref }}" | sed 's|refs/tags/v||')
+          SEMVER=$(echo "${{ github.ref_name }}" | sed 's/^v//')
           mkdir -p /tmp/ramp
 
           cat > /tmp/ramp/ramp.yml << EOL
