@@ -22,3 +22,6 @@
 [submodule "deps/LAGraph"]
 	path = deps/LAGraph
 	url = https://github.com/GraphBLAS/LAGraph.git
+[submodule "deps/quickjs"]
+	path = deps/quickjs
+	url = https://github.com/bellard/quickjs.git

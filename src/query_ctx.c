@@ -498,20 +498,21 @@ void QueryCtx_Free(void) {
 	QueryCtx *ctx = _QueryCtx_GetCtx();
 	ASSERT(ctx != NULL);
 
-	if(ctx->undo_log) {
-		UndoLog_Free(ctx->undo_log);
-		ctx->undo_log = NULL;
-	}
-	EffectsBuffer_Free(ctx->effects_buffer);
-
-	if(ctx->query_data.params != NULL) {
-		HashTableRelease(ctx->query_data.params);
-		ctx->query_data.params = NULL;
+	if (ctx->undo_log) {
+		UndoLog_Free (ctx->undo_log) ;
+		ctx->undo_log = NULL ;
 	}
 
-	rm_free(ctx);
+	EffectsBuffer_Free (ctx->effects_buffer) ;
+
+	if (ctx->query_data.params != NULL) {
+		HashTableRelease (ctx->query_data.params) ;
+		ctx->query_data.params = NULL ;
+	}
+
+	rm_free (ctx) ;
 
 	// NULL-set the context for reuse the next time this thread receives a query
-	QueryCtx_RemoveFromTLS();
+	QueryCtx_RemoveFromTLS () ;
 }
 

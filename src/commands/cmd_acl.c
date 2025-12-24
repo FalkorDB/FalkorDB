@@ -565,7 +565,7 @@ static int _execute_acl_cmd_as_admin
 
 // this function is the main entry point for the GRAPH.ACL command
 // it manipulates the arguments, impersonate and calls redis ACL command
-int graph_acl_cmd
+int Graph_ACL
 (
 	RedisModuleCtx *ctx,       // the redis module context
 	RedisModuleString **argv,  // the arguments to the command
