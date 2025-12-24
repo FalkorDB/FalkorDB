@@ -590,7 +590,7 @@ jobs:
           ramp_format_version: 1
           EOL
 
-          file_name=falkordb-ramp-${{ matrix.platform.ramp_os }}-${SEMVER}.zip
+          file_name=falkordb-ramp-${{ matrix.platform.suffix }}-${SEMVER}.zip
 
           docker run --rm \
             -v /tmp/ramp:/tmp/ramp \
