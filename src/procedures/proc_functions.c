@@ -167,7 +167,7 @@ SIValue *Proc_FunctionsStep
 
 	// yield reducible
 	if (pdata->yield_reducible != NULL) {
-		*pdata->yield_reducible = SI_BoolVal (f->internal) ;
+		*pdata->yield_reducible = SI_BoolVal (f->reducible) ;
 	}
 
 	// yield aggregation
