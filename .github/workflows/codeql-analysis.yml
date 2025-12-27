@@ -76,35 +76,35 @@ jobs:
 
       - name: Cache GraphBLAS
         id: cache_graphblas
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: $GITHUB_WORKSPACE/bin/linux-x64-release/GraphBLAS
           key: graphblas-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
 
       - name: Cache parser
         id: cache_parser
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcypher-parser
           key: parser-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
       - name: Cache search
         id: cache_search
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: $GITHUB_WORKSPACE/bin/linux-x64-release/search-static
           key: search-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
       - name: Cache libcurl
         id: cache_libcurl
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcurl
           key: libcurl-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}
   
       - name: Cache libcsv
         id: cache_libcsv
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcsv
           key: libcsv-${{ hashFiles('./deps/libcsv/ChangeLog') }}
