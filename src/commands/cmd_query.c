@@ -21,6 +21,9 @@
 #include "../util/cache/cache.h"
 #include "../configuration/config.h"
 #include "../execution_plan/execution_plan.h"
+#include "keyspace_events.h"
+
+#include <string.h>
 
 // GraphQueryCtx stores the allocations required to execute a query
 typedef struct {
@@ -275,6 +278,12 @@ static void _ExecuteQuery(void *args) {
 				// replicate original query
 				QueryCtx_Replicate(query_ctx);
 			}
+
+			// emit keyspace notifications for graph modifications
+			const char *graph_name = GraphContext_GetName(gc);
+			RedisModuleString *graph_key = RedisModule_CreateString(rm_ctx, graph_name, strlen(graph_name));
+			KeyspaceEvent_EmitStats(rm_ctx, graph_key, &result_set->stats);
+			RedisModule_FreeString(rm_ctx, graph_key);
 		}
 	}
 
