@@ -12,6 +12,7 @@
 #include "../globals.h"
 #include "../query_ctx.h"
 #include "execution_ctx.h"
+#include "../udf/udf_ctx.h"
 #include "../graph/graph.h"
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
@@ -171,9 +172,10 @@ static void _ExecuteQuery(void *args) {
 	// update thread-local storage and track the CommandCtx
 	if (command_ctx->thread == EXEC_THREAD_WRITER) {
 		// transition the query from waiting to executing
-		QueryCtx_AdvanceStage(query_ctx);
-		QueryCtx_SetTLS(query_ctx);
-		Globals_TrackCommandCtx(command_ctx);
+		QueryCtx_AdvanceStage (query_ctx) ;
+		QueryCtx_SetTLS (query_ctx) ;
+		Globals_TrackCommandCtx (command_ctx) ;
+		UDFCtx_Update () ;  // make sure thread's UDFs are up to date
 	}
 
 	// instantiate the query ResultSet
@@ -387,6 +389,7 @@ void _query
 
 	Globals_TrackCommandCtx(command_ctx);
 	QueryCtx_SetGlobalExecutionCtx(command_ctx);
+	UDFCtx_Update () ;  // make sure thread's UDFs are up to date
 
 	// transition the query from waiting to executing
 	QueryCtx_AdvanceStage(query_ctx);
@@ -394,7 +397,9 @@ void _query
 	// parse query parameters and build an execution plan
 	// or retrieve it from the cache
 	exec_ctx = ExecutionCtx_FromQuery(command_ctx);
-	if(exec_ctx == NULL) goto cleanup;
+	if(exec_ctx == NULL || ErrorCtx_EncounteredError()) {
+		goto cleanup;
+	}
 
 	// update cached flag
 	QueryCtx_SetUtilizedCache(query_ctx, exec_ctx->cached);
@@ -494,4 +499,3 @@ void Graph_Profile(void *args) {
 void Graph_Query(void *args) {
 	_query(false, args);
 }
-

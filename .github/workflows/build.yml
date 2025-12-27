@@ -12,6 +12,11 @@ on:
         required: false
         type: boolean
         default: false
+      build_ramp_packages:
+        description: "Build RAMP packages"
+        required: false
+        type: boolean
+        default: true
   pull_request:
     branches: [master, "[0-9]+.[0-9]+"]
   push:
@@ -26,7 +31,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BASE_IMAGE_VERSION: 1.0.0
+  BASE_IMAGE_VERSION: 1.1.2
 jobs:
   build:
     runs-on: ${{ matrix.platform.machine_label }}
@@ -48,6 +53,7 @@ jobs:
             cache_path: linux-x64
             build_variants: [release, server]
             use_docker: true
+            build_test_image: true
           - name: ubuntu-arm64
             suffix: arm64v8
             os: ubuntu
@@ -56,6 +62,7 @@ jobs:
             cache_path: linux-arm64v8
             build_variants: [release, server]
             use_docker: true
+            build_test_image: true
           # Alpine builds
           - name: alpine-x64
             suffix: alpine-x64
@@ -65,6 +72,7 @@ jobs:
             cache_path: linux-x64
             build_variants: [release, server]
             use_docker: true
+            build_test_image: true
           - name: alpine-arm64
             suffix: alpine-arm64v8
             os: alpine
@@ -73,15 +81,17 @@ jobs:
             cache_path: linux-arm64v8
             build_variants: [release, server]
             use_docker: true
+            build_test_image: true
           # RHEL builds
-          - name: rhel-x64
-            suffix: rhel-x64
-            os: rhel
+          - name: rhel9-x64
+            suffix: rhel9-x64
+            os: rhel9
             arch: amd64
             machine_label: ubuntu-latest
             cache_path: linux-x64
             build_variants: [release]
             use_docker: true
+            build_test_image: true
           - name: rhel8-x64
             suffix: rhel8-x64
             os: rhel8
@@ -90,6 +100,16 @@ jobs:
             cache_path: linux-x64
             build_variants: [release]
             use_docker: true
+            build_test_image: true
+          - name: amazonlinux2023-x64
+            suffix: amazonlinux2023-x64
+            os: amazonlinux2023
+            arch: amd64
+            machine_label: ubuntu-latest
+            cache_path: linux-x64
+            build_variants: [release]
+            use_docker: true
+            build_test_image: true
           # macOS builds
           - name: macos-arm64
             suffix: macos-arm64v8
@@ -99,6 +119,7 @@ jobs:
             cache_path: macos-arm64v8
             build_variants: [release]
             use_docker: false
+            build_test_image: false
         build_type: [release, debug]
     steps:
       - uses: actions/checkout@v6
@@ -218,9 +239,12 @@ jobs:
           if [[ "${{ matrix.platform.os }}" == "alpine" ]]; then
             echo "final=Dockerfile.alpine" >> $GITHUB_OUTPUT
             echo "test=Dockerfile.alpine" >> $GITHUB_OUTPUT
-          elif [[ "${{ matrix.platform.os }}" == "rhel" ]] || [[ "${{ matrix.platform.os }}" == "rhel8" ]]; then
+          elif [[ "${{ matrix.platform.os }}" == rhel* ]]; then
             echo "final=Dockerfile" >> $GITHUB_OUTPUT
             echo "test=Dockerfile.rhel" >> $GITHUB_OUTPUT
+          elif [[ "${{ matrix.platform.os }}" == amazonlinux* ]]; then
+            echo "final=Dockerfile" >> $GITHUB_OUTPUT
+            echo "test=Dockerfile.amazonlinux2023" >> $GITHUB_OUTPUT
           else
             echo "final=Dockerfile" >> $GITHUB_OUTPUT
             echo "test=Dockerfile.debian" >> $GITHUB_OUTPUT
@@ -296,7 +320,7 @@ jobs:
           echo "BROWSER_TAG=${BROWSER_TAG}" >> $GITHUB_ENV
 
       - name: Build test image
-        if: matrix.platform.use_docker && matrix.build_type == 'release'
+        if: matrix.platform.build_test_image && matrix.platform.use_docker && matrix.build_type == 'release'
         uses: docker/build-push-action@v6
         with:
           context: /FalkorDB
@@ -312,7 +336,7 @@ jobs:
 
       - name: Upload test image
         if: matrix.platform.use_docker && matrix.build_type == 'release'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
@@ -342,7 +366,7 @@ jobs:
 
       - name: Upload base image
         if: matrix.platform.use_docker && matrix.build_type == 'release'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: falkordb-${{ matrix.platform.suffix }}
           path: /tmp/falkordb-${{ matrix.platform.suffix }}.tar
@@ -367,7 +391,7 @@ jobs:
 
       - name: Upload server image
         if: matrix.platform.use_docker && steps.dockerfile.outputs.build_server == 'true'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: falkordb-server-${{ matrix.platform.suffix }}
           path: /tmp/falkordb-server-${{ matrix.platform.suffix }}.tar
@@ -380,7 +404,7 @@ jobs:
           docker run --rm --entrypoint cat localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }} /FalkorDB/bin/src/falkordb.so > /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
 
       - name: Upload .so file
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
           path: /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
@@ -402,7 +426,9 @@ jobs:
             machine_label: ubuntu-latest
           - suffix: alpine-arm64v8
             machine_label: ubuntu-24.04-arm
-          - suffix: rhel-x64
+          - suffix: rhel9-x64
+            machine_label: ubuntu-latest
+          - suffix: amazonlinux2023-x64
             machine_label: ubuntu-latest
         test_type: [unit, flow, tck, fuzz]
     steps:
@@ -435,7 +461,7 @@ jobs:
 
       - name: Upload test logs
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.test_type }}-test-logs-${{ matrix.platform.suffix }}
           path: /tmp/logs
@@ -457,6 +483,10 @@ jobs:
             machine_label: ubuntu-latest
           - suffix: alpine-arm64v8
             machine_label: ubuntu-24.04-arm
+          - suffix: rhel9-x64
+            machine_label: ubuntu-latest
+          - suffix: amazonlinux2023-x64
+            machine_label: ubuntu-latest
     steps:
       - name: Download image
         uses: actions/download-artifact@v7
@@ -481,3 +511,114 @@ jobs:
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results.sarif
+
+  ramp-package:
+    needs: build
+    if: needs.build.result == 'success' && (startsWith(github.ref, 'refs/tags/') || github.event.inputs.build_ramp_packages == 'true')
+    runs-on: ${{ matrix.platform.machine_label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - ramp_os: rhel8
+            suffix: rhel8-x64
+            arch: amd64
+            machine_label: ubuntu-latest
+          - ramp_os: rhel9
+            suffix: rhel9-x64
+            arch: amd64
+            machine_label: ubuntu-latest
+          - ramp_os: amazonlinux2023
+            suffix: amazonlinux2023-x64
+            arch: amd64
+            machine_label: ubuntu-latest
+          - ramp_os: linux
+            suffix: x64
+            arch: amd64
+            machine_label: ubuntu-latest
+          - ramp_os: linux
+            suffix: arm64v8
+            arch: arm64
+            machine_label: ubuntu-24.04-arm
+    steps:
+      - name: Download test image
+        uses: actions/download-artifact@v7
+        with:
+          name: falkordb-tests-${{ matrix.platform.suffix }}
+          path: /tmp
+
+      - name: Load test image
+        run: docker load --input /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
+
+      - name: Create RAMP package (in test image)
+        id: create_ramp
+        run: |
+          SEMVER=$(echo "${{ github.ref_name }}" | sed 's/^v//')
+          mkdir -p /tmp/ramp
+
+          cat > /tmp/ramp/ramp.yml << EOL
+          ---
+          module_name: FalkorDB
+          architecture: ${{ matrix.platform.arch }}
+          os: ${{ matrix.platform.ramp_os }}
+          version: ${SEMVER}
+          semantic_version: ${SEMVER}
+          display_name: FalkorDB
+          author: FalkorDB
+          email: info@falkordb.com
+          description: A low-latency, high-throughput graph database
+          homepage: https://falkordb.com
+          license: SSPL
+          command_line_args: ""
+          min_redis_version: "7.2.0"
+          min_redis_pack_version: "6.0.0"
+          capabilities:
+            - types
+            - no_multi_key
+            - replica_of
+            - backup_restore
+            - reshard_rebalance
+            - failover_migrate
+            - persistence_aof
+            - persistence_rdb
+            - hash_policy
+            - clustering
+            - intershard_tls
+            - intershard_tls_pass
+            - ipv6
+          ramp_format_version: 1
+          EOL
+
+          file_name=falkordb-ramp-${{ matrix.platform.suffix }}-${SEMVER}.zip
+
+          docker run --rm \
+            -v /tmp/ramp:/tmp/ramp \
+            -e FILE_NAME="${file_name}" \
+            falkordb/falkordb-tests-${{ matrix.platform.suffix }} \
+            /bin/sh -c '
+              set -e
+              cp /FalkorDB/bin/src/falkordb.so /tmp/ramp/falkordb.so
+              if command -v apt-get >/dev/null 2>&1; then
+                apt-get update && apt-get install -y python3-pip python3-setuptools redis tar
+              elif command -v yum >/dev/null 2>&1; then
+                yum install -y python3-pip python3-setuptools redis tar || true
+                yum update -y || true
+              elif command -v apk >/dev/null 2>&1; then
+                apk add --no-cache python3 py3-pip py3-setuptools redis tar
+              fi
+              python3 -m pip install --upgrade pip
+              python3 -m pip install --break-system-packages git+https://github.com/RedisLabsModules/RAMP.git@71ab0ea1913fa2880b7e9ca0fd7ee4ef2fde2875
+              cd /tmp/ramp
+              redis-server --daemonize yes
+              python3 -m RAMP.ramp pack -m ramp.yml -o "$FILE_NAME" falkordb.so
+              redis-cli shutdown || true
+            '
+
+          echo "file_name=${file_name}" >> $GITHUB_OUTPUT
+
+      - name: Upload RAMP package
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ steps.create_ramp.outputs.file_name }}
+          path: /tmp/ramp/${{ steps.create_ramp.outputs.file_name }}
+          retention-days: 7

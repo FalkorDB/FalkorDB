@@ -5,3 +5,7 @@ leak:GB_Global_malloc_function
 leak:_dlerror_run
 leak:createRawStringObject
 leak:createEmbeddedStringObject
+leak:_UDFCtx_GetCtx
+leak:AR_FuncRegisterUDF
+leak:UDFCtx_RegisterLibrary
+leak:UDFCtx_RegisterFunction

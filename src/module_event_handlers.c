@@ -24,6 +24,9 @@
 #include <pthread.h>
 #include <stdbool.h>
 
+// forward declaration
+void RediSearch_CleanupModule();
+
 // indicates the possibility of half-baked graphs in the keyspace
 #define INTERMEDIATE_GRAPHS (aux_field_counter > 0)
 
@@ -366,33 +369,34 @@ static void _ShutdownEventHandler
 	uint64_t subevent,
 	void *data
 ) {
-	void RediSearch_CleanupModule();
 	if (!getenv("RS_GLOBAL_DTORS")) {  // used only with sanitizer or valgrind
 		return; 
 	}
 
 	// stop cron
-	Cron_Stop();
+	Cron_Stop () ;
 
 	// stop indexer
 	Indexer_Stop () ;
 
 	// stop threads before finalize GraphBLAS
-	ThreadPool_Destroy();
+	ThreadPool_Destroy () ;
 
 	// server is shutting down, finalize GraphBLAS
-	LAGraph_Finalize(NULL);
+	LAGraph_Finalize (NULL) ;
 
-	RedisModule_Log(ctx, "notice", "%s", "Clearing RediSearch resources on shutdown");
-	RediSearch_CleanupModule();
+	free_cmd_acl () ;
+	free_run_cmd_as () ;
 
-	free_cmd_acl();
-	free_run_cmd_as();
-
-	BoltApi_Unregister();
+	BoltApi_Unregister () ;
 
 	// free global variables
-	Globals_Free();
+	Globals_Free () ;
+
+	RedisModule_Log (ctx, "notice", "%s",
+			"Clearing RediSearch resources on shutdown") ;
+
+	RediSearch_CleanupModule () ;
 }
 
 static void _ModuleLoadedHandler
