@@ -9,6 +9,7 @@
 #include "graph/graphcontext.h"
 #include "query_ctx.h"
 #include "resultset/resultset.h"
+#include "keyspace_events.h"
 
 // graphContext type as it is registered at Redis
 extern RedisModuleType *GraphContextRedisModuleType;
@@ -35,6 +36,10 @@ int Graph_Delete
 		if(RedisModule_ModuleTypeGetType(key) == GraphContextRedisModuleType) {
 			deleted = true;
 			RedisModule_DeleteKey(key);  // untrack graph & decreases graph ref count
+			
+			// emit keyspace notification for graph deletion
+			KeyspaceEvent_EmitGraphDeleted(ctx, key_name);
+			
 			RedisModule_ReplyWithSimpleString(ctx, "OK");
 			// delete commands should always modify slaves
 			RedisModule_ReplicateVerbatim(ctx);

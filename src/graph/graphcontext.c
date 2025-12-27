@@ -16,6 +16,7 @@
 #include "../constraint/constraint.h"
 #include "../serializers/graphcontext_type.h"
 #include "../commands/execution_ctx.h"
+#include "../commands/keyspace_events.h"
 
 #include <pthread.h>
 #include <sys/param.h>
@@ -165,6 +166,9 @@ static GraphContext *_GraphContext_Create
 
 	// register graph context for BGSave
 	GraphContext_RegisterWithModule(gc);
+
+	// emit keyspace notification for graph creation
+	RedisModule_NotifyKeyspaceEvent(ctx, REDISMODULE_NOTIFY_MODULE, "graph.create", graphID);
 
 	RedisModule_FreeString(ctx, graphID);
 	RedisModule_CloseKey(key);

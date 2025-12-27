@@ -21,6 +21,7 @@
 #include "../util/cache/cache.h"
 #include "../configuration/config.h"
 #include "../execution_plan/execution_plan.h"
+#include "keyspace_events.h"
 
 // GraphQueryCtx stores the allocations required to execute a query
 typedef struct {
@@ -275,6 +276,9 @@ static void _ExecuteQuery(void *args) {
 				// replicate original query
 				QueryCtx_Replicate(query_ctx);
 			}
+
+			// emit keyspace notifications for graph modifications
+			KeyspaceEvent_EmitStats(rm_ctx, GraphContext_GetName(gc), &result_set->stats);
 		}
 	}
 

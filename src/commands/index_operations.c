@@ -11,6 +11,7 @@
 #include "../graph/graph_hub.h"
 #include "../datatypes/datatypes.h"
 #include "../arithmetic/arithmetic_expression_construct.h"
+#include "keyspace_events.h"
 
 // parse drop index old format
 // DROP INDEX ON :N(name)
