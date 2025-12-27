@@ -72,11 +72,10 @@ void KeyspaceEvent_EmitStats
 	if(stats->properties_set > 0 || stats->properties_removed > 0) {
 		// If properties were set/removed, it's an update operation
 		// We can't distinguish between node and edge property updates from stats alone
-		// So we emit both if there were any property modifications
-		if(stats->properties_set > 0) {
-			_emit_event(ctx, "graph.node.update", key);
-			_emit_event(ctx, "graph.edge.update", key);
-		}
+		// So we emit both events when there are any property modifications
+		// This is a conservative approach that may emit false positives
+		_emit_event(ctx, "graph.node.update", key);
+		_emit_event(ctx, "graph.edge.update", key);
 	}
 
 	// Label operations also indicate updates

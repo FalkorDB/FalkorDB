@@ -11,7 +11,7 @@ The following keyspace notifications are emitted by FalkorDB:
 ### Graph Operations
 - `graph.create` - When a new graph is created
 - `graph.delete` - When a graph is deleted/dropped
-- `graph.query` - When a write query is executed (general modification event)
+- `graph.query` - When a write query is executed (emitted alongside specific node/edge events)
 
 ### Node Operations
 - `graph.node.create` - When nodes are created
@@ -126,6 +126,10 @@ RedisModule_SubscribeToKeyspaceEvents(ctx,
 - Notifications are only sent to subscribers (no overhead if no subscribers exist)
 - When disabled (default), there is zero performance impact
 - The module automatically detects notification settings via Redis configuration
+
+## Known Limitations
+
+- **Property update events**: When properties are modified on nodes or edges, both `graph.node.update` and `graph.edge.update` events are emitted because the result statistics don't distinguish between node and edge property updates. This is a conservative approach that may produce false positives (e.g., emitting `graph.edge.update` when only node properties were modified).
 
 ## Use Cases
 
