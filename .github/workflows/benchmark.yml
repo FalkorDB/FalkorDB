@@ -138,7 +138,7 @@ jobs:
           python3 run_benchmarks.py group_${{ matrix.benchmark_group }}
 
       - name: Upload results
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ github.head_ref || github.ref_name }}-benchmark-group_${{ matrix.benchmark_group }}-results
           path: tests/benchmarks/*-results.json
@@ -171,7 +171,7 @@ jobs:
           pattern: ${{ github.head_ref || github.ref_name }}-benchmark-group_*-results
           merge-multiple: true
       - name: Upload merged results
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ github.head_ref || github.ref_name }}-benchmark-results
           path: ./*-results.json
