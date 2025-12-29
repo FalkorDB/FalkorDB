@@ -128,3 +128,63 @@ class testOperatorPrecedence():
         # (n.val) ^ 3 should be 8, which is IN [8, 9, 10]
         result = self.g.query("MATCH (n) WHERE (n.val) ^ 3 IN [8, 9, 10] RETURN n.val")
         self.env.assertEqual(result.result_set, [[2]])
+
+    def test12_chained_subtraction_with_contains(self):
+        """Test chained non-commutative subtraction with CONTAINS predicate"""
+        self.g.query("CREATE (:Node {a: 100, b: 20, c: 30})")
+        
+        # Test: (n.a) - (n.b) - (n.c) should be (100 - 20 - 30) = 50
+        # Then toString(50) CONTAINS '5' should be true
+        result = self.g.query("MATCH (n) WHERE toString((n.a) - (n.b) - (n.c)) CONTAINS '5' RETURN n.a")
+        self.env.assertEqual(result.result_set, [[100]])
+        
+        # Verify the chained subtraction is left-associative: (100 - 20) - 30 = 50, not 100 - (20 - 30) = 110
+        result = self.g.query("MATCH (n) WHERE toString((n.a) - (n.b) - (n.c)) CONTAINS '110' RETURN n.a")
+        self.env.assertEqual(result.result_set, [])
+
+    def test13_chained_division_with_in(self):
+        """Test chained non-commutative division with IN predicate"""
+        self.g.query("CREATE (:Node {a: 100, b: 5, c: 2})")
+        
+        # Test: (n.a) / (n.b) / (n.c) should be (100 / 5 / 2) = 10
+        # Then 10 IN [10, 20, 30] should be true
+        result = self.g.query("MATCH (n) WHERE (n.a) / (n.b) / (n.c) IN [10, 20, 30] RETURN n.a")
+        self.env.assertEqual(result.result_set, [[100]])
+        
+        # Verify left-associativity: (100 / 5) / 2 = 10, not 100 / (5 / 2) = 40
+        result = self.g.query("MATCH (n) WHERE (n.a) / (n.b) / (n.c) IN [40] RETURN n.a")
+        self.env.assertEqual(result.result_set, [])
+
+    def test14_chained_modulo_with_starts_with(self):
+        """Test chained modulo operations with STARTS WITH predicate"""
+        self.g.query("CREATE (:Node {a: 17, b: 5, c: 3})")
+        
+        # Test: (n.a) % (n.b) % (n.c) should be (17 % 5 % 3) = (2 % 3) = 2
+        # Then toString(2) STARTS WITH '2' should be true
+        result = self.g.query("MATCH (n) WHERE toString((n.a) % (n.b) % (n.c)) STARTS WITH '2' RETURN n.a")
+        self.env.assertEqual(result.result_set, [[17]])
+
+    def test15_mixed_chained_operators_with_ends_with(self):
+        """Test mixed chained arithmetic operators with ENDS WITH predicate"""
+        self.g.query("CREATE (:Node {a: 10, b: 3, c: 2})")
+        
+        # Test: (n.a) * (n.b) - (n.c) should be (10 * 3 - 2) = 28
+        # Then toString(28) ENDS WITH '8' should be true
+        result = self.g.query("MATCH (n) WHERE toString((n.a) * (n.b) - (n.c)) ENDS WITH '8' RETURN n.a")
+        self.env.assertEqual(result.result_set, [[10]])
+
+    def test16_complex_chained_expression_with_contains(self):
+        """Test complex chained expression with CONTAINS predicate"""
+        self.g.query("CREATE (:Node {val: 'test'})")
+        
+        # Test: (n.val) + 'a' + 'b' + 'c' CONTAINS 'abc'
+        # Should evaluate as ((((n.val) + 'a') + 'b') + 'c') CONTAINS 'abc'
+        # Result: 'testabc' CONTAINS 'abc' = true
+        result = self.g.query("MATCH (n) WHERE (n.val) + 'a' + 'b' + 'c' CONTAINS 'abc' RETURN n.val")
+        self.env.assertEqual(result.result_set, [['test']])
+        
+        # Negative test: verify it's not right-associative
+        # If right-associative, it would be 'test' + ('a' + ('b' + ('c' CONTAINS 'abc')))
+        # which would fail with type mismatch
+        result = self.g.query("MATCH (n) WHERE (n.val) + 'a' + 'b' + 'c' CONTAINS 'testabc' RETURN n.val")
+        self.env.assertEqual(result.result_set, [['test']])
