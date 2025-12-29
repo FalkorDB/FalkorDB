@@ -16,7 +16,7 @@ bool is_safe_path(
     const char *path
 ) {
     char resolved_path[PATH_MAX];
-
+    size_t base_len;
     // resolve the full path to absolute canonical paths
     if (realpath(path, resolved_path) == NULL) {
         if (errno == ENOENT) {
@@ -26,7 +26,15 @@ bool is_safe_path(
         }
         return false;
     }
-
-    // ensure the resolved_full starts with base
-    return (strncmp(base, resolved_path, strlen(base)) == 0);
+    // ensure the resolved path starts with base and respects path boundaries
+    base_len = strlen(base);
+    if (strncmp(base, resolved_path, base_len) != 0) {
+        return false;
+    }
+    
+    // check that after base prefix, we have either:
+    // - end of string (exact match)
+    // - path separator (subdirectory)
+    return (resolved_path[base_len] == '\0' || 
+            resolved_path[base_len] == '/');
 }

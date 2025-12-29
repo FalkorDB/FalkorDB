@@ -84,16 +84,6 @@ static FILE *_getRemoteURIReadStream
 	return fdopen(pipefd[0], "r");
 }
 
-// validate that the user's specified path remains within
-// the configuration base path
-//
-// e.g.
-// configuration import dir: /var/lib/FalkorDB/import
-// user's relative path:   /../../unauthorized/access.pem
-// if were to access /var/lib/FalkorDB/import/../../unauthorized/access.pem
-// malicious actor whould have gain access to restricted data
-// is_safe_path moved to src/util/path_utils.{h,c}
-
 // initialize CSV reader from a local file URI file://
 static FILE *_getLocalURIReadStream
 (

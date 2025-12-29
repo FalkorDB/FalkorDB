@@ -549,6 +549,8 @@ int Graph_Copy
 	GraphCopyContext *context = GraphCopyContext_New(bc, argv[1], argv[2]);
 
 	if(context == NULL) {
+		RedisModule_FreeString(ctx, argv[1]);
+		RedisModule_FreeString(ctx, argv[2]);
 		RedisModule_UnblockClient(bc, NULL);
 		return RedisModule_ReplyWithError(ctx, "Failed to create copy context");
 	}
