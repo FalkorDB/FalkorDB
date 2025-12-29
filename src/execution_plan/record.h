@@ -119,6 +119,14 @@ SIValue Record_Get
 	uint idx
 );
 
+// get a node from record
+// if record[idx] is unset, set its type to REC_TYPE_NODE
+Node *Record_GetSetNode
+(
+	Record r,  // record
+	uint idx   // entry index
+);
+
 // remove item at position idx
 void Record_Remove
 (

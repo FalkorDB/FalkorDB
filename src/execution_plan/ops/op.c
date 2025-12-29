@@ -379,6 +379,20 @@ void OpBase_BindOpToPlan
 	}
 }
 
+// create a new record batch
+RecordBatch OpBase_CreateRecordBatch
+(
+	const OpBase *op,  // op
+	uint16_t n         // batch size
+) {
+	ExecutionPlan *plan = (ExecutionPlan*)op->plan;
+
+	RecordBatch batch = RecordBatch_New (n) ;
+	ExecutionPlan_BorrowRecords (batch, plan, n) ;
+
+	return batch ;
+}
+
 inline Record OpBase_CreateRecord
 (
 	const OpBase *op

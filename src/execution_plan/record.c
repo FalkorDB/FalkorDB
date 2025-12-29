@@ -225,6 +225,30 @@ SIValue Record_Get
 	}
 }
 
+// get a node from record
+// if record[idx] is unset, set its type to REC_TYPE_NODE
+Node *Record_GetSetNode
+(
+	Record r,  // record
+	uint idx   // entry index
+) {
+	ASSERT (r != NULL) ;
+	ASSERT (idx < Record_length (r));
+
+	Entry *e = r->entries + idx ;
+	if (e->type == REC_TYPE_UNKNOWN) {
+		e->type = REC_TYPE_NODE ;
+	}
+
+	if (unlikely (e->type != REC_TYPE_NODE)) {
+		ErrorCtx_RaiseRuntimeException (
+				"encountered unexpected record type when trying to retrieve node") ;
+		return NULL ;
+	}
+
+	return &(e->value.n) ;
+}
+
 void Record_Remove
 (
 	Record r,

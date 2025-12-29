@@ -1,7 +1,6 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #include "op_all_node_scan.h"
@@ -10,7 +9,7 @@
 
 // forward declarations
 static OpResult AllNodeScanInit(OpBase *opBase);
-static Record AllNodeScanConsume(OpBase *opBase);
+static RecordBatch AllNodeScanConsume(OpBase *opBase);
 static Record AllNodeScanConsumeFromChild(OpBase *opBase);
 static OpResult AllNodeScanReset(OpBase *opBase);
 static OpBase *AllNodeScanClone(const ExecutionPlan *plan, const OpBase *opBase);
@@ -43,14 +42,18 @@ static OpResult AllNodeScanInit
 (
 	OpBase *opBase
 ) {
-	AllNodeScan *op = (AllNodeScan *)opBase;
+	Graph       *g  = QueryCtx_GetGraph () ;
+	AllNodeScan *op = (AllNodeScan *)opBase ;
 
-	if(opBase->childCount > 0) {
-		OpBase_UpdateConsume(opBase, AllNodeScanConsumeFromChild);
+	op->node_count = Graph_NodeCount (g) ;
+
+	if (opBase->childCount > 0) {
+		OpBase_UpdateConsume (opBase, AllNodeScanConsumeFromChild) ;
 	} else {
-		op->iter = Graph_ScanNodes(QueryCtx_GetGraph());
+		op->iter = Graph_ScanNodes (g) ;
 	}
-	return OP_OK;
+
+	return OP_OK ;
 }
 
 static Record AllNodeScanConsumeFromChild
@@ -92,34 +95,45 @@ static Record AllNodeScanConsumeFromChild
 	return r;
 }
 
-static Record AllNodeScanConsume
+static RecordBatch AllNodeScanConsume
 (
 	OpBase *opBase
 ) {
 	AllNodeScan *op = (AllNodeScan *)opBase;
 
-	Node n = GE_NEW_NODE();
-	n.attributes = DataBlockIterator_Next(op->iter, &n.id);
-	if(n.attributes == NULL) return NULL;
+	uint16_t n = MIN (op->node_count - op->progress, 64) ;
+	if (n == 0) {
+		return NULL ;
+	}
 
-	Record r = OpBase_CreateRecord((OpBase *)op);
-	Record_AddNode(r, op->nodeRecIdx, n);
+	RecordBatch batch = OpBase_CreateRecordBatch (opBase, n) ;
 
-	return r;
+	// populate batch
+	for (uint16_t i = 0; i < n; i++) {
+		Record r = batch[i] ;
+		Node *node = Record_GetSetNode (r, op->nodeRecIdx) ;
+
+		node->attributes = DataBlockIterator_Next (op->iter, &node->id) ;
+		ASSERT (node->attributes != NULL) ;
+	}
+
+	op->progress += n ;
+
+	return batch ;
 }
 
 static void _AllNodeScan_FreeInternals
 (
 	AllNodeScan *op
 ) {
-	if(op->child_record) {
-		OpBase_DeleteRecord(&op->child_record);
-		op->child_record = NULL;
+	if (op->child_record) {
+		OpBase_DeleteRecord (&op->child_record) ;
+		op->child_record = NULL ;
 	}
 
-	if(op->iter != NULL) {
-		DataBlockIterator_Free(op->iter);
-		op->iter = NULL;
+	if (op->iter != NULL) {
+		DataBlockIterator_Free (op->iter) ;
+		op->iter = NULL ;
 	}
 }
 
@@ -127,16 +141,19 @@ static OpResult AllNodeScanReset
 (
 	OpBase *op
 ) {
+	Graph       *g           = QueryCtx_GetGraph ();
 	AllNodeScan *allNodeScan = (AllNodeScan *)op;
 
-	_AllNodeScan_FreeInternals(allNodeScan);
+	_AllNodeScan_FreeInternals (allNodeScan) ;
 
 	// reset iterator by recreating it
 	// a simple DataBlockIterator_Reset is NOT good enough
 	// as the iterator "end" position might be outdated
-	allNodeScan->iter = Graph_ScanNodes(QueryCtx_GetGraph());
+	allNodeScan->iter       = Graph_ScanNodes (g) ;
+	allNodeScan->progress   = 0 ;
+	allNodeScan->node_count = Graph_NodeCount (g) ;
 
-	return OP_OK;
+	return OP_OK ;
 }
 
 static inline OpBase *AllNodeScanClone

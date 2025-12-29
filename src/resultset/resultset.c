@@ -60,34 +60,39 @@ ResultSet *NewResultSet
 ) {
 	ResultSet *set = rm_malloc(sizeof(ResultSet));
 
-	set->gc                  =  QueryCtx_GetGraphCtx();
-	set->ctx                 =  ctx;
-	set->cells               =  NULL;
-	set->format              =  format;
-	set->columns             =  NULL;
-	set->formatter           =  ResultSetFormatter_GetFormatter(format);
-	set->bolt_client         =  bolt_client;
-	set->column_count        =  0;
-	set->cells_allocation    =  M_NONE;
-	set->columns_record_map  =  NULL;
+	set->gc                 = QueryCtx_GetGraphCtx() ;
+	set->ctx                = ctx ;
+	set->cells              = NULL ;
+	set->format             = format ;
+	set->columns            = NULL ;
+	set->formatter          = ResultSetFormatter_GetFormatter (format) ;
+	set->bolt_client        = bolt_client ;
+	set->column_count       = 0 ;
+	set->cells_allocation   = M_NONE ;
+	set->columns_record_map = NULL ;
 
 	// init resultset statistics
-	ResultSetStat_init(&set->stats);
+	ResultSetStat_init (&set->stats) ;
 
 	// create resultset columns
-	if(set->format != FORMATTER_NOP) {
-		_ResultSet_SetColumns(set);
+	if (set->format != FORMATTER_NOP) {
+		_ResultSet_SetColumns (set) ;
 	}
 
 	// allocate space for resultset entries only if data is expected
-	if(set->column_count > 0) {
+	if (set->column_count > 0) {
 		// none empty result-set
 		// allocate enough space for at least 10 rows
-		uint64_t nrows = set->column_count * 10;
-		set->cells = DataBlock_New(16384, nrows, sizeof(SIValue), NULL);
+		uint64_t nrows = set->column_count * 10 ;
+
+		// make sure block_size is a multiplier of number of columns
+		uint64_t block_size = 16384 - (16384 % set->column_count) ;
+		ASSERT (block_size % set->column_count == 0) ;
+
+		set->cells = DataBlock_New (block_size, nrows, sizeof (SIValue), NULL) ;
 	}
 
-	return set;
+	return set ;
 }
 
 // map each column to a record index
@@ -122,6 +127,80 @@ uint64_t ResultSet_RowCount
 
 	if(set->column_count == 0) return 0;
 	return DataBlock_ItemCount(set->cells) / set->column_count;
+}
+
+// materializes a RecordBatch into the ResultSet by copying projected values
+// into the result set's data blocks and clearing the source records
+int ResultSet_AddBatch
+(
+	ResultSet *set,    // resultset to extend
+	RecordBatch batch  // record containing projected data
+) {
+	ASSERT (set   != NULL) ;
+	ASSERT (batch != NULL) ;
+
+	//--------------------------------------------------------------------------
+	// state variables
+	//--------------------------------------------------------------------------
+
+	uint32_t batch_size = RecordBatch_Size (batch) ;       // # records in batch
+	ASSERT (batch_size > 0) ;
+
+	uint32_t col_count = set->column_count ;               // # columns per row
+    uint32_t n_cells_remaining = batch_size * col_count ;  // # remaining cells
+
+	uint32_t rec_idx = 0 ; // current record index within the batch
+
+    SIValue *cells            = NULL ;  // contiguous memory block
+    uint32_t cells_offset     = 0 ;     // write offset within the 'cells' block
+	uint32_t actual_available = 0 ;     // number of cells currently usable
+
+	//--------------------------------------------------------------------------
+	// copy data from records to Result Set
+	//--------------------------------------------------------------------------
+
+	while (n_cells_remaining > 0) {
+		if (actual_available == 0) {
+			cells = (SIValue *) DataBlock_AllocateItems (set->cells,
+					n_cells_remaining, &actual_available) ;
+			cells_offset = 0 ;
+		}
+
+		// Since block_size is a multiplier of col_count, actual_available is always rows * col_count
+		uint32_t rows_to_process = actual_available / col_count ;
+
+		for (uint32_t r_count = 0; r_count < rows_to_process; r_count++) {
+			Record r = batch[rec_idx] ;
+			SIValue *row_ptr = &cells[cells_offset] ;
+
+			for (int i = 0 ; i < col_count; i++) {
+				int value_idx = set->columns_record_map[i] ;
+				row_ptr[i] = Record_Get (r, value_idx) ;
+				SIValue_Persist (&row_ptr[i]) ;
+				set->cells_allocation |= SI_ALLOCATION (&row_ptr[i]) ;
+			}
+
+			rec_idx++ ;
+			cells_offset += col_count ;
+		}
+
+		n_cells_remaining -= actual_available ;
+		actual_available = 0 ;
+	}
+
+	// remove entry from record in a second pass
+	// this will ensure duplicated projections are not removed
+	// too early, consider: MATCH (a) RETURN max(a.val), max(a.val)
+	for (uint32_t i = 0; i < batch_size; i++) {
+		Record r = batch[i] ;
+
+		for(int j = 0; j < set->column_count; j++) {
+			int idx = set->columns_record_map[j] ;
+			Record_Remove (r, idx) ;
+		}
+	}
+
+	return RESULTSET_OK ;
 }
 
 // add a new row to resultset
@@ -225,35 +304,32 @@ void ResultSet_Reply
 ) {
 	ASSERT(set != NULL);
 
-	uint64_t row_count = ResultSet_RowCount(set);
+	uint64_t row_count = ResultSet_RowCount (set) ;
 
 	// check to see if we've encountered a run-time error
 	// if so, emit it as the only response
-	if(ErrorCtx_EncounteredError()) {
-		ErrorCtx_EmitException();
-		return;
+	if (ErrorCtx_EncounteredError ()) {
+		ErrorCtx_EmitException () ;
+		return ;
 	}
 
 	// set up the results array and emit the header if the query requires one
-	_ResultSet_ReplyWithPreamble(set);
+	_ResultSet_ReplyWithPreamble (set) ;
 
 	// emit resultset
-	if(set->column_count > 0) {
-		RedisModule_ReplyWithArray(set->ctx, row_count);
-		SIValue *row[set->column_count];
-		uint64_t cells = DataBlock_ItemCount(set->cells);
-		// for each row
-		for(uint64_t i = 0; i < cells; i += set->column_count) {
-			// for each column
-			for(uint j = 0; j < set->column_count; j++) {
-				row[j] = DataBlock_GetItem(set->cells, i + j);
-			}
-
-			set->formatter->EmitRow(set, row);
+	if (set->column_count > 0) {
+		RedisModule_ReplyWithArray (set->ctx, row_count) ;
+		uint64_t cells = DataBlock_ItemCount (set->cells) ;
+		// for each row:
+		for (uint64_t i = 0; i < cells; i += set->column_count) {
+			// note rows are stored consecutively within the datablock
+			// no rows cross a block boundry
+			SIValue *row = DataBlock_GetItem (set->cells, i) ;
+			set->formatter->EmitRow (set, row) ;
 		}
 	}
 
-	set->formatter->EmitStats(set);
+	set->formatter->EmitStats (set) ;
 }
 
 void ResultSet_Clear(ResultSet *set) {

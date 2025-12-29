@@ -18,7 +18,7 @@ void ResultSet_EmitNOPHeader
 void ResultSet_EmitNOPRow
 (
     ResultSet *set,
-    SIValue **row
+    SIValue *row
 );
 
 // emit statistics
@@ -26,3 +26,4 @@ void ResultSet_EmitNOPStats
 (
     ResultSet *set
 );
+
