@@ -8,11 +8,18 @@ import pytest
 
 class testGraphCopyTempFolder:
     def teardown_method(self):
-        self.conn.delete(self.src, self.dest)
+        # Only attempt delete if setup completed and attributes exist
+        if hasattr(self, 'conn') and hasattr(self, 'src') and hasattr(self, 'dest') and self.conn:
+            try:
+                self.conn.delete(self.src, self.dest)
+            except Exception:
+                pass
 
     def set_temp_folder(self, path):
         module_args = f"TEMP_FOLDER {path}"
         self.env, self.db = Env(moduleArgs=module_args, enableDebugCommand=True)
+        if SANITIZER:
+            self.env.skip()
         self.conn = self.env.getConnection()
         self.src = 'temp_src_graph'
         self.dest = 'temp_dest_graph'
@@ -20,8 +27,6 @@ class testGraphCopyTempFolder:
         src_graph.query("RETURN 1")
 
     def test_01_temp_folder_is_file(self):
-        if SANITIZER:
-            self.env.skip()
         fd, file_path = tempfile.mkstemp()
         os.close(fd)
         try:
@@ -31,8 +36,6 @@ class testGraphCopyTempFolder:
             os.remove(file_path)
 
     def test_02_temp_folder_not_exist(self):
-        if SANITIZER:
-            self.env.skip()
         non_existent = "/tmp/falkordb_nonexistent_dir"
         if os.path.exists(non_existent):
             shutil.rmtree(non_existent)
@@ -40,8 +43,6 @@ class testGraphCopyTempFolder:
             self.set_temp_folder(non_existent)
 
     def test_03_temp_folder_no_permission(self):
-        if SANITIZER:
-            self.env.skip()
         no_perm_dir = tempfile.mkdtemp()
         os.chmod(no_perm_dir, stat.S_IREAD)
         try:
@@ -52,8 +53,6 @@ class testGraphCopyTempFolder:
             shutil.rmtree(no_perm_dir)
 
     def test_04_temp_folder_exists_success(self):
-        if SANITIZER:
-            self.env.skip()
         valid_dir = tempfile.mkdtemp()
         self.set_temp_folder(valid_dir)
         try:
@@ -62,4 +61,3 @@ class testGraphCopyTempFolder:
             assert self.conn.type(self.dest) == 'graphdata'
         finally:
             shutil.rmtree(valid_dir)
-            self.conn.delete(self.dest)

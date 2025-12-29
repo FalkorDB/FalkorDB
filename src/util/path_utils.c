@@ -16,9 +16,20 @@ bool is_safe_path(
     const char *path
 ) {
     char resolved_path[PATH_MAX];
-    size_t base_len;
+    char *canonical_base = realpath(base, NULL);
+    if (canonical_base == NULL) {
+        // base path must exist and be resolvable
+        return false;
+    }
+    // Remove trailing slash except for root
+    size_t canon_len = strlen(canonical_base);
+    if (canon_len > 1 && canonical_base[canon_len - 1] == '/') {
+        canonical_base[canon_len - 1] = '\0';
+        canon_len--;
+    }
     // resolve the full path to absolute canonical paths
     if (realpath(path, resolved_path) == NULL) {
+        free(canonical_base);
         if (errno == ENOENT) {
             // Part of the path doesn't exist. Allow to proceed (open will fail),
             // so we don't leak existence outside the base via this check.
@@ -26,15 +37,15 @@ bool is_safe_path(
         }
         return false;
     }
-    // ensure the resolved path starts with base and respects path boundaries
-    base_len = strlen(base);
-    if (strncmp(base, resolved_path, base_len) != 0) {
+    // ensure the resolved path starts with canonical_base and respects path boundaries
+    if (strncmp(canonical_base, resolved_path, canon_len) != 0) {
+        free(canonical_base);
         return false;
     }
-    
     // check that after base prefix, we have either:
     // - end of string (exact match)
     // - path separator (subdirectory)
-    return (resolved_path[base_len] == '\0' || 
-            resolved_path[base_len] == '/');
+    bool safe = (resolved_path[canon_len] == '\0' || resolved_path[canon_len] == '/');
+    free(canonical_base);
+    return safe;
 }
