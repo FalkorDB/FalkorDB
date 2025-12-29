@@ -7,6 +7,9 @@ class testOperatorPrecedence():
         self.env, self.db = Env()
         self.g = self.db.select_graph(GRAPH_ID)
 
+    def tearDown(self):
+        self.g.delete()
+
     def test01_contains_with_concatenation(self):
         """Test that arithmetic operators have higher precedence than CONTAINS"""
         # Create test data
