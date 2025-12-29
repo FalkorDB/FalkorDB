@@ -317,6 +317,51 @@ static AR_ExpNode *_AR_EXP_FromBinaryOpExpression(const cypher_astnode_t *expr) 
 	op->op.children[0] = _AR_EXP_FromASTNode(lhs_node);
 	const cypher_astnode_t *rhs_node = cypher_ast_binary_operator_get_argument2(expr);
 	op->op.children[1] = _AR_EXP_FromASTNode(rhs_node);
+	
+	// Fix operator precedence: arithmetic operators should have higher precedence
+	// than predicate operators (CONTAINS, STARTS WITH, ENDS WITH, IN)
+	// If current operator is arithmetic and RHS is a predicate operator,
+	// rotate the AST to ensure correct evaluation order
+	if((operator_enum == OP_PLUS || operator_enum == OP_MINUS || 
+	    operator_enum == OP_MULT || operator_enum == OP_DIV || 
+	    operator_enum == OP_MOD || operator_enum == OP_POW)) {
+		
+		AR_ExpNode *rhs = op->op.children[1];
+		
+		// Check if RHS is a predicate operator
+		if(rhs->type == AR_EXP_OP && rhs->op.child_count == 2 &&
+		   (strcmp(rhs->op.f->name, "contains") == 0 ||
+		    strcmp(rhs->op.f->name, "startsWith") == 0 ||
+		    strcmp(rhs->op.f->name, "endsWith") == 0 ||
+		    strcmp(rhs->op.f->name, "in") == 0)) {
+			
+			// Rotate AST: A + (B CONTAINS C) -> (A + B) CONTAINS C
+			// Original structure:
+			//       +
+			//      / \
+			//     A  CONTAINS
+			//         / \
+			//        B   C
+			// Desired structure:
+			//     CONTAINS
+			//       / \
+			//      +   C
+			//     / \
+			//    A   B
+			
+			AR_ExpNode *A = op->op.children[0];
+			AR_ExpNode *B = rhs->op.children[0];
+			AR_ExpNode *C = rhs->op.children[1];
+			
+			// Rewire: op becomes left child of rhs
+			op->op.children[1] = B;
+			rhs->op.children[0] = op;
+			// rhs->op.children[1] already points to C
+			
+			return rhs;
+		}
+	}
+	
 	return op;
 }
 
