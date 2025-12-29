@@ -1,0 +1,94 @@
+name: Release RAMP artifacts
+
+on:
+  workflow_run:
+    workflows: ["Build"]
+    types: [completed]
+    branches: ["v[0-9]+.[0-9]+"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (must already exist and start with v)"
+        required: true
+      commit_sha:
+        description: "Commit SHA to fetch artifacts from Build workflow"
+        required: true
+
+env:
+  BUILD_WORKFLOW_NAME: build.yml
+  # Get the commit SHA from the event that triggered the workflow
+  # Use workflow_dispatch input when dispatched manually, otherwise the head_commit.id from the triggering Build workflow_run
+  COMMIT_SHA: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.commit_sha || github.event.workflow_run.head_commit.id || github.sha }}
+
+jobs:
+  upload-ramp-files:
+    if: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v')) || (github.event_name == 'workflow_dispatch' && startsWith(github.event.inputs.tag, 'v')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set SEMVER and TAG
+        id: set_semver
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            TAG_NAME=${{ github.event.inputs.tag }}
+          else
+            TAG_NAME=${{ github.event.workflow_run.head_branch }}
+          fi
+          SEMVER=$(echo "${TAG_NAME}" | sed 's/^v//')
+          echo "SEMVER=${SEMVER}" >> $GITHUB_OUTPUT
+          echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Download rhel8 ramp file
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-ramp-rhel8-x64-${{ steps.set_semver.outputs.SEMVER }}.zip
+          if_no_artifact_found: error
+
+      - name: Download rhel9 ramp file
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-ramp-rhel9-x64-${{ steps.set_semver.outputs.SEMVER }}.zip
+          if_no_artifact_found: error
+
+      - name: Download amazonlinux2023 ramp file
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-ramp-amazonlinux2023-x64-${{ steps.set_semver.outputs.SEMVER }}.zip
+          if_no_artifact_found: error
+
+      - name: Download linux x64 ramp file
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-ramp-x64-${{ steps.set_semver.outputs.SEMVER }}.zip
+          if_no_artifact_found: error
+
+      - name: Download linux arm64v8 ramp file
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-ramp-arm64v8-${{ steps.set_semver.outputs.SEMVER }}.zip
+          if_no_artifact_found: error
+
+      - name: Upload ramp files to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ steps.set_semver.outputs.TAG_NAME }} \
+            falkordb-ramp-rhel8-x64-${{ steps.set_semver.outputs.SEMVER }}.zip \
+            falkordb-ramp-rhel9-x64-${{ steps.set_semver.outputs.SEMVER }}.zip \
+            falkordb-ramp-amazonlinux2023-x64-${{ steps.set_semver.outputs.SEMVER }}.zip \
+            falkordb-ramp-x64-${{ steps.set_semver.outputs.SEMVER }}.zip \
+            falkordb-ramp-arm64v8-${{ steps.set_semver.outputs.SEMVER }}.zip
