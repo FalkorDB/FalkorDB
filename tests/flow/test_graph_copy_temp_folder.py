@@ -47,7 +47,8 @@ class testGraphCopyTempFolder:
         os.chmod(no_perm_dir, stat.S_IREAD)
         # Check if directory is truly unwritable
         if os.access(no_perm_dir, os.W_OK):
-            pytest.skip("Directory is still writable; cannot test no-permission case on this platform/user.")
+            env, _ = Env(enableDebugCommand=True)
+            env.skip()
         try:
             with pytest.raises(Exception):
                 self.set_temp_folder(no_perm_dir)
