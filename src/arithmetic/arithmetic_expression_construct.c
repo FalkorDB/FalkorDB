@@ -320,7 +320,8 @@ static AR_ExpNode *_AR_EXP_FromBinaryOpExpression(const cypher_astnode_t *expr) 
 	
 	// Fix operator precedence: arithmetic operators should have higher precedence
 	// than predicate operators (CONTAINS, STARTS WITH, ENDS WITH, IN)
-	// If current operator is arithmetic and RHS is a predicate operator,
+	
+	// Case 1: If current operator is arithmetic and RHS is a predicate operator,
 	// rotate the AST to ensure correct evaluation order
 	if((operator_enum == OP_PLUS || operator_enum == OP_MINUS || 
 	    operator_enum == OP_MULT || operator_enum == OP_DIV || 
@@ -360,6 +361,46 @@ static AR_ExpNode *_AR_EXP_FromBinaryOpExpression(const cypher_astnode_t *expr) 
 			// rhs->op.children[1] already points to C
 			
 			return rhs;
+		}
+		
+		// Case 2: If current operator is arithmetic and LHS is a predicate operator with arithmetic RHS,
+		// the parser may have given them equal precedence (left-to-right parsing)
+		// For example: [1]+2 IN [3]+4 might be parsed as (([ 1]+2) IN [3])+4
+		// We need to rotate to get ([1]+2) IN ([3]+4)
+		AR_ExpNode *lhs = op->op.children[0];
+		
+		if(lhs->type == AR_EXP_OP && lhs->op.child_count == 2 &&
+		   (strcmp(lhs->op.f->name, "contains") == 0 ||
+		    strcmp(lhs->op.f->name, "starts with") == 0 ||
+		    strcmp(lhs->op.f->name, "ends with") == 0 ||
+		    strcmp(lhs->op.f->name, "in") == 0)) {
+			
+			// Rotate AST: (A IN B) + C -> A IN (B + C)
+			// Original structure:
+			//       +
+			//      / \
+			//     IN  C
+			//    /  \
+			//   A    B
+			// Desired structure:
+			//     IN
+			//    /  \
+			//   A    +
+			//       / \
+			//      B   C
+			
+			AR_ExpNode *predicate = lhs;  // The IN/CONTAINS operator
+			AR_ExpNode *A = predicate->op.children[0];
+			AR_ExpNode *B = predicate->op.children[1];
+			AR_ExpNode *C = op->op.children[1];
+			
+			// Rewire: op becomes right child of predicate
+			op->op.children[0] = B;
+			op->op.children[1] = C;
+			predicate->op.children[1] = op;
+			// predicate->op.children[0] already points to A
+			
+			return predicate;
 		}
 	}
 	
