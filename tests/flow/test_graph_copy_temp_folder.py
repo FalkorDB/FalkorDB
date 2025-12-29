@@ -1,4 +1,4 @@
-from common import Env, FalkorDB, SANITIZER
+from common import Env, SANITIZER
 import os
 import tempfile
 import shutil
