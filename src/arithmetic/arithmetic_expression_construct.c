@@ -329,10 +329,11 @@ static AR_ExpNode *_AR_EXP_FromBinaryOpExpression(const cypher_astnode_t *expr) 
 		AR_ExpNode *rhs = op->op.children[1];
 		
 		// Check if RHS is a predicate operator
+		// Note: function names are registered in lowercase with spaces
 		if(rhs->type == AR_EXP_OP && rhs->op.child_count == 2 &&
 		   (strcmp(rhs->op.f->name, "contains") == 0 ||
-		    strcmp(rhs->op.f->name, "startsWith") == 0 ||
-		    strcmp(rhs->op.f->name, "endsWith") == 0 ||
+		    strcmp(rhs->op.f->name, "starts with") == 0 ||
+		    strcmp(rhs->op.f->name, "ends with") == 0 ||
 		    strcmp(rhs->op.f->name, "in") == 0)) {
 			
 			// Rotate AST: A + (B CONTAINS C) -> (A + B) CONTAINS C
