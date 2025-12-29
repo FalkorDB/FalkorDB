@@ -319,7 +319,10 @@ static AR_ExpNode *_AR_EXP_FromBinaryOpExpression(const cypher_astnode_t *expr) 
 	op->op.children[1] = _AR_EXP_FromASTNode(rhs_node);
 	
 	// Fix operator precedence: arithmetic operators should have higher precedence
-	// than predicate operators (CONTAINS, STARTS WITH, ENDS WITH, IN)
+	// than predicate operators (CONTAINS, STARTS WITH, ENDS WITH, IN).
+	// The Cypher parser may give these equal precedence, so we need to check both:
+	// - Case 1: Arithmetic op with predicate on RIGHT (e.g., A + (B IN C))
+	// - Case 2: Arithmetic op with predicate on LEFT (e.g., (A IN B) + C)
 	
 	// Case 1: If current operator is arithmetic and RHS is a predicate operator,
 	// rotate the AST to ensure correct evaluation order
