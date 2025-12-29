@@ -70,16 +70,17 @@ class testOperatorPrecedence():
         
         # The problematic query from the issue - should not crash or raise Type mismatch error
         # WHERE (n1.k159)+'1' CONTAINS '1' should work correctly
+        # This query may return empty results but should NOT raise "Type mismatch: expected Boolean but was String"
         try:
             result = self.g.query("MATCH (n0)<-[r0]-(n1), (n2)<-[r1]-(n1), (n0)<-[r2]-(n3) OPTIONAL MATCH (n0)<-[r3]-(n3), (n2)<-[r4]-(n1) WHERE (n1.k159)+'1' CONTAINS '1' AND r3.id <> r4.id AND r4.id <> r3.id AND r3.k485 > r4.k485 AND r4.k485 > r0.k485 RETURN *")
-            # Query should execute without Type mismatch error
-            # The specific result doesn't matter as much as ensuring no crash/error
+            # Success - query executed without the type mismatch error
         except Exception as e:
-            # Should not raise "Type mismatch: expected Boolean but was String"
-            self.env.assertNotContains("Type mismatch: expected Boolean but was String", str(e))
-            # Re-raise if it's a different error
-            if "Type mismatch: expected Boolean but was String" in str(e):
-                raise
+            # If any error occurs, ensure it's NOT the type mismatch error we're fixing
+            error_msg = str(e)
+            if "Type mismatch: expected Boolean but was String" in error_msg:
+                self.env.fail(f"Query raised the type mismatch error that should be fixed: {error_msg}")
+            # Other errors (e.g., no matching data) are acceptable - re-raise them
+            raise
 
     def test06_multiple_arithmetic_operators(self):
         """Test precedence with multiple arithmetic operators"""
