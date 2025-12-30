@@ -106,6 +106,17 @@ void AR_EXP_ResolveVariables(AR_ExpNode *root, const Record r);
 // this function raise exception
 SIValue AR_EXP_Evaluate(AR_ExpNode *root, const Record r);
 
+// evaluate arithmetic exception tree for a number of records
+// this function raise exception
+// populates res with each evaluated value
+void AR_EXP_Evaluate_Batch
+(
+	SIValue *restrict res,        // [input/output] results
+	AR_ExpNode *restrict root,    // root of expression tree to evaluate
+	const Record *restrict recs,  // batch of records
+	size_t n                      // number of records
+);
+
 // evaluate arithmmetic expression tree
 // this function will not raise exception in case of error
 // use it in arithmetic function for example comprehension function

@@ -75,28 +75,25 @@ static RecordBatch ProjectConsume
 	uint16_t batch_size = RecordBatch_Size (op->batch) ;
 	op->projection = OpBase_CreateRecordBatch (opBase, batch_size) ;
 
-	for (uint i = 0 ; i < batch_size; i++) {
-		Record input  = op->batch[i] ;
-		Record output = op->projection[i] ;
+	SIValue res[batch_size] ;
 
-		for (uint j = 0; j < op->exp_count; j++) {
-			AR_ExpNode *exp = op->exps[j] ;
-			SIValue v = AR_EXP_Evaluate (exp, input) ;
+	// evaluate each expression
+	// TODO: skip evaluation of const expressions
+	for (uint i = 0; i < op->exp_count; i++) {
+		AR_ExpNode *exp = op->exps[i] ;
 
-			// persisting a value is only necessary when
-			// 'v' refers to a scalar held in Record 'r'
-			// graph entities don't need to be persisted here as
-			// Record_Add will copy them internally
-			//
-			// the RETURN projection here requires persistence:
-			// MATCH (a) WITH toUpper(a.name) AS e RETURN e
-			// TODO: this is a rare case;
-			// the logic of when to persist can be improved
+		AR_EXP_Evaluate_Batch (res, exp, op->batch, batch_size) ;
+
+		int rec_idx = op->record_offsets[i] ;
+
+		for (uint j = 0 ; j < batch_size; j++) {
+			SIValue v = res[j] ;
+
 			if (!(v.type & SI_GRAPHENTITY)) {
 				SIValue_Persist (&v) ;
 			}
 
-			int rec_idx = op->record_offsets[j] ;
+			Record output = op->projection[j] ;
 			Record_Add (output, rec_idx, v) ;
 
 			// if the value was a graph entity with its own allocation

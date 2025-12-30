@@ -207,21 +207,25 @@ SIValue Record_Get
 	Record r,
 	uint idx
 ) {
-	ASSERT(Record_length(r) > idx);
+	ASSERT (Record_length(r) > idx) ;
 
-	Entry e = r->entries[idx];
-	switch(e.type) {
-		case REC_TYPE_NODE:
-			return SI_Node(Record_GetNode(r, idx));
-		case REC_TYPE_EDGE:
-			return SI_Edge(Record_GetEdge(r, idx));
-		case REC_TYPE_SCALAR:
-			return r->entries[idx].value.s;
-		case REC_TYPE_UNKNOWN:
-			return SI_NullVal();
-		default:
-			ASSERT(false);
-			return SI_NullVal();
+	Entry e = r->entries[idx] ;
+	switch (e.type) {
+		case REC_TYPE_NODE :
+			return SI_Node (Record_GetNode(r, idx)) ;
+
+		case REC_TYPE_EDGE :
+			return SI_Edge (Record_GetEdge(r, idx)) ;
+
+		case REC_TYPE_SCALAR :
+			return r->entries[idx].value.s ;
+
+		case REC_TYPE_UNKNOWN :
+			return SI_NullVal ();
+
+		default :
+			ASSERT (false) ;
+			return SI_NullVal () ;
 	}
 }
 
