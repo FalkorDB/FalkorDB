@@ -80,8 +80,8 @@ endef
 
 #----------------------------------------------------------------------------------------------
 
+#-Werror=incompatible-pointer-types
 define CC_C_FLAGS.warnings +=
-	-Werror=incompatible-pointer-types
 	-Werror=implicit-function-declaration
 endef
 
