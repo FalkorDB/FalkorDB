@@ -31,15 +31,15 @@
 
 // sets the deleted bit in the header to 1.
 #define MARK_ITEM_AS_DELETED(idx) \
-	((unsigned char*)(GET_ITEM_BLOCK(idx)->data))[ITEM_POSITION_WITHIN_BLOCK(idx) * dataBlock->itemSize] |= _8BIT_MSB_MASK
+	((uintptr_t*)(GET_ITEM_BLOCK(idx)->data))[ITEM_POSITION_WITHIN_BLOCK(idx) * dataBlock->itemSize] |= MSB_MASK
 
 // sets the deleted bit in the item's header to 0
 #define MARK_ITEM_AS_NOT_DELETED(idx) \
-	((unsigned char*)(GET_ITEM_BLOCK(idx)->data))[ITEM_POSITION_WITHIN_BLOCK(idx) * dataBlock->itemSize] &= _8BIT_MSB_MASK_CMP
+	((uintptr_t*)(GET_ITEM_BLOCK(idx)->data))[ITEM_POSITION_WITHIN_BLOCK(idx) * dataBlock->itemSize] &= MSB_MASK_CMP
 
 // returns a pointer to the ith item
 #define GET_ITEM(idx) \
-	((unsigned char*)(GET_ITEM_BLOCK(idx)->data)) + (ITEM_POSITION_WITHIN_BLOCK(idx) * dataBlock->itemSize)
+	((void*)(GET_ITEM_BLOCK(idx)->data)) + (ITEM_POSITION_WITHIN_BLOCK(idx) * dataBlock->itemSize)
 
 // add new blocks to datablock
 static void _DataBlock_AddBlocks

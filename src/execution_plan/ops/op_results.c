@@ -63,6 +63,8 @@ static RecordBatch ResultsConsume
 	}
 
 	uint32_t batch_size = RecordBatch_Size (batch) ;
+	ASSERT (batch_size > 0) ;
+
 	if (unlikely (batch_size > op->result_set_size_limit)) {
 		RecordBatch_RemoveRecords (batch,
 				batch_size - op->result_set_size_limit) ;

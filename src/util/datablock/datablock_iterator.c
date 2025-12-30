@@ -52,7 +52,7 @@ void *DataBlockIterator_Next
 	ASSERT (iter != NULL) ;
 
 	// set default
-	void *item =  NULL ;
+	unsigned char *item = NULL ;
 
 	// have we reached the end of our iterator?
 	while (iter->_current_pos < iter->_end_pos && iter->_current_block != NULL) {
@@ -78,7 +78,7 @@ void *DataBlockIterator_Next
 		}
 	}
 
-	return item ;
+	return (void*)item ;
 }
 
 // reset iterator to original position

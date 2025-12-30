@@ -4,11 +4,11 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "op_filter.h"
 #include "RG.h"
+#include "op_filter.h"
 
 // forward declarations
-static Record FilterConsume(OpBase *opBase);
+static RecordBatch FilterConsume(OpBase *opBase);
 static OpBase *FilterClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void FilterFree(OpBase *opBase);
 
@@ -29,29 +29,44 @@ OpBase *NewFilterOp
 
 // FilterConsume next operation
 // returns OP_OK when graph passes filter tree
-static Record FilterConsume
+static RecordBatch FilterConsume
 (
 	OpBase *opBase
 ) {
-	Record r = NULL;
-	OpFilter *filter = (OpFilter *)opBase;
-	OpBase *child = filter->op.children[0];
+	OpFilter   *filter = (OpFilter *)opBase ;
+	OpBase     *child  = filter->op.children[0] ;
+	RecordBatch batch  = NULL ;
 
-	while (true) {
-		r = OpBase_Consume (child) ;
-		if (!r) {
-			break ;
-		}
+pull:
+	// get batch
+	batch = OpBase_Consume (child) ;
+	if (batch == NULL) {
+		// depleted
+		return NULL ;
+	}
 
-		// pass record through filter tree
-		if (FilterTree_applyFilters (filter->filterTree, r) == FILTER_PASS) {
-			break ;
-		} else {
-			OpBase_DeleteRecord (&r) ;
+	uint16_t batch_size = RecordBatch_Size (batch) ;
+
+	for (uint16_t i = 0 ; i < batch_size ; i++) {
+		Record r = batch[i] ;
+
+		// TODO: batch filter
+		// pass record through filter
+		if (!FilterTree_applyFilters (filter->filterTree, r) == FILTER_PASS) {
+			// record did not passed filter
+			RecordBatch_RemoveRecord (batch, i) ;
+			i-- ;
+			batch_size-- ;
 		}
 	}
 
-	return r;
+	// pull again if batch is empty (no record passed the filter)
+	if (unlikely (RecordBatch_Size (batch) == 0)) {
+		RecordBatch_Free (&batch) ;
+		goto pull ;
+	}
+
+	return batch ;
 }
 
 static inline OpBase *FilterClone

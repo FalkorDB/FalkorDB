@@ -12,14 +12,9 @@
 #include "../block.h"
 #include "./datablock_iterator.h"
 
-// 8-bit MSB mask
-#define _8BIT_MSB_MASK (0x80)
-#define _8BIT_MSB_MASK_CMP (~0x80)
-#define _8BIT_MSB_IS_SET(val) ((val) & _8BIT_MSB_MASK)
-
 // checks if item is marked as deleted
 #define IS_ITEM_DELETED(item) \
-	(_8BIT_MSB_IS_SET(*(unsigned char*)(item)))
+	((*(uintptr_t*)(item)) & MSB_MASK)
 
 typedef void (*fpDestructor)(void *);
 
