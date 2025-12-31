@@ -28,6 +28,13 @@ uint16_t RecordBatch_Capacity
 	const RecordBatch batch  // record batch
 );
 
+// update batch size
+void RecordBatch_SetSize
+(
+	RecordBatch batch,  // batch
+	uint16_t n          // new batch size
+);
+
 // add a record to batch
 void RecordBatch_AddRecord
 (

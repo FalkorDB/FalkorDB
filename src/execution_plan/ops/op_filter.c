@@ -27,46 +27,48 @@ OpBase *NewFilterOp
 	return (OpBase *)op;
 }
 
-// FilterConsume next operation
-// returns OP_OK when graph passes filter tree
 static RecordBatch FilterConsume
 (
 	OpBase *opBase
 ) {
-	OpFilter   *filter = (OpFilter *)opBase ;
-	OpBase     *child  = filter->op.children[0] ;
-	RecordBatch batch  = NULL ;
+    OpFilter *filter = (OpFilter *)opBase ;
+    OpBase *child = filter->op.children[0] ;
 
-pull:
-	// get batch
-	batch = OpBase_Consume (child) ;
-	if (batch == NULL) {
-		// depleted
-		return NULL ;
-	}
-
-	uint16_t batch_size = RecordBatch_Size (batch) ;
-
-	for (uint16_t i = 0 ; i < batch_size ; i++) {
-		Record r = batch[i] ;
-
-		// TODO: batch filter
-		// pass record through filter
-		if (!FilterTree_applyFilters (filter->filterTree, r) == FILTER_PASS) {
-			// record did not passed filter
-			RecordBatch_RemoveRecord (batch, i) ;
-			i-- ;
-			batch_size-- ;
+    while (true) {
+		// pull batch
+        RecordBatch batch = OpBase_Consume (child) ;
+        if (batch == NULL) {
+			// depleted
+			return NULL ;
 		}
-	}
 
-	// pull again if batch is empty (no record passed the filter)
-	if (unlikely (RecordBatch_Size (batch) == 0)) {
-		RecordBatch_Free (&batch) ;
-		goto pull ;
-	}
+        uint16_t n = RecordBatch_Size (batch) ;
 
-	return batch ;
+        FT_Result pass[n] ; // TODO: move to a pre allocated workspace
+        FilterTree_applyBatchFilters (pass, filter->filterTree, batch, n) ;
+
+        // compaction Logic: move 'passing' records to the front
+        uint16_t write_idx = 0 ;
+        for (uint16_t read_idx = 0 ; read_idx < n ; read_idx++) {
+            if (pass[read_idx] == FILTER_PASS) {
+                batch[write_idx] = batch[read_idx] ;
+                write_idx++ ;
+            } else {
+				OpBase_DeleteRecord (batch + read_idx) ;
+			}
+        }
+
+		// update batch size
+		RecordBatch_SetSize (batch, write_idx) ;
+
+		if (write_idx == 0) {
+			// entire batch was filtered out, loop again to get next batch
+			RecordBatch_Free (&batch) ;
+			continue ;
+		} 
+
+		return batch ;
+    }
 }
 
 static inline OpBase *FilterClone

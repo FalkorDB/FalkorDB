@@ -34,6 +34,18 @@ uint16_t RecordBatch_Capacity
 	return array_cap (batch) ;
 }
 
+// update batch size
+void RecordBatch_SetSize
+(
+	RecordBatch batch,  // batch
+	uint16_t n          // new batch size
+) {
+	ASSERT (batch != NULL) ;
+	ASSERT (n <= RecordBatch_Size (batch)) ;
+
+	array_trimm_len (batch, n) ;
+}
+
 // add a record to batch
 void RecordBatch_AddRecord
 (

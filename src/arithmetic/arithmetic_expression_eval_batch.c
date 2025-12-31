@@ -216,8 +216,8 @@ static inline AR_EXP_Result _AR_EXP_Evaluate_Const_Batch
 	SIValue c = SI_ShareValue (root->operand.constant) ; 
 
 	// copy const into each result entry
-	for (uint i = 0; i < n; i += step) {
-		res[i] = c ;
+	for (uint i = 0; i < n; i++) {
+		res[i * step] = c ;
 	}
 
 	return EVAL_OK ;
@@ -240,9 +240,9 @@ static AR_EXP_Result _AR_EXP_EvaluateVariadic_Batch
 
 	int aliasIdx = node->operand.variadic.entity_alias_idx ;
 
-	for (uint i = 0; i < n; i += step) {
+	for (uint i = 0; i < n; i++) {
 		// the value was not created here; share with the caller
-		res[i] = SI_ShareValue (Record_Get (recs[i], aliasIdx)) ;
+		res[i * step] = SI_ShareValue (Record_Get (recs[i], aliasIdx)) ;
 	}
 
 	return EVAL_OK ;
@@ -277,8 +277,8 @@ static AR_EXP_Result _AR_EXP_EvaluateParam_Batch
 	root->operand.constant = SI_ShareValue (*param) ;
 
 	// copy const into each result entry
-	for(uint i = 0; i < n; i += step) {
-		res[i] = root->operand.constant ;
+	for(uint i = 0; i < n; i++) {
+		res[i * step] = root->operand.constant ;
 	}
 
 	return EVAL_FOUND_PARAM ;
@@ -291,9 +291,9 @@ static AR_EXP_Result _AR_EXP_EvaluateBorrowRecord_Batch
 	size_t n,                     // number of records
 	uint step                     // step within 'res'
 ) {
-	for (uint i = 0; i < n; i += step) {
+	for (uint i = 0; i < n; i++) {
 		// wrap the current Record in an SI pointer
-		res[i] = SI_PtrVal (recs[i]) ;
+		res[i * step] = SI_PtrVal (recs[i]) ;
 	}
 
 	return EVAL_OK ;
@@ -361,7 +361,7 @@ void AR_EXP_Evaluate_Batch
 
 	AR_EXP_Result ret = _AR_EXP_Evaluate_Batch (res, root, recs, n, 1);
 
-	if (ret == EVAL_ERR) {
+	if (unlikely (ret == EVAL_ERR)) {
 		// jumps if longjump is set
 		ErrorCtx_RaiseRuntimeException (NULL) ;
 
