@@ -22,8 +22,8 @@ env:
   # Get the commit SHA from the event that triggered the workflow
   # If the event is a workflow_dispatch, use the input value
   # If the event is a workflow_run, use the head_commit.id
-  # If the event is a release, use the target_commitish
-  COMMIT_SHA: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.commit_sha || github.event_name == 'workflow_run' && github.event.workflow_run.head_commit.id || github.event_name == 'release' && github.event.release.target_commitish || github.sha }}
+  # If the event is a release, use the sha
+  COMMIT_SHA: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.commit_sha || github.event_name == 'workflow_run' && github.event.workflow_run.head_commit.id || github.sha }}
 
 jobs:
   release:
