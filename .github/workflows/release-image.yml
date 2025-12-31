@@ -439,7 +439,7 @@ jobs:
   trigger-falkordb-cloud-update:
     needs: release
     runs-on: ubuntu-latest
-    if: github.event_name == 'release' || github.event.inputs.run_falkordb_cloud_update != 'true'
+    if: github.event_name == 'release' || github.event.inputs.run_falkordb_cloud_update == 'true'
     steps:
       - name: Trigger FalkorDB Cloud version update
         uses: peter-evans/repository-dispatch@v4
@@ -452,7 +452,7 @@ jobs:
   trigger-testflight-workflow:
     needs: release
     runs-on: ubuntu-latest
-    if: github.event_name == 'release' || github.event.inputs.run_testflight_workflow != 'true'
+    if: github.event_name == 'release' || github.event.inputs.run_testflight_workflow == 'true'
     steps:
       - name: Trigger Redis Enterprise tests in FalkorDB/testflight
         uses: peter-evans/repository-dispatch@v4
