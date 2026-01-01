@@ -1,6 +1,5 @@
 import os
 import sys
-import redis
 import argparse
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
