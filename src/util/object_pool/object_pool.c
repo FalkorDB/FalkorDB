@@ -221,10 +221,12 @@ void ObjectPool_Free
 (
 	ObjectPool *pool
 ) {
-	for(uint i = 0; i < pool->blockCount; i++) Block_Free(pool->blocks[i]);
+	for (uint i = 0; i < pool->blockCount; i++) {
+		Block_Free (pool->blocks[i]) ;
+	}
 
-	rm_free(pool->blocks);
-	array_free(pool->deletedIdx);
-	rm_free(pool);
+	rm_free (pool->blocks) ;
+	array_free (pool->deletedIdx) ;
+	rm_free (pool) ;
 }
 

@@ -451,9 +451,10 @@ void ExecutionPlan_BorrowRecords
 	for (uint i = 0; i < n; i++) {
 		Record r = records[i] ;
 
-		r->owner     = plan ;
-		r->mapping   = mapping ;
-		r->ref_count = 1 ;
+		r->owner       = plan ;
+		r->mapping     = mapping ;
+		r->ref_count   = 1 ;
+		r->num_entries = raxSize (mapping) ;
 	}
 }
 
@@ -461,17 +462,18 @@ Record ExecutionPlan_BorrowRecord
 (
 	ExecutionPlan *plan
 ) {
-	rax *mapping = ExecutionPlan_GetMappings(plan);
-	ASSERT(plan->record_pool);
+	rax *mapping = ExecutionPlan_GetMappings (plan) ;
+	ASSERT (plan->record_pool) ;
 
 	// get a Record from the pool and set its owner and mapping
-	Record r = ObjectPool_NewItem(plan->record_pool);
+	Record r = ObjectPool_NewItem (plan->record_pool) ;
 
-	r->owner     = plan;
-	r->mapping   = mapping;
-	r->ref_count = 1;
+	r->owner       = plan;
+	r->mapping     = mapping;
+	r->ref_count   = 1;
+	r->num_entries = raxSize (mapping) ;
 
-	return r;
+	return r ;
 }
 
 void ExecutionPlan_ReturnRecord
@@ -702,7 +704,7 @@ static void _ExecutionPlan_FreeInternals
 		raxFree(plan->record_map);
 	}
 	if(plan->record_pool != NULL) {
-		ObjectPool_Free(plan->record_pool);
+		ObjectPool_Free (plan->record_pool) ;
 	}
 	if(plan->ast_segment != NULL) {
 		AST_Free(plan->ast_segment);
@@ -721,9 +723,9 @@ void ExecutionPlan_Free
 		return;
 	}
 
-	// -------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
 	// free op tree and collect execution-plans
-	// -------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
 
 	// traverse the execution-plan graph (DAG -> no endless cycles), while
 	// collecting the different segments, and freeing the op tree

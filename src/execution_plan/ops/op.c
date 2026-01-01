@@ -404,8 +404,8 @@ Record OpBase_CloneRecord
 (
 	Record r
 ) {
-	Record clone = ExecutionPlan_BorrowRecord((struct ExecutionPlan *)r->owner);
-	Record_Clone(r, clone);
+	Record clone = ExecutionPlan_BorrowRecord ((struct ExecutionPlan *)r->owner);
+	Record_Clone (r, clone);
 
 	// increase r's ref count and set r as clone's parent
 	r->ref_count++;

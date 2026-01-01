@@ -15,13 +15,11 @@
 // return value in case of call to Record_GetEntryIdx with invalid entry alias
 #define INVALID_INDEX -1
 
-typedef enum  {
-	REC_TYPE_UNKNOWN = 0,
-	REC_TYPE_SCALAR = 1 << 0,
-	REC_TYPE_NODE = 1 << 1,
-	REC_TYPE_EDGE = 1 << 2,
-	REC_TYPE_HEADER = 1 << 3,
-} RecordEntryType;
+#define REC_TYPE_UNKNOWN 0
+#define REC_TYPE_SCALAR  1 << 0
+#define REC_TYPE_NODE    1 << 1
+#define REC_TYPE_EDGE    1 << 2
+typedef uint8_t RecordEntryType ;
 
 typedef struct {
 	union {
@@ -29,24 +27,55 @@ typedef struct {
 		Node n;
 		Edge e;
 	} value;
-	RecordEntryType type;
 } Entry;
 
 typedef struct _Record _Record;
 typedef _Record *Record;
 
 typedef struct _Record {
-	rax *mapping;        // mapping between alias to record entry
-	void *owner;         // owner of record
-	Record parent;       // this record relies on data in parent record
-	uint32_t ref_count;  // number of records directly relying on this record
-	Entry entries[];     // array of entries
+	rax *mapping;          // mapping between alias to record entry
+	void *owner;           // owner of record
+	Record parent;         // this record relies on data in parent record
+	uint32_t ref_count;    // number of records directly relying on this record
+	uint8_t	num_entries;   // number of entries record holds
+	unsigned char data[];  // logical Layout:
+						   // [uint8_t types[num_entries]]
+						   // [padding to 8-byte boundary]
+						   // [entry values[num_entries]]
 } _Record;
 
 // create a new record sized to accommodate all entries in the given map
 Record Record_New
 (
-	rax *mapping
+	rax *mapping  // record's mapping
+);
+
+// returns number of entries record can hold
+uint Record_length
+(
+	const Record r
+);
+
+// get entry type
+RecordEntryType Record_GetType
+(
+	const Record r,  // record
+	uint idx         // entry index
+);
+
+// return true if records contains entry at position 'idx'
+bool Record_ContainsEntry
+(
+	const Record r,
+	uint8_t idx
+);
+
+// return alias position within the record
+uint8_t Record_GetEntryIdx
+(
+	Record r,
+	const char *alias,
+	size_t len
 );
 
 // clones record
@@ -70,53 +99,25 @@ void Record_DuplicateEntries
 	restrict const Record src  // src record
 );
 
-// returns number of entries record can hold
-uint Record_length
-(
-	const Record r
-);
-
-// return true if records contains entry at position 'idx'
-bool Record_ContainsEntry
-(
-	const Record r,
-	uint idx
-);
-
-// return alias position within the record
-uint Record_GetEntryIdx
-(
-	Record r,
-	const char *alias,
-	size_t len
-);
-
-// get entry type
-RecordEntryType Record_GetType
-(
-	const Record r,
-	uint idx
-);
-
 // get a node from record at position idx
 Node *Record_GetNode
 (
-	const Record r,
-	uint idx
+	const Record r,  // record
+	uint idx         // entry index
 );
 
 // get an edge from record at position idx
 Edge *Record_GetEdge
 (
-	const Record r,
-	uint idx
+	const Record r,  // record
+	uint idx         // entry index
 );
 
 // get an SIValue containing the entity at position idx
 SIValue Record_Get
 (
-	Record r,
-	uint idx
+	Record r,  // record
+	uint idx   // entry index
 );
 
 // get a node from record
@@ -130,74 +131,74 @@ Node *Record_GetSetNode
 // remove item at position idx
 void Record_Remove
 (
-	Record r,
-	uint idx
+	Record r,  // record
+	uint idx   // entry index
 );
 
 // get a graph entity from record at position idx
 GraphEntity *Record_GetGraphEntity
 (
-	const Record r,
-	uint idx
+	const Record r,  // record
+	uint idx         // entry index
 );
 
 // add a scalar, node, or edge to the record, depending on the SIValue type
 void Record_Add
 (
-	Record r,
-	uint idx,
-	SIValue v
+	Record r,  // record
+	uint idx,  // entry index
+	SIValue v  // value
 );
 
 // add a scalar to record at position idx and return a reference to it
 SIValue *Record_AddScalar
 (
-	Record r,
-	uint idx,
-	SIValue v
+	Record r,  // record
+	uint idx,  // entry index
+	SIValue v  // value
 );
 
 // add a node to record at position idx and return a reference to it
 Node *Record_AddNode
 (
-	Record r,
-	uint idx,
-	Node node
+	Record r,  // record
+	uint idx,  // entry index
+	Node node  // node
 );
 
 // add an edge to record at position idx and return a reference to it
 Edge *Record_AddEdge
 (
-	Record r,
-	uint idx,
-	Edge edge
+	Record r,  // record
+	uint idx,  // entry index
+	Edge edge  // edge
 );
 
 // string representation of record
 size_t Record_ToString
 (
-	const Record r,
-	char **buf,
-	size_t *buf_cap
+	const Record r,  // record
+	char **buf,      // buffer
+	size_t *buf_cap  // buffer capacity
 );
 
 // retrieves mapping associated with record
 rax *Record_GetMappings
 (
-	const Record r
+	const Record r  // record
 );
 
 // remove and free entry at position idx
 void Record_FreeEntry
 (
-	Record r,
-	int idx
+	Record r,  // record
+	int idx    // entry index
 );
 
 // free record entries
 void Record_FreeEntries
 (
-	Record r
+	Record r  // record
 );
 
 // increase record's reference count
