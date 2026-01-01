@@ -33,7 +33,7 @@ RUN ln -s ${FALKORDB_BIN_PATH} /FalkorDB/build/docker && \
     ln -s ${FALKORDB_DATA_PATH} /data
 
 RUN apt-get update && apt-get install -y libgomp1 curl && \
-    curl -sL https://deb.nodesource.com/setup_22.x -o nodesource_setup.sh && \
+    curl -sL https://deb.nodesource.com/setup_24.x -o nodesource_setup.sh && \
     bash nodesource_setup.sh && \
     apt-get install -y nodejs && \
     apt-get upgrade -y && \
