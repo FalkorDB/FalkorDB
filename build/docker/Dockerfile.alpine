@@ -40,7 +40,7 @@ RUN apk add --no-cache libgomp openssl curl && \
     echo "${SHASUM}  ${NODE_DISTRO}.tar.xz" | sha256sum -c - && \
     tar -xJ -f "${NODE_DISTRO}.tar.xz" -C /usr/local --strip-components=1 && \
     rm "${NODE_DISTRO}.tar.xz" && \
-    node --version && npm --version
+    node --version && npm --version \
     NODE_VERSION=v24.12.0 && \
     curl -fsSL https://unofficial-builds.nodejs.org/download/release/${NODE_VERSION}/node-${NODE_VERSION}-linux-${ARCH}-musl.tar.xz | tar -xJ -C /usr/local --strip-components=1 && \
     node --version && npm --version
