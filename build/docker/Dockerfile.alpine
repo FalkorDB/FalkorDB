@@ -25,7 +25,7 @@ ENV FALKORDB_BROWSER_PATH=${FALKORDB_HOME}/browser
 # Install runtime dependencies using Alpine packages (equivalent to Debian version)
 RUN apk add --no-cache libgomp openssl curl && \
     ARCH=$(uname -m) && \
-    if [ "$ARCH" = "aarch64" ]; then ARCH="arm64" else ARCH="x64"; fi && \
+    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then ARCH="arm64" else; ARCH="x64"; fi && \
     NODE_VERSION=v24.9.0 && \
     curl -fsSL https://unofficial-builds.nodejs.org/download/release/${NODE_VERSION}/node-${NODE_VERSION}-linux-${ARCH}-musl.tar.xz | tar -xJ -C /usr/local --strip-components=1 && \
     node --version && npm --version
