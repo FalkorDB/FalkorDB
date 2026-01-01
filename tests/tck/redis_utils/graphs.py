@@ -2,7 +2,7 @@ import os
 import sys
 from RLTest import Env
 
-from falkordb import FalkorDB, Graph, Node, Edge
+from falkordb import FalkorDB
 
 r = None
 graph_name = "G"
