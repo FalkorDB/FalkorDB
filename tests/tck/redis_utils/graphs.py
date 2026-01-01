@@ -1,4 +1,3 @@
-import os
 from RLTest import Env
 
 from falkordb import FalkorDB
