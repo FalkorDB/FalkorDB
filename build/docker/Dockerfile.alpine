@@ -43,7 +43,22 @@ RUN apk add --no-cache libgomp openssl curl && \
     node --version && npm --version \
     NODE_VERSION=v24.12.0 && \
     curl -fsSL https://unofficial-builds.nodejs.org/download/release/${NODE_VERSION}/node-${NODE_VERSION}-linux-${ARCH}-musl.tar.xz | tar -xJ -C /usr/local --strip-components=1 && \
-    node --version && npm --version
+     NODE_VERSION=v24.12.0 && \
+     SHA256SUM_X64="09f08678037380126987c6533054178385419967272847514332990928a38520" && \
+     SHA256SUM_ARM64="4826477e313702213754940384795325785002012015525539009841804f339f" && \
+     if [ "${ARCH}" = "x64" ]; then \
+         SHA256SUM="${SHA256SUM_X64}"; \
+     elif [ "${ARCH}" = "arm64" ]; then \
+         SHA256SUM="${SHA256SUM_ARM64}"; \
+     else \
+         echo "Unsupported architecture: ${ARCH}" >&2; \
+         exit 1; \
+     fi && \
+     NODE_FILENAME="node-${NODE_VERSION}-linux-${ARCH}-musl.tar.xz" && \
+     curl -fsSL -o "${NODE_FILENAME}" "https://unofficial-builds.nodejs.org/download/release/${NODE_VERSION}/${NODE_FILENAME}" && \
+     echo "${SHA256SUM}  ${NODE_FILENAME}" | sha256sum -c - && \
+     tar -xJ -f "${NODE_FILENAME}" -C /usr/local --strip-components=1 && \
+     rm "${NODE_FILENAME}" && \
 
 WORKDIR ${FALKORDB_HOME}
 
