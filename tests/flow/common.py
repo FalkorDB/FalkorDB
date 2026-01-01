@@ -8,8 +8,6 @@ import redis
 from redis import ResponseError
 from falkordb import FalkorDB, Graph, Node, Edge, Path, ExecutionPlan
 
-from base import FlowTestsBase
-
 Defaults.decode_responses = True
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../deps/readies"))
