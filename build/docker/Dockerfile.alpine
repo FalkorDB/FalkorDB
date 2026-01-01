@@ -23,7 +23,12 @@ ENV FALKORDB_TLS_PATH=${FALKORDB_HOME}/tls
 ENV FALKORDB_BROWSER_PATH=${FALKORDB_HOME}/browser
 
 # Install runtime dependencies using Alpine packages (equivalent to Debian version)
-RUN apk add --no-cache libgomp openssl nodejs npm
+RUN apk add --no-cache libgomp openssl curl jq && \
+    ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then ARCH="x64"; fi && \
+    NODE_VERSION=$(curl -fsSL https://unofficial-builds.nodejs.org/download/release/index.json | jq -r '[.[] | select(.version | startswith("v24."))] | .[0].version' | sed 's/^v//') && \
+    curl -fsSL https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${ARCH}-musl.tar.xz | tar -xJ -C /usr/local --strip-components=1 && \
+    node --version && npm --version
 
 WORKDIR ${FALKORDB_HOME}
 
