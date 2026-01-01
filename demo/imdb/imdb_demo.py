@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/..')
 import imdb_queries
 import imdb_utils
-from utils import execute_query, _redis
+from utils import execute_query
 
 db    = None
 conn  = None
