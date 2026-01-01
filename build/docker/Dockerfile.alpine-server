@@ -19,13 +19,13 @@ ENV FALKORDB_TLS_PATH=${FALKORDB_HOME}/tls
 # Install runtime dependencies using Alpine packages (equivalent to Debian version)
 RUN apk add --no-cache libgomp openssl curl && \
     ARCH=$(uname -m) && \
-    NODE_VERSION=v24.9.0 && \
+    NODE_VERSION=v24.12.0 && \
     if [ "$ARCH" = "x86_64" ]; then \
         ARCH_SUFFIX="x64"; \
-        SHASUM="f833139589318336264d3b40970054378393527753696885860824655452243d"; \
+        SHASUM="cfeae321f64251488a03613dfbe635d1cf925804031efbd57705073cf0618c40"; \
     elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
         ARCH_SUFFIX="arm64"; \
-        SHASUM="118335031b997415170425313936940381643445821217646536376517926135"; \
+        SHASUM="8e047e3ecad08a9843e7e73f0b12d194489ac31dba642a492ad0b20446076767"; \
     else \
         echo "ERROR: Unsupported architecture: $ARCH" >&2; exit 1; \
     fi && \
@@ -34,9 +34,6 @@ RUN apk add --no-cache libgomp openssl curl && \
     echo "${SHASUM}  ${NODE_DISTRO}.tar.xz" | sha256sum -c - && \
     tar -xJ -f "${NODE_DISTRO}.tar.xz" -C /usr/local --strip-components=1 && \
     rm "${NODE_DISTRO}.tar.xz" && \
-    node --version && npm --version \
-    NODE_VERSION=v24.12.0 && \
-    curl -fsSL https://unofficial-builds.nodejs.org/download/release/${NODE_VERSION}/node-${NODE_VERSION}-linux-${ARCH}-musl.tar.xz | tar -xJ -C /usr/local --strip-components=1 && \
     node --version && npm --version
 
 WORKDIR ${FALKORDB_HOME}
