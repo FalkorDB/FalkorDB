@@ -1,6 +1,5 @@
 import sys
 import os
-import ast
 
 if 'TCK_PROTOCOL' in os.environ and os.environ['TCK_PROTOCOL'] == 'BOLT':
     sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../../bolt_utils/')
