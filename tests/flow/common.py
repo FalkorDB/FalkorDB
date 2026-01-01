@@ -5,7 +5,6 @@ from functools import wraps
 from RLTest import Env as Environment, Defaults
 
 import redis
-from redis import ResponseError
 from falkordb import FalkorDB
 
 Defaults.decode_responses = True
