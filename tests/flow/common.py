@@ -6,7 +6,7 @@ from RLTest import Env as Environment, Defaults
 
 import redis
 from redis import ResponseError
-from falkordb import FalkorDB, Graph, Node, Edge, Path, ExecutionPlan
+from falkordb import FalkorDB
 
 Defaults.decode_responses = True
 
