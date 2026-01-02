@@ -95,16 +95,19 @@ static void _annotate_relevant_projected_named_path_identifier
 						   	path_identifier, path);
 				}
 			}
-		} else if(clause_type == CYPHER_AST_MERGE) {
-			const cypher_astnode_t *path =
-				cypher_ast_merge_get_pattern_path(clause);
-			if(cypher_astnode_type(path) == CYPHER_AST_NAMED_PATH) {
-				const cypher_astnode_t *path_identifier =
-					cypher_ast_named_path_get_identifier(path);
-				const char *path_name =
-					cypher_ast_identifier_get_name(path_identifier);
-				_attach_identifier(identifier_map, named_paths_ctx,
-					path_identifier, path);
+		} else if(clause_type == CYPHER_AST_CREATE) {
+			const cypher_astnode_t *pattern =
+				cypher_ast_create_get_pattern(clause);
+			uint path_count = cypher_ast_pattern_npaths(pattern);
+			for(uint i = 0; i < path_count; i++) {
+				const cypher_astnode_t *path =
+					cypher_ast_pattern_get_path(pattern, i);
+				if(cypher_astnode_type(path) == CYPHER_AST_NAMED_PATH) {
+					const cypher_astnode_t *path_identifier =
+						cypher_ast_named_path_get_identifier(path);
+					_attach_identifier(identifier_map, named_paths_ctx,
+						   	path_identifier, path);
+				}
 			}
 		} else if(clause_type == CYPHER_AST_RETURN) {
 			uint return_projection_count =
@@ -253,6 +256,20 @@ static void _annotate_match_clause_projected_named_path
 	raxFreeWithCallback(identifier_map, array_free);
 }
 
+static void _annotate_create_clause_projected_named_path
+(
+	AST *ast,
+	const cypher_astnode_t *create_clause,
+	uint scope_start,
+	uint scope_end
+) {
+	rax *identifier_map = raxNew();
+	_collect_projected_identifier(create_clause, identifier_map);
+	_annotate_relevant_projected_named_path_identifier(ast, identifier_map,
+													   scope_start, scope_end);
+	raxFreeWithCallback(identifier_map, array_free);
+}
+
 static void _annotate_foreach_clause_projected_named_path
 (
 	AST *ast,
@@ -387,9 +404,9 @@ static void _annotate_projected_named_path(AST *ast) {
 		} else if(cypher_astnode_type(child) == CYPHER_AST_FOREACH) {
 			_annotate_foreach_clause_projected_named_path(ast,
 				child, scope_start, scope_end);
-		} else if(cypher_astnode_type(child) == CYPHER_AST_CALL_SUBQUERY) {
-			_annotate_callsubquery_clause_projected_named_path(ast, child,
-				scope_start, scope_end);
+		} else if(cypher_astnode_type(child) == CYPHER_AST_CREATE) {
+			_annotate_create_clause_projected_named_path(ast, child,
+														scope_start, scope_end);
 		}
 	}
 }
