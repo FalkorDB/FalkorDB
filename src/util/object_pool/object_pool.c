@@ -204,17 +204,19 @@ void ObjectPool_DeleteItem
 	ObjectPool *pool,
 	void *item
 ) {
-	ASSERT(pool != NULL);
+	ASSERT (pool != NULL) ;
 
 	// get item ID
-	ObjectID idx = ITEM_ID(item);
+	ObjectID idx = ITEM_ID (item) ;
 
 	// call item destructor
-	if(pool->destructor) pool->destructor(item);
+	if (pool->destructor) {
+		pool->destructor (item) ;
+	}
 
 	// add ID to deleted list
-	array_append(pool->deletedIdx, idx);
-	pool->itemCount--;
+	array_append (pool->deletedIdx, idx) ;
+	pool->itemCount-- ;
 }
 
 void ObjectPool_Free
