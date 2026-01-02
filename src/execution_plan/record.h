@@ -38,6 +38,7 @@ typedef struct _Record {
 	Record parent;         // this record relies on data in parent record
 	uint32_t ref_count;    // number of records directly relying on this record
 	uint8_t	num_entries;   // number of entries record holds
+	bool heap_alloc;       // true if record contains a head allocated entry
 	unsigned char data[];  // logical Layout:
 						   // [uint8_t types[num_entries]]
 						   // [padding to 8-byte boundary]

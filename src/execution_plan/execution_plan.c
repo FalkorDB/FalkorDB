@@ -454,6 +454,7 @@ void ExecutionPlan_BorrowRecords
 		r->owner       = plan ;
 		r->mapping     = mapping ;
 		r->ref_count   = 1 ;
+		r->heap_alloc  = false ;
 		r->num_entries = raxSize (mapping) ;
 	}
 }
@@ -471,6 +472,7 @@ Record ExecutionPlan_BorrowRecord
 	r->owner       = plan;
 	r->mapping     = mapping;
 	r->ref_count   = 1;
+	r->heap_alloc  = false ;
 	r->num_entries = raxSize (mapping) ;
 
 	return r ;
@@ -493,7 +495,7 @@ void ExecutionPlan_ReturnRecord
 		if(r->parent != NULL) {
 			ExecutionPlan_ReturnRecord (r->parent->owner, r->parent) ;
 		}
-		ObjectPool_DeleteItem(plan->record_pool, r);
+		ObjectPool_DeleteItem (plan->record_pool, r) ;
 	}
 }
 

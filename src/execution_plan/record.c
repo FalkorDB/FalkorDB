@@ -468,6 +468,9 @@ SIValue *Record_AddScalar
 	Entry *entries = Record_GetEntries (r) ;
 	Record_GetTypes (r)[idx] = REC_TYPE_SCALAR ;
 
+	// track if record contains an entry that needs to be freed
+	r->heap_alloc |= SI_ALLOCATION (&v) & M_SELF ;
+
 	entries[idx].value.s = v ;
 	return &(entries[idx].value.s) ;
 }
@@ -575,37 +578,40 @@ void Record_FreeEntries
 	ASSERT (r != NULL) ;
 
 	uint n = r->num_entries ;
-	Entry *entries = Record_GetEntries (r) ;
 	RecordEntryType *types = Record_GetTypes (r) ;
 
-	uint32_t i = 0 ;
-	const uint32_t scalar_mask = 0x01010101U ;
+	if (r->heap_alloc) {
+		Entry *entries = Record_GetEntries (r) ;
 
-    // process in batches of 4
-	for (; i + 4 <= n; i+= 4) {
-		// load 4 bytes into one 32-bit register
-		uint32_t chunk = *(uint32_t*)(types + i) ;
+		uint32_t i = 0 ;
+		const uint32_t scalar_mask = 0x01010101U ;
 
-		// if no scalars are present in these 4 entries, skip them entirely
-		// this effectively skips Nodes, Edges, and Unknowns in one check
-		if (!(chunk & scalar_mask)) {
-			continue ;
+		// process in batches of 4
+		for (; i + 4 <= n; i+= 4) {
+			// load 4 bytes into one 32-bit register
+			uint32_t chunk = *(uint32_t*)(types + i) ;
+
+			// if no scalars are present in these 4 entries, skip them entirely
+			// this effectively skips Nodes, Edges, and Unknowns in one check
+			if (!(chunk & scalar_mask)) {
+				continue ;
+			}
+
+			// at least one scalar exists in this batch; find and free it
+			for (int j = 0; j < 4; j++) {
+				if (types[i + j] & REC_TYPE_SCALAR) {
+					SIValue_Free (entries[i + j].value.s) ;
+				}
+			}
 		}
 
-		// at least one scalar exists in this batch; find and free it
-		for (int j = 0; j < 4; j++) {
-			if (types[i + j] & REC_TYPE_SCALAR) {
-				SIValue_Free (entries[i + j].value.s) ;
+		// process remaining tail (0-3 entries)
+		for (; i < n; i++) {
+			if (types[i] & REC_TYPE_SCALAR) {
+				SIValue_Free (entries[i].value.s) ;
 			}
 		}
 	}
-
-	// process remaining tail (0-3 entries)
-    for (; i < n; i++) {
-        if (types[i] & REC_TYPE_SCALAR) {
-            SIValue_Free (entries[i].value.s) ;
-        }
-    }
 
 	// bulk reset types to UNKNOWN
     memset (types, REC_TYPE_UNKNOWN, n) ;
@@ -630,6 +636,7 @@ void Record_Free
 	ASSERT (r->ref_count == 0) ;
 
 	Record_FreeEntries (r) ;
+
 	rm_free (r) ;
 }
 
