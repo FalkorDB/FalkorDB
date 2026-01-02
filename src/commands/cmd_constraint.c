@@ -11,6 +11,7 @@
 #include "../graph/graph_hub.h"
 #include "../graph/graphcontext.h"
 #include "constraint/constraint.h"
+#include "keyspace_events.h"
 
 #define PROPERTY_NAME_PATTERN "[a-zA-Z_][a-zA-Z0-9_$]*"
 
@@ -218,6 +219,9 @@ static bool _Constraint_Drop
 cleanup:
 	if(res == false) {
 		RedisModule_ReplyWithError(ctx, "Unable to drop constraint, no such constraint.");
+	} else {
+		// emit keyspace notification for constraint drop
+		KeyspaceEvent_EmitConstraintDropped(ctx, key);
 	}
 
 	// decrease graph reference count
@@ -361,6 +365,9 @@ cleanup:
 		// TODO: give additional information to caller
 		RedisModule_ReplyWithError(ctx, error_msg);
 	} else {
+		// emit keyspace notification for constraint creation
+		KeyspaceEvent_EmitConstraintCreated(ctx, key);
+		
 		// constraint creation succeeded, enforce constraint
 		Constraint_Enforce(c, (struct GraphContext*)gc);
 	}
