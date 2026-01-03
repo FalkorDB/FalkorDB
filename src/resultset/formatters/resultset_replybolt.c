@@ -264,13 +264,13 @@ static void _ResultSet_BoltReplyWithPath
 void ResultSet_EmitBoltRow
 (
 	ResultSet *set,
-	SIValue **row
+	SIValue *row
 ) {
 	bolt_client_t *bolt_client = set->bolt_client;
 	bolt_client_reply_for(set->bolt_client, BST_PULL, BST_RECORD, 1);
 	bolt_reply_list(set->bolt_client, set->column_count);
 	for(int i = 0; i < set->column_count; i++) {
-		_ResultSet_BoltReplyWithSIValue(bolt_client, set->gc, *row[i]);
+		_ResultSet_BoltReplyWithSIValue(bolt_client, set->gc, row[i]);
 	}
 	bolt_client_end_message(bolt_client);
 }

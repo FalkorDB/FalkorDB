@@ -206,15 +206,18 @@ SIValue SI_Point(float latitude, float longitude) {
 // make an SIValue that reuses the original's allocations, if any
 // the returned value is not responsible for freeing any allocations
 // and is not guaranteed that these allocations will remain in scope
-SIValue SI_ShareValue(const SIValue v) {
-	SIValue dup = v;
+SIValue SI_ShareValue
+(
+	const SIValue v
+) {
+	SIValue dup = v ;
 	// if the original value owns an allocation
 	// mark that the duplicate shares it
-	if(v.allocation == M_SELF) {
-		dup.allocation = M_VOLATILE;
+	if (v.allocation == M_SELF) {
+		dup.allocation = M_VOLATILE ;
 	}
 
-	return dup;
+	return dup ;
 }
 
 // make an SIValue that creates its own copies of the original's allocations

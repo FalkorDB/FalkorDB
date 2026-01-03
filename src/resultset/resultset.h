@@ -10,6 +10,7 @@
 #include "../redismodule.h"
 #include "resultset_statistics.h"
 #include "../execution_plan/record.h"
+#include "../execution_plan/record_batch.h"
 #include "./formatters/resultset_formatters.h"
 #include "rax.h"
 
@@ -52,6 +53,14 @@ ResultSet *NewResultSet
 uint64_t ResultSet_RowCount
 (
 	const ResultSet *set  // resultset to inquery
+);
+
+// materializes a RecordBatch into the ResultSet by copying projected values
+// into the result set's data blocks and clearing the source records
+int ResultSet_AddBatch
+(
+	ResultSet *set,    // resultset to extend
+	RecordBatch batch  // record containing projected data
 );
 
 // add a new row to resultset

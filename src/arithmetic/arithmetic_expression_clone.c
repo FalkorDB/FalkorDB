@@ -34,6 +34,15 @@ static AR_ExpNode *_AR_EXP_CloneOp
 	AR_ExpNode *clone = rm_malloc (sizeof (AR_ExpNode)) ;
 	memcpy (clone, exp, sizeof (AR_ExpNode)) ;
 
+	//--------------------------------------------------------------------------
+	// clone cached constants
+	//--------------------------------------------------------------------------
+
+	size_t cached_constants_size = sizeof (SIValue) * clone->op.child_count ;
+	clone->op.cached_constants = rm_malloc (cached_constants_size) ;
+	memcpy (clone->op.cached_constants, exp->op.cached_constants,
+			cached_constants_size) ;
+
 	uint child_count   = exp->op.child_count ;
 	clone->op.children = rm_calloc (child_count, sizeof (AR_ExpNode *)) ;
 
