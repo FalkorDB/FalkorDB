@@ -18,29 +18,35 @@ static RecordBatch ResultsConsume(OpBase *opBase);
 static OpResult ResultsInit(OpBase *opBase);
 static OpBase *ResultsClone(const ExecutionPlan *plan, const OpBase *opBase);
 
-OpBase *NewResultsOp(const ExecutionPlan *plan) {
+OpBase *NewResultsOp
+(
+	const ExecutionPlan *plan
+) {
 	Results *op = rm_calloc (1, sizeof(Results)) ;
 
-	// Set our Op operations
-	OpBase_Init((OpBase *)op, OPType_RESULTS, "Results", ResultsInit, ResultsConsume,
-				NULL, NULL, ResultsClone, NULL, false, plan);
+	// set our Op operations
+	OpBase_Init ((OpBase *)op, OPType_RESULTS, "Results", ResultsInit,
+			ResultsConsume, NULL, NULL, ResultsClone, NULL, false, plan) ;
 
-	return (OpBase *)op;
+	return (OpBase *)op ;
 }
 
-static OpResult ResultsInit(OpBase *opBase) {
-	Results *op = (Results *)opBase;
-	op->result_set = QueryCtx_GetResultSet();
-	Config_Option_get(Config_RESULTSET_MAX_SIZE, &op->result_set_size_limit);
+static OpResult ResultsInit
+(
+	OpBase *opBase
+) {
+	Results *op = (Results *)opBase ;
+	op->result_set = QueryCtx_GetResultSet () ;
+	Config_Option_get (Config_RESULTSET_MAX_SIZE, &op->result_set_size_limit) ;
 
 	// map resultset columns to record entries
-	OpBase *join = ExecutionPlan_LocateOpDepth(opBase, OPType_JOIN, 2);
-	if(op->result_set != NULL && (join == NULL || !JoinGetUpdateColumnMap(join))) {
-		rax *mapping = ExecutionPlan_GetMappings(opBase->plan);
-		ResultSet_MapProjection(op->result_set, mapping);
+	OpBase *join = ExecutionPlan_LocateOpDepth (opBase, OPType_JOIN, 2) ;
+	if (op->result_set != NULL && (join == NULL || !JoinGetUpdateColumnMap (join))) {
+		rax *mapping = ExecutionPlan_GetMappings (opBase->plan) ;
+		ResultSet_MapProjection (op->result_set, mapping) ;
 	}
 
-	return OP_OK;
+	return OP_OK ;
 }
 
 // results consume operation

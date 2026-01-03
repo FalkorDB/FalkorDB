@@ -57,19 +57,19 @@ static bool _AR_EXP_UpdateEntityIdx
 // and will leak if not freed here
 static inline void _AR_EXP_FreeArgsArray
 (
-	SIValue *args,  // evaluated arguments to free
-	uint argc,      // number of args in each batch
-	uint step,      // batch size
-	uint n          // args array length
+	SIValue *args,          // evaluated arguments to free
+	uint argc,              // number of arguments
+	uint batch_size,        // size of batch
+	uint16_t constant_mask  // constants mask
 ) {
-	for (int i = 0; i < n; i += step) {
-		for (int j = 0; j < argc; j++) {
-			SIValue_Free (args[i+j]) ;
+	for (int i = 0; i < argc; i++) {
+		if (!(constant_mask & 1ULL << (i % batch_size))) {
+			SIValue_Free (args[i]) ;
 		}
 	}
 
 	// large arrays are heap-allocated, so here is where we free it
-	if (n > MAX_ARRAY_SIZE_ON_STACK) {
+	if (argc > MAX_ARRAY_SIZE_ON_STACK) {
 		rm_free (args) ;
 	}
 }
@@ -149,21 +149,37 @@ static AR_EXP_Result _AR_EXP_EvaluateFunctionCall_Batch
 		args = sub_trees_on_stack ;
 	}
 
-	bool param_found = false ;
+	bool param_found    = false ;
+	bool err_eval_child = false ;
 	for (int child_idx = 0 ; child_idx < child_count ; child_idx++) {
+
+		//----------------------------------------------------------------------
+		// plant cached constant
+		//----------------------------------------------------------------------
+
+		if (node->op.constant_mask & 1ULL << child_idx) {
+			for (int i = child_idx ; i < argc; i+= child_count) {
+				args[i] = node->op.cached_constants[child_idx] ;
+			}
+			continue ;
+		}
+
+		//----------------------------------------------------------------------
+		// evaluate child
+		//----------------------------------------------------------------------
+
 		AR_ExpNode *child = NODE_CHILD (node, child_idx) ;
 		ret = _AR_EXP_Evaluate_Batch (args + child_idx, child, recs, n,
 				child_count) ;
 
-		if (ret == EVAL_ERR) {
-			// encountered an error while evaluating a subtree
-			// free all arguments generated up to this point
-			// and propagate the error upwards
-			_AR_EXP_FreeArgsArray (args, child_idx, child_count, argc) ;
-			return ret ;
-		}
+		err_eval_child |= (ret == EVAL_ERR) ;
+		param_found    |= (ret == EVAL_FOUND_PARAM) ;
+	}
 
-		param_found |= (ret == EVAL_FOUND_PARAM) ;
+	// error while evaluating children
+	if (err_eval_child) {
+		ret = EVAL_ERR ;
+		goto cleanup ;
 	}
 
 	if (param_found) {
@@ -185,7 +201,7 @@ static AR_EXP_Result _AR_EXP_EvaluateFunctionCall_Batch
 		SIValue v = node->op.f->func (args + i * child_count, child_count,
 				node->op.private_data) ;
 
-		ASSERT (node->op.f->aggregate || SI_TYPE(v) & AR_FuncDesc_RetType(node->op.f)) ;
+		ASSERT (node->op.f->aggregate || SI_TYPE (v) & AR_FuncDesc_RetType (node->op.f)) ;
 		if (SIValue_IsNull (v) && ErrorCtx_EncounteredError ()) {
 			// an error was encountered while evaluating this function
 			// and has already been set in the QueryCtx
@@ -200,7 +216,7 @@ static AR_EXP_Result _AR_EXP_EvaluateFunctionCall_Batch
 	}
 
 cleanup:
-	_AR_EXP_FreeArgsArray (args, child_count, child_count, argc) ;
+	_AR_EXP_FreeArgsArray (args, argc, child_count, node->op.constant_mask) ;
 	return ret ;
 }
 
