@@ -1,5 +1,4 @@
 from common import *
-import threading
 import time
 
 GRAPH_ID = "keyspace_notifications_test"

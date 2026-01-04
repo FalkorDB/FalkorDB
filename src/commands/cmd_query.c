@@ -277,14 +277,18 @@ static void _ExecuteQuery(void *args) {
 			}
 
 			// send keyspace notification for graph modification
-			const char *graph_name = GraphContext_GetName(gc);
-			RedisModuleString *key = RedisModule_CreateString(rm_ctx,
-					graph_name, strlen(graph_name));
-			RedisModule_NotifyKeyspaceEvent(rm_ctx,
-					REDISMODULE_NOTIFY_MODULE,
-					"graph.modified",
-					key);
-			RedisModule_FreeString(rm_ctx, key);
+			// only if notifications are enabled to avoid allocation overhead
+			int notify_flags = RedisModule_GetNotifyKeyspaceEvents();
+			if(notify_flags & REDISMODULE_NOTIFY_MODULE) {
+				const char *graph_name = GraphContext_GetName(gc);
+				RedisModuleString *key = RedisModule_CreateString(rm_ctx,
+						graph_name, strlen(graph_name));
+				RedisModule_NotifyKeyspaceEvent(rm_ctx,
+						REDISMODULE_NOTIFY_MODULE,
+						"graph.modified",
+						key);
+				RedisModule_FreeString(rm_ctx, key);
+			}
 		}
 	}
 
