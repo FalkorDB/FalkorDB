@@ -275,6 +275,16 @@ static void _ExecuteQuery(void *args) {
 				// replicate original query
 				QueryCtx_Replicate(query_ctx);
 			}
+
+			// send keyspace notification for graph modification
+			const char *graph_name = GraphContext_GetName(gc);
+			RedisModuleString *key = RedisModule_CreateString(rm_ctx,
+					graph_name, strlen(graph_name));
+			RedisModule_NotifyKeyspaceEvent(rm_ctx,
+					REDISMODULE_NOTIFY_MODULE,
+					"graph.modified",
+					key);
+			RedisModule_FreeString(rm_ctx, key);
 		}
 	}
 

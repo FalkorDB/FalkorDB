@@ -1,0 +1,220 @@
+from common import *
+import threading
+import time
+
+GRAPH_ID = "keyspace_notifications_test"
+
+class testKeyspaceNotifications(FlowTestsBase):
+    def __init__(self):
+        self.env, self.db = Env()
+        self.conn = self.env.getConnection()
+
+    def test01_graph_modified_notification(self):
+        """Test that graph.modified notification is sent on write operations"""
+        # Enable keyspace notifications
+        self.conn.execute_command("CONFIG", "SET", "notify-keyspace-events", "AKE")
+        
+        # Create a pubsub connection to listen for notifications
+        pubsub = self.conn.pubsub()
+        pubsub.psubscribe("__keyevent@0__:graph.modified")
+        
+        # Give pubsub a moment to subscribe
+        time.sleep(0.1)
+        
+        # Create a graph and perform a write operation
+        graph = self.db.select_graph(GRAPH_ID)
+        
+        # Perform a write operation
+        result = graph.query("CREATE (n:Person {name: 'Alice'})")
+        self.env.assertEquals(result.nodes_created, 1)
+        
+        # Check for notification
+        message = pubsub.get_message(timeout=2.0)
+        # Skip the subscribe confirmation message
+        if message and message['type'] == 'psubscribe':
+            message = pubsub.get_message(timeout=2.0)
+        
+        # Verify the notification was received
+        self.env.assertIsNotNone(message)
+        self.env.assertEquals(message['type'], 'pmessage')
+        self.env.assertEquals(message['pattern'], b'__keyevent@0__:graph.modified')
+        self.env.assertEquals(message['channel'], b'__keyevent@0__:graph.modified')
+        self.env.assertEquals(message['data'], GRAPH_ID.encode())
+        
+        # Clean up
+        pubsub.punsubscribe()
+        pubsub.close()
+        graph.delete()
+
+    def test02_graph_modified_on_different_operations(self):
+        """Test that graph.modified is sent for various write operations"""
+        # Enable keyspace notifications
+        self.conn.execute_command("CONFIG", "SET", "notify-keyspace-events", "AKE")
+        
+        graph = self.db.select_graph(GRAPH_ID + "_ops")
+        
+        # Create a pubsub connection
+        pubsub = self.conn.pubsub()
+        pubsub.psubscribe("__keyevent@0__:graph.modified")
+        time.sleep(0.1)
+        
+        # Test CREATE operation
+        result = graph.query("CREATE (n:Person {name: 'Bob'})")
+        self.env.assertEquals(result.nodes_created, 1)
+        
+        # Check for notification
+        message = pubsub.get_message(timeout=2.0)
+        if message and message['type'] == 'psubscribe':
+            message = pubsub.get_message(timeout=2.0)
+        self.env.assertIsNotNone(message)
+        self.env.assertEquals(message['data'], (GRAPH_ID + "_ops").encode())
+        
+        # Test SET operation (property update)
+        result = graph.query("MATCH (n:Person) SET n.age = 30")
+        self.env.assertEquals(result.properties_set, 1)
+        
+        message = pubsub.get_message(timeout=2.0)
+        self.env.assertIsNotNone(message)
+        self.env.assertEquals(message['data'], (GRAPH_ID + "_ops").encode())
+        
+        # Test DELETE operation
+        result = graph.query("MATCH (n:Person) DELETE n")
+        self.env.assertEquals(result.nodes_deleted, 1)
+        
+        message = pubsub.get_message(timeout=2.0)
+        self.env.assertIsNotNone(message)
+        self.env.assertEquals(message['data'], (GRAPH_ID + "_ops").encode())
+        
+        # Clean up
+        pubsub.punsubscribe()
+        pubsub.close()
+        graph.delete()
+
+    def test03_graph_deleted_notification(self):
+        """Test that graph.deleted notification is sent when graph is deleted"""
+        # Enable keyspace notifications
+        self.conn.execute_command("CONFIG", "SET", "notify-keyspace-events", "AKE")
+        
+        # Create a graph
+        graph = self.db.select_graph(GRAPH_ID + "_delete")
+        graph.query("CREATE (n:Person {name: 'Charlie'})")
+        
+        # Create a pubsub connection to listen for delete notifications
+        pubsub = self.conn.pubsub()
+        pubsub.psubscribe("__keyevent@0__:graph.deleted")
+        time.sleep(0.1)
+        
+        # Delete the graph
+        graph.delete()
+        
+        # Check for notification
+        message = pubsub.get_message(timeout=2.0)
+        # Skip the subscribe confirmation message
+        if message and message['type'] == 'psubscribe':
+            message = pubsub.get_message(timeout=2.0)
+        
+        # Verify the notification was received
+        self.env.assertIsNotNone(message)
+        self.env.assertEquals(message['type'], 'pmessage')
+        self.env.assertEquals(message['pattern'], b'__keyevent@0__:graph.deleted')
+        self.env.assertEquals(message['channel'], b'__keyevent@0__:graph.deleted')
+        self.env.assertEquals(message['data'], (GRAPH_ID + "_delete").encode())
+        
+        # Clean up
+        pubsub.punsubscribe()
+        pubsub.close()
+
+    def test04_no_notification_on_read_only(self):
+        """Test that no notification is sent for read-only queries"""
+        # Enable keyspace notifications
+        self.conn.execute_command("CONFIG", "SET", "notify-keyspace-events", "AKE")
+        
+        graph = self.db.select_graph(GRAPH_ID + "_readonly")
+        
+        # Create some data first
+        graph.query("CREATE (n:Person {name: 'Dave'})")
+        
+        # Create a pubsub connection
+        pubsub = self.conn.pubsub()
+        pubsub.psubscribe("__keyevent@0__:graph.modified")
+        time.sleep(0.1)
+        
+        # Clear any pending messages (from the CREATE)
+        while pubsub.get_message(timeout=0.1):
+            pass
+        
+        # Perform a read-only query
+        graph.query("MATCH (n:Person) RETURN n")
+        
+        # Check that no notification was received
+        message = pubsub.get_message(timeout=1.0)
+        self.env.assertIsNone(message)
+        
+        # Clean up
+        pubsub.punsubscribe()
+        pubsub.close()
+        graph.delete()
+
+    def test05_notification_disabled_by_default(self):
+        """Test that notifications are not sent when notifications are disabled"""
+        # Disable keyspace notifications
+        self.conn.execute_command("CONFIG", "SET", "notify-keyspace-events", "")
+        
+        graph = self.db.select_graph(GRAPH_ID + "_disabled")
+        
+        # Create a pubsub connection
+        pubsub = self.conn.pubsub()
+        pubsub.psubscribe("__keyevent@0__:graph.modified")
+        time.sleep(0.1)
+        
+        # Clear subscribe message
+        pubsub.get_message(timeout=0.1)
+        
+        # Perform a write operation
+        graph.query("CREATE (n:Person {name: 'Eve'})")
+        
+        # Check that no notification was received (keyspace notifications disabled)
+        message = pubsub.get_message(timeout=1.0)
+        self.env.assertIsNone(message)
+        
+        # Clean up
+        pubsub.punsubscribe()
+        pubsub.close()
+        graph.delete()
+        
+        # Re-enable for other tests
+        self.conn.execute_command("CONFIG", "SET", "notify-keyspace-events", "AKE")
+
+    def test06_multiple_graph_modifications(self):
+        """Test that multiple modifications generate multiple notifications"""
+        # Enable keyspace notifications
+        self.conn.execute_command("CONFIG", "SET", "notify-keyspace-events", "AKE")
+        
+        graph = self.db.select_graph(GRAPH_ID + "_multi")
+        
+        # Create a pubsub connection
+        pubsub = self.conn.pubsub()
+        pubsub.psubscribe("__keyevent@0__:graph.modified")
+        time.sleep(0.1)
+        
+        # Clear subscribe message
+        pubsub.get_message(timeout=0.1)
+        
+        # Perform multiple write operations
+        for i in range(3):
+            graph.query(f"CREATE (n:Person {{id: {i}}})")
+        
+        # Check for 3 notifications
+        notifications_received = 0
+        for _ in range(3):
+            message = pubsub.get_message(timeout=2.0)
+            if message and message['type'] == 'pmessage':
+                self.env.assertEquals(message['data'], (GRAPH_ID + "_multi").encode())
+                notifications_received += 1
+        
+        self.env.assertEquals(notifications_received, 3)
+        
+        # Clean up
+        pubsub.punsubscribe()
+        pubsub.close()
+        graph.delete()

@@ -34,6 +34,11 @@ int Graph_Delete
 	if(key != NULL) {
 		if(RedisModule_ModuleTypeGetType(key) == GraphContextRedisModuleType) {
 			deleted = true;
+			// send keyspace notification before deleting the graph
+			RedisModule_NotifyKeyspaceEvent(ctx,
+					REDISMODULE_NOTIFY_MODULE,
+					"graph.deleted",
+					key_name);
 			RedisModule_DeleteKey(key);  // untrack graph & decreases graph ref count
 			RedisModule_ReplyWithSimpleString(ctx, "OK");
 			// delete commands should always modify slaves
