@@ -139,9 +139,10 @@ class testKeyspaceNotifications(FlowTestsBase):
         pubsub.psubscribe("__keyevent@0__:graph.modified")
         time.sleep(0.1)
         
-        # Clear any pending messages (from the CREATE)
-        while pubsub.get_message(timeout=0.1):
-            pass
+        # Clear any pending messages (from the CREATE above)
+        msg = pubsub.get_message(timeout=0.1)
+        while msg is not None:
+            msg = pubsub.get_message(timeout=0.1)
         
         # Perform a read-only query
         graph.query("MATCH (n:Person) RETURN n")
