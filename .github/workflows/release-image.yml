@@ -122,6 +122,46 @@ jobs:
           path: /tmp
           if_no_artifact_found: error
 
+      - name: Retrieve built image Red Hat AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-redhat-x64
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image Red Hat ARM
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-redhat-arm64v8
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image Red Hat AMD server only
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-server-redhat-x64
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image Red Hat ARM server only
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-server-redhat-arm64v8
+          path: /tmp
+          if_no_artifact_found: error
+
       - name: Retrieve built image Amazon Linux AMD
         uses: dawidd6/action-download-artifact@v11
         with:
@@ -211,6 +251,26 @@ jobs:
           path: /tmp
           if_no_artifact_found: error
 
+      - name: Retrieve built .so Red Hat AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-redhat-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so Red Hat ARM
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-redhat-arm64v8.so
+          path: /tmp
+          if_no_artifact_found: error
+
       - name: Retrieve built .so Amazon Linux AMD
         uses: dawidd6/action-download-artifact@v11
         with:
@@ -281,6 +341,26 @@ jobs:
           path: /tmp
           if_no_artifact_found: error
 
+      - name: Retrieve built debug.so Red Hat AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-redhat-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built debug.so Red Hat ARM
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-redhat-arm64v8.so
+          path: /tmp
+          if_no_artifact_found: error
+
       - name: Retrieve built .so macOS ARM64
         uses: dawidd6/action-download-artifact@v11
         with:
@@ -313,6 +393,10 @@ jobs:
           docker load -i /tmp/falkordb-server-arm64v8.tar
           docker load -i /tmp/falkordb-alpine-x64.tar
           docker load -i /tmp/falkordb-alpine-arm64v8.tar
+          docker load -i /tmp/falkordb-redhat-x64.tar
+          docker load -i /tmp/falkordb-redhat-arm64v8.tar
+          docker load -i /tmp/falkordb-server-redhat-x64.tar
+          docker load -i /tmp/falkordb-server-redhat-arm64v8.tar
           docker load -i /tmp/falkordb-amazonlinux2023-x64.tar
 
       - name: Login to DockerHub
@@ -359,8 +443,14 @@ jobs:
           docker tag falkordb/falkordb-alpine-x64 falkordb/falkordb:${{ env.TAG_NAME }}-alpine-x64
           docker tag falkordb/falkordb-alpine-arm64v8 falkordb/falkordb:${{ env.TAG_NAME }}-alpine-arm64v8
 
+          docker tag falkordb/falkordb-redhat-x64 falkordb/falkordb:${{ env.TAG_NAME }}-redhat-x64
+          docker tag falkordb/falkordb-redhat-arm64v8 falkordb/falkordb:${{ env.TAG_NAME }}-redhat-arm64v8
+
           docker tag falkordb/falkordb-server-alpine-x64 falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-x64
           docker tag falkordb/falkordb-server-alpine-arm64v8 falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-arm64v8
+
+          docker tag falkordb/falkordb-server-redhat-x64 falkordb/falkordb-server:${{ env.TAG_NAME }}-redhat-x64
+          docker tag falkordb/falkordb-server-redhat-arm64v8 falkordb/falkordb-server:${{ env.TAG_NAME }}-redhat-arm64v8
 
           docker tag falkordb/falkordb-server-x64 falkordb/falkordb-server:${{ env.TAG_NAME }}-x64
           docker tag falkordb/falkordb-server-arm64v8 falkordb/falkordb-server:${{ env.TAG_NAME }}-arm64v8
@@ -373,9 +463,13 @@ jobs:
           docker push falkordb/falkordb:${{ env.TAG_NAME }}-rhel8-x64
           docker push falkordb/falkordb:${{ env.TAG_NAME }}-alpine-x64
           docker push falkordb/falkordb:${{ env.TAG_NAME }}-alpine-arm64v8
+          docker push falkordb/falkordb:${{ env.TAG_NAME }}-redhat-x64
+          docker push falkordb/falkordb:${{ env.TAG_NAME }}-redhat-arm64v8
           docker push falkordb/falkordb:${{ env.TAG_NAME }}-amazonlinux2023-x64
           docker push falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-x64
           docker push falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-arm64v8
+          docker push falkordb/falkordb-server:${{ env.TAG_NAME }}-redhat-x64
+          docker push falkordb/falkordb-server:${{ env.TAG_NAME }}-redhat-arm64v8
           docker push falkordb/falkordb-server:${{ env.TAG_NAME }}-x64
           docker push falkordb/falkordb-server:${{ env.TAG_NAME }}-arm64v8
 
@@ -387,6 +481,10 @@ jobs:
           falkordb/falkordb:${{ env.TAG_NAME }}-alpine-x64 \
           falkordb/falkordb:${{ env.TAG_NAME }}-alpine-arm64v8
 
+          docker buildx imagetools create -t falkordb/falkordb:${{ env.TAG_NAME }}-redhat ${{ env.IS_LATEST == '1' && '-t falkordb/falkordb:latest-redhat' || '' }} \
+          falkordb/falkordb:${{ env.TAG_NAME }}-redhat-x64 \
+          falkordb/falkordb:${{ env.TAG_NAME }}-redhat-arm64v8
+
           docker buildx imagetools create -t falkordb/falkordb-server:${{ env.TAG_NAME }} ${{ env.IS_LATEST == '1' && '-t falkordb/falkordb-server:latest' || '' }} \
           falkordb/falkordb-server:${{ env.TAG_NAME }}-x64 \
           falkordb/falkordb-server:${{ env.TAG_NAME }}-arm64v8
@@ -395,12 +493,18 @@ jobs:
           falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-x64 \
           falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-arm64v8
 
+          docker buildx imagetools create -t falkordb/falkordb-server:${{ env.TAG_NAME }}-redhat ${{ env.IS_LATEST == '1' && '-t falkordb/falkordb-server:latest-redhat' || '' }} \
+          falkordb/falkordb-server:${{ env.TAG_NAME }}-redhat-x64 \
+          falkordb/falkordb-server:${{ env.TAG_NAME }}-redhat-arm64v8
+
       - name: Inspect image
         run: |
           docker buildx imagetools inspect falkordb/falkordb:${{ env.TAG_NAME }}
           docker buildx imagetools inspect falkordb/falkordb:${{ env.TAG_NAME }}-alpine
+          docker buildx imagetools inspect falkordb/falkordb:${{ env.TAG_NAME }}-redhat
           docker buildx imagetools inspect falkordb/falkordb-server:${{ env.TAG_NAME }}
           docker buildx imagetools inspect falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine
+          docker buildx imagetools inspect falkordb/falkordb-server:${{ env.TAG_NAME }}-redhat
 
       - name: Check if release exists
         id: check_release
@@ -435,6 +539,12 @@ jobs:
           gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-alpine-arm64v8.so
           gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-alpine-x64.so
           gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-alpine-arm64v8.so
+
+          # Red Hat binaries
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-redhat-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-redhat-arm64v8.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-redhat-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-redhat-arm64v8.so
 
           # Amazon Linux binaries
           gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-amazonlinux2023-x64.so
