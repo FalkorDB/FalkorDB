@@ -34,19 +34,15 @@ int Graph_Delete
 	if(key != NULL) {
 		if(RedisModule_ModuleTypeGetType(key) == GraphContextRedisModuleType) {
 			deleted = true;
-			// send keyspace notification before deleting the graph
-			// only if notifications are enabled to avoid allocation overhead
-			int notify_flags = RedisModule_GetNotifyKeyspaceEvents();
-			if(notify_flags & REDISMODULE_NOTIFY_MODULE) {
-				RedisModule_NotifyKeyspaceEvent(ctx,
-						REDISMODULE_NOTIFY_MODULE,
-						"graph.deleted",
-						key_name);
-			}
 			RedisModule_DeleteKey(key);  // untrack graph & decreases graph ref count
 			RedisModule_ReplyWithSimpleString(ctx, "OK");
 			// delete commands should always modify slaves
 			RedisModule_ReplicateVerbatim(ctx);
+			// send keyspace notification after deleting the graph
+			RedisModule_NotifyKeyspaceEvent(ctx,
+					REDISMODULE_NOTIFY_MODULE,
+					"graph.deleted",
+					key_name);
 		}
 		RedisModule_CloseKey(key);  // close key handle
 	}
