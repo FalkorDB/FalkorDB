@@ -37,9 +37,9 @@ class testKeyspaceNotifications(FlowTestsBase):
         # Verify the notification was received
         self.env.assertIsNotNone(message)
         self.env.assertEquals(message['type'], 'pmessage')
-        self.env.assertEquals(message['pattern'], b'__keyevent@0__:graph.modified')
-        self.env.assertEquals(message['channel'], b'__keyevent@0__:graph.modified')
-        self.env.assertEquals(message['data'], GRAPH_ID.encode())
+        self.env.assertEquals(message['pattern'], '__keyevent@0__:graph.modified')
+        self.env.assertEquals(message['channel'], '__keyevent@0__:graph.modified')
+        self.env.assertEquals(message['data'], GRAPH_ID)
         
         # Clean up
         pubsub.punsubscribe()
@@ -67,7 +67,7 @@ class testKeyspaceNotifications(FlowTestsBase):
         if message and message['type'] == 'psubscribe':
             message = pubsub.get_message(timeout=2.0)
         self.env.assertIsNotNone(message)
-        self.env.assertEquals(message['data'], (GRAPH_ID + "_ops").encode())
+        self.env.assertEquals(message['data'], GRAPH_ID + "_ops")
         
         # Test SET operation (property update)
         result = graph.query("MATCH (n:Person) SET n.age = 30")
@@ -75,7 +75,7 @@ class testKeyspaceNotifications(FlowTestsBase):
         
         message = pubsub.get_message(timeout=2.0)
         self.env.assertIsNotNone(message)
-        self.env.assertEquals(message['data'], (GRAPH_ID + "_ops").encode())
+        self.env.assertEquals(message['data'], GRAPH_ID + "_ops")
         
         # Test DELETE operation
         result = graph.query("MATCH (n:Person) DELETE n")
@@ -83,7 +83,7 @@ class testKeyspaceNotifications(FlowTestsBase):
         
         message = pubsub.get_message(timeout=2.0)
         self.env.assertIsNotNone(message)
-        self.env.assertEquals(message['data'], (GRAPH_ID + "_ops").encode())
+        self.env.assertEquals(message['data'], GRAPH_ID + "_ops")
         
         # Clean up
         pubsub.punsubscribe()
@@ -116,9 +116,9 @@ class testKeyspaceNotifications(FlowTestsBase):
         # Verify the notification was received
         self.env.assertIsNotNone(message)
         self.env.assertEquals(message['type'], 'pmessage')
-        self.env.assertEquals(message['pattern'], b'__keyevent@0__:graph.deleted')
-        self.env.assertEquals(message['channel'], b'__keyevent@0__:graph.deleted')
-        self.env.assertEquals(message['data'], (GRAPH_ID + "_delete").encode())
+        self.env.assertEquals(message['pattern'], '__keyevent@0__:graph.deleted')
+        self.env.assertEquals(message['channel'], '__keyevent@0__:graph.deleted')
+        self.env.assertEquals(message['data'], GRAPH_ID + "_delete")
         
         # Clean up
         pubsub.punsubscribe()
@@ -210,7 +210,7 @@ class testKeyspaceNotifications(FlowTestsBase):
         for _ in range(3):
             message = pubsub.get_message(timeout=2.0)
             if message and message['type'] == 'pmessage':
-                self.env.assertEquals(message['data'], (GRAPH_ID + "_multi").encode())
+                self.env.assertEquals(message['data'], GRAPH_ID + "_multi")
                 notifications_received += 1
         
         self.env.assertEquals(notifications_received, 3)
