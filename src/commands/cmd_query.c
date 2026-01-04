@@ -167,6 +167,7 @@ static void _ExecuteQuery(void *args) {
 	ExecutionType  exec_type    = exec_ctx->exec_type;
 	const bool     profile      = (query_ctx->flags & QueryExecutionTypeFlag_PROFILE);
 	const bool     readonly     = !(query_ctx->flags & QueryExecutionTypeFlag_WRITE);
+	bool           graph_modified = false;  // track if graph was modified for notification
 
 	// if we have migrated to a writer thread,
 	// update thread-local storage and track the CommandCtx
@@ -256,6 +257,7 @@ static void _ExecuteQuery(void *args) {
 	} else {
 		// replicate if graph was modified
 		if(ResultSetStat_IndicateModification(&result_set->stats)) {
+			graph_modified = true;  // mark for notification after locks released
 			// determine rather or not to replicate via effects
 			// effect replication is mandatory if query is non deterministic
 			if (EffectsBuffer_Length (QueryCtx_GetEffectsBuffer()) > 0 &&
@@ -275,16 +277,6 @@ static void _ExecuteQuery(void *args) {
 				// replicate original query
 				QueryCtx_Replicate(query_ctx);
 			}
-
-			// send keyspace notification for graph modification
-			const char *graph_name = GraphContext_GetName(gc);
-			RedisModuleString *key = RedisModule_CreateString(rm_ctx,
-					graph_name, strlen(graph_name));
-			RedisModule_NotifyKeyspaceEvent(rm_ctx,
-					REDISMODULE_NOTIFY_MODULE,
-					"graph.modified",
-					key);
-			RedisModule_FreeString(rm_ctx, key);
 		}
 	}
 
@@ -302,6 +294,18 @@ static void _ExecuteQuery(void *args) {
 	}
 
 	if(readonly) Graph_ReleaseLock(gc->g); // release read lock
+
+	// send keyspace notification after all locks are released
+	if(graph_modified) {
+		const char *graph_name = GraphContext_GetName(gc);
+		RedisModuleString *key = RedisModule_CreateString(rm_ctx,
+				graph_name, strlen(graph_name));
+		RedisModule_NotifyKeyspaceEvent(rm_ctx,
+				REDISMODULE_NOTIFY_MODULE,
+				"graph.modified",
+				key);
+		RedisModule_FreeString(rm_ctx, key);
+	}
 
 	//--------------------------------------------------------------------------
 	// log query to slowlog

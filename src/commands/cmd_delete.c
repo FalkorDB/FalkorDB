@@ -38,13 +38,16 @@ int Graph_Delete
 			RedisModule_ReplyWithSimpleString(ctx, "OK");
 			// delete commands should always modify slaves
 			RedisModule_ReplicateVerbatim(ctx);
-			// send keyspace notification after deleting the graph
-			RedisModule_NotifyKeyspaceEvent(ctx,
-					REDISMODULE_NOTIFY_MODULE,
-					"graph.deleted",
-					key_name);
 		}
 		RedisModule_CloseKey(key);  // close key handle
+	}
+
+	// send keyspace notification after key is closed
+	if(deleted) {
+		RedisModule_NotifyKeyspaceEvent(ctx,
+				REDISMODULE_NOTIFY_MODULE,
+				"graph.deleted",
+				key_name);
 	}
 
 	// unable to delete graph
