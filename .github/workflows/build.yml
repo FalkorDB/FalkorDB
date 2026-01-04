@@ -105,6 +105,7 @@ jobs:
           - name: redhat-x64
             suffix: redhat-x64
             os: redhat
+            compiler_os: rhel9
             arch: amd64
             machine_label: ubuntu-latest
             cache_path: linux-x64
@@ -114,6 +115,7 @@ jobs:
           - name: redhat-arm64
             suffix: redhat-arm64v8
             os: redhat
+            compiler_os: rhel9
             arch: arm64
             machine_label: ubuntu-24.04-arm
             cache_path: linux-arm64v8
@@ -300,7 +302,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=compiler-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
-            OS=${{ matrix.platform.os }}
+            OS=${{ matrix.platform.compiler_os || matrix.platform.os }}
             BASE_IMAGE_VERSION=${{ env.BASE_IMAGE_VERSION }}
             DEBUG=${{ matrix.build_type == 'debug' && '1' || '0' }}
 

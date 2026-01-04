@@ -6,7 +6,7 @@ FROM $BASE_IMAGE AS compiler
 
 FROM registry.access.redhat.com/ubi9/nodejs-20-minimal:latest AS node
 
-FROM registry.access.redhat.com/ubi9-minimal:latest
+FROM registry.access.redhat.com/ubi9:latest
 
 ENV FALKORDB_HOME=/var/lib/falkordb
 
@@ -18,10 +18,10 @@ ENV FALKORDB_IMPORT_PATH=${FALKORDB_HOME}/import
 
 ENV FALKORDB_TLS_PATH=${FALKORDB_HOME}/tls
 
-# Install runtime dependencies using microdnf for UBI9 minimal
+# Install runtime dependencies using dnf for UBI9
 # Redis, libgomp (for OpenMP support), and other required libraries
-RUN microdnf install -y redis libgomp openssl curl shadow-utils && \
-    microdnf clean all
+RUN dnf install -y redis libgomp openssl curl shadow-utils && \
+    dnf clean all
 
 # Create redis user and group if they don't exist
 RUN groupadd -r -g 999 redis 2>/dev/null || true && \
