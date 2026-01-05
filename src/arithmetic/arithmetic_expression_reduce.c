@@ -60,17 +60,26 @@ static bool _ReduceOperation
 
 	AR_OpNode *op = &root->op ;
 	bool all_children_reduced = true ;
-	size_t n = op->child_count;
+	size_t child_count = op->child_count;
+	size_t argc = child_count * 64 ;
 
 	op->constant_mask = 0 ;  // clear constant_mask
 
-	for (int i = 0; i < n; i++) {
+	for (int i = 0; i < child_count; i++) {
 		SIValue v ;
 		AR_ExpNode *child = op->children[i] ;
 
 		if (AR_EXP_ReduceToScalar (child, reduce_params, &v)) {
 			op->constant_mask |= 1ULL << i ;
-			op->cached_constants[i] = v ;
+			
+			//------------------------------------------------------------------
+			// distribute constant among op's args
+			//------------------------------------------------------------------
+
+			for (int j = i; j < argc; j+= child_count) {
+				op->args[j] = v ;
+			}
+
 		} else {
 			all_children_reduced = false ;
 		}

@@ -448,7 +448,7 @@ FT_Result FilterTree_applyFilters
 			} else {
 				// if the expression node evaluated to an unexpected type:
 				// numeric, string, node or edge, emit an error
-				Error_SITypeMismatch(res, T_BOOL);
+				Error_SITypeMismatch (SI_TYPE (res), T_BOOL) ;
 				retval = FILTER_FAIL;
 			}
 

@@ -36,7 +36,7 @@ SIValue AR_TOMAP
 
 		// make sure key is a string
 		if(!(SI_TYPE(key) & T_STRING)) {
-			Error_SITypeMismatch(key, T_STRING);
+			Error_SITypeMismatch(SI_TYPE (key), T_STRING);
 			break;
 		}
 

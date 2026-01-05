@@ -557,7 +557,7 @@ void FilterTree_applyBatchFilters
 				} else {
 					// if the expression node evaluated to an unexpected type:
 					// numeric, string, node or edge, emit an error
-					Error_SITypeMismatch(res[i], T_BOOL);
+					Error_SITypeMismatch (SI_TYPE (res[i]), T_BOOL) ;
 					pass[i] = FILTER_FAIL;
 				}
 

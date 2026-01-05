@@ -42,7 +42,7 @@ typedef struct {
 	uint8_t child_count;            // number of children
 	uint16_t constant_mask;         // bitmask where bit i is set if
 									// children[i] is a constant
-	SIValue *cached_constants;      // pre-evaluated constants
+	SIValue *args;                  // op's arguments
 	AR_FuncDesc *f;                 // operation to perform on children
 	void *private_data;             // additional data associated with function
 	struct AR_ExpNode **children;   // child nodes

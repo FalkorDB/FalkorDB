@@ -117,10 +117,10 @@ static AR_ExpNode *_AR_EXP_NewOpNode
 ) {
 	AR_ExpNode *node = rm_calloc (1, sizeof (AR_ExpNode)) ;
 
-	node->type                = AR_EXP_OP ;
-	node->op.children         = rm_calloc (child_count, sizeof (AR_ExpNode *)) ;
-	node->op.child_count      = child_count ;
-	node->op.cached_constants = rm_calloc (child_count, sizeof (SIValue)) ;
+	node->type           = AR_EXP_OP ;
+	node->op.args        = rm_calloc (child_count * 64, sizeof (SIValue)) ;
+	node->op.children    = rm_calloc (child_count, sizeof (AR_ExpNode *)) ;
+	node->op.child_count = child_count ;
 
 	return node ;
 }
@@ -356,9 +356,10 @@ static bool _AR_EXP_ValidateInvocation
 		if(i < expected_types_count) {
 			expected_type = fdesc->types[i];
 		}
-		if(!(actual_type & expected_type)) {
-			Error_SITypeMismatch(argv[i], expected_type);
-			return false;
+
+		if (!(actual_type & expected_type)) {
+			Error_SITypeMismatch (SI_TYPE (argv[i]), expected_type) ;
+			return false ;
 		}
 	}
 
@@ -418,7 +419,7 @@ static AR_EXP_Result _AR_EXP_EvaluateFunctionCall
 	bool param_found = false ;
 	for (int child_idx = 0; child_idx < child_count; child_idx++) {
 		if (node->op.constant_mask & 1ULL << child_idx) {
-			sub_trees[child_idx] = node->op.cached_constants[child_idx] ;
+			sub_trees[child_idx] = node->op.args[child_idx] ;
 			continue ;
 		}
 
@@ -1176,13 +1177,13 @@ void _AR_EXP_FreeOpInternals
 	for (int i = 0; i < op->child_count; i++) {
 		AR_EXP_Free (op->children[i]) ;
 
-		// free cached constants
+		// free only the first instance of a cached constants
 		if (op->constant_mask & 1ULL << i) {
-			SIValue_Free (op->cached_constants[i]) ;
+			SIValue_Free (op->args[i]) ;
 		}
 	}
 
-	rm_free (op->cached_constants) ;
+	rm_free (op->args) ;
 	rm_free (op->children) ;
 }
 
