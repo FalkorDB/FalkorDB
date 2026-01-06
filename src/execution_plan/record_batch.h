@@ -42,15 +42,21 @@ void RecordBatch_AddRecord
 	Record r             // record to add
 );
 
-// remove record at position idx from the batch
-void RecordBatch_RemoveRecord
+// delete record at position idx from the batch
+void RecordBatch_DeleteRecord
 (
 	RecordBatch batch,  // batch to update
 	uint16_t idx        // record position to remove
 );
 
-// remove the last n records from the batch
-void RecordBatch_RemoveRecords
+void RecordBatch_RemoveRecord
+(
+	RecordBatch batch,  // batch to update
+	uint16_t idx        // record position
+);
+
+// deletes the last n records from the batch
+void RecordBatch_DeleteRecords
 (
 	RecordBatch batch,  // records batch
 	uint32_t n          // number of records to remove

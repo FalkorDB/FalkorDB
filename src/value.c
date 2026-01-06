@@ -859,59 +859,59 @@ int SIValue_Compare
 	// in order to be comparable, both SIValues must be from the same type
 	if(a.type & b.type) {
 		switch(a.type) {
-		case T_INT64:
-		case T_BOOL:
-			return SAFE_COMPARISON_RESULT(a.longval - b.longval);
+			case T_INT64:
+			case T_BOOL:
+				return SAFE_COMPARISON_RESULT(a.longval - b.longval);
 
-		case T_DOUBLE:
-			if(isnan(a.doubleval) || isnan(b.doubleval)) {
-				if(disjointOrNull) *disjointOrNull = COMPARED_NAN;
-			}
+			case T_DOUBLE:
+				if(isnan(a.doubleval) || isnan(b.doubleval)) {
+					if(disjointOrNull) *disjointOrNull = COMPARED_NAN;
+				}
 
-			return SAFE_COMPARISON_RESULT(a.doubleval - b.doubleval);
+				return SAFE_COMPARISON_RESULT(a.doubleval - b.doubleval);
 
-		case T_STRING:
-		case T_INTERN_STRING:
-			return strcmp(a.stringval, b.stringval);
+			case T_STRING:
+			case T_INTERN_STRING:
+				return strcmp(a.stringval, b.stringval);
 
-		case T_NODE:
-		case T_EDGE:
-			return ENTITY_GET_ID((GraphEntity *)a.ptrval) - ENTITY_GET_ID((GraphEntity *)b.ptrval);
+			case T_NODE:
+			case T_EDGE:
+				return ENTITY_GET_ID((GraphEntity *)a.ptrval) - ENTITY_GET_ID((GraphEntity *)b.ptrval);
 
-		case T_ARRAY:
-			return SIArray_Compare(a, b, disjointOrNull);
+			case T_ARRAY:
+				return SIArray_Compare(a, b, disjointOrNull);
 
-		case T_PATH:
-			return SIPath_Compare(a, b);
+			case T_PATH:
+				return SIPath_Compare(a, b);
 
-		case T_MAP:
-			return Map_Compare(a, b, disjointOrNull);
+			case T_MAP:
+				return Map_Compare(a, b, disjointOrNull);
 
-		case T_DATE:
-		case T_TIME:
-		case T_DATETIME:
-		case T_DURATION:
-			return a.datetimeval - b.datetimeval;
+			case T_DATE:
+			case T_TIME:
+			case T_DATETIME:
+			case T_DURATION:
+				return a.datetimeval - b.datetimeval;
 
-		case T_NULL:
-			break;
+			case T_NULL:
+				break;
 
-		case T_POINT:
-		{
-			int lon_diff = SAFE_COMPARISON_RESULT(Point_lon(a) - Point_lon(b));
-			if(lon_diff == 0)
-				return SAFE_COMPARISON_RESULT(Point_lat(a) - Point_lat(b));
-			return lon_diff;
-		}
+			case T_POINT:
+				{
+					int lon_diff = SAFE_COMPARISON_RESULT(Point_lon(a) - Point_lon(b));
+					if(lon_diff == 0)
+						return SAFE_COMPARISON_RESULT(Point_lat(a) - Point_lat(b));
+					return lon_diff;
+				}
 
-		case T_VECTOR_F32:
-			return SIVector_Compare(a, b);
+			case T_VECTOR_F32:
+				return SIVector_Compare(a, b);
 
-		default:
-			// both inputs were of an incomparable type, like a pointer
-			// or not implemented comparison yet
-			ASSERT(false);
-			break;
+			default:
+				// both inputs were of an incomparable type, like a pointer
+				// or not implemented comparison yet
+				ASSERT(false);
+				break;
 		}
 	}
 

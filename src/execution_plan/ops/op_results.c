@@ -72,7 +72,7 @@ static RecordBatch ResultsConsume
 	ASSERT (batch_size > 0) ;
 
 	if (unlikely (batch_size > op->result_set_size_limit)) {
-		RecordBatch_RemoveRecords (batch,
+		RecordBatch_DeleteRecords (batch,
 				batch_size - op->result_set_size_limit) ;
 		batch_size = op->result_set_size_limit ;
 	}

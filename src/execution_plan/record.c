@@ -347,17 +347,18 @@ SIValue Record_Get
 ) {
 	ASSERT (Record_length (r) > idx) ;
 
+	Entry *entries       = Record_GetEntries (r) ;
 	RecordEntryType type = Record_GetTypes (r)[idx] ;
 
 	switch (type) {
 		case REC_TYPE_NODE :
-			return SI_Node (Record_GetNode (r, idx)) ;
+			return SI_Node (&(entries[idx].value.n)) ;
 
 		case REC_TYPE_EDGE :
-			return SI_Edge (Record_GetEdge(r, idx)) ;
+			return SI_Edge (&(entries[idx].value.e)) ;
 
 		case REC_TYPE_SCALAR :
-			return Record_GetEntries (r)[idx].value.s ;
+			return entries[idx].value.s ;
 
 		case REC_TYPE_UNKNOWN :
 			return SI_NullVal ();

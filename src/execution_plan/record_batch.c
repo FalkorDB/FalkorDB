@@ -53,16 +53,15 @@ void RecordBatch_AddRecord
 	Record r             // record to add
 );
 
-// remove record at position idx from the batch
-void RecordBatch_RemoveRecord
+// delete record at position idx from the batch
+void RecordBatch_DeleteRecord
 (
 	RecordBatch batch,  // batch to update
 	uint16_t idx        // record position to remove
 ) {
 	ASSERT (batch != NULL) ;
 
-	uint32_t batch_size = RecordBatch_Size (batch) ;
-	ASSERT (idx < batch_size) ;
+	ASSERT (idx < RecordBatch_Size (batch)) ;
 
 	Record r = batch[idx] ;
 	ExecutionPlan_ReturnRecord (r->owner, r) ;
@@ -70,8 +69,20 @@ void RecordBatch_RemoveRecord
 	array_del_fast (batch, idx) ;
 }
 
-// remove the last n records from the batch
-void RecordBatch_RemoveRecords
+void RecordBatch_RemoveRecord
+(
+	RecordBatch batch,  // batch to update
+	uint16_t idx        // record position
+) {
+	ASSERT (batch != NULL) ;
+
+	ASSERT (idx < RecordBatch_Size (batch)) ;
+
+	array_del_fast (batch, idx) ;
+}
+
+// deletes the last n records from the batch
+void RecordBatch_DeleteRecords
 (
 	RecordBatch batch,  // records batch
 	uint32_t n          // number of records to remove
@@ -83,7 +94,7 @@ void RecordBatch_RemoveRecords
 	ASSERT (n <= i) ;
 
 	while (i > 0) {
-		RecordBatch_RemoveRecord (batch, i-1) ;
+		RecordBatch_DeleteRecord (batch, i-1) ;
 		i-- ;
 	}
 }
