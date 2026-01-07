@@ -10,7 +10,7 @@
 #include "../../arithmetic/arithmetic_expression.h"
 
 // forward declarations
-static Record SkipConsume(OpBase *opBase);
+static RecordBatch SkipConsume(OpBase *opBase);
 static OpResult SkipReset(OpBase *opBase);
 static void SkipFree(OpBase *opBase);
 static OpBase *SkipClone(const ExecutionPlan *plan, const OpBase *opBase);
@@ -57,31 +57,51 @@ OpBase *NewSkipOp
 	return (OpBase *)op;
 }
 
-static Record SkipConsume(OpBase *opBase) {
-	OpSkip *skip = (OpSkip *)opBase;
-	OpBase *child = skip->op.children[0];
+static RecordBatch SkipConsume
+(
+	OpBase *opBase
+) {
+	OpSkip *op = (OpSkip *)opBase;
+	OpBase *child = op->op.children[0] ;
 
-	// As long as we're required to skip
-	while(skip->skipped < skip->skip) {
-		Record discard = OpBase_Consume(child);
+	// as long as we're required to skip
+	while (op->skipped < op->skip) {
+		RecordBatch batch = OpBase_Consume (child) ;
 
-		// Depleted.
-		if(!discard) return NULL;
+		// depleted
+		if (batch == NULL) {
+			return NULL ;
+		}
 
-		// Discard.
-		OpBase_DeleteRecord(&discard);
+		size_t batch_size = RecordBatch_Size (batch) ;
+		size_t remaining = op->skip - op->skipped ;
 
-		// Advance.
-		skip->skipped++;
+		// full batch skip
+		if (batch_size <= remaining) {
+			RecordBatch_Free (&batch) ;
+			op->skipped += batch_size ;
+		}
+
+		else {
+			// partial batch skip
+			RecordBatch_DeleteFirstN (batch, remaining) ;
+			op->skipped += remaining ;
+			return batch ;
+		}
 	}
 
-	return OpBase_Consume(child);
+	// pass-through
+	return OpBase_Consume (child) ;
 }
 
-static OpResult SkipReset(OpBase *ctx) {
-	OpSkip *skip = (OpSkip *)ctx;
-	skip->skipped = 0;
-	return OP_OK;
+static OpResult SkipReset
+(
+	OpBase *ctx
+) {
+	OpSkip *skip = (OpSkip *)ctx ;
+	skip->skipped = 0 ;
+
+	return OP_OK ;
 }
 
 static inline OpBase *SkipClone(const ExecutionPlan *plan, const OpBase *opBase) {

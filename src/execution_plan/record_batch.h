@@ -49,6 +49,14 @@ void RecordBatch_DeleteRecord
 	uint16_t idx        // record position to remove
 );
 
+// delete the first N records
+// maintain records order within the batch
+void RecordBatch_DeleteFirstN
+(
+	RecordBatch batch,  // batch
+	uint16_t n          // number of records to delete
+) ;
+
 void RecordBatch_RemoveRecord
 (
 	RecordBatch batch,  // batch to update

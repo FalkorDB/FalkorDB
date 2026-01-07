@@ -69,16 +69,30 @@ void RecordBatch_DeleteRecord
 	array_del_fast (batch, idx) ;
 }
 
-void RecordBatch_RemoveRecord
+// delete the first N records
+// maintain records order within the batch
+void RecordBatch_DeleteFirstN
 (
-	RecordBatch batch,  // batch to update
-	uint16_t idx        // record position
+	RecordBatch batch,  // batch
+	uint16_t n          // number of records to delete
 ) {
 	ASSERT (batch != NULL) ;
 
-	ASSERT (idx < RecordBatch_Size (batch)) ;
+	size_t batch_size = RecordBatch_Size (batch) ;
+	ASSERT (batch_size >= n) ;
 
-	array_del_fast (batch, idx) ;
+	// delete first n records
+	for (uint16_t i = 0 ; i < n ; i++) {
+		Record r = batch[i] ;
+		ExecutionPlan_ReturnRecord (r->owner, r) ;
+	}
+
+	// push remaining records to the back of the batch
+	size_t remaining = batch_size - n ;
+	memmove (batch, batch + n, sizeof(Record) * remaining);
+
+	// update batch length
+	array_trimm_len (batch, remaining) ;
 }
 
 // deletes the last n records from the batch
@@ -97,6 +111,18 @@ void RecordBatch_DeleteRecords
 		RecordBatch_DeleteRecord (batch, i-1) ;
 		i-- ;
 	}
+}
+
+void RecordBatch_RemoveRecord
+(
+	RecordBatch batch,  // batch to update
+	uint16_t idx        // record position
+) {
+	ASSERT (batch != NULL) ;
+
+	ASSERT (idx < RecordBatch_Size (batch)) ;
+
+	array_del_fast (batch, idx) ;
 }
 
 // merge two batchs
