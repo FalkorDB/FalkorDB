@@ -223,6 +223,45 @@ uint64_t DataBlock_GetReservedIdx
 	return DataBlock_ItemCount (dataBlock) + n ;
 }
 
+// reserve an additional `n` IDs ontop of the already `k` reserved
+void DataBlock_ReservedIDs
+(
+	uint64_t *ids,               // [output]
+	const DataBlock *dataBlock,  // datablock
+	uint64_t k,                  // number of already reserved ids
+	uint64_t n                   // number of IDs to reserve
+) {
+	ASSERT (n         >  0) ;
+	ASSERT (ids       != NULL) ;
+	ASSERT (dataBlock != NULL) ;
+
+	uint64_t n_deleted = DataBlock_DeletedItemsCount (dataBlock) ;
+	uint64_t ids_idx = 0; // tracks our position in the output 'ids' array
+
+	//--------------------------------------------------------------------------
+	// reserve from deleted IDs
+	//--------------------------------------------------------------------------
+
+	if (k < n_deleted) {
+		uint64_t avail_in_deleted = n_deleted - k ;
+		uint64_t to_take = MIN (avail_in_deleted, n) ;
+
+		for (uint64_t i = 0; i < to_take; i++) {
+            ids[ids_idx++] = dataBlock->deletedIdx[n_deleted - (k + i) - 1] ;
+        }
+
+		n -= to_take ;
+		k += to_take ;
+	}
+
+	if (n > 0) {
+		uint64_t start_val = DataBlock_ItemCount (dataBlock) + k ;
+		for (uint64_t i = 0; i < n; i++) {
+			ids[ids_idx++] = start_val + i;
+		}
+	}
+}
+
 // allocate a new item within given dataBlock,
 // if idx is not NULL, idx will contain item position
 // return a pointer to the newly allocated item.

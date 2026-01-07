@@ -91,6 +91,15 @@ uint64_t DataBlock_GetReservedIdx
 	uint64_t n                   // number of reserved items
 );
 
+// reserve an additional `n` IDs ontop of the already `k` reserved
+void DataBlock_ReservedIDs
+(
+	uint64_t *ids,               // [output]
+	const DataBlock *dataBlock,  // datablock
+	uint64_t k,                  // number of already reserved ids
+	uint64_t n                   // number of IDs to reserve
+) ;
+
 // allocate a new item within given dataBlock,
 // if idx is not NULL, idx will contain item position
 // return a pointer to the newly allocated item.
