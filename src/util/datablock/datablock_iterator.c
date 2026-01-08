@@ -49,36 +49,36 @@ void *DataBlockIterator_Next
 	DataBlockIterator *iter,  // iterator
 	uint64_t *id              // item position
 ) {
-	ASSERT(iter != NULL);
+	ASSERT (iter != NULL) ;
 
 	// set default
-	void                 *item         =  NULL;
-	DataBlockItemHeader  *item_header  =  NULL;
+	unsigned char *item = NULL ;
 
 	// have we reached the end of our iterator?
-	while(iter->_current_pos < iter->_end_pos && iter->_current_block != NULL) {
+	while (iter->_current_pos < iter->_end_pos && iter->_current_block != NULL) {
 		// get item at current position
-		Block *block = iter->_current_block;
-		item_header = (DataBlockItemHeader *)block->data + (iter->_block_pos * block->itemSize);
+		Block *block = iter->_current_block ;
+		item = block->data + (iter->_block_pos * block->itemSize) ;
 
 		// advance to next position
-		iter->_block_pos += 1;
-		iter->_current_pos += 1;
+		iter->_block_pos   += 1 ;
+		iter->_current_pos += 1 ;
 
 		// advance to next block if current block consumed
-		if(iter->_block_pos == iter->_block_cap) {
-			iter->_block_pos = 0;
-			iter->_current_block = iter->_current_block->next;
+		if (iter->_block_pos == iter->_block_cap) {
+			iter->_block_pos = 0 ;
+			iter->_current_block = iter->_current_block->next ;
 		}
 
-		if(!IS_ITEM_DELETED(item_header)) {
-			item = ITEM_DATA(item_header);
-			if(id) *id = iter->_current_pos - 1;
-			break;
+		if (!IS_ITEM_DELETED (item)) {
+			if (id) {
+				*id = iter->_current_pos - 1 ;
+			}
+			break ;
 		}
 	}
 
-	return item;
+	return (void*)item ;
 }
 
 // reset iterator to original position

@@ -269,14 +269,14 @@ static void _ResultSet_VerboseReplyAsString
 void ResultSet_EmitVerboseRow
 (
 	ResultSet *set,
-	SIValue **row
+	SIValue *row
 ) {
 	RedisModuleCtx *ctx = set->ctx;
 	// Prepare return array sized to the number of RETURN entities
 	RedisModule_ReplyWithArray(ctx, set->column_count);
 
 	for(int i = 0; i < set->column_count; i++) {
-		SIValue v = *row[i];
+		SIValue v = row[i];
 		_ResultSet_VerboseReplyWithSIValue(ctx, set->gc, v);
 	}
 }

@@ -10,7 +10,7 @@
 #include "../../arithmetic/arithmetic_expression.h"
 
 // forward declarations
-static Record LimitConsume(OpBase *opBase);
+static RecordBatch LimitConsume(OpBase *opBase);
 static OpResult LimitReset(OpBase *opBase);
 static void LimitFree(OpBase *opBase);
 static OpBase *LimitClone(const ExecutionPlan *plan, const OpBase *opBase);
@@ -62,19 +62,35 @@ OpBase *NewLimitOp
 	return (OpBase *)op;
 }
 
-static Record LimitConsume
+static RecordBatch LimitConsume
 (
 	OpBase *opBase
 ) {
-	OpLimit *op = (OpLimit *)opBase;
+	OpLimit *op = (OpLimit *)opBase ;
 
 	// have we reached our limit?
-	if(op->consumed >= op->limit) return NULL;
+	if (op->consumed >= op->limit) {
+		return NULL ;
+	}
 
-	// consume a single record.
-	op->consumed++;
-	OpBase *child = op->op.children[0];
-	return OpBase_Consume(child);
+	OpBase *child = op->op.children[0] ;
+	RecordBatch batch = OpBase_Consume (child) ;
+
+	if (unlikely (batch == NULL)) {
+		return NULL ;
+	}
+
+	size_t remaining  = op->limit - op->consumed ;
+	size_t batch_size = RecordBatch_Size (batch) ;
+
+	if (unlikely (batch_size > remaining)) {
+		RecordBatch_DeleteRecords (batch, batch_size - remaining) ;
+		batch_size = remaining ;
+	}
+
+	// consume batch
+	op->consumed += batch_size ;
+	return batch ;
 }
 
 static OpResult LimitReset

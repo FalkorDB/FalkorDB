@@ -46,7 +46,7 @@ static void _removeTrueFilter
 	SIValue bool_val = AR_EXP_Evaluate(root->exp.exp, NULL);
 	if(SI_TYPE(bool_val) != T_BOOL && SI_TYPE(bool_val) != T_NULL) {
 		// Value did not resolve to boolean, emit an error
-		Error_SITypeMismatch(bool_val, T_BOOL);
+		Error_SITypeMismatch (SI_TYPE (bool_val), T_BOOL) ;
 		SIValue_Free(bool_val);
 		return;
 	}

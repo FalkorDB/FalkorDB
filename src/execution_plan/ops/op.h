@@ -8,6 +8,7 @@
 
 #include "../record.h"
 #include "../../util/arr.h"
+#include "../record_batch.h"
 #include "../../util/dict.h"
 #include "../../redismodule.h"
 #include "../../schema/schema.h"
@@ -132,7 +133,8 @@ struct ExecutionPlan;
 
 typedef void (*fpFree)(struct OpBase *);
 typedef OpResult(*fpInit)(struct OpBase *);
-typedef Record(*fpConsume)(struct OpBase *);
+//typedef Record(*fpConsume)(struct OpBase *);
+typedef void*(*fpConsume)(struct OpBase *);
 typedef OpResult(*fpReset)(struct OpBase *);
 typedef void (*fpToString)(const struct OpBase *, sds *);
 typedef struct OpBase *(*fpClone)(const struct ExecutionPlan *, const struct OpBase *);
@@ -306,6 +308,13 @@ void OpBase_BindOpToPlan
 (
 	OpBase *op,
 	const struct ExecutionPlan *plan
+);
+
+// create a new record batch
+RecordBatch OpBase_CreateRecordBatch
+(
+	const OpBase *op,  // op
+	uint16_t n         // batch size
 );
 
 // creates a new record that will be populated during execution

@@ -113,6 +113,64 @@ ObjectPool *ObjectPool_New
 	return pool;
 }
 
+// borrow `n` records from `pool`
+void ObjectPool_NewItems
+(
+	void **records,    // [input/output] records to return
+	ObjectPool *pool,  // object pool
+	uint32_t n         // number of records to borrow
+) {
+	ASSERT (n       >  0) ;
+	ASSERT (pool    != NULL) ;
+	ASSERT (records != NULL) ;
+	ASSERT (array_len(records) >= n) ;
+
+	//--------------------------------------------------------------------------
+	// recycle items
+	//--------------------------------------------------------------------------
+
+	// number of deleted items
+	uint32_t n_deleted = array_len (pool->deletedIdx) ;
+	uint32_t m = MIN (n, n_deleted) ;
+
+	for (uint32_t i = 0; i < m; i++) {
+		records[i] = _ObjectPool_ReuseItem (pool) ;
+	}
+
+	//--------------------------------------------------------------------------
+	// borrow remaining
+	//--------------------------------------------------------------------------
+
+	// borrow remaining
+	uint32_t remaining = n - m ;
+	if (remaining == 0) {
+		return ;
+	}
+
+	// check capacity and grow if needed
+	uint32_t available = pool->itemCap - pool->itemCount;
+	if (unlikely (remaining > available)) {
+		_ObjectPool_AddBlocks (pool,
+				ITEM_COUNT_TO_BLOCK_COUNT (remaining - available)) ;
+	}
+
+	for (uint32_t i = 0; i < remaining; i++) {
+		// get the index of the new allocation
+		ObjectID idx = pool->itemCount;
+		pool->itemCount++;
+
+		Block *block = GET_ITEM_BLOCK (pool, idx) ;
+		uint pos = ITEM_POSITION_WITHIN_BLOCK (idx) ;
+
+		// retrieve a pointer to the item's header
+		unsigned char *item_header = block->data + (pos * block->itemSize);
+		unsigned char *item = ITEM_FROM_HEADER(item_header);
+
+		ITEM_ID(item) = idx; // set the item ID
+		records[m + i] = item ;
+	}
+}
+
 void *ObjectPool_NewItem
 (
 	ObjectPool *pool
@@ -146,27 +204,31 @@ void ObjectPool_DeleteItem
 	ObjectPool *pool,
 	void *item
 ) {
-	ASSERT(pool != NULL);
+	ASSERT (pool != NULL) ;
 
 	// get item ID
-	ObjectID idx = ITEM_ID(item);
+	ObjectID idx = ITEM_ID (item) ;
 
 	// call item destructor
-	if(pool->destructor) pool->destructor(item);
+	if (pool->destructor) {
+		pool->destructor (item) ;
+	}
 
 	// add ID to deleted list
-	array_append(pool->deletedIdx, idx);
-	pool->itemCount--;
+	array_append (pool->deletedIdx, idx) ;
+	pool->itemCount-- ;
 }
 
 void ObjectPool_Free
 (
 	ObjectPool *pool
 ) {
-	for(uint i = 0; i < pool->blockCount; i++) Block_Free(pool->blocks[i]);
+	for (uint i = 0; i < pool->blockCount; i++) {
+		Block_Free (pool->blocks[i]) ;
+	}
 
-	rm_free(pool->blocks);
-	array_free(pool->deletedIdx);
-	rm_free(pool);
+	rm_free (pool->blocks) ;
+	array_free (pool->deletedIdx) ;
+	rm_free (pool) ;
 }
 

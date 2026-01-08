@@ -258,8 +258,11 @@ void CommitNewEntities
 (
 	PendingCreations *pending
 ) {
-	Graph *g = QueryCtx_GetGraph();
-	uint node_count = array_len(pending->nodes.created_nodes);
+	ASSERT (pending != NULL) ;
+
+	Graph *g = QueryCtx_GetGraph () ;
+	uint node_count = array_len (pending->nodes.created_nodes) ;
+
 	// count number of edges created
 	// edges are distributed among multiple containers, one for each edge in the CREATE/MERGE pattern
 	uint edge_count = 0;
@@ -405,6 +408,112 @@ void ConvertPropertyMap
 
 	// batch add
 	AttributeSet_Add (attributes, ids, vals, attrs_count, false) ;
+}
+
+// resolve properties specified in the query into constant values
+// for a number of entities
+void ConvertPropertyMaps
+(
+	AttributeSet *sets,   // attribute sets
+	RecordBatch batch,    // batch
+	PropertyMap *map      // properties to compute
+) {
+	ASSERT (sets  != NULL) ;
+	ASSERT (map   != NULL) ;
+	ASSERT (batch != NULL) ;
+
+	size_t batch_size = RecordBatch_Size (batch) ;
+	ASSERT (batch_size > 0) ;
+
+	uint property_count = array_len (map->keys) ;
+	SIValue *vals = rm_calloc (property_count * batch_size, sizeof (SIValue)) ;
+
+	// evaluate each property
+	// e.g.
+	// CREATE ({v:1, x:2})
+	// this loop will evaluate the value of both `v` and `x`
+	// for every entity in the batch in the batch
+
+	int  step = property_count ;
+	bool encountered_null = false ;
+
+	for (int i = 0; i < property_count; i++) {
+		// note that AR_EXP_Evaluate may raise a run-time exception
+		// in which case the allocations in this function will leak
+		// for example, this occurs in the query:
+		// CREATE (a {val: 2}), (b {val: a.val})
+		SIValue _vals[batch_size] ;
+		AR_EXP_Evaluate_Batch (_vals, map->values[i], batch, batch_size) ;
+
+		//----------------------------------------------------------------------
+		// validate values
+		//----------------------------------------------------------------------
+
+		bool failed = false ;
+
+		for (int j = 0 ; j < batch_size ; j++) {
+			SIValue val = _vals[j] ;
+
+			if (unlikely (!(SI_TYPE(val) & SI_VALID_PROPERTY_VALUE))) {
+				// this value is of an invalid type
+				if (!SIValue_IsNull (val)) {
+					// if the value was a complex type, emit an exception
+					failed = true ;
+					break ;
+				} else {
+					encountered_null = true ;
+				}
+			}
+
+			// fail if value is an array containing an invalid type
+			if (unlikely (SI_TYPE (val) == T_ARRAY)) {
+				SIType invalid_properties = ~SI_VALID_PROPERTY_VALUE ;
+				if (SIArray_ContainsType (val, invalid_properties)) {
+					// validation failed
+					failed = true ;
+					break ;
+				}
+			}
+		}
+
+		if (failed) {
+			//------------------------------------------------------------------
+			// clean up
+			//------------------------------------------------------------------
+
+			// free last property values
+			for (int j = 0 ; j < batch_size ; j++) {
+				SIValue_Free (_vals[j]) ;
+			}
+
+			// free accumulated values
+			for (int j = 0 ; j < i ; j++) {
+				for (int k = 0 ; k < batch_size ; k++) {
+					SIValue_Free (vals[j + k * property_count]) ;
+				}
+			}
+
+			rm_free (vals) ;
+			Error_InvalidPropertyValue () ;
+			ErrorCtx_RaiseRuntimeException (NULL) ;
+		}
+
+		// distribute property values
+		for (int j = 0 ; j < batch_size ; j++) {
+			vals[j * step + i] = _vals[j] ;
+		}
+	}
+
+	// TODO: handle nulls
+	assert (encountered_null == false) ;
+
+	// batch add
+	for (int i = 0 ; i < batch_size; i++) {
+		AttributeSet_Add (sets + i, map->attr_ids, vals + property_count * i,
+				property_count, true) ;
+	}
+
+	rm_free (vals) ;
 }
 
 // free all data associated with a completed create operation
