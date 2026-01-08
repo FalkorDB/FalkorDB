@@ -9,6 +9,14 @@ on:
       commit_sha:
         description: "Commit SHA"
         required: true
+      run_falkordb_cloud_update:
+        description: "Trigger FalkorDB Cloud version update"
+        required: false
+        default: "true"
+      run_testflight_workflow:
+        description: "Trigger Testflight workflow"
+        required: false
+        default: "true"
   workflow_run:
     workflows: ["Build"]
     types:
@@ -22,8 +30,8 @@ env:
   # Get the commit SHA from the event that triggered the workflow
   # If the event is a workflow_dispatch, use the input value
   # If the event is a workflow_run, use the head_commit.id
-  # If the event is a release, use the target_commitish
-  COMMIT_SHA: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.commit_sha || github.event_name == 'workflow_run' && github.event.workflow_run.head_commit.id || github.event_name == 'release' && github.event.release.target_commitish || github.sha }}
+  # If the event is a release, use the sha
+  COMMIT_SHA: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.commit_sha || github.event_name == 'workflow_run' && github.event.workflow_run.head_commit.id || github.sha }}
 
 jobs:
   release:
@@ -394,44 +402,55 @@ jobs:
           docker buildx imagetools inspect falkordb/falkordb-server:${{ env.TAG_NAME }}
           docker buildx imagetools inspect falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine
 
+      - name: Check if release exists
+        id: check_release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view ${{ env.TAG_NAME }} > /dev/null 2>&1; then
+            echo "RELEASE_EXISTS=true" >> $GITHUB_OUTPUT
+          else
+            echo "RELEASE_EXISTS=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Upload falkordb.so files to release
-        if: github.event_name == 'release'
+        if: steps.check_release.outputs.RELEASE_EXISTS == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Ubuntu binaries
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-x64.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-arm64v8.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-x64.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-arm64v8.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-arm64v8.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-arm64v8.so
 
           # RHEL binaries
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-rhel9-x64.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-rhel9-x64.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-rhel8-x64.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-rhel8-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-rhel9-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-rhel9-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-rhel8-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-rhel8-x64.so
 
           # Alpine binaries
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-alpine-x64.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-alpine-arm64v8.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-alpine-x64.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-alpine-arm64v8.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-alpine-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-alpine-arm64v8.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-alpine-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-alpine-arm64v8.so
 
           # Amazon Linux binaries
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-amazonlinux2023-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-amazonlinux2023-x64.so
 
           # macOS binaries (if they exist)
           if [ -f /tmp/falkordb-macos-arm64v8.so ]; then
-            gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-macos-arm64v8.so
+            gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-macos-arm64v8.so
           fi
           if [ -f /tmp/falkordb-debug-macos-arm64v8.so ]; then
-            gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-macos-arm64v8.so
+            gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-macos-arm64v8.so
           fi
 
   trigger-falkordb-cloud-update:
     needs: release
     runs-on: ubuntu-latest
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || github.event.inputs.run_falkordb_cloud_update == 'true'
     steps:
       - name: Trigger FalkorDB Cloud version update
         uses: peter-evans/repository-dispatch@v4
@@ -439,12 +458,12 @@ jobs:
           token: ${{ secrets.FALKORDB_OMNISTRATE_PAT }}
           repository: FalkorDB/falkordb-omnistrate
           event-type: bump-falkordb-version
-          client-payload: '{"new_version": "${{ github.event.release.tag_name }}"}'
+          client-payload: '{"new_version": "${{ github.event.release.tag_name || github.event.inputs.tag }}"}'
 
   trigger-testflight-workflow:
     needs: release
     runs-on: ubuntu-latest
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || github.event.inputs.run_testflight_workflow == 'true'
     steps:
       - name: Trigger Redis Enterprise tests in FalkorDB/testflight
         uses: peter-evans/repository-dispatch@v4
@@ -452,4 +471,4 @@ jobs:
           token: ${{ secrets.GH_TESTFLIGHT_TOKEN }}
           repository: FalkorDB/testflight
           event-type: release-created
-          client-payload: '{"tag_name": "${{ github.event.release.tag_name }}"}'
+          client-payload: '{"tag_name": "${{ github.event.release.tag_name || github.event.inputs.tag }}"}'
