@@ -79,8 +79,6 @@ bool BitmapRange_FromRanges (
 	roaring64_bitmap_free (*bitmap) ;
 	*bitmap = roaring64_bitmap_create () ;
 
-	roaring64_bitmap_remove_range_closed (*bitmap, min, max) ;
-
 	// evaluate range expressions and tighten
     int n = array_len ((RangeExpression *)ranges) ;
 
