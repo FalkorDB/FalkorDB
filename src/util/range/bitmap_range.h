@@ -13,9 +13,10 @@
 // 3 < n < 10 && 1 < n < 8
 // will result in the range: 3 < n < 8
 bool BitmapRange_Tighten (
-    roaring64_bitmap_t *range,  // tighten range
-	uint64_t v,                 // value
-	AST_Operator op             // <, <=, =, >=, >
+	uint64_t v,       // value
+	AST_Operator op,  // <, <=, =, >=, >
+    uint64_t *min,    // minimum value
+    uint64_t *max     // maximum value
 );
 
 // combine multiple ranges into a single range object
