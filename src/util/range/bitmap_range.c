@@ -17,34 +17,37 @@ bool BitmapRange_Tighten (
     uint64_t *min,    // minimum value
     uint64_t *max     // maximum value
 ) {
+	ASSERT (min != NULL) ;
+	ASSERT (max != NULL) ;
+
 	// tighten range acording to operator
-	switch(op) {
+	switch (op) {
 		case OP_LT:    // <
-			if(*max >= v) {
+			if (*max >= v) {
 				*max = v - 1;
 			}
 			break;
 
 		case OP_LE:    // <=
-			if(*max > v) {
+			if (*max > v) {
 				*max = v;
 			}
 			break;
 
 		case OP_GT:    // >
-			if(*min <= v) {
+			if (*min <= v) {
 				*min = v + 1;
 			}
 			break;
 
 		case OP_GE:    // >=
-			if(*min < v) {
+			if (*min < v) {
 				*min = v;
 			}
 			break;
 
 		case OP_EQUAL:  // =
-			if(v < *min || v > *max) {
+			if (v < *min || v > *max) {
 				return false;
 			}
 
@@ -53,7 +56,7 @@ bool BitmapRange_Tighten (
 			break;
 
 		default:
-			ASSERT(false && "operation not supported");
+			ASSERT (false && "operation not supported");
 			break;
 	}
 
@@ -63,38 +66,39 @@ bool BitmapRange_Tighten (
 // combine multiple ranges into a single range object
 bool BitmapRange_FromRanges (
     const RangeExpression *ranges,  // ranges to tighten
-    roaring64_bitmap_t *range,      // tighten range
+    roaring64_bitmap_t **bitmap,    // tighten range
     Record r,                       // record to evaluate range expressions
 	uint64_t min,                   // initial minumum value
 	uint64_t max                    // initial maximum value
 ) {
-	ASSERT(min    <= max);
-	ASSERT(min    != NULL);
-	ASSERT(max    != NULL);
-	ASSERT(range  != NULL);
-	ASSERT(ranges != NULL);
+	ASSERT (min    <= max) ;
+	ASSERT (bitmap  != NULL) ;
+	ASSERT (ranges != NULL) ;
 
 	// clear range
-	roaring64_bitmap_remove_range_closed(range, min, max);
+	roaring64_bitmap_free (*bitmap) ;
+	*bitmap = roaring64_bitmap_create () ;
+
+	roaring64_bitmap_remove_range_closed (*bitmap, min, max) ;
 
 	// evaluate range expressions and tighten
-    int n = array_len((RangeExpression *)ranges);
+    int n = array_len ((RangeExpression *)ranges) ;
 
-	for(int i = 0; i < n; i++) {
-		SIValue v = AR_EXP_Evaluate(ranges[i].exp, r);
+	for (int i = 0; i < n; i++) {
+		SIValue v = AR_EXP_Evaluate (ranges[i].exp, r) ;
 
 		// fail if range expression isn't an integer
-		if(SI_TYPE(v) != T_INT64) {
-			return false;
+		if (SI_TYPE(v) != T_INT64) {
+			return false ;
 		}
 
-		if(!BitmapRange_Tighten(v.longval, ranges[i].op, &min, &max)) {
-			return false;
+		if (!BitmapRange_Tighten (v.longval, ranges[i].op, &min, &max)) {
+			return false ;
 		}
 	}
 
-	roaring64_bitmap_add_range_closed(range, min, max);
-    roaring64_bitmap_run_optimize(range);
-    return true;
+	roaring64_bitmap_add_range_closed (*bitmap, min, max) ;
+    roaring64_bitmap_run_optimize (*bitmap) ;
+    return true ;
 }
 
