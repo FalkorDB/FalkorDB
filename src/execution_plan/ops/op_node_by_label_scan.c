@@ -100,8 +100,6 @@ static bool _ConstructIterator
 	NodeByLabelScan *op
 ) {
 	GrB_Info info;
-	NodeID   minId;
-	NodeID   maxId;
 
 	op->L = Graph_GetLabelMatrix(op->g, op->n->label_id);
 

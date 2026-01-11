@@ -72,8 +72,8 @@ bool BitmapRange_FromRanges (
 	uint64_t max                    // initial maximum value
 ) {
 	ASSERT (min    <= max) ;
-	ASSERT (bitmap  != NULL) ;
 	ASSERT (ranges != NULL) ;
+	ASSERT (bitmap != NULL && *bitmap != NULL) ;
 
 	// clear range
 	roaring64_bitmap_free (*bitmap) ;
