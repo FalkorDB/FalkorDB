@@ -57,7 +57,7 @@ static bool _AR_EXP_UpdateEntityIdx
 // a.first_name + toUpper(a.last_name)
 // the result of toUpper() is allocated within this tree
 // and will leak if not freed here
-static inline void _AR_EXP_FreeArgsArray
+static void _AR_EXP_FreeArgsRows
 (
 	SIValue *args,          // evaluated arguments to free
 	SIAllocation *allocs,   // args allocations
@@ -70,6 +70,24 @@ static inline void _AR_EXP_FreeArgsArray
 		if (!(constant_mask & 1ULL << i) && allocs[i] == M_SELF) {
 			for (int j = i; j < argc; j+= chunk_size) {
 				SIValue_Free (args[j]) ;
+			}
+		}
+	}
+}
+
+static void _AR_EXP_FreeArgsColumn
+(
+	SIValue *args,  //
+	SIAllocation *allocs,
+	uint16_t n_cols,
+	uint16_t n_rows,
+	uint16_t constant_mask
+) {
+	for (uint16_t i = 0 ; i < n_cols ; i++) {
+		if (!(constant_mask & 1ULL << i) && allocs[i] == M_SELF) {
+			uint16_t offset = n_rows * i ;
+			for (uint16_t j = 0 ; j < n_rows ; j++) {
+				SIValue_Free (args[offset + j]) ;
 			}
 		}
 	}
@@ -130,27 +148,33 @@ static AR_EXP_Result _AR_EXP_EvaluateFunctionCall_Batch
 	size_t n,                     // number of batches
 	uint step                     // step within 'res'
 ) {
+	ASSERT (res  != NULL) ;
+	ASSERT (node != NULL) ;
+
 	AR_EXP_Result ret = EVAL_OK ;
 
 	uint child_count = NODE_CHILD_COUNT (node) ;
 	ASSERT (n <= 64) ;
 	uint argc = child_count * n ;
 
-	//--------------------------------------------------------------------------
-	// evaluate each child before evaluating current node
-	//--------------------------------------------------------------------------
-
 	SIType types[child_count] ;         // value type(s) of sub exps
 	SIAllocation allocs[child_count] ;  // value allocation type(s) of sub exps
 
 	bool param_found    = false ;
 	bool err_eval_child = false ;
+	bool vectorized     = AR_HasBatchVersion (node->op.f) ;
+	uint _step          = vectorized ? 1 : step ;  // row / col layout
+
+	//--------------------------------------------------------------------------
+	// evaluate each child before evaluating current node
+	//--------------------------------------------------------------------------
 
 	for (int child_idx = 0 ; child_idx < child_count ; child_idx++) {
+		int arg_offset = child_idx * 64 * vectorized ;
 
 		// argument already cached
 		if (node->op.constant_mask & 1ULL << child_idx) {
-			types[child_idx] = SI_TYPE (node->op.args[child_idx]) ;
+			types[child_idx] = SI_TYPE (node->op.args[arg_offset]) ;
 			continue ;
 		}
 
@@ -160,9 +184,9 @@ static AR_EXP_Result _AR_EXP_EvaluateFunctionCall_Batch
 
 		AR_ExpNode *child = NODE_CHILD (node, child_idx) ;
 
-		ret = _AR_EXP_Evaluate_Batch (node->op.args + child_idx,
+		ret = _AR_EXP_Evaluate_Batch (node->op.args + arg_offset,
 				types + child_idx, allocs + child_idx, child, recs, n,
-				child_count) ;
+				_step) ;
 
 		err_eval_child |= (ret == EVAL_ERR) ;
 		param_found    |= (ret == EVAL_FOUND_PARAM) ;
@@ -192,24 +216,44 @@ static AR_EXP_Result _AR_EXP_EvaluateFunctionCall_Batch
 	SIType _type = 0 ;
 	SIAllocation _alloc = M_NONE ;
 
+	if (vectorized) 
+	{
+		// set columns
+		SIValue *_args [child_count];
+		for (uint i = 0; i < child_count; i++) {
+			_args[i] = &(node->op.args[i * 64]) ;
+		}
+
+		// call vectorized operator
+		node->op.f->batch_func (res, _args, types, n, node->op.private_data) ;
+	}
+	else
+	{
+		for (uint i = 0; i < n; i++) {
+			SIValue *row_args = node->op.args + (i * child_count);
+			SIValue v = node->op.f->func (row_args, child_count,
+					node->op.private_data) ;
+
+			SIValue_Persist (&v) ;
+			res[i * step] = v ;
+		}
+	}
+
+	// compute results types and allocation types
 	for (uint i = 0; i < n; i++) {
-		SIValue v = node->op.f->func (node->op.args + i * child_count, child_count,
-				node->op.private_data) ;
+		_type  |= SI_TYPE (res[i]) ;
+		_alloc |= SI_ALLOCATION (&res[i]) ;
 
-		_type  |= SI_TYPE (v) ;
-		_alloc |= SI_ALLOCATION (&v) ;
+		ASSERT (node->op.f->aggregate ||
+				SI_TYPE (res[i]) & AR_FuncDesc_RetType (node->op.f)) ;
 
-		ASSERT (node->op.f->aggregate || SI_TYPE (v) & AR_FuncDesc_RetType (node->op.f)) ;
-		if (unlikely (SIValue_IsNull (v) && ErrorCtx_EncounteredError ())) {
+		if (unlikely (SIValue_IsNull (res[i]) &&
+					  ErrorCtx_EncounteredError ())) {
 			// an error was encountered while evaluating this function
 			// and has already been set in the QueryCtx
 			// exit with an error
 			ret = EVAL_ERR ;
-		}
-
-		if (res) {
-			SIValue_Persist (&v) ;
-			res[i * step] = v ;
+			break ;
 		}
 	}
 
@@ -223,8 +267,13 @@ static AR_EXP_Result _AR_EXP_EvaluateFunctionCall_Batch
 	}
 
 cleanup:
-	_AR_EXP_FreeArgsArray (node->op.args, allocs, argc, child_count,
-			node->op.constant_mask) ;
+	if (vectorized) {
+		_AR_EXP_FreeArgsColumn (node->op.args, allocs, child_count, n,
+				node->op.constant_mask) ;
+	} else {
+		_AR_EXP_FreeArgsRows (node->op.args, allocs, argc, child_count,
+				node->op.constant_mask) ;
+	}
 
 	return ret ;
 }

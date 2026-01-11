@@ -36,48 +36,6 @@ static inline void _SIString_ToString
 			str.stringval);
 }
 
-SIValue SI_LongVal(int64_t i) {
-	return (SIValue) {
-		.longval = i, .type = T_INT64, .allocation = M_NONE
-	};
-}
-
-SIValue SI_DoubleVal(double d) {
-	return (SIValue) {
-		.doubleval = d, .type = T_DOUBLE, .allocation = M_NONE
-	};
-}
-
-SIValue SI_NullVal(void) {
-	return (SIValue) {
-		.longval = 0, .type = T_NULL, .allocation = M_NONE
-	};
-}
-
-SIValue SI_BoolVal(int b) {
-	return (SIValue) {
-		.longval = b, .type = T_BOOL, .allocation = M_NONE
-	};
-}
-
-SIValue SI_PtrVal(void *v) {
-	return (SIValue) {
-		.ptrval = v, .type = T_PTR, .allocation = M_NONE
-	};
-}
-
-SIValue SI_Node(void *n) {
-	return (SIValue) {
-		.ptrval = n, .type = T_NODE, .allocation = M_VOLATILE
-	};
-}
-
-SIValue SI_Edge(void *e) {
-	return (SIValue) {
-		.ptrval = e, .type = T_EDGE, .allocation = M_VOLATILE
-	};
-}
-
 SIValue SI_Path(void *p) {
 	Path *path = (Path *)p;
 	return SIPath_New(path);

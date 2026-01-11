@@ -24,6 +24,16 @@ typedef struct {
 // AR_Func - function pointer to an operation with an arithmetic expression
 typedef SIValue(*AR_Func)(SIValue *argv, int argc, void *private_data);
 
+// AR_BatchFunc - vectorized arithmetic operator
+// performs an operation across a batch of records
+typedef void (*AR_BatchFunc) (
+    SIValue *restrict results,    // target buffer for computed values
+    SIValue **restrict args,      // input vectors (columns)
+    SIType  *restrict arg_types,  // metadata: types of the input vectors
+    int batch_size,               // number of rows to process
+    void *private_data            // context/constants (e.g. cached regex)
+);
+
 // AR_Func_Finalize - function pointer to a routine for computing an aggregate function's final value
 typedef void (*AR_Func_Finalize)(void *ctx);
 
@@ -45,18 +55,19 @@ typedef struct {
 } AR_FuncCBs;
 
 typedef struct {
-	AR_Func func;          // function pointer to scalar or aggregate function routine
-	SIType *types;         // types of arguments
-	SIType ret_type;       // return type
-	uint min_argc;         // minimal number of arguments function expects
-	uint max_argc;         // maximal number of arguments function expects
-	bool internal;         // is function internal
-	bool reducible;        // can be reduced using static evaluation
-	bool aggregate;        // true if the function is an aggregation
-	bool udf;              // user define function
-	bool deterministic;    // true if return value is predictable
-	char *name;            // function name
-	AR_FuncCBs callbacks;  // aggregation callbacks
+	AR_Func func;             // function pointer to scalar or aggregate function routine
+	AR_BatchFunc batch_func;  // vectorized arithmetic operator
+	SIType *types;            // types of arguments
+	SIType ret_type;          // return type
+	uint min_argc;            // minimal number of arguments function expects
+	uint max_argc;            // maximal number of arguments function expects
+	bool internal;            // is function internal
+	bool reducible;           // can be reduced using static evaluation
+	bool aggregate;           // true if the function is an aggregation
+	bool udf;                 // user define function
+	bool deterministic;       // true if return value is predictable
+	char *name;               // function name
+	AR_FuncCBs callbacks;     // aggregation callbacks
 } AR_FuncDesc;
 
 // initialize functions repository
@@ -100,6 +111,19 @@ void AR_SetPrivateDataRoutines
 	AR_FuncDesc *func_desc,
 	AR_Func_Free free,
 	AR_Func_Clone clone
+);
+
+// sets the descriptor's batched operator
+void AR_SetBatchVersion
+(
+	AR_FuncDesc *func_desc,  // function descriptor
+	AR_BatchFunc fp          // function pointer to a vectorized operator
+);
+
+// checks if descriptor has a vectorized version
+bool AR_HasBatchVersion
+(
+	const AR_FuncDesc *func_desc  // function descriptor
 );
 
 // get arithmetic function

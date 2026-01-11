@@ -27,7 +27,59 @@ SIValue AR_ADD
 	int argc,
 	void *private_data
 ) {
-	return SIValue_Add(argv[0], argv[1]);
+	return SIValue_Add (argv[0], argv[1]) ;
+}
+
+// AR_Add_Batch: Vectorized Addition
+// computes: results[i] = left[i] + right[i]
+// optimized for homogeneous numeric vectors to encourage SIMD auto-vectorization
+// falls back to scalar SIValue_Add for mixed types, strings, or null-handling
+void AR_Add_Batch
+(
+	SIValue *restrict results,   // [out] target vector for results
+	SIValue **restrict args,     // [in] array of input vectors
+	SIType *restrict arg_types,  // [in] arg_types[i] type of vector args[i]
+	int batch_size,              // [in] number of elements in the vectors
+	void *private_data           // [unused]
+) {
+	ASSERT (results    != NULL) ;
+	ASSERT (batch_size > 0) ;
+	ASSERT (arg_types  != NULL) ;
+	ASSERT (args != NULL && args[0] != NULL && args[1] != NULL) ;
+
+	SIValue *restrict left  = args[0] ;
+	SIValue *restrict right = args[1] ;
+
+	if (likely (arg_types[0] == arg_types[1])) {
+		const SIType common_type = arg_types[0] ;
+
+		switch (common_type) {
+			case T_INT64:
+				for (int i = 0; i < batch_size ; i++) {
+					results[i] =
+						SI_LongVal (left[i].longval + right[i].longval) ;
+				}
+				return ;
+
+			case T_DOUBLE:
+				for (int i = 0; i < batch_size ; i++) {
+					results[i] =
+						SI_DoubleVal (left[i].doubleval + right[i].doubleval) ;
+				}
+				return ;
+
+			default:
+				// types match but aren't simple primitives e.g. arrays
+				break ;
+		}
+	}
+
+	// fallback path:
+    // used for heterogeneous types (e.g., INT + DOUBLE) or complex types
+    // SIValue_Add handles type promotion and error checking internally
+	for (int i = 0 ; i < batch_size ; i++) {
+		results[i] = SIValue_Add (left[i], right[i]) ;
+	}
 }
 
 // returns the subtracting given values
@@ -38,6 +90,58 @@ SIValue AR_SUB
 	void *private_data
 ) {
 	return SIValue_Subtract(argv[0], argv[1]);
+}
+
+// AR_Sub_Batch: Vectorized Subtraction
+// computes: results[i] = left[i] - right[i]
+// optimized for homogeneous numeric vectors to encourage SIMD auto-vectorization
+// falls back to scalar SIValue_Subtract for mixed types
+void AR_Sub_Batch
+(
+	SIValue *restrict results,   // [out] target vector for results
+	SIValue **restrict args,     // [in] array of input vectors
+	SIType *restrict arg_types,  // [in] arg_types[i] type of vector args[i]
+	int batch_size,              // [in] number of elements in the vectors
+	void *private_data           // [unused]
+) {
+	ASSERT (results    != NULL) ;
+	ASSERT (batch_size > 0) ;
+	ASSERT (arg_types  != NULL) ;
+	ASSERT (args != NULL && args[0] != NULL && args[1] != NULL) ;
+
+	SIValue *restrict left  = args[0] ;
+	SIValue *restrict right = args[1] ;
+
+	if (likely (arg_types[0] == arg_types[1])) {
+		const SIType common_type = arg_types[0] ;
+
+		switch (common_type) {
+			case T_INT64:
+				for (int i = 0; i < batch_size ; i++) {
+					results[i] =
+						SI_LongVal (left[i].longval - right[i].longval) ;
+				}
+				return ;
+
+			case T_DOUBLE:
+				for (int i = 0; i < batch_size ; i++) {
+					results[i] =
+						SI_DoubleVal (left[i].doubleval - right[i].doubleval) ;
+				}
+				return ;
+
+			default:
+				// types match but aren't simple primitives e.g. arrays
+				break ;
+		}
+	}
+
+	// fallback path:
+    // used for heterogeneous types (e.g., INT - DOUBLE) or complex types
+    // SIValue_Subtract handles type promotion and error checking internally
+	for (int i = 0 ; i < batch_size ; i++) {
+		results[i] = SIValue_Subtract (left[i], right[i]) ;
+	}
 }
 
 /* returns the multiplication of given values. */
@@ -395,21 +499,23 @@ void Register_NumericFuncs() {
 	SIType ret_type;
 	AR_FuncDesc *func_desc;
 
-	types = array_new(SIType, 2);
-	array_append(types, (SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_NULL));
-	array_append(types, (SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_NULL));
-	ret_type = SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_NULL;
-	func_desc = AR_FuncDescNew("add", AR_ADD, 2, 2, types, ret_type, true, true,
-			true);
-	AR_FuncRegister(func_desc);
+	types = array_new (SIType, 2) ;
+	array_append (types, (SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_NULL)) ;
+	array_append (types, (SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_NULL)) ;
+	ret_type = SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_NULL ;
+	func_desc = AR_FuncDescNew ("add", AR_ADD, 2, 2, types, ret_type, true, true,
+			true) ;
+	AR_FuncRegister (func_desc) ;
+	AR_SetBatchVersion (func_desc, AR_Add_Batch) ;
 
-	types = array_new(SIType, 2);
-	array_append(types, (SI_NUMERIC | SI_TEMPORAL | T_NULL));
-	array_append(types, (SI_NUMERIC | T_DURATION  | T_NULL));
+	types = array_new (SIType, 2) ;
+	array_append (types, (SI_NUMERIC | SI_TEMPORAL | T_NULL)) ;
+	array_append (types, (SI_NUMERIC | T_DURATION  | T_NULL)) ;
 	ret_type = SI_NUMERIC | SI_TEMPORAL | T_NULL;
-	func_desc = AR_FuncDescNew("sub", AR_SUB, 2, 2, types, ret_type, true, true,
-			true);
-	AR_FuncRegister(func_desc);
+	func_desc = AR_FuncDescNew ("sub", AR_SUB, 2, 2, types, ret_type, true, true,
+			true) ;
+	AR_FuncRegister (func_desc) ;
+	//AR_SetBatchVersion (func_desc, AR_Sub_Batch) ;
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));

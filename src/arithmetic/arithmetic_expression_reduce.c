@@ -76,10 +76,19 @@ static bool _ReduceOperation
 			// distribute constant among op's args
 			//------------------------------------------------------------------
 
-			for (int j = i; j < argc; j+= child_count) {
-				op->args[j] = v ;
+			if (unlikely (AR_HasBatchVersion (root->op.f))) {
+				// column format
+				int j   = 64 * i ;
+				int end = j + 64 ;
+				for (; j < end; j++) {
+					op->args[j] = v ;
+				}
+			} else {
+				// row format
+				for (int j = i; j < argc; j+= child_count) {
+					op->args[j] = v ;
+				}
 			}
-
 		} else {
 			all_children_reduced = false ;
 		}
