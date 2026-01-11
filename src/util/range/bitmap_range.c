@@ -68,7 +68,9 @@ bool BitmapRange_FromRanges (
 	uint64_t min,                   // initial minumum value
 	uint64_t max                    // initial maximum value
 ) {
-	ASSERT(min <= max);
+	ASSERT(min    <= max);
+	ASSERT(min    != NULL);
+	ASSERT(max    != NULL);
 	ASSERT(range  != NULL);
 	ASSERT(ranges != NULL);
 
