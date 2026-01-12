@@ -22,7 +22,7 @@ bool BitmapRange_Tighten (
 // combine multiple ranges into a single range object
 bool BitmapRange_FromRanges (
     const RangeExpression *ranges,  // ranges to tighten
-    roaring64_bitmap_t **bitmap,    // tighten range
+    roaring64_bitmap_t *bitmap,     // tighten range
     Record r,                       // record to evaluate range expressions
 	uint64_t min,                   // initial minumum value
 	uint64_t max                    // initial maximum value

@@ -66,17 +66,17 @@ bool BitmapRange_Tighten (
 // combine multiple ranges into a single range object
 bool BitmapRange_FromRanges (
     const RangeExpression *ranges,  // ranges to tighten
-    roaring64_bitmap_t **bitmap,    // tighten range
+    roaring64_bitmap_t *bitmap,     // tighten range
     Record r,                       // record to evaluate range expressions
 	uint64_t min,                   // initial minumum value
 	uint64_t max                    // initial maximum value
 ) {
 	ASSERT (min    <= max) ;
 	ASSERT (ranges != NULL) ;
-	ASSERT (bitmap != NULL && *bitmap != NULL) ;
+	ASSERT (bitmap != NULL) ;
 
 	// clear range
-	roaring64_bitmap_clear (*bitmap) ;
+	roaring64_bitmap_clear (bitmap) ;
 
 	// evaluate range expressions and tighten
     int n = array_len ((RangeExpression *)ranges) ;
@@ -94,8 +94,8 @@ bool BitmapRange_FromRanges (
 		}
 	}
 
-	roaring64_bitmap_add_range_closed (*bitmap, min, max) ;
-    roaring64_bitmap_run_optimize (*bitmap) ;
+	roaring64_bitmap_add_range_closed (bitmap, min, max) ;
+    roaring64_bitmap_run_optimize (bitmap) ;
     return true ;
 }
 

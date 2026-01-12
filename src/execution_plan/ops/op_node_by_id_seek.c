@@ -70,7 +70,7 @@ static OpResult NodeByIdSeekInit
 
 	// operation is a tap
 	// evaluate ID ranges
-	if(!BitmapRange_FromRanges(op->ranges, &op->ids, op->child_record, 0,
+	if(!BitmapRange_FromRanges(op->ranges, op->ids, op->child_record, 0,
 				Graph_UncompactedNodeCount(op->g))) {
 		// failed to tighten range, update consume function to return NULL
 		OpBase_UpdateConsume(opBase, NodeByIdSeekDepleted);
@@ -126,7 +126,7 @@ pull:
 		if(op->child_record == NULL) return NULL;  // child depleted
 
 		// re-evealuate ID ranges
-		if(!BitmapRange_FromRanges(op->ranges, &op->ids, op->child_record, 0,
+		if(!BitmapRange_FromRanges(op->ranges, op->ids, op->child_record, 0,
 					Graph_UncompactedNodeCount(op->g))) {
 			return NULL;
 		}
