@@ -280,7 +280,19 @@ static void _ExecuteQuery(void *args) {
 		}
 	}
 
-	QueryCtx_UnlockCommit();
+	// send keyspace notification after all locks are released
+	if (graph_modified) {
+		const char *graph_name = GraphContext_GetName(gc);
+		RedisModuleString *key = RedisModule_CreateString(rm_ctx,
+				graph_name, strlen(graph_name));
+		RedisModule_NotifyKeyspaceEvent(rm_ctx,
+				REDISMODULE_NOTIFY_MODULE,
+				"graph.modified",
+				key);
+		RedisModule_FreeString(rm_ctx, key);
+	}
+
+	QueryCtx_UnlockCommit () ;
 
 	if(!profile || ErrorCtx_EncounteredError()) {
 		// if we encountered an error, ResultSet_Reply will emit the error
@@ -294,18 +306,6 @@ static void _ExecuteQuery(void *args) {
 	}
 
 	if(readonly) Graph_ReleaseLock(gc->g); // release read lock
-
-	// send keyspace notification after all locks are released
-	if(graph_modified) {
-		const char *graph_name = GraphContext_GetName(gc);
-		RedisModuleString *key = RedisModule_CreateString(rm_ctx,
-				graph_name, strlen(graph_name));
-		RedisModule_NotifyKeyspaceEvent(rm_ctx,
-				REDISMODULE_NOTIFY_MODULE,
-				"graph.modified",
-				key);
-		RedisModule_FreeString(rm_ctx, key);
-	}
 
 	//--------------------------------------------------------------------------
 	// log query to slowlog
