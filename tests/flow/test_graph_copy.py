@@ -1,9 +1,9 @@
-from common import Env, FalkorDB, SANITIZER, VALGRIND
-from redis import BusyLoadingError
-from random_graph import create_random_schema, create_random_graph
-from graph_utils import graph_eq
-from constraint_utils import create_constraint
 import time
+from graph_utils import graph_eq
+from redis import BusyLoadingError
+from constraint_utils import create_constraint
+from common import Env, FalkorDB, SANITIZER, VALGRIND
+from random_graph import create_random_schema, create_random_graph
 
 GRAPH_ID = "graph_copy"
 
