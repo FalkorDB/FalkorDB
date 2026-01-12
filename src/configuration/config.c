@@ -6,14 +6,15 @@
 
 #include "RG.h"
 #include "config.h"
+#include "util/rmalloc.h"
+#include "util/redis_version.h"
+#include "../deps/GraphBLAS/Include/GraphBLAS.h"
+
 #include <unistd.h>
 #include <string.h>
 #include <limits.h>
 #include <errno.h>
 #include <sys/stat.h>
-#include "util/rmalloc.h"
-#include "util/redis_version.h"
-#include "../deps/GraphBLAS/Include/GraphBLAS.h"
 
 //-----------------------------------------------------------------------------
 // Configuration parameters
@@ -1617,7 +1618,7 @@ bool Config_Option_set(
 	{
 		ASSERT(val != NULL);
 
-		// Check that path exists
+		// check that path exists
 		if (access(val, F_OK) != 0)
 		{
 			if (err)
@@ -1625,7 +1626,7 @@ bool Config_Option_set(
 			return false;
 		}
 
-		// Check that path is a directory
+		// check that path is a directory
 		struct stat st;
 		if (stat(val, &st) != 0 || !S_ISDIR(st.st_mode))
 		{
@@ -1634,7 +1635,7 @@ bool Config_Option_set(
 			return false;
 		}
 
-		// Check that process has write access
+		// check that process has write access
 		if (access(val, W_OK) != 0)
 		{
 			if (err)
