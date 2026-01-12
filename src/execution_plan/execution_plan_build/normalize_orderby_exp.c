@@ -152,6 +152,8 @@ void normalize_sort_exps
 
 	// process each ORDER BY expression
 	for (int si = 0; si < sort_count; si++) {
+		int n_vars  = 0 ;
+		char **vars = NULL ;
 		AR_ExpNode *sort_exp = sort_exps[si] ;
 
 		//----------------------------------------------------------------------
@@ -214,8 +216,8 @@ void normalize_sort_exps
 		// check for un-projected variables
 		//----------------------------------------------------------------------
 
-		char **vars = collect_expr_vars (sort_exp) ;
-		int n_vars = array_len (vars) ;
+		vars   = collect_expr_vars (sort_exp) ;
+		n_vars = array_len (vars) ;
 		bool has_nonprojected_vars = false ;
 
 		for (int vi = 0; vi < n_vars; vi++) {
