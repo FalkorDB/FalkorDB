@@ -332,6 +332,11 @@ import shutil
 import tempfile
 
 class testConfigTempFolder:
+    def __init__(self):
+        self.env, self.db = Env()
+        if SANITIZER or VALGRIND:
+            self.env.skip()
+
     def teardown_method(self):
         if hasattr(self, 'conn'):
             self.conn.shutdown()
@@ -339,9 +344,6 @@ class testConfigTempFolder:
     def set_temp_folder(self, path):
         module_args = f"TEMP_FOLDER {path}"
         self.env, self.db = Env(moduleArgs=module_args, enableDebugCommand=True)
-
-        if SANITIZER:
-            self.env.skip()
 
         self.conn = self.env.getConnection()
 
