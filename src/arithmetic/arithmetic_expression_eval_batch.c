@@ -163,14 +163,16 @@ static AR_EXP_Result _AR_EXP_EvaluateFunctionCall_Batch
 	bool param_found    = false ;
 	bool err_eval_child = false ;
 	bool vectorized     = AR_HasBatchVersion (node->op.f) ;
-	uint _step          = vectorized ? 1 : step ;  // row / col layout
+	uint _step          = vectorized ? 1 : child_count ;  // row / col layout
 
 	//--------------------------------------------------------------------------
 	// evaluate each child before evaluating current node
 	//--------------------------------------------------------------------------
 
 	for (int child_idx = 0 ; child_idx < child_count ; child_idx++) {
-		int arg_offset = child_idx * 64 * vectorized ;
+		int arg_offset = (vectorized) ?
+			child_idx * 64 * vectorized :
+			child_idx ;
 
 		// argument already cached
 		if (node->op.constant_mask & 1ULL << child_idx) {

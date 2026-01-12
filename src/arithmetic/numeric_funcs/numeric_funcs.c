@@ -144,10 +144,70 @@ void AR_Sub_Batch
 	}
 }
 
-/* returns the multiplication of given values. */
-SIValue AR_MUL(SIValue *argv, int argc, void *private_data) {
-	if(SIValue_IsNull(argv[0]) || SIValue_IsNull(argv[1])) return SI_NullVal();
-	return SIValue_Multiply(argv[0], argv[1]);
+// returns the multiplication of given values
+SIValue AR_MUL
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
+	if (SIValue_IsNull(argv[0]) || SIValue_IsNull(argv[1])) {
+		return SI_NullVal () ;
+	}
+
+	return SIValue_Multiply (argv[0], argv[1]) ;
+}
+
+// AR_Mul_Batch: Vectorized Multiplication
+// computes: results[i] = left[i] * right[i]
+// optimized for homogeneous numeric vectors to encourage SIMD auto-vectorization
+// falls back to scalar SIValue_Multiply for mixed types
+void AR_Mul_Batch
+(
+	SIValue *restrict results,   // [out] target vector for results
+	SIValue **restrict args,     // [in] array of input vectors
+	SIType *restrict arg_types,  // [in] arg_types[i] type of vector args[i]
+	int batch_size,              // [in] number of elements in the vectors
+	void *private_data           // [unused]
+) {
+	ASSERT (results    != NULL) ;
+	ASSERT (batch_size > 0) ;
+	ASSERT (arg_types  != NULL) ;
+	ASSERT (args != NULL && args[0] != NULL && args[1] != NULL) ;
+
+	SIValue *restrict left  = args[0] ;
+	SIValue *restrict right = args[1] ;
+
+	if (likely (arg_types[0] == arg_types[1])) {
+		const SIType common_type = arg_types[0] ;
+
+		switch (common_type) {
+			case T_INT64:
+				for (int i = 0; i < batch_size ; i++) {
+					results[i] =
+						SI_LongVal (left[i].longval * right[i].longval) ;
+				}
+				return ;
+
+			case T_DOUBLE:
+				for (int i = 0; i < batch_size ; i++) {
+					results[i] =
+						SI_DoubleVal (left[i].doubleval * right[i].doubleval) ;
+				}
+				return ;
+
+			default:
+				// types match but aren't simple primitives e.g. arrays
+				break ;
+		}
+	}
+
+	// fallback path:
+    // used for heterogeneous types (e.g., INT * DOUBLE)
+    // SIValue_Multiply handles type promotion and error checking internally
+	for (int i = 0 ; i < batch_size ; i++) {
+		results[i] = SIValue_Multiply (left[i], right[i]) ;
+	}
 }
 
 /* returns the division of given values. */
@@ -515,14 +575,15 @@ void Register_NumericFuncs() {
 	func_desc = AR_FuncDescNew ("sub", AR_SUB, 2, 2, types, ret_type, true, true,
 			true) ;
 	AR_FuncRegister (func_desc) ;
-	//AR_SetBatchVersion (func_desc, AR_Sub_Batch) ;
+	AR_SetBatchVersion (func_desc, AR_Sub_Batch) ;
 
-	types = array_new(SIType, 1);
-	array_append(types, (SI_NUMERIC | T_NULL));
-	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("mul", AR_MUL, 2, 2, types, ret_type, true, true,
-			true);
-	AR_FuncRegister(func_desc);
+	types = array_new (SIType, 1) ;
+	array_append (types, (SI_NUMERIC | T_NULL)) ;
+	ret_type = SI_NUMERIC | T_NULL ;
+	func_desc = AR_FuncDescNew ("mul", AR_MUL, 2, 2, types, ret_type, true, true,
+			true) ;
+	AR_FuncRegister (func_desc) ;
+	AR_SetBatchVersion (func_desc, AR_Mul_Batch) ;
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));

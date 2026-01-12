@@ -207,6 +207,17 @@ void *DataBlock_GetItem
 	return item ;
 }
 
+// get item at position idx
+void *DataBlock_GetItemUnchecked
+(
+	const DataBlock *dataBlock,  // datablock
+	uint64_t idx                 // item's index
+) {
+	ASSERT (dataBlock != NULL) ;
+
+	return GET_ITEM (idx) ;
+}
+
 // get reserved item id after 'n' items
 uint64_t DataBlock_GetReservedIdx
 (

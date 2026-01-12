@@ -24,7 +24,7 @@ typedef struct ResultSet {
 	uint column_count;              // number of columns in result set
 	const char **columns;           // field names for each column of results
 	uint *columns_record_map;       // mapping between column name and record index
-	DataBlock *cells;               // accumulated cells
+	DataBlock *rows;                // accumulated rows
 	double timer[2];                // query runtime tracker
 	ResultSetStatistics stats;      // result set statistics
 	ResultSetFormatterType format;  // result set format; compact/verbose/nop
