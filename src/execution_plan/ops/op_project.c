@@ -13,7 +13,7 @@
 #include "../../util/rax_extensions.h"
 
 // forward declarations
-static Record ProjectConsume(OpBase *opBase);
+static RecordBatch ProjectConsume(OpBase *opBase);
 static OpResult ProjectReset(OpBase *opBase);
 static OpBase *ProjectClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void ProjectFree(OpBase *opBase);
@@ -45,61 +45,74 @@ OpBase *NewProjectOp
 	return (OpBase *)op;
 }
 
-static Record ProjectConsume
+static RecordBatch ProjectConsume
 (
 	OpBase *opBase
 ) {
-	OpProject *op = (OpProject *)opBase;
+	OpProject *op = (OpProject *)opBase ;
+	ASSERT (op->batch == NULL) ;
 
-	if(op->op.childCount) {
-		OpBase *child = op->op.children[0];
-		op->r = OpBase_Consume(child);
-		if(!op->r) return NULL;
+	if (op->op.childCount) {
+		OpBase *child = op->op.children[0] ;
+		op->batch = OpBase_Consume (child) ;
+		if (op->batch == NULL) {
+			return NULL ;
+		}
 	} else {
 		// QUERY: RETURN 1+2
 		// Return a single record followed by NULL on the second call.
-		if(op->singleResponse) return NULL;
-		op->singleResponse = true;
-		op->r = OpBase_CreateRecord(opBase);
-	}
-
-	op->projection = OpBase_CreateRecord(opBase);
-
-	for(uint i = 0; i < op->exp_count; i++) {
-		AR_ExpNode *exp = op->exps[i];
-		SIValue v = AR_EXP_Evaluate(exp, op->r);
-		int rec_idx = op->record_offsets[i];
-
-		// persisting a value is only necessary when
-		// 'v' refers to a scalar held in Record 'r'
-		// graph entities don't need to be persisted here as
-		// Record_Add will copy them internally
-		//
-		// the RETURN projection here requires persistence:
-		// MATCH (a) WITH toUpper(a.name) AS e RETURN e
-		// TODO: this is a rare case;
-		// the logic of when to persist can be improved
-		if(!(v.type & SI_GRAPHENTITY)) {
-			SIValue_Persist(&v);
+		if (op->singleResponse) {
+			return NULL ;
 		}
 
-		Record_Add(op->projection, rec_idx, v);
+		op->singleResponse = true ;
+		op->batch = OpBase_CreateRecordBatch (opBase, 1) ;
+	}
 
-		// if the value was a graph entity with its own allocation
-		// as with a query like:
-		// MATCH p = (src) RETURN nodes(p)[0]
-		// ensure that the allocation is freed here
-		if((v.type & SI_GRAPHENTITY)) {
-			SIValue_Free(v);
+	ASSERT (op->batch != NULL) ;
+
+	// allocate projected batch
+	uint16_t batch_size = RecordBatch_Size (op->batch) ;
+	op->projection = OpBase_CreateRecordBatch (opBase, batch_size) ;
+
+	SIValue res[batch_size] ;
+
+	// evaluate each expression
+	// TODO: skip evaluation of const expressions
+	for (uint i = 0; i < op->exp_count; i++) {
+		AR_ExpNode *exp = op->exps[i] ;
+
+		AR_EXP_Evaluate_Batch (res, exp, op->batch, batch_size) ;
+
+		int rec_idx = op->record_offsets[i] ;
+
+		for (uint j = 0 ; j < batch_size; j++) {
+			SIValue v = res[j] ;
+
+			if (!(v.type & SI_GRAPHENTITY)) {
+				SIValue_Persist (&v) ;
+			}
+
+			Record output = op->projection[j] ;
+			Record_Add (output, rec_idx, v) ;
+
+			// if the value was a graph entity with its own allocation
+			// as with a query like:
+			// MATCH p = (src) RETURN nodes(p)[0]
+			// ensure that the allocation is freed here
+			if ((v.type & SI_GRAPHENTITY)) {
+				SIValue_Free (v) ;
+			}
 		}
 	}
 
-	OpBase_DeleteRecord(&op->r);
+	// release input batch
+	RecordBatch_Free (&op->batch) ;
 
-	// Emit the projected Record once.
-	Record projection = op->projection;
-	op->projection = NULL;
-	return projection;
+	// emit the projected batch
+	RecordBatch projection = op->projection ;
+	op->projection = NULL ;
+	return projection ;
 }
 
 static OpResult ProjectReset
@@ -108,6 +121,15 @@ static OpResult ProjectReset
 ) {
 	OpProject *op = (OpProject *)opBase;
 	op->singleResponse = false;
+
+	if (op->batch != NULL) {
+		RecordBatch_Free (&op->batch) ;
+	}
+
+	if (op->projection != NULL) {
+		RecordBatch_Free (&op->projection) ;
+	}
+
 	return OP_OK;
 }
 
@@ -147,25 +169,27 @@ static void ProjectFree
 (
 	OpBase *ctx
 ) {
-	OpProject *op = (OpProject *)ctx;
+	OpProject *op = (OpProject *)ctx ;
 
-	if(op->exps) {
-		for(uint i = 0; i < op->exp_count; i ++) AR_EXP_Free(op->exps[i]);
-		array_free(op->exps);
-		op->exps = NULL;
+	if (op->exps != NULL) {
+		for (uint i = 0; i < op->exp_count; i++) {
+			AR_EXP_Free (op->exps[i]) ;
+		}
+		array_free (op->exps) ;
+		op->exps = NULL ;
 	}
 
-	if(op->record_offsets) {
-		array_free(op->record_offsets);
-		op->record_offsets = NULL;
+	if (op->record_offsets != NULL) {
+		array_free (op->record_offsets) ;
+		op->record_offsets = NULL ;
 	}
 
-	if(op->r) {
-		OpBase_DeleteRecord(&op->r);
+	if (op->batch != NULL) {
+		RecordBatch_Free (&op->batch) ;
 	}
 
-	if(op->projection) {
-		OpBase_DeleteRecord(&op->projection);
+	if (op->projection != NULL) {
+		RecordBatch_Free (&op->projection) ;
 	}
 }
 

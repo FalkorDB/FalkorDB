@@ -39,11 +39,11 @@ typedef enum {
 
 typedef struct ResultSet ResultSet;
 
-// Typedef for header formatters.
+// Typedef for header formatters
 typedef void (*EmitHeaderFunc)(ResultSet *set);
 
-// Typedef for row formatters.
-typedef void (*EmitRowFunc)(ResultSet *set, SIValue **row);
+// Typedef for row formatters
+typedef void (*EmitRowFunc)(ResultSet *set, SIValue *row);
 
 typedef void (*EmitStatsFunc)(ResultSet *set);
 							   

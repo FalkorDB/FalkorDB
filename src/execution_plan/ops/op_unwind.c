@@ -14,7 +14,7 @@
 // forward declarations
 static void UnwindFree(OpBase *opBase);
 static OpResult UnwindInit(OpBase *opBase);
-static Record UnwindConsume(OpBase *opBase);
+static RecordBatch UnwindConsume(OpBase *opBase);
 static OpResult UnwindReset(OpBase *opBase);
 static OpBase *UnwindClone(const ExecutionPlan *plan, const OpBase *opBase);
 
@@ -23,17 +23,18 @@ OpBase *NewUnwindOp
 	const ExecutionPlan *plan,
 	AR_ExpNode *exp
 ) {
-	OpUnwind *op = rm_calloc (1, sizeof(OpUnwind)) ;
+	OpUnwind *op = rm_calloc (1, sizeof (OpUnwind)) ;
 
-	op->exp  = exp;
-	op->list = SI_NullVal();
+	op->exp  = exp ;
+	op->list = SI_NullVal () ;
 
 	// Set our Op operations
-	OpBase_Init((OpBase *)op, OPType_UNWIND, "Unwind", UnwindInit, UnwindConsume,
-				UnwindReset, NULL, UnwindClone, UnwindFree, false, plan);
+	OpBase_Init ((OpBase *)op, OPType_UNWIND, "Unwind", UnwindInit,
+			UnwindConsume, UnwindReset, NULL, UnwindClone, UnwindFree, false,
+			plan) ;
 
-	op->unwindRecIdx = OpBase_Modifies((OpBase *)op, exp->resolved_name);
-	return (OpBase *)op;
+	op->unwindRecIdx = OpBase_Modifies ((OpBase *)op, exp->resolved_name) ;
+	return (OpBase *)op ;
 }
 
 // evaluate list expression,
@@ -84,66 +85,74 @@ static OpResult UnwindInit
 // try to generate a new value to return
 // NULL will be returned if dynamic list is not evaluated
 // or in case where the current list is fully consumed
-static Record _handoff
+static RecordBatch _handoff
 (
 	OpUnwind *op
 ) {
-	// if there is a new value ready, return it
-	if(op->listIdx < op->listLen) {
-		Record  r = OpBase_CloneRecord(op->currentRecord);
-		SIValue v = SIArray_Get(op->list, op->listIdx);
+	uint n = MIN (64, op->listLen - op->listIdx) ;
 
-		if(!(SI_TYPE(v) & SI_GRAPHENTITY)) {
-			SIValue_Persist(&v);
-		}
-
-		Record_Add(r, op->unwindRecIdx, v);
-
-		op->listIdx++;
-		return r;
+	if (n == 0) {
+		// depleted
+		return NULL ;
 	}
 
-	// depleted
-	return NULL;
+	RecordBatch batch = OpBase_CreateRecordBatch ((OpBase*)op, n) ;
+
+	for (uint i = 0 ; i < n ; i++) {
+		//Record  r = OpBase_CloneRecord (op->currentRecord) ;
+		Record  r = batch[i] ;
+		SIValue v = SIArray_Get (op->list, op->listIdx++) ;
+
+		if (!(SI_TYPE (v) & SI_GRAPHENTITY)) {
+			SIValue_Persist (&v) ;
+		}
+
+		Record_Add (r, op->unwindRecIdx, v) ;
+	}
+
+	return batch ;
 }
 
-static Record UnwindConsume
+static RecordBatch UnwindConsume
 (
 	OpBase *opBase
 ) {
 	OpUnwind *op = (OpUnwind *)opBase;
 
 	// try to produce data
-	Record r = _handoff(op);
-	if(r != NULL) {
-		return r;
+	RecordBatch batch = _handoff (op) ;
+	if (batch != NULL) {
+		return batch ;
 	}
 
 	// no child operation to pull data from, we're done
-	if(op->op.childCount == 0) {
-		return NULL;
+	if (op->op.childCount == 0) {
+		return NULL ;
 	}
 
-	OpBase *child = op->op.children[0];
-	// did we manage to get new data?
-pull:
-	if((r = OpBase_Consume(child))) {
-		// free current record
-		OpBase_DeleteRecord(&op->currentRecord);
+	assert (false && "implement") ;
+	return NULL ;
 
-		// assign new record
-		op->currentRecord = r;
-
-		// reset index and set list
-		_initList(op);
-
-		// skip empty lists
-		if(op->listLen == 0) {
-			goto pull;
-		}
-	}
-
-	return _handoff(op);
+//	OpBase *child = op->op.children[0] ;
+//	// did we manage to get new data?
+//pull:
+//	if ((r = OpBase_Consume (child))) {
+//		// free current record
+//		OpBase_DeleteRecord (&op->currentRecord) ;
+//
+//		// assign new record
+//		op->currentRecord = r;
+//
+//		// reset index and set list
+//		_initList(op);
+//
+//		// skip empty lists
+//		if(op->listLen == 0) {
+//			goto pull;
+//		}
+//	}
+//
+//	return _handoff (op) ;
 }
 
 static OpResult UnwindReset

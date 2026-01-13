@@ -13,7 +13,10 @@
 
 typedef struct {
 	OpBase op;
+
 	Record *buffer;        // holds all records
+	size_t buffer_len;     // number of items in buffer
+
 	heap_t *heap;          // holds top n records
 	bool first;            // first visit to consume func
 	uint64_t skip;         // total number of records to skip

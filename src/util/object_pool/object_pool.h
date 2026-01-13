@@ -37,6 +37,14 @@ ObjectPool *ObjectPool_New
 	void (*fp)(void *)
 );
 
+// borrow `n` records from `pool`
+void ObjectPool_NewItems
+(
+	void **records,    // [input/output] records to return
+	ObjectPool *pool,  // object pool
+	uint32_t n         // number of records to borrow
+);
+
 // allocate a new item within the given pool and return a pointer to it
 void *ObjectPool_NewItem
 (

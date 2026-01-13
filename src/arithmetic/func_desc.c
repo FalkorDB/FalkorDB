@@ -111,20 +111,20 @@ AR_FuncDesc *AR_FuncDescNew
 	bool reducible,     // true if function is reducible
 	bool deterministic  // true if return value is predictable
 ) {
-	AR_FuncDesc *desc = rm_calloc(1, sizeof(AR_FuncDesc));
+	AR_FuncDesc *desc = rm_calloc (1, sizeof (AR_FuncDesc)) ;
 
-	desc->name          = name;
-	desc->func          = func;
-	desc->types         = types;
-	desc->ret_type      = ret_type;
-	desc->min_argc      = min_argc;
-	desc->max_argc      = max_argc;
-	desc->internal      = internal;
-	desc->aggregate     = false;
-	desc->reducible     = reducible;
-	desc->deterministic = deterministic;
+	desc->name          = name ;
+	desc->func          = func ;
+	desc->types         = types ;
+	desc->ret_type      = ret_type ;
+	desc->min_argc      = min_argc ;
+	desc->max_argc      = max_argc ;
+	desc->internal      = internal ;
+	desc->aggregate     = false ;
+	desc->reducible     = reducible ;
+	desc->deterministic = deterministic ;
 
-	return desc;
+	return desc ;
 }
 
 // register function to repository
@@ -214,7 +214,7 @@ bool AR_FuncRemoveUDF
 	return removed == 1 ;
 }
 
-inline void AR_SetPrivateDataRoutines
+void AR_SetPrivateDataRoutines
 (
 	AR_FuncDesc *func_desc,
 	AR_Func_Free free,
@@ -222,6 +222,29 @@ inline void AR_SetPrivateDataRoutines
 ) {
 	func_desc->callbacks.free = free;
 	func_desc->callbacks.clone = clone;
+}
+
+// sets the descriptor's batched operator
+void AR_SetBatchVersion
+(
+	AR_FuncDesc *func_desc,  // function descriptor
+	AR_BatchFunc fp          // function pointer to a vectorized operator
+) {
+	ASSERT (fp        != NULL) ;
+	ASSERT (func_desc != NULL) ;
+	ASSERT (func_desc->batch_func == NULL) ;
+
+	func_desc->batch_func = fp ;
+}
+
+// checks if descriptor has a vectorized version
+bool AR_HasBatchVersion
+(
+	const AR_FuncDesc *func_desc  // function descriptor
+) {
+	ASSERT (func_desc != NULL) ;
+
+	return func_desc->batch_func != NULL ;
 }
 
 // get arithmetic function

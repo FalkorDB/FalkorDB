@@ -53,6 +53,13 @@ void *Heap_peek
 	const heap_t *hp
 );
 
+// replace heap's head
+void *Heap_replace_head
+(
+	heap_t *hp,  // heap
+	void *item   // new item
+);
+
 // clear all items
 // note: does not free items
 // only use if item memory is managed outside of heap
@@ -93,6 +100,12 @@ int Heap_contains_item
 (
 	const heap_t *hp,
 	const void *item // the item to test
+);
+
+// returns an array containing heap's items
+void **Heap_Items
+(
+	heap_t *hp  // heap
 );
 
 // prints heap

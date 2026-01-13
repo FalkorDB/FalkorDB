@@ -10,6 +10,7 @@
 #include "../redismodule.h"
 #include "resultset_statistics.h"
 #include "../execution_plan/record.h"
+#include "../execution_plan/record_batch.h"
 #include "./formatters/resultset_formatters.h"
 #include "rax.h"
 
@@ -23,7 +24,7 @@ typedef struct ResultSet {
 	uint column_count;              // number of columns in result set
 	const char **columns;           // field names for each column of results
 	uint *columns_record_map;       // mapping between column name and record index
-	DataBlock *cells;               // accumulated cells
+	DataBlock *rows;                // accumulated rows
 	double timer[2];                // query runtime tracker
 	ResultSetStatistics stats;      // result set statistics
 	ResultSetFormatterType format;  // result set format; compact/verbose/nop
@@ -52,6 +53,14 @@ ResultSet *NewResultSet
 uint64_t ResultSet_RowCount
 (
 	const ResultSet *set  // resultset to inquery
+);
+
+// materializes a RecordBatch into the ResultSet by copying projected values
+// into the result set's data blocks and clearing the source records
+int ResultSet_AddBatch
+(
+	ResultSet *set,    // resultset to extend
+	RecordBatch batch  // record containing projected data
 );
 
 // add a new row to resultset
