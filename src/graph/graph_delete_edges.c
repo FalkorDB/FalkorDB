@@ -11,6 +11,33 @@
 
 // qsort compare function
 // compare edges by relationship-type, src ID and dest ID
+//static int _edge_cmp
+//(
+//	const void *a,
+//	const void *b
+//) {
+//	Edge *ea = (Edge*)a;
+//	Edge *eb = (Edge*)b;
+//
+//	// get edges relationship-type, src and dest node IDs
+//	NodeID as     = Edge_GetSrcNodeID(ea);   // A's src node ID
+//	NodeID bs     = Edge_GetSrcNodeID(eb);   // B's src node ID
+//	NodeID at     = Edge_GetDestNodeID(ea);  // A's dest node ID
+//	NodeID bt     = Edge_GetDestNodeID(eb);  // B's dest node ID
+//	RelationID ar = Edge_GetRelationID(ea);  // A's relationship-type
+//	RelationID br = Edge_GetRelationID(eb);  // B's relationship-type
+//
+//	// different relationship-type
+//	if(ar != br) return ar - br;
+//
+//	// same relationship-type, different source node ID
+//	if(as != bs) return as - bs;
+//
+//	// same relationship-type and src node ID
+//	// compare base on destination node ID
+//	return at - bt;
+//}
+
 static int _edge_cmp
 (
 	const void *a,
@@ -18,24 +45,7 @@ static int _edge_cmp
 ) {
 	Edge *ea = (Edge*)a;
 	Edge *eb = (Edge*)b;
-
-	// get edges relationship-type, src and dest node IDs
-	NodeID as     = Edge_GetSrcNodeID(ea);   // A's src node ID
-	NodeID bs     = Edge_GetSrcNodeID(eb);   // B's src node ID
-	NodeID at     = Edge_GetDestNodeID(ea);  // A's dest node ID
-	NodeID bt     = Edge_GetDestNodeID(eb);  // B's dest node ID
-	RelationID ar = Edge_GetRelationID(ea);  // A's relationship-type
-	RelationID br = Edge_GetRelationID(eb);  // B's relationship-type
-
-	// different relationship-type
-	if(ar != br) return ar - br;
-
-	// same relationship-type, different source node ID
-	if(as != bs) return as - bs;
-
-	// same relationship-type and src node ID
-	// compare base on destination node ID
-	return at - bt;
+	return ea->relationID - eb->relationID ;
 }
 
 static void _clear_adj_batch
@@ -151,7 +161,7 @@ void Graph_ClearConnections
 	GrB_Info info;
 
 	//--------------------------------------------------------------------------
-	// create mask
+	// create mask matrix
 	//--------------------------------------------------------------------------
 	
 	GrB_Index m = Graph_RequiredMatrixDim (g) ;
@@ -166,44 +176,50 @@ void Graph_ClearConnections
 	// 1. relationship-type
 	// 2. src node ID
 	// 3. dest node ID
-	qsort(edges, n, sizeof(Edge), _edge_cmp);
+	//qsort (edges, n, sizeof(Edge), _edge_cmp);
+	qsort (edges, n, sizeof(Edge), _edge_cmp);
 
 	// handle each relationship-type seperetly
-	for(uint64_t i = 0; i < n;) {
-		Edge      *e = edges + i;
-		RelationID r = Edge_GetRelationID(e);
+	for (uint64_t i = 0; i < n;) {
+		Edge      *e = edges + i ;
+		RelationID r = Edge_GetRelationID (e) ;
 
-		info = GrB_Matrix_setElement_BOOL (M, true, Edge_GetSrcNodeID (e),
-				Edge_GetDestNodeID (e)) ;
+		// mark entry in mask
+		info = GrB_Matrix_setElement_BOOL (M, true, e->src_id, e->dest_id) ;
 		ASSERT (info == GrB_SUCCESS) ;
 
 		// gather edges by relationship-type
 		uint64_t j = i;
-		while(Edge_GetRelationID(e) == r) {
+		while (e->relationID == r) {
 			// advance
-			if(++j == n) break;
+			if (++j == n) {
+				break ;
+			}
 
 			e = edges + j;
+			info = GrB_Matrix_setElement_BOOL (M, true, e->src_id, e->dest_id) ;
+			ASSERT (info == GrB_SUCCESS) ;
 		}
 
 		// in case relationship-type 'r' doesn't contains any vector entries
 		// we can improve deletion performance by performin "flat deletion"
 		// otherwise the deletion process needs to take into account vectors
 		// which is a bit more expenssive
-		bool flat_deletion = !Graph_RelationshipContainsMultiEdge(g, r);
+		bool flat_deletion = !Graph_RelationshipContainsMultiEdge (g, r) ;
 
 		// edge(s) of type r has just been deleted, update statistics
-		uint64_t d = j - i;  // number of edges sharing the same relationship
-		GraphStatistics_DecEdgeCount(&g->stats, r, d);
+		uint64_t d = j - i ;  // number of edges sharing the same relationship
+		GraphStatistics_DecEdgeCount (&g->stats, r, d) ;
 
 		// delete edges[i..j]
-		Delta_Matrix R   = Graph_GetRelationMatrix(g, r, false);
-		Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
+		Delta_Matrix R   = Graph_GetRelationMatrix (g, r, false) ;
+		Delta_Matrix ADJ = Graph_GetAdjacencyMatrix (g, false) ;
 
-		if(flat_deletion) {
+		if (flat_deletion) {
 			// tensor R doesn't contains any vector
 			// perform a simple "flat" deletion
-			Tensor_RemoveElements_Flat(R, edges + i, d);
+			Tensor_RemoveElements_Flat (R, edges + i, d) ;
+
 			// for each removed edge E see if ADJ[E.src, E.dest] needs clearing
 			//for (uint64_t k = 0; k < d; k++) {
 			//	e = edges + (i + k);
