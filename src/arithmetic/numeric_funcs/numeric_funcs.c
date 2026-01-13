@@ -210,16 +210,89 @@ void AR_Mul_Batch
 	}
 }
 
-/* returns the division of given values. */
-SIValue AR_DIV(SIValue *argv, int argc, void *private_data) {
-	if(SIValue_IsNull(argv[0]) || SIValue_IsNull(argv[1])) return SI_NullVal();
+// returns the division of given values
+SIValue AR_DIV
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
+	if (SIValue_IsNull (argv[0]) || SIValue_IsNull (argv[1])) {
+		return SI_NullVal () ;
+	}
 
 	// check for division by zero e.g. n / 0
-	if((SI_TYPE(argv[0]) & SI_TYPE(argv[1]) & T_INT64) && SI_GET_NUMERIC(argv[1]) == 0) {
-		Error_DivisionByZero();
-		return SI_NullVal();
+	if ((SI_TYPE (argv[0]) & SI_TYPE (argv[1]) & T_INT64) &&
+		 SI_GET_NUMERIC (argv[1]) == 0) {
+		Error_DivisionByZero () ;
+		return SI_NullVal () ;
 	}
-	return SIValue_Divide(argv[0], argv[1]);
+
+	return SIValue_Divide (argv[0], argv[1]) ;
+}
+
+// AR_Div_Batch: Vectorized Division
+// computes: results[i] = left[i] / right[i]
+// optimized for homogeneous numeric vectors to encourage SIMD auto-vectorization
+// falls back to scalar SIValue_Divide for mixed types
+void AR_Div_Batch
+(
+	SIValue *restrict results,   // [out] target vector for results
+	SIValue **restrict args,     // [in] array of input vectors
+	SIType *restrict arg_types,  // [in] arg_types[i] type of vector args[i]
+	int batch_size,              // [in] number of elements in the vectors
+	void *private_data           // [unused]
+) {
+	ASSERT (results    != NULL) ;
+	ASSERT (batch_size > 0) ;
+	ASSERT (arg_types  != NULL) ;
+	ASSERT (args != NULL && args[0] != NULL && args[1] != NULL) ;
+
+	SIValue *restrict left  = args[0] ;
+	SIValue *restrict right = args[1] ;
+
+	if (likely (arg_types[0] == arg_types[1]) && arg_types[0] & SI_NUMERIC) {
+		const SIType common_type = arg_types[0] ;
+
+		// pre-scan: very fast, likely to stay in L1 cache
+		for (int i = 0; i < batch_size; i++) {
+			if (unlikely (right[i].doubleval == 0)) {
+				Error_DivisionByZero () ;
+
+				for (int j = 0; j < batch_size; j++) {
+					results[j] = SI_NullVal () ;
+				}
+				return ;
+			}
+		}
+
+		switch (common_type) {
+			case T_INT64:
+				for (int i = 0; i < batch_size ; i++) {
+					results[i] =
+						SI_LongVal (left[i].longval / right[i].longval) ;
+				}
+				return ;
+
+			case T_DOUBLE:
+				for (int i = 0; i < batch_size ; i++) {
+					results[i] =
+						SI_DoubleVal (left[i].doubleval / right[i].doubleval) ;
+				}
+				return ;
+
+			default:
+				// types match but aren't simple primitives e.g. arrays
+				break ;
+		}
+	}
+
+	// fallback path:
+    // used for heterogeneous types (e.g., INT / DOUBLE)
+    // SIValue_Divide handles type promotion and error checking internally
+	for (int i = 0 ; i < batch_size ; i++) {
+		results[i] = SIValue_Divide (left[i], right[i]) ;
+	}
 }
 
 SIValue AR_MODULO(SIValue *argv, int argc, void *private_data) {
@@ -563,8 +636,8 @@ void Register_NumericFuncs() {
 	array_append (types, (SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_NULL)) ;
 	array_append (types, (SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_NULL)) ;
 	ret_type = SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_MAP | SI_TEMPORAL | T_NULL ;
-	func_desc = AR_FuncDescNew ("add", AR_ADD, 2, 2, types, ret_type, true, true,
-			true) ;
+	func_desc = AR_FuncDescNew ("add", AR_ADD, 2, 2, types, ret_type, true,
+			true, true) ;
 	AR_FuncRegister (func_desc) ;
 	AR_SetBatchVersion (func_desc, AR_Add_Batch) ;
 
@@ -572,25 +645,26 @@ void Register_NumericFuncs() {
 	array_append (types, (SI_NUMERIC | SI_TEMPORAL | T_NULL)) ;
 	array_append (types, (SI_NUMERIC | T_DURATION  | T_NULL)) ;
 	ret_type = SI_NUMERIC | SI_TEMPORAL | T_NULL;
-	func_desc = AR_FuncDescNew ("sub", AR_SUB, 2, 2, types, ret_type, true, true,
-			true) ;
+	func_desc = AR_FuncDescNew ("sub", AR_SUB, 2, 2, types, ret_type, true,
+			true, true) ;
 	AR_FuncRegister (func_desc) ;
 	AR_SetBatchVersion (func_desc, AR_Sub_Batch) ;
 
 	types = array_new (SIType, 1) ;
 	array_append (types, (SI_NUMERIC | T_NULL)) ;
 	ret_type = SI_NUMERIC | T_NULL ;
-	func_desc = AR_FuncDescNew ("mul", AR_MUL, 2, 2, types, ret_type, true, true,
-			true) ;
+	func_desc = AR_FuncDescNew ("mul", AR_MUL, 2, 2, types, ret_type, true,
+			true, true) ;
 	AR_FuncRegister (func_desc) ;
 	AR_SetBatchVersion (func_desc, AR_Mul_Batch) ;
 
-	types = array_new(SIType, 1);
-	array_append(types, (SI_NUMERIC | T_NULL));
-	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("div", AR_DIV, 2, 2, types, ret_type, true, true,
-			true);
-	AR_FuncRegister(func_desc);
+	types = array_new (SIType, 1) ;
+	array_append (types, (SI_NUMERIC | T_NULL)) ;
+	ret_type = SI_NUMERIC | T_NULL ;
+	func_desc = AR_FuncDescNew ("div", AR_DIV, 2, 2, types, ret_type, true,
+			true, true) ;
+	AR_FuncRegister (func_desc) ;
+	AR_SetBatchVersion (func_desc, AR_Div_Batch) ;
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));

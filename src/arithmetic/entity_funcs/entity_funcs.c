@@ -18,10 +18,62 @@
 #include "../../graph/entities/graph_entity.h"
 
 // returns the id of a relationship or node
-SIValue AR_ID(SIValue *argv, int argc, void *private_data) {
-	if(SI_TYPE(argv[0]) == T_NULL) return SI_NullVal();
-	GraphEntity *graph_entity = (GraphEntity *)argv[0].ptrval;
-	return SI_LongVal(ENTITY_GET_ID(graph_entity));
+SIValue AR_ID
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
+	if (SI_TYPE (argv[0]) == T_NULL) {
+		return SI_NullVal () ;
+	}
+
+	GraphEntity *graph_entity = (GraphEntity *)argv[0].ptrval ;
+	return SI_LongVal (ENTITY_GET_ID (graph_entity)) ;
+}
+
+// AR_Id_Batch: Vectorized entity ID retrival
+// computes: results[i] = entity's internal ID
+// encourage SIMD auto-vectorization
+void AR_Id_Batch
+(
+	SIValue *restrict results,   // [out] target vector for results
+	SIValue **restrict args,     // [in] array of input vectors
+	SIType *restrict arg_types,  // [in] arg_types[i] type of vector args[i]
+	int batch_size,              // [in] number of elements in the vectors
+	void *private_data           // [unused]
+) {
+	ASSERT (results    != NULL) ;
+	ASSERT (batch_size > 0) ;
+	ASSERT (arg_types  != NULL) ;
+	ASSERT (args != NULL && args[0] != NULL && args[1] != NULL) ;
+
+	SIValue *restrict entities = args[0] ;
+
+	//--------------------------------------------------------------------------
+	// NULL free batch
+	//--------------------------------------------------------------------------
+
+	if (likely (!(arg_types[0] & T_NULL))) {
+		for (int i = 0; i < batch_size; i++) {
+			GraphEntity *graph_entity = (GraphEntity *)entities[i].ptrval ;
+			results[i] = SI_LongVal (ENTITY_GET_ID (graph_entity)) ;
+		}
+		return ;
+	}
+
+	//--------------------------------------------------------------------------
+	// batch contains NULLs
+	//--------------------------------------------------------------------------
+
+	for (int i = 0; i < batch_size; i++) {
+		if (SI_TYPE (entities[i]) == NULL) {
+			results[i] = SI_NullVal () ;
+		} else {
+			GraphEntity *graph_entity = (GraphEntity *)entities[i].ptrval ;
+			results[i] = SI_LongVal (ENTITY_GET_ID (graph_entity)) ;
+		}
+	}
 }
 
 // returns an array of string representations of each label of a node
@@ -373,12 +425,13 @@ void Register_EntityFuncs() {
 	SIType ret_type;
 	AR_FuncDesc *func_desc;
 
-	types = array_new(SIType, 1);
-	array_append(types, T_NULL | T_NODE | T_EDGE);
-	ret_type = T_NULL | T_INT64;
-	func_desc = AR_FuncDescNew("id", AR_ID, 1, 1, types, ret_type, false, true,
-			true);
-	AR_FuncRegister(func_desc);
+	types = array_new (SIType, 1) ;
+	array_append (types, T_NULL | T_NODE | T_EDGE) ;
+	ret_type = T_NULL | T_INT64 ;
+	func_desc = AR_FuncDescNew ("id", AR_ID, 1, 1, types, ret_type, false,
+			true, true) ;
+	AR_FuncRegister (func_desc) ;
+	AR_SetBatchVersion (func_desc, AR_Id_Batch) ;
 
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_NODE);
