@@ -38,6 +38,69 @@ static int _edge_cmp
 	return at - bt;
 }
 
+static void _clear_adj_batch
+(
+	Graph *g,
+	Delta_Matrix ADJ,
+	GrB_Matrix M
+) {
+	ASSERT (g   != NULL) ;
+	ASSERT (M   != NULL) ;
+	ASSERT (ADJ != NULL) ;
+
+	// remove still active entries from M
+	GrB_Info info;
+	GrB_Index nvals ;
+	int relationCount = Graph_RelationTypeCount(g);
+
+	for(int ri = 0; ri < relationCount; ri++) {
+		Delta_Matrix DR = Graph_GetRelationMatrix (g, ri, false) ;
+		info = Delta_Matrix_wait (DR, true) ;
+		ASSERT (info == GrB_SUCCESS) ;
+		GrB_Matrix R = DELTA_MATRIX_M(DR) ;
+
+		info = GrB_transpose (M, R, NULL, M, GrB_DESC_RSCT0) ;
+		ASSERT (info == GrB_SUCCESS) ;
+
+		info = GrB_Matrix_nvals (&nvals, M) ;
+		ASSERT (info == GrB_SUCCESS) ;
+
+		if (nvals == 0) {
+			return ;
+		}
+	}
+
+    GxB_Iterator iterator ;
+    GxB_Iterator_new (&iterator) ;
+
+    // attach it to the matrix
+    info = GxB_rowIterator_attach (iterator, M, NULL) ;
+	ASSERT (info == GrB_SUCCESS) ;
+
+    // seek to M(0,:)
+    info = GxB_rowIterator_seekRow (iterator, 0) ;
+    while (info != GxB_EXHAUSTED) {
+        // iterate over entries in A(i,:)
+        GrB_Index i = GxB_rowIterator_getRowIndex (iterator) ;
+        while (info == GrB_SUCCESS)
+        {
+            // get the entry A(i,j)
+            GrB_Index j = GxB_rowIterator_getColIndex (iterator) ;
+
+			info = Delta_Matrix_removeElement (ADJ, i, j);
+			ASSERT (info == GrB_SUCCESS) ;
+
+            // move to the next entry in A(i,:)
+            info = GxB_rowIterator_nextCol (iterator) ;
+        }
+
+        // move to the next row, A(i+1,:)
+        info = GxB_rowIterator_nextRow (iterator) ;
+    }
+
+    GrB_free (&iterator) ;
+}
+
 static void _clear_adj
 (
 	Graph *g,
@@ -87,6 +150,15 @@ void Graph_ClearConnections
 
 	GrB_Info info;
 
+	//--------------------------------------------------------------------------
+	// create mask
+	//--------------------------------------------------------------------------
+	
+	GrB_Index m = Graph_RequiredMatrixDim (g) ;
+	GrB_Matrix M;
+	info = GrB_Matrix_new (&M, GrB_BOOL, m, m) ;
+	ASSERT (info == GrB_SUCCESS) ;
+
 	// update matrix sync policy to NOP
 	MATRIX_POLICY policy = Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
 
@@ -100,6 +172,10 @@ void Graph_ClearConnections
 	for(uint64_t i = 0; i < n;) {
 		Edge      *e = edges + i;
 		RelationID r = Edge_GetRelationID(e);
+
+		info = GrB_Matrix_setElement_BOOL (M, true, Edge_GetSrcNodeID (e),
+				Edge_GetDestNodeID (e)) ;
+		ASSERT (info == GrB_SUCCESS) ;
 
 		// gather edges by relationship-type
 		uint64_t j = i;
@@ -129,10 +205,10 @@ void Graph_ClearConnections
 			// perform a simple "flat" deletion
 			Tensor_RemoveElements_Flat(R, edges + i, d);
 			// for each removed edge E see if ADJ[E.src, E.dest] needs clearing
-			for (uint64_t k = 0; k < d; k++) {
-				e = edges + (i + k);
-				_clear_adj(g, ADJ, e);
-			}
+			//for (uint64_t k = 0; k < d; k++) {
+			//	e = edges + (i + k);
+			//	_clear_adj(g, ADJ, e);
+			//}
 		} else {
 			// tensor R contains vectors
 			// perform deletion which handels vector entries
@@ -153,6 +229,10 @@ void Graph_ClearConnections
 		i = j;
 	}
 
-	Graph_SetMatrixPolicy(g, policy);
+	Delta_Matrix ADJ = Graph_GetAdjacencyMatrix (g, false) ;
+	_clear_adj_batch (g, ADJ, M) ;
+	GrB_free (&M) ;
+
+	Graph_SetMatrixPolicy (g, policy) ;
 }
 
