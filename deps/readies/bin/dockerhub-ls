@@ -13,7 +13,6 @@ import argparse
 HERE = os.path.dirname(__file__)
 READIES = os.path.abspath(os.path.join(HERE, ".."))
 sys.path.insert(0, READIES)
-import paella  # noqa: F401
 
 #----------------------------------------------------------------------------------------------
 
