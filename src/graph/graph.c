@@ -713,9 +713,13 @@ void Graph_CreateNode
 	ASSERT(n != NULL);
 	ASSERT(label_count == 0 || (label_count > 0 && labels != NULL));
 
-	NodeID id      = n->id;  // save node ID
-	n->attributes  = DataBlock_AllocateItem(g->nodes, &n->id);
-	*n->attributes = NULL;   // initialize attributes to NULL
+	NodeID id = n->id;
+
+	// allocate attributes if not already allocated
+	if(n->attributes == NULL) {
+		n->attributes = DataBlock_AllocateItem(g->nodes, &n->id);
+		*n->attributes = NULL;
+	}
 
 	// node ID was reserved, make reserved ID was assigned
 	if(id != INVALID_ENTITY_ID) {
