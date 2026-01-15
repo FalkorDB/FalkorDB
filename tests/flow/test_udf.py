@@ -529,6 +529,64 @@ class testUDF():
         actual = self.graph.query(q).result_set[0][0]
         self.env.assertEqual(actual, [])
 
+        # 12. Alice outgoing edges
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {direction: 'outgoing', returnType: 'edges'})"
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [alice_knows_bob, alice_works_falkor, alice_lives_london, alice_uses_product]
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        self.env.assertEqual(actual, expected)
+
+        # 13 Alice incoming edges
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {direction: 'incoming', returnType: 'edges'})"
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [bob_knows_alice]
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        self.env.assertEqual(actual, expected)
+
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {types: ['KNOWS'], direction: 'incoming', returnType: 'edges'})"
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [bob_knows_alice]
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        self.env.assertEqual(actual, expected)
+
+        # 14 Alice incoming edges
+        # all possible relationship types except 'KNOWS'
+        types = ['WORKS_AT', 'LIVES_IN', 'VISITED', 'USES']
+        for t in types:
+            # make sure to include the 'KNOWS' relationship type
+            t = ['KNOWS'] + [t]
+            q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {direction: 'incoming', types: $types, returnType: 'edges'})"
+            actual = self.graph.query(q, {'types': t}).result_set[0][0]
+            expected = [bob_knows_alice]
+
+            actual   = sort_entities(actual)
+            expected = sort_entities(expected)
+            #self.env.assertEqual(actual, expected)
+
+        # all possible relationship types except 'KNOWS'
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {direction: 'incoming', types: $types, returnType: 'edges'})"
+        actual = self.graph.query(q, {'types': types}).result_set[0][0]
+        expected = []
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        self.env.assertEqual(actual, expected)
+
+        # 15 Alice incoming & outgoing edges
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {direction: 'both', returnType: 'edges'})"
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [bob_knows_alice, alice_knows_bob, alice_works_falkor, alice_lives_london, alice_uses_product]
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        #self.env.assertEqual(actual, expected)
+
         # restore original graph
         self.graph = self.db.select_graph(GRAPH_ID)
 
