@@ -309,7 +309,7 @@ static JSValue _traverse
 					R = Graph_GetRelationMatrix (g, rel_id, transposed) ;
 				}
 				AlgebraicExpression_AddChild (add,
-						AlgebraicExpression_NewOperand (R, false, "n", "n", "e",
+						AlgebraicExpression_NewOperand (R, false, "n", "m", "e",
 							"R")) ;
 			}
 
@@ -436,8 +436,13 @@ static JSValue _traverse
 			else {
 				// fetch edges
 				for (int j = 0; j < n_rel_ids; j++) {
-					Graph_GetEdgesConnectingNodes (g, src_id, dest_id,
+					if (transposed) {
+						Graph_GetEdgesConnectingNodes (g, dest_id, src_id,
+								rel_ids[j], &edges) ;
+					} else {
+						Graph_GetEdgesConnectingNodes (g, src_id, dest_id,
 							rel_ids[j], &edges) ;
+					}
 				}
 			}
 
