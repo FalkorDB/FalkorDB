@@ -285,7 +285,8 @@ void test_map_edge_cases() {
 	for(int i = 0; i < 100; i++) {
 		char key[32];
 		sprintf(key, "key_%d", i);
-		Map_Add(&map4, SI_ConstStringVal(key), SI_LongVal(i));
+		// Use DuplicateStringVal to create a proper copy since key buffer is reused
+		Map_Add(&map4, SI_DuplicateStringVal(key), SI_LongVal(i));
 	}
 	TEST_ASSERT(Map_KeyCount(map4) == 100);
 	
