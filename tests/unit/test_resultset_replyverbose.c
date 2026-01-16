@@ -87,10 +87,12 @@ void test_vector_formatting() {
 	// Test vector creation and string conversion
 	uint32_t dim = 4;
 	float values[] = {1.0f, 2.5f, 3.7f, 4.2f};
-	SIValue vector = SIVector_New(dim);
+	SIValue vector = SIVectorf32_New(dim);
 	
+	// Get pointer to vector elements and set values
+	float *elements = (float *)SIVector_Elements(vector);
 	for(uint32_t i = 0; i < dim; i++) {
-		SIVector_Set(vector, i, values[i]);
+		elements[i] = values[i];
 	}
 	
 	TEST_ASSERT(SI_TYPE(vector) == T_VECTOR_F32);
@@ -111,16 +113,18 @@ void test_vector_formatting() {
 
 void test_vector_edge_cases() {
 	// Test very small vector (dimension 1)
-	SIValue vec1 = SIVector_New(1);
-	SIVector_Set(vec1, 0, 42.0f);
+	SIValue vec1 = SIVectorf32_New(1);
+	float *elem1 = (float *)SIVector_Elements(vec1);
+	elem1[0] = 42.0f;
 	TEST_ASSERT(SIVector_Dim(vec1) == 1);
 	SIValue_Free(vec1);
 	
 	// Test larger vector
 	uint32_t large_dim = 128;
-	SIValue vec2 = SIVector_New(large_dim);
+	SIValue vec2 = SIVectorf32_New(large_dim);
+	float *elem2 = (float *)SIVector_Elements(vec2);
 	for(uint32_t i = 0; i < large_dim; i++) {
-		SIVector_Set(vec2, i, (float)i);
+		elem2[i] = (float)i;
 	}
 	TEST_ASSERT(SIVector_Dim(vec2) == large_dim);
 	
@@ -134,17 +138,19 @@ void test_vector_edge_cases() {
 	SIValue_Free(vec2);
 	
 	// Test vector with negative values
-	SIValue vec3 = SIVector_New(3);
-	SIVector_Set(vec3, 0, -1.5f);
-	SIVector_Set(vec3, 1, -2.5f);
-	SIVector_Set(vec3, 2, -3.5f);
+	SIValue vec3 = SIVectorf32_New(3);
+	float *elem3 = (float *)SIVector_Elements(vec3);
+	elem3[0] = -1.5f;
+	elem3[1] = -2.5f;
+	elem3[2] = -3.5f;
 	TEST_ASSERT(SIVector_Dim(vec3) == 3);
 	SIValue_Free(vec3);
 	
 	// Test vector with very small values
-	SIValue vec4 = SIVector_New(2);
-	SIVector_Set(vec4, 0, 0.000001f);
-	SIVector_Set(vec4, 1, 0.000002f);
+	SIValue vec4 = SIVectorf32_New(2);
+	float *elem4 = (float *)SIVector_Elements(vec4);
+	elem4[0] = 0.000001f;
+	elem4[1] = 0.000002f;
 	TEST_ASSERT(SIVector_Dim(vec4) == 2);
 	SIValue_Free(vec4);
 }
@@ -486,7 +492,7 @@ void test_sivalue_type_coverage() {
 	TEST_ASSERT(SI_TYPE(v_point) == T_POINT);
 	SIValue_Free(v_point);
 	
-	SIValue v_vector = SIVector_New(1);
+	SIValue v_vector = SIVectorf32_New(1);
 	TEST_ASSERT(SI_TYPE(v_vector) == T_VECTOR_F32);
 	SIValue_Free(v_vector);
 	
