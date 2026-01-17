@@ -100,6 +100,15 @@ static OpBase *_ReduceFilterToOp
 	// case of an operator (Or or And) which its subtree contains path filter
 	if(filter_root->t == FT_N_COND && FilterTree_ContainsFunc(filter_root,
 				"path_filter", &node)) {
+		// validate that the operator is supported before creating ApplyMultiplexer
+		// only AND and OR are currently supported
+		if(filter_root->cond.op != OP_AND && filter_root->cond.op != OP_OR) {
+			ErrorCtx_SetError(EMSG_FALKORDB_SUPPORT,
+				"path filters combined with XOR or other non-AND/OR operators");
+			// fallback to regular filter which will return the error
+			return NewFilterOp(plan, filter_root);
+		}
+
 		// create the relevant LHS branch and set a bounded branch for it
 		OpBase *lhs = _ReduceFilterToOp(plan, vars, filter_root->cond.left);
 		if(lhs->type == OPType_FILTER) filter_root->cond.left = NULL;
