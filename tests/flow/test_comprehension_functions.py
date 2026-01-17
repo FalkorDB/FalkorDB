@@ -157,6 +157,19 @@ class testComprehensionFunctions(FlowTestsBase):
         expected_result = [[[4, 8, 12]]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
+    def test10_list_comprehension_memory_limit(self):
+        prev_limit = int(self.db.config_get("QUERY_MEM_CAPACITY"))
+        try:
+            self.db.config_set("QUERY_MEM_CAPACITY", 64 * 1024)
+            query = """WITH range(1, 200) AS axis RETURN [x IN axis | [y IN axis | 1]]"""
+            try:
+                self.graph.query(query)
+                assert(False)
+            except redis.exceptions.ResponseError as e:
+                self.env.assertIn("Query's mem consumption exceeded capacity", str(e))
+        finally:
+            self.db.config_set("QUERY_MEM_CAPACITY", prev_limit)
+
     def test10_any_all_comprehension_acceptance(self):
         # Reject ANY and ALL comprehensions that don't include a WHERE predicate.
         try:
@@ -451,4 +464,3 @@ class testComprehensionFunctions(FlowTestsBase):
         actual_result = self.graph.query(query)
         expected_result = [[[1, 1]], [[2]], [[3]], [[]]]
         self.env.assertEquals(actual_result.result_set, expected_result)
-
