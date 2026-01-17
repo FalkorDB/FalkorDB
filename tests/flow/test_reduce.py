@@ -140,11 +140,11 @@ class testReduce():
     def test_nested_shadowed_reduce_aliases(self):
         self.graph.query("CREATE (:Node)")
 
-        q = """MATCH (n)
-               WHERE [x IN [0] |
-                     reduce(s=0, x IN [0] | s +
-                            reduce(s=0, x IN [0] | s + 1))][0]
-               RETURN 1"""
+         q = """MATCH (n)
+             WHERE [x IN [0] |
+                reduce(s=0, x IN [0] | s +
+                    reduce(s=0, x IN [0] | s + 1))][0] = 1
+             RETURN 1"""
 
         expected = [[1]]
         actual = self.graph.query(q).result_set
