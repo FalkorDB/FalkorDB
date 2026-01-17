@@ -1,4 +1,7 @@
+import os
 import re
+import sys
+import redis.exceptions
 from common import *
 from index_utils import *
 from collections import Counter
@@ -333,8 +336,8 @@ class testPathFilter(FlowTestsBase):
         try:
             query = "MATCH (n) WHERE NOT((()--()) XOR TRUE) RETURN n"
             result_set = self.graph.query(query)
-            self.env.assertTrue(False, "Expected query to fail with error")
-        except Exception as e:
+            self.env.fail("Expected query to fail with error")
+        except redis.exceptions.ResponseError as e:
             error_msg = str(e)
             self.env.assertContains("does not currently support", error_msg)
 
@@ -342,8 +345,8 @@ class testPathFilter(FlowTestsBase):
         try:
             query = "MATCH (n) WHERE ()-[]-() XOR TRUE RETURN n"
             result_set = self.graph.query(query)
-            self.env.assertTrue(False, "Expected query to fail with error")
-        except Exception as e:
+            self.env.fail("Expected query to fail with error")
+        except redis.exceptions.ResponseError as e:
             error_msg = str(e)
             self.env.assertContains("does not currently support", error_msg)
 
@@ -351,8 +354,8 @@ class testPathFilter(FlowTestsBase):
         try:
             query = "OPTIONAL MATCH (a)--(b) WHERE ()--() XOR FALSE RETURN a, b"
             result_set = self.graph.query(query)
-            self.env.assertTrue(False, "Expected query to fail with error")
-        except Exception as e:
+            self.env.fail("Expected query to fail with error")
+        except redis.exceptions.ResponseError as e:
             error_msg = str(e)
             self.env.assertContains("does not currently support", error_msg)
 
@@ -360,8 +363,8 @@ class testPathFilter(FlowTestsBase):
         try:
             query = "OPTIONAL MATCH (a)--(b) WITH a,b WHERE ()--() XOR TRUE RETURN a"
             result_set = self.graph.query(query)
-            self.env.assertTrue(False, "Expected query to fail with error")
-        except Exception as e:
+            self.env.fail("Expected query to fail with error")
+        except redis.exceptions.ResponseError as e:
             error_msg = str(e)
             self.env.assertContains("does not currently support", error_msg)
 
