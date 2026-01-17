@@ -13,6 +13,8 @@
 typedef struct {
 	const char *variable;     // closure varaible name
 	const char *accumulator;  // closure accumulator name
+	bool variable_owned;      // does context own variable string
+	bool accumulator_owned;   // does context own accumulator string
 	int variable_idx;         // closure variable record index
 	int accumulator_idx;      // closure accumulator record index
 	AR_ExpNode *exp;          // expression used for reduction
