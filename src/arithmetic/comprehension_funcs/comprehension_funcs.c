@@ -256,6 +256,9 @@ SIValue AR_LIST_COMPREHENSION
 
 	uint len = SIArray_Length(list);
 	for(uint i = 0; i < len; i++) {
+		if(unlikely(ErrorCtx_EncounteredError())) {
+			break;
+		}
 		// retrieve the current element
 		SIValue current_elem = SIArray_Get(list, i);
 		// add the current element to the record at its allocated position
@@ -271,6 +274,10 @@ SIValue AR_LIST_COMPREHENSION
 		if(ctx->eval_exp) {
 			// compute the current element to append to the return list
 			SIValue newval = AR_EXP_Evaluate_NoThrow(ctx->eval_exp, r);
+			if(unlikely(ErrorCtx_EncounteredError())) {
+				SIValue_Free(newval);
+				break;
+			}
 			SIArray_Append(&retval, newval);
 			SIValue_Free(newval);
 		} else {
@@ -278,6 +285,11 @@ SIValue AR_LIST_COMPREHENSION
 			// add each element unmodified
 			SIArray_Append(&retval, current_elem);
 		}
+	}
+
+	if(unlikely(ErrorCtx_EncounteredError())) {
+		SIValue_Free(retval);
+		return SI_NullVal();
 	}
 
 	return retval;
