@@ -17,6 +17,73 @@
 #include "../string_funcs/string_funcs.h"
 #include "../boolean_funcs/boolean_funcs.h"
 #include "../numeric_funcs/numeric_funcs.h"
+#include "../../ast/ast.h"
+
+static uint64_t _reduce_alias_counter = 0;
+
+static char *_DuplicateReduceAlias
+(
+	const char *alias
+) {
+	size_t len = strlen(alias);
+	char *dup = rm_malloc(len + 1);
+	memcpy(dup, alias, len + 1);
+	return dup;
+}
+
+static char *_GenerateUniqueReduceAlias
+(
+	rax *mapping,
+	const char *alias,
+	const char *tag
+) {
+	uint64_t suffix = __sync_fetch_and_add(&_reduce_alias_counter, 1);
+	char *candidate = NULL;
+
+	while(true) {
+		size_t alias_len = strlen(alias);
+		size_t tag_len = strlen(tag);
+		size_t buff_len = alias_len + tag_len + 32;
+		candidate = rm_malloc(buff_len);
+		snprintf(candidate, buff_len, "%s__reduce_%s_%llu", alias, tag,
+				 (unsigned long long)suffix);
+
+		if(raxFind(mapping, (unsigned char *)candidate,
+				 strlen(candidate)) == raxNotFound) {
+			break;
+		}
+
+		rm_free(candidate);
+		candidate = NULL;
+		suffix++;
+	}
+
+	return candidate;
+}
+
+static void _RenameAliasInExpression
+(
+	AR_ExpNode *root,
+	const char *old_alias,
+	const char *new_alias
+) {
+	if(root == NULL) return;
+
+	if(root->type == AR_EXP_OPERAND && root->operand.type == AR_EXP_VARIADIC) {
+		const char *alias = root->operand.variadic.entity_alias;
+		if(strcmp(alias, old_alias) == 0) {
+			root->operand.variadic.entity_alias = new_alias;
+			root->operand.variadic.entity_alias_idx = IDENTIFIER_NOT_FOUND;
+		}
+		return;
+	}
+
+	if(root->type == AR_EXP_OP) {
+		for(int i = 0; i < root->op.child_count; i++) {
+			_RenameAliasInExpression(root->op.children[i], old_alias, new_alias);
+		}
+	}
+}
 
 //------------------------------------------------------------------------------
 // reduce context
@@ -31,6 +98,14 @@ void ListReduceCtx_Free
 
 	if(ctx->exp) {
 		AR_EXP_Free(ctx->exp);
+	}
+
+	if(ctx->variable_owned) {
+		rm_free((char *)ctx->variable);
+	}
+
+	if(ctx->accumulator_owned) {
+		rm_free((char *)ctx->accumulator);
 	}
 
 	if(ctx->record) {
@@ -57,9 +132,29 @@ void *ListReduceCtx_Clone
 	clone->variable         =  ctx->variable;
 	clone->accumulator_idx  =  ctx->accumulator_idx;
 	clone->accumulator      =  ctx->accumulator;
+	clone->variable_owned   =  false;
+	clone->accumulator_owned = false;
+
+	if(ctx->variable_owned) {
+		clone->variable = _DuplicateReduceAlias(ctx->variable);
+		clone->variable_owned = true;
+	}
+
+	if(ctx->accumulator_owned) {
+		clone->accumulator = _DuplicateReduceAlias(ctx->accumulator);
+		clone->accumulator_owned = true;
+	}
 
 	// clone the eval routine
 	clone->exp = AR_EXP_Clone(ctx->exp);
+
+	if(clone->variable_owned) {
+		_RenameAliasInExpression(clone->exp, ctx->variable, clone->variable);
+	}
+
+	if(clone->accumulator_owned) {
+		_RenameAliasInExpression(clone->exp, ctx->accumulator, clone->accumulator);
+	}
 
 	return clone;
 }
@@ -70,6 +165,25 @@ static void _PopulateReduceCtx
 	Record outer_record
 ) {
 	rax *record_map = raxClone(outer_record->mapping);
+
+	if(raxFind(record_map, (unsigned char *)ctx->variable,
+			 strlen(ctx->variable)) != raxNotFound) {
+		char *unique_alias = _GenerateUniqueReduceAlias(record_map,
+				 ctx->variable, "var");
+		_RenameAliasInExpression(ctx->exp, ctx->variable, unique_alias);
+		ctx->variable = unique_alias;
+		ctx->variable_owned = true;
+	}
+
+	if(strcmp(ctx->accumulator, ctx->variable) == 0 ||
+	   raxFind(record_map, (unsigned char *)ctx->accumulator,
+			 strlen(ctx->accumulator)) != raxNotFound) {
+		char *unique_alias = _GenerateUniqueReduceAlias(record_map,
+				 ctx->accumulator, "acc");
+		_RenameAliasInExpression(ctx->exp, ctx->accumulator, unique_alias);
+		ctx->accumulator = unique_alias;
+		ctx->accumulator_owned = true;
+	}
 
 	//--------------------------------------------------------------------------
 	// map variable name

@@ -763,6 +763,8 @@ static AR_ExpNode *_AR_ExpNodeFromReduceFunction
 	ctx->record           =  NULL;
 	ctx->variable         =  NULL;
 	ctx->accumulator      =  NULL;
+	ctx->variable_owned   =  false;
+	ctx->accumulator_owned = false;
 	ctx->variable_idx     =  INVALID_INDEX;
 	ctx->accumulator_idx  =  INVALID_INDEX;
 
