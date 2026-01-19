@@ -171,3 +171,15 @@ class testOrderBy(FlowTestsBase):
         except Exception as e:
             self.env.assertIn("ORDER BY cannot reference variables not projected", str(e))
 
+    def test07_order_aggregation(self):
+        """computing an aggregation expression within the ORDER-BY clause
+           should fail"""
+
+        q = "UNWIND range (0, 9) AS x RETURN x ORDER BY MAX(x)"
+
+        try:
+            res = self.graph.query(q).result_set
+            self.env.assertTrue(False and "expecting a failure")
+        except Exception as e:
+            self.env.assertIn("failed to map aggregation expression", str(e))
+
