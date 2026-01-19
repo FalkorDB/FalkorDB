@@ -131,13 +131,13 @@ bool _matrix_leq
 	const GrB_Matrix B,
 	bool transpose
 ) {
-	GrB_Index      a_nvals = 0;
-	GrB_Index      b_nvals = 0;
-	GrB_Index      c_nvals = 0;
-	GrB_Index      nrows   = 0;
-	GrB_Index      ncols   = 0;
-	GrB_Index      brows   = 0;
-	GrB_Index      bcols   = 0;
+	GrB_Index      nrows   = 0 ;
+	GrB_Index      ncols   = 0 ;
+	GrB_Index      brows   = 0 ;
+	GrB_Index      bcols   = 0 ;
+	GrB_Index      a_nvals = 0 ;
+	GrB_Index      b_nvals = 0 ;
+	GrB_Index      c_nvals = 0 ;
 	GrB_Descriptor desc = transpose ? GrB_DESC_T1 : NULL;
 	
 	GrB_OK (GrB_Matrix_nvals(&a_nvals, A));
@@ -219,12 +219,13 @@ void Delta_Matrix_validate
 	//--------------------------------------------------------------------------
 
 	// GrB_OK (Delta_Matrix_type(&ty, C));
-	GrB_OK (GxB_Matrix_type(&ty_m, m));
-	GrB_OK (GxB_Matrix_type(&ty_dp, dp));
-	ty = ty_m;
-	ASSERT(ty == ty_m);
-	ASSERT(ty == ty_dp);
-	ASSERT(ty == GrB_BOOL || ty == GrB_UINT64);
+	GrB_OK (GxB_Matrix_type (&ty_m, m)) ;
+	GrB_OK (GxB_Matrix_type (&ty_dp, dp)) ;
+	ty = ty_m ;
+
+	ASSERT (ty == ty_m);
+	ASSERT (ty == ty_dp);
+	ASSERT (ty == GrB_BOOL || ty == GrB_UINT64);
 
 	//--------------------------------------------------------------------------
 	// check sparcity control
@@ -244,7 +245,7 @@ void Delta_Matrix_validate
 	// Check dm is iso
 	//--------------------------------------------------------------------------
 
-	#if 0 // less strict iso test:
+	#if 1 // less strict iso test:
 	// if this passes, Graphblas may not recognize the matrix as iso
 	// but it only has true values. 
 	info = GrB_Matrix_reduce_BOOL(
@@ -257,7 +258,8 @@ void Delta_Matrix_validate
 	GrB_OK (GrB_Matrix_nvals (&dm_nvals, dm));
 
 	if(!dm_iso && dm_nvals > 0) {
-		GxB_fprint(dm, GxB_SHORT, stdout);
+		//GxB_fprint (dm, GxB_SHORT, stdout) ;
+		GxB_fprint (dm, GxB_COMPLETE_VERBOSE, stdout) ;
 	}
 
 	ASSERT(dm_iso || dm_nvals == 0);
@@ -269,21 +271,48 @@ void Delta_Matrix_validate
 		// this may to too strict
 		// the transpose should be structually the transpose
 		// however doesn't need to have all pending changes be equal.
-		GrB_Matrix tm        = DELTA_MATRIX_TM(C);
-		GrB_Matrix tdp       = DELTA_MATRIX_TDELTA_PLUS(C);
-		GrB_Matrix tdm       = DELTA_MATRIX_TDELTA_MINUS(C);
+		GrB_Matrix tm  = DELTA_MATRIX_TM (C) ;
+		GrB_Matrix tdp = DELTA_MATRIX_TDELTA_PLUS (C) ;
+		GrB_Matrix tdm = DELTA_MATRIX_TDELTA_MINUS (C) ;
 
 		// m = tm^t
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, m, tm, true));
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tm, m, true));
+		if (!_matrix_leq (GrB_ONEB_BOOL, m, tm, true)) {
+			GxB_fprint (m, GxB_COMPLETE_VERBOSE, stdout) ;
+			GxB_fprint (tm, GxB_COMPLETE_VERBOSE, stdout) ;
+			ASSERT (false) ;
+		}
+
+		if (!_matrix_leq (GrB_ONEB_BOOL, tm, m, true)) {
+			GxB_fprint (tm, GxB_COMPLETE_VERBOSE, stdout) ;
+			GxB_fprint (m, GxB_COMPLETE_VERBOSE, stdout) ;
+			ASSERT (false) ;
+		}
 
 		// dp = tdp^t
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, dp, tdp, true));
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tdp, dp, true));
+		if (!_matrix_leq (GrB_ONEB_BOOL, dp, tdp, true)) {
+			GxB_fprint (dp, GxB_COMPLETE_VERBOSE, stdout) ;
+			GxB_fprint (tdp, GxB_COMPLETE_VERBOSE, stdout) ;
+			ASSERT (false) ;
+		}
+
+		if (!_matrix_leq (GrB_ONEB_BOOL, tdp, dp, true)) {
+			GxB_fprint (tdp, GxB_COMPLETE_VERBOSE, stdout) ;
+			GxB_fprint (dp, GxB_COMPLETE_VERBOSE, stdout) ;
+			ASSERT (false) ;
+		}
 
 		// dm = tdm^t
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, dm, tdm, true));
-		ASSERT(_matrix_leq(GrB_ONEB_BOOL, tdm, dm, true));
+		if (!_matrix_leq(GrB_ONEB_BOOL, dm, tdm, true)) {
+			GxB_fprint (dm, GxB_SHORT, stdout) ;
+			GxB_fprint (tdm, GxB_SHORT, stdout) ;
+			ASSERT (false) ;
+		}
+
+		if (!_matrix_leq(GrB_ONEB_BOOL, tdm, dm, true)) {
+			GxB_fprint (tdm, GxB_SHORT, stdout) ;
+			GxB_fprint (dm, GxB_SHORT, stdout) ;
+			ASSERT (false) ;
+		}
 	}
 	
 	//--------------------------------------------------------------------------
@@ -315,3 +344,4 @@ void Delta_Matrix_validate
 	GrB_free(&temp);
 #endif
 }
+

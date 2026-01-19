@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "tensor.h"
 #include "util/arr.h"
+#include "../delta_matrix/delta_utils.h"
 #include "../delta_matrix/delta_matrix.h"
 #include "../delta_matrix/delta_matrix_iter.h"
 
@@ -662,6 +663,68 @@ void Tensor_RemoveElements
 	} else {
 		array_free(delayed);
 	}
+}
+
+// called by GrB_Matrix_apply on a matrix containing tensors
+// frees all tensors
+// return a new value 1, for every entry (tensor/non-tensor)
+static void UnaryOp_clearTensors
+(
+	void *z,
+	const void *x
+) {
+	uint64_t *_z = (uint64_t*) z ;
+	uint64_t *_x = (uint64_t*) x ;
+
+	// if this is a tensor (GrB_Vector) free it
+	if (!SCALAR_ENTRY(*_x)) {
+		GrB_Vector v = AS_VECTOR (*_x) ;
+		GrB_OK (GrB_free (&v)) ;
+	}
+	
+	*_z = true ;
+}
+
+// clear all elements in T specified bt A
+void Tensor_ClearElements
+(
+	Tensor T,            // tensor to remove entries from
+	const GrB_Matrix A,  // elements to remove
+	const GrB_Matrix AT  // A's transpose
+) {
+	ASSERT (T != NULL) ;
+	ASSERT (A != NULL) ;
+
+	// leaking!
+	GrB_OK (Delta_Matrix_removeElements (T, A, AT)) ;
+	return ;
+
+	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE (T)) {
+		ASSERT (AT != NULL) ;
+		GrB_OK (Delta_Matrix_removeElements (T->transposed, AT, NULL)) ;
+	}
+
+	GrB_Matrix m  = DELTA_MATRIX_M           (T) ;
+	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS  (T) ;
+	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS (T) ;
+
+	// create unary op
+    GrB_UnaryOp unaryop ;
+	GrB_Type t = GrB_UINT64 ;
+	GrB_OK (GrB_UnaryOp_new (&unaryop, UnaryOp_clearTensors, t, t)) ;
+
+	// find the entries that are already in M and set them in DM
+	// the unaryop is responsible for freeing any tensors
+	GrB_OK (GrB_Matrix_apply (dm, A, NULL, unaryop, m, NULL)) ;
+
+	// remove entries in DP that are also in A
+	GrB_OK (GrB_Matrix_apply (dp, A, NULL, unaryop, dp, NULL)) ;
+	GrB_OK (GrB_transpose (dp, A, NULL, dp, GrB_DESC_RSCT0)) ;
+
+	Delta_Matrix_setDirty (T) ;
+	Delta_Matrix_validate (T, true) ;
+
+	GrB_free (&unaryop) ;
 }
 
 // computes row degree of T[row:]

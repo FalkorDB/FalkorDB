@@ -104,6 +104,7 @@ static int GraphBLAS_Init (RedisModuleCtx *ctx) {
 
 	// alow only baked-in JIT kernels (pre-jit)
     GrB_OK (GrB_set (GrB_GLOBAL, GxB_JIT_RUN, GxB_JIT_C_CONTROL)) ;
+    //GrB_OK (GrB_set (GrB_GLOBAL, GxB_JIT_OFF, GxB_JIT_C_CONTROL)) ;
 	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
 			"GraphBLAS JIT restrict to pre-jit kernels") ;
 

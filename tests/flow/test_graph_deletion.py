@@ -466,3 +466,4 @@ class testGraphDeletionFlow(FlowTestsBase):
         for i in range(1, 1000):
             self.graph.query("MATCH (n:N) WITH n LIMIT 10000 DELETE n")
             self.graph.query("MATCH (n:N) RETURN n.v LIMIT 1")
+
