@@ -1140,6 +1140,44 @@ class testUDF():
         res = self.db.udf_list()
         self.env.assertEqual(len(res), 0)
 
+    def test_falkor_log(self):
+        # setup the schema
+        self.graph.query("CREATE (:Person {name:'Link'})-[:EQUIPS {slot:'hand'}]->(:Item {type:'Sword'})")
+
+        # load logger UDF
+        script = """
+        function log(obj) {
+            falkor.log(obj);
+            return true;
+        }
+        falkor.register('log', log);
+        """
+        self.db.udf_load("logger", script, True)
+
+        # define the test cases
+        test_cases = [
+            # primitives
+            "RETURN logger.log(100)",
+            "RETURN logger.log(3.14)",
+            "RETURN logger.log('FalkorDB')",
+            "RETURN logger.log(true)",
+            "RETURN logger.log(null)",
+
+            # graph entities
+            "MATCH (n:Person) RETURN logger.log(n)",
+            "MATCH ()-[e:EQUIPS]->() RETURN logger.log(e)",
+            "MATCH p=()-[]->() RETURN logger.log(p)",
+
+            # collections
+            "RETURN logger.log([1, 2, 3])",
+            "RETURN logger.log({key: 'value', nested: {a: 1}})"
+        ]
+
+        for query in test_cases:
+            res = self.graph.query(query)
+
+        # TODO: not sure how to get server's STDOUT
+
 class test_udf_javascript():
     def __init__(self):
         self.env, self.db = Env()

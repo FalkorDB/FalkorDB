@@ -668,6 +668,33 @@ static JSValue js_node_get_neighbors
 	return neighbors ;
 }
 
+// node to json
+static JSValue js_node_to_json
+(
+	JSContext *ctx,
+	JSValueConst this_val,
+	int argc,
+	JSValueConst *argv
+) {
+    // create a plain "data" object
+    JSValue obj = JS_NewObject (ctx) ;
+
+    // reuse existing getters to fill the data object
+    JS_SetPropertyStr (ctx, obj, "id",
+			JS_GetPropertyStr (ctx, this_val, "id")) ;
+
+    JS_SetPropertyStr (ctx, obj, "labels",
+			JS_GetPropertyStr (ctx, this_val, "labels")) ;
+
+    JS_SetPropertyStr (ctx, obj, "attributes",
+			JS_GetPropertyStr (ctx, this_val, "attributes")) ;
+
+    // debugging metadata
+    JS_SetPropertyStr (ctx, obj, "__type", JS_NewString (ctx, "Node")) ;
+
+    return obj ;
+}
+
 // create a JavaScript Node object from a FalkorDB Node
 // wraps a native FalkorDB Node into a QuickJS JSValue instance
 // return JSValue representing the Node in QuickJS
@@ -728,7 +755,9 @@ static const JSCFunctionListEntry node_proto_func_list[] = {
 	JS_CGETSET_DEF ("id", js_entity_get_id, NULL),
 	JS_CGETSET_DEF ("labels", js_entity_get_labels, NULL),
 	JS_CGETSET_DEF ("attributes", UDF_EntityGetAttributes, NULL),
-	JS_CFUNC_DEF   ("getNeighbors", 1, js_node_get_neighbors),
+
+	JS_CFUNC_DEF ("toJSON", 0, js_node_to_json),
+	JS_CFUNC_DEF ("getNeighbors", 1, js_node_get_neighbors)
 };
 
 void UDF_RegisterNodeProto
@@ -741,7 +770,7 @@ void UDF_RegisterNodeProto
     JSValue proto = JS_NewObject (js_ctx) ;
 
     int res =
-		JS_SetPropertyFunctionList (js_ctx, proto, node_proto_func_list, 4) ;
+		JS_SetPropertyFunctionList (js_ctx, proto, node_proto_func_list, 5) ;
 	ASSERT (res == 0) ;
 
     JS_SetClassProto (js_ctx, js_node_class_id, proto) ;
