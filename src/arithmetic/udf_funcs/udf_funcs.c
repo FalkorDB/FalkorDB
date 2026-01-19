@@ -94,8 +94,8 @@ SIValue AR_UDF
 	}
 
 	// setup interrupt handler
-	int64_t deadline_ms = _current_time_in_ms() + 3; // 3 seconds
-	JS_SetInterruptHandler(js_rt, js_interrupt_handler, &deadline_ms) ;
+	int64_t deadline_ms = _current_time_in_ms() + 3000; // 3 seconds
+	JS_SetInterruptHandler (js_rt, js_interrupt_handler, &deadline_ms) ;
 
 	// invoke UDF
 	JSValue res = JS_Call (js_ctx, *fn, JS_UNDEFINED, argc-2, js_argv) ;
