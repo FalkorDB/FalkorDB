@@ -18,7 +18,7 @@ def udf_list(db, lib=None, with_code=None):
 
     return libs
 
-class testUDF():
+class TestUDF():
     def __init__(self):
         self.env, self.db = Env()
         self.graph = self.db.select_graph(GRAPH_ID)
