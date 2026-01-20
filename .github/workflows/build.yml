@@ -32,6 +32,8 @@ concurrency:
 
 env:
   BASE_IMAGE_VERSION: 1.1.2
+  DOCKER_BUILDKIT: 1
+  BUILDKIT_PROGRESS: plain
 jobs:
   build:
     runs-on: ${{ matrix.platform.machine_label }}
