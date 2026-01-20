@@ -32,8 +32,6 @@ concurrency:
 
 env:
   BASE_IMAGE_VERSION: 1.1.2
-  DOCKER_BUILDKIT: 1
-  BUILDKIT_PROGRESS: plain
 jobs:
   build:
     runs-on: ${{ matrix.platform.machine_label }}
@@ -275,7 +273,7 @@ jobs:
           tags: localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
           push: true
           cache-from: type=gha,scope=compiler-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
-          cache-to: type=gha,mode=max,scope=compiler-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }},ignore-error=true
+          cache-to: type=gha,ignore-error=true,mode=max,scope=compiler-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
             OS=${{ matrix.platform.os }}
@@ -331,7 +329,7 @@ jobs:
           tags: falkordb/falkordb-tests-${{ matrix.platform.suffix }}
           platforms: linux/${{ matrix.platform.arch }}
           cache-from: type=gha,scope=tests-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
-          cache-to: type=gha,mode=max,scope=tests-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          cache-to: type=gha,ignore-error=true,mode=max,scope=tests-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
@@ -356,7 +354,7 @@ jobs:
           outputs: type=docker,dest=/tmp/falkordb-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-${{ matrix.platform.suffix }}
           cache-from: type=gha,scope=base-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
-          cache-to: type=gha,mode=max,scope=base-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          cache-to: type=gha,ignore-error=true,mode=max,scope=base-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
@@ -385,7 +383,7 @@ jobs:
           outputs: type=docker,dest=/tmp/falkordb-server-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-server-${{ matrix.platform.suffix }}
           cache-from: type=gha,scope=server-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
-          cache-to: type=gha,mode=max,scope=server-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          cache-to: type=gha,ignore-error=true,mode=max,scope=server-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
