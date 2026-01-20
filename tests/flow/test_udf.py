@@ -585,7 +585,7 @@ class testUDF():
 
         actual   = sort_entities(actual)
         expected = sort_entities(expected)
-        #self.env.assertEqual(actual, expected)
+        self.env.assertEqual(actual, expected)
 
         # restore original graph
         self.graph = self.db.select_graph(GRAPH_ID)
