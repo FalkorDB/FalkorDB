@@ -567,7 +567,7 @@ class testUDF():
 
             actual   = sort_entities(actual)
             expected = sort_entities(expected)
-            #self.env.assertEqual(actual, expected)
+            self.env.assertEqual(actual, expected)
 
         # all possible relationship types except 'KNOWS'
         q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {direction: 'incoming', types: $types, returnType: 'edges'})"
