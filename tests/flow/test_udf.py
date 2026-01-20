@@ -1,4 +1,4 @@
-from common import *
+from common import Env
 
 GRAPH_ID = "udfs"
 
