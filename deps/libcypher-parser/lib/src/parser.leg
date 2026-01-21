@@ -445,10 +445,13 @@ set-item =
 delete-clause =
       < DETACH-DELETE e:expression     { sequence_add(e); }
         ( COMMA - e:expression         { sequence_add(e); }
-        )* >                           { $$ = delete(true); }
+        )* >                           { $$ = delete(CYPHER_AST_DELETE_MODE_DETACH); }
+    | < NODETACH-DELETE e:expression   { sequence_add(e); }
+        ( COMMA - e:expression         { sequence_add(e); }
+        )* >                           { $$ = delete(CYPHER_AST_DELETE_MODE_NODETACH); }
     | < DELETE e:expression            { sequence_add(e); }
         ( COMMA - e:expression         { sequence_add(e); }
-        )* >                           { $$ = delete(false); }
+        )* >                           { $$ = delete(CYPHER_AST_DELETE_MODE_DELETE); }
 
 remove-clause =
     < REMOVE i:remove-item             { sequence_add(i); }
@@ -1196,6 +1199,8 @@ SET = [Ss]([Ee][Tt] WB -) ~{ERR("SET")}
 DELETE = [Dd]([Ee][Ll][Ee][Tt][Ee] WB -) ~{ERR("DELETE")}
 DETACH-DELETE = [Dd]([Ee][Tt][Aa][Cc][Hh] WB - [Dd][Ee][Ll][Ee][Tt][Ee] WB -)
     ~{ERR("DETACH DELETE")}
+NODETACH-DELETE = [Nn]([Oo][Dd][Ee][Tt][Aa][Cc][Hh] WB - [Dd][Ee][Ll][Ee][Tt][Ee] WB -)
+    ~{ERR("NODETACH DELETE")}
 REMOVE = [Rr]([Ee][Mm][Oo][Vv][Ee] WB -) ~{ERR("REMOVE")}
 FOREACH = [Ff]([Oo][Rr][Ee][Aa][Cc][Hh] WB -) ~{ERR("FOREACH")}
 WITH = [Ww]([Ii][Tt][Hh] WB -) ~{ERR("WITH")}
