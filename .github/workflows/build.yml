@@ -488,6 +488,9 @@ jobs:
           - suffix: amazonlinux2023-x64
             machine_label: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        
       - name: Download image
         uses: actions/download-artifact@v7
         with:
@@ -511,7 +514,7 @@ jobs:
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results.sarif
-          category: trivy/${{ matrix.platform.suffix }}
+          category: security-scan/${{ matrix.platform.suffix }}
 
   ramp-package:
     needs: build
