@@ -1,27 +1,30 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #pragma once
 
 #include "op.h"
 #include "../execution_plan.h"
-#include "../../graph/graph.h"
-#include "../../graph/query_graph.h"
-#include "../../graph/entities/node.h"
 #include "../../util/datablock/datablock_iterator.h"
 
-/* AllNodesScan
- * Scans entire graph */
+// AllNodesScan
+// scans through all nodes in the graph
 typedef struct {
-	OpBase op;
-	const char *alias;          /* Alias of the node being scanned by this op. */
-	uint nodeRecIdx;
-	DataBlockIterator *iter;
-	Record child_record;        /* The Record this op acts on if it is not a tap. */
+	OpBase op;                // op base
+	const char *alias;        // alias of the node being scanned
+	uint64_t progress;        // number of nodes processed thus far
+	uint64_t node_count;      // number of nodes in graph
+	uint32_t nodeRecIdx;      // position of node in record
+	DataBlockIterator *iter;  // node iterator
+	Record child_record;      // the record this op acts on if it is not a tap
 } AllNodeScan;
 
-OpBase *NewAllNodeScanOp(const ExecutionPlan *plan, const char *alias);
+// create a new all node scan operation
+OpBase *NewAllNodeScanOp
+(
+	const ExecutionPlan *plan,
+	const char *alias
+);
 

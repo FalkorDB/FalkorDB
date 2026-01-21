@@ -115,17 +115,55 @@ typedef struct SIValue {
 	SIAllocation allocation;    // allocation type
 } SIValue;
 
+//------------------------------------------------------------------------------
 // functions to construct an SIValue from a specific input type
+//------------------------------------------------------------------------------
+
+static inline SIValue SI_LongVal(int64_t i) {
+	return (SIValue) {
+		.longval = i, .type = T_INT64, .allocation = M_NONE
+	};
+}
+
+static inline SIValue SI_DoubleVal(double d) {
+	return (SIValue) {
+		.doubleval = d, .type = T_DOUBLE, .allocation = M_NONE
+	};
+}
+
+static inline SIValue SI_NullVal(void) {
+	return (SIValue) {
+		.longval = 0, .type = T_NULL, .allocation = M_NONE
+	};
+}
+
+static inline SIValue SI_BoolVal(int b) {
+	return (SIValue) {
+		.longval = b, .type = T_BOOL, .allocation = M_NONE
+	};
+}
+
+static inline SIValue SI_PtrVal(void *v) {
+	return (SIValue) {
+		.ptrval = v, .type = T_PTR, .allocation = M_NONE
+	};
+}
+
+static inline SIValue SI_Node(void *n) {
+	return (SIValue) {
+		.ptrval = n, .type = T_NODE, .allocation = M_VOLATILE
+	};
+}
+
+static inline SIValue SI_Edge(void *e) {
+	return (SIValue) {
+		.ptrval = e, .type = T_EDGE, .allocation = M_VOLATILE
+	};
+}
+
 SIValue SI_EmptyMap();
 SIValue SI_EmptyArray();
-SIValue SI_Node(void *n);
-SIValue SI_Edge(void *e);
 SIValue SI_Path(void *p);
-SIValue SI_NullVal(void);
-SIValue SI_BoolVal(int b);
-SIValue SI_PtrVal(void *v);
-SIValue SI_LongVal(int64_t i);
-SIValue SI_DoubleVal(double d);
 SIValue SI_Vectorf32(uint32_t dim);
 SIValue SI_Map(u_int64_t initialCapacity);
 SIValue SI_Array(u_int64_t initialCapacity);

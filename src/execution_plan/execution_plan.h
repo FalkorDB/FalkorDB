@@ -56,6 +56,14 @@ rax *ExecutionPlan_GetMappings
 	const ExecutionPlan *plan
 );
 
+// borrow multiple records from plan
+void ExecutionPlan_BorrowRecords
+(
+	Record *records,      // [input/output] array of records to fill
+	ExecutionPlan *plan,  // execution plan
+	uint16_t n            // number of records to borrow
+);
+
 // retrieves a Record from the ExecutionPlan's Record pool
 Record ExecutionPlan_BorrowRecord
 (

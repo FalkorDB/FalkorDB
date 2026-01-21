@@ -288,7 +288,7 @@ SIValue AR_JOIN
 		SIValue str = SIArray_Get(list, i);
 		if(!(SI_TYPE(str) & T_STRING)) {
 			// all elements in the list should be string.
-			Error_SITypeMismatch(str, T_STRING);
+			Error_SITypeMismatch (SI_TYPE (str), T_STRING);
 			return SI_NullVal();
 		}
 

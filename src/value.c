@@ -36,48 +36,6 @@ static inline void _SIString_ToString
 			str.stringval);
 }
 
-SIValue SI_LongVal(int64_t i) {
-	return (SIValue) {
-		.longval = i, .type = T_INT64, .allocation = M_NONE
-	};
-}
-
-SIValue SI_DoubleVal(double d) {
-	return (SIValue) {
-		.doubleval = d, .type = T_DOUBLE, .allocation = M_NONE
-	};
-}
-
-SIValue SI_NullVal(void) {
-	return (SIValue) {
-		.longval = 0, .type = T_NULL, .allocation = M_NONE
-	};
-}
-
-SIValue SI_BoolVal(int b) {
-	return (SIValue) {
-		.longval = b, .type = T_BOOL, .allocation = M_NONE
-	};
-}
-
-SIValue SI_PtrVal(void *v) {
-	return (SIValue) {
-		.ptrval = v, .type = T_PTR, .allocation = M_NONE
-	};
-}
-
-SIValue SI_Node(void *n) {
-	return (SIValue) {
-		.ptrval = n, .type = T_NODE, .allocation = M_VOLATILE
-	};
-}
-
-SIValue SI_Edge(void *e) {
-	return (SIValue) {
-		.ptrval = e, .type = T_EDGE, .allocation = M_VOLATILE
-	};
-}
-
 SIValue SI_Path(void *p) {
 	Path *path = (Path *)p;
 	return SIPath_New(path);
@@ -206,15 +164,18 @@ SIValue SI_Point(float latitude, float longitude) {
 // make an SIValue that reuses the original's allocations, if any
 // the returned value is not responsible for freeing any allocations
 // and is not guaranteed that these allocations will remain in scope
-SIValue SI_ShareValue(const SIValue v) {
-	SIValue dup = v;
+SIValue SI_ShareValue
+(
+	const SIValue v
+) {
+	SIValue dup = v ;
 	// if the original value owns an allocation
 	// mark that the duplicate shares it
-	if(v.allocation == M_SELF) {
-		dup.allocation = M_VOLATILE;
+	if (v.allocation == M_SELF) {
+		dup.allocation = M_VOLATILE ;
 	}
 
-	return dup;
+	return dup ;
 }
 
 // make an SIValue that creates its own copies of the original's allocations
@@ -856,59 +817,59 @@ int SIValue_Compare
 	// in order to be comparable, both SIValues must be from the same type
 	if(a.type & b.type) {
 		switch(a.type) {
-		case T_INT64:
-		case T_BOOL:
-			return SAFE_COMPARISON_RESULT(a.longval - b.longval);
+			case T_INT64:
+			case T_BOOL:
+				return SAFE_COMPARISON_RESULT(a.longval - b.longval);
 
-		case T_DOUBLE:
-			if(isnan(a.doubleval) || isnan(b.doubleval)) {
-				if(disjointOrNull) *disjointOrNull = COMPARED_NAN;
-			}
+			case T_DOUBLE:
+				if(isnan(a.doubleval) || isnan(b.doubleval)) {
+					if(disjointOrNull) *disjointOrNull = COMPARED_NAN;
+				}
 
-			return SAFE_COMPARISON_RESULT(a.doubleval - b.doubleval);
+				return SAFE_COMPARISON_RESULT(a.doubleval - b.doubleval);
 
-		case T_STRING:
-		case T_INTERN_STRING:
-			return strcmp(a.stringval, b.stringval);
+			case T_STRING:
+			case T_INTERN_STRING:
+				return strcmp(a.stringval, b.stringval);
 
-		case T_NODE:
-		case T_EDGE:
-			return ENTITY_GET_ID((GraphEntity *)a.ptrval) - ENTITY_GET_ID((GraphEntity *)b.ptrval);
+			case T_NODE:
+			case T_EDGE:
+				return ENTITY_GET_ID((GraphEntity *)a.ptrval) - ENTITY_GET_ID((GraphEntity *)b.ptrval);
 
-		case T_ARRAY:
-			return SIArray_Compare(a, b, disjointOrNull);
+			case T_ARRAY:
+				return SIArray_Compare(a, b, disjointOrNull);
 
-		case T_PATH:
-			return SIPath_Compare(a, b);
+			case T_PATH:
+				return SIPath_Compare(a, b);
 
-		case T_MAP:
-			return Map_Compare(a, b, disjointOrNull);
+			case T_MAP:
+				return Map_Compare(a, b, disjointOrNull);
 
-		case T_DATE:
-		case T_TIME:
-		case T_DATETIME:
-		case T_DURATION:
-			return a.datetimeval - b.datetimeval;
+			case T_DATE:
+			case T_TIME:
+			case T_DATETIME:
+			case T_DURATION:
+				return a.datetimeval - b.datetimeval;
 
-		case T_NULL:
-			break;
+			case T_NULL:
+				break;
 
-		case T_POINT:
-		{
-			int lon_diff = SAFE_COMPARISON_RESULT(Point_lon(a) - Point_lon(b));
-			if(lon_diff == 0)
-				return SAFE_COMPARISON_RESULT(Point_lat(a) - Point_lat(b));
-			return lon_diff;
-		}
+			case T_POINT:
+				{
+					int lon_diff = SAFE_COMPARISON_RESULT(Point_lon(a) - Point_lon(b));
+					if(lon_diff == 0)
+						return SAFE_COMPARISON_RESULT(Point_lat(a) - Point_lat(b));
+					return lon_diff;
+				}
 
-		case T_VECTOR_F32:
-			return SIVector_Compare(a, b);
+			case T_VECTOR_F32:
+				return SIVector_Compare(a, b);
 
-		default:
-			// both inputs were of an incomparable type, like a pointer
-			// or not implemented comparison yet
-			ASSERT(false);
-			break;
+			default:
+				// both inputs were of an incomparable type, like a pointer
+				// or not implemented comparison yet
+				ASSERT(false);
+				break;
 		}
 	}
 

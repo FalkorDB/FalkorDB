@@ -6,8 +6,8 @@
 
 #pragma once
 
-#include "../../value.h"
 #include "path.h"
+#include "../../value.h"
 #include "../../graph/entities/qg_edge.h"
 #include <stdlib.h>
 

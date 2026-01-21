@@ -12,7 +12,7 @@
 
 // forward declarations
 static OpResult LoadCSVInit(OpBase *opBase);
-static Record LoadCSVConsume(OpBase *opBase);
+static RecordBatch LoadCSVConsume(OpBase *opBase);
 static Record LoadCSVConsumeDepleted(OpBase *opBase);
 static Record LoadCSVConsumeFromChild(OpBase *opBase);
 static OpBase *LoadCSVClone(const ExecutionPlan *plan, const OpBase *opBase);
@@ -152,7 +152,7 @@ static bool _Init_CSVReader
 }
 
 // get a single CSV row
-static bool _CSV_GetRow
+static inline bool _CSV_GetRow
 (
 	OpLoadCSV *op,  // load CSV operation
 	SIValue *row    // row to populate
@@ -309,23 +309,39 @@ pull_from_child:
 }
 
 // load CSV consume function in the case this operation is a tap
-static Record LoadCSVConsume
+static RecordBatch LoadCSVConsume
 (
 	OpBase *opBase
 ) {
-	ASSERT(opBase != NULL);
+	ASSERT (opBase != NULL) ;
 
-	OpLoadCSV *op = (OpLoadCSV*)opBase;
+	OpLoadCSV *op = (OpLoadCSV*)opBase ;
 
-	SIValue row;
-	Record r = NULL;
+	SIValue row ;
+	size_t batch_size = 64 ;
+	RecordBatch batch = OpBase_CreateRecordBatch (opBase, batch_size) ;
 
-	if(_CSV_GetRow(op, &row)) {
-		r = OpBase_CreateRecord(opBase);
-		Record_AddScalar(r, op->recIdx, row);
+	uint32_t i = 0 ;
+	uint32_t target_idx = op->recIdx ;
+
+	for (; i < batch_size; i++) {
+		if (unlikely (!_CSV_GetRow (op, &row))) {
+			break ;
+		}
+
+		Record r = batch[i] ;
+		Record_AddScalar (r, target_idx, row) ;
 	}
 
-	return r;
+	// depleted
+	if (unlikely (i == 0)) {
+		RecordBatch_Free (&batch) ;
+		return NULL ;
+	}
+
+	// adjust batch size
+	RecordBatch_SetSize (batch, i) ;
+	return batch ;
 }
 
 static inline OpBase *LoadCSVClone

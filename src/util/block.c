@@ -8,15 +8,26 @@
 #include "RG.h"
 #include "rmalloc.h"
 
-Block *Block_New(uint itemSize, uint capacity) {
-	ASSERT(itemSize > 0);
-	Block *block = rm_calloc(1, sizeof(Block) + (capacity * itemSize));
-	block->itemSize = itemSize;
-	return block;
+Block *Block_New
+(
+	uint itemSize,  // item size
+	uint capacity   // number of items
+) {
+	ASSERT (itemSize > 0) ;
+
+	size_t n = sizeof (Block) + (capacity * itemSize) ;
+	Block *block = rm_calloc (1, n) ;
+
+	block->itemSize = itemSize ;
+
+	return block ;
 }
 
-void Block_Free(Block *block) {
-	ASSERT(block != NULL);
-	rm_free(block);
+void Block_Free
+(
+	Block *block
+) {
+	ASSERT (block != NULL) ;
+	rm_free (block) ;
 }
 

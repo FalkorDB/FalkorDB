@@ -18,7 +18,7 @@ void ResultSet_ReplyWithVerboseHeader
 void ResultSet_EmitVerboseRow
 (
 	ResultSet *set,
-	SIValue **row
+	SIValue *row
 );
 
 // emit statistics

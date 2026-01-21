@@ -17,7 +17,7 @@ void ResultSet_ReplyWithBoltHeader
 void ResultSet_EmitBoltRow
 (
 	ResultSet *set,
-	SIValue **row
+	SIValue *row
 );
 
 // emit statistics
@@ -25,3 +25,4 @@ void ResultSet_EmitBoltStats
 (
 	ResultSet *set
 );
+

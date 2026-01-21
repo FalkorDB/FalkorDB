@@ -151,13 +151,16 @@ void Error_InvalidFilterPlacement(rax *entitiesRax) {
 	raxFree(entitiesRax);
 }
 
-void Error_SITypeMismatch(SIValue received, SIType expected) {
+void Error_SITypeMismatch
+(
+	SIType actual,
+	SIType expected
+) {
 	size_t bufferLen = MULTIPLE_TYPE_STRING_BUFFER_SIZE;
 	char buf[bufferLen];
 
 	SIType_ToMultipleTypeString(expected, buf, bufferLen);
-	ErrorCtx_SetError(EMSG_TYPE_MISMATCH, buf,
-					  SIType_ToString(SI_TYPE(received)));
+	ErrorCtx_SetError(EMSG_TYPE_MISMATCH, buf, SIType_ToString(actual));
 }
 
 void Error_UnsupportedASTNodeType(const cypher_astnode_t *node) {
