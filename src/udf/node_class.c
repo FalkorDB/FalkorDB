@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "utils.h"
 #include "classes.h"
+#include "traverse.h"
 #include "node_class.h"
 #include "../query_ctx.h"
 #include "attributes_class.h"
@@ -146,89 +147,6 @@ static JSValue js_entity_get_labels
     return obj ;
 }
 
-// converts a JavaScript array of strings (JSValueConst) into a dynamically
-// allocated C array of strings (char**).
-//
-// this function handles error cases (e.g., input is not an array, or elements
-// are not strings) and throws a JS exception on failure
-// returns 0 on success, -1 on failure (exception thrown)
-static int js_array_to_c_strings
-(
-    JSContext *js_ctx,      // js_ctx The QuickJS context
-    JSValueConst js_array,  // js_array The JSValueConst representing the array
-    char ***c_strings_out   // c_strings_out Pointer to the output char**
-) {
-    JSValue len_val = JS_UNDEFINED ;
-    uint32_t len ;
-    int ret = -1 ; // default return is failure
-
-    // check if it's an array
-    if (!JS_IsArray (js_ctx, js_array)) {
-        JS_ThrowTypeError (js_ctx, "Expected an array of strings.") ;
-        return -1 ;
-    }
-
-    // get the array length
-    len_val = JS_GetPropertyStr (js_ctx, js_array, "length") ;
-    if (JS_IsException (len_val) || JS_ToUint32 (js_ctx, &len, len_val)) {
-        // error getting length or converting to uint32
-        goto cleanup ;
-    }
-
-	*c_strings_out = array_new (char *, len) ;
-
-    // initialize output count
-    if (len == 0) {
-        ret = 0 ; // success for empty array
-        goto cleanup ;
-    }
-
-    // iterate and convert each element
-    for (uint32_t i = 0; i < len; i++) {
-        JSValue js_element = JS_GetPropertyUint32 (js_ctx, js_array, i) ;
-        if (JS_IsException (js_element)) {
-            // error getting property
-            goto error_free_strings ;
-        }
-
-        // ensure element is a string before converting
-        if (!JS_IsString (js_element)) {
-            JS_FreeValue (js_ctx, js_element) ;
-            JS_ThrowTypeError (js_ctx,
-					"Array element at index %d is not a string.", i) ;
-            goto error_free_strings ;
-        }
-
-        // convert to C string (copy is made)
-        const char *c_str = JS_ToCString (js_ctx, js_element) ;
-        JS_FreeValue (js_ctx, js_element) ; // free the JS string value
-
-        if (!c_str) {
-            // memory error or exception during conversion
-            goto error_free_strings ;
-        }
-
-        // must allocate a copy to persist the string after JS_FreeCString
-        array_append (*c_strings_out, strdup (c_str)) ;
-        JS_FreeCString (js_ctx, c_str) ; // free the temp C string
-    }
-
-    // success
-    ret = 0 ;
-    goto cleanup ;
-
-error_free_strings:
-    // if an error occurred mid-loop, free the strings allocated so far
-    for (uint32_t i = 0; i < array_len (*c_strings_out) ; i++) {
-        free ((*c_strings_out)[i]) ;
-    }
-    array_free (*c_strings_out) ;
-
-cleanup:
-    JS_FreeValue (js_ctx, len_val) ;
-    return ret ;
-}
-
 // collect node's labels['Person', 'City'],neighbors
 //
 // example:
@@ -248,10 +166,10 @@ cleanup:
 // returns an array of Nodes
 static JSValue js_node_get_neighbors
 (
-	JSContext *js_ctx,
-	JSValueConst this_val,
-	int argc,
-	JSValueConst *argv
+	JSContext *js_ctx,      // javascript context
+	JSValueConst this_val,  // node from which we traverse
+	int argc,               // number of arguments
+	JSValueConst *argv      // arguments
 ) {
 	ASSERT (js_ctx != NULL) ;
 
@@ -267,145 +185,64 @@ static JSValue js_node_get_neighbors
 
 	uint distance            = 1 ;                        // direct neighbors
 	char **labels            = NULL ;                     // neighbors labels
-	char **rel_types         = NULL ;                     // edge types to consider
+	char **rel_types         = NULL ;                     // edge types
 	GRAPH_EDGE_DIR dir       = GRAPH_EDGE_DIR_OUTGOING ;  // edge direction
-	GraphEntityType ret_type = GETYPE_NODE ;              // returned entity type
+	GraphEntityType ret_type = GETYPE_NODE ;              // returned type
+
+	//----------------------------------------------------------------------
+	// parse the provided options object
+	//----------------------------------------------------------------------
 
 	const char *err_msg = NULL ;
-
-	if (argc > 0) {
-		JSValueConst options_obj = argv[0] ;
-
-		// check if argument is an object
-		if (!JS_IsObject (options_obj)) {
-			return JS_ThrowTypeError (js_ctx,
-					"argument must be an object or omitted") ;
-		}
-
-		//----------------------------------------------------------------------
-		// parse the provided options object
-		//----------------------------------------------------------------------
-
-		//----------------------------------------------------------------------
-		// parse direction
-		//----------------------------------------------------------------------
-
-		JSValue dir_val = JS_GetPropertyStr (js_ctx, options_obj, "direction") ;
-		if (!JS_IsUndefined (dir_val)) {
-			const char *dir_str = JS_ToCString (js_ctx, dir_val) ;
-
-			if (dir_str != NULL) {
-				if (strcmp (dir_str, "outgoing") == 0) {
-					dir = GRAPH_EDGE_DIR_OUTGOING ;
-				}
-
-				else if (strcmp (dir_str, "incoming") == 0) {
-					dir = GRAPH_EDGE_DIR_INCOMING ;
-				}
-
-				// 'both' is default, but validate if provided
-				else if (strcmp (dir_str, "both") != 0) {
-					err_msg = "'direction' must be 'incoming', 'outgoing', or 'both'." ;
-				}
-				JS_FreeCString (js_ctx, dir_str) ;
-			}
-		}
-		JS_FreeValue (js_ctx, dir_val) ;
-
-		//----------------------------------------------------------------------
-		// parse relationship-types
-		//----------------------------------------------------------------------
-
-		JSValue types_val = JS_GetPropertyStr (js_ctx, options_obj, "types") ;
-		if (!JS_IsUndefined (types_val)) {
-			if (js_array_to_c_strings (js_ctx, types_val, &rel_types)) {
-				// error occurred during conversion
-				// (e.g., not an array, or elements aren't strings)
-				err_msg = "'types' must be an array of strings" ;
-			}
-		}
-		JS_FreeValue (js_ctx, types_val) ;
-
-		//----------------------------------------------------------------------
-		// parse labels
-		//----------------------------------------------------------------------
-
-		JSValue labels_val = JS_GetPropertyStr (js_ctx, options_obj, "labels") ;
-		if (!JS_IsUndefined (labels_val)) {
-			if (js_array_to_c_strings (js_ctx, labels_val, &labels)) {
-				// error occurred during conversion
-				// (e.g., not an array, or elements aren't strings)
-				err_msg = "'labels' must be an array of strings" ;
-			}
-		}
-		JS_FreeValue (js_ctx, labels_val) ;
-
-		//----------------------------------------------------------------------
-		// parse distance
-		//----------------------------------------------------------------------
-
-		JSValue dist_val = JS_GetPropertyStr (js_ctx, options_obj, "distance") ;
-		if (!JS_IsUndefined (dist_val)) {
-			int64_t dist_long;
-
-			// failed to get int64
-			if (JS_ToInt64 (js_ctx, &dist_long, dist_val)) {
-				err_msg = "'distance' must be a positive integer." ;
-			}
-
-			// check for negative value
-			else if (dist_long <= 0) {
-				err_msg = "'distance' must be a positive integer." ;
-			}
-
-			// cast to int
-			else {
-				distance = (int)dist_long ;
-			}
-		}
-		JS_FreeValue (js_ctx, dist_val) ;
-
-		//----------------------------------------------------------------------
-		// parse returnType
-		//----------------------------------------------------------------------
-
-		JSValue ret_type_val =
-			JS_GetPropertyStr (js_ctx, options_obj, "returnType") ;
-
-		if (!JS_IsUndefined (ret_type_val)) {
-			const char *ret_type_str = JS_ToCString (js_ctx, ret_type_val) ;
-
-			if (ret_type_str != NULL) {
-				if (strcmp (ret_type_str, "edges") == 0) {
-					ret_type = GETYPE_EDGE ;
-				}
-
-				// 'nodes' is default, but validate if provided
-				else if (strcmp (ret_type_str, "nodes") != 0) {
-					err_msg = "'returnType' must be 'nodes' or 'edges'." ;
-				}
-				JS_FreeCString (js_ctx, ret_type_str) ;
-			}
-		}
-		JS_FreeValue (js_ctx, ret_type_val) ;
-
-		//----------------------------------------------------------------------
-		// done parsing
-		//----------------------------------------------------------------------
-
-		// check for error
-		if (err_msg != NULL) {
-			return JS_ThrowTypeError (js_ctx, "%s", err_msg) ;
-		}
+	if (!traverse_init_config (js_ctx, argc, argv, &distance, &labels,
+				&rel_types, &dir, &ret_type, &err_msg)) {
+		// parsing config map failed
+		ASSERT (err_msg != NULL) ;
+		return JS_ThrowTypeError (js_ctx, "%s", err_msg) ;
 	}
 
-	// collect neighbors
-	JSValue neighbors = traverse (js_ctx, ENTITY_GET_ID(node), distance,
-			labels, rel_types, dir, ret_type) ;
+	//--------------------------------------------------------------------------
+	// traverse
+	//--------------------------------------------------------------------------
+
+	EntityID node_id = ENTITY_GET_ID (node) ;
+
+	// neighbors is an array with a single element:
+	// an array of all reachable entities (Nodes / Edges)
+	uint neighbors_count = 0 ;
+	GraphEntity **neighbors = traverse (&neighbors_count, &node_id, 1, distance,
+			(const char **)labels, (const char **)rel_types, dir, ret_type) ;
+	ASSERT (neighbors != NULL) ;
+
+	// populate output javascript array
+	JSValue js_neighbors = JS_NewArray (js_ctx) ;
+
+	if (ret_type == GETYPE_NODE) {
+		// add node to neighbors
+		Node *nodes = (Node*) neighbors[0] ;
+
+		for (uint i = 0; i < neighbors_count ; i++) {
+			JS_SetPropertyUint32 (js_ctx, js_neighbors, i,
+					UDF_CreateNode (js_ctx, nodes + i)) ;
+		}
+		rm_free (nodes) ;
+	}
+	else {
+		// add edge to neighbors
+		Edge *edges = (Edge*) neighbors[0] ;
+
+		for (uint i = 0; i < neighbors_count ; i++) {
+			JS_SetPropertyUint32 (js_ctx, js_neighbors, i,
+					UDF_CreateEdge (js_ctx, edges + i)) ;
+		}
+		array_free (edges) ;
+	}
 
 	//--------------------------------------------------------------------------
 	// clean up
 	//--------------------------------------------------------------------------
+
+	rm_free (neighbors) ;
 
 	if (labels != NULL) {
 		for (int i = 0; i < array_len (labels) ; i++) {
@@ -421,7 +258,7 @@ static JSValue js_node_get_neighbors
 		array_free (rel_types) ;
 	}
 
-	return neighbors ;
+	return js_neighbors ;
 }
 
 // node to json

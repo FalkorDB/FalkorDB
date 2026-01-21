@@ -4,6 +4,7 @@
 */
 
 #include "RG.h"
+#include "../graph/graph.h"
 
 // initialize traversal configuration
 bool traverse_init_config
@@ -27,6 +28,7 @@ bool traverse_init_config
 // lastly caller can decide if he wish to get the reachable nodes or edges
 GraphEntity **traverse
 (
+	uint *neighbors_count,    // number of discovered neighbors
 	const EntityID *sources,  // traversal begins here
 	uint n,                   // number of sources
 	uint distance,            // direct neighbors [ignored]

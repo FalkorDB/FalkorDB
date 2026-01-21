@@ -4,9 +4,93 @@
 */
 
 #include "RG.h"
+#include "quickjs.h"
 #include "../query_ctx.h"
 #include "../schema/schema.h"
 #include "../arithmetic/algebraic_expression.h"
+
+// converts a JavaScript array of strings (JSValueConst) into a dynamically
+// allocated C array of strings (char**).
+//
+// this function handles error cases (e.g., input is not an array, or elements
+// are not strings) and throws a JS exception on failure
+// returns 0 on success, -1 on failure (exception thrown)
+static int js_array_to_c_strings
+(
+    JSContext *js_ctx,      // js_ctx The QuickJS context
+    JSValueConst js_array,  // js_array The JSValueConst representing the array
+    char ***c_strings_out   // c_strings_out Pointer to the output char**
+) {
+    JSValue len_val = JS_UNDEFINED ;
+    uint32_t len ;
+    int ret = -1 ; // default return is failure
+
+    // check if it's an array
+    if (!JS_IsArray (js_ctx, js_array)) {
+        JS_ThrowTypeError (js_ctx, "Expected an array of strings.") ;
+        return -1 ;
+    }
+
+    // get the array length
+    len_val = JS_GetPropertyStr (js_ctx, js_array, "length") ;
+    if (JS_IsException (len_val) || JS_ToUint32 (js_ctx, &len, len_val)) {
+        // error getting length or converting to uint32
+        goto cleanup ;
+    }
+
+	*c_strings_out = array_new (char *, len) ;
+
+    // initialize output count
+    if (len == 0) {
+        ret = 0 ; // success for empty array
+        goto cleanup ;
+    }
+
+    // iterate and convert each element
+    for (uint32_t i = 0; i < len; i++) {
+        JSValue js_element = JS_GetPropertyUint32 (js_ctx, js_array, i) ;
+        if (JS_IsException (js_element)) {
+            // error getting property
+            goto error_free_strings ;
+        }
+
+        // ensure element is a string before converting
+        if (!JS_IsString (js_element)) {
+            JS_FreeValue (js_ctx, js_element) ;
+            JS_ThrowTypeError (js_ctx,
+					"Array element at index %d is not a string.", i) ;
+            goto error_free_strings ;
+        }
+
+        // convert to C string (copy is made)
+        const char *c_str = JS_ToCString (js_ctx, js_element) ;
+        JS_FreeValue (js_ctx, js_element) ; // free the JS string value
+
+        if (!c_str) {
+            // memory error or exception during conversion
+            goto error_free_strings ;
+        }
+
+        // must allocate a copy to persist the string after JS_FreeCString
+        array_append (*c_strings_out, strdup (c_str)) ;
+        JS_FreeCString (js_ctx, c_str) ; // free the temp C string
+    }
+
+    // success
+    ret = 0 ;
+    goto cleanup ;
+
+error_free_strings:
+    // if an error occurred mid-loop, free the strings allocated so far
+    for (uint32_t i = 0; i < array_len (*c_strings_out) ; i++) {
+        free ((*c_strings_out)[i]) ;
+    }
+    array_free (*c_strings_out) ;
+
+cleanup:
+    JS_FreeValue (js_ctx, len_val) ;
+    return ret ;
+}
 
 // initialize traversal configuration
 bool traverse_init_config
@@ -44,9 +128,8 @@ bool traverse_init_config
 		return true ;
 	}
 
+	// if an argument is specified we're expecting a config map
 	JSValueConst options_obj = argv[0] ;
-
-	// check if argument is an object
 	if (!JS_IsObject (options_obj)) {
 		*err_msg = "argument must be an object or omitted" ;
 		return false ;
@@ -164,7 +247,7 @@ bool traverse_init_config
 	//----------------------------------------------------------------------
 
 	// check for error
-	return (*err_msg != NULL) ;
+	return (*err_msg == NULL) ;
 }
 
 // traverse from src node
@@ -174,6 +257,7 @@ bool traverse_init_config
 // lastly caller can decide if he wish to get the reachable nodes or edges
 GraphEntity **traverse
 (
+	uint *neighbors_count,    // number of discovered neighbors
 	const EntityID *sources,  // traversal begins here
 	uint n,                   // number of sources
 	uint distance,            // direct neighbors [ignored]
@@ -182,11 +266,11 @@ GraphEntity **traverse
 	GRAPH_EDGE_DIR dir,       // edge direction
 	GraphEntityType ret_type  // returned entity type
 ) {
-	GraphEntity **reachables = array_new (GraphEntity*, n) ;
-
 	if (n == 0) {
-		return reachables ;
+		return NULL ;
 	}
+	ASSERT (sources         != NULL) ;
+	ASSERT (neighbors_count != NULL) ;
 
 	const Graph         *g  = QueryCtx_GetGraph () ;
 	const GraphContext  *gc = QueryCtx_GetGraphCtx () ;
@@ -204,7 +288,7 @@ GraphEntity **traverse
 
 	GrB_Matrix FM = Delta_Matrix_M (F) ;
 	for (uint i = 0 ; i < n ; i++) {
-		GrB_OK (GrB_Matrix_setElement_BOOL (FM, true, i, src_id)) ;
+		GrB_OK (GrB_Matrix_setElement_BOOL (FM, true, i, sources[i])) ;
 	}
 
 	ae = AlgebraicExpression_NewOperand (F, false, "n", "n", NULL, "F") ;
@@ -353,69 +437,80 @@ GraphEntity **traverse
 	// collect results
 	//--------------------------------------------------------------------------
 
-	int i = 0;  // output index
-	JSValue neighbors = JS_NewArray (js_ctx) ;  // output
+	// determine nuumber of neighbors for each node
+	GrB_Vector w ;
+	GrB_OK (GrB_Vector_new (&w, GrB_UINT64, n)) ;
 
-	Edge *edges = NULL ;  // intermediate edge collection
-	if (ret_type == GETYPE_EDGE) {
-		edges = array_new (Edge, 1) ;
+	// w[i] holds number of neighbors for node i
+	GrB_OK (GrB_Matrix_reduce_Monoid (w, NULL, NULL, GrB_PLUS_MONOID_UINT64, FM,
+				NULL)) ;
+
+	GraphEntity **reachables = rm_malloc (sizeof (GraphEntity*) * n) ;
+
+	for (uint i = 0 ; i < n ; i++) {
+		uint64_t wi = 0 ;
+		GrB_OK (GrB_Vector_extractElement (&wi, w, i)) ;
+
+		if (ret_type == GETYPE_NODE) {
+			reachables[i] = (GraphEntity*)rm_malloc (sizeof (Node) * wi) ;
+		} else {
+			reachables[i] = (GraphEntity*)array_new (Edge, wi) ;
+		}
+		neighbors_count[i] = wi ;  // set output
 	}
+
+	GrB_OK (GrB_free (&w)) ;
 
 	// iterate over reachable nodes / edges
     GrB_Info info = GxB_rowIterator_seekRow (it, 0) ;
-    if (info != GxB_EXHAUSTED) {
-        // iterate over entries in FM(0,:)
+    while (info != GxB_EXHAUSTED) {
+        // iterate over entries in FM(i,:)
+		GrB_Index src_id  = GxB_rowIterator_getRowIndex (it) ;
+		GraphEntity *neighbors = reachables[src_id] ;
+
+		uint neighbor_idx = 0 ;
 		while (info == GrB_SUCCESS) {
+            // get the entry FM(i,j)
 			GrB_Index dest_id = GxB_rowIterator_getColIndex (it) ;
 
 			if (ret_type == GETYPE_NODE) {
 				// fetch node
-				Node n ;
-				Graph_GetNode (g, dest_id, &n) ;
-
-				// add node to neighbors
-				JS_SetPropertyUint32 (js_ctx, neighbors, i++,
-						UDF_CreateNode (js_ctx, &n)) ;
+				Node *n = (Node*)&neighbors[neighbor_idx++] ;
+				Graph_GetNode (g, dest_id, n) ;
 			}
 
 			// collecting edges
 			else {
-				// fetch edges
 				for (int j = 0; j < n_rel_ids; j++) {
 					if (transposed) {
 						Graph_GetEdgesConnectingNodes (g, dest_id, src_id,
-								rel_ids[j], &edges) ;
+								rel_ids[j], (Edge**)&neighbors) ;
 					} else {
 						Graph_GetEdgesConnectingNodes (g, src_id, dest_id,
-							rel_ids[j], &edges) ;
+							rel_ids[j], (Edge**)&neighbors) ;
 					}
 				}
+				reachables[src_id] = neighbors ;
 			}
-
-			// move to the next entry in FM(i,:)
-			info = GxB_rowIterator_nextCol (it) ;
+            // move to the next entry in FM(i,:)
+            info = GxB_rowIterator_nextCol (it) ;
 		}
+		// move to the next row, FM(i+1,:)
+		info = GxB_rowIterator_nextRow (it) ;
 	}
 
-	// add edge to neighbors
-	for (int j = 0; j < array_len (edges) ; j++) {
-		JS_SetPropertyUint32 (js_ctx, neighbors, i++,
-				UDF_CreateEdge (js_ctx, edges + j)) ;
-	}
-
+	//--------------------------------------------------------------------------
 	// clean up
+	//--------------------------------------------------------------------------
+
 	Delta_Matrix_free (&F) ;
 	GxB_Iterator_free (&it) ;
 	AlgebraicExpression_Free (ae) ;
-
-	if (edges != NULL) {
-		array_free (edges) ;
-	}
 
 	if (rel_ids != NULL) {
 		rm_free (rel_ids) ;
 	}
 
-	return neighbors ;
+	return reachables ;
 }
 
