@@ -429,10 +429,6 @@ GraphEntity **traverse
 	AlgebraicExpression_Optimize (&ae) ;
 	AlgebraicExpression_Eval (ae, F) ;
 
-	GxB_Iterator it ;
-	GrB_OK (GxB_Iterator_new (&it)) ;
-	GrB_OK (GxB_rowIterator_attach (it, FM, NULL)) ;
-
 	//--------------------------------------------------------------------------
 	// collect results
 	//--------------------------------------------------------------------------
@@ -462,11 +458,15 @@ GraphEntity **traverse
 	GrB_OK (GrB_free (&w)) ;
 
 	// iterate over reachable nodes / edges
+	GxB_Iterator it ;
+	GrB_OK (GxB_Iterator_new (&it)) ;
+	GrB_OK (GxB_rowIterator_attach (it, FM, NULL)) ;
+
     GrB_Info info = GxB_rowIterator_seekRow (it, 0) ;
     while (info != GxB_EXHAUSTED) {
         // iterate over entries in FM(i,:)
-		GrB_Index src_id  = GxB_rowIterator_getRowIndex (it) ;
-		GraphEntity *neighbors = reachables[src_id] ;
+		GrB_Index row_id = GxB_rowIterator_getRowIndex (it) ;
+		GraphEntity *neighbors = reachables[row_id] ;
 
 		uint neighbor_idx = 0 ;
 		while (info == GrB_SUCCESS) {
@@ -481,7 +481,9 @@ GraphEntity **traverse
 
 			// collecting edges
 			else {
+				EntityID src_id = sources[row_id] ;
 				for (int j = 0; j < n_rel_ids; j++) {
+					uint neighbors_len = array_len (neighbors) ;
 					if (transposed) {
 						Graph_GetEdgesConnectingNodes (g, dest_id, src_id,
 								rel_ids[j], (Edge**)&neighbors) ;
@@ -489,8 +491,12 @@ GraphEntity **traverse
 						Graph_GetEdgesConnectingNodes (g, src_id, dest_id,
 							rel_ids[j], (Edge**)&neighbors) ;
 					}
+					// expecting at least an additional edge
+					ASSERT (neighbors_len < array_len(neighbors)) ;
 				}
-				reachables[src_id] = neighbors ;
+				// update outputs
+				reachables[row_id] = neighbors ;
+				neighbors_count[row_id] = array_len (neighbors) ;
 			}
             // move to the next entry in FM(i,:)
             info = GxB_rowIterator_nextCol (it) ;
