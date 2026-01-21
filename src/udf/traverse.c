@@ -247,7 +247,28 @@ bool traverse_init_config
 	//----------------------------------------------------------------------
 
 	// check for error
-	return (*err_msg == NULL) ;
+	bool success = (*err_msg == NULL) ;
+
+	// clean up on error
+	if (!success) {
+		if (*labels != NULL) {
+			for (int i = 0 ; i < array_len (*labels) ; i++) {
+				free (*labels[i]) ;
+			}
+			array_free (*labels) ;
+			*labels = NULL ;
+		}
+
+		if (*rel_types != NULL) {
+			for (int i = 0 ; i < array_len (*rel_types) ; i++) {
+				free (*rel_types[i]) ;
+			}
+			array_free (*rel_types) ;
+			*rel_types = NULL ;
+		}
+	}
+
+	return success ;
 }
 
 // traverse from src node
