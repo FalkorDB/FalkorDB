@@ -657,6 +657,112 @@ class testUDF():
         # restore original graph
         self.graph = self.db.select_graph(GRAPH_ID)
 
+    def test_falkor_multi_source_traverse(self):
+        """
+        Verifies the correctness of the vectorized falkor.traverse function,
+        ensuring it correctly handles multiple source nodes and returns
+        a nested array of results.
+        """
+
+        self.graph = self.db.select_graph("multi_traverse")
+
+        # Helper for stable comparison of nested arrays
+        def sort_nested_entities(nested_list):
+            return [sorted(inner, key=lambda x: x.id) for inner in nested_list]
+
+        script = """
+        function batch_traverse(nodes, config) {
+            return falkor.traverse(nodes, config || {});
+        }
+        falkor.register('batch_traverse', batch_traverse);
+        """
+        self.db.udf_load("MultiTraversal", script, True)
+
+        # 1. Setup the Graph (Reusing the Person/City/Company schema)
+        q = """CREATE (Alice:Person {name: 'Alice'}),
+        (Bob:Person {name: 'Bob'}),
+        (Charlie:Person {name: 'Charlie'}),
+        (David:Person {name: 'David'}),
+        (London:City {name: 'London'}),
+        (Paris:City {name: 'Paris'}),
+        (FalkorDB:Company {name: 'FalkorDB'}),
+
+        (Alice)-[akb:KNOWS]->(Bob),
+        (Bob)-[bka:KNOWS]->(Alice),
+        (Bob)-[bkc:KNOWS]->(Charlie),
+        (Alice)-[awf:WORKS_AT]->(FalkorDB),
+        (Alice)-[all:LIVES_IN]->(London),
+        (Bob)-[blp:LIVES_IN]->(Paris),
+        (Charlie)-[cvl:VISITED]->(London)
+
+        RETURN Alice, Bob, Charlie, David, London, Paris, FalkorDB,
+               akb, bka, bkc, awf, all, blp, cvl
+        """
+
+        res = self.graph.query(q).result_set[0]
+        alice, bob, charlie, david, london, paris, falkorDB = res[0:7]
+        akb, bka, bkc, awf, all_rel, blp, cvl = res[7:14]
+
+        # --- TEST CASES ---
+
+        # 1. Multi-Source Nodes (Alice & Bob) - Default Config
+        # Alice out: [Bob, FalkorDB, London]
+        # Bob out: [Alice, Charlie, Paris]
+        q = "MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'}) RETURN MultiTraversal.batch_traverse([a, b])"
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [[bob, falkorDB, london], [alice, charlie, paris]]
+
+        self.env.assertEqual(sort_nested_entities(actual), sort_nested_entities(expected))
+
+        # 2. Multi-Source Nodes (Bob & Charlie) - Direction: 'incoming'
+        # Bob in: [Alice]
+        # Charlie in: [Bob]
+        q = """MATCH (b:Person {name: 'Bob'}), (c:Person {name: 'Charlie'})
+               RETURN MultiTraversal.batch_traverse([b, c], {direction: 'incoming'})"""
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [[alice], [bob]]
+
+        self.env.assertEqual(sort_nested_entities(actual), sort_nested_entities(expected))
+
+        # 3. Filtering by Labels (Alice & Charlie)
+        # Alice -> labels:['City'] -> [London]
+        # Charlie -> labels:['City'] -> [London]
+        q = """MATCH (a:Person {name: 'Alice'}), (c:Person {name: 'Charlie'})
+               RETURN MultiTraversal.batch_traverse([a, c], {labels: ['City']})"""
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [[london], [london]]
+
+        self.env.assertEqual(sort_nested_entities(actual), sort_nested_entities(expected))
+
+        # 4. Mixed Results: One node with neighbors, one without (Alice & David)
+        # Alice out: [Bob, FalkorDB, London]
+        # David out: []
+        q = """MATCH (a:Person {name: 'Alice'}), (d:Person {name: 'David'})
+               RETURN MultiTraversal.batch_traverse([a, d])"""
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [[bob, falkorDB, london], []]
+
+        self.env.assertEqual(sort_nested_entities(actual), sort_nested_entities(expected))
+
+        # 5. ReturnType: 'edges' (Alice & Bob)
+        # Alice out edges: [akb, awf, all]
+        # Bob out edges: [bka, bkc, blp]
+        q = """MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+               RETURN MultiTraversal.batch_traverse([a, b], {returnType: 'edges'})"""
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [[akb, awf, all_rel], [bka, bkc, blp]]
+
+        self.env.assertEqual(sort_nested_entities(actual), sort_nested_entities(expected))
+
+        # 6. Stress Test: Same node multiple times in the array
+        # Ensures the Frontier Matrix row extraction doesn't "exhaust" results for duplicate IDs
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN MultiTraversal.batch_traverse([a, a, a])"
+        actual = self.graph.query(q).result_set[0][0]
+        alice_neighbors = [bob, falkorDB, london]
+        expected = [alice_neighbors, alice_neighbors, alice_neighbors]
+
+        self.env.assertEqual(sort_nested_entities(actual), sort_nested_entities(expected))
+
     # Test that FalkorDB’s JavaScript Edge object exposes:
     # - `id`: internal edge ID
     # - `type`: relationship type string
@@ -1139,6 +1245,44 @@ class testUDF():
         self.db.udf_flush()  # ensure clean state
         res = self.db.udf_list()
         self.env.assertEqual(len(res), 0)
+
+    def test_falkor_log(self):
+        # setup the schema
+        self.graph.query("CREATE (:Person {name:'Link'})-[:EQUIPS {slot:'hand'}]->(:Item {type:'Sword'})")
+
+        # load logger UDF
+        script = """
+        function log(obj) {
+            falkor.log(obj);
+            return true;
+        }
+        falkor.register('log', log);
+        """
+        self.db.udf_load("logger", script, True)
+
+        # define the test cases
+        test_cases = [
+            # primitives
+            "RETURN logger.log(100)",
+            "RETURN logger.log(3.14)",
+            "RETURN logger.log('FalkorDB')",
+            "RETURN logger.log(true)",
+            "RETURN logger.log(null)",
+
+            # graph entities
+            "MATCH (n:Person) RETURN logger.log(n)",
+            "MATCH ()-[e:EQUIPS]->() RETURN logger.log(e)",
+            "MATCH p=()-[]->() RETURN logger.log(p)",
+
+            # collections
+            "RETURN logger.log([1, 2, 3])",
+            "RETURN logger.log({key: 'value', nested: {a: 1}})"
+        ]
+
+        for query in test_cases:
+            res = self.graph.query(query)
+
+        # TODO: not sure how to get server's STDOUT
 
 class test_udf_javascript():
     def __init__(self):
