@@ -28,9 +28,9 @@ ENV FALKORDB_TLS_PATH=${FALKORDB_HOME}/tls
 ENV FALKORDB_BROWSER_PATH=${FALKORDB_HOME}/browser
 
 # Install runtime dependencies using Alpine packages (equivalent to Debian version)
-# libexecinfo-dev provides backtrace support for musl-based systems
+# libexecinfo provides backtrace support for musl-based systems
 # gcompat provides glibc compatibility layer
-RUN apk add --no-cache libgomp openssl curl libexecinfo-dev gcompat
+RUN apk add --no-cache libgomp openssl curl libexecinfo gcompat
 
 WORKDIR ${FALKORDB_HOME}
 
