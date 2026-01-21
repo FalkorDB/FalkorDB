@@ -574,6 +574,20 @@ class testConstraintNodes():
         drop_node_range_index(self.g, "Author", "nickname")
         drop_node_range_index(self.g, "Author", "birthdate")
 
+    def test09_whitespace_crash(self):
+        # create supporting index
+        create_node_range_index(self.g, "Author", "nickname")
+
+        # create unique index
+        create_constraint(self.g, "unique", "node", "Author", "nickname")
+
+        # create nodes with and without whitespace in the nickname
+        res = self.g.query("CREATE (:Author {nickname: 'abcd'})")
+        self.env.assertEqual(res.nodes_created, 1)
+
+        res = self.g.query("CREATE (:Author {nickname: '   abcd   '})")
+        self.env.assertEqual(res.nodes_created, 1)
+
 class testConstraintEdges():
     def __init__(self):
         self.env, self.db = Env()
