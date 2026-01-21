@@ -30,6 +30,10 @@ typedef struct {
 typedef struct {
 	NodeCreateCtx *nodes_to_create;
 	EdgeCreateCtx *edges_to_create;
+	// named paths to create and bind to record
+	// array of {alias, elements} where elements are ordered node/edge IDs in the path
+	const char **named_paths_aliases;
+	const char ***named_paths_elements;  // array of arrays of element aliases
 } AST_CreateContext;
 
 // convert the properties specified in a node or edge entity
