@@ -454,7 +454,7 @@ GraphEntity **traverse
 	// collect results
 	//--------------------------------------------------------------------------
 
-	// determine nuumber of neighbors for each node
+	// determine number of neighbors for each node
 	GrB_Vector w ;
 	GrB_OK (GrB_Vector_new (&w, GrB_UINT64, n)) ;
 
@@ -504,7 +504,6 @@ GraphEntity **traverse
 			else {
 				EntityID src_id = sources[row_id] ;
 				for (int j = 0; j < n_rel_ids; j++) {
-					uint neighbors_len = array_len (neighbors) ;
 					if (transposed) {
 						Graph_GetEdgesConnectingNodes (g, dest_id, src_id,
 								rel_ids[j], (Edge**)&neighbors) ;
@@ -512,8 +511,6 @@ GraphEntity **traverse
 						Graph_GetEdgesConnectingNodes (g, src_id, dest_id,
 							rel_ids[j], (Edge**)&neighbors) ;
 					}
-					// expecting at least an additional edge
-					ASSERT (neighbors_len < array_len(neighbors)) ;
 				}
 				// update outputs
 				reachables[row_id] = neighbors ;
