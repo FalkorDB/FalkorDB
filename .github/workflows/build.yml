@@ -511,7 +511,7 @@ jobs:
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results.sarif
-          category: trivy/${{ matrix.platform.name }}
+          category: trivy/${{ matrix.platform.suffix }}
 
   ramp-package:
     needs: build
