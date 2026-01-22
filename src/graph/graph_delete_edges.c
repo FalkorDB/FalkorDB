@@ -136,9 +136,6 @@ static void Graph_ImplicitClearConnections
 	GrB_OK (GrB_Matrix_new (&MT, GrB_BOOL, m, m)) ;
 	GrB_OK (GrB_transpose (MT, NULL, NULL, M, NULL)) ;
 
-	GxB_print (M, GxB_COMPLETE_VERBOSE) ;
-	GxB_print (MT, GxB_COMPLETE_VERBOSE) ;
-
 	for (int r = 0; r < relation_count; r++) {
 		uint64_t n_deletions = encountered_relations[r] ;
 
@@ -159,7 +156,6 @@ static void Graph_ImplicitClearConnections
 		if (flat_deletion) {
 			// tensor R doesn't contains any vector
 			// perform a simple "flat" deletion
-			Delta_Matrix_fprint (R, GxB_COMPLETE_VERBOSE, stdout) ;
 			GrB_OK (Delta_Matrix_removeElements (R, M, MT)) ;
 		} else {
 			Tensor_ClearElements (R, M, MT) ;
@@ -175,10 +171,6 @@ static void Graph_ImplicitClearConnections
 	GrB_Matrix adj_m  = Delta_Matrix_M  (ADJ) ;
 	GrB_Matrix adj_dp =	Delta_Matrix_DP (ADJ) ;
 	GrB_Matrix adj_dm =	Delta_Matrix_DM (ADJ) ;
-
-	GxB_fprint (adj_m,  GxB_SHORT, stdout) ;
-	GxB_fprint (adj_dp, GxB_SHORT, stdout) ;
-	GxB_fprint (adj_dm, GxB_SHORT, stdout) ;
 
 	GrB_OK (Delta_Matrix_removeElements (ADJ, M, MT)) ;
 

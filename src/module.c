@@ -109,6 +109,11 @@ static int GraphBLAS_Init (RedisModuleCtx *ctx) {
 	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
 			"GraphBLAS JIT restrict to pre-jit kernels") ;
 
+	// turn JIT off
+    //GrB_OK (GrB_set (GrB_GLOBAL, GxB_JIT_OFF, GxB_JIT_C_CONTROL)) ;
+	//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+	//		"GraphBLAS JIT off") ;
+
 	return REDISMODULE_OK ;
 }
 

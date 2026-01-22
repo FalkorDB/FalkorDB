@@ -679,10 +679,12 @@ static void UnaryOp_clearTensors
 	// if this is a tensor (GrB_Vector) free it
 	if (!SCALAR_ENTRY(*_x)) {
 		GrB_Vector v = AS_VECTOR (*_x) ;
-		GrB_OK (GrB_free (&v)) ;
+		//GrB_OK (GrB_free (&v)) ;
+		*_z = MSB_MASK ;  // delete marker
+		return ;
 	}
-	
-	*_z = true ;
+
+	*_z = *_x ;
 }
 
 // clear all elements in T specified bt A
@@ -694,10 +696,6 @@ void Tensor_ClearElements
 ) {
 	ASSERT (T != NULL) ;
 	ASSERT (A != NULL) ;
-
-	// leaking!
-	GrB_OK (Delta_Matrix_removeElements (T, A, AT)) ;
-	return ;
 
 	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE (T)) {
 		ASSERT (AT != NULL) ;
@@ -715,16 +713,22 @@ void Tensor_ClearElements
 
 	// find the entries that are already in M and set them in DM
 	// the unaryop is responsible for freeing any tensors
-	GrB_OK (GrB_Matrix_apply (dm, A, NULL, unaryop, m, NULL)) ;
+	GrB_OK (GrB_Matrix_apply (m, A, NULL, unaryop, m, GrB_DESC_S)) ;
+	GrB_OK (GrB_Matrix_eWiseMult_BinaryOp (dm, A, NULL, GrB_ONEB_BOOL, m, A,
+				GrB_DESC_S)) ;
 
 	// remove entries in DP that are also in A
-	GrB_OK (GrB_Matrix_apply (dp, A, NULL, unaryop, dp, NULL)) ;
-	GrB_OK (GrB_transpose (dp, A, NULL, dp, GrB_DESC_RSCT0)) ;
+	GrB_OK (GrB_Matrix_apply (dp, A, NULL, unaryop, dp, GrB_DESC_S)) ;
+	GrB_free (&unaryop) ;
+
+	//GrB_OK (GrB_transpose (dp, A, NULL, dp, GrB_DESC_RSCT0)) ;
+	GrB_Scalar s ;
+	GrB_OK (GrB_Scalar_new (&s, GrB_BOOL)) ;
+	GrB_OK (GrB_Matrix_assign_Scalar (dp, A, NULL, s, GrB_ALL, 0, GrB_ALL, 0,
+				GrB_DESC_S)) ;
+	GrB_OK (GrB_free (&s)) ;
 
 	Delta_Matrix_setDirty (T) ;
-	Delta_Matrix_validate (T, true) ;
-
-	GrB_free (&unaryop) ;
 }
 
 // computes row degree of T[row:]
