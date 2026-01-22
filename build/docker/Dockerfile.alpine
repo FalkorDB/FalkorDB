@@ -27,6 +27,11 @@ ENV FALKORDB_TLS_PATH=${FALKORDB_HOME}/tls
 
 ENV FALKORDB_BROWSER_PATH=${FALKORDB_HOME}/browser
 
+# Install runtime dependencies using Alpine packages (equivalent to Debian version)
+# gcompat provides glibc compatibility layer including backtrace support
+# libunwind provides stack unwinding for backtrace
+RUN apk add --no-cache libgomp openssl curl
+
 WORKDIR ${FALKORDB_HOME}
 
 COPY ./build/docker/run.sh ${FALKORDB_BIN_PATH}/run.sh
