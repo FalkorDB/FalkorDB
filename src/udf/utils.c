@@ -10,6 +10,8 @@
 #include "../errors/errors.h"
 #include "../arithmetic/func_desc.h"
 
+#define JS_RUNTIME_STACK_SIZE 1024 * 1024 * 1024
+
 extern JSClassID js_node_class_id;        // JS Node class
 extern JSClassID js_edge_class_id;        // JS Edge class
 extern JSClassID js_path_class_id;        // JS Path class
@@ -27,7 +29,7 @@ JSRuntime *UDF_GetJSRuntime(void) {
 	ASSERT (js_rt != NULL) ;
 
 	UDF_RT_RegisterClasses (js_rt) ;
-	JS_SetMaxStackSize (js_rt, 1024 * 1024) ; // 1 MB stack limit
+	JS_SetMaxStackSize (js_rt, JS_RUNTIME_STACK_SIZE) ; // 1 GB stack limit
 
 	return js_rt ;
 }

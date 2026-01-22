@@ -39,9 +39,10 @@ void UDF_CTX_RegisterClasses
 (
 	JSContext *js_ctx  // the QuickJS context in which to register classes.
 ) {
-	UDF_RegisterNodeProto    (js_ctx) ;
-	UDF_RegisterEdgeProto    (js_ctx) ;
-	UDF_RegisterPathProto    (js_ctx) ;
-	UDF_RegisterFalkorObject (js_ctx) ;
+	UDF_RegisterNodeProto       (js_ctx) ;
+	UDF_RegisterEdgeProto       (js_ctx) ;
+	UDF_RegisterPathProto       (js_ctx) ;
+	UDF_RegisterFalkorObject    (js_ctx) ;
+	UDF_RegisterAttributesProto (js_ctx) ;
 }
 
