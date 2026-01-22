@@ -15,7 +15,8 @@ void GB_enumify_masker      // enumify a masker problem
     // output:
     uint64_t *method_code,  // unique encoding of the entire operation
     // input:
-    const GrB_Matrix R,     // NULL for phase 1
+    const int R_sparsity,   // any sparsity format
+    const GrB_Type rtype,   // the type of R (NULL for phase1)
     const bool Rp_is_32,    // if true, R->p is 32-bit; else 64-bit
     const bool Rj_is_32,    // if true, R->h is 32-bit; else 64-bit
     const bool Ri_is_32,    // if true, R->i is 32-bit; else 64-bit
@@ -28,12 +29,11 @@ void GB_enumify_masker      // enumify a masker problem
 { 
 
     //--------------------------------------------------------------------------
-    // get the types of R, C, and Z
+    // check inputs
     //--------------------------------------------------------------------------
 
-    GrB_Type rtype = (R == NULL) ? NULL : R->type ;
-    ASSERT (GB_IMPLIES (R != NULL, rtype == C->type)) ;
-    ASSERT (GB_IMPLIES (R != NULL, rtype == Z->type)) ;
+    ASSERT (GB_IMPLIES (rtype != NULL, rtype == C->type)) ;
+    ASSERT (GB_IMPLIES (rtype != NULL, rtype == Z->type)) ;
 
     //--------------------------------------------------------------------------
     // enumify the types
@@ -55,7 +55,6 @@ void GB_enumify_masker      // enumify a masker problem
     // enumify the sparsity structures of R, C, M, and Z
     //--------------------------------------------------------------------------
 
-    int R_sparsity = GB_sparsity (R) ;
     int C_sparsity = GB_sparsity (C) ;
     int M_sparsity = GB_sparsity (M) ;
     int Z_sparsity = GB_sparsity (Z) ;
