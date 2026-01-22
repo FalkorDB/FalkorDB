@@ -11,7 +11,7 @@ FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
 FROM node:24-alpine AS node
 
 # Update node-tar to address security vulnerabilities
-RUN npm install -g tar@^7.5.4
+RUN npm install -g npm
 
 FROM redis:8.2.2-alpine
 
