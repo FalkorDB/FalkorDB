@@ -74,9 +74,9 @@ static void _DeleteEntities
 				roaring64_bitmap_contains (op->node_bitmap, e->dest_id)) {
 				array_del_fast (edges, i) ;
 				i-- ;
+				explicit_edge_count-- ;
 			}
 		}
-		explicit_edge_count = array_len (edges) ;
 	}
 
 	// at least one entity is marked for deletion
@@ -133,11 +133,11 @@ OpBase *NewDeleteOp
 ) {
 	OpDelete *op = rm_calloc(1, sizeof(OpDelete));
 
-	op->gc            = QueryCtx_GetGraphCtx();
-	op->exps          = exps;
-	op->exp_count     = array_len(exps);
-	op->deleted_nodes = array_new(Node, 32);
-	op->deleted_edges = array_new(Edge, 32);
+	op->gc            = QueryCtx_GetGraphCtx () ;
+	op->exps          = exps ;
+	op->exp_count     = array_len (exps) ;
+	op->deleted_nodes = array_new (Node, 32) ;
+	op->deleted_edges = array_new (Edge, 32) ;
 
 	op->node_bitmap = roaring64_bitmap_create () ;
 	op->edge_bitmap = roaring64_bitmap_create () ;
@@ -313,14 +313,14 @@ static void DeleteFree
 		op->records = NULL ;
 	}
 
-	if(op->deleted_nodes) {
-		array_free(op->deleted_nodes);
-		op->deleted_nodes = NULL;
+	if (op->deleted_nodes) {
+		array_free (op->deleted_nodes) ;
+		op->deleted_nodes = NULL ;
 	}
 
-	if(op->deleted_edges) {
-		array_free(op->deleted_edges);
-		op->deleted_edges = NULL;
+	if (op->deleted_edges) {
+		array_free (op->deleted_edges) ;
+		op->deleted_edges = NULL ;
 	}
 
 	if(op->exps) {
