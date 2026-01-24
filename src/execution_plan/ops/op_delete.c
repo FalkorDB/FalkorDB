@@ -254,8 +254,6 @@ static inline void _CollectDeletedEntities
 				roaring64_bitmap_add_checked (op->node_bitmap, ENTITY_GET_ID (n))) {
 				array_append (op->deleted_nodes, *n) ;
 			}
-
-			continue ;
 		}
 
 		else if (type & T_EDGE) {
@@ -268,8 +266,6 @@ static inline void _CollectDeletedEntities
 				roaring64_bitmap_add_checked (op->edge_bitmap, ENTITY_GET_ID (e))) {
 				array_append (op->deleted_edges, *e) ;
 			}
-
-			continue ;
 		}
 
 		else if (type & T_PATH) {
