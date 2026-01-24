@@ -14,20 +14,14 @@
 
 #include <stdlib.h>
 
+#define BULK_DELETE_THRESHOLD 500000  // .5M nodes use bulk delete logic
+
 // forward declarations
 static Record DeleteConsume(OpBase *opBase);
 static OpBase *DeleteClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void DeleteFree(OpBase *opBase);
 
-static int entity_cmp
-(
-	const GraphEntity *a,
-	const GraphEntity *b
-) {
-	return ENTITY_GET_ID(a) - ENTITY_GET_ID(b);
-}
-
-static void _DeleteEntities
+static void _BulkDeleteEntities
 (
 	OpDelete *op
 ) {
@@ -123,6 +117,92 @@ static void _DeleteEntities
 
 	if (incoming != NULL) {
 		array_free (incoming) ;
+	}
+}
+
+static void _DeleteEntities
+(
+	OpDelete *op
+) {
+	uint node_count = array_len (op->deleted_nodes) ;
+	uint edge_count = array_len (op->deleted_edges);
+
+	ASSERT ((node_count + edge_count) > 0) ;
+
+	// for a large number of node use dedicated delete logic
+	if (node_count >= BULK_DELETE_THRESHOLD) {
+		return _BulkDeleteEntities (op) ;
+	}
+
+	Graph        *g  = op->gc->g;
+	GraphContext *gc = op->gc;
+	Edge *implicit_edges = NULL ;
+	uint implicit_edge_count = 0 ;
+
+	//--------------------------------------------------------------------------
+	// collect implicit edges
+	//--------------------------------------------------------------------------
+
+	if (node_count > 0) {
+		Node *nodes = op->deleted_nodes ;
+		implicit_edges = array_new (Edge, node_count) ;
+
+		for (uint i = 0; i < node_count; i++) {
+			Node *n = nodes + i ;
+
+			// mark node's edges for deletion
+			Graph_GetNodeEdges (g, n, GRAPH_EDGE_DIR_BOTH, GRAPH_NO_RELATION,
+					&implicit_edges) ;
+		}
+
+		//----------------------------------------------------------------------
+		// remove edge duplicates
+		//----------------------------------------------------------------------
+
+		implicit_edge_count = array_len (implicit_edges) ;
+		for (uint i = 0; i < implicit_edge_count; i++) {
+			Edge *e = implicit_edges + i ;
+			EntityID eid = ENTITY_GET_ID (e) ;
+
+			// edge shouldn't be already deleted
+			ASSERT (!Graph_EntityIsDeleted ((GraphEntity *)e)) ;
+
+			if (!roaring64_bitmap_add_checked (op->edge_bitmap, eid)) {
+				// duplicated edge, remove it
+				array_del_fast (implicit_edges, i) ;
+
+				// adjust loop index
+				i-- ;
+				implicit_edge_count-- ;
+			}
+		}
+	}
+
+	// lock everything
+	QueryCtx_LockForCommit();
+	// NOTE: delete edges before nodes
+	// required as a deleted node must be detached
+
+	// delete edges
+	if (edge_count > 0) {
+		GraphHub_DeleteEdges (gc, op->deleted_edges, edge_count, true,
+				false) ;
+	}
+
+	// delete edges
+	if (implicit_edge_count > 0) {
+		GraphHub_DeleteEdges (gc, implicit_edges, implicit_edge_count, true,
+				false) ;
+	}
+
+	// delete nodes
+	if (node_count > 0) {
+		GraphHub_DeleteNodes (gc, op->deleted_nodes, node_count, true) ;
+	}
+
+	// clean up
+	if (implicit_edges != NULL) {
+		array_free (implicit_edges) ;
 	}
 }
 

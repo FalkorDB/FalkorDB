@@ -72,7 +72,7 @@ void Tensor_RemoveElements
 	uint64_t **cleared_entries  // [optional] cleared entries, referes elements
 );
 
-// clear all elements in T specified bt A
+// clear all elements specified by A from T
 void Tensor_ClearElements
 (
 	Tensor T,            // tensor to remove entries from

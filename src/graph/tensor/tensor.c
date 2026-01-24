@@ -10,6 +10,36 @@
 #include "../delta_matrix/delta_matrix.h"
 #include "../delta_matrix/delta_matrix_iter.h"
 
+// free vector entries of a tensor
+static void _free_vectors
+(
+	void *z,       // [ignored] new value
+	const void *x  // current entry
+) {
+	// see if entry is a vector
+	uint64_t _x = *(uint64_t*)(x);
+	if(!SCALAR_ENTRY(_x)) {
+		// free vector
+		GrB_Vector V = AS_VECTOR(_x);
+		GrB_free(&V);
+	}
+}
+
+// locate tensors within a matrix
+static void locate_tensors
+(
+    void *z,        // output value z, of type ztype
+    const void *x,  // input value x of type xtype; value of v(i) or A(i,j)
+    GrB_Index i,    // row index of A(i,j)
+    GrB_Index j,    // column index of A(i,j), or zero for v(i)
+    const void *y   // input scalar y
+) {
+	bool *_z           = (bool *) z ;
+	const uint64_t *_x = (const uint64_t *) x ;
+
+	*_z = !SCALAR_ENTRY (*_x) ;
+}
+
 // init new tensor
 Tensor Tensor_new
 (
@@ -665,29 +695,7 @@ void Tensor_RemoveElements
 	}
 }
 
-// called by GrB_Matrix_apply on a matrix containing tensors
-// frees all tensors
-// return a new value 1, for every entry (tensor/non-tensor)
-static void UnaryOp_clearTensors
-(
-	void *z,
-	const void *x
-) {
-	uint64_t *_z = (uint64_t*) z ;
-	uint64_t *_x = (uint64_t*) x ;
-
-	// if this is a tensor (GrB_Vector) free it
-	if (!SCALAR_ENTRY(*_x)) {
-		GrB_Vector v = AS_VECTOR (*_x) ;
-		//GrB_OK (GrB_free (&v)) ;
-		*_z = MSB_MASK ;  // delete marker
-		return ;
-	}
-
-	*_z = *_x ;
-}
-
-// clear all elements in T specified bt A
+// clear all elements specified by A from T
 void Tensor_ClearElements
 (
 	Tensor T,            // tensor to remove entries from
@@ -698,37 +706,67 @@ void Tensor_ClearElements
 	ASSERT (A != NULL) ;
 
 	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE (T)) {
+		// we can treat a tensor's transpose as a "flat" delta-matrix
 		ASSERT (AT != NULL) ;
 		GrB_OK (Delta_Matrix_removeElements (T->transposed, AT, NULL)) ;
 	}
 
-	GrB_Matrix m  = DELTA_MATRIX_M           (T) ;
-	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS  (T) ;
-	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS (T) ;
-
-	// create unary op
-    GrB_UnaryOp unaryop ;
-	GrB_Type t = GrB_UINT64 ;
-	GrB_OK (GrB_UnaryOp_new (&unaryop, UnaryOp_clearTensors, t, t)) ;
+	GrB_Matrix M  = DELTA_MATRIX_M           (T) ;
+	GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS  (T) ;
+	GrB_Matrix DM = DELTA_MATRIX_DELTA_MINUS (T) ;
 
 	// find the entries that are already in M and set them in DM
 	// the unaryop is responsible for freeing any tensors
-	GrB_OK (GrB_Matrix_apply (m, A, NULL, unaryop, m, GrB_DESC_S)) ;
-	GrB_OK (GrB_Matrix_eWiseMult_BinaryOp (dm, A, NULL, GrB_ONEB_BOOL, m, A,
+
+	// collect tensors
+	GrB_Matrix C ;
+	GrB_Index nrows, ncols, nvals ;
+
+	GrB_OK (GrB_Matrix_nrows (&nrows, M)) ;
+	GrB_OK (GrB_Matrix_ncols (&ncols, M)) ;
+	GrB_OK (GrB_Matrix_new (&C, GrB_UINT64, nrows, ncols)) ;
+
+    GrB_IndexUnaryOp op ;
+	GrB_OK (GrB_IndexUnaryOp_new (&op, locate_tensors, GrB_BOOL, GrB_UINT64,
+				GrB_BOOL)) ;
+
+	//--------------------------------------------------------------------------
+	// collect tensors
+	//--------------------------------------------------------------------------
+
+	GrB_OK (GrB_Matrix_select_Scalar (C, A, NULL, op, M,  NULL, NULL)) ;
+	GrB_OK (GrB_Matrix_select_Scalar (C, A, NULL, op, DP, NULL, NULL)) ;
+	GrB_OK (GrB_Matrix_nvals (&nvals, C)) ;
+
+	//--------------------------------------------------------------------------
+	// free tensors
+	//--------------------------------------------------------------------------
+
+	if (nvals > 0) {
+		GrB_UnaryOp unaryop = NULL;
+		GrB_OK (GrB_UnaryOp_new (&unaryop, _free_vectors, GrB_UINT64,
+					GrB_UINT64)) ;
+
+		GrB_OK (GrB_Matrix_apply (C, NULL, NULL, unaryop, C, NULL)) ;
+		GrB_OK (GrB_free (&unaryop)) ;
+	}
+
+	// set deleted elements from M in DM
+	GrB_OK (GrB_Matrix_eWiseMult_BinaryOp (DM, A, NULL, GrB_ONEB_BOOL, M, A,
 				GrB_DESC_S)) ;
 
-	// remove entries in DP that are also in A
-	GrB_OK (GrB_Matrix_apply (dp, A, NULL, unaryop, dp, GrB_DESC_S)) ;
-	GrB_free (&unaryop) ;
-
-	//GrB_OK (GrB_transpose (dp, A, NULL, dp, GrB_DESC_RSCT0)) ;
+	// remove deleted elements from DP
 	GrB_Scalar s ;
 	GrB_OK (GrB_Scalar_new (&s, GrB_BOOL)) ;
-	GrB_OK (GrB_Matrix_assign_Scalar (dp, A, NULL, s, GrB_ALL, 0, GrB_ALL, 0,
+	GrB_OK (GrB_Matrix_assign_Scalar (DP, A, NULL, s, GrB_ALL, 0, GrB_ALL, 0,
 				GrB_DESC_S)) ;
-	GrB_OK (GrB_free (&s)) ;
 
 	Delta_Matrix_setDirty (T) ;
+
+	// clean up
+	GrB_OK (GrB_free (&s)) ;
+	GrB_OK (GrB_free (&C)) ;
+	GrB_OK (GrB_free (&op)) ;
 }
 
 // computes row degree of T[row:]
@@ -815,21 +853,6 @@ uint64_t Tensor_ColDegree
 	}
 
 	return degree;
-}
-
-// free vector entries of a tensor
-static void _free_vectors
-(
-	void *z,       // [ignored] new value
-	const void *x  // current entry
-) {
-	// see if entry is a vector
-	uint64_t _x = *(uint64_t*)(x);
-	if(!SCALAR_ENTRY(_x)) {
-		// free vector
-		GrB_Vector V = AS_VECTOR(_x);
-		GrB_free(&V);
-	}
 }
 
 // free tensor
