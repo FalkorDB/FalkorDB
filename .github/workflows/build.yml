@@ -183,7 +183,7 @@ jobs:
       - name: Restore dependency caches (Docker)
         if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker
         id: restore-deps
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
@@ -205,7 +205,7 @@ jobs:
       - name: Restore dependency cache (macOS)
         if: steps.should_skip.outputs.skip != 'true' && matrix.platform.os == 'macos'
         id: restore-deps-macos
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           key: ${{ steps.cache-key-macos.outputs.key }}
@@ -234,8 +234,8 @@ jobs:
           make DEBUG=${{ matrix.build_type == 'debug' && '1' || '0' }} CXXFLAGS="-Wno-error=vla-cxx-extension"
 
       - name: Save dependency cache (macOS)
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.os == 'macos' && steps.restore-deps-macos.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        if: matrix.platform.os == 'macos' && steps.restore-deps-macos.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
         with:
           path: ./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           key: ${{ steps.cache-key-macos.outputs.key }}
@@ -289,8 +289,8 @@ jobs:
           platforms: linux/${{ matrix.platform.arch }}
           tags: localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
           push: true
-          cache-from: type=gha,scope=compiler-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
-          cache-to: type=gha,mode=max,scope=compiler-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          cache-from: type=gha,scope=compiler-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          cache-to: type=gha,ignore-error=true,mode=max,scope=compiler-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
             OS=${{ matrix.platform.os }}
@@ -305,8 +305,8 @@ jobs:
           docker rm -v $id
 
       - name: Save dependency cache (Docker)
-        if: steps.should_skip.outputs.skip != 'true' && matrix.platform.use_docker && steps.restore-deps.outputs.cache-hit != 'true' && steps.build_compiler.outcome == 'success'
-        uses: actions/cache/save@v4
+        if: matrix.platform.use_docker && steps.restore-deps.outputs.cache-hit != 'true' && steps.build_compiler.outcome == 'success'
+        uses: actions/cache/save@v5
         with:
           path: |
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
@@ -344,8 +344,8 @@ jobs:
           outputs: type=docker,dest=/tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-tests-${{ matrix.platform.suffix }}
           platforms: linux/${{ matrix.platform.arch }}
-          cache-from: type=gha,scope=tests-${{ matrix.platform.cache_path }}
-          cache-to: type=gha,mode=max,scope=tests-${{ matrix.platform.cache_path }}
+          cache-from: type=gha,scope=tests-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          cache-to: type=gha,ignore-error=true,mode=max,scope=tests-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
@@ -369,8 +369,8 @@ jobs:
           platforms: linux/${{ matrix.platform.arch }}
           outputs: type=docker,dest=/tmp/falkordb-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-${{ matrix.platform.suffix }}
-          cache-from: type=gha,scope=base-${{ matrix.platform.cache_path }}
-          cache-to: type=gha,mode=max,scope=base-${{ matrix.platform.cache_path }}
+          cache-from: type=gha,scope=base-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          cache-to: type=gha,ignore-error=true,mode=max,scope=base-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
@@ -398,8 +398,8 @@ jobs:
           platforms: linux/${{ matrix.platform.arch }}
           outputs: type=docker,dest=/tmp/falkordb-server-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-server-${{ matrix.platform.suffix }}
-          cache-from: type=gha,scope=server-${{ matrix.platform.cache_path }}
-          cache-to: type=gha,mode=max,scope=server-${{ matrix.platform.cache_path }}
+          cache-from: type=gha,scope=server-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          cache-to: type=gha,ignore-error=true,mode=max,scope=server-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
@@ -514,6 +514,9 @@ jobs:
           - suffix: alpine-arm64v8
             machine_label: ubuntu-24.04-arm
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        
       - name: Download image
         uses: actions/download-artifact@v7
         with:
@@ -537,5 +540,6 @@ jobs:
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results.sarif
+          category: security-scan/${{ matrix.platform.suffix }}
 
 
