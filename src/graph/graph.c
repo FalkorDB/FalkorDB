@@ -1513,33 +1513,32 @@ uint Graph_GetNodeLabels
 	uint label_count  // size of labels array
 ) {
 	// validate inputs
-	ASSERT(g      != NULL);
-	ASSERT(n      != NULL);
-	ASSERT(labels != NULL);
+	ASSERT (g      != NULL) ;
+	ASSERT (n      != NULL) ;
+	ASSERT (labels != NULL) ;
 
-	GrB_Info res;
-	UNUSED(res);
+	Delta_Matrix M = Graph_GetNodeLabelMatrix (g) ;
 
-	Delta_Matrix M = Graph_GetNodeLabelMatrix(g);
+	EntityID id = ENTITY_GET_ID (n) ;
+	Delta_MatrixTupleIter iter ;
+	GrB_OK (Delta_MatrixTupleIter_AttachRange (&iter, M, id, id)) ;
 
-	EntityID id = ENTITY_GET_ID(n);
-	Delta_MatrixTupleIter iter;
-	res = Delta_MatrixTupleIter_AttachRange(&iter, M, id, id);
-	ASSERT(res == GrB_SUCCESS);
+	uint i = 0 ;  // number of labels associated with n
 
-	uint i = 0;
+	for (; i < label_count; i++) {
+		GrB_Index col ;
+		GrB_Info info =
+			Delta_MatrixTupleIter_next_BOOL (&iter, NULL, &col, NULL) ;
+		labels[i] = col ;
 
-	for(; i < label_count; i++) {
-		GrB_Index col;
-		res = Delta_MatrixTupleIter_next_BOOL(&iter, NULL, &col, NULL);
-		labels[i] = col;
-
-		if(res == GxB_EXHAUSTED) break;
+		if (info == GxB_EXHAUSTED) {
+			break ;
+		}
 	}
 
-	Delta_MatrixTupleIter_detach(&iter);
+	Delta_MatrixTupleIter_detach (&iter) ;
 
-	return i;
+	return i ;
 }
 
 // retrieves the adjacency matrix
