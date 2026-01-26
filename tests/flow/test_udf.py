@@ -1,4 +1,4 @@
-from common import *
+from common import Env
 
 GRAPH_ID = "udfs"
 
@@ -18,7 +18,7 @@ def udf_list(db, lib=None, with_code=None):
 
     return libs
 
-class testUDF():
+class TestUDF():
     def __init__(self):
         self.env, self.db = Env()
         self.graph = self.db.select_graph(GRAPH_ID)
@@ -567,7 +567,7 @@ class testUDF():
 
             actual   = sort_entities(actual)
             expected = sort_entities(expected)
-            #self.env.assertEqual(actual, expected)
+            self.env.assertEqual(actual, expected)
 
         # all possible relationship types except 'KNOWS'
         q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {direction: 'incoming', types: $types, returnType: 'edges'})"
@@ -585,7 +585,7 @@ class testUDF():
 
         actual   = sort_entities(actual)
         expected = sort_entities(expected)
-        #self.env.assertEqual(actual, expected)
+        self.env.assertEqual(actual, expected)
 
         # restore original graph
         self.graph = self.db.select_graph(GRAPH_ID)
