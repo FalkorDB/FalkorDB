@@ -785,7 +785,7 @@ class testEntityUpdateReplication():
 
     # verify label matrix is resized and updated
     # when it is dimensions are lagging behind
-    def test01_last_update_persists(self):
+    def test01_update_node_labels(self):
         """scenario to test:
         1. Introduce label X
            X is of size MxM
@@ -815,10 +815,10 @@ class testEntityUpdateReplication():
         # wait for replica
         self.master.wait(1, 0)
 
-        n = self.master_graph.query(q).result_set[0][0]
+        n = res[0][0]
         self.env.assertEqual(n.labels, ["X"])
 
-        n_lbls = self.master_graph.query(q).result_set[0][1]
+        n_lbls = res[0][1]
         self.env.assertEqual(n_lbls, ["X"])
 
         # verify number of nodes associated with the label X
@@ -836,7 +836,7 @@ class testEntityUpdateReplication():
 
     # verify label matrix is resized and updated
     # when it is dimensions are lagging behind
-    def test02_last_update_persists(self):
+    def test02_remove_node_label(self):
         """scenario to test:
         1. Introduce label X
            X is of size MxM
@@ -869,10 +869,10 @@ class testEntityUpdateReplication():
         # wait for replica
         self.master.wait(1, 0)
 
-        n = self.master_graph.query(q).result_set[0][0]
+        n = res[0][0]
         self.env.assertEqual(n.labels, None)
 
-        n_lbls = self.master_graph.query(q).result_set[0][1]
+        n_lbls = res[0][1]
         self.env.assertEqual(n_lbls, [])
 
         # verify number of nodes associated with the label X
@@ -887,4 +887,71 @@ class testEntityUpdateReplication():
 
             x_count = self.replica_graph.ro_query(q).result_set[0][0]
             self.env.assertEqual(x_count, 1)
+
+    # verify label matrix is resized and updated
+    # when it is dimensions are lagging behind
+    def test03_merge_update_node_labels(self):
+        """scenario to test:
+        1. Introduce labels X & Z
+           X is of size MxM
+           Z is of size MxM
+        2. Create enough nodes to cause X & Z matrices to require a resize
+        3. Update node n with ID > M to be associated with label X
+        4. Create a new node and associate it with label Z
+        5. Verify nodes labels
+        6. Verify labels statistics
+        """
+
+        self.master_graph.delete()
+
+        M = self.db.config_get("NODE_CREATION_BUFFER")
+
+        # introduce label X & Z
+        q = "CREATE (:X), (:Z)"
+        res = self.master_graph.query(q)
+        self.env.assertEqual(res.labels_added,  2)
+        self.env.assertEqual(res.nodes_created, 2)
+
+        # create enough nodes to cause the X & Z matrices dimensions to lag behind the graph
+        q = "UNWIND range(1, $end) AS x CREATE ({v:x})"
+        res = self.master_graph.query(q, {'end': M*3})
+        self.env.assertEqual(res.nodes_created, M*3)
+
+        # update node with internal ID 3M to be associated with label X
+        q = "MERGE (n {v:$v}) ON MATCH SET n:X RETURN n, labels(n)"
+        res_x = self.master_graph.query(q, {'v': M*3}).result_set
+
+        # merge a new node and associate it with label Z
+        q = "MERGE (n {v:-2}) ON CREATE SET n:Z RETURN n, labels(n)"
+        res_z = self.master_graph.query(q).result_set
+
+        # wait for replica
+        self.master.wait(1, 0)
+
+        n = res_x[0][0]
+        self.env.assertEqual(n.labels, ['X'])
+
+        n_lbls = res_x[0][1]
+        self.env.assertEqual(n_lbls, ['X'])
+
+        n = res_z[0][0]
+        self.env.assertEqual(n.labels, ['Z'])
+
+        n_lbls = res_z[0][1]
+        self.env.assertEqual(n_lbls, ['Z'])
+
+        # verify number of nodes associated with the label X
+        queries = [
+                "MATCH (n:X) RETURN count(n)",  # uses graph internal stas
+                "MATCH (n:X) RETURN count(1)",  # perform actual counting
+                "MATCH (n:Z) RETURN count(n)",  # uses graph internal stas
+                "MATCH (n:Z) RETURN count(1)"   # perform actual counting
+        ]
+
+        for q in queries:
+            count = self.master_graph.query(q).result_set[0][0]
+            self.env.assertEqual(count, 2)
+
+            count = self.replica_graph.ro_query(q).result_set[0][0]
+            self.env.assertEqual(count, 2)
 

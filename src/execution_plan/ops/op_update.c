@@ -47,56 +47,6 @@ static void freeCallback
 	PendingUpdateCtx_Free((PendingUpdateCtx*)val);
 }
 
-// make sure label matrices used in SET n:L
-// are of the correct dimensions NxN
-static void ensureMatrixDim
-(
-	OpUpdate *op
-) {
-	// quick return if no nodes been updated
-	uint node_updates_count = HashTableElemCount (op->node_updates) ;
-	if (node_updates_count == 0) {
-		return ;
-	}
-
-	GraphContext *gc = op->gc ;
-	Graph *g = GraphContext_GetGraph (gc) ;
-
-	// expected sync policy to be flush & resize
-	ASSERT (Graph_GetMatrixPolicy (g) == SYNC_POLICY_FLUSH_RESIZE) ;
-
-	// for each update blueprint
-	raxSeek (&op->it, "^", NULL, 0) ;
-	while (raxNext (&op->it)) {
-		EntityUpdateEvalCtx *ctx = op->it.data ;
-
-		uint n = array_len (ctx->add_labels) ;
-		for (uint i = 0 ; i < n ; i++) {
-			const char *label = ctx->add_labels[i] ;
-			const Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
-
-			if (s != NULL) {
-				// make sure label matrix is of the right dimensions
-				Graph_GetLabelMatrix (g, Schema_GetID (s)) ;
-			}
-		}
-
-		n = array_len (ctx->remove_labels) ;
-		for (uint i = 0 ; i < n ; i++) {
-			const char *label = ctx->remove_labels[i] ;
-			const Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
-
-			if (s != NULL) {
-				// make sure label matrix is of the right dimensions
-				Graph_GetLabelMatrix (g, Schema_GetID (s)) ;
-			}
-		}
-	}
-
-	// sync node labels matrix
-	Graph_GetNodeLabelMatrix (g) ;
-}
-
 // hashtable callbacks
 static dictType _dt = { _id_hash, NULL, NULL, NULL, NULL, freeCallback, NULL,
 	NULL, NULL, NULL};
@@ -167,7 +117,9 @@ static Record UpdateConsume
 		// in cases such as:
 		// MATCH (n) SET n:L
 		// make sure L is of the right dimensions
-		ensureMatrixDim (op) ;
+		if (node_updates_count > 0) {
+			ensureMatrixDim (op->gc, op->update_ctxs) ;
+		}
 
 		// lock everything
 		QueryCtx_LockForCommit () ;

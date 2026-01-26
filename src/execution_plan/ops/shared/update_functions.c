@@ -367,6 +367,61 @@ static void _UpdateSetFromEntity
 	_AttributeSetUpdate (e, et, attr_ids, attr_vals, n , mode, eb) ;
 }
 
+// make sure label matrices used in SET n:L
+// are of the correct dimensions NxN
+void ensureMatrixDim
+(
+	GraphContext *gc,
+	rax *blueprints
+) {
+	ASSERT (gc         != NULL) ;
+	ASSERT (blueprints != NULL) ;
+
+	Graph *g = GraphContext_GetGraph (gc) ;
+
+	// set matrix sync policy to resize
+	MATRIX_POLICY policy = Graph_SetMatrixPolicy (g, SYNC_POLICY_RESIZE) ;
+
+	// for each update blueprint
+	raxIterator it ;
+	raxStart (&it, blueprints) ;
+	raxSeek (&it, "^", NULL, 0) ;
+
+	while (raxNext (&it)) {
+		EntityUpdateEvalCtx *ctx = it.data ;
+
+		uint n = array_len (ctx->add_labels) ;
+		for (uint i = 0 ; i < n ; i++) {
+			const char *label = ctx->add_labels[i] ;
+			const Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
+
+			if (s != NULL) {
+				// make sure label matrix is of the right dimensions
+				Graph_GetLabelMatrix (g, Schema_GetID (s)) ;
+			}
+		}
+
+		n = array_len (ctx->remove_labels) ;
+		for (uint i = 0 ; i < n ; i++) {
+			const char *label = ctx->remove_labels[i] ;
+			const Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
+
+			if (s != NULL) {
+				// make sure label matrix is of the right dimensions
+				Graph_GetLabelMatrix (g, Schema_GetID (s)) ;
+			}
+		}
+	}
+
+	raxStop (&it) ;
+
+	// sync node labels matrix
+	Graph_GetNodeLabelMatrix (g) ;
+
+	// restore matrix sync policy
+	Graph_SetMatrixPolicy (g, policy) ;
+}
+
 // build pending updates in the 'updates' array to match all
 // AST-level updates described in the context
 // NULL values are allowed in SET clauses but not in MERGE clauses
