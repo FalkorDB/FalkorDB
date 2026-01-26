@@ -51,21 +51,28 @@ static void _UpdateProperties
 (
 	dict *node_pending_updates,
 	dict *edge_pending_updates,
+	rax *blueprint,
 	raxIterator updates,
 	Record *records,
 	uint record_count
 ) {
-	ASSERT(record_count > 0);
-	GraphContext *gc = QueryCtx_GetGraphCtx();
+	ASSERT (record_count > 0) ;
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
 
-	for(uint i = 0; i < record_count; i ++) {  // for each record to update
-		Record r = records[i];
+	// in cases such as:
+	// MERGE (n) ON MATCH SET n:L
+	// make sure L is of the right dimensions
+	ensureMatrixDim (gc, blueprint) ;
+
+	// for each record to update
+	for (uint i = 0 ; i < record_count ; i++) {
+		Record r = records[i] ;
 		// evaluate update expressions
-		raxSeek(&updates, "^", NULL, 0);
-		while(raxNext(&updates)) {
-			EntityUpdateEvalCtx *ctx = updates.data;
-			EvalEntityUpdates(gc, node_pending_updates, edge_pending_updates,
-					r, ctx, true);
+		raxSeek (&updates, "^", NULL, 0) ;
+		while (raxNext (&updates)) {
+			EntityUpdateEvalCtx *ctx = updates.data ;
+			EvalEntityUpdates (gc, node_pending_updates, edge_pending_updates,
+					r, ctx, true) ;
 		}
 	}
 }
@@ -247,9 +254,9 @@ static void _processPostponedRecords
 
 	// if we are setting properties with ON MATCH, compute pending updates
 	if(op->on_match && n > 0) {
-		_UpdateProperties(op->node_pending_updates, op->edge_pending_updates,
-				op->on_match_it,
-				op->output_records + match_count + create_count, n);
+		_UpdateProperties (op->node_pending_updates, op->edge_pending_updates,
+				op->on_match, op->on_match_it,
+				op->output_records + match_count + create_count, n) ;
 	}
 }
 
@@ -369,8 +376,8 @@ static Record MergeConsume
 
 	// if we are setting properties with ON MATCH, compute all pending updates
 	if(op->on_match && match_count > 0) {
-		_UpdateProperties(op->node_pending_updates, op->edge_pending_updates,
-			op->on_match_it, op->output_records, match_count);
+		_UpdateProperties (op->node_pending_updates, op->edge_pending_updates,
+			op->on_match, op->on_match_it, op->output_records, match_count) ;
 	}
 
 	if(must_create_records) {
@@ -393,9 +400,9 @@ static Record MergeConsume
 		// TODO: note we're under lock at this point! is there a way
 		// to compute these changes before locking ?
 		if(op->on_create) {
-			_UpdateProperties(op->node_pending_updates,
-				op->edge_pending_updates, op->on_create_it,
-				op->output_records + match_count, create_count);
+			_UpdateProperties (op->node_pending_updates,
+				op->edge_pending_updates, op->on_create, op->on_create_it,
+				op->output_records + match_count, create_count) ;
 		}
 	}
 
