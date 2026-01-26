@@ -58,15 +58,15 @@ static inline void _init_iter
 	GrB_Index max_row,  // ending row (exclusive)
 	bool *depleted      // true if no values in range
 ) {
-	ASSERT(it       != NULL) ;
-	ASSERT(m        != NULL) ;
-	ASSERT(min_row  <= max_row) ;
-	ASSERT(depleted != NULL) ;
+	ASSERT (m        != NULL) ;
+	ASSERT (it       != NULL) ;
+	ASSERT (depleted != NULL) ;
+	ASSERT (min_row  <= max_row) ;
 
 	*depleted = true ; // default
 
-	GrB_OK(GxB_rowIterator_attach(it, m, NULL)) ;
-	_set_iter_range(it, min_row, max_row, depleted) ;
+	GrB_OK (GxB_rowIterator_attach (it, m, NULL)) ;
+	_set_iter_range (it, min_row, max_row, depleted) ;
 }
 
 // iterate over a single row
@@ -343,21 +343,27 @@ GrB_Info Delta_MatrixTupleIter_AttachRange
 	GrB_Index min_row,            // minimum row for iteration
 	GrB_Index max_row             // maximum row for iteration
 ) {
-	if(A == NULL) return GrB_NULL_POINTER ;
-	if(iter == NULL) return GrB_NULL_POINTER ;
-	ASSERT(min_row <= max_row) ;
+	if (A == NULL) {
+		return GrB_NULL_POINTER ;
+	}
 
-	GrB_Matrix M  = DELTA_MATRIX_M(A) ;
-	GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS(A) ;
-	GrB_Matrix DM = DELTA_MATRIX_DELTA_MINUS(A) ;
+	if (iter == NULL) {
+		return GrB_NULL_POINTER ;
+	}
+
+	ASSERT (min_row <= max_row) ;
+
+	GrB_Matrix M  = DELTA_MATRIX_M (A) ;
+	GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS (A) ;
+	GrB_Matrix DM = DELTA_MATRIX_DELTA_MINUS (A) ;
 
 	iter->A = A ;
 	iter->min_row = min_row ;
 	iter->max_row = max_row ;
 
-	_init_iter(&iter->m_it, M, iter->min_row, iter->max_row, &iter->m_depleted) ;
-	_init_iter(&iter->dp_it, DP, iter->min_row, iter->max_row, &iter->dp_depleted) ;
-	_init_iter(&iter->dm_it, DM, iter->min_row, iter->max_row, &iter->dm_depleted) ;
+	_init_iter (&iter->m_it,  M,  iter->min_row, iter->max_row, &iter->m_depleted) ;
+	_init_iter (&iter->dp_it, DP, iter->min_row, iter->max_row, &iter->dp_depleted) ;
+	_init_iter (&iter->dm_it, DM, iter->min_row, iter->max_row, &iter->dm_depleted) ;
 
 	return GrB_SUCCESS ;
 }
