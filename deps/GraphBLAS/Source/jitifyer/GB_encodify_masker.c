@@ -20,7 +20,8 @@ uint64_t GB_encodify_masker     // encode a masker problem
     char **suffix,              // suffix for user-defined kernel
     // input:
     const GB_jit_kcode kcode,   // kernel to encode
-    const GrB_Matrix R,         // may be NULL, for phase1
+    const int R_sparsity,       // any sparsity format
+    const GrB_Type rtype,
     const bool Rp_is_32,        // if true, R->p is 32 bit; else 64 bit
     const bool Rj_is_32,        // if true, R->h is 32 bit; else 64 bit
     const bool Ri_is_32,        // if true, R->i is 32 bit; else 64 bit
@@ -33,11 +34,10 @@ uint64_t GB_encodify_masker     // encode a masker problem
 { 
 
     //--------------------------------------------------------------------------
-    // check if the R->type is JIT'able
+    // check if the rtype is JIT'able
     //--------------------------------------------------------------------------
 
-    GrB_Type rtype = (R == NULL) ? NULL : R->type ;
-    if (R != NULL && rtype->hash == UINT64_MAX)
+    if (rtype != NULL && rtype->hash == UINT64_MAX)
     { 
         // cannot JIT this type
         memset (encoding, 0, sizeof (GB_jit_encoding)) ;
@@ -50,7 +50,8 @@ uint64_t GB_encodify_masker     // encode a masker problem
     //--------------------------------------------------------------------------
 
     GB_encodify_kcode (encoding, kcode) ;
-    GB_enumify_masker (&encoding->code, R, Rp_is_32, Rj_is_32, Ri_is_32,
+    GB_enumify_masker (&encoding->code, R_sparsity, rtype,
+        Rp_is_32, Rj_is_32, Ri_is_32,
         M, Mask_struct, Mask_comp, C, Z) ;
 
     //--------------------------------------------------------------------------

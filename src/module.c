@@ -90,12 +90,14 @@ static void _Print_Config
 }
 
 static int GraphBLAS_Init (RedisModuleCtx *ctx) {
-	// GraphBLAS should use Redis allocator
-	GrB_Info info = GxB_init (GrB_NONBLOCKING, RedisModule_Alloc,
-			RedisModule_Calloc, RedisModule_Realloc, RedisModule_Free);
+	// initialize GraphBLAS via LAGraph, use Redis allocator
+	char msg [LAGRAPH_MSG_LEN] ;
+	GrB_Info info = LAGr_Init (GrB_NONBLOCKING, RedisModule_Alloc,
+			RedisModule_Calloc, RedisModule_Realloc, RedisModule_Free, msg) ;
 
 	if (info != GrB_SUCCESS) {
-		RedisModule_Log (ctx, "warning", "Encountered error initializing GraphBLAS") ;
+		RedisModule_Log (ctx, "warning",
+				"Encountered error initializing LAGraph: %s", msg) ;
 		return REDISMODULE_ERR ;
 	}
 
@@ -107,16 +109,10 @@ static int GraphBLAS_Init (RedisModuleCtx *ctx) {
 	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
 			"GraphBLAS JIT restrict to pre-jit kernels") ;
 
-	// initialize LAGraph
-	char msg [LAGRAPH_MSG_LEN] ;
-	info = LAGr_Init (GrB_NONBLOCKING, RedisModule_Alloc, RedisModule_Calloc,
-			RedisModule_Realloc, RedisModule_Free, msg) ;
-
-	if (info != GrB_SUCCESS) {
-		RedisModule_Log (ctx, "warning",
-				"Encountered error initializing LAGraph: %s", msg) ;
-		return REDISMODULE_ERR ;
-	}
+	// turn JIT off
+    //GrB_OK (GrB_set (GrB_GLOBAL, GxB_JIT_OFF, GxB_JIT_C_CONTROL)) ;
+	//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+	//		"GraphBLAS JIT off") ;
 
 	return REDISMODULE_OK ;
 }

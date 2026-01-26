@@ -17,56 +17,68 @@ GrB_Info Delta_Matrix_removeElement
 	GrB_Index i,     // row index
 	GrB_Index j      // column index
 ) {
-	ASSERT(C);
-	Delta_Matrix_checkBounds(C, i, j);
-	GrB_Info   info;
-	bool       in_m  = false;
-	GrB_Matrix m     = DELTA_MATRIX_M(C);
-	GrB_Matrix dp    = DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix dm    = DELTA_MATRIX_DELTA_MINUS(C);
+	ASSERT (C) ;
+	Delta_Matrix_checkBounds (C, i, j) ;
+	GrB_Info   info ;
+	bool       in_m = false;
+	GrB_Matrix m    = DELTA_MATRIX_M (C) ;
+	GrB_Matrix dp   = DELTA_MATRIX_DELTA_PLUS (C) ;
+	GrB_Matrix dm   = DELTA_MATRIX_DELTA_MINUS (C) ;
 
-	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
-		GrB_OK (Delta_Matrix_removeElement(C->transposed, j, i));
+	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE (C)) {
+		GrB_OK (Delta_Matrix_removeElement (C->transposed, j, i)) ;
 	}
 
 	//--------------------------------------------------------------------------
 	// find where entry is stored
 	//--------------------------------------------------------------------------
-	info = GxB_Matrix_isStoredElement(m, i, j);
-	in_m = (info == GrB_SUCCESS);
 
-	if(in_m) {
+	info = GxB_Matrix_isStoredElement (m, i, j) ;
+	in_m = (info == GrB_SUCCESS) ;
+
+	if (in_m) {
 		// mark deletion in delta minus
-		GrB_OK(GrB_Matrix_setElement_BOOL(dm, (bool) true, i, j));
+		GrB_OK (GrB_Matrix_setElement_BOOL (dm, (bool) true, i, j)) ;
 	} else {
-		GrB_OK (GrB_Matrix_removeElement(dp, i, j));
+		GrB_OK (GrB_Matrix_removeElement (dp, i, j)) ;
 	}
 	
-	Delta_Matrix_setDirty(C);
-	return GrB_SUCCESS;
+	Delta_Matrix_setDirty (C) ;
+	return GrB_SUCCESS ;
 }
 
 // remove all entries in matrix m from delta matrix C
 GrB_Info Delta_Matrix_removeElements
 (
-	Delta_Matrix C,     // matrix to remove entry from
-	const GrB_Matrix A  // elements to remove
+	Delta_Matrix C,      // matrix to remove entries from
+	const GrB_Matrix A,  // elements to remove
+	const GrB_Matrix AT  // A's transpose
 ) {
-	ASSERT(C != NULL);
-	ASSERT(A != NULL);
-	ASSERT(!DELTA_MATRIX_MAINTAIN_TRANSPOSE(C));
+	ASSERT (C != NULL) ;
+	ASSERT (A != NULL) ;
 
-	GrB_Matrix m  = DELTA_MATRIX_M(C);
-	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(C);
+	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE (C)) {
+		ASSERT (AT != NULL) ;
+		GrB_OK (Delta_Matrix_removeElements (C->transposed, AT, NULL)) ;
+	}
 
-	// find the entries that are already in M
-	GrB_OK (GrB_Matrix_eWiseMult_BinaryOp(
-		dm, NULL, GrB_ONEB_BOOL, GrB_ONEB_BOOL, m, A, NULL)) ;
+	GrB_Matrix m  = DELTA_MATRIX_M (C) ;
+	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS (C) ;
+	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS (C) ;
 
-	// remove edges in dp that are also in A.
-	GrB_OK (GrB_transpose(dp, A, NULL, dp, GrB_DESC_RSCT0));
+	// find the entries that are already in M and set them in DM
+	GrB_OK (GrB_Matrix_eWiseMult_BinaryOp (
+		dm, A, NULL, GrB_ONEB_BOOL, m, A, GrB_DESC_S)) ;
 
-	Delta_Matrix_setDirty(C);
-	return GrB_SUCCESS;
+	// remove entries in DP that are also in A
+	//GrB_OK (GrB_transpose (dp, A, NULL, dp, GrB_DESC_RSCT0)) ;
+	GrB_Scalar s ;
+	GrB_OK (GrB_Scalar_new (&s, GrB_BOOL)) ;
+	GrB_OK (GrB_Matrix_assign_Scalar (dp, A, NULL, s, GrB_ALL, 0, GrB_ALL, 0,
+				GrB_DESC_S)) ;
+	GrB_OK (GrB_free (&s)) ;
+
+	Delta_Matrix_setDirty (C) ;
+	return GrB_SUCCESS ;
 }
+

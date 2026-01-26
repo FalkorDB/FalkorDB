@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
-// GB_jit__masker_phase1__dff33044.c
+// GB_jit__masker_phase1__dff33045.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.3.0, Timothy A. Davis, (c) 2017-2025,
+// SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -80,13 +80,13 @@
 #define GB_Mj_BITS 32
 #define GB_Mi_BITS 32
 
-// Z matrix: hypersparse
-#define GB_Z_IS_HYPER  1
-#define GB_Z_IS_SPARSE 0
+// Z matrix: sparse
+#define GB_Z_IS_HYPER  0
+#define GB_Z_IS_SPARSE 1
 #define GB_Z_IS_BITMAP 0
 #define GB_Z_IS_FULL   0
 #define GBp_Z(Zp,k,vlen) Zp [k]
-#define GBh_Z(Zh,k)      Zh [k]
+#define GBh_Z(Zh,k)      (k)
 #define GBi_Z(Zi,p,vlen) Zi [p]
 #define GBb_Z(Zb,p)      1
 #define GB_Z_NVALS(e) int64_t e = Z->nvals
@@ -103,15 +103,15 @@
 
 #include "include/GB_masker_shared_definitions.h"
 #ifndef GB_JIT_RUNTIME
-#define GB_jit_kernel GB_jit__masker_phase1__dff33044
-#define GB_jit_query  GB_jit__masker_phase1__dff33044_query
+#define GB_jit_kernel GB_jit__masker_phase1__dff33045
+#define GB_jit_query  GB_jit__masker_phase1__dff33045_query
 #endif
 #include "template/GB_jit_kernel_masker_phase1.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0x8a0ee6fdf5022b9c ;
-    v [0] = 10 ; v [1] = 3 ; v [2] = 0 ;
+    (*hash) = 0x5f0b1c3f4a79d329 ;
+    v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = NULL ;

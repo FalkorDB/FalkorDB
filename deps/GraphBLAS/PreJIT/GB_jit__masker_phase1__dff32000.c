@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
-// GB_jit__masker_phase1__dff33040.c
+// GB_jit__masker_phase1__dff32000.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.3.0, Timothy A. Davis, (c) 2017-2025,
+// SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -12,13 +12,13 @@
 
 // masker: 
 
-// R matrix: sparse
-#define GB_R_IS_HYPER  0
-#define GB_R_IS_SPARSE 1
+// R matrix: hypersparse
+#define GB_R_IS_HYPER  1
+#define GB_R_IS_SPARSE 0
 #define GB_R_IS_BITMAP 0
 #define GB_R_IS_FULL   0
 #define GBp_R(Rp,k,vlen) Rp [k]
-#define GBh_R(Rh,k)      (k)
+#define GBh_R(Rh,k)      Rh [k]
 #define GBi_R(Ri,p,vlen) Ri [p]
 #define GBb_R(Rb,p)      1
 #define GB_R_NVALS(e) int64_t e = R->nvals
@@ -63,11 +63,11 @@
 #define GBh_M(Mh,k)      Mh [k]
 #define GBi_M(Mi,p,vlen) Mi [p]
 #define GBb_M(Mb,p)      1
-// structural mask (complemented):
+// structural mask:
 #define GB_M_TYPE void
 #define GB_MCAST(Mx,p,msize) 1
 #define GB_MASK_STRUCT 1
-#define GB_MASK_COMP   1
+#define GB_MASK_COMP   0
 #define GB_NO_MASK     0
 #define GB_M_NVALS(e) int64_t e = M->nvals
 #define GB_M_NHELD(e) GB_M_NVALS(e)
@@ -103,15 +103,15 @@
 
 #include "include/GB_masker_shared_definitions.h"
 #ifndef GB_JIT_RUNTIME
-#define GB_jit_kernel GB_jit__masker_phase1__dff33040
-#define GB_jit_query  GB_jit__masker_phase1__dff33040_query
+#define GB_jit_kernel GB_jit__masker_phase1__dff32000
+#define GB_jit_query  GB_jit__masker_phase1__dff32000_query
 #endif
 #include "template/GB_jit_kernel_masker_phase1.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0x29cb2620ec83de4e ;
-    v [0] = 10 ; v [1] = 3 ; v [2] = 0 ;
+    (*hash) = 0x9183b2255bdd51c5 ;
+    v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = NULL ;

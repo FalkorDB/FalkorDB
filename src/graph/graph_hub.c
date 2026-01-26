@@ -186,19 +186,22 @@ void GraphHub_CreateEdges
 	}
 }
 
-// delete a node
-// remove the node from the relevant indexes
+// delete nodes
+// remove nodes from the relevant indexes
 // add node deletion operation to undo-log
-// return 1 on success, 0 otherwise
 void GraphHub_DeleteNodes
 (
 	GraphContext *gc,
 	Node *nodes,
-	uint n,
+	uint64_t n,
 	bool log
 ) {
 	ASSERT (gc    != NULL) ;
 	ASSERT (nodes != NULL) ;
+
+	if (n == 0) {
+		return ;
+	}
 
 	bool has_indices = GraphContext_HasIndices (gc) ;
 
@@ -233,19 +236,27 @@ void GraphHub_DeleteNodes
 	Graph_DeleteNodes (gc->g, nodes, n) ;
 }
 
+// delete an edge
+// delete the edge from the graph
+// delete the edge from the relevant indexes
+// add edge deletion operation to undo-log
 void GraphHub_DeleteEdges
 (
-	GraphContext *gc,
-	Edge *edges,
-	uint64_t n,
-	bool log
+	GraphContext *gc,  // graph context to delete the edge
+	Edge *edges,       // the edge to be deleted
+	uint64_t n,        // number of edges to delete
+	bool log,          // log operations in undo-log
+	bool implicit      // edge deleted due to node deletion
 ) {
-	ASSERT(gc != NULL);
-	ASSERT(n > 0);
-	ASSERT(edges != NULL);
+	ASSERT (gc != NULL) ;
+	ASSERT (edges != NULL) ;
+
+	if (n == 0) {
+		return ;
+	}
 
 	// add edge deletion operation to undo log
-	bool has_indices = GraphContext_HasIndices(gc);
+	bool has_indices = GraphContext_HasIndices (gc) ;
 
 	UndoLog undo_log  = NULL ;
 	EffectsBuffer *eb = NULL ;
@@ -269,7 +280,7 @@ void GraphHub_DeleteEdges
 		}
 	}
 
-	Graph_DeleteEdges(gc->g, edges, n);
+	Graph_DeleteEdges (gc->g, edges, n, implicit) ;
 }
 
 // updates a graph entity attribute set
