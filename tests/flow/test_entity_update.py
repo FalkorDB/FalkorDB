@@ -1,11 +1,13 @@
 from common import *
 from index_utils import *
 
+GRAPH_ID = "update"
+
 class testEntityUpdate():
     def __init__(self):
         self.env, self.db = Env()
         # create a graph with a single node with attribute 'v'
-        self.graph = self.db.select_graph('update')
+        self.graph = self.db.select_graph(GRAPH_ID)
         self.graph.query("CREATE ({v:1})")
 
         # create a graph with a two nodes connected by an edge
@@ -772,4 +774,117 @@ class testEntityUpdate():
         self.env.assertEqual(len(actual_node.properties), 2)
         self.env.assertEqual(actual_node.properties['a'], 4)
         self.env.assertEqual(actual_node.properties['c'], 'str')
+
+class testEntityUpdateReplication():
+    def __init__(self):
+        self.env, self.db = Env(env='oss', useSlaves=True)
+        self.master = self.env.getConnection()
+        self.replica = self.env.getSlaveConnection()
+        self.master_graph = Graph(self.master, GRAPH_ID)
+        self.replica_graph = Graph(self.replica, GRAPH_ID)
+
+    # verify label matrix is resized and updated
+    # when it is dimensions are lagging behind
+    def test01_last_update_persists(self):
+        """scenario to test:
+        1. Introduce label X
+           X is of size MxM
+        2. Create enough nodes to cause X to require a resize
+        3. Update node n with ID > M to be associated with label X
+        4. Verify n's labels
+        5. Verify labels statistics
+        """
+
+        M = self.db.config_get("NODE_CREATION_BUFFER")
+
+        # introduce label X
+        q = "CREATE (:X)"
+        res = self.master_graph.query(q)
+        self.env.assertEqual(res.labels_added,  1)
+        self.env.assertEqual(res.nodes_created, 1)
+
+        # create enough nodes to cause X matrix dimensions to lag behind the graph
+        q = f"UNWIND range(1, {M*3}) AS x CREATE ()"
+        res = self.master_graph.query(q)
+        self.env.assertEqual(res.nodes_created, M*3)
+
+        # update node with internal ID 3M to be associated with label X
+        q = f"MATCH (n) WHERE ID(n) = {M*3} SET n:X RETURN n, labels(n)"
+        res = self.master_graph.query(q).result_set
+
+        # wait for replica
+        self.master.wait(1, 0)
+
+        n = self.master_graph.query(q).result_set[0][0]
+        self.env.assertEqual(n.labels, ["X"])
+
+        n_lbls = self.master_graph.query(q).result_set[0][1]
+        self.env.assertEqual(n_lbls, ["X"])
+
+        # verify number of nodes associated with the label X
+        queries = [
+                "MATCH (n:X) RETURN count(n)",  # uses graph internal stas
+                "MATCH (n:X) RETURN count(1)"   # perform actual counting
+        ]
+
+        for q in queries:
+            x_count = self.master_graph.query(q).result_set[0][0]
+            self.env.assertEqual(x_count, 2)
+
+            x_count = self.replica_graph.ro_query(q).result_set[0][0]
+            self.env.assertEqual(x_count, 2)
+
+    # verify label matrix is resized and updated
+    # when it is dimensions are lagging behind
+    def test02_last_update_persists(self):
+        """scenario to test:
+        1. Introduce label X
+           X is of size MxM
+        2. Create enough nodes to cause X to require a resize
+        3. Remove label X from node n with ID > M
+           although n isn't associated with X
+        4. Verify n's labels
+        5. Verify labels statistics
+        """
+
+        self.master_graph.delete()
+
+        M = self.db.config_get("NODE_CREATION_BUFFER")
+
+        # introduce label X
+        q = "CREATE (:X)"
+        res = self.master_graph.query(q)
+        self.env.assertEqual(res.labels_added,  1)
+        self.env.assertEqual(res.nodes_created, 1)
+
+        # create enough nodes to cause X matrix dimensions to lag behind the graph
+        q = f"UNWIND range(1, {M*3}) AS x CREATE ()"
+        res = self.master_graph.query(q)
+        self.env.assertEqual(res.nodes_created, M*3)
+
+        # update node with internal ID 3M to be associated with label X
+        q = f"MATCH (n) WHERE ID(n) = {M*3} REMOVE n:X RETURN n, labels(n)"
+        res = self.master_graph.query(q).result_set
+
+        # wait for replica
+        self.master.wait(1, 0)
+
+        n = self.master_graph.query(q).result_set[0][0]
+        self.env.assertEqual(n.labels, None)
+
+        n_lbls = self.master_graph.query(q).result_set[0][1]
+        self.env.assertEqual(n_lbls, [])
+
+        # verify number of nodes associated with the label X
+        queries = [
+                "MATCH (n:X) RETURN count(n)",  # uses graph internal stas
+                "MATCH (n:X) RETURN count(1)"   # perform actual counting
+        ]
+
+        for q in queries:
+            x_count = self.master_graph.query(q).result_set[0][0]
+            self.env.assertEqual(x_count, 1)
+
+            x_count = self.replica_graph.ro_query(q).result_set[0][0]
+            self.env.assertEqual(x_count, 1)
 

@@ -4,14 +4,13 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "op_update.h"
 #include "RG.h"
+#include "op_update.h"
 #include "../../query_ctx.h"
 #include "../../util/arr.h"
-#include "../../util/rmalloc.h"
-#include "../../errors/errors.h"
+#include "../../schema/schema.h"
+#include "shared/update_functions.h"
 #include "../../util/rax_extensions.h"
-#include "../../arithmetic/arithmetic_expression.h"
 
 // forward declarations
 static Record UpdateConsume(OpBase *opBase);
@@ -46,6 +45,56 @@ static void freeCallback
 	void *val
 ) {
 	PendingUpdateCtx_Free((PendingUpdateCtx*)val);
+}
+
+// make sure label matrices used in SET n:L
+// are of the correct dimensions NxN
+static void ensureMatrixDim
+(
+	OpUpdate *op
+) {
+	// quick return if no nodes been updated
+	uint node_updates_count = HashTableElemCount (op->node_updates) ;
+	if (node_updates_count == 0) {
+		return ;
+	}
+
+	GraphContext *gc = op->gc ;
+	Graph *g = GraphContext_GetGraph (gc) ;
+
+	// expected sync policy to be flush & resize
+	ASSERT (Graph_GetMatrixPolicy (g) == SYNC_POLICY_FLUSH_RESIZE) ;
+
+	// for each update blueprint
+	raxSeek (&op->it, "^", NULL, 0) ;
+	while (raxNext (&op->it)) {
+		EntityUpdateEvalCtx *ctx = op->it.data ;
+
+		uint n = array_len (ctx->add_labels) ;
+		for (uint i = 0 ; i < n ; i++) {
+			const char *label = ctx->add_labels[i] ;
+			const Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
+
+			if (s != NULL) {
+				// make sure label matrix is of the right dimensions
+				Graph_GetLabelMatrix (g, Schema_GetID (s)) ;
+			}
+		}
+
+		n = array_len (ctx->remove_labels) ;
+		for (uint i = 0 ; i < n ; i++) {
+			const char *label = ctx->remove_labels[i] ;
+			const Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
+
+			if (s != NULL) {
+				// make sure label matrix is of the right dimensions
+				Graph_GetLabelMatrix (g, Schema_GetID (s)) ;
+			}
+		}
+	}
+
+	// sync node labels matrix
+	Graph_GetNodeLabelMatrix (g) ;
 }
 
 // hashtable callbacks
@@ -85,9 +134,9 @@ static Record UpdateConsume
 (
 	OpBase *opBase
 ) {
-	OpUpdate *op = (OpUpdate *)opBase;
-	OpBase *child = op->op.children[0];
-	Record r;
+	OpUpdate *op = (OpUpdate *)opBase ;
+	OpBase *child = op->op.children[0] ;
+	Record r ;
 
 	// updates already performed
 	if (array_len (op->records) > 0) {
@@ -103,27 +152,32 @@ static Record UpdateConsume
 					ctx, true) ;
 		}
 
-		array_append(op->records, r);
+		array_append (op->records, r) ;
 	}
 	
-	uint node_updates_count = HashTableElemCount(op->node_updates);
-	uint edge_updates_count = HashTableElemCount(op->edge_updates);
+	uint node_updates_count = HashTableElemCount (op->node_updates) ;
+	uint edge_updates_count = HashTableElemCount (op->edge_updates) ;
 
-	if(node_updates_count > 0 || edge_updates_count > 0) {
+	if (node_updates_count > 0 || edge_updates_count > 0) {
 		// done reading; we're not going to call Consume any longer
 		// there might be operations like "Index Scan" that need to free the
 		// index R/W lock - as such, free all ExecutionPlan operations up the chain.
-		OpBase_PropagateReset(child);
+		OpBase_PropagateReset (child) ;
+
+		// in cases such as:
+		// MATCH (n) SET n:L
+		// make sure L is of the right dimensions
+		ensureMatrixDim (op) ;
 
 		// lock everything
-		QueryCtx_LockForCommit();
+		QueryCtx_LockForCommit () ;
 
-		CommitUpdates(op->gc, op->node_updates, ENTITY_NODE);
-		CommitUpdates(op->gc, op->edge_updates, ENTITY_EDGE);
+		CommitUpdates (op->gc, op->node_updates, ENTITY_NODE) ;
+		CommitUpdates (op->gc, op->edge_updates, ENTITY_EDGE) ;
 	}
 
-	HashTableEmpty(op->node_updates, NULL);
-	HashTableEmpty(op->edge_updates, NULL);
+	HashTableEmpty (op->node_updates, NULL) ;
+	HashTableEmpty (op->edge_updates, NULL) ;
 
 	// no one consumes our output, return NULL
 	if (opBase->parent == NULL) {
