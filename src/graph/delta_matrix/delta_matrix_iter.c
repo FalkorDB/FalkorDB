@@ -61,8 +61,8 @@ static inline void _init_iter
 	GrB_Index max_row,  // ending row (exclusive)
 	bool *depleted      // true if no values in range
 ) {
-	ASSERT (it       != NULL) ;
 	ASSERT (m        != NULL) ;
+	ASSERT (it       != NULL) ;
 	ASSERT (depleted != NULL) ;
 	ASSERT (min_row  <= max_row) ;
 

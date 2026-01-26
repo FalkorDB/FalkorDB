@@ -330,16 +330,20 @@ void Schema_AddNodeToIndex
 	const Schema *s,
 	const Node *n
 ) {
-	ASSERT(s != NULL);
-	ASSERT(n != NULL);
+	ASSERT (s != NULL) ;
+	ASSERT (n != NULL) ;
 
-	Index idx = NULL;
+	Index idx = NULL ;
 
-	idx = ACTIVE_IDX(s);
-	if(idx != NULL) Index_IndexNode(idx, n);
+	idx = ACTIVE_IDX (s) ;
+	if (idx != NULL) {
+		Index_IndexNode (idx, n) ;
+	}
 
-	idx = PENDING_IDX(s);
-	if(idx != NULL) Index_IndexNode(idx, n);
+	idx = PENDING_IDX (s) ;
+	if (idx != NULL) {
+		Index_IndexNode (idx, n) ;
+	}
 }
 
 // index edge under all schema index
