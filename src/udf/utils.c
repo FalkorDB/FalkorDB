@@ -98,10 +98,8 @@ JSContext *UDF_GetExecutionJSContext
 	JSContext *js_ctx = JS_NewContext(js_rt) ;
 	ASSERT (js_ctx != NULL) ;
 
-	UDF_RegisterGraphObject  (js_ctx) ;
-	UDF_SetGraphTraverseImpl (js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
-
 	UDF_CTX_RegisterClasses   (js_ctx) ;
+	UDF_SetGraphTraverseImpl  (js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
 	UDF_SetFalkorRegisterImpl (js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
 
 	return js_ctx ;

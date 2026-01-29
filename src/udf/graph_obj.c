@@ -68,7 +68,7 @@ static JSValue graph_traverse
 
 	if (argc == 0) {
 		return JS_ThrowTypeError (js_ctx,
-				"falkor.traverse requires at least one argument") ;
+				"graph.traverse requires at least one argument") ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -79,7 +79,7 @@ static JSValue graph_traverse
 	JSValueConst js_arr = argv[0] ;
 	if (!JS_IsArray (js_ctx, js_arr)) {
 		return JS_ThrowTypeError (js_ctx,
-				"falkor.traverse first argument should be an array of nodes") ;
+				"graph.traverse first argument should be an array of nodes") ;
 	}
 
 	// process array
@@ -87,6 +87,10 @@ static JSValue graph_traverse
 	JSValue len_val = JS_GetPropertyStr (js_ctx, js_arr, "length") ;
 	JS_ToUint32  (js_ctx, &source_count, len_val) ;
 	JS_FreeValue (js_ctx, len_val) ;
+
+	if (source_count == 0) {
+		return JS_NewArray (js_ctx) ;
+	}
 
 	// extract each node
 	EntityID *sources = rm_malloc (sizeof (EntityID) * source_count) ;
@@ -98,7 +102,7 @@ static JSValue graph_traverse
 			rm_free (sources) ;
 			JS_FreeValue (js_ctx, elem) ;
 			return JS_ThrowTypeError (js_ctx,
-					"falkor.traverse first argument should be an array of nodes") ;
+					"graph.traverse first argument should be an array of nodes") ;
 		}
 
 		Node *node = JS_GetOpaque2 (js_ctx, elem, js_node_class_id) ;
@@ -246,7 +250,7 @@ void UDF_SetGraphTraverseImpl
 ) {
 	ASSERT(js_ctx != NULL);
 
-    // get global.falkor
+    // get global.graph
     JSValue global_obj = JS_GetGlobalObject (js_ctx) ;
     JSValue graph_obj = JS_GetPropertyStr  (js_ctx, global_obj, "graph") ;
 
