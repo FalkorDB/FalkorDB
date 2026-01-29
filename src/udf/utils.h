@@ -8,6 +8,13 @@
 #include "quickjs.h"
 #include "../value.h"
 
+// modes for registering UDF functions within a QuickJS context
+typedef enum {
+	UDF_FUNC_REG_MODE_VALIDATE,  // only validate UDF register functions
+	UDF_FUNC_REG_MODE_LOCAL,     // register UDF functions with TLS
+	UDF_FUNC_REG_MODE_GLOBAL     // register UDF functions in global functions repository
+} UDF_JSCtxRegisterFuncMode ;
+
 // allocate and return a new JavaScript runtime for UDF operations
 // each call creates an independent runtime
 // the caller owns the runtime and is responsible for freeing it via
