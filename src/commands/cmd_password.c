@@ -130,7 +130,9 @@ static int _remove_password
 // add or remove password for current user
 // examples:
 // GRAPH.PASSWORD ADD <password>
+// GRAPH.PASSWORD ADD <password> <username>  (internal, for replication)
 // GRAPH.PASSWORD REMOVE <password>
+// GRAPH.PASSWORD REMOVE <password> <username>  (internal, for replication)
 int Graph_SetPassword
 (
 	RedisModuleCtx *ctx,       // redis module context
@@ -141,17 +143,14 @@ int Graph_SetPassword
 	ASSERT(argv != NULL);
 	ASSERT(argc > 0);
 
-	// expecting 3 arguments
-	if(argc != 3) {
+	// expecting 3 or 4 arguments (4th is username for replication)
+	if(argc != 3 && argc != 4) {
 		return RedisModule_WrongArity(ctx);
 	}
 
-	// get the current user name as C string, to pass as private data
-	RedisModuleString *_redis_current_user_name = 
-		RedisModule_GetCurrentUserName(ctx);
-
-	const char *username = 
-		RedisModule_StringPtrLen(_redis_current_user_name, NULL);
+	if(argc == 4 && !is_replica(ctx)) {
+		return RedisModule_WrongArity(ctx);
+	}
 
 	// get the action ADD / REMOVE
  	const char *action = RedisModule_StringPtrLen(argv[1], NULL);
@@ -162,19 +161,48 @@ int Graph_SetPassword
 	} else if(strcasecmp(action, "REMOVE") == 0) {
 		f = _remove_password;
 	} else {
-		RedisModule_FreeString(ctx, _redis_current_user_name);
 		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING, 
-		"Unknown command: GRAPH.PASSWORD %s, passible commands are [ADD, REMOVE]",
+		"Unknown command: GRAPH.PASSWORD %s, possible commands are [ADD, REMOVE]",
 		action);
 
 		RedisModule_ReplyWithError(ctx, "Unknown sub-command");
 		return REDISMODULE_ERR;
 	}
 
+	// if running on replica, extract username from argv[3]
+	if(is_replica(ctx)) {
+		if(argc != 4) {
+ 			RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
+ 				"Replica execution requires 4 arguments (username missing)");
+ 			RedisModule_ReplyWithError(ctx, "FAILED");
+ 			return REDISMODULE_ERR;
+ 		}
+		// username was passed as the 4th argument during replication
+		const char *username = RedisModule_StringPtrLen(argv[3], NULL);
+		return f(ctx, argv, argc, (void*)username);
+	}
+
+	// get the current user name as C string, to pass as private data
+	// when not on replica _redis_current_user_name should never be NULL
+	RedisModuleString *_redis_current_user_name = 
+		RedisModule_GetCurrentUserName(ctx);
+
+	const char *username = 
+		RedisModule_StringPtrLen(_redis_current_user_name, NULL);
+
+
 	int ret = run_acl_function_as(ctx, argv, argc, f, ACL_ADMIN_USER,
 		 (void*) username);
 
-	RedisModule_FreeString(ctx, _redis_current_user_name);
+	if(ret == REDISMODULE_OK) {
+		// replicate this command to the replica with username appended
+		RedisModule_Replicate(ctx, "GRAPH.PASSWORD", "sss", argv[1], argv[2], 
+			_redis_current_user_name);		
+	}
+
+	if(_redis_current_user_name != NULL) {
+		RedisModule_FreeString(ctx, _redis_current_user_name);
+	}
 	return ret;
 }
 
