@@ -353,3 +353,57 @@ class testRelationPattern(FlowTestsBase):
         self.env.assertEquals(e12.src_node, 1)
         self.env.assertEquals(e12.dest_node, 2)
         self.env.assertEquals(e12.relation, 'R')
+
+    # Test that the same relationship cannot be bound to multiple variables
+    # in a single MATCH pattern (relationship uniqueness within a pattern)
+    # Regression test for: https://github.com/FalkorDB/FalkorDB/issues/1469
+    def test14_relationship_uniqueness_in_pattern(self):
+        # Create a minimal graph: 2 nodes connected by a single relationship
+        g = self.db.select_graph("relationship_uniqueness")
+        g.query("CREATE ()-[:R]->()")
+
+        # Sanity check: verify the graph has exactly one relationship
+        sanity_result = g.query("MATCH ()-[r]->() RETURN count(r) AS rel_count")
+        self.env.assertEquals(sanity_result.result_set, [[1]])
+
+        # Bug query: pattern requires two distinct relationships
+        # Since only one relationship exists, this should return 0 rows
+        # (the same relationship cannot be used for both 'a' and 'b')
+        bug_result = g.query("MATCH ()<-[a]-()-[b]->() RETURN count(*) AS rows")
+        self.env.assertEquals(bug_result.result_set, [[0]])
+
+        # Verify with different pattern variations
+        # Pattern: (x)<-[a]-(y)-[b]->(z) - requires two distinct edges from y
+        result = g.query("MATCH (x)<-[a]-(y)-[b]->(z) RETURN count(*)")
+        self.env.assertEquals(result.result_set, [[0]])
+
+        # Now add a second relationship to verify the fix allows valid patterns
+        g.query("MATCH (n) WHERE id(n) = 1 CREATE (n)-[:R]->()")
+
+        # After adding a second edge, we should get results
+        result = g.query("MATCH ()<-[a]-()-[b]->() RETURN count(*)")
+        # Node 1 has both an incoming edge (from node 0) and an outgoing edge (to node 2)
+        self.env.assertEquals(result.result_set, [[1]])
+
+        # Verify the two edge IDs are different
+        result = g.query("MATCH ()<-[a]-()-[b]->() RETURN id(a), id(b)")
+        self.env.assertEquals(len(result.result_set), 1)
+        edge_a_id = result.result_set[0][0]
+        edge_b_id = result.result_set[0][1]
+        self.env.assertNotEqual(edge_a_id, edge_b_id)
+
+        # Test with bidirectional pattern - same edge should not be used twice
+        g2 = self.db.select_graph("relationship_uniqueness_bidir")
+        g2.query("CREATE (a)-[:R]->(b)")
+
+        # Bidirectional pattern with single edge - should return 0
+        result = g2.query("MATCH ()-[a]-()-[b]-() RETURN count(*)")
+        self.env.assertEquals(result.result_set, [[0]])
+
+        # Add another edge
+        g2.query("MATCH (n) WHERE id(n) = 0 CREATE (n)-[:S]->(m)")
+
+        # Now there are two edges, so patterns requiring 2 edges should work
+        result = g2.query("MATCH ()-[a]-()-[b]-() WHERE id(a) <> id(b) RETURN count(*)")
+        # This should have results now
+        self.env.assertTrue(result.result_set[0][0] >= 1)

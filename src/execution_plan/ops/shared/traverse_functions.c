@@ -123,6 +123,28 @@ void EdgeTraverseCtx_CollectEdges
 	}
 }
 
+// check if edge with given ID is already bound to another edge entry
+// in the current Record (enforces relationship uniqueness within a pattern)
+static bool _EdgeAlreadyBound
+(
+	const Record r,
+	int self_idx,
+	EntityID edge_id
+) {
+	uint entries = Record_length(r);
+	for(uint i = 0; i < entries; i++) {
+		// skip our own slot
+		if((int)i == self_idx) continue;
+
+		// skip entries that are not edges
+		if(Record_GetType(r, i) != REC_TYPE_EDGE) continue;
+
+		Edge *e = Record_GetEdge(r, i);
+		if(e != NULL && ENTITY_GET_ID(e) == edge_id) return true;
+	}
+	return false;
+}
+
 bool EdgeTraverseCtx_SetEdge
 (
 	EdgeTraverseCtx *edge_ctx,
@@ -131,14 +153,23 @@ bool EdgeTraverseCtx_SetEdge
 	ASSERT(r != NULL);
 	ASSERT(edge_ctx != NULL);
 
-	// return false if all edges have been consumed
-	if(array_len(edge_ctx->edges) == 0) return false;
+	// iterate through edges, skipping any that are already bound
+	// to another alias in this record (relationship uniqueness)
+	while(array_len(edge_ctx->edges) > 0) {
+		Edge e = array_pop(edge_ctx->edges);
 
-	// pop an edge and add it to the Record
-	Edge e = array_pop(edge_ctx->edges);
-	Record_AddEdge(r, edge_ctx->edgeRecIdx, e);
+		// check if this edge is already bound to another alias in the record
+		if(_EdgeAlreadyBound(r, edge_ctx->edgeRecIdx, ENTITY_GET_ID(&e))) {
+			continue; // skip duplicate edge, try next
+		}
 
-	return true;
+		// unique edge found, add it to the Record
+		Record_AddEdge(r, edge_ctx->edgeRecIdx, e);
+		return true;
+	}
+
+	// no unique edges available
+	return false;
 }
 
 int EdgeTraverseCtx_EdgeCount
