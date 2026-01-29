@@ -9,17 +9,17 @@
 #include "quickjs.h"
 
 //------------------------------------------------------------------------------
-// UDF Falkor object binding
+// UDF Graph object binding
 //------------------------------------------------------------------------------
 
-// register the global falkor object in the given QuickJS context
-void UDF_RegisterFalkorObject
+// register the global graph object in the given QuickJS context
+void UDF_RegisterGraphObject
 (
 	JSContext *js_ctx  // the QuickJS context in which to register the object
 );
 
-// set the implementation of the `falkor.register` function
-void UDF_SetFalkorRegisterImpl
+// set the implementation of the `graph.*` functions
+void UDF_SetGraphTraverseImpl
 (
 	JSContext *js_ctx,              // the QuickJS context
 	UDF_JSCtxRegisterFuncMode mode  // the registration mode
