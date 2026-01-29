@@ -7,19 +7,12 @@
 #include "utils.h"
 #include "udf_ctx.h"
 #include "classes.h"
-#include "traverse.h"
 #include "repository.h"
 #include "../query_ctx.h"
 #include "../arithmetic/func_desc.h"
 
 // global UDF library name used when registering functions globally
 extern const char *UDF_LIB ;
-
-//------------------------------------------------------------------------------
-// external class IDs
-//------------------------------------------------------------------------------
-
-extern JSClassID js_node_class_id;  // JS Node class
 
 //------------------------------------------------------------------------------
 // falkor.register implementations
@@ -218,177 +211,11 @@ static JSValue falkor_log
     }
 
     printf ("\n") ;
+
+	// ensure the user sees the word immediately
+    fflush (stdout) ;
+
     return JS_UNDEFINED ;
-}
-
-// traverse from multiple sources
-//
-// example:
-// let nodes = falkor.traverse([a,b]);
-// nodes[0] contains a's neighbors
-// nodes[1] contains b's neighbors
-//
-// accepts an optional config map:
-// {
-//   direction:  string   - 'incoming' / 'outgoing' / 'both',
-//   types:      string[] - ['KNOWS', 'WORKS_AT'],
-//   labels:     string[] - ['Person', 'City'],
-//   distance:   number   - traversal depth,
-//   returnType: string   - 'nodes' / 'edges'
-// }
-//
-// all fields in map are optional
-//
-// returns an array of array of Nodes
-static JSValue falkor_traverse
-(
-	JSContext *js_ctx,
-	JSValueConst this_val,
-	int argc,
-	JSValueConst *argv
-) {
-	ASSERT (js_ctx != NULL) ;
-
-	if (argc == 0) {
-		return JS_ThrowTypeError (js_ctx,
-				"falkor.traverse requires at least one argument") ;
-	}
-
-	//--------------------------------------------------------------------------
-	// extract nodes
-	//--------------------------------------------------------------------------
-
-	// expecting an array of nodes
-	JSValueConst js_arr = argv[0] ;
-	if (!JS_IsArray (js_ctx, js_arr)) {
-		return JS_ThrowTypeError (js_ctx,
-				"falkor.traverse first argument should be an array of nodes") ;
-	}
-
-	// process array
-	uint32_t source_count = 0 ;
-	JSValue len_val = JS_GetPropertyStr (js_ctx, js_arr, "length") ;
-	JS_ToUint32  (js_ctx, &source_count, len_val) ;
-	JS_FreeValue (js_ctx, len_val) ;
-
-	// extract each node
-	EntityID *sources = rm_malloc (sizeof (EntityID) * source_count) ;
-	for (uint32_t i = 0 ; i < source_count ; i++) {
-		JSValue   elem = JS_GetPropertyUint32 (js_ctx, js_arr, i) ;
-		JSClassID cid  = JS_GetClassID (elem) ;
-
-		if (cid != js_node_class_id) {
-			rm_free (sources) ;
-			JS_FreeValue (js_ctx, elem) ;
-			return JS_ThrowTypeError (js_ctx,
-					"falkor.traverse first argument should be an array of nodes") ;
-		}
-
-		Node *node = JS_GetOpaque2 (js_ctx, elem, js_node_class_id) ;
-		if (!node) {
-			rm_free (sources) ;
-			JS_FreeValue (js_ctx, elem) ;
-			return JS_EXCEPTION ;
-		}
-
-		sources[i] = ENTITY_GET_ID (node) ;
-		JS_FreeValue (js_ctx, elem) ;
-	}
-
-	//--------------------------------------------------------------------------
-	// default config
-	//--------------------------------------------------------------------------
-
-	uint distance            = 1 ;                        // direct neighbors
-	char **labels            = NULL ;                     // neighbors labels
-	char **rel_types         = NULL ;                     // edge types
-	GRAPH_EDGE_DIR dir       = GRAPH_EDGE_DIR_OUTGOING ;  // edge direction
-	GraphEntityType ret_type = GETYPE_NODE ;              // returned type
-
-	//----------------------------------------------------------------------
-	// parse the provided options object
-	//----------------------------------------------------------------------
-
-	if (argc > 1) {
-		const char *err_msg = NULL ;
-		if (!traverse_init_config (js_ctx, argc - 1, argv + 1, &distance,
-					&labels, &rel_types, &dir, &ret_type, &err_msg)) {
-			// parsing config map failed
-			ASSERT (err_msg != NULL) ;
-			rm_free (sources) ;
-			return JS_ThrowTypeError (js_ctx, "%s", err_msg) ;
-		}
-	}
-
-	//--------------------------------------------------------------------------
-	// traverse
-	//--------------------------------------------------------------------------
-
-	// neighbors is an array with a single element:
-	// an array of all reachable entities (Nodes / Edges)
-	uint *neighbors_count = rm_malloc (sizeof (uint) * source_count)  ;
-
-	GraphEntity **neighbors = traverse (neighbors_count, sources, source_count,
-			distance, (const char **)labels, (const char **)rel_types, dir,
-			ret_type) ;
-	ASSERT (neighbors != NULL) ;
-
-	//--------------------------------------------------------------------------
-	// compose output
-	//--------------------------------------------------------------------------
-
-	JSValue output = JS_NewArray (js_ctx) ;
-	for (uint i = 0 ; i < source_count ; i++) {
-		// populate output javascript array
-		JSValue js_neighbors = JS_NewArray (js_ctx) ;
-
-		if (ret_type == GETYPE_NODE) {
-			// add node to neighbors
-			Node *nodes = (Node*) neighbors[i] ;
-
-			for (uint j = 0; j < neighbors_count[i] ; j++) {
-				JS_SetPropertyUint32 (js_ctx, js_neighbors, j,
-						UDF_CreateNode (js_ctx, nodes + j)) ;
-			}
-			rm_free (nodes) ;
-		}
-		else {
-			// add edge to neighbors
-			Edge *edges = (Edge*) neighbors[i] ;
-
-			for (uint j = 0; j < neighbors_count[i] ; j++) {
-				JS_SetPropertyUint32 (js_ctx, js_neighbors, j,
-						UDF_CreateEdge (js_ctx, edges + j)) ;
-			}
-			array_free (edges) ;
-		}
-
-		JS_SetPropertyUint32 (js_ctx, output, i, js_neighbors) ;
-	}
-
-	//--------------------------------------------------------------------------
-	// clean up
-	//--------------------------------------------------------------------------
-
-	rm_free (sources) ;
-	rm_free (neighbors) ;
-	rm_free (neighbors_count) ;
-
-	if (labels != NULL) {
-		for (int i = 0; i < array_len (labels) ; i++) {
-			free (labels[i]) ;
-		}
-		array_free (labels) ;
-	}
-
-	if (rel_types != NULL) {
-		for (int i = 0; i < array_len (rel_types) ; i++) {
-			free (rel_types[i]) ;
-		}
-		array_free (rel_types) ;
-	}
-
-	return output ;
 }
 
 //------------------------------------------------------------------------------
@@ -409,13 +236,6 @@ void UDF_RegisterFalkorObject
 	JSValue func_obj = JS_NewCFunction (js_ctx, falkor_log, "log", 1) ;
 
     int def_res = JS_DefinePropertyValueStr (js_ctx, falkor_obj, "log",
-			func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
-	ASSERT (def_res >= 0) ;
-
-	// register falkor.traverse
-	func_obj = JS_NewCFunction (js_ctx, falkor_traverse, "traverse", 2) ;
-
-    def_res = JS_DefinePropertyValueStr (js_ctx, falkor_obj, "traverse",
 			func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
 	ASSERT (def_res >= 0) ;
 
