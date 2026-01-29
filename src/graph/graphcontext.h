@@ -190,6 +190,12 @@ unsigned short GraphContext_SchemaCount
 	SchemaType t
 );
 
+// checks if graph has constraints
+bool GraphContext_HasConstraints
+(
+	const GraphContext *gc
+);
+
 // enable all constraints
 void GraphContext_EnableConstrains
 (
