@@ -49,8 +49,11 @@ JSContext *UDF_GetValidationJSContext
 	JSContext *js_ctx = JS_NewContext (js_rt) ;
 	ASSERT (js_ctx != NULL) ;
 
+	UDF_RegisterGraphObject  (js_ctx) ;
+	UDF_SetGraphTraverseImpl (js_ctx, UDF_FUNC_REG_MODE_VALIDATE) ;
+
 	// provide validation-only register() hook
-	UDF_RegisterFalkorObject (js_ctx) ;
+	UDF_RegisterFalkorObject  (js_ctx) ;
 	UDF_SetFalkorRegisterImpl (js_ctx, UDF_FUNC_REG_MODE_VALIDATE) ;
 
 	return js_ctx ;
@@ -71,7 +74,10 @@ JSContext *UDF_GetRegistrationJSContext
 	JSContext *js_ctx = JS_NewContext(js_rt) ;
 	ASSERT (js_ctx != NULL) ;
 
-	UDF_RegisterFalkorObject (js_ctx) ;
+	UDF_RegisterGraphObject  (js_ctx) ;
+	UDF_SetGraphTraverseImpl (js_ctx, UDF_FUNC_REG_MODE_GLOBAL) ;
+
+	UDF_RegisterFalkorObject  (js_ctx) ;
 	UDF_SetFalkorRegisterImpl (js_ctx, UDF_FUNC_REG_MODE_GLOBAL) ;
 
 	return js_ctx ;
@@ -92,7 +98,10 @@ JSContext *UDF_GetExecutionJSContext
 	JSContext *js_ctx = JS_NewContext(js_rt) ;
 	ASSERT (js_ctx != NULL) ;
 
-	UDF_CTX_RegisterClasses (js_ctx) ;
+	UDF_RegisterGraphObject  (js_ctx) ;
+	UDF_SetGraphTraverseImpl (js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
+
+	UDF_CTX_RegisterClasses   (js_ctx) ;
 	UDF_SetFalkorRegisterImpl (js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
 
 	return js_ctx ;

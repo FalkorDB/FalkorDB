@@ -659,7 +659,7 @@ class testUDF():
 
     def test_falkor_multi_source_traverse(self):
         """
-        Verifies the correctness of the vectorized falkor.traverse function,
+        Verifies the correctness of the multi-source graph.traverse function,
         ensuring it correctly handles multiple source nodes and returns
         a nested array of results.
         """
@@ -672,7 +672,7 @@ class testUDF():
 
         script = """
         function batch_traverse(nodes, config) {
-            return falkor.traverse(nodes, config || {});
+            return graph.traverse(nodes, config || {});
         }
         falkor.register('batch_traverse', batch_traverse);
         """

@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "utils.h"
 #include "quickjs.h"
 
 //------------------------------------------------------------------------------
@@ -18,7 +19,7 @@ void UDF_RegisterGraphObject
 );
 
 // set the implementation of the `graph.*` functions
-void UDF_SetGraphRegisterImpl
+void UDF_SetGraphTraverseImpl
 (
 	JSContext *js_ctx,              // the QuickJS context
 	UDF_JSCtxRegisterFuncMode mode  // the registration mode

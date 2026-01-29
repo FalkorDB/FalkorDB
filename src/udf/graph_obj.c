@@ -24,7 +24,7 @@ extern JSClassID js_node_class_id;  // JS Node class
 
 // non-runtime implementation of `graph.traverse`
 // JS call: graph.traverse();
-static JSValue non_runtime_traverse_udf
+static JSValue non_runtime_traverse
 (
 	JSContext *js_ctx,      // JavaScript context
 	JSValueConst this_val,  // 'this' value passed by the caller
@@ -57,7 +57,7 @@ static JSValue non_runtime_traverse_udf
 // all fields in map are optional
 //
 // returns an array of array of Nodes
-static JSValue falkor_traverse
+static JSValue graph_traverse
 (
 	JSContext *js_ctx,
 	JSValueConst this_val,
@@ -209,44 +209,37 @@ static JSValue falkor_traverse
 }
 
 //------------------------------------------------------------------------------
-// falkor object setup
+// graph object setup
 //------------------------------------------------------------------------------
 
-// register the global falkor object in the given QuickJS context
-void UDF_RegisterFalkorObject
+// register the global graph object in the given QuickJS context
+void UDF_RegisterGraphObject
 (
 	JSContext *js_ctx  // the QuickJS context in which to register the object
 ) {
 	ASSERT (js_ctx != NULL) ;
 
-    // create a plain namespace object: const falkor = {};
-    JSValue falkor_obj = JS_NewObject (js_ctx) ;
+    // create a plain namespace object: const graph = {};
+    JSValue graph_obj = JS_NewObject (js_ctx) ;
 
-	// register falkor.log
-	JSValue func_obj = JS_NewCFunction (js_ctx, falkor_log, "log", 1) ;
+	// register graph.traverse
+	JSValue func_obj = JS_NewCFunction (js_ctx, graph_traverse, "traverse", 2) ;
 
-    int def_res = JS_DefinePropertyValueStr (js_ctx, falkor_obj, "log",
+    int def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "traverse",
 			func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
 	ASSERT (def_res >= 0) ;
 
-	// register falkor.traverse
-	func_obj = JS_NewCFunction (js_ctx, falkor_traverse, "traverse", 2) ;
-
-    def_res = JS_DefinePropertyValueStr (js_ctx, falkor_obj, "traverse",
-			func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
-	ASSERT (def_res >= 0) ;
-
-    // expose the namespace globally as "falkor"
+    // expose the namespace globally as "graph"
     JSValue global_obj = JS_GetGlobalObject (js_ctx) ;
 
-    JS_SetPropertyStr (js_ctx, global_obj, "falkor", falkor_obj) ;
+    JS_SetPropertyStr (js_ctx, global_obj, "graph", graph_obj) ;
 
     // free what we got from GetGlobalObject
     JS_FreeValue (js_ctx, global_obj) ;
 }
 
-// set the implementation of the `falkor.register` function
-void UDF_SetFalkorRegisterImpl
+// set the implementation of the `graph.traverse` function
+void UDF_SetGraphTraverseImpl
 (
 	JSContext *js_ctx,              // the QuickJS context
 	UDF_JSCtxRegisterFuncMode mode  // the registration mode
@@ -255,39 +248,28 @@ void UDF_SetFalkorRegisterImpl
 
     // get global.falkor
     JSValue global_obj = JS_GetGlobalObject (js_ctx) ;
-    JSValue falkor_obj = JS_GetPropertyStr  (js_ctx, global_obj, "falkor") ;
+    JSValue graph_obj = JS_GetPropertyStr  (js_ctx, global_obj, "graph") ;
 
-	ASSERT (JS_IsObject (falkor_obj));
+	ASSERT (JS_IsObject (graph_obj));
 
 	// pick implementation
     JSValue func_obj = JS_UNDEFINED;
-    switch (mode) {
-        case UDF_FUNC_REG_MODE_VALIDATE:
-            func_obj = JS_NewCFunction (js_ctx, validate_register_udf, "register", 1) ;
-            break ;
-
-        case UDF_FUNC_REG_MODE_LOCAL:
-            func_obj = JS_NewCFunction (js_ctx, local_register_udf, "register", 1) ;
-            break ;
-
-        case UDF_FUNC_REG_MODE_GLOBAL:
-            func_obj = JS_NewCFunction (js_ctx, global_register_udf, "register", 1) ;
-            break ;
-
-        default:
-            assert (false && "unknown mode") ;
-    }
+	if (mode == UDF_FUNC_REG_MODE_LOCAL) {
+		func_obj = JS_NewCFunction (js_ctx, graph_traverse, "traverse", 2) ;
+	} else {
+		func_obj = JS_NewCFunction (js_ctx, non_runtime_traverse, "traverse", 2) ;
+	}
 
 	ASSERT (JS_IsFunction (js_ctx, func_obj)) ;
 
     // define property with explicit flags (writable, configurable)
-    int def_res = JS_DefinePropertyValueStr (js_ctx, falkor_obj, "register",
+    int def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "traverse",
 			func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
 
 	ASSERT (def_res >= 0) ;
 
     // clean up
     JS_FreeValue (js_ctx, global_obj) ;
-    JS_FreeValue (js_ctx, falkor_obj) ;
+    JS_FreeValue (js_ctx, graph_obj) ;
 }
 
