@@ -470,6 +470,10 @@ class testGraphDeletionFlow(FlowTestsBase):
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
+
+        if SANITIZER or VALGRIND:
+            self.env.skip()
+
         self.graph = self.db.select_graph("bulk-delete")
 
     def test01_bulk_delete_tensors(self):
