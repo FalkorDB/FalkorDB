@@ -16,13 +16,13 @@ GrB_Info Delta_Matrix_setMatrices
 	GrB_Matrix *DP,  // new delta-plus
 	GrB_Matrix *DM   // new delta-minus
 ) {
-	ASSERT(C  != NULL);
-	ASSERT(M  != NULL);
-	ASSERT(DP != NULL);
-	ASSERT(DM != NULL);
-	ASSERT(*M  != NULL);
-	ASSERT(*DP != NULL);
-	ASSERT(*DM != NULL);
+	ASSERT (C   != NULL) ;
+	ASSERT (M   != NULL) ;
+	ASSERT (DP  != NULL) ;
+	ASSERT (DM  != NULL) ;
+	ASSERT (*M  != NULL) ;
+	ASSERT (*DP != NULL) ;
+	ASSERT (*DM != NULL) ;
 
 	GrB_Index nvals = 0;
 

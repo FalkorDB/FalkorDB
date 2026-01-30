@@ -28,24 +28,27 @@ static inline void _set_iter_range
 			// no values to iterate on
 			*depleted = true ;
 			break ;
+
 		case GrB_NO_VALUE:
 			// in sparse matrix no value in the current row
 			// seek to first none empty row
-			while (info == GrB_NO_VALUE && GxB_rowIterator_getRowIndex(it) < max_row) {
+			while (info == GrB_NO_VALUE && GxB_rowIterator_getRowIndex (it) < max_row) {
 				info = GxB_rowIterator_nextRow (it) ;
 			}
 
 			*depleted = (info != GrB_SUCCESS ||
-						GxB_rowIterator_getRowIndex(it) > max_row) ;
+						GxB_rowIterator_getRowIndex (it) > max_row) ;
 			break ;
+
 		case GrB_SUCCESS:
 			// in hypersparse matrix iterator move to the next row with values
 			// make sure seekRow didn't over-reached
 			*depleted = GxB_rowIterator_getRowIndex (it) > max_row;
 			break ;		
+
 		default:
-			ASSERT(false);
-			break;
+			ASSERT (false) ;
+			break ;
 	}
 }
 

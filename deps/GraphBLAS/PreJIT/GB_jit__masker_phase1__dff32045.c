@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
-// GB_jit__masker_phase2__fff03141.c
+// GB_jit__masker_phase1__dff32045.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.3.0, Timothy A. Davis, (c) 2017-2025,
+// SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -10,20 +10,7 @@
 
 #include "include/GB_jit_kernel.h"
 
-// masker: bool
-#define GB_R_TYPE bool
-#define GB_COPY_C_TO_R(Rx,pR,Cx,pC,C_iso,rsize) Rx [pR] = Cx [pC]
-#define GB_COPY_Z_TO_R(Rx,pR,Zx,pZ,Z_iso,rsize) Rx [pR] = Zx [pZ]
-#define GB_COPY_C_TO_R_RANGE(Rx,pR,Cx,pC,C_iso,rsize,cjnz) \
-{                                                          \
-    /* Rx [pR:pR+cjnz-1] = Cx [pC:pC+cjnz-1] */            \
-    memcpy (Rx +(pR), Cx +(pC), (cjnz)*rsize) ;            \
-}
-#define GB_COPY_Z_TO_R_RANGE(Rx,pR,Zx,pZ,Z_iso,rsize,zjnz) \
-{                                                          \
-    /* Rx [pR:pR+zjnz-1] = Zx [pZ:pZ+zjnz-1] */            \
-    memcpy (Rx +(pR), Zx +(pZ), (zjnz)*rsize) ;            \
-}
+// masker: 
 
 // R matrix: sparse
 #define GB_R_IS_HYPER  0
@@ -40,11 +27,11 @@
 #define GB_Rp_TYPE uint32_t
 #define GB_Rj_TYPE uint32_t
 #define GB_Rj_SIGNED_TYPE int32_t
-#define GB_Ri_TYPE uint32_t
-#define GB_Ri_SIGNED_TYPE int32_t
+#define GB_Ri_TYPE uint64_t
+#define GB_Ri_SIGNED_TYPE int64_t
 #define GB_Rp_BITS 32
 #define GB_Rj_BITS 32
-#define GB_Ri_BITS 32
+#define GB_Ri_BITS 64
 
 // C matrix: hypersparse
 #define GB_C_IS_HYPER  1
@@ -57,7 +44,7 @@
 #define GBb_C(Cb,p)      1
 #define GB_C_NVALS(e) int64_t e = C->nvals
 #define GB_C_NHELD(e) GB_C_NVALS(e)
-#define GB_C_ISO 0
+#define GB_C_ISO 1
 #define GB_Cp_TYPE uint32_t
 #define GB_Cj_TYPE uint32_t
 #define GB_Cj_SIGNED_TYPE int32_t
@@ -67,21 +54,22 @@
 #define GB_Cj_BITS 32
 #define GB_Ci_BITS 32
 
-// M matrix: hypersparse
-#define GB_M_IS_HYPER  1
-#define GB_M_IS_SPARSE 0
+// M matrix: sparse
+#define GB_M_IS_HYPER  0
+#define GB_M_IS_SPARSE 1
 #define GB_M_IS_BITMAP 0
 #define GB_M_IS_FULL   0
 #define GBp_M(Mp,k,vlen) Mp [k]
-#define GBh_M(Mh,k)      Mh [k]
+#define GBh_M(Mh,k)      (k)
 #define GBi_M(Mi,p,vlen) Mi [p]
 #define GBb_M(Mb,p)      1
-// structural mask (complemented):
+// structural mask:
 #define GB_M_TYPE void
 #define GB_MCAST(Mx,p,msize) 1
 #define GB_MASK_STRUCT 1
-#define GB_MASK_COMP   1
+#define GB_MASK_COMP   0
 #define GB_NO_MASK     0
+#define GB_MASK_SPARSE_STRUCTURAL_AND_NOT_COMPLEMENTED
 #define GB_M_NVALS(e) int64_t e = M->nvals
 #define GB_M_NHELD(e) GB_M_NVALS(e)
 #define GB_Mp_TYPE uint32_t
@@ -104,7 +92,7 @@
 #define GBb_Z(Zb,p)      1
 #define GB_Z_NVALS(e) int64_t e = Z->nvals
 #define GB_Z_NHELD(e) GB_Z_NVALS(e)
-#define GB_Z_ISO 0
+#define GB_Z_ISO 1
 #define GB_Zp_TYPE uint32_t
 #define GB_Zj_TYPE uint32_t
 #define GB_Zj_SIGNED_TYPE int32_t
@@ -116,15 +104,15 @@
 
 #include "include/GB_masker_shared_definitions.h"
 #ifndef GB_JIT_RUNTIME
-#define GB_jit_kernel GB_jit__masker_phase2__fff03141
-#define GB_jit_query  GB_jit__masker_phase2__fff03141_query
+#define GB_jit_kernel GB_jit__masker_phase1__dff32045
+#define GB_jit_query  GB_jit__masker_phase1__dff32045_query
 #endif
-#include "template/GB_jit_kernel_masker_phase2.c"
+#include "template/GB_jit_kernel_masker_phase1.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0xf239f0fa622bd729 ;
-    v [0] = 10 ; v [1] = 3 ; v [2] = 0 ;
+    (*hash) = 0x19d6d28654926f6c ;
+    v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = NULL ;

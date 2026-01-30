@@ -16,68 +16,61 @@ GrB_Info Delta_Matrix_setElement_UINT64
     GrB_Index i,     // row index
     GrB_Index j      // column index
 ) {
-	ASSERT(C != NULL);
-	Delta_Matrix_checkBounds(C, i, j);
+	ASSERT (C != NULL) ;
+	Delta_Matrix_checkBounds (C, i, j) ;
 
-	GrB_Info info;
-	bool entry_exists      = false;  //  M[i,j] exists
-	bool mark_for_deletion = false;  //  dm[i,j] exists
+	GrB_Info info ;
+	bool already_allocated = false ;
 
-	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
-		info =  Delta_Matrix_setElement_BOOL(C->transposed, j, i);
-		if(info != GrB_SUCCESS) {
-			return info;
-		}
-	}
-
-	GrB_Matrix m  = DELTA_MATRIX_M(C);
-	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(C);
+	GrB_Matrix M  = DELTA_MATRIX_M (C) ;
+	GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS (C) ;
+	GrB_Matrix DM = DELTA_MATRIX_DELTA_MINUS (C) ;
 
 #ifdef RG_DEBUG
 	//--------------------------------------------------------------------------
 	// validate type
 	//--------------------------------------------------------------------------
 
-	GrB_Type t;
-	info = GxB_Matrix_type(&t, m);
-	ASSERT(info == GrB_SUCCESS);
-	ASSERT(t == GrB_UINT64);
+	GrB_Type t ;
+	info = GxB_Matrix_type (&t, M) ;
+	ASSERT (info == GrB_SUCCESS) ;
+	ASSERT (t == GrB_UINT64) ;
 #endif
 
-	//--------------------------------------------------------------------------
-	// check deleted
-	//--------------------------------------------------------------------------
+	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE (C)) {
+		GrB_Matrix TM  = DELTA_MATRIX_M (C->transposed) ;
+		GrB_Matrix TDP = DELTA_MATRIX_DELTA_PLUS (C->transposed) ;
+		GrB_Matrix TDM = DELTA_MATRIX_DELTA_MINUS (C->transposed) ;
 
-	GrB_OK (info = GxB_Matrix_isStoredElement(dm, i, j));	
-	mark_for_deletion = (info == GrB_SUCCESS);
+		GrB_OK (info = GxB_Matrix_isStoredElement (TM, j, i)) ;
+		already_allocated = (info == GrB_SUCCESS);
 
-	if(mark_for_deletion) { // m contains single edge, simple replace
-		// clear dm[i,j]
-		GrB_OK (GrB_Matrix_removeElement(dm, i, j));
-
-		// overwrite m[i,j]
-		GrB_OK (GrB_Matrix_setElement(m, x, i, j));
-	} else {
-		// entry isn't marked for deletion
-		// see if entry already exists in 'm'
-		// we'll prefer setting entry in 'm' incase it already exists
-		// otherwise we'll set the entry in 'delta-plus'
-		GrB_OK (info = GxB_Matrix_isStoredElement(m, i, j));
-		entry_exists = (info == GrB_SUCCESS);
-
-		if(entry_exists) {
-			// update entry at m[i,j]
-			info = GrB_Matrix_setElement_UINT64(m, x, i, j);
+		if (already_allocated) {
+			// unset delta-minus
+			GrB_OK (GrB_Matrix_removeElement (TDM, j, i)) ;
 		} else {
-			// update entry at dp[i,j]
-			info = GrB_Matrix_setElement_UINT64(dp, x, i, j);
+			// update entry to dp[i, j]
+			GrB_OK (GrB_Matrix_setElement_BOOL (TDP, true, j, i)) ;
 		}
-
-		GrB_OK(info);
+	} else {
+		GrB_OK (info = GxB_Matrix_isStoredElement (M, i, j)) ;
+		already_allocated = (info == GrB_SUCCESS);
 	}
 
-	Delta_Matrix_setDirty(C);
-	return info;
+	if (already_allocated) {
+		// unset delta-minus
+		GrB_OK (GrB_Matrix_removeElement (DM, i, j)) ;
+
+		// overwrite m[i,j]
+		info = GrB_Matrix_setElement (M, x, i, j) ;
+		ASSERT (info == GrB_SUCCESS) ;
+	} else {
+		// update entry to dp[i, j]
+		info = GrB_Matrix_setElement_UINT64 (DP, x, i, j) ;
+		ASSERT (info == GrB_SUCCESS) ;
+	}
+
+	Delta_Matrix_setDirty (C) ;
+	return info ;
 }
 
