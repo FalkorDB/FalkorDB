@@ -590,7 +590,6 @@ class testGraphBulkDeletion(FlowTestsBase):
         combine the deletion of both explicit and implicitly edges
         where the explicit overlap the implicit
         """
-        pass
 
         #-----------------------------------------------------------------------
         # populate the graph
@@ -637,7 +636,6 @@ class testGraphBulkDeletion(FlowTestsBase):
         """
         introduce duplicated nodes to the DELETE op
         """
-        pass
 
         #-----------------------------------------------------------------------
         # populate the graph
@@ -685,7 +683,6 @@ class testGraphBulkDeletion(FlowTestsBase):
         combine the deletion of both explicit and implicitly edges
         where the explicit edges are duplicated
         """
-        pass
 
         #-----------------------------------------------------------------------
         # populate the graph
