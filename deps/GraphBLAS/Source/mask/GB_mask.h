@@ -54,6 +54,7 @@ GrB_Info GB_masker_phase1           // count nnz in each R(:,j)
     const int64_t *restrict R_to_Z,
     const bool Rp_is_32,
     const bool Rj_is_32,
+    const int R_sparsity,           // GxB_SPARSE or GxB_HYPERSPARSE
     // original input:
     const GrB_Matrix M,             // required mask
     const bool Mask_comp,           // if true, then M is complemented
@@ -85,7 +86,7 @@ GrB_Info GB_masker_phase2           // phase2 for R = masker (C,M,Z)
     const bool Rp_is_32,
     const bool Rj_is_32,
     const bool Ri_is_32,
-    const int R_sparsity,
+    const int R_sparsity,           // any sparsity format
     // original input:
     const GrB_Matrix M,             // required mask
     const bool Mask_comp,           // if true, then M is complemented
