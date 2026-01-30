@@ -734,9 +734,15 @@ void Tensor_ClearElements
 	// collect tensors
 	//--------------------------------------------------------------------------
 
-	GrB_OK (GrB_Matrix_select_Scalar (C, A, NULL, op, M,  NULL, NULL)) ;
-	GrB_OK (GrB_Matrix_select_Scalar (C, A, NULL, op, DP, NULL, NULL)) ;
+	GrB_Scalar s ;
+	GrB_OK (GrB_Scalar_new (&s, GrB_BOOL)) ;
+	GrB_OK (GxB_Scalar_setElement_BOOL (s, true)) ;
+
+	GrB_OK (GrB_Matrix_select_Scalar (C, A, NULL, op, M,  s, NULL)) ;
+	GrB_OK (GrB_Matrix_select_Scalar (C, A, NULL, op, DP, s, NULL)) ;
 	GrB_OK (GrB_Matrix_nvals (&nvals, C)) ;
+
+	GrB_OK (GrB_free (&s)) ;
 
 	//--------------------------------------------------------------------------
 	// free tensors
@@ -756,7 +762,6 @@ void Tensor_ClearElements
 				GrB_DESC_S)) ;
 
 	// remove deleted elements from DP
-	GrB_Scalar s ;
 	GrB_OK (GrB_Scalar_new (&s, GrB_BOOL)) ;
 	GrB_OK (GrB_Matrix_assign_Scalar (DP, A, NULL, s, GrB_ALL, 0, GrB_ALL, 0,
 				GrB_DESC_S)) ;
