@@ -20,6 +20,7 @@ GrB_Info Delta_Matrix_removeRow
 	GrB_Index i,        // row index
 	GrB_Descriptor desc // use transpose to remove column
 ) {
+	ASSERT (C);
 	bool       has_t = DELTA_MATRIX_MAINTAIN_TRANSPOSE(C);
 	GrB_Index  nrows;
 	GrB_Scalar empty = NULL;
@@ -53,25 +54,29 @@ GrB_Info Delta_Matrix_removeRow
 		dm = tdm;
 		tdm = temp;
 	}
+
+	// get the row to be deleted
+	GrB_OK (GrB_Col_extract (
+		row, NULL, NULL, dp, GrB_ALL, 0, i, GrB_DESC_T0));
+
+	// ensure row is iso (falses could result from typecasting) this is a
+	// special case in GraphBLAS so is very quick
+	GrB_OK (GrB_Vector_assign_BOOL(row, row, NULL, (bool) true, GrB_ALL, 0,
+		GrB_DESC_S)) ;
 	
-	GrB_set (GrB_GLOBAL, true, GxB_BURBLE) ;
 	// delete the given row in dp and corresponding column in tdp
 	GrB_OK (GrB_Matrix_assign_Scalar (
 		dp, NULL,  NULL, empty, &i, 1, GrB_ALL, 0, NULL));
 
-	// TODO: this does a full scan. make it faster? extract row from dp, then 
-	// delete corresponding elements
 	if (has_t) {
 		// Scalar_Vector assign on the row instead of w/ GrB all to speed up
-		GrB_OK (GrB_Matrix_assign_Scalar (
-			tdp, NULL,  NULL, empty, GrB_ALL, 0, &i, 1, NULL));
+		GrB_OK (GxB_Matrix_subassign_Scalar (
+			tdp, (GrB_Matrix) row ,NULL, empty, GrB_ALL, 0, &i, 1, GrB_DESC_S));
 	}
-	GrB_set (GrB_GLOBAL, false, GxB_BURBLE) ;
 
 	// get the row to be deleted
 	GrB_OK (GrB_Col_extract (
 		row, NULL, NULL, transpose ? tm : m, GrB_ALL, 0, i, GrB_DESC_T0));
-
 
 	// ensure row is iso (falses could result from typecasting) this is a
 	// special case in GraphBLAS so is very quick
@@ -152,8 +157,6 @@ GrB_Info Delta_Matrix_removeRows
 		tdm = temp;
 	}
 
-	// TODO: extract rows from dp before deleting to mask entries in tdp
-
 	// get the rows to be deleted
 	GrB_OK (GxB_Matrix_extract_Vector (rows, NULL, NULL, dp, i, NULL, d));
 
@@ -168,7 +171,7 @@ GrB_Info Delta_Matrix_removeRows
 		dp, NULL,  NULL, empty, i, NULL, d));
 
 	if (tdp) {
-		// manually lazy transpose to ensure no extra work is done
+		// manually lazy transpose
 		GxB_Container cont = NULL;
 		GrB_OK ( GxB_Container_new (&cont)) ;
 		GrB_OK ( GxB_unload_Matrix_into_Container (rows, cont, NULL));
@@ -212,3 +215,4 @@ GrB_Info Delta_Matrix_removeRows
 	
 	return GrB_SUCCESS;
 }
+
