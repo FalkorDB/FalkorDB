@@ -113,16 +113,16 @@ void GB_macrofy_binop
             ASSERT (!is_monoid_or_build) ;
             if (is_kron)
             { 
-                fprintf (fp, " %s (&(z), &(x),ix,jx, &(y),iy,jy, theta)\n",
-                    op->name) ;
+                fprintf (fp, " %s (&(z), &(x),ix,jx, &(y),iy,jy", op->name) ;
             }
             else
             { 
                 const char *xindices = is_ewise ? "i,j" : "i,k" ;
                 const char *yindices = is_ewise ? "i,j" : "k,j" ;
-                fprintf (fp, " %s (&(z), &(x),%s, &(y),%s, theta)\n",
+                fprintf (fp, " %s (&(z), &(x),%s, &(y),%s",
                     op->name, xindices, yindices) ;
             }
+            fprintf (fp, ", (const GB_THETA_TYPE *) theta)\n") ;
         }
         else
         { 

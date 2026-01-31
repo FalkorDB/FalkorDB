@@ -26,9 +26,10 @@ static inline QueryCtx *_QueryCtx_GetCreateCtx(void) {
 		ctx = rm_calloc(1, sizeof(QueryCtx));
 
 		// created lazily only when needed
-		ctx->undo_log       = NULL;
-		ctx->effects_buffer = NULL;
-		ctx->stage          = QueryStage_WAITING;  // initial query stage
+		ctx->undo_log       = NULL ;
+		ctx->effects_buffer = NULL ;
+		ctx->stage          = QueryStage_WAITING ;  // initial query stage
+		ctx->deterministic  = true ;                // assuming deterministic
 
 		pthread_setspecific(_tlsQueryCtxKey, ctx);
 	}
@@ -118,7 +119,7 @@ void QueryCtx_AdvanceStage
 
 	if(ctx->stage == QueryStage_REPORTING) {
 		// done reporting, log query
-		GraphContext_LogQuery(ctx->gc,
+		GraphContext_LogQuery (ctx->gc,
 				ctx->stats.received_ts,
 				ctx->stats.durations[QueryStage_WAITING],
 				ctx->stats.durations[QueryStage_EXECUTING],
@@ -127,7 +128,8 @@ void QueryCtx_AdvanceStage
 				ctx->stats.utilized_cache,
 				ctx->flags & QueryExecutionTypeFlag_WRITE,
 				ctx->status == QueryExecutionStatus_TIMEDOUT,
-				ctx->query_data.query);
+				ctx->query_data.query_params_len,
+				ctx->query_data.query) ;
 	}
 
 	// advance to next stage
@@ -225,6 +227,18 @@ void QueryCtx_SetParams
 
 	QueryCtx *ctx = _QueryCtx_GetCreateCtx();
 	ctx->query_data.params = params;
+}
+
+// mark query context as not deterministic
+void QueryCtx_SetNonDeterministic (void) {
+	QueryCtx *ctx = _QueryCtx_GetCreateCtx () ;
+	ctx->deterministic = false ;
+}
+
+// returns true if query is deterministic
+bool QueryCtx_IsDeterministic (void) {
+	QueryCtx *ctx = _QueryCtx_GetCreateCtx () ;
+	return ctx->deterministic ;
 }
 
 // retrieve the AST
@@ -471,25 +485,34 @@ double QueryCtx_GetRuntime(void) {
 		ctx->stats.durations[QueryStage_REPORTING];
 }
 
+// returns query received timestamp
+uint64_t QueryCtx_GetReceivedTS (void) {
+	QueryCtx *ctx = _QueryCtx_GetCtx();
+	ASSERT(ctx != NULL);
+
+	return ctx->stats.received_ts ;
+}
+
 // free the allocations within the QueryCtx and reset it for the next query
 void QueryCtx_Free(void) {
 	QueryCtx *ctx = _QueryCtx_GetCtx();
 	ASSERT(ctx != NULL);
 
-	if(ctx->undo_log) {
-		UndoLog_Free(ctx->undo_log);
-		ctx->undo_log = NULL;
-	}
-	EffectsBuffer_Free(ctx->effects_buffer);
-
-	if(ctx->query_data.params != NULL) {
-		HashTableRelease(ctx->query_data.params);
-		ctx->query_data.params = NULL;
+	if (ctx->undo_log) {
+		UndoLog_Free (ctx->undo_log) ;
+		ctx->undo_log = NULL ;
 	}
 
-	rm_free(ctx);
+	EffectsBuffer_Free (ctx->effects_buffer) ;
+
+	if (ctx->query_data.params != NULL) {
+		HashTableRelease (ctx->query_data.params) ;
+		ctx->query_data.params = NULL ;
+	}
+
+	rm_free (ctx) ;
 
 	// NULL-set the context for reuse the next time this thread receives a query
-	QueryCtx_RemoveFromTLS();
+	QueryCtx_RemoveFromTLS () ;
 }
 

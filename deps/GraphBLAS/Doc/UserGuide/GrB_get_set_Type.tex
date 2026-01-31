@@ -41,6 +41,7 @@ GrB_Info GrB_set (GrB_Type t, char *     value, int f) ;
     type definition, as a C \verb'typedef';
     built-in types return an empty string. 
     It can be set at most once. \\
+\verb'GxB_PRINT_FUNCTION' & R/W & \verb'void *' & pointer to print function \\
 \hline
 \end{tabular}
 }
@@ -70,3 +71,6 @@ The size of the type can be returned as a \verb'size_t' C scalar, or as a
     GrB_Scalar_extractElement (&size, s) ;
     assert (size == sizeof (float)) ; \end{verbatim}}
 
+A print function can be set for user-defined types, which allows entries to be
+printed with \verb'GxB_*print' methods.  See Section \ref{fprint_user} for
+details.

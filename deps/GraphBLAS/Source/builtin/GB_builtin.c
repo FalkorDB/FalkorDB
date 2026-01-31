@@ -42,7 +42,8 @@
         sizeof (ctype),             /* sizeof the type */                   \
         GB_ ## type ## _code,       /* type code */                         \
         0, name,                    /* name_len and name */                 \
-        NULL, 0, 0                  /* defn, alloc, hash */                 \
+        NULL, 0, 0,                 /* defn, alloc, hash */                 \
+        NULL                        /* print function (user-defn types) */  \
     } ;                                                                     \
     GrB_Type prefix ## _ ## type = & GB_OPAQUE (type)
 
@@ -1039,7 +1040,12 @@ struct GB_Context_opaque GB_OPAQUE (CONTEXT_WORLD) =
     // revised by GxB_Context_get/set:
     (double) GB_CHUNK_DEFAULT,      // chunk
     1,                              // nthreads_max
-    -1,                             // gpu_id
+    0,                              // int32_t ngpus
+    // uint8_t gpu_ids [GB_MAX_NGPUS]:
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
 } ;
 
 GxB_Context GxB_CONTEXT_WORLD = & GB_OPAQUE (CONTEXT_WORLD) ;

@@ -194,6 +194,9 @@ is returned.
     GrB_Vector_new (&c, Tuple, nrows, 1)) ;
     GrB_mxv (c, NULL, NULL, Semiring, A, y, NULL) ; \end{verbatim}}
 
+To avoid name collisions with LAGraph and GraphBLAS, avoid
+function names that start with \verb'LG_' and \verb'gb_'.
+
 \newpage
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GxB\_IndexBinaryOp\_wait:} wait for an index-binary operator}

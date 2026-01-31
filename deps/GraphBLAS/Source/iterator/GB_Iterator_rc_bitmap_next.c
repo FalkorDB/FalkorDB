@@ -9,7 +9,7 @@
 
 #include "GB.h"
 
-GrB_Info GB_Iterator_rc_bitmap_next (GxB_Iterator iterator)
+GrB_Info GB(Iterator_rc_bitmap_next)(GxB_Iterator iterator)
 {
     for ( ; iterator->p < iterator->pend ; iterator->p++)
     {

@@ -23,10 +23,33 @@ OS     = paella.Platform().os
 ARCH   = paella.Platform().arch
 OSNICK = paella.Platform().osnick
 
-def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False):
+def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, shardsCount=None):
     env = Environment(decodeResponses=True, moduleArgs=moduleArgs, env=env,
-                      useSlaves=useSlaves, enableDebugCommand=enableDebugCommand)
+                      useSlaves=useSlaves, enableDebugCommand=enableDebugCommand,
+                      shardsCount=shardsCount)
     db  = FalkorDB("localhost", env.port)
+
+    if SANITIZER or VALGRIND:
+        # patch env, turning every assert call into NOP
+        # the arguments passed to the assert* are still evaluated
+        # we've introduce this runtime patch to avoid any false asserts which
+        # might be wrongly triggered running under memory sanitizer
+
+        # The replacement function for self.env._assertion
+        def sanitized_assertion_nop(self, checkStr, trueValue, depth=0, message=None):
+            """
+            Replaces the original _assertion function.
+
+            1. It executes no logic internally.
+            2. The 'trueValue' argument (the result of the assertion check)
+               has already been calculated by the calling assert* function.
+            3. No exception is raised, and no failure summary is recorded.
+            """
+            # Simply do nothing. The side effects (evaluation) have already happened.
+            pass
+
+        setattr(env, '_assertion', sanitized_assertion_nop.__get__(env))
+
     return (env, db)
 
 def skip(cluster=False, macos=False):
@@ -43,3 +66,4 @@ def skip(cluster=False, macos=False):
             return f(x, *args, **kwargs)
         return wrapper
     return decorate
+

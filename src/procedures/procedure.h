@@ -49,3 +49,4 @@ bool Procedure_IsReadOnly(const ProcedureCtx *proc);
 
 // Returns the procedure's name.
 const char *Procedure_GetName(const ProcedureCtx *proc);
+

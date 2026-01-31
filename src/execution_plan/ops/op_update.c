@@ -4,14 +4,13 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "op_update.h"
 #include "RG.h"
+#include "op_update.h"
 #include "../../query_ctx.h"
 #include "../../util/arr.h"
-#include "../../util/rmalloc.h"
-#include "../../errors/errors.h"
+#include "../../schema/schema.h"
+#include "shared/update_functions.h"
 #include "../../util/rax_extensions.h"
-#include "../../arithmetic/arithmetic_expression.h"
 
 // forward declarations
 static Record UpdateConsume(OpBase *opBase);
@@ -85,42 +84,52 @@ static Record UpdateConsume
 (
 	OpBase *opBase
 ) {
-	OpUpdate *op = (OpUpdate *)opBase;
-	OpBase *child = op->op.children[0];
-	Record r;
+	OpUpdate *op = (OpUpdate *)opBase ;
+	OpBase *child = op->op.children[0] ;
+	Record r ;
 
 	// updates already performed
-	if(array_len(op->records) > 0) return _handoff(op);
+	if (array_len (op->records) > 0) {
+		return _handoff (op) ;
+	}
 
-	while((r = OpBase_Consume(child))) {
+	while ((r = OpBase_Consume (child))) {
 		// evaluate update expressions
-		raxSeek(&op->it, "^", NULL, 0);
-		while(raxNext(&op->it)) {
+		raxSeek (&op->it, "^", NULL, 0) ;
+		while (raxNext (&op->it)) {
 			EntityUpdateEvalCtx *ctx = op->it.data;
-			EvalEntityUpdates(op->gc, op->node_updates, op->edge_updates, r, ctx, true);
+			EvalEntityUpdates (op->gc, op->node_updates, op->edge_updates, r,
+					ctx, true) ;
 		}
 
-		array_append(op->records, r);
+		array_append (op->records, r) ;
 	}
 	
-	uint node_updates_count = HashTableElemCount(op->node_updates);
-	uint edge_updates_count = HashTableElemCount(op->edge_updates);
+	uint node_updates_count = HashTableElemCount (op->node_updates) ;
+	uint edge_updates_count = HashTableElemCount (op->edge_updates) ;
 
-	if(node_updates_count > 0 || edge_updates_count > 0) {
+	if (node_updates_count > 0 || edge_updates_count > 0) {
 		// done reading; we're not going to call Consume any longer
 		// there might be operations like "Index Scan" that need to free the
 		// index R/W lock - as such, free all ExecutionPlan operations up the chain.
-		OpBase_PropagateReset(child);
+		OpBase_PropagateReset (child) ;
+
+		// in cases such as:
+		// MATCH (n) SET n:L
+		// make sure L is of the right dimensions
+		if (node_updates_count > 0) {
+			ensureMatrixDim (op->gc, op->update_ctxs) ;
+		}
 
 		// lock everything
-		QueryCtx_LockForCommit();
+		QueryCtx_LockForCommit () ;
 
-		CommitUpdates(op->gc, op->node_updates, ENTITY_NODE);
-		CommitUpdates(op->gc, op->edge_updates, ENTITY_EDGE);
+		CommitUpdates (op->gc, op->node_updates, ENTITY_NODE) ;
+		CommitUpdates (op->gc, op->edge_updates, ENTITY_EDGE) ;
 	}
 
-	HashTableEmpty(op->node_updates, NULL);
-	HashTableEmpty(op->edge_updates, NULL);
+	HashTableEmpty (op->node_updates, NULL) ;
+	HashTableEmpty (op->edge_updates, NULL) ;
 
 	// no one consumes our output, return NULL
 	if (opBase->parent == NULL) {

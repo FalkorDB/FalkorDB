@@ -166,7 +166,7 @@ void GB_assign_describe
 #undef GB_NVTX
 #if defined ( GRAPHBLAS_HAS_CUDA ) && defined ( GBNVTX )
 // enable nvtxMark for CUDA
-#include <nvToolsExt.h>
+#include <nvtx3/nvToolsExt.h>
 #define GB_NVTX { nvtxMark ("nvtx:" __FILE__ ":" GB_XSTR(__LINE__)) ; }
 #else
 #define GB_NVTX

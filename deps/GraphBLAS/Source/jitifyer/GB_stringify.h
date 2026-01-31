@@ -24,7 +24,9 @@ void GB_macrofy_preface
     char *kernel_name,      // name of the kernel
     char *C_preface,        // user-provided preface for CPU JIT kernels
     char *CUDA_preface,     // user-provided preface for CUDA JIT kernels
-    GB_jit_kcode kcode
+    GB_jit_kcode kcode,
+    uint8_t major,          // CUDA compute capability
+    uint8_t minor
 ) ;
 
 //------------------------------------------------------------------------------
@@ -41,7 +43,7 @@ void GB_macrofy_name
     const char *name_space, // namespace for the kernel_name
     const char *kname,      // kname for the kernel_name
     int method_code_digits, // # of hexadecimal digits printed
-    uint64_t method_code,   // enumify'd code of the kernel
+    GB_jit_encoding *encoding,  // encoding of the kernel
     const char *suffix      // suffix for the kernel_name (NULL if none)
 ) ;
 
@@ -928,7 +930,8 @@ void GB_macrofy_typedefs
     GrB_Type btype,
     GrB_Type xtype,
     GrB_Type ytype,
-    GrB_Type ztype
+    GrB_Type ztype,
+    GrB_Type theta_type
 ) ;
 
 void GB_macrofy_type
@@ -1570,6 +1573,7 @@ GrB_Info GB_masker_phase1_jit       // count nnz in each R(:,j)
     const int64_t *restrict R_to_Z,
     const bool Rp_is_32,            // if true, Rp is 32-bit; else 64-bit
     const bool Rj_is_32,            // if true, Rh is 32-bit; else 64-bit
+    const int R_sparsity,           // GxB_SPARSE or GxB_HYPERSPARSE
     // original input:
     const GrB_Matrix M,             // required mask
     const bool Mask_comp,           // if true, then M is complemented
@@ -1589,6 +1593,7 @@ GrB_Info GB_masker_phase2_jit       // phase2 for R = masker (C,M,Z)
     const int64_t *restrict R_to_M,
     const int64_t *restrict R_to_C,
     const int64_t *restrict R_to_Z,
+    const int R_sparsity,           // any sparsity format
     // original input:
     const GrB_Matrix M,             // required mask
     const bool Mask_comp,           // if true, then M is complemented
@@ -1611,7 +1616,8 @@ uint64_t GB_encodify_masker     // encode a masker problem
     char **suffix,              // suffix for user-defined kernel
     // input:
     const GB_jit_kcode kcode,   // kernel to encode
-    const GrB_Matrix R,         // may be NULL, for phase1
+    const int R_sparsity,       // GxB_SPARSE or GxB_HYPERSPARSE
+    const GrB_Type rtype,
     const bool Rp_is_32,        // if true, R->p is 32 bit; else 64 bit
     const bool Rj_is_32,        // if true, R->h is 32 bit; else 64 bit
     const bool Ri_is_32,        // if true, R->i is 32 bit; else 64 bit
@@ -1627,7 +1633,8 @@ void GB_enumify_masker      // enumify a masker problem
     // output:
     uint64_t *method_code,  // unique encoding of the entire operation
     // input:
-    const GrB_Matrix R,     // NULL for phase 1
+    const int R_sparsity,   // GxB_SPARSE or GxB_HYPERSPARSE
+    const GrB_Type rtype,   // the type of R (NULL for phase1)
     const bool Rp_is_32,    // if true, R->p is 32-bit; else 64-bit
     const bool Rj_is_32,    // if true, R->h is 32-bit; else 64-bit
     const bool Ri_is_32,    // if true, R->i is 32-bit; else 64-bit
@@ -1667,8 +1674,7 @@ uint64_t GB_encodify_subref     // encode an subref problem
     int Ikind,              // 0: all (no I), 1: range, 2: stride, 3: list
     int Jkind,              // ditto, or 0 if not used
     bool need_qsort,        // true if qsort needs to be called
-    bool Ihead_is_32,       // if true, Ihead/Inext 32-bit; else 64
-    bool I_has_duplicates,  // true if I has duplicate entries
+    const GrB_Matrix R,     // R = inverse (I), if needed
     // A matrix:
     GrB_Matrix A
 ) ;
@@ -1685,8 +1691,7 @@ void GB_enumify_subref      // enumerate a GrB_extract problem
     int Ikind,              // 0: all (no I), 1: range, 2: stride, 3: list
     int Jkind,              // ditto, or 0 if not used
     bool need_qsort,        // true if qsort needs to be called
-    bool Ihead_is_32,       // if true, Ihead/Inext 32-bit; else 64
-    bool I_has_duplicates,  // true if I has duplicate entries
+    const GrB_Matrix R,     // R = inverse (I), if needed
     // A matrix:
     GrB_Matrix A
 ) ;
@@ -1709,10 +1714,7 @@ GrB_Info GB_subref_sparse_jit
     const int ntasks,                   // # of tasks
     const int nthreads,                 // # of threads to use
     const bool post_sort,               // true if post-sort needed
-    const void *Ihead,                  // for I inverse buckets, size A->vlen
-    const void *Inext,                  // for I inverse buckets, size nI
-    const bool Ihead_is_32,             // if true, Ihead/Inext 32-bit; else 64
-    const bool I_has_duplicates,        // true if I has duplicates
+    const GrB_Matrix R,                 // R = inverse (I), if needed
     // from phase0:
     const void *Ap_start,
     const void *Ap_end,

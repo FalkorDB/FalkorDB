@@ -267,6 +267,7 @@ void mexFunction
 
     OK (GrB_Matrix_new (&A, GrB_INT32, n, n)) ;
     OK (GrB_Matrix_setElement_INT32 (A, 12345, 0, 0)) ;
+    OK (GrB_Matrix_wait (A, GrB_MATERIALIZE)) ;
     OK (GrB_Matrix_dup (&C, A)) ;
     CHECK (!GB_any_aliased (A, C)) ;
     GB_free_memory (&(C->p), C->p_size) ;

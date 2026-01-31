@@ -16,8 +16,9 @@ typedef struct {
 	double report_duration;     // reporting time
 	bool parameterized;         // uses parameters
 	bool utilized_cache;        // utilized cache
-	bool write;                 // write query
-	bool timeout;               // timeout query
+	bool write;    		        // write query
+	bool timeout;    		    // timeout query
+	char *params;               // query parameters
 	char *query;                // query string
 } LoggedQuery;
 
@@ -37,8 +38,9 @@ void QueriesLog_AddQuery
 	double report_duration,     // reporting time
 	bool parameterized,         // uses parameters
 	bool utilized_cache,        // utilized cache
-	bool write,                 // write query
-	bool timeout,               // timeout query
+	bool write,    		        // write query
+	bool timeout,    		    // timeout query
+	uint params_len,            // length of parameters
 	const char *query           // query string
 );
 

@@ -23,6 +23,7 @@ GrB_Info GB_masker_phase2_jit       // phase2 for R = masker (C,M,Z)
     const int64_t *restrict R_to_M,
     const int64_t *restrict R_to_C,
     const int64_t *restrict R_to_Z,
+    const int R_sparsity,           // any sparsity format
     // original input:
     const GrB_Matrix M,             // required mask
     const bool Mask_comp,           // if true, then M is complemented
@@ -45,7 +46,8 @@ GrB_Info GB_masker_phase2_jit       // phase2 for R = masker (C,M,Z)
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_masker (&encoding, &suffix,
-        GB_JIT_KERNEL_MASKER_PHASE2, R, R->p_is_32, R->j_is_32, R->i_is_32,
+        GB_JIT_KERNEL_MASKER_PHASE2, R_sparsity, R->type,
+        R->p_is_32, R->j_is_32, R->i_is_32,
         M, Mask_struct, Mask_comp, C, Z) ;
 
     //--------------------------------------------------------------------------

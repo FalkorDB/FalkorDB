@@ -381,8 +381,13 @@ const char *SIType_ToString(SIType t) {
 	}
 }
 
-void SIType_ToMultipleTypeString(SIType t, char *buf, size_t bufferLen) {
-	// Worst case: Len(SIType names) + 19*Len(", ") + Len("Or") = 177 + 38 + 2 = 217
+void SIType_ToMultipleTypeString
+(
+	SIType t,
+	char *buf,
+	size_t bufferLen
+) {
+	// worst case: Len(SIType names) + 19*Len(", ") + Len("Or") = 177 + 38 + 2 = 217
 	ASSERT(bufferLen >= MULTIPLE_TYPE_STRING_BUFFER_SIZE);
 
 	uint   count		= __builtin_popcount(t);
@@ -391,9 +396,10 @@ void SIType_ToMultipleTypeString(SIType t, char *buf, size_t bufferLen) {
 	size_t bytesWritten = 0;
 
 	// find first type
-	while((t & currentType) == 0) {
+	while ((t & currentType) == 0) {
 		currentType = currentType << 1;
 	}
+
 	bytesWritten += snprintf(buf + bytesWritten, bufferLen, "%s", SIType_ToString(currentType));
 	if(count == 1) return;
 
@@ -1243,8 +1249,6 @@ void SIValue_Free
 (
 	SIValue v
 ) {
-	StringPool pool;
-
 	if(v.allocation != M_SELF) {
 		return;
 	}

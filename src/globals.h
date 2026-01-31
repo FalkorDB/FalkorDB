@@ -21,6 +21,19 @@ struct GrB_ops {
 // initialize global variables
 void Globals_Init(void);
 
+// acquire globals read lock
+void Globals_ReadLock(void);
+
+// acquire globals write lock
+void Globals_WriteLock(void);
+
+// release globals RWLock
+void Globals_Unlock(void);
+
+// reinitialize globals RWLock
+// required by forked child process
+void Globals_ReInitLock(void);
+
 // get string pool
 StringPool Globals_Get_StringPool(void);
 

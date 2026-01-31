@@ -11,10 +11,10 @@
 
 // context representing a single update to perform on an entity
 typedef struct {
-	GraphEntity *ge;            // entity to be updated
-	AttributeSet attributes;    // attributes to update
-	const char **add_labels;    // labels to add to the node
-	const char **remove_labels; // labels to remove from the node
+	GraphEntity *ge;             // entity to be updated
+	AttributeSet attributes;     // attributes to update
+	const char **add_labels;     // labels to add to the node
+	const char **remove_labels;  // labels to remove from the node
 } PendingUpdateCtx;
 
 // commit all updates described in the array of pending updates
@@ -23,6 +23,14 @@ void CommitUpdates
 	GraphContext *gc,
 	dict *updates,
 	EntityType type
+);
+
+// make sure label matrices used in SET n:L
+// are of the correct dimensions NxN
+void ensureMatrixDim
+(
+	GraphContext *gc,
+	rax *blueprints
 );
 
 // build pending updates in the 'updates' array to match all
