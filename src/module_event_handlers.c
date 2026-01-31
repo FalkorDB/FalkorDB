@@ -570,8 +570,6 @@ static void RG_AfterForkParent() {
 static void RG_AfterForkChild() {
 	// mark that the child is a forked process so that it doesn't
 	// attempt invalid accesses of POSIX primitives it doesn't own
-	Globals_Unlock () ; // release globals lock
-	Globals_ReInitLock () ;
 	Globals_Set_ProcessIsChild (true) ;
 
 	// restrict GraphBLAS to use a single thread this is done for 2 reasons:
