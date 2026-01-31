@@ -25,12 +25,12 @@ static void _free_vectors
 	}
 }
 
-// remove all entries in the given row with a call back to a free function
-GrB_Info Tensor_removeRow
+// remove all entries in the given row for a tensor with multi edges
+GrB_Info Tensor_RemoveRow
 (
-	Tensor T,     // matrix to remove entry from
-	GrB_Index i,        // row index
-	GrB_Descriptor desc // use transpose to remove column
+	Tensor T,                 // matrix to remove entry from
+	const GrB_Index i,        // row index
+	const GrB_Descriptor desc // use transpose to remove column
 ) {
 	ASSERT (T);
 	ASSERT (DELTA_MATRIX_MAINTAIN_TRANSPOSE(T));
@@ -47,11 +47,9 @@ GrB_Info Tensor_removeRow
 
 	// initialize unaryop only once
 	// WARNING: operator has side effects. Should only be called with an unmasked apply
-	static GrB_UnaryOp free_op = NULL;
-	if(free_op == NULL) {
-		GrB_OK (GrB_UnaryOp_new(
-			&free_op, _free_vectors, GrB_UINT64, GrB_UINT64));
-	}
+	GrB_UnaryOp free_op = NULL;
+	GrB_OK (GrB_UnaryOp_new (&free_op, _free_vectors, GrB_UINT64,
+				GrB_UINT64)) ;
 
 	GrB_OK (GrB_Matrix_nrows(&nrows, m));
 	GrB_OK (GrB_Vector_new (&empty, GrB_UINT64, nrows)) ;
@@ -105,7 +103,7 @@ GrB_Info Tensor_removeRow
 
 	if (transpose) {
 		// extract the entries that are being deleted
-		// TODO: check if GrB_SECOND makes this faster. Is row duped?
+		// TODO: Is row duped?
 		GrB_OK (GrB_Col_extract(
 			row, row, GrB_SECOND_UINT64, m, GrB_ALL, 0, i, GrB_DESC_S)) ;
 	}
@@ -115,7 +113,7 @@ GrB_Info Tensor_removeRow
 
 	// ensure that row is iso (and has no hanging pointers)
 	GrB_OK (GrB_Vector_assign_UINT64 (
-		row, row, NULL, MSB_MASK, GrB_ALL, 0, NULL)) ;
+		row, row, NULL, MSB_MASK, GrB_ALL, 0, GrB_DESC_S)) ;
 
 	// Add the row to dm
 	GrB_OK (GrB_Row_assign (dm, row, NULL, row, i, GrB_ALL, 0, GrB_DESC_S));
@@ -132,14 +130,16 @@ GrB_Info Tensor_removeRow
 	// Add the column to tdm
 	GrB_OK (GrB_Col_assign (tdm, row, NULL, row, GrB_ALL, 0, i, GrB_DESC_S));
 	
-	GrB_free(&row);
-	GrB_free(&empty);
+	GrB_free (&row);
+	GrB_free (&empty);
+	GrB_free (&free_op) ;
+
 	Delta_Matrix_validate(T, true);
 	return GrB_SUCCESS;
 }
 
 // remove all entries in the given rows
-GrB_Info Tensor_removeRows
+GrB_Info Tensor_RemoveRows
 (
 	Delta_Matrix T,            // matrix to remove entry from
 	const GrB_Vector i,        // row index
@@ -155,7 +155,7 @@ GrB_Info Tensor_removeRows
 	GrB_Index  nvals;
 	GrB_Scalar     s     = NULL;
 	GrB_Matrix     rows  = NULL;
-	GrB_Descriptor d     = NULL;
+	GrB_Descriptor _desc = NULL;
 
 	GrB_Matrix     m     = DELTA_MATRIX_M(T);
 	GrB_Matrix     dm    = DELTA_MATRIX_DELTA_MINUS(T);
@@ -168,10 +168,8 @@ GrB_Info Tensor_removeRows
 	// WARNING: operator has side effects. Should only be called with an
 	// unmasked, inplace apply.
 	static GrB_UnaryOp free_op = NULL;
-	if(free_op == NULL) {
-		GrB_OK (GrB_UnaryOp_new(
-			&free_op, _free_vectors, GrB_UINT64, GrB_UINT64));
-	}
+	GrB_OK (GrB_UnaryOp_new(
+		&free_op, _free_vectors, GrB_UINT64, GrB_UINT64));
 
 	int32_t inp0 = GrB_DEFAULT;
 	GrB_Descriptor_get_INT32 (desc, &inp0, GrB_INP0);
@@ -186,7 +184,7 @@ GrB_Info Tensor_removeRows
 	GrB_OK (GrB_Vector_nvals (&nvals, i));
 	GrB_OK (GrB_Scalar_new (&s, GrB_UINT64)) ;
 	GrB_OK (GrB_Matrix_new (&rows, GrB_UINT64, nvals, ncols));
-	GrB_OK (GrB_Descriptor_new (&d)) ;
+	GrB_OK (GrB_Descriptor_new (&_desc)) ;
 
 	int32_t index_list = GrB_DEFAULT;
 
@@ -194,9 +192,9 @@ GrB_Info Tensor_removeRows
 	GrB_Descriptor_get_INT32 (desc, &index_list, GxB_ROWINDEX_LIST);
 	ASSERT (index_list == GrB_DEFAULT || index_list == GxB_USE_INDICES);
 	
-	GrB_set (d, index_list, GxB_ROWINDEX_LIST) ;
-	GrB_set (d, index_list, GxB_COLINDEX_LIST) ;
-	GrB_set (d, GrB_STRUCTURE, GrB_MASK) ;
+	GrB_set (_desc, index_list, GxB_ROWINDEX_LIST) ;
+	GrB_set (_desc, index_list, GxB_COLINDEX_LIST) ;
+	GrB_set (_desc, GrB_STRUCTURE, GrB_MASK) ;
 
 	// swap matricies if transposed
 	if (transpose) {
@@ -209,13 +207,13 @@ GrB_Info Tensor_removeRows
 	}
 
 	// get the rows to be deleted
-	GrB_OK (GxB_Matrix_extract_Vector (rows, NULL, NULL, dp, i, NULL, d));
+	GrB_OK (GxB_Matrix_extract_Vector (rows, NULL, NULL, dp, i, NULL, _desc));
 
 
 	// delete the given rows in dp and corresponding column in tdp
 	// don't use the mask because GraphBLAS can delete the row easily
 	GrB_OK (GxB_Matrix_assign_Scalar_Vector (
-		dp, NULL,  NULL, s, i, NULL, d));
+		dp, NULL,  NULL, s, i, NULL, _desc));
 
 	// rows = transpose(rows)
 	// manually lazy transpose to ensure no extra work is done
@@ -232,7 +230,7 @@ GrB_Info Tensor_removeRows
 	if (transpose) {
 		// extract the entries that are being deleted
 		GrB_OK (GxB_Matrix_extract_Vector (
-			rows, rows,  NULL, tdp, NULL, i, d)) ;
+			rows, rows,  NULL, tdp, NULL, i, _desc)) ;
 	}
 
 	// call free on these value
@@ -241,19 +239,24 @@ GrB_Info Tensor_removeRows
 	// use the extracted rows (transposed) as a mask
 	// to prevent a full scan of the matrix
 	GrB_OK (GxB_Matrix_subassign_Scalar_Vector (
-		tdp, rows,  NULL, s, NULL, i, d)) ;
+		tdp, rows,  NULL, s, NULL, i, _desc)) ;
 	GrB_OK (GrB_Matrix_clear(rows)) ;
 	GrB_OK (GrB_Matrix_resize(rows, nvals, ncols)) ;
 
 	GrB_OK (GxB_Matrix_extract_Vector (
-		rows, NULL, NULL, transpose ? tm : m, i, NULL, d));
+		rows, NULL, NULL, transpose ? tm : m, i, NULL, _desc));
 
 	GrB_OK (GxB_Scalar_setElement_UINT64(s, MSB_MASK));
 
 	// set any hanging pointer in m to a NULL pointer to prevent use after free
 	// also add deletions into dm and tdm
 	GrB_OK (GxB_Matrix_subassign_Scalar_Vector (
-		dm, rows, NULL, s, i, NULL, d));
+		dm, rows, NULL, s, i, NULL, _desc));
+
+	if (!transpose) {
+		GrB_OK (GxB_Matrix_subassign_Scalar_Vector (
+			m, rows, NULL, s, i, NULL, _desc));
+	}
 
 	// rows = transpose(rows)
 	// manually lazy transpose to ensure no extra work is done
@@ -267,29 +270,37 @@ GrB_Info Tensor_removeRows
 
 	// NOTE: these should not change the structure of m and so should not
 	// make pending changes to m
+	GrB_set(GrB_GLOBAL, true, GxB_BURBLE);
 	if (transpose) {
 		// extract the entries that are being deleted
 		// TODO: is row duped?
 		GrB_OK (GxB_Matrix_extract_Vector (
-			rows, rows,  GrB_SECOND_UINT64, m, NULL, i, d)) ;
+			rows, rows,  GrB_SECOND_UINT64, m, NULL, i, _desc)) ;
 
+		// assign deleted entries a value to remove hanging pointers in m
 		GrB_OK (GxB_Matrix_subassign_Scalar_Vector (
-			m, rows, NULL, s, NULL, i, d));
-	} else {
-		// TODO: check burble to ensure this hits a special case (m doesn't dup)
-		GrB_OK (GxB_Matrix_assign_Scalar_Vector (
-			m, m, GrB_SECOND_UINT64, s, i, NULL, d));
+			m, rows, NULL, s, NULL, i, _desc));
+	// } else {
+	// 	// assign deleted entries a value to remove hanging pointers in m
+	// 	// FIXME: burble appears to show m dups which will tank preformance
+	// 	// can be fixed with a subassign using a non-transposed row matrix
+
+	// 	GrB_OK (GxB_Matrix_assign_Scalar_Vector (
+	// 		m, m, NULL, s, i, NULL, _desc));
 	}
+
+	GrB_set(GrB_GLOBAL, false, GxB_BURBLE);
 
 	// free the entries extracted from the matrix
 	GrB_OK (GrB_Matrix_apply (rows, NULL, NULL, free_op, rows, NULL)) ;
 
 	GrB_OK (GxB_Matrix_subassign_Scalar_Vector (
-		tdm, rows, NULL, s, i, NULL, d));
+		tdm, rows, NULL, s, NULL, i, _desc));
 
-	GrB_free(&d);
-	GrB_free(&rows);
-	GrB_free(&s);
+	GrB_free (&_desc);
+	GrB_free (&rows);
+	GrB_free (&s);
+	GrB_free (&free_op);
 
 	Delta_Matrix_validate(T, false) ;
 	return GrB_SUCCESS;

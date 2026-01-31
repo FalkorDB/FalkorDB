@@ -773,6 +773,7 @@ void test_RGMatrix_del_entry() {
 void test_RGMatrix_del_row() {
 	GrB_Type     t               =  GrB_BOOL;
 	Delta_Matrix A               =  NULL;
+	Tensor       T               =  NULL;
 	GrB_Matrix   M               =  NULL;
 	GrB_Matrix   DP              =  NULL;
 	GrB_Matrix   DM              =  NULL;
@@ -929,11 +930,90 @@ void test_RGMatrix_del_row() {
 	TEST_CHECK(nvals == 0) ;
 
 	// Column deletion not tested when transpose is false
+	
 
-	Delta_Matrix_free (&A);
-	GrB_free (&desc);
-	GrB_free (&rows);
+	//-------------------------------------------------------------------------
+	// test tensor row deletion
+	//-------------------------------------------------------------------------
+	Delta_Matrix_free(&A);
 	TEST_ASSERT(A == NULL);
+	T = Tensor_new (nrows, ncols) ;
+
+	GrB_Index rows_arr [] = {0, 0, 0, 0, 0, 0, 0, 1, 1};
+	GrB_Index cols_arr [] = {1, 2, 3, 3, 4, 4, 4, 0, 0};
+	uint64_t  vals_arr [] = {0, 1, 2, 3, 4, 5, 6, 7, 8};
+	Tensor_SetElements(T, rows_arr, cols_arr, vals_arr, 9);
+	Delta_Matrix_wait ((Delta_Matrix) T, true);
+
+	// Add pending changes
+	Tensor_SetElement (T, 0, 5, 9);
+	Tensor_SetElement (T, 0, 6, 10);
+	Tensor_SetElement (T, 0, 6, 11);
+	Delta_Matrix_removeElement(T, 0, 1);
+	Tensor_RemoveRow (T, 0, NULL);
+	// There should only be one entry with a multiedge (1,0)
+	Delta_Matrix_nvals(&nvals, (Delta_Matrix) T);
+	TEST_CHECK (nvals == 1);
+	Tensor_free (&T);
+
+	//-------------------------------------------------------------------------
+	// Test tensor col deletion
+	//-------------------------------------------------------------------------
+	T = Tensor_new (nrows, ncols) ;
+	Tensor_SetElements(T, cols_arr, rows_arr, vals_arr, 9);
+	Delta_Matrix_wait ((Delta_Matrix) T, true);
+
+	// Add pending changes
+	Tensor_SetElement (T, 5, 0, 9);
+	Tensor_SetElement (T, 6, 0, 10);
+	Tensor_SetElement (T, 6, 0, 11);
+	Delta_Matrix_removeElement(T, 1, 0);
+	Tensor_RemoveRow (T, 0, GrB_DESC_T0);
+	TEST_CHECK (nvals == 1);
+	Tensor_free (&T);
+
+	//-------------------------------------------------------------------------
+	// test tensor multi row deletion
+	//-------------------------------------------------------------------------
+	T = Tensor_new (nrows, ncols) ;
+	GrB_set (desc, GrB_DEFAULT, GrB_INP0);
+	GrB_Vector_setElement_BOOL(rows, true, 1);
+
+	Tensor_SetElements(T, rows_arr, cols_arr, vals_arr, 9);
+	Delta_Matrix_wait ((Delta_Matrix) T, true);
+
+	// Add pending changes
+	Tensor_SetElement (T, 1, 5, 9);
+	Tensor_SetElement (T, 1, 6, 10);
+	Tensor_SetElement (T, 1, 6, 11);
+	Delta_Matrix_removeElement(T, 0, 1);
+
+	Tensor_RemoveRows (T, rows, desc);
+	// There should only be one entry with a multiedge (1,0)
+	Delta_Matrix_nvals (&nvals, (Delta_Matrix) T) ;
+	TEST_CHECK (nvals == 0);
+	Tensor_free (&T);
+
+	//-------------------------------------------------------------------------
+	// Test tensor multi col deletion
+	//-------------------------------------------------------------------------
+	T = Tensor_new (nrows, ncols) ;
+	GrB_set (desc, GrB_TRAN, GrB_INP0) ;
+
+	Tensor_SetElements (T, cols_arr, rows_arr, vals_arr, 9) ;
+	Delta_Matrix_wait ((Delta_Matrix) T, true);
+
+	// Add pending changes
+	Tensor_SetElement (T, 5, 1, 9) ;
+	Tensor_SetElement (T, 6, 1, 10) ;
+	Tensor_SetElement (T, 6, 1, 11) ;
+	Delta_Matrix_removeElement(T, 1, 0) ;
+	Tensor_RemoveRows (T, rows, desc) ;
+	TEST_CHECK (nvals == 0) ;
+
+	Tensor_free (&T) ;
+	GrB_free (&desc) ;
+	GrB_free (&rows) ;
 }
 
 void test_RGMatrix_set() {
