@@ -152,6 +152,10 @@ string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}
 # Build RediSearch as subdirectory
 #-----------------------------------------------------------------------------
 
+# Enable Position Independent Code for all targets - required for shared library on ARM64 Linux
+# This must be set before adding RediSearch subdirectory
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # Set RediSearch build options - use static library without coordinator
 set(BUILD_STATIC ON CACHE BOOL "Build RediSearch as static library" FORCE)
 set(BUILD_COORDINATOR OFF CACHE BOOL "Disable coordinator" FORCE)
