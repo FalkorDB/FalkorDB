@@ -39,7 +39,7 @@ WORKDIR ${FALKORDB_HOME}
 COPY ./build/docker/run.sh ${FALKORDB_BIN_PATH}/run.sh
 COPY ./build/docker/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 
-COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
+COPY --from=compiler /FalkorDB/bin/src/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
 ENV ARCH=${TARGETPLATFORM}
 

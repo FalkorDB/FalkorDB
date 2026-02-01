@@ -12,7 +12,13 @@ WORKDIR /FalkorDB
 
 COPY . /FalkorDB
 
-RUN make DEBUG=$DEBUG
+RUN if [ "$DEBUG" = "1" ]; then \
+        ./build.sh DEBUG=1; \
+    else \
+        ./build.sh; \
+    fi
 
+# Copy artifact to a well-known location for extraction
+# build.sh places output at /FalkorDB/bin/{os}-{arch}-{flavor}/falkordb.so
 RUN mkdir -p /FalkorDB/bin/src \
- && find /FalkorDB/bin -type f -path "/FalkorDB/bin/linux*/src/falkordb.so" -exec cp {} /FalkorDB/bin/src/ \;
+ && find /FalkorDB/bin -maxdepth 2 -type f -name "falkordb.so" -exec cp {} /FalkorDB/bin/src/ \;
