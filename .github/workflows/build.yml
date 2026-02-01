@@ -176,9 +176,6 @@ jobs:
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/oniguruma
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/FalkorDB-core-rs
           key: deps-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}-${{ steps.cache-keys.outputs.combined }}
-          restore-keys: |
-            deps-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}-
-            deps-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-
           enableCrossOsArchive: true
 
       - name: Restore dependency cache (macOS)
@@ -188,8 +185,6 @@ jobs:
         with:
           path: ./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           key: ${{ steps.cache-key-macos.outputs.key }}
-          restore-keys: |
-            macos-deps-${{ matrix.build_type }}-
 
       - name: Set up Docker Buildx
         if: matrix.platform.use_docker
