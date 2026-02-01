@@ -3,8 +3,25 @@
 PROGNAME="${BASH_SOURCE[0]}"
 HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
 ROOT=$(cd $HERE/.. && pwd)
-export READIES=$ROOT/deps/readies
-. $READIES/shibumi/defs
+
+# Native helper functions (replacing readies)
+eprint() {
+    >&2 echo "$@"
+}
+
+runn() {
+    if [[ $1 == "@" ]]; then
+        # Run heredoc command
+        shift
+        local cmd
+        cmd=$(cat)
+        [[ $VERBOSE == 1 ]] && echo "$cmd"
+        [[ $NOP != 1 ]] && eval "$cmd"
+    else
+        [[ $VERBOSE == 1 ]] && echo "$@"
+        [[ $NOP != 1 ]] && "$@"
+    fi
+}
 
 SBIN=$ROOT/sbin
 
@@ -16,7 +33,7 @@ cd $ROOT
 
 if [[ $1 == --help || $1 == help || $HELP == 1 ]]; then
 	cat <<-END
-		Generate RedisGraph distribution packages.
+		Generate FalkorDB distribution packages.
 
 		[ARGVARS...] pack.sh [--help|help]
 
@@ -51,15 +68,43 @@ fi
 OP=""
 [[ $NOP == 1 ]] && OP=echo
 
-# RLEC naming conventions
+# Platform detection (native, replacing readies/bin/platform)
+detect_platform() {
+    # Detect OS
+    local os_name=$(uname -s)
+    case "$os_name" in
+        Linux*) OS="linux" ;;
+        Darwin*) OS="macos" ;;
+        *) OS=$(echo "$os_name" | tr '[:upper:]' '[:lower:]') ;;
+    esac
 
-ARCH=$($READIES/bin/platform --arch)
+    # Detect architecture
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64) ARCH="x64" ;;
+        aarch64|arm64) ARCH="aarch64" ;;
+    esac
+
+    # Detect OS nickname
+    if [[ "$OS" == "linux" ]]; then
+        if [[ -f /etc/os-release ]]; then
+            . /etc/os-release
+            OSNICK=$(echo "$ID$VERSION_ID" | tr '[:upper:]' '[:lower:]')
+        else
+            OSNICK="linux"
+        fi
+    elif [[ "$OS" == "macos" ]]; then
+        OSNICK="macos"
+    else
+        OSNICK="$OS"
+    fi
+}
+
+detect_platform
+
+# RLEC naming conventions (platform adjustments)
 [[ $ARCH == x64 ]] && ARCH=x86_64
-
-OS=$($READIES/bin/platform --os)
 [[ $OS == linux ]] && OS=Linux
-
-OSNICK=$($READIES/bin/platform --osnick)
 [[ $OSNICK == trusty ]]  && OSNICK=ubuntu14.04
 [[ $OSNICK == xenial ]]  && OSNICK=ubuntu16.04
 [[ $OSNICK == bionic ]]  && OSNICK=ubuntu18.04
@@ -69,7 +114,6 @@ OSNICK=$($READIES/bin/platform --osnick)
 [[ $OSNICK == centos8 ]] && OSNICK=rhel8
 [[ $OSNICK == ol8 ]]     && OSNICK=rhel8
 [[ $OSNICK == rocky8 ]]  && OSNICK=rhel8
-
 [[ $OSNICK == bigsur ]]  && OSNICK=catalina
 
 PLATFORM="$OS-$OSNICK-$ARCH"
@@ -144,10 +188,10 @@ pack_ramp() {
 		RAMP_YAML=$ROOT/ramp${_RAMP_VARIANT}.yml
 	fi
 
-	python3 $READIES/bin/xtx \
-		$xtx_vars \
-		-e NUMVER -e SEMVER \
-		$RAMP_YAML > /tmp/ramp.yml
+	# Export all required variables for envsubst
+	export NUMVER SEMVER
+	# envsubst handles variable substitution in the template
+	envsubst < $RAMP_YAML > /tmp/ramp.yml
 	if [[ $VERBOSE == 1 ]]; then
 		echo "# ramp.yml:"
 		cat /tmp/ramp.yml

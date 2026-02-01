@@ -123,15 +123,16 @@ endif()
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${CMAKE_LD_FLAGS} ${CMAKE_EXE_LD_FLAGS}")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${CMAKE_LD_FLAGS} ${CMAKE_SO_LD_FLAGS}")
 
-# -Bsymbolic: Resolve internal references to global symbols locally, preventing
-# symbol interposition from the host process (Redis). This is critical because
+# -Bsymbolic and -Bsymbolic-functions: Resolve internal references to global symbols locally,
+# preventing symbol interposition from the host process (Redis). This is critical because
 # RediSearch has its own dict implementation with the same symbol names as Redis's
 # internal dict (dictCreate, dictAdd, etc.), but with a different dictType structure.
-# Without -Bsymbolic, RediSearch's code would call Redis's dict functions instead
+# Without these flags, RediSearch's code would call Redis's dict functions instead
 # of its own, causing crashes due to ABI incompatibility (Redis 8.x dictType has
 # more fields than RediSearch's dictType).
+# Note: Both flags are used together as in the original readies build system.
 if(NOT APPLE)
-    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-Bsymbolic")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-Bsymbolic,-Bsymbolic-functions")
 endif()
 
 # Set C standard
