@@ -146,16 +146,14 @@ jobs:
         working-directory: /FalkorDB
         run: |
           # Generate a single combined hash of all dependencies to avoid 512 char key limit
-          # Include build.sh to bust cache when build flags change
-          DEPS_HASH=$(cat ./build.sh ./deps/GraphBLAS/Include/GraphBLAS.h ./deps/GraphBLAS/Config/GB_prejit.c ./deps/libcypher-parser/lib/src/parser.c ./deps/RediSearch/src/version.h ./deps/libcurl/RELEASE-NOTES ./deps/libcsv/ChangeLog ./deps/LAGraph/include/LAGraph.h ./deps/rax/rax.h ./deps/xxHash/xxhash.h ./deps/utf8proc/utf8proc.h ./deps/oniguruma/src/oniguruma.h ./deps/FalkorDB-core-rs/Cargo.toml 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "no-hash")
+          DEPS_HASH=$(cat ./deps/GraphBLAS/Include/GraphBLAS.h ./deps/GraphBLAS/Config/GB_prejit.c ./deps/libcypher-parser/lib/src/parser.c ./deps/RediSearch/src/version.h ./deps/libcurl/RELEASE-NOTES ./deps/libcsv/ChangeLog ./deps/LAGraph/include/LAGraph.h ./deps/rax/rax.h ./deps/xxHash/xxhash.h ./deps/utf8proc/utf8proc.h ./deps/oniguruma/src/oniguruma.h ./deps/FalkorDB-core-rs/Cargo.toml 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "no-hash")
           echo "combined=${DEPS_HASH}" >> $GITHUB_OUTPUT
 
       - name: Generate cache key (macOS)
         if: matrix.platform.os == 'macos'
         id: cache-key-macos
         run: |
-          # Include build.sh to bust cache when build flags change
-          DEPS_HASH=$(cat build.sh deps/GraphBLAS/Include/GraphBLAS.h deps/libcypher-parser/lib/src/parser.c deps/RediSearch/src/version.h deps/libcurl/RELEASE-NOTES deps/libcsv/ChangeLog deps/LAGraph/include/LAGraph.h deps/rax/rax.h deps/xxHash/xxhash.h deps/utf8proc/utf8proc.h deps/oniguruma/src/oniguruma.h deps/FalkorDB-core-rs/Cargo.toml | shasum -a 256 | cut -d' ' -f1)
+          DEPS_HASH=$(cat deps/GraphBLAS/Include/GraphBLAS.h deps/libcypher-parser/lib/src/parser.c deps/RediSearch/src/version.h deps/libcurl/RELEASE-NOTES deps/libcsv/ChangeLog deps/LAGraph/include/LAGraph.h deps/rax/rax.h deps/xxHash/xxhash.h deps/utf8proc/utf8proc.h deps/oniguruma/src/oniguruma.h deps/FalkorDB-core-rs/Cargo.toml | shasum -a 256 | cut -d' ' -f1)
           echo "key=macos-deps-${{ matrix.build_type }}-${DEPS_HASH}" >> $GITHUB_OUTPUT
 
       - name: Restore dependency caches (Docker)
@@ -176,6 +174,9 @@ jobs:
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/oniguruma
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/FalkorDB-core-rs
           key: deps-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}-${{ steps.cache-keys.outputs.combined }}
+          restore-keys: |
+            deps-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}-
+            deps-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-
           enableCrossOsArchive: true
 
       - name: Restore dependency cache (macOS)
@@ -185,6 +186,8 @@ jobs:
         with:
           path: ./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           key: ${{ steps.cache-key-macos.outputs.key }}
+          restore-keys: |
+            macos-deps-${{ matrix.build_type }}-
 
       - name: Set up Docker Buildx
         if: matrix.platform.use_docker
