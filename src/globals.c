@@ -40,29 +40,32 @@ void Globals_Init(void) {
 
 // acquire globals read lock
 void Globals_ReadLock(void) {
+	// skip lock if running in child process
+	if (_globals.process_is_child == true) {
+		return ;
+	}
+
 	pthread_rwlock_rdlock (&_globals.lock) ;
 }
 
 // acquire globals write lock
 void Globals_WriteLock(void) {
+	// skip lock if running in child process
+	if (_globals.process_is_child == true) {
+		return ;
+	}
+
 	pthread_rwlock_wrlock (&_globals.lock) ;
 }
 
 // release globals RWLock
 void Globals_Unlock(void) {
+	// skip lock if running in child process
+	if (_globals.process_is_child == true) {
+		return ;
+	}
+
 	pthread_rwlock_unlock (&_globals.lock) ;
-}
-
-// reinitialize globals RWLock
-// required by forked child process
-void Globals_ReInitLock(void) {
-	int res ;
-
-	res = pthread_rwlock_destroy (&_globals.lock) ;
-	ASSERT (res == 0) ;
-
-	res = pthread_rwlock_init (&_globals.lock, NULL) ;
-	ASSERT (res == 0) ;
 }
 
 StringPool Globals_Get_StringPool(void) {
@@ -71,15 +74,11 @@ StringPool Globals_Get_StringPool(void) {
 
 // read global variable 'process_is_child'
 bool Globals_Get_ProcessIsChild(void) {
-	bool process_is_child = false;
-
-	Globals_ReadLock () ;
-
-	process_is_child = _globals.process_is_child;
-
-	Globals_Unlock () ;
-
-	return process_is_child;
+	// no locks needed
+	// this function used to lock but due to access by child process
+	// and pthread rwlock handling in a multi process environment we're
+	// better off not guarding with a lock
+	return _globals.process_is_child ;
 }
 
 // set global variable 'process_is_child'
@@ -87,11 +86,15 @@ void Globals_Set_ProcessIsChild
 (
 	bool process_is_child
 ) {
-	Globals_WriteLock () ;
+	// expecting the transition of process_is_child from false to true
+	ASSERT (process_is_child          == true) ;
+	ASSERT (_globals.process_is_child == false) ;
 
+	// no locks needed
+	// this function used to lock but due to access by child process
+	// and pthread rwlock handling in a multi process environment we're
+	// better off not guarding with a lock
 	_globals.process_is_child =	process_is_child;
-
-	Globals_Unlock () ;
 }
 
 // get main thread id
