@@ -693,7 +693,8 @@ build_libcypher_parser() {
     if [[ ! -f "$build_dir/Makefile" ]]; then
         log_info "Configuring libcypher-parser..."
         # --disable-tools: don't build cypher-lint (we only need the library)
-        if ! "$src_dir/configure" --disable-dependency-tracking --disable-tools; then
+        # Use -fPIC for position-independent code (required for linking into shared library)
+        if ! CFLAGS="-fPIC" "$src_dir/configure" --disable-dependency-tracking --disable-tools; then
             log_error "Failed to configure libcypher-parser"
             cd "$ROOT"
             end_group
@@ -744,7 +745,8 @@ build_libcurl() {
     if [[ ! -f "$build_dir/Makefile" ]]; then
         log_info "Configuring libcurl..."
         # Disable all optional dependencies to build a minimal static library
-        if ! "$src_dir/configure" --disable-dependency-tracking --disable-shared --enable-static \
+        # Use -fPIC for position-independent code (required for linking into shared library)
+        if ! CFLAGS="-fPIC" "$src_dir/configure" --disable-dependency-tracking --disable-shared --enable-static \
             --without-ssl --without-libssh2 --without-librtmp --without-libidn2 \
             --without-nghttp2 --without-brotli --without-zstd --without-libpsl \
             --without-zlib --disable-ldap; then
@@ -796,7 +798,8 @@ build_libcsv() {
     # Run configure if Makefile doesn't exist
     if [[ ! -f "$build_dir/Makefile" ]]; then
         log_info "Configuring libcsv..."
-        if ! "$src_dir/configure" --disable-dependency-tracking; then
+        # Use -fPIC for position-independent code (required for linking into shared library)
+        if ! CFLAGS="-fPIC" "$src_dir/configure" --disable-dependency-tracking; then
             log_error "Failed to configure libcsv"
             cd "$ROOT"
             end_group
@@ -842,6 +845,8 @@ build_graphblas() {
         -DBUILD_SHARED_LIBS=OFF
         -DGRAPHBLAS_COMPACT=ON
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+        -DCMAKE_C_FLAGS="-fPIC"
+        -DCMAKE_CXX_FLAGS="-fPIC"
     )
 
     if [[ "$DEPS_DEBUG" == "1" ]]; then
@@ -902,6 +907,8 @@ build_lagraph() {
         -DGRAPHBLAS_INCLUDE_DIR="${ROOT}/deps/GraphBLAS/Include"
         -DGRAPHBLAS_LIBRARY="$GRAPHBLAS"
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+        -DCMAKE_C_FLAGS="-fPIC"
+        -DCMAKE_CXX_FLAGS="-fPIC"
     )
 
     if [[ "$DEPS_DEBUG" == "1" ]]; then
@@ -1056,6 +1063,7 @@ build_oniguruma() {
         -DENABLE_POSIX_API=OFF
         -DBUILD_TEST=OFF
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+        -DCMAKE_C_FLAGS="-fPIC"
     )
 
     if [[ "$DEPS_DEBUG" == "1" ]]; then
