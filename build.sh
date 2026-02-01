@@ -841,6 +841,7 @@ build_graphblas() {
         -DBUILD_STATIC_LIBS=ON
         -DBUILD_SHARED_LIBS=OFF
         -DGRAPHBLAS_COMPACT=ON
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
     )
 
     if [[ "$DEPS_DEBUG" == "1" ]]; then
@@ -900,6 +901,7 @@ build_lagraph() {
         -DGRAPHBLAS_ROOT="$GRAPHBLAS_BINDIR"
         -DGRAPHBLAS_INCLUDE_DIR="${ROOT}/deps/GraphBLAS/Include"
         -DGRAPHBLAS_LIBRARY="$GRAPHBLAS"
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
     )
 
     if [[ "$DEPS_DEBUG" == "1" ]]; then
@@ -1053,6 +1055,7 @@ build_oniguruma() {
         -DBUILD_SHARED_LIBS=OFF
         -DENABLE_POSIX_API=OFF
         -DBUILD_TEST=OFF
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
     )
 
     if [[ "$DEPS_DEBUG" == "1" ]]; then
