@@ -86,6 +86,10 @@ void Globals_Set_ProcessIsChild
 (
 	bool process_is_child
 ) {
+	// expecting the transition of process_is_child from false to true
+	ASSERT (process_is_child          == true) ;
+	ASSERT (_globals.process_is_child == false) ;
+
 	// no locks needed
 	// this function used to lock but due to access by child process
 	// and pthread rwlock handling in a multi process environment we're

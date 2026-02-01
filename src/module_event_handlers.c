@@ -456,7 +456,7 @@ static void _RegisterServerEvents
 //------------------------------------------------------------------------------
 
 // before fork at parent
-static void RG_ForkPrepare() {
+static void _ForkPrepare() {
 	// at this point, fork been issued, we assume that this is due to BGSAVE
 	// or RedisSearch GC
 	//
@@ -490,7 +490,7 @@ static void RG_ForkPrepare() {
 		while ((gc = GraphIterator_Next (&it)) != NULL) {
 			// acquire read lock, guarantee graph isn't modified by a writer
 			Graph *g = gc->g ;
-			Graph_AcquireReadLock (g) ;  // release in RG_AfterForkParent
+			Graph_AcquireReadLock (g) ;  // release in _AfterForkParent
 
 			// set matrix synchronization policy to default
 			Graph_SetMatrixPolicy (g, SYNC_POLICY_FLUSH_RESIZE) ;
@@ -531,9 +531,6 @@ static void RG_ForkPrepare() {
 		}
 	}
 
-	// acquire globals write lock
-	Globals_WriteLock () ;
-
 	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
 			"Fork preparation time: %.6f sec\n", simple_toc (tic)) ;
 
@@ -542,13 +539,10 @@ static void RG_ForkPrepare() {
 }
 
 // after fork at parent
-static void RG_AfterForkParent() {
+static void _AfterForkParent() {
 	bool release_graphs_after_fork =
 		pthread_equal (pthread_self (), redis_main_thread_id) &&
 		!INTERMEDIATE_GRAPHS ;
-
-	// release globals lock
-	Globals_Unlock () ;
 
 	if (release_graphs_after_fork) {
 		// the child process forked, release all acquired locks
@@ -567,7 +561,7 @@ static void RG_AfterForkParent() {
 }
 
 // after fork at child
-static void RG_AfterForkChild() {
+static void _AfterForkChild() {
 	// mark that the child is a forked process so that it doesn't
 	// attempt invalid accesses of POSIX primitives it doesn't own
 	Globals_Set_ProcessIsChild (true) ;
@@ -597,9 +591,9 @@ static void _RegisterForkHooks() {
 
 	// register handlers to control the behavior of fork calls
 	int res = pthread_atfork (
-			RG_ForkPrepare,
-			RG_AfterForkParent,
-			RG_AfterForkChild) ;
+			_ForkPrepare,
+			_AfterForkParent,
+			_AfterForkChild) ;
 	ASSERT (res == 0) ;
 }
 

@@ -123,7 +123,7 @@ int RedisModule_OnLoad
 	RedisModuleString **argv,
 	int argc
 ) {
-	if(RedisModule_Init(ctx, "graph", REDISGRAPH_MODULE_VERSION,
+	if(RedisModule_Init(ctx, "graph", FALKOR_MODULE_VERSION,
 						REDISMODULE_APIVER_1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
@@ -156,7 +156,7 @@ int RedisModule_OnLoad
 	}
 
 	RedisModule_Log(ctx, "notice", "Starting up FalkorDB version %d.%d.%d.",
-					REDISGRAPH_VERSION_MAJOR, REDISGRAPH_VERSION_MINOR, REDISGRAPH_VERSION_PATCH);
+					FALKOR_VERSION_MAJOR, FALKOR_VERSION_MINOR, FALKOR_VERSION_PATCH);
 
 	Proc_Register();     // register procedures
 	AR_RegisterFuncs();  // register arithmetic functions
