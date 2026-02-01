@@ -60,16 +60,9 @@ function(setup_shared_object_target TARGET OUTPUT_NAME)
 
     if(APPLE)
         # macOS uses two-level namespace by default, which prevents symbol interposition
-        add_target_linker_flags(${TARGET} "-undefined dynamic_lookup")
+        target_link_options(${TARGET} PRIVATE "-undefined" "dynamic_lookup")
     else()
-        # -Bsymbolic: Resolve internal references to global symbols locally, preventing
-        # symbol interposition from the host process (Redis). This is critical because
-        # RediSearch has its own dict implementation with the same symbol names as Redis's
-        # internal dict (dictCreate, dictAdd, etc.), but with a different dictType structure.
-        # Without -Bsymbolic, RediSearch's code would call Redis's dict functions instead
-        # of its own, causing crashes due to ABI incompatibility (Redis 8.x dictType has
-        # more fields than RediSearch's dictType).
-        add_target_linker_flags(${TARGET} "-Wl,--enable-new-dtags -Wl,-rpath,\$ORIGIN -Wl,-Bsymbolic")
+        target_link_options(${TARGET} PRIVATE "-Wl,--enable-new-dtags" "-Wl,-rpath,\$ORIGIN")
     endif()
 
     if("${OUTPUT_NAME}" STREQUAL "")
@@ -129,6 +122,17 @@ endif()
 
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${CMAKE_LD_FLAGS} ${CMAKE_EXE_LD_FLAGS}")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${CMAKE_LD_FLAGS} ${CMAKE_SO_LD_FLAGS}")
+
+# -Bsymbolic: Resolve internal references to global symbols locally, preventing
+# symbol interposition from the host process (Redis). This is critical because
+# RediSearch has its own dict implementation with the same symbol names as Redis's
+# internal dict (dictCreate, dictAdd, etc.), but with a different dictType structure.
+# Without -Bsymbolic, RediSearch's code would call Redis's dict functions instead
+# of its own, causing crashes due to ABI incompatibility (Redis 8.x dictType has
+# more fields than RediSearch's dictType).
+if(NOT APPLE)
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-Bsymbolic")
+endif()
 
 # Set C standard
 set(CMAKE_C_STANDARD 11)
