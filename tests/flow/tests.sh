@@ -5,8 +5,9 @@
 PROGNAME="${BASH_SOURCE[0]}"
 HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
 ROOT=$(cd $HERE/../.. && pwd)
-READIES=$ROOT/deps/readies
-. $READIES/shibumi/defs
+
+# Source common definitions and functions
+. "$ROOT/tests/common.sh"
 
 export PYTHONUNBUFFERED=1
 
@@ -51,7 +52,7 @@ help() {
 		VG=1                  Run with Valgrind
 		VG_LEAKS=1            Look for memory leaks
 		VG_ACCESS=1           Look for memory access errors
-		SAN=type              Use LLVM sanitizer (type=address|memory|leak|thread) 
+		SAN=type              Use LLVM sanitizer (type=address|memory|leak|thread)
 		BB=1                  Enable Python debugger (break using BB() in tests)
 		GDB=1                 Enable interactive gdb debugging (in single-test mode)
 
@@ -64,11 +65,7 @@ help() {
 		UNIX=1                Use unix sockets
 		RANDPORTS=1           Use randomized ports
 
-		PLATFORM_MODE=1       Implies NOFAIL & COLLECT_LOGS into STATFILE
-		COLLECT_LOGS=1        Collect logs into .tar file
 		CLEAR_LOGS=0          Do not remove logs prior to running tests
-		NOFAIL=1              Do not fail on errors (always exit with 0)
-		STATFILE=file         Write test status (0|1) into `file`
 
 		LIST=1                List all tests and exit
 		ENV_ONLY=1            Just start environment, run no tests
@@ -81,7 +78,7 @@ help() {
 	END
 }
 
-#---------------------------------------------------------------------------------------------- 
+#----------------------------------------------------------------------------------------------
 
 traps() {
 	local func="$1"
@@ -114,7 +111,7 @@ stop() {
 
 traps 'stop' SIGINT
 
-#---------------------------------------------------------------------------------------------- 
+#----------------------------------------------------------------------------------------------
 
 setup_rltest() {
 	if [[ $RLTEST == view ]]; then
@@ -137,7 +134,7 @@ setup_rltest() {
 			echo "PYTHONPATH=$PYTHONPATH"
 		fi
 	fi
-	
+
 	RLTEST_ARGS+=" --enable-debug-command --no-progress"
 
 	if [[ $RLTEST_VERBOSE == 1 ]]; then
@@ -168,16 +165,15 @@ setup_clang_sanitizer() {
 	# for RLTest
 	export SANITIZER="$SAN"
 	export SHORT_READ_BYTES_DELTA=512
-	
+
 	# --no-output-catch --exit-on-failure --check-exitcode
 	RLTEST_SAN_ARGS="--sanitizer $SAN"
 
 	if [[ $SAN == addr || $SAN == address ]]; then
 		REDIS_SERVER=${REDIS_SERVER:-redis-server-asan-$SAN_REDIS_SUFFIX}
 		if ! command -v $REDIS_SERVER > /dev/null; then
-			echo Building Redis for clang-asan ...
-			V="$VERBOSE" runn $READIES/bin/getredis --force -v $SAN_REDIS_VER --own-openssl --no-run \
-				--suffix asan-${SAN_REDIS_SUFFIX} --clang-asan --clang-san-blacklist $ignorelist
+			echo "Warning: Redis not found for clang-asan. Please install redis-server manually."
+			# Note: getredis functionality not available without readies
 		fi
 
 		export ASAN_OPTIONS="detect_odr_violation=0:halt_on_error=0:detect_leaks=1"
@@ -186,10 +182,8 @@ setup_clang_sanitizer() {
 	elif [[ $SAN == mem || $SAN == memory ]]; then
 		REDIS_SERVER=${REDIS_SERVER:-redis-server-msan-$SAN_REDIS_VER}
 		if ! command -v $REDIS_SERVER > /dev/null; then
-			echo Building Redis for clang-msan ...
-			$READIES/bin/getredis --force -v $SAN_REDIS_VER  --no-run --own-openssl \
-				--suffix msan --clang-msan --llvm-dir /opt/llvm-project/build-msan \
-				--clang-san-blacklist $ignorelist
+			echo "Warning: Redis not found for clang-msan. Please install redis-server manually."
+			# Note: getredis functionality not available without readies
 		fi
 	fi
 }
@@ -210,8 +204,8 @@ setup_redis_server() {
 setup_valgrind() {
 	REDIS_SERVER=${REDIS_SERVER:-redis-server-vg-$VG_REDIS_SUFFIX}
 	if ! is_command $REDIS_SERVER; then
-		echo Building Redis for Valgrind ...
-		V="$VERBOSE" runn $READIES/bin/getredis -v ${VG_REDIS_VER} --valgrind --suffix vg-${VG_REDIS_VER}
+		echo "Warning: Redis not found for Valgrind. Please install redis-server manually."
+		# Note: getredis functionality not available without readies
 	fi
 
 	if [[ $VG_LEAKS == 0 ]]; then
@@ -308,7 +302,7 @@ run_tests() {
 		if [[ -n $GITHUB_ACTIONS ]]; then
 			echo "::group::$title"
 		else
-			$READIES/bin/sep1 -0
+			sep1
 			printf "Running $title:\n\n"
 		fi
 	fi
@@ -388,7 +382,7 @@ run_tests() {
 	fi
 
 	[[ $RLEC == 1 ]] && export RLEC_CLUSTER=1
-	
+
 	local E=0
 	if [[ $NOP != 1 ]]; then
 		{ $OP python3 -m RLTest @$rltest_config; (( E |= $? )); } || true
@@ -430,9 +424,9 @@ EXT_HOST=${EXT_HOST:-127.0.0.1}
 EXT_PORT=${EXT_PORT:-6379}
 
 PID=$$
-OS=$($READIES/bin/platform --os)
-ARCH=$($READIES/bin/platform --arch)
-OSNICK=$($READIES/bin/platform --osnick)
+OS=$(get_platform_os)
+ARCH=$(get_platform_arch)
+OSNICK=$(get_platform_osnick)
 
 #---------------------------------------------------------------------------------- Tests scope
 
@@ -476,24 +470,15 @@ if [[ -n $TEST ]]; then
 	export RUST_BACKTRACE=1
 fi
 
-#-------------------------------------------------------------------------------- Platform Mode
-
-if [[ $PLATFORM_MODE == 1 ]]; then
-	CLEAR_LOGS=0
-	COLLECT_LOGS=1
-	NOFAIL=1
-fi
-STATFILE=${STATFILE:-$ROOT/bin/artifacts/tests/status}
-
 #---------------------------------------------------------------------------------- Parallelism
 
 PARALLEL=${PARALLEL:-1}
 
-[[ $EXT == 1 || $EXT == run || $BB == 1 || $GDB == 1 ]] && PARALLEL=0
+[[ $EXT == 1 || $EXT == run || $BB == 1 || $GDB == 1 || -n $TEST ]] && PARALLEL=0
 
 if [[ -n $PARALLEL && $PARALLEL != 0 ]]; then
 	if [[ $PARALLEL == 1 ]]; then
-		parallel="$($READIES/bin/nproc)"
+		parallel="$(get_nproc)"
 	else
 		parallel="$PARALLEL"
 	fi
@@ -624,35 +609,13 @@ fi
 
 if [[ $NOP != 1 ]]; then
 	if [[ -n $SAN || $VG == 1 ]]; then
-		[[ $GEN == 1 || $AOF == 1 ]] && FLOW=1
-		{ FLOW=$FLOW TCK=$TCK $ROOT/sbin/memcheck-summary.sh; (( E |= $? )); } || true
-	fi
-fi
+		# Build list of test directories to check
+		MEMCHECK_DIRS=()
+		[[ $GEN == 1 || $AOF == 1 ]] && MEMCHECK_DIRS+=(flow)
+		[[ $TCK == 1 ]] && MEMCHECK_DIRS+=(tck)
 
-if [[ $COLLECT_LOGS == 1 ]]; then
-	cd $ROOT
-	mkdir -p bin/artifacts/tests
-	if [[ $GEN == 1 || $AOF == 1 ]]; then
-		{ find tests/flow/logs -name "*.log" | tar -czf bin/artifacts/tests/tests-flow-logs-${ARCH}-${OSNICK}.tgz -T -; } || true
+		{ memcheck_summary "${MEMCHECK_DIRS[@]}"; (( E |= $? )); } || true
 	fi
-	if [[ $TCK == 1 ]]; then
-		{ find tests/tck/logs -name "*.log" | tar -czf bin/artifacts/tests/tests-tck-logs-${ARCH}-${OSNICK}.tgz -T - ; } || true
-	fi
-	if [[ $UPGRADE == 1 ]]; then
-		{ find tests/upgrade/logs -name "*.log" | tar -czf bin/artifacts/tests/tests-upgrade-logs-${ARCH}-${OSNICK}.tgz -T - ; } || true
-	fi
-fi
-
-if [[ -n $STATFILE ]]; then
-	mkdir -p "$(dirname "$STATFILE")"
-	if [[ -f $STATFILE ]]; then
-		(( E |= $(cat $STATFILE || echo 1) )) || true
-	fi
-	echo $E > $STATFILE
-fi
-
-if [[ $NOFAIL == 1 ]]; then
-	exit 0
 fi
 
 exit $E

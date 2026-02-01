@@ -3,8 +3,9 @@
 PROGNAME="${BASH_SOURCE[0]}"
 HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
 ROOT=$(cd $HERE/../.. && pwd)
-READIES=$ROOT/deps/readies
-. $READIES/shibumi/defs
+
+# Source common definitions and functions
+. "$ROOT/tests/common.sh"
 
 cd $HERE
 
@@ -49,30 +50,30 @@ sanitizer_defs() {
 sanitizer_summary() {
 	if grep -l "leaked in" ${LOGS_DIR}/*.asan.log* &> /dev/null; then
 		echo
-		echo "${LIGHTRED}Sanitizer: leaks detected:${RED}"
+		echo -e "${LIGHTRED}Sanitizer: leaks detected:${RED}"
 		grep -l "leaked in" ${LOGS_DIR}/*.asan.log*
-		echo "${NOCOLOR}"
+		echo -e "${NOCOLOR}"
 		E=1
 	fi
 	if grep -l "dynamic-stack-buffer-overflow" ${LOGS_DIR}/*.asan.log* &> /dev/null; then
 		echo
-		echo "${LIGHTRED}Sanitizer: buffer overflow detected:${RED}"
+		echo -e "${LIGHTRED}Sanitizer: buffer overflow detected:${RED}"
 		grep -l "dynamic-stack-buffer-overflow" ${LOGS_DIR}/*.asan.log*
-		echo "${NOCOLOR}"
+		echo -e "${NOCOLOR}"
 		E=1
 	fi
 	if grep -l "stack-buffer-overflow" ${LOGS_DIR}/*.asan.log* &> /dev/null; then
 		echo
-		echo "${LIGHTRED}Sanitizer: buffer overflow detected:${RED}"
+		echo -e "${LIGHTRED}Sanitizer: buffer overflow detected:${RED}"
 		grep -l "stack-buffer-overflow" ${LOGS_DIR}/*.asan.log*
-		echo "${NOCOLOR}"
+		echo -e "${NOCOLOR}"
 		E=1
 	fi
 	if grep -l "stack-use-after-scope" ${LOGS_DIR}/*.asan.log* &> /dev/null; then
 		echo
-		echo "${LIGHTRED}Sanitizer: stack use after scope detected:${RED}"
+		echo -e "${LIGHTRED}Sanitizer: stack use after scope detected:${RED}"
 		grep -l "stack-use-after-scope" ${LOGS_DIR}/*.asan.log*
-		echo "${NOCOLOR}"
+		echo -e "${NOCOLOR}"
 		E=1
 	fi
 }
@@ -137,9 +138,9 @@ fi
 
 E=0
 
-$READIES/bin/sep
+separator
 echo "# Running unit tests"
-TESTS_DIR="$(cd $BINROOT/src/tests/unit; pwd)"
+TESTS_DIR="$(cd $BINROOT/tests/unit; pwd)"
 cd $ROOT/tests/unit
 if [[ -z $TEST ]]; then
 	for test in $(find $TESTS_DIR -name "test_*" -type f -print); do
@@ -174,8 +175,7 @@ else
 fi
 
 if [[ -n $SAN || $VG == 1 ]]; then
-	# sanitizer_summary
-	{ UNIT=1 $ROOT/sbin/memcheck-summary.sh; (( E |= $? )); } || true
+	{ memcheck_summary unit; (( E |= $? )); } || true
 fi
 
 exit $E
