@@ -524,9 +524,10 @@ setup_build_environment() {
     export CMAKE_CC_FLAGS="${CMAKE_CC_FLAGS:- }"
     # Disable VLA warnings and GNU extensions completely for RediSearch macro compatibility
     export CMAKE_CC_C_FLAGS="${CMAKE_CC_C_FLAGS:- -Wno-gnu-zero-variadic-macro-arguments}"
-    # Note: -Wno-vla-cxx-extension is Clang-specific, GCC doesn't recognize it
+    # Note: -Wno-vla-extension is Clang-specific, GCC doesn't recognize it
+    # Using -Wno-vla-extension instead of -Wno-vla-cxx-extension for compatibility with Clang < 18
     if [[ "$CLANG" == "1" ]] || [[ "${CC:-}" == *"clang"* ]]; then
-        export CMAKE_CC_CXX_FLAGS="${CMAKE_CC_CXX_FLAGS:- -Wno-vla-cxx-extension -Wno-gnu-zero-variadic-macro-arguments}"
+        export CMAKE_CC_CXX_FLAGS="${CMAKE_CC_CXX_FLAGS:- -Wno-vla-extension -Wno-gnu-zero-variadic-macro-arguments}"
     else
         export CMAKE_CC_CXX_FLAGS="${CMAKE_CC_CXX_FLAGS:- -Wno-gnu-zero-variadic-macro-arguments}"
     fi

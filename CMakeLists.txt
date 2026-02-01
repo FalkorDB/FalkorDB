@@ -144,9 +144,10 @@ endif()
 
 # Workaround for RediSearch macro compatibility with newer Clang
 # Disable warnings for GNU zero-variadic-macro-arguments completely
+# Using -Wno-vla-extension instead of -Wno-vla-cxx-extension for compatibility with Clang < 18
 if(CMAKE_C_COMPILER_ID MATCHES "Clang" OR CMAKE_C_COMPILER_ID MATCHES "AppleClang")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-gnu-zero-variadic-macro-arguments")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-gnu-zero-variadic-macro-arguments -Wno-error=vla-cxx-extension")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-gnu-zero-variadic-macro-arguments -Wno-error=vla-extension")
 endif()
 
 # Remove NDEBUG to match RediSearch's RS_LOG_ASSERT macro signature (expects 2 args without NDEBUG)
