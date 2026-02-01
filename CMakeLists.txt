@@ -142,11 +142,12 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang" OR CMAKE_C_COMPILER_ID MATCHES "AppleClan
 endif()
 
 # Remove NDEBUG to match RediSearch's RS_LOG_ASSERT macro signature (expects 2 args without NDEBUG)
-# Must be set BEFORE adding RediSearch subdirectory - applies to all compilers
-string(REPLACE "-DNDEBUG" "" CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS_RELWITHDEBINFO}")
-string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
-string(REPLACE "-DNDEBUG" "" CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}")
-string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
+# The RS_LOG_ASSERT macro in RediSearch has different signatures depending on NDEBUG:
+#   - With NDEBUG: RS_LOG_ASSERT(ctx, condition, fmt, ...) - 4 arguments
+#   - Without NDEBUG: RS_LOG_ASSERT(condition, str) - 2 arguments
+# The code uses the 2-argument version, so we must ensure NDEBUG is not defined.
+# Using -UNDEBUG explicitly undefines it, overriding any -DNDEBUG from CMake defaults.
+add_compile_options(-UNDEBUG)
 
 #-----------------------------------------------------------------------------
 # Build RediSearch as subdirectory
