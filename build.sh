@@ -678,7 +678,16 @@ build_libcypher_parser() {
     local build_dir="$LIBCYPHER_PARSER_BINDIR"
 
     mkdir -p "$build_dir"
-    cd "$build_dir"
+
+    # Run autoreconf if configure doesn't exist (it's gitignored and must be generated)
+    if [[ ! -f "$src_dir/configure" ]]; then
+        log_info "Running autoreconf for libcypher-parser..."
+        cd "$src_dir"
+        autoreconf -fi
+        cd "$build_dir"
+    else
+        cd "$build_dir"
+    fi
 
     # Run configure if Makefile doesn't exist
     if [[ ! -f "$build_dir/Makefile" ]]; then
