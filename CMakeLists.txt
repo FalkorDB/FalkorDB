@@ -256,6 +256,7 @@ set(FALKORDB_LIBS
     redisearch-static
     VectorSimilarity
     OpenSSL::SSL
+    ${CMAKE_DL_LIBS}
 )
 
 if(APPLE)
