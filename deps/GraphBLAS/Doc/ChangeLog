@@ -1,3 +1,10 @@
+Jan 21, 2026, version 10.3.1
+
+    * (67) bug fix:  incorrect JIT kernel constructed for R=masker(C,M,Z)
+        when R is hypersparse.  Found by Roi Lipman, FalkorDB.
+    * (66) bug fix:  GB_bitonic did not compile with the MS cl compiler.
+        Found by Erik Welch, NVIDIA.
+
 Dec 3, 2025, version 10.3.0
 
     * GrB_extract: performance improvement for C=A(I,J) when A is very large
