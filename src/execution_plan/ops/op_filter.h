@@ -10,12 +10,17 @@
 #include "../execution_plan.h"
 #include "../../filter_tree/filter_tree.h"
 
-/* Filter
- * filters graph according to where cluase */
+// filter
+// filters graph according to where cluase
 typedef struct {
 	OpBase op;
 	FT_FilterNode *filterTree;
 } OpFilter;
 
-/* Creates a new Filter operation */
-OpBase *NewFilterOp(const ExecutionPlan *plan, FT_FilterNode *filterTree);
+// creates a new Filter operation
+OpBase *NewFilterOp
+(
+	const ExecutionPlan *plan,
+	FT_FilterNode *filterTree
+);
+

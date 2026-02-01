@@ -411,14 +411,14 @@ static void _ResultSet_CompactReplyWithPoint
 void ResultSet_EmitCompactRow
 (
 	ResultSet *set,
-	SIValue **row
+	SIValue *row
 ) {
 	RedisModuleCtx *ctx = set->ctx;
 	// Prepare return array sized to the number of RETURN entities
 	RedisModule_ReplyWithArray(ctx, set->column_count);
 
 	for(uint i = 0; i < set->column_count; i++) {
-		SIValue cell = *row[i];
+		SIValue cell = row[i];
 		RedisModule_ReplyWithArray(ctx, 2); // Reply with array with space for type and value
 		_ResultSet_CompactReplyWithSIValue(ctx, set->gc, cell);
 	}

@@ -14,11 +14,11 @@
 #include "../arithmetic/arithmetic_expression.h"
 
 // filter tree evaluation return values
-typedef enum {
-	FILTER_NULL = -1,  // indicates filter evaluated to NULL
-	FILTER_FAIL =  0,  // indicates filter evaluated to FALSE
-	FILTER_PASS =  1   // indicates filter evaluated to TRUE
-} FT_Result;
+#define FILTER_FAIL 0  // 00 indicates filter evaluated to FALSE
+#define FILTER_PASS 1  // 01 indicates filter evaluated to TRUE
+#define FILTER_NULL 2  // 10 indicates filter evaluated to NULL
+
+typedef uint8_t FT_Result ;
 
 // nodes within the filter tree are one of two types
 // either a predicate node or a condition node
@@ -126,6 +126,15 @@ FT_Result FilterTree_applyFilters
 (
 	const FT_FilterNode *root,
 	const Record r
+);
+
+// evaluate filter for multiple records
+void FilterTree_applyBatchFilters
+(
+	FT_Result *restrict pass,            // [input/output] filter results
+	const FT_FilterNode *restrict root,  // filter tree
+	const Record *restrict records,      // records
+	size_t n                             // number of records
 );
 
 // extract every modified record ID mentioned in the tree

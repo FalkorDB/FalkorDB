@@ -430,21 +430,52 @@ inline rax *ExecutionPlan_GetMappings(const ExecutionPlan *plan) {
 	return plan->record_map;
 }
 
+// borrow multiple records from plan
+void ExecutionPlan_BorrowRecords
+(
+	Record *records,      // [input/output] array of records to fill
+	ExecutionPlan *plan,  // execution plan
+	uint16_t n            // number of records to borrow
+) {
+	ASSERT (plan    != NULL) ;
+	ASSERT (records != NULL) ;
+	ASSERT (array_len (records) >= n) ;
+
+	// get n records from plan's record pool
+	ObjectPool_NewItems ((void**)records, plan->record_pool, n) ;
+
+	// init each record
+	rax *mapping = ExecutionPlan_GetMappings (plan) ;
+	ASSERT (plan->record_pool);
+
+	for (uint i = 0; i < n; i++) {
+		Record r = records[i] ;
+
+		r->owner       = plan ;
+		r->mapping     = mapping ;
+		r->ref_count   = 1 ;
+		r->heap_alloc  = false ;
+		r->num_entries = raxSize (mapping) ;
+	}
+}
+
 Record ExecutionPlan_BorrowRecord
 (
 	ExecutionPlan *plan
 ) {
-	rax *mapping = ExecutionPlan_GetMappings(plan);
-	ASSERT(plan->record_pool);
+	rax *mapping = ExecutionPlan_GetMappings (plan) ;
+	ASSERT (plan->record_pool) ;
 
 	// get a Record from the pool and set its owner and mapping
-	Record r = ObjectPool_NewItem(plan->record_pool);
+	Record r = ObjectPool_NewItem (plan->record_pool) ;
 
-	r->owner     = plan;
-	r->mapping   = mapping;
-	r->ref_count = 1;
+	r->owner       = plan;
+	r->mapping     = mapping;
+	r->ref_count   = 1;
+	r->heap_alloc  = false ;
+	r->num_entries = raxSize (mapping) ;
 
-	return r;
+	return r ;
 }
 
 void ExecutionPlan_ReturnRecord
@@ -462,9 +493,9 @@ void ExecutionPlan_ReturnRecord
 	if(r->ref_count == 0) {
 		// call recursively for parent
 		if(r->parent != NULL) {
-			ExecutionPlan_ReturnRecord(r->parent->owner, r->parent);
+			ExecutionPlan_ReturnRecord (r->parent->owner, r->parent) ;
 		}
-		ObjectPool_DeleteItem(plan->record_pool, r);
+		ObjectPool_DeleteItem (plan->record_pool, r) ;
 	}
 }
 
@@ -533,8 +564,16 @@ ResultSet *ExecutionPlan_Execute(ExecutionPlan *plan) {
 	ExecutionPlan_Init(plan);
 
 	Record r = NULL;
-	// Execute the root operation and free the processed Record until the data stream is depleted.
-	while((r = OpBase_Consume(plan->root)) != NULL) ExecutionPlan_ReturnRecord(r->owner, r);
+	RecordBatch batch = NULL ;
+	// pull data from the root operation
+	// free the processed record until data stream is depleted
+	while ((batch = OpBase_Consume (plan->root)) != NULL) {
+		RecordBatch_Free (&batch) ;
+	}
+
+//	while ((r = OpBase_Consume (plan->root)) != NULL) {
+//		ExecutionPlan_ReturnRecord (r->owner, r) ;
+//	}
 
 	return QueryCtx_GetResultSet();
 }
@@ -544,7 +583,8 @@ ResultSet *ExecutionPlan_Execute(ExecutionPlan *plan) {
 //------------------------------------------------------------------------------
 
 // NOP operation consume routine for immediately terminating execution.
-static Record deplete_consume(struct OpBase *op) {
+//static Record deplete_consume(struct OpBase *op) {
+static void* deplete_consume(struct OpBase *op) {
 	return NULL;
 }
 
@@ -666,7 +706,7 @@ static void _ExecutionPlan_FreeInternals
 		raxFree(plan->record_map);
 	}
 	if(plan->record_pool != NULL) {
-		ObjectPool_Free(plan->record_pool);
+		ObjectPool_Free (plan->record_pool) ;
 	}
 	if(plan->ast_segment != NULL) {
 		AST_Free(plan->ast_segment);
@@ -685,9 +725,9 @@ void ExecutionPlan_Free
 		return;
 	}
 
-	// -------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
 	// free op tree and collect execution-plans
-	// -------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
 
 	// traverse the execution-plan graph (DAG -> no endless cycles), while
 	// collecting the different segments, and freeing the op tree

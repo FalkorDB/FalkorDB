@@ -80,12 +80,14 @@ endef
 
 #----------------------------------------------------------------------------------------------
 
-define CC_C_FLAGS.warnings +=
-	-Werror=incompatible-pointer-types
-	-Werror=implicit-function-declaration
-endef
+#-Werror=incompatible-pointer-types
+#define CC_C_FLAGS.warnings +=
+#	-Werror=implicit-function-declaration
+#endef
 
-#	-Wno-error=incompatible-pointer-types-discards-qualifiers
+define CC_C_FLAGS.warnings +=
+	-Wno-error=incompatible-pointer-types
+endef
 
 ifneq ($(CC_C_STD),)
 CC_C_FLAGS.lang += -std=$(CC_C_STD)

@@ -284,7 +284,7 @@ SIValue CSVReader_GetRow
 	short bom_idx = 0;
 	
 	// try to parse additional data
-	while(!reader->reached_eof && array_len(reader->rows) == 0) {
+	while (!reader->reached_eof && array_len (reader->rows) == 0) {
 
 		//----------------------------------------------------------------------
 		// pool on stream
@@ -384,11 +384,11 @@ SIValue CSVReader_GetRow
 	// either way no need to continue searching for bom
 	reader->search_for_bom = false;
 
-	if(array_len(reader->rows) > 0) {
-		return array_pop(reader->rows);
+	if (array_len (reader->rows) > 0) {
+		return array_pop (reader->rows) ;
 	}
 
-	return SI_NullVal();
+	return SI_NullVal () ;
 }
 
 // free CSV reader

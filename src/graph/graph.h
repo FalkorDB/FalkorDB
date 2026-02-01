@@ -213,6 +213,14 @@ Node Graph_ReserveNode
 	Graph *g  // graph for which nodes will be added
 );
 
+// reserve `n` node ids
+void Graph_ReserveNodeIDs
+(
+	EntityID *ids,  // [output] allocated nodes
+	Graph *g,       // graph for which nodes will be added
+	uint16_t n      // number of nodes to reserve
+);
+
 // create a single node and labels it accordingly.
 // Return newly created node.
 void Graph_CreateNode

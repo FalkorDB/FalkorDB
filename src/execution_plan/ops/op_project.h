@@ -12,12 +12,12 @@
 
 typedef struct {
 	OpBase op;
-	Record r;                // input Record being read from (stored to free if we encounter an error).
-	Record projection;       // record projected by this operation (stored to free if we encounter an error).
-	AR_ExpNode **exps;       // projected expressions (including order exps).
-	uint *record_offsets;    // record IDs corresponding to each projection (including order exps).
-	bool singleResponse;     // when no child operations, return NULL after a first response.
-	uint exp_count;          // number of projected expressions.
+	RecordBatch batch;       // input batch
+	RecordBatch projection;  // projected batch by this operation (stored to free if we encounter an error).
+	AR_ExpNode **exps;       // projected expressions (including order exps)
+	uint *record_offsets;    // record IDs corresponding to each projection
+	bool singleResponse;     // when no child operations, return NULL after a first response
+	uint exp_count;          // number of projected expressions
 } OpProject;
 
 // create a new projection operation

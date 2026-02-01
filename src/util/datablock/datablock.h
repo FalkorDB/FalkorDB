@@ -12,48 +12,28 @@
 #include "../block.h"
 #include "./datablock_iterator.h"
 
+// checks if item is marked as deleted
+#define IS_ITEM_DELETED(item) \
+	((*(uintptr_t*)(item)) & MSB_MASK)
+
 typedef void (*fpDestructor)(void *);
 
-// Returns the item header size.
-#define ITEM_HEADER_SIZE 1
-
-// DataBlock item is stored as ||header|data||. This macro retrive the data pointer out of the header pointer.
-#define ITEM_DATA(header) ((void *)((header) + ITEM_HEADER_SIZE))
-
-// DataBlock item is stored as ||header|data||. This macro retrive the header pointer out of the data pointer.
-#define GET_ITEM_HEADER(item) ((item) - ITEM_HEADER_SIZE)
-
-// Sets the deleted bit in the header to 1.
-#define MARK_HEADER_AS_DELETED(header) ((header)->deleted |= 1)
-
-// Sets the deleted bit in the header to 0.
-#define MARK_HEADER_AS_NOT_DELETED(header) ((header)->deleted &= 0)
-
-// Checks if the deleted bit in the header is 1 or not.
-#define IS_ITEM_DELETED(header) ((header)->deleted & 1)
-
-/* The DataBlock is a container structure for holding arbitrary items of a uniform type
- * in order to reduce the number of alloc/free calls and improve locality of reference.
- * Item deletions are thread-safe, and a DataBlockIterator can be used to traverse a
- * range within the block. */
+// the DataBlock is a container structure for holding arbitrary items
+// of a uniform type in order to reduce the number of alloc/free calls
+// and improve locality of reference
+// a DataBlockIterator can be used to traverse a range within the block
 typedef struct {
-	uint64_t itemCount;         // Number of items stored in datablock.
-	uint64_t itemCap;           // Number of items datablock can hold.
-	uint64_t blockCap;          // Number of items a single block can hold.
-	uint blockCount;            // Number of blocks in datablock.
-	uint itemSize;              // Size of a single item in bytes.
-	Block **blocks;             // Array of blocks.
-	uint64_t *deletedIdx;       // Array of free indicies.
-	fpDestructor destructor;    // Function pointer to a clean-up function of an item.
+	uint64_t itemCount;       // number of items stored in datablock
+	uint64_t itemCap;         // number of items datablock can hold
+	uint64_t blockCap;        // number of items a single block can hold
+	uint blockCount;          // number of blocks in datablock
+	uint itemSize;            // size of a single item in bytes
+	Block **blocks;           // array of blocks
+	uint64_t *deletedIdx;     // array of free indicies
+	fpDestructor destructor;  // function pointer to a clean-up function of an item
 } DataBlock;
 
-// This struct is for data block item header data.
-// TODO: Consider using pragma pack/pop for tight memory/word alignment.
-typedef struct {
-	unsigned char deleted: 1;  // A bit indicate if the current item is deleted or not.
-} DataBlockItemHeader;
-
-// Create a new DataBlock
+// create a new DataBlock
 // itemCap - number of items datablock can hold before resizing.
 // itemSize - item size in bytes.
 // fp - destructor routine for freeing items.
@@ -66,50 +46,109 @@ DataBlock *DataBlock_New
 );
 
 // returns number of items stored
-uint64_t DataBlock_ItemCount(const DataBlock *dataBlock);
-
-// returns datablock item size
-uint DataBlock_itemSize
+uint64_t DataBlock_ItemCount
 (
 	const DataBlock *dataBlock  // datablock
 );
 
-// Make sure datablock can accommodate at least k items.
-void DataBlock_Accommodate(DataBlock *dataBlock, int64_t k);
+// make sure datablock can accommodate at least k items.
+void DataBlock_Accommodate
+(
+	DataBlock *dataBlock,  // datablock
+	int64_t k              // number of items required
+);
 
-// ensure datablock capacity >= 'idx'
-void DataBlock_Ensure(DataBlock *dataBlock, uint64_t idx);
+// ensure datablock capacity >= `n`
+void DataBlock_Ensure
+(
+	DataBlock *dataBlock,  // datablock
+	uint64_t n             // minumum capacity
+);
 
-// Returns an iterator which scans entire datablock.
-DataBlockIterator *DataBlock_Scan(const DataBlock *dataBlock);
+// returns an iterator which scans entire datablock.
+DataBlockIterator *DataBlock_Scan
+(
+	const DataBlock *dataBlock  // datablock
+);
 
-// Returns an iterator which scans entire out of order datablock.
-DataBlockIterator *DataBlock_FullScan(const DataBlock *dataBlock);
+// returns an iterator which scans entire out of order datablock
+DataBlockIterator *DataBlock_FullScan
+(
+	const DataBlock *dataBlock  // datablock
+);
 
-// Get item at position idx
-void *DataBlock_GetItem(const DataBlock *dataBlock, uint64_t idx);
+// get item at position idx
+void *DataBlock_GetItem
+(
+	const DataBlock *dataBlock,  // datablock
+	uint64_t idx                 // item's index
+);
 
-// Get reserved item id after 'n' items
-uint64_t DataBlock_GetReservedIdx(const DataBlock *dataBlock, uint64_t n);
+// get item at position idx
+void *DataBlock_GetItemUnchecked
+(
+	const DataBlock *dataBlock,  // datablock
+	uint64_t idx                 // item's index
+);
 
-// Allocate a new item within given dataBlock,
+// get reserved item id after 'n' items
+uint64_t DataBlock_GetReservedIdx
+(
+	const DataBlock *dataBlock,  // datablock
+	uint64_t n                   // number of reserved items
+);
+
+// reserve an additional `n` IDs ontop of the already `k` reserved
+void DataBlock_ReservedIDs
+(
+	uint64_t *ids,               // [output]
+	const DataBlock *dataBlock,  // datablock
+	uint64_t k,                  // number of already reserved ids
+	uint64_t n                   // number of IDs to reserve
+) ;
+
+// allocate a new item within given dataBlock,
 // if idx is not NULL, idx will contain item position
 // return a pointer to the newly allocated item.
-void *DataBlock_AllocateItem(DataBlock *dataBlock, uint64_t *idx);
+void *DataBlock_AllocateItem
+(
+	DataBlock *dataBlock,  // datablock
+	uint64_t *idx          // [optional] item's index
+);
 
-// Removes item at position idx.
-void DataBlock_DeleteItem(DataBlock *dataBlock, uint64_t idx);
+// try to get n consecutive items, this function operates on a best effort
+// bases, it's not guarantee that it will be able to provide n items
+// the actual number of returned items is reported back via `actual`
+void *DataBlock_AllocateItems
+(
+	DataBlock *dataBlock,  // datablock
+	uint32_t n,            // number of requested items
+	uint32_t *actual       // number of returned items
+);
 
-// Returns the number of deleted items.
-uint DataBlock_DeletedItemsCount(const DataBlock *dataBlock);
+// removes item at position idx
+void DataBlock_DeleteItem
+(
+	DataBlock *dataBlock,  // datablock
+	uint64_t idx           // item position
+);
 
-// Returns true if the given item has been deleted.
-bool DataBlock_ItemIsDeleted(void *item);
+// returns the number of deleted items
+uint DataBlock_DeletedItemsCount
+(
+	const DataBlock *dataBlock  // datablock
+);
+
+// returns true if the given item has been deleted
+bool DataBlock_ItemIsDeleted
+(
+	void *item
+);
 
 // returns datablock's deleted indices array
 const uint64_t *DataBlock_DeletedItems
 (
-	const DataBlock *dataBlock
+	const DataBlock *dataBlock  // datablock
 );
 
 // returns to amount of memory consumed by the datablock
@@ -118,6 +157,9 @@ size_t DataBlock_memoryUsage
 	const DataBlock *dataBlock
 );
 
-// Free block.
-void DataBlock_Free(DataBlock *block);
+// free datablock
+void DataBlock_Free
+(
+	DataBlock *dataBlock  // datablock
+) ;
 

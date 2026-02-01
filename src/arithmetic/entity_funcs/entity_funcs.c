@@ -18,10 +18,62 @@
 #include "../../graph/entities/graph_entity.h"
 
 // returns the id of a relationship or node
-SIValue AR_ID(SIValue *argv, int argc, void *private_data) {
-	if(SI_TYPE(argv[0]) == T_NULL) return SI_NullVal();
-	GraphEntity *graph_entity = (GraphEntity *)argv[0].ptrval;
-	return SI_LongVal(ENTITY_GET_ID(graph_entity));
+SIValue AR_ID
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
+	if (SI_TYPE (argv[0]) == T_NULL) {
+		return SI_NullVal () ;
+	}
+
+	GraphEntity *graph_entity = (GraphEntity *)argv[0].ptrval ;
+	return SI_LongVal (ENTITY_GET_ID (graph_entity)) ;
+}
+
+// AR_Id_Batch: Vectorized entity ID retrival
+// computes: results[i] = entity's internal ID
+// encourage SIMD auto-vectorization
+void AR_Id_Batch
+(
+	SIValue *restrict results,   // [out] target vector for results
+	SIValue **restrict args,     // [in] array of input vectors
+	SIType *restrict arg_types,  // [in] arg_types[i] type of vector args[i]
+	int batch_size,              // [in] number of elements in the vectors
+	void *private_data           // [unused]
+) {
+	ASSERT (results    != NULL) ;
+	ASSERT (batch_size > 0) ;
+	ASSERT (arg_types  != NULL) ;
+	ASSERT (args != NULL && args[0] != NULL && args[1] != NULL) ;
+
+	SIValue *restrict entities = args[0] ;
+
+	//--------------------------------------------------------------------------
+	// NULL free batch
+	//--------------------------------------------------------------------------
+
+	if (likely (!(arg_types[0] & T_NULL))) {
+		for (int i = 0; i < batch_size; i++) {
+			GraphEntity *graph_entity = (GraphEntity *)entities[i].ptrval ;
+			results[i] = SI_LongVal (ENTITY_GET_ID (graph_entity)) ;
+		}
+		return ;
+	}
+
+	//--------------------------------------------------------------------------
+	// batch contains NULLs
+	//--------------------------------------------------------------------------
+
+	for (int i = 0; i < batch_size; i++) {
+		if (SI_TYPE (entities[i]) == NULL) {
+			results[i] = SI_NullVal () ;
+		} else {
+			GraphEntity *graph_entity = (GraphEntity *)entities[i].ptrval ;
+			results[i] = SI_LongVal (ENTITY_GET_ID (graph_entity)) ;
+		}
+	}
 }
 
 // returns an array of string representations of each label of a node
@@ -61,7 +113,7 @@ SIValue AR_HAS_LABELS(SIValue *argv, int argc, void *private_data) {
 	for (uint32_t i = 0; i < labels_length; i++) {
 		SIValue label_value = SIArray_Get(labels, i);
 		if(!(SI_TYPE(label_value) & T_STRING)) {
-			Error_SITypeMismatch(label_value, T_STRING);
+			Error_SITypeMismatch (SI_TYPE (label_value), T_STRING);
 			return SI_NullVal();
 		}
 		char *label = label_value.stringval;
@@ -165,7 +217,7 @@ static SIValue _AR_NodeDegree
 						SIArray_Append(&labels, argv[i]);
 					}
 				} else {
-					Error_SITypeMismatch(argv[i], T_STRING);
+					Error_SITypeMismatch (SI_TYPE (argv[i]), T_STRING);
 				}
 			}
 		} else if (SI_TYPE(argv[1]) == T_ARRAY) {
@@ -178,7 +230,7 @@ static SIValue _AR_NodeDegree
 				SIValue elem = SIArray_Get(argv[1], j);
 				if(!(SI_TYPE(elem) & T_STRING)) {
 					SIArray_Free(labels);
-					Error_SITypeMismatch(elem, T_STRING);
+					Error_SITypeMismatch (SI_TYPE (elem), T_STRING) ;
 					return SI_NullVal();
 				}
 				if(SIArray_ContainsValue(labels, elem, NULL) == false) {
@@ -251,7 +303,7 @@ SIValue AR_PROPERTY
 	// As such, we need to validate the argument's type independently of the invocation validation.
 	if(!(SI_TYPE(argv[1]) & T_STRING)) {
 		// String indexes are only permitted on maps, not arrays.
-		Error_SITypeMismatch(argv[1], T_STRING);
+		Error_SITypeMismatch (SI_TYPE (argv[1]), T_STRING) ;
 		return SI_NullVal();
 	}
 
@@ -373,12 +425,13 @@ void Register_EntityFuncs() {
 	SIType ret_type;
 	AR_FuncDesc *func_desc;
 
-	types = array_new(SIType, 1);
-	array_append(types, T_NULL | T_NODE | T_EDGE);
-	ret_type = T_NULL | T_INT64;
-	func_desc = AR_FuncDescNew("id", AR_ID, 1, 1, types, ret_type, false, true,
-			true);
-	AR_FuncRegister(func_desc);
+	types = array_new (SIType, 1) ;
+	array_append (types, T_NULL | T_NODE | T_EDGE) ;
+	ret_type = T_NULL | T_INT64 ;
+	func_desc = AR_FuncDescNew ("id", AR_ID, 1, 1, types, ret_type, false,
+			true, true) ;
+	AR_FuncRegister (func_desc) ;
+	AR_SetBatchVersion (func_desc, AR_Id_Batch) ;
 
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_NODE);

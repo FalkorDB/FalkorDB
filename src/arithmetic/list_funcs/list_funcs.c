@@ -246,7 +246,7 @@ SIValue AR_SUBSCRIPT(SIValue *argv, int argc, void *private_data) {
 	if(SI_TYPE(argv[0]) == T_NULL || SI_TYPE(argv[1]) == T_NULL) return SI_NullVal();
 	if(SI_TYPE(argv[0]) & (T_MAP | SI_GRAPHENTITY)) {
 		if(SI_TYPE(argv[1]) != T_STRING) {
-			Error_SITypeMismatch(argv[1], T_STRING);
+			Error_SITypeMismatch (SI_TYPE (argv[1]), T_STRING) ;
 			return SI_NullVal();
 		}
 		/* If the first argument is a map or graph entity, this is a property lookup of a form like:
@@ -259,7 +259,7 @@ SIValue AR_SUBSCRIPT(SIValue *argv, int argc, void *private_data) {
 
 	if(SI_TYPE(argv[1]) == T_STRING) {
 		// String indexes are only permitted on maps, not arrays.
-		Error_SITypeMismatch(argv[1], T_INT64);
+		Error_SITypeMismatch (SI_TYPE (argv[1]), T_INT64) ;
 		return SI_NullVal();
 	}
 

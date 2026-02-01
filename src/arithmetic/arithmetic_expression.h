@@ -39,8 +39,11 @@ typedef enum {
 
 // op represents an operation applied to child args
 typedef struct {
+	uint8_t child_count;            // number of children
+	uint16_t constant_mask;         // bitmask where bit i is set if
+									// children[i] is a constant
+	SIValue *args;                  // op's arguments
 	AR_FuncDesc *f;                 // operation to perform on children
-	int child_count;                // number of children
 	void *private_data;             // additional data associated with function
 	struct AR_ExpNode **children;   // child nodes
 } AR_OpNode;
@@ -73,7 +76,12 @@ typedef struct AR_ExpNode {
 } AR_ExpNode;
 
 // creates a new Arithmetic expression operation node
-AR_ExpNode *AR_EXP_NewOpNode(const char *func_name, bool include_internal, uint child_count);
+AR_ExpNode *AR_EXP_NewOpNode
+(
+	const char *func_name,
+	bool include_internal,
+	uint child_count
+);
 
 // creates a new Arithmetic expression variable operand node
 AR_ExpNode *AR_EXP_NewVariableOperandNode(const char *alias);
@@ -93,11 +101,16 @@ AR_ExpNode *AR_EXP_NewRecordNode(void);
 // set node private data
 void AR_SetPrivateData(AR_ExpNode *node, void *pdata);
 
-// compact tree by evaluating all contained functions that can be resolved right now
-// the function returns true if it managed to compact the expression
-// the reduce_params flag indicates if parameters should be evaluated
-// the val pointer is out-by-ref returned computation
-bool AR_EXP_ReduceToScalar(AR_ExpNode *root, bool reduce_params, SIValue *val);
+// compact tree by evaluating constant expressions
+// e.g. MINUS(X) where X is a constant number will be reduced to
+// a single node with the value -X
+// PLUS(MINUS(A), B) will be reduced to a single constant: B-A
+bool AR_EXP_ReduceToScalar
+(
+	AR_ExpNode *root,    // expression to reduce
+	bool reduce_params,  // should reduce params
+	SIValue *val         // value representing reduced expression
+);
 
 // resolve variables to constants
 void AR_EXP_ResolveVariables(AR_ExpNode *root, const Record r);
@@ -105,6 +118,17 @@ void AR_EXP_ResolveVariables(AR_ExpNode *root, const Record r);
 // evaluate arithmetic expression tree
 // this function raise exception
 SIValue AR_EXP_Evaluate(AR_ExpNode *root, const Record r);
+
+// evaluate arithmetic exception tree for a number of records
+// this function raise exception
+// populates res with each evaluated value
+void AR_EXP_Evaluate_Batch
+(
+	SIValue *restrict res,        // [input/output] results
+	AR_ExpNode *restrict root,    // root of expression tree to evaluate
+	const Record *restrict recs,  // batch of records
+	size_t n                      // number of records
+);
 
 // evaluate arithmmetic expression tree
 // this function will not raise exception in case of error
@@ -197,16 +221,25 @@ bool AR_EXP_ContainsFunc(const AR_ExpNode *root, const char *func);
 bool AR_EXP_ContainsVariadic(const AR_ExpNode *root);
 
 // returns true if an arithmetic expression node is a constant
-bool AR_EXP_IsConstant(const AR_ExpNode *exp);
+bool AR_EXP_IsConstant
+(
+	const AR_ExpNode *exp
+);
 
 // returns true if an arithmetic expression node is variadic
 bool AR_EXP_IsVariadic(const AR_ExpNode *exp);
 
 // returns true if an arithmetic expression node is a parameter
-bool AR_EXP_IsParameter(const AR_ExpNode *exp);
+bool AR_EXP_IsParameter
+(
+	const AR_ExpNode *exp
+);
 
 // returns true if an arithmetic expression node is an operation
-bool AR_EXP_IsOperation(const AR_ExpNode *exp);
+bool AR_EXP_IsOperation
+(
+	const AR_ExpNode *exp
+);
 
 // returns true if 'exp' represent attribute extraction
 // sets 'attr' to attribute name if provided

@@ -60,6 +60,15 @@ void ConvertPropertyMap
 	bool fail_on_null
 );
 
+// resolve properties specified in the query into constant values
+// for a number of entities
+void ConvertPropertyMaps
+(
+	AttributeSet *sets,  // attribute sets
+	RecordBatch batch,   // batch
+	PropertyMap *map     // properties to compute
+);
+
 // free all data associated with a completed create operation
 void PendingCreationsFree
 (

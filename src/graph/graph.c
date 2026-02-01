@@ -689,15 +689,33 @@ Node Graph_ReserveNode
 	ASSERT(g != NULL);
 
 	// reserve node ID
-	NodeID id = DataBlock_GetReservedIdx(g->nodes, g->reserved_node_count);
+	NodeID id = DataBlock_GetReservedIdx (g->nodes, g->reserved_node_count) ;
 
 	// increment reserved node count
-	g->reserved_node_count++;
+	g->reserved_node_count++ ;
 
 	// create node
-	Node n = (Node) { .attributes = NULL, .id = id };
+	Node n = (Node) {.attributes = NULL, .id = id} ;
 
-	return n;
+	return n ;
+}
+
+// reserve `n` node ids
+void Graph_ReserveNodeIDs
+(
+	EntityID *ids,  // [output] allocated nodes
+	Graph *g,       // graph for which nodes will be added
+	uint16_t n      // number of nodes to reserve
+) {
+	ASSERT (n   >  0) ;
+	ASSERT (g   != NULL) ;
+	ASSERT (ids != NULL) ;
+
+	// reserve node ID
+	DataBlock_ReservedIDs (ids, g->nodes, g->reserved_node_count, n) ;
+
+	// increment reserved node count
+	g->reserved_node_count += n ;
 }
 
 // create a single node and labels it accordingly.

@@ -14,24 +14,13 @@
 #include "../graph/graph.h"
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
-#include "../graph/graphcontext.h"
-#include "../datatypes/temporal_value.h"
-#include "../datatypes/array.h"
 #include "../ast/ast_shared.h"
+#include "../datatypes/array.h"
+#include "../graph/graphcontext.h"
+#include "arithmetic_expression_eval.h"
+#include "../datatypes/temporal_value.h"
 
 #include <ctype.h>
-
-// returns true if given node 'n' represents an aggregation expression
-#define AGGREGATION_NODE(n) ((AR_EXP_IsOperation(n)) && (n)->op.f->aggregate)
-
-// return number of child nodes of 'n'
-#define NODE_CHILD_COUNT(n) (n)->op.child_count
-
-// return child at position 'idx' of 'n'
-#define NODE_CHILD(n, idx) (n)->op.children[(idx)]
-
-// maximum size for which an array of SIValue will be stack-allocated, otherwise it will be heap-allocated.
-#define MAX_ARRAY_SIZE_ON_STACK 32
 
 //------------------------------------------------------------------------------
 // Forward declarations
@@ -45,8 +34,8 @@ static AR_EXP_Result _AR_EXP_Evaluate(AR_ExpNode *root, const Record r,
 
 static void _AR_EXP_ResolveVariables(AR_ExpNode *root, const Record r);
 
-// Clear an op node internals, without freeing the node allocation itself.
-static void _AR_EXP_FreeOpInternals(AR_ExpNode *op_node);
+// clear an op node internals, without freeing the node allocation itself
+void _AR_EXP_FreeOpInternals(AR_ExpNode *op_node);
 
 static void _AR_EXP_FreeInternals (AR_ExpNode *node) ;
 
@@ -102,15 +91,24 @@ bool AR_EXP_PerformsDistinct(AR_ExpNode *exp) {
 }
 
 // repurpose node to a constant expression
-static void _AR_EXP_InplaceRepurposeConstant(AR_ExpNode *node, SIValue v) {
+static void _AR_EXP_InplaceRepurposeConstant
+(
+	AR_ExpNode *node,
+	SIValue v
+) {
 	// free node internals
-	if(AR_EXP_IsOperation(node)) _AR_EXP_FreeOpInternals(node);
-	else if(AR_EXP_IsConstant(node)) SIValue_Free(node->operand.constant);
+	if (AR_EXP_IsOperation (node)) {
+		_AR_EXP_FreeOpInternals (node) ;
+	}
+
+	else if (AR_EXP_IsConstant (node)) {
+		SIValue_Free (node->operand.constant) ;
+	}
 
 	// repurpose as constant operand
-	node->type              =  AR_EXP_OPERAND;
-	node->operand.type      =  AR_EXP_CONSTANT;
-	node->operand.constant  =  v;
+	node->type             = AR_EXP_OPERAND ;
+	node->operand.type     = AR_EXP_CONSTANT ;
+	node->operand.constant = v ;
 }
 
 static AR_ExpNode *_AR_EXP_NewOpNode
@@ -120,6 +118,7 @@ static AR_ExpNode *_AR_EXP_NewOpNode
 	AR_ExpNode *node = rm_calloc (1, sizeof (AR_ExpNode)) ;
 
 	node->type           = AR_EXP_OP ;
+	node->op.args        = rm_calloc (child_count * 64, sizeof (SIValue)) ;
 	node->op.children    = rm_calloc (child_count, sizeof (AR_ExpNode *)) ;
 	node->op.child_count = child_count ;
 
@@ -145,9 +144,9 @@ static void _AR_EXP_ValidateArgsCount
 
 AR_ExpNode *AR_EXP_NewOpNode
 (
-	const char *func_name,
-	bool include_internal,
-	uint child_count
+	const char *func_name,  // function name
+	bool include_internal,  // access to internal functions
+	uint child_count        // number of child nodes
 ) {
 	// retrieve function
 	AR_FuncDesc *func = AR_GetFunc (func_name, include_internal) ;
@@ -155,7 +154,7 @@ AR_ExpNode *AR_EXP_NewOpNode
 		// function wasn't found, this can happen when
 		// an execution-plan is cloned and a UDF function been removed
 
-		ErrorCtx_SetError ("undefined function: '%s'", func_name);
+		ErrorCtx_SetError ("undefined function: '%s'", func_name) ;
 
 		// use a placeholder function
 		func = AR_GetFunc ("nop", true) ;
@@ -268,126 +267,76 @@ void AR_SetPrivateData
 	node->op.private_data = pdata;
 }
 
-// compact tree by evaluating constant expressions
-// e.g. MINUS(X) where X is a constant number will be reduced to
-// a single node with the value -X
-// PLUS(MINUS(A), B) will be reduced to a single constant: B-A
-bool AR_EXP_ReduceToScalar
+static void _AR_EXP_OpResolveVariables
 (
-	AR_ExpNode *root,
-	bool reduce_params,
-	SIValue *val
+	AR_ExpNode *node,
+	const Record r
 ) {
-	if(val != NULL) {
-		*val = SI_NullVal();
-	}
+	ASSERT (node->type == AR_EXP_OP) ;
 
-	if(root->type == AR_EXP_OPERAND) {
-		// in runtime, parameters are set so they can be evaluated
-		if(reduce_params && AR_EXP_IsParameter(root)) {
-			SIValue v = AR_EXP_Evaluate(root, NULL);
-			if(val != NULL) {
-				*val = v;
-			}
-			return true;
-		}
-		if(AR_EXP_IsConstant(root)) {
-			// Root is already a constant
-			if(val != NULL) *val = root->operand.constant;
-			return true;
-		}
-		// Root is variadic, no way to reduce
-		return false;
-	} else {
-		// root represents an operation
-		ASSERT(AR_EXP_IsOperation(root));
-
-		// see if we're able to reduce each child of root
-		// if so we'll be able to reduce root
-		bool reduce_children = true;
-		for(int i = 0; i < root->op.child_count; i++) {
-			if(!AR_EXP_ReduceToScalar(root->op.children[i], reduce_params, NULL)) {
-				// root reduce is not possible, but continue to reduce every reducable child
-				reduce_children = false;
-			}
-		}
-
-		// can't reduce root as one of its children is not a constant
-		if(!reduce_children) {
-			return false;
-		}
-
-		// all child nodes are constants, make sure function is marked as reducible
-		if(!root->op.f->reducible) {
-			return false;
-		}
-
-		// evaluate function
-		SIValue v = AR_EXP_Evaluate(root, NULL);
-		if(val != NULL) *val = v;
-		if(SIValue_IsNull(v)) {
-			return false;
-		}
-
-		// reduce
-		// clear children and function context
-		_AR_EXP_FreeOpInternals(root);
-
-		// in-place update, set as constant
-		root->type = AR_EXP_OPERAND;
-		root->operand.type = AR_EXP_CONSTANT;
-		root->operand.constant = v;
-
-		return true;
+	for (uint i = 0; i < node->op.child_count; i++) {
+		AR_ExpNode *child = node->op.children[i] ;
+		_AR_EXP_ResolveVariables (child, r) ;
 	}
 }
 
-static void _AR_EXP_OpResolveVariables(AR_ExpNode *node, const Record r) {
-	ASSERT(node->type == AR_EXP_OP);
-
-	for(uint i = 0; i < node->op.child_count; i++) {
-		AR_ExpNode *child = node->op.children[i];
-		_AR_EXP_ResolveVariables(child, r);
-	}
-}
-
-void _AR_EXP_OperandResolveVariables(AR_ExpNode *node, const Record r) {
-	ASSERT(node->type == AR_EXP_OPERAND);
+void _AR_EXP_OperandResolveVariables
+(
+	AR_ExpNode *node,
+	const Record r
+) {
+	ASSERT (node->type == AR_EXP_OPERAND) ;
 
 	// return if this is not a variadic node
-	if(!AR_EXP_IsVariadic(node)) return;
+	if (!AR_EXP_IsVariadic (node)) {
+		return ;
+	}
 
 	// see if record contains a value for this variadic
-	const char *alias = node->operand.variadic.entity_alias;
-	uint idx = Record_GetEntryIdx(r, alias, strlen(alias));
-	ASSERT(idx != INVALID_INDEX);
-	if(!Record_ContainsEntry(r, idx)) return;
+	const char *alias = node->operand.variadic.entity_alias ;
+	uint idx = Record_GetEntryIdx (r, alias, strlen (alias)) ;
+	ASSERT (idx != INVALID_INDEX) ;
+	if (!Record_ContainsEntry (r, idx)) {
+		return ;
+	}
 
 	// replace variadic with constant
-	SIValue v = SI_CloneValue(Record_Get(r, idx));
-	_AR_EXP_InplaceRepurposeConstant(node, v);
+	SIValue v = SI_CloneValue (Record_Get (r, idx)) ;
+	_AR_EXP_InplaceRepurposeConstant (node, v) ;
 }
 
-static void _AR_EXP_ResolveVariables(AR_ExpNode *root, const Record r) {
-	ASSERT(r != NULL);
+static void _AR_EXP_ResolveVariables
+(
+	AR_ExpNode *root,
+	const Record r
+) {
+	ASSERT (r != NULL) ;
 
-	if(root == NULL) return;
+	if (root == NULL) {
+		return ;
+	}
 
-	switch(root->type) {
+	switch (root->type) {
 		case AR_EXP_OP:
-			_AR_EXP_OpResolveVariables(root, r);
-			break;
+			_AR_EXP_OpResolveVariables (root, r) ;
+			break ;
+
 		case AR_EXP_OPERAND:
-			_AR_EXP_OperandResolveVariables(root, r);
-			break;
+			_AR_EXP_OperandResolveVariables (root, r) ;
+			break ;
+
 		default:
-			ASSERT(false && "unknown arithmetic expression node type");
+			ASSERT (false && "unknown arithmetic expression node type") ;
 	}
 }
 
-void AR_EXP_ResolveVariables(AR_ExpNode *root, const Record r) {
-	_AR_EXP_ResolveVariables(root, r);
-	AR_EXP_ReduceToScalar(root, true, NULL);
+void AR_EXP_ResolveVariables
+(
+	AR_ExpNode *root,
+	const Record r
+) {
+	_AR_EXP_ResolveVariables (root, r) ;
+	AR_EXP_ReduceToScalar (root, true, NULL) ;
 }
 
 static bool _AR_EXP_ValidateInvocation
@@ -407,27 +356,39 @@ static bool _AR_EXP_ValidateInvocation
 		if(i < expected_types_count) {
 			expected_type = fdesc->types[i];
 		}
-		if(!(actual_type & expected_type)) {
-			Error_SITypeMismatch(argv[i], expected_type);
-			return false;
+
+		if (!(actual_type & expected_type)) {
+			Error_SITypeMismatch (SI_TYPE (argv[i]), expected_type) ;
+			return false ;
 		}
 	}
 
 	return true;
 }
 
-/* Evaluating an expression tree constructs an array of SIValues.
- * Free all of these values, in case an intermediate node on the tree caused a heap allocation.
- * For example, in the expression:
- * a.first_name + toUpper(a.last_name)
- * the result of toUpper() is allocated within this tree, and will leak if not freed here. */
-static inline void _AR_EXP_FreeResultsArray(SIValue *results, int count) {
-	for(int i = 0; i < count; i ++) {
-		SIValue_Free(results[i]);
+// evaluating an expression tree constructs an array of SIValues
+// free all of these values
+// in case an intermediate node on the tree caused a heap allocation
+// for example, in the expression
+// a.first_name + toUpper(a.last_name)
+// the result of toUpper() is allocated within this tree, and will leak if not freed here
+static inline void _AR_EXP_FreeResultsArray
+(
+	SIValue *results,
+	int count,
+	uint16_t constant_mask
+) {
+	// free arguments
+	for (int i = 0; i < count; i ++) {
+		// free non cahced arguments
+		if (!(constant_mask & 1ULL << i)) {
+			SIValue_Free (results[i]) ;
+		}
 	}
-	// Large arrays are heap-allocated, so here is where we free it.
+
+	// large arrays are heap-allocated, so here is where we free it
 	if (count > MAX_ARRAY_SIZE_ON_STACK) {
-		rm_free(results);
+		rm_free (results) ;
 	}
 }
 
@@ -437,64 +398,81 @@ static AR_EXP_Result _AR_EXP_EvaluateFunctionCall
 	const Record r,
 	SIValue *result
 ) {
-	AR_EXP_Result res = EVAL_OK;
+	AR_EXP_Result res = EVAL_OK ;
 
-	int child_count = NODE_CHILD_COUNT(node);
+	int child_count = NODE_CHILD_COUNT (node) ;
 
-	// evaluate each child before evaluating current node
-	SIValue *sub_trees = NULL;
-	// if array size is above the threshold, we allocate it on the heap (otherwise on stack)
-	size_t array_on_stack_size = child_count > MAX_ARRAY_SIZE_ON_STACK ? 0 : child_count;
-	SIValue sub_trees_on_stack[array_on_stack_size];
+	// evaluate non cached scalars
+	SIValue *sub_trees = NULL ;
+	// if array size is above the threshold, we allocate it on the heap
+	size_t array_on_stack_size =
+		child_count > MAX_ARRAY_SIZE_ON_STACK ? 0 : child_count ;
+
+	SIValue sub_trees_on_stack[array_on_stack_size] ;
+
 	if (child_count > MAX_ARRAY_SIZE_ON_STACK) {
-		sub_trees = rm_malloc(child_count * sizeof(SIValue));
+		sub_trees = rm_malloc (child_count * sizeof (SIValue)) ;
 	} else {
 		sub_trees = sub_trees_on_stack;
 	}
-	bool param_found = false;
-	for(int child_idx = 0; child_idx < child_count; child_idx++) {
-		SIValue v;
-		AR_ExpNode *child = NODE_CHILD(node, child_idx);
-		res = _AR_EXP_Evaluate(child, r, &v);
+
+	bool param_found = false ;
+	for (int child_idx = 0; child_idx < child_count; child_idx++) {
+		if (node->op.constant_mask & 1ULL << child_idx) {
+			sub_trees[child_idx] = node->op.args[child_idx] ;
+			continue ;
+		}
+
+		SIValue v ;
+		AR_ExpNode *child = NODE_CHILD (node, child_idx) ;
+		res = _AR_EXP_Evaluate (child, r, &v) ;
 
 		if(res == EVAL_ERR) {
 			// encountered an error while evaluating a subtree
 			// free all values generated up to this point
 			// and propagate the error upwards
-			_AR_EXP_FreeResultsArray(sub_trees, child_idx);
-			return res;
+			_AR_EXP_FreeResultsArray (sub_trees, child_idx,
+					node->op.constant_mask) ;
+			return res ;
 		}
 
-		param_found |= (res == EVAL_FOUND_PARAM);
-		sub_trees[child_idx] = v;
+		param_found |= (res == EVAL_FOUND_PARAM) ;
+		sub_trees[child_idx] = v ;
 	}
 
-	if(param_found) res = EVAL_FOUND_PARAM;
+	if (param_found) {
+		res = EVAL_FOUND_PARAM ;
+	}
 
 	// validate before evaluation
-	if(!_AR_EXP_ValidateInvocation(node->op.f, sub_trees, child_count)) {
+	if (!_AR_EXP_ValidateInvocation (node->op.f, sub_trees, child_count)) {
 		// the expression tree failed its validations and set an error message
-		res = EVAL_ERR;
-		goto cleanup;
+		res = EVAL_ERR ;
+		goto cleanup ;
 	}
 
 	// evaluate self
-	SIValue v = node->op.f->func(sub_trees, child_count, node->op.private_data);
-	ASSERT(node->op.f->aggregate || SI_TYPE(v) & AR_FuncDesc_RetType(node->op.f));
-	if(SIValue_IsNull(v) && ErrorCtx_EncounteredError()) {
+	SIValue v =
+		node->op.f->func (sub_trees, child_count, node->op.private_data) ;
+
+	ASSERT (node->op.f->aggregate || SI_TYPE (v) & AR_FuncDesc_RetType (node->op.f)) ;
+
+	if (SIValue_IsNull (v) && ErrorCtx_EncounteredError ()) {
 		// an error was encountered while evaluating this function,
 		// and has already been set in the QueryCtx
 		// exit with an error
-		res = EVAL_ERR;
+		res = EVAL_ERR ;
 	}
-	if(result) {
-		SIValue_Persist(&v);
-		*result = v;
+
+	if (result) {
+		SIValue_Persist (&v) ;
+		*result = v ;
 	}
 
 cleanup:
-	_AR_EXP_FreeResultsArray(sub_trees, node->op.child_count);
-	return res;
+	_AR_EXP_FreeResultsArray (sub_trees, node->op.child_count,
+			node->op.constant_mask) ;
+	return res ;
 }
 
 static bool _AR_EXP_UpdateEntityIdx(AR_OperandNode *node, const Record r) {
@@ -575,32 +553,38 @@ static AR_EXP_Result _AR_EXP_Evaluate
 	const Record r,
 	SIValue *result
 ) {
-	AR_EXP_Result res = EVAL_OK;
+	AR_EXP_Result res = EVAL_OK ;
 
-	switch(root->type) {
-	case AR_EXP_OP:
-		return _AR_EXP_EvaluateFunctionCall(root, r, result);
-	case AR_EXP_OPERAND:
-		switch(root->operand.type) {
-		case AR_EXP_CONSTANT:
-			// the value is constant or has been computed elsewhere
-			// share with caller
-			*result = SI_ShareValue(root->operand.constant);
-			return res;
-		case AR_EXP_VARIADIC:
-			return _AR_EXP_EvaluateVariadic(root, r, result);
-		case AR_EXP_PARAM:
-			return _AR_EXP_EvaluateParam(root, result);
-		case AR_EXP_BORROW_RECORD:
-			return _AR_EXP_EvaluateBorrowRecord(root, r, result);
+	switch (root->type) {
+		case AR_EXP_OP:
+			return _AR_EXP_EvaluateFunctionCall (root, r, result) ;
+
+		case AR_EXP_OPERAND:
+			switch (root->operand.type) {
+				case AR_EXP_CONSTANT:
+					// the value is constant or has been computed elsewhere
+					// share with caller
+					*result = SI_ShareValue (root->operand.constant) ;
+					return res ;
+
+				case AR_EXP_VARIADIC:
+					return _AR_EXP_EvaluateVariadic (root, r, result) ;
+
+				case AR_EXP_PARAM:
+					return _AR_EXP_EvaluateParam (root, result) ;
+
+				case AR_EXP_BORROW_RECORD:
+					return _AR_EXP_EvaluateBorrowRecord (root, r, result) ;
+
+				default:
+					ASSERT (false && "Invalid expression type") ;
+			}
+
 		default:
-			ASSERT(false && "Invalid expression type");
-		}
-	default:
-		ASSERT(false && "Unknown expression type");
+			ASSERT (false && "Unknown expression type") ;
 	}
 
-	return res;
+	return res ;
 }
 
 SIValue AR_EXP_Evaluate_NoThrow(AR_ExpNode *root, const Record r) {
@@ -686,29 +670,29 @@ void _AR_EXP_FinalizeAggregations
 	// finalize aggregation node
 	//--------------------------------------------------------------------------
 
-	if(AGGREGATION_NODE(root)) {
-		SIValue v = _AR_EXP_FinalizeAggregation(root);
+	if (AGGREGATION_NODE (root)) {
+		SIValue v = _AR_EXP_FinalizeAggregation (root) ;
 
 		// free node internals
-		_AR_EXP_FreeOpInternals(root);
+		_AR_EXP_FreeOpInternals (root) ;
 
 		// replace root with constant node
-		root->type             = AR_EXP_OPERAND;
-		root->operand.type     = AR_EXP_CONSTANT;
-		root->operand.constant = v;
+		root->type             = AR_EXP_OPERAND ;
+		root->operand.type     = AR_EXP_CONSTANT ;
+		root->operand.constant = v ;
 
 		// return, aggregation nodes cannot contain nested aggregation nodes
-		return;
+		return ;
 	}
 
 	//--------------------------------------------------------------------------
 	// recursively traverse child nodes
 	//--------------------------------------------------------------------------
 
-	if(AR_EXP_IsOperation(root)) {
-		for(int i = 0; i < NODE_CHILD_COUNT(root); i++) {
-			AR_ExpNode *child = NODE_CHILD(root, i);
-			_AR_EXP_FinalizeAggregations(child);
+	if (AR_EXP_IsOperation (root)) {
+		for (int i = 0 ; i < NODE_CHILD_COUNT (root) ; i++) {
+			AR_ExpNode *child = NODE_CHILD (root, i) ;
+			_AR_EXP_FinalizeAggregations (child) ;
 		}
 	}
 }
@@ -1170,26 +1154,37 @@ void AR_EXP_Overwrite
 	rm_free (clone) ;
 }
 
-static inline void _AR_EXP_FreeOpInternals
+void _AR_EXP_FreeOpInternals
 (
 	AR_ExpNode *op_node
 ) {
-	if(AGGREGATION_NODE(op_node)) {
-		AR_FuncDesc *agg_func = op_node->op.f;
+	ASSERT (op_node != NULL) ;
+	ASSERT (op_node->type == AR_EXP_OP) ;
 
-		AggregateCtx *ctx = op_node->op.private_data;
-		ASSERT(ctx != NULL);
+	AR_OpNode *op = &op_node->op ;
 
-		Aggregate_Free(agg_func, ctx);
-	} else if(op_node->op.f->callbacks.free && op_node->op.private_data) {
-		op_node->op.f->callbacks.free(op_node->op.private_data);
+	if (AGGREGATION_NODE (op_node)) {
+		AR_FuncDesc *agg_func = op->f ;
+
+		AggregateCtx *ctx = op->private_data ;
+		ASSERT (ctx != NULL) ;
+
+		Aggregate_Free (agg_func, ctx) ;
+	} else if (op->f->callbacks.free && op->private_data) {
+		op->f->callbacks.free (op->private_data) ;
 	}
 
-	for(int child_idx = 0; child_idx < op_node->op.child_count; child_idx++) {
-		AR_EXP_Free(op_node->op.children[child_idx]);
+	for (int i = 0; i < op->child_count; i++) {
+		AR_EXP_Free (op->children[i]) ;
+
+		// free only the first instance of a cached constants
+		if (op->constant_mask & 1ULL << i) {
+			SIValue_Free (op->args[i]) ;
+		}
 	}
 
-	rm_free(op_node->op.children);
+	rm_free (op->args) ;
+	rm_free (op->children) ;
 }
 
 static void _AR_EXP_FreeInternals

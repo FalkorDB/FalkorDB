@@ -1,9 +1,15 @@
+/*
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
+ */
+
+#include "RG.h"
+#include "heap.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
 #include <string.h>
-
-#include "heap.h"
 
 #define DEFAULT_CAPACITY 13
 
@@ -257,6 +263,29 @@ void *Heap_peek
 	return hp->array[0];
 }
 
+// replace heap's head
+void *Heap_replace_head
+(
+	heap_t *hp,  // heap
+	void *item   // new item
+) {
+	ASSERT (hp != NULL) ;
+	ASSERT (Heap_count (hp) > 0) ;
+
+	// capture the current head (the "worst" value in a Top-K Max-Heap)
+	void *head = hp->array[0] ;
+
+	// overwrite the root with the new item
+	hp->array[0] = item ;
+
+	// sift the new item down to its correct position to restore heap property
+    // this is O(log N)
+	__pushdown (hp, 0) ;
+
+	// return the old head to the caller
+	return head ;
+}
+
 // clear all items
 // note: does not free items
 // only use if item memory is managed outside of heap
@@ -333,6 +362,15 @@ int Heap_contains_item
 	const void *item
 ) {
 	return __item_get_idx(hp, item) != -1;
+}
+
+// returns an array containing heap's items
+void **Heap_Items
+(
+	heap_t *hp  // heap
+) {
+	ASSERT (hp != NULL) ;
+	return hp->array ;
 }
 
 static void _Heap_print

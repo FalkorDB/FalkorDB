@@ -6,25 +6,33 @@
 
 #include "resultset_formatters.h"
 
-ResultSetFormatter *ResultSetFormatter_GetFormatter(ResultSetFormatterType t) {
-	ResultSetFormatter *formatter = NULL;
-	switch(t) {
-	case FORMATTER_NOP:
-		formatter = &ResultSetNOP;
-		break;
-	case FORMATTER_VERBOSE:
-		formatter = &ResultSetFormatterVerbose;
-		break;
-	case FORMATTER_COMPACT:
-		formatter = &ResultSetFormatterCompact;
-		break;
-	case FORMATTER_BOLT:
-		formatter = &ResultSetFormatterBolt;
-		break;
-	default:
-		RedisModule_Assert(false && "Unknown formatter");
+ResultSetFormatter *ResultSetFormatter_GetFormatter
+(
+	ResultSetFormatterType t
+) {
+	ResultSetFormatter *formatter = NULL ;
+
+	switch (t) {
+		case FORMATTER_NOP :
+			formatter = &ResultSetNOP ;
+			break ;
+
+		case FORMATTER_VERBOSE :
+			formatter = &ResultSetFormatterVerbose ;
+			break ;
+
+		case FORMATTER_COMPACT :
+			formatter = &ResultSetFormatterCompact ;
+			break ;
+
+		case FORMATTER_BOLT :
+			formatter = &ResultSetFormatterBolt ;
+			break ;
+
+		default :
+			RedisModule_Assert (false && "Unknown formatter") ;
 	}
 
-	return formatter;
+	return formatter ;
 }
 

@@ -17,9 +17,9 @@
 
 typedef struct {
 	OpBase op;                 // the base operation
-	uint64_t rec_idx;          // emit record index
-	Record *records;           // array of Records created by this operation
-	PendingCreations pending;  // container struct for all graph changes to be committed
+	uint64_t batch_idx;        // emit batch index
+	RecordBatch *batches;      // array of batches
+	PendingCreations pending;  // container for all changes to be committed
 } OpCreate;
 
 OpBase *NewCreateOp
