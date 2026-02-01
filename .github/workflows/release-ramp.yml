@@ -25,6 +25,9 @@ jobs:
     if: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v')) || (github.event_name == 'workflow_dispatch' && startsWith(github.event.inputs.tag, 'v')) }}
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
       - name: Set SEMVER and TAG
         id: set_semver
         run: |

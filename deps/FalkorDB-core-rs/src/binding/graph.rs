@@ -126,6 +126,7 @@ extern "C" {
         g: *mut Graph,
         edges: *mut Edge,
         count: u64,
+        implicit: bool
     );
     fn Graph_LabelNode(
         g: *mut Graph,
@@ -238,7 +239,7 @@ impl GraphAPI {
         count: u64,
     ) {
         unsafe {
-            Graph_DeleteEdges(self.graph, edges, count);
+            Graph_DeleteEdges(self.graph, edges, count, false);
         }
     }
     pub fn label_node(

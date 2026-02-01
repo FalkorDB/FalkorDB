@@ -187,6 +187,39 @@ static JSValue js_edge_source
 	return UDF_CreateNode (js_ctx, &n) ;
 }
 
+// edge to json
+static JSValue js_edge_to_json
+(
+	JSContext *ctx,
+	JSValueConst this_val,
+	int argc,
+	JSValueConst *argv
+) {
+    // create a plain "data" object
+    JSValue obj = JS_NewObject (ctx) ;
+
+    // reuse existing getters to fill the data object
+    JS_SetPropertyStr (ctx, obj, "id",
+			JS_GetPropertyStr (ctx, this_val, "id")) ;
+
+    JS_SetPropertyStr (ctx, obj, "type",
+			JS_GetPropertyStr (ctx, this_val, "type")) ;
+
+    JS_SetPropertyStr (ctx, obj, "source",
+			JS_GetPropertyStr (ctx, this_val, "source")) ;
+
+    JS_SetPropertyStr (ctx, obj, "target",
+			JS_GetPropertyStr (ctx, this_val, "target")) ;
+
+    JS_SetPropertyStr (ctx, obj, "attributes",
+			JS_GetPropertyStr (ctx, this_val, "attributes")) ;
+
+    // debugging metadata
+    JS_SetPropertyStr (ctx, obj, "__type", JS_NewString (ctx, "Edge")) ;
+
+    return obj ;
+}
+
 //------------------------------------------------------------------------------
 // edge object creation
 //------------------------------------------------------------------------------
@@ -256,7 +289,9 @@ static const JSCFunctionListEntry edge_proto_func_list[] = {
 	JS_CGETSET_DEF ("type",       js_edge_type,            NULL),
 	JS_CGETSET_DEF ("source",     js_edge_source,          NULL),
 	JS_CGETSET_DEF ("target",     js_edge_target,          NULL),
-	JS_CGETSET_DEF ("attributes", UDF_EntityGetAttributes, NULL)
+	JS_CGETSET_DEF ("attributes", UDF_EntityGetAttributes, NULL),
+
+	JS_CFUNC_DEF ("toJSON", 0, js_edge_to_json)
 } ;
 
 void UDF_RegisterEdgeProto
@@ -269,7 +304,7 @@ void UDF_RegisterEdgeProto
     JSValue proto = JS_NewObject (js_ctx) ;
 
     int res =
-		JS_SetPropertyFunctionList (js_ctx, proto, edge_proto_func_list, 5) ;
+		JS_SetPropertyFunctionList (js_ctx, proto, edge_proto_func_list, 6) ;
 	ASSERT (res == 0) ;
 
     JS_SetClassProto (js_ctx, js_edge_class_id, proto) ;

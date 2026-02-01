@@ -29,35 +29,35 @@ jobs:
 
     - name: Cache GraphBLAS
       id: cache_graphblas
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ./bin/linux-x64-debug-asan/GraphBLAS
         key: graphblas-sanitizer-llvm-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
 
     - name: Cache parser
       id: cache_parser
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ./bin/linux-x64-debug-asan/libcypher-parser
         key: parser-sanitizer-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
     - name: Cache search
       id: cache_search
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ./bin/linux-x64-debug-asan/search-static
         key: search-sanitizer-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
     - name: Cache libcurl
       id: cache_libcurl
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ./bin/linux-x64-debug-asan/libcurl
         key: libcurl-sanitizer-llvm-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}
 
     - name: Cache libcsv
       id: cache_libcsv
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ./bin/linux-x64-debug-asan/libcsv
         key: libcsv-sanitizer-llvm-${{ hashFiles('./deps/libcsv/ChangeLog') }}
@@ -86,7 +86,7 @@ jobs:
       run: make unit-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@v5
+    - uses: actions/upload-artifact@v6
       with:
         name: Upload unit tests logs
         path: ${{ github.workspace }}/tests/unit/logs/
@@ -99,7 +99,7 @@ jobs:
         make flow-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@v5
+    - uses: actions/upload-artifact@v6
       with:
         name: Upload flow tests logs
         path: ${{ github.workspace }}/tests/flow/logs/
@@ -112,7 +112,7 @@ jobs:
         make tck-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@v5
+    - uses: actions/upload-artifact@v6
       with:
         name: Upload TCK tests logs
         path: ${{ github.workspace }}/tests/tck/logs/
