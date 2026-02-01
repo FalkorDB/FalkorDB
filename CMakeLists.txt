@@ -58,16 +58,24 @@ function(setup_shared_object_target TARGET OUTPUT_NAME)
     set_target_properties(${TARGET} PROPERTIES PREFIX "")
     set_target_properties(${TARGET} PROPERTIES SUFFIX ".so")
 
-    add_target_linker_flags(${TARGET} "-Wl,--enable-new-dtags -Wl,-rpath,\$ORIGIN")
+    if(APPLE)
+        # macOS uses two-level namespace by default, which prevents symbol interposition
+        add_target_linker_flags(${TARGET} "-undefined dynamic_lookup")
+    else()
+        # -Bsymbolic: Resolve internal references to global symbols locally, preventing
+        # symbol interposition from the host process (Redis). This is critical because
+        # RediSearch has its own dict implementation with the same symbol names as Redis's
+        # internal dict (dictCreate, dictAdd, etc.), but with a different dictType structure.
+        # Without -Bsymbolic, RediSearch's code would call Redis's dict functions instead
+        # of its own, causing crashes due to ABI incompatibility (Redis 8.x dictType has
+        # more fields than RediSearch's dictType).
+        add_target_linker_flags(${TARGET} "-Wl,--enable-new-dtags -Wl,-rpath,\$ORIGIN -Wl,-Bsymbolic")
+    endif()
 
     if("${OUTPUT_NAME}" STREQUAL "")
         set(OUTPUT_NAME "${TARGET}")
     endif()
     set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME "${OUTPUT_NAME}")
-
-    if(APPLE)
-        set_target_properties(${TARGET} PROPERTIES LINK_FLAGS "-undefined dynamic_lookup")
-    endif()
 endfunction()
 
 #-----------------------------------------------------------------------------
