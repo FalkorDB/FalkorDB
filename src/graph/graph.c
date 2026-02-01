@@ -527,28 +527,28 @@ static void _GetIncomingNodeEdges
 	bool skip_self_edges,  // skip self referencing edges
 	Edge **edges           // [output] array of edges
 ) {
-	ASSERT(g);
-	ASSERT(n);
-	ASSERT(edges);
-	ASSERT(r != GRAPH_NO_RELATION && r != GRAPH_UNKNOWN_RELATION);
+	ASSERT (g     != NULL) ;
+	ASSERT (n     != NULL) ;
+	ASSERT (edges != NULL) ;
+	ASSERT (r != GRAPH_NO_RELATION && r != GRAPH_UNKNOWN_RELATION) ;
 
-	TensorIterator it;
-	Tensor T       = Graph_GetRelationMatrix(g, r, false);
-	NodeID src_id  = INVALID_ENTITY_ID;
-	NodeID dest_id = ENTITY_GET_ID(n);
+	TensorIterator it ;
+	Tensor T       = Graph_GetRelationMatrix (g, r, false) ;
+	NodeID src_id  = INVALID_ENTITY_ID ;
+	NodeID dest_id = ENTITY_GET_ID (n) ;
 
-	Edge e = {.dest_id = dest_id, .relationID = r};
+	Edge e = {.dest_id = dest_id, .relationID = r} ;
 
-	TensorIterator_ScanRange(&it, T, dest_id, dest_id, true);
-	while(TensorIterator_next(&it, &e.src_id, NULL, &e.id, NULL)) {
+	TensorIterator_ScanRange (&it, T, dest_id, dest_id, true) ;
+	while (TensorIterator_next (&it, &e.src_id, NULL, &e.id, NULL)) {
 		// skip self edges
-		if(skip_self_edges && e.src_id == e.dest_id) {
-			continue;
+		if (skip_self_edges && e.src_id == e.dest_id) {
+			continue ;
 		}
 
-		e.attributes = DataBlock_GetItem(g->edges, e.id);
-		ASSERT(e.attributes);
-		array_append(*edges, e);
+		e.attributes = DataBlock_GetItem (g->edges, e.id) ;
+		ASSERT (e.attributes) ;
+		array_append (*edges, e) ;
 	}
 }
 
@@ -1051,33 +1051,35 @@ void Graph_CreateEdges
 // clears connections from the graph by updating relevent matrices
 void Graph_ClearConnections
 (
-	Graph *g,     // graph to update
-	Edge *edges,  // edges to clear
-	uint64_t n    // number of edges
+	Graph *g,      // graph to update
+	Edge *edges,   // edges to clear
+	uint64_t n,    // number of edges
+	bool implicit  // edge deleted due to node deletion
 );
 
 // deletes edges from the graph
 void Graph_DeleteEdges
 (
-	Graph *g,     // graph to delete edges from
-	Edge *edges,  // edges to delete
-	uint64_t n    // number of edges
+	Graph *g,      // graph to delete edges from
+	Edge *edges,   // edges to delete
+	uint64_t n,    // number of edges
+	bool implicit  // edge deleted due to node deletion
 ) {
-	ASSERT(n     > 0);
-	ASSERT(g     != NULL);
-	ASSERT(edges != NULL);
+	ASSERT (n     > 0) ;
+	ASSERT (g     != NULL) ;
+	ASSERT (edges != NULL) ;
 
-	for(uint64_t i = 0; i < n; i++) {
+	for (uint64_t i = 0; i < n; i++) {
 		Edge *e = edges + i;
 
 		// make sure edge isn't already deleted
-		ASSERT(!DataBlock_ItemIsDeleted((void *)e->attributes));
+		ASSERT (!DataBlock_ItemIsDeleted ((void *)e->attributes)) ;
 
-		EdgeID id = ENTITY_GET_ID(e);
-		DataBlock_DeleteItem(g->edges, id);
+		EdgeID id = ENTITY_GET_ID (e) ;
+		DataBlock_DeleteItem (g->edges, id) ;
 	}
 
-	Graph_ClearConnections(g, edges, n);
+	Graph_ClearConnections (g, edges, n, implicit) ;
 }
 
 // returns true if the given entity has been deleted
@@ -1429,12 +1431,12 @@ void Graph_GetNodeEdges
 
 	if(incoming) {
 		if(r != GRAPH_NO_RELATION) {
-			_GetIncomingNodeEdges(g, n, r, skip_self_edges, edges);
+			_GetIncomingNodeEdges (g, n, r, skip_self_edges, edges) ;
 		} else {
 			// relation type missing, scan through each edge type
-			int relationCount = Graph_RelationTypeCount(g);
+			int relationCount = Graph_RelationTypeCount (g) ;
 			for(int i = 0; i < relationCount; i++) {
-				_GetIncomingNodeEdges(g, n, i, skip_self_edges, edges);
+				_GetIncomingNodeEdges (g, n, i, skip_self_edges, edges) ;
 			}
 		}
 	}
@@ -1513,33 +1515,32 @@ uint Graph_GetNodeLabels
 	uint label_count  // size of labels array
 ) {
 	// validate inputs
-	ASSERT(g      != NULL);
-	ASSERT(n      != NULL);
-	ASSERT(labels != NULL);
+	ASSERT (g      != NULL) ;
+	ASSERT (n      != NULL) ;
+	ASSERT (labels != NULL) ;
 
-	GrB_Info res;
-	UNUSED(res);
+	Delta_Matrix M = Graph_GetNodeLabelMatrix (g) ;
 
-	Delta_Matrix M = Graph_GetNodeLabelMatrix(g);
+	EntityID id = ENTITY_GET_ID (n) ;
+	Delta_MatrixTupleIter iter ;
+	GrB_OK (Delta_MatrixTupleIter_AttachRange (&iter, M, id, id)) ;
 
-	EntityID id = ENTITY_GET_ID(n);
-	Delta_MatrixTupleIter iter;
-	res = Delta_MatrixTupleIter_AttachRange(&iter, M, id, id);
-	ASSERT(res == GrB_SUCCESS);
+	uint i = 0 ;  // number of labels associated with n
 
-	uint i = 0;
+	for (; i < label_count; i++) {
+		GrB_Index col ;
+		GrB_Info info =
+			Delta_MatrixTupleIter_next_BOOL (&iter, NULL, &col, NULL) ;
+		labels[i] = col ;
 
-	for(; i < label_count; i++) {
-		GrB_Index col;
-		res = Delta_MatrixTupleIter_next_BOOL(&iter, NULL, &col, NULL);
-		labels[i] = col;
-
-		if(res == GxB_EXHAUSTED) break;
+		if (info == GxB_EXHAUSTED) {
+			break ;
+		}
 	}
 
-	Delta_MatrixTupleIter_detach(&iter);
+	Delta_MatrixTupleIter_detach (&iter) ;
 
-	return i;
+	return i ;
 }
 
 // retrieves the adjacency matrix
@@ -1635,6 +1636,45 @@ Delta_Matrix Graph_GetZeroMatrix
 #endif
 
 	return z;
+}
+
+void Graph_PrintMatrices
+(
+	Graph *g
+) {
+	ASSERT (g != NULL) ;
+
+	printf ("labels matrix\n") ;
+	Delta_Matrix lbls = Graph_GetNodeLabelMatrix (g) ;
+	Delta_Matrix_wait (lbls, true) ;
+	GrB_Matrix M = Delta_Matrix_M (lbls) ;
+	GxB_print (M, GxB_COMPLETE_VERBOSE) ;
+
+	printf ("label matrices\n") ;
+	uint32_t n = array_len (g->labels) ;
+	for (uint32_t i = 0; i < n; i++) {
+		printf("\t label: %d\n", i) ;
+		Delta_Matrix L = Graph_GetLabelMatrix (g, i) ;
+		Delta_Matrix_wait (L, true) ;
+		M = Delta_Matrix_M (L) ;
+		GxB_print (M, GxB_COMPLETE_VERBOSE) ;
+	}
+
+	printf ("adjacency matrix\n") ;
+	Delta_Matrix ADJ = Graph_GetAdjacencyMatrix (g, false) ;
+	Delta_Matrix_wait (ADJ, true) ;
+	M = Delta_Matrix_M (ADJ) ;
+	GxB_print (M, GxB_COMPLETE_VERBOSE) ;
+
+	printf ("relation matrices\n") ;
+	n = Graph_RelationTypeCount (g) ;
+	for (uint32_t i = 0; i < n; i++) {
+		printf("\t relation: %d\n", i) ;
+		Delta_Matrix R = Graph_GetRelationMatrix (g, i, false) ;
+		Delta_Matrix_wait (R, true) ;
+		M = Delta_Matrix_M (R) ;
+		GxB_print (M, GxB_COMPLETE_VERBOSE) ;
+	}
 }
 
 static void _Graph_Free

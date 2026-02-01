@@ -208,7 +208,7 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
             // from phase1a:
             TaskList, R_ntasks, R_nthreads,
             // from phase0:
-            Rnvec, Rh, R_to_M, R_to_C, R_to_Z, Rp_is_32, Rj_is_32,
+            Rnvec, Rh, R_to_M, R_to_C, R_to_Z, Rp_is_32, Rj_is_32, R_sparsity,
             // original input:
             M, Mask_comp, Mask_struct, C, Z, Werk) ;
         if (info != GrB_SUCCESS)
