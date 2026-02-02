@@ -1003,14 +1003,11 @@ static void _GraphContext_Free
 	GraphContext *gc = (GraphContext *)arg;
 	uint len;
 
-	// disable matrix synchronization for graph deletion
-	Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
-
-	if(gc->decoding_context == NULL ||
-			GraphDecodeContext_Finished(gc->decoding_context)) {
-		Graph_Free(gc->g);
+	if (gc->decoding_context == NULL ||
+			GraphDecodeContext_Finished (gc->decoding_context)) {
+		Graph_Free (gc->g) ;
 	} else {
-		Graph_PartialFree(gc->g);
+		Graph_PartialFree (gc->g) ;
 	}
 
 	// Redis main thread is 0

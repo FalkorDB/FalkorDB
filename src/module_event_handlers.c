@@ -45,7 +45,7 @@ extern RedisModuleType *GraphMetaRedisModuleType;
 uint aux_field_counter = 0 ;
 
 // holds the id of the Redis Main thread in order to figure out the context the fork is running on
-static pthread_t redis_main_thread_id;
+pthread_t redis_main_thread_id;
 
 // this callback invokes once rename for a graph is done
 // since the key value is a graph context
@@ -577,9 +577,6 @@ static void _AfterForkChild() {
 	Globals_ScanGraphs (&it) ;
 
 	while ((gc = GraphIterator_Next (&it)) != NULL) {
-		// matrices should be synced, don't waste time
-		Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_NOP) ;
-
 		// decrease graph context ref count
 		GraphContext_DecreaseRefCount (gc) ;
 	}

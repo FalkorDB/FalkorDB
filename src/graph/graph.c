@@ -12,6 +12,8 @@
 #include "delta_matrix/delta_matrix_iter.h"
 #include "../util/datablock/oo_datablock.h"
 
+extern pthread_t redis_main_thread_id;
+
 //------------------------------------------------------------------------------
 // Synchronization functions
 //------------------------------------------------------------------------------
@@ -63,11 +65,11 @@ void Graph_AcquireWriteLock
 (
 	Graph *g
 ) {
-	ASSERT(g != NULL);
-	ASSERT(g->_writelocked == false);
+	ASSERT (g != NULL) ;
+	ASSERT (g->_writelocked == false) ;
 
-	pthread_rwlock_wrlock(&g->_rwlock);
-	g->_writelocked = true;
+	pthread_rwlock_wrlock (&g->_rwlock) ;
+	g->_writelocked = true ;
 }
 
 // acquire the graph write lock with a timeout
@@ -102,7 +104,7 @@ void Graph_ReleaseLock
 (
 	Graph *g
 ) {
-	ASSERT(g != NULL);
+	ASSERT (g != NULL) ;
 
 	// set _writelocked to false BEFORE unlocking
 	// if this is a reader thread no harm done,
@@ -111,8 +113,12 @@ void Graph_ReleaseLock
 	// for a reader thread to be considered as writer, performing illegal access to
 	// underline matrices, consider a context switch after unlocking `_rwlock` but
 	// before setting `_writelocked` to false
-	g->_writelocked = false;
-	pthread_rwlock_unlock(&g->_rwlock);
+	g->_writelocked = false ;
+
+	// set default synchronization behavior
+	Graph_SetMatrixPolicy (g, SYNC_POLICY_FLUSH_RESIZE) ;
+
+	pthread_rwlock_unlock (&g->_rwlock) ;
 }
 
 //------------------------------------------------------------------------------
@@ -181,16 +187,21 @@ void _MatrixResizeToCapacity
 	GrB_Index nrows,  // # of rows for the resize
 	GrB_Index ncols   // # of columns for the resize
 ) {
-	GrB_Index n_rows;
-	GrB_Index n_cols;
-	Delta_Matrix_nrows(&n_rows, M);
-	Delta_Matrix_ncols(&n_cols, M);
+	// resize sync policy should be used only by writers or Redis main thread
+	// e.g. while loading an RDB
+	ASSERT (g->_writelocked == true ||
+			pthread_equal (pthread_self (), redis_main_thread_id)) ;
+
+	GrB_Index n_rows ;
+	GrB_Index n_cols ;
+	Delta_Matrix_nrows (&n_rows, M) ;
+	Delta_Matrix_ncols (&n_cols, M) ;
 
 	// this policy should only be used in a thread-safe context,
 	// so no locking is required
-	if(n_rows < nrows || n_cols < ncols) {
-		GrB_Info res = Delta_Matrix_resize(M, nrows, ncols);
-		ASSERT(res == GrB_SUCCESS);
+	if (n_rows < nrows || n_cols < ncols) {
+		GrB_Info res = Delta_Matrix_resize (M, nrows, ncols) ;
+		ASSERT (res == GrB_SUCCESS) ;
 	}
 }
 
@@ -202,7 +213,12 @@ void _MatrixNOP
 	GrB_Index nrows,  // # of rows for the resize
 	GrB_Index ncols   // # of columns for the resize
 ) {
-	return;
+	// resize sync policy should be used only by writers or Redis main thread
+	// e.g. while loading an RDB
+	ASSERT (g->_writelocked == true ||
+			pthread_equal (pthread_self (), redis_main_thread_id)) ;
+
+	return ;
 }
 
 // retrieve graph matrix synchronization policy
@@ -233,23 +249,35 @@ MATRIX_POLICY Graph_SetMatrixPolicy
 	Graph *g,
 	MATRIX_POLICY policy
 ) {
-	MATRIX_POLICY prev_policy = Graph_GetMatrixPolicy(g);
+	MATRIX_POLICY prev_policy = Graph_GetMatrixPolicy (g) ;
 
-	switch(policy) {
+	switch (policy) {
 		case SYNC_POLICY_FLUSH_RESIZE:
-			// Default behavior; forces execution of pending GraphBLAS operations
-			// when appropriate and sizes matrices to the current node count.
-			g->SynchronizeMatrix = _MatrixSynchronize;
-			break;
+			// default behavior
+			// forces execution of pending GraphBLAS operations
+			// when appropriate and sizes matrices to the current node count
+			g->SynchronizeMatrix = _MatrixSynchronize ;
+			break ;
+
 		case SYNC_POLICY_RESIZE:
-			// Bulk insertion and creation behavior; does not force pending operations
-			// and resizes matrices to the graph's current node capacity.
-			g->SynchronizeMatrix = _MatrixResizeToCapacity;
-			break;
+			// bulk insertion and creation behavior
+			// does not force pending operations
+			// resizes matrices to the graph's current node capacity
+			ASSERT (g->_writelocked == true ||
+			pthread_equal (pthread_self (), redis_main_thread_id)) ;
+
+			g->SynchronizeMatrix = _MatrixResizeToCapacity ;
+			break ;
+
 		case SYNC_POLICY_NOP:
-			// Used when deleting or freeing a graph; forces no matrix updates or resizes.
-			g->SynchronizeMatrix = _MatrixNOP;
-			break;
+			// used when deleting or freeing a graph
+			// forces no matrix updates or resizes
+			ASSERT (g->_writelocked == true ||
+			pthread_equal (pthread_self (), redis_main_thread_id)) ;
+
+			g->SynchronizeMatrix = _MatrixNOP ;
+			break ;
+
 		default:
 			ASSERT(false);
 	}
@@ -557,16 +585,16 @@ static void _Graph_FreeRelationMatrices
 (
 	const Graph *g
 ) {
-	uint n = Graph_RelationTypeCount(g);
+	uint n = Graph_RelationTypeCount (g) ;
 
-	for(uint i = 0; i < n; i++) {
+	for (uint i = 0; i < n; i++) {
 		// in case relation contains multi-edges free tensor
 		// otherwise treat the relation matrix as a regular 2D matrix
 		// which is a bit faster to free
-		if(Graph_RelationshipContainsMultiEdge(g, i)) {
-			Tensor_free(g->relations + i);
+		if (Graph_RelationshipContainsMultiEdge (g, i)) {
+			Tensor_free (g->relations + i) ;
 		} else {
-			Delta_Matrix_free(g->relations + i);
+			Delta_Matrix_free (g->relations + i) ;
 		}
 	}
 }
@@ -1682,53 +1710,60 @@ static void _Graph_Free
 	Graph *g,
 	bool is_full_graph
 ) {
-	ASSERT(g);
+	ASSERT (g != NULL) ;
+
 	// free matrices
-	AttributeSet *set;
-	DataBlockIterator *it;
+	AttributeSet *set ;
+	DataBlockIterator *it ;
 
-	Delta_Matrix_free(&g->_zero_matrix);
-	Delta_Matrix_free(&g->adjacency_matrix);
+	Delta_Matrix_free (&g->_zero_matrix) ;
+	Delta_Matrix_free (&g->adjacency_matrix) ;
 
-	_Graph_FreeRelationMatrices(g);
-	array_free(g->relations);
+	_Graph_FreeRelationMatrices (g) ;
+	array_free (g->relations) ;
 
-	uint32_t labelCount = array_len(g->labels);
-	for(int i = 0; i < labelCount; i++) Delta_Matrix_free(&g->labels[i]);
-	array_free(g->labels);
-	Delta_Matrix_free(&g->node_labels);
+	uint32_t labelCount = array_len (g->labels) ;
+	for (int i = 0 ; i < labelCount ; i++) {
+		Delta_Matrix_free (&g->labels[i]) ;
+	}
 
-	it = is_full_graph ? Graph_ScanNodes(g) : DataBlock_FullScan(g->nodes);
-	while((set = (AttributeSet *)DataBlockIterator_Next(it, NULL)) != NULL) {
-		if(*set != NULL) {
-			AttributeSet_Free(set);
+	array_free (g->labels) ;
+	Delta_Matrix_free (&g->node_labels) ;
+
+	it = is_full_graph ? Graph_ScanNodes(g) : DataBlock_FullScan (g->nodes) ;
+	while ((set = (AttributeSet *)DataBlockIterator_Next (it, NULL)) != NULL) {
+		if (*set != NULL) {
+			AttributeSet_Free (set) ;
 		}
 	}
-	DataBlockIterator_Free(it);
+	DataBlockIterator_Free (it) ;
 
-	it = is_full_graph ? Graph_ScanEdges(g) : DataBlock_FullScan(g->edges);
-	while((set = DataBlockIterator_Next(it, NULL)) != NULL) {
-		if(*set != NULL) {
-			AttributeSet_Free(set);
+	it = is_full_graph ? Graph_ScanEdges (g) : DataBlock_FullScan (g->edges) ;
+	while ((set = DataBlockIterator_Next (it, NULL)) != NULL) {
+		if (*set != NULL) {
+			AttributeSet_Free (set) ;
 		}
 	}
-	DataBlockIterator_Free(it);
+	DataBlockIterator_Free (it) ;
 
 
 	// free blocks
-	DataBlock_Free(g->nodes);
-	DataBlock_Free(g->edges);
+	DataBlock_Free (g->nodes) ;
+	DataBlock_Free (g->edges) ;
 
-	GraphStatistics_FreeInternals(&g->stats);
+	GraphStatistics_FreeInternals (&g->stats) ;
 
-	int res;
-	UNUSED(res);
+	int res ;
+	UNUSED (res) ;
 
-	if(g->_writelocked) Graph_ReleaseLock(g);
-	res = pthread_rwlock_destroy(&g->_rwlock);
-	ASSERT(res == 0);
+	if (g->_writelocked) {
+		Graph_ReleaseLock (g) ;
+	}
 
-	rm_free(g);
+	res = pthread_rwlock_destroy (&g->_rwlock) ;
+	ASSERT (res == 0) ;
+
+	rm_free (g) ;
 }
 
 void Graph_PartialFree
