@@ -1408,12 +1408,16 @@ run_unit_tests() {
         return 1
     fi
 
-    # Run Rust unit tests
-    log_info "Running Rust unit tests..."
-    if ! cargo test --lib --target-dir "$FalkorDBRS_BINDIR"; then
-        log_error "Rust unit tests failed"
-        end_group
-        return 1
+    # Run Rust unit tests (skip when running with sanitizer - Rust tests have different ASAN setup)
+    if [[ -n "$SAN" ]]; then
+        log_info "Skipping Rust unit tests (sanitizer mode)"
+    else
+        log_info "Running Rust unit tests..."
+        if ! cargo test --lib --target-dir "$FalkorDBRS_BINDIR"; then
+            log_error "Rust unit tests failed"
+            end_group
+            return 1
+        fi
     fi
 
     log_success "All unit tests passed"

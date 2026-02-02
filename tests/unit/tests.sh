@@ -42,6 +42,8 @@ sanitizer_defs() {
 		ASAN_LOG=${LOGS_DIR}/${TEST_NAME}.asan.log
 		export ASAN_OPTIONS="detect_odr_violation=0:halt_on_error=0::detect_leaks=1:log_path=${ASAN_LOG}"
 		export LSAN_OPTIONS="suppressions=$ROOT/tests/memcheck/asan.supp:use_tls=0"
+		# Set SANITIZER env var for tests that check it to skip
+		export SANITIZER=1
 	fi
 }
 
@@ -143,7 +145,8 @@ echo "# Running unit tests"
 TESTS_DIR="$(cd $BINROOT/tests/unit; pwd)"
 cd $ROOT/tests/unit
 if [[ -z $TEST ]]; then
-	for test in $(find $TESTS_DIR -name "test_*" -type f -print); do
+	# Find test executables - exclude CMakeFiles directory and .o/.d files
+	for test in $(find $TESTS_DIR -maxdepth 1 -name "test_*" -type f -print); do
 		if [[ ! -x $test ]]; then
 			continue
 		fi
