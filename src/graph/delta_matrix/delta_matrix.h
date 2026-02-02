@@ -129,6 +129,11 @@ Delta_Matrix Delta_Matrix_getTranspose
 	const Delta_Matrix C
 );
 
+bool Delta_Matrix_isDirty
+(
+	const Delta_Matrix C
+);
+
 // get the internal matrix M
 GrB_Matrix Delta_Matrix_M
 (

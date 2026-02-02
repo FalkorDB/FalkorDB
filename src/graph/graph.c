@@ -12,6 +12,12 @@
 #include "delta_matrix/delta_matrix_iter.h"
 #include "../util/datablock/oo_datablock.h"
 
+// assert caller can drop matrix sync policy from
+// SYNC_POLICY_FLUSH_RESIZE to either SYNC_POLICY_RESIZE or SYNC_POLICY_RESIZE
+#define ASSERT_ALLOW_POLICY_LOOSE()                               \
+ASSERT (g->_writelocked == true ||                                \
+		pthread_equal (pthread_self (), redis_main_thread_id)) ;
+
 extern pthread_t redis_main_thread_id;
 
 //------------------------------------------------------------------------------
@@ -99,6 +105,16 @@ int Graph_TimeAcquireWriteLock
 	return res ;
 }
 
+// returns rather or not graph is locked for writing
+bool Graph_IsWriteLocked
+(
+	const Graph *g
+) {
+	ASSERT (g != NULL) ;
+
+	return g->_writelocked ;
+}
+
 // Release the held lock
 void Graph_ReleaseLock
 (
@@ -176,7 +192,7 @@ void _MatrixSynchronize
 	GrB_Index nrows,  // # of rows for the resize
 	GrB_Index ncols   // # of columns for the resize
 ) {
-	Delta_Matrix_synchronize(M, nrows, ncols);
+	Delta_Matrix_synchronize (M, nrows, ncols) ;
 }
 
 // resize matrix to node capacity
@@ -189,8 +205,7 @@ void _MatrixResizeToCapacity
 ) {
 	// resize sync policy should be used only by writers or Redis main thread
 	// e.g. while loading an RDB
-	ASSERT (g->_writelocked == true ||
-			pthread_equal (pthread_self (), redis_main_thread_id)) ;
+	ASSERT_ALLOW_POLICY_LOOSE () ;
 
 	GrB_Index n_rows ;
 	GrB_Index n_cols ;
@@ -215,8 +230,7 @@ void _MatrixNOP
 ) {
 	// resize sync policy should be used only by writers or Redis main thread
 	// e.g. while loading an RDB
-	ASSERT (g->_writelocked == true ||
-			pthread_equal (pthread_self (), redis_main_thread_id)) ;
+	ASSERT_ALLOW_POLICY_LOOSE () ;
 
 	return ;
 }
@@ -263,8 +277,7 @@ MATRIX_POLICY Graph_SetMatrixPolicy
 			// bulk insertion and creation behavior
 			// does not force pending operations
 			// resizes matrices to the graph's current node capacity
-			ASSERT (g->_writelocked == true ||
-			pthread_equal (pthread_self (), redis_main_thread_id)) ;
+			ASSERT_ALLOW_POLICY_LOOSE () ;
 
 			g->SynchronizeMatrix = _MatrixResizeToCapacity ;
 			break ;
@@ -272,8 +285,7 @@ MATRIX_POLICY Graph_SetMatrixPolicy
 		case SYNC_POLICY_NOP:
 			// used when deleting or freeing a graph
 			// forces no matrix updates or resizes
-			ASSERT (g->_writelocked == true ||
-			pthread_equal (pthread_self (), redis_main_thread_id)) ;
+			ASSERT_ALLOW_POLICY_LOOSE () ;
 
 			g->SynchronizeMatrix = _MatrixNOP ;
 			break ;
@@ -331,86 +343,6 @@ void Graph_ApplyAllPending
 
 	// restore previous matrix sync policy
 	Graph_SetMatrixPolicy(g, policy);
-}
-
-// lock all matrices:
-// 1. adjacency matrix
-// 2. label matrices
-// 3. node labels matrix
-// 4. relation matrices
-//
-// currently only used just before forking for the purpose of
-// taking a snapshot
-void Graph_LockAllMatrices
-(
-	Graph *g  // graph to lock
-) {
-	ASSERT(g != NULL);
-
-	uint n = 0;  // length of matrices array
-
-	//--------------------------------------------------------------------------
-	// lock matrices
-	//--------------------------------------------------------------------------
-
-	// lock the adjacency matrix
-	Delta_Matrix_lock(g->adjacency_matrix);
-
-	// lock node labels matrix
-	Delta_Matrix_lock(g->node_labels);
-
-	// lock each label matrix
-	n = array_len(g->labels);
-	for(int i = 0; i < n; i ++) {
-		Delta_Matrix_lock(g->labels[i]);
-	}
-
-	// lock each relation matrix
-	n = array_len(g->relations);
-	for(int i = 0; i < n; i ++) {
-		Delta_Matrix_lock(g->relations[i]);
-	}
-}
-
-// the counter-part of GraphLockAllMatrices
-// unlocks all matrices:
-//
-// 1. adjacency matrix
-// 2. label matrices
-// 3. node labels matrix
-// 4. relation matrices
-//
-// currently only used after a fork had been issued on both
-// the parent and child processes
-void Graph_UnlockAllMatrices
-(
-	Graph *g  // graph to unlock
-) {
-	ASSERT(g != NULL);
-
-	uint n = 0;  // length of matrices array
-
-	//--------------------------------------------------------------------------
-	// unlock matrices
-	//--------------------------------------------------------------------------
-
-	// unlock the adjacency matrix
-	Delta_Matrix_unlock(g->adjacency_matrix);
-
-	// unlock node labels matrix
-	Delta_Matrix_unlock(g->node_labels);
-
-	// unlock each label matrix
-	n = array_len(g->labels);
-	for(int i = 0; i < n; i ++) {
-		Delta_Matrix_unlock(g->labels[i]);
-	}
-
-	// unlock each relation matrix
-	n = array_len(g->relations);
-	for(int i = 0; i < n; i ++) {
-		Delta_Matrix_unlock(g->relations[i]);
-	}
 }
 
 // checks to see if graph has pending operations
@@ -1764,6 +1696,67 @@ static void _Graph_Free
 	ASSERT (res == 0) ;
 
 	rm_free (g) ;
+}
+
+// check if a delta matrix is synced
+// 1. of the expected dimensions
+// 2. doesn't contains any pendding changes
+static inline bool is_matrix_synced
+(
+	Delta_Matrix A,   // matrix
+	GrB_Index nrows,  // expected number of rows
+	GrB_Index ncols   // expected number of columns
+) {
+	ASSERT (A != NULL) ;
+
+	GrB_Index _nrows, _ncols ;
+	// assuming GrB_OK handles error states internally
+	GrB_OK (Delta_Matrix_nrows (&_nrows, A)) ;
+	GrB_OK (Delta_Matrix_ncols (&_ncols, A)) ;
+
+	return !Delta_Matrix_isDirty (A) && (nrows == _nrows && ncols == _ncols) ;
+}
+
+// return true if all graph matrices are fully synced (not dirty)
+// and are of the expected dimensions
+bool Graph_Synced
+(
+	const Graph *g
+) {
+	ASSERT (g != NULL) ;
+
+	GrB_Index n = Graph_RequiredMatrixDim (g) ;
+
+	// check fixed matrices
+	if (!is_matrix_synced (g->node_labels, n, n)) {
+		return false ;
+	}
+
+	if (!is_matrix_synced (g->_zero_matrix, n, n)) {
+		return false ;
+	}
+
+	if (!is_matrix_synced (g->adjacency_matrix, n, n)) {
+		return false ;
+	}
+
+	// check label matrices array
+	int num_labels = array_len (g->labels) ;
+	for (int i = 0 ; i < num_labels ; i++) {
+		if (!is_matrix_synced (g->labels[i], n, n)) {
+			return false ;
+		}
+	}
+
+	// check relation matrices array
+	int num_relations = array_len (g->relations) ;
+	for (int i = 0 ; i < num_relations ; i++) {
+		if (!is_matrix_synced (g->relations[i], n, n)) {
+			return false ;
+		}
+	}
+
+	return true ;
 }
 
 void Graph_PartialFree
