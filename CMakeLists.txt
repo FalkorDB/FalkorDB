@@ -120,6 +120,12 @@ if(CMAKE_CC_FLAGS)
     add_compile_options(${CMAKE_CC_FLAGS_LIST})
 endif()
 
+# Disable strict aliasing optimization - required for RediSearch compatibility.
+# RediSearch code contains strict aliasing violations that cause undefined behavior
+# when compiled with -O2 or higher. This manifests as fulltext phrase queries
+# returning empty results. The original readies build system also uses this flag.
+add_compile_options(-fno-strict-aliasing)
+
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${CMAKE_LD_FLAGS} ${CMAKE_EXE_LD_FLAGS}")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${CMAKE_LD_FLAGS} ${CMAKE_SO_LD_FLAGS}")
 
