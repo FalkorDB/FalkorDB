@@ -11,10 +11,8 @@ ROOT=$(cd $HERE/../.. && pwd)
 
 export PYTHONUNBUFFERED=1
 
-VG_REDIS_VER=7.2
-VG_REDIS_SUFFIX=7.2
-SAN_REDIS_VER=7.2
-SAN_REDIS_SUFFIX=7.2
+# Redis version for testing (used for reference)
+REDIS_VER=8.0
 
 cd $HERE
 
@@ -153,6 +151,82 @@ setup_rltest() {
 
 #----------------------------------------------------------------------------------------------
 
+build_redis_with_sanitizer() {
+	local san_type=$1
+	local redis_dir="/tmp/redis-san-build"
+	local redis_version="8.0.0"
+	local ignorelist=$ROOT/tests/memcheck/redis.san-ignorelist
+	local build_log="/tmp/redis-san-build.log"
+
+	echo "Building Redis $redis_version with $san_type sanitizer..."
+
+	# Download and extract Redis if not already present
+	if [[ ! -d "$redis_dir" ]]; then
+		mkdir -p "$redis_dir"
+		cd /tmp
+		if [[ ! -f "redis-$redis_version.tar.gz" ]]; then
+			echo "Downloading Redis $redis_version..."
+			wget -q "https://github.com/redis/redis/archive/refs/tags/$redis_version.tar.gz" -O "redis-$redis_version.tar.gz"
+		fi
+		tar xzf "redis-$redis_version.tar.gz" -C "$redis_dir" --strip-components=1
+	fi
+
+	cd "$redis_dir"
+
+	# Clean previous build
+	make distclean > /dev/null 2>&1 || true
+
+	# Build with sanitizer flags
+	local build_result=0
+	if [[ $san_type == "address" ]]; then
+		local san_flags="-fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls"
+		if [[ -f "$ignorelist" ]]; then
+			san_flags="$san_flags -fsanitize-blacklist=$ignorelist"
+		fi
+
+		# Build dependencies first with sanitizer flags
+		echo "Building Redis dependencies with ASAN..."
+		make -C deps \
+			CC=clang \
+			CXX=clang++ \
+			CFLAGS="$san_flags" \
+			CXXFLAGS="$san_flags" \
+			hiredis linenoise lua fpconv fast_float \
+			>> "$build_log" 2>&1 || true
+
+		echo "Building Redis with CFLAGS: $san_flags"
+		make -j$(nproc) \
+			CC=clang \
+			CXX=clang++ \
+			OPTIMIZATION="-O1" \
+			MALLOC="libc" \
+			CFLAGS="$san_flags" \
+			CXXFLAGS="$san_flags" \
+			LDFLAGS="-fsanitize=address" \
+			>> "$build_log" 2>&1 || build_result=$?
+	fi
+
+	if [[ $build_result -ne 0 ]]; then
+		echo "Redis build failed. Last 50 lines of build log:"
+		tail -50 "$build_log"
+		cd "$ROOT"
+		return 1
+	fi
+
+	if [[ -f "$redis_dir/src/redis-server" ]]; then
+		REDIS_SERVER="$redis_dir/src/redis-server"
+		echo "Redis built successfully: $REDIS_SERVER"
+	else
+		echo "Failed to build Redis with sanitizer - redis-server binary not found"
+		echo "Last 50 lines of build log:"
+		tail -50 "$build_log"
+		cd "$ROOT"
+		return 1
+	fi
+
+	cd "$ROOT"
+}
+
 setup_clang_sanitizer() {
 	local ignorelist=$ROOT/tests/memcheck/redis.san-ignorelist
 	if ! grep THPIsEnabled $ignorelist &> /dev/null; then
@@ -170,20 +244,26 @@ setup_clang_sanitizer() {
 	RLTEST_SAN_ARGS="--sanitizer $SAN"
 
 	if [[ $SAN == addr || $SAN == address ]]; then
-		REDIS_SERVER=${REDIS_SERVER:-redis-server-asan-$SAN_REDIS_SUFFIX}
-		if ! command -v $REDIS_SERVER > /dev/null; then
-			echo "Warning: Redis not found for clang-asan. Please install redis-server manually."
-			# Note: getredis functionality not available without readies
+		# Build Redis with ASAN to detect memory issues in Redis<->module interactions
+		if [[ -z $REDIS_SERVER ]]; then
+			build_redis_with_sanitizer "address" || {
+				echo "Error: Failed to build Redis with ASAN."
+				exit 1
+			}
 		fi
 
 		export ASAN_OPTIONS="detect_odr_violation=0:halt_on_error=0:detect_leaks=1"
 		export LSAN_OPTIONS="suppressions=$ROOT/tests/memcheck/asan.supp:use_tls=0"
 
 	elif [[ $SAN == mem || $SAN == memory ]]; then
-		REDIS_SERVER=${REDIS_SERVER:-redis-server-msan-$SAN_REDIS_VER}
-		if ! command -v $REDIS_SERVER > /dev/null; then
-			echo "Warning: Redis not found for clang-msan. Please install redis-server manually."
-			# Note: getredis functionality not available without readies
+		# For MSAN, use regular redis-server (MSAN requires special libc build)
+		if [[ -z $REDIS_SERVER ]]; then
+			if command -v redis-server > /dev/null; then
+				REDIS_SERVER=redis-server
+			else
+				echo "Error: No redis-server found. Please install redis-server."
+				exit 1
+			fi
 		fi
 	fi
 }
@@ -202,10 +282,14 @@ setup_redis_server() {
 #----------------------------------------------------------------------------------------------
 
 setup_valgrind() {
-	REDIS_SERVER=${REDIS_SERVER:-redis-server-vg-$VG_REDIS_SUFFIX}
-	if ! is_command $REDIS_SERVER; then
-		echo "Warning: Redis not found for Valgrind. Please install redis-server manually."
-		# Note: getredis functionality not available without readies
+	# Use regular redis-server for valgrind tests
+	if [[ -z $REDIS_SERVER ]]; then
+		if command -v redis-server > /dev/null; then
+			REDIS_SERVER=redis-server
+		else
+			echo "Error: No redis-server found. Please install redis-server."
+			exit 1
+		fi
 	fi
 
 	if [[ $VG_LEAKS == 0 ]]; then
