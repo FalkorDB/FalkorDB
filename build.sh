@@ -485,7 +485,19 @@ setup_build_environment() {
     export ONIGURUMA="${ONIGURUMA_BINDIR}/libonig.a"
 
     # FalkorDB Rust
-    if [[ "$DEBUG" == "1" || -n "$SAN" || "$COV" == "1" ]]; then
+    # Note: When using sanitizer with nightly Rust, cargo builds with --target <triple>
+    # which changes the output path structure to include the target triple
+    if [[ -n "$SAN" ]] && rustup run nightly rustc --version &>/dev/null 2>&1; then
+        # Sanitizer build with nightly uses explicit target - determine the correct triple
+        local rust_target
+        if [[ "$ARCH" == "arm64v8" ]]; then
+            rust_target="aarch64-unknown-linux-gnu"
+        else
+            rust_target="x86_64-unknown-linux-gnu"
+        fi
+        export FalkorDBRS="${FalkorDBRS_BINDIR}/${rust_target}/debug/libFalkorDB_rs.a"
+    elif [[ "$DEBUG" == "1" || -n "$SAN" || "$COV" == "1" ]]; then
+        # Debug, coverage, or sanitizer fallback (without nightly)
         export FalkorDBRS="${FalkorDBRS_BINDIR}/debug/libFalkorDB_rs.a"
     else
         export FalkorDBRS="${FalkorDBRS_BINDIR}/release/libFalkorDB_rs.a"
@@ -1162,7 +1174,19 @@ build_falkordbrs() {
         if rustup run nightly rustc --version &>/dev/null; then
             cargo_cmd="cargo +nightly"
             rustflags="-Zsanitizer=${SAN}"
-            cargo_flags+=(--target x86_64-unknown-linux-gnu)
+            # Use the correct target triple for the current architecture
+            local rust_target
+            if [[ "$ARCH" == "arm64v8" ]]; then
+                rust_target="aarch64-unknown-linux-gnu"
+            else
+                rust_target="x86_64-unknown-linux-gnu"
+            fi
+            # Ensure the target's standard library is installed for nightly
+            if ! rustup +nightly target list --installed | grep -q "$rust_target"; then
+                log_info "Installing Rust nightly target: $rust_target"
+                rustup +nightly target add "$rust_target"
+            fi
+            cargo_flags+=(--target "$rust_target")
         else
             log_warn "Rust nightly toolchain not available, skipping sanitizer for Rust build"
             log_warn "Install with: rustup toolchain install nightly"

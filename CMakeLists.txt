@@ -105,6 +105,30 @@ if(DEFINED ENV{SAN})
     set(SANITIZER $ENV{SAN})
 endif()
 
+# Also accept SAN from CMake command line
+if(DEFINED SAN AND NOT DEFINED SANITIZER)
+    set(SANITIZER ${SAN})
+endif()
+
+# Handle sanitizer compile and link flags
+# This ensures all targets (including unit tests) are built with sanitizer support
+if(SANITIZER)
+    message("# Sanitizer enabled: ${SANITIZER}")
+    if(SANITIZER STREQUAL "address")
+        add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=address)
+    elseif(SANITIZER STREQUAL "memory")
+        add_compile_options(-fsanitize=memory -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=memory)
+    elseif(SANITIZER STREQUAL "thread")
+        add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=thread)
+    elseif(SANITIZER STREQUAL "undefined")
+        add_compile_options(-fsanitize=undefined -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=undefined)
+    endif()
+endif()
+
 #-----------------------------------------------------------------------------
 # Setup compiler options
 #-----------------------------------------------------------------------------
