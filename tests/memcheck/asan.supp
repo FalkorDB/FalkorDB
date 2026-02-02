@@ -9,3 +9,7 @@ leak:_UDFCtx_GetCtx
 leak:AR_FuncRegisterUDF
 leak:UDFCtx_RegisterLibrary
 leak:UDFCtx_RegisterFunction
+
+# Redis networking leaks at shutdown - client buffers not freed
+leak:readQueryFromClient
+leak:_sdsnewlen
