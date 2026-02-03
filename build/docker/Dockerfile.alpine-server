@@ -32,6 +32,8 @@ COPY --from=node /usr/local/bin/npm /usr/local/bin/npm
 COPY --from=node /usr/local/bin/npx /usr/local/bin/npx
 COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
 
+RUN npm install -g npm@^11.8.0
+
 # Copy the compiled FalkorDB module from the Alpine compiler
 COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 

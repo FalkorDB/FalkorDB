@@ -520,6 +520,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           header: "Trivy Vulnerability Scan Results for ${{ matrix.platform.suffix }}"
           message: |
+            Architecture: ${{ matrix.platform.suffix }}
             Trivy scan completed for the image built in this PR. Please review the attached report for details on any vulnerabilities found.
             If there are any high or critical severity vulnerabilities, please address them before merging.
             <details>
