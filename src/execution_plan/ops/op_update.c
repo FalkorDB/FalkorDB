@@ -111,8 +111,12 @@ static Record UpdateConsume
 	if (node_updates_count > 0 || edge_updates_count > 0) {
 		// done reading; we're not going to call Consume any longer
 		// there might be operations like "Index Scan" that need to free the
-		// index R/W lock - as such, free all ExecutionPlan operations up the chain.
+		// index R/W lock - as such
+		// free all ExecutionPlan operations up the chain
 		OpBase_PropagateReset (child) ;
+
+		// lock everything
+		QueryCtx_LockForCommit () ;
 
 		// in cases such as:
 		// MATCH (n) SET n:L
@@ -120,9 +124,6 @@ static Record UpdateConsume
 		if (node_updates_count > 0) {
 			ensureMatrixDim (op->gc, op->update_ctxs) ;
 		}
-
-		// lock everything
-		QueryCtx_LockForCommit () ;
 
 		CommitUpdates (op->gc, op->node_updates, ENTITY_NODE) ;
 		CommitUpdates (op->gc, op->edge_updates, ENTITY_EDGE) ;

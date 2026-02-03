@@ -11,20 +11,22 @@ static GraphContext *_GetOrCreateGraphContext
 (
 	char *graph_name
 ) {
-	GraphContext *gc = GraphContext_UnsafeGetGraphContext(graph_name);
-	if(gc == NULL) {
+	GraphContext *gc = GraphContext_UnsafeGetGraphContext (graph_name) ;
+	if (!gc) {
 		// new graph is being decoded
 		// inform the module and create new graph context
-		gc = GraphContext_New(graph_name);
+		gc = GraphContext_New (graph_name) ;
+
 		// while loading the graph
 		// minimize matrix realloc and synchronization calls
-		Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_RESIZE);
+		Graph_AcquireWriteLock (gc->g) ;
+		Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_RESIZE) ;
 	}
 
 	// free the name string, as it either not in used or copied
-	RedisModule_Free(graph_name);
+	RedisModule_Free (graph_name) ;
 
-	return gc;
+	return gc ;
 }
 
 // the first initialization of the graph data structure guarantees that
@@ -249,17 +251,17 @@ GraphContext *RdbLoadGraphContext_v14
 		GraphDecodeContext_AddMetaKey(gc->decoding_context, key_name);
 	}
 
-	if(GraphDecodeContext_Finished(gc->decoding_context)) {
-		Graph *g = gc->g;
+	if (GraphDecodeContext_Finished (gc->decoding_context)) {
+		Graph *g = gc->g ;
+
+		// release graph write lock
+		Graph_ReleaseLock (g) ;
 
 		// set the node label matrix
 		Serializer_Graph_SetNodeLabels(g);
 
 		// flush graph matrices
 		Graph_ApplyAllPending(g, true);
-
-		// revert to default synchronization behavior
-		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
 
 		uint rel_count   = Graph_RelationTypeCount(g);
 		uint label_count = Graph_LabelTypeCount(g);
