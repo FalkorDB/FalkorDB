@@ -464,22 +464,18 @@ static void _Graph_Copy
 	// child process will encode src graph to a file
 	// parent process will decode cloned graph from file
 
+	// acquire READ lock on gc
+	// we do not want to fork while the graph is modified
+	// might be redundant, see: GraphContext_LockForCommit
+	Graph_AcquireReadLock (gc->g) ;
+	Graph_ApplyAllPending (gc->g, false) ;  // flush all pending changes
+
 	int pid = -1;
 	while(pid == -1) {
 		// try to fork
 		RedisModule_ThreadSafeContextLock(ctx); // lock GIL
 
-		// acquire READ lock on gc
-		// we do not want to fork while the graph is modified
-		// might be redundant, see: GraphContext_LockForCommit
-		Graph_AcquireReadLock(gc->g);
-
 		pid = RedisModule_Fork (ForkDoneHandler, copy_ctx) ;
-		RedisModule_ThreadSafeContextUnlock (ctx) ;  // release GIL
-
-		// release graph READ lock
-		Graph_ReleaseLock(gc->g);
-
 		if(pid < 0) {
 			// failed to fork! retry in a bit
 			// go to sleep for 5.0ms
@@ -494,6 +490,12 @@ static void _Graph_Copy
 			// all done, Redis require us to call 'RedisModule_ExitFromChild'
 			RedisModule_ExitFromChild (res) ;
 			return ;
+		} else {
+			// managed to fork, in parent process
+			RedisModule_ThreadSafeContextUnlock (ctx) ;  // release GIL
+
+			// release graph READ lock
+			Graph_ReleaseLock (gc->g) ;
 		}
 	}
 
