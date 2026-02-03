@@ -1,27 +1,4 @@
-#include "tests/cpp_benchmarks/create_random.h"
-
-void rg_setup(const benchmark::State &state) {
-	// Initialize GraphBLAS.
-	RedisModule_Alloc   = malloc;
-	RedisModule_Realloc = realloc;
-	RedisModule_Calloc  = calloc;
-	RedisModule_Free    = free;
-	RedisModule_Strdup  = strdup;
-	LAGraph_Init(NULL);
-
-	Config_Option_set(Config_DELTA_MAX_PENDING_CHANGES,
-			"100000", NULL);
-	GrB_Global_set_INT32(GrB_GLOBAL, GxB_JIT_OFF, GxB_JIT_C_CONTROL);
-	GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
-	GxB_Global_Option_set(GxB_FORMAT, GxB_BY_ROW); // all matrices in CSR format
-	Global_GrB_Ops_Init();
-}
-
-void rg_teardown(const benchmark::State &state) {
-	Global_GrB_Ops_Free();
-	GrB_finalize();
-	// GrB_OK((GrB_Info) LAGraph_Finalize(NULL));
-}
+#include "micro_benchmarks.h"
 
 static void BM_delete_from_m(benchmark::State &state) {
 	Delta_Matrix A     = NULL;
@@ -147,11 +124,8 @@ static void BM_tensor_delete_batch(benchmark::State &state) {
 	Tensor_free(&A);
 }
 
-BENCHMARK(BM_delete_from_m)->Setup(rg_setup)->Teardown(rg_teardown);
-BENCHMARK(BM_delete_from_dp)->Setup(rg_setup)->Teardown(rg_teardown)->
-	Iterations(20000);
-BENCHMARK(BM_tensor_delete)->Setup(rg_setup)->Teardown(rg_teardown)->
-	Iterations(40000);
-BENCHMARK(BM_tensor_delete_batch)->Setup(rg_setup)->Teardown(rg_teardown)->
-	Iterations(4);
-BENCHMARK_MAIN();
+BENCHMARK(BM_delete_from_m);
+BENCHMARK(BM_delete_from_dp)->Iterations(20000);
+BENCHMARK(BM_tensor_delete)->Iterations(40000);
+BENCHMARK(BM_tensor_delete_batch)->Iterations(4);
+FDB_BENCHMARK_MAIN()

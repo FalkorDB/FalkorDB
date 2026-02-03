@@ -1,6 +1,6 @@
-#include "tests/cpp_benchmarks/create_random.h"
+#include "micro_benchmarks.h"
 
-void rg_setup(const benchmark::State &state) {
+void rg_setup() {
 	// Initialize GraphBLAS.
 	RedisModule_Alloc   = malloc;
 	RedisModule_Realloc = realloc;
@@ -17,10 +17,9 @@ void rg_setup(const benchmark::State &state) {
 	Global_GrB_Ops_Init();
 }
 
-void rg_teardown(const benchmark::State &state) {
+void rg_teardown() {
 	Global_GrB_Ops_Free();
-    GrB_finalize();
-    // GrB_OK((GrB_Info) LAGraph_Finalize(NULL));
+	GrB_OK((GrB_Info) LAGraph_Finalize(NULL));
 }
 
 static void BM_add_all(benchmark::State &state) {
@@ -80,8 +79,9 @@ static void BM_add_chain(benchmark::State &state) {
 	Delta_Matrix_free(&C);
 }
 
-BENCHMARK(BM_add_all)->Setup(rg_setup)->Teardown(rg_teardown)
-    ->Unit(benchmark::kMicrosecond)->Args({10000, 10000})->Iterations(1);
-BENCHMARK(BM_add_chain)->Setup(rg_setup)->Teardown(rg_teardown)
-    ->Unit(benchmark::kMicrosecond)->Args({10000, 10000})->Iterations(1);
-BENCHMARK_MAIN();
+BENCHMARK(BM_add_all)->Unit(benchmark::kMicrosecond)->Args({10000, 10000})
+	->Iterations(1);
+BENCHMARK(BM_add_chain)->Unit(benchmark::kMicrosecond)->Args({10000, 10000})
+	->Iterations(1);
+
+FDB_BENCHMARK_MAIN()

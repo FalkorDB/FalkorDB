@@ -1,4 +1,4 @@
-#include "tests/cpp_benchmarks/create_random.h"
+#include "micro_benchmarks.h"
 
 static void _fake_graph_context() {
 	GraphContext *gc = (GraphContext *)calloc(1, sizeof(GraphContext));
@@ -28,28 +28,11 @@ static void _fake_graph_context() {
 }
 
 void rg_setup(const benchmark::State &state) {
-	// Initialize GraphBLAS.
-	RedisModule_Alloc   = malloc;
-	RedisModule_Realloc = realloc;
-	RedisModule_Calloc  = calloc;
-	RedisModule_Free    = free;
-	RedisModule_Strdup  = strdup;
-	LAGraph_Init(NULL);
-
-	Config_Option_set(Config_DELTA_MAX_PENDING_CHANGES,
-			"100000", NULL);
-	GrB_Global_set_INT32(GrB_GLOBAL, GxB_JIT_OFF, GxB_JIT_C_CONTROL);
-	GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
-	GxB_Global_Option_set(GxB_FORMAT, GxB_BY_ROW); // all matrices in CSR format
-	Global_GrB_Ops_Init();
 	_fake_graph_context();
 }
 
 void rg_teardown(const benchmark::State &state) {
-	Global_GrB_Ops_Free();
-	GrB_finalize();
 	QueryCtx_Free();
-	// GrB_OK((GrB_Info) LAGraph_Finalize(NULL));
 }
 
 void BM_eval_add_chain(benchmark::State &state) {
@@ -205,4 +188,4 @@ BENCHMARK(BM_eval_mul_chain)->Setup(rg_setup)->Teardown(rg_teardown)
 //	   // ->Unit(benchmark::kMillisecond)->Args({0, 0})->Args({10000, 10000})
 //	   // ->Args({0, 10000})->Args({10000, 0})->Args({100, 100})->Args({0, 100})
 //	   // ->Args({100, 0});
-BENCHMARK_MAIN();
+FDB_BENCHMARK_MAIN()

@@ -1,27 +1,4 @@
-#include "tests/cpp_benchmarks/create_random.h"
-
-void rg_setup(const benchmark::State &state) {
-	// Initialize GraphBLAS.
-	RedisModule_Alloc   = malloc;
-	RedisModule_Realloc = realloc;
-	RedisModule_Calloc  = calloc;
-	RedisModule_Free    = free;
-	RedisModule_Strdup  = strdup;
-	LAGraph_Init(NULL);
-
-	Config_Option_set(Config_DELTA_MAX_PENDING_CHANGES,
-			"100000", NULL);
-    GrB_Global_set_INT32(GrB_GLOBAL, GxB_JIT_OFF, GxB_JIT_C_CONTROL);
-    GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
-	GxB_Global_Option_set(GxB_FORMAT, GxB_BY_ROW); // all matrices in CSR format
-	Global_GrB_Ops_Init();
-}
-
-void rg_teardown(const benchmark::State &state) {
-	Global_GrB_Ops_Free();
-    GrB_finalize();
-    // GrB_OK((GrB_Info) LAGraph_Finalize(NULL));
-}
+#include "micro_benchmarks.h"
 
 static void ArgGenerator(benchmark::internal::Benchmark* b) {
     std::vector<int> values = {0, 100, 10000};
@@ -91,8 +68,6 @@ static void BM_wait(benchmark::State &state) {
     Delta_Matrix_free(&A);
 }
 
-// BENCHMARK(BM_export)->Setup(rg_setup)->Teardown(rg_teardown)
-// 	->Unit(benchmark::kMillisecond)->Apply(ArgGenerator);
-BENCHMARK(BM_wait)->Setup(rg_setup)->Teardown(rg_teardown)
-    ->Unit(benchmark::kMillisecond)->Apply(ArgGenerator);
-BENCHMARK_MAIN();
+// BENCHMARK(BM_export)->Unit(benchmark::kMillisecond)->Apply(ArgGenerator);
+BENCHMARK(BM_wait)->Unit(benchmark::kMillisecond)->Apply(ArgGenerator);
+FDB_BENCHMARK_MAIN()

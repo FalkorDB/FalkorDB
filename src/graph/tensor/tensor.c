@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "tensor.h"
+#include "globals.h"
 #include "util/arr.h"
 #include "../delta_matrix/delta_utils.h"
 #include "../delta_matrix/delta_matrix.h"
@@ -749,9 +750,7 @@ void Tensor_ClearElements
 	//--------------------------------------------------------------------------
 
 	if (nvals > 0) {
-		GrB_UnaryOp unaryop = NULL;
-		GrB_OK (GrB_UnaryOp_new (&unaryop, _free_vectors, GrB_UINT64,
-					GrB_UINT64)) ;
+		GrB_UnaryOp unaryop = Global_GrB_Ops_Get()->free_tensors;
 
 		GrB_OK (GrB_Matrix_apply (C, NULL, NULL, unaryop, C, NULL)) ;
 		GrB_OK (GrB_free (&unaryop)) ;
@@ -879,11 +878,7 @@ void Tensor_free
 	GrB_Matrix M = Delta_Matrix_M(t);
 
 	// initialize unaryop only once
-	static GrB_UnaryOp unaryop = NULL;
-	if(unaryop == NULL) {
-		info = GrB_UnaryOp_new(&unaryop, _free_vectors, GrB_UINT64, GrB_UINT64);
-		ASSERT(info == GrB_SUCCESS);
-	}
+	GrB_UnaryOp unaryop = Global_GrB_Ops_Get()->free_tensors;
 
 	// apply _free_vectors on every entry of the tensor
 	info = GrB_Matrix_apply(M, NULL, NULL, unaryop, M, NULL);

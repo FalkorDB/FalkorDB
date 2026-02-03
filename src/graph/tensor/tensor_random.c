@@ -1,4 +1,12 @@
-#include "create_random.h"
+#include "tensor.h"
+#include "LAGraph.h"
+#include "LAGraphX.h"
+#include "src/globals.h"
+#include "util/simple_rand.h"
+#include "src/configuration/config.h"
+#include "src/graph/delta_matrix/delta_utils.h"
+#include "src/arithmetic/algebraic_expression.h"
+
 void Delta_Random_Matrix
 (
 	Delta_Matrix *A,
@@ -203,3 +211,4 @@ void Random_Tensor
 	GrB_OK (GrB_IndexUnaryOp_free(&select_op));
 	GrB_OK (GrB_Descriptor_free(&desc));
 }
+
