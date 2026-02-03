@@ -253,7 +253,7 @@ static GB_Global_struct GB_Global =
     .gpu_count = 0,                     // # of GPUs in the system
 
     // OpenMP locks
-    .lock_is_created = {0, 0, 0, 0},
+    .lock_is_created = {0, 0, 0, 0, 0, 0, 0, 0},    // of size GB_GLOBAL_NLOCKS
 } ;
 
 //==============================================================================

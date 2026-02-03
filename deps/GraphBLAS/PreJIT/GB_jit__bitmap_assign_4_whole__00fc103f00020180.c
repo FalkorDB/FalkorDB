@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__bitmap_assign_4_whole__00fc103f00020180.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.3.0, Timothy A. Davis, (c) 2017-2025,
+// SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -122,7 +122,7 @@ GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
     (*hash) = 0xad715613bd563dd0 ;
-    v [0] = 10 ; v [1] = 3 ; v [2] = 0 ;
+    v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = NULL ;

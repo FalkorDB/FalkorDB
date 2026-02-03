@@ -7,6 +7,7 @@
 #include "utils.h"
 #include "classes.h"
 #include "../query_ctx.h"
+#include "../datatypes/map.h"
 #include "../graph/entities/graph_entity.h"
 
 //------------------------------------------------------------------------------
@@ -102,6 +103,38 @@ static int js_attributes_get_property
 	return 1 ;
 }
 
+// attribute-set to json
+static JSValue js_attributes_to_json
+(
+	JSContext *ctx,
+	JSValueConst this_val,
+	int argc,
+	JSValueConst *argv
+) {
+    // create a plain "data" object
+    JSValue obj = JS_NewObject (ctx) ;
+
+	GraphEntity *e = JS_GetOpaque (this_val, js_attributes_class_id) ;
+
+	SIValue attributes = GraphEntity_Properties (e) ;
+
+	uint n = Map_KeyCount (attributes) ;
+	for (uint i = 0 ; i < n ; i++) {
+		SIValue key ;
+		SIValue value ;
+
+		Map_GetIdx (attributes, i, &key, &value) ;
+
+		// reuse existing getters to fill the data object
+		JS_SetPropertyStr (ctx, obj, key.stringval,
+				UDF_SIValueToJS (ctx, value)) ;
+	}
+
+	SIValue_Free (attributes) ;
+
+    return obj ;
+}
+
 //------------------------------------------------------------------------------
 // Attributes object factory
 //------------------------------------------------------------------------------
@@ -159,5 +192,25 @@ void UDF_RegisterAttributesClass
 	int res = JS_NewClass (js_runtime, js_attributes_class_id,
 			&js_attributes_class) ;
 	ASSERT (res == 0) ;
+}
+
+static const JSCFunctionListEntry attributes_proto_func_list[] = {
+	JS_CFUNC_DEF ("toJSON", 0, js_attributes_to_json)
+};
+
+void UDF_RegisterAttributesProto
+(
+	JSContext *js_ctx  // JavaScript context
+) {
+	ASSERT (js_ctx != NULL) ;
+
+	// prototype object
+    JSValue proto = JS_NewObject (js_ctx) ;
+
+    int res =
+		JS_SetPropertyFunctionList (js_ctx, proto, attributes_proto_func_list, 1) ;
+	ASSERT (res == 0) ;
+
+    JS_SetClassProto (js_ctx, js_attributes_class_id, proto) ;
 }
 

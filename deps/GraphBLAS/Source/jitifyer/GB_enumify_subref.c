@@ -80,6 +80,7 @@ void GB_enumify_subref      // enumerate a GrB_extract problem
                 GB_LSHIFT (rj_is_32   , 26) |  // 0 to 1       1
                 GB_LSHIFT (ri_is_32   , 25) |  // 0 to 1       1
                 GB_LSHIFT (rsparsity  , 23) |  // 0 to 3       2
+                // 22: unused
 
                 // C, A integer sizes (2 hex digits)
                 GB_LSHIFT (cp_is_32   , 21) |  // 0 to 1       1

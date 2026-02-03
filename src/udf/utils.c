@@ -10,6 +10,8 @@
 #include "../errors/errors.h"
 #include "../arithmetic/func_desc.h"
 
+#define JS_RUNTIME_STACK_SIZE 1024 * 1024 * 1024
+
 extern JSClassID js_node_class_id;        // JS Node class
 extern JSClassID js_edge_class_id;        // JS Edge class
 extern JSClassID js_path_class_id;        // JS Path class
@@ -27,7 +29,7 @@ JSRuntime *UDF_GetJSRuntime(void) {
 	ASSERT (js_rt != NULL) ;
 
 	UDF_RT_RegisterClasses (js_rt) ;
-	JS_SetMaxStackSize (js_rt, 1024 * 1024) ; // 1 MB stack limit
+	JS_SetMaxStackSize (js_rt, JS_RUNTIME_STACK_SIZE) ; // 1 GB stack limit
 
 	return js_rt ;
 }
@@ -47,8 +49,11 @@ JSContext *UDF_GetValidationJSContext
 	JSContext *js_ctx = JS_NewContext (js_rt) ;
 	ASSERT (js_ctx != NULL) ;
 
+	UDF_RegisterGraphObject  (js_ctx) ;
+	UDF_SetGraphTraverseImpl (js_ctx, UDF_FUNC_REG_MODE_VALIDATE) ;
+
 	// provide validation-only register() hook
-	UDF_RegisterFalkorObject (js_ctx) ;
+	UDF_RegisterFalkorObject  (js_ctx) ;
 	UDF_SetFalkorRegisterImpl (js_ctx, UDF_FUNC_REG_MODE_VALIDATE) ;
 
 	return js_ctx ;
@@ -69,7 +74,10 @@ JSContext *UDF_GetRegistrationJSContext
 	JSContext *js_ctx = JS_NewContext(js_rt) ;
 	ASSERT (js_ctx != NULL) ;
 
-	UDF_RegisterFalkorObject (js_ctx) ;
+	UDF_RegisterGraphObject  (js_ctx) ;
+	UDF_SetGraphTraverseImpl (js_ctx, UDF_FUNC_REG_MODE_GLOBAL) ;
+
+	UDF_RegisterFalkorObject  (js_ctx) ;
 	UDF_SetFalkorRegisterImpl (js_ctx, UDF_FUNC_REG_MODE_GLOBAL) ;
 
 	return js_ctx ;
@@ -90,7 +98,8 @@ JSContext *UDF_GetExecutionJSContext
 	JSContext *js_ctx = JS_NewContext(js_rt) ;
 	ASSERT (js_ctx != NULL) ;
 
-	UDF_CTX_RegisterClasses (js_ctx) ;
+	UDF_CTX_RegisterClasses   (js_ctx) ;
+	UDF_SetGraphTraverseImpl  (js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
 	UDF_SetFalkorRegisterImpl (js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
 
 	return js_ctx ;

@@ -6,7 +6,7 @@ FROM $BASE_IMAGE AS compiler
 
 FROM node:24-alpine AS node
 
-FROM redis:8.2.2-alpine
+FROM redis:8.2.3-alpine
 
 ENV FALKORDB_HOME=/var/lib/falkordb
 

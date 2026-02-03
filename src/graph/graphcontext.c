@@ -439,6 +439,32 @@ unsigned short GraphContext_SchemaCount(const GraphContext *gc, SchemaType t) {
 	else return array_len(gc->relation_schemas);
 }
 
+// checks if graph has constraints
+bool GraphContext_HasConstraints
+(
+	const GraphContext *gc
+) {
+	ASSERT (gc != NULL) ;
+
+	uint n = array_len (gc->node_schemas) ;
+	for (uint i = 0 ; i < n ; i++) {
+		Schema *s = gc->node_schemas[i] ;
+		if (Schema_HasConstraints (s)) {
+			return true ;
+		}
+	}
+
+	n = array_len (gc->relation_schemas) ;
+	for (uint i = 0 ; i < n ; i++) {
+		Schema *s = gc->relation_schemas[i] ;
+		if (Schema_HasConstraints (s)) {
+			return true ;
+		}
+	}
+
+	return false ;
+}
+
 // enable all constraints
 void GraphContext_EnableConstrains
 (
@@ -832,20 +858,20 @@ void GraphContext_AddNodeToIndices
 	GraphContext *gc,  // graph context
 	Node *n            // node to add to index
 ) {
-	ASSERT(n  != NULL);
-	ASSERT(gc != NULL);
+	ASSERT (n  != NULL) ;
+	ASSERT (gc != NULL) ;
 
-	Schema   *s      = NULL;
-	Graph    *g      = gc->g;
-	EntityID node_id = ENTITY_GET_ID(n);
+	Schema   *s      = NULL ;
+	Graph    *g      = gc->g ;
+	EntityID node_id = ENTITY_GET_ID (n) ;
 
 	// retrieve node labels
-	uint label_count;
-	NODE_GET_LABELS(g, n, label_count);
+	uint label_count ;
+	NODE_GET_LABELS (g, n, label_count) ;
 
-	for(uint i = 0; i < label_count; i++) {
-		int label_id = labels[i];
-		s = GraphContext_GetSchemaByID(gc, label_id, SCHEMA_NODE);
+	for (uint i = 0; i < label_count; i++) {
+		int label_id = labels[i] ;
+		s = GraphContext_GetSchemaByID (gc, label_id, SCHEMA_NODE) ;
 		ASSERT(s != NULL);
 		Schema_AddNodeToIndex(s, n);
 	}
