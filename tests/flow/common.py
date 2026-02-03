@@ -89,7 +89,14 @@ def Env(
     )
     # Use envRunner.port to get the actual running port (may differ from Defaults.port
     # when using --randomize-ports or parallel execution)
-    db = FalkorDB("localhost", env.envRunner.port)
+    # ClusterEnv has shards[], StandardEnv has port directly
+    if hasattr(env.envRunner, 'shards'):
+        # Cluster mode - get port from first shard
+        port = env.envRunner.shards[0].port
+    else:
+        # Standard mode - direct port access
+        port = env.envRunner.port
+    db = FalkorDB("localhost", port)
 
     if SANITIZER or VALGRIND:
         # patch env, turning every assert call into NOP
