@@ -157,6 +157,7 @@ build_redis_with_sanitizer() {
 	local redis_version="8.0.0"
 	local ignorelist=$ROOT/tests/memcheck/redis.san-ignorelist
 	local build_log="/tmp/redis-san-build.log"
+	local original_dir="$PWD"
 
 	echo "Building Redis $redis_version with $san_type sanitizer..."
 
@@ -209,7 +210,7 @@ build_redis_with_sanitizer() {
 	if [[ $build_result -ne 0 ]]; then
 		echo "Redis build failed. Last 50 lines of build log:"
 		tail -50 "$build_log"
-		cd "$ROOT"
+		cd "$original_dir"
 		return 1
 	fi
 
@@ -220,11 +221,11 @@ build_redis_with_sanitizer() {
 		echo "Failed to build Redis with sanitizer - redis-server binary not found"
 		echo "Last 50 lines of build log:"
 		tail -50 "$build_log"
-		cd "$ROOT"
+		cd "$original_dir"
 		return 1
 	fi
 
-	cd "$ROOT"
+	cd "$original_dir"
 }
 
 setup_clang_sanitizer() {

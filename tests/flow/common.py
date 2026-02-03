@@ -87,7 +87,9 @@ def Env(
         enableDebugCommand=enableDebugCommand,
         shardsCount=shardsCount,
     )
-    db = FalkorDB("localhost", env.port)
+    # Use envRunner.port to get the actual running port (may differ from Defaults.port
+    # when using --randomize-ports or parallel execution)
+    db = FalkorDB("localhost", env.envRunner.port)
 
     if SANITIZER or VALGRIND:
         # patch env, turning every assert call into NOP
