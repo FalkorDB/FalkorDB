@@ -32,11 +32,8 @@ WORKDIR ${FALKORDB_HOME}
 COPY ./build/docker/run.sh ${FALKORDB_BIN_PATH}/run.sh
 COPY ./build/docker/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 
-# Copy Node.js and npm from official node:24-alpine image
-COPY --from=node /usr/local/bin/node /usr/local/bin/node
-COPY --from=node /usr/local/bin/npm /usr/local/bin/npm
-COPY --from=node /usr/local/bin/npx /usr/local/bin/npx
-COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
+# Copy full Node.js installation from official node:24-alpine image
+COPY --from=node /usr/local /usr/local
 
 RUN npm install -g npm@^11.8.0
 

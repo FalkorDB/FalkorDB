@@ -524,7 +524,7 @@ jobs:
             Trivy scan completed for the image built in this PR. Please review the attached report for details on any vulnerabilities found.
             If there are any high or critical severity vulnerabilities, please address them before merging.
             <details>
-            <a href="${{ steps.upload_trivy_report.outputs.download_url }}">Trivy Report (JSON)</a>
+            <a href="${{ steps.upload_trivy_report.outputs.artifact-url }}">Trivy Report (JSON)</a>
             </details>
 
       - name: Fail build on high/critical severity vulnerabilities
