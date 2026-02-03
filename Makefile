@@ -2,14 +2,12 @@
 #
 # This Makefile provides a familiar make interface while delegating
 # all actual build operations to build.sh
-#
-# For the original Makefile (which requires readies), see _Makefile
 
 .PHONY: all build deps clean pack package test unit-tests flow-tests tck-tests upgrade-tests \
         fuzz-tests benchmark coverage help run
 
 #----------------------------------------------------------------------------------------------
-# Default target - must be first
+# Default target
 #----------------------------------------------------------------------------------------------
 
 all: build

@@ -46,14 +46,6 @@ message("# ARCH=${ARCH}")
 # Helper functions
 #-----------------------------------------------------------------------------
 
-function(add_target_linker_flags TARGET FLAGS)
-    get_target_property(LD_FLAGS ${TARGET} LINK_FLAGS)
-    if(LD_FLAGS)
-        set(FLAGS "${LD_FLAGS} ${FLAGS}")
-    endif()
-    set_target_properties(${TARGET} PROPERTIES LINK_FLAGS ${FLAGS})
-endfunction()
-
 function(setup_shared_object_target TARGET OUTPUT_NAME)
     set_target_properties(${TARGET} PROPERTIES PREFIX "")
     set_target_properties(${TARGET} PROPERTIES SUFFIX ".so")
