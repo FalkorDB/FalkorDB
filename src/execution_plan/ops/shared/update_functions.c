@@ -377,6 +377,7 @@ void ensureMatrixDim
 	ASSERT (gc         != NULL) ;
 	ASSERT (blueprints != NULL) ;
 
+	bool resize_required = false ;
 	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// set matrix sync policy to resize
@@ -397,6 +398,7 @@ void ensureMatrixDim
 
 			if (s != NULL) {
 				// make sure label matrix is of the right dimensions
+				resize_required = true ;
 				Graph_GetLabelMatrix (g, Schema_GetID (s)) ;
 			}
 		}
@@ -408,6 +410,7 @@ void ensureMatrixDim
 
 			if (s != NULL) {
 				// make sure label matrix is of the right dimensions
+				resize_required = true ;
 				Graph_GetLabelMatrix (g, Schema_GetID (s)) ;
 			}
 		}
@@ -416,7 +419,9 @@ void ensureMatrixDim
 	raxStop (&it) ;
 
 	// sync node labels matrix
-	Graph_GetNodeLabelMatrix (g) ;
+	if (resize_required) {
+		Graph_GetNodeLabelMatrix (g) ;
+	}
 
 	// restore matrix sync policy
 	Graph_SetMatrixPolicy (g, policy) ;
