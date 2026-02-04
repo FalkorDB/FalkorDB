@@ -159,10 +159,21 @@ build_redis_with_sanitizer() {
 	local build_log="/tmp/redis-san-build.log"
 	local original_dir="$PWD"
 
+	# Check if we already have a working ASAN Redis build
+	if [[ -f "$redis_dir/src/redis-server" ]]; then
+		# Verify it's an ASAN build by checking for ASAN symbols
+		if nm "$redis_dir/src/redis-server" 2>/dev/null | grep -q "__asan"; then
+			REDIS_SERVER="$redis_dir/src/redis-server"
+			echo "Using cached ASAN Redis build: $REDIS_SERVER"
+			return 0
+		fi
+	fi
+
 	echo "Building Redis $redis_version with $san_type sanitizer..."
 
 	# Download and extract Redis if not already present
-	if [[ ! -d "$redis_dir" ]]; then
+	if [[ ! -d "$redis_dir" ]] || [[ ! -f "$redis_dir/Makefile" ]]; then
+		rm -rf "$redis_dir"
 		mkdir -p "$redis_dir"
 		cd /tmp
 		if [[ ! -f "redis-$redis_version.tar.gz" ]]; then
@@ -181,7 +192,7 @@ build_redis_with_sanitizer() {
 
 	cd "$redis_dir"
 
-	# Clean previous build
+	# Clean previous build only if needed (not an ASAN build)
 	make distclean > /dev/null 2>&1 || true
 
 	# Build with sanitizer flags
