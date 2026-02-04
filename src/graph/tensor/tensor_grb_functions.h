@@ -22,13 +22,13 @@ static void _push_element
 	ASSERT(SCALAR_ENTRY(*y));
 	if(SCALAR_ENTRY(*x)){
 		GrB_Vector v = NULL;
-		GrB_Vector_new(&v, GrB_BOOL, GrB_INDEX_MAX);
-		GrB_Vector_setElement_BOOL(v, true, *x);
-		GrB_Vector_setElement_BOOL(v, true, *y);
+		GrB_OK (GrB_Vector_new(&v, GrB_BOOL, GrB_INDEX_MAX));
+		GrB_OK (GrB_Vector_setElement_BOOL(v, true, *x));
+		GrB_OK (GrB_Vector_setElement_BOOL(v, true, *y));
 		*z = SET_MSB((uint64_t) v);
 	} else {
 		GrB_Vector v = AS_VECTOR(*x);
-		GrB_Vector_setElement_BOOL(v, true, *y);
+		GrB_OK (GrB_Vector_setElement_BOOL(v, true, *y));
 		*z = SET_MSB((uint64_t) v);
 	}
 }

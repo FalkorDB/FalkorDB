@@ -175,14 +175,14 @@ void Random_Tensor
 	//--------------------------------------------------------------------------
 	// Create M and DP
 	//--------------------------------------------------------------------------
-	_make_single_tensor(M, n, (uint64_t) (n * n * density), dup_handler, mod_op, 
+	_make_single_tensor(M, n, (uint64_t) (n * n * density), dup_handler, mod_op,
 		desc, seed);
 	GrB_Matrix_nvals(&nvals, M);
 	ASSERT(nvals > 0);
 
 	simple_rand(&seed);
 
-	_make_single_tensor(DP, n, (uint64_t) (n * n * add_density), dup_handler, 
+	_make_single_tensor(DP, n, (uint64_t) (n * n * add_density), dup_handler,
 		mod_op, desc, seed);
 	GrB_Matrix_nvals(&nvals, DP);
 	ASSERT(nvals > 0);
@@ -190,8 +190,8 @@ void Random_Tensor
 	//--------------------------------------------------------------------------
 	// Make M and DP disjoint
 	//--------------------------------------------------------------------------
-	GrB_OK (GrB_Matrix_apply(DP, M, NULL, free_entry, DP, GrB_DESC_S)); 
-	GrB_OK (GrB_Matrix_select_UINT64(DP, NULL, NULL, GrB_VALUENE_UINT64, DP, 
+	GrB_OK (GrB_Matrix_apply(DP, M, NULL, free_entry, DP, GrB_DESC_S));
+	GrB_OK (GrB_Matrix_select_UINT64(DP, NULL, NULL, GrB_VALUENE_UINT64, DP,
 		MSB_MASK, NULL));
 
 
@@ -199,16 +199,15 @@ void Random_Tensor
 	// Create DM
 	//--------------------------------------------------------------------------
 	GrB_OK (GrB_Matrix_new(&temp, GrB_BOOL, n, n));
-	GrB_OK (GrB_Matrix_select_FP64(temp, NULL, NULL, select_op, M, 
+	GrB_OK (GrB_Matrix_select_FP64(temp, NULL, NULL, select_op, M,
 		del_density / density, NULL));
 	GrB_OK (GrB_Matrix_apply(temp, NULL, NULL, free_entry, temp, GrB_DESC_S));
-	GrB_OK (GrB_Matrix_assign_BOOL(DM, temp, NULL, true, GrB_ALL, n, 
+	GrB_OK (GrB_Matrix_assign_BOOL(DM, temp, NULL, true, GrB_ALL, n,
 		GrB_ALL, n, GrB_DESC_S));
 
-	GrB_OK (GrB_Matrix_free(&temp));
-	GrB_OK (GrB_BinaryOp_free(&dup_handler));
-	GrB_OK (GrB_BinaryOp_free(&mod_op));
-	GrB_OK (GrB_IndexUnaryOp_free(&select_op));
-	GrB_OK (GrB_Descriptor_free(&desc));
+	GrB_OK (GrB_free(&temp));
+	GrB_OK (GrB_free(&mod_op));
+	GrB_OK (GrB_free(&select_op));
+	GrB_OK (GrB_free(&desc));
 }
 

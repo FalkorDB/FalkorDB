@@ -73,6 +73,7 @@ static void BM_mxm_chain_V1(benchmark::State &state) {
 
 	Delta_Matrix_free(&A);
 	Delta_Matrix_free(&C);
+	GrB_Matrix_free(&C_cpy);
 }
 
 BENCHMARK(BM_mxm_all_V1)

@@ -74,6 +74,7 @@ void BM_eval_add_chain(benchmark::State &state) {
 		Delta_Matrix_free(&Cs[i]);
 	}
 	Delta_Matrix_free(&res);
+	raxFree(&matrices);
 }
 
 void BM_eval(benchmark::State &state, const char *expression) {
@@ -126,6 +127,7 @@ void BM_eval(benchmark::State &state, const char *expression) {
 	}
 	Delta_Matrix_free(&res);
 	Delta_Matrix_free(&F);
+	raxFree(&matrices);
 }
 
 void BM_eval_mul_chain(benchmark::State &state) {
@@ -168,6 +170,7 @@ void BM_eval_mul_chain(benchmark::State &state) {
 	AlgebraicExpression_Free(exp);
 	Delta_Matrix_free(&res);
 	Delta_Matrix_free(&C);
+	raxFree(&matrices);
 }
 
 

@@ -20,6 +20,7 @@ static void BM_delete_from_m(benchmark::State &state) {
 
 	uint64_t i = 0;
 	for (auto _ : state) {
+		if (i >= nvals) break;
 		if(x_v[i]){
 			GrB_Info info = Delta_Matrix_removeElement(A, i_v[i], j_v[i]);
 			ASSERT(info == GrB_SUCCESS);
@@ -115,7 +116,7 @@ static void BM_tensor_delete_batch(benchmark::State &state) {
 	int batch_size = 10000;
 	int j = 0;
 	for (auto _ : state) {
-		ASSERT(j + batch_size <= 40000);
+		ASSERT(j + batch_size < 40000);
 		Edge *e = arr + j;
 		Tensor_RemoveElements(A, e, batch_size, NULL);
 		j += batch_size;

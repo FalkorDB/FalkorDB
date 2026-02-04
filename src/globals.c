@@ -375,6 +375,14 @@ void Globals_Free(void) {
 void Global_GrB_Ops_Init(void) {
 	struct GrB_ops *ops = &_globals.ops;
 	// initialize global GraphBLAS objects
+	uint8_t initialized = false;
+	uint8_t *bytes = (uint8_t *) ops;
+	for (int i = 0; i < sizeof(struct GrB_ops); ++i){
+		initialized |= bytes[i];
+	}
+	if (initialized) {
+		return;
+	}
 
 	//--------------------------------------------------------------------------
 	// initialize operators for zombie handling
@@ -399,7 +407,7 @@ void Global_GrB_Ops_Free(void) {
 	struct GrB_ops *ops = &_globals.ops;
 
 	//--------------------------------------------------------------------------
-	// free everything
+	// free everything this sets all pointers to NULL
 	//--------------------------------------------------------------------------
 	GrB_free(&ops->free_tensors);
 	GrB_free(&ops->push_id);
