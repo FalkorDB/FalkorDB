@@ -1,27 +1,5 @@
 #include "micro_benchmarks.h"
 
-void rg_setup() {
-	// Initialize GraphBLAS.
-	RedisModule_Alloc   = malloc;
-	RedisModule_Realloc = realloc;
-	RedisModule_Calloc  = calloc;
-	RedisModule_Free    = free;
-	RedisModule_Strdup  = strdup;
-	LAGraph_Init(NULL);
-
-	Config_Option_set(Config_DELTA_MAX_PENDING_CHANGES,
-			"100000", NULL);
-	GrB_Global_set_INT32(GrB_GLOBAL, GxB_JIT_OFF, GxB_JIT_C_CONTROL);
-	GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
-	GxB_Global_Option_set(GxB_FORMAT, GxB_BY_ROW); // all matrices in CSR format
-	Global_GrB_Ops_Init();
-}
-
-void rg_teardown() {
-	Global_GrB_Ops_Free();
-	GrB_OK((GrB_Info) LAGraph_Finalize(NULL));
-}
-
 static void BM_add_all(benchmark::State &state) {
 	Delta_Matrix A = NULL;
 	Delta_Matrix B = NULL;
