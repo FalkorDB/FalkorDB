@@ -78,6 +78,24 @@ void Tensor_RemoveElements
 	uint64_t **cleared_entries  // [optional] cleared entries, referes elements
 );
 
+// remove all entries in the given row for a tensor with multi edges
+GrB_Info Tensor_RemoveRow
+(
+	Tensor T,                 // matrix to remove entry from
+	const GrB_Index i,        // row index
+	const GrB_Descriptor desc // use transpose to remove column
+);
+
+// remove all entries in the given rows for a tensor with multi edges
+GrB_Info Tensor_RemoveRows
+(
+	Delta_Matrix T,            // matrix to remove entry from
+	const GrB_Vector i,        // row index
+	const GrB_Descriptor desc  // use INP0 transpose to remove column
+	                           // use GxB_ROWINDEX_LIST to manage 
+	                           // interpretation of i
+);
+
 // clear all elements specified by A from T
 void Tensor_ClearElements
 (

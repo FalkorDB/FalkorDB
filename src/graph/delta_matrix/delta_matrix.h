@@ -241,6 +241,22 @@ GrB_Info Delta_Matrix_removeElements
 	const GrB_Matrix AT  // A's transpose
 );
 
+// remove all entries in the given row
+GrB_Info Delta_Matrix_removeRow
+(
+	Delta_Matrix C,     // matrix to remove entry from
+	GrB_Index i,        // row index
+	GrB_Descriptor desc // use transpose to remove column
+) ;
+
+// remove all entries in the given rows (batch)
+GrB_Info Delta_Matrix_removeRows
+(
+	Delta_Matrix C,     // matrix to remove entry from
+	GrB_Vector i,       // row index
+	GrB_Descriptor desc // use transpose to remove column
+) ;
+
 // C = AB
 // A should be fully synced on input
 // C will be fully synced on output

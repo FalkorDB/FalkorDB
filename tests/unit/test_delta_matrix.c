@@ -3,6 +3,8 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "GraphBLAS.h"
+#include "graph/delta_matrix/delta_matrix.h"
 #include "src/util/rmalloc.h"
 #include "src/configuration/config.h"
 #include "src/graph/tensor/tensor.h"
@@ -61,8 +63,8 @@ void tearDown() {
 // nvals(A + B) == nvals(A) == nvals(B)
 void CHECK_GrB_Matrices_EQ
 (
-	const GrB_Matrix A, 
-	const GrB_Matrix B, 
+	const GrB_Matrix A,
+	const GrB_Matrix B,
 	const GrB_BinaryOp eq
 ) {
 	GrB_Type    t_A                 =  NULL;
@@ -768,6 +770,253 @@ void test_RGMatrix_del_entry() {
 
 	Tensor_free(&A);
 	TEST_ASSERT(A == NULL);
+}
+
+// multiple delete row scenarios
+void test_RGMatrix_del_row() {
+	GrB_Type     t               =  GrB_BOOL;
+	Delta_Matrix A               =  NULL;
+	Tensor       T               =  NULL;
+	GrB_Matrix   M               =  NULL;
+	GrB_Matrix   DP              =  NULL;
+	GrB_Matrix   DM              =  NULL;
+	GrB_Info     info            =  GrB_SUCCESS;
+	GrB_Index    nvals           =  0;
+	GrB_Index    nrows           =  100;
+	GrB_Index    ncols           =  100;
+	GrB_Index    i               =  0;
+	GrB_Index    j               =  1;
+	uint64_t     x               =  1;
+	bool         entry_deleted   =  false;
+	Edge         edges[1]        = {{.id = x, .src_id = i, .dest_id = j}};
+
+	info = Delta_Matrix_new(&A, t, nrows, ncols, true);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	// get internal matrices
+	M  = DELTA_MATRIX_M(A);
+	DP = DELTA_MATRIX_DELTA_PLUS(A);
+	DM = DELTA_MATRIX_DELTA_MINUS(A);
+	// A's first row: . m - + . . .
+
+	Delta_Matrix_setElement_BOOL(A, 0, 1);
+	Delta_Matrix_setElement_BOOL(A, 0, 2);
+	// Sync
+	Delta_Matrix_wait (A, true);
+
+	Delta_Matrix_removeElement(A, 0, 2);
+	Delta_Matrix_setElement_BOOL(A, 0, 3);
+
+	// remove the row
+	Delta_Matrix_removeRow(A, 0, NULL);
+
+	// validate
+	Delta_Matrix_validate(A, true);
+	Delta_Matrix_nvals(&nvals, A);
+	TEST_CHECK(nvals == 0) ;
+
+	// A's first col: m - + . . .
+	Delta_Matrix_setElement_BOOL(A, 1, 0);
+	Delta_Matrix_setElement_BOOL(A, 2, 0);
+	// Sync
+	Delta_Matrix_wait (A, true);
+
+	Delta_Matrix_removeElement(A, 2, 0);
+	Delta_Matrix_setElement_BOOL(A, 3, 0);
+
+	// remove the col
+	Delta_Matrix_removeRow(A, 0, GrB_DESC_T0);
+
+	// validate
+	Delta_Matrix_nvals(&nvals, A);
+	TEST_CHECK(nvals == 0) ;
+	Delta_Matrix_wait (A, true);
+
+	//-------------------------------------------------------------------------
+	// Test batch row deletion
+	//-------------------------------------------------------------------------
+	GrB_Vector rows = NULL;
+	GrB_Descriptor desc = NULL;
+	GrB_Vector_new (&rows, GrB_BOOL, nrows);
+	GrB_Descriptor_new (&desc);
+
+	GrB_Vector_setElement(rows, true, 0);
+	GrB_set (desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST);
+
+	// A's first row: m - + . . .
+	Delta_Matrix_setElement_BOOL(A, 0, 1);
+	Delta_Matrix_setElement_BOOL(A, 0, 2);
+
+	// Sync
+	Delta_Matrix_wait (A, true);
+
+	Delta_Matrix_removeElement(A, 0, 2);
+	Delta_Matrix_setElement_BOOL(A, 0, 3);
+
+	// remove the row
+	Delta_Matrix_removeRows(A, rows, desc);
+
+	// validate
+	Delta_Matrix_validate(A, true);
+	Delta_Matrix_nvals(&nvals, A);
+	TEST_CHECK(nvals == 0) ;
+
+	// A's first col: m - + . . .
+	Delta_Matrix_setElement_BOOL(A, 1, 0);
+	Delta_Matrix_setElement_BOOL(A, 2, 0);
+	// Sync
+	Delta_Matrix_wait (A, true);
+
+	Delta_Matrix_removeElement(A, 2, 0);
+	Delta_Matrix_setElement_BOOL(A, 3, 0);
+
+	// remove the col
+	GrB_set (desc, GrB_TRAN, GrB_INP0);
+	Delta_Matrix_removeRows(A, rows, desc);
+
+	// validate
+	Delta_Matrix_validate(A, true);
+	Delta_Matrix_nvals(&nvals, A);
+	TEST_CHECK(nvals == 0) ;
+
+	//-------------------------------------------------------------------------
+	// Test without transpose
+	//-------------------------------------------------------------------------
+	GrB_set (desc, GrB_DEFAULT, GrB_INP0);
+	
+	Delta_Matrix_free(&A);
+	info = Delta_Matrix_new(&A, t, nrows, ncols, false);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	// A's first row: m - + . . .
+
+	Delta_Matrix_setElement_BOOL(A, 0, 1);
+	Delta_Matrix_setElement_BOOL(A, 0, 2);
+	// Sync
+	Delta_Matrix_wait (A, true);
+
+	Delta_Matrix_removeElement(A, 0, 2);
+	Delta_Matrix_setElement_BOOL(A, 0, 3);
+
+	// remove the row
+	Delta_Matrix_removeRow(A, 0, NULL);
+
+	// validate
+	Delta_Matrix_validate(A, true);
+	Delta_Matrix_nvals(&nvals, A);
+	TEST_CHECK(nvals == 0) ;
+
+	Delta_Matrix_wait (A, true);
+
+	// Column deletion not tested when transpose is false
+
+	//-------------------------------------------------------------------------
+	// Test batch row deletion
+	//-------------------------------------------------------------------------
+
+	// A's first row: m - + . . .
+	Delta_Matrix_setElement_BOOL(A, 0, 1);
+	Delta_Matrix_setElement_BOOL(A, 0, 2);
+
+	// Sync
+	Delta_Matrix_wait (A, true);
+
+	Delta_Matrix_removeElement(A, 0, 2);
+	Delta_Matrix_setElement_BOOL(A, 0, 3);
+
+	// remove the row
+	Delta_Matrix_removeRows(A, rows, desc);
+	Delta_Matrix_validate(A, true);
+
+	// validate
+	Delta_Matrix_nvals(&nvals, A);
+	TEST_CHECK(nvals == 0) ;
+
+	// Column deletion not tested when transpose is false
+	
+
+	//-------------------------------------------------------------------------
+	// test tensor row deletion
+	//-------------------------------------------------------------------------
+	Delta_Matrix_free(&A);
+	TEST_ASSERT(A == NULL);
+	T = Tensor_new (nrows, ncols) ;
+
+	GrB_Index rows_arr [] = {0, 0, 0, 0, 0, 0, 0, 1, 1};
+	GrB_Index cols_arr [] = {1, 2, 3, 3, 4, 4, 4, 0, 0};
+	uint64_t  vals_arr [] = {0, 1, 2, 3, 4, 5, 6, 7, 8};
+	Tensor_SetElements(T, rows_arr, cols_arr, vals_arr, 9);
+	Delta_Matrix_wait ((Delta_Matrix) T, true);
+
+	// Add pending changes
+	Tensor_SetElement (T, 0, 5, 9);
+	Tensor_SetElement (T, 0, 6, 10);
+	Tensor_SetElement (T, 0, 6, 11);
+	Delta_Matrix_removeElement(T, 0, 1);
+	Tensor_RemoveRow (T, 0, NULL);
+	// There should only be one entry with a multiedge (1,0)
+	Delta_Matrix_nvals(&nvals, (Delta_Matrix) T);
+	TEST_CHECK (nvals == 1);
+	Tensor_free (&T);
+
+	//-------------------------------------------------------------------------
+	// Test tensor col deletion
+	//-------------------------------------------------------------------------
+	T = Tensor_new (nrows, ncols) ;
+	Tensor_SetElements(T, cols_arr, rows_arr, vals_arr, 9);
+	Delta_Matrix_wait ((Delta_Matrix) T, true);
+
+	// Add pending changes
+	Tensor_SetElement (T, 5, 0, 9);
+	Tensor_SetElement (T, 6, 0, 10);
+	Tensor_SetElement (T, 6, 0, 11);
+	Delta_Matrix_removeElement(T, 1, 0);
+	Tensor_RemoveRow (T, 0, GrB_DESC_T0);
+	TEST_CHECK (nvals == 1);
+	Tensor_free (&T);
+
+	//-------------------------------------------------------------------------
+	// test tensor multi row deletion
+	//-------------------------------------------------------------------------
+	T = Tensor_new (nrows, ncols) ;
+	GrB_set (desc, GrB_DEFAULT, GrB_INP0);
+	GrB_Vector_setElement_BOOL(rows, true, 1);
+
+	Tensor_SetElements(T, rows_arr, cols_arr, vals_arr, 9);
+	Delta_Matrix_wait ((Delta_Matrix) T, true);
+
+	// Add pending changes
+	Tensor_SetElement (T, 1, 5, 9);
+	Tensor_SetElement (T, 1, 6, 10);
+	Tensor_SetElement (T, 1, 6, 11);
+	Delta_Matrix_removeElement(T, 0, 1);
+
+	Tensor_RemoveRows (T, rows, desc);
+	// There should only be one entry with a multiedge (1,0)
+	Delta_Matrix_nvals (&nvals, (Delta_Matrix) T) ;
+	TEST_CHECK (nvals == 0);
+	Tensor_free (&T);
+
+	//-------------------------------------------------------------------------
+	// Test tensor multi col deletion
+	//-------------------------------------------------------------------------
+	T = Tensor_new (nrows, ncols) ;
+	GrB_set (desc, GrB_TRAN, GrB_INP0) ;
+
+	Tensor_SetElements (T, cols_arr, rows_arr, vals_arr, 9) ;
+	Delta_Matrix_wait ((Delta_Matrix) T, true);
+
+	// Add pending changes
+	Tensor_SetElement (T, 5, 1, 9) ;
+	Tensor_SetElement (T, 6, 1, 10) ;
+	Tensor_SetElement (T, 6, 1, 11) ;
+	Delta_Matrix_removeElement(T, 1, 0) ;
+	Tensor_RemoveRows (T, rows, desc) ;
+	TEST_CHECK (nvals == 0) ;
+
+	Tensor_free (&T) ;
+	GrB_free (&desc) ;
+	GrB_free (&rows) ;
 }
 
 void test_RGMatrix_set() {
@@ -1719,6 +1968,7 @@ TEST_LIST = {
 	{"RGMatrix_simple_set", test_RGMatrix_simple_set},
 	{"RGMatrix_del", test_RGMatrix_del},
 	{"RGMatrix_del_entry", test_RGMatrix_del_entry},
+	{"RGMatrix_del_row", test_RGMatrix_del_row},
 	{"RGMatrix_set", test_RGMatrix_set},
 	{"RGMatrix_flus", test_RGMatrix_flus},
 	{"GRMatrix_managed_transposed", test_GRMatrix_managed_transposed},
