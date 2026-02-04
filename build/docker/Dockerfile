@@ -39,7 +39,12 @@ RUN apt-get update && apt-get install -y libgomp1 curl && \
     apt-get upgrade -y && \
     apt-get autoremove -y && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* \
+    # remove npm
+    && rm -rf /usr/local/lib/node_modules/npm \
+    && rm /usr/local/bin/npm \
+    && rm /usr/local/bin/npx
+
 
 WORKDIR ${FALKORDB_HOME}
 
