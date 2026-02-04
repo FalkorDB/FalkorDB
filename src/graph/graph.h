@@ -42,6 +42,7 @@ typedef enum {
 
 // forward declaration of Graph struct
 typedef struct Graph Graph;
+
 // typedef for synchronization function pointer
 typedef void (*SyncMatrixFunc)(const Graph *, Delta_Matrix, GrB_Index, GrB_Index);
 
@@ -94,6 +95,12 @@ int Graph_TimeAcquireWriteLock
                     // - timeout_ms > 0 : wait up to timeout_ms milliseconds
 );
 
+// returns rather or not graph is locked for writing
+bool Graph_IsWriteLocked
+(
+	const Graph *g
+);
+
 // release the held lock
 void Graph_ReleaseLock
 (
@@ -118,34 +125,6 @@ void Graph_ApplyAllPending
 (
 	Graph *g,           // graph to sync
 	bool force_flush    // force sync of delta matrices
-);
-
-// lock all matrices:
-// 1. adjacency matrix
-// 2. label matrices
-// 3. node labels matrix
-// 4. relation matrices
-//
-// currently only used just before forking for the purpose of
-// taking a snapshot
-void Graph_LockAllMatrices
-(
-	Graph *g  // graph to lock
-);
-
-// the counter-part of GraphLockAllMatrices
-// unlocks all matrices:
-//
-// 1. adjacency matrix
-// 2. label matrices
-// 3. node labels matrix
-// 4. relation matrices
-//
-// currently only used after a fork had been issued on both
-// the parent and child processes
-void Graph_UnlockAllMatrices
-(
-	Graph *g  // graph to unlock
 );
 
 // checks to see if graph has pending operations
@@ -545,6 +524,13 @@ Delta_Matrix Graph_GetNodeLabelMatrix
 Delta_Matrix Graph_GetZeroMatrix
 (
 	const Graph *g
+);
+
+// return true if all graph matrices are fully synced (not dirty)
+// and are of the expected dimensions
+bool Graph_Synced
+(
+	const Graph *g  // graph
 );
 
 // free partial graph
