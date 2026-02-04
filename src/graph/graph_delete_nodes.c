@@ -30,15 +30,15 @@
 
 void Graph_DeleteNodes
 (
-	Graph *g,       // graph to delete nodes from
-	Node *nodes,    // nodes to delete
-	uint64_t count  // number of nodes
+	Graph *g,            // graph to delete nodes from
+	Node *nodes,         // nodes to delete
+	uint64_t node_count  // number of nodes
 ) {
 	// assumption, nodes are detached
 	// there are no incoming nor outgoing edges leading to / from nodes
-	ASSERT (g     != NULL) ;
-	ASSERT (count > 0) ;
-	ASSERT (nodes != NULL) ;
+	ASSERT (g          != NULL) ;
+	ASSERT (nodes      != NULL) ;
+	ASSERT (node_count > 0) ;
 
 	// set matrix sync policy to NOP
 	MATRIX_POLICY policy = Graph_GetMatrixPolicy (g) ;
@@ -46,7 +46,7 @@ void Graph_DeleteNodes
 
 #if RG_DEBUG
 	Edge *es = array_new (Edge, 0) ;
-	for (uint i = 0; i < count; i++) {
+	for (uint i = 0; i < node_count; i++) {
 		Node *n = nodes + i;
 		// validate assumption
 		Graph_GetNodeEdges (g, n, GRAPH_EDGE_DIR_BOTH, GRAPH_NO_RELATION, &es) ;
@@ -60,64 +60,87 @@ void Graph_DeleteNodes
 	//--------------------------------------------------------------------------
 
 	GrB_Index j;               // iterated entry col idx
-	GrB_Info info;             // GraphBLAS return code
 	GrB_Index nrows;           // lbls row count
 	GrB_Index ncols;           // lbls col count
 	GrB_Matrix elems;          // elements to delete
 	Delta_MatrixTupleIter it;  // matrix iterator
 
 	// get labels matrix
-	Delta_Matrix lbls = Graph_GetNodeLabelMatrix(g);
+	Delta_Matrix lbls = Graph_GetNodeLabelMatrix (g) ;
 
 	// create lbls mask
-	info = Delta_Matrix_nrows(&nrows, lbls);
-	ASSERT(info == GrB_SUCCESS);
-	info = Delta_Matrix_ncols(&ncols, lbls);
-	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_new(&elems, GrB_BOOL, nrows, ncols);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (Delta_Matrix_nrows (&nrows, lbls)) ;
+	GrB_OK (Delta_Matrix_ncols (&ncols, lbls)) ;
+	GrB_OK (GrB_Matrix_new (&elems, GrB_BOOL, nrows, ncols)) ;
 
 	//--------------------------------------------------------------------------
 	// phase one
 	//--------------------------------------------------------------------------
 
+	int lbl_count = Graph_LabelTypeCount (g) ;
+	uint64_t *encountered_labels = rm_calloc (lbl_count, sizeof (uint64_t)) ;
+
+    GrB_Index *_I = rm_malloc (sizeof (GrB_Index) * node_count) ;
+
 	// iterate over each lbls row coresponding to a deleted node
 	// and clear relevant label matrices
-	for(uint i = 0; i < count; i++) {
-		Node *n = nodes + i;
-		EntityID id = ENTITY_GET_ID(n);
+	for (uint i = 0; i < node_count; i++) {
+		Node *n = nodes + i ;
+		EntityID id = ENTITY_GET_ID (n) ;
+		_I[i] = id ;
 
-		info = Delta_MatrixTupleIter_AttachRange(&it, lbls, id, id);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (Delta_MatrixTupleIter_AttachRange (&it, lbls, id, id)) ;
 
 		// for each deleted node label
-		while(Delta_MatrixTupleIter_next_BOOL(&it, NULL, &j, NULL) == GrB_SUCCESS) {
+		while (Delta_MatrixTupleIter_next_BOOL (&it, NULL, &j, NULL) == GrB_SUCCESS) {
+			encountered_labels[j] += 1 ;
+
 			// populate lbls mask
-			info = GrB_Matrix_setElement_BOOL(elems, true, id, j);
-			ASSERT(info == GrB_SUCCESS);
-
-			// clear label matrix j at position [id,id]
-			Delta_Matrix L = Graph_GetLabelMatrix(g, j);
-			info = Delta_Matrix_removeElement(L, id, id);
-			ASSERT(info == GrB_SUCCESS);
-
-			// a label was removed from node, update statistics
-			GraphStatistics_DecNodeCount(&g->stats, j, 1);
+			GrB_OK (GrB_Matrix_setElement_BOOL (elems, true, id, j)) ;
 		}
 
 		// remove node from datablock
-		DataBlock_DeleteItem(g->nodes, id);
+		DataBlock_DeleteItem (g->nodes, id) ;
 	}
+
+	GrB_Scalar s ;
+	GrB_OK (GrB_Scalar_new (&s, GrB_BOOL)) ;
+	GrB_OK (GrB_Scalar_setElement (s, true)) ;
+
+	GrB_Matrix M ;
+	GrB_Index d = Graph_RequiredMatrixDim (g) ;
+	GrB_OK (GrB_Matrix_new (&M, GrB_BOOL, d, d)) ;
+
+	GrB_OK (GxB_Matrix_build_Scalar (M, _I, _I, s, node_count)) ;
+
+	GrB_OK (GrB_free (&s)) ;
+	rm_free (_I) ;
+
+	for (LabelID l = 0 ; l < lbl_count ; l++) {
+		if (encountered_labels[l] == 0) {
+			continue ;
+		}
+
+		Delta_Matrix L = Graph_GetLabelMatrix (g, l) ;
+
+		GrB_OK (Delta_Matrix_removeElements (L, M, NULL)) ;
+
+		// a label was removed from node, update statistics
+		GraphStatistics_DecNodeCount (&g->stats, l, encountered_labels[l]) ;
+	}
+
+	GrB_free (&M) ;
+	rm_free (encountered_labels) ;
 
 	//--------------------------------------------------------------------------
 	// phase two
 	//--------------------------------------------------------------------------
 
-	Delta_Matrix_removeElements(lbls, elems);
+	Delta_Matrix_removeElements (lbls, elems, NULL) ;
 
 	// restore matrix sync policy
-	Graph_SetMatrixPolicy(g, policy);
+	Graph_SetMatrixPolicy (g, policy) ;
 
-	GrB_free(&elems);
+	GrB_free (&elems) ;
 }
 

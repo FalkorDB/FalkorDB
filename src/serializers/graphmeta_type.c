@@ -19,13 +19,13 @@ static void *_GraphMetaType_RdbLoad(RedisModuleIO *rdb, int encver) {
 
 	if(encver > GRAPH_ENCODING_LATEST_V) {
 		// not forward compatible
-		printf("Failed loading Graph, RedisGraph version (%d) is not forward compatible.\n",
-			   REDISGRAPH_MODULE_VERSION);
+		printf("Failed loading Graph, FalkorDB version (%d) is not forward compatible.\n",
+			   FALKOR_MODULE_VERSION);
 		return NULL;
 		// not backward compatible
 	} else if(encver < GRAPH_DECODE_MIN_V) {
-		printf("Failed loading Graph, RedisGraph version (%d) is not backward compatible with encoder version %d.\n",
-			   REDISGRAPH_MODULE_VERSION, encver);
+		printf("Failed loading Graph, FalkorDB version (%d) is not backward compatible with encoder version %d.\n",
+			   FALKOR_MODULE_VERSION, encver);
 		return NULL;
 	}
 

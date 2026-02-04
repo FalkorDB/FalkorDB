@@ -1573,6 +1573,7 @@ GrB_Info GB_masker_phase1_jit       // count nnz in each R(:,j)
     const int64_t *restrict R_to_Z,
     const bool Rp_is_32,            // if true, Rp is 32-bit; else 64-bit
     const bool Rj_is_32,            // if true, Rh is 32-bit; else 64-bit
+    const int R_sparsity,           // GxB_SPARSE or GxB_HYPERSPARSE
     // original input:
     const GrB_Matrix M,             // required mask
     const bool Mask_comp,           // if true, then M is complemented
@@ -1592,6 +1593,7 @@ GrB_Info GB_masker_phase2_jit       // phase2 for R = masker (C,M,Z)
     const int64_t *restrict R_to_M,
     const int64_t *restrict R_to_C,
     const int64_t *restrict R_to_Z,
+    const int R_sparsity,           // any sparsity format
     // original input:
     const GrB_Matrix M,             // required mask
     const bool Mask_comp,           // if true, then M is complemented
@@ -1614,7 +1616,8 @@ uint64_t GB_encodify_masker     // encode a masker problem
     char **suffix,              // suffix for user-defined kernel
     // input:
     const GB_jit_kcode kcode,   // kernel to encode
-    const GrB_Matrix R,         // may be NULL, for phase1
+    const int R_sparsity,       // GxB_SPARSE or GxB_HYPERSPARSE
+    const GrB_Type rtype,
     const bool Rp_is_32,        // if true, R->p is 32 bit; else 64 bit
     const bool Rj_is_32,        // if true, R->h is 32 bit; else 64 bit
     const bool Ri_is_32,        // if true, R->i is 32 bit; else 64 bit
@@ -1630,7 +1633,8 @@ void GB_enumify_masker      // enumify a masker problem
     // output:
     uint64_t *method_code,  // unique encoding of the entire operation
     // input:
-    const GrB_Matrix R,     // NULL for phase 1
+    const int R_sparsity,   // GxB_SPARSE or GxB_HYPERSPARSE
+    const GrB_Type rtype,   // the type of R (NULL for phase1)
     const bool Rp_is_32,    // if true, R->p is 32-bit; else 64-bit
     const bool Rj_is_32,    // if true, R->h is 32-bit; else 64-bit
     const bool Ri_is_32,    // if true, R->i is 32-bit; else 64-bit

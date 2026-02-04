@@ -65,7 +65,7 @@ GrB_Info GB_masker_phase2           // phase2 for R = masker (C,M,Z)
     const bool Rp_is_32,
     const bool Rj_is_32,
     const bool Ri_is_32,
-    const int R_sparsity,
+    const int R_sparsity,           // any sparsity format
     // original input:
     const GrB_Matrix M,             // required mask
     const bool Mask_comp,           // if true, then M is complemented
@@ -243,7 +243,8 @@ GrB_Info GB_masker_phase2           // phase2 for R = masker (C,M,Z)
         //----------------------------------------------------------------------
 
         info = GB_masker_phase2_jit (R, TaskList, R_ntasks, R_nthreads,
-            R_to_M, R_to_C, R_to_Z, M, Mask_comp, Mask_struct, C, Z,
+            R_to_M, R_to_C, R_to_Z, R_sparsity,
+            M, Mask_comp, Mask_struct, C, Z,
             C_ek_slicing, C_ntasks, C_nthreads,
             M_ek_slicing, M_ntasks, M_nthreads) ;
 
