@@ -648,7 +648,7 @@ build_rax() {
     if [[ "$DEPS_DEBUG" == "1" ]]; then
         cc_flags+=" -g -O0"
     else
-        cc_flags+=" -O3"
+        cc_flags+=" -O3 -g"  # -O3 for optimization, -g for debug symbols
     fi
 
     # Compile rax.c
@@ -677,7 +677,7 @@ build_xxhash() {
     local bin_dir="$LIBXXHASH_BINDIR"
     mkdir -p "$bin_dir"
 
-    local cc_flags="-O3 -fPIC"
+    local cc_flags="-O3 -g -fPIC"  # -O3 for optimization, -g for debug symbols
 
     # Compile xxhash.c
     ${CC:-cc} $cc_flags -c "$src_dir/xxhash.c" -o "$bin_dir/xxhash.o"
@@ -720,7 +720,8 @@ build_libcypher_parser() {
         log_info "Configuring libcypher-parser..."
         # --disable-tools: don't build cypher-lint (we only need the library)
         # Use -fPIC for position-independent code (required for linking into shared library)
-        if ! CFLAGS="-fPIC" "$src_dir/configure" --disable-dependency-tracking --disable-tools; then
+        # Use -O3 for optimization, -g for debug symbols, -DYY_BUFFER_SIZE for larger parser buffer
+        if ! CFLAGS="-fPIC -O3 -g -DYY_BUFFER_SIZE=1048576" "$src_dir/configure" --disable-dependency-tracking --disable-tools; then
             log_error "Failed to configure libcypher-parser"
             cd "$ROOT"
             end_group
@@ -772,7 +773,8 @@ build_libcurl() {
         log_info "Configuring libcurl..."
         # Disable all optional dependencies to build a minimal static library
         # Use -fPIC for position-independent code (required for linking into shared library)
-        if ! CFLAGS="-fPIC" "$src_dir/configure" --disable-dependency-tracking --disable-shared --enable-static \
+        # Use -O3 for optimization, -g for debug symbols
+        if ! CFLAGS="-fPIC -O3 -g" "$src_dir/configure" --disable-dependency-tracking --disable-shared --enable-static \
             --without-ssl --without-libssh2 --without-librtmp --without-libidn2 \
             --without-nghttp2 --without-brotli --without-zstd --without-libpsl \
             --without-zlib --disable-ldap; then
@@ -825,7 +827,8 @@ build_libcsv() {
     if [[ ! -f "$build_dir/Makefile" ]]; then
         log_info "Configuring libcsv..."
         # Use -fPIC for position-independent code (required for linking into shared library)
-        if ! CFLAGS="-fPIC" "$src_dir/configure" --disable-dependency-tracking; then
+        # Use -O3 for optimization, -g for debug symbols
+        if ! CFLAGS="-fPIC -O3 -g" "$src_dir/configure" --disable-dependency-tracking; then
             log_error "Failed to configure libcsv"
             cd "$ROOT"
             end_group
@@ -870,15 +873,22 @@ build_graphblas() {
         -DBUILD_STATIC_LIBS=ON
         -DBUILD_SHARED_LIBS=OFF
         -DGRAPHBLAS_COMPACT=ON
+        -DGRAPHBLAS_BUILD_STATIC_LIBS=ON
+        -DBUILD_TESTING=OFF
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-        -DCMAKE_C_FLAGS="-fPIC"
-        -DCMAKE_CXX_FLAGS="-fPIC"
+        -DCMAKE_C_FLAGS="-fPIC -fno-stack-protector"
+        -DCMAKE_CXX_FLAGS="-fPIC -fno-stack-protector"
     )
 
     if [[ "$DEPS_DEBUG" == "1" ]]; then
         cmake_args+=(-DCMAKE_BUILD_TYPE=Debug)
     else
-        cmake_args+=(-DCMAKE_BUILD_TYPE=Release)
+        # Use RelWithDebInfo for debug symbols, but override to -O3 for max optimization
+        cmake_args+=(
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+            "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O3 -g -DNDEBUG -fPIC -fno-stack-protector"
+            "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O3 -g -DNDEBUG -fPIC -fno-stack-protector"
+        )
     fi
 
     if [[ "$JIT" != "" ]]; then
@@ -894,7 +904,7 @@ build_graphblas() {
     fi
 
     log_info "Building GraphBLAS..."
-    if ! cmake --build . --config Release -j "$NPROC"; then
+    if ! cmake --build . --config RelWithDebInfo -j "$NPROC"; then
         log_error "Failed to build GraphBLAS"
         cd "$ROOT"
         end_group
@@ -941,7 +951,12 @@ build_lagraph() {
     if [[ "$DEPS_DEBUG" == "1" ]]; then
         cmake_args+=(-DCMAKE_BUILD_TYPE=Debug)
     else
-        cmake_args+=(-DCMAKE_BUILD_TYPE=Release)
+        # Use RelWithDebInfo for debug symbols, but override to -O3 for max optimization
+        cmake_args+=(
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+            "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O3 -g -DNDEBUG -fPIC"
+            "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O3 -g -DNDEBUG -fPIC"
+        )
     fi
 
     log_info "Configuring LAGraph..."
@@ -953,7 +968,7 @@ build_lagraph() {
     fi
 
     log_info "Building LAGraph..."
-    if ! cmake --build . --config Release -j "$NPROC"; then
+    if ! cmake --build . --config RelWithDebInfo -j "$NPROC"; then
         log_error "Failed to build LAGraph"
         cd "$ROOT"
         end_group
@@ -1052,7 +1067,7 @@ build_utf8proc() {
 
     mkdir -p "$bin_dir"
 
-    local cc_flags="-O2 -fPIC -std=c99 -I${src_dir}"
+    local cc_flags="-O2 -g -fPIC -std=c99 -I${src_dir}"  # -O2 for optimization, -g for debug symbols
     if [[ "$DEPS_DEBUG" == "1" ]]; then
         cc_flags="-g -O0 -fPIC -std=c99 -I${src_dir}"
     fi
@@ -1096,7 +1111,11 @@ build_oniguruma() {
     if [[ "$DEPS_DEBUG" == "1" ]]; then
         cmake_args+=(-DCMAKE_BUILD_TYPE=Debug)
     else
-        cmake_args+=(-DCMAKE_BUILD_TYPE=Release)
+        # Use RelWithDebInfo for debug symbols, but override to -O3 for max optimization
+        cmake_args+=(
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+            "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O3 -g -DNDEBUG -fPIC"
+        )
     fi
 
     log_info "Configuring oniguruma..."
@@ -1108,7 +1127,7 @@ build_oniguruma() {
     fi
 
     log_info "Building oniguruma..."
-    if ! cmake --build . --config Release -j "$NPROC"; then
+    if ! cmake --build . --config RelWithDebInfo -j "$NPROC"; then
         log_error "Failed to build oniguruma"
         cd "$ROOT"
         end_group
