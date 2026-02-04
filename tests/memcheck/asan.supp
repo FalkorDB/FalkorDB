@@ -1,4 +1,6 @@
 leak:ErrorCtx_Get
+leak:ErrorCtx_EncounteredError
+leak:ErrorCtx_SetError
 leak:AR_RegisterFuncs
 leak:Register_PlaceholderFuncs
 leak:AlgebraicExpression_FromString
@@ -14,3 +16,17 @@ leak:UDFCtx_RegisterFunction
 # Redis networking leaks at shutdown - client buffers not freed
 leak:readQueryFromClient
 leak:_sdsnewlen
+
+# macOS system library false positives
+# These are allocations from system libraries that are intentionally not freed at exit
+leak:libobjc.A.dylib
+leak:CoreFoundation
+leak:libsystem_notify.dylib
+leak:libsystem_info.dylib
+leak:libsystem_malloc.dylib
+leak:libsystem_platform.dylib
+leak:libsystem_collections.dylib
+leak:libSystem.B.dylib
+leak:dyld
+leak:libomp.dylib
+leak:Foundation

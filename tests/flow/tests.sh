@@ -167,7 +167,14 @@ build_redis_with_sanitizer() {
 		cd /tmp
 		if [[ ! -f "redis-$redis_version.tar.gz" ]]; then
 			echo "Downloading Redis $redis_version..."
-			wget -q "https://github.com/redis/redis/archive/refs/tags/$redis_version.tar.gz" -O "redis-$redis_version.tar.gz"
+			if command -v wget > /dev/null; then
+				wget -q "https://github.com/redis/redis/archive/refs/tags/$redis_version.tar.gz" -O "redis-$redis_version.tar.gz"
+			elif command -v curl > /dev/null; then
+				curl -sL "https://github.com/redis/redis/archive/refs/tags/$redis_version.tar.gz" -o "redis-$redis_version.tar.gz"
+			else
+				echo "Error: Neither wget nor curl found. Please install one of them."
+				return 1
+			fi
 		fi
 		tar xzf "redis-$redis_version.tar.gz" -C "$redis_dir" --strip-components=1
 	fi
@@ -196,7 +203,7 @@ build_redis_with_sanitizer() {
 			>> "$build_log" 2>&1 || true
 
 		echo "Building Redis with CFLAGS: $san_flags"
-		make -j$(nproc) \
+		make -j$(get_nproc) \
 			CC=clang \
 			CXX=clang++ \
 			OPTIMIZATION="-O1" \
@@ -255,6 +262,31 @@ setup_clang_sanitizer() {
 
 		export ASAN_OPTIONS="detect_odr_violation=0:halt_on_error=0:detect_leaks=1"
 		export LSAN_OPTIONS="suppressions=$ROOT/tests/memcheck/asan.supp:use_tls=0"
+
+		# macOS requires preloading ASAN runtime for modules loaded via dlopen
+		# SIP strips DYLD_* variables from child processes, so we create a wrapper script
+		if [[ $OS == macos ]]; then
+			local asan_rt_dir=$(clang --print-runtime-dir 2>/dev/null)
+			if [[ -n "$asan_rt_dir" ]]; then
+				local asan_lib="$asan_rt_dir/libclang_rt.asan_osx_dynamic.dylib"
+				if [[ -f "$asan_lib" ]]; then
+					# Create wrapper script that sets DYLD_INSERT_LIBRARIES before exec
+					local wrapper="/tmp/redis-asan-wrapper.sh"
+					cat > "$wrapper" << WRAPPER_EOF
+#!/bin/bash
+export DYLD_INSERT_LIBRARIES="$asan_lib"
+exec "$REDIS_SERVER" "\$@"
+WRAPPER_EOF
+					chmod +x "$wrapper"
+					REDIS_SERVER="$wrapper"
+					echo "ASAN runtime wrapper created: $wrapper"
+				else
+					echo "Warning: ASAN runtime not found at $asan_lib"
+				fi
+			else
+				echo "Warning: Could not determine ASAN runtime directory"
+			fi
+		fi
 
 	elif [[ $SAN == mem || $SAN == memory ]]; then
 		# For MSAN, use regular redis-server (MSAN requires special libc build)

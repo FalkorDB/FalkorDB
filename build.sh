@@ -490,10 +490,18 @@ setup_build_environment() {
     if [[ -n "$SAN" ]] && rustup run nightly rustc --version &>/dev/null 2>&1; then
         # Sanitizer build with nightly uses explicit target - determine the correct triple
         local rust_target
-        if [[ "$ARCH" == "arm64v8" ]]; then
-            rust_target="aarch64-unknown-linux-gnu"
+        if [[ "$OS" == "macos" ]]; then
+            if [[ "$ARCH" == "arm64v8" ]]; then
+                rust_target="aarch64-apple-darwin"
+            else
+                rust_target="x86_64-apple-darwin"
+            fi
         else
-            rust_target="x86_64-unknown-linux-gnu"
+            if [[ "$ARCH" == "arm64v8" ]]; then
+                rust_target="aarch64-unknown-linux-gnu"
+            else
+                rust_target="x86_64-unknown-linux-gnu"
+            fi
         fi
         export FalkorDBRS="${FalkorDBRS_BINDIR}/${rust_target}/debug/libFalkorDB_rs.a"
     elif [[ "$DEBUG" == "1" || -n "$SAN" || "$COV" == "1" ]]; then
@@ -1174,12 +1182,20 @@ build_falkordbrs() {
         if rustup run nightly rustc --version &>/dev/null; then
             cargo_cmd="cargo +nightly"
             rustflags="-Zsanitizer=${SAN}"
-            # Use the correct target triple for the current architecture
+            # Use the correct target triple for the current architecture and OS
             local rust_target
-            if [[ "$ARCH" == "arm64v8" ]]; then
-                rust_target="aarch64-unknown-linux-gnu"
+            if [[ "$OS" == "macos" ]]; then
+                if [[ "$ARCH" == "arm64v8" ]]; then
+                    rust_target="aarch64-apple-darwin"
+                else
+                    rust_target="x86_64-apple-darwin"
+                fi
             else
-                rust_target="x86_64-unknown-linux-gnu"
+                if [[ "$ARCH" == "arm64v8" ]]; then
+                    rust_target="aarch64-unknown-linux-gnu"
+                else
+                    rust_target="x86_64-unknown-linux-gnu"
+                fi
             fi
             # Ensure the target's standard library is installed for nightly
             if ! rustup +nightly target list --installed | grep -q "$rust_target"; then
@@ -1480,6 +1496,10 @@ run_flow_tests() {
         export VERBOSE=1
     fi
 
+    if [[ -n "$SAN" ]]; then
+        export SAN
+    fi
+
     log_info "Running flow tests..."
     if ! "${ROOT}/tests/flow/tests.sh"; then
         log_error "Flow tests failed"
@@ -1529,6 +1549,10 @@ run_tck_tests() {
         export TEST="$TEST_FILTER"
     fi
 
+    if [[ -n "$SAN" ]]; then
+        export SAN
+    fi
+
     log_info "Running TCK tests..."
     if ! "${ROOT}/tests/flow/tests.sh"; then
         log_error "TCK tests failed"
@@ -1575,6 +1599,10 @@ run_upgrade_tests() {
 
     if [[ -n "$TEST_FILTER" ]]; then
         export TEST="$TEST_FILTER"
+    fi
+
+    if [[ -n "$SAN" ]]; then
+        export SAN
     fi
 
     log_info "Running upgrade tests..."
