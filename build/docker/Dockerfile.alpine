@@ -32,13 +32,11 @@ WORKDIR ${FALKORDB_HOME}
 COPY ./build/docker/run.sh ${FALKORDB_BIN_PATH}/run.sh
 COPY ./build/docker/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 
-# Copy full Node.js installation from official node:24-alpine image
-COPY --from=node /usr/local /usr/local
-
-# Update to latest npm version which includes patched tar dependency
-RUN npm install -g npm@latest \
-    && cd /usr/local/lib/node_modules/npm/ \
-    && npm install tar@^7.5.7 @isaacs/brace-expansion@^5.0.1
+# Copy only Node.js runtime from official node:24-alpine image (exclude npm)
+COPY --from=node /usr/local/bin/node /usr/local/bin/
+COPY --from=node /usr/local/include/node /usr/local/include/node
+COPY --from=node /usr/local/share/man/man1/node.1 /usr/local/share/man/man1/
+COPY --from=node /opt/yarn-* /opt/
 
 # Copy the compiled FalkorDB module from the Alpine compiler
 COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
