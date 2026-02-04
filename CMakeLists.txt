@@ -127,6 +127,11 @@ endif()
 
 message("# CMAKE_C_COMPILER_ID: ${CMAKE_C_COMPILER_ID}")
 
+# Override RelWithDebInfo to use -O3 instead of -O2 for maximum optimization
+# while keeping debug symbols for profiling and crash analysis
+set(CMAKE_C_FLAGS_RELWITHDEBINFO "-O3 -g -DNDEBUG" CACHE STRING "" FORCE)
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 -g -DNDEBUG" CACHE STRING "" FORCE)
+
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${CMAKE_CC_C_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CMAKE_CC_CXX_FLAGS}")
 
