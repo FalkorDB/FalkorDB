@@ -247,6 +247,10 @@ inline AttributeSet GraphEntity_GetAttributes
 ) {
 	ASSERT(e != NULL);
 
+	if(!e->attributes) {
+		return NULL;
+	}
+
 	return *e->attributes;
 }
 

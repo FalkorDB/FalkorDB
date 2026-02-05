@@ -168,6 +168,10 @@ static void _ResultSet_CompactReplyWithProperties
 	const GraphEntity *e
 ) {
 	const AttributeSet set = GraphEntity_GetAttributes(e);
+	if (!set) {
+		RedisModule_ReplyWithArray(ctx, 0);
+		return;
+	}
 	int prop_count = AttributeSet_Count(set);
 	RedisModule_ReplyWithArray(ctx, prop_count);
 
@@ -546,4 +550,3 @@ void ResultSet_EmitCompactStats
 	buflen = sprintf(buff, "Query internal execution time: %.6f milliseconds", t);
 	RedisModule_ReplyWithStringBuffer(ctx, buff, buflen);
 }
-

@@ -184,3 +184,54 @@ class testResultSetFlow(FlowTestsBase):
         query = """RETURN 'Foo\r\nBar'"""
         result = self.graph.query(query)
         self.env.assertEqual(result.result_set[0][0], 'Foo\r\nBar')
+        
+    # Test returning startNode of deleted node
+    def test11_deleted_start_node(self):
+        query = """CREATE (a)-[r:R]->(a) WITH r, a DETACH DELETE a RETURN startNode(r)"""
+        result = self.graph.query(query)
+        # Should return a node with empty labels and properties (deleted node)
+        self.env.assertEquals(len(result.result_set), 1)
+        node = result.result_set[0][0]
+        self.env.assertEquals(node.labels, None)
+        self.env.assertEquals(node.properties, {})
+
+    # Test returning endNode of deleted node
+    def test12_deleted_end_node(self):
+        query = """CREATE (a)-[r:R]->(a) WITH r, a DETACH DELETE a RETURN endNode(r)"""
+        result = self.graph.query(query)
+        # Should return a node with empty labels and properties (deleted node)
+        self.env.assertEquals(len(result.result_set), 1)
+        node = result.result_set[0][0]
+        self.env.assertEquals(node.labels, None)
+        self.env.assertEquals(node.properties, {})
+
+    # Test returning deleted relationship via startNode/endNode
+    def test13_deleted_relationship_endpoints(self):
+        query = """CREATE (a)-[r:R]->(b) WITH r, a, b DETACH DELETE a, b RETURN startNode(r), endNode(r)"""
+        result = self.graph.query(query)
+        self.env.assertEquals(len(result.result_set), 1)
+        start_node = result.result_set[0][0]
+        end_node = result.result_set[0][1]
+        # Both endpoints should be returned as deleted nodes with empty labels/properties
+        self.env.assertEquals(start_node.labels, None)
+        self.env.assertEquals(start_node.properties, {})
+        self.env.assertEquals(end_node.labels, None)
+        self.env.assertEquals(end_node.properties, {})
+
+    # Test that deleted node with original properties returns empty properties
+    def test14_deleted_node_with_properties(self):
+        query = """CREATE (a:Person {name: 'test', age: 30})-[r:R]->(a) WITH r, a DETACH DELETE a RETURN startNode(r)"""
+        result = self.graph.query(query)
+        self.env.assertEquals(len(result.result_set), 1)
+        node = result.result_set[0][0]
+        # Properties should be empty after deletion
+        self.env.assertEquals(node.labels, None)
+        self.env.assertEquals(node.properties, {})
+
+    # Test accessing relationship after its endpoints are deleted
+    def test15_deleted_relationship_via_type(self):
+        query = """CREATE (a)-[r:KNOWS]->(a) WITH r, a DETACH DELETE a RETURN type(r)"""
+        result = self.graph.query(query)
+        self.env.assertEquals(len(result.result_set), 1)
+        # Relationship type should still be accessible
+        self.env.assertEquals(result.result_set[0][0], "KNOWS")
