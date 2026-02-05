@@ -304,6 +304,8 @@ bolt_value_type bolt_read_type
 			return BVT_MAP;
 		default:
 			if(marker >= TINY_INT8_MIN || marker <= TINY_INT8_MAX) {
+				// TINY_INT8: values from -16 (0xF0) to 127 (0x7F)
+				// This covers 0x00-0x7F (positive) and 0xF0-0xFF (negative)
 				return BVT_INT8;
 			}
 			if(TINY_MARKER_CHECK(TINY_STRING_BASE_MARKER, marker)) {
@@ -367,6 +369,8 @@ int8_t bolt_read_int8
 		case INT8_MARKER:
 			return buffer_read_uint8(data);
 		default:
+			// TINY_INT8: values from -16 (0xF0) to 127 (0x7F)
+			// This covers 0x00-0x7F (positive) and 0xF0-0xFF (negative)
 			if(marker >= TINY_INT8_MIN || marker <= TINY_INT8_MAX) {
 				return marker;
 			}
