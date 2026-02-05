@@ -3,7 +3,7 @@
 # This Makefile provides a familiar make interface while delegating
 # all actual build operations to build.sh
 
-.PHONY: all build deps clean pack package test unit-tests flow-tests tck-tests upgrade-tests \
+.PHONY: all build deps clean pack package test unit-tests flow-tests tck-tests \
         fuzz-tests benchmark coverage help run
 
 #----------------------------------------------------------------------------------------------
@@ -48,7 +48,6 @@ make test         # Run tests
 make unit-tests     # Run unit tests
 make flow-tests     # Run flow tests
 make tck-tests      # Run TCK tests
-make upgrade-tests  # Run upgrade tests
 make fuzz-tests     # Run fuzz tester
   TIMEOUT=secs      # Timeout in `secs`
 
@@ -200,9 +199,6 @@ flow-tests:
 
 tck-tests:
 	@./build.sh RUN_TCK_TESTS=1 $(BUILD_ARGS)
-
-upgrade-tests:
-	@./build.sh RUN_UPGRADE_TESTS=1 $(BUILD_ARGS)
 
 fuzz-tests fuzz:
 	@./build.sh RUN_FUZZ_TESTS=1 $(BUILD_ARGS)

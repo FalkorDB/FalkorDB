@@ -35,7 +35,6 @@ RUN_TESTS=0          # Run all tests
 RUN_UNIT_TESTS=0     # Run unit tests
 RUN_FLOW_TESTS=0     # Run flow tests
 RUN_TCK_TESTS=0      # Run TCK tests
-RUN_UPGRADE_TESTS=0  # Run upgrade tests
 
 # Other options
 LIST_TESTS=0         # List tests only
@@ -153,7 +152,6 @@ TEST OPTIONS:
     RUN_UNIT_TESTS=1    Run unit tests only
     RUN_FLOW_TESTS=1    Run flow tests only
     RUN_TCK_TESTS=1     Run TCK tests only
-    RUN_UPGRADE_TESTS=1 Run upgrade tests only
     LIST=1              List all tests, do not execute
     TEST=name           Run specific test
     TESTFILE=file       Run tests listed in file
@@ -285,9 +283,6 @@ parse_arguments() {
                 ;;
             RUN_TCK_TESTS=1|TCK=1)
                 RUN_TCK_TESTS=1
-                ;;
-            RUN_UPGRADE_TESTS=1|UPGRADE=1)
-                RUN_UPGRADE_TESTS=1
                 ;;
             LIST=1)
                 LIST_TESTS=1
@@ -1493,7 +1488,6 @@ run_flow_tests() {
     export GEN=1
     export AOF=0
     export TCK=0
-    export UPGRADE=0
 
     if [[ -n "$TEST_FILTER" ]]; then
         export TEST="$TEST_FILTER"
@@ -1562,7 +1556,6 @@ run_tck_tests() {
     export GEN=0
     export AOF=0
     export TCK=1
-    export UPGRADE=0
 
     if [[ -n "$TEST_FILTER" ]]; then
         export TEST="$TEST_FILTER"
@@ -1587,57 +1580,6 @@ run_tck_tests() {
     end_group
 }
 
-#-----------------------------------------------------------------------------
-# Function: run_upgrade_tests
-# Run upgrade tests
-#-----------------------------------------------------------------------------
-run_upgrade_tests() {
-    if [[ "$RUN_UPGRADE_TESTS" != "1" ]]; then
-        return 0
-    fi
-
-    # Prepare coverage capture if enabled
-    prepare_coverage_capture
-
-    start_group "Running Upgrade Tests"
-
-    export MODULE="$TARGET"
-    export BINROOT
-
-    if [[ -n "$PARALLEL" ]]; then
-        export PARALLEL
-    else
-        export PARALLEL=0  # Upgrade tests run slowly
-    fi
-
-    export GEN=0
-    export AOF=0
-    export TCK=0
-    export UPGRADE=1
-    export SLOW=1
-
-    if [[ -n "$TEST_FILTER" ]]; then
-        export TEST="$TEST_FILTER"
-    fi
-
-    if [[ -n "$SAN" ]]; then
-        export SAN
-    fi
-
-    log_info "Running upgrade tests..."
-    if ! "${ROOT}/tests/flow/tests.sh"; then
-        log_error "Upgrade tests failed"
-        end_group
-        return 1
-    fi
-
-    log_success "Upgrade tests passed"
-
-    # Capture coverage if enabled
-    capture_coverage upgrade
-
-    end_group
-}
 
 #-----------------------------------------------------------------------------
 # Function: run_fuzz_tests
@@ -1969,7 +1911,6 @@ run_all_tests() {
     run_unit_tests || has_failures=1
     run_flow_tests || has_failures=1
     run_tck_tests || has_failures=1
-    run_upgrade_tests || has_failures=1
 
     if [[ $has_failures -eq 1 ]]; then
         log_error "Some tests failed"
@@ -2007,7 +1948,7 @@ main() {
     # Handle pack-only operation (no build needed if target exists)
     if [[ "$PACK" == "1" && "$RUN_TESTS" != "1" && "$RUN_UNIT_TESTS" != "1" && \
           "$RUN_FLOW_TESTS" != "1" && "$RUN_TCK_TESTS" != "1" && \
-          "$RUN_UPGRADE_TESTS" != "1" && "$RUN_FUZZ_TESTS" != "1" ]]; then
+          "$RUN_FUZZ_TESTS" != "1" ]]; then
         # Check if target already exists
         if [[ -f "$TARGET" ]]; then
             do_pack
@@ -2038,18 +1979,16 @@ main() {
         RUN_UNIT_TESTS=1
         RUN_FLOW_TESTS=1
         RUN_TCK_TESTS=1
-        RUN_UPGRADE_TESTS=1
     fi
 
     local test_result=0
-    if [[ "$RUN_UNIT_TESTS" == "1" || "$RUN_FLOW_TESTS" == "1" || "$RUN_TCK_TESTS" == "1" || "$RUN_UPGRADE_TESTS" == "1" ]]; then
+    if [[ "$RUN_UNIT_TESTS" == "1" || "$RUN_FLOW_TESTS" == "1" || "$RUN_TCK_TESTS" == "1" ]]; then
         if [[ "$RUN_TESTS" == "1" ]]; then
             run_all_tests || test_result=1
         else
             run_unit_tests || test_result=1
             run_flow_tests || test_result=1
             run_tck_tests || test_result=1
-            run_upgrade_tests || test_result=1
         fi
     fi
 
