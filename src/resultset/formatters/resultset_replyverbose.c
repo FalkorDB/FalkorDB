@@ -109,6 +109,11 @@ static void _ResultSet_VerboseReplyWithProperties
 	const GraphEntity *e
 ) {
 	const AttributeSet set = GraphEntity_GetAttributes (e) ;
+	if (!set) {
+		RedisModule_ReplyWithArray(ctx,0);
+		return;
+	}
+
 	int prop_count = AttributeSet_Count (set) ;
 	RedisModule_ReplyWithArray (ctx, prop_count) ;
 
@@ -162,6 +167,7 @@ static void _ResultSet_VerboseReplyWithNode(RedisModuleCtx *ctx, GraphContext *g
 	RedisModule_ReplyWithArray(ctx, 2);
 	RedisModule_ReplyWithStringBuffer(ctx, "properties", 10);
 	_ResultSet_VerboseReplyWithProperties(ctx, gc, (GraphEntity *)n);
+
 }
 
 static void _ResultSet_VerboseReplyWithEdge(RedisModuleCtx *ctx, GraphContext *gc, Edge *e) {
