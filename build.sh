@@ -1488,6 +1488,7 @@ run_flow_tests() {
     export GEN=1
     export AOF=0
     export TCK=0
+    export UPGRADE=0
 
     if [[ -n "$TEST_FILTER" ]]; then
         export TEST="$TEST_FILTER"
@@ -1556,6 +1557,7 @@ run_tck_tests() {
     export GEN=0
     export AOF=0
     export TCK=1
+    export UPGRADE=0
 
     if [[ -n "$TEST_FILTER" ]]; then
         export TEST="$TEST_FILTER"
