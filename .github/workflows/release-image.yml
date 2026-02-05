@@ -63,7 +63,7 @@ jobs:
 
           # If the event is a workflow_run, and branch is not master, set to the branch name
           if [ "${{ github.event_name }}" == "workflow_run" ] && [ "${{ github.event.workflow_run.head_branch }}" != "master" ]; then
-            TAG_NAME="v${{ github.event.workflow_run.head_branch }}"
+            TAG_NAME="${{ github.event.workflow_run.head_branch }}"
           fi
 
           echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_ENV
