@@ -167,6 +167,24 @@ jobs:
 
           echo "Cherry-pick summary: $SUCCESS_COUNT successful, $FAIL_COUNT failed"
 
+      - name: Bump patch version
+        run: |
+          TAG="${{ steps.find_tag.outputs.LATEST_TAG }}"
+          # Parse version components from tag (e.g., v4.16.2)
+          MAJOR=$(echo "$TAG" | sed 's/^v//' | cut -d. -f1)
+          MINOR=$(echo "$TAG" | sed 's/^v//' | cut -d. -f2)
+          PATCH=$(echo "$TAG" | sed 's/^v//' | cut -d. -f3)
+          NEW_PATCH=$((PATCH + 1))
+
+          echo "Bumping version: ${MAJOR}.${MINOR}.${PATCH} -> ${MAJOR}.${MINOR}.${NEW_PATCH}"
+
+          sed -i "s/#define FALKOR_VERSION_MAJOR .*/#define FALKOR_VERSION_MAJOR ${MAJOR}/" src/version.h
+          sed -i "s/#define FALKOR_VERSION_MINOR .*/#define FALKOR_VERSION_MINOR ${MINOR}/" src/version.h
+          sed -i "s/#define FALKOR_VERSION_PATCH .*/#define FALKOR_VERSION_PATCH ${NEW_PATCH}/" src/version.h
+
+          git add src/version.h
+          git commit -m "Bump version to ${MAJOR}.${MINOR}.${NEW_PATCH}"
+
       - name: Push branch
         run: |
           git push origin "${{ steps.create_branch.outputs.BRANCH_NAME }}"
