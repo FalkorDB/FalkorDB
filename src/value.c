@@ -873,7 +873,12 @@ int SIValue_Compare
 
 		case T_NODE:
 		case T_EDGE:
-			return ENTITY_GET_ID((GraphEntity *)a.ptrval) - ENTITY_GET_ID((GraphEntity *)b.ptrval);
+		{
+			// use comparison operators to avoid integer overflow with large IDs
+			EntityID id_a = ENTITY_GET_ID((GraphEntity *)a.ptrval);
+			EntityID id_b = ENTITY_GET_ID((GraphEntity *)b.ptrval);
+			return (id_a > id_b) - (id_a < id_b);
+		}
 
 		case T_ARRAY:
 			return SIArray_Compare(a, b, disjointOrNull);

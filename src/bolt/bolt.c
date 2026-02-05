@@ -555,7 +555,7 @@ uint32_t bolt_read_map_size
 		case MAP16_MARKER:
 			return ntohs(buffer_read_uint16(data));
 		case MAP32_MARKER:
-			return ntohs(buffer_read_uint32(data));
+			return ntohl(buffer_read_uint32(data));
 		default:
 			if(TINY_MARKER_CHECK(TINY_MAP_BASE_MARKER, marker)) {
 				return marker - TINY_MAP_BASE_MARKER;
