@@ -123,6 +123,12 @@ GrB_Info Delta_Matrix_new
 	bool transpose           // if true, create a transpose of the matrix
 );
 
+// allocate and update the transpose of a matrix whose transpose is NULL
+GrB_Info Delta_Matrix_cacheTranspose
+(
+	Delta_Matrix A // matrix to give transpose
+);
+
 // returns transposed matrix of C
 Delta_Matrix Delta_Matrix_getTranspose
 (
@@ -188,6 +194,12 @@ GrB_Info Delta_Matrix_nvals  // get the number of entries in a matrix
 	const Delta_Matrix A     // matrix to query
 );
 
+GrB_Info Delta_Matrix_type
+(
+	GrB_Type *type,
+	Delta_Matrix A
+);
+
 GrB_Info Delta_Matrix_resize  // change the size of a matrix
 (
 	Delta_Matrix C,           // matrix to modify
@@ -240,6 +252,22 @@ GrB_Info Delta_Matrix_removeElements
 	const GrB_Matrix A,  // elements to remove
 	const GrB_Matrix AT  // A's transpose
 );
+
+// remove all entries in the given row
+GrB_Info Delta_Matrix_removeRow
+(
+	Delta_Matrix C,     // matrix to remove entry from
+	GrB_Index i,        // row index
+	GrB_Descriptor desc // use transpose to remove column
+) ;
+
+// remove all entries in the given rows (batch)
+GrB_Info Delta_Matrix_removeRows
+(
+	Delta_Matrix C,     // matrix to remove entry from
+	GrB_Vector i,       // row index
+	GrB_Descriptor desc // use transpose to remove column
+) ;
 
 // C = AB
 // A should be fully synced on input

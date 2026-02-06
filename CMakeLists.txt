@@ -9,6 +9,10 @@ if (NOT DEFINED UNIT_TESTS)
 	set(UNIT_TESTS OFF)
 endif()
 
+if (NOT DEFINED MICRO_BENCHMARKS)
+	set(MICRO_BENCHMARKS OFF)
+endif()
+
 project(falkordb)
 
 setup_cc_options()
@@ -71,3 +75,6 @@ if (UNIT_TESTS)
 	add_subdirectory(${root}/tests/unit tests/unit)
 endif()
 
+if (MICRO_BENCHMARKS)
+	add_subdirectory(${root}/tests/micro_benchmarks tests/micro_benchmarks)
+endif()

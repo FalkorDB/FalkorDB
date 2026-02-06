@@ -40,9 +40,15 @@ void Tensor_SetElement
 void Tensor_SetElements
 (
 	Tensor T,                        // tensor
+	#if defined(__cplusplus)
+	const GrB_Index *rows,  // array of row indices
+	const GrB_Index *cols,  // array of column indices
+	const uint64_t *vals,   // values
+	#else
 	const GrB_Index *restrict rows,  // array of row indices
 	const GrB_Index *restrict cols,  // array of column indices
 	const uint64_t *restrict vals,   // values
+	#endif
 	uint64_t n                       // number of elements
 );
 
@@ -70,6 +76,20 @@ void Tensor_RemoveElements
 	const Edge *elements,       // elements to remove
 	uint64_t n,                 // number of elements
 	uint64_t **cleared_entries  // [optional] cleared entries, referes elements
+);
+
+// remove all entries in the given rows
+GrB_Info Tensor_RemoveRows
+(
+	Tensor T,                  // matrix to remove entry from
+	Delta_Matrix *dels,        // A [nvals x ncols] matrix containing the values
+	                           // deleted from T, if NULL entries won't be
+	                           // returned, instead GrB_free will be called on
+	                           // the multi edges
+	const GrB_Vector i,        // row index
+	const GrB_Descriptor desc  // use INP0 transpose to remove column
+	                           // use GxB_ROWINDEX_LIST to manage
+	                           // interpretation of i
 );
 
 // clear all elements specified by A from T
