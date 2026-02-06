@@ -1,0 +1,270 @@
+name: Batch Backport
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_branch:
+        description: "Version branch to backport to (e.g., 4.16)"
+        required: true
+        type: string
+
+jobs:
+  backport:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Validate version format
+        run: |
+          VERSION="${{ github.event.inputs.version_branch }}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format '$VERSION'. Expected format: X.Y (e.g., 4.16)"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Find latest tag for version
+        id: find_tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Finding latest tag for version $VERSION..."
+
+          # Get all tags matching v<version>.* pattern
+          TAGS=$(gh api repos/${{ github.repository }}/tags --paginate --jq '.[].name' | grep -E "^v${VERSION}\.[0-9]+$" | sort -t. -k3 -n)
+
+          if [ -z "$TAGS" ]; then
+            echo "::error::No tags found matching pattern v${VERSION}.*"
+            exit 1
+          fi
+
+          LATEST_TAG=$(echo "$TAGS" | tail -1)
+          echo "Latest tag: $LATEST_TAG"
+          echo "LATEST_TAG=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+      - name: Get tag date
+        id: tag_date
+        run: |
+          TAG="${{ steps.find_tag.outputs.LATEST_TAG }}"
+          TAG_DATE=$(git log -1 --format="%cI" "$TAG")
+          # Extract just the date part (YYYY-MM-DD) for the search query
+          TAG_DATE_SHORT=$(echo "$TAG_DATE" | cut -d'T' -f1)
+          echo "Tag date: $TAG_DATE_SHORT"
+          echo "TAG_DATE=$TAG_DATE_SHORT" >> $GITHUB_OUTPUT
+
+      - name: Find PRs with version label
+        id: find_prs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Searching for merged PRs with label '$VERSION' since ${{ steps.tag_date.outputs.TAG_DATE }}..."
+
+          # Search for merged PRs with the version label
+          SEARCH_QUERY="is:pr is:merged label:\"$VERSION\" base:master merged:>${{ steps.tag_date.outputs.TAG_DATE }} repo:${{ github.repository }}"
+
+          PR_DATA=$(gh api -X GET search/issues \
+            -f q="$SEARCH_QUERY" \
+            -f sort=updated \
+            -f order=asc \
+            --jq '.items | map({number: .number, title: .title, user: .user.login})')
+
+          PR_COUNT=$(echo "$PR_DATA" | jq 'length')
+
+          if [ "$PR_COUNT" -eq 0 ]; then
+            echo "::error::No merged PRs found with label '$VERSION' since tag ${{ steps.find_tag.outputs.LATEST_TAG }}"
+            exit 1
+          fi
+
+          echo "Found $PR_COUNT PRs to backport"
+          echo "$PR_DATA" > /tmp/prs.json
+          echo "PR_COUNT=$PR_COUNT" >> $GITHUB_OUTPUT
+
+      - name: Get merge commit SHAs
+        id: get_commits
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Getting merge commit SHAs for each PR..."
+
+          # Process each PR and get its merge commit SHA and merged_at timestamp
+          COMMITS_DATA="[]"
+
+          while read -r PR_NUMBER; do
+            PR_INFO=$(gh api repos/${{ github.repository }}/pulls/$PR_NUMBER \
+              --jq '{number: .number, title: .title, user: .user.login, merge_commit_sha: .merge_commit_sha, merged_at: .merged_at}')
+
+            COMMITS_DATA=$(echo "$COMMITS_DATA" | jq --argjson pr "$PR_INFO" '. + [$pr]')
+          done < <(jq -r '.[].number' /tmp/prs.json)
+
+          # Sort by merged_at for chronological order
+          COMMITS_DATA=$(echo "$COMMITS_DATA" | jq 'sort_by(.merged_at)')
+
+          echo "$COMMITS_DATA" > /tmp/commits.json
+          echo "Commits to cherry-pick (in chronological order):"
+          jq -r '.[] | "  #\(.number) - \(.title) (\(.merge_commit_sha | .[0:7]))"' /tmp/commits.json
+
+      - name: Create backport branch
+        id: create_branch
+        run: |
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          BRANCH_NAME="backport/${VERSION}-${TIMESTAMP}"
+
+          echo "Creating branch $BRANCH_NAME from origin/$VERSION..."
+          git checkout -b "$BRANCH_NAME" "origin/$VERSION"
+
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_OUTPUT
+
+      - name: Cherry-pick commits
+        id: cherry_pick
+        run: |
+          SUCCESS_COUNT=0
+          FAIL_COUNT=0
+
+          # Initialize result JSON files
+          echo "[]" > /tmp/success.json
+          echo "[]" > /tmp/failed.json
+
+          # Configure git for cherry-pick
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          while read -r COMMIT_INFO; do
+            PR_NUMBER=$(echo "$COMMIT_INFO" | jq -r '.number')
+            PR_TITLE=$(echo "$COMMIT_INFO" | jq -r '.title')
+            PR_USER=$(echo "$COMMIT_INFO" | jq -r '.user')
+            MERGE_SHA=$(echo "$COMMIT_INFO" | jq -r '.merge_commit_sha')
+
+            echo "Cherry-picking #$PR_NUMBER ($MERGE_SHA): $PR_TITLE"
+
+            if git cherry-pick "$MERGE_SHA" --allow-empty -m 1; then
+              echo "  ✓ Success"
+              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+              jq --argjson item "$COMMIT_INFO" '. + [$item]' /tmp/success.json > /tmp/success_tmp.json
+              mv /tmp/success_tmp.json /tmp/success.json
+            else
+              echo "  ✗ Conflict - aborting this cherry-pick"
+              git cherry-pick --abort || true
+              FAIL_COUNT=$((FAIL_COUNT + 1))
+              jq --argjson item "$COMMIT_INFO" '. + [$item]' /tmp/failed.json > /tmp/failed_tmp.json
+              mv /tmp/failed_tmp.json /tmp/failed.json
+            fi
+          done < <(jq -c '.[]' /tmp/commits.json)
+
+          echo "SUCCESS_COUNT=$SUCCESS_COUNT" >> $GITHUB_OUTPUT
+          echo "FAIL_COUNT=$FAIL_COUNT" >> $GITHUB_OUTPUT
+
+          if [ "$SUCCESS_COUNT" -eq 0 ]; then
+            echo "::error::All cherry-picks failed due to conflicts. Manual intervention required."
+            exit 1
+          fi
+
+          echo "Cherry-pick summary: $SUCCESS_COUNT successful, $FAIL_COUNT failed"
+
+      - name: Bump patch version
+        run: |
+          TAG="${{ steps.find_tag.outputs.LATEST_TAG }}"
+          # Parse version components from tag (e.g., v4.16.2)
+          MAJOR=$(echo "$TAG" | sed 's/^v//' | cut -d. -f1)
+          MINOR=$(echo "$TAG" | sed 's/^v//' | cut -d. -f2)
+          PATCH=$(echo "$TAG" | sed 's/^v//' | cut -d. -f3)
+          NEW_PATCH=$((PATCH + 1))
+
+          echo "Bumping version: ${MAJOR}.${MINOR}.${PATCH} -> ${MAJOR}.${MINOR}.${NEW_PATCH}"
+
+          sed -i "s/#define FALKOR_VERSION_MAJOR .*/#define FALKOR_VERSION_MAJOR ${MAJOR}/" src/version.h
+          sed -i "s/#define FALKOR_VERSION_MINOR .*/#define FALKOR_VERSION_MINOR ${MINOR}/" src/version.h
+          sed -i "s/#define FALKOR_VERSION_PATCH .*/#define FALKOR_VERSION_PATCH ${NEW_PATCH}/" src/version.h
+
+          git add src/version.h
+          git commit -m "Bump version to ${MAJOR}.${MINOR}.${NEW_PATCH}"
+
+      - name: Push branch
+        run: |
+          git push origin "${{ steps.create_branch.outputs.BRANCH_NAME }}"
+
+      - name: Create Pull Request
+        id: create_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SUCCESS_COUNT="${{ steps.cherry_pick.outputs.SUCCESS_COUNT }}"
+          FAIL_COUNT="${{ steps.cherry_pick.outputs.FAIL_COUNT }}"
+
+          # Build PR title
+          if [ "$FAIL_COUNT" -gt 0 ]; then
+            PR_TITLE="[$VERSION] Batch backport ($SUCCESS_COUNT commits, $FAIL_COUNT conflicts)"
+          else
+            PR_TITLE="[$VERSION] Batch backport ($SUCCESS_COUNT commits)"
+          fi
+
+          # Build PR body using a file
+          cat > /tmp/pr_body.md << HEADER
+          ## Batch Backport to $VERSION
+
+          Backporting commits from \`master\` since tag \`${{ steps.find_tag.outputs.LATEST_TAG }}\`.
+
+          HEADER
+
+          # Remove leading whitespace from heredoc content
+          sed -i 's/^          //' /tmp/pr_body.md
+
+          # Add successful cherry-picks section
+          echo "### Successfully Cherry-Picked ($SUCCESS_COUNT)" >> /tmp/pr_body.md
+          jq -r '.[] | "- [x] #\(.number) - \(.title) (@\(.user))"' /tmp/success.json >> /tmp/pr_body.md
+
+          # Add failed cherry-picks section if any
+          if [ "$FAIL_COUNT" -gt 0 ]; then
+            echo "" >> /tmp/pr_body.md
+            echo "### Failed Cherry-Picks ($FAIL_COUNT) - Manual Resolution Required" >> /tmp/pr_body.md
+            jq -r '.[] | "- [ ] #\(.number) - \(.title) (@\(.user)) - `\(.merge_commit_sha | .[0:7])`"' /tmp/failed.json >> /tmp/pr_body.md
+          fi
+
+          # Add footer
+          echo "" >> /tmp/pr_body.md
+          echo "---" >> /tmp/pr_body.md
+          echo "*This PR was automatically generated by the batch-backport workflow.*" >> /tmp/pr_body.md
+
+          # Create the PR
+          PR_URL=$(gh pr create \
+            --base "$VERSION" \
+            --head "${{ steps.create_branch.outputs.BRANCH_NAME }}" \
+            --title "$PR_TITLE" \
+            --body-file /tmp/pr_body.md)
+
+          echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
+          echo "Created PR: $PR_URL"
+
+      - name: Write workflow summary
+        run: |
+          SUCCESS_COUNT="${{ steps.cherry_pick.outputs.SUCCESS_COUNT }}"
+          FAIL_COUNT="${{ steps.cherry_pick.outputs.FAIL_COUNT }}"
+          TOTAL_COUNT="${{ steps.find_prs.outputs.PR_COUNT }}"
+
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## Batch Backport Summary
+
+          | Metric | Value |
+          |--------|-------|
+          | Version Branch | \`$VERSION\` |
+          | Latest Tag | \`${{ steps.find_tag.outputs.LATEST_TAG }}\` |
+          | PRs Found | $TOTAL_COUNT |
+          | Successfully Cherry-Picked | $SUCCESS_COUNT |
+          | Failed (Conflicts) | $FAIL_COUNT |
+
+          ### Pull Request
+          ${{ steps.create_pr.outputs.PR_URL }}
+          EOF
+
+          # Remove leading whitespace from summary
+          sed -i 's/^          //' $GITHUB_STEP_SUMMARY
+
+          if [ "$FAIL_COUNT" -gt 0 ]; then
+            echo "⚠️ **Note:** $FAIL_COUNT commits had conflicts and require manual resolution." >> $GITHUB_STEP_SUMMARY
+          fi
