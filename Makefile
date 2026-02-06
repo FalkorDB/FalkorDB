@@ -158,9 +158,13 @@ FalkorDBRS_DIR = $(ROOT)/deps/FalkorDB-core-rs
 export FalkorDBRS_BINDIR=$(BINROOT)/FalkorDB-core-rs
 include $(ROOT)/build/FalkorDB-core-rs/Makefile.defs
 
+TIDESDB_DIR = $(ROOT)/deps/tidesdb
+export TIDESDB_BINDIR=$(DEPS_BINDIR)/tidesdb
+include $(ROOT)/build/tidesdb/Makefile.defs
+
 BIN_DIRS += $(REDISEARCH_BINROOT)/search-static
 
-LIBS=$(RAX) $(LIBXXHASH) $(GRAPHBLAS) $(LAGRAPH) $(REDISEARCH_LIBS) $(QUICKJS) $(LIBCURL) $(LIBCSV) $(LIBCYPHER_PARSER) $(UTF8PROC) $(ONIGURUMA) $(FalkorDBRS)
+LIBS=$(RAX) $(LIBXXHASH) $(TIDESDB) $(GRAPHBLAS) $(LAGRAPH) $(REDISEARCH_LIBS) $(QUICKJS) $(LIBCURL) $(LIBCSV) $(LIBCYPHER_PARSER) $(UTF8PROC) $(ONIGURUMA) $(FalkorDBRS)
 
 #----------------------------------------------------------------------------------------------
 
@@ -205,6 +209,10 @@ endif
 
 ifeq ($(wildcard $(LIBXXHASH)),)
 MISSING_DEPS += $(LIBXXHASH)
+endif
+
+ifeq ($(wildcard $(TIDESDB)),)
+MISSING_DEPS += $(TIDESDB)
 endif
 
 ifeq ($(wildcard $(GRAPHBLAS)),)
@@ -267,7 +275,7 @@ include $(MK)/rules
 
 ifeq ($(DEPS),1)
 
-deps: $(LIBCURL) $(LIBCSV) $(LIBCYPHER_PARSER) $(GRAPHBLAS) $(LAGRAPH) $(LIBXXHASH) $(RAX) $(REDISEARCH_LIBS) $(QUICKJS) $(UTF8PROC) $(ONIGURUMA) falkordbrs
+deps: $(LIBCURL) $(LIBCSV) $(TIDESDB) $(LIBCYPHER_PARSER) $(GRAPHBLAS) $(LAGRAPH) $(LIBXXHASH) $(RAX) $(REDISEARCH_LIBS) $(QUICKJS) $(UTF8PROC) $(ONIGURUMA) falkordbrs
 
 libxxhash: $(LIBXXHASH)
 
@@ -280,6 +288,12 @@ rax: $(RAX)
 $(RAX):
 	@echo Building $@ ...
 	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/rax DEBUG=$(DEPS_DEBUG)
+
+tidesdb: $(TIDESDB)
+
+$(TIDESDB):
+	@echo Building $@ ...
+	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/tidesdb DEBUG=$(DEPS_DEBUG)
 
 graphblas: $(GRAPHBLAS)
 
@@ -488,6 +502,7 @@ COV_EXCLUDE_DIRS += \
 	deps/RediSearch \
 	deps/utf8proc \
 	deps/xxHash \
+	deps/tidesdb \
 	src/util/sds \
 	tests
 

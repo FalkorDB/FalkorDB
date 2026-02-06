@@ -1,0 +1,2 @@
+
+export TIDESDB=$(TIDESDB_BINDIR)/libtidesdb.a
