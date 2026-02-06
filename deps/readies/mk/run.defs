@@ -1,6 +1,0 @@
-
-ifeq ($(CLANG),1)
-DEBUGGER_CMD=lldb -o run --
-else
-DEBUGGER_CMD=gdb -ex r --args
-endif
