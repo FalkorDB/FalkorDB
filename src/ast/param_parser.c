@@ -734,10 +734,11 @@ dict *ParamParser_Parse
 		}
 
 		// repeat param name
-		size_t l = strlen(param) * 2;
+		size_t param_len = strlen(param);
+		size_t l = param_len * 2;
 		char *duplicated_param_name = rm_malloc(l + 1);
-		strcpy(duplicated_param_name, param);
-		strcpy(duplicated_param_name + l/2, param);
+		memcpy(duplicated_param_name, param, param_len);
+		memcpy(duplicated_param_name + param_len, param, param_len);
 		duplicated_param_name[l] = '\0';
 		HashTableAdd(params, duplicated_param_name, v);
 

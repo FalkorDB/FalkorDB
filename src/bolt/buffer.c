@@ -34,7 +34,7 @@ void buffer_index_advance
 	ASSERT(buffer_index_length(index) >= n);
 
 	index->offset += n;
-	if(index->offset > BUFFER_CHUNK_SIZE) {
+	if(index->offset >= BUFFER_CHUNK_SIZE) {
 		index->chunk += index->offset / BUFFER_CHUNK_SIZE;
 		index->offset %= BUFFER_CHUNK_SIZE;
 	}
