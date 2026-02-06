@@ -1,4 +1,3 @@
-import os
 import warnings
 
 # The default warnings.warn prints itself, this function should override the default behavior

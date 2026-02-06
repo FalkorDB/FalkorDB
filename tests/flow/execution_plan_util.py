@@ -1,5 +1,5 @@
 
-from falkordb.execution_plan import Operation, ExecutionPlan
+from falkordb.execution_plan import Operation
 
 
 def locate_operation(op: Operation, name: str):

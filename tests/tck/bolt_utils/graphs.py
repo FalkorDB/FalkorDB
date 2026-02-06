@@ -1,5 +1,3 @@
-import os
-import sys
 from RLTest import Env
 
 from neo4j import GraphDatabase
