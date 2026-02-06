@@ -25,3 +25,6 @@
 [submodule "deps/quickjs"]
 	path = deps/quickjs
 	url = https://github.com/bellard/quickjs.git
+[submodule "deps/tidesdb"]
+	path = deps/tidesdb
+	url = https://github.com/TidesDB/tidesdb.git
