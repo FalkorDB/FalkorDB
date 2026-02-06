@@ -103,7 +103,7 @@ GrB_Info Delta_Matrix_removeRows
 	Delta_Matrix C,            // matrix to remove entry from
 	const GrB_Vector i,        // row index
 	const GrB_Descriptor desc  // use INP0 transpose to remove column
-	                           // use GxB_ROWINDEX_LIST to manage 
+	                           // use GxB_ROWINDEX_LIST to manage
 	                           // interpretation of i
 ) {
 	GrB_Index  ncols;
@@ -124,6 +124,9 @@ GrB_Info Delta_Matrix_removeRows
 	GrB_Descriptor_get_INT32 (desc, &inp0, GrB_INP0);
 	bool transpose = inp0 == GrB_TRAN;
 
+	// only remove columns if the transpose is cached
+	// if the transpose is not cached, removing a col would require a full
+	// scan of the matrix, so has not been implemented
 	ASSERT (has_t || !transpose);
 
 	if (transpose) {

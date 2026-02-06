@@ -15,6 +15,9 @@
 struct GrB_ops {
 	GrB_Scalar   empty;        // empty scalar
 	GrB_BinaryOp push_id;      // binary operator to add an ID to a tensor entry
+	// WARNING: free_tensors has side effects: it should only be used with
+	// unmasked, inplace GrB_applies ie.
+	// GrB_apply (A, NULL, NULL, free_tensors, A, NULL);
 	GrB_UnaryOp  free_tensors; // unary operator to free tensor entries
 };
 
