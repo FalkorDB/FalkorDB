@@ -9,8 +9,6 @@
 #include "op.h"
 #include "../../util/dict.h"
 #include "../execution_plan.h"
-#include "shared/update_functions.h"
-#include "../../resultset/resultset_statistics.h"
 
 typedef struct {
 	OpBase op;

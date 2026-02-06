@@ -28,15 +28,15 @@
 #define GET_DEEP_COPY ;
 #define FREE_DEEP_COPY ;
 
-void opi32func (GxB_FC32_t *z, const GxB_FC32_t *x, uint64_t i, uint64_t j,
+void gb_opi32func (GxB_FC32_t *z, const GxB_FC32_t *x, uint64_t i, uint64_t j,
     const GxB_FC32_t *y) ;
-void opi32func (GxB_FC32_t *z, const GxB_FC32_t *x, uint64_t i, uint64_t j,
+void gb_opi32func (GxB_FC32_t *z, const GxB_FC32_t *x, uint64_t i, uint64_t j,
     const GxB_FC32_t *y)
 {
     (*z) = (*x) ;
 }
 #define OPI32_DEFN \
-"void opi32func (GxB_FC32_t *z, const GxB_FC32_t *x, uint64_t i, uint64_t j,\n"\
+"void gb_opi32func (GxB_FC32_t *z, const GxB_FC32_t *x, uint64_t i, uint64_t j,\n"\
 " const GxB_FC32_t *y)      \n" \
 "{                          \n" \
 "    (*z) = (*x) ;          \n" \
@@ -207,8 +207,8 @@ void mexFunction
     fprintf (fp, "GB_enumify_select / GB_macrofy_select: opi32\n") ;
     printf ("GB_enumify_select / GB_macrofy_select: opi32\n") ;
     GrB_IndexUnaryOp opi ;
-    OK (GxB_IndexUnaryOp_new (&opi, (GxB_index_unary_function) opi32func,
-        GxB_FC32, GxB_FC32, GxB_FC32, "opi32func", OPI32_DEFN)) ;
+    OK (GxB_IndexUnaryOp_new (&opi, (GxB_index_unary_function) gb_opi32func,
+        GxB_FC32, GxB_FC32, GxB_FC32, "gb_opi32func", OPI32_DEFN)) ;
     GB_enumify_select (&method_code, /* C: */ A,
         opi, /* flipij: */ false, A) ;
     GB_macrofy_select (fp, method_code, opi, GxB_FC32) ;

@@ -14,6 +14,12 @@ GraphContext *RdbLoadGraphContext_latest
 	const RedisModuleString *rm_key_name
 );
 
+// encode DB UDFs
+void AUXLoadUDF_latest
+(
+	RedisModuleIO *io  // IO
+);
+
 // decode nodes
 void RdbLoadNodes_v18
 (

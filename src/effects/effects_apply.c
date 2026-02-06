@@ -59,7 +59,7 @@ static AttributeSet ReadAttributeSet
 	}
 
 	AttributeSet attr_set = NULL;
-	AttributeSet_AddNoClone(&attr_set, ids, values, attr_count, false);
+	AttributeSet_Add (&attr_set, ids, values, attr_count, false) ;
 
 	return attr_set;
 }
@@ -590,7 +590,7 @@ static void ApplyDeleteEdge
 		// check if batch is full
 		if (i == batch_size) {
 			// flush batch
-			GraphHub_DeleteEdges (gc, edges, i, false) ;
+			GraphHub_DeleteEdges (gc, edges, i, false, false) ;
 			i = 0 ;
 		}
 
@@ -610,7 +610,7 @@ static void ApplyDeleteEdge
 
 	// flush last batch
 	if (i > 0) {
-		GraphHub_DeleteEdges (gc, edges, i, false) ;
+		GraphHub_DeleteEdges (gc, edges, i, false, false) ;
 	}
 }
 

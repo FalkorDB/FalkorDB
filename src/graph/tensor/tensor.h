@@ -72,6 +72,14 @@ void Tensor_RemoveElements
 	uint64_t **cleared_entries  // [optional] cleared entries, referes elements
 );
 
+// clear all elements specified by A from T
+void Tensor_ClearElements
+(
+	Tensor T,            // tensor to remove entries from
+	const GrB_Matrix A,  // elements to remove
+	const GrB_Matrix AT  // A's transpose
+);
+
 // computes row degree of T[row:]
 uint64_t Tensor_RowDegree
 (

@@ -213,3 +213,4 @@ GrB_Info Delta_Matrix_memoryUsage
 	
 	return GrB_SUCCESS;
 }
+

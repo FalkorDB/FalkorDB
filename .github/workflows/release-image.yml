@@ -9,8 +9,16 @@ on:
       commit_sha:
         description: "Commit SHA"
         required: true
+      run_falkordb_cloud_update:
+        description: "Trigger FalkorDB Cloud version update"
+        required: false
+        default: "true"
+      run_testflight_workflow:
+        description: "Trigger Testflight workflow"
+        required: false
+        default: "true"
   workflow_run:
-    workflows: ["Build on ubuntu"]
+    workflows: ["Build"]
     types:
       - completed
     branches: [master, "v[0-9]+.[0-9]+"]
@@ -22,8 +30,8 @@ env:
   # Get the commit SHA from the event that triggered the workflow
   # If the event is a workflow_dispatch, use the input value
   # If the event is a workflow_run, use the head_commit.id
-  # If the event is a release, use the target_commitish
-  COMMIT_SHA: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.commit_sha || github.event_name == 'workflow_run' && github.event.workflow_run.head_commit.id || github.event_name == 'release' && github.sha || github.sha }}
+  # If the event is a release, use the sha
+  COMMIT_SHA: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.commit_sha || github.event_name == 'workflow_run' && github.event.workflow_run.head_commit.id || github.sha }}
 
 jobs:
   release:
@@ -32,7 +40,48 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
+
+      - name: Set tag name
+        id: set_tag
+        run: |
+          # If the event is a release, use the release tag name
+          if [ "${{ github.event_name }}" == "release" ]; then
+            TAG_NAME=${{ github.event.release.tag_name }}
+            echo "IS_LATEST=1" >> $GITHUB_ENV
+          fi
+
+          # If the event is a workflow_dispatch, use the input value
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            TAG_NAME=${{ github.event.inputs.tag }}
+          fi
+
+          # If the event is a workflow_run, and branch is master, set to "edge"
+          if [ "${{ github.event_name }}" == "workflow_run" ] && [ "${{ github.event.workflow_run.head_branch }}" == "master" ]; then
+            TAG_NAME="edge"
+          fi
+
+          # If the event is a workflow_run, and branch is not master, set to the branch name
+          if [ "${{ github.event_name }}" == "workflow_run" ] && [ "${{ github.event.workflow_run.head_branch }}" != "master" ]; then
+            TAG_NAME="v${{ github.event.workflow_run.head_branch }}"
+          fi
+
+          echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_ENV
+
+      - name: Verify tag matches version.h
+        if: ${{ startsWith(env.TAG_NAME, 'v') && env.TAG_NAME != 'edge' }}
+        run: |
+          git fetch origin ${{ env.COMMIT_SHA }} --depth=1
+          VERSION_H=$(git show ${{ env.COMMIT_SHA }}:src/version.h)
+          MAJOR=$(echo "$VERSION_H" | grep FALKOR_VERSION_MAJOR | awk '{print $3}')
+          MINOR=$(echo "$VERSION_H" | grep FALKOR_VERSION_MINOR | awk '{print $3}')
+          PATCH=$(echo "$VERSION_H" | grep FALKOR_VERSION_PATCH | awk '{print $3}')
+          FILE_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "Tag: ${{ env.TAG_NAME }}, version.h: ${FILE_VERSION}"
+          if [ "${{ env.TAG_NAME }}" != "${FILE_VERSION}" ]; then
+            echo "::error::Tag '${{ env.TAG_NAME }}' does not match version.h '${FILE_VERSION}'"
+            exit 1
+          fi
 
       - name: Retrieve built image AMD
         uses: dawidd6/action-download-artifact@v11
@@ -54,13 +103,23 @@ jobs:
           path: /tmp
           if_no_artifact_found: error
 
-      - name: Retrieve built image RHEL AMD
+      - name: Retrieve built image RHEL8 AMD
         uses: dawidd6/action-download-artifact@v11
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
-          name: falkordb-rhel-x64
+          name: falkordb-rhel8-x64
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image RHEL9 AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-rhel9-x64
           path: /tmp
           if_no_artifact_found: error
 
@@ -104,6 +163,16 @@ jobs:
           path: /tmp
           if_no_artifact_found: error
 
+      - name: Retrieve built image Amazon Linux AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-amazonlinux2023-x64
+          path: /tmp
+          if_no_artifact_found: error
+
       - name: Retrieve built image Ubuntu AMD server only
         uses: dawidd6/action-download-artifact@v11
         with:
@@ -143,15 +212,56 @@ jobs:
           name: falkordb-arm64v8.so
           path: /tmp
           if_no_artifact_found: error
-      - name: Retrieve built .so RHEL AMD
+      - name: Retrieve built .so RHEL9 AMD
         uses: dawidd6/action-download-artifact@v11
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
-          name: falkordb-rhel-x64.so
+          name: falkordb-rhel9-x64.so
           path: /tmp
           if_no_artifact_found: error
+
+      - name: Retrieve built .so RHEL8 AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-rhel8-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so Alpine AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-alpine-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so Alpine ARM
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-alpine-arm64v8.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so Amazon Linux AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-amazonlinux2023-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
       - name: Retrieve built debug.so AMD
         uses: dawidd6/action-download-artifact@v11
         with:
@@ -161,6 +271,7 @@ jobs:
           name: falkordb-debug-x64.so
           path: /tmp
           if_no_artifact_found: error
+
       - name: Retrieve built debug.so ARM
         uses: dawidd6/action-download-artifact@v11
         with:
@@ -170,13 +281,44 @@ jobs:
           name: falkordb-debug-arm64v8.so
           path: /tmp
           if_no_artifact_found: error
-      - name: Retrieve built debug.so RHEL AMD
+
+      - name: Retrieve built debug.so RHEL9 AMD
         uses: dawidd6/action-download-artifact@v11
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
-          name: falkordb-debug-rhel-x64.so
+          name: falkordb-debug-rhel9-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built debug.so RHEL8 AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-rhel8-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built debug.so Alpine AMD
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-alpine-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built debug.so Alpine ARM
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-alpine-arm64v8.so
           path: /tmp
           if_no_artifact_found: error
 
@@ -204,13 +346,15 @@ jobs:
         run: |
           docker load -i /tmp/falkordb-x64.tar
           docker load -i /tmp/falkordb-arm64v8.tar
-          docker load -i /tmp/falkordb-rhel-x64.tar
+          docker load -i /tmp/falkordb-rhel9-x64.tar
+          docker load -i /tmp/falkordb-rhel8-x64.tar
           docker load -i /tmp/falkordb-server-alpine-x64.tar
           docker load -i /tmp/falkordb-server-alpine-arm64v8.tar
           docker load -i /tmp/falkordb-server-x64.tar
           docker load -i /tmp/falkordb-server-arm64v8.tar
           docker load -i /tmp/falkordb-alpine-x64.tar
           docker load -i /tmp/falkordb-alpine-arm64v8.tar
+          docker load -i /tmp/falkordb-amazonlinux2023-x64.tar
 
       - name: Login to DockerHub
         uses: docker/login-action@v3
@@ -218,37 +362,14 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Set tag name
-        id: set_tag
-        run: |
-          # If the event is a release, use the release tag name
-          if [ "${{ github.event_name }}" == "release" ]; then
-            TAG_NAME=${{ github.event.release.tag_name }}
-            echo "IS_LATEST=1" >> $GITHUB_ENV
-          fi
-
-          # If the event is a workflow_dispatch, use the input value
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            TAG_NAME=${{ github.event.inputs.tag }}
-          fi
-
-          # If the event is a workflow_run, and branch is master, set to "edge"
-          if [ "${{ github.event_name }}" == "workflow_run" ] && [ "${{ github.event.workflow_run.head_branch }}" == "master" ]; then
-            TAG_NAME="edge"
-          fi
-
-          # If the event is a workflow_run, and branch is not master, set to the branch name
-          if [ "${{ github.event_name }}" == "workflow_run" ] && [ "${{ github.event.workflow_run.head_branch }}" != "master" ]; then
-            TAG_NAME="v${{ github.event.workflow_run.head_branch }}"
-          fi
-
-          echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_ENV
-
       - name: Tag x64, ARM, and rhel-x64 images
         run: |
           docker tag falkordb/falkordb-x64 falkordb/falkordb:${{ env.TAG_NAME }}-x64
           docker tag falkordb/falkordb-arm64v8 falkordb/falkordb:${{ env.TAG_NAME }}-arm64v8
-          docker tag falkordb/falkordb-rhel-x64 falkordb/falkordb:${{ env.TAG_NAME }}-rhel-x64
+          docker tag falkordb/falkordb-rhel9-x64 falkordb/falkordb:${{ env.TAG_NAME }}-rhel9-x64
+          docker tag falkordb/falkordb-rhel8-x64 falkordb/falkordb:${{ env.TAG_NAME }}-rhel8-x64
+
+          docker tag falkordb/falkordb-amazonlinux2023-x64 falkordb/falkordb:${{ env.TAG_NAME }}-amazonlinux2023-x64
 
           docker tag falkordb/falkordb-alpine-x64 falkordb/falkordb:${{ env.TAG_NAME }}-alpine-x64
           docker tag falkordb/falkordb-alpine-arm64v8 falkordb/falkordb:${{ env.TAG_NAME }}-alpine-arm64v8
@@ -263,9 +384,11 @@ jobs:
         run: |
           docker push falkordb/falkordb:${{ env.TAG_NAME }}-x64
           docker push falkordb/falkordb:${{ env.TAG_NAME }}-arm64v8
-          docker push falkordb/falkordb:${{ env.TAG_NAME }}-rhel-x64
+          docker push falkordb/falkordb:${{ env.TAG_NAME }}-rhel9-x64
+          docker push falkordb/falkordb:${{ env.TAG_NAME }}-rhel8-x64
           docker push falkordb/falkordb:${{ env.TAG_NAME }}-alpine-x64
           docker push falkordb/falkordb:${{ env.TAG_NAME }}-alpine-arm64v8
+          docker push falkordb/falkordb:${{ env.TAG_NAME }}-amazonlinux2023-x64
           docker push falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-x64
           docker push falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-arm64v8
           docker push falkordb/falkordb-server:${{ env.TAG_NAME }}-x64
@@ -294,41 +417,68 @@ jobs:
           docker buildx imagetools inspect falkordb/falkordb-server:${{ env.TAG_NAME }}
           docker buildx imagetools inspect falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine
 
-      - name: Upload falkordb.so files to release
-        if: github.event_name == 'release'
+      - name: Check if release exists
+        id: check_release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-x64.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-arm64v8.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-rhel-x64.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-x64.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-arm64v8.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-rhel-x64.so
-          # Upload macOS binaries if they exist
-          if [ -f /tmp/falkordb-macos-arm64v8.so ]; then
-            gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-macos-arm64v8.so
-          fi
-          if [ -f /tmp/falkordb-debug-macos-arm64v8.so ]; then
-            gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-debug-macos-arm64v8.so
+          if gh release view ${{ env.TAG_NAME }} > /dev/null 2>&1; then
+            echo "RELEASE_EXISTS=true" >> $GITHUB_OUTPUT
+          else
+            echo "RELEASE_EXISTS=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Trigger FalkorDB Cloud Version Update
-        if: github.event_name == 'release'
+      - name: Upload falkordb.so files to release
+        if: steps.check_release.outputs.RELEASE_EXISTS == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Ubuntu binaries
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-arm64v8.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-arm64v8.so
+
+          # RHEL binaries
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-rhel9-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-rhel9-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-rhel8-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-rhel8-x64.so
+
+          # Alpine binaries
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-alpine-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-alpine-arm64v8.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-alpine-x64.so
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-alpine-arm64v8.so
+
+          # Amazon Linux binaries
+          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-amazonlinux2023-x64.so
+
+          # macOS binaries (if they exist)
+          if [ -f /tmp/falkordb-macos-arm64v8.so ]; then
+            gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-macos-arm64v8.so
+          fi
+          if [ -f /tmp/falkordb-debug-macos-arm64v8.so ]; then
+            gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-macos-arm64v8.so
+          fi
+
+  trigger-falkordb-cloud-update:
+    needs: release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || github.event.inputs.run_falkordb_cloud_update == 'true'
+    steps:
+      - name: Trigger FalkorDB Cloud version update
         uses: peter-evans/repository-dispatch@v4
         with:
           token: ${{ secrets.FALKORDB_OMNISTRATE_PAT }}
           repository: FalkorDB/falkordb-omnistrate
           event-type: bump-falkordb-version
-          client-payload: |
-            {
-              "new_version": "${{ github.event.release.tag_name }}"
-            }
-  
+          client-payload: '{"new_version": "${{ github.event.release.tag_name || github.event.inputs.tag }}"}'
+
   trigger-testflight-workflow:
     needs: release
     runs-on: ubuntu-latest
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || github.event.inputs.run_testflight_workflow == 'true'
     steps:
       - name: Trigger Redis Enterprise tests in FalkorDB/testflight
         uses: peter-evans/repository-dispatch@v4
@@ -336,4 +486,4 @@ jobs:
           token: ${{ secrets.GH_TESTFLIGHT_TOKEN }}
           repository: FalkorDB/testflight
           event-type: release-created
-          client-payload: '{"tag_name": "${{ github.event.release.tag_name }}"}'
+          client-payload: '{"tag_name": "${{ github.event.release.tag_name || github.event.inputs.tag }}"}'

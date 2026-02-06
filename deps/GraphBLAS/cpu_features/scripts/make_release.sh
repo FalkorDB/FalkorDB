@@ -19,16 +19,16 @@ declare -r VERSION=$1
 declare -r GIT_TAG="v$1"
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
-if [[ "${BRANCH}" != "master" ]]
+if [[ "${BRANCH}" != "main" ]]
 then
-    echo -e "${ERROR}Not on master. Aborting. ${NOCOLOR}"
+    echo -e "${ERROR}Not on main. Aborting. ${NOCOLOR}"
     echo
     exit 1
 fi
 
 git fetch
 HEADHASH=$(git rev-parse HEAD)
-UPSTREAMHASH=$(git rev-parse master@{upstream})
+UPSTREAMHASH=$(git rev-parse main@{upstream})
 
 if [[ "${HEADHASH}" != "${UPSTREAMHASH}" ]]
 then
@@ -50,7 +50,7 @@ then
     exit 1
 fi
 
-declare -r LATEST_GIT_TAG=$(git describe --tags)
+declare -r LATEST_GIT_TAG=$(git describe --tags --abbrev=0)
 declare -r LATEST_VERSION=${LATEST_GIT_TAG#"v"}
 
 if ! dpkg --compare-versions "${VERSION}" "gt" "${LATEST_VERSION}"
@@ -69,4 +69,7 @@ git commit -m"Release ${GIT_TAG}"
 echo -e "${ACTION}Create new tag${NOCOLOR}"
 git tag ${GIT_TAG}
 
-echo -e "${FINISHED}Local release is ready. Run `git push origin --tags`${NOCOLOR}"
+echo -e "${FINISHED}Manual steps:${NOCOLOR}"
+echo -e "${FINISHED} - Push the tag upstream 'git push origin ${GIT_TAG}'${NOCOLOR}"
+echo -e "${FINISHED} - Create a new release https://github.com/google/cpu_features/releases/new${NOCOLOR}"
+echo -e "${FINISHED} - Update the Release Notes 'gren release --override'${NOCOLOR}"

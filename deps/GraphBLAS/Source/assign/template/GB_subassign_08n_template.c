@@ -89,6 +89,7 @@
     GB_GET_C_HYPER_HASH ;
     GB_GET_MASK ;
     GB_GET_ACCUM_MATRIX ;
+    bool A_is_full = GB_IS_FULL (A) ;
 
     //--------------------------------------------------------------------------
     // Method 08n: C(I,J)<M> += A ; no S
@@ -219,11 +220,32 @@
             GB_LOOKUP_VECTOR_jC ;
             bool cjdense = (pC_end - pC_start == Cvlen) ;
 
+
             //------------------------------------------------------------------
             // C(I,jC)<M(:,j)> += A(:,j) ; no S
             //------------------------------------------------------------------
 
-            if (ajnz > 32 * mjnz)
+            if (GB_A_IS_FULL)
+            {
+
+                //--------------------------------------------------------------
+                // A is a full matrix
+                //--------------------------------------------------------------
+
+                int64_t pA_start = j * Avlen ;
+                for ( ; pM < pM_end ; pM++)
+                {
+                    if (GB_MCAST (Mx, pM, msize))
+                    { 
+                        int64_t iA = GBi_M (Mi, pM, Mvlen) ;
+                        // get iA in A(:,j)
+                        pA = pA_start + iA ;
+                        GB_PHASE1_ACTION ;
+                    }
+                }
+
+            }
+            else if (ajnz > 32 * mjnz)
             {
 
                 //--------------------------------------------------------------
@@ -237,9 +259,7 @@
                         int64_t iA = GBi_M (Mi, pM, Mvlen) ;
                         // find iA in A(:,j)
                         int64_t pright = pA_end - 1 ;
-                        bool found ;
-                        // FUTURE::: exploit dense A(:,j)
-                        found = GB_binary_search (iA, Ai, GB_Ai_IS_32,
+                        bool found = GB_binary_search (iA, Ai, GB_Ai_IS_32,
                             &pA, &pright) ;
                         if (found) GB_PHASE1_ACTION ;
                     }
@@ -399,7 +419,27 @@
             // C(I,jC)<M(:,j)> += A(:,j) ; no S
             //------------------------------------------------------------------
 
-            if (ajnz > 32 * mjnz)
+            if (GB_A_IS_FULL)
+            {
+
+                //--------------------------------------------------------------
+                // A is a full matrix
+                //--------------------------------------------------------------
+
+                int64_t pA_start = j * Avlen ;
+                for ( ; pM < pM_end ; pM++)
+                {
+                    if (GB_MCAST (Mx, pM, msize))
+                    { 
+                        int64_t iA = GBi_M (Mi, pM, Mvlen) ;
+                        // get iA in A(:,j)
+                        pA = pA_start + iA ;
+                        GB_PHASE2_ACTION ;
+                    }
+                }
+
+            }
+            else if (ajnz > 32 * mjnz)
             {
 
                 //--------------------------------------------------------------
@@ -413,9 +453,7 @@
                         int64_t iA = GBi_M (Mi, pM, Mvlen) ;
                         // find iA in A(:,j)
                         int64_t pright = pA_end - 1 ;
-                        bool found ;
-                        // FUTURE::: exploit dense A(:,j)
-                        found = GB_binary_search (iA, Ai, GB_Ai_IS_32,
+                        bool found = GB_binary_search (iA, Ai, GB_Ai_IS_32,
                             &pA, &pright) ;
                         if (found) GB_PHASE2_ACTION ;
                     }

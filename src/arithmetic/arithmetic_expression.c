@@ -113,72 +113,17 @@ static void _AR_EXP_InplaceRepurposeConstant(AR_ExpNode *node, SIValue v) {
 	node->operand.constant  =  v;
 }
 
-static AR_ExpNode *_AR_EXP_CloneOperand
+static AR_ExpNode *_AR_EXP_NewOpNode
 (
-	const AR_ExpNode *exp
+	uint child_count
 ) {
-	AR_ExpNode *clone = rm_calloc(1, sizeof(AR_ExpNode));
-	clone->type = AR_EXP_OPERAND;
+	AR_ExpNode *node = rm_calloc (1, sizeof (AR_ExpNode)) ;
 
-	switch(exp->operand.type) {
-	case AR_EXP_CONSTANT:
-		clone->operand.type = AR_EXP_CONSTANT;
-		clone->operand.constant = SI_ShallowCloneValue(exp->operand.constant);
-		break;
-	case AR_EXP_VARIADIC:
-		clone->operand.type = exp->operand.type;
-		clone->operand.variadic.entity_alias = exp->operand.variadic.entity_alias;
-		clone->operand.variadic.entity_alias_idx = exp->operand.variadic.entity_alias_idx;
-		break;
-	case AR_EXP_PARAM:
-		clone->operand.type = AR_EXP_PARAM;
-		clone->operand.param_name = exp->operand.param_name;
-		break;
-	case AR_EXP_BORROW_RECORD:
-		clone->operand.type = AR_EXP_BORROW_RECORD;
-		break;
-	default:
-		ASSERT(false);
-		break;
-	}
-
-	return clone;
-}
-
-static AR_ExpNode *_AR_EXP_NewOpNode(uint child_count) {
-	AR_ExpNode *node = rm_calloc(1, sizeof(AR_ExpNode));
-
-	node->type           = AR_EXP_OP;
+	node->type           = AR_EXP_OP ;
 	node->op.children    = rm_calloc (child_count, sizeof (AR_ExpNode *)) ;
-	node->op.child_count = child_count;
+	node->op.child_count = child_count ;
 
-	return node;
-}
-
-static AR_ExpNode *_AR_EXP_CloneOp
-(
-	const AR_ExpNode *exp
-) {
-	const char *func_name = exp->op.f->name ;
-	bool include_internal = exp->op.f->internal ;
-	uint child_count = exp->op.child_count ;
-	AR_ExpNode *clone =
-		AR_EXP_NewOpNode (func_name, include_internal, child_count) ;
-
-	AR_Func_Clone clone_cb = clone->op.f->callbacks.clone ;
-	void *pdata = exp->op.private_data ;
-	if (clone_cb != NULL) {
-		// clone callback specified, use it to duplicate function's private data
-		clone->op.private_data = clone_cb (exp->op.private_data) ;
-	}
-
-	// clone child nodes
-	for (uint i = 0; i < exp->op.child_count; i++) {
-		AR_ExpNode *child = AR_EXP_Clone (exp->op.children[i]) ;
-		clone->op.children[i] = child ;
-	}
-
-	return clone ;
+	return node ;
 }
 
 static void _AR_EXP_ValidateArgsCount
@@ -205,19 +150,41 @@ AR_ExpNode *AR_EXP_NewOpNode
 	uint child_count
 ) {
 	// retrieve function
-	AR_FuncDesc *func = AR_GetFunc(func_name, include_internal);
-	AR_ExpNode *node = _AR_EXP_NewOpNode(child_count);
+	AR_FuncDesc *func = AR_GetFunc (func_name, include_internal) ;
+	if (unlikely (func == NULL)) {
+		// function wasn't found, this can happen when
+		// an execution-plan is cloned and a UDF function been removed
 
-	if(!func->internal) _AR_EXP_ValidateArgsCount(func, child_count);
+		ErrorCtx_SetError ("undefined function: '%s'", func_name);
 
-	ASSERT(func != NULL);
+		// use a placeholder function
+		func = AR_GetFunc ("nop", true) ;
+	}
+
+	// increase child count by 2 in case of a user define function
+	// accommodating the UDF lib name & function name as the first arguments
+	if (func->udf) {
+		child_count += 2 ;
+	}
+
+	AR_ExpNode *node = _AR_EXP_NewOpNode (child_count) ;
+
+	if (!func->internal) {
+		_AR_EXP_ValidateArgsCount (func, child_count) ;
+	}
+
 	node->op.f = func;
 
 	// add aggregation context as function private data
-	if(func->aggregate) {
+	if (func->aggregate) {
 		// generate aggregation context and store it in node's private data
-		ASSERT(func->callbacks.private_data != NULL);
-		node->op.private_data = func->callbacks.private_data();
+		ASSERT (func->callbacks.private_data != NULL) ;
+		node->op.private_data = func->callbacks.private_data () ;
+	}
+
+	// mark query as non deterministic if function is non deterministic
+	if (unlikely (!func->deterministic)) {
+		QueryCtx_SetNonDeterministic () ;
 	}
 
 	return node;
@@ -1178,35 +1145,6 @@ inline const char *AR_EXP_GetFuncName(const AR_ExpNode *exp) {
 	ASSERT(exp->type == AR_EXP_OP);
 
 	return exp->op.f->name;
-}
-
-AR_ExpNode *AR_EXP_Clone
-(
-	const AR_ExpNode *exp
-) {
-	if (exp == NULL) {
-		return NULL ;
-	}
-
-	AR_ExpNode *clone = NULL;
-
-	switch (exp->type) {
-		case AR_EXP_OPERAND:
-			clone = _AR_EXP_CloneOperand (exp) ;
-			break ;
-
-		case AR_EXP_OP:
-			clone = _AR_EXP_CloneOp (exp) ;
-			break ;
-
-		default:
-			ASSERT (false) ;
-			break ;
-	}
-
-	clone->resolved_name = exp->resolved_name ;
-
-	return clone ;
 }
 
 // copies the content of `src` into `dest`

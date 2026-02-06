@@ -138,6 +138,7 @@ typedef enum
     GB_JIT_KERNEL_SUBASSIGN_15  = 60, // GB_subassign_15
     GB_JIT_KERNEL_SUBASSIGN_17  = 61, // GB_subassign_17
     GB_JIT_KERNEL_SUBASSIGN_19  = 62, // GB_subassign_19
+    GB_JIT_KERNEL_SUBASSIGN_27  = 88, // GB_subassign_27
     GB_JIT_KERNEL_BITMAP_ASSIGN_1        = 63, // GB_bitmap_assign_1
     GB_JIT_KERNEL_BITMAP_ASSIGN_1_WHOLE  = 64, // GB_bitmap_assign_1_whole
     GB_JIT_KERNEL_BITMAP_ASSIGN_2        = 65, // GB_bitmap_assign_2
@@ -201,14 +202,12 @@ GB_jit_kcode ;
 // GB_jitifyer_entry: an entry in the jitifyer hash table
 //------------------------------------------------------------------------------
 
-// kcode can be reduced to uint8_t, and suffix_len to uint16_t.
-// To save space, prejit_index could then be reduced to uint32_t and saved
-// in the encoding struct.
-
 struct GB_jit_encoding_struct
 {
     uint64_t code ;         // from GB_enumify_*
-    uint32_t kcode ;        // which kernel (a GB_jit_kcode)
+    uint8_t major ;         // for CUDA kernels only; zero for CPU kernels
+    uint8_t minor ;         // for CUDA kernels only; zero for CPU kernels
+    uint16_t kcode ;        // which kernel (a GB_jit_kcode)
     uint32_t suffix_len ;   // length of the suffix (0 for builtin)
 } ;
 
@@ -230,6 +229,39 @@ struct GB_jit_entry_struct
 } ;
 
 typedef struct GB_jit_entry_struct GB_jit_entry ;
+
+//------------------------------------------------------------------------------
+// GB_encodify_kcode: encode the kcode, and major.minor for CUDA
+//------------------------------------------------------------------------------
+
+static inline void GB_encodify_kcode
+(
+    // output:
+    GB_jit_encoding *encoding,  // unique encoding of the entire problem
+    // input
+    const GB_jit_kcode kcode    // kernel to encode
+)
+{
+    encoding->kcode = (uint16_t) kcode ;
+    #if defined ( GRAPHBLAS_HAS_CUDA )
+    if (kcode >= GB_JIT_CUDA_KERNEL)
+    {
+        // CUDA kernel
+        int device = 0 ;
+        GB_cuda_get_device (&device) ;
+        int major = GB_Global_gpu_compute_capability_major_get (device) ;
+        int minor = GB_Global_gpu_compute_capability_minor_get (device) ;
+        encoding->major = (uint8_t) major ;
+        encoding->minor = (uint8_t) minor ;
+    }
+    else
+    #endif
+    {
+        // CPU kernel
+        encoding->major = 0 ;
+        encoding->minor = 0 ;
+    }
+}
 
 //------------------------------------------------------------------------------
 // GB_jitifyer methods for GraphBLAS
@@ -352,7 +384,14 @@ bool GB_jitifyer_query
 
 void GB_jitifyer_cmake_compile (char *kernel_name, uint64_t hash) ;
 void GB_jitifyer_direct_compile (char *kernel_name, uint32_t bucket) ;
-void GB_jitifyer_nvcc_compile (char *kernel_name, uint32_t bucket) ;
+
+void GB_jitifyer_nvcc_compile
+(
+    char *kernel_name,
+    uint32_t bucket,
+    uint8_t major,
+    uint8_t minor
+) ;
 
 GrB_Info GB_jitifyer_init (void) ;  // initialize the JIT
 

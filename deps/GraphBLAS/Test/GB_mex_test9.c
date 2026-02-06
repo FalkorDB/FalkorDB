@@ -22,28 +22,28 @@ typedef struct
 {
     double stuff [32] ;
 }
-bigtype ;
+gb_bigtype ;
 
- void f1 (void *z, const void *x) ;
- void f2 (void *z, const void *x, const void *y) ;
- void i1 (void *z, const void *x, uint64_t i, uint64_t j, const void *thunk) ;
+ void gb_f1 (void *z, const void *x) ;
+ void gb_f2 (void *z, const void *x, const void *y) ;
+ void gb_i1 (void *z, const void *x, uint64_t i, uint64_t j, const void *thunk) ;
 
 #define F1_DEFN                                     \
-"void f1 (void *z, const void *x) "                 \
+"void gb_f1 (void *z, const void *x) "                 \
 "{ (*((double *)z)) = 2*(*(double *)x) ; } "
- void f1 (void *z, const void *x)
+ void gb_f1 (void *z, const void *x)
  { (*((double *)z)) = 2*(*(double *)x) ; }
 
 #define F2_DEFN                                     \
-"void f2 (void *z, const void *x, const void *y) "  \
+"void gb_f2 (void *z, const void *x, const void *y) "  \
 "{ (*((double *)z)) = 2*(*(double *)x) + 1 ; }   "
- void f2 (void *z, const void *x, const void *y)
+ void gb_f2 (void *z, const void *x, const void *y)
  { (*((double *)z)) = 2*(*(double *)x) + 1 ; }
 
 #define I1_DEFN                                                                \
-"void i1 (void *z, const void *x, uint64_t i, uint64_t j, const void *thunk) " \
+"void gb_i1 (void *z, const void *x, uint64_t i, uint64_t j, const void *thunk) " \
 "{ (*((bool *)z)) = (i == j) ; }"
- void i1 (void *z, const void *x, uint64_t i, uint64_t j, const void *thunk)
+ void gb_i1 (void *z, const void *x, uint64_t i, uint64_t j, const void *thunk)
  { (*((bool *)z)) = (i == j) ; }
 
 #define GET_DEEP_COPY ;
@@ -71,8 +71,8 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     GrB_Type BigType ;
-    METHOD (GxB_Type_new (&BigType, sizeof (bigtype), "bigtype",
-        "typedef struct { double stuff [32] ; } bigtype")) ;
+    METHOD (GxB_Type_new (&BigType, sizeof (gb_bigtype), "gb_bigtype",
+        "typedef struct { double stuff [32] ; } gb_bigtype")) ;
     OK (GxB_Type_fprint (BigType, "(256-byte big type)", GxB_COMPLETE,
         stdout)) ;
     OK (GrB_Type_free (&BigType)) ;
@@ -82,20 +82,20 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     GrB_UnaryOp op1 = NULL ;
-    METHOD (GxB_UnaryOp_new (&op1, &f1, GrB_FP64, GrB_FP64, "f1", F1_DEFN)) ;
-    OK (GxB_UnaryOp_fprint (op1, "f1", GxB_COMPLETE, stdout)) ;
+    METHOD (GxB_UnaryOp_new (&op1, &gb_f1, GrB_FP64, GrB_FP64, "gb_f1", F1_DEFN)) ;
+    OK (GxB_UnaryOp_fprint (op1, "gb_f1", GxB_COMPLETE, stdout)) ;
     OK (GrB_UnaryOp_free (&op1)) ;
 
     GrB_BinaryOp op2 = NULL ;
-    METHOD (GxB_BinaryOp_new (&op2, &f2, GrB_FP64, GrB_FP64, GrB_FP64,
-        "f2", F2_DEFN)) ;
-    OK (GxB_BinaryOp_fprint (op2, "f2", GxB_COMPLETE, stdout)) ;
+    METHOD (GxB_BinaryOp_new (&op2, &gb_f2, GrB_FP64, GrB_FP64, GrB_FP64,
+        "gb_f2", F2_DEFN)) ;
+    OK (GxB_BinaryOp_fprint (op2, "gb_f2", GxB_COMPLETE, stdout)) ;
     OK (GrB_BinaryOp_free (&op2)) ;
 
     GrB_IndexUnaryOp opi = NULL ;
-    METHOD (GxB_IndexUnaryOp_new (&opi, &i1, GrB_FP64, GrB_FP64, GrB_FP64,
-        "i1", I1_DEFN)) ;
-    OK (GxB_IndexUnaryOp_fprint (opi, "i1", GxB_COMPLETE, stdout)) ;
+    METHOD (GxB_IndexUnaryOp_new (&opi, &gb_i1, GrB_FP64, GrB_FP64, GrB_FP64,
+        "gb_i1", I1_DEFN)) ;
+    OK (GxB_IndexUnaryOp_fprint (opi, "gb_i1", GxB_COMPLETE, stdout)) ;
     OK (GrB_IndexUnaryOp_free (&opi)) ;
 
     //--------------------------------------------------------------------------

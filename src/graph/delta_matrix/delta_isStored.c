@@ -13,7 +13,7 @@ GrB_Info Delta_Matrix_isStoredElement
 	GrB_Index i,           // row index
 	GrB_Index j            // column index
 ) {
-	ASSERT(A != NULL);
+	ASSERT (A != NULL) ;
 
 	GrB_Info info;
 	bool in_M  = false;

@@ -23,35 +23,20 @@ static void _IncrementalHashEntity
 	uint label_count,
 	AttributeSet *set
 ) {
-	AttributeSet _set = *set;
+	AttributeSet _set = *set ;
 
 	// update hash with label if one is provided
-	XXH_errorcode res;
-	UNUSED(res);
+	XXH_errorcode res ;
+	UNUSED (res) ;
 
-	for(uint i = 0; i < label_count; i++) {
-		res = XXH64_update(state, labels[i], strlen(labels[i]));
-		ASSERT(res != XXH_ERROR);
+	for (uint i = 0; i < label_count; i++) {
+		res = XXH64_update (state, labels[i], strlen (labels[i])) ;
+		ASSERT (res != XXH_ERROR) ;
 	}
 
-	if(_set) {
-		// update hash with attribute count
-		res = XXH64_update(state, &_set->attr_count, sizeof(_set->attr_count));
-		ASSERT(res != XXH_ERROR);
-
-		for (uint16_t i = 0; i < _set->attr_count; ++i) {
-			Attribute *a = _set->attributes + i;
-
-			// update hash with attribute ID
-			res = XXH64_update(state, &a->id, sizeof(a->id));
-			ASSERT(res != XXH_ERROR);
-
-			// update hash with the hashval of the associated SIValue
-			XXH64_hash_t value_hash = SIValue_HashCode(a->value);
-			res = XXH64_update(state, &value_hash, sizeof(value_hash));
-			ASSERT(res != XXH_ERROR);
-		}
-	}
+	XXH64_hash_t set_hash = AttributeSet_HashCode (_set) ;
+	res = XXH64_update (state, &set_hash, sizeof (set_hash)) ;
+	ASSERT (res != XXH_ERROR) ;
 }
 
 // revert the most recent set of buffered creations and free any allocations
@@ -343,20 +328,22 @@ void MergeCreate_Commit
 (
 	OpBase *opBase
 ) {
-	ASSERT(opBase != NULL);
+	ASSERT (opBase != NULL) ;
 
-	OpMergeCreate *op = (OpMergeCreate *)opBase;
+	OpMergeCreate *op = (OpMergeCreate *)opBase ;
 
 	// switch to hand-off mode
-	op->handoff_mode = true;
+	op->handoff_mode = true ;
 
 	// done reading, we're not going to call consume any longer
 	// there might be operations e.g. index scan that need to free
 	// index R/W lock, as such free all execution plan operation up the chain
-	if(opBase->childCount > 0) OpBase_PropagateReset(opBase->children[0]);
+	if (opBase->childCount > 0) {
+		OpBase_PropagateReset (opBase->children[0]) ;
+	}
 
 	// create entities
-	CommitNewEntities(&op->pending);
+	CommitNewEntities (&op->pending) ;
 }
 
 // clone operation

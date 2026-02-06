@@ -309,7 +309,7 @@ void test_removeNodes() {
 	uint edge_count = array_len(edges);
 	TEST_ASSERT(edge_count == 2);
 
-	Graph_DeleteEdges(g, edges, edge_count);
+	Graph_DeleteEdges(g, edges, edge_count, false);
 	Graph_GetNode(g, 0, &node);
 	Graph_DeleteNodes(g, &node, 1);
 	

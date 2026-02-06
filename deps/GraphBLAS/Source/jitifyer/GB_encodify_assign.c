@@ -58,7 +58,7 @@ uint64_t GB_encodify_assign     // encode an assign problem
     // primary encoding of the problem
     //--------------------------------------------------------------------------
 
-    encoding->kcode = kcode ;
+    GB_encodify_kcode (encoding, kcode) ;
     GB_enumify_assign (&encoding->code, C, C_replace, I_is_32, J_is_32,
         Ikind, Jkind, M, Mask_comp, Mask_struct, accum, A, scalar_type,
         S, assign_kind) ;

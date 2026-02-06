@@ -4,7 +4,7 @@ ARG TARGETPLATFORM=linux/amd64
 
 FROM $BASE_IMAGE AS compiler
 
-FROM redis:8.2.2-alpine
+FROM redis:8.2.3-alpine
 
 ENV FALKORDB_HOME=/var/lib/falkordb
 
@@ -17,7 +17,7 @@ ENV FALKORDB_IMPORT_PATH=${FALKORDB_HOME}/import
 ENV FALKORDB_TLS_PATH=${FALKORDB_HOME}/tls
 
 # Install runtime dependencies using Alpine packages (equivalent to Debian version)
-RUN apk add --no-cache libgomp openssl nodejs npm
+RUN apk add --no-cache libgomp openssl curl
 
 WORKDIR ${FALKORDB_HOME}
 

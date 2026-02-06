@@ -22,7 +22,7 @@ void GB_memcpy                  // parallel memcpy
 )
 {
 
-    // Fixme for CUDA: do:
+    // FIXME for CUDA: do (cpu,gpu) <= (cpu,gpu) memcpy's
     //  cpu <- cpu (already done below)
     //  cpu <- gpu (effectively done below but could be better)
     //  gpu <- cpu (need this)

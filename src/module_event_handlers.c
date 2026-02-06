@@ -24,6 +24,9 @@
 #include <pthread.h>
 #include <stdbool.h>
 
+// forward declaration
+void RediSearch_CleanupModule();
+
 // indicates the possibility of half-baked graphs in the keyspace
 #define INTERMEDIATE_GRAPHS (aux_field_counter > 0)
 
@@ -41,8 +44,9 @@ extern RedisModuleType *GraphMetaRedisModuleType;
 // this field is used to represent when the module is replicating its graphs
 uint aux_field_counter = 0 ;
 
-// holds the id of the Redis Main thread in order to figure out the context the fork is running on
-static pthread_t redis_main_thread_id;
+// holds the id of the Redis Main thread in order to figure out the context
+// the fork is running on
+pthread_t redis_main_thread_id ;
 
 // this callback invokes once rename for a graph is done
 // since the key value is a graph context
@@ -300,31 +304,6 @@ static bool _IsEventPersistenceEnd
 		   );
 }
 
-static void _ReplicationRoleChangedEventHandler
-(
-	RedisModuleCtx *ctx,
-	RedisModuleEvent eid,
-	uint64_t subevent,
-	void *data
-) {
-	KeySpaceGraphIterator it;
-	GraphContext *gc = NULL;
-	Globals_ScanGraphs(&it);
-	if(subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_MASTER) {
-		// now master enable constraints
-		while((gc = GraphIterator_Next(&it)) != NULL) {
-			GraphContext_EnableConstrains(gc);
-			GraphContext_DecreaseRefCount(gc);
-		}
-	} else if (subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA) {
-		// now slave disable constraints
-		while((gc = GraphIterator_Next(&it)) != NULL) {
-			GraphContext_DisableConstrains(gc);
-			GraphContext_DecreaseRefCount(gc);
-		}
-	}
-}
-
 // server persistence event handler
 static void _PersistenceEventHandler
 (
@@ -366,33 +345,34 @@ static void _ShutdownEventHandler
 	uint64_t subevent,
 	void *data
 ) {
-	void RediSearch_CleanupModule();
 	if (!getenv("RS_GLOBAL_DTORS")) {  // used only with sanitizer or valgrind
 		return; 
 	}
 
 	// stop cron
-	Cron_Stop();
+	Cron_Stop () ;
 
 	// stop indexer
 	Indexer_Stop () ;
 
 	// stop threads before finalize GraphBLAS
-	ThreadPool_Destroy();
+	ThreadPool_Destroy () ;
 
 	// server is shutting down, finalize GraphBLAS
-	LAGraph_Finalize(NULL);
+	LAGraph_Finalize (NULL) ;
 
-	RedisModule_Log(ctx, "notice", "%s", "Clearing RediSearch resources on shutdown");
-	RediSearch_CleanupModule();
+	free_cmd_acl () ;
+	free_run_cmd_as () ;
 
-	free_cmd_acl();
-	free_run_cmd_as();
-
-	BoltApi_Unregister();
+	BoltApi_Unregister () ;
 
 	// free global variables
-	Globals_Free();
+	Globals_Free () ;
+
+	RedisModule_Log (ctx, "notice", "%s",
+			"Clearing RediSearch resources on shutdown") ;
+
+	RediSearch_CleanupModule () ;
 }
 
 static void _ModuleLoadedHandler
@@ -438,14 +418,9 @@ static void _RegisterServerEvents
 	//		_ModuleLoadedHandler);
 	//ASSERT(res == REDISMODULE_OK);
 
-	//	RedisModule_SubscribeToServerEvent(ctx,
-	//			RedisModuleEvent_ReplicationRoleChanged,
-	//			_ReplicationRoleChangedEventHandler);
-
 	RedisModule_SubscribeToKeyspaceEvents(ctx,
 			REDISMODULE_NOTIFY_GENERIC,
 			_GenericKeyspaceHandler);
-
 }
 
 //------------------------------------------------------------------------------
@@ -453,7 +428,7 @@ static void _RegisterServerEvents
 //------------------------------------------------------------------------------
 
 // before fork at parent
-static void RG_ForkPrepare() {
+static void _ForkPrepare() {
 	// at this point, fork been issued, we assume that this is due to BGSAVE
 	// or RedisSearch GC
 	//
@@ -467,129 +442,140 @@ static void RG_ForkPrepare() {
 	// in the case of RediSearch GC fork, quickly return
 
 	// BGSAVE is invoked from Redis main thread
-	if(!pthread_equal(pthread_self(), redis_main_thread_id)) {
-		return;
-	}
-
 	// return if we have half-baked graphs
-	if(INTERMEDIATE_GRAPHS) {
-		return;
-	}
+	bool sync_graphs_before_fork =
+		pthread_equal (pthread_self (), redis_main_thread_id) != 0 &&
+		!INTERMEDIATE_GRAPHS ;
 
 	// measure and report prep time
-	double tic[2];
-	simple_tic(tic);
+	double tic[2] ;
+	simple_tic (tic) ;
 
-	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(NULL);
+	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext (NULL) ;
 
-	// scan through each graph in the keyspace
-	GraphContext *gc = NULL;
-	KeySpaceGraphIterator it;
-	Globals_ScanGraphs(&it);
+	if (sync_graphs_before_fork) {
+		// scan through each graph in the keyspace
+		GraphContext *gc = NULL ;
+		KeySpaceGraphIterator it ;
+		Globals_ScanGraphs (&it) ;
 
-	while((gc = GraphIterator_Next(&it)) != NULL) {
-		// acquire read lock, guarantee graph isn't modified by a writer
-		Graph *g = gc->g;
-		Graph_AcquireReadLock(g);  // release in RG_AfterForkParent
+		while ((gc = GraphIterator_Next (&it)) != NULL) {
+			// acquire read lock, guarantee graph isn't modified by a writer
+			Graph *g = gc->g ;
+			Graph_AcquireReadLock (g) ;  // release in _AfterForkParent
 
-		// set matrix synchronization policy to default
-		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
+			// set matrix synchronization policy to default
+			Graph_SetMatrixPolicy (g, SYNC_POLICY_FLUSH_RESIZE) ;
 
-		// synchronize all matrices, make sure they're in a consistent state
-		// do not force-flush as this can take awhile
+			// synchronize all matrices, make sure they're in a consistent state
+			// do not force-flush as this can take awhile
 
-		//----------------------------------------------------------------------
-		// sync graph's matrices
-		//----------------------------------------------------------------------
+			//------------------------------------------------------------------
+			// sync graph's matrices
+			//------------------------------------------------------------------
 
-		// calling Graph_Get* will sync the retrieved matrix
+			// calling Graph_Get* will sync the retrieved matrix
 
-		Graph_GetAdjacencyMatrix(g, false);
-		RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-				"preparing to fork");
+			Graph_GetZeroMatrix (g) ;
+			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+					"preparing to fork") ;
 
-		Graph_GetNodeLabelMatrix(g);
-		RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-				"preparing to fork");
+			Graph_GetAdjacencyMatrix (g, false) ;
+			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+					"preparing to fork") ;
 
-		int n_lbls = Graph_LabelTypeCount(g);
-		for (int i = 0; i < n_lbls; i++) {
-			Graph_GetLabelMatrix(g, i);
-			RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-					"preparing to fork");
+			Graph_GetNodeLabelMatrix (g) ;
+			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+					"preparing to fork") ;
+
+			int n_lbls = Graph_LabelTypeCount (g) ;
+			for (int i = 0; i < n_lbls; i++) {
+				Graph_GetLabelMatrix (g, i) ;
+				RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+						"preparing to fork") ;
+			}
+
+			int n_rels = Graph_RelationTypeCount (g) ;
+			for (int i = 0; i < n_rels; i++) {
+				Graph_GetRelationMatrix (g, i, false) ;
+				RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+						"preparing to fork") ;
+			}
+
+			// decrease graph context ref count
+			GraphContext_DecreaseRefCount (gc) ;
 		}
-
-		int n_rels = Graph_RelationTypeCount(g);
-		for (int i = 0; i < n_rels; i++) {
-			Graph_GetRelationMatrix(g, i, false);
-			RedisModule_Yield(ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-					"preparing to fork");
-		}
-
-		// decrease graph context ref count
-		GraphContext_DecreaseRefCount(gc);
 	}
 
-	RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_NOTICE,
-			"Fork preparation time: %.6f sec\n", simple_toc(tic));
+	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+			"Fork preparation time: %.6f sec\n", simple_toc (tic)) ;
 
 	// clean up
-	RedisModule_FreeThreadSafeContext(ctx);
+	RedisModule_FreeThreadSafeContext (ctx) ;
 }
 
 // after fork at parent
-static void RG_AfterForkParent() {
-	// BGSAVE is invoked from Redis main thread
-	if(!pthread_equal(pthread_self(), redis_main_thread_id)) return;
+static void _AfterForkParent() {
+	bool release_graphs_after_fork =
+		pthread_equal (pthread_self (), redis_main_thread_id) &&
+		!INTERMEDIATE_GRAPHS ;
 
-	// return if we have half-baked graphs
-	if(INTERMEDIATE_GRAPHS) return;
+	if (release_graphs_after_fork) {
+		// the child process forked, release all acquired locks
+		GraphContext *gc = NULL ;
+		KeySpaceGraphIterator it ;
+		Globals_ScanGraphs (&it) ;
 
-	// the child process forked, release all acquired locks
-	GraphContext *gc = NULL;
-	KeySpaceGraphIterator it;
-	Globals_ScanGraphs(&it);
+		while ((gc = GraphIterator_Next (&it)) != NULL) {
+			// release read lock
+			Graph_ReleaseLock (gc->g) ;
 
-	while((gc = GraphIterator_Next(&it)) != NULL) {
-		// release read lock
-		Graph_ReleaseLock(gc->g);
-
-		// decrease graph context ref count
-		GraphContext_DecreaseRefCount(gc);
+			// decrease graph context ref count
+			GraphContext_DecreaseRefCount (gc) ;
+		}
 	}
 }
 
 // after fork at child
-static void RG_AfterForkChild() {
+static void _AfterForkChild() {
 	// mark that the child is a forked process so that it doesn't
 	// attempt invalid accesses of POSIX primitives it doesn't own
-	Globals_Set_ProcessIsChild(true);
+	Globals_Set_ProcessIsChild (true) ;
 
 	// restrict GraphBLAS to use a single thread this is done for 2 reasons:
 	// 1. save resources
 	// 2. avoid a bug in GNU OpenMP which hangs when performing parallel loop
 	// in forked process
-	GxB_set(GxB_NTHREADS, 1);
+	GxB_set (GxB_NTHREADS, 1) ;
 
-	GraphContext *gc = NULL;
-	KeySpaceGraphIterator it;
-	Globals_ScanGraphs(&it);
+	// make sure all graphs in keyspace are fully synced
+#ifdef RG_DEBUG
+	GraphContext *gc = NULL ;
+	KeySpaceGraphIterator it ;
+	Globals_ScanGraphs (&it) ;
 
-	while((gc = GraphIterator_Next(&it)) != NULL) {
-		// matrices should be synced, don't waste time
-		Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
+	while ((gc = GraphIterator_Next (&it)) != NULL) {
+		Graph *g = GraphContext_GetGraph (gc) ;
+		ASSERT (Graph_Synced (g)) ;
+		ASSERT (!Graph_IsWriteLocked (g)) ;
 
 		// decrease graph context ref count
-		GraphContext_DecreaseRefCount(gc);
+		GraphContext_DecreaseRefCount (gc) ;
 	}
+#endif
+
 }
 
 static void _RegisterForkHooks() {
-	redis_main_thread_id = pthread_self();  // This function is being called on the main thread context.
+	// this function is being called on the main thread context.
+	redis_main_thread_id = pthread_self () ;
 
 	// register handlers to control the behavior of fork calls
-	int res = pthread_atfork(RG_ForkPrepare, RG_AfterForkParent, RG_AfterForkChild);
-	ASSERT(res == 0);
+	int res = pthread_atfork (
+			_ForkPrepare,
+			_AfterForkParent,
+			_AfterForkChild) ;
+	ASSERT (res == 0) ;
 }
 
 static void _ModuleEventHandler_TryClearKeyspace(void) {

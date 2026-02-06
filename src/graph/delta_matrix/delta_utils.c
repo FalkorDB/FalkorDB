@@ -326,7 +326,7 @@ void Delta_Matrix_validate
 	// Check dm is iso
 	//--------------------------------------------------------------------------
 
-	#if 0 // less strict iso test:
+	#if 1 // less strict iso test:
 	// if this passes, Graphblas may not recognize the matrix as iso
 	// but it only has true values. 
 	info = GrB_Matrix_reduce_BOOL(
@@ -339,7 +339,8 @@ void Delta_Matrix_validate
 	GrB_OK (GrB_Matrix_nvals (&dm_nvals, dm));
 
 	if(!dm_iso && dm_nvals > 0) {
-		GxB_fprint(dm, GxB_SHORT, stdout);
+		//GxB_fprint (dm, GxB_SHORT, stdout) ;
+		GxB_fprint (dm, GxB_COMPLETE_VERBOSE, stdout) ;
 	}
 
 	ASSERT(dm_iso || dm_nvals == 0);
@@ -382,3 +383,4 @@ void Delta_Matrix_validate
 	GrB_free(&temp);
 #endif
 }
+

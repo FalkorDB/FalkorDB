@@ -6,6 +6,7 @@
 
 #include "globals.h"
 #include "util/arr.h"
+#include "udf/repository.h"
 #include "util/thpool/pool.h"
 #include "configuration/config.h"
 #include "string_pool/string_pool.h"
@@ -37,21 +38,47 @@ void Globals_Init(void) {
 	ASSERT(res == 0);
 }
 
+// acquire globals read lock
+void Globals_ReadLock(void) {
+	// skip lock if running in child process
+	if (_globals.process_is_child == true) {
+		return ;
+	}
+
+	pthread_rwlock_rdlock (&_globals.lock) ;
+}
+
+// acquire globals write lock
+void Globals_WriteLock(void) {
+	// skip lock if running in child process
+	if (_globals.process_is_child == true) {
+		return ;
+	}
+
+	pthread_rwlock_wrlock (&_globals.lock) ;
+}
+
+// release globals RWLock
+void Globals_Unlock(void) {
+	// skip lock if running in child process
+	if (_globals.process_is_child == true) {
+		return ;
+	}
+
+	pthread_rwlock_unlock (&_globals.lock) ;
+}
+
 StringPool Globals_Get_StringPool(void) {
 	return _globals.string_pool;
 }
 
 // read global variable 'process_is_child'
 bool Globals_Get_ProcessIsChild(void) {
-	bool process_is_child = false;
-
-	pthread_rwlock_rdlock(&_globals.lock);
-
-	process_is_child = _globals.process_is_child;
-
-	pthread_rwlock_unlock(&_globals.lock);
-
-	return process_is_child;
+	// no locks needed
+	// this function used to lock but due to access by child process
+	// and pthread rwlock handling in a multi process environment we're
+	// better off not guarding with a lock
+	return _globals.process_is_child ;
 }
 
 // set global variable 'process_is_child'
@@ -59,11 +86,15 @@ void Globals_Set_ProcessIsChild
 (
 	bool process_is_child
 ) {
-	pthread_rwlock_wrlock(&_globals.lock);
+	// expecting the transition of process_is_child from false to true
+	ASSERT (process_is_child          == true) ;
+	ASSERT (_globals.process_is_child == false) ;
 
+	// no locks needed
+	// this function used to lock but due to access by child process
+	// and pthread rwlock handling in a multi process environment we're
+	// better off not guarding with a lock
 	_globals.process_is_child =	process_is_child;
-
-	pthread_rwlock_unlock(&_globals.lock);
 }
 
 // get main thread id
@@ -87,7 +118,7 @@ void Globals_AddGraph
 	GraphContext_IncreaseRefCount(gc);
 
 	// acuire write lock
-	pthread_rwlock_wrlock(&_globals.lock);
+	Globals_WriteLock () ;
 
 	bool registered = false;
 	uint n = array_len(_globals.graphs_in_keyspace);
@@ -104,7 +135,7 @@ void Globals_AddGraph
 	}
 
 	// release lock
-	pthread_rwlock_unlock(&_globals.lock);
+	Globals_Unlock () ;
 }
 
 // remove graph from global tracker
@@ -119,7 +150,7 @@ void Globals_RemoveGraph
 	if(n == 0) return;
 
 	// acuire write lock
-	pthread_rwlock_wrlock(&_globals.lock);
+	Globals_WriteLock () ;
 
 	// search for graph
 	for(; i < n; i++) {
@@ -135,7 +166,7 @@ void Globals_RemoveGraph
 	array_del_fast(_globals.graphs_in_keyspace, i);
 
 	// release lock
-	pthread_rwlock_unlock(&_globals.lock);
+	Globals_Unlock () ;
 }
 
 // remove a graph by its name
@@ -146,7 +177,7 @@ void Globals_RemoveGraphByName
 	ASSERT(name != NULL);
 
 	// acuire write lock
-	pthread_rwlock_wrlock(&_globals.lock);
+	Globals_WriteLock () ;
 
 	// search for graph
 	uint64_t i = 0;
@@ -164,7 +195,7 @@ void Globals_RemoveGraphByName
 	}
 
 	// release lock
-	pthread_rwlock_unlock(&_globals.lock);
+	Globals_Unlock () ;
 }
 
 // clear all tracked graphs
@@ -173,7 +204,7 @@ void Globals_ClearGraphs
 	RedisModuleCtx *ctx
 ) {
 	// acquire write lock
-	pthread_rwlock_wrlock(&_globals.lock);
+	Globals_WriteLock () ;
 	
 	for(uint i = 0; i < array_len(_globals.graphs_in_keyspace); i++) {
 		GraphContext *gc = _globals.graphs_in_keyspace[i];
@@ -187,7 +218,7 @@ void Globals_ClearGraphs
 	array_clear(_globals.graphs_in_keyspace);
 
 	// release lock
-	pthread_rwlock_unlock(&_globals.lock);
+	Globals_Unlock () ;
 }
 
 //------------------------------------------------------------------------------
@@ -205,7 +236,7 @@ void Globals_TrackCommandCtx
 	int tid = ThreadPool_GetThreadID();
 
 	// acuire read lock
-	pthread_rwlock_rdlock(&_globals.lock);
+	Globals_ReadLock () ;
 
 	// expecting slot to be empty
 	ASSERT(_globals.command_ctxs[tid] == NULL);
@@ -214,7 +245,7 @@ void Globals_TrackCommandCtx
 	_globals.command_ctxs[tid] = ctx;
 
 	// release lock
-	pthread_rwlock_unlock(&_globals.lock);
+	Globals_Unlock () ;
 
 	// reset thread memory consumption to 0 (no memory consumed)
 	rm_reset_n_alloced();
@@ -231,7 +262,7 @@ void Globals_UntrackCommandCtx
 	int tid = ThreadPool_GetThreadID();
 
 	// acuire read lock
-	pthread_rwlock_rdlock(&_globals.lock);
+	Globals_ReadLock () ;
 
 	ASSERT(_globals.command_ctxs[tid] == ctx);
 
@@ -240,7 +271,7 @@ void Globals_UntrackCommandCtx
 	_globals.command_ctxs[tid] = NULL;
 
 	// release lock
-	pthread_rwlock_unlock(&_globals.lock);
+	Globals_Unlock () ;
 }
 
 // get all currently tracked CommandCtxs
@@ -259,7 +290,7 @@ void Globals_GetCommandCtxs
 	uint32_t found = 0;     // number of command contexts found
 
 	// acquire write lock
-	pthread_rwlock_wrlock(&_globals.lock);
+	Globals_WriteLock () ;
 
 	// increase ref count of each CommandCtx
 	for(uint32_t i = 0; i < nthreads && found < cap; i++) {
@@ -271,7 +302,7 @@ void Globals_GetCommandCtxs
 	}
 
 	// release lock
-	pthread_rwlock_unlock(&_globals.lock);
+	Globals_Unlock () ;
 
 	// update number of command contexts found
 	*count = found;
@@ -310,7 +341,7 @@ GraphContext *GraphIterator_Next
 
 	GraphContext *gc = NULL;
 
-	pthread_rwlock_rdlock(&_globals.lock);
+	Globals_ReadLock () ;
 
 	if(it->idx < array_len(_globals.graphs_in_keyspace)) {
 		// prepare next call
@@ -318,7 +349,7 @@ GraphContext *GraphIterator_Next
 		GraphContext_IncreaseRefCount(gc);
 	}
 
-	pthread_rwlock_unlock(&_globals.lock);
+	Globals_Unlock () ;
 
 	return gc;
 }
@@ -329,5 +360,11 @@ void Globals_Free(void) {
 	array_free(_globals.graphs_in_keyspace);
 	StringPool_free(&_globals.string_pool);
 	pthread_rwlock_destroy(&_globals.lock);
+
+	// free registered functions
+	AR_FinalizeFuncsRepo () ;
+
+	// free UDF related data
+	UDF_RepoFree () ;  // UDF repository
 }
 

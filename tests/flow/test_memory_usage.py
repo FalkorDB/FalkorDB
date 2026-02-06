@@ -522,3 +522,112 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.env.assertGreater(res.edge_block_storage_sz_mb, 0)
         self.env.assertGreater(res.edge_attributes_by_type_storage_sz_mb[1], 0)
 
+    def test_graph_with_empty_relationship_type(self):
+        """test memory consumption of a graph containing an empty relationship-type"""
+
+        # create a graph with an empty relationship-type
+        q = "CREATE ()-[:R]->()"
+        self.graph.query(q)
+
+        # delete the only edge
+        q = """MATCH ()-[e:R]->()
+               DELETE e"""
+        self.graph.query(q)
+
+        # compute graph memory consumption
+        res = self._graph_memory_usage()
+
+        # validate graph's memory consumption
+        self.env.assertEquals(res.indices_sz_mb, 0)
+        self.env.assertEquals(res.edge_block_storage_sz_mb, 0)
+        self.env.assertEquals(res.label_matrices_sz_mb, 0)
+        self.env.assertEquals(res.relation_matrices_sz_mb, 0)
+        self.env.assertEquals(res.total_graph_sz_mb, 0)
+        self.env.assertEquals(res.node_block_storage_sz_mb, 0)
+        self.env.assertEquals(res.unlabeled_node_attributes_sz_mb, 0)
+
+    def test_graph_recreate_memory_consumption(self):
+        """test memory consumption of a graph which had a large set of deletions
+           followed by entities reintroduction, the reconstructed graph memory
+           consumption should be similar to the original state"""
+
+        #-----------------------------------------------------------------------
+        # create a graph with 250K nodes and 500K edges
+        #-----------------------------------------------------------------------
+
+        node_count = 250000
+        edge_count = node_count * 2 - 2
+
+        q = """UNWIND range (1, $node_count) AS x
+               CREATE (a)"""
+
+        res = self.graph.query(q, {'node_count': node_count})
+        self.env.assertEquals(res.nodes_created, node_count)
+
+        # create edges
+        q = """MATCH (a)
+               WITH a, ID(a) + 1 AS b_id
+               MATCH (b)
+               WHERE ID(b) = b_id
+               CREATE (a)-[:R]->(a), (a)-[:R]->(b)"""
+
+        res = self.graph.query(q, {'node_count': node_count})
+        self.env.assertEquals(res.relationships_created, edge_count)
+
+        # compute graph memory consumption
+        original_memory_consumption = self._graph_memory_usage()
+        self.env.assertGreater(original_memory_consumption.total_graph_sz_mb, 0)
+        self.env.assertGreater(original_memory_consumption.node_block_storage_sz_mb, 0)
+        self.env.assertGreater(original_memory_consumption.edge_block_storage_sz_mb, 0)
+
+        #-----------------------------------------------------------------------
+        # delete entities
+        #-----------------------------------------------------------------------
+
+        # delete all entities
+        q = "MATCH (n) DELETE n"
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_deleted, node_count)
+        self.env.assertEquals(res.relationships_deleted, edge_count)
+
+        # compute graph memory consumption
+        deleted_memory_consumption = self._graph_memory_usage()
+        self.env.assertGreater(deleted_memory_consumption.total_graph_sz_mb, 0)
+
+        # expecting datablocks to consume more space, as these do not shrinks
+        # and the internal deleted_idx array contains every deleted ID
+
+        self.env.assertGreater(deleted_memory_consumption.node_block_storage_sz_mb,
+                               original_memory_consumption.node_block_storage_sz_mb)
+
+        self.env.assertGreater(deleted_memory_consumption.edge_block_storage_sz_mb,
+                               original_memory_consumption.edge_block_storage_sz_mb)
+
+        #-----------------------------------------------------------------------
+        # restore entities
+        #-----------------------------------------------------------------------
+
+        q = "UNWIND range (1, $node_count) AS x CREATE (a)"
+
+        res = self.graph.query(q, {'node_count': node_count})
+        self.env.assertEquals(res.nodes_created, node_count)
+
+        q = """MATCH (a)
+               WITH a, ID(a) + 1 AS b_id
+               MATCH (b)
+               WHERE ID(b) = b_id
+               CREATE (a)-[:R]->(a), (a)-[:R]->(b)"""
+
+        res = self.graph.query(q, {'node_count': node_count})
+        self.env.assertEquals(res.relationships_created, edge_count)
+
+        # compute graph memory consumption
+        reconstructed_memory_consumption = self._graph_memory_usage()
+        self.env.assertEquals(reconstructed_memory_consumption.total_graph_sz_mb, original_memory_consumption.total_graph_sz_mb)
+
+        # datablock memory consumption should return to its original size
+        # now that the its deleted IDs array been cleared
+
+        self.env.assertEquals(reconstructed_memory_consumption.node_block_storage_sz_mb, original_memory_consumption.node_block_storage_sz_mb)
+        self.env.assertEquals(reconstructed_memory_consumption.edge_block_storage_sz_mb, original_memory_consumption.edge_block_storage_sz_mb)
+

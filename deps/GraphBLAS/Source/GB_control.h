@@ -104,8 +104,8 @@
 // #define GxB_NO_INT32     1
 // #define GxB_NO_INT64     1
    #define GxB_NO_INT8      1
-// #define GxB_NO_UINT16    1
-   #define GxB_NO_UINT32    1
+   #define GxB_NO_UINT16    1
+// #define GxB_NO_UINT32    1
 // #define GxB_NO_UINT64    1
    #define GxB_NO_UINT8     1
 
