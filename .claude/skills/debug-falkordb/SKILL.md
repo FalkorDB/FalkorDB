@@ -23,10 +23,6 @@ The debug binary is output to `bin/<arch>/src/falkordb.so`. Load it into redis-s
     make flow-tests SAN=address
     make unit-tests SAN=address
 
-## ThreadSanitizer (data races)
-
-    make SAN=thread
-
 ## Valgrind (memory leaks and access errors)
 
     # Build for Valgrind

@@ -57,8 +57,6 @@ make test
 make unit-tests
 make flow-tests
 make tck-tests
-make upgrade-tests
-make fuzz-tests
 
 # Run a specific test
 make flow-tests TEST=test_aggregation
@@ -67,11 +65,6 @@ make unit-tests TEST=test_delta_matrix
 # Parallel test execution
 make flow-tests PARALLEL=4
 
-# Run with debugger
-make flow-tests GDB=1 TEST=test_aggregation
-
-# List all tests without running
-make test LIST=1
 ```
 
 **Flow tests** (`tests/flow/test_*.py`): Python integration tests using the RLTest framework. Each test class gets a live Redis+FalkorDB instance. Pattern:
@@ -80,8 +73,8 @@ make test LIST=1
 from common import *
 class testExample():
     def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph("test")
+        self.env = Env()
+        self.graph =Graph(self.env.getConnection(), "test"))
     def test01_something(self):
         result = self.graph.query("MATCH (n) RETURN n")
         self.env.assertEqual(result.result_set, expected)
@@ -163,4 +156,4 @@ Client Request (GRAPH.QUERY "graph" "MATCH ...")
 
 ### Redis Commands
 
-`GRAPH.QUERY`, `GRAPH.RO_QUERY`, `GRAPH.EXPLAIN`, `GRAPH.PROFILE`, `GRAPH.DELETE`, `GRAPH.COPY`, `GRAPH.RESTORE`, `GRAPH.BULK`, `GRAPH.CONFIG`, `GRAPH.INFO`, `GRAPH.DEBUG`, `GRAPH.ACL`
+`GRAPH.QUERY`, `GRAPH.RO_QUERY`, `GRAPH.EXPLAIN`, `GRAPH.PROFILE`, `GRAPH.DELETE`, `GRAPH.COPY`, `GRAPH.RESTORE`, `GRAPH.BULK`, `GRAPH.CONFIG`, `GRAPH.INFO`, `GRAPH.DEBUG`
