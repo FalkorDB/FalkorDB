@@ -504,17 +504,41 @@ jobs:
         uses: aquasecurity/trivy-action@0.33.0
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
-          severity: CRITICAL,HIGH
-          format: sarif
-          output: trivy-results.sarif
-          ignore-unfixed: true
-          scan-type: image
+          output: trivy-report.json
+          format: json
+          exit-code: '0'
 
-      - name: Upload scan results
-        uses: github/codeql-action/upload-sarif@v4
+      - name: Upload Vulnerability Scan Results
+        uses: actions/upload-artifact@v6
+        id: upload_trivy_report
         with:
-          sarif_file: trivy-results.sarif
-          category: security-scan/${{ matrix.platform.suffix }}
+          name: trivy-report-${{ matrix.platform.suffix }}
+          path: trivy-report.json
+          retention-days: 30
+
+      - name: Add comment to PR
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          header: "Trivy Vulnerability Scan Results for ${{ matrix.platform.suffix }}"
+          message: |
+            Architecture: ${{ matrix.platform.suffix }}
+            Trivy scan completed for the image built in this PR. Please review the attached report for details on any vulnerabilities found.
+            If there are any high or critical severity vulnerabilities, please address them before merging.
+            <details>
+            <a href="${{ steps.upload_trivy_report.outputs.artifact-url }}">Trivy Report (JSON)</a>
+            </details>
+
+      - name: Fail build on high/critical severity vulnerabilities
+        uses: aquasecurity/trivy-action@0.33.0
+        with:
+          image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+          skip-setup-trivy: true
 
   ramp-package:
     needs: build
