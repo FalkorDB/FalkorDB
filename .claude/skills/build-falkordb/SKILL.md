@@ -22,9 +22,6 @@ Run `make` from the project root. The compiled module is output to `bin/<arch>/s
     # AddressSanitizer (detects memory errors: buffer overflows, use-after-free)
     make SAN=address
 
-    # ThreadSanitizer (detects data races)
-    make SAN=thread
-
     # Build for Valgrind
     make VG=1
 
@@ -59,4 +56,3 @@ Run `make` from the project root. The compiled module is output to `bin/<arch>/s
 - macOS requires GCC for OpenMP: `brew install gcc g++`
 - Ubuntu deps: `apt-get install build-essential cmake m4 automake peg libtool autoconf python3 python3-pip`
 - Output binary location: `bin/<arch>/src/falkordb.so`
-- Debug symbols are extracted to `falkordb.so.debug`
