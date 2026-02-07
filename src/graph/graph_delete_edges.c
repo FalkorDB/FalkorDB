@@ -138,6 +138,12 @@ static void Graph_ImplicitClearConnections
 
 	GrB_OK (Delta_Matrix_removeElements (ADJ, M, MT)) ;
 
+	// HACK: all removed values must now be zero in adj_m
+	// perhaps removeElements should automatically set deleted entries in m to
+	// zombie value
+	GrB_OK (GrB_Matrix_assign_UINT16(
+		adj_m, adj_dm, NULL, (uint16_t) 0, GrB_ALL, 0, GrB_ALL, 0, NULL));
+
 	// clean up
 	GrB_OK (GrB_free (&s)) ;
 	rm_free (_I) ;

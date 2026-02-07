@@ -48,19 +48,11 @@ GrB_Info Delta_Matrix_assign_scalar_##TYPE_SUFFIX                              \
 	in_M = (info == GrB_SUCCESS) ;                                             \
                                                                                \
 	if (in_M) {                                                                \
-		info = GxB_Matrix_isStoredElement (dm, i, j) ;                         \
-		in_DM = (info == GrB_SUCCESS) ;                                        \
-                                                                               \
-		if (in_DM) { /* if deleted, simply set in M (no accum) */              \
-			/* clear dm[i,j] */                                                \
-			GrB_OK (GrB_Matrix_removeElement (dm, i, j)) ;                     \
-                                                                               \
-			/* overwrite m[i,j] */                                             \
-			GrB_OK (GrB_Matrix_setElement (m, x, i, j)) ;                      \
-		} else {                                                               \
-			/* update entry at m[i,j] */                                       \
-			GrB_OK (GrB_assign (m, NULL, accum, x, &i, 1, &j, 1, NULL)) ;      \
-		}                                                                      \
+		/* NOTE: Checking if elements is deleted will cause significant slow */\
+		/* down due to read after write. Therefore, it is not checked. So, we*/\
+		/* assume that the "zombie" value in m is the identity of accum.     */\
+		GrB_OK (GrB_assign (m, NULL, accum, x, &i, 1, &j, 1, NULL)) ;          \
+		GrB_OK (GrB_Matrix_removeElement (dm, i, j)) ;                         \
 	} else {                                                                   \
 		/* update entry at dp[i,j] */                                          \
 		GrB_OK (GrB_assign (dp, NULL, accum, x, &i, 1, &j, 1, NULL)) ;         \
