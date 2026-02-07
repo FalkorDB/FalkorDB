@@ -31,6 +31,12 @@ static const AlgebraicExpression *_AlgebraicExpression_SrcOperand
 				// Src (Transpose(A*B)) = Src (Transpose(B)*Transpose(A)) = Src (Transpose(B))
 				exp = (t) ? LAST_CHILD(exp) : FIRST_CHILD(exp);
 				break;
+			case AL_EXP_POW:
+				// Src (A^n) = Src(A)
+				// POW is used for variable length edges e.g. [:KNOWS*1..3]
+				// The source of a variable length traversal is the source of the edge
+				exp = FIRST_CHILD(exp);
+				break;
 			case AL_EXP_TRANSPOSE:
 				// Src (Transpose(Transpose(A))) = Src(A)
 				// negate transpose
