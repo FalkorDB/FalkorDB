@@ -6,6 +6,7 @@
 #pragma once
 
 #include "../../../serializers_include.h"
+#include "../../decode_utilies.h"
 
 GraphContext *RdbLoadGraphContext_latest
 (
@@ -23,7 +24,7 @@ void AUXLoadUDF_latest
 void RdbLoadNodes_v18
 (
 	SerializerIO rdb,          // RDB
-	Graph *g,                  // graph context
+	Graph *g,                  // graph
 	const uint64_t node_count  // number of nodes to decode
 );
 
@@ -31,7 +32,7 @@ void RdbLoadNodes_v18
 void RdbLoadDeletedNodes_v18
 (
 	SerializerIO rdb,                  // RDB
-	Graph *g,                          // graph context
+	Graph *g,                          // graph
 	const uint64_t deleted_node_count  // number of deleted nodes
 );
 
@@ -39,7 +40,7 @@ void RdbLoadDeletedNodes_v18
 void RdbLoadEdges_v18
 (
 	SerializerIO rdb,  // RDB
-	Graph *g,          // graph context
+	Graph *g,          // graph
 	const uint64_t n   // virtual key capacity
 );
 
@@ -47,7 +48,7 @@ void RdbLoadEdges_v18
 void RdbLoadDeletedEdges_v18
 (
 	SerializerIO rdb,                  // RDB
-	Graph *g,                          // graph context
+	Graph *g,                          // graph
 	const uint64_t deleted_edge_count  // number of deleted edges
 );
 
