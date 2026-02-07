@@ -3,7 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "decode_v18.h"
+#include "decode_v19.h"
 #include "../../../../index/indexer.h"
 
 // TODO: have the delta matrix upon setting M, incase the matrix
@@ -172,7 +172,7 @@ static GraphContext *_DecodeHeader
 	}
 
 	// decode graph schemas
-	RdbLoadGraphSchema_v18(rdb, gc, !first_vkey);
+	RdbLoadGraphSchema_v19(rdb, gc, !first_vkey);
 
 	// save decode statistics for later progess reporting
 	// e.g. "Decoded 20000/4500000 nodes"
@@ -249,7 +249,7 @@ GraphContext *RdbLoadGraphContext_latest
 		switch(payload.state) {
 			case ENCODE_STATE_NODES:
 				Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
-				RdbLoadNodes_v18(rdb, g, payload.entities_count);
+				RdbLoadNodes_v19(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -261,7 +261,7 @@ GraphContext *RdbLoadGraphContext_latest
 				break;
 
 			case ENCODE_STATE_DELETED_NODES:
-				RdbLoadDeletedNodes_v18(rdb, g, payload.entities_count);
+				RdbLoadDeletedNodes_v19(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -274,7 +274,7 @@ GraphContext *RdbLoadGraphContext_latest
 
 			case ENCODE_STATE_EDGES:
 				Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
-				RdbLoadEdges_v18(rdb, g, payload.entities_count);
+				RdbLoadEdges_v19(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -284,7 +284,7 @@ GraphContext *RdbLoadGraphContext_latest
 
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
-				RdbLoadDeletedEdges_v18(rdb, g, payload.entities_count);
+				RdbLoadDeletedEdges_v19(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -300,7 +300,7 @@ GraphContext *RdbLoadGraphContext_latest
 						"Graph '%s' loading label matrices",
 						GraphContext_GetName(gc));
 
-				RdbLoadLabelMatrices_v18(rdb, gc);
+				RdbLoadLabelMatrices_v19(rdb, gc);
 				break;
 
 			case ENCODE_STATE_RELATION_MATRICES:
@@ -308,7 +308,7 @@ GraphContext *RdbLoadGraphContext_latest
 						"Graph '%s' loading relation matrices",
 						GraphContext_GetName(gc));
 
-				RdbLoadRelationMatrices_v18(rdb, gc);
+				RdbLoadRelationMatrices_v19(rdb, gc);
 				break;
 
 			case ENCODE_STATE_ADJ_MATRIX:
@@ -316,7 +316,7 @@ GraphContext *RdbLoadGraphContext_latest
 						"Graph '%s' loading Adjacency matrix",
 						GraphContext_GetName(gc));
 
-				RdbLoadAdjMatrix_v18(rdb, gc);
+				RdbLoadAdjMatrix_v19(rdb, gc);
 				break;
 
 			case ENCODE_STATE_LBLS_MATRIX:
@@ -324,7 +324,7 @@ GraphContext *RdbLoadGraphContext_latest
 						"Graph '%s' loading Labels matrix",
 						GraphContext_GetName(gc));
 
-				RdbLoadLblsMatrix_v18(rdb, gc);
+				RdbLoadLblsMatrix_v19(rdb, gc);
 				break;
 
 			default:
