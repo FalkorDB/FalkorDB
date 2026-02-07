@@ -20,8 +20,6 @@ Install Python test dependencies first: `pip install -r tests/requirements.txt`
     make unit-tests            # C unit tests
     make flow-tests            # Python integration tests (RLTest)
     make tck-tests             # OpenCypher compliance tests (Behave)
-    make upgrade-tests         # Version upgrade tests
-    make fuzz-tests            # Fuzz tests
 
 ## Run a specific test
 
