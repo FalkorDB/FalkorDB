@@ -22,6 +22,7 @@
 #include "bolt/bolt_api.h"
 #include "index/indexer.h"
 #include "udf/repository.h"
+#include "storage/storage.h"
 #include "udf/replication.h"
 #include "redisearch_api.h"
 #include "commands/cmd_acl.h"
@@ -128,19 +129,6 @@ int RedisModule_OnLoad
 		return REDISMODULE_ERR;
 	}
 
-	// initialize GraphBLAS
-	int res = GraphBLAS_Init(ctx);
-	if(res != REDISMODULE_OK) return res;
-
-	roaring_init_memory_hook((roaring_memory_t) {
-		.free           = rm_free,
-		.malloc         = rm_malloc,
-		.calloc         = rm_calloc,
-		.realloc        = rm_realloc,
-		.aligned_free   = rm_free,
-		.aligned_malloc = rm_aligned_malloc
-	});
-
 	// validate minimum redis-server version
 	if(!Redis_Version_GreaterOrEqual(MIN_REDIS_VERSION_MAJOR,
 				MIN_REDIS_VERSION_MINOR, MIN_REDIS_VERSION_PATCH)) {
@@ -150,6 +138,30 @@ int RedisModule_OnLoad
 				MIN_REDIS_VERSION_PATCH);
 		return REDISMODULE_ERR;
 	}
+
+	// initialize GraphBLAS
+	int res = GraphBLAS_Init (ctx) ;
+	if (res != REDISMODULE_OK) {
+		return res ;
+	}
+
+	// initialize tidesdb
+	res = Storage_init () ;
+	if (res != 0) {
+		RedisModule_Log (ctx, "warning",
+				"Failed to initialize FalkorDB disk storage, error code: %d",
+				res) ;
+		return REDISMODULE_ERR ;
+	}
+
+	roaring_init_memory_hook((roaring_memory_t) {
+		.free           = rm_free,
+		.malloc         = rm_malloc,
+		.calloc         = rm_calloc,
+		.realloc        = rm_realloc,
+		.aligned_free   = rm_free,
+		.aligned_malloc = rm_aligned_malloc
+	});
 
 	if(RediSearch_Init(ctx, REDISEARCH_INIT_LIBRARY) != REDISMODULE_OK) {
 		return REDISMODULE_ERR;

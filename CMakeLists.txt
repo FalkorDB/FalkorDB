@@ -9,6 +9,12 @@ if (NOT DEFINED UNIT_TESTS)
 	set(UNIT_TESTS OFF)
 endif()
 
+if (APPLE)
+    include_directories(/opt/homebrew/include)
+    link_directories(/opt/homebrew/lib)
+	add_library(falkordb_static STATIC $<TARGET_OBJECTS:falkordb>)
+endif()
+
 project(falkordb)
 
 setup_cc_options()
@@ -32,7 +38,8 @@ include_directories(
 	${root}/deps/GraphBLAS/Include
 	${root}/deps/libcurl/include/curl
 	${root}/deps/libcypher-parser/lib/src
-	$ENV{LIBCYPHER_PARSER_BINDIR}/lib/src)
+	$ENV{LIBCYPHER_PARSER_BINDIR}/lib/src
+	$ENV{TIDESDB_BINDIR}/include/tidesdb)
 
 add_compile_definitions(
 	_GNU_SOURCE
@@ -60,13 +67,18 @@ lists_from_env(GRAPHBLAS LAGRAPH TIDESDB LAGRAPHX QUICKJS LIBXXHASH LIBCURL LIBC
 set(FALKORDB_LIBS ${FalkorDBRS} ${LAGRAPHX} ${LAGRAPH} ${QUICKJS} ${GRAPHBLAS} ${TIDESDB} ${LIBXXHASH} ${LIBCURL} ${LIBCSV} ${RAX} ${LIBCYPHER_PARSER} ${REDISEARCH_LIBS} ${UTF8PROC} ${ONIGURUMA} OpenSSL::SSL)
 
 target_link_options(falkordb PRIVATE ${CMAKE_LD_FLAGS_LIST} ${CMAKE_SO_LD_FLAGS_LIST})
-target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS} ${CoreFoundation_Library} ${SystemConfiguration_Library})
+target_link_libraries(falkordb
+	PRIVATE
+	${FALKORDB_LIBS}
+	${CMAKE_LD_LIBS}
+	zstd
+    lz4
+    snappy
+	${CoreFoundation_Library}
+	${SystemConfiguration_Library}
+)
 
 extract_debug_symbols(falkordb)
-
-if (APPLE)
-	add_library(falkordb_static STATIC $<TARGET_OBJECTS:falkordb>)
-endif()
 
 if (UNIT_TESTS)
 	add_subdirectory(${root}/tests/unit tests/unit)

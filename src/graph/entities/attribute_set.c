@@ -24,15 +24,6 @@
 #define VALID_ATTRIBUTE_ID(attr_id)                   \
 	((attr_id) != ATTRIBUTE_ID_NONE && (attr_id) != ATTRIBUTE_ID_ALL)
 
-// compute size in bytes of attribute set in bytes
-// attribute-set size =
-//    sizeof(AttributeSet) +
-//    number of attributes * (sizeof(AttributeID) + sizeof(AttrValue_t))
-#define ATTRIBUTESET_BYTE_SIZE(set) ((set) == NULL ?  \
-		sizeof (_AttributeSet) :                      \
-		sizeof (_AttributeSet) +                      \
-		(sizeof (AttributeID)  + sizeof (AttrValue_t)) * (set)->attr_count)
-
 // pointer to the begining of the attribute-set attribute ids
 #define ATTRIBUTE_SET_IDS(set)                        \
 			(AttributeID*)((set)->attributes)
@@ -41,6 +32,15 @@
 #define ATTRIBUTE_SET_VALS(set)                       \
 			(AttrValue_t*)((set)->attributes +        \
 					(sizeof(AttributeID) * (set)->attr_count))
+
+// compute size in bytes of attribute set in bytes
+// attribute-set size =
+//    sizeof(AttributeSet) +
+//    number of attributes * (sizeof(AttributeID) + sizeof(AttrValue_t))
+#define ATTRIBUTESET_BYTE_SIZE(set) ((set) == NULL ?  \
+		sizeof (_AttributeSet) :                      \
+		sizeof (_AttributeSet) +                      \
+		(sizeof (AttributeID)  + sizeof (AttrValue_t)) * (set)->attr_count)
 
 //------------------------------------------------------------------------------
 // attribute type
@@ -524,6 +524,18 @@ void AttributeSet_GetIdx
 
 	// extract attribute value
 	_AttrValueToSIValue (v, _GetAttrVal (_set, i)) ;
+}
+
+// returns attribute-set size in bytes
+size_t AttributeSet_ByteSize
+(
+	const AttributeSet set  // attribute-set
+) {
+	if (unlikely (set == NULL)) {
+		return 0 ;
+	}
+
+	return ATTRIBUTESET_BYTE_SIZE (set) ;
 }
 
 // adds new attributes to the attribute-set

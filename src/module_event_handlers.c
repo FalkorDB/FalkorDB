@@ -14,6 +14,7 @@
 #include "bolt/bolt_api.h"
 #include "commands/cmd_acl.h"
 #include "util/thpool/pool.h"
+#include "storage/storage.h"
 #include "util/redis_version.h"
 #include "graph/graphcontext.h"
 #include "configuration/config.h"
@@ -360,6 +361,9 @@ static void _ShutdownEventHandler
 
 	// server is shutting down, finalize GraphBLAS
 	LAGraph_Finalize (NULL) ;
+
+	// finalize tidesdb
+	Storage_finalize () ;
 
 	free_cmd_acl () ;
 	free_run_cmd_as () ;

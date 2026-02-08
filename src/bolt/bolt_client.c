@@ -32,9 +32,9 @@ bolt_client_t *bolt_client_new
 	client->shutdown   = false;
 	client->processing = false;
 	client->write_messages = array_new(bolt_message_t, 1);
-	buffer_new(&client->msg_buf);
-	buffer_new(&client->read_buf);
-	buffer_new(&client->write_buf);
+	bolt_buffer_new(&client->msg_buf);
+	bolt_buffer_new(&client->read_buf);
+	bolt_buffer_new(&client->write_buf);
 	buffer_index_set(&client->ws_frame, &client->read_buf, 0);
 	return client;
 }
@@ -690,9 +690,9 @@ void bolt_client_free
 
 	RedisModule_EventLoopDel(client->socket, REDISMODULE_EVENTLOOP_WRITABLE);
 	socket_close(client->socket);
-	buffer_free(&client->read_buf);
-	buffer_free(&client->write_buf);
-	buffer_free(&client->msg_buf);
+	bolt_buffer_free(&client->read_buf);
+	bolt_buffer_free(&client->write_buf);
+	bolt_buffer_free(&client->msg_buf);
 	array_free(client->write_messages);
 	rm_free(client);
 }

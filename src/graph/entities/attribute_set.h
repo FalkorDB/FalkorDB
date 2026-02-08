@@ -68,6 +68,12 @@ void AttributeSet_GetIdx
 	SIValue *v               // [output] value
 );
 
+// returns attribute-set size in bytes
+size_t AttributeSet_ByteSize
+(
+	const AttributeSet set  // attribute-set
+);
+
 // adds new attributes to the attribute-set
 // all attributes MUST NOT be in the set
 void AttributeSet_Add

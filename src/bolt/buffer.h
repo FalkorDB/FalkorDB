@@ -69,7 +69,7 @@ char *buffer_index_read_until
 );
 
 // initialize a new buffer
-void buffer_new
+void bolt_buffer_new
 (
 	buffer_t *buf  // buffer
 );
@@ -166,7 +166,7 @@ void buffer_apply_mask
 );
 
 // free the buffer
-void buffer_free
+void bolt_buffer_free
 (
 	buffer_t *buf  // buffer
 );
