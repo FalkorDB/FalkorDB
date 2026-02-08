@@ -878,11 +878,11 @@ build_graphblas() {
     if [[ "$DEPS_DEBUG" == "1" ]]; then
         cmake_args+=(-DCMAKE_BUILD_TYPE=Debug)
     else
-        # Use RelWithDebInfo for debug symbols, but override to -O3 for max optimization
+        # Use RelWithDebInfo for debug symbols with -O2 optimization (matches master defaults)
         cmake_args+=(
             -DCMAKE_BUILD_TYPE=RelWithDebInfo
-            "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O3 -g -DNDEBUG -fPIC -fno-stack-protector"
-            "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O3 -g -DNDEBUG -fPIC -fno-stack-protector"
+            "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O2 -g -DNDEBUG -fPIC -fno-stack-protector"
+            "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O2 -g -DNDEBUG -fPIC -fno-stack-protector"
         )
     fi
 
@@ -946,11 +946,11 @@ build_lagraph() {
     if [[ "$DEPS_DEBUG" == "1" ]]; then
         cmake_args+=(-DCMAKE_BUILD_TYPE=Debug)
     else
-        # Use RelWithDebInfo for debug symbols, but override to -O3 for max optimization
+        # Use RelWithDebInfo for debug symbols with -O2 optimization (matches master defaults)
         cmake_args+=(
             -DCMAKE_BUILD_TYPE=RelWithDebInfo
-            "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O3 -g -DNDEBUG -fPIC"
-            "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O3 -g -DNDEBUG -fPIC"
+            "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O2 -g -DNDEBUG -fPIC"
+            "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O2 -g -DNDEBUG -fPIC"
         )
     fi
 
@@ -1106,10 +1106,10 @@ build_oniguruma() {
     if [[ "$DEPS_DEBUG" == "1" ]]; then
         cmake_args+=(-DCMAKE_BUILD_TYPE=Debug)
     else
-        # Use RelWithDebInfo for debug symbols, but override to -O3 for max optimization
+        # Use RelWithDebInfo for debug symbols with -O2 optimization (matches master defaults)
         cmake_args+=(
             -DCMAKE_BUILD_TYPE=RelWithDebInfo
-            "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O3 -g -DNDEBUG -fPIC"
+            "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O2 -g -DNDEBUG -fPIC"
         )
     fi
 
