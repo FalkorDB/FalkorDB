@@ -185,9 +185,9 @@ class testResultSetFlow(FlowTestsBase):
         result = self.graph.query(query)
         self.env.assertEqual(result.result_set[0][0], 'Foo\r\nBar')
         
-    # Test returning startNode of deleted node
+    # Test returning startNode of deleted edge
     def test11_deleted_start_node(self):
-        query = """CREATE (a)-[r:R]->(a) WITH r, a DETACH DELETE a RETURN startNode(r)"""
+        query = """CREATE (a)-[r:R]->(a) WITH r, a DELETE a RETURN startNode(r)"""
         result = self.graph.query(query)
         # Should return a node with empty labels and properties (deleted node)
         self.env.assertEquals(len(result.result_set), 1)
@@ -195,9 +195,9 @@ class testResultSetFlow(FlowTestsBase):
         self.env.assertEquals(node.labels, None)
         self.env.assertEquals(node.properties, {})
 
-    # Test returning endNode of deleted node
+    # Test returning endNode of deleted edge
     def test12_deleted_end_node(self):
-        query = """CREATE (a)-[r:R]->(a) WITH r, a DETACH DELETE a RETURN endNode(r)"""
+        query = """CREATE (a)-[r:R]->(a) WITH r, a DELETE a RETURN endNode(r)"""
         result = self.graph.query(query)
         # Should return a node with empty labels and properties (deleted node)
         self.env.assertEquals(len(result.result_set), 1)
@@ -207,7 +207,7 @@ class testResultSetFlow(FlowTestsBase):
 
     # Test returning deleted relationship via startNode/endNode
     def test13_deleted_relationship_endpoints(self):
-        query = """CREATE (a)-[r:R]->(b) WITH r, a, b DETACH DELETE a, b RETURN startNode(r), endNode(r)"""
+        query = """CREATE (a)-[r:R]->(b) WITH r, a, b DELETE a, b RETURN startNode(r), endNode(r)"""
         result = self.graph.query(query)
         self.env.assertEquals(len(result.result_set), 1)
         start_node = result.result_set[0][0]
@@ -220,7 +220,7 @@ class testResultSetFlow(FlowTestsBase):
 
     # Test that deleted node with original properties returns empty properties
     def test14_deleted_node_with_properties(self):
-        query = """CREATE (a:Person {name: 'test', age: 30})-[r:R]->(a) WITH r, a DETACH DELETE a RETURN startNode(r)"""
+        query = """CREATE (a:Person {name: 'test', age: 30})-[r:R]->(a) WITH r, a DELETE a RETURN startNode(r)"""
         result = self.graph.query(query)
         self.env.assertEquals(len(result.result_set), 1)
         node = result.result_set[0][0]

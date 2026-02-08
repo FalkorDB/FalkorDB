@@ -168,11 +168,7 @@ static void _ResultSet_CompactReplyWithProperties
 	const GraphEntity *e
 ) {
 	const AttributeSet set = GraphEntity_GetAttributes(e);
-	if (!set) {
-		RedisModule_ReplyWithArray(ctx, 0);
-		return;
-	}
-	int prop_count = AttributeSet_Count(set);
+	int prop_count = set ? AttributeSet_Count(set) : 0;
 	RedisModule_ReplyWithArray(ctx, prop_count);
 
 	// iterate over all properties stored on entity
