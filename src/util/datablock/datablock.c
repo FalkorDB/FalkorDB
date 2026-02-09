@@ -12,6 +12,8 @@
 #include <math.h>
 #include <stdbool.h>
 
+#define OFFLOADED_POINTER 
+
 // computes the number of blocks required to accommodate n items.
 #define ITEM_COUNT_TO_BLOCK_COUNT(n, cap) \
     ceil((double)n / cap)
@@ -27,6 +29,19 @@
 // retrieves block in which item with index resides.
 #define GET_ITEM_BLOCK(dataBlock, idx) \
     dataBlock->blocks[ITEM_INDEX_TO_BLOCK_INDEX(idx, dataBlock->blockCap)]
+
+//------------------------------------------------------------------------------
+// offloaded macros
+//------------------------------------------------------------------------------
+
+// sets the offloaded bit in the header to 1
+#define MARK_HEADER_AS_OFFLOADED(header) ((header)->offloaded |= 1)
+
+// sets the offloaded bit in the header to 0
+#define MARK_HEADER_AS_NOT_OFFLOADED(header) ((header)->offloaded &= 0)
+
+// checks if the offloaded bit in the header is 1 or not
+#define IS_ITEM_OFFLOADED(header) ((header)->offloaded & 1)
 
 static void _DataBlock_AddBlocks
 (
@@ -53,7 +68,7 @@ static void _DataBlock_AddBlocks
 	dataBlock->itemCap = dataBlock->blockCount * dataBlock->blockCap;
 }
 
-// Checks to see if idx is within global array bounds
+// checks to see if idx is within global array bounds
 // array bounds are between 0 and itemCount + #deleted indices
 // e.g. [3, 7, 2, D, 1, D, 5] where itemCount = 5 and #deleted indices is 2
 // and so it is valid to query the array with idx 6.
@@ -268,6 +283,38 @@ const uint64_t *DataBlock_DeletedItems
 	ASSERT(dataBlock != NULL);
 
 	return (const uint64_t *) dataBlock->deletedIdx;
+}
+
+// marks specified items within a DataBlock as offloaded to external storage
+void DataBlock_MarkOffloaded (
+	DataBlock *dataBlock,     // datablock
+	const uint64_t *indices,  // array of indices to be marked
+	size_t n_indices          // number of elements in the indices array
+) {
+	// validations
+	ASSERT (indices   != NULL) ;
+	ASSERT (dataBlock != NULL) ;
+
+	//--------------------------------------------------------------------------
+	// process entries
+	//--------------------------------------------------------------------------
+
+	for (size_t i = 0 ; i < n_indices ; i++) {
+		uint64_t idx = indices[i] ;
+
+		// item index must be valid
+		ASSERT (!_DataBlock_IndexOutOfBounds (dataBlock, idx)) ;
+
+		// get item's header
+		DataBlockItemHeader *header = DataBlock_GetItemHeader (dataBlock, idx) ;
+
+		// item shouldn't be deleted nor offloaded
+		ASSERT (!IS_ITEM_DELETED   (header)) ;
+		ASSERT (!IS_ITEM_OFFLOADED (header)) ;
+
+		// mark item as offloaded
+		MARK_HEADER_AS_OFFLOADED (header) ;
+	}
 }
 
 //------------------------------------------------------------------------------

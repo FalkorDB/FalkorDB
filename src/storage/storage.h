@@ -24,9 +24,11 @@
 #include "../graph/entities/attribute_set.h"
 
 // initialize storage
+// returns 0 on success
 int Storage_init(void) ;
 
 // offloads attribute sets to tidesdb
+// returns 0 on success
 int Storage_putAttributes
 (
 	tidesdb_column_family_t *cf,  // tidesdb column family
@@ -36,6 +38,18 @@ int Storage_putAttributes
 	const EntityID *ids           // array of entity IDs
 );
 
+// loads attribute sets from tidesdb
+// returns 0 on success
+int Storage_loadAttributes
+(
+	tidesdb_column_family_t *cf,  // tidesdb column family
+	AttributeSet *sets,           // array of attribute sets
+	size_t n_sets,                // number of sets to load
+	GraphEntityType t,            // Node or Edge type
+	const EntityID *ids           // array of entity IDs
+);
+
 // finalize tidesdb
+// returns 0 on success
 int Storage_finalize (void) ;
 

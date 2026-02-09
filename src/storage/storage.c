@@ -10,9 +10,9 @@
 #include <stdlib.h>
 
 #define TIDESDB_ROOT_DIR "./tidesdb"  // TODO: should be user configurable
-#define NO_TTL -1  // tidesdb key's TTL
-#define KEY_SIZE (sizeof (char) + sizeof (EntityID))  // tidesdb key byte size
-#define TRANSACTION_CAP 10000 // tidesdb transaction max size 10K
+#define NO_TTL           -1                                   // key TTL
+#define KEY_SIZE         (sizeof (char) + sizeof (EntityID))  // key byte size
+#define TRANSACTION_CAP  10000                                // txn capacity
 
 tidesdb_t *db = NULL ;
 
@@ -32,27 +32,59 @@ static inline void compute_key
 }
 
 // create tidesdb
+// returns 0 on success
 int Storage_init(void) {
 	ASSERT (db == NULL) ;
 
-	// tidesdb config
+	//--------------------------------------------------------------------------
+	// open the database
+	//--------------------------------------------------------------------------
+
 	tidesdb_config_t config = tidesdb_default_config () ;
 
 	config.db_path   = TIDESDB_ROOT_DIR ;
 	config.log_level = TDB_LOG_ERROR ;
 
-	// try to open the database
 	if (tidesdb_open (&config, &db) != 0) {
 		RedisModule_Log (NULL, "warning", "failed to open tidesdb") ;
 		return -1 ;
 	}
 
-	// TODO: clear all data from tidesdb
+	//--------------------------------------------------------------------------
+	// clear tidesdb database
+	//--------------------------------------------------------------------------
 
-	return 0 ;
+	int res      = 0 ;
+	int count    = 0 ;
+	char **names = NULL ;
+
+	if (tidesdb_list_column_families (db, &names, &count) == 0) {
+		for (int i = 0 ; i < count ; i++) {
+			if (tidesdb_drop_column_family (db, names[i]) != 0) {
+				RedisModule_Log (NULL, "warning", "failed to remove column %s",
+						names[i]) ;
+				res = -1 ;
+				break ;
+			}
+		}
+	}
+
+	//--------------------------------------------------------------------------
+	// clean up
+	//--------------------------------------------------------------------------
+
+	if (names != NULL) {
+		for (int i = 0 ; i < count ; i++) {
+			free (names[i]) ;
+		}
+		free (names) ;
+	}
+
+	return res ;
 }
 
 // offloads attribute sets to tidesdb
+// returns 0 on success
 int Storage_putAttributes
 (
 	tidesdb_column_family_t *cf,  // tidesdb column family
@@ -63,6 +95,7 @@ int Storage_putAttributes
 ) {
 	// validate arguments
 	ASSERT (t      == GETYPE_NODE || t == GETYPE_EDGE) ;
+	ASSERT (db     != NULL) ;
 	ASSERT (cf     != NULL) ;
 	ASSERT (ids    != NULL) ;
 	ASSERT (sets   != NULL) ;
@@ -149,6 +182,68 @@ cleanup:
 	return res ;
 }
 
+// loads attribute sets from tidesdb
+// returns 0 on success
+int Storage_loadAttributes
+(
+	tidesdb_column_family_t *cf,  // tidesdb column family
+	AttributeSet *sets,           // array of attribute sets
+	size_t n_sets,                // number of sets to load
+	GraphEntityType t,            // Node or Edge type
+	const EntityID *ids           // array of entity IDs
+) {
+	// validate arguments
+	ASSERT (t      == GETYPE_NODE || t == GETYPE_EDGE) ;
+	ASSERT (db     != NULL) ;
+	ASSERT (cf     != NULL) ;
+	ASSERT (ids    != NULL) ;
+	ASSERT (sets   != NULL) ;
+	ASSERT (n_sets > 0) ;
+
+	int res = 0 ;
+	tidesdb_txn_t *txn = NULL ;
+	char key[KEY_SIZE] ;        // prefix char followed by 8 bytes entity id
+
+	// create transaction
+	res = tidesdb_txn_begin (db, &txn) ;
+	if (res != 0) {
+		RedisModule_Log (NULL, "warning", "failed to start transaction") ;
+		return res ;
+	}
+
+	//--------------------------------------------------------------------------
+	// fetch batch
+	//--------------------------------------------------------------------------
+
+	for (size_t i = 0 ; i < n_sets ; i++) {
+		EntityID id = ids[i] ;
+		ASSERT (id != INVALID_ENTITY_ID) ;
+
+		// key format: N/E<entity_id>
+		compute_key (key, t, id) ;
+
+		// get attribute-set
+		res = tidesdb_txn_get (txn, cf, (const uint8_t*) key, KEY_SIZE,
+				(uint8_t**)(sets + i), NULL) ;
+
+		if (res != 0) {
+			RedisModule_Log (NULL, "warning",
+					"failed to get attribute-set for entity id: %llu,"
+					"err code: %d", id, res) ;
+			// setting attribute-set to NULL
+			sets[i] = NULL ;
+		}
+	}
+
+	if (txn != NULL) {
+		tidesdb_txn_free (txn) ;
+	}
+
+	return res ;
+}
+
+// finalize tidesdb
+// returns 0 on success
 int Storage_finalize (void) {
 	ASSERT (db != NULL) ;
 

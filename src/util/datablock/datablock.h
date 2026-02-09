@@ -47,10 +47,11 @@ typedef struct {
 	fpDestructor destructor;    // Function pointer to a clean-up function of an item.
 } DataBlock;
 
-// This struct is for data block item header data.
-// TODO: Consider using pragma pack/pop for tight memory/word alignment.
+// this struct is for data block item header data
 typedef struct {
-	unsigned char deleted: 1;  // A bit indicate if the current item is deleted or not.
+	unsigned char deleted   : 1; // 1 if the item is deleted
+	unsigned char offloaded : 1; // 1 if the item is offloaded to disk
+    unsigned char reserved  : 6; // explicitly padding to fill the byte
 } DataBlockItemHeader;
 
 // Create a new DataBlock
@@ -112,12 +113,22 @@ const uint64_t *DataBlock_DeletedItems
 	const DataBlock *dataBlock
 );
 
+// marks specified items within a DataBlock as offloaded to external storage
+bool DataBlock_MarkOffloaded (
+	DataBlock *dataBlock,     // datablock
+	const uint64_t *indices,  // array of indices to be marked
+	size_t n_indices          // number of elements in the indices array
+);
+
 // returns to amount of memory consumed by the datablock
 size_t DataBlock_memoryUsage
 (
 	const DataBlock *dataBlock
 );
 
-// Free block.
-void DataBlock_Free(DataBlock *block);
+// free block
+void DataBlock_Free
+(
+	DataBlock *block
+) ;
 
