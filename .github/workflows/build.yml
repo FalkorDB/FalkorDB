@@ -401,7 +401,7 @@ jobs:
       - name: Extract .so file (Docker)
         if: matrix.platform.use_docker
         run: |
-          docker run --rm --entrypoint cat localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }} /FalkorDB/bin/src/falkordb.so > /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
+          docker run --rm --entrypoint sh localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }} -c 'cat /FalkorDB/bin/linux*/falkordb.so' > /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
 
       - name: Upload .so file
         uses: actions/upload-artifact@v6
@@ -625,7 +625,7 @@ jobs:
             falkordb/falkordb-tests-${{ matrix.platform.suffix }} \
             /bin/sh -c '
               set -e
-              cp /FalkorDB/bin/src/falkordb.so /tmp/ramp/falkordb.so
+              cp /FalkorDB/bin/linux*/falkordb.so /tmp/ramp/falkordb.so
               if command -v apt-get >/dev/null 2>&1; then
                 apt-get update && apt-get install -y python3-pip python3-setuptools redis tar
               elif command -v yum >/dev/null 2>&1; then

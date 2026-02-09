@@ -85,14 +85,14 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ./bin/linux-x64-release/GraphBLAS
-          key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
+          key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c', './build.sh') }}
 
       - name: Cache parser
         id: cache_parser
         uses: actions/cache@v5
         with:
           path: ./bin/linux-x64-release/libcypher-parser
-          key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+          key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c', './build.sh') }}
 
       - name: Cache search
         id: cache_search
@@ -106,14 +106,14 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ./bin/linux-x64-release/libcurl
-          key: libcurl-x64-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}
+          key: libcurl-x64-${{ hashFiles('./deps/libcurl/RELEASE-NOTES', './build.sh') }}
 
       - name: Cache libcsv
         id: cache_libcsv
         uses: actions/cache@v5
         with:
           path: ./bin/linux-x64-release/libcsv
-          key: libcsv-x64-${{ hashFiles('./deps/libcsv/ChangeLog') }}
+          key: libcsv-x64-${{ hashFiles('./deps/libcsv/ChangeLog', './build.sh') }}
 
       - name: Build
         run: |
