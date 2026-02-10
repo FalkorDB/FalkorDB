@@ -9,5 +9,4 @@ wheel
 rmtest
 psutil
 python-dateutil
-git+https://github.com/falkordb/RLTest.git@master
-
+RLTest==0.7.20
