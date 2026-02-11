@@ -42,6 +42,7 @@ typedef enum {
 
 // forward declaration of Graph struct
 typedef struct Graph Graph;
+
 // typedef for synchronization function pointer
 typedef void (*SyncMatrixFunc)(const Graph *, Delta_Matrix, GrB_Index, GrB_Index);
 
@@ -94,6 +95,12 @@ int Graph_TimeAcquireWriteLock
                     // - timeout_ms > 0 : wait up to timeout_ms milliseconds
 );
 
+// returns rather or not graph is locked for writing
+bool Graph_IsWriteLocked
+(
+	const Graph *g
+);
+
 // release the held lock
 void Graph_ReleaseLock
 (
@@ -118,34 +125,6 @@ void Graph_ApplyAllPending
 (
 	Graph *g,           // graph to sync
 	bool force_flush    // force sync of delta matrices
-);
-
-// lock all matrices:
-// 1. adjacency matrix
-// 2. label matrices
-// 3. node labels matrix
-// 4. relation matrices
-//
-// currently only used just before forking for the purpose of
-// taking a snapshot
-void Graph_LockAllMatrices
-(
-	Graph *g  // graph to lock
-);
-
-// the counter-part of GraphLockAllMatrices
-// unlocks all matrices:
-//
-// 1. adjacency matrix
-// 2. label matrices
-// 3. node labels matrix
-// 4. relation matrices
-//
-// currently only used after a fork had been issued on both
-// the parent and child processes
-void Graph_UnlockAllMatrices
-(
-	Graph *g  // graph to unlock
 );
 
 // checks to see if graph has pending operations
@@ -294,17 +273,18 @@ void Graph_CreateEdges
 // deletes nodes from the graph
 void Graph_DeleteNodes
 (
-	Graph *g,       // graph to delete nodes from
-	Node *nodes,    // nodes to delete
-	uint64_t count  // number of nodes
+	Graph *g,            // graph to delete nodes from
+	Node *nodes,         // nodes to delete
+	uint64_t node_count  // number of nodes
 );
 
 // deletes edges from the graph
 void Graph_DeleteEdges
 (
-	Graph *g,     // graph to delete edges from
-	Edge *edges,  // edges to delete
-	uint64_t n    // number of edges
+	Graph *g,      // graph to delete edges from
+	Edge *edges,   // edges to delete
+	uint64_t n,    // number of edges
+	bool implicit  // edge deleted due to node deletion
 );
 
 // returns true if the given entity has been deleted
@@ -453,6 +433,31 @@ bool Graph_LookupEdgeRelationID
 	int n_rels               // the number of relations
 );
 
+void Graph_CollectInOutEdges
+(
+	Edge **outgoing,     // [output] outgoing edges
+	Edge **incoming,     // [output] incoming edges
+	Graph *g,            // graph
+	Node *nodes,         // nodes to collect edges for
+	uint64_t node_count  // number of nodes
+);
+
+void Graph_CollectOutgoingEdges
+(
+	Edge **edges,
+	Graph *g,
+	Node *nodes,
+	uint64_t node_count
+);
+
+void Graph_CollectIncomingEdges
+(
+	Edge **edges,
+	Graph *g,
+	Node *nodes,
+	uint64_t node_count
+);
+
 // get node edges
 void Graph_GetNodeEdges
 (
@@ -521,8 +526,22 @@ Delta_Matrix Graph_GetZeroMatrix
 	const Graph *g
 );
 
+// return true if all graph matrices are fully synced (not dirty)
+// and are of the expected dimensions
+bool Graph_Synced
+(
+	const Graph *g  // graph
+);
+
 // free partial graph
 void Graph_PartialFree
+(
+	Graph *g
+);
+
+// debug utility
+// prints every matrix in the graph
+void Graph_PrintMatrices
 (
 	Graph *g
 );

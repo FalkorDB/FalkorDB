@@ -76,7 +76,7 @@ void GraphHub_DeleteNodes
 (
 	GraphContext *gc,  // graph context to delete the node
 	Node *nodes,       // nodes to be deleted
-	uint n,            // number of nodes to delete
+	uint64_t n,        // number of nodes to delete
 	bool log           // log operations in undo-log
 );
 
@@ -89,7 +89,8 @@ void GraphHub_DeleteEdges
 	GraphContext *gc,  // graph context to delete the edge
 	Edge *edges,       // the edge to be deleted
 	uint64_t n,        // number of edges to delete
-	bool log           // log operations in undo-log
+	bool log,          // log operations in undo-log
+	bool implicit      // edge deleted due to node deletion
 );
 
 // update an entity(node/edge)

@@ -9,7 +9,7 @@ FROM $BASE_IMAGE AS compiler
 FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
 
 
-FROM redis:8.2.2
+FROM redis:8.2.3
 
 ENV FALKORDB_HOME=/var/lib/falkordb
 
@@ -39,14 +39,19 @@ RUN apt-get update && apt-get install -y libgomp1 curl && \
     apt-get upgrade -y && \
     apt-get autoremove -y && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* \
+    # Remove npm to avoid vulnerabilities (keep only node runtime)
+    && rm -rf /usr/lib/node_modules/npm \
+    && rm -f /usr/bin/npm \
+    && rm -f /usr/bin/npx
+
 
 WORKDIR ${FALKORDB_HOME}
 
 COPY ./build/docker/run.sh ${FALKORDB_BIN_PATH}/run.sh
 COPY ./build/docker/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 
-COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
+COPY --from=compiler /FalkorDB/bin/linux*/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
 COPY --from=browser /app ${FALKORDB_BROWSER_PATH}
 

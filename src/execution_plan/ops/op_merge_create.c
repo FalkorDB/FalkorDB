@@ -328,20 +328,22 @@ void MergeCreate_Commit
 (
 	OpBase *opBase
 ) {
-	ASSERT(opBase != NULL);
+	ASSERT (opBase != NULL) ;
 
-	OpMergeCreate *op = (OpMergeCreate *)opBase;
+	OpMergeCreate *op = (OpMergeCreate *)opBase ;
 
 	// switch to hand-off mode
-	op->handoff_mode = true;
+	op->handoff_mode = true ;
 
 	// done reading, we're not going to call consume any longer
 	// there might be operations e.g. index scan that need to free
 	// index R/W lock, as such free all execution plan operation up the chain
-	if(opBase->childCount > 0) OpBase_PropagateReset(opBase->children[0]);
+	if (opBase->childCount > 0) {
+		OpBase_PropagateReset (opBase->children[0]) ;
+	}
 
 	// create entities
-	CommitNewEntities(&op->pending);
+	CommitNewEntities (&op->pending) ;
 }
 
 // clone operation

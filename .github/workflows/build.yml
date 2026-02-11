@@ -159,7 +159,7 @@ jobs:
       - name: Restore dependency caches (Docker)
         if: matrix.platform.use_docker
         id: restore-deps
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
@@ -182,7 +182,7 @@ jobs:
       - name: Restore dependency cache (macOS)
         if: matrix.platform.os == 'macos'
         id: restore-deps-macos
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           key: ${{ steps.cache-key-macos.outputs.key }}
@@ -212,7 +212,7 @@ jobs:
 
       - name: Save dependency cache (macOS)
         if: matrix.platform.os == 'macos' && steps.restore-deps-macos.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           key: ${{ steps.cache-key-macos.outputs.key }}
@@ -273,7 +273,7 @@ jobs:
           tags: localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
           push: true
           cache-from: type=gha,scope=compiler-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
-          cache-to: type=gha,mode=max,scope=compiler-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          cache-to: type=gha,ignore-error=true,mode=max,scope=compiler-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
             OS=${{ matrix.platform.os }}
@@ -290,7 +290,7 @@ jobs:
 
       - name: Save dependency cache (Docker)
         if: matrix.platform.use_docker && steps.restore-deps.outputs.cache-hit != 'true' && steps.build_compiler.outcome == 'success'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: |
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
@@ -329,7 +329,7 @@ jobs:
           tags: falkordb/falkordb-tests-${{ matrix.platform.suffix }}
           platforms: linux/${{ matrix.platform.arch }}
           cache-from: type=gha,scope=tests-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
-          cache-to: type=gha,mode=max,scope=tests-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          cache-to: type=gha,ignore-error=true,mode=max,scope=tests-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
@@ -354,7 +354,7 @@ jobs:
           outputs: type=docker,dest=/tmp/falkordb-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-${{ matrix.platform.suffix }}
           cache-from: type=gha,scope=base-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
-          cache-to: type=gha,mode=max,scope=base-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          cache-to: type=gha,ignore-error=true,mode=max,scope=base-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
@@ -383,7 +383,7 @@ jobs:
           outputs: type=docker,dest=/tmp/falkordb-server-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-server-${{ matrix.platform.suffix }}
           cache-from: type=gha,scope=server-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
-          cache-to: type=gha,mode=max,scope=server-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
+          cache-to: type=gha,ignore-error=true,mode=max,scope=server-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
@@ -401,7 +401,7 @@ jobs:
       - name: Extract .so file (Docker)
         if: matrix.platform.use_docker
         run: |
-          docker run --rm --entrypoint cat localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }} /FalkorDB/bin/src/falkordb.so > /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
+          docker run --rm --entrypoint sh localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }} -c 'cat /FalkorDB/bin/linux*/falkordb.so' > /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
 
       - name: Upload .so file
         uses: actions/upload-artifact@v6
@@ -488,6 +488,9 @@ jobs:
           - suffix: amazonlinux2023-x64
             machine_label: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        
       - name: Download image
         uses: actions/download-artifact@v7
         with:
@@ -501,16 +504,41 @@ jobs:
         uses: aquasecurity/trivy-action@0.33.0
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
-          severity: CRITICAL,HIGH
-          format: sarif
-          output: trivy-results.sarif
-          ignore-unfixed: true
-          scan-type: image
+          output: trivy-report.json
+          format: json
+          exit-code: '0'
 
-      - name: Upload scan results
-        uses: github/codeql-action/upload-sarif@v4
+      - name: Upload Vulnerability Scan Results
+        uses: actions/upload-artifact@v6
+        id: upload_trivy_report
         with:
-          sarif_file: trivy-results.sarif
+          name: trivy-report-${{ matrix.platform.suffix }}
+          path: trivy-report.json
+          retention-days: 30
+
+      - name: Add comment to PR
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          header: "Trivy Vulnerability Scan Results for ${{ matrix.platform.suffix }}"
+          message: |
+            Architecture: ${{ matrix.platform.suffix }}
+            Trivy scan completed for the image built in this PR. Please review the attached report for details on any vulnerabilities found.
+            If there are any high or critical severity vulnerabilities, please address them before merging.
+            <details>
+            <a href="${{ steps.upload_trivy_report.outputs.artifact-url }}">Trivy Report (JSON)</a>
+            </details>
+
+      - name: Fail build on high/critical severity vulnerabilities
+        uses: aquasecurity/trivy-action@0.33.0
+        with:
+          image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+          skip-setup-trivy: true
 
   ramp-package:
     needs: build
@@ -597,7 +625,7 @@ jobs:
             falkordb/falkordb-tests-${{ matrix.platform.suffix }} \
             /bin/sh -c '
               set -e
-              cp /FalkorDB/bin/src/falkordb.so /tmp/ramp/falkordb.so
+              cp /FalkorDB/bin/linux*/falkordb.so /tmp/ramp/falkordb.so
               if command -v apt-get >/dev/null 2>&1; then
                 apt-get update && apt-get install -y python3-pip python3-setuptools redis tar
               elif command -v yum >/dev/null 2>&1; then

@@ -9,6 +9,9 @@
 #include "../../value.h"
 #include "../../util/rmalloc.h"
 
+// global AGGREGATE_OK result value
+AggregateResult AGGREGATE_OK;
+
 // create a new aggregation function descriptor
 AR_FuncDesc *AR_AggFuncDescNew
 (

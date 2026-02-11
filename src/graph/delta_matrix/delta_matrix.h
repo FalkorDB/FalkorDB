@@ -129,6 +129,11 @@ Delta_Matrix Delta_Matrix_getTranspose
 	const Delta_Matrix C
 );
 
+bool Delta_Matrix_isDirty
+(
+	const Delta_Matrix C
+);
+
 // get the internal matrix M
 GrB_Matrix Delta_Matrix_M
 (
@@ -229,12 +234,12 @@ GrB_Info Delta_Matrix_removeElement
 	GrB_Index j      // column index
 );
 
-// remove all entries in matrix m from delta matrix C
 GrB_Info Delta_Matrix_removeElements
 (
-	Delta_Matrix C,     // matrix to remove entry from
-	const GrB_Matrix A  // elements to remove
-) ;
+	Delta_Matrix C,      // matrix to remove entries from
+	const GrB_Matrix A,  // elements to remove
+	const GrB_Matrix AT  // A's transpose
+);
 
 // C = AB
 // A should be fully synced on input
@@ -327,7 +332,16 @@ void Delta_Matrix_setDirty
 	Delta_Matrix C
 );
 
+// print and check a GrB_Matrix
+GrB_Info Delta_Matrix_fprint
+(
+    Delta_Matrix A,  // object to print and check
+    int pr,          // print level (GxB_Print_Level)
+    FILE *f          // file for output
+) ;
+
 void Delta_Matrix_free
 (
 	Delta_Matrix *C
 );
+
