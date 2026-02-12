@@ -45,10 +45,6 @@ Install Python test dependencies first: `pip install -r tests/requirements.txt`
     make unit-tests VG=1
     make flow-tests VG=1 VG_LEAKS=1
 
-## Skip rebuild
-
-    make unit-tests BUILD=0
-
 ## Verbose output
 
     make flow-tests VERBOSE=1

@@ -39,10 +39,6 @@ Run `make` from the project root. The compiled module is output to `bin/<arch>/s
 ## Build individual dependencies
 
     make deps                  # All dependencies
-    make graphblas             # GraphBLAS
-    make redisearch            # RediSearch
-    make libcypher-parser      # Cypher parser
-    make falkordbrs            # Rust components
 
 ## Clean
 

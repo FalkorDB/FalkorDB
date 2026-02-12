@@ -13,14 +13,14 @@ Use `GRAPH.CONSTRAINT CREATE` to establish constraints and check their status wi
 
 ## Example
 
+    redis-cli GRAPH.QUERY social "CREATE INDEX FOR (p:Person) ON (p.id)"
     redis-cli GRAPH.CONSTRAINT CREATE social UNIQUE NODE Person PROPERTIES 1 id
     redis-cli GRAPH.QUERY social "CALL db.constraints()"
 
 ## Notes
 
-- Constraints ensure data integrity by enforcing uniqueness rules
-- Constraint creation may be asynchronous, especially on large graphs
-- Use `db.constraints()` to verify constraint status
-- The syntax shown is typical, but confirm exact syntax with current FalkorDB documentation
+- A supporting exact-match index must exist on the property before creating a UNIQUE constraint
+- Constraint creation is asynchronous; it returns `PENDING` and builds in the background
+- Use `db.constraints()` to verify constraint status (check for `OPERATIONAL` status)
 - Constraints help prevent duplicate data and maintain data quality
 - Constraint violations will cause write operations to fail

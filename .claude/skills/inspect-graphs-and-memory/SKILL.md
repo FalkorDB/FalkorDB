@@ -14,13 +14,14 @@ Use `GRAPH.LIST`, `GRAPH.INFO`, and `GRAPH.MEMORY USAGE` commands for operationa
 ## Example
 
     redis-cli GRAPH.LIST
-    redis-cli GRAPH.INFO social
+    redis-cli GRAPH.INFO
+    redis-cli GRAPH.INFO RunningQueries WaitingQueries
     redis-cli GRAPH.MEMORY USAGE social
 
 ## Notes
 
 - `GRAPH.LIST` shows all graphs in the database
-- `GRAPH.INFO` provides statistics about a specific graph (node count, edge count, etc.)
-- `GRAPH.MEMORY USAGE` reports memory consumption for a graph
+- `GRAPH.INFO` is a global command (no graph name argument) that shows running queries, waiting queries, and object pool stats
+- `GRAPH.INFO` accepts optional section filters: `RunningQueries`, `WaitingQueries`, `ObjectPool`
+- `GRAPH.MEMORY USAGE <graph>` reports memory consumption for a specific graph
 - These commands are essential for monitoring and capacity planning
-- Use them to understand resource utilization and graph characteristics
