@@ -96,7 +96,7 @@
 #endif
 
 // computes GrB_method
-// returns GrB_Info incase the mathod did not returned success
+// returns GrB_Info in case the method did not return success
 #define GrB_RETURN_IF_FAIL(GrB_method)             \
 	{                                              \
 		GrB_Info info = (GrB_method) ;             \

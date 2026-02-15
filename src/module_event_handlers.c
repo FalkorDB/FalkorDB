@@ -502,8 +502,6 @@ static void _ForkPrepare() {
 						"preparing to fork") ;
 			}
 
-			ASSERT (Graph_Synced (g) == true) ;
-
 			// decrease graph context ref count
 			GraphContext_DecreaseRefCount (gc) ;
 		}
@@ -558,20 +556,23 @@ static void _AfterForkChild() {
 	while ((gc = GraphIterator_Next (&it)) != NULL) {
 		Graph *g = GraphContext_GetGraph (gc) ;
 
-		// abort BGSAVE if graph isn't synced
-		// it's the parent process responsibility (_ForkPrepare) to synchronize
-		// the entire graph, if one of the graph's matrices isn't synced
-		// it might be related to a GraphBLAS failure e.g. out of memory
-		if (!Graph_Synced (g)) {
-			RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_WARNING,
-					"Graph %s isn't synchronize, aborting save",
-					GraphContext_GetName (gc));
-		}
+		bool synced = Graph_Synced (g) ;
 
 		ASSERT (!Graph_IsWriteLocked (g)) ;
 
 		// decrease graph context ref count
 		GraphContext_DecreaseRefCount (gc) ;
+
+		// abort BGSAVE if graph isn't synced
+		// it's the parent process responsibility (_ForkPrepare) to synchronize
+		// the entire graph, if one of the graph's matrices isn't synced
+		// it might be related to a GraphBLAS failure e.g. out of memory
+		if (!synced) {
+			RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_WARNING,
+					"Graph %s isn't synchronize, aborting save",
+					GraphContext_GetName (gc));
+			_exit (1) ;  // use _exit as it is async-signal-safe
+		}
 	}
 }
 

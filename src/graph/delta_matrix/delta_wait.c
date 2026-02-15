@@ -157,8 +157,8 @@ GrB_Info Delta_Matrix_synchronize
 	GrB_RETURN_IF_FAIL (Delta_Matrix_nrows (&A_nrows, A)) ;
 	GrB_RETURN_IF_FAIL (Delta_Matrix_ncols (&A_ncols, A)) ;
 	
-	bool alreay_sync = (A_nrows >= nrows && A_ncols >= ncols && !A->dirty) ;
-	if (alreay_sync == true) {
+	bool already_sync = (A_nrows >= nrows && A_ncols >= ncols && !A->dirty) ;
+	if (already_sync == true) {
 		return GrB_SUCCESS ;
 	}
 
