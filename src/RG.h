@@ -95,6 +95,14 @@
 	#define GrB_OK(GrB_method) (GrB_method)
 #endif
 
+// computes GrB_method
+// returns GrB_Info incase the mathod did not returned success
+#define GrB_RETURN_IF_FAIL(GrB_method)             \
+	{                                              \
+		GrB_Info info = (GrB_method) ;             \
+		if (info != GrB_SUCCESS) return info ;     \
+	}
+
 // use likely and unlikely to provide the compiler with branch prediction information
 // for example:
 // if (likely(x > 0))

@@ -502,6 +502,8 @@ static void _ForkPrepare() {
 						"preparing to fork") ;
 			}
 
+			ASSERT (Graph_Synced (g) == true) ;
+
 			// decrease graph context ref count
 			GraphContext_DecreaseRefCount (gc) ;
 		}
@@ -549,21 +551,28 @@ static void _AfterForkChild() {
 	GxB_set (GxB_NTHREADS, 1) ;
 
 	// make sure all graphs in keyspace are fully synced
-#ifdef RG_DEBUG
 	GraphContext *gc = NULL ;
 	KeySpaceGraphIterator it ;
 	Globals_ScanGraphs (&it) ;
 
 	while ((gc = GraphIterator_Next (&it)) != NULL) {
 		Graph *g = GraphContext_GetGraph (gc) ;
-		ASSERT (Graph_Synced (g)) ;
+
+		// abort BGSAVE if graph isn't synced
+		// it's the parent process responsibility (_ForkPrepare) to synchronize
+		// the entire graph, if one of the graph's matrices isn't synced
+		// it might be related to a GraphBLAS failure e.g. out of memory
+		if (!Graph_Synced (g)) {
+			RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_WARNING,
+					"Graph %s isn't synchronize, aborting save",
+					GraphContext_GetName (gc));
+		}
+
 		ASSERT (!Graph_IsWriteLocked (g)) ;
 
 		// decrease graph context ref count
 		GraphContext_DecreaseRefCount (gc) ;
 	}
-#endif
-
 }
 
 static void _RegisterForkHooks() {
