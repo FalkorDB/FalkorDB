@@ -56,7 +56,7 @@ static GrB_Info Delta_Matrix_sync_additions
 	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS (C) ;
 
 	GrB_Index nvals ;
-	GrB_RETURN_IF_FAIL (GrB_Matrix_nvals (&nvals, dp))
+	GrB_RETURN_IF_FAIL (GrB_Matrix_nvals (&nvals, dp)) ;
 
 	if (nvals > 0) { //shortcut if no vals
 		// TODO: turn on burble, see if "wait add pending tuples into existing A" shows up
@@ -82,8 +82,8 @@ static GrB_Info Delta_Matrix_sync
 	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS (C) ;
 
 	if (force_sync) {
-		GrB_RETURN_IF_FAIL (Delta_Matrix_sync_deletions (C))
-		GrB_RETURN_IF_FAIL (Delta_Matrix_sync_additions (C))
+		GrB_RETURN_IF_FAIL (Delta_Matrix_sync_deletions (C)) ;
+		GrB_RETURN_IF_FAIL (Delta_Matrix_sync_additions (C)) ;
 	} else {
 		GrB_Index dp_nvals = 0;
 		GrB_Index dm_nvals = 0;
@@ -92,15 +92,15 @@ static GrB_Info Delta_Matrix_sync
 		// determine change set
 		//----------------------------------------------------------------------
 
-		GrB_RETURN_IF_FAIL (GrB_Matrix_nvals (&dp_nvals, dp))
-		GrB_RETURN_IF_FAIL (GrB_Matrix_nvals (&dm_nvals, dm))
+		GrB_RETURN_IF_FAIL (GrB_Matrix_nvals (&dp_nvals, dp)) ;
+		GrB_RETURN_IF_FAIL (GrB_Matrix_nvals (&dm_nvals, dm)) ;
 
 		//----------------------------------------------------------------------
 		// perform deletions
 		//----------------------------------------------------------------------
 
 		if (dm_nvals >= delta_max_pending_changes) {
-			GrB_RETURN_IF_FAIL (Delta_Matrix_sync_deletions (C))
+			GrB_RETURN_IF_FAIL (Delta_Matrix_sync_deletions (C)) ;
 		}
 
 		//----------------------------------------------------------------------
@@ -108,14 +108,14 @@ static GrB_Info Delta_Matrix_sync
 		//----------------------------------------------------------------------
 
 		if (dp_nvals >= delta_max_pending_changes) {
-			GrB_RETURN_IF_FAIL (Delta_Matrix_sync_additions (C))
+			GrB_RETURN_IF_FAIL (Delta_Matrix_sync_additions (C)) ;
 		}
 	}
 
 	// wait on all 3 matrices
-	GrB_RETURN_IF_FAIL (GrB_wait (m,  GrB_MATERIALIZE))
-	GrB_RETURN_IF_FAIL (GrB_wait (dm, GrB_MATERIALIZE))
-	GrB_RETURN_IF_FAIL (GrB_wait (dp, GrB_MATERIALIZE))
+	GrB_RETURN_IF_FAIL (GrB_wait (m,  GrB_MATERIALIZE)) ;
+	GrB_RETURN_IF_FAIL (GrB_wait (dm, GrB_MATERIALIZE)) ;
+	GrB_RETURN_IF_FAIL (GrB_wait (dp, GrB_MATERIALIZE)) ;
 
 	return GrB_SUCCESS ;
 }
@@ -128,7 +128,7 @@ GrB_Info Delta_Matrix_wait
 	ASSERT (A != NULL) ;
 
 	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE (A)) {
-		GrB_RETURN_IF_FAIL (Delta_Matrix_wait (A->transposed, force_sync))
+		GrB_RETURN_IF_FAIL (Delta_Matrix_wait (A->transposed, force_sync)) ;
 	}
 
 	uint64_t delta_max_pending_changes ;
@@ -136,7 +136,7 @@ GrB_Info Delta_Matrix_wait
 			&delta_max_pending_changes) ;
 
 	GrB_RETURN_IF_FAIL (Delta_Matrix_sync (A, force_sync,
-				delta_max_pending_changes))
+				delta_max_pending_changes)) ;
 
 	_SetUndirty (A) ;
 

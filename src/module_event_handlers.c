@@ -504,6 +504,17 @@ static void _ForkPrepare() {
 
 			// decrease graph context ref count
 			GraphContext_DecreaseRefCount (gc) ;
+
+			// quick return if graph sync failed
+			// as we can't abort the fork it is the child which will shortly
+			// discover that one of the graphs isn't sync causing it to exit
+			// before redis starts encoding the RDB file
+			if (!Graph_Synced (g)) {
+				RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_WARNING,
+						"Graph %s isn't synchronize, BGSAVE will fail",
+						GraphContext_GetName (gc));
+				break ;
+			}
 		}
 	}
 
@@ -568,9 +579,6 @@ static void _AfterForkChild() {
 		// the entire graph, if one of the graph's matrices isn't synced
 		// it might be related to a GraphBLAS failure e.g. out of memory
 		if (!synced) {
-			RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_WARNING,
-					"Graph %s isn't synchronize, aborting save",
-					GraphContext_GetName (gc));
 			_exit (1) ;  // use _exit as it is async-signal-safe
 		}
 	}
