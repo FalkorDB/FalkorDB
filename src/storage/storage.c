@@ -134,7 +134,8 @@ int Storage_putAttributes
 			EntityID     id  = ids[set_idx] ;
 			AttributeSet set = sets[set_idx] ;
 
-			ASSERT (id != INVALID_ENTITY_ID) ;
+			ASSERT (set != NULL) ;
+			ASSERT (id  != INVALID_ENTITY_ID) ;
 
 			// key format: N/E<entity_id>
 			compute_key (key, t, id) ;

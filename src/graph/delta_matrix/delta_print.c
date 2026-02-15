@@ -35,5 +35,7 @@ GrB_Info Delta_Matrix_fprint
 	GrB_OK (GxB_Matrix_fprint (m,  "M",  pr, f)) ;
 	GrB_OK (GxB_Matrix_fprint (dp, "DP", pr, f)) ;
 	GrB_OK (GxB_Matrix_fprint (dm, "DM", pr, f)) ;
+
+	return GrB_SUCCESS ;
 }
 

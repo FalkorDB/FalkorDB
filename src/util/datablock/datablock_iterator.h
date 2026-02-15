@@ -48,6 +48,16 @@ void *DataBlockIterator_Next
 	uint64_t *id              // item position
 );
 
+// returns the next item, unless we've reached the end
+// in which case NULL is returned
+// if `id` is provided and an item is located
+// `id` will be set to the returned item index
+void *DataBlockIterator_NextSkipOffloaded
+(
+	DataBlockIterator *iter,  // iterator
+	uint64_t *id              // item position
+);
+
 // reset iterator to original position
 void DataBlockIterator_Reset
 (

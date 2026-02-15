@@ -30,19 +30,6 @@
 #define GET_ITEM_BLOCK(dataBlock, idx) \
     dataBlock->blocks[ITEM_INDEX_TO_BLOCK_INDEX(idx, dataBlock->blockCap)]
 
-//------------------------------------------------------------------------------
-// offloaded macros
-//------------------------------------------------------------------------------
-
-// sets the offloaded bit in the header to 1
-#define MARK_HEADER_AS_OFFLOADED(header) ((header)->offloaded |= 1)
-
-// sets the offloaded bit in the header to 0
-#define MARK_HEADER_AS_NOT_OFFLOADED(header) ((header)->offloaded &= 0)
-
-// checks if the offloaded bit in the header is 1 or not
-#define IS_ITEM_OFFLOADED(header) ((header)->offloaded & 1)
-
 static void _DataBlock_AddBlocks
 (
 	DataBlock *dataBlock,

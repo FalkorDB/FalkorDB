@@ -72,7 +72,7 @@ typedef double simple_timer_t[2];
 // Determines how many milliseconds are in a second.
 #define MILLISECONDS_IN_SECOND 1000
 
-// An alias to return the time in milliseconds passed since the previous call.
+// an alias to return the time in milliseconds passed since the previous call
 #define TIMER_GET_ELAPSED_MILLISECONDS(timer) \
     (simple_toc(timer) * MILLISECONDS_IN_SECOND)
 

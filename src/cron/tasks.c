@@ -6,22 +6,49 @@
 
 #include "RG.h"
 #include "cron.h"
+#include "tasks/tasks.h"
 #include "util/rmalloc.h"
 #include "configuration/config.h"
-#include "tasks/stream_finished_queries.h"
 
 typedef struct RecurringTaskCtx {
-	uint32_t when;
-	uint32_t min_interval;
-	uint32_t max_interval;
-	Config_Option_Field field;
-	bool (*task)(void*);
-	void *(*new)(void*);
-	void (*free)(void*);
-	void *ctx;
+	uint32_t when;          // next reschedule in ms
+	uint32_t min_interval;  // minimum rescheduling interval
+	uint32_t max_interval;  // maximum rescheduling interval
+	bool (*task)(void*);    // task function pointer
+	void *(*new)(void*);    // task's context constructor
+	void (*free)(void*);    // task's context destructor
+	void *ctx;              // task's context
 } RecurringTaskCtx;
 
-void CronTask_RecurringTaskFree
+RecurringTaskCtx *RecurringTaskCtx_New
+(
+	uint32_t when,           // next reschedule in ms
+	uint32_t min_interval,   // minimum rescheduling interval
+	uint32_t max_interval,   // maximum rescheduling interval
+	bool (*task_fp)(void*),   // task function pointer
+	void *(*new_fp)(void*),  // task's context constructor
+	void (*free_fp)(void*),  // task's context destructor
+	void *ctx                // task's context
+) {
+	ASSERT (new_fp  != NULL) ;
+	ASSERT (free_fp != NULL) ;
+	ASSERT (task_fp != NULL) ;
+	ASSERT (min_interval <= max_interval) ;
+
+	RecurringTaskCtx *re_ctx = rm_malloc (sizeof (RecurringTaskCtx)) ;
+
+	re_ctx->ctx          = ctx;
+	re_ctx->new          = new_fp ;
+	re_ctx->when         = when ;
+	re_ctx->task         = task_fp ;
+	re_ctx->free         = free_fp ;
+	re_ctx->min_interval = min_interval ;
+	re_ctx->max_interval = max_interval ;
+
+	return re_ctx ;
+}
+
+void CronTask_RecurringTask_Free
 (
 	void *pdata
 ) {
@@ -54,38 +81,63 @@ void CronTask_RecurringTask
 
 	// re-add task to CRON
 	Cron_AddTask (re_ctx->when, CronTask_RecurringTask,
-			CronTask_RecurringTaskFree, (void*)re_ctx) ;
+			CronTask_RecurringTask_Free, (void*)re_ctx) ;
 }
 
-void CronTask_AddStreamFinishedQueries() {
+void CronTask_AddStreamFinishedQueries(void) {
 	//--------------------------------------------------------------------------
 	// add query logging task
 	//--------------------------------------------------------------------------
 
 	// make sure info tracking is enabled
 	bool info_enabled = false;
-	if(Config_Option_get(Config_CMD_INFO, &info_enabled) && info_enabled) {
-		RecurringTaskCtx *re_ctx = rm_malloc(sizeof(RecurringTaskCtx));
-		re_ctx->new          = CronTask_newStreamFinishedQueries;
-		re_ctx->task         = CronTask_streamFinishedQueries;
-		re_ctx->free		 = rm_free;
-		re_ctx->when         = 10;   // 10ms from now
-		re_ctx->min_interval = 250;  // 250ms
-		re_ctx->max_interval = 3000; // 3s
-
-		// create task context
-		StreamFinishedQueryCtx *ctx = rm_malloc(sizeof(StreamFinishedQueryCtx));
-		ctx->graph_idx = 0;
-		
-		re_ctx->ctx = ctx;
-
-		// add recurring task
-		Cron_AddTask(0, CronTask_RecurringTask, CronTask_RecurringTaskFree, (void*)re_ctx);
+	if (!(Config_Option_get (Config_CMD_INFO, &info_enabled) && info_enabled)) {
+		// info tracking disabled, quickly return
+		return ;
 	}
+
+	// create task context
+	StreamFinishedQueryCtx *ctx = rm_malloc (sizeof (StreamFinishedQueryCtx)) ;
+	ctx->graph_idx = 0 ;
+
+	// create a reuccring task
+	RecurringTaskCtx *re_ctx = RecurringTaskCtx_New (
+			10,    // 10ms from now
+			250,   // min interval 250ms
+			3000,  // max interval 3s
+			CronTask_streamFinishedQueries,
+			CronTask_newStreamFinishedQueries,
+			rm_free,
+			ctx) ;
+
+	// add recurring task
+	Cron_AddTask (0, CronTask_RecurringTask, CronTask_RecurringTask_Free,
+			(void*)re_ctx) ;
+}
+
+// add data offloading task as a recurring cron task
+static void CronTask_AddDataOffloadingTask(void) {
+	// create task context
+	void *ctx = CronTask_newOffloadEntities (NULL) ;
+
+	// create a reuccring task
+	RecurringTaskCtx *re_ctx = RecurringTaskCtx_New (
+			10,    // 10ms from now
+			250,   // min interval 250ms
+			3000,  // max interval 3s
+			CronTask_offloadEntities,
+			CronTask_newOffloadEntities,
+			rm_free,
+			ctx) ;
+
+	// add recurring task
+	Cron_AddTask (0, CronTask_RecurringTask, CronTask_RecurringTask_Free,
+			(void*)re_ctx) ;
 }
 
 // add recurring tasks
 void Cron_AddRecurringTasks(void) {
-	CronTask_AddStreamFinishedQueries();
+	CronTask_AddDataOffloadingTask () ;
+	CronTask_AddStreamFinishedQueries () ;
 }
 

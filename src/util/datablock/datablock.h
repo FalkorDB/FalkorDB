@@ -32,6 +32,19 @@ typedef void (*fpDestructor)(void *);
 // Checks if the deleted bit in the header is 1 or not.
 #define IS_ITEM_DELETED(header) ((header)->deleted & 1)
 
+//------------------------------------------------------------------------------
+// offloaded macros
+//------------------------------------------------------------------------------
+
+// sets the offloaded bit in the header to 1
+#define MARK_HEADER_AS_OFFLOADED(header) ((header)->offloaded |= 1)
+
+// sets the offloaded bit in the header to 0
+#define MARK_HEADER_AS_NOT_OFFLOADED(header) ((header)->offloaded &= 0)
+
+// checks if the offloaded bit in the header is 1 or not
+#define IS_ITEM_OFFLOADED(header) ((header)->offloaded & 1)
+
 /* The DataBlock is a container structure for holding arbitrary items of a uniform type
  * in order to reduce the number of alloc/free calls and improve locality of reference.
  * Item deletions are thread-safe, and a DataBlockIterator can be used to traverse a
@@ -114,7 +127,7 @@ const uint64_t *DataBlock_DeletedItems
 );
 
 // marks specified items within a DataBlock as offloaded to external storage
-bool DataBlock_MarkOffloaded (
+void DataBlock_MarkOffloaded (
 	DataBlock *dataBlock,     // datablock
 	const uint64_t *indices,  // array of indices to be marked
 	size_t n_indices          // number of elements in the indices array

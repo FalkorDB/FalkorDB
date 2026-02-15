@@ -221,6 +221,19 @@ void Globals_ClearGraphs
 	Globals_Unlock () ;
 }
 
+// returns number of graphs in keyspace
+uint32_t Globals_GraphsCount (void) {
+	uint32_t n = 0 ;
+
+	Globals_ReadLock () ;
+
+	n = array_len (_globals.graphs_in_keyspace) ;
+
+	Globals_Unlock () ;
+
+	return n ;
+}
+
 //------------------------------------------------------------------------------
 // Command context tracking
 //------------------------------------------------------------------------------

@@ -71,6 +71,9 @@ void Globals_ClearGraphs(
 	RedisModuleCtx *ctx
 );
 
+// returns number of graphs in keyspace
+uint32_t Globals_GraphsCount (void) ;
+
 //------------------------------------------------------------------------------
 // Command context tracking
 //------------------------------------------------------------------------------
