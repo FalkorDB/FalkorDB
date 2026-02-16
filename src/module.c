@@ -92,9 +92,8 @@ static void _Print_Config
 static int GraphBLAS_Init (RedisModuleCtx *ctx) {
 	// initialize GraphBLAS via LAGraph, use Redis allocator
 	char msg [LAGRAPH_MSG_LEN] ;
-	//GrB_Info info = LAGr_Init (GrB_NONBLOCKING, RedisModule_Alloc,
-	//		RedisModule_Calloc, RedisModule_Realloc, RedisModule_Free, msg) ;
-	GrB_Info info = LAGraph_Init (msg) ;
+	GrB_Info info = LAGr_Init (GrB_NONBLOCKING, RedisModule_Alloc,
+			RedisModule_Calloc, RedisModule_Realloc, RedisModule_Free, msg) ;
 
 	if (info != GrB_SUCCESS) {
 		RedisModule_Log (ctx, "warning",
