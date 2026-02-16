@@ -34,7 +34,6 @@ int Storage_putAttributes
 	tidesdb_column_family_t *cf,  // tidesdb column family
 	const AttributeSet *sets,     // array of attribute sets
 	size_t n_sets,                // number of sets to offload
-	GraphEntityType t,            // Node or Edge type
 	const EntityID *ids           // array of entity IDs
 );
 
@@ -43,9 +42,8 @@ int Storage_putAttributes
 int Storage_loadAttributes
 (
 	tidesdb_column_family_t *cf,  // tidesdb column family
-	AttributeSet *sets,           // array of attribute sets
+	void **sets,                  // array of attribute sets
 	size_t n_sets,                // number of sets to load
-	GraphEntityType t,            // Node or Edge type
 	const EntityID *ids           // array of entity IDs
 );
 

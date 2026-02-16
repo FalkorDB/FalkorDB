@@ -24,13 +24,10 @@
 #define TELEMETRY_FORMAT "telemetry{%s}"
 
 extern uint aux_field_counter;
-// GraphContext type as it is registered at Redis.
+// GraphContext type as it is registered at Redis
 extern RedisModuleType *GraphContextRedisModuleType;
 
-// tidesdb, declared within src/storage/storage.c
-extern tidesdb_t *db ;
-
-// Forward declarations.
+// forward declarations
 static void _GraphContext_Free(void *arg);
 static void _GraphContext_UpdateVersion(GraphContext *gc, const char *str);
 static void _DeleteTelemetryStream(RedisModuleCtx *ctx, const GraphContext *gc);
@@ -123,7 +120,7 @@ GraphContext *GraphContext_New
 	assert(rc);
 	edge_cap = node_cap;
 
-	gc->g = Graph_New (node_cap, edge_cap) ;
+	gc->g = Graph_New (graph_name, node_cap, edge_cap) ;
 	gc->graph_name = rm_strdup (graph_name) ;
 	gc->telemetry_stream = RedisModule_CreateStringPrintf (NULL,
 			TELEMETRY_FORMAT, gc->graph_name) ;
@@ -143,24 +140,6 @@ GraphContext *GraphContext_New
 						  (CacheEntryCopyFunc)ExecutionCtx_Clone) ;
 
 	Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_FLUSH_RESIZE) ;
-
-	//--------------------------------------------------------------------------
-	// create tidesdb column family for this graph
-	//--------------------------------------------------------------------------
-
-	// default column config
-	tidesdb_column_family_config_t cf_config =
-		tidesdb_default_column_family_config () ;
-
-	// add column to tidesdb, column name matches graph's name
-	if (tidesdb_create_column_family (db, graph_name, &cf_config) != 0) {
-		// no disk offloading support for this graph
-		RedisModule_Log (NULL, "warning",
-				"failed to create tidesdb column family for graph: %s",
-				graph_name) ;
-	}
-	// set graph's tidesdb column family, can be NULL
-	gc->cf = tidesdb_get_column_family (db, graph_name) ;
 
 	return gc ;
 }
@@ -1127,16 +1106,6 @@ static void _GraphContext_Free
 	if(gc->pending_write_queue != NULL) {
 		ASSERT(CircularBuffer_Empty(gc->pending_write_queue));
 		CircularBuffer_Free(gc->pending_write_queue, NULL);
-	}
-
-	//--------------------------------------------------------------------------
-	// free tidesdb column family
-	//--------------------------------------------------------------------------
-
-	if (tidesdb_drop_column_family (db, gc->graph_name) != 0) {
-		RedisModule_Log (NULL, "warning",
-				"failed to remove tidesdb column family for graph: %s",
-				gc->graph_name) ;
 	}
 
 	GraphEncodeContext_Free(gc->encoding_context);

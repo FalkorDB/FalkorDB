@@ -136,8 +136,9 @@ bool Graph_Pending
 // create a new graph
 Graph *Graph_New
 (
-	size_t node_cap,  // allocation size for node datablocks and matrix dimensions
-	size_t edge_cap   // allocation size for edge datablocks
+	const char *name,  // [optional] graph's name
+	size_t node_cap,   // allocation size for node datablocks and matrix dimensions
+	size_t edge_cap    // allocation size for edge datablocks
 );
 
 // creates a new label matrix, returns id given to label

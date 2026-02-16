@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include "db.h"
 #include "../block.h"
 #include "./datablock_iterator.h"
 
@@ -45,19 +46,20 @@ typedef void (*fpDestructor)(void *);
 // checks if the offloaded bit in the header is 1 or not
 #define IS_ITEM_OFFLOADED(header) ((header)->offloaded & 1)
 
-/* The DataBlock is a container structure for holding arbitrary items of a uniform type
- * in order to reduce the number of alloc/free calls and improve locality of reference.
- * Item deletions are thread-safe, and a DataBlockIterator can be used to traverse a
- * range within the block. */
+// the DataBlock is a container structure for holding arbitrary items of a uniform type
+// in order to reduce the number of alloc/free calls and improve locality of reference.
+// Item deletions are thread-safe, and a DataBlockIterator can be used to traverse a
+// range within the block
 typedef struct {
-	uint64_t itemCount;         // Number of items stored in datablock.
-	uint64_t itemCap;           // Number of items datablock can hold.
-	uint64_t blockCap;          // Number of items a single block can hold.
-	uint blockCount;            // Number of blocks in datablock.
-	uint itemSize;              // Size of a single item in bytes.
-	Block **blocks;             // Array of blocks.
-	uint64_t *deletedIdx;       // Array of free indicies.
-	fpDestructor destructor;    // Function pointer to a clean-up function of an item.
+	uint64_t itemCount;           // number of items stored in datablock
+	uint64_t itemCap;             // number of items datablock can hold
+	uint64_t blockCap;            // number of items a single block can hold
+	uint blockCount;              // number of blocks in datablock
+	uint itemSize;                // size of a single item in bytes
+	Block **blocks;               // array of blocks
+	uint64_t *deletedIdx;         // array of free indicies
+	fpDestructor destructor;      // function pointer to a clean-up function of an item
+	tidesdb_column_family_t *cf;  // [optional] disk storage
 } DataBlock;
 
 // this struct is for data block item header data
@@ -67,16 +69,20 @@ typedef struct {
     unsigned char reserved  : 6; // explicitly padding to fill the byte
 } DataBlockItemHeader;
 
-// Create a new DataBlock
-// itemCap - number of items datablock can hold before resizing.
-// itemSize - item size in bytes.
-// fp - destructor routine for freeing items.
+// create a new DataBlock
 DataBlock *DataBlock_New
 (
-	uint64_t blockCap,  // block size
-	uint64_t itemCap,   // initial item cap
-	uint itemSize,      // size of item in bytes
-	fpDestructor fp     // item destructor
+	uint64_t blockCap,  // block capacity
+	uint64_t itemCap,   // total number of items
+	uint itemSize,      // item byte size
+	fpDestructor fp     // [optional] item destructor
+);
+
+// set datablock disk storage
+void DataBlock_SetStorage
+(
+	DataBlock *dataBlock,        // datablock
+	tidesdb_column_family_t *cf  // tidesdb storage
 );
 
 // returns number of items stored
@@ -100,10 +106,14 @@ DataBlockIterator *DataBlock_Scan(const DataBlock *dataBlock);
 // Returns an iterator which scans entire out of order datablock.
 DataBlockIterator *DataBlock_FullScan(const DataBlock *dataBlock);
 
-// Get item at position idx
-void *DataBlock_GetItem(const DataBlock *dataBlock, uint64_t idx);
+// get item at position idx
+void *DataBlock_GetItem
+(
+	const DataBlock *dataBlock,
+	uint64_t idx
+);
 
-// Get reserved item id after 'n' items
+// get reserved item id after 'n' items
 uint64_t DataBlock_GetReservedIdx(const DataBlock *dataBlock, uint64_t n);
 
 // Allocate a new item within given dataBlock,

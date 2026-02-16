@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include "db.h"  // tidesdb
 #include "graph.h"
 #include "../redismodule.h"
 #include "../index/index.h"
@@ -49,8 +48,6 @@ typedef struct {
 	
 	atomic_bool write_in_progress;         // write query in progess
 	CircularBuffer pending_write_queue;    // pending write queries queue
-
-	tidesdb_column_family_t *cf;           // tidesdb column family
 } GraphContext;
 
 //------------------------------------------------------------------------------

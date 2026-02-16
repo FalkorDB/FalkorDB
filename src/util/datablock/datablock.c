@@ -5,10 +5,12 @@
  */
 
 #include "RG.h"
-#include "datablock.h"
-#include "datablock_iterator.h"
 #include "../arr.h"
+#include "datablock.h"
 #include "../rmalloc.h"
+#include "datablock_iterator.h"
+#include "../../storage/storage.h"
+
 #include <math.h>
 #include <stdbool.h>
 
@@ -81,26 +83,41 @@ DataBlockItemHeader *DataBlock_GetItemHeader
 // DataBlock API implementation
 //------------------------------------------------------------------------------
 
+// create a new DataBlock
 DataBlock *DataBlock_New
 (
-	uint64_t blockCap,
-	uint64_t itemCap,
-	uint itemSize,
-	fpDestructor fp
+	uint64_t blockCap,  // block capacity
+	uint64_t itemCap,   // total number of items
+	uint itemSize,      // item byte size
+	fpDestructor fp     // [optional] item destructor
 ) {
-	DataBlock *dataBlock = rm_malloc(sizeof(DataBlock));
-	dataBlock->blocks     = NULL;
-	dataBlock->itemSize   = itemSize + ITEM_HEADER_SIZE;
-	dataBlock->itemCount  = 0;
-	dataBlock->blockCount = 0;
-	dataBlock->blockCap   = blockCap;
-	dataBlock->deletedIdx = array_new(uint64_t, 128);
-	dataBlock->destructor = fp;
+	DataBlock *dataBlock  = rm_malloc (sizeof (DataBlock)) ;
+
+	dataBlock->blocks     = NULL ;
+	dataBlock->itemSize   = itemSize ;
+	dataBlock->itemCount  = 0 ;
+	dataBlock->blockCount = 0 ;
+	dataBlock->blockCap   = blockCap ;
+	dataBlock->deletedIdx = array_new (uint64_t, 128) ;
+	dataBlock->destructor = fp ;
 
 	_DataBlock_AddBlocks(dataBlock,
 			ITEM_COUNT_TO_BLOCK_COUNT(itemCap, dataBlock->blockCap));
 
 	return dataBlock;
+}
+
+// set datablock disk storage
+void DataBlock_SetStorage
+(
+	DataBlock *dataBlock,        // datablock
+	tidesdb_column_family_t *cf  // tidesdb storage
+) {
+	ASSERT (cf            != NULL) ;
+	ASSERT (dataBlock     != NULL) ;
+	ASSERT (dataBlock->cf == NULL) ;
+
+	dataBlock->cf = cf ;
 }
 
 uint64_t DataBlock_ItemCount(const DataBlock *dataBlock) {
@@ -163,18 +180,95 @@ void DataBlock_Ensure(DataBlock *dataBlock, uint64_t idx) {
 	ASSERT(dataBlock->itemCap > idx);
 }
 
-void *DataBlock_GetItem(const DataBlock *dataBlock, uint64_t idx) {
-	ASSERT(dataBlock != NULL);
+// loads item from storage back into the datablock
+// this function is thread safe
+// multiple threads can load the same item concurrently and only one will set
+// the item
+static void *_DataBlock_LoadItem
+(
+	const DataBlock *dataBlock,  // datablock
+	uint64_t idx,                // the local index of the item
+	DataBlockItemHeader *header  // item's header
+) {
+	ASSERT (dataBlock     != NULL) ;
+	ASSERT (dataBlock->cf != NULL) ;
+
+	tidesdb_column_family_t *cf = dataBlock->cf ;
+
+	//--------------------------------------------------------------------------
+	// load item from storage
+	//--------------------------------------------------------------------------
+
+	void *item = NULL ;
+	int loaded = Storage_loadAttributes (cf, &item, 1, &idx) ;
+
+	// failed to load item from storage, return NULL
+	if (loaded != 0) {
+		return NULL ;
+	}
+
+	// we expect the slot to currently be NULL (not yet loaded)
+	void **slot = (void**)ITEM_DATA (header) ;
+	void *expected = NULL;
+
+	// if *slot == expected (NULL), sets *slot = item and returns true
+	// if *slot != expected, updates 'expected' with the current value of *slot 
+	// and returns false
+
+	bool success = __atomic_compare_exchange_n (
+		slot,              // target: the 8-byte pointer address
+        &expected,         // what we think is there (NULL)
+        item,              // what we want to put there
+        false,             // 'false' for strong CAS (better for this logic)
+        __ATOMIC_SEQ_CST,  // success memory order: sequentially consistent
+        __ATOMIC_RELAXED   // failure memory order
+    );
+
+	if (!success) {
+		// race lost: another thread loaded this item while we were 
+		// fetching it from TidesDB
+		ASSERT (expected != NULL) ;
+
+		rm_free (item) ;   // free redundant item
+		item = expected ;  // use the pointer the other thread successfully set
+	} else {
+		// race won: we are responsible for updating the metadata
+		MARK_HEADER_AS_NOT_OFFLOADED (header) ;	
+	}
+
+	return (void*)slot ;
+}
+
+// retrieves a pointer to the data of a specific item within the DataBlock
+// return A pointer to the item's data, or NULL if:
+// 1. the index is out of bounds
+// 2. the item is marked as deleted
+void *DataBlock_GetItem
+(
+	const DataBlock *dataBlock,  // datablock
+	uint64_t idx                 // the local index of the item
+) {
+	ASSERT (dataBlock != NULL) ;
 
 	// return NULL if idx is out of bounds
-	if(_DataBlock_IndexOutOfBounds(dataBlock, idx)) return NULL;
+	if (_DataBlock_IndexOutOfBounds (dataBlock, idx)) {
+		return NULL ;
+	}
 
-	DataBlockItemHeader *item_header = DataBlock_GetItemHeader(dataBlock, idx);
+	DataBlockItemHeader *header = DataBlock_GetItemHeader (dataBlock, idx) ;
+	ASSERT (header != NULL) ;
 
-	// Incase item is marked as deleted, return NULL.
-	if(IS_ITEM_DELETED(item_header)) return NULL;
+	// incase item is marked as deleted, return NULL
+	if (IS_ITEM_DELETED (header)) {
+		return NULL ;
+	}
 
-	return ITEM_DATA(item_header);
+	//  load item if offloaded
+	if (IS_ITEM_OFFLOADED (header)) {
+		return _DataBlock_LoadItem (dataBlock, idx, header) ;
+	}
+
+	return ITEM_DATA (header) ;
 }
 
 uint64_t DataBlock_GetReservedIdx
@@ -301,6 +395,8 @@ void DataBlock_MarkOffloaded (
 
 		// mark item as offloaded
 		MARK_HEADER_AS_OFFLOADED (header) ;
+		void **item = (void **) ITEM_DATA (header) ;
+		*item = NULL ;
 	}
 }
 
@@ -348,11 +444,25 @@ size_t DataBlock_memoryUsage
 		dataBlock->blockCount * (dataBlock->itemSize * dataBlock->blockCap);
 }
 
-void DataBlock_Free(DataBlock *dataBlock) {
-	for(uint i = 0; i < dataBlock->blockCount; i++) Block_Free(dataBlock->blocks[i]);
+// free the datablock
+void DataBlock_Free
+(
+	DataBlock *dataBlock  // datablock to free
+) {
+	// free blocks
+	for (uint i = 0; i < dataBlock->blockCount; i++) {
+		Block_Free (dataBlock->blocks[i]) ;
+	}
 
-	rm_free(dataBlock->blocks);
-	array_free(dataBlock->deletedIdx);
-	rm_free(dataBlock);
+	if (dataBlock->cf != NULL) {
+		// TODO: free tidesdb column family
+		//if (tidesdb_drop_column_family (db, "my_cf") != 0) {
+		//	return -1;
+		//}
+	}
+
+	rm_free (dataBlock->blocks) ;
+	array_free (dataBlock->deletedIdx) ;
+	rm_free (dataBlock) ;
 }
 

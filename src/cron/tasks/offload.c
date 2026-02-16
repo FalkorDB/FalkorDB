@@ -127,7 +127,7 @@ static void _offloadGraph
 			RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
 					"Offloading collected sets to disk") ;
 
-			if (Storage_putAttributes (gc->cf, sets, count, ctx->t, ids) == 0) {
+			if (Storage_putAttributes (datablock->cf, sets, count, ids) == 0) {
 				// attribute sets been offloaded to disk
 				// mark datablock entries as offloaded
 				DataBlock_MarkOffloaded (datablock, ids, count) ;
@@ -205,8 +205,13 @@ bool CronTask_offloadEntities
 (
 	void *pdata  // task context
 ) {
-	RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
-			"Offload data task start") ;
+	// quick return if keyspace does not contains any graphs
+	if (unlikely (Globals_GraphsCount () == 0)) {
+		RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
+			"No graphs to process quick return") ;
+		printf ("No graphs to process quick return\n") ;
+		return false ;
+	}
 
 	size_t rss = get_current_rss () ;
 	rss /= (1024 * 1024) ;
@@ -214,12 +219,16 @@ bool CronTask_offloadEntities
 			"rss: %zu", rss) ;
 	printf ("rss: %zumb\n", rss) ;
 
-	// quick return if keyspace does not contains any graphs
-	if (unlikely (Globals_GraphsCount () == 0)) {
+	// TODO: introduce config
+	if (rss <= 500) {
 		RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
-			"No graphs to process quick return") ;
+			"Memory consumption too low, skipping data offloading") ;
+		printf ("Memory consumption too low, skipping data offloading\n") ;
 		return false ;
 	}
+
+	RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
+			"Offload data task start") ;
 
 	OffloadTaskCtx *ctx = (OffloadTaskCtx*)pdata ;
 

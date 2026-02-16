@@ -5,36 +5,40 @@
 
 #include "RG.h"
 #include "storage.h"
+#include "../util/rmalloc.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 
 #define TIDESDB_ROOT_DIR "./tidesdb"  // TODO: should be user configurable
-#define NO_TTL           -1                                   // key TTL
-#define KEY_SIZE         (sizeof (char) + sizeof (EntityID))  // key byte size
-#define TRANSACTION_CAP  10000                                // txn capacity
+#define NO_TTL           -1                 // key TTL
+#define KEY_SIZE         sizeof (EntityID)  // key byte size
+#define TRANSACTION_CAP  10000              // txn capacity
 
 tidesdb_t *db = NULL ;
 
 // compute tidesdb key for entity
-// key = 'N'/'E'<entity_id>
+// key = <entity_id>
 static inline void compute_key
 (
 	char *key,          // [output] tidesdb key
-	GraphEntityType t,  // entity type node/edge
 	EntityID id         // entity id
 ) {
-	// set prefix
-	key[0] = (t == GETYPE_NODE) ? 'N' : 'E' ;
-
 	// set entity id
-	*((uint64_t*) (key+1)) = id ;
+	*((uint64_t*) (key)) = id ;
 }
 
 // create tidesdb
 // returns 0 on success
 int Storage_init(void) {
 	ASSERT (db == NULL) ;
+
+	int res = tidesdb_init (RedisModule_Alloc, RedisModule_Calloc,
+			RedisModule_Realloc, RedisModule_Free) ;
+
+	if (res != 0) {
+		return res ;	
+	}
 
 	//--------------------------------------------------------------------------
 	// open the database
@@ -45,25 +49,25 @@ int Storage_init(void) {
 	config.db_path   = TIDESDB_ROOT_DIR ;
 	config.log_level = TDB_LOG_ERROR ;
 
-	if (tidesdb_open (&config, &db) != 0) {
+	res = tidesdb_open (&config, &db) ;
+	if (res != 0) {
 		RedisModule_Log (NULL, "warning", "failed to open tidesdb") ;
-		return -1 ;
+		return res ;
 	}
 
 	//--------------------------------------------------------------------------
 	// clear tidesdb database
 	//--------------------------------------------------------------------------
 
-	int res      = 0 ;
 	int count    = 0 ;
 	char **names = NULL ;
 
 	if (tidesdb_list_column_families (db, &names, &count) == 0) {
 		for (int i = 0 ; i < count ; i++) {
-			if (tidesdb_drop_column_family (db, names[i]) != 0) {
+			res = tidesdb_drop_column_family (db, names[i]) ;
+			if (res != 0) {
 				RedisModule_Log (NULL, "warning", "failed to remove column %s",
 						names[i]) ;
-				res = -1 ;
 				break ;
 			}
 		}
@@ -75,9 +79,9 @@ int Storage_init(void) {
 
 	if (names != NULL) {
 		for (int i = 0 ; i < count ; i++) {
-			free (names[i]) ;
+			rm_free (names[i]) ;
 		}
-		free (names) ;
+		rm_free (names) ;
 	}
 
 	return res ;
@@ -90,11 +94,9 @@ int Storage_putAttributes
 	tidesdb_column_family_t *cf,  // tidesdb column family
 	const AttributeSet *sets,     // array of attribute sets
 	size_t n_sets,                // number of sets to offload
-	GraphEntityType t,            // Node or Edge type
 	const EntityID *ids           // array of entity IDs
 ) {
 	// validate arguments
-	ASSERT (t      == GETYPE_NODE || t == GETYPE_EDGE) ;
 	ASSERT (db     != NULL) ;
 	ASSERT (cf     != NULL) ;
 	ASSERT (ids    != NULL) ;
@@ -137,8 +139,8 @@ int Storage_putAttributes
 			ASSERT (set != NULL) ;
 			ASSERT (id  != INVALID_ENTITY_ID) ;
 
-			// key format: N/E<entity_id>
-			compute_key (key, t, id) ;
+			// key format: <entity_id>
+			compute_key (key, id) ;
 
 			//------------------------------------------------------------------
 			// put attribute-set into transaction
@@ -188,13 +190,11 @@ cleanup:
 int Storage_loadAttributes
 (
 	tidesdb_column_family_t *cf,  // tidesdb column family
-	AttributeSet *sets,           // array of attribute sets
+	void **sets,                  // array of attribute sets
 	size_t n_sets,                // number of sets to load
-	GraphEntityType t,            // Node or Edge type
 	const EntityID *ids           // array of entity IDs
 ) {
 	// validate arguments
-	ASSERT (t      == GETYPE_NODE || t == GETYPE_EDGE) ;
 	ASSERT (db     != NULL) ;
 	ASSERT (cf     != NULL) ;
 	ASSERT (ids    != NULL) ;
@@ -220,12 +220,13 @@ int Storage_loadAttributes
 		EntityID id = ids[i] ;
 		ASSERT (id != INVALID_ENTITY_ID) ;
 
-		// key format: N/E<entity_id>
-		compute_key (key, t, id) ;
+		// key format: <entity_id>
+		compute_key (key, id) ;
 
 		// get attribute-set
+		size_t value_size ;
 		res = tidesdb_txn_get (txn, cf, (const uint8_t*) key, KEY_SIZE,
-				(uint8_t**)(sets + i), NULL) ;
+				(uint8_t**)(sets + i), &value_size) ;
 
 		if (res != 0) {
 			RedisModule_Log (NULL, "warning",

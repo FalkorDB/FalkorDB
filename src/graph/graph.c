@@ -5,6 +5,7 @@
  */
 
 #include "RG.h"
+#include "db.h"
 #include "graph.h"
 #include "../util/arr.h"
 #include "../util/rwlock.h"
@@ -19,6 +20,9 @@ ASSERT (g->_writelocked == true ||                                \
 		pthread_equal (pthread_self (), redis_main_thread_id)) ;
 
 extern pthread_t redis_main_thread_id;
+
+// tidesdb, declared within src/storage/storage.c
+extern tidesdb_t *db ;
 
 //------------------------------------------------------------------------------
 // Synchronization functions
@@ -419,8 +423,9 @@ bool Graph_Pending
 // create a new graph
 Graph *Graph_New
 (
-	size_t node_cap,  // allocation size for node datablocks and matrix dimensions
-	size_t edge_cap   // allocation size for edge datablocks
+	const char *name,  // [optional] graph's name
+	size_t node_cap,   // allocation size for node datablocks and matrix dimensions
+	size_t edge_cap    // allocation size for edge datablocks
 ) {
 	fpDestructor cb = (fpDestructor)AttributeSet_Free;
 	Graph *g = rm_calloc(1, sizeof(Graph));
@@ -447,6 +452,57 @@ Graph *Graph_New
 
 	// force GraphBLAS updates and resize matrices to node count by default
 	g->SynchronizeMatrix = _MatrixSynchronize;
+
+	//--------------------------------------------------------------------------
+	// create tidesdb column family for this graph
+	//--------------------------------------------------------------------------
+
+	// default column config
+	tidesdb_column_family_config_t cf_config =
+		tidesdb_default_column_family_config () ;
+
+	if (name != NULL) {
+
+		//----------------------------------------------------------------------
+		// create tidesdb nodes storage
+		//----------------------------------------------------------------------
+
+		char *col_name = NULL ;
+
+		if (asprintf (&col_name, "%s_nodes", name) != -1) {
+			// add column to tidesdb, column name matches graph's name
+			if (tidesdb_create_column_family (db, col_name, &cf_config) != 0) {
+				// no disk offloading support for this graph
+				RedisModule_Log (NULL, "warning",
+						"failed to create tidesdb column family for graph: %s",
+						name) ;
+			}
+
+			// set nodes tidesdb column family
+			DataBlock_SetStorage (g->nodes,
+					tidesdb_get_column_family (db, col_name)) ;
+			free (col_name) ;
+		}
+
+		//----------------------------------------------------------------------
+		// create tidesdb edges storage
+		//----------------------------------------------------------------------
+
+		if (asprintf (&col_name, "%s_edges", name) != -1) {
+			// add column to tidesdb, column name matches graph's name
+			if (tidesdb_create_column_family (db, col_name, &cf_config) != 0) {
+				// no disk offloading support for this graph
+				RedisModule_Log (NULL, "warning",
+						"failed to create tidesdb column family for graph: %s",
+						name) ;
+			}
+
+			// set edges tidesdb column family
+			DataBlock_SetStorage (g->edges,
+					tidesdb_get_column_family (db, col_name)) ;
+			free (col_name) ;
+		}
+	}
 
 	return g;
 }
