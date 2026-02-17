@@ -5,6 +5,7 @@
  */
 
 #include "rmalloc.h"
+#include "mmap_alloc.h"
 
 #include "../errors/errors.h"
 
@@ -27,6 +28,35 @@ static void * (*RedisModule_Alloc_Orig)(size_t bytes);
 static char * (*RedisModule_Strdup_Orig)(const char *str);
 static void * (*RedisModule_Realloc_Orig)(void *ptr, size_t bytes);
 static void * (*RedisModule_Calloc_Orig)(size_t nmemb, size_t size);
+
+// flag to enable/disable mmap allocator
+static bool use_mmap_allocator = false;
+
+// initialize mmap allocator with given chunk size
+// if chunk_size is 0, uses default (100MB)
+// returns true on success, false on failure
+bool rm_mmap_init(size_t chunk_size) {
+	if (mmap_alloc_init(chunk_size)) {
+		use_mmap_allocator = true;
+		return true;
+	}
+	return false;
+}
+
+// cleanup mmap allocator resources
+void rm_mmap_cleanup(void) {
+	if (use_mmap_allocator) {
+		mmap_alloc_cleanup();
+		use_mmap_allocator = false;
+	}
+}
+
+// get mmap allocator statistics
+void rm_mmap_get_stats(mmap_stats_t *stats) {
+	if (use_mmap_allocator) {
+		mmap_get_stats(stats);
+	}
+}
 
 void rm_reset_n_alloced() {
 	n_alloced = 0;
@@ -52,36 +82,74 @@ static inline void _nmalloc_increment(int64_t n_bytes) {
 }
 
 void *rm_alloc_with_capacity(size_t n_bytes) {
-	void *p = RedisModule_Alloc_Orig(n_bytes);
+	void *p;
+	if (use_mmap_allocator) {
+		p = mmap_alloc(n_bytes);
+	} else {
+		p = RedisModule_Alloc_Orig(n_bytes);
+	}
 	_nmalloc_increment(n_bytes);
 	return p;
 }
 
 void *rm_realloc_with_capacity(void *ptr, size_t n_bytes) {
 	// remove bytes of original allocation
-	_nmalloc_decrement(RedisModule_MallocSize(ptr));
+	if (use_mmap_allocator && ptr != NULL) {
+		_nmalloc_decrement(mmap_malloc_size(ptr));
+	} else if (ptr != NULL) {
+		_nmalloc_decrement(RedisModule_MallocSize(ptr));
+	}
 	// track new allocation size
 	_nmalloc_increment(n_bytes);
-	return RedisModule_Realloc_Orig(ptr, n_bytes);
+	if (use_mmap_allocator) {
+		return mmap_realloc(ptr, n_bytes);
+	} else {
+		return RedisModule_Realloc_Orig(ptr, n_bytes);
+	}
 }
 
 void *rm_calloc_with_capacity(size_t n_elem, size_t size) {
-	void *p = RedisModule_Calloc_Orig(n_elem, size);
+	void *p;
+	if (use_mmap_allocator) {
+		// mmap_alloc doesn't have a calloc equivalent, so allocate and zero
+		p = mmap_alloc(n_elem * size);
+		if (p) {
+			memset(p, 0, n_elem * size);
+		}
+	} else {
+		p = RedisModule_Calloc_Orig(n_elem, size);
+	}
 	_nmalloc_increment(n_elem * size);
 	return p;
 }
 
 char *rm_strdup_with_capacity(const char *str) {
-	char *str_copy = RedisModule_Strdup_Orig(str);
-	// use 'RedisModule_MallocSize' instead of strlen as it should be faster
-	// in determining allocation size
-	_nmalloc_increment(RedisModule_MallocSize(str_copy));
+	char *str_copy;
+	size_t len;
+	if (use_mmap_allocator) {
+		len = strlen(str) + 1;
+		str_copy = (char *)mmap_alloc(len);
+		if (str_copy) {
+			memcpy(str_copy, str, len);
+		}
+		_nmalloc_increment(len);
+	} else {
+		str_copy = RedisModule_Strdup_Orig(str);
+		// use 'RedisModule_MallocSize' instead of strlen as it should be faster
+		// in determining allocation size
+		_nmalloc_increment(RedisModule_MallocSize(str_copy));
+	}
 	return str_copy;
 }
 
 void rm_free_with_capacity(void *ptr) {
-	_nmalloc_decrement(RedisModule_MallocSize(ptr));
-	RedisModule_Free_Orig(ptr);
+	if (use_mmap_allocator) {
+		_nmalloc_decrement(mmap_malloc_size(ptr));
+		mmap_free(ptr);
+	} else {
+		_nmalloc_decrement(RedisModule_MallocSize(ptr));
+		RedisModule_Free_Orig(ptr);
+	}
 }
 
 void rm_set_mem_capacity(int64_t cap) {

@@ -3,9 +3,22 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include "../redismodule.h"
+#include "mmap_alloc.h"
 
 #ifdef REDIS_MODULE_TARGET /* Set this when compiling your code as a module */
+
+// initialize mmap allocator with given chunk size
+// if chunk_size is 0, uses default (100MB)
+// returns true on success, false on failure
+bool rm_mmap_init(size_t chunk_size);
+
+// cleanup mmap allocator resources
+void rm_mmap_cleanup(void);
+
+// get mmap allocator statistics
+void rm_mmap_get_stats(mmap_stats_t *stats);
 
 // called when mem_capacity configuration changes
 // note that this function might be called during query execution
