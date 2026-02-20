@@ -315,6 +315,8 @@ class testGraphCopy():
         # regression test for issue #1611
         # GRAPH.COPY should succeed when other graphs exist in the database
 
+        # refresh connection (test_08 may have restarted the environment)
+        self.conn = self.env.getConnection()
         self.conn.execute_command("FLUSHALL")
 
         dummy_id    = "dummy"
