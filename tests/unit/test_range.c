@@ -4,6 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "mock_log.h"
 #include "src/util/rmalloc.h"
 #include "src/ast/ast_shared.h"
 #include "src/util/range/string_range.h"
@@ -12,7 +13,8 @@
 #include <math.h>
 
 void setup() {
-	Alloc_Reset();
+	Alloc_Reset () ;
+	Logging_Reset () ;
 }
 
 #define TEST_INIT setup();

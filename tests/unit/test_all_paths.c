@@ -4,6 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "mock_log.h"
 #include "src/util/rmalloc.h"
 #include "src/configuration/config.h"
 #include "src/algorithms/algorithms.h"
@@ -17,15 +18,16 @@ void tearDown();
 #include "acutest.h"
 
 static Graph *BuildGraph() {
-	Edge e;
-	Node n;
-	size_t nodeCount = 4;
-	size_t edgeCount = 7;
-	Graph *g = Graph_New(nodeCount, edgeCount);
-	int relation = Graph_AddRelationType(g);
-	for(int i = 0; i < 4; i++) {
-		n = GE_NEW_NODE();
-		Graph_CreateNode(g, &n, NULL, 0);
+	Edge e ;
+	Node n ;
+	size_t nodeCount = 4 ;
+	size_t edgeCount = 7 ;
+	Graph *g = Graph_New ("g", nodeCount, edgeCount) ;
+
+	int relation = Graph_AddRelationType (g) ;
+	for (int i = 0; i < 4; i++) {
+		n = GE_NEW_NODE () ;
+		Graph_CreateNode (g, &n, NULL, 0) ;
 	}
 
 	/* Connections:
@@ -78,7 +80,8 @@ bool pathArrayContainsPath(NodeID **array, int arrayLen, Path *path) {
 
 void setup() {
 	// Use the malloc family for allocations
-	Alloc_Reset();
+	Alloc_Reset () ;
+	Logging_Reset () ;
 
 	// Initialize GraphBLAS.
 	GrB_init(GrB_NONBLOCKING);

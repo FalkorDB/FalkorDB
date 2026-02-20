@@ -4,6 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "mock_log.h"
 #include "src/value.h"
 #include "src/util/arr.h"
 #include "src/util/rmalloc.h"
@@ -11,7 +12,8 @@
 #include "src/datatypes/array.h"
 
 void setup() {
-	Alloc_Reset();
+	Alloc_Reset () ;
+	Logging_Reset () ;
 }
 #define TEST_INIT setup();
 #include "acutest.h"

@@ -4,12 +4,14 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "mock_log.h"
 #include "src/util/rmalloc.h"
 #include "src/datatypes/datatypes.h"
 #include "src/graph/entities/attribute_set.h"
 
 void setup() {
-	Alloc_Reset();
+	Alloc_Reset () ;
+	Logging_Reset () ;
 }
 
 #define TEST_INIT setup();

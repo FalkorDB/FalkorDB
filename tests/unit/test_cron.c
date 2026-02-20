@@ -4,6 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "mock_log.h"
 #include "src/cron/cron.h"
 #include "src/util/rmalloc.h"
 #include "src/util/simple_timer.h"
@@ -216,8 +217,9 @@ static void long_running_task(void *pdata) {
 
 static void setup() {
 	// Use the malloc family for allocations
-	Alloc_Reset();
-	Cron_Start();
+	Alloc_Reset () ;
+	Logging_Reset () ;
+	Cron_Start () ;
 }
 
 static void tearDown() {

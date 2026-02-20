@@ -105,16 +105,16 @@ static void _CreateEdges
 		EdgeCreateCtx *e = &pending_edge->edges_to_create;
 
 		// retrieve source and dest nodes
-		GraphEntity *src_node  = (GraphEntity*)Record_GetNode(r, e->src_idx);
-		GraphEntity *dest_node = (GraphEntity*)Record_GetNode(r, e->dest_idx);
+		Node *src_node  = Record_GetNode (r, e->src_idx) ;
+		Node *dest_node = Record_GetNode (r, e->dest_idx) ;
 
 		// verify edge endpoints resolved properly, fail otherwise
-		if(unlikely(!src_node                       ||
-					!dest_node                      ||
-					GraphEntity_IsDeleted(src_node) ||
-					GraphEntity_IsDeleted(dest_node))) {
-			ErrorCtx_RaiseRuntimeException(
-					"Failed to create relationship; endpoint was not found.");
+		if (unlikely(!src_node                            ||
+					!dest_node                            ||
+					Graph_IsNodeDeleted (gc->g, src_node) ||
+					Graph_IsNodeDeleted (gc->g, dest_node))) {
+			ErrorCtx_RaiseRuntimeException (
+					"Failed to create relationship; endpoint was not found.") ;
 		}
 
 		// create the actual edge

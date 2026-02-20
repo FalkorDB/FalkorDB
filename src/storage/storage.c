@@ -9,8 +9,9 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
-#define TIDESDB_ROOT_DIR "./tidesdb"  // TODO: should be user configurable
+#define TIDESDB_ROOT_DIR "./tidesdb"        // TODO: should be user configurable
 #define NO_TTL           -1                 // key TTL
 #define KEY_SIZE         sizeof (EntityID)  // key byte size
 #define TRANSACTION_CAP  10000              // txn capacity
@@ -31,6 +32,7 @@ static inline void compute_key
 // create tidesdb
 // returns 0 on success
 int Storage_init(void) {
+	// expecting a one time initialization
 	ASSERT (db == NULL) ;
 
 	int res = tidesdb_init (RedisModule_Alloc, RedisModule_Calloc,
@@ -46,10 +48,18 @@ int Storage_init(void) {
 
 	tidesdb_config_t config = tidesdb_default_config () ;
 
-	config.db_path   = TIDESDB_ROOT_DIR ;
+	char *path = NULL ;
+	res = asprintf (&path, "%s_%d", TIDESDB_ROOT_DIR, getpid ()) ;
+	if (res == -1) {
+		return res ;
+	}
+
+	config.db_path   = path ;
 	config.log_level = TDB_LOG_ERROR ;
 
 	res = tidesdb_open (&config, &db) ;
+	free (path) ;
+
 	if (res != 0) {
 		RedisModule_Log (NULL, "warning", "failed to open tidesdb") ;
 		return res ;
@@ -64,10 +74,13 @@ int Storage_init(void) {
 
 	if (tidesdb_list_column_families (db, &names, &count) == 0) {
 		for (int i = 0 ; i < count ; i++) {
+			RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
+					"tidesdb removing column %s", names[i]) ;
+
 			res = tidesdb_drop_column_family (db, names[i]) ;
 			if (res != 0) {
-				RedisModule_Log (NULL, "warning", "failed to remove column %s",
-						names[i]) ;
+				RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_WARNING,
+						"failed to remove column %s", names[i]) ;
 				break ;
 			}
 		}
@@ -116,17 +129,17 @@ int Storage_putAttributes
 	uint n_txn = (n_sets + TRANSACTION_CAP - 1) / TRANSACTION_CAP ;
 	tidesdb_txn_t *txn = NULL ;
 
+	//--------------------------------------------------------------------------
+	// create transaction
+	//--------------------------------------------------------------------------
+
+	res = tidesdb_txn_begin (db, &txn) ;
+	if (res != 0) {
+		RedisModule_Log (NULL, "warning", "failed to start transaction") ;
+		goto cleanup ;
+	}
+
 	for (size_t txn_id = 0 ; txn_id < n_txn ; txn_id++) {
-		//----------------------------------------------------------------------
-		// create transaction
-		//----------------------------------------------------------------------
-
-		res = tidesdb_txn_begin (db, &txn) ;
-		if (res != 0) {
-			RedisModule_Log (NULL, "warning", "failed to start transaction") ;
-			goto cleanup ;
-		}
-
 		// transaction size
 		size_t remaining = n_sets - set_idx ;
 		size_t txn_size  = (remaining > TRANSACTION_CAP) ?
@@ -169,11 +182,14 @@ int Storage_putAttributes
 		//----------------------------------------------------------------------
 
 		res = tidesdb_txn_commit (txn);
-		tidesdb_txn_free (txn) ;
-		txn = NULL ;
-
 		if (res != 0) {
 			RedisModule_Log (NULL, "warning", "failed to commit transaction") ;
+			goto cleanup ;
+		}
+
+		res = tidesdb_txn_reset (txn, TDB_ISOLATION_READ_COMMITTED) ;
+		if (res != 0) {
+			RedisModule_Log (NULL, "warning", "failed to reset transaction") ;
 			goto cleanup ;
 		}
 	}
@@ -230,10 +246,60 @@ int Storage_loadAttributes
 
 		if (res != 0) {
 			RedisModule_Log (NULL, "warning",
-					"failed to get attribute-set for entity id: %llu,"
+					"failed to get attribute-set for entity id: %" PRIu64 ","
 					"err code: %d", id, res) ;
 			// setting attribute-set to NULL
 			sets[i] = NULL ;
+		}
+	}
+
+	if (txn != NULL) {
+		tidesdb_txn_free (txn) ;
+	}
+
+	return res ;
+}
+
+// delete attribute sets from tidesdb
+// returns 0 on success
+int Storage_deleteAttributes
+(
+	tidesdb_column_family_t *cf,  // tidesdb column family
+	const EntityID *ids,          // array of entity IDs
+	size_t n_ids                  // number of IDs
+) {
+	ASSERT (cf    != NULL) ;
+	ASSERT (ids   != NULL) ;
+	ASSERT (n_ids > 0) ;
+
+	int res = 0 ;
+	tidesdb_txn_t *txn = NULL ;
+	char key[KEY_SIZE] ;        // prefix char followed by 8 bytes entity id
+
+	// create transaction
+	res = tidesdb_txn_begin (db, &txn) ;
+	if (res != 0) {
+		RedisModule_Log (NULL, "warning", "failed to start transaction") ;
+		return res ;
+	}
+
+	//--------------------------------------------------------------------------
+	// delete batch
+	//--------------------------------------------------------------------------
+
+	for (size_t i = 0 ; i < n_ids ; i++) {
+		EntityID id = ids[i] ;
+		ASSERT (id != INVALID_ENTITY_ID) ;
+
+		// key format: <entity_id>
+		compute_key (key, id) ;
+
+		res = tidesdb_txn_delete (txn, cf, (const uint8_t*) key, KEY_SIZE) ;
+
+		if (res != 0) {
+			RedisModule_Log (NULL, "warning",
+					"failed to delete attribute-set for entity id: %" PRIu64 ","
+					"err code: %d", id, res) ;
 		}
 	}
 

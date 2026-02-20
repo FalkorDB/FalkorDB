@@ -4,6 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "mock_log.h"
 #include "src/util/rmalloc.h"
 #include "src/util/thpool/pool.h"
 #include "src/configuration/config.h"
@@ -13,7 +14,8 @@
 #define WORKERS_COUNT 5
 
 void setup() {
-	Alloc_Reset();
+	Alloc_Reset () ;
+	Logging_Reset () ;
 }
 
 #define TEST_INIT setup();

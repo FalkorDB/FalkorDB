@@ -4,6 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "mock_log.h"
 #include "src/util/rmalloc.h"
 #include "src/graph/query_graph.h"
 #include "src/algorithms/algorithms.h"
@@ -98,7 +99,8 @@ QueryGraph *CyclicBuildGraph() {
 
 void setup() {
 	// Use the malloc family for allocations
-	Alloc_Reset();
+	Alloc_Reset () ;
+	Logging_Reset () ;
 
 	// Initialize GraphBLAS
 	GrB_init(GrB_NONBLOCKING);

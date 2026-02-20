@@ -94,12 +94,6 @@ void GraphEntity_ToString
 	GraphEntityType entityType
 );
 
-// returns true if the given graph entity has been deleted
-bool GraphEntity_IsDeleted
-(
-	const GraphEntity *e
-);
-
 // returns attribute-set of entity
 AttributeSet GraphEntity_GetAttributes
 (

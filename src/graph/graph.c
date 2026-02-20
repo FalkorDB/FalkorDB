@@ -457,25 +457,26 @@ Graph *Graph_New
 	// create tidesdb column family for this graph
 	//--------------------------------------------------------------------------
 
-	// default column config
-	tidesdb_column_family_config_t cf_config =
-		tidesdb_default_column_family_config () ;
-
 	if (name != NULL) {
+		// default column config
+		tidesdb_column_family_config_t cf_config =
+			tidesdb_default_column_family_config () ;
 
 		//----------------------------------------------------------------------
 		// create tidesdb nodes storage
 		//----------------------------------------------------------------------
 
+		int tides_res = 0 ;
 		char *col_name = NULL ;
 
 		if (asprintf (&col_name, "%s_nodes", name) != -1) {
 			// add column to tidesdb, column name matches graph's name
-			if (tidesdb_create_column_family (db, col_name, &cf_config) != 0) {
+			tides_res = tidesdb_create_column_family (db, col_name, &cf_config) ;
+			if (tides_res != 0) {
 				// no disk offloading support for this graph
 				RedisModule_Log (NULL, "warning",
-						"failed to create tidesdb column family for graph: %s",
-						name) ;
+						"tidesdb error: %d, failed to create column family for graph: %s",
+						tides_res, name) ;
 			}
 
 			// set nodes tidesdb column family
@@ -490,11 +491,12 @@ Graph *Graph_New
 
 		if (asprintf (&col_name, "%s_edges", name) != -1) {
 			// add column to tidesdb, column name matches graph's name
-			if (tidesdb_create_column_family (db, col_name, &cf_config) != 0) {
+			tides_res = tidesdb_create_column_family (db, col_name, &cf_config) ;
+			if (tides_res != 0) {
 				// no disk offloading support for this graph
 				RedisModule_Log (NULL, "warning",
-						"failed to create tidesdb column family for graph: %s",
-						name) ;
+						"tidesdb error: %d, failed to create column family for graph: %s",
+						tides_res, name) ;
 			}
 
 			// set edges tidesdb column family
@@ -1089,7 +1091,7 @@ void Graph_DeleteEdges
 		Edge *e = edges + i;
 
 		// make sure edge isn't already deleted
-		ASSERT (!DataBlock_ItemIsDeleted ((void *)e->attributes)) ;
+		ASSERT (!DataBlock_ItemIsDeleted (g->edges, e->id)) ;
 
 		EdgeID id = ENTITY_GET_ID (e) ;
 		DataBlock_DeleteItem (g->edges, id) ;
@@ -1099,16 +1101,41 @@ void Graph_DeleteEdges
 }
 
 // returns true if the given entity has been deleted
-inline bool Graph_EntityIsDeleted
+static inline bool Graph_EntityIsDeleted
 (
+	const DataBlock *datablock,
 	const GraphEntity *e
 ) {
 	if (e->attributes == NULL) {
 		// most likely an entity which wasn't created just yet (reserved)
-		return false;
+		return false ;
 	}
 
-	return DataBlock_ItemIsDeleted (e->attributes) ;
+	return DataBlock_ItemIsDeleted (datablock, e->id) ;
+}
+
+// returns true if node is marked as deleted
+inline bool Graph_IsNodeDeleted
+(
+	const Graph *g,  // graph
+	const Node *n    // node to check if deleted
+) {
+	ASSERT (g != NULL) ;
+	ASSERT (n != NULL) ;
+
+	return Graph_EntityIsDeleted (g->nodes, (const GraphEntity*) n) ;
+}
+
+// returns true if edge is marked as deleted
+inline bool Graph_IsEdgeDeleted
+(
+	const Graph *g,  // graph
+	const Edge *e    // edge to check if deleted
+) {
+	ASSERT (g != NULL) ;
+	ASSERT (e != NULL) ;
+
+	return Graph_EntityIsDeleted (g->edges, (const GraphEntity*) e) ;
 }
 
 // populate 'nodes' with deleted node ids

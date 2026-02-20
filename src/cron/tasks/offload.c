@@ -77,6 +77,9 @@ static void _offloadGraph
 	//----------------------------------------------------------------------
 
 	DataBlock *datablock = (ctx->t == GETYPE_NODE) ? g->nodes : g->edges ;
+	if (!DataBlock_HasStorage (datablock)) {
+		return ;
+	}
 
 	DataBlockIterator *it = NULL ;
 	it = DataBlock_Scan (datablock) ;

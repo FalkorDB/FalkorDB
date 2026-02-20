@@ -4,13 +4,15 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "mock_log.h"
 #include "src/util/rmalloc.h"
 #include "src/configuration/config.h"
 #include "src/graph/delta_matrix/delta_matrix.h"
 #include "src/graph/delta_matrix/delta_matrix_iter.h"
 
 void setup() {
-	Alloc_Reset();	
+	Alloc_Reset () ;	
+	Logging_Reset () ;
 
 	// initialize GraphBLAS
 	GrB_init(GrB_NONBLOCKING);

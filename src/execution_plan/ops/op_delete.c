@@ -165,7 +165,7 @@ static void _DeleteEntities
 			EntityID eid = ENTITY_GET_ID (e) ;
 
 			// edge shouldn't be already deleted
-			ASSERT (!Graph_EntityIsDeleted ((GraphEntity *)e)) ;
+			ASSERT (!Graph_IsEdgeDeleted (g, e)) ;
 
 			if (!roaring64_bitmap_add_checked (op->edge_bitmap, eid)) {
 				// duplicated edge, remove it
@@ -250,7 +250,7 @@ static inline void _CollectDeletedEntities
 			Node *n = (Node *)value.ptrval ;
 
 			// skip duplicated & deleted nodes
-			if (!Graph_EntityIsDeleted ((GraphEntity *)n) &&
+			if (!Graph_IsNodeDeleted (op->gc->g, n) &&
 				roaring64_bitmap_add_checked (op->node_bitmap, ENTITY_GET_ID (n))) {
 				array_append (op->deleted_nodes, *n) ;
 			}
@@ -260,7 +260,7 @@ static inline void _CollectDeletedEntities
 			Edge *e = (Edge *)value.ptrval ;
 
 			// skip already deleted edges
-			if (!Graph_EntityIsDeleted ((GraphEntity *)e)                &&
+			if (!Graph_IsEdgeDeleted (op->gc->g, e)                      &&
 				!roaring64_bitmap_contains (op->node_bitmap, e->src_id)  &&
 				!roaring64_bitmap_contains (op->node_bitmap, e->dest_id) &&
 				roaring64_bitmap_add_checked (op->edge_bitmap, ENTITY_GET_ID (e))) {
@@ -271,13 +271,12 @@ static inline void _CollectDeletedEntities
 		else if (type & T_PATH) {
 			Path *p = (Path *)value.ptrval ;
 			size_t nodeCount = Path_NodeCount (p) ;
-			size_t edgeCount = Path_EdgeCount (p) ;
 
 			for (size_t j = 0; j < nodeCount; j++) {
 				Node *n = Path_GetNode (p, j) ;
 
 				// skip duplicated & deleted nodes
-				if (!Graph_EntityIsDeleted ((GraphEntity *)n) &&
+				if (!Graph_IsNodeDeleted (op->gc->g, n) &&
 					roaring64_bitmap_add_checked (op->node_bitmap, ENTITY_GET_ID (n))) {
 					array_append (op->deleted_nodes, *n) ;
 				}

@@ -47,6 +47,15 @@ int Storage_loadAttributes
 	const EntityID *ids           // array of entity IDs
 );
 
+// delete attribute sets from tidesdb
+// returns 0 on success
+int Storage_deleteAttributes
+(
+	tidesdb_column_family_t *cf,  // tidesdb column family
+	const EntityID *ids,          // array of entity IDs
+	size_t n_ids                  // number of IDs
+);
+
 // finalize tidesdb
 // returns 0 on success
 int Storage_finalize (void) ;

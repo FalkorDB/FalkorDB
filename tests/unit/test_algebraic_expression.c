@@ -4,6 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "mock_log.h"
 #include "src/value.h"
 #include "src/util/arr.h"
 #include "src/query_ctx.h"
@@ -64,7 +65,7 @@ const char *query_return_last_edge =
 static void _fake_graph_context() {
 	GraphContext *gc = (GraphContext *)calloc(1, sizeof(GraphContext));
 
-	gc->g = Graph_New(16, 16);
+	gc->g = Graph_New ("g", 16, 16) ;
 
 	gc->ref_count        = 1;
 	gc->index_count      = 0;
@@ -310,6 +311,7 @@ void free_algebraic_expressions(AlgebraicExpression **exps, uint count) {
 void setup() {
 	// Use the malloc family for allocations
 	Alloc_Reset();
+	Logging_Reset () ;
 
 	// Initialize the thread pool.
 	TEST_ASSERT(ThreadPool_CreatePool(1, 2));

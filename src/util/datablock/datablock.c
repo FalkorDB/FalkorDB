@@ -14,8 +14,6 @@
 #include <math.h>
 #include <stdbool.h>
 
-#define OFFLOADED_POINTER 
-
 // computes the number of blocks required to accommodate n items.
 #define ITEM_COUNT_TO_BLOCK_COUNT(n, cap) \
     ceil((double)n / cap)
@@ -24,38 +22,13 @@
 #define ITEM_INDEX_TO_BLOCK_INDEX(idx, cap) \
     (idx / cap)
 
-// computes item position within a block.
-#define ITEM_POSITION_WITHIN_BLOCK(idx, cap) \
-    (idx % cap)
+// translate item global index to block local index
+#define GLOBAL_TO_LOCAL_IDX(idx) \
+    (idx % dataBlock->blockCap)
 
 // retrieves block in which item with index resides.
-#define GET_ITEM_BLOCK(dataBlock, idx) \
+#define GET_ITEM_BLOCK(idx) \
     dataBlock->blocks[ITEM_INDEX_TO_BLOCK_INDEX(idx, dataBlock->blockCap)]
-
-static void _DataBlock_AddBlocks
-(
-	DataBlock *dataBlock,
-	uint blockCount
-) {
-	ASSERT(dataBlock);
-	ASSERT(blockCount > 0);
-
-	uint prevBlockCount = dataBlock->blockCount;
-	dataBlock->blockCount += blockCount;
-	if(!dataBlock->blocks)
-		dataBlock->blocks = rm_malloc(sizeof(Block *) * dataBlock->blockCount);
-	else
-		dataBlock->blocks = rm_realloc(dataBlock->blocks, sizeof(Block *) * dataBlock->blockCount);
-
-	uint i;
-	for(i = prevBlockCount; i < dataBlock->blockCount; i++) {
-		dataBlock->blocks[i] = Block_New(dataBlock->itemSize, dataBlock->blockCap);
-		if(i > 0) dataBlock->blocks[i - 1]->next = dataBlock->blocks[i];
-	}
-	dataBlock->blocks[i - 1]->next = NULL;
-
-	dataBlock->itemCap = dataBlock->blockCount * dataBlock->blockCap;
-}
 
 // checks to see if idx is within global array bounds
 // array bounds are between 0 and itemCount + #deleted indices
@@ -66,17 +39,59 @@ static inline bool _DataBlock_IndexOutOfBounds
 	const DataBlock *dataBlock,
 	uint64_t idx
 ) {
-	return (idx >= (dataBlock->itemCount + array_len(dataBlock->deletedIdx)));
+	return (idx >= (dataBlock->itemCount + array_len (dataBlock->deletedIdx))) ;
 }
 
-DataBlockItemHeader *DataBlock_GetItemHeader
+// add additional blocks to the datablock
+static void _DataBlock_AddBlocks
 (
-	const DataBlock *dataBlock,
-	uint64_t idx
+	DataBlock *dataBlock,  // datablock
+	uint blockCount        // number of blocks to add
 ) {
-	Block *block = GET_ITEM_BLOCK(dataBlock, idx);
-	idx = ITEM_POSITION_WITHIN_BLOCK(idx, dataBlock->blockCap);
-	return (DataBlockItemHeader *)block->data + (idx * block->itemSize);
+	ASSERT (dataBlock) ;
+	ASSERT (blockCount > 0) ;
+
+	uint prevBlockCount = dataBlock->blockCount ;
+	dataBlock->blockCount += blockCount ;
+
+	//--------------------------------------------------------------------------
+	// allocate blocks array
+	//--------------------------------------------------------------------------
+
+	size_t n = sizeof (Block *) * dataBlock->blockCount ;
+
+	if (dataBlock->blocks == NULL) {
+		dataBlock->blocks = rm_malloc (n) ;
+	} else {
+		dataBlock->blocks = rm_realloc (dataBlock->blocks, n) ;
+	}
+
+	//--------------------------------------------------------------------------
+	// allocate blocks
+	//--------------------------------------------------------------------------
+
+	uint i = prevBlockCount ;
+	for (; i < dataBlock->blockCount; i++) {
+		dataBlock->blocks[i] =
+			Block_New (dataBlock->itemSize, dataBlock->blockCap) ;
+
+		// link blocks
+		if (i > 0) {
+			Block_Link (dataBlock->blocks[i-1], dataBlock->blocks[i]) ;
+		}
+	}
+
+	dataBlock->itemCap = dataBlock->blockCount * dataBlock->blockCap ;
+}
+
+// returns a pointer to an item within the DataBlock
+static inline void *DataBlock_GetItemPrt
+(
+	const DataBlock *dataBlock,  // the DataBlock containing the item
+	uint64_t idx                 // the global index of the item
+) {
+	return (void *) Block_GetItem (GET_ITEM_BLOCK (idx),
+			GLOBAL_TO_LOCAL_IDX (idx)) ;
 }
 
 //------------------------------------------------------------------------------
@@ -91,7 +106,7 @@ DataBlock *DataBlock_New
 	uint itemSize,      // item byte size
 	fpDestructor fp     // [optional] item destructor
 ) {
-	DataBlock *dataBlock  = rm_malloc (sizeof (DataBlock)) ;
+	DataBlock *dataBlock  = rm_calloc (1, sizeof (DataBlock)) ;
 
 	dataBlock->blocks     = NULL ;
 	dataBlock->itemSize   = itemSize ;
@@ -101,8 +116,8 @@ DataBlock *DataBlock_New
 	dataBlock->deletedIdx = array_new (uint64_t, 128) ;
 	dataBlock->destructor = fp ;
 
-	_DataBlock_AddBlocks(dataBlock,
-			ITEM_COUNT_TO_BLOCK_COUNT(itemCap, dataBlock->blockCap));
+	_DataBlock_AddBlocks (dataBlock,
+			ITEM_COUNT_TO_BLOCK_COUNT (itemCap, dataBlock->blockCap)) ;
 
 	return dataBlock;
 }
@@ -113,15 +128,32 @@ void DataBlock_SetStorage
 	DataBlock *dataBlock,        // datablock
 	tidesdb_column_family_t *cf  // tidesdb storage
 ) {
-	ASSERT (cf            != NULL) ;
 	ASSERT (dataBlock     != NULL) ;
 	ASSERT (dataBlock->cf == NULL) ;
 
-	dataBlock->cf = cf ;
+	if (cf != NULL) {
+		// strict requirement for atomic pointer safety
+		ASSERT (dataBlock->itemSize % 8  == 0) ;
+		dataBlock->cf = cf ;
+	}
 }
 
-uint64_t DataBlock_ItemCount(const DataBlock *dataBlock) {
-	return dataBlock->itemCount;
+// checks if datablock has a tidesdb column
+bool DataBlock_HasStorage
+(
+	const DataBlock *dataBlock  // datablock
+) {
+	ASSERT (dataBlock != NULL) ;
+
+	return (dataBlock->cf != NULL) ;
+}
+
+// returns number of items stored in datablock
+uint64_t DataBlock_ItemCount
+(
+	const DataBlock *dataBlock  // datablock
+) {
+	return dataBlock->itemCount ;
 }
 
 // returns datablock item size
@@ -129,55 +161,76 @@ uint DataBlock_itemSize
 (
 	const DataBlock *dataBlock  // datablock
 ) {
-	ASSERT(dataBlock != NULL);
+	ASSERT (dataBlock != NULL) ;
 
-	return dataBlock->itemSize;
+	return dataBlock->itemSize ;
 }
 
-DataBlockIterator *DataBlock_Scan(const DataBlock *dataBlock) {
-	ASSERT(dataBlock != NULL);
-	Block *startBlock = dataBlock->blocks[0];
+// returns an iterator which scans entire datablock.
+DataBlockIterator *DataBlock_Scan
+(
+	const DataBlock *dataBlock  // datablock to scan
+) {
+	ASSERT (dataBlock != NULL) ;
+	Block *startBlock = dataBlock->blocks[0] ;
 
-	// Deleted items are skipped, we're about to perform
-	// array_len(dataBlock->deletedIdx) skips during out scan.
-	int64_t endPos = dataBlock->itemCount + array_len(dataBlock->deletedIdx);
-	return DataBlockIterator_New(startBlock, dataBlock->blockCap, endPos);
+	// deleted items are skipped, we're about to perform
+	// array_len(dataBlock->deletedIdx) skips during out scan
+	int64_t endPos = dataBlock->itemCount + array_len (dataBlock->deletedIdx) ;
+	return DataBlockIterator_New (dataBlock, startBlock, dataBlock->blockCap,
+			endPos) ;
 }
 
-DataBlockIterator *DataBlock_FullScan(const DataBlock *dataBlock) {
-	ASSERT(dataBlock != NULL);
-	Block *startBlock = dataBlock->blocks[0];
+// returns an iterator which scans entire out of order datablock
+DataBlockIterator *DataBlock_FullScan
+(
+	const DataBlock *dataBlock  // datablock to scan
+) {
+	ASSERT (dataBlock != NULL);
+	Block *startBlock = dataBlock->blocks[0] ;
 
-	int64_t endPos = dataBlock->blockCount * dataBlock->blockCap;
-	return DataBlockIterator_New(startBlock, dataBlock->blockCap, endPos);
+	int64_t endPos = dataBlock->blockCount * dataBlock->blockCap ;
+	return DataBlockIterator_New (dataBlock, startBlock, dataBlock->blockCap,
+			endPos) ;
 }
 
-// Make sure datablock can accommodate at least k items.
-void DataBlock_Accommodate(DataBlock *dataBlock, int64_t k) {
-	// Compute number of free slots.
-	int64_t freeSlotsCount = dataBlock->itemCap - dataBlock->itemCount;
-	int64_t additionalItems = k - freeSlotsCount;
+// make sure datablock can accommodate at least k items
+void DataBlock_Accommodate
+(
+	DataBlock *dataBlock,
+	int64_t k
+) {
+	// compute number of free slots
+	int64_t freeSlotsCount = dataBlock->itemCap - dataBlock->itemCount ;
+	int64_t additionalItems = k - freeSlotsCount ;
 
-	if(additionalItems > 0) {
+	if (additionalItems > 0) {
 		int64_t additionalBlocks =
-			ITEM_COUNT_TO_BLOCK_COUNT(additionalItems, dataBlock->blockCap);
-		_DataBlock_AddBlocks(dataBlock, additionalBlocks);
+			ITEM_COUNT_TO_BLOCK_COUNT (additionalItems, dataBlock->blockCap) ;
+		_DataBlock_AddBlocks (dataBlock, additionalBlocks) ;
 	}
 }
 
-void DataBlock_Ensure(DataBlock *dataBlock, uint64_t idx) {
-	ASSERT(dataBlock != NULL);
+// ensure datablock capacity >= 'idx'
+void DataBlock_Ensure
+(
+	DataBlock *dataBlock,
+	uint64_t idx
+) {
+	ASSERT (dataBlock != NULL) ;
 
 	// datablock[idx] exists
-	if(dataBlock->itemCap > idx) return;
+	if (dataBlock->itemCap > idx) {
+		return ;
+	}
 
 	// make sure datablock cap > 'idx'
-	int64_t additionalItems = (1 + idx) - dataBlock->itemCap;
+	int64_t additionalItems = (1 + idx) - dataBlock->itemCap ;
 	int64_t additionalBlocks =
-		ITEM_COUNT_TO_BLOCK_COUNT(additionalItems, dataBlock->blockCap);
-	_DataBlock_AddBlocks(dataBlock, additionalBlocks);
+		ITEM_COUNT_TO_BLOCK_COUNT (additionalItems, dataBlock->blockCap) ;
+	_DataBlock_AddBlocks (dataBlock, additionalBlocks) ;
 
-	ASSERT(dataBlock->itemCap > idx);
+	ASSERT (dataBlock->itemCap > idx) ;
 }
 
 // loads item from storage back into the datablock
@@ -186,9 +239,9 @@ void DataBlock_Ensure(DataBlock *dataBlock, uint64_t idx) {
 // the item
 static void *_DataBlock_LoadItem
 (
-	const DataBlock *dataBlock,  // datablock
-	uint64_t idx,                // the local index of the item
-	DataBlockItemHeader *header  // item's header
+	const DataBlock *dataBlock,   // datablock
+	uint64_t idx,                 // the local index of the item
+	bool delete                   // delete item from storage
 ) {
 	ASSERT (dataBlock     != NULL) ;
 	ASSERT (dataBlock->cf != NULL) ;
@@ -208,7 +261,7 @@ static void *_DataBlock_LoadItem
 	}
 
 	// we expect the slot to currently be NULL (not yet loaded)
-	void **slot = (void**)ITEM_DATA (header) ;
+	void **slot = DataBlock_GetItemPrt (dataBlock, idx) ;
 	void *expected = NULL;
 
 	// if *slot == expected (NULL), sets *slot = item and returns true
@@ -233,7 +286,12 @@ static void *_DataBlock_LoadItem
 		item = expected ;  // use the pointer the other thread successfully set
 	} else {
 		// race won: we are responsible for updating the metadata
-		MARK_HEADER_AS_NOT_OFFLOADED (header) ;	
+		Block_MarkItemActive (GET_ITEM_BLOCK (idx), GLOBAL_TO_LOCAL_IDX (idx)) ;
+
+		if (delete) {
+			// delete item from storage
+			Storage_deleteAttributes (cf, &idx, 1) ;
+		}
 	}
 
 	return (void*)slot ;
@@ -255,26 +313,27 @@ void *DataBlock_GetItem
 		return NULL ;
 	}
 
-	DataBlockItemHeader *header = DataBlock_GetItemHeader (dataBlock, idx) ;
-	ASSERT (header != NULL) ;
+	Block *block = GET_ITEM_BLOCK (idx) ;
+	uint32_t local_idx = GLOBAL_TO_LOCAL_IDX (idx) ;
 
 	// incase item is marked as deleted, return NULL
-	if (IS_ITEM_DELETED (header)) {
+	if (unlikely (Block_IsItemDeleted (block, local_idx))) {
 		return NULL ;
 	}
 
 	//  load item if offloaded
-	if (IS_ITEM_OFFLOADED (header)) {
-		return _DataBlock_LoadItem (dataBlock, idx, header) ;
+	if (Block_IsItemOffloaded (block, local_idx)) {
+		return _DataBlock_LoadItem (dataBlock, idx, false) ;
 	}
 
-	return ITEM_DATA (header) ;
+	return DataBlock_GetItemPrt (dataBlock, idx) ;
 }
 
+// get reserved item id after 'n' items
 uint64_t DataBlock_GetReservedIdx
 (
-	const DataBlock *dataBlock,
-	uint64_t n
+	const DataBlock *dataBlock,  // datablock
+	uint64_t n                   // number of items already reserved
 ) {
 	ASSERT (dataBlock != NULL) ;
 
@@ -286,10 +345,13 @@ uint64_t DataBlock_GetReservedIdx
 	return DataBlock_ItemCount (dataBlock) + n ;
 }
 
+// allocate a new item within given dataBlock
+// if idx is not NULL, idx will contain item position
+// return a pointer to the newly allocated item
 void *DataBlock_AllocateItem
 (
-	DataBlock *dataBlock,
-	uint64_t *idx
+	DataBlock *dataBlock,  // datablock
+	uint64_t *idx          // [optional] item position
 ) {
 	// make sure we've got room for items
 	if (unlikely (dataBlock->itemCount >= dataBlock->itemCap)) {
@@ -313,6 +375,8 @@ void *DataBlock_AllocateItem
 			dataBlock->deletedIdx = array_trimm_cap (dataBlock->deletedIdx,
 					array_len (dataBlock->deletedIdx)) ;
 		}
+
+		Block_MarkItemActive (GET_ITEM_BLOCK (pos), GLOBAL_TO_LOCAL_IDX (pos)) ;
 	}
 
 	dataBlock->itemCount++ ;
@@ -321,39 +385,64 @@ void *DataBlock_AllocateItem
 		*idx = pos;
 	}
 
-	DataBlockItemHeader *header = DataBlock_GetItemHeader (dataBlock, pos) ;
-	MARK_HEADER_AS_NOT_DELETED (header) ;
-
-	return ITEM_DATA (header) ;
+	return DataBlock_GetItemPrt (dataBlock, pos) ;
 }
 
-void DataBlock_DeleteItem(DataBlock *dataBlock, uint64_t idx) {
-	ASSERT(dataBlock != NULL);
-	ASSERT(!_DataBlock_IndexOutOfBounds(dataBlock, idx));
+// removes item at position idx
+void DataBlock_DeleteItem
+(
+	DataBlock *dataBlock,  // datablock from which to delete item
+	uint64_t idx           // item index
+) {
+	ASSERT (dataBlock != NULL) ;
+	ASSERT (!_DataBlock_IndexOutOfBounds (dataBlock, idx)) ;
 
-	// Return if item already deleted.
-	DataBlockItemHeader *item_header = DataBlock_GetItemHeader(dataBlock, idx);
-	if(IS_ITEM_DELETED(item_header)) return;
+	Block *block = GET_ITEM_BLOCK (idx) ;
+	uint32_t i = GLOBAL_TO_LOCAL_IDX (idx) ;
 
-	// Call item destructor.
-	if(dataBlock->destructor) {
-		unsigned char *item = ITEM_DATA(item_header);
-		dataBlock->destructor(item);
+	// return if item already deleted
+	if (Block_IsItemDeleted (block, i)) {
+		return ;
 	}
 
-	MARK_HEADER_AS_DELETED(item_header);
+	void *item = NULL ;
+	if (Block_IsItemOffloaded (block,  i)) {
+		item = _DataBlock_LoadItem (dataBlock, idx, true) ;
+	} else {
+		item = DataBlock_GetItemPrt (dataBlock, idx) ;
+	}
 
-	array_append(dataBlock->deletedIdx, idx);
-	dataBlock->itemCount--;
+	// call item destructor
+	if (dataBlock->destructor && item != NULL) {
+		dataBlock->destructor (item) ;
+	}
+
+	Block_MarkItemDeleted (block, i) ;
+
+	// add item index to delete list
+	array_append (dataBlock->deletedIdx, idx) ;
+	dataBlock->itemCount-- ;
 }
 
-uint DataBlock_DeletedItemsCount(const DataBlock *dataBlock) {
-	return array_len(dataBlock->deletedIdx);
+// returns the number of deleted items
+uint DataBlock_DeletedItemsCount
+(
+	const DataBlock *dataBlock  // datablock to query
+) {
+	ASSERT (dataBlock != NULL) ;
+	return array_len (dataBlock->deletedIdx) ;
 }
 
-inline bool DataBlock_ItemIsDeleted(void *item) {
-	DataBlockItemHeader *header = GET_ITEM_HEADER(item);
-	return IS_ITEM_DELETED(header);
+// returns true if the ith item is deleted
+bool DataBlock_ItemIsDeleted
+(
+	const DataBlock *dataBlock,  // datablock
+	uint64_t i                   // item index
+) {
+	ASSERT (dataBlock != NULL) ;
+	ASSERT (!_DataBlock_IndexOutOfBounds (dataBlock, i)) ;
+
+	return Block_IsItemDeleted (GET_ITEM_BLOCK (i), GLOBAL_TO_LOCAL_IDX (i)) ;
 }
 
 // returns datablock's deleted indices array
@@ -361,9 +450,9 @@ const uint64_t *DataBlock_DeletedItems
 (
 	const DataBlock *dataBlock
 ) {
-	ASSERT(dataBlock != NULL);
+	ASSERT (dataBlock != NULL) ;
 
-	return (const uint64_t *) dataBlock->deletedIdx;
+	return (const uint64_t *) dataBlock->deletedIdx ;
 }
 
 // marks specified items within a DataBlock as offloaded to external storage
@@ -386,17 +475,8 @@ void DataBlock_MarkOffloaded (
 		// item index must be valid
 		ASSERT (!_DataBlock_IndexOutOfBounds (dataBlock, idx)) ;
 
-		// get item's header
-		DataBlockItemHeader *header = DataBlock_GetItemHeader (dataBlock, idx) ;
-
-		// item shouldn't be deleted nor offloaded
-		ASSERT (!IS_ITEM_DELETED   (header)) ;
-		ASSERT (!IS_ITEM_OFFLOADED (header)) ;
-
-		// mark item as offloaded
-		MARK_HEADER_AS_OFFLOADED (header) ;
-		void **item = (void **) ITEM_DATA (header) ;
-		*item = NULL ;
+		Block_MarkItemOffload (GET_ITEM_BLOCK (idx),
+				GLOBAL_TO_LOCAL_IDX (idx)) ;
 	}
 }
 
@@ -409,12 +489,15 @@ void *DataBlock_AllocateItemOutOfOrder
 	DataBlock *dataBlock,
 	uint64_t idx
 ) {
-	// Check if idx<=data block's current capacity. If needed, allocate additional blocks.
-	DataBlock_Ensure(dataBlock, idx);
-	DataBlockItemHeader *item_header = DataBlock_GetItemHeader(dataBlock, idx);
-	MARK_HEADER_AS_NOT_DELETED(item_header);
-	dataBlock->itemCount++;
-	return ITEM_DATA(item_header);
+	// check if idx<=data block's current capacity
+	// if needed, allocate additional blocks
+	DataBlock_Ensure (dataBlock, idx) ;
+
+	// reset header
+	Block_ResetHeader (GET_ITEM_BLOCK (idx), GLOBAL_TO_LOCAL_IDX (idx)) ;
+
+	dataBlock->itemCount++ ;
+	return DataBlock_GetItemPrt (dataBlock, idx) ;
 }
 
 void DataBlock_MarkAsDeletedOutOfOrder
@@ -422,14 +505,13 @@ void DataBlock_MarkAsDeletedOutOfOrder
 	DataBlock *dataBlock,
 	uint64_t idx
 ) {
-	// check if idx<=data block's current capacity
+	// check if idx <= data block's current capacity
 	// if needed, allocate additional blocks
-	DataBlock_Ensure(dataBlock, idx);
-	DataBlockItemHeader *item_header = DataBlock_GetItemHeader(dataBlock, idx);
+	DataBlock_Ensure (dataBlock, idx) ;
 
 	// delete
-	MARK_HEADER_AS_DELETED(item_header);
-	array_append(dataBlock->deletedIdx, idx);
+	Block_MarkItemDeleted (GET_ITEM_BLOCK (idx), GLOBAL_TO_LOCAL_IDX (idx)) ;
+	array_append (dataBlock->deletedIdx, idx) ;
 }
 
 size_t DataBlock_memoryUsage
@@ -440,8 +522,8 @@ size_t DataBlock_memoryUsage
 
 	// datablock size = deleted index array size +
 	//                  (number of blocks * block size)
-	return array_len(dataBlock->deletedIdx) * sizeof(uint64_t) +
-		dataBlock->blockCount * (dataBlock->itemSize * dataBlock->blockCap);
+	return array_len (dataBlock->deletedIdx) * sizeof(uint64_t) +
+		dataBlock->blockCount * (dataBlock->itemSize * dataBlock->blockCap) ;
 }
 
 // free the datablock

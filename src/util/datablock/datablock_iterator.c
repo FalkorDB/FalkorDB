@@ -5,29 +5,40 @@
  */
 
 #include "RG.h"
-#include "datablock_iterator.h"
 #include "datablock.h"
 #include "../rmalloc.h"
 
 // creates a new datablock iterator
 DataBlockIterator *DataBlockIterator_New
 (
-	Block *block,        // block from which iteration begins
-	uint64_t block_cap,  // max number of items in block
-	uint64_t end_pos     // iteration stops here
+	const DataBlock *datablock,  // datablock being iterated
+	Block *block,                // block from which iteration begins
+	uint64_t block_cap,          // max number of items in block
+	uint64_t end_pos             // iteration stops here
 ) {
-	ASSERT (block) ;
+	ASSERT (block     != NULL) ;
+	ASSERT (datablock != NULL) ;
 
-	DataBlockIterator *iter = rm_malloc (sizeof (DataBlockIterator)) ;
+	DataBlockIterator *it = rm_malloc (sizeof (DataBlockIterator)) ;
 
-	iter->_end_pos       = end_pos ;
-	iter->_block_pos     = 0 ;
-	iter->_block_cap     = block_cap ;
-	iter->_current_pos   = 0 ;
-	iter->_start_block   = block ;
-	iter->_current_block = block ;
+	it->datablock     = datablock ;
+	it->end_pos       = end_pos ;
+	it->block_pos     = 0 ;
+	it->block_cap     = block_cap ;
+	it->current_pos   = 0 ;
+	it->start_block   = block ;
+	it->current_block = block ;
 
-	return iter ;
+	return it ;
+}
+
+inline uint64_t DataBlockIterator_Position
+(
+	const DataBlockIterator *it
+) {
+	ASSERT (it != NULL) ;
+
+	return it->current_pos ;
 }
 
 // checks if iterator is depleted
@@ -37,7 +48,7 @@ bool DataBlockIterator_Depleted
 ) {
 	ASSERT (it != NULL) ;
 
-	return (it->_current_pos == it->_end_pos) ;
+	return (it->current_pos == it->end_pos) ;
 }
 
 // returns the next item, unless we've reached the end
@@ -46,39 +57,36 @@ bool DataBlockIterator_Depleted
 // `id` will be set to the returned item index
 void *DataBlockIterator_Next
 (
-	DataBlockIterator *iter,  // iterator
-	uint64_t *id              // item position
+	DataBlockIterator *it,  // iterator
+	uint64_t *id            // item position
 ) {
-	ASSERT (iter != NULL) ;
+	ASSERT (it != NULL) ;
 
 	// set default
-	void                *item        = NULL ;
-	DataBlockItemHeader *item_header = NULL ;
+	void *item = NULL ;
 
 	// have we reached the end of our iterator?
-	while (iter->_current_pos < iter->_end_pos && iter->_current_block != NULL) {
-		// get item at current position
-		Block *block = iter->_current_block ;
-		item_header = (DataBlockItemHeader *)block->data +
-			(iter->_block_pos * block->itemSize) ;
-
+	while (it->current_pos < it->end_pos && it->current_block != NULL) {
 		// advance to next position
-		iter->_block_pos   += 1 ;
-		iter->_current_pos += 1 ;
+		it->block_pos   += 1 ;
+		it->current_pos += 1 ;
 
 		// advance to next block if current block consumed
-		if (iter->_block_pos == iter->_block_cap) {
-			iter->_block_pos = 0 ;
-			iter->_current_block = iter->_current_block->next ;
+		if (it->block_pos == it->block_cap) {
+			it->block_pos = 0 ;
+			it->current_block = Block_Next (it->current_block) ;
 		}
 
-		if (!IS_ITEM_DELETED (item_header)) {
-			item = ITEM_DATA (item_header) ;
-			if (id) {
-				*id = iter->_current_pos - 1 ;
-			}
-			break ;
+		item = DataBlock_GetItem (it->datablock, it->current_pos - 1) ;
+		if (item == NULL) {
+			continue ;
 		}
+
+		if (id != NULL) {
+			*id = it->current_pos - 1 ;
+		}
+
+		break ;
 	}
 
 	return item ;
@@ -90,43 +98,52 @@ void *DataBlockIterator_Next
 // `id` will be set to the returned item index
 void *DataBlockIterator_NextSkipOffloaded
 (
-	DataBlockIterator *iter,  // iterator
-	uint64_t *id              // item position
+	DataBlockIterator *it,  // iterator
+	uint64_t *id            // item position
 ) {
-	ASSERT (iter != NULL) ;
+	ASSERT (it != NULL) ;
 
 	// set default
-	void                *item        = NULL ;
-	DataBlockItemHeader *item_header = NULL ;
+	void *item = NULL ;
 
 	// have we reached the end of our iterator?
-	while (iter->_current_pos < iter->_end_pos && iter->_current_block != NULL) {
+	while (it->current_pos < it->end_pos && it->current_block != NULL) {
 		// get item at current position
-		Block *block = iter->_current_block ;
-		item_header = (DataBlockItemHeader *)block->data +
-			(iter->_block_pos * block->itemSize) ;
+		Block *block = it->current_block ;
+
+		// advance to next block if current block consumed or empty
+		if (it->block_pos == it->block_cap ||
+			!Block_HasActiveItems (it->current_block)) {
+
+			it->block_pos = 0 ;
+
+			// search for a valid block
+			do {
+				it->current_block = Block_Next (it->current_block) ;
+			} while (it->current_block != NULL &&
+					 !Block_HasActiveItems (it->current_block)) ;
+		}
+
+		// skip if either offloaded or deleted
+		bool skip = Block_IsItemDeleted   (block, it->current_pos) ||
+					Block_IsItemOffloaded (block, it->current_pos) ;
 
 		// advance to next position
-		iter->_block_pos   += 1 ;
-		iter->_current_pos += 1 ;
+		it->block_pos   += 1 ;
+		it->current_pos += 1 ;
 
-		// advance to next block if current block consumed
-		if (iter->_block_pos == iter->_block_cap) {
-			iter->_block_pos = 0 ;
-			iter->_current_block = iter->_current_block->next ;
+		if (skip) {
+			continue ;
 		}
 
-		if (!IS_ITEM_DELETED   (item_header) &&
-			!IS_ITEM_OFFLOADED (item_header)) {
-			item = ITEM_DATA (item_header) ;
+		item = DataBlock_GetItem (it->datablock, it->current_pos - 1) ;
+		ASSERT (item != NULL) ;
 
-			// report id
-			if (id) {
-				*id = iter->_current_pos - 1 ;
-			}
-
-			break ;
+		if (id != NULL) {
+			*id = it->current_pos - 1 ;
 		}
+
+		break ;
 	}
 
 	return item ;
@@ -135,13 +152,13 @@ void *DataBlockIterator_NextSkipOffloaded
 // reset iterator to original position
 void DataBlockIterator_Reset
 (
-	DataBlockIterator *iter  // iterator
+	DataBlockIterator *it  // iterator
 ) {
-	ASSERT (iter != NULL) ;
+	ASSERT (it != NULL) ;
 
-	iter->_block_pos     = 0 ;
-	iter->_current_pos   = 0 ;
-	iter->_current_block = iter->_start_block ;
+	it->block_pos     = 0 ;
+	it->current_pos   = 0 ;
+	it->current_block = it->start_block ;
 }
 
 // seek iterator to index
@@ -151,35 +168,33 @@ void DataBlockIterator_Seek
 	uint64_t idx            // index to seek to
 ) {
 	ASSERT (it != NULL) ;
-	ASSERT (idx <= it->_end_pos) ;
+	ASSERT (idx <= it->end_pos) ;
 
 	// reset iterator
-	it->_block_pos     = 0 ;
-	it->_current_block = it->_start_block ;
+	it->block_pos     = 0 ;
+	it->current_block = it->start_block ;
 
 	//--------------------------------------------------------------------------
 	// seek to idx
 	//--------------------------------------------------------------------------
 
 	// absolute position
-	it->_current_pos = idx ;
+	it->current_pos = idx ;
 
 	// set current block
-	int skipped_blocks = idx / it->_block_cap ;
-	for (int i = 0; i < skipped_blocks ; i++) {
-		it->_current_block = it->_current_block->next ;
-	}
+	int skipped_blocks = idx / it->block_cap ;
+	it->current_block = it->datablock->blocks [skipped_blocks] ;
 
 	// set offset within current block
-	it->_block_pos = (idx % it->_block_cap) ;
+	it->block_pos = (idx % it->block_cap) ;
 }
 
 // free iterator
 void DataBlockIterator_Free
 (
-	DataBlockIterator *iter  // iterator
+	DataBlockIterator *it  // iterator
 ) {
-	ASSERT (iter != NULL) ;
-	rm_free (iter) ;
+	ASSERT (it != NULL) ;
+	rm_free (it) ;
 }
 

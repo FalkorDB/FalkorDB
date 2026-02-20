@@ -4,6 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "mock_log.h"
 #include "src/util/arr.h"
 #include "src/graph/graph.h"
 #include "src/util/rmalloc.h"
@@ -67,7 +68,7 @@ void benchmark_node_creation_with_labels() {
 	float threshold = 0.0018;
 	// size_t n = GRAPH_DEFAULT_NODE_CAP;
 	size_t n = 1000000;
-	Graph *g = Graph_New(n, n);
+	Graph *g = Graph_New("g", n, n);
 	Graph_AcquireWriteLock(g);
 
 	// Introduce labels and relations to graph.
@@ -115,7 +116,7 @@ void benchmark_node_creation_no_labels() {
 	// size_t n = GRAPH_DEFAULT_NODE_CAP;
 	Node node;
 	size_t n = 1000000;
-	Graph *g = Graph_New(n, n);
+	Graph *g = Graph_New("g", n, n);
 	Graph_AcquireWriteLock(g);
 
 	for(int i = 0; i < samples; i++) {
@@ -155,7 +156,7 @@ void benchmark_edge_creation_with_relationships() {
 	EdgeDesc connections[edge_count];
 	Node node;
 	Edge edge;
-	Graph *g = Graph_New(GRAPH_DEFAULT_NODE_CAP, GRAPH_DEFAULT_EDGE_CAP);
+	Graph *g = Graph_New("g", GRAPH_DEFAULT_NODE_CAP, GRAPH_DEFAULT_EDGE_CAP);
 	Graph_AcquireWriteLock(g);
 
 	// Introduce relations types.
@@ -206,7 +207,8 @@ void benchmark_graph() {
 
 void setup() {
 	// Use the malloc family for allocations
-	Alloc_Reset();
+	Alloc_Reset () ;
+	Logging_Reset () ;
 
 	// Initialize GraphBLAS.
 	GrB_init(GrB_NONBLOCKING);
@@ -224,7 +226,7 @@ void tearDown() {
 // Make sure graph's defaults are applied.
 void test_newGraph() {
 	GrB_Index ncols, nrows, nvals;
-	Graph *g = Graph_New(GRAPH_DEFAULT_NODE_CAP, GRAPH_DEFAULT_EDGE_CAP);
+	Graph *g = Graph_New("g", GRAPH_DEFAULT_NODE_CAP, GRAPH_DEFAULT_EDGE_CAP);
 	Graph_AcquireWriteLock(g);
 	Delta_Matrix adj_matrix = g->adjacency_matrix;
 	TEST_ASSERT(Delta_Matrix_ncols(&ncols, adj_matrix) == GrB_SUCCESS);
@@ -249,7 +251,7 @@ void test_newGraph() {
 // Tests node and edge creation.
 void test_graphConstruction() {
 	size_t node_count = GRAPH_DEFAULT_NODE_CAP / 2;
-	Graph *g = Graph_New(node_count, node_count);
+	Graph *g = Graph_New("g", node_count, node_count);
 	Graph_AcquireWriteLock(g);
 	_test_node_creation(g, node_count);
 	Graph_ReleaseLock(g);
@@ -260,7 +262,7 @@ void test_removeNodes() {
 	// Construct graph.
 	Delta_Matrix M;
 	GrB_Index nnz;
-	Graph *g = Graph_New(32, 32);
+	Graph *g = Graph_New("g", 32, 32);
 	Graph_AcquireWriteLock(g);
 
 	// Create 3 nodes.
@@ -330,7 +332,7 @@ void test_getNode() {
 
 	Node n;
 	size_t nodeCount = 16;
-	Graph *g = Graph_New(nodeCount, nodeCount);
+	Graph *g = Graph_New("g", nodeCount, nodeCount);
 
 	Graph_AcquireWriteLock(g);
 	{
@@ -365,7 +367,7 @@ void test_getEdge() {
 	size_t edgeCount = 5;
 	int relations[relationCount];
 
-	Graph *g = Graph_New(nodeCount, nodeCount);
+	Graph *g = Graph_New("g", nodeCount, nodeCount);
 	Graph_AcquireWriteLock(g);
 	for(int i = 0; i < nodeCount; i++) {
 		n = GE_NEW_NODE();

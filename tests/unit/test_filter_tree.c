@@ -4,6 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "mock_log.h"
 #include "src/query_ctx.h"
 #include "src/util/arr.h"
 #include "src/util/rmalloc.h"
@@ -35,11 +36,12 @@ void _fake_graph_context() {
 }
 
 void setup() {
-	Alloc_Reset();
-	QueryCtx_Init();
-	ErrorCtx_Init();
-	AR_RegisterFuncs();
-	_fake_graph_context();
+	Alloc_Reset () ;
+	Logging_Reset () ;
+	QueryCtx_Init () ;
+	ErrorCtx_Init () ;
+	AR_RegisterFuncs () ;
+	_fake_graph_context () ;
 }
 
 void tearDown() {

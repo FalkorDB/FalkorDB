@@ -4,6 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "mock_log.h"
 #include "src/util/arr.h"
 #include "src/query_ctx.h"
 #include "src/util/rmalloc.h"
@@ -61,7 +62,7 @@ static void build_ast_and_plan
 static void _fake_graph_context() {
 	GraphContext *gc = (GraphContext *)calloc(1, sizeof(GraphContext));
 
-	gc->g = Graph_New(16, 16);
+	gc->g = Graph_New("g", 16, 16);
 
 	gc->ref_count        = 1;
 	gc->index_count      = 0;
@@ -127,7 +128,8 @@ void setup() {
 	}
 
 	// use the malloc family for allocations
-	Alloc_Reset();
+	Alloc_Reset () ;
+	Logging_Reset () ;
 
 	// Initialize the thread pool.
 	TEST_ASSERT(ThreadPool_CreatePool(1, 2));

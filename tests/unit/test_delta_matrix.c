@@ -3,6 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "mock_log.h"
 #include "src/util/rmalloc.h"
 #include "src/configuration/config.h"
 #include "src/graph/tensor/tensor.h"
@@ -39,7 +40,8 @@ void tearDown();
 
 void setup() {
 	// use the malloc family for allocations
-	Alloc_Reset();
+	Alloc_Reset () ;
+	Logging_Reset () ;
 
 	// initialize GraphBLAS
 	GrB_init(GrB_NONBLOCKING);

@@ -234,13 +234,6 @@ void GraphEntity_ToString
 	*bytesWritten += snprintf(*buffer + *bytesWritten, *bufferLen, "%s", closeSymbole);
 }
 
-inline bool GraphEntity_IsDeleted
-(
-	const GraphEntity *e
-) {
-	return Graph_EntityIsDeleted(e);
-}
-
 inline AttributeSet GraphEntity_GetAttributes
 (
 	const GraphEntity *e

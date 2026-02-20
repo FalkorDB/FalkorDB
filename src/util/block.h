@@ -9,14 +9,103 @@
 #include <stdlib.h>
 #include <sys/types.h>
 
-/* The Block is a type-agnostic block of continuous memory used to hold items of the same type.
- * Each block has a next pointer to another block, or NULL if this is the last block. */
-typedef struct Block {
-	size_t itemSize;        // Size of a single item in bytes.
-	struct Block *next;     // Pointer to next block.
-	unsigned char data[];   // Item array. MUST BE LAST MEMBER OF THE STRUCT!
-} Block;
+// forward declaration: the struct body is in block.c
+typedef struct Block Block ;
 
-Block *Block_New(uint itemSize, uint capacity);
-void Block_Free(Block *block);
+// create a new block
+Block *Block_New
+(
+	uint32_t itemSize,  // item byte size
+	uint32_t capacity   // number of items
+);
+
+// link blocks
+void Block_Link
+(
+	Block *prev,  // prev block
+	Block *next   // next block
+) ;
+
+// get a pointer to the ith item
+unsigned char *Block_GetItem
+(
+	Block *block,  // block
+	uint32_t i     // item position
+) ;
+
+// get next block
+Block *Block_Next
+(
+	const Block *block  // block
+);
+
+// reset the ith item header
+void Block_ResetHeader
+(
+	Block *block,  // block
+	uint32_t i     // item's position
+);
+
+//------------------------------------------------------------------------------
+// status checks
+//------------------------------------------------------------------------------
+
+// check if the ith item is marked as deleted
+bool Block_IsItemDeleted
+(
+	const Block *block,  // block
+	uint32_t i           // item's position
+) ;
+
+// check if the ith item is marked as offloaded
+bool Block_IsItemOffloaded
+(
+	const Block *block,  // block
+	uint32_t i           // item's position
+);
+
+// checks if block contains non offloaded, non deleted items
+// return false if offloaded + deleted = block capacity
+bool Block_HasActiveItems
+(
+	const Block *block  // block
+);
+
+//------------------------------------------------------------------------------
+// state transitions
+//------------------------------------------------------------------------------
+
+// marks the ith item as deleted
+void Block_MarkItemDeleted
+(
+	Block *block,  // block
+	uint32_t i     // item position within block
+);
+
+// marks the ith item as active
+void Block_MarkItemActive
+(
+	Block *block,  // block
+	uint32_t i     // item position within block
+);
+
+// marks the ith item as offloaded
+void Block_MarkItemOffload
+(
+	Block *block,  // block
+	uint32_t i     // item position within block
+);
+
+// marks the ith item as loaded
+void Block_MarkItemLoaded
+(
+	Block *block,  // block
+	uint32_t i     // item position within block
+);
+
+// free block
+void Block_Free
+(
+	Block *block  // block to free
+);
 

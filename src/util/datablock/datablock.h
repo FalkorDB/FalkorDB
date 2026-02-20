@@ -6,45 +6,14 @@
 
 #pragma once
 
+#include "db.h"
+#include "../block.h"
+
 #include <stdlib.h>
 #include <stdbool.h>
 #include <pthread.h>
-#include "db.h"
-#include "../block.h"
-#include "./datablock_iterator.h"
 
 typedef void (*fpDestructor)(void *);
-
-// Returns the item header size.
-#define ITEM_HEADER_SIZE 1
-
-// DataBlock item is stored as ||header|data||. This macro retrive the data pointer out of the header pointer.
-#define ITEM_DATA(header) ((void *)((header) + ITEM_HEADER_SIZE))
-
-// DataBlock item is stored as ||header|data||. This macro retrive the header pointer out of the data pointer.
-#define GET_ITEM_HEADER(item) ((item) - ITEM_HEADER_SIZE)
-
-// Sets the deleted bit in the header to 1.
-#define MARK_HEADER_AS_DELETED(header) ((header)->deleted |= 1)
-
-// Sets the deleted bit in the header to 0.
-#define MARK_HEADER_AS_NOT_DELETED(header) ((header)->deleted &= 0)
-
-// Checks if the deleted bit in the header is 1 or not.
-#define IS_ITEM_DELETED(header) ((header)->deleted & 1)
-
-//------------------------------------------------------------------------------
-// offloaded macros
-//------------------------------------------------------------------------------
-
-// sets the offloaded bit in the header to 1
-#define MARK_HEADER_AS_OFFLOADED(header) ((header)->offloaded |= 1)
-
-// sets the offloaded bit in the header to 0
-#define MARK_HEADER_AS_NOT_OFFLOADED(header) ((header)->offloaded &= 0)
-
-// checks if the offloaded bit in the header is 1 or not
-#define IS_ITEM_OFFLOADED(header) ((header)->offloaded & 1)
 
 // the DataBlock is a container structure for holding arbitrary items of a uniform type
 // in order to reduce the number of alloc/free calls and improve locality of reference.
@@ -62,12 +31,16 @@ typedef struct {
 	tidesdb_column_family_t *cf;  // [optional] disk storage
 } DataBlock;
 
-// this struct is for data block item header data
+// datablock iterator iterates over items within a datablock
 typedef struct {
-	unsigned char deleted   : 1; // 1 if the item is deleted
-	unsigned char offloaded : 1; // 1 if the item is offloaded to disk
-    unsigned char reserved  : 6; // explicitly padding to fill the byte
-} DataBlockItemHeader;
+	const DataBlock *datablock;   // datablock being iterated
+	Block *start_block;           // first block accessed by iterator
+	Block *current_block;         // current block
+	uint64_t block_pos;           // position within a block
+	uint64_t block_cap;           // max number of items in block
+	uint64_t current_pos;         // iterator current position
+	uint64_t end_pos;             // iterator won't pass end position
+} DataBlockIterator;
 
 // create a new DataBlock
 DataBlock *DataBlock_New
@@ -85,8 +58,17 @@ void DataBlock_SetStorage
 	tidesdb_column_family_t *cf  // tidesdb storage
 );
 
-// returns number of items stored
-uint64_t DataBlock_ItemCount(const DataBlock *dataBlock);
+// checks if datablock has a tidesdb column
+bool DataBlock_HasStorage
+(
+	const DataBlock *dataBlock  // datablock
+) ;
+
+// returns number of items stored in datablock
+uint64_t DataBlock_ItemCount
+(
+	const DataBlock *dataBlock  // datablock
+);
 
 // returns datablock item size
 uint DataBlock_itemSize
@@ -94,17 +76,31 @@ uint DataBlock_itemSize
 	const DataBlock *dataBlock  // datablock
 );
 
-// Make sure datablock can accommodate at least k items.
-void DataBlock_Accommodate(DataBlock *dataBlock, int64_t k);
+// returns an iterator which scans entire datablock.
+DataBlockIterator *DataBlock_Scan
+(
+	const DataBlock *dataBlock  // datablock to scan
+);
+
+// returns an iterator which scans entire out of order datablock
+DataBlockIterator *DataBlock_FullScan
+(
+	const DataBlock *dataBlock  // datablock to scan
+);
+
+// make sure datablock can accommodate at least k items
+void DataBlock_Accommodate
+(
+	DataBlock *dataBlock,
+	int64_t k
+);
 
 // ensure datablock capacity >= 'idx'
-void DataBlock_Ensure(DataBlock *dataBlock, uint64_t idx);
-
-// Returns an iterator which scans entire datablock.
-DataBlockIterator *DataBlock_Scan(const DataBlock *dataBlock);
-
-// Returns an iterator which scans entire out of order datablock.
-DataBlockIterator *DataBlock_FullScan(const DataBlock *dataBlock);
+void DataBlock_Ensure
+(
+	DataBlock *dataBlock,
+	uint64_t idx
+);
 
 // get item at position idx
 void *DataBlock_GetItem
@@ -114,21 +110,40 @@ void *DataBlock_GetItem
 );
 
 // get reserved item id after 'n' items
-uint64_t DataBlock_GetReservedIdx(const DataBlock *dataBlock, uint64_t n);
+uint64_t DataBlock_GetReservedIdx
+(
+	const DataBlock *dataBlock,  // datablock
+	uint64_t n                   // number of items already reserved
+);
 
-// Allocate a new item within given dataBlock,
+// allocate a new item within given dataBlock
 // if idx is not NULL, idx will contain item position
-// return a pointer to the newly allocated item.
-void *DataBlock_AllocateItem(DataBlock *dataBlock, uint64_t *idx);
+// return a pointer to the newly allocated item
+void *DataBlock_AllocateItem
+(
+	DataBlock *dataBlock,  // datablock
+	uint64_t *idx          // [optional] item position
+);
 
-// Removes item at position idx.
-void DataBlock_DeleteItem(DataBlock *dataBlock, uint64_t idx);
+// removes item at position idx
+void DataBlock_DeleteItem
+(
+	DataBlock *dataBlock,  // datablock from which to delete item
+	uint64_t idx           // item index
+);
 
-// Returns the number of deleted items.
-uint DataBlock_DeletedItemsCount(const DataBlock *dataBlock);
+// returns the number of deleted items
+uint DataBlock_DeletedItemsCount
+(
+	const DataBlock *dataBlock  // datablock to query
+) ;
 
-// Returns true if the given item has been deleted.
-bool DataBlock_ItemIsDeleted(void *item);
+// returns true if the ith item is deleted
+bool DataBlock_ItemIsDeleted
+(
+	const DataBlock *dataBlock,  // datablock
+	uint64_t i                   // item index
+);
 
 // returns datablock's deleted indices array
 const uint64_t *DataBlock_DeletedItems
@@ -154,4 +169,68 @@ void DataBlock_Free
 (
 	DataBlock *block
 ) ;
+
+//------------------------------------------------------------------------------
+// datablock iterator
+//------------------------------------------------------------------------------
+
+// creates a new datablock iterator
+DataBlockIterator *DataBlockIterator_New
+(
+	const DataBlock *datablock,  // datablock being iterated
+	Block *block,                // block from which iteration begins
+	uint64_t block_cap,          // max number of items in block
+	uint64_t end_pos	         // iteration stops here
+);
+
+// get iterator's global position
+uint64_t DataBlockIterator_Position
+(
+	const DataBlockIterator *it
+);
+
+// checks if iterator is depleted
+bool DataBlockIterator_Depleted
+(
+	const DataBlockIterator *it  // iterator
+);
+
+// returns the next item, unless we've reached the end
+// in which case NULL is returned
+// if `id` is provided and an item is located
+// `id` will be set to the returned item index
+void *DataBlockIterator_Next
+(
+	DataBlockIterator *it,  // iterator
+	uint64_t *id            // item position
+);
+
+// returns the next item, unless we've reached the end
+// in which case NULL is returned
+// if `id` is provided and an item is located
+// `id` will be set to the returned item index
+void *DataBlockIterator_NextSkipOffloaded
+(
+	DataBlockIterator *it,  // iterator
+	uint64_t *id            // item position
+);
+
+// reset iterator to original position
+void DataBlockIterator_Reset
+(
+	DataBlockIterator *it  // iterator
+);
+
+// seek iterator to index
+void DataBlockIterator_Seek
+(
+	DataBlockIterator *it,  // iterator
+	uint64_t idx            // index to seek to
+);
+
+// free iterator
+void DataBlockIterator_Free
+(
+	DataBlockIterator *it  // iterator
+);
 

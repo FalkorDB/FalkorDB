@@ -4,6 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "mock_log.h"
 #include "src/util/rmalloc.h"
 #include "src/graph/query_graph.h"
 #include "src/execution_plan/ops/ops.h"
@@ -26,7 +27,8 @@ void setup() {
 	}
 
 	// use the malloc family for allocations
-	Alloc_Reset();
+	Alloc_Reset () ;
+	Logging_Reset () ;
 }
 
 static ExecutionPlan *_EmptyExecutionPlan(void) {

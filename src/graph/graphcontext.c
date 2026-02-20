@@ -27,6 +27,9 @@ extern uint aux_field_counter;
 // GraphContext type as it is registered at Redis
 extern RedisModuleType *GraphContextRedisModuleType;
 
+// tidesdb, declared within src/storage/storage.c
+extern tidesdb_t *db ;
+
 // forward declarations
 static void _GraphContext_Free(void *arg);
 static void _GraphContext_UpdateVersion(GraphContext *gc, const char *str);
@@ -70,6 +73,22 @@ inline void GraphContext_DecreaseRefCount
 	if(__atomic_sub_fetch(&gc->ref_count, 1, __ATOMIC_RELAXED) == 0) {
 		bool async_delete;
 		Config_Option_get(Config_ASYNC_DELETE, &async_delete);
+
+		//----------------------------------------------------------------------
+		// free tidesdb storage
+		//----------------------------------------------------------------------
+
+		// TODO: this needs to move to the datablock layer
+		char *col_name = NULL ;
+		if (asprintf (&col_name, "%s_nodes", gc->graph_name) != -1) {
+			tidesdb_drop_column_family (db, col_name) ;
+			free (col_name) ;
+		}
+
+		if (asprintf (&col_name, "%s_edges", gc->graph_name) != -1) {
+			tidesdb_drop_column_family (db, col_name) ;
+			free (col_name) ;
+		}
 
 		if(async_delete) {
 			// Async delete
@@ -1108,9 +1127,9 @@ static void _GraphContext_Free
 		CircularBuffer_Free(gc->pending_write_queue, NULL);
 	}
 
-	GraphEncodeContext_Free(gc->encoding_context);
-	GraphDecodeContext_Free(gc->decoding_context);
-	rm_free(gc->graph_name);
-	rm_free(gc);
+	GraphEncodeContext_Free (gc->encoding_context) ;
+	GraphDecodeContext_Free (gc->decoding_context) ;
+	rm_free (gc->graph_name) ;
+	rm_free (gc) ;
 }
 

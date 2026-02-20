@@ -4,6 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "mock_log.h"
 #include "src/ast/ast.h"
 #include "src/util/arr.h"
 #include "src/query_ctx.h"
@@ -26,8 +27,9 @@ static void _fake_graph_context() {
 }
 
 void setup() {
-	Alloc_Reset();
-	_fake_graph_context();
+	Alloc_Reset () ;
+	Logging_Reset () ;
+	_fake_graph_context () ;
 }
 
 void tearDown() {

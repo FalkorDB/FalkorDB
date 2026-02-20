@@ -4,16 +4,19 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "mock_log.h"
 #include "src/util/arr.h"
+#include "src/util/rmalloc.h"
+#include "src/util/block_struct.h"
 #include "src/util/datablock/datablock.h"
 #include "src/util/datablock/oo_datablock.h"
-#include "src/util/rmalloc.h"
 
 #include <stdio.h>
 #include <string.h>
 
 void setup() {
-	Alloc_Reset();
+	Alloc_Reset () ;
+	Logging_Reset () ;
 }
 #define TEST_INIT setup();
 #include "acutest.h"
@@ -23,13 +26,13 @@ void setup() {
 void test_dataBlockNew() {
 	// create a new data block, which can hold at least 1024 items
 	// each item is an integer.
-	size_t itemSize = sizeof(int);
-	DataBlock *dataBlock = DataBlock_New(DATABLOCK_BLOCK_CAP, 1024, itemSize, NULL);
+	size_t itemSize = sizeof (int) ;
+	DataBlock *dataBlock = DataBlock_New (DATABLOCK_BLOCK_CAP, 1024, itemSize, NULL) ;
 
-	TEST_ASSERT(dataBlock->itemCount == 0);     // No items were added.
-	TEST_ASSERT(dataBlock->itemCap >= 1024);
-	TEST_ASSERT(dataBlock->itemSize == itemSize + ITEM_HEADER_SIZE);
-	TEST_ASSERT(dataBlock->blockCount >= 1024 / DATABLOCK_BLOCK_CAP);
+	TEST_ASSERT (dataBlock->itemCount == 0) ;     // no items were added
+	TEST_ASSERT (dataBlock->itemCap >= 1024) ;
+	TEST_ASSERT (dataBlock->itemSize == itemSize) ;
+	TEST_ASSERT (dataBlock->blockCount >= 1024 / DATABLOCK_BLOCK_CAP) ;
 
 	for(int i = 0; i < dataBlock->blockCount; i++) {
 		Block *block = dataBlock->blocks[i];
@@ -128,29 +131,29 @@ void test_dataBlockScan() {
 	DataBlockIterator_Free(it);
 }
 
-void test_dataBlockRemoveItem() {
-	DataBlock *dataBlock = DataBlock_New(DATABLOCK_BLOCK_CAP, 1024, sizeof(int), NULL);
-	uint itemCount = 32;
-	DataBlock_Accommodate(dataBlock, itemCount);
+void test_dataBlockRemoveItem(void) {
+	DataBlock *dataBlock =
+		DataBlock_New (DATABLOCK_BLOCK_CAP, 1024, sizeof(int), NULL) ;
+	uint itemCount = 32 ;
+	DataBlock_Accommodate (dataBlock, itemCount) ;
 
-	// Set items.
-	for(int i = 0 ; i < itemCount; i++) {
-		int *item = (int *)DataBlock_AllocateItem(dataBlock, NULL);
-		*item = i;
+	// set items
+	for (int i = 0; i < itemCount; i++) {
+		int *item = (int *)DataBlock_AllocateItem (dataBlock, NULL) ;
+		*item = i ;
 	}
 
-	// Validate item at position 0.
-	int *item = (int *)DataBlock_GetItem(dataBlock, 0);
-	TEST_ASSERT(item != NULL);
-	TEST_ASSERT(*item == 0);
+	// validate item at position 0
+	int *item = (int *)DataBlock_GetItem (dataBlock, 0) ;
+	TEST_ASSERT (item != NULL) ;
+	TEST_ASSERT (*item == 0) ;
 
-	// Remove item at position 0 and perform validations
+	// remove item at position 0 and perform validations
 	// Index 0 should be added to datablock deletedIdx array.
-	DataBlock_DeleteItem(dataBlock, 0);
-	TEST_ASSERT(dataBlock->itemCount == itemCount - 1);
-	TEST_ASSERT(array_len(dataBlock->deletedIdx) == 1);
-	DataBlockItemHeader *header = (DataBlockItemHeader *)dataBlock->blocks[0]->data;
-	TEST_ASSERT(IS_ITEM_DELETED(header));
+	DataBlock_DeleteItem (dataBlock, 0) ;
+	TEST_ASSERT (dataBlock->itemCount == itemCount - 1) ;
+	TEST_ASSERT (array_len (dataBlock->deletedIdx) == 1) ;
+	TEST_ASSERT (DataBlock_ItemIsDeleted (dataBlock, 0)) ;
 
 	// Try to get item from deleted cell.
 	item = (int *)DataBlock_GetItem(dataBlock, 0);
@@ -166,11 +169,11 @@ void test_dataBlockRemoveItem() {
 	// There's no harm in deleting a deleted item.
 	DataBlock_DeleteItem(dataBlock, 0);
 
-	// Add a new item, expecting deleted cell to be reused.
-	int *newItem = (int *)DataBlock_AllocateItem(dataBlock, NULL);
-	TEST_ASSERT(dataBlock->itemCount == itemCount);
-	TEST_ASSERT(array_len(dataBlock->deletedIdx) == 0);
-	TEST_ASSERT((void *)newItem == (void *)((dataBlock->blocks[0]->data) + ITEM_HEADER_SIZE));
+	// add a new item, expecting deleted cell to be reused
+	int *newItem = (int *)DataBlock_AllocateItem (dataBlock, NULL) ;
+	TEST_ASSERT (dataBlock->itemCount == itemCount) ;
+	TEST_ASSERT (array_len(dataBlock->deletedIdx) == 0) ;
+	TEST_ASSERT ((void *)newItem == (void *)((dataBlock->blocks[0]->elements))) ;
 
 	it = DataBlock_Scan(dataBlock);
 	counter = 0;

@@ -67,7 +67,10 @@ void CommitUpdates
 		PendingUpdateCtx *update = HashTableGetVal (entry) ;
 
 		// if entity has been deleted, perform no updates
-		if (GraphEntity_IsDeleted (update->ge)) {
+		if ((type == ENTITY_NODE &&
+			 Graph_IsNodeDeleted (gc->g, (Node*) update->ge)) ||
+			(type == ENTITY_EDGE &&
+			 Graph_IsEdgeDeleted (gc->g, (Edge*) update->ge))) {
 			continue ;
 		}
 
@@ -467,18 +470,23 @@ void EvalEntityUpdates
 	// get the updated entity
 	GraphEntity *entity = Record_GetGraphEntity (r, ctx->record_idx) ;
 
-	// if the entity is marked as deleted, make no updates but do not error
-	if (unlikely (Graph_EntityIsDeleted (entity))) {
-		return ;
-	}
-
 	dict *updates ;
 	GraphEntityType entity_type ;
 
 	if (t == REC_TYPE_NODE) {
+		// if the entity is marked as deleted, make no updates but do not error
+		if (unlikely (Graph_IsNodeDeleted (gc->g, (Node*)entity))) {
+			return ;
+		}
+
 		updates     = node_updates ;
 		entity_type = GETYPE_NODE ;
 	} else {
+		// if the entity is marked as deleted, make no updates but do not error
+		if (unlikely (Graph_IsEdgeDeleted (gc->g, (Edge*)entity))) {
+			return ;
+		}
+
 		updates     = edge_updates ;
 		entity_type = GETYPE_EDGE ;
 	}

@@ -288,11 +288,19 @@ void Graph_DeleteEdges
 	bool implicit  // edge deleted due to node deletion
 );
 
-// returns true if the given entity has been deleted
-bool Graph_EntityIsDeleted
+// returns true if node is marked as deleted
+bool Graph_IsNodeDeleted
 (
-	const GraphEntity *e
-);
+	const Graph *g,  // graph
+	const Node *n    // node to check if deleted
+) ;
+
+// returns true if edge is marked as deleted
+bool Graph_IsEdgeDeleted
+(
+	const Graph *g,  // graph
+	const Edge *e    // edge to check if deleted
+) ;
 
 // populate 'nodes' with deleted node ids
 void Graph_DeletedNodes
