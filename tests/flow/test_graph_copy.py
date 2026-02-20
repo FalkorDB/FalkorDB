@@ -315,10 +315,7 @@ class testGraphCopy():
         # regression test for issue #1611
         # GRAPH.COPY should succeed when other graphs exist in the database
 
-        # restart environment to get a clean state
-        self.env.stop()
-        self.env, self.db = Env(enableDebugCommand=True)
-        self.conn = self.env.getConnection()
+        self.conn.execute_command("FLUSHALL")
 
         dummy_id    = "dummy"
         src_id      = "copy_src"
@@ -336,14 +333,12 @@ class testGraphCopy():
         src_graph.query("CREATE INDEX FOR ()-[r:R]-() ON (r.v)")
         create_constraint(src_graph, "UNIQUE", "NODE", "A", "v", sync=True)
 
-        # copy should succeed despite the dummy graph existing
+        # expecting GRAPH.COPY to succeed
         self.graph_copy(src_id, dest_id)
 
         dest_graph = self.db.select_graph(dest_id)
         self.assert_graph_eq(src_graph, dest_graph)
 
         # clean up
-        dummy_graph.delete()
-        src_graph.delete()
-        dest_graph.delete()
+        self.conn.execute_command("FLUSHALL")
 

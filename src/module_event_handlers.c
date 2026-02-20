@@ -559,35 +559,39 @@ static void _AfterForkChild() {
 	// in forked process
 	GxB_set (GxB_NTHREADS, 1) ;
 
-	// validate graph sync only for BGSAVE forks (main thread)
+	// the graph sync validation only applies to BGSAVE forks (main thread)
 	// GRAPH.COPY forks from a cron thread and only syncs the source graph
+	// after fork(), the child inherits the forking thread's ID (POSIX)
+	// so pthread_self() here matches the thread that called fork()
 	bool validate_graphs_after_fork =
 		pthread_equal (pthread_self (), redis_main_thread_id) != 0 &&
 		!INTERMEDIATE_GRAPHS ;
 
-	if (validate_graphs_after_fork) {
-		// make sure all graphs in keyspace are fully synced
-		GraphContext *gc = NULL ;
-		KeySpaceGraphIterator it ;
-		Globals_ScanGraphs (&it) ;
+	if (!validate_graphs_after_fork) {
+		return ;
+	}
 
-		while ((gc = GraphIterator_Next (&it)) != NULL) {
-			Graph *g = GraphContext_GetGraph (gc) ;
+	// make sure all graphs in keyspace are fully synced
+	GraphContext *gc = NULL ;
+	KeySpaceGraphIterator it ;
+	Globals_ScanGraphs (&it) ;
 
-			bool synced = Graph_Synced (g) ;
+	while ((gc = GraphIterator_Next (&it)) != NULL) {
+		Graph *g = GraphContext_GetGraph (gc) ;
 
-			ASSERT (!Graph_IsWriteLocked (g)) ;
+		bool synced = Graph_Synced (g) ;
 
-			// decrease graph context ref count
-			GraphContext_DecreaseRefCount (gc) ;
+		ASSERT (!Graph_IsWriteLocked (g)) ;
 
-			// abort BGSAVE if graph isn't synced
-			// it's the parent process responsibility (_ForkPrepare) to synchronize
-			// the entire graph, if one of the graph's matrices isn't synced
-			// it might be related to a GraphBLAS failure e.g. out of memory
-			if (!synced) {
-				_exit (1) ;  // use _exit as it is async-signal-safe
-			}
+		// decrease graph context ref count
+		GraphContext_DecreaseRefCount (gc) ;
+
+		// abort BGSAVE if graph isn't synced
+		// it's the parent process responsibility (_ForkPrepare) to synchronize
+		// the entire graph, if one of the graph's matrices isn't synced
+		// it might be related to a GraphBLAS failure e.g. out of memory
+		if (!synced) {
+			_exit (1) ;  // use _exit as it is async-signal-safe
 		}
 	}
 }
