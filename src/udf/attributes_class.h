@@ -21,3 +21,10 @@ void UDF_RegisterAttributesClass
 	JSRuntime *js_runtime  // the QuickJS runtime in which to register the class
 );
 
+// register the Attributes class with a JavaScript context
+// makes the Attributes class available within the provided QuickJS context
+void UDF_RegisterAttributesProto
+(
+	JSContext *js_ctx  // JavaScript context
+);
+

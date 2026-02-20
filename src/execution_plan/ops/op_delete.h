@@ -10,7 +10,8 @@
 #include "../execution_plan.h"
 #include "../../graph/entities/node.h"
 #include "../../resultset/resultset_statistics.h"
-#include "rax.h"
+
+#include "../../util/roaring.h"
 
 // deletes entities specified within the DELETE clause
 
@@ -23,6 +24,9 @@ typedef struct {
 	uint exp_count;         // number of expressions
 	Node *deleted_nodes;    // array of nodes to be removed
 	Edge *deleted_edges;    // array of edges to be removed
+
+	roaring64_bitmap_t *node_bitmap;  // node ids
+	roaring64_bitmap_t *edge_bitmap;  // edge ids
 } OpDelete;
 
 OpBase *NewDeleteOp

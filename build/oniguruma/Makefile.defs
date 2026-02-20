@@ -1,2 +1,0 @@
-
-export ONIGURUMA=$(ONIGURUMA_BINDIR)/libonig.a

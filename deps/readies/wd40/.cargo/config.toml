@@ -1,4 +1,0 @@
-
-[build]
-rustflags = "-L linux-x64"
-
