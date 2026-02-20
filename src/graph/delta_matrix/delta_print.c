@@ -23,17 +23,19 @@ GrB_Info Delta_Matrix_fprint
 		GrB_Matrix dpt = Delta_Matrix_DP (AT) ;
 		GrB_Matrix dmt = Delta_Matrix_DM (AT) ;
 
-		GrB_OK (GxB_Matrix_fprint (mt,  "MT",  pr, f)) ;
-		GrB_OK (GxB_Matrix_fprint (dpt, "DPT", pr, f)) ;
-		GrB_OK (GxB_Matrix_fprint (dmt, "DMT", pr, f)) ;
+		GrB_RETURN_IF_FAIL (GxB_Matrix_fprint (mt,  "MT",  pr, f)) ;
+		GrB_RETURN_IF_FAIL (GxB_Matrix_fprint (dpt, "DPT", pr, f)) ;
+		GrB_RETURN_IF_FAIL (GxB_Matrix_fprint (dmt, "DMT", pr, f)) ;
 	}
 
 	GrB_Matrix m  = Delta_Matrix_M  (A) ;
 	GrB_Matrix dp = Delta_Matrix_DP (A) ;
 	GrB_Matrix dm = Delta_Matrix_DM (A) ;
 
-	GrB_OK (GxB_Matrix_fprint (m,  "M",  pr, f)) ;
-	GrB_OK (GxB_Matrix_fprint (dp, "DP", pr, f)) ;
-	GrB_OK (GxB_Matrix_fprint (dm, "DM", pr, f)) ;
+	GrB_RETURN_IF_FAIL (GxB_Matrix_fprint (m,  "M",  pr, f)) ;
+	GrB_RETURN_IF_FAIL (GxB_Matrix_fprint (dp, "DP", pr, f)) ;
+	GrB_RETURN_IF_FAIL (GxB_Matrix_fprint (dm, "DM", pr, f)) ;
+
+	return GrB_SUCCESS ;
 }
 

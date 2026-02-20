@@ -44,7 +44,7 @@ typedef enum {
 typedef struct Graph Graph;
 
 // typedef for synchronization function pointer
-typedef void (*SyncMatrixFunc)(const Graph *, Delta_Matrix, GrB_Index, GrB_Index);
+typedef bool (*SyncMatrixFunc)(const Graph *, Delta_Matrix, GrB_Index, GrB_Index);
 
 struct Graph {
 	int reserved_node_count;           // number of nodes not commited yet
