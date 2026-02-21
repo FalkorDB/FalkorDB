@@ -1420,3 +1420,12 @@ class testList(FlowTestsBase):
         query = """RETURN list.dedup([3,[1,2],3,[1],[1,2]])"""
         actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
+
+    def test14_range_size_limit(self):
+        # regression test for issue #1410
+        # range() with enormous size must return error, not OOM
+        try:
+            self.graph.query("RETURN range(1, 9223372036854775807)")
+            self.env.assertTrue(False, "Expected an error")
+        except ResponseError as e:
+            self.env.assertContains("range() maximum size exceeded", str(e))

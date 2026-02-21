@@ -9,6 +9,7 @@
 #include "../../query_ctx.h"
 #include "../execution_plan.h"
 #include "../../ast/ast_mock.h"
+#include "../../errors/errors.h"
 #include "execution_plan_util.h"
 #include "execution_plan_modify.h"
 #include "execution_plan_construct.h"
@@ -100,6 +101,14 @@ static OpBase *_ReduceFilterToOp
 	// case of an operator (Or or And) which its subtree contains path filter
 	if(filter_root->t == FT_N_COND && FilterTree_ContainsFunc(filter_root,
 				"path_filter", &node)) {
+		// only AND and OR operators are supported with path filters
+		// other operators (XOR, XNOR) are not supported
+		if(filter_root->cond.op != OP_AND && filter_root->cond.op != OP_OR) {
+			ErrorCtx_SetError(EMSG_FALKORDB_SUPPORT,
+				"combining path filters with XOR");
+			return NewFilterOp(plan, filter_root);
+		}
+
 		// create the relevant LHS branch and set a bounded branch for it
 		OpBase *lhs = _ReduceFilterToOp(plan, vars, filter_root->cond.left);
 		if(lhs->type == OPType_FILTER) filter_root->cond.left = NULL;
