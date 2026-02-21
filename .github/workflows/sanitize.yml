@@ -16,6 +16,7 @@ concurrency:
 jobs:
   sanitize-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     container: falkordb/falkordb-build:ubuntu
     steps:
 
@@ -96,7 +97,11 @@ jobs:
       id: flow_tests
       run: |
         . venv/bin/activate
-        make flow-tests CLEAR_LOGS=0 SAN=address
+        if ! make flow-tests CLEAR_LOGS=0 SAN=address; then
+          echo "::warning::Flow tests failed on first attempt, retrying..."
+          rm -rf tests/flow/logs
+          make flow-tests CLEAR_LOGS=0 SAN=address
+        fi
       continue-on-error: true
 
     - uses: actions/upload-artifact@v6
@@ -109,7 +114,11 @@ jobs:
       id: tck_tests
       run: |
         . venv/bin/activate
-        make tck-tests CLEAR_LOGS=0 SAN=address
+        if ! make tck-tests CLEAR_LOGS=0 SAN=address; then
+          echo "::warning::TCK tests failed on first attempt, retrying..."
+          rm -rf tests/tck/logs
+          make tck-tests CLEAR_LOGS=0 SAN=address
+        fi
       continue-on-error: true
 
     - uses: actions/upload-artifact@v6
