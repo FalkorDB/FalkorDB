@@ -230,10 +230,9 @@ void RdbSaveNodes_v18
 	_SaveEntities_v18(rdb, gc, iter, n);
 
 	// check if done encodeing nodes
-	if(offset + n == graph_nodes) {
-		DataBlockIterator_Free(iter);
-		iter = NULL;
-		GraphEncodeContext_SetDatablockIterator(gc->encoding_context, iter);
+	if (offset + n == graph_nodes) {
+		DataBlockIterator_Free (&iter) ;
+		GraphEncodeContext_SetDatablockIterator (gc->encoding_context, iter) ;
 	}
 }
 
@@ -268,10 +267,9 @@ void RdbSaveEdges_v18
 	_SaveEntities_v18(rdb, gc, iter, n);
 
 	// check if done encodeing edges
-	if(offset + n == graph_edges) {
-		DataBlockIterator_Free(iter);
-		iter = NULL;
-		GraphEncodeContext_SetDatablockIterator(gc->encoding_context, iter);
+	if (offset + n == graph_edges) {
+		DataBlockIterator_Free (&iter) ;
+		GraphEncodeContext_SetDatablockIterator (gc->encoding_context, iter) ;
 	}
 }
 

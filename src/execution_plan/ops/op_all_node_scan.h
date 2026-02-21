@@ -11,17 +11,21 @@
 #include "../../graph/graph.h"
 #include "../../graph/query_graph.h"
 #include "../../graph/entities/node.h"
-#include "../../util/datablock/datablock_iterator.h"
+#include "../../util/datablock/datablock.h"
 
-/* AllNodesScan
- * Scans entire graph */
+// AllNodesScan
+// scans entire graph
 typedef struct {
 	OpBase op;
-	const char *alias;          /* Alias of the node being scanned by this op. */
+	const char *alias;          // alias of the node being scanned by this op
 	uint nodeRecIdx;
 	DataBlockIterator *iter;
-	Record child_record;        /* The Record this op acts on if it is not a tap. */
+	Record child_record;        // the Record this op acts on if it is not a tap
 } AllNodeScan;
 
-OpBase *NewAllNodeScanOp(const ExecutionPlan *plan, const char *alias);
+OpBase *NewAllNodeScanOp
+(
+	const ExecutionPlan *plan,
+	const char *alias
+);
 

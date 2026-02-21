@@ -8,7 +8,6 @@
 #include "../arr.h"
 #include "datablock.h"
 #include "../rmalloc.h"
-#include "datablock_iterator.h"
 #include "../../storage/storage.h"
 
 #include <math.h>
@@ -253,7 +252,7 @@ static void *_DataBlock_LoadItem
 	//--------------------------------------------------------------------------
 
 	void *item = NULL ;
-	int loaded = Storage_loadAttributes (cf, &item, 1, &idx) ;
+	int loaded = Storage_load (cf, &item, NULL, &idx, 1) ;
 
 	// failed to load item from storage, return NULL
 	if (loaded != 0) {
@@ -462,8 +461,9 @@ void DataBlock_MarkOffloaded (
 	size_t n_indices          // number of elements in the indices array
 ) {
 	// validations
-	ASSERT (indices   != NULL) ;
-	ASSERT (dataBlock != NULL) ;
+	ASSERT (indices       != NULL) ;
+	ASSERT (dataBlock     != NULL) ;
+	ASSERT (dataBlock->cf != NULL) ;
 
 	//--------------------------------------------------------------------------
 	// process entries
@@ -477,6 +477,29 @@ void DataBlock_MarkOffloaded (
 
 		Block_MarkItemOffload (GET_ITEM_BLOCK (idx),
 				GLOBAL_TO_LOCAL_IDX (idx)) ;
+	}
+}
+
+// checks the offloaded status of each queried item
+void DataBlock_IsOffloaded (
+	bool *res,                // [output] datablock[indices[i]] is offloaded?
+	DataBlock *dataBlock,     // datablock
+	const uint64_t *indices,  // array of indices to be marked
+	size_t n_indices          // number of elements in the indices array
+) {
+	ASSERT (res       != NULL) ;
+	ASSERT (indices   != NULL) ;
+	ASSERT (dataBlock != NULL) ;
+	ASSERT (n_indices > 0) ;
+
+	for (size_t i = 0; i < n_indices; i++) {
+		int32_t idx = indices[i] ;
+		ASSERT (!_DataBlock_IndexOutOfBounds (dataBlock, idx)) ;
+
+		Block *b = GET_ITEM_BLOCK (idx) ;
+		ASSERT (b != NULL) ;
+
+		res[i] = Block_IsItemOffloaded (b, GLOBAL_TO_LOCAL_IDX (idx)) ;
 	}
 }
 
@@ -526,25 +549,30 @@ size_t DataBlock_memoryUsage
 		dataBlock->blockCount * (dataBlock->itemSize * dataBlock->blockCap) ;
 }
 
-// free the datablock
+// free datablock
 void DataBlock_Free
 (
-	DataBlock *dataBlock  // datablock to free
+	DataBlock **dataBlock  // datablock to free
 ) {
+	ASSERT (dataBlock != NULL && *dataBlock != NULL) ;
+	DataBlock *_dataBlock = *dataBlock ;
+
 	// free blocks
-	for (uint i = 0; i < dataBlock->blockCount; i++) {
-		Block_Free (dataBlock->blocks[i]) ;
+	for (uint i = 0; i < _dataBlock->blockCount; i++) {
+		Block_Free (_dataBlock->blocks[i]) ;
 	}
 
-	if (dataBlock->cf != NULL) {
+	if (_dataBlock->cf != NULL) {
 		// TODO: free tidesdb column family
 		//if (tidesdb_drop_column_family (db, "my_cf") != 0) {
 		//	return -1;
 		//}
 	}
 
-	rm_free (dataBlock->blocks) ;
-	array_free (dataBlock->deletedIdx) ;
-	rm_free (dataBlock) ;
+	rm_free (_dataBlock->blocks) ;
+	array_free (_dataBlock->deletedIdx) ;
+	rm_free (_dataBlock) ;
+
+	*dataBlock = NULL ;
 }
 

@@ -1751,7 +1751,7 @@ static void _Graph_Free
 			AttributeSet_Free (set) ;
 		}
 	}
-	DataBlockIterator_Free (it) ;
+	DataBlockIterator_Free (&it) ;
 
 	it = is_full_graph ? Graph_ScanEdges (g) : DataBlock_FullScan (g->edges) ;
 	while ((set = DataBlockIterator_Next (it, NULL)) != NULL) {
@@ -1759,12 +1759,12 @@ static void _Graph_Free
 			AttributeSet_Free (set) ;
 		}
 	}
-	DataBlockIterator_Free (it) ;
+	DataBlockIterator_Free (&it) ;
 
 
 	// free blocks
-	DataBlock_Free (g->nodes) ;
-	DataBlock_Free (g->edges) ;
+	DataBlock_Free (&g->nodes) ;
+	DataBlock_Free (&g->edges) ;
 
 	GraphStatistics_FreeInternals (&g->stats) ;
 

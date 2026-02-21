@@ -55,9 +55,8 @@ void GraphEncodeContext_Reset
 	Config_Option_get(Config_VKEY_MAX_ENTITY_COUNT, &ctx->vkey_entity_count);
 
 	// avoid leaks in case or reset during encodeing
-	if(ctx->datablock_iterator != NULL) {
-		DataBlockIterator_Free(ctx->datablock_iterator);
-		ctx->datablock_iterator = NULL;
+	if (ctx->datablock_iterator != NULL) {
+		DataBlockIterator_Free (&ctx->datablock_iterator) ;
 	}
 
 	// avoid leaks in case or reset during encodeing

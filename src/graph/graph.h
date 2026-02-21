@@ -18,7 +18,6 @@
 #include "../commands/cmd_memory.h"
 #include "delta_matrix/delta_matrix.h"
 #include "../util/datablock/datablock.h"
-#include "../util/datablock/datablock_iterator.h"
 
 #define GRAPH_DEFAULT_RELATION_TYPE_CAP 16  // default number of different relationship types a graph can hold before resizing.
 #define GRAPH_DEFAULT_LABEL_CAP 16          // default number of different labels a graph can hold before resizing.

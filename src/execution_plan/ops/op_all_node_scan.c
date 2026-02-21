@@ -112,14 +112,13 @@ static void _AllNodeScan_FreeInternals
 (
 	AllNodeScan *op
 ) {
-	if(op->child_record) {
-		OpBase_DeleteRecord(&op->child_record);
-		op->child_record = NULL;
+	if (op->child_record) {
+		OpBase_DeleteRecord (&op->child_record) ;
+		op->child_record = NULL ;
 	}
 
-	if(op->iter != NULL) {
-		DataBlockIterator_Free(op->iter);
-		op->iter = NULL;
+	if (op->iter != NULL) {
+		DataBlockIterator_Free (&op->iter) ;
 	}
 }
 

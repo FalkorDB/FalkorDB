@@ -290,8 +290,8 @@ void ResultSet_Free
 				SIValue_Free(*v);
 			}
 		}
-		DataBlock_Free(set->cells);
+		DataBlock_Free (&set->cells) ;
 	}
 
-	rm_free(set);
+	rm_free (set) ;
 }

@@ -23,28 +23,58 @@
 #include "../graph/entities/graph_entity.h"
 #include "../graph/entities/attribute_set.h"
 
+#define KEY_SIZE sizeof (EntityID)  // key byte size
+
+// compute tidesdb key for entity
+// key = <entity_id>
+#define COMPUTE_KEY(key, id) *((uint64_t*) (key)) = (id)
+
 // initialize storage
 // returns 0 on success
 int Storage_init(void) ;
 
-// offloads attribute sets to tidesdb
-// returns 0 on success
-int Storage_putAttributes
+// serializes and persists an array of items to a TidesDB column family
+// each item is stored under its corresponding ID
+// the caller is responsible for ensuring that `items`, `sizes`, and `ids`
+// are all valid pointers to arrays of at least `n_items` elements
+//
+// return 0 on success, or a negative error code on failure
+//
+// note: items are stored in the order they appear
+// no deduplication is performed if an ID already exists
+// its value will be overwritten
+int Storage_save
 (
 	tidesdb_column_family_t *cf,  // tidesdb column family
-	const AttributeSet *sets,     // array of attribute sets
-	size_t n_sets,                // number of sets to offload
-	const EntityID *ids           // array of entity IDs
+	const void * const *items,    // array of pointers to the items to store
+	const size_t *sizes,          // array of byte sizes for each item in items
+	const uint64_t *ids,          // array of unique 64-bit IDs
+								  // under which items will be stored
+	size_t n_items                // number of items to save
 );
 
-// loads attribute sets from tidesdb
-// returns 0 on success
-int Storage_loadAttributes
+// loads and deserializes an array of items from a TidesDB column family by ID
+// retrieves each item corresponding to the given IDs and writes pointers to
+// the allocated data into `items`
+// the caller is responsible for freeing each
+// non-NULL pointer in `items` after use
+//
+// return 0 on success, or a negative error code on failure
+//
+// note: caller must free each non-NULL pointer written into items
+// if any ID is not found, the corresponding items[i] is set to NULL
+int Storage_load
 (
 	tidesdb_column_family_t *cf,  // tidesdb column family
-	void **sets,                  // array of attribute sets
-	size_t n_sets,                // number of sets to load
-	const EntityID *ids           // array of entity IDs
+	void **items,                 // [output] array of pointers
+								  // must contain at least n_items pointers
+
+	size_t *sizes,                // [optional] [output] array of byte sizes
+								  // for each item
+								  // must contain at least n_items elements
+
+	const uint64_t *ids,          // array of unique 64-bit IDs to look up
+	size_t n_items                // number of items to load
 );
 
 // delete attribute sets from tidesdb

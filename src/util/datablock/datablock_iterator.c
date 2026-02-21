@@ -192,9 +192,10 @@ void DataBlockIterator_Seek
 // free iterator
 void DataBlockIterator_Free
 (
-	DataBlockIterator *it  // iterator
+	DataBlockIterator **it  // iterator
 ) {
-	ASSERT (it != NULL) ;
-	rm_free (it) ;
+	ASSERT (it != NULL && *it != NULL) ;
+	rm_free (*it) ;
+	*it = NULL ;
 }
 

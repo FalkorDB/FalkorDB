@@ -10,7 +10,6 @@
 #include "src/util/rmalloc.h"
 #include "src/util/simple_timer.h"
 #include "src/configuration/config.h"
-#include "src/util/datablock/datablock_iterator.h"
 #include "GraphBLAS/Include/GraphBLAS.h"
 
 void setup();

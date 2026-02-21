@@ -154,7 +154,7 @@ static int defrag_edges
 	Graph_ReleaseLock (g) ;
 
 	// clean up
-	DataBlockIterator_Free (it) ;
+	DataBlockIterator_Free (&it) ;
 	return res ;
 }
 
@@ -183,7 +183,7 @@ static int defrag_nodes
 	Graph_ReleaseLock (g) ;
 
 	// clean up
-	DataBlockIterator_Free (it) ;
+	DataBlockIterator_Free (&it) ;
 	return res ;
 }
 

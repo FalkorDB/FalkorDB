@@ -158,16 +158,24 @@ void DataBlock_MarkOffloaded (
 	size_t n_indices          // number of elements in the indices array
 );
 
+// checks the offloaded status of each queried item
+void DataBlock_IsOffloaded (
+	bool *res,                // [output] datablock[indices[i]] is offloaded?
+	DataBlock *dataBlock,     // datablock
+	const uint64_t *indices,  // array of indices to be marked
+	size_t n_indices          // number of elements in the indices array
+);
+
 // returns to amount of memory consumed by the datablock
 size_t DataBlock_memoryUsage
 (
 	const DataBlock *dataBlock
 );
 
-// free block
+// free datablock
 void DataBlock_Free
 (
-	DataBlock *block
+	DataBlock **dataBlock  // datablock to free
 ) ;
 
 //------------------------------------------------------------------------------
@@ -231,6 +239,6 @@ void DataBlockIterator_Seek
 // free iterator
 void DataBlockIterator_Free
 (
-	DataBlockIterator *it  // iterator
+	DataBlockIterator **it  // iterator
 );
 

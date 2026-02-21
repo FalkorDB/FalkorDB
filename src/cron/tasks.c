@@ -137,7 +137,7 @@ static void CronTask_AddDataOffloadingTask(void) {
 
 // add recurring tasks
 void Cron_AddRecurringTasks(void) {
-	//CronTask_AddDataOffloadingTask () ;
+	CronTask_AddDataOffloadingTask () ;
 	CronTask_AddStreamFinishedQueries () ;
 }
 
