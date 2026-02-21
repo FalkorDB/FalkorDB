@@ -278,3 +278,23 @@ class testPathFilter(FlowTestsBase):
 
         res = self.graph.query(q).result_set
         self.env.assertEqual(res[0][0], 1)
+
+    def test16_xor_with_path_filter(self):
+        # regression test for issue #1466
+        # XOR combined with a path filter must return an error, not crash
+        try:
+            self.graph.query(
+                "MATCH (n) WHERE NOT((()--()) XOR TRUE) RETURN n")
+            self.env.assertTrue(False, "Expected an error")
+        except ResponseError as e:
+            self.env.assertContains("XOR", str(e))
+
+    def test17_xnor_with_path_filter(self):
+        # regression test for issue #1466
+        # NOT(XOR) becomes XNOR internally via DeMorgan, must also error
+        try:
+            self.graph.query(
+                "MATCH (n) WHERE (()--()) XOR n.v RETURN n")
+            self.env.assertTrue(False, "Expected an error")
+        except ResponseError as e:
+            self.env.assertContains("XOR", str(e))
