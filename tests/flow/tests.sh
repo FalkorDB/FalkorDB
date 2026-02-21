@@ -663,7 +663,7 @@ setup_rltest
 
 if [[ -n $SAN ]]; then
 	setup_clang_sanitizer
-	RLTEST_ARGS+=" --test-timeout 900"
+	RLTEST_ARGS+=" --test-timeout 1800"
 elif [[ $VG == 1 ]]; then
 	# no timeout for Valgrind tests
 	setup_valgrind
