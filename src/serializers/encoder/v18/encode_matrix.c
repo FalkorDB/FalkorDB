@@ -330,24 +330,23 @@ void RdbSaveLabelMatrices_v18
 	//   label id
 	//   matrix
 
-	ASSERT(g   != NULL);
-	ASSERT(rdb != NULL);
+	ASSERT (g   != NULL) ;
+	ASSERT (rdb != NULL) ;
 
-	int n = Graph_LabelTypeCount(g);
-	bool reload = !Globals_Get_ProcessIsChild();
+	int n = Graph_LabelTypeCount (g) ;
+	bool reload = !Globals_Get_ProcessIsChild () ;
 
 	// write number of matrices
-	SerializerIO_WriteUnsigned(rdb, n);
+	SerializerIO_WriteUnsigned (rdb, n) ;
 	
 	// encode label matrices
-	Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
-	for(LabelID i = 0; i < n; i++) {
+	for (LabelID i = 0 ; i < n ; i++) {
 		// write label ID
-		SerializerIO_WriteUnsigned(rdb, i);
+		SerializerIO_WriteUnsigned (rdb, i) ;
 
 		// dump matrix to rdb
-		Delta_Matrix L = Graph_GetLabelMatrix(g, i);
-		_Encode_Delta_Matrix(rdb, L, reload);
+		Delta_Matrix L = Graph_GetLabelMatrix (g, i) ;
+		_Encode_Delta_Matrix (rdb, L, reload) ;
 	}
 }
 
@@ -363,14 +362,13 @@ void RdbSaveRelationMatrices_v18
 	//   tensors count X N
 	//   tensors
 
-	ASSERT(g   != NULL);
-	ASSERT(rdb != NULL);
+	ASSERT (g   != NULL) ;
+	ASSERT (rdb != NULL) ;
 
-	int n = Graph_RelationTypeCount(g);
-	bool reload = !Globals_Get_ProcessIsChild();
+	int n = Graph_RelationTypeCount (g) ;
+	bool reload = !Globals_Get_ProcessIsChild () ;
 
-	Graph_SetMatrixPolicy (g, SYNC_POLICY_NOP) ;
-	for (RelationID i = 0; i < n; i++) {
+	for (RelationID i = 0 ; i < n ; i++) {
 		// write relation ID
 		SerializerIO_WriteUnsigned (rdb, i) ;
 
@@ -404,14 +402,13 @@ void RdbSaveAdjMatrix_v18
 	// format:
 	//   lbls matrix
 
-	ASSERT(g   != NULL);
-	ASSERT(rdb != NULL);
+	ASSERT (g   != NULL) ;
+	ASSERT (rdb != NULL) ;
 
-	bool reload = !Globals_Get_ProcessIsChild();
+	bool reload = !Globals_Get_ProcessIsChild () ;
 
-	Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
-	Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
-	_Encode_Delta_Matrix(rdb, ADJ, reload);
+	Delta_Matrix ADJ = Graph_GetAdjacencyMatrix (g, false) ;
+	_Encode_Delta_Matrix (rdb, ADJ, reload) ;
 }
 
 // encode graph's node labels matrix
@@ -423,12 +420,12 @@ void RdbSaveLblsMatrix_v18
 	// format:
 	//   lbls matrix
 
-	ASSERT(g   != NULL);
-	ASSERT(rdb != NULL);
+	ASSERT (g   != NULL) ;
+	ASSERT (rdb != NULL) ;
 
-	bool reload = !Globals_Get_ProcessIsChild();
+	bool reload = !Globals_Get_ProcessIsChild () ;
 
-	Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
-	Delta_Matrix lbls = Graph_GetNodeLabelMatrix(g);
-	_Encode_Delta_Matrix(rdb, lbls, reload);
+	Delta_Matrix lbls = Graph_GetNodeLabelMatrix (g) ;
+	_Encode_Delta_Matrix (rdb, lbls, reload) ;
 }
+

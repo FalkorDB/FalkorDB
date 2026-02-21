@@ -186,19 +186,22 @@ void GraphHub_CreateEdges
 	}
 }
 
-// delete a node
-// remove the node from the relevant indexes
+// delete nodes
+// remove nodes from the relevant indexes
 // add node deletion operation to undo-log
-// return 1 on success, 0 otherwise
 void GraphHub_DeleteNodes
 (
 	GraphContext *gc,
 	Node *nodes,
-	uint n,
+	uint64_t n,
 	bool log
 ) {
 	ASSERT (gc    != NULL) ;
 	ASSERT (nodes != NULL) ;
+
+	if (n == 0) {
+		return ;
+	}
 
 	bool has_indices = GraphContext_HasIndices (gc) ;
 
@@ -233,19 +236,27 @@ void GraphHub_DeleteNodes
 	Graph_DeleteNodes (gc->g, nodes, n) ;
 }
 
+// delete an edge
+// delete the edge from the graph
+// delete the edge from the relevant indexes
+// add edge deletion operation to undo-log
 void GraphHub_DeleteEdges
 (
-	GraphContext *gc,
-	Edge *edges,
-	uint64_t n,
-	bool log
+	GraphContext *gc,  // graph context to delete the edge
+	Edge *edges,       // the edge to be deleted
+	uint64_t n,        // number of edges to delete
+	bool log,          // log operations in undo-log
+	bool implicit      // edge deleted due to node deletion
 ) {
-	ASSERT(gc != NULL);
-	ASSERT(n > 0);
-	ASSERT(edges != NULL);
+	ASSERT (gc != NULL) ;
+	ASSERT (edges != NULL) ;
+
+	if (n == 0) {
+		return ;
+	}
 
 	// add edge deletion operation to undo log
-	bool has_indices = GraphContext_HasIndices(gc);
+	bool has_indices = GraphContext_HasIndices (gc) ;
 
 	UndoLog undo_log  = NULL ;
 	EffectsBuffer *eb = NULL ;
@@ -269,7 +280,7 @@ void GraphHub_DeleteEdges
 		}
 	}
 
-	Graph_DeleteEdges(gc->g, edges, n);
+	Graph_DeleteEdges (gc->g, edges, n, implicit) ;
 }
 
 // updates a graph entity attribute set
@@ -429,93 +440,90 @@ void GraphHub_UpdateNodeLabels
 	ASSERT((remove_labels != NULL && n_remove_labels > 0) ||
 		   (remove_labels == NULL && n_remove_labels == 0));
 
-	EffectsBuffer *eb = NULL; 
-	UndoLog undo_log  = NULL;
+	UndoLog undo_log  = NULL ;
+	EffectsBuffer *eb = NULL ;
 
-	if(log == true) {
-		eb = QueryCtx_GetEffectsBuffer();
-		undo_log = QueryCtx_GetUndoLog();
+	if (log == true) {
+		eb = QueryCtx_GetEffectsBuffer () ;
+		undo_log = QueryCtx_GetUndoLog () ;
 	}
 
-	if(add_labels != NULL) {
-		int add_labels_ids[n_add_labels];
+	if (add_labels != NULL) {
 		uint add_labels_index = 0;
+		int add_labels_ids[n_add_labels];
 
 		for (uint i = 0; i < n_add_labels; i++) {
-			const char *label = add_labels[i];
 			// get or create label matrix
-			const Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
-			bool schema_created = false;
-			if(s == NULL) {
-				s = GraphHub_AddSchema(gc, label, SCHEMA_NODE, log);
-				schema_created = true;
+			const char *label = add_labels[i] ;
+			const Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE) ;
+			bool schema_created = false ;
+			if (s == NULL) {
+				s = GraphHub_AddSchema (gc, label, SCHEMA_NODE, log) ;
+				schema_created = true ;
 			}
 
-			int  schema_id = Schema_GetID(s);
-			bool node_labeled = Graph_IsNodeLabeled(gc->g, ENTITY_GET_ID(node),
-					schema_id);
+			int  schema_id = Schema_GetID (s) ;
+			bool node_labeled = Graph_IsNodeLabeled (gc->g, ENTITY_GET_ID(node),
+					schema_id) ;
 
-			if(!node_labeled) {
-				// sync matrix
-				// make sure label matrix is of the right dimensions
-				if(schema_created) {
-					Delta_Matrix m = Graph_GetLabelMatrix(gc->g, schema_id);
-				}
+			if (!node_labeled) {
 				// append label id
-				add_labels_ids[add_labels_index++] = schema_id;
+				add_labels_ids[add_labels_index++] = schema_id ;
 				// add to index
-				Schema_AddNodeToIndex(s, node);
+				Schema_AddNodeToIndex (s, node) ;
 			}
 		}
 
-		if(add_labels_index > 0) {
+		if (add_labels_index > 0) {
 			// update node's labels
-			Graph_LabelNode(gc->g, ENTITY_GET_ID(node), add_labels_ids,
-					add_labels_index);
-			if(log == true) {
-				UndoLog_AddLabels(undo_log, node, add_labels_ids,
-						add_labels_index);
-				EffectsBuffer_AddLabelsEffect(eb, node, add_labels_ids,
-						add_labels_index);
+			Graph_LabelNode (gc->g, ENTITY_GET_ID (node), add_labels_ids,
+					add_labels_index) ;
+
+			if (log == true) {
+				UndoLog_AddLabels (undo_log, node, add_labels_ids,
+						add_labels_index) ;
+				EffectsBuffer_AddLabelsEffect (eb, node, add_labels_ids,
+						add_labels_index) ;
 			}
 		}
 	}
 
-	if(remove_labels != NULL) {
-		int remove_labels_ids[n_remove_labels];
-		uint remove_labels_index = 0;
+	if (remove_labels != NULL) {
+		int remove_labels_ids[n_remove_labels] ;
+		uint remove_labels_index = 0 ;
 
 		for (uint i = 0; i < n_remove_labels; i++) {
-			const char *label = remove_labels[i];
+			const char *label = remove_labels[i] ;
 
 			// label removal
 			// get or create label matrix
-			const Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
-			if(s == NULL) {
+			const Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
+			if (s == NULL) {
 				// skip removal of none existing label
-				continue;
+				continue ;
 			}
 
-			if(!Graph_IsNodeLabeled(gc->g, ENTITY_GET_ID(node), Schema_GetID(s))) {
+			if (!Graph_IsNodeLabeled (gc->g, ENTITY_GET_ID (node),
+						Schema_GetID (s))) {
 				// skip removal of none existing label
-				continue;
+				continue ;
 			}
 
 			// append label id
-			remove_labels_ids[remove_labels_index++] = Schema_GetID(s);
+			remove_labels_ids[remove_labels_index++] = Schema_GetID (s) ;
 			// remove node from index
-			Schema_RemoveNodeFromIndex(s, node);
+			Schema_RemoveNodeFromIndex (s, node) ;
 		}
 
-		if(remove_labels_index > 0) {
+		if (remove_labels_index > 0) {
 			// update node's labels
-			Graph_RemoveNodeLabels(gc->g, ENTITY_GET_ID(node),
-					remove_labels_ids, remove_labels_index);
-			if(log == true) {
-				UndoLog_RemoveLabels(undo_log, node, remove_labels_ids,
-						remove_labels_index);
-				EffectsBuffer_AddRemoveLabelsEffect(eb, node, remove_labels_ids,
-						remove_labels_index);
+			Graph_RemoveNodeLabels (gc->g, ENTITY_GET_ID(node),
+					remove_labels_ids, remove_labels_index) ;
+			if (log == true) {
+				UndoLog_RemoveLabels (undo_log, node, remove_labels_ids,
+						remove_labels_index) ;
+				EffectsBuffer_AddRemoveLabelsEffect (eb, node,
+						remove_labels_ids, remove_labels_index) ;
 			}
 		}
 	}

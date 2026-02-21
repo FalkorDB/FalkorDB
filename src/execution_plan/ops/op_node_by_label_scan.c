@@ -100,15 +100,13 @@ static bool _ConstructIterator
 	NodeByLabelScan *op
 ) {
 	GrB_Info info;
-	NodeID   minId;
-	NodeID   maxId;
 
 	op->L = Graph_GetLabelMatrix(op->g, op->n->label_id);
 
 	bool has_ranges = array_len(op->ranges) > 0;
 	if(has_ranges) {
 		// use range iterator
-		if(!BitmapRange_FromRanges(op->ranges, op->ids, op->child_record, 0,
+		if (!BitmapRange_FromRanges (op->ranges, op->ids, op->child_record, 0,
 				Graph_UncompactedNodeCount(op->g))) {
 			return false;
 		}

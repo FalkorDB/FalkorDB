@@ -44,8 +44,9 @@ extern RedisModuleType *GraphMetaRedisModuleType;
 // this field is used to represent when the module is replicating its graphs
 uint aux_field_counter = 0 ;
 
-// holds the id of the Redis Main thread in order to figure out the context the fork is running on
-static pthread_t redis_main_thread_id;
+// holds the id of the Redis Main thread in order to figure out the context
+// the fork is running on
+pthread_t redis_main_thread_id ;
 
 // this callback invokes once rename for a graph is done
 // since the key value is a graph context
@@ -303,31 +304,6 @@ static bool _IsEventPersistenceEnd
 		   );
 }
 
-static void _ReplicationRoleChangedEventHandler
-(
-	RedisModuleCtx *ctx,
-	RedisModuleEvent eid,
-	uint64_t subevent,
-	void *data
-) {
-	//KeySpaceGraphIterator it;
-	//GraphContext *gc = NULL;
-	//Globals_ScanGraphs(&it);
-	//if(subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_MASTER) {
-	//	// now master enable constraints
-	//	while((gc = GraphIterator_Next(&it)) != NULL) {
-	//		GraphContext_EnableConstrains(gc);
-	//		GraphContext_DecreaseRefCount(gc);
-	//	}
-	//} else if (subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA) {
-	//	// now slave disable constraints
-	//	while((gc = GraphIterator_Next(&it)) != NULL) {
-	//		GraphContext_DisableConstrains(gc);
-	//		GraphContext_DecreaseRefCount(gc);
-	//	}
-	//}
-}
-
 // server persistence event handler
 static void _PersistenceEventHandler
 (
@@ -442,10 +418,6 @@ static void _RegisterServerEvents
 	//		_ModuleLoadedHandler);
 	//ASSERT(res == REDISMODULE_OK);
 
-//	RedisModule_SubscribeToServerEvent (ctx,
-//			RedisModuleEvent_ReplicationRoleChanged,
-//			_ReplicationRoleChangedEventHandler) ;
-
 	RedisModule_SubscribeToKeyspaceEvents(ctx,
 			REDISMODULE_NOTIFY_GENERIC,
 			_GenericKeyspaceHandler);
@@ -456,7 +428,7 @@ static void _RegisterServerEvents
 //------------------------------------------------------------------------------
 
 // before fork at parent
-static void RG_ForkPrepare() {
+static void _ForkPrepare() {
 	// at this point, fork been issued, we assume that this is due to BGSAVE
 	// or RedisSearch GC
 	//
@@ -472,7 +444,7 @@ static void RG_ForkPrepare() {
 	// BGSAVE is invoked from Redis main thread
 	// return if we have half-baked graphs
 	bool sync_graphs_before_fork =
-		pthread_equal (pthread_self (), redis_main_thread_id) &&
+		pthread_equal (pthread_self (), redis_main_thread_id) != 0 &&
 		!INTERMEDIATE_GRAPHS ;
 
 	// measure and report prep time
@@ -490,7 +462,7 @@ static void RG_ForkPrepare() {
 		while ((gc = GraphIterator_Next (&it)) != NULL) {
 			// acquire read lock, guarantee graph isn't modified by a writer
 			Graph *g = gc->g ;
-			Graph_AcquireReadLock (g) ;  // release in RG_AfterForkParent
+			Graph_AcquireReadLock (g) ;  // release in _AfterForkParent
 
 			// set matrix synchronization policy to default
 			Graph_SetMatrixPolicy (g, SYNC_POLICY_FLUSH_RESIZE) ;
@@ -503,6 +475,10 @@ static void RG_ForkPrepare() {
 			//------------------------------------------------------------------
 
 			// calling Graph_Get* will sync the retrieved matrix
+
+			Graph_GetZeroMatrix (g) ;
+			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+					"preparing to fork") ;
 
 			Graph_GetAdjacencyMatrix (g, false) ;
 			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
@@ -528,11 +504,19 @@ static void RG_ForkPrepare() {
 
 			// decrease graph context ref count
 			GraphContext_DecreaseRefCount (gc) ;
+
+			// quick return if graph sync failed
+			// as we can't abort the fork it is the child which will shortly
+			// discover that one of the graphs isn't sync causing it to exit
+			// before redis starts encoding the RDB file
+			if (!Graph_Synced (g)) {
+				RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_WARNING,
+						"Graph %s isn't synchronize, BGSAVE will fail",
+						GraphContext_GetName (gc));
+				break ;
+			}
 		}
 	}
-
-	// acquire globals write lock
-	Globals_WriteLock () ;
 
 	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
 			"Fork preparation time: %.6f sec\n", simple_toc (tic)) ;
@@ -542,13 +526,10 @@ static void RG_ForkPrepare() {
 }
 
 // after fork at parent
-static void RG_AfterForkParent() {
+static void _AfterForkParent() {
 	bool release_graphs_after_fork =
 		pthread_equal (pthread_self (), redis_main_thread_id) &&
 		!INTERMEDIATE_GRAPHS ;
-
-	// release globals lock
-	Globals_Unlock () ;
 
 	if (release_graphs_after_fork) {
 		// the child process forked, release all acquired locks
@@ -567,11 +548,9 @@ static void RG_AfterForkParent() {
 }
 
 // after fork at child
-static void RG_AfterForkChild() {
+static void _AfterForkChild() {
 	// mark that the child is a forked process so that it doesn't
 	// attempt invalid accesses of POSIX primitives it doesn't own
-	Globals_Unlock () ; // release globals lock
-	Globals_ReInitLock () ;
 	Globals_Set_ProcessIsChild (true) ;
 
 	// restrict GraphBLAS to use a single thread this is done for 2 reasons:
@@ -580,16 +559,28 @@ static void RG_AfterForkChild() {
 	// in forked process
 	GxB_set (GxB_NTHREADS, 1) ;
 
+	// make sure all graphs in keyspace are fully synced
 	GraphContext *gc = NULL ;
 	KeySpaceGraphIterator it ;
 	Globals_ScanGraphs (&it) ;
 
 	while ((gc = GraphIterator_Next (&it)) != NULL) {
-		// matrices should be synced, don't waste time
-		Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_NOP) ;
+		Graph *g = GraphContext_GetGraph (gc) ;
+
+		bool synced = Graph_Synced (g) ;
+
+		ASSERT (!Graph_IsWriteLocked (g)) ;
 
 		// decrease graph context ref count
 		GraphContext_DecreaseRefCount (gc) ;
+
+		// abort BGSAVE if graph isn't synced
+		// it's the parent process responsibility (_ForkPrepare) to synchronize
+		// the entire graph, if one of the graph's matrices isn't synced
+		// it might be related to a GraphBLAS failure e.g. out of memory
+		if (!synced) {
+			_exit (1) ;  // use _exit as it is async-signal-safe
+		}
 	}
 }
 
@@ -599,9 +590,9 @@ static void _RegisterForkHooks() {
 
 	// register handlers to control the behavior of fork calls
 	int res = pthread_atfork (
-			RG_ForkPrepare,
-			RG_AfterForkParent,
-			RG_AfterForkChild) ;
+			_ForkPrepare,
+			_AfterForkParent,
+			_AfterForkChild) ;
 	ASSERT (res == 0) ;
 }
 

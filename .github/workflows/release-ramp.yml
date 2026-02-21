@@ -25,6 +25,9 @@ jobs:
     if: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v')) || (github.event_name == 'workflow_dispatch' && startsWith(github.event.inputs.tag, 'v')) }}
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
       - name: Set SEMVER and TAG
         id: set_semver
         run: |
@@ -36,6 +39,21 @@ jobs:
           SEMVER=$(echo "${TAG_NAME}" | sed 's/^v//')
           echo "SEMVER=${SEMVER}" >> $GITHUB_OUTPUT
           echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Verify tag matches version.h
+        run: |
+          git fetch origin ${{ env.COMMIT_SHA }} --depth=1
+          VERSION_H=$(git show ${{ env.COMMIT_SHA }}:src/version.h)
+          MAJOR=$(echo "$VERSION_H" | grep FALKOR_VERSION_MAJOR | awk '{print $3}')
+          MINOR=$(echo "$VERSION_H" | grep FALKOR_VERSION_MINOR | awk '{print $3}')
+          PATCH=$(echo "$VERSION_H" | grep FALKOR_VERSION_PATCH | awk '{print $3}')
+          FILE_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          TAG="${{ steps.set_semver.outputs.TAG_NAME }}"
+          echo "Tag: ${TAG}, version.h: ${FILE_VERSION}"
+          if [ "${TAG}" != "${FILE_VERSION}" ]; then
+            echo "::error::Tag '${TAG}' does not match version.h '${FILE_VERSION}'"
+            exit 1
+          fi
 
       - name: Download rhel8 ramp file
         uses: dawidd6/action-download-artifact@v12
