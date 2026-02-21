@@ -12,7 +12,7 @@ import asyncio
 #    expect not to get any exceptions
 
 GRAPH_ID = "max_pending_queries"
-SLOW_QUERY = "UNWIND range (0, 1000000) AS x WITH x WHERE (x / 2) = 50 RETURN x"
+SLOW_QUERY = "UNWIND range(0, 999999) AS x WITH x WHERE (x / 2) = 50 RETURN x"
 
 
 async def issue_query(self, g, q):
