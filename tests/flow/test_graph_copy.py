@@ -317,7 +317,7 @@ class testGraphCopy():
 
         # refresh connection (test_08 may have restarted the environment)
         self.conn = self.env.getConnection()
-        self.conn.execute_command("FLUSHALL")
+        self.conn.flushall()
 
         dummy_id    = "dummy"
         src_id      = "copy_src"
@@ -342,5 +342,5 @@ class testGraphCopy():
         self.assert_graph_eq(src_graph, dest_graph)
 
         # clean up
-        self.conn.execute_command("FLUSHALL")
+        self.conn.flushall()
 
