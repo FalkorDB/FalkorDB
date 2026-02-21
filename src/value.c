@@ -218,9 +218,8 @@ SIValue SI_ShareValue(const SIValue v) {
 }
 
 // make an SIValue that creates its own copies of the original's allocations
-// if any this is not a deep clone: if the inner value holds its own references
-// such as the Entity pointer to the properties of a Node or Edge
-// those are unmodified
+// for Node and Edge values, this deep-copies the AttributeSet so the clone
+// is independent of graph storage and safe from use-after-free on deletion
 SIValue SI_CloneValue(const SIValue v) {
 	if(v.allocation == M_NONE) {
 		return v; // stack value; no allocation necessary
@@ -268,6 +267,16 @@ SIValue SI_CloneValue(const SIValue v) {
 
 	clone.ptrval = rm_malloc(size);
 	memcpy(clone.ptrval, v.ptrval, size);
+
+	// deep-copy attributes so the clone is independent of graph storage
+	// this prevents use-after-free when the original entity is deleted
+	GraphEntity *src = (GraphEntity *)v.ptrval;
+	GraphEntity *dst = (GraphEntity *)clone.ptrval;
+	if(src->attributes != NULL) {
+		dst->attributes = rm_malloc(sizeof(AttributeSet));
+		*dst->attributes = AttributeSet_Clone(*src->attributes);
+	}
+
 	return clone;
 }
 
@@ -1263,8 +1272,16 @@ void SIValue_Free
 			break;
 		case T_NODE:
 		case T_EDGE:
+		{
+			// free deep-copied attributes owned by this clone
+			GraphEntity *e = (GraphEntity *)v.ptrval;
+			if(e->attributes != NULL) {
+				AttributeSet_Free(e->attributes);
+				rm_free(e->attributes);
+			}
 			rm_free(v.ptrval);
 			break;
+		}
 		case T_ARRAY:
 			SIArray_Free(v);
 			break;
