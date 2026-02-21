@@ -345,6 +345,14 @@ SIValue AR_RANGE(SIValue *argv, int argc, void *private_data) {
 		size = 1 + (end - start) / interval;
 	}
 
+	// cap range size to prevent OOM from queries like range(1, INT64_MAX)
+	if(size > 1000000) {
+		ErrorCtx_RaiseRuntimeException(
+			"range() maximum size exceeded: %llu elements requested, "
+			"limit is 1000000", (unsigned long long)size);
+		return SI_NullVal();
+	}
+
 	SIValue array = SI_Array(size);
 	for(uint64_t i = 0; i < size; i++) {
 		SIArray_Append(&array, SI_LongVal(start));
