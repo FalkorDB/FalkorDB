@@ -15,6 +15,29 @@ SIValue SIPath_New(Path *p) {
 	path.ptrval = Path_Clone(p);
 	path.type = T_PATH;
 	path.allocation = M_SELF;
+
+	// deep-copy attributes for each node and edge so the SIValue
+	// is independent of graph storage (prevents use-after-free on deletion)
+	Path *clone = (Path *)path.ptrval;
+	size_t nodeCount = Path_NodeCount(clone);
+	for(size_t i = 0; i < nodeCount; i++) {
+		Node *n = clone->nodes + i;
+		if(n->attributes != NULL) {
+			AttributeSet *a = rm_malloc(sizeof(AttributeSet));
+			*a = AttributeSet_Clone(*n->attributes);
+			n->attributes = a;
+		}
+	}
+	size_t edgeCount = Path_EdgeCount(clone);
+	for(size_t i = 0; i < edgeCount; i++) {
+		Edge *e = clone->edges + i;
+		if(e->attributes != NULL) {
+			AttributeSet *a = rm_malloc(sizeof(AttributeSet));
+			*a = AttributeSet_Clone(*e->attributes);
+			e->attributes = a;
+		}
+	}
+
 	return path;
 }
 
@@ -175,6 +198,25 @@ int SIPath_Compare(SIValue p1, SIValue p2) {
 void SIPath_Free(SIValue p) {
 	if(p.allocation == M_SELF) {
 		Path *path = (Path *) p.ptrval;
+
+		// free deep-copied attributes owned by this clone
+		size_t nodeCount = Path_NodeCount(path);
+		for(size_t i = 0; i < nodeCount; i++) {
+			Node *n = path->nodes + i;
+			if(n->attributes != NULL) {
+				AttributeSet_Free(n->attributes);
+				rm_free(n->attributes);
+			}
+		}
+		size_t edgeCount = Path_EdgeCount(path);
+		for(size_t i = 0; i < edgeCount; i++) {
+			Edge *e = path->edges + i;
+			if(e->attributes != NULL) {
+				AttributeSet_Free(e->attributes);
+				rm_free(e->attributes);
+			}
+		}
+
 		Path_Free(path);
 	}
 }
