@@ -99,15 +99,18 @@ jobs:
         . venv/bin/activate
         if ! make flow-tests CLEAR_LOGS=0 SAN=address; then
           echo "::warning::Flow tests failed on first attempt, retrying..."
-          rm -rf tests/flow/logs
+          mv tests/flow/logs tests/flow/logs.first-attempt
           make flow-tests CLEAR_LOGS=0 SAN=address
         fi
       continue-on-error: true
 
     - uses: actions/upload-artifact@v6
+      if: always()
       with:
         name: Upload flow tests logs
-        path: ${{ github.workspace }}/tests/flow/logs/
+        path: |
+          ${{ github.workspace }}/tests/flow/logs/
+          ${{ github.workspace }}/tests/flow/logs.first-attempt/
         retention-days: 7
 
     - name: TCK tests
@@ -116,15 +119,18 @@ jobs:
         . venv/bin/activate
         if ! make tck-tests CLEAR_LOGS=0 SAN=address; then
           echo "::warning::TCK tests failed on first attempt, retrying..."
-          rm -rf tests/tck/logs
+          mv tests/tck/logs tests/tck/logs.first-attempt
           make tck-tests CLEAR_LOGS=0 SAN=address
         fi
       continue-on-error: true
 
     - uses: actions/upload-artifact@v6
+      if: always()
       with:
         name: Upload TCK tests logs
-        path: ${{ github.workspace }}/tests/tck/logs/
+        path: |
+          ${{ github.workspace }}/tests/tck/logs/
+          ${{ github.workspace }}/tests/tck/logs.first-attempt/
         retention-days: 7
 
     - name: Check on failures
