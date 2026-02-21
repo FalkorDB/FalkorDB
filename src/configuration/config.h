@@ -39,7 +39,9 @@ typedef enum {
 	Config_DELAY_INDEXING            = 17,  // delay index construction when decoding
 	Config_IMPORT_FOLDER             = 18,  // path to CSV import folder
 	Config_TEMP_FOLDER               = 19,  // path to temp folder
-	Config_END_MARKER                = 20
+	Config_MMAP_ALLOCATOR_ENABLED    = 20,  // enable/disable mmap-backed allocator
+	Config_MMAP_ALLOCATOR_CHUNK_SIZE = 21,  // chunk size for mmap allocator (in bytes)
+	Config_END_MARKER                = 22
 } Config_Option_Field;
 
 // callback function, invoked once configuration changes as a result of
