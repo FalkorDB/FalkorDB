@@ -56,7 +56,7 @@ jobs:
           fi
 
       - name: Download rhel8 ramp file
-        uses: dawidd6/action-download-artifact@v11
+        uses: dawidd6/action-download-artifact@v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -65,7 +65,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Download rhel9 ramp file
-        uses: dawidd6/action-download-artifact@v11
+        uses: dawidd6/action-download-artifact@v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -74,7 +74,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Download amazonlinux2023 ramp file
-        uses: dawidd6/action-download-artifact@v11
+        uses: dawidd6/action-download-artifact@v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -83,7 +83,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Download linux x64 ramp file
-        uses: dawidd6/action-download-artifact@v11
+        uses: dawidd6/action-download-artifact@v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -92,7 +92,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Download linux arm64v8 ramp file
-        uses: dawidd6/action-download-artifact@v11
+        uses: dawidd6/action-download-artifact@v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
