@@ -119,7 +119,7 @@ jobs:
         . venv/bin/activate
         if ! make tck-tests CLEAR_LOGS=0 SAN=address; then
           echo "::warning::TCK tests failed on first attempt, retrying..."
-          mv tests/tck/logs tests/tck/logs.first-attempt
+          mv tests/tck/logs tests/tck/logs.first-attempt || true
           make tck-tests CLEAR_LOGS=0 SAN=address
         fi
       continue-on-error: true
