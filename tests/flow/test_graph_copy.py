@@ -307,3 +307,40 @@ class testGraphCopy():
         # make sure src graph on master is the same as cloned graph on replica
         self.assert_graph_eq(src_graph, replica_cloned_graph)
 
+    def test_09_copy_with_multiple_graphs(self):
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
+        # regression test for issue #1611
+        # GRAPH.COPY should succeed when other graphs exist in the database
+
+        # refresh connection (test_08 may have restarted the environment)
+        self.conn = self.env.getConnection()
+        self.conn.flushall()
+
+        dummy_id    = "dummy"
+        src_id      = "copy_src"
+        dest_id     = "copy_dest"
+
+        dummy_graph = self.db.select_graph(dummy_id)
+        src_graph   = self.db.select_graph(src_id)
+
+        # create a dummy graph so multiple graphs exist in keyspace
+        dummy_graph.query("CREATE (:X {v:1})")
+
+        # create src graph with nodes, edges, indices and constraints
+        src_graph.query("CREATE (:A {v:1})-[:R {v:2}]->(:B {v:3})")
+        src_graph.query("CREATE INDEX FOR (n:A) ON (n.v)")
+        src_graph.query("CREATE INDEX FOR ()-[r:R]-() ON (r.v)")
+        create_constraint(src_graph, "UNIQUE", "NODE", "A", "v", sync=True)
+
+        # expecting GRAPH.COPY to succeed
+        self.graph_copy(src_id, dest_id)
+
+        dest_graph = self.db.select_graph(dest_id)
+        self.assert_graph_eq(src_graph, dest_graph)
+
+        # clean up
+        self.conn.flushall()
+

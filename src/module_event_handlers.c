@@ -559,6 +559,18 @@ static void _AfterForkChild() {
 	// in forked process
 	GxB_set (GxB_NTHREADS, 1) ;
 
+	// the graph sync validation only applies to BGSAVE forks (main thread)
+	// GRAPH.COPY forks from a cron thread and only syncs the source graph
+	// after fork(), the child inherits the forking thread's ID (POSIX)
+	// so pthread_self() here matches the thread that called fork()
+	bool validate_graphs_after_fork =
+		pthread_equal (pthread_self (), redis_main_thread_id) != 0 &&
+		!INTERMEDIATE_GRAPHS ;
+
+	if (!validate_graphs_after_fork) {
+		return ;
+	}
+
 	// make sure all graphs in keyspace are fully synced
 	GraphContext *gc = NULL ;
 	KeySpaceGraphIterator it ;
