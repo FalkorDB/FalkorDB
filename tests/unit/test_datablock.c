@@ -14,6 +14,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 
 void setup() {
 	Alloc_Reset () ;

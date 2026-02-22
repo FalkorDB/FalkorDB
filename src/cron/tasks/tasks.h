@@ -8,5 +8,6 @@
 // a single header file which includes all cron reuccring tasks
 
 #include "./offload.h"
+#include "./recurring_task.h"
 #include "./stream_finished_queries.h"
 
