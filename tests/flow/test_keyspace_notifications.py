@@ -1,5 +1,5 @@
 import time
-from common import Env, FalkorDB
+from common import Env
 
 GRAPH_ID = "keyspace_notifications_test"
 
