@@ -155,6 +155,12 @@ void ExecutionPlan_ReduceFilterToApply
 	// reduce
 	OpBase *apply_op = _ReduceFilterToOp(filter_plan, vars, filter->filterTree);
 
+	// if _ReduceFilterToOp returned a FilterOp reusing the same tree,
+	// transfer ownership to prevent double-free
+	if(apply_op->type == OPType_FILTER) {
+		filter->filterTree = NULL;
+	}
+
 	// replace operations
 	ExecutionPlan_ReplaceOp(plan, (OpBase *)filter, apply_op);
 
