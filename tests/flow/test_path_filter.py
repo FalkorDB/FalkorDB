@@ -284,7 +284,7 @@ class testPathFilter(FlowTestsBase):
         # XOR combined with a path filter must return an error, not crash
         try:
             self.graph.query(
-                "MATCH (n) WHERE NOT((()--()) XOR TRUE) RETURN n")
+                "MATCH (n) WHERE (()--()) XOR n.v RETURN n")
             self.env.assertTrue(False, "Expected an error")
         except ResponseError as e:
             self.env.assertContains("XOR", str(e))
@@ -294,7 +294,7 @@ class testPathFilter(FlowTestsBase):
         # NOT(XOR) becomes XNOR internally via DeMorgan, must also error
         try:
             self.graph.query(
-                "MATCH (n) WHERE (()--()) XOR n.v RETURN n")
+                "MATCH (n) WHERE NOT((()--()) XOR TRUE) RETURN n")
             self.env.assertTrue(False, "Expected an error")
         except ResponseError as e:
             self.env.assertContains("XOR", str(e))
