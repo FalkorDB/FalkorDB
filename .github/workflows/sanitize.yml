@@ -99,7 +99,7 @@ jobs:
         . venv/bin/activate
         if ! make flow-tests CLEAR_LOGS=0 SAN=address; then
           echo "::warning::Flow tests failed on first attempt, retrying..."
-          mv tests/flow/logs tests/flow/logs.first-attempt
+          mv tests/flow/logs tests/flow/logs.first-attempt || true
           make flow-tests CLEAR_LOGS=0 SAN=address
         fi
       continue-on-error: true
