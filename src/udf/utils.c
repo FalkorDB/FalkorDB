@@ -3,6 +3,7 @@
 * Licensed under the Server Side Public License v1 (SSPLv1).
 */
 
+#include "RG.h"
 #include "quickjs.h"
 #include "classes.h"
 #include "repository.h"
