@@ -11,6 +11,10 @@
 #include <stdio.h>
 
 void setup() {
+	// skip if memory sanitizer is enabled
+	if(getenv("SANITIZER") != NULL || getenv("VALGRIND") != NULL) {
+		exit(0);
+	}
 	Alloc_Reset();
 }
 

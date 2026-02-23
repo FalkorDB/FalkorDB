@@ -3,8 +3,6 @@
 PROGNAME="${BASH_SOURCE[0]}"
 HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
 ROOT=$(cd $HERE/../.. && pwd)
-READIES=$ROOT/deps/readies
-. $READIES/shibumi/defs
 
 cd $HERE
 
@@ -135,9 +133,15 @@ fi
 
 E=0
 
-$READIES/bin/sep
+echo "========================================"
 echo "# Running micro benchmarks"
-BENCHS_DIR="$(cd $BINROOT/src/tests/micro_benchmarks; pwd)"
+BENCHS_DIR="$(cd $BINROOT/tests/micro_benchmarks 2>/dev/null && pwd)"
+
+if [[ ! -d "$BENCHS_DIR" ]]; then
+    echo "Error: Benchmark directory not found: $BINROOT/tests/micro_benchmarks"
+    exit 1
+fi
+
 cd $ROOT/tests/micro_benchmarks
 if [[ -z $BENCH ]]; then
     for bench in $(find $BENCHS_DIR -type f -executable -name "benchmark_*"); do

@@ -79,35 +79,35 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ./bin/linux-x64-release/GraphBLAS
-          key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
+          key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c', './build.sh') }}
 
       - name: Cache parser
         id: cache_parser
         uses: actions/cache@v5
         with:
           path: ./bin/linux-x64-release/libcypher-parser
-          key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+          key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c', './build.sh') }}
 
       - name: Cache search
         id: cache_search
         uses: actions/cache@v5
         with:
           path: ./bin/linux-x64-release/search-static
-          key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+          key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h', './build.sh') }}
 
       - name: Cache libcurl
         id: cache_libcurl
         uses: actions/cache@v5
         with:
           path: ./bin/linux-x64-release/libcurl
-          key: libcurl-x64-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}
+          key: libcurl-x64-${{ hashFiles('./deps/libcurl/RELEASE-NOTES', './build.sh') }}
 
       - name: Cache libcsv
         id: cache_libcsv
         uses: actions/cache@v5
         with:
           path: ./bin/linux-x64-release/libcsv
-          key: libcsv-x64-${{ hashFiles('./deps/libcsv/ChangeLog') }}
+          key: libcsv-x64-${{ hashFiles('./deps/libcsv/ChangeLog', './build.sh') }}
 
       - name: Install Google Benchmark
         run: |
@@ -116,7 +116,7 @@ jobs:
       - name: Build with micro-benchmarks
         run: |
           rustup default stable
-          make BUILD_TYPE=release MICRO_BENCHMARKS=1 -j$(nproc)
+          BUILD_BENCHMARKS=1 make -j$(nproc)
 
       - name: Run micro-benchmarks
         run: |

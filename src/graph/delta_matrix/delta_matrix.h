@@ -333,7 +333,7 @@ GrB_Info Delta_Matrix_wait
 	bool force_sync
 );
 
-void Delta_Matrix_synchronize
+GrB_Info Delta_Matrix_synchronize
 (
 	Delta_Matrix C,
 	GrB_Index nrows,
