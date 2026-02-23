@@ -23,16 +23,15 @@ void CronTask_AddStreamFinishedQueries(void) {
 	}
 
 	// create task context
-	StreamFinishedQueryCtx *ctx = rm_malloc (sizeof (StreamFinishedQueryCtx)) ;
-	ctx->graph_idx = 0 ;
+	void *ctx = StreamFinishedQueries_new () ;
 
 	// create a reuccring task
 	RecurringTaskCtx *re_ctx = RecurringTask_New (
 			10,    // every 10ms
 			250,   // min interval 250ms
 			3000,  // max interval 3s
-			CronTask_streamFinishedQueries,
-			rm_free,
+			StreamFinishedQueries,
+			(void (*)(void**))StreamFinishedQueries_free,
 			ctx) ;
 
 	// add recurring task
@@ -43,15 +42,15 @@ void CronTask_AddStreamFinishedQueries(void) {
 // add data offloading task as a recurring cron task
 static void CronTask_AddDataOffloadingTask(void) {
 	// create task context
-	void *ctx = CronTask_newOffloadEntities (NULL) ;
+	void *ctx = OffloadEntities_new () ;
 
 	// create a reuccring task
 	RecurringTaskCtx *re_ctx = RecurringTask_New (
 			10,    // every 10ms
 			250,   // min interval 250ms
 			3000,  // max interval 3s
-			CronTask_offloadEntities,
-			rm_free,
+			OffloadEntities,
+			(void (*)(void**))OffloadEntities_free,
 			ctx) ;
 
 	// add recurring task

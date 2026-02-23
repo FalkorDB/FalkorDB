@@ -13,16 +13,18 @@ typedef struct {
 	uint32_t graph_idx;        // last processed graph index
 } StreamFinishedQueryCtx;
 
-// create task context
-void *CronTask_newStreamFinishedQueries
+// create a new stream finished queries context
+void *StreamFinishedQueries_new (void);
+
+// stream finished queries for each graph in the keyspace
+bool StreamFinishedQueries
 (
 	void *pdata  // task context
 );
 
-// cron task
-// stream finished queries for each graph in the keyspace
-bool CronTask_streamFinishedQueries
+// free stream finished queries context
+void *StreamFinishedQueries_free
 (
-	void *pdata  // task context
+	StreamFinishedQueryCtx **ctx
 );
 

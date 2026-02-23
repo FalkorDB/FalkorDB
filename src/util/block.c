@@ -209,7 +209,7 @@ void Block_MarkItemDeleted
 	ASSERT (block->offloaded_count + block->deleted_count <= block->cap) ;
 }
 
-// marks the ith item as active
+// marks the ith item as active, counterpart of Block_MarkItemDeleted
 void Block_MarkItemActive
 (
 	Block *block,  // block
@@ -262,7 +262,7 @@ void Block_MarkItemOffload
 	memset (block->elements + (i * block->itemSize), 0, block->itemSize) ;
 }
 
-// marks the ith item as loaded
+// marks the ith item as loaded, counterpart of Block_MarkItemOffload
 void Block_MarkItemLoaded
 (
 	Block *block,  // block

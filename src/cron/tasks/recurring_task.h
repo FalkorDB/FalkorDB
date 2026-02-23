@@ -19,9 +19,9 @@ RecurringTaskCtx *RecurringTask_New
 	// hosted task callbacks
 	//--------------------------------------------------------------------------
 
-	bool (*task_cb)(void*),     // hosted task function pointer
-	void (*destructor)(void*),  // hosted task's context destructor
-	void *ctx                   // hosted task's context
+	bool (*task_cb)(void*),      // hosted task function pointer
+	void (*destructor)(void**),  // hosted task's context destructor
+	void *ctx                    // hosted task's context
 );
 
 // recurring task run function

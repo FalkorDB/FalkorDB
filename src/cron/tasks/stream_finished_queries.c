@@ -193,25 +193,19 @@ static void _stream_queries
 	}
 }
 
-void *CronTask_newStreamFinishedQueries
-(
-	void *pdata  // task context
-) {
-	ASSERT(pdata != NULL);
-	StreamFinishedQueryCtx *ctx = (StreamFinishedQueryCtx*)pdata;
-
+// create a new stream finished queries context
+void *StreamFinishedQueries_new (void) {
 	// create private data for next invocation
-	StreamFinishedQueryCtx *new_ctx = rm_malloc(sizeof(StreamFinishedQueryCtx));
+	StreamFinishedQueryCtx *ctx = rm_malloc (sizeof (StreamFinishedQueryCtx)) ;
 
 	// set next iteration graph index
-	new_ctx->graph_idx = ctx->graph_idx;
+	ctx->graph_idx = 0 ;
 
-	return new_ctx;
+	return ctx ;
 }
 
-// cron task
 // stream finished queries for each graph in the keyspace
-bool CronTask_streamFinishedQueries
+bool StreamFinishedQueries
 (
 	void *pdata  // task context
 ) {
@@ -314,5 +308,16 @@ bool CronTask_streamFinishedQueries
 	ctx->graph_idx = (gc == NULL) ? 0 : ctx->graph_idx;
 
 	return (gc != NULL);
+}
+
+// free stream finished queries context
+void *StreamFinishedQueries_free
+(
+	StreamFinishedQueryCtx **ctx
+) {
+	ASSERT (ctx != NULL && *ctx != NULL) ;
+
+	rm_free (*ctx) ;
+	*ctx = NULL ;
 }
 

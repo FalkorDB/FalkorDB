@@ -18,9 +18,9 @@ typedef struct RecurringTaskCtx {
 	// hosted task callbacks
 	//--------------------------------------------------------------------------
 
-	bool (*task_cb)(void *);     // task function pointer
-	void (*destructor)(void *);  // task's context destructor
-	void *ctx;                   // ctx passed to task and destructor callbacks
+	bool (*task_cb)(void *);      // task function pointer
+	void (*destructor)(void **);  // task's context destructor
+	void *ctx;                    // ctx passed to task and destructor callbacks
 } RecurringTaskCtx;
 
 // recurring task constructor
@@ -34,9 +34,9 @@ RecurringTaskCtx *RecurringTask_New
 	// hosted task callbacks
 	//--------------------------------------------------------------------------
 
-	bool (*task_cb)(void*),     // hosted task function pointer
-	void (*destructor)(void*),  // hosted task's context destructor
-	void *ctx                   // hosted task's context
+	bool (*task_cb)(void*),      // hosted task function pointer
+	void (*destructor)(void**),  // hosted task's context destructor
+	void *ctx                    // hosted task's context
 ) {
 	ASSERT (task_cb      != NULL) ;
 	ASSERT (destructor   != NULL) ;
@@ -71,7 +71,7 @@ void CronTask_RecurringTask_Free
 	if (ctx->ref_count  == 0    &&
 		ctx->destructor != NULL &&
 		ctx->ctx        != NULL) {
-		ctx->destructor (ctx->ctx) ;
+		ctx->destructor (&ctx->ctx) ;
 
 		// free recurring task context
 		rm_free (ctx) ;

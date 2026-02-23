@@ -23,32 +23,65 @@ typedef struct {
 	uint64_t graph_idx;  // index of the graph currently being processed
 	EntityID entity_id;  // ID of the next entity to process (resume point)
 	GraphEntityType t;   // current processed entity type Node/Edge
+	EntityID *ids;       // array of entity IDs
+	AttributeSet *sets;  // array of attribute sets
+	size_t *sizes;       // array of attribute-set byte sizes
 } OffloadTaskCtx;
 
-void *CronTask_newOffloadEntities
-(
-	void *pdata  // [optional] task context
-) {
-	OffloadTaskCtx *ctx = rm_calloc (1, sizeof (OffloadTaskCtx)) ;
-	if (ctx == NULL) {
+// create a new offload entities context
+void *OffloadEntities_new (void) {
+	//--------------------------------------------------------------------------
+	// allocate workspace
+	//--------------------------------------------------------------------------
+
+	EntityID     *ids   = rm_calloc (MAX_BATCH_SIZE, sizeof (EntityID)) ;
+	AttributeSet *sets  = rm_calloc (MAX_BATCH_SIZE, sizeof (AttributeSet)) ;
+	size_t       *sizes = rm_calloc (MAX_BATCH_SIZE, sizeof (size_t)) ;
+
+	// return if allocation fails
+	if (ids == NULL || sets == NULL || sizes == NULL) {
+		RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
+			"Failed to allocate workspace") ;
+
+		if (ids   != NULL) rm_free (ids)   ;
+		if (sets  != NULL) rm_free (sets)  ;
+		if (sizes != NULL) rm_free (sizes) ;
 		return NULL ;
 	}
 
-	ctx->t = GETYPE_NODE ;
+	// create the context object
+	OffloadTaskCtx *ctx = rm_calloc (1, sizeof (OffloadTaskCtx)) ;
 
-	if (pdata != NULL) {
-		// create a new offload task continuing from where the previous one
-		// (pdata) had leftoff
-		OffloadTaskCtx *prev_ctx = (OffloadTaskCtx*)pdata ;
-		*ctx = *prev_ctx ;
-		rm_free (prev_ctx) ;
+	if (ctx == NULL) {
+		rm_free (ids)   ;
+		rm_free (sets)  ;
+		rm_free (sizes) ;
+		return NULL ;
 	}
 
-	// postcondition: context is valid
-	ASSERT (ctx->t == GETYPE_NODE || ctx->t == GETYPE_EDGE) ;
-	ASSERT (ctx->entity_id != INVALID_ENTITY_ID) ;
+	// initialize context
+	ctx->t     = GETYPE_NODE ;
+	ctx->ids   = ids ;
+	ctx->sets  = sets ;
+	ctx->sizes = sizes ;
 
 	return ctx ;
+}
+
+// free offload entities context
+void OffloadEntities_free
+(
+	OffloadTaskCtx **ctx
+) {
+	ASSERT (ctx != NULL && *ctx != NULL) ;
+
+	rm_free ((*ctx)->ids)   ;
+	rm_free ((*ctx)->sets)  ;
+	rm_free ((*ctx)->sizes) ;
+
+	rm_free (*ctx) ;
+
+	*ctx = NULL ;
 }
 
 // offload graph to disk
@@ -62,15 +95,8 @@ static void _offloadGraph
 (
 	OffloadTaskCtx *ctx,      // task context
 	GraphContext *gc,         // graph context
-	EntityID *ids,            // pre allocated array of entity IDs
-	AttributeSet *sets,       // pre allocated array of attribute sets
-	size_t *sizes,            // pre-allocated array of byte sizes, per attr-set
 	simple_timer_t stopwatch  // timer
 ) {
-	ASSERT (ids  != NULL) ;
-	ASSERT (ctx  != NULL) ;
-	ASSERT (sets != NULL) ;
-
 	// acquire READ lock
 	Graph *g = GraphContext_GetGraph (gc) ;
 	Graph_AcquireReadLock (g) ;
@@ -107,7 +133,7 @@ static void _offloadGraph
 			read++ ;
 			AttributeSet *set =
 				(AttributeSet*)DataBlockIterator_NextSkipOffloaded (it,
-						ids + write) ;
+						ctx->ids + write) ;
 
 			if (set == NULL) {
 				break ;
@@ -118,8 +144,8 @@ static void _offloadGraph
 				continue ;
 			}
 
-			sets  [write] = *set ;
-			sizes [write] = AttributeSet_ByteSize (*set) ;
+			ctx->sets  [write] = *set ;
+			ctx->sizes [write] = AttributeSet_ByteSize (*set) ;
 			write++ ;
 		}
 
@@ -138,11 +164,11 @@ static void _offloadGraph
 			RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
 					"Offloading collected sets to disk") ;
 
-			if (Storage_save (datablock->cf, (const void * const *)sets, sizes,
-						ids, count) == 0) {
+			if (Storage_save (datablock->cf, (const void * const *)ctx->sets,
+						ctx->sizes, ctx->ids, count) == 0) {
 				// attribute sets been offloaded to disk
 				// mark datablock entries as offloaded
-				DataBlock_MarkOffloaded (datablock, ids, count) ;
+				DataBlock_MarkOffloaded (datablock, ctx->ids, count) ;
 
 				// attribute sets been offloaded to disk and the datablock
 				// marked each one as offloaded
@@ -158,7 +184,7 @@ static void _offloadGraph
 				// "shallow" free attribute-sets
 				int j = count ;
 				while (j > 0) {
-					rm_free (sets[--j]) ;
+					rm_free (ctx->sets[--j]) ;
 				}
 
 				Graph_ReleaseLock (g) ;
@@ -214,7 +240,7 @@ static void _offloadGraph
 // the task will quickly return if memory consumption is below a specified limit
 // e.g. memory consumption < 65% quickly return otherwise start offloading
 // returns true to increase task frequency, false to slowdown
-bool CronTask_offloadEntities
+bool OffloadEntities
 (
 	void *pdata  // task context
 ) {
@@ -253,21 +279,6 @@ bool CronTask_offloadEntities
 	// allocate workspace
 	//--------------------------------------------------------------------------
 
-	// TODO: consider moving into task's context and allocate just once
-	EntityID     *ids   = rm_calloc (MAX_BATCH_SIZE, sizeof (EntityID)) ;
-	AttributeSet *sets  = rm_calloc (MAX_BATCH_SIZE, sizeof (AttributeSet)) ;
-	size_t       *sizes = rm_calloc (MAX_BATCH_SIZE, sizeof (size_t)) ;
-
-	// return if allocation fails
-	if (ids == NULL || sets == NULL || sizes == NULL) {
-		RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
-			"Failed to allocate workspace, quickly return") ;
-		if (ids   != NULL) rm_free (ids)   ;
-		if (sets  != NULL) rm_free (sets)  ;
-		if (sizes != NULL) rm_free (sizes) ;
-		return true ;
-	}
-
 	// initialize graphs iterator and pick up from where we've left
 	KeySpaceGraphIterator it ;
 	Globals_ScanGraphs (&it) ;
@@ -300,7 +311,7 @@ bool CronTask_offloadEntities
 				"Offloading graph %s", gc->graph_name) ;
 
 		// offload current graph
-		_offloadGraph (ctx, gc, ids, sets, sizes, stopwatch) ;
+		_offloadGraph (ctx, gc, stopwatch) ;
 
 		RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
 				"Done processing graph %s, either out of time or finished "
@@ -312,11 +323,6 @@ bool CronTask_offloadEntities
 	}
 
 	RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG, "Time quota expired") ;
-
-	// clean up
-	rm_free (ids) ;
-	rm_free (sets) ;
-	rm_free (sizes) ;
 
 	// indicate if there's additional work to be done
 	size_t new_rss = (get_current_rss () / (1024 * 1024)) ;

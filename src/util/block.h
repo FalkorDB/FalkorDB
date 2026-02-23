@@ -82,7 +82,7 @@ void Block_MarkItemDeleted
 	uint32_t i     // item position within block
 );
 
-// marks the ith item as active
+// marks the ith item as active, counterpart of Block_MarkItemDeleted
 void Block_MarkItemActive
 (
 	Block *block,  // block
@@ -96,7 +96,7 @@ void Block_MarkItemOffload
 	uint32_t i     // item position within block
 );
 
-// marks the ith item as loaded
+// marks the ith item as loaded, counterpart of Block_MarkItemOffload
 void Block_MarkItemLoaded
 (
 	Block *block,  // block

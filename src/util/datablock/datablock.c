@@ -276,6 +276,9 @@ static void *_DataBlock_LoadItem
         __ATOMIC_RELAXED   // failure memory order
     );
 
+	Block *block = GET_ITEM_BLOCK (idx) ;
+	uint32_t local_idx = GLOBAL_TO_LOCAL_IDX (idx) ;
+
 	if (!success) {
 		// race lost: another thread loaded this item while we were 
 		// fetching it from TidesDB
@@ -285,7 +288,7 @@ static void *_DataBlock_LoadItem
 		item = expected ;  // use the pointer the other thread successfully set
 	} else {
 		// race won: we are responsible for updating the metadata
-		Block_MarkItemActive (GET_ITEM_BLOCK (idx), GLOBAL_TO_LOCAL_IDX (idx)) ;
+		Block_MarkItemLoaded (block, local_idx) ;
 
 		if (delete) {
 			// delete item from storage
@@ -375,7 +378,10 @@ void *DataBlock_AllocateItem
 					array_len (dataBlock->deletedIdx)) ;
 		}
 
-		Block_MarkItemActive (GET_ITEM_BLOCK (pos), GLOBAL_TO_LOCAL_IDX (pos)) ;
+		Block *block       = GET_ITEM_BLOCK      (pos) ;
+		uint32_t local_idx = GLOBAL_TO_LOCAL_IDX (pos) ;
+
+		Block_MarkItemActive (block, local_idx) ;
 	}
 
 	dataBlock->itemCount++ ;
@@ -393,6 +399,7 @@ void DataBlock_DeleteItem
 	DataBlock *dataBlock,  // datablock from which to delete item
 	uint64_t idx           // item index
 ) {
+	// validations
 	ASSERT (dataBlock != NULL) ;
 	ASSERT (!_DataBlock_IndexOutOfBounds (dataBlock, idx)) ;
 

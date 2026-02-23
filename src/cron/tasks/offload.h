@@ -5,6 +5,9 @@
 
 #pragma once
 
+// opaque
+typedef struct OffloadTaskCtx OffloadTaskCtx ;
+
 // the offload recurring task is responsible for scanning through each
 // graph in the keyspace and offload attribute-sets to disk
 //
@@ -15,13 +18,25 @@
 // attribute-sets are offload from the currently processed graph G while the
 // task has acquired both G's write lock and the server's GIL
 
-void *CronTask_newOffloadEntities
+// create a new offload entities context
+void *OffloadEntities_new (void) ;
+
+// cron task entry point
+// offloads all graphs in the keyspace one by one to disk
+// the task is bounded by time (DEADLINE) after which it will exit
+// and be rescheduled for future runs
+//
+// the task will quickly return if memory consumption is below a specified limit
+// e.g. memory consumption < 65% quickly return otherwise start offloading
+// returns true to increase task frequency, false to slowdown
+bool OffloadEntities
 (
 	void *pdata  // task context
 );
 
-bool CronTask_offloadEntities
+// free offload entities context
+void OffloadEntities_free
 (
-	void *pdata  // task context
+	OffloadTaskCtx **ctx
 );
 
