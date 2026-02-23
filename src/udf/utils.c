@@ -10,7 +10,10 @@
 #include "../errors/errors.h"
 #include "../arithmetic/func_desc.h"
 
-#define JS_RUNTIME_STACK_SIZE 1024 * 1024 * 1024
+#define JS_RUNTIME_STACK_SIZE (984 * 1024)  // 984kB stack limit
+#define JS_RUNTIME_HEAP_MIN   (10 * 1024 * 1024)   // 10MB minimum heap
+#define JS_RUNTIME_HEAP_MAX   (512 * 1024 * 1024)  // 512MB maximum heap
+#define JS_RUNTIME_HEAP_RATIO 0.05  // 5% of database memory
 
 extern JSClassID js_node_class_id;        // JS Node class
 extern JSClassID js_edge_class_id;        // JS Edge class
@@ -18,6 +21,48 @@ extern JSClassID js_path_class_id;        // JS Path class
 extern JSClassID js_attributes_class_id;  // JS Attributes class
 
 const char *UDF_LIB = NULL ;              // global register library name
+
+// calculate heap memory limit based on Redis used memory
+// returns a value between JS_RUNTIME_HEAP_MIN and JS_RUNTIME_HEAP_MAX
+static size_t _UDF_CalculateHeapLimit(void) {
+	// get Redis server memory info
+	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(NULL);
+	if (ctx == NULL) {
+		// fallback to minimum if context is unavailable
+		return JS_RUNTIME_HEAP_MIN;
+	}
+
+	RedisModuleServerInfoData *info = RedisModule_GetServerInfo(ctx, "Memory");
+	if (info == NULL) {
+		RedisModule_FreeThreadSafeContext(ctx);
+		return JS_RUNTIME_HEAP_MIN;
+	}
+
+	// get used memory in bytes
+	int err = 0;
+	unsigned long long used_memory = RedisModule_ServerInfoGetFieldUnsigned(
+		info, "used_memory", &err);
+
+	RedisModule_FreeServerInfo(ctx, info);
+	RedisModule_FreeThreadSafeContext(ctx);
+
+	if (err != 0 || used_memory == 0) {
+		// fallback to minimum on error
+		return JS_RUNTIME_HEAP_MIN;
+	}
+
+	// calculate heap limit as a percentage of used memory
+	size_t heap_limit = (size_t)(used_memory * JS_RUNTIME_HEAP_RATIO);
+
+	// clamp to min/max bounds
+	if (heap_limit < JS_RUNTIME_HEAP_MIN) {
+		heap_limit = JS_RUNTIME_HEAP_MIN;
+	} else if (heap_limit > JS_RUNTIME_HEAP_MAX) {
+		heap_limit = JS_RUNTIME_HEAP_MAX;
+	}
+
+	return heap_limit;
+}
 
 // allocate and return a new JavaScript runtime for UDF operations
 // each call creates an independent runtime
@@ -29,7 +74,11 @@ JSRuntime *UDF_GetJSRuntime(void) {
 	ASSERT (js_rt != NULL) ;
 
 	UDF_RT_RegisterClasses (js_rt) ;
-	JS_SetMaxStackSize (js_rt, JS_RUNTIME_STACK_SIZE) ; // 1 GB stack limit
+
+	// set memory limits
+	size_t heap_limit = _UDF_CalculateHeapLimit();
+	JS_SetMemoryLimit(js_rt, heap_limit);
+	JS_SetMaxStackSize (js_rt, JS_RUNTIME_STACK_SIZE) ; // 984kB stack limit
 
 	return js_rt ;
 }
