@@ -17,6 +17,7 @@ help() {
         Argument variables:
         BINROOT=path   Path to repo binary root dir
         BENCH=name     Operate in single-benchmark mode
+        JSON=1         Output results in JSON format to results directory
 
         SAN=addr|mem   Run with sanitizer
         VG=1           Run with Valgrind
@@ -82,8 +83,15 @@ OP=
 [[ $NOP == 1 ]] && OP=echo
 
 LEAK=${LEAK:-0}
+JSON=${JSON:-0}
 
 export LOGS_DIR=$ROOT/tests/micro_benchmarks/logs
+export RESULTS_DIR=$ROOT/tests/micro_benchmarks/results
+
+# Create results directory if JSON output is requested
+if [[ $JSON == 1 ]]; then
+    mkdir -p $RESULTS_DIR
+fi
 
 if [[ $GDB == 1 ]]; then
     if [[ $CLANG == 1 ]]; then
@@ -151,9 +159,16 @@ if [[ -z $BENCH ]]; then
         bench_name="$(basename $bench)"
         if [[ $LEAK == 1 || $bench_name != benchmark_leak ]]; then
             echo "Running $bench ..."
+            
+            # Prepare benchmark arguments
+            BENCH_ARGS=""
+            if [[ $JSON == 1 ]]; then
+                BENCH_ARGS="--benchmark_format=json --benchmark_out=${RESULTS_DIR}/${bench_name}_results.json"
+            fi
+            
             if [[ $VG == 1 ]]; then
                 VG_LOG_ARG="--log-file=${LOGS_DIR}/${bench_name}.valgrind.log"
-                { $OP $VG_OP $VG_OPTIONS $VG_LOG_ARG $bench; (( E |= $? )); } || true
+                { $OP $VG_OP $VG_OPTIONS $VG_LOG_ARG $bench $BENCH_ARGS; (( E |= $? )); } || true
             else
                 BENCH_NAME="$bench_name" sanitizer_defs
                 { $OP $bench $BENCH_ARGS; (( E |= $? )); } || true
@@ -166,12 +181,19 @@ else
     echo SUPERBENCH=$SUPERBENCH
     echo SUBBENCH=$SUBBENCH
     echo "Running $BENCHS_DIR/$SUPERBENCH ..."
+    
+    # Prepare benchmark arguments
+    BENCH_ARGS="$SUBBENCH"
+    if [[ $JSON == 1 ]]; then
+        BENCH_ARGS="--benchmark_format=json --benchmark_out=${RESULTS_DIR}/${SUPERBENCH}_results.json $SUBBENCH"
+    fi
+    
     if [[ $VG == 1 ]]; then
         VG_LOG_ARG="--log-file=${LOGS_DIR}/${SUPERBENCH}.valgrind.log"
-        { $OP $VG_OP $VG_OPTIONS $VG_LOG_ARG $BENCHS_DIR/$SUPERBENCH $BENCH_ARGS $SUBBENCH; (( E |= $? )); } || true
+        { $OP $VG_OP $VG_OPTIONS $VG_LOG_ARG $BENCHS_DIR/$SUPERBENCH $BENCH_ARGS; (( E |= $? )); } || true
     else
         BENCH_NAME="$SUPERBENCH" sanitizer_defs
-        { $OP $GDB_CMD $BENCHS_DIR/$SUPERBENCH $BENCH_ARGS $SUBBENCH; (( E |= $? )); } || true
+        { $OP $GDB_CMD $BENCHS_DIR/$SUPERBENCH $BENCH_ARGS; (( E |= $? )); } || true
     fi
 fi
 

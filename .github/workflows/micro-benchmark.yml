@@ -119,16 +119,7 @@ jobs:
           BUILD_BENCHMARKS=1 make -j$(nproc)
 
       - name: Run micro-benchmarks
-        run: |
-          mkdir -p tests/micro_benchmarks/results
-          BENCHS_DIR="bin/linux-x64-release/src/tests/micro_benchmarks"
-          for bench in $BENCHS_DIR/benchmark_*; do
-            if [[ -x "$bench" ]]; then
-              bench_name=$(basename "$bench")
-              echo "Running $bench_name..."
-              "$bench" --benchmark_format=json --benchmark_out="tests/micro_benchmarks/results/${bench_name}_results.json" || true
-            fi
-          done
+        run: make micro-benchmark
 
       - name: Upload results
         uses: actions/upload-artifact@v6

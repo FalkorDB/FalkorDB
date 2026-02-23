@@ -1834,8 +1834,10 @@ run_micro_benchmarks() {
         return 1
     fi
 
-    # Run using the benchmarks.sh script
+    # Run using the benchmarks.sh script with JSON output enabled by default
     export BINROOT
+    export JSON=1  # Always output JSON for analysis
+    
     cd "${ROOT}/tests/micro_benchmarks"
     
     if ! ./benchmarks.sh; then

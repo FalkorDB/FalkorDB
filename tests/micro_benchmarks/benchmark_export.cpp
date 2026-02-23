@@ -1,71 +1,72 @@
 #include "micro_benchmarks.h"
 
 static void ArgGenerator(benchmark::internal::Benchmark* b) {
-    std::vector<int> values = {0, 100, 10000};
+	std::vector<int> values = {0, 100, 10000};
 
-    for (int x : values) {
-        for (int y: values) {
-            b->Args({x, y});
-        }
-    }
+	for (int x : values) {
+		for (int y : values) {
+			if (x == 0 && y == 0) {
+				continue;
+			}
+			b->Args({x, y});
+		}
+	}
 }
 
-static void BM_export(benchmark::State &state) {
-    Delta_Matrix A = NULL;
-	GrB_Matrix   C = NULL;
-    uint64_t     n     = 10000000;
-    uint64_t     seed  = 870713428976ul;
+static void BM_export(benchmark::State& state) {
+	Delta_Matrix A    = NULL;
+	GrB_Matrix   C    = NULL;
+	uint64_t     n    = 10000000;
+	uint64_t     seed = 870713428976ul;
 
-    int additions = state.range(0);
-    int deletions = state.range(1);
-    double add_density = additions / ((double) n * (double) n);
-    double del_density = deletions / ((double) n * (double) n); 
+	int    additions   = state.range(0);
+	int    deletions   = state.range(1);
+	double add_density = additions / ((double)n * (double)n);
+	double del_density = deletions / ((double)n * (double)n);
 
-    Delta_Random_Matrix(&A, GrB_BOOL, n, 5E-7, add_density, del_density, seed);
+	Delta_Random_Matrix(&A, GrB_BOOL, n, 5E-7, add_density, del_density, seed);
 
-    GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
+	GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
 
-    for (auto _ : state) {
+	for (auto _ : state) {
 		Delta_Matrix_export(&C, A, GrB_BOOL);
-        GrB_Matrix_wait(C, GrB_MATERIALIZE);
-        GrB_Matrix_free(&C);
-    }
+		GrB_Matrix_wait(C, GrB_MATERIALIZE);
+		GrB_Matrix_free(&C);
+	}
 
-    GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
+	GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
 
-    Delta_Matrix_free(&A);
+	Delta_Matrix_free(&A);
 }
 
-static void BM_wait(benchmark::State &state) {
-    Delta_Matrix A = NULL;
-    Delta_Matrix C = NULL;
-    uint64_t     n     = 10000000;
-    uint64_t     seed  = 870713428976ul;
+static void BM_wait(benchmark::State& state) {
+	Delta_Matrix A    = NULL;
+	Delta_Matrix C    = NULL;
+	uint64_t     n    = 10000000;
+	uint64_t     seed = 870713428976ul;
 
-    int additions = state.range(0);
-    int deletions = state.range(1);
-    double add_density = additions / ((double) n * (double) n);
-    double del_density = deletions / ((double) n * (double) n); 
+	int    additions   = state.range(0);
+	int    deletions   = state.range(1);
+	double add_density = additions / ((double)n * (double)n);
+	double del_density = deletions / ((double)n * (double)n);
 
-    Delta_Random_Matrix(&A, GrB_BOOL, n, 5E-7, add_density, del_density, seed);
+	Delta_Random_Matrix(&A, GrB_BOOL, n, 5E-7, add_density, del_density, seed);
 
+	GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
 
-    GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
-
-    for (auto _ : state) {
-		if((additions | deletions) == 0) state.SkipWithMessage("nothing to sync");
+	for (auto _ : state) {
 		state.PauseTiming();
 		Delta_Matrix_free(&C);
 		Delta_Matrix_dup(&C, A);
 		state.ResumeTiming();
 
 		Delta_Matrix_wait(C, true);
-    }
+	}
 
-    GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
+	GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
 
 	Delta_Matrix_free(&C);
-    Delta_Matrix_free(&A);
+	Delta_Matrix_free(&A);
 }
 
 // BENCHMARK(BM_export)->Unit(benchmark::kMillisecond)->Apply(ArgGenerator);
