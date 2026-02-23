@@ -1080,11 +1080,14 @@ sym-part = [a-zA-Z0-9_$]
 line-end = (line-comment | EOL | EOF)
 
 comment = line-comment | block-comment
-line-comment = '//' < (!EOL .)* >      { line_comment(); }
-               (EOL | EOF)
-block-comment = '/*' < (EOL | !'*/' .)* >
-                                       { block_comment(); }
-                '*/' ~{ERR("*/")}
+#line-comment = '//' < (!EOL .)* >      { line_comment(); }
+#               (EOL | EOF)
+#block-comment = '/*' < (EOL | !'*/' .)* >
+#                                       { block_comment(); }
+#                '*/' ~{ERR("*/")}
+
+line-comment = '//' (!EOL .)* (EOL | EOF)
+block-comment = '/*' (!'*/' .)* '*/'
 
 WS = HWS | EOL
 HWS = [ \t]
