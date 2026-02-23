@@ -35,6 +35,7 @@ static void _removeRedundantTraversal(ExecutionPlan *plan, OpCondTraverse *trave
 	AlgebraicExpression *ae =  traverse->ae;
 	if(AlgebraicExpression_OperandCount(ae) == 1 &&
 	   !strcmp(AlgebraicExpression_Src(ae), AlgebraicExpression_Dest(ae))) {
+		ASSERT(false);
 		ExecutionPlan_RemoveOp(plan, (OpBase *)traverse);
 		OpBase_Free((OpBase *)traverse);
 	}
@@ -134,11 +135,12 @@ void reduceTraversal(ExecutionPlan *plan) {
 		raxFree(bound_vars);
 	}
 
-	// Remove redundant traversals
-	for(uint i = 0; i < redundantTraversalsCount; i++)
-		_removeRedundantTraversal(plan, redundantTraversals[i]);
+	// remove redundant traversals
+	for (uint i = 0; i < redundantTraversalsCount; i++) {
+		_removeRedundantTraversal (plan, redundantTraversals[i]) ;
+	}
 
-	// Clean up.
+	// clean up
 	array_free(traversals);
 }
 
