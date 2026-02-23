@@ -2,7 +2,6 @@ find_package(benchmark REQUIRED)
 
 file(GLOB BENCH_SOURCES LIST_DIRECTORIES false benchmark_*.cpp)
 
-
 foreach(bench_src ${BENCH_SOURCES})
 	get_filename_component(bench ${bench_src} NAME_WE)
 	add_executable(${bench} ${bench_src})

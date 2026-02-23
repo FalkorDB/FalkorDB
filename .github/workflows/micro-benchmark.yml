@@ -1,0 +1,152 @@
+name: Micro-benchmark build
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ master ]
+    types: [opened, labeled, synchronize]
+  push:
+    branches:
+      - 'master'
+    tags:
+      - 'v*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  haslabel:
+    name: Check label or branch
+    runs-on: ubuntu-latest
+    outputs:
+      has-benchmark-label: ${{ steps.haslabel.outputs.result }}
+    steps:
+      - name: Check label or branch
+        id: haslabel
+        uses: actions/github-script@v8
+        with:
+          script: |
+            if (context.eventName !== 'pull_request') {
+              console.log("Not a pull request")
+              return false
+            }
+
+            const existing_pull = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              headers: { 'Accept': 'application/vnd.github-json' }
+            });
+
+
+            const has_label = existing_pull.data.labels.find(label => label.name === 'micro_benchmark')
+            console.log(`Found label: ${has_label !== undefined}`)
+            return has_label !== undefined
+
+  create-runner:
+    needs: haslabel
+    if: ${{ needs.haslabel.outputs.has-benchmark-label == 'true' || github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create Runner For Micro-Benchmark
+        id: create-runner
+        uses: FalkorDB/gce-github-runner@install_docker
+        with:
+          token: ${{ secrets.GH_SA_TOKEN }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          machine_zone: ${{ vars.GCP_ZONE }}
+          machine_type: n4-highcpu-8
+          network: gh-runner
+          runner_label: micro-benchmark-${{ github.run_id }}-${{ github.run_number }}
+
+  run-micro-benchmarks:
+    needs:
+      - create-runner
+    runs-on: micro-benchmark-${{ github.run_id }}-${{ github.run_number }}
+    container: falkordb/falkordb-build:ubuntu
+    steps:
+      - name: Safe dir
+        run: git config --global --add safe.directory '*'
+
+      - uses: actions/checkout@v6
+        with:
+          set-safe-directory: '*'
+          submodules: recursive
+
+      - name: Cache GraphBLAS
+        id: cache_graphblas
+        uses: actions/cache@v5
+        with:
+          path: ./bin/linux-x64-release/GraphBLAS
+          key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
+
+      - name: Cache parser
+        id: cache_parser
+        uses: actions/cache@v5
+        with:
+          path: ./bin/linux-x64-release/libcypher-parser
+          key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+
+      - name: Cache search
+        id: cache_search
+        uses: actions/cache@v5
+        with:
+          path: ./bin/linux-x64-release/search-static
+          key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+
+      - name: Cache libcurl
+        id: cache_libcurl
+        uses: actions/cache@v5
+        with:
+          path: ./bin/linux-x64-release/libcurl
+          key: libcurl-x64-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}
+
+      - name: Cache libcsv
+        id: cache_libcsv
+        uses: actions/cache@v5
+        with:
+          path: ./bin/linux-x64-release/libcsv
+          key: libcsv-x64-${{ hashFiles('./deps/libcsv/ChangeLog') }}
+
+      - name: Install Google Benchmark
+        run: |
+          apt update && apt install -y libbenchmark-dev
+
+      - name: Build with micro-benchmarks
+        run: |
+          rustup default stable
+          make BUILD_TYPE=release MICRO_BENCHMARKS=1 -j$(nproc)
+
+      - name: Run micro-benchmarks
+        run: |
+          mkdir -p tests/micro_benchmarks/results
+          BENCHS_DIR="bin/linux-x64-release/src/tests/micro_benchmarks"
+          for bench in $BENCHS_DIR/benchmark_*; do
+            if [[ -x "$bench" ]]; then
+              bench_name=$(basename "$bench")
+              echo "Running $bench_name..."
+              "$bench" --benchmark_format=json --benchmark_out="tests/micro_benchmarks/results/${bench_name}_results.json" || true
+            fi
+          done
+
+      - name: Upload results
+        uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: ${{ github.head_ref || github.ref_name }}-micro-benchmark-results
+          path: tests/micro_benchmarks/results/*_results.json
+          retention-days: 30
+
+  cleanup-runner:
+    needs: run-micro-benchmarks
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          zone: ${{ vars.GCP_ZONE }}
+          instance_label: micro-benchmark-${{ github.run_id }}-${{ github.run_number }}
