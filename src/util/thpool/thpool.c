@@ -369,7 +369,7 @@ static void *thread_do(struct thread *thread_p) {
 
 	/* Set thread name for profiling and debuging */
 	char thread_name[128] = {0};
-	sprintf(thread_name, "thread-pool-%s-%d", thread_p->thpool_p->name, thread_p->id);
+	snprintf(thread_name, sizeof(thread_name), "thread-pool-%s-%d", thread_p->thpool_p->name, thread_p->id);
 
 #if defined(__linux__)
 	/* Use prctl instead to prevent using _GNU_SOURCE flag and implicit declaration */
