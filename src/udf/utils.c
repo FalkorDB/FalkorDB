@@ -11,7 +11,7 @@
 #include "../arithmetic/func_desc.h"
 
 #define JS_RUNTIME_STACK_SIZE (984 * 1024)       // 984kB stack limit
-#define JS_RUNTIME_HEAP_MAX   (512 * 1024 * 1024)  // 512MB heap limit
+#define JS_RUNTIME_HEAP_MAX   (1024 * 1024 * 1024)  // 1024MB heap limit
 
 extern JSClassID js_node_class_id;        // JS Node class
 extern JSClassID js_edge_class_id;        // JS Edge class
