@@ -6,7 +6,7 @@
 #include "RG.h"
 #include "../graph/graphcontext.h"
 #include "../serializers/serializer_io.h"
-#include "../serializers/decoders/current/v18/decode_v18.h"
+#include "../serializers/decoders/decoders.h"
 
 extern RedisModuleType *GraphContextRedisModuleType;
 
@@ -65,8 +65,17 @@ int Graph_Restore
 
 	SerializerIO io = SerializerIO_FromStream(stream, false);
 
+	// determine decoder version
+	uint64_t ver = SerializerIO_ReadUnsigned (io) ;
+	DecoderFP decoder = Decoder_GetDecoder (ver) ;
+	if (decoder == NULL) {
+		RedisModule_ReplyWithErrorFormat (ctx,
+				"unknown graph decoding version: %llu", ver) ;
+		goto cleanup ;
+	}
+
 	// decode graph
-	GraphContext *gc = RdbLoadGraphContext_latest(io, argv[1]);
+	GraphContext *gc = decoder (io, argv[1]) ;
 	ASSERT(gc != NULL);
 
 	// add graph to keyspace
@@ -84,6 +93,7 @@ int Graph_Restore
 	// clean up
 	//--------------------------------------------------------------------------
 
+cleanup:
 	SerializerIO_Free(&io);
 
 	fclose(stream);

@@ -60,6 +60,7 @@
 #include "../redismodule.h"
 #include "../graph/graphcontext.h"
 #include "../serializers/serializer_io.h"
+#include "../serializers/encoding_version.h"
 #include "../serializers/encoder/v18/encode_v18.h"
 #include "../serializers/decoders/current/v18/decode_v18.h"
 
@@ -207,6 +208,10 @@ static int encode_graph
 	io = SerializerIO_FromStream(f, true);
 	ASSERT(io != NULL);
 
+	// write encoder version to stream
+	// this will be used by GRAPH.RESTORE to determine which decoder to use
+	SerializerIO_WriteUnsigned (io, GRAPH_ENCODING_LATEST_V) ;
+
 	// encode graph to disk
 	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE, "dump graph: %s to: %s",
 			copy_ctx->src, copy_ctx->path);
@@ -301,6 +306,9 @@ static void LoadGraphFromFile
 	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
 			"Decoding graph: %s from: %s", copy_ctx->dest, copy_ctx->path);
 
+	// first 8 bytes on the stream represent the encoder version
+	// we must skip it at this stage, it's required by GRAPH.RESTORE
+	SerializerIO_ReadUnsigned (io) ;
 	GraphContext *gc = RdbLoadGraphContext_latest(io, copy_ctx->rm_dest);
 	ASSERT(gc != NULL);
 
