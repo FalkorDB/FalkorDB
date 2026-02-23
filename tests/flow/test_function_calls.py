@@ -2802,3 +2802,51 @@ class testFunctionCallsFlow(FlowTestsBase):
 
         res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(tostring(x) + tostring(x))")
         self.env.assertEquals(res.result_set, [[None], ['11'], ['22'], ['33'], ['44']])
+
+    def test96_greek_sigma_case_conversion(self):
+        # Test Greek Sigma context-sensitive lowercasing
+        # Greek capital Σ (U+03A3) should become:
+        # - ς (final sigma, U+03C2) at the end of words
+        # - σ (medial sigma, U+03C3) in the middle of words
+        
+        # Test the original issue: κόσμος -> ΚΌΣΜΟΣ -> κόσμος
+        query = "RETURN toLower(toUpper('κόσμος'))"
+        actual_result = self.graph.query(query)
+        expected_result = [['κόσμος']]  # Should have final sigma ς at the end
+        self.env.assertEquals(actual_result.result_set, expected_result)
+        
+        # Test a word with Sigma in the middle
+        query = "RETURN toLower('ΑΣΣΟΣ')"
+        actual_result = self.graph.query(query)
+        expected_result = [['ασσος']]  # Should have medial sigma σ in middle
+        self.env.assertEquals(actual_result.result_set, expected_result)
+        
+        # Test multiple words with Sigmas
+        query = "RETURN toLower('ΚΌΣΜΟΣ ΑΣΣΟΣ')"
+        actual_result = self.graph.query(query)
+        expected_result = [['κόσμος ασσος']]  # Final ς at end of first word, medial σ in second
+        self.env.assertEquals(actual_result.result_set, expected_result)
+        
+        # Test Sigma at end of string
+        query = "RETURN toLower('ΚΌΣΜΟΣ')"
+        actual_result = self.graph.query(query)
+        expected_result = [['κόσμος']]  # Should have final sigma ς
+        self.env.assertEquals(actual_result.result_set, expected_result)
+        
+        # Test single Sigma
+        query = "RETURN toLower('Σ')"
+        actual_result = self.graph.query(query)
+        expected_result = [['ς']]  # Single sigma should be final
+        self.env.assertEquals(actual_result.result_set, expected_result)
+        
+        # Test Sigma before letter (should be medial)
+        query = "RETURN toLower('ΣΑ')"
+        actual_result = self.graph.query(query)
+        expected_result = [['σα']]  # Sigma before letter should be medial
+        self.env.assertEquals(actual_result.result_set, expected_result)
+        
+        # Test Sigma before punctuation (should be final)
+        query = "RETURN toLower('ΚΌΣΜΟΣ.')"
+        actual_result = self.graph.query(query)
+        expected_result = [['κόσμος.']]  # Sigma before punctuation should be final
+        self.env.assertEquals(actual_result.result_set, expected_result)
