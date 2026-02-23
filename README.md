@@ -69,18 +69,32 @@ Our goal is to build a high-performance Knowledge Graph tailored for Large Langu
 
 ## GET STARTED
 
-### Step 1
+### Option 1: Docker (Recommended)
 
 To quickly try out FalkorDB, launch an instance using docker:
 
-```
+```bash
 docker run -p 6379:6379 -p 3000:3000 -it --rm -v ./data:/var/lib/falkordb/data falkordb/falkordb
 ```
 
-### Step 2
-
 Then, open your browser and navigate to `http://localhost:3000`.
 
+### Option 2: Homebrew (macOS)
+
+Install FalkorDB using Homebrew:
+
+```bash
+brew tap falkordb/falkordb
+brew install falkordb
+```
+
+Then start Redis with FalkorDB:
+
+```bash
+redis-server --loadmodule $(brew --prefix)/lib/falkordb.so
+```
+
+For more installation options and detailed instructions, see our [Installation Guide](https://docs.falkordb.com/installation.html).
 
 You can also interact with FalkorDB using any of the supported [Client Libraries](https://docs.falkordb.com/clients.html)
 
