@@ -187,6 +187,16 @@ AlgebraicExpression *AlgebraicExpression_NewOperation
 (
 	AL_EXP_OP op    // Operation to perform.
 ) {
+    // validating operations : only allow supported ops (ADD, MUL, TRANSPOSE)
+    switch(op) {
+        case AL_EXP_ADD:
+        case AL_EXP_MUL:
+        case AL_EXP_TRANSPOSE:
+            break;
+        default:
+            ASSERT("Unknown or unsupported algebraic expression operation" && false);
+    }
+
 	AlgebraicExpression *node = rm_malloc(sizeof(AlgebraicExpression));
 	node->type = AL_OPERATION;
 	node->operation.op = op;
