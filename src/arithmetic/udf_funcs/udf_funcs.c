@@ -9,8 +9,11 @@
 #include "../../udf/udf_ctx.h"
 #include "../../udf/repository.h"
 #include "../../errors/errors.h"
+#include "../../configuration/config.h"
 
 #include <time.h>
+
+#define UDF_MIN_TIMEOUT_MS 3000  // default UDF timeout 3 seconds
 
 // get current time in ms as a unix timestamp
 static int64_t _current_time_in_ms(void) {
@@ -93,8 +96,18 @@ SIValue AR_UDF
 		js_argv[i] = UDF_SIValueToJS (js_ctx, args[i]) ;
 	}
 
+	//--------------------------------------------------------------------------
 	// setup interrupt handler
-	int64_t deadline_ms = _current_time_in_ms() + 3000; // 3 seconds
+	//--------------------------------------------------------------------------
+
+	// try to get timeout from configuration
+	uint64_t timeout = 0 ;
+	Config_Option_get (Config_TIMEOUT_DEFAULT, &timeout) ;
+
+	// timeout is set to a minimum of 3 seconds
+	timeout = (timeout == 0 /* no timeout */) ? UDF_MIN_TIMEOUT_MS : timeout ;
+
+	int64_t deadline_ms = _current_time_in_ms() + timeout ;
 	JS_SetInterruptHandler (js_rt, js_interrupt_handler, &deadline_ms) ;
 
 	// invoke UDF
