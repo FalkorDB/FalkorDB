@@ -12,7 +12,7 @@
 #include <unistd.h>
 
 #define NO_TTL           -1     // item never expires
-#define TRANSACTION_CAP  10000  // maximum number of puts per transaction batch
+#define TRANSACTION_CAP  64000  // maximum number of puts per transaction batch
 
 extern tidesdb_t *db ;
 

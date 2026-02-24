@@ -459,6 +459,8 @@ Graph *Graph_New
 
 	if (name != NULL) {
 		// default column config
+		// TODO: use .comparator_name = "uint64 compare" see docs!
+
 		tidesdb_column_family_config_t cf_config =
 			tidesdb_default_column_family_config () ;
 
@@ -1745,8 +1747,8 @@ static void _Graph_Free
 	array_free (g->labels) ;
 	Delta_Matrix_free (&g->node_labels) ;
 
-	it = is_full_graph ? Graph_ScanNodes(g) : DataBlock_FullScan (g->nodes) ;
-	while ((set = (AttributeSet *)DataBlockIterator_Next (it, NULL)) != NULL) {
+	it = is_full_graph ? Graph_ScanNodes (g) : DataBlock_FullScan (g->nodes) ;
+	while ((set = DataBlockIterator_NextSkipOffloaded (it, NULL)) != NULL) {
 		if (*set != NULL) {
 			AttributeSet_Free (set) ;
 		}
@@ -1754,7 +1756,7 @@ static void _Graph_Free
 	DataBlockIterator_Free (&it) ;
 
 	it = is_full_graph ? Graph_ScanEdges (g) : DataBlock_FullScan (g->edges) ;
-	while ((set = DataBlockIterator_Next (it, NULL)) != NULL) {
+	while ((set = DataBlockIterator_NextSkipOffloaded (it, NULL)) != NULL) {
 		if (*set != NULL) {
 			AttributeSet_Free (set) ;
 		}

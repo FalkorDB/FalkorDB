@@ -14,9 +14,11 @@
 
 #include <stdint.h>
 
-#define DEADLINE 40          // maximum task runtime in ms before yielding
-#define MAX_BATCH_SIZE 1024  // maximum number of attribute-sets collected
-                             // and offloaded per batch
+#define DEADLINE 1000            // maximum task runtime in ms before yielding
+#define MAX_BATCH_SIZE 64000   // maximum number of attribute-sets collected
+                               // and offloaded per batch
+
+#define BYTES_TO_MB(bytes) (bytes) / (1024LL * 1024LL)
 
 // task context
 typedef struct {
@@ -91,14 +93,18 @@ void OffloadEntities_free
 // this operation is bounded by time, once the time quota is over
 // the function returns, not before updating the tasks' context
 // for future resume
-static void _offloadGraph
+static size_t _offloadGraph
 (
 	OffloadTaskCtx *ctx,      // task context
 	GraphContext *gc,         // graph context
 	simple_timer_t stopwatch  // timer
 ) {
-	// acquire READ lock
+	printf ("Offloading graph %s\n", gc->graph_name) ;
+
+	size_t total_size = 0 ;  // number of bytes offloaded
 	Graph *g = GraphContext_GetGraph (gc) ;
+
+	// acquire READ lock
 	Graph_AcquireReadLock (g) ;
 
 	//----------------------------------------------------------------------
@@ -108,12 +114,19 @@ static void _offloadGraph
 	DataBlock *datablock = (ctx->t == GETYPE_NODE) ? g->nodes : g->edges ;
 	if (!DataBlock_HasStorage (datablock)) {
 		Graph_ReleaseLock (g) ;
-		return ;
+		printf ("Graph %s doesn't has a backing storage, skipping graph\n",
+				gc->graph_name) ;
+		return total_size ;
 	}
 
 	DataBlockIterator *it = NULL ;
 	it = DataBlock_Scan (datablock) ;
-	ASSERT (it != NULL) ;
+	if (it == NULL) {
+		Graph_ReleaseLock (g) ;
+		return total_size ;
+	}
+
+	printf ("Resuming scan from entity ID: %" PRIu64 "\n", ctx->entity_id) ;
 	DataBlockIterator_Seek (it, ctx->entity_id) ;
 
 	// as long as we've got processing time
@@ -122,9 +135,6 @@ static void _offloadGraph
 		//----------------------------------------------------------------------
 		// collect attribute sets
 		//----------------------------------------------------------------------
-
-		RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
-				"Collecting attribute-sets") ;
 
 		size_t read  = 0 ;  // number of items scanned
 		size_t write = 0 ;  // number of items collected
@@ -135,6 +145,7 @@ static void _offloadGraph
 				(AttributeSet*)DataBlockIterator_NextSkipOffloaded (it,
 						ctx->ids + write) ;
 
+			// iterator depleted
 			if (set == NULL) {
 				break ;
 			}
@@ -151,6 +162,7 @@ static void _offloadGraph
 
 		RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG, "Collected %zu sets",
 				write) ;
+		printf ("Collected %zu sets\n", write) ;
 
 		// update context
 		ctx->entity_id += read ;
@@ -163,6 +175,7 @@ static void _offloadGraph
 		if (count > 0) {
 			RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
 					"Offloading collected sets to disk") ;
+			printf ("Offloading collected sets to disk\n") ;
 
 			if (Storage_save (datablock->cf, (const void * const *)ctx->sets,
 						ctx->sizes, ctx->ids, count) == 0) {
@@ -175,19 +188,26 @@ static void _offloadGraph
 				// now we're ready to free attribute-sets
 				// to do that we must hold the graph's write lock
 
+				// release read lock
 				Graph_ReleaseLock (g) ;
+
+				// acquire & release write lock
+				// this guarantees noone holds pointers to offloaded sets
 				Graph_AcquireWriteLock (g) ;
+				Graph_ReleaseLock (g) ;
 
 				RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
 						"Freeing sets") ;
+				printf ("Freeing sets\n") ;
 
 				// "shallow" free attribute-sets
-				int j = count ;
-				while (j > 0) {
-					rm_free (ctx->sets[--j]) ;
+				int j = count -1 ;
+				while (j >= 0) {
+					total_size += ctx->sizes[j] ;
+					rm_free (ctx->sets[j]) ;
+					j-- ;
 				}
 
-				Graph_ReleaseLock (g) ;
 				Graph_AcquireReadLock (g) ;
 			}
 		}
@@ -196,6 +216,7 @@ static void _offloadGraph
 			// datablock iterator depleted
 			RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
 					"Datablock iterator depleted") ;
+			printf ("Datablock iterator depleted\n") ;
 
 			DataBlockIterator_Free (&it) ;
 
@@ -203,6 +224,7 @@ static void _offloadGraph
 				// next iteration should scan edges
 				RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
 						"Move to edges") ;
+				printf ("Move to edges\n") ;
 
 				ctx->t = GETYPE_EDGE ;
 				ctx->entity_id = 0 ;
@@ -213,6 +235,7 @@ static void _offloadGraph
 			} else {
 				RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
 						"Done offloading graph, move on to the next one") ;
+				printf ("Done offloading graph, move on to the next one\n") ;
 				// both node & edge iterators are depleted
 				// reset context and move on to the next graph
 
@@ -230,6 +253,9 @@ static void _offloadGraph
 	if (it != NULL) {
 		DataBlockIterator_Free (&it) ;
 	}
+
+	// return number of bytes offloaded
+	return total_size ;
 }
 
 // cron task entry point
@@ -284,6 +310,7 @@ bool OffloadEntities
 	Globals_ScanGraphs (&it) ;
 	GraphIterator_Seek (&it, ctx->graph_idx) ;
 
+	bool it_reset = false ; // true if graph iterator had gone a full cycle
 	GraphContext *gc = NULL ;
 
 	// as long as we've got processing time
@@ -293,9 +320,18 @@ bool OffloadEntities
 
 		// iterator depleted
 		if (gc == NULL) {
+			if (it_reset) {
+				RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
+					"offload task scanned through the entire keyspace") ;
+				printf ("offload task scanned through the entire keyspace\n") ;
+				break ;
+			}
+
 			RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
 					"Finished scanning through all graphs in keyspace, "
 					"resetting graphs iterator") ;
+
+			it_reset = true ;
 
 			// reset context
 			ctx->t         = GETYPE_NODE ;
@@ -311,11 +347,9 @@ bool OffloadEntities
 				"Offloading graph %s", gc->graph_name) ;
 
 		// offload current graph
-		_offloadGraph (ctx, gc, stopwatch) ;
-
-		RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_DEBUG,
-				"Done processing graph %s, either out of time or finished "
-				"processing all attribute-sets", gc->graph_name) ;
+		size_t bytes_offloaded = _offloadGraph (ctx, gc, stopwatch) ;
+		printf ("Graph %s offloaded: %.2f MB\n",
+				gc->graph_name, (double)(BYTES_TO_MB (bytes_offloaded))) ;
 
 		// either we've offloaded the entire graph or we're out of time
 		// regardless decrease the graph's ref count

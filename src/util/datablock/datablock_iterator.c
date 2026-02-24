@@ -108,25 +108,43 @@ void *DataBlockIterator_NextSkipOffloaded
 
 	// have we reached the end of our iterator?
 	while (it->current_pos < it->end_pos && it->current_block != NULL) {
-		// get item at current position
-		Block *block = it->current_block ;
 
-		// advance to next block if current block consumed or empty
-		if (it->block_pos == it->block_cap ||
-			!Block_HasActiveItems (it->current_block)) {
-
+		// advance to next block if current block is consumed
+		if (it->block_pos == it->block_cap) {
 			it->block_pos = 0 ;
+			it->current_block = Block_Next (it->current_block) ;
 
+			// iterator depleted
+			if (it->current_block == NULL) {
+				return NULL ;
+			}
+		}
+
+		//----------------------------------------------------------------------
+		// skip empty blocks
+		//----------------------------------------------------------------------
+
+		if (it->block_pos == 0 && !Block_HasActiveItems (it->current_block)) {
 			// search for a valid block
 			do {
 				it->current_block = Block_Next (it->current_block) ;
+				it->current_pos += it->block_cap ;
 			} while (it->current_block != NULL &&
 					 !Block_HasActiveItems (it->current_block)) ;
+
+			if (it->current_block == NULL) {
+				return NULL ;
+			}
 		}
 
+		// get item at current position
+		Block *block = it->current_block ;
+		ASSERT (block != NULL) ;
+		ASSERT (it->current_pos % it->block_cap == it->block_pos) ;
+
 		// skip if either offloaded or deleted
-		bool skip = Block_IsItemDeleted   (block, it->current_pos) ||
-					Block_IsItemOffloaded (block, it->current_pos) ;
+		bool skip = Block_IsItemDeleted   (block, it->block_pos) ||
+					Block_IsItemOffloaded (block, it->block_pos) ;
 
 		// advance to next position
 		it->block_pos   += 1 ;
@@ -136,7 +154,7 @@ void *DataBlockIterator_NextSkipOffloaded
 			continue ;
 		}
 
-		item = DataBlock_GetItem (it->datablock, it->current_pos - 1) ;
+		item = Block_GetItem (block, it->block_pos - 1) ;
 		ASSERT (item != NULL) ;
 
 		if (id != NULL) {

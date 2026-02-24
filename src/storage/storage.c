@@ -42,6 +42,7 @@ int Storage_init(void) {
 
 	config.db_path   = path ;
 	config.log_level = TDB_LOG_ERROR ;
+	// TODO: specify .max_memory_usage = 0, /* Global memory limit in bytes (default: 0 = auto, 80% of system RAM; minimum: 50% of system RAM) */
 
 	res = tidesdb_open (&config, &db) ;
 	free (path) ;
