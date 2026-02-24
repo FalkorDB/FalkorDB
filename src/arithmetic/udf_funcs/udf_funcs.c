@@ -6,14 +6,13 @@
 #include "../func_desc.h"
 #include "../../util/arr.h"
 #include "../../udf/utils.h"
+#include "../../query_ctx.h"
 #include "../../udf/udf_ctx.h"
 #include "../../udf/repository.h"
 #include "../../errors/errors.h"
 #include "../../configuration/config.h"
 
 #include <time.h>
-
-#define UDF_MIN_TIMEOUT_MS 3000  // default UDF timeout 3 seconds
 
 // get current time in ms as a unix timestamp
 static int64_t _current_time_in_ms(void) {
@@ -100,15 +99,20 @@ SIValue AR_UDF
 	// setup interrupt handler
 	//--------------------------------------------------------------------------
 
-	// try to get timeout from configuration
-	uint64_t timeout = 0 ;
-	Config_Option_get (Config_TIMEOUT_DEFAULT, &timeout) ;
+	// set timeout on UDF if timeout is configured and is not unlimited
+	uint64_t timeout = 0 ;  // unlimited
+	if (Config_Option_get (Config_TIMEOUT_DEFAULT, &timeout) && timeout != 0) {
+		QueryCtx *qctx = QueryCtx_GetQueryCtx () ;
+		ASSERT (qctx != NULL) ;
 
-	// timeout is set to a minimum of 3 seconds
-	timeout = (timeout == 0 /* no timeout */) ? UDF_MIN_TIMEOUT_MS : timeout ;
+		// determine how much time the query already consumed
+		double elapsed = QueryCtx_StageElapsed (qctx) ;
+		ASSERT (elapsed >= 0) ;
 
-	int64_t deadline_ms = _current_time_in_ms() + timeout ;
-	JS_SetInterruptHandler (js_rt, js_interrupt_handler, &deadline_ms) ;
+		// compute deadline
+		int64_t deadline_ms = _current_time_in_ms() + timeout - elapsed ;
+		JS_SetInterruptHandler (js_rt, js_interrupt_handler, &deadline_ms) ;
+	}
 
 	// invoke UDF
 	JSValue res = JS_Call (js_ctx, *fn, JS_UNDEFINED, argc-2, js_argv) ;

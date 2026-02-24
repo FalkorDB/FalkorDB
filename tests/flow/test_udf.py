@@ -1572,31 +1572,6 @@ class test_udf_javascript():
         v = self.graph.query("RETURN lib_undef.undef()").result_set[0][0]
         self.env.assertEqual(v, None)
 
-    def test_runtime_interrupt(self):
-        """
-        UDFs should be time bounded, avoiding infinity loop
-        and long computations
-        """
-
-        script = """
-        function infinity() {
-            while(1) {
-                var a = 1;
-            }
-            return 1;
-        }
-
-        falkor.register('infinity', infinity);
-        """
-
-        self.db.udf_load("infinity", script)
-
-        try:
-            v = self.graph.query("RETURN infinity.infinity()")
-            assert False, "Expected JS exception to propagate"
-        except ResponseError as e:
-            self.env.assertIn("UDF Exception: interrupted", str(e))
-
 class testUDFCluster():
     def __init__(self):
         self.env, self.db = Env(env='oss-cluster', shardsCount=3)

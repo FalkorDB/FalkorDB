@@ -136,6 +136,16 @@ void QueryCtx_AdvanceStage
 	ctx->stage++;
 }
 
+// returns the number of milliseconds elapsed for the current stage
+double QueryCtx_StageElapsed
+(
+	const QueryCtx *ctx  // query context
+) {
+	ASSERT (ctx != NULL) ;
+
+	return TIMER_GET_ELAPSED_MILLISECONDS (ctx->stats.timer) ;
+}
+
 // regress query's stage
 // waiting <- executing
 void QueryCtx_ResetStage
