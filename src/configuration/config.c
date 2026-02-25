@@ -125,8 +125,8 @@ typedef struct
 	bool delay_indexing;			   // delay index construction when decoding
 	char *import_folder;			   // path to import folder, used for CSV loading
 	char *temp_folder;				   // path to temp folder, used for storing temporary files
-	size_t js_heap_size;               // quickjs runtime max heap size; -1 unlimited
-	size_t js_stack_size;              // quickjs runtime max stack size; 0 unlimited
+	size_t js_heap_size;               // quickjs runtime max heap size;
+	size_t js_stack_size;              // quickjs runtime max stack size;
 	Config_on_change cb;			   // callback function which being called when config param changed
 } RG_Config;
 
