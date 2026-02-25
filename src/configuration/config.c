@@ -99,8 +99,8 @@
 #define DELAY_INDEXING_DEFAULT false
 #define IMPORT_DIR_DEFAULT "/var/lib/FalkorDB/import/"
 #define TEMP_DIR_DEFAULT "/tmp"
-#define JS_HEAP_SIZE_DEFAULT  (64 * 1024 * 1024)  // 64MB
-#define JS_STACK_SIZE_DEFAULT (8  * 1024 * 1024)  // 8MB
+#define JS_HEAP_SIZE_DEFAULT  (256 * 1024 * 1024)  // 256 MB
+#define JS_STACK_SIZE_DEFAULT (1024 * 1024)  // 1MB
 
 // configuration object
 typedef struct

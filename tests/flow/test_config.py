@@ -46,8 +46,8 @@ class testConfig(FlowTestsBase):
                 ("DELAY_INDEXING", 0),
                 ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
                 ("TEMP_FOLDER", "/tmp"),
-                ("JS_HEAP_SIZE", 64 * 1024 * 1024),
-                ("JS_STACK_SIZE", 8 * 1024 * 1024)
+                ("JS_HEAP_SIZE", 256 * 1024 * 1024),
+                ("JS_STACK_SIZE", 1024 * 1024)
         ]
 
         for i, config in enumerate(response):
@@ -256,18 +256,18 @@ class testConfig(FlowTestsBase):
         expected_response = 0
         self.env.assertEqual(response, expected_response)
 
-        response = self.db.config_set("JS_HEAP_SIZE", 64 * 1024 * 1024)
+        response = self.db.config_set("JS_HEAP_SIZE", 256 * 1024 * 1024)
         self.env.assertEqual(response, "OK")
 
         response = self.db.config_get("JS_HEAP_SIZE")
-        expected_response = 64 * 1024 * 1024
+        expected_response = 256 * 1024 * 1024
         self.env.assertEqual(response, expected_response)
 
-        response = self.db.config_set("JS_STACK_SIZE", 8 * 1024 * 1024)
+        response = self.db.config_set("JS_STACK_SIZE", 1024 * 1024)
         self.env.assertEqual(response, "OK")
 
         response = self.db.config_get("JS_STACK_SIZE")
-        expected_response = 8 * 1024 * 1024
+        expected_response = 1024 * 1024
         self.env.assertEqual(response, expected_response)
 
     def test09_set_invalid_values(self):
