@@ -101,6 +101,7 @@ SIValue AR_UDF
 
 	// set timeout on UDF if timeout is configured and is not unlimited
 	uint64_t timeout = 0 ;  // unlimited
+	int64_t *deadline_ms = NULL ;
 	if (Config_Option_get (Config_TIMEOUT_DEFAULT, &timeout) && timeout != 0) {
 		QueryCtx *qctx = QueryCtx_GetQueryCtx () ;
 		ASSERT (qctx != NULL) ;
@@ -110,15 +111,20 @@ SIValue AR_UDF
 		ASSERT (elapsed >= 0) ;
 
 		// compute deadline
-		int64_t deadline_ms = _current_time_in_ms() + timeout - elapsed ;
-		JS_SetInterruptHandler (js_rt, js_interrupt_handler, &deadline_ms) ;
+		deadline_ms = rm_malloc (sizeof (int64_t)) ;
+		*deadline_ms = _current_time_in_ms() + timeout - elapsed ;
+
+		JS_SetInterruptHandler (js_rt, js_interrupt_handler, deadline_ms) ;
 	}
 
 	// invoke UDF
 	JSValue res = JS_Call (js_ctx, *fn, JS_UNDEFINED, argc-2, js_argv) ;
 
 	// disable the interrupt handler
-	JS_SetInterruptHandler(js_rt, NULL, NULL);
+	if (deadline_ms != NULL) {
+		JS_SetInterruptHandler(js_rt, NULL, NULL);
+		rm_free (deadline_ms) ;
+	}
 
 	// free args
 	for (int i = 0; i < argc - 2; i++) {
