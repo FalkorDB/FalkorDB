@@ -114,6 +114,19 @@ bool UDF_RepoInit(void) {
 	return (udf_repo->libs != NULL) ;
 }
 
+// bumps repo's version by 1
+// function is exposed to allow quickjs runtime heap & stack size adjustment
+// via runtime re-configuration, once the user changes either the heap or stack
+// size limit the configuration handler would bump the UDFs repo version
+// without changing its internal content, this will force each query execution
+// thread to reload a new quickjs runtime picking up on the new limits
+void UDF_RepoBumpVersion(void) {
+	ASSERT (udf_repo != NULL) ;
+
+	// bump version
+	udf_repo->v++ ;
+}
+
 // return repo's version
 UDF_RepoVersion UDF_RepoGetVersion(void) {
 	ASSERT (udf_repo != NULL) ;
@@ -394,7 +407,7 @@ bool UDF_RepoRemoveLib
 	array_del_fast (udf_repo->libs, idx);
 
 	// bump version
-	udf_repo->v++ ;
+	UDF_RepoBumpVersion ();
 
 	// unlock
 	pthread_rwlock_unlock (&udf_repo->rwlock) ;
@@ -416,7 +429,7 @@ void UDF_RepoExposeLib
 	ASSERT (_lib != NULL) ;
 
 	// bump version
-	udf_repo->v++ ;
+	UDF_RepoBumpVersion ();
 
 	int n = array_len (_lib->functions) ;
 	for (int i = 0; i < n ; i++) {

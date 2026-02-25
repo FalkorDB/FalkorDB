@@ -5,15 +5,14 @@
 PROGNAME="${BASH_SOURCE[0]}"
 HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
 ROOT=$(cd $HERE/../.. && pwd)
-READIES=$ROOT/deps/readies
-. $READIES/shibumi/defs
+
+# Source common definitions and functions
+. "$ROOT/tests/common.sh"
 
 export PYTHONUNBUFFERED=1
 
-VG_REDIS_VER=7.2
-VG_REDIS_SUFFIX=7.2
-SAN_REDIS_VER=7.2
-SAN_REDIS_SUFFIX=7.2
+# Redis version for testing (used for reference)
+REDIS_VER=8.0
 
 cd $HERE
 
@@ -51,7 +50,7 @@ help() {
 		VG=1                  Run with Valgrind
 		VG_LEAKS=1            Look for memory leaks
 		VG_ACCESS=1           Look for memory access errors
-		SAN=type              Use LLVM sanitizer (type=address|memory|leak|thread) 
+		SAN=type              Use LLVM sanitizer (type=address|memory|leak|thread)
 		BB=1                  Enable Python debugger (break using BB() in tests)
 		GDB=1                 Enable interactive gdb debugging (in single-test mode)
 
@@ -64,11 +63,7 @@ help() {
 		UNIX=1                Use unix sockets
 		RANDPORTS=1           Use randomized ports
 
-		PLATFORM_MODE=1       Implies NOFAIL & COLLECT_LOGS into STATFILE
-		COLLECT_LOGS=1        Collect logs into .tar file
 		CLEAR_LOGS=0          Do not remove logs prior to running tests
-		NOFAIL=1              Do not fail on errors (always exit with 0)
-		STATFILE=file         Write test status (0|1) into `file`
 
 		LIST=1                List all tests and exit
 		ENV_ONLY=1            Just start environment, run no tests
@@ -81,7 +76,7 @@ help() {
 	END
 }
 
-#---------------------------------------------------------------------------------------------- 
+#----------------------------------------------------------------------------------------------
 
 traps() {
 	local func="$1"
@@ -114,7 +109,7 @@ stop() {
 
 traps 'stop' SIGINT
 
-#---------------------------------------------------------------------------------------------- 
+#----------------------------------------------------------------------------------------------
 
 setup_rltest() {
 	if [[ $RLTEST == view ]]; then
@@ -137,7 +132,7 @@ setup_rltest() {
 			echo "PYTHONPATH=$PYTHONPATH"
 		fi
 	fi
-	
+
 	RLTEST_ARGS+=" --enable-debug-command --no-progress"
 
 	if [[ $RLTEST_VERBOSE == 1 ]]; then
@@ -156,6 +151,101 @@ setup_rltest() {
 
 #----------------------------------------------------------------------------------------------
 
+build_redis_with_sanitizer() {
+	local san_type=$1
+	local redis_dir="/tmp/redis-san-build"
+	local redis_version="8.0.0"
+	local ignorelist=$ROOT/tests/memcheck/redis.san-ignorelist
+	local build_log="/tmp/redis-san-build.log"
+	local original_dir="$PWD"
+
+	# Check if we already have a working ASAN Redis build
+	if [[ -f "$redis_dir/src/redis-server" ]]; then
+		# Verify it's an ASAN build by checking for ASAN symbols
+		if nm "$redis_dir/src/redis-server" 2>/dev/null | grep -q "__asan"; then
+			REDIS_SERVER="$redis_dir/src/redis-server"
+			echo "Using cached ASAN Redis build: $REDIS_SERVER"
+			return 0
+		fi
+	fi
+
+	echo "Building Redis $redis_version with $san_type sanitizer..."
+
+	# Download and extract Redis if not already present
+	if [[ ! -d "$redis_dir" ]] || [[ ! -f "$redis_dir/Makefile" ]]; then
+		rm -rf "$redis_dir"
+		mkdir -p "$redis_dir"
+		cd /tmp
+		if [[ ! -f "redis-$redis_version.tar.gz" ]]; then
+			echo "Downloading Redis $redis_version..."
+			if command -v wget > /dev/null; then
+				wget -q "https://github.com/redis/redis/archive/refs/tags/$redis_version.tar.gz" -O "redis-$redis_version.tar.gz"
+			elif command -v curl > /dev/null; then
+				curl -sL "https://github.com/redis/redis/archive/refs/tags/$redis_version.tar.gz" -o "redis-$redis_version.tar.gz"
+			else
+				echo "Error: Neither wget nor curl found. Please install one of them."
+				return 1
+			fi
+		fi
+		tar xzf "redis-$redis_version.tar.gz" -C "$redis_dir" --strip-components=1
+	fi
+
+	cd "$redis_dir"
+
+	# Clean previous build only if needed (not an ASAN build)
+	make distclean > /dev/null 2>&1 || true
+
+	# Build with sanitizer flags
+	local build_result=0
+	if [[ $san_type == "address" ]]; then
+		local san_flags="-fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls"
+		if [[ -f "$ignorelist" ]]; then
+			san_flags="$san_flags -fsanitize-blacklist=$ignorelist"
+		fi
+
+		# Build dependencies first with sanitizer flags
+		echo "Building Redis dependencies with ASAN..."
+		make -C deps \
+			CC=clang \
+			CXX=clang++ \
+			CFLAGS="$san_flags" \
+			CXXFLAGS="$san_flags" \
+			hiredis linenoise lua fpconv fast_float \
+			>> "$build_log" 2>&1 || true
+
+		echo "Building Redis with CFLAGS: $san_flags"
+		make -j$(get_nproc) \
+			CC=clang \
+			CXX=clang++ \
+			OPTIMIZATION="-O1" \
+			MALLOC="libc" \
+			CFLAGS="$san_flags" \
+			CXXFLAGS="$san_flags" \
+			LDFLAGS="-fsanitize=address" \
+			>> "$build_log" 2>&1 || build_result=$?
+	fi
+
+	if [[ $build_result -ne 0 ]]; then
+		echo "Redis build failed. Last 50 lines of build log:"
+		tail -50 "$build_log"
+		cd "$original_dir"
+		return 1
+	fi
+
+	if [[ -f "$redis_dir/src/redis-server" ]]; then
+		REDIS_SERVER="$redis_dir/src/redis-server"
+		echo "Redis built successfully: $REDIS_SERVER"
+	else
+		echo "Failed to build Redis with sanitizer - redis-server binary not found"
+		echo "Last 50 lines of build log:"
+		tail -50 "$build_log"
+		cd "$original_dir"
+		return 1
+	fi
+
+	cd "$original_dir"
+}
+
 setup_clang_sanitizer() {
 	local ignorelist=$ROOT/tests/memcheck/redis.san-ignorelist
 	if ! grep THPIsEnabled $ignorelist &> /dev/null; then
@@ -168,28 +258,56 @@ setup_clang_sanitizer() {
 	# for RLTest
 	export SANITIZER="$SAN"
 	export SHORT_READ_BYTES_DELTA=512
-	
+
 	# --no-output-catch --exit-on-failure --check-exitcode
 	RLTEST_SAN_ARGS="--sanitizer $SAN"
 
 	if [[ $SAN == addr || $SAN == address ]]; then
-		REDIS_SERVER=${REDIS_SERVER:-redis-server-asan-$SAN_REDIS_SUFFIX}
-		if ! command -v $REDIS_SERVER > /dev/null; then
-			echo Building Redis for clang-asan ...
-			V="$VERBOSE" runn $READIES/bin/getredis --force -v $SAN_REDIS_VER --own-openssl --no-run \
-				--suffix asan-${SAN_REDIS_SUFFIX} --clang-asan --clang-san-blacklist $ignorelist
+		# Build Redis with ASAN to detect memory issues in Redis<->module interactions
+		if [[ -z $REDIS_SERVER ]]; then
+			build_redis_with_sanitizer "address" || {
+				echo "Error: Failed to build Redis with ASAN."
+				exit 1
+			}
 		fi
 
 		export ASAN_OPTIONS="detect_odr_violation=0:halt_on_error=0:detect_leaks=1"
 		export LSAN_OPTIONS="suppressions=$ROOT/tests/memcheck/asan.supp:use_tls=0"
 
+		# macOS requires preloading ASAN runtime for modules loaded via dlopen
+		# SIP strips DYLD_* variables from child processes, so we create a wrapper script
+		if [[ $OS == macos ]]; then
+			local asan_rt_dir=$(clang --print-runtime-dir 2>/dev/null)
+			if [[ -n "$asan_rt_dir" ]]; then
+				local asan_lib="$asan_rt_dir/libclang_rt.asan_osx_dynamic.dylib"
+				if [[ -f "$asan_lib" ]]; then
+					# Create wrapper script that sets DYLD_INSERT_LIBRARIES before exec
+					local wrapper="/tmp/redis-asan-wrapper.sh"
+					cat > "$wrapper" << WRAPPER_EOF
+#!/bin/bash
+export DYLD_INSERT_LIBRARIES="$asan_lib"
+exec "$REDIS_SERVER" "\$@"
+WRAPPER_EOF
+					chmod +x "$wrapper"
+					REDIS_SERVER="$wrapper"
+					echo "ASAN runtime wrapper created: $wrapper"
+				else
+					echo "Warning: ASAN runtime not found at $asan_lib"
+				fi
+			else
+				echo "Warning: Could not determine ASAN runtime directory"
+			fi
+		fi
+
 	elif [[ $SAN == mem || $SAN == memory ]]; then
-		REDIS_SERVER=${REDIS_SERVER:-redis-server-msan-$SAN_REDIS_VER}
-		if ! command -v $REDIS_SERVER > /dev/null; then
-			echo Building Redis for clang-msan ...
-			$READIES/bin/getredis --force -v $SAN_REDIS_VER  --no-run --own-openssl \
-				--suffix msan --clang-msan --llvm-dir /opt/llvm-project/build-msan \
-				--clang-san-blacklist $ignorelist
+		# For MSAN, use regular redis-server (MSAN requires special libc build)
+		if [[ -z $REDIS_SERVER ]]; then
+			if command -v redis-server > /dev/null; then
+				REDIS_SERVER=redis-server
+			else
+				echo "Error: No redis-server found. Please install redis-server."
+				exit 1
+			fi
 		fi
 	fi
 }
@@ -208,10 +326,14 @@ setup_redis_server() {
 #----------------------------------------------------------------------------------------------
 
 setup_valgrind() {
-	REDIS_SERVER=${REDIS_SERVER:-redis-server-vg-$VG_REDIS_SUFFIX}
-	if ! is_command $REDIS_SERVER; then
-		echo Building Redis for Valgrind ...
-		V="$VERBOSE" runn $READIES/bin/getredis -v ${VG_REDIS_VER} --valgrind --suffix vg-${VG_REDIS_VER}
+	# Use regular redis-server for valgrind tests
+	if [[ -z $REDIS_SERVER ]]; then
+		if command -v redis-server > /dev/null; then
+			REDIS_SERVER=redis-server
+		else
+			echo "Error: No redis-server found. Please install redis-server."
+			exit 1
+		fi
 	fi
 
 	if [[ $VG_LEAKS == 0 ]]; then
@@ -308,7 +430,7 @@ run_tests() {
 		if [[ -n $GITHUB_ACTIONS ]]; then
 			echo "::group::$title"
 		else
-			$READIES/bin/sep1 -0
+			sep1
 			printf "Running $title:\n\n"
 		fi
 	fi
@@ -388,7 +510,7 @@ run_tests() {
 	fi
 
 	[[ $RLEC == 1 ]] && export RLEC_CLUSTER=1
-	
+
 	local E=0
 	if [[ $NOP != 1 ]]; then
 		{ $OP python3 -m RLTest @$rltest_config; (( E |= $? )); } || true
@@ -430,9 +552,9 @@ EXT_HOST=${EXT_HOST:-127.0.0.1}
 EXT_PORT=${EXT_PORT:-6379}
 
 PID=$$
-OS=$($READIES/bin/platform --os)
-ARCH=$($READIES/bin/platform --arch)
-OSNICK=$($READIES/bin/platform --osnick)
+OS=$(get_platform_os)
+ARCH=$(get_platform_arch)
+OSNICK=$(get_platform_osnick)
 
 #---------------------------------------------------------------------------------- Tests scope
 
@@ -476,24 +598,15 @@ if [[ -n $TEST ]]; then
 	export RUST_BACKTRACE=1
 fi
 
-#-------------------------------------------------------------------------------- Platform Mode
-
-if [[ $PLATFORM_MODE == 1 ]]; then
-	CLEAR_LOGS=0
-	COLLECT_LOGS=1
-	NOFAIL=1
-fi
-STATFILE=${STATFILE:-$ROOT/bin/artifacts/tests/status}
-
 #---------------------------------------------------------------------------------- Parallelism
 
 PARALLEL=${PARALLEL:-1}
 
-[[ $EXT == 1 || $EXT == run || $BB == 1 || $GDB == 1 ]] && PARALLEL=0
+[[ $EXT == 1 || $EXT == run || $BB == 1 || $GDB == 1 || -n $TEST ]] && PARALLEL=0
 
 if [[ -n $PARALLEL && $PARALLEL != 0 ]]; then
 	if [[ $PARALLEL == 1 ]]; then
-		parallel="$($READIES/bin/nproc)"
+		parallel="$(get_nproc)"
 	else
 		parallel="$PARALLEL"
 	fi
@@ -624,35 +737,13 @@ fi
 
 if [[ $NOP != 1 ]]; then
 	if [[ -n $SAN || $VG == 1 ]]; then
-		[[ $GEN == 1 || $AOF == 1 ]] && FLOW=1
-		{ FLOW=$FLOW TCK=$TCK $ROOT/sbin/memcheck-summary.sh; (( E |= $? )); } || true
-	fi
-fi
+		# Build list of test directories to check
+		MEMCHECK_DIRS=()
+		[[ $GEN == 1 || $AOF == 1 ]] && MEMCHECK_DIRS+=(flow)
+		[[ $TCK == 1 ]] && MEMCHECK_DIRS+=(tck)
 
-if [[ $COLLECT_LOGS == 1 ]]; then
-	cd $ROOT
-	mkdir -p bin/artifacts/tests
-	if [[ $GEN == 1 || $AOF == 1 ]]; then
-		{ find tests/flow/logs -name "*.log" | tar -czf bin/artifacts/tests/tests-flow-logs-${ARCH}-${OSNICK}.tgz -T -; } || true
+		{ memcheck_summary "${MEMCHECK_DIRS[@]}"; (( E |= $? )); } || true
 	fi
-	if [[ $TCK == 1 ]]; then
-		{ find tests/tck/logs -name "*.log" | tar -czf bin/artifacts/tests/tests-tck-logs-${ARCH}-${OSNICK}.tgz -T - ; } || true
-	fi
-	if [[ $UPGRADE == 1 ]]; then
-		{ find tests/upgrade/logs -name "*.log" | tar -czf bin/artifacts/tests/tests-upgrade-logs-${ARCH}-${OSNICK}.tgz -T - ; } || true
-	fi
-fi
-
-if [[ -n $STATFILE ]]; then
-	mkdir -p "$(dirname "$STATFILE")"
-	if [[ -f $STATFILE ]]; then
-		(( E |= $(cat $STATFILE || echo 1) )) || true
-	fi
-	echo $E > $STATFILE
-fi
-
-if [[ $NOFAIL == 1 ]]; then
-	exit 0
 fi
 
 exit $E
