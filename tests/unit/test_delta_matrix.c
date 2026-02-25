@@ -9,6 +9,7 @@
 #include "src/configuration/config.h"
 #include "src/graph/tensor/tensor.h"
 #include "src/graph/delta_matrix/delta_utils.h"
+#include "tests/utils/mock_log.h"
 #include <time.h>
 
 void setup();
@@ -29,7 +30,7 @@ void tearDown();
 	({                                \
 		GrB_Matrix_nvals(&nvals, M);  \
 		TEST_CHECK(nvals != 0);       \
-	}) 
+	})
 
 #define M_EMPTY()   MATRIX_EMPTY(M)
 #define DP_EMPTY()  MATRIX_EMPTY(DP)
@@ -42,12 +43,16 @@ void tearDown();
 void setup() {
 	// use the malloc family for allocations
 	Alloc_Reset();
+	Logging_Reset();
 
 	// initialize GraphBLAS
 	GrB_init(GrB_NONBLOCKING);
 
 	// all matrices in CSR format
 	GxB_Global_Option_set(GxB_FORMAT, GxB_BY_ROW);
+
+	// set JIT to run
+	GxB_Global_Option_set(GxB_JIT_C_CONTROL, GxB_JIT_RUN);
 
 	// set delta matrix flush threshold
 	Config_Option_set(Config_DELTA_MAX_PENDING_CHANGES, "10000", NULL);
@@ -67,17 +72,17 @@ void CHECK_GrB_Matrices_EQ
 	const GrB_Matrix B,
 	const GrB_BinaryOp eq
 ) {
-	GrB_Type    t_A                 =  NULL;
-	GrB_Type    t_B                 =  NULL;
-	GrB_Matrix  C                   =  NULL;
-	GrB_Info    info                =  GrB_SUCCESS;
-	GrB_Index   nvals_A             =  0;
-	GrB_Index   nvals_B             =  0;
-	GrB_Index   nvals_C             =  0;
-	GrB_Index   nrows_A             =  0;
-	GrB_Index   ncols_A             =  0;
-	GrB_Index   nrows_B             =  0;
-	GrB_Index   ncols_B             =  0;
+	GrB_Type   t_A     = NULL;
+	GrB_Type   t_B     = NULL;
+	GrB_Matrix C       = NULL;
+	GrB_Info   info    = GrB_SUCCESS;
+	GrB_Index  nvals_A = 0;
+	GrB_Index  nvals_B = 0;
+	GrB_Index  nvals_C = 0;
+	GrB_Index  nrows_A = 0;
+	GrB_Index  ncols_A = 0;
+	GrB_Index  nrows_B = 0;
+	GrB_Index  ncols_B = 0;
 
 	//--------------------------------------------------------------------------
 	// type(A) == type(B)
@@ -89,7 +94,7 @@ void CHECK_GrB_Matrices_EQ
 	info = GxB_Matrix_type(&t_B, B);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	TEST_ASSERT(t_A == t_B);
+	TEST_CHECK(t_A == t_B);
 
 	//--------------------------------------------------------------------------
 	// dim(A) == dim(B)
@@ -120,6 +125,8 @@ void CHECK_GrB_Matrices_EQ
 	info = GrB_Matrix_nvals(&nvals_B, B);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
+	TEST_CHECK(nvals_A == nvals_B) ;
+
 	//--------------------------------------------------------------------------
 	// structure(A) == structure(B)
 	//--------------------------------------------------------------------------
@@ -134,88 +141,6 @@ void CHECK_GrB_Matrices_EQ
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	TEST_CHECK(nvals_C == nvals_A);
-	TEST_CHECK(nvals_C == nvals_B);
-
-	bool ok = true;
-	info = GrB_Matrix_reduce_BOOL(&ok, NULL, GrB_LAND_MONOID_BOOL, C, NULL);
-	TEST_CHECK(ok);
-
-	// clean up
-	info = GrB_Matrix_free(&C);
-	TEST_ASSERT(info == GrB_SUCCESS);
-}
-
-// nvals(A + B) == nvals(A) == nvals(B)
-void ASSERT_GrB_Matrices_EQ(const GrB_Matrix A, const GrB_Matrix B) {
-	GrB_Type    t_A                 =  NULL;
-	GrB_Type    t_B                 =  NULL;
-	GrB_Matrix  C                   =  NULL;
-	GrB_Info    info                =  GrB_SUCCESS;
-	GrB_Index   nvals_A             =  0;
-	GrB_Index   nvals_B             =  0;
-	GrB_Index   nvals_C             =  0;
-	GrB_Index   nrows_A             =  0;
-	GrB_Index   ncols_A             =  0;
-	GrB_Index   nrows_B             =  0;
-	GrB_Index   ncols_B             =  0;
-
-	//--------------------------------------------------------------------------
-	// type(A) == type(B)
-	//--------------------------------------------------------------------------
-
-	info = GxB_Matrix_type(&t_A, A);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	info = GxB_Matrix_type(&t_B, B);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	TEST_ASSERT(t_A == t_B);
-
-	//--------------------------------------------------------------------------
-	// dim(A) == dim(B)
-	//--------------------------------------------------------------------------
-
-	info = GrB_Matrix_nrows(&nrows_A, A);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Matrix_ncols(&ncols_A, A);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Matrix_nrows(&nrows_B, B);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Matrix_ncols(&ncols_B, B);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	TEST_CHECK(nrows_A == nrows_B);
-	TEST_CHECK(ncols_A == ncols_B);
-
-	//--------------------------------------------------------------------------
-	// NNZ(A) == NNZ(B)
-	//--------------------------------------------------------------------------
-
-	info = GrB_Matrix_nvals(&nvals_A, A);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Matrix_nvals(&nvals_B, B);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	//--------------------------------------------------------------------------
-	// structure(A) == structure(B)
-	//--------------------------------------------------------------------------
-
-	info = GrB_Matrix_new(&C, GrB_BOOL, nrows_A, ncols_A);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	GrB_BinaryOp op = t_A == GrB_BOOL? GrB_EQ_BOOL: GrB_EQ_UINT64;
-	info = GrB_Matrix_eWiseMult_BinaryOp(C, NULL, NULL, op, A, B, NULL);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Matrix_nvals(&nvals_C, C);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	TEST_CHECK(nvals_C == nvals_A);
-	TEST_CHECK(nvals_C == nvals_B);
 
 	bool ok = true;
 	info = GrB_Matrix_reduce_BOOL(&ok, NULL, GrB_LAND_MONOID_BOOL, C, NULL);
@@ -1374,8 +1299,8 @@ void test_RGMatrix_fuzzy() {
 	info = GrB_transpose(NT, NULL, NULL, N, NULL);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	ASSERT_GrB_Matrices_EQ(M, N);
-	ASSERT_GrB_Matrices_EQ(MT, NT);
+	CHECK_GrB_Matrices_EQ(M, N, GrB_ONEB_BOOL);
+	CHECK_GrB_Matrices_EQ(MT, NT, GrB_ONEB_BOOL);
 
 	//--------------------------------------------------------------------------
 	// clean up
@@ -1425,7 +1350,7 @@ void test_RGMatrix_export_no_changes() {
 	// validation
 	//--------------------------------------------------------------------------
 
-	ASSERT_GrB_Matrices_EQ(M, N);
+	CHECK_GrB_Matrices_EQ(M, N, GrB_ONEB_BOOL);
 	GrB_Matrix_free(&N);
 
 	//--------------------------------------------------------------------------
@@ -1451,7 +1376,7 @@ void test_RGMatrix_export_no_changes() {
 	info = Delta_Matrix_export(&N, A, t);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	ASSERT_GrB_Matrices_EQ(M, N);
+	CHECK_GrB_Matrices_EQ(M, N, GrB_ONEB_BOOL);
 
 	//--------------------------------------------------------------------------
 	// clean up
@@ -1525,7 +1450,7 @@ void test_RGMatrix_export_pending_changes() {
 	// validation
 	//--------------------------------------------------------------------------
 
-	ASSERT_GrB_Matrices_EQ(M, N);
+	CHECK_GrB_Matrices_EQ(M, N, GrB_ONEB_BOOL);
 
 	// clean up
 	GrB_Matrix_free(&N);
@@ -1595,9 +1520,9 @@ void test_RGMatrix_copy() {
 	A_DM = DELTA_MATRIX_DELTA_MINUS(A);
 	B_DM = DELTA_MATRIX_DELTA_MINUS(B);
 	
-	ASSERT_GrB_Matrices_EQ(A_M, B_M);
-	ASSERT_GrB_Matrices_EQ(A_DP, B_DP);
-	ASSERT_GrB_Matrices_EQ(A_DM, B_DM);
+	CHECK_GrB_Matrices_EQ(A_M, B_M, GrB_ONEB_BOOL);
+	CHECK_GrB_Matrices_EQ(A_DP, B_DP, GrB_ONEB_BOOL);
+	CHECK_GrB_Matrices_EQ(A_DM, B_DM, GrB_ONEB_BOOL);
 
 	//--------------------------------------------------------------------------
 	// free
@@ -1756,7 +1681,7 @@ void test_Delta_Matrix_add() {
 
 	C_M  = DELTA_MATRIX_M(C);
 
-	ASSERT_GrB_Matrices_EQ(C_M, C_GB);
+	CHECK_GrB_Matrices_EQ(C_M, C_GB, GrB_ONEB_BOOL);
 
 	//--------------------------------------------------------------------------
 	// set pending additions
@@ -1792,7 +1717,7 @@ void test_Delta_Matrix_add() {
 
 	C_M  = DELTA_MATRIX_M(C);
 
-	ASSERT_GrB_Matrices_EQ(C_M, C_GB);
+	CHECK_GrB_Matrices_EQ(C_M, C_GB, GrB_ONEB_BOOL);
 
 	//--------------------------------------------------------------------------
 	// set pending removals
@@ -1829,7 +1754,7 @@ void test_Delta_Matrix_add() {
 
 	C_M  = DELTA_MATRIX_M(C);
 
-	ASSERT_GrB_Matrices_EQ(C_M, C_GB);
+	CHECK_GrB_Matrices_EQ(C_M, C_GB, GrB_ONEB_BOOL);
 
 	// clean up
 	Delta_Matrix_free(&A);

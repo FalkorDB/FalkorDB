@@ -8,6 +8,7 @@
 #include "src/util/arr.h"
 #include "src/query_ctx.h"
 #include "src/util/rmalloc.h"
+#include "tests/utils/mock_log.h"
 #include "src/graph/query_graph.h"
 #include "src/graph/graphcontext.h"
 
@@ -27,6 +28,7 @@ static void _fake_graph_context() {
 
 void setup() {
 	Alloc_Reset();
+	Logging_Reset();
 	_fake_graph_context();
 }
 

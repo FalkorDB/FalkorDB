@@ -7,6 +7,7 @@
 #include "src/util/arr.h"
 #include "src/query_ctx.h"
 #include "src/util/rmalloc.h"
+#include "tests/utils/mock_log.h"
 #include "src/arithmetic/funcs.h"
 #include "src/util/thpool/pool.h"
 #include "src/procedures/procedure.h"
@@ -128,6 +129,7 @@ void setup() {
 
 	// use the malloc family for allocations
 	Alloc_Reset();
+	Logging_Reset();
 
 	// Initialize the thread pool.
 	TEST_ASSERT(ThreadPool_CreatePool(1, 2));

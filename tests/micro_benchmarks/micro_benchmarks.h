@@ -14,7 +14,7 @@ extern "C" {
 	#include "src/graph/graphcontext.h"
 	#include "src/graph/tensor/tensor.h"
 	#include "src/configuration/config.h"
-	#include "src/graph/tensor/tensor_random.h"
+	#include "tests/utils/tensor_random.h"
 	#include "src/graph/delta_matrix/delta_utils.h"
 	#include "src/arithmetic/algebraic_expression.h"
 }

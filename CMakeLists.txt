@@ -318,6 +318,10 @@ if(APPLE)
     add_library(falkordb_static STATIC $<TARGET_OBJECTS:falkordb>)
 endif()
 
+if(UNIT_TESTS OR BUILD_BENCHMARKS)
+    add_subdirectory(${root}/tests/utils tests/utils)
+endif()
+
 if(UNIT_TESTS)
     add_subdirectory(${root}/tests/unit tests/unit)
 endif()

@@ -11,6 +11,7 @@
 #include "src/filter_tree/filter_tree.h"
 #include "src/ast/ast_build_filter_tree.h"
 #include "src/arithmetic/funcs.h"
+#include "tests/utils/mock_log.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -36,6 +37,7 @@ void _fake_graph_context() {
 
 void setup() {
 	Alloc_Reset();
+	Logging_Reset();
 	QueryCtx_Init();
 	ErrorCtx_Init();
 	AR_RegisterFuncs();

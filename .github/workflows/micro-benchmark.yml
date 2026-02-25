@@ -141,3 +141,123 @@ jobs:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           zone: ${{ vars.GCP_ZONE }}
           instance_label: micro-benchmark-${{ github.run_id }}-${{ github.run_number }}
+
+  compare-results:
+    needs: run-micro-benchmarks
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Create comparison directories
+        run: mkdir -p compare/pr compare/master
+
+      - name: Download PR benchmark results
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ github.head_ref }}-micro-benchmark-results
+          path: compare/pr
+
+      - name: Download master benchmark results
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'master-micro-benchmark-results',
+              per_page: 1
+            })
+            if (artifacts.data.total_count === 0) {
+              core.warning('No master micro-benchmark results found — comparison will be skipped.')
+              return
+            }
+            const download_res = await github.rest.actions.downloadArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: artifacts.data.artifacts[0].id,
+              archive_format: 'zip',
+            })
+            require('fs').writeFileSync('master-results.zip', Buffer.from(download_res.data))
+        continue-on-error: true
+
+      - name: Unzip master results
+        run: unzip master-results.zip -d compare/master
+        continue-on-error: true
+
+      - name: Install comparison dependencies
+        working-directory: tests/micro_benchmarks
+        run: pip install -r comparison_requirements.txt
+
+      - name: Generate comparison markdown
+        working-directory: tests/micro_benchmarks
+        run: |
+          python3 compare_results.py \
+            --master_dir ../../compare/master \
+            --branch_dir ../../compare/pr \
+            --branch_name "${{ github.head_ref }}" \
+            --output ../../compare/micro_benchmark_compare.md
+        continue-on-error: true
+
+      - name: Post comparison to PR
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs')
+            let comparison = '_Micro-benchmark comparison could not be generated._'
+            try {
+              comparison = fs.readFileSync('compare/micro_benchmark_compare.md', 'utf-8')
+            } catch (e) {
+              core.warning(`Could not read comparison file: ${e}`)
+            }
+
+            const existing_pull = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              headers: { 'Accept': 'application/vnd.github-json' }
+            })
+
+            const startMarker = '<!-- Micro-benchmark results auto generation start -->'
+            const endMarker   = '<!-- Micro-benchmark results auto generation end -->'
+            const regex       = new RegExp(`${startMarker}[\\s\\S]*?${endMarker}`, 'g')
+            const section     = `${startMarker}\n${comparison}\n${endMarker}`
+
+            let body = existing_pull.data.body || ''
+            body = body.includes(startMarker)
+              ? body.replace(regex, section)
+              : `${body}\n${section}\n`
+
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              body: body,
+            })
+
+  push-to-grafana:
+    needs: run-micro-benchmarks
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download benchmark results
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ github.ref_name }}-micro-benchmark-results
+          path: tests/micro_benchmarks/results
+
+      - name: Install Grafana push dependencies
+        run: pip install -r tests/micro_benchmarks/grafana_requirements.txt
+
+      - name: Push results to Grafana
+        env:
+          GRAFANA_REMOTE_WRITE_URL: ${{ vars.GRAFANA_REMOTE_WRITE_URL }}
+          GRAFANA_METRICS_USER:     ${{ secrets.GRAFANA_METRICS_USER }}
+          GRAFANA_METRICS_TOKEN:    ${{ secrets.GRAFANA_METRICS_TOKEN }}
+        run: |
+          python3 tests/micro_benchmarks/push_to_grafana.py \
+            --branch      "${{ github.ref_name }}" \
+            --commit-sha  "${{ github.sha }}" \
+            --event-name  "${{ github.event_name }}"

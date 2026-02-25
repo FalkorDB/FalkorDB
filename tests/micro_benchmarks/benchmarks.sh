@@ -163,7 +163,7 @@ if [[ -z $BENCH ]]; then
             # Prepare benchmark arguments
             BENCH_ARGS=""
             if [[ $JSON == 1 ]]; then
-                BENCH_ARGS="--benchmark_format=json --benchmark_out=${RESULTS_DIR}/${bench_name}_results.json"
+                BENCH_ARGS="--benchmark_out=${RESULTS_DIR}/${bench_name}_results.json --benchmark_out_format=json"
             fi
             
             if [[ $VG == 1 ]]; then
@@ -185,7 +185,7 @@ else
     # Prepare benchmark arguments
     BENCH_ARGS="$SUBBENCH"
     if [[ $JSON == 1 ]]; then
-        BENCH_ARGS="--benchmark_format=json --benchmark_out=${RESULTS_DIR}/${SUPERBENCH}_results.json $SUBBENCH"
+        BENCH_ARGS="--benchmark_out=${RESULTS_DIR}/${SUPERBENCH}_results.json --benchmark_out_format=json $SUBBENCH"
     fi
     
     if [[ $VG == 1 ]]; then
