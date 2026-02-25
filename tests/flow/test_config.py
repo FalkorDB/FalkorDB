@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 20 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 22 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -45,7 +45,9 @@ class testConfig(FlowTestsBase):
                 ("BOLT_PORT", 65535),
                 ("DELAY_INDEXING", 0),
                 ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
-                ("TEMP_FOLDER", "/tmp")
+                ("TEMP_FOLDER", "/tmp"),
+                ("JS_HEAP_SIZE", 256 * 1024 * 1024),
+                ("JS_STACK_SIZE", 1024 * 1024)
         ]
 
         for i, config in enumerate(response):
@@ -252,6 +254,20 @@ class testConfig(FlowTestsBase):
 
         response = self.db.config_get("DELAY_INDEXING")
         expected_response = 0
+        self.env.assertEqual(response, expected_response)
+
+        response = self.db.config_set("JS_HEAP_SIZE", 256 * 1024 * 1024)
+        self.env.assertEqual(response, "OK")
+
+        response = self.db.config_get("JS_HEAP_SIZE")
+        expected_response = 256 * 1024 * 1024
+        self.env.assertEqual(response, expected_response)
+
+        response = self.db.config_set("JS_STACK_SIZE", 1024 * 1024)
+        self.env.assertEqual(response, "OK")
+
+        response = self.db.config_get("JS_STACK_SIZE")
+        expected_response = 1024 * 1024
         self.env.assertEqual(response, expected_response)
 
     def test09_set_invalid_values(self):
