@@ -1,9 +1,11 @@
 #pragma once
 
 #include <benchmark/benchmark.h>
+#include <atomic>
 
 // Define C++ things
 #define restrict
+using std::atomic_int;
 extern "C" {
 	#include "RG.h"
 	#include "rax.h"

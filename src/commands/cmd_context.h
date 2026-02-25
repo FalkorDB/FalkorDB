@@ -6,17 +6,11 @@
 
 #pragma once
 
+#include <stdatomic.h>
 #include "../bolt/bolt.h"
 #include "../redismodule.h"
 #include "../util/simple_timer.h"
 #include "../graph/graphcontext.h"
-
-#ifdef __cplusplus
-#include <atomic>
-using std::atomic_int;
-#else
-#include <stdatomic.h>
-#endif
 
 // ExecutorThread lists the different types of threads in the system
 typedef enum {
