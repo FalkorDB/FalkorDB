@@ -4,11 +4,11 @@
  */
 
 #include "../../globals.h"
+#include "../../util/memory.h"
 #include "../../util/rmalloc.h"
 #include "../../storage/storage.h"
 #include "../../util/simple_timer.h"
 #include "../../graph/graphcontext.h"
-#include "../../util/memory_consumption.h"
 #include "../../util/datablock/datablock.h"
 #include "../../graph/entities/graph_entity.h"
 

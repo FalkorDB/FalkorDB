@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "storage.h"
+#include "../util/memory.h"
 #include "../util/rmalloc.h"
 
 #include <stdio.h>
@@ -40,9 +41,9 @@ int Storage_init(void) {
 		return res ;
 	}
 
-	config.db_path   = path ;
-	config.log_level = TDB_LOG_ERROR ;
-	// TODO: specify .max_memory_usage = 0, /* Global memory limit in bytes (default: 0 = auto, 80% of system RAM; minimum: 50% of system RAM) */
+	config.db_path          = path ;
+	config.log_level        = TDB_LOG_ERROR ;
+	config.max_memory_usage = get_host_available_memory () * 0.1 ;
 
 	res = tidesdb_open (&config, &db) ;
 	free (path) ;

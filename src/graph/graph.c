@@ -459,10 +459,11 @@ Graph *Graph_New
 
 	if (name != NULL) {
 		// default column config
-		// TODO: use .comparator_name = "uint64 compare" see docs!
-
 		tidesdb_column_family_config_t cf_config =
 			tidesdb_default_column_family_config () ;
+		strncpy (cf_config.comparator_name,  "uint64",
+				TDB_MAX_COMPARATOR_NAME - 1) ;
+		cf_config.comparator_name[TDB_MAX_COMPARATOR_NAME - 1] = '\0' ;
 
 		//----------------------------------------------------------------------
 		// create tidesdb nodes storage

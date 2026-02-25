@@ -8,3 +8,6 @@
 // returns the current Resident Set Size (RSS) in bytes
 size_t get_current_rss(void) ;
 
+// returns the total amount of available physical memory on the host in bytes
+size_t get_host_available_memory(void) ;
+
