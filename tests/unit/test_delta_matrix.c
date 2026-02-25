@@ -1931,6 +1931,109 @@ void test_RGMatrix_resize() {
 	Delta_Matrix_free(&A);
 }
 
+// test Tensor_RemoveRows with and without the optional dels output
+void test_Tensor_RemoveRows() {
+	GrB_Info      info   = GrB_SUCCESS;
+	GrB_Index     nvals  = 0;
+	GrB_Index     nrows  = 100;
+	GrB_Index     ncols  = 100;
+	GrB_Vector    rows   = NULL;
+	GrB_Descriptor desc  = NULL;
+	Tensor        T      = NULL;
+	Delta_Matrix  dels   = NULL;
+
+	GrB_Vector_new(&rows, GrB_BOOL, nrows);
+	GrB_Descriptor_new(&desc);
+
+	// target row 0 for removal
+	GrB_Vector_setElement_BOOL(rows, true, 0);
+	GrB_set(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST);
+
+	// -------------------------------------------------------------------------
+	// dels = NULL
+	// -------------------------------------------------------------------------
+
+	T = Tensor_new(nrows, ncols);
+	TEST_ASSERT(T != NULL);
+
+	// add scalar entries in row 0 (pending in DP)
+	Tensor_SetElement(T, 0, 1, 1);
+	Tensor_SetElement(T, 0, 2, 2);
+
+	// sync some entries to M
+	Delta_Matrix_wait((Delta_Matrix) T, true);
+
+	// add a multi-edge at (0,5) — two values at the same (row,col) become a vector
+	Tensor_SetElement(T, 0, 5, 10);
+	Tensor_SetElement(T, 0, 5, 11);
+
+	// add a pending entry to M
+	Tensor_SetElement(T, 0, 6, 3);
+
+	// add entries in row 1 that must survive
+	Tensor_SetElement(T, 1, 0, 7);
+	Tensor_SetElement(T, 1, 0, 8);
+
+	// remove row 0; dels is NULL so vectors are freed internally
+	info = Tensor_RemoveRows(T, NULL, rows, desc);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	// row 0 must be empty; row 1 entries remain
+	Delta_Matrix_nvals(&nvals, (Delta_Matrix) T);
+	TEST_CHECK(nvals > 0); // row 1 entries still present
+
+	Tensor_free(&T);
+	TEST_ASSERT(T == NULL);
+
+	// -------------------------------------------------------------------------
+	// dels != NULL
+	// -------------------------------------------------------------------------
+
+	T = Tensor_new(nrows, ncols);
+	TEST_ASSERT(T != NULL);
+
+	// add scalar entries in row 0 (pending in DP)
+	Tensor_SetElement(T, 0, 1, 1);
+	Tensor_SetElement(T, 0, 2, 2);
+
+	// sync some entries to M
+	Delta_Matrix_wait((Delta_Matrix) T, true);
+
+	// add a multi-edge at (0,5)
+	Tensor_SetElement(T, 0, 5, 10);
+	Tensor_SetElement(T, 0, 5, 11);
+
+	// add a pending entry
+	Tensor_SetElement(T, 0, 6, 3);
+
+	// add entries in row 1 that must survive
+	Tensor_SetElement(T, 1, 0, 7);
+	Tensor_SetElement(T, 1, 0, 8);
+
+	// remove row 0 and capture deleted entries in dels
+	info = Tensor_RemoveRows(T, &dels, rows, desc);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	TEST_ASSERT(dels != NULL);
+
+	// dels must contain the deleted entries from row 0
+	Delta_Matrix_nvals(&nvals, dels);
+	TEST_CHECK(nvals > 0);
+
+	// row 0 in T must be empty; row 1 entries remain
+	Delta_Matrix_nvals(&nvals, (Delta_Matrix) T);
+	TEST_CHECK(nvals > 0); // row 1 entries still present
+
+	// free T and dels — must not crash (no double-free of multi-edge vectors)
+	Tensor_free(&T);
+	TEST_ASSERT(T == NULL);
+
+	Tensor_free(&dels);
+	TEST_ASSERT(dels == NULL);
+
+	GrB_free(&rows);
+	GrB_free(&desc);
+}
+
 TEST_LIST = {
 	{"RGMatrix_new", test_RGMatrix_new},
 	{"RGMatrix_simple_set", test_RGMatrix_simple_set},
@@ -1945,6 +2048,7 @@ TEST_LIST = {
 	{"RGMatrix_export_pending_changes", test_RGMatrix_export_pending_changes},
 	{"Delta_Matrix_add", test_Delta_Matrix_add},
 	{"RGMatrix_resize", test_RGMatrix_resize},
+	{"Tensor_RemoveRows", test_Tensor_RemoveRows},
 	{NULL, NULL}
 };
 
