@@ -167,6 +167,7 @@ static void _ExecuteQuery(void *args) {
 	ExecutionType  exec_type    = exec_ctx->exec_type;
 	const bool     profile      = (query_ctx->flags & QueryExecutionTypeFlag_PROFILE);
 	const bool     readonly     = !(query_ctx->flags & QueryExecutionTypeFlag_WRITE);
+	bool           graph_modified = false;  // track if graph was modified for notification
 
 	// if we have migrated to a writer thread,
 	// update thread-local storage and track the CommandCtx
@@ -256,6 +257,7 @@ static void _ExecuteQuery(void *args) {
 	} else {
 		// replicate if graph was modified
 		if(ResultSetStat_IndicateModification(&result_set->stats)) {
+			graph_modified = true;  // mark for notification after locks released
 			// determine rather or not to replicate via effects
 			// effect replication is mandatory if query is non deterministic
 			if (EffectsBuffer_Length (QueryCtx_GetEffectsBuffer()) > 0 &&
@@ -276,6 +278,18 @@ static void _ExecuteQuery(void *args) {
 				QueryCtx_Replicate(query_ctx);
 			}
 		}
+	}
+
+	// send keyspace notification while thread-safe context is still locked
+	if (graph_modified) {
+		const char *graph_name = GraphContext_GetName(gc);
+		RedisModuleString *key = RedisModule_CreateString(rm_ctx,
+				graph_name, strlen(graph_name));
+		RedisModule_NotifyKeyspaceEvent(rm_ctx,
+				REDISMODULE_NOTIFY_MODULE,
+				"graph.modified",
+				key);
+		RedisModule_FreeString(rm_ctx, key);
 	}
 
 	QueryCtx_UnlockCommit();
