@@ -281,13 +281,14 @@ static void _ExecuteQuery(void *args) {
 		}
 	}
 
+	QueryCtx_UnlockCommit();
+
 	// defer keyspace notification to main thread
-	// Redis 8 asserts pubsub runs on the main thread
+	// must be after QueryCtx_UnlockCommit to avoid notifying subscribers
+	// while the write lock is still held
 	if(graph_modified) {
 		Notify_Keyspace_GraphModified(GraphContext_GetName(gc));
 	}
-
-	QueryCtx_UnlockCommit();
 
 	if(!profile || ErrorCtx_EncounteredError()) {
 		// if we encountered an error, ResultSet_Reply will emit the error

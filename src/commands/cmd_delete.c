@@ -43,6 +43,8 @@ int Graph_Delete
 	}
 
 	// send keyspace notification after key is closed
+	// safe to call directly here because Graph_Delete runs on the main
+	// Redis thread (registered without CommandDispatch)
 	if(deleted) {
 		RedisModule_NotifyKeyspaceEvent(ctx,
 				REDISMODULE_NOTIFY_MODULE,
