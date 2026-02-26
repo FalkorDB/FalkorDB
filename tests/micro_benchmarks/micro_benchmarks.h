@@ -1,26 +1,24 @@
 #pragma once
 
 #include <benchmark/benchmark.h>
-#include <atomic>
+#include "LAGraph.h"
+
+// TODO: move these includes to the individual c-files
 
 // Define C++ things
-#define restrict
-using std::atomic_int;
-extern "C" {
-	#include "RG.h"
-	#include "rax.h"
-	#include "LAGraph.h"
-	#include "LAGraphX.h"
-	#include "src/globals.h"
-	#include "src/query_ctx.h"
-	#include "src/graph/graphcontext.h"
-	#include "src/graph/tensor/tensor.h"
-	#include "src/configuration/config.h"
-	#include "tests/utils/tensor_random.h"
-	#include "src/graph/delta_matrix/delta_utils.h"
-	#include "src/arithmetic/algebraic_expression.h"
-}
-#undef restrict
+// extern "C" {
+// 	#include "RG.h"
+// 	#include "rax.h"
+// 	#include "LAGraphX.h"
+// 	#include "src/globals.h"
+// 	// #include "src/query_ctx.h"
+// 	// #include "src/graph/graphcontext.h"
+// 	#include "src/graph/tensor/tensor.h"
+// 	#include "src/configuration/config.h"
+// 	#include "src/graph/delta_matrix/delta_utils.h"
+// 	#include "src/arithmetic/algebraic_expression.h"
+// }
+// #undef restrict
 
 #define FDB_BENCHMARK_MAIN()                                                   \
 	int main(int argc, char** argv) {                                          \
@@ -36,11 +34,9 @@ extern "C" {
 			return 1;                                                          \
 		}                                                                      \
 		                                                                       \
-		Config_Option_set(Config_DELTA_MAX_PENDING_CHANGES, "100000", NULL);   \
-		GrB_Global_set_INT32(GrB_GLOBAL, GxB_JIT_OFF, GxB_JIT_C_CONTROL);      \
+		GrB_Global_set_INT32(GrB_GLOBAL, GxB_JIT_RUN, GxB_JIT_C_CONTROL);      \
 		GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);                   \
 		GxB_Global_Option_set(GxB_FORMAT, GxB_BY_ROW);                         \
-		Global_GrB_Ops_Init();                                                 \
 		                                                                       \
 		/* Google Benchmark */                                                 \
 		::benchmark::Initialize(&argc, argv);                                  \
@@ -49,7 +45,6 @@ extern "C" {
 		::benchmark::Shutdown();                                               \
 		                                                                       \
 		/* teardown */                                                         \
-		Global_GrB_Ops_Free();                                                 \
 		LAGraph_Finalize(NULL);                                                \
 		return 0;                                                              \
 	}

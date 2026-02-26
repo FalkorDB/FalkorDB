@@ -1,5 +1,11 @@
 #include "micro_benchmarks.h"
 
+extern "C" {
+#include "tests/utils/tensor_random.h"
+#include "src/graph/delta_matrix/delta_utils.h"
+#include "src/graph/delta_matrix/delta_matrix.h"
+}
+
 static void BM_delete_from_m(benchmark::State &state) {
 	Delta_Matrix A     = NULL;
 	Tensor T = NULL;

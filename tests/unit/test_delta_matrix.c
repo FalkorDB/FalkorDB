@@ -18,7 +18,6 @@ void tearDown();
 #define TEST_INIT setup();
 #define TEST_FINI tearDown();
 #include "acutest.h"
-#include "globals.h"
 
 #define MATRIX_EMPTY(M)               \
 	({                                \
@@ -56,12 +55,9 @@ void setup() {
 
 	// set delta matrix flush threshold
 	Config_Option_set(Config_DELTA_MAX_PENDING_CHANGES, "10000", NULL);
-
-	Global_GrB_Ops_Init();
 }
 
 void tearDown() {
-	Global_GrB_Ops_Free();
 	GrB_finalize();
 }
 

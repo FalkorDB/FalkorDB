@@ -12,15 +12,6 @@
 
 #include <pthread.h>
 
-struct GrB_ops {
-	GrB_Scalar   empty;        // empty scalar
-	GrB_BinaryOp push_id;      // binary operator to add an ID to a tensor entry
-	// WARNING: free_tensors has side effects: it should only be used with
-	// unmasked, inplace GrB_applies ie.
-	// GrB_apply (A, NULL, NULL, free_tensors, A, NULL);
-	GrB_UnaryOp  free_tensors; // unary operator to free tensor entries
-};
-
 // initialize global variables
 void Globals_Init(void);
 
@@ -139,10 +130,3 @@ GraphContext *GraphIterator_Next
 	KeySpaceGraphIterator *it  // iterator to advance
 );
 
-//------------------------------------------------------------------------------
-// Global GraphBLAS objects
-//------------------------------------------------------------------------------
-
-void Global_GrB_Ops_Init(void) ;
-void Global_GrB_Ops_Free(void) ;
-const struct GrB_ops *Global_GrB_Ops_Get(void) ;

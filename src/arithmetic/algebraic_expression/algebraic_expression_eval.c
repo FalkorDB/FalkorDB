@@ -4,8 +4,6 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "utils.h"
-#include "../../query_ctx.h"
 #include "../algebraic_expression.h"
 
 // forward declarations

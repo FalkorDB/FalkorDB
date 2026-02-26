@@ -1,5 +1,26 @@
 #include "micro_benchmarks.h"
 
+// take care of cpp definitions
+#define restrict
+
+// C++ and C have incompatible atomic declarations
+// first, include <atomic>, then block C's <stdatomic.h> from redefining them
+#include <atomic>
+using std::atomic_bool;
+using std::atomic_int;
+
+#define _STDATOMIC_H          // GCC
+#define __CLANG_STDATOMIC_H   // Clang
+extern "C" {
+#include "tests/utils/tensor_random.h"
+#include "src/graph/delta_matrix/delta_utils.h"
+#include "src/graph/delta_matrix/delta_matrix.h"
+#include "src/arithmetic/algebraic_expression.h"
+#include "src/query_ctx.h"
+#include "src/graph/graphcontext.h"
+}
+#undef restrict
+
 static void _fake_graph_context() {
 	GraphContext* gc = (GraphContext*)calloc(1, sizeof(GraphContext));
 
@@ -16,12 +37,6 @@ static void _fake_graph_context() {
 	gc->queries_log = QueriesLog_New();
 
 	pthread_rwlock_init(&gc->_attribute_rwlock, NULL);
-
-	GraphContext_AddSchema(gc, "Person", SCHEMA_NODE);
-	GraphContext_AddSchema(gc, "City", SCHEMA_NODE);
-	GraphContext_AddSchema(gc, "friend", SCHEMA_EDGE);
-	GraphContext_AddSchema(gc, "visit", SCHEMA_EDGE);
-	GraphContext_AddSchema(gc, "war", SCHEMA_EDGE);
 
 	int res = QueryCtx_Init();
 	ASSERT(res);
@@ -179,7 +194,6 @@ void BM_eval_mul_chain(benchmark::State& state) {
 BENCHMARK(BM_eval_add_chain)
     ->Setup(rg_setup)
     ->Teardown(rg_teardown)
-    // ->Unit(benchmark::kMicrosecond)->Args({10000, 10000});
     ->Unit(benchmark::kMillisecond)
     ->Args({0, 0})
     ->Args({10000, 10000})
@@ -191,7 +205,6 @@ BENCHMARK(BM_eval_add_chain)
 BENCHMARK(BM_eval_mul_chain)
     ->Setup(rg_setup)
     ->Teardown(rg_teardown)
-    // ->Unit(benchmark::kMicrosecond)->Args({10000, 10000});
     ->Unit(benchmark::kMillisecond)
     ->Args({0, 0})
     ->Args({10000, 10000})

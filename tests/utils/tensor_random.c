@@ -1,11 +1,8 @@
 #include "LAGraph.h"
 #include "LAGraphX.h"
-#include "src/globals.h"
 #include "util/simple_rand.h"
 #include "src/graph/tensor/tensor.h"
-#include "src/configuration/config.h"
 #include "src/graph/delta_matrix/delta_utils.h"
-#include "src/arithmetic/algebraic_expression.h"
 
 void Delta_Random_Matrix
 (
@@ -138,6 +135,41 @@ void _make_single_tensor
 	GrB_Vector_free(&j_v);
 }
 
+// free vector entries of a tensor
+static void _free_vectors
+(
+	uint64_t *z,       // [ignored] new value
+	const uint64_t *x  // current entry
+) {
+	// see if entry is a vector
+	if(!SCALAR_ENTRY(*x)) {
+		// free vector
+		GrB_Vector V = AS_VECTOR(*x);
+		GrB_free(&V);
+	}
+	*z = MSB_MASK;
+}
+
+static void _push_element
+(
+	uint64_t *z,
+	const uint64_t *x,
+	const uint64_t *y
+) {
+	ASSERT(SCALAR_ENTRY(*y));
+	if(SCALAR_ENTRY(*x)){
+		GrB_Vector v = NULL;
+		GrB_OK (GrB_Vector_new(&v, GrB_BOOL, GrB_INDEX_MAX));
+		GrB_OK (GrB_Vector_setElement_BOOL(v, true, *x));
+		GrB_OK (GrB_Vector_setElement_BOOL(v, true, *y));
+		*z = SET_MSB((uint64_t) v);
+	} else {
+		GrB_Vector v = AS_VECTOR(*x);
+		GrB_OK (GrB_Vector_setElement_BOOL(v, true, *y));
+		*z = SET_MSB((uint64_t) v);
+	}
+}
+
 // Make a random tensor
 void Random_Tensor
 (
@@ -151,15 +183,19 @@ void Random_Tensor
 	ASSERT(A != NULL);
 
 	GrB_BinaryOp     mod_op      = NULL;
-	GrB_BinaryOp     dup_handler = Global_GrB_Ops_Get()->push_id;
-	GrB_UnaryOp      free_entry  = Global_GrB_Ops_Get()->free_tensors;
+	GrB_BinaryOp     dup_handler = NULL;
+	GrB_UnaryOp      free_entry  = NULL;
 	GrB_IndexUnaryOp select_op   = NULL;
 	GrB_Descriptor   desc        = NULL;
 
-	GrB_OK(GrB_BinaryOp_new(&mod_op, (GxB_binary_function) _mod_function, 
+	GrB_OK(GrB_BinaryOp_new(&mod_op, (GxB_binary_function) _mod_function,
 		GrB_UINT64, GrB_UINT64, GrB_UINT64));
+	GrB_OK(GrB_BinaryOp_new(&dup_handler, (GxB_binary_function) _push_element,
+		GrB_UINT64, GrB_UINT64, GrB_UINT64));
+	GrB_OK(GrB_UnaryOp_new(&free_entry, (GxB_unary_function) _free_vectors,
+		GrB_UINT64, GrB_UINT64));
 	GrB_OK(GrB_IndexUnaryOp_new(
-		&select_op, (GxB_index_unary_function) _select_random, 
+		&select_op, (GxB_index_unary_function) _select_random,
 		GrB_BOOL, GrB_UINT64, GrB_FP64));
 
 	GrB_OK(GrB_Descriptor_new(&desc));

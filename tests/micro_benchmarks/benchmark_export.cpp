@@ -1,5 +1,11 @@
 #include "micro_benchmarks.h"
 
+extern "C" {
+#include "tests/utils/tensor_random.h"
+#include "src/graph/delta_matrix/delta_utils.h"
+#include "src/graph/delta_matrix/delta_matrix.h"
+}
+
 static void ArgGenerator(benchmark::internal::Benchmark* b) {
 	std::vector<int> values = {0, 100, 10000};
 

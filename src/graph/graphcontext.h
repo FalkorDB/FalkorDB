@@ -7,6 +7,7 @@
 #pragma once
 
 #include "graph.h"
+#include <stdatomic.h>
 #include "../redismodule.h"
 #include "../index/index.h"
 #include "../schema/schema.h"
@@ -16,12 +17,6 @@
 #include "../serializers/encode_context.h"
 #include "../serializers/decode_context.h"
 
-#ifdef __cplusplus
-#include <atomic>
-using std::atomic_bool;
-#else
-#include <stdatomic.h>
-#endif
 // GraphContext holds refrences to various elements of a graph object
 // it is the value sitting behind a Redis graph key
 //
@@ -49,7 +44,6 @@ struct GraphContext{
 	Cache *cache;                          // global cache of execution plans
 	XXH32_hash_t version;                  // graph version
 	RedisModuleString *telemetry_stream;   // telemetry stream name
-	
 	atomic_bool write_in_progress;         // write query in progess
 	CircularBuffer pending_write_queue;    // pending write queries queue
 };

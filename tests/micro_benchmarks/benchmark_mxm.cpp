@@ -1,5 +1,12 @@
 #include "micro_benchmarks.h"
 
+extern "C" {
+#include "LAGraphX.h"
+#include "tests/utils/tensor_random.h"
+#include "src/graph/delta_matrix/delta_utils.h"
+#include "src/graph/delta_matrix/delta_matrix.h"
+}
+
 static void BM_mxm_all_V1(benchmark::State &state) {
 	GrB_Matrix   A_M   = NULL;
 	Delta_Matrix A     = NULL;
