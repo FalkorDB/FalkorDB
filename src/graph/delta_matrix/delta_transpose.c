@@ -24,7 +24,7 @@ GrB_Info Delta_Matrix_cacheTranspose
 
 	GrB_OK(Delta_Matrix_type(&type, A));
 
-	Delta_Matrix_new(&A->transposed, GrB_BOOL, nrows, ncols, false);
+	GrB_OK(Delta_Matrix_new(&A->transposed, GrB_BOOL, ncols, nrows, false));
 
 	Delta_Matrix T   = A->transposed;
 	GrB_Matrix   M   = DELTA_MATRIX_M(A);
