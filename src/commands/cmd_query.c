@@ -21,6 +21,7 @@
 #include "../util/cache/cache.h"
 #include "../configuration/config.h"
 #include "../execution_plan/execution_plan.h"
+#include "cmd_notifications.h"
 
 // GraphQueryCtx stores the allocations required to execute a query
 typedef struct {
@@ -167,6 +168,7 @@ static void _ExecuteQuery(void *args) {
 	ExecutionType  exec_type    = exec_ctx->exec_type;
 	const bool     profile      = (query_ctx->flags & QueryExecutionTypeFlag_PROFILE);
 	const bool     readonly     = !(query_ctx->flags & QueryExecutionTypeFlag_WRITE);
+	bool           graph_modified = false;  // track if graph was modified for notification
 
 	// if we have migrated to a writer thread,
 	// update thread-local storage and track the CommandCtx
@@ -256,6 +258,7 @@ static void _ExecuteQuery(void *args) {
 	} else {
 		// replicate if graph was modified
 		if(ResultSetStat_IndicateModification(&result_set->stats)) {
+			graph_modified = true;  // mark for notification after locks released
 			// determine rather or not to replicate via effects
 			// effect replication is mandatory if query is non deterministic
 			if (EffectsBuffer_Length (QueryCtx_GetEffectsBuffer()) > 0 &&
@@ -279,6 +282,13 @@ static void _ExecuteQuery(void *args) {
 	}
 
 	QueryCtx_UnlockCommit();
+
+	// defer keyspace notification to main thread
+	// must be after QueryCtx_UnlockCommit to avoid notifying subscribers
+	// while the write lock is still held
+	if(graph_modified) {
+		Notify_Keyspace_GraphModified(GraphContext_GetName(gc));
+	}
 
 	if(!profile || ErrorCtx_EncounteredError()) {
 		// if we encountered an error, ResultSet_Reply will emit the error
