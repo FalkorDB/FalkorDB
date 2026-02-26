@@ -39,7 +39,9 @@ typedef enum {
 	Config_DELAY_INDEXING            = 17,  // delay index construction when decoding
 	Config_IMPORT_FOLDER             = 18,  // path to CSV import folder
 	Config_TEMP_FOLDER               = 19,  // path to temp folder
-	Config_END_MARKER                = 20
+	Config_JS_HEAP_SIZE              = 20,  // quickjs js runtime heap size limit
+	Config_JS_STACK_SIZE             = 21,  // quickjs js runtime stack size limit
+	Config_END_MARKER                = 22
 } Config_Option_Field;
 
 // callback function, invoked once configuration changes as a result of
@@ -60,7 +62,9 @@ static const Config_Option_Field RUNTIME_CONFIGS[] = {
 	Config_CMD_INFO,
 	Config_CMD_INFO_MAX_QUERY_COUNT,
 	Config_EFFECTS_THRESHOLD,
-	Config_DELAY_INDEXING
+	Config_DELAY_INDEXING,
+	Config_JS_HEAP_SIZE,
+	Config_JS_STACK_SIZE
 };
 static const size_t RUNTIME_CONFIG_COUNT = sizeof(RUNTIME_CONFIGS) / sizeof(RUNTIME_CONFIGS[0]);
 

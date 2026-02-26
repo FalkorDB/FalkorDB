@@ -1,2 +1,0 @@
-
-extract_symbols=$(shell $(MK)/extract-obj-symbols $1)

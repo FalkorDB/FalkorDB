@@ -8,7 +8,7 @@ fn main() {
     if let Ok(bin_root) = bin_root {
         let clang = env::var("CLANG").unwrap_or("0".to_string());
 
-        println!("cargo:rustc-link-arg=-Wl,-rpath,{bin_root}/src");
-        println!("cargo:rustc-link-arg={bin_root}/src/falkordb.so");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{bin_root}");
+        println!("cargo:rustc-link-arg={bin_root}/falkordb.so");
     }
 }

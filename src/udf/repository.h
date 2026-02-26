@@ -12,6 +12,14 @@ typedef uint64_t UDF_RepoVersion;
 // initialize UDF repository
 bool UDF_RepoInit(void);
 
+// bumps repo's version by 1
+// function is exposed to allow quickjs runtime heap & stack size adjustment
+// via runtime re-configuration, once the user changes either the heap or stack
+// size limit the configuration handler would bump the UDFs repo version
+// without changing its internal content, this will force each query execution
+// thread to reload a new quickjs runtime picking up on the new limits
+void UDF_RepoBumpVersion(void);
+
 // return repo's version
 UDF_RepoVersion UDF_RepoGetVersion(void);
 
