@@ -60,21 +60,26 @@ static void BM_wait(benchmark::State& state) {
 
 	GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
 
+	if(Delta_Matrix_Synced(A)) {
+		printf ("Error! Got a fully synced matrix. Exiting.");
+		return ;
+	}
+
 	for (auto _ : state) {
 		state.PauseTiming();
-		Delta_Matrix_free(&C);
-		Delta_Matrix_dup(&C, A);
+		GrB_OK (Delta_Matrix_free(&C));
+		GrB_OK (Delta_Matrix_dup(&C, A));
 		state.ResumeTiming();
 
-		Delta_Matrix_wait(C, true);
+		GrB_OK (Delta_Matrix_wait(C, true));
 	}
 
 	GrB_Global_set_INT32(GrB_GLOBAL, false, GxB_BURBLE);
 
-	Delta_Matrix_free(&C);
-	Delta_Matrix_free(&A);
+	GrB_OK (Delta_Matrix_free(&C));
+	GrB_OK (Delta_Matrix_free(&A));
 }
 
-// BENCHMARK(BM_export)->Unit(benchmark::kMillisecond)->Apply(ArgGenerator);
+BENCHMARK(BM_export)->Unit(benchmark::kMillisecond)->Apply(ArgGenerator);
 BENCHMARK(BM_wait)->Unit(benchmark::kMillisecond)->Apply(ArgGenerator);
 FDB_BENCHMARK_MAIN()

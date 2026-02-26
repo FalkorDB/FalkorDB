@@ -68,8 +68,14 @@ void Delta_Random_Matrix
 		n, GrB_DESC_S));
 	GrB_OK(GrB_Matrix_apply(DP, NULL, NULL, GxB_ONE_BOOL, DP, NULL));
 
+	//--------------------------------------------------------------------------
+	// Wait before returning
+	//--------------------------------------------------------------------------
+	GrB_wait(M,  GrB_MATERIALIZE);
+	GrB_wait(DP, GrB_MATERIALIZE);
+	GrB_wait(DM, GrB_MATERIALIZE);
+
 	Delta_Matrix_setMatrices(mtx, &M, &DP, &DM);
-	Delta_Matrix_wait(mtx, false);
 	Delta_Matrix_validate(mtx, true);
 
 	*A = mtx;
@@ -131,8 +137,8 @@ void _make_single_tensor
 	// Want to build a tensor
 	GrB_OK(GxB_Matrix_build_Vector(A, i_v, j_v, i_v, dup_handler, desc));
 
-	GrB_Vector_free(&i_v);
-	GrB_Vector_free(&j_v);
+	GrB_OK (GrB_Vector_free(&i_v));
+	GrB_OK (GrB_Vector_free(&j_v));
 }
 
 // free vector entries of a tensor
@@ -240,6 +246,13 @@ void Random_Tensor
 	GrB_OK (GrB_Matrix_apply(temp, NULL, NULL, free_entry, temp, GrB_DESC_S));
 	GrB_OK (GrB_Matrix_assign_BOOL(DM, temp, NULL, true, GrB_ALL, n,
 		GrB_ALL, n, GrB_DESC_S));
+
+	//--------------------------------------------------------------------------
+	// Wait before returning
+	//--------------------------------------------------------------------------
+	GrB_wait(M,  GrB_MATERIALIZE);
+	GrB_wait(DP, GrB_MATERIALIZE);
+	GrB_wait(DM, GrB_MATERIALIZE);
 
 	GrB_OK (GrB_free(&temp));
 	GrB_OK (GrB_free(&mod_op));
