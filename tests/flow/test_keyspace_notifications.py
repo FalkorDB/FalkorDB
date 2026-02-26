@@ -196,3 +196,34 @@ class testKeyspaceNotifications():
         pubsub.punsubscribe()
         pubsub.close()
 
+    def test07_graph_copy_notification(self):
+        """Test that graph.copy_to notification is sent on GRAPH.COPY"""
+
+        # Make sure source graph exists
+        self.graph.query("CREATE (n:Person {name: 'Frank'})")
+
+        dest = GRAPH_ID + "_copy"
+
+        # Create a pubsub connection to listen for copy notifications
+        pubsub = self.conn.pubsub()
+        pubsub.psubscribe("__keyevent@0__:graph.copy_to")
+        time.sleep(0.1)
+
+        # Copy the graph
+        self.conn.execute_command("GRAPH.COPY", GRAPH_ID, dest)
+
+        # Check for notification
+        message = pubsub.get_message(timeout=2.0)
+        # Skip the subscribe confirmation message
+        if message and message['type'] == 'psubscribe':
+            message = pubsub.get_message(timeout=2.0)
+
+        # Verify the notification was received for the destination graph
+        self.env.assertIsNotNone(message)
+        self.env.assertEquals(message['type'], 'pmessage')
+        self.env.assertEquals(message['data'], dest)
+
+        # Clean up
+        pubsub.punsubscribe()
+        pubsub.close()
+        self.conn.execute_command("GRAPH.DELETE", dest)

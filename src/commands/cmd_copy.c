@@ -59,6 +59,7 @@
 #include "../util/path_utils.h"
 #include "../redismodule.h"
 #include "../graph/graphcontext.h"
+#include "cmd_notifications.h"
 #include "../serializers/serializer_io.h"
 #include "../serializers/encoder/v18/encode_v18.h"
 #include "../serializers/decoders/current/v18/decode_v18.h"
@@ -349,6 +350,9 @@ static void LoadGraphFromFile
 		GraphContext_RegisterWithModule (gc) ;
 
 		RedisModule_ReplyWithCString (ctx, "OK") ;
+
+		// defer keyspace notification to main thread
+		Notify_Keyspace_GraphCopyTo(copy_ctx->dest);
 	}
 
 cleanup:

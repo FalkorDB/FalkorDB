@@ -21,6 +21,7 @@
 #include "../util/cache/cache.h"
 #include "../configuration/config.h"
 #include "../execution_plan/execution_plan.h"
+#include "cmd_notifications.h"
 
 // GraphQueryCtx stores the allocations required to execute a query
 typedef struct {
@@ -280,19 +281,13 @@ static void _ExecuteQuery(void *args) {
 		}
 	}
 
-	// send keyspace notification after all locks are released
-	if (graph_modified) {
-		const char *graph_name = GraphContext_GetName(gc);
-		RedisModuleString *key = RedisModule_CreateString(rm_ctx,
-				graph_name, strlen(graph_name));
-		RedisModule_NotifyKeyspaceEvent(rm_ctx,
-				REDISMODULE_NOTIFY_MODULE,
-				"graph.modified",
-				key);
-		RedisModule_FreeString(rm_ctx, key);
+	// defer keyspace notification to main thread
+	// Redis 8 asserts pubsub runs on the main thread
+	if(graph_modified) {
+		Notify_Keyspace_GraphModified(GraphContext_GetName(gc));
 	}
 
-	QueryCtx_UnlockCommit () ;
+	QueryCtx_UnlockCommit();
 
 	if(!profile || ErrorCtx_EncounteredError()) {
 		// if we encountered an error, ResultSet_Reply will emit the error
