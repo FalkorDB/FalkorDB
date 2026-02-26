@@ -10,9 +10,14 @@
 #include "../util/rmalloc.h"
 #include "../schema/schema.h"
 #include "../datatypes/array.h"
+#include "../datatypes/vector.h"
 #include "../graph/graph_hub.h"
 
 #include <string.h>
+
+// maximum vector dimension to prevent integer overflow
+// 100K dimensions = 400KB of data per vector
+#define MAX_VECTOR_DIMENSION 100000
 
 // the first byte of each property in the binary stream
 // is used to indicate the type of the subsequent SIValue
@@ -23,6 +28,7 @@ typedef enum {
 	BI_STRING = 3,
 	BI_LONG   = 4,
 	BI_ARRAY  = 5,
+	BI_VECTOR = 6,
 } TYPE;
 
 // binary header format:
@@ -144,6 +150,7 @@ static SIValue _BulkInsert_ReadProperty
     // - LONG      : 8 bytes
     // - STRING    : null-terminated C string
     // - ARRAY     : 8-byte length + N serialized values
+    // - VECTOR    : 4-byte dimension + dimension * 4 bytes of float elements
 
 	TYPE t = data[*data_idx] ;
 	(*data_idx)++ ;
@@ -185,6 +192,32 @@ static SIValue _BulkInsert_ReadProperty
 				SIArray_Append (&arr, _BulkInsert_ReadProperty (data, data_idx)) ;
 			}
 			return arr ;
+		}
+
+		case BI_VECTOR: {
+			// read vector dimension
+			uint32_t dim = *(uint32_t*)&data[*data_idx] ;
+			*data_idx += sizeof (uint32_t) ;
+			
+			// validate dimension to prevent integer overflow
+			// this check is always active, even in release builds
+			if (dim > MAX_VECTOR_DIMENSION) {
+				// return NULL for invalid dimension
+				// null values are skipped during property assignment
+				return SI_NullVal () ;
+			}
+			
+			// create vector
+			SIValue v = SIVectorf32_New (dim) ;
+			
+			// read vector elements
+			if (dim > 0) {
+				float *elements = (float*)SIVector_Elements (v) ;
+				memcpy (elements, data + *data_idx, dim * sizeof (float)) ;
+				*data_idx += dim * sizeof (float) ;
+			}
+			
+			return v ;
 		}
 
 		default:
