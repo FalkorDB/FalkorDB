@@ -342,7 +342,25 @@ SIValue AR_RANGE(SIValue *argv, int argc, void *private_data) {
 
 	uint64_t size = 0;
 	if((end >= start && interval > 0) || (end <= start && interval < 0)) {
-		size = 1 + (end - start) / interval;
+		// use unsigned arithmetic to avoid signed overflow in (end - start)
+		uint64_t diff;
+		uint64_t step;
+		if(interval > 0) {
+			diff = (uint64_t)end - (uint64_t)start;
+			step = (uint64_t)interval;
+		} else {
+			diff = (uint64_t)start - (uint64_t)end;
+			step = (uint64_t)(-(interval + 1)) + 1;
+		}
+		size = 1 + diff / step;
+	}
+
+	// cap range size to prevent OOM from queries like range(1, INT64_MAX)
+	if(size > 1000000) {
+		ErrorCtx_RaiseRuntimeException(
+			"range() maximum size exceeded: %llu elements requested, "
+			"limit is 1000000", (unsigned long long)size);
+		return SI_NullVal();
 	}
 
 	SIValue array = SI_Array(size);
