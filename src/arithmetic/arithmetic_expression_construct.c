@@ -317,6 +317,96 @@ static AR_ExpNode *_AR_EXP_FromBinaryOpExpression(const cypher_astnode_t *expr) 
 	op->op.children[0] = _AR_EXP_FromASTNode(lhs_node);
 	const cypher_astnode_t *rhs_node = cypher_ast_binary_operator_get_argument2(expr);
 	op->op.children[1] = _AR_EXP_FromASTNode(rhs_node);
+	
+	// Fix operator precedence: arithmetic operators should have higher precedence
+	// than predicate operators (CONTAINS, STARTS WITH, ENDS WITH, IN).
+	// The Cypher parser may give these equal precedence, so we need to check both:
+	// - Case 1: Arithmetic op with predicate on RIGHT (e.g., A + (B IN C))
+	// - Case 2: Arithmetic op with predicate on LEFT (e.g., (A IN B) + C)
+	
+	// Case 1: If current operator is arithmetic and RHS is a predicate operator,
+	// rotate the AST to ensure correct evaluation order
+	if((operator_enum == OP_PLUS || operator_enum == OP_MINUS || 
+	    operator_enum == OP_MULT || operator_enum == OP_DIV || 
+	    operator_enum == OP_MOD || operator_enum == OP_POW)) {
+		
+		AR_ExpNode *rhs = op->op.children[1];
+		
+		// Check if RHS is a predicate operator
+		// Note: function names are registered in lowercase with spaces
+		if(rhs->type == AR_EXP_OP && rhs->op.child_count == 2 &&
+		   (strcmp(rhs->op.f->name, "contains") == 0 ||
+		    strcmp(rhs->op.f->name, "starts with") == 0 ||
+		    strcmp(rhs->op.f->name, "ends with") == 0 ||
+		    strcmp(rhs->op.f->name, "in") == 0)) {
+			
+			// Rotate AST: A + (B CONTAINS C) -> (A + B) CONTAINS C
+			// Original structure:
+			//       +
+			//      / \
+			//     A  CONTAINS
+			//         / \
+			//        B   C
+			// Desired structure:
+			//     CONTAINS
+			//       / \
+			//      +   C
+			//     / \
+			//    A   B
+			
+			AR_ExpNode *A = op->op.children[0];
+			AR_ExpNode *B = rhs->op.children[0];
+			AR_ExpNode *C = rhs->op.children[1];
+			
+			// Rewire: op becomes left child of rhs
+			op->op.children[1] = B;
+			rhs->op.children[0] = op;
+			// rhs->op.children[1] already points to C
+			
+			return rhs;
+		}
+		
+		// Case 2: If current operator is arithmetic and LHS is a predicate operator with arithmetic RHS,
+		// the parser may have given them equal precedence (left-to-right parsing)
+		// For example: [1]+2 IN [3]+4 might be parsed as (([ 1]+2) IN [3])+4
+		// We need to rotate to get ([1]+2) IN ([3]+4)
+		AR_ExpNode *lhs = op->op.children[0];
+		
+		if(lhs->type == AR_EXP_OP && lhs->op.child_count == 2 &&
+		   (strcmp(lhs->op.f->name, "contains") == 0 ||
+		    strcmp(lhs->op.f->name, "starts with") == 0 ||
+		    strcmp(lhs->op.f->name, "ends with") == 0 ||
+		    strcmp(lhs->op.f->name, "in") == 0)) {
+			
+			// Rotate AST: (A IN B) + C -> A IN (B + C)
+			// Original structure:
+			//       +
+			//      / \
+			//     IN  C
+			//    /  \
+			//   A    B
+			// Desired structure:
+			//     IN
+			//    /  \
+			//   A    +
+			//       / \
+			//      B   C
+			
+			AR_ExpNode *predicate = lhs;  // The IN/CONTAINS operator
+			AR_ExpNode *A = predicate->op.children[0];
+			AR_ExpNode *B = predicate->op.children[1];
+			AR_ExpNode *C = op->op.children[1];
+			
+			// Rewire: op becomes right child of predicate
+			op->op.children[0] = B;
+			op->op.children[1] = C;
+			predicate->op.children[1] = op;
+			// predicate->op.children[0] already points to A
+			
+			return predicate;
+		}
+	}
+	
 	return op;
 }
 
