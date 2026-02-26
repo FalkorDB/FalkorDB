@@ -101,6 +101,27 @@ jobs:
             build_variants: [release]
             use_docker: true
             build_test_image: true
+          # Red Hat UBI builds
+          - name: redhat-x64
+            suffix: redhat-x64
+            os: redhat
+            compiler_os: rhel9
+            arch: amd64
+            machine_label: ubuntu-latest
+            cache_path: linux-x64
+            build_variants: [release, server]
+            use_docker: true
+            build_test_image: true
+          - name: redhat-arm64
+            suffix: redhat-arm64v8
+            os: redhat
+            compiler_os: rhel9
+            arch: arm64
+            machine_label: ubuntu-24.04-arm
+            cache_path: linux-arm64v8
+            build_variants: [release, server]
+            use_docker: true
+            build_test_image: true
           - name: amazonlinux2023-x64
             suffix: amazonlinux2023-x64
             os: amazonlinux2023
@@ -239,6 +260,9 @@ jobs:
           if [[ "${{ matrix.platform.os }}" == "alpine" ]]; then
             echo "final=Dockerfile.alpine" >> $GITHUB_OUTPUT
             echo "test=Dockerfile.alpine" >> $GITHUB_OUTPUT
+          elif [[ "${{ matrix.platform.os }}" == "redhat" ]]; then
+            echo "final=Dockerfile.redhat" >> $GITHUB_OUTPUT
+            echo "test=Dockerfile.rhel" >> $GITHUB_OUTPUT
           elif [[ "${{ matrix.platform.os }}" == rhel* ]]; then
             echo "final=Dockerfile" >> $GITHUB_OUTPUT
             echo "test=Dockerfile.rhel" >> $GITHUB_OUTPUT
@@ -255,6 +279,8 @@ jobs:
             echo "build_server=true" >> $GITHUB_OUTPUT
             if [[ "${{ matrix.platform.os }}" == "alpine" ]]; then
               echo "server_dockerfile=Dockerfile.alpine-server" >> $GITHUB_OUTPUT
+            elif [[ "${{ matrix.platform.os }}" == "redhat" ]]; then
+              echo "server_dockerfile=Dockerfile.redhat-server" >> $GITHUB_OUTPUT
             else
               echo "server_dockerfile=Dockerfile.server" >> $GITHUB_OUTPUT
             fi
@@ -276,7 +302,7 @@ jobs:
           cache-to: type=gha,ignore-error=true,mode=max,scope=compiler-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
-            OS=${{ matrix.platform.os }}
+            OS=${{ matrix.platform.compiler_os || matrix.platform.os }}
             BASE_IMAGE_VERSION=${{ env.BASE_IMAGE_VERSION }}
             DEBUG=${{ matrix.build_type == 'debug' && '1' || '0' }}
 
@@ -428,6 +454,10 @@ jobs:
             machine_label: ubuntu-24.04-arm
           - suffix: rhel9-x64
             machine_label: ubuntu-latest
+          - suffix: redhat-x64
+            machine_label: ubuntu-latest
+          - suffix: redhat-arm64v8
+            machine_label: ubuntu-24.04-arm
           - suffix: amazonlinux2023-x64
             machine_label: ubuntu-latest
         test_type: [unit, flow, tck, fuzz]
