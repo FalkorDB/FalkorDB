@@ -84,7 +84,7 @@ jobs:
           fi
 
       - name: Retrieve built image AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -94,7 +94,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image ARM
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -104,7 +104,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image RHEL8 AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -114,7 +114,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image RHEL9 AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -124,7 +124,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image Alpine AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -134,7 +134,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image Alpine ARM
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -144,7 +144,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image Alpine AMD server only
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -154,7 +154,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image Alpine ARM server only
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -164,7 +164,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image Amazon Linux AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -174,7 +174,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image Ubuntu AMD server only
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -184,7 +184,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image Ubuntu ARM server only
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -194,7 +194,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built .so AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -204,7 +204,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built .so ARM
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -213,7 +213,7 @@ jobs:
           path: /tmp
           if_no_artifact_found: error
       - name: Retrieve built .so RHEL9 AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -223,7 +223,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built .so RHEL8 AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -233,7 +233,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built .so Alpine AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -243,7 +243,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built .so Alpine ARM
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -253,7 +253,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built .so Amazon Linux AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -263,7 +263,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built debug.so AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -273,7 +273,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built debug.so ARM
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -283,7 +283,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built debug.so RHEL9 AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -293,7 +293,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built debug.so RHEL8 AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -303,7 +303,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built debug.so Alpine AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -313,7 +313,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built debug.so Alpine ARM
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -323,7 +323,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built .so macOS ARM64
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -333,7 +333,7 @@ jobs:
           if_no_artifact_found: ignore
 
       - name: Retrieve built debug.so macOS ARM64
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@v15
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
