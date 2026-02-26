@@ -22,8 +22,10 @@ JSON
 runtime
 Redis
 redis
+ai
 Alessandro
 Balasco
+BDD
 Campoy
 Dani
 JReBloom
@@ -45,6 +47,10 @@ vertx
 yadazula
 RedisBloom
 CircleCI
+claude
+CMake
+Cron
+CSR
 Dockerhub
 io
 submodules
@@ -52,6 +58,11 @@ scalable
 ISC
 JRedisGraph
 KJDev
+LAGraph
+Lifecycle
+libcypher
+Lua
+macOS
 NRedisGraph
 RedisGraph
 RedisGraphDotNet
@@ -79,16 +90,24 @@ RHEL
 RedisGraph's
 MotoGP
 Ducati
+eaf
+executables
+ExecutionPlan
 toolchain
 conf
 Cypher
 OpenCypher
 cli
 Quickstart
+QuickJS
 queryable
+RLTest
 RSALv
+schemas
 SSPLv
 SSPL
+TCK
+UDFs
 falkordb
 FalkorDB
 FalkorDB's
@@ -98,6 +117,8 @@ LLM
 Github
 txt
 GenAI
+GraphBLAS
+GraphContext
 GraphRAG
 LLMs
 Embeddings
@@ -110,5 +131,4 @@ www
 faq
 
 Repo
-eaf
 github
