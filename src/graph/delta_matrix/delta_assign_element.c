@@ -8,9 +8,6 @@
 #include "delta_utils.h"
 #include "delta_matrix.h"
 
-// TODO: ensure that reading dm before removing its value does not cause a
-// significant slowdown in this function
-
 // C (i,j) = accum(C(i,j), x)
 #define DM_assign_scalar(TYPE_SUFFIX, CTYPE)                                   \
 GrB_Info Delta_Matrix_assign_scalar_##TYPE_SUFFIX                              \

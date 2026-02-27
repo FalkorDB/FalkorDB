@@ -224,9 +224,9 @@ GrB_Info Delta_Matrix_setElement_UINT64  // C (i,j) = x
 
 #define Delta_Matrix_setElement(C, x, i, j)            \
 	_Generic((x),                                      \
-		bool:     Delta_Matrix_assign_scalar_BOOL,     \
-		uint16_t: Delta_Matrix_assign_scalar_UINT16,   \
-		uint64_t: Delta_Matrix_assign_scalar_UINT64    \
+		bool:     Delta_Matrix_setElement_BOOL,        \
+		uint16_t: Delta_Matrix_setElement_UINT16,      \
+		uint64_t: Delta_Matrix_setElement_UINT64       \
 	)(C, x, i, j)
 
 // C (i,j) = accum(C(i,j), x)
@@ -271,11 +271,36 @@ GrB_Info Delta_Matrix_extractElement_UINT64  // x = A(i,j)
 	GrB_Index j                              // column index
 ) ;
 
-#define Delta_Matrix_extractElement(C, x, i, j)        \
-	_Generic((x),                                      \
-		uint16_t: Delta_Matrix_setElement_UINT16,      \
-		uint64_t: Delta_Matrix_setElement_UINT64       \
-	)(C, x, i, j)
+#define Delta_Matrix_extractElement(x, A, i, j)            \
+	_Generic((x),                                          \
+		uint16_t*: Delta_Matrix_extractElement_UINT16,      \
+		uint64_t*: Delta_Matrix_extractElement_UINT64       \
+	)(x, A, i, j)
+
+// WARNING: this function DOES NOT check for pending deletions
+GrB_Info Delta_Matrix_extractElement_lazy_UINT16  // x = A(i,j)
+(
+	uint16_t *x,                             // extracted scalar
+	const Delta_Matrix A,                    // matrix to extract a scalar from
+	GrB_Index i,                             // row index
+	GrB_Index j                              // column index
+) ;
+
+// WARNING: this function DOES NOT check for pending deletions
+GrB_Info Delta_Matrix_extractElement_lazy_UINT64  // x = A(i,j)
+(
+	uint64_t *x,                             // extracted scalar
+	const Delta_Matrix A,                    // matrix to extract a scalar from
+	GrB_Index i,                             // row index
+	GrB_Index j                              // column index
+) ;
+
+// WARNING: this function DOES NOT check for pending deletions
+#define Delta_Matrix_extractElement_lazy(x, A, i, j)             \
+	_Generic((x),                                                \
+		uint16_t*: Delta_Matrix_extractElement_lazy_UINT16,      \
+		uint64_t*: Delta_Matrix_extractElement_lazy_UINT64       \
+	)(x, A, i, j)
 
 // check if element A(i,j) is stored in the delta matrix
 GrB_Info Delta_Matrix_isStoredElement

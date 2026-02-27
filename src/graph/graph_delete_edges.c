@@ -242,7 +242,8 @@ void Graph_ClearConnections
 
 			NodeID src  = Edge_GetSrcNodeID  (e) ;
 			NodeID dest = Edge_GetDestNodeID (e) ;
-			GrB_OK (Delta_Matrix_extractElement_UINT16 (&v, ADJ, src, dest)) ;
+
+			GrB_OK (Delta_Matrix_extractElement_lazy (&v, ADJ, src, dest)) ;
 			ASSERT (v > 0) ;
 
 			if (--v == 0) {
