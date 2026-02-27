@@ -487,7 +487,7 @@ static void _Graph_Copy
 			// managed to fork, in child process
 			// encode graph to disk
 			int res = encode_graph(ctx, gc, copy_ctx);
-			// all done, Redis require us to call 'RedisModule_ExitFromChild'
+			// all done, Redis requires us to call 'RedisModule_ExitFromChild'
 			RedisModule_ExitFromChild (res) ;
 			return ;
 		} else {
