@@ -88,56 +88,6 @@ int Storage_init(void) {
 	return res ;
 }
 
-// delete attribute sets from tidesdb
-// returns 0 on success
-int Storage_deleteAttributes
-(
-	tidesdb_column_family_t *cf,  // tidesdb column family
-	const EntityID *ids,          // array of entity IDs
-	size_t n_ids                  // number of IDs
-) {
-	ASSERT (cf    != NULL) ;
-	ASSERT (ids   != NULL) ;
-	ASSERT (n_ids > 0) ;
-
-	int res = 0 ;
-	tidesdb_txn_t *txn = NULL ;
-	char key[KEY_SIZE] ;        // prefix char followed by 8 bytes entity id
-
-	// create transaction
-	res = tidesdb_txn_begin (db, &txn) ;
-	if (res != 0) {
-		RedisModule_Log (NULL, "warning", "failed to start transaction") ;
-		return res ;
-	}
-
-	//--------------------------------------------------------------------------
-	// delete batch
-	//--------------------------------------------------------------------------
-
-	for (size_t i = 0 ; i < n_ids ; i++) {
-		EntityID id = ids[i] ;
-		ASSERT (id != INVALID_ENTITY_ID) ;
-
-		// key format: <entity_id>
-		COMPUTE_KEY (key, id) ;
-
-		res = tidesdb_txn_delete (txn, cf, (const uint8_t*) key, KEY_SIZE) ;
-
-		if (res != 0) {
-			RedisModule_Log (NULL, "warning",
-					"failed to delete attribute-set for entity id: %" PRIu64 ","
-					"err code: %d", id, res) ;
-		}
-	}
-
-	if (txn != NULL) {
-		tidesdb_txn_free (txn) ;
-	}
-
-	return res ;
-}
-
 // finalize tidesdb
 // returns 0 on success
 int Storage_finalize (void) {

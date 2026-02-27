@@ -44,7 +44,6 @@ int Storage_save
 	ASSERT (n_items > 0) ;
 
 	int    res = 0 ;
-	char   key[KEY_SIZE] ;        // 8 bytes entity id
 	size_t item_idx = 0 ;         // current item
 	size_t total_offloaded = 0 ;  // number of bytes offloaded
 
@@ -77,14 +76,11 @@ int Storage_save
 			ASSERT (n > 0) ;
 			ASSERT (item != NULL) ;
 
-			// key format: <entity_id>
-			COMPUTE_KEY (key, id) ;
-
 			//------------------------------------------------------------------
 			// put item into transaction
 			//------------------------------------------------------------------
 
-			res = tidesdb_txn_put (txn, cf, (const uint8_t *)key, KEY_SIZE,
+			res = tidesdb_txn_put (txn, cf, (const uint8_t *)&id, KEY_SIZE,
 					(const uint8_t *)item, n, NO_TTL) ;
 
 			if (res != 0) {

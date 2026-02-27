@@ -10,24 +10,20 @@
 // one of more column families
 //
 // at the moment FalkorDB offloads entire attribute-sets to disk
-// node attribute-sets are mapped to disk via the key: N<node_id> e.g.
-// 'N280982' while edges uses the E<edge_id> prefix
+// node attribute-sets are mapped to disk via the key: <node_id> e.g.
+// '280982'
 //
 // storage exposes three main functions:
-// 1. offload an attribute-set to disk
-// 2. load an attribute-set from disk
-// 3. delete an attribute-set from disk
+// 1. offload items to disk
+// 2. load items from disk
+// 3. delete items from disk
 #pragma once
 
 #include "db.h"
 #include "../graph/entities/graph_entity.h"
 #include "../graph/entities/attribute_set.h"
 
-#define KEY_SIZE sizeof (EntityID)  // key byte size
-
-// compute tidesdb key for entity
-// key = <entity_id>
-#define COMPUTE_KEY(key, id) *((uint64_t*) (key)) = (id)
+#define KEY_SIZE sizeof (uint64_t)  // key byte size
 
 // initialize storage
 // returns 0 on success
@@ -77,16 +73,15 @@ int Storage_load
 	size_t n_items                // number of items to load
 );
 
-// delete attribute sets from tidesdb
+// delete items from tidesdb
 // returns 0 on success
-int Storage_deleteAttributes
+int Storage_delete
 (
 	tidesdb_column_family_t *cf,  // tidesdb column family
-	const EntityID *ids,          // array of entity IDs
-	size_t n_ids                  // number of IDs
+	const uint64_t *ids,          // array of unique 64-bit IDs
+	size_t n_ids                  // number of IDs to delete
 );
 
 // finalize tidesdb
 // returns 0 on success
 int Storage_finalize (void) ;
-

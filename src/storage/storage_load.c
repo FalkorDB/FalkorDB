@@ -54,7 +54,6 @@ int Storage_load
 	}
 
 	int res = 0 ;
-	char key[KEY_SIZE] ;        // prefix char followed by 8 bytes entity id
 	tidesdb_txn_t *txn = NULL ;
 	
 	// create transaction
@@ -72,12 +71,9 @@ int Storage_load
 	for (size_t i = 0 ; i < n_items ; i++) {
 		uint64_t id = ids[i] ;
 
-		// key format: <entity_id>
-		COMPUTE_KEY (key, id) ;
-
 		// get item
 		size_t item_size = 0 ;
-		res = tidesdb_txn_get (txn, cf, (const uint8_t*) key, KEY_SIZE,
+		res = tidesdb_txn_get (txn, cf, (const uint8_t*) &id, KEY_SIZE,
 				(uint8_t**)(items + i), &item_size) ;
 
 		if (res != 0) {
