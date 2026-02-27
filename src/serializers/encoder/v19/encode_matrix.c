@@ -68,12 +68,152 @@ static void _ExtractTensors
 	ASSERT ((tm_nvals + tdp_nvals) > 0) ;
 }
 
+
+// unloads vector to C array and encodes the vector to stream
+static void _unload_and_encode_vector
+(
+	SerializerIO rdb,  // stream
+	GrB_Vector v,      // vector to unload and encode
+	bool reload        // reload vector
+) {
+	// format:
+	//   array
+	//   type name
+	//   number of entries
+	//   number of bytes
+	//   handeling
+
+	ASSERT(v   != NULL);
+	ASSERT(rdb != NULL);
+
+	GrB_Info info;
+	void *arr;           // vector's data
+	GrB_Type t;          // data type
+	uint64_t n_entries;  // number of entries
+	uint64_t n_bytes;    // data size in bytes
+	int handling;        // memory owner GraphBLAS / Application
+
+	// unload vector to C array
+	GrB_OK (GxB_Vector_unload (v, &arr, &t, &n_entries, &n_bytes, &handling,
+			NULL)) ;
+
+	// get type name
+	size_t t_name_len = 0 ;
+	char   t_name [GxB_MAX_NAME_LEN] = {0} ;
+
+	GrB_OK (GrB_get (t, t_name, GrB_NAME)) ;
+
+	t_name_len = strlen ((char *)t_name) + 1 ;  // account for NULL byte
+
+	//--------------------------------------------------------------------------
+	// encode vector
+	//--------------------------------------------------------------------------
+
+	SerializerIO_WriteBuffer   (rdb, arr, n_bytes) ;
+	SerializerIO_WriteBuffer   (rdb, t_name, t_name_len) ;
+	SerializerIO_WriteUnsigned (rdb, n_entries) ;
+	SerializerIO_WriteUnsigned (rdb, n_bytes) ;
+	SerializerIO_WriteSigned   (rdb, handling) ;
+
+	if (reload) {
+		// reload vector
+		info = GxB_Vector_load (v, &arr, t, n_entries, n_bytes, handling, NULL) ;
+		ASSERT (info == GrB_SUCCESS) ;
+	} else {
+		// free array
+		// NOTE: this destroys the matrix!
+		// rm_free(arr);
+	}
+}
+
+static void _Encode_multiedge
+(
+	SerializerIO rdb,  // stream
+	GrB_Vector v,      // multi edge to encode
+	bool reload        // reload vector
+) {
+	// format:
+	//  unloaded i vector
+
+	ASSERT (A   != NULL) ;
+	ASSERT (rdb != NULL) ;
+
+    GxB_Container container;
+	GrB_OK (GxB_Container_new (&container)) ;
+
+	// unload matrix into a container
+	GrB_OK (GxB_unload_Vector_into_Container(v, container, NULL)) ;
+
+	//--------------------------------------------------------------------------
+	// encode vector
+	//--------------------------------------------------------------------------
+
+	_unload_and_encode_vector(rdb, container->i, reload);
+
+	if (reload) {
+		// reload vector
+		GrB_OK (GxB_load_Vector_from_Container (v, container, NULL)) ;
+	}
+
+	// clean up
+	GxB_Container_free(&container);
+}
+
+// encode a GraphBLAS matrix
+static void _Encode_GrB_Matrix
+(
+	SerializerIO rdb,  // stream
+	GrB_Matrix A,      // GraphBLAS matrix to encode
+	bool reload        // reload matrix
+) {
+	// format:
+	//  GraphBLAS container
+	//  unloaded matrix components
+
+	ASSERT (A   != NULL) ;
+	ASSERT (rdb != NULL) ;
+
+	GrB_Info info;
+
+    GxB_Container container;
+	info = GxB_Container_new (&container) ;
+	ASSERT (info == GrB_SUCCESS);
+
+	// unload matrix into a container
+	info = GxB_unload_Matrix_into_Container (A, container, NULL) ;
+	ASSERT(info == GrB_SUCCESS);
+
+	// encode entire container
+	SerializerIO_WriteBuffer (rdb, container,
+			sizeof (struct GxB_Container_struct)) ;
+
+	//--------------------------------------------------------------------------
+	// encode vectors
+	//--------------------------------------------------------------------------
+
+	_unload_and_encode_vector(rdb, container->x, reload);
+	_unload_and_encode_vector(rdb, container->h, reload);
+	_unload_and_encode_vector(rdb, container->p, reload);
+	_unload_and_encode_vector(rdb, container->i, reload);
+	_unload_and_encode_vector(rdb, container->b, reload);
+
+	if (reload) {
+		// reload matrix
+		info = GxB_load_Matrix_from_Container (A, container, NULL) ;
+		ASSERT (info == GrB_SUCCESS) ;
+	}
+
+	// clean up
+	GxB_Container_free(&container);
+}
+
 // encode tensors
 static void _EncodeTensors
 (
 	SerializerIO rdb,  // RDB
 	GrB_Matrix TM,     // M's tensors
-	GrB_Matrix TDP     // DP's tensors
+	GrB_Matrix TDP,    // DP's tensors
+	bool reload
 ) {
 	// format:
 	//  total number of tensors
@@ -161,21 +301,11 @@ static void _EncodeTensors
 			//--------------------------------------------------------------
 			// serialize the tensor
 			//--------------------------------------------------------------
-
-			void *blob;           // the blob
-			GrB_Index blob_size;  // size of the blob
-
-			info = GxB_Vector_serialize (&blob, &blob_size, u, NULL) ;
-			ASSERT (info == GrB_SUCCESS) ;
-
 			// write tensor i,j position
 			SerializerIO_WriteUnsigned (rdb, i) ;
 			SerializerIO_WriteUnsigned (rdb, j) ;
 
-			// write blob to rdb
-			SerializerIO_WriteBuffer (rdb, blob, blob_size) ;
-
-			rm_free (blob) ;
+			_Encode_multiedge(rdb, u, reload);
 
 			// move to the next entry
 			info = GxB_Matrix_Iterator_next (it) ;
@@ -184,113 +314,6 @@ static void _EncodeTensors
 		// clean up
 		GrB_free (&it) ;
 	}
-}
-
-// unloads vector to C array and encodes the vector to stream
-static void _unload_and_encode_vector
-(
-	SerializerIO rdb,  // stream
-	GrB_Vector v,      // vector to unload and encode
-	bool reload        // reload vector
-) {
-	// format:
-	//   array
-	//   type name
-	//   number of entries
-	//   number of bytes
-	//   handeling
-
-	ASSERT(v   != NULL);
-	ASSERT(rdb != NULL);
-
-	GrB_Info info;
-	void *arr;           // vector's data
-	GrB_Type t;          // data type
-	uint64_t n_entries;  // number of entries
-	uint64_t n_bytes;    // data size in bytes
-	int handling;        // memory owner GraphBLAS / Application
-
-	// unload vector to C array
-	info = GxB_Vector_unload (v, &arr, &t, &n_entries, &n_bytes, &handling,
-			NULL) ;
-	ASSERT (info == GrB_SUCCESS) ;
-
-	// get type name
-	size_t t_name_len = 0 ;
-	char   t_name [GxB_MAX_NAME_LEN] = {0} ;
-
-	info = GrB_get (t, t_name, GrB_NAME) ;
-	ASSERT (info == GrB_SUCCESS) ;
-
-	t_name_len = strlen ((char *)t_name) + 1 ;  // account for NULL byte
-
-	//--------------------------------------------------------------------------
-	// encode vector
-	//--------------------------------------------------------------------------
-
-	SerializerIO_WriteBuffer   (rdb, arr, n_bytes) ;
-	SerializerIO_WriteBuffer   (rdb, t_name, t_name_len) ;
-	SerializerIO_WriteUnsigned (rdb, n_entries) ;
-	SerializerIO_WriteUnsigned (rdb, n_bytes) ;
-	SerializerIO_WriteSigned   (rdb, handling) ;
-
-	if (reload) {
-		// reload vector
-		info = GxB_Vector_load (v, &arr, t, n_entries, n_bytes, handling, NULL) ;
-		ASSERT (info == GrB_SUCCESS) ;
-	} else {
-		// free array
-		// NOTE: this destroys the matrix!
-		// rm_free(arr);
-	}
-}
-
-// encode a GraphBLAS matrix
-static void _Encode_GrB_Matrix
-(
-	SerializerIO rdb,  // stream
-	GrB_Matrix A,      // GraphBLAS matrix to encode
-	bool reload        // reload matrix
-) {
-	// format:
-	//  GraphBLAS container
-	//  unloaded matrix components
-
-	ASSERT (A   != NULL) ;
-	ASSERT (rdb != NULL) ;
-
-	GrB_Info info;
-
-    GxB_Container container;
-	info = GxB_Container_new (&container) ;
-	ASSERT (info == GrB_SUCCESS);
-
-	// unload matrix into a container
-	info = GxB_unload_Matrix_into_Container (A, container, NULL) ;
-	ASSERT(info == GrB_SUCCESS);
-
-	// encode entire container
-	SerializerIO_WriteBuffer (rdb, container,
-			sizeof (struct GxB_Container_struct)) ;
-
-	//--------------------------------------------------------------------------
-	// encode vectors
-	//--------------------------------------------------------------------------
-
-	_unload_and_encode_vector(rdb, container->x, reload);
-	_unload_and_encode_vector(rdb, container->h, reload);
-	_unload_and_encode_vector(rdb, container->p, reload);
-	_unload_and_encode_vector(rdb, container->i, reload);
-	_unload_and_encode_vector(rdb, container->b, reload);
-
-	if (reload) {
-		// reload matrix
-		info = GxB_load_Matrix_from_Container (A, container, NULL) ;
-		ASSERT (info == GrB_SUCCESS) ;
-	}
-
-	// clean up
-	GxB_Container_free(&container);
 }
 
 // encode delta matrix
@@ -384,7 +407,7 @@ void RdbSaveRelationMatrices_v19
 
 		_Encode_Delta_Matrix (rdb, R, reload) ;
 
-		_EncodeTensors (rdb, TM, TDP) ;
+		_EncodeTensors (rdb, TM, TDP, reload) ;
 
 		if (encode_tensors) {
 			GrB_free (&TM) ;

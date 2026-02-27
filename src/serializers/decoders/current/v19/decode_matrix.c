@@ -11,6 +11,127 @@
 #include "../../../../graph/graph_statistics.h"
 #include "../../../../graph/delta_matrix/delta_matrix.h"
 
+static void _decode_and_load_vector
+(
+	SerializerIO rdb,
+	GrB_Vector *v
+) {
+	// format:
+	//   array
+	//   type name
+	//   number of entries
+	//   number of bytes
+	//   handeling
+
+	ASSERT (v   != NULL) ;
+	ASSERT (rdb != NULL) ;
+
+	void *arr;              // vector's data
+	size_t n;               // number of bytes read
+	uint64_t n_entries;     // number of entries
+	uint64_t n_bytes;       // data size in bytes
+	int handling;           // memory owner GraphBLAS / App
+	char   *t_name;         // type name
+	size_t t_name_len = 0;  // type name length
+	GrB_Info info;
+
+	// load vector from stream
+	arr       = SerializerIO_ReadBuffer   (rdb, &n) ;
+	t_name    = SerializerIO_ReadBuffer   (rdb, &t_name_len) ;
+	n_entries = SerializerIO_ReadUnsigned (rdb) ;
+	n_bytes   = SerializerIO_ReadUnsigned (rdb) ;
+	handling  = SerializerIO_ReadSigned   (rdb) ;
+
+	// get GrB_Type
+	GrB_Type t;  // data type
+	info = GxB_Type_from_name (&t, t_name) ;
+	ASSERT (info == GrB_SUCCESS) ;
+	rm_free (t_name) ;
+
+	// load vector
+	info = GrB_Vector_new (v, t, 0) ;
+	ASSERT (info == GrB_SUCCESS) ;
+
+	info = GxB_Vector_load (*v, &arr, t, n_entries, n_bytes, handling, NULL) ;
+	ASSERT (info == GrB_SUCCESS) ;
+}
+
+// decode a multiedge entry
+static GrB_Vector _Decode_multiedge
+(
+	SerializerIO rdb  // stream
+) {
+	// format:
+	//  unloaded i vector
+
+	// load into v
+	GrB_Vector v = NULL;
+	GrB_Vector i = NULL;
+	GrB_Scalar one = NULL;
+	GrB_OK (GrB_Scalar_new(&one, GrB_BOOL));
+	GrB_OK (GrB_Scalar_setElement_BOOL(one, true));
+	GrB_OK (GrB_Vector_new (&v, GrB_BOOL, GrB_INDEX_MAX));
+
+	// make multiedge
+	_decode_and_load_vector(rdb, &i);
+	GrB_OK (GxB_Vector_assign_Scalar_Vector(v, NULL, NULL, one, i, NULL));
+
+	// v is now back to its original state
+	GrB_OK (GrB_free(&i));
+	GrB_OK (GrB_free(&one));
+
+	return v;
+}
+
+// decode a GraphBLAS matrix
+static GrB_Matrix _Decode_GrB_Matrix
+(
+	SerializerIO rdb  // stream
+) {
+	// format:
+	//  GraphBLAS container
+	//  unloaded matrix components
+
+	// decode container
+	size_t n;
+	GxB_Container container;
+
+	container = SerializerIO_ReadBuffer (rdb, &n) ;
+	ASSERT (n == sizeof(struct GxB_Container_struct)) ;
+
+	// nullify container's vectors
+    container->p = NULL ;
+    container->h = NULL ;
+    container->b = NULL ;
+    container->i = NULL ;
+    container->x = NULL ;
+    container->Y = NULL ;
+
+	_decode_and_load_vector (rdb, &container->x) ;
+	_decode_and_load_vector (rdb, &container->h) ;
+	_decode_and_load_vector (rdb, &container->p) ;
+	_decode_and_load_vector (rdb, &container->i) ;
+	_decode_and_load_vector (rdb, &container->b) ;
+
+	// load A from the container
+	GrB_Matrix A;
+	GrB_Info info;
+
+	info = GrB_Matrix_new (&A, GrB_BOOL, 0, 0) ;  // matrix type doesn't matter
+	ASSERT (info == GrB_SUCCESS) ;
+
+	info = GxB_load_Matrix_from_Container (A, container, NULL) ;
+	ASSERT (info == GrB_SUCCESS) ;
+
+	// A is now back to its original state. The container and its p,h,b,i,x
+	// GrB_Vectors exist but its vectors all have length 0.
+
+	info = GxB_Container_free (&container) ; // does several O(1)-sized free’s
+	ASSERT (info == GrB_SUCCESS) ;
+
+	return A;
+}
+
 // decode tensors
 static void _DecodeTensors
 (
@@ -65,128 +186,22 @@ static void _DecodeTensors
 			GrB_Index i = SerializerIO_ReadUnsigned (rdb) ;
 			GrB_Index j = SerializerIO_ReadUnsigned (rdb) ;
 
-			// read tensor blob
-			GrB_Index blob_size;
-			void *blob = SerializerIO_ReadBuffer (rdb, (size_t*)&blob_size) ;
-			ASSERT (blob != NULL) ;
-
-			GrB_Vector u;
-			GrB_Info info =
-				GxB_Vector_deserialize (&u, NULL, blob, blob_size, NULL) ;
-			ASSERT (info == GrB_SUCCESS) ;
+			GrB_Vector u = _Decode_multiedge(rdb);
 
 			// update number of elements loaded
 			GrB_Index nvals;
-			info = GrB_Vector_nvals (&nvals, u) ;
-			ASSERT (info == GrB_SUCCESS) ;
+			GrB_OK (GrB_Vector_nvals (&nvals, u)) ;
 			ASSERT (nvals > 0) ;
 			*n_elem += nvals;
 
 			// set tensor
 			uint64_t v = SET_MSB ((uint64_t)(uintptr_t) u) ;
-			info = GrB_Matrix_setElement_UINT64 (A, v, i, j) ;
-			ASSERT (info == GrB_SUCCESS) ;
-
-			rm_free(blob);
+			GrB_OK (GrB_Matrix_setElement_UINT64 (A, v, i, j)) ;
 		}
 
 		// set number of loaded tensors
 		*n_tensors += _n_tensors;
 	}
-}
-
-static void _decode_and_load_vector
-(
-	SerializerIO rdb,
-	GrB_Vector *v
-) {
-	// format:
-	//   array
-	//   type name
-	//   number of entries
-	//   number of bytes
-	//   handeling
-
-	ASSERT (v   != NULL) ;
-	ASSERT (rdb != NULL) ;
-
-	void *arr;              // vector's data
-	size_t n;               // number of bytes read
-	uint64_t n_entries;     // number of entries
-	uint64_t n_bytes;       // data size in bytes
-	int handling;           // memory owner GraphBLAS / App
-	char   *t_name;         // type name
-	size_t t_name_len = 0;  // type name length
-	GrB_Info info;
-
-	// load vector from stream
-	arr       = SerializerIO_ReadBuffer   (rdb, &n) ;
-	t_name    = SerializerIO_ReadBuffer   (rdb, &t_name_len) ;
-	n_entries = SerializerIO_ReadUnsigned (rdb) ;
-	n_bytes   = SerializerIO_ReadUnsigned (rdb) ;
-	handling  = SerializerIO_ReadSigned   (rdb) ;
-
-	// get GrB_Type
-	GrB_Type t;  // data type
-	info = GxB_Type_from_name (&t, t_name) ;
-	ASSERT (info == GrB_SUCCESS) ;
-	rm_free (t_name) ;
-
-	// load vector
-	info = GrB_Vector_new (v, t, 0) ;
-	ASSERT (info == GrB_SUCCESS) ;
-
-	info = GxB_Vector_load (*v, &arr, t, n_entries, n_bytes, handling, NULL) ;
-	ASSERT (info == GrB_SUCCESS) ;
-}
-
-// decode a GraphBLAS matrix
-static GrB_Matrix _Decode_GrB_Matrix
-(
-	SerializerIO rdb  // stream
-) {
-	// format:
-	//  GraphBLAS container
-	//  unloaded matrix components
-
-	// decode container
-	size_t n;
-	GxB_Container container;
-
-	container = SerializerIO_ReadBuffer (rdb, &n) ;
-	ASSERT (n == sizeof(struct GxB_Container_struct)) ;
-
-	// nullify container's vectors
-    container->p = NULL ;
-    container->h = NULL ;
-    container->b = NULL ;
-    container->i = NULL ;
-    container->x = NULL ;
-    container->Y = NULL ;
-
-	_decode_and_load_vector (rdb, &container->x) ;
-	_decode_and_load_vector (rdb, &container->h) ;
-	_decode_and_load_vector (rdb, &container->p) ;
-	_decode_and_load_vector (rdb, &container->i) ;
-	_decode_and_load_vector (rdb, &container->b) ;
-
-	// load A from the container
-	GrB_Matrix A;
-	GrB_Info info;
-
-	info = GrB_Matrix_new (&A, GrB_BOOL, 0, 0) ;  // matrix type doesn't matter
-	ASSERT (info == GrB_SUCCESS) ;
-
-	info = GxB_load_Matrix_from_Container (A, container, NULL) ;
-	ASSERT (info == GrB_SUCCESS) ;
-
-	// A is now back to its original state. The container and its p,h,b,i,x
-	// GrB_Vectors exist but its vectors all have length 0.
-
-	info = GxB_Container_free (&container) ; // does several O(1)-sized free’s
-	ASSERT (info == GrB_SUCCESS) ;
-
-	return A;
 }
 
 // decode matrix
