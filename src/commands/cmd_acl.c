@@ -525,11 +525,10 @@ static int _execute_acl_cmd_fn
 		"delegating to execute ACL command '%s'", msg);
 	sdsfree(msg);
 #endif
-		
+
 	RedisModuleCallReply *reply = 
 		RedisModule_Call(ctx, "ACL", "v", argv, argc);
-	
-	if(reply == NULL) {
+ 	if(reply == NULL) {
 		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
 			"Failed to execute ACL command, Error: %d", errno);
 		RedisModule_ReplyWithError(ctx, "FAILED");
@@ -538,6 +537,9 @@ static int _execute_acl_cmd_fn
 		}
 		return REDISMODULE_ERR;
 	}
+
+	// replicate only after successful execution
+	RedisModule_ReplicateVerbatim(ctx);
 
 	RedisModule_ReplyWithCallReply(ctx, reply);
 	RedisModule_FreeCallReply(reply);

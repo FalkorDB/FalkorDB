@@ -32,6 +32,13 @@ void init_acl_admin_username
 	RedisModuleCtx *ctx  // redis module context
 );
 
+// check if the current instance is a replica
+// returns 1 if replica, 0 otherwise
+int is_replica
+(
+	RedisModuleCtx *ctx  // redis module context
+);
+
 // run the given acl function as the given user
 // the function will switch the user to the given username
 // and run the given acl function with the given arguments

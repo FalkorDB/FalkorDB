@@ -6,6 +6,7 @@
 #include "RG.h"
 #include <string.h>
 #include <stdlib.h>
+#include "redismodule.h"
 #include "run_redis_command_as.h"
 
 char *ACL_ADMIN_USER = "default";  // the default username
@@ -55,6 +56,14 @@ static int _switch_user
 	return REDISMODULE_OK;
 }
 
+int is_replica
+(
+	RedisModuleCtx *ctx
+) {
+    int flags = RedisModule_GetContextFlags(ctx);
+    return (flags & REDISMODULE_CTX_FLAGS_SLAVE) != 0;
+}
+
 // run the given acl function as the given user
 // the function will switch the user to the given username
 // and run the given acl function with the given arguments
@@ -77,26 +86,30 @@ int run_acl_function_as
 	ASSERT(argv     != NULL);
 	ASSERT(username != NULL);
 
+	// if running on replica, skip user switching and just execute the command
+	if(is_replica(ctx)) {
+		return cmd(ctx, argv, argc, privdata);
+	}
+
 	// get current user
 	RedisModuleString *_redis_current_user_name = 
 		RedisModule_GetCurrentUserName(ctx);
 
+	ASSERT(_redis_current_user_name != NULL);
+
 	const char *redis_current_user_name = 
 		RedisModule_StringPtrLen(_redis_current_user_name, NULL);
-	
+
 	// try switching user
 	uint64_t client_id = 0;
 	if(_switch_user(ctx, username, &client_id) != REDISMODULE_OK) {
 		RedisModule_Log(ctx, "error", "Failed to authenticate as user %s",
 				username);
-
 		RedisModule_ReplyWithError(ctx, "FAILED");
-
 		RedisModule_FreeString(ctx, _redis_current_user_name);
-
 		return REDISMODULE_ERR;
     }
-	
+
 	// managed to swtich, run function under new user
 	int res = cmd(ctx, argv, argc, privdata);
 
@@ -104,11 +117,8 @@ int run_acl_function_as
 	if(_switch_user(ctx, redis_current_user_name, NULL) != REDISMODULE_OK) {
 		RedisModule_Log(ctx, "error", "Failed to authenticate back as user %s",
 				redis_current_user_name);
-
 		RedisModule_DeauthenticateAndCloseClient(ctx, client_id);
-
 		RedisModule_FreeString(ctx, _redis_current_user_name);
-
 		return REDISMODULE_ERR;
 	}
 
