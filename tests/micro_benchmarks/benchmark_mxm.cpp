@@ -83,14 +83,6 @@ static void BM_mxm_chain_V1(benchmark::State &state) {
 	GrB_Matrix_free(&C_cpy);
 }
 
-BENCHMARK(BM_mxm_all_V1)
-	// ->Unit(benchmark::kMicrosecond)->Args({10000, 10000});
-	->Unit(benchmark::kMillisecond)->Args({0, 0})->Args({10000, 10000})
-	->Args({0, 10000})->Args({10000, 0})->Args({100, 100})->Args({0, 100})
-	->Args({100, 0});
-BENCHMARK(BM_mxm_chain_V1)
-	// ->Unit(benchmark::kMicrosecond)->Args({10000, 10000})->Threads(1);
-	->Unit(benchmark::kMillisecond)->Args({0, 0})->Args({10000, 10000})
-	->Args({0, 10000})->Args({10000, 0})->Args({100, 100})->Args({0, 100})
-	->Args({100, 0});
+FDB_BENCHMARK_ARGS(BM_mxm_all_V1);
+FDB_BENCHMARK_ARGS(BM_mxm_chain_V1);
 FDB_BENCHMARK_MAIN()

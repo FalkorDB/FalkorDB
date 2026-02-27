@@ -20,6 +20,39 @@
 // }
 // #undef restrict
 
+// Generates all 9 combinations of {0, 100, 10000} adds x dels (including {0,0})
+static void ArgGenerator(benchmark::internal::Benchmark* b) {
+	for (int adds : {0, 100, 10000}) {
+		for (int dels : {0, 100, 10000}) {
+			b->Args({adds, dels});
+		}
+	}
+}
+
+// Generates the 8 combinations excluding {0,0} — for benchmarks where a
+// fully-synced matrix has no pending work to measure
+static void ArgGeneratorPending(benchmark::internal::Benchmark* b) {
+	for (int adds : {0, 100, 10000}) {
+		for (int dels : {0, 100, 10000}) {
+			if (adds == 0 && dels == 0) continue;
+			b->Args({adds, dels});
+		}
+	}
+}
+
+// Apply the standard pending-change arg sweep with human-readable labels
+#define FDB_BENCHMARK_ARGS(bm)                                                 \
+	BENCHMARK(bm)                                                              \
+	    ->Apply(ArgGenerator)                                                  \
+	    ->ArgNames({"adds", "dels"})                                           \
+	    ->Unit(benchmark::kMillisecond)
+// Use this definition if you want faster benchmarks, but less detail.
+// #define FDB_BENCHMARK_ARGS(bm)                                                 \
+	BENCHMARK(bm)                                                              \
+	    ->Args({1000, 1000})                                                   \
+	    ->ArgNames({"adds", "dels"})                                           \
+	    ->Unit(benchmark::kMillisecond)
+
 #define FDB_BENCHMARK_MAIN()                                                   \
 	int main(int argc, char** argv) {                                          \
 		RedisModule_Alloc   = malloc;                                          \

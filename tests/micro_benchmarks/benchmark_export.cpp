@@ -6,19 +6,6 @@ extern "C" {
 #include "src/graph/delta_matrix/delta_matrix.h"
 }
 
-static void ArgGenerator(benchmark::internal::Benchmark* b) {
-	std::vector<int> values = {0, 100, 10000};
-
-	for (int x : values) {
-		for (int y : values) {
-			if (x == 0 && y == 0) {
-				continue;
-			}
-			b->Args({x, y});
-		}
-	}
-}
-
 static void BM_export(benchmark::State& state) {
 	Delta_Matrix A    = NULL;
 	GrB_Matrix   C    = NULL;
@@ -80,6 +67,6 @@ static void BM_wait(benchmark::State& state) {
 	GrB_OK (Delta_Matrix_free(&A));
 }
 
-BENCHMARK(BM_export)->Unit(benchmark::kMillisecond)->Apply(ArgGenerator);
-BENCHMARK(BM_wait)->Unit(benchmark::kMillisecond)->Apply(ArgGenerator);
+BENCHMARK(BM_export)->Apply(ArgGeneratorPending)->ArgNames({"adds", "dels"})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_wait)->Apply(ArgGeneratorPending)->ArgNames({"adds", "dels"})->Unit(benchmark::kMillisecond);
 FDB_BENCHMARK_MAIN()

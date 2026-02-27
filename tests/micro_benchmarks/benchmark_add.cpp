@@ -63,9 +63,7 @@ static void BM_add_chain(benchmark::State &state) {
 	Delta_Matrix_free(&C);
 }
 
-BENCHMARK(BM_add_all)->Unit(benchmark::kMicrosecond)->Args({10000, 10000})
-	->Iterations(1);
-BENCHMARK(BM_add_chain)->Unit(benchmark::kMicrosecond)->Args({10000, 10000})
-	->Iterations(1);
+FDB_BENCHMARK_ARGS(BM_add_all);
+FDB_BENCHMARK_ARGS(BM_add_chain);
 
 FDB_BENCHMARK_MAIN()

@@ -188,31 +188,16 @@ void BM_eval_mul_chain(benchmark::State& state) {
 	AlgebraicExpression_Free(exp);
 	Delta_Matrix_free(&res);
 	Delta_Matrix_free(&C);
+	Delta_Matrix_free(&F);
 	raxFree(matrices);
 }
 
-BENCHMARK(BM_eval_add_chain)
+FDB_BENCHMARK_ARGS(BM_eval_add_chain)
     ->Setup(rg_setup)
-    ->Teardown(rg_teardown)
-    ->Unit(benchmark::kMillisecond)
-    ->Args({0, 0})
-    ->Args({10000, 10000})
-    ->Args({0, 10000})
-    ->Args({10000, 0})
-    ->Args({100, 100})
-    ->Args({0, 100})
-    ->Args({100, 0});
-BENCHMARK(BM_eval_mul_chain)
+    ->Teardown(rg_teardown);
+FDB_BENCHMARK_ARGS(BM_eval_mul_chain)
     ->Setup(rg_setup)
-    ->Teardown(rg_teardown)
-    ->Unit(benchmark::kMillisecond)
-    ->Args({0, 0})
-    ->Args({10000, 10000})
-    ->Args({0, 10000})
-    ->Args({10000, 0})
-    ->Args({100, 100})
-    ->Args({0, 100})
-    ->Args({100, 0});
+    ->Teardown(rg_teardown);
 // BENCHMARK_CAPTURE(BM_eval, (F*C0*C1*C2) + (F*C1*C2*C3) + (F*C2*C3*C4),
 //	   "(F*C0*C1*C2)+(F*C0)")
 //	   ->Setup(rg_setup)->Teardown(rg_teardown)
