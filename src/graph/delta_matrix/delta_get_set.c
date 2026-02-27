@@ -9,6 +9,7 @@
 
 // Set the internal matricies of C
 // the operation can only succeed if C's internal matrices are all empty
+// WARNING: This function may put the transpose into an inconsistent state.
 GrB_Info Delta_Matrix_setMatrices
 (
 	Delta_Matrix C,  // delta matrix
@@ -26,36 +27,36 @@ GrB_Info Delta_Matrix_setMatrices
 
 	GrB_Index nvals = 0;
 
-	// Verify that C is empty
-	ASSERT(Delta_Matrix_Synced(C));
-	Delta_Matrix_nvals(&nvals, C);
-	ASSERT(nvals == 0);
+	// verify that C is empty
+	ASSERT (Delta_Matrix_Synced (C)) ;
+	Delta_Matrix_nvals (&nvals, C) ;
+	ASSERT (nvals == 0) ;
 
-	GrB_OK(GrB_free(&DELTA_MATRIX_M(C)));
-	GrB_OK(GrB_free(&DELTA_MATRIX_DELTA_PLUS(C)));
-	GrB_OK(GrB_free(&DELTA_MATRIX_DELTA_MINUS(C)));
+	GrB_OK (GrB_free (&DELTA_MATRIX_M (C))) ;
+	GrB_OK (GrB_free (&DELTA_MATRIX_DELTA_PLUS (C))) ;
+	GrB_OK (GrB_free (&DELTA_MATRIX_DELTA_MINUS (C))) ;
 
-	DELTA_MATRIX_M(C)           = *M;
-	DELTA_MATRIX_DELTA_PLUS(C)  = *DP;
-	DELTA_MATRIX_DELTA_MINUS(C) = *DM;
-	GrB_OK (GrB_Matrix_wait(*M, GrB_MATERIALIZE));
+	DELTA_MATRIX_M(C)           = *M ;
+	DELTA_MATRIX_DELTA_PLUS(C)  = *DP ;
+	DELTA_MATRIX_DELTA_MINUS(C) = *DM ;
+	GrB_OK (GrB_Matrix_wait (*M, GrB_MATERIALIZE)) ;
 
-	// Set correct sparcity controls
-	GrB_OK (GrB_set(*M, GxB_SPARSE | GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
-	GrB_OK (GrB_set(*DP, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
-	GrB_OK (GrB_set(*DM, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
+	// set correct sparcity controls
+	GrB_OK (GrB_set (*M,  GxB_SPARSE | GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL)) ;
+	GrB_OK (GrB_set (*DP, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL)) ;
+	GrB_OK (GrB_set (*DM, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL)) ;
 
-	*M  = NULL;
-	*DP  = NULL;
-	*DM  = NULL;
+	*M  = NULL ;
+	*DP = NULL ;
+	*DM = NULL ;
 
-	Delta_Matrix_validate(C, false);
-
-	return GrB_SUCCESS;
+	Delta_Matrix_validate (C, VAL_NO_T) ;
+	return GrB_SUCCESS ;
 }
 
 // set the internal matrix M
 // the operation can only succeed if C's internal matrices are all empty
+// WARNING: This function may put the transpose into an inconsistent state.
 GrB_Info Delta_Matrix_setM
 (
 	Delta_Matrix C,  // delta matrix
@@ -86,6 +87,7 @@ GrB_Info Delta_Matrix_setM
 
 	*M = NULL;
 
+	// Delta_Matrix_validate (C, VAL_NO_T) ;
 	return GrB_SUCCESS;
 }
 

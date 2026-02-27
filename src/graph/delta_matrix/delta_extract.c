@@ -4,37 +4,91 @@
  */
 
 #include "RG.h"
+#include "GraphBLAS.h"
 #include "delta_matrix.h"
+#include "graph/delta_matrix/delta_utils.h"
 
-GrB_Info Delta_Matrix_extractElement_UINT64   // x = A(i,j)
-(
-    uint64_t *x,           // extracted scalar
-    const Delta_Matrix A,  // matrix to extract a scalar from
-    GrB_Index i,           // row index
-    GrB_Index j            // column index
-) {
-	ASSERT(x != NULL);
-	ASSERT(A != NULL);
-
-	GrB_Info info;
-	GrB_Matrix m  = DELTA_MATRIX_M(A);
-	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(A);
-	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(A);
-
-	// if dp[i,j] exists return it
-	GrB_OK (info = GrB_Matrix_extractElement(x, dp, i, j));
-	if(info == GrB_SUCCESS) {
-		return info;
-	}
-
-	// if dm[i,j] exists, return no value
-	GrB_OK (info = GxB_Matrix_isStoredElement(dm, i, j));
-	if(info == GrB_SUCCESS) {
-		// entry marked for deletion
-		return GrB_NO_VALUE;
-	}
-
-	// entry isn't marked for deletion, see if it exists in 'm'
-	GrB_OK (info = GrB_Matrix_extractElement(x, m, i, j));
-	return info;
+#define DM_extractElement(TYPE_SUFFIX, CTYPE)                                  \
+GrB_Info Delta_Matrix_extractElement_##TYPE_SUFFIX                             \
+(                                                                              \
+	CTYPE *x,              /* extracted scalar                */               \
+	const Delta_Matrix A,  /* matrix to extract a scalar from */               \
+	GrB_Index i,           /* row index                       */               \
+	GrB_Index j            /* column index                    */               \
+) {                                                                            \
+	/* validate */                                                             \
+	ASSERT (x != NULL) ;                                                       \
+	ASSERT (A != NULL) ;                                                       \
+                                                                               \
+	CTYPE      _x ;                                                            \
+	bool       in_M;                                                           \
+	GrB_Info   info;                                                           \
+	GrB_Matrix m  = DELTA_MATRIX_M (A) ;                                       \
+	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS (A) ;                              \
+	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS (A) ;                             \
+                                                                               \
+	GRB_MATRIX_TYPE_ASSERT(m, GrB_##TYPE_SUFFIX)                               \
+                                                                               \
+	/* see if entry exists in 'm' */                                           \
+	GrB_OK (info = GrB_Matrix_extractElement (&_x, m, i, j)) ;                 \
+	in_M = info == GrB_SUCCESS;                                                \
+	if (in_M) {                                                                \
+		/* if dm[i,j] exists, return no value and do not set *x */             \
+		GrB_OK (info = GxB_Matrix_isStoredElement (dm, i, j)) ;                \
+		if (info == GrB_NO_VALUE) {                                            \
+			*x = _x;                                                           \
+		}                                                                      \
+		info = (info == GrB_NO_VALUE) ? GrB_SUCCESS : GrB_NO_VALUE ;           \
+	} else {                                                                   \
+		/* if dp[i,j] exists return it */                                      \
+		GrB_OK (info = GrB_Matrix_extractElement (x, dp, i, j)) ;              \
+	}                                                                          \
+                                                                               \
+	return info ;                                                              \
 }
+
+//------------------------------------------------------------------------------
+// Function definitions (contained entirely within the following macros)
+//------------------------------------------------------------------------------
+DM_extractElement(UINT64, uint64_t)
+DM_extractElement(UINT16, uint16_t)
+
+// Extract an element without checking if it is contained in dm
+#define DM_extractElement_lazy(TYPE_SUFFIX, CTYPE)                             \
+GrB_Info Delta_Matrix_extractElement_lazy_##TYPE_SUFFIX                        \
+(                                                                              \
+	CTYPE *x,              /* extracted scalar                */               \
+	const Delta_Matrix A,  /* matrix to extract a scalar from */               \
+	GrB_Index i,           /* row index                       */               \
+	GrB_Index j            /* column index                    */               \
+) {                                                                            \
+	/* validate */                                                             \
+	ASSERT (x != NULL) ;                                                       \
+	ASSERT (A != NULL) ;                                                       \
+                                                                               \
+	CTYPE      _x ;                                                            \
+	bool       in_M;                                                           \
+	GrB_Info   info;                                                           \
+	GrB_Matrix m  = DELTA_MATRIX_M (A) ;                                       \
+	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS (A) ;                              \
+                                                                               \
+	GRB_MATRIX_TYPE_ASSERT(m, GrB_##TYPE_SUFFIX)                               \
+                                                                               \
+	/* see if entry exists in 'm' */                                           \
+	GrB_OK (info = GrB_Matrix_extractElement (&_x, m, i, j)) ;                 \
+	in_M = info == GrB_SUCCESS;                                                \
+                                                                               \
+	/* WARNING: I do not check dm. A pending deletion will not be detected */  \
+	if (!in_M) {                                                               \
+		/* if dp[i,j] exists return it */                                      \
+		GrB_OK (info = GrB_Matrix_extractElement (x, dp, i, j)) ;              \
+	}                                                                          \
+                                                                               \
+	return info ;                                                              \
+}
+
+//------------------------------------------------------------------------------
+// Function definitions (contained entirely within the following macros)
+//------------------------------------------------------------------------------
+DM_extractElement_lazy(UINT64, uint64_t)
+DM_extractElement_lazy(UINT16, uint16_t)

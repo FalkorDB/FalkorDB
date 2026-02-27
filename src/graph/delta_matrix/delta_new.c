@@ -57,8 +57,8 @@ GrB_Info Delta_Matrix_new
 	// input validations
 	//--------------------------------------------------------------------------
 
-	// supported types: boolean and uint64
-	ASSERT(type == GrB_BOOL || type == GrB_UINT64);
+	// supported types: boolean and uint64 and uint16
+	ASSERT(type == GrB_BOOL || type == GrB_UINT16 || type == GrB_UINT64);
 
 	GrB_OK(_Delta_Matrix_init(matrix, type, nrows, ncols));
 

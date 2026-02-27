@@ -154,6 +154,7 @@ GrB_Matrix Delta_Matrix_DM
 
 // set the internal matrix M
 // the operation can only succeed if C's interal matrices are all empty
+// WARNING: This function may put the transpose into an inconsistent state.
 GrB_Info Delta_Matrix_setM
 (
 	Delta_Matrix C,  // delta matrix
@@ -162,6 +163,7 @@ GrB_Info Delta_Matrix_setM
 
 // Set the internal matricies of C
 // the operation can only succeed if C's interal matrices are all empty
+// WARNING: This function may put the transpose into an inconsistent state.
 GrB_Info Delta_Matrix_setMatrices
 (
 	Delta_Matrix C,  // delta matrix
@@ -195,11 +197,21 @@ GrB_Info Delta_Matrix_resize  // change the size of a matrix
 	GrB_Index ncols_new       // new number of columns in matrix
 );
 
+
 GrB_Info Delta_Matrix_setElement_BOOL   // C (i,j) = x
 (
 	Delta_Matrix C,                     // matrix to modify
+	bool x,                             // scalar to assign to C(i,j)
 	GrB_Index i,                        // row index
 	GrB_Index j                         // column index
+);
+
+GrB_Info Delta_Matrix_setElement_UINT16   // C (i,j) = x
+(
+	Delta_Matrix C,                       // matrix to modify
+	uint16_t x,                           // scalar to assign to C(i,j)
+	GrB_Index i,                          // row index
+	GrB_Index j                           // column index
 );
 
 GrB_Info Delta_Matrix_setElement_UINT64  // C (i,j) = x
@@ -210,6 +222,47 @@ GrB_Info Delta_Matrix_setElement_UINT64  // C (i,j) = x
 	GrB_Index j                          // column index
 );
 
+#define Delta_Matrix_setElement(C, x, i, j)            \
+	_Generic((x),                                      \
+		bool:     Delta_Matrix_setElement_BOOL,        \
+		uint16_t: Delta_Matrix_setElement_UINT16,      \
+		uint64_t: Delta_Matrix_setElement_UINT64       \
+	)(C, x, i, j)
+
+// C (i,j) = accum(C(i,j), x)
+GrB_Info Delta_Matrix_assign_scalar_UINT16
+(
+	Delta_Matrix C,            // input/output matrix for results
+	const GrB_BinaryOp accum,  // optional accum for Z=accum(C(I,J),x)
+	uint16_t x,                // scalar to assign to C(i,j)
+	GrB_Index i,               // row index
+	GrB_Index j                // column index
+);
+
+// C (i,j) = accum(C(i,j), x)
+GrB_Info Delta_Matrix_assign_scalar_UINT64
+(
+	Delta_Matrix C,            // input/output matrix for results
+	const GrB_BinaryOp accum,  // optional accum for Z=accum(C(I,J),x)
+	uint64_t x,                // scalar to assign to C(i,j)
+	GrB_Index i,               // row index
+	GrB_Index j                // column index
+);
+
+#define Delta_Matrix_assign_scalar(C, accum, x, i, j)  \
+	_Generic((x),                                      \
+		uint16_t: Delta_Matrix_assign_scalar_UINT16,   \
+		uint64_t: Delta_Matrix_assign_scalar_UINT64    \
+	)(C, accum, x, i, j)
+
+GrB_Info Delta_Matrix_extractElement_UINT16  // x = A(i,j)
+(
+	uint16_t *x,                             // extracted scalar
+	const Delta_Matrix A,                    // matrix to extract a scalar from
+	GrB_Index i,                             // row index
+	GrB_Index j                              // column index
+) ;
+
 GrB_Info Delta_Matrix_extractElement_UINT64  // x = A(i,j)
 (
 	uint64_t *x,                             // extracted scalar
@@ -217,6 +270,37 @@ GrB_Info Delta_Matrix_extractElement_UINT64  // x = A(i,j)
 	GrB_Index i,                             // row index
 	GrB_Index j                              // column index
 ) ;
+
+#define Delta_Matrix_extractElement(x, A, i, j)            \
+	_Generic((x),                                          \
+		uint16_t*: Delta_Matrix_extractElement_UINT16,      \
+		uint64_t*: Delta_Matrix_extractElement_UINT64       \
+	)(x, A, i, j)
+
+// WARNING: this function DOES NOT check for pending deletions
+GrB_Info Delta_Matrix_extractElement_lazy_UINT16  // x = A(i,j)
+(
+	uint16_t *x,                             // extracted scalar
+	const Delta_Matrix A,                    // matrix to extract a scalar from
+	GrB_Index i,                             // row index
+	GrB_Index j                              // column index
+) ;
+
+// WARNING: this function DOES NOT check for pending deletions
+GrB_Info Delta_Matrix_extractElement_lazy_UINT64  // x = A(i,j)
+(
+	uint64_t *x,                             // extracted scalar
+	const Delta_Matrix A,                    // matrix to extract a scalar from
+	GrB_Index i,                             // row index
+	GrB_Index j                              // column index
+) ;
+
+// WARNING: this function DOES NOT check for pending deletions
+#define Delta_Matrix_extractElement_lazy(x, A, i, j)             \
+	_Generic((x),                                                \
+		uint16_t*: Delta_Matrix_extractElement_lazy_UINT16,      \
+		uint64_t*: Delta_Matrix_extractElement_lazy_UINT64       \
+	)(x, A, i, j)
 
 // check if element A(i,j) is stored in the delta matrix
 GrB_Info Delta_Matrix_isStoredElement
@@ -252,7 +336,7 @@ GrB_Info Delta_mxm
 	const Delta_Matrix B          // second input: matrix B
 );
 
-// C = A + B 
+// C = A + B
 // C is fully synced on output
 GrB_Info Delta_eWiseAdd
 (

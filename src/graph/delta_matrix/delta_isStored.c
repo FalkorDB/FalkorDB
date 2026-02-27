@@ -15,28 +15,25 @@ GrB_Info Delta_Matrix_isStoredElement
 ) {
 	ASSERT (A != NULL) ;
 
-	GrB_Info info ;
-	GrB_Matrix M  = DELTA_MATRIX_M (A) ;
-	GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS (A) ;
-	GrB_Matrix DM = DELTA_MATRIX_DELTA_MINUS (A) ;
-	bool in_M  = false ;
-	bool in_DM = false ;
+	GrB_Info info;
+	bool in_M  = false;
+	GrB_Matrix m  = DELTA_MATRIX_M(A);
+	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(A);
+	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(A);
 
-	// if dp[i,j] exists return it
-	info = GxB_Matrix_isStoredElement (DP, i, j) ;
-	if(info == GrB_SUCCESS) {
-		return info ;
+	// see if entry exists in m
+	GrB_OK (info = GxB_Matrix_isStoredElement(m, i, j));
+	in_M = info == GrB_SUCCESS;
+
+	if (in_M){
+		// if dm[i,j] exists, return no value
+		GrB_OK (info = GxB_Matrix_isStoredElement(dm, i, j));
+		info = (info == GrB_NO_VALUE) ? GrB_SUCCESS : GrB_NO_VALUE ;
+	} else {
+		// if dp[i,j] exists return it
+		GrB_OK (info = GxB_Matrix_isStoredElement(dp, i, j));
 	}
 
-	// if dm[i,j] exists, return no value
-	info = GxB_Matrix_isStoredElement (DM, i, j) ;
-	if (info == GrB_SUCCESS) {
-		// entry marked for deletion
-		return GrB_NO_VALUE ;
-	}
-
-	// entry isn't marked for deletion, see if it exists in 'm'
-	info = GxB_Matrix_isStoredElement (M, i, j) ;
 	return info ;
 }
 

@@ -152,22 +152,22 @@ GrB_Info Delta_Matrix_clear
 (
     Delta_Matrix A
 ) {
-	ASSERT(A !=  NULL);
+	ASSERT (A !=  NULL) ;
 
-	GrB_Matrix m    = DELTA_MATRIX_M(A);
-	GrB_Matrix dp   = DELTA_MATRIX_DELTA_PLUS(A);
-	GrB_Matrix dm   = DELTA_MATRIX_DELTA_MINUS(A);
+	GrB_Matrix m  = DELTA_MATRIX_M (A) ;
+	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS (A) ;
+	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS (A) ;
 
-	GrB_OK(GrB_Matrix_clear(m));
-	GrB_OK(GrB_Matrix_clear(dp));
-	GrB_OK(GrB_Matrix_clear(dm));
+	GrB_OK (GrB_Matrix_clear (m)) ;
+	GrB_OK (GrB_Matrix_clear (dp)) ;
+	GrB_OK (GrB_Matrix_clear (dm)) ;
 
-	A->dirty = false;
-	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(A)) {
-		GrB_OK(Delta_Matrix_clear(A->transposed));
+	A->dirty = false ;
+	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE (A)) {
+		GrB_OK (Delta_Matrix_clear (A->transposed)) ;
 	}
 
-	return GrB_SUCCESS;
+	return GrB_SUCCESS ;
 }
 
 GrB_Info Delta_Matrix_type

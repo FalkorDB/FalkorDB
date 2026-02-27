@@ -605,16 +605,16 @@ void test_Exp_OP_ADD() {
 	// 1 1
 	// 0 0
 	Delta_Matrix_new(&A, GrB_BOOL, 2, 2, false);
-	Delta_Matrix_setElement_BOOL(A, 0, 0);
-	Delta_Matrix_setElement_BOOL(A, 0, 1);
+	Delta_Matrix_setElement_BOOL(A, true, 0, 0);
+	Delta_Matrix_setElement_BOOL(A, true, 0, 1);
 
 	// B
 	// 0 1
 	// 1 1
 	Delta_Matrix_new(&B, GrB_BOOL, 2, 2, false);
-	Delta_Matrix_setElement_BOOL(B, 0, 1);
-	Delta_Matrix_setElement_BOOL(B, 1, 0);
-	Delta_Matrix_setElement_BOOL(B, 1, 1);
+	Delta_Matrix_setElement_BOOL(B, true, 0, 1);
+	Delta_Matrix_setElement_BOOL(B, true, 1, 0);
+	Delta_Matrix_setElement_BOOL(B, true, 1, 1);
 
 	// expected
 	// 1 1
@@ -657,16 +657,16 @@ void test_Exp_OP_MUL() {
 	// 1 1
 	// 0 0
 	Delta_Matrix_new(&A, GrB_BOOL, 2, 2, false);
-	Delta_Matrix_setElement_BOOL(A, 0, 0);
-	Delta_Matrix_setElement_BOOL(A, 0, 1);
+	Delta_Matrix_setElement_BOOL(A, true, 0, 0);
+	Delta_Matrix_setElement_BOOL(A, true, 0, 1);
 	Delta_Matrix_wait(A, true); // force flush
 
 	// I
 	// 1 0
 	// 0 1
 	Delta_Matrix_new(&i, GrB_BOOL, 2, 2, false);
-	Delta_Matrix_setElement_BOOL(i, 0, 0);
-	Delta_Matrix_setElement_BOOL(i, 1, 1);
+	Delta_Matrix_setElement_BOOL(i, true, 0, 0);
+	Delta_Matrix_setElement_BOOL(i, true, 1, 1);
 
 	rax *matrices = raxNew();
 	raxInsert(matrices, (unsigned char *)"A", strlen("A"), A, NULL);
@@ -812,21 +812,21 @@ void test_Exp_OP_A_MUL_B_Plus_C() {
 	// 1 1
 	// 0 0
 	Delta_Matrix_new(&A, GrB_BOOL, 2, 2, false);
-	Delta_Matrix_setElement_BOOL(A, 0, 0);
-	Delta_Matrix_setElement_BOOL(A, 0, 1);
+	Delta_Matrix_setElement_BOOL(A, true, 0, 0);
+	Delta_Matrix_setElement_BOOL(A, true, 0, 1);
 	Delta_Matrix_wait(A, true); // force flush
 
 	// B
 	// 1 0
 	// 0 0
 	Delta_Matrix_new(&B, GrB_BOOL, 2, 2, false);
-	Delta_Matrix_setElement_BOOL(B, 0, 0);
+	Delta_Matrix_setElement_BOOL(B, true, 0, 0);
 
 	// C
 	// 0 0
 	// 0 1
 	Delta_Matrix_new(&C, GrB_BOOL, 2, 2, false);
-	Delta_Matrix_setElement_BOOL(C, 1, 1);
+	Delta_Matrix_setElement_BOOL(C, true, 1, 1);
 
 	// Matrix used for intermidate computations of AlgebraicExpression_Eval
 	// but also contains the result of expression evaluation.

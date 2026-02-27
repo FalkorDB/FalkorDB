@@ -6,6 +6,7 @@
 #pragma once
 
 #include "../../../serializers_include.h"
+#include "../../decode_utilies.h"
 
 GraphContext *RdbLoadGraphContext_v17
 (
