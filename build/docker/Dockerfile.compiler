@@ -13,6 +13,3 @@ WORKDIR /FalkorDB
 COPY . /FalkorDB
 
 RUN make DEBUG=$DEBUG
-
-RUN mkdir -p /FalkorDB/bin/src \
- && find /FalkorDB/bin -type f -path "/FalkorDB/bin/linux*/src/falkordb.so" -exec cp {} /FalkorDB/bin/src/ \;

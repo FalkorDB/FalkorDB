@@ -80,6 +80,12 @@
 // temp folder
 #define TEMP_FOLDER "TEMP_FOLDER"
 
+// quick js runtime heap max size
+#define JS_HEAP_SIZE "JS_HEAP_SIZE"
+
+// quick js runtime stack max size
+#define JS_STACK_SIZE "JS_STACK_SIZE"
+
 //------------------------------------------------------------------------------
 // Configuration defaults
 //------------------------------------------------------------------------------
@@ -93,6 +99,8 @@
 #define DELAY_INDEXING_DEFAULT false
 #define IMPORT_DIR_DEFAULT "/var/lib/FalkorDB/import/"
 #define TEMP_DIR_DEFAULT "/tmp"
+#define JS_HEAP_SIZE_DEFAULT  (256 * 1024 * 1024)  // 256 MB
+#define JS_STACK_SIZE_DEFAULT (1024 * 1024)  // 1MB
 
 // configuration object
 typedef struct
@@ -117,6 +125,8 @@ typedef struct
 	bool delay_indexing;			   // delay index construction when decoding
 	char *import_folder;			   // path to import folder, used for CSV loading
 	char *temp_folder;				   // path to temp folder, used for storing temporary files
+	size_t js_heap_size;               // quickjs runtime max heap size;
+	size_t js_stack_size;              // quickjs runtime max stack size;
 	Config_on_change cb;			   // callback function which being called when config param changed
 } RG_Config;
 
@@ -552,6 +562,36 @@ static const char *Config_temp_folder_get(void)
 	return config.temp_folder;
 }
 
+//------------------------------------------------------------------------------
+// JS Heap Size
+//------------------------------------------------------------------------------
+
+static void Config_js_heap_size_set
+(
+	size_t size
+) {
+    config.js_heap_size = size ;
+}
+
+static size_t Config_js_heap_size_get(void) {
+    return config.js_heap_size ;
+}
+
+//------------------------------------------------------------------------------
+// JS Stack Size
+//------------------------------------------------------------------------------
+
+static void Config_js_stack_size_set
+(
+	size_t size
+) {
+    config.js_stack_size = size ;
+}
+
+static size_t Config_js_stack_size_get(void) {
+    return config.js_stack_size ;
+}
+
 // check if field is a valid configuration option
 bool Config_Contains_field(
 	const char *field_str,	   // configuration option name
@@ -642,9 +682,17 @@ bool Config_Contains_field(
 	{
 		f = Config_TEMP_FOLDER;
 	}
+	else if (!(strcasecmp (field_str, JS_HEAP_SIZE)))
+    {
+        f = Config_JS_HEAP_SIZE ;
+    }
+    else if (!(strcasecmp (field_str, JS_STACK_SIZE)))
+    {
+        f = Config_JS_STACK_SIZE ;
+    }
 	else
 	{
-		return false;
+		return false ;
 	}
 
 	if (field)
@@ -718,6 +766,12 @@ SIType Config_Field_type(
 
 	case Config_TEMP_FOLDER:
 		return T_STRING;
+
+	case Config_JS_HEAP_SIZE:
+        return T_INT64 ;
+
+    case Config_JS_STACK_SIZE:
+        return T_INT64 ;
 
 		//----------------------------------------------------------------------
 		// invalid option
@@ -817,6 +871,14 @@ const char *Config_Field_name(
 		name = TEMP_FOLDER;
 		break;
 
+	case Config_JS_HEAP_SIZE:
+        name = JS_HEAP_SIZE ;
+        break ;
+
+    case Config_JS_STACK_SIZE:
+        name = JS_STACK_SIZE ;
+        break ;
+
 		//----------------------------------------------------------------------
 		// invalid option
 		//----------------------------------------------------------------------
@@ -897,6 +959,10 @@ static void _Config_SetToDefaults(void)
 
 	// set default temp folder path
 	config.temp_folder = rm_strdup(TEMP_DIR_DEFAULT);
+
+	// set default JS runtime limits
+    config.js_heap_size  = JS_HEAP_SIZE_DEFAULT ;
+    config.js_stack_size = JS_STACK_SIZE_DEFAULT ;
 }
 
 int Config_Init(
@@ -1290,6 +1356,28 @@ bool Config_Option_get(
 	}
 	break;
 
+	case Config_JS_HEAP_SIZE:
+    {
+        va_start (ap, field) ;
+        size_t *js_heap_size = va_arg (ap, size_t *) ;
+        va_end (ap) ;
+
+        ASSERT (js_heap_size != NULL) ;
+        (*js_heap_size) = Config_js_heap_size_get () ;
+    }
+    break ;
+
+    case Config_JS_STACK_SIZE:
+    {
+        va_start (ap, field) ;
+        size_t *js_stack_size = va_arg (ap, size_t *) ;
+        va_end (ap) ;
+
+        ASSERT (js_stack_size != NULL) ;
+        (*js_stack_size) = Config_js_stack_size_get () ;
+    }
+    break ;
+
 		//----------------------------------------------------------------------
 		// invalid option
 		//----------------------------------------------------------------------
@@ -1647,18 +1735,45 @@ bool Config_Option_set(
 	}
 	break;
 
+	case Config_JS_HEAP_SIZE:
+    {
+        long long heap_size;
+        if (!_Config_ParsePositiveInteger (val, &heap_size) || heap_size < 1048576) {
+			if (err) {
+				*err = "JS_HEAP_SIZE must be at least 1MB (1048576)";
+			}
+            return false ;
+        }
+        Config_js_heap_size_set ((size_t)heap_size) ;
+    }
+    break ;
+
+    case Config_JS_STACK_SIZE:
+    {
+        long long stack_size ;
+        if (!_Config_ParsePositiveInteger (val, &stack_size) || stack_size < 1048576) {
+			if (err) {
+				*err = "JS_STACK_SIZE must be at least 1MB (1048576)";
+			}
+            return false ;
+        }
+        Config_js_stack_size_set ((size_t)stack_size) ;
+    }
+    break ;
+
 		//----------------------------------------------------------------------
 		// invalid option
 		//----------------------------------------------------------------------
 
 	default:
-		return false;
+		return false ;
 	}
 
-	if (config.cb)
-		config.cb(field);
+	if (config.cb) {
+		config.cb (field) ;
+	}
 
-	return true;
+	return true ;
 }
 
 // dry run configuration change
@@ -1689,3 +1804,4 @@ void Config_Subscribe_Changes(
 	ASSERT(cb != NULL);
 	config.cb = cb;
 }
+
