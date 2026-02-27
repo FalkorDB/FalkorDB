@@ -3,23 +3,6 @@
 #include <benchmark/benchmark.h>
 #include "LAGraph.h"
 
-// TODO: move these includes to the individual c-files
-
-// Define C++ things
-// extern "C" {
-// 	#include "RG.h"
-// 	#include "rax.h"
-// 	#include "LAGraphX.h"
-// 	#include "src/globals.h"
-// 	// #include "src/query_ctx.h"
-// 	// #include "src/graph/graphcontext.h"
-// 	#include "src/graph/tensor/tensor.h"
-// 	#include "src/configuration/config.h"
-// 	#include "src/graph/delta_matrix/delta_utils.h"
-// 	#include "src/arithmetic/algebraic_expression.h"
-// }
-// #undef restrict
-
 // Generates all 9 combinations of {0, 100, 10000} adds x dels (including {0,0})
 static void ArgGenerator(benchmark::internal::Benchmark* b) {
 	for (int adds : {0, 100, 10000}) {
@@ -53,6 +36,8 @@ static void ArgGeneratorPending(benchmark::internal::Benchmark* b) {
 	    ->ArgNames({"adds", "dels"})                                           \
 	    ->Unit(benchmark::kMillisecond)
 
+// Set up the environment for each benchmark. Should be at the end of each
+// benchmark file.
 #define FDB_BENCHMARK_MAIN()                                                   \
 	int main(int argc, char** argv) {                                          \
 		RedisModule_Alloc   = malloc;                                          \

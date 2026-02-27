@@ -51,7 +51,10 @@ make tck-tests      # Run TCK tests
 make fuzz-tests     # Run fuzz tester
   TIMEOUT=secs      # Timeout in `secs`
 
-make benchmark    # Run benchmarks
+make benchmark        # Run benchmarks
+
+make micro_benchmarks # Run micro benchmarks
+  BENCH=file          # Run a specific benchmark file
 
 make coverage     # Perform coverage analysis (build & test)
 
