@@ -79,18 +79,19 @@ static GrB_Vector _Decode_multiedge
 	// v is now back to its original state
 	GrB_OK (GrB_free(&i));
 	GrB_OK (GrB_free(&one));
-
 	return v;
 }
 
 // decode a GraphBLAS matrix
 static GrB_Matrix _Decode_GrB_Matrix
 (
-	SerializerIO rdb  // stream
+	SerializerIO rdb,  // stream
+	bool tensors       // matrix has tensor entries?
 ) {
 	// format:
 	//  GraphBLAS container
 	//  unloaded matrix components
+	//  [if tensors: (k, multiedge)* terminated by UINT64_MAX]
 
 	// decode container
 	size_t n;
@@ -113,6 +114,17 @@ static GrB_Matrix _Decode_GrB_Matrix
 	_decode_and_load_vector (rdb, &container->i) ;
 	_decode_and_load_vector (rdb, &container->b) ;
 
+	// patch tensor entries in x before loading the matrix
+	if (tensors) {
+		uint64_t k = SerializerIO_ReadUnsigned (rdb) ;
+		while (k != UINT64_MAX) {
+			GrB_Vector u = _Decode_multiedge (rdb) ;
+			uint64_t v = SET_MSB ((uint64_t)(uintptr_t) u) ;
+			GrB_OK (GrB_Vector_setElement_UINT64 (container->x, v, k)) ;
+			k = SerializerIO_ReadUnsigned (rdb) ;
+		}
+	}
+
 	// load A from the container
 	GrB_Matrix A;
 	GrB_Info info;
@@ -132,83 +144,12 @@ static GrB_Matrix _Decode_GrB_Matrix
 	return A;
 }
 
-// decode tensors
-static void _DecodeTensors
-(
-	SerializerIO rdb,     // RDB
-	Delta_Matrix D,       // matrix to populate with tensors
-	uint64_t *n_tensors,  // [output] number of tensors loaded
-	uint64_t *n_elem      // [output] number of edges loaded
-) {
-	// format:
-	//  total number of tensors
-	//
-	//  M - number of tensors
-	//  tensors:
-	//   tensor i index
-	//   tensor j index
-	//   tensor
-	//
-	//  DP - number of tensors
-	//  tensors:
-	//   tensor i index
-	//   tensor j index
-	//   tensor
-
-	ASSERT(D         != NULL);
-	ASSERT(n_elem    != NULL);
-	ASSERT(n_tensors != NULL);
-
-	*n_elem    = 0;
-	*n_tensors = 0;
-
-	// read number of tensors
-	uint64_t n = SerializerIO_ReadUnsigned(rdb);
-
-	// no tensors, simply return
-	if(n == 0) {
-		return;
-	}
-
-	GrB_Matrix M  = Delta_Matrix_M  (D) ;
-	GrB_Matrix DP = Delta_Matrix_DP (D) ;
-
-	GrB_Matrix matrices[2] = {M, DP} ;
-
-	for (int l = 0; l < 2; l++) {
-		GrB_Matrix A = matrices[l] ;
-
-		uint64_t _n_tensors = SerializerIO_ReadUnsigned (rdb) ;
-
-		// decode and set tensors
-		for (uint64_t k = 0; k < _n_tensors; k++) {
-			// read tensor i,j indicies
-			GrB_Index i = SerializerIO_ReadUnsigned (rdb) ;
-			GrB_Index j = SerializerIO_ReadUnsigned (rdb) ;
-
-			GrB_Vector u = _Decode_multiedge(rdb);
-
-			// update number of elements loaded
-			GrB_Index nvals;
-			GrB_OK (GrB_Vector_nvals (&nvals, u)) ;
-			ASSERT (nvals > 0) ;
-			*n_elem += nvals;
-
-			// set tensor
-			uint64_t v = SET_MSB ((uint64_t)(uintptr_t) u) ;
-			GrB_OK (GrB_Matrix_setElement_UINT64 (A, v, i, j)) ;
-		}
-
-		// set number of loaded tensors
-		*n_tensors += _n_tensors;
-	}
-}
-
 // decode matrix
 static void _Decode_Delta_Matrix
 (
 	SerializerIO rdb,  // RDB
-	Delta_Matrix D     // delta matrix to populate
+	Delta_Matrix D,    // delta matrix to populate
+	bool tensors       // matrix has tensor entries?
 ) {
 	// format:
 	//  M
@@ -218,9 +159,9 @@ static void _Decode_Delta_Matrix
 	ASSERT (D   != NULL) ;
 	ASSERT (rdb != NULL) ;
 
-	GrB_Matrix M  = _Decode_GrB_Matrix (rdb) ;
-	GrB_Matrix DP = _Decode_GrB_Matrix (rdb) ;
-	GrB_Matrix DM = _Decode_GrB_Matrix (rdb) ;
+	GrB_Matrix M  = _Decode_GrB_Matrix (rdb, tensors) ;
+	GrB_Matrix DP = _Decode_GrB_Matrix (rdb, tensors) ;
+	GrB_Matrix DM = _Decode_GrB_Matrix (rdb, false) ;
 
 	GrB_Info info = Delta_Matrix_setMatrices (D, &M, &DP, &DM) ;
 	ASSERT (info == GrB_SUCCESS) ;
@@ -251,7 +192,7 @@ void RdbLoadLabelMatrices_v19
 		// read label ID
 		LabelID l = SerializerIO_ReadUnsigned(rdb);
 		Delta_Matrix lbl = Graph_GetLabelMatrix(g, l);
-		_Decode_Delta_Matrix(rdb, lbl);
+		_Decode_Delta_Matrix(rdb, lbl, false);
 	}
 }
 
@@ -262,10 +203,9 @@ void RdbLoadRelationMatrices_v19
 	GraphContext *gc   // graph context
 ) {
 	// format:
-	//   relation id   X N
-	//   matrix        X N
-	//   tensors count X N
-	//   tensors
+	//   relation id      X N
+	//   encode_tensors   X N
+	//   matrix           X N
 
 	ASSERT(gc  != NULL);
 	ASSERT(rdb != NULL);
@@ -282,6 +222,9 @@ void RdbLoadRelationMatrices_v19
 		RelationID r = SerializerIO_ReadUnsigned (rdb) ;
 		ASSERT (r == i) ;
 
+		// read tensors flag
+		bool encode_tensors = SerializerIO_ReadUnsigned (rdb) ;
+
 		// plant M matrix
 		Delta_Matrix DR = Graph_GetRelationMatrix (g, r, false) ;
 
@@ -289,18 +232,42 @@ void RdbLoadRelationMatrices_v19
 		Delta_Matrix_nvals (&nvals, DR) ;
 		ASSERT (nvals == 0) ;
 
-		_Decode_Delta_Matrix(rdb, DR);
-
-		// decode tensors
-		uint64_t n_elem    = 0;  // number of tensor edges
-		uint64_t n_tensors = 0;  // number of tensors in matrix
-		_DecodeTensors (rdb, DR, &n_tensors, &n_elem) ;
+		_Decode_Delta_Matrix(rdb, DR, encode_tensors);
 
 		// update graph edge statistics
 		// number of edges of type 'r' equals to:
 		// |R| - n_tensors + n_elem
+		// where n_tensors is the count of tensor entries and
+		// n_elem is the total number of edges across all tensors
 		info = Delta_Matrix_nvals (&nvals, DR) ;
 		ASSERT (info == GrB_SUCCESS) ;
+
+		uint64_t n_tensors = 0;
+		uint64_t n_elem    = 0;
+
+		if (encode_tensors) {
+			GrB_Matrix M  = Delta_Matrix_M  (DR) ;
+			GrB_Matrix DP = Delta_Matrix_DP (DR) ;
+			GrB_Matrix matrices[2] = {M, DP} ;
+
+			for (int l = 0; l < 2; l++) {
+				GxB_Iterator it;
+				GrB_OK (GxB_Iterator_new (&it)) ;
+				GrB_OK (GxB_Matrix_Iterator_attach (it, matrices[l], NULL)) ;
+				info = GxB_Matrix_Iterator_seek (it, 0) ;
+				while (info != GxB_EXHAUSTED) {
+					uint64_t aij = GxB_Iterator_get_UINT64 (it) ;
+					if (!SCALAR_ENTRY (aij)) {
+						n_tensors++ ;
+						GrB_Index nv ;
+						GrB_OK (GrB_Vector_nvals (&nv, AS_VECTOR (aij))) ;
+						n_elem += nv ;
+					}
+					info = GxB_Matrix_Iterator_next (it) ;
+				}
+				GrB_free (&it) ;
+			}
+		}
 
 		GraphStatistics_IncEdgeCount (&g->stats, r, nvals - n_tensors + n_elem) ;
 	}
@@ -319,7 +286,7 @@ void RdbLoadAdjMatrix_v19
 	ASSERT(rdb != NULL);
 
 	Delta_Matrix adj = Graph_GetAdjacencyMatrix(gc->g, false);
-	_Decode_Delta_Matrix(rdb, adj);
+	_Decode_Delta_Matrix(rdb, adj, false);
 }
 
 // decode labels matrix
@@ -335,5 +302,5 @@ void RdbLoadLblsMatrix_v19
 	ASSERT(rdb != NULL);
 
 	Delta_Matrix lbl = Graph_GetNodeLabelMatrix(gc->g);
-	_Decode_Delta_Matrix(rdb, lbl);
+	_Decode_Delta_Matrix(rdb, lbl, false);
 }
