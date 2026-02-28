@@ -470,11 +470,13 @@ static void _Graph_Copy
 	Graph_AcquireReadLock (gc->g) ;
 	Graph_ApplyAllPending (gc->g, false) ;  // flush all pending changes
 
-	int pid = -1 ;
-	while (pid == -1) {
+	int pid   = -1 ;
+	int retry = 10 ;  // 50ms at most, see fork failure block below
+	while (pid == -1 && retry > 0) {
 		// try to fork
 		pid = RedisModule_Fork (ForkDoneHandler, copy_ctx) ;
 		if (pid < 0) {
+			retry-- ;
 			// failed to fork! retry in a bit
 			// go to sleep for 5.0ms
 			struct timespec sleep_time ;
@@ -500,6 +502,13 @@ cleanup:
 	// decrease src graph ref-count
 	if (gc != NULL) {
 		GraphContext_DecreaseRefCount (gc);
+	}
+
+	// failed to fork multiple times, reply with error
+	if (retry == 0) {
+		RedisModule_ReplyWithError(ctx,
+				"GRAPH.COPY failed, could not fork");
+		error = true ;
 	}
 
 	if (error) {
