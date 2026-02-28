@@ -490,11 +490,11 @@ static void _Graph_Copy
 			// all done, Redis require us to call 'RedisModule_ExitFromChild'
 			RedisModule_ExitFromChild (res) ;
 			return ;
-		} else {
-			// release graph READ lock
-			Graph_ReleaseLock (gc->g) ;
 		}
 	}
+
+	// in parent process, release graph READ lock
+	Graph_ReleaseLock (gc->g) ;
 
 	// clean up
 cleanup:
