@@ -414,7 +414,9 @@ static void _Graph_Copy
 
 	GraphCopyContext *copy_ctx = (GraphCopyContext*)context;
 
-	bool error = false;
+	int  retry = 10 ;  // 10 attempts to fork
+	bool error = false ;
+
 	GraphContext *gc = NULL;
 
 	RedisModuleString *rm_src    = copy_ctx->rm_src;
@@ -471,7 +473,6 @@ static void _Graph_Copy
 	Graph_ApplyAllPending (gc->g, false) ;  // flush all pending changes
 
 	int pid   = -1 ;
-	int retry = 10 ;  // 50ms at most, see fork failure block below
 	while (pid == -1 && retry > 0) {
 		// try to fork
 		pid = RedisModule_Fork (ForkDoneHandler, copy_ctx) ;
