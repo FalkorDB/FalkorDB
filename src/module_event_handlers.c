@@ -591,7 +591,7 @@ static void _AfterForkChild() {
 		// the entire graph, if one of the graph's matrices isn't synced
 		// it might be related to a GraphBLAS failure e.g. out of memory
 		if (!synced) {
-			_exit (1) ;  // use _exit as it is async-signal-safe
+			RedisModule_ExitFromChild (-1) ;
 		}
 	}
 }

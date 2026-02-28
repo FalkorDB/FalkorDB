@@ -470,30 +470,25 @@ static void _Graph_Copy
 	Graph_AcquireReadLock (gc->g) ;
 	Graph_ApplyAllPending (gc->g, false) ;  // flush all pending changes
 
-	int pid = -1;
-	while(pid == -1) {
+	int pid = -1 ;
+	while (pid == -1) {
 		// try to fork
-		RedisModule_ThreadSafeContextLock(ctx); // lock GIL
-
 		pid = RedisModule_Fork (ForkDoneHandler, copy_ctx) ;
-		if(pid < 0) {
+		if (pid < 0) {
 			// failed to fork! retry in a bit
 			// go to sleep for 5.0ms
-			struct timespec sleep_time;
-			sleep_time.tv_sec = 0;
-			sleep_time.tv_nsec = 5000000;
-			nanosleep(&sleep_time, NULL);
-		} else if(pid == 0) {
+			struct timespec sleep_time ;
+			sleep_time.tv_sec = 0 ;
+			sleep_time.tv_nsec = 5000000 ;
+			nanosleep (&sleep_time, NULL) ;
+		} else if (pid == 0) {
 			// managed to fork, in child process
 			// encode graph to disk
-			int res = encode_graph(ctx, gc, copy_ctx);
+			int res = encode_graph (ctx, gc, copy_ctx) ;
 			// all done, Redis require us to call 'RedisModule_ExitFromChild'
 			RedisModule_ExitFromChild (res) ;
 			return ;
 		} else {
-			// managed to fork, in parent process
-			RedisModule_ThreadSafeContextUnlock (ctx) ;  // release GIL
-
 			// release graph READ lock
 			Graph_ReleaseLock (gc->g) ;
 		}
@@ -503,17 +498,17 @@ static void _Graph_Copy
 cleanup:
 
 	// decrease src graph ref-count
-	if(gc != NULL) {
-		GraphContext_DecreaseRefCount(gc);
+	if (gc != NULL) {
+		GraphContext_DecreaseRefCount (gc);
 	}
 
-	if(error) {
+	if (error) {
 		// free command context only in the case of an error
 		// otherwise the fork callback is responsible for freeing this context
-		GraphCopyContext_Free(copy_ctx);
+		GraphCopyContext_Free (copy_ctx) ;
 	}
 
-	RedisModule_FreeThreadSafeContext(ctx);
+	RedisModule_FreeThreadSafeContext (ctx) ;
 }
 
 // clone a graph
