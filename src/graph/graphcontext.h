@@ -7,6 +7,7 @@
 #pragma once
 
 #include "graph.h"
+#include <stdatomic.h>
 #include "../redismodule.h"
 #include "../index/index.h"
 #include "../schema/schema.h"
@@ -15,8 +16,6 @@
 #include "../queries_log/queries_log.h"
 #include "../serializers/encode_context.h"
 #include "../serializers/decode_context.h"
-
-#include <stdatomic.h>
 
 // GraphContext holds refrences to various elements of a graph object
 // it is the value sitting behind a Redis graph key
@@ -28,7 +27,7 @@
 // can use the graph version to understand if the schema was modified
 // and take action accordingly
 
-typedef struct {
+struct GraphContext{
 	Graph *g;                              // container for all matrices and entity properties
 	int ref_count;                         // number of active references
 	rax *attributes;                       // from strings to attribute IDs
@@ -45,10 +44,12 @@ typedef struct {
 	Cache *cache;                          // global cache of execution plans
 	XXH32_hash_t version;                  // graph version
 	RedisModuleString *telemetry_stream;   // telemetry stream name
-	
 	atomic_bool write_in_progress;         // write query in progess
 	CircularBuffer pending_write_queue;    // pending write queries queue
-} GraphContext;
+};
+
+typedef struct GraphContext GraphContext;
+
 
 //------------------------------------------------------------------------------
 // GraphContext API

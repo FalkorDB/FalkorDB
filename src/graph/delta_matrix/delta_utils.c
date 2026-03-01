@@ -3,6 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "GraphBLAS.h"
 #include "RG.h"
 #include "delta_matrix.h"
 
@@ -242,12 +243,19 @@ void Delta_Matrix_validate
 	ASSERT(sparticy == GxB_HYPERSPARSE);
 
 	//--------------------------------------------------------------------------
+	// check that m has no pending changes
+	//--------------------------------------------------------------------------
+	int32_t m_has_pending = false;
+	GrB_OK (GrB_Matrix_get_INT32(m, &m_has_pending, GxB_WILL_WAIT));
+	ASSERT (m_has_pending == false) ;
+
+	//--------------------------------------------------------------------------
 	// Check dm is iso
 	//--------------------------------------------------------------------------
 
 	#if 1 // less strict iso test:
 	// if this passes, Graphblas may not recognize the matrix as iso
-	// but it only has true values. 
+	// but it only has true values.
 	info = GrB_Matrix_reduce_BOOL(
 		&dm_iso, GrB_LAND, GrB_LAND_MONOID_BOOL, dm, NULL);
 	ASSERT(info == GrB_SUCCESS);

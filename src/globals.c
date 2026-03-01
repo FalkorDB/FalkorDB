@@ -8,7 +8,6 @@
 #include "util/arr.h"
 #include "udf/repository.h"
 #include "util/thpool/pool.h"
-#include "configuration/config.h"
 #include "string_pool/string_pool.h"
 
 struct Globals {
@@ -94,7 +93,7 @@ void Globals_Set_ProcessIsChild
 	// this function used to lock but due to access by child process
 	// and pthread rwlock handling in a multi process environment we're
 	// better off not guarding with a lock
-	_globals.process_is_child =	process_is_child;
+	_globals.process_is_child = process_is_child;
 }
 
 // get main thread id

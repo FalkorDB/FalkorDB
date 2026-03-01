@@ -7,6 +7,7 @@
 #include "src/util/rmalloc.h"
 #include "src/util/arr.h"
 #include "src/ast/ast.h"
+#include "tests/utils/mock_log.h"
 
 #include <stdio.h>
 
@@ -16,6 +17,7 @@ void setup() {
 		exit(0);
 	}
 	Alloc_Reset();
+	Logging_Reset();
 }
 
 #define TEST_INIT setup();

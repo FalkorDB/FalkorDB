@@ -87,10 +87,10 @@
 // return codes
 #if RG_DEBUG
 	#define GrB_OK(GrB_method)                                       \
-	{                                                                \
+	do {                                                             \
 		GrB_Info _info = (GrB_method) ;                              \
 		ASSERT(_info == GrB_SUCCESS || _info == GrB_NO_VALUE);       \
-	}
+	} while(0)
 #else
 	#define GrB_OK(GrB_method) (GrB_method)
 #endif

@@ -6,12 +6,11 @@
 
 #pragma once
 
+#include <stdatomic.h>
 #include "../bolt/bolt.h"
 #include "../redismodule.h"
 #include "../util/simple_timer.h"
 #include "../graph/graphcontext.h"
-
-#include <stdatomic.h>
 
 // ExecutorThread lists the different types of threads in the system
 typedef enum {

@@ -20,6 +20,10 @@ if(NOT DEFINED UNIT_TESTS)
     set(UNIT_TESTS OFF)
 endif()
 
+if (NOT DEFINED BUILD_BENCHMARKS)
+	set(BUILD_BENCHMARKS OFF)
+endif()
+
 project(falkordb)
 
 #-----------------------------------------------------------------------------
@@ -314,6 +318,15 @@ if(APPLE)
     add_library(falkordb_static STATIC $<TARGET_OBJECTS:falkordb>)
 endif()
 
+if(UNIT_TESTS OR BUILD_BENCHMARKS)
+    add_subdirectory(${root}/tests/utils tests/utils)
+endif()
+
 if(UNIT_TESTS)
     add_subdirectory(${root}/tests/unit tests/unit)
 endif()
+
+if (BUILD_BENCHMARKS)
+    add_subdirectory(${root}/tests/micro_benchmarks tests/micro_benchmarks)
+endif()
+
