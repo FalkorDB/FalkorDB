@@ -150,17 +150,8 @@ add_compile_options(-fno-strict-aliasing)
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${CMAKE_LD_FLAGS} ${CMAKE_EXE_LD_FLAGS}")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${CMAKE_LD_FLAGS} ${CMAKE_SO_LD_FLAGS}")
 
-# -Bsymbolic and -Bsymbolic-functions: Resolve internal references to global symbols locally,
-# preventing symbol interposition from the host process (Redis). This is critical because
-# RediSearch has its own dict implementation with the same symbol names as Redis's
-# internal dict (dictCreate, dictAdd, etc.), but with a different dictType structure.
-# Without these flags, RediSearch's code would call Redis's dict functions instead
-# of its own, causing crashes due to ABI incompatibility (Redis 8.x dictType has
-# more fields than RediSearch's dictType).
-# Note: Both flags are used together as in the original readies build system.
-if(NOT APPLE)
-    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-Bsymbolic,-Bsymbolic-functions")
-endif()
+# Symbol isolation flags are applied per-target below (after add_library).
+# See the target_link_options(falkordb ...) block near line 320.
 
 # Set C standard
 set(CMAKE_C_STANDARD 11)
@@ -309,6 +300,41 @@ add_dependencies(falkordb redisearch-static)
 
 target_link_options(falkordb PRIVATE ${CMAKE_LD_FLAGS_LIST} ${CMAKE_SO_LD_FLAGS_LIST})
 target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS})
+
+# Symbol isolation: prevent RediSearch's dict symbols from clashing with Redis's.
+#
+# RediSearch has its own dict implementation (dictCreate, dictAdd, dictFind, etc.)
+# with the same symbol names as Redis's dict API but a different dictType layout.
+# On Redis 8.x, dictType has 12+ fields vs RediSearch's 6 — without isolation,
+# the dynamic linker resolves RediSearch's internal dict calls to Redis's versions,
+# causing ABI mismatches and SEGFAULT in UNIQUE constraint enforcement.
+#
+# Two layers of defense (applied to the falkordb target only):
+# 1. -Bsymbolic: tells the linker to bind internal references locally
+# 2. Version script (src/falkordb.ver): explicitly hides dict* from dynamic export
+#
+# Both are needed because -Bsymbolic alone may not set DF_SYMBOLIC on all
+# toolchains (observed with Clang 19 + binutils 2.42 on complex builds).
+if(NOT APPLE)
+    target_link_options(falkordb PRIVATE
+        -Wl,-Bsymbolic,-Bsymbolic-functions)
+    set(FALKORDB_VERSION_SCRIPT "${CMAKE_SOURCE_DIR}/src/falkordb.ver")
+    if(EXISTS "${FALKORDB_VERSION_SCRIPT}")
+        target_link_options(falkordb PRIVATE
+            -Wl,--version-script=${FALKORDB_VERSION_SCRIPT})
+    endif()
+endif()
+
+# Post-build verification: ensure dict* symbols are not dynamically exported.
+# If any dict symbol leaks through, the module will crash on Redis 8.x.
+if(NOT APPLE)
+    add_custom_command(TARGET falkordb POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E echo "Verifying dict symbol isolation..."
+        COMMAND /bin/sh -c "if nm -D $<TARGET_FILE:falkordb> 2>/dev/null | grep -q ' [TBD] dict'; then echo 'ERROR: dict* symbols are dynamically exported — Redis 8.x ABI crash risk!' && exit 1; else echo 'OK: dict* symbols are hidden'; fi"
+        COMMENT "Checking that dict* symbols are hidden from dynamic export"
+        VERBATIM
+    )
+endif()
 
 if(APPLE)
     add_library(falkordb_static STATIC $<TARGET_OBJECTS:falkordb>)
