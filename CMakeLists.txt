@@ -310,6 +310,17 @@ add_dependencies(falkordb redisearch-static)
 target_link_options(falkordb PRIVATE ${CMAKE_LD_FLAGS_LIST} ${CMAKE_SO_LD_FLAGS_LIST})
 target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS})
 
+# Extract debug symbols and strip the binary for non-debug Linux builds
+# This reduces binary size significantly while preserving debug info in a separate .debug file
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug" AND NOT APPLE)
+    add_custom_command(TARGET falkordb POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:falkordb>" "$<TARGET_FILE:falkordb>.debug"
+        COMMAND ${CMAKE_OBJCOPY} --add-gnu-debuglink="$<TARGET_FILE:falkordb>.debug" "$<TARGET_FILE:falkordb>"
+        COMMAND ${CMAKE_STRIP} -g "$<TARGET_FILE:falkordb>"
+        COMMENT "Extracting debug symbols and stripping falkordb binary"
+    )
+endif()
+
 if(APPLE)
     add_library(falkordb_static STATIC $<TARGET_OBJECTS:falkordb>)
 endif()
