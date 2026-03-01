@@ -2,6 +2,7 @@
 
 #include <benchmark/benchmark.h>
 #include "LAGraph.h"
+#define restrict
 
 // Generates all 9 combinations of {0, 100, 10000} adds x dels (including {0,0})
 static void ArgGenerator(benchmark::internal::Benchmark* b) {

@@ -3,7 +3,6 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "GraphBLAS.h"
 #include "RG.h"
 #include "delta_matrix.h"
 

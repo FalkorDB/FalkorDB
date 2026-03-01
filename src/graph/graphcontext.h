@@ -7,7 +7,6 @@
 #pragma once
 
 #include "graph.h"
-#include <stdatomic.h>
 #include "../redismodule.h"
 #include "../index/index.h"
 #include "../schema/schema.h"
@@ -16,6 +15,8 @@
 #include "../queries_log/queries_log.h"
 #include "../serializers/encode_context.h"
 #include "../serializers/decode_context.h"
+
+#include <stdatomic.h>
 
 // GraphContext holds refrences to various elements of a graph object
 // it is the value sitting behind a Redis graph key

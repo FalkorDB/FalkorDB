@@ -1,14 +1,12 @@
 #include "micro_benchmarks.h"
 
-// take care of cpp definitions
-#define restrict
-
 // C++ and C have incompatible atomic declarations
 // first, include <atomic>, then block C's <stdatomic.h> from redefining them
 #include <atomic>
 using std::atomic_bool;
 using std::atomic_int;
 
+// Guard against h files
 #define _STDATOMIC_H          // GCC
 #define __CLANG_STDATOMIC_H   // Clang
 extern "C" {
@@ -19,7 +17,6 @@ extern "C" {
 #include "src/query_ctx.h"
 #include "src/graph/graphcontext.h"
 }
-#undef restrict
 
 static void _fake_graph_context() {
 	GraphContext* gc = (GraphContext*)calloc(1, sizeof(GraphContext));

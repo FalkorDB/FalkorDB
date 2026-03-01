@@ -358,9 +358,6 @@ static void _ShutdownEventHandler
 	// stop threads before finalize GraphBLAS
 	ThreadPool_Destroy () ;
 
-	// free global variables
-	Globals_Free () ;
-
 	// server is shutting down, finalize GraphBLAS
 	LAGraph_Finalize (NULL) ;
 
@@ -368,6 +365,9 @@ static void _ShutdownEventHandler
 	free_run_cmd_as () ;
 
 	BoltApi_Unregister () ;
+
+	// free global variables
+	Globals_Free () ;
 
 	RedisModule_Log (ctx, "notice", "%s",
 			"Clearing RediSearch resources on shutdown") ;

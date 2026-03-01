@@ -115,7 +115,7 @@ void CHECK_GrB_Matrices_EQ
 	// NNZ(A) == NNZ(B)
 	//--------------------------------------------------------------------------
 
-	info =GrB_Matrix_nvals(&nvals_A, A);
+	info = GrB_Matrix_nvals(&nvals_A, A);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	info = GrB_Matrix_nvals(&nvals_B, B);
