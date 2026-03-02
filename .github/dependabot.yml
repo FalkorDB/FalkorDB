@@ -5,3 +5,48 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: daily
+
+  - package-ecosystem: docker
+    directory: /build/docker
+    schedule:
+      interval: daily
+
+  - package-ecosystem: pip
+    directory: /demo/imdb
+    schedule:
+      interval: daily
+
+  - package-ecosystem: pip
+    directory: /demo/social
+    schedule:
+      interval: daily
+
+  - package-ecosystem: docker
+    directory: /deps/GraphBLAS/cpu_features/.github/workflows
+    schedule:
+      interval: daily
+
+  - package-ecosystem: docker
+    directory: /deps/GraphBLAS/cpu_features/bazel/ci/docker
+    schedule:
+      interval: daily
+
+  - package-ecosystem: docker
+    directory: /deps/GraphBLAS/cpu_features/cmake/ci/docker/amd64
+    schedule:
+      interval: daily
+
+  - package-ecosystem: docker
+    directory: /deps/GraphBLAS/cpu_features/cmake/ci/docker/toolchain
+    schedule:
+      interval: daily
+
+  - package-ecosystem: pip
+    directory: /tests
+    schedule:
+      interval: daily
