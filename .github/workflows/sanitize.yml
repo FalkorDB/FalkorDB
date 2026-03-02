@@ -32,40 +32,34 @@ jobs:
         set-safe-directory: '*'
         submodules: recursive
 
-    - name: Cache GraphBLAS
-      id: cache_graphblas
-      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
-      with:
-        path: ./bin/linux-x64-debug-asan/GraphBLAS
-        key: graphblas-sanitizer-llvm-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
+    - name: Generate cache key
+      id: cache-key
+      shell: bash
+      run: |
+        set -o pipefail
+        # build.sh included so that changes to dep build flags (e.g. libcurl SSL) invalidate the cache
+        DEPS_HASH=$(cat ./deps/GraphBLAS/Include/GraphBLAS.h ./deps/GraphBLAS/Config/GB_prejit.c ./deps/libcypher-parser/lib/src/parser.c ./deps/RediSearch/src/version.h ./deps/libcurl/RELEASE-NOTES ./deps/libcsv/ChangeLog ./deps/LAGraph/include/LAGraph.h ./deps/rax/rax.h ./deps/xxHash/xxhash.h ./deps/utf8proc/utf8proc.h ./deps/oniguruma/src/oniguruma.h ./deps/FalkorDB-core-rs/Cargo.toml ./build.sh 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "no-hash")
+        echo "combined=${DEPS_HASH}" >> "$GITHUB_OUTPUT"
 
-    - name: Cache parser
-      id: cache_parser
+    - name: Restore dependency cache
+      id: restore-deps
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
-        path: ./bin/linux-x64-debug-asan/libcypher-parser
-        key: parser-sanitizer-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
-
-    - name: Cache search
-      id: cache_search
-      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
-      with:
-        path: ./bin/linux-x64-debug-asan/search-static
-        key: search-sanitizer-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
-
-    - name: Cache libcurl
-      id: cache_libcurl
-      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
-      with:
-        path: ./bin/linux-x64-debug-asan/libcurl
-        key: libcurl-sanitizer-llvm-${{ hashFiles('./deps/libcurl/RELEASE-NOTES', './build.sh') }}
-
-    - name: Cache libcsv
-      id: cache_libcsv
-      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
-      with:
-        path: ./bin/linux-x64-debug-asan/libcsv
-        key: libcsv-sanitizer-llvm-${{ hashFiles('./deps/libcsv/ChangeLog') }}
+        path: |
+          ./bin/linux-x64-debug-asan/GraphBLAS
+          ./bin/linux-x64-debug-asan/libcypher-parser
+          ./bin/linux-x64-debug-asan/search-static
+          ./bin/linux-x64-debug-asan/libcurl
+          ./bin/linux-x64-debug-asan/libcsv
+          ./bin/linux-x64-debug-asan/LAGraph
+          ./bin/linux-x64-debug-asan/rax
+          ./bin/linux-x64-debug-asan/xxHash
+          ./bin/linux-x64-debug-asan/utf8proc
+          ./bin/linux-x64-debug-asan/oniguruma
+          ./bin/linux-x64-debug-asan/FalkorDB-core-rs
+        key: deps-sanitizer-${{ steps.cache-key.outputs.combined }}
+        restore-keys: |
+          deps-sanitizer-
 
     - name: Build
       run: |
