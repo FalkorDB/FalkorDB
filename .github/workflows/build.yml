@@ -120,7 +120,7 @@ jobs:
             build_variants: [release]
             use_docker: false
             build_test_image: false
-        build_type: [release, debug]
+        build_type: ${{ github.event_name == 'pull_request' && fromJSON('["release"]') || fromJSON('["release", "debug"]') }}
     steps:
       - uses: actions/checkout@v6
         with:
