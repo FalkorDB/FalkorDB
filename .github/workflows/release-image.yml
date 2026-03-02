@@ -39,8 +39,13 @@ jobs:
     if: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') || github.event_name != 'workflow_run' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set tag name
         id: set_tag
@@ -84,7 +89,7 @@ jobs:
           fi
 
       - name: Retrieve built image AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -94,7 +99,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image ARM
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -104,7 +109,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image RHEL8 AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -114,7 +119,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image RHEL9 AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -124,7 +129,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image Alpine AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -134,7 +139,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image Alpine ARM
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -144,7 +149,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image Alpine AMD server only
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -154,7 +159,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image Alpine ARM server only
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -164,7 +169,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image Amazon Linux AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -174,7 +179,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image Ubuntu AMD server only
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -184,7 +189,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image Ubuntu ARM server only
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -194,7 +199,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built .so AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -204,7 +209,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built .so ARM
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -213,7 +218,7 @@ jobs:
           path: /tmp
           if_no_artifact_found: error
       - name: Retrieve built .so RHEL9 AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -223,7 +228,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built .so RHEL8 AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -233,7 +238,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built .so Alpine AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -243,7 +248,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built .so Alpine ARM
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -253,7 +258,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built .so Amazon Linux AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -263,7 +268,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built debug.so AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -273,7 +278,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built debug.so ARM
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -283,7 +288,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built debug.so RHEL9 AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -293,7 +298,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built debug.so RHEL8 AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -303,7 +308,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built debug.so Alpine AMD
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -313,7 +318,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built debug.so Alpine ARM
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -323,7 +328,7 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built .so macOS ARM64
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -333,7 +338,7 @@ jobs:
           if_no_artifact_found: ignore
 
       - name: Retrieve built debug.so macOS ARM64
-        uses: dawidd6/action-download-artifact@v12
+        uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -357,7 +362,7 @@ jobs:
           docker load -i /tmp/falkordb-amazonlinux2023-x64.tar
 
       - name: Login to DockerHub
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
@@ -467,8 +472,13 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'release' || github.event.inputs.run_falkordb_cloud_update == 'true'
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+
       - name: Trigger FalkorDB Cloud version update
-        uses: peter-evans/repository-dispatch@v4
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ secrets.FALKORDB_OMNISTRATE_PAT }}
           repository: FalkorDB/falkordb-omnistrate
@@ -480,8 +490,13 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'release' || github.event.inputs.run_testflight_workflow == 'true'
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+
       - name: Trigger Redis Enterprise tests in FalkorDB/testflight
-        uses: peter-evans/repository-dispatch@v4
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ secrets.GH_TESTFLIGHT_TOKEN }}
           repository: FalkorDB/testflight
