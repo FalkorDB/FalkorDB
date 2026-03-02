@@ -332,7 +332,7 @@ jobs:
 
       - name: Upload test image
         if: matrix.platform.use_docker && matrix.build_type == 'release'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
@@ -360,7 +360,7 @@ jobs:
 
       - name: Upload base image
         if: matrix.platform.use_docker && matrix.build_type == 'release'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: falkordb-${{ matrix.platform.suffix }}
           path: /tmp/falkordb-${{ matrix.platform.suffix }}.tar
@@ -383,7 +383,7 @@ jobs:
 
       - name: Upload server image
         if: matrix.platform.use_docker && steps.dockerfile.outputs.build_server == 'true'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: falkordb-server-${{ matrix.platform.suffix }}
           path: /tmp/falkordb-server-${{ matrix.platform.suffix }}.tar
@@ -396,7 +396,7 @@ jobs:
           docker run --rm --entrypoint sh localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }} -c 'cat /FalkorDB/bin/linux*/falkordb.so' > /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
 
       - name: Upload .so file
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
           path: /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
@@ -453,7 +453,7 @@ jobs:
 
       - name: Upload test logs
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.test_type }}-test-logs-${{ matrix.platform.suffix }}
           path: /tmp/logs
@@ -521,7 +521,7 @@ jobs:
           version: 'v0.69.2'
 
       - name: Upload Vulnerability Scan Results
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         id: upload_trivy_report
         with:
           name: trivy-report-${{ matrix.platform.suffix }}
@@ -658,7 +658,7 @@ jobs:
           echo "file_name=${file_name}" >> $GITHUB_OUTPUT
 
       - name: Upload RAMP package
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.create_ramp.outputs.file_name }}
           path: /tmp/ramp/${{ steps.create_ramp.outputs.file_name }}
