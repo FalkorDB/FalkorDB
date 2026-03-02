@@ -17,7 +17,7 @@ class testGraphCopy():
         # invokes the GRAPH.COPY command
         self.conn.execute_command("GRAPH.COPY", src, dest)
 
-    def graph_copy_with_replica_retry(self, src, dest):
+    def graph_copy_with_retry(self, src, dest):
         # invokes GRAPH.COPY, retrying on fork errors for up to 1 minute
         deadline = time.time() + 60
         while True:
@@ -298,6 +298,7 @@ class testGraphCopy():
         self.env, self.db = Env(env='oss', useSlaves=True)
 
         master_con = self.env.getConnection()
+        self.conn = master_con
 
         # create a random graph
         src_graph_id  = GRAPH_ID
@@ -308,7 +309,7 @@ class testGraphCopy():
         create_random_graph(src_graph, nodes, edges)
 
         # copy graph
-        self.graph_copy_with_replica_retry(src_graph_id, copy_graph_id)
+        self.graph_copy_with_retry(src_graph_id, copy_graph_id)
 
         # the WAIT command forces master slave sync to complete
         master_con.execute_command("WAIT", "1", "0")
@@ -350,7 +351,7 @@ class testGraphCopy():
         create_constraint(src_graph, "UNIQUE", "NODE", "A", "v", sync=True)
 
         # expecting GRAPH.COPY to succeed
-        self.graph_copy_with_replica_retry(src_id, dest_id)
+        self.graph_copy_with_retry(src_id, dest_id)
 
         dest_graph = self.db.select_graph(dest_id)
         self.assert_graph_eq(src_graph, dest_graph)
