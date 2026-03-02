@@ -493,12 +493,13 @@ jobs:
         run: docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
 
       - name: Run Trivy scan
-        uses: aquasecurity/trivy-action@0.34.0
+        uses: aquasecurity/trivy-action@0.34.1
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
           output: trivy-report.json
           format: json
           exit-code: '0'
+          version: 'v0.69.2'
 
       - name: Upload Vulnerability Scan Results
         uses: actions/upload-artifact@v6
@@ -523,7 +524,7 @@ jobs:
             </details>
 
       - name: Fail build on high/critical severity vulnerabilities
-        uses: aquasecurity/trivy-action@0.34.0
+        uses: aquasecurity/trivy-action@0.34.1
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
           format: table
@@ -531,6 +532,7 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
           skip-setup-trivy: true
+          version: 'v0.69.2'
 
   ramp-package:
     needs: build
