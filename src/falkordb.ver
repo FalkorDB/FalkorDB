@@ -1,0 +1,25 @@
+/*
+ * FalkorDB symbol version script
+ *
+ * Hides internal dict* symbols to prevent dynamic symbol interposition
+ * when loaded as a Redis module. This is necessary because RediSearch's
+ * internal dict implementation (dictCreate, dictAdd, dictFind, etc.)
+ * uses the same symbol names as Redis's dict API, but with a different
+ * dictType struct layout.
+ *
+ * On Redis 8.x, dictType has 12+ fields while RediSearch's has 6.
+ * Without symbol hiding, the dynamic linker may resolve RediSearch's
+ * dict calls to Redis's implementations, causing ABI mismatches and
+ * crashes (SEGFAULT in EnforceUniqueEntity during UNIQUE constraint
+ * enforcement).
+ *
+ * This version script provides reliable symbol isolation even when
+ * -Bsymbolic does not produce DF_SYMBOLIC in the final binary
+ * (observed with Clang 19 on complex CMake builds).
+ */
+{
+    global:
+        RedisModule_OnLoad;
+    local:
+        dict*;
+};
