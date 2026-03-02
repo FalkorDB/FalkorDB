@@ -459,6 +459,25 @@ jobs:
           path: /tmp/logs
           retention-days: 7
 
+  binary-size-check:
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download all .so artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: 'falkordb-*.so'
+          path: /tmp/binaries
+
+      - name: Check binary sizes
+        run: bash tests/check_binary_size.sh /tmp/binaries
+
   security-scan:
     needs: build
     if: needs.build.result == 'success'
