@@ -1,6 +1,6 @@
 import time
 from graph_utils import graph_eq
-from redis import BusyLoadingError
+from redis import BusyLoadingError, ResponseError
 from constraint_utils import create_constraint
 from common import Env, FalkorDB, SANITIZER, VALGRIND
 from random_graph import create_random_schema, create_random_graph
@@ -16,6 +16,20 @@ class testGraphCopy():
     def graph_copy(self, src, dest):
         # invokes the GRAPH.COPY command
         self.conn.execute_command("GRAPH.COPY", src, dest)
+
+    def graph_copy_with_replica_retry(self, src, dest):
+        # invokes GRAPH.COPY, retrying on fork errors for up to 1 minute
+        deadline = time.time() + 60
+        while True:
+            try:
+                self.conn.execute_command("GRAPH.COPY", src, dest)
+                return
+            except ResponseError as e:
+                if "could not fork" in str(e).lower() and time.time() + 5 <= deadline:
+                    print(f"Fork error, retrying in 5 seconds: {e}")
+                    time.sleep(5)
+                else:
+                    raise
 
     # compare graphs
     def assert_graph_eq(self, A, B):
@@ -294,7 +308,7 @@ class testGraphCopy():
         create_random_graph(src_graph, nodes, edges)
 
         # copy graph
-        self.graph_copy(src_graph_id, copy_graph_id)
+        self.graph_copy_with_replica_retry(src_graph_id, copy_graph_id)
 
         # the WAIT command forces master slave sync to complete
         master_con.execute_command("WAIT", "1", "0")
@@ -336,7 +350,7 @@ class testGraphCopy():
         create_constraint(src_graph, "UNIQUE", "NODE", "A", "v", sync=True)
 
         # expecting GRAPH.COPY to succeed
-        self.graph_copy(src_id, dest_id)
+        self.graph_copy_with_replica_retry(src_id, dest_id)
 
         dest_graph = self.db.select_graph(dest_id)
         self.assert_graph_eq(src_graph, dest_graph)
