@@ -19,6 +19,11 @@ on:
         default: true
   pull_request:
     branches: [master, "[0-9]+.[0-9]+"]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE.txt'
+      - '.gitignore'
   push:
     branches:
       - master
