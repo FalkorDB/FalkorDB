@@ -4,6 +4,11 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [master, "[0-9]+.[0-9]+"]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE.txt'
+      - '.gitignore'
   push:
     branches:
       - master
@@ -27,51 +32,59 @@ jobs:
         set-safe-directory: '*'
         submodules: recursive
 
-    - name: Cache GraphBLAS
-      id: cache_graphblas
-      uses: actions/cache@v5
-      with:
-        path: ./bin/linux-x64-debug-asan/GraphBLAS
-        key: graphblas-sanitizer-llvm-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
-
-    - name: Cache parser
-      id: cache_parser
-      uses: actions/cache@v5
-      with:
-        path: ./bin/linux-x64-debug-asan/libcypher-parser
-        key: parser-sanitizer-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
-
-    - name: Cache search
-      id: cache_search
-      uses: actions/cache@v5
-      with:
-        path: ./bin/linux-x64-debug-asan/search-static
-        key: search-sanitizer-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
-
-    - name: Cache libcurl
-      id: cache_libcurl
-      uses: actions/cache@v5
-      with:
-        path: ./bin/linux-x64-debug-asan/libcurl
-        key: libcurl-sanitizer-llvm-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}
-
-    - name: Cache libcsv
-      id: cache_libcsv
-      uses: actions/cache@v5
-      with:
-        path: ./bin/linux-x64-debug-asan/libcsv
-        key: libcsv-sanitizer-llvm-${{ hashFiles('./deps/libcsv/ChangeLog') }}
-
-    - name: Build
+    - name: Generate cache key
+      id: cache-key
       run: |
-        rustup default nightly
+        DEPS_HASH=$(cat ./deps/GraphBLAS/Include/GraphBLAS.h ./deps/GraphBLAS/Config/GB_prejit.c ./deps/libcypher-parser/lib/src/parser.c ./deps/RediSearch/src/version.h ./deps/libcurl/RELEASE-NOTES ./deps/libcsv/ChangeLog ./deps/LAGraph/include/LAGraph.h ./deps/rax/rax.h ./deps/xxHash/xxhash.h ./deps/utf8proc/utf8proc.h ./deps/oniguruma/src/oniguruma.h ./deps/FalkorDB-core-rs/Cargo.toml 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "no-hash")
+        echo "combined=${DEPS_HASH}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore dependency cache
+      id: restore-deps
+      uses: actions/cache@v5
+      with:
+        path: |
+          ./bin/linux-x64-release/GraphBLAS
+          ./bin/linux-x64-release/libcypher-parser
+          ./bin/linux-x64-release/search-static
+          ./bin/linux-x64-release/libcurl
+          ./bin/linux-x64-release/libcsv
+          ./bin/linux-x64-release/LAGraph
+          ./bin/linux-x64-release/rax
+          ./bin/linux-x64-release/xxHash
+          ./bin/linux-x64-release/utf8proc
+          ./bin/linux-x64-release/oniguruma
+          ./bin/linux-x64-debug-asan/FalkorDB-core-rs
+        key: deps-sanitizer-${{ steps.cache-key.outputs.combined }}
+        restore-keys: |
+          deps-sanitizer-
+
+    - name: Cache LLVM 17
+      id: cache-llvm
+      uses: actions/cache@v5
+      with:
+        path: |
+          /usr/lib/llvm-17
+          /usr/bin/clang-17
+          /usr/bin/clang++-17
+          /usr/lib/x86_64-linux-gnu/libomp*17*
+        key: llvm-17-sanitizer-ubuntu
+
+    - name: Install LLVM 17
+      if: steps.cache-llvm.outputs.cache-hit != 'true'
+      run: |
         apt-get update
         apt-get install -y lsb-release wget software-properties-common gnupg
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
         ./llvm.sh 17
         apt-get update
-        apt-get install -y libomp-17-dev libc6-dbg python3-venv
+        apt-get install -y libomp-17-dev
+
+    - name: Build
+      run: |
+        rustup default nightly
+        apt-get update
+        apt-get install -y libc6-dbg python3-venv
         python3 -m venv venv
         . venv/bin/activate
         pip install -r tests/requirements.txt
