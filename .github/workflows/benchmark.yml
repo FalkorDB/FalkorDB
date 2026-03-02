@@ -171,7 +171,7 @@ jobs:
         run: echo "SAFE_REF=$(echo '${{ github.head_ref || github.ref_name }}' | tr '/' '-')" >> "$GITHUB_ENV"
 
       - name: Download artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           # change this so it uses a pattern to download all group_* artifacts
           pattern: ${{ env.SAFE_REF }}-benchmark-group_*-results
@@ -198,7 +198,7 @@ jobs:
           mkdir -p tests/benchmarks/compare/master
 
       - name: Download artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: ${{ env.SAFE_REF }}-benchmark-results
           path: tests/benchmarks/compare/${{ github.head_ref }}
