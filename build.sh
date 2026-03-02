@@ -867,7 +867,7 @@ build_graphblas() {
         -DSUITESPARSE_USE_FORTRAN=OFF
         -DBUILD_STATIC_LIBS=ON
         -DBUILD_SHARED_LIBS=OFF
-        -DGRAPHBLAS_COMPACT=ON
+        -DGRAPHBLAS_COMPACT=OFF
         -DGRAPHBLAS_BUILD_STATIC_LIBS=ON
         -DBUILD_TESTING=OFF
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
@@ -878,8 +878,7 @@ build_graphblas() {
     if [[ "$DEPS_DEBUG" == "1" ]]; then
         cmake_args+=(-DCMAKE_BUILD_TYPE=Debug)
     else
-        # Use RelWithDebInfo with default -O2 flags (matching old readies build).
-        # -O3 causes ~14MB code bloat in GraphBLAS due to aggressive inlining of thousands of kernels.
+        # Use RelWithDebInfo for debug symbols, but override to -O3 for max optimization
         cmake_args+=(
             -DCMAKE_BUILD_TYPE=RelWithDebInfo
             "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O3 -g -DNDEBUG -fPIC -fno-stack-protector"
