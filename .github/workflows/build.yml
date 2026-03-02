@@ -272,8 +272,6 @@ jobs:
           platforms: linux/${{ matrix.platform.arch }}
           tags: localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
           push: true
-          cache-from: type=gha,scope=compiler-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
-          cache-to: type=gha,ignore-error=true,mode=max,scope=compiler-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
             OS=${{ matrix.platform.os }}
@@ -328,15 +326,13 @@ jobs:
           outputs: type=docker,dest=/tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-tests-${{ matrix.platform.suffix }}
           platforms: linux/${{ matrix.platform.arch }}
-          cache-from: type=gha,scope=tests-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
-          cache-to: type=gha,ignore-error=true,mode=max,scope=tests-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
 
       - name: Upload test image
         if: matrix.platform.use_docker && matrix.build_type == 'release'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
@@ -353,8 +349,6 @@ jobs:
           platforms: linux/${{ matrix.platform.arch }}
           outputs: type=docker,dest=/tmp/falkordb-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-${{ matrix.platform.suffix }}
-          cache-from: type=gha,scope=base-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
-          cache-to: type=gha,ignore-error=true,mode=max,scope=base-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
@@ -366,7 +360,7 @@ jobs:
 
       - name: Upload base image
         if: matrix.platform.use_docker && matrix.build_type == 'release'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: falkordb-${{ matrix.platform.suffix }}
           path: /tmp/falkordb-${{ matrix.platform.suffix }}.tar
@@ -382,8 +376,6 @@ jobs:
           platforms: linux/${{ matrix.platform.arch }}
           outputs: type=docker,dest=/tmp/falkordb-server-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-server-${{ matrix.platform.suffix }}
-          cache-from: type=gha,scope=server-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
-          cache-to: type=gha,ignore-error=true,mode=max,scope=server-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
@@ -391,7 +383,7 @@ jobs:
 
       - name: Upload server image
         if: matrix.platform.use_docker && steps.dockerfile.outputs.build_server == 'true'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: falkordb-server-${{ matrix.platform.suffix }}
           path: /tmp/falkordb-server-${{ matrix.platform.suffix }}.tar
@@ -404,7 +396,7 @@ jobs:
           docker run --rm --entrypoint sh localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }} -c 'cat /FalkorDB/bin/linux*/falkordb.so' > /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
 
       - name: Upload .so file
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
           path: /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
@@ -461,7 +453,7 @@ jobs:
 
       - name: Upload test logs
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.test_type }}-test-logs-${{ matrix.platform.suffix }}
           path: /tmp/logs
@@ -501,37 +493,26 @@ jobs:
         run: docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
 
       - name: Run Trivy scan
-        uses: aquasecurity/trivy-action@0.34.0
+        uses: aquasecurity/trivy-action@0.34.1
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
           output: trivy-report.json
           format: json
           exit-code: '0'
+          version: 'v0.69.2'
 
       - name: Upload Vulnerability Scan Results
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         id: upload_trivy_report
         with:
           name: trivy-report-${{ matrix.platform.suffix }}
           path: trivy-report.json
           retention-days: 30
 
-      - name: Add comment to PR
-        if: github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          header: "Trivy Vulnerability Scan Results for ${{ matrix.platform.suffix }}"
-          message: |
-            Architecture: ${{ matrix.platform.suffix }}
-            Trivy scan completed for the image built in this PR. Please review the attached report for details on any vulnerabilities found.
-            If there are any high or critical severity vulnerabilities, please address them before merging.
-            <details>
-            <a href="${{ steps.upload_trivy_report.outputs.artifact-url }}">Trivy Report (JSON)</a>
-            </details>
-
       - name: Fail build on high/critical severity vulnerabilities
-        uses: aquasecurity/trivy-action@0.34.0
+        id: trivy_gate
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.34.1
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
           format: table
@@ -539,6 +520,24 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
           skip-setup-trivy: true
+          version: 'v0.69.2'
+
+      - name: Add comment to PR
+        if: github.event_name == 'pull_request' && steps.trivy_gate.outcome == 'failure'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          header: "Trivy Vulnerability Scan Results for ${{ matrix.platform.suffix }}"
+          message: |
+            Architecture: ${{ matrix.platform.suffix }}
+            High or critical vulnerabilities were detected by Trivy. Please review and address them before merging.
+            <details>
+            <a href="${{ steps.upload_trivy_report.outputs.artifact-url }}">Trivy Report (JSON)</a>
+            </details>
+
+      - name: Enforce failure on high/critical vulnerabilities
+        if: steps.trivy_gate.outcome == 'failure'
+        run: exit 1
 
   ramp-package:
     needs: build
@@ -645,7 +644,7 @@ jobs:
           echo "file_name=${file_name}" >> $GITHUB_OUTPUT
 
       - name: Upload RAMP package
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.create_ramp.outputs.file_name }}
           path: /tmp/ramp/${{ steps.create_ramp.outputs.file_name }}
