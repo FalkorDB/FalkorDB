@@ -46,16 +46,16 @@ jobs:
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: |
-          ./bin/linux-x64-debug-asan/GraphBLAS
-          ./bin/linux-x64-debug-asan/libcypher-parser
-          ./bin/linux-x64-debug-asan/search-static
-          ./bin/linux-x64-debug-asan/libcurl
-          ./bin/linux-x64-debug-asan/libcsv
-          ./bin/linux-x64-debug-asan/LAGraph
-          ./bin/linux-x64-debug-asan/rax
-          ./bin/linux-x64-debug-asan/xxHash
-          ./bin/linux-x64-debug-asan/utf8proc
-          ./bin/linux-x64-debug-asan/oniguruma
+          ./bin/linux-x64-release/GraphBLAS
+          ./bin/linux-x64-release/libcypher-parser
+          ./bin/linux-x64-release/search-static
+          ./bin/linux-x64-release/libcurl
+          ./bin/linux-x64-release/libcsv
+          ./bin/linux-x64-release/LAGraph
+          ./bin/linux-x64-release/rax
+          ./bin/linux-x64-release/xxHash
+          ./bin/linux-x64-release/utf8proc
+          ./bin/linux-x64-release/oniguruma
           ./bin/linux-x64-debug-asan/FalkorDB-core-rs
         key: deps-sanitizer-${{ steps.cache-key.outputs.combined }}
         restore-keys: |
@@ -128,6 +128,37 @@ jobs:
       with:
         name: sanitizer-build
         path: ./bin/linux-x64-debug-asan/
+
+    - name: Restore file permissions
+      run: |
+        chmod -R +x ./bin/linux-x64-debug-asan/ || true
+        find ./bin/linux-x64-debug-asan/ -name "*.so" -exec chmod +x {} \;
+        find ./bin/linux-x64-debug-asan/ -name "*.sh" -exec chmod +x {} \;
+
+    - name: Generate cache key
+      id: cache-key
+      run: |
+        DEPS_HASH=$(cat ./deps/GraphBLAS/Include/GraphBLAS.h ./deps/GraphBLAS/Config/GB_prejit.c ./deps/libcypher-parser/lib/src/parser.c ./deps/RediSearch/src/version.h ./deps/libcurl/RELEASE-NOTES ./deps/libcsv/ChangeLog ./deps/LAGraph/include/LAGraph.h ./deps/rax/rax.h ./deps/xxHash/xxhash.h ./deps/utf8proc/utf8proc.h ./deps/oniguruma/src/oniguruma.h ./deps/FalkorDB-core-rs/Cargo.toml 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "no-hash")
+        echo "combined=${DEPS_HASH}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore dependency cache
+      uses: actions/cache@v5
+      with:
+        path: |
+          ./bin/linux-x64-release/GraphBLAS
+          ./bin/linux-x64-release/libcypher-parser
+          ./bin/linux-x64-release/search-static
+          ./bin/linux-x64-release/libcurl
+          ./bin/linux-x64-release/libcsv
+          ./bin/linux-x64-release/LAGraph
+          ./bin/linux-x64-release/rax
+          ./bin/linux-x64-release/xxHash
+          ./bin/linux-x64-release/utf8proc
+          ./bin/linux-x64-release/oniguruma
+          ./bin/linux-x64-debug-asan/FalkorDB-core-rs
+        key: deps-sanitizer-${{ steps.cache-key.outputs.combined }}
+        restore-keys: |
+          deps-sanitizer-
 
     - name: Cache LLVM 17
       id: cache-llvm
