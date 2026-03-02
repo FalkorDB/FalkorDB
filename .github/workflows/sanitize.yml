@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  sanitize-test:
+  build-sanitizer:
     runs-on: ubuntu-latest
     container: falkordb/falkordb-build:ubuntu
     steps:
@@ -94,43 +94,82 @@ jobs:
           --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17
         make CLANG=1 SAN=address NPROC=16
 
-    - name: Unit tests
-      id: unit_tests
-      run: make unit-tests CLEAR_LOGS=0 SAN=address
-      continue-on-error: true
-
-    - uses: actions/upload-artifact@v7
+    - name: Upload build output
+      uses: actions/upload-artifact@v7
       with:
-        name: Upload unit tests logs
-        path: ${{ github.workspace }}/tests/unit/logs/
-        retention-days: 7
+        name: sanitizer-build
+        path: ./bin/linux-x64-debug-asan/
+        retention-days: 1
+        compression-level: 1
 
-    - name: Flow tests
-      id: flow_tests
+  test-sanitizer:
+    needs: build-sanitizer
+    runs-on: ubuntu-latest
+    container: falkordb/falkordb-build:ubuntu
+    strategy:
+      fail-fast: false
+      matrix:
+        test_type: [unit, flow, tck]
+    steps:
+
+    - name: Safe dir
+      run: git config --global --add safe.directory '*'
+
+    - uses: actions/checkout@v6
+      with:
+        set-safe-directory: '*'
+        submodules: recursive
+
+    - name: Download build artifacts
+      uses: actions/download-artifact@v7
+      with:
+        name: sanitizer-build
+        path: ./bin/linux-x64-debug-asan/
+
+    - name: Cache LLVM 17
+      id: cache-llvm
+      uses: actions/cache@v5
+      with:
+        path: |
+          /usr/lib/llvm-17
+          /usr/bin/clang-17
+          /usr/bin/clang++-17
+          /usr/lib/x86_64-linux-gnu/libomp*17*
+        key: llvm-17-sanitizer-ubuntu
+
+    - name: Install LLVM 17
+      if: steps.cache-llvm.outputs.cache-hit != 'true'
+      run: |
+        apt-get update
+        apt-get install -y lsb-release wget software-properties-common gnupg
+        wget https://apt.llvm.org/llvm.sh
+        chmod +x llvm.sh
+        ./llvm.sh 17
+        apt-get update
+        apt-get install -y libomp-17-dev
+
+    - name: Setup test environment
+      run: |
+        apt-get update
+        apt-get install -y libc6-dbg python3-venv
+        rustup default nightly
+        python3 -m venv venv
+        . venv/bin/activate
+        pip install -r tests/requirements.txt
+        update-alternatives \
+          --verbose \
+          --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
+          --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17
+
+    - name: Run ${{ matrix.test_type }} tests
       run: |
         . venv/bin/activate
-        make flow-tests CLEAR_LOGS=0 SAN=address
-      continue-on-error: true
+        make ${{ matrix.test_type }}-tests CLEAR_LOGS=0 SAN=address
 
-    - uses: actions/upload-artifact@v7
+    - name: Upload test logs
+      if: always()
+      uses: actions/upload-artifact@v7
       with:
-        name: Upload flow tests logs
-        path: ${{ github.workspace }}/tests/flow/logs/
+        name: sanitizer-${{ matrix.test_type }}-test-logs
+        path: ./tests/${{ matrix.test_type }}/logs/
         retention-days: 7
-
-    - name: TCK tests
-      id: tck_tests
-      run: |
-        . venv/bin/activate
-        make tck-tests CLEAR_LOGS=0 SAN=address
-      continue-on-error: true
-
-    - uses: actions/upload-artifact@v7
-      with:
-        name: Upload TCK tests logs
-        path: ${{ github.workspace }}/tests/tck/logs/
-        retention-days: 7
-
-    - name: Check on failures
-      if: steps.unit_tests.outcome != 'success' || steps.flow_tests.outcome != 'success' || steps.tck_tests.outcome != 'success'
-      run: exit 1
