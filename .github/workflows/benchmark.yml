@@ -72,6 +72,9 @@ jobs:
     runs-on: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
     container: falkordb/falkordb-build:ubuntu
     steps:
+      - name: Sanitize ref name
+        run: echo "SAFE_REF=$(echo '${{ github.head_ref || github.ref_name }}' | tr '/' '-')" >> "$GITHUB_ENV"
+
       - name: Safe dir
         run: git config --global --add safe.directory '*'
 
@@ -140,7 +143,7 @@ jobs:
       - name: Upload results
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ github.head_ref || github.ref_name }}-benchmark-group_${{ matrix.benchmark_group }}-results
+          name: ${{ env.SAFE_REF }}-benchmark-group_${{ matrix.benchmark_group }}-results
           path: tests/benchmarks/*-results.json
           retention-days: 1
 
@@ -164,16 +167,19 @@ jobs:
       - run-benchmarks
     runs-on: ubuntu-latest
     steps:
+      - name: Sanitize ref name
+        run: echo "SAFE_REF=$(echo '${{ github.head_ref || github.ref_name }}' | tr '/' '-')" >> "$GITHUB_ENV"
+
       - name: Download artifacts
         uses: actions/download-artifact@v7
         with:
           # change this so it uses a pattern to download all group_* artifacts
-          pattern: ${{ github.head_ref || github.ref_name }}-benchmark-group_*-results
+          pattern: ${{ env.SAFE_REF }}-benchmark-group_*-results
           merge-multiple: true
       - name: Upload merged results
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ github.head_ref || github.ref_name }}-benchmark-results
+          name: ${{ env.SAFE_REF }}-benchmark-results
           path: ./*-results.json
 
   compare-results:
@@ -183,6 +189,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Sanitize ref name
+        run: echo "SAFE_REF=$(echo '${{ github.head_ref }}' | tr '/' '-')" >> "$GITHUB_ENV"
+
       - name: Create paths
         run: |
           mkdir -p tests/benchmarks/compare/${{ github.head_ref }}
@@ -191,7 +200,7 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v7
         with:
-          name: ${{ github.head_ref }}-benchmark-results
+          name: ${{ env.SAFE_REF }}-benchmark-results
           path: tests/benchmarks/compare/${{ github.head_ref }}
 
       - name: Download master artifact
