@@ -58,16 +58,33 @@ jobs:
         restore-keys: |
           deps-sanitizer-
 
-    - name: Build
+    - name: Cache LLVM 17
+      id: cache-llvm
+      uses: actions/cache@v5
+      with:
+        path: |
+          /usr/lib/llvm-17
+          /usr/bin/clang-17
+          /usr/bin/clang++-17
+          /usr/lib/x86_64-linux-gnu/libomp*17*
+        key: llvm-17-sanitizer-ubuntu
+
+    - name: Install LLVM 17
+      if: steps.cache-llvm.outputs.cache-hit != 'true'
       run: |
-        rustup default nightly
         apt-get update
         apt-get install -y lsb-release wget software-properties-common gnupg
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
         ./llvm.sh 17
         apt-get update
-        apt-get install -y libomp-17-dev libc6-dbg python3-venv
+        apt-get install -y libomp-17-dev
+
+    - name: Build
+      run: |
+        rustup default nightly
+        apt-get update
+        apt-get install -y libc6-dbg python3-venv
         python3 -m venv venv
         . venv/bin/activate
         pip install -r tests/requirements.txt
