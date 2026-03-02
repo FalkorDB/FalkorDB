@@ -462,6 +462,8 @@ jobs:
   security-scan:
     needs: build
     if: needs.build.result == 'success'
+    permissions:
+      pull-requests: write
     runs-on: ${{ matrix.platform.machine_label }}
     strategy:
       fail-fast: false
