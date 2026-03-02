@@ -509,21 +509,9 @@ jobs:
           path: trivy-report.json
           retention-days: 30
 
-      - name: Add comment to PR
-        if: github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          header: "Trivy Vulnerability Scan Results for ${{ matrix.platform.suffix }}"
-          message: |
-            Architecture: ${{ matrix.platform.suffix }}
-            Trivy scan completed for the image built in this PR. Please review the attached report for details on any vulnerabilities found.
-            If there are any high or critical severity vulnerabilities, please address them before merging.
-            <details>
-            <a href="${{ steps.upload_trivy_report.outputs.artifact-url }}">Trivy Report (JSON)</a>
-            </details>
-
       - name: Fail build on high/critical severity vulnerabilities
+        id: trivy_gate
+        continue-on-error: true
         uses: aquasecurity/trivy-action@0.34.1
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
@@ -533,6 +521,23 @@ jobs:
           ignore-unfixed: true
           skip-setup-trivy: true
           version: 'v0.69.2'
+
+      - name: Add comment to PR
+        if: github.event_name == 'pull_request' && steps.trivy_gate.outcome == 'failure'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          header: "Trivy Vulnerability Scan Results for ${{ matrix.platform.suffix }}"
+          message: |
+            Architecture: ${{ matrix.platform.suffix }}
+            High or critical vulnerabilities were detected by Trivy. Please review and address them before merging.
+            <details>
+            <a href="${{ steps.upload_trivy_report.outputs.artifact-url }}">Trivy Report (JSON)</a>
+            </details>
+
+      - name: Enforce failure on high/critical vulnerabilities
+        if: steps.trivy_gate.outcome == 'failure'
+        run: exit 1
 
   ramp-package:
     needs: build
