@@ -43,16 +43,16 @@ jobs:
       uses: actions/cache@v5
       with:
         path: |
-          ./bin/linux-x64-release-cov/GraphBLAS
-          ./bin/linux-x64-release-cov/libcypher-parser
-          ./bin/linux-x64-debug-cov/search-static
-          ./bin/linux-x64-debug-cov/libcurl
-          ./bin/linux-x64-debug-cov/libcsv
-          ./bin/linux-x64-debug-cov/LAGraph
-          ./bin/linux-x64-debug-cov/rax
-          ./bin/linux-x64-debug-cov/xxHash
-          ./bin/linux-x64-debug-cov/utf8proc
-          ./bin/linux-x64-debug-cov/oniguruma
+          ./bin/linux-x64-release/GraphBLAS
+          ./bin/linux-x64-release/libcypher-parser
+          ./bin/linux-x64-release/search-static
+          ./bin/linux-x64-release/libcurl
+          ./bin/linux-x64-release/libcsv
+          ./bin/linux-x64-release/LAGraph
+          ./bin/linux-x64-release/rax
+          ./bin/linux-x64-release/xxHash
+          ./bin/linux-x64-release/utf8proc
+          ./bin/linux-x64-release/oniguruma
           ./bin/linux-x64-debug-cov/FalkorDB-core-rs
         key: deps-coverage-${{ steps.cache-key.outputs.combined }}
         restore-keys: |
