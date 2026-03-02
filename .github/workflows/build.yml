@@ -507,6 +507,7 @@ jobs:
           output: trivy-report.json
           format: json
           exit-code: '0'
+          version: 'v0.69.2'
 
       - name: Upload Vulnerability Scan Results
         uses: actions/upload-artifact@v6
@@ -539,6 +540,7 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
           skip-setup-trivy: true
+          version: 'v0.69.2'
 
   ramp-package:
     needs: build
