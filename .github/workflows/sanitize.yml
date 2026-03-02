@@ -133,9 +133,14 @@ jobs:
 
     - name: Restore file permissions
       run: |
-        chmod -R +x ./bin/ || true
-        find ./bin/ -name "*.so" -exec chmod +x {} \;
-        find ./bin/ -name "*.sh" -exec chmod +x {} \;
+        find ./bin/ -type f -name "*.so" -exec chmod +x {} \; 2>/dev/null || true
+        find ./bin/ -type f -name "falkordb.so" -exec chmod +x {} \; 2>/dev/null || true
+        find ./bin/ -type f -name "unit_tests" -exec chmod +x {} \; 2>/dev/null || true
+        find ./bin/ -type f -executable -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
+        # Fix broken symlinks from artifact upload (autotools creates .so symlinks)
+        for dir in ./bin/linux-x64-release/*/; do
+          find "$dir" -xtype l -delete 2>/dev/null || true
+        done
 
     - name: Cache LLVM 17
       id: cache-llvm
