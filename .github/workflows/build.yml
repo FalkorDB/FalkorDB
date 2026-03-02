@@ -272,8 +272,6 @@ jobs:
           platforms: linux/${{ matrix.platform.arch }}
           tags: localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
           push: true
-          cache-from: type=gha,scope=compiler-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
-          cache-to: type=gha,ignore-error=true,mode=max,scope=compiler-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
             OS=${{ matrix.platform.os }}
@@ -328,8 +326,6 @@ jobs:
           outputs: type=docker,dest=/tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-tests-${{ matrix.platform.suffix }}
           platforms: linux/${{ matrix.platform.arch }}
-          cache-from: type=gha,scope=tests-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
-          cache-to: type=gha,ignore-error=true,mode=max,scope=tests-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
@@ -353,8 +349,6 @@ jobs:
           platforms: linux/${{ matrix.platform.arch }}
           outputs: type=docker,dest=/tmp/falkordb-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-${{ matrix.platform.suffix }}
-          cache-from: type=gha,scope=base-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
-          cache-to: type=gha,ignore-error=true,mode=max,scope=base-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
@@ -382,8 +376,6 @@ jobs:
           platforms: linux/${{ matrix.platform.arch }}
           outputs: type=docker,dest=/tmp/falkordb-server-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-server-${{ matrix.platform.suffix }}
-          cache-from: type=gha,scope=server-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
-          cache-to: type=gha,ignore-error=true,mode=max,scope=server-${{ matrix.platform.os }}-${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
@@ -520,12 +512,13 @@ jobs:
         run: docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
 
       - name: Run Trivy scan
-        uses: aquasecurity/trivy-action@0.34.0
+        uses: aquasecurity/trivy-action@0.34.1
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
           output: trivy-report.json
           format: json
           exit-code: '0'
+          version: 'v0.69.2'
 
       - name: Upload Vulnerability Scan Results
         uses: actions/upload-artifact@v6
@@ -550,7 +543,7 @@ jobs:
             </details>
 
       - name: Fail build on high/critical severity vulnerabilities
-        uses: aquasecurity/trivy-action@0.34.0
+        uses: aquasecurity/trivy-action@0.34.1
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
           format: table
@@ -558,6 +551,7 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
           skip-setup-trivy: true
+          version: 'v0.69.2'
 
   ramp-package:
     needs: build
