@@ -1,4 +1,4 @@
-#include "micro_benchmarks.h"
+#include "micro_benchmarks.hpp"
 
 // C++ and C have incompatible atomic declarations
 // first, include <atomic>, then block C's <stdatomic.h> from redefining them

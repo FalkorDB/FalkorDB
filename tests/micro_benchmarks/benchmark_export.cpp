@@ -1,4 +1,4 @@
-#include "micro_benchmarks.h"
+#include "micro_benchmarks.hpp"
 
 extern "C" {
 #include "tests/utils/tensor_random.h"

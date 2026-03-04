@@ -62,7 +62,7 @@ void tearDown() {
 }
 
 // nvals(A + B) == nvals(A) == nvals(B)
-void CHECK_GrB_Matrices_EQ
+bool _GrB_Matrices_EQ
 (
 	const GrB_Matrix A,
 	const GrB_Matrix B,
@@ -90,7 +90,9 @@ void CHECK_GrB_Matrices_EQ
 	info = GxB_Matrix_type(&t_B, B);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	TEST_CHECK(t_A == t_B);
+	if (t_A != t_B) {
+		return false;
+	}
 
 	//--------------------------------------------------------------------------
 	// dim(A) == dim(B)
@@ -108,8 +110,12 @@ void CHECK_GrB_Matrices_EQ
 	info = GrB_Matrix_ncols(&ncols_B, B);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	TEST_CHECK(nrows_A == nrows_B);
-	TEST_CHECK(ncols_A == ncols_B);
+	if (nrows_A != nrows_B) {
+		return false;
+	}
+	if (ncols_A != ncols_B) {
+		return false;
+	}
 
 	//--------------------------------------------------------------------------
 	// NNZ(A) == NNZ(B)
@@ -121,7 +127,9 @@ void CHECK_GrB_Matrices_EQ
 	info = GrB_Matrix_nvals(&nvals_B, B);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	TEST_CHECK(nvals_A == nvals_B) ;
+	if (nvals_A != nvals_B){
+		return false;
+	}
 
 	//--------------------------------------------------------------------------
 	// structure(A) == structure(B)
@@ -136,15 +144,18 @@ void CHECK_GrB_Matrices_EQ
 	info = GrB_Matrix_nvals(&nvals_C, C);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	TEST_CHECK(nvals_C == nvals_A);
+	if (nvals_C != nvals_A){
+		return false;
+	}
 
 	bool ok = true;
 	info = GrB_Matrix_reduce_BOOL(&ok, NULL, GrB_LAND_MONOID_BOOL, C, NULL);
-	TEST_CHECK(ok);
+	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// clean up
 	info = GrB_Matrix_free(&C);
 	TEST_ASSERT(info == GrB_SUCCESS);
+	return ok;
 }
 
 // make a matrix for testing
@@ -1080,8 +1091,8 @@ void test_RGMatrix_fuzzy() {
 	info = GrB_transpose(NT, NULL, NULL, N, NULL);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	CHECK_GrB_Matrices_EQ(M, N, GrB_ONEB_BOOL);
-	CHECK_GrB_Matrices_EQ(MT, NT, GrB_ONEB_BOOL);
+	TEST_CHECK (_GrB_Matrices_EQ(M, N, GrB_ONEB_BOOL));
+	TEST_CHECK (_GrB_Matrices_EQ(MT, NT, GrB_ONEB_BOOL));
 
 	//--------------------------------------------------------------------------
 	// clean up
@@ -1131,7 +1142,7 @@ void test_RGMatrix_export_no_changes() {
 	// validation
 	//--------------------------------------------------------------------------
 
-	CHECK_GrB_Matrices_EQ(M, N, GrB_ONEB_BOOL);
+	TEST_CHECK (_GrB_Matrices_EQ(M, N, GrB_ONEB_BOOL));
 	GrB_Matrix_free(&N);
 
 	//--------------------------------------------------------------------------
@@ -1157,7 +1168,7 @@ void test_RGMatrix_export_no_changes() {
 	info = Delta_Matrix_export(&N, A, t);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	CHECK_GrB_Matrices_EQ(M, N, GrB_ONEB_BOOL);
+	TEST_CHECK (_GrB_Matrices_EQ(M, N, GrB_ONEB_BOOL));
 
 	//--------------------------------------------------------------------------
 	// clean up
@@ -1231,7 +1242,7 @@ void test_RGMatrix_export_pending_changes() {
 	// validation
 	//--------------------------------------------------------------------------
 
-	CHECK_GrB_Matrices_EQ(M, N, GrB_ONEB_BOOL);
+	TEST_CHECK (_GrB_Matrices_EQ(M, N, GrB_ONEB_BOOL));
 
 	// clean up
 	GrB_Matrix_free(&N);
@@ -1301,9 +1312,9 @@ void test_RGMatrix_copy() {
 	A_DM = DELTA_MATRIX_DELTA_MINUS(A);
 	B_DM = DELTA_MATRIX_DELTA_MINUS(B);
 	
-	CHECK_GrB_Matrices_EQ(A_M, B_M, GrB_ONEB_BOOL);
-	CHECK_GrB_Matrices_EQ(A_DP, B_DP, GrB_ONEB_BOOL);
-	CHECK_GrB_Matrices_EQ(A_DM, B_DM, GrB_ONEB_BOOL);
+	TEST_CHECK (_GrB_Matrices_EQ(A_M, B_M, GrB_ONEB_BOOL));
+	TEST_CHECK (_GrB_Matrices_EQ(A_DP, B_DP, GrB_ONEB_BOOL));
+	TEST_CHECK (_GrB_Matrices_EQ(A_DM, B_DM, GrB_ONEB_BOOL));
 
 	//--------------------------------------------------------------------------
 	// free
@@ -1360,9 +1371,9 @@ void test_RGMatrix_copy() {
 	A_DM = DELTA_MATRIX_DELTA_MINUS(A);
 	B_DM = DELTA_MATRIX_DELTA_MINUS(B);
 	
-	CHECK_GrB_Matrices_EQ(A_M, B_M, GrB_ONEB_BOOL);
-	CHECK_GrB_Matrices_EQ(A_DP, B_DP, GrB_ONEB_BOOL);
-	CHECK_GrB_Matrices_EQ(A_DM, B_DM, GrB_ONEB_BOOL);
+	TEST_CHECK (_GrB_Matrices_EQ(A_M, B_M, GrB_ONEB_BOOL));
+	TEST_CHECK (_GrB_Matrices_EQ(A_DP, B_DP, GrB_ONEB_BOOL));
+	TEST_CHECK (_GrB_Matrices_EQ(A_DM, B_DM, GrB_ONEB_BOOL));
 
 	// clean up
 	Delta_Matrix_free(&A);
@@ -1462,7 +1473,7 @@ void test_Delta_Matrix_add() {
 
 	C_M  = DELTA_MATRIX_M(C);
 
-	CHECK_GrB_Matrices_EQ(C_M, C_GB, GrB_ONEB_BOOL);
+	TEST_CHECK (_GrB_Matrices_EQ(C_M, C_GB, GrB_ONEB_BOOL));
 
 	//--------------------------------------------------------------------------
 	// set pending additions
@@ -1498,7 +1509,7 @@ void test_Delta_Matrix_add() {
 
 	C_M  = DELTA_MATRIX_M(C);
 
-	CHECK_GrB_Matrices_EQ(C_M, C_GB, GrB_ONEB_BOOL);
+	TEST_CHECK (_GrB_Matrices_EQ(C_M, C_GB, GrB_ONEB_BOOL));
 
 	//--------------------------------------------------------------------------
 	// set pending removals
@@ -1535,7 +1546,7 @@ void test_Delta_Matrix_add() {
 
 	C_M  = DELTA_MATRIX_M(C);
 
-	CHECK_GrB_Matrices_EQ(C_M, C_GB, GrB_ONEB_BOOL);
+	TEST_CHECK (_GrB_Matrices_EQ(C_M, C_GB, GrB_ONEB_BOOL));
 
 	// clean up
 	Delta_Matrix_free(&A);
