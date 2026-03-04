@@ -123,6 +123,12 @@ GrB_Info Delta_Matrix_new
 	bool transpose           // if true, create a transpose of the matrix
 );
 
+// allocate and update the transpose of a matrix whose transpose is NULL
+GrB_Info Delta_Matrix_cacheTranspose
+(
+	Delta_Matrix A // matrix to give transpose
+);
+
 // returns transposed matrix of C
 Delta_Matrix Delta_Matrix_getTranspose
 (
@@ -186,6 +192,12 @@ GrB_Info Delta_Matrix_nvals  // get the number of entries in a matrix
 (
 	GrB_Index *nvals,        // matrix has nvals entries
 	const Delta_Matrix A     // matrix to query
+);
+
+GrB_Info Delta_Matrix_type
+(
+	GrB_Type *type,
+	Delta_Matrix A
 );
 
 GrB_Info Delta_Matrix_resize  // change the size of a matrix

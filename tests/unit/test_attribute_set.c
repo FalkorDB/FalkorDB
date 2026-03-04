@@ -5,11 +5,13 @@
  */
 
 #include "src/util/rmalloc.h"
+#include "tests/utils/mock_log.h"
 #include "src/datatypes/datatypes.h"
 #include "src/graph/entities/attribute_set.h"
 
 void setup() {
 	Alloc_Reset();
+	Logging_Reset();
 }
 
 #define TEST_INIT setup();

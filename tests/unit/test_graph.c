@@ -7,6 +7,7 @@
 #include "src/util/arr.h"
 #include "src/graph/graph.h"
 #include "src/util/rmalloc.h"
+#include "tests/utils/mock_log.h"
 #include "src/util/simple_timer.h"
 #include "src/configuration/config.h"
 #include "src/util/datablock/datablock_iterator.h"
@@ -207,6 +208,7 @@ void benchmark_graph() {
 void setup() {
 	// Use the malloc family for allocations
 	Alloc_Reset();
+	Logging_Reset();
 
 	// Initialize GraphBLAS.
 	GrB_init(GrB_NONBLOCKING);

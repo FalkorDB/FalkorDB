@@ -62,8 +62,10 @@ RUN_FUZZ_TESTS=0     # Run fuzz tests
 FUZZ_TIMEOUT=30      # Fuzz test timeout in seconds
 
 # Benchmark options
-BENCHMARK=0          # Run benchmarks
-BENCHMARK_GROUP=""   # Benchmark group to run (group_a, group_b, or empty for all)
+BENCHMARK=0                     # Run benchmarks
+BUILD_BENCHMARKS=0              # Build benchmarks
+RUN_MICRO_BENCHMARKS=0          # Run micro benchmarks
+BENCHMARK_GROUP=""              # Benchmark group to run (group_a, group_b, or empty for all)
 
 # Run options
 RUN=0                # Run redis-server with the module
@@ -163,8 +165,10 @@ TEST OPTIONS:
     TIMEOUT=secs        Fuzz test timeout in seconds (default: 30)
 
 BENCHMARK OPTIONS:
-    BENCHMARK=1         Run benchmarks
-    BENCHMARK_GROUP=x   Run specific benchmark group (group_a, group_b)
+    BENCHMARK=1            Run benchmarks
+    BENCHMARK_GROUP=x      Run specific benchmark group (group_a, group_b)
+    BUILD_BENCHMARKS=1     Build C++ micro benchmarks
+    RUN_MICRO_BENCHMARKS=1 Run C++ micro benchmarks
 
 RUN OPTIONS:
     RUN=1               Run redis-server with the FalkorDB module loaded
@@ -329,6 +333,13 @@ parse_arguments() {
             # Benchmark options
             BENCHMARK=1)
                 BENCHMARK=1
+                ;;
+            BUILD_BENCHMARKS=1)
+                BUILD_BENCHMARKS=1
+                ;;
+            RUN_MICRO_BENCHMARKS=1)
+                RUN_MICRO_BENCHMARKS=1
+                BUILD_BENCHMARKS=1
                 ;;
             BENCHMARK_GROUP=*)
                 BENCHMARK_GROUP="${arg#*=}"
@@ -1266,6 +1277,11 @@ prepare_cmake_arguments() {
         CMAKE_ARGS+=(-DUNIT_TESTS:BOOL=on)
     fi
 
+    # Micro benchmarks
+    if [[ "$BUILD_BENCHMARKS" == "1" ]]; then
+        CMAKE_ARGS+=(-DBUILD_BENCHMARKS:BOOL=on)
+    fi
+
     # Coverage
     if [[ "$COV" == "1" ]]; then
         CMAKE_ARGS+=(-DCOV=ON)
@@ -1779,6 +1795,64 @@ run_benchmark() {
 }
 
 #-----------------------------------------------------------------------------
+# Function: run_micro_benchmarks
+# Run C++ micro benchmarks
+#-----------------------------------------------------------------------------
+run_micro_benchmarks() {
+    if [[ "$RUN_MICRO_BENCHMARKS" != "1" ]]; then
+        return 0
+    fi
+
+    start_group "Running Micro Benchmarks"
+
+    log_info "Running micro benchmarks..."
+
+    # Path to micro benchmarks directory
+    local benchs_dir="$BINROOT/tests/micro_benchmarks"
+    
+    # Verify benchmarks were built
+    if [[ ! -d "$benchs_dir" ]]; then
+        log_error "Micro benchmarks directory not found: $benchs_dir"
+        log_error "Build with BUILD_BENCHMARKS=1 first"
+        end_group
+        return 1
+    fi
+
+    # Find benchmark executables
+    local benchmark_found=0
+    for bench in "$benchs_dir"/benchmark_*; do
+        if [[ -x "$bench" ]]; then
+            benchmark_found=1
+            break
+        fi
+    done
+
+    if [[ $benchmark_found -eq 0 ]]; then
+        log_error "No benchmark executables found in $benchs_dir"
+        log_error "Build with BUILD_BENCHMARKS=1 first"
+        end_group
+        return 1
+    fi
+
+    # Run using the benchmarks.sh script with JSON output enabled by default
+    export BINROOT
+    export JSON=1  # Always output JSON for analysis
+    
+    cd "${ROOT}/tests/micro_benchmarks"
+    
+    if ! ./benchmarks.sh; then
+        log_error "Micro benchmarks failed"
+        cd "$ROOT"
+        end_group
+        return 1
+    fi
+
+    cd "$ROOT"
+    log_success "Micro benchmarks completed successfully"
+    end_group
+}
+
+#-----------------------------------------------------------------------------
 # Function: run_redis
 # Run redis-server with the FalkorDB module loaded
 #-----------------------------------------------------------------------------
@@ -2002,6 +2076,11 @@ main() {
     # Run benchmarks if requested
     if [[ "$BENCHMARK" == "1" ]]; then
         run_benchmark || test_result=1
+    fi
+
+    # Run micro benchmarks if requested
+    if [[ "$RUN_MICRO_BENCHMARKS" == "1" ]]; then
+        run_micro_benchmarks || test_result=1
     fi
 
     # Run redis-server if requested (this will exec and not return)

@@ -5,6 +5,7 @@
  */
 
 #include "src/util/rmalloc.h"
+#include "tests/utils/mock_log.h"
 #include "src/configuration/config.h"
 #include "src/algorithms/algorithms.h"
 
@@ -79,6 +80,7 @@ bool pathArrayContainsPath(NodeID **array, int arrayLen, Path *path) {
 void setup() {
 	// Use the malloc family for allocations
 	Alloc_Reset();
+	Logging_Reset();
 
 	// Initialize GraphBLAS.
 	GrB_init(GrB_NONBLOCKING);
