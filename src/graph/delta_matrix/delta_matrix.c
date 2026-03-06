@@ -7,16 +7,6 @@
 #include "delta_utils.h"
 #include "../../util/rmalloc.h"
 
-
-void Delta_Matrix_setDirty
-(
-	Delta_Matrix C
-) {
-	ASSERT(C);
-	C->dirty = true;
-	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) C->transposed->dirty = true;
-}
-
 Delta_Matrix Delta_Matrix_getTranspose
 (
 	const Delta_Matrix C
@@ -29,24 +19,49 @@ bool Delta_Matrix_isDirty
 (
 	const Delta_Matrix C
 ) {
-	ASSERT(C);
+	ASSERT (C != NULL) ;
 
-	if(C->dirty) {
-		return true;
+	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE (C)) {
+		if (Delta_Matrix_isDirty (C->transposed)) {
+			return true ;
+		}
 	}
 
-	int pending_M;
-	int pending_DP;
-	int pending_DM;
+	int32_t pending_M  = 0 ;
+	int32_t pending_DP = 0 ;
+	int32_t pending_DM = 0 ;
 
-	GrB_OK(GrB_Matrix_get_INT32(DELTA_MATRIX_M(C), &pending_M, 
-		GxB_WILL_WAIT));
-	GrB_OK(GrB_Matrix_get_INT32(DELTA_MATRIX_DELTA_PLUS(C), &pending_DP, 
-		GxB_WILL_WAIT));
-	GrB_OK(GrB_Matrix_get_INT32(DELTA_MATRIX_DELTA_MINUS(C), &pending_DM, 
-		GxB_WILL_WAIT));
+	GrB_Info info ;
+
+	GrB_Matrix M  = DELTA_MATRIX_M           (C) ;
+	GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS  (C) ;
+	GrB_Matrix DM = DELTA_MATRIX_DELTA_MINUS (C) ;
+
+	info = GrB_Matrix_get_INT32 (M,  &pending_M,  GxB_WILL_WAIT) ;
+	if (info != GrB_SUCCESS) {
+		const char *error = NULL ;
+		GrB_error (&error, M) ;
+		printf ("M, info: %d, error: %s\n", info, error) ;
+		assert (GrB_Matrix_get_INT32 (M,  &pending_M,  GxB_WILL_WAIT) == GrB_SUCCESS) ;
+	}
+
+	info = GrB_Matrix_get_INT32 (DP, &pending_DP, GxB_WILL_WAIT) ;
+	if (info != GrB_SUCCESS) {
+		const char *error = NULL ;
+		GrB_error (&error, DP) ;
+		printf ("DO, info: %d, error: %s\n", info, error) ;
+		assert (GrB_Matrix_get_INT32 (DP,  &pending_DP,  GxB_WILL_WAIT) == GrB_SUCCESS) ;
+	}
+
+	info = GrB_Matrix_get_INT32 (DM, &pending_DM, GxB_WILL_WAIT) ;
+	if (info != GrB_SUCCESS) {
+		const char *error = NULL ;
+		GrB_error (&error, DM) ;
+		printf ("DM, info: %d, error: %s\n", info, error) ;
+		assert (GrB_Matrix_get_INT32 (DM,  &pending_DM,  GxB_WILL_WAIT) == GrB_SUCCESS) ;
+	}
 	
-	return (pending_M || pending_DM || pending_DP);
+	return (pending_M != 0 || pending_DM != 0 || pending_DP != 0) ;
 }
 
 // checks if C is fully synced
@@ -56,19 +71,13 @@ bool Delta_Matrix_Synced
 (
 	const Delta_Matrix C  // matrix to inquery
 ) {
-	ASSERT(C);
+	ASSERT (C) ;
 
-	// quick indication, if the matrix is marked as dirty that means
-	// entires exists in either DP or DM
-	if(C->dirty) {
-		return false;
-	}
+	GrB_Index dp_nvals ;
+	GrB_Index dm_nvals ;
 
-	GrB_Index dp_nvals;
-	GrB_Index dm_nvals;
-
-	GrB_OK(GrB_Matrix_nvals(&dp_nvals, DELTA_MATRIX_DELTA_PLUS(C)));
-	GrB_OK(GrB_Matrix_nvals(&dm_nvals, DELTA_MATRIX_DELTA_MINUS(C)));
+	GrB_OK (GrB_Matrix_nvals (&dp_nvals, DELTA_MATRIX_DELTA_PLUS  (C))) ;
+	GrB_OK (GrB_Matrix_nvals (&dm_nvals, DELTA_MATRIX_DELTA_MINUS (C))) ;
 
 	return ((dp_nvals + dm_nvals) == 0);
 }
@@ -78,8 +87,11 @@ void Delta_Matrix_lock
 (
 	Delta_Matrix C
 ) {
-	ASSERT(C);
-	pthread_mutex_lock(&C->mutex);
+	ASSERT (C) ;
+	ASSERT (C->locked == false) ;
+
+	pthread_mutex_lock (&C->mutex) ;
+	C->locked = true ;
 }
 
 // unlocks the matrix
@@ -87,8 +99,11 @@ void Delta_Matrix_unlock
 (
 	Delta_Matrix C
 ) {
-	ASSERT(C);
-	pthread_mutex_unlock(&C->mutex);
+	ASSERT (C) ;
+	ASSERT (C->locked == true) ;
+
+	C->locked = false ;
+	pthread_mutex_unlock (&C->mutex) ;
 }
 
 // get the number of rows of a matrix
@@ -152,19 +167,18 @@ GrB_Info Delta_Matrix_clear
 (
     Delta_Matrix A
 ) {
-	ASSERT(A !=  NULL);
+	ASSERT (A !=  NULL) ;
 
-	GrB_Matrix m    = DELTA_MATRIX_M(A);
-	GrB_Matrix dp   = DELTA_MATRIX_DELTA_PLUS(A);
-	GrB_Matrix dm   = DELTA_MATRIX_DELTA_MINUS(A);
+	GrB_Matrix m  = DELTA_MATRIX_M           (A) ;
+	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS  (A) ;
+	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS (A) ;
 
-	GrB_OK(GrB_Matrix_clear(m));
-	GrB_OK(GrB_Matrix_clear(dp));
-	GrB_OK(GrB_Matrix_clear(dm));
+	GrB_OK (GrB_Matrix_clear (m)) ;
+	GrB_OK (GrB_Matrix_clear (dp)) ;
+	GrB_OK (GrB_Matrix_clear (dm)) ;
 
-	A->dirty = false;
-	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(A)) {
-		GrB_OK(Delta_Matrix_clear(A->transposed));
+	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE (A)) {
+		GrB_OK (Delta_Matrix_clear (A->transposed)) ;
 	}
 
 	return GrB_SUCCESS;

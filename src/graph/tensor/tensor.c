@@ -766,8 +766,6 @@ void Tensor_ClearElements
 	GrB_OK (GrB_Matrix_assign_Scalar (DP, A, NULL, s, GrB_ALL, 0, GrB_ALL, 0,
 				GrB_DESC_S)) ;
 
-	Delta_Matrix_setDirty (T) ;
-
 	// clean up
 	GrB_OK (GrB_free (&s)) ;
 	GrB_OK (GrB_free (&C)) ;

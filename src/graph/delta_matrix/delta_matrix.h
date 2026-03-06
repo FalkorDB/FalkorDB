@@ -106,7 +106,7 @@ typedef _Delta_Matrix *Delta_Matrix;
 //------------------------------------------------------------------------------
 
 struct _Delta_Matrix {
-	volatile bool dirty;      // Indicates if matrix requires sync
+	bool locked;
 	GrB_Matrix matrix;        // Underlying GrB_Matrix
 	GrB_Matrix delta_plus;    // Pending additions
 	GrB_Matrix delta_minus;   // Pending deletions
@@ -305,11 +305,15 @@ GrB_Info Delta_Matrix_wait
 	bool force_sync
 );
 
+// synchronizes the DeltaMatrix `C`
+// in case `C` isn't of the expected dimensions it will be resized
+// in case GraphBLAS indicates one of `C`'s internal matrices: `M`, `DP` or `DM`
+// requires waiting then these matrices will be synchronized
 GrB_Info Delta_Matrix_synchronize
 (
-	Delta_Matrix C,
-	GrB_Index nrows,
-	GrB_Index ncols
+	Delta_Matrix C,   // the DeltaMatrix to synchronize
+	GrB_Index nrows,  // the required number of rows
+	GrB_Index ncols   // the required number of columns
 );
 
 bool Delta_Matrix_Synced
@@ -323,11 +327,6 @@ void Delta_Matrix_lock
 );
 
 void Delta_Matrix_unlock
-(
-	Delta_Matrix C
-);
-
-void Delta_Matrix_setDirty
 (
 	Delta_Matrix C
 );

@@ -10,19 +10,6 @@
 #include "../../util/rmalloc.h"
 #include "configuration/config.h"
 
-static inline void _SetUndirty
-(
-	Delta_Matrix C
-) {
-	ASSERT(C);
-
-	C->dirty = false;
-
-	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
-		C->transposed->dirty = false;
-	}
-}
-
 static GrB_Info Delta_Matrix_sync_deletions
 (
 	Delta_Matrix C
@@ -77,9 +64,9 @@ static GrB_Info Delta_Matrix_sync
 ) {
 	ASSERT (C != NULL) ;
 
-	GrB_Matrix m  = DELTA_MATRIX_M (C) ;
-	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS (C) ;
-	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS (C) ;
+	GrB_Matrix M  = DELTA_MATRIX_M (C) ;
+	GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS (C) ;
+	GrB_Matrix DM = DELTA_MATRIX_DELTA_MINUS (C) ;
 
 	if (force_sync) {
 		GrB_RETURN_IF_FAIL (Delta_Matrix_sync_deletions (C)) ;
@@ -92,8 +79,8 @@ static GrB_Info Delta_Matrix_sync
 		// determine change set
 		//----------------------------------------------------------------------
 
-		GrB_RETURN_IF_FAIL (GrB_Matrix_nvals (&dp_nvals, dp)) ;
-		GrB_RETURN_IF_FAIL (GrB_Matrix_nvals (&dm_nvals, dm)) ;
+		GrB_RETURN_IF_FAIL (GrB_Matrix_nvals (&dp_nvals, DP)) ;
+		GrB_RETURN_IF_FAIL (GrB_Matrix_nvals (&dm_nvals, DM)) ;
 
 		//----------------------------------------------------------------------
 		// perform deletions
@@ -113,9 +100,9 @@ static GrB_Info Delta_Matrix_sync
 	}
 
 	// wait on all 3 matrices
-	GrB_RETURN_IF_FAIL (GrB_wait (m,  GrB_MATERIALIZE)) ;
-	GrB_RETURN_IF_FAIL (GrB_wait (dm, GrB_MATERIALIZE)) ;
-	GrB_RETURN_IF_FAIL (GrB_wait (dp, GrB_MATERIALIZE)) ;
+	GrB_RETURN_IF_FAIL (GrB_wait (M,  GrB_MATERIALIZE)) ;
+	GrB_RETURN_IF_FAIL (GrB_wait (DM, GrB_MATERIALIZE)) ;
+	GrB_RETURN_IF_FAIL (GrB_wait (DP, GrB_MATERIALIZE)) ;
 
 	return GrB_SUCCESS ;
 }
@@ -138,59 +125,69 @@ GrB_Info Delta_Matrix_wait
 	GrB_RETURN_IF_FAIL (Delta_Matrix_sync (A, force_sync,
 				delta_max_pending_changes)) ;
 
-	_SetUndirty (A) ;
-
 	return GrB_SUCCESS ;
 }
 
+// synchronizes the DeltaMatrix `C`
+// in case `C` isn't of the expected dimensions it will be resized
+// in case GraphBLAS indicates one of `C`'s internal matrices: `M`, `DP` or `DM`
+// requires waiting then these matrices will be synchronized
 GrB_Info Delta_Matrix_synchronize
 (
-	Delta_Matrix A,
-	GrB_Index nrows,
-	GrB_Index ncols
+	Delta_Matrix C,   // the DeltaMatrix to synchronize
+	GrB_Index nrows,  // the required number of rows
+	GrB_Index ncols   // the required number of columns
 )
 {
-	ASSERT (A != NULL) ;
-	uint64_t A_nrows = 0 ;
-	uint64_t A_ncols = 0 ;
+	ASSERT (C != NULL) ;
+	uint64_t C_nrows = 0 ;
+	uint64_t C_ncols = 0 ;
 
-	GrB_RETURN_IF_FAIL (Delta_Matrix_nrows (&A_nrows, A)) ;
-	GrB_RETURN_IF_FAIL (Delta_Matrix_ncols (&A_ncols, A)) ;
-	
-	bool already_sync = (A_nrows >= nrows && A_ncols >= ncols && !A->dirty) ;
+	// get C's number of rows and columns
+	GrB_RETURN_IF_FAIL (Delta_Matrix_nrows (&C_nrows, C)) ;
+	GrB_RETURN_IF_FAIL (Delta_Matrix_ncols (&C_ncols, C)) ;
+
+	bool already_sync = (C_nrows >= nrows &&
+						 C_ncols >= ncols &&
+						 !Delta_Matrix_isDirty (C) ) ;
+
 	if (already_sync == true) {
 		return GrB_SUCCESS ;
 	}
 
-	Delta_Matrix_lock (A) ;
+	Delta_Matrix_lock (C) ;
 
 	GrB_Info info ;
 
+	//--------------------------------------------------------------------------
 	// refetch under lock
+	//--------------------------------------------------------------------------
 
-	info = Delta_Matrix_nrows (&A_nrows, A) ;
+	info = Delta_Matrix_nrows (&C_nrows, C) ;
 	if (info != GrB_SUCCESS) {
 		goto unlock ;
 	}
 
-	info = Delta_Matrix_ncols (&A_ncols, A) ;
+	info = Delta_Matrix_ncols (&C_ncols, C) ;
 	if (info != GrB_SUCCESS) {
 		goto unlock ;
 	}
 
-	if (A_nrows < nrows || A_ncols < ncols) {
-		info = Delta_Matrix_resize (A, nrows, ncols) ;
+	if (C_nrows < nrows || C_ncols < ncols) {
+		info = Delta_Matrix_resize (C, nrows, ncols) ;
 		if (info != GrB_SUCCESS) {
 			goto unlock ;
 		}
 	}
 
-	if (A->dirty) {
-		info = Delta_Matrix_wait (A, false) ;
+	if (Delta_Matrix_isDirty (C)) {
+		info = Delta_Matrix_wait (C, false) ;
+		ASSERT ((info == GrB_SUCCESS && Delta_Matrix_isDirty (C) == false) ||
+				 info != GrB_SUCCESS) ;
 	}
 
 unlock:
-	Delta_Matrix_unlock (A) ;
+	Delta_Matrix_unlock (C) ;
 
 	return info ;
 }

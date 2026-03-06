@@ -14,8 +14,6 @@ static GrB_Info _Delta_Matrix_init
 	GrB_Index nrows,
 	GrB_Index ncols
 ) {
-	A->dirty = false;
-
 	//--------------------------------------------------------------------------
 	// create m, delta-plus and delta-minus
 	//--------------------------------------------------------------------------
@@ -52,7 +50,7 @@ GrB_Info Delta_Matrix_new
 	GrB_Index ncols,
 	bool transpose
 ) {
-	Delta_Matrix matrix = rm_calloc(1, sizeof(_Delta_Matrix));
+	Delta_Matrix matrix = rm_calloc (1, sizeof (_Delta_Matrix)) ;
 	//--------------------------------------------------------------------------
 	// input validations
 	//--------------------------------------------------------------------------
@@ -66,15 +64,15 @@ GrB_Info Delta_Matrix_new
 	// create transpose matrix if required
 	//--------------------------------------------------------------------------
 
-	if(transpose) {
-		matrix->transposed = rm_calloc(1, sizeof(_Delta_Matrix));
-		GrB_OK(_Delta_Matrix_init(matrix->transposed, GrB_BOOL, ncols, nrows));
+	if (transpose) {
+		matrix->transposed = rm_calloc (1, sizeof (_Delta_Matrix)) ;
+		GrB_OK (_Delta_Matrix_init (matrix->transposed, GrB_BOOL, ncols, nrows)) ;
 	}
 
-	int mutex_res = pthread_mutex_init(&matrix->mutex, NULL);
-	ASSERT(mutex_res == 0);
+	int mutex_res = pthread_mutex_init (&matrix->mutex, NULL) ;
+	ASSERT (mutex_res == 0) ;
 
-	*A = matrix;
-	return GrB_SUCCESS;
+	*A = matrix ;
+	return GrB_SUCCESS ;
 }
 
