@@ -105,7 +105,9 @@ static GrB_Info Delta_Matrix_sync
 	GrB_RETURN_IF_FAIL (GrB_wait (DP, GrB_MATERIALIZE)) ;
 
 	// C shouldn't have any pending operations
-	ASSERT (!Delta_Matrix_willWait (C)) ;
+	bool will_wait = true ;
+	GrB_OK (Delta_Matrix_willWait (C, &will_wait)) ;
+	ASSERT (will_wait == false) ;
 
 	return GrB_SUCCESS ;
 }
@@ -164,7 +166,12 @@ GrB_Info Delta_Matrix_synchronize
 		goto unlock ;
 	}
 
-	bool will_wait    = Delta_Matrix_willWait (C) ;
+	bool will_wait = true ;
+	info = Delta_Matrix_willWait (C, &will_wait) ;
+	if (info != GrB_SUCCESS) {
+		goto unlock ;
+	}
+
 	bool already_sync = (C_nrows >= nrows &&
 						 C_ncols >= ncols &&
 						 !will_wait) ;
@@ -179,11 +186,20 @@ GrB_Info Delta_Matrix_synchronize
 			// failed to resize
 			goto unlock ;
 		}
+
+		// recheck pending work
+		will_wait = true ;
+		info = Delta_Matrix_willWait (C, &will_wait) ;
+		if (info != GrB_SUCCESS) {
+			goto unlock ;
+		}
 	}
 
 	if (will_wait) {
 		info = Delta_Matrix_wait (C, false) ;
-		ASSERT ((info == GrB_SUCCESS && Delta_Matrix_willWait (C) == false) ||
+		GrB_OK (Delta_Matrix_willWait (C, &will_wait)) ;
+
+		ASSERT ((info == GrB_SUCCESS && will_wait == false) ||
 				 info != GrB_SUCCESS) ;
 	}
 

@@ -129,9 +129,12 @@ Delta_Matrix Delta_Matrix_getTranspose
 	const Delta_Matrix C
 );
 
-bool Delta_Matrix_willWait
+// checks if C or its transpose (if exists) will trigger a GrB_wait
+// as a result of some pending work that GraphBLAS need to perform
+GrB_Info Delta_Matrix_willWait
 (
-	const Delta_Matrix C
+	const Delta_Matrix C,  // matrix to query
+	bool *willWait         // [output] true if the matrix requires GrB_wait
 );
 
 // get the internal matrix M
@@ -281,15 +284,6 @@ GrB_Info Delta_Matrix_export
     GrB_Matrix *A,         // output Matrix 
     const Delta_Matrix C,  // input Delta Matrix
     const GrB_Type type    // output matrix type (values will be typecast)
-);
-
-// checks to see if matrix has pending operations
-// pending is set to true if any of the internal matricies have pending
-// operations
-GrB_Info Delta_Matrix_pending
-(
-	const Delta_Matrix C,  // matrix to query
-	bool *pending          // are there any pending operations
 );
 
 // return # of bytes used for a matrix

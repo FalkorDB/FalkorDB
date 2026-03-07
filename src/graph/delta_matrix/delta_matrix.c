@@ -15,33 +15,6 @@ Delta_Matrix Delta_Matrix_getTranspose
 	return C->transposed;
 }
 
-bool Delta_Matrix_willWait
-(
-	const Delta_Matrix C
-) {
-	ASSERT (C != NULL) ;
-
-	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE (C)) {
-		if (Delta_Matrix_willWait (C->transposed)) {
-			return true ;
-		}
-	}
-
-	int32_t M_wait  = 0 ;  // will M  require GrB_wait
-	int32_t DP_wait = 0 ;  // will DP require GrB_wait
-	int32_t DM_wait = 0 ;  // will DM require GrB_wait
-
-	GrB_Matrix M  = DELTA_MATRIX_M           (C) ;
-	GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS  (C) ;
-	GrB_Matrix DM = DELTA_MATRIX_DELTA_MINUS (C) ;
-
-	assert (GrB_Matrix_get_INT32 (M,  &M_wait,  GxB_WILL_WAIT) == GrB_SUCCESS) ;
-	assert (GrB_Matrix_get_INT32 (DP, &DP_wait, GxB_WILL_WAIT) == GrB_SUCCESS) ;
-	assert (GrB_Matrix_get_INT32 (DM, &DM_wait, GxB_WILL_WAIT) == GrB_SUCCESS) ;
-	
-	return (M_wait | DM_wait | DP_wait) ;
-}
-
 // checks if C is fully synced
 // a synced delta matrix does not contains any entries in
 // either its delta-plus and delta-minus internal matrices

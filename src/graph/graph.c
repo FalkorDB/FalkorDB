@@ -372,7 +372,7 @@ bool Graph_Pending
 	//--------------------------------------------------------------------------
 
 	M = g->adjacency_matrix;
-	info = Delta_Matrix_pending(M, &pending);
+	info = Delta_Matrix_willWait(M, &pending);
 	ASSERT(info == GrB_SUCCESS);
 	if(pending) {
 		return true;
@@ -383,7 +383,7 @@ bool Graph_Pending
 	//--------------------------------------------------------------------------
 
 	M = g->node_labels;
-	info = Delta_Matrix_pending(M, &pending);
+	info = Delta_Matrix_willWait (M, &pending) ;
 	ASSERT(info == GrB_SUCCESS);
 	if(pending) {
 		return true;
@@ -396,7 +396,7 @@ bool Graph_Pending
 	n = array_len(g->labels);
 	for(int i = 0; i < n; i ++) {
 		M = g->labels[i];
-		info = Delta_Matrix_pending(M, &pending);
+		info = Delta_Matrix_willWait (M, &pending) ;
 		ASSERT(info == GrB_SUCCESS);
 		if(pending) {
 			return true;
@@ -410,7 +410,7 @@ bool Graph_Pending
 	n = array_len(g->relations);
 	for(int i = 0; i < n; i ++) {
 		M = g->relations[i];
-		info = Delta_Matrix_pending(M, &pending);
+		info = Delta_Matrix_willWait (M, &pending) ;
 		ASSERT(info == GrB_SUCCESS);
 		if(pending) {
 			return true;
@@ -1721,7 +1721,9 @@ static inline bool is_matrix_synced
 	// assuming GrB_OK handles error states internally
 	GrB_OK (Delta_Matrix_nrows (&_nrows, A)) ;
 	GrB_OK (Delta_Matrix_ncols (&_ncols, A)) ;
-	bool willWait = Delta_Matrix_willWait (A) ;
+
+	bool willWait ;
+	GrB_OK (Delta_Matrix_willWait (A, &willWait)) ;
 
 	return !willWait && (nrows == _nrows && ncols == _ncols) ;
 }
