@@ -70,7 +70,6 @@ GrB_Info Delta_Matrix_setElement_UINT64
 		ASSERT (info == GrB_SUCCESS) ;
 	}
 
-	Delta_Matrix_setDirty (C) ;
 	return info ;
 }
 
