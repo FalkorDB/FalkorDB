@@ -1708,7 +1708,7 @@ static void _Graph_Free
 
 // check if a delta matrix is synced
 // 1. of the expected dimensions
-// 2. doesn't contains any pendding changes
+// 2. doesn't contains any pending changes
 static inline bool is_matrix_synced
 (
 	Delta_Matrix A,   // matrix

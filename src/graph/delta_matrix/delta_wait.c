@@ -142,8 +142,7 @@ GrB_Info Delta_Matrix_synchronize
 	Delta_Matrix C,   // the DeltaMatrix to synchronize
 	GrB_Index nrows,  // the required number of rows
 	GrB_Index ncols   // the required number of columns
-)
-{
+) {
 	ASSERT (C != NULL) ;
 
 	GrB_Info info = GrB_SUCCESS ;
@@ -180,6 +179,10 @@ GrB_Info Delta_Matrix_synchronize
 		goto unlock ;
 	}
 
+	//--------------------------------------------------------------------------
+	// resize
+	//--------------------------------------------------------------------------
+
 	if (C_nrows < nrows || C_ncols < ncols) {
 		info = Delta_Matrix_resize (C, nrows, ncols) ;
 		if (info != GrB_SUCCESS) {
@@ -194,6 +197,10 @@ GrB_Info Delta_Matrix_synchronize
 			goto unlock ;
 		}
 	}
+
+	//--------------------------------------------------------------------------
+	// flush pending changes
+	//--------------------------------------------------------------------------
 
 	if (will_wait) {
 		info = Delta_Matrix_wait (C, false) ;
