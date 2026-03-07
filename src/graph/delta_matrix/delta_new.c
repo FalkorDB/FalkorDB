@@ -51,14 +51,15 @@ GrB_Info Delta_Matrix_new
 	bool transpose
 ) {
 	Delta_Matrix matrix = rm_calloc (1, sizeof (_Delta_Matrix)) ;
+
 	//--------------------------------------------------------------------------
 	// input validations
 	//--------------------------------------------------------------------------
 
 	// supported types: boolean and uint64
-	ASSERT(type == GrB_BOOL || type == GrB_UINT64);
+	ASSERT (type == GrB_BOOL || type == GrB_UINT64) ;
 
-	GrB_OK(_Delta_Matrix_init(matrix, type, nrows, ncols));
+	GrB_OK (_Delta_Matrix_init (matrix, type, nrows, ncols)) ;
 
 	//--------------------------------------------------------------------------
 	// create transpose matrix if required

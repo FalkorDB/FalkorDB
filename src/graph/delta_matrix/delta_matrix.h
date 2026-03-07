@@ -129,7 +129,7 @@ Delta_Matrix Delta_Matrix_getTranspose
 	const Delta_Matrix C
 );
 
-bool Delta_Matrix_isDirty
+bool Delta_Matrix_willWait
 (
 	const Delta_Matrix C
 );

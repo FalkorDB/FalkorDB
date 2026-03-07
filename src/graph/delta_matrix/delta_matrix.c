@@ -15,53 +15,31 @@ Delta_Matrix Delta_Matrix_getTranspose
 	return C->transposed;
 }
 
-bool Delta_Matrix_isDirty
+bool Delta_Matrix_willWait
 (
 	const Delta_Matrix C
 ) {
 	ASSERT (C != NULL) ;
 
 	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE (C)) {
-		if (Delta_Matrix_isDirty (C->transposed)) {
+		if (Delta_Matrix_willWait (C->transposed)) {
 			return true ;
 		}
 	}
 
-	int32_t pending_M  = 0 ;
-	int32_t pending_DP = 0 ;
-	int32_t pending_DM = 0 ;
-
-	GrB_Info info ;
+	int32_t M_wait  = 0 ;  // will M  require GrB_wait
+	int32_t DP_wait = 0 ;  // will DP require GrB_wait
+	int32_t DM_wait = 0 ;  // will DM require GrB_wait
 
 	GrB_Matrix M  = DELTA_MATRIX_M           (C) ;
 	GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS  (C) ;
 	GrB_Matrix DM = DELTA_MATRIX_DELTA_MINUS (C) ;
 
-	info = GrB_Matrix_get_INT32 (M,  &pending_M,  GxB_WILL_WAIT) ;
-	if (info != GrB_SUCCESS) {
-		const char *error = NULL ;
-		GrB_error (&error, M) ;
-		printf ("M, info: %d, error: %s\n", info, error) ;
-		assert (GrB_Matrix_get_INT32 (M,  &pending_M,  GxB_WILL_WAIT) == GrB_SUCCESS) ;
-	}
-
-	info = GrB_Matrix_get_INT32 (DP, &pending_DP, GxB_WILL_WAIT) ;
-	if (info != GrB_SUCCESS) {
-		const char *error = NULL ;
-		GrB_error (&error, DP) ;
-		printf ("DO, info: %d, error: %s\n", info, error) ;
-		assert (GrB_Matrix_get_INT32 (DP,  &pending_DP,  GxB_WILL_WAIT) == GrB_SUCCESS) ;
-	}
-
-	info = GrB_Matrix_get_INT32 (DM, &pending_DM, GxB_WILL_WAIT) ;
-	if (info != GrB_SUCCESS) {
-		const char *error = NULL ;
-		GrB_error (&error, DM) ;
-		printf ("DM, info: %d, error: %s\n", info, error) ;
-		assert (GrB_Matrix_get_INT32 (DM,  &pending_DM,  GxB_WILL_WAIT) == GrB_SUCCESS) ;
-	}
+	assert (GrB_Matrix_get_INT32 (M,  &M_wait,  GxB_WILL_WAIT) == GrB_SUCCESS) ;
+	assert (GrB_Matrix_get_INT32 (DP, &DP_wait, GxB_WILL_WAIT) == GrB_SUCCESS) ;
+	assert (GrB_Matrix_get_INT32 (DM, &DM_wait, GxB_WILL_WAIT) == GrB_SUCCESS) ;
 	
-	return (pending_M != 0 || pending_DM != 0 || pending_DP != 0) ;
+	return (M_wait | DM_wait | DP_wait) ;
 }
 
 // checks if C is fully synced
@@ -88,9 +66,12 @@ void Delta_Matrix_lock
 	Delta_Matrix C
 ) {
 	ASSERT (C) ;
+
+	int res = pthread_mutex_lock (&C->mutex) ;
+
+	ASSERT (res       == 0) ;
 	ASSERT (C->locked == false) ;
 
-	pthread_mutex_lock (&C->mutex) ;
 	C->locked = true ;
 }
 
@@ -103,7 +84,8 @@ void Delta_Matrix_unlock
 	ASSERT (C->locked == true) ;
 
 	C->locked = false ;
-	pthread_mutex_unlock (&C->mutex) ;
+	int res = pthread_mutex_unlock (&C->mutex) ;
+	ASSERT (res == 0) ;
 }
 
 // get the number of rows of a matrix

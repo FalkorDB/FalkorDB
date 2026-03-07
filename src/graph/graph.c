@@ -1721,9 +1721,9 @@ static inline bool is_matrix_synced
 	// assuming GrB_OK handles error states internally
 	GrB_OK (Delta_Matrix_nrows (&_nrows, A)) ;
 	GrB_OK (Delta_Matrix_ncols (&_ncols, A)) ;
-	bool isDirty = Delta_Matrix_isDirty (A) ;
+	bool willWait = Delta_Matrix_willWait (A) ;
 
-	return !isDirty && (nrows == _nrows && ncols == _ncols) ;
+	return !willWait && (nrows == _nrows && ncols == _ncols) ;
 }
 
 // return true if all graph matrices are fully synced (not dirty)

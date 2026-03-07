@@ -83,7 +83,7 @@ static GrB_Info Delta_Matrix_sync
 		GrB_RETURN_IF_FAIL (GrB_Matrix_nvals (&dm_nvals, DM)) ;
 
 		//----------------------------------------------------------------------
-		// perform deletions
+		// flush deletions
 		//----------------------------------------------------------------------
 
 		if (dm_nvals >= delta_max_pending_changes) {
@@ -91,7 +91,7 @@ static GrB_Info Delta_Matrix_sync
 		}
 
 		//----------------------------------------------------------------------
-		// perform additions
+		// flush additions
 		//----------------------------------------------------------------------
 
 		if (dp_nvals >= delta_max_pending_changes) {
@@ -103,6 +103,9 @@ static GrB_Info Delta_Matrix_sync
 	GrB_RETURN_IF_FAIL (GrB_wait (M,  GrB_MATERIALIZE)) ;
 	GrB_RETURN_IF_FAIL (GrB_wait (DM, GrB_MATERIALIZE)) ;
 	GrB_RETURN_IF_FAIL (GrB_wait (DP, GrB_MATERIALIZE)) ;
+
+	// C shouldn't have any pending operations
+	ASSERT (!Delta_Matrix_willWait (C)) ;
 
 	return GrB_SUCCESS ;
 }
@@ -140,27 +143,15 @@ GrB_Info Delta_Matrix_synchronize
 )
 {
 	ASSERT (C != NULL) ;
+
+	GrB_Info info = GrB_SUCCESS ;
 	uint64_t C_nrows = 0 ;
 	uint64_t C_ncols = 0 ;
 
-	// get C's number of rows and columns
-	GrB_RETURN_IF_FAIL (Delta_Matrix_nrows (&C_nrows, C)) ;
-	GrB_RETURN_IF_FAIL (Delta_Matrix_ncols (&C_ncols, C)) ;
-
-	bool already_sync = (C_nrows >= nrows &&
-						 C_ncols >= ncols &&
-						 !Delta_Matrix_isDirty (C) ) ;
-
-	if (already_sync == true) {
-		return GrB_SUCCESS ;
-	}
-
 	Delta_Matrix_lock (C) ;
 
-	GrB_Info info ;
-
 	//--------------------------------------------------------------------------
-	// refetch under lock
+	// get C's number of rows and columns
 	//--------------------------------------------------------------------------
 
 	info = Delta_Matrix_nrows (&C_nrows, C) ;
@@ -173,16 +164,26 @@ GrB_Info Delta_Matrix_synchronize
 		goto unlock ;
 	}
 
+	bool will_wait    = Delta_Matrix_willWait (C) ;
+	bool already_sync = (C_nrows >= nrows &&
+						 C_ncols >= ncols &&
+						 !will_wait) ;
+
+	if (already_sync == true) {
+		goto unlock ;
+	}
+
 	if (C_nrows < nrows || C_ncols < ncols) {
 		info = Delta_Matrix_resize (C, nrows, ncols) ;
 		if (info != GrB_SUCCESS) {
+			// failed to resize
 			goto unlock ;
 		}
 	}
 
-	if (Delta_Matrix_isDirty (C)) {
+	if (will_wait) {
 		info = Delta_Matrix_wait (C, false) ;
-		ASSERT ((info == GrB_SUCCESS && Delta_Matrix_isDirty (C) == false) ||
+		ASSERT ((info == GrB_SUCCESS && Delta_Matrix_willWait (C) == false) ||
 				 info != GrB_SUCCESS) ;
 	}
 
