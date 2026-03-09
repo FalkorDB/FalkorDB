@@ -191,7 +191,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: matrix.platform.use_docker
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
         with:
           driver-opts: network=host
 
