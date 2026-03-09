@@ -265,7 +265,7 @@ jobs:
       - name: Build compiler image
         if: matrix.platform.use_docker
         id: build_compiler
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: /FalkorDB
           file: /FalkorDB/build/docker/${{ steps.dockerfile.outputs.compiler }}
@@ -319,7 +319,7 @@ jobs:
 
       - name: Build test image
         if: matrix.platform.build_test_image && matrix.platform.use_docker && matrix.build_type == 'release'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: /FalkorDB
           file: /FalkorDB/tests/${{ steps.dockerfile.outputs.test }}
@@ -342,7 +342,7 @@ jobs:
       - name: Build base image
         if: matrix.platform.use_docker && matrix.build_type == 'release'
         id: build_base
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: /FalkorDB
           file: /FalkorDB/build/docker/${{ steps.dockerfile.outputs.final }}
@@ -369,7 +369,7 @@ jobs:
 
       - name: Build server image
         if: matrix.platform.use_docker && steps.dockerfile.outputs.build_server == 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: /FalkorDB
           file: /FalkorDB/build/docker/${{ steps.dockerfile.outputs.server_dockerfile }}
