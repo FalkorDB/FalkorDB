@@ -323,7 +323,14 @@ static void _costBaseLabelScan
 	OpBase *parent = op->parent;
 	while(OpBase_Type(parent) == OPType_FILTER) parent = parent->parent;
 	OPType t = OpBase_Type(parent);
-	ASSERT(t == OPType_CONDITIONAL_TRAVERSE || t == OPType_EXPAND_INTO);
+
+	// this optimization only supports conditional traversal and expand-into
+	// variable-length traversal types (OPType_CONDITIONAL_VAR_LEN_TRAVERSE,
+	// OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO, etc.) are not supported
+	// in this path — skip the optimization gracefully instead of asserting
+	if(t != OPType_CONDITIONAL_TRAVERSE && t != OPType_EXPAND_INTO) {
+		return;
+	}
 
 	AlgebraicExpression *ae = NULL;
 	if(t == OPType_CONDITIONAL_TRAVERSE) {
