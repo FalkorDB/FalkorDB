@@ -348,7 +348,9 @@ class testConfig(FlowTestsBase):
     def test12_start_with_cmd_info_enabled(self):
         # restart server with CMD_INFO explicitly enabled to ensure startup succeeds
         self.graph = self.db.select_graph(GRAPH_ID)
-        self.graph.delete()
+        # delete the graph only if it exists to avoid errors on empty key
+        if self.redis_con.execute_command("EXISTS", GRAPH_ID):
+            self.graph.delete()
         self.env.stop()
 
         self.env, self.db = Env(moduleArgs="CMD_INFO yes")
