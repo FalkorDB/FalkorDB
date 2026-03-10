@@ -1,4 +1,5 @@
 import os
+import inspect
 from common import *
 
 GRAPH_ID = "config"
@@ -467,7 +468,18 @@ class testConfigRewritePersist:
         with os.fdopen(fd, "w") as cfg:
             cfg.write("\n".join(cfg_lines))
 
-        self.env, self.db = Env(redisConfigFile=self.cfg_path)
+        params = inspect.signature(Env).parameters
+        env_kwargs = {}
+        if "redisConfigFile" in params:
+            env_kwargs["redisConfigFile"] = self.cfg_path
+        elif "redisConfigPath" in params:
+            env_kwargs["redisConfigPath"] = self.cfg_path
+        elif "redisConfig" in params:
+            env_kwargs["redisConfig"] = self.cfg_path
+        else:
+            raise RuntimeError("Env is missing a redis config file parameter")
+
+        self.env, self.db = Env(**env_kwargs)
         self.redis_con = self.env.getConnection()
 
         # values should load from config file
