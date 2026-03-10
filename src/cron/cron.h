@@ -27,6 +27,9 @@ bool Cron_Start(void);
 // stop CRON
 void Cron_Stop(void);
 
+// returns true if CRON is initialized and running
+bool Cron_IsStarted(void);
+
 // add recurring tasks
 void Cron_AddRecurringTasks(void);
 
@@ -49,4 +52,3 @@ bool Cron_AbortTask
 (
 	CronTaskHandle t
 );
-

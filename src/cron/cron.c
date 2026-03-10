@@ -265,6 +265,10 @@ void Cron_Stop(void) {
 	cron = NULL;
 }
 
+bool Cron_IsStarted(void) {
+	return cron != NULL && cron->alive;
+}
+
 // create a new CRON task
 CronTaskHandle Cron_AddTask
 (
@@ -314,4 +318,3 @@ bool Cron_AbortTask
 	// managed to abort task
 	return true;
 }
-

@@ -343,6 +343,21 @@ class testConfig(FlowTestsBase):
         expected_response = 1024
         self.env.assertEqual(creation_buffer_size, expected_response)
 
+    def test12_start_with_cmd_info_enabled(self):
+        # restart server with CMD_INFO explicitly enabled to ensure startup succeeds
+        self.graph.delete()
+        self.env.stop()
+
+        self.env, self.db = Env(moduleArgs="CMD_INFO yes")
+        self.redis_con = self.env.getConnection()
+        self.graph = self.db.select_graph(GRAPH_ID)
+
+        cmd_info_enabled = self.db.config_get("CMD_INFO")
+        self.env.assertEqual(cmd_info_enabled, 1)
+
+        result = self.graph.query("RETURN 1")
+        self.env.assertEqual(result.result_set, [[1]])
+
 import stat
 import shutil
 import tempfile
@@ -430,4 +445,3 @@ class testConfigTempFolder:
         finally:
             # clean up
             shutil.rmtree(valid_dir)
-

@@ -62,6 +62,8 @@ void CronTask_AddStreamFinishedQueries() {
 	// add query logging task
 	//--------------------------------------------------------------------------
 
+	if(!Cron_IsStarted()) return;
+
 	// make sure info tracking is enabled
 	bool info_enabled = false;
 	if(Config_Option_get(Config_CMD_INFO, &info_enabled) && info_enabled) {
@@ -88,4 +90,3 @@ void CronTask_AddStreamFinishedQueries() {
 void Cron_AddRecurringTasks(void) {
 	CronTask_AddStreamFinishedQueries();
 }
-
