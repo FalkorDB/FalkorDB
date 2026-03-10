@@ -1,5 +1,7 @@
 import os
 import inspect
+import subprocess
+import time
 from common import *
 
 GRAPH_ID = "config"
@@ -453,6 +455,16 @@ class testConfigRewritePersist:
     def teardown_method(self):
         if hasattr(self, "env"):
             self.env.stop()
+        if hasattr(self, "redis_proc") and self.redis_proc:
+            try:
+                self.redis_con.shutdown()
+            except Exception:
+                pass
+            self.redis_proc.terminate()
+            try:
+                self.redis_proc.wait(timeout=5)
+            except Exception:
+                self.redis_proc.kill()
         if hasattr(self, "cfg_path") and os.path.exists(self.cfg_path):
             os.remove(self.cfg_path)
 
@@ -476,11 +488,35 @@ class testConfigRewritePersist:
             env_kwargs["redisConfigPath"] = self.cfg_path
         elif "redisConfig" in params:
             env_kwargs["redisConfig"] = self.cfg_path
-        else:
-            raise RuntimeError("Env is missing a redis config file parameter")
 
-        self.env, self.db = Env(**env_kwargs)
-        self.redis_con = self.env.getConnection()
+        if env_kwargs:
+            self.env, self.db = Env(**env_kwargs)
+            self.redis_con = self.env.getConnection()
+            self.redis_proc = None
+        else:
+            # RLTest version does not support passing a config file; launch Redis
+            # manually using the same binary/module args RLTest would use.
+            self.env, _ = Env()
+            runner = self.env.envRunner
+            port = runner.port
+            # stop the RLTest-managed instance so we can reuse the port/args
+            self.env.stop()
+
+            cmd = [runner.redisBinaryPath, self.cfg_path] + runner.masterCmdArgs[1:]
+            self.redis_proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+            )
+
+            self.redis_con = redis.StrictRedis(
+                "localhost", port, decode_responses=True
+            )
+            for _ in range(100):
+                try:
+                    if self.redis_con.ping():
+                        break
+                except Exception:
+                    time.sleep(0.05)
+            self.db = FalkorDB("localhost", port)
 
         # values should load from config file
         self.env.assertEqual(self.db.config_get("TIMEOUT"), 7)
