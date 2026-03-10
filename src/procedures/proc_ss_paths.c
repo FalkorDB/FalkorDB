@@ -514,7 +514,9 @@ static int path_cmp
 	WeightedPath *db = (WeightedPath *)b;
 	if(da->weight == db->weight) {
 		if(da->cost == db->cost) {
-			return Path_Len(da->path) - Path_Len(db->path);
+			size_t len_a = Path_Len(da->path);
+			size_t len_b = Path_Len(db->path);
+			return (len_a > len_b) - (len_a < len_b);
 		}
 		return (da->cost > db->cost) - (da->cost < db->cost);
 	}
