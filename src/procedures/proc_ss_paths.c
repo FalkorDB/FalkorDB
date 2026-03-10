@@ -516,9 +516,9 @@ static int path_cmp
 		if(da->cost == db->cost) {
 			return Path_Len(da->path) - Path_Len(db->path);
 		}
-		return da->cost - db->cost;
+		return (da->cost > db->cost) - (da->cost < db->cost);
 	}
-	return da->weight - db->weight;
+	return (da->weight > db->weight) - (da->weight < db->weight);
 }
 
 // get all minimal paths (all paths with the same weight)
