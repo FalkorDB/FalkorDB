@@ -327,6 +327,7 @@ class testConfig(FlowTestsBase):
 
         self.env, self.db = Env(moduleArgs='NODE_CREATION_BUFFER 0')
         self.redis_con = self.env.getConnection()
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # values less than 128 (such as 0, which this module was loaded with)
         # will be increased to 128
@@ -337,6 +338,7 @@ class testConfig(FlowTestsBase):
         # restart the server with a buffer argument of 600
         self.env, self.db = Env(moduleArgs='NODE_CREATION_BUFFER 600')
         self.redis_con = self.env.getConnection()
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # the node creation buffer should be 1024, the next-greatest power of 2 of 600
         creation_buffer_size = self.db.config_get("NODE_CREATION_BUFFER")
@@ -345,6 +347,7 @@ class testConfig(FlowTestsBase):
 
     def test12_start_with_cmd_info_enabled(self):
         # restart server with CMD_INFO explicitly enabled to ensure startup succeeds
+        self.graph = self.db.select_graph(GRAPH_ID)
         self.graph.delete()
         self.env.stop()
 
