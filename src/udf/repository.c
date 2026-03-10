@@ -121,7 +121,9 @@ bool UDF_RepoInit(void) {
 // without changing its internal content, this will force each query execution
 // thread to reload a new quickjs runtime picking up on the new limits
 void UDF_RepoBumpVersion(void) {
-	ASSERT (udf_repo != NULL) ;
+	// During module startup configuration callbacks may fire before the repo is
+	// initialized, in which case there's nothing to bump yet.
+	if (udf_repo == NULL) return ;
 
 	// bump version
 	udf_repo->v++ ;
@@ -463,4 +465,3 @@ void UDF_RepoFree(void) {
 
 	rm_free (udf_repo) ;
 }
-
