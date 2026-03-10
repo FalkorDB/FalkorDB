@@ -447,3 +447,44 @@ class testConfigTempFolder:
         finally:
             # clean up
             shutil.rmtree(valid_dir)
+
+class testConfigRewritePersist:
+    def teardown_method(self):
+        if hasattr(self, "env"):
+            self.env.stop()
+        if hasattr(self, "cfg_path") and os.path.exists(self.cfg_path):
+            os.remove(self.cfg_path)
+
+    def test_config_rewrite_roundtrip(self):
+        # configure via redis.conf only, no module args
+        cfg_lines = [
+            "graph.TIMEOUT 7",
+            "graph.RESULTSET_SIZE 4",
+            "graph.CMD_INFO no",
+        ]
+
+        fd, self.cfg_path = tempfile.mkstemp(prefix="falkordb-config-", suffix=".conf")
+        with os.fdopen(fd, "w") as cfg:
+            cfg.write("\n".join(cfg_lines))
+
+        self.env, self.db = Env(redisConfigFile=self.cfg_path)
+        self.redis_con = self.env.getConnection()
+
+        # values should load from config file
+        self.env.assertEqual(self.db.config_get("TIMEOUT"), 7)
+        self.env.assertEqual(self.db.config_get("RESULTSET_SIZE"), 4)
+        self.env.assertEqual(self.db.config_get("CMD_INFO"), 0)
+
+        # rewrite and ensure persisted in file
+        self.env.assertEqual(self.redis_con.config_rewrite(), True)
+        with open(self.cfg_path, "r") as cfg:
+            contents = cfg.read().lower()
+
+        for line in cfg_lines:
+            key, val = line.split()
+            self.env.assertIn(f"{key.lower()} {val.lower()}", contents)
+
+        # still reflected in the running config
+        self.env.assertEqual(self.db.config_get("TIMEOUT"), 7)
+        self.env.assertEqual(self.db.config_get("RESULTSET_SIZE"), 4)
+        self.env.assertEqual(self.db.config_get("CMD_INFO"), 0)
