@@ -499,10 +499,35 @@ class testConfigRewritePersist:
             self.env, _ = Env()
             runner = self.env.envRunner
             port = runner.port
+
+            # pull loadmodule directives from the RLTest command and move them into the config
+            loadmodule_lines = []
+            filtered_args = []
+            args = runner.masterCmdArgs[1:]  # skip redis-server binary
+            i = 0
+            while i < len(args):
+                if args[i] == "--loadmodule" and i + 1 < len(args):
+                    j = i + 2
+                    while j < len(args) and not args[j].startswith("--"):
+                        j += 1
+                    load_args = args[i + 1 : j]
+                    loadmodule_lines.append("loadmodule " + " ".join(load_args))
+                    i = j
+                else:
+                    filtered_args.append(args[i])
+                    i += 1
+
+            if loadmodule_lines:
+                with open(self.cfg_path, "r+") as cfg:
+                    existing = cfg.read()
+                    cfg.seek(0)
+                    cfg.write("\n".join(loadmodule_lines) + "\n" + existing)
+                    cfg.truncate()
+
             # stop the RLTest-managed instance so we can reuse the port/args
             self.env.stop()
 
-            cmd = [runner.redisBinaryPath, self.cfg_path] + runner.masterCmdArgs[1:]
+            cmd = [runner.redisBinaryPath, self.cfg_path] + filtered_args
             self.redis_proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
             )
