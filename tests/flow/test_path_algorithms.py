@@ -489,7 +489,7 @@ class testAllShortestPaths():
         # SSpaths: same graph, verify ordering for single-source paths.
         # From A the three reachable paths are: A->B (0.1), A->B->C (0.2), A->C (0.9).
         # With pathCount=2 the two lightest are A->B (0.1) and A->B->C (0.2).
-        # Their weight difference is 0.1 – a fractional value the old bug would
+        # Their weight difference is 0.1 - a fractional value the old bug would
         # truncate to 0, making them appear equal and breaking the heap order.
         ss_result = g.query("""
             MATCH (src:FN {id: 'A'})
