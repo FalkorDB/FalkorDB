@@ -444,3 +444,65 @@ class testAllShortestPaths():
             self.env.assertEquals(len(result.result_set), 5)
             for i in range(0, 5):
                 self.env.assertContains(result.result_set[i], self.ss_paths)
+
+    def test08_fractional_weights(self):
+        # Regression test: path_cmp used to return (int)(weight_a - weight_b),
+        # truncating differences in the range (-1.0, 1.0) to 0 and treating
+        # paths with different fractional weights as equal, causing incorrect ordering.
+        # The fix uses (a > b) - (a < b) which correctly returns -1, 0, or 1.
+        g = self.db.select_graph("frac_weight_graph")
+
+        # Build a graph with two paths from A to C:
+        #   Path 1: (A) -[w=0.9]-> (C)                 total weight: 0.9
+        #   Path 2: (A) -[w=0.1]-> (B) -[w=0.1]-> (C)  total weight: 0.2
+        # Correct ordering: Path 2 (0.2) before Path 1 (0.9).
+        # Buggy behaviour: int(0.9 - 0.2) = int(0.7) = 0, treating them equal.
+        g.query("""
+            CREATE (a:FN {id: 'A'}),
+                   (b:FN {id: 'B'}),
+                   (c:FN {id: 'C'}),
+                   (a)-[:FR {weight: 0.9}]->(c),
+                   (a)-[:FR {weight: 0.1}]->(b),
+                   (b)-[:FR {weight: 0.1}]->(c)
+        """)
+
+        # SPpaths: both paths should be returned ordered by ascending weight
+        result = g.query("""
+            MATCH (src:FN {id: 'A'}), (dst:FN {id: 'C'})
+            CALL algo.SPpaths({
+                sourceNode: src,
+                targetNode: dst,
+                weightProp: 'weight',
+                maxLen: 3,
+                pathCount: 2
+            }) YIELD path, pathWeight
+            RETURN path, pathWeight
+        """)
+
+        self.env.assertEquals(len(result.result_set), 2)
+        # The lighter path (A->B->C, weight 0.2) must come before the
+        # heavier path (A->C, weight 0.9)
+        self.env.assertLess(result.result_set[0][1], result.result_set[1][1])
+        self.env.assertAlmostEqual(result.result_set[0][1], 0.2, delta=1e-9)
+        self.env.assertAlmostEqual(result.result_set[1][1], 0.9, delta=1e-9)
+
+        # SSpaths: same graph, verify ordering for single-source paths.
+        # From A the three reachable paths are: A->B (0.1), A->B->C (0.2), A->C (0.9).
+        # With pathCount=2 the two lightest are A->B (0.1) and A->B->C (0.2).
+        # Their weight difference is 0.1 – a fractional value the old bug would
+        # truncate to 0, making them appear equal and breaking the heap order.
+        ss_result = g.query("""
+            MATCH (src:FN {id: 'A'})
+            CALL algo.SSpaths({
+                sourceNode: src,
+                weightProp: 'weight',
+                maxLen: 3,
+                pathCount: 2
+            }) YIELD path, pathWeight
+            RETURN path, pathWeight
+        """)
+
+        self.env.assertEquals(len(ss_result.result_set), 2)
+        self.env.assertLess(ss_result.result_set[0][1], ss_result.result_set[1][1])
+        self.env.assertAlmostEqual(ss_result.result_set[0][1], 0.1, delta=1e-9)
+        self.env.assertAlmostEqual(ss_result.result_set[1][1], 0.2, delta=1e-9)
