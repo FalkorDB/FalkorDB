@@ -26,29 +26,32 @@ QGNode **BFS(QGNode *s, int *level) {
 		// As long as there are nodes in the frontier.
 		for(int i = 0; i < array_len(current); i++) {
 			QGNode *n = current[i];
+			size_t n_alias_len = strlen(n->alias);
 
 			// Have we already processed n?
-			seen = raxFind(visited, (unsigned char *)n->alias, strlen(n->alias));
+			seen = raxFind(visited, (unsigned char *)n->alias, n_alias_len);
 			if(seen != raxNotFound) continue;
 
 			// Expand node N by visiting all of its neighbors
 			for(int j = 0; j < array_len(n->outgoing_edges); j++) {
 				QGEdge *e = n->outgoing_edges[j];
-				seen = raxFind(visited, (unsigned char *)e->dest->alias, strlen(e->dest->alias));
+				size_t dest_alias_len = strlen(e->dest->alias);
+				seen = raxFind(visited, (unsigned char *)e->dest->alias, dest_alias_len);
 				if(seen == raxNotFound) {
 					array_append(next, e->dest);
 				}
 			}
 			for(int j = 0; j < array_len(n->incoming_edges); j++) {
 				QGEdge *e = n->incoming_edges[j];
-				seen = raxFind(visited, (unsigned char *)e->src->alias, strlen(e->src->alias));
+				size_t src_alias_len = strlen(e->src->alias);
+				seen = raxFind(visited, (unsigned char *)e->src->alias, src_alias_len);
 				if(seen == raxNotFound) {
 					array_append(next, e->src);
 				}
 			}
 
 			// Mark n as visited.
-			raxInsert(visited, (unsigned char *)n->alias, strlen(n->alias), NULL, NULL);
+			raxInsert(visited, (unsigned char *)n->alias, n_alias_len, NULL, NULL);
 		}
 
 		/* No way to progress and we're interested in the lowest level leafs
