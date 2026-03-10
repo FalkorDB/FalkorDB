@@ -467,7 +467,7 @@ class testConfigRewritePersist:
         with os.fdopen(fd, "w") as cfg:
             cfg.write("\n".join(cfg_lines))
 
-        self.env, self.db = Env(redisConfigPath=self.cfg_path)
+        self.env, self.db = Env(redisConfigFile=self.cfg_path)
         self.redis_con = self.env.getConnection()
 
         # values should load from config file
