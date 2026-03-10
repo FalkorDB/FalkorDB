@@ -14,6 +14,7 @@
 #include <string.h>
 #include <limits.h>
 #include <errno.h>
+#include <stdint.h>
 #include <sys/stat.h>
 
 //-----------------------------------------------------------------------------
@@ -131,6 +132,344 @@ typedef struct
 } RG_Config;
 
 RG_Config config; // global module configuration
+
+//------------------------------------------------------------------------------
+// Redis module configuration registration helpers
+//------------------------------------------------------------------------------
+
+static bool _Config_is_runtime(Config_Option_Field field) {
+	for(size_t i = 0; i < RUNTIME_CONFIG_COUNT; i++) {
+		if(RUNTIME_CONFIGS[i] == field) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static unsigned int _Config_flags(Config_Option_Field field, bool memory) {
+	unsigned int flags = _Config_is_runtime(field) ?
+		REDISMODULE_CONFIG_DEFAULT : REDISMODULE_CONFIG_IMMUTABLE;
+	if(memory) flags |= REDISMODULE_CONFIG_MEMORY;
+	return flags;
+}
+
+static int _Config_set_from_string
+(
+	Config_Option_Field field,
+	const char *val,
+	RedisModuleString **err
+) {
+	char *error = NULL;
+	if(!Config_Option_set(field, val, &error)) {
+		if(err != NULL) {
+			const char *name = Config_Field_name(field);
+			if(error) {
+				*err = RedisModule_CreateString(NULL, error, strlen(error));
+			} else {
+				char buf[128];
+				snprintf(buf, sizeof(buf),
+					"Failed to set config value %s to %s", name, val);
+				*err = RedisModule_CreateString(NULL, buf, strlen(buf));
+			}
+		}
+		return REDISMODULE_ERR;
+	}
+	return REDISMODULE_OK;
+}
+
+static RedisModuleString *_Config_get_string_value(Config_Option_Field field) {
+	const char *value = NULL;
+	bool res = Config_Option_get(field, &value);
+	ASSERT(res);
+	return RedisModule_CreateString(NULL, value, strlen(value));
+}
+
+static int _ModuleConfigSetNumeric(const char *name, long long val,
+	void *privdata, RedisModuleString **err) {
+	UNUSED(name);
+	Config_Option_Field field = (Config_Option_Field)(intptr_t)privdata;
+	char buf[64];
+	snprintf(buf, sizeof(buf), "%lld", val);
+	return _Config_set_from_string(field, buf, err);
+}
+
+static long long _ModuleConfigGetNumeric(const char *name, void *privdata) {
+	UNUSED(name);
+	Config_Option_Field field = (Config_Option_Field)(intptr_t)privdata;
+
+	switch(field) {
+	case Config_TIMEOUT:
+	case Config_TIMEOUT_DEFAULT:
+	case Config_TIMEOUT_MAX:
+	case Config_CACHE_SIZE:
+	case Config_OPENMP_NTHREAD:
+	case Config_THREAD_POOL_SIZE:
+	case Config_RESULTSET_MAX_SIZE:
+	case Config_VKEY_MAX_ENTITY_COUNT:
+	case Config_MAX_QUEUED_QUERIES:
+	case Config_QUERY_MEM_CAPACITY:
+	case Config_DELTA_MAX_PENDING_CHANGES:
+	case Config_NODE_CREATION_BUFFER:
+	case Config_CMD_INFO_MAX_QUERY_COUNT:
+	case Config_EFFECTS_THRESHOLD:
+	case Config_BOLT_PORT:
+	case Config_IMPORT_FOLDER: // not numeric, handled below
+	case Config_TEMP_FOLDER:   // not numeric, handled below
+	case Config_JS_HEAP_SIZE:
+	case Config_JS_STACK_SIZE:
+	default:
+		break;
+	}
+
+	long long n = 0;
+
+	switch(field) {
+	case Config_TIMEOUT:
+	case Config_TIMEOUT_DEFAULT:
+	case Config_TIMEOUT_MAX:
+	case Config_MAX_QUEUED_QUERIES:
+	case Config_QUERY_MEM_CAPACITY:
+	case Config_DELTA_MAX_PENDING_CHANGES:
+	case Config_EFFECTS_THRESHOLD:
+	case Config_RESULTSET_MAX_SIZE:
+	case Config_VKEY_MAX_ENTITY_COUNT:
+	case Config_NODE_CREATION_BUFFER:
+	case Config_CMD_INFO_MAX_QUERY_COUNT:
+	case Config_CACHE_SIZE:
+	case Config_OPENMP_NTHREAD:
+	case Config_THREAD_POOL_SIZE:
+	case Config_JS_HEAP_SIZE:
+	case Config_JS_STACK_SIZE:
+		Config_Option_get(field, &n);
+		break;
+
+	case Config_BOLT_PORT: {
+		int16_t port;
+		Config_Option_get(field, &port);
+		n = port;
+		break;
+	}
+
+	default:
+		ASSERT(false && "invalid numeric config");
+	}
+
+	return n;
+}
+
+static int _ModuleConfigSetBool(const char *name, int val, void *privdata,
+	RedisModuleString **err) {
+	UNUSED(name);
+	Config_Option_Field field = (Config_Option_Field)(intptr_t)privdata;
+	const char *bool_str = val ? "yes" : "no";
+	return _Config_set_from_string(field, bool_str, err);
+}
+
+static int _ModuleConfigGetBool(const char *name, void *privdata) {
+	UNUSED(name);
+	Config_Option_Field field = (Config_Option_Field)(intptr_t)privdata;
+	bool flag = false;
+	Config_Option_get(field, &flag);
+	return flag ? 1 : 0;
+}
+
+static int _ModuleConfigSetString(const char *name, RedisModuleString *val,
+	void *privdata, RedisModuleString **err) {
+	UNUSED(name);
+	Config_Option_Field field = (Config_Option_Field)(intptr_t)privdata;
+
+	size_t len = 0;
+	const char *cstr = RedisModule_StringPtrLen(val, &len);
+	char *buf = rm_malloc(len + 1);
+	memcpy(buf, cstr, len);
+	buf[len] = '\0';
+
+	int rc = _Config_set_from_string(field, buf, err);
+	rm_free(buf);
+	return rc;
+}
+
+static RedisModuleString *_ModuleConfigGetString(const char *name,
+	void *privdata) {
+	UNUSED(name);
+	Config_Option_Field field = (Config_Option_Field)(intptr_t)privdata;
+	return _Config_get_string_value(field);
+}
+
+static int _RegisterModuleConfigs(RedisModuleCtx *ctx) {
+	// numeric configs
+	if(RedisModule_RegisterNumericConfig(ctx, TIMEOUT, config.timeout,
+		_Config_flags(Config_TIMEOUT, false),
+		0, LLONG_MAX, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
+		NULL, (void *)(intptr_t)Config_TIMEOUT) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterNumericConfig(ctx, TIMEOUT_DEFAULT,
+		config.timeout_default,
+		_Config_flags(Config_TIMEOUT_DEFAULT, false),
+		0, LLONG_MAX, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
+		NULL, (void *)(intptr_t)Config_TIMEOUT_DEFAULT) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterNumericConfig(ctx, TIMEOUT_MAX, config.timeout_max,
+		_Config_flags(Config_TIMEOUT_MAX, false),
+		0, LLONG_MAX, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
+		NULL, (void *)(intptr_t)Config_TIMEOUT_MAX) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterNumericConfig(ctx, CACHE_SIZE, config.cache_size,
+		_Config_flags(Config_CACHE_SIZE, false),
+		1, LLONG_MAX, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
+		NULL, (void *)(intptr_t)Config_CACHE_SIZE) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterNumericConfig(ctx, THREAD_COUNT,
+		config.thread_pool_size,
+		_Config_flags(Config_THREAD_POOL_SIZE, false),
+		1, LLONG_MAX, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
+		NULL, (void *)(intptr_t)Config_THREAD_POOL_SIZE) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterNumericConfig(ctx, RESULTSET_SIZE,
+		config.resultset_size,
+		_Config_flags(Config_RESULTSET_MAX_SIZE, false),
+		LLONG_MIN, LLONG_MAX, _ModuleConfigGetNumeric,
+		_ModuleConfigSetNumeric, NULL,
+		(void *)(intptr_t)Config_RESULTSET_MAX_SIZE) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterNumericConfig(ctx, OMP_THREAD_COUNT,
+		config.omp_thread_count,
+		_Config_flags(Config_OPENMP_NTHREAD, false),
+		1, LLONG_MAX, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
+		NULL, (void *)(intptr_t)Config_OPENMP_NTHREAD) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterNumericConfig(ctx, VKEY_MAX_ENTITY_COUNT,
+		config.vkey_entity_count,
+		_Config_flags(Config_VKEY_MAX_ENTITY_COUNT, false),
+		0, LLONG_MAX, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
+		NULL, (void *)(intptr_t)Config_VKEY_MAX_ENTITY_COUNT) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterNumericConfig(ctx, MAX_QUEUED_QUERIES,
+		config.max_queued_queries,
+		_Config_flags(Config_MAX_QUEUED_QUERIES, false),
+		1, LLONG_MAX, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
+		NULL, (void *)(intptr_t)Config_MAX_QUEUED_QUERIES) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterNumericConfig(ctx, QUERY_MEM_CAPACITY,
+		config.query_mem_capacity,
+		_Config_flags(Config_QUERY_MEM_CAPACITY, true),
+		0, LLONG_MAX, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
+		NULL, (void *)(intptr_t)Config_QUERY_MEM_CAPACITY) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterNumericConfig(ctx, DELTA_MAX_PENDING_CHANGES,
+		config.delta_max_pending_changes,
+		_Config_flags(Config_DELTA_MAX_PENDING_CHANGES, false),
+		0, LLONG_MAX, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
+		NULL, (void *)(intptr_t)Config_DELTA_MAX_PENDING_CHANGES) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterNumericConfig(ctx, NODE_CREATION_BUFFER,
+		config.node_creation_buffer,
+		_Config_flags(Config_NODE_CREATION_BUFFER, false),
+		0, LLONG_MAX, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
+		NULL, (void *)(intptr_t)Config_NODE_CREATION_BUFFER) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterNumericConfig(ctx, CMD_INFO_MAX_QUERIES_COUNT_OPTION_NAME,
+		config.max_info_queries_count,
+		_Config_flags(Config_CMD_INFO_MAX_QUERY_COUNT, false),
+		0, LLONG_MAX, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
+		NULL, (void *)(intptr_t)Config_CMD_INFO_MAX_QUERY_COUNT) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterNumericConfig(ctx, EFFECTS_THRESHOLD,
+		config.effects_threshold,
+		_Config_flags(Config_EFFECTS_THRESHOLD, false),
+		0, LLONG_MAX, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
+		NULL, (void *)(intptr_t)Config_EFFECTS_THRESHOLD) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterNumericConfig(ctx, BOLT_PORT, config.bolt_port,
+		_Config_flags(Config_BOLT_PORT, false),
+		-1, 65535, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
+		NULL, (void *)(intptr_t)Config_BOLT_PORT) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterNumericConfig(ctx, JS_HEAP_SIZE,
+		(long long)config.js_heap_size,
+		_Config_flags(Config_JS_HEAP_SIZE, true),
+		1048576, LLONG_MAX, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
+		NULL, (void *)(intptr_t)Config_JS_HEAP_SIZE) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterNumericConfig(ctx, JS_STACK_SIZE,
+		(long long)config.js_stack_size,
+		_Config_flags(Config_JS_STACK_SIZE, true),
+		1048576, LLONG_MAX, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
+		NULL, (void *)(intptr_t)Config_JS_STACK_SIZE) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	// bool configs
+	if(RedisModule_RegisterBoolConfig(ctx, ASYNC_DELETE, config.async_delete,
+		_Config_flags(Config_ASYNC_DELETE, false),
+		_ModuleConfigGetBool, _ModuleConfigSetBool, NULL,
+		(void *)(intptr_t)Config_ASYNC_DELETE) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterBoolConfig(ctx, CMD_INFO, config.cmd_info_on,
+		_Config_flags(Config_CMD_INFO, false),
+		_ModuleConfigGetBool, _ModuleConfigSetBool, NULL,
+		(void *)(intptr_t)Config_CMD_INFO) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterBoolConfig(ctx, DELAY_INDEXING, config.delay_indexing,
+		_Config_flags(Config_DELAY_INDEXING, false),
+		_ModuleConfigGetBool, _ModuleConfigSetBool, NULL,
+		(void *)(intptr_t)Config_DELAY_INDEXING) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	// string configs
+	if(RedisModule_RegisterStringConfig(ctx, IMPORT_FOLDER, config.import_folder,
+		_Config_flags(Config_IMPORT_FOLDER, false),
+		_ModuleConfigGetString, _ModuleConfigSetString, NULL,
+		(void *)(intptr_t)Config_IMPORT_FOLDER) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_RegisterStringConfig(ctx, TEMP_FOLDER, config.temp_folder,
+		_Config_flags(Config_TEMP_FOLDER, false),
+		_ModuleConfigGetString, _ModuleConfigSetString, NULL,
+		(void *)(intptr_t)Config_TEMP_FOLDER) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	return REDISMODULE_OK;
+}
 
 //------------------------------------------------------------------------------
 // config value parsing
@@ -976,6 +1315,20 @@ int Config_Init(
 	// initialize the configuration to its default values
 	_Config_SetToDefaults();
 
+	// register configurations with Redis CONFIG interface
+	if(_RegisterModuleConfigs(ctx) != REDISMODULE_OK) {
+		RedisModule_Log(ctx, "warning",
+				"Failed to register module configuration");
+		return REDISMODULE_ERR;
+	}
+
+	// apply configurations provided via MODULE LOADEX / redis.conf
+	if(RedisModule_LoadConfigs(ctx) != REDISMODULE_OK) {
+		RedisModule_Log(ctx, "warning",
+				"Failed to load module configuration");
+		return REDISMODULE_ERR;
+	}
+
 	if (argc % 2)
 	{
 		// emit an error if we received an odd number of arguments,
@@ -1804,4 +2157,3 @@ void Config_Subscribe_Changes(
 	ASSERT(cb != NULL);
 	config.cb = cb;
 }
-

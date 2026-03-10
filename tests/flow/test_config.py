@@ -343,6 +343,23 @@ class testConfig(FlowTestsBase):
         expected_response = 1024
         self.env.assertEqual(creation_buffer_size, expected_response)
 
+    def test12_config_commands_available_via_redis_config(self):
+        timeout_key = "graph.TIMEOUT"
+
+        # ensure CONFIG GET exposes module configs
+        cfg = self.redis_con.config_get("graph.*")
+        self.env.assertIn(timeout_key, cfg)
+
+        # set via CONFIG SET and validate through GRAPH.CONFIG path
+        self.redis_con.config_set(timeout_key, 2)
+        self.env.assertEqual(self.db.config_get("TIMEOUT"), 2)
+
+        cfg = self.redis_con.config_get(timeout_key)
+        self.env.assertEqual(int(cfg[timeout_key]), 2)
+
+        # reset
+        self.redis_con.config_set(timeout_key, 0)
+
 import stat
 import shutil
 import tempfile
@@ -430,4 +447,3 @@ class testConfigTempFolder:
         finally:
             # clean up
             shutil.rmtree(valid_dir)
-
