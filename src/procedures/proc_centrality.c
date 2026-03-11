@@ -18,7 +18,9 @@
 #include "../graph/graphcontext.h"
 
 #include <string.h>
+#include <stdio.h>
 #include "hll/hll.h"
+#include "../util/simple_timer.h"
 
 #define HLL_BITS 10              // 1024 registers, ~3.25% estimation error
 #define CENTRALITY_MAX_ITER 100  // maximum BFS levels to propagate
@@ -34,15 +36,15 @@
 
 // Centrality procedure context
 typedef struct {
-	const Graph *g;           // graph
-	AttributeID weight_prop;  // weight attribute id
-	GrB_Vector  scores;       // harmonic centrality scores (FP64, index = nodeID)
-	GrB_Info    info;         // iterator state
-	GxB_Iterator it;          // iterator over scores
-	Node        node;         // current node
-	SIValue output[2];        // array with up to 2 entries [node, score]
-	SIValue *yield_node;      // nodes
-	SIValue *yield_score;     // score
+	const Graph *g;            // graph
+	AttributeID  weight_prop;  // weight attribute id
+	GrB_Vector   scores;       // harmonic centrality scores (FP64, index = nodeID)
+	GrB_Info     info;         // iterator state
+	GxB_Iterator it;           // iterator over scores
+	Node         node;         // current node
+	SIValue      output[2];    // array with up to 2 entries [node, score]
+	SIValue     *yield_node;   // nodes
+	SIValue     *yield_score;  // score
 } Centrality_Context;
 
 // process procedure yield
@@ -252,12 +254,20 @@ static ProcedureResult _calculate_centrality
 	GrB_Index     nrows      = 0;
 	GrB_Index     nvals      = 0;
 
+	// simple_timer_t t_total;
+	// simple_timer_t t_phase;
+	// simple_tic(t_total);
+
 	GrB_OK(GrB_Vector_size(&nrows, node_weights));
 	GrB_OK(GrB_Vector_nvals(&nvals, node_weights));
+
+	// printf("[centrality] n_participating=%llu\n", (unsigned long long) nvals);
 
 	//--------------------------------------------------------------------------
 	// build compact submatrix _A
 	//--------------------------------------------------------------------------
+
+	// simple_tic(t_phase);
 
 	GrB_Descriptor desc = NULL;
 	GrB_OK(GrB_Descriptor_new(&desc));
@@ -302,6 +312,9 @@ static ProcedureResult _calculate_centrality
 			&i_n, &i_size, &i_handling, NULL));
 	GrB_OK (GxB_Container_free(&A_cont));
 
+	// printf("[centrality] build compact submatrix: %.2f ms\n",
+	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
+
 	if((p_type != GrB_INT32 && p_type != GrB_UINT32)
 		|| (i_type != GrB_INT32 && i_type != GrB_UINT32)) {
 		ErrorCtx_SetError(
@@ -314,17 +327,18 @@ static ProcedureResult _calculate_centrality
 	}
 
 	//--------------------------------------------------------------------------
-	// HLL BFS propagation
+	// Initialize HLL
 	//--------------------------------------------------------------------------
+
+	// simple_tic(t_phase);
 
 	struct HLL *new_sets    = rm_calloc(nvals, sizeof(struct HLL));
 	struct HLL *old_sets    = rm_calloc(nvals, sizeof(struct HLL));
 	double     *flat_scores = rm_calloc(nvals, sizeof(double));
+	bool       *change_arr  = rm_malloc(nvals * sizeof(bool));
 	size_t      reg_size    = (size_t) 1 << HLL_BITS;
 
-	// initialize each node's HLL with node_weights[nodeID] distinct
-	// hashes. For boolean weights this is 1 hash per node, but the structure
-	// supports weighted nodes where more hashes reflect a larger contribution
+	// double check weight type and maximum weight requirements
 	GrB_Type weight_t = NULL;
 	GrB_OK (GxB_Vector_type(&weight_t, node_weights));
 	ASSERT(weight_t == GrB_BOOL || weight_t == GrB_INT64);
@@ -350,6 +364,9 @@ static ProcedureResult _calculate_centrality
 	GrB_OK(GxB_Vector_Iterator_attach(nw_it, node_weights, NULL));
 	GrB_Info nw_info = GxB_Vector_Iterator_seek(nw_it, 0);
 
+	// initialize each node's HLL with node_weights[nodeID] distinct
+	// hashes. For boolean weights this is 1 hash per node, but the structure
+	// supports weighted nodes where more hashes reflect a larger contribution
 	for(GrB_Index k = 0; nw_info != GxB_EXHAUSTED; k++) {
 		hll_init(&new_sets[k], HLL_BITS);
 		hll_init(&old_sets[k], HLL_BITS);
@@ -362,41 +379,70 @@ static ProcedureResult _calculate_centrality
 		}
 		nw_info = GxB_Vector_Iterator_next(nw_it);
 	}
-
 	GrB_free(&nw_it);
 
+	// printf("[centrality] HLL init: %.2f ms\n",
+	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
+
+	memset(change_arr, true, nvals * sizeof(bool));
+	#pragma omp parallel for schedule(static)
+	for(GrB_Index k = 0; k < nvals; k++) {
+		memcpy(old_sets[k].registers, new_sets[k].registers, reg_size);
+	}
+	//--------------------------------------------------------------------------
+	// HLL BFS propagation
+	//--------------------------------------------------------------------------
+
+
+	int64_t changes = 0;
+	// simple_tic(t_phase);
 	for(int d = 1; d <= CENTRALITY_MAX_ITER; d++) {
-		// snapshot current sketches before propagating
-		for(GrB_Index k = 0; k < nvals; k++) {
-			memcpy(old_sets[k].registers, new_sets[k].registers, reg_size);
+		simple_timer_t t_loop;
+
+		changes = 0;
+		// simple_tic(t_loop);
+
+		#pragma omp parallel for schedule(static)
+		for(GrB_Index i = 0; i < nvals; i++) {
+			for(GrB_Index k = A_p[i]; k < A_p[i + 1]; k++) {
+				if (change_arr[A_i[k]]) {
+					hll_merge(&new_sets[i], &old_sets[A_i[k]]);
+				}
+			}
 		}
+		// printf("[centrality] merge time: %.2f ms\n",
+		// 	TIMER_GET_ELAPSED_MILLISECONDS(t_loop));
 
-		bool changed = false;
-
+		// simple_tic(t_loop);
+		memset(change_arr, 0, nvals * sizeof(bool));
 		// merge each neighbor's pre-round set into this node's set;
 		// each node i only writes new_sets[i] and reads old_sets (snapshot),
 		// so iterations are fully independent
+		#pragma omp parallel for
 		for(GrB_Index i = 0; i < nvals; i++) {
-			double old_count = hll_count(&old_sets[i]);
-
-			for(GrB_Index k = A_p[i]; k < A_p[i + 1]; k++) {
-				hll_merge(&new_sets[i], &old_sets[A_i[k]]);
-			}
-
-			double delta = hll_count(&new_sets[i]) - old_count;
-			if(delta > 0) {
+			if (memcmp(new_sets[i].registers, old_sets[i].registers, reg_size)
+				!= 0){
+				double delta = hll_count(&new_sets[i]) - hll_count(&old_sets[i]);
 				flat_scores[i] += delta / d;
-				changed = true;
+				#pragma omp atomic
+				++changes;
+				memcpy(old_sets[i].registers, new_sets[i].registers, reg_size);
+				change_arr[i] = true;
 			}
 		}
 
 		// stop when no HLL cardinality changed this round
-		if(!changed) break;
+		if(changes == 0) break;
 	}
+
+	// printf("[centrality] HLL BFS propagation: %.2f ms\n",
+	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
 
 	//--------------------------------------------------------------------------
 	// write flat_scores into score_cont->x, clear iso, reload scores vector
 	//--------------------------------------------------------------------------
+
+	// simple_tic(t_phase);
 
 	// discard the 1-element iso x, create a fresh vector, then load flat_scores
 	GrB_OK(GrB_free(&score_cont->x));
@@ -411,6 +457,9 @@ static ProcedureResult _calculate_centrality
 	GrB_Index check_nvals = 0;
 	GrB_OK(GrB_Vector_nvals(&check_nvals, *scores));
 	ASSERT(check_nvals == nvals);
+
+	// printf("[centrality] score write-back: %.2f ms\n",
+	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
 
 	//--------------------------------------------------------------------------
 	// cleanup
@@ -428,6 +477,9 @@ static ProcedureResult _calculate_centrality
 	GrB_free(&score_cont);
 	GrB_free (&A_cont);
 	GrB_free (&_A);
+
+	// printf("[centrality] _calculate_centrality total: %.2f ms\n",
+	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_total));
 
 	return PROCEDURE_OK;
 }
@@ -516,8 +568,15 @@ ProcedureResult Proc_CentralityInvoke
 	bool sym          = false;
 	bool compact      = true;
 
+	// simple_timer_t t_invoke;
+	// simple_timer_t t_phase;
+	// simple_tic(t_invoke);
+	// simple_tic(t_phase);
+
 	GrB_OK(Build_Matrix(&A, &nodes, g, lbls, array_len(lbls), rels,
 			array_len(rels), sym, compact));
+	// printf("[centrality] Build_Matrix: %.2f ms\n",
+	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
 
 	array_free(lbls);
 	array_free(rels);
@@ -529,7 +588,10 @@ ProcedureResult Proc_CentralityInvoke
 		GrB_OK (GrB_Vector_assign_BOOL(
 			nodes, nodes, NULL, true, GrB_ALL, 0, GrB_DESC_S));
 	} else {
+		// simple_tic(t_phase);
 		get_node_attribute (nodes, g, weightAtt, defaultW, T_BOOL | T_INT64) ;
+		// printf("[centrality] get_node_attribute: %.2f ms\n",
+		// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
 	}
 
 
@@ -542,6 +604,9 @@ ProcedureResult Proc_CentralityInvoke
 		GrB_free (&scores);
 		return PROCEDURE_ERR;
 	}
+
+	// printf("[centrality] Proc_CentralityInvoke total: %.2f ms\n",
+	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_invoke));
 
 	pdata->scores = scores;
 
