@@ -483,9 +483,9 @@ class testAllShortestPaths():
         self.env.assertEquals(len(result.result_set), 2)
         # first the heavier path (A->C, weight 0.9), then the lighter
         # path (A->B->C, weight 0.2).
-        self.env.assertGreater(result.result_set[0][1], result.result_set[1][1])
-        self.env.assertAlmostEqual(result.result_set[0][1], 0.9, delta=1e-9)
-        self.env.assertAlmostEqual(result.result_set[1][1], 0.2, delta=1e-9)
+        self.env.assertGreater(result.result_set[0][0], result.result_set[1][0])
+        self.env.assertAlmostEqual(result.result_set[0][0], 0.9, delta=1e-9)
+        self.env.assertAlmostEqual(result.result_set[1][0], 0.2, delta=1e-9)
 
         # SSpaths: same graph, verify ordering for single-source paths.
         # From A the three reachable paths are: A->B (0.1), A->B->C (0.2), A->C (0.9).
@@ -505,6 +505,6 @@ class testAllShortestPaths():
         """)
 
         self.env.assertEquals(len(ss_result.result_set), 2)
-        self.env.assertGreater(ss_result.result_set[0][1], ss_result.result_set[1][1])
-        self.env.assertAlmostEqual(ss_result.result_set[0][1], 0.2, delta=1e-9)
-        self.env.assertAlmostEqual(ss_result.result_set[1][1], 0.1, delta=1e-9)
+        self.env.assertGreater(ss_result.result_set[0][0], ss_result.result_set[1][0])
+        self.env.assertAlmostEqual(ss_result.result_set[0][0], 0.2, delta=1e-9)
+        self.env.assertAlmostEqual(ss_result.result_set[1][0], 0.1, delta=1e-9)
