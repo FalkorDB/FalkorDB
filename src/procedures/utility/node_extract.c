@@ -21,21 +21,21 @@ typedef struct
 // outputs true if the current nodeID has the given attribute
 void _selectID_withAttribute
 (
-	bool *z,                   // [output] edge weight
+	bool *z,                   // [output] keep edge?
 	const void *x,             // unused
 	GrB_Index i,               // nodeID
 	GrB_Index j,               // unused
 	const selectContext *ctx   // theta
 ) {
 	ASSERT(sizeof(ctype) == sizeof(v.longval));
-	Node e;
+	Node n;
 	ASSERT(SCALAR_ENTRY(*x));
-	bool found = Graph_GetNode(ctx->g, (NodeID) i, &e);
+	bool found = Graph_GetNode(ctx->g, (NodeID) i, &n);
 	ASSERT(found == true);
 
 	SIValue v ;
-	GraphEntity_GetProperty ((GraphEntity *) &e, ctx->w, &v) ;
-	*z = SI_TYPE(v) & ctx->type;
+	GraphEntity_GetProperty ((GraphEntity *) &n, ctx->w, &v) ;
+	*z = (SI_TYPE(v) & ctx->type) != 0;
 }
 
 // get the value of a certain attribute given its c-type
@@ -132,7 +132,7 @@ void get_node_attribute
 	selectContext ctx = {.g = g, .w = attr, .type = allowed_types,
 	                     .defaultA = &default_val.longval };
 
-	GrB_Index  nrows = 0;
+	GrB_Index nrows = 0;
 	GrB_Vector       x        = NULL;
 	GrB_Type         ctx_type = NULL;
 	GrB_IndexUnaryOp selectOp = NULL; // select values within allowed types
@@ -144,6 +144,8 @@ void get_node_attribute
 
 	GrB_OK (GxB_Container_new(&cont));
 	GrB_OK (GrB_Type_new(&ctx_type, sizeof(selectContext)));
+	GrB_OK (GrB_Scalar_new(&ctx_s, ctx_type));
+	GrB_OK (GrB_Scalar_setElement_UDT(ctx_s, (void *) &ctx));
 	GrB_OK (GrB_Vector_size(&nrows, rows));
 
 	if (del_nodes){

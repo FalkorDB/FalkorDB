@@ -46,6 +46,7 @@ void Proc_Register() {
 	_procRegister("algo.SPpaths",          Proc_SPpathCtx);
 	_procRegister("algo.SSpaths",          Proc_SSpathCtx);
 	_procRegister("algo.betweenness",      Proc_BetweennessCtx);
+	_procRegister("algo.Centrality",       Proc_CentralityCtx);
 	_procRegister("algo.labelPropagation", Proc_CDLPCtx);
 
 	// register FullText Search generator
