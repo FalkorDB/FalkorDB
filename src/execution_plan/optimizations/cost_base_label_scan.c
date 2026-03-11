@@ -51,6 +51,10 @@
 //
 // Conditional Traverse | (b)<-(a:A)"
 //     Node By Label Scan | (b:B)"
+//
+// _transposeExpression checks whether the label-scan side of a pattern should
+// be swapped to reduce estimated cardinality. Returns true if a transposition
+// was performed, false otherwise.
 static bool _transposeExpression
 (
 	NodeByLabelScan *scan
@@ -273,6 +277,14 @@ static bool _transposeExpression
 	return true;
 }
 
+// _costBaseLabelScan optimizes a NodeByLabelScan by choosing the label with
+// the smallest cardinality when a node has multiple labels.
+//
+// For a node n:A:B, if |A| < |B|, the scan is switched from B to A and the
+// downstream traversal matrix is patched accordingly.
+//
+// Variable-length traversal types that are not CONDITIONAL_TRAVERSE or
+// EXPAND_INTO are skipped gracefully (no assertion failure).
 static void _costBaseLabelScan
 (
 	NodeByLabelScan *scan
@@ -373,6 +385,10 @@ static void _costBaseLabelScan
 	_AlgebraicExpression_InplaceRepurpose(operand, replacement);
 }
 
+// costBaseLabelScan is the entry point for the cost-based label scan
+// optimization. It collects all NodeByLabelScan operations in the plan and
+// attempts to either transpose the scan expression or pick the lowest-
+// cardinality label, whichever reduces the estimated row count most.
 void costBaseLabelScan
 (
 	ExecutionPlan *plan
