@@ -726,8 +726,8 @@ static SIValue *Proc_SPpathsStep
 	
 	if(single_pair_ctx->yield_path) {
 		*single_pair_ctx->yield_path = SI_Path(p.path);
-		Path_Free(p.path);
 	}
+	Path_Free(p.path);
 	if(single_pair_ctx->yield_path_weight) *single_pair_ctx->yield_path_weight = SI_DoubleVal(p.weight);
 	if(single_pair_ctx->yield_path_cost)   *single_pair_ctx->yield_path_cost   = SI_DoubleVal(p.cost);
 
