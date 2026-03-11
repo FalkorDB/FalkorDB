@@ -431,3 +431,64 @@ class testConfigTempFolder:
             # clean up
             shutil.rmtree(valid_dir)
 
+class testLoadTimeConfig(FlowTestsBase):
+    """
+    Test suite for validating FalkorDB load-time configuration defaults.
+
+    Inherits from FlowTestsBase to leverage shared test environment setup
+    and assertion utilities.
+    """
+
+    def __init__(self):
+        """
+        Initialize the test class.
+
+        Note: super().__init__() must be called to ensure FlowTestsBase
+        performs any required setup (e.g. connecting to the test environment).
+        """
+        super().__init__()
+
+    def test01_loadtime_config(self):
+        """
+        Verify that FalkorDB starts with the expected default configuration values.
+
+        Constructs a module argument string from the known defaults, launches
+        a FalkorDB environment with those arguments, then asserts that each
+        config key returns the expected value via `config_get`.
+
+        Defaults tested:
+            - CACHE_SIZE:              25
+            - VKEY_MAX_ENTITY_COUNT:   100000
+            - CMD_INFO:                True
+            - DELAY_INDEXING:          False
+            - IMPORT_FOLDER:           /var/lib/FalkorDB/import/
+            - TEMP_FOLDER:             /tmp
+            - JS_HEAP_SIZE:            268435456  (256 MB)
+            - JS_STACK_SIZE:           1048576    (1 MB)
+        """
+
+        defaults = [
+            ("CACHE_SIZE",            25),
+            ("VKEY_MAX_ENTITY_COUNT", 100000),
+            ("CMD_INFO",              "yes"),
+            ("DELAY_INDEXING",        "no"),
+            ("IMPORT_FOLDER",         "/var/lib/FalkorDB/import/"),
+            ("TEMP_FOLDER",           "/tmp"),
+            ("JS_HEAP_SIZE",          268435456),
+            ("JS_STACK_SIZE",         1048576),
+        ]
+
+        loadtime_args = " ".join(str(token) for pair in defaults for token in pair)
+        print (f"loadtime_args: {loadtime_args}")
+
+        env, db = Env(moduleArgs=loadtime_args)
+
+        for name, val in defaults:
+            if val == "yes":
+                val = True
+
+            elif val == "no":
+                val = False
+
+            env.assertEqual(db.config_get(name), val)
+
