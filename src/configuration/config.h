@@ -73,9 +73,9 @@ static const size_t RUNTIME_CONFIG_COUNT = sizeof(RUNTIME_CONFIGS) / sizeof(RUNT
 // emits an error and returns REDISMODULE_ERR on failure
 int Config_Init
 (
-	RedisModuleCtx *ctx,
-	RedisModuleString **argv,
-	int argc
+	RedisModuleCtx *ctx,       // redis module context
+	RedisModuleString **argv,  // arguments
+	int argc                   // number of arguments
 );
 
 // returns true if 'field_str' reffers to a configuration field and sets
