@@ -97,9 +97,9 @@ static void _process_yield
 	SinglePairCtx *ctx,
 	const char **yield
 ) {
-	ctx->yield_path         = NULL;
-	ctx->yield_path_weight  = NULL;
-	ctx->yield_path_cost    = NULL;
+	ctx->yield_path        = NULL ;
+	ctx->yield_path_weight = NULL ;
+	ctx->yield_path_cost   = NULL ;
 
 	int idx = 0;
 	for(uint i = 0; i < array_len(yield); i++) {
@@ -727,9 +727,11 @@ static SIValue *Proc_SPpathsStep
 	}
 	
 	if(single_pair_ctx->yield_path) {
-		*single_pair_ctx->yield_path = SI_Path(p.path);
-		Path_Free(p.path);
+		*single_pair_ctx->yield_path = SIPath_Wrap (&p.path) ;
+	} else {
+		Path_Free (p.path) ;
 	}
+
 	if(single_pair_ctx->yield_path_weight) *single_pair_ctx->yield_path_weight = SI_DoubleVal(p.weight);
 	if(single_pair_ctx->yield_path_cost)   *single_pair_ctx->yield_path_cost   = SI_DoubleVal(p.cost);
 
