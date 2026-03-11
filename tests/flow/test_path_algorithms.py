@@ -475,12 +475,12 @@ class testAllShortestPaths():
                 weightProp: 'weight',
                 maxLen: 3,
                 pathCount: 2
-            }) YIELD path, pathWeight
-            RETURN path, pathWeight
+            }) YIELD pathWeight
+            RETURN pathWeight
+            ORDER BY pathWeight DESC
         """)
 
         self.env.assertEquals(len(result.result_set), 2)
-        # The heap is a max-heap so results are polled heaviest-first:
         # first the heavier path (A->C, weight 0.9), then the lighter
         # path (A->B->C, weight 0.2).
         self.env.assertGreater(result.result_set[0][1], result.result_set[1][1])
@@ -499,8 +499,9 @@ class testAllShortestPaths():
                 weightProp: 'weight',
                 maxLen: 3,
                 pathCount: 2
-            }) YIELD path, pathWeight
-            RETURN path, pathWeight
+            }) YIELD pathWeight
+            RETURN pathWeight
+            ORDER BY pathWeight DESC
         """)
 
         self.env.assertEquals(len(ss_result.result_set), 2)
