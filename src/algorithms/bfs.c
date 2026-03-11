@@ -35,16 +35,14 @@ QGNode **BFS(QGNode *s, int *level) {
 			// Expand node N by visiting all of its neighbors
 			for(int j = 0; j < array_len(n->outgoing_edges); j++) {
 				QGEdge *e = n->outgoing_edges[j];
-				size_t dest_alias_len = strlen(e->dest->alias);
-				seen = raxFind(visited, (unsigned char *)e->dest->alias, dest_alias_len);
+				seen = raxFind(visited, (unsigned char *)e->dest->alias, strlen(e->dest->alias));
 				if(seen == raxNotFound) {
 					array_append(next, e->dest);
 				}
 			}
 			for(int j = 0; j < array_len(n->incoming_edges); j++) {
 				QGEdge *e = n->incoming_edges[j];
-				size_t src_alias_len = strlen(e->src->alias);
-				seen = raxFind(visited, (unsigned char *)e->src->alias, src_alias_len);
+				seen = raxFind(visited, (unsigned char *)e->src->alias, strlen(e->src->alias));
 				if(seen == raxNotFound) {
 					array_append(next, e->src);
 				}

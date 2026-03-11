@@ -25,10 +25,9 @@ bool _DFS(QGNode *n, int level, bool close_cycle, int current_level, rax *visite
 	bool not_seen;
 	for(uint i = 0; i < array_len(n->outgoing_edges); i++) {
 		QGEdge *e = n->outgoing_edges[i];
-		size_t dest_alias_len = strlen(e->dest->alias);
-		size_t e_alias_len = strlen(e->alias);
-		not_seen = raxFind(visited, (unsigned char *)e->dest->alias, dest_alias_len) == raxNotFound;
+		not_seen = raxFind(visited, (unsigned char *)e->dest->alias, strlen(e->dest->alias)) == raxNotFound;
 		if(not_seen || close_cycle) {
+			size_t e_alias_len = strlen(e->alias);
 			if(!raxInsert(used_edges, (unsigned char *)e->alias, e_alias_len, NULL, NULL)) continue;
 			array_append(*path, e);
 			if(_DFS(e->dest, level, close_cycle, current_level + 1, visited, used_edges, path)) return true;
@@ -39,10 +38,9 @@ bool _DFS(QGNode *n, int level, bool close_cycle, int current_level, rax *visite
 
 	for(uint i = 0; i < array_len(n->incoming_edges); i++) {
 		QGEdge *e = n->incoming_edges[i];
-		size_t src_alias_len = strlen(e->src->alias);
-		size_t e_alias_len = strlen(e->alias);
-		not_seen = raxFind(visited, (unsigned char *)e->src->alias, src_alias_len) == raxNotFound;
+		not_seen = raxFind(visited, (unsigned char *)e->src->alias, strlen(e->src->alias)) == raxNotFound;
 		if(not_seen || close_cycle) {
+			size_t e_alias_len = strlen(e->alias);
 			if(!raxInsert(used_edges, (unsigned char *)e->alias, e_alias_len, NULL, NULL)) continue;
 			array_append(*path, e);
 			if(_DFS(e->src, level, close_cycle, current_level + 1, visited, used_edges, path)) return true;
