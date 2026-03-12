@@ -34,7 +34,7 @@ class testCentrality(FlowTestsBase):
             config["defaultWeight"] = defaultWeight
 
         return self.graph.query(
-            """CALL algo.Centrality($config)
+            """CALL algo.HarmonicCentrality($config)
                                    YIELD node, score
                                    RETURN node.name, score
                                    ORDER BY score DESC""",
