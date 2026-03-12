@@ -1300,20 +1300,24 @@ static void _Config_SetToDefaults(void)
 	config.temp_folder = rm_strdup(TEMP_DIR_DEFAULT);
 
 	// set default JS runtime limits
-    config.js_heap_size  = JS_HEAP_SIZE_DEFAULT ;
-    config.js_stack_size = JS_STACK_SIZE_DEFAULT ;
+	config.js_heap_size  = JS_HEAP_SIZE_DEFAULT ;
+	config.js_stack_size = JS_STACK_SIZE_DEFAULT ;
 }
 
-int Config_Init(
-	RedisModuleCtx *ctx,
-	RedisModuleString **argv,
-	int argc)
-{
+// set module-level configurations to defaults or to user provided arguments
+// returns REDISMODULE_OK on success
+// emits an error and returns REDISMODULE_ERR on failure
+int Config_Init
+(
+	RedisModuleCtx *ctx,       // redis module context
+	RedisModuleString **argv,  // arguments
+	int argc                   // number of arguments
+) {
 	// make sure reconfiguration callback is already registered
-	ASSERT(config.cb != NULL);
+	ASSERT (config.cb != NULL) ;
 
 	// initialize the configuration to its default values
-	_Config_SetToDefaults();
+	_Config_SetToDefaults () ;
 
 	// register configurations with Redis CONFIG interface
 	if(_RegisterModuleConfigs(ctx) != REDISMODULE_OK) {
@@ -1333,72 +1337,66 @@ int Config_Init(
 	{
 		// emit an error if we received an odd number of arguments,
 		// as this indicates an invalid configuration
-		RedisModule_Log(ctx, "warning",
-						"FalkorDB received %d arguments, all configurations should be key-value pairs", argc);
-		return REDISMODULE_ERR;
+		RedisModule_Log (ctx, "warning",
+						"FalkorDB received %d arguments, all configurations"
+						"should be key-value pairs", argc) ;
+		return REDISMODULE_ERR ;
 	}
 
-	bool old_timeout_specified = false;
-	bool new_timeout_specified = false;
+	bool old_timeout_specified = false ;
+	bool new_timeout_specified = false ;
 
-	for (int i = 0; i < argc; i += 2)
-	{
+	for (int i = 0; i < argc; i += 2) {
 		// each configuration is a key-value pair. (K, V)
 
 		//----------------------------------------------------------------------
 		// get field
 		//----------------------------------------------------------------------
 
-		Config_Option_Field field;
-		RedisModuleString *val = argv[i + 1];
-		const char *field_str = RedisModule_StringPtrLen(argv[i], NULL);
-		const char *val_str = RedisModule_StringPtrLen(val, NULL);
+		Config_Option_Field field ;
+		RedisModuleString *val = argv [i + 1] ;
+		const char *val_str    = RedisModule_StringPtrLen (val, NULL) ;
+		const char *field_str  = RedisModule_StringPtrLen (argv [i], NULL) ;
 
 		// exit if configuration is not aware of field
-		if (!Config_Contains_field(field_str, &field))
-		{
-			RedisModule_Log(ctx, "error",
-							"Encountered unknown configuration field '%s'", field_str);
-			return REDISMODULE_ERR;
+		if (!Config_Contains_field (field_str, &field)) {
+			RedisModule_Log (ctx, "error",
+							"Encountered unknown configuration field '%s'",
+							field_str) ;
+			return REDISMODULE_ERR ;
 		}
 
-		if (field == Config_TIMEOUT_DEFAULT || field == Config_TIMEOUT_MAX)
-		{
-			new_timeout_specified = true;
+		if (field == Config_TIMEOUT_DEFAULT || field == Config_TIMEOUT_MAX) {
+			new_timeout_specified = true ;
 		}
 
-		if (field == Config_TIMEOUT)
-		{
-			old_timeout_specified = true;
+		if (field == Config_TIMEOUT) {
+			old_timeout_specified = true ;
 		}
 
 		// exit if encountered an error when setting configuration
-		char *error = NULL;
-		if (!Config_Option_set(field, val_str, &error))
-		{
-			if (error != NULL)
-			{
-				RedisModule_Log(ctx, "error",
+		char *error = NULL ;
+		if (!Config_Option_set (field, val_str, &error)) {
+			if (error != NULL) {
+				RedisModule_Log (ctx, "error",
 								"Failed setting field '%s' with error: %s",
-								field_str, error);
+								field_str, error) ;
+			} else {
+				RedisModule_Log (ctx, "error",
+								"Failed setting field '%s'", field_str) ;
 			}
-			else
-			{
-				RedisModule_Log(ctx, "error",
-								"Failed setting field '%s'", field_str);
-			}
-			return REDISMODULE_ERR;
+			return REDISMODULE_ERR ;
 		}
 	}
 
-	if (old_timeout_specified && new_timeout_specified)
-	{
-		RedisModule_Log(ctx, "error",
-						"The TIMEOUT configuration parameter should be removed when specifying TIMEOUT_DEFAULT and/or TIMEOUT_MAX");
-		return REDISMODULE_ERR;
+	if (old_timeout_specified && new_timeout_specified) {
+		RedisModule_Log (ctx, "error",
+						"The TIMEOUT configuration parameter should be removed"
+						"when specifying TIMEOUT_DEFAULT and/or TIMEOUT_MAX") ;
+		return REDISMODULE_ERR ;
 	}
 
-	return REDISMODULE_OK;
+	return REDISMODULE_OK ;
 }
 
 bool Config_Option_get(
@@ -1743,11 +1741,14 @@ bool Config_Option_get(
 	return true;
 }
 
-bool Config_Option_set(
+bool Config_Option_set
+(
 	Config_Option_Field field,
 	const char *val,
-	char **err)
-{
+	char **err
+) {
+	bool updated = false ;  // indicate rather or not a value was updated
+
 	//--------------------------------------------------------------------------
 	// set the option
 	//--------------------------------------------------------------------------
@@ -1758,361 +1759,450 @@ bool Config_Option_set(
 		// max queued queries
 		//----------------------------------------------------------------------
 
-	case Config_MAX_QUEUED_QUERIES:
-	{
-		long long max_queued_queries;
-		if (!_Config_ParsePositiveInteger(val, &max_queued_queries))
+		case Config_MAX_QUEUED_QUERIES:
 		{
-			return false;
+			long long max_queued_queries;
+			if (!_Config_ParsePositiveInteger(val, &max_queued_queries))
+			{
+				return false;
+			}
+
+			// update only if value changed
+			if (Config_max_queued_queries_get () != max_queued_queries) {
+				Config_max_queued_queries_set (max_queued_queries) ;
+				updated = true ;
+			}
 		}
-		Config_max_queued_queries_set(max_queued_queries);
-	}
-	break;
+		break;
 
 		//----------------------------------------------------------------------
 		// timeout
 		//----------------------------------------------------------------------
 
-	case Config_TIMEOUT:
-	{
-		long long timeout;
-		if (!_Config_ParseNonNegativeInteger(val, &timeout))
-			return false;
-		if (!_Config_check_if_new_timeout_used())
+		case Config_TIMEOUT:
 		{
-			if (err)
-				*err = "The TIMEOUT configuration parameter is deprecated. Please set TIMEOUT_MAX and TIMEOUT_DEFAULT instead";
-			return false;
+			long long timeout ;
+			if (!_Config_ParseNonNegativeInteger (val, &timeout)) {
+				return false ;
+			}
+
+			if (!_Config_check_if_new_timeout_used ()) {
+				if (err) {
+					*err = "The TIMEOUT configuration parameter is deprecated."
+						" Please set TIMEOUT_MAX and TIMEOUT_DEFAULT instead";
+				}
+				return false ;
+			}
+			if (Config_timeout_get () != timeout) {
+				Config_timeout_set (timeout) ;
+				updated = true ;
+			}
 		}
-		Config_timeout_set(timeout);
-	}
-	break;
+		break;
 
 		//----------------------------------------------------------------------
 		// timeout default
 		//----------------------------------------------------------------------
 
-	case Config_TIMEOUT_DEFAULT:
-	{
-		long long timeout_default;
-		if (!_Config_ParseNonNegativeInteger(val, &timeout_default))
-			return false;
-		if (!Config_timeout_default_set(timeout_default))
+		case Config_TIMEOUT_DEFAULT:
 		{
-			if (err)
-				*err = "TIMEOUT_DEFAULT configuration parameter cannot be set to a value higher than TIMEOUT_MAX";
-			return false;
+			long long timeout_default ;
+			if (!_Config_ParseNonNegativeInteger (val, &timeout_default)) {
+				return false ;
+			}
+
+			if (Config_timeout_default_get () != timeout_default) {
+				if (!Config_timeout_default_set (timeout_default)) {
+					if (err) {
+						*err = "TIMEOUT_DEFAULT configuration parameter cannot be"
+							" set to a value higher than TIMEOUT_MAX" ;
+					}
+					return false ;
+				}
+				updated = true ;
+			}
 		}
-	}
-	break;
+		break ;
 
 		//----------------------------------------------------------------------
 		// timeout max
 		//----------------------------------------------------------------------
 
-	case Config_TIMEOUT_MAX:
-	{
-		long long timeout_max;
-		if (!_Config_ParseNonNegativeInteger(val, &timeout_max))
-			return false;
-		if (!Config_timeout_max_set(timeout_max))
+		case Config_TIMEOUT_MAX:
 		{
-			if (err)
-				*err = "TIMEOUT_MAX configuration parameter cannot be set to a value lower than TIMEOUT_DEFAULT";
-			return false;
+			long long timeout_max ;
+			if (!_Config_ParseNonNegativeInteger (val, &timeout_max)) {
+				return false ;
+			}
+
+			if (Config_timeout_max_get () != timeout_max) {
+				if (!Config_timeout_max_set (timeout_max)) {
+					if (err)
+						*err = "TIMEOUT_MAX configuration parameter cannot be"
+							" set to a value lower than TIMEOUT_DEFAULT" ;
+					return false ;
+				}
+				updated = true ;
+			}
 		}
-	}
-	break;
+		break ;
 
 		//----------------------------------------------------------------------
 		// cache size
 		//----------------------------------------------------------------------
 
-	case Config_CACHE_SIZE:
-	{
-		long long cache_size;
-		if (!_Config_ParsePositiveInteger(val, &cache_size))
-			return false;
-		Config_cache_size_set(cache_size);
-	}
-	break;
+		case Config_CACHE_SIZE:
+		{
+			long long cache_size ;
+			if (!_Config_ParsePositiveInteger (val, &cache_size)) {
+				return false ;
+			}
+
+			if (Config_cache_size_get () != cache_size) {
+				Config_cache_size_set (cache_size) ;
+				updated = true ;
+			}
+		}
+		break ;
 
 		//----------------------------------------------------------------------
 		// OpenMP thread count
 		//----------------------------------------------------------------------
 
-	case Config_OPENMP_NTHREAD:
-	{
-		long long omp_nthreads;
-		if (!_Config_ParsePositiveInteger(val, &omp_nthreads))
-			return false;
+		case Config_OPENMP_NTHREAD:
+		{
+			long long omp_nthreads ;
+			if (!_Config_ParsePositiveInteger (val, &omp_nthreads)) {
+				return false ;
+			}
 
-		Config_OMP_thread_count_set(omp_nthreads);
-	}
-	break;
+			if (Config_OMP_thread_count_get () != omp_nthreads) {
+				Config_OMP_thread_count_set (omp_nthreads) ;
+				updated = true ;
+			}
+		}
+		break ;
 
 		//----------------------------------------------------------------------
 		// thread-pool size
 		//----------------------------------------------------------------------
 
-	case Config_THREAD_POOL_SIZE:
-	{
-		long long pool_nthreads;
-		if (!_Config_ParsePositiveInteger(val, &pool_nthreads))
-			return false;
+		case Config_THREAD_POOL_SIZE:
+		{
+			long long pool_nthreads ;
+			if (!_Config_ParsePositiveInteger (val, &pool_nthreads)) {
+				return false ;
+			}
 
-		Config_thread_pool_size_set(pool_nthreads);
-	}
-	break;
+			if (Config_thread_pool_size_get () != pool_nthreads) {
+				Config_thread_pool_size_set (pool_nthreads) ;
+				updated = true ;
+			}
+		}
+		break ;
 
 		//----------------------------------------------------------------------
 		// result-set size
 		//----------------------------------------------------------------------
 
-	case Config_RESULTSET_MAX_SIZE:
-	{
-		long long resultset_max_size;
-		if (!_Config_ParseInteger(val, &resultset_max_size))
-			return false;
+		case Config_RESULTSET_MAX_SIZE:
+		{
+			long long resultset_max_size ;
+			if (!_Config_ParseInteger (val, &resultset_max_size)) {
+				return false ;
+			}
 
-		Config_resultset_max_size_set(resultset_max_size);
-	}
-	break;
+			if (Config_resultset_max_size_get () != resultset_max_size) {
+				Config_resultset_max_size_set(resultset_max_size);
+				updated = true ;
+			}
+		}
+		break ;
 
 		//----------------------------------------------------------------------
 		// virtual key entity count
 		//----------------------------------------------------------------------
 
-	case Config_VKEY_MAX_ENTITY_COUNT:
-	{
-		long long vkey_max_entity_count;
-		if (!_Config_ParseNonNegativeInteger(val, &vkey_max_entity_count))
-			return false;
+		case Config_VKEY_MAX_ENTITY_COUNT:
+		{
+			long long vkey_max_entity_count ;
+			if (!_Config_ParseNonNegativeInteger (val, &vkey_max_entity_count)) {
+				return false ;
+			}
 
-		Config_virtual_key_entity_count_set(vkey_max_entity_count);
-	}
-	break;
+			if (Config_virtual_key_entity_count_get () != vkey_max_entity_count) {
+				Config_virtual_key_entity_count_set(vkey_max_entity_count);
+				updated = true ;
+			}
+		}
+		break ;
 
 		//----------------------------------------------------------------------
 		// async deleteion
 		//----------------------------------------------------------------------
 
-	case Config_ASYNC_DELETE:
-	{
-		bool async_delete;
-		if (!_Config_ParseYesNo(val, &async_delete))
-			return false;
+		case Config_ASYNC_DELETE:
+		{
+			bool async_delete ;
+			if (!_Config_ParseYesNo (val, &async_delete)) {
+				return false ;
+			}
 
-		Config_async_delete_set(async_delete);
-	}
-	break;
+			if (Config_async_delete_get () != async_delete) {
+				Config_async_delete_set (async_delete) ;
+				updated = true ;
+			}
+		}
+		break ;
 
 		//----------------------------------------------------------------------
 		// query mem capacity
 		//----------------------------------------------------------------------
 
-	case Config_QUERY_MEM_CAPACITY:
-	{
-		long long query_mem_capacity;
-		if (!_Config_ParseNonNegativeInteger(val, &query_mem_capacity))
-			return false;
+		case Config_QUERY_MEM_CAPACITY:
+		{
+			long long query_mem_capacity ;
+			if (!_Config_ParseNonNegativeInteger (val, &query_mem_capacity)) {
+				return false ;
+			}
 
-		Config_query_mem_capacity_set(query_mem_capacity);
-	}
-	break;
+			if (Config_query_mem_capacity_get () != query_mem_capacity) {
+				Config_query_mem_capacity_set (query_mem_capacity) ;
+				updated = true ;
+			}
+		}
+		break ;
 
 		//----------------------------------------------------------------------
 		// number of pending changed befor Delta_Matrix flushed
 		//----------------------------------------------------------------------
 
-	case Config_DELTA_MAX_PENDING_CHANGES:
-	{
-		long long delta_max_pending_changes;
-		if (!_Config_ParseNonNegativeInteger(val, &delta_max_pending_changes))
-			return false;
+		case Config_DELTA_MAX_PENDING_CHANGES:
+		{
+			long long delta_max_pending_changes ;
+			if (!_Config_ParseNonNegativeInteger (val, &delta_max_pending_changes)) {
+				return false ;
+			}
 
-		Config_delta_max_pending_changes_set(delta_max_pending_changes);
-	}
-	break;
+			if (Config_delta_max_pending_changes_get () != delta_max_pending_changes) {
+				Config_delta_max_pending_changes_set (delta_max_pending_changes) ;
+				updated = true ;
+			}
+		}
+		break ;
 
 		//----------------------------------------------------------------------
 		// size of buffer to maintain as margin in matrices
 		//----------------------------------------------------------------------
 
-	case Config_NODE_CREATION_BUFFER:
-	{
-		long long node_creation_buffer;
-		if (!_Config_ParseNonNegativeInteger(val, &node_creation_buffer))
-			return false;
-
-		// node_creation_buffer should be at-least 128
-		node_creation_buffer =
-			(node_creation_buffer < 128) ? 128 : node_creation_buffer;
-
-		// retrieve the MSB of the value
-		long long msb = (sizeof(long long) * 8) - __builtin_clzll(node_creation_buffer);
-		long long set_msb = 1 << (msb - 1);
-
-		// if the value is not a power of 2
-		// (if any bits other than the MSB are 1),
-		// raise it to the next power of 2
-		if ((~set_msb & node_creation_buffer) != 0)
+		case Config_NODE_CREATION_BUFFER:
 		{
-			node_creation_buffer = 1 << msb;
+			long long node_creation_buffer ;
+			if (!_Config_ParseNonNegativeInteger (val, &node_creation_buffer)) {
+				return false ;
+			}
+
+			// node_creation_buffer should be at-least 128
+			node_creation_buffer = (node_creation_buffer < 128) ?
+				128 :
+				node_creation_buffer ;
+
+			// retrieve the MSB of the value
+			long long msb = (sizeof(long long) * 8) - __builtin_clzll (node_creation_buffer) ;
+			long long set_msb = 1 << (msb - 1) ;
+
+			// if the value is not a power of 2
+			// (if any bits other than the MSB are 1),
+			// raise it to the next power of 2
+			if ((~set_msb & node_creation_buffer) != 0) {
+				node_creation_buffer = 1 << msb ;
+			}
+			if (Config_node_creation_buffer_get () != node_creation_buffer) {
+				Config_node_creation_buffer_set (node_creation_buffer) ;
+				updated = true ;
+			}
 		}
-		Config_node_creation_buffer_set(node_creation_buffer);
-	}
-	break;
+		break ;
 
 		//----------------------------------------------------------------------
 		// cmd info
 		//----------------------------------------------------------------------
 
-	case Config_CMD_INFO:
-	{
-		bool cmd_info_on = false;
-		if (!_Config_ParseYesNo(val, &cmd_info_on))
+		case Config_CMD_INFO:
 		{
-			return false;
-		}
+			bool cmd_info_on = false ;
+			if (!_Config_ParseYesNo (val, &cmd_info_on)) {
+				return false ;
+			}
 
-		Config_cmd_info_set(cmd_info_on);
-	}
-	break;
+			if (Config_cmd_info_get () != cmd_info_on) {
+				Config_cmd_info_set (cmd_info_on) ;
+				updated = true ;
+			}
+		}
+		break ;
 
 		//----------------------------------------------------------------------
 		// cmd info max queries count
 		//----------------------------------------------------------------------
 
-	case Config_CMD_INFO_MAX_QUERY_COUNT:
-	{
-		long long count = 0;
-		if (!_Config_ParseNonNegativeInteger(val, &count))
-			return false;
-		if (count > UINT64_MAX)
-			return false;
+		case Config_CMD_INFO_MAX_QUERY_COUNT:
+		{
+			long long count = 0 ;
+			if (!_Config_ParseNonNegativeInteger (val, &count)) {
+				return false ;
+			}
+			if (count > UINT64_MAX) {
+				return false ;
+			}
 
-		Config_cmd_info_max_queries_set(count);
-	}
-	break;
+			if (Config_cmd_info_max_queries_get () != count) {
+				Config_cmd_info_max_queries_set (count) ;
+				updated = true ;
+			}
+		}
+		break ;
 
 		//----------------------------------------------------------------------
 		// effects threshold
 		//----------------------------------------------------------------------
 
-	case Config_EFFECTS_THRESHOLD:
-	{
-		long long threshold;
-		if (!_Config_ParseNonNegativeInteger(val, &threshold))
+		case Config_EFFECTS_THRESHOLD:
 		{
-			return false;
+			long long threshold ;
+			if (!_Config_ParseNonNegativeInteger (val, &threshold)) {
+				return false ;
+			}
+			if (Config_effects_threshold_get () != threshold) {
+				Config_effects_threshold_set (threshold) ;
+				updated = true ;
+			}
 		}
-		Config_effects_threshold_set(threshold);
-	}
-	break;
+		break ;
 
 		//----------------------------------------------------------------------
 		// bolt protocol port
 		//----------------------------------------------------------------------
 
-	case Config_BOLT_PORT:
-	{
-		long long port;
-		if (!_Config_ParseInteger(val, &port))
+		case Config_BOLT_PORT:
 		{
-			return false;
+			long long port ;
+			if (!_Config_ParseInteger (val, &port)) {
+				return false ;
+			}
+			if (Config_bolt_port_get () != port) {
+				Config_bolt_port_set (port) ;
+				updated = true ;
+			}
 		}
-		Config_bolt_port_set(port);
-	}
-	break;
+		break ;
 
 		//----------------------------------------------------------------------
 		// delay indexing
 		//----------------------------------------------------------------------
 
-	case Config_DELAY_INDEXING:
-	{
-		bool delay_indexing;
-		if (!_Config_ParseYesNo(val, &delay_indexing))
-			return false;
+		case Config_DELAY_INDEXING:
+		{
+			bool delay_indexing ;
+			if (!_Config_ParseYesNo (val, &delay_indexing)) {
+				return false ;
+			}
 
-		Config_delay_indexing_set(delay_indexing);
-	}
-	break;
+			if (Config_delay_indexing_get () != delay_indexing) {
+				Config_delay_indexing_set (delay_indexing) ;
+				updated = true ;
+			}
+		}
+		break ;
 
 		//----------------------------------------------------------------------
 		// import folder path
 		//----------------------------------------------------------------------
 
-	case Config_IMPORT_FOLDER:
-	{
-		ASSERT(val != NULL);
-		Config_import_folder_set(val);
-	}
-	break;
+		case Config_IMPORT_FOLDER:
+		{
+			ASSERT (val != NULL) ;
+			if (strcmp (Config_import_folder_get (), val) != 0) {
+				Config_import_folder_set (val) ;
+				updated = true ;
+			}
+		}
+		break ;
 
 		//----------------------------------------------------------------------
 		// temp folder path
 		//----------------------------------------------------------------------
 
-	case Config_TEMP_FOLDER:
-	{
-		ASSERT(val != NULL);
-
-		// check that path exists
-		if (access(val, F_OK) != 0)
+		case Config_TEMP_FOLDER:
 		{
-			if (err)
-				*err = "TEMP_FOLDER path does not exist";
-			return false;
-		}
+			ASSERT (val != NULL) ;
 
-		// check that path is a directory
-		struct stat st;
-		if (stat(val, &st) != 0 || !S_ISDIR(st.st_mode))
-		{
-			if (err)
-				*err = "TEMP_FOLDER path is not a directory";
-			return false;
-		}
-
-		// check that process has write access
-		if (access(val, W_OK) != 0)
-		{
-			if (err)
-				*err = "No write access to TEMP_FOLDER path";
-			return false;
-		}
-
-		Config_temp_folder_set(val);
-	}
-	break;
-
-	case Config_JS_HEAP_SIZE:
-    {
-        long long heap_size;
-        if (!_Config_ParsePositiveInteger (val, &heap_size) || heap_size < 1048576) {
-			if (err) {
-				*err = "JS_HEAP_SIZE must be at least 1MB (1048576)";
+			// check that path exists
+			if (access (val, F_OK) != 0)
+			{
+				if (err)
+					*err = "TEMP_FOLDER path does not exist";
+				return false;
 			}
-            return false ;
-        }
-        Config_js_heap_size_set ((size_t)heap_size) ;
-    }
-    break ;
 
-    case Config_JS_STACK_SIZE:
-    {
-        long long stack_size ;
-        if (!_Config_ParsePositiveInteger (val, &stack_size) || stack_size < 1048576) {
-			if (err) {
-				*err = "JS_STACK_SIZE must be at least 1MB (1048576)";
+			// check that path is a directory
+			struct stat st;
+			if (stat(val, &st) != 0 || !S_ISDIR(st.st_mode))
+			{
+				if (err)
+					*err = "TEMP_FOLDER path is not a directory";
+				return false;
 			}
-            return false ;
-        }
-        Config_js_stack_size_set ((size_t)stack_size) ;
-    }
-    break ;
+
+			// check that process has write access
+			if (access(val, W_OK) != 0)
+			{
+				if (err)
+					*err = "No write access to TEMP_FOLDER path";
+				return false;
+			}
+
+			if (strcmp (Config_temp_folder_get (), val) != 0) {
+				Config_temp_folder_set (val) ;
+				updated = true ;
+			}
+		}
+		break ;
+
+		case Config_JS_HEAP_SIZE:
+		{
+			long long heap_size ;
+			if (!_Config_ParsePositiveInteger (val, &heap_size) ||
+				heap_size < 1048576) {
+				if (err) {
+					*err = "JS_HEAP_SIZE must be at least 1MB (1048576)" ;
+				}
+				return false ;
+			}
+
+			if (Config_js_heap_size_get () != heap_size) {
+				Config_js_heap_size_set ((size_t)heap_size) ;
+				updated = true ;
+			}
+		}
+		break ;
+
+		case Config_JS_STACK_SIZE:
+		{
+			long long stack_size ;
+			if (!_Config_ParsePositiveInteger (val, &stack_size) || stack_size < 1048576) {
+				if (err) {
+					*err = "JS_STACK_SIZE must be at least 1MB (1048576)" ;
+				}
+				return false ;
+			}
+
+			if (Config_js_stack_size_get () != stack_size) {
+				Config_js_stack_size_set ((size_t)stack_size) ;
+				updated = true ;
+			}
+		}
+		break ;
 
 		//----------------------------------------------------------------------
 		// invalid option
@@ -2122,7 +2212,7 @@ bool Config_Option_set(
 		return false ;
 	}
 
-	if (config.cb) {
+	if (updated && config.cb) {
 		config.cb (field) ;
 	}
 
