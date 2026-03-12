@@ -7,10 +7,14 @@ class testUndoLog():
     def __init__(self):
         self.env, self.db = Env()
         self.conn = self.env.getConnection()
+        self.db.config_set("ASYNC_DELETE", "no")
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def tearDown(self):
-        self.graph.delete()
+        try:
+            self.graph.delete()
+        except ResponseError as e:
+            self.env.assertContains("Invalid graph operation on empty key", str(e))
 
     def test00_undo_schema(self):
         try:
@@ -49,10 +53,18 @@ class testUndoLog():
 
 
     def test02_undo_create_edge(self):
-        # test undo create edge only by creating a node first so the schema is created
-        self.graph.query("CREATE (:N {v: 1})-[:R]->(:N {v: 2})")
+        graph = self.db.select_graph(f"{GRAPH_ID}-create-edge")
+
+        # ensure a clean graph for this test
         try:
-            self.graph.query("""MATCH (s:N {v: 1}), (t:N {v: 2})
+            graph.delete()
+        except:
+            pass
+
+        # test undo create edge by creating endpoints first
+        graph.query("CREATE (:N {v: 1}), (:N {v: 2})")
+        try:
+            graph.query("""MATCH (s:N {v: 1}), (t:N {v: 2})
                                 CREATE (s)-[r:R]->(t)
                                 WITH r
                                 RETURN 1 * r""")
@@ -61,9 +73,11 @@ class testUndoLog():
         except:
             pass
 
-        # edge [r:R] should have been removed
-        result = self.graph.query("MATCH ()-[r:R]->() RETURN r")
-        self.env.assertEquals(len(result.result_set), 1)
+        # no edge should exist, rollback should remove the created edge
+        result = graph.query("MATCH ()-[r:R]->() RETURN r")
+        self.env.assertEquals(len(result.result_set), 0)
+
+        graph.delete()
 
     def test03_undo_delete_node(self):
         self.graph.query("CREATE (:N)")

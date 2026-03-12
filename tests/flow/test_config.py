@@ -13,6 +13,32 @@ class testConfig(FlowTestsBase):
         self.redis_con = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
+    def tearDown(self):
+        # Reset mutable runtime configs to defaults so changes in one test
+        # don't leak into subsequent flow tests sharing the same Redis process.
+        defaults = {
+            "TIMEOUT": 0,
+            "TIMEOUT_DEFAULT": 0,
+            "TIMEOUT_MAX": 0,
+            "RESULTSET_SIZE": -1,
+            "MAX_QUEUED_QUERIES": 4294967295,
+            "QUERY_MEM_CAPACITY": 0,
+            "DELTA_MAX_PENDING_CHANGES": 10000,
+            "VKEY_MAX_ENTITY_COUNT": 100000,
+            "CMD_INFO": 1,
+            "MAX_INFO_QUERIES": 1000,
+            "EFFECTS_THRESHOLD": 300,
+            "DELAY_INDEXING": 0,
+            "JS_HEAP_SIZE": 256 * 1024 * 1024,
+            "JS_STACK_SIZE": 1024 * 1024,
+        }
+
+        for name, value in defaults.items():
+            try:
+                self.db.config_set(name, value)
+            except redis.exceptions.ResponseError:
+                pass
+
     def test01_config_get(self):
         # Try reading 'QUERY_MEM_CAPACITY' from config
         config_name = "QUERY_MEM_CAPACITY"
@@ -34,7 +60,8 @@ class testConfig(FlowTestsBase):
                 ("TIMEOUT_MAX",  0),
                 ("CACHE_SIZE", 25),
                 ("ASYNC_DELETE", [0,1]), # could be either 0 or 1 depending on load time config
-                ("OMP_THREAD_COUNT", os.cpu_count()),
+                # OMP thread count can be 1 when OpenMP is unavailable.
+                ("OMP_THREAD_COUNT", [1, os.cpu_count()]),
                 ("THREAD_COUNT", os.cpu_count()),
                 ("RESULTSET_SIZE", -1),
                 ("VKEY_MAX_ENTITY_COUNT", 100000),
@@ -452,7 +479,27 @@ class testConfigTempFolder:
             shutil.rmtree(valid_dir)
 
 class testConfigRewritePersist:
+    def _reset_runtime_configs(self):
+        if not hasattr(self, "db"):
+            return
+
+        defaults = {
+            "TIMEOUT": 0,
+            "TIMEOUT_DEFAULT": 0,
+            "TIMEOUT_MAX": 0,
+            "RESULTSET_SIZE": -1,
+            "CMD_INFO": 1,
+        }
+
+        for name, value in defaults.items():
+            try:
+                self.db.config_set(name, value)
+            except Exception:
+                pass
+
     def teardown_method(self):
+        self._reset_runtime_configs()
+
         if hasattr(self, "env"):
             self.env.stop()
         if hasattr(self, "redis_proc") and self.redis_proc:
@@ -549,7 +596,8 @@ class testConfigRewritePersist:
         self.env.assertEqual(self.db.config_get("CMD_INFO"), 0)
 
         # rewrite and ensure persisted in file
-        self.env.assertEqual(self.redis_con.config_rewrite(), True)
+        rewrite_result = self.redis_con.config_rewrite()
+        self.env.assertIn(rewrite_result, [True, "OK"])
         with open(self.cfg_path, "r") as cfg:
             contents = cfg.read().lower()
 
