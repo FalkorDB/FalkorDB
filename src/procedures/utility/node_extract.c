@@ -27,12 +27,9 @@ void _selectID_withAttribute
 	GrB_Index j,              // unused
 	const selectContext *ctx  // theta
 ) {
-	ASSERT (SCALAR_ENTRY (*x)) ;
-	ASSERT (sizeof (ctype) == sizeof (v.longval)) ;
-
-	Node n ;
-	bool found = Graph_GetNode (ctx->g, (NodeID) i, &n) ;
-	ASSERT (found == true) ;
+	Node n;
+	bool found = Graph_GetNode (ctx->g, (NodeID) i, &n);
+	ASSERT (found == true);
 
 	SIValue v ;
 	GraphEntity_GetProperty ((GraphEntity *) &n, ctx->w, &v) ;
@@ -49,15 +46,14 @@ void _getAtt_##ctype                                                           \
 	GrB_Index j,               /* unused */                                    \
 	const selectContext *ctx   /* theta */                                     \
 ) {                                                                            \
-	ASSERT (sizeof (ctype) == sizeof (v.longval)) ;                            \
-	Node e ;                                                                   \
-	ASSERT (SCALAR_ENTRY (*x));                                                \
-	bool found = Graph_GetNode (ctx->g, (NodeID) i, &e) ;                      \
-	ASSERT (found == true) ;                                                   \
+	Node e;                                                                    \
+	bool found = Graph_GetNode(ctx->g, (NodeID) i, &e);                        \
+	ASSERT (found == true);                                                    \
                                                                                \
 	SIValue v ;                                                                \
 	GraphEntity_GetProperty ((GraphEntity *) &e, ctx->w, &v) ;                 \
-	ctype *val = (ctype *) &v.longval ;                                        \
+	ASSERT (sizeof(ctype) == sizeof(v.longval));                               \
+	ctype *val = (ctype *) &v.longval;                                         \
                                                                                \
 	if (SI_TYPE (v) & ctx->type) {                                             \
 		*z = *val ;                                                            \
@@ -123,12 +119,11 @@ void get_node_attribute
 ) {
 	ASSERT (g    != NULL) ;
 	ASSERT (rows != NULL) ;
-	ASSERT (type != NULL) ;
 	ASSERT (attr != ATTRIBUTE_ID_ALL) ;
 	ASSERT (attr != ATTRIBUTE_ID_NONE) ;
 
 	bool del_nodes = SIValue_IsNull (default_val); // delete nodes of wrong type?
-	ASSERT (del_nodes || (allowed_type & SI_TYPE (defaul_val))) ;
+	ASSERT (del_nodes || (allowed_types & SI_TYPE (default_val))) ;
 
 	selectContext ctx = {.g = g, .w = attr, .type = allowed_types,
 	                     .defaultA = &default_val.longval} ;

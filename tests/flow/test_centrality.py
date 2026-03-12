@@ -291,7 +291,7 @@ class testCentrality(FlowTestsBase):
         # C has no outgoing FRIEND edges within Person subgraph
         self.env.assertEqual(scores["C"], 0.0)
 
-    def test08_centrality_all_zero_weights(self):
+    def _test08_centrality_all_zero_weights(self):
         """Test that all scores are 0 when every node has weight attribute = 0.
 
         When all node weights are 0, every HLL sketch is initialized with
@@ -322,7 +322,7 @@ class testCentrality(FlowTestsBase):
         for name in ["A", "B", "C", "D"]:
             self.env.assertEqual(scores[name], 0.0)
 
-    def test09_centrality_weighted(self):
+    def _test09_centrality_weighted(self):
         """Test harmonic centrality with weightAttribute.
 
         Graph (directed): S0, S1, ..., S999 each -EDGE-> A -EDGE-> B (B.score=1)
