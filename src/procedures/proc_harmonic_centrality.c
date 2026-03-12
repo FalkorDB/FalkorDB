@@ -7,83 +7,145 @@
 #include "LAGraphX.h"
 #include "GraphBLAS.h"
 
-#include "proc_msf.h"
 #include "../value.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
 #include "../datatypes/map.h"
+#include "../util/mt19937-64.h"
 #include "../datatypes/array.h"
 #include "./utility/internal.h"
 #include "../graph/graphcontext.h"
+#include "proc_harmonic_centrality.h"
 
 #include <string.h>
 #include <stdio.h>
-#include "hll/hll.h"
 #include "../util/simple_timer.h"
 
-#define HLL_BITS 10              // 1024 registers, ~3.25% estimation error
-#define CENTRALITY_MAX_ITER 100  // maximum BFS levels to propagate
+#define CENTRALITY_MAX_ITER 100
+#define HLL_P 10                   // Precision
+#define HLL_REGISTERS (1 << HLL_P) // number of registers
+#define HLL_ALPHA 0.72134          // Constant for m >= 128
+// register a function (or type) and the jit string for its definition
+#define JIT_STR(f, var) static char* var = #f; f
+
+JIT_STR(
+typedef struct {
+	uint8_t registers[1 << 10];
+} HLL;
+, HLL_jit)
+
+static __inline uint8_t _hll_rank(uint32_t hash, uint8_t bits) {
+	uint8_t i;
+
+	for(i = 1; i <= 32 - bits; i++) {
+		if(hash & 1)
+			break;
+
+		hash >>= 1;
+	}
+
+	return i;
+}
+static __inline void _hll_add_hash(HLL *hll, uint32_t hash) {
+	uint32_t index = hash >> (32 - HLL_P);
+	uint8_t rank = _hll_rank(hash, HLL_P);
+
+	if(rank > hll->registers[index]) {
+		hll->registers[index] = rank;
+	}
+}
+
+double _hll_count(const HLL *hll) {
+	uint32_t i;
+
+	double alpha_mm = 0.7213 / (1.0 + 1.079 / (double) HLL_REGISTERS);
+
+	alpha_mm *= ((double) HLL_REGISTERS * (double) HLL_REGISTERS);
+
+	double sum = 0;
+	for(uint32_t i = 0; i < HLL_REGISTERS; i++) {
+		sum += 1.0 / (1 << hll->registers[i]);
+	}
+
+	double estimate = alpha_mm / sum;
+
+	if (estimate <= 5.0 / 2.0 * (double) HLL_REGISTERS) {
+		int zeros = 0;
+
+		for(i = 0; i < HLL_REGISTERS; i++)
+			zeros += (hll->registers[i] == 0);
+
+		if(zeros)
+			estimate = (double)HLL_REGISTERS * log((double) HLL_REGISTERS / zeros);
+
+	} else if (estimate > (1.0 / 30.0) * 4294967296.0) {
+		estimate = -4294967296.0 * log(1.0 - (estimate / 4294967296.0));
+	}
+
+	return estimate;
+}
 
 //------------------------------------------------------------------------------
 // GraphBLAS Ops
 //------------------------------------------------------------------------------
+
+// no need to register in JIT, not proformance critical
+// load a new HLL set with *x hashes in the set.
 void fdb_hll_init(
-	struct HLL *z,
+	HLL *z,
 	const uint64_t *x,
 	GrB_Index i,
 	GrB_Index j,
 	bool theta
 ) {
 	int64_t weight = *x;
-
-	hll_init(z, HLL_BITS);
-
+	memset (z->registers, 0, HLL_REGISTERS);
+	// build a hash chain seeded from the node index i:
+	// each iteration hashes the previous result, yielding 'weight'
+	// distinct pseudo-random values for the HLL sketch
+	uint32_t hash = XXH32(&i, sizeof(GrB_Index), 0);
 	for(int64_t h = 0; h < weight; h++) {
-		GrB_Index seed[2] = {i, h};
-		hll_add(z, seed, sizeof(seed));
+		_hll_add_hash(z, hash);
+		hash = XXH32(&hash, sizeof(uint32_t), 0);
 	}
 }
 
+JIT_STR (
 void fdb_hll_merge
 (
-	struct HLL *z,
-	const struct HLL *x,
-	const struct HLL *y
+	HLL *z,
+	const HLL *x,
+	const HLL *y
 ) {
-	//FIXME: this requires so much memory but needed for pointer safety
-	// also probably leaks memory
-	void *reg = rm_calloc(z->size, 1);
-	memcpy (reg, x->registers, z->size);
-	z->registers = reg;
-	hll_merge(z, y);
-}
+	for(uint32_t i = 0; i < 1 << 10; i++) {
+		z->registers[i] = y->registers[i] > x->registers[i] ?
+		                  y->registers[i] : x->registers[i];
+	}
+}, FDB_HLL_MERGE_STR)
 
 void fdb_hll_delta
 (
 	double *z,
-	const struct HLL *x,
-	const struct HLL *y
+	const HLL *x,
+	const HLL *y
 ) {
 	*z = 0;
-	size_t s = (size_t)1 << HLL_BITS;
-	bool diff = 0 != memcmp(x->registers, y->registers, s);
+	bool diff = 0 != memcmp(x->registers, y->registers, HLL_REGISTERS);
 	if(diff) {
-		*z = hll_count(x) - hll_count(y);
-		memcpy(x->registers, y->registers, s);
+		*z = _hll_count(x) - _hll_count(y);
 	}
 }
 
+JIT_STR (
 void fdb_hll_second
 (
-	struct HLL *z,
-	const struct HLL *x, //unused
-	const struct HLL *y
+	HLL *z,
+	bool *x, //unused
+	const HLL *y
 ) {
-	z->bits = y->bits;
-	z->size = y->size;
-	z->registers = y->registers;
-}
+	memcpy(z->registers, y->registers, 1 << 10);
+}, FDB_HLL_SECOND_STR)
 
 int64_t print_hll
 (
@@ -92,15 +154,15 @@ int64_t print_hll
 	const void *value,   // HLL value to print
 	int verbose          // if >0, print verbosely; else tersely
 ) {
-	const struct HLL *hll = (const struct HLL *)value;
+	const HLL *hll = (const HLL *)value;
 
 	if(verbose > 0) {
 		return snprintf(string, string_size,
-			"HLL{bits=%u, size=%zu, count=%.2f}",
-			hll->bits, hll->size, hll_count(hll));
+			"HLL{bits=%u, size=%u, count=%.2f}",
+			HLL_P, HLL_REGISTERS, _hll_count(hll));
 	}
 
-	return snprintf(string, string_size, "HLL{count=%.2f}", hll_count(hll));
+	return snprintf(string, string_size, "HLL{count=%.2f}", _hll_count(hll));
 }
 
 // closeness invoke examples:
@@ -422,13 +484,13 @@ static ProcedureResult _calculate_centrality
 	GrB_BinaryOp     delta_hll      = NULL;
 
 
-	GrB_OK (GrB_Type_new(&hll_t, sizeof(struct HLL)));
+	GrB_OK (GxB_Type_new (&hll_t, sizeof(HLL), "HLL" , HLL_jit));
 	GrB_OK (GrB_Vector_new (&new_sets, hll_t, nvals));
 	GrB_OK (GrB_Vector_new (&old_sets, hll_t, nvals));
 	GrB_OK (GxB_Container_new (&old_cont)) ;
-	GrB_OK (GrB_Vector_new(&flat_scores, GrB_FP64, nvals));
-	GrB_OK (GrB_Vector_new(&flat_weight, GrB_INT64, nvals));
-	GrB_OK (GxB_Vector_extractTuples_Vector(
+	GrB_OK (GrB_Vector_new (&flat_scores, GrB_FP64, nvals));
+	GrB_OK (GrB_Vector_new (&flat_weight, GrB_INT64, nvals));
+	GrB_OK (GxB_Vector_extractTuples_Vector (
 		NULL, flat_weight, node_weights, NULL));
 
 	GrB_OK(GrB_free(&score_cont->x));
@@ -439,16 +501,17 @@ static ProcedureResult _calculate_centrality
 		(GxB_index_unary_function) fdb_hll_init, hll_t, GrB_INT64, GrB_BOOL));
 
 	// merge binary op (HLL, HLL) -> HLL  in-place: z == x required
-	GrB_OK(GrB_BinaryOp_new(&merge_hll_biop,
-		(GxB_binary_function) fdb_hll_merge, hll_t, hll_t, hll_t));
+	GrB_OK(GxB_BinaryOp_new(&merge_hll_biop,
+		(GxB_binary_function) fdb_hll_merge, hll_t, hll_t, hll_t,
+		"fdb_hll_merge", FDB_HLL_MERGE_STR));
 
 	// second op
-	GrB_OK(GrB_BinaryOp_new(&shallow_second,
-		(GxB_binary_function) fdb_hll_second, hll_t, GrB_BOOL, hll_t));
+	GrB_OK(GxB_BinaryOp_new(&shallow_second,
+		(GxB_binary_function) fdb_hll_second, hll_t, GrB_BOOL, hll_t,
+		"fdb_hll_second", FDB_HLL_SECOND_STR));
 
 	// merge monoid — identity is an empty (all-zero) HLL sketch
-	struct HLL hll_zero;
-	hll_init(&hll_zero, HLL_BITS);
+	HLL hll_zero = {0};
 	GrB_OK(GrB_Monoid_new_UDT(&merge_hll, merge_hll_biop, &hll_zero));
 
 	// semiring: add = merge monoid, multiply = copy (pass-through second operand)
@@ -471,8 +534,6 @@ static ProcedureResult _calculate_centrality
 	GrB_OK (GrB_Vector_apply_IndexOp_BOOL (
 		old_sets, NULL, NULL, init_hlls, flat_weight, false, NULL));
 	GrB_OK (GrB_set (old_sets, GxB_BITMAP, GxB_SPARSITY_CONTROL));
-	GrB_OK (GrB_Type_set_VOID (hll_t, (void **) &print_hll, GxB_PRINT_FUNCTION,
-		sizeof(GxB_print_function)));
 
 	GrB_OK (GrB_free (&flat_weight));
 	GrB_OK (GrB_Vector_assign_FP64 (
@@ -484,6 +545,7 @@ static ProcedureResult _calculate_centrality
 
 	int64_t changes = 0 ;
 	// simple_tic(t_phase);
+		GrB_set(GrB_GLOBAL, true, GxB_BURBLE);
 	for (int d = 1; d <= CENTRALITY_MAX_ITER; d++) {
 		simple_timer_t t_loop ;
 
@@ -493,10 +555,8 @@ static ProcedureResult _calculate_centrality
 		// foward bfs
 		// merge each neighbor's pre-round set into this node's set
 		// target kernel for inplace adjustments
-		// GrB_set(GrB_GLOBAL, true, GxB_BURBLE);
 		GrB_OK (GrB_mxv(
 			new_sets, NULL, merge_hll_biop, merge_second, _A, old_sets, NULL)) ;
-		// GrB_set(GrB_GLOBAL, false, GxB_BURBLE);
 		// printf("[centrality] merge time: %.2f ms\n",
 		// 	TIMER_GET_ELAPSED_MILLISECONDS(t_loop));
 
@@ -506,6 +566,9 @@ static ProcedureResult _calculate_centrality
 
 		GrB_OK (GrB_eWiseMult(
 			delta_vec, NULL, NULL, delta_hll, new_sets, old_cont->x, NULL));
+		GrB_OK (GrB_Vector_assign (
+			old_cont->x, NULL, NULL, new_sets, GrB_ALL, 0, NULL));
+
 		int32_t status = 0;
 		GrB_OK (GrB_get(delta_vec, &status, GxB_SPARSITY_STATUS));
 		ASSERT (status == GxB_FULL);
@@ -528,6 +591,7 @@ static ProcedureResult _calculate_centrality
 		}
 	}
 
+	GrB_set(GrB_GLOBAL, false, GxB_BURBLE);
 	// printf("[centrality] HLL BFS propagation: %.2f ms\n",
 	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
 
@@ -554,9 +618,6 @@ static ProcedureResult _calculate_centrality
 	GrB_free(&merge_hll_biop);
 	GrB_free(&delta_hll);
 	GrB_free(&init_hlls);
-
-	// free the monoid identity's register allocation
-	hll_destroy(&hll_zero);
 
 	GrB_free(&delta_vec);
 	GrB_free(&new_sets);
@@ -780,7 +841,7 @@ ProcedureResult Proc_CentralityFree
 //     nodeLabels:         ['Person'],
 //     relationshipTypes:  ['KNOWS'],
 //     weightAttribute:    'Power',
-//     defaultWeight:      '0'
+//     defaultWeight:      0
 // })
 // YIELD node, score
 ProcedureCtx *Proc_HarmonicCentralityCtx(void) {
