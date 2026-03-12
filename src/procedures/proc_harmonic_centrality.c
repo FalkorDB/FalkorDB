@@ -215,7 +215,7 @@ static bool _read_config
 					"'defaultWeight' should be an integer") ;
 			goto error;
 		}
-		defaultW = v ;
+		*defaultW = v ;
 		match_fields++ ;
 	}
 
@@ -709,7 +709,7 @@ ProcedureResult Proc_CentralityFree
 //     defaultWeight:      '0'
 // })
 // YIELD node, score
-ProcedureCtx *Proc_HarmonicCentralityCtx(void);
+ProcedureCtx *Proc_HarmonicCentralityCtx(void) {
 	ProcedureOutput *outputs      = array_new (ProcedureOutput, 2) ;
 	ProcedureOutput output_node   = {.name = "node",  .type = T_NODE} ;
 	ProcedureOutput output_score  = {.name = "score", .type = T_DOUBLE} ;
