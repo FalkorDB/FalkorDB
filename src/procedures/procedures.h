@@ -19,12 +19,12 @@
 #include "proc_procedures.h"
 #include "proc_meta_stats.h"
 #include "proc_betweenness.h"
-#include "proc_centrality.h"
 #include "proc_list_indexes.h"
 #include "proc_vector_query.h"
 #include "proc_property_keys.h"
 #include "proc_fulltext_query.h"
 #include "proc_list_constraints.h"
+#include "proc_harmonic_centrality.h"
 #include "proc_fulltext_drop_index.h"
 #include "proc_fulltext_create_index.h"
 

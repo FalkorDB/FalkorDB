@@ -8,4 +8,4 @@
 #include "proc_ctx.h"
 
 // run harmonic closeness centrality on sub graph using HLL BFS propagation
-ProcedureCtx *Proc_CentralityCtx(void);
+ProcedureCtx *Proc_HarmonicCentralityCtx(void);
