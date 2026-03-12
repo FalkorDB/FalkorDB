@@ -771,8 +771,16 @@ build_libcurl() {
         # Disable all optional dependencies to build a minimal static library
         # Use -fPIC for position-independent code (required for linking into shared library)
         # Use -O3 for optimization, -g for debug symbols
+        # On Linux: enable OpenSSL for HTTPS support (required for LOAD CSV from HTTPS URLs)
+        # On macOS: use SecureTransport (auto-detected, no --with-ssl needed)
+        local ssl_flags
+        if [[ "$OS" == "linux" ]]; then
+            ssl_flags="--with-openssl"
+        else
+            ssl_flags="--without-ssl"
+        fi
         if ! CFLAGS="-fPIC -O3 -g" "$src_dir/configure" --disable-dependency-tracking --disable-shared --enable-static \
-            --without-ssl --without-libssh2 --without-librtmp --without-libidn2 \
+            $ssl_flags --without-libssh2 --without-librtmp --without-libidn2 \
             --without-nghttp2 --without-brotli --without-zstd --without-libpsl \
             --without-zlib --disable-ldap; then
             log_error "Failed to configure libcurl"
