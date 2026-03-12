@@ -58,8 +58,9 @@ class testUndoLog():
         # ensure a clean graph for this test
         try:
             graph.delete()
-        except:
-            pass
+        except ResponseError as e:
+            # Ignore attempts to delete an already-empty/nonexistent graph
+            self.env.assertContains("Invalid graph operation on empty key", str(e))
 
         # test undo create edge by creating endpoints first
         graph.query("CREATE (:N {v: 1}), (:N {v: 2})")

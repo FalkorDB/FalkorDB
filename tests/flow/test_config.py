@@ -37,6 +37,8 @@ class testConfig(FlowTestsBase):
             try:
                 self.db.config_set(name, value)
             except redis.exceptions.ResponseError:
+                # Best-effort cleanup: some configs may be unavailable or immutable
+                # in certain Redis/module versions, but teardown should not fail.
                 pass
 
     def test01_config_get(self):
@@ -495,6 +497,8 @@ class testConfigRewritePersist:
             try:
                 self.db.config_set(name, value)
             except Exception:
+                # Best-effort reset before/after tests: ignore failures so that
+                # missing/unsupported configs do not cause the test to error.
                 pass
 
     def teardown_method(self):
@@ -505,8 +509,9 @@ class testConfigRewritePersist:
         if hasattr(self, "redis_proc") and self.redis_proc:
             try:
                 self.redis_con.shutdown()
-            except Exception:
-                pass
+            except Exception as e:
+                # Ignore shutdown exceptions during teardown, but log for diagnostics.
+                print(f"Warning: redis_con.shutdown() failed during teardown: {e}")
             self.redis_proc.terminate()
             try:
                 self.redis_proc.wait(timeout=5)
