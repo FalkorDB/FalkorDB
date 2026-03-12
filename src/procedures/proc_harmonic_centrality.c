@@ -25,6 +25,84 @@
 #define HLL_BITS 10              // 1024 registers, ~3.25% estimation error
 #define CENTRALITY_MAX_ITER 100  // maximum BFS levels to propagate
 
+//------------------------------------------------------------------------------
+// GraphBLAS Ops
+//------------------------------------------------------------------------------
+void fdb_hll_init(
+	struct HLL *z,
+	const uint64_t *x,
+	GrB_Index i,
+	GrB_Index j,
+	bool theta
+) {
+	int64_t weight = *x;
+
+	hll_init(z, HLL_BITS);
+
+	for(int64_t h = 0; h < weight; h++) {
+		GrB_Index seed[2] = {i, h};
+		hll_add(z, seed, sizeof(seed));
+	}
+}
+
+void fdb_hll_merge
+(
+	struct HLL *z,
+	const struct HLL *x,
+	const struct HLL *y
+) {
+	//FIXME: this requires so much memory but needed for pointer safety
+	// also probably leaks memory
+	void *reg = rm_calloc(z->size, 1);
+	memcpy (reg, x->registers, z->size);
+	z->registers = reg;
+	hll_merge(z, y);
+}
+
+void fdb_hll_delta
+(
+	double *z,
+	const struct HLL *x,
+	const struct HLL *y
+) {
+	*z = 0;
+	size_t s = (size_t)1 << HLL_BITS;
+	bool diff = 0 != memcmp(x->registers, y->registers, s);
+	if(diff) {
+		*z = hll_count(x) - hll_count(y);
+		memcpy(x->registers, y->registers, s);
+	}
+}
+
+void fdb_hll_second
+(
+	struct HLL *z,
+	const struct HLL *x, //unused
+	const struct HLL *y
+) {
+	z->bits = y->bits;
+	z->size = y->size;
+	z->registers = y->registers;
+}
+
+int64_t print_hll
+(
+	char *string,        // value is printed to the string
+	size_t string_size,  // size of the string array
+	const void *value,   // HLL value to print
+	int verbose          // if >0, print verbosely; else tersely
+) {
+	const struct HLL *hll = (const struct HLL *)value;
+
+	if(verbose > 0) {
+		return snprintf(string, string_size,
+			"HLL{bits=%u, size=%zu, count=%.2f}",
+			hll->bits, hll->size, hll_count(hll));
+	}
+
+	return snprintf(string, string_size, "HLL{count=%.2f}", hll_count(hll));
+}
+
 // closeness invoke examples:
 //
 // CALL algo.closeness() YIELD node, score
@@ -259,20 +337,41 @@ static ProcedureResult _calculate_centrality
 	ASSERT (scores       != NULL) ;
 	ASSERT (node_weights != NULL) ;
 
-	GrB_Matrix    _A         = NULL ;
-	GxB_Container score_cont = NULL ;
-	GxB_Container A_cont     = NULL ;
-	GrB_Index     nrows      = 0 ;
-	GrB_Index     nvals      = 0 ;
+	GrB_Matrix    _A         = NULL;
+	GxB_Container score_cont = NULL;
+	GrB_Index     nrows      = 0;
+	GrB_Index     nvals      = 0;
 
 	// simple_timer_t t_total;
 	// simple_timer_t t_phase;
 	// simple_tic(t_total);
 
-	GrB_OK (GrB_Vector_size (&nrows, node_weights)) ;
-	GrB_OK (GrB_Vector_nvals (&nvals, node_weights)) ;
+	GrB_OK (GrB_Vector_size(&nrows, node_weights));
+	GrB_OK (GrB_Vector_nvals(&nvals, node_weights));
+	GrB_OK (GrB_Vector_new(scores, GrB_FP64, nrows));
+
+	if (nvals == 0) {
+		return PROCEDURE_OK;
+	}
 
 	// printf("[centrality] n_participating=%llu\n", (unsigned long long) nvals);
+	
+	// double check weight type and maximum weight requirements
+	GrB_Type weight_t = NULL;
+	GrB_OK (GxB_Vector_type(&weight_t, node_weights));
+	ASSERT(weight_t == GrB_BOOL || weight_t == GrB_INT64);
+	if (weight_t == GrB_INT64){
+		int64_t max_w = 0, min_w = 0;
+		GrB_OK (GrB_Vector_reduce_INT64(
+			&max_w, NULL, GrB_MAX_MONOID_INT64, node_weights, NULL));
+		GrB_OK (GrB_Vector_reduce_INT64(
+			&min_w, NULL, GrB_MIN_MONOID_INT64, node_weights, NULL));
+		if (min_w < 0 || max_w > 127){
+			ErrorCtx_SetError(
+				"algo.Centrality: node weights to large (>127)");
+			return PROCEDURE_ERR;
+		}
+	}
 
 	//--------------------------------------------------------------------------
 	// build compact submatrix _A
@@ -295,110 +394,89 @@ static ProcedureResult _calculate_centrality
 	// create scores vector (0.0 at each participating node)
 	//--------------------------------------------------------------------------
 
-	GrB_OK (GrB_Vector_new (scores, GrB_FP64, nrows)) ;
-	GrB_OK (GrB_Vector_assign_FP64 (*scores, node_weights, NULL, 0.0,
-			GrB_ALL, 0, GrB_DESC_S)) ;
-	GrB_OK (GrB_set (*scores, GxB_SPARSE | GxB_FULL, GxB_SPARSITY_CONTROL)) ;
-	GrB_OK (GxB_Container_new (&score_cont)) ;
-	GrB_OK (GxB_unload_Vector_into_Container (*scores, score_cont, NULL)) ;
-
-	//--------------------------------------------------------------------------
-	// unload compact matrix into container for raw CSR access
-	//--------------------------------------------------------------------------
-
-	GrB_OK (GxB_Container_new(&A_cont)) ;
-	GrB_OK (GxB_unload_Matrix_into_Container (_A, A_cont, NULL)) ;
-	GrB_OK (GrB_free (&_A)) ;
-
-	uint32_t *A_p = NULL ;
-	uint32_t *A_i = NULL ;
-	GrB_Type  p_type, i_type ;
-	uint64_t  p_n, i_n, p_size, i_size ;
-	int       p_handling, i_handling ;
-
-	GrB_OK (GxB_Vector_unload (A_cont->p, (void **) &A_p, &p_type,
-			&p_n, &p_size, &p_handling, NULL)) ;
-	GrB_OK (GxB_Vector_unload (A_cont->i, (void **) &A_i, &i_type,
-			&i_n, &i_size, &i_handling, NULL)) ;
-	GrB_OK (GxB_Container_free (&A_cont)) ;
-
-	// printf("[centrality] build compact submatrix: %.2f ms\n",
-	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
-
-	if ((p_type != GrB_INT32 && p_type != GrB_UINT32)
-		|| (i_type != GrB_INT32 && i_type != GrB_UINT32)) {
-		ErrorCtx_SetError (
-			"algo.Centrality: unexpected index type (graph too large)");
-		rm_free (A_p) ;
-		rm_free (A_i) ;
-		GrB_free (scores) ;
-		GxB_Container_free (&score_cont) ;
-		return PROCEDURE_ERR ;
-	}
+	GrB_OK (GrB_Vector_assign_FP64(*scores, node_weights, NULL, 0.0,
+			GrB_ALL, 0, GrB_DESC_S));
+	GrB_OK (GrB_set (*scores, GxB_SPARSE | GxB_FULL, GxB_SPARSITY_CONTROL));
+	GrB_OK (GxB_Container_new(&score_cont));
+	GrB_OK (GxB_unload_Vector_into_Container(*scores, score_cont, NULL));
 
 	//--------------------------------------------------------------------------
 	// Initialize HLL
 	//--------------------------------------------------------------------------
 
 	// simple_tic(t_phase);
+	GrB_Type      hll_t       = NULL;
+	GrB_Vector    new_sets    = NULL;
+	GrB_Vector    old_sets    = NULL;
+	GxB_Container old_cont    = NULL;
+	GrB_Vector    flat_scores = NULL;
+	GrB_Vector    flat_weight = NULL;
+	GrB_Vector    delta_vec   = NULL;
 
-	struct HLL *new_sets    = rm_calloc (nvals, sizeof (struct HLL)) ;
-	struct HLL *old_sets    = rm_calloc (nvals, sizeof (struct HLL)) ;
-	double     *flat_scores = rm_calloc (nvals, sizeof (double)) ;
-	bool       *change_arr  = rm_malloc (nvals * sizeof (bool)) ;
-	size_t      reg_size    = (size_t) 1 << HLL_BITS ;
+	GrB_IndexUnaryOp init_hlls      = NULL;
+	GrB_BinaryOp     shallow_second = NULL;
+	GrB_BinaryOp     merge_hll_biop = NULL;
+	GrB_Monoid       merge_hll      = NULL;
+	GrB_Semiring     merge_second   = NULL;
+	// WARNING: op has side effects
+	GrB_BinaryOp     delta_hll      = NULL;
 
-	// double check weight type and maximum weight requirements
-	GrB_Type weight_t = NULL;
-	GrB_OK (GxB_Vector_type(&weight_t, node_weights));
-	ASSERT(weight_t == GrB_BOOL || weight_t == GrB_INT64);
-	if (weight_t == GrB_INT64) {
-		int64_t max_w = 0, min_w = 0 ;
-		GrB_OK (GrB_Vector_reduce_INT64 (
-			&max_w, NULL, GrB_MAX_MONOID_INT64, node_weights, NULL)) ;
-		GrB_OK (GrB_Vector_reduce_INT64 (
-			&min_w, NULL, GrB_MIN_MONOID_INT64, node_weights, NULL)) ;
-		if (min_w < 0 || max_w > 127) {
-			ErrorCtx_SetError (
-				"algo.Centrality: node weights to large (>127)");
-			rm_free (A_p) ;
-			rm_free (A_i) ;
-			GrB_free (scores) ;
-			GxB_Container_free (&score_cont) ;
-			return PROCEDURE_ERR ;
-		}
-	}
 
-	GxB_Iterator nw_it ;
-	GrB_OK (GxB_Iterator_new (&nw_it)) ;
-	GrB_OK (GxB_Vector_Iterator_attach (nw_it, node_weights, NULL)) ;
-	GrB_Info nw_info = GxB_Vector_Iterator_seek (nw_it, 0) ;
+	GrB_OK (GrB_Type_new(&hll_t, sizeof(struct HLL)));
+	GrB_OK (GrB_Vector_new (&new_sets, hll_t, nvals));
+	GrB_OK (GrB_Vector_new (&old_sets, hll_t, nvals));
+	GrB_OK (GxB_Container_new (&old_cont)) ;
+	GrB_OK (GrB_Vector_new(&flat_scores, GrB_FP64, nvals));
+	GrB_OK (GrB_Vector_new(&flat_weight, GrB_INT64, nvals));
+	GrB_OK (GxB_Vector_extractTuples_Vector(
+		NULL, flat_weight, node_weights, NULL));
 
-	// initialize each node's HLL with node_weights[nodeID] distinct hashes
-	// for boolean weights this is 1 hash per node, but the structure
-	// supports weighted nodes where more hashes reflect a larger contribution
-	for (GrB_Index k = 0; nw_info != GxB_EXHAUSTED; k++) {
-		hll_init (&new_sets[k], HLL_BITS) ;
-		hll_init (&old_sets[k], HLL_BITS) ;
+	GrB_OK(GrB_free(&score_cont->x));
+	score_cont->x = flat_scores;
 
-		GrB_Index w = weight_t == GrB_INT64 ?
-			GxB_Iterator_get_INT64 (nw_it) : GxB_Iterator_get_BOOL (nw_it) ;
-		for (GrB_Index h = 0; h < w; h++) {
-			GrB_Index seed[2] = {k, h} ;
-			hll_add (&new_sets[k], seed, sizeof (seed)) ;
-		}
-		nw_info = GxB_Vector_Iterator_next (nw_it) ;
-	}
-	GrB_free (&nw_it) ;
+	// init op: weight (INT64) at row index i → HLL seeded with 'weight' hashes
+	GrB_OK(GrB_IndexUnaryOp_new(&init_hlls,
+		(GxB_index_unary_function) fdb_hll_init, hll_t, GrB_INT64, GrB_BOOL));
 
-	// printf("[centrality] HLL init: %.2f ms\n",
-	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
+	// merge binary op (HLL, HLL) -> HLL  in-place: z == x required
+	GrB_OK(GrB_BinaryOp_new(&merge_hll_biop,
+		(GxB_binary_function) fdb_hll_merge, hll_t, hll_t, hll_t));
 
-	memset (change_arr, true, nvals * sizeof (bool)) ;
-	#pragma omp parallel for schedule(static)
-	for (GrB_Index k = 0; k < nvals; k++) {
-		memcpy (old_sets[k].registers, new_sets[k].registers, reg_size) ;
-	}
+	// second op
+	GrB_OK(GrB_BinaryOp_new(&shallow_second,
+		(GxB_binary_function) fdb_hll_second, hll_t, GrB_BOOL, hll_t));
+
+	// merge monoid — identity is an empty (all-zero) HLL sketch
+	struct HLL hll_zero;
+	hll_init(&hll_zero, HLL_BITS);
+	GrB_OK(GrB_Monoid_new_UDT(&merge_hll, merge_hll_biop, &hll_zero));
+
+	// semiring: add = merge monoid, multiply = copy (pass-through second operand)
+	GrB_OK(GrB_Semiring_new(&merge_second, merge_hll, shallow_second));
+
+	// delta op: (HLL_old, HLL_new) → FP64 cardinality change
+	// WARNING: side-effect: overwrites old registers with new on any difference
+	GrB_OK(GrB_BinaryOp_new(&delta_hll,
+		(GxB_binary_function) fdb_hll_delta, GrB_FP64, hll_t, hll_t));
+
+	// delta output: one FP64 entry per participating node
+	GrB_OK(GrB_Vector_new(&delta_vec, GrB_FP64, nvals));
+
+	//--------------------------------------------------------------------------
+	// Load vector values
+	//--------------------------------------------------------------------------
+	// initialize HLLs
+	GrB_OK (GrB_Vector_apply_IndexOp_BOOL (
+		new_sets, NULL, NULL, init_hlls, flat_weight, false, NULL));
+	GrB_OK (GrB_Vector_apply_IndexOp_BOOL (
+		old_sets, NULL, NULL, init_hlls, flat_weight, false, NULL));
+	GrB_OK (GrB_set (old_sets, GxB_BITMAP, GxB_SPARSITY_CONTROL));
+	GrB_OK (GrB_Type_set_VOID (hll_t, (void **) &print_hll, GxB_PRINT_FUNCTION,
+		sizeof(GxB_print_function)));
+
+	GrB_OK (GrB_free (&flat_weight));
+	GrB_OK (GrB_Vector_assign_FP64 (
+		flat_scores, NULL, NULL, 0.0, GrB_ALL, 0, NULL));
 
 	//--------------------------------------------------------------------------
 	// HLL BFS propagation
@@ -412,35 +490,37 @@ static ProcedureResult _calculate_centrality
 		changes = 0 ;
 		// simple_tic(t_loop);
 
-		#pragma omp parallel for schedule(static)
-		for (GrB_Index i = 0; i < nvals; i++) {
-			for (GrB_Index k = A_p [i]; k < A_p[i + 1]; k++) {
-				if (change_arr [A_i [k]]) {
-					hll_merge (&new_sets [i], &old_sets [A_i [k]]) ;
-				}
-			}
-		}
+		// foward bfs
+		// merge each neighbor's pre-round set into this node's set
+		// target kernel for inplace adjustments
+		// GrB_set(GrB_GLOBAL, true, GxB_BURBLE);
+		GrB_OK (GrB_mxv(
+			new_sets, NULL, merge_hll_biop, merge_second, _A, old_sets, NULL)) ;
+		// GrB_set(GrB_GLOBAL, false, GxB_BURBLE);
 		// printf("[centrality] merge time: %.2f ms\n",
 		// 	TIMER_GET_ELAPSED_MILLISECONDS(t_loop));
 
+		GrB_OK (GxB_unload_Vector_into_Container(old_sets, old_cont, NULL));
 		// simple_tic(t_loop);
-		memset (change_arr, 0, nvals * sizeof (bool)) ;
-		// merge each neighbor's pre-round set into this node's set;
-		// each node i only writes new_sets[i] and reads old_sets (snapshot),
-		// so iterations are fully independent
-		#pragma omp parallel for
-		for (GrB_Index i = 0; i < nvals; i++) {
-			if (memcmp (new_sets [i].registers, old_sets [i].registers, reg_size)
-				!= 0) {
-				double delta =
-					hll_count (&new_sets [i]) - hll_count (&old_sets [i]) ;
-				flat_scores [i] += delta / d ;
-				#pragma omp atomic
-				++changes ;
-				memcpy (old_sets [i].registers, new_sets [i].registers, reg_size) ;
-				change_arr [i] = true ;
-			}
-		}
+		// find the delta between last round and this one
+
+		GrB_OK (GrB_eWiseMult(
+			delta_vec, NULL, NULL, delta_hll, new_sets, old_cont->x, NULL));
+		int32_t status = 0;
+		GrB_OK (GrB_get(delta_vec, &status, GxB_SPARSITY_STATUS));
+		ASSERT (status == GxB_FULL);
+
+		// old_set bitmap is the set of nodes with non-zero deltas
+		GrB_OK (GrB_apply(
+			old_cont->b, NULL, NULL, GrB_IDENTITY_BOOL, delta_vec, NULL));
+		GrB_OK (GrB_Vector_reduce_INT64(
+			&changes, NULL, GrB_PLUS_MONOID_INT64, old_cont->b, NULL));
+		old_cont->nvals = changes;
+		GrB_OK (GxB_load_Vector_from_Container(old_sets, old_cont, NULL));
+
+		// use the deltas to update the score
+		GrB_OK (GrB_apply(flat_scores, NULL, GrB_PLUS_FP64, GrB_DIV_FP64,
+			delta_vec, (double) d, NULL));
 
 		// stop when no HLL cardinality changed this round
 		if (changes == 0) {
@@ -456,20 +536,9 @@ static ProcedureResult _calculate_centrality
 	//--------------------------------------------------------------------------
 
 	// simple_tic(t_phase);
-
-	// discard the 1-element iso x, create a fresh vector, then load flat_scores
-	GrB_OK (GrB_free (&score_cont->x)) ;
-	GrB_OK (GrB_Vector_new (&score_cont->x, GrB_FP64, nvals)) ;
-	GrB_OK (GxB_Vector_load (score_cont->x, (void **)&flat_scores, GrB_FP64,
-			nvals, nvals * sizeof (double), GrB_DEFAULT, NULL)) ;
-	score_cont->iso = false ;
-
-	GrB_OK (GxB_load_Vector_from_Container (*scores, score_cont, NULL)) ;
-	GrB_OK (GxB_Container_free (&score_cont)) ;
-
-	GrB_Index check_nvals = 0 ;
-	GrB_OK (GrB_Vector_nvals (&check_nvals, *scores)) ;
-	ASSERT (check_nvals == nvals) ;
+	score_cont->iso = false;
+	GrB_OK (GxB_load_Vector_from_Container(*scores, score_cont, NULL));
+	GrB_OK (GxB_Container_free(&score_cont));
 
 	// printf("[centrality] score write-back: %.2f ms\n",
 	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
@@ -478,18 +547,23 @@ static ProcedureResult _calculate_centrality
 	// cleanup
 	//--------------------------------------------------------------------------
 
-	for (GrB_Index k = 0; k < nvals; k++) {
-		hll_destroy (&new_sets [k]) ;
-		hll_destroy (&old_sets [k]) ;
-	}
+	// free operators (semiring before monoid)
+	GrB_free(&merge_second);
+	GrB_free(&merge_hll);
+	GrB_free(&shallow_second);
+	GrB_free(&merge_hll_biop);
+	GrB_free(&delta_hll);
+	GrB_free(&init_hlls);
 
-	rm_free (new_sets) ;
-	rm_free (old_sets) ;
-	rm_free (A_p) ;
-	rm_free (A_i) ;
-	GrB_free (&score_cont) ;
-	GrB_free (&A_cont) ;
-	GrB_free (&_A) ;
+	// free the monoid identity's register allocation
+	hll_destroy(&hll_zero);
+
+	GrB_free(&delta_vec);
+	GrB_free(&new_sets);
+	GrB_free(&old_sets);
+	GrB_free(&old_cont);
+	GrB_free(&hll_t);
+	GrB_free(&_A);
 
 	// printf("[centrality] _calculate_centrality total: %.2f ms\n",
 	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_total));
