@@ -374,7 +374,7 @@ class testConfig(FlowTestsBase):
         self.env.assertEqual(creation_buffer_size, expected_response)
 
     def test12_config_commands_available_via_redis_config(self):
-        timeout_key = "graph.TIMEOUT"
+        timeout_key = "graph.timeout"
 
         # ensure CONFIG GET exposes module configs
         cfg = self.redis_con.config_get("graph.*")
@@ -518,9 +518,9 @@ class testConfigRewritePersist:
     def test_config_rewrite_roundtrip(self):
         # configure via redis.conf only, no module args
         cfg_lines = [
-            "graph.TIMEOUT 7",
-            "graph.RESULTSET_SIZE 4",
-            "graph.CMD_INFO no",
+            "graph.timeout 7",
+            "graph.resultset_size 4",
+            "graph.cmd_info no",
         ]
 
         fd, self.cfg_path = tempfile.mkstemp(prefix="falkordb-config-", suffix=".conf")
