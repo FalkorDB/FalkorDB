@@ -382,11 +382,13 @@ detect_platform() {
     # Detect OS nickname (simplified version)
     if [[ "$OS" == "linux" ]]; then
         if [[ -f /etc/os-release ]]; then
-            . /etc/os-release
-            OSNICK=$(echo "$ID" | tr '[:upper:]' '[:lower:]')
-            if [[ -n "$VERSION_ID" ]]; then
-                OSNICK="${OSNICK}${VERSION_ID}"
+            # source only the desired varibles to prevent others from leaking
+            read -r _os_id _os_ver < <(unset ID VERSION_ID; source /etc/os-release; echo "$ID" "$VERSION_ID")
+            OSNICK=$(echo "$_os_id" | tr '[:upper:]' '[:lower:]')
+            if [[ -n "$_os_ver" ]]; then
+                OSNICK="${OSNICK}${_os_ver}"
             fi
+            unset _os_id _os_ver
         else
             OSNICK="linux"
         fi
@@ -1254,8 +1256,8 @@ build_falkordbrs() {
 prepare_cmake_arguments() {
     CMAKE_ARGS=()
 
-    # Build type
-    if [[ "$DEBUG" == "1" ]]; then
+    # Build type debug if specified or using a sanitizer
+    if [[ "$DEBUG" == "1" || -n "$SAN" ]]; then
         CMAKE_ARGS+=(-DCMAKE_BUILD_TYPE=Debug)
     else
         CMAKE_ARGS+=(-DCMAKE_BUILD_TYPE=RelWithDebInfo)
