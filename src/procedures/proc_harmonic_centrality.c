@@ -23,6 +23,9 @@
 #include "../util/simple_timer.h"
 
 #define CENTRALITY_MAX_ITER 100
+
+//WARNING: JIT cannot use these macros, so you will have to change the
+// JIT functions below by hand if you want to change these. look for '(1 << 10)'
 #define HLL_P 10                   // Precision
 #define HLL_REGISTERS (1 << HLL_P) // number of registers
 #define HLL_ALPHA 0.72134          // Constant for m >= 128
@@ -47,6 +50,7 @@ static __inline uint8_t _hll_rank(uint32_t hash, uint8_t bits) {
 
 	return i;
 }
+
 static __inline void _hll_add_hash(HLL *hll, uint32_t hash) {
 	uint32_t index = hash >> (32 - HLL_P);
 	uint8_t rank = _hll_rank(hash, HLL_P);
@@ -118,12 +122,13 @@ void fdb_hll_merge
 	const HLL *x,
 	const HLL *y
 ) {
-	for(uint32_t i = 0; i < 1 << 10; i++) {
+	for(uint32_t i = 0; i < (1 << 10); i++) {
 		z->registers[i] = y->registers[i] > x->registers[i] ?
 		                  y->registers[i] : x->registers[i];
 	}
 }, FDB_HLL_MERGE_STR)
 
+JIT_STR (
 void fdb_hll_delta
 (
 	double *z,
@@ -131,11 +136,58 @@ void fdb_hll_delta
 	const HLL *y
 ) {
 	*z = 0;
-	bool diff = 0 != memcmp(x->registers, y->registers, HLL_REGISTERS);
+	bool diff = 0 != memcmp(x->registers, y->registers, (1 << 10));
 	if(diff) {
-		*z = _hll_count(x) - _hll_count(y);
+		uint32_t i;
+
+		double alpha_mm = 0.7213 / (1.0 + 1.079 / (double) (1 << 10));
+
+		alpha_mm *= ((double) (1 << 10) * (double) (1 << 10));
+
+		double sum = 0;
+		for(uint32_t i = 0; i < (1 << 10); i++) {
+			sum += 1.0 / (1 << x->registers[i]);
+		}
+
+		double estimate = alpha_mm / sum;
+
+		if (estimate <= 5.0 / 2.0 * (double) (1 << 10)) {
+			int zeros = 0;
+
+			for(i = 0; i < (1 << 10); i++)
+				zeros += (x->registers[i] == 0);
+
+			if(zeros)
+				estimate = (double)(1 << 10) * log((double) (1 << 10) / zeros);
+
+		} else if (estimate > (1.0 / 30.0) * 4294967296.0) {
+			estimate = -4294967296.0 * log(1.0 - (estimate / 4294967296.0));
+		}
+
+		*z = estimate;
+
+		sum = 0;
+		for(uint32_t i = 0; i < (1 << 10); i++) {
+			sum += 1.0 / (1 << y->registers[i]);
+		}
+
+		estimate = alpha_mm / sum;
+
+		if (estimate <= 5.0 / 2.0 * (double) (1 << 10)) {
+			int zeros = 0;
+
+			for(i = 0; i < (1 << 10); i++)
+				zeros += (y->registers[i] == 0);
+
+			if(zeros)
+				estimate = (double)(1 << 10) * log((double) (1 << 10) / zeros);
+
+		} else if (estimate > (1.0 / 30.0) * 4294967296.0) {
+			estimate = -4294967296.0 * log(1.0 - (estimate / 4294967296.0));
+		}
+		*z -= estimate;
 	}
-}
+}, FDB_HLL_DELTA_STR)
 
 JIT_STR (
 void fdb_hll_second
@@ -519,8 +571,9 @@ static ProcedureResult _calculate_centrality
 
 	// delta op: (HLL_old, HLL_new) → FP64 cardinality change
 	// WARNING: side-effect: overwrites old registers with new on any difference
-	GrB_OK(GrB_BinaryOp_new(&delta_hll,
-		(GxB_binary_function) fdb_hll_delta, GrB_FP64, hll_t, hll_t));
+	GrB_OK(GxB_BinaryOp_new(&delta_hll,
+		(GxB_binary_function) fdb_hll_delta, GrB_FP64, hll_t, hll_t,
+		"fdb_hll_delta", FDB_HLL_DELTA_STR));
 
 	// delta output: one FP64 entry per participating node
 	GrB_OK(GrB_Vector_new(&delta_vec, GrB_FP64, nvals));
