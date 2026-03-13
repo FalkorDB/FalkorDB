@@ -100,7 +100,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcurl
-          key: libcurl-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}
+          key: libcurl-${{ hashFiles('./deps/libcurl/RELEASE-NOTES', './build.sh') }}
   
       - name: Cache libcsv
         id: cache_libcsv

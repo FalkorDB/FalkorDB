@@ -241,7 +241,8 @@ add_compile_definitions(
     REDISMODULE_EXPERIMENTAL_API
     XXH_STATIC_LINKING_ONLY)
 
-if(DEBUG)
+# set RG_DEBUG flag if this is a Debug build
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_definitions(RG_DEBUG)
 endif()
 
