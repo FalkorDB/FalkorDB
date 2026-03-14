@@ -157,3 +157,88 @@ class testBolt():
              self.env.assertEquals(p.nodes[2].labels, set(['C']))
              self.env.assertEquals(p.relationships[0].type, 'R1')
              self.env.assertEquals(p.relationships[1].type, 'R2')
+
+    # ---------------------------------------------------------------
+    # Regression tests for bolt protocol bug fixes (issue #1702)
+    # ---------------------------------------------------------------
+
+    def test10_tiny_int_negative_range(self):
+        """Verify tiny int encoding for the full range -16..127.
+        Before the fix, bolt_reply_int never used the tiny int path
+        because the comparison used the unsigned constant 0xF0 (240)."""
+        with bolt_con.session() as session:
+            # test all negative tiny ints: -16 to -1
+            vals = list(range(-16, 0))
+            placeholders = ', '.join(f'${f"n{abs(v)}"}' for v in vals)
+            params = {f"n{abs(v)}": v for v in vals}
+            result = session.run(f"RETURN {placeholders}", params)
+            record = result.single()
+            for i, v in enumerate(vals):
+                self.env.assertEquals(record[i], v)
+
+            # test boundaries around tiny int range
+            result = session.run("RETURN $a, $b, $c, $d",
+                                 {"a": -16, "b": -17, "c": 127, "d": 128})
+            record = result.single()
+            self.env.assertEquals(record[0], -16)
+            self.env.assertEquals(record[1], -17)
+            self.env.assertEquals(record[2], 127)
+            self.env.assertEquals(record[3], 128)
+
+    def test11_negative_integer_boundaries(self):
+        """Test negative values at int8/int16/int32/int64 boundaries."""
+        with bolt_con.session() as session:
+            result = session.run(
+                "RETURN $a, $b, $c, $d, $e, $f",
+                {"a": -128, "b": -129, "c": -32768,
+                 "d": -32769, "e": -2147483648, "f": -2147483649})
+            record = result.single()
+            self.env.assertEquals(record[0], -128)     # int8 min
+            self.env.assertEquals(record[1], -129)     # int16
+            self.env.assertEquals(record[2], -32768)   # int16 min
+            self.env.assertEquals(record[3], -32769)   # int32
+            self.env.assertEquals(record[4], -2147483648)   # int32 min
+            self.env.assertEquals(record[5], -2147483649)   # int64
+
+    def test12_point_followed_by_values(self):
+        """Verify Point2D doesn't corrupt subsequent values in the record.
+        Before the fix, an extra bolt_reply_null shifted all following data."""
+        with bolt_con.session() as session:
+            result = session.run(
+                "RETURN POINT({longitude:1.5, latitude:2.5}), 42, 'hello'")
+            record = result.single()
+            self.env.assertEquals(record[0], WGS84Point((1.5, 2.5)))
+            self.env.assertEquals(record[1], 42)
+            self.env.assertEquals(record[2], 'hello')
+
+    def test13_multiple_points(self):
+        """Test returning multiple Point2D values in the same record."""
+        with bolt_con.session() as session:
+            result = session.run(
+                "RETURN POINT({longitude:10, latitude:20}), "
+                "POINT({longitude:30, latitude:40}), "
+                "POINT({longitude:-122.4194, latitude:37.7749})")
+            record = result.single()
+            self.env.assertEquals(record[0], WGS84Point((10, 20)))
+            self.env.assertEquals(record[1], WGS84Point((30, 40)))
+            self.env.assertEquals(record[2], WGS84Point((-122.4194, 37.7749)))
+
+    def test14_large_string_parameter(self):
+        """Test queries with large string parameters.
+        Before the fix, a fixed 4096-byte stack buffer could overflow."""
+        with bolt_con.session() as session:
+            large_str = 'X' * 8000
+            result = session.run("RETURN $v", {"v": large_str})
+            record = result.single()
+            self.env.assertEquals(record[0], large_str)
+
+    def test15_many_parameters(self):
+        """Test a query with many parameters to stress the parameterized
+        query buffer allocation."""
+        with bolt_con.session() as session:
+            params = {f"p{i}": i for i in range(100)}
+            placeholders = ', '.join(f'${k}' for k in params)
+            result = session.run(f"RETURN {placeholders}", params)
+            record = result.single()
+            for i in range(100):
+                self.env.assertEquals(record[i], i)
