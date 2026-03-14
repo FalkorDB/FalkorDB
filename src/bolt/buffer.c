@@ -78,8 +78,9 @@ uint64_t buffer_index_diff
 	ASSERT(a->buf == b->buf);
 
 	ASSERT(a->chunk > b->chunk || (a->chunk == b->chunk && a->offset >= b->offset));
-	uint64_t diff = (a->chunk - b->chunk) * BUFFER_CHUNK_SIZE + (a->offset - b->offset);
-	return diff;
+	uint64_t pos_a = (uint64_t)a->chunk * BUFFER_CHUNK_SIZE + (uint64_t)a->offset;
+	uint64_t pos_b = (uint64_t)b->chunk * BUFFER_CHUNK_SIZE + (uint64_t)b->offset;
+	return pos_a - pos_b;
 }
 
 // the length of the buffer index
