@@ -2,6 +2,7 @@ from common import *
 from neo4j import GraphDatabase
 from neo4j.spatial import WGS84Point
 import neo4j.graph
+import threading
 # from neo4j.debug import watch
 
 bolt_con = None
@@ -242,3 +243,91 @@ class testBolt():
             record = result.single()
             for i in range(100):
                 self.env.assertEquals(record[i], i)
+
+    def test16_int16_string16_list16_serialization(self):
+        """Verify int16/string16/list16 serialization works correctly.
+        Before the fix, unaligned pointer casts (e.g. *(int16_t*)(values+1))
+        were undefined behavior. memcpy is now used instead."""
+        with bolt_con.session() as session:
+            # int16 range: 128..32767 and -128..-17
+            result = session.run("RETURN $a, $b, $c, $d",
+                                 {"a": 200, "b": 32767, "c": -100, "d": -32768})
+            record = result.single()
+            self.env.assertEquals(record[0], 200)
+            self.env.assertEquals(record[1], 32767)
+            self.env.assertEquals(record[2], -100)
+            self.env.assertEquals(record[3], -32768)
+
+            # string16: string with length 256 (requires 16-bit size header)
+            s16 = 'B' * 256
+            result = session.run("RETURN $v", {"v": s16})
+            record = result.single()
+            self.env.assertEquals(record[0], s16)
+
+            # list16: list with 256 elements (requires 16-bit size header)
+            l16 = list(range(256))
+            result = session.run("RETURN $v", {"v": l16})
+            record = result.single()
+            self.env.assertEquals(record[0], l16)
+
+    def test17_int32_int64_serialization(self):
+        """Verify int32/int64 serialization after unaligned access fix."""
+        with bolt_con.session() as session:
+            # int32 range
+            result = session.run("RETURN $a, $b, $c, $d",
+                                 {"a": 100000, "b": 2147483647,
+                                  "c": -100000, "d": -2147483648})
+            record = result.single()
+            self.env.assertEquals(record[0], 100000)
+            self.env.assertEquals(record[1], 2147483647)
+            self.env.assertEquals(record[2], -100000)
+            self.env.assertEquals(record[3], -2147483648)
+
+            # int64 range
+            result = session.run("RETURN $a, $b",
+                                 {"a": 9223372036854775807,
+                                  "b": -9223372036854775808})
+            record = result.single()
+            self.env.assertEquals(record[0], 9223372036854775807)
+            self.env.assertEquals(record[1], -9223372036854775808)
+
+    def test18_reset_during_session(self):
+        """Verify RESET handling works correctly.
+        Before the fix, raw pointer arithmetic in the RESET message removal
+        could corrupt memory when data spanned buffer chunk boundaries.
+        session.reset() sends a RESET message through the bolt protocol."""
+        with bolt_con.session() as session:
+            # run a query, then reset, then run another query
+            result = session.run("RETURN 1")
+            record = result.single()
+            self.env.assertEquals(record[0], 1)
+
+        # after closing and reopening a session, the connection is reused
+        # but the state is reset
+        with bolt_con.session() as session:
+            result = session.run("RETURN 'after_reset'")
+            record = result.single()
+            self.env.assertEquals(record[0], 'after_reset')
+
+    def test19_reset_with_pipelined_queries(self):
+        """Test that RESET works correctly when interleaved with queries.
+        Uses explicit transaction begin/rollback to trigger RESET."""
+        with bolt_con.session() as session:
+            # begin a transaction then roll it back (triggers RESET-like behavior)
+            tx = session.begin_transaction()
+            tx.run("RETURN 1").consume()
+            tx.rollback()
+
+            # subsequent query on the same session should work correctly
+            result = session.run("RETURN 42")
+            record = result.single()
+            self.env.assertEquals(record[0], 42)
+
+    def test20_rapid_session_cycling(self):
+        """Rapidly open/close sessions to stress RESET handling.
+        Each session close sends RESET on the pooled connection."""
+        for i in range(20):
+            with bolt_con.session() as session:
+                result = session.run("RETURN $i", {"i": i})
+                record = result.single()
+                self.env.assertEquals(record[0], i)
