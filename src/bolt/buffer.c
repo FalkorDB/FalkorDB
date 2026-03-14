@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "buffer.h"
 #include "../util/arr.h"
+#include <errno.h>
 
 // set buffer index to offset
 void buffer_index_set
@@ -76,8 +77,8 @@ uint64_t buffer_index_diff
 	ASSERT(b != NULL);
 	ASSERT(a->buf == b->buf);
 
+	ASSERT(a->chunk > b->chunk || (a->chunk == b->chunk && a->offset >= b->offset));
 	uint64_t diff = (a->chunk - b->chunk) * BUFFER_CHUNK_SIZE + (a->offset - b->offset);
-	ASSERT(diff >= 0);
 	return diff;
 }
 
@@ -255,8 +256,8 @@ bool buffer_socket_read
 		buf->write.chunk++;
 		arr_append(buf->chunks, rm_malloc(BUFFER_CHUNK_SIZE));
 		nread = socket_read(socket, buf->chunks[buf->write.chunk], BUFFER_CHUNK_SIZE);
-		if(nread < 0) {
-			return false;
+		if(nread <= 0) {
+			return nread == 0 || errno == EAGAIN || errno == EWOULDBLOCK;
 		}
 		buf->write.offset += nread;
 	}
