@@ -331,3 +331,42 @@ class testBolt():
                 result = session.run("RETURN $i", {"i": i})
                 record = result.single()
                 self.env.assertEquals(record[0], i)
+
+    def test21_large_string_parameter_value(self):
+        """Test parameterized query where write_value must serialize a very
+        large string value. Before the fix, write_value wrote into a fixed
+        buffer that could overflow; now it uses a growable wbuf_t."""
+        with bolt_con.session() as session:
+            large = 'Z' * 50000
+            result = session.run("RETURN $v", {"v": large})
+            record = result.single()
+            self.env.assertEquals(record[0], large)
+
+    def test22_large_list_parameter_value(self):
+        """Test parameterized query with a large list value that forces
+        write_value to grow the buffer during recursive serialization."""
+        with bolt_con.session() as session:
+            large_list = list(range(1000))
+            result = session.run("RETURN $v", {"v": large_list})
+            record = result.single()
+            self.env.assertEquals(record[0], large_list)
+
+    def test23_nested_map_parameter(self):
+        """Test parameterized query with a nested map to exercise
+        write_value's recursive map serialization with heap-allocated keys."""
+        with bolt_con.session() as session:
+            nested = {"outer_key": {"inner_key": "inner_value"}}
+            result = session.run("RETURN $v", {"v": nested})
+            record = result.single()
+            self.env.assertEquals(record[0], nested)
+
+    def test24_many_large_parameters(self):
+        """Combine many parameters with large values to stress the
+        growable query buffer across multiple write_value calls."""
+        with bolt_con.session() as session:
+            params = {f"p{i}": 'V' * 500 for i in range(50)}
+            placeholders = ', '.join(f'${k}' for k in params)
+            result = session.run(f"RETURN {placeholders}", params)
+            record = result.single()
+            for i in range(50):
+                self.env.assertEquals(record[i], 'V' * 500)

@@ -9,6 +9,8 @@
 #include "rax/rax.h"
 #include "util/rmalloc.h"
 #include <string.h>
+#include <strings.h>
+#include <ctype.h>
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/sha.h>
@@ -73,14 +75,17 @@ static bool validate_headers
 	}
 	char *i = v;
 	bool is_upgrade = false;
-	while (i != NULL && strlen(i) > 0) {
-		if(strncmp(i, "Upgrade", 7) == 0) {
+	while (i != NULL && *i != '\0') {
+		// skip leading OWS (spaces and tabs) per RFC 7230
+		while(*i == ' ' || *i == '\t') i++;
+		if(strncasecmp(i, "Upgrade", 7) == 0 &&
+		   (i[7] == '\0' || i[7] == ',' || i[7] == ' ' || i[7] == '\t')) {
 			is_upgrade = true;
 			break;
 		}
 		char *comma = strchr(i, ',');
 		if(comma == NULL) break;
-		i = comma + 2;
+		i = comma + 1;
 	}
 	if(!is_upgrade) {
 		return false;
