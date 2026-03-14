@@ -246,7 +246,10 @@ bool buffer_socket_read
 
 	char *ptr = buf->chunks[buf->write.chunk] + buf->write.offset;
 	int nread = socket_read(socket, ptr, BUFFER_CHUNK_SIZE - buf->write.offset);
-	if(nread < 0 || (nread == 0 && buf->write.offset < BUFFER_CHUNK_SIZE)) {
+	if(nread < 0) {
+		return errno == EAGAIN || errno == EWOULDBLOCK;
+	}
+	if(nread == 0 && buf->write.offset < BUFFER_CHUNK_SIZE) {
 		return false;
 	}
 
