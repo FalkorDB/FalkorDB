@@ -205,9 +205,14 @@ static bool wbuf_ensure
 	wbuf_t *wb,      // write buffer
 	uint32_t need    // additional bytes needed
 ) {
-	if(wb->n + need <= wb->cap) return true;
+	uint64_t target = (uint64_t)wb->n + need;
+	if(target <= wb->cap) return true;
+	if(target > UINT32_MAX) return false;
 	uint32_t new_cap = wb->cap;
-	while(new_cap < wb->n + need) new_cap *= 2;
+	while(new_cap < (uint32_t)target) {
+		if(new_cap > UINT32_MAX / 2) return false;
+		new_cap *= 2;
+	}
 	char *tmp = rm_realloc(wb->buf, new_cap);
 	if(tmp == NULL) return false;
 	wb->buf = tmp;
@@ -709,6 +714,7 @@ void BoltReadHandler
 			ASSERT(res == 0);
 			// current_read is now 6 bytes past msg_start
 			// remove the 6-byte RESET frame by shifting remaining data back
+			buffer_index_t scan_restart = msg_start;
 			uint32_t remaining = (uint32_t)buffer_index_length(&current_read);
 			if(remaining > 0) {
 				char *tmp = rm_malloc(remaining);
@@ -717,7 +723,7 @@ void BoltReadHandler
 				rm_free(tmp);
 			}
 			client->read_buf.write = msg_start;
-			current_read = msg_start;
+			current_read = scan_restart;
 			bolt_client_finish_write(client);
 		} else {
 			size = ntohs(buffer_read_uint16(&current_read));

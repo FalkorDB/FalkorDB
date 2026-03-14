@@ -370,3 +370,35 @@ class testBolt():
             record = result.single()
             for i in range(50):
                 self.env.assertEquals(record[i], 'V' * 500)
+
+    def test25_multiple_consecutive_rollbacks(self):
+        """Test that multiple consecutive transaction rollbacks within the
+        same session work correctly. Each rollback sends a RESET-like message;
+        the RESET scan loop must continue past the first removed frame to
+        handle any subsequent ones in the buffer."""
+        with bolt_con.session() as session:
+            for i in range(10):
+                tx = session.begin_transaction()
+                tx.run("RETURN $i", {"i": i}).consume()
+                tx.rollback()
+
+            # after all rollbacks, the session must still be usable
+            result = session.run("RETURN 'after_rollbacks'")
+            record = result.single()
+            self.env.assertEquals(record[0], 'after_rollbacks')
+
+    def test26_interleaved_rollback_and_queries(self):
+        """Stress the RESET scan loop by interleaving rollbacks with
+        queries on the same session. Verifies the buffer state is
+        consistent after each RESET removal."""
+        with bolt_con.session() as session:
+            for i in range(5):
+                # rollback a transaction
+                tx = session.begin_transaction()
+                tx.run("RETURN 1").consume()
+                tx.rollback()
+
+                # immediately run a normal query
+                result = session.run("RETURN $v", {"v": i * 100})
+                record = result.single()
+                self.env.assertEquals(record[0], i * 100)
