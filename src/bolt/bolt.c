@@ -71,7 +71,7 @@ void bolt_reply_tiny_int
 	int8_t data             // tiny int value to write
 ) {
 	ASSERT(client != NULL);
-	ASSERT(data >= TINY_INT8_MIN && data <= TINY_INT8_MAX);
+	ASSERT(data >= -16 && data <= 127);
 
 	buffer_write_uint8(&client->write_buf.write, data);
 }
@@ -137,7 +137,7 @@ void bolt_reply_int
 ) {
 	ASSERT(client != NULL);
 
-	if(data >= TINY_INT8_MIN && data <= TINY_INT8_MAX) {
+	if(data >= -16 && data <= 127) {
 		bolt_reply_tiny_int(client, data);
 	} else if(INT8_MIN <= data && data <= INT8_MAX) {
 		bolt_reply_int8(client, data);
@@ -555,7 +555,7 @@ uint32_t bolt_read_map_size
 		case MAP16_MARKER:
 			return ntohs(buffer_read_uint16(data));
 		case MAP32_MARKER:
-			return ntohs(buffer_read_uint32(data));
+			return ntohl(buffer_read_uint32(data));
 		default:
 			if(TINY_MARKER_CHECK(TINY_MAP_BASE_MARKER, marker)) {
 				return marker - TINY_MAP_BASE_MARKER;
