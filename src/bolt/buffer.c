@@ -352,7 +352,6 @@ void buffer_write
 	while(buf->offset + size > BUFFER_CHUNK_SIZE) {
 		uint32_t n = BUFFER_CHUNK_SIZE - buf->offset;
 		memcpy(buf->buf->chunks[buf->chunk] + buf->offset, data, n);
-		buffer_index_advance(buf, n);
 		data += n;
 		size -= n;
 		buf->chunk++;
