@@ -68,9 +68,12 @@ static bool is_authenticated
 	uint32_t auth_size = bolt_read_map_size(&client->msg_buf.read);
 
 	if(auth_size < 3) {
-		// if no password provided check we can call PING
-		RedisModuleCallReply *reply = RedisModule_Call(client->ctx, "PING", "");
-		bool res = RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR;
+		// no credentials provided
+		// use AUTH with empty string: succeeds only when requirepass is not set
+		RedisModuleCallReply *reply =
+			RedisModule_Call(client->ctx, "AUTH", "c", "");
+		bool res =
+			RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR;
 		RedisModule_FreeCallReply(reply);
 		return res;
 	}
@@ -246,17 +249,26 @@ static bool wbuf_printf
 	return true;
 }
 
+// maximum nesting depth for recursive value serialization
+#define WRITE_VALUE_MAX_DEPTH 128
+
 // write the bolt value to the growable buffer as string
 // returns false if a write error occurred
-static bool write_value
+static bool _write_value
 (
 	wbuf_t *wb,            // growable write buffer
-	buffer_index_t *value  // the value to write
+	buffer_index_t *value, // the value to write
+	int depth              // current recursion depth
 ) {
 	ASSERT(wb != NULL);
 	ASSERT(value != NULL);
 
 	if(wb->err) return false;
+
+	if(depth > WRITE_VALUE_MAX_DEPTH) {
+		wb->err = true;
+		return false;
+	}
 
 	switch (bolt_read_type(*value))
 	{
@@ -297,10 +309,10 @@ static bool write_value
 			uint32_t size = bolt_read_list_size(value);
 			wbuf_printf(wb, "[");
 			if(size > 0) {
-				write_value(wb, value);
+				_write_value(wb, value, depth + 1);
 				for (uint32_t i = 1; i < size; i++) {
 					wbuf_printf(wb, ", ");
-					write_value(wb, value);
+					_write_value(wb, value, depth + 1);
 				}
 			}
 			wbuf_printf(wb, "]");
@@ -317,7 +329,7 @@ static bool write_value
 				bolt_read_string(value, key);
 				wbuf_printf(wb, "%.*s: ", key_len, key);
 				rm_free(key);
-				write_value(wb, value);
+				_write_value(wb, value, depth + 1);
 				for (uint32_t i = 1; i < size; i++) {
 					bolt_read_string_size(value, &key_len);
 					key = rm_malloc(key_len);
@@ -325,7 +337,7 @@ static bool write_value
 					bolt_read_string(value, key);
 					wbuf_printf(wb, ", %.*s: ", key_len, key);
 					rm_free(key);
-					write_value(wb, value);
+					_write_value(wb, value, depth + 1);
 				}
 			}
 			wbuf_printf(wb, "}");
@@ -344,6 +356,15 @@ static bool write_value
 			ASSERT(false);
 			return false;
 	}
+}
+
+// public entry point — starts recursion at depth 0
+static bool write_value
+(
+	wbuf_t *wb,            // growable write buffer
+	buffer_index_t *value  // the value to write
+) {
+	return _write_value(wb, value, 0);
 }
 
 // read the query from the message buffer

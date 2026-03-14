@@ -402,3 +402,57 @@ class testBolt():
                 result = session.run("RETURN $v", {"v": i * 100})
                 record = result.single()
                 self.env.assertEquals(record[0], i * 100)
+
+    def test27_auth_empty_credentials_no_password(self):
+        """Verify that authentication with empty credentials still works
+        when no requirepass is configured. Before the fix, PING was used
+        which always succeeds even when requirepass IS set. Now AUTH with
+        empty string is used, which correctly reflects server config."""
+        # the test env has no requirepass, so empty auth should still succeed
+        driver = GraphDatabase.driver(
+            "bolt://localhost:7687", auth=("falkordb", ""))
+        with driver.session() as session:
+            result = session.run("RETURN 1")
+            record = result.single()
+            self.env.assertEquals(record[0], 1)
+        driver.close()
+
+    def test28_deeply_nested_map_parameter_rejected(self):
+        """Test that deeply nested parameters beyond the recursion limit
+        cause query construction to fail gracefully rather than crash.
+        Before the fix, write_value had no recursion depth limit; a deeply
+        nested structure would overflow the C stack."""
+        # build a map nested 200 levels deep (exceeds WRITE_VALUE_MAX_DEPTH=128)
+        nested = "inner_value"
+        for i in range(200):
+            nested = {"k": nested}
+        with bolt_con.session() as session:
+            try:
+                result = session.run("RETURN $v", {"v": nested})
+                result.consume()
+                # if server handled it gracefully (returned error), that's fine
+            except Exception:
+                # a client or server error is acceptable — crash is not
+                pass
+        # verify the server is still alive after the deeply nested param
+        with bolt_con.session() as session:
+            result = session.run("RETURN 'alive'")
+            record = result.single()
+            self.env.assertEquals(record[0], 'alive')
+
+    def test29_moderately_nested_map_parameter_succeeds(self):
+        """Verify that moderately nested parameters (within the depth
+        limit) still work correctly after the recursion limit was added."""
+        # 50 levels deep — well within WRITE_VALUE_MAX_DEPTH=128
+        nested = "leaf"
+        for i in range(50):
+            nested = {"k": nested}
+        with bolt_con.session() as session:
+            result = session.run("RETURN $v", {"v": nested})
+            record = result.single()
+            # verify the innermost value survived the round-trip
+            val = record[0]
+            for i in range(50):
+                self.env.assertContains("k", val)
+                val = val["k"]
+            self.env.assertEquals(val, "leaf")
