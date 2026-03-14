@@ -502,8 +502,24 @@ static void _ForkPrepare() {
 						"preparing to fork") ;
 			}
 
+			bool synced = Graph_Synced (g) ;
+
+			// quick return if graph sync failed
+			// as we can't abort the fork it is the child which will shortly
+			// discover that one of the graphs isn't sync causing it to exit
+			// before redis starts encoding the RDB file
+			if (!synced) {
+				RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_WARNING,
+						"Graph %s isn't synchronize, BGSAVE will fail",
+						GraphContext_GetName (gc));
+			}
+
 			// decrease graph context ref count
 			GraphContext_DecreaseRefCount (gc) ;
+
+			if (!synced) {
+				break ;
+			}
 		}
 	}
 
@@ -548,22 +564,41 @@ static void _AfterForkChild() {
 	// in forked process
 	GxB_set (GxB_NTHREADS, 1) ;
 
+	// the graph sync validation only applies to BGSAVE forks (main thread)
+	// GRAPH.COPY forks from a cron thread and only syncs the source graph
+	// after fork(), the child inherits the forking thread's ID (POSIX)
+	// so pthread_self() here matches the thread that called fork()
+	bool validate_graphs_after_fork =
+		pthread_equal (pthread_self (), redis_main_thread_id) != 0 &&
+		!INTERMEDIATE_GRAPHS ;
+
+	if (!validate_graphs_after_fork) {
+		return ;
+	}
+
 	// make sure all graphs in keyspace are fully synced
-#ifdef RG_DEBUG
 	GraphContext *gc = NULL ;
 	KeySpaceGraphIterator it ;
 	Globals_ScanGraphs (&it) ;
 
 	while ((gc = GraphIterator_Next (&it)) != NULL) {
 		Graph *g = GraphContext_GetGraph (gc) ;
-		ASSERT (Graph_Synced (g)) ;
+
+		bool synced = Graph_Synced (g) ;
+
 		ASSERT (!Graph_IsWriteLocked (g)) ;
 
 		// decrease graph context ref count
 		GraphContext_DecreaseRefCount (gc) ;
-	}
-#endif
 
+		// abort BGSAVE if graph isn't synced
+		// it's the parent process responsibility (_ForkPrepare) to synchronize
+		// the entire graph, if one of the graph's matrices isn't synced
+		// it might be related to a GraphBLAS failure e.g. out of memory
+		if (!synced) {
+			RedisModule_ExitFromChild (-1) ;
+		}
+	}
 }
 
 static void _RegisterForkHooks() {

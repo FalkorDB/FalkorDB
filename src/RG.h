@@ -95,6 +95,19 @@
 	#define GrB_OK(GrB_method) (GrB_method)
 #endif
 
+// computes GrB_method
+// returns GrB_Info in case the method did not return success
+#define GrB_RETURN_IF_FAIL(GrB_method)                                         \
+    do {                                                                       \
+        GrB_Info info = (GrB_method) ;                                         \
+        if (info != GrB_SUCCESS) {                                             \
+            RedisModule_Log (NULL, "warning",                                  \
+                "[GraphBLAS Error] %s (Error Code: %d) failed at %s:%d in function %s", \
+                #GrB_method, (int)info, __FILE__, __LINE__, __func__) ;        \
+            return info ;                                                      \
+        }                                                                      \
+    } while (0)
+
 // use likely and unlikely to provide the compiler with branch prediction information
 // for example:
 // if (likely(x > 0))

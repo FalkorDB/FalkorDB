@@ -205,6 +205,14 @@ void UDFCtx_Update(void) {
 		// UDF context is outdated, reconstruct JSContext
 		JS_FreeContext (ctx->js_ctx) ;  // free outdated js context
 
+		// free js runtime
+		// stack or heap limits might have changed due to reconfiguration
+		// at the moment this is our only way resetting these values
+		JS_FreeRuntime (ctx->js_rt) ;
+
+		// create js runtime
+		ctx->js_rt = UDF_GetJSRuntime() ;
+
 		// create js context
 		ctx->js_ctx = UDF_GetExecutionJSContext (ctx->js_rt) ;
 

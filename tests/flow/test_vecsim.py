@@ -6,6 +6,12 @@ GRAPH_ID = "vecsim"
 class testVecsim():
     def __init__(self):
         self.env, self.db = Env()
+
+        # Skip on macOS with ASAN due to VectorSimilarity container-overflow bug
+        # https://github.com/RediSearch/VectorSimilarity - needs upstream fix
+        if SANITIZER and OS == "macos":
+            self.env.skip()
+
         self.conn = self.env.getConnection()
         self.graph = Graph(self.conn, GRAPH_ID)
 

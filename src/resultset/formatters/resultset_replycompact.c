@@ -546,4 +546,3 @@ void ResultSet_EmitCompactStats
 	buflen = sprintf(buff, "Query internal execution time: %.6f milliseconds", t);
 	RedisModule_ReplyWithStringBuffer(ctx, buff, buflen);
 }
-

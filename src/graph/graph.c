@@ -185,18 +185,18 @@ static inline AttributeSet *_Graph_GetEntity
 // resize given matrix, such that its number of row and columns
 // matches the number of nodes in the graph. Also, synchronize
 // matrix to execute any pending operations
-void _MatrixSynchronize
+bool _MatrixSynchronize
 (
 	const Graph *g,   // graph the matrix is related to
 	Delta_Matrix M,   // matrix to synchronize
 	GrB_Index nrows,  // # of rows for the resize
 	GrB_Index ncols   // # of columns for the resize
 ) {
-	Delta_Matrix_synchronize (M, nrows, ncols) ;
+	return (Delta_Matrix_synchronize (M, nrows, ncols) == GrB_SUCCESS) ;
 }
 
 // resize matrix to node capacity
-void _MatrixResizeToCapacity
+static bool _MatrixResizeToCapacity
 (
 	const Graph *g,   // graph the matrix is related to
 	Delta_Matrix M,   // matrix to synchronize
@@ -209,19 +209,27 @@ void _MatrixResizeToCapacity
 
 	GrB_Index n_rows ;
 	GrB_Index n_cols ;
-	Delta_Matrix_nrows (&n_rows, M) ;
-	Delta_Matrix_ncols (&n_cols, M) ;
+
+	if (Delta_Matrix_nrows (&n_rows, M) != GrB_SUCCESS) {
+		return false ;
+	}
+
+	if (Delta_Matrix_ncols (&n_cols, M) != GrB_SUCCESS) {
+		return false ;
+	}
 
 	// this policy should only be used in a thread-safe context,
 	// so no locking is required
+	GrB_Info info = GrB_SUCCESS ;
 	if (n_rows < nrows || n_cols < ncols) {
-		GrB_Info res = Delta_Matrix_resize (M, nrows, ncols) ;
-		ASSERT (res == GrB_SUCCESS) ;
+		info = Delta_Matrix_resize (M, nrows, ncols) ;
 	}
+
+	return info == GrB_SUCCESS ;
 }
 
 // do not update matrices
-void _MatrixNOP
+static bool _MatrixNOP
 (
 	const Graph *g,   // graph the matrix is related to
 	Delta_Matrix M,   // matrix to synchronize
@@ -232,7 +240,7 @@ void _MatrixNOP
 	// e.g. while loading an RDB
 	ASSERT_ALLOW_POLICY_LOOSE () ;
 
-	return ;
+	return true ;
 }
 
 // retrieve graph matrix synchronization policy
@@ -364,7 +372,7 @@ bool Graph_Pending
 	//--------------------------------------------------------------------------
 
 	M = g->adjacency_matrix;
-	info = Delta_Matrix_pending(M, &pending);
+	info = Delta_Matrix_willWait(M, &pending);
 	ASSERT(info == GrB_SUCCESS);
 	if(pending) {
 		return true;
@@ -375,7 +383,7 @@ bool Graph_Pending
 	//--------------------------------------------------------------------------
 
 	M = g->node_labels;
-	info = Delta_Matrix_pending(M, &pending);
+	info = Delta_Matrix_willWait (M, &pending) ;
 	ASSERT(info == GrB_SUCCESS);
 	if(pending) {
 		return true;
@@ -388,7 +396,7 @@ bool Graph_Pending
 	n = array_len(g->labels);
 	for(int i = 0; i < n; i ++) {
 		M = g->labels[i];
-		info = Delta_Matrix_pending(M, &pending);
+		info = Delta_Matrix_willWait (M, &pending) ;
 		ASSERT(info == GrB_SUCCESS);
 		if(pending) {
 			return true;
@@ -402,7 +410,7 @@ bool Graph_Pending
 	n = array_len(g->relations);
 	for(int i = 0; i < n; i ++) {
 		M = g->relations[i];
-		info = Delta_Matrix_pending(M, &pending);
+		info = Delta_Matrix_willWait (M, &pending) ;
 		ASSERT(info == GrB_SUCCESS);
 		if(pending) {
 			return true;
@@ -1700,7 +1708,7 @@ static void _Graph_Free
 
 // check if a delta matrix is synced
 // 1. of the expected dimensions
-// 2. doesn't contains any pendding changes
+// 2. doesn't contains any pending changes
 static inline bool is_matrix_synced
 (
 	Delta_Matrix A,   // matrix
@@ -1714,7 +1722,10 @@ static inline bool is_matrix_synced
 	GrB_OK (Delta_Matrix_nrows (&_nrows, A)) ;
 	GrB_OK (Delta_Matrix_ncols (&_ncols, A)) ;
 
-	return !Delta_Matrix_isDirty (A) && (nrows == _nrows && ncols == _ncols) ;
+	bool willWait ;
+	GrB_OK (Delta_Matrix_willWait (A, &willWait)) ;
+
+	return !willWait && (nrows == _nrows && ncols == _ncols) ;
 }
 
 // return true if all graph matrices are fully synced (not dirty)

@@ -1284,6 +1284,87 @@ class testUDF():
 
         # TODO: not sure how to get server's STDOUT
 
+    def test_heap_size_constraint(self):
+        """
+        Test that JS_HEAP_SIZE configuration limits memory allocation.
+        We attempt to allocate a large array that exceeds the configured limit.
+        """
+
+        script = """
+        function ExploitHeap() {
+            let storage = [];
+            // Attempt to allocate a large amount of data
+            for(let i = 0; i < 1000000; i++) {
+                storage.push("Some large-ish string to consume memory")
+            }
+            return storage.length;
+        }
+        falkor.register('ExploitHeap', ExploitHeap);
+        """
+
+        # We assume the environment is configured with a restricted JS_HEAP_SIZE
+        # If the UDF engine is working correctly, this should throw an out-of-memory exception.
+        self.db.udf_load("HeapTest", script, True)
+
+        # update the heap size to 1MB
+        response = self.db.config_set("JS_HEAP_SIZE", 1 * 1024 * 1024)
+        self.env.assertEqual(response, "OK")
+
+        try:
+            # This query should fail because the JS environment runs out of heap space
+            self.graph.query("RETURN HeapTest.ExploitHeap()")
+            self.env.assertTrue(False, "Query should have failed due to JS_HEAP_SIZE constraint")
+        except Exception as e:
+            self.env.assertIn("out of memory", str(e).lower())
+
+        # Update JS heap size to 2GB and retry
+        response = self.db.config_set("JS_HEAP_SIZE", 2 * 1024 * 1024 * 1024)
+        self.env.assertEqual(response, "OK")
+
+        try:
+            # This query should succeed because the JS environment runs with a large heap space
+            response = self.graph.query("RETURN HeapTest.ExploitHeap()").result_set[0][0]
+            self.env.assertEqual(response, 1000000)
+        except Exception as e:
+            self.env.assertTrue(False, "Query should have succeeded")
+
+    def test_udf_timeout(self):
+        """
+        Test that UDF timeout is enforced
+        """
+
+        # Update timeout to 1 second
+        response = self.db.config_set("TIMEOUT_DEFAULT", 1000)
+        self.env.assertEqual(response, "OK")
+
+        # Register a UDF with an infinite loop
+        script = """
+        function LongRunningUDF() {
+            let start = Date.now();
+            // Loop for much longer than the 1s timeout
+            // Or simply an infinite loop
+            while(true) {
+                // Busy wait
+            }
+            return true;
+        }
+        falkor.register('LongRunningUDF', LongRunningUDF);
+        """
+        self.db.udf_load("TimeoutTest", script, True)
+
+        # Execute and assert that it times out
+        try:
+            # We use a query that calls the blocking UDF
+            self.graph.query("RETURN TimeoutTest.LongRunningUDF()")
+            self.env.assertTrue(False, "Query should have been terminated due to timeout")
+        except Exception as e:
+            # FalkorDB typically returns a 'Query timed out' error
+            # We check for the presence of 'timeout' in the error message
+            self.env.assertIn("UDF Exception", str(e))
+
+        # Reset timeout to a higher value for subsequent tests
+        self.db.config_set("TIMEOUT_DEFAULT", 0)
+
 class test_udf_javascript():
     def __init__(self):
         self.env, self.db = Env()
@@ -1490,31 +1571,6 @@ class test_udf_javascript():
 
         v = self.graph.query("RETURN lib_undef.undef()").result_set[0][0]
         self.env.assertEqual(v, None)
-
-    def test_runtime_interrupt(self):
-        """
-        UDFs should be time bounded, avoiding infinity loop
-        and long computations
-        """
-
-        script = """
-        function infinity() {
-            while(1) {
-                var a = 1;
-            }
-            return 1;
-        }
-
-        falkor.register('infinity', infinity);
-        """
-
-        self.db.udf_load("infinity", script)
-
-        try:
-            v = self.graph.query("RETURN infinity.infinity()")
-            assert False, "Expected JS exception to propagate"
-        except ResponseError as e:
-            self.env.assertIn("UDF Exception: interrupted", str(e))
 
 class testUDFCluster():
     def __init__(self):

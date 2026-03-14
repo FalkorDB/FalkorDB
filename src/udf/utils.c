@@ -8,13 +8,9 @@
 #include "repository.h"
 #include "../util/arr.h"
 #include "../errors/errors.h"
+#include "../configuration/config.h"
 #include "../arithmetic/func_desc.h"
 
-// 8 MB stack limit - sufficient for most UDF operations
-#define JS_RUNTIME_STACK_SIZE (8 * 1024 * 1024)
-
-// 1024 MB memory limit - prevents resource exhaustion from malicious scripts
-#define JS_RUNTIME_MEMORY_LIMIT (1024 * 1024 * 1024)
 
 extern JSClassID js_node_class_id;        // JS Node class
 extern JSClassID js_edge_class_id;        // JS Edge class
@@ -33,8 +29,16 @@ JSRuntime *UDF_GetJSRuntime(void) {
 	ASSERT (js_rt != NULL) ;
 
 	UDF_RT_RegisterClasses (js_rt) ;
-	JS_SetMaxStackSize (js_rt, JS_RUNTIME_STACK_SIZE) ;
-	JS_SetMemoryLimit (js_rt, JS_RUNTIME_MEMORY_LIMIT) ;
+
+	size_t heap_size  = -1 ;  // unlimited
+	size_t stack_size = 0 ;   // unlimited
+
+	// read JS heap and stack limits from config
+	Config_Option_get (Config_JS_HEAP_SIZE,  &heap_size)  ;
+	Config_Option_get (Config_JS_STACK_SIZE, &stack_size) ;
+
+	JS_SetMemoryLimit  (js_rt, heap_size)  ;
+	JS_SetMaxStackSize (js_rt, stack_size) ;
 
 	return js_rt ;
 }

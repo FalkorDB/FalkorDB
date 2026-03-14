@@ -10,80 +10,67 @@
 #include "../../util/rmalloc.h"
 #include "configuration/config.h"
 
-static inline void _SetUndirty
+static GrB_Info Delta_Matrix_sync_deletions
 (
 	Delta_Matrix C
 ) {
-	ASSERT(C);
+	ASSERT (C != NULL) ;
 
-	C->dirty = false;
+	GrB_Matrix m  = DELTA_MATRIX_M (C) ;
+	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS (C) ;
 
-	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
-		C->transposed->dirty = false;
-	}
-}
+	GrB_Index nvals ;
+	GrB_RETURN_IF_FAIL (GrB_Matrix_nvals (&nvals, dm)) ;
 
-static void Delta_Matrix_sync_deletions
-(
-	Delta_Matrix C
-) {
-	ASSERT(C != NULL);
-
-	GrB_Matrix m  = DELTA_MATRIX_M(C);
-	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(C);
-
-	GrB_Index nvals;
-	GrB_OK (GrB_Matrix_nvals(&nvals, dm));
-
-	if(nvals > 0) { //shortcut if no vals
+	if (nvals > 0) { //shortcut if no vals
 		// turn on burble and look for: "alias duplicate"
 		// in that case replace with: asign
 		// or assign an empty scalar with a struct mask
-		GrB_OK (GrB_transpose(m, dm, NULL, m, GrB_DESC_RSCT0));
+		GrB_RETURN_IF_FAIL (GrB_transpose (m, dm, NULL, m, GrB_DESC_RSCT0)) ;
 	}
 
 	// clear delta minus
-	GrB_OK (GrB_Matrix_clear(dm));
+	return GrB_Matrix_clear (dm) ;
 }
 
-static void Delta_Matrix_sync_additions
+static GrB_Info Delta_Matrix_sync_additions
 (
 	Delta_Matrix C
 ) {
-	ASSERT(C != NULL);
+	ASSERT (C != NULL) ;
 
-	GrB_Matrix m  = DELTA_MATRIX_M(C);
-	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(C);
+	GrB_Matrix m  = DELTA_MATRIX_M (C) ;
+	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS (C) ;
 
-	GrB_Index nvals;
-	GrB_OK (GrB_Matrix_nvals(&nvals, dp));
+	GrB_Index nvals ;
+	GrB_RETURN_IF_FAIL (GrB_Matrix_nvals (&nvals, dp)) ;
 
-	if(nvals > 0) { //shortcut if no vals
+	if (nvals > 0) { //shortcut if no vals
 		// TODO: turn on burble, see if "wait add pending tuples into existing A" shows up
 		// in that case change to ewiseadd
-		GrB_OK (GrB_Matrix_assign(m, dp, NULL, dp, GrB_ALL, 0, GrB_ALL, 0,
-			GrB_DESC_S));
+		GrB_RETURN_IF_FAIL (GrB_Matrix_assign (m, dp, NULL, dp, GrB_ALL, 0,
+					GrB_ALL, 0, GrB_DESC_S)) ;
 	}
 
 	// clear delta plus
-	GrB_OK (GrB_Matrix_clear(dp));
+	return GrB_Matrix_clear (dp) ;
 }
 
-static void Delta_Matrix_sync
+static GrB_Info Delta_Matrix_sync
 (
 	Delta_Matrix C,
 	bool force_sync,
 	uint64_t delta_max_pending_changes
 ) {
-	ASSERT(C != NULL);
+	ASSERT (C != NULL) ;
 
-	GrB_Matrix m  = DELTA_MATRIX_M(C);
-	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(C);
+	GrB_Matrix M  = DELTA_MATRIX_M (C) ;
+	GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS (C) ;
+	GrB_Matrix DM = DELTA_MATRIX_DELTA_MINUS (C) ;
 
-	if(force_sync) {
-		Delta_Matrix_sync_deletions(C);
-		Delta_Matrix_sync_additions(C);
+	if (force_sync) {
+		GrB_RETURN_IF_FAIL (Delta_Matrix_sync_deletions (C)) ;
+		GrB_RETURN_IF_FAIL (Delta_Matrix_sync_additions (C)) ;
 	} else {
 		GrB_Index dp_nvals = 0;
 		GrB_Index dm_nvals = 0;
@@ -92,30 +79,37 @@ static void Delta_Matrix_sync
 		// determine change set
 		//----------------------------------------------------------------------
 
-		GrB_OK (GrB_Matrix_nvals(&dp_nvals, dp));
-		GrB_OK (GrB_Matrix_nvals(&dm_nvals, dm));
+		GrB_RETURN_IF_FAIL (GrB_Matrix_nvals (&dp_nvals, DP)) ;
+		GrB_RETURN_IF_FAIL (GrB_Matrix_nvals (&dm_nvals, DM)) ;
 
 		//----------------------------------------------------------------------
-		// perform deletions
+		// flush deletions
 		//----------------------------------------------------------------------
 
-		if(dm_nvals >= delta_max_pending_changes) {
-			Delta_Matrix_sync_deletions(C);
+		if (dm_nvals >= delta_max_pending_changes) {
+			GrB_RETURN_IF_FAIL (Delta_Matrix_sync_deletions (C)) ;
 		}
 
 		//----------------------------------------------------------------------
-		// perform additions
+		// flush additions
 		//----------------------------------------------------------------------
 
-		if(dp_nvals >= delta_max_pending_changes) {
-			Delta_Matrix_sync_additions(C);
+		if (dp_nvals >= delta_max_pending_changes) {
+			GrB_RETURN_IF_FAIL (Delta_Matrix_sync_additions (C)) ;
 		}
 	}
 
 	// wait on all 3 matrices
-	GrB_OK (GrB_wait(m, GrB_MATERIALIZE));
-	GrB_OK (GrB_wait(dm, GrB_MATERIALIZE));
-	GrB_OK (GrB_wait(dp, GrB_MATERIALIZE));
+	GrB_RETURN_IF_FAIL (GrB_wait (M,  GrB_MATERIALIZE)) ;
+	GrB_RETURN_IF_FAIL (GrB_wait (DM, GrB_MATERIALIZE)) ;
+	GrB_RETURN_IF_FAIL (GrB_wait (DP, GrB_MATERIALIZE)) ;
+
+	// C shouldn't have any pending operations
+	bool will_wait = true ;
+	GrB_OK (Delta_Matrix_willWait (C, &will_wait)) ;
+	ASSERT (will_wait == false) ;
+
+	return GrB_SUCCESS ;
 }
 
 GrB_Info Delta_Matrix_wait
@@ -124,50 +118,101 @@ GrB_Info Delta_Matrix_wait
 	bool force_sync
 ) {
 	ASSERT (A != NULL) ;
-	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE (A)) {
-		Delta_Matrix_wait (A->transposed, force_sync) ;
+
+	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE (A)) {
+		GrB_RETURN_IF_FAIL (Delta_Matrix_wait (A->transposed, force_sync)) ;
 	}
 
 	uint64_t delta_max_pending_changes ;
 	Config_Option_get (Config_DELTA_MAX_PENDING_CHANGES,
 			&delta_max_pending_changes) ;
 
-	Delta_Matrix_sync (A, force_sync, delta_max_pending_changes) ;
+	GrB_RETURN_IF_FAIL (Delta_Matrix_sync (A, force_sync,
+				delta_max_pending_changes)) ;
 
-	_SetUndirty (A) ;
-
-	return GrB_SUCCESS;
+	return GrB_SUCCESS ;
 }
 
-void Delta_Matrix_synchronize
+// synchronizes the DeltaMatrix `C`
+// in case `C` isn't of the expected dimensions it will be resized
+// in case GraphBLAS indicates one of `C`'s internal matrices: `M`, `DP` or `DM`
+// requires waiting then these matrices will be synchronized
+GrB_Info Delta_Matrix_synchronize
 (
-	Delta_Matrix A,
-	GrB_Index nrows,
-	GrB_Index ncols
-)
-{
-	ASSERT (A != NULL) ;
-	uint64_t A_nrows = 0 ;
-	uint64_t A_ncols = 0 ;
-	GrB_OK (Delta_Matrix_nrows (&A_nrows, A)) ;
-	GrB_OK (Delta_Matrix_ncols (&A_ncols, A)) ;
-	
-	if (!(A_nrows < nrows || A_ncols < ncols || A->dirty)) {
-		return;
+	Delta_Matrix C,   // the DeltaMatrix to synchronize
+	GrB_Index nrows,  // the required number of rows
+	GrB_Index ncols   // the required number of columns
+) {
+	ASSERT (C != NULL) ;
+
+	GrB_Info info = GrB_SUCCESS ;
+	uint64_t C_nrows = 0 ;
+	uint64_t C_ncols = 0 ;
+
+	Delta_Matrix_lock (C) ;
+
+	//--------------------------------------------------------------------------
+	// get C's number of rows and columns
+	//--------------------------------------------------------------------------
+
+	info = Delta_Matrix_nrows (&C_nrows, C) ;
+	if (info != GrB_SUCCESS) {
+		goto unlock ;
 	}
 
-	Delta_Matrix_lock (A) ;
-	GrB_OK (Delta_Matrix_nrows (&A_nrows, A)) ;
-	GrB_OK (Delta_Matrix_ncols (&A_ncols, A)) ;
-
-	if (A_nrows < nrows || A_ncols < ncols) {
-		GrB_OK (Delta_Matrix_resize (A, nrows, ncols)) ;
+	info = Delta_Matrix_ncols (&C_ncols, C) ;
+	if (info != GrB_SUCCESS) {
+		goto unlock ;
 	}
 
-	if (A->dirty) {
-		GrB_OK (Delta_Matrix_wait(A, false));
+	bool will_wait = true ;
+	info = Delta_Matrix_willWait (C, &will_wait) ;
+	if (info != GrB_SUCCESS) {
+		goto unlock ;
 	}
 
-	Delta_Matrix_unlock(A);
+	bool already_sync = (C_nrows >= nrows &&
+						 C_ncols >= ncols &&
+						 !will_wait) ;
+
+	if (already_sync == true) {
+		goto unlock ;
+	}
+
+	//--------------------------------------------------------------------------
+	// resize
+	//--------------------------------------------------------------------------
+
+	if (C_nrows < nrows || C_ncols < ncols) {
+		info = Delta_Matrix_resize (C, nrows, ncols) ;
+		if (info != GrB_SUCCESS) {
+			// failed to resize
+			goto unlock ;
+		}
+
+		// recheck pending work
+		will_wait = true ;
+		info = Delta_Matrix_willWait (C, &will_wait) ;
+		if (info != GrB_SUCCESS) {
+			goto unlock ;
+		}
+	}
+
+	//--------------------------------------------------------------------------
+	// flush pending changes
+	//--------------------------------------------------------------------------
+
+	if (will_wait) {
+		info = Delta_Matrix_wait (C, false) ;
+		GrB_OK (Delta_Matrix_willWait (C, &will_wait)) ;
+
+		ASSERT ((info == GrB_SUCCESS && will_wait == false) ||
+				 info != GrB_SUCCESS) ;
+	}
+
+unlock:
+	Delta_Matrix_unlock (C) ;
+
+	return info ;
 }
 

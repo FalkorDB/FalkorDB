@@ -164,8 +164,10 @@ int RedisModule_OnLoad
 	// set up the module's configurable variables,
 	// using user-defined values where provided
 	// register for config updates
-	Config_Subscribe_Changes(reconf_handler);
-	if(Config_Init(ctx, argv, argc) != REDISMODULE_OK) return REDISMODULE_ERR;
+	Config_Subscribe_Changes (reconf_handler) ;
+	if (Config_Init (ctx, argv, argc) != REDISMODULE_OK) {
+		return REDISMODULE_ERR ;
+	}
 
 	RegisterEventHandlers(ctx);
 
