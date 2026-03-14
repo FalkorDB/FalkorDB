@@ -97,7 +97,8 @@ void bolt_reply_int16
 	ASSERT(client != NULL);
 
 	int8_t values[3] = {INT16_MARKER, 0, 0};
-	*(int16_t *)(values + 1) = htons(data);
+	int16_t tmp16 = htons(data);
+	memcpy(values + 1, &tmp16, sizeof(tmp16));
 	buffer_write(&client->write_buf.write, values, 3);
 }
 
@@ -110,7 +111,8 @@ void bolt_reply_int32
 	ASSERT(client != NULL);
 
 	int8_t values[5] = {INT32_MARKER, 0, 0, 0, 0};
-	*(int32_t *)(values + 1) = htonl(data);
+	int32_t tmp32 = htonl(data);
+	memcpy(values + 1, &tmp32, sizeof(tmp32));
 	buffer_write(&client->write_buf.write, values, 5);
 }
 
@@ -123,7 +125,8 @@ void bolt_reply_int64
 	ASSERT(client != NULL);
 
 	int8_t values[9] = {INT64_MARKER, 0, 0, 0, 0, 0, 0, 0, 0};
-	*(int64_t *)(values + 1) = htonll(data);
+	int64_t tmp64 = htonll(data);
+	memcpy(values + 1, &tmp64, sizeof(tmp64));
 	buffer_write(&client->write_buf.write, values, 9);
 }
 
@@ -183,11 +186,13 @@ void bolt_reply_string
     	buffer_write(&client->write_buf.write, values, 2);
 	} else if (size <= UINT16_MAX) {
 		int8_t values[3] = {STRING16_MARKER, 0, 0};
-		*(uint16_t *)(values + 1) = htons(size);
+		uint16_t tmp16 = htons(size);
+		memcpy(values + 1, &tmp16, sizeof(tmp16));
 		buffer_write(&client->write_buf.write, values, 3);
 	} else {
 		int8_t values[5] = {STRING32_MARKER, 0, 0, 0, 0};
-		*(uint32_t *)(values + 1) = htonl(size);
+		uint32_t tmp32 = htonl(size);
+		memcpy(values + 1, &tmp32, sizeof(tmp32));
 		buffer_write(&client->write_buf.write, values, 5);
 	}
 	buffer_write(&client->write_buf.write, data, size);
@@ -209,11 +214,13 @@ void bolt_reply_list
     	buffer_write(&client->write_buf.write, values, 2);
 	} else if (size <= UINT16_MAX) {
 		int8_t values[3] = {LIST16_MARKER, 0, 0};
-		*(uint16_t *)(values + 1) = htons(size);
+		uint16_t tmp16 = htons(size);
+		memcpy(values + 1, &tmp16, sizeof(tmp16));
 		buffer_write(&client->write_buf.write, values, 3);
 	} else {
 		int8_t values[5] = {LIST32_MARKER, 0, 0, 0, 0};
-		*(uint32_t *)(values + 1) = htonl(size);
+		uint32_t tmp32 = htonl(size);
+		memcpy(values + 1, &tmp32, sizeof(tmp32));
 		buffer_write(&client->write_buf.write, values, 5);
 	}
 }
@@ -236,11 +243,13 @@ void bolt_reply_map
     	buffer_write(&client->write_buf.write, values, 2);
 	} else if (size <= UINT16_MAX) {
 		int8_t values[3] = {MAP16_MARKER, 0, 0};
-		*(uint16_t *)(values + 1) = htons(size);
+		uint16_t tmp16 = htons(size);
+		memcpy(values + 1, &tmp16, sizeof(tmp16));
 		buffer_write(&client->write_buf.write, values, 3);
 	} else {
 		int8_t values[5] = {MAP32_MARKER, 0, 0, 0, 0};
-		*(uint32_t *)(values + 1) = htonl(size);
+		uint32_t tmp32 = htonl(size);
+		memcpy(values + 1, &tmp32, sizeof(tmp32));
 		buffer_write(&client->write_buf.write, values, 5);
 	}
 }

@@ -642,6 +642,7 @@ void BoltReadHandler
 	// process interrupt message
 	buffer_index_t current_read = client->read_buf.read;
 	while(buffer_index_length(&current_read) > 0) {
+		buffer_index_t msg_start = current_read;
 		uint16_t size = ntohs(buffer_read_uint16(&current_read));
 		if(buffer_index_length(&current_read) < size) break;
 		bolt_structure_type request_type = bolt_read_structure_type(&current_read);
@@ -650,12 +651,17 @@ void BoltReadHandler
 			client->reset = true;
 			uint16_t res = buffer_read_uint16(&current_read);
 			ASSERT(res == 0);
-			char *src = client->read_buf.chunks[current_read.chunk] + current_read.offset;
-			char *dst = src - size - 4;
-			size = buffer_index_length(&current_read);
-			memmove(dst, src, size);
-			current_read.offset -= 6;
-			client->read_buf.write.offset -= 6;
+			// current_read is now 6 bytes past msg_start
+			// remove the 6-byte RESET frame by shifting remaining data back
+			uint32_t remaining = (uint32_t)buffer_index_length(&current_read);
+			if(remaining > 0) {
+				char *tmp = rm_malloc(remaining);
+				buffer_index_read(&current_read, tmp, remaining);
+				buffer_write(&msg_start, tmp, remaining);
+				rm_free(tmp);
+			}
+			client->read_buf.write = msg_start;
+			current_read = msg_start;
 			bolt_client_finish_write(client);
 		} else {
 			size = ntohs(buffer_read_uint16(&current_read));
