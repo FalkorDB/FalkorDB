@@ -226,16 +226,18 @@ class testBoltRegression():
             self.env.assertEquals(record[2], 'hello')
 
     def test13_multiple_points(self):
-        """Test returning multiple Point2D values in the same record."""
+        """Test returning multiple Point2D values with float coordinates.
+        Uses float32-exact values (multiples of powers of 2) to exercise
+        the float serialization path without precision mismatch."""
         with self.bolt_con.session() as session:
             result = session.run(
-                "RETURN POINT({longitude:10, latitude:20}), "
-                "POINT({longitude:30, latitude:40}), "
-                "POINT({longitude:-50, latitude:60})")
+                "RETURN POINT({longitude:10.5, latitude:20.25}), "
+                "POINT({longitude:-30.125, latitude:40.75}), "
+                "POINT({longitude:-50.5, latitude:60.875})")
             record = result.single()
-            self.env.assertEquals(record[0], WGS84Point((10, 20)))
-            self.env.assertEquals(record[1], WGS84Point((30, 40)))
-            self.env.assertEquals(record[2], WGS84Point((-50, 60)))
+            self.env.assertEquals(record[0], WGS84Point((10.5, 20.25)))
+            self.env.assertEquals(record[1], WGS84Point((-30.125, 40.75)))
+            self.env.assertEquals(record[2], WGS84Point((-50.5, 60.875)))
 
     def test14_large_string_parameter(self):
         """Test queries with large string parameters.
