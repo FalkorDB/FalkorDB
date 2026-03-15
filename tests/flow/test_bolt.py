@@ -217,11 +217,11 @@ class testBolt():
             result = session.run(
                 "RETURN POINT({longitude:10, latitude:20}), "
                 "POINT({longitude:30, latitude:40}), "
-                "POINT({longitude:-122.4194, latitude:37.7749})")
+                "POINT({longitude:-50, latitude:60})")
             record = result.single()
             self.env.assertEquals(record[0], WGS84Point((10, 20)))
             self.env.assertEquals(record[1], WGS84Point((30, 40)))
-            self.env.assertEquals(record[2], WGS84Point((-122.4194, 37.7749)))
+            self.env.assertEquals(record[2], WGS84Point((-50, 60)))
 
     def test14_large_string_parameter(self):
         """Test queries with large string parameters.
