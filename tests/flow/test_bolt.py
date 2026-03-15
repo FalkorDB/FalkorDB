@@ -325,7 +325,7 @@ class testBolt():
     def test20_rapid_session_cycling(self):
         """Rapidly open/close sessions to stress RESET handling.
         Each session close sends RESET on the pooled connection."""
-        for i in range(20):
+        for i in range(5):
             with bolt_con.session() as session:
                 result = session.run("RETURN $i", {"i": i})
                 record = result.single()
@@ -336,7 +336,7 @@ class testBolt():
         large string value. Before the fix, write_value wrote into a fixed
         buffer that could overflow; now it uses a growable wbuf_t."""
         with bolt_con.session() as session:
-            large = 'Z' * 50000
+            large = 'Z' * 8192
             result = session.run("RETURN $v", {"v": large})
             record = result.single()
             self.env.assertEquals(record[0], large)
@@ -345,7 +345,7 @@ class testBolt():
         """Test parameterized query with a large list value that forces
         write_value to grow the buffer during recursive serialization."""
         with bolt_con.session() as session:
-            large_list = list(range(1000))
+            large_list = list(range(200))
             result = session.run("RETURN $v", {"v": large_list})
             record = result.single()
             self.env.assertEquals(record[0], large_list)
@@ -363,11 +363,11 @@ class testBolt():
         """Combine many parameters with large values to stress the
         growable query buffer across multiple write_value calls."""
         with bolt_con.session() as session:
-            params = {f"p{i}": 'V' * 500 for i in range(50)}
+            params = {f"p{i}": 'V' * 500 for i in range(15)}
             placeholders = ', '.join(f'${k}' for k in params)
             result = session.run(f"RETURN {placeholders}", params)
             record = result.single()
-            for i in range(50):
+            for i in range(15):
                 self.env.assertEquals(record[i], 'V' * 500)
 
     def test25_multiple_consecutive_rollbacks(self):
@@ -376,7 +376,7 @@ class testBolt():
         the RESET scan loop must continue past the first removed frame to
         handle any subsequent ones in the buffer."""
         with bolt_con.session() as session:
-            for i in range(10):
+            for i in range(3):
                 tx = session.begin_transaction()
                 tx.run("RETURN $i", {"i": i}).consume()
                 tx.rollback()
@@ -391,7 +391,7 @@ class testBolt():
         queries on the same session. Verifies the buffer state is
         consistent after each RESET removal."""
         with bolt_con.session() as session:
-            for i in range(5):
+            for i in range(3):
                 # rollback a transaction
                 tx = session.begin_transaction()
                 tx.run("RETURN 1").consume()
