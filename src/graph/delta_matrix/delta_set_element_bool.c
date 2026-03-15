@@ -39,7 +39,6 @@ GrB_Info Delta_Matrix_setElement_BOOL
 		GrB_OK (GrB_Matrix_setElement_BOOL (dp, true, i, j)) ;
 	}
 
-	Delta_Matrix_setDirty (C) ;
 	return GrB_SUCCESS ;
 }
 
