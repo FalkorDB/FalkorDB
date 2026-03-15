@@ -4,24 +4,30 @@ from neo4j.spatial import WGS84Point
 import neo4j.graph
 # from neo4j.debug import watch
 
-bolt_con = None
+BOLT_PORT = 7687
 
-class testBolt():
+def _bolt_setup(env_self):
+    """Shared setup: start server and create bolt driver."""
+    env_self.env, _ = Env(moduleArgs=f"BOLT_PORT {BOLT_PORT}")
+    env_self.bolt_con = GraphDatabase.driver(
+        f"bolt://localhost:{BOLT_PORT}", auth=("falkordb", ""))
+
+# ---------------------------------------------------------------------------
+# Class 1: Basic data type serialization (tests 01-09)
+# ---------------------------------------------------------------------------
+
+class testBoltTypes():
     def __init__(self):
-        global bolt_con
-        bolt_port = 7687
-        self.env,_ = Env(moduleArgs=f"BOLT_PORT {bolt_port}")
-        bolt_con = GraphDatabase.driver(f"bolt://localhost:{bolt_port}", auth=("falkordb", ""))
-        # self.watcher = watch("neo4j")
+        _bolt_setup(self)
 
     def test01_null(self):
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             result = session.run("RETURN null, $v", {"v": None})
             record = result.single()
             self.env.assertEquals(record[0], None)
 
     def test02_boolean(self):
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             result = session.run("RETURN true, false, $v_true, $v_false", {"v_true": True, "v_false": False})
             record = result.single()
             self.env.assertEquals(record[0], True)
@@ -30,7 +36,7 @@ class testBolt():
             self.env.assertEquals(record[3], False)
 
     def test03_integer(self):
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             result = session.run("RETURN -1, 0, 1, 2, $v", {"v": 3})
             record = result.single()
             self.env.assertEquals(record[0], -1)
@@ -66,14 +72,14 @@ class testBolt():
             self.env.assertEquals(record[1], 9223372036854775807)
 
     def test04_float(self):
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             result = session.run("RETURN 1.23, $v", {"v": 4.56})
             record = result.single()
             self.env.assertEquals(record[0], 1.23)
             self.env.assertEquals(record[1], 4.56)
 
     def test05_string(self):
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             result = session.run("RETURN '', 'Hello, World!', $v8, $v16", {"v8": 'A' * 255, "v16": 'A' * 256})
             record = result.single()
             self.env.assertEquals(record[0], '')
@@ -82,7 +88,7 @@ class testBolt():
             self.env.assertEquals(record[3], 'A' * 256)
 
     def test06_list(self):
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             result = session.run("RETURN [], [1,2,3], $v8, $v16", {"v8": [1] * 255, "v16": [1] * 256})
             record = result.single()
             self.env.assertEquals(record[0], [])
@@ -91,7 +97,7 @@ class testBolt():
             self.env.assertEquals(record[3], [1] * 256)
 
     def test07_map(self):
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
              result = session.run("RETURN {}, {foo:'bar'}, $v8", {"v8": {'foo':'bar'} })
              record = result.single()
              self.env.assertEquals(record[0], {})
@@ -99,13 +105,13 @@ class testBolt():
              self.env.assertEquals(record[2], {'foo':'bar'})
 
     def test08_point(self):
-         with bolt_con.session() as session:
+         with self.bolt_con.session() as session:
              result = session.run("RETURN POINT({longitude:1, latitude:2})")
              record = result.single()
              self.env.assertEquals(record[0], WGS84Point((1, 2)))
 
     def test09_graph_entities_values(self):
-         with bolt_con.session() as session:
+         with self.bolt_con.session() as session:
              result = session.run("""CREATE (a:A {v: 1})-[r1:R1]->(b:B)<-[r2:R2]-(c:C) RETURN a, r1, b, r2, c""")
              record = result.single()
              a:neo4j.graph.Node = record[0]
@@ -162,11 +168,19 @@ class testBolt():
     # Regression tests for bolt protocol bug fixes (issue #1702)
     # ---------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Class 2: Regression tests — serialization & RESET (tests 10-20)
+# ---------------------------------------------------------------------------
+
+class testBoltRegression():
+    def __init__(self):
+        _bolt_setup(self)
+
     def test10_tiny_int_negative_range(self):
         """Verify tiny int encoding for the full range -16..127.
         Before the fix, bolt_reply_int never used the tiny int path
         because the comparison used the unsigned constant 0xF0 (240)."""
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             # test all negative tiny ints: -16 to -1
             vals = list(range(-16, 0))
             placeholders = ', '.join(f'${f"n{abs(v)}"}' for v in vals)
@@ -187,7 +201,7 @@ class testBolt():
 
     def test11_negative_integer_boundaries(self):
         """Test negative values at int8/int16/int32/int64 boundaries."""
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             result = session.run(
                 "RETURN $a, $b, $c, $d, $e, $f",
                 {"a": -128, "b": -129, "c": -32768,
@@ -203,7 +217,7 @@ class testBolt():
     def test12_point_followed_by_values(self):
         """Verify Point2D doesn't corrupt subsequent values in the record.
         Before the fix, an extra bolt_reply_null shifted all following data."""
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             result = session.run(
                 "RETURN POINT({longitude:1.5, latitude:2.5}), 42, 'hello'")
             record = result.single()
@@ -213,7 +227,7 @@ class testBolt():
 
     def test13_multiple_points(self):
         """Test returning multiple Point2D values in the same record."""
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             result = session.run(
                 "RETURN POINT({longitude:10, latitude:20}), "
                 "POINT({longitude:30, latitude:40}), "
@@ -226,7 +240,7 @@ class testBolt():
     def test14_large_string_parameter(self):
         """Test queries with large string parameters.
         Before the fix, a fixed 4096-byte stack buffer could overflow."""
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             large_str = 'X' * 8000
             result = session.run("RETURN $v", {"v": large_str})
             record = result.single()
@@ -235,7 +249,7 @@ class testBolt():
     def test15_many_parameters(self):
         """Test a query with many parameters to stress the parameterized
         query buffer allocation."""
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             params = {f"p{i}": i for i in range(100)}
             placeholders = ', '.join(f'${k}' for k in params)
             result = session.run(f"RETURN {placeholders}", params)
@@ -247,7 +261,7 @@ class testBolt():
         """Verify int16/string16/list16 serialization works correctly.
         Before the fix, unaligned pointer casts (e.g. *(int16_t*)(values+1))
         were undefined behavior. memcpy is now used instead."""
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             # int16 range: 128..32767 and -128..-17
             result = session.run("RETURN $a, $b, $c, $d",
                                  {"a": 200, "b": 32767, "c": -100, "d": -32768})
@@ -271,7 +285,7 @@ class testBolt():
 
     def test17_int32_int64_serialization(self):
         """Verify int32/int64 serialization after unaligned access fix."""
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             # int32 range
             result = session.run("RETURN $a, $b, $c, $d",
                                  {"a": 100000, "b": 2147483647,
@@ -295,7 +309,7 @@ class testBolt():
         Before the fix, raw pointer arithmetic in the RESET message removal
         could corrupt memory when data spanned buffer chunk boundaries.
         session.reset() sends a RESET message through the bolt protocol."""
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             # run a query, then reset, then run another query
             result = session.run("RETURN 1")
             record = result.single()
@@ -303,7 +317,7 @@ class testBolt():
 
         # after closing and reopening a session, the connection is reused
         # but the state is reset
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             result = session.run("RETURN 'after_reset'")
             record = result.single()
             self.env.assertEquals(record[0], 'after_reset')
@@ -311,7 +325,7 @@ class testBolt():
     def test19_reset_with_pipelined_queries(self):
         """Test that RESET works correctly when interleaved with queries.
         Uses explicit transaction begin/rollback to trigger RESET."""
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             # begin a transaction then roll it back (triggers RESET-like behavior)
             tx = session.begin_transaction()
             tx.run("RETURN 1").consume()
@@ -326,16 +340,24 @@ class testBolt():
         """Rapidly open/close sessions to stress RESET handling.
         Each session close sends RESET on the pooled connection."""
         for i in range(5):
-            with bolt_con.session() as session:
+            with self.bolt_con.session() as session:
                 result = session.run("RETURN $i", {"i": i})
                 record = result.single()
                 self.env.assertEquals(record[0], i)
+
+# ---------------------------------------------------------------------------
+# Class 3: Buffer stress, transactions & auth (tests 21-29)
+# ---------------------------------------------------------------------------
+
+class testBoltStress():
+    def __init__(self):
+        _bolt_setup(self)
 
     def test21_large_string_parameter_value(self):
         """Test parameterized query where write_value must serialize a very
         large string value. Before the fix, write_value wrote into a fixed
         buffer that could overflow; now it uses a growable wbuf_t."""
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             large = 'Z' * 8192
             result = session.run("RETURN $v", {"v": large})
             record = result.single()
@@ -344,7 +366,7 @@ class testBolt():
     def test22_large_list_parameter_value(self):
         """Test parameterized query with a large list value that forces
         write_value to grow the buffer during recursive serialization."""
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             large_list = list(range(200))
             result = session.run("RETURN $v", {"v": large_list})
             record = result.single()
@@ -353,7 +375,7 @@ class testBolt():
     def test23_nested_map_parameter(self):
         """Test parameterized query with a nested map to exercise
         write_value's recursive map serialization with heap-allocated keys."""
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             nested = {"outer_key": {"inner_key": "inner_value"}}
             result = session.run("RETURN $v", {"v": nested})
             record = result.single()
@@ -362,7 +384,7 @@ class testBolt():
     def test24_many_large_parameters(self):
         """Combine many parameters with large values to stress the
         growable query buffer across multiple write_value calls."""
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             params = {f"p{i}": 'V' * 500 for i in range(15)}
             placeholders = ', '.join(f'${k}' for k in params)
             result = session.run(f"RETURN {placeholders}", params)
@@ -375,7 +397,7 @@ class testBolt():
         same session work correctly. Each rollback sends a RESET-like message;
         the RESET scan loop must continue past the first removed frame to
         handle any subsequent ones in the buffer."""
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             for i in range(3):
                 tx = session.begin_transaction()
                 tx.run("RETURN $i", {"i": i}).consume()
@@ -390,7 +412,7 @@ class testBolt():
         """Stress the RESET scan loop by interleaving rollbacks with
         queries on the same session. Verifies the buffer state is
         consistent after each RESET removal."""
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             for i in range(3):
                 # rollback a transaction
                 tx = session.begin_transaction()
@@ -409,7 +431,7 @@ class testBolt():
         empty string is used, which correctly reflects server config."""
         # the test env has no requirepass, so empty auth should still succeed
         driver = GraphDatabase.driver(
-            "bolt://localhost:7687", auth=("falkordb", ""))
+            f"bolt://localhost:{BOLT_PORT}", auth=("falkordb", ""))
         with driver.session() as session:
             result = session.run("RETURN 1")
             record = result.single()
@@ -425,7 +447,7 @@ class testBolt():
         nested = "inner_value"
         for i in range(200):
             nested = {"k": nested}
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             try:
                 result = session.run("RETURN $v", {"v": nested})
                 result.consume()
@@ -434,7 +456,7 @@ class testBolt():
                 # a client or server error is acceptable — crash is not
                 pass
         # verify the server is still alive after the deeply nested param
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             result = session.run("RETURN 'alive'")
             record = result.single()
             self.env.assertEquals(record[0], 'alive')
@@ -446,7 +468,7 @@ class testBolt():
         nested = "leaf"
         for i in range(50):
             nested = {"k": nested}
-        with bolt_con.session() as session:
+        with self.bolt_con.session() as session:
             result = session.run("RETURN $v", {"v": nested})
             record = result.single()
             # verify the innermost value survived the round-trip
