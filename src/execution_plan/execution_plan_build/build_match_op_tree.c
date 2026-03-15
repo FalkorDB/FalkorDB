@@ -78,40 +78,50 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 		orderExpressions(qg, exps, &expCount, ft, bound_vars);
 
 		// create a SCAN operation that will be the tail of the traversal chain
-		QGNode *src = QueryGraph_GetNodeByAlias (qg,
-				AlgebraicExpression_Src (exps[0])) ;
+		const char *src_alias  = AlgebraicExpression_Src(exps[0]);
+		const char *dest_alias = AlgebraicExpression_Dest(exps[0]);
 
-		uint label_count = QGNode_LabelCount (src) ;
+		QGNode *src = QueryGraph_GetNodeByAlias(qg, src_alias);
+		uint label_count = QGNode_LabelCount(src);
 
-		if (label_count > 0) {
+		// self-referential traversals like:
+		// MATCH (n:A)<-[*..]-(n:B)
+		// must not be opened by removing the source operand, as this can
+		// leave a degenerate traversal expression for later optimizer passes
+		bool self_referential =
+			(src_alias != NULL && dest_alias != NULL &&
+			 strcmp(src_alias, dest_alias) == 0);
+
+		if(label_count > 0 && !self_referential) {
 			AlgebraicExpression *ae_src =
-				AlgebraicExpression_RemoveSource (&exps[0]) ;
-			ASSERT(AlgebraicExpression_DiagonalOperand (ae_src, 0)) ;
+				AlgebraicExpression_RemoveSource(&exps[0]);
+			ASSERT(AlgebraicExpression_DiagonalOperand(ae_src, 0));
 
-			const char *label = AlgebraicExpression_Label (ae_src) ;
-			const char *alias = AlgebraicExpression_Src (ae_src) ;
-			ASSERT (label != NULL) ;
-			ASSERT (alias != NULL) ;
+			const char *label = AlgebraicExpression_Label(ae_src);
+			const char *alias = AlgebraicExpression_Src(ae_src);
+			ASSERT(label != NULL);
+			ASSERT(alias != NULL);
 
-			int label_id = GRAPH_UNKNOWN_LABEL ;
-			Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
-			if (s != NULL) {
+			int label_id = GRAPH_UNKNOWN_LABEL;
+			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
+			if(s != NULL) {
 				label_id = Schema_GetID(s);
 			}
 
 			// resolve source node by performing label scan
-			NodeScanCtx *ctx = NodeScanCtx_New (alias, label, label_id, src);
+			NodeScanCtx *ctx = NodeScanCtx_New(alias, label, label_id, src);
 			root = tail = NewNodeByLabelScanOp(plan, ctx);
 
 			// first operand has been converted into a label scan op
 			AlgebraicExpression_Free(ae_src);
 		} else {
 			root = tail = NewAllNodeScanOp(plan, src->alias);
-			// free expression source
-			// in-case there are additional patterns to traverse
+
+			// free expression source only for isolated node scans;
+			// keep self-referential traversal expressions intact
 			if(array_len(cc->edges) == 0) {
 				AlgebraicExpression_Free(
-						AlgebraicExpression_RemoveSource(&exps[0]));
+					AlgebraicExpression_RemoveSource(&exps[0]));
 			}
 		}
 
