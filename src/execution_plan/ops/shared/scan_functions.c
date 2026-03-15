@@ -23,8 +23,8 @@ NodeScanCtx *NodeScanCtx_New
 
     NodeScanCtx *ctx = rm_malloc(sizeof(NodeScanCtx));
 
-	ctx->alias    = alias;
-	ctx->label    = label;
+	ctx->alias    = rm_strdup(alias);
+	ctx->label    = rm_strdup(label);
 	ctx->label_id = label_id;
 	ctx->n        = QGNode_Clone(n);
 
@@ -41,6 +41,8 @@ NodeScanCtx *NodeScanCtx_Clone
 
     NodeScanCtx *clone = rm_malloc(sizeof(NodeScanCtx));
     memcpy(clone, ctx, sizeof(NodeScanCtx));
+    clone->alias = rm_strdup(ctx->alias);
+    clone->label = rm_strdup(ctx->label);
     clone->n = QGNode_Clone(ctx->n);
 
     return clone;
@@ -53,7 +55,8 @@ void NodeScanCtx_Free
 ) {
     ASSERT(ctx != NULL);
     ASSERT(ctx->n != NULL);
-    
+    rm_free(ctx->alias);
+    rm_free(ctx->label);
     QGNode_Free(ctx->n);
 
     rm_free(ctx);

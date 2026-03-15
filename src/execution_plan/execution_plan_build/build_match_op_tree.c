@@ -98,26 +98,22 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 			ASSERT(AlgebraicExpression_DiagonalOperand(ae_src, 0));
 
 			const char *label = AlgebraicExpression_Label(ae_src);
-            const char *alias = AlgebraicExpression_Src(ae_src);
-            ASSERT(label != NULL);
-            ASSERT(alias != NULL);
-            
-            // copy before freeing expression
-            char *label_copy = rm_strdup(label);
-            char *alias_copy = rm_strdup(alias);
-            
-            int label_id = GRAPH_UNKNOWN_LABEL;
-            Schema *s = GraphContext_GetSchema(gc, label_copy, SCHEMA_NODE);
-            if(s != NULL) {
-                label_id = Schema_GetID(s);
-            }
-            
-            // resolve source node by performing label scan
-            NodeScanCtx *ctx = NodeScanCtx_New(alias_copy, label_copy, label_id, src);
-            root = tail = NewNodeByLabelScanOp(plan, ctx);
-            
-            // first operand has been converted into a label scan op
-            AlgebraicExpression_Free(ae_src);
+			const char *alias = AlgebraicExpression_Src(ae_src);
+			ASSERT(label != NULL);
+			ASSERT(alias != NULL);
+
+			int label_id = GRAPH_UNKNOWN_LABEL;
+			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
+			if(s != NULL) {
+				label_id = Schema_GetID(s);
+			}
+
+			// resolve source node by performing label scan
+			NodeScanCtx *ctx = NodeScanCtx_New(alias, label, label_id, src);
+			root = tail = NewNodeByLabelScanOp(plan, ctx);
+
+			// first operand has been converted into a label scan op
+			AlgebraicExpression_Free(ae_src);
 		} else {
 			root = tail = NewAllNodeScanOp(plan, src->alias);
 
