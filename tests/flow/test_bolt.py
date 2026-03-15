@@ -2,7 +2,6 @@ from common import *
 from neo4j import GraphDatabase
 from neo4j.spatial import WGS84Point
 import neo4j.graph
-import threading
 # from neo4j.debug import watch
 
 bolt_con = None
