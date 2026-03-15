@@ -69,13 +69,22 @@ static bool is_authenticated
 
 	if(auth_size < 3) {
 		// no credentials provided
-		// use AUTH with empty string: succeeds only when requirepass is not set
+		// probe with AUTH to determine whether a password is required:
+		//   - "WRONGPASS ..." → requirepass/ACL is active → deny
+		//   - "ERR ... no password is set" → no password needed → allow
 		RedisModuleCallReply *reply =
 			RedisModule_Call(client->ctx, "AUTH", "c", "");
-		bool res =
-			RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR;
+		if(RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR) {
+			RedisModule_FreeCallReply(reply);
+			return true;
+		}
+		size_t err_len;
+		const char *err = RedisModule_CallReplyStringPtr(reply, &err_len);
+		// WRONGPASS means a password IS required but was not provided
+		bool password_required =
+			(err_len >= 9 && memcmp(err, "WRONGPASS", 9) == 0);
 		RedisModule_FreeCallReply(reply);
-		return res;
+		return !password_required;
 	}
 
 	uint32_t len;
@@ -126,12 +135,19 @@ static bool is_authenticated
 
 	// check if the credentials are valid
 	bolt_read_string_size(&client->msg_buf.read, &len);
-	if(len == 0 || len > 1024) return false;
-	char *credentials = rm_malloc(len);
+	if(len > 1024) return false;
+	char *credentials = rm_malloc(len + 1);
 	if(credentials == NULL) return false;
 	bolt_read_string(&client->msg_buf.read, credentials);
+	credentials[len] = '\0';
 	RedisModuleCallReply *reply = RedisModule_Call(client->ctx, "AUTH", "b", credentials, len);
 	bool res = RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR;
+	if(!res && len == 0) {
+		// empty credentials — check if no password is required
+		size_t err_len;
+		const char *err = RedisModule_CallReplyStringPtr(reply, &err_len);
+		res = !(err_len >= 9 && memcmp(err, "WRONGPASS", 9) == 0);
+	}
 	RedisModule_FreeCallReply(reply);
 	rm_free(credentials);
 	return res;
