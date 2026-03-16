@@ -12,13 +12,21 @@ def _bolt_setup(env_self):
     env_self.bolt_con = GraphDatabase.driver(
         f"bolt://localhost:{BOLT_PORT}", auth=("falkordb", ""))
 
+def _bolt_teardown(env_self):
+    """Shared teardown: close bolt driver to release connections."""
+    if hasattr(env_self, 'bolt_con') and env_self.bolt_con is not None:
+        env_self.bolt_con.close()
+
 # ---------------------------------------------------------------------------
 # Class 1: Basic data type serialization (tests 01-09)
 # ---------------------------------------------------------------------------
 
-class testBoltTypes():
+class testBolt01_Types():
     def __init__(self):
         _bolt_setup(self)
+
+    def __del__(self):
+        _bolt_teardown(self)
 
     def test01_null(self):
         with self.bolt_con.session() as session:
@@ -172,9 +180,12 @@ class testBoltTypes():
 # Class 2: Regression tests — serialization & RESET (tests 10-20)
 # ---------------------------------------------------------------------------
 
-class testBoltRegression():
+class testBolt02_Regression():
     def __init__(self):
         _bolt_setup(self)
+
+    def __del__(self):
+        _bolt_teardown(self)
 
     def test10_tiny_int_negative_range(self):
         """Verify tiny int encoding for the full range -16..127.
@@ -351,9 +362,12 @@ class testBoltRegression():
 # Class 3: Buffer stress, transactions & auth (tests 21-29)
 # ---------------------------------------------------------------------------
 
-class testBoltStress():
+class testBolt03_Stress():
     def __init__(self):
         _bolt_setup(self)
+
+    def __del__(self):
+        _bolt_teardown(self)
 
     def test21_large_string_parameter_value(self):
         """Test parameterized query where write_value must serialize a very
