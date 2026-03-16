@@ -61,7 +61,7 @@ GrB_Info get_sub_weight_matrix
 ) ;
 
 // Get attributes of the given nodes
-void get_node_attribute
+bool get_node_attribute
 (
 	GrB_Vector rows,       // [input / output] the nodes for which to get values
 	const Graph *g,        // graph
