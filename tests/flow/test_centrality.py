@@ -291,7 +291,7 @@ class testCentrality(FlowTestsBase):
         # C has no outgoing FRIEND edges within Person subgraph
         self.env.assertEqual(scores["C"], 0.0)
 
-    def _test08_centrality_all_zero_weights(self):
+    def test08_centrality_all_zero_weights(self):
         """Test that all scores are 0 when every node has weight attribute = 0.
 
         When all node weights are 0, every HLL sketch is initialized with
@@ -322,7 +322,7 @@ class testCentrality(FlowTestsBase):
         for name in ["A", "B", "C", "D"]:
             self.env.assertEqual(scores[name], 0.0)
 
-    def _test09_centrality_weighted(self):
+    def test09_centrality_weighted(self):
         """Test harmonic centrality with weightAttribute.
 
         Graph (directed): S0, S1, ..., S999 each -EDGE-> A -EDGE-> B (B.score=1)
@@ -339,8 +339,8 @@ class testCentrality(FlowTestsBase):
           Only B is included (only B has the `score` attribute).
           B has no outgoing edges     -> score(B) = 0; only B is returned.
         """
-        # build hub graph; only B carries the score attribute
-        parts = ["CREATE (b:Hub {name: 'B', score: 1}), (a:Hub {name: 'A'})"]
+        # build hub graph; only B carries the score attribute (and gets the extra Scored label)
+        parts = ["CREATE (b:Hub:Scored {name: 'B', score: 1}), (a:Hub {name: 'A'})"]
         for i in range(1000):
             parts.append(f"(s{i}:Hub {{name: 'S{i}'}})")
         create_q = parts[0] + ", " + ", ".join(parts[1:])
@@ -370,8 +370,18 @@ class testCentrality(FlowTestsBase):
         # A should score higher than any individual source node
         self.env.assertGreater(scores1["A"], scores1["S0"])
 
-        # ---- Case 2: no defaultWeight, only B participates ----
-        result2 = self.centrality(weightAttribute="score")
+        # ---- Case 2: no defaultWeight, error ----
+        # Not all Hub nodes have 'score', so omitting defaultWeight must raise an error.
+        # FIXME: catch correct error
+        try:
+            result2 = self.centrality(weightAttribute="score")
+            self.env.assertTrue(False)
+        except:
+            pass
+
+        # ---- Case 3: no defaultWeight, but nodeLabels restricts to nodes that all have the attribute ----
+        # Only B has the Scored label and carries the score attribute, so no error is expected.
+        result2 = self.centrality(weightAttribute="score", nodeLabels=["Scored"])
         scores2 = {row[0]: row[1] for row in result2.result_set}
 
         # only B has the score attribute -> only B is returned
