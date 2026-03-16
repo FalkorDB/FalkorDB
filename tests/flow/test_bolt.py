@@ -172,6 +172,9 @@ class testBolt01_Types():
              self.env.assertEquals(p.relationships[0].type, 'R1')
              self.env.assertEquals(p.relationships[1].type, 'R2')
 
+         # close driver to unblock server teardown
+         self.bolt_con.close()
+
     # ---------------------------------------------------------------
     # Regression tests for bolt protocol bug fixes (issue #1702)
     # ---------------------------------------------------------------
@@ -358,6 +361,9 @@ class testBolt02_Regression():
                 record = result.single()
                 self.env.assertEquals(record[0], i)
 
+        # close driver to unblock server teardown
+        self.bolt_con.close()
+
 # ---------------------------------------------------------------------------
 # Class 3: Buffer stress, transactions & auth (tests 21-29)
 # ---------------------------------------------------------------------------
@@ -493,3 +499,6 @@ class testBolt03_Stress():
                 self.env.assertContains("k", val)
                 val = val["k"]
             self.env.assertEquals(val, "leaf")
+
+        # close driver to unblock server teardown
+        self.bolt_con.close()
