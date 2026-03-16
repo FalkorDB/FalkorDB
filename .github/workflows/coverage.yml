@@ -48,7 +48,7 @@ jobs:
         path: |
           ./bin/linux-x64-release/GraphBLAS
           ./bin/linux-x64-release/libcypher-parser
-          ./bin/linux-x64-release/search-static
+          ./bin/linux-x64-debug-cov/search-static
           ./bin/linux-x64-release/libcurl
           ./bin/linux-x64-release/libcsv
           ./bin/linux-x64-release/LAGraph
