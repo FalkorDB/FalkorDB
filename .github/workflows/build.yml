@@ -19,6 +19,11 @@ on:
         default: true
   pull_request:
     branches: [master, "[0-9]+.[0-9]+"]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE.txt'
+      - '.gitignore'
   push:
     branches:
       - master
@@ -33,7 +38,30 @@ concurrency:
 env:
   BASE_IMAGE_VERSION: 1.1.2
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      build_platforms: ${{ steps.set-matrix.outputs.build_platforms }}
+      test_platforms: ${{ steps.set-matrix.outputs.test_platforms }}
+    steps:
+      - name: Determine CI matrix
+        id: set-matrix
+        env:
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+          HAS_FULL_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full-matrix') }}
+        run: |
+          if [[ "$IS_PR" == "true" && "$HAS_FULL_LABEL" != "true" ]]; then
+            # PR without ci:full-matrix label: core platforms only (ubuntu x64 + arm64)
+            echo 'build_platforms=[{"name":"ubuntu-x64","suffix":"x64","os":"ubuntu","arch":"amd64","machine_label":"ubuntu-latest","cache_path":"linux-x64","build_variants":["release","server"],"use_docker":true,"build_test_image":true},{"name":"ubuntu-arm64","suffix":"arm64v8","os":"ubuntu","arch":"arm64","machine_label":"ubuntu-24.04-arm","cache_path":"linux-arm64v8","build_variants":["release","server"],"use_docker":true,"build_test_image":true}]' >> "$GITHUB_OUTPUT"
+            echo 'test_platforms=[{"suffix":"x64","machine_label":"ubuntu-latest"},{"suffix":"arm64v8","machine_label":"ubuntu-24.04-arm"}]' >> "$GITHUB_OUTPUT"
+          else
+            # Full matrix: push to master/tags, workflow_dispatch, or PR with ci:full-matrix label
+            echo 'build_platforms=[{"name":"ubuntu-x64","suffix":"x64","os":"ubuntu","arch":"amd64","machine_label":"ubuntu-latest","cache_path":"linux-x64","build_variants":["release","server"],"use_docker":true,"build_test_image":true},{"name":"ubuntu-arm64","suffix":"arm64v8","os":"ubuntu","arch":"arm64","machine_label":"ubuntu-24.04-arm","cache_path":"linux-arm64v8","build_variants":["release","server"],"use_docker":true,"build_test_image":true},{"name":"alpine-x64","suffix":"alpine-x64","os":"alpine","arch":"amd64","machine_label":"ubuntu-latest","cache_path":"linux-x64","build_variants":["release","server"],"use_docker":true,"build_test_image":true},{"name":"alpine-arm64","suffix":"alpine-arm64v8","os":"alpine","arch":"arm64","machine_label":"ubuntu-24.04-arm","cache_path":"linux-arm64v8","build_variants":["release","server"],"use_docker":true,"build_test_image":true},{"name":"rhel9-x64","suffix":"rhel9-x64","os":"rhel9","arch":"amd64","machine_label":"ubuntu-latest","cache_path":"linux-x64","build_variants":["release"],"use_docker":true,"build_test_image":true},{"name":"rhel8-x64","suffix":"rhel8-x64","os":"rhel8","arch":"amd64","machine_label":"ubuntu-latest","cache_path":"linux-x64","build_variants":["release"],"use_docker":true,"build_test_image":false},{"name":"amazonlinux2023-x64","suffix":"amazonlinux2023-x64","os":"amazonlinux2023","arch":"amd64","machine_label":"ubuntu-latest","cache_path":"linux-x64","build_variants":["release"],"use_docker":true,"build_test_image":true},{"name":"macos-arm64","suffix":"macos-arm64v8","os":"macos","arch":"arm64","machine_label":"macos-latest","cache_path":"macos-arm64v8","build_variants":["release"],"use_docker":false,"build_test_image":false}]' >> "$GITHUB_OUTPUT"
+            echo 'test_platforms=[{"suffix":"x64","machine_label":"ubuntu-latest"},{"suffix":"arm64v8","machine_label":"ubuntu-24.04-arm"},{"suffix":"alpine-x64","machine_label":"ubuntu-latest"},{"suffix":"alpine-arm64v8","machine_label":"ubuntu-24.04-arm"},{"suffix":"rhel9-x64","machine_label":"ubuntu-latest"},{"suffix":"amazonlinux2023-x64","machine_label":"ubuntu-latest"}]' >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: setup
     runs-on: ${{ matrix.platform.machine_label }}
     services:
       registry:
@@ -43,84 +71,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          # Ubuntu builds
-          - name: ubuntu-x64
-            suffix: x64
-            os: ubuntu
-            arch: amd64
-            machine_label: ubuntu-latest
-            cache_path: linux-x64
-            build_variants: [release, server]
-            use_docker: true
-            build_test_image: true
-          - name: ubuntu-arm64
-            suffix: arm64v8
-            os: ubuntu
-            arch: arm64
-            machine_label: ubuntu-24.04-arm
-            cache_path: linux-arm64v8
-            build_variants: [release, server]
-            use_docker: true
-            build_test_image: true
-          # Alpine builds
-          - name: alpine-x64
-            suffix: alpine-x64
-            os: alpine
-            arch: amd64
-            machine_label: ubuntu-latest
-            cache_path: linux-x64
-            build_variants: [release, server]
-            use_docker: true
-            build_test_image: true
-          - name: alpine-arm64
-            suffix: alpine-arm64v8
-            os: alpine
-            arch: arm64
-            machine_label: ubuntu-24.04-arm
-            cache_path: linux-arm64v8
-            build_variants: [release, server]
-            use_docker: true
-            build_test_image: true
-          # RHEL builds
-          - name: rhel9-x64
-            suffix: rhel9-x64
-            os: rhel9
-            arch: amd64
-            machine_label: ubuntu-latest
-            cache_path: linux-x64
-            build_variants: [release]
-            use_docker: true
-            build_test_image: true
-          - name: rhel8-x64
-            suffix: rhel8-x64
-            os: rhel8
-            arch: amd64
-            machine_label: ubuntu-latest
-            cache_path: linux-x64
-            build_variants: [release]
-            use_docker: true
-            build_test_image: true
-          - name: amazonlinux2023-x64
-            suffix: amazonlinux2023-x64
-            os: amazonlinux2023
-            arch: amd64
-            machine_label: ubuntu-latest
-            cache_path: linux-x64
-            build_variants: [release]
-            use_docker: true
-            build_test_image: true
-          # macOS builds
-          - name: macos-arm64
-            suffix: macos-arm64v8
-            os: macos
-            arch: arm64
-            machine_label: macos-latest
-            cache_path: macos-arm64v8
-            build_variants: [release]
-            use_docker: false
-            build_test_image: false
-        build_type: [release, debug]
+        platform: ${{ fromJSON(needs.setup.outputs.build_platforms) }}
+        build_type: ${{ github.event_name == 'pull_request' && fromJSON('["release"]') || fromJSON('["release", "debug"]') }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -404,25 +356,13 @@ jobs:
           retention-days: 7
 
   test:
-    needs: build
+    needs: [setup, build]
     if: ${{ !inputs.skip_tests && (needs.build.result == 'success') }}
     runs-on: ${{ matrix.platform.machine_label }}
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - suffix: x64
-            machine_label: ubuntu-latest
-          - suffix: arm64v8
-            machine_label: ubuntu-24.04-arm
-          - suffix: alpine-x64
-            machine_label: ubuntu-latest
-          - suffix: alpine-arm64v8
-            machine_label: ubuntu-24.04-arm
-          - suffix: rhel9-x64
-            machine_label: ubuntu-latest
-          - suffix: amazonlinux2023-x64
-            machine_label: ubuntu-latest
+        platform: ${{ fromJSON(needs.setup.outputs.test_platforms) }}
         test_type: [unit, flow, tck, fuzz]
     steps:
       - name: Download test image
@@ -461,25 +401,13 @@ jobs:
           retention-days: 7
 
   security-scan:
-    needs: build
+    needs: [setup, build]
     if: needs.build.result == 'success'
     runs-on: ${{ matrix.platform.machine_label }}
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - suffix: x64
-            machine_label: ubuntu-latest
-          - suffix: arm64v8
-            machine_label: ubuntu-24.04-arm
-          - suffix: alpine-x64
-            machine_label: ubuntu-latest
-          - suffix: alpine-arm64v8
-            machine_label: ubuntu-24.04-arm
-          - suffix: rhel9-x64
-            machine_label: ubuntu-latest
-          - suffix: amazonlinux2023-x64
-            machine_label: ubuntu-latest
+        platform: ${{ fromJSON(needs.setup.outputs.test_platforms) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
