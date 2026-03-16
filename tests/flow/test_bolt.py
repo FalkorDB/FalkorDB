@@ -276,9 +276,7 @@ class testBolt02_Regression():
                 self.env.assertEquals(record[i], i)
 
     def test16_int16_string16_list16_serialization(self):
-        """Verify int16/string16/list16 serialization works correctly.
-        Before the fix, unaligned pointer casts (e.g. *(int16_t*)(values+1))
-        were undefined behavior. memcpy is now used instead."""
+        """Verify int16/string16/list16 serialization works correctly."""
         with self.bolt_con.session() as session:
             # int16 range: 128..32767 and -128..-17
             result = session.run("RETURN $a, $b, $c, $d",
@@ -302,7 +300,7 @@ class testBolt02_Regression():
             self.env.assertEquals(record[0], l16)
 
     def test17_int32_int64_serialization(self):
-        """Verify int32/int64 serialization after unaligned access fix."""
+        """Verify int32/int64 serialization at boundary values."""
         with self.bolt_con.session() as session:
             # int32 range
             result = session.run("RETURN $a, $b, $c, $d",
