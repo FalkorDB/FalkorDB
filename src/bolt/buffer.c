@@ -375,25 +375,16 @@ static void buffer_apply_mask_single
 ) {
 	char *payload = buf.buf->chunks[buf.chunk] + buf.offset;
 	int local_offset = *offset;
-	// 4 copies of the masking key = 16 bytes, enough for any offset (0–3) + 8
 	uint32_t double_mask[4] = {masking_key, masking_key, masking_key, masking_key};
-	uint64_t offset_mask;
-	memcpy(&offset_mask, (char *)double_mask + local_offset, sizeof(offset_mask));
+	uint64_t offset_mask = *(uint64_t *)((char *)double_mask + local_offset);
 	int i = 0;
-	// XOR 8 bytes at a time using memcpy to avoid unaligned uint64_t* casts,
-	// which are undefined behavior on strict-alignment architectures (ARM, RISC-V).
-	// Compilers optimize the memcpy round-trip to a single instruction on x86.
 	for(; i + 8 <= payload_len; i+=8) {
-		uint64_t tmp;
-		memcpy(&tmp, payload + i, sizeof(tmp));
-		tmp ^= offset_mask;
-		memcpy(payload + i, &tmp, sizeof(tmp));
+		*(uint64_t *)(payload + i) ^= offset_mask;
 	}
 	for(; i < payload_len; i++) {
-		payload[i] ^= ((char*)double_mask)[local_offset];
-		local_offset = (local_offset + 1) % 4;
+		payload[i] ^= ((char*)double_mask)[local_offset++];
 	}
-	*offset = local_offset;
+	*offset = local_offset % 4;
 }
 
 // apply the mask to the buffer
