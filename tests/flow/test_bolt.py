@@ -176,6 +176,11 @@ class testBolt01_Types():
     # Regression tests for bolt protocol bug fixes (issue #1702)
     # ---------------------------------------------------------------
 
+    def test99_cleanup(self):
+        """Stop server before RLTest teardown to prevent bolt connection hang.
+        Idle bolt connections block FLUSHALL; pre-stopping avoids the issue."""
+        self.env.stop()
+
 # ---------------------------------------------------------------------------
 # Class 2: Regression tests — serialization & RESET (tests 10-20)
 # ---------------------------------------------------------------------------
@@ -358,6 +363,11 @@ class testBolt02_Regression():
                 record = result.single()
                 self.env.assertEquals(record[0], i)
 
+    def test99_cleanup(self):
+        """Stop server before RLTest teardown to prevent bolt connection hang.
+        Idle bolt connections block FLUSHALL; pre-stopping avoids the issue."""
+        self.env.stop()
+
 # ---------------------------------------------------------------------------
 # Class 3: Buffer stress, transactions & auth (tests 21-29)
 # ---------------------------------------------------------------------------
@@ -493,3 +503,8 @@ class testBolt03_Stress():
                 self.env.assertContains("k", val)
                 val = val["k"]
             self.env.assertEquals(val, "leaf")
+
+    def test99_cleanup(self):
+        """Stop server before RLTest teardown to prevent bolt connection hang.
+        Idle bolt connections block FLUSHALL; pre-stopping avoids the issue."""
+        self.env.stop()
