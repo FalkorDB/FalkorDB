@@ -21,6 +21,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "../util/simple_timer.h"
+#include "procedures/proc_ctx.h"
 
 #define CENTRALITY_MAX_ITER 100
 
@@ -34,7 +35,7 @@
 
 JIT_STR(
 typedef struct {
-	uint8_t registers[1 << 10];
+	uint8_t registers[(1 << 10)];
 } HLL;
 , HLL_jit)
 
@@ -250,13 +251,11 @@ static void _process_yield
 		if (strcasecmp ("node", yield [i]) == 0) {
 			ctx->yield_node = ctx->output + idx ;
 			idx++ ;
-			continue ;
 		}
 
 		else if (strcasecmp ("score", yield[i]) == 0) {
 			ctx->yield_score = ctx->output + idx ;
 			idx++ ;
-			continue ;
 		}
 
 		else {
@@ -274,16 +273,16 @@ static bool _read_config
 	AttributeID *weightAtt,  // [output] relationship used as weight
 	SIValue *defaultW        // [output] the default value of the weightAtt
 ) {
-	ASSERT (lbls            != NULL) ;
-	ASSERT (rels            != NULL) ;
-	ASSERT (defaultW        != NULL) ;
-	ASSERT (weightAtt       != NULL) ;
+	ASSERT (lbls             != NULL) ;
+	ASSERT (rels             != NULL) ;
+	ASSERT (defaultW         != NULL) ;
+	ASSERT (weightAtt        != NULL) ;
 	ASSERT (SI_TYPE (config) == T_MAP) ;  // expecting configuration to be a map
 
 	// initialize outputs
 	*lbls      = NULL ;
 	*rels      = NULL ;
-	*defaultW  = SI_DoubleVal (0) ;
+	*defaultW  = SI_NullVal();
 	*weightAtt = ATTRIBUTE_ID_NONE ;
 
 	uint match_fields = 0 ;
@@ -598,7 +597,6 @@ static ProcedureResult _calculate_centrality
 
 	int64_t changes = 0 ;
 	// simple_tic(t_phase);
-		GrB_set(GrB_GLOBAL, true, GxB_BURBLE);
 	for (int d = 1; d <= CENTRALITY_MAX_ITER; d++) {
 		simple_timer_t t_loop ;
 
@@ -643,8 +641,6 @@ static ProcedureResult _calculate_centrality
 			break ;
 		}
 	}
-
-	GrB_set(GrB_GLOBAL, false, GxB_BURBLE);
 	// printf("[centrality] HLL BFS propagation: %.2f ms\n",
 	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
 
@@ -765,10 +761,10 @@ ProcedureResult Proc_CentralityInvoke
 	// run centrality
 	//--------------------------------------------------------------------------
 
-	GrB_Matrix A      = NULL;
-	GrB_Vector nodes  = NULL;
-	GrB_Vector scores = NULL;
-	bool sym          = false;
+	GrB_Matrix A      = NULL;   // Matrix with the edges of specified types
+	GrB_Vector nodes  = NULL;   // Vector of participating nodes
+	GrB_Vector scores = NULL;   // score[i] is the centrality of node i
+	bool sym          = false;  // matrix is directed
 	bool compact      = true;
 
 	// simple_timer_t t_invoke;
@@ -793,7 +789,13 @@ ProcedureResult Proc_CentralityInvoke
 			nodes, nodes, NULL, true, GrB_ALL, 0, GrB_DESC_S));
 	} else {
 		// simple_tic(t_phase);
-		get_node_attribute (nodes, g, weightAtt, defaultW, T_BOOL | T_INT64) ;
+		if (!get_node_attribute (nodes, g, weightAtt, defaultW,
+			T_BOOL | T_INT64)) {
+			ErrorCtx_SetError ("harmonic centrality weight attribute specified"
+				" with no default value and non-existent or non-integer"
+				" attribute was found");
+			return PROCEDURE_ERR;
+		}
 		// printf("[centrality] get_node_attribute: %.2f ms\n",
 		// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
 	}
