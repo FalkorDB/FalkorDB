@@ -68,12 +68,13 @@ GrB_Info Delta_Matrix_new
 	if (transpose) {
 		matrix->transposed = rm_calloc (1, sizeof (_Delta_Matrix)) ;
 		GrB_OK (_Delta_Matrix_init (matrix->transposed, GrB_BOOL, ncols, nrows)) ;
+		matrix->transposed->last_sync_txn_id = UINT64_MAX ;
 	}
 
 	int mutex_res = pthread_mutex_init (&matrix->mutex, NULL) ;
 	ASSERT (mutex_res == 0) ;
 
+	matrix->last_sync_txn_id = UINT64_MAX ;
 	*A = matrix ;
 	return GrB_SUCCESS ;
 }
-

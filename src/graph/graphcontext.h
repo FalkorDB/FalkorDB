@@ -28,7 +28,7 @@
 // can use the graph version to understand if the schema was modified
 // and take action accordingly
 
-typedef struct {
+typedef struct GraphContext {
 	Graph *g;                              // container for all matrices and entity properties
 	int ref_count;                         // number of active references
 	rax *attributes;                       // from strings to attribute IDs
@@ -47,6 +47,7 @@ typedef struct {
 	RedisModuleString *telemetry_stream;   // telemetry stream name
 	
 	atomic_bool write_in_progress;         // write query in progess
+	atomic_uint_fast64_t write_txn_id;     // monotonic write transaction ID
 	CircularBuffer pending_write_queue;    // pending write queries queue
 } GraphContext;
 
@@ -105,6 +106,16 @@ void GraphContext_LockForCommit
 void GraphContext_UnlockCommit
 (
 	RedisModuleCtx *ctx,
+	GraphContext *gc
+);
+
+uint64_t GraphContext_GetWriteTransactionID
+(
+	const GraphContext *gc
+);
+
+uint64_t GraphContext_AdvanceWriteTransactionID
+(
 	GraphContext *gc
 );
 
@@ -427,4 +438,3 @@ Cache *GraphContext_GetCache
 (
 	const GraphContext *gc
 );
-
