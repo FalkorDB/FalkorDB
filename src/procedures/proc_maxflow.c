@@ -13,8 +13,8 @@
 //
 // usage:
 //   CALL algo.maxFlow({
-//     sourceNode:        s,
-//     targetNode:        t,
+//     sourceNodes:        s,
+//     targetNodes:        t,
 //     capacityProperty:  'cap',
 //     nodeLabels:        ['Intersection'],
 //     relationshipTypes: ['CONNECTS']
@@ -114,22 +114,22 @@ static bool _read_config
 	SIValue config,       // procedure configuration map
 	LabelID **lbls,       // [output] array of label IDs (caller must free)
 	RelationID **rels,    // [output] array of relation IDs (caller must free)
-	Node **src,           // [output] source node
-	Node **sink,          // [output] sink node
+	Node ***srcs,         // [output] source node
+	Node ***sinks,        // [output] sink node
 	AttributeID *attr_id  // [output] capacity attribute ID
 ) {
-	ASSERT (src     != NULL) ;
+	ASSERT (srcs    != NULL) ;
 	ASSERT (lbls    != NULL) ;
 	ASSERT (rels    != NULL) ;
-	ASSERT (sink    != NULL) ;
+	ASSERT (sinks   != NULL) ;
 	ASSERT (attr_id != NULL) ;
 	ASSERT (SI_TYPE (config) == T_MAP) ;
 
 	// initialise outputs
-	*src     = NULL ;
+	*srcs    = NULL ;
 	*lbls    = NULL ;
 	*rels    = NULL ;
-	*sink    = NULL ;
+	*sinks   = NULL ;
 	*attr_id = ATTRIBUTE_ID_NONE ;
 
 	uint n = Map_KeyCount (config);
@@ -210,14 +210,20 @@ static bool _read_config
 	// read sourceNode
 	//--------------------------------------------------------------------------
 
-	if (MAP_GETCASEINSENSITIVE (config, "sourceNode", v)) {
-		if (SI_TYPE (v) != T_NODE) {
+	if (MAP_GETCASEINSENSITIVE (config, "sourceNodes", v)) {
+		if (SI_TYPE (v) != T_ARRAY || !SIArray_AllOfType (v, T_NODE)) {
 			ErrorCtx_SetError ("MaxFlow configuration, "
-					"'sourceNodes' should be a node") ;
+					"'sourceNodes' must be an array of nodes") ;
 			goto error ;
 		}
-		
-		*src = v.ptrval ;
+
+		*srcs = array_new (Node*, 1) ;
+		uint32_t l = SIArray_Length (v) ;
+		for (uint32_t i = 0; i < l; i++) {
+			SIValue *src = SIArray_GetRef (v, i) ;
+			array_append (*srcs, (Node*)src->ptrval) ;
+		}
+
 		matched++ ;
 	}
 
@@ -225,14 +231,20 @@ static bool _read_config
 	// read targetNode
 	//--------------------------------------------------------------------------
 
-	if (MAP_GETCASEINSENSITIVE (config, "targetNode", v)) {
-		if (SI_TYPE (v) != T_NODE) {
+	if (MAP_GETCASEINSENSITIVE (config, "targetNodes", v)) {
+		if (SI_TYPE (v) != T_ARRAY || !SIArray_AllOfType (v, T_NODE)) {
 			ErrorCtx_SetError ("MaxFlow configuration, "
-					"'targetNode' should be a node") ;
+					"'targetNodes' must be an array of nodes") ;
 			goto error ;
 		}
+
+		*sinks = array_new (Node*, 1) ;
+		uint32_t l = SIArray_Length (v) ;
+		for (uint32_t i = 0; i < l; i++) {
+			SIValue *t = SIArray_GetRef (v, i) ;
+			array_append (*sinks, (Node*)t->ptrval) ;
+		}
 		
-		*sink = v.ptrval ;
 		matched++ ;
 	}
 
@@ -345,15 +357,15 @@ ProcedureResult Proc_MaxFlowInvoke
 	Graph *g            = QueryCtx_GetGraph () ;
 	LabelID     *lbls   = NULL ;
 	RelationID  *rels   = NULL ;
-	Node        *src    = NULL ;
-	Node        *sink   = NULL ;
+	Node        **srcs  = NULL ;
+	Node        **sinks = NULL ;
 	AttributeID attr_id = ATTRIBUTE_ID_NONE ;
 
 	//--------------------------------------------------------------------------
 	// parse and validate configuration
 	//--------------------------------------------------------------------------
 
-	if (!_read_config (args[0], &lbls, &rels, &src, &sink, &attr_id)) {
+	if (!_read_config (args[0], &lbls, &rels, &srcs, &sinks, &attr_id)) {
 		return PROCEDURE_ERR ;
 	}
 
@@ -366,6 +378,12 @@ ProcedureResult Proc_MaxFlowInvoke
 	if (Graph_RelationshipContainsMultiEdge (g, rels[0])) {
 		ErrorCtx_SetError ("algo.maxFlow: relationship type must not "
 				"contain multi-edges (tensors)") ;
+		return PROCEDURE_ERR ;
+	}
+
+	if (srcs == NULL || sinks == NULL) {
+		ErrorCtx_SetError ("algo.maxFlow: expects at least "
+				"one source and one sink") ;
 		return PROCEDURE_ERR ;
 	}
 
@@ -447,6 +465,60 @@ ProcedureResult Proc_MaxFlowInvoke
 	}
 
 	//--------------------------------------------------------------------------
+	// accommodate for multiple sources / sinks
+	//--------------------------------------------------------------------------
+
+	NodeID src_id  = INVALID_ENTITY_ID ;
+	NodeID sink_id = INVALID_ENTITY_ID ;
+
+	bool multi_srcs  = array_len (srcs)  > 1 ;
+	bool multi_sinks = array_len (sinks) > 1 ;
+
+	if (!multi_srcs)  src_id  = ENTITY_GET_ID (srcs  [0]) ;
+	if (!multi_sinks) sink_id = ENTITY_GET_ID (sinks [0]) ;
+
+	if (multi_srcs || multi_sinks) {
+		// enlarge C to make room for a new source of sources and sink of sinks
+		GrB_Index nrows, ncols ;
+		GrB_OK (GrB_Matrix_nrows (&nrows, C)) ;
+		GrB_OK (GrB_Matrix_ncols (&ncols, C)) ;
+		ASSERT (nrows == ncols) ;
+
+		GrB_Index n = nrows ;
+		if (multi_srcs)  n++ ;
+		if (multi_sinks) n++ ;
+
+		GrB_OK (GrB_Matrix_resize (C, n, n)) ;
+
+		uint64_t x = UINT32_MAX ;
+
+		if (multi_srcs) {
+			src_id = --n ; // source of sources id
+			// connect source of sources to each individual source
+			int l = array_len (srcs) ;
+			for (int i = 0 ; i < l ; i++) {
+				Node *s = srcs[i] ;
+				NodeID s_id = ENTITY_GET_ID (s) ;
+				GrB_OK (GrB_Matrix_setElement_UINT64 (C, x, src_id, s_id)) ;
+			}
+		}
+
+		if (multi_sinks) {
+			sink_id = --n ; // sink of sinks id
+			// connect each sink to sink of sinks
+			int l = array_len (sinks) ;
+			for (int i = 0 ; i < l ; i++) {
+				Node *s = sinks[i] ;
+				NodeID s_id = ENTITY_GET_ID (s) ;
+				GrB_OK (GrB_Matrix_setElement_UINT64 (C, x, s_id, sink_id)) ;
+			}
+		}
+	}
+
+	ASSERT (src_id  != INVALID_ENTITY_ID) ;
+	ASSERT (sink_id != INVALID_ENTITY_ID) ;
+
+	//--------------------------------------------------------------------------
 	// build the LAGraph graph (includes AT and EMin caches required by MaxFlow)
 	//--------------------------------------------------------------------------
 
@@ -462,12 +534,39 @@ ProcedureResult Proc_MaxFlowInvoke
 	//--------------------------------------------------------------------------
 
 	// execute Betweenness Centrality
-	double   flow ;
-	GrB_Info info = LAGr_MaxFlow (&flow, &pdata->flow_mtx, G,
-			ENTITY_GET_ID (src), ENTITY_GET_ID (sink), msg) ;
+	double     flow ;
+	GrB_Matrix flow_mtx ;
+	GrB_Info info = LAGr_MaxFlow (&flow, &flow_mtx, G,
+			src_id, sink_id, msg) ;
 
 	GrB_OK (LAGraph_Delete (&G, msg)) ;
 
+	//--------------------------------------------------------------------------
+	// clear temporary edges
+	//--------------------------------------------------------------------------
+
+	if (multi_srcs) {
+		int l = array_len (srcs) ;
+		for (int i = 0 ; i < l ; i++) {
+			Node *s = srcs [i] ;
+			NodeID s_id = ENTITY_GET_ID (s) ;
+			GrB_OK (GrB_Matrix_removeElement (flow_mtx, src_id, s_id)) ;
+		}
+	}
+
+	if (multi_sinks) {
+		int l = array_len (sinks) ;
+		for (int i = 0 ; i < l ; i++) {
+			Node *s = sinks [i] ;
+			NodeID s_id = ENTITY_GET_ID (s) ;
+			GrB_OK (GrB_Matrix_removeElement (flow_mtx, s_id, sink_id)) ;
+		}
+	}
+
+	array_free (srcs)  ;
+	array_free (sinks) ;
+
+	pdata->flow_mtx  = flow_mtx ;
 	ctx->privateData = pdata ;
 
 	if (info != GrB_SUCCESS) {
@@ -601,6 +700,8 @@ SIValue *Proc_MaxFlowStep
 
 			Edge *e = rm_malloc (sizeof (Edge)) ;
 			Graph_GetEdge (g, id, e) ;
+			e->src_id  = i ;
+			e->dest_id = j ;
 			array_append (edges, SI_Edge (e)) ;
 		}
 
