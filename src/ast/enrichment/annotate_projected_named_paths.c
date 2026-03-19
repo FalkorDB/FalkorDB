@@ -95,6 +95,20 @@ static void _annotate_relevant_projected_named_path_identifier
 						   	path_identifier, path);
 				}
 			}
+		} else if(clause_type == CYPHER_AST_CREATE) {
+			const cypher_astnode_t *pattern =
+				cypher_ast_create_get_pattern(clause);
+			uint path_count = cypher_ast_pattern_npaths(pattern);
+			for(uint i = 0; i < path_count; i++) {
+				const cypher_astnode_t *path =
+					cypher_ast_pattern_get_path(pattern, i);
+				if(cypher_astnode_type(path) == CYPHER_AST_NAMED_PATH) {
+					const cypher_astnode_t *path_identifier =
+						cypher_ast_named_path_get_identifier(path);
+					_attach_identifier(identifier_map, named_paths_ctx,
+						path_identifier, path);
+				}
+			}
 		} else if(clause_type == CYPHER_AST_MERGE) {
 			const cypher_astnode_t *path =
 				cypher_ast_merge_get_pattern_path(clause);
