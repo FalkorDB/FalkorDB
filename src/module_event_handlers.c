@@ -562,7 +562,7 @@ static void _AfterForkChild() {
 	// 1. save resources
 	// 2. avoid a bug in GNU OpenMP which hangs when performing parallel loop
 	// in forked process
-	GxB_set (GxB_NTHREADS, 1) ;
+	GrB_set (GrB_GLOBAL, (int32_t) 1, GxB_NTHREADS) ;
 
 	// the graph sync validation only applies to BGSAVE forks (main thread)
 	// GRAPH.COPY forks from a cron thread and only syncs the source graph
