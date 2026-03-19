@@ -317,7 +317,6 @@ static void _process_yield
 
 		else if (strcasecmp("edges", yield [i]) == 0) {
 			ctx->yield_edges = ctx->output + slot++ ;
-			continue ;
 		}
 
 		else if (strcasecmp ("edgeFlows", yield [i]) == 0) {
@@ -551,7 +550,7 @@ ProcedureResult Proc_MaxFlowInvoke
 	// run MaxFlow
 	//--------------------------------------------------------------------------
 
-	// execute Betweenness Centrality
+	// execute maxflow
 	GrB_Matrix flow_mtx = NULL ;
 	GrB_Info info = LAGr_MaxFlow (&pdata->max_flow, &flow_mtx, G, src_id,
 			sink_id, msg) ;
@@ -672,7 +671,7 @@ SIValue *Proc_MaxFlowStep
 		GrB_OK (GxB_Vector_Iterator_attach (it, unique_nodes, NULL)) ;
 
 		GrB_Info info = GxB_Vector_Iterator_seek (it, 0) ;
-
+		int counter = 0 ;
 		while (info != GxB_EXHAUSTED) {
 			// get the entry v(i)
 			GrB_Index node_id = GxB_Vector_Iterator_getIndex (it) ;
@@ -681,6 +680,10 @@ SIValue *Proc_MaxFlowStep
 			Node *n = rm_malloc (sizeof (Node)) ;
 			Graph_GetNode (g, node_id, n) ;
 			array_append (nodes, SI_Node (n)) ;
+
+			// mark as owner of memory allocation
+			SIValue_SetAllocationType (nodes + counter, M_SELF) ;
+			counter++ ;
 
 			// move to the next entry in v
 			info = GxB_Vector_Iterator_next (it) ;
@@ -726,6 +729,7 @@ SIValue *Proc_MaxFlowStep
 
 		// seek to the first entry
 		GrB_Info info = GxB_Matrix_Iterator_seek (it, 0) ;
+		int counter = 0 ;
 		while (info != GxB_EXHAUSTED) {
 			// get current iterator indices
 			GrB_Index i, j ;
@@ -745,6 +749,10 @@ SIValue *Proc_MaxFlowStep
 				e->relationID = pdata->rel_id ;
 
 				array_append (edges, SI_Edge (e)) ;
+
+				// mark as owner of memory allocation
+				SIValue_SetAllocationType (edges + counter, M_SELF) ;
+				counter++ ;
 			}
 
 			if (pdata->yield_edgeFlows != NULL) {
