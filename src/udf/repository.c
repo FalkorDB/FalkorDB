@@ -393,13 +393,17 @@ bool UDF_RepoRemoveLib
 ) {
 	ASSERT (lib      != NULL) ;
 	ASSERT (udf_repo != NULL) ;
-	
+
+	// lock under WRITE
+	pthread_rwlock_wrlock (&udf_repo->rwlock) ;
+
 	// locate library
 	unsigned int idx ;
 	UDF_Lib *_lib = _UDF_RepoGetLib (lib, &idx) ;
 
 	// return if library doesn't exists
 	if (_lib == NULL) {
+		pthread_rwlock_unlock (&udf_repo->rwlock) ;
 		return false ;
 	}
 
@@ -408,9 +412,6 @@ bool UDF_RepoRemoveLib
 		*script = udf_repo->libs[idx].script ;
 		udf_repo->libs[idx].script = NULL ;
 	}
-
-	// lock under WRITE
-	pthread_rwlock_wrlock (&udf_repo->rwlock) ;
 
 	// free library
 	UDF_Lib_Free (_lib) ;
