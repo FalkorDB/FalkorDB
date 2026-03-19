@@ -19,7 +19,7 @@
 //     nodeLabels:        ['Intersection'],
 //     relationshipTypes: ['CONNECTS']
 //   })
-//   YIELD nodes, edges, flow
+//   YIELD nodes, edges, edgeFlows, maxFlow
 
 #include "RG.h"
 #include "LAGraph.h"
@@ -42,16 +42,18 @@
 
 // per-call state threaded through Invoke → Step → Free
 typedef struct {
-	GrB_Matrix R ;          // relationship matrix for the chosen rel-type
-					        // used to resolve EdgeIDs during Step
+	GrB_Matrix R ;              // relationship matrix for the chosen rel-type
+                                // used to resolve EdgeIDs during Step
 
-	GrB_Matrix flow_mtx ;   // result matrix from LAGr_MaxFlow
-							// set to NULL after Step has consumed it
+	double max_flow ;           // network's max flow
+	GrB_Matrix flow_mtx ;       // result matrix from LAGr_MaxFlow
+                                // set to NULL after Step has consumed it
 
-	SIValue output[3] ;     // packed output slots [nodes, edges, flow]
-	SIValue *yield_nodes ;  // pointer into output[] for the nodes slot, or NULL
-	SIValue *yield_edges ;  // pointer into output[] for the edges slot, or NULL
-	SIValue *yield_flows ;  // pointer into output[] for the flow slot, or NULL
+	SIValue output[4] ;         // packed output slots [nodes, edges, flow]
+	SIValue *yield_nodes ;      // pointer into output[] for the nodes slot
+	SIValue *yield_edges ;      // pointer into output[] for the edges slot
+	SIValue *yield_edgeFlows ;  // pointer into output[] for the edge flows slot
+	SIValue *yield_maxFlow ;    // pointer into output[] for the maxflow slot
 } MaxFlow_Context ;
 
 // context passed to the GraphBLAS IndexUnaryOp that maps each matrix entry to
@@ -317,8 +319,12 @@ static void _process_yield
 			continue ;
 		}
 
-		else if (strcasecmp ("flow", yield [i]) == 0) {
-			ctx->yield_flows = ctx->output + slot++ ;
+		else if (strcasecmp ("edgeFlows", yield [i]) == 0) {
+			ctx->yield_edgeFlows = ctx->output + slot++ ;
+		}
+
+		else if (strcasecmp ("maxflow", yield [i]) == 0) {
+			ctx->yield_maxFlow = ctx->output + slot++ ;
 		}
 
 		else {
@@ -546,10 +552,9 @@ ProcedureResult Proc_MaxFlowInvoke
 	//--------------------------------------------------------------------------
 
 	// execute Betweenness Centrality
-	double     flow ;
 	GrB_Matrix flow_mtx ;
-	GrB_Info info = LAGr_MaxFlow (&flow, &flow_mtx, G,
-			src_id, sink_id, msg) ;
+	GrB_Info info = LAGr_MaxFlow (&pdata->max_flow, &flow_mtx, G, src_id,
+			sink_id, msg) ;
 
 	res = (info == GrB_SUCCESS) ? PROCEDURE_OK : PROCEDURE_ERR ;
 
@@ -701,8 +706,12 @@ SIValue *Proc_MaxFlowStep
 		edges = array_new (SIValue, edge_count) ;
 	}
 
-	if (pdata->yield_flows != NULL) {
+	if (pdata->yield_edgeFlows != NULL) {
 		flows = array_new (SIValue, edge_count) ;
+	}
+
+	if (pdata->yield_maxFlow != NULL) {
+		*pdata->yield_maxFlow = SI_DoubleVal (pdata->max_flow) ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -731,7 +740,7 @@ SIValue *Proc_MaxFlowStep
 			array_append (edges, SI_Edge (e)) ;
 		}
 
-		if (pdata->yield_flows != NULL) {
+		if (pdata->yield_edgeFlows != NULL) {
 			// get the entry A(i,j)
 			double flow_val = GxB_Iterator_get_FP64 (it) ;
 			array_append (flows, SI_DoubleVal (flow_val)) ;
@@ -754,8 +763,8 @@ SIValue *Proc_MaxFlowStep
 		*pdata->yield_edges = SIArray_FromRaw (&edges) ;
 	}
 
-	if (pdata->yield_flows != NULL) {
-		*pdata->yield_flows = SIArray_FromRaw (&flows) ;
+	if (pdata->yield_edgeFlows != NULL) {
+		*pdata->yield_edgeFlows = SIArray_FromRaw (&flows) ;
 	}
 
 	return pdata->output ;
@@ -791,17 +800,20 @@ ProcedureResult Proc_MaxFlowFree
 
 // returns a ProcedureCtx that registers algo.maxFlow with the procedure
 // subsystem. the procedure accepts one map argument and can yield any
-// combination of: nodes (T_ARRAY), edges (T_ARRAY), flow (T_DOUBLE).
+// combination of: nodes (T_ARRAY), edges (T_ARRAY), edgeFlows (T_ARRAY)
+// and maxFlow (T_DOUBLE)
 ProcedureCtx *Proc_MaxFlowCtx(void) {
-	ProcedureOutput *outputs = array_new (ProcedureOutput, 3) ;
+	ProcedureOutput *outputs = array_new (ProcedureOutput, 4) ;
 
-	ProcedureOutput output_flow  = {.name = "flow",  .type = T_DOUBLE} ;
-	ProcedureOutput output_nodes = {.name = "nodes", .type = T_ARRAY}  ;
-	ProcedureOutput output_edges = {.name = "edges", .type = T_ARRAY}  ;
+	ProcedureOutput output_nodes     = {.name = "nodes",     .type = T_ARRAY}  ;
+	ProcedureOutput output_edges     = {.name = "edges",     .type = T_ARRAY}  ;
+	ProcedureOutput output_maxFlow   = {.name = "maxFlow",   .type = T_DOUBLE} ;
+	ProcedureOutput output_edgeFlows = {.name = "edgeFlows", .type = T_ARRAY}  ;
 
-	array_append (outputs, output_flow) ;
 	array_append (outputs, output_nodes) ;
 	array_append (outputs, output_edges) ;
+	array_append (outputs, output_maxFlow) ;
+	array_append (outputs, output_edgeFlows) ;
 
 	ProcedureCtx *ctx = ProcCtxNew ("algo.maxFlow", 1,
 								   outputs,
