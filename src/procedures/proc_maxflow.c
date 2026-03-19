@@ -42,6 +42,7 @@
 
 // per-call state threaded through Invoke → Step → Free
 typedef struct {
+	RelationID rel_id ;         // edges relationship id
 	GrB_Matrix R ;              // relationship matrix for the chosen rel-type
                                 // used to resolve EdgeIDs during Step
 
@@ -552,7 +553,7 @@ ProcedureResult Proc_MaxFlowInvoke
 	//--------------------------------------------------------------------------
 
 	// execute Betweenness Centrality
-	GrB_Matrix flow_mtx ;
+	GrB_Matrix flow_mtx = NULL ;
 	GrB_Info info = LAGr_MaxFlow (&pdata->max_flow, &flow_mtx, G, src_id,
 			sink_id, msg) ;
 
@@ -584,6 +585,7 @@ ProcedureResult Proc_MaxFlowInvoke
 		}
 	}
 
+	pdata->rel_id    = rels[0] ;
 	pdata->flow_mtx  = flow_mtx ;
 	ctx->privateData = pdata ;
 
@@ -734,9 +736,14 @@ SIValue *Proc_MaxFlowStep
 			GrB_OK (GrB_Matrix_extractElement_UINT64 (&id, R, i, j)) ;
 
 			Edge *e = rm_malloc (sizeof (Edge)) ;
-			Graph_GetEdge (g, id, e) ;
-			e->src_id  = i ;
-			e->dest_id = j ;
+			bool found = Graph_GetEdge (g, id, e) ;
+			ASSERT (found == true) ;
+
+			// initialize edge
+			e->src_id     = i ;
+			e->dest_id    = j ;
+			e->relationID = pdata->rel_id ;
+
 			array_append (edges, SI_Edge (e)) ;
 		}
 
