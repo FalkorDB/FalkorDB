@@ -159,9 +159,9 @@ static bool _read_config
 		}
 
 		_lbls = array_new (LabelID, 0) ;
-		u_int32_t l = SIArray_Length (v) ;
+		uint32_t l = SIArray_Length (v) ;
 
-		for (u_int32_t i = 0; i < l; i++) {
+		for (uint32_t i = 0; i < l; i++) {
 			const char *label = SIArray_Get (v, i).stringval ;
 			Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
 			if (s == NULL) {
@@ -788,6 +788,10 @@ ProcedureResult Proc_MaxFlowFree
 
 	if (pdata == NULL) {
 		return PROCEDURE_OK ;
+	}
+
+	if (pdata->R != NULL) {
+		GrB_OK (GrB_free (&pdata->R)) ;
 	}
 
 	// flow_matrix is normally freed in Step; free it here only if Step was
