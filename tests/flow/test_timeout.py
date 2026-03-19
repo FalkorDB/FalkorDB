@@ -1,5 +1,6 @@
 import asyncio
 from common import *
+from common import Env
 from index_utils import *
 from falkordb.asyncio import FalkorDB
 from redis.asyncio import BlockingConnectionPool

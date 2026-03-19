@@ -101,6 +101,12 @@ def Env(
     # This is critical when tests run with randomized ports.
     env.port = port
 
+    if useSlaves:
+        slavePort = None
+        if hasattr(env.envRunner, 'slavePort'):
+            slavePort = env.envRunner.slavePort
+        env.slavePort = slavePort
+
     db = FalkorDB("localhost", port)
 
     if SANITIZER or VALGRIND:

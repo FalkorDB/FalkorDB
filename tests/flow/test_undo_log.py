@@ -1,5 +1,6 @@
 from common import *
 from index_utils import *
+from redis.exceptions import ResponseError
 
 GRAPH_ID = "undo-log"
 

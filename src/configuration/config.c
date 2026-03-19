@@ -122,7 +122,7 @@ typedef struct
 	bool cmd_info_on;				   // if true, the GRAPH.INFO is enabled
 	uint64_t effects_threshold;		   // replicate via effects when runtime exceeds threshold
 	uint64_t max_info_queries_count;   // maximum number of query info elements
-	int16_t bolt_port;				   // bolt protocol port
+	int32_t bolt_port;				   // bolt protocol port
 	bool delay_indexing;			   // delay index construction when decoding
 	char *import_folder;			   // path to import folder, used for CSV loading
 	char *temp_folder;				   // path to temp folder, used for storing temporary files
@@ -201,60 +201,55 @@ static long long _ModuleConfigGetNumeric(const char *name, void *privdata) {
 	case Config_TIMEOUT:
 	case Config_TIMEOUT_DEFAULT:
 	case Config_TIMEOUT_MAX:
+	case Config_MAX_QUEUED_QUERIES:
+	case Config_VKEY_MAX_ENTITY_COUNT:
+	case Config_NODE_CREATION_BUFFER:
+	case Config_CMD_INFO_MAX_QUERY_COUNT:
 	case Config_CACHE_SIZE:
 	case Config_OPENMP_NTHREAD:
 	case Config_THREAD_POOL_SIZE:
-	case Config_RESULTSET_MAX_SIZE:
-	case Config_VKEY_MAX_ENTITY_COUNT:
-	case Config_MAX_QUEUED_QUERIES:
-	case Config_QUERY_MEM_CAPACITY:
-	case Config_DELTA_MAX_PENDING_CHANGES:
-	case Config_NODE_CREATION_BUFFER:
-	case Config_CMD_INFO_MAX_QUERY_COUNT:
-	case Config_EFFECTS_THRESHOLD:
-	case Config_BOLT_PORT:
-	case Config_IMPORT_FOLDER: // not numeric, handled below
-	case Config_TEMP_FOLDER:   // not numeric, handled below
-	case Config_JS_HEAP_SIZE:
-	case Config_JS_STACK_SIZE:
-	default:
-		break;
+	case Config_EFFECTS_THRESHOLD: {
+		uint64_t n = 0;
+		Config_Option_get(field, &n);
+		ASSERT(n <= (uint64_t)LLONG_MAX);
+		return (long long)n;
 	}
 
-	long long n = 0;
-
-	switch(field) {
-	case Config_TIMEOUT:
-	case Config_TIMEOUT_DEFAULT:
-	case Config_TIMEOUT_MAX:
-	case Config_MAX_QUEUED_QUERIES:
-	case Config_QUERY_MEM_CAPACITY:
-	case Config_DELTA_MAX_PENDING_CHANGES:
-	case Config_EFFECTS_THRESHOLD:
-	case Config_RESULTSET_MAX_SIZE:
-	case Config_VKEY_MAX_ENTITY_COUNT:
-	case Config_NODE_CREATION_BUFFER:
-	case Config_CMD_INFO_MAX_QUERY_COUNT:
-	case Config_CACHE_SIZE:
-	case Config_OPENMP_NTHREAD:
-	case Config_THREAD_POOL_SIZE:
-	case Config_JS_HEAP_SIZE:
-	case Config_JS_STACK_SIZE:
+	case Config_RESULTSET_MAX_SIZE: {
+		uint64_t n = 0;
 		Config_Option_get(field, &n);
-		break;
+		if(n == RESULTSET_SIZE_UNLIMITED) {
+			return -1;
+		}
+		ASSERT(n <= (uint64_t)LLONG_MAX);
+		return (long long)n;
+	}
+
+	case Config_QUERY_MEM_CAPACITY:
+	case Config_DELTA_MAX_PENDING_CHANGES: {
+		int64_t n = 0;
+		Config_Option_get(field, &n);
+		return (long long)n;
+	}
+
+	case Config_JS_HEAP_SIZE:
+	case Config_JS_STACK_SIZE: {
+		size_t n = 0;
+		Config_Option_get(field, &n);
+		ASSERT(n <= (size_t)LLONG_MAX);
+		return (long long)n;
+	}
 
 	case Config_BOLT_PORT: {
-		int16_t port;
-		Config_Option_get(field, &port);
-		n = port;
-		break;
+		int32_t n = 0;
+		Config_Option_get(field, &n);
+		return (long long)n;
 	}
 
 	default:
 		ASSERT(false && "invalid numeric config");
+		return 0;
 	}
-
-	return n;
 }
 
 static int _ModuleConfigSetBool(const char *name, int val, void *privdata,
@@ -408,9 +403,10 @@ static int _RegisterModuleConfigs(RedisModuleCtx *ctx) {
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_RegisterNumericConfig(ctx, "bolt_port", config.bolt_port,
+	if(RedisModule_RegisterNumericConfig(ctx, "bolt_port",
+		(long long)config.bolt_port,
 		_Config_flags(Config_BOLT_PORT, false),
-		-1, 65535, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
+		-1, UINT16_MAX, _ModuleConfigGetNumeric, _ModuleConfigSetNumeric,
 		NULL, (void *)(intptr_t)Config_BOLT_PORT) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
@@ -822,13 +818,13 @@ static uint64_t Config_effects_threshold_get(void)
 //------------------------------------------------------------------------------
 
 static void Config_bolt_port_set(
-	int16_t port)
+	int32_t port)
 {
-	int16_t p = (port < 0) ? BOLT_PROTOCOL_PORT_DEFAULT : port;
+	int32_t p = (port < 0) ? BOLT_PROTOCOL_PORT_DEFAULT : port;
 	config.bolt_port = p;
 }
 
-static int16_t Config_bolt_port_get(void)
+static int32_t Config_bolt_port_get(void)
 {
 	return config.bolt_port;
 }
@@ -1662,7 +1658,7 @@ bool Config_Option_get(
 	case Config_BOLT_PORT:
 	{
 		va_start(ap, field);
-		int16_t *bolt_port = va_arg(ap, int16_t *);
+		int32_t *bolt_port = va_arg(ap, int32_t *);
 		va_end(ap);
 
 		ASSERT(bolt_port != NULL);
@@ -2098,8 +2094,14 @@ bool Config_Option_set
 			if (!_Config_ParseInteger (val, &port)) {
 				return false ;
 			}
+			if (port < -1 || port > UINT16_MAX) {
+				if (err) {
+					*err = "BOLT_PORT must be between -1 and 65535";
+				}
+				return false;
+			}
 			if (Config_bolt_port_get () != port) {
-				Config_bolt_port_set (port) ;
+				Config_bolt_port_set ((int32_t)port) ;
 				updated = true ;
 			}
 		}

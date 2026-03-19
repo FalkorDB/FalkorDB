@@ -3,6 +3,7 @@ import inspect
 import subprocess
 import time
 from common import *
+from redis.exceptions import BusyLoadingError, ConnectionError as RedisConnectionError
 
 GRAPH_ID = "config"
 NUMBER_OF_CONFIGURATIONS = 22 # number of configurations available
@@ -74,7 +75,7 @@ class testConfig(FlowTestsBase):
                 ("CMD_INFO", 1),
                 ("MAX_INFO_QUERIES", 1000),
                 ("EFFECTS_THRESHOLD", 300),
-                ("BOLT_PORT", 65535),
+                ("BOLT_PORT", -1),
                 ("DELAY_INDEXING", 0),
                 ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
                 ("TEMP_FOLDER", "/tmp"),
@@ -591,8 +592,10 @@ class testConfigRewritePersist:
                 try:
                     if self.redis_con.ping():
                         break
-                except Exception:
+                except (RedisConnectionError, BusyLoadingError):
                     time.sleep(0.05)
+            else:
+                raise RuntimeError(f"Redis failed to become ready on port {port}")
             self.db = FalkorDB("localhost", port)
 
         # values should load from config file
