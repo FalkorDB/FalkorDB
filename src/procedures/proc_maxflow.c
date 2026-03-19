@@ -375,8 +375,7 @@ ProcedureResult Proc_MaxFlowInvoke
 	ProcedureResult res = PROCEDURE_OK ;
 
 	if (!_read_config (args[0], &lbls, &rels, &srcs, &sinks, &attr_id)) {
-		ErrorCtx_SetError ("algo.maxFlow: failed to read config map") ;
-
+		// error already set
 		res = PROCEDURE_ERR ;
 		goto cleanup ;
 	}
@@ -720,44 +719,46 @@ SIValue *Proc_MaxFlowStep
 	// initialize iterator
 	//--------------------------------------------------------------------------
 
-	GxB_Iterator it ;
-	GrB_OK (GxB_Iterator_new (&it)) ;
-	GrB_OK (GxB_Matrix_Iterator_attach (it, pdata->flow_mtx, NULL)) ;
+	if (pdata->yield_edges != NULL || pdata->yield_edgeFlows != NULL) {
+		GxB_Iterator it ;
+		GrB_OK (GxB_Iterator_new (&it)) ;
+		GrB_OK (GxB_Matrix_Iterator_attach (it, pdata->flow_mtx, NULL)) ;
 
-	// seek to the first entry
-	GrB_Info info = GxB_Matrix_Iterator_seek (it, 0) ;
-	while (info != GxB_EXHAUSTED) {
-		// get current iterator indices
-		GrB_Index i, j ;
-		GxB_Matrix_Iterator_getIndex (it, &i, &j) ;
+		// seek to the first entry
+		GrB_Info info = GxB_Matrix_Iterator_seek (it, 0) ;
+		while (info != GxB_EXHAUSTED) {
+			// get current iterator indices
+			GrB_Index i, j ;
+			GxB_Matrix_Iterator_getIndex (it, &i, &j) ;
 
-		if (pdata->yield_edges != NULL) {
-			EdgeID id ;
-			GrB_OK (GrB_Matrix_extractElement_UINT64 (&id, R, i, j)) ;
+			if (pdata->yield_edges != NULL) {
+				EdgeID id ;
+				GrB_OK (GrB_Matrix_extractElement_UINT64 (&id, R, i, j)) ;
 
-			Edge *e = rm_malloc (sizeof (Edge)) ;
-			bool found = Graph_GetEdge (g, id, e) ;
-			ASSERT (found == true) ;
+				Edge *e = rm_malloc (sizeof (Edge)) ;
+				bool found = Graph_GetEdge (g, id, e) ;
+				ASSERT (found == true) ;
 
-			// initialize edge
-			e->src_id     = i ;
-			e->dest_id    = j ;
-			e->relationID = pdata->rel_id ;
+				// initialize edge
+				e->src_id     = i ;
+				e->dest_id    = j ;
+				e->relationID = pdata->rel_id ;
 
-			array_append (edges, SI_Edge (e)) ;
+				array_append (edges, SI_Edge (e)) ;
+			}
+
+			if (pdata->yield_edgeFlows != NULL) {
+				// get the entry A(i,j)
+				double flow_val = GxB_Iterator_get_FP64 (it) ;
+				array_append (flows, SI_DoubleVal (flow_val)) ;
+			}
+
+			// move to the next entry
+			info = GxB_Matrix_Iterator_next (it) ;
 		}
 
-		if (pdata->yield_edgeFlows != NULL) {
-			// get the entry A(i,j)
-			double flow_val = GxB_Iterator_get_FP64 (it) ;
-			array_append (flows, SI_DoubleVal (flow_val)) ;
-		}
-
-		// move to the next entry
-		info = GxB_Matrix_Iterator_next (it) ;
+		GrB_OK (GrB_free (&it)) ;
 	}
-
-	GrB_OK (GrB_free (&it)) ;
 
 	// release the flow matrix; setting to NULL marks this Step as consumed
 	GrB_OK (GrB_free (&pdata->flow_mtx)) ;
