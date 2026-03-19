@@ -7,14 +7,14 @@
 //
 // implements the `algo.maxFlow` stored procedure
 //
-// given a directed weighted graph, a source node, and a sink node, this
-// procedure computes the maximum flow through the network and returns the
-// participating nodes, edges, and per-edge flow values
+// given a directed weighted graph, a set of source nodes,
+// and a set of sink nodes, this procedure computes the maximum flow through
+// the network and returns the participating nodes, edges, and per-edge flow
 //
 // usage:
 //   CALL algo.maxFlow({
-//     sourceNodes:        s,
-//     targetNodes:        t,
+//     sourceNodes:        [s0, s1, s2],
+//     targetNodes:        [t0],
 //     capacityProperty:  'cap',
 //     nodeLabels:        ['Intersection'],
 //     relationshipTypes: ['CONNECTS']
@@ -365,26 +365,48 @@ ProcedureResult Proc_MaxFlowInvoke
 	// parse and validate configuration
 	//--------------------------------------------------------------------------
 
+	ProcedureResult res = PROCEDURE_OK ;
+
 	if (!_read_config (args[0], &lbls, &rels, &srcs, &sinks, &attr_id)) {
-		return PROCEDURE_ERR ;
+		ErrorCtx_SetError ("algo.maxFlow: failed to read config map") ;
+
+		res = PROCEDURE_ERR ;
+		goto cleanup ;
 	}
 
 	if (rels == NULL || array_len (rels) != 1) {
 		ErrorCtx_SetError ("algo.maxFlow: 'relationshipTypes' is required "
 				"and must contain exactly one type") ;
-		return PROCEDURE_ERR ;
+
+		res = PROCEDURE_ERR ;
+		goto cleanup ;
 	}
 
 	if (Graph_RelationshipContainsMultiEdge (g, rels[0])) {
 		ErrorCtx_SetError ("algo.maxFlow: relationship type must not "
 				"contain multi-edges (tensors)") ;
-		return PROCEDURE_ERR ;
+
+		res = PROCEDURE_ERR ;
+		goto cleanup ;
 	}
 
-	if (srcs == NULL || sinks == NULL) {
+	if (srcs              == NULL ||
+		sinks             == NULL ||
+		array_len (srcs)  == 0    ||
+		array_len (sinks) == 0
+	) {
 		ErrorCtx_SetError ("algo.maxFlow: expects at least "
 				"one source and one sink") ;
-		return PROCEDURE_ERR ;
+
+		res = PROCEDURE_ERR ;
+		goto cleanup ;
+	}
+
+	if (attr_id == ATTRIBUTE_ID_NONE) {
+		ErrorCtx_SetError ("algo.maxFlow: 'capacityProperty' is required") ;
+
+		res = PROCEDURE_ERR ;
+		goto cleanup ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -401,7 +423,6 @@ ProcedureResult Proc_MaxFlowInvoke
 
 	GrB_Matrix U ;
 	Delta_Matrix R = Graph_GetRelationMatrix (g, rels[0], false) ;
-
 	GrB_OK (Delta_Matrix_export (&U, R, GrB_UINT64)) ;
 
 	GrB_Matrix A ;
@@ -454,15 +475,6 @@ ProcedureResult Proc_MaxFlowInvoke
 	GrB_OK (GrB_free (&cap_ctx_s)) ;
 	GrB_OK (GrB_free (&cap_ctx_type)) ;
 	GrB_OK (GrB_free (&get_capacity)) ;
-
-	// configuration arrays no longer needed
-	if (lbls != NULL) {
-		array_free (lbls) ;
-	}
-
-	if (rels != NULL) {
-		array_free (rels) ;
-	}
 
 	//--------------------------------------------------------------------------
 	// accommodate for multiple sources / sinks
@@ -539,41 +551,55 @@ ProcedureResult Proc_MaxFlowInvoke
 	GrB_Info info = LAGr_MaxFlow (&flow, &flow_mtx, G,
 			src_id, sink_id, msg) ;
 
+	res = (info == GrB_SUCCESS) ? PROCEDURE_OK : PROCEDURE_ERR ;
+
 	GrB_OK (LAGraph_Delete (&G, msg)) ;
 
 	//--------------------------------------------------------------------------
 	// clear temporary edges
 	//--------------------------------------------------------------------------
 
-	if (multi_srcs) {
-		int l = array_len (srcs) ;
-		for (int i = 0 ; i < l ; i++) {
-			Node *s = srcs [i] ;
-			NodeID s_id = ENTITY_GET_ID (s) ;
-			GrB_OK (GrB_Matrix_removeElement (flow_mtx, src_id, s_id)) ;
+	if (info == GrB_SUCCESS) {
+		if (multi_srcs) {
+			int l = array_len (srcs) ;
+			for (int i = 0 ; i < l ; i++) {
+				Node *s = srcs [i] ;
+				NodeID s_id = ENTITY_GET_ID (s) ;
+				GrB_OK (GrB_Matrix_removeElement (flow_mtx, src_id, s_id)) ;
+			}
+		}
+
+		if (multi_sinks) {
+			int l = array_len (sinks) ;
+			for (int i = 0 ; i < l ; i++) {
+				Node *s = sinks [i] ;
+				NodeID s_id = ENTITY_GET_ID (s) ;
+				GrB_OK (GrB_Matrix_removeElement (flow_mtx, s_id, sink_id)) ;
+			}
 		}
 	}
-
-	if (multi_sinks) {
-		int l = array_len (sinks) ;
-		for (int i = 0 ; i < l ; i++) {
-			Node *s = sinks [i] ;
-			NodeID s_id = ENTITY_GET_ID (s) ;
-			GrB_OK (GrB_Matrix_removeElement (flow_mtx, s_id, sink_id)) ;
-		}
-	}
-
-	array_free (srcs)  ;
-	array_free (sinks) ;
 
 	pdata->flow_mtx  = flow_mtx ;
 	ctx->privateData = pdata ;
 
-	if (info != GrB_SUCCESS) {
-		return PROCEDURE_ERR ;
+cleanup:
+	if (srcs != NULL) {
+		array_free (srcs)  ;
 	}
 
-	return PROCEDURE_OK ;
+	if (sinks != NULL) {
+		array_free (sinks) ;
+	}
+
+	if (lbls != NULL) {
+		array_free (lbls) ;
+	}
+
+	if (rels != NULL) {
+		array_free (rels) ;
+	}
+
+	return res ;
 }
 
 // Proc_MaxFlowStep
