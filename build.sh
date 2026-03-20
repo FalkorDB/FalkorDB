@@ -773,9 +773,18 @@ build_libcurl() {
         # Use -O3 for optimization, -g for debug symbols
         # On Linux: enable OpenSSL for HTTPS support (required for LOAD CSV from HTTPS URLs)
         # On macOS: use SecureTransport (auto-detected, no --with-ssl needed)
+        # Note: libcurl >= 8.18.0 requires OpenSSL >= 3.0.0.
+        # On RHEL8/UBI8, openssl3-devel installs OpenSSL 3 to a non-standard path
+        # (/usr/lib64/openssl3/pkgconfig/); set PKG_CONFIG_PATH so configure finds it.
         local ssl_flags
         if [[ "$OS" == "linux" ]]; then
             ssl_flags="--with-openssl"
+            if ! pkg-config --atleast-version=3.0.0 openssl 2>/dev/null; then
+                if [[ -f /usr/lib64/openssl3/pkgconfig/openssl.pc ]]; then
+                    export PKG_CONFIG_PATH="/usr/lib64/openssl3/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+                    log_info "Using OpenSSL 3 from /usr/lib64/openssl3 (RHEL8 non-standard path)"
+                fi
+            fi
         else
             ssl_flags="--without-ssl"
         fi
@@ -1302,6 +1311,14 @@ prepare_cmake_arguments() {
     fi
     if [[ -n "$CXX" ]]; then
         CMAKE_ARGS+=(-DCMAKE_CXX_COMPILER="$CXX")
+    fi
+
+    # On RHEL8/UBI8, openssl3-devel installs OpenSSL 3 to non-standard paths.
+    # Direct CMake's FindOpenSSL to the correct locations so that find_package(OpenSSL)
+    # finds OpenSSL 3 rather than the system OpenSSL 1.1.x from openssl-devel.
+    if [[ -f /usr/lib64/openssl3/pkgconfig/openssl.pc ]]; then
+        CMAKE_ARGS+=(-DOPENSSL_ROOT_DIR=/usr/lib64/openssl3)
+        CMAKE_ARGS+=(-DOPENSSL_INCLUDE_DIR=/usr/include/openssl3)
     fi
 
     # Export platform info
