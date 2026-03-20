@@ -47,10 +47,10 @@ static int cmp_timespec
 	struct timespec a,
 	struct timespec b
 ) {
-	if(a.tv_sec == b.tv_sec) {
-		return a.tv_nsec - b.tv_nsec;
+	if (a.tv_sec == b.tv_sec) {
+		return a.tv_nsec - b.tv_nsec ;
 	} else {
-		return a.tv_sec - b.tv_sec;
+		return a.tv_sec - b.tv_sec ;
 	}
 }
 
@@ -61,9 +61,9 @@ static int CRON_JobCmp
 	const void *b,
 	void *udata
 ) {
-	CRON_TASK *_a = (CRON_TASK*)a;
-	CRON_TASK *_b = (CRON_TASK*)b;
-	return cmp_timespec(_b->due, _a->due);
+	CRON_TASK *_a = (CRON_TASK*)a ;
+	CRON_TASK *_b = (CRON_TASK*)b ;
+	return cmp_timespec (_b->due, _a->due) ;
 }
 
 //------------------------------------------------------------------------------
@@ -75,17 +75,17 @@ static struct timespec due_in_ms
 (
 	uint ms
 ) {
-	struct timespec due;
-	clock_gettime(CLOCK_REALTIME, &due);
+	struct timespec due ;
+	clock_gettime (CLOCK_REALTIME, &due) ;
 
-	due.tv_sec += ms / 1000;
-	due.tv_nsec += (ms % 1000) * 1000000;
+	due.tv_sec += ms / 1000 ;
+	due.tv_nsec += (ms % 1000) * 1000000 ;
 	// add the overflow seconds otherwise the time will be invalid
 	// and the thread will wake up immediately which lead to busy loop
-	due.tv_sec += due.tv_nsec / 1000000000;
-	due.tv_nsec %= 1000000000;
+	due.tv_sec += due.tv_nsec / 1000000000 ;
+	due.tv_nsec %= 1000000000 ;
 
-	return due;
+	return due ;
 }
 
 // peak at the next task and find out when it is due
@@ -99,7 +99,6 @@ static bool CRON_PeekDue
 	ASSERT (task != NULL) ;
 
 	struct timespec now ;
-	bool due_now = false ;
 
 	*task = Heap_peek (cron->tasks) ;
 	if (*task == NULL) {
@@ -179,9 +178,9 @@ static void CRON_FreeTask
 }
 
 static void clear_tasks() {
-	CRON_TASK *task = NULL;
-	while((task = Heap_poll(cron->tasks))) {
-		CRON_FreeTask(task);
+	CRON_TASK *task = NULL ;
+	while ((task = Heap_poll (cron->tasks))) {
+		CRON_FreeTask (task) ;
 	}
 }
 
@@ -265,17 +264,17 @@ bool Cron_Start (void) {
 	cron->tasks        = Heap_new (CRON_JobCmp, NULL) ;
 	cron->current_task = NULL ;
 
-	int res ;
-	res = pthread_cond_init (&cron->task_enqueued, NULL) ;
+	int res = 0 ;
+	res |= pthread_cond_init (&cron->task_enqueued, NULL) ;
 	ASSERT (res == 0) ;
 
-	res = pthread_mutex_init (&cron->task_queue_lock, NULL) ;
+	res |= pthread_mutex_init (&cron->task_queue_lock, NULL) ;
 	ASSERT (res == 0) ;
 
-	res = pthread_create (&cron->thread, NULL, Cron_Run, NULL) ;
+	res |= pthread_create (&cron->thread, NULL, Cron_Run, NULL) ;
 	ASSERT (res == 0) ;
 
-	return true ;
+	return res == 0 ;
 }
 
 // stops CRON
@@ -342,23 +341,23 @@ bool Cron_AbortTask
 (
 	CronTaskHandle t  // task to abort
 ) {
-	ASSERT(cron != NULL);
+	ASSERT (cron != NULL) ;
 
-	CRON_TASK *task = (CRON_TASK *)t;
+	CRON_TASK *task = (CRON_TASK *)t ;
 
 	// try remove the task
-	if(!CRON_RemoveTask(task)) {
+	if (!CRON_RemoveTask (task)) {
 		// in case task is currently being performed, wait for it to finish
 		while (cron->current_task == task) { }
 
 		// task wan't aborted
-		return false;
+		return false ;
 	}
 	
 	// free task
-	CRON_FreeTask(task);
+	CRON_FreeTask (task) ;
 
 	// managed to abort task
-	return true;
+	return true ;
 }
 
