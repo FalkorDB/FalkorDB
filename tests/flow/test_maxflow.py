@@ -9,6 +9,8 @@ class testMaxFlow(FlowTestsBase):
 
     def tearDown(self):
         self.graph.delete()
+        # re-create the graph object to get a fresh client-side schema cache
+        self.graph = self.db.select_graph(GRAPH_ID)
 
     def max_flow(self, sourceNodes, targetNodes, capacityProperty=None,
                  nodeLabels=[], relationshipTypes=None):
@@ -37,7 +39,7 @@ class testMaxFlow(FlowTestsBase):
     #  invalid invocations                                               #
     # ------------------------------------------------------------------ #
 
-    def test_invalid_invocation(self):
+    def test_01_invalid_invocation(self):
         """Procedure must reject every malformed configuration."""
         # need at least one node in the graph so that id-based queries compile
         self.graph.query("CREATE (:N), (:N)")
@@ -118,6 +120,20 @@ class testMaxFlow(FlowTestsBase):
                CALL algo.maxFlow({sourceNodes:[s], targetNodes:[t],
                    relationshipTypes:['R'], oops:'yes'})
                YIELD maxFlow""",
+
+            # defaultCapacity must be numeric
+            """MATCH (s:N),(t:N) WHERE id(s)<>id(t)
+               CALL algo.maxFlow({sourceNodes:[s], targetNodes:[t],
+                   relationshipTypes:['R'], capacityProperty:'cap',
+                   defaultCapacity:'bad'})
+               YIELD maxFlow""",
+
+            # defaultCapacity must be non-negative
+            """MATCH (s:N),(t:N) WHERE id(s)<>id(t)
+               CALL algo.maxFlow({sourceNodes:[s], targetNodes:[t],
+                   relationshipTypes:['R'], capacityProperty:'cap',
+                   defaultCapacity:-1})
+               YIELD maxFlow""",
         ]
 
         for q in invalid_queries:
@@ -131,7 +147,7 @@ class testMaxFlow(FlowTestsBase):
     #  empty / trivial graphs                                            #
     # ------------------------------------------------------------------ #
 
-    def test_max_flow_empty_graph(self):
+    def test_02_max_flow_empty_graph(self):
         """Flow on an empty graph should throw an exceptiont."""
         self.graph.query("CREATE (a)-[e:PIPE]->(b) DELETE a,e,b")
 
@@ -149,7 +165,7 @@ class testMaxFlow(FlowTestsBase):
         except:
             pass
 
-    def test_max_flow_no_path_between_source_and_sink(self):
+    def test_03_max_flow_no_path_between_source_and_sink(self):
         """Two disconnected nodes yield zero flow."""
         self.graph.query("""
             CREATE (:Node {name:'A'})-[e:PIPE {cap:1}]->(:Node {name:'B'})
@@ -174,7 +190,7 @@ class testMaxFlow(FlowTestsBase):
     #  single source, single sink – correctness                          #
     # ------------------------------------------------------------------ #
 
-    def test_max_flow_simple_path(self):
+    def test_04_max_flow_simple_path(self):
         """A -5-> B -5-> C  →  max flow = 5."""
         self.graph.query("""
             CREATE (a:Node {name:'A'})-[:PIPE {cap:5}]->
@@ -195,7 +211,7 @@ class testMaxFlow(FlowTestsBase):
         self.env.assertEqual(result.result_set[0][1], 5)
         self.env.assertEqual(result.result_set[0][0], [5,5])
 
-    def test_max_flow_bottleneck(self):
+    def test_05_max_flow_bottleneck(self):
         """
         A -10-> B -3-> C -10-> D
         The bottleneck edge B->C limits flow to 3.
@@ -219,7 +235,7 @@ class testMaxFlow(FlowTestsBase):
         self.env.assertEqual(result.result_set[0][1], 3)
         self.env.assertEqual(result.result_set[0][0], [3, 3, 3])
 
-    def test_max_flow_parallel_paths(self):
+    def test_06_max_flow_parallel_paths(self):
         """
         Two parallel paths A->B->D and A->C->D, each with capacity 4.
         Max flow = 8.
@@ -251,8 +267,9 @@ class testMaxFlow(FlowTestsBase):
         self.env.assertEqual(result.result_set[0][1], 8)
         self.env.assertEqual(result.result_set[0][0], [4, 4, 4, 4])
 
-    def test_max_flow_default_capacity(self):
-        """Without capacityProperty every edge defaults to capacity 1."""
+    def test_07_max_flow_default_capacity(self):
+        """When defaultCapacity is given, edges with missing or non-numeric
+        capacity attributes use that fallback value."""
         self.graph.query("""
             CREATE (a:Node {name:'A'}),
                    (b:Node {name:'B'}),
@@ -269,6 +286,7 @@ class testMaxFlow(FlowTestsBase):
                 sourceNodes:       [s],
                 targetNodes:       [t],
                 capacityProperty:  'cap',
+                defaultCapacity:   1,
                 relationshipTypes: ['PIPE']
             })
             YIELD edgeFlows, maxFlow
@@ -281,7 +299,7 @@ class testMaxFlow(FlowTestsBase):
     #  yield – subsets of output columns                                 #
     # ------------------------------------------------------------------ #
 
-    def test_yield_flow_only(self):
+    def test_08_yield_flow_only(self):
         """Requesting only YIELD flow must succeed and return a numeric value."""
         self.graph.query("""
             CREATE (a:Node {name:'A'})-[:PIPE {cap:7}]->(b:Node {name:'B'})
@@ -299,7 +317,7 @@ class testMaxFlow(FlowTestsBase):
         self.env.assertEqual(len(result.result_set), 1)
         self.env.assertEqual(result.result_set[0][0], 7)
 
-    def test_yield_nodes_only(self):
+    def test_09_yield_nodes_only(self):
         """Requesting only YIELD nodes must return a non-empty array."""
         nodes = self.graph.query("""
             CREATE (a:Node {name:'A'})-[:PIPE {cap:7}]->(b:Node {name:'B'})
@@ -320,7 +338,7 @@ class testMaxFlow(FlowTestsBase):
         yield_nodes = result.result_set[0][0]
         self.env.assertEqual(nodes, yield_nodes)
 
-    def test_yield_edges_only(self):
+    def test_10_yield_edges_only(self):
         """Requesting only YIELD edges must return a non-empty array."""
         edges = self.graph.query("""
             CREATE (a:Node {name:'A'})-[e:PIPE {cap:7}]->(b:Node {name:'B'})
@@ -340,7 +358,7 @@ class testMaxFlow(FlowTestsBase):
         yield_edges = result.result_set[0][0]
         self.env.assertEqual(edges, yield_edges)
 
-    def test_yield_nodes_edges_flow(self):
+    def test_11_yield_nodes_edges_flow(self):
         """
         All three yield columns must be consistent with each other:
         - nodes includes exactly the endpoints that appear in edges
@@ -354,6 +372,10 @@ class testMaxFlow(FlowTestsBase):
                    (a)-[:PIPE {cap:5}]->(b),
                    (b)-[:PIPE {cap:5}]->(c)
         """)
+
+        # warm the client schema so edge parsing succeeds
+        self.graph.query("MATCH ()-[e:PIPE]->() RETURN e LIMIT 1")
+
         result = self.graph.query("""
             MATCH (s:Node {name:'A'}), (t:Node {name:'C'})
             CALL algo.maxFlow({
@@ -381,7 +403,7 @@ class testMaxFlow(FlowTestsBase):
     #  multi-source, single sink                                         #
     # ------------------------------------------------------------------ #
 
-    def test_max_flow_multi_source_single_sink(self):
+    def test_12_max_flow_multi_source_single_sink(self):
         """
         Two independent sources feeding a common sink.
 
@@ -413,7 +435,7 @@ class testMaxFlow(FlowTestsBase):
         self.env.assertEqual(result.result_set[0][1], 8)
         self.env.assertEqual(len(result.result_set[0][0]), 3)
 
-    def test_max_flow_multi_source_bottleneck(self):
+    def test_13_max_flow_multi_source_bottleneck(self):
         """
         Sources A and B both feed into C which is a bottleneck (cap 4) to D.
 
@@ -449,7 +471,7 @@ class testMaxFlow(FlowTestsBase):
     #  single source, multi-sink                                         #
     # ------------------------------------------------------------------ #
 
-    def test_max_flow_single_source_multi_sink(self):
+    def test_14_max_flow_single_source_multi_sink(self):
         """
         One source, two independent sinks.
 
@@ -481,7 +503,7 @@ class testMaxFlow(FlowTestsBase):
         self.env.assertEqual(len(result.result_set[0][0]), 3)
         self.env.assertEqual(result.result_set[0][1], 8)
 
-    def test_max_flow_single_source_multi_sink_bottleneck(self):
+    def test_15_max_flow_single_source_multi_sink_bottleneck(self):
         """
         Source bottleneck constrains multi-sink total.
 
@@ -519,7 +541,7 @@ class testMaxFlow(FlowTestsBase):
     #  multi-source, multi-sink                                          #
     # ------------------------------------------------------------------ #
 
-    def test_max_flow_multi_source_multi_sink(self):
+    def test_16_max_flow_multi_source_multi_sink(self):
         """
         Two sources and two sinks in a diamond.
 
@@ -555,7 +577,7 @@ class testMaxFlow(FlowTestsBase):
         """)
         self.env.assertEqual(result.result_set[0][0], 10)
 
-    def test_max_flow_multi_source_multi_sink_asymmetric(self):
+    def test_17_max_flow_multi_source_multi_sink_asymmetric(self):
         """
         Asymmetric capacities ensure the super-source / super-sink trick
         does not over-count or under-count.
@@ -602,7 +624,7 @@ class testMaxFlow(FlowTestsBase):
     #  multi-source / multi-sink output sanity                           #
     # ------------------------------------------------------------------ #
 
-    def test_multi_source_sink_no_super_nodes_in_output(self):
+    def test_18_multi_source_sink_no_super_nodes_in_output(self):
         """
         The synthetic super-source and super-sink must NOT appear in the
         returned nodes or edges arrays – they are implementation details.
@@ -650,7 +672,7 @@ class testMaxFlow(FlowTestsBase):
     #  nodeLabels filter                                                 #
     # ------------------------------------------------------------------ #
 
-    def test_max_flow_node_labels_filter(self):
+    def test_19_max_flow_node_labels_filter(self):
         """
         Graph has two node types; filtering to only 'Pipe' nodes should
         exclude 'Valve' nodes and therefore reduce the max flow.
@@ -710,7 +732,7 @@ class testMaxFlow(FlowTestsBase):
     #  relationshipTypes filter                                          #
     # ------------------------------------------------------------------ #
 
-    def test_max_flow_relationship_type_filter(self):
+    def test_20_max_flow_relationship_type_filter(self):
         """
         Same node topology, different relationship types.
         Using only 'PIPE' edges ignores 'CABLE' edges.
@@ -746,7 +768,7 @@ class testMaxFlow(FlowTestsBase):
     #  single-element arrays equal single source / sink behaviour        #
     # ------------------------------------------------------------------ #
 
-    def test_single_element_array_equals_scalar(self):
+    def test_21_single_element_array_equals_scalar(self):
         """
         [src] / [sink] (length-1 arrays) must produce the same flow as the
         plain single-source / single-sink call.
@@ -771,21 +793,358 @@ class testMaxFlow(FlowTestsBase):
     #  source == sink (degenerate case)                                  #
     # ------------------------------------------------------------------ #
 
-    def test_source_equals_sink(self):
-        """When source and sink are the same node, flow must be 0."""
+    def test_22_source_equals_sink(self):
+        """When source and sink are the same node, the procedure must error
+        because source and sink sets are not disjoint."""
         self.graph.query("""
             CREATE (a:Node {name:'A'})-[:PIPE {cap:5}]->(b:Node {name:'B'})
         """)
+        try:
+            self.graph.query("""
+                MATCH (s:Node {name:'A'})
+                CALL algo.maxFlow({
+                    sourceNodes:       [s],
+                    targetNodes:       [s],
+                    capacityProperty:  'cap',
+                    relationshipTypes: ['PIPE']
+                })
+                YIELD maxFlow
+            """)
+            self.env.assertTrue(False, "Expected error for overlapping "
+                                       "source and sink sets")
+        except Exception:
+            pass
+
+    def test_23_overlapping_multi_source_sink_errors(self):
+        """When a node appears in both sourceNodes and targetNodes the
+        procedure must raise an error (sets not disjoint)."""
+        self.graph.query("""
+            CREATE (a:Node {name:'A'}),
+                   (b:Node {name:'B'}),
+                   (c:Node {name:'C'}),
+                   (a)-[:PIPE {cap:5}]->(b),
+                   (b)-[:PIPE {cap:5}]->(c)
+        """)
+        try:
+            self.graph.query("""
+                MATCH (a:Node {name:'A'}),
+                      (b:Node {name:'B'}),
+                      (c:Node {name:'C'})
+                CALL algo.maxFlow({
+                    sourceNodes:       [a, b],
+                    targetNodes:       [c, a],
+                    capacityProperty:  'cap',
+                    relationshipTypes: ['PIPE']
+                })
+                YIELD maxFlow
+            """)
+            self.env.assertTrue(False, "Expected error for overlapping "
+                                       "source and sink sets")
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------ #
+    #  numeric capacity types: integer, double, mixed, zero              #
+    # ------------------------------------------------------------------ #
+
+    def test_24_max_flow_integer_capacities(self):
+        """Integer capacities of various magnitudes."""
+        self.graph.query("""
+            CREATE (a:Node {name:'A'}),
+                   (b:Node {name:'B'}),
+                   (c:Node {name:'C'}),
+                   (d:Node {name:'D'}),
+                   (a)-[:PIPE {cap:100}]->(b),
+                   (a)-[:PIPE {cap:200}]->(c),
+                   (b)-[:PIPE {cap:150}]->(d),
+                   (c)-[:PIPE {cap:50}]->(d)
+        """)
         result = self.graph.query("""
-            MATCH (s:Node {name:'A'})
+            MATCH (s:Node {name:'A'}), (t:Node {name:'D'})
             CALL algo.maxFlow({
                 sourceNodes:       [s],
-                targetNodes:       [s],
+                targetNodes:       [t],
                 capacityProperty:  'cap',
                 relationshipTypes: ['PIPE']
             })
             YIELD maxFlow
         """)
-        if len(result.result_set) > 0:
-            self.env.assertEqual(result.result_set[0][0], 0)
+        # path A->B->D carries min(100,150)=100; path A->C->D carries min(200,50)=50
+        # total = 150
+        self.env.assertEqual(result.result_set[0][0], 150)
 
+    def test_25_max_flow_double_capacities(self):
+        """Fractional (double) capacities."""
+        self.graph.query("""
+            CREATE (a:Node {name:'A'}),
+                   (b:Node {name:'B'}),
+                   (c:Node {name:'C'}),
+                   (a)-[:PIPE {cap:2.5}]->(b),
+                   (b)-[:PIPE {cap:1.75}]->(c)
+        """)
+        result = self.graph.query("""
+            MATCH (s:Node {name:'A'}), (t:Node {name:'C'})
+            CALL algo.maxFlow({
+                sourceNodes:       [s],
+                targetNodes:       [t],
+                capacityProperty:  'cap',
+                relationshipTypes: ['PIPE']
+            })
+            YIELD maxFlow
+        """)
+        # bottleneck is B->C at 1.75
+        self.env.assertAlmostEqual(result.result_set[0][0], 1.75, 5)
+
+    def test_26_max_flow_mixed_int_double_capacities(self):
+        """Mix of integer and double capacities on different edges."""
+        self.graph.query("""
+            CREATE (a:Node {name:'A'}),
+                   (b:Node {name:'B'}),
+                   (c:Node {name:'C'}),
+                   (d:Node {name:'D'}),
+                   (a)-[:PIPE {cap:10}]->(b),
+                   (a)-[:PIPE {cap:3.5}]->(c),
+                   (b)-[:PIPE {cap:7.25}]->(d),
+                   (c)-[:PIPE {cap:6}]->(d)
+        """)
+        result = self.graph.query("""
+            MATCH (s:Node {name:'A'}), (t:Node {name:'D'})
+            CALL algo.maxFlow({
+                sourceNodes:       [s],
+                targetNodes:       [t],
+                capacityProperty:  'cap',
+                relationshipTypes: ['PIPE']
+            })
+            YIELD maxFlow
+        """)
+        # path A->B->D carries min(10,7.25)=7.25
+        # path A->C->D carries min(3.5,6)=3.5
+        # total = 10.75
+        self.env.assertAlmostEqual(result.result_set[0][0], 10.75, 5)
+
+    def test_27_max_flow_zero_capacity_edge(self):
+        """An edge with capacity 0 should not carry any flow."""
+        self.graph.query("""
+            CREATE (a:Node {name:'A'}),
+                   (b:Node {name:'B'}),
+                   (c:Node {name:'C'}),
+                   (a)-[:PIPE {cap:0}]->(b),
+                   (b)-[:PIPE {cap:10}]->(c)
+        """)
+        result = self.graph.query("""
+            MATCH (s:Node {name:'A'}), (t:Node {name:'C'})
+            CALL algo.maxFlow({
+                sourceNodes:       [s],
+                targetNodes:       [t],
+                capacityProperty:  'cap',
+                relationshipTypes: ['PIPE']
+            })
+            YIELD maxFlow
+        """)
+        self.env.assertEqual(result.result_set[0][0], 0)
+
+    def test_28_max_flow_large_integer_capacities(self):
+        """Large integer capacities (millions)."""
+        self.graph.query("""
+            CREATE (a:Node {name:'A'})-[:PIPE {cap:1000000}]->(b:Node {name:'B'})
+        """)
+        result = self.graph.query("""
+            MATCH (s:Node {name:'A'}), (t:Node {name:'B'})
+            CALL algo.maxFlow({
+                sourceNodes:       [s],
+                targetNodes:       [t],
+                capacityProperty:  'cap',
+                relationshipTypes: ['PIPE']
+            })
+            YIELD maxFlow
+        """)
+        self.env.assertEqual(result.result_set[0][0], 1000000)
+
+    def test_29_max_flow_small_double_capacities(self):
+        """Very small fractional capacities."""
+        self.graph.query("""
+            CREATE (a:Node {name:'A'})-[:PIPE {cap:0.001}]->(b:Node {name:'B'})
+        """)
+        result = self.graph.query("""
+            MATCH (s:Node {name:'A'}), (t:Node {name:'B'})
+            CALL algo.maxFlow({
+                sourceNodes:       [s],
+                targetNodes:       [t],
+                capacityProperty:  'cap',
+                relationshipTypes: ['PIPE']
+            })
+            YIELD maxFlow
+        """)
+        self.env.assertAlmostEqual(result.result_set[0][0], 0.001, 6)
+
+    # ------------------------------------------------------------------ #
+    #  missing / non-numeric capacity without defaultCapacity → error    #
+    # ------------------------------------------------------------------ #
+
+    def test_30_max_flow_missing_attr_no_default_errors(self):
+        """When an edge lacks the capacity attribute and no defaultCapacity
+        is configured, the procedure must raise an error."""
+        self.graph.query("""
+            CREATE (a:Node {name:'A'})-[:PIPE]->(b:Node {name:'B'})
+        """)
+        # ensure the attribute 'cap' exists in the schema
+        self.graph.query("""
+            CREATE (:Tmp {cap:1})
+        """)
+        try:
+            self.graph.query("""
+                MATCH (s:Node {name:'A'}), (t:Node {name:'B'})
+                CALL algo.maxFlow({
+                    sourceNodes:       [s],
+                    targetNodes:       [t],
+                    capacityProperty:  'cap',
+                    relationshipTypes: ['PIPE']
+                })
+                YIELD maxFlow
+            """)
+            self.env.assertTrue(False, "Expected error for missing attribute "
+                                       "without defaultCapacity")
+        except Exception:
+            pass
+
+    def test_31_max_flow_string_attr_no_default_errors(self):
+        """When the capacity attribute is a string and no defaultCapacity
+        is configured, the procedure must raise an error."""
+        self.graph.query("""
+            CREATE (a:Node {name:'A'})-[:PIPE {cap:'not_a_number'}]->(b:Node {name:'B'})
+        """)
+        try:
+            self.graph.query("""
+                MATCH (s:Node {name:'A'}), (t:Node {name:'B'})
+                CALL algo.maxFlow({
+                    sourceNodes:       [s],
+                    targetNodes:       [t],
+                    capacityProperty:  'cap',
+                    relationshipTypes: ['PIPE']
+                })
+                YIELD maxFlow
+            """)
+            self.env.assertTrue(False, "Expected error for string capacity "
+                                       "without defaultCapacity")
+        except Exception:
+            pass
+
+    def test_32_max_flow_array_attr_no_default_errors(self):
+        """When the capacity attribute is an array and no defaultCapacity
+        is configured, the procedure must raise an error."""
+        self.graph.query("""
+            CREATE (a:Node {name:'A'})-[:PIPE {cap:[1,2,3]}]->(b:Node {name:'B'})
+        """)
+        try:
+            self.graph.query("""
+                MATCH (s:Node {name:'A'}), (t:Node {name:'B'})
+                CALL algo.maxFlow({
+                    sourceNodes:       [s],
+                    targetNodes:       [t],
+                    capacityProperty:  'cap',
+                    relationshipTypes: ['PIPE']
+                })
+                YIELD maxFlow
+            """)
+            self.env.assertTrue(False, "Expected error for array capacity "
+                                       "without defaultCapacity")
+        except Exception:
+            pass
+
+    def test_33_max_flow_mixed_valid_invalid_attr_no_default_errors(self):
+        """Even if some edges have valid numeric capacity, one edge with a
+        non-numeric attribute and no defaultCapacity must cause an error."""
+        self.graph.query("""
+            CREATE (a:Node {name:'A'}),
+                   (b:Node {name:'B'}),
+                   (c:Node {name:'C'}),
+                   (a)-[:PIPE {cap:5}]->(b),
+                   (b)-[:PIPE {cap:'bad'}]->(c)
+        """)
+        try:
+            self.graph.query("""
+                MATCH (s:Node {name:'A'}), (t:Node {name:'C'})
+                CALL algo.maxFlow({
+                    sourceNodes:       [s],
+                    targetNodes:       [t],
+                    capacityProperty:  'cap',
+                    relationshipTypes: ['PIPE']
+                })
+                YIELD maxFlow
+            """)
+            self.env.assertTrue(False, "Expected error for mixed valid/invalid "
+                                       "capacities without defaultCapacity")
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------ #
+    #  defaultCapacity fallback                                          #
+    # ------------------------------------------------------------------ #
+
+    def test_34_max_flow_default_capacity_with_missing_attr(self):
+        """When defaultCapacity is provided, edges missing the capacity
+        attribute use the fallback value."""
+        self.graph.query("""
+            CREATE (a:Node {name:'A'}),
+                   (b:Node {name:'B'}),
+                   (c:Node {name:'C'}),
+                   (a)-[:PIPE {cap:10}]->(b),
+                   (b)-[:PIPE]->(c)
+        """)
+        # ensure 'cap' attribute exists in the schema
+        self.graph.query("CREATE (:Tmp {cap:1})")
+        result = self.graph.query("""
+            MATCH (s:Node {name:'A'}), (t:Node {name:'C'})
+            CALL algo.maxFlow({
+                sourceNodes:       [s],
+                targetNodes:       [t],
+                capacityProperty:  'cap',
+                defaultCapacity:   3,
+                relationshipTypes: ['PIPE']
+            })
+            YIELD maxFlow
+        """)
+        # A->B cap=10, B->C cap=3 (default) → bottleneck = 3
+        self.env.assertEqual(result.result_set[0][0], 3)
+
+    def test_35_max_flow_default_capacity_zero(self):
+        """defaultCapacity: 0 turns missing-attribute edges into zero-capacity
+        edges, effectively blocking flow through them."""
+        self.graph.query("""
+            CREATE (a:Node {name:'A'}),
+                   (b:Node {name:'B'}),
+                   (c:Node {name:'C'}),
+                   (a)-[:PIPE {cap:10}]->(b),
+                   (b)-[:PIPE]->(c)
+        """)
+        self.graph.query("CREATE (:Tmp {cap:1})")
+        result = self.graph.query("""
+            MATCH (s:Node {name:'A'}), (t:Node {name:'C'})
+            CALL algo.maxFlow({
+                sourceNodes:       [s],
+                targetNodes:       [t],
+                capacityProperty:  'cap',
+                defaultCapacity:   0,
+                relationshipTypes: ['PIPE']
+            })
+            YIELD maxFlow
+        """)
+        self.env.assertEqual(result.result_set[0][0], 0)
+
+    def test_36_max_flow_default_capacity_double(self):
+        """defaultCapacity accepts a fractional (double) fallback value."""
+        self.graph.query("""
+            CREATE (a:Node {name:'A'})-[:PIPE {cap:'text'}]->(b:Node {name:'B'})
+        """)
+        result = self.graph.query("""
+            MATCH (s:Node {name:'A'}), (t:Node {name:'B'})
+            CALL algo.maxFlow({
+                sourceNodes:       [s],
+                targetNodes:       [t],
+                capacityProperty:  'cap',
+                defaultCapacity:   4.5,
+                relationshipTypes: ['PIPE']
+            })
+            YIELD maxFlow
+        """)
+        self.env.assertAlmostEqual(result.result_set[0][0], 4.5, 5)

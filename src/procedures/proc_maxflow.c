@@ -34,7 +34,7 @@
 #include "../graph/graphcontext.h"
 
 // number of recognised keys in the configuration map
-#define MAX_FLOW_CONFIG_KEY_COUNT 5
+#define MAX_FLOW_CONFIG_KEY_COUNT 6
 
 //------------------------------------------------------------------------------
 // context
@@ -63,8 +63,10 @@ typedef struct {
 	const Graph *g;        // the graph being queried
 	AttributeID attr_id;   // attribute ID that holds the capacity value
 	SIType expected_type;  // accepted SIType(s) for the capacity attribute
-	uint64_t default_cap;  // capacity to use when the attribute is missing
-						   // or has the wrong type (default: 1)
+	double default_cap;    // capacity to use when the attribute is missing
+						   // or has the wrong type (default: -1, meaning
+						   // procedure error on missing or wrong attribute)
+	atomic_bool *invalid;  // true if matrix has invalid values
 } EdgeCapacityContext ;
 
 // GraphBLAS IndexUnaryOp callback
@@ -75,7 +77,7 @@ typedef struct {
 //       default capacity is used
 static void _get_edge_capacity
 (
-	uint64_t *z,                    // [output] capacity value
+	double *z,                    // [output] capacity value
 	const void *x,                  // entry value (EdgeID) – currently unused
 	GrB_Index i,                    // row index (source node ID)
 	GrB_Index j,                    // column index (destination node ID)
@@ -88,9 +90,15 @@ static void _get_edge_capacity
 	SIValue v ;
 	GraphEntity_GetProperty ((GraphEntity *) &e, ctx->attr_id, &v) ;
 
-	*z = (SI_TYPE (v) & ctx->expected_type) ?
-		(uint64_t) v.longval
-		: ctx->default_cap ;
+	// set z to double cast if numeric. Set to default capacity otherwise.
+	int res = SIValue_ToDouble(&v, z) ;
+	*z = (res == 1) ? *z : ctx->default_cap ;
+
+	// set invalid flag if value is negative
+	bool valid = *z >= 0.0 ;
+	if (!valid && !(*(ctx->invalid))) {
+		atomic_store(ctx->invalid, true) ;
+	}
 }
 
 //------------------------------------------------------------------------------
@@ -114,26 +122,29 @@ static void _get_edge_capacity
 
 static bool _read_config
 (
-	SIValue config,       // procedure configuration map
-	LabelID **lbls,       // [output] array of label IDs (caller must free)
-	RelationID **rels,    // [output] array of relation IDs (caller must free)
-	Node ***srcs,         // [output] source node
-	Node ***sinks,        // [output] sink node
-	AttributeID *attr_id  // [output] capacity attribute ID
+	SIValue config,         // procedure configuration map
+	LabelID **lbls,         // [output] array of label IDs (caller must free)
+	RelationID **rels,      // [output] array of relation IDs (caller must free)
+	Node ***srcs,           // [output] source node
+	Node ***sinks,          // [output] sink node
+	AttributeID *attr_id,   // [output] capacity attribute ID
+	double *default_cap     // [output] default capacity (-1 = error on missing)
 ) {
-	ASSERT (srcs    != NULL) ;
-	ASSERT (lbls    != NULL) ;
-	ASSERT (rels    != NULL) ;
-	ASSERT (sinks   != NULL) ;
-	ASSERT (attr_id != NULL) ;
+	ASSERT (srcs        != NULL) ;
+	ASSERT (lbls        != NULL) ;
+	ASSERT (rels        != NULL) ;
+	ASSERT (sinks       != NULL) ;
+	ASSERT (attr_id     != NULL) ;
+	ASSERT (default_cap != NULL) ;
 	ASSERT (SI_TYPE (config) == T_MAP) ;
 
 	// initialise outputs
-	*srcs    = NULL ;
-	*lbls    = NULL ;
-	*rels    = NULL ;
-	*sinks   = NULL ;
-	*attr_id = ATTRIBUTE_ID_NONE ;
+	*srcs        = NULL ;
+	*lbls        = NULL ;
+	*rels        = NULL ;
+	*sinks       = NULL ;
+	*attr_id     = ATTRIBUTE_ID_NONE ;
+	*default_cap = -1 ;
 
 	uint n = Map_KeyCount (config);
 	if (n > MAX_FLOW_CONFIG_KEY_COUNT) {
@@ -273,6 +284,22 @@ static bool _read_config
 		matched++ ;
 	}
 
+	//--------------------------------------------------------------------------
+	// read defaultCapacity – optional numeric fallback for missing/wrong-type
+	//--------------------------------------------------------------------------
+
+	if (MAP_GETCASEINSENSITIVE (config, "defaultCapacity", v)) {
+		double d ;
+		if (SIValue_ToDouble (&v, &d) != 1 || d < 0) {
+			ErrorCtx_SetError ("MaxFlow configuration, "
+					"'defaultCapacity' must be a non-negative number") ;
+			goto error ;
+		}
+
+		*default_cap = d ;
+		matched++ ;
+	}
+
 	// make sure all fields been matched
 	if (n != matched) {
 		ErrorCtx_SetError ("MaxFlow configuration contains unknown key");
@@ -366,6 +393,7 @@ ProcedureResult Proc_MaxFlowInvoke
 	Node        **srcs  = NULL ;
 	Node        **sinks = NULL ;
 	AttributeID attr_id = ATTRIBUTE_ID_NONE ;
+	double  default_cap = -1 ;
 
 	//--------------------------------------------------------------------------
 	// parse and validate configuration
@@ -373,7 +401,8 @@ ProcedureResult Proc_MaxFlowInvoke
 
 	ProcedureResult res = PROCEDURE_OK ;
 
-	if (!_read_config (args[0], &lbls, &rels, &srcs, &sinks, &attr_id)) {
+	if (!_read_config (
+		args[0], &lbls, &rels, &srcs, &sinks, &attr_id, &default_cap)) {
 		// error already set
 		res = PROCEDURE_ERR ;
 		goto cleanup ;
@@ -403,6 +432,47 @@ ProcedureResult Proc_MaxFlowInvoke
 		ErrorCtx_SetError ("algo.maxFlow: expects at least "
 				"one source and one sink") ;
 
+		res = PROCEDURE_ERR ;
+		goto cleanup ;
+	}
+
+	// validate that source and sink sets are disjoint
+	uint n_srcs  = array_len (srcs) ;
+	uint n_sinks = array_len (sinks) ;
+	bool disjoint = true ;
+
+	if (n_srcs == 1 && n_sinks == 1) {
+		// both singletons — direct ID comparison
+		disjoint = ENTITY_GET_ID (srcs[0]) != ENTITY_GET_ID (sinks[0]) ;
+	} else {
+		// build a boolean vector for the larger set,
+		// then probe each element of the smaller set
+		GrB_Index dim = Graph_RequiredMatrixDim (g) ;
+		GrB_Vector v  = NULL ;
+		GrB_OK (GrB_Vector_new (&v, GrB_BOOL, dim)) ;
+
+		Node **big   = (n_srcs >= n_sinks) ? srcs  : sinks ;
+		Node **small = (n_srcs >= n_sinks) ? sinks : srcs  ;
+		uint n_big   = (n_srcs >= n_sinks) ? n_srcs  : n_sinks ;
+		uint n_small = (n_srcs >= n_sinks) ? n_sinks : n_srcs  ;
+
+		for (uint i = 0; i < n_big; i++) {
+			GrB_OK (GrB_Vector_setElement_BOOL (v, true,
+						ENTITY_GET_ID (big[i]))) ;
+		}
+
+		for (uint i = 0; i < n_small && disjoint; i++) {
+			GrB_Info info = GxB_Vector_isStoredElement(
+					v, ENTITY_GET_ID (small[i])) ;
+			disjoint = disjoint && (info == GrB_NO_VALUE) ;
+		}
+
+		GrB_OK (GrB_free (&v)) ;
+	}
+
+	if (!disjoint) {
+		ErrorCtx_SetError ("algo.maxFlow: source and sink "
+				"sets must be disjoint") ;
 		res = PROCEDURE_ERR ;
 		goto cleanup ;
 	}
@@ -447,12 +517,14 @@ ProcedureResult Proc_MaxFlowInvoke
 	//--------------------------------------------------------------------------
 	// apply capacity weights to U via a custom IndexUnaryOp
 	//--------------------------------------------------------------------------
+	atomic_bool invalid_attributes = false;
 
 	EdgeCapacityContext cap_ctx = {
 		.g             = g,
 		.attr_id       = attr_id,
 		.expected_type = T_INT64,
-		.default_cap   = 1
+		.default_cap   = default_cap,
+		.invalid       = &invalid_attributes
 	} ;
 
 	GrB_Type         cap_ctx_type = NULL ;
@@ -466,13 +538,13 @@ ProcedureResult Proc_MaxFlowInvoke
 	GrB_OK (GrB_IndexUnaryOp_new (
 				&get_capacity,
 				(GxB_index_unary_function) _get_edge_capacity,
-				GrB_UINT64, GrB_UINT64, cap_ctx_type)) ;
+				GrB_FP64, GrB_UINT64, cap_ctx_type)) ;
 
 	GrB_Matrix C ;
 	GrB_Index nrows, ncols ;
 	GrB_OK (GrB_Matrix_nrows (&nrows, U)) ;
 	GrB_OK (GrB_Matrix_ncols (&ncols, U)) ;
-	GrB_OK (GrB_Matrix_new (&C, GrB_UINT64, nrows, ncols)) ;
+	GrB_OK (GrB_Matrix_new (&C, GrB_FP64, nrows, ncols)) ;
 
 	GrB_OK (GrB_Matrix_apply_IndexOp_Scalar (
 		C, NULL, NULL, get_capacity, U, cap_ctx_s, NULL)) ;
@@ -480,6 +552,14 @@ ProcedureResult Proc_MaxFlowInvoke
 	GrB_OK (GrB_free (&cap_ctx_s)) ;
 	GrB_OK (GrB_free (&cap_ctx_type)) ;
 	GrB_OK (GrB_free (&get_capacity)) ;
+
+	if (invalid_attributes) {
+		ErrorCtx_SetError ("algo.maxFlow: invalid or missing attribute and no"
+			"default attribute specified") ;
+
+		res = PROCEDURE_ERR ;
+		goto cleanup ;
+	}
 
 	//--------------------------------------------------------------------------
 	// accommodate for multiple sources / sinks
@@ -507,7 +587,9 @@ ProcedureResult Proc_MaxFlowInvoke
 
 		GrB_OK (GrB_Matrix_resize (C, n, n)) ;
 
-		uint64_t x = UINT32_MAX ;
+		// FIXME: LAGraph will hang on values spread accross many orders of
+		// magnitude
+		double x =  INT32_MAX;
 
 		if (multi_srcs) {
 			src_id = --n ; // source of sources id
@@ -516,7 +598,7 @@ ProcedureResult Proc_MaxFlowInvoke
 			for (int i = 0 ; i < l ; i++) {
 				Node *s = srcs[i] ;
 				NodeID s_id = ENTITY_GET_ID (s) ;
-				GrB_OK (GrB_Matrix_setElement_UINT64 (C, x, src_id, s_id)) ;
+				GrB_OK (GrB_Matrix_setElement_FP64 (C, x, src_id, s_id)) ;
 			}
 		}
 
@@ -527,13 +609,14 @@ ProcedureResult Proc_MaxFlowInvoke
 			for (int i = 0 ; i < l ; i++) {
 				Node *s = sinks[i] ;
 				NodeID s_id = ENTITY_GET_ID (s) ;
-				GrB_OK (GrB_Matrix_setElement_UINT64 (C, x, s_id, sink_id)) ;
+				GrB_OK (GrB_Matrix_setElement_FP64 (C, x, s_id, sink_id)) ;
 			}
 		}
 	}
 
 	ASSERT (src_id  != INVALID_ENTITY_ID) ;
 	ASSERT (sink_id != INVALID_ENTITY_ID) ;
+
 
 	//--------------------------------------------------------------------------
 	// build the LAGraph graph (includes AT and EMin caches required by MaxFlow)
