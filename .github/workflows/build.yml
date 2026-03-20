@@ -494,7 +494,7 @@ jobs:
         run: docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
 
       - name: Run Trivy scan
-        uses: aquasecurity/trivy-action@0.34.1
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
           output: trivy-report.json
@@ -513,7 +513,7 @@ jobs:
       - name: Fail build on high/critical severity vulnerabilities
         id: trivy_gate
         continue-on-error: true
-        uses: aquasecurity/trivy-action@0.34.1
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
           format: table
