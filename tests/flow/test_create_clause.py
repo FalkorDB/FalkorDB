@@ -113,3 +113,59 @@ class testCreateClause():
         self.env.assertEqual(v, 2)
         self.env.assertEqual(d, "B")
 
+    def test_04_named_paths_in_create(self):
+        # validate CREATE clause with named paths
+        # e.g. CREATE p=(n) RETURN p should work without error
+
+        # single node path
+        q = "CREATE p=(n) RETURN p"
+        result = self.g.query(q)
+        self.env.assertEqual(result.nodes_created, 1)
+        self.env.assertIsNotNone(result.result_set[0][0])
+
+        # path with edge pattern
+        q = "CREATE p=(a)-[:R]->(b) RETURN p"
+        result = self.g.query(q)
+        self.env.assertEqual(result.nodes_created, 2)
+        self.env.assertEqual(result.relationships_created, 1)
+        self.env.assertIsNotNone(result.result_set[0][0])
+
+        # multi-hop path
+        q = "CREATE p=(a)-[:R1]->(b)-[:R2]->(c) RETURN p"
+        result = self.g.query(q)
+        self.env.assertEqual(result.nodes_created, 3)
+        self.env.assertEqual(result.relationships_created, 2)
+
+        # path functions should work on created paths
+        q = "CREATE p=(x)-[:REL]->(y) RETURN nodes(p), relationships(p), length(p)"
+        result = self.g.query(q)
+        self.env.assertEqual(len(result.result_set[0][0]), 2)
+        self.env.assertEqual(len(result.result_set[0][1]), 1)
+        self.env.assertEqual(result.result_set[0][2], 1)
+
+        # named paths should be accessible in WITH clause
+        q = """CREATE p=(m {v: 1})-[:L]->(n {v: 2})
+               WITH p, nodes(p) AS ns
+               RETURN ns[0].v, ns[1].v"""
+        result = self.g.query(q)
+        self.env.assertEqual(result.result_set[0][0], 1)
+        self.env.assertEqual(result.result_set[0][1], 2)
+
+        # multiple named paths in same CREATE clause
+        q = "CREATE p1=(a), p2=(b)-[:E]->(c) RETURN length(p1), length(p2)"
+        result = self.g.query(q)
+        self.env.assertEqual(result.nodes_created, 3)
+        self.env.assertEqual(result.relationships_created, 1)
+        self.env.assertEqual(result.result_set[0][0], 0)
+        self.env.assertEqual(result.result_set[0][1], 1)
+
+        # multiple CREATE clauses with named paths
+        q = """CREATE p1=(a)
+               CREATE p2=(a)-[:R]->(b)
+               RETURN length(p1), length(p2)"""
+        result = self.g.query(q)
+        self.env.assertEqual(result.nodes_created, 2)
+        self.env.assertEqual(result.relationships_created, 1)
+        self.env.assertEqual(result.result_set[0][0], 0)
+        self.env.assertEqual(result.result_set[0][1], 1)
+
