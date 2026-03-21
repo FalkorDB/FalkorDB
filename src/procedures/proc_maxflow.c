@@ -18,6 +18,7 @@
 //     capacityProperty:  'cap',
 //     nodeLabels:        ['Intersection'],
 //     relationshipTypes: ['CONNECTS']
+//     defaultCapacity: ['CONNECTS']
 //   })
 //   YIELD nodes, edges, edgeFlows, maxFlow
 
@@ -90,11 +91,14 @@ static void _get_edge_capacity
 	SIValue v ;
 	GraphEntity_GetProperty ((GraphEntity *) &e, ctx->attr_id, &v) ;
 
-	// set z to double cast if numeric. Set to default capacity otherwise.
+	// set z to double cast if numeric. Set to default capacity if negative,
+	// non-numeric or non-existent
 	int res = SIValue_ToDouble(&v, z) ;
-	*z = (res == 1) ? *z : ctx->default_cap ;
 
-	// set invalid flag if value is negative
+	*z = (res == 1 && *z >= 0) ? *z : ctx->default_cap ;
+
+	// set invalid flag if value is still negative
+	// meaning we have encountered an invalid value and the default was not set
 	bool valid = *z >= 0.0 ;
 	if (!valid && !(*(ctx->invalid))) {
 		atomic_store(ctx->invalid, true) ;
@@ -558,6 +562,7 @@ ProcedureResult Proc_MaxFlowInvoke
 			"default attribute specified") ;
 
 		res = PROCEDURE_ERR ;
+		rm_free (pdata);
 		goto cleanup ;
 	}
 
