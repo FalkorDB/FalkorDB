@@ -16,6 +16,22 @@
 
 #define MAX(a,b) ((a) >= (b)) ? (a) : (b)
 
+#define CRON_LOCK()                                            \
+do {                                                           \
+	ASSERT (cron != NULL) ;                                    \
+	int res = pthread_mutex_lock (&cron->task_queue_lock) ;    \
+	ASSERT (res == 0) ;                                        \
+}                                                              \
+while (false)                                                  \
+
+#define CRON_UNLOCK()                                          \
+do {                                                           \
+	ASSERT (cron != NULL) ;                                    \
+	int res = pthread_mutex_unlock (&cron->task_queue_lock) ;  \
+	ASSERT (res == 0) ;                                        \
+}                                                              \
+while (false)                                                  \
+
 //------------------------------------------------------------------------------
 // Data structures
 //------------------------------------------------------------------------------
@@ -90,7 +106,8 @@ static struct timespec due_in_ms
 
 // peak at the next task and find out when it is due
 // returns true if there is a task due.
-static bool CRON_PeekDue
+// the method must be called under cron lock
+static bool _CRON_PeekDue
 (
 	CRON_TASK **task,
 	struct timespec *due
@@ -116,18 +133,17 @@ static bool CRON_RemoveTask
 ) {
 	ASSERT (t != NULL) ;
 
-	int res = pthread_mutex_lock (&cron->task_queue_lock) ;
-	ASSERT (res == 0) ;
+	CRON_LOCK () ;
 
 	void *removed = Heap_remove_item (cron->tasks, t) ;
 
-	res = pthread_mutex_unlock (&cron->task_queue_lock) ;
-	ASSERT (res == 0) ;
+	CRON_UNLOCK () ;
 
 	return removed != NULL ;
 }
 
-static bool CRON_RemoveCurrentTask
+// the method must be called under cron lock
+static bool _CRON_RemoveCurrentTask
 (
 	const CRON_TASK *t  // task to remove
 ) {
@@ -143,24 +159,22 @@ static void CRON_InsertTask
 ) {
 	ASSERT (t != NULL) ;
 
-	int res = pthread_mutex_lock (&cron->task_queue_lock) ;
-	ASSERT (res == 0) ;
+	CRON_LOCK () ;
 
 	Heap_offer (&cron->tasks, t) ;
 
-	res = pthread_cond_signal (&cron->task_enqueued) ;
+	int res = pthread_cond_signal (&cron->task_enqueued) ;
 	ASSERT (res == 0) ;
 
-	res = pthread_mutex_unlock (&cron->task_queue_lock) ;
-	ASSERT (res == 0) ;
+	CRON_UNLOCK () ;
 }
 
 static void CRON_PerformTask
 (
 	CRON_TASK *t
 ) {
-	ASSERT(t);
-	t->cb(t->pdata);
+	ASSERT (t) ;
+	t->cb (t->pdata) ;
 }
 
 static void CRON_FreeTask
@@ -197,8 +211,7 @@ static void *Cron_Run
     // and reacquires it atomically on wake — so the lock is always
     // held at the top of each iteration without a redundant lock call
 
-	int res = pthread_mutex_lock (&cron->task_queue_lock) ;
-	ASSERT (res == 0) ;
+	CRON_LOCK () ;
 
 	while (cron->alive) {
 		CRON_TASK *task = NULL ;
@@ -207,16 +220,15 @@ static void *Cron_Run
 		// drain all tasks that are due right now
         // the lock is released around the actual callback so that
         // inserters are never blocked while a task executes
-		while (CRON_PeekDue (&task, &due_time)) {
-			if (!CRON_RemoveCurrentTask (task)) {
+		while (_CRON_PeekDue (&task, &due_time)) {
+			if (!_CRON_RemoveCurrentTask (task)) {
 				// task is aborted
 				continue ;
 			}
 
 			// release the lock while the callback runs so that
             // CRON_AddTask / CRON_AbortTask do not stall
-			res = pthread_mutex_unlock (&cron->task_queue_lock) ;
-			ASSERT (res == 0) ;
+			CRON_UNLOCK () ;
 
 			//------------------------------------------------------------------
 			// perform and free task
@@ -227,8 +239,7 @@ static void *Cron_Run
 			CRON_FreeTask (task) ;
 
 			// lock before accessing the heap
-			res = pthread_mutex_lock (&cron->task_queue_lock) ;
-			ASSERT (res == 0) ;
+			CRON_LOCK () ;
 		}
 
 		// no tasks are due right now
@@ -240,13 +251,12 @@ static void *Cron_Run
 		// atomically releases task_queue_lock and blocks
         // reacquires task_queue_lock before returning — whether woken by
         // task_enqueued or by timeout — so the next iteration is safe
-		res = pthread_cond_timedwait (&cron->task_enqueued,
+		int res = pthread_cond_timedwait (&cron->task_enqueued,
 				&cron->task_queue_lock, &sleep_until) ;
 		ASSERT (res == 0 || res == ETIMEDOUT) ;
 	}
 
-	res = pthread_mutex_unlock (&cron->task_queue_lock) ;
-    ASSERT (res == 0) ;
+	CRON_UNLOCK () ;
 
 	return NULL ;
 }
@@ -285,17 +295,15 @@ void Cron_Stop (void) {
 	// set alive=false and signal under the lock so Cron_Run cannot miss
     // the state change between checking alive and entering timedwait
 
-	int res = pthread_mutex_lock (&cron->task_queue_lock) ;
-	ASSERT (res == 0) ;
+	CRON_LOCK () ;
 
 	// stop cron main loop
 	cron->alive = false ;
 
-	res = pthread_cond_signal (&cron->task_enqueued) ;
+	int res = pthread_cond_signal (&cron->task_enqueued) ;
 	ASSERT (res == 0) ;
 
-	res = pthread_mutex_unlock (&cron->task_queue_lock) ;
-	ASSERT (res == 0) ;
+	CRON_UNLOCK () ;
 
 	// wait for thread to terminate
 	pthread_join (cron->thread, NULL) ;
@@ -303,10 +311,15 @@ void Cron_Stop (void) {
 	clear_tasks () ;
 
 	// free resources
-	Heap_free             (cron->tasks)            ;
-	pthread_cond_destroy  (&cron->task_enqueued)   ;
-	pthread_mutex_destroy (&cron->task_queue_lock) ;
-	rm_free               (cron)                   ;
+	Heap_free (cron->tasks) ;
+
+	res = pthread_cond_destroy (&cron->task_enqueued) ;
+	ASSERT (res == 0) ;
+
+	res = pthread_mutex_destroy (&cron->task_queue_lock) ;
+	ASSERT (res == 0) ;
+
+	rm_free (cron) ;
 
 	cron = NULL ;
 }
