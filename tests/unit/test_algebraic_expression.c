@@ -320,7 +320,7 @@ void setup() {
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// all matrices in CSR format
-	info = GxB_set(GxB_FORMAT, GxB_BY_ROW);
+	info = GrB_set(GrB_GLOBAL, GxB_BY_ROW, GxB_FORMAT);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// Create a graph
