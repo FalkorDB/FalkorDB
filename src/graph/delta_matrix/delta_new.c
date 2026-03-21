@@ -21,22 +21,27 @@ static GrB_Info _Delta_Matrix_init
 	//--------------------------------------------------------------------------
 	// m, can be either hypersparse or sparse
 	//--------------------------------------------------------------------------
-	GrB_OK(GrB_Matrix_new(&A->matrix, type, nrows, ncols));
-	GrB_OK(GxB_set(A->matrix, GxB_SPARSITY_CONTROL, GxB_SPARSE | GxB_HYPERSPARSE));
+	GrB_OK(GrB_Matrix_new (&A->matrix, type, nrows, ncols));
+	GrB_OK (GrB_set (
+		A->matrix, GxB_SPARSE | GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
 
 	//--------------------------------------------------------------------------
 	// delta-plus, always hypersparse
 	//--------------------------------------------------------------------------
-	GrB_OK(GrB_Matrix_new(&A->delta_plus, type, nrows, ncols));
-	GrB_OK(GxB_set(A->delta_plus, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE));
-	GrB_OK(GxB_set(A->delta_plus, GxB_HYPER_SWITCH, GxB_ALWAYS_HYPER));
+	GrB_OK (GrB_Matrix_new (&A->delta_plus, type, nrows, ncols));
+	GrB_OK (GrB_set (A->delta_plus, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
+	GrB_OK (GrB_set (A->delta_plus, (int32_t) false, GxB_HYPER_HASH));
+	// Using historical method because modern one requires me to create a scalar
+	GrB_OK (GxB_set (A->delta_plus, GxB_HYPER_SWITCH, GxB_ALWAYS_HYPER));
 
 	//--------------------------------------------------------------------------
 	// delta-minus, always hypersparse
 	//--------------------------------------------------------------------------
-	GrB_OK(GrB_Matrix_new(&A->delta_minus, GrB_BOOL, nrows, ncols));
-	GrB_OK(GxB_set(A->delta_minus, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE));
-	GrB_OK(GxB_set(A->delta_minus, GxB_HYPER_SWITCH, GxB_ALWAYS_HYPER));
+	GrB_OK (GrB_Matrix_new (&A->delta_minus, GrB_BOOL, nrows, ncols));
+	GrB_OK (GrB_set (A->delta_minus, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
+	GrB_OK (GrB_set (A->delta_minus, (int32_t) false, GxB_HYPER_HASH));
+	// Using historical method because modern one requires me to create a scalar
+	GrB_OK (GxB_set (A->delta_minus, GxB_HYPER_SWITCH, GxB_ALWAYS_HYPER));
 
 	return GrB_SUCCESS;
 }
