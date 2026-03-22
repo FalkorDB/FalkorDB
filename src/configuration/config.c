@@ -898,8 +898,10 @@ static void _Config_SetToDefaults(void)
 	int CPUCount = sysconf(_SC_NPROCESSORS_ONLN);
 	config.thread_pool_size = (CPUCount != -1) ? CPUCount : 1;
 
+	int32_t thread_count;
 	// use the GraphBLAS-defined number of OpenMP threads by default
-	GxB_get(GxB_NTHREADS, &config.omp_thread_count);
+	GrB_OK (GrB_get(GrB_GLOBAL, &thread_count, GxB_NTHREADS));
+	config.omp_thread_count = thread_count;
 
 	// the default entity count of virtual keys
 	config.vkey_entity_count = VKEY_MAX_ENTITY_COUNT_DEFAULT;
