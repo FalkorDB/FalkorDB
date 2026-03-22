@@ -5,8 +5,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-  # Monitor all git submodules under deps/
+  # Submodule updates are handled by the submodule-update workflow
   - package-ecosystem: "gitsubmodule"
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 0
