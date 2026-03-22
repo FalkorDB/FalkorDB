@@ -30,11 +30,13 @@ int AllShortestPaths_FindMinimumLength
 	GrB_Vector newly_visited; // nodes visited in current level
 
 	// initialize both `visited` and `newly_visited` vectors
-	GrB_Vector_new(&visited, GrB_BOOL, Graph_UncompactedNodeCount(ctx->g));
-	GxB_set(visited, GxB_SPARSITY_CONTROL, GxB_BITMAP);
+	GrB_OK (GrB_Vector_new (
+		&visited, GrB_BOOL, Graph_UncompactedNodeCount(ctx->g)));
+	GrB_OK (GrB_set (visited, GxB_BITMAP, GxB_SPARSITY_CONTROL));
 
-	GrB_Vector_new(&newly_visited, GrB_BOOL, Graph_UncompactedNodeCount(ctx->g));
-	GxB_set(newly_visited, GxB_SPARSITY_CONTROL, GxB_BITMAP);
+	GrB_OK (GrB_Vector_new (
+		&newly_visited, GrB_BOOL, Graph_UncompactedNodeCount(ctx->g)));
+	GrB_OK (GrB_set(newly_visited, GxB_BITMAP, GxB_SPARSITY_CONTROL));
 
 	while (true) {
 		// see if we have nodes in the current level
@@ -54,11 +56,11 @@ int AllShortestPaths_FindMinimumLength
 
 			// add the newly_visited nodes to the global visited vector
 			// as we finished with current level and move to next level
-			GrB_Vector_eWiseAdd_BinaryOp(visited, NULL, NULL, GxB_ANY_BOOL,
-					visited, newly_visited, NULL);
+			GrB_OK (GrB_Vector_eWiseAdd_BinaryOp(visited, NULL, NULL,
+				GxB_ANY_BOOL, visited, newly_visited, NULL));
 
 			// clear newly visited
-			GrB_Vector_clear(newly_visited);
+			GrB_OK (GrB_Vector_clear(newly_visited));
 		}
 
 		// get the node from the frontier
@@ -85,7 +87,7 @@ int AllShortestPaths_FindMinimumLength
 		if(is_visited) continue;
 
 		// mark node in newly_visited vector
-		GrB_Vector_setElement_BOOL(newly_visited, true, frontierID);
+		GrB_OK (GrB_Vector_setElement_BOOL(newly_visited, true, frontierID));
 		// add all neighbors of the current node to the next level
 		addNeighbors(ctx, &frontierConnection, depth + 1, ctx->dir);
 	}
@@ -97,7 +99,7 @@ int AllShortestPaths_FindMinimumLength
 		if(depth < array_len(ctx->levels)) array_clear(ctx->levels[depth]);
 	}
 
-	GrB_free(&newly_visited);
+	GrB_OK (GrB_free(&newly_visited));
 	ctx->visited = visited;
 
 	return depth;
