@@ -525,7 +525,7 @@ jobs:
 
       - name: Add comment to PR
         if: github.event_name == 'pull_request' && steps.trivy_gate.outcome == 'failure'
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           header: "Trivy Vulnerability Scan Results for ${{ matrix.platform.suffix }}"
