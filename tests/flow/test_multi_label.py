@@ -233,3 +233,27 @@ class testMultiLabel():
         self.env.assertEquals(query_result.labels_added, 1)
         self.env.assertEquals(query_result.nodes_created, 1)
         self.env.assertEquals(query_result.result_set[0][0], ["L4"])
+
+    def test11_cost_base_label_scan_var_len_self_alias_no_crash(self):
+        # Regression test for https://github.com/FalkorDB/FalkorDB/issues/636
+        #
+        # The costBaseLabelScan optimization incorrectly asserted that the
+        # parent op of a NodeByLabelScan must be a ConditionalTraverse or
+        # ExpandInto. When the parent is a variable-length traversal op
+        # (e.g. OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO triggered by
+        # a self-aliased var-len pattern like (n:A)<-[*]-(n:Z)), the assert
+        # fired causing a SIGSEGV. The fix skips the optimization gracefully.
+        g = self.db.select_graph('issue_636')
+
+        # Minimal reproducer from the bug report - must not crash
+        g.query("CREATE (:A), (:B)<-[:R0]-()<-[:R1]-()")
+        result = g.query("MATCH (n:A)<-[*]-(n:Z) RETURN 1")
+        # The pattern has no matches (there's no :A/:Z node connected to
+        # itself via var-len traversal), so expect an empty result set
+        self.env.assertEquals(result.result_set, [])
+
+        # Second reproducer from issue comments - must not crash
+        g2 = self.db.select_graph('issue_636_b')
+        g2.query("CREATE (:label8)")
+        result2 = g2.query("MATCH (node_0:label8)<-[*..]-(node_0:label9) RETURN *")
+        self.env.assertEquals(result2.result_set, [])
