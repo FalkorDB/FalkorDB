@@ -44,15 +44,26 @@ jobs:
 
       - name: Check for new tag in ${{ matrix.submodule.path }}
         id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SUBMODULE_PATH: ${{ matrix.submodule.path }}
+          UPSTREAM: ${{ matrix.submodule.upstream }}
         run: |
-          SUBMODULE_PATH="${{ matrix.submodule.path }}"
           SUBMODULE_NAME=$(basename "$SUBMODULE_PATH")
 
           cd "$SUBMODULE_PATH"
 
           git fetch --tags
 
-          LATEST_TAG=$(git tag --sort=-version:refname | head -n1)
+          # Prefer GitHub Releases API to get the latest stable release tag,
+          # avoiding pre-release tags and non-release tags (e.g. tiny-curl-*)
+          LATEST_TAG=$(gh api "repos/${UPSTREAM}/releases/latest" --jq '.tag_name' 2>/dev/null || echo "")
+
+          if [ -z "$LATEST_TAG" ]; then
+            # Fallback: version-sort tags, demoting pre-release suffixes (-rc, -beta, etc.)
+            LATEST_TAG=$(git -c 'versionsort.suffix=-' tag --sort=-version:refname | head -n1)
+          fi
+
           if [ -z "$LATEST_TAG" ]; then
             echo "No tags found for $SUBMODULE_NAME, skipping."
             echo "needs_update=false" >> "$GITHUB_OUTPUT"
@@ -82,13 +93,14 @@ jobs:
         if: steps.check.outputs.needs_update == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SUBMODULE_PATH: ${{ matrix.submodule.path }}
+          UPSTREAM: ${{ matrix.submodule.upstream }}
+          SUBMODULE_NAME: ${{ steps.check.outputs.submodule_name }}
+          LATEST_TAG: ${{ steps.check.outputs.latest_tag }}
+          LATEST_SHA: ${{ steps.check.outputs.latest_sha }}
+          CURRENT_SHA: ${{ steps.check.outputs.current_sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          SUBMODULE_PATH="${{ matrix.submodule.path }}"
-          SUBMODULE_NAME="${{ steps.check.outputs.submodule_name }}"
-          LATEST_TAG="${{ steps.check.outputs.latest_tag }}"
-          LATEST_SHA="${{ steps.check.outputs.latest_sha }}"
-          CURRENT_SHA="${{ steps.check.outputs.current_sha }}"
-
           BRANCH_NAME="submodule-update/${SUBMODULE_NAME}/${LATEST_TAG}"
 
           # Check if a PR for this branch already exists
@@ -130,14 +142,14 @@ PRBODY
           sed -i \
             -e "s|SUBMODULE_NAME_PLACEHOLDER|${SUBMODULE_NAME}|g" \
             -e "s|SUBMODULE_PATH_PLACEHOLDER|${SUBMODULE_PATH}|g" \
-            -e "s|UPSTREAM_PLACEHOLDER|${{ matrix.submodule.upstream }}|g" \
+            -e "s|UPSTREAM_PLACEHOLDER|${UPSTREAM}|g" \
             -e "s|CURRENT_SHA_PLACEHOLDER|${CURRENT_SHA}|g" \
             -e "s|LATEST_TAG_PLACEHOLDER|${LATEST_TAG}|g" \
             -e "s|LATEST_SHA_PLACEHOLDER|${LATEST_SHA}|g" \
             /tmp/pr_body.md
 
           gh pr create \
-            --base "${{ github.event.repository.default_branch }}" \
+            --base "$DEFAULT_BRANCH" \
             --head "$BRANCH_NAME" \
             --title "chore(deps): update ${SUBMODULE_NAME} to ${LATEST_TAG}" \
             --body-file /tmp/pr_body.md
