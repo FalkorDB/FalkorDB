@@ -6,7 +6,43 @@ on:
   workflow_dispatch:
 
 jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Discover submodules from .gitmodules
+        id: discover
+        run: |
+          # Parse .gitmodules to build a JSON matrix of {path, upstream} objects.
+          # Only includes submodules whose URL points to github.com.
+          matrix="[]"
+          while read -r key path; do
+            name="${key#submodule.}"
+            name="${name%.path}"
+            url=$(git config --file .gitmodules "submodule.${name}.url")
+
+            # Extract owner/repo from https://github.com/{owner}/{repo}[.git]
+            upstream=$(echo "$url" | sed -n 's|^https://github\.com/||p')
+            upstream="${upstream%.git}"
+            if [ -z "$upstream" ] || ! echo "$upstream" | grep -q '/'; then
+              echo "Skipping ${path}: not a github.com URL (${url})"
+              continue
+            fi
+
+            matrix=$(echo "$matrix" | jq -c --arg p "$path" --arg u "$upstream" '. + [{"path": $p, "upstream": $u}]')
+          done < <(git config --file .gitmodules --get-regexp '^submodule\..*\.path$')
+
+          echo "matrix={\"submodule\":${matrix}}" >> "$GITHUB_OUTPUT"
+          echo "Discovered submodules:"
+          echo "$matrix" | jq .
+
   check-and-update:
+    needs: discover
+    if: fromJSON(needs.discover.outputs.matrix).submodule[0] != null
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -14,26 +50,7 @@ jobs:
 
     strategy:
       fail-fast: false
-      matrix:
-        submodule:
-          - path: deps/LAGraph
-            upstream: GraphBLAS/LAGraph
-          - path: deps/RediSearch
-            upstream: FalkorDB/RediSearch
-          - path: deps/libcsv
-            upstream: rgamble/libcsv
-          - path: deps/libcurl
-            upstream: curl/curl
-          - path: deps/oniguruma
-            upstream: kkos/oniguruma
-          - path: deps/quickjs
-            upstream: bellard/quickjs
-          - path: deps/rax
-            upstream: antirez/rax
-          - path: deps/utf8proc
-            upstream: JuliaStrings/utf8proc
-          - path: deps/xxHash
-            upstream: Cyan4973/xxHash
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
 
     steps:
       - name: Checkout repository
