@@ -5,9 +5,4 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-  # Submodule updates are handled by the submodule-update workflow
-  - package-ecosystem: "gitsubmodule"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 0
+
