@@ -193,7 +193,6 @@ void _reduceEdgeCount
 	// cannot apply optimization
 	if(!condTraverse->edge_ctx) return;
 
-	//uint relationCount = array_len(condTraverse->edge_ctx->edgeRelationTypes);
 	EdgeTraverseCtx *edge_ctx = condTraverse->edge_ctx ;
 	uint relationCount = EdgeTraverseCtx_RelationCount (edge_ctx) ;
 

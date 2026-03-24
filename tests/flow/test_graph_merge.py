@@ -740,10 +740,13 @@ class testGraphMergeFlow():
         """
 
         params = {'relationships': [1, 2]}
-        rel = self.graph.query(q, params).result_set[0][0]
+        res = self.graph.query(q, params).result_set
+        self.env.assertEquals(len(res), 2)
+        self.env.assertEquals(res[0][0], res[1][0])
 
-        self.env.assertEquals(rel.properties['created'], True)
-        self.env.assertEquals(rel.properties['matched'], True)
+        edge = res[0][0]
+        self.env.assertEquals(edge.properties['created'], True)
+        self.env.assertEquals(edge.properties['matched'], True)
 
         # run a similar query only this time the merge pattern matching operation
         # is going to be 'ConditionalTraverse' instead of 'ExpandInto'
@@ -766,8 +769,11 @@ class testGraphMergeFlow():
         """
 
         params = {'relationships': [1, 2]}
-        rel = self.graph.query(q, params).result_set[0][0]
+        res = self.graph.query(q, params).result_set
+        self.env.assertEquals(len(res), 2)
+        self.env.assertEquals(res[0][0], res[1][0])
 
-        self.env.assertEquals(rel.properties['created'], True)
-        self.env.assertEquals(rel.properties['matched'], True)
+        edge = res[0][0]
+        self.env.assertEquals(edge.properties['created'], True)
+        self.env.assertEquals(edge.properties['matched'], True)
 

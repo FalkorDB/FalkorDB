@@ -97,7 +97,7 @@ uint EdgeTraverseCtx_RelationCount
 RelationID EdgeTraverseCtx_GetRelationIdx
 (
 	const EdgeTraverseCtx *edge_ctx,  // edge traverse context
-	int idx                           // edge ith rel type
+	uint idx                          // edge ith rel type
 ) {
 	ASSERT (edge_ctx    != NULL) ;
 	ASSERT (edge_ctx->e != NULL) ;

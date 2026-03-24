@@ -37,7 +37,7 @@ uint EdgeTraverseCtx_RelationCount
 RelationID EdgeTraverseCtx_GetRelationIdx
 (
 	const EdgeTraverseCtx *edge_ctx,  // edge traverse context
-	int idx                           // edge ith rel type
+	uint idx                          // edge ith rel type
 );
 
 // collect all appropriate edges between the given endpoints

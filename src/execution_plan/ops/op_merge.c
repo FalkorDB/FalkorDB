@@ -30,7 +30,7 @@ static uint64_t _id_hash
 }
 
 // hashtable value destructor callback
-static void dictValDist
+static void dictValDest
 (
 	dict *d,
 	void *val
@@ -39,7 +39,7 @@ static void dictValDist
 }
 
 // hashtable callbacks
-static dictType _dt = { _id_hash, NULL, NULL, NULL, NULL, dictValDist, NULL,
+static dictType _dt = { _id_hash, NULL, NULL, NULL, NULL, dictValDest, NULL,
 	NULL, NULL, NULL};
 
 //------------------------------------------------------------------------------
