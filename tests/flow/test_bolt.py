@@ -177,9 +177,10 @@ class testBolt01_Types():
     # ---------------------------------------------------------------
 
     def test99_cleanup(self):
-        """Stop server before RLTest teardown to prevent bolt connection hang.
-        Idle bolt connections block FLUSHALL; pre-stopping avoids the issue."""
-        self.env.stop()
+        """Close bolt driver before RLTest teardown to prevent idle connection
+        blocking FLUSHALL.  The server stays alive so the next test class can
+        re-bind to the same BOLT_PORT without a race."""
+        _bolt_teardown(self)
 
 # ---------------------------------------------------------------------------
 # Class 2: Regression tests — serialization & RESET (tests 10-20)
@@ -362,9 +363,10 @@ class testBolt02_Regression():
                 self.env.assertEquals(record[0], i)
 
     def test99_cleanup(self):
-        """Stop server before RLTest teardown to prevent bolt connection hang.
-        Idle bolt connections block FLUSHALL; pre-stopping avoids the issue."""
-        self.env.stop()
+        """Close bolt driver before RLTest teardown to prevent idle connection
+        blocking FLUSHALL.  The server stays alive so the next test class can
+        re-bind to the same BOLT_PORT without a race."""
+        _bolt_teardown(self)
 
 # ---------------------------------------------------------------------------
 # Class 3: Buffer stress, transactions & auth (tests 21-29)
@@ -503,9 +505,10 @@ class testBolt03_Stress():
             self.env.assertEquals(val, "leaf")
 
     def test99_cleanup(self):
-        """Stop server before RLTest teardown to prevent bolt connection hang.
-        Idle bolt connections block FLUSHALL; pre-stopping avoids the issue."""
-        self.env.stop()
+        """Close bolt driver before RLTest teardown to prevent idle connection
+        blocking FLUSHALL.  The server stays alive so the next test class can
+        re-bind to the same BOLT_PORT without a race."""
+        _bolt_teardown(self)
 
 # ---------------------------------------------------------------------------
 # Class 4: WebSocket transport tests
