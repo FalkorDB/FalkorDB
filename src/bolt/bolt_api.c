@@ -393,6 +393,7 @@ RedisModuleString *get_query
 	uint32_t query_len;
 	bolt_read_string_size(&client->msg_buf.read, &query_len);
 	char *query = rm_malloc(query_len);
+	if(query == NULL) return NULL;
 	bolt_read_string(&client->msg_buf.read, query);
 	uint32_t params_count = bolt_read_map_size(&client->msg_buf.read);
 	if(params_count > 0) {
