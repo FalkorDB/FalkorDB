@@ -336,3 +336,53 @@ class testPathFilter(FlowTestsBase):
         query = "MATCH (n) WHERE ()--() XOR FALSE RETURN count(n)"
         result = self.graph.query(query)
         self.env.assertEqual(result.result_set, [[0]])
+
+    def test18_path_filter_xnor(self):
+        """Regression test for XNOR path filter exercising XnorMultiplexer_Consume.
+        XNOR is expressed via NOT(... XOR ...) since the parser has no XNOR keyword."""
+
+        # create graph: 3 nodes with edges a->b->c
+        self.graph.query("UNWIND ['a','b','c'] AS v CREATE (:L {n:v})")
+        self.graph.query(
+            "MATCH (a:L {n:'a'}), (b:L {n:'b'}), (c:L {n:'c'}) "
+            "CREATE (a)-[:R]->(b)-[:R]->(c)"
+        )
+
+        # global-pattern XNOR TRUE: ()--() is true for all nodes
+        # NOT(TRUE XOR TRUE) = NOT(FALSE) = TRUE → all 3 nodes returned
+        query = "MATCH (n) WHERE NOT(()--() XOR TRUE) RETURN n.n ORDER BY n.n"
+        result = self.graph.query(query)
+        self.env.assertEqual(len(result.result_set), 3)
+        self.env.assertEqual(result.result_set, [['a'], ['b'], ['c']])
+
+        # global-pattern XNOR FALSE: NOT(TRUE XOR FALSE) = NOT(TRUE) = FALSE → none returned
+        query = "MATCH (n) WHERE NOT(()--() XOR FALSE) RETURN n.n"
+        result = self.graph.query(query)
+        self.env.assertEqual(len(result.result_set), 0)
+
+        # bound-variable XNOR property check via NOT(XOR)
+        # (n)-[]->() is true for a and b; n.n = 'c' is true for c
+        # XNOR: pass when both true or both false (even parity)
+        # a: has outgoing edge (T) xor n.n!='c' (F) → T, NOT(T) = F
+        # b: has outgoing edge (T) xor n.n!='c' (F) → T, NOT(T) = F
+        # c: no outgoing edge (F) xor n.n='c' (T) → T, NOT(T) = F
+        # none pass
+        query = "MATCH (n:L) WHERE NOT((n)-[]->() XOR n.n = 'c') RETURN n.n ORDER BY n.n"
+        result = self.graph.query(query)
+        self.env.assertEqual(len(result.result_set), 0)
+
+    def test19_path_filter_xnor_no_edges(self):
+        """Test XNOR with path filter when no edges exist in the graph."""
+
+        # create graph with isolated nodes only
+        self.graph.query("UNWIND [1,2] AS v CREATE (:N {v:v})")
+
+        # NOT(FALSE XOR TRUE) = NOT(TRUE) = FALSE → none returned
+        query = "MATCH (n) WHERE NOT(()--() XOR TRUE) RETURN count(n)"
+        result = self.graph.query(query)
+        self.env.assertEqual(result.result_set, [[0]])
+
+        # NOT(FALSE XOR FALSE) = NOT(FALSE) = TRUE → all returned
+        query = "MATCH (n) WHERE NOT(()--() XOR FALSE) RETURN count(n)"
+        result = self.graph.query(query)
+        self.env.assertEqual(result.result_set, [[2]])

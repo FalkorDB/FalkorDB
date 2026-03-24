@@ -25,6 +25,12 @@
  * each branch was able to produce a record. If one branch did not produced any data, the operation will try to fetch
  * a new data point from the bounded branch, otherwise the bounded branch
  * record is passed onward.
+ * XOR/XNOR use parity semantics over the number of branches that produce a record:
+ * XORApplyMultiplexer: evaluates to true when an odd number of branches produce
+ * a record (odd parity). For two branches this means exactly one succeeds.
+ * XNORApplyMultiplexer: evaluates to true when an even number of branches produce
+ * a record (even parity, including zero). For two branches this means both
+ * succeed or both fail.
  *                  .                                                        _______________
  *                  .                                                       || argument op ||
  *                  .                                                        ______________
