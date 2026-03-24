@@ -189,9 +189,8 @@ class testBolt01_Types():
     # ---------------------------------------------------------------
 
     def test99_cleanup(self):
-        """Close bolt driver then stop server to prevent idle-connection hang
-        during RLTest teardown and release BOLT_PORT for the next class."""
-        _bolt_teardown(self)
+        """Stop server before RLTest teardown to prevent bolt connection hang.
+        Idle bolt connections block FLUSHALL; pre-stopping avoids the issue."""
         self.env.stop()
 
 # ---------------------------------------------------------------------------
@@ -375,9 +374,8 @@ class testBolt02_Regression():
                 self.env.assertEquals(record[0], i)
 
     def test99_cleanup(self):
-        """Close bolt driver then stop server to prevent idle-connection hang
-        during RLTest teardown and release BOLT_PORT for the next class."""
-        _bolt_teardown(self)
+        """Stop server before RLTest teardown to prevent bolt connection hang.
+        Idle bolt connections block FLUSHALL; pre-stopping avoids the issue."""
         self.env.stop()
 
 # ---------------------------------------------------------------------------
@@ -517,9 +515,8 @@ class testBolt03_Stress():
             self.env.assertEquals(val, "leaf")
 
     def test99_cleanup(self):
-        """Close bolt driver then stop server to prevent idle-connection hang
-        during RLTest teardown and release BOLT_PORT for the next class."""
-        _bolt_teardown(self)
+        """Stop server before RLTest teardown to prevent bolt connection hang.
+        Idle bolt connections block FLUSHALL; pre-stopping avoids the issue."""
         self.env.stop()
 
 # ---------------------------------------------------------------------------
