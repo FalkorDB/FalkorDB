@@ -506,3 +506,165 @@ class testBolt03_Stress():
         """Stop server before RLTest teardown to prevent bolt connection hang.
         Idle bolt connections block FLUSHALL; pre-stopping avoids the issue."""
         self.env.stop()
+
+# ---------------------------------------------------------------------------
+# Class 4: WebSocket transport tests
+# ---------------------------------------------------------------------------
+
+import socket
+import struct
+import hashlib
+import base64
+import os
+
+def _ws_connect(port):
+    """Perform a WebSocket upgrade handshake to the Bolt port.
+    Returns (socket, True) on success, (None, False) on failure."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(5)
+    s.connect(('127.0.0.1', port))
+    key = base64.b64encode(os.urandom(16)).decode()
+    request = (
+        "GET / HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        f"Sec-WebSocket-Key: {key}\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        f"Origin: http://127.0.0.1:{port}\r\n"
+        "\r\n"
+    )
+    s.sendall(request.encode())
+    response = b''
+    while b'\r\n\r\n' not in response:
+        response += s.recv(4096)
+    return s, response.startswith(b'HTTP/1.1 101')
+
+def _ws_send_frame(s, data):
+    """Send a WebSocket binary frame (masked, as required by client)."""
+    mask_key = os.urandom(4)
+    masked = bytearray(len(data))
+    for i in range(len(data)):
+        masked[i] = data[i] ^ mask_key[i % 4]
+    header = bytearray()
+    header.append(0x82)  # FIN + binary opcode
+    length = len(data)
+    if length < 126:
+        header.append(0x80 | length)  # MASK bit set
+    elif length < 65536:
+        header.append(0x80 | 126)
+        header += struct.pack('>H', length)
+    else:
+        header.append(0x80 | 127)
+        header += struct.pack('>Q', length)
+    header += mask_key
+    s.sendall(header + masked)
+
+def _ws_recv_frame(s):
+    """Receive a WebSocket frame and return the payload bytes."""
+    head = s.recv(2)
+    if len(head) < 2:
+        return b''
+    payload_len = head[1] & 0x7F
+    if payload_len == 126:
+        ext = s.recv(2)
+        payload_len = struct.unpack('>H', ext)[0]
+    elif payload_len == 127:
+        ext = s.recv(8)
+        payload_len = struct.unpack('>Q', ext)[0]
+    data = bytearray()
+    while len(data) < payload_len:
+        chunk = s.recv(payload_len - len(data))
+        if not chunk:
+            break
+        data += chunk
+    return bytes(data)
+
+def _bolt_handshake_over_ws(s):
+    """Send the Bolt handshake over an established WebSocket connection.
+    Returns the server version response bytes."""
+    # Bolt magic preamble (0x6060B017) + 4 version proposals
+    handshake = struct.pack('>I', 0x6060B017)
+    # version proposals: [5.7, 5.1, 0, 0]
+    handshake += struct.pack('>I', 0x00070005)
+    handshake += struct.pack('>I', 0x00010005)
+    handshake += struct.pack('>I', 0x00000000)
+    handshake += struct.pack('>I', 0x00000000)
+    _ws_send_frame(s, handshake)
+    response = _ws_recv_frame(s)
+    return response
+
+class testBolt04_WebSocket():
+    def __init__(self):
+        self.env, _ = Env(moduleArgs=f"BOLT_PORT {BOLT_PORT}")
+
+    def __del__(self):
+        pass
+
+    def test30_ws_handshake_upgrade(self):
+        """Test that the server accepts a WebSocket upgrade request and
+        responds with HTTP 101 Switching Protocols."""
+        s, ok = _ws_connect(BOLT_PORT)
+        self.env.assertTrue(ok)
+        s.close()
+
+    def test31_ws_bolt_handshake(self):
+        """Test Bolt protocol handshake over WebSocket transport.
+        After WS upgrade, send the Bolt magic + version proposals and
+        verify the server negotiates a valid Bolt version."""
+        s, ok = _ws_connect(BOLT_PORT)
+        self.env.assertTrue(ok)
+        response = _bolt_handshake_over_ws(s)
+        # response should be 4 bytes: 2 zero bytes + minor + major
+        self.env.assertTrue(len(response) >= 4)
+        # Bolt version 5.x expected
+        self.env.assertEquals(response[-1], 5)
+        self.env.assertTrue(response[-2] >= 1)
+        s.close()
+
+    def test32_ws_reject_invalid_upgrade(self):
+        """Test that the server rejects a non-WebSocket, non-Bolt connection
+        by closing the socket."""
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(5)
+        s.connect(('127.0.0.1', BOLT_PORT))
+        # send garbage that's neither Bolt handshake nor WS upgrade
+        s.sendall(b'INVALID REQUEST\r\n\r\n')
+        try:
+            data = s.recv(4096)
+            # empty response or connection reset both acceptable
+            self.env.assertTrue(len(data) == 0 or data == b'')
+        except (ConnectionResetError, socket.timeout):
+            pass  # expected: server closes connection
+        s.close()
+
+    def test33_ws_connection_header_variants(self):
+        """Test that WebSocket upgrade works with different Connection
+        header formats (comma-separated tokens, mixed case)."""
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(5)
+        s.connect(('127.0.0.1', BOLT_PORT))
+        key = base64.b64encode(os.urandom(16)).decode()
+        request = (
+            "GET / HTTP/1.1\r\n"
+            f"Host: 127.0.0.1:{BOLT_PORT}\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: keep-alive, Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            "Sec-WebSocket-Version: 13\r\n"
+            f"Origin: http://127.0.0.1:{BOLT_PORT}\r\n"
+            "\r\n"
+        )
+        s.sendall(request.encode())
+        response = b''
+        try:
+            while b'\r\n\r\n' not in response:
+                response += s.recv(4096)
+            self.env.assertTrue(response.startswith(b'HTTP/1.1 101'))
+        except socket.timeout:
+            self.env.assertTrue(False, "Timeout waiting for WS upgrade response")
+        s.close()
+
+    def test99_cleanup(self):
+        """Stop server before RLTest teardown to prevent bolt connection hang."""
+        self.env.stop()
