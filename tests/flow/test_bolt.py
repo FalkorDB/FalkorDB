@@ -554,6 +554,9 @@ class testBolt():
     def test30_ws_handshake_upgrade(self):
         """Test that the server accepts a WebSocket upgrade request and
         responds with HTTP 101 Switching Protocols."""
+        # close the bolt driver to free server thread-pool threads
+        # idle pooled connections block threads preventing new connections
+        _bolt_teardown(self)
         s, ok = _ws_connect(BOLT_PORT)
         self.env.assertTrue(ok)
         s.close()
