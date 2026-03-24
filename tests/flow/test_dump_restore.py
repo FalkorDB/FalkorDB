@@ -1,5 +1,6 @@
 from graph_utils import graph_eq
-from common import Env, SANITIZER
+from index_utils import wait_for_indices_to_sync
+from common import Env
 
 
 GRAPH_ID = "dump_restore"
@@ -134,9 +135,7 @@ class testDumpRestore():
         src_graph = self.db.select_graph(src_id)
         src_graph.query("CREATE (:Person {name: 'Alice', age: 30})")
         src_graph.query("CREATE INDEX FOR (n:Person) ON (n.name)")
-
-        # wait for index to be populated
-        src_graph.query("MATCH (n:Person) WHERE n.name = 'Alice' RETURN n")
+        wait_for_indices_to_sync(src_graph)
 
         payload = self.conn.dump(src_id)
         self.conn.restore(dest_id, 0, payload)

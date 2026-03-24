@@ -71,21 +71,22 @@ static void _ComputeTransposeMatrices
 static GraphContext *_GetOrCreateGraphContext
 (
 	const char *key_name,  // destination key name (from Redis)
-	char *graph_name       // embedded graph name (from serialized payload)
+	char *graph_name,      // embedded graph name (from serialized payload)
+	uint64_t key_number    // total number of virtual keys for this graph
 ) {
-	// try to find a GraphContext with the embedded graph name
 	GraphContext *gc = GraphContext_UnsafeGetGraphContext (graph_name) ;
 
+	// detect a single-key RESTORE to a different key name
+	// e.g. DUMP a | RESTORE c — payload embeds "a" but dest is "c"
+	bool renamed_single_key =
+		(key_number == 1 && strcmp(key_name, graph_name) != 0) ;
+
 	if (gc != NULL) {
-		// found an existing graph with this embedded name
-		// check if this is a multi-key continuation (processed > 0)
-		// or a RESTORE to a different key (processed == 0, names differ)
 		uint64_t processed =
 			GraphDecodeContext_GetProcessedKeyCount(gc->decoding_context);
-		if (processed == 0 && strcmp(key_name, graph_name) != 0) {
+		if (processed == 0 && renamed_single_key) {
 			// a fully-loaded graph exists under the embedded name,
 			// but the destination key is different
-			// this is a RESTORE / DUMP scenario
 			// create a new GraphContext with the destination key name
 			gc = NULL ;
 		}
@@ -94,8 +95,9 @@ static GraphContext *_GetOrCreateGraphContext
 
 	if (gc == NULL) {
 		// new graph is being decoded
-		// inform the module and create new graph context
-		gc = GraphContext_New (key_name) ;
+		// use destination key name for renamed single-key restores
+		// otherwise use the embedded graph name (for multi-key decodes)
+		gc = GraphContext_New (renamed_single_key ? key_name : graph_name) ;
 
 		// while loading the graph
 		// minimize matrix realloc and synchronization calls
@@ -168,7 +170,8 @@ static GraphContext *_DecodeHeader
 	// total keys representing the graph
 	uint64_t key_number = SerializerIO_ReadUnsigned(rdb);
 
-	GraphContext *gc = _GetOrCreateGraphContext(key_name, graph_name);
+	GraphContext *gc = _GetOrCreateGraphContext(key_name, graph_name,
+			key_number);
 	Graph *g = gc->g;
 
 	// if it is the first key of this graph,
