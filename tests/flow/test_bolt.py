@@ -2,13 +2,25 @@ from common import *
 from neo4j import GraphDatabase
 from neo4j.spatial import WGS84Point
 import neo4j.graph
+import time
 # from neo4j.debug import watch
 
 BOLT_PORT = 7687
 
 def _bolt_setup(env_self):
-    """Shared setup: start server and create bolt driver."""
-    env_self.env, _ = Env(moduleArgs=f"BOLT_PORT {BOLT_PORT}")
+    """Shared setup: start server and create bolt driver.
+    Retries Env creation to handle ASAN builds where the previous server
+    takes extra time to release BOLT_PORT."""
+    last_err = None
+    for attempt in range(5):
+        try:
+            env_self.env, _ = Env(moduleArgs=f"BOLT_PORT {BOLT_PORT}")
+            break
+        except Exception as e:
+            last_err = e
+            time.sleep(2)
+    else:
+        raise last_err
     env_self.bolt_con = GraphDatabase.driver(
         f"bolt://localhost:{BOLT_PORT}", auth=("falkordb", ""))
 
@@ -177,10 +189,10 @@ class testBolt01_Types():
     # ---------------------------------------------------------------
 
     def test99_cleanup(self):
-        """Close bolt driver before RLTest teardown to prevent idle connection
-        blocking FLUSHALL.  The server stays alive so the next test class can
-        re-bind to the same BOLT_PORT without a race."""
+        """Close bolt driver then stop server to prevent idle-connection hang
+        during RLTest teardown and release BOLT_PORT for the next class."""
         _bolt_teardown(self)
+        self.env.stop()
 
 # ---------------------------------------------------------------------------
 # Class 2: Regression tests — serialization & RESET (tests 10-20)
@@ -363,10 +375,10 @@ class testBolt02_Regression():
                 self.env.assertEquals(record[0], i)
 
     def test99_cleanup(self):
-        """Close bolt driver before RLTest teardown to prevent idle connection
-        blocking FLUSHALL.  The server stays alive so the next test class can
-        re-bind to the same BOLT_PORT without a race."""
+        """Close bolt driver then stop server to prevent idle-connection hang
+        during RLTest teardown and release BOLT_PORT for the next class."""
         _bolt_teardown(self)
+        self.env.stop()
 
 # ---------------------------------------------------------------------------
 # Class 3: Buffer stress, transactions & auth (tests 21-29)
@@ -505,10 +517,10 @@ class testBolt03_Stress():
             self.env.assertEquals(val, "leaf")
 
     def test99_cleanup(self):
-        """Close bolt driver before RLTest teardown to prevent idle connection
-        blocking FLUSHALL.  The server stays alive so the next test class can
-        re-bind to the same BOLT_PORT without a race."""
+        """Close bolt driver then stop server to prevent idle-connection hang
+        during RLTest teardown and release BOLT_PORT for the next class."""
         _bolt_teardown(self)
+        self.env.stop()
 
 # ---------------------------------------------------------------------------
 # Class 4: WebSocket transport tests
@@ -607,7 +619,16 @@ def _bolt_handshake_over_ws(s):
 
 class testBolt04_WebSocket():
     def __init__(self):
-        self.env, _ = Env(moduleArgs=f"BOLT_PORT {BOLT_PORT}")
+        last_err = None
+        for attempt in range(5):
+            try:
+                self.env, _ = Env(moduleArgs=f"BOLT_PORT {BOLT_PORT}")
+                break
+            except Exception as e:
+                last_err = e
+                time.sleep(2)
+        else:
+            raise last_err
 
     def __del__(self):
         pass
