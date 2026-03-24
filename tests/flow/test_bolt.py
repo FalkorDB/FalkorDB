@@ -535,9 +535,13 @@ def _ws_connect(port):
         "\r\n"
     )
     s.sendall(request.encode())
+    # read response byte-by-byte to avoid consuming WS frame data
     response = b''
     while b'\r\n\r\n' not in response:
-        response += s.recv(4096)
+        b = s.recv(1)
+        if not b:
+            break
+        response += b
     return s, response.startswith(b'HTTP/1.1 101')
 
 def _ws_send_frame(s, data):
@@ -580,9 +584,13 @@ def _ws_recv_frame(s):
         data += chunk
     return bytes(data)
 
+import time
+
 def _bolt_handshake_over_ws(s):
     """Send the Bolt handshake over an established WebSocket connection.
     Returns the server version response bytes."""
+    # small delay to let the server finish processing the WS upgrade
+    time.sleep(0.1)
     # Bolt magic preamble (0x6060B017) + 4 version proposals
     handshake = struct.pack('>I', 0x6060B017)
     # version proposals: [5.7, 5.1, 0, 0]
@@ -616,10 +624,11 @@ class testBolt04_WebSocket():
         self.env.assertTrue(ok)
         response = _bolt_handshake_over_ws(s)
         # response should be 4 bytes: 2 zero bytes + minor + major
-        self.env.assertTrue(len(response) >= 4)
-        # Bolt version 5.x expected
-        self.env.assertEquals(response[-1], 5)
-        self.env.assertTrue(response[-2] >= 1)
+        self.env.assertGreaterEqual(len(response), 4)
+        if len(response) >= 4:
+            # Bolt version 5.x expected
+            self.env.assertEquals(response[-1], 5)
+            self.env.assertTrue(response[-2] >= 1)
         s.close()
 
     def test32_ws_reject_invalid_upgrade(self):
@@ -659,7 +668,10 @@ class testBolt04_WebSocket():
         response = b''
         try:
             while b'\r\n\r\n' not in response:
-                response += s.recv(4096)
+                b = s.recv(1)
+                if not b:
+                    break
+                response += b
             self.env.assertTrue(response.startswith(b'HTTP/1.1 101'))
         except socket.timeout:
             self.env.assertTrue(False, "Timeout waiting for WS upgrade response")
