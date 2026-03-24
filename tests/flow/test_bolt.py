@@ -22,32 +22,40 @@ def _bolt_teardown(env_self):
     if hasattr(env_self, 'bolt_con') and env_self.bolt_con is not None:
         env_self.bolt_con.close()
 
-def _ws_connect(port):
+def _ws_connect(port, retries=3):
     """Perform a WebSocket upgrade handshake to the Bolt port.
+    Retries on timeout to handle slow server thread release (e.g. ASAN).
     Returns (socket, True) on success, (None, False) on failure."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(5)
-    s.connect(('127.0.0.1', port))
-    key = base64.b64encode(os.urandom(16)).decode()
-    request = (
-        "GET / HTTP/1.1\r\n"
-        f"Host: 127.0.0.1:{port}\r\n"
-        "Upgrade: websocket\r\n"
-        "Connection: Upgrade\r\n"
-        f"Sec-WebSocket-Key: {key}\r\n"
-        "Sec-WebSocket-Version: 13\r\n"
-        f"Origin: http://127.0.0.1:{port}\r\n"
-        "\r\n"
-    )
-    s.sendall(request.encode())
-    # read response byte-by-byte to avoid consuming WS frame data
-    response = b''
-    while b'\r\n\r\n' not in response:
-        b = s.recv(1)
-        if not b:
-            break
-        response += b
-    return s, response.startswith(b'HTTP/1.1 101')
+    for attempt in range(retries):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(10)
+        try:
+            s.connect(('127.0.0.1', port))
+            key = base64.b64encode(os.urandom(16)).decode()
+            request = (
+                "GET / HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{port}\r\n"
+                "Upgrade: websocket\r\n"
+                "Connection: Upgrade\r\n"
+                f"Sec-WebSocket-Key: {key}\r\n"
+                "Sec-WebSocket-Version: 13\r\n"
+                f"Origin: http://127.0.0.1:{port}\r\n"
+                "\r\n"
+            )
+            s.sendall(request.encode())
+            # read response byte-by-byte to avoid consuming WS frame data
+            response = b''
+            while b'\r\n\r\n' not in response:
+                b = s.recv(1)
+                if not b:
+                    break
+                response += b
+            return s, response.startswith(b'HTTP/1.1 101')
+        except (socket.timeout, TimeoutError):
+            s.close()
+            if attempt < retries - 1:
+                time.sleep(2)
+    return None, False
 
 def _ws_send_frame(s, data):
     """Send a WebSocket binary frame (masked, as required by client)."""
@@ -582,7 +590,7 @@ class testBolt():
         """Test that the server rejects a non-WebSocket, non-Bolt connection
         by closing the socket."""
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(5)
+        s.settimeout(10)
         s.connect(('127.0.0.1', BOLT_PORT))
         # send garbage that's neither Bolt handshake nor WS upgrade
         s.sendall(b'INVALID REQUEST\r\n\r\n')
@@ -598,7 +606,7 @@ class testBolt():
         """Test that WebSocket upgrade works with different Connection
         header formats (comma-separated tokens, mixed case)."""
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(5)
+        s.settimeout(10)
         s.connect(('127.0.0.1', BOLT_PORT))
         key = base64.b64encode(os.urandom(16)).decode()
         request = (
