@@ -71,7 +71,7 @@ void bolt_reply_tiny_int
 	int8_t data             // tiny int value to write
 ) {
 	ASSERT(client != NULL);
-	ASSERT(data >= -16 && data <= 127);
+	ASSERT(data >= TINY_INT8_MIN && data <= TINY_INT8_MAX);
 
 	buffer_write_uint8(&client->write_buf.write, data);
 }
@@ -137,7 +137,7 @@ void bolt_reply_int
 ) {
 	ASSERT(client != NULL);
 
-	if(data >= -16 && data <= 127) {
+	if(data >= TINY_INT8_MIN && data <= TINY_INT8_MAX) {
 		bolt_reply_tiny_int(client, data);
 	} else if(INT8_MIN <= data && data <= INT8_MAX) {
 		bolt_reply_int8(client, data);

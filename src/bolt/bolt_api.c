@@ -136,8 +136,7 @@ static bool is_authenticated
 	// check if the credentials are valid
 	bolt_read_string_size(&client->msg_buf.read, &len);
 	if(len > 1024) return false;
-	char *credentials = rm_malloc(len + 1);
-	if(credentials == NULL) return false;
+	char credentials[len + 1];
 	bolt_read_string(&client->msg_buf.read, credentials);
 	credentials[len] = '\0';
 	RedisModuleCallReply *reply = RedisModule_Call(client->ctx, "AUTH", "b", credentials, len);
@@ -149,7 +148,6 @@ static bool is_authenticated
 		res = !(err_len >= 9 && memcmp(err, "WRONGPASS", 9) == 0);
 	}
 	RedisModule_FreeCallReply(reply);
-	rm_free(credentials);
 	return res;
 }
 
@@ -772,7 +770,6 @@ void BoltReadHandler
 	// process interrupt message
 	buffer_index_t current_read = client->read_buf.read;
 	while(buffer_index_length(&current_read) > 0) {
-		buffer_index_t msg_start = current_read;
 		uint16_t size = ntohs(buffer_read_uint16(&current_read));
 		if(buffer_index_length(&current_read) < size) break;
 		bolt_structure_type request_type = bolt_read_structure_type(&current_read);
@@ -781,18 +778,12 @@ void BoltReadHandler
 			client->reset = true;
 			uint16_t res = buffer_read_uint16(&current_read);
 			ASSERT(res == 0);
-			// current_read is now 6 bytes past msg_start
-			// remove the 6-byte RESET frame by shifting remaining data back
-			buffer_index_t scan_restart = msg_start;
-			uint32_t remaining = (uint32_t)buffer_index_length(&current_read);
-			if(remaining > 0) {
-				char *tmp = rm_malloc(remaining);
-				buffer_index_read(&current_read, tmp, remaining);
-				buffer_write(&msg_start, tmp, remaining);
-				rm_free(tmp);
-			}
-			client->read_buf.write = msg_start;
-			current_read = scan_restart;
+			char *src = client->read_buf.chunks[current_read.chunk] + current_read.offset;
+			char *dst = src - size - 4;
+			size = buffer_index_length(&current_read);
+			memmove(dst, src, size);
+			current_read.offset -= 6;
+			client->read_buf.write.offset -= 6;
 			bolt_client_finish_write(client);
 		} else {
 			size = ntohs(buffer_read_uint16(&current_read));
