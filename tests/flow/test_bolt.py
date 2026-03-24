@@ -676,7 +676,3 @@ class testBolt04_WebSocket():
         except socket.timeout:
             self.env.assertTrue(False, "Timeout waiting for WS upgrade response")
         s.close()
-
-    def test99_cleanup(self):
-        """Stop server before RLTest teardown to prevent bolt connection hang."""
-        self.env.stop()
