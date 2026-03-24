@@ -185,11 +185,12 @@ static Record AndMultiplexer_Consume
 	}
 }
 
-// XOR: passes when an odd number of branches produce a record
-// for two branches: exactly one must produce a record
-static Record XorMultiplexer_Consume
+// shared XOR/XNOR helper: passes when branch-pass parity matches expected_parity
+// XOR expects odd parity (1), XNOR expects even parity (0)
+static Record _ParityMultiplexer_Consume
 (
-	OpBase *opBase
+	OpBase *opBase,
+	int expected_parity
 ) {
 	OpApplyMultiplexer *op = (OpApplyMultiplexer *)opBase;
 	while(true) {
@@ -197,26 +198,33 @@ static Record XorMultiplexer_Consume
 		op->r = OpBase_Consume(op->bound_branch);
 		if(!op->r) return NULL; // depleted
 
-		// evaluate all branches, count how many produce a record
-		int pass_count = 0;
+		// evaluate all branches, track parity of branches that produce a record
+		int parity = 0;
 		for(int i = 1; i < op->op.childCount; i++) {
 			Record branch_record = _pullFromBranchStream(op, i);
 			if(branch_record) {
 				OpBase_DeleteRecord(&branch_record);
-				pass_count++;
+				parity ^= 1;
 			}
 		}
 
-		// XOR: pass when odd number of branches succeed
-		if(pass_count % 2 == 1) {
+		if(parity == expected_parity) {
 			Record r = op->r;
 			op->r = NULL;
 			return r;
 		}
 
-		// XOR not satisfied, try next record
 		OpBase_DeleteRecord(&op->r);
 	}
+}
+
+// XOR: passes when an odd number of branches produce a record
+// for two branches: exactly one must produce a record
+static Record XorMultiplexer_Consume
+(
+	OpBase *opBase
+) {
+	return _ParityMultiplexer_Consume(opBase, 1);
 }
 
 // XNOR: passes when an even number of branches produce a record
@@ -225,32 +233,7 @@ static Record XnorMultiplexer_Consume
 (
 	OpBase *opBase
 ) {
-	OpApplyMultiplexer *op = (OpApplyMultiplexer *)opBase;
-	while(true) {
-		// try to get a record from bound stream
-		op->r = OpBase_Consume(op->bound_branch);
-		if(!op->r) return NULL; // depleted
-
-		// evaluate all branches, count how many produce a record
-		int pass_count = 0;
-		for(int i = 1; i < op->op.childCount; i++) {
-			Record branch_record = _pullFromBranchStream(op, i);
-			if(branch_record) {
-				OpBase_DeleteRecord(&branch_record);
-				pass_count++;
-			}
-		}
-
-		// XNOR: pass when even number of branches succeed
-		if(pass_count % 2 == 0) {
-			Record r = op->r;
-			op->r = NULL;
-			return r;
-		}
-
-		// XNOR not satisfied, try next record
-		OpBase_DeleteRecord(&op->r);
-	}
+	return _ParityMultiplexer_Consume(opBase, 0);
 }
 
 static OpResult OpApplyMultiplexerReset
