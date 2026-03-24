@@ -559,22 +559,15 @@ class testBolt():
                 val = val["k"]
             self.env.assertEquals(val, "leaf")
 
-    def test30_ws_handshake_upgrade(self):
-        """Test that the server accepts a WebSocket upgrade request and
-        responds with HTTP 101 Switching Protocols."""
+    def test30_ws_handshake_and_bolt(self):
+        """Test WebSocket upgrade and Bolt protocol handshake over WS.
+        Verifies that the server accepts a WS upgrade (HTTP 101) and then
+        successfully negotiates a Bolt version over the WS transport."""
         # close the bolt driver to free server thread-pool threads
         # idle pooled connections block threads preventing new connections
         _bolt_teardown(self)
         # allow server threads to finish processing connection close
         time.sleep(2)
-        s, ok = _ws_connect(BOLT_PORT)
-        self.env.assertTrue(ok)
-        s.close()
-
-    def test31_ws_bolt_handshake(self):
-        """Test Bolt protocol handshake over WebSocket transport.
-        After WS upgrade, send the Bolt magic + version proposals and
-        verify the server negotiates a valid Bolt version."""
         s, ok = _ws_connect(BOLT_PORT)
         self.env.assertTrue(ok)
         response = _bolt_handshake_over_ws(s)
@@ -586,7 +579,7 @@ class testBolt():
             self.env.assertTrue(response[-2] >= 1)
         s.close()
 
-    def test32_ws_reject_invalid_upgrade(self):
+    def test31_ws_reject_invalid_upgrade(self):
         """Test that the server rejects a non-WebSocket, non-Bolt connection
         by closing the socket."""
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -602,7 +595,7 @@ class testBolt():
             pass  # expected: server closes connection
         s.close()
 
-    def test33_ws_connection_header_variants(self):
+    def test32_ws_connection_header_variants(self):
         """Test that WebSocket upgrade works with different Connection
         header formats (comma-separated tokens, mixed case)."""
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
