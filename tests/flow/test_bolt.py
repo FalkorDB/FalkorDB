@@ -2,25 +2,18 @@ from common import *
 from neo4j import GraphDatabase
 from neo4j.spatial import WGS84Point
 import neo4j.graph
+import socket
+import struct
+import hashlib
+import base64
+import os
 import time
-# from neo4j.debug import watch
 
 BOLT_PORT = 7687
 
 def _bolt_setup(env_self):
-    """Shared setup: start server and create bolt driver.
-    Retries Env creation to handle ASAN builds where the previous server
-    takes extra time to release BOLT_PORT."""
-    last_err = None
-    for attempt in range(5):
-        try:
-            env_self.env, _ = Env(moduleArgs=f"BOLT_PORT {BOLT_PORT}")
-            break
-        except Exception as e:
-            last_err = e
-            time.sleep(2)
-    else:
-        raise last_err
+    """Shared setup: start server and create bolt driver."""
+    env_self.env, _ = Env(moduleArgs=f"BOLT_PORT {BOLT_PORT}")
     env_self.bolt_con = GraphDatabase.driver(
         f"bolt://localhost:{BOLT_PORT}", auth=("falkordb", ""))
 
@@ -29,11 +22,91 @@ def _bolt_teardown(env_self):
     if hasattr(env_self, 'bolt_con') and env_self.bolt_con is not None:
         env_self.bolt_con.close()
 
-# ---------------------------------------------------------------------------
-# Class 1: Basic data type serialization (tests 01-09)
-# ---------------------------------------------------------------------------
+def _ws_connect(port):
+    """Perform a WebSocket upgrade handshake to the Bolt port.
+    Returns (socket, True) on success, (None, False) on failure."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(5)
+    s.connect(('127.0.0.1', port))
+    key = base64.b64encode(os.urandom(16)).decode()
+    request = (
+        "GET / HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        f"Sec-WebSocket-Key: {key}\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        f"Origin: http://127.0.0.1:{port}\r\n"
+        "\r\n"
+    )
+    s.sendall(request.encode())
+    # read response byte-by-byte to avoid consuming WS frame data
+    response = b''
+    while b'\r\n\r\n' not in response:
+        b = s.recv(1)
+        if not b:
+            break
+        response += b
+    return s, response.startswith(b'HTTP/1.1 101')
 
-class testBolt01_Types():
+def _ws_send_frame(s, data):
+    """Send a WebSocket binary frame (masked, as required by client)."""
+    mask_key = os.urandom(4)
+    masked = bytearray(len(data))
+    for i in range(len(data)):
+        masked[i] = data[i] ^ mask_key[i % 4]
+    header = bytearray()
+    header.append(0x82)  # FIN + binary opcode
+    length = len(data)
+    if length < 126:
+        header.append(0x80 | length)  # MASK bit set
+    elif length < 65536:
+        header.append(0x80 | 126)
+        header += struct.pack('>H', length)
+    else:
+        header.append(0x80 | 127)
+        header += struct.pack('>Q', length)
+    header += mask_key
+    s.sendall(header + masked)
+
+def _ws_recv_frame(s):
+    """Receive a WebSocket frame and return the payload bytes."""
+    head = s.recv(2)
+    if len(head) < 2:
+        return b''
+    payload_len = head[1] & 0x7F
+    if payload_len == 126:
+        ext = s.recv(2)
+        payload_len = struct.unpack('>H', ext)[0]
+    elif payload_len == 127:
+        ext = s.recv(8)
+        payload_len = struct.unpack('>Q', ext)[0]
+    data = bytearray()
+    while len(data) < payload_len:
+        chunk = s.recv(payload_len - len(data))
+        if not chunk:
+            break
+        data += chunk
+    return bytes(data)
+
+def _bolt_handshake_over_ws(s):
+    """Send the Bolt handshake over an established WebSocket connection.
+    Returns the server version response bytes."""
+    # small delay to let the server finish processing the WS upgrade
+    time.sleep(0.1)
+    # Bolt magic preamble (0x6060B017) + 4 version proposals
+    handshake = struct.pack('>I', 0x6060B017)
+    # version proposals: [5.7, 5.1, 0, 0]
+    handshake += struct.pack('>I', 0x00070005)
+    handshake += struct.pack('>I', 0x00010005)
+    handshake += struct.pack('>I', 0x00000000)
+    handshake += struct.pack('>I', 0x00000000)
+    _ws_send_frame(s, handshake)
+    response = _ws_recv_frame(s)
+    return response
+
+
+class testBolt():
     def __init__(self):
         _bolt_setup(self)
 
@@ -183,26 +256,6 @@ class testBolt01_Types():
              self.env.assertEquals(p.nodes[2].labels, set(['C']))
              self.env.assertEquals(p.relationships[0].type, 'R1')
              self.env.assertEquals(p.relationships[1].type, 'R2')
-
-    # ---------------------------------------------------------------
-    # Regression tests for bolt protocol bug fixes (issue #1702)
-    # ---------------------------------------------------------------
-
-    def test99_cleanup(self):
-        """Stop server before RLTest teardown to prevent bolt connection hang.
-        Idle bolt connections block FLUSHALL; pre-stopping avoids the issue."""
-        self.env.stop()
-
-# ---------------------------------------------------------------------------
-# Class 2: Regression tests — serialization & RESET (tests 10-20)
-# ---------------------------------------------------------------------------
-
-class testBolt02_Regression():
-    def __init__(self):
-        _bolt_setup(self)
-
-    def __del__(self):
-        _bolt_teardown(self)
 
     def test10_tiny_int_negative_range(self):
         """Verify tiny int encoding for the full range -16..127.
@@ -373,22 +426,6 @@ class testBolt02_Regression():
                 record = result.single()
                 self.env.assertEquals(record[0], i)
 
-    def test99_cleanup(self):
-        """Stop server before RLTest teardown to prevent bolt connection hang.
-        Idle bolt connections block FLUSHALL; pre-stopping avoids the issue."""
-        self.env.stop()
-
-# ---------------------------------------------------------------------------
-# Class 3: Buffer stress, transactions & auth (tests 21-29)
-# ---------------------------------------------------------------------------
-
-class testBolt03_Stress():
-    def __init__(self):
-        _bolt_setup(self)
-
-    def __del__(self):
-        _bolt_teardown(self)
-
     def test21_large_string_parameter_value(self):
         """Test parameterized query where write_value must serialize a very
         large string value. Before the fix, write_value wrote into a fixed
@@ -513,122 +550,6 @@ class testBolt03_Stress():
                 self.env.assertContains("k", val)
                 val = val["k"]
             self.env.assertEquals(val, "leaf")
-
-    def test99_cleanup(self):
-        """Stop server before RLTest teardown to prevent bolt connection hang.
-        Idle bolt connections block FLUSHALL; pre-stopping avoids the issue."""
-        self.env.stop()
-
-# ---------------------------------------------------------------------------
-# Class 4: WebSocket transport tests
-# ---------------------------------------------------------------------------
-
-import socket
-import struct
-import hashlib
-import base64
-import os
-
-def _ws_connect(port):
-    """Perform a WebSocket upgrade handshake to the Bolt port.
-    Returns (socket, True) on success, (None, False) on failure."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(5)
-    s.connect(('127.0.0.1', port))
-    key = base64.b64encode(os.urandom(16)).decode()
-    request = (
-        "GET / HTTP/1.1\r\n"
-        f"Host: 127.0.0.1:{port}\r\n"
-        "Upgrade: websocket\r\n"
-        "Connection: Upgrade\r\n"
-        f"Sec-WebSocket-Key: {key}\r\n"
-        "Sec-WebSocket-Version: 13\r\n"
-        f"Origin: http://127.0.0.1:{port}\r\n"
-        "\r\n"
-    )
-    s.sendall(request.encode())
-    # read response byte-by-byte to avoid consuming WS frame data
-    response = b''
-    while b'\r\n\r\n' not in response:
-        b = s.recv(1)
-        if not b:
-            break
-        response += b
-    return s, response.startswith(b'HTTP/1.1 101')
-
-def _ws_send_frame(s, data):
-    """Send a WebSocket binary frame (masked, as required by client)."""
-    mask_key = os.urandom(4)
-    masked = bytearray(len(data))
-    for i in range(len(data)):
-        masked[i] = data[i] ^ mask_key[i % 4]
-    header = bytearray()
-    header.append(0x82)  # FIN + binary opcode
-    length = len(data)
-    if length < 126:
-        header.append(0x80 | length)  # MASK bit set
-    elif length < 65536:
-        header.append(0x80 | 126)
-        header += struct.pack('>H', length)
-    else:
-        header.append(0x80 | 127)
-        header += struct.pack('>Q', length)
-    header += mask_key
-    s.sendall(header + masked)
-
-def _ws_recv_frame(s):
-    """Receive a WebSocket frame and return the payload bytes."""
-    head = s.recv(2)
-    if len(head) < 2:
-        return b''
-    payload_len = head[1] & 0x7F
-    if payload_len == 126:
-        ext = s.recv(2)
-        payload_len = struct.unpack('>H', ext)[0]
-    elif payload_len == 127:
-        ext = s.recv(8)
-        payload_len = struct.unpack('>Q', ext)[0]
-    data = bytearray()
-    while len(data) < payload_len:
-        chunk = s.recv(payload_len - len(data))
-        if not chunk:
-            break
-        data += chunk
-    return bytes(data)
-
-import time
-
-def _bolt_handshake_over_ws(s):
-    """Send the Bolt handshake over an established WebSocket connection.
-    Returns the server version response bytes."""
-    # small delay to let the server finish processing the WS upgrade
-    time.sleep(0.1)
-    # Bolt magic preamble (0x6060B017) + 4 version proposals
-    handshake = struct.pack('>I', 0x6060B017)
-    # version proposals: [5.7, 5.1, 0, 0]
-    handshake += struct.pack('>I', 0x00070005)
-    handshake += struct.pack('>I', 0x00010005)
-    handshake += struct.pack('>I', 0x00000000)
-    handshake += struct.pack('>I', 0x00000000)
-    _ws_send_frame(s, handshake)
-    response = _ws_recv_frame(s)
-    return response
-
-class testBolt04_WebSocket():
-    def __init__(self):
-        last_err = None
-        for attempt in range(5):
-            try:
-                self.env, _ = Env(moduleArgs=f"BOLT_PORT {BOLT_PORT}")
-                break
-            except Exception as e:
-                last_err = e
-                time.sleep(2)
-        else:
-            raise last_err
-
-    def __del__(self):
-        pass
 
     def test30_ws_handshake_upgrade(self):
         """Test that the server accepts a WebSocket upgrade request and
