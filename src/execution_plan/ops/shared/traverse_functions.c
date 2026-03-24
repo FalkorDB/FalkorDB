@@ -20,8 +20,9 @@ static void _Traverse_CollectEdges
 				&edge_ctx->edges) ;
 	} else {
 		for (uint i = 0; i < count; i++) {
-			Graph_GetEdgesConnectingNodes (g, src, dest,
-					QGEdge_RelationID (edge_ctx->e, i), &edge_ctx->edges) ;
+			RelationID rel_id = QGEdge_RelationID (edge_ctx->e, i) ;
+			Graph_GetEdgesConnectingNodes (g, src, dest, rel_id,
+					&edge_ctx->edges) ;
 		}
 	}
 }

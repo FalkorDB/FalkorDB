@@ -1260,20 +1260,22 @@ bool Graph_GetEdge
 // about edge type
 void Graph_GetEdgesConnectingNodes
 (
-	const Graph *g,  // Graph to get edges from.
-	NodeID srcID,    // Source node of edge
-	NodeID destID,   // Destination node of edge
-	RelationID r,    // Edge type.
-	Edge **edges     // array_t of edges connecting src to dest of type r.
+	const Graph *g,  // graph to get edges from
+	NodeID srcID,    // source node of edge
+	NodeID destID,   // destination node of edge
+	RelationID r,    // edge type
+	Edge **edges     // array_t of edges connecting src to dest of type r
 ) {
-	ASSERT(g);
-	ASSERT(edges);
-	ASSERT(r < Graph_RelationTypeCount(g));
+	ASSERT (g) ;
+	ASSERT (edges) ;
+	ASSERT (r < Graph_RelationTypeCount (g)) ;
 
 	// invalid relation type specified;
 	// this can occur on multi-type traversals like:
 	// MATCH ()-[:real_type|fake_type]->()
-	if(r == GRAPH_UNKNOWN_RELATION) return;
+	if (r == GRAPH_UNKNOWN_RELATION) {
+		return ;
+	}
 
 #ifdef RG_DEBUG
 	Node  srcNode   =  GE_NEW_NODE();
