@@ -557,6 +557,8 @@ class testBolt():
         # close the bolt driver to free server thread-pool threads
         # idle pooled connections block threads preventing new connections
         _bolt_teardown(self)
+        # allow server threads to finish processing connection close
+        time.sleep(2)
         s, ok = _ws_connect(BOLT_PORT)
         self.env.assertTrue(ok)
         s.close()
