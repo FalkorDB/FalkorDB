@@ -14,8 +14,10 @@ BOLT_PORT = 7687
 def _bolt_setup(env_self):
     """Shared setup: start server and create bolt driver."""
     env_self.env, _ = Env(moduleArgs=f"BOLT_PORT {BOLT_PORT}")
+    # limit pool size so idle connections don't consume all server threads
     env_self.bolt_con = GraphDatabase.driver(
-        f"bolt://localhost:{BOLT_PORT}", auth=("falkordb", ""))
+        f"bolt://localhost:{BOLT_PORT}", auth=("falkordb", ""),
+        max_connection_pool_size=1)
 
 def _bolt_teardown(env_self):
     """Shared teardown: close bolt driver to release connections."""
@@ -563,11 +565,6 @@ class testBolt():
         """Test WebSocket upgrade and Bolt protocol handshake over WS.
         Verifies that the server accepts a WS upgrade (HTTP 101) and then
         successfully negotiates a Bolt version over the WS transport."""
-        # close the bolt driver to free server thread-pool threads
-        # idle pooled connections block threads preventing new connections
-        _bolt_teardown(self)
-        # allow server threads to finish processing connection close
-        time.sleep(2)
         s, ok = _ws_connect(BOLT_PORT)
         self.env.assertTrue(ok)
         response = _bolt_handshake_over_ws(s)
