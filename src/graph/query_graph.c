@@ -512,27 +512,21 @@ void QueryGraph_ResolveUnknownRelIDs
 	QueryGraph *qg
 ) {
 	// no unknown relationships - no need to updated
-	if(!qg->unknown_reltype_ids) return;
-
-	Schema *s = NULL;
-	bool unkown_relationships = false;
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	uint edge_count = QueryGraph_EdgeCount(qg);
-
-	// update edges
-	for(uint i = 0; i < edge_count; i++) {
-		QGEdge *edge = qg->edges[i];
-		uint rel_types_count = array_len(edge->reltypeIDs);
-		for(uint j = 0; j < rel_types_count; j++) {
-			if(edge->reltypeIDs[j] == GRAPH_UNKNOWN_RELATION) {
-				s = GraphContext_GetSchema(gc, edge->reltypes[j], SCHEMA_EDGE);
-				if(s) edge->reltypeIDs[j] = s->id;
-				else unkown_relationships = true; // cannot update the unkown relationship
-			}
-		}
+	if (!qg->unknown_reltype_ids) {
+		return ;
 	}
 
-	qg->unknown_reltype_ids = unkown_relationships;
+	Schema *s = NULL ;
+	uint edge_count = QueryGraph_EdgeCount (qg) ;
+
+	// update edges
+	for (uint i = 0; i < edge_count; i++) {
+		QGEdge *edge = qg->edges [i] ;
+		if (!QGEdge_ResolveUnknownRelIDS (edge)) {
+			// cannot update the unkown relationship
+			qg->unknown_reltype_ids = true ;
+		}
+	}
 }
 
 QueryGraph *QueryGraph_Clone

@@ -76,8 +76,8 @@ static void _traverse
 
 		// partial_ae is true when
 		// the algebraic expression contains the zero matrix
-		op->partial_ae = AlgebraicExpression_ContainsMatrix(op->ae,
-				Graph_GetZeroMatrix(QueryCtx_GetGraph()));
+		op->partial_ae = AlgebraicExpression_ContainsMatrix (op->ae,
+				Graph_GetZeroMatrix (QueryCtx_GetGraph ())) ;
 	}
 
 	// populate filter matrix
@@ -113,16 +113,16 @@ OpBase *NewExpandIntoOp
 	aware = OpBase_AliasMapping((OpBase *)op, AlgebraicExpression_Dest(ae), &op->destNodeIdx);
 	ASSERT(aware);
 
-	const char *edge = AlgebraicExpression_Edge(ae);
-	if(edge) {
+	const char *edge = AlgebraicExpression_Edge (ae) ;
+	if (edge) {
 		// this operation will populate an edge in the record
 		// prepare all necessary information for collecting matching edges
-		uint edge_idx = OpBase_Modifies((OpBase *)op, edge);
-		QGEdge *e = QueryGraph_GetEdgeByAlias(plan->query_graph, edge);
-		op->edge_ctx = EdgeTraverseCtx_New(ae, e, edge_idx);
+		uint edge_idx = OpBase_Modifies ((OpBase *)op, edge) ;
+		QGEdge *e = QueryGraph_GetEdgeByAlias (plan->query_graph, edge) ;
+		op->edge_ctx = EdgeTraverseCtx_New (ae, e, edge_idx) ;
 	}
 
-	return (OpBase *)op;
+	return (OpBase *)op ;
 }
 
 static OpResult ExpandIntoInit
@@ -312,28 +312,33 @@ static OpResult ExpandIntoReset
 (
 	OpBase *ctx
 ) {
-	OpExpandInto *op = (OpExpandInto *)ctx;
+	OpExpandInto *op = (OpExpandInto *)ctx ;
 
-	if(op->r != NULL) {
-		OpBase_DeleteRecord(&op->r);
+	if (op->r != NULL) {
+		OpBase_DeleteRecord (&op->r) ;
 	}
 
-	for(uint i = 0; i < op->record_count; i++) {
-		OpBase_DeleteRecord(op->records+i);
+	for (uint i = 0; i < op->record_count; i++) {
+		OpBase_DeleteRecord (op->records + i) ;
 	}
-	op->record_count = 0;
+	op->record_count = 0 ;
 
-	if(op->edge_ctx != NULL) EdgeTraverseCtx_Reset(op->edge_ctx);
+	if (op->edge_ctx != NULL) {
+		EdgeTraverseCtx_Reset (op->edge_ctx) ;
+	}
 
 	// in case algebraic expression has missing operands
 	// i.e. has an operand which is the zero matrix
 	// see if at this point in time the graph is aware of the missing operand
 	// and if so replace the zero matrix operand with the actual matrix
-	if(unlikely(op->partial_ae == true)) {
-		_AlgebraicExpression_PopulateOperands(op->ae, QueryCtx_GetGraphCtx());
+	if (unlikely (op->partial_ae == true)) {
+		_AlgebraicExpression_PopulateOperands (op->ae, QueryCtx_GetGraphCtx ()) ;
+
+		op->partial_ae = AlgebraicExpression_ContainsMatrix (op->ae,
+				Graph_GetZeroMatrix (QueryCtx_GetGraph ())) ;
 	}
 
-	return OP_OK;
+	return OP_OK ;
 }
 
 static inline OpBase *ExpandIntoClone

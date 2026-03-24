@@ -29,17 +29,17 @@ static uint64_t _id_hash
 	return ((uint64_t)key);
 }
 
-// hashtable entry free callback
-static void freeCallback
+// hashtable value destructor callback
+static void dictValDist
 (
 	dict *d,
 	void *val
 ) {
-	PendingUpdateCtx_Free((PendingUpdateCtx*)val);
+	PendingUpdateCtx_Free ((PendingUpdateCtx*)val) ;
 }
 
 // hashtable callbacks
-static dictType _dt = { _id_hash, NULL, NULL, NULL, NULL, freeCallback, NULL,
+static dictType _dt = { _id_hash, NULL, NULL, NULL, NULL, dictValDist, NULL,
 	NULL, NULL, NULL};
 
 //------------------------------------------------------------------------------
@@ -157,46 +157,63 @@ static OpResult MergeInit
 	// - the next (first if there are 2 children, second otherwise)
 	//   should attempt to match the pattern
 	// - the last creates the pattern
-	ASSERT(opBase->childCount == 2 || opBase->childCount == 3);
-	OpMerge *op = (OpMerge *)opBase;
-	if(opBase->childCount == 2) {
-		// if we only have 2 streams, the first one is the bound variable stream
-		// and the second is the match stream
-		op->match_stream  = opBase->children[0];
-		op->create_stream = opBase->children[1];
+	ASSERT (opBase->childCount == 2 || opBase->childCount == 3) ;
+	OpMerge *op = (OpMerge *)opBase ;
 
-		ASSERT(OpBase_Type(op->create_stream) == OPType_MERGE_CREATE);
-		return OP_OK;
+	//--------------------------------------------------------------------------
+	// no bound variables
+	//--------------------------------------------------------------------------
+
+	// example:
+	// MERGE (a:A {v:2})
+
+	if (opBase->childCount == 2) {
+		// if we only have 2 streams,
+		// the first one is the merged pattern match stream
+		// and the second is the create stream
+		op->match_stream  = opBase->children [0] ;
+		op->create_stream = opBase->children [1] ;
+
+		ASSERT (OpBase_Type (op->create_stream) == OPType_MERGE_CREATE) ;
+		return OP_OK ;
 	}
+
+	//--------------------------------------------------------------------------
+	// bound variables
+	//--------------------------------------------------------------------------
+
+	// example:
+	// MATCH (a:A {v:2}), (b:B {v:3})
+	// MERGE (a)-[:R]->(b)
 
 	// if we have 3 streams, the first is the bound variable stream
 	// the second is the match stream, and the third is the create stream
-	op->bound_variable_stream = opBase->children[0];
-	op->match_stream          = opBase->children[1];
-	op->create_stream         = opBase->children[2];
+	op->bound_variable_stream = opBase->children [0] ;
+	op->match_stream          = opBase->children [1] ;
+	op->create_stream         = opBase->children [2] ;
 
-	ASSERT(OpBase_Type(op->create_stream) == OPType_MERGE_CREATE);
-	ASSERT(op->bound_variable_stream != NULL &&
-		   op->match_stream          != NULL &&
-		   op->create_stream         != NULL);
+	ASSERT (OpBase_Type (op->create_stream) == OPType_MERGE_CREATE) ;
+	ASSERT (op->bound_variable_stream != NULL &&
+			op->match_stream          != NULL &&
+			op->create_stream         != NULL) ;
 
 	// find and store references to the:
 	// Argument taps for the Match and Create streams
 	// the Match stream is populated by an Argument tap
 	// store a reference to it
 	op->match_argument_tap =
-		(OpArgument *)ExecutionPlan_LocateOp(op->match_stream, OPType_ARGUMENT);
-	ASSERT(op->match_argument_tap != NULL);
+		(OpArgument *)ExecutionPlan_LocateOp (op->match_stream, OPType_ARGUMENT) ;
+	ASSERT (op->match_argument_tap != NULL) ;
 
-	// if the create stream is populated by an Argument tap, store a reference to it.
+	// store a reference to the Argument op feeding the create stream
 	op->create_argument_tap =
-		(OpArgument *)ExecutionPlan_LocateOp(op->create_stream, OPType_ARGUMENT);
-	ASSERT(op->create_argument_tap != NULL);
+		(OpArgument *)ExecutionPlan_LocateOp (op->create_stream, OPType_ARGUMENT) ;
+	ASSERT (op->create_argument_tap != NULL) ;
 
 	// set up an array to store records produced by the bound variable stream
-	op->input_records = array_new(Record, 1);
+	op->input_records = array_new (Record, 1) ;
 
-	return OP_OK;
+	return OP_OK ;
 }
 
 static Record _handoff
@@ -209,7 +226,6 @@ static Record _handoff
 		return NULL;
 	}
 }
-
 
 // records which were scheduled for creation but resulted in duplications
 // e.g.
@@ -226,36 +242,37 @@ static Record _handoff
 // this function matches duplicates and apply the ON MATCH directive if present
 static void _processPostponedRecords
 (
-	OpMerge *op,
-	uint match_count,  // number of records matched
-	uint create_count  // number of records created
-
+	OpMerge *op
 ) {
-	ASSERT(op != NULL);
+	ASSERT (op != NULL) ;
+
+	// save number of output records
+	size_t offset = array_len (op->output_records) ;
 
 	// run through the postponed records
 	// match each one and add them to the output array
-	int n = array_len(op->postponed_match);
-	for(int i = 0; i < n; i++) {
-		Record r = array_pop(op->postponed_match);
+	int n = array_len (op->postponed_match) ;
+	for (int i = 0; i < n; i++) {
+		Record r = array_pop (op->postponed_match) ;
 
 		// propagate record to the top of the Match stream
-		Argument_AddRecord(op->match_argument_tap, r);
+		Argument_AddRecord (op->match_argument_tap, r) ;
 
 		// pull match stream
-		r = _pullFromStream(op->match_stream);
-		ASSERT(r != NULL);
-		ASSERT(_pullFromStream(op->match_stream) == NULL);  // expecting a single record
+		r = _pullFromStream (op->match_stream) ;
+		ASSERT (r != NULL) ;
+
+		// expecting a single record
+		ASSERT (_pullFromStream (op->match_stream) == NULL) ;
 
 		// add record to outputs
-		array_append(op->output_records, r);
+		array_append (op->output_records, r) ;
 	}
 
 	// if we are setting properties with ON MATCH, compute pending updates
-	if(op->on_match && n > 0) {
+	if (op->on_match && n > 0) {
 		_UpdateProperties (op->node_pending_updates, op->edge_pending_updates,
-				op->on_match_it,
-				op->output_records + match_count + create_count, n) ;
+				op->on_match_it, op->output_records + offset, n) ;
 	}
 }
 
@@ -271,23 +288,22 @@ static Record MergeConsume
 	//--------------------------------------------------------------------------
 
 	// return mode, all data was consumed
-	if(op->output_records) {
-		return _handoff(op);
+	if (op->output_records != NULL) {
+		return _handoff (op) ;
 	}
 
 	//--------------------------------------------------------------------------
 	// consume bound stream
 	//--------------------------------------------------------------------------
 
-	op->output_records  = array_new(Record, 32);
-	op->postponed_match = array_new(Record, 0);
+	op->output_records  = array_new (Record, 32) ;
+	op->postponed_match = array_new (Record, 0) ;
 
-	// if we have a bound variable stream
-	// pull from it and store records until depleted
-	if(op->bound_variable_stream) {
-		Record input_record;
-		while((input_record = _pullFromStream(op->bound_variable_stream))) {
-			array_append(op->input_records, input_record);
+	// if we have a bound variable stream drain it
+	if (op->bound_variable_stream != NULL) {
+		Record input_record ;
+		while ((input_record = _pullFromStream (op->bound_variable_stream))) {
+			array_append (op->input_records, input_record) ;
 		}
 	}
 
@@ -295,71 +311,77 @@ static Record MergeConsume
 	// match pattern
 	//--------------------------------------------------------------------------
 
-	uint match_count         = 0;
-	uint create_count        = 0;
-	bool reading_matches     = true;
-	bool must_create_records = false;
+	uint match_count         = 0     ;  // number of records resulted in a match
+	uint create_count        = 0     ;  // number of records resulted in a create
+	bool reading_matches     = true  ;
+	bool must_create_records = false ;
 
 	// match mode: attempt to resolve the pattern for every record from
 	// the bound variable stream, or once if we have no bound variables
-	while(reading_matches) {
-		Record lhs_record = NULL;
-		if(op->input_records) {
+	while (reading_matches) {
+		Record lhs_record = NULL ;
+		if (op->input_records) {
 			// if we had bound variables but have depleted our input records,
 			// we're done pulling from the Match stream
-			if(array_len(op->input_records) == 0) {
-				break;
+			if (array_len (op->input_records) == 0) {
+				break ;
 			}
 
 			// pull a new input record
-			lhs_record = array_pop(op->input_records);
+			lhs_record = array_pop (op->input_records) ;
 
 			// propagate record to the top of the Match stream
 			// (must clone the Record, as it will be freed in the Match stream)
-			Argument_AddRecord(op->match_argument_tap, OpBase_CloneRecord(lhs_record));
+			Argument_AddRecord (op->match_argument_tap,
+					OpBase_CloneRecord (lhs_record)) ;
 		} else {
 			// this loop only executes once if we don't have input records
 			// resolving bound variables
-			reading_matches = false;
+			reading_matches = false ;
 		}
 
-		Record rhs_record;
-		bool should_create_pattern = true;
+		Record rhs_record ;
+		bool should_create_pattern = true ;
+
 		// retrieve Records from the Match stream until it's depleted
-		while((rhs_record = _pullFromStream(op->match_stream))) {
+		while ((rhs_record = _pullFromStream (op->match_stream))) {
 			// pattern was successfully matched
-			should_create_pattern = false;
-			array_append(op->output_records, rhs_record);
-			match_count++;
+			should_create_pattern = false ;
+			array_append (op->output_records, rhs_record) ;
+			match_count++ ;
 		}
 
-		if(should_create_pattern) {
+		if (should_create_pattern) {
 			// transfer the unmatched record to the Create stream
 			// we don't need to clone the record
 			// as it won't be accessed again outside that stream
 			// but we must make sure its elements are access-safe
 			// as the input stream will be freed
 			// before entities are created
-			if(lhs_record) {
-				Argument_AddRecord(op->create_argument_tap, lhs_record);
-				lhs_record = NULL;
+			if (lhs_record) {
+				Argument_AddRecord (op->create_argument_tap, lhs_record) ;
+				lhs_record = NULL ;
 			}
 
-			Record r = _pullFromStream(op->create_stream);
-			if(r != NULL) {
+			Record r = _pullFromStream (op->create_stream) ;
+			if (r != NULL) {
 				// duplicate detected, this record need to be matched
 				// once we commit all of the changes
-				array_append(op->postponed_match, r);
+				array_append (op->postponed_match, r) ;
 			} else {
-				must_create_records = true;
+				must_create_records = true ;
 			}
 		}
 
 		// free the LHS Record if we haven't transferred it to the Create stream
-		if(lhs_record) {
-			OpBase_DeleteRecord(&lhs_record);
+		if (lhs_record != NULL) {
+			OpBase_DeleteRecord (&lhs_record) ;
 		}
 	}
+
+	// NOTE:
+	// at this point output_records contains only merge matched records
+	// the following will add any record resulted in a merge create
 
 	//--------------------------------------------------------------------------
 	// compute updates and create
@@ -413,7 +435,7 @@ static Record MergeConsume
 		// compute all pending updates
 		// TODO: note we're under lock at this point! is there a way
 		// to compute these changes before locking ?
-		if (op->on_create) {
+		if (op->on_create != NULL) {
 			_UpdateProperties (op->node_pending_updates,
 				op->edge_pending_updates, op->on_create_it,
 				op->output_records + match_count, create_count) ;
@@ -424,7 +446,7 @@ static Record MergeConsume
 	if (array_len (op->postponed_match) > 0) {
 		// reset match stream, required as we've commited data to the graph
 		OpBase_PropagateReset (op->match_stream) ;
-		_processPostponedRecords (op, match_count, create_count) ;
+		_processPostponedRecords (op) ;
 		OpBase_PropagateReset (op->match_stream) ;
 	}
 
@@ -433,7 +455,7 @@ static Record MergeConsume
 	//--------------------------------------------------------------------------
 
 	if (HashTableElemCount (op->node_pending_updates) > 0 ||
-	   HashTableElemCount  (op->edge_pending_updates) > 0) {
+		HashTableElemCount (op->edge_pending_updates) > 0) {
 
 		CommitUpdates (gc, op->node_pending_updates, ENTITY_NODE) ;
 		if (likely (!ErrorCtx_EncounteredError ())) {

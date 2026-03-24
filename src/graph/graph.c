@@ -144,11 +144,11 @@ void Graph_ReleaseLock
 // retrieves edges connecting source to destination
 static void _Graph_GetEdgesConnectingNodes
 (
-	const Graph *g,     // Graph to get edges from.
-	NodeID srcID,       // Source node of edge
-	NodeID destID,      // Destination node of edge
-	RelationID r,       // Edge type.
-	Edge **edges        // array_t of edges connecting src to dest of type r
+	const Graph *g,  // Graph to get edges from.
+	NodeID srcID,    // Source node of edge
+	NodeID destID,   // Destination node of edge
+	RelationID r,    // Edge type.
+	Edge **edges     // array_t of edges connecting src to dest of type r
 ) {
 	ASSERT(g);
 	ASSERT(r      != GRAPH_NO_RELATION);

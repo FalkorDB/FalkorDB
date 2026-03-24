@@ -8,6 +8,9 @@
 #include "qg_node.h"
 #include "../graph.h"
 #include "../../util/arr.h"
+#include "../../query_ctx.h"
+#include "../graphcontext.h"
+#include "../../schema/schema.h"
 
 QGEdge *QGEdge_New
 (
@@ -150,6 +153,37 @@ void QGEdge_Reverse
 	e->dest = src;
 
 	QGNode_ConnectNode(e->src, e->dest, e);
+}
+
+// tries to resolves unknown relationship types
+// return false if at least one relationship type remained unresolved
+// otherwise all relationship types are resolved and true is returned
+bool QGEdge_ResolveUnknownRelIDS
+(
+	QGEdge *e  // edge to update
+) {
+	ASSERT (e != NULL) ;
+
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
+	bool    res = true ;  // assuming all relationship types are resolved
+	Schema *s   = NULL ;
+	uint    n   = array_len (e->reltypeIDs) ;
+
+	for (uint i = 0; i < n; i++) {
+		if (e->reltypeIDs [i] == GRAPH_UNKNOWN_RELATION) {
+			// try to resolve an unknown relationship type
+			s = GraphContext_GetSchema (gc, e->reltypes [i], SCHEMA_EDGE) ;
+			if (s != NULL) {
+				// update relationship type
+				e->reltypeIDs[i] = s->id ;
+			} else {
+				// cannot update the unkown relationship
+				res = false ;
+			}
+		}
+	}
+
+	return res ;
 }
 
 void QGEdge_ToString
