@@ -13,33 +13,17 @@ static void _Traverse_CollectEdges
 	NodeID src,
 	NodeID dest
 ) {
-	Graph *g = QueryCtx_GetGraph();
-	uint count = array_len(edge_ctx->edgeRelationTypes);
-	for(uint i = 0; i < count; i++) {
-		Graph_GetEdgesConnectingNodes(g,
-									  src,
-									  dest,
-									  edge_ctx->edgeRelationTypes[i],
-									  &edge_ctx->edges);
-	}
-}
-
-// collects traversed edge relations.
-// e.g. [e:R0|R1]
-// edge_ctx->edgeRelationTypes will hold both R0 and R1 IDs.
-// in the case where no relationship types are specified
-// edge_ctx->edgeRelationTypes will contain GRAPH_NO_RELATION
-static void _Traverse_SetRelationTypes
-(
-	EdgeTraverseCtx *edge_ctx,
-	QGEdge *e
-) {
-	uint reltype_count = array_len(e->reltypeIDs);
-	if(reltype_count > 0) {
-		array_clone(edge_ctx->edgeRelationTypes, e->reltypeIDs);
+	Graph *g = QueryCtx_GetGraph () ;
+	uint count = QGEdge_RelationCount (edge_ctx->e) ;
+	if (count == 0) {
+		Graph_GetEdgesConnectingNodes (g, src, dest, GRAPH_NO_RELATION,
+				&edge_ctx->edges) ;
 	} else {
-		edge_ctx->edgeRelationTypes = array_new(int, 1);
-		array_append(edge_ctx->edgeRelationTypes, GRAPH_NO_RELATION);
+		for (uint i = 0; i < count; i++) {
+			RelationID rel_id = QGEdge_RelationID (edge_ctx->e, i) ;
+			Graph_GetEdgesConnectingNodes (g, src, dest, rel_id,
+					&edge_ctx->edges) ;
+		}
 	}
 }
 
@@ -85,15 +69,42 @@ EdgeTraverseCtx *EdgeTraverseCtx_New
 	QGEdge *e,
 	int idx
 ) {
-	ASSERT(e != NULL);
-	ASSERT(ae != NULL);
+	ASSERT (e  != NULL) ;
+	ASSERT (ae != NULL) ;
 
-	EdgeTraverseCtx *edge_ctx = rm_malloc(sizeof(EdgeTraverseCtx));
-	edge_ctx->edges = array_new(Edge, 32); // Instantiate array to collect matching edges.
-	_Traverse_SetRelationTypes(edge_ctx, e); // Build the array of relation type IDs.
-	edge_ctx->edgeRecIdx = idx;
-	edge_ctx->direction = _Traverse_SetDirection(ae, e);
-	return edge_ctx;
+	EdgeTraverseCtx *edge_ctx = rm_malloc (sizeof (EdgeTraverseCtx)) ;
+
+	edge_ctx->e = e ;
+	edge_ctx->edges = array_new (Edge, 32) ;   // instantiate array to collect matching edges
+
+	edge_ctx->edgeRecIdx = idx ;
+	edge_ctx->direction = _Traverse_SetDirection (ae, e) ;
+
+	return edge_ctx ;
+}
+
+// returns the number of relationship types used in this context
+uint EdgeTraverseCtx_RelationCount
+(
+	const EdgeTraverseCtx *edge_ctx  // edge traverse context
+) {
+	ASSERT (edge_ctx    != NULL) ;
+	ASSERT (edge_ctx->e != NULL) ;
+
+	return QGEdge_RelationCount (edge_ctx->e) ;
+}
+
+// get the ith relationship type used in this context
+RelationID EdgeTraverseCtx_GetRelationIdx
+(
+	const EdgeTraverseCtx *edge_ctx,  // edge traverse context
+	uint idx                          // edge ith rel type
+) {
+	ASSERT (edge_ctx    != NULL) ;
+	ASSERT (edge_ctx->e != NULL) ;
+	ASSERT (QGEdge_RelationCount (edge_ctx->e) > idx) ;
+
+	return QGEdge_RelationID (edge_ctx->e, idx) ;
 }
 
 // populate the traverse context's edges array with all edges of the appropriate
@@ -153,19 +164,21 @@ void EdgeTraverseCtx_Reset
 (
 	EdgeTraverseCtx *edge_ctx
 ) {
-	ASSERT(edge_ctx != NULL);
+	ASSERT (edge_ctx != NULL) ;
 
-	array_clear(edge_ctx->edges);
+	array_clear (edge_ctx->edges) ;
+	QGEdge_ResolveUnknownRelIDS (edge_ctx->e) ;
 }
 
 void EdgeTraverseCtx_Free
 (
 	EdgeTraverseCtx *edge_ctx
 ) {
-	if(!edge_ctx) return;
+	if (edge_ctx == NULL) {
+		return ;
+	}
 
-	array_free(edge_ctx->edges);
-	array_free(edge_ctx->edgeRelationTypes);
-	rm_free(edge_ctx);
+	array_free (edge_ctx->edges) ;
+	rm_free (edge_ctx) ;
 }
 
