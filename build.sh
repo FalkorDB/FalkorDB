@@ -563,8 +563,6 @@ setup_build_environment() {
         NPROC=$(sysctl -n hw.ncpu)
     elif command -v nproc &> /dev/null; then
         NPROC=$(nproc)
-    elif command -v sysctl &> /dev/null && [[ "$OS" == "macos" ]]; then
-        NPROC=$(sysctl -n hw.physicalcpu)
     else
         NPROC=4
     fi
@@ -1385,8 +1383,6 @@ build_project() {
         NPROC=$(sysctl -n hw.ncpu)
     elif command -v nproc &> /dev/null; then
         NPROC=$(nproc)
-    elif command -v sysctl &> /dev/null && [[ "$OS" == "macos" ]]; then
-        NPROC=$(sysctl -n hw.physicalcpu)
     else
         NPROC=4
     fi
