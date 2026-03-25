@@ -512,27 +512,23 @@ void QueryGraph_ResolveUnknownRelIDs
 	QueryGraph *qg
 ) {
 	// no unknown relationships - no need to updated
-	if(!qg->unknown_reltype_ids) return;
-
-	Schema *s = NULL;
-	bool unkown_relationships = false;
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	uint edge_count = QueryGraph_EdgeCount(qg);
-
-	// update edges
-	for(uint i = 0; i < edge_count; i++) {
-		QGEdge *edge = qg->edges[i];
-		uint rel_types_count = array_len(edge->reltypeIDs);
-		for(uint j = 0; j < rel_types_count; j++) {
-			if(edge->reltypeIDs[j] == GRAPH_UNKNOWN_RELATION) {
-				s = GraphContext_GetSchema(gc, edge->reltypes[j], SCHEMA_EDGE);
-				if(s) edge->reltypeIDs[j] = s->id;
-				else unkown_relationships = true; // cannot update the unkown relationship
-			}
-		}
+	if (!qg->unknown_reltype_ids) {
+		return ;
 	}
 
-	qg->unknown_reltype_ids = unkown_relationships;
+	// update edges
+	uint edge_count = QueryGraph_EdgeCount (qg) ;
+	bool unknown_reltype_ids = false ;
+	for (uint i = 0; i < edge_count; i++) {
+		QGEdge *edge = qg->edges [i] ;
+		if (!QGEdge_ResolveUnknownRelIDS (edge)) {
+			// cannot update the unkown relationship
+			// do not break, we want `QGEdge_ResolveUnknownRelIDS`
+			// to try and resolve unknown relationship types for all edges
+			unknown_reltype_ids = true ;
+		}
+	}
+	qg->unknown_reltype_ids = unknown_reltype_ids ;
 }
 
 QueryGraph *QueryGraph_Clone
