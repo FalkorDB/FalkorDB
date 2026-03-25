@@ -33,10 +33,11 @@ static inline bool _isInSubExecutionPlan(OpBase *op) {
 
 static void _removeRedundantTraversal(ExecutionPlan *plan, OpCondTraverse *traverse) {
 	AlgebraicExpression *ae = traverse->ae;
+	if(!ae || AlgebraicExpression_OperandCount(ae) != 1) return;
+
 	const char *src = AlgebraicExpression_Src(ae);
 	const char *dest = AlgebraicExpression_Dest(ae);
-	if(ae && AlgebraicExpression_OperandCount(ae) == 1 &&
-	   src && dest && !strcmp(src, dest)) {
+	if(src && dest && !strcmp(src, dest)) {
 		ExecutionPlan_RemoveOp(plan, (OpBase *)traverse);
 		OpBase_Free((OpBase *)traverse);
 	}
@@ -68,6 +69,8 @@ void reduceTraversal(ExecutionPlan *plan) {
 		} else {
 			ASSERT(false);
 		}
+
+		if(ae == NULL) continue;
 
 		/* If traverse src and dest nodes are the same,
 		 * number of hops is 1 and the matrix being used is a label matrix, than
