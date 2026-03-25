@@ -183,6 +183,10 @@ static AlgebraicExpression **_AlgebraicExpression_IsolateVariableLenExps
 		// separate it into its own expression
 		op = NULL;
 
+		// if expression was reduced to NULL (e.g. single labeled node)
+		// skip destination handling
+		if(exp == NULL) continue;
+
 		//----------------------------------------------------------------------
 		// handle destination
 		//----------------------------------------------------------------------
@@ -656,8 +660,11 @@ AlgebraicExpression **AlgebraicExpression_FromQueryGraph
 			if(i > 0) {
 				AlgebraicExpression *prev_exp = sub_exps[i-1];
 				// make sure expression i follows previous expression
-				QGNode *src = QueryGraph_GetNodeByAlias(qg, AlgebraicExpression_Src(exp));
-				QGNode *dest = QueryGraph_GetNodeByAlias(qg, AlgebraicExpression_Dest(prev_exp));
+				const char *src_alias = AlgebraicExpression_Src(exp);
+				const char *dest_alias = AlgebraicExpression_Dest(prev_exp);
+
+				QGNode *src = src_alias ? QueryGraph_GetNodeByAlias(qg, src_alias) : NULL;
+				QGNode *dest = dest_alias ? QueryGraph_GetNodeByAlias(qg, dest_alias) : NULL;
 				ASSERT(src == dest);
 
 				// exp[i] shares a label matrix with exp[i-1]
