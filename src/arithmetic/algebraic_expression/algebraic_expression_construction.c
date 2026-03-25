@@ -177,15 +177,15 @@ static AlgebraicExpression **_AlgebraicExpression_IsolateVariableLenExps
 			}
 		}
 
+		// if expression was reduced to NULL (e.g. single labeled node)
+		// skip destination handling
+		if(exp == NULL) continue;
+
 		array_append(res, exp);
 
 		// if the expression has a labeled destination,
 		// separate it into its own expression
 		op = NULL;
-
-		// if expression was reduced to NULL (e.g. single labeled node)
-		// skip destination handling
-		if(exp == NULL) continue;
 
 		//----------------------------------------------------------------------
 		// handle destination
