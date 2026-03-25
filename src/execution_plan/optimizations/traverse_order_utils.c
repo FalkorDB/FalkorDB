@@ -49,8 +49,8 @@ int TraverseOrder_LabelsScore
 	QGNode     *src_node  = src ? QueryGraph_GetNodeByAlias(qg, src) : NULL;
 	QGNode     *dest_node = dest ? QueryGraph_GetNodeByAlias(qg, dest) : NULL;
 
-	score += QGNode_LabelCount(src_node);
-	score += QGNode_LabelCount(dest_node);
+	if(src_node) score += QGNode_LabelCount(src_node);
+	if(dest_node) score += QGNode_LabelCount(dest_node);
 
 	// TODO: re-enable, see https://github.com/RedisGraph/RedisGraph/issues/1742
 	// consider 'dest' only if different than 'src'

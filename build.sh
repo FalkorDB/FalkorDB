@@ -559,6 +559,8 @@ setup_build_environment() {
     # Determine number of parallel jobs (needed for dependency builds)
     if [[ "$SLOW" == "1" ]]; then
         NPROC=1
+    elif [[ "$OS" == "macos" ]]; then
+        NPROC=$(sysctl -n hw.ncpu)
     elif command -v nproc &> /dev/null; then
         NPROC=$(nproc)
     elif command -v sysctl &> /dev/null && [[ "$OS" == "macos" ]]; then
@@ -1379,6 +1381,8 @@ build_project() {
     # Determine number of parallel jobs
     if [[ "$SLOW" == "1" ]]; then
         NPROC=1
+    elif [[ "$OS" == "macos" ]]; then
+        NPROC=$(sysctl -n hw.ncpu)
     elif command -v nproc &> /dev/null; then
         NPROC=$(nproc)
     elif command -v sysctl &> /dev/null && [[ "$OS" == "macos" ]]; then
