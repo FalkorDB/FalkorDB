@@ -99,6 +99,18 @@ log_success() {
     echo -e "${GREEN}[SUCCESS]${NC} $*"
 }
 
+get_nproc() {
+    if [[ "$SLOW" == "1" ]]; then
+        echo 1
+    elif [[ "$OS" == "macos" ]]; then
+        sysctl -n hw.ncpu
+    elif command -v nproc &> /dev/null; then
+        nproc
+    else
+        echo 4
+    fi
+}
+
 log_error() {
     echo -e "${RED}[ERROR]${NC} $*" >&2
 }
@@ -557,15 +569,7 @@ setup_build_environment() {
     export CMAKE_LD_LIBS="${CMAKE_LD_LIBS:- }"
 
     # Determine number of parallel jobs (needed for dependency builds)
-    if [[ "$SLOW" == "1" ]]; then
-        NPROC=1
-    elif [[ "$OS" == "macos" ]]; then
-        NPROC=$(sysctl -n hw.ncpu)
-    elif command -v nproc &> /dev/null; then
-        NPROC=$(nproc)
-    else
-        NPROC=4
-    fi
+    NPROC=$(get_nproc)
     export NPROC
 
     # Print build configuration
@@ -1377,15 +1381,7 @@ build_project() {
     start_group "Building FalkorDB"
 
     # Determine number of parallel jobs
-    if [[ "$SLOW" == "1" ]]; then
-        NPROC=1
-    elif [[ "$OS" == "macos" ]]; then
-        NPROC=$(sysctl -n hw.ncpu)
-    elif command -v nproc &> /dev/null; then
-        NPROC=$(nproc)
-    else
-        NPROC=4
-    fi
+    NPROC=$(get_nproc)
 
     log_info "Building with $NPROC parallel jobs..."
 
