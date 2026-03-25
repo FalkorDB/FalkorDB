@@ -343,7 +343,9 @@ static OpResult CondTraverseReset
 		array_clear (op->optional_records) ;
 	}
 
-	if(op->edge_ctx) EdgeTraverseCtx_Reset(op->edge_ctx);
+	if (op->edge_ctx) {
+		EdgeTraverseCtx_Reset (op->edge_ctx) ;
+	}
 
 	GrB_Info info = Delta_MatrixTupleIter_detach(&op->iter);
 	ASSERT(info == GrB_SUCCESS);
