@@ -31,7 +31,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BASE_IMAGE_VERSION: 1.1.2
+  BASE_IMAGE_VERSION: 1.2.0
 jobs:
   build:
     runs-on: ${{ matrix.platform.machine_label }}
@@ -494,7 +494,7 @@ jobs:
         run: docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
 
       - name: Run Trivy scan
-        uses: aquasecurity/trivy-action@0.34.1
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
           output: trivy-report.json
@@ -513,7 +513,7 @@ jobs:
       - name: Fail build on high/critical severity vulnerabilities
         id: trivy_gate
         continue-on-error: true
-        uses: aquasecurity/trivy-action@0.34.1
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
           format: table
@@ -525,7 +525,7 @@ jobs:
 
       - name: Add comment to PR
         if: github.event_name == 'pull_request' && steps.trivy_gate.outcome == 'failure'
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           header: "Trivy Vulnerability Scan Results for ${{ matrix.platform.suffix }}"
