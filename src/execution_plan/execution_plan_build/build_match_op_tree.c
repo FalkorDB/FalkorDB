@@ -72,6 +72,7 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 		}
 
 		AlgebraicExpression **exps = AlgebraicExpression_FromQueryGraph(cc);
+		if(!exps) return NULL;
 		uint expCount = array_len(exps);
 
 		// reorder exps, to the most performant arrangement of evaluation
@@ -278,4 +279,3 @@ void buildMatchOpTree
 cleanup:
 	QueryGraph_Free(sub_qg);
 }
-
