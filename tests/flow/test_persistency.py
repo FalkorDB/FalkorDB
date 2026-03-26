@@ -502,7 +502,7 @@ class testGraphPersistency():
             for q, expected_count in qs:
                 result = g.query(q).result_set[0][0]
                 if(result != expected_count):
-                    self.env.log(f"Graph {i} expected {expected_count}, got {result}")
+                    print(f"Graph {i} expected {expected_count}, got {result}")
                     self.env.assertFalse(True)
 
     # Verify that the DB will respond to PING while taking a snapshot

@@ -1035,7 +1035,6 @@ class testUDF():
             self.graph.query("RETURN del_lib.DelTest()")
             assert False, "Expected failure calling deleted function"
         except ResponseError as e:
-            print (f"str(e).lower(): {str(e).lower()}")
             self.env.assertIn("unknown function 'del_lib.deltest'", str(e).lower())
 
     def test_delete_nonexistent_library(self):
