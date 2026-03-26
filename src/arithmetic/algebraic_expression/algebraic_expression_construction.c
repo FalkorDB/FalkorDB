@@ -662,7 +662,16 @@ AlgebraicExpression **AlgebraicExpression_FromQueryGraph
 					QGNode *src = src_alias ? QueryGraph_GetNodeByAlias(qg, src_alias) : NULL;
 					const char* dest_alias = AlgebraicExpression_Dest(prev_exp);
 					QGNode *dest = dest_alias ? QueryGraph_GetNodeByAlias(qg, dest_alias) : NULL;
-					if(!src || !dest) continue;
+					if(!src || !dest) {
+						array_free_elements(sub_exps, (void (*)(void *))AlgebraicExpression_Free);
+						array_free(sub_exps);
+						for (uint j = i; j < path_count; j++) {
+							array_free(paths[j]);
+					}
+						array_free(paths);
+						array_free(path);
+						return NULL;
+					}
 				ASSERT(src == dest);
 
 				// exp[i] shares a label matrix with exp[i-1]
