@@ -102,6 +102,8 @@ void TraversalToString
 	const char *edge       = AlgebraicExpression_Edge(ae);
 	const char *src_alias  = AlgebraicExpression_Src(ae);
 	const char *dest_alias = AlgebraicExpression_Dest(ae);
+	if (!src_alias) src_alias = "?";
+	if (!dest_alias) dest_alias = "?";
 
 	bool transpose  = (edge && AlgebraicExpression_Transposed(ae));
 	bool same_alias = !strcmp(src_alias, dest_alias);
@@ -150,7 +152,8 @@ void TraversalToString
 		*buf = sdscatprintf(*buf, "%s", src_labels);
 		sdsfree(src_labels);
 	} else {
-		*buf = sdscatprintf(*buf, "(%s", AlgebraicExpression_Dest(clone));
+		const char* clone_dest_alias = clone ? AlgebraicExpression_Dest(clone) : dest_alias;
+		*buf = sdscatprintf(*buf, "(%s", clone_dest_alias ? clone_dest_alias : "?");
 		char *dest_labels = ae_labels_dest(&clone);
 		*buf = sdscatprintf(*buf, "%s", dest_labels);
 		sdsfree(dest_labels);

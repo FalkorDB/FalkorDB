@@ -146,13 +146,17 @@ OpBase *NewCondTraverseOp
 			CondTraverseReset, CondTraverseToString, CondTraverseClone,
 			CondTraverseFree, false, plan);
 
-	bool aware = OpBase_AliasMapping((OpBase *)op, AlgebraicExpression_Src(ae),
+	const char *src_alias = AlgebraicExpression_Src(ae);
+	const char *dest_alias = AlgebraicExpression_Dest(ae);
+	ASSERT(src_alias != NULL);
+	ASSERT(dest_alias != NULL);
+
+	bool aware = OpBase_AliasMapping((OpBase *)op, src_alias,
 			&op->srcNodeIdx);
 	UNUSED(aware);
 	ASSERT(aware == true);
 
-	const char *dest = AlgebraicExpression_Dest(ae);
-	op->destNodeIdx = OpBase_Modifies((OpBase *)op, dest);
+	op->destNodeIdx = OpBase_Modifies((OpBase *)op, dest_alias);
 
 	const char *edge = AlgebraicExpression_Edge(ae);
 	if(edge) {

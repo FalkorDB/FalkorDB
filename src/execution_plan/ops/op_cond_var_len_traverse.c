@@ -132,12 +132,17 @@ OpBase *NewCondVarLenTraverseOp
 				CondVarLenTraverseToString, CondVarLenTraverseClone,
 				CondVarLenTraverseFree, false, plan);
 
-	bool aware = OpBase_AliasMapping((OpBase *)op, AlgebraicExpression_Src(ae),
+	const char *src_alias = AlgebraicExpression_Src(ae);
+	const char *dest_alias = AlgebraicExpression_Dest(ae);
+	ASSERT(src_alias != NULL);
+	ASSERT(dest_alias != NULL);
+
+	bool aware = OpBase_AliasMapping((OpBase *)op, src_alias,
 			&op->srcNodeIdx);
 	ASSERT(aware);
 
 	op->destNodeIdx = OpBase_Modifies((OpBase *)op,
-			AlgebraicExpression_Dest(ae));
+			dest_alias);
 
 	// populate edge value in record only if it is referenced
 	AST *ast = QueryCtx_GetAST();

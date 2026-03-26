@@ -22,8 +22,9 @@ static bool _highly_connected_node
 	ASSERT(alias != NULL);
 
 	// look up node in qg
+	if (!alias) return false;
 	QGNode *n = QueryGraph_GetNodeByAlias(qg, alias);
-	ASSERT(n != NULL);
+	if (!n) return false;
 	return QGNode_HighlyConnected(n);
 }
 
@@ -156,15 +157,15 @@ static AlgebraicExpression **_AlgebraicExpression_IsolateVariableLenExps
 		//----------------------------------------------------------------------
 
 		// expression contains a variable length edge
-		QGNode *src = QueryGraph_GetNodeByAlias(qg,
-				AlgebraicExpression_Src(exp));
+		const char *src_alias = AlgebraicExpression_Src(exp);
+		QGNode *src = src_alias ? QueryGraph_GetNodeByAlias(qg, src_alias) : NULL;
 
 		// a variable length expression with a labeled source node
 		// we only care about the source label matrix, when it comes to
 		// the first expression, as in the following expressions
 		// src is the destination of the previous expression
 		AlgebraicExpression *op = NULL;
-		if(QGNode_Labeled(src)) {
+		if(src && QGNode_Labeled(src)) {
 			// remove src node matrix from expression
 			op = AlgebraicExpression_RemoveSource(&exp);
 		}
@@ -187,10 +188,10 @@ static AlgebraicExpression **_AlgebraicExpression_IsolateVariableLenExps
 		// handle destination
 		//----------------------------------------------------------------------
 
-		QGNode *dest = QueryGraph_GetNodeByAlias(qg,
-				AlgebraicExpression_Dest(exp));
+		const char *dest_alias = AlgebraicExpression_Dest(exp);
+		QGNode *dest = dest_alias ? QueryGraph_GetNodeByAlias(qg, dest_alias) : NULL;
 
-		if(QGNode_Labeled(dest)) {
+		if(dest && QGNode_Labeled(dest)) {
 			// remove dest node matrix from expression
 			op = AlgebraicExpression_RemoveDest(&exp);
 		}
@@ -273,9 +274,10 @@ static void _AlgebraicExpression_ExpandNodeOperand
 
 	const  char  *l      =  NULL;
 	const  char  *alias  =  AlgebraicExpression_Src(exp);
+	if(!alias) return;
 
 	QGNode *n = QueryGraph_GetNodeByAlias(qg, alias);
-	ASSERT(n != NULL);
+	if(!n) return;
 
 	uint label_count = QGNode_LabelCount(n);
 	if(label_count > 0) l = QGNode_GetLabel(n, 0);
@@ -656,8 +658,11 @@ AlgebraicExpression **AlgebraicExpression_FromQueryGraph
 			if(i > 0) {
 				AlgebraicExpression *prev_exp = sub_exps[i-1];
 				// make sure expression i follows previous expression
-				QGNode *src = QueryGraph_GetNodeByAlias(qg, AlgebraicExpression_Src(exp));
-				QGNode *dest = QueryGraph_GetNodeByAlias(qg, AlgebraicExpression_Dest(prev_exp));
+					const char* src_alias = AlgebraicExpression_Src(exp);
+					QGNode *src = src_alias ? QueryGraph_GetNodeByAlias(qg, src_alias) : NULL;
+					const char* dest_alias = AlgebraicExpression_Dest(prev_exp);
+					QGNode *dest = dest_alias ? QueryGraph_GetNodeByAlias(qg, dest_alias) : NULL;
+					if(!src || !dest) continue;
 				ASSERT(src == dest);
 
 				// exp[i] shares a label matrix with exp[i-1]

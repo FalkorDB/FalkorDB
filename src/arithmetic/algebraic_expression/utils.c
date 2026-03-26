@@ -393,9 +393,9 @@ void _AlgebraicExpression_RemoveRedundentOperands
 					AlgebraicExpression_SrcOperand(exp), 0)) continue;
 
 		const char *src_alias = AlgebraicExpression_Src(exp);
-		ASSERT(src_alias != NULL);
+		if(!src_alias) continue;
 		QGNode *src_node = QueryGraph_GetNodeByAlias(qg, src_alias);
-		ASSERT(src_node != NULL);
+		if(!src_node) continue;
 
 		uint label_count = QGNode_LabelCount(src_node);
 		ASSERT(label_count > 0);
@@ -405,7 +405,7 @@ void _AlgebraicExpression_RemoveRedundentOperands
 		for(int j = i-1; j >= 0; j--) {
 			AlgebraicExpression *prev_exp = exps[j];
 			const char *dest_alias = AlgebraicExpression_Dest(prev_exp);
-			if(strcmp(src_alias, dest_alias)) continue;
+			if(!dest_alias || strcmp(src_alias, dest_alias)) continue;
 
 			resolved = (AlgebraicExpression_DiagonalOperand(
 			AlgebraicExpression_DestOperand(prev_exp), 0));
