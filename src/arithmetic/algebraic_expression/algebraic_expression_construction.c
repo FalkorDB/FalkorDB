@@ -665,11 +665,12 @@ AlgebraicExpression **AlgebraicExpression_FromQueryGraph
 					if(!src || !dest) {
 						array_free_elements(sub_exps, (void (*)(void *))AlgebraicExpression_Free);
 						array_free(sub_exps);
-						for (uint j = i; j < path_count; j++) {
+						for (uint j = 0; j < path_count; j++) {
 							array_free(paths[j]);
-					}
+						}
 						array_free(paths);
 						array_free(path);
+						QueryGraph_Free(g);
 						return NULL;
 					}
 				ASSERT(src == dest);
