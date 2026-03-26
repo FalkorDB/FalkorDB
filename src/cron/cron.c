@@ -63,11 +63,20 @@ static int cmp_timespec
 	struct timespec a,
 	struct timespec b
 ) {
-	if (a.tv_sec == b.tv_sec) {
-		return a.tv_nsec - b.tv_nsec ;
-	} else {
-		return a.tv_sec - b.tv_sec ;
+	if (a.tv_sec < b.tv_sec) {
+		return -1 ;
+	} else if (a.tv_sec > b.tv_sec) {
+		return 1 ;
 	}
+
+	// seconds are equal; compare nanoseconds
+	if (a.tv_nsec < b.tv_nsec) {
+		return -1 ;
+	} else if (a.tv_nsec > b.tv_nsec) {
+		return 1 ;
+	}
+
+	return 0 ;
 }
 
 // minimum heap sort function
