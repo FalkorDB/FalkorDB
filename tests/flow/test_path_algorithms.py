@@ -7,7 +7,7 @@ EDGES = 200   # edge count
 
 GRAPH_ID = "path_algos"
 
-class testAllShortestPaths():
+class TestAllShortestPaths():
     def __init__(self):
         self.env, self.db = Env()
         self.graph = self.db.select_graph(GRAPH_ID)
