@@ -657,6 +657,81 @@ class testUDF():
         # restore original graph
         self.graph = self.db.select_graph(GRAPH_ID)
 
+    def test_get_node_by_id(self):
+        """
+        Test the graph.getNodeById(id) JS binding:
+        - Verify retrieval of existing nodes.
+        - Verify behavior for non-existent IDs.
+        - Verify error handling for invalid argument types.
+        - Verify behavior in an empty graph.
+        """
+
+        # Register UDF
+        script_valid = """
+            function getNode(id) {
+                let node = graph.getNodeById(id);
+                return node;
+            }
+            falkor.register('getNode', getNode);
+        """
+        self.db.udf_load("test_lib", script_valid, True)
+
+        # 1. Setup: Create a small graph
+        # Node ID 0: Alice, Node ID 1: Bob
+        self.graph.query("CREATE (:Person {name: 'Alice'}), (:Person {name: 'Bob'})")
+
+        # 2. Happy Path: Retrieve an existing node
+        # We expect the C implementation to return a Node object
+        res = self.graph.query("RETURN test_lib.getNode(0)").result_set
+        node = res[0][0]
+
+        # Expecting a node object
+        self.env.assertEqual(type(node), Node)
+        self.env.assertEqual(node.properties['name'], "Alice")
+
+        res = self.graph.query("RETURN test_lib.getNode(1)").result_set
+        node = res[0][0]
+
+        # Expecting a node object
+        self.env.assertEqual(type(node), Node)
+        self.env.assertEqual(node.properties['name'], "Bob")
+
+        # 3. Scenario: Node does not exist
+        # The C implementation returns JS_NULL
+        res = self.graph.query("RETURN test_lib.getNode(999)").result_set
+        self.env.assertEqual(res[0][0], None)
+
+        # 4. Scenario: Invalid Invocation (Wrong Type)
+        # The C implementation throws a JS_ThrowTypeError
+        try:
+            self.graph.query("RETURN test_lib.getNode('a')")
+            self.env.assertTrue(False)
+        except Exception:
+            pass
+
+        # 5. Scenario: Invalid Invocation (Missing argument)
+        # The C implementation throws a JS_ThrowTypeError
+        try:
+            self.graph.query("RETURN test_lib.getNode()")
+            self.env.assertTrue(False)
+        except Exception:
+            pass
+
+        # 6. Scenario: Invalid Invocation (Missing Arguments)
+        # The C implementation throws a JS_ThrowTypeError for argc < 1
+        script_no_args = """
+            function getNoArgs() {
+                return graph.getNodeById();
+            }
+            falkor.register('getNoArgs', getNoArgs);
+        """
+        self.db.udf_load("test_lib", script_no_args, True)
+        try:
+            self.graph.query("RETURN test_lib.getNoArgs()")
+            self.env.assertTrue(False)
+        except Exception:
+            pass
+
     def test_falkor_multi_source_traverse(self):
         """
         Verifies the correctness of the multi-source graph.traverse function,

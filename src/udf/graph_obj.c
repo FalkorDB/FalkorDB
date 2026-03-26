@@ -19,6 +19,71 @@
 extern JSClassID js_node_class_id;  // JS Node class
 
 //------------------------------------------------------------------------------
+// graph.getNodeById implementations
+//------------------------------------------------------------------------------
+
+// non-runtime implementation of `graph.getNodeById`
+// JS call: graph.getNodeById(19);
+static JSValue non_runtime_get_node
+(
+	JSContext *js_ctx,      // JavaScript context
+	JSValueConst this_val,  // 'this' value passed by the caller
+	int argc,               // number of arguments
+	JSValueConst *argv      // function arguments
+) {
+	ASSERT (argv   != NULL) ;
+	ASSERT (js_ctx != NULL) ;
+
+	return JS_ThrowTypeError (js_ctx,
+			"graph.getNodeById shouldn't be called in a global context") ;
+}
+
+// retrieves a node from the graph by its integer ID
+// JS Usage: const node = graph.getNodeById(nodeId);
+// argv[0] the integer ID of the node
+// return JSValue The Node object if found, JS_NULL if not found,
+// or a TypeError if arguments are invalid
+static JSValue graph_get_node_by_id
+(
+	JSContext *ctx,
+	JSValueConst this_val,
+	int argc,
+	JSValueConst *argv
+) {
+    // 1. validation: ensure an argument is provided
+    if (argc < 1) {
+        return JS_ThrowTypeError (ctx, "getNodeById: At least one "
+				"argument (ID) expected") ;
+    }
+
+    // 2. type checking: ensure the argument is a number (integer)
+    // note: use JS_IsNumber or JS_ToInt32 to ensure we get a valid ID
+
+	if (!JS_IsNumber(argv[0])) {
+		return JS_ThrowTypeError(ctx, "getNodeById: Argument must be a numeric integer");
+	}
+
+    int32_t node_id ;
+    if (JS_ToInt32 (ctx, &node_id, argv [0])) {
+        return JS_ThrowTypeError (ctx, "getNodeById: First argument must be an "
+				"integer ID") ;
+    }
+
+	const Graph *graph = QueryCtx_GetGraph () ;
+	ASSERT (graph != NULL) ;
+
+    // 3. Logic: Fetch the node from the underlying C engine
+    Node node ;
+    if (Graph_GetNode (graph, node_id, &node)) {
+        // successfully found: return the JS wrapper for the Node
+        return UDF_CreateNode (ctx, &node) ;
+    }
+
+    // 5. Fallback: Node not found
+    return JS_NULL ;
+}
+
+//------------------------------------------------------------------------------
 // graph.traverse implementations
 //------------------------------------------------------------------------------
 
@@ -243,7 +308,7 @@ void UDF_RegisterGraphObject
 }
 
 // set the implementation of the `graph.traverse` function
-void UDF_SetGraphTraverseImpl
+void UDF_SetGraphAPI
 (
 	JSContext *js_ctx,              // the QuickJS context
 	UDF_JSCtxRegisterFuncMode mode  // the registration mode
@@ -257,19 +322,32 @@ void UDF_SetGraphTraverseImpl
 	ASSERT (JS_IsObject (graph_obj));
 
 	// pick implementation
-    JSValue func_obj = JS_UNDEFINED;
+    JSValue traverse_func_obj = JS_UNDEFINED ;
+    JSValue get_node_func_obj = JS_UNDEFINED ;
 	if (mode == UDF_FUNC_REG_MODE_LOCAL) {
-		func_obj = JS_NewCFunction (js_ctx, graph_traverse, "traverse", 2) ;
+		traverse_func_obj =
+			JS_NewCFunction (js_ctx, graph_traverse, "traverse", 2) ;
+		get_node_func_obj =
+			JS_NewCFunction (js_ctx, graph_get_node_by_id, "getNodeById", 1) ;
 	} else {
-		func_obj = JS_NewCFunction (js_ctx, non_runtime_traverse, "traverse", 2) ;
+		traverse_func_obj =
+			JS_NewCFunction (js_ctx, non_runtime_traverse, "traverse", 2) ;
+		get_node_func_obj =
+			JS_NewCFunction (js_ctx, non_runtime_get_node, "getNodeById", 1) ;
 	}
 
-	ASSERT (JS_IsFunction (js_ctx, func_obj)) ;
+	ASSERT (JS_IsFunction (js_ctx, traverse_func_obj)) ;
+	ASSERT (JS_IsFunction (js_ctx, get_node_func_obj)) ;
 
     // define property with explicit flags (writable, configurable)
-    int def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "traverse",
-			func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
+    int def_res ;
 
+    def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "traverse",
+			traverse_func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
+	ASSERT (def_res >= 0) ;
+
+    def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "getNodeById",
+			get_node_func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
 	ASSERT (def_res >= 0) ;
 
     // clean up
