@@ -45,13 +45,13 @@ void CommitUpdates
 	dict *updates,
 	EntityType type
 ) {
-	ASSERT(gc      != NULL);
-	ASSERT(updates != NULL);
-	ASSERT(type    != ENTITY_UNKNOWN);
+	ASSERT (gc      != NULL) ;
+	ASSERT (updates != NULL) ;
+	ASSERT (type    != ENTITY_UNKNOWN) ;
 
-	uint update_count         = HashTableElemCount(updates);
+	uint update_count         = HashTableElemCount (updates) ;
 	bool enforce_constraints  = GraphContext_HasConstraints (gc) ;
-	bool constraint_violation = false;
+	bool constraint_violation = false ;
 
 	// return early if no updates are enqueued
 	if (update_count == 0) {
@@ -389,7 +389,7 @@ void ensureMatrixDim
 	raxSeek (&it, "^", NULL, 0) ;
 
 	while (raxNext (&it)) {
-		EntityUpdateEvalCtx *ctx = it.data ;
+		EntityUpdateDesc *ctx = it.data ;
 
 		uint n = array_len (ctx->add_labels) ;
 		for (uint i = 0 ; i < n ; i++) {
@@ -436,7 +436,7 @@ void EvalEntityUpdates
 	dict *node_updates,
 	dict *edge_updates,
 	const Record r,
-	const EntityUpdateEvalCtx *ctx,
+	const EntityUpdateDesc *desc,
 	bool allow_null
 ) {
 	//--------------------------------------------------------------------------
@@ -445,7 +445,7 @@ void EvalEntityUpdates
 
 	// get the type of the entity to update
 	// if the expected entity was not found, make no updates but do not error
-	RecordEntryType t = Record_GetType (r, ctx->record_idx) ;
+	RecordEntryType t = Record_GetType (r, desc->record_idx) ;
 	if (unlikely (t == REC_TYPE_UNKNOWN)) {
 		return ;
 	}
@@ -454,18 +454,18 @@ void EvalEntityUpdates
 	if (unlikely (t != REC_TYPE_NODE && t != REC_TYPE_EDGE)) {
 		ErrorCtx_RaiseRuntimeException (
 			"Update error: alias '%s' did not resolve to a graph entity",
-			ctx->alias) ;
+			desc->alias) ;
 	}
 
 	// label(s) update can only be performed on nodes
-	if (unlikely ((ctx->add_labels != NULL || ctx->remove_labels != NULL) &&
+	if (unlikely ((desc->add_labels != NULL || desc->remove_labels != NULL) &&
 			t != REC_TYPE_NODE)) {
 		ErrorCtx_RaiseRuntimeException (
 				"Type mismatch: expected Node but was Relationship") ;
 	}
 
 	// get the updated entity
-	GraphEntity *entity = Record_GetGraphEntity (r, ctx->record_idx) ;
+	GraphEntity *entity = Record_GetGraphEntity (r, desc->record_idx) ;
 
 	// if the entity is marked as deleted, make no updates but do not error
 	if (unlikely (Graph_EntityIsDeleted (entity))) {
@@ -500,20 +500,20 @@ void EvalEntityUpdates
 		update = (PendingUpdateCtx *)HashTableGetVal (entry) ;
 	}
 
-	if (array_len (ctx->add_labels) > 0) {
-	   if (update->add_labels == NULL) {
-		   update->add_labels =
-			   array_new (const char *, array_len (ctx->add_labels)) ;
-	   }
-		array_union (update->add_labels, ctx->add_labels, strcmp) ;
+	if (array_len (desc->add_labels) > 0) {
+		if (update->add_labels == NULL) {
+			update->add_labels =
+				array_new (const char *, array_len (desc->add_labels)) ;
+		}
+		array_union (update->add_labels, desc->add_labels, strcmp) ;
 	}
 
-	if (array_len(ctx->remove_labels) > 0) {
+	if (array_len(desc->remove_labels) > 0) {
 		if (update->remove_labels == NULL) {
 			update->remove_labels =
-				array_new (const char *, array_len (ctx->remove_labels)) ;
+				array_new (const char *, array_len (desc->remove_labels)) ;
 		}
-		array_union (update->remove_labels, ctx->remove_labels, strcmp) ;
+		array_union (update->remove_labels, desc->remove_labels, strcmp) ;
 	}
 
 	AttributeSet *old_attrs = entity->attributes ;  // backup original attributes
@@ -521,9 +521,9 @@ void EvalEntityUpdates
 
 	// now that the attribute-set was updated re-assign entity to the record
 	if (t == REC_TYPE_NODE) {
-		Record_AddNode (r, ctx->record_idx, *(Node *)entity) ;
+		Record_AddNode (r, desc->record_idx, *(Node *)entity) ;
 	} else {
-		Record_AddEdge (r, ctx->record_idx, *(Edge *)entity) ;
+		Record_AddEdge (r, desc->record_idx, *(Edge *)entity) ;
 	}
 
 	// if we're converting a SET clause, NULL is acceptable
@@ -534,7 +534,7 @@ void EvalEntityUpdates
 	}
 
 	bool error = false;
-	uint exp_count = array_len (ctx->properties) ;
+	uint exp_count = array_len (desc->properties) ;
 	EffectsBuffer *eb = QueryCtx_GetEffectsBuffer () ;
 
 	// evaluate each assigned expression
@@ -551,7 +551,7 @@ void EvalEntityUpdates
 	AttributeID attr_ids [exp_count] ;  // attribute ids
 
 	for (uint i = 0; i < exp_count && !error; i++) {
-		PropertySetCtx *property = ctx->properties + i ;
+		PropertySetDesc *property = desc->properties + i ;
 
 		SIValue     v         = AR_EXP_Evaluate (property->exp, r) ;
 		SIType      t         = SI_TYPE (v) ;
@@ -656,9 +656,9 @@ void EvalEntityUpdates
 	update->attributes = *entity->attributes ;
 	entity->attributes = old_attrs ;
 	if (t == REC_TYPE_NODE) {
-		Record_AddNode (r, ctx->record_idx, *(Node *)entity) ;
+		Record_AddNode (r, desc->record_idx, *(Node *)entity) ;
 	} else {
-		Record_AddEdge (r, ctx->record_idx, *(Edge *)entity) ;
+		Record_AddEdge (r, desc->record_idx, *(Edge *)entity) ;
 	}
 }
 

@@ -148,7 +148,7 @@ static void _ConvertUpdateItem
 
 	// see if we need to create an update context for updated entity
 	int len = strlen(alias);
-	EntityUpdateEvalCtx *ctx = raxFind(updates, (unsigned char *)alias, len);
+	EntityUpdateDesc *ctx = raxFind(updates, (unsigned char *)alias, len);
 	if(ctx == raxNotFound) {
 		ctx = UpdateCtx_New(alias);
 		raxInsert(updates, (unsigned char *)alias, len, ctx, NULL);
@@ -247,7 +247,7 @@ static void _ConvertUpdateItem
 			exp = AR_EXP_NewConstOperandNode (SI_NullVal ()) ;
 		}
 
-		PropertySetCtx update = {
+		PropertySetDesc update = {
 			.exp       = exp,
 			.mode      = update_mode,
 			.attr_id   = ATTRIBUTE_ID_NONE,
@@ -441,7 +441,7 @@ rax *AST_PrepareUpdateOp
 	cypher_astnode_type_t type = cypher_astnode_type(clause);
 	ASSERT(type == CYPHER_AST_SET || type == CYPHER_AST_REMOVE);
 
-	rax *updates = raxNew(); // entity alias -> EntityUpdateEvalCtx
+	rax *updates = raxNew(); // entity alias -> EntityUpdateDesc
 	if(type == CYPHER_AST_SET) {
 		uint nitems = cypher_ast_set_nitems(clause);
 		for(uint i = 0; i < nitems; i++) {

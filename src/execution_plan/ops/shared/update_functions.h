@@ -42,7 +42,7 @@ void EvalEntityUpdates
 	dict *node_updates,
 	dict *edge_updates,
 	const Record r,
-	const EntityUpdateEvalCtx *ctx,
+	const EntityUpdateDesc *ctx,
 	bool allow_null
 );
 

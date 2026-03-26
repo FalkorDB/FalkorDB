@@ -73,7 +73,7 @@ OpBase *NewUpdateOp
 	raxStart(&op->it, update_exps);
 	raxSeek(&op->it, "^", NULL, 0);
 	while(raxNext(&op->it)) {
-		EntityUpdateEvalCtx *ctx = op->it.data;
+		EntityUpdateDesc *ctx = op->it.data;
 		ctx->record_idx = OpBase_Modifies((OpBase *)op, ctx->alias);
 	}
 
@@ -97,7 +97,7 @@ static Record UpdateConsume
 		// evaluate update expressions
 		raxSeek (&op->it, "^", NULL, 0) ;
 		while (raxNext (&op->it)) {
-			EntityUpdateEvalCtx *ctx = op->it.data;
+			EntityUpdateDesc *ctx = op->it.data;
 			EvalEntityUpdates (op->gc, op->node_updates, op->edge_updates, r,
 					ctx, true) ;
 		}

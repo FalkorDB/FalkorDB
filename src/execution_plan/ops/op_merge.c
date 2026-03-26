@@ -64,7 +64,7 @@ static void _UpdateProperties
 		// evaluate update expressions
 		raxSeek (&updates, "^", NULL, 0) ;
 		while (raxNext (&updates)) {
-			EntityUpdateEvalCtx *ctx = updates.data ;
+			EntityUpdateDesc *ctx = updates.data ;
 			EvalEntityUpdates (gc, node_pending_updates, edge_pending_updates,
 					r, ctx, true) ;
 		}
@@ -90,13 +90,14 @@ static void _InitializeUpdates
 ) {
 	// if we have ON MATCH / ON CREATE directives
 	// set the appropriate record IDs of entities to be updated
-	raxStart(it, updates);
-	raxSeek(it, "^", NULL, 0);
+	raxStart (it, updates) ;
+	raxSeek  (it, "^", NULL, 0) ;
+
 	// iterate over all expressions
-	while(raxNext(it)) {
-		EntityUpdateEvalCtx *ctx = it->data;
+	while (raxNext (it)) {
+		EntityUpdateDesc *ctx = it->data ;
 		// set the record index for every entity modified by this operation
-		ctx->record_idx = OpBase_Modifies((OpBase *)op, ctx->alias);
+		ctx->record_idx = OpBase_Modifies ((OpBase *)op, ctx->alias) ;
 	}
 
 }

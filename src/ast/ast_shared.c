@@ -212,32 +212,32 @@ EdgeCreateCtx EdgeCreateCtx_Clone
 	return clone ;
 }
 
-EntityUpdateEvalCtx *UpdateCtx_New
+EntityUpdateDesc *UpdateCtx_New
 (
 	const char *alias
 ) {
-	EntityUpdateEvalCtx *ctx = rm_malloc(sizeof(EntityUpdateEvalCtx));
+	EntityUpdateDesc *ctx = rm_malloc(sizeof(EntityUpdateDesc));
 
 	ctx->alias         = alias;
 	ctx->record_idx    = INVALID_INDEX;
-	ctx->properties    = array_new(PropertySetCtx, 1);
+	ctx->properties    = array_new(PropertySetDesc, 1);
 	ctx->add_labels    = NULL;
 	ctx->remove_labels = NULL;
 
 	return ctx;
 }
 
-EntityUpdateEvalCtx *UpdateCtx_Clone
+EntityUpdateDesc *UpdateCtx_Clone
 (
-	const EntityUpdateEvalCtx *orig
+	const EntityUpdateDesc *orig
 ) {
-	EntityUpdateEvalCtx *clone = rm_malloc(sizeof(EntityUpdateEvalCtx));
+	EntityUpdateDesc *clone = rm_malloc(sizeof(EntityUpdateDesc));
 
 	uint count = array_len(orig->properties);
 
 	clone->alias         = orig->alias;
 	clone->record_idx    = orig->record_idx;
-	clone->properties    = array_new(PropertySetCtx, count);
+	clone->properties    = array_new(PropertySetDesc, count);
 	clone->add_labels    = NULL;
 	clone->remove_labels = NULL;
 	if(orig->add_labels != NULL) {
@@ -248,7 +248,7 @@ EntityUpdateEvalCtx *UpdateCtx_Clone
 	}
 
 	for(uint i = 0; i < count; i ++) {
-		PropertySetCtx update = {
+		PropertySetDesc update = {
 			.exp       = AR_EXP_Clone(orig->properties[i].exp),
 			.mode      = orig->properties[i].mode,
 			.attr_id   = orig->properties[i].attr_id,
@@ -262,7 +262,7 @@ EntityUpdateEvalCtx *UpdateCtx_Clone
 
 void UpdateCtx_Clear
 (
-	EntityUpdateEvalCtx *ctx
+	EntityUpdateDesc *ctx
 ) {
 	uint count = array_len(ctx->properties);
 	for(uint i = 0; i < count; i ++) AR_EXP_Free(ctx->properties[i].exp);
@@ -271,7 +271,7 @@ void UpdateCtx_Clear
 
 void UpdateCtx_Free
 (
-	EntityUpdateEvalCtx *ctx
+	EntityUpdateDesc *ctx
 ) {
 	uint count = array_len(ctx->properties);
 	for(uint i = 0; i < count; i ++) {
@@ -372,7 +372,8 @@ static void _collect_with_projections
 	}
 }
 
-static void _collect_call_projections(
+static void _collect_call_projections
+(
 	const cypher_astnode_t *call_clause,
 	rax *identifiers
 ) {
@@ -492,3 +493,4 @@ void collect_aliases_in_scope
 		}
 	}
 }
+
