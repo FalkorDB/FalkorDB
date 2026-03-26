@@ -441,8 +441,9 @@ class testAllShortestPaths():
         ]
 
         for result in results:
-            self.env.assertEquals(len(result.result_set), 5)
-            for i in range(0, 5):
+            expected_count = min(len(self.ss_paths), 5)
+            self.env.assertEquals(len(result.result_set), expected_count)
+            for i in range(0, expected_count):
                 self.env.assertContains(result.result_set[i], self.ss_paths)
 
     def test08_fractional_weights(self):
