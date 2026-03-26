@@ -363,7 +363,7 @@ bool Cron_AbortTask
 		// in case task is currently being performed, wait for it to finish
 		while (cron->current_task == task) { }
 
-		// task wan't aborted
+		// task wasn't aborted
 		return false ;
 	}
 	
