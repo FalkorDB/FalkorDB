@@ -327,7 +327,7 @@ void Cron_Stop (void) {
 // create a new CRON task
 CronTaskHandle Cron_AddTask
 (
-	uint when,          // number of miliseconds until task invocation
+	uint when,          // number of milliseconds until task invocation
 	CronTaskCB work,    // callback to call when task is due
 	CronTaskFree free,  // [optional] task private data free function
 	void *pdata         // [optional] private data to pass to callback
