@@ -13,8 +13,8 @@
 typedef struct {
 	QGNode *n;          // node to scan (might hold multiple labels)
 	LabelID label_id;   // label ID of the node being traversed
-	const char *alias;  // alias of the node being traversed
-	const char *label;  // label of the node being traversed
+	char *alias;        // alias of the node being traversed (owned)
+	char *label;        // label of the node being traversed (owned)
 } NodeScanCtx;
 
 // allocates and returns a new context
