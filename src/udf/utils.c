@@ -11,6 +11,7 @@
 #include "../configuration/config.h"
 #include "../arithmetic/func_desc.h"
 
+
 extern JSClassID js_node_class_id;        // JS Node class
 extern JSClassID js_edge_class_id;        // JS Edge class
 extern JSClassID js_path_class_id;        // JS Path class
