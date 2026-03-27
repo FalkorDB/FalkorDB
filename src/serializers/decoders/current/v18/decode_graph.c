@@ -70,13 +70,34 @@ static void _ComputeTransposeMatrices
 
 static GraphContext *_GetOrCreateGraphContext
 (
-	char *graph_name
+	const char *key_name,  // destination key name (from Redis)
+	char *graph_name,      // embedded graph name (from serialized payload)
+	uint64_t key_number    // total number of virtual keys for this graph
 ) {
 	GraphContext *gc = GraphContext_UnsafeGetGraphContext (graph_name) ;
-	if (!gc) {
+
+	// detect a single-key RESTORE to a different key name
+	// e.g. DUMP a | RESTORE c — payload embeds "a" but dest is "c"
+	bool renamed_single_key =
+		(key_number == 1 && strcmp(key_name, graph_name) != 0) ;
+
+	if (gc != NULL) {
+		uint64_t processed =
+			GraphDecodeContext_GetProcessedKeyCount(gc->decoding_context);
+		if (processed == 0 && renamed_single_key) {
+			// a fully-loaded graph exists under the embedded name,
+			// but the destination key is different
+			// create a new GraphContext with the destination key name
+			gc = NULL ;
+		}
+		// else: multi-key continuation, reuse existing gc
+	}
+
+	if (gc == NULL) {
 		// new graph is being decoded
-		// inform the module and create new graph context
-		gc = GraphContext_New (graph_name) ;
+		// use destination key name for renamed single-key restores
+		// otherwise use the embedded graph name (for multi-key decodes)
+		gc = GraphContext_New (renamed_single_key ? key_name : graph_name) ;
 
 		// while loading the graph
 		// minimize matrix realloc and synchronization calls
@@ -114,7 +135,8 @@ static void _InitGraphDataStructure
 
 static GraphContext *_DecodeHeader
 (
-	SerializerIO rdb
+	SerializerIO rdb,
+	const char *key_name  // destination key name (from Redis)
 ) {
 	// Header format:
 	// Graph name
@@ -148,7 +170,8 @@ static GraphContext *_DecodeHeader
 	// total keys representing the graph
 	uint64_t key_number = SerializerIO_ReadUnsigned(rdb);
 
-	GraphContext *gc = _GetOrCreateGraphContext(graph_name);
+	GraphContext *gc = _GetOrCreateGraphContext(key_name, graph_name,
+			key_number);
 	Graph *g = gc->g;
 
 	// if it is the first key of this graph,
@@ -224,7 +247,8 @@ GraphContext *RdbLoadGraphContext_latest
 	//      Entities in payload
 	//  Payload(s) X N
 
-	GraphContext *gc = _DecodeHeader(rdb);
+	const char *key_name = RedisModule_StringPtrLen(rm_key_name, NULL);
+	GraphContext *gc = _DecodeHeader(rdb, key_name);
 	Graph        *g  = gc->g;
 
 	// log progress
@@ -339,8 +363,6 @@ GraphContext *RdbLoadGraphContext_latest
 	GraphDecodeContext_IncreaseProcessedKeyCount(gc->decoding_context);
 
 	// before finalizing keep encountered meta keys names, for future deletion
-	const char *key_name = RedisModule_StringPtrLen(rm_key_name, NULL);
-
 	// the virtual key name is not equal the graph name
 	if(strcmp(key_name, gc->graph_name) != 0) {
 		GraphDecodeContext_AddMetaKey(gc->decoding_context, key_name);
