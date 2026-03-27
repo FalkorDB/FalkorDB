@@ -4,7 +4,6 @@ from neo4j.spatial import WGS84Point
 import neo4j.graph
 import socket
 import struct
-import hashlib
 import base64
 import os
 import time
@@ -573,7 +572,7 @@ class testBolt():
         if len(response) >= 4:
             # Bolt version 5.x expected
             self.env.assertEquals(response[-1], 5)
-            self.env.assertTrue(response[-2] >= 1)
+            self.env.assertGreaterEqual(response[-2], 1)
         s.close()
 
     def test31_ws_reject_invalid_upgrade(self):
