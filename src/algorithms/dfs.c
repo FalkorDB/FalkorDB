@@ -15,7 +15,8 @@ bool _DFS(QGNode *n, int level, bool close_cycle, int current_level, rax *visite
 	if(current_level >= level) return true;
 
 	// Mark n as visited, return if node already marked.
-	if(!raxInsert(visited, (unsigned char *)n->alias, strlen(n->alias), NULL, NULL)) {
+	size_t n_alias_len = strlen(n->alias);
+	if(!raxInsert(visited, (unsigned char *)n->alias, n_alias_len, NULL, NULL)) {
 		// We've already processed n.
 		return false;
 	}
@@ -26,11 +27,12 @@ bool _DFS(QGNode *n, int level, bool close_cycle, int current_level, rax *visite
 		QGEdge *e = n->outgoing_edges[i];
 		not_seen = raxFind(visited, (unsigned char *)e->dest->alias, strlen(e->dest->alias)) == raxNotFound;
 		if(not_seen || close_cycle) {
-			if(!raxInsert(used_edges, (unsigned char *)e->alias, strlen(e->alias), NULL, NULL)) continue;
+			size_t e_alias_len = strlen(e->alias);
+			if(!raxInsert(used_edges, (unsigned char *)e->alias, e_alias_len, NULL, NULL)) continue;
 			array_append(*path, e);
 			if(_DFS(e->dest, level, close_cycle, current_level + 1, visited, used_edges, path)) return true;
 			array_pop(*path);
-			raxRemove(used_edges, (unsigned char *)e->alias, strlen(e->alias), NULL);
+			raxRemove(used_edges, (unsigned char *)e->alias, e_alias_len, NULL);
 		}
 	}
 
@@ -38,15 +40,16 @@ bool _DFS(QGNode *n, int level, bool close_cycle, int current_level, rax *visite
 		QGEdge *e = n->incoming_edges[i];
 		not_seen = raxFind(visited, (unsigned char *)e->src->alias, strlen(e->src->alias)) == raxNotFound;
 		if(not_seen || close_cycle) {
-			if(!raxInsert(used_edges, (unsigned char *)e->alias, strlen(e->alias), NULL, NULL)) continue;
+			size_t e_alias_len = strlen(e->alias);
+			if(!raxInsert(used_edges, (unsigned char *)e->alias, e_alias_len, NULL, NULL)) continue;
 			array_append(*path, e);
 			if(_DFS(e->src, level, close_cycle, current_level + 1, visited, used_edges, path)) return true;
 			array_pop(*path);
-			raxRemove(used_edges, (unsigned char *)e->alias, strlen(e->alias), NULL);
+			raxRemove(used_edges, (unsigned char *)e->alias, e_alias_len, NULL);
 		}
 	}
 
-	raxRemove(visited, (unsigned char *)n->alias, strlen(n->alias), NULL);
+	raxRemove(visited, (unsigned char *)n->alias, n_alias_len, NULL);
 	return false;
 }
 
