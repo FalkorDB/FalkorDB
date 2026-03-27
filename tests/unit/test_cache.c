@@ -5,11 +5,13 @@
  */
 
 #include "src/util/rmalloc.h"
+#include "tests/utils/mock_log.h"
 #include "src/util/cache/cache.h"
 #include "src/execution_plan/execution_plan.h"
 
 void setup() {
 	Alloc_Reset();
+	Logging_Reset();
 }
 
 #define TEST_INIT setup();
