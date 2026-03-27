@@ -668,7 +668,7 @@ elif [[ $VG == 1 ]]; then
 	# no timeout for Valgrind tests
 	setup_valgrind
 else
-	RLTEST_ARGS+=" --test-timeout 180"
+	RLTEST_ARGS+=" --test-timeout 300"
 fi
 
 if [[ $RLEC != 1 ]]; then

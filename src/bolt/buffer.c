@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "buffer.h"
 #include "../util/arr.h"
+#include <errno.h>
 
 // set buffer index to offset
 void buffer_index_set
@@ -76,9 +77,10 @@ uint64_t buffer_index_diff
 	ASSERT(b != NULL);
 	ASSERT(a->buf == b->buf);
 
-	uint64_t diff = (a->chunk - b->chunk) * BUFFER_CHUNK_SIZE + (a->offset - b->offset);
-	ASSERT(diff >= 0);
-	return diff;
+	ASSERT(a->chunk > b->chunk || (a->chunk == b->chunk && a->offset >= b->offset));
+	uint64_t pos_a = (uint64_t)a->chunk * BUFFER_CHUNK_SIZE + (uint64_t)a->offset;
+	uint64_t pos_b = (uint64_t)b->chunk * BUFFER_CHUNK_SIZE + (uint64_t)b->offset;
+	return pos_a - pos_b;
 }
 
 // the length of the buffer index
@@ -245,7 +247,10 @@ bool buffer_socket_read
 
 	char *ptr = buf->chunks[buf->write.chunk] + buf->write.offset;
 	int nread = socket_read(socket, ptr, BUFFER_CHUNK_SIZE - buf->write.offset);
-	if(nread < 0 || (nread == 0 && buf->write.offset < BUFFER_CHUNK_SIZE)) {
+	if(nread < 0) {
+		return errno == EAGAIN || errno == EWOULDBLOCK;
+	}
+	if(nread == 0 && buf->write.offset < BUFFER_CHUNK_SIZE) {
 		return false;
 	}
 
@@ -255,8 +260,8 @@ bool buffer_socket_read
 		buf->write.chunk++;
 		array_append(buf->chunks, rm_malloc(BUFFER_CHUNK_SIZE));
 		nread = socket_read(socket, buf->chunks[buf->write.chunk], BUFFER_CHUNK_SIZE);
-		if(nread < 0) {
-			return false;
+		if(nread <= 0) {
+			return nread == 0 || errno == EAGAIN || errno == EWOULDBLOCK;
 		}
 		buf->write.offset += nread;
 	}
@@ -347,7 +352,6 @@ void buffer_write
 	while(buf->offset + size > BUFFER_CHUNK_SIZE) {
 		uint32_t n = BUFFER_CHUNK_SIZE - buf->offset;
 		memcpy(buf->buf->chunks[buf->chunk] + buf->offset, data, n);
-		buffer_index_advance(buf, n);
 		data += n;
 		size -= n;
 		buf->chunk++;
