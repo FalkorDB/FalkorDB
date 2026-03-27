@@ -776,8 +776,8 @@ class testUDF():
         names = res[0][0]
 
         self.env.assertEqual(len(names), 2)
-        self.env.assertTrue("Bob" in names)
-        self.env.assertTrue("Alice" in names)
+        self.env.assertIn("Bob", names)
+        self.env.assertIn("Alice", names)
 
         # 3. Happy Path: Single result
         res = self.graph.query("RETURN test_lib.getNamesByLabel('Animal')").result_set

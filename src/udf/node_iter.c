@@ -115,6 +115,8 @@ JSValue UDF_CreateNodeIterator
 
     JSValue obj = JS_NewObjectClass (js_ctx, js_node_it_class_id) ;
     if (JS_IsException (obj)) {
+		GrB_OK (Delta_MatrixTupleIter_detach (it)) ;
+		rm_free (it) ;
         return obj ;
     }
 
@@ -139,7 +141,7 @@ static void js_node_it_finalizer
     // check if the pointer exists and free the native object
     if (state) {
 		if (state->it) {
-			GrB_OK (Delta_MatrixTupleIter_detach(state->it));
+			GrB_OK (Delta_MatrixTupleIter_detach (state->it)) ;
 			rm_free (state->it) ;
 		}
 		rm_free (state) ;
