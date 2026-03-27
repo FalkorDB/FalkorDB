@@ -9,6 +9,7 @@
 #include "../ops/op_expand_into.h"
 #include "../ops/op_node_by_label_scan.h"
 #include "../ops/op_conditional_traverse.h"
+#include "../ops/op_cond_var_len_traverse.h"
 #include "../execution_plan_build/execution_plan_util.h"
 #include "../execution_plan_build/execution_plan_modify.h"
 #include "../../arithmetic/algebraic_expression/utils.h"
@@ -323,7 +324,6 @@ static void _costBaseLabelScan
 	OpBase *parent = op->parent;
 	while(OpBase_Type(parent) == OPType_FILTER) parent = parent->parent;
 	OPType t = OpBase_Type(parent);
-	ASSERT(t == OPType_CONDITIONAL_TRAVERSE || t == OPType_EXPAND_INTO);
 
 	AlgebraicExpression *ae = NULL;
 	if(t == OPType_CONDITIONAL_TRAVERSE) {
@@ -334,7 +334,7 @@ static void _costBaseLabelScan
 		// 4) "            Node By Label Scan | (n:A)"
 		OpCondTraverse *op_traverse = (OpCondTraverse*)parent;
 		ae = op_traverse->ae;
-	} else {
+	} else if(t == OPType_EXPAND_INTO) {
 		// GRAPH.EXPLAIN g "MATCH (n:B:A:C) RETURN n"
 		// 1) "Results"
 		// 2) "    Project"
@@ -342,6 +342,14 @@ static void _costBaseLabelScan
 		// 4) "            Node By Label Scan | (n:B)"
 		OpExpandInto *op_expand = (OpExpandInto*)parent;
 		ae = op_expand->ae;
+	} else if(t == OPType_CONDITIONAL_VAR_LEN_TRAVERSE ||
+	          t == OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO) {
+		CondVarLenTraverse *op_var_len = (CondVarLenTraverse*)parent;
+		ae = op_var_len->ae;
+	} else {
+		// unsupported operation type following the label scan
+		// skip optimization for this scan
+		return;
 	}
 
 	AlgebraicExpression *operand;
