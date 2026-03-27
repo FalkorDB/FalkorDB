@@ -19,10 +19,6 @@
 
 extern JSClassID js_node_class_id;  // JS Node class
 
-//------------------------------------------------------------------------------
-// graph.getNodeById implementations
-//------------------------------------------------------------------------------
-
 // return a node iterator over the specified label
 // usage: const it = graph.iterateNodes('Country');
 static JSValue graph_iterate_nodes
@@ -69,6 +65,59 @@ static JSValue graph_iterate_nodes
     // we pass 'g' as well so the iterator knows which graph to query for node data
     return UDF_CreateNodeIterator (js_ctx, g, it) ;
 }
+
+// return an edge iterator over the specified relationship-type
+// usage: const it = graph.iterateEdges('FOLLOWS');
+static JSValue graph_iterate_edges
+(
+	JSContext *js_ctx,
+	JSValueConst this_val,
+	int argc,
+	JSValueConst *argv
+) {
+	const Graph *g = QueryCtx_GetGraph () ;
+	ASSERT (g != NULL) ;
+
+	// validate arguments: ensure a label string is provided
+	if (argc < 1 || !JS_IsString (argv [0])) {
+		return JS_ThrowTypeError (js_ctx,
+				"iterateEdges expects a relationship-type string as the first argument") ;
+	}
+
+	const char *rel = JS_ToCString (js_ctx, argv [0]) ;
+	if (!rel) {
+		return JS_EXCEPTION ;
+	}
+
+	// get the label matrix from the graph
+	Tensor R = NULL ;
+	RelationID rel_id = GRAPH_UNKNOWN_RELATION ;
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
+	Schema *s = GraphContext_GetSchema (gc, rel, SCHEMA_EDGE) ;
+
+	if (s == NULL) {
+		R = Graph_GetZeroMatrix (g) ;
+	} else {
+		rel_id = Schema_GetID (s) ;
+		R = Graph_GetRelationMatrix (g, rel_id, false) ;
+	}
+	ASSERT (R != NULL) ;
+
+	// free the C string immediately after use
+	JS_FreeCString (js_ctx, rel) ;
+
+	// create the Tensor Iterator
+	TensorIterator *it = rm_malloc (sizeof (TensorIterator)) ;
+	TensorIterator_ScanRange (it, R, 0, UINT64_MAX, false) ;
+
+	// wrap it in our custom EdgeIterator JS Object
+	// we pass 'g' as well so the iterator knows which graph to query for edge data
+	return UDF_CreateEdgeIterator (js_ctx, g, rel_id, it) ;
+}
+
+//------------------------------------------------------------------------------
+// graph.getNodeById implementations
+//------------------------------------------------------------------------------
 
 // retrieves a node from the graph by its integer ID
 // JS Usage: const node = graph.getNodeById(nodeId);
@@ -380,6 +429,7 @@ void UDF_SetGraphAPI
     JSValue traverse_func_obj      = JS_UNDEFINED ;
     JSValue get_node_func_obj      = JS_UNDEFINED ;
 	JSValue iterate_nodes_func_obj = JS_UNDEFINED ;
+	JSValue iterate_edges_func_obj = JS_UNDEFINED ;
 
 	if (mode == UDF_FUNC_REG_MODE_LOCAL) {
 		traverse_func_obj =
@@ -388,6 +438,8 @@ void UDF_SetGraphAPI
 			JS_NewCFunction (js_ctx, graph_get_node_by_id, "getNodeById",  1) ;
 		iterate_nodes_func_obj =
 			JS_NewCFunction (js_ctx, graph_iterate_nodes,  "iterateNodes", 1) ;
+		iterate_edges_func_obj =
+			JS_NewCFunction (js_ctx, graph_iterate_edges,  "iterateEdges", 1) ;
 	} else {
 		traverse_func_obj =
 			JS_NewCFunction (js_ctx, non_runtime_function, "traverse",     2) ;
@@ -395,11 +447,14 @@ void UDF_SetGraphAPI
 			JS_NewCFunction (js_ctx, non_runtime_function, "getNodeById",  1) ;
 		iterate_nodes_func_obj =
 			JS_NewCFunction (js_ctx, non_runtime_function, "iterateNodes", 1) ;
+		iterate_edges_func_obj =
+			JS_NewCFunction (js_ctx, non_runtime_function, "iterateEdges", 1) ;
 	}
 
 	ASSERT (JS_IsFunction (js_ctx, traverse_func_obj)) ;
 	ASSERT (JS_IsFunction (js_ctx, get_node_func_obj)) ;
 	ASSERT (JS_IsFunction (js_ctx, iterate_nodes_func_obj)) ;
+	ASSERT (JS_IsFunction (js_ctx, iterate_edges_func_obj)) ;
 
     // define property with explicit flags (writable, configurable)
     int def_res ;
@@ -414,6 +469,10 @@ void UDF_SetGraphAPI
 
     def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "iterateNodes",
 			iterate_nodes_func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
+	ASSERT (def_res >= 0) ;
+
+    def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "iterateEdges",
+			iterate_edges_func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
 	ASSERT (def_res >= 0) ;
 
     // clean up

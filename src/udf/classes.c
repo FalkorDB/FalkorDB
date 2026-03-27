@@ -10,6 +10,7 @@ JSClassID js_node_class_id ;        // JS node class
 JSClassID js_edge_class_id ;        // JS edge class
 JSClassID js_path_class_id ;        // JS path class
 JSClassID js_node_it_class_id ;     // JS node iterator class
+JSClassID js_edge_it_class_id ;     // JS edge iterator class
 JSClassID js_attributes_class_id ;  // JS attributes class
 
 // initialize all QuickJS classes required by the UDF subsystem
@@ -20,6 +21,7 @@ void UDF_InitClasses(void) {
     JS_NewClassID (&js_edge_class_id) ;
     JS_NewClassID (&js_path_class_id) ;
     JS_NewClassID (&js_node_it_class_id) ;
+    JS_NewClassID (&js_edge_it_class_id) ;
     JS_NewClassID (&js_attributes_class_id) ;
 }
 
@@ -35,6 +37,7 @@ void UDF_RT_RegisterClasses
 	UDF_RegisterPathClass         (js_rt) ;
 	UDF_RegisterAttributesClass   (js_rt) ;
 	UDF_RegisterNodeIteratorClass (js_rt) ;
+	UDF_RegisterEdgeIteratorClass (js_rt) ;
 }
 
 // register all FalkorDB classes with the given QuickJS context
@@ -49,5 +52,6 @@ void UDF_CTX_RegisterClasses
 	UDF_RegisterFalkorObject      (js_ctx) ;
 	UDF_RegisterAttributesProto   (js_ctx) ;
 	UDF_RegisterNodeIteratorProto (js_ctx) ;
+	UDF_RegisterEdgeIteratorProto (js_ctx) ;
 }
 

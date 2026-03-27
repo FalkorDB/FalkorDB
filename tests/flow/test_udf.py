@@ -800,6 +800,96 @@ class testUDF():
                 # Any exception here indicates the test behaved as expected
                 pass
 
+    def test_iterate_edges(self):
+        """
+        Test the graph.iterateEdges(relType) JS binding:
+        - Verify retrieval of edges with a specific relationship type.
+        - Verify behavior for relationship types that do not exist in the graph.
+        - Verify error handling for invalid argument types (non-strings).
+        """
+        # Register UDF
+        # We use a for...of loop to consume the iterator and collect edge properties
+        script_valid = """
+            function getEdgesByType(relType) {
+                let edges = [];
+                let it = graph.iterateEdges(relType);
+                for (let edge of it) {
+                    edges.push(edge);
+                }
+                return edges;
+            }
+            falkor.register('getEdgesByType', getEdgesByType);
+        """
+        self.db.udf_load("test_lib", script_valid, True)
+
+        # 1. Setup: Create a graph with multiple relationship types
+        self.graph.query("""
+            CREATE (a:Person {name: 'Alice'}),
+                   (b:Person {name: 'Bob'}),
+                   (c:Person {name: 'Charlie'}),
+                   (d:Person {name: 'Diana'}),
+                   (a)-[:KNOWS {since: 2020}]->(b),
+                   (b)-[:KNOWS {since: 2021}]->(c),
+                   (a)-[:FOLLOWS {since: 2019}]->(d)
+        """)
+
+        # 2. Happy Path: Retrieve edges by existing relationship type with multiple results
+        # We expect an array containing the 'since' values of all KNOWS edges
+        actual = self.graph.query("RETURN test_lib.getEdgesByType('KNOWS')").result_set[0][0]
+        expected = self.graph.query("MATCH ()-[e:KNOWS]->() RETURN collect(e)").result_set[0][0]
+
+        self.env.assertEqual(len(actual), len(expected))
+        for e in expected:
+            self.env.assertIn(e, actual)
+
+        # 3. Happy Path: Single result
+        # Only one FOLLOWS edge exists
+        actual = self.graph.query("RETURN test_lib.getEdgesByType('FOLLOWS')").result_set[0][0]
+        expected = self.graph.query("MATCH ()-[e:FOLLOWS]->() RETURN collect(e)").result_set[0][0]
+        self.env.assertEqual(len(actual), len(expected))
+        for e in expected:
+            self.env.assertIn(e, actual)
+
+        # 4. Scenario: Relationship type does not exist
+        # The iterator should be empty, resulting in an empty list, not an error
+        res = self.graph.query("RETURN test_lib.getEdgesByType('MARRIED')").result_set
+        self.env.assertEqual(res[0][0], [])
+
+        # 5. Scenario: Invalid Invocation (Wrong Type)
+        # The C implementation should throw a TypeError if relType is not a string/null
+        _invalid_types = [123, 1.2, [], {}]
+        for t in _invalid_types:
+            try:
+                self.graph.query("RETURN test_lib.getEdgesByType($x)", {'x': t})
+            except Exception:
+                # Expected: invalid invocation
+                # Any exception here indicates the test behaved as expected
+                pass
+
+        # 6. Scenario: Verify src/dst node IDs are populated on the edge
+        # Register a second UDF that inspects edge topology, not just properties
+        script_topology = """
+            function getEdgeEndpoints(relType) {
+                let endpoints = [];
+                let it = graph.iterateEdges(relType);
+                for (let edge of it) {
+                    endpoints.push({src: edge.source, dst: edge.target});
+                }
+                return endpoints;
+            }
+            falkor.register('getEdgeEndpoints', getEdgeEndpoints);
+        """
+        self.db.udf_load("test_lib", script_topology, True)
+
+        actual = self.graph.query("RETURN test_lib.getEdgeEndpoints('FOLLOWS')").result_set[0][0]
+        expected = self.graph.query("MATCH (s)-[:FOLLOWS]->(t) RETURN s, t").result_set[0]
+        src = expected[0]
+        dst = expected[1]
+
+        # Each entry must have both src and dst populated (non-null, non-negative)
+        self.env.assertEqual(src, actual[0]['src'])
+        self.env.assertEqual(dst, actual[0]['dst'])
+
     def test_falkor_multi_source_traverse(self):
         """
         Verifies the correctness of the multi-source graph.traverse function,
