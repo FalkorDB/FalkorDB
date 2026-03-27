@@ -32,9 +32,6 @@ static JSValue graph_iterate_nodes
 	int argc,
 	JSValueConst *argv
 ) {
-    // get the Graph pointer from the JS object (this_val)
-    // Assuming js_graph_class_id is the ID for your Graph class
-
 	const Graph *g = QueryCtx_GetGraph () ;
 	ASSERT (g != NULL) ;
 
@@ -50,7 +47,6 @@ static JSValue graph_iterate_nodes
 	}
 
     // get the label matrix from the graph
-    // this assumes your
 	Delta_Matrix L = NULL ;
 	GraphContext *gc = QueryCtx_GetGraphCtx () ;
 	Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
@@ -65,7 +61,7 @@ static JSValue graph_iterate_nodes
     // free the C string immediately after use
     JS_FreeCString (js_ctx, label) ;
 
-    // create the GraphBLAS Iterator
+    // create the DeltaMatrix Iterator
     Delta_MatrixTupleIter *it = rm_malloc (sizeof (Delta_MatrixTupleIter)) ;
     Delta_MatrixTupleIter_attach (it, L) ;
 
