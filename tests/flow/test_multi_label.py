@@ -250,5 +250,8 @@ class testMultiLabel():
             try:
                 self.graph.query(q)
             except Exception:
-                # query may return an error, but it should not crash
                 pass
+            # verify server is still alive after each query
+            # if the server crashed (SIGSEGV), this will fail
+            result = self.graph.query("RETURN 1")
+            self.env.assertEquals(result.result_set[0][0], 1)
