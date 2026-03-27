@@ -50,36 +50,60 @@ static JSValue graph_get_node_by_id
 	int argc,
 	JSValueConst *argv
 ) {
-    // 1. validation: ensure an argument is provided
+    // validation: ensure an argument is provided
     if (argc < 1) {
         return JS_ThrowTypeError (ctx, "getNodeById: At least one "
 				"argument (ID) expected") ;
     }
 
-    // 2. type checking: ensure the argument is a number (integer)
-    // note: use JS_IsNumber or JS_ToInt32 to ensure we get a valid ID
+	int64_t node_id = -1 ;
+	JSValueConst val = argv [0] ;
 
-	if (!JS_IsNumber(argv[0])) {
-		return JS_ThrowTypeError(ctx, "getNodeById: Argument must be a numeric integer");
+	// check if it's a BigInt (common for 64-bit IDs in JS)
+	if (JS_IsBigInt (ctx, val)) {
+		if (JS_ToInt64 (ctx, &node_id, val)) {
+			return JS_EXCEPTION ;
+		}
 	}
 
-    int32_t node_id ;
-    if (JS_ToInt32 (ctx, &node_id, argv [0])) {
-        return JS_ThrowTypeError (ctx, "getNodeById: First argument must be an "
-				"integer ID") ;
-    }
+	// check if it's a standard JS Number
+	else if (JS_IsNumber (val)) {
+		double d;
+		JS_ToFloat64 (ctx, &d, val) ;
+
+		// ensure the number has no fractional part and is within uint64 range
+		// fmod(d, 1.0) != 0 checks if it's a "true" float (e.g., 1.5)
+		if (d < 0 || fmod (d, 1.0) != 0) {
+			return JS_ThrowTypeError (ctx,
+					"getNodeById: ID must be a positive integer") ;
+		}
+
+		// safe to convert now that we've validated it's a whole number
+		JS_ToInt64 (ctx, &node_id, val) ;
+	}
+
+	else {
+		return JS_ThrowTypeError (ctx,
+				"getNodeById: Argument must be a positive integer") ;
+	}
+
+	// final safety check for the logic
+	if (node_id < 0) {
+		return JS_ThrowTypeError (ctx,
+				"getNodeById: ID must be a positive integer") ;
+	}
 
 	const Graph *graph = QueryCtx_GetGraph () ;
 	ASSERT (graph != NULL) ;
 
-    // 3. Logic: Fetch the node from the underlying C engine
+    // fetch the node from the underlying C engine
     Node node ;
-    if (Graph_GetNode (graph, node_id, &node)) {
+    if (Graph_GetNode (graph, (NodeID) node_id, &node)) {
         // successfully found: return the JS wrapper for the Node
         return UDF_CreateNode (ctx, &node) ;
     }
 
-    // 5. Fallback: Node not found
+    // fallback: Node not found
     return JS_NULL ;
 }
 

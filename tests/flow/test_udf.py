@@ -703,11 +703,15 @@ class testUDF():
 
         # 4. Scenario: Invalid Invocation (Wrong Type)
         # The C implementation throws a JS_ThrowTypeError
-        try:
-            self.graph.query("RETURN test_lib.getNode('a')")
-            self.env.assertTrue(False)
-        except Exception:
-            pass
+        _types = ['a', 1.2, -3, [], {}]
+        for t in _types:
+            try:
+                self.graph.query("RETURN test_lib.getNode($x)", {'x': t})
+                self.env.assertTrue(False)
+            except Exception:
+                # Expected: invalid invocation
+                # Any exception here indicates the test behaved as expected
+                pass
 
         # 5. Scenario: Invalid Invocation (Missing argument)
         # The C implementation throws a JS_ThrowTypeError
@@ -715,6 +719,8 @@ class testUDF():
             self.graph.query("RETURN test_lib.getNode()")
             self.env.assertTrue(False)
         except Exception:
+            # Expected: invalid invocation
+            # Any exception here indicates the test behaved as expected
             pass
 
         # 6. Scenario: Invalid Invocation (Missing Arguments)
@@ -730,6 +736,8 @@ class testUDF():
             self.graph.query("RETURN test_lib.getNoArgs()")
             self.env.assertTrue(False)
         except Exception:
+            # Expected: invalid invocation
+            # Any exception here indicates the test behaved as expected
             pass
 
     def test_falkor_multi_source_traverse(self):
