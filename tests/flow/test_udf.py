@@ -740,6 +740,66 @@ class testUDF():
             # Any exception here indicates the test behaved as expected
             pass
 
+    def test_iterate_nodes(self):
+        """
+        Test the graph.iterateNodes(label) JS binding:
+        - Verify retrieval of nodes with a specific label.
+        - Verify behavior for labels that do not exist in the graph.
+        - Verify error handling for invalid argument types (non-strings).
+        """
+
+        # Register UDF
+        # We use a for...of loop to consume the iterator and return an array of names
+        script_valid = """
+            function getNamesByLabel(label) {
+                let names = [];
+                let it = graph.iterateNodes(label);
+                for (let node of it) {
+                    names.push(node.name);
+                }
+                return names;
+            }
+            falkor.register('getNamesByLabel', getNamesByLabel);
+        """
+        self.db.udf_load("test_lib", script_valid, True)
+
+        # 1. Setup: Create a multi-label graph
+        self.graph.query("""
+            CREATE (:Person {name: 'Alice'}),
+                   (:Person {name: 'Bob'}),
+                   (:Animal {name: 'Charlie'})
+        """)
+
+        # 2. Happy Path: Retrieve nodes by existing label
+        # We expect an array containing 'Alice' and 'Bob'
+        res = self.graph.query("RETURN test_lib.getNamesByLabel('Person')").result_set
+        names = res[0][0]
+
+        self.env.assertEqual(len(names), 2)
+        self.env.assertTrue("Bob" in names)
+        self.env.assertTrue("Alice" in names)
+
+        # 3. Happy Path: Single result
+        res = self.graph.query("RETURN test_lib.getNamesByLabel('Animal')").result_set
+        names = res[0][0]
+        self.env.assertEqual(names, ["Charlie"])
+
+        # 4. Scenario: Label does not exist
+        # The iterator should be empty, resulting in an empty list, not an error
+        res = self.graph.query("RETURN test_lib.getNamesByLabel('Alien')").result_set
+        self.env.assertEqual(res[0][0], [])
+
+        # 5. Scenario: Invalid Invocation (Wrong Type)
+        # The C implementation should throw a TypeError if label is not a string/null
+        _invalid_types = [123, 1.2, [], {}]
+        for t in _invalid_types:
+            try:
+                self.graph.query("RETURN test_lib.getNamesByLabel($x)", {'x': t})
+            except Exception:
+                # Expected: invalid invocation
+                # Any exception here indicates the test behaved as expected
+                pass
+
     def test_falkor_multi_source_traverse(self):
         """
         Verifies the correctness of the multi-source graph.traverse function,

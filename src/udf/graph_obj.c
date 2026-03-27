@@ -8,6 +8,7 @@
 #include "udf_ctx.h"
 #include "classes.h"
 #include "traverse.h"
+#include "GraphBLAS.h"
 #include "repository.h"
 #include "../query_ctx.h"
 #include "../arithmetic/func_desc.h"
@@ -22,20 +23,55 @@ extern JSClassID js_node_class_id;  // JS Node class
 // graph.getNodeById implementations
 //------------------------------------------------------------------------------
 
-// non-runtime implementation of `graph.getNodeById`
-// JS call: graph.getNodeById(19);
-static JSValue non_runtime_get_node
+// return a node iterator over the specified label
+// usage: const it = graph.iterateNodes('Country');
+static JSValue graph_iterate_nodes
 (
-	JSContext *js_ctx,      // JavaScript context
-	JSValueConst this_val,  // 'this' value passed by the caller
-	int argc,               // number of arguments
-	JSValueConst *argv      // function arguments
+	JSContext *js_ctx,
+	JSValueConst this_val,
+	int argc,
+	JSValueConst *argv
 ) {
-	ASSERT (argv   != NULL) ;
-	ASSERT (js_ctx != NULL) ;
+    // get the Graph pointer from the JS object (this_val)
+    // Assuming js_graph_class_id is the ID for your Graph class
 
-	return JS_ThrowTypeError (js_ctx,
-			"graph.getNodeById shouldn't be called in a global context") ;
+	const Graph *g = QueryCtx_GetGraph () ;
+	ASSERT (g != NULL) ;
+
+    // validate arguments: ensure a label string is provided
+    if (argc < 1 || !JS_IsString (argv [0])) {
+        return JS_ThrowTypeError (js_ctx,
+				"iterateNodes expects a label string as the first argument") ;
+    }
+
+    const char *label = JS_ToCString (js_ctx, argv [0]) ;
+    if (!label) {
+		return JS_EXCEPTION ;
+	}
+
+    // get the label matrix from the graph
+    // this assumes your
+	Delta_Matrix L = NULL ;
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
+	Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
+
+	if (s == NULL) {
+		L = Graph_GetZeroMatrix (g) ;
+	} else {
+		L = Graph_GetLabelMatrix (g, Schema_GetID (s)) ;
+	}
+	ASSERT (L != NULL) ;
+
+    // free the C string immediately after use
+    JS_FreeCString (js_ctx, label) ;
+
+    // create the GraphBLAS Iterator
+    Delta_MatrixTupleIter *it = rm_malloc (sizeof (Delta_MatrixTupleIter)) ;
+    Delta_MatrixTupleIter_attach (it, L) ;
+
+    // wrap it in our custom NodeIterator JS Object
+    // we pass 'g' as well so the iterator knows which graph to query for node data
+    return UDF_CreateNodeIterator (js_ctx, g, it) ;
 }
 
 // retrieves a node from the graph by its integer ID
@@ -111,9 +147,8 @@ static JSValue graph_get_node_by_id
 // graph.traverse implementations
 //------------------------------------------------------------------------------
 
-// non-runtime implementation of `graph.traverse`
-// JS call: graph.traverse();
-static JSValue non_runtime_traverse
+// non-runtime implementation of `graph.*`
+static JSValue non_runtime_function
 (
 	JSContext *js_ctx,      // JavaScript context
 	JSValueConst this_val,  // 'this' value passed by the caller
@@ -124,7 +159,7 @@ static JSValue non_runtime_traverse
 	ASSERT (js_ctx != NULL) ;
 
 	return JS_ThrowTypeError (js_ctx,
-			"graph.traverse shouldn't be called in a global context") ;
+			"graph API shouldn't be called in a global context") ;
 }
 
 // traverse from multiple sources
@@ -316,11 +351,11 @@ void UDF_RegisterGraphObject
     JSValue graph_obj = JS_NewObject (js_ctx) ;
 
 	// register graph.traverse
-	JSValue func_obj = JS_NewCFunction (js_ctx, graph_traverse, "traverse", 2) ;
-
-    int def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "traverse",
-			func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
-	ASSERT (def_res >= 0) ;
+//	JSValue func_obj = JS_NewCFunction (js_ctx, graph_traverse, "traverse", 2) ;
+//
+//    int def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "traverse",
+//			func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
+//	ASSERT (def_res >= 0) ;
 
     // expose the namespace globally as "graph"
     JSValue global_obj = JS_GetGlobalObject (js_ctx) ;
@@ -346,22 +381,29 @@ void UDF_SetGraphAPI
 	ASSERT (JS_IsObject (graph_obj));
 
 	// pick implementation
-    JSValue traverse_func_obj = JS_UNDEFINED ;
-    JSValue get_node_func_obj = JS_UNDEFINED ;
+    JSValue traverse_func_obj      = JS_UNDEFINED ;
+    JSValue get_node_func_obj      = JS_UNDEFINED ;
+	JSValue iterate_nodes_func_obj = JS_UNDEFINED ;
+
 	if (mode == UDF_FUNC_REG_MODE_LOCAL) {
 		traverse_func_obj =
-			JS_NewCFunction (js_ctx, graph_traverse, "traverse", 2) ;
+			JS_NewCFunction (js_ctx, graph_traverse,       "traverse",     2) ;
 		get_node_func_obj =
-			JS_NewCFunction (js_ctx, graph_get_node_by_id, "getNodeById", 1) ;
+			JS_NewCFunction (js_ctx, graph_get_node_by_id, "getNodeById",  1) ;
+		iterate_nodes_func_obj =
+			JS_NewCFunction (js_ctx, graph_iterate_nodes,  "iterateNodes", 1) ;
 	} else {
 		traverse_func_obj =
-			JS_NewCFunction (js_ctx, non_runtime_traverse, "traverse", 2) ;
+			JS_NewCFunction (js_ctx, non_runtime_function, "traverse",     2) ;
 		get_node_func_obj =
-			JS_NewCFunction (js_ctx, non_runtime_get_node, "getNodeById", 1) ;
+			JS_NewCFunction (js_ctx, non_runtime_function, "getNodeById",  1) ;
+		iterate_nodes_func_obj =
+			JS_NewCFunction (js_ctx, non_runtime_function, "iterateNodes", 1) ;
 	}
 
 	ASSERT (JS_IsFunction (js_ctx, traverse_func_obj)) ;
 	ASSERT (JS_IsFunction (js_ctx, get_node_func_obj)) ;
+	ASSERT (JS_IsFunction (js_ctx, iterate_nodes_func_obj)) ;
 
     // define property with explicit flags (writable, configurable)
     int def_res ;
@@ -372,6 +414,10 @@ void UDF_SetGraphAPI
 
     def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "getNodeById",
 			get_node_func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
+	ASSERT (def_res >= 0) ;
+
+    def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "iterateNodes",
+			iterate_nodes_func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
 	ASSERT (def_res >= 0) ;
 
     // clean up
