@@ -63,11 +63,20 @@ static int cmp_timespec
 	struct timespec a,
 	struct timespec b
 ) {
-	if (a.tv_sec == b.tv_sec) {
-		return a.tv_nsec - b.tv_nsec ;
-	} else {
-		return a.tv_sec - b.tv_sec ;
+	if (a.tv_sec < b.tv_sec) {
+		return -1 ;
+	} else if (a.tv_sec > b.tv_sec) {
+		return 1 ;
 	}
+
+	// seconds are equal; compare nanoseconds
+	if (a.tv_nsec < b.tv_nsec) {
+		return -1 ;
+	} else if (a.tv_nsec > b.tv_nsec) {
+		return 1 ;
+	}
+
+	return 0 ;
 }
 
 // minimum heap sort function
@@ -327,7 +336,7 @@ void Cron_Stop (void) {
 // create a new CRON task
 CronTaskHandle Cron_AddTask
 (
-	uint when,          // number of miliseconds until task invocation
+	uint when,          // number of milliseconds until task invocation
 	CronTaskCB work,    // callback to call when task is due
 	CronTaskFree free,  // [optional] task private data free function
 	void *pdata         // [optional] private data to pass to callback
@@ -363,7 +372,7 @@ bool Cron_AbortTask
 		// in case task is currently being performed, wait for it to finish
 		while (cron->current_task == task) { }
 
-		// task wan't aborted
+		// task wasn't aborted
 		return false ;
 	}
 	
