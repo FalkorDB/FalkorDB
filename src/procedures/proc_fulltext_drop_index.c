@@ -52,7 +52,10 @@ ProcedureResult Proc_FulltextDropIndexInvoke
 	const IndexField *fields = Index_GetFields(idx);
 	int n = array_len((IndexField*)fields);
 	// drop only fulltext fields
-	for(int i = 0; i < n; i++) {
+	// iterate backwards: array_del_fast swaps deleted element with the last
+	// element, iterating forward corrupts the iteration when fields points
+	// to the same array being modified by Schema_RemoveIndex
+	for(int i = n - 1; i >= 0; i--) {
 		const IndexField *f = fields + i;
 		if(IndexField_GetType(f) & INDEX_FLD_FULLTEXT) {
 			int res = GraphContext_DeleteIndex(gc, SCHEMA_NODE, lbl,
