@@ -8,6 +8,8 @@
 #include "quickjs.h"
 #include "../graph/entities/node.h"
 
+extern JSClassID js_node_it_class_id ;  // JS node class
+
 //------------------------------------------------------------------------------
 // node class binding
 //------------------------------------------------------------------------------
