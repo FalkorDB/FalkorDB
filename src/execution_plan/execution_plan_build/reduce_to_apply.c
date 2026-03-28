@@ -78,7 +78,7 @@ static OpBase *_ApplyOpFromPathExpression
 // the three possible operations could be:
 // 1. OpFilter - in the case the subtree originated from the root does not contains any path filters
 // 2. OpSemiApply - in case of the current root is an expression which contains a path filter
-// 3. ApplyMultiplexer - in case the current root is an operator (OR or AND) and at least one of its children
+// 3. ApplyMultiplexer - in case the current root is an operator (OR, AND, XOR or XNOR) and at least one of its children
 // has been reduced to OpSemiApply or ApplyMultiplexer
 static OpBase *_ReduceFilterToOp
 (
@@ -97,7 +97,7 @@ static OpBase *_ReduceFilterToOp
 		return _ApplyOpFromPathExpression(plan, vars, expression);
 	}
 
-	// case of an operator (Or or And) which its subtree contains path filter
+	// case of an operator (Or, And, Xor or Xnor) which its subtree contains path filter
 	if(filter_root->t == FT_N_COND && FilterTree_ContainsFunc(filter_root,
 				"path_filter", &node)) {
 		// create the relevant LHS branch and set a bounded branch for it
