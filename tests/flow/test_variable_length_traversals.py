@@ -462,4 +462,5 @@ class testVariableLengthTraversals(FlowTestsBase):
         self.graph.delete()
 
         self.graph.query("MERGE (:A) MERGE (:B{})<-[:R]-(n0{})<-[:R]-({})")
-        self.graph.query("MATCH (n0:A{})<-[*..]-(n0:C) RETURN *")
+        res = self.graph.query("MATCH (n0:A{})<-[*..]-(n0:C) RETURN *")
+        self.env.assertEquals(len(res.result_set), 0)
