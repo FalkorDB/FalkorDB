@@ -6,6 +6,7 @@
 
 #include "RG.h"
 #include "graph.h"
+#include "graphcontext.h"
 #include "../util/arr.h"
 #include "../util/rwlock.h"
 #include "../util/rmalloc.h"
@@ -76,6 +77,10 @@ void Graph_AcquireWriteLock
 
 	pthread_rwlock_wrlock (&g->_rwlock) ;
 	g->_writelocked = true ;
+
+	if (g->context != NULL) {
+		GraphContext_AdvanceWriteTransactionID(g->context) ;
+	}
 }
 
 // acquire the graph write lock with a timeout
@@ -101,6 +106,10 @@ int Graph_TimeAcquireWriteLock
 
 	int res = rwlock_timedwrlock (&g->_rwlock, timeout_ms) ;
 	g->_writelocked = (res == 0) ;
+
+	if (res == 0 && g->context != NULL) {
+		GraphContext_AdvanceWriteTransactionID(g->context) ;
+	}
 
 	return res ;
 }
@@ -192,7 +201,14 @@ bool _MatrixSynchronize
 	GrB_Index nrows,  // # of rows for the resize
 	GrB_Index ncols   // # of columns for the resize
 ) {
-	return (Delta_Matrix_synchronize (M, nrows, ncols) == GrB_SUCCESS) ;
+	uint64_t write_txn_id = 0 ;
+
+	if (g->context != NULL) {
+		write_txn_id = GraphContext_GetWriteTransactionID (g->context) ;
+	}
+
+	return (Delta_Matrix_synchronize (M, nrows, ncols,
+				write_txn_id) == GrB_SUCCESS) ;
 }
 
 // resize matrix to node capacity
@@ -1786,4 +1802,3 @@ void Graph_Free
 ) {
 	_Graph_Free(g, true);
 }
-
