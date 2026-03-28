@@ -323,7 +323,10 @@ static void _costBaseLabelScan
 	OpBase *parent = op->parent;
 	while(OpBase_Type(parent) == OPType_FILTER) parent = parent->parent;
 	OPType t = OpBase_Type(parent);
-	ASSERT(t == OPType_CONDITIONAL_TRAVERSE || t == OPType_EXPAND_INTO);
+
+	if(t != OPType_CONDITIONAL_TRAVERSE && t != OPType_EXPAND_INTO) {
+		return;
+	}
 
 	AlgebraicExpression *ae = NULL;
 	if(t == OPType_CONDITIONAL_TRAVERSE) {
