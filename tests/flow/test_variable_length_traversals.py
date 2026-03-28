@@ -456,3 +456,10 @@ class testVariableLengthTraversals(FlowTestsBase):
                 Node(2, labels=["C"], properties={"v": 5})],
             [Edge(0, "R", 1, 0, properties={"v": 2}), Edge(1, "R", 2, 1, properties={"v": 4})]
         ))
+    # regression test for issue #636
+    # variable-length traversal with multi-label nodes should not crash
+    def test16_varlen_multi_label_no_crash(self):
+        self.graph.delete()
+
+        self.graph.query("MERGE (:A) MERGE (:B{})<-[:R]-(n0{})<-[:R]-({})")
+        self.graph.query("MATCH (n0:A{})<-[*..]-(n0:C) RETURN *")
