@@ -46,6 +46,10 @@ int TraverseOrder_LabelsScore
 	int        score      = 0;
 	const char *src       = AlgebraicExpression_Src(exp);
 	const char *dest      = AlgebraicExpression_Dest(exp);
+
+    // guard against malformed/var-len constructed expressions
+    if(src == NULL || dest == NULL) return 0;
+
 	QGNode     *src_node  = QueryGraph_GetNodeByAlias(qg, src);
 	QGNode     *dest_node = QueryGraph_GetNodeByAlias(qg, dest);
 
@@ -95,7 +99,7 @@ int TraverseOrder_FilterExistenceScore
 
 	// varible length expression shouldn't be scored on its source or destination
 	// as these are usually (if labeled) represented via seperated expressions
-	if(!_AlgebraicExpression_IsVarLen(exp, qg)) {
+    if(src != NULL && dest != NULL && !_AlgebraicExpression_IsVarLen(exp, qg)) {
 		frequency = raxFind(filtered_entities, (unsigned char *)src, strlen(src));
 		if(frequency != raxNotFound) {
 			score += 2;
@@ -140,6 +144,8 @@ int TraverseOrder_BoundVariableScore
 	bool        dest_bound  =  false;
 	const char *src         =  AlgebraicExpression_Src(exp);
 	const char *dest        =  AlgebraicExpression_Dest(exp);
+
+    if(src == NULL || dest == NULL) return 0;
 
 	src_bound = raxFind(bound_vars, (unsigned char *)src,
 						strlen(src)) != raxNotFound;
