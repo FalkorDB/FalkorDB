@@ -233,3 +233,25 @@ class testMultiLabel():
         self.env.assertEquals(query_result.labels_added, 1)
         self.env.assertEquals(query_result.nodes_created, 1)
         self.env.assertEquals(query_result.result_set[0][0], ["L4"])
+
+    # Regression test for issue #636
+    # Variable-length traversal with multi-label nodes should not crash
+    def test06_varlen_traversal_multi_label_no_crash(self):
+        # This query previously caused a SIGSEGV crash because
+        # _costBaseLabelScan did not handle variable-length traversal
+        # operation types (e.g. OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO)
+        # The fix skips the cost-base label scan optimization for these types
+        queries = [
+            "MATCH (n:A)<-[*]-(n:Z) RETURN 1",
+            "MATCH (n:L0:L1)-[*]->(m:L1:L2) RETURN n, m",
+            "MATCH (n:L1)-[*0..3]->(m:L1:L2) RETURN n, m",
+        ]
+        for q in queries:
+            try:
+                self.graph.query(q)
+            except Exception:
+                pass
+            # verify server is still alive after each query
+            # if the server crashed (SIGSEGV), this will fail
+            result = self.graph.query("RETURN 1")
+            self.env.assertEquals(result.result_set[0][0], 1)
