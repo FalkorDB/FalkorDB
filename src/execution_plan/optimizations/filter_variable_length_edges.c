@@ -63,6 +63,8 @@ static void _filterVariableLengthEdges
 	const char *src    = AlgebraicExpression_Src(traverse_op->ae);
 	const char *edge   = AlgebraicExpression_Edge(traverse_op->ae);
 	const char *dest   = AlgebraicExpression_Dest(traverse_op->ae);
+	if (!src) src = "?";
+	if (!dest) dest = "?";
 	OpFilter **filters = array_new(OpFilter *, 0);
 
 	// collect applicable filters
