@@ -7,7 +7,7 @@ EDGES = 200   # edge count
 
 GRAPH_ID = "path_algos"
 
-class testAllShortestPaths():
+class TestAllShortestPaths():
     def __init__(self):
         self.env, self.db = Env()
         self.graph = self.db.select_graph(GRAPH_ID)
@@ -386,9 +386,10 @@ class testAllShortestPaths():
             self.sp_query(self.m, self.n, None, 3, self.max_cost, 5, "incoming")
         ]
 
+        incoming_expected_len = min(len(self.incoming_sp_paths), 5)
         for result in results:
-            self.env.assertEquals(len(result.result_set), expected_len)
-            for i in range(0, expected_len):
+            self.env.assertEquals(len(result.result_set), incoming_expected_len)
+            for i in range(0, incoming_expected_len):
                 self.env.assertContains(result.result_set[i], self.incoming_sp_paths)
 
     def ss_query(self, source, relTypes, maxLen, maxCost, pathCount, relDirection):
@@ -441,8 +442,9 @@ class testAllShortestPaths():
         ]
 
         for result in results:
-            self.env.assertEquals(len(result.result_set), 5)
-            for i in range(0, 5):
+            expected_count = min(len(self.ss_paths), 5)
+            self.env.assertEquals(len(result.result_set), expected_count)
+            for i in range(0, expected_count):
                 self.env.assertContains(result.result_set[i], self.ss_paths)
 
     def test08_fractional_weights(self):
