@@ -9,6 +9,8 @@ FROM $BASE_IMAGE AS compiler
 FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
 
 
+FROM node:24-bookworm-slim AS node
+
 FROM redis:8.2.3
 
 ENV FALKORDB_HOME=/var/lib/falkordb
@@ -32,18 +34,17 @@ RUN ln -s ${FALKORDB_BIN_PATH} /FalkorDB/build/docker && \
     ln -s ${FALKORDB_BIN_PATH} /FalkorDB/bin/src && \
     ln -s ${FALKORDB_DATA_PATH} /data
 
-RUN apt-get update && apt-get install -y libgomp1 curl && \
-    curl -sL https://deb.nodesource.com/setup_24.x -o nodesource_setup.sh && \
-    bash nodesource_setup.sh && \
-    apt-get install -y nodejs && \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libgomp1 && \
     apt-get upgrade -y && \
+    # Remove packages not needed at runtime to reduce CVE surface
+    apt-get purge -y python3.11 python3.11-minimal libpython3.11-minimal libpython3.11-stdlib || true && \
     apt-get autoremove -y && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/* \
-    # Remove npm to avoid vulnerabilities (keep only node runtime)
-    && rm -rf /usr/lib/node_modules/npm \
-    && rm -f /usr/bin/npm \
-    && rm -f /usr/bin/npx
+    rm -rf /var/lib/apt/lists/*
+
+# Copy only Node.js runtime from official image (no npm, no curl/gnupg needed)
+COPY --from=node /usr/local/bin/node /usr/local/bin/
 
 
 WORKDIR ${FALKORDB_HOME}
