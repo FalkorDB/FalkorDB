@@ -725,7 +725,7 @@ void AlgebraicExpression_Free
 (
 	AlgebraicExpression *root  // Root node.
 ) {
-	ASSERT(root != NULL);
+	if(root == NULL) return;
 	switch(root->type) {
 	case AL_OPERATION:
 		_AlgebraicExpression_FreeOperation(root);

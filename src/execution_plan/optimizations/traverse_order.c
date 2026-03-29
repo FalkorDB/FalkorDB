@@ -69,8 +69,11 @@ static void _resolve_winning_sequence
 		// see if source is already resolved
 		for(int j = i - 1; j >= 0; j--) {
 			AlgebraicExpression *prev_exp = exps[j];
-			if(!strcmp(AlgebraicExpression_Src(prev_exp), src) ||
-			   !strcmp(AlgebraicExpression_Dest(prev_exp), src)) {
+			const char *prev_src = AlgebraicExpression_Src(prev_exp);
+			const char *prev_dest = AlgebraicExpression_Dest(prev_exp);
+
+			if((prev_src && src && !strcmp(prev_src, src)) ||
+			   (prev_dest && src && !strcmp(prev_dest, src))) {
 				src_resolved = true;
 				break;
 			}
@@ -118,10 +121,10 @@ static AlgebraicExpression **_valid_expressions
 			const char *used_src = AlgebraicExpression_Src(used);
 			const char *used_dest  = AlgebraicExpression_Dest(used);
 
-			if(strcmp(src, used_src)   == 0  ||
-			   strcmp(src, used_dest)  == 0  ||
-			   strcmp(dest, used_src)  == 0  ||
-			   strcmp(dest, used_dest) == 0) {
+			if((src && used_src && strcmp(src, used_src) == 0)   ||
+			   (src && used_dest && strcmp(src, used_dest) == 0)  ||
+			   (dest && used_src && strcmp(dest, used_src) == 0)  ||
+			   (dest && used_dest && strcmp(dest, used_dest) == 0)) {
 				valid = true;
 				break;
 			}
