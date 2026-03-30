@@ -35,7 +35,7 @@ static void _process_yield
 ) {
 	int idx = 0 ;
 
-	for (uint i = 0; i < array_len(yield); i++) {
+	for (uint i = 0; i < arr_len(yield); i++) {
 		if (strcasecmp ("name", yield[i]) == 0) {
 			ctx->yield_name = ctx->output + idx ;
 			idx++ ;
@@ -93,7 +93,7 @@ ProcedureResult Proc_FunctionsInvoke
 	const char **yield    // procedure outputs
 ) {
 	// expecting no arguments
-	if (array_len ((SIValue *)args) != 0) {
+	if (arr_len ((SIValue *)args) != 0) {
 		return PROCEDURE_ERR ;
 	}
 
@@ -145,7 +145,7 @@ SIValue *Proc_FunctionsStep
 
 	// yield function args
 	if (pdata->yield_args != NULL) {
-		int l = array_len (f->types) ;
+		int l = arr_len (f->types) ;
 		SIValue types = SI_Array (l) ;
 
 		char buf[1024] ;
@@ -206,31 +206,31 @@ ProcedureCtx *Proc_FunctionsCtx (void) {
 	void *privateData = NULL ;
 
 	ProcedureOutput output ;
-	ProcedureOutput *outputs = array_new (ProcedureOutput, 8) ;
+	ProcedureOutput *outputs = arr_new (ProcedureOutput, 8) ;
 
 	output = (ProcedureOutput) {.name = "name", .type = T_STRING} ;
-	array_append (outputs, output) ;
+	arr_append (outputs, output) ;
 
 	output = (ProcedureOutput) {.name = "return_type", .type = T_STRING} ;
-	array_append (outputs, output) ;
+	arr_append (outputs, output) ;
 
 	output = (ProcedureOutput) {.name = "arguments", .type = T_ARRAY} ;
-	array_append (outputs, output) ;
+	arr_append (outputs, output) ;
 
 	output = (ProcedureOutput) {.name = "internal", .type = T_BOOL} ;
-	array_append (outputs, output) ;
+	arr_append (outputs, output) ;
 
 	output = (ProcedureOutput) {.name = "reducible", .type = T_BOOL} ;
-	array_append (outputs, output) ;
+	arr_append (outputs, output) ;
 
 	output = (ProcedureOutput) {.name = "aggregation", .type = T_BOOL} ;
-	array_append (outputs, output) ;
+	arr_append (outputs, output) ;
 
 	output = (ProcedureOutput) {.name = "variable_len", .type = T_BOOL} ;
-	array_append (outputs, output) ;
+	arr_append (outputs, output) ;
 
 	output = (ProcedureOutput) {.name = "udf", .type = T_BOOL} ;
-	array_append (outputs, output) ;
+	arr_append (outputs, output) ;
 
 	ProcedureCtx *ctx = ProcCtxNew (
 			"dbms.functions",

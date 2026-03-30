@@ -21,7 +21,7 @@ static void __DFSMaxDepth(QGNode *n, int level, int *max_depth, rax *visited, ra
 	}
 
 	// Expand node N by visiting all of its neighbors
-	for(uint i = 0; i < array_len(n->outgoing_edges); i++) {
+	for(uint i = 0; i < arr_len(n->outgoing_edges); i++) {
 		QGEdge *e = n->outgoing_edges[i];
 		if(!raxInsert(used_edges, (unsigned char *)e->alias, strlen(e->alias), NULL, NULL)) continue;
 		__DFSMaxDepth(e->dest, level + 1, max_depth, visited, used_edges);
@@ -29,7 +29,7 @@ static void __DFSMaxDepth(QGNode *n, int level, int *max_depth, rax *visited, ra
 	}
 
 	// Expand node N by visiting all of its neighbors
-	for(uint i = 0; i < array_len(n->incoming_edges); i++) {
+	for(uint i = 0; i < arr_len(n->incoming_edges); i++) {
 		QGEdge *e = n->incoming_edges[i];
 		if(!raxInsert(used_edges, (unsigned char *)e->alias, strlen(e->alias), NULL, NULL)) continue;
 		__DFSMaxDepth(e->src, level + 1, max_depth, visited, used_edges);
@@ -84,14 +84,14 @@ QGNode *LongestPathTree(const QueryGraph *g, int *level) {
 	int l = BFS_LOWEST_LEVEL;
 	QGNode **leafs = BFS(g->nodes[0], &l);
 	QGNode *leaf = leafs[0];
-	array_free(leafs);
+	arr_free(leafs);
 
 	l = BFS_LOWEST_LEVEL;
 	leafs = BFS(leaf, &l);
 
-	ASSERT(array_len(leafs) > 0 && l >= 0);
+	ASSERT(arr_len(leafs) > 0 && l >= 0);
 	QGNode *n = leafs[0];
-	array_free(leafs);
+	arr_free(leafs);
 
 	*level = l;
 	return n;

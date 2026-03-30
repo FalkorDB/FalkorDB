@@ -49,7 +49,7 @@ static int *_BulkInsert_ReadHeaderLabels
 	*data_idx += labels_len + 1 ;
 
 	// array of all label IDs
-	int *label_ids = array_new(int, 1) ;
+	int *label_ids = arr_new(int, 1) ;
 	// stack variable to contain a single label
 	char label[labels_len + 1] ;
 
@@ -80,7 +80,7 @@ static int *_BulkInsert_ReadHeaderLabels
 		ASSERT (s != NULL) ;
 
 		// store the label ID
-		array_append (label_ids, Schema_GetID (s)) ;
+		arr_append (label_ids, Schema_GetID (s)) ;
 
 		// break if we've exhausted all labels
 		if (!found) {
@@ -214,7 +214,7 @@ static int _BulkInsert_ProcessNodeFile
 			&data_idx) ;
 	ASSERT (label_ids != NULL) ;
 
-	uint n_lbl = array_len (label_ids) ;
+	uint n_lbl = arr_len (label_ids) ;
 
 	// read the CSV header properties and collect their indices
 	AttributeID *prop_indices = _BulkInsert_ReadHeaderProperties (gc,
@@ -287,7 +287,7 @@ static int _BulkInsert_ProcessNodeFile
 	if (prop_indices) {
 		rm_free (prop_indices) ;
 	}
-	array_free (label_ids) ;
+	arr_free (label_ids) ;
 
 	return BULK_OK ;
 }
@@ -310,7 +310,7 @@ static int _BulkInsert_ProcessEdgeFile
 
 	RelationID *rels = _BulkInsert_ReadHeaderLabels (gc, SCHEMA_EDGE, data,
 			&data_idx) ;
-	uint type_count = array_len (rels) ;
+	uint type_count = arr_len (rels) ;
 
 	// // edges must have exactly one type
 	ASSERT (type_count == 1) ;
@@ -336,8 +336,8 @@ static int _BulkInsert_ProcessEdgeFile
 	// load edges
 	//--------------------------------------------------------------------------
 
-	Edge *edges = array_new (Edge, 1) ;
-	AttributeSet *sets = array_new (AttributeSet, 1) ;
+	Edge *edges = arr_new (Edge, 1) ;
+	AttributeSet *sets = arr_new (AttributeSet, 1) ;
 
 	SIValue props[prop_count] ;
 	AttributeID prop_attr_ids[prop_count] ;
@@ -356,7 +356,7 @@ static int _BulkInsert_ProcessEdgeFile
 		// accumulate edges
 		Edge_SetSrcNodeID  (&e, src) ;
 		Edge_SetDestNodeID (&e, dest) ;
-		array_append (edges, e) ;
+		arr_append (edges, e) ;
 
 		uint n = 0 ;
 		// read edge properties
@@ -377,7 +377,7 @@ static int _BulkInsert_ProcessEdgeFile
 		// assign properties
 		AttributeSet set = NULL ;
 		AttributeSet_Add (&set, prop_attr_ids, props, n, false) ;
-		array_append (sets, set) ;
+		arr_append (sets, set) ;
 
 		// yield every 500000 iterations
 		if (iterations++ == 500000) {
@@ -390,9 +390,9 @@ static int _BulkInsert_ProcessEdgeFile
 	// commit edges
 	//--------------------------------------------------------------------------
 
-	uint n = array_len (edges) ;
+	uint n = arr_len (edges) ;
 	if (n > 0) {
-		Edge **pedges = array_newlen (Edge*, n) ;
+		Edge **pedges = arr_newlen (Edge*, n) ;
 
 		for (uint i = 0; i < n; i++) {
 			pedges[i] = edges + i ;
@@ -403,16 +403,16 @@ static int _BulkInsert_ProcessEdgeFile
 
 		GraphHub_CreateEdges (gc, pedges, rel, sets, false) ;
 
-		array_free (pedges) ;
+		arr_free (pedges) ;
 	}
 
 	//--------------------------------------------------------------------------
 	// cleanup
 	//--------------------------------------------------------------------------
 
-	array_free (rels) ;
-	array_free (sets) ;
-	array_free (edges) ;
+	arr_free (rels) ;
+	arr_free (sets) ;
+	arr_free (edges) ;
 
 	if (prop_indices) {
 		rm_free (prop_indices) ;

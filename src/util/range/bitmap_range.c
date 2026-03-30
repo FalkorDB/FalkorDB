@@ -79,7 +79,7 @@ bool BitmapRange_FromRanges (
 	roaring64_bitmap_clear (bitmap) ;
 
 	// evaluate range expressions and tighten
-    int n = array_len ((RangeExpression *)ranges) ;
+    int n = arr_len ((RangeExpression *)ranges) ;
 
 	for (int i = 0; i < n; i++) {
 		SIValue v = AR_EXP_Evaluate (ranges[i].exp, r) ;

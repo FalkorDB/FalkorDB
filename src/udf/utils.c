@@ -157,7 +157,7 @@ bool UDF_Delete
 
 	// remove library's functions from global functions repo
 	bool removed ;
-	int n = array_len (functions) ;
+	int n = arr_len (functions) ;
 	for (int i = 0; i < n; i++) {
 		// concat lib and function name
 		char *udf;
