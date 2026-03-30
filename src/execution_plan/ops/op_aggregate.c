@@ -479,6 +479,10 @@ void AggregateBindToPlan
 				op->aggregate_exps[i]->resolved_name);
 		array_append(op->record_offsets, record_idx);
 	}
+	for(uint i = 0; i < op->mixed_count; i++) {
+		int record_idx = OpBase_Modifies((OpBase *)op, op->mixed_aliases[i]);
+		array_append(op->record_offsets, record_idx);
+	}
 }
 
 static void AggregateFree
