@@ -105,7 +105,7 @@ static void _migrate_expressions
 	}
 
 	rax *seen = raxNew();
-	op->mixed_aliases = array_new(char *, 0);
+	op->mixed_aliases = arr_new(char *, 0);
 
 	for(uint i = 0; i < op->aggregate_count; i++) {
 		rax *entities = raxNew();
@@ -120,7 +120,7 @@ static void _migrate_expressions
 				char *alias = rm_malloc(it.key_len + 1);
 				memcpy(alias, it.key, it.key_len);
 				alias[it.key_len] = '\0';
-				array_append(op->mixed_aliases, alias);
+				arr_append(op->mixed_aliases, alias);
 				raxInsert(seen, it.key, it.key_len, NULL, NULL);
 			}
 		}
@@ -130,7 +130,7 @@ static void _migrate_expressions
 
 	raxFree(key_aliases);
 	raxFree(seen);
-	op->mixed_count = array_len(op->mixed_aliases);
+	op->mixed_count = arr_len(op->mixed_aliases);
 }
 
 // clone all aggregate expression templates to associate with a new group
@@ -347,7 +347,7 @@ OpBase *NewAggregateOp
 	// reserve record slots for mixed aliases
 	for(uint i = 0; i < op->mixed_count; i++) {
 		int record_idx = OpBase_Modifies((OpBase *)op, op->mixed_aliases[i]);
-		array_append(op->record_offsets, record_idx);
+		arr_append(op->record_offsets, record_idx);
 	}
 
 	return (OpBase *)op;
@@ -482,7 +482,7 @@ void AggregateBindToPlan
 	}
 	for(uint i = 0; i < op->mixed_count; i++) {
 		int record_idx = OpBase_Modifies((OpBase *)op, op->mixed_aliases[i]);
-		array_append(op->record_offsets, record_idx);
+		arr_append(op->record_offsets, record_idx);
 	}
 }
 
@@ -530,7 +530,7 @@ static void AggregateFree
 		for(uint i = 0; i < op->mixed_count; i++) {
 			rm_free(op->mixed_aliases[i]);
 		}
-		array_free(op->mixed_aliases);
+		arr_free(op->mixed_aliases);
 		op->mixed_aliases = NULL;
 	}
 
@@ -538,4 +538,3 @@ static void AggregateFree
 		OpBase_DeleteRecord(&op->r);
 	}
 }
-
