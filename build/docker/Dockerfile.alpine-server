@@ -16,8 +16,8 @@ ENV FALKORDB_IMPORT_PATH=${FALKORDB_HOME}/import
 
 ENV FALKORDB_TLS_PATH=${FALKORDB_HOME}/tls
 
-# Install runtime dependencies using Alpine packages (equivalent to Debian version)
-RUN apk add --no-cache libgomp openssl curl
+# Install only runtime dependencies (openssl for TLS cert generation, libgomp for GraphBLAS)
+RUN apk add --no-cache libgomp openssl
 
 WORKDIR ${FALKORDB_HOME}
 

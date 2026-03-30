@@ -113,8 +113,8 @@ bool _reduceNodeCount
 	AR_ExpNode *exp = AR_EXP_NewConstOperandNode(nodeCount);
 	// the new expression must be aliased to populate the Record
 	exp->resolved_name = opAggregate->aggregate_exps[0]->resolved_name;
-	AR_ExpNode **exps = array_new(AR_ExpNode *, 1);
-	array_append(exps, exp);
+	AR_ExpNode **exps = arr_new(AR_ExpNode *, 1);
+	arr_append(exps, exp);
 
 	OpBase *opProject = NewProjectOp (opAggregate->op.plan, exps) ;
 
@@ -216,8 +216,8 @@ void _reduceEdgeCount
 	AR_ExpNode *exp = AR_EXP_NewConstOperandNode(edgeCount);
 	// the new expression must be aliased to populate the Record
 	exp->resolved_name = opAggregate->aggregate_exps[0]->resolved_name;
-	AR_ExpNode **exps = array_new(AR_ExpNode *, 1);
-	array_append(exps, exp);
+	AR_ExpNode **exps = arr_new(AR_ExpNode *, 1);
+	arr_append(exps, exp);
 
 	OpBase *opProject = NewProjectOp (opAggregate->op.plan, exps) ;
 

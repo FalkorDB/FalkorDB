@@ -14,30 +14,30 @@
 static void _AllPathsCtx_EnsureLevelArrayCap(AllPathsCtx *ctx, uint level, uint cap) {
 	if(cap == 0) return;
 
-	uint len = array_len(ctx->levels);
+	uint len = arr_len(ctx->levels);
 	if(level < len) {
 		LevelConnection *current = ctx->levels[level];
-		ctx->levels[level] = array_ensure_cap(current, array_len(current) + cap);
+		ctx->levels[level] = arr_ensure_cap(current, arr_len(current) + cap);
 		return;
 	}
 
 	ASSERT(level == len);
-	array_append(ctx->levels, array_new(LevelConnection, cap));
+	arr_append(ctx->levels, arr_new(LevelConnection, cap));
 }
 
 // Append given 'node' to given 'level' array.
 static void _AllPathsCtx_AddConnectionToLevel(AllPathsCtx *ctx, uint level, Node *node,
 											  Edge *edge) {
-	ASSERT(level < array_len(ctx->levels));
+	ASSERT(level < arr_len(ctx->levels));
 	LevelConnection connection;
 	connection.node = *node;
 	if(edge) connection.edge = *edge;
-	array_append(ctx->levels[level], connection);
+	arr_append(ctx->levels[level], connection);
 }
 
 // Check to see if context levels array has entries at position 'level'.
 static bool _AllPathsCtx_LevelNotEmpty(const AllPathsCtx *ctx, uint level) {
-	return (level < array_len(ctx->levels) && array_len(ctx->levels[level]) > 0);
+	return (level < arr_len(ctx->levels) && arr_len(ctx->levels[level]) > 0);
 }
 
 void addOutgoingNeighbors
@@ -55,7 +55,7 @@ void addOutgoingNeighbors
 	}
 
 	// Add unvisited neighbors to next level.
-	uint32_t neighborsCount = array_len(ctx->neighbors);
+	uint32_t neighborsCount = arr_len(ctx->neighbors);
 
 	//--------------------------------------------------------------------------
 	// apply filter to edge
@@ -69,7 +69,7 @@ void addOutgoingNeighbors
 
 			// drop edge if it doesn't passes filter
 			if(FilterTree_applyFilters(ctx->ft, ctx->r) != FILTER_PASS) {
-				array_del_fast(ctx->neighbors, i);
+				arr_del_fast(ctx->neighbors, i);
 				i--;
 				neighborsCount--;
 			}
@@ -86,7 +86,7 @@ void addOutgoingNeighbors
 		// Add the node and edge to the frontier.
 		_AllPathsCtx_AddConnectionToLevel(ctx, depth, &neighbor, (ctx->neighbors + i));
 	}
-	array_clear(ctx->neighbors);
+	arr_clear(ctx->neighbors);
 }
 
 void addIncomingNeighbors
@@ -104,7 +104,7 @@ void addIncomingNeighbors
 	}
 
 	// Add unvisited neighbors to next level.
-	uint32_t neighborsCount = array_len(ctx->neighbors);
+	uint32_t neighborsCount = arr_len(ctx->neighbors);
 
 	//--------------------------------------------------------------------------
 	// apply filter to edge
@@ -118,7 +118,7 @@ void addIncomingNeighbors
 
 			// drop edge if it doesn't passes filter
 			if(FilterTree_applyFilters(ctx->ft, ctx->r) != FILTER_PASS) {
-				array_del_fast(ctx->neighbors, i);
+				arr_del_fast(ctx->neighbors, i);
 				i--;
 				neighborsCount--;
 			}
@@ -135,7 +135,7 @@ void addIncomingNeighbors
 		// Add the node and edge to the frontier.
 		_AllPathsCtx_AddConnectionToLevel(ctx, depth, &neighbor, (ctx->neighbors + i));
 	}
-	array_clear(ctx->neighbors);
+	arr_clear(ctx->neighbors);
 }
 
 // Traverse from the frontier node in the specified direction and add all encountered nodes and edges.
@@ -195,9 +195,9 @@ AllPathsCtx *AllPathsCtx_New
 	ctx->maxLen         =  maxLen + 1;
 	ctx->relationIDs    =  relationIDs;
 	ctx->relationCount  =  relationCount;
-	ctx->levels         =  array_new(LevelConnection *, 1);
+	ctx->levels         =  arr_new(LevelConnection *, 1);
 	ctx->path           =  Path_New(1);
-	ctx->neighbors      =  array_new(Edge, 32);
+	ctx->neighbors      =  arr_new(Edge, 32);
 	ctx->dst            =  dst;
 	ctx->shortest_paths =  shortest_paths;
 	ctx->visited        =  NULL;
@@ -239,7 +239,7 @@ static Path *_AllPathsCtx_NextPath(AllPathsCtx *ctx) {
 		// Can we advance?
 		if(_AllPathsCtx_LevelNotEmpty(ctx, depth)) {
 			// Get a new frontier.
-			LevelConnection frontierConnection = array_pop(ctx->levels[depth]);
+			LevelConnection frontierConnection = arr_pop(ctx->levels[depth]);
 			Node frontierNode = frontierConnection.node;
 
 			/* See if frontier is already on path,
@@ -299,11 +299,11 @@ Path *AllPathsCtx_NextPath(AllPathsCtx *ctx) {
 
 void AllPathsCtx_Free(AllPathsCtx *ctx) {
 	if(!ctx) return;
-	uint32_t levelsCount = array_len(ctx->levels);
-	for(int i = 0; i < levelsCount; i++) array_free(ctx->levels[i]);
-	array_free(ctx->levels);
+	uint32_t levelsCount = arr_len(ctx->levels);
+	for(int i = 0; i < levelsCount; i++) arr_free(ctx->levels[i]);
+	arr_free(ctx->levels);
 	Path_Free(ctx->path);
-	array_free(ctx->neighbors);
+	arr_free(ctx->neighbors);
 	if(ctx->visited) GrB_Vector_free(&ctx->visited);
 	rm_free(ctx);
 	ctx = NULL;

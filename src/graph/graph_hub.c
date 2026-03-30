@@ -159,7 +159,7 @@ void GraphHub_CreateEdges
 	bool has_indices = Schema_HasIndices (s) ;
 
 	if (has_indices || log) {
-		uint count = array_len (edges) ;
+		uint count = arr_len (edges) ;
 		UndoLog undo_log = NULL ;
 		EffectsBuffer *eb = NULL ;
 
