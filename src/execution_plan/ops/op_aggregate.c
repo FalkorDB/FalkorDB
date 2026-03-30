@@ -100,7 +100,11 @@ static void _migrate_expressions
 		if(!AR_EXP_IsOperation(kexp) &&
 		kexp->operand.type == AR_EXP_VARIADIC) {
 			const char *alias = kexp->operand.variadic.entity_alias;
-			raxInsert(key_aliases, (unsigned char *)alias, strlen(alias), NULL, NULL);
+			if(alias != NULL &&
+			   kexp->resolved_name != NULL &&
+			   strcmp(alias, kexp->resolved_name) == 0) {
+				raxInsert(key_aliases, (unsigned char *)alias, strlen(alias), NULL, NULL);
+			}
 		}
 	}
 
@@ -245,7 +249,7 @@ static Group *_GetGroup
 			if(!(t & SI_GRAPHENTITY)) {
 				val = SI_CloneValue(val);
 			}
-			int dst_idx = op->record_offsets[op->key_count + op->aggregate_count + i];
+			int dst_idx = op->mixed_record_offsets[i];
 			Record_Add(representative, dst_idx, val);
 		}
 
@@ -344,10 +348,12 @@ OpBase *NewAggregateOp
 				op->aggregate_exps[i]->resolved_name);
 		array_append(op->record_offsets, record_idx);
 	}
-	// reserve record slots for mixed aliases
+	// reserve internal record slots for mixed aliases
+	// use OpBase_Modifies to allocate a slot but store separately
+	// so mixed aliases are not exposed as public outputs
+	op->mixed_record_offsets = rm_malloc(op->mixed_count * sizeof(uint));
 	for(uint i = 0; i < op->mixed_count; i++) {
-		int record_idx = OpBase_Modifies((OpBase *)op, op->mixed_aliases[i]);
-		arr_append(op->record_offsets, record_idx);
+		op->mixed_record_offsets[i] = OpBase_Modifies((OpBase *)op, op->mixed_aliases[i]);
 	}
 
 	return (OpBase *)op;
@@ -481,8 +487,7 @@ void AggregateBindToPlan
 		array_append(op->record_offsets, record_idx);
 	}
 	for(uint i = 0; i < op->mixed_count; i++) {
-		int record_idx = OpBase_Modifies((OpBase *)op, op->mixed_aliases[i]);
-		arr_append(op->record_offsets, record_idx);
+		op->mixed_record_offsets[i] = OpBase_Modifies((OpBase *)op, op->mixed_aliases[i]);
 	}
 }
 
@@ -534,7 +539,13 @@ static void AggregateFree
 		op->mixed_aliases = NULL;
 	}
 
+	if(op->mixed_record_offsets) {
+		rm_free(op->mixed_record_offsets);
+		op->mixed_record_offsets = NULL;
+	}
+
 	if(op->r) {
 		OpBase_DeleteRecord(&op->r);
 	}
 }
+

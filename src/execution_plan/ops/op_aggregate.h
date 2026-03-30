@@ -24,6 +24,7 @@ typedef struct {
 	uint aggregate_count;         // number of aggregating expressions
 	char **mixed_aliases;   // non-key aliases referenced inside aggregate exps
 	uint mixed_count;       // number of mixed aliases
+	uint *mixed_record_offsets;  // internal record slots for mixed aliases (not public outputs)
 } OpAggregate;
 
 OpBase *NewAggregateOp
