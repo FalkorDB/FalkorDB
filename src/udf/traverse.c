@@ -38,7 +38,7 @@ static int js_array_to_c_strings
         goto cleanup ;
     }
 
-	*c_strings_out = array_new (char *, len) ;
+	*c_strings_out = arr_new (char *, len) ;
 
     // initialize output count
     if (len == 0) {
@@ -72,7 +72,7 @@ static int js_array_to_c_strings
         }
 
         // must allocate a copy to persist the string after JS_FreeCString
-        array_append (*c_strings_out, strdup (c_str)) ;
+        arr_append (*c_strings_out, strdup (c_str)) ;
         JS_FreeCString (js_ctx, c_str) ; // free the temp C string
     }
 
@@ -82,10 +82,10 @@ static int js_array_to_c_strings
 
 error_free_strings:
     // if an error occurred mid-loop, free the strings allocated so far
-    for (uint32_t i = 0; i < array_len (*c_strings_out) ; i++) {
+    for (uint32_t i = 0; i < arr_len (*c_strings_out) ; i++) {
         free ((*c_strings_out)[i]) ;
     }
-    array_free (*c_strings_out) ;
+    arr_free (*c_strings_out) ;
 
 cleanup:
     JS_FreeValue (js_ctx, len_val) ;
@@ -252,18 +252,18 @@ bool traverse_init_config
 	// clean up on error
 	if (!success) {
 		if (*labels != NULL) {
-			for (int i = 0 ; i < array_len (*labels) ; i++) {
+			for (int i = 0 ; i < arr_len (*labels) ; i++) {
 				free ((*labels)[i]) ;
 			}
-			array_free (*labels) ;
+			arr_free (*labels) ;
 			*labels = NULL ;
 		}
 
 		if (*rel_types != NULL) {
-			for (int i = 0 ; i < array_len (*rel_types) ; i++) {
+			for (int i = 0 ; i < arr_len (*rel_types) ; i++) {
 				free ((*rel_types)[i]) ;
 			}
-			array_free (*rel_types) ;
+			arr_free (*rel_types) ;
 			*rel_types = NULL ;
 		}
 	}
@@ -328,7 +328,7 @@ GraphEntity **traverse
 		rels = AlgebraicExpression_NewOperand (ADJ, false, "n", "m", NULL,
 				"ADJ") ;
 	} else {
-		int l = array_len (rel_types) ;
+		int l = arr_len (rel_types) ;
 		Schema *s = NULL ;
 		Delta_Matrix R = NULL ;
 		RelationID rel_id = GRAPH_NO_RELATION ;
@@ -408,7 +408,7 @@ GraphEntity **traverse
 			n_rel_ids = 1 ;
 		} else {
 			// collect relationship-type ids
-			int l = array_len (rel_types) ;
+			int l = arr_len (rel_types) ;
 			rel_ids = rm_malloc (sizeof (RelationID) * l) ;
 
 			for (int i = 0; i < l ; i++) {
@@ -429,7 +429,7 @@ GraphEntity **traverse
 
 	// filter reachable neighbors
 	// F * rels * lbls
-	for (int i = 0; i < array_len (labels); i++) {
+	for (int i = 0; i < arr_len (labels); i++) {
 		Delta_Matrix L ;
 		Schema *s = GraphContext_GetSchema (gc, labels[i], SCHEMA_NODE) ;
 		if (s == NULL) {
@@ -471,7 +471,7 @@ GraphEntity **traverse
 		if (ret_type == GETYPE_NODE) {
 			reachables[i] = (GraphEntity*)rm_malloc (sizeof (Node) * wi) ;
 		} else {
-			reachables[i] = (GraphEntity*)array_new (Edge, wi) ;
+			reachables[i] = (GraphEntity*)arr_new (Edge, wi) ;
 		}
 		neighbors_count[i] = wi ;  // set output
 	}
@@ -514,7 +514,7 @@ GraphEntity **traverse
 				}
 				// update outputs
 				reachables[row_id] = neighbors ;
-				neighbors_count[row_id] = array_len (neighbors) ;
+				neighbors_count[row_id] = arr_len (neighbors) ;
 			}
             // move to the next entry in FM(i,:)
             info = GxB_rowIterator_nextCol (it) ;

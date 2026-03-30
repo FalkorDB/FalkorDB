@@ -198,7 +198,7 @@ static void _DeleteGraphMetaKeys
 		keys = GraphEncodeContext_GetMetaKeys(gc->encoding_context);
 	}
 
-	key_count = array_len(keys);
+	key_count = arr_len(keys);
 	for(uint i = 0; i < key_count; i++) {
 		RedisModuleString *meta_rm_string =
 			RedisModule_CreateStringPrintf(ctx, "%s", keys[i]);
@@ -213,7 +213,7 @@ static void _DeleteGraphMetaKeys
 		rm_free(keys[i]);
 	}
 
-	array_free(keys);
+	arr_free(keys);
 
 	// clear the relevant context meta keys as they are no longer valid
 	if(decode) {

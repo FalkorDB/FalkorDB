@@ -24,7 +24,7 @@ ProcedureResult Proc_FulltextDropIndexInvoke
 	const char **yield
 ) {
 	// argument validations
-	int argc = array_len((SIValue *)args);
+	int argc = arr_len((SIValue *)args);
 	ASSERT(argc == 1);
 
 	// expecting arg[0] to be a string
@@ -50,7 +50,7 @@ ProcedureResult Proc_FulltextDropIndexInvoke
 	}
 
 	const IndexField *fields = Index_GetFields(idx);
-	int n = array_len((IndexField*)fields);
+	int n = arr_len((IndexField*)fields);
 	// drop only fulltext fields
 	for(int i = 0; i < n; i++) {
 		const IndexField *f = fields + i;
@@ -76,7 +76,7 @@ SIValue *Proc_FulltextDropIndexStep
 // CALL db.idx.fulltext.drop('books')
 ProcedureCtx *Proc_FulltextDropIdxGen() {
 	void *privateData = NULL;
-	ProcedureOutput *output = array_new(ProcedureOutput, 0);
+	ProcedureOutput *output = arr_new(ProcedureOutput, 0);
 	ProcedureCtx *ctx = ProcCtxNew("db.idx.fulltext.drop",
 								   1,
 								   output,

@@ -18,11 +18,11 @@ static void _QGNode_RemoveEdge
 	ASSERT(e != NULL);
 	ASSERT(edges != NULL);
 
-	uint edge_count = array_len(edges);
+	uint edge_count = arr_len(edges);
 	for(uint i = 0; i < edge_count; i++) {
 		QGEdge *ie = edges[i];
 		if(e == ie) {
-			array_del_fast(edges, i);
+			arr_del_fast(edges, i);
 			return;
 		}
 	}
@@ -37,10 +37,10 @@ QGNode *QGNode_New
 	QGNode *n = rm_malloc(sizeof(QGNode));
 
 	n->alias             =  alias;
-	n->labels            =  array_new(const char *, 0);
-	n->labelsID          =  array_new(int, 0);
-	n->incoming_edges    =  array_new(QGEdge *, 0);
-	n->outgoing_edges    =  array_new(QGEdge *, 0);
+	n->labels            =  arr_new(const char *, 0);
+	n->labelsID          =  arr_new(int, 0);
+	n->incoming_edges    =  arr_new(QGEdge *, 0);
+	n->outgoing_edges    =  arr_new(QGEdge *, 0);
 	n->highly_connected  =  false;
 
 	return n;
@@ -61,7 +61,7 @@ inline bool QGNode_Labeled
 ) {
 	ASSERT(n != NULL);
 
-	return array_len(n->labels) > 0;
+	return arr_len(n->labels) > 0;
 }
 
 inline uint QGNode_LabelCount
@@ -70,7 +70,7 @@ inline uint QGNode_LabelCount
 ) {
 	ASSERT(n != NULL);
 
-	return array_len(n->labels);
+	return arr_len(n->labels);
 }
 
 int QGNode_GetLabelID
@@ -139,8 +139,8 @@ void QGNode_AddLabel
 	// node already labeled as l
 	if(QGNode_HasLabel(n, l)) return;
 
-	array_append(n->labels, l);
-	array_append(n->labelsID, l_id);
+	arr_append(n->labels, l);
+	arr_append(n->labelsID, l_id);
 }
 
 inline bool QGNode_HighlyConnected
@@ -167,7 +167,7 @@ inline int QGNode_IncomeDegree
 ) {
 	ASSERT(n != NULL);
 
-	return array_len(n->incoming_edges);
+	return arr_len(n->incoming_edges);
 }
 
 inline int QGNode_OutgoingDegree
@@ -176,7 +176,7 @@ inline int QGNode_OutgoingDegree
 ) {
 	ASSERT(n != NULL);
 
-	return array_len(n->outgoing_edges);
+	return arr_len(n->outgoing_edges);
 }
 
 inline int QGNode_EdgeCount
@@ -198,8 +198,8 @@ void QGNode_ConnectNode
 	ASSERT(src  != NULL);
 	ASSERT(dest != NULL);
 
-	array_append(src->outgoing_edges, e);
-	array_append(dest->incoming_edges, e);
+	arr_append(src->outgoing_edges, e);
+	arr_append(dest->incoming_edges, e);
 
 	// set src node as highly connected if in-degree + out-degree > 2
 	if(src->highly_connected == false && QGNode_Degree(src) > 2) {
@@ -243,12 +243,12 @@ QGNode *QGNode_Clone
 	QGNode *clone = rm_malloc(sizeof(QGNode));
 	memcpy(clone, orig, sizeof(QGNode));
 
-	array_clone(clone->labels, orig->labels);
-	array_clone(clone->labelsID, orig->labelsID);
+	arr_clone(clone->labels, orig->labels);
+	arr_clone(clone->labelsID, orig->labelsID);
 
 	// don't clone edges when duplicating a node
-	clone->incoming_edges = array_new(QGEdge *, 0);
-	clone->outgoing_edges = array_new(QGEdge *, 0);
+	clone->incoming_edges = arr_new(QGEdge *, 0);
+	clone->outgoing_edges = arr_new(QGEdge *, 0);
 
 	return clone;
 }
@@ -279,10 +279,10 @@ void QGNode_Free
 ) {
 	if(node == NULL) return;
 
-	array_free(node->labels);
-	array_free(node->labelsID);
-	array_free(node->outgoing_edges);
-	array_free(node->incoming_edges);
+	arr_free(node->labels);
+	arr_free(node->labelsID);
+	arr_free(node->outgoing_edges);
+	arr_free(node->incoming_edges);
 
 	rm_free(node);
 }

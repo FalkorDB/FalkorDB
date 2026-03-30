@@ -42,7 +42,7 @@ static void _process_yield
 
 	int idx = 0;
 
-	for (uint i = 0; i < array_len(yield); i++) {
+	for (uint i = 0; i < arr_len(yield); i++) {
 		if (strcasecmp ("labels", yield[i]) == 0) {
 			ctx->yield_labels = ctx->output + idx++ ;
 			continue ;
@@ -93,7 +93,7 @@ ProcedureResult Proc_MetaStatsInvoke
 	ASSERT (yield != NULL) ;
 
 	// no arguments
-	if (array_len ((SIValue *)args) != 0) {
+	if (arr_len ((SIValue *)args) != 0) {
 		return PROCEDURE_ERR ;
 	}
 
@@ -204,27 +204,27 @@ ProcedureResult Proc_MetaStatsFree
 
 ProcedureCtx *Proc_MetaStatsCtx(void) {
 	ProcedureOutput output ;
-	ProcedureOutput *outputs = array_new (ProcedureOutput, 7) ;
+	ProcedureOutput *outputs = arr_new (ProcedureOutput, 7) ;
 
-	array_append(outputs,
+	arr_append(outputs,
 		((ProcedureOutput) {.name = "labels", .type = T_MAP })) ;
 
-	array_append (outputs,
+	arr_append (outputs,
 		((ProcedureOutput) {.name = "relTypes", .type = T_MAP })) ;
 
-	array_append (outputs,
+	arr_append (outputs,
 		((ProcedureOutput) {.name = "relCount", .type = T_INT64})) ;
 
-	array_append (outputs,
+	arr_append (outputs,
 		((ProcedureOutput) {.name = "nodeCount", .type = T_INT64})) ;
 
-	array_append (outputs,
+	arr_append (outputs,
 		((ProcedureOutput) {.name = "labelCount", .type = T_INT64})) ;
 
-	array_append (outputs,
+	arr_append (outputs,
 		((ProcedureOutput) {.name = "relTypeCount", .type = T_INT64 })) ;
 
-	array_append (outputs,
+	arr_append (outputs,
 		((ProcedureOutput) {.name = "propertyKeyCount", .type = T_INT64})) ;
 
 	ProcedureCtx *ctx = ProcCtxNew("db.meta.stats",

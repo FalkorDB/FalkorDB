@@ -197,7 +197,7 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
 	OpBase *op = _LocateOpResolvingAliases(root, (const char**)references, n,
 			blacklisted_ops, nblacklisted_ops);
 
-	array_free_cb(references, rm_free);
+	arr_free_cb(references, rm_free);
 
 	return op;
 }
@@ -270,7 +270,7 @@ static void _ExecutionPlan_CollectOpsMatchingTypes
 	for(int i = 0; i < type_count; i++) {
 		// check to see if the op's type matches any of the types provided
 		if(root->type == types[i]) {
-			array_append(*ops, root);
+			arr_append(*ops, root);
 			break;
 		}
 	}
@@ -290,7 +290,7 @@ OpBase **ExecutionPlan_CollectOpsMatchingTypes
     const OPType *types,
     uint type_count
 ) {
-	OpBase **ops = array_new(OpBase *, 0);
+	OpBase **ops = arr_new(OpBase *, 0);
 	_ExecutionPlan_CollectOpsMatchingTypes(root, types, type_count, &ops);
 	return ops;
 }
@@ -300,7 +300,7 @@ OpBase **ExecutionPlan_CollectOps
     OpBase *root,
     OPType type
 ) {
-	OpBase **ops = array_new(OpBase *, 0);
+	OpBase **ops = arr_new(OpBase *, 0);
 	_ExecutionPlan_CollectOpsMatchingTypes(root, &type, 1, &ops);
 	return ops;
 }
