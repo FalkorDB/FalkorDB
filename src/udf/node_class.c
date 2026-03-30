@@ -235,7 +235,7 @@ static JSValue js_node_get_neighbors
 			JS_SetPropertyUint32 (js_ctx, js_neighbors, i,
 					UDF_CreateEdge (js_ctx, edges + i)) ;
 		}
-		array_free (edges) ;
+		arr_free (edges) ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -245,17 +245,17 @@ static JSValue js_node_get_neighbors
 	rm_free (neighbors) ;
 
 	if (labels != NULL) {
-		for (int i = 0; i < array_len (labels) ; i++) {
+		for (int i = 0; i < arr_len (labels) ; i++) {
 			free (labels[i]) ;
 		}
-		array_free (labels) ;
+		arr_free (labels) ;
 	}
 
 	if (rel_types != NULL) {
-		for (int i = 0; i < array_len (rel_types) ; i++) {
+		for (int i = 0; i < arr_len (rel_types) ; i++) {
 			free (rel_types[i]) ;
 		}
-		array_free (rel_types) ;
+		arr_free (rel_types) ;
 	}
 
 	return js_neighbors ;

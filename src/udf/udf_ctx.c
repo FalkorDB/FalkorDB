@@ -44,7 +44,7 @@ static UDFLib *_UDFCtx_GetLib
 	ASSERT (ctx      != NULL) ;
 	ASSERT (lib_name != NULL) ;
 
-	int16_t n = array_len (ctx->libs) ;
+	int16_t n = arr_len (ctx->libs) ;
 	for (int16_t i = 0; i < n; i++) {
 		UDFLib *l = ctx->libs + i ;
 		if (strcmp (l->name, lib_name) == 0) {
@@ -64,7 +64,7 @@ static UDFFunc *_UDFCtx_GetFunc
 	ASSERT (lib       != NULL) ;
 	ASSERT (func_name != NULL) ;
 
-	int16_t n = array_len (lib->funcs) ;
+	int16_t n = arr_len (lib->funcs) ;
 	for (int16_t i = 0; i < n; i++) {
 		UDFFunc *f = lib->funcs + i ;
 		if (strcmp (f->name, func_name) == 0) {
@@ -82,12 +82,12 @@ static void _UDFCtx_ClearLibs
 ) {
 	ASSERT (ctx != NULL) ;
 
-	int16_t n = array_len (ctx->libs) ;
+	int16_t n = arr_len (ctx->libs) ;
 	for (int16_t i = 0; i < n; i++) {
 		UDFLib *l = ctx->libs + i ;
 		UDFFunc *funcs = l->funcs ;
 
-		int16_t m = array_len (funcs) ;
+		int16_t m = arr_len (funcs) ;
 		for (int16_t j = 0; j < m; j++) {
 			UDFFunc *f = funcs + j ;
 			JS_FreeValue (ctx->js_ctx, f->func) ;
@@ -95,10 +95,10 @@ static void _UDFCtx_ClearLibs
 		}
 
 		rm_free    (l->name)  ;
-		array_free (l->funcs) ;
+		arr_free (l->funcs) ;
 	}
 
-	array_clear (ctx->libs) ;
+	arr_clear (ctx->libs) ;
 }
 
 // retrieve UDFCtx from TLS
@@ -108,7 +108,7 @@ static UDFCtx *_UDFCtx_GetCtx(void) {
 	if (unlikely (ctx == NULL)) {
 		ctx = rm_calloc (1, sizeof(UDFCtx)) ;
 
-		ctx->libs = array_new (UDFLib, 0) ;
+		ctx->libs = arr_new (UDFLib, 0) ;
 
 		// create js runtime & context
 		ctx->js_rt  = UDF_GetJSRuntime() ;
@@ -140,7 +140,7 @@ static void UDFCtx_FreeTLSData
 	//--------------------------------------------------------------------------
 
 	_UDFCtx_ClearLibs (ctx) ;
-	array_free (ctx->libs) ;
+	arr_free (ctx->libs) ;
 
 	// free order is important, start with context and follow with runtime
 
@@ -163,7 +163,7 @@ bool UDFCtx_Init(void) {
 // get number of libraries in TLS UDF context
 uint16_t UDFCtx_LibCount(void) {
 	UDFCtx *ctx = _UDFCtx_GetCtx () ;
-	return array_len (ctx->libs) ;
+	return arr_len (ctx->libs) ;
 }
 
 // retrive thread's javascript runtime
@@ -232,8 +232,8 @@ void UDFCtx_RegisterLibrary
 	ASSERT (_UDFCtx_GetLib (ctx, lib_name) == NULL) ;
 
 	// add new library
-	UDFLib l = {.name = rm_strdup (lib_name), .funcs = array_new (UDFFunc, 0)} ;
-	array_append (ctx->libs, l) ;
+	UDFLib l = {.name = rm_strdup (lib_name), .funcs = arr_new (UDFFunc, 0)} ;
+	arr_append (ctx->libs, l) ;
 }
 
 // register a UDF function with TLS UDF context
@@ -245,7 +245,7 @@ void UDFCtx_RegisterFunction
 	UDFCtx *ctx = _UDFCtx_GetCtx () ;
 
 	// functions are added to the last library
-	int n = array_len(ctx->libs) ;
+	int n = arr_len(ctx->libs) ;
 	ASSERT (n > 0) ;
 
 	UDFLib  *l = ctx->libs + (n - 1) ;
@@ -258,7 +258,7 @@ void UDFCtx_RegisterFunction
 	} else {
 		// add a new function
 		UDFFunc _f = (UDFFunc) {.func = func, .name = (rm_strdup (func_name))} ;
-		array_append (l->funcs, _f) ;
+		arr_append (l->funcs, _f) ;
 	}
 }
 

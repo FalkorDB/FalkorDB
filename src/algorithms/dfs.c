@@ -22,26 +22,26 @@ bool _DFS(QGNode *n, int level, bool close_cycle, int current_level, rax *visite
 
 	// Expand node N by visiting all of its neighbors
 	bool not_seen;
-	for(uint i = 0; i < array_len(n->outgoing_edges); i++) {
+	for(uint i = 0; i < arr_len(n->outgoing_edges); i++) {
 		QGEdge *e = n->outgoing_edges[i];
 		not_seen = raxFind(visited, (unsigned char *)e->dest->alias, strlen(e->dest->alias)) == raxNotFound;
 		if(not_seen || close_cycle) {
 			if(!raxInsert(used_edges, (unsigned char *)e->alias, strlen(e->alias), NULL, NULL)) continue;
-			array_append(*path, e);
+			arr_append(*path, e);
 			if(_DFS(e->dest, level, close_cycle, current_level + 1, visited, used_edges, path)) return true;
-			array_pop(*path);
+			arr_pop(*path);
 			raxRemove(used_edges, (unsigned char *)e->alias, strlen(e->alias), NULL);
 		}
 	}
 
-	for(uint i = 0; i < array_len(n->incoming_edges); i++) {
+	for(uint i = 0; i < arr_len(n->incoming_edges); i++) {
 		QGEdge *e = n->incoming_edges[i];
 		not_seen = raxFind(visited, (unsigned char *)e->src->alias, strlen(e->src->alias)) == raxNotFound;
 		if(not_seen || close_cycle) {
 			if(!raxInsert(used_edges, (unsigned char *)e->alias, strlen(e->alias), NULL, NULL)) continue;
-			array_append(*path, e);
+			arr_append(*path, e);
 			if(_DFS(e->src, level, close_cycle, current_level + 1, visited, used_edges, path)) return true;
-			array_pop(*path);
+			arr_pop(*path);
 			raxRemove(used_edges, (unsigned char *)e->alias, strlen(e->alias), NULL);
 		}
 	}
@@ -55,7 +55,7 @@ QGEdge **DFS(QGNode *s, int level, bool close_cycle) {
 	int current_level = 0;                  // Tracks BFS level.
 	rax *visited = raxNew();                // Dictionary of visited nodes.
 	rax *used_edges = raxNew();             // Dictionary of used edges.
-	QGEdge **path = array_new(QGEdge *, 0); // Path found.
+	QGEdge **path = arr_new(QGEdge *, 0); // Path found.
 
 	_DFS(s, level, close_cycle, current_level, visited, used_edges, &path);
 	raxFree(visited);

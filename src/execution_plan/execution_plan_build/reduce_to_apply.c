@@ -157,6 +157,6 @@ void ExecutionPlan_ReduceFilterToApply
 	// free filter op
 	OpBase_Free((OpBase *)filter);
 	raxFree(bound_vars);
-	array_free(vars);
+	arr_free(vars);
 }
 
