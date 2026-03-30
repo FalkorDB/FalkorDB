@@ -80,7 +80,7 @@ static Indexer *indexer = NULL;
 // clear indexer's tasks
 static void _Indexer_ClearTasks(void) {
 	INDEXER_LOCK_QUEUE () ;
-	array_clear (indexer->q) ;
+	arr_clear (indexer->q) ;
 	INDEXER_UNLOCK_QUEUE () ;
 }
 
@@ -275,7 +275,7 @@ void _indexer_AddTask
 	IndexerTask	task = {.op = op, .pdata = pdata} ;
 
 	INDEXER_LOCK_QUEUE () ;
-	array_append (indexer->q, task) ;
+	arr_append (indexer->q, task) ;
 	INDEXER_UNLOCK_QUEUE () ;
 
 	// signal conditional variable
@@ -296,7 +296,7 @@ static void _indexer_PopTask
 	INDEXER_LOCK_QUEUE () ;
 
 	// remove task to queue
-	if (array_len (indexer->q) == 0) {
+	if (arr_len (indexer->q) == 0) {
 		// waiting for work
 		// lock conditional variable mutex
 		pthread_mutex_lock(&indexer->cm);
@@ -313,7 +313,7 @@ static void _indexer_PopTask
 	}
 
 	*task = indexer->q[0] ;
-	array_del (indexer->q, 0) ;
+	arr_del (indexer->q, 0) ;
 
 	INDEXER_UNLOCK_QUEUE () ;
 }
@@ -350,7 +350,7 @@ bool Indexer_Init(void) {
 	}
 
 	// create task queue
-	indexer->q = array_new (IndexerTask, 0) ;
+	indexer->q = arr_new (IndexerTask, 0) ;
 
 	// create worker thread
 	pthread_attr_t attr;
@@ -386,7 +386,7 @@ cleanup:
 	}
 
 	if(indexer->q != NULL) {
-		array_free (indexer->q) ;
+		arr_free (indexer->q) ;
 	}
 
 	rm_free(indexer);
@@ -510,7 +510,7 @@ void Indexer_Stop(void) {
 	pthread_join (indexer->t, NULL) ;
 
 	// free indexer
-	array_free (indexer->q) ;
+	arr_free (indexer->q) ;
 	pthread_cond_destroy (&indexer->c) ;
 	pthread_mutex_destroy (&indexer->m) ;
 	pthread_mutex_destroy (&indexer->cm) ;

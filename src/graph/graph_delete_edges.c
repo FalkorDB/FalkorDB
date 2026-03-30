@@ -268,14 +268,14 @@ void Graph_ClearConnections
 			Tensor_RemoveElements (R, edges + i, d, &cleared_entries) ;
 
 			// for each cleared entry E see if ADJ[E.src, E.dest] needs clearing
-			uint64_t m = array_len (cleared_entries) ;
+			uint64_t m = arr_len (cleared_entries) ;
 			for (uint k = 0; k < m; k++) {
 				e = edges + (i + cleared_entries[k]) ;
 				_clear_adj (g, ADJ, e) ;
 			}
 
 			// free reported cleared entries
-			array_free (cleared_entries) ;
+			arr_free (cleared_entries) ;
 		}
 
 		i = j ;

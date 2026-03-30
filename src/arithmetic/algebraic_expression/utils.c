@@ -71,7 +71,7 @@ void _AlgebraicExpression_OperationRemoveChild
 			parent->operation.children[j] = parent->operation.children[j+1];
 		}
 
-		array_pop(parent->operation.children);
+		arr_pop(parent->operation.children);
 		break;
 	}
 }
@@ -88,7 +88,7 @@ AlgebraicExpression *_AlgebraicExpression_OperationRemoveDest
 	if(AlgebraicExpression_ChildCount(root) == 0) return NULL;
 
 	// Remove rightmost child.
-	AlgebraicExpression *child = array_pop(root->operation.children);
+	AlgebraicExpression *child = arr_pop(root->operation.children);
 	return child;
 }
 
@@ -111,7 +111,7 @@ AlgebraicExpression *_AlgebraicExpression_OperationRemoveSource
 	for(uint i = 0; i < child_count - 1; i++) {
 		root->operation.children[i] = root->operation.children[i + 1];
 	}
-	array_pop(root->operation.children);
+	arr_pop(root->operation.children);
 
 	return child;
 }
@@ -195,7 +195,7 @@ void _AlgebraicExpression_FreeOperation
 		for(uint i = 0; i < child_count; i++) {
 			AlgebraicExpression_Free(node->operation.children[i]);
 		}
-		array_free(node->operation.children);
+		arr_free(node->operation.children);
 		node->operation.children = NULL;
 	}
 }
@@ -382,7 +382,7 @@ void _AlgebraicExpression_RemoveRedundentOperands
 	ASSERT(qg   != NULL);
 	ASSERT(exps != NULL);
 
-	int exp_count = array_len(exps);
+	int exp_count = arr_len(exps);
 	if(exp_count < 2) return;
 
 	for(int i = 1; i < exp_count; i++) {
@@ -424,7 +424,7 @@ void _AlgebraicExpression_RemoveRedundentOperands
 		if(AlgebraicExpression_OperandCount(exp) == 0) {
 			// reduced to an empty expression
 			// delete expression from list
-			array_del(exps, i);
+			arr_del(exps, i);
 			exp_count--;
 			i--;
 		}

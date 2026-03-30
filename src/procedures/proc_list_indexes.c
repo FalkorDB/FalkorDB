@@ -47,7 +47,7 @@ static void _process_yield
 	ctx->yield_entity_type = NULL;
 
 	int idx = 0;
-	for(uint i = 0; i < array_len(yield); i++) {
+	for(uint i = 0; i < arr_len(yield); i++) {
 		if(strcasecmp("label", yield[i]) == 0) {
 			ctx->yield_label = ctx->out + idx;
 			idx++;
@@ -118,7 +118,7 @@ ProcedureResult Proc_IndexesInvoke
 
 	// TODO: introduce invoke validation, similar to arithmetic expressions
 	// expecting no arguments
-	uint arg_count = array_len((SIValue *)args);
+	uint arg_count = arr_len((SIValue *)args);
 	if(arg_count != 0) return PROCEDURE_ERR;
 
 	GraphContext *gc = QueryCtx_GetGraphCtx();
@@ -126,7 +126,7 @@ ProcedureResult Proc_IndexesInvoke
 	IndexesContext *pdata = rm_malloc(sizeof(IndexesContext));
 
 	pdata->gc      = gc;
-	pdata->indices = array_new(Index, 0);
+	pdata->indices = arr_new(Index, 0);
 
 	//--------------------------------------------------------------------------
 	// collect all indices
@@ -143,7 +143,7 @@ ProcedureResult Proc_IndexesInvoke
 		s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
 		idx_count = Schema_GetIndicies(s, indicies);
 		for(unsigned short j = 0; j < idx_count; j++) {
-			array_append(pdata->indices, indicies[j]);
+			arr_append(pdata->indices, indicies[j]);
 		}
 	}
 
@@ -153,7 +153,7 @@ ProcedureResult Proc_IndexesInvoke
 		s = GraphContext_GetSchemaByID(gc, i, SCHEMA_EDGE);
 		idx_count = Schema_GetIndicies(s, indicies);
 		for(uint j = 0; j < idx_count; j++) {
-			array_append(pdata->indices, indicies[j]);
+			arr_append(pdata->indices, indicies[j]);
 		}
 	}
 
@@ -425,12 +425,12 @@ SIValue *Proc_IndexesStep
 	IndexesContext *pdata = ctx->privateData;
 
 	// no more indices to emit
-	if(array_len(pdata->indices) == 0) {
+	if(arr_len(pdata->indices) == 0) {
 		return NULL;
 	}
 
 	// emit index
-	Index idx = array_pop(pdata->indices);
+	Index idx = arr_pop(pdata->indices);
 	_EmitIndex(pdata, idx);
 
 	return pdata->out;
@@ -443,7 +443,7 @@ ProcedureResult Proc_IndexesFree
 	// clean up
 	if(ctx->privateData) {
 		IndexesContext *pdata = ctx->privateData;
-		array_free(pdata->indices);
+		arr_free(pdata->indices);
 		rm_free(pdata);
 	}
 
@@ -453,61 +453,61 @@ ProcedureResult Proc_IndexesFree
 ProcedureCtx *Proc_IndexesCtx(void) {
 	void *privateData = NULL;
 	ProcedureOutput output;
-	ProcedureOutput *outputs = array_new(ProcedureOutput, 9);
+	ProcedureOutput *outputs = arr_new(ProcedureOutput, 9);
 
 	// indexed label
 	output = (ProcedureOutput) {
 		.name = "label", .type = T_STRING
 	};
-	array_append(outputs, output);
+	arr_append(outputs, output);
 
 	// indexed properties
 	output = (ProcedureOutput) {
 		.name = "properties", .type = T_ARRAY
 	};
-	array_append(outputs, output);
+	arr_append(outputs, output);
 
 	// indexed fields types
 	output = (ProcedureOutput) {
 		.name = "types", .type = T_MAP
 	};
-	array_append(outputs, output);
+	arr_append(outputs, output);
 
 	// indexed fields options
 	output = (ProcedureOutput) {
 		.name = "options", .type = T_MAP
 	};
-	array_append(outputs, output);
+	arr_append(outputs, output);
 
 	// indexed language
 	output = (ProcedureOutput) {
 		.name = "language", .type = T_STRING
 	};
-	array_append(outputs, output);
+	arr_append(outputs, output);
 
 	// indexed stopwords
 	output = (ProcedureOutput) {
 		.name = "stopwords", .type = T_ARRAY
 	};
-	array_append(outputs, output);
+	arr_append(outputs, output);
 
 	// index entity type (node / relationship)
 	output = (ProcedureOutput) {
 		.name = "entitytype", .type = T_STRING
 	};
-	array_append(outputs, output);
+	arr_append(outputs, output);
 
 	// index status (operational / under construction)
 	output = (ProcedureOutput) {
 		.name = "status", .type = T_STRING
 	};
-	array_append(outputs, output);
+	arr_append(outputs, output);
 
 	// index info
 	output = (ProcedureOutput) {
 		.name = "info", .type = T_MAP
 	};
-	array_append(outputs, output);
+	arr_append(outputs, output);
 
 	ProcedureCtx *ctx = ProcCtxNew("db.indexes",
 								   0,

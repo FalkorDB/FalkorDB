@@ -58,8 +58,8 @@ static ExecutionPlan *_ExecutionPlan_UnionPlans(AST *ast) {
 	uint start_offset = 0;
 	uint clause_count = cypher_ast_query_nclauses(ast->root);
 	uint *union_indices = AST_GetClauseIndices(ast, CYPHER_AST_UNION);
-	array_append(union_indices, clause_count);
-	int union_count = array_len(union_indices);
+	arr_append(union_indices, clause_count);
+	int union_count = arr_len(union_indices);
 	ASSERT(union_count > 1);
 
 	// Placeholder for each execution plan, these all will be joined
@@ -79,7 +79,7 @@ static ExecutionPlan *_ExecutionPlan_UnionPlans(AST *ast) {
 
 	QueryCtx_SetAST(ast); // AST segments have been freed, set master AST in QueryCtx.
 
-	array_free(union_indices);
+	arr_free(union_indices);
 
 	/* Join streams:
 	 * MATCH (a) RETURN a UNION MATCH (a) RETURN a ....
@@ -184,9 +184,9 @@ static ExecutionPlan **_process_segments
 	segment_indices = AST_GetClauseIndices(ast, CYPHER_AST_WITH);
 
 	// last segment
-	array_append(segment_indices, clause_count);
-	nsegments = array_len(segment_indices);
-	segments = array_new(ExecutionPlan *, nsegments);
+	arr_append(segment_indices, clause_count);
+	nsegments = arr_len(segment_indices);
+	segments = arr_new(ExecutionPlan *, nsegments);
 
 	//--------------------------------------------------------------------------
 	// process segments
@@ -203,7 +203,7 @@ static ExecutionPlan **_process_segments
 
 		// create ExecutionPlan segment that represents this slice of the AST
 		segment = _process_segment(ast_segment, seg_start_idx, seg_end_idx);
-		array_append(segments, segment);
+		arr_append(segments, segment);
 
 		// the next segment will start where the current one ended
 		seg_start_idx = seg_end_idx;
@@ -211,7 +211,7 @@ static ExecutionPlan **_process_segments
 
 	// restore the overall AST
 	QueryCtx_SetAST(ast);
-	array_free(segment_indices);
+	arr_free(segment_indices);
 
 	return segments;
 }
@@ -357,7 +357,7 @@ static ExecutionPlan *_tie_segments
 			migrate_filter = OpBase_Aware(OpBase_GetChild(connecting_op, 0),
 					(const char**)aliases, raxSize(modifiers));
 
-			array_free_cb(aliases, rm_free);
+			arr_free_cb(aliases, rm_free);
 			raxFree(modifiers);
 		}
 
@@ -402,7 +402,7 @@ ExecutionPlan *ExecutionPlan_FromTLS_AST(void) {
 	// execution plans are created in 1 or more segments
 	ExecutionPlan **segments = _process_segments(ast);
 	ASSERT(segments != NULL);
-	uint segment_count = array_len(segments);
+	uint segment_count = arr_len(segments);
 	ASSERT(segment_count > 0);
 
 	// connect all segments into a single ExecutionPlan
@@ -413,7 +413,7 @@ ExecutionPlan *ExecutionPlan_FromTLS_AST(void) {
 	_implicit_result(plan);
 
 	// clean up
-	array_free(segments);
+	arr_free(segments);
 
 	return plan;
 }
@@ -494,17 +494,17 @@ static void _ExecutionPlanInit
 ) {
 	// TODO: would have been better to get a direct access to every sub-plan
 	// stack of operations
-	OpBase **ops = array_new(OpBase*, 1);
-	array_append(ops, root);
+	OpBase **ops = arr_new(OpBase*, 1);
+	arr_append(ops, root);
 
 	// as long as there are ops to process
-	while(array_len(ops) > 0) {
+	while(arr_len(ops) > 0) {
 		// get current op from ops stack
-		OpBase *current = array_pop(ops);
+		OpBase *current = arr_pop(ops);
 
 		// add child ops to stack
 		for(int i = 0; i < current->childCount; i++) {
-			array_append(ops, current->children[i]);
+			arr_append(ops, current->children[i]);
 		}
 
 		// if the plan associated with this op hasn't built a record pool
@@ -513,7 +513,7 @@ static void _ExecutionPlanInit
 		}
 	}
 
-	array_free(ops);
+	arr_free(ops);
 }
 
 void ExecutionPlan_Init(ExecutionPlan *plan) {
@@ -601,17 +601,17 @@ static void _ExecutionPlan_InitProfiling
 ) {
 	ASSERT(root != NULL);
 
-	OpBase **ops = array_new(OpBase*, 1);
-	array_append(ops, root);
+	OpBase **ops = arr_new(OpBase*, 1);
+	arr_append(ops, root);
 
 	// as long as there are operations to process
-	while(array_len(ops) > 0) {
+	while(arr_len(ops) > 0) {
 		// get current op
-		OpBase *current = array_pop(ops);
+		OpBase *current = arr_pop(ops);
 
 		// add child operations to stack
 		for(int i = 0; i < current->childCount; i++) {
-			array_append(ops, current->children[i]);
+			arr_append(ops, current->children[i]);
 		}
 
 		// set operation consume wrapper function
@@ -622,7 +622,7 @@ static void _ExecutionPlan_InitProfiling
 	}
 
 	// clean up
-	array_free(ops);
+	arr_free(ops);
 }
 
 static void _ExecutionPlan_FinalizeProfiling
@@ -692,14 +692,14 @@ void ExecutionPlan_Free
 	// traverse the execution-plan graph (DAG -> no endless cycles), while
 	// collecting the different segments, and freeing the op tree
 	dict *plans = HashTableCreate(&def_dt);
-	OpBase **visited = array_new(OpBase *, 1);
-	OpBase **to_visit = array_new(OpBase *, 1);
+	OpBase **visited = arr_new(OpBase *, 1);
+	OpBase **to_visit = arr_new(OpBase *, 1);
 
 	OpBase *op = plan->root;
-	array_append(to_visit, op);
+	arr_append(to_visit, op);
 
-	while(array_len(to_visit) > 0) {
-		op = array_pop(to_visit);
+	while(arr_len(to_visit) > 0) {
+		op = arr_pop(to_visit);
 
 		// add the plan this op is affiliated with
 		HashTableAdd(plans, (void *)op->plan, (void *)op->plan);
@@ -707,21 +707,21 @@ void ExecutionPlan_Free
 		// add all direct children of op to to_visit
 		for(uint i = 0; i < op->childCount; i++) {
 			if(op->children[i] != NULL) {
-				array_append(to_visit, op->children[i]);
+				arr_append(to_visit, op->children[i]);
 			}
 		}
 
 		// add op to `visited` array
-		array_append(visited, op);
+		arr_append(visited, op);
 	}
 
 	// free the collected ops
-	for(int i = array_len(visited)-1; i >= 0; i--) {
+	for(int i = arr_len(visited)-1; i >= 0; i--) {
 		op = visited[i];
 		OpBase_Free(op);
 	}
-	array_free(visited);
-	array_free(to_visit);
+	arr_free(visited);
+	arr_free(to_visit);
 
 	// -------------------------------------------------------------------------
 	// free internals of the plans

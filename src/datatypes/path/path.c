@@ -13,8 +13,8 @@ Path *Path_New
 	size_t len
 ) {
 	Path *path  = rm_malloc (sizeof (Path)) ;
-	path->edges = array_new(Edge, len);
-	path->nodes = array_new(Node, len + 1);
+	path->edges = arr_new(Edge, len);
+	path->nodes = arr_new(Node, len + 1);
 
 	return path ;
 }
@@ -24,8 +24,8 @@ void Path_EnsureLen
 	Path *p,
 	size_t len
 ) {
-	p->nodes = array_ensure_len (p->nodes, len) ;
-	p->edges = array_ensure_len (p->edges, len - 1) ;
+	p->nodes = arr_ensure_len (p->nodes, len) ;
+	p->edges = arr_ensure_len (p->edges, len - 1) ;
 }
 
 void Path_AppendNode
@@ -33,7 +33,7 @@ void Path_AppendNode
 	Path *p,
 	Node n
 ) {
-	array_append (p->nodes, n) ;
+	arr_append (p->nodes, n) ;
 }
 
 void Path_AppendEdge
@@ -41,7 +41,7 @@ void Path_AppendEdge
 	Path *p,
 	Edge e
 ) {
-	array_append (p->edges, e) ;
+	arr_append (p->edges, e) ;
 }
 
 void Path_SetNode
@@ -51,7 +51,7 @@ void Path_SetNode
 	Node n
 ) {
 	ASSERT (p != NULL) ;
-	ASSERT (i < array_len (p->nodes)) ;
+	ASSERT (i < arr_len (p->nodes)) ;
 
 	p->nodes [i] = n ;
 }
@@ -63,7 +63,7 @@ void Path_SetEdge
 	Edge e
 ) {
 	ASSERT (p != NULL) ;
-	ASSERT (i < array_len (p->edges)) ;
+	ASSERT (i < arr_len (p->edges)) ;
 
 	p->edges [i] = e ;
 }
@@ -96,7 +96,7 @@ Node Path_PopNode
 	Path *p
 ) {
 	ASSERT (p != NULL) ;
-	return array_pop (p->nodes) ;
+	return arr_pop (p->nodes) ;
 }
 
 // removes the last edge from the path
@@ -105,7 +105,7 @@ Edge Path_PopEdge
 	Path *p
 ) {
 	ASSERT (p != NULL) ;
-	return array_pop (p->edges) ;
+	return arr_pop (p->edges) ;
 }
 
 // returns the amount of nodes in the path
@@ -114,7 +114,7 @@ inline size_t Path_NodeCount
 	const Path *p
 ) {
 	ASSERT (p != NULL) ;
-	return array_len (p->nodes) ;
+	return arr_len (p->nodes) ;
 }
 
 // returns the amount of edges in the path
@@ -123,7 +123,7 @@ inline size_t Path_EdgeCount
 	const Path *p
 ) {
 	ASSERT (p != NULL) ;
-	return array_len (p->edges) ;
+	return arr_len (p->edges) ;
 }
 
 // returns the last node in the path
@@ -132,7 +132,7 @@ Node Path_Head
 	Path *p
 ) {
 	ASSERT (p != NULL) ;
-	return p->nodes [array_len (p->nodes) - 1] ;
+	return p->nodes [arr_len (p->nodes) - 1] ;
 }
 
 size_t Path_Len(const Path *p) {
@@ -168,8 +168,8 @@ Path *Path_Clone
 
 	Path *clone = rm_malloc (sizeof (Path)) ;
 
-	array_clone (clone->nodes, p->nodes) ;
-	array_clone (clone->edges, p->edges) ;
+	arr_clone (clone->nodes, p->nodes) ;
+	arr_clone (clone->edges, p->edges) ;
 
 	return clone ;
 }
@@ -181,8 +181,8 @@ void Path_Reverse
 ) {
 	ASSERT (p != NULL) ;
 
-	array_reverse (p->nodes) ;
-	array_reverse (p->edges) ;
+	arr_reverse (p->nodes) ;
+	arr_reverse (p->edges) ;
 }
 
 // clear the path
@@ -192,8 +192,8 @@ void Path_Clear
 ) {
 	ASSERT (p != NULL) ;
 
-	array_clear (p->nodes) ;
-	array_clear (p->edges) ;
+	arr_clear (p->nodes) ;
+	arr_clear (p->edges) ;
 }
 
 // deletes the path nodes and edges arrays
@@ -203,8 +203,8 @@ void Path_Free
 ) {
 	ASSERT (p != NULL) ;
 
-	array_free (p->nodes) ;
-	array_free (p->edges) ;
+	arr_free (p->nodes) ;
+	arr_free (p->edges) ;
 	rm_free (p) ;
 }
 

@@ -41,7 +41,7 @@ static void _process_yield
 	const char **yield
 ) {
 	int idx = 0;
-	for(uint i = 0; i < array_len(yield); i++) {
+	for(uint i = 0; i < arr_len(yield); i++) {
 		if(strcasecmp("node", yield[i]) == 0) {
 			ctx->yield_node = ctx->output + idx;
 			idx++;
@@ -97,7 +97,7 @@ static bool _read_config
 			goto error;
 		}
 
-		_lbls = array_new(LabelID, 0);
+		_lbls = arr_new(LabelID, 0);
 		u_int32_t l = SIArray_Length(v);
 		for(u_int32_t i = 0; i < l; i++) {
 			SIValue lbl = SIArray_Get(v, i);
@@ -109,7 +109,7 @@ static bool _read_config
 			}
 
 			LabelID lbl_id = Schema_GetID(s);
-			array_append(_lbls, lbl_id);
+			arr_append(_lbls, lbl_id);
 		}
 		*lbls = _lbls;
 
@@ -127,7 +127,7 @@ static bool _read_config
 			goto error;
 		}
 
-		_rels = array_new(RelationID, 0);
+		_rels = arr_new(RelationID, 0);
 		u_int32_t l = SIArray_Length(v);
 		for(u_int32_t i = 0; i < l; i++) {
 			SIValue rel = SIArray_Get(v, i);
@@ -139,7 +139,7 @@ static bool _read_config
 			}
 
 			RelationID rel_id = Schema_GetID(s);
-			array_append(_rels, rel_id);
+			arr_append(_rels, rel_id);
 		}
 		*rels = _rels;
 
@@ -155,12 +155,12 @@ static bool _read_config
 
 error:
 	if(_lbls != NULL) {
-		array_free(_lbls);
+		arr_free(_lbls);
 		*lbls = NULL;
 	}
 
 	if(_rels != NULL) {
-		array_free(_rels);
+		arr_free(_rels);
 		*rels = NULL;
 	}
 
@@ -176,7 +176,7 @@ ProcedureResult Proc_WCCInvoke
 ) {
 	// expecting 0 or 1 argument
 
-	size_t l = array_len((SIValue *)args);
+	size_t l = arr_len((SIValue *)args);
 
 	if(l > 1) return PROCEDURE_ERR;
 
@@ -236,11 +236,11 @@ ProcedureResult Proc_WCCInvoke
 	bool compact = true;
 
 	// TODO: think of a better name
-	info = Build_Matrix(&A, &pdata->N, g, lbls, array_len(lbls), rels,
-			array_len(rels), sym, compact);
+	info = Build_Matrix(&A, &pdata->N, g, lbls, arr_len(lbls), rels,
+			arr_len(rels), sym, compact);
 
-	array_free(lbls);
-	array_free(rels);
+	arr_free(lbls);
+	arr_free(rels);
 
 	ASSERT(A        != NULL);
 	ASSERT(pdata->N != NULL);
@@ -348,12 +348,12 @@ ProcedureResult Proc_WCCFree
 ProcedureCtx *Proc_WCCCtx(void) {
 	void *privateData = NULL;
 
-	ProcedureOutput *outputs         = array_new(ProcedureOutput, 2);
+	ProcedureOutput *outputs         = arr_new(ProcedureOutput, 2);
 	ProcedureOutput output_node      = {.name = "node", .type = T_NODE};
 	ProcedureOutput output_component = {.name = "componentId", .type = T_INT64};
 
-	array_append(outputs, output_node);
-	array_append(outputs, output_component);
+	arr_append(outputs, output_node);
+	arr_append(outputs, output_component);
 
 	ProcedureCtx *ctx = ProcCtxNew("algo.WCC",
 								   PROCEDURE_VARIABLE_ARG_COUNT,

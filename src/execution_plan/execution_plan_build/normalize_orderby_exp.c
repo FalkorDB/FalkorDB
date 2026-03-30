@@ -135,8 +135,8 @@ void normalize_sort_exps
 	ASSERT (projections != NULL && *projections != NULL) ;
 
 	AR_ExpNode **_projections = *projections ;
-	int sort_count = array_len (sort_exps) ;
-	int proj_count = array_len (_projections) ;
+	int sort_count = arr_len (sort_exps) ;
+	int proj_count = arr_len (_projections) ;
 
 	ASSERT (sort_count > 0) ;
 	ASSERT (proj_count > 0) ;
@@ -173,7 +173,7 @@ void normalize_sort_exps
 		// to internal function calls
 		AR_ExpNode **func_nodes = AR_EXP_CollectFunctions (sort_exp) ;
 
-		for (int ai = 0; ai < array_len (func_nodes); ai++) {
+		for (int ai = 0; ai < arr_len (func_nodes); ai++) {
 			AR_ExpNode *f = func_nodes[ai] ;
 
 			for (int pi = 0; pi < proj_count; pi++) {
@@ -193,7 +193,7 @@ void normalize_sort_exps
 					// recompute func_nodes
 					// by replacing `f` all of its inner function node
 					// are removed
-					array_free (func_nodes) ;
+					arr_free (func_nodes) ;
 					func_nodes = AR_EXP_CollectFunctions (sort_exp) ;
 					ai-- ;  // reset loop index
 
@@ -202,7 +202,7 @@ void normalize_sort_exps
 			}
 		}
 
-		array_free (func_nodes) ;
+		arr_free (func_nodes) ;
 
 		// check if there are any aggregation nodes in expression
 		// as the order-by clause can not have aggregation expressions
@@ -217,7 +217,7 @@ void normalize_sort_exps
 		//----------------------------------------------------------------------
 
 		vars   = collect_expr_vars (sort_exp) ;
-		n_vars = array_len (vars) ;
+		n_vars = arr_len (vars) ;
 		bool has_nonprojected_vars = false ;
 
 		for (int vi = 0; vi < n_vars; vi++) {
@@ -276,7 +276,7 @@ void normalize_sort_exps
 			// collect variabels operand nodes
 			AR_ExpNode **var_ops = AR_EXP_CollectVariableOperands (sort_exp) ;
 
-			for (int vo = 0; vo < array_len(var_ops); vo++) {
+			for (int vo = 0; vo < arr_len(var_ops); vo++) {
 				AR_ExpNode *node = var_ops[vo] ;
 				const char *entity_alias = node->operand.variadic.entity_alias ;
 
@@ -297,7 +297,7 @@ void normalize_sort_exps
 				ASSERT (ak < alias_count) ;  // remapping should be possible
 			}
 
-			array_free(var_ops) ;
+			arr_free(var_ops) ;
 			goto cleanup ;
 		}
 
@@ -324,7 +324,7 @@ void normalize_sort_exps
 		}
 
 		AR_ExpNode **var_ops = AR_EXP_CollectVariableOperands (sort_exp) ;
-		for (int vo = 0; vo < array_len(var_ops); vo++) {
+		for (int vo = 0; vo < arr_len(var_ops); vo++) {
 			AR_ExpNode *vnode = var_ops[vo] ;
 			const char *alias = vnode->operand.variadic.entity_alias ;
 
@@ -338,10 +338,10 @@ void normalize_sort_exps
 				}
 			}
 		}
-		array_free(var_ops);
+		arr_free(var_ops);
 
 		// add modified sort expression to projections
-		array_append (_projections, AR_EXP_Clone (sort_exp)) ;
+		arr_append (_projections, AR_EXP_Clone (sort_exp)) ;
 
 cleanup:
 		// free the char ** returned by collect_expr_vars
@@ -349,7 +349,7 @@ cleanup:
 			for (int vix = 0; vix < n_vars; vix++) {
 				rm_free (vars[vix]) ;
 			}
-			array_free (vars) ;
+			arr_free (vars) ;
 		}
 
     } // end for each sort expr

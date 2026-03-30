@@ -68,7 +68,7 @@ void ExecutionPlanAwareness_SelfAware
 
 	HashTableEmpty(op->awareness, NULL);
 
-	int n = array_len(op->modifies);
+	int n = arr_len(op->modifies);
 	for(int i = 0; i < n; i++) {
 		const char *alias = op->modifies[i];
 		HashTableAdd(op->awareness, (void*)alias, NULL);
@@ -172,7 +172,7 @@ void ExecutionPlanAwareness_RemoveOp
 ) {
 	ASSERT(op != NULL);
 
-	int n = array_len(op->modifies);
+	int n = arr_len(op->modifies);
 
 	// op doesn't introduce any variabels, it has no effect on awareness
 	if(n == 0) {

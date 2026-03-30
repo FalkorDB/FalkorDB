@@ -93,7 +93,7 @@ static AlgebraicExpression **_valid_expressions
 	uint nrestricted                   // number of elements in restricted
 ) {
 	// sorted array of valid expressions to return
-	AlgebraicExpression **options = array_new(AlgebraicExpression *, 0);
+	AlgebraicExpression **options = arr_new(AlgebraicExpression *, 0);
 
 	for(int i = nexp - 1; i >= 0; i--) {
 		// see if current expression is a valid expression to use
@@ -127,7 +127,7 @@ static AlgebraicExpression **_valid_expressions
 			}
 		}
 
-		if(valid) array_append(options, exp);
+		if(valid) arr_append(options, exp);
 	}
 
 	return options;
@@ -143,7 +143,7 @@ static bool _arrangement_set_expression
 ) {
 	// done
 	if(i == nexp) {
-		array_free(options);
+		arr_free(options);
 		return true;
 	}
 
@@ -156,9 +156,9 @@ static bool _arrangement_set_expression
 
 	// as long as we didn't find an expression for position i
 	// and there are options to go through
-	while(!position_set && array_len(options) > 0) {
+	while(!position_set && arr_len(options) > 0) {
 		// options are sorted by score
-		AlgebraicExpression *exp = array_pop(options);
+		AlgebraicExpression *exp = arr_pop(options);
 
 		// set current expression in arrangement
 		arrangement[i] = exp;
@@ -171,7 +171,7 @@ static bool _arrangement_set_expression
 												   follows, i + 1);
 	}
 
-	array_free(options);
+	arr_free(options);
 	return position_set;
 }
 
@@ -271,7 +271,7 @@ void orderExpressions
 	// RemoveRedundentOperands will remove label operands from already resolved
 	// nodes, this might reduce numder of expressions in 'exps'
 	_AlgebraicExpression_RemoveRedundentOperands(exps, qg);
-	*exp_count = array_len(exps);
+	*exp_count = arr_len(exps);
 
 	if(filtered_entities) {
 		raxFree(filtered_entities);

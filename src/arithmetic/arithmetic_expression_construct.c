@@ -613,10 +613,10 @@ static AR_ExpNode *_AR_ExpFromShortestPath
 	uint reltype_count = cypher_ast_rel_pattern_nreltypes(edge);
 	const char **reltype_names = NULL;
 	if(reltype_count > 0) {
-		reltype_names = array_new(const char *, reltype_count);
+		reltype_names = arr_new(const char *, reltype_count);
 		for(uint i = 0; i < reltype_count; i ++) {
 			const char *reltype = cypher_ast_reltype_get_name(cypher_ast_rel_pattern_get_reltype(edge, i));
-			array_append(reltype_names, reltype);
+			arr_append(reltype_names, reltype);
 		}
 	}
 
@@ -627,7 +627,7 @@ static AR_ExpNode *_AR_ExpFromShortestPath
 	ctx->minHops       = start;
 	ctx->maxHops       = end;
 	ctx->reltype_names = reltype_names;
-	ctx->reltype_count = array_len(reltype_names);
+	ctx->reltype_count = arr_len(reltype_names);
 
 	AR_SetPrivateData(op, ctx);
 	AR_ExpNode *src;
