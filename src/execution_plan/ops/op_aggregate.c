@@ -236,6 +236,7 @@ static Group *_GetGroup
 		for(uint i = 0; i < op->mixed_count; i++) {
 			const char *alias = op->mixed_aliases[i];
 			int src_idx = Record_GetEntryIdx(r, alias, strlen(alias));
+			ASSERT(src_idx != INVALID_INDEX && "mixed alias not found in record");
 			if(src_idx == INVALID_INDEX) continue;
 			SIValue val = Record_Get(r, src_idx);
 			SIType t = val.type;
