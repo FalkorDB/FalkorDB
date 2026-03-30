@@ -4,15 +4,21 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "acutest.h"
 #include "../../src/util/heap.h"
 #include <time.h>
 #include <stdlib.h>
 
-#define arr_alloc_fn malloc
-#define arr_realloc_fn realloc
-#define arr_free_fn free
+void setup();
+
+#define TEST_INIT setup();
+
+#include "acutest.h"
 #include "../../src/util/arr.h"
+
+void setup() {
+	// Use the malloc family for allocations
+	Alloc_Reset();
+}
 
 // find min value in array
 static int find_min
