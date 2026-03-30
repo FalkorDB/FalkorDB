@@ -9,9 +9,9 @@
 #include <time.h>
 #include <stdlib.h>
 
-#define array_alloc_fn malloc
-#define array_realloc_fn realloc
-#define array_free_fn free
+#define arr_alloc_fn malloc
+#define arr_realloc_fn realloc
+#define arr_free_fn free
 #include "../../src/util/arr.h"
 
 // find min value in array
@@ -20,7 +20,7 @@ static int find_min
 	int *arr
 ) {
 	int min = arr[0];
-	int n = array_len(arr);
+	int n = arr_len(arr);
 	for(int i = 1; i < n; i++) {
 		if(min > arr[i]) {
 			min = arr[i];
@@ -36,10 +36,10 @@ static void remove_value
 	int *arr,
 	int v
 ) {
-	int n = array_len(arr);
+	int n = arr_len(arr);
 	for(int i = 0; i < n; i++) {
 		if(arr[i] == v) {
-			array_del_fast(arr, i);
+			arr_del_fast(arr, i);
 			break;
 		}
 	}
@@ -344,8 +344,8 @@ static void test_heapFuzz(void) {
 	heap_t *heap = Heap_new(cmp, NULL);
 
 	int n                = 500;
-	int *elements        = array_new(int, n);  // all elements ever introduced
-	int *synced_elements = array_new(int, n);  // elements synced with heap
+	int *elements        = arr_new(int, n);  // all elements ever introduced
+	int *synced_elements = arr_new(int, n);  // elements synced with heap
 
 	// perform random operations:
 	// 1. introduce a new random element
@@ -363,15 +363,15 @@ static void test_heapFuzz(void) {
 			case 0:
 				// introduce a new random element
 				elem = rand() % 100;
-				array_append(elements, elem);
-				array_append(synced_elements, elem);
-				Heap_offer(&heap, elements + (array_len(elements)-1));
+				arr_append(elements, elem);
+				arr_append(synced_elements, elem);
+				Heap_offer(&heap, elements + (arr_len(elements)-1));
 				break;
 			case 1:
 				// remove random element
 				if(Heap_count(heap) > 0) {
 					// remove a random element
-					idx = rand() % array_len(elements);
+					idx = rand() % arr_len(elements);
 
 					if(Heap_remove_item(heap, elements + idx) != NULL) {
 						remove_value(synced_elements, elements[idx]);
@@ -393,7 +393,7 @@ static void test_heapFuzz(void) {
 		// validate head of heap contains the lowest value in elements array
 		//----------------------------------------------------------------------
 		int heap_count = Heap_count(heap);
-		int arr_count  = array_len(synced_elements);
+		int arr_count  = arr_len(synced_elements);
 		TEST_ASSERT(heap_count == arr_count);
 		if(heap_count > 0) {
 			top = (int*)Heap_peek(heap);
@@ -404,8 +404,8 @@ static void test_heapFuzz(void) {
 
 	// clean up
 	Heap_free(heap);
-	array_free(elements);
-	array_free(synced_elements);
+	arr_free(elements);
+	arr_free(synced_elements);
 }
 
 TEST_LIST = {
