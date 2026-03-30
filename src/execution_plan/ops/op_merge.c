@@ -20,28 +20,6 @@ static Record MergeConsume(OpBase *opBase);
 static OpBase *MergeClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void MergeFree(OpBase *opBase);
 
-// fake hash function
-// hash of key is simply key
-static uint64_t _id_hash
-(
-	const void *key
-) {
-	return ((uint64_t)key);
-}
-
-// hashtable value destructor callback
-static void dictValDest
-(
-	dict *d,
-	void *val
-) {
-	PendingUpdateCtx_Free ((PendingUpdateCtx*)val) ;
-}
-
-// hashtable callbacks
-static dictType _dt = { _id_hash, NULL, NULL, NULL, NULL, dictValDest, NULL,
-	NULL, NULL, NULL};
-
 //------------------------------------------------------------------------------
 // ON MATCH / ON CREATE logic
 //------------------------------------------------------------------------------

@@ -22,62 +22,40 @@ static Record _handoff
 (
 	OpUpdate *op
 ) {
-	if(op->rec_idx < array_len(op->records)) {
-		return op->records[op->rec_idx++];
+	if (op->rec_idx < array_len (op->records)) {
+		return op->records [op->rec_idx++] ;
 	} else {
-		return NULL;
+		return NULL ;
 	}
 }
 
-// fake hash function
-// hash of key is simply key
-static uint64_t _id_hash
-(
-	const void *key
-) {
-	return ((uint64_t)key);
-}
-
-// hashtable entry free callback
-static void freeCallback
-(
-	dict *d,
-	void *val
-) {
-	PendingUpdateCtx_Free((PendingUpdateCtx*)val);
-}
-
-// hashtable callbacks
-static dictType _dt = { _id_hash, NULL, NULL, NULL, NULL, freeCallback, NULL,
-	NULL, NULL, NULL};
-
+// create a new update operation
 OpBase *NewUpdateOp
 (
-	const ExecutionPlan *plan,
-	rax *update_exps
+	const ExecutionPlan *plan,  // execution plan
+	rax *update_exps            // update expressions
 ) {
-	OpUpdate *op = rm_calloc(1, sizeof(OpUpdate));
+	OpUpdate *op = rm_calloc (1, sizeof (OpUpdate)) ;
 
-	op->gc           = QueryCtx_GetGraphCtx();
-	op->records      = array_new(Record, 64);
-	op->update_ctxs  = update_exps;
-	op->node_updates = HashTableCreate(&_dt);
-	op->edge_updates = HashTableCreate(&_dt);
+	op->gc             = QueryCtx_GetGraphCtx () ;
+	op->records        = array_new (Record, 64) ;
+	op->update_ctxs    = update_exps ;
+	op->staged_updates = StagedUpdatesCtx_New () ;
 
 	// set our op operations
-	OpBase_Init((OpBase *)op, OPType_UPDATE, "Update", NULL, UpdateConsume,
-				UpdateReset, NULL, UpdateClone, UpdateFree, true, plan);
+	OpBase_Init ((OpBase *)op, OPType_UPDATE, "Update", NULL, UpdateConsume,
+				UpdateReset, NULL, UpdateClone, UpdateFree, true, plan) ;
 
 	// iterate over all update expressions
 	// set the record index for every entity modified by this operation
-	raxStart(&op->it, update_exps);
-	raxSeek(&op->it, "^", NULL, 0);
-	while(raxNext(&op->it)) {
-		EntityUpdateDesc *ctx = op->it.data;
-		ctx->record_idx = OpBase_Modifies((OpBase *)op, ctx->alias);
+	raxStart (&op->it, update_exps) ;
+	raxSeek (&op->it, "^", NULL, 0) ;
+	while (raxNext (&op->it)) {
+		EntityUpdateDesc *desc = op->it.data ;
+		ctx->record_idx = OpBase_Modifies ((OpBase *)op, desc->alias) ;
 	}
 
-	return (OpBase *)op;
+	return (OpBase *)op ;
 }
 
 static Record UpdateConsume
@@ -86,20 +64,19 @@ static Record UpdateConsume
 ) {
 	OpUpdate *op = (OpUpdate *)opBase ;
 	OpBase *child = op->op.children[0] ;
-	Record r ;
 
 	// updates already performed
 	if (array_len (op->records) > 0) {
 		return _handoff (op) ;
 	}
 
+	Record r ;
 	while ((r = OpBase_Consume (child))) {
 		// evaluate update expressions
 		raxSeek (&op->it, "^", NULL, 0) ;
 		while (raxNext (&op->it)) {
-			EntityUpdateDesc *ctx = op->it.data;
-			EvalEntityUpdates (op->gc, op->node_updates, op->edge_updates, r,
-					ctx, true) ;
+			EntityUpdateDesc *desc = op->it.data ;
+			EvalEntityUpdates (op->gc, op->staged_updates, r, desc, true) ;
 		}
 
 		array_append (op->records, r) ;
@@ -108,7 +85,8 @@ static Record UpdateConsume
 	uint node_updates_count = HashTableElemCount (op->node_updates) ;
 	uint edge_updates_count = HashTableElemCount (op->edge_updates) ;
 
-	if (node_updates_count > 0 || edge_updates_count > 0) {
+	if (StagedUpdatesCtx_HasNodeUpdates (op->staged_updates) ||
+		StagedUpdatesCtx_HasEdgeUpdates (op->staged_updates)) {
 		// done reading; we're not going to call Consume any longer
 		// there might be operations like "Index Scan" that need to free the
 		// index R/W lock - as such
@@ -121,23 +99,21 @@ static Record UpdateConsume
 		// in cases such as:
 		// MATCH (n) SET n:L
 		// make sure L is of the right dimensions
-		if (node_updates_count > 0) {
+		if (StagedUpdatesCtx_HasNodeUpdates (op->staged_updates)) {
 			ensureMatrixDim (op->gc, op->update_ctxs) ;
 		}
 
-		CommitUpdates (op->gc, op->node_updates, ENTITY_NODE) ;
-		CommitUpdates (op->gc, op->edge_updates, ENTITY_EDGE) ;
+		CommitUpdates (op->gc, op->staged_updates) ;
 	}
 
-	HashTableEmpty (op->node_updates, NULL) ;
-	HashTableEmpty (op->edge_updates, NULL) ;
+	StagedUpdatesCtx_Free (&op->staged_updates) ;
 
 	// no one consumes our output, return NULL
 	if (opBase->parent == NULL) {
 		return NULL ;
 	}
 
-	return _handoff(op);
+	return _handoff (op) ;
 }
 
 static OpBase *UpdateClone
@@ -145,54 +121,53 @@ static OpBase *UpdateClone
 	const ExecutionPlan *plan,
 	const OpBase *opBase
 ) {
-	ASSERT(opBase->type == OPType_UPDATE);
-	OpUpdate *op = (OpUpdate *)opBase;
+	ASSERT (opBase->type == OPType_UPDATE) ;
+	OpUpdate *op = (OpUpdate *)opBase ;
 
 	rax *update_ctxs =
-		raxCloneWithCallback(op->update_ctxs, (void *(*)(void *))UpdateCtx_Clone);
-	return NewUpdateOp(plan, update_ctxs);
+		raxCloneWithCallback (op->update_ctxs,
+				(void *(*)(void *))UpdateCtx_Clone) ;
+	return NewUpdateOp (plan, update_ctxs) ;
 }
 
 static OpResult UpdateReset
 (
 	OpBase *ctx
 ) {
-	OpUpdate *op = (OpUpdate *)ctx;
+	OpUpdate *op = (OpUpdate *)ctx ;
 
-	HashTableEmpty(op->node_updates, NULL);
-	HashTableEmpty(op->edge_updates, NULL);
+	// re create staged updates context
+	StagedUpdatesCtx_Free (&op->staged_updates) ;
+	op->staged_updates = StagedUpdatesCtx_New () ;
 
-	uint records_count = array_len(op->records);
+	uint records_count = array_len (op->records) ;
 	// records[0..op->record_idx] had been already emitted, skip them
-	for(uint i = op->rec_idx; i < records_count; i++) {
-		OpBase_DeleteRecord(op->records+i);
+	for (uint i = op->rec_idx; i < records_count; i++) {
+		OpBase_DeleteRecord (op->records+i) ;
 	}
-	array_clear(op->records);
-	op->rec_idx = 0;
+	array_clear (op->records) ;
+	op->rec_idx = 0 ;
 
-	return OP_OK;
+	return OP_OK ;
 }
 
-static void UpdateFree(OpBase *ctx) {
-	OpUpdate *op = (OpUpdate *)ctx;
+static void UpdateFree
+(
+	OpBase *ctx
+) {
+	OpUpdate *op = (OpUpdate *)ctx ;
 
-	if(op->node_updates) {
-		HashTableRelease(op->node_updates);
-		op->node_updates = NULL;
-	}
-
-	if(op->edge_updates) {
-		HashTableRelease(op->edge_updates);
-		op->edge_updates = NULL;
+	if (op->staged_updates != NULL) {
+		StagedUpdatesCtx_Free (&op->staged_updates) ;
 	}
 
 	// free each update context
-	if(op->update_ctxs) {
-		raxFreeWithCallback(op->update_ctxs, (void(*)(void *))UpdateCtx_Free);
-		op->update_ctxs = NULL;
+	if (op->update_ctxs != NULL) {
+		raxFreeWithCallback (op->update_ctxs, (void(*)(void *))UpdateCtx_Free) ;
+		op->update_ctxs = NULL ;
 	}
 
-	if (op->records) {
+	if (op->records != NULL) {
 		uint64_t n = array_len (op->records) ;
 		for (uint64_t i = op->rec_idx; i < n; i++) {
 			OpBase_DeleteRecord (op->records+i) ;
@@ -202,6 +177,6 @@ static void UpdateFree(OpBase *ctx) {
 		op->records = NULL ;
 	}
 
-	raxStop(&op->it);
+	raxStop (&op->it) ;
 }
 

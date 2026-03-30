@@ -11,17 +11,51 @@
 
 // context representing a single update to perform on an entity
 typedef struct {
-	GraphEntity *ge;             // entity to be updated
-	AttributeSet attributes;     // attributes to update
-	const char **add_labels;     // labels to add to the node
-	const char **remove_labels;  // labels to remove from the node
+	GraphEntity *ge;           // entity to be updated
+	AttributeSet attributes;  // attributes to update
 } PendingUpdateCtx;
+
+// opaque StagedUpdatesCtx struct
+typedef struct StagedUpdatesCtx StagedUpdatesCtx ;
+
+// create a new StagedUpdatesCtx
+StagedUpdatesCtx *StagedUpdatesCtx_New (void);
+
+// returns true if there are pending node updates
+bool StagedUpdatesCtx_HasNodeUpdates
+(
+	const StagedUpdatesCtx *ctx  // staged updates context
+) ;
+
+// returns true if there are pending edge updates
+bool StagedUpdatesCtx_HasEdgeUpdates
+(
+	const StagedUpdatesCtx *ctx  // staged updates context
+) ;
+
+// free staged update context
+void StagedUpdatesCtx_Free
+(
+	StagedUpdatesCtx **ctx  // staged updates context to free
+) ;
+
+// build pending updates in the 'updates' array to match all
+// AST-level updates described in the context
+// NULL values are allowed in SET clauses but not in MERGE clauses
+void EvalEntityUpdates
+(
+	GraphContext *gc,
+	StagedUpdatesCtx *staged_updates
+	const Record r,
+	const EntityUpdateDesc *desc,
+	bool allow_null
+);
 
 // commit all updates described in the array of pending updates
 void CommitUpdates
 (
 	GraphContext *gc,
-	dict *updates,
+	StagedUpdatesCtx *updates,
 	EntityType type
 );
 
@@ -31,19 +65,6 @@ void ensureMatrixDim
 (
 	GraphContext *gc,
 	rax *blueprints
-);
-
-// build pending updates in the 'updates' array to match all
-// AST-level updates described in the context
-// NULL values are allowed in SET clauses but not in MERGE clauses
-void EvalEntityUpdates
-(
-	GraphContext *gc,
-	dict *node_updates,
-	dict *edge_updates,
-	const Record r,
-	const EntityUpdateDesc *ctx,
-	bool allow_null
 );
 
 void PendingUpdateCtx_Free
