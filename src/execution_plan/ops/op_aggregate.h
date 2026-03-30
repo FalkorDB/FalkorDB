@@ -22,6 +22,8 @@ typedef struct {
 	dictIterator *group_iter;     // iterator for walking all groups
 	uint key_count;               // number of key expressions
 	uint aggregate_count;         // number of aggregating expressions
+	char **mixed_aliases;   // non-key aliases referenced inside aggregate exps
+	uint mixed_count;       // number of mixed aliases
 } OpAggregate;
 
 OpBase *NewAggregateOp
