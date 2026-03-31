@@ -102,7 +102,7 @@ static int GraphBLAS_Init (RedisModuleCtx *ctx) {
 	}
 
 	// all matrices in CSR format
-	GrB_OK (GxB_set (GxB_FORMAT, GxB_BY_ROW)) ;
+	GrB_OK (GrB_set (GrB_GLOBAL, GxB_BY_ROW, GxB_FORMAT)) ;
 
 	// alow only baked-in JIT kernels (pre-jit)
     GrB_OK (GrB_set (GrB_GLOBAL, GxB_JIT_RUN, GxB_JIT_C_CONTROL)) ;
@@ -194,7 +194,8 @@ int RedisModule_OnLoad
 	uint64_t ompThreadCount;
 	Config_Option_get(Config_OPENMP_NTHREAD, &ompThreadCount);
 
-	if(GxB_set(GxB_NTHREADS, ompThreadCount) != GrB_SUCCESS) {
+	if(GrB_set(GrB_GLOBAL, (int32_t) ompThreadCount, GxB_NTHREADS)
+		!= GrB_SUCCESS) {
 		RedisModule_Log(ctx, "warning",
 				"Failed to set OpenMP thread count to %" PRIu64, ompThreadCount);
 		return REDISMODULE_ERR;

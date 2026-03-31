@@ -198,7 +198,7 @@ static void _DeleteGraphMetaKeys
 		keys = GraphEncodeContext_GetMetaKeys(gc->encoding_context);
 	}
 
-	key_count = array_len(keys);
+	key_count = arr_len(keys);
 	for(uint i = 0; i < key_count; i++) {
 		RedisModuleString *meta_rm_string =
 			RedisModule_CreateStringPrintf(ctx, "%s", keys[i]);
@@ -213,7 +213,7 @@ static void _DeleteGraphMetaKeys
 		rm_free(keys[i]);
 	}
 
-	array_free(keys);
+	arr_free(keys);
 
 	// clear the relevant context meta keys as they are no longer valid
 	if(decode) {
@@ -562,7 +562,11 @@ static void _AfterForkChild() {
 	// 1. save resources
 	// 2. avoid a bug in GNU OpenMP which hangs when performing parallel loop
 	// in forked process
+	// FIXME: this uses a historical method to bypass the graphblas global lock,
+	// which will cause sanitizer to fail. Set before forking, or use the new
+	// GraphBLAS function for forking.
 	GxB_set (GxB_NTHREADS, 1) ;
+	// GrB_set (GrB_GLOBAL, (int32_t) 1, GxB_NTHREADS) ;
 
 	// the graph sync validation only applies to BGSAVE forks (main thread)
 	// GRAPH.COPY forks from a cron thread and only syncs the source graph

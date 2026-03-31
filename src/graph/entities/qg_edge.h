@@ -7,9 +7,12 @@
 #pragma once
 
 #include "qg_node.h"
+
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+
+typedef struct QGEdge QGEdge ;
 
 struct QGEdge {
 	const char *alias;      // user-provided alias attached to edge
@@ -22,8 +25,6 @@ struct QGEdge {
 	bool bidirectional;     // edge doesn't have a direction
 	bool shortest_path;     // only edges in the shortest paths should be collected
 };
-
-typedef struct QGEdge QGEdge;
 
 // creates a new edge without forming connections
 QGEdge *QGEdge_New
@@ -107,6 +108,14 @@ void QGEdge_Reverse
 (
 	QGEdge *e
 );
+
+// tries to resolves unknown relationship types
+// return false if at least one relationship type remained unresolved
+// otherwise all relationship types are resolved and true is returned
+bool QGEdge_ResolveUnknownRelIDS
+(
+	QGEdge *e  // edge to update
+) ;
 
 // gets a string representation of given edge
 void QGEdge_ToString

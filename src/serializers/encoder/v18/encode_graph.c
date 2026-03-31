@@ -141,7 +141,7 @@ static PayloadInfo *_RdbSaveKeySchema
 	//      Number of entities encoded in this state
 
 	uint32_t payloads_count = 0;
-	PayloadInfo *payloads = array_new(PayloadInfo, 1);
+	PayloadInfo *payloads = arr_new(PayloadInfo, 1);
 
 	// get current encoding state
 	EncodeState current_state =
@@ -174,7 +174,7 @@ static PayloadInfo *_RdbSaveKeySchema
 
 		// only include non empty states
 		if(payload.entities_count > 0) {
-			array_append(payloads, payload);
+			arr_append(payloads, payload);
 			if(!last_key) capacity -= payload.entities_count;
 		}
 
@@ -188,7 +188,7 @@ static PayloadInfo *_RdbSaveKeySchema
 	}
 
 	// save the number of payloads
-	payloads_count = array_len(payloads);
+	payloads_count = arr_len(payloads);
 	SerializerIO_WriteUnsigned(rdb, payloads_count);
 
 	// save paylopads
@@ -251,7 +251,7 @@ void RdbSaveGraph_latest
 	PayloadInfo *payloads = _RdbSaveKeySchema(rdb, gc);
 
 	PayloadInfo *payload = NULL;
-	uint32_t payloads_count = array_len(payloads);
+	uint32_t payloads_count = arr_len(payloads);
 
 	for(uint i = 0; i < payloads_count; i++) {
 		payload = payloads+i;
@@ -310,7 +310,7 @@ void RdbSaveGraph_latest
 	}
 
 	// free payloads
-	array_free(payloads);
+	arr_free(payloads);
 
 	// increase processed key count
 	// if finished encoding, reset context

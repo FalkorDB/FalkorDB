@@ -49,7 +49,7 @@ static void _process_yield
 	ctx->yield_edges = NULL;
 
 	int idx = 0;
-	for(uint i = 0; i < array_len(yield); i++) {
+	for(uint i = 0; i < arr_len(yield); i++) {
 		if(strcasecmp("nodes", yield[i]) == 0) {
 			ctx->yield_nodes = ctx->output + idx;
 			idx++;
@@ -74,7 +74,7 @@ static ProcedureResult Proc_BFS_Invoke
 	ASSERT(ctx  != NULL);
 	ASSERT(args != NULL);
 
-	if(array_len((SIValue *)args) != 3) {
+	if(arr_len((SIValue *)args) != 3) {
 		return PROCEDURE_ERR;
 	}
 
@@ -187,7 +187,7 @@ static SIValue *Proc_BFS_Step
 		edges = SI_Array(n);
 	}
 
-	Edge *edge = array_new(Edge, 1);
+	Edge *edge = arr_new(Edge, 1);
 
 	// setup result iterator
 	NodeID       id;
@@ -216,7 +216,7 @@ static SIValue *Proc_BFS_Step
 		}
 
 		if(yield_edges) {
-			array_clear(edge);
+			arr_clear(edge);
 			GrB_Index parent_id;
 			// find the parent of the reached node
 			info = GrB_Vector_extractElement(&parent_id, bfs_ctx->parents, id);
@@ -245,7 +245,7 @@ static SIValue *Proc_BFS_Step
 	}
 
 	// clean up
-	array_free(edge);
+	arr_free(edge);
 	GxB_Iterator_free(&iter);
 	bfs_ctx->depleted = true;
 
@@ -284,11 +284,11 @@ ProcedureCtx *Proc_BFS_Ctx() {
 	void *privdata = _Build_Private_Data();
 
 	// declare possible outputs
-	ProcedureOutput *outputs = array_new(ProcedureOutput, 2);
+	ProcedureOutput *outputs = arr_new(ProcedureOutput, 2);
 	ProcedureOutput out_nodes = {.name = "nodes", .type = T_ARRAY};
 	ProcedureOutput out_edges = {.name = "edges", .type = T_ARRAY};
-	array_append(outputs, out_nodes);
-	array_append(outputs, out_edges);
+	arr_append(outputs, out_nodes);
+	arr_append(outputs, out_edges);
 
 	ProcedureCtx *ctx = ProcCtxNew("algo.BFS",
 								   3,

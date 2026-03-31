@@ -121,13 +121,13 @@ static bool _set_intersection_idx
 ) {
 	op->intersect_idx = -1;
 	op->number_of_intersections = 0;
-	uint record_count = array_len(op->cached_records);
+	uint record_count = arr_len(op->cached_records);
 
 	uint leftmost_idx  = 0;
 	uint rightmost_idx = 0;
 
 	if(!_binarySearchLeftmost(&leftmost_idx, op->cached_records,
-				array_len(op->cached_records), op->join_value_rec_idx, v)) {
+				arr_len(op->cached_records), op->join_value_rec_idx, v)) {
 		return false;
 	}
 
@@ -162,7 +162,7 @@ void _sort_cached_records
 	uint idx = op->join_value_rec_idx;
 	sort_r(
 			op->cached_records,
-			array_len(op->cached_records),
+			arr_len(op->cached_records),
 			sizeof(Record),
 			(int(*)(const void*, const void*, void*))_record_cmp,
 			&idx
@@ -177,7 +177,7 @@ void _cache_records
 	ASSERT(op->cached_records == NULL);
 
 	OpBase *left_child = OpBase_GetChild((OpBase*)op, 0);
-	op->cached_records = array_new(Record, 32);
+	op->cached_records = arr_new(Record, 32);
 
 	Record r = OpBase_Consume(left_child);
 	if(r == NULL) return;
@@ -198,7 +198,7 @@ void _cache_records
 		Record_AddScalar(r, op->join_value_rec_idx, v);
 
 		// cache the record
-		array_append(op->cached_records, r);
+		arr_append(op->cached_records, r);
 	} while((r = OpBase_Consume(left_child)));
 }
 
@@ -341,11 +341,11 @@ static OpResult ValueHashJoinReset
 	}
 
 	if(op->cached_records) {
-		uint record_count = array_len(op->cached_records);
+		uint record_count = arr_len(op->cached_records);
 		for(uint i = 0; i < record_count; i++) {
 			OpBase_DeleteRecord(op->cached_records+i);
 		}
-		array_free(op->cached_records);
+		arr_free(op->cached_records);
 		op->cached_records = NULL;
 	}
 
@@ -372,11 +372,11 @@ static void ValueHashJoinFree(OpBase *ctx) {
 	}
 
 	if(op->cached_records) {
-		uint record_count = array_len(op->cached_records);
+		uint record_count = arr_len(op->cached_records);
 		for(uint i = 0; i < record_count; i++) {
 			OpBase_DeleteRecord(op->cached_records+i);
 		}
-		array_free(op->cached_records);
+		arr_free(op->cached_records);
 		op->cached_records = NULL;
 	}
 
