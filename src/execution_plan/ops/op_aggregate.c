@@ -72,21 +72,21 @@ static void _migrate_expressions
 	OpAggregate *op,
 	AR_ExpNode **exps
 ) {
-	uint exp_count = array_len(exps);
-	op->key_exps = array_new(AR_ExpNode *, 0);
-	op->aggregate_exps = array_new(AR_ExpNode *, 1);
+	uint exp_count = arr_len(exps);
+	op->key_exps = arr_new(AR_ExpNode *, 0);
+	op->aggregate_exps = arr_new(AR_ExpNode *, 1);
 
 	for(uint i = 0; i < exp_count; i++) {
 		AR_ExpNode *exp = exps[i];
 		if(!AR_EXP_ContainsAggregation(exp)) {
-			array_append(op->key_exps, exp);
+			arr_append(op->key_exps, exp);
 		} else {
-			array_append(op->aggregate_exps, exp);
+			arr_append(op->aggregate_exps, exp);
 		}
 	}
 
-	op->key_count       = array_len(op->key_exps);
-	op->aggregate_count = array_len(op->aggregate_exps);
+	op->key_count       = arr_len(op->key_exps);
+	op->aggregate_count = arr_len(op->aggregate_exps);
 
 	// collect aliases referenced inside aggregate expressions
 	// that are not already covered by key expressions
@@ -331,22 +331,22 @@ OpBase *NewAggregateOp
 	// migrate each expression to the keys array or
 	// the aggregations array as appropriate
 	_migrate_expressions(op, exps);
-	array_free(exps);
+	arr_free(exps);
 
 	// the projected record will associate values with their resolved name
 	// to ensure that space is allocated for each entry
-	op->record_offsets = array_new(uint, op->aggregate_count + op->key_count);
+	op->record_offsets = arr_new(uint, op->aggregate_count + op->key_count);
 	for(uint i = 0; i < op->key_count; i++) {
 		// store the index of each key expression
 		int record_idx = OpBase_Modifies((OpBase *)op,
 				op->key_exps[i]->resolved_name);
-		array_append(op->record_offsets, record_idx);
+		arr_append(op->record_offsets, record_idx);
 	}
 	for(uint i = 0; i < op->aggregate_count; i++) {
 		// store the index of each aggregating expression
 		int record_idx = OpBase_Modifies((OpBase *)op,
 				op->aggregate_exps[i]->resolved_name);
-		array_append(op->record_offsets, record_idx);
+		arr_append(op->record_offsets, record_idx);
 	}
 	// reserve internal record slots for mixed aliases
 	// use OpBase_Modifies to allocate a slot but store separately
@@ -448,14 +448,14 @@ static OpBase *AggregateClone
 	OpAggregate *op = (OpAggregate *)opBase;
 	uint key_count = op->key_count;
 	uint aggregate_count = op->aggregate_count;
-	AR_ExpNode **exps = array_new(AR_ExpNode *, aggregate_count + key_count);
+	AR_ExpNode **exps = arr_new(AR_ExpNode *, aggregate_count + key_count);
 
 	for(uint i = 0; i < key_count; i++) {
-		array_append(exps, AR_EXP_Clone(op->key_exps[i]));
+		arr_append(exps, AR_EXP_Clone(op->key_exps[i]));
 	}
 
 	for(uint i = 0; i < aggregate_count; i++) {
-		array_append(exps, AR_EXP_Clone(op->aggregate_exps[i]));
+		arr_append(exps, AR_EXP_Clone(op->aggregate_exps[i]));
 	}
 
 	return NewAggregateOp(plan, exps);
@@ -472,19 +472,19 @@ void AggregateBindToPlan
 
 	// introduce the projected aliases to the plan record-mapping, and reset the
 	// record offsets to the correct indexes
-	array_clear(op->record_offsets);
+	arr_clear(op->record_offsets);
 
 	for(uint i = 0; i < op->key_count; i ++) {
 		// The projected record will associate values with their resolved name
 		// to ensure that space is allocated for each entry.
 		int record_idx = OpBase_Modifies((OpBase *)op, op->key_exps[i]->resolved_name);
-		array_append(op->record_offsets, record_idx);
+		arr_append(op->record_offsets, record_idx);
 	}
 	for(uint i = 0; i < op->aggregate_count; i++) {
 		// store the index of each aggregating expression
 		int record_idx = OpBase_Modifies((OpBase *)op,
 				op->aggregate_exps[i]->resolved_name);
-		array_append(op->record_offsets, record_idx);
+		arr_append(op->record_offsets, record_idx);
 	}
 	for(uint i = 0; i < op->mixed_count; i++) {
 		op->mixed_record_offsets[i] = OpBase_Modifies((OpBase *)op, op->mixed_aliases[i]);
@@ -509,7 +509,7 @@ static void AggregateFree
 		for(uint i = 0; i < op->key_count; i++) {
 			AR_EXP_Free(op->key_exps[i]);
 		}
-		array_free(op->key_exps);
+		arr_free(op->key_exps);
 		op->key_exps = NULL;
 	}
 
@@ -517,7 +517,7 @@ static void AggregateFree
 		for(uint i = 0; i < op->aggregate_count; i++) {
 			AR_EXP_Free(op->aggregate_exps[i]);
 		}
-		array_free(op->aggregate_exps);
+		arr_free(op->aggregate_exps);
 		op->aggregate_exps = NULL;
 	}
 
@@ -527,7 +527,7 @@ static void AggregateFree
 	}
 
 	if(op->record_offsets) {
-		array_free(op->record_offsets);
+		arr_free(op->record_offsets);
 		op->record_offsets = NULL;
 	}
 
@@ -548,4 +548,3 @@ static void AggregateFree
 		OpBase_DeleteRecord(&op->r);
 	}
 }
-
