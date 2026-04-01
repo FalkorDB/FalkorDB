@@ -133,6 +133,10 @@ GraphContext *GraphContext_New
 	int rc1 = pthread_rwlock_init (&gc->_attribute_rwlock, NULL) ;
 	assert (rc1 == 0) ;
 
+	// initialize the read-write lock to protect access to the schema arrays
+	int rc2 = pthread_rwlock_init (&gc->_schema_rwlock, NULL) ;
+	assert (rc2 == 0) ;
+
 	// build the execution plans cache
 	uint64_t cache_size ;
 	Config_Option_get (Config_CACHE_SIZE, &cache_size) ;
@@ -418,25 +422,33 @@ int _GraphContext_GetLabelID
 	const char *label,
 	SchemaType t
 ) {
+	pthread_rwlock_rdlock (&((GraphContext *)gc)->_schema_rwlock) ;
+
 	// choose the appropriate schema array given the entity type
 	Schema **schemas = (t == SCHEMA_NODE) ?
 		gc->node_schemas : gc->relation_schemas ;
 
 	// TODO: optimize lookup
 	uint32_t l = arr_len (schemas) ;
+	int result = GRAPH_NO_LABEL ;
 	for (uint32_t i = 0; i < l; i++) {
 		if (!strcmp (label, schemas[i]->name)) {
-			return i ;
+			result = i ;
+			break ;
 		}
 	}
 
-	return GRAPH_NO_LABEL; // equivalent to GRAPH_NO_RELATION
+	pthread_rwlock_unlock (&((GraphContext *)gc)->_schema_rwlock) ;
+	return result ;
 }
 
 unsigned short GraphContext_SchemaCount(const GraphContext *gc, SchemaType t) {
 	ASSERT(gc);
-	if(t == SCHEMA_NODE) return arr_len(gc->node_schemas);
-	else return arr_len(gc->relation_schemas);
+	pthread_rwlock_rdlock (&((GraphContext *)gc)->_schema_rwlock) ;
+	unsigned short count = (t == SCHEMA_NODE) ?
+		arr_len(gc->node_schemas) : arr_len(gc->relation_schemas) ;
+	pthread_rwlock_unlock (&((GraphContext *)gc)->_schema_rwlock) ;
+	return count ;
 }
 
 // checks if graph has constraints
@@ -515,11 +527,13 @@ Schema *GraphContext_GetSchemaByID
 		return NULL;
 	}
 
+	pthread_rwlock_rdlock (&((GraphContext *)gc)->_schema_rwlock) ;
 	Schema **schemas = (t == SCHEMA_NODE) ?
 		gc->node_schemas :
 		gc->relation_schemas;
-
-	return schemas[id];
+	Schema *s = schemas[id] ;
+	pthread_rwlock_unlock (&((GraphContext *)gc)->_schema_rwlock) ;
+	return s ;
 }
 
 Schema *GraphContext_GetSchema
@@ -547,11 +561,15 @@ Schema *GraphContext_AddSchema
 	if(t == SCHEMA_NODE) {
 		id = Graph_AddLabel(gc->g);
 		schema = Schema_New(SCHEMA_NODE, id, label);
+		pthread_rwlock_wrlock (&gc->_schema_rwlock) ;
 		arr_append(gc->node_schemas, schema);
+		pthread_rwlock_unlock (&gc->_schema_rwlock) ;
 	} else {
 		id = Graph_AddRelationType(gc->g);
 		schema = Schema_New(SCHEMA_EDGE, id, label);
+		pthread_rwlock_wrlock (&gc->_schema_rwlock) ;
 		arr_append(gc->relation_schemas, schema);
+		pthread_rwlock_unlock (&gc->_schema_rwlock) ;
 	}
 
 	// new schema added, update graph version
@@ -561,6 +579,7 @@ Schema *GraphContext_AddSchema
 }
 
 void GraphContext_RemoveSchema(GraphContext *gc, int schema_id, SchemaType t) {
+	pthread_rwlock_wrlock (&gc->_schema_rwlock) ;
 	if(t == SCHEMA_NODE) {
 		Schema *schema = gc->node_schemas[schema_id];
 		Schema_Free(schema);
@@ -570,6 +589,7 @@ void GraphContext_RemoveSchema(GraphContext *gc, int schema_id, SchemaType t) {
 		Schema_Free(schema);
 		gc->relation_schemas = arr_del(gc->relation_schemas, schema_id);
 	}
+	pthread_rwlock_unlock (&gc->_schema_rwlock) ;
 }
 
 const char *GraphContext_GetEdgeRelationType(const GraphContext *gc, Edge *e) {
@@ -1090,6 +1110,9 @@ static void _GraphContext_Free
 
 	int res = pthread_rwlock_destroy(&gc->_attribute_rwlock);
 	ASSERT(res == 0);
+
+	int res2 = pthread_rwlock_destroy(&gc->_schema_rwlock);
+	ASSERT(res2 == 0);
 
 	if(gc->slowlog) SlowLog_Free(gc->slowlog);
 

@@ -33,6 +33,7 @@ typedef struct {
 	int ref_count;                         // number of active references
 	rax *attributes;                       // from strings to attribute IDs
 	pthread_rwlock_t _attribute_rwlock;    // read-write lock to protect access to the attribute maps
+	pthread_rwlock_t _schema_rwlock;       // read-write lock to protect access to the schema arrays
 	char *graph_name;                      // string associated with graph
 	char **string_mapping;                 // from attribute IDs to strings
 	Schema **node_schemas;                 // array of schemas for each node label
