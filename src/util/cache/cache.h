@@ -8,6 +8,7 @@
 
 #include "cache_array.h"
 #include "rax.h"
+
 #include <stdatomic.h>
 
 /**
@@ -15,14 +16,14 @@
  * Assumes owership over stored objects.
  */
 typedef struct Cache {
-	uint cap;                          // Cache capacity.
-	uint size;                         // Cache current size.
-	atomic_llong counter;              // Counter for number of reads.
-	rax *lookup;                       // Mapping between keys to entries, for fast lookups.
-	CacheEntry *arr;                   // Array of cache elements.
-	CacheEntryFreeFunc free_item;      // Callback function that free cached value.
-	CacheEntryCopyFunc copy_item;      // Callback function that copies cached value.
-	pthread_rwlock_t _cache_rwlock;    // Read-write lock to protect access to the cache.
+	uint cap;                        // cache capacity
+	uint size;                       // number of items in cache
+	atomic_llong counter;            // counter for number of reads
+	rax *lookup;                     // mapping between keys to entries, for fast lookups
+	CacheEntry *arr;                 // array of cache elements
+	CacheEntryFreeFunc free_item;    // callback function that free cached value
+	CacheEntryCopyFunc copy_item;    // callback function that copies cached value
+	pthread_rwlock_t _cache_rwlock;  // read-write lock to protect access to the cache
 } Cache;
 
 /**
