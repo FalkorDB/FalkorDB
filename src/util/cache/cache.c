@@ -91,7 +91,7 @@ void *Cache_GetValue(Cache *cache, const char *key) {
 
 	// element is now the most recently used; update its LRU
 	long long new_val = atomic_fetch_add(&cache->counter, 1) + 1;
-	atomic_store(&entry->LRU, new_val);
+	entry->LRU = new_val;
 
 	// return a copy of element
 	item = cache->copy_item(entry->value);

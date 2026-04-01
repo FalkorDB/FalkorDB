@@ -12,14 +12,11 @@ CacheEntry *CacheArray_FindMinLRU(CacheEntry *cache_arr, uint cap) {
 	ASSERT(cache_arr != NULL);
 
 	CacheEntry *min_LRU_entry = cache_arr;
-	long long min_LRU = atomic_load(&min_LRU_entry->LRU);
 
 	for(size_t i = 1; i < cap; i++) {
 		CacheEntry *current_entry = cache_arr + i;
-		long long current_LRU = atomic_load(&current_entry->LRU);
-		if(current_LRU < min_LRU) {
+		if(current_entry->LRU < min_LRU_entry->LRU) {
 			min_LRU_entry = current_entry;
-			min_LRU = current_LRU;
 		}
 	}
 
@@ -31,7 +28,7 @@ CacheEntry *CacheArray_PopulateEntry(long long counter, CacheEntry *entry, char 
 
 	entry->key   = key;
 	entry->value = value;
-	atomic_store(&entry->LRU, counter);
+	entry->LRU   = counter;
 
 	return entry;
 }
@@ -50,6 +47,6 @@ void CacheArray_CleanEntry(CacheEntry *entry, CacheEntryFreeFunc free_entry) {
 		entry->value = NULL;
 	}
 
-	atomic_store(&entry->LRU, 0);
+	entry->LRU = 0;
 }
 
