@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <sys/types.h>
 
 //------------------------------------------------------------------------------
@@ -27,7 +28,7 @@ typedef void *(*CacheEntryCopyFunc)(void *);
 typedef struct CacheEntry_t {
 	char *key;      // Entry key.
 	void *value;    // Entry stored value.
-	long long LRU;  // Indicates the time when the entry was last recently used.
+	atomic_llong LRU;  // Indicates the time when the entry was last recently used.
 } CacheEntry;
 
 

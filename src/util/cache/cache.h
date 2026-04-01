@@ -8,6 +8,7 @@
 
 #include "cache_array.h"
 #include "rax.h"
+#include <stdatomic.h>
 
 /**
  * @brief Key-value cache, uses LRU policy for eviction.
@@ -16,7 +17,7 @@
 typedef struct Cache {
 	uint cap;                          // Cache capacity.
 	uint size;                         // Cache current size.
-	long long counter;                 // Atomic counter for number of reads.
+	atomic_llong counter;              // Counter for number of reads.
 	rax *lookup;                       // Mapping between keys to entries, for fast lookups.
 	CacheEntry *arr;                   // Array of cache elements.
 	CacheEntryFreeFunc free_item;      // Callback function that free cached value.

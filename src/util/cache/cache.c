@@ -44,8 +44,8 @@ static bool _Cache_SetValue(Cache *cache, const char *key, void *value,
 
 	// populate the entry
 	char *k = rm_strdup(key);
-	cache->counter++;
-	CacheArray_PopulateEntry(cache->counter, entry, k, value);
+	long long new_val = atomic_fetch_add(&cache->counter, 1) + 1;
+	CacheArray_PopulateEntry(new_val, entry, k, value);
 
 
 	// Add the new entry to the rax.
@@ -62,7 +62,7 @@ Cache *Cache_New(uint cap, CacheEntryFreeFunc freeFunc, CacheEntryCopyFunc copyF
 	cache->cap       = cap;
 	cache->size      = 0;
 	cache->lookup    = raxNew();       // Instantiate key entry mapping.
-	cache->counter   = 0;             // Initialize counter to zero.
+	atomic_init(&cache->counter, 0);  // Initialize counter to zero.
 	cache->copy_item = copyFunc;
 	cache->free_item = freeFunc;
 	cache->arr = rm_calloc(cap, sizeof(CacheEntry)); // Array of cached values.
@@ -90,9 +90,8 @@ void *Cache_GetValue(Cache *cache, const char *key) {
 	if(entry == raxNotFound) goto cleanup;
 
 	// element is now the most recently used; update its LRU
-	// note that multiple threads can be here simultaneously
-	cache->counter++;
-	entry->LRU = cache->counter;
+	long long new_val = atomic_fetch_add(&cache->counter, 1) + 1;
+	atomic_store(&entry->LRU, new_val);
 
 	// return a copy of element
 	item = cache->copy_item(entry->value);
