@@ -16,7 +16,7 @@
 typedef struct Cache {
 	uint cap;                          // Cache capacity.
 	uint size;                         // Cache current size.
-	long long counter;                 // Atomic counter for number of reads.
+	long long counter;                 // Monotonically increasing counter used for LRU tracking.
 	rax *lookup;                       // Mapping between keys to entries, for fast lookups.
 	CacheEntry *arr;                   // Array of cache elements.
 	CacheEntryFreeFunc free_item;      // Callback function that free cached value.
