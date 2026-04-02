@@ -26,32 +26,19 @@ typedef void *(*CacheEntryCopyFunc)(void *);
  * @brief  A struct for an entry in cache array with a key and value.
  */
 typedef struct CacheEntry_t {
-	char *key;         // entry key
-	void *value;       // entry stored value
-	atomic_llong LRU;  // indicates the time when the entry was last recently used
+	char *key;      // Entry key.
+	void *value;    // Entry stored value.
+	atomic_llong LRU;  // Indicates the time when the entry was last recently used.
 } CacheEntry;
 
 
-// returns a pointer to the entry in the cache array with the minimum LRU
-CacheEntry *CacheArray_FindMinLRU
-(
-	CacheEntry *cache_arr,
-	uint cap
-) ;
+// Returns a pointer to the entry in the cache array with the minimum LRU.
+CacheEntry *CacheArray_FindMinLRU(CacheEntry *cache_arr, uint cap);
 
-// assign new values to the fields of a cache entry
-CacheEntry *CacheArray_PopulateEntry
-(
-	long long counter,
-	CacheEntry *entry,
-	char *key,
-	void *value
-) ;
+// Assign new values to the fields of a cache entry.
+CacheEntry *CacheArray_PopulateEntry(long long counter, CacheEntry *entry, char *key,
+  			void *value);
 
-// free the fields of a cache entry to prepare it for reuse
-void CacheArray_CleanEntry
-(
-	CacheEntry *entry,
-	CacheEntryFreeFunc free_entry
-) ;
+// Free the fields of a cache entry to prepare it for reuse.
+void CacheArray_CleanEntry(CacheEntry *entry, CacheEntryFreeFunc free_entry);
 

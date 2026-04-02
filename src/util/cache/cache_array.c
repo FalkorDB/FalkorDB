@@ -23,18 +23,14 @@ CacheEntry *CacheArray_FindMinLRU(CacheEntry *cache_arr, uint cap) {
 	return min_LRU_entry;
 }
 
-CacheEntry *CacheArray_PopulateEntry
-(
-	long long counter,
-	CacheEntry *entry,
-	char *key,
-	void *value
-) {
-	entry->key   = key ;
-	entry->LRU   = counter ;
-	entry->value = value ;
+CacheEntry *CacheArray_PopulateEntry(long long counter, CacheEntry *entry, char *key,
+  									void *value) {
 
-	return entry ;
+	entry->key   = key;
+	entry->value = value;
+	entry->LRU   = counter;
+
+	return entry;
 }
 
 void CacheArray_CleanEntry(CacheEntry *entry, CacheEntryFreeFunc free_entry) {
