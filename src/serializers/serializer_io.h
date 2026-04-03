@@ -70,7 +70,7 @@ void SerializerIO_WriteString
 void SerializerIO_WriteBuffer
 (
 	SerializerIO io,   // stream to write to
-	const char *buff,  // buffer 
+	const void *buff,  // buffer
 	size_t len         // number of bytes to write
 );
 
@@ -118,7 +118,7 @@ RedisModuleString *SerializerIO_ReadString
 );
 
 // read buffer from stream
-char *SerializerIO_ReadBuffer
+void *SerializerIO_ReadBuffer
 (
 	SerializerIO io,  // stream
 	size_t *lenptr     // number of bytes to read

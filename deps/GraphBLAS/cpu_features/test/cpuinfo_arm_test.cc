@@ -21,6 +21,18 @@
 namespace cpu_features {
 namespace {
 
+TEST(CpuinfoArmTest, ArmFeaturesEnum) {
+   const char *last_name = GetArmFeaturesEnumName(ARM_LAST_);
+   EXPECT_STREQ(last_name, "unknown_feature");
+   for (int i = static_cast<int>(ARM_SWP); i != static_cast<int>(ARM_LAST_); ++i) {
+      const auto feature = static_cast<ArmFeaturesEnum>(i);
+      const char *name = GetArmFeaturesEnumName(feature);
+      ASSERT_FALSE(name == nullptr);
+      EXPECT_STRNE(name, "");
+      EXPECT_STRNE(name, last_name);
+   }
+}
+
 TEST(CpuinfoArmTest, FromHardwareCap) {
   ResetHwcaps();
   SetHardwareCapabilities(ARM_HWCAP_NEON, ARM_HWCAP2_AES | ARM_HWCAP2_CRC32);
@@ -325,6 +337,24 @@ CPU revision	: 3)");
   EXPECT_TRUE(info.features.idivt);
 
   EXPECT_EQ(GetArmCpuId(&info), 0x510006f3);
+}
+
+// The 2013 Nexus 7 (Qualcomm Krait) kernel configuration forgets to report IDIV
+// support.
+TEST(CpuinfoArmTest, Nexus7_2013_0x511006f0) {
+  ResetHwcaps();
+  auto& fs = GetEmptyFilesystem();
+  fs.CreateFile("/proc/cpuinfo",
+                R"(CPU implementer  : 0x51
+CPU architecture: 7
+CPU variant : 0x1
+CPU part  : 0x06f
+CPU revision  : 0)");
+  const auto info = GetArmInfo();
+  EXPECT_TRUE(info.features.idiva);
+  EXPECT_TRUE(info.features.idivt);
+
+  EXPECT_EQ(GetArmCpuId(&info), 0x511006f0);
 }
 
 // The emulator-specific Android 4.2 kernel fails to report support for the

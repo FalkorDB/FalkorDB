@@ -110,3 +110,34 @@ OpBase *ExecutionPlan_BuildOpsFromPath
 	const cypher_astnode_t *path
 );
 
+// normalize ORDER BY expressions
+// if possible bring expressions to refer only to projected aliases
+// transformation examples:
+// 
+// WITH a AS b, c.x AS X
+// ORDER BY a.v, c.x
+// 
+// becomes:
+//
+// WITH a AS b, c.x AS X
+// ORDER BY b.v, X
+//
+// in some cases this might not be possible
+// e.g.
+//
+// MATCH (n), (m)
+// WITH n.v AS V
+// ORDER BY m.x + V
+// 
+// in such cases projected aliases would revert to their origin
+//
+// MATCH (n), (m)
+// WITH n.v AS V
+// ORDER BY m.x + n.v
+void normalize_sort_exps
+(
+	AR_ExpNode ***projections,  // projected expressions
+	AR_ExpNode **sort_exps,     // ORDER BY expressions to normalize
+	bool aggregate              // true if this is an aggregation context
+);
+

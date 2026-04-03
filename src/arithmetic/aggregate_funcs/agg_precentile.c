@@ -17,7 +17,7 @@ static inline int _cmp
 	const double *a,
 	const double *b
 ) {
-	return *a - *b;
+	return (*a > *b) - (*a < *b);
 }
 
 //------------------------------------------------------------------------------
@@ -42,7 +42,7 @@ AggregateResult AGG_PERC(SIValue *argv, int argc, void *private_data) {
 		if(perc_ctx->percentile < 0 || perc_ctx->percentile > 1) {
 			ErrorCtx_SetError(EMSG_PREC_INPUT_RANGE, perc_ctx->percentile);
 		}
-		perc_ctx->values = array_new(double, 1024);
+		perc_ctx->values = arr_new(double, 1024);
 	}
 
 	SIValue v = argv[0];
@@ -50,7 +50,7 @@ AggregateResult AGG_PERC(SIValue *argv, int argc, void *private_data) {
 
 	double n;
 	SIValue_ToDouble(&v, &n);
-	array_append(perc_ctx->values, n);
+	arr_append(perc_ctx->values, n);
 
 	return AGGREGATE_OK;
 }
@@ -60,7 +60,7 @@ void PercDiscFinalize(void *ctx_ptr) {
 	_agg_PercCtx *perc_ctx = ctx->private_data;
 	if(perc_ctx == NULL) return;
 
-	uint count = array_len(perc_ctx->values);
+	uint count = arr_len(perc_ctx->values);
 	if(count == 0) {
 		Aggregate_SetResult(ctx, SI_NullVal());
 	} else {
@@ -80,7 +80,7 @@ void PercContFinalize(void *ctx_ptr) {
 	_agg_PercCtx *perc_ctx = ctx->private_data;
 	if(perc_ctx == NULL) return;
 
-	uint count = array_len(perc_ctx->values);
+	uint count = arr_len(perc_ctx->values);
 	if(count == 0) {
 		Aggregate_SetResult(ctx, SI_NullVal());
 	} else {
@@ -116,7 +116,7 @@ void Percentile_Free(void *pdata) {
 
 	_agg_PercCtx *ctx = pdata;
 	if(ctx->values != NULL) {
-		array_free(ctx->values);
+		arr_free(ctx->values);
 	}
 	rm_free(ctx);
 }
@@ -142,20 +142,20 @@ void Register_PRECENTILE(void) {
 	SIType ret_type;
 	AR_FuncDesc *func_desc;
 
-	types = array_new(SIType, 3);
-	array_append(types, T_NULL | T_INT64 | T_DOUBLE);
-	array_append(types, T_NULL | T_INT64 | T_DOUBLE);
-	ret_type = T_NULL | T_DOUBLE;
-	func_desc = AR_AggFuncDescNew("percentileDisc", AGG_PERC, 2, 2, types, ret_type,
-			Percentile_Free, PercDiscFinalize, Precentile_PrivateData);
-	AR_RegFunc(func_desc);
+	types = arr_new (SIType, 3) ;
+	arr_append (types, T_NULL | T_INT64 | T_DOUBLE) ;
+	arr_append (types, T_NULL | T_INT64 | T_DOUBLE) ;
+	ret_type = T_NULL | T_DOUBLE ;
+	func_desc = AR_AggFuncDescNew ("percentileDisc", AGG_PERC, 2, 2, types,
+			ret_type, Percentile_Free, PercDiscFinalize, Precentile_PrivateData) ;
+	AR_FuncRegister (func_desc) ;
 
-	types = array_new(SIType, 3);
-	array_append(types, T_NULL | T_INT64 | T_DOUBLE);
-	array_append(types, T_NULL | T_INT64 | T_DOUBLE);
-	ret_type = T_NULL | T_DOUBLE;
-	func_desc = AR_AggFuncDescNew("percentileCont", AGG_PERC, 2, 2, types, ret_type,
-			Percentile_Free, PercContFinalize, Precentile_PrivateData);
-	AR_RegFunc(func_desc);
+	types = arr_new (SIType, 3) ;
+	arr_append (types, T_NULL | T_INT64 | T_DOUBLE) ;
+	arr_append (types, T_NULL | T_INT64 | T_DOUBLE) ;
+	ret_type = T_NULL | T_DOUBLE ;
+	func_desc = AR_AggFuncDescNew ("percentileCont", AGG_PERC, 2, 2, types, ret_type,
+			Percentile_Free, PercContFinalize, Precentile_PrivateData) ;
+	AR_FuncRegister (func_desc) ;
 }
 

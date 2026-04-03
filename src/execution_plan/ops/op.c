@@ -6,6 +6,7 @@
 
 #include "op.h"
 #include "RG.h"
+#include "op_sort.h"
 #include "op_project.h"
 #include "op_aggregate.h"
 #include "../../util/rmalloc.h"
@@ -131,11 +132,14 @@ int OpBase_Modifies
 	OpBase *op,
 	const char *alias
 ) {
+	ASSERT (op    != NULL) ;
+	ASSERT (alias != NULL) ;
+
 	if(!op->modifies) {
-		op->modifies = array_new(const char *, 1);
+		op->modifies = arr_new(const char *, 1);
 	}
 
-	array_append(op->modifies, alias);
+	arr_append(op->modifies, alias);
 
 	// make sure alias has an entry associated with it
 	// within the record mapping
@@ -167,7 +171,7 @@ int OpBase_AliasModifier
 
 	// make sure to not introduce the same modifier twice
 	if(raxInsert(mapping, (unsigned char *)alias, strlen(alias), id, NULL)) {
-		array_append(op->modifies, alias);
+		arr_append(op->modifies, alias);
 	}
 
 	return (intptr_t)id;
@@ -182,7 +186,7 @@ bool OpBase_ChildrenAware
 	for (int i = 0; i < op->childCount; i++) {
 		OpBase *child = op->children[i];
 		if(op->plan == child->plan && child->modifies != NULL) {
-			uint count = array_len(child->modifies);
+			uint count = arr_len(child->modifies);
 			for (uint i = 0; i < count; i++) {
 				if(strcmp(alias, child->modifies[i]) == 0) {
 					if(idx) {
@@ -229,7 +233,7 @@ static void _OpBase_PropagateReset
 ) {
 	if(op->reset) {
 		if(OpBase_IsWriter(op)) {
-			array_append(*write_ops, op);
+			arr_append(*write_ops, op);
 		} else {
 			OpResult res = op->reset(op);
 			ASSERT(res == OP_OK);
@@ -247,20 +251,20 @@ void OpBase_PropagateReset
 	OpBase *op
 ) {
 	// hold write operations until the read operations have been reset
-	OpBase **write_ops = array_new(OpBase *, 0);
+	OpBase **write_ops = arr_new(OpBase *, 0);
 
 	// reset read operations
 	_OpBase_PropagateReset(op, &write_ops);
 
 	// reset write operations
-	uint write_op_count = array_len(write_ops);
+	uint write_op_count = arr_len(write_ops);
 	for(uint i = 0; i < write_op_count; i++) {
 		OpBase *write_op = write_ops[i];
 		OpResult res = write_op->reset(write_op);
 		ASSERT(res == OP_OK);
 	}
 
-	array_free(write_ops);
+	arr_free(write_ops);
 }
 
 static void _OpBase_StatsToString
@@ -328,6 +332,11 @@ bool OpBase_IsEager
 	return false;
 }
 
+Record OpBase_Profile_init
+(
+	OpBase *op
+) ;
+
 void OpBase_UpdateConsume
 (
 	OpBase *op,
@@ -336,7 +345,9 @@ void OpBase_UpdateConsume
 	ASSERT(op != NULL);
 
 	// update both consume and backup consume function
-	op->consume  = consume;  // in case update performed within op consume
+	if(op->consume != OpBase_Profile_init && op->consume != OpBase_Profile) {
+		op->consume  = consume;  // in case update performed within op consume
+	}
 	op->_consume = consume;  // in case update performed within op init
 }
 
@@ -349,12 +360,22 @@ void OpBase_BindOpToPlan
 	ASSERT(op != NULL);
 
 	OPType type = OpBase_Type(op);
-	if(type == OPType_PROJECT) {
-		ProjectBindToPlan(op, plan);
-	} else if(type == OPType_AGGREGATE) {
-		AggregateBindToPlan(op, plan);
-	} else {
-		op->plan = plan;
+	switch (type) {
+		case OPType_PROJECT:
+			ProjectBindToPlan (op, plan) ;
+			break ;	
+
+		case OPType_AGGREGATE:
+			AggregateBindToPlan (op, plan) ;
+			break ;
+
+		case OPType_SORT:
+			SortBindToPlan (op, plan) ;
+			break ;
+
+		default:
+			op->plan = plan;
+			break ;
 	}
 }
 
@@ -407,6 +428,16 @@ OpBase *OpBase_GetChild
 	return op->children[i];
 }
 
+// returns op's parent
+OpBase *OpBase_Parent
+(
+	const OpBase *op  // op
+) {
+	ASSERT (op != NULL) ;
+
+	return op->parent ;
+}
+
 inline void OpBase_DeleteRecord
 (
 	Record *r
@@ -450,7 +481,7 @@ void OpBase_Free
 	// free internal operation
 	if(op->free)     op->free(op);
 	if(op->children) rm_free(op->children);
-	if(op->modifies) array_free(op->modifies);
+	if(op->modifies) arr_free(op->modifies);
 	if(op->stats)    rm_free(op->stats);
 
 	HashTableRelease(op->awareness);

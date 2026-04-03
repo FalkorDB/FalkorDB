@@ -40,7 +40,7 @@ void GB_macrofy_user_op         // construct a user-defined operator
     //--------------------------------------------------------------------------
 
     GB_macrofy_typedefs (fp, NULL, NULL, NULL,
-        op->xtype, op->ytype, op->ztype) ;
+        op->xtype, op->ytype, op->ztype, op->theta_type) ;
 
     //--------------------------------------------------------------------------
     // construct the function prototype

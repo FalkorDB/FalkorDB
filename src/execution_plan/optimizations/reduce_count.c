@@ -113,10 +113,10 @@ bool _reduceNodeCount
 	AR_ExpNode *exp = AR_EXP_NewConstOperandNode(nodeCount);
 	// the new expression must be aliased to populate the Record
 	exp->resolved_name = opAggregate->aggregate_exps[0]->resolved_name;
-	AR_ExpNode **exps = array_new(AR_ExpNode *, 1);
-	array_append(exps, exp);
+	AR_ExpNode **exps = arr_new(AR_ExpNode *, 1);
+	arr_append(exps, exp);
 
-	OpBase *opProject = NewProjectOp(opAggregate->op.plan, exps);
+	OpBase *opProject = NewProjectOp (opAggregate->op.plan, exps) ;
 
 	// new execution plan: "Project -> Results"
 	ExecutionPlan_RemoveOp(plan, opScan);
@@ -193,33 +193,33 @@ void _reduceEdgeCount
 	// cannot apply optimization
 	if(!condTraverse->edge_ctx) return;
 
-	uint relationCount = array_len(condTraverse->edge_ctx->edgeRelationTypes);
+	EdgeTraverseCtx *edge_ctx = condTraverse->edge_ctx ;
+	uint relationCount = EdgeTraverseCtx_RelationCount (edge_ctx) ;
 
-	uint64_t edges = 0;
-	for(uint i = 0; i < relationCount; i++) {
-		int relType = condTraverse->edge_ctx->edgeRelationTypes[i];
-		switch(relType) {
-			case GRAPH_NO_RELATION:
-				// should be the only relationship type mentioned, -[]->
-				edges = Graph_EdgeCount(g);
-				break;
-			case GRAPH_UNKNOWN_RELATION:
-				// no change to current count, -[:none_existing]->
-				break;
-			default:
-				edges += Graph_RelationEdgeCount(g, relType);
+	uint64_t n_edges = 0 ;
+
+	if (relationCount == 0) {
+		// edge isn't associated with any relationship type
+		n_edges = Graph_EdgeCount (g) ;
+	} else {
+		for (uint i = 0; i < relationCount; i++) {
+			int relType = EdgeTraverseCtx_GetRelationIdx (edge_ctx, i) ;
+			if (relType != GRAPH_UNKNOWN_RELATION) {
+				n_edges += Graph_RelationEdgeCount (g, relType) ;
+			}
 		}
 	}
-	edgeCount = SI_LongVal(edges);
+
+	edgeCount = SI_LongVal (n_edges) ;
 
 	// construct a constant expression, used by a new projection operation
 	AR_ExpNode *exp = AR_EXP_NewConstOperandNode(edgeCount);
 	// the new expression must be aliased to populate the Record
 	exp->resolved_name = opAggregate->aggregate_exps[0]->resolved_name;
-	AR_ExpNode **exps = array_new(AR_ExpNode *, 1);
-	array_append(exps, exp);
+	AR_ExpNode **exps = arr_new(AR_ExpNode *, 1);
+	arr_append(exps, exp);
 
-	OpBase *opProject = NewProjectOp(opAggregate->op.plan, exps);
+	OpBase *opProject = NewProjectOp (opAggregate->op.plan, exps) ;
 
 	// new execution plan: "Project -> Results"
 	ExecutionPlan_RemoveOp(plan, opScan);

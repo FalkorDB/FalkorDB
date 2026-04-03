@@ -267,6 +267,17 @@ GrB_Info GB_msort_3     // sort array A of size 3-by-n
 ) ;
 
 //------------------------------------------------------------------------------
+// bitonic sort
+//------------------------------------------------------------------------------
+
+GrB_Info GB_bitonic
+(
+    int32_t *restrict A,    // array of size n
+    int64_t n,              // n does not need to be a power of 2
+    int nthreads
+) ;
+
+//------------------------------------------------------------------------------
 // matrix sorting (for GxB_Matrix_sort and GxB_Vector_sort)
 //------------------------------------------------------------------------------
 

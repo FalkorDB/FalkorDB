@@ -206,7 +206,6 @@ GrB_Info GB_ijxvector
             case 2 : list_descriptor = desc->val_list ; break ;
         }
     }
-
     bool list_is_stride = (list_descriptor == GxB_IS_STRIDE) ;
     int64_t ni = GB_nnz ((GrB_Matrix) List) ;
     if (list_is_stride && (ni != 3 || is_build))
@@ -444,7 +443,8 @@ GrB_Info GB_ijxvector
         GB_OK (GB_new (&T, // static header
             I_type, ni, 1, GB_ph_null, true, GxB_FULL, 0, 0,
             false, false, false)) ;
-        GB_vector_load ((GrB_Vector) T, &I, I_type, ni, I_size, true) ;
+        GB_vector_load ((GrB_Vector) T, &I, I_type, ni, ni * (I_type->size),
+            true) ;
         ASSERT_MATRIX_OK (T, "T for typecast to I", GB0) ;
 
         // I2 = (uint64_t) T->x or (int64_t) T->x

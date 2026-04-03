@@ -8,15 +8,18 @@
 //------------------------------------------------------------------------------
 
 #include "GB_mex.h"
+#include "GB_mex_errors.h"
 
 #define USAGE "C = GB_mex_edit (C, I, J, X, Action)"
 
 #define FREE_ALL                        \
 {                                       \
     GrB_Matrix_free_(&C) ;              \
+    GrB_Matrix_free_(&B) ;              \
     GB_mx_put_global (true) ;           \
 }
 
+#undef  OK
 #define OK(method)                      \
 {                                       \
     info = method ;                     \
@@ -27,6 +30,9 @@
     }                                   \
 }
 
+#define GET_DEEP_COPY
+#define FREE_DEEP_COPY ;
+
 void mexFunction
 (
     int nargout,
@@ -36,7 +42,7 @@ void mexFunction
 )
 {
 
-    GrB_Matrix C = NULL ;
+    GrB_Matrix C = NULL, B = NULL ;
     uint64_t *I = NULL, ni = 0, I_range [3] ;       // OK
     uint64_t *J = NULL, nj = 0, J_range [3] ;       // OK
     bool ignore ;
@@ -169,6 +175,16 @@ void mexFunction
 
     OK (GrB_Scalar_free (&Scalar)) ;
     GB_Global_malloc_debug_set (save) ;
+
+    //--------------------------------------------------------------------------
+    // duplicate the matrix and check if it stays the same
+    //--------------------------------------------------------------------------
+
+    METHOD (GrB_Matrix_dup (&B, C)) ;
+    CHECK (GB_mx_isequal (B, C, 0)) ;
+    OK (GrB_Matrix_wait (C, GrB_MATERIALIZE)) ;
+    OK (GrB_Matrix_wait (B, GrB_MATERIALIZE)) ;
+    CHECK (GB_mx_isequal (B, C, 0)) ;
 
     //--------------------------------------------------------------------------
     // return C as a built-in sparse matrix

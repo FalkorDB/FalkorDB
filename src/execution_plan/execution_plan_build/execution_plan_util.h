@@ -26,9 +26,10 @@ bool ExecutionPlan_isEager
 // returns NULL if no matching operation was found
 OpBase *ExecutionPlan_LocateOpMatchingTypes
 (
-    OpBase *root,
-    const OPType *types,
-    uint type_count
+	OpBase *root,         // start lookup from here
+	const OPType *types,  // types to match
+	uint type_count,      // number of types
+	uint *depth           // [optional] depth of returned op
 );
 
 // Convenience wrapper around ExecutionPlan_LocateOpMatchingType for lookups of a single type.

@@ -10,9 +10,23 @@
 #ifndef USERCOMPLEX_H
 #define USERCOMPLEX_H
 
- typedef struct { double re ; double im ; } mycx ;
+ typedef struct { double re ; double im ; } gb_mycx ;
 #define MYCX_DEFN \
-"typedef struct { double re ; double im ; } mycx ;"
+"typedef struct { double re ; double im ; } gb_mycx ;"
+
+//------------------------------------------------------------------------------
+// function to print a single gb_mycx scalar
+//------------------------------------------------------------------------------
+
+int64_t gb_mycx_print
+(
+    // output:
+    char *string,           // value is printed to the string
+    // input:
+    size_t string_size,     // size of the string array
+    const void *value,      // value to print
+    int verbose             // if >0, print verbosely; else tersely
+) ;
 
 //------------------------------------------------------------------------------
 // 10 binary functions, z=f(x,y), where CxC -> C
@@ -93,63 +107,63 @@ GrB_Info Complex_finalize (void) ;
 // function prototypes
 //------------------------------------------------------------------------------
 
-void mycx_first (mycx *z, const mycx *x, const mycx *y) ;
-void mycx_second (mycx *z, const mycx *x, const mycx *y) ;
-void mycx_pair (mycx *z, const mycx *x, const mycx *y) ;
-void mycx_plus (mycx *z, const mycx *x, const mycx *y) ;
-void mycx_minus (mycx *z, const mycx *x, const mycx *y) ;
-void mycx_rminus (mycx *z, const mycx *x, const mycx *y) ;
-void mycx_times (mycx *z, const mycx *x, const mycx *y) ;
-void mycx_div (mycx *z, const mycx *x, const mycx *y) ;
-void mycx_rdiv (mycx *z, const mycx *x, const mycx *y) ;
-void fx64_min (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
-void mycx_min (mycx *z, const mycx *x, const mycx *y) ;
-void fx64_max (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
-void mycx_max (mycx *z, const mycx *x, const mycx *y) ;
-void mycx_iseq (mycx *z, const mycx *x, const mycx *y) ;
-void mycx_isne (mycx *z, const mycx *x, const mycx *y) ;
-void fx64_isgt (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
-void mycx_isgt (mycx *z, const mycx *x, const mycx *y) ;
-void fx64_islt (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
-void mycx_islt (mycx *z, const mycx *x, const mycx *y) ;
-void fx64_isge (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
-void mycx_isge (mycx *z, const mycx *x, const mycx *y) ;
-void fx64_isle (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
-void mycx_isle (mycx *z, const mycx *x, const mycx *y) ;
-void fx64_or (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
-void mycx_or (mycx *z, const mycx *x, const mycx *y) ;
-void fx64_and (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
-void mycx_and (mycx *z, const mycx *x, const mycx *y) ;
-void fx64_xor (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
-void mycx_xor (mycx *z, const mycx *x, const mycx *y) ;
-void mycx_eq (bool *z, const mycx *x, const mycx *y) ;
-void mycx_ne (bool *z, const mycx *x, const mycx *y) ;
-void fx64_gt (bool *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
-void mycx_gt (bool *z, const mycx *x, const mycx *y) ;
-void fx64_lt (bool *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
-void mycx_lt (bool *z, const mycx *x, const mycx *y) ;
-void fx64_ge (bool *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
-void mycx_ge (bool *z, const mycx *x, const mycx *y) ;
-void fx64_le (bool *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
-void mycx_le (bool *z, const mycx *x, const mycx *y) ;
-void mycx_cmplx (mycx *z, const double *x, const double *y) ;
-void mycx_one (mycx *z, const mycx *x) ;
-void mycx_identity (mycx *z, const mycx *x) ;
-void mycx_ainv (mycx *z, const mycx *x) ;
-void mycx_minv (mycx *z, const mycx *x) ;
-void mycx_conj (mycx *z, const mycx *x) ;
-void fx64_abs (GxB_FC64_t *z, const GxB_FC64_t *x) ;
-void mycx_abs (mycx *z, const mycx *x) ;
-void fx64_not (GxB_FC64_t *z, const GxB_FC64_t *x) ;
-void mycx_not (mycx *z, const mycx *x) ;
-void mycx_real (double *z, const mycx *x) ;
-void mycx_imag (double *z, const mycx *x) ;
-void mycx_cabs (double *z, const mycx *x) ;
-void mycx_angle (double *z, const mycx *x) ;
-void fx64_cmplx_real (GxB_FC64_t *z, const double *x) ;
-void mycx_cmplx_real (mycx *z, const double *x) ;
-void fx64_cmplx_imag (GxB_FC64_t *z, const double *x) ;
-void mycx_cmplx_imag (mycx *z, const double *x) ;
+void gb_mycx_first (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_mycx_second (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_mycx_pair (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_mycx_plus (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_mycx_minus (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_mycx_rminus (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_mycx_times (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_mycx_div (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_mycx_rdiv (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_fx64_min (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
+void gb_mycx_min (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_fx64_max (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
+void gb_mycx_max (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_mycx_iseq (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_mycx_isne (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_fx64_isgt (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
+void gb_mycx_isgt (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_fx64_islt (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
+void gb_mycx_islt (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_fx64_isge (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
+void gb_mycx_isge (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_fx64_isle (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
+void gb_mycx_isle (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_fx64_or (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
+void gb_mycx_or (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_fx64_and (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
+void gb_mycx_and (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_fx64_xor (GxB_FC64_t *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
+void gb_mycx_xor (gb_mycx *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_mycx_eq (bool *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_mycx_ne (bool *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_fx64_gt (bool *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
+void gb_mycx_gt (bool *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_fx64_lt (bool *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
+void gb_mycx_lt (bool *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_fx64_ge (bool *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
+void gb_mycx_ge (bool *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_fx64_le (bool *z, const GxB_FC64_t *x, const GxB_FC64_t *y) ;
+void gb_mycx_le (bool *z, const gb_mycx *x, const gb_mycx *y) ;
+void gb_mycx_cmplx (gb_mycx *z, const double *x, const double *y) ;
+void gb_mycx_one (gb_mycx *z, const gb_mycx *x) ;
+void gb_mycx_identity (gb_mycx *z, const gb_mycx *x) ;
+void gb_mycx_ainv (gb_mycx *z, const gb_mycx *x) ;
+void gb_mycx_minv (gb_mycx *z, const gb_mycx *x) ;
+void gb_mycx_conj (gb_mycx *z, const gb_mycx *x) ;
+void gb_fx64_abs (GxB_FC64_t *z, const GxB_FC64_t *x) ;
+void gb_mycx_abs (gb_mycx *z, const gb_mycx *x) ;
+void gb_fx64_not (GxB_FC64_t *z, const GxB_FC64_t *x) ;
+void gb_mycx_not (gb_mycx *z, const gb_mycx *x) ;
+void gb_mycx_real (double *z, const gb_mycx *x) ;
+void gb_mycx_imag (double *z, const gb_mycx *x) ;
+void gb_mycx_cabs (double *z, const gb_mycx *x) ;
+void gb_mycx_angle (double *z, const gb_mycx *x) ;
+void gb_fx64_cmplx_real (GxB_FC64_t *z, const double *x) ;
+void gb_mycx_cmplx_real (gb_mycx *z, const double *x) ;
+void gb_fx64_cmplx_imag (GxB_FC64_t *z, const double *x) ;
+void gb_mycx_cmplx_imag (gb_mycx *z, const double *x) ;
 
 //------------------------------------------------------------------------------
 // C++ compatibility

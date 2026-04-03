@@ -190,12 +190,12 @@ static inline void GB_find_Ap_start_end
     GB_WERK_POP (Count, uint64_t) ; \
 }
 
-#define GB_FREE_ALL                             \
-{                                               \
-    GB_FREE_WORKSPACE ;                         \
-    GB_FREE_MEMORY (&Ch, Ch_size) ;                    \
-    GB_FREE_MEMORY (&Ap_start, Ap_start_size) ;   \
-    GB_FREE_MEMORY (&Ap_end, Ap_end_size) ;       \
+#define GB_FREE_ALL                                 \
+{                                                   \
+    GB_FREE_WORKSPACE ;                             \
+    GB_FREE_MEMORY (&Ch, Ch_size) ;                 \
+    GB_FREE_MEMORY (&Ap_start, Ap_start_size) ;     \
+    GB_FREE_MEMORY (&Ap_end, Ap_end_size) ;         \
 }
 
 GrB_Info GB_subref_phase0

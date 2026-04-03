@@ -15,6 +15,7 @@
 #include "../datatypes/map.h"
 #include "../datatypes/array.h"
 #include "./utility/internal.h"
+#include "../util/simple_rand.h"
 #include "../graph/graphcontext.h"
 
 #define BETWEENNESS_DEFAULT_SAMPLE_SIZE 32
@@ -46,7 +47,7 @@ static GrB_Index* _Random_Sources
 (
 	GrB_Matrix AT,          // transposed adjacency matrix
 	int32_t *samplingSize,  // size of sample
-	uint32_t samplingSeed   // random seed
+	uint64_t samplingSeed   // random seed
 ) {
 	GrB_Info info;
 
@@ -78,7 +79,7 @@ static GrB_Index* _Random_Sources
 	// pick random sources
 	for(int i = 0; i < *samplingSize; i++) {
 		uint64_t x;
-		GrB_Index idx = rand_r(&samplingSeed) % container->nvals;
+		GrB_Index idx = simple_rand(&samplingSeed) % container->nvals;
 
 		info = GrB_Vector_extractElement(&x, container->i, idx);
 		ASSERT(info == GrB_SUCCESS);
@@ -104,7 +105,7 @@ static void _process_yield
 	const char **yield
 ) {
 	int idx = 0;
-	for(uint i = 0; i < array_len(yield); i++) {
+	for(uint i = 0; i < arr_len(yield); i++) {
 		if(strcasecmp("node", yield[i]) == 0) {
 			ctx->yield_node = ctx->output + idx;
 			idx++;
@@ -126,7 +127,7 @@ static bool _read_config
 	LabelID **lbls,         // [output] labels
 	RelationID **rels,      // [output] relationships
 	int32_t *samplingSize,  // [output] number of source vertices
-	uint32_t *samplingSeed	// [output] random number generator seed
+	uint64_t *samplingSeed	// [output] random number generator seed
 ) {
 	// expecting configuration to be a map
 	ASSERT(lbls            != NULL);
@@ -186,7 +187,7 @@ static bool _read_config
 			goto error;
 		}
 
-		_lbls = array_new(LabelID, 0);
+		_lbls = arr_new(LabelID, 0);
 		u_int32_t l = SIArray_Length(v);
 		for(u_int32_t i = 0; i < l; i++) {
 			SIValue lbl = SIArray_Get(v, i);
@@ -198,7 +199,7 @@ static bool _read_config
 			}
 
 			LabelID lbl_id = Schema_GetID(s);
-			array_append(_lbls, lbl_id);
+			arr_append(_lbls, lbl_id);
 		}
 		*lbls = _lbls;
 
@@ -216,7 +217,7 @@ static bool _read_config
 			goto error;
 		}
 
-		_rels = array_new(RelationID, 0);
+		_rels = arr_new(RelationID, 0);
 		u_int32_t l = SIArray_Length(v);
 		for(u_int32_t i = 0; i < l; i++) {
 			SIValue rel = SIArray_Get(v, i);
@@ -228,7 +229,7 @@ static bool _read_config
 			}
 
 			RelationID rel_id = Schema_GetID(s);
-			array_append(_rels, rel_id);
+			arr_append(_rels, rel_id);
 		}
 		*rels = _rels;
 
@@ -244,12 +245,12 @@ static bool _read_config
 
 error:
 	if(_lbls != NULL) {
-		array_free(_lbls);
+		arr_free(_lbls);
 		*lbls = NULL;
 	}
 
 	if(_rels != NULL) {
-		array_free(_rels);
+		arr_free(_rels);
 		*rels = NULL;
 	}
 
@@ -265,7 +266,7 @@ ProcedureResult Proc_BetweennessInvoke
 ) {
 	// expecting a single argument
 
-	size_t l = array_len((SIValue *)args);
+	size_t l = arr_len((SIValue *)args);
 
 	if(l > 1) return PROCEDURE_ERR;
 
@@ -297,7 +298,7 @@ ProcedureResult Proc_BetweennessInvoke
 	LabelID    *lbls         = NULL;
 	RelationID *rels         = NULL;
 	int32_t     samplingSize = -1;
-	uint32_t    samplingSeed = 0;
+	uint64_t    samplingSeed = 0;
 
 	//--------------------------------------------------------------------------
 	// load configuration map
@@ -339,13 +340,13 @@ ProcedureResult Proc_BetweennessInvoke
 	GrB_Matrix A;
 	GrB_Info info;
 
-	info = Build_Matrix(&A, &pdata->nodes, g, lbls, array_len(lbls), rels,
-			array_len(rels), false, true);
+	info = Build_Matrix(&A, &pdata->nodes, g, lbls, arr_len(lbls), rels,
+			arr_len(rels), false, true);
 	ASSERT(info == GrB_SUCCESS);
 
 	// free build matrix inputs
-	if(lbls != NULL) array_free(lbls);
-	if(rels != NULL) array_free(rels);
+	if(lbls != NULL) arr_free(lbls);
+	if(rels != NULL) arr_free(rels);
 
 	//--------------------------------------------------------------------------
 	// build AT
@@ -475,12 +476,12 @@ ProcedureResult Proc_BetweennessFree
 ProcedureCtx *Proc_BetweennessCtx(void) {
 	void *privateData = NULL;
 
-	ProcedureOutput *outputs         = array_new(ProcedureOutput, 2);
+	ProcedureOutput *outputs         = arr_new(ProcedureOutput, 2);
 	ProcedureOutput output_node      = {.name = "node", .type = T_NODE};
 	ProcedureOutput output_component = {.name = "score", .type = T_DOUBLE};
 
-	array_append(outputs, output_node);
-	array_append(outputs, output_component);
+	arr_append(outputs, output_node);
+	arr_append(outputs, output_component);
 
 	ProcedureCtx *ctx = ProcCtxNew("algo.betweenness",
 			PROCEDURE_VARIABLE_ARG_COUNT,

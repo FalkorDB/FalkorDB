@@ -62,7 +62,7 @@ static inline bool _DataBlock_IndexOutOfBounds
 	const DataBlock *dataBlock,
 	uint64_t idx
 ) {
-	return (idx >= (dataBlock->itemCount + array_len(dataBlock->deletedIdx)));
+	return (idx >= (dataBlock->itemCount + arr_len(dataBlock->deletedIdx)));
 }
 
 DataBlockItemHeader *DataBlock_GetItemHeader
@@ -92,7 +92,7 @@ DataBlock *DataBlock_New
 	dataBlock->itemCount  = 0;
 	dataBlock->blockCount = 0;
 	dataBlock->blockCap   = blockCap;
-	dataBlock->deletedIdx = array_new(uint64_t, 128);
+	dataBlock->deletedIdx = arr_new(uint64_t, 128);
 	dataBlock->destructor = fp;
 
 	_DataBlock_AddBlocks(dataBlock,
@@ -121,7 +121,7 @@ DataBlockIterator *DataBlock_Scan(const DataBlock *dataBlock) {
 
 	// Deleted items are skipped, we're about to perform
 	// array_len(dataBlock->deletedIdx) skips during out scan.
-	int64_t endPos = dataBlock->itemCount + array_len(dataBlock->deletedIdx);
+	int64_t endPos = dataBlock->itemCount + arr_len(dataBlock->deletedIdx);
 	return DataBlockIterator_New(startBlock, dataBlock->blockCap, endPos);
 }
 
@@ -175,39 +175,60 @@ void *DataBlock_GetItem(const DataBlock *dataBlock, uint64_t idx) {
 	return ITEM_DATA(item_header);
 }
 
-uint64_t DataBlock_GetReservedIdx(const DataBlock *dataBlock, uint64_t n) {
-	ASSERT(dataBlock != NULL);
+uint64_t DataBlock_GetReservedIdx
+(
+	const DataBlock *dataBlock,
+	uint64_t n
+) {
+	ASSERT (dataBlock != NULL) ;
 
-	uint deleted = DataBlock_DeletedItemsCount(dataBlock);
-	if(n < deleted) {
-		return dataBlock->deletedIdx[deleted - n - 1];
+	uint deleted = DataBlock_DeletedItemsCount (dataBlock) ;
+	if (n < deleted) {
+		return dataBlock->deletedIdx[deleted - n - 1] ;
 	} 
-	
-	return DataBlock_ItemCount(dataBlock) + n;
+
+	return DataBlock_ItemCount (dataBlock) + n ;
 }
 
-void *DataBlock_AllocateItem(DataBlock *dataBlock, uint64_t *idx) {
+void *DataBlock_AllocateItem
+(
+	DataBlock *dataBlock,
+	uint64_t *idx
+) {
 	// make sure we've got room for items
-	if(dataBlock->itemCount >= dataBlock->itemCap) {
+	if (unlikely (dataBlock->itemCount >= dataBlock->itemCap)) {
 		// allocate an additional block
-		_DataBlock_AddBlocks(dataBlock, 1);
+		_DataBlock_AddBlocks (dataBlock, 1) ;
 	}
-	ASSERT(dataBlock->itemCap > dataBlock->itemCount);
+
+	ASSERT (dataBlock->itemCap > dataBlock->itemCount) ;
 
 	// get index into which to store item,
 	// prefer reusing free indicies
-	uint pos = dataBlock->itemCount;
-	if(array_len(dataBlock->deletedIdx) > 0) {
-		pos = array_pop(dataBlock->deletedIdx);
+	uint pos = dataBlock->itemCount ;
+	if (arr_len (dataBlock->deletedIdx) > 0) {
+		pos = arr_pop (dataBlock->deletedIdx) ;
+
+		// trim array if number of free entries is greater than 20%
+		if (unlikely (
+			(float)arr_len (dataBlock->deletedIdx) /
+			(float)arr_cap (dataBlock->deletedIdx) <= 0.8)
+		) {
+			dataBlock->deletedIdx = arr_trimm_cap (dataBlock->deletedIdx,
+					arr_len (dataBlock->deletedIdx)) ;
+		}
 	}
-	dataBlock->itemCount++;
 
-	if(idx) *idx = pos;
+	dataBlock->itemCount++ ;
 
-	DataBlockItemHeader *item_header = DataBlock_GetItemHeader(dataBlock, pos);
-	MARK_HEADER_AS_NOT_DELETED(item_header);
+	if (idx) {
+		*idx = pos;
+	}
 
-	return ITEM_DATA(item_header);
+	DataBlockItemHeader *header = DataBlock_GetItemHeader (dataBlock, pos) ;
+	MARK_HEADER_AS_NOT_DELETED (header) ;
+
+	return ITEM_DATA (header) ;
 }
 
 void DataBlock_DeleteItem(DataBlock *dataBlock, uint64_t idx) {
@@ -226,12 +247,12 @@ void DataBlock_DeleteItem(DataBlock *dataBlock, uint64_t idx) {
 
 	MARK_HEADER_AS_DELETED(item_header);
 
-	array_append(dataBlock->deletedIdx, idx);
+	arr_append(dataBlock->deletedIdx, idx);
 	dataBlock->itemCount--;
 }
 
 uint DataBlock_DeletedItemsCount(const DataBlock *dataBlock) {
-	return array_len(dataBlock->deletedIdx);
+	return arr_len(dataBlock->deletedIdx);
 }
 
 inline bool DataBlock_ItemIsDeleted(void *item) {
@@ -278,7 +299,7 @@ void DataBlock_MarkAsDeletedOutOfOrder
 
 	// delete
 	MARK_HEADER_AS_DELETED(item_header);
-	array_append(dataBlock->deletedIdx, idx);
+	arr_append(dataBlock->deletedIdx, idx);
 }
 
 size_t DataBlock_memoryUsage
@@ -289,7 +310,7 @@ size_t DataBlock_memoryUsage
 
 	// datablock size = deleted index array size +
 	//                  (number of blocks * block size)
-	return array_len(dataBlock->deletedIdx) * sizeof(uint64_t) +
+	return arr_len(dataBlock->deletedIdx) * sizeof(uint64_t) +
 		dataBlock->blockCount * (dataBlock->itemSize * dataBlock->blockCap);
 }
 
@@ -297,7 +318,7 @@ void DataBlock_Free(DataBlock *dataBlock) {
 	for(uint i = 0; i < dataBlock->blockCount; i++) Block_Free(dataBlock->blocks[i]);
 
 	rm_free(dataBlock->blocks);
-	array_free(dataBlock->deletedIdx);
+	arr_free(dataBlock->deletedIdx);
 	rm_free(dataBlock);
 }
 

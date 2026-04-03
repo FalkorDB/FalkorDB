@@ -298,6 +298,7 @@ void mexFunction
         OK (GrB_Scalar_new (&Zero, atype)) ;
         OK (GrB_Scalar_setElement_INT32 (Zero, 0)) ;
         b = (GrB_Matrix) Zero ;
+        Zero = NULL ;
     }
 
     //--------------------------------------------------------------------------

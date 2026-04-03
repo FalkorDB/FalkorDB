@@ -17,9 +17,8 @@
 #include "../../util/json_encoder.h"
 #include "../deps/oniguruma/src/oniguruma.h"
 
-// toString supports only integer, float, string, boolean, point, duration, 
-// date, time, localtime, localdatetime or datetime values
-#define STRINGABLE (SI_NUMERIC | T_POINT | T_DURATION | T_DATETIME | T_STRING | T_BOOL)
+// toString supports only integer, float, string, boolean, point & temporals
+#define STRINGABLE (SI_NUMERIC | T_POINT | T_STRING | T_BOOL | SI_TEMPORAL)
 
 // returns a string containing the specified number of leftmost characters of
 // the original string
@@ -170,7 +169,7 @@ SIValue AR_REVERSE
 		return SI_TransferStringVal(reverse);
 	} else {
 		SIValue reverse = SI_CloneValue(value);
-		array_reverse(reverse.array);
+		arr_reverse(reverse.array);
 		return reverse;
 	}
 }
@@ -705,7 +704,7 @@ SIValue AR_REPLACE
 	size_t      new_string_len = strlen(new_string);
 
 	const char *ptr  = str;
-	const char **arr = array_new(const char *, 0);
+	const char **arr = arr_new(const char *, 0);
 
 	// if any parameter is not a valid utf8 string return the original string
 	if(!str_utf8_validate(old_string) || !str_utf8_validate(new_string) ||
@@ -721,18 +720,18 @@ SIValue AR_REPLACE
 		if(ptr == NULL) break;
 
 		// store ptr for replace use
-		array_append(arr, ptr);
+		arr_append(arr, ptr);
 
 		// increment our string pointer
 		// in case search string is empty move one char
 		ptr += old_string_len == 0 ? 1 : old_string_len;
 	}
 
-	int occurrences = array_len(arr);
+	int occurrences = arr_len(arr);
 
 	// if sub string not found return original string
 	if(occurrences == 0) {
-		array_free(arr);
+		arr_free(arr);
 		return SI_DuplicateStringVal(str);
 	}
 
@@ -775,7 +774,7 @@ SIValue AR_REPLACE
 
 	buffer[buffer_size] = '\0';
 
-	array_free(arr);
+	arr_free(arr);
 
 	return SI_TransferStringVal(buffer);
 }
@@ -883,149 +882,171 @@ void Register_StringFuncs() {
 	SIType ret_type;
 	AR_FuncDesc *func_desc;
 
-	types = array_new(SIType, 2);
-	array_append(types, (T_STRING | T_NULL));
-	array_append(types, T_INT64 | T_NULL);
+	types = arr_new(SIType, 2);
+	arr_append(types, (T_STRING | T_NULL));
+	arr_append(types, T_INT64 | T_NULL);
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("left", AR_LEFT, 2, 2, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("left", AR_LEFT, 2, 2, types, ret_type, false,
+			true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, (T_STRING | T_NULL));
+	types = arr_new(SIType, 1);
+	arr_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("ltrim", AR_LTRIM, 1, 1, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("ltrim", AR_LTRIM, 1, 1, types, ret_type, false,
+			true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 2);
-	array_append(types, (T_STRING | T_NULL));
-	array_append(types, T_INT64 | T_NULL);
+	types = arr_new(SIType, 2);
+	arr_append(types, (T_STRING | T_NULL));
+	arr_append(types, T_INT64 | T_NULL);
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("right", AR_RIGHT, 2, 2, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("right", AR_RIGHT, 2, 2, types, ret_type, false,
+			true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, (T_STRING | T_NULL));
+	types = arr_new(SIType, 1);
+	arr_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("rtrim", AR_RTRIM, 1, 1, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("rtrim", AR_RTRIM, 1, 1, types, ret_type, false,
+			true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, (T_STRING | T_ARRAY | T_NULL));
+	types = arr_new(SIType, 1);
+	arr_append(types, (T_STRING | T_ARRAY | T_NULL));
 	ret_type = T_STRING | T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("reverse", AR_REVERSE, 1, 1, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("reverse", AR_REVERSE, 1, 1, types, ret_type,
+			false, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 3);
-	array_append(types, (T_STRING | T_NULL));
-	array_append(types, T_INT64);
-	array_append(types, T_INT64);
+	types = arr_new(SIType, 3);
+	arr_append(types, (T_STRING | T_NULL));
+	arr_append(types, T_INT64);
+	arr_append(types, T_INT64);
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("substring", AR_SUBSTRING, 2, 3, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("substring", AR_SUBSTRING, 2, 3, types, ret_type,
+			false, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 2);
-	array_append(types, (T_ARRAY | T_NULL));
-	array_append(types, T_STRING);
+	types = arr_new(SIType, 2);
+	arr_append(types, (T_ARRAY | T_NULL));
+	arr_append(types, T_STRING);
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("string.join", AR_JOIN, 1, 2, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("string.join", AR_JOIN, 1, 2, types, ret_type,
+			false, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 2);
-	array_append(types, (T_STRING | T_NULL));
-	array_append(types, (T_STRING | T_NULL));
+	types = arr_new(SIType, 2);
+	arr_append(types, (T_STRING | T_NULL));
+	arr_append(types, (T_STRING | T_NULL));
 	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("string.matchRegEx", AR_MATCHREGEX, 2, 2, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("string.matchRegEx", AR_MATCHREGEX, 2, 2, types,
+			ret_type, false, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 3);
-	array_append(types, (T_STRING | T_NULL));
-	array_append(types, (T_STRING | T_NULL));
-	array_append(types, (T_STRING | T_NULL));
+	types = arr_new(SIType, 3);
+	arr_append(types, (T_STRING | T_NULL));
+	arr_append(types, (T_STRING | T_NULL));
+	arr_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("string.replaceRegEx", AR_REPLACEREGEX, 2, 3, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("string.replaceRegEx", AR_REPLACEREGEX, 2, 3,
+			types, ret_type, false, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, (T_STRING | T_NULL));
+	types = arr_new(SIType, 1);
+	arr_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("tolower", AR_TOLOWER, 1, 1, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("tolower", AR_TOLOWER, 1, 1, types, ret_type,
+			false, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, (T_STRING | T_NULL));
+	types = arr_new(SIType, 1);
+	arr_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("toupper", AR_TOUPPER, 1, 1, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("toupper", AR_TOUPPER, 1, 1, types, ret_type,
+			false, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, STRINGABLE | T_NULL);
+	types = arr_new(SIType, 1);
+	arr_append(types, STRINGABLE | T_NULL);
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("tostring", AR_TOSTRING, 1, 1, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("tostring", AR_TOSTRING, 1, 1, types, ret_type,
+			false, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, SI_ALL);
+	types = arr_new(SIType, 1);
+	arr_append(types, SI_ALL);
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("tostringornull", AR_TOSTRING, 1, 1, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("tostringornull", AR_TOSTRING, 1, 1, types,
+			ret_type, false, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, SI_ALL);
+	types = arr_new(SIType, 1);
+	arr_append(types, SI_ALL);
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("tojson", AR_TOJSON, 1, 1, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("tojson", AR_TOJSON, 1, 1, types, ret_type,
+			false, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, (T_STRING | T_NULL));
+	types = arr_new(SIType, 1);
+	arr_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("trim", AR_TRIM, 1, 1, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("trim", AR_TRIM, 1, 1, types, ret_type, false,
+			true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 2);
-	array_append(types, (T_STRING | T_NULL));
-	array_append(types, (T_STRING | T_NULL));
+	types = arr_new(SIType, 2);
+	arr_append(types, (T_STRING | T_NULL));
+	arr_append(types, (T_STRING | T_NULL));
 	ret_type = T_BOOL | T_NULL;
-	func_desc = AR_FuncDescNew("contains", AR_CONTAINS, 2, 2, types, ret_type, true, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("contains", AR_CONTAINS, 2, 2, types, ret_type,
+			true, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 2);
-	array_append(types, (T_STRING | T_NULL));
-	array_append(types, (T_STRING | T_NULL));
+	types = arr_new(SIType, 2);
+	arr_append(types, (T_STRING | T_NULL));
+	arr_append(types, (T_STRING | T_NULL));
 	ret_type = T_BOOL | T_NULL;
-	func_desc = AR_FuncDescNew("starts with", AR_STARTSWITH, 2, 2, types, ret_type, true, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("starts with", AR_STARTSWITH, 2, 2, types,
+			ret_type, true, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 2);
-	array_append(types, (T_STRING | T_NULL));
-	array_append(types, (T_STRING | T_NULL));
+	types = arr_new(SIType, 2);
+	arr_append(types, (T_STRING | T_NULL));
+	arr_append(types, (T_STRING | T_NULL));
 	ret_type = T_BOOL | T_NULL;
-	func_desc = AR_FuncDescNew("ends with", AR_ENDSWITH, 2, 2, types, ret_type, true, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("ends with", AR_ENDSWITH, 2, 2, types, ret_type,
+			true, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 0);
+	types = arr_new(SIType, 0);
 	ret_type = T_STRING;
-	func_desc = AR_FuncDescNew("randomuuid", AR_RANDOMUUID, 0, 0, types, ret_type, false, false);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("randomuuid", AR_RANDOMUUID, 0, 0, types,
+			ret_type, false, false, false);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 3);
-	array_append(types, (T_STRING | T_NULL));
-	array_append(types, (T_STRING | T_NULL));
-	array_append(types, (T_STRING | T_NULL));
+	types = arr_new(SIType, 3);
+	arr_append(types, (T_STRING | T_NULL));
+	arr_append(types, (T_STRING | T_NULL));
+	arr_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("replace", AR_REPLACE, 3, 3, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("replace", AR_REPLACE, 3, 3, types, ret_type,
+			false, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 2);
-	array_append(types, (T_STRING | T_NULL));
-	array_append(types, (T_STRING | T_NULL));
+	types = arr_new(SIType, 2);
+	arr_append(types, (T_STRING | T_NULL));
+	arr_append(types, (T_STRING | T_NULL));
 	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("split", AR_SPLIT, 2, 2, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("split", AR_SPLIT, 2, 2, types, ret_type, false,
+			true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, (T_STRING | T_NULL));
+	types = arr_new(SIType, 1);
+	arr_append(types, (T_STRING | T_NULL));
 	ret_type = T_INTERN_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("intern", AR_INTERN, 1, 1, types, ret_type, false, false);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("intern", AR_INTERN, 1, 1, types, ret_type,
+			false, false, true);
+	AR_FuncRegister(func_desc);
 }
 

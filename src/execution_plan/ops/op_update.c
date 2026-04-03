@@ -4,14 +4,13 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "op_update.h"
 #include "RG.h"
+#include "op_update.h"
 #include "../../query_ctx.h"
 #include "../../util/arr.h"
-#include "../../util/rmalloc.h"
-#include "../../errors/errors.h"
+#include "../../schema/schema.h"
+#include "shared/update_functions.h"
 #include "../../util/rax_extensions.h"
-#include "../../arithmetic/arithmetic_expression.h"
 
 // forward declarations
 static Record UpdateConsume(OpBase *opBase);
@@ -23,7 +22,7 @@ static Record _handoff
 (
 	OpUpdate *op
 ) {
-	if(op->rec_idx < array_len(op->records)) {
+	if(op->rec_idx < arr_len(op->records)) {
 		return op->records[op->rec_idx++];
 	} else {
 		return NULL;
@@ -58,12 +57,12 @@ OpBase *NewUpdateOp
 	rax *update_exps
 ) {
 	OpUpdate *op = rm_calloc(1, sizeof(OpUpdate));
-	op->gc                = QueryCtx_GetGraphCtx();
-	op->rec_idx           = 0;
-	op->records           = array_new(Record, 64);
-	op->update_ctxs       = update_exps;
-	op->node_updates      = HashTableCreate(&_dt);
-	op->edge_updates      = HashTableCreate(&_dt);
+
+	op->gc           = QueryCtx_GetGraphCtx();
+	op->records      = arr_new(Record, 64);
+	op->update_ctxs  = update_exps;
+	op->node_updates = HashTableCreate(&_dt);
+	op->edge_updates = HashTableCreate(&_dt);
 
 	// set our op operations
 	OpBase_Init((OpBase *)op, OPType_UPDATE, "Update", NULL, UpdateConsume,
@@ -85,42 +84,58 @@ static Record UpdateConsume
 (
 	OpBase *opBase
 ) {
-	OpUpdate *op = (OpUpdate *)opBase;
-	OpBase *child = op->op.children[0];
-	Record r;
+	OpUpdate *op = (OpUpdate *)opBase ;
+	OpBase *child = op->op.children[0] ;
+	Record r ;
 
 	// updates already performed
-	if(array_len(op->records) > 0) return _handoff(op);
+	if (arr_len (op->records) > 0) {
+		return _handoff (op) ;
+	}
 
-	while((r = OpBase_Consume(child))) {
+	while ((r = OpBase_Consume (child))) {
 		// evaluate update expressions
-		raxSeek(&op->it, "^", NULL, 0);
-		while(raxNext(&op->it)) {
+		raxSeek (&op->it, "^", NULL, 0) ;
+		while (raxNext (&op->it)) {
 			EntityUpdateEvalCtx *ctx = op->it.data;
-			EvalEntityUpdates(op->gc, op->node_updates, op->edge_updates, r, ctx, true);
+			EvalEntityUpdates (op->gc, op->node_updates, op->edge_updates, r,
+					ctx, true) ;
 		}
 
-		array_append(op->records, r);
+		arr_append (op->records, r) ;
 	}
 	
-	uint node_updates_count = HashTableElemCount(op->node_updates);
-	uint edge_updates_count = HashTableElemCount(op->edge_updates);
+	uint node_updates_count = HashTableElemCount (op->node_updates) ;
+	uint edge_updates_count = HashTableElemCount (op->edge_updates) ;
 
-	if(node_updates_count > 0 || edge_updates_count > 0) {
+	if (node_updates_count > 0 || edge_updates_count > 0) {
 		// done reading; we're not going to call Consume any longer
 		// there might be operations like "Index Scan" that need to free the
-		// index R/W lock - as such, free all ExecutionPlan operations up the chain.
-		OpBase_PropagateReset(child);
+		// index R/W lock - as such
+		// free all ExecutionPlan operations up the chain
+		OpBase_PropagateReset (child) ;
 
 		// lock everything
-		QueryCtx_LockForCommit();
+		QueryCtx_LockForCommit () ;
 
-		CommitUpdates(op->gc, op->node_updates, ENTITY_NODE);
-		CommitUpdates(op->gc, op->edge_updates, ENTITY_EDGE);
+		// in cases such as:
+		// MATCH (n) SET n:L
+		// make sure L is of the right dimensions
+		if (node_updates_count > 0) {
+			ensureMatrixDim (op->gc, op->update_ctxs) ;
+		}
+
+		CommitUpdates (op->gc, op->node_updates, ENTITY_NODE) ;
+		CommitUpdates (op->gc, op->edge_updates, ENTITY_EDGE) ;
 	}
 
-	HashTableEmpty(op->node_updates, NULL);
-	HashTableEmpty(op->edge_updates, NULL);
+	HashTableEmpty (op->node_updates, NULL) ;
+	HashTableEmpty (op->edge_updates, NULL) ;
+
+	// no one consumes our output, return NULL
+	if (opBase->parent == NULL) {
+		return NULL ;
+	}
 
 	return _handoff(op);
 }
@@ -147,12 +162,12 @@ static OpResult UpdateReset
 	HashTableEmpty(op->node_updates, NULL);
 	HashTableEmpty(op->edge_updates, NULL);
 
-	uint records_count = array_len(op->records);
+	uint records_count = arr_len(op->records);
 	// records[0..op->record_idx] had been already emitted, skip them
 	for(uint i = op->rec_idx; i < records_count; i++) {
 		OpBase_DeleteRecord(op->records+i);
 	}
-	array_clear(op->records);
+	arr_clear(op->records);
 	op->rec_idx = 0;
 
 	return OP_OK;
@@ -177,12 +192,16 @@ static void UpdateFree(OpBase *ctx) {
 		op->update_ctxs = NULL;
 	}
 
-	uint records_count = array_len(op->records);
-	// records[0..op->record_idx] had been already emitted, skip them
-	for(uint i = op->rec_idx; i < records_count; i++) {
-		OpBase_DeleteRecord(op->records+i);
+	if (op->records) {
+		uint64_t n = arr_len (op->records) ;
+		for (uint64_t i = op->rec_idx; i < n; i++) {
+			OpBase_DeleteRecord (op->records+i) ;
+		}
+
+		arr_free (op->records) ;
+		op->records = NULL ;
 	}
-	array_free(op->records);
 
 	raxStop(&op->it);
 }
+

@@ -1,5 +1,5 @@
 from common import *
-from index_utils import *
+from index_utils import create_node_fulltext_index, create_node_range_index
 
 GRAPH_ID = "procedures"
 
@@ -313,30 +313,14 @@ class testProcedures(FlowTestsBase):
             self.env.assertFalse(1)
             pass
 
-    def test10_procedure_get_all_procedures(self):
-        actual_resultset = self.graph.call_procedure("dbms.procedures").result_set
-
-        # The following two procedure are a part of the expected results
-        expected_result = [["db.labels", "READ"], ["db.idx.fulltext.createNodeIndex", "WRITE"],
-                           ["db.propertyKeys", "READ"], ["dbms.procedures", "READ"], ["db.relationshipTypes", "READ"],
-                           ["algo.BFS", "READ"], ["algo.pageRank", "READ"], ["db.idx.fulltext.queryNodes", "READ"],
-                           ["db.idx.fulltext.drop", "WRITE"]]
-        for res in expected_result:
-            self.env.assertContains(res, actual_resultset)
-
-    def test11_procedure_indexes(self):
-        # flaky when running under valgrind
-        # TODO: investigate
-        if VALGRIND or SANITIZER:
-            self.env.skip()
-
+    def test10_procedure_indexes(self):
         # Verify that the full-text index is reported properly.
         actual_resultset = self.graph.query("CALL db.indexes() YIELD label, properties").result_set
         expected_results = [["fruit", ["name"]]]
         self.env.assertEquals(actual_resultset, expected_results)
 
         # Add an exact-match index to a different property on the same label..
-        result = create_node_range_index(self.graph, 'fruit', 'other_property')
+        result = create_node_range_index(self.graph, 'fruit', 'other_property', sync=True)
         self.env.assertEquals(result.indices_created, 1)
 
         # Verify that all indexes are reported.
@@ -358,18 +342,18 @@ class testProcedures(FlowTestsBase):
         expected_results = [["fruit"]]
         self.env.assertEquals(actual_resultset, expected_results)
 
-    def test12_procedure_reordered_yields(self):
-        # Yield results of procedure in a non-default sequence
+    def test11_list_procedures(self):
+        # validates list of available procedures
         actual_resultset = self.graph.query("CALL dbms.procedures() YIELD mode, name RETURN mode, name ORDER BY name").result_set
-
         expected_result = [["READ",  "algo.BFS"],
-                           ['READ',  "algo.SPpaths"],
-                           ['READ',  "algo.SSpaths"],
+                           ["READ",  "algo.MSF"],
+                           ["READ",  "algo.SPpaths"],
+                           ["READ",  "algo.SSpaths"],
                            ["READ",  "algo.WCC"],
-                           ['READ',  "algo.betweenness"],
+                           ["READ",  "algo.betweenness"],
                            ["READ",  "algo.labelPropagation"],
                            ["READ",  "algo.pageRank"],
-                           ['READ',  "db.constraints"],
+                           ["READ",  "db.constraints"],
                            ["WRITE", "db.idx.fulltext.createNodeIndex"],
                            ["WRITE", "db.idx.fulltext.drop"],
                            ["READ",  "db.idx.fulltext.queryNodes"],
@@ -378,7 +362,85 @@ class testProcedures(FlowTestsBase):
                            ["READ",  "db.idx.vector.queryRelationships"],
                            ["READ",  "db.indexes"],
                            ["READ",  "db.labels"],
+                           ["READ", "db.meta.stats"],
                            ["READ",  "db.propertyKeys"],
                            ["READ",  "db.relationshipTypes"],
+                           ["READ",  "dbms.functions"],
                            ["READ",  "dbms.procedures"]]
         self.env.assertEquals(actual_resultset, expected_result)
+
+    def test12_list_functions(self):
+        # test the functions procedure call
+        # CALL dbms.functions()
+
+        q = """CALL dbms.functions()
+               YIELD name, return_type, arguments, internal, reducible,
+               aggregation, variable_len, udf
+               WHERE name = $name
+               RETURN name, return_type, arguments, internal, reducible,
+                      aggregation, variable_len, udf"""
+
+        f = self.graph.query(q, {'name': 'add'}).result_set[0]
+
+        name         = f[0]
+        return_type  = f[1]
+        arguments    = f[2]
+        internal     = f[3]
+        reducible    = f[4]
+        aggregation  = f[5]
+        variable_len = f[6]
+        udf          = f[7]
+
+        self.env.assertEquals(name,         "add")
+        self.env.assertEquals(return_type,  "Map, List, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, or Null")
+        self.env.assertEquals(arguments,    ['Map, List, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, or Null', 'Map, List, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, or Null'])
+        self.env.assertEquals(internal,     True)
+        self.env.assertEquals(reducible,    True)
+        self.env.assertEquals(aggregation,  False)
+        self.env.assertEquals(variable_len, False)
+        self.env.assertEquals(udf,          False)
+
+        #-----------------------------------------------------------------------
+
+        f = self.graph.query(q, {'name': 'avg'}).result_set[0]
+
+        name         = f[0]
+        return_type  = f[1]
+        arguments    = f[2]
+        internal     = f[3]
+        reducible    = f[4]
+        aggregation  = f[5]
+        variable_len = f[6]
+        udf          = f[7]
+
+        self.env.assertEquals(name,         "avg")
+        self.env.assertEquals(return_type,  "Float or Null")
+        self.env.assertEquals(arguments,    ["Integer, Float, or Null"])
+        self.env.assertEquals(internal,     False)
+        self.env.assertEquals(reducible,    False)
+        self.env.assertEquals(aggregation,  True)
+        self.env.assertEquals(variable_len, False)
+        self.env.assertEquals(udf,          False)
+
+        #-----------------------------------------------------------------------
+
+        f = self.graph.query(q, {'name': 'case'}).result_set[0]
+
+        name         = f[0]
+        return_type  = f[1]
+        arguments    = f[2]
+        internal     = f[3]
+        reducible    = f[4]
+        aggregation  = f[5]
+        variable_len = f[6]
+        udf          = f[7]
+
+        self.env.assertEquals(name,         "case")
+        self.env.assertEquals(return_type,  "Map, Node, Edge, List, Path, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, Null, Pointer, Point, or Vectorf32")
+        self.env.assertEquals(arguments,    ['Map, Node, Edge, List, Path, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, Null, Pointer, Point, or Vectorf32'])
+        self.env.assertEquals(internal,     True)
+        self.env.assertEquals(reducible,    True)
+        self.env.assertEquals(aggregation,  False)
+        self.env.assertEquals(variable_len, True)
+        self.env.assertEquals(udf,          False)
+

@@ -23,10 +23,10 @@
 #define MSB_MASK_CMP ~MSB_MASK
 
 // Set X's most significant bit on.
-#define SET_MSB(x) (x) | MSB_MASK
+#define SET_MSB(x) ((x) | MSB_MASK)
 
 // Clear X's most significant bit.
-#define CLEAR_MSB(x) (x) & MSB_MASK_CMP
+#define CLEAR_MSB(x) ((x) & MSB_MASK_CMP)
 
 //------------------------------------------------------------------------------
 // code development settings
@@ -56,10 +56,10 @@
 		if (!(X))                                                   \
 		{                                                           \
 			if(RedisModule__Assert != NULL) {                       \
-				RedisModule_Assert(X);				                \
+				RedisModule_Assert(X);                              \
 			} else {                                                \
-				printf ("assert(" #X ") failed: "                   \
-				__FILE__ " line %d\n", __LINE__) ;                  \
+				printf ("assert(%s) failed: %s line %d\n",          \
+				#X, __FILE__, __LINE__);                            \
 				/* force crash */                                   \
 				char x = *((char*)NULL); /* produce stack trace */  \
 				assert(x); /* solves C++ unused var warning */      \
@@ -85,11 +85,28 @@
 // GraphBLAS return code validation
 // both GrB_SUCCESS and GrB_NO_VALUE are valid "OK"
 // return codes
-#define GrB_OK(GrB_method)                                      \
-{                                                               \
-	    GrB_Info info = GrB_method ;                            \
-	    ASSERT ( (info == GrB_SUCCESS || info == GrB_NO_VALUE)) \
-}
+#if RG_DEBUG
+	#define GrB_OK(GrB_method)                                       \
+	{                                                                \
+		GrB_Info _info = (GrB_method) ;                              \
+		ASSERT(_info == GrB_SUCCESS || _info == GrB_NO_VALUE);       \
+	}
+#else
+	#define GrB_OK(GrB_method) (GrB_method)
+#endif
+
+// computes GrB_method
+// returns GrB_Info in case the method did not return success
+#define GrB_RETURN_IF_FAIL(GrB_method)                                         \
+    do {                                                                       \
+        GrB_Info info = (GrB_method) ;                                         \
+        if (info != GrB_SUCCESS) {                                             \
+            RedisModule_Log (NULL, "warning",                                  \
+                "[GraphBLAS Error] %s (Error Code: %d) failed at %s:%d in function %s", \
+                #GrB_method, (int)info, __FILE__, __LINE__, __func__) ;        \
+            return info ;                                                      \
+        }                                                                      \
+    } while (0)
 
 // use likely and unlikely to provide the compiler with branch prediction information
 // for example:

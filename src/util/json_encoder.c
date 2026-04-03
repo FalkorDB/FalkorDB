@@ -23,21 +23,31 @@ static inline sds _JsonEncoder_String(SIValue v, sds s) {
 	return sdscatfmt(s, "\"%s\"", v.stringval);
 }
 
-static sds _JsonEncoder_Properties(const GraphEntity *ge, sds s) {
-	s = sdscat(s, "\"properties\": {");
-	const AttributeSet set = GraphEntity_GetAttributes(ge);
-	uint prop_count = AttributeSet_Count(set);
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	for(uint i = 0; i < prop_count; i ++) {
-		AttributeID attr_id;
-		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
-		const char *key = GraphContext_GetAttributeString(gc, attr_id);
-		s = sdscatfmt(s, "\"%s\": ", key);
-		s = _JsonEncoder_SIValue(value, s);
-		if(i < prop_count - 1) s = sdscat(s, ", ");
+static sds _JsonEncoder_Properties
+(
+	const GraphEntity *ge,
+	sds s
+) {
+	s = sdscat (s, "\"properties\": {") ;
+	const AttributeSet set = GraphEntity_GetAttributes (ge) ;
+	uint prop_count = AttributeSet_Count (set) ;
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
+
+	for (uint i = 0; i < prop_count; i ++) {
+		SIValue value ;
+		AttributeID attr_id ;
+		AttributeSet_GetIdx (set, i, &attr_id, &value) ;
+
+		const char *key = GraphContext_GetAttributeString (gc, attr_id) ;
+		s = sdscatfmt (s, "\"%s\": ", key) ;
+		s = _JsonEncoder_SIValue (value, s) ;
+		if (i < prop_count - 1) {
+			s = sdscat (s, ", ") ;
+		}
 	}
-	s = sdscat(s, "}");
-	return s;
+
+	s = sdscat (s, "}") ;
+	return s ;
 }
 
 static sds _JsonEncoder_Node(const Node *n, sds s) {

@@ -51,11 +51,7 @@ OpBase *NewLimitOp
 	ASSERT(plan      != NULL);
 	ASSERT(limit_exp != NULL);
 
-	OpLimit *op = rm_malloc(sizeof(OpLimit));
-
-	op->limit     = 0;
-	op->consumed  = 0;
-	op->limit_exp = NULL;
+	OpLimit *op = rm_calloc (1, sizeof(OpLimit)) ;
 
 	_eval_limit(op, limit_exp);
 

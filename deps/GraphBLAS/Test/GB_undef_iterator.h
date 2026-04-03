@@ -7,6 +7,7 @@
 
 //------------------------------------------------------------------------------
 
+#if 0
 #undef GxB_rowIterator_attach
 #undef GxB_rowIterator_kount
 #undef GxB_rowIterator_seekRow
@@ -42,4 +43,5 @@
 #undef GxB_Iterator_get_FC32
 #undef GxB_Iterator_get_FC64
 #undef GxB_Iterator_get_UDT
+#endif
 

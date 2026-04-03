@@ -426,6 +426,9 @@ GrB_set (AbsDiff,
   "void absdiff (double *z, double *x, double *y) { (*z) = fabs ((*x) - (*y)) ; }",
   GxB_JIT_C_DEFINITION) ;\end{verbatim}}
 
+To avoid name collisions with LAGraph and GraphBLAS, avoid
+function names that start with \verb'LG_' and \verb'gb_'.
+
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GrB\_BinaryOp\_wait:} wait for a binary operator}
 %-------------------------------------------------------------------------------

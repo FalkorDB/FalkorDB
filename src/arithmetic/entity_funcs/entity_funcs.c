@@ -74,11 +74,10 @@ SIValue AR_HAS_LABELS(SIValue *argv, int argc, void *private_data) {
 		}
 
 		// validate label is set
-		bool x;
 		Delta_Matrix M = Graph_GetLabelMatrix(g, Schema_GetID(s));
 		ASSERT(M != NULL);
 
-		if(Delta_Matrix_extractElement_BOOL(&x, M, id, id) == GrB_NO_VALUE) {
+		if(Delta_Matrix_isStoredElement(M, id, id) == GrB_NO_VALUE) {
 			res = false;
 			break;
 		}
@@ -238,7 +237,12 @@ SIValue AR_OUTGOINGDEGREE
 	return _AR_NodeDegree(argv, argc, GRAPH_EDGE_DIR_OUTGOING);
 }
 
-SIValue AR_PROPERTY(SIValue *argv, int argc, void *private_data) {
+SIValue AR_PROPERTY
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
 	// return NULL for missing graph entity
 	if(SI_TYPE(argv[0]) == T_NULL) return SI_NullVal();
 
@@ -260,37 +264,103 @@ SIValue AR_PROPERTY(SIValue *argv, int argc, void *private_data) {
 	// Process inputs
 	//--------------------------------------------------------------------------
 
+	SIValue val;
+	SIValue p_val;
 	SIValue obj = argv[0];
-	if(SI_TYPE(obj) & SI_GRAPHENTITY) {
-		// retrieve entity property
-		GraphEntity *graph_entity = (GraphEntity *)obj.ptrval;
-		const char *prop_name     = argv[1].stringval;
-		AttributeID prop_idx     = argv[2].longval;
+	SIValue key = argv[1];
+	const char *key_str = key.stringval;
 
-		// We have the property string, attempt to look up the index now.
-		if(prop_idx == ATTRIBUTE_ID_NONE) {
-			GraphContext *gc = QueryCtx_GetGraphCtx();
-			prop_idx = GraphContext_GetAttributeID(gc, prop_name);
+	SIType t = SI_TYPE(obj);
+	switch(t) {
+		case T_NODE:
+		case T_EDGE:
+		{
+			// retrieve entity property
+			GraphEntity *graph_entity = (GraphEntity *)obj.ptrval;
+			const char *prop_name     = argv[1].stringval;
+			AttributeID prop_idx      = argv[2].longval;
+
+			// we have the property string, attempt to look up the index now
+			if(prop_idx == ATTRIBUTE_ID_NONE) {
+				GraphContext *gc = QueryCtx_GetGraphCtx();
+				prop_idx = GraphContext_GetAttributeID(gc, prop_name);
+			}
+
+			// retrieve the property
+			GraphEntity_GetProperty (graph_entity, prop_idx, &p_val) ;
+			return SI_ConstValue (&p_val) ;
 		}
 
-		// Retrieve the property.
-		SIValue *value = GraphEntity_GetProperty(graph_entity, prop_idx);
-		return SI_ConstValue(value);
-	} else if(SI_TYPE(obj) & T_MAP) {
-		// retrieve map key
-		SIValue key = argv[1];
-		SIValue value;
+		case T_MAP:
+			// retrieve map key
+			Map_Get(obj, key, &val);
 
-		Map_Get(obj, key, &value);
-		// Return a volatile copy of the value, as it may be heap-allocated.
-		return SI_ShareValue(value);
-	} else if(SI_TYPE(obj) & T_POINT) {
-		// retrieve property key 
-		SIValue key = argv[1];
-		return Point_GetCoordinate(obj, key);
-	} else {
-		// unexpected type SI_TYPE(obj)
-		return SI_NullVal();
+			// Return a volatile copy of the value, as it may be heap-allocated.
+			return SI_ShareValue(val);
+
+		case T_POINT:
+			// retrieve property key 
+			return Point_GetCoordinate(obj, key);
+
+		case T_DATETIME:
+		{
+			// retrieve datetime component e.g. year, month, hour
+			int comp;
+			bool found = DateTime_getComponent(&obj, key_str, &comp);
+
+			if(found == false) {
+				ErrorCtx_SetError("unknown datetime component %s", key_str);
+				return SI_NullVal();	
+			}
+
+			return SI_LongVal(comp);
+		}
+
+		case T_DATE:
+		{
+			// retrieve date component e.g. year, month, day
+			int comp;
+			bool found = Date_getComponent(&obj, key_str, &comp);
+
+			if(found == false) {
+				ErrorCtx_SetError("unknown date component %s", key_str);
+				return SI_NullVal();
+			}
+
+			return SI_LongVal(comp);
+		}
+
+		case T_TIME:
+		{
+			// retrieve time component e.g. hour, minute, second
+			int comp;
+			bool found = Time_getComponent(&obj, key_str, &comp);
+
+			if(found == false) {
+				ErrorCtx_SetError("unknown time component %s", key_str);
+				return SI_NullVal();
+			}
+
+			return SI_LongVal(comp);
+		}
+
+		case T_DURATION:
+		{
+			// retrieve duration component e.g. years, months, hours, minutes
+			float comp;
+			bool found = Duration_getComponent(&obj, key_str, &comp);
+
+			if(found == false) {
+				ErrorCtx_SetError("unknown duration component %s", key_str);
+				return SI_NullVal();
+			}
+
+			return SI_DoubleVal(comp);
+		}
+
+		default:
+			// unexpected type
+			return SI_NullVal();
 	}
 }
 
@@ -303,75 +373,86 @@ void Register_EntityFuncs() {
 	SIType ret_type;
 	AR_FuncDesc *func_desc;
 
-	types = array_new(SIType, 1);
-	array_append(types, T_NULL | T_NODE | T_EDGE);
+	types = arr_new(SIType, 1);
+	arr_append(types, T_NULL | T_NODE | T_EDGE);
 	ret_type = T_NULL | T_INT64;
-	func_desc = AR_FuncDescNew("id", AR_ID, 1, 1, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("id", AR_ID, 1, 1, types, ret_type, false, true,
+			true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, T_NULL | T_NODE);
+	types = arr_new(SIType, 1);
+	arr_append(types, T_NULL | T_NODE);
 	ret_type = T_NULL | T_ARRAY;
-	func_desc = AR_FuncDescNew("labels", AR_LABELS, 1, 1, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("labels", AR_LABELS, 1, 1, types, ret_type,
+			false, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 2);
-	array_append(types, T_NULL | T_NODE);
-	array_append(types, T_ARRAY);
+	types = arr_new(SIType, 2);
+	arr_append(types, T_NULL | T_NODE);
+	arr_append(types, T_ARRAY);
 	ret_type = T_NULL | T_BOOL;
-	func_desc = AR_FuncDescNew("hasLabels", AR_HAS_LABELS, 2, 2, types, ret_type, false, false);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("hasLabels", AR_HAS_LABELS, 2, 2, types,
+			ret_type, false, false, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, T_NULL | T_EDGE);
+	types = arr_new(SIType, 1);
+	arr_append(types, T_NULL | T_EDGE);
 	ret_type = T_NULL | T_STRING;
-	func_desc = AR_FuncDescNew("type", AR_TYPE, 1, 1, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("type", AR_TYPE, 1, 1, types, ret_type, false,
+			true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, T_NULL | T_EDGE);
+	types = arr_new(SIType, 1);
+	arr_append(types, T_NULL | T_EDGE);
 	ret_type = T_NULL | T_NODE;
-	func_desc = AR_FuncDescNew("startNode", AR_STARTNODE, 1, 1, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("startNode", AR_STARTNODE, 1, 1, types, ret_type,
+			false, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, T_NULL | T_EDGE);
+	types = arr_new(SIType, 1);
+	arr_append(types, T_NULL | T_EDGE);
 	ret_type = T_NULL | T_NODE;
-	func_desc = AR_FuncDescNew("endNode", AR_ENDNODE, 1, 1, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("endNode", AR_ENDNODE, 1, 1, types, ret_type,
+			false, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, T_NULL | SI_ALL);
+	types = arr_new(SIType, 1);
+	arr_append(types, T_NULL | SI_ALL);
 	ret_type = T_NULL | T_BOOL;
-	func_desc = AR_FuncDescNew("exists", AR_EXISTS, 1, 1, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("exists", AR_EXISTS, 1, 1, types, ret_type,
+			false, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 2);
-	array_append(types, T_NULL | T_NODE);
-	array_append(types, T_STRING | T_ARRAY);
+	types = arr_new(SIType, 2);
+	arr_append(types, T_NULL | T_NODE);
+	arr_append(types, T_STRING | T_ARRAY);
 	ret_type = T_NULL | T_INT64;
-	func_desc = AR_FuncDescNew("indegree", AR_INCOMEDEGREE, 1, VAR_ARG_LEN, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("indegree", AR_INCOMEDEGREE, 1, VAR_ARG_LEN,
+			types, ret_type, false, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 2);
-	array_append(types, T_NULL | T_NODE);
-	array_append(types, T_STRING | T_ARRAY);
+	types = arr_new(SIType, 2);
+	arr_append(types, T_NULL | T_NODE);
+	arr_append(types, T_STRING | T_ARRAY);
 	ret_type = T_NULL | T_INT64;
-	func_desc = AR_FuncDescNew("outdegree", AR_OUTGOINGDEGREE, 1, VAR_ARG_LEN, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("outdegree", AR_OUTGOINGDEGREE, 1, VAR_ARG_LEN,
+			types, ret_type, false, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 3);
-	array_append(types, T_NULL | T_NODE | T_EDGE | T_MAP | T_POINT);
-	array_append(types, T_STRING);
-	array_append(types, T_INT64);
+	types = arr_new(SIType, 3);
+	arr_append(types, T_NULL | T_NODE | T_EDGE | T_MAP | T_POINT | SI_TEMPORAL);
+	arr_append(types, T_STRING);
+	arr_append(types, T_INT64);
 	ret_type = SI_ALL;
-	func_desc = AR_FuncDescNew("property", AR_PROPERTY, 3, 3, types, ret_type, true, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("property", AR_PROPERTY, 3, 3, types, ret_type,
+			true, true, true);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, T_NULL | SI_ALL);
+	types = arr_new(SIType, 1);
+	arr_append(types, T_NULL | SI_ALL);
 	ret_type = T_STRING;
-	func_desc = AR_FuncDescNew("typeof", AR_TYPEOF, 1, 1, types, ret_type, false, true);
-	AR_RegFunc(func_desc);
+	func_desc = AR_FuncDescNew("typeof", AR_TYPEOF, 1, 1, types, ret_type,
+			false, true, true);
+	AR_FuncRegister(func_desc);
 }
 

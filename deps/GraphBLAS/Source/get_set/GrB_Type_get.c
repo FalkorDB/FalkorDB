@@ -231,6 +231,27 @@ GrB_Info GrB_Type_get_VOID
     int field
 )
 { 
+
+    //--------------------------------------------------------------------------
+    // check inputs
+    //--------------------------------------------------------------------------
+
+    GB_CHECK_INIT ;
+    GB_RETURN_IF_NULL_OR_FAULTY (type) ;
+    GB_RETURN_IF_NULL (value) ;
+    ASSERT_TYPE_OK (type, "type for get", GB0) ;
+
+    //--------------------------------------------------------------------------
+    // get the field
+    //--------------------------------------------------------------------------
+
+    if (field == GxB_PRINT_FUNCTION && type->code == GB_UDT_code)
+    { 
+        void **func = (void **) value ;
+        (*func) = type->print_function ;
+        return (GrB_SUCCESS) ;
+    }
+
     return (GrB_INVALID_VALUE) ;
 }
 

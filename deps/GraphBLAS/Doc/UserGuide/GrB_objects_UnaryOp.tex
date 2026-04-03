@@ -313,6 +313,9 @@ The above example is identical to the following usage, except that
     GrB_set (Square, "void square (double *z, double *x) { (*z) = (*x) * (*x) ; } ;",
         GxB_JIT_C_DEFINITION) ; \end{verbatim}}
 
+To avoid name collisions with LAGraph and GraphBLAS, avoid
+function names that start with \verb'LG_' and \verb'gb_'.
+
 % \newpage
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GrB\_UnaryOp\_wait:} wait for a unary operator}

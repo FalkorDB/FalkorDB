@@ -10,8 +10,19 @@
 #include "commands/cmd_context.h"
 #include "string_pool/string_pool.h"
 
+#include <pthread.h>
+
 // initialize global variables
 void Globals_Init(void);
+
+// acquire globals read lock
+void Globals_ReadLock(void);
+
+// acquire globals write lock
+void Globals_WriteLock(void);
+
+// release globals RWLock
+void Globals_Unlock(void);
 
 // get string pool
 StringPool Globals_Get_StringPool(void);
@@ -24,6 +35,9 @@ void Globals_Set_ProcessIsChild
 (
 	bool process_is_child
 );
+
+// get process main thread id
+pthread_t Globals_Get_MainThreadId(void);
 
 // get direct access to 'graphs_in_keyspace'
 GraphContext **Globals_Get_GraphsInKeyspace(void);

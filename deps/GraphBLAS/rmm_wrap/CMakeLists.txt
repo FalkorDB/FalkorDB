@@ -17,6 +17,7 @@ set ( CMAKE_C_STANDARD 99 )
 set ( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC" )
 
 find_package ( CUDAToolkit REQUIRED )
+message ( STATUS "CUDA include dirs: ${CUDA_INCLUDE_DIRS} " )
 
 set ( EXTERNAL_INCLUDES_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/external_includes )
 
@@ -25,9 +26,9 @@ if ( NOT EXISTS ${EXTERNAL_INCLUDES_DIRECTORY} )
 endif ( )
 
 if ( NOT EXISTS ${EXTERNAL_INCLUDES_DIRECTORY}/spdlog )
-    message ( status "cloning spdlog v1.10.0" )
+    message ( STATUS "cloning spdlog v1.10.0" )
     execute_process (
-        COMMAND git clone "https://github.com/gabime/spdlog.git" --branch v1.10.0 --recursive spdlog
+        COMMAND git clone "https://github.com/gabime/spdlog" --branch v1.10.0 --recursive spdlog
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/external_includes )
 endif ( )
 
@@ -35,9 +36,9 @@ set ( SPDLOG_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/external_includes/spdlog/in
 include_directories ( ${SPDLOG_INCLUDE_DIR} )
 
 if ( NOT EXISTS ${EXTERNAL_INCLUDES_DIRECTORY}/rmm )
-    message ( status "cloning rmm branch-21.10" )
+    message ( STATUS "cloning rmm branch-21.10" )
     execute_process (
-        COMMAND git clone "https://github.com/rapidsai/rmm.git" --branch branch-21.10 --recursive rmm
+        COMMAND git clone "https://github.com/rapidsai/rmm" --branch branch-21.10 --recursive rmm
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/external_includes )
 endif()
 

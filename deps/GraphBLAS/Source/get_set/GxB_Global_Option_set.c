@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GxB_Global_Option_set: set a global default option
+// GxB_Global_Option_set: set a global default option (HISTORICAL)
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
@@ -57,11 +57,6 @@ GrB_Info GxB_Global_Option_set_INT32      // set a global default option
         case GxB_GLOBAL_NTHREADS :          // same as GxB_NTHREADS
 
             GB_Context_nthreads_max_set (NULL, value) ;
-            break ;
-
-        case GxB_GLOBAL_GPU_ID :            // same as GxB_GPU_ID
-
-            GB_Context_gpu_id_set (NULL, value) ;
             break ;
 
         case GxB_BURBLE : 
@@ -416,16 +411,6 @@ GrB_Info GxB_Global_Option_set      // set a global default option
                 int value = va_arg (ap, int) ;
                 va_end (ap) ;
                 GB_Context_nthreads_max_set (NULL, value) ;
-            }
-            break ;
-
-        case GxB_GLOBAL_GPU_ID :            // same as GxB_GPU_ID
-
-            {
-                va_start (ap, field) ;
-                int value = va_arg (ap, int) ;
-                va_end (ap) ;
-                GB_Context_gpu_id_set (NULL, value) ;
             }
             break ;
 

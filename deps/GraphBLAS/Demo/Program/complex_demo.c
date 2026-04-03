@@ -113,7 +113,7 @@ int main (int argc, char **argv)
     GrB_Matrix_new (&C, Complex, m, n) ;
     GrB_mxm (C, NULL, NULL, Complex_plus_times, A, B, NULL) ;
 
-    GxB_Matrix_fprint (C, "C", GxB_SHORT, stderr) ;
+    GxB_Matrix_fprint (C, "C", GxB_SHORT_VERBOSE, stderr) ;
 
     // print the results
     printf ("\n%% run this output of this program as a script:\n") ;

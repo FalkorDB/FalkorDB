@@ -1,15 +1,38 @@
-[![Dockerhub](https://img.shields.io/docker/pulls/falkordb/falkordb?label=Docker)](https://hub.docker.com/r/falkordb/falkordb/)
-[![Discord](https://img.shields.io/discord/1146782921294884966?style=flat-square)](https://discord.gg/6M4QwDXn2w)
-[![codecov](https://codecov.io/gh/falkordb/falkordb/graph/badge.svg?token=0G4HBEJMW0)](https://codecov.io/gh/falkordb/falkordb)
-[![Workflow](https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml)
+<div align="center">
+  <img width="100" height="100" alt="FalkorDB Logo Square B" src="https://github.com/user-attachments/assets/ec67e5e3-a060-405d-b229-1fe2badcf8ad" />
+</div>
+<div align="center">
+  <h1>FalkorDB</h1>
+  <h2>Ultra-fast, Multi-tenant Graph Database</h2>
+  <h3>Powering Generative AI, Agent Memory, Cloud Security, and Fraud Detection</h3>
+<a href="https://trendshift.io/repositories/14787" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/14787" alt="FalkorDB%2FFalkorDB | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+</div>
+<div align="center">
+  <a href="https://app.falkordb.cloud/signup">
+    <img src="https://img.shields.io/badge/Try%20Free-FalkorDB%20Cloud-FF8101?labelColor=FDE900&style=for-the-badge" alt="Try Free" />
+  </a><br>
+  <a href="https://discord.com/invite/TJ4SaPTptf" rel="nofollow">
+    <img src="https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white" alt="Discord" />
+  </a>
+  <a href="https://hub.docker.com/r/falkordb/falkordb/">
+    <img src="https://img.shields.io/docker/pulls/falkordb/falkordb?label=Docker" alt="Dockerhub" />
+  </a>
+  <a href="https://discord.gg/6M4QwDXn2w">
+    <img src="https://img.shields.io/discord/1146782921294884966?style=flat-square" alt="Discord" />
+  </a>
+  <a href="https://codecov.io/gh/falkordb/falkordb">
+    <img src="https://codecov.io/gh/falkordb/falkordb/graph/badge.svg?token=0G4HBEJMW0" alt="codecov" />
+  </a>
+  <a href="https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml">
+    <img src="https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml/badge.svg?branch=master" alt="Workflow" />
+  </a>
+</div>
 
-# FalkorDB - Graph Database for GraphRAG & GenAI
+<div align="center">
 
-A scalable, low-latency graph database designed for development teams managing structured and unstructured interconnected data in real-time or interactive environments.
+![FalkorDB GitHub Repo - Video - 640x365](https://github.com/user-attachments/assets/131867d4-fa2b-41f8-ac72-5c5f6eaf4e12)
 
-[![Try Free](https://img.shields.io/badge/Try%20Free-FalkorDB%20Cloud-FF8101?labelColor=FDE900&style=for-the-badge&link=https://app.falkordb.cloud)](https://app.falkordb.cloud)<br>
-
-![FalkorDB Graph Database](/assets/header.jpg)
+</div>
 
 ## UNIQUE FEATURES
 
@@ -51,13 +74,7 @@ Our goal is to build a high-performance Knowledge Graph tailored for Large Langu
 To quickly try out FalkorDB, launch an instance using docker:
 
 ```
-docker run -p 6379:6379 -it --rm -v ./data:/var/lib/falkordb/data falkordb/falkordb:edge
-```
-
-Or, to use the built-in browser-based interface, run:
-
-```
-docker run -p 6379:6379 -p 3000:3000 -it --rm -v ./data:/var/lib/falkordb/data falkordb/falkordb:edge
+docker run -p 6379:6379 -p 3000:3000 -it --rm -v ./data:/var/lib/falkordb/data falkordb/falkordb
 ```
 
 ### Step 2
@@ -109,10 +126,10 @@ Make sure to complete these requirements:
 
 1️⃣ The FalkorDB repository: `git clone --recurse-submodules -j8 https://github.com/FalkorDB/FalkorDB.git`
 
->On Ubuntu Linux, run: `apt-get install build-essential cmake m4 automake peg libtool autoconf python3 python3-pip`
-	
->On OS X, verify that `homebrew` is installed and run: `brew install cmake m4 automake peg libtool autoconf`.
->>The version of Clang that ships with the OS X toolchain does not support OpenMP, which is a requirement for FalkorDB. One way to resolve this is to run `brew install gcc g++` and follow the on-screen instructions to update the symbolic links. Note that this is a system-wide change - setting the environment variables for `CC` and `CXX` will work if that is not an option.
+* Ubuntu, install: `apt-get install build-essential cmake m4 automake peg libtool autoconf python3 python3-pip`
+* Alpine, install: `apk add build-base cmake m4 automake libtool autoconf python3 py3-pip peg git libgomp openssl-dev`
+* OS X, verify that `homebrew` is installed and run: `brew install cmake m4 automake peg libtool autoconf`.
+	* The version of Clang that ships with the OS X toolchain does not support OpenMP, which is a requirement for FalkorDB. One way to resolve this is to run `brew install gcc g++` and follow the on-screen instructions to update the symbolic links. Note that this is a system-wide change - setting the environment variables for `CC` and `CXX` will work if that is not an option.
 
 2️⃣ Build by running `make` in the project's directory.
 
@@ -131,7 +148,7 @@ The FalkorDB build system runs within docker. For detailed instructions on build
 ## LOADING FALKORDB INTO REDIS
 
 FalkorDB is hosted by [Redis](https://redis.io), so you'll first have to load it as a Module to a Redis server. 
-> Note: [Redis 6.2](https://redis.io/download) is required for FalkorDB 2.12.
+> Note: [Redis 7.4](https://redis.io/download) is required for the latest FalkorDB version.
 
 💡 We recommend having Redis load FalkorDB during startup by adding the following to your redis.conf file:
 

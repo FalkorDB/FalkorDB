@@ -26,8 +26,7 @@ uint64_t GB_encodify_subref     // encode an subref problem
     int Ikind,              // 0: all (no I), 1: range, 2: stride, 3: list
     int Jkind,              // ditto, or 0 if not used
     bool need_qsort,        // true if qsort needs to be called
-    bool Ihead_is_32,       // if true, Ihead/Inext 32-bit; else 64
-    bool I_has_duplicates,  // true if I has duplicate entries
+    GrB_Matrix R,
     // A matrix:
     GrB_Matrix A
 )
@@ -49,10 +48,9 @@ uint64_t GB_encodify_subref     // encode an subref problem
     // primary encoding of the problem
     //--------------------------------------------------------------------------
 
-    encoding->kcode = kcode ;
+    GB_encodify_kcode (encoding, kcode) ;
     GB_enumify_subref (&encoding->code,
-        C, I_is_32, J_is_32, Ikind, Jkind, need_qsort, Ihead_is_32,
-        I_has_duplicates, A) ;
+        C, I_is_32, J_is_32, Ikind, Jkind, need_qsort, R, A) ;
 
     //--------------------------------------------------------------------------
     // determine the suffix and its length

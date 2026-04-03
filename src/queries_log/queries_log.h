@@ -18,6 +18,7 @@ typedef struct QueryStats {
 	bool utilized_cache;        // utilized cache
 	bool write;    		        // write query
 	bool timeout;    		    // timeout query
+	char *params;               // query parameters
 	char *query;                // query string
 } LoggedQuery;
 
@@ -39,6 +40,7 @@ void QueriesLog_AddQuery
 	bool utilized_cache,        // utilized cache
 	bool write,    		        // write query
 	bool timeout,    		    // timeout query
+	uint params_len,            // length of parameters
 	const char *query           // query string
 );
 
@@ -54,6 +56,12 @@ CircularBuffer QueriesLog_ResetQueries
 (
 	QueriesLog log  // queries log
 );
+
+// free a logged query
+void LoggedQuery_Free
+(
+	LoggedQuery *q
+) ;
 
 // free the QueriesLog structure's content
 void QueriesLog_Free

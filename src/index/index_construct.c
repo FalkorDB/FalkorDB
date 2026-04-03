@@ -32,7 +32,7 @@ static void _Index_PopulateNodeIndex
 	GrB_Index          rowIdx     = 0;
 	int                indexed    = 0;      // #entities in current batch
 	int                batch_size = 10000;  // max #entities to index in one go
-	Delta_MatrixTupleIter it      = {0};
+	Delta_MatrixTupleIter it;
 
 	while(true) {
 		// lock graph for reading

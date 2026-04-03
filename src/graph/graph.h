@@ -42,8 +42,9 @@ typedef enum {
 
 // forward declaration of Graph struct
 typedef struct Graph Graph;
+
 // typedef for synchronization function pointer
-typedef void (*SyncMatrixFunc)(const Graph *, Delta_Matrix, GrB_Index, GrB_Index);
+typedef bool (*SyncMatrixFunc)(const Graph *, Delta_Matrix, GrB_Index, GrB_Index);
 
 struct Graph {
 	int reserved_node_count;           // number of nodes not commited yet
@@ -75,6 +76,31 @@ void Graph_AcquireWriteLock
 	Graph *g
 );
 
+// acquire the graph write lock with a timeout
+// attempts to acquire the write lock on the given graph
+// if the lock is not acquired immediately the function will block until either
+// the lock becomes available or the timeout elapses
+//
+// returns:
+// - 0 on success (lock acquired)
+// - ETIMEDOUT if the timeout expired before acquiring the lock
+// - EBUSY if called with timeout_ms == 0 and the lock could not be acquired
+// - other nonzero error codes may be returned for unexpected failures
+int Graph_TimeAcquireWriteLock
+(
+	Graph *g,       // graph to lock
+	int timeout_ms  // maximum time in milliseconds to wait for the lock:
+                    // - timeout_ms < 0 : block until the lock is acquired
+                    // - timeout_ms = 0 : non-blocking attempt (try-lock)
+                    // - timeout_ms > 0 : wait up to timeout_ms milliseconds
+);
+
+// returns rather or not graph is locked for writing
+bool Graph_IsWriteLocked
+(
+	const Graph *g
+);
+
 // release the held lock
 void Graph_ReleaseLock
 (
@@ -99,34 +125,6 @@ void Graph_ApplyAllPending
 (
 	Graph *g,           // graph to sync
 	bool force_flush    // force sync of delta matrices
-);
-
-// lock all matrices:
-// 1. adjacency matrix
-// 2. label matrices
-// 3. node labels matrix
-// 4. relation matrices
-//
-// currently only used just before forking for the purpose of
-// taking a snapshot
-void Graph_LockAllMatrices
-(
-	Graph *g  // graph to lock
-);
-
-// the counter-part of GraphLockAllMatrices
-// unlocks all matrices:
-//
-// 1. adjacency matrix
-// 2. label matrices
-// 3. node labels matrix
-// 4. relation matrices
-//
-// currently only used after a fork had been issued on both
-// the parent and child processes
-void Graph_UnlockAllMatrices
-(
-	Graph *g  // graph to unlock
 );
 
 // checks to see if graph has pending operations
@@ -204,6 +202,18 @@ void Graph_CreateNode
 	uint label_count  // number of labels
 );
 
+// create multiple nodes
+// all nodes share the same set of labels
+void Graph_CreateNodes
+(
+	Graph *g,            // graph
+	Node **nodes,        // array of nodes to create
+	AttributeSet *sets,  // nodes attributes
+	uint node_count,     // number of nodes
+	LabelID *labels,     // labels, same set of labels applied to all nodes
+	uint label_count     // number of labels
+);
+
 // label node with each label in 'lbls'
 void Graph_LabelNode
 (
@@ -254,25 +264,27 @@ void Graph_CreateEdge
 // create multiple edges
 void Graph_CreateEdges
 (
-	Graph *g,      // graph on which to operate
-	RelationID r,  // relationship type
-	Edge **edges   // edges to create
+	Graph *g,           // graph on which to operate
+	RelationID r,       // relationship type
+	Edge **edges,       // edges to create
+	AttributeSet *sets  // [optional] attribute sets
 );
 
 // deletes nodes from the graph
 void Graph_DeleteNodes
 (
-	Graph *g,       // graph to delete nodes from
-	Node *nodes,    // nodes to delete
-	uint64_t count  // number of nodes
+	Graph *g,            // graph to delete nodes from
+	Node *nodes,         // nodes to delete
+	uint64_t node_count  // number of nodes
 );
 
 // deletes edges from the graph
 void Graph_DeleteEdges
 (
-	Graph *g,     // graph to delete edges from
-	Edge *edges,  // edges to delete
-	uint64_t n    // number of edges
+	Graph *g,      // graph to delete edges from
+	Edge *edges,   // edges to delete
+	uint64_t n,    // number of edges
+	bool implicit  // edge deleted due to node deletion
 );
 
 // returns true if the given entity has been deleted
@@ -410,6 +422,42 @@ void Graph_GetEdgesConnectingNodes
 	Edge **edges     // array_t of edges connecting src to dest of type r.
 );
 
+// returns true and sets edge's relation ID if edge is associated
+// with one of the specified relations, otherwise returns false and does not
+// change edge's relation ID
+bool Graph_LookupEdgeRelationID
+(
+	const Graph *g,          // graph to get edges from
+	Edge *edge,    	         // edge to check
+	const RelationID *rels,  // relationships (can't contain unknown relations)
+	int n_rels               // the number of relations
+);
+
+void Graph_CollectInOutEdges
+(
+	Edge **outgoing,     // [output] outgoing edges
+	Edge **incoming,     // [output] incoming edges
+	Graph *g,            // graph
+	Node *nodes,         // nodes to collect edges for
+	uint64_t node_count  // number of nodes
+);
+
+void Graph_CollectOutgoingEdges
+(
+	Edge **edges,
+	Graph *g,
+	Node *nodes,
+	uint64_t node_count
+);
+
+void Graph_CollectIncomingEdges
+(
+	Edge **edges,
+	Graph *g,
+	Node *nodes,
+	uint64_t node_count
+);
+
 // get node edges
 void Graph_GetNodeEdges
 (
@@ -478,8 +526,22 @@ Delta_Matrix Graph_GetZeroMatrix
 	const Graph *g
 );
 
+// return true if all graph matrices are fully synced (not dirty)
+// and are of the expected dimensions
+bool Graph_Synced
+(
+	const Graph *g  // graph
+);
+
 // free partial graph
 void Graph_PartialFree
+(
+	Graph *g
+);
+
+// debug utility
+// prints every matrix in the graph
+void Graph_PrintMatrices
 (
 	Graph *g
 );

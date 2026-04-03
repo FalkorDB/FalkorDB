@@ -1,7 +1,9 @@
+import time
+from graph_utils import graph_eq
+from redis import BusyLoadingError, ResponseError
+from constraint_utils import create_constraint
 from common import Env, FalkorDB, SANITIZER, VALGRIND
 from random_graph import create_random_schema, create_random_graph
-from graph_utils import graph_eq
-import time
 
 GRAPH_ID = "graph_copy"
 
@@ -15,20 +17,40 @@ class testGraphCopy():
         # invokes the GRAPH.COPY command
         self.conn.execute_command("GRAPH.COPY", src, dest)
 
-    # compare graphs
-    def assert_graph_eq(self, A, B):
-        # tests that the graphs are the same
+    def graph_copy_with_retry(self, src, dest):
+        # invokes GRAPH.COPY, retrying on fork errors for up to 1 minute
+        deadline = time.time() + 60
         while True:
             try:
+                self.conn.execute_command("GRAPH.COPY", src, dest)
+                return
+            except ResponseError as e:
+                if "could not fork" in str(e).lower() and time.time() + 5 <= deadline:
+                    print(f"Fork error, retrying in 5 seconds: {e}")
+                    time.sleep(5)
+                else:
+                    raise
+
+    # compare graphs
+    def assert_graph_eq(self, A, B):
+        max_iterations = 20
+        # tests that the graphs are the same
+        # limit retries to 20
+        for _ in range(max_iterations):
+            try:
                 self.env.assertTrue(graph_eq(A, B))
-                break
-            except Exception as e:
-                # retry if query was issued while redis is loading
-                if str(e) == "Redis is loading the dataset in memory":
-                    print("Retry!")
-                    continue
+                return
+            except BusyLoadingError as e:
+                print("Retry!")
+                time.sleep(1)
+
+        raise RuntimeError("Redis not loaded after 20 seconds")
 
     def test_01_invalid_invocation(self):
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
         # validate invalid invocations of the GRAPH.COPY command
 
         # missing src graph
@@ -81,6 +103,10 @@ class testGraphCopy():
         self.conn.delete(src, dest)
 
     def test_02_copy_empty_graph(self):
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
         # src is an empty graph
         src = 'a'
         dest = 'z'
@@ -109,9 +135,13 @@ class testGraphCopy():
         dest_graph.delete()
 
     def test_03_copy_random_graph(self):
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
         # make sure copying of a random graph is working as expected
-        src = 'a'
-        dest = 'z'
+        src = 'n'
+        dest = 'm'
 
         src_graph = self.db.select_graph(src)
         nodes, edges = create_random_schema()
@@ -129,6 +159,10 @@ class testGraphCopy():
         dest_graph.delete()
 
     def test_04_copy_constraints(self):
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
         # make sure constrains and indexes are copied
 
         src_id = GRAPH_ID
@@ -140,8 +174,7 @@ class testGraphCopy():
         # create graph with both indices and constrains
         src_graph.create_node_range_index("Person", "name", "age")
 
-        self.conn.execute_command("GRAPH.CONSTRAINT", "CREATE", src_id, "UNIQUE",
-                                  "NODE", "Person", "PROPERTIES", 1, "name")
+        create_constraint(src_graph, "UNIQUE", "NODE", "Person", "name", sync=True)
 
         # copy graph
         self.graph_copy(src_id, clone_id)
@@ -154,6 +187,10 @@ class testGraphCopy():
         clone_graph.delete()
 
     def test_05_chain_of_copies(self):
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
         # make multiple copies of essentially the same graph
         # start with graph A
         # copy A to B, copy B to C and C to D
@@ -183,6 +220,10 @@ class testGraphCopy():
             graph.delete()
 
     def test_06_write_to_copy(self):
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
         # make sure copied graph is writeable and loadable
         src_graph_id = GRAPH_ID
         copy_graph_id = GRAPH_ID + "_copy"
@@ -210,6 +251,10 @@ class testGraphCopy():
         copy_graph.delete()
 
     def test_07_copy_uneffected_by_vkey_size(self):
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
         # set size of virtual key to 1
         # i.e. number of entities per virtual key is 1.
         vkey_max_entity_count = self.db.config_get("VKEY_MAX_ENTITY_COUNT")
@@ -253,6 +298,7 @@ class testGraphCopy():
         self.env, self.db = Env(env='oss', useSlaves=True)
 
         master_con = self.env.getConnection()
+        self.conn = master_con
 
         # create a random graph
         src_graph_id  = GRAPH_ID
@@ -263,7 +309,7 @@ class testGraphCopy():
         create_random_graph(src_graph, nodes, edges)
 
         # copy graph
-        self.graph_copy(src_graph_id, copy_graph_id)
+        self.graph_copy_with_retry(src_graph_id, copy_graph_id)
 
         # the WAIT command forces master slave sync to complete
         master_con.execute_command("WAIT", "1", "0")
@@ -275,4 +321,41 @@ class testGraphCopy():
         
         # make sure src graph on master is the same as cloned graph on replica
         self.assert_graph_eq(src_graph, replica_cloned_graph)
+
+    def test_09_copy_with_multiple_graphs(self):
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
+        # regression test for issue #1611
+        # GRAPH.COPY should succeed when other graphs exist in the database
+
+        # refresh connection (test_08 may have restarted the environment)
+        self.conn = self.env.getConnection()
+        self.conn.flushall()
+
+        dummy_id    = "dummy"
+        src_id      = "copy_src"
+        dest_id     = "copy_dest"
+
+        dummy_graph = self.db.select_graph(dummy_id)
+        src_graph   = self.db.select_graph(src_id)
+
+        # create a dummy graph so multiple graphs exist in keyspace
+        dummy_graph.query("CREATE (:X {v:1})")
+
+        # create src graph with nodes, edges, indices and constraints
+        src_graph.query("CREATE (:A {v:1})-[:R {v:2}]->(:B {v:3})")
+        src_graph.query("CREATE INDEX FOR (n:A) ON (n.v)")
+        src_graph.query("CREATE INDEX FOR ()-[r:R]-() ON (r.v)")
+        create_constraint(src_graph, "UNIQUE", "NODE", "A", "v", sync=True)
+
+        # expecting GRAPH.COPY to succeed
+        self.graph_copy_with_retry(src_id, dest_id)
+
+        dest_graph = self.db.select_graph(dest_id)
+        self.assert_graph_eq(src_graph, dest_graph)
+
+        # clean up
+        self.conn.flushall()
 

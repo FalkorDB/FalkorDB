@@ -12,17 +12,17 @@
 #include "../globals.h"
 #include "../query_ctx.h"
 #include "execution_ctx.h"
+#include "../udf/udf_ctx.h"
 #include "../graph/graph.h"
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
 #include "index_operations.h"
 #include "../effects/effects.h"
 #include "../util/cache/cache.h"
-#include "../util/thpool/pools.h"
 #include "../configuration/config.h"
 #include "../execution_plan/execution_plan.h"
 
-// GraphQueryCtx stores the allocations required to execute a query.
+// GraphQueryCtx stores the allocations required to execute a query
 typedef struct {
 	GraphContext *graph_ctx;  // graph context
 	RedisModuleCtx *rm_ctx;   // redismodule context
@@ -172,9 +172,10 @@ static void _ExecuteQuery(void *args) {
 	// update thread-local storage and track the CommandCtx
 	if (command_ctx->thread == EXEC_THREAD_WRITER) {
 		// transition the query from waiting to executing
-		QueryCtx_AdvanceStage(query_ctx);
-		QueryCtx_SetTLS(query_ctx);
-		Globals_TrackCommandCtx(command_ctx);
+		QueryCtx_AdvanceStage (query_ctx) ;
+		QueryCtx_SetTLS (query_ctx) ;
+		Globals_TrackCommandCtx (command_ctx) ;
+		UDFCtx_Update () ;  // make sure thread's UDFs are up to date
 	}
 
 	// instantiate the query ResultSet
@@ -256,8 +257,10 @@ static void _ExecuteQuery(void *args) {
 		// replicate if graph was modified
 		if(ResultSetStat_IndicateModification(&result_set->stats)) {
 			// determine rather or not to replicate via effects
-			if(EffectsBuffer_Length(QueryCtx_GetEffectsBuffer()) > 0 &&
-			   _should_replicate_effects()) {
+			// effect replication is mandatory if query is non deterministic
+			if (EffectsBuffer_Length (QueryCtx_GetEffectsBuffer()) > 0 &&
+			    (!exec_ctx->deterministic || _should_replicate_effects()))
+			{
 				// compute effects buffer
 				size_t effects_len = 0;
 				u_char *effects = EffectsBuffer_Buffer(
@@ -272,7 +275,7 @@ static void _ExecuteQuery(void *args) {
 				// replicate original query
 				QueryCtx_Replicate(query_ctx);
 			}
-		}	
+		}
 	}
 
 	QueryCtx_UnlockCommit();
@@ -290,10 +293,18 @@ static void _ExecuteQuery(void *args) {
 
 	if(readonly) Graph_ReleaseLock(gc->g); // release read lock
 
+	//--------------------------------------------------------------------------
 	// log query to slowlog
-	SlowLog *slowlog = GraphContext_GetSlowLog(gc);
-	SlowLog_Add(slowlog, command_ctx->command_name, command_ctx->query,
-				QueryCtx_GetRuntime(), NULL);
+	//--------------------------------------------------------------------------
+
+	SlowLog *slowlog = GraphContext_GetSlowLog (gc) ;
+	SlowLog_Add (slowlog,
+			command_ctx->command_name,              // command
+			query_ctx->query_data.query,            // query
+			query_ctx->query_data.query_params_len, // params length
+			QueryCtx_GetRuntime (),                 // latency
+			QueryCtx_GetReceivedTS ()               // receive time
+		) ;
 
 	// clean up
 	ExecutionCtx_Free(exec_ctx);
@@ -307,14 +318,17 @@ static void _ExecuteQuery(void *args) {
 	GraphQueryCtx_Free(gq_ctx);
 }
 
-static void _DelegateWriter(GraphQueryCtx *gq_ctx) {
+static bool _DelegateQuery
+(
+	GraphContext *gc,
+	GraphQueryCtx *gq_ctx
+) {
 	ASSERT(gq_ctx != NULL);
 
-	//---------------------------------------------------------------------------
-	// Migrate to writer thread
-	//---------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
+	// delegate query to the current graph writer thread
+	//--------------------------------------------------------------------------
 
-	// write queries will be executed on a dedicated writer thread,
 	// clear this thread data
 	ErrorCtx_Clear();
 	QueryCtx_RemoveFromTLS();
@@ -328,9 +342,38 @@ static void _DelegateWriter(GraphQueryCtx *gq_ctx) {
 	// reset query stage from executing back to waiting
 	QueryCtx_ResetStage(gq_ctx->query_ctx);
 
-	// dispatch work to the writer thread
-	int res = ThreadPools_AddWorkWriter(_ExecuteQuery, gq_ctx, 0);
-	ASSERT(res == 0);
+	// queue query
+	return GraphContext_EnqueueWriteQuery(gc, gq_ctx);
+}
+
+// process all queued write queries
+// writer will only release write access when the queue is truly empty
+static void enter_writer_loop
+(
+	GraphContext *gc
+) {
+	while (true) {
+		// drain the queue
+		GraphQueryCtx *gq_ctx;
+		while ((gq_ctx = (GraphQueryCtx *)GraphContext_DequeueWriteQuery(gc))) {
+			_ExecuteQuery(gq_ctx);
+		}
+
+		// release write access
+		GraphContext_ExitWrite(gc);
+
+		// race condition handling: after releasing write access, another thread
+		// may have enqueued a query
+		// we must check the queue again and attempt
+		// to reacquire write access
+		// if we succeed, continue processing
+		// if we fail, another thread is now the writer and will handle the queue
+		if(GraphContext_WriteQueueEmpty(gc) || !GraphContext_TryEnterWrite(gc)) {
+			// either the queue is empty
+			// or the another thread became a writer
+			break;
+		}
+	}
 }
 
 void _query
@@ -346,14 +389,17 @@ void _query
 
 	Globals_TrackCommandCtx(command_ctx);
 	QueryCtx_SetGlobalExecutionCtx(command_ctx);
+	UDFCtx_Update () ;  // make sure thread's UDFs are up to date
 
 	// transition the query from waiting to executing
 	QueryCtx_AdvanceStage(query_ctx);
 
 	// parse query parameters and build an execution plan
 	// or retrieve it from the cache
-	exec_ctx = ExecutionCtx_FromQuery(command_ctx->query);
-	if(exec_ctx == NULL) goto cleanup;
+	exec_ctx = ExecutionCtx_FromQuery(command_ctx);
+	if(exec_ctx == NULL || ErrorCtx_EncounteredError()) {
+		goto cleanup;
+	}
 
 	// update cached flag
 	QueryCtx_SetUtilizedCache(query_ctx, exec_ctx->cached);
@@ -402,7 +448,30 @@ void _query
 	if(readonly || command_ctx->thread == EXEC_THREAD_MAIN) {
 		_ExecuteQuery(gq_ctx);
 	} else {
-		_DelegateWriter(gq_ctx);
+		// increase graph ref count, guard against the graph context
+		// being free too early as the writer need access to the graph's
+		// pending queries queue and the writer's flag
+		GraphContext_IncreaseRefCount(gc);
+
+		// thread failed getting exclusive write access to graph
+		// delegate query to current writer
+		if(!_DelegateQuery(gc, gq_ctx)) {
+			ErrorCtx_SetError(EMSG_WRITE_QUEUE_FULL);
+
+			// counter to GraphContext_IncreaseRefCount just above
+			GraphContext_DecreaseRefCount(gc);
+			goto cleanup;
+		}
+
+		// try to acquire exclusive write access to graph
+		if(GraphContext_TryEnterWrite(gc)) {
+			// thread has exclusive write access to graph
+			// go ahead and run the query
+			enter_writer_loop(gc);
+		}
+
+		// counter to GraphContext_IncreaseRefCount just above
+		GraphContext_DecreaseRefCount(gc);
 	}
 
 	return;
@@ -413,13 +482,13 @@ cleanup:
 		ErrorCtx_EmitException();
 	}
 
-	// Cleanup routine invoked after encountering errors in this function.
+	// cleanup routine invoked after encountering errors in this function
 	ExecutionCtx_Free(exec_ctx);
 	GraphContext_DecreaseRefCount(gc);
 	Globals_UntrackCommandCtx(command_ctx);
 	CommandCtx_UnblockClient(command_ctx);
 	CommandCtx_Free(command_ctx);
-	QueryCtx_Free(); // Reset the QueryCtx and free its allocations.
+	QueryCtx_Free(); // reset the QueryCtx and free its allocations
 	ErrorCtx_Clear();
 }
 
@@ -430,4 +499,3 @@ void Graph_Profile(void *args) {
 void Graph_Query(void *args) {
 	_query(false, args);
 }
-

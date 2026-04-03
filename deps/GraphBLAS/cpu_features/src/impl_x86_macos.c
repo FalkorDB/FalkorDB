@@ -42,7 +42,8 @@ static void OverrideOsPreserves(OsPreserves* os_preserves) {
   os_preserves->avx512_registers = GetDarwinSysCtlByName("hw.optional.avx512f");
 }
 
-static void DetectFeaturesFromOs(X86Features* features) {
+static void DetectFeaturesFromOs(X86Info* info, X86Features* features) {
+  (void)info;
   // Handling Darwin platform through sysctlbyname.
   features->sse = GetDarwinSysCtlByName("hw.optional.sse");
   features->sse2 = GetDarwinSysCtlByName("hw.optional.sse2");

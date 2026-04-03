@@ -40,11 +40,6 @@ GrB_Info GxB_Context_set_INT32      // set a parameter in a Context
             GB_Context_nthreads_max_set (Context, value) ;
             break ;
 
-        case GxB_CONTEXT_GPU_ID :           // same as GxB_GPU_ID
-
-            GB_Context_gpu_id_set (Context, value) ;
-            break ;
-
         default : 
 
             return (GrB_INVALID_VALUE) ;
@@ -126,16 +121,6 @@ GrB_Info GxB_Context_set            // set a parameter in a Context
                 va_start (ap, field) ;
                 int value = va_arg (ap, int) ;
                 GB_Context_nthreads_max_set (Context, value) ;
-                va_end (ap) ;
-            }
-            break ;
-
-        case GxB_CONTEXT_GPU_ID :           // same as GxB_GPU_ID
-
-            {
-                va_start (ap, field) ;
-                int value = va_arg (ap, int) ;
-                GB_Context_gpu_id_set (Context, value) ;
                 va_end (ap) ;
             }
             break ;

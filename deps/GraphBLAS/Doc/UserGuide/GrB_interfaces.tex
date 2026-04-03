@@ -46,12 +46,6 @@ GraphBLAS matrices.  Some of these may be added in future releases.
         display properly in the \verb'whos' command.  The size is displayed
         correctly with \verb'disp' or \verb'display'.
     \item Non-blocking mode is not exploited.
-        % ; this would require
-        % a MATLAB/Octave mexFunction to modify its inputs, which is
-        % technically possible but not permitted by the MATLAB/Octave API.
-        % This can have significant impact on performance, if an
-        % m-file makes many repeated tiny changes to a matrix.  This
-        % can be done in the C API but not MATLAB/Octave.
     \item Linear indexing: \verb'A(:)' for a 2D matrix, and \verb'I=find(A)'.
     \item Singleton expansion.
     \item Dynamically growing arrays, where \verb'C(i)=x' can increase

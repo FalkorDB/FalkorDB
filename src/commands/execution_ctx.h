@@ -7,6 +7,7 @@
 #pragma once
 
 #include "../ast/ast.h"
+#include "cmd_context.h"
 #include "../execution_plan/execution_plan.h"
 
  // execution type derived from a query
@@ -20,6 +21,7 @@ typedef enum {
 typedef struct {
 	AST *ast;                 // AST
 	bool cached;              // cache hit/miss
+	bool deterministic;       // false if query contains a non deterministic exp
 	ExecutionPlan *plan;      // execution plan
 	ExecutionType exec_type;  // execution type: query, index create/delete
 } ExecutionCtx;
@@ -31,7 +33,7 @@ typedef struct {
 // returns ExecutionCtx populated with the current execution relevant objects
 ExecutionCtx *ExecutionCtx_FromQuery
 (
-	const char *q  // string representing the query
+	CommandCtx *cmd_ctx
 );
 
 // clone the execution ctx and return a shallow copy for the ast

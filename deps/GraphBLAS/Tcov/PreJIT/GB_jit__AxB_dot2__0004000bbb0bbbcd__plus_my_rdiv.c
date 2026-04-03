@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__AxB_dot2__0004000bbb0bbbcd__plus_my_rdiv.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.0.0, Timothy A. Davis, (c) 2017-2025,
+// SuiteSparse:GraphBLAS v10.1.0, Timothy A. Davis, (c) 2017-2025,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -41,7 +41,7 @@ void my_rdiv (double *z, const double *x, const double *y)
 {
     // escape this quote: "
     /* escape this backslash \ */
-    /* revised for GrB 9.4.1 */
+    /* revised for GrB 10.0.0 */
     (*z) = (*y) / (*x) ;
 }
 #define GB_my_rdiv_USER_DEFN \
@@ -49,7 +49,7 @@ void my_rdiv (double *z, const double *x, const double *y)
 "{\n" \
 "    // escape this quote: \"\n" \
 "    /* escape this backslash \\ */\n" \
-"    /* revised for GrB 9.4.1 INTENTIONALLY STALE */\n" \
+"    /* revised for GrB 10.0.0 INTENTIONALY STALE */\n" \
 "    (*z) = (*y) / (*x) ;\n" \
 "}"
 #endif
@@ -80,10 +80,13 @@ void my_rdiv (double *z, const double *x, const double *y)
 #define GB_C_IN_ISO 0
 #define GB_C_TYPE double
 #define GB_PUTC(c,Cx,p) Cx [p] = c
+#define GB_Cp_TYPE uint64_t
+#define GB_Cj_TYPE uint64_t
+#define GB_Ci_TYPE uint64_t
+#define GB_Ci_SIGNED_TYPE int64_t
 #define GB_Cp_BITS 64
 #define GB_Cj_BITS 64
 #define GB_Ci_BITS 64
-#define GB_Ci_TYPE uint64_t
 
 // M matrix: none
 #define GB_M_TYPE void
@@ -91,6 +94,10 @@ void my_rdiv (double *z, const double *x, const double *y)
 #define GB_MASK_STRUCT 1
 #define GB_MASK_COMP   0
 #define GB_NO_MASK     1
+#define GB_Mp_TYPE uint64_t
+#define GB_Mj_TYPE uint64_t
+#define GB_Mi_TYPE uint64_t
+#define GB_Mi_SIGNED_TYPE int64_t
 #define GB_Mp_BITS 64
 #define GB_Mj_BITS 64
 #define GB_Mi_BITS 64
@@ -111,6 +118,10 @@ void my_rdiv (double *z, const double *x, const double *y)
 #define GB_A2TYPE double
 #define GB_DECLAREA(a) double a
 #define GB_GETA(a,Ax,p,iso) a = Ax [p]
+#define GB_Ap_TYPE uint64_t
+#define GB_Aj_TYPE uint64_t
+#define GB_Ai_TYPE uint64_t
+#define GB_Ai_SIGNED_TYPE int64_t
 #define GB_Ap_BITS 64
 #define GB_Aj_BITS 64
 #define GB_Ai_BITS 64
@@ -131,6 +142,10 @@ void my_rdiv (double *z, const double *x, const double *y)
 #define GB_B2TYPE double
 #define GB_DECLAREB(b) double b
 #define GB_GETB(b,Bx,p,iso) b = Bx [p]
+#define GB_Bp_TYPE uint64_t
+#define GB_Bj_TYPE uint64_t
+#define GB_Bi_TYPE uint64_t
+#define GB_Bi_SIGNED_TYPE int64_t
 #define GB_Bp_BITS 64
 #define GB_Bj_BITS 64
 #define GB_Bi_BITS 64
@@ -144,7 +159,7 @@ void my_rdiv (double *z, const double *x, const double *y)
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0x4b2ea6f2b6a7b0ce ;
+    (*hash) = 0xfbabe0564ae89613 ;
     v [0] = GxB_IMPLEMENTATION_MAJOR ;      // keep at current version
     v [1] = GxB_IMPLEMENTATION_MINOR ;
     v [2] = GxB_IMPLEMENTATION_SUB ;

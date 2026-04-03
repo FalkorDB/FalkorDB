@@ -30,7 +30,7 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 
 	// if we have already constructed any ops
 	// the plan's record map contains all variables bound at this time
-	uint connectedComponentsCount = array_len(connectedComponents);
+	uint connectedComponentsCount = arr_len(connectedComponents);
 	rax *bound_vars = plan->record_map;
 
 	// if we have multiple graph components
@@ -56,7 +56,7 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 	// keep track after all traversal operations along a pattern
 	for(uint i = 0; i < connectedComponentsCount; i++) {
 		QueryGraph *cc = connectedComponents[i];
-		uint edge_count = array_len(cc->edges);
+		uint edge_count = arr_len(cc->edges);
 		OpBase *root = NULL; // the root of the traversal chain will be added to the ExecutionPlan
 		OpBase *tail = NULL;
 
@@ -72,33 +72,35 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 		}
 
 		AlgebraicExpression **exps = AlgebraicExpression_FromQueryGraph(cc);
-		uint expCount = array_len(exps);
+		uint expCount = arr_len(exps);
 
 		// reorder exps, to the most performant arrangement of evaluation
 		orderExpressions(qg, exps, &expCount, ft, bound_vars);
 
-		// Create the SCAN operation that will be the tail of the traversal chain.
-		QGNode *src = QueryGraph_GetNodeByAlias(qg,
-			AlgebraicExpression_Src(exps[0]));
+		// create a SCAN operation that will be the tail of the traversal chain
+		QGNode *src = QueryGraph_GetNodeByAlias (qg,
+				AlgebraicExpression_Src (exps[0])) ;
 
-		uint label_count = QGNode_LabelCount(src);
-		if(label_count > 0) {
+		uint label_count = QGNode_LabelCount (src) ;
+
+		if (label_count > 0) {
 			AlgebraicExpression *ae_src =
-				AlgebraicExpression_RemoveSource(&exps[0]);
-			ASSERT(AlgebraicExpression_DiagonalOperand(ae_src, 0));
+				AlgebraicExpression_RemoveSource (&exps[0]) ;
+			ASSERT(AlgebraicExpression_DiagonalOperand (ae_src, 0)) ;
 
-			const char *label = AlgebraicExpression_Label(ae_src);
-			const char *alias = AlgebraicExpression_Src(ae_src);
-			ASSERT(label != NULL);
-			ASSERT(alias != NULL);
+			const char *label = AlgebraicExpression_Label (ae_src) ;
+			const char *alias = AlgebraicExpression_Src (ae_src) ;
+			ASSERT (label != NULL) ;
+			ASSERT (alias != NULL) ;
 
-			int label_id = GRAPH_UNKNOWN_LABEL;
-			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
-			if(s != NULL) label_id = Schema_GetID(s);
+			int label_id = GRAPH_UNKNOWN_LABEL ;
+			Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
+			if (s != NULL) {
+				label_id = Schema_GetID(s);
+			}
 
 			// resolve source node by performing label scan
-			NodeScanCtx *ctx = NodeScanCtx_New((char *)alias, (char *)label,
-				label_id, src);
+			NodeScanCtx *ctx = NodeScanCtx_New (alias, label, label_id, src);
 			root = tail = NewNodeByLabelScanOp(plan, ctx);
 
 			// first operand has been converted into a label scan op
@@ -107,7 +109,7 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 			root = tail = NewAllNodeScanOp(plan, src->alias);
 			// free expression source
 			// in-case there are additional patterns to traverse
-			if(array_len(cc->edges) == 0) {
+			if(arr_len(cc->edges) == 0) {
 				AlgebraicExpression_Free(
 						AlgebraicExpression_RemoveSource(&exps[0]));
 			}
@@ -145,10 +147,11 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 						ErrorCtx_SetError(EMSG_ALLSHORTESTPATH_SRC_DST_RESLOVED);
 					}
 				}
-				root = NewCondVarLenTraverseOp(plan, gc->g, exp);
+				root = NewCondVarLenTraverseOp (plan, gc->g, exp) ;
 			} else {
-				root = NewCondTraverseOp(plan, gc->g, exp);
+				root = NewCondTraverseOp (plan, gc->g, exp) ;
 			}
+
 			// insert the new traversal op at the root of the chain
 			ExecutionPlan_AddOp(root, tail);
 			tail = root;
@@ -156,7 +159,7 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 
 		// free the expressions array
 		// as its parts have been converted into operations
-		array_free(exps);
+		arr_free(exps);
 
 		if(cartesianProduct) {
 			// we have multiple disjoint traversal chains
@@ -190,7 +193,7 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 		}
 
 		raxFree(bound_args);
-		array_free(arguments);
+		arr_free(arguments);
 	}
 
 	for(uint i = 0; i < connectedComponentsCount; i++) {
@@ -198,7 +201,7 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 	}
 
 	FilterTree_Free(ft);
-	array_free(connectedComponents);
+	arr_free(connectedComponents);
 
 	return (cartesianProduct != NULL) ? cartesianProduct : plan->root;
 }
@@ -227,7 +230,7 @@ static void _buildOptionalMatchOps
 
 	// Build the new Match stream and add it to the Optional stream.
 	OpBase *match_stream = ExecutionPlan_BuildOpsFromPath(plan, arguments, clause);
-	array_free(arguments);
+	arr_free(arguments);
 	ExecutionPlan_AddOp(optional, match_stream);
 
 	// The root will be non-null unless the first clause is an OPTIONAL MATCH.

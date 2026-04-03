@@ -37,8 +37,8 @@
 
 static GrB_Info GB_export_worker  // export a matrix
 (
-    uint64_t *Ap,           // pointers for CSR, CSC, row indices for COO
-    uint64_t *Ai,           // row indices for CSR, CSC, col indices for COO
+    uint64_t *Ap,           // pointers for CSR,CSC; row indices for COO
+    uint64_t *Ai,           // row indices for CSC; col indices for COO,CSR
     void *Ax,               // values (must match the type of A_input)
     uint64_t *Ap_len,       // number of entries in Ap (not # of bytes)
     uint64_t *Ai_len,       // number of entries in Ai (not # of bytes)
@@ -244,8 +244,8 @@ static GrB_Info GB_export_worker  // export a matrix
 #define GB_EXPORT(prefix,ctype,Type,acode)                                     \
 GrB_Info GB_EVAL3 (prefix, _Matrix_export_, Type) /* export a matrix */        \
 (                                                                              \
-    uint64_t *Ap,           /* pointers for CSR, CSC, row indices for COO    */\
-    uint64_t *Ai,           /* row indices for CSR, CSC, col indices for COO */\
+    uint64_t *Ap,           /* pointers for CSR,CSC; row indices for COO     */\
+    uint64_t *Ai,           /* row indices for CSC; col indices for COO,CSR  */\
     ctype *Ax,              /* values (must match the type of A)             */\
     uint64_t *Ap_len,       /* number of entries in Ap (not # of bytes)      */\
     uint64_t *Ai_len,       /* number of entries in Ai (not # of bytes)      */\

@@ -219,6 +219,10 @@ The \verb'banded_idx' function is defined the same as above.
     GrB_set (Banded, "banded_idx", GxB_JIT_C_NAME)) ;
     GrB_set (Banded, BANDED_IDX_DEFN, GxB_JIT_C_DEFINITION)) ;\end{verbatim}}
 
+To avoid name collisions with LAGraph and GraphBLAS, avoid
+function names that start with \verb'LG_' and \verb'gb_'.
+
+\newpage
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GrB\_IndexUnaryOp\_wait:} wait for an index-unary operator}
 %-------------------------------------------------------------------------------
@@ -240,7 +244,6 @@ to exploit non-blocking mode to delay its creation.  Currently,
 SuiteSparse:GraphBLAS currently does nothing except to ensure that the
 \verb'op' is valid.
 
-\newpage
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GrB\_IndexUnaryOp\_free:} free a user-defined index-unary operator}
 %-------------------------------------------------------------------------------

@@ -44,6 +44,7 @@ typedef struct
     size_t  pool_size ;
     size_t  max_pool_size ;
     void *memory_resource ;
+    // TODO: add something about the streams for this device
 }
 GB_cuda_device ;
 
@@ -74,7 +75,7 @@ static inline int GB_ngpus_to_use
     else if (gpu_hack == 1)
     {
         // always use all available GPU(s)
-        // Fixme for CUDA: allow 1 to gpu_count to be requested
+        // FIXME for CUDA: allow 1 to gpu_count to be requested
         return (gpu_count) ;
     }
     else
@@ -93,11 +94,15 @@ static inline int GB_ngpus_to_use
 //------------------------------------------------------------------------------
 
 GrB_Info GB_cuda_init (void) ;
+GrB_Info GB_cuda_finalize (void) ;
 
 bool GB_cuda_get_device_count   // true if OK, false if failure
 (
     int *gpu_count              // return # of GPUs in the system
 ) ;
+
+GrB_Info GB_cuda_stream_pool_init (void) ;
+GrB_Info GB_cuda_stream_pool_finalize (void) ;
 
 bool GB_cuda_warmup (int device) ;
 

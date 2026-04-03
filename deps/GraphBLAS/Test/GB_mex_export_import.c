@@ -159,6 +159,28 @@ static GrB_Info GB_importer (GrB_Matrix *A, GrB_Type type, uint64_t nrows,
 }
 
 //------------------------------------------------------------------------------
+// GB_dump_indices: print out the row/column indices of a COO matrix
+//------------------------------------------------------------------------------
+
+static void GB_dump_indices
+(
+    const uint64_t *I,
+    const uint64_t *J,
+    const uint64_t nz
+)
+{
+    if (nz > 0 && nz < 20)
+    {
+        // only print out small matrices
+        printf ("\nCOO format of indices (1-based):\n") ;
+        for (int64_t k = 0 ; k < nz ; k++)
+        {
+            printf ("   (%ld, %ld)\n", I [k] + 1, J [k] + 1) ;
+        }
+    }
+}
+
+//------------------------------------------------------------------------------
 // GB_mex_export_import mexFunction
 //------------------------------------------------------------------------------
 
@@ -615,6 +637,7 @@ GrB_Info export_import
             info = (GB_importer (&C, type2, nrows2, ncols2, Tp, Ti, Tx,
                 Tp_len, Ti_len, Tx_len, GrB_COO_FORMAT)) ;
             OK (info) ;
+            GB_dump_indices (Tp, Ti, Tp_len) ;
             mxFree (Tp) ;
             mxFree (Ti) ;
             mxFree (Tx) ;

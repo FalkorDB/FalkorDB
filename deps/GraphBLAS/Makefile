@@ -24,39 +24,41 @@
 
 JOBS ?= 8
 
+F = -DSUITESPARSE_USE_FORTRAN=OFF
+
 default: library
 
 # default is to install only in /usr/local
 library:
-	( cd build && cmake $(CMAKE_OPTIONS) .. && cmake --build . --config Release -j${JOBS} )
+	( cd build && cmake $(F) $(CMAKE_OPTIONS) .. && cmake --build . --config Release -j${JOBS} )
 
 # install only in SuiteSparse/lib and SuiteSparse/include
 local:
-	( cd build && cmake $(CMAKE_OPTIONS) -USUITESPARSE_PKGFILEDIR -DSUITESPARSE_LOCAL_INSTALL=1 .. && cmake --build . --config Release -j${JOBS} )
+	( cd build && cmake $(F) $(CMAKE_OPTIONS) -USUITESPARSE_PKGFILEDIR -DSUITESPARSE_LOCAL_INSTALL=1 .. && cmake --build . --config Release -j${JOBS} )
 
 # install only in /usr/local (default)
 global:
-	( cd build && cmake $(CMAKE_OPTIONS) -USUITESPARSE_PKGFILEDIR -DSUITESPARSE_LOCAL_INSTALL=0 .. && cmake --build . --config Release -j${JOBS} )
+	( cd build && cmake $(F) $(CMAKE_OPTIONS) -USUITESPARSE_PKGFILEDIR -DSUITESPARSE_LOCAL_INSTALL=0 .. && cmake --build . --config Release -j${JOBS} )
 
 # enable CUDA (NOTE: not ready for production use)
 cuda:
-	( cd build && cmake $(CMAKE_OPTIONS) -DGRAPHBLAS_USE_CUDA=1 .. && cmake --build . --config Release -j$(JOBS) )
+	( cd build && cmake $(F) $(CMAKE_OPTIONS) -DGRAPHBLAS_USE_CUDA=1 .. && cmake --build . --config Release -j$(JOBS) )
 
 # compile with -g 
 debug:
-	( cd build && cmake -DCMAKE_BUILD_TYPE=Debug $(CMAKE_OPTIONS) .. && cmake --build . --config Debug -j$(JOBS) )
+	( cd build && cmake -DCMAKE_BUILD_TYPE=Debug $(F) $(CMAKE_OPTIONS) .. && cmake --build . --config Debug -j$(JOBS) )
 
 # compile without FactoryKernels
 compact:
-	( cd build && cmake $(CMAKE_OPTIONS) -DGRAPHBLAS_COMPACT=1 .. && cmake --build . --config Release -j$(JOBS) )
+	( cd build && cmake $(F) $(CMAKE_OPTIONS) -DGRAPHBLAS_COMPACT=1 .. && cmake --build . --config Release -j$(JOBS) )
 
 # compile with -g, and without FactoryKernels
 cdebug:
-	( cd build && cmake -DCMAKE_BUILD_TYPE=Debug -DGRAPHBLAS_COMPACT=1 $(CMAKE_OPTIONS) .. && cmake --build . --config Debug -j$(JOBS) )
+	( cd build && cmake -DCMAKE_BUILD_TYPE=Debug -DGRAPHBLAS_COMPACT=1 $(F) $(CMAKE_OPTIONS) .. && cmake --build . --config Debug -j$(JOBS) )
 
 # build the dynamic library and the demos
 all:
-	( cd build && cmake $(CMAKE_OPTIONS) -DSUITESPARSE_DEMOS=1 .. && cmake --build . --config Release -j$(JOBS) )
+	( cd build && cmake $(F) $(CMAKE_OPTIONS) -DSUITESPARSE_DEMOS=1 .. && cmake --build . --config Release -j$(JOBS) )
 
 # run the demos
 demos: all
@@ -83,11 +85,11 @@ remake:
 
 # just run cmake; do not compile
 setup:
-	( cd build && cmake $(CMAKE_OPTIONS) .. )
+	( cd build && cmake $(F) $(CMAKE_OPTIONS) .. )
 
 # build the static library
 static:
-	( cd build && cmake $(CMAKE_OPTIONS) -DBUILD_STATIC_LIBS=ON -DBUILD_SHARED_LIBS=OFF .. && cmake --build . --config Release -j$(JOBS) )
+	( cd build && cmake $(F) $(CMAKE_OPTIONS) -DBUILD_STATIC_LIBS=ON -DBUILD_SHARED_LIBS=OFF .. && cmake --build . --config Release -j$(JOBS) )
 
 # installs GraphBLAS to the install location defined by cmake, usually
 # /usr/local/lib and /usr/local/include

@@ -639,6 +639,33 @@ GBZSTD (ZSTD_XXH64_update)
 #define ZSTD_XXH_versionNumber                   \
 GBZSTD (ZSTD_XXH_versionNumber)
 
+#define ZSTD_CCtx_setCParams                     \
+GBZSTD (ZSTD_CCtx_setCParams)
+#define ZSTD_CCtx_setFParams                     \
+GBZSTD (ZSTD_CCtx_setFParams)
+#define ZSTD_CCtx_setParams                      \
+GBZSTD (ZSTD_CCtx_setParams)
+#define ZSTD_compressBegin_usingCDict_deprecated \
+GBZSTD (ZSTD_compressBegin_usingCDict_deprecated)
+#define ZSTD_compressBlock_deprecated            \
+GBZSTD (ZSTD_compressBlock_deprecated)
+#define ZSTD_compressContinue_public             \
+GBZSTD (ZSTD_compressContinue_public)
+#define ZSTD_compressEnd_public                  \
+GBZSTD (ZSTD_compressEnd_public)
+#define ZSTD_copySequencesToSeqStoreExplicitBlockDelim \
+GBZSTD (ZSTD_copySequencesToSeqStoreExplicitBlockDelim)
+#define ZSTD_copySequencesToSeqStoreNoBlockDelim \
+GBZSTD (ZSTD_copySequencesToSeqStoreNoBlockDelim)
+#define ZSTD_decompressBlock_deprecated          \
+GBZSTD (ZSTD_decompressBlock_deprecated)
+#define ZSTD_decompressionMargin                 \
+GBZSTD (ZSTD_decompressionMargin)
+#define ZSTD_registerSequenceProducer            \
+GBZSTD (ZSTD_registerSequenceProducer)
+#define ZSTD_sequenceBound                       \
+GBZSTD (ZSTD_sequenceBound)
+
 #define HIST_count                               \
 GBZSTD (HIST_count)
 #define HIST_countFast                           \
@@ -770,6 +797,11 @@ GBZSTD (HUF_validateCTable)
 GBZSTD (HUF_writeCTable)
 #define HUF_writeCTable_wksp                     \
 GBZSTD (HUF_writeCTable_wksp)
+
+#define HUF_cardinality                          \
+GBZSTD (HUF_cardinality)
+#define HUF_minTableLog                          \
+GBZSTD (HUF_minTableLog)
 
 #define POOL_add                                 \
 GBZSTD (POOL_add)

@@ -4,9 +4,9 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "RG.h"
 #include <string.h>
 #include <ctype.h>
-#include "RG.h"
 #include "rmalloc.h"
 #include "utf8proc/utf8proc.h"
 #include "oniguruma/src/oniguruma.h"
@@ -195,3 +195,27 @@ bool str_MatchRegex
 
 	return match;
 }
+
+// truncate string to max_len
+// truncated = str[:min (n, max_len)]
+//
+// create a newly allocated truncated copy of `str`
+// copies at most `max_len` bytes from `str` (not including null terminator)
+// the returned string is always null-terminated
+void str_truncate
+(
+	char **truncated,  // [output] truncated string
+	const char *str,   // string to truncate
+	uint len,          // string length
+	uint max_len       // string max length
+) {
+	ASSERT (str       != NULL) ;
+	ASSERT (truncated != NULL) ;
+
+	if (len >= max_len) {
+		asprintf (truncated, "%.*s...", max_len, str) ;
+	} else {
+		*truncated = strndup (str, len) ;
+	}
+}
+

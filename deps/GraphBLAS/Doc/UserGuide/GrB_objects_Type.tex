@@ -212,6 +212,9 @@ to the size of the C type.
     GrB_set (MyQtype, "typedef struct { float x [4][4] ; int color ; } myquaternion ;"
         GxB_JIT_C_DEFINITION) ; \end{verbatim}}
 
+To avoid name collisions with LAGraph and GraphBLAS, avoid
+type names that start with \verb'LG_' and \verb'gb_'.
+
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GrB\_Type\_wait:} wait for a type}
 %-------------------------------------------------------------------------------

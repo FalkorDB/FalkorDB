@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__user_op__0__my_rdiv.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.0.0, Timothy A. Davis, (c) 2017-2025,
+// SuiteSparse:GraphBLAS v10.1.0, Timothy A. Davis, (c) 2017-2025,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -18,7 +18,7 @@ void my_rdiv (double *z, const double *x, const double *y)
 {
     // escape this quote: "
     /* escape this backslash \ */
-    /* revised for GrB 10.0.0 */
+    /* revised for GrB 10.1.0 */
     (*z) = (*y) / (*x) ;
 }
 #define GB_my_rdiv_USER_DEFN \
@@ -26,7 +26,7 @@ void my_rdiv (double *z, const double *x, const double *y)
 "{\n" \
 "    // escape this quote: \"\n" \
 "    /* escape this backslash \\ */\n" \
-"    /* revised for GrB 10.0.0 */\n" \
+"    /* revised for GrB 10.1.0 */\n" \
 "    (*z) = (*y) / (*x) ;\n" \
 "}"
 #define GB_USER_OP_DEFN GB_my_rdiv_USER_DEFN
@@ -38,8 +38,8 @@ void my_rdiv (double *z, const double *x, const double *y)
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0xa98ff14e387744fe ;
-    v [0] = 10 ; v [1] = 0 ; v [2] = 0 ;
+    (*hash) = 0x8c5b014b88b8adfb ;
+    v [0] = 10 ; v [1] = 1 ; v [2] = 0 ;
     defn [0] = GB_my_rdiv_USER_DEFN ;
     defn [1] = NULL ;
     defn [2] = NULL ;

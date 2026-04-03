@@ -73,20 +73,6 @@ void mexFunction
 
     GxB_set (GxB_NTHREADS, nthreads1) ;
 
-    int32_t gpu ;
-    OK (GxB_Context_get_INT_ (GxB_CONTEXT_WORLD, &gpu, GxB_GPU_ID)) ;
-    CHECK (gpu == -1) ;
-
-    gpu = 4 ;
-    OK (GxB_Context_set_INT_ (GxB_CONTEXT_WORLD, 3, GxB_GPU_ID)) ;
-    OK (GxB_Context_get_INT_ (GxB_CONTEXT_WORLD, &gpu, GxB_GPU_ID)) ;
-    CHECK (gpu == -1) ;
-
-    OK (GxB_Context_set_Scalar_ (GxB_CONTEXT_WORLD, s_int32, GxB_GPU_ID)) ;
-    OK (GxB_Context_get_Scalar_ (GxB_CONTEXT_WORLD, s_fp64, GxB_GPU_ID)) ;
-    OK (GrB_Scalar_extractElement_FP64 (&dvalue, s_fp64)) ;
-    CHECK (dvalue == -1) ;
-
     double chunk ;
     OK (GxB_Context_get_Scalar_ (GxB_CONTEXT_WORLD, s_fp64, GxB_CHUNK)) ;
     OK (GrB_Scalar_extractElement_FP64 (&chunk, s_fp64)) ;

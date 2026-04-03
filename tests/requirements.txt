@@ -1,12 +1,12 @@
 behave
 click
 docker
-FalkorDB
+falkordb==1.2.2
 falkordb-bulk-loader
-neo4j==5.27.0
+neo4j
 grammarinator
 wheel
 rmtest
 psutil
-git+https://github.com/falkordb/RLTest.git@master
-
+python-dateutil
+RLTest==0.7.20

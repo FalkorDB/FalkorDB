@@ -41,12 +41,12 @@ GrB_Info GxB_Context_set_Scalar
     switch ((int) field)
     {
 
-        case GxB_CONTEXT_NTHREADS :         // same as GxB_NTHREADS
-        case GxB_CONTEXT_GPU_ID :           // same as GxB_GPU_ID
+        case GxB_CONTEXT_NGPUS : 
+        case GxB_CONTEXT_NTHREADS : 
             info = GrB_Scalar_extractElement_INT32 (&ivalue, scalar) ;
             break ;
 
-        case GxB_CONTEXT_CHUNK :            // same as GxB_CHUNK
+        case GxB_CONTEXT_CHUNK : 
             info = GrB_Scalar_extractElement_FP64 (&dvalue, scalar) ;
             break ;
 
@@ -64,15 +64,15 @@ GrB_Info GxB_Context_set_Scalar
     {
 
         default:
-        case GxB_CONTEXT_NTHREADS :         // same as GxB_NTHREADS
+        case GxB_CONTEXT_NTHREADS : 
 
             GB_Context_nthreads_max_set (Context, ivalue) ;
             break ;
 
-        case GxB_CONTEXT_GPU_ID :           // same as GxB_GPU_ID
+        case GxB_CONTEXT_NGPUS : 
 
-            GB_Context_gpu_id_set (Context, ivalue) ;
-            break ;
+            // set # of gpus to the given ivalue, and GPU ids to 0:ivalue-1
+            return (GB_Context_gpu_ids_set (Context, NULL, ivalue)) ;
 
         case GxB_CONTEXT_CHUNK :            // same as GxB_CHUNK
 
@@ -150,9 +150,10 @@ GrB_Info GxB_Context_set_INT
             GB_Context_nthreads_max_set (Context, value) ;
             break ;
 
-        case GxB_CONTEXT_GPU_ID :           // same as GxB_GPU_ID
+        case GxB_CONTEXT_NGPUS : 
 
-            GB_Context_gpu_id_set (Context, value) ;
+            // set # of gpus to the given value, and GPU ids to 0:value-1
+            return (GB_Context_gpu_ids_set (Context, NULL, value)) ;
             break ;
 
         default : 
@@ -174,6 +175,22 @@ GrB_Info GxB_Context_set_VOID
     size_t size
 )
 { 
-    return (GrB_INVALID_VALUE) ;
+    if (field == GxB_CONTEXT_GPU_IDS)
+    {
+        int32_t ngpus = GB_Context_gpu_ids_get (Context, NULL) ;
+        if (size < ngpus * sizeof (int32_t))
+        { 
+            return (GrB_INVALID_VALUE) ;
+        }
+        else
+        { 
+            return (GB_Context_gpu_ids_set (Context, (int32_t *) value,
+                ngpus)) ;
+        }
+    }
+    else
+    { 
+        return (GrB_INVALID_VALUE) ;
+    }
 }
 

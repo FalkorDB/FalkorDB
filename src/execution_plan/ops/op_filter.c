@@ -17,7 +17,7 @@ OpBase *NewFilterOp
 	const ExecutionPlan *plan,
 	FT_FilterNode *filterTree
 ) {
-	OpFilter *op = rm_malloc(sizeof(OpFilter));
+	OpFilter *op = rm_calloc (1, sizeof(OpFilter)) ;
 	op->filterTree = filterTree;
 
 	// Set our Op operations
@@ -37,13 +37,18 @@ static Record FilterConsume
 	OpFilter *filter = (OpFilter *)opBase;
 	OpBase *child = filter->op.children[0];
 
-	while(true) {
-		r = OpBase_Consume(child);
-		if(!r) break;
+	while (true) {
+		r = OpBase_Consume (child) ;
+		if (!r) {
+			break ;
+		}
 
 		// pass record through filter tree
-		if(FilterTree_applyFilters(filter->filterTree, r) == FILTER_PASS) break;
-		else OpBase_DeleteRecord(&r);
+		if (FilterTree_applyFilters (filter->filterTree, r) == FILTER_PASS) {
+			break ;
+		} else {
+			OpBase_DeleteRecord (&r) ;
+		}
 	}
 
 	return r;

@@ -49,11 +49,11 @@ typedef enum QueryStage {
 } QueryStage;
 
 typedef struct {
-	AST *ast;                              // the scoped AST associated with this query
-	rax *params;                           // query parameters
-	const char *query;                     // query string
-	const char *query_no_params;           // query string without parameters part
-	cypher_parse_result_t *parsed_params;  // parsed query parameters
+	AST *ast;                     // the scoped AST associated with this query
+	dict *params;                 // dict [param_name, param_value]
+	const char *query;            // query string
+	uint query_params_len;        // length of query parameters
+	const char *query_no_params;  // query string without parameters part
 } QueryCtx_QueryData;
 
 typedef struct {
@@ -83,6 +83,7 @@ typedef struct QueryCtx {
 	GraphContext *gc;                            // GraphContext associated with this query's graph
 	UndoLog undo_log;                            // undo-log in case rollback is needed
 	QueryStage stage;                            // query execution stage
+	bool deterministic;                          // false if query contains a non deterministic element
 	QueryExecutionStatus status;                 // query execution status
 	QueryExecutionTypeFlag flags;                // execution flags
 	EffectsBuffer *effects_buffer;               // effects-buffer for replication, used when write query succeed and replication is needed
@@ -118,6 +119,12 @@ void QueryCtx_AdvanceStage
 (
 	QueryCtx *ctx  // query context
 );
+
+// returns the number of milliseconds elapsed for the current stage
+double QueryCtx_StageElapsed
+(
+	const QueryCtx *ctx  // query context
+) ;
 
 // reset query's stage
 // waiting <- executing
@@ -164,8 +171,14 @@ void QueryCtx_SetResultSet
 // set the parameters map
 void QueryCtx_SetParams
 (
-	rax *params
+	dict *params
 );
+
+// mark query context as not deterministic
+void QueryCtx_SetNonDeterministic (void) ;
+
+// returns true if query is deterministic
+bool QueryCtx_IsDeterministic (void) ;
 
 //------------------------------------------------------------------------------
 // getters
@@ -175,7 +188,7 @@ void QueryCtx_SetParams
 AST *QueryCtx_GetAST(void);
 
 // retrieve the query parameters values map
-rax *QueryCtx_GetParams(void);
+dict *QueryCtx_GetParams(void);
 
 // retrieve the GraphCtx
 GraphContext *QueryCtx_GetGraphCtx(void);
@@ -238,6 +251,9 @@ void QueryCtx_Replicate
 
 // compute and return elapsed query execution time
 double QueryCtx_GetRuntime(void);
+
+// returns query received timestamp
+uint64_t QueryCtx_GetReceivedTS (void) ;
 
 // free the allocations within the QueryCtx and reset it for the next query
 void QueryCtx_Free(void);

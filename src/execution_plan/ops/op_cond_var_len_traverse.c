@@ -36,25 +36,25 @@ static void _setupTraversedRelations
 	uint reltype_count = QGEdge_RelationCount(e);
 	if(reltype_count == 0) {
 		op->edgeRelationCount = 1;
-		op->edgeRelationTypes = array_new(int, 1);
-		array_append(op->edgeRelationTypes, GRAPH_NO_RELATION);
+		op->edgeRelationTypes = arr_new(int, 1);
+		arr_append(op->edgeRelationTypes, GRAPH_NO_RELATION);
 	} else {
 		GraphContext *gc = QueryCtx_GetGraphCtx();
 		op->edgeRelationCount = 0;
-		op->edgeRelationTypes = array_new(int, reltype_count);
+		op->edgeRelationTypes = arr_new(int, reltype_count);
 
 		for(int i = 0; i < reltype_count; i++) {
 			int rel_id = e->reltypeIDs[i];
 			if(rel_id != GRAPH_UNKNOWN_RELATION) {
-				array_append(op->edgeRelationTypes, rel_id);
+				arr_append(op->edgeRelationTypes, rel_id);
 			} else {
 				const char *rel_type = e->reltypes[i];
 				Schema *s = GraphContext_GetSchema(gc, rel_type, SCHEMA_EDGE);
-				if(s) array_append(op->edgeRelationTypes, s->id);
+				if(s) arr_append(op->edgeRelationTypes, s->id);
 			}
 		}
 
-		op->edgeRelationCount = array_len(op->edgeRelationTypes);
+		op->edgeRelationCount = arr_len(op->edgeRelationTypes);
 	}
 }
 
@@ -93,7 +93,7 @@ void CondVarLenTraverseOp_ExpandInto
 	CondVarLenTraverse *op
 ) {
 	// expand into doesn't performs any modifications
-	array_clear(op->op.modifies);
+	arr_clear(op->op.modifies);
 	op->expandInto = true;
 	op->op.type = OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO;
 	op->op.name = "Conditional Variable Length Traverse (Expand Into)";
@@ -120,18 +120,11 @@ OpBase *NewCondVarLenTraverseOp
 	ASSERT(g  != NULL);
 	ASSERT(ae != NULL);
 
-	CondVarLenTraverse *op = rm_malloc(sizeof(CondVarLenTraverse));
+	CondVarLenTraverse *op = rm_calloc (1, sizeof(CondVarLenTraverse)) ;
 
-	op->g                 = g;
-	op->r                 = NULL;
-	op->M                 = NULL;
-	op->ae                = ae;
-	op->ft                = NULL;
-	op->expandInto        = false;
-	op->allPathsCtx       = NULL;
-	op->collect_paths     = true;
-	op->allNeighborsCtx   = NULL;
-	op->edgeRelationTypes = NULL;
+	op->g             = g;
+	op->ae            = ae;
+	op->collect_paths = true;
 
 	OpBase_Init((OpBase *)op, OPType_CONDITIONAL_VAR_LEN_TRAVERSE,
 				"Conditional Variable Length Traverse", CondVarLenTraverseInit,
@@ -398,7 +391,7 @@ static void CondVarLenTraverseFree
 	CondVarLenTraverse *op = (CondVarLenTraverse *)ctx;
 
 	if(op->edgeRelationTypes) {
-		array_free(op->edgeRelationTypes);
+		arr_free(op->edgeRelationTypes);
 		op->edgeRelationTypes = NULL;
 	}
 

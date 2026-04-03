@@ -26,7 +26,7 @@ AggregateResult AGG_STDEV(SIValue *argv, int argc, void *private_data) {
 	// on the first invocation, initialize the context
 	if(stdev_ctx->values == NULL) {
 		stdev_ctx->total = 0;
-		stdev_ctx->values = array_new(double, 1024);
+		stdev_ctx->values = arr_new(double, 1024);
 	}
 
 	SIValue v = argv[0];
@@ -34,7 +34,7 @@ AggregateResult AGG_STDEV(SIValue *argv, int argc, void *private_data) {
 
 	double n;
 	SIValue_ToDouble(&v, &n);
-	array_append(stdev_ctx->values, n);
+	arr_append(stdev_ctx->values, n);
 	stdev_ctx->total += n;
 
 	return AGGREGATE_OK;
@@ -45,7 +45,7 @@ void StDevGenericFinalize(AggregateCtx *ctx, int is_sampled) {
 
 	if(stdev_ctx == NULL) return;
 
-	uint count = array_len(stdev_ctx->values);
+	uint count = arr_len(stdev_ctx->values);
 	if(count - is_sampled == 0) {
 		Aggregate_SetResult(ctx, SI_DoubleVal(0));
 		return;
@@ -76,7 +76,7 @@ void StDev_Free(void *pdata) {
 
 	_agg_StDevCtx *stdev_ctx = pdata;
 	if(stdev_ctx->values != NULL) {
-		array_free(stdev_ctx->values);
+		arr_free(stdev_ctx->values);
 	}
 	rm_free(pdata);
 }
@@ -102,18 +102,18 @@ void Register_STD(void) {
 	SIType ret_type;
 	AR_FuncDesc *func_desc;
 
-	types = array_new(SIType, 2);
-	array_append(types, T_NULL | T_INT64 | T_DOUBLE);
-	ret_type = T_NULL | T_DOUBLE;
-	func_desc = AR_AggFuncDescNew("stDev", AGG_STDEV, 1, 1, types, ret_type,
-			StDev_Free, StDevFinalize, STD_PrivateData);
-	AR_RegFunc(func_desc);
+	types = arr_new (SIType, 2) ;
+	arr_append (types, T_NULL | T_INT64 | T_DOUBLE) ;
+	ret_type = T_NULL | T_DOUBLE ;
+	func_desc = AR_AggFuncDescNew ("stDev", AGG_STDEV, 1, 1, types, ret_type,
+			StDev_Free, StDevFinalize, STD_PrivateData) ;
+	AR_FuncRegister (func_desc) ;
 
-	types = array_new(SIType, 2);
-	array_append(types, T_NULL | T_INT64 | T_DOUBLE);
-	ret_type = T_NULL | T_DOUBLE;
-	func_desc = AR_AggFuncDescNew("stDevP", AGG_STDEV, 1, 1, types, ret_type,
-			StDev_Free, StDevPFinalize, STD_PrivateData);
-	AR_RegFunc(func_desc);
+	types = arr_new (SIType, 2) ;
+	arr_append (types, T_NULL | T_INT64 | T_DOUBLE) ;
+	ret_type = T_NULL | T_DOUBLE ;
+	func_desc = AR_AggFuncDescNew ("stDevP", AGG_STDEV, 1, 1, types, ret_type,
+			StDev_Free, StDevPFinalize, STD_PrivateData) ;
+	AR_FuncRegister (func_desc) ;
 }
 

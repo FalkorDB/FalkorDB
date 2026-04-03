@@ -25,11 +25,9 @@ OpBase *NewAllNodeScanOp
 	const ExecutionPlan *plan,
 	const char *alias
 ) {
-	AllNodeScan *op = rm_malloc(sizeof(AllNodeScan));
+	AllNodeScan *op = rm_calloc (1, sizeof(AllNodeScan)) ;
 
-	op->iter         = NULL;
-	op->alias        = alias;
-	op->child_record = NULL;
+	op->alias = alias;
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_ALL_NODE_SCAN, "All Node Scan",

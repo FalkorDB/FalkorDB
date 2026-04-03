@@ -22,8 +22,8 @@
 // The work is done in major 5 Steps, some of which can be skipped, depending
 // on how the tuples are provided (*_work or *_input), and whether or not they
 // are sorted, or have duplicates.  If vdim <= 1, some work is skipped (for
-// GrB_Vectors, and single-vector GrB_Matrices).  Let e be the of tuples on
-// input.  Let p be the # of threads used.
+// GrB_Vectors, and single-vector GrB_Matrices).  Let e be the number of tuples
+// on input.  Let p be the number of threads used.
 
 // STEP 1: copy user input.  O(e/p) read/write per thread, or skipped.
 
@@ -40,47 +40,58 @@
 // STEP 5: assemble the tuples.  O(e/p) read/writes per thread, or O(1) if the
 //         values can be transplanted into T as-is.
 
-// For GrB_Matrix_build:  If the input (I_input, J_input, S_input) is already
-// sorted with no duplicates, and no typecasting needs to be done, then Step 1
-// still must be done (each thread does O(e/p) reads of (I_input,J_input) and
-// writes to I_work), but Step 1 also does the work for Step 3.  Step 2 and 3
-// are skipped.  Step 4 does O(e/p) reads per thread (J_input only).  Then
-// I_work is transplanted into T->i.  Step 5 does O(e/p) read/writes per thread
-// to copy Sx into T->x.
+// For GrB_Matrix_build and GrB_Matrix_import:  The (I_work, J_work, S_work)
+//      inputs are not used, and are NULL.  If the input (I_input, J_input,
+//      S_input) is already sorted with no duplicates, and no typecasting needs
+//      to be done, then Step 1 still must be done (each thread does O(e/p)
+//      reads of (I_input,J_input) and writes to I_work), but Step 1 also does
+//      the work for Step 3.  Step 2 and 3 are skipped.  Step 4 does O(e/p)
+//      reads per thread (J_input only).  Then I_work is transplanted into
+//      T->i.  Step 5 does O(e/p) read/writes per thread to copy Sx into T->x.
+//      After the matrix is built, GB_all_entries_are_iso is called to
+//      determine if the matrix is iso.
 
 // For GrB_Vector_build: as GrB_Matrix_build, Step 1 does O(e/p) read/writes
-// per thread.  The input is always a vector, so vdim == 1 always holds.  Step
-// 2 is skipped if the indices are already sorted, and Step 3 does no work at
-// all unless duplicates appear.  Step 4 takes no time, for any vector. Step 5
-// does O(e/p) reads/writes per thread.
+//      per thread.  The input is always a vector, so vdim == 1 always holds,
+//      and J_input is NULL.  Step 2 is skipped if the indices are already
+//      sorted, and Step 3 does no work at all unless duplicates appear.  Step
+//      4 takes no time, for any vector. Step 5 does O(e/p) reads/writes per
+//      thread.  After the vector is built, GB_all_entries_are_iso is called to
+//      determine if the vector is iso.
 
 // For GB_wait:  the pending tuples are provided as I_work, J_work, and S_work,
-// so Step 1 is skipped (no need to check for invalid indices).  The input
-// J_work may be null (vdim can be anything, since GB_wait is used for both
-// vectors and matrices).  The tuples might be in sorted order already, which
-// is known precisely known from A->Pending->sorted.  Step 2 does
-// O((e log e)/p) work to sort the tuples.  Duplicates may appear, and
-// out-of-order tuples are likely.  Step 3 does O(e/p) read/writes.  Step 4
-// does O(e/p) reads per thread of (I_work,J_work), or just I_work.  Step 5
-// does O(e/p) read/writes per thread, or O(1) time if S_work can be
-// transplanted into T->x.
+//      so Step 1 is skipped (no need to check for invalid indices).  The input
+//      J_work may be NULL (vdim can be anything, since GB_wait is used for
+//      both vectors and matrices).  The tuples might be in sorted order
+//      already, which is known precisely known from A->Pending->sorted.  Step
+//      2 does O((e log e)/p) work to sort the tuples.  Duplicates may appear,
+//      and out-of-order tuples are likely.  Step 3 does O(e/p) read/writes.
+//      Step 4 does O(e/p) reads per thread of (I_work,J_work), or just I_work.
+//      Step 5 does O(e/p) read/writes per thread, or O(1) time if S_work can
+//      be transplanted into T->x.
 
 // For GB_transpose: uses I_work, J_work, and either S_input (if no op applied
-// to the values) or S_work (if an op was applied to the A->x values).  This is
-// only done for matrices, not vectors, so vdim > 1 will always hold.  The
-// indices are valid so Step 1 is skipped.  The tuples are not sorted, so Step
-// 2 takes O((e log e)/p) time to do the sort.  There are no duplicates, so
-// Step 3 only does O(e/p) reads of J_work to count the vectors in each slice.
-// Step 4 only does O(e/p) reads of J_work to compute T->h and T->p.  Step 5
-// does O(e/p) read/writes per thread, but it uses the simpler case in
-// GB_bld_template since no duplicates can appear.  It is unlikely
-// able to transplant S_work into T->x since the input will almost always be
-// unsorted.
+//      to the values) or S_work (if an op was applied to the A->x values).
+//      This is only done for matrices, not vectors, so vdim > 1 will always
+//      hold.  The indices are valid so Step 1 is skipped.  The tuples are not
+//      sorted, so Step 2 takes O((e log e)/p) time to do the sort.  There are
+//      no duplicates, so Step 3 only does O(e/p) reads of J_work to count the
+//      vectors in each slice.  Step 4 only does O(e/p) reads of J_work to
+//      compute T->h and T->p.  Step 5 does O(e/p) read/writes per thread, but
+//      it uses the simpler case in GB_bld_template since no duplicates can
+//      appear.  It is unlikely able to transplant S_work into T->x since the
+//      input will almost always be unsorted.
 
-// For GB_concat_hyper:  uses I_work, J_work, and S_work.  No duplicates
-// appear.  Tuples are not sorted on input.  I_work is transplanted into C->i.
-// J_work and S_work are freed on output.  S_work is not transplanted into
-// C->x.
+// For GB_concat_hyper:  uses I_work, J_work, and S_work (or S_input is a
+//      scalar if C is iso).  No duplicates appear.  Tuples are not sorted on
+//      input.  I_work is transplanted into C->i.  J_work and S_work are freed
+//      on output.  S_work is not transplanted into C->x.
+
+// For GB_hyper_hash_build:  uses I_work, J_work, and S_work.  No duplicates
+//      appear.  Tuples are not sorted on input.  S_iso is false.
+
+// For GB_reshape: uses I_work, J_work, and S_work.  No duplicates appear.
+//      Tuples can be sorted or unsorted on input.
 
 // For iso inputs/outputs: T and Sx have the same iso property.  If they are
 // iso, then dup is always NULL.  Duplicates may or may not appear if T and Sx

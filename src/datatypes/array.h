@@ -7,6 +7,7 @@
 #pragma once
 
 #include "../value.h"
+#include "../redismodule.h"
 
 // initialize a new SIValue array type with given capacity
 // returns initialized array
@@ -48,6 +49,14 @@ SIValue SIArray_Get
 (
 	SIValue siarray,  // siarray: array
 	u_int32_t index   // index: index
+);
+
+// get a reference to the 'idx' element on the array
+// if index is out of bounds NULL is returned
+SIValue *SIArray_GetRef
+(
+	SIValue siarray,  // array
+	u_int32_t index   // index
 );
 
 // get the array length
@@ -114,6 +123,14 @@ XXH64_hash_t SIArray_HashCode
 SIValue SIArray_FromBinary
 (
 	FILE *stream  // stream containing binary representation of an array
+);
+
+// defrag array
+// returns true if array memory been relocated
+bool SIArray_Defrag
+(
+	SIValue *arr,              // array to defrag
+	RedisModuleDefragCtx *ctx  // redis defrag context
 );
 
 // free an array

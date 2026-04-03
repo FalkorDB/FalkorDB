@@ -366,10 +366,10 @@ static bool extract_index_level_config
 		}
 
 		uint nstopwords = SIArray_Length(stopwords_val);
-		*stopwords = array_new(char*, nstopwords);
+		*stopwords = arr_new(char*, nstopwords);
 		for(uint i = 0; i < nstopwords; i++) {
 			SIValue stopword = SIArray_Get(stopwords_val, i);
-			array_append((*stopwords), rm_strdup(stopword.stringval));
+			arr_append((*stopwords), rm_strdup(stopword.stringval));
 		}
 	}
 
@@ -442,7 +442,7 @@ static void index_create
 	ASSERT(result_set != NULL);
 
 	for(uint i = 0; i < nfields; i++) {
-		idx = AddIndex(label, fields[i], et, idx_type, options, true);
+		idx = GraphHub_AddIndex(label, fields[i], et, idx_type, options, true);
 		if(idx != NULL) {
 			ResultSet_IndexCreated(result_set, INDEX_OK);
 		} else {
@@ -476,7 +476,7 @@ static void index_create
 
 cleanup:
 	if(fields    != NULL) rm_free(fields);
-	if(stopwords != NULL) array_free_cb(stopwords, rm_free);
+	if(stopwords != NULL) arr_free_cb(stopwords, rm_free);
 	SIValue_Free(options);
 
 	// make sure no effects were generated

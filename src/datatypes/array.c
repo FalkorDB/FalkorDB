@@ -7,8 +7,9 @@
 #include "array.h"
 #include "../util/arr.h"
 #include "../util/qsort.h"
-#include <limits.h>
 #include "xxhash.h"
+
+#include <limits.h>
 
 // initialize a new SIValue array type with given capacity
 // returns initialized array
@@ -17,9 +18,11 @@ SIValue SIArray_New
 	u_int32_t initialCapacity // initial capacity
 ) {
 	SIValue siarray;
-	siarray.array = array_new(SIValue, initialCapacity);
-	siarray.type = T_ARRAY;
-	siarray.allocation = M_SELF;
+
+	siarray.array      = arr_new (SIValue, initialCapacity) ;
+	siarray.type       = T_ARRAY ;
+	siarray.allocation = M_SELF ;
+
 	return siarray;
 }
 
@@ -55,7 +58,7 @@ void SIArray_Append
 	// clone and persist incase of pointer values
 	SIValue clone = SI_CloneValue(value);
 
-	array_append(siarray->array, clone);
+	arr_append(siarray->array, clone);
 }
 
 // appends value to array
@@ -71,7 +74,7 @@ void SIArray_AppendAsOwner
 	ASSERT(SI_ALLOCATION(value) != M_VOLATILE);
 
 	// add value as is
-	array_append(siarray->array, *value);
+	arr_append(siarray->array, *value);
 	SIValue_SetAllocationType(value, M_VOLATILE);
 }
 
@@ -85,9 +88,28 @@ SIValue SIArray_Get
 	SIValue siarray,  // siarray: array
 	u_int32_t index   // index: index
 ) {
+	SIValue *v = SIArray_GetRef (siarray, index) ;
+
+	if (unlikely (v == NULL)) {
+		return SI_NullVal () ;
+	} else {
+		return SI_ShareValue (*v) ;
+	}
+}
+
+// get a reference to the 'idx' element on the array
+// if index is out of bounds NULL is returned
+SIValue *SIArray_GetRef
+(
+	SIValue siarray,  // array
+	u_int32_t index   // index
+) {
 	// check index
-	if(index >= SIArray_Length(siarray)) return SI_NullVal();
-	return SI_ShareValue(siarray.array[index]);
+	if (unlikely (index >= SIArray_Length (siarray))) {
+		return NULL ;
+	}
+
+	return siarray.array + index ;
 }
 
 // get the array length
@@ -95,7 +117,7 @@ u_int32_t SIArray_Length
 (
 	SIValue siarray  // array to return length of
 ) {
-	return array_len(siarray.array);
+	return arr_len(siarray.array);
 }
 
 // returns true if any of the types in 't' are contained in the array
@@ -105,18 +127,23 @@ bool SIArray_ContainsType
 	SIValue siarray,  // array to inspect
 	SIType t          // bitmap of types to search for
 ) {
-	uint array_len = SIArray_Length(siarray);
-	for(uint i = 0; i < array_len; i++) {
-		SIValue elem = siarray.array[i];
-		if(SI_TYPE(elem) & t) return true;
+	uint array_len = SIArray_Length (siarray) ;
+	for (uint i = 0; i < array_len; i++) {
+		SIValue elem = siarray.array[i] ;
+		if (SI_TYPE (elem) & t) {
+			return true ;
+		}
 
 		// recursively check nested arrays
-		if(SI_TYPE(elem) == T_ARRAY) {
-			bool type_is_nested = SIArray_ContainsType(elem, t);
-			if(type_is_nested) return true;
+		if (SI_TYPE (elem) == T_ARRAY) {
+			bool type_is_nested = SIArray_ContainsType (elem, t) ;
+			if (type_is_nested) {
+				return true ;
+			}
 		}
 	}
-	return false;
+
+	return false ;
 }
 
 // returns true if the array contains an element equals to 'value'
@@ -277,10 +304,34 @@ SIValue SIArray_FromBinary
 	SIValue arr = SIArray_New(n);
 
 	for(uint32_t i = 0; i < n; i++) {
-		array_append(arr.array, SIValue_FromBinary(stream));
+		arr_append(arr.array, SIValue_FromBinary(stream));
 	}
 
 	return arr;
+}
+
+// defrag array
+// returns true if array memory been relocated
+bool SIArray_Defrag
+(
+	SIValue *arr,              // array to defrag
+	RedisModuleDefragCtx *ctx  // redis defrag context
+) {
+	ASSERT (arr != NULL) ;
+	ASSERT (ctx != NULL) ;
+
+	// pointer to arr's elements
+	void *p     = arr_hdr (arr->array) ;  // array header points to allocation
+	void *moved = RedisModule_DefragAlloc (ctx, p) ;
+
+	// update arr if p been relocated
+	if (moved != NULL) {
+		// assign back array's buffer
+		arr->array = (struct SIValue *) (((arr_hdr_t *)moved)->buf) ;
+		return true ;
+	}
+
+	return false ;
 }
 
 // free an array
@@ -293,6 +344,6 @@ void SIArray_Free
 		SIValue value = siarray.array[i];
 		SIValue_Free(value);
 	}
-	array_free(siarray.array);
+	arr_free(siarray.array);
 }
 

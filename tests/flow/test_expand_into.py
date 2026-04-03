@@ -115,3 +115,39 @@ class testExpandInto():
             self.env.assertIn("Expand Into", plan)
             self.env.assertEquals(1, result.result_set[0][0])
 
+    def test06_expand_into_reset_crash(self):
+        # crash: https://github.com/FalkorDB/FalkorDB/issues/1231
+
+        # run on an empty graph
+        self.graph.delete()
+
+        # populate graph
+        q = """
+        UNWIND range(0, 30) AS x
+        CREATE (d:Item { id: 1 })<-[:FromItem]-(de:ItemElement)<-[:ItemElement]-(e:Thing),
+               (d)<-[:FromItem]-(:ItemElement)-[:SubCategory]->(sc:SubCategory),
+               (de)-[:TextAssociated]->(t),
+               (de)-[:CrossItem]->(:Relation)-[:FromItem]->(:Item),
+               (d)<-[:FromItem]-(:ItemElement)-[:SubCategory]->(sc:SubCategory),
+               (de)-[:TextAssociated]->(t),
+               (de)-[:CrossItem]->(:Relation)-[:FromItem]->(:Item),
+               (d)<-[:FromItem]-(:ItemElement)-[:SubCategory]->(sc:SubCategory),
+               (de)-[:TextAssociated]->(t),
+               (de)-[:CrossItem]->(:Relation)-[:FromItem]->(:Item),
+               (d)<-[:FromItem]-(:ItemElement)-[:SubCategory]->(sc:SubCategory),
+               (de)-[:TextAssociated]->(t),
+               (de)-[:CrossItem]->(:Relation)-[:FromItem]->(:Item)"""
+
+        self.graph.query(q)
+
+
+        # used to crash due to uninitialized memory
+        for i in range(0, 10):
+            q = """
+            MATCH (d:Item {id: 1})<-[:FromItem]-(de:ItemElement)
+            OPTIONAL MATCH (d)<-[:FromItem]-(de:ItemElement)-[:SubCategory]->(sc:SubCategory)
+            WHERE (de:Component)
+            RETURN 2"""
+
+            self.graph.query(q)
+

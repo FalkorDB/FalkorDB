@@ -177,8 +177,9 @@ GrB_Info GB_subassigner             // C(I,J)<#M> = A or accum (C (I,J), A)
         //  M   -   -   -   A   -       06n: C(I,J)<M> = A, no S
         //  M   -   -   -   A   S       06s: C(I,J)<M> = A, with S
         //  M   -   -   +   -   -       07:  C(I,J)<M> += x, no S
+        //  C   -   -   +   A   -       27:  C<C,struct> += A
         //  M   -   -   +   A   -       08n: C(I,J)<M> += A, no S
-        //  M   -   -   +   A   -       08s: C(I,J)<M> += A, with S
+        //  M   -   -   +   A   S       08s: C(I,J)<M> += A, with S
         //  M   -   r   -   -   S       09:  C(I,J)<M,repl> = x, with S
         //  M   -   r   -   A   S       10:  C(I,J)<M,repl> = A, with S
         //  M   -   r   +   -   S       11:  C(I,J)<M,repl> += x, with S
@@ -192,6 +193,7 @@ GrB_Info GB_subassigner             // C(I,J)<#M> = A or accum (C (I,J), A)
         //  M   c   r   -   A   S       18:  C(I,J)<!M,repl> = A, with S
         //  M   c   r   +   -   S       19:  C(I,J)<!M,repl> += x, with S
         //  M   c   r   +   A   S       20:  C(I,J)<!M,repl> += A, with S
+
 
         //----------------------------------------------------------------------
         // FUTURE::: 8 simpler cases when I and J are ":" (S not needed):
@@ -216,7 +218,6 @@ GrB_Info GB_subassigner             // C(I,J)<#M> = A or accum (C (I,J), A)
         //----------------------------------------------------------------------
         // FUTURE::: C<C,s> += x   C==M, update all values, C_replace ignored
         // FUTURE::: C<C,s> = A    C==M, A dense, C_replace ignored
-        // FUTURE::: C<C,s> += A   C==M, no zombies or pending tuples added
         //----------------------------------------------------------------------
 
     // For the single case C(I,J)<M>=A, two methods can be used: 06n and 06s.
@@ -379,12 +380,21 @@ GrB_Info GB_subassigner             // C(I,J)<#M> = A or accum (C (I,J), A)
         //  =====================       ==============
         //  M   cmp rpl acc A   S       method: action
         //  =====================       ==============
+        //  C   -   -   +   A   -       27:  C<C,struct> += A
         //  M   -   -   +   A   -       08n: C(I,J)<M> += A, no S
-        //  M   -   -   +   A   -       08s: C(I,J)<M> += A, with S
+        //  M   -   -   +   A   S       08s: C(I,J)<M> += A, with S
         //  A   -   -   -   A   -       06d: C<A> = A, no S, C dense
         //  M   -   x   -   A   -       25:  C<M,s> = A, A dense, C empty
         //  M   -   -   -   A   -       06n: C(I,J)<M> = A, no S
         //  M   -   -   -   A   S       06s: C(I,J)<M> = A, with S
+
+        case GB_SUBASSIGN_METHOD_27 : 
+        {
+            // Method 27: C<C,struct> += A ; no S
+            GBURBLE ("Method 27: C<C,struct> += Z ; no S ") ;
+            GB_OK (GB_subassign_27 (C, accum, A, Werk)) ;
+        }
+        break ;
 
         case GB_SUBASSIGN_METHOD_08n : 
         {

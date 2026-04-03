@@ -56,7 +56,7 @@ uint64_t GB_encodify_apply      // encode an apply problem
     // primary encoding of the problem
     //--------------------------------------------------------------------------
 
-    encoding->kcode = kcode ;
+    GB_encodify_kcode (encoding, kcode) ;
     GB_enumify_apply (&encoding->code, C_sparsity, C_is_matrix, ctype,
         Cp_is_32, Ci_is_32, Cj_is_32, op, flipij, A_sparsity, A_is_matrix,
         atype, Ap_is_32, Aj_is_32, Ai_is_32, A_iso, A_nzombies) ;

@@ -70,7 +70,7 @@ GrB_Info GB_shallow_op      // create shallow matrix and apply operator
         ASSERT_OP_OK (op, "binop for shallow_op", GB0) ;
         if (!GB_IS_BUILTIN_BINOP_CODE_POSITIONAL (opcode))
         { 
-            op_intype = (binop_bind1st) ? op->xtype : op->ytype ;
+            op_intype = (binop_bind1st) ? op->ytype : op->xtype ;
             ASSERT (GB_Type_compatible (op_intype, A->type)) ;
         }
     }

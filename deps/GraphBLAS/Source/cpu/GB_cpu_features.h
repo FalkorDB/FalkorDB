@@ -38,8 +38,12 @@
     #include "cpu_features_macros.h"
     #define STACK_LINE_READER_BUFFER_SIZE 1024
     #if GBX86
-    // Intel x86 (also AMD): other architectures are not exploited
+    // Intel x86 (also AMD)
     #include "cpuinfo_x86.h"
+    #endif
+    #if GBRISCV64
+    // RISC-V
+    #include "cpuinfo_riscv.h"
     #endif
 #endif
 

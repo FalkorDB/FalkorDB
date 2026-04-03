@@ -21,7 +21,8 @@ SIValue SIVectorf32_New
 (
 	uint32_t dim  // vector's dimension
 ) {
-	SIVector *v = rm_calloc(1, sizeof(SIVector) + dim * sizeof(float));
+	size_t n = sizeof(SIVector) + (dim * sizeof(float)) ;
+	SIVector *v = rm_calloc (1, n) ;
 	v->dim = dim;
 
 	return (SIValue) {
@@ -29,6 +30,24 @@ SIValue SIVectorf32_New
 		.ptrval     = (void*)v,
 		.allocation = M_SELF
 	};
+}
+
+// returns number of bytes used to represent vector's elements
+// for vector32f this is 4 * vector's dimension
+// for vector64f this is 8 * vector's dimension
+size_t SIVector_ElementsByteSize
+(
+	SIValue vector // vector to get binary size of
+) {
+	return SIVector_Dim(vector) * sizeof(float);
+}
+
+// returns number of bytes used to represent the entire vector
+size_t SIVector_ByteSize
+(
+	SIValue vector  // vector to get binary size of
+) {
+	return SIVector_ElementsByteSize(vector) + sizeof(SIVector);
 }
 
 // clones vector
@@ -169,24 +188,6 @@ uint32_t SIVector_Dim
 	SIVector *v = (SIVector*)vector.ptrval;
 
 	return v->dim;
-}
-
-// returns number of bytes used to represent vector's elements
-// for vector32f this is 4 * vector's dimension
-// for vector64f this is 8 * vector's dimension
-size_t SIVector_ElementsByteSize
-(
-	SIValue vector // vector to get binary size of
-) {
-	return SIVector_Dim(vector) * sizeof(float);
-}
-
-// returns number of bytes used to represent the entire vector
-size_t SIVector_ByteSize
-(
-	SIValue vector  // vector to get binary size of
-) {
-	return SIVector_ElementsByteSize(vector) + sizeof(SIVector);
 }
 
 // computes the euclidean distance between two vectors

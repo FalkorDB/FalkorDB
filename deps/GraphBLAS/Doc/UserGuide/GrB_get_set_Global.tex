@@ -46,7 +46,8 @@ GrB_Info GrB_set (GrB_Global g, void *     value, int f, size_t s) ;
 %                                                           value is set to \verb'GrB_COLMAJOR'. \\
 \verb'GxB_NTHREADS'                 & R/W  & \verb'int32_t'& number of OpenMP threads used. \newline
                                                             See Section~\ref{omp_parallelism}. \\
-% \verb'GxB_GPU_ID'                 & R/W  & \verb'int32_t'& which GPU to use \\
+\verb'GxB_NGPUS_MAX'                & R    & \verb'int32_t'& number of GPUs in the system \\
+\verb'GxB_NGPUS'                    & R/W  & \verb'int32_t'& number of GPUs to use \\
 \verb'GxB_BURBLE'                   & R/W  & \verb'int32_t'& diagnostic output (true/false). \newline
                                                                 See Section~\ref{diag}. \\
 \verb'GxB_PRINT_1BASED'             & R/W  & \verb'int32_t'& matrices printed as 1-based or 0-based  \\
@@ -64,6 +65,17 @@ GrB_Info GrB_set (GrB_Global g, void *     value, int f, size_t s) ;
 \verb'GxB_CHUNK'                    & R/W  & \verb'double' & global chunk size for parallel task creation.
                                                                 See Section~\ref{omp_parallelism}. \\
 \hline
+\end{tabular}
+}
+\vspace{0.05in}
+
+\vspace{0.1in}
+\noindent
+{\small
+\begin{tabular}{|l|l|l|p{2.5in}|}
+\hline
+\verb'int field'                    & R/W  & C type        & description \\
+\hline
 \verb'GrB_NAME'                     & R    & \verb'char *' & name of the library \newline
                                                                 (\verb'"SuiteSparse:GraphBLAS"') \\
 \verb'GxB_LIBRARY_DATE'             & R    & \verb'char *' & library release date \\
@@ -77,16 +89,7 @@ GrB_Info GrB_set (GrB_Global g, void *     value, int f, size_t s) ;
 \verb'GxB_API_URL'                  & R    & \verb'char *' & URL for the C API \\
 \verb'GxB_COMPILER_NAME'            & R    & \verb'char *' & name of the compiler used to compile the library \\
 \hline
-\end{tabular}
-}
-\vspace{0.05in}
-
-\vspace{0.1in}
-\noindent
-{\small
-\begin{tabular}{|l|l|l|p{2.5in}|}
-\hline
-\verb'int field'                    & R/W  & C type        & description \\
+\verb'GxB_GPU_IDS'                  & R/W  & \verb'void *'& list of GPU IDs to use (\verb'int32_t' array)\\
 \hline
 \verb'GxB_JIT_C_COMPILER_NAME'      & R/W  & \verb'char *' & See Section~\ref{jit} \\
 \verb'GxB_JIT_C_COMPILER_FLAGS'     & R/W  & \verb'char *' & " \\
@@ -260,6 +263,19 @@ You can query GraphBLAS at run-time to ask if it was compiled with OpenMP:
 
 Compiling GraphBLAS without OpenMP is not recommended for installation in a
 package manager (Linux, conda-forge, spack, brew, vcpkg, etc).
+
+%-------------------------------------------------------------------------------
+\subsubsection{GPU parallelism}
+%-------------------------------------------------------------------------------
+\label{gpu_parallelism}
+
+% TODO: decide how to use get/set for the GPU(s) in GraphBLAS.
+
+GPU kernels are under development but are not yet available for production use.
+Once they are available, the get/set options will be able to control which
+GPU(s) to use for any given call to GraphBLAS, via the \verb'GxB_Context'
+object.  The current interface described in GraphBLAS.h is tentative and
+may change when released for production use.
 
 %-------------------------------------------------------------------------------
 \subsubsection{Other global options}

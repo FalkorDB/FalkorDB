@@ -34,7 +34,8 @@ void Graph_Explain(void *args) {
 	// 2. Whether these items were cached or not
 	bool           cached = false;
 	ExecutionPlan  *plan  = NULL;
-	exec_ctx  =  ExecutionCtx_FromQuery(command_ctx->query);
+
+	exec_ctx = ExecutionCtx_FromQuery (command_ctx) ;
 	if (exec_ctx == NULL) {
 		query_ctx->status = QueryExecutionStatus_FAILURE;
 		goto cleanup;

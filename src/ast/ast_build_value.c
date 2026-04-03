@@ -6,7 +6,8 @@
 #include "../datatypes/map.h"
 #include "../datatypes/array.h"
 
-#include <sys/errno.h>
+#include <errno.h>
+
 
 // convert an AST node into an integer SIValue
 static void _SIValue_FromIntegerNode

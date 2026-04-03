@@ -49,10 +49,10 @@ void buildPatternComprehensionOps
 	// quickly return if none been found
 	const cypher_astnode_t **pcs =
 		AST_GetTypedNodes(ast, CYPHER_AST_PATTERN_COMPREHENSION);
-	uint count = array_len(pcs);
+	uint count = arr_len(pcs);
 
 	if(count == 0) {
-		array_free(pcs);
+		arr_free(pcs);
 		return;
 	}
 
@@ -94,8 +94,8 @@ void buildPatternComprehensionOps
 		collect_exp->resolved_name = AST_ToString(pc);
 
 		// add collect expression to an AGGREGATION Operation
-		AR_ExpNode **exps = array_new(AR_ExpNode *, 1);
-		array_append(exps, collect_exp);
+		AR_ExpNode **exps = arr_new(AR_ExpNode *, 1);
+		arr_append(exps, collect_exp);
 		OpBase *aggregate = NewAggregateOp(plan, exps);
 		ExecutionPlan_AddOp(aggregate, match_stream);
 
@@ -135,8 +135,8 @@ void buildPatternComprehensionOps
 	// restore AST
 	QueryCtx_SetAST(prev_ast);
 
-	if(arguments != NULL) array_free(arguments);
-	array_free(pcs);
+	if(arguments != NULL) arr_free(arguments);
+	arr_free(pcs);
 }
 
 // build pattern path plan operations for example:
@@ -176,9 +176,9 @@ void buildPatternPathOps
 	const  cypher_astnode_t  **pps  =  AST_GetTypedNodes(ast,  CYPHER_AST_PATTERN_PATH);
 	const  cypher_astnode_t  **pcs  =  AST_GetTypedNodes(ast,  CYPHER_AST_PATTERN_COMPREHENSION);
 
-	uint  count      =  array_len(pps);
-	uint  pcs_count  =  array_len(pcs);
-	uint  sps_count  =  array_len(sps);
+	uint  count      =  arr_len(pps);
+	uint  pcs_count  =  arr_len(pcs);
+	uint  sps_count  =  arr_len(sps);
 
 	// backup AST, restore at the end
 	AST *prev_ast = QueryCtx_GetAST();
@@ -245,8 +245,8 @@ void buildPatternPathOps
 		collect_exp->resolved_name = AST_ToString(path);
 
 		// constuct aggregation operation
-		AR_ExpNode **exps = array_new(AR_ExpNode *, 1);
-		array_append(exps, collect_exp);
+		AR_ExpNode **exps = arr_new(AR_ExpNode *, 1);
+		arr_append(exps, collect_exp);
 		OpBase *aggregate = NewAggregateOp(plan, exps);
 		ExecutionPlan_AddOp(aggregate, match_stream);
 
@@ -266,9 +266,9 @@ void buildPatternPathOps
 	// restore AST
 	QueryCtx_SetAST(prev_ast);
 
-	if(arguments != NULL) array_free(arguments);
-	array_free(pps);
-	array_free(pcs);
-	array_free(sps);
+	if(arguments != NULL) arr_free(arguments);
+	arr_free(pps);
+	arr_free(pcs);
+	arr_free(sps);
 }
 

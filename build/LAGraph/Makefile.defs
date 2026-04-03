@@ -1,3 +1,0 @@
-
-export LAGRAPH=$(LAGRAPH_BINDIR)/src/liblagraph.a
-export LAGRAPHX=$(LAGRAPH_BINDIR)/experimental/liblagraphx.a

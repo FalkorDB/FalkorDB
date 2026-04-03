@@ -4,11 +4,13 @@
 */
 
 #include "RG.h"
-#include <stdbool.h>
 #include "../globals.h"
 #include "../redismodule.h"
 #include "../graph/graphcontext.h"
 #include "./util/run_redis_command_as.h"
+
+#include <assert.h>
+#include <stdbool.h>
 
 // GRAPH.PASSWORD ADD <password>
 // GRAPH.PASSWORD REMOVE <password>
@@ -77,7 +79,8 @@ static int _set_password_with_prefix
 	const char *passwordStr = RedisModule_StringPtrLen(pass, &passwordStrLen);
 
 	char *passwordBuff = NULL;
-	asprintf(&passwordBuff, "%c%s", prefix, passwordStr);
+	int n = asprintf(&passwordBuff, "%c%s", prefix, passwordStr);
+	assert (n > 0) ;
 
 	int ret = _set_password_fun(ctx, username, passwordBuff);
 

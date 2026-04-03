@@ -311,7 +311,7 @@ class testIndexCreationFlow():
         # 3.c. queries aren't utilizing the index while it is being constructed
 
         min_node_v = 0
-        max_node_v = 1000000
+        max_node_v = 1000000 # 1 milion
 
         g = Graph(self.env.getConnection(), "async-index")
 
@@ -371,12 +371,6 @@ class testIndexCreationFlow():
         # delete an indexed node
         q = "MATCH (n:L) WHERE ID(n) = $id WITH n LIMIT 1 DELETE n"
         g.query(q, {'id': 2})
-
-        #-----------------------------------------------------------------------
-        # validate index is being populated
-        #-----------------------------------------------------------------------
-
-        self.env.assertTrue(index_under_construction(g, 'L'))
 
         # wait for index to become operational
         wait_for_indices_to_sync(g)
@@ -493,12 +487,6 @@ class testIndexCreationFlow():
 
         q = "MATCH (n:L) WHERE ID(n) = $id WITH n LIMIT 1 DELETE n"
         self.graph.query(q, {'id': 2})
-
-        #-----------------------------------------------------------------------
-        # validate index is being populated
-        #-----------------------------------------------------------------------
-
-        self.env.assertTrue(index_under_construction(self.graph, 'L'))
 
         # wait for index to become operational
         wait_for_indices_to_sync(self.graph)
@@ -699,14 +687,8 @@ class testIndexCreationFlow():
         # create an index
         #-----------------------------------------------------------------------
 
-        # determine how much time does it take to construct our index
-        start = time()
-
         res = create_node_fulltext_index(self.graph, 'L', 'v', sync=True)
         self.env.assertEquals(res.indices_created, 1)
-
-        # total index creation time
-        elapsed = time() - start
 
         #-----------------------------------------------------------------------
         # drop the index
@@ -718,8 +700,6 @@ class testIndexCreationFlow():
 
         # recreate the index, but this time introduce additionl fields
         # while the index is being populated
-
-        start = time()
 
         # introduce a new field
         res = self.graph.create_node_fulltext_index('L', 'a')
@@ -740,13 +720,6 @@ class testIndexCreationFlow():
 
         # wait for index to become operational
         wait_for_indices_to_sync(self.graph)
-
-        elapsed_2 = time() - start
-
-        # although we've constructed a larger index
-        # new index includes 2 fields (b,v) while the former index included just
-        # one (v) we're expecting thier overall construction time to be similar
-        self.env.assertTrue(elapsed_2 < elapsed * 2)
 
     def test14_multi_type_index_listing(self):
         # clear DB

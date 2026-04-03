@@ -21,7 +21,7 @@ static Record _yield(OpProcCall *op) {
 	if(outputs == NULL) return NULL;
 
 	Record clone = OpBase_CloneRecord(op->r);
-	for(uint i = 0; i < array_len(op->output); i++) {
+	for(uint i = 0; i < arr_len(op->output); i++) {
 		int idx = op->yield_map[i].rec_idx;
 		uint proc_out_idx = op->yield_map[i].proc_out_idx;
 		SIValue val = outputs[proc_out_idx];
@@ -36,15 +36,15 @@ static void _evaluate_proc_args
 	OpProcCall *op
 ) {
 	// evaluate arguments, free args from previous call
-	uint arg_count = array_len(op->args);
+	uint arg_count = arr_len(op->args);
 	for(uint i = 0; i < arg_count; i++) {
 		SIValue_Free(op->args[i]);
 	}
 
-	array_clear(op->args);
+	arr_clear(op->args);
 
 	for(uint i = 0; i < op->arg_count; i++) {
-		array_append(op->args, AR_EXP_Evaluate(op->arg_exps[i], op->r));
+		arr_append(op->args, AR_EXP_Evaluate(op->arg_exps[i], op->r));
 	}
 }
 
@@ -61,14 +61,12 @@ OpBase *NewProcCallOp
 	ASSERT(arg_exps   != NULL);
 	ASSERT(yield_exps != NULL);
 
-	OpProcCall *op = rm_malloc(sizeof(OpProcCall));
+	OpProcCall *op = rm_calloc (1, sizeof(OpProcCall)) ;
 
-	op->r          = NULL;
-	op->args       = array_new(SIValue, array_len(arg_exps));
+	op->args       = arr_new(SIValue, arr_len(arg_exps));
 	op->arg_exps   = arg_exps;
-	op->arg_count  = array_len(arg_exps);
+	op->arg_count  = arr_len(arg_exps);
 	op->proc_name  = proc_name;
-	op->yield_map  = NULL;
 	op->first_call = true;
 	op->yield_exps = yield_exps;
 
@@ -76,8 +74,8 @@ OpBase *NewProcCallOp
 	op->procedure = Proc_Get(proc_name);
 	ASSERT(op->procedure != NULL);
 
-	uint yield_count = array_len(yield_exps);
-	op->output = array_new(const char *, yield_count);
+	uint yield_count = arr_len(yield_exps);
+	op->output = arr_new(const char *, yield_count);
 	op->yield_map = rm_malloc(sizeof(OutputMap) * yield_count);
 
 	// set callbacks
@@ -90,7 +88,7 @@ OpBase *NewProcCallOp
 		const char *alias = yield_exps[i]->resolved_name;
 		const char *yield = yield_exps[i]->operand.variadic.entity_alias;
 
-		array_append(op->output, yield);
+		arr_append(op->output, yield);
 		int rec_idx = OpBase_Modifies((OpBase *)op, alias);
 		op->yield_map[i].rec_idx = rec_idx;
 		op->yield_map[i].proc_out_idx = i;
@@ -163,8 +161,8 @@ static OpBase *ProcCallClone(const ExecutionPlan *plan, const OpBase *opBase) {
 	OpProcCall *op = (OpProcCall *)opBase;
 	AR_ExpNode **args_exp;
 	AR_ExpNode **yield_exps;
-	array_clone_with_cb(args_exp, op->arg_exps, AR_EXP_Clone);
-	array_clone_with_cb(yield_exps, op->yield_exps, AR_EXP_Clone);
+	arr_clone_with_cb(args_exp, op->arg_exps, AR_EXP_Clone);
+	arr_clone_with_cb(yield_exps, op->yield_exps, AR_EXP_Clone);
 	return NewProcCallOp(plan, op->proc_name, args_exp, yield_exps);
 }
 
@@ -186,27 +184,27 @@ static void ProcCallFree(OpBase *ctx) {
 	}
 
 	if(op->args) {
-		uint arg_count = array_len(op->args);
+		uint arg_count = arr_len(op->args);
 		for(uint i = 0; i < arg_count; i++) SIValue_Free(op->args[i]);
-		array_free(op->args);
+		arr_free(op->args);
 		op->args = NULL;
 	}
 
 	if(op->arg_exps) {
 		for(uint i = 0; i < op->arg_count; i++) AR_EXP_Free(op->arg_exps[i]);
-		array_free(op->arg_exps);
+		arr_free(op->arg_exps);
 		op->arg_exps = NULL;
 	}
 
 	if(op->output) {
-		array_free(op->output);
+		arr_free(op->output);
 		op->output = NULL;
 	}
 
 	if(op->yield_exps) {
-		uint yield_count = array_len(op->yield_exps);
+		uint yield_count = arr_len(op->yield_exps);
 		for(uint i = 0; i < yield_count; i ++) AR_EXP_Free(op->yield_exps[i]);
-		array_free(op->yield_exps);
+		arr_free(op->yield_exps);
 		op->yield_exps = NULL;
 	}
 }

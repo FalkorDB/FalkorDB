@@ -289,13 +289,20 @@
     // https://docs.microsoft.com/en-us/cpp/intrinsics/interlockedincrement-intrinsic-functions?view=msvc-160
     // The MS Visual Studio version computes result = ++target, so result must
     // be decremented by one.
+    //
+    // signatures:
+    //
+    //  long _InterlockedIncrement( long volatile * lpAddend);
+    //  __int64 _InterlockedIncrement64( __int64 volatile * lpAddend);
+
 
     #if GB_COMPILER_MSC
 
-        #define GB_ATOMIC_CAPTURE_INC32(result,target)                  \
-        {                                                               \
-            result = _InterlockedIncrement ((int32_t volatile *) (&(target))) ;\
-            result-- ;                                                  \
+        #define GB_ATOMIC_CAPTURE_INC32(result,target)                      \
+        {                                                                   \
+            ASSERT (sizeof (int32_t) == sizeof (long)) ;                    \
+            result = _InterlockedIncrement ((long volatile *) (&(target))) ;\
+            result-- ;                                                      \
         }
 
     #else

@@ -22,9 +22,9 @@ def run_single_benchmark(file_stream: TextIO, bench: str):
 
     # Always prefer the environment variable over the yaml file
     if platform.system() == "Darwin":
-        db_module = os.getenv("DB_MODULE", "../../bin/macos-arm64v8-release/src/falkordb.so")
+        db_module = os.getenv("DB_MODULE", "../../bin/macos-arm64v8-release/falkordb.so")
     else:
-        db_module = os.getenv("DB_MODULE", "../../bin/linux-x64-release/src/falkordb.so")
+        db_module = os.getenv("DB_MODULE", "../../bin/linux-x64-release/falkordb.so")
     if db_module is None and "db_module" not in data:
         print("Error! No DB module specified in the yaml file or the environment variable")
         exit(1)

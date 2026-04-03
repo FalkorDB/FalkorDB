@@ -1,2 +1,0 @@
-
-export LIBCYPHER_PARSER=$(LIBCYPHER_PARSER_BINDIR)/lib/src/.libs/libcypher-parser.a

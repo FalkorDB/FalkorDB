@@ -15,8 +15,7 @@ static OpBase *JoinClone(const ExecutionPlan *plan, const OpBase *opBase);
 static OpResult JoinReset(OpBase *opBase);
 
 OpBase *NewJoinOp(const ExecutionPlan *plan) {
-	OpJoin *op = rm_malloc(sizeof(OpJoin));
-	op->stream = NULL;
+	OpJoin *op = rm_calloc (1, sizeof(OpJoin)) ;
 
 	// Set our Op operations
 	OpBase_Init((OpBase *)op, OPType_JOIN, "Join", JoinInit, JoinConsume, 
