@@ -16,8 +16,9 @@ ENV FALKORDB_IMPORT_PATH=${FALKORDB_HOME}/import
 
 ENV FALKORDB_TLS_PATH=${FALKORDB_HOME}/tls
 
-# Install only runtime dependencies (openssl for TLS cert generation, libgomp for GraphBLAS)
-RUN apk add --no-cache libgomp openssl
+# Install only runtime dependencies (openssl for TLS cert generation, libgomp for GraphBLAS,
+# ca-certificates for HTTPS in LOAD CSV)
+RUN apk add --no-cache libgomp openssl ca-certificates
 
 WORKDIR ${FALKORDB_HOME}
 

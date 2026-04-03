@@ -82,8 +82,8 @@ void CommitUpdates
 		if (type == ENTITY_NODE) {
 			GraphHub_UpdateNodeLabels (gc, (Node*)update->ge,
 					update->add_labels, update->remove_labels,
-					array_len (update->add_labels),
-					array_len (update->remove_labels), true) ;
+					arr_len (update->add_labels),
+					arr_len (update->remove_labels), true) ;
 		}
 
 		//----------------------------------------------------------------------
@@ -391,7 +391,7 @@ void ensureMatrixDim
 	while (raxNext (&it)) {
 		EntityUpdateEvalCtx *ctx = it.data ;
 
-		uint n = array_len (ctx->add_labels) ;
+		uint n = arr_len (ctx->add_labels) ;
 		for (uint i = 0 ; i < n ; i++) {
 			const char *label = ctx->add_labels[i] ;
 			const Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
@@ -403,7 +403,7 @@ void ensureMatrixDim
 			}
 		}
 
-		n = array_len (ctx->remove_labels) ;
+		n = arr_len (ctx->remove_labels) ;
 		for (uint i = 0 ; i < n ; i++) {
 			const char *label = ctx->remove_labels[i] ;
 			const Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
@@ -500,20 +500,20 @@ void EvalEntityUpdates
 		update = (PendingUpdateCtx *)HashTableGetVal (entry) ;
 	}
 
-	if (array_len (ctx->add_labels) > 0) {
+	if (arr_len (ctx->add_labels) > 0) {
 	   if (update->add_labels == NULL) {
 		   update->add_labels =
-			   array_new (const char *, array_len (ctx->add_labels)) ;
+			   arr_new (const char *, arr_len (ctx->add_labels)) ;
 	   }
-		array_union (update->add_labels, ctx->add_labels, strcmp) ;
+		arr_union (update->add_labels, ctx->add_labels, strcmp) ;
 	}
 
-	if (array_len(ctx->remove_labels) > 0) {
+	if (arr_len(ctx->remove_labels) > 0) {
 		if (update->remove_labels == NULL) {
 			update->remove_labels =
-				array_new (const char *, array_len (ctx->remove_labels)) ;
+				arr_new (const char *, arr_len (ctx->remove_labels)) ;
 		}
-		array_union (update->remove_labels, ctx->remove_labels, strcmp) ;
+		arr_union (update->remove_labels, ctx->remove_labels, strcmp) ;
 	}
 
 	AttributeSet *old_attrs = entity->attributes ;  // backup original attributes
@@ -534,7 +534,7 @@ void EvalEntityUpdates
 	}
 
 	bool error = false;
-	uint exp_count = array_len (ctx->properties) ;
+	uint exp_count = arr_len (ctx->properties) ;
 	EffectsBuffer *eb = QueryCtx_GetEffectsBuffer () ;
 
 	// evaluate each assigned expression
@@ -667,8 +667,8 @@ void PendingUpdateCtx_Free
 	PendingUpdateCtx *ctx
 ) {
 	AttributeSet_Free(&ctx->attributes);
-	array_free(ctx->add_labels);
-	array_free(ctx->remove_labels);
+	arr_free(ctx->add_labels);
+	arr_free(ctx->remove_labels);
 	rm_free(ctx);
 }
 

@@ -118,7 +118,7 @@ void _traverse
 			// add record to optional_records
 			Record r = op->records[i] ;
 			Record_IncRefCount (r) ;
-			array_append (op->optional_records, r) ;
+			arr_append (op->optional_records, r) ;
 
 			// move to the next entry in v
 			info = GxB_Vector_Iterator_next (it) ;
@@ -180,7 +180,7 @@ void CondTraverse_MakeOptional
 	op->optional = true ;
 	op->op.name  = "Optional Conditional Traverse" ;
 	op->op.type  = OPType_OPTIONAL_CONDITIONAL_TRAVERSE ;
-	op->optional_records = array_new (Record, op->record_cap) ;
+	op->optional_records = arr_new (Record, op->record_cap) ;
 
 	// s = true
 	GrB_OK (GxB_Scalar_new (&op->s, GrB_BOOL)) ;
@@ -243,8 +243,8 @@ static Record CondTraverseConsume
 		}
 
 		// if optional, emit nodes without neighbors
-		if (op->optional && array_len (op->optional_records) > 0) {
-			Record r = array_pop (op->optional_records) ;
+		if (op->optional && arr_len (op->optional_records) > 0) {
+			Record r = arr_pop (op->optional_records) ;
 			return r ;
 		}
 
@@ -259,10 +259,10 @@ static Record CondTraverseConsume
 		}
 
 		if (op->optional) {
-			for (uint i = 0; i < array_len (op->optional_records); i++) {
+			for (uint i = 0; i < arr_len (op->optional_records); i++) {
 				OpBase_DeleteRecord (op->optional_records+i) ;
 			}
-			array_clear (op->optional_records) ;
+			arr_clear (op->optional_records) ;
 		}
 
 		//----------------------------------------------------------------------
@@ -337,10 +337,10 @@ static OpResult CondTraverseReset
 		GrB_OK (GrB_Vector_clear (op->w)) ;
 		GrB_OK (GrB_Vector_clear (op->e)) ;
 
-		for (uint i = 0; i < array_len (op->optional_records); i++) {
+		for (uint i = 0; i < arr_len (op->optional_records); i++) {
 			OpBase_DeleteRecord (op->optional_records+i) ;
 		}
-		array_clear (op->optional_records) ;
+		arr_clear (op->optional_records) ;
 	}
 
 	if (op->edge_ctx) {
@@ -422,10 +422,10 @@ static void CondTraverseFree
 	}
 
 	if (op->optional) {
-		for (uint i = 0; i < array_len (op->optional_records); i++) {
+		for (uint i = 0; i < arr_len (op->optional_records); i++) {
 			OpBase_DeleteRecord (op->optional_records+i) ;
 		}
-		array_free (op->optional_records) ;
+		arr_free (op->optional_records) ;
 		op->optional_records = NULL ;
 
 		GrB_free (&op->w) ;
