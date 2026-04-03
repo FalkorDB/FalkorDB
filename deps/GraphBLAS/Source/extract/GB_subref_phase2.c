@@ -26,10 +26,7 @@ GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
     GB_task_struct *restrict TaskList,  // array of structs
     const int ntasks,                   // # of tasks
     const int nthreads,                 // # of threads to use
-    const void *Ihead,                  // for I inverse buckets, size A->vlen
-    const void *Inext,                  // for I inverse buckets, size nI
-    const bool Ihead_is_32,             // if true, Ihead,Inext 32-bit; else 64
-    const bool I_has_duplicates,        // true if I has duplicates
+    const GrB_Matrix R,                 // R = inverse (I), if needed
     uint64_t **p_Cwork,                 // workspace of size max(2,C->nvec+1)
     size_t Cwork_size,
     // analysis from phase0:
@@ -62,8 +59,39 @@ GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
     GB_IDECL (I       , const, u) ; GB_IPTR (I       , I_is_32) ;
     GB_IDECL (Ap_start, const, u) ; GB_IPTR (Ap_start, A->p_is_32) ;
     GB_IDECL (Ap_end  , const, u) ; GB_IPTR (Ap_end  , A->p_is_32) ;
-    GB_IDECL (Ihead   , const, u) ; GB_IPTR (Ihead   , Ihead_is_32) ;
-    GB_IDECL (Inext   , const, u) ; GB_IPTR (Inext   , Ihead_is_32) ;
+
+    bool R_is_hyper = false ;
+    int64_t rnvec = 0, R_hash_bits = 0 ;
+    void *Rp = NULL, *Rh = NULL, *Ri = NULL ;
+    void *R_Yp = NULL, *R_Yi = NULL, *R_Yx = NULL ;
+    bool Rp_is_32 = false ;
+    bool Rj_is_32 = false ;
+    bool Ri_is_32 = false ;
+    GB_IDECL (Rp, const, u) ;
+    GB_IDECL (Rh, const, u) ;
+    GB_IDECL (Ri, const, u) ;
+    if (R != NULL)
+    {
+        R_is_hyper = GB_IS_HYPERSPARSE (R) ;
+        rnvec = R->nvec ;
+        Rp = R->p ;
+        Rh = R->h ;
+        Ri = R->i ;
+        GB_IPTR (Rp, R->p_is_32) ;
+        GB_IPTR (Rh, R->j_is_32) ;
+        GB_IPTR (Ri, R->i_is_32) ;
+        Rp_is_32 = R->p_is_32 ;
+        Rj_is_32 = R->j_is_32 ;
+        Ri_is_32 = R->i_is_32 ;
+        GrB_Matrix R_Y = R->Y ;
+        if (R_Y != NULL)
+        {
+            R_Yp = R_Y->p ;
+            R_Yi = R_Y->i ;
+            R_Yx = R_Y->x ;
+            R_hash_bits = (R_Y->vdim - 1) ;
+        }
+    }
 
     (*Cp_handle) = NULL ;
     (*Cp_size_handle) = 0 ;
@@ -97,7 +125,6 @@ GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
 
     #define GB_I_KIND Ikind
     #define GB_NEED_QSORT need_qsort
-    #define GB_I_HAS_DUPLICATES I_has_duplicates
 
     #define GB_ANALYSIS_PHASE
     if (symbolic)

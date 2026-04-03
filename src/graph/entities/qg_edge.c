@@ -8,6 +8,9 @@
 #include "qg_node.h"
 #include "../graph.h"
 #include "../../util/arr.h"
+#include "../../query_ctx.h"
+#include "../graphcontext.h"
+#include "../../schema/schema.h"
 
 QGEdge *QGEdge_New
 (
@@ -17,8 +20,8 @@ QGEdge *QGEdge_New
 	QGEdge *e = rm_malloc(sizeof(QGEdge));
 
 	e->alias         = alias;
-	e->reltypes      = array_new(const char*, 1);
-	e->reltypeIDs    = array_new(int, 1);
+	e->reltypes      = arr_new(const char*, 1);
+	e->reltypeIDs    = arr_new(int, 1);
 	e->src           = NULL;
 	e->dest          = NULL;
 	e->minHops       = 1;
@@ -64,8 +67,8 @@ QGEdge *QGEdge_Clone
 	memcpy(e, orig, sizeof(QGEdge));
 	e->src = NULL;
 	e->dest = NULL;
-	array_clone(e->reltypes, orig->reltypes);
-	array_clone(e->reltypeIDs, orig->reltypeIDs);
+	arr_clone(e->reltypes, orig->reltypes);
+	arr_clone(e->reltypeIDs, orig->reltypeIDs);
 
 	return e;
 }
@@ -112,7 +115,7 @@ int QGEdge_RelationCount
 	const QGEdge *e
 ) {
 	ASSERT(e);
-	return array_len(e->reltypes);
+	return arr_len(e->reltypes);
 }
 
 const char *QGEdge_Relation
@@ -152,6 +155,37 @@ void QGEdge_Reverse
 	QGNode_ConnectNode(e->src, e->dest, e);
 }
 
+// tries to resolves unknown relationship types
+// return false if at least one relationship type remained unresolved
+// otherwise all relationship types are resolved and true is returned
+bool QGEdge_ResolveUnknownRelIDS
+(
+	QGEdge *e  // edge to update
+) {
+	ASSERT (e != NULL) ;
+
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
+	bool    res = true ;  // assuming all relationship types are resolved
+	Schema *s   = NULL ;
+	uint    n   = arr_len (e->reltypeIDs) ;
+
+	for (uint i = 0; i < n; i++) {
+		if (e->reltypeIDs [i] == GRAPH_UNKNOWN_RELATION) {
+			// try to resolve an unknown relationship type
+			s = GraphContext_GetSchema (gc, e->reltypes [i], SCHEMA_EDGE) ;
+			if (s != NULL) {
+				// update relationship type
+				e->reltypeIDs[i] = s->id ;
+			} else {
+				// cannot update the unkown relationship
+				res = false ;
+			}
+		}
+	}
+
+	return res ;
+}
+
 void QGEdge_ToString
 (
 	const QGEdge *e,
@@ -184,8 +218,8 @@ void QGEdge_Free
 ) {
 	if(!e) return;
 
-	array_free(e->reltypes);
-	array_free(e->reltypeIDs);
+	arr_free(e->reltypes);
+	arr_free(e->reltypeIDs);
 
 	rm_free(e);
 }

@@ -22,6 +22,18 @@
 namespace cpu_features {
 namespace {
 
+TEST(CpustringsPPCTest, PPCFeaturesEnum) {
+   const char *last_name = GetPPCFeaturesEnumName(PPC_LAST_);
+   EXPECT_STREQ(last_name, "unknown_feature");
+   for (int i = static_cast<int>(PPC_32); i != static_cast<int>(PPC_LAST_); ++i) {
+      const auto feature = static_cast<PPCFeaturesEnum>(i);
+      const char *name = GetPPCFeaturesEnumName(feature);
+      ASSERT_FALSE(name == nullptr);
+      EXPECT_STRNE(name, "");
+      EXPECT_STRNE(name, last_name);
+   }
+}
+
 TEST(CpustringsPPCTest, FromHardwareCap) {
   ResetHwcaps();
   SetHardwareCapabilities(PPC_FEATURE_HAS_FPU | PPC_FEATURE_HAS_VSX,

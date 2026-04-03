@@ -72,20 +72,22 @@ static GraphContext *_GetOrCreateGraphContext
 (
 	char *graph_name
 ) {
-	GraphContext *gc = GraphContext_UnsafeGetGraphContext(graph_name);
-	if(gc == NULL) {
+	GraphContext *gc = GraphContext_UnsafeGetGraphContext (graph_name) ;
+	if (!gc) {
 		// new graph is being decoded
 		// inform the module and create new graph context
-		gc = GraphContext_New(graph_name);
+		gc = GraphContext_New (graph_name) ;
+
 		// while loading the graph
 		// minimize matrix realloc and synchronization calls
-		Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_RESIZE);
+		Graph_AcquireWriteLock (gc->g) ;
+		Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_RESIZE) ;
 	}
 
 	// free the name string, as it either not in used or copied
-	RedisModule_Free(graph_name);
+	RedisModule_Free (graph_name) ;
 
-	return gc;
+	return gc ;
 }
 
 // the first initialization of the graph data structure guarantees that
@@ -158,12 +160,12 @@ static GraphContext *_DecodeHeader
 		_InitGraphDataStructure(gc->g, node_count, edge_count,
 			deleted_node_count, deleted_edge_count, label_count, relation_count);
 
-		gc->decoding_context->multi_edge = array_new(uint64_t, relation_count);
+		gc->decoding_context->multi_edge = arr_new(uint64_t, relation_count);
 		for(uint i = 0; i < relation_count; i++) {
 			// enable/Disable support for multi-edge
 			// we will enable support for multi-edge on all relationship
 			// matrices once we finish loading the graph
-			array_append(gc->decoding_context->multi_edge,  multi_edge[i]);
+			arr_append(gc->decoding_context->multi_edge,  multi_edge[i]);
 		}
 
 		GraphDecodeContext_SetKeyCount(gc->decoding_context, key_number);
@@ -193,7 +195,7 @@ static PayloadInfo *_RdbLoadKeySchema
 	//     Number of entities encoded in this state.
 
 	uint64_t payloads_count = SerializerIO_ReadUnsigned(rdb);
-	PayloadInfo *payloads = array_new(PayloadInfo, payloads_count);
+	PayloadInfo *payloads = arr_new(PayloadInfo, payloads_count);
 
 	for(uint i = 0; i < payloads_count; i++) {
 		// for each payload
@@ -203,7 +205,7 @@ static PayloadInfo *_RdbLoadKeySchema
 		payload_info.state          = SerializerIO_ReadUnsigned(rdb);
 		payload_info.entities_count = SerializerIO_ReadUnsigned(rdb);
 
-		array_append(payloads, payload_info);
+		arr_append(payloads, payload_info);
 	}
 
 	return payloads;
@@ -241,7 +243,7 @@ GraphContext *RdbLoadGraphContext_latest
 	// 4. Edges - The edges that are currently valid in the graph
 	// 4. Deleted edges - Edges that were deleted and there ids can be re-used. Used for exact replication of data block state
 	// The following switch checks which part of the graph the current key holds, and decodes it accordingly
-	uint payloads_count = array_len(payloads);
+	uint payloads_count = arr_len(payloads);
 	for(uint i = 0; i < payloads_count; i++) {
 		PayloadInfo payload = payloads[i];
 		switch(payload.state) {
@@ -331,7 +333,7 @@ GraphContext *RdbLoadGraphContext_latest
 		}
 	}
 
-	array_free(payloads);
+	arr_free(payloads);
 
 	// update decode context
 	GraphDecodeContext_IncreaseProcessedKeyCount(gc->decoding_context);
@@ -344,17 +346,15 @@ GraphContext *RdbLoadGraphContext_latest
 		GraphDecodeContext_AddMetaKey(gc->decoding_context, key_name);
 	}
 
-	if(GraphDecodeContext_Finished(gc->decoding_context)) {
+	if (GraphDecodeContext_Finished (gc->decoding_context)) {
 		// flush graph matrices
-		Graph_ApplyAllPending(g, true);
+		Graph_ApplyAllPending (g, true) ;
 
 		// compute transposes
-		_ComputeTransposeMatrices(g);
+		_ComputeTransposeMatrices (g) ;
 
-		Graph *g = gc->g;
-
-		// revert to default synchronization behavior
-		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
+		// release graph write lock
+		Graph_ReleaseLock (g) ;
 
 		uint rel_count   = Graph_RelationTypeCount(g);
 		uint label_count = Graph_LabelTypeCount(g);

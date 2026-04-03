@@ -72,6 +72,19 @@
 #                       for your system.
 #                       Default: ON
 #
+#       *** WARNING:  Using the Intel icx compiler, the Intel MKL BLAS, and the
+#       GNU Fortran compiler together will result in two OpenMP libraries
+#       linked to the UMFPACK, CHOLMOD, ParU, and SPQR libraries.  This will
+#       cause serious performance issues.  This cmake file detects if icx and
+#       gfortran are in use, and issues a fatal error.  Otherwise, if the C,
+#       C++, and Fortran compilers have a different compiler ID, a warning is
+#       issued; this is NOT recommended, but it might be OK.  In that case,
+#       ensure that you are linking with just one OpenMP library.  If this
+#       occurs, disable the use of Fortran by setting SUITESPARSE_USE_FORTRAN
+#       to OFF, use a suite of C/C++/Fortran compilers with the same ID,
+#       or ensure that all your compiled libraries link against a single
+#       OpenMP library.
+#
 #   SUITESPARSE_PKGFILEDIR: Directory where CMake Config and pkg-config files
 #                       will be installed.  By default, CMake Config files will
 #                       be installed in the subfolder `cmake` of the directory
@@ -243,6 +256,13 @@ if ( INSIDE_SUITESPARSE )
     list ( APPEND CMAKE_BUILD_RPATH ${SUITESPARSE_LIBDIR} )
 endif ( )
 
+if ( APPLE )
+    # append /usr/local/lib to the install and build runpaths
+    message ( STATUS "Add to Mac rpath: " ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR} )
+    list ( APPEND CMAKE_INSTALL_RPATH ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR} )
+    list ( APPEND CMAKE_BUILD_RPATH   ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR} )
+endif ( )
+
 set ( SUITESPARSE_PKGFILEDIR ${SUITESPARSE_LIBDIR} CACHE STRING
     "Directory where CMake Config and pkg-config files will be installed" )
 
@@ -281,11 +301,36 @@ endif ( )
 include ( CheckLanguage )
 option ( SUITESPARSE_USE_FORTRAN "ON (default): use Fortran. OFF: do not use Fortran" ON )
 if ( SUITESPARSE_USE_FORTRAN )
+    message ( STATUS "Checking if Fortran is available and compatible with C/C++" )
     check_language ( Fortran )
     if ( CMAKE_Fortran_COMPILER )
+        # Fortran is available; ensure that it is compatible with C/C++
+        enable_language ( CXX )
         enable_language ( Fortran )
-        message ( STATUS "Fortran:          ${CMAKE_Fortran_COMPILER}" )
         set ( SUITESPARSE_HAS_FORTRAN ON )
+        if ( NOT "${CMAKE_Fortran_COMPILER_ID}" STREQUAL "${CMAKE_C_COMPILER_ID}" OR
+             NOT "${CMAKE_Fortran_COMPILER_ID}" STREQUAL "${CMAKE_CXX_COMPILER_ID}" )
+            message ( STATUS " " )
+            message ( STATUS "Incompatible Fortran/C/C++ compilers detected:" )
+            message ( STATUS "    Fortran:          ${CMAKE_Fortran_COMPILER}" )
+            message ( STATUS "    Fortran id:       ${CMAKE_Fortran_COMPILER_ID}" )
+            message ( STATUS "    C                 ${CMAKE_C_COMPILER}" )
+            message ( STATUS "    C       id:       ${CMAKE_C_COMPILER_ID}" )
+            message ( STATUS "    C++               ${CMAKE_CXX_COMPILER}" )
+            message ( STATUS "    C++     id:       ${CMAKE_CXX_COMPILER_ID}" )
+            if ( "${CMAKE_C_COMPILER_ID}" STREQUAL "IntelLLVM" )
+                # icx/icpx cannot be used with gfortran: this is a fatal error
+                message ( FATAL_ERROR "ERROR: Using Fortran with SuiteSparse requires that "
+                " it has the same compiler ID as the C/C++ compilers."
+                "  Use a compatible Fortran compiler, or set SUITESPARSE_USE_FORTRAN to OFF." )
+            else ( )
+                # other cases: just issue a warning and hope it works.
+                message ( WARNING "Warning: Using Fortran with SuiteSparse requires that "
+                " it has the same compiler ID as the C/C++ compilers."
+                "  Use a compatible Fortran compiler, or set SUITESPARSE_USE_FORTRAN to OFF." )
+            endif ( )
+        endif ( )
+        message ( STATUS "Fortran:          enabled" )
     else ( )
         # Fortran not available:
         set ( SUITESPARSE_HAS_FORTRAN OFF )

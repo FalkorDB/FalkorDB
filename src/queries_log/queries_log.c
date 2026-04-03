@@ -7,10 +7,13 @@
 #include "RG.h"
 #include "queries_log.h"
 #include "util/rmalloc.h"
+#include "util/strutil.h"
 #include "configuration/config.h"
 
 #include <pthread.h>
 #include <stdatomic.h>
+
+#define QUERIES_LOG_STR_MAX_LEN   2048  // string max len
 
 // holds query statistics per graph
 typedef struct QueriesCounters {
@@ -64,9 +67,28 @@ void QueriesLog_AddQuery
 	bool utilized_cache,        // utilized cache
 	bool write,                 // write query
 	bool timeout,               // timeout query
+	uint params_len,            // length of parameters
 	const char *query           // query string
 ) {
+	ASSERT (query != NULL) ;
+
+	// cap query lenght
+	const char *_query = query + params_len ;
+
+	char *truncated_query;
+	size_t n = strnlen (_query, QUERIES_LOG_STR_MAX_LEN) ;
+	str_truncate (&truncated_query, _query, n, QUERIES_LOG_STR_MAX_LEN) ;
+
+	// cap parameters lenght
+	char *truncated_params = NULL ;
+	if (params_len > 0) {
+		str_truncate (&truncated_params, query, params_len,
+				QUERIES_LOG_STR_MAX_LEN) ;
+	}
+
+	//--------------------------------------------------------------------------
 	// add query stats to buffer
+	//--------------------------------------------------------------------------
 
 	LoggedQuery q = {
 		. received           = received,
@@ -77,7 +99,8 @@ void QueriesLog_AddQuery
 		. utilized_cache     = utilized_cache,
 		. write              = write,
 		. timeout            = timeout,
-		. query              = rm_strdup (query)
+		. params             = truncated_params,
+		. query              = truncated_query
 	} ;
 
 	// try adding query to buffer
@@ -138,7 +161,11 @@ void LoggedQuery_Free
 ) {
 	ASSERT (q != NULL) ;
 
-	rm_free (q->query) ;
+	free (q->query) ;
+
+	if (q->params != NULL) {
+		free (q->params) ;
+	}
 }
 
 // free the QueriesLog structure's content

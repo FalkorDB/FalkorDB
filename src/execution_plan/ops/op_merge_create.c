@@ -23,35 +23,20 @@ static void _IncrementalHashEntity
 	uint label_count,
 	AttributeSet *set
 ) {
-	AttributeSet _set = *set;
+	AttributeSet _set = *set ;
 
 	// update hash with label if one is provided
-	XXH_errorcode res;
-	UNUSED(res);
+	XXH_errorcode res ;
+	UNUSED (res) ;
 
-	for(uint i = 0; i < label_count; i++) {
-		res = XXH64_update(state, labels[i], strlen(labels[i]));
-		ASSERT(res != XXH_ERROR);
+	for (uint i = 0; i < label_count; i++) {
+		res = XXH64_update (state, labels[i], strlen (labels[i])) ;
+		ASSERT (res != XXH_ERROR) ;
 	}
 
-	if(_set) {
-		// update hash with attribute count
-		res = XXH64_update(state, &_set->attr_count, sizeof(_set->attr_count));
-		ASSERT(res != XXH_ERROR);
-
-		for (uint16_t i = 0; i < _set->attr_count; ++i) {
-			Attribute *a = _set->attributes + i;
-
-			// update hash with attribute ID
-			res = XXH64_update(state, &a->id, sizeof(a->id));
-			ASSERT(res != XXH_ERROR);
-
-			// update hash with the hashval of the associated SIValue
-			XXH64_hash_t value_hash = SIValue_HashCode(a->value);
-			res = XXH64_update(state, &value_hash, sizeof(value_hash));
-			ASSERT(res != XXH_ERROR);
-		}
-	}
+	XXH64_hash_t set_hash = AttributeSet_HashCode (_set) ;
+	res = XXH64_update (state, &set_hash, sizeof (set_hash)) ;
+	ASSERT (res != XXH_ERROR) ;
 }
 
 // revert the most recent set of buffered creations and free any allocations
@@ -59,16 +44,16 @@ static void _RollbackPendingCreations
 (
 	OpMergeCreate *op
 ) {
-	uint nodes_to_create_count = array_len(op->pending.nodes.nodes_to_create);
+	uint nodes_to_create_count = arr_len(op->pending.nodes.nodes_to_create);
 	for(uint i = 0; i < nodes_to_create_count; i++) {
-		AttributeSet props = array_pop(op->pending.nodes.node_attributes);
+		AttributeSet props = arr_pop(op->pending.nodes.node_attributes);
 		AttributeSet_Free(&props);
 	}
 
-	uint edges_to_create_count = array_len(op->pending.edges);
+	uint edges_to_create_count = arr_len(op->pending.edges);
 	for(uint i = 0; i < edges_to_create_count; i++) {
 		PendingEdgeCreations *pending_edge = op->pending.edges + i;
-		AttributeSet props = array_pop(pending_edge->edge_attributes);
+		AttributeSet props = arr_pop(pending_edge->edge_attributes);
 		AttributeSet_Free(&props);
 	}
 }
@@ -81,20 +66,20 @@ OpBase *NewMergeCreateOp
 ) {
 	OpMergeCreate *op = rm_calloc(1, sizeof(OpMergeCreate));
 
-	op->records         = array_new(Record, 32);  // accumulated records
+	op->records         = arr_new(Record, 32);  // accumulated records
 	op->hash_state      = XXH64_createState();    // create a hash state
 	op->unique_entities = raxNew();               // create a map to unique pending creations
 
 	// insert one NULL value to terminate execution of the op
-	array_append(op->records, NULL);
+	arr_append(op->records, NULL);
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_MERGE_CREATE, "MergeCreate",
 			MergeCreateInit, MergeCreateConsume, NULL, NULL, MergeCreateClone,
 			MergeCreateFree, true, plan);
 
-	uint node_blueprint_count = array_len(nodes);
-	uint edge_blueprint_count = array_len(edges);
+	uint node_blueprint_count = arr_len(nodes);
+	uint edge_blueprint_count = arr_len(edges);
 
 	// construct the array of IDs this operation modifies
 	for(uint i = 0; i < node_blueprint_count; i ++) {
@@ -147,7 +132,7 @@ static bool _CreateEntities
 	// hash nodes
 	//--------------------------------------------------------------------------
 
-	uint nodes_to_create_count = array_len(op->pending.nodes.nodes_to_create);
+	uint nodes_to_create_count = arr_len(op->pending.nodes.nodes_to_create);
 
 	for(uint i = 0; i < nodes_to_create_count; i++) {
 		// get specified node to create
@@ -161,22 +146,22 @@ static bool _CreateEntities
 		}
 
 		// update the hash code with this entity
-		uint label_count = array_len(n->labels);
+		uint label_count = arr_len(n->labels);
 		_IncrementalHashEntity(op->hash_state, n->labels, label_count,
 				&converted_attr);
 
 		// save attributes
-		array_append(op->pending.nodes.node_attributes, converted_attr);
+		arr_append(op->pending.nodes.node_attributes, converted_attr);
 
 		// save labels
-		array_append(op->pending.nodes.node_labels, n->labelsId);
+		arr_append(op->pending.nodes.node_labels, n->labelsId);
 	}
 
 	//--------------------------------------------------------------------------
 	// hash edges
 	//--------------------------------------------------------------------------
 
-	uint edges_to_create_count = array_len(op->pending.edges);
+	uint edges_to_create_count = arr_len(op->pending.edges);
 
 	for(uint i = 0; i < edges_to_create_count; i++) {
 		PendingEdgeCreations *pending_edge = op->pending.edges + i;
@@ -224,7 +209,7 @@ static bool _CreateEntities
 		}
 
 		// save attributes
-		array_append(pending_edge->edge_attributes, converted_attr);
+		arr_append(pending_edge->edge_attributes, converted_attr);
 	}
 
 	// finalize the hash value for all processed creations
@@ -247,7 +232,7 @@ static bool _CreateEntities
 			Node *node_ref = Record_AddNode(r, n->node_idx, newNode);
 
 			// save node for later insertion
-			array_append(op->pending.nodes.created_nodes, node_ref);
+			arr_append(op->pending.nodes.created_nodes, node_ref);
 		}
 
 		// updated edges with reserved node ids
@@ -273,7 +258,7 @@ static bool _CreateEntities
 			Edge_SetDestNodeID(e, ENTITY_GET_ID(dest_node));
 
 			// save edge for later insertion
-			array_append(pending_edge->created_edges, e);
+			arr_append(pending_edge->created_edges, e);
 		}
 	} else {
 		_RollbackPendingCreations(op);
@@ -287,7 +272,7 @@ static Record _handoff
 (
 	OpMergeCreate *op
 ) {
-	return array_pop(op->records);
+	return arr_pop(op->records);
 }
 
 // operation consume method
@@ -315,7 +300,7 @@ static Record MergeCreateConsume
 		ASSERT(entities_created == true);
 
 		// save record for later use
-		array_append(op->records, r);
+		arr_append(op->records, r);
 
 		r = NULL; // record scheduled for creation nullify it
 	} else {
@@ -325,7 +310,7 @@ static Record MergeCreateConsume
 			// create entities
 			if(_CreateEntities(op, r, op->gc)) {
 				// save record for later use
-				array_append(op->records, r);
+				arr_append(op->records, r);
 
 				r = NULL; // record scheduled for creation nullify it
 			}
@@ -343,20 +328,22 @@ void MergeCreate_Commit
 (
 	OpBase *opBase
 ) {
-	ASSERT(opBase != NULL);
+	ASSERT (opBase != NULL) ;
 
-	OpMergeCreate *op = (OpMergeCreate *)opBase;
+	OpMergeCreate *op = (OpMergeCreate *)opBase ;
 
 	// switch to hand-off mode
-	op->handoff_mode = true;
+	op->handoff_mode = true ;
 
 	// done reading, we're not going to call consume any longer
 	// there might be operations e.g. index scan that need to free
 	// index R/W lock, as such free all execution plan operation up the chain
-	if(opBase->childCount > 0) OpBase_PropagateReset(opBase->children[0]);
+	if (opBase->childCount > 0) {
+		OpBase_PropagateReset (opBase->children[0]) ;
+	}
 
 	// create entities
-	CommitNewEntities(&op->pending);
+	CommitNewEntities (&op->pending) ;
 }
 
 // clone operation
@@ -372,16 +359,16 @@ static OpBase *MergeCreateClone
 	OpMergeCreate *op = (OpMergeCreate *)opBase;
 
 	NodeCreateCtx *nodes;
-	array_clone_with_cb(nodes, op->pending.nodes.nodes_to_create,
+	arr_clone_with_cb(nodes, op->pending.nodes.nodes_to_create,
 			NodeCreateCtx_Clone);
 
-	EdgeCreateCtx *edges = array_new(EdgeCreateCtx,
-			array_len(op->pending.edges));
+	EdgeCreateCtx *edges = arr_new(EdgeCreateCtx,
+			arr_len(op->pending.edges));
 
-	for(uint i = 0; i < array_len(op->pending.edges); i++) {
+	for(uint i = 0; i < arr_len(op->pending.edges); i++) {
 		EdgeCreateCtx ctx =
 			EdgeCreateCtx_Clone(op->pending.edges[i].edges_to_create);
-		array_append(edges, ctx);
+		arr_append(edges, ctx);
 	}
 
 	return NewMergeCreateOp(plan, nodes, edges);
@@ -395,9 +382,9 @@ static void MergeCreateFree
 	OpMergeCreate *op = (OpMergeCreate *)ctx;
 
 	if(op->records) {
-		uint rec_count = array_len(op->records);
+		uint rec_count = arr_len(op->records);
 		for(uint i = 1; i < rec_count; i++) OpBase_DeleteRecord(op->records+i);
-		array_free(op->records);
+		arr_free(op->records);
 		op->records = NULL;
 	}
 

@@ -36,7 +36,7 @@ bool select_nothing (uint64_t i, uint64_t j, const void *x, const void *thunk)
     return (false) ;
 }
 
-typedef int16_t user_int ;
+typedef int16_t gb_user_int16 ;
 
 void mexFunction
 (
@@ -506,41 +506,6 @@ void mexFunction
     #endif
 
     //--------------------------------------------------------------------------
-    // CUDA
-    //--------------------------------------------------------------------------
-
-    int gpu_count = GB_Global_gpu_count_get ( ) ;
-    printf ("gpu count: %d\n", gpu_count) ;
-
-    int gpu_id = -99 ;
-    OK (GxB_Global_Option_get_(GxB_GLOBAL_GPU_ID, &gpu_id)) ;
-    printf ("gpu control: %d\n", gpu_id) ;
-
-    int32_t gpu_id2 = -88 ;
-    OK (GxB_Global_Option_get_INT32 (GxB_GLOBAL_GPU_ID, &gpu_id2)) ;
-    CHECK ((int) gpu_id == gpu_id2) ;
-
-    GB_Context_gpu_id_set (NULL, 12) ;
-    OK (GxB_Global_Option_set_(GxB_GLOBAL_GPU_ID, -1)) ;
-    OK (GxB_Global_Option_get_(GxB_GLOBAL_GPU_ID, &gpu_id)) ;
-    CHECK (gpu_id == -1) ;
-
-    GB_Context_gpu_id_set (NULL, 13) ;
-    OK (GxB_Global_Option_set_INT32 (GxB_GLOBAL_GPU_ID, -1)) ;
-    OK (GxB_Global_Option_get_INT32 (GxB_GLOBAL_GPU_ID, &gpu_id2)) ;
-    CHECK (gpu_id2 == (int32_t) -1) ;
-
-    OK (GxB_Global_Option_get_INT32 (GxB_GLOBAL_GPU_ID, &gpu_id2)) ;
-    CHECK (gpu_id2 == (int) -1) ;
-
-    OK (GxB_Global_Option_set_(GxB_GLOBAL_GPU_ID, 1)) ;
-    OK (GxB_Global_Option_get_(GxB_GLOBAL_GPU_ID, &gpu_id)) ;
-    CHECK (gpu_id == -1) ;
-
-    OK (GxB_Global_Option_get_INT32 (GxB_GLOBAL_GPU_ID, &gpu_id2)) ;
-    CHECK (gpu_id2 == -1) ;
-
-    //--------------------------------------------------------------------------
     // types
     //--------------------------------------------------------------------------
 
@@ -570,18 +535,18 @@ void mexFunction
     float    f32 = 3.14 ;
     double   f64 = 99.4 ;
 
-    GB_code_check (GB_BOOL_code,   &b  , 5, stdout) ; printf ("\n");
-    GB_code_check (GB_INT8_code,   &int8 , 5, stdout) ; printf ("\n");
-    GB_code_check (GB_UINT8_code,  &u8 , 5, stdout) ; printf ("\n");
-    GB_code_check (GB_INT16_code,  &int16, 5, stdout) ; printf ("\n");
-    GB_code_check (GB_UINT16_code, &u16, 5, stdout) ; printf ("\n");
-    GB_code_check (GB_INT32_code,  &int32, 5, stdout) ; printf ("\n");
-    GB_code_check (GB_UINT32_code, &u32, 5, stdout) ; printf ("\n");
-    GB_code_check (GB_INT64_code,  &int64, 5, stdout) ; printf ("\n");
-    GB_code_check (GB_UINT64_code, &u64, 5, stdout) ; printf ("\n");
-    GB_code_check (GB_FP32_code,   &f32, 5, stdout) ; printf ("\n");
-    GB_code_check (GB_FP64_code,   &f64, 5, stdout) ; printf ("\n");
-    GB_code_check (GB_UDT_code,    &f64, 5, stdout) ; printf ("\n");
+    GB_entry_check (GrB_BOOL,   &b,     5, stdout, NULL, NULL) ; printf ("\n");
+    GB_entry_check (GrB_INT8,   &int8,  5, stdout, NULL, NULL) ; printf ("\n");
+    GB_entry_check (GrB_UINT8,  &u8,    5, stdout, NULL, NULL) ; printf ("\n");
+    GB_entry_check (GrB_INT16,  &int16, 5, stdout, NULL, NULL) ; printf ("\n");
+    GB_entry_check (GrB_UINT16, &u16,   5, stdout, NULL, NULL) ; printf ("\n");
+    GB_entry_check (GrB_INT32,  &int32, 5, stdout, NULL, NULL) ; printf ("\n");
+    GB_entry_check (GrB_UINT32, &u32,   5, stdout, NULL, NULL) ; printf ("\n");
+    GB_entry_check (GrB_INT64,  &int64, 5, stdout, NULL, NULL) ; printf ("\n");
+    GB_entry_check (GrB_UINT64, &u64,   5, stdout, NULL, NULL) ; printf ("\n");
+    GB_entry_check (GrB_FP32,   &f32,   5, stdout, NULL, NULL) ; printf ("\n");
+    GB_entry_check (GrB_FP64,   &f64,   5, stdout, NULL, NULL) ; printf ("\n");
+//  GB_entry_check ( ,    &f64, 5, stdout) ; printf ("\n");
 
     printf ("Check status codes\n") ;
     #define CHKSTAT(code,string)                        \
@@ -780,12 +745,12 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     GrB_Type user_type = NULL ;
-    OK (GxB_Type_new (&user_type, sizeof (user_int), "user_int",
-        "typedef int16_t user_int ;")) ;
+    OK (GxB_Type_new (&user_type, sizeof (gb_user_int16), "gb_user_int16",
+        "typedef int16_t gb_user_int16 ;")) ;
     OK (GrB_Type_wait_(user_type, GrB_MATERIALIZE)) ;
     OK (GrB_Matrix_new (&A, user_type, 10, 10)) ;
     OK (GrB_Matrix_new (&B, GrB_INT16, 10, 10)) ;
-    user_int value ;
+    gb_user_int16 value ;
     for (int i = 0 ; i < 10 ; i++)
     {
         value = (int64_t) i ;
@@ -1178,8 +1143,8 @@ void mexFunction
     // setElement typecast
     //--------------------------------------------------------------------------
 
-    OK (GxB_Type_new (&user_type, sizeof (user_int), "user_int",
-        "typedef int16_t user_int ;")) ;
+    OK (GxB_Type_new (&user_type, sizeof (gb_user_int16), "gb_user_int16",
+        "typedef int16_t gb_user_int16 ;")) ;
     OK (GrB_Matrix_new (&A, user_type, 10, 10)) ;
 
     expected = GrB_DOMAIN_MISMATCH ;

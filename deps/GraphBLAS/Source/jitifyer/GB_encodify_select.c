@@ -41,7 +41,7 @@ uint64_t GB_encodify_select     // encode an select problem
     // primary encoding of the problem
     //--------------------------------------------------------------------------
 
-    encoding->kcode = kcode ;
+    GB_encodify_kcode (encoding, kcode) ;
     GB_enumify_select (&encoding->code, C, op, flipij, A) ;
 
     //--------------------------------------------------------------------------

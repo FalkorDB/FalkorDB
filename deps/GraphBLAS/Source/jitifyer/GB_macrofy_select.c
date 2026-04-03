@@ -103,7 +103,7 @@ void GB_macrofy_select          // construct all macros for GrB_select
     // construct the typedefs
     //--------------------------------------------------------------------------
 
-    GB_macrofy_typedefs (fp, NULL, atype, NULL, xtype, ytype, ztype) ;
+    GB_macrofy_typedefs (fp, NULL, atype, NULL, xtype, ytype, ztype, NULL) ;
 
     fprintf (fp, "// unary operator types:\n") ;
     GB_macrofy_type (fp, "Z", "_", ztype_name) ;

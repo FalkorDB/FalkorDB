@@ -19,22 +19,22 @@ int int_identity(int x) {
 }
 
 void test_arrCloneWithCB() {
-	int *arr = array_new(int, 10);
+	int *arr = arr_new(int, 10);
 	for(int i = 0; i < 10; i++) {
-		array_append(arr, i);
+		arr_append(arr, i);
 	}
 
 	int *arr_clone;
-	array_clone_with_cb(arr_clone, arr, int_identity);
+	arr_clone_with_cb(arr_clone, arr, int_identity);
 
-	TEST_ASSERT(array_len(arr) == array_len(arr_clone));
+	TEST_ASSERT(arr_len(arr) == arr_len(arr_clone));
 
 	for(int i = 0; i < 10; i++) {
 		TEST_ASSERT(arr[i] == arr_clone[i]);
 	}
 
-	array_free(arr);
-	array_free(arr_clone);
+	arr_free(arr);
+	arr_free(arr_clone);
 }
 
 TEST_LIST = {

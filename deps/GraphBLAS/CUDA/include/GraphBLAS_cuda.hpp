@@ -10,6 +10,9 @@
 extern "C"
 { 
     // definitions that modify GraphBLAS.h
+    #ifndef GBNCPUFEAT
+    #define GBNCPUFEAT
+    #endif
     #include "include/GB_dev.h"
     #include "include/GB_compiler.h"
     #include "include/GB_warnings.h"
@@ -29,6 +32,7 @@ extern "C"
 
 #endif
 
+#undef GRAPHBLAS_VANILLA
 #define GB_CUDA_FOLDER
 #include "GraphBLAS.h"
 #undef I
@@ -39,4 +43,6 @@ extern "C"
 { 
     #include "include/GB_abort.h"
 }
+
+#include "include/GB_cuda_geometry.hpp"
 

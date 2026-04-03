@@ -172,17 +172,18 @@ static void _ResultSet_CompactReplyWithProperties
 	RedisModule_ReplyWithArray(ctx, prop_count);
 
 	// iterate over all properties stored on entity
-	for(int i = 0; i < prop_count; i ++) {
+	for (int i = 0; i < prop_count; i++) {
 		// compact replies include the value's type; verbose replies do not
-		RedisModule_ReplyWithArray(ctx, 3);
+		RedisModule_ReplyWithArray (ctx, 3) ;
+		SIValue value ;
 		AttributeID attr_id;
-		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
+		AttributeSet_GetIdx (set, i, &attr_id, &value) ;
 
 		// emit the attribute id
-		RedisModule_ReplyWithLongLong(ctx, attr_id);
+		RedisModule_ReplyWithLongLong (ctx, attr_id) ;
 
 		// emit the value
-		_ResultSet_CompactReplyWithSIValue(ctx, gc, value);
+		_ResultSet_CompactReplyWithSIValue (ctx, gc, value) ;
 	}
 }
 
@@ -545,4 +546,3 @@ void ResultSet_EmitCompactStats
 	buflen = sprintf(buff, "Query internal execution time: %.6f milliseconds", t);
 	RedisModule_ReplyWithStringBuffer(ctx, buff, buflen);
 }
-

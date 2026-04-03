@@ -141,7 +141,7 @@ void RdbLoadLabelMatrices_v17
 		ASSERT(lbl != NULL);
 
 		// replace lbl's current M matrix with L
-		info = Delta_Matrix_setM(lbl, L);
+		info = Delta_Matrix_setM(lbl, &L);
 		ASSERT(info == GrB_SUCCESS);
 	}
 }
@@ -182,14 +182,14 @@ void RdbLoadRelationMatrices_v17
 		Delta_Matrix DR = Graph_GetRelationMatrix(g, r, false);
 		ASSERT(DR != NULL);
 
-		info = Delta_Matrix_setM(DR, R);
-		ASSERT(info == GrB_SUCCESS);
-
 		// update graph edge statistics
 		// number of edges of type 'r' equals to:
 		// |R| - n_tensors + n_elem
 		GrB_Index nvals;
 		info = GrB_Matrix_nvals(&nvals, R);
+		ASSERT(info == GrB_SUCCESS);
+
+		info = Delta_Matrix_setM(DR, &R);
 		ASSERT(info == GrB_SUCCESS);
 
 		GraphStatistics_IncEdgeCount(&g->stats, r, nvals - n_tensors + n_elem);
@@ -214,7 +214,7 @@ void RdbLoadAdjMatrix_v17
 	ASSERT(adj != NULL);
 
 	// replace adj's current M matrix with A
-	GrB_Info info = Delta_Matrix_setM(adj, A);
+	GrB_Info info = Delta_Matrix_setM(adj, &A);
 	ASSERT(info == GrB_SUCCESS);
 }
 
@@ -236,7 +236,7 @@ void RdbLoadLblsMatrix_v17
 	ASSERT(lbl != NULL);
 
 	// replace lbl's current M matrix with A
-	GrB_Info info = Delta_Matrix_setM(lbl, A);
+	GrB_Info info = Delta_Matrix_setM(lbl, &A);
 	ASSERT(info == GrB_SUCCESS);
 }
 

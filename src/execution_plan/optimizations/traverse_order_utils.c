@@ -172,7 +172,7 @@ void FilterTree_CollectIndependentEntities
 	// clone input filter-tree as we're about to modify it
 	// breaking it down to sub-trees
 	const FT_FilterNode **sub_trees = FilterTree_SubTrees(root);
-	uint sub_tree_count = array_len(sub_trees);
+	uint sub_tree_count = arr_len(sub_trees);
 
 	// for each sub tree of 'root'
 	for(uint i = 0; i < sub_tree_count; i++) {
@@ -202,7 +202,7 @@ void FilterTree_CollectIndependentEntities
 		raxFree(modified);
 	}
 
-	array_free(sub_trees);
+	arr_free(sub_trees);
 }
 
 // score each expression and sort expressions by score

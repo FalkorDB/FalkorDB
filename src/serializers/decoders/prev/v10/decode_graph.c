@@ -10,19 +10,22 @@ static GraphContext *_GetOrCreateGraphContext
 (
 	char *graph_name
 ) {
-	GraphContext *gc = GraphContext_UnsafeGetGraphContext(graph_name);
-	if(!gc) {
+	GraphContext *gc = GraphContext_UnsafeGetGraphContext (graph_name) ;
+	if (!gc) {
 		// new graph is being decoded
 		// inform the module and create new graph context
-		gc = GraphContext_New(graph_name);
+		gc = GraphContext_New (graph_name) ;
+
 		// while loading the graph
 		// minimize matrix realloc and synchronization calls
-		Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_RESIZE);
+		Graph_AcquireWriteLock (gc->g) ;
+		Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_RESIZE) ;
 	}
-	// free the name string, as it either not in used or copied
-	RedisModule_Free(graph_name);
 
-	return gc;
+	// free the name string, as it either not in used or copied
+	RedisModule_Free (graph_name) ;
+
+	return gc ;
 }
 
 /* The first initialization of the graph data structure guarantees that there will be no further re-allocation
@@ -74,12 +77,12 @@ static GraphContext *_DecodeHeader(RedisModuleIO *rdb) {
 	if(GraphDecodeContext_GetProcessedKeyCount(gc->decoding_context) == 0) {
 		_InitGraphDataStructure(g, node_count, edge_count, label_count, relation_count);
 
-		gc->decoding_context->multi_edge = array_new(uint64_t, relation_count);
+		gc->decoding_context->multi_edge = arr_new(uint64_t, relation_count);
 		for(uint i = 0; i < relation_count; i++) {
 			// Enable/Disable support for multi-edge
 			// we will enable support for multi-edge on all relationship
 			// matrices once we finish loading the graph
-			array_append(gc->decoding_context->multi_edge,  multi_edge[i]);
+			arr_append(gc->decoding_context->multi_edge,  multi_edge[i]);
 		}
 
 		GraphDecodeContext_SetKeyCount(gc->decoding_context, key_number);
@@ -100,14 +103,14 @@ static PayloadInfo *_RdbLoadKeySchema(RedisModuleIO *rdb) {
 	*/
 
 	uint64_t payloads_count = RedisModule_LoadUnsigned(rdb);
-	PayloadInfo *payloads = array_new(PayloadInfo, payloads_count);
+	PayloadInfo *payloads = arr_new(PayloadInfo, payloads_count);
 
 	for(uint i = 0; i < payloads_count; i++) {
 		// For each payload, load its type and the number of entities it contains.
 		PayloadInfo payload_info;
 		payload_info.state =  RedisModule_LoadUnsigned(rdb);
 		payload_info.entities_count =  RedisModule_LoadUnsigned(rdb);
-		array_append(payloads, payload_info);
+		arr_append(payloads, payload_info);
 	}
 	return payloads;
 }
@@ -146,7 +149,7 @@ GraphContext *RdbLoadGraphContext_v10(RedisModuleIO *rdb) {
 	//
 	// the following switch checks which part of the graph the current key holds
 	// and decodes it accordingly
-	uint payloads_count = array_len(key_schema);
+	uint payloads_count = arr_len(key_schema);
 	for(uint i = 0; i < payloads_count; i++) {
 		PayloadInfo payload = key_schema[i];
 		switch(payload.state) {
@@ -172,7 +175,7 @@ GraphContext *RdbLoadGraphContext_v10(RedisModuleIO *rdb) {
 				break;
 		}
 	}
-	array_free(key_schema);
+	arr_free(key_schema);
 
 	// update decode context
 	GraphDecodeContext_IncreaseProcessedKeyCount(gc->decoding_context);
@@ -185,16 +188,16 @@ GraphContext *RdbLoadGraphContext_v10(RedisModuleIO *rdb) {
 		GraphDecodeContext_AddMetaKey(gc->decoding_context, key_name);
 	}
 
-	if(GraphDecodeContext_Finished(gc->decoding_context)) {
-		Graph *g = gc->g;
+	if (GraphDecodeContext_Finished (gc->decoding_context)) {
+		Graph *g = gc->g ;
+
+		// release graph write lock
+		Graph_ReleaseLock (g) ;
 
 		// set the node label matrix
 		Serializer_Graph_SetNodeLabels(g);
 
 		Graph_ApplyAllPending(g, true);
-
-		// revert to default synchronization behavior
-		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
 
 		uint rel_count   = Graph_RelationTypeCount(g);
 		uint label_count = Graph_LabelTypeCount(g);

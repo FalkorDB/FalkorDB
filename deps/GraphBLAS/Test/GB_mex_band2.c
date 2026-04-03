@@ -34,16 +34,16 @@
     }                                                   \
 }
 
- typedef struct { int64_t lo ; int64_t hi ; } LoHi_type ; 
+ typedef struct { int64_t lo ; int64_t hi ; } gb_LoHi_type ; 
 
 #define LOHI_DEFN                                       \
-"typedef struct { int64_t lo ; int64_t hi ; } LoHi_type ;"
+"typedef struct { int64_t lo ; int64_t hi ; } gb_LoHi_type ;"
 
-void LoHi_band2 (int16_t *z, /* x is unused: */ const void *x,
-    uint64_t i, uint64_t j, const LoHi_type *thunk) ;
+void gb_LoHi_band2 (int16_t *z, /* x is unused: */ const void *x,
+    uint64_t i, uint64_t j, const gb_LoHi_type *thunk) ;
 
-void LoHi_band2 (int16_t *z, /* x is unused: */ const void *x,
-    uint64_t i, uint64_t j, const LoHi_type *thunk)
+void gb_LoHi_band2 (int16_t *z, /* x is unused: */ const void *x,
+    uint64_t i, uint64_t j, const gb_LoHi_type *thunk)
 {
     int64_t i2 = (int64_t) i ;
     int64_t j2 = (int64_t) j ;
@@ -86,9 +86,9 @@ void mexFunction
     }
 
     // create the Thunk
-    LoHi_type bandwidth  ;
-    OK (GxB_Type_new (&Thunk_type, sizeof (LoHi_type),
-        "LoHi_type", LOHI_DEFN)) ;
+    gb_LoHi_type bandwidth  ;
+    OK (GxB_Type_new (&Thunk_type, sizeof (gb_LoHi_type),
+        "gb_LoHi_type", LOHI_DEFN)) ;
 
     // get lo and hi
     bandwidth.lo = (int64_t) mxGetScalar (pargin [1]) ;
@@ -108,9 +108,9 @@ void mexFunction
     }
 
     // create operator
-    // use the user-defined operator, from the LoHi_band2 function.
+    // use the user-defined operator, from the gb_LoHi_band2 function.
     // This operator cannot be JIT'd because it doesn't have a name or defn.
-    METHOD (GrB_IndexUnaryOp_new (&op, (GxB_index_unary_function) LoHi_band2,
+    METHOD (GrB_IndexUnaryOp_new (&op, (GxB_index_unary_function) gb_LoHi_band2,
         GrB_INT16, GrB_FP64, Thunk_type)) ;
 
     uint64_t nrows, ncols ;

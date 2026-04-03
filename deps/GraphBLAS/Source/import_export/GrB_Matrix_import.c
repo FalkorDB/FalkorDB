@@ -337,8 +337,8 @@ GrB_Info GB_EVAL3 (prefix, _Matrix_import_, T) /* import a matrix */           \
     GrB_Type type,          /* type of matrix to create                      */\
     uint64_t nrows,         /* number of rows of the matrix                  */\
     uint64_t ncols,         /* number of columns of the matrix               */\
-    const uint64_t *Ap,     /* pointers for CSR, CSC, row indices for COO    */\
-    const uint64_t *Ai,     /* row indices for CSR, CSC, col indices for COO */\
+    const uint64_t *Ap,     /* pointers for CSR,CSC; row indices for COO     */\
+    const uint64_t *Ai,     /* row indices for CSR; col indices for COO,CSR  */\
     const ctype *Ax,        /* values (must match GrB_Type type parameter)   */\
     uint64_t Ap_len,        /* number of entries in Ap (not # of bytes)      */\
     uint64_t Ai_len,        /* number of entries in Ai (not # of bytes)      */\

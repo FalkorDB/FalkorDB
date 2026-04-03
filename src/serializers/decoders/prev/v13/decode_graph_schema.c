@@ -27,10 +27,10 @@ static void _RdbLoadFullTextIndex
 	
 	uint stopwords_count = RedisModule_LoadUnsigned(rdb);
 	if(stopwords_count > 0) {
-		stopwords = array_new(char *, stopwords_count);
+		stopwords = arr_new(char *, stopwords_count);
 		for (uint i = 0; i < stopwords_count; i++) {
 			char *stopword = RedisModule_LoadStringBuffer(rdb, NULL);
-			array_append(stopwords, stopword);
+			arr_append(stopwords, stopword);
 		}
 	}
 
@@ -205,11 +205,11 @@ static void _RdbLoadSchema
 	if(!already_loaded) {
 		s = Schema_New(type, id, name);
 		if(type == SCHEMA_NODE) {
-			ASSERT(array_len(gc->node_schemas) == id);
-			array_append(gc->node_schemas, s);
+			ASSERT(arr_len(gc->node_schemas) == id);
+			arr_append(gc->node_schemas, s);
 		} else {
-			ASSERT(array_len(gc->relation_schemas) == id);
-			array_append(gc->relation_schemas, s);
+			ASSERT(arr_len(gc->relation_schemas) == id);
+			arr_append(gc->relation_schemas, s);
 		}
 	}
 
@@ -279,7 +279,7 @@ void RdbLoadGraphSchema_v13
 	uint schema_count = RedisModule_LoadUnsigned(rdb);
 
 	// Load each node schema
-	gc->node_schemas = array_ensure_cap(gc->node_schemas, schema_count);
+	gc->node_schemas = arr_ensure_cap(gc->node_schemas, schema_count);
 	for(uint i = 0; i < schema_count; i ++) {
 		_RdbLoadSchema(rdb, gc, SCHEMA_NODE, already_loaded);
 	}
@@ -288,7 +288,7 @@ void RdbLoadGraphSchema_v13
 	schema_count = RedisModule_LoadUnsigned(rdb);
 
 	// Load each edge schema
-	gc->relation_schemas = array_ensure_cap(gc->relation_schemas, schema_count);
+	gc->relation_schemas = arr_ensure_cap(gc->relation_schemas, schema_count);
 	for(uint i = 0; i < schema_count; i ++) {
 		_RdbLoadSchema(rdb, gc, SCHEMA_EDGE, already_loaded);
 	}

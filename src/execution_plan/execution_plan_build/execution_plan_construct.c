@@ -130,11 +130,11 @@ static void _buildForeachOp
 
 	// construct AST from Foreach body
 	uint nclauses = cypher_ast_foreach_nclauses(clause);
-	cypher_astnode_t **clauses = array_new(cypher_astnode_t *, nclauses);
+	cypher_astnode_t **clauses = arr_new(cypher_astnode_t *, nclauses);
 	for(uint i = 0; i < nclauses; i++) {
 		cypher_astnode_t *inner_clause =
 			(cypher_astnode_t *)cypher_ast_foreach_get_clause(clause, i);
-		array_append(clauses, inner_clause);
+		arr_append(clauses, inner_clause);
 	}
 
 	struct cypher_input_range range = {0};
@@ -205,8 +205,8 @@ static void _buildForeachOp
 	QueryCtx_SetAST(orig_ast);
 
 	// free the artificial body array (not its components)
-	array_free(clauses);
-	array_free(arguments);
+	arr_free(clauses);
+	arr_free(arguments);
 
 	// connect the embedded plan to the Foreach op
 	ExecutionPlan_AddOp(foreach, embedded_plan->root);
@@ -244,10 +244,10 @@ OpBase *ExecutionPlan_BuildOpsFromPath
 
 	// extract pattern from holistic query graph
 	const cypher_astnode_t **match_clauses = AST_GetClauses(match_stream_ast, CYPHER_AST_MATCH);
-	ASSERT(array_len(match_clauses) == 1);
+	ASSERT(arr_len(match_clauses) == 1);
 
 	const cypher_astnode_t *pattern = cypher_ast_match_get_pattern(match_clauses[0]);
-	array_free(match_clauses);
+	arr_free(match_clauses);
 	QueryGraph *sub_qg = QueryGraph_ExtractPatterns(plan->query_graph, &pattern, 1);
 	match_stream_plan->query_graph = sub_qg;
 
@@ -302,7 +302,7 @@ void ExecutionPlanSegment_ConvertClause
 	} else if(t == CYPHER_AST_FOREACH) {
 		_buildForeachOp(plan, clause, gc);
 	} else if(t == CYPHER_AST_CALL_SUBQUERY) {
-		buildCallSubqueryPlan(plan, clause);
+		buildCallSubqueryPlan (plan, clause) ;
 	} else if(t == CYPHER_AST_LOAD_CSV) {
 		_buildLoadCSVOp(plan, clause);
 	} else {

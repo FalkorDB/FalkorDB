@@ -100,15 +100,13 @@ static bool _ConstructIterator
 	NodeByLabelScan *op
 ) {
 	GrB_Info info;
-	NodeID   minId;
-	NodeID   maxId;
 
 	op->L = Graph_GetLabelMatrix(op->g, op->n->label_id);
 
-	bool has_ranges = array_len(op->ranges) > 0;
+	bool has_ranges = arr_len(op->ranges) > 0;
 	if(has_ranges) {
 		// use range iterator
-		if(!BitmapRange_FromRanges(op->ranges, op->ids, op->child_record, 0,
+		if (!BitmapRange_FromRanges (op->ranges, op->ids, op->child_record, 0,
 				Graph_UncompactedNodeCount(op->g))) {
 			return false;
 		}
@@ -135,7 +133,7 @@ static OpResult NodeByLabelScanInit
 ) {
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 
-	bool has_ranges = array_len(op->ranges) > 0;
+	bool has_ranges = arr_len(op->ranges) > 0;
 
 	OpBase_UpdateConsume(opBase, has_ranges
 		? NodeByLabelAndIDScanConsume 
@@ -228,8 +226,7 @@ static Record NodeByLabelAndIDScanConsume
 	while(roaring64_iterator_has_value(op->ID_it)) {
 		id = roaring64_iterator_value(op->ID_it);
 		roaring64_iterator_advance(op->ID_it);
-		bool x;
-		if(Delta_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
+		if(Delta_Matrix_isStoredElement(op->L, id, id) == GrB_SUCCESS) {
 			Record r = OpBase_CreateRecord((OpBase *)op);
 
 			// Populate the Record with the actual node.
@@ -302,7 +299,6 @@ static Record NodeByLabelAndIDScanConsumeFromChild
 ) {
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 
-	bool      x;
 	bool      emited;
 	GrB_Index id;
 	GrB_Info  info;
@@ -315,7 +311,7 @@ pull:
 		roaring64_iterator_advance(op->ID_it);
 
 		// make sure ID is labeled as L
-		if(Delta_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
+		if(Delta_Matrix_isStoredElement(op->L, id, id) == GrB_SUCCESS) {
 			emited = true;
 			break;
 		}
@@ -400,10 +396,10 @@ static void NodeByLabelScanFree
 	}
 
 	if(op->ranges) {
-		for(int i = 0; i < array_len(op->ranges); i++) {
+		for(int i = 0; i < arr_len(op->ranges); i++) {
 			RangeExpression_Free(op->ranges + i);
 		}
-		array_free(op->ranges);
+		arr_free(op->ranges);
 		op->ranges = NULL;
 	}
 

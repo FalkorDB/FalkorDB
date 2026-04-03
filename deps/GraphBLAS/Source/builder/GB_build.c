@@ -303,8 +303,8 @@ GrB_Info GB_build               // build matrix
         xtype,          // type of the X array
         true,           // burble is OK
         Werk,
-        I_is_32,        // if true, I is 32-bit; else 64-bit
-        J_is_32,        // if true, J is 32-bit; else 64-bit
+        C->is_csc ? I_is_32 : J_is_32,  // if true, I is 32-bit; else 64-bit
+        C->is_csc ? J_is_32 : I_is_32,  // if true, J is 32-bit; else 64-bit
         Tp_is_32, Tj_is_32, Ti_is_32    // integer sizes to create T
     )) ;
 
@@ -336,8 +336,8 @@ GrB_Info GB_build               // build matrix
     // created an iso-valued matrix T, but this is not yet known.  X_iso is
     // false for these methods.  Since it has not yet been conformed to its
     // final sparsity structure, the matrix T is hypersparse, not bitmap.  It
-    // has no zombies or pending tuples, so GB_all_entries_are_iso does need to
-    // handle those cases.  T->x [0] is the new iso value of T.
+    // has no zombies or pending tuples, so GB_all_entries_are_iso does not
+    // need to handle those cases.  T->x [0] is the new iso value of T.
 
     if (!X_iso && GB_all_entries_are_iso (T))
     { 

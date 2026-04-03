@@ -41,7 +41,7 @@ uint64_t GB_encodify_reduce // encode a GrB_reduce problem
 
     GB_enumify_reduce (&encoding->code, monoid, A) ;
     bool builtin = (monoid->hash == 0) ;
-    encoding->kcode = kcode ;
+    GB_encodify_kcode (encoding, kcode) ;
 
     //--------------------------------------------------------------------------
     // determine the suffix and its length

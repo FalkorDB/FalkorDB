@@ -31,4 +31,5 @@ void reduceTraversal(ExecutionPlan *plan);
 void reduceDistinct(ExecutionPlan *plan);
 void reduceCount(ExecutionPlan *plan);
 void costBaseLabelScan(ExecutionPlan *plan);
+void batchOptionalMatch(ExecutionPlan *plan);
 

@@ -108,19 +108,23 @@ static void _ResultSet_VerboseReplyWithProperties
 	GraphContext *gc,
 	const GraphEntity *e
 ) {
-	const AttributeSet set = GraphEntity_GetAttributes(e);
+	const AttributeSet set = GraphEntity_GetAttributes (e) ;
 	int prop_count = AttributeSet_Count(set);
-	RedisModule_ReplyWithArray(ctx, prop_count);
+	RedisModule_ReplyWithArray (ctx, prop_count) ;
+
 	// iterate over all properties stored on entity
 	for(int i = 0; i < prop_count; i ++) {
-		RedisModule_ReplyWithArray(ctx, 2);
-		AttributeID attr_id;
-		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
-		// Emit the actual string
-		const char *prop_str = GraphContext_GetAttributeString(gc, attr_id);
-		RedisModule_ReplyWithStringBuffer(ctx, prop_str, strlen(prop_str));
-		// Emit the value
-		_ResultSet_VerboseReplyWithSIValue(ctx, gc, value);
+		RedisModule_ReplyWithArray (ctx, 2) ;
+
+		SIValue value ;
+		AttributeID attr_id ;
+		AttributeSet_GetIdx (set, i, &attr_id, &value) ;
+
+		// emit the actual string
+		const char *prop_str = GraphContext_GetAttributeString (gc, attr_id) ;
+		RedisModule_ReplyWithStringBuffer (ctx, prop_str, strlen (prop_str)) ;
+		// emit the value
+		_ResultSet_VerboseReplyWithSIValue (ctx, gc, value) ;
 	}
 }
 
@@ -158,6 +162,7 @@ static void _ResultSet_VerboseReplyWithNode(RedisModuleCtx *ctx, GraphContext *g
 	RedisModule_ReplyWithArray(ctx, 2);
 	RedisModule_ReplyWithStringBuffer(ctx, "properties", 10);
 	_ResultSet_VerboseReplyWithProperties(ctx, gc, (GraphEntity *)n);
+
 }
 
 static void _ResultSet_VerboseReplyWithEdge(RedisModuleCtx *ctx, GraphContext *gc, Edge *e) {

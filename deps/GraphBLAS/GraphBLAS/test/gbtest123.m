@@ -20,7 +20,13 @@ try
     S = GrB.build (H,H,H) ;
     ok = false ;
 catch me
-    assert (isequal (me.message, 'input matrix dimensions are too large')) ;
+    me
+    have_octave = gb_octave ;
+    if (have_octave)
+        assert (isequal (me.message, 'gbbuild: input matrix dimensions are too large')) ;
+    else
+        assert (isequal (me.message, 'input matrix dimensions are too large')) ;
+    end
     ok = true ;
 end
 assert (ok) ;

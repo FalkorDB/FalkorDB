@@ -207,11 +207,7 @@ static void _Decode_Delta_Matrix
 	GrB_Matrix DP = _Decode_GrB_Matrix (rdb) ;
 	GrB_Matrix DM = _Decode_GrB_Matrix (rdb) ;
 
-	ASSERT (M  != NULL) ;
-	ASSERT (DP != NULL) ;
-	ASSERT (DM != NULL) ;
-
-	GrB_Info info = Delta_Matrix_setMatrices (D, M, DP, DM) ;
+	GrB_Info info = Delta_Matrix_setMatrices (D, &M, &DP, &DM) ;
 	ASSERT (info == GrB_SUCCESS) ;
 }
 

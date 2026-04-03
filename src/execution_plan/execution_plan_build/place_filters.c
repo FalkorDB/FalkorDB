@@ -35,7 +35,7 @@ static void _ExecutionPlan_PlaceApplyOps
 	ExecutionPlan *plan
 ) {
 	OpBase **filter_ops = ExecutionPlan_CollectOps(plan->root, OPType_FILTER);
-	uint filter_ops_count = array_len(filter_ops);
+	uint filter_ops_count = arr_len(filter_ops);
 	for(uint i = 0; i < filter_ops_count; i++) {
 		OpFilter *op = (OpFilter *)filter_ops[i];
 		FT_FilterNode *node;
@@ -47,7 +47,7 @@ static void _ExecutionPlan_PlaceApplyOps
 			ExecutionPlan_ReduceFilterToApply(plan, op);
 		}
 	}
-	array_free(filter_ops);
+	arr_free(filter_ops);
 }
 
 // reposition a filter operation to the earliest position within the plan
@@ -103,7 +103,7 @@ void ExecutionPlan_RePositionFilterOp
 		// place the filter directly below the first projection if there is one
 		// otherwise update the execution plan's root
 		op = ExecutionPlan_LocateOpMatchingTypes(plan->root, PROJECT_OPS,
-				PROJECT_OP_COUNT);
+				PROJECT_OP_COUNT, NULL);
 		op = (op == NULL) ? plan->root : op;
 	}
 
@@ -162,7 +162,7 @@ void ExecutionPlan_PlaceFilterOps
 
 	// for each filter tree, find the earliest position in the op tree
 	// after which the filter tree can be applied
-	uint n = array_len(sub_trees);
+	uint n = arr_len(sub_trees);
 	for(uint i = 0; i < n; i++) {
 		// clone current sub-tree
 		FT_FilterNode *tree = FilterTree_Clone(sub_trees[i]);
@@ -175,7 +175,7 @@ void ExecutionPlan_PlaceFilterOps
 	}
 
 	// all trees been positioned, clean up
-	array_free(sub_trees);
+	arr_free(sub_trees);
 	FilterTree_Free(ft);
 
 	// build ops in the Apply family to appropriately process path filters

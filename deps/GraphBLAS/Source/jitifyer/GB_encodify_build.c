@@ -45,7 +45,7 @@ uint64_t GB_encodify_build      // encode an build problem
     // primary encoding of the problem
     //--------------------------------------------------------------------------
 
-    encoding->kcode = kcode ;
+    GB_encodify_kcode (encoding, kcode) ;
     GB_enumify_build (&encoding->code, dup, ttype, stype,
         Ti_is_32, I_is_32, K_is_32, K_is_null, no_duplicates) ;
 

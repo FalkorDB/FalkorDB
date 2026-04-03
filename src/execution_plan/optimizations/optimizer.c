@@ -30,6 +30,9 @@ void Optimizer_CompileTimeOptimize
 
 	// try to reduce distinct if it follows aggregation
 	reduceDistinct(plan);
+
+	// batch optional match
+	batchOptionalMatch (plan) ;
 }
 
 // apply runtime optimizations

@@ -45,7 +45,7 @@ static void _process_yield
 	const char **yield
 ) {
 	int idx = 0;
-	for(uint i = 0; i < array_len(yield); i++) {
+	for(uint i = 0; i < arr_len(yield); i++) {
 		if(strcasecmp("node", yield[i]) == 0) {
 			ctx->yield_node = ctx->output + idx;
 			idx++;
@@ -114,7 +114,7 @@ static bool _read_config
 			goto error;
 		}
 
-		_lbls = array_new(LabelID, 0);
+		_lbls = arr_new(LabelID, 0);
 		u_int32_t l = SIArray_Length(v);
 		for(u_int32_t i = 0; i < l; i++) {
 			SIValue lbl = SIArray_Get(v, i);
@@ -126,7 +126,7 @@ static bool _read_config
 			}
 
 			LabelID lbl_id = Schema_GetID(s);
-			array_append(_lbls, lbl_id);
+			arr_append(_lbls, lbl_id);
 		}
 		*lbls = _lbls;
 
@@ -144,7 +144,7 @@ static bool _read_config
 			goto error;
 		}
 
-		_rels = array_new(RelationID, 0);
+		_rels = arr_new(RelationID, 0);
 		u_int32_t l = SIArray_Length(v);
 		for(u_int32_t i = 0; i < l; i++) {
 			SIValue rel = SIArray_Get(v, i);
@@ -156,7 +156,7 @@ static bool _read_config
 			}
 
 			RelationID rel_id = Schema_GetID(s);
-			array_append(_rels, rel_id);
+			arr_append(_rels, rel_id);
 		}
 		*rels = _rels;
 
@@ -172,12 +172,12 @@ static bool _read_config
 
 error:
 	if(_lbls != NULL) {
-		array_free(_lbls);
+		arr_free(_lbls);
 		*lbls = NULL;
 	}
 
 	if(_rels != NULL) {
-		array_free(_rels);
+		arr_free(_rels);
 		*rels = NULL;
 	}
 
@@ -193,7 +193,7 @@ ProcedureResult Proc_CDLPInvoke
 ) {
 	// expecting 0 or 1 argument
 
-	size_t l = array_len((SIValue *)args);
+	size_t l = arr_len((SIValue *)args);
 
 	if(l > 1) return PROCEDURE_ERR;
 
@@ -256,12 +256,12 @@ ProcedureResult Proc_CDLPInvoke
 	//--------------------------------------------------------------------------
 
 	GrB_Matrix A = NULL;
-	Build_Matrix(&A, &pdata->nodes, g, lbls, array_len(lbls), rels,
-			array_len(rels), true, true);
+	Build_Matrix(&A, &pdata->nodes, g, lbls, arr_len(lbls), rels,
+			arr_len(rels), true, true);
 
 	// free build matrix inputs
-	if(lbls != NULL) array_free(lbls);
-	if(rels != NULL) array_free(rels);
+	if(lbls != NULL) arr_free(lbls);
+	if(rels != NULL) arr_free(rels);
 
 	//--------------------------------------------------------------------------
 	// run CDLP
@@ -374,12 +374,12 @@ ProcedureResult Proc_CDLPFree
 ProcedureCtx *Proc_CDLPCtx(void) {
 	void *privateData = NULL;
 
-	ProcedureOutput *outputs         = array_new(ProcedureOutput, 2);
+	ProcedureOutput *outputs         = arr_new(ProcedureOutput, 2);
 	ProcedureOutput output_node      = {.name = "node", .type = T_NODE};
 	ProcedureOutput output_community = {.name = "communityId", .type = T_INT64};
 
-	array_append(outputs, output_node);
-	array_append(outputs, output_community);
+	arr_append(outputs, output_node);
+	arr_append(outputs, output_community);
 
 	ProcedureCtx *ctx = ProcCtxNew("algo.labelPropagation",
 								   PROCEDURE_VARIABLE_ARG_COUNT,

@@ -26,7 +26,7 @@ CommandCtx *CommandCtx_New
 	bool compact,                  // whether this query was issued with the compact flag
 	long long timeout,             // the query timeout, if specified
 	bool timeout_rw,               // apply timeout on both read and write queries
-	uint64_t received_ts,          // command received at this  UNIX timestamp
+	uint64_t received_ts,          // command received at this UNIX timestamp
 	simple_timer_t timer,          // stopwatch started upon command received
 	bolt_client_t *bolt_client     // BOLT client
 ) {

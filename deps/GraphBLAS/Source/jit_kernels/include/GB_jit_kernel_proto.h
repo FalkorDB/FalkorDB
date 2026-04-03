@@ -225,6 +225,7 @@ GrB_Info GB_jit_kernel_AxB_saxpy5                                       \
     const int64_t *restrict B_slice,                                    \
     bool cpu_has_avx2,                                                  \
     bool cpu_has_avx512f,                                               \
+    bool cpu_has_rvv1,                                                  \
     const void *theta,                                                  \
     const GB_callback_struct *restrict my_callback                      \
 )
@@ -661,8 +662,7 @@ GrB_Info GB_jit_kernel_subref_sparse                                    \
     const int ntasks,                                                   \
     const int nthreads,                                                 \
     const bool post_sort,                                               \
-    const void *Ihead_input,                                            \
-    const void *Inext_input,                                            \
+    const GrB_Matrix R,                                                 \
     const void *Ap_start_input,                                         \
     const void *Ap_end_input,                                           \
     const int64_t nI,                                                   \
@@ -826,7 +826,6 @@ GrB_Info GB_jit_kernel_select_bitmap                                        \
     const GB_void *ythunk,                                                  \
     cudaStream_t stream,                                                    \
     int32_t gridsz,                                                         \
-    int32_t blocksz,                                                        \
     const GB_callback_struct *restrict my_callback                          \
 )                                                                           \
 
@@ -838,7 +837,6 @@ GrB_Info GB_jit_kernel_select_sparse                                        \
     const GB_void *ythunk,                                                  \
     cudaStream_t stream,                                                    \
     int32_t gridsz,                                                         \
-    int32_t blocksz,                                                        \
     const GB_callback_struct *restrict my_callback                          \
 )
 

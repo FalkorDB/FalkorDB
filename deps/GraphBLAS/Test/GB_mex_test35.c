@@ -64,10 +64,23 @@ void mexFunction
     OK (GrB_set (A, 64, GxB_ROWINDEX_INTEGER_HINT)) ;
     OK (GrB_set (A, 64, GxB_COLINDEX_INTEGER_HINT)) ;
 
+    //--------------------------------------------------------------------------
+    // test global hints
+    //--------------------------------------------------------------------------
+
     expected = GrB_INVALID_VALUE ;
     ERR (GrB_set (GrB_GLOBAL, 0, GxB_OFFSET_INTEGER_HINT)) ;
     ERR (GrB_set (GrB_GLOBAL, 0, GxB_ROWINDEX_INTEGER_HINT)) ;
     ERR (GrB_set (GrB_GLOBAL, 0, GxB_COLINDEX_INTEGER_HINT)) ;
+
+    OK (GrB_set (GrB_GLOBAL, GrB_ROWMAJOR, GrB_STORAGE_ORIENTATION_HINT)) ;
+    OK (GrB_set (GrB_GLOBAL, 32, GxB_OFFSET_INTEGER_HINT)) ;
+    OK (GrB_set (GrB_GLOBAL, 32, GxB_ROWINDEX_INTEGER_HINT)) ;
+    OK (GrB_set (GrB_GLOBAL, 32, GxB_COLINDEX_INTEGER_HINT)) ;
+    OK (GrB_set (GrB_GLOBAL, GrB_COLMAJOR, GrB_STORAGE_ORIENTATION_HINT)) ;
+    OK (GrB_set (GrB_GLOBAL, 32, GxB_OFFSET_INTEGER_HINT)) ;
+    OK (GrB_set (GrB_GLOBAL, 32, GxB_ROWINDEX_INTEGER_HINT)) ;
+    OK (GrB_set (GrB_GLOBAL, 32, GxB_COLINDEX_INTEGER_HINT)) ;
 
     //--------------------------------------------------------------------------
     // test GxB_Serialized_get

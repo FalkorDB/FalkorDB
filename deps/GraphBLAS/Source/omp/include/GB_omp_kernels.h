@@ -36,13 +36,20 @@
 //------------------------------------------------------------------------------
 
 #if defined ( _OPENMP )
+    // using OpenMP 2.0 or later
     #include <omp.h>
     #define GB_OPENMP_MAX_THREADS       omp_get_max_threads ( )
     #define GB_OPENMP_GET_WTIME         omp_get_wtime ( )
-
+    #define GB_OPENMP_LOCK_T            omp_lock_t
+    #define GB_OPENMP_LOCK_SET(k)       GB_Global_lock_set (k) ;
+    #define GB_OPENMP_LOCK_UNSET(k)     GB_Global_lock_unset (k) ;
 #else
+    // no OpenMP at all
     #define GB_OPENMP_MAX_THREADS       (1)
     #define GB_OPENMP_GET_WTIME         (0)
+    #define GB_OPENMP_LOCK_T            int
+    #define GB_OPENMP_LOCK_SET(k)
+    #define GB_OPENMP_LOCK_UNSET(k)
 #endif
 
 #endif

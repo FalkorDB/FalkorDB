@@ -29,7 +29,7 @@ OpBase *NewArgumentOp
 				ArgumentFree, false, plan);
 
 	// introduce modifies
-	uint n = array_len(variables);
+	uint n = arr_len(variables);
 	for(uint i = 0; i < n; i++) {
 		OpBase_Modifies((OpBase *)op, variables[i]);
 	}

@@ -82,7 +82,7 @@ void GB_macrofy_build           // construct all macros for GB_build
     // construct the typedefs
     //--------------------------------------------------------------------------
 
-    GB_macrofy_typedefs (fp, stype, ttype, NULL, xtype, ytype, ztype) ;
+    GB_macrofy_typedefs (fp, stype, ttype, NULL, xtype, ytype, ztype, NULL) ;
 
     fprintf (fp, "// binary dup operator types:\n") ;
     GB_macrofy_type (fp, "Z", "_", ztype_name) ;

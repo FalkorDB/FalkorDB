@@ -9,7 +9,9 @@ FROM $BASE_IMAGE AS compiler
 FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
 
 
-FROM redis:8.0.2
+FROM node:24-bookworm-slim AS node
+
+FROM redis:8.6.2
 
 ENV FALKORDB_HOME=/var/lib/falkordb
 
@@ -32,21 +34,25 @@ RUN ln -s ${FALKORDB_BIN_PATH} /FalkorDB/build/docker && \
     ln -s ${FALKORDB_BIN_PATH} /FalkorDB/bin/src && \
     ln -s ${FALKORDB_DATA_PATH} /data
 
-RUN apt-get update && apt-get install -y libgomp1 curl && \
-    curl -sL https://deb.nodesource.com/setup_22.x -o nodesource_setup.sh && \
-    bash nodesource_setup.sh && \
-    apt-get install -y nodejs && \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libgomp1 ca-certificates && \
     apt-get upgrade -y && \
+    # Remove packages not needed at runtime to reduce CVE surface
+    (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+# Copy only Node.js runtime from official image (no npm, no curl/gnupg needed)
+COPY --from=node /usr/local/bin/node /usr/local/bin/
+
 
 WORKDIR ${FALKORDB_HOME}
 
 COPY ./build/docker/run.sh ${FALKORDB_BIN_PATH}/run.sh
 COPY ./build/docker/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 
-COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
+COPY --from=compiler /FalkorDB/bin/linux*/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
 COPY --from=browser /app ${FALKORDB_BROWSER_PATH}
 

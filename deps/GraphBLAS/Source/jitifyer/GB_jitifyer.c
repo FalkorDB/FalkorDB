@@ -72,7 +72,7 @@ static size_t   GB_jit_C_link_flags_allocated = 0 ;
 static char    *GB_jit_C_libraries = NULL ;
 static size_t   GB_jit_C_libraries_allocated = 0 ;
 
-// libraries to link against when using cmake: 
+// libraries to link against when using cmake:
 static char    *GB_jit_C_cmake_libs = NULL ;
 static size_t   GB_jit_C_cmake_libs_allocated = 0 ;
 
@@ -279,6 +279,11 @@ void GB_jitifyer_sanitize (char *string, size_t len)
 
 GrB_Info GB_jitifyer_init (void)
 { 
+    #if defined ( GRAPHBLAS_HAS_CUDA )
+    int device = -1 ;
+    GB_cuda_get_device (&device) ;
+    printf ("JIT init, device %d\n", device) ;  // for CUDA only
+    #endif
 
     //--------------------------------------------------------------------------
     // initialize the JIT control
@@ -556,8 +561,10 @@ GrB_Info GB_jitifyer_init (void)
         }
 
         #undef IS
-        encoding->kcode = c ;
         encoding->code = method_code ;
+        encoding->major = 0 ;       // CUDA PreJIT kernels not yet supported
+        encoding->minor = 0 ;
+        encoding->kcode = c ;
         encoding->suffix_len = (int32_t) GB_STRLEN (suffix) ;
 
         //----------------------------------------------------------------------
@@ -651,15 +658,14 @@ GrB_Info GB_jitifyer_establish_paths (GrB_Info error_condition)
 { 
 
     //--------------------------------------------------------------------------
-    // construct the src and lock folders
+    // construct the src folders
     //--------------------------------------------------------------------------
 
     bool ok = GB_file_mkdir (GB_jit_cache_path) ;
 
-    // construct the c, lib, and lock paths and their 256 subfolders
+    // construct the c and lib and their 256 subfolders
     ok = ok && GB_jitifyer_path_256 ("c") ;
     ok = ok && GB_jitifyer_path_256 ("lib") ;
-    ok = ok && GB_jitifyer_path_256 ("lock") ;
 
     // construct the src path and its subfolders
     snprintf (GB_jit_temp, GB_jit_temp_allocated, "%s/src", GB_jit_cache_path) ;
@@ -707,22 +713,6 @@ GrB_Info GB_jitifyer_extract_JITpackage (GrB_Info error_condition)
     #ifndef NJIT
 
     //--------------------------------------------------------------------------
-    // lock the lock/00/src_lock file
-    //--------------------------------------------------------------------------
-
-    snprintf (GB_jit_temp, GB_jit_temp_allocated, "%s/lock/00/src_lock",
-        GB_jit_cache_path) ;
-    FILE *fp_lock = NULL ;
-    int fd_lock = -1 ;
-    if (!GB_file_open_and_lock (GB_jit_temp, &fp_lock, &fd_lock))
-    {
-        // failure; disable the JIT
-        GBURBLE ("(jit: unable to write to source cache, jit disabled) ") ;
-        GB_jit_control = GxB_JIT_RUN ;
-        return (error_condition) ;
-    }
-
-    //--------------------------------------------------------------------------
     // check the version number in src/GraphBLAS.h
     //--------------------------------------------------------------------------
 
@@ -741,7 +731,6 @@ GrB_Info GB_jitifyer_extract_JITpackage (GrB_Info error_condition)
             v3 == GxB_IMPLEMENTATION_SUB)
         { 
             // looks fine; assume the rest of the source is fine
-            GB_file_unlock_and_close (&fp_lock, &fd_lock) ;
             return (GrB_SUCCESS) ;
         }
     }
@@ -818,12 +807,6 @@ GrB_Info GB_jitifyer_extract_JITpackage (GrB_Info error_condition)
     //--------------------------------------------------------------------------
 
     GB_FREE_PERSISTENT (dst) ;
-
-    //--------------------------------------------------------------------------
-    // unlock and close the lock/GB_src_lock file
-    //--------------------------------------------------------------------------
-
-    GB_file_unlock_and_close (&fp_lock, &fd_lock) ;
     if (!ok)
     {
         // JITPackage error: disable the JIT
@@ -844,10 +827,11 @@ GrB_Info GB_jitifyer_extract_JITpackage (GrB_Info error_condition)
 int GB_jitifyer_get_control (void)
 {
     int control ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     { 
         control = GB_jit_control ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (control) ;
 }
 
@@ -857,7 +841,7 @@ int GB_jitifyer_get_control (void)
 
 void GB_jitifyer_set_control (int control)
 { 
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         control = GB_IMAX (control, (int) GxB_JIT_OFF) ;
         #ifndef NJIT
@@ -876,6 +860,7 @@ void GB_jitifyer_set_control (int control)
             GB_jitifyer_table_free (false) ;
         }
     }
+    GB_OPENMP_LOCK_UNSET (1)
 }
 
 //------------------------------------------------------------------------------
@@ -929,10 +914,11 @@ GrB_Info GB_jitifyer_alloc_space (void)
 const char *GB_jitifyer_get_cache_path (void)
 { 
     const char *s ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         s = GB_jit_cache_path ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (s) ;
 }
 
@@ -962,10 +948,11 @@ GrB_Info GB_jitifyer_set_cache_path (const char *new_cache_path)
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         info = GB_jitifyer_set_cache_path_worker (new_cache_path) ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (info) ;
 }
 
@@ -996,10 +983,11 @@ GrB_Info GB_jitifyer_set_cache_path_worker (const char *new_cache_path)
 const char *GB_jitifyer_get_error_log (void)
 { 
     const char *s ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         s = GB_jit_error_log ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (s) ;
 }
 
@@ -1018,11 +1006,12 @@ GrB_Info GB_jitifyer_set_error_log (const char *new_error_log)
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         info = GB_jitifyer_set_error_log_worker
             ((new_error_log == NULL) ? "" : new_error_log) ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (info) ;
 }
 
@@ -1048,10 +1037,11 @@ GrB_Info GB_jitifyer_set_error_log_worker (const char *new_error_log)
 const char *GB_jitifyer_get_C_compiler (void)
 { 
     const char *s ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         s = GB_jit_C_compiler ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (s) ;
 }
 
@@ -1076,10 +1066,11 @@ GrB_Info GB_jitifyer_set_C_compiler (const char *new_C_compiler)
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         info = GB_jitifyer_set_C_compiler_worker (new_C_compiler) ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (info) ;
 }
 
@@ -1104,10 +1095,11 @@ GrB_Info GB_jitifyer_set_C_compiler_worker (const char *new_C_compiler)
 const char *GB_jitifyer_get_C_flags (void)
 { 
     const char *s ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         s = GB_jit_C_flags ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (s) ;
 }
 
@@ -1132,10 +1124,11 @@ GrB_Info GB_jitifyer_set_C_flags (const char *new_C_flags)
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         info = GB_jitifyer_set_C_flags_worker (new_C_flags) ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (info) ;
 }
 
@@ -1160,10 +1153,11 @@ GrB_Info GB_jitifyer_set_C_flags_worker (const char *new_C_flags)
 const char *GB_jitifyer_get_C_link_flags (void)
 { 
     const char *s ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         s = GB_jit_C_link_flags ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (s) ;
 }
 
@@ -1188,10 +1182,11 @@ GrB_Info GB_jitifyer_set_C_link_flags (const char *new_C_link_flags)
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         info = GB_jitifyer_set_C_link_flags_worker (new_C_link_flags) ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (info) ;
 }
 
@@ -1216,10 +1211,11 @@ GrB_Info GB_jitifyer_set_C_link_flags_worker (const char *new_C_link_flags)
 const char *GB_jitifyer_get_C_libraries (void)
 { 
     const char *s ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         s = GB_jit_C_libraries ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (s) ;
 }
 
@@ -1244,10 +1240,11 @@ GrB_Info GB_jitifyer_set_C_libraries (const char *new_C_libraries)
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         info = GB_jitifyer_set_C_libraries_worker (new_C_libraries) ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (info) ;
 }
 
@@ -1272,10 +1269,11 @@ GrB_Info GB_jitifyer_set_C_libraries_worker (const char *new_C_libraries)
 bool GB_jitifyer_get_use_cmake (void)
 { 
     bool use_cmake ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         use_cmake = GB_jit_use_cmake ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (use_cmake) ;
 }
 
@@ -1285,7 +1283,7 @@ bool GB_jitifyer_get_use_cmake (void)
 
 void GB_jitifyer_set_use_cmake (bool use_cmake)
 { 
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         #if defined (_MSC_VER)
         // Windows requires cmake
@@ -1298,6 +1296,7 @@ void GB_jitifyer_set_use_cmake (bool use_cmake)
         GB_jit_use_cmake = use_cmake ;
         #endif
     }
+    GB_OPENMP_LOCK_UNSET (1)
 }
 
 //------------------------------------------------------------------------------
@@ -1307,10 +1306,11 @@ void GB_jitifyer_set_use_cmake (bool use_cmake)
 const char *GB_jitifyer_get_C_cmake_libs (void)
 { 
     const char *s ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         s = GB_jit_C_cmake_libs ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (s) ;
 }
 
@@ -1335,10 +1335,11 @@ GrB_Info GB_jitifyer_set_C_cmake_libs (const char *new_cmake_libs)
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         info = GB_jitifyer_set_C_cmake_libs_worker (new_cmake_libs) ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (info) ;
 }
 
@@ -1363,10 +1364,11 @@ GrB_Info GB_jitifyer_set_C_cmake_libs_worker (const char *new_cmake_libs)
 const char *GB_jitifyer_get_C_preface (void)
 { 
     const char *s ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         s = GB_jit_C_preface ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (s) ;
 }
 
@@ -1391,10 +1393,11 @@ GrB_Info GB_jitifyer_set_C_preface (const char *new_C_preface)
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         info = GB_jitifyer_set_C_preface_worker (new_C_preface) ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (info) ;
 }
 
@@ -1418,10 +1421,11 @@ GrB_Info GB_jitifyer_set_C_preface_worker (const char *new_C_preface)
 const char *GB_jitifyer_get_CUDA_preface (void)
 { 
     const char *s ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         s = GB_jit_CUDA_preface ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (s) ;
 }
 
@@ -1446,10 +1450,11 @@ GrB_Info GB_jitifyer_set_CUDA_preface (const char *new_CUDA_preface)
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     {
         info = GB_jitifyer_set_CUDA_preface_worker (new_CUDA_preface) ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
     return (info) ;
 }
 
@@ -1658,11 +1663,12 @@ GrB_Info GB_jitifyer_load
     // do the rest inside a critical section
     //--------------------------------------------------------------------------
 
-    #pragma omp critical (GB_jitifyer_worker)
+    GB_OPENMP_LOCK_SET (1)
     { 
         info = GB_jitifyer_load2_worker (dl_function, family, kname, hash,
             encoding, suffix, semiring, monoid, op, type1, type2, type3) ;
     }
+    GB_OPENMP_LOCK_UNSET (1)
 
     return (info) ;
 }
@@ -1864,7 +1870,7 @@ GrB_Info GB_jitifyer_load2_worker
             break ;
 
         case GB_jit_subref_family  : 
-            method_code_digits = 6 ;
+            method_code_digits = 7 ;
             break ;
 
         case GB_jit_sort_family  : 
@@ -1876,30 +1882,7 @@ GrB_Info GB_jitifyer_load2_worker
 
     char kernel_name [GB_KLEN] ;
     GB_macrofy_name (kernel_name, "GB_jit", kname, method_code_digits,
-        encoding->code, suffix) ;
-
-    //--------------------------------------------------------------------------
-    // lock the kernel
-    //--------------------------------------------------------------------------
-
-    // TODO: add kernel_name to the lock filename.  If the lock fails,
-    // sleep for 1 second and try again repeatedly, with a timeout limit of
-    // (say) 60 seconds.
-
-    uint32_t bucket = hash & 0xFF ;
-    snprintf (GB_jit_temp, GB_jit_temp_allocated,
-        "%s/lock/%02x/%016" PRIx64 "_lock", GB_jit_cache_path, bucket, hash) ;
-    FILE *fp_klock = NULL ;
-    int fd_klock = -1 ;
-    if (!GB_file_open_and_lock (GB_jit_temp, &fp_klock, &fd_klock))
-    {
-        // JIT failure: unable to lock the kernel
-        // disable the JIT to avoid repeated load errors
-        GB_jit_control = GxB_JIT_RUN ;
-        // report the error: punt to generic or panic
-        GBURBLE ("\n(jit failure: cannot create a file I/O lock)\n") ;
-        return (GxB_JIT_ERROR) ;
-    }
+        encoding, suffix) ;
 
     //--------------------------------------------------------------------------
     // load the kernel, compiling it if needed
@@ -1909,11 +1892,6 @@ GrB_Info GB_jitifyer_load2_worker
         kname, hash, encoding, suffix, semiring, monoid, op, op1, op2,
         type1, type2, type3) ;
 
-    //--------------------------------------------------------------------------
-    // unlock the kernel
-    //--------------------------------------------------------------------------
-
-    GB_file_unlock_and_close (&fp_klock, &fd_klock) ;
     return (info) ;
     #endif
 }
@@ -1922,9 +1900,7 @@ GrB_Info GB_jitifyer_load2_worker
 // GB_jitifyer_load_worker: load/compile a kernel
 //------------------------------------------------------------------------------
 
-// This work is done inside a critical section for this process, and inside a
-// file lock/unlock section (fp_klock) to guard against access from other
-// processes.
+// This work is done inside a critical section for this process.
 
 GrB_Info GB_jitifyer_load_worker
 (
@@ -2025,7 +2001,8 @@ GrB_Info GB_jitifyer_load_worker
         { 
             // create the preface
             GB_macrofy_preface (fp, kernel_name,
-                GB_jit_C_preface, GB_jit_CUDA_preface, kcode) ;
+                GB_jit_C_preface, GB_jit_CUDA_preface, kcode,
+                encoding->major, encoding->minor) ;
             // macrofy the kernel operators, types, and matrix formats
             GB_macrofy_family (fp, family, encoding->code, encoding->kcode,
                 semiring, monoid, op, type1, type2, type3) ;
@@ -2052,7 +2029,8 @@ GrB_Info GB_jitifyer_load_worker
         if (kcode >= GB_JIT_CUDA_KERNEL)
         {
             // use NVCC to directly compile the CUDA kernel
-            GB_jitifyer_nvcc_compile (kernel_name, bucket) ;
+            GB_jitifyer_nvcc_compile (kernel_name, bucket,
+                encoding->major, encoding->minor) ;
         }
         else if (GB_jit_use_cmake)
         { 
@@ -2579,7 +2557,13 @@ void GB_jitifyer_cmake_compile (char *kernel_name, uint64_t hash)
 //
 // All other temporary files (including *.o object files) are removed.
 
-void GB_jitifyer_nvcc_compile (char *kernel_name, uint32_t bucket)
+void GB_jitifyer_nvcc_compile
+(
+    char *kernel_name,
+    uint32_t bucket,
+    uint8_t major,
+    uint8_t minor
+)
 {
 
 #if defined ( GRAPHBLAS_HAS_CUDA ) && !defined ( NJIT )
@@ -2596,17 +2580,19 @@ void GB_jitifyer_nvcc_compile (char *kernel_name, uint32_t bucket)
 
     // compile:
     "sh -c \""                          // execute with POSIX shell
-    // Fixme for CUDA: use GB_CUDA_COMPILER here:
+    // FIXME for CUDA: use GB_CUDA_COMPILER here:
+    "nvcc --version ; "
     "nvcc "                             // compiler command
     "-forward-unknown-to-host-compiler "
     "-DGB_JIT_RUNTIME=1  "              // nvcc flags
-    // Fixme for CUDA: add GB_CUDA_INC here:
+    // FIXME for CUDA: add GB_CUDA_INC here:
     "-I/usr/local/cuda/include -std=c++17 " 
-    // Fixme for CUDA: use GB_CUDA_ARCHITECTURES here:
-    " -arch=sm_60 "
+    " --gpu-architecture=compute_%d%d"  // major,minor
+    " --gpu-code=sm_%d%d "              // major,minor
     " -fPIC " 
-    // Fixme for CUDA: add GB_CUDA_FLAGS here:
-    " -O3 "   // HACK Fixme for CUDA
+    // FIXME for CUDA: add GB_CUDA_FLAGS here:
+    " -O3 "   // HACK FIXME for CUDA
+    " -Wno-deprecated-gpu-targets "
     "-I'%s/src' "                       // include source directory
     "-I'%s/src/template' "
     "-I'%s/src/include' "
@@ -2618,7 +2604,10 @@ void GB_jitifyer_nvcc_compile (char *kernel_name, uint32_t bucket)
     // link:
     "nvcc "                             // compiler
     "-DGB_JIT_RUNTIME=1  "              // nvcc flags
-    "-I/usr/local/cuda/include -std=c++17 -arch=sm_60 "
+    "-I/usr/local/cuda/include -std=c++17 "
+    " -Wno-deprecated-gpu-targets "
+    " --gpu-architecture=compute_%d%d"  // major,minor
+    " --gpu-code=sm_%d%d "              // major,minor
     " -shared "
     "-o '%s/lib/%02x/%s%s%s' "          // lib*.so output file
     "'%s/c/%02x/%s%s' "                 // *.o input file
@@ -2628,6 +2617,8 @@ void GB_jitifyer_nvcc_compile (char *kernel_name, uint32_t bucket)
     "%s %s%s%s\"",                      // error log file
 
     // compile:
+    (int) major, (int) minor,           // CUDA compute_xy architecture
+    (int) major, (int) minor,           // CUDA sm_xy code
     GB_jit_cache_path,                  // include cache/src
     GB_jit_cache_path,                  // include cache/src/template
     GB_jit_cache_path,                  // include cache/src/include
@@ -2637,6 +2628,8 @@ void GB_jitifyer_nvcc_compile (char *kernel_name, uint32_t bucket)
     err_redirect, log_quote, GB_jit_error_log, log_quote,   // error log file
 
     // link:
+    (int) major, (int) minor,           // CUDA compute_xy architecture
+    (int) major, (int) minor,           // CUDA sm_xy code
     GB_jit_cache_path, bucket,  
     GB_LIB_PREFIX, kernel_name, GB_LIB_SUFFIX,              // lib*.so file
     GB_jit_cache_path, bucket, kernel_name, GB_OBJ_SUFFIX,  // *.o input file

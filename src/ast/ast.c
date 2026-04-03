@@ -13,7 +13,6 @@
 #include "procedures/procedure.h"
 #include "ast_build_value.h"
 #include "ast_rewrite_same_clauses.h"
-#include "ast_rewrite_call_subquery.h"
 #include "ast_rewrite_star_projections.h"
 #include "arithmetic/arithmetic_expression.h"
 #include "arithmetic/arithmetic_expression_construct.h"
@@ -270,11 +269,11 @@ uint *AST_GetClauseIndices
 	const AST *ast,
 	cypher_astnode_type_t clause_type
 ) {
-	uint *clause_indices = array_new(uint, 1);
+	uint *clause_indices = arr_new(uint, 1);
 	uint clause_count = cypher_ast_query_nclauses(ast->root);
 	for(uint i = 0; i < clause_count; i ++) {
 		if(cypher_astnode_type(cypher_ast_query_get_clause(ast->root, i)) == clause_type) {
-			array_append(clause_indices, i);
+			arr_append(clause_indices, i);
 		}
 	}
 	return clause_indices;
@@ -298,13 +297,13 @@ const cypher_astnode_t **AST_GetClauses
 	const AST *ast,
 	cypher_astnode_type_t type
 ) {
-	const cypher_astnode_t **clauses = array_new(const cypher_astnode_t *, 0);
+	const cypher_astnode_t **clauses = arr_new(const cypher_astnode_t *, 0);
 	uint clause_count = cypher_ast_query_nclauses(ast->root);
 
 	for(uint i = 0; i < clause_count; i ++) {
 		const cypher_astnode_t *child = cypher_ast_query_get_clause(ast->root, i);
 		if(cypher_astnode_type(child) != type) continue;
-		array_append(clauses, child);
+		arr_append(clauses, child);
 	}
 
 	return clauses;
@@ -316,10 +315,20 @@ static void _AST_GetTypedNodes
 	const cypher_astnode_t *root,
 	cypher_astnode_type_t type
 ) {
-	if(cypher_astnode_type(root) == type) array_append(*nodes, root);
-	uint nchildren = cypher_astnode_nchildren(root);
-	for(uint i = 0; i < nchildren; i ++) {
-		_AST_GetTypedNodes(nodes, cypher_astnode_get_child(root, i), type);
+	if (cypher_astnode_type(root) == type) {
+		arr_append (*nodes, root) ;
+	}
+
+	uint nchildren = cypher_astnode_nchildren (root) ;
+	for (uint i = 0; i < nchildren; i ++) {
+		const cypher_astnode_t *child = cypher_astnode_get_child (root, i) ;
+
+		// we shouldn't peek into sub-query
+		if (cypher_astnode_type (child) == CYPHER_AST_CALL_SUBQUERY) {
+			continue ;
+		}
+
+		_AST_GetTypedNodes (nodes, child, type) ;
 	}
 }
 
@@ -328,7 +337,7 @@ const cypher_astnode_t **AST_GetTypedNodes
 	const cypher_astnode_t *root,
 	cypher_astnode_type_t type
 ) {
-	const cypher_astnode_t **nodes = array_new(const cypher_astnode_t *, 0);
+	const cypher_astnode_t **nodes = arr_new(const cypher_astnode_t *, 0);
 	_AST_GetTypedNodes(&nodes, root, type);
 	return nodes;
 }
@@ -341,13 +350,13 @@ void AST_CollectAliases
 	if(entity == NULL) return;
 
 	const  cypher_astnode_t **identifier_nodes =  AST_GetTypedNodes(entity, CYPHER_AST_IDENTIFIER);
-	uint nodes_count = array_len(identifier_nodes);
+	uint nodes_count = arr_len(identifier_nodes);
 	for(uint i = 0 ; i < nodes_count; i ++) {
 		const char *identifier = cypher_ast_identifier_get_name(identifier_nodes[i]);
-		array_append(*aliases, identifier);
+		arr_append(*aliases, identifier);
 	}
 
-	array_free(identifier_nodes);
+	arr_free(identifier_nodes);
 }
 
 AST *AST_Build
@@ -535,14 +544,14 @@ const char **AST_BuildReturnColumnNames
 
 	// Collect every alias from the RETURN projections.
 	uint projection_count = cypher_ast_return_nprojections(return_clause);
-	const char **columns = array_new(const char *, projection_count);
+	const char **columns = arr_new(const char *, projection_count);
 	for(uint i = 0; i < projection_count; i++) {
 		const cypher_astnode_t *projection = cypher_ast_return_get_projection(return_clause, i);
 		const cypher_astnode_t *ast_alias = cypher_ast_projection_get_alias(projection);
 		// If the projection was not aliased, the projection itself is an identifier.
 		if(ast_alias == NULL) ast_alias = cypher_ast_projection_get_expression(projection);
 		const char *alias = cypher_ast_identifier_get_name(ast_alias);
-		array_append(columns, alias);
+		arr_append(columns, alias);
 	}
 
 	return columns;
@@ -555,7 +564,7 @@ const char **AST_BuildCallColumnNames
 	const char **proc_output_columns = NULL;
 	uint yield_count = cypher_ast_call_nprojections(call_clause);
 	if(yield_count > 0) {
-		proc_output_columns = array_new(const char *, yield_count);
+		proc_output_columns = arr_new(const char *, yield_count);
 		for(uint i = 0; i < yield_count; i ++) {
 			const cypher_astnode_t *projection = cypher_ast_call_get_projection(call_clause, i);
 			const cypher_astnode_t *ast_exp = cypher_ast_projection_get_expression(projection);
@@ -571,7 +580,7 @@ const char **AST_BuildCallColumnNames
 				// Retrieve "a" from "RETURN a" or "RETURN a AS e" (theoretically; the latter case is already handled)
 				identifier = cypher_ast_identifier_get_name(ast_exp);
 			}
-			array_append(proc_output_columns, identifier);
+			arr_append(proc_output_columns, identifier);
 		}
 	} else {
 		// If the procedure call is missing its yield part, include procedure outputs.
@@ -579,9 +588,9 @@ const char **AST_BuildCallColumnNames
 		ProcedureCtx *proc = Proc_Get(proc_name);
 		ASSERT(proc);
 		unsigned int output_count = Procedure_OutputCount(proc);
-		proc_output_columns = array_new(const char *, output_count);
+		proc_output_columns = arr_new(const char *, output_count);
 		for(uint i = 0; i < output_count; i++) {
-			array_append(proc_output_columns, Procedure_GetOutput(proc, i));
+			arr_append(proc_output_columns, Procedure_GetOutput(proc, i));
 		}
 		Proc_Free(proc);
 	}
@@ -697,13 +706,6 @@ cypher_parse_result_t *parse_query
 	// will be rewritten as:
 	// MATCH (a:N), (b:N) RETURN a,b
 	bool rerun_validation = AST_RewriteSameClauses(root);
-
-	// rewrite eager & resulting Call {} clauses
-	// e.g. MATCH (m) CALL { CREATE (n:N) RETURN n } RETURN n, m
-	// will be rewritten as:
-	// MATCH (m) CALL { WITH m AS @m CREATE (n:N) RETURN n, @m AS m } RETURN n, m
-	// note: we rewrite the ast for sure here, so we need to re-validate it
-	rerun_validation |= AST_RewriteCallSubquery(root);
 
 	// rewrite '*' projections
 	// e.g. MATCH (a), (b) RETURN *

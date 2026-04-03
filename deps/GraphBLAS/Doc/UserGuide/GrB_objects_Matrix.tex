@@ -189,6 +189,12 @@ same set of values, but they do not depend on each other.  Modifying one has
 no effect on the other.
 The \verb'GrB_NAME' is copied into the new matrix.
 
+In GraphBLAS v10.2.0 and earlier, a call to \verb'GrB_Matrix_dup' triggered
+a internal call to \verb'GrB_Matrix_wait' on the input matrix \verb'A'.  In
+v10.3.0 and later, this call is removed.  To obtain the old behavior of
+v10.2.0 and earlier, simply call \verb'GrB_Matrix_wait' on the input matrix
+\verb'A' prior to calling \verb'GrB_Matrix_dup(&C,A)'.
+
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GrB\_Matrix\_clear:}        clear a matrix of all entries}
 %-------------------------------------------------------------------------------

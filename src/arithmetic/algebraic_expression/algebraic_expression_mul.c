@@ -58,7 +58,8 @@ Delta_Matrix _Eval_Mul
 	}
 
 	if(!res_modified) {
-		info = Delta_Matrix_copy(res, A) ;
+		Delta_Matrix_free(&res);
+		info = Delta_Matrix_dup(&res, A) ;
 		ASSERT(info == GrB_SUCCESS) ;
 	}
 

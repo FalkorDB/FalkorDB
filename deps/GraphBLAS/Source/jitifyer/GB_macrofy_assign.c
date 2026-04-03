@@ -196,7 +196,7 @@ void GB_macrofy_assign          // construct all macros for GrB_assign
     // construct the typedefs
     //--------------------------------------------------------------------------
 
-    GB_macrofy_typedefs (fp, ctype, atype, NULL, xtype, ytype, ztype) ;
+    GB_macrofy_typedefs (fp, ctype, atype, NULL, xtype, ytype, ztype, NULL) ;
 
     if (accum != NULL)
     { 

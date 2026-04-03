@@ -184,7 +184,7 @@ GrB_Info GB_AxB_dot                 // dot product (multiple methods)
         GBURBLE ("(%sdot3) ", iso_kind) ;
         (*mask_applied) = true ;    // mask is always applied
         (*done_in_place) = false ;
-        GrB_Info info ;
+        GrB_Info info = GrB_NO_VALUE ;
 
         // construct the hyper hashes for A and B
         GB_OK (GB_hyper_hash_build (A, Werk)) ;
@@ -198,15 +198,17 @@ GrB_Info GB_AxB_dot                 // dot product (multiple methods)
             GB_sparsity_char_matrix (A),
             GB_sparsity_char_matrix (B)) ;
 
+        info = GrB_NO_VALUE ;
         #if defined ( GRAPHBLAS_HAS_CUDA )
-        if (!C_iso &&   // Fixme for CUDA, remove and create C iso on output
+        if (!C_iso &&   // FIXME for CUDA, remove and create C iso on output
             GB_cuda_AxB_dot3_branch (M, Mask_struct, A, B, semiring, flipxy))
         {
             info = (GB_cuda_AxB_dot3 (C, M, Mask_struct, A, B, semiring,
                 flipxy)) ;
         }
-        else
         #endif
+
+        if (info == GrB_NO_VALUE)
         { 
             // use the CPU
             info = (GB_AxB_dot3 (C, C_iso, cscalar, M, Mask_struct, A, B,

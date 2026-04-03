@@ -2,10 +2,7 @@ from numbers import Number
 from collections import Counter
 from RLTest import Env
 
-from redis.commands.graph import Graph
-from redis.commands.graph.node import Node
-from redis.commands.graph.edge import Edge
-from redis.commands.graph.path import Path
+from falkordb import Node, Edge, Path
 
 
 def nodeToString(value):
@@ -50,11 +47,11 @@ def listToString(listToConvert):
 
 def pathToString(pathToConvert):
     strValue = "<"
-    nodes_count = pathToConvert.nodes_count()
+    nodes_count = pathToConvert.node_count()
     for i in range(0, nodes_count - 1):
         node = pathToConvert.get_node(i)
         node_str = nodeToString(node)
-        edge = pathToConvert.get_relationship(i)
+        edge = pathToConvert.get_edge(i)
         edge_str = edgeToString(edge)
         strValue += node_str + "-" + edge_str + "->" if edge.src_node == node.id else node_str + "<-" + edge_str + "-"
 

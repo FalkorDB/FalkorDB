@@ -21,10 +21,7 @@ GrB_Info GB_subref_sparse_jit
     const int ntasks,                   // # of tasks
     const int nthreads,                 // # of threads to use
     const bool post_sort,               // true if post-sort needed
-    const void *Ihead,                  // for I inverse buckets, size A->vlen
-    const void *Inext,                  // for I inverse buckets, size nI
-    const bool Ihead_is_32,             // if true, Ihead/Inext 32-bit; else 64
-    const bool I_has_duplicates,        // true if I has duplicates
+    const GrB_Matrix R,                 // R = inverse (I), if needed
     // from phase0:
     const void *Ap_start,
     const void *Ap_end,
@@ -47,7 +44,7 @@ GrB_Info GB_subref_sparse_jit
     char *suffix ;
     uint64_t hash = GB_encodify_subref (&encoding, &suffix,
         GB_JIT_KERNEL_SUBREF_SPARSE, C, I_is_32, false, Ikind, 0,
-        need_qsort, Ihead_is_32, I_has_duplicates, A) ;
+        need_qsort, R, A) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed
@@ -66,7 +63,7 @@ GrB_Info GB_subref_sparse_jit
 
     #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
-    return (GB_jit_kernel (C, TaskList, ntasks, nthreads, post_sort, Ihead,
-        Inext, Ap_start, Ap_end, nI, Icolon, A, I, &GB_callback)) ;
+    return (GB_jit_kernel (C, TaskList, ntasks, nthreads, post_sort, R,
+        Ap_start, Ap_end, nI, Icolon, A, I, &GB_callback)) ;
 }
 

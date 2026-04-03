@@ -153,6 +153,17 @@ void GB_enumify_assign      // enumerate a GrB_assign problem
     int sx_is_32 = (stype == GrB_UINT32) ? 1 : 0 ;
 
     //--------------------------------------------------------------------------
+    // special cases
+    //--------------------------------------------------------------------------
+
+    #if 0
+    // not enough bits to store this information...
+    int M_is_A = GB_all_aliased (M, A) ;
+    int C_is_M = GB_all_aliased (C, M) ;
+    int C_is_A = GB_all_aliased (C, A) ;
+    #endif
+
+    //--------------------------------------------------------------------------
     // construct the assign method_code
     //--------------------------------------------------------------------------
 

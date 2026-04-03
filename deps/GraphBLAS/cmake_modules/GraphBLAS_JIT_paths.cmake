@@ -38,11 +38,6 @@ endif ( )
 # GRAPHBLAS_USE_JIT and GRAPHBLAS_COMPACT options
 #-------------------------------------------------------------------------------
 
-if ( SUITESPARSE_HAS_CUDA AND GRAPHBLAS_USE_CUDA )
-    # FOR NOW: do not compile FactoryKernels when developing the CUDA kernels
-#   set ( GRAPHBLAS_COMPACT on )    # Fixme for CUDA
-endif ( )
-
 include ( CheckSymbolExists )
 check_symbol_exists ( system "stdlib.h" HAVE_C_SYSTEM )
 

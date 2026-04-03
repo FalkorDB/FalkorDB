@@ -152,12 +152,18 @@ static OpResult UnwindReset
 ) {
 	OpUnwind *op = (OpUnwind *)ctx;
 
-	op->listIdx = 0;
-	SIValue_Free(op->list);
-	op->list = SI_NullVal();
-	op->listLen = 0;
+	if (op->op.childCount == 0) {
+		// no child operation, list must be static
+		op->listIdx = 0 ;
+	}
+	else {
+		op->listIdx = 0 ;
+		op->listLen = 0 ;
+		SIValue_Free (op->list) ;
+		op->list = SI_NullVal () ;
+	}
 
-	return OP_OK;
+	return OP_OK ;
 }
 
 static inline OpBase *UnwindClone

@@ -17,6 +17,7 @@
 void     GB_Global_cpu_features_query (void) ;
 bool     GB_Global_cpu_features_avx2 (void) ;
 bool     GB_Global_cpu_features_avx512f (void) ;
+bool     GB_Global_cpu_features_rvv_1_0 (void) ;
 
 void     GB_Global_mode_set (int mode) ;
 int      GB_Global_mode_get (void) ;
@@ -100,6 +101,8 @@ bool     GB_Global_gpu_device_max_pool_size_set (int device, size_t size) ;
 bool     GB_Global_gpu_device_memory_resource_set (int device, void *resource) ;
 void*    GB_Global_gpu_device_memory_resource_get (int device) ;
 bool     GB_Global_gpu_device_properties_get (int device) ;
+int      GB_Global_gpu_compute_capability_major_get (int device) ;
+int      GB_Global_gpu_compute_capability_minor_get (int device) ;
 
 void     GB_Global_timing_clear_all (void) ;
 void     GB_Global_timing_clear (int k) ;
@@ -135,5 +138,10 @@ void     GB_Global_j_control_set (int8_t j_control) ;
 int8_t   GB_Global_j_control_get (void) ;
 void     GB_Global_i_control_set (int8_t i_control) ;
 int8_t   GB_Global_i_control_get (void) ;
+
+void     GB_Global_lock_init (void) ;
+void     GB_Global_lock_destroy (void) ;
+void     GB_Global_lock_set (int k) ;
+void     GB_Global_lock_unset (int k) ;
 #endif
 

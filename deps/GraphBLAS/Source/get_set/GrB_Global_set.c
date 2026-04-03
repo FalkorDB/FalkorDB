@@ -57,11 +57,11 @@ static GrB_Info GB_global_enum_set (int32_t value, int field)
                 return (GrB_INVALID_VALUE) ;
             }
             if (GB_Global_is_csc_get ( ))
-            {
+            { 
                 GB_Global_j_control_set (value) ;
             }
             else
-            {
+            { 
                 GB_Global_i_control_set (value) ;
             }
             break ;
@@ -73,23 +73,18 @@ static GrB_Info GB_global_enum_set (int32_t value, int field)
                 return (GrB_INVALID_VALUE) ;
             }
             if (GB_Global_is_csc_get ( ))
-            {
+            { 
                 GB_Global_i_control_set (value) ;
             }
             else
-            {
+            { 
                 GB_Global_j_control_set (value) ;
             }
             break ;
 
-        case GxB_GLOBAL_NTHREADS :          // same as GxB_NTHREADS
+        case GxB_GLOBAL_NTHREADS : 
 
             GB_Context_nthreads_max_set (NULL, value) ;
-            break ;
-
-        case GxB_GLOBAL_GPU_ID :            // same as GxB_GPU_ID
-
-            GB_Context_gpu_id_set (NULL, value) ;
             break ;
 
         case GxB_BURBLE : 
@@ -116,6 +111,11 @@ static GrB_Info GB_global_enum_set (int32_t value, int field)
 
             GB_jitifyer_set_control (value) ;
             break ;
+
+        case GxB_GLOBAL_NGPUS : 
+
+            // set # of gpus to the given value, and the GPU ids to 0:value-1
+            return (GB_Context_gpu_ids_set (NULL, NULL, value)) ;
 
         default : 
 
@@ -150,7 +150,7 @@ GrB_Info GrB_Global_set_Scalar
     // set the field
     //--------------------------------------------------------------------------
 
-    #pragma omp critical (GB_global_get_set)
+    GB_OPENMP_LOCK_SET (0)
     {
         double dvalue = 0 ;
         int32_t ivalue = 0 ;
@@ -162,16 +162,16 @@ GrB_Info GrB_Global_set_Scalar
 
                 info = GrB_Scalar_extractElement_FP64 (&dvalue, scalar) ;
                 if (info == GrB_SUCCESS)
-                {
+                { 
                     GB_Global_hyper_switch_set ((float) dvalue) ;
                 }
                 break ;
 
-            case GxB_GLOBAL_CHUNK :             // same as GxB_CHUNK
+            case GxB_GLOBAL_CHUNK : 
 
                 info = GrB_Scalar_extractElement_FP64 (&dvalue, scalar) ;
                 if (info == GrB_SUCCESS)
-                {
+                { 
                     GB_Context_chunk_set (NULL, dvalue) ;
                 }
                 break ;
@@ -180,7 +180,7 @@ GrB_Info GrB_Global_set_Scalar
 
                 info = GrB_Scalar_extractElement_INT64 (&i64value, scalar) ;
                 if (info == GrB_SUCCESS)
-                {
+                { 
                     GB_Global_hyper_hash_set (i64value) ;
                 }
                 break ;
@@ -189,12 +189,13 @@ GrB_Info GrB_Global_set_Scalar
 
                 info = GrB_Scalar_extractElement_INT32 (&ivalue, scalar) ;
                 if (info == GrB_SUCCESS)
-                {
+                { 
                     info = GB_global_enum_set (ivalue, field) ;
                 }
                 break ;
         }
     }
+    GB_OPENMP_LOCK_UNSET (0)
 
     return ((info == GrB_NO_VALUE) ? GrB_EMPTY_OBJECT : info) ;
 }
@@ -224,7 +225,7 @@ GrB_Info GrB_Global_set_String
     // get the field
     //--------------------------------------------------------------------------
 
-    #pragma omp critical (GB_global_get_set)
+    GB_OPENMP_LOCK_SET (0)
     {
         switch ((int) field)
         {
@@ -280,6 +281,7 @@ GrB_Info GrB_Global_set_String
                 break ;
         }
     }
+    GB_OPENMP_LOCK_UNSET (0)
 
     return (info) ;
 }
@@ -308,10 +310,11 @@ GrB_Info GrB_Global_set_INT32
     // set the field
     //--------------------------------------------------------------------------
 
-    #pragma omp critical (GB_global_get_set)
+    GB_OPENMP_LOCK_SET (0)
     {
         info = GB_global_enum_set (value, field) ;
     }
+    GB_OPENMP_LOCK_UNSET (0)
 
     return (info) ;
 }
@@ -343,9 +346,9 @@ GrB_Info GrB_Global_set_VOID
     // set the field
     //--------------------------------------------------------------------------
 
-    #pragma omp critical (GB_global_get_set)
+    GB_OPENMP_LOCK_SET (0)
     {
-        switch ((int) field)
+        switch (field)
         {
 
             case GxB_BITMAP_SWITCH : 
@@ -397,12 +400,28 @@ GrB_Info GrB_Global_set_VOID
                 }
                 break ;
 
+            case GxB_GLOBAL_GPU_IDS : 
+
+                {
+                    int32_t ngpus = GB_Context_gpu_ids_get (NULL, NULL) ;
+                    if (size < ngpus * sizeof (int32_t))
+                    { 
+                        info = GrB_INVALID_VALUE ;
+                    }
+                    else
+                    { 
+                        info = GB_Context_gpu_ids_set (NULL, (int32_t *) value, ngpus) ;
+                    }
+                }
+                break ;
+
             default : 
 
                 info = GrB_INVALID_VALUE ;
                 break ;
         }
     }
+    GB_OPENMP_LOCK_UNSET (0)
 
     #pragma omp flush
     return (info) ;

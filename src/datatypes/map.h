@@ -17,6 +17,7 @@
  * [ (key/value), (key/value), ... (key/value) ] */
 
 #include "../value.h"
+#include "../redismodule.h"
 
 typedef struct Pair {
 	SIValue key;  // key associated with value
@@ -182,6 +183,14 @@ void Map_ToString
 	char **buf,           // buffer to populate
 	size_t *bufferLen,    // size of buffer
 	size_t *bytesWritten  // length of string
+);
+
+// defrag map
+// returns true if map memory been relocated
+bool Map_Defrag
+(
+	SIValue *map,              // map to defrag
+	RedisModuleDefragCtx *ctx  // redis defrag context
 );
 
 // free map

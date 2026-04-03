@@ -24,10 +24,10 @@
     GB_mx_put_global (true) ;                       \
 }
 
-void myplus (float *z, const float *x, const float *y) ;
-void myplus (float *z, const float *x, const float *y) { (*z) = (*x)+(*y) ; }
+void gb_myplus (float *z, const float *x, const float *y) ;
+void gb_myplus (float *z, const float *x, const float *y) { (*z) = (*x)+(*y) ; }
 #define MYPLUS_DEFN \
-"void myplus (float *z, const float *x, const float *y) { (*z) = (*x)+(*y) ; }"
+"void gb_myplus (float *z, const float *x, const float *y) { (*z) = (*x)+(*y) ; }"
 
 void mexFunction
 (
@@ -90,8 +90,8 @@ void mexFunction
     }
 
     // create the semiring
-    GxB_BinaryOp_new (&MyPlus, (GxB_binary_function) myplus,
-        GrB_FP32, GrB_FP32, GrB_FP32, "myplus", MYPLUS_DEFN) ;
+    GxB_BinaryOp_new (&MyPlus, (GxB_binary_function) gb_myplus,
+        GrB_FP32, GrB_FP32, GrB_FP32, "gb_myplus", MYPLUS_DEFN) ;
     float zero = 0 ;
     GrB_Monoid_new (&MyAdd, MyPlus, zero) ;
     GrB_Semiring_new (&MyPlusPlus, MyAdd, MyPlus) ;

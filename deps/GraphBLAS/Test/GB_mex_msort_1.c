@@ -11,6 +11,8 @@
 
 #define USAGE "[I] = GB_mex_msort_1 (I,nthreads)"
 
+#define WALLCLOCK GB_omp_get_wtime ( )
+
 void mexFunction
 (
     int nargout,
@@ -52,7 +54,10 @@ void mexFunction
     void *Iout = mxGetData (pargout [0]) ;
     memcpy (Iout, I, n * (I_is_32 ? sizeof (uint32_t) : sizeof (uint64_t))) ;
 
+    double t = WALLCLOCK ;
     GB_msort_1 (Iout, I_is_32, n, nthreads) ;
+    t = WALLCLOCK - t ;
+    printf ("nthreads %d, n: %ld, time: %g\n", nthreads, n, t) ;
 
     GB_mx_put_global (true) ;   
 }

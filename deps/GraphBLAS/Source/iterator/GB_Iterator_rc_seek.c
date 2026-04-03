@@ -15,7 +15,7 @@
 
 #include "GB.h"
 
-GrB_Info GB_Iterator_rc_seek
+GrB_Info GB(Iterator_rc_seek)
 (
     GxB_Iterator iterator,
     uint64_t j_input,
@@ -117,7 +117,7 @@ GrB_Info GB_Iterator_rc_seek
             iterator->pend = (j+1) * iterator->avlen ;
             iterator->p = iterator->pstart ;
             iterator->k = j ;
-            return (GB_Iterator_rc_bitmap_next (iterator)) ;
+            return (GB(Iterator_rc_bitmap_next)(iterator)) ;
         }
         break ;
 

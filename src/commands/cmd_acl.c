@@ -80,9 +80,9 @@ static CommandCategory *_create_command_category
 	category->name = name;
 
 	// parse the (space separated) commands string to array of commands
-	category->commands = array_new(char*, 0);
-	category->redis_module_commands_minus = array_new(RedisModuleString*, 0);
-	category->redis_module_commands_plus  = array_new(RedisModuleString*, 0);
+	category->commands = arr_new(char*, 0);
+	category->redis_module_commands_minus = arr_new(RedisModuleString*, 0);
+	category->redis_module_commands_plus  = arr_new(RedisModuleString*, 0);
 
 	char *token, *saveptr;
 	char *commands_copy = rm_strdup(commands_str);
@@ -104,12 +104,12 @@ static CommandCategory *_create_command_category
 			goto cleanup;
 		}
 
-		array_append(category->commands, cmd);
+		arr_append(category->commands, cmd);
 	
 		// add the command to the minus and plus arrays
-		array_append(category->redis_module_commands_minus,
+		arr_append(category->redis_module_commands_minus,
 			_create_command_with_prefix(ctx, '-', cmd));
-		array_append(category->redis_module_commands_plus,
+		arr_append(category->redis_module_commands_plus,
 			_create_command_with_prefix(ctx, '+', cmd));
 	}
 
@@ -236,7 +236,7 @@ static bool _command_in_category
 	ASSERT(category           != NULL);
 	ASSERT(category->commands != NULL);
 
-	for(int i = 0; i < array_len(category->commands); i++) {
+	for(int i = 0; i < arr_len(category->commands); i++) {
 		if(strcasecmp(cmd, category->commands[i]) == 0) {
 			return true;
 		}
@@ -307,7 +307,7 @@ static bool _expand_acl_pseudo_category
 
 	// arg refers to category
 	int n = *acl_argc;
-	for(int i = 0; i < array_len(category->commands); i++) {
+	for(int i = 0; i < arr_len(category->commands); i++) {
 		acl_args[n++] = commands[i];
 	}
 
@@ -343,19 +343,19 @@ static int _compute_expand_offset
 
 		// is this a graph user categoty?
 		if(strcasecmp(arg_str + 1, ACL_GRAPH_USER->name) == 0) {
-			res = res + array_len(ACL_GRAPH_USER->commands);
+			res = res + arr_len(ACL_GRAPH_USER->commands);
 			continue;
 		}
 
 		// is this a graph admin categoty?
 		else if(strcasecmp(arg_str + 1, ACL_GRAPH_ADMIN->name) == 0) {
-			res = res + array_len(ACL_GRAPH_ADMIN->commands);
+			res = res + arr_len(ACL_GRAPH_ADMIN->commands);
 			continue;
 		}
 
 		// is this a graph readonly user categoty?
 		else if(strcasecmp(arg_str + 1, ACL_GRAPH_READONLY_USER->name) == 0) {
-			res = res + array_len(ACL_GRAPH_READONLY_USER->commands);
+			res = res + arr_len(ACL_GRAPH_READONLY_USER->commands);
 			continue;	
 		}
 	}
@@ -565,7 +565,7 @@ static int _execute_acl_cmd_as_admin
 
 // this function is the main entry point for the GRAPH.ACL command
 // it manipulates the arguments, impersonate and calls redis ACL command
-int graph_acl_cmd
+int Graph_ACL
 (
 	RedisModuleCtx *ctx,       // the redis module context
 	RedisModuleString **argv,  // the arguments to the command
@@ -647,7 +647,7 @@ static void free_command_category
 	// free commands
 	if(_category->commands != NULL) {
 		// free each command
-		for(int i = 0; i < array_len(_category->commands); i++) {
+		for(int i = 0; i < arr_len(_category->commands); i++) {
 			// command name
 			if(_category->commands[i] != NULL) {
 				rm_free(_category->commands[i]);
@@ -667,9 +667,9 @@ static void free_command_category
 		}
 
 		// free arrays
-		array_free(_category->commands);
-		array_free(_category->redis_module_commands_plus);
-		array_free(_category->redis_module_commands_minus);
+		arr_free(_category->commands);
+		arr_free(_category->redis_module_commands_plus);
+		arr_free(_category->redis_module_commands_minus);
 	}
 
 	// deallocate data structure

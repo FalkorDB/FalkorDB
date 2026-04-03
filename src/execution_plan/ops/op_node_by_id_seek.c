@@ -212,7 +212,7 @@ static OpBase *NodeByIdSeekClone
 	NodeByIdSeek *op = (NodeByIdSeek *)opBase;
 
 	RangeExpression *ranges;
-	array_clone_with_cb(ranges, op->ranges, RangeExpression_Clone);
+	arr_clone_with_cb(ranges, op->ranges, RangeExpression_Clone);
 
 	return NewNodeByIdSeekOp(plan, op->alias, ranges);
 }
@@ -228,10 +228,10 @@ static void NodeByIdSeekFree
 	}
 
 	if(op->ranges) {
-		for(int i = 0; i < array_len(op->ranges); i++) {
+		for(int i = 0; i < arr_len(op->ranges); i++) {
 			RangeExpression_Free(op->ranges + i);
 		}
-		array_free(op->ranges);
+		arr_free(op->ranges);
 		op->ranges = NULL;
 	}
 

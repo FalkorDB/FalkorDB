@@ -16,6 +16,7 @@ GrB_Info GrB_get (GxB_Context Context, size_t *   value, int f) ;
 GrB_Info GrB_set (GxB_Context Context, GrB_Scalar value, int f) ;
 GrB_Info GrB_set (GxB_Context Context, char *     value, int f) ;
 GrB_Info GrB_set (GxB_Context Context, int32_t    value, int f) ;
+GrB_Info GrB_set (GxB_Context Context, void *     value, int f, size_t s) ;
 \end{verbatim}
 }\end{mdframed}
 
@@ -25,10 +26,17 @@ GrB_Info GrB_set (GxB_Context Context, int32_t    value, int f) ;
 \hline
 \verb'int field'                    & R/W  & C type        & description \\
 \hline
-\verb'GxB_NTHREADS' & R/W & \verb'int32_t' & number of OpenMP threads to use;
+\verb'GxB_NTHREADS' & R/W &
+    \verb'int32_t' & number of OpenMP threads to use;
     See Section~\ref{omp_parallelism} \\
 \verb'GxB_CHUNK'    & R/W & \verb'double' & chunk factor for task creation;
     See Section~\ref{omp_parallelism} \\
+\verb'GxB_NGPUS'    & R/W & 
+    \verb'int32_t' & number of GPUs to use;
+    See Section~\ref{gpu_parallelism} \\
+\verb'GxB_GPU_IDS' & R/W &
+    \verb'void *' & list of GPUs IDs to use;
+    See Section~\ref{gpu_parallelism} \\
 \hline
 \verb'GrB_NAME'         & R/W  & \verb'char *' & name of the context.
     This can be set any number of times for user-defined contexts.  Built-in

@@ -17,11 +17,36 @@
 //      iso:       C = A(I,J), extracting the pattern only, not the values
 //      numeric:   C = A(I,J), extracting the pattern and values
 
-// to iterate across all entries in a bucket:
-#define GB_for_each_index_in_bucket(inew,i,nI,Ihead,Inext)  \
-    for (uint64_t inew = GB_IGET (Ihead, i) ;               \
-                  inew < nI ;                               \
-                  inew = GB_IGET (Inext, inew))
+// The matrix R holds the "inverse" of I, which is not actually an inverse
+// since I can have duplicates.  If i = I [k1] = I [k2] = I [k3], then the
+// column indices in R(i,:) are {k1, k2, k3}.  R is held by row, and is either
+// sparse or hypersparse.
+
+#define GB_for_each_inew_in_I_inverse_hash(i,pR)                        \
+        int64_t pR, pR_end ;                                            \
+        if (R_is_hyper)                                                 \
+        {                                                               \
+            /* R(i,:) is the kth vector in the hypersparse matrix R; */ \
+            /* find k so that i = Rh [k] using the R->Y hyper_hash, */  \
+            /* and set pR = Rp [k] and pR_end = Rp [k+1]. */            \
+            GB_hyper_hash_lookup (Rp_is_32, Rj_is_32,                   \
+                Rh, rnvec, Rp, R_Yp, R_Yi, R_Yx, R_hash_bits,           \
+                i, &pR, &pR_end) ;                                      \
+        }                                                               \
+        else                                                            \
+        {                                                               \
+            /* R(i,:) is the ith vector in the sparse matrix R */       \
+            pR = GB_IGET (Rp, i) ;          /* pR = Rp [i] */           \
+            pR_end = GB_IGET (Rp, i+1) ;    /* pR_end = Rp [i+1] */     \
+        }                                                               \
+        /* for each entry in the row R(i,:) */                          \
+        for ( ; pR < pR_end ; pR++)
+        #if 0
+        {
+            // get R(i,inew); this is the index i = I [inew]
+            int64_t inew = GB_IGET (Ri, pR) ;        // inew = Ri [pR]
+        }
+        #endif
 
 //------------------------------------------------------------------------------
 
@@ -185,7 +210,7 @@
             { 
                 // determine the method based on A(*,kA) and I
                 method = GB_subref_method (alen, avlen, GB_I_KIND, nI,
-                    (Ihead != NULL), GB_NEED_QSORT, iinc, GB_I_HAS_DUPLICATES) ;
+                    GB_NEED_QSORT, iinc) ;
             }
 
             //------------------------------------------------------------------
@@ -355,12 +380,10 @@
                     // properties.  For a fine task, A(:,kA) has not been
                     // sliced; I has been sliced instead.
 
-                    // If the I bucket inverse has not been created, this
-                    // method is the only option.  Alternatively, if nI =
-                    // length (I) is << nnz (A (:,kA)), then scanning I and
-                    // doing a binary search of A (:,kA) is faster than doing a
-                    // linear-time search of A(:,kA) and a lookup into the I
-                    // bucket inverse.
+                    // If nI = length (I) is << nnz (A (:,kA)), then scanning I
+                    // and doing a binary search of A (:,kA) is faster than
+                    // doing a linear-time scan of A(:,kA) and a lookup into
+                    // R for each row index i in A(:,kA).
 
                     // The vector of C is constructed in sorted order, so no
                     // sort is needed.
@@ -513,10 +536,8 @@
                 case 10 : // I unsorted, and C needs qsort, duplicates OK
                 //--------------------------------------------------------------
 
-                    // Time: with one thread: 2x slower, probably
-                    // because of the qsort.  Good speedup however.  This used
-                    // if qsort is needed but ndupl == 0.  Try a method that
-                    // needs qsort, but no duplicates?
+                    // Time: with one thread: 2x slower, probably because of
+                    // the qsort.  Good speedup however.
 
                     // Case 10 works well when I has many entries and A(:,kA)
                     // has few entries. C(:,kC) must be sorted after this pass.
@@ -524,15 +545,16 @@
                     ASSERT (GB_I_KIND == GB_LIST) ;
                     for (int64_t k = 0 ; k < alen ; k++)
                     {
-                        // A(i,kA) present, look it up in the I inverse buckets
+                        // A(i,kA) present, look it up in R(i,:)
                         int64_t i = GB_IGET (Ai, pA + k) ;
                         #if defined ( GB_SYMBOLIC )
                         i = GB_UNZOMBIE (i) ;
                         #endif
-                        // traverse bucket i for all indices inew where
+                        // traverse R(i,:) for all indices inew where
                         // i == I [inew] or where i is from a colon expression
-                        GB_for_each_index_in_bucket (inew, i, nI, Ihead, Inext)
+                        GB_for_each_inew_in_I_inverse_hash (i,pR)
                         { 
+                            int64_t inew = GB_IGET (Ri, pR) ; // inew = Ri [pR]
                             ASSERT (inew >= 0 && inew < nI) ;
                             ASSERT (i == GB_IJLIST (I, inew, GB_I_KIND,Icolon));
                             #if defined ( GB_ANALYSIS_PHASE )
@@ -564,7 +586,7 @@
                     break ;
 
                 //--------------------------------------------------------------
-                case 11 : // I not contiguous, with duplicates. No qsort needed
+                case 11 : // I not contiguous, duplicates OK. No qsort needed
                 //--------------------------------------------------------------
 
                     // Case 11 works well when I has many entries and A(:,kA)
@@ -575,53 +597,17 @@
                     ASSERT (GB_I_KIND == GB_LIST) ;
                     for (int64_t k = 0 ; k < alen ; k++)
                     {
-                        // A(i,kA) present, look it up in the I inverse buckets
+                        // A(i,kA) present, look it up in R(i,:)
                         int64_t i = GB_IGET (Ai, pA + k) ;
                         #if defined ( GB_SYMBOLIC )
                         i = GB_UNZOMBIE (i) ;
                         #endif
-                        // traverse bucket i for all indices inew where
+                        // traverse R(i,:) for all indices inew where
                         // i == I [inew] or where i is from a colon expression
-                        GB_for_each_index_in_bucket (inew, i, nI, Ihead, Inext)
+                        GB_for_each_inew_in_I_inverse_hash (i,pR)
                         { 
+                            int64_t inew = GB_IGET (Ri, pR) ; // inew = Ri [pR]
                             ASSERT (inew >= 0 && inew < nI) ;
-                            ASSERT (i == GB_IJLIST (I, inew, GB_I_KIND,Icolon));
-                            #if defined ( GB_ANALYSIS_PHASE )
-                            clen++ ;
-                            #else
-                            GB_ISET (Ci, pC, inew) ;  // Ci [pC] = inew ;
-                            GB_COPY_ENTRY (pC, pA + k) ;
-                            pC++ ;
-                            #endif
-                        }
-                    }
-
-                    #if defined ( GB_PHASE_2_OF_2 )
-                    ASSERT (pC == pC_end) ;
-                    #endif
-                    break ;
-
-                //--------------------------------------------------------------
-                case 12 : // I not contiguous, no duplicates.  No qsort needed.
-                //--------------------------------------------------------------
-
-                    // Identical to Case 11, except GB_for_each_index_in_bucket
-                    // just needs to iterate 0 or 1 times.  Works well when I
-                    // has many entries and A(:,kA) has few entries.
-
-                    ASSERT (GB_I_KIND == GB_LIST && !GB_I_HAS_DUPLICATES)
-                    for (int64_t k = 0 ; k < alen ; k++)
-                    {
-                        // A(i,kA) present, look it up in the I inverse buckets
-                        int64_t i = GB_IGET (Ai, pA + k) ;
-                        #if defined ( GB_SYMBOLIC )
-                        i = GB_UNZOMBIE (i) ;
-                        #endif
-                        // bucket i has at most one index inew such that
-                        // i == I [inew]
-                        uint64_t inew = GB_IGET (Ihead, i) ;
-                        if (inew < nI)
-                        { 
                             ASSERT (i == GB_IJLIST (I, inew, GB_I_KIND,Icolon));
                             #if defined ( GB_ANALYSIS_PHASE )
                             clen++ ;
@@ -708,7 +694,7 @@
     #endif
 }
 
-#undef GB_for_each_index_in_bucket
+#undef GB_for_each_inew_in_I_inverse_hash
 #undef GB_COPY_RANGE
 #undef GB_COPY_ENTRY
 #undef GB_SYMBOLIC

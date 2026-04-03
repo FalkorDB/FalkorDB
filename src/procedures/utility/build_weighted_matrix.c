@@ -24,12 +24,12 @@
 
 #define COMPARE_AND_CHANGE_MINID                                 \
 Graph_GetEdge(ctx->g, currID, &currE);                           \
-currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w); \
+GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w, &currV); \
                                                                  \
 /* only update minV if edge attribute is numeric */              \
-bool replace = (SI_TYPE(*currV) & SI_NUMERIC) &&                 \
-	SIValue_Compare(minV, *currV, NULL) == ctx->comp;            \
-minV  = replace ? *currV : minV;                                 \
+bool replace = (SI_TYPE(currV) & SI_NUMERIC) &&                  \
+	SIValue_Compare(minV, currV, NULL) == ctx->comp;             \
+minV  = replace ? currV : minV;                                  \
 minID = replace ? currID : minID;
 
 // structure that holds all the context nessesary for the GraphBLAS functions
@@ -64,8 +64,8 @@ static void _reduceToMatrix
 		info = GxB_Vector_Iterator_seek(i, 0);
 		ASSERT(info == GrB_SUCCESS)
 
-		EdgeID minID   = (EdgeID) GxB_Vector_Iterator_getIndex(i);
-		SIValue *currV = NULL;
+		EdgeID minID = (EdgeID) GxB_Vector_Iterator_getIndex(i);
+		SIValue currV;
 
 		// -infinity if max or +infinity if min
 		SIValue minV = SI_DoubleVal(ctx->comp * INFINITY);
@@ -73,13 +73,13 @@ static void _reduceToMatrix
 
 		Edge currE;
 		Graph_GetEdge(ctx->g, minID, &currE);
-		currV = GraphEntity_GetProperty((GraphEntity *) &currE, ctx->w);
+		GraphEntity_GetProperty ((GraphEntity *) &currE, ctx->w, &currV) ;
 		info = GxB_Vector_Iterator_next(i);
 
 		// treat edges without the attribute or with a non-numeric attribute
 		// as infinite length
-		if (SI_TYPE(*currV) & SI_NUMERIC) {
-			minV = *currV;
+		if (SI_TYPE(currV) & SI_NUMERIC) {
+			minV = currV;
 		}
 
 		while (info != GxB_EXHAUSTED) {
@@ -104,10 +104,11 @@ void _getAttFromID
 	bool found = Graph_GetEdge(ctx->g, (EdgeID) (*x), &e);
 	ASSERT(found == true);
 
-	SIValue *v = GraphEntity_GetProperty((GraphEntity *) &e, ctx->w);
+	SIValue v ;
+	GraphEntity_GetProperty ((GraphEntity *) &e, ctx->w, &v) ;
 
-	if(SI_TYPE(*v) & SI_NUMERIC) {
-		int info = SIValue_ToDouble(v, z);
+	if(SI_TYPE(v) & SI_NUMERIC) {
+		int info = SIValue_ToDouble(&v, z);
 		ASSERT(info == 1);
 	} else {
 		// -infinity if max or +infinity if min
@@ -164,10 +165,10 @@ static void _pickBinary
 	GrB_Info info;
 	struct GB_Iterator_opaque _i;  // stack allocate the iterator
 
+	SIValue currV ;
 	GxB_Iterator i     = &_i;
 	GrB_Vector   _v    = GrB_NULL;
 	SIValue      minV  = SI_DoubleVal(ctx->comp * INFINITY); // -inf if max or +inf min
-	SIValue     *currV = NULL;
 
 	//--------------------------------------------------------------------------
 	// search for min / max weight attribute on both x and y

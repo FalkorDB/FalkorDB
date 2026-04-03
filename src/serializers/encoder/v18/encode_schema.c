@@ -154,19 +154,19 @@ static void _RdbSaveConstraintsData
 	SerializerIO rdb,
 	Constraint *constraints
 ) {
-	uint n_constraints = array_len(constraints);
-	Constraint *active_constraints = array_new(Constraint, n_constraints);
+	uint n_constraints = arr_len(constraints);
+	Constraint *active_constraints = arr_new(Constraint, n_constraints);
 
 	// collect active constraints
 	for (uint i = 0; i < n_constraints; i++) {
 		Constraint c = constraints[i];
 		if (Constraint_GetStatus(c) == CT_ACTIVE) {
-			array_append(active_constraints, c);
+			arr_append(active_constraints, c);
 		}
 	}
 
 	// encode number of active constraints
-	uint n_active_constraints = array_len(active_constraints);
+	uint n_active_constraints = arr_len(active_constraints);
 	SerializerIO_WriteUnsigned(rdb, n_active_constraints);
 
 	// encode constraints
@@ -176,7 +176,7 @@ static void _RdbSaveConstraintsData
 	}
 
 	// clean up
-	array_free(active_constraints);
+	arr_free(active_constraints);
 }
 
 static void _RdbSaveSchema
