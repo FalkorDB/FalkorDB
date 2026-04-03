@@ -79,7 +79,7 @@ static bool _extractArgs
 	//     arg[2] - k:3
 	//     arg[3] - query: vector32f([1,2])
 
-	uint n = array_len((SIValue*)args);
+	uint n = arr_len((SIValue*)args);
 	ASSERT(n == 4);
 
 	SIValue v;  // current argument
@@ -214,7 +214,7 @@ static ProcedureResult Proc_VectorQueryInvoke
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 
 	// validate args
-	uint argc = array_len((SIValue*)args);
+	uint argc = arr_len((SIValue*)args);
 	if(argc != 4) return PROCEDURE_ERR;
 
 	//--------------------------------------------------------------------------
@@ -316,7 +316,7 @@ ProcedureResult Proc_VectorQueryNodeInvoke
 	pdata->yield_entity = NULL;
 
 	int idx = 0;
-	for(uint i = 0; i < array_len(yield); i++) {
+	for(uint i = 0; i < arr_len(yield); i++) {
 		if(strcasecmp("node", yield[i]) == 0) {
 			pdata->yield_entity = pdata->output + idx;
 			idx++;
@@ -359,7 +359,7 @@ ProcedureResult Proc_VectorQueryRelInvoke
 	pdata->yield_entity = NULL;
 
 	int idx = 0;
-	for(uint i = 0; i < array_len(yield); i++) {
+	for(uint i = 0; i < arr_len(yield); i++) {
 		if(strcasecmp("relationship", yield[i]) == 0) {
 			pdata->yield_entity = pdata->output + idx;
 			idx++;
@@ -409,11 +409,11 @@ ProcedureResult Proc_VectorKNNFree
 // options  : map } ) YIELD node, score
 
 ProcedureCtx *Proc_VectorQueryNodeCtx() {
-	ProcedureOutput *output   = array_new(ProcedureOutput, 2);
+	ProcedureOutput *output   = arr_new(ProcedureOutput, 2);
 	ProcedureOutput out_node  = {.name = "node", .type = T_NODE};
 	ProcedureOutput out_score = {.name = "score", .type = T_DOUBLE};
-	array_append(output, out_node);
-	array_append(output, out_score);
+	arr_append(output, out_node);
+	arr_append(output, out_score);
 
 	ProcedureCtx *ctx = ProcCtxNew("db.idx.vector.queryNodes",
 								   4,
@@ -427,11 +427,11 @@ ProcedureCtx *Proc_VectorQueryNodeCtx() {
 }
 
 ProcedureCtx *Proc_VectorQueryRelCtx() {
-	ProcedureOutput *output    = array_new(ProcedureOutput, 2);
+	ProcedureOutput *output    = arr_new(ProcedureOutput, 2);
 	ProcedureOutput out_rel = {.name = "relationship", .type = T_EDGE};
 	ProcedureOutput out_score  = {.name = "score", .type = T_DOUBLE};
-	array_append(output, out_rel);
-	array_append(output, out_score);
+	arr_append(output, out_rel);
+	arr_append(output, out_score);
 
 	ProcedureCtx *ctx = ProcCtxNew("db.idx.vector.queryRelationships",
 								   4,

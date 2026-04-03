@@ -783,8 +783,8 @@ static AST_Validation _ValidateInlinedProperties
 	for(uint i = 0; i < prop_count; i++) {
 		const cypher_astnode_t *prop_val = cypher_ast_map_get_value(props, i);
 		const cypher_astnode_t **patterns = AST_GetTypedNodes(prop_val, CYPHER_AST_PATTERN_PATH);
-		uint patterns_count = array_len(patterns);
-		array_free(patterns);
+		uint patterns_count = arr_len(patterns);
+		arr_free(patterns);
 		if(patterns_count > 0) {
 			// encountered query of the form
 			// MATCH (a {prop: ()-[]->()}) RETURN a
@@ -948,7 +948,7 @@ static VISITOR_STRATEGY _Validate_shortest_path
 		// MATCH (a), (b), p = allShortestPaths((a)-[*2..]->(b)) RETURN p
 		// validate rel pattern range doesn't contains a minimum > 1
 		const cypher_astnode_t **ranges = AST_GetTypedNodes(n, CYPHER_AST_RANGE);
-		int range_count = array_len(ranges);
+		int range_count = arr_len(ranges);
 		for(int i = 0; i < range_count; i++) {
 			long min_hops = 1;
 			const cypher_astnode_t *r = ranges[i];
@@ -959,7 +959,7 @@ static VISITOR_STRATEGY _Validate_shortest_path
 				break;
 			}
 		}
-		array_free(ranges);
+		arr_free(ranges);
 	}
 
 	if(ErrorCtx_EncounteredError()) {
@@ -1027,19 +1027,19 @@ static AST_Validation _ValidateUnion_Clauses
 	AST_Validation res = AST_VALID;
 
 	uint *union_indices = AST_GetClauseIndices(ast, CYPHER_AST_UNION);
-	uint union_clause_count = array_len(union_indices);
-	array_free(union_indices);
+	uint union_clause_count = arr_len(union_indices);
+	arr_free(union_indices);
 
 	if(union_clause_count != 0) {
 		// Require all RETURN clauses to perform the exact same projection
 		uint *return_indices = AST_GetClauseIndices(ast, CYPHER_AST_RETURN);
-		uint return_clause_count = array_len(return_indices);
+		uint return_clause_count = arr_len(return_indices);
 
 		// We should have one more RETURN clauses than we have UNION clauses.
 		if(return_clause_count != union_clause_count + 1) {
 			ErrorCtx_SetError(EMSG_UNION_MISSING_RETURNS, union_clause_count,
 							return_clause_count);
-			array_free(return_indices);
+			arr_free(return_indices);
 			return AST_INVALID;
 		}
 
@@ -1085,7 +1085,7 @@ static AST_Validation _ValidateUnion_Clauses
 		}
 
 	cleanup:
-		array_free(return_indices);
+		arr_free(return_indices);
 		if(res == AST_INVALID) {
 			return res;
 		}
@@ -1094,7 +1094,7 @@ static AST_Validation _ValidateUnion_Clauses
 	// validate union clauses of subqueries
 	uint *call_subquery_indices = AST_GetClauseIndices(ast,
 		CYPHER_AST_CALL_SUBQUERY);
-	uint n_subqueries = array_len(call_subquery_indices);
+	uint n_subqueries = arr_len(call_subquery_indices);
 
 	for(uint i = 0; i < n_subqueries; i++) {
 		AST subquery_ast = {
@@ -1108,7 +1108,7 @@ static AST_Validation _ValidateUnion_Clauses
 			break;
 		}
 	}
-	array_free(call_subquery_indices);
+	arr_free(call_subquery_indices);
 
 	return res;
 }
@@ -1657,7 +1657,7 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 	vctx->clause = cypher_astnode_type(n);
 
 	// track new entities (identifier + type) introduced by CREATE clause
-	const char **new_identifiers = array_new(const char*, 1);
+	const char **new_identifiers = arr_new(const char*, 1);
 
 	// manual traverse validation of the CREATE clause
 	// this is done primarily because of identifiers scoping
@@ -1737,8 +1737,8 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 			// remove identifier from scope
 			if(hide) {
 				_IdentifierRemove(vctx, alias);
-				array_append(new_identifiers, alias);
-				array_append(new_identifiers, (char*)t); // note identifier type
+				arr_append(new_identifiers, alias);
+				arr_append(new_identifiers, (char*)t); // note identifier type
 			}
 		}
 	}
@@ -1747,7 +1747,7 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 	// introduce identifiers to scope
 	//--------------------------------------------------------------------------
 
-	uint l = array_len(new_identifiers);
+	uint l = arr_len(new_identifiers);
 	for(uint i = 0; i < l; i+=2) {
 		const char *alias = new_identifiers[i];
 		SIType t = (SIType)new_identifiers[i+1];
@@ -1761,7 +1761,7 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 	}
 
 	cleanup:
-	array_free(new_identifiers);
+	arr_free(new_identifiers);
 	return res;
 }
 
@@ -1916,7 +1916,7 @@ static VISITOR_STRATEGY _Validate_RETURN_Clause
 		// check for duplicate column names
 		rax           *rax          = raxNew();
 		const char   **columns      = AST_BuildReturnColumnNames(n);
-		uint           column_count = array_len(columns);
+		uint           column_count = arr_len(columns);
 
 		for (uint i = 0; i < column_count; i++) {
 			// column with same name is invalid
@@ -1927,7 +1927,7 @@ static VISITOR_STRATEGY _Validate_RETURN_Clause
 		}
 
 		raxFree(rax);
-		array_free(columns);
+		arr_free(columns);
 	}
 
 	// manually traverse children. order by and predicate should be aware of the

@@ -20,7 +20,7 @@ OpBase *NewApplyOp
 ) {
 	OpApply *op = rm_calloc (1, sizeof(OpApply)) ;
 
-	op->rhs_args = array_new(OpArgument*, 1);
+	op->rhs_args = arr_new(OpArgument*, 1);
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_APPLY, "Apply", ApplyInit, ApplyConsume,
@@ -43,18 +43,18 @@ static OpResult ApplyInit
 
 	// locate all reachable Argument/ArgumentList ops
 	// do not recurse into other Apply ops right hand branches
-	OpBase **queue = array_new (OpBase*, 1) ;
+	OpBase **queue = arr_new (OpBase*, 1) ;
 
 	// start traversal from op's right hand side
-	array_append (queue, OpBase_GetChild (opBase, 1)) ;
+	arr_append (queue, OpBase_GetChild (opBase, 1)) ;
 
-	while (array_len (queue) > 0) {
-		OpBase *current = array_pop (queue) ;
+	while (arr_len (queue) > 0) {
+		OpBase *current = arr_pop (queue) ;
 		OPType t = OpBase_Type (current) ;
 
 		// found an argument op, add it to our arguments array
 		if (t == OPType_ARGUMENT) {
-			array_append (op->rhs_args, (OpArgument*)current);
+			arr_append (op->rhs_args, (OpArgument*)current);
 			continue ;
 		}
 
@@ -67,12 +67,12 @@ static OpResult ApplyInit
 
 		// add child op's to queue
 		for (uint i = 0; i < n; i++) {
-			array_append (queue, OpBase_GetChild (current, i)) ;
+			arr_append (queue, OpBase_GetChild (current, i)) ;
 		}
 	}
-	array_free (queue) ;
+	arr_free (queue) ;
 
-	op->nargs = array_len (op->rhs_args) ;
+	op->nargs = arr_len (op->rhs_args) ;
 
 	return OP_OK;
 }
@@ -159,7 +159,7 @@ static void ApplyFree
 	}
 
 	if (op->rhs_args != NULL) {
-		array_free (op->rhs_args) ;
+		arr_free (op->rhs_args) ;
 		op->rhs_args = NULL ;
 	}
 }

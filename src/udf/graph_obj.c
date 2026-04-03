@@ -350,7 +350,7 @@ static JSValue graph_traverse
 				JS_SetPropertyUint32 (js_ctx, js_neighbors, j,
 						UDF_CreateEdge (js_ctx, edges + j)) ;
 			}
-			array_free (edges) ;
+			arr_free (edges) ;
 		}
 
 		JS_SetPropertyUint32 (js_ctx, output, i, js_neighbors) ;
@@ -365,17 +365,17 @@ static JSValue graph_traverse
 	rm_free (neighbors_count) ;
 
 	if (labels != NULL) {
-		for (int i = 0; i < array_len (labels) ; i++) {
+		for (int i = 0; i < arr_len (labels) ; i++) {
 			free (labels[i]) ;
 		}
-		array_free (labels) ;
+		arr_free (labels) ;
 	}
 
 	if (rel_types != NULL) {
-		for (int i = 0; i < array_len (rel_types) ; i++) {
+		for (int i = 0; i < arr_len (rel_types) ; i++) {
 			free (rel_types[i]) ;
 		}
-		array_free (rel_types) ;
+		arr_free (rel_types) ;
 	}
 
 	return output ;

@@ -211,7 +211,7 @@ static OpResult MergeInit
 	ASSERT (op->create_argument_tap != NULL) ;
 
 	// set up an array to store records produced by the bound variable stream
-	op->input_records = array_new (Record, 1) ;
+	op->input_records = arr_new (Record, 1) ;
 
 	return OP_OK ;
 }
@@ -220,7 +220,7 @@ static Record _handoff
 (
 	OpMerge *op
 ) {
-	if(op->output_rec_idx < array_len(op->output_records)) {
+	if(op->output_rec_idx < arr_len(op->output_records)) {
 		return op->output_records[op->output_rec_idx++];
 	} else {
 		return NULL;
@@ -247,13 +247,13 @@ static void _processPostponedRecords
 	ASSERT (op != NULL) ;
 
 	// save number of output records
-	size_t offset = array_len (op->output_records) ;
+	size_t offset = arr_len (op->output_records) ;
 
 	// run through the postponed records
 	// match each one and add them to the output array
-	int n = array_len (op->postponed_match) ;
+	int n = arr_len (op->postponed_match) ;
 	for (int i = 0; i < n; i++) {
-		Record r = array_pop (op->postponed_match) ;
+		Record r = arr_pop (op->postponed_match) ;
 
 		// propagate record to the top of the Match stream
 		Argument_AddRecord (op->match_argument_tap, r) ;
@@ -266,7 +266,7 @@ static void _processPostponedRecords
 		ASSERT (_pullFromStream (op->match_stream) == NULL) ;
 
 		// add record to outputs
-		array_append (op->output_records, r) ;
+		arr_append (op->output_records, r) ;
 	}
 
 	// if we are setting properties with ON MATCH, compute pending updates
@@ -285,7 +285,7 @@ static void _ConsumeBoundStream
 	if (op->bound_variable_stream != NULL) {
 		Record input_record ;
 		while ((input_record = _pullFromStream (op->bound_variable_stream))) {
-			array_append (op->input_records, input_record) ;
+			arr_append (op->input_records, input_record) ;
 		}
 	}
 }
@@ -311,12 +311,12 @@ static uint _RunMatchPhase
 		if (op->input_records) {
 			// if we had bound variables but have depleted our input records,
 			// we're done pulling from the Match stream
-			if (array_len (op->input_records) == 0) {
+			if (arr_len (op->input_records) == 0) {
 				break ;
 			}
 
 			// pull a new input record
-			bound_record = array_pop (op->input_records) ;
+			bound_record = arr_pop (op->input_records) ;
 
 			// propagate record to the top of the Match stream
 			// (must clone the Record, as it will be freed in the Match stream)
@@ -335,7 +335,7 @@ static uint _RunMatchPhase
 		while ((matched_record = _pullFromStream (op->match_stream))) {
 			// pattern was successfully matched
 			should_create_pattern = false ;
-			array_append (op->output_records, matched_record) ;
+			arr_append (op->output_records, matched_record) ;
 			match_count++ ;
 		}
 
@@ -355,7 +355,7 @@ static uint _RunMatchPhase
 			if (r != NULL) {
 				// duplicate detected, this record need to be matched
 				// once we commit all of the changes
-				array_append (op->postponed_match, r) ;
+				arr_append (op->postponed_match, r) ;
 			} else {
 				must_create_records = true ;
 			}
@@ -386,11 +386,11 @@ static void _RunCreatePhase
 	// or performing updates on creation
 	// pull all records from the Create stream
 	uint create_count = 0 ;  // number of records resulted in a create
-	uint offset = array_len (op->output_records) ;
+	uint offset = arr_len (op->output_records) ;
 
 	Record created_record ;
 	while ((created_record = _pullFromStream (op->create_stream))) {
-		array_append (op->output_records, created_record) ;
+		arr_append (op->output_records, created_record) ;
 		create_count++ ;
 	}
 
@@ -413,7 +413,7 @@ static void _RunPostponedPhase
 	OpMerge *op
 ) {
 	// handle postpone records
-	if (array_len (op->postponed_match) > 0) {
+	if (arr_len (op->postponed_match) > 0) {
 		// reset match stream, required as we've commited data to the graph
 		OpBase_PropagateReset (op->match_stream) ;
 		_processPostponedRecords (op) ;
@@ -452,8 +452,8 @@ static Record MergeConsume
 		return _handoff (op) ;
 	}
 
-	op->output_records       = array_new (Record, 32) ;
-	op->postponed_match      = array_new (Record, 0) ;
+	op->output_records       = arr_new (Record, 32) ;
+	op->postponed_match      = arr_new (Record, 0) ;
 	op->node_pending_updates = HashTableCreate (&_dt) ;
 	op->edge_pending_updates = HashTableCreate (&_dt) ;
 
@@ -533,32 +533,32 @@ static void MergeFree
 
 	// free input records
 	if(op->input_records) {
-		uint input_count = array_len(op->input_records);
+		uint input_count = arr_len(op->input_records);
 		for(uint i = 0; i < input_count; i ++) {
 			OpBase_DeleteRecord(op->input_records+i);
 		}
-		array_free(op->input_records);
+		arr_free(op->input_records);
 		op->input_records = NULL;
 	}
 
 	// free postponed match records
 	if(op->postponed_match != NULL) {
-		uint n = array_len(op->postponed_match);
+		uint n = arr_len(op->postponed_match);
 		for(uint i = 0; i < n; i ++) {
 			OpBase_DeleteRecord(op->postponed_match + i);
 		}
-		array_free(op->postponed_match);
+		arr_free(op->postponed_match);
 		op->postponed_match = NULL;
 	}
 
 	// free output records
 	if(op->output_records != NULL) {
-		uint output_count = array_len(op->output_records);
+		uint output_count = arr_len(op->output_records);
 		// output_records[0..output_rec_idx] had been already emitted, skip them
 		for(uint i = op->output_rec_idx; i < output_count; i ++) {
 			OpBase_DeleteRecord(op->output_records+i);
 		}
-		array_free(op->output_records);
+		arr_free(op->output_records);
 		op->output_records = NULL;
 	}
 

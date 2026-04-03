@@ -75,7 +75,7 @@ static void *_ObjectPool_ReuseItem
 (
 	ObjectPool *pool
 ) {
-	ObjectID idx = array_pop(pool->deletedIdx);
+	ObjectID idx = arr_pop(pool->deletedIdx);
 
 	pool->itemCount++;
 
@@ -105,7 +105,7 @@ ObjectPool *ObjectPool_New
 	pool->itemSize   = itemSize + HEADER_SIZE;  // accommodate the header
 	pool->blockCount = 0;
 	pool->blocks     = NULL;
-	pool->deletedIdx = array_new(uint64_t, 128);
+	pool->deletedIdx = arr_new(uint64_t, 128);
 	pool->destructor = fp;
 
 	_ObjectPool_AddBlocks(pool, ITEM_COUNT_TO_BLOCK_COUNT(itemCap));
@@ -118,7 +118,7 @@ void *ObjectPool_NewItem
 	ObjectPool *pool
 ) {
 	// reuse a deleted item if one is available
-	if(array_len(pool->deletedIdx)) return _ObjectPool_ReuseItem(pool);
+	if(arr_len(pool->deletedIdx)) return _ObjectPool_ReuseItem(pool);
 
 	// make sure we have room for a new item
 	if(pool->itemCount >= pool->itemCap) {
@@ -155,7 +155,7 @@ void ObjectPool_DeleteItem
 	if(pool->destructor) pool->destructor(item);
 
 	// add ID to deleted list
-	array_append(pool->deletedIdx, idx);
+	arr_append(pool->deletedIdx, idx);
 	pool->itemCount--;
 }
 
@@ -166,7 +166,7 @@ void ObjectPool_Free
 	for(uint i = 0; i < pool->blockCount; i++) Block_Free(pool->blocks[i]);
 
 	rm_free(pool->blocks);
-	array_free(pool->deletedIdx);
+	arr_free(pool->deletedIdx);
 	rm_free(pool);
 }
 

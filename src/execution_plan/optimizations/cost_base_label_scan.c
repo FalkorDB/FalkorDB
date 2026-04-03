@@ -378,7 +378,7 @@ void costBaseLabelScan
 			&t ,1);
 
 	// for each label scan operation try to optimize scanned label
-	uint op_count = array_len(label_scan_ops);
+	uint op_count = arr_len(label_scan_ops);
 	for(uint i = 0; i < op_count; i++) {
 		NodeByLabelScan *label_scan = (NodeByLabelScan*)label_scan_ops[i];
 		if(!_transposeExpression(label_scan)) {
@@ -386,6 +386,6 @@ void costBaseLabelScan
 		}
 	}
 
-	array_free(label_scan_ops);
+	arr_free(label_scan_ops);
 }
 

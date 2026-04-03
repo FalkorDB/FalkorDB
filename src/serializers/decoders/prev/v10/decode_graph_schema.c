@@ -107,20 +107,20 @@ void RdbLoadGraphSchema_v10
 		GraphDecodeContext_GetProcessedKeyCount(gc->decoding_context) > 0;
 
 	// load each node schema
-	gc->node_schemas = array_ensure_cap(gc->node_schemas, schema_count);
+	gc->node_schemas = arr_ensure_cap(gc->node_schemas, schema_count);
 	for(uint i = 0; i < schema_count; i ++) {
 		Schema *s = _RdbLoadSchema(rdb, gc, SCHEMA_NODE, already_loaded);
-		if(!already_loaded) array_append(gc->node_schemas, s);
+		if(!already_loaded) arr_append(gc->node_schemas, s);
 	}
 
 	// #edge schemas
 	schema_count = RedisModule_LoadUnsigned(rdb);
 
 	// load each edge schema
-	gc->relation_schemas = array_ensure_cap(gc->relation_schemas, schema_count);
+	gc->relation_schemas = arr_ensure_cap(gc->relation_schemas, schema_count);
 	for(uint i = 0; i < schema_count; i ++) {
 		Schema *s = _RdbLoadSchema(rdb, gc, SCHEMA_EDGE, already_loaded);
-		if(!already_loaded) array_append(gc->relation_schemas, s);
+		if(!already_loaded) arr_append(gc->relation_schemas, s);
 	}
 }
 
