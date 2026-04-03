@@ -11,17 +11,18 @@
 #include <pthread.h>
 #include <stdatomic.h>
 
+static atomic_int free_count = 0;  // count how many cache objects been freed
+
 void setup() {
 	Alloc_Reset();
+	atomic_store(&free_count, 0);
 }
 
 #define TEST_INIT setup();
 #include "acutest.h"
 
-static atomic_int free_count = 0;  // count how many cache objects been freed
-
 typedef struct {
-	const char *str;
+	char *str;
 } CacheObj;
 
 CacheObj *CacheObj_New(const char *str) {
@@ -31,9 +32,7 @@ CacheObj *CacheObj_New(const char *str) {
 }
 
 CacheObj *CacheObj_Dup(const CacheObj *obj) {
-	CacheObj *dup = (CacheObj *)rm_malloc(sizeof(CacheObj));
-	dup->str = rm_strdup(obj->str);
-	return dup;
+	return CacheObj_New(obj->str);
 }
 
 bool CacheObj_EQ(const CacheObj *a, const CacheObj *b) {
@@ -42,8 +41,8 @@ bool CacheObj_EQ(const CacheObj *a, const CacheObj *b) {
 }
 
 void CacheObj_Free(CacheObj *obj) {
-	free_count++;
-	rm_free((char *)obj->str);
+	atomic_fetch_add(&free_count, 1);
+	rm_free(obj->str);
 	rm_free(obj);
 }
 
@@ -145,7 +144,7 @@ static void *_cache_reader(void *arg) {
 			CacheObj *val = (CacheObj *)Cache_GetValue(cache, key);
 			if (val != NULL) {
 				// value must be valid (not corrupted)
-				TEST_CHECK(val->str != NULL);
+				TEST_ASSERT(val->str != NULL);
 				CacheObj_Free(val);
 			}
 		}
@@ -230,18 +229,16 @@ void test_cacheConcurrency() {
 
 	// counter must be positive (incremented by both readers and writers)
 	long long final_counter = atomic_load(&cache->counter);
-	TEST_CHECK_(final_counter > 0, "counter=%lld should be > 0", final_counter);
+	TEST_ASSERT(final_counter > 0);
 
 	// every cached entry's LRU must be <= counter and >= 0
 	for (uint i = 0; i < cache->size; i++) {
 		long long lru = atomic_load(&cache->arr[i].LRU);
-		TEST_CHECK_(lru >= 0 && lru <= final_counter,
-			"entry[%u] LRU=%lld out of range [0, %lld]", i, lru, final_counter);
+		TEST_ASSERT(lru >= 0 && lru <= final_counter);
 	}
 
 	// cache should not have grown beyond its capacity
-	TEST_CHECK_(cache->size <= cache->cap,
-		"cache size=%u exceeds cap=%u", cache->size, cache->cap);
+	TEST_ASSERT(cache->size <= cache->cap);
 
 	Cache_Free(cache);
 }
