@@ -45,7 +45,7 @@ void Schema_ActivateIndex
 	// uniqie constraint rely on indicies
 	// whenever such an index is updated
 	// we need to update the relevant uniqie constraint
-	uint n = array_len(s->constraints);
+	uint n = arr_len(s->constraints);
 	for(uint i = 0; i < n; i++) {
 		Constraint c = s->constraints[i];
 		Constraint_SetPrivateData(c, active);
@@ -65,7 +65,7 @@ Schema *Schema_New
 	s->id          = id;
 	s->type        = type;
 	s->name        = rm_strdup(name);
-	s->constraints = array_new(Constraint, 0);
+	s->constraints = arr_new(Constraint, 0);
 
 	return s;
 }
@@ -291,7 +291,7 @@ int Schema_RemoveIndex
 	//--------------------------------------------------------------------------
 
 	if(t == INDEX_FLD_RANGE) {
-		uint n = array_len(s->constraints);
+		uint n = arr_len(s->constraints);
 		for(uint i = 0; i < n; i++) {
 			Constraint c = s->constraints[i];
 			if(Constraint_GetStatus(c) != CT_FAILED &&
@@ -410,7 +410,7 @@ bool Schema_HasConstraints
 	const Schema *s  // schema to query
 ) {
 	ASSERT(s != NULL);
-	return (s->constraints != NULL && array_len(s->constraints) > 0);
+	return (s->constraints != NULL && arr_len(s->constraints) > 0);
 }
 
 // checks if schema constains constraint
@@ -445,7 +445,7 @@ Constraint Schema_GetConstraint
 	ASSERT(attr_count > 0);
 
 	// search for constraint
-	uint n = array_len(s->constraints);
+	uint n = arr_len(s->constraints);
 	for(uint i = 0; i < n; i++) {
 		Constraint c = s->constraints[i];
 
@@ -499,7 +499,7 @@ void Schema_AddConstraint
 ) {
 	ASSERT(s != NULL);
 	ASSERT(c != NULL);
-	array_append(s->constraints, c);
+	arr_append(s->constraints, c);
 }
 
 // removes constraint from schema
@@ -513,11 +513,11 @@ void Schema_RemoveConstraint
 	ASSERT(c != NULL);
 
 	// search for constraint
-	uint n = array_len(s->constraints);
+	uint n = arr_len(s->constraints);
 	for(uint i = 0; i < n; i++) {
 		if(c == s->constraints[i]) {
 			Constraint_IncPendingChanges(c);
-			array_del_fast(s->constraints, i);
+			arr_del_fast(s->constraints, i);
 			return;
 		}
 	}
@@ -537,7 +537,7 @@ bool Schema_EnforceConstraints
 	ASSERT(e != NULL);
 	
 	// see if entity holds under all schema's constraints
-	uint n = array_len(s->constraints);
+	uint n = arr_len(s->constraints);
 	for(uint i = 0; i < n; i++) {
 		Constraint c = s->constraints[i];
 		if(Constraint_GetStatus(c) != CT_FAILED &&
@@ -563,11 +563,11 @@ void Schema_Free
 
 	// free constraints
 	if(s->constraints != NULL) {
-		uint n = array_len(s->constraints);
+		uint n = arr_len(s->constraints);
 		for(uint i = 0; i < n; i++) {
 			Constraint_Free(s->constraints + i);
 		}
-		array_free(s->constraints);
+		arr_free(s->constraints);
 	}
 
 	// free indicies

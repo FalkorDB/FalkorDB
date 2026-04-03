@@ -38,7 +38,7 @@ static Record EagerConsume
 
 handoff:
 	if (op->records != NULL) {
-		if (op->rec_idx < array_len (op->records)) {
+		if (op->rec_idx < arr_len (op->records)) {
 			return op->records[op->rec_idx++] ;
 		}
 
@@ -47,13 +47,13 @@ handoff:
 
 	ASSERT (OpBase_ChildCount (opBase) == 1) ;
 
-	op->records = array_new (Record, 1) ;
+	op->records = arr_new (Record, 1) ;
 	OpBase *child = OpBase_GetChild (opBase, 0) ;
 
 	// drain stream
 	Record r = NULL ;
 	while ((r = OpBase_Consume (child))) {
-		array_append (op->records, r) ;
+		arr_append (op->records, r) ;
 	}
 
 	OpBase_PropagateReset (child) ;
@@ -68,12 +68,12 @@ static OpResult EagerReset
 	OpEager *op = (OpEager *)ctx;
 	
 	if (op->records != NULL) {
-		uint n = array_len (op->records) ;
+		uint n = arr_len (op->records) ;
 		for (uint i = op->rec_idx; i < n; i++) {
 			OpBase_DeleteRecord (op->records + i) ;
 		}
 
-		array_free (op->records) ;
+		arr_free (op->records) ;
 		op->records = NULL ;
 	}
 
@@ -99,12 +99,12 @@ static void EagerFree
 	OpEager *op = (OpEager *)opBase;
 
 	if (op->records != NULL) {
-		uint n = array_len (op->records) ;
+		uint n = arr_len (op->records) ;
 		for (uint i = op->rec_idx; i < n; i++) {
 			OpBase_DeleteRecord (op->records + i) ;
 		}
 
-		array_free (op->records) ;
+		arr_free (op->records) ;
 		op->records = NULL ;
 	}
 }

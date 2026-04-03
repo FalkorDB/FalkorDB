@@ -47,7 +47,7 @@ void AllNeighborsCtx_Reset
 	ctx->first_pull    = true;
 	ctx->current_level = 0;
 
-	array_clear(ctx->visited);
+	arr_clear(ctx->visited);
 
 	// reset visited nodes
 	HashTableRelease(ctx->visited_nodes);
@@ -72,7 +72,7 @@ AllNeighborsCtx *AllNeighborsCtx_New
 	ctx->maxLen        = maxLen;
 	ctx->levels        = rm_malloc(sizeof(Delta_MatrixTupleIter));
 	ctx->n_levels      = 1;
-	ctx->visited       = array_new(EntityID, 1);
+	ctx->visited       = arr_new(EntityID, 1);
 	ctx->first_pull    = true;
 	ctx->current_level = 0;
 	ctx->visited_nodes = HashTableCreate(&def_dt);
@@ -94,7 +94,7 @@ EntityID AllNeighborsCtx_NextNeighbor
 		ctx->first_pull = false;
 
 		// update visited path, replace frontier with current node
-		array_append(ctx->visited, ctx->src);
+		arr_append(ctx->visited, ctx->src);
 		HashTableAdd(ctx->visited_nodes, (void*)(ctx->src), NULL);
 
 		// current_level >= ctx->minLen
@@ -119,7 +119,7 @@ EntityID AllNeighborsCtx_NextNeighbor
 		if(info == GxB_EXHAUSTED) {
 			// backtrack
 			ctx->current_level--;
-			dest_id = array_pop(ctx->visited);
+			dest_id = arr_pop(ctx->visited);
 			int res = HashTableDelete(ctx->visited_nodes, (void*)(dest_id));
 			ASSERT(res == DICT_OK);
 			continue;
@@ -130,7 +130,7 @@ EntityID AllNeighborsCtx_NextNeighbor
 			HashTableAdd(ctx->visited_nodes, (void*)(dest_id), NULL) != DICT_OK;
 
 		if(ctx->current_level < ctx->minLen && !visited) {
-			array_append(ctx->visited, dest_id);
+			arr_append(ctx->visited, dest_id);
 			// continue traversing
 			_AllNeighborsCtx_CollectNeighbors(ctx, dest_id);
 			continue;
@@ -139,7 +139,7 @@ EntityID AllNeighborsCtx_NextNeighbor
 		// current_level >= ctx->minLen
 		// see if we should expand further?
 		if(ctx->current_level < ctx->maxLen && !visited) {
-			array_append(ctx->visited, dest_id);
+			arr_append(ctx->visited, dest_id);
 			// we can expand further
 			_AllNeighborsCtx_CollectNeighbors(ctx, dest_id);
 		}
@@ -162,7 +162,7 @@ void AllNeighborsCtx_Free
 		Delta_MatrixTupleIter_detach(ctx->levels + i);
 	}
 	rm_free(ctx->levels);
-	array_free(ctx->visited);
+	arr_free(ctx->visited);
 
 	HashTableRelease(ctx->visited_nodes);
 

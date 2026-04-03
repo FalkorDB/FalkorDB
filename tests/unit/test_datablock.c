@@ -148,7 +148,7 @@ void test_dataBlockRemoveItem() {
 	// Index 0 should be added to datablock deletedIdx array.
 	DataBlock_DeleteItem(dataBlock, 0);
 	TEST_ASSERT(dataBlock->itemCount == itemCount - 1);
-	TEST_ASSERT(array_len(dataBlock->deletedIdx) == 1);
+	TEST_ASSERT(arr_len(dataBlock->deletedIdx) == 1);
 	DataBlockItemHeader *header = (DataBlockItemHeader *)dataBlock->blocks[0]->data;
 	TEST_ASSERT(IS_ITEM_DELETED(header));
 
@@ -169,7 +169,7 @@ void test_dataBlockRemoveItem() {
 	// Add a new item, expecting deleted cell to be reused.
 	int *newItem = (int *)DataBlock_AllocateItem(dataBlock, NULL);
 	TEST_ASSERT(dataBlock->itemCount == itemCount);
-	TEST_ASSERT(array_len(dataBlock->deletedIdx) == 0);
+	TEST_ASSERT(arr_len(dataBlock->deletedIdx) == 0);
 	TEST_ASSERT((void *)newItem == (void *)((dataBlock->blocks[0]->data) + ITEM_HEADER_SIZE));
 
 	it = DataBlock_Scan(dataBlock);
@@ -196,7 +196,7 @@ void test_dataBlockOutOfOrderBuilding() {
 		*item = insert_arr1[i];
 	}
 	TEST_ASSERT(4 == dataBlock->itemCount);
-	TEST_ASSERT(0 == array_len(dataBlock->deletedIdx));
+	TEST_ASSERT(0 == arr_len(dataBlock->deletedIdx));
 
 	// Mark deleted values.
 	for(int i = 0; i < 2; i++) {
@@ -204,7 +204,7 @@ void test_dataBlockOutOfOrderBuilding() {
 	}
 
 	TEST_ASSERT(4 == dataBlock->itemCount);
-	TEST_ASSERT(2 == array_len(dataBlock->deletedIdx));
+	TEST_ASSERT(2 == arr_len(dataBlock->deletedIdx));
 
 	// Add another array
 	for(int i = 0; i < 4; i++) {
@@ -213,7 +213,7 @@ void test_dataBlockOutOfOrderBuilding() {
 	}
 
 	TEST_ASSERT(8 == dataBlock->itemCount);
-	TEST_ASSERT(2 == array_len(dataBlock->deletedIdx));
+	TEST_ASSERT(2 == arr_len(dataBlock->deletedIdx));
 
 	// Validate
 	DataBlockIterator *it = DataBlock_Scan(dataBlock);

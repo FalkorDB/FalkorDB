@@ -20,8 +20,8 @@ QGEdge *QGEdge_New
 	QGEdge *e = rm_malloc(sizeof(QGEdge));
 
 	e->alias         = alias;
-	e->reltypes      = array_new(const char*, 1);
-	e->reltypeIDs    = array_new(int, 1);
+	e->reltypes      = arr_new(const char*, 1);
+	e->reltypeIDs    = arr_new(int, 1);
 	e->src           = NULL;
 	e->dest          = NULL;
 	e->minHops       = 1;
@@ -67,8 +67,8 @@ QGEdge *QGEdge_Clone
 	memcpy(e, orig, sizeof(QGEdge));
 	e->src = NULL;
 	e->dest = NULL;
-	array_clone(e->reltypes, orig->reltypes);
-	array_clone(e->reltypeIDs, orig->reltypeIDs);
+	arr_clone(e->reltypes, orig->reltypes);
+	arr_clone(e->reltypeIDs, orig->reltypeIDs);
 
 	return e;
 }
@@ -115,7 +115,7 @@ int QGEdge_RelationCount
 	const QGEdge *e
 ) {
 	ASSERT(e);
-	return array_len(e->reltypes);
+	return arr_len(e->reltypes);
 }
 
 const char *QGEdge_Relation
@@ -167,7 +167,7 @@ bool QGEdge_ResolveUnknownRelIDS
 	GraphContext *gc = QueryCtx_GetGraphCtx () ;
 	bool    res = true ;  // assuming all relationship types are resolved
 	Schema *s   = NULL ;
-	uint    n   = array_len (e->reltypeIDs) ;
+	uint    n   = arr_len (e->reltypeIDs) ;
 
 	for (uint i = 0; i < n; i++) {
 		if (e->reltypeIDs [i] == GRAPH_UNKNOWN_RELATION) {
@@ -218,8 +218,8 @@ void QGEdge_Free
 ) {
 	if(!e) return;
 
-	array_free(e->reltypes);
-	array_free(e->reltypeIDs);
+	arr_free(e->reltypes);
+	arr_free(e->reltypeIDs);
 
 	rm_free(e);
 }

@@ -40,8 +40,8 @@ void Register_SUM(void) {
 	SIType ret_type;
 	AR_FuncDesc *func_desc;
 
-	types = array_new (SIType, 2) ;
-	array_append (types, T_NULL | T_INT64 | T_DOUBLE) ;
+	types = arr_new (SIType, 2) ;
+	arr_append (types, T_NULL | T_INT64 | T_DOUBLE) ;
 	ret_type = T_NULL | T_DOUBLE ;
 	func_desc = AR_AggFuncDescNew ("sum", AGG_SUM, 1, 1, types, ret_type, NULL,
 			NULL, SUM_PrivateData) ;

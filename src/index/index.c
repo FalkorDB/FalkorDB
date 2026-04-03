@@ -117,7 +117,7 @@ static void _Index_ConstructStructure
 	ASSERT(idx != NULL);
 	ASSERT(rsIdx != NULL);
 
-	uint fields_count = array_len(idx->fields);
+	uint fields_count = arr_len(idx->fields);
 
 	for(uint i = 0; i < fields_count; i++) {
 		IndexField *field = idx->fields + i;
@@ -237,7 +237,7 @@ void Index_ConstructStructure
 	RediSearch_IndexOptionsSetStopwords(idx_options, NULL, 0);
 	if(idx->stopwords) {
 		RediSearch_IndexOptionsSetStopwords(idx_options,
-				(const char**)idx->stopwords, array_len(idx->stopwords));
+				(const char**)idx->stopwords, arr_len(idx->stopwords));
 	}
 
 	rsIdx = RediSearch_CreateIndex(idx->label, idx_options);
@@ -298,8 +298,8 @@ static inline void _addArrayField
 	double d;  // numerical value
 
 	uint32_t l = SIArray_Length(arr);
-	double *numerics = array_new(double, l);
-	char **strings = array_new(char *, l);
+	double *numerics = arr_new(double, l);
+	char **strings = arr_new(char *, l);
 
 	// split array into dedicated numerical and string arrays
 	for(uint i = 0; i < l; i++) {
@@ -310,12 +310,12 @@ static inline void _addArrayField
 			case T_INT64:
 			case T_DOUBLE:
 				d = SI_GET_NUMERIC(elem);
-				array_append(numerics, d);
+				arr_append(numerics, d);
 				break;
 			case T_STRING:
 			case T_INTERN_STRING:
 				s = elem.stringval;
-				array_append(strings, s);
+				arr_append(strings, s);
 				break;
 			default:
 				// unsupported value type
@@ -323,8 +323,8 @@ static inline void _addArrayField
 		}
 	}
 
-	size_t n_strings  = array_len(strings);
-	size_t n_numerics = array_len(numerics);
+	size_t n_strings  = arr_len(strings);
+	size_t n_numerics = arr_len(numerics);
 
 	//--------------------------------------------------------------------------
 	// index numerical values
@@ -347,11 +347,11 @@ static inline void _addArrayField
 
 	// clean up
 	if(n_numerics == 0) {
-		array_free(numerics);
+		arr_free(numerics);
 	}
 
 	if(n_strings == 0) {
-		array_free(strings);
+		arr_free(strings);
 	}
 }
 
@@ -373,7 +373,7 @@ RSDoc *Index_IndexGraphEntity
 	SIValue    v;                   // current indexed value
 	double     score       = 1;     // default score
 	IndexField *field      = NULL;  // current indexed field
-	uint       field_count = array_len(idx->fields);
+	uint       field_count = arr_len(idx->fields);
 
 	*doc_field_count = 0;  // number of indexed fields
 
@@ -531,7 +531,7 @@ Index Index_New
 
 	idx->label           = rm_strdup(label);
 	idx->rsIdx           = NULL;
-	idx->fields          = array_new(IndexField, 1);
+	idx->fields          = arr_new(IndexField, 1);
 	idx->label_id        = label_id;
 	idx->language        = NULL;
 	idx->stopwords       = NULL;
@@ -561,7 +561,7 @@ Index Index_Clone
 	clone->pending_changes = ATOMIC_VAR_INIT(0);
 	
 	if(clone->stopwords != NULL) {
-		array_clone_with_cb(clone->stopwords, idx->stopwords, rm_strdup);
+		arr_clone_with_cb(clone->stopwords, idx->stopwords, rm_strdup);
 	}
 
 	if(clone->language != NULL) {
@@ -572,13 +572,13 @@ Index Index_Clone
 	// clone index fields
 	//--------------------------------------------------------------------------
 
-	int n = array_len(idx->fields);
-	clone->fields = array_new(IndexField, n);
+	int n = arr_len(idx->fields);
+	clone->fields = arr_new(IndexField, n);
 	for(int i = 0; i < n; i++) {
 		IndexField _f;
 		IndexField *f = idx->fields + i;
 		IndexField_Clone(f, &_f);
-		array_append(clone->fields, _f);
+		arr_append(clone->fields, _f);
 	}
 
 	return clone;
@@ -644,7 +644,7 @@ int Index_AddField
 
 	if(existing_field == NULL) {
 		// first time field is introduced
-		array_append(idx->fields, *field);
+		arr_append(idx->fields, *field);
 	} else {
 		// field exists, merge fields
 		_Index_MergeFields(existing_field, field);
@@ -676,7 +676,7 @@ void Index_RemoveField
 	if(f->type == INDEX_FLD_UNKNOWN) {
 		// free field
 		IndexField_Free(f);
-		array_del_fast(idx->fields, pos);
+		arr_del_fast(idx->fields, pos);
 	}
 
 	Index_Disable(idx);
@@ -712,7 +712,7 @@ uint Index_FieldsCount
 ) {
 	ASSERT(idx != NULL);
 
-	return array_len(idx->fields);
+	return arr_len(idx->fields);
 }
 
 // returns indexed fields
@@ -740,7 +740,7 @@ IndexField *Index_GetField
 	if(pos != NULL) *pos = -1;
 
 	IndexField *f = NULL;
-	uint n = array_len(idx->fields);
+	uint n = arr_len(idx->fields);
 
 	for(uint i = 0; i < n; i++) {
 		IndexField *field = idx->fields + i;
@@ -914,14 +914,14 @@ void Index_Free
 		rm_free(idx->language);
 	}
 
-	uint fields_count = array_len(idx->fields);
+	uint fields_count = arr_len(idx->fields);
 	for(uint i = 0; i < fields_count; i++) {
 		IndexField_Free(idx->fields + i);
 	}
-	array_free(idx->fields);
+	arr_free(idx->fields);
 
 	if(idx->stopwords != NULL) {
-		array_free_cb(idx->stopwords, rm_free);
+		arr_free_cb(idx->stopwords, rm_free);
 	}
 
 	rm_free(idx->label);

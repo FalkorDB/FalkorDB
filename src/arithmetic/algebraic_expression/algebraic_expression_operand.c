@@ -92,26 +92,26 @@ AlgebraicExpression **AlgebraicExpression_CollectOperandsInOrder
 	// NOTE: this function doesn't treat operands switch by transpose operation
 	// e.g. T(A*B) -> Bt * At
 	// will treat A as the leftmost operand and B as the rightmost
-	AlgebraicExpression **queue = array_new(AlgebraicExpression*, 1);
-	array_append(queue, (AlgebraicExpression*)root);
+	AlgebraicExpression **queue = arr_new(AlgebraicExpression*, 1);
+	arr_append(queue, (AlgebraicExpression*)root);
 
 	// as long as there are nodes to visit
-	while(array_len(queue) > 0) {
+	while(arr_len(queue) > 0) {
 		// get the newest node added to the queue
-		AlgebraicExpression *current = array_pop(queue);
+		AlgebraicExpression *current = arr_pop(queue);
 
 		if(current->type == AL_OPERATION) {
 			// push children to queue
 			uint child_count = AlgebraicExpression_ChildCount(current);
 			for(int i = child_count-1; i >= 0; i--) {
-				array_append(queue, CHILD_AT(current, i));
+				arr_append(queue, CHILD_AT(current, i));
 			}
 		} else {
 			// node is an operand add it to the output array
 			operands[idx++] = current;
 		}
 	}
-	array_free(queue);
+	arr_free(queue);
 
 	// set output 'n'
 	ASSERT(idx == _n);
