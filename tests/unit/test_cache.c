@@ -18,7 +18,7 @@ void setup() {
 #define TEST_INIT setup();
 #include "acutest.h"
 
-static int free_count = 0;  // count how many cache objects been freed
+static atomic_int free_count = 0;  // count how many cache objects been freed
 
 typedef struct {
 	const char *str;
