@@ -98,7 +98,7 @@ static bool _GraphContext_NameContainsTag
 (
 	const GraphContext *gc
 ) {
-	const char *left_curly_brace = strstr(gc->graph_name, "{");
+	const char *left_curly_brace = strstr(GraphContext_GetName (gc), "{");
 	if(left_curly_brace) {
 		const char *right_curly_brace = strstr(left_curly_brace, "}");
 		if(right_curly_brace) {
@@ -113,14 +113,22 @@ static uint64_t _GraphContext_RequiredMetaKeys
 (
 	const GraphContext *gc
 ) {
-	uint64_t vkey_entity_count;
-	Config_Option_get(Config_VKEY_MAX_ENTITY_COUNT, &vkey_entity_count);
-	gc->encoding_context->vkey_entity_count = vkey_entity_count;
+	Graph *g = GraphContext_GetGraph (gc) ;
+	GraphEncodeContext *encoding_context =
+		GraphContext_GetEncodingCtx ((GraphContext*) gc) ;
 
-	uint64_t entities_count = Graph_NodeCount(gc->g) + Graph_EdgeCount(gc->g) +
-		Graph_DeletedNodeCount(gc->g) + Graph_DeletedEdgeCount(gc->g);
+	uint64_t vkey_entity_count ;
+	Config_Option_get (Config_VKEY_MAX_ENTITY_COUNT, &vkey_entity_count) ;
+	encoding_context->vkey_entity_count = vkey_entity_count ;
 
-	if(entities_count == 0) return 0;
+	uint64_t entities_count = Graph_NodeCount(g)         +
+							  Graph_EdgeCount(g)         +
+							  Graph_DeletedNodeCount (g) +
+							  Graph_DeletedEdgeCount (g) ;
+
+	if (entities_count == 0) {
+		return 0 ;
+	}
 
 	// calculate the required keys
 	// substruct one since there is also the graph context key
@@ -135,6 +143,7 @@ static void _CreateGraphMetaKeys
 ) {
 	uint meta_key_count = _GraphContext_RequiredMetaKeys(gc);
 	bool graph_name_contains_tag = _GraphContext_NameContainsTag(gc);
+	GraphEncodeContext *encoding_context = GraphContext_GetEncodingCtx (gc) ;
 	for(uint i = 1; i <= meta_key_count; i++) {
 		char *uuid = UUID_New();
 		RedisModuleString *meta_rm_string;
@@ -152,17 +161,17 @@ static void _CreateGraphMetaKeys
 		if(graph_name_contains_tag) {
 			// graph already has a tag, create a meta key of "graph_name_uuid"
 			meta_rm_string = RedisModule_CreateStringPrintf(ctx, "%s_%s",
-					gc->graph_name, uuid);
+					GraphContext_GetName (gc), uuid);
 		} else {
 			// graph is untagged, one must be introduced to ensure that
 			// keys are propagated to the same node
 			// create a meta key of "{graph_name}graph_name_i"
 			meta_rm_string = RedisModule_CreateStringPrintf(ctx, "{%s}%s_%s",
-					gc->graph_name, gc->graph_name, uuid);
+					GraphContext_GetName (gc), GraphContext_GetName (gc), uuid) ;
 		}
 
 		const char *key_name = RedisModule_StringPtrLen(meta_rm_string, NULL);
-		GraphEncodeContext_AddMetaKey(gc->encoding_context, key_name);
+		GraphEncodeContext_AddMetaKey (encoding_context, key_name) ;
 		RedisModuleKey *key = RedisModule_OpenKey(ctx, meta_rm_string,
 				REDISMODULE_WRITE);
 
@@ -177,7 +186,7 @@ static void _CreateGraphMetaKeys
 	}
 
 	RedisModule_Log(ctx, "notice", "Created %d virtual keys for graph %s",
-			meta_key_count, gc->graph_name);
+			meta_key_count, GraphContext_GetName (gc)) ;
 }
 
 // delete meta keys, upon RDB encode or decode finished event triggering
@@ -191,11 +200,14 @@ static void _DeleteGraphMetaKeys
 	uint key_count;
 	unsigned char **keys;
 
+	GraphEncodeContext *encoding_ctx = GraphContext_GetEncodingCtx (gc) ;
+	GraphDecodeContext *decoding_ctx = GraphContext_GetDecodingCtx (gc) ;
+
 	// get the meta keys required, according to the "decode" flag.
 	if(decode) {
-		keys = GraphDecodeContext_GetMetaKeys(gc->decoding_context);
+		keys = GraphDecodeContext_GetMetaKeys (decoding_ctx) ;
 	} else {
-		keys = GraphEncodeContext_GetMetaKeys(gc->encoding_context);
+		keys = GraphEncodeContext_GetMetaKeys (encoding_ctx) ;
 	}
 
 	key_count = arr_len(keys);
@@ -217,13 +229,13 @@ static void _DeleteGraphMetaKeys
 
 	// clear the relevant context meta keys as they are no longer valid
 	if(decode) {
-		GraphDecodeContext_ClearMetaKeys(gc->decoding_context);
+		GraphDecodeContext_ClearMetaKeys (decoding_ctx) ;
 	} else {
-		GraphEncodeContext_ClearMetaKeys(gc->encoding_context);
+		GraphEncodeContext_ClearMetaKeys (encoding_ctx) ;
 	}
 
 	RedisModule_Log(ctx, "notice", "Deleted %d virtual keys for graph %s",
-			key_count, gc->graph_name);
+			key_count, GraphContext_GetName (gc)) ;
 }
 
 // create the meta keys for each graph in the keyspace
@@ -448,21 +460,61 @@ static void _ForkPrepare() {
 		!INTERMEDIATE_GRAPHS ;
 
 	// measure and report prep time
-	double tic[2] ;
+	double tic   [2] ;
+	double sync  [2] ;
+	double read  [2] ;
+	double yield [2] ;
+
+	double sync_time       = 0 ;
+	double total_sync_time = 0 ;
+
+	double yield_time       = 0 ;
+	double total_yield_time = 0 ;
+
+	double read_acquire_time = 0 ;
+	double total_read_acquire_time = 0 ;
+
 	simple_tic (tic) ;
 
 	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext (NULL) ;
 
 	if (sync_graphs_before_fork) {
+		uint32_t n = Globals_GraphsCount () ;
+		GraphContext **graphs = rm_malloc (sizeof (GraphContext*) * n) ;
+
 		// scan through each graph in the keyspace
 		GraphContext *gc = NULL ;
 		KeySpaceGraphIterator it ;
 		Globals_ScanGraphs (&it) ;
 
-		while ((gc = GraphIterator_Next (&it)) != NULL) {
+		// collect graphs
+		for (uint32_t i = 0 ; i < n ; i++) {
+			graphs [i] = GraphIterator_Next (&it) ;
+			ASSERT (graphs [i] != NULL) ;
+		}
+
+		// sync each graph's matrices in parallel
+		// each iteration is independent — different graph, different locks
+		#pragma omp parallel for schedule(dynamic)
+		for (uint32_t i = 0; i < n; i++) {
 			// acquire read lock, guarantee graph isn't modified by a writer
-			Graph *g = gc->g ;
+			GraphContext *gc = graphs [i] ;
+			Graph *g = GraphContext_GetGraph (gc) ;
+
+			// print once per thread, on first iteration that thread executes
+			if (omp_get_thread_num () == 0 && i == 0) {
+				printf ("OpenMP: using %d threads\n", omp_get_num_threads ()) ;
+			}
+
+		//	printf("OpenMP: thread %d syncing graph %s\n",
+		//			omp_get_thread_num (), GraphContext_GetName (gc)) ;
+
+			// simple_tic (read) ;
 			Graph_AcquireReadLock (g) ;  // release in _AfterForkParent
+			//read_acquire_time = simple_toc (read) ;
+			//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+			//		"acquire read lock time: %.6f ms\n", read_acquire_time * 1000) ;
+			//total_read_acquire_time += read_acquire_time ;
 
 			// set matrix synchronization policy to default
 			Graph_SetMatrixPolicy (g, SYNC_POLICY_FLUSH_RESIZE) ;
@@ -476,30 +528,103 @@ static void _ForkPrepare() {
 
 			// calling Graph_Get* will sync the retrieved matrix
 
+			// simple_tic (sync) ;
 			Graph_GetZeroMatrix (g) ;
+			//sync_time = simple_toc (sync) ;
+
+			//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+			//		"Matrix sync time: %.6f ms\n", sync_time) ;
+			//total_sync_time += sync_time ;
+
+			// simple_tic (yield) ;
+
 			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
 					"preparing to fork") ;
 
+			//yield_time = simple_toc (yield) ;
+			//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+			//		"Yield time: %.6f ms\n", yield_time) ;
+			//total_yield_time += yield_time ;
+
+			// simple_tic (sync) ;
 			Graph_GetAdjacencyMatrix (g, false) ;
+			//sync_time = simple_toc (sync) ;
+
+			//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+			//		"Matrix sync time: %.6f ms\n", sync_time) ;
+			//total_sync_time += sync_time ;
+
+			// simple_tic (yield) ;
+
 			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
 					"preparing to fork") ;
 
+			//yield_time = simple_toc (yield) ;
+			//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+			//		"Yield time: %.6f ms\n", yield_time) ;
+			//total_yield_time += yield_time ;
+
+			// simple_tic (sync) ;
 			Graph_GetNodeLabelMatrix (g) ;
+			//sync_time = simple_toc (sync) ;
+
+			//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+			//		"Matrix sync time: %.6f ms\n", sync_time) ;
+			//total_sync_time += sync_time ;
+
+			// simple_tic (yield) ;
+
 			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
 					"preparing to fork") ;
+
+			//yield_time = simple_toc (yield) ;
+
+			//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+			//		"Yield time: %.6f ms\n", yield_time) ;
+			//total_yield_time += yield_time ;
 
 			int n_lbls = Graph_LabelTypeCount (g) ;
 			for (int i = 0; i < n_lbls; i++) {
+				// simple_tic (sync) ;
 				Graph_GetLabelMatrix (g, i) ;
-				RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-						"preparing to fork") ;
+				//sync_time = simple_toc (sync) ;
+
+				//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+				//		"Matrix sync time: %.6f ms\n", sync_time) ;
+				//total_sync_time += sync_time ;
+
+				// simple_tic (yield) ;
+
+				//RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+				//		"preparing to fork") ;
+
+				//yield_time = simple_toc (yield) ;
+
+				//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+				//		"Yield time: %.6f ms\n", yield_time) ;
+				//total_yield_time += yield_time ;
 			}
 
 			int n_rels = Graph_RelationTypeCount (g) ;
 			for (int i = 0; i < n_rels; i++) {
+				// simple_tic (sync) ;
 				Graph_GetRelationMatrix (g, i, false) ;
+				//sync_time = simple_toc (sync) ;
+
+				//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+				//		"Matrix sync time: %.6f ms\n", sync_time) ;
+				//total_sync_time += sync_time ;
+
+				// simple_tic (yield) ;
+
 				RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
 						"preparing to fork") ;
+
+				//yield_time = simple_toc (yield) ;
+
+				//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+				//		"Yield time: %.6f ms\n", yield_time) ;
+				//total_yield_time += yield_time ;
 			}
 
 			bool synced = Graph_Synced (g) ;
@@ -517,14 +642,23 @@ static void _ForkPrepare() {
 			// decrease graph context ref count
 			GraphContext_DecreaseRefCount (gc) ;
 
-			if (!synced) {
-				break ;
-			}
+			//if (!synced) {
+			//	break ;
+			//}
 		}
 	}
 
 	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
-			"Fork preparation time: %.6f sec\n", simple_toc (tic)) ;
+			"Fork preparation time: %.6f ms\n", simple_toc (tic) * 1000) ;
+
+	//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+	//		"Read lock total time: %.6f ms\n", total_read_acquire_time * 1000) ;
+
+	//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+	//		"Yield total time: %.6f ms\n", total_yield_time * 1000) ;
+
+	//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+	//		"Matrix sync total time: %.6f ms\n", total_sync_time * 1000) ;
 
 	// clean up
 	RedisModule_FreeThreadSafeContext (ctx) ;
@@ -544,7 +678,8 @@ static void _AfterForkParent() {
 
 		while ((gc = GraphIterator_Next (&it)) != NULL) {
 			// release read lock
-			Graph_ReleaseLock (gc->g) ;
+			Graph *g = GraphContext_GetGraph (gc) ;
+			Graph_ReleaseLock (g) ;
 
 			// decrease graph context ref count
 			GraphContext_DecreaseRefCount (gc) ;

@@ -107,6 +107,18 @@ GraphContext **Globals_Get_GraphsInKeyspace(void) {
 	return _globals.graphs_in_keyspace;
 }
 
+uint32_t Globals_GraphsCount (void) {
+	// acuire write lock
+	Globals_WriteLock () ;
+
+	uint32_t n = arr_len (_globals.graphs_in_keyspace) ;
+
+	// release lock
+	Globals_Unlock () ;
+
+	return n ;
+}
+
 // add graph to global tracker
 void Globals_AddGraph
 (
@@ -206,16 +218,13 @@ void Globals_ClearGraphs
 	// acquire write lock
 	Globals_WriteLock () ;
 	
-	for(uint i = 0; i < arr_len(_globals.graphs_in_keyspace); i++) {
-		GraphContext *gc = _globals.graphs_in_keyspace[i];
-		if(gc->telemetry_stream != NULL) {
-			RedisModule_FreeString(ctx, gc->telemetry_stream);
-			gc->telemetry_stream = NULL;
-		}
+	for (uint i = 0 ; i < arr_len (_globals.graphs_in_keyspace) ; i++) {
+		GraphContext *gc = _globals.graphs_in_keyspace [i] ;
+		GraphContext_FreeTelemetryStreamName (gc, ctx) ;
 	}
 
 	// clear graph tracking
-	arr_clear(_globals.graphs_in_keyspace);
+	arr_clear (_globals.graphs_in_keyspace) ;
 
 	// release lock
 	Globals_Unlock () ;

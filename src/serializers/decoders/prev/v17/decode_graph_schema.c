@@ -234,37 +234,32 @@ static void _RdbLoadSchema
 	 * (constraint type, constraint fields) X N
 	 */
 
-	Schema *s    = NULL;
-	int     id   = SerializerIO_ReadUnsigned(rdb);
-	char   *name = SerializerIO_ReadBuffer(rdb, NULL);
+	Schema *s    = NULL ;
+	int     id   = SerializerIO_ReadUnsigned (rdb) ;
+	char   *name = SerializerIO_ReadBuffer (rdb, NULL) ;
 
-	if(!already_loaded) {
-		s = Schema_New(type, id, name);
-		if(type == SCHEMA_NODE) {
-			ASSERT(arr_len(gc->node_schemas) == id);
-			arr_append(gc->node_schemas, s);
-		} else {
-			ASSERT(arr_len(gc->relation_schemas) == id);
-			arr_append(gc->relation_schemas, s);
-		}
+	if (!already_loaded) {
+		s = GraphContext_AddSchema (gc, name, type) ;
+		ASSERT (s != NULL) ;
+		ASSERT (Schema_GetID (s) == id) ;
 	}
 
-	RedisModule_Free(name);
+	RedisModule_Free (name) ;
 
 	//--------------------------------------------------------------------------
 	// load indices
 	//--------------------------------------------------------------------------
 
-	uint index_count = SerializerIO_ReadUnsigned(rdb);
-	for(uint index = 0; index < index_count; index++) {
-		_RdbLoadIndex(rdb, gc, s, already_loaded);
+	uint index_count = SerializerIO_ReadUnsigned (rdb) ;
+	for (uint index = 0 ; index < index_count ; index++) {
+		_RdbLoadIndex (rdb, gc, s, already_loaded) ;
 	}
 
 	//--------------------------------------------------------------------------
 	// load constraints
 	//--------------------------------------------------------------------------
 
-	_RdbLoadConstaints(rdb, gc, s, already_loaded);
+	_RdbLoadConstaints (rdb, gc, s, already_loaded) ;
 }
 
 static void _RdbLoadAttributeKeys
@@ -307,7 +302,6 @@ void RdbLoadGraphSchema_v17
 	uint schema_count = SerializerIO_ReadUnsigned(rdb);
 
 	// Load each node schema
-	gc->node_schemas = arr_ensure_cap(gc->node_schemas, schema_count);
 	for(uint i = 0; i < schema_count; i ++) {
 		_RdbLoadSchema(rdb, gc, SCHEMA_NODE, already_loaded);
 	}
@@ -316,7 +310,6 @@ void RdbLoadGraphSchema_v17
 	schema_count = SerializerIO_ReadUnsigned(rdb);
 
 	// Load each edge schema
-	gc->relation_schemas = arr_ensure_cap(gc->relation_schemas, schema_count);
 	for(uint i = 0; i < schema_count; i ++) {
 		_RdbLoadSchema(rdb, gc, SCHEMA_EDGE, already_loaded);
 	}
