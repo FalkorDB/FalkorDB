@@ -147,7 +147,7 @@ void Tensor_SetElements
 	// array of indexes pairs
 	// delayed[i, i+1] points to a range of consecutive elements to be inserted
 	// these elements are creating a new entries either scalar or vector
-	uint64_t *delayed = array_new(uint64_t, 0);
+	uint64_t *delayed = arr_new(uint64_t, 0);
 
 	GrB_Vector V;
 	GrB_Info info;
@@ -199,8 +199,8 @@ void Tensor_SetElements
 				// save elements IDs
 				// we can't insert at this time as we'll be introducing pendding
 				// changes in a READ / WRITE scenario
-				array_append(delayed, i);
-				array_append(delayed, j);
+				arr_append(delayed, i);
+				arr_append(delayed, j);
 				break;
 			case NEW_VECTOR:
 				info = GrB_Vector_new(&V, GrB_BOOL, GrB_INDEX_MAX);
@@ -254,7 +254,7 @@ void Tensor_SetElements
 	}
 
 	// process delayed inserts
-	n = array_len(delayed);
+	n = arr_len(delayed);
 	for(uint64_t i = 0; i < n; i+=2) {
 		uint64_t a = delayed[i];
 		uint64_t z = delayed[i+1];
@@ -299,7 +299,7 @@ void Tensor_SetElements
 		}
 	}
 
-	array_free(delayed);
+	arr_free(delayed);
 }
 
 // set multiple entries
@@ -334,7 +334,7 @@ void Tensor_SetEdges
 	// array of indexes pairs
 	// delayed[i, i+1] points to a range of consecutive elements to be inserted
 	// these elements are creating new entries either scalar or vector
-	uint64_t *delayed = array_new(uint64_t, 0); 
+	uint64_t *delayed = arr_new(uint64_t, 0); 
 
 	GrB_Vector V;
 	GrB_Info info;
@@ -387,8 +387,8 @@ void Tensor_SetEdges
 				// save elements IDs
 				// we can't insert at this time as we'll be introducing pendding
 				// changes in a READ / WRITE scenario
-				array_append(delayed, i);
-				array_append(delayed, j);
+				arr_append(delayed, i);
+				arr_append(delayed, j);
 				break;
 			case NEW_VECTOR:
 				info = GrB_Vector_new(&V, GrB_BOOL, GrB_INDEX_MAX);
@@ -444,7 +444,7 @@ void Tensor_SetEdges
 	}
 
 	// process delayed inserts
-	n = array_len(delayed);
+	n = arr_len(delayed);
 	for(uint64_t i = 0; i < n; i+=2) {
 		uint64_t a = delayed[i];
 		uint64_t z = delayed[i+1];
@@ -491,7 +491,7 @@ void Tensor_SetEdges
 		}
 	}
 
-	array_free(delayed);
+	arr_free(delayed);
 }
 
 // qsort element compare function
@@ -556,7 +556,7 @@ void Tensor_RemoveElements
 	// array of indexes
 	// delayed[i] points to elements which need to be deleted
 	// these elements are introducing pendding changes to the tensor
-	uint64_t *delayed = array_new(uint64_t, 0); 
+	uint64_t *delayed = arr_new(uint64_t, 0); 
 
 	// i's is advanced within the loop's body
 	for(uint64_t i = 0; i < n;) {
@@ -592,7 +592,7 @@ void Tensor_RemoveElements
 			// removing a single entry
 			ASSERT(d == 1);
 			// postpone clear entry
-			array_append(delayed, i);
+			arr_append(delayed, i);
 		} else {
 			// entry is a vector
 			// determine if vector needs to be removed
@@ -606,7 +606,7 @@ void Tensor_RemoveElements
 				// entire vector needs to be removed
 				// postpone entry removal
 				GrB_free(&V);
-				array_append(delayed, i);
+				arr_append(delayed, i);
 
 				// do not leave a dangling pointer
 				// replace vector entry with a delete marker
@@ -678,7 +678,7 @@ void Tensor_RemoveElements
 	}
 
 	// handel delayed deletions
-	n = array_len(delayed);
+	n = arr_len(delayed);
 	for(uint64_t i = 0; i < n; i++) {
 		const Edge *e   = elements + delayed[i];  // tuple (row, col, x)
 		GrB_Index   row = Edge_GetSrcNodeID(e);   // element row index
@@ -691,7 +691,7 @@ void Tensor_RemoveElements
 	if(cleared_entries != NULL) {
 		*cleared_entries = delayed;
 	} else {
-		array_free(delayed);
+		arr_free(delayed);
 	}
 }
 
@@ -765,8 +765,6 @@ void Tensor_ClearElements
 	GrB_OK (GrB_Scalar_new (&s, GrB_BOOL)) ;
 	GrB_OK (GrB_Matrix_assign_Scalar (DP, A, NULL, s, GrB_ALL, 0, GrB_ALL, 0,
 				GrB_DESC_S)) ;
-
-	Delta_Matrix_setDirty (T) ;
 
 	// clean up
 	GrB_OK (GrB_free (&s)) ;

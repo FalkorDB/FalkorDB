@@ -18,6 +18,13 @@
  */
 SIValue SIPath_New(Path *p);
 
+// creates a new SIPath out of path struct
+// the new SIPath object owns the path object and is responsible for freeing it
+SIValue SIPath_Wrap
+(
+	Path **p  // path to wrap as an SIValue
+) ;
+
 /**
  * @brief  Clones a given SIPath.
  * @param  p: SIPath.

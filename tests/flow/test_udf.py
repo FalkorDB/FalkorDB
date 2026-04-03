@@ -657,6 +657,239 @@ class testUDF():
         # restore original graph
         self.graph = self.db.select_graph(GRAPH_ID)
 
+    def test_get_node_by_id(self):
+        """
+        Test the graph.getNodeById(id) JS binding:
+        - Verify retrieval of existing nodes.
+        - Verify behavior for non-existent IDs.
+        - Verify error handling for invalid argument types.
+        - Verify behavior in an empty graph.
+        """
+
+        # Register UDF
+        script_valid = """
+            function getNode(id) {
+                let node = graph.getNodeById(id);
+                return node;
+            }
+            falkor.register('getNode', getNode);
+        """
+        self.db.udf_load("test_lib", script_valid, True)
+
+        # 1. Setup: Create a small graph
+        # Node ID 0: Alice, Node ID 1: Bob
+        self.graph.query("CREATE (:Person {name: 'Alice'}), (:Person {name: 'Bob'})")
+
+        # 2. Happy Path: Retrieve an existing node
+        # We expect the C implementation to return a Node object
+        res = self.graph.query("RETURN test_lib.getNode(0)").result_set
+        node = res[0][0]
+
+        # Expecting a node object
+        self.env.assertEqual(type(node), Node)
+        self.env.assertEqual(node.properties['name'], "Alice")
+
+        res = self.graph.query("RETURN test_lib.getNode(1)").result_set
+        node = res[0][0]
+
+        # Expecting a node object
+        self.env.assertEqual(type(node), Node)
+        self.env.assertEqual(node.properties['name'], "Bob")
+
+        # 3. Scenario: Node does not exist
+        # The C implementation returns JS_NULL
+        res = self.graph.query("RETURN test_lib.getNode(999)").result_set
+        self.env.assertEqual(res[0][0], None)
+
+        # 4. Scenario: Invalid Invocation (Wrong Type)
+        # The C implementation throws a JS_ThrowTypeError
+        _types = ['a', 1.2, -3, [], {}]
+        for t in _types:
+            try:
+                self.graph.query("RETURN test_lib.getNode($x)", {'x': t})
+                self.env.assertTrue(False)
+            except Exception:
+                # Expected: invalid invocation
+                # Any exception here indicates the test behaved as expected
+                pass
+
+        # 5. Scenario: Invalid Invocation (Missing argument)
+        # The C implementation throws a JS_ThrowTypeError
+        try:
+            self.graph.query("RETURN test_lib.getNode()")
+            self.env.assertTrue(False)
+        except Exception:
+            # Expected: invalid invocation
+            # Any exception here indicates the test behaved as expected
+            pass
+
+        # 6. Scenario: Invalid Invocation (Missing Arguments)
+        # The C implementation throws a JS_ThrowTypeError for argc < 1
+        script_no_args = """
+            function getNoArgs() {
+                return graph.getNodeById();
+            }
+            falkor.register('getNoArgs', getNoArgs);
+        """
+        self.db.udf_load("test_lib", script_no_args, True)
+        try:
+            self.graph.query("RETURN test_lib.getNoArgs()")
+            self.env.assertTrue(False)
+        except Exception:
+            # Expected: invalid invocation
+            # Any exception here indicates the test behaved as expected
+            pass
+
+    def test_iterate_nodes(self):
+        """
+        Test the graph.iterateNodes(label) JS binding:
+        - Verify retrieval of nodes with a specific label.
+        - Verify behavior for labels that do not exist in the graph.
+        - Verify error handling for invalid argument types (non-strings).
+        """
+
+        # Register UDF
+        # We use a for...of loop to consume the iterator and return an array of names
+        script_valid = """
+            function getNamesByLabel(label) {
+                let names = [];
+                let it = graph.iterateNodes(label);
+                for (let node of it) {
+                    names.push(node.name);
+                }
+                return names;
+            }
+            falkor.register('getNamesByLabel', getNamesByLabel);
+        """
+        self.db.udf_load("test_lib", script_valid, True)
+
+        # 1. Setup: Create a multi-label graph
+        self.graph.query("""
+            CREATE (:Person {name: 'Alice'}),
+                   (:Person {name: 'Bob'}),
+                   (:Animal {name: 'Charlie'})
+        """)
+
+        # 2. Happy Path: Retrieve nodes by existing label
+        # We expect an array containing 'Alice' and 'Bob'
+        res = self.graph.query("RETURN test_lib.getNamesByLabel('Person')").result_set
+        names = res[0][0]
+
+        self.env.assertEqual(len(names), 2)
+        self.env.assertIn("Bob", names)
+        self.env.assertIn("Alice", names)
+
+        # 3. Happy Path: Single result
+        res = self.graph.query("RETURN test_lib.getNamesByLabel('Animal')").result_set
+        names = res[0][0]
+        self.env.assertEqual(names, ["Charlie"])
+
+        # 4. Scenario: Label does not exist
+        # The iterator should be empty, resulting in an empty list, not an error
+        res = self.graph.query("RETURN test_lib.getNamesByLabel('Alien')").result_set
+        self.env.assertEqual(res[0][0], [])
+
+        # 5. Scenario: Invalid Invocation (Wrong Type)
+        # The C implementation should throw a TypeError if label is not a string/null
+        _invalid_types = [123, 1.2, [], {}]
+        for t in _invalid_types:
+            try:
+                self.graph.query("RETURN test_lib.getNamesByLabel($x)", {'x': t})
+            except Exception:
+                # Expected: invalid invocation
+                # Any exception here indicates the test behaved as expected
+                pass
+
+    def test_iterate_edges(self):
+        """
+        Test the graph.iterateEdges(relType) JS binding:
+        - Verify retrieval of edges with a specific relationship type.
+        - Verify behavior for relationship types that do not exist in the graph.
+        - Verify error handling for invalid argument types (non-strings).
+        """
+        # Register UDF
+        # We use a for...of loop to consume the iterator and collect edge properties
+        script_valid = """
+            function getEdgesByType(relType) {
+                let edges = [];
+                let it = graph.iterateEdges(relType);
+                for (let edge of it) {
+                    edges.push(edge);
+                }
+                return edges;
+            }
+            falkor.register('getEdgesByType', getEdgesByType);
+        """
+        self.db.udf_load("test_lib", script_valid, True)
+
+        # 1. Setup: Create a graph with multiple relationship types
+        self.graph.query("""
+            CREATE (a:Person {name: 'Alice'}),
+                   (b:Person {name: 'Bob'}),
+                   (c:Person {name: 'Charlie'}),
+                   (d:Person {name: 'Diana'}),
+                   (a)-[:KNOWS {since: 2020}]->(b),
+                   (b)-[:KNOWS {since: 2021}]->(c),
+                   (a)-[:FOLLOWS {since: 2019}]->(d)
+        """)
+
+        # 2. Happy Path: Retrieve edges by existing relationship type with multiple results
+        # We expect an array containing the 'since' values of all KNOWS edges
+        actual = self.graph.query("RETURN test_lib.getEdgesByType('KNOWS')").result_set[0][0]
+        expected = self.graph.query("MATCH ()-[e:KNOWS]->() RETURN collect(e)").result_set[0][0]
+
+        self.env.assertEqual(len(actual), len(expected))
+        for e in expected:
+            self.env.assertIn(e, actual)
+
+        # 3. Happy Path: Single result
+        # Only one FOLLOWS edge exists
+        actual = self.graph.query("RETURN test_lib.getEdgesByType('FOLLOWS')").result_set[0][0]
+        expected = self.graph.query("MATCH ()-[e:FOLLOWS]->() RETURN collect(e)").result_set[0][0]
+        self.env.assertEqual(len(actual), len(expected))
+        for e in expected:
+            self.env.assertIn(e, actual)
+
+        # 4. Scenario: Relationship type does not exist
+        # The iterator should be empty, resulting in an empty list, not an error
+        res = self.graph.query("RETURN test_lib.getEdgesByType('MARRIED')").result_set
+        self.env.assertEqual(res[0][0], [])
+
+        # 5. Scenario: Invalid Invocation (Wrong Type)
+        # The C implementation should throw a TypeError if relType is not a string/null
+        _invalid_types = [123, 1.2, [], {}]
+        for t in _invalid_types:
+            try:
+                self.graph.query("RETURN test_lib.getEdgesByType($x)", {'x': t})
+            except Exception:
+                # Expected: invalid invocation
+                # Any exception here indicates the test behaved as expected
+                pass
+
+        # 6. Scenario: Verify src/dst node IDs are populated on the edge
+        # Register a second UDF that inspects edge topology, not just properties
+        script_topology = """
+            function getEdgeEndpoints(relType) {
+                let endpoints = [];
+                let it = graph.iterateEdges(relType);
+                for (let edge of it) {
+                    endpoints.push({src: edge.source, dst: edge.target});
+                }
+                return endpoints;
+            }
+            falkor.register('getEdgeEndpoints', getEdgeEndpoints);
+        """
+        self.db.udf_load("test_lib", script_topology, True)
+
+        actual = self.graph.query("RETURN test_lib.getEdgeEndpoints('FOLLOWS')").result_set[0][0]
+        expected = self.graph.query("MATCH (s)-[:FOLLOWS]->(t) RETURN s, t").result_set[0]
+        src = expected[0]
+        dst = expected[1]
+
+        # Each entry must have both src and dst populated (non-null, non-negative)
+        self.env.assertEqual(src, actual[0]['src'])
+        self.env.assertEqual(dst, actual[0]['dst'])
+
     def test_falkor_multi_source_traverse(self):
         """
         Verifies the correctness of the multi-source graph.traverse function,
@@ -1035,7 +1268,6 @@ class testUDF():
             self.graph.query("RETURN del_lib.DelTest()")
             assert False, "Expected failure calling deleted function"
         except ResponseError as e:
-            print (f"str(e).lower(): {str(e).lower()}")
             self.env.assertIn("unknown function 'del_lib.deltest'", str(e).lower())
 
     def test_delete_nonexistent_library(self):

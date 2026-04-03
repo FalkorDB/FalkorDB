@@ -67,9 +67,9 @@ static void _fake_graph_context() {
 	gc->index_count      = 0;
 	gc->graph_name       = strdup("G");
 	gc->attributes       = raxNew();
-	gc->string_mapping   = (char**)array_new(char*, 64);
-	gc->node_schemas     = (Schema**)array_new(Schema*, GRAPH_DEFAULT_LABEL_CAP);
-	gc->relation_schemas = (Schema**)array_new(Schema*, GRAPH_DEFAULT_RELATION_TYPE_CAP);
+	gc->string_mapping   = (char**)arr_new(char*, 64);
+	gc->node_schemas     = (Schema**)arr_new(Schema*, GRAPH_DEFAULT_LABEL_CAP);
+	gc->relation_schemas = (Schema**)arr_new(Schema*, GRAPH_DEFAULT_RELATION_TYPE_CAP);
 	gc->queries_log      = QueriesLog_New();
 
 	pthread_rwlock_init(&gc->_attribute_rwlock,  NULL);
@@ -101,7 +101,7 @@ static void validate_query_plans_clone
 (
 	const char **queries
 ) {
-	uint query_count = array_len(queries);
+	uint query_count = arr_len(queries);
 	for(uint i = 0; i < query_count; i++) {
 		AST *ast = NULL;
 		ExecutionPlan *plan = NULL;
@@ -154,167 +154,167 @@ void tearDown() {
 }
 
 void test_createClause() {
-	const char **queries = array_new(const char *, 12);
+	const char **queries = arr_new(const char *, 12);
 	// anonymous nodes create clauses
-	array_append(queries, "CREATE ()");
-	array_append(queries, "CREATE (:N)");
-	array_append(queries, "CREATE (:N {val:1})");
+	arr_append(queries, "CREATE ()");
+	arr_append(queries, "CREATE (:N)");
+	arr_append(queries, "CREATE (:N {val:1})");
 
 	// referenced nodes create clauses
-	array_append(queries, "CREATE (n) RETURN n");
-	array_append(queries, "CREATE (n:N) RETURN n");
-	array_append(queries, "CREATE (n:N {val:1}) RETURN n");
+	arr_append(queries, "CREATE (n) RETURN n");
+	arr_append(queries, "CREATE (n:N) RETURN n");
+	arr_append(queries, "CREATE (n:N {val:1}) RETURN n");
 
 	// anonymous edges create clauses
-	array_append(queries, "CREATE ()-[]->()");
-	array_append(queries, "CREATE ()-[:E]->()");
-	array_append(queries, "CREATE ()-[:E {val:1}]->()");
+	arr_append(queries, "CREATE ()-[]->()");
+	arr_append(queries, "CREATE ()-[:E]->()");
+	arr_append(queries, "CREATE ()-[:E {val:1}]->()");
 
 	// referenced edges create clauses
-	array_append(queries, "CREATE ()-[e]->() RETURN e");
-	array_append(queries, "CREATE ()-[e:E]->() RETURN e");
-	array_append(queries, "CREATE ()-[e:E {val:1}]->()");
+	arr_append(queries, "CREATE ()-[e]->() RETURN e");
+	arr_append(queries, "CREATE ()-[e:E]->() RETURN e");
+	arr_append(queries, "CREATE ()-[e:E {val:1}]->()");
 	validate_query_plans_clone(queries);
-	array_free(queries);
+	arr_free(queries);
 }
 
 void test_matchClause() {
-	const char **queries = array_new(const char *, 9);
-	array_append(queries, "MATCH (n) RETURN n");  // All node scan
-	array_append(queries, "MATCH (n:N) RETURN n");    // Label scan
-	array_append(queries, "MATCH (n) WHERE id(n) = 0 RETURN n");  // ID Scan
-	array_append(queries, "MATCH (n)-[]->() RETURN n");    // Conditional traverse, referenced src node.
-	array_append(queries, "MATCH (n)-[e]->() RETURN n");   // Conditional traverse, referenced src node and edge.
-	array_append(queries, "MATCH p = ()-[]->() RETURN p"); // Named path, conditional traverse
-	array_append(queries, "MATCH (n)-[*]->() RETURN n");   // Variable length traverse.
-	array_append(queries, "MATCH p = ()-[*]->() return p");    // Named path, variable length traverse.
-	array_append(queries, "MATCH (n) WHERE (n)-[:R]->() AND NOT (n)-[:R2]->() RETURN n");   // Apply ops.
+	const char **queries = arr_new(const char *, 9);
+	arr_append(queries, "MATCH (n) RETURN n");  // All node scan
+	arr_append(queries, "MATCH (n:N) RETURN n");    // Label scan
+	arr_append(queries, "MATCH (n) WHERE id(n) = 0 RETURN n");  // ID Scan
+	arr_append(queries, "MATCH (n)-[]->() RETURN n");    // Conditional traverse, referenced src node.
+	arr_append(queries, "MATCH (n)-[e]->() RETURN n");   // Conditional traverse, referenced src node and edge.
+	arr_append(queries, "MATCH p = ()-[]->() RETURN p"); // Named path, conditional traverse
+	arr_append(queries, "MATCH (n)-[*]->() RETURN n");   // Variable length traverse.
+	arr_append(queries, "MATCH p = ()-[*]->() return p");    // Named path, variable length traverse.
+	arr_append(queries, "MATCH (n) WHERE (n)-[:R]->() AND NOT (n)-[:R2]->() RETURN n");   // Apply ops.
 
 	validate_query_plans_clone(queries);
-	array_free(queries);
+	arr_free(queries);
 }
 
 void test_updateClause() {
-	const char **queries = array_new(const char *, 2);
-	array_append(queries, "MATCH (n) SET n.v = 1");
-	array_append(queries, "MATCH ()-[e]->() SET e.v = 1");
+	const char **queries = arr_new(const char *, 2);
+	arr_append(queries, "MATCH (n) SET n.v = 1");
+	arr_append(queries, "MATCH ()-[e]->() SET e.v = 1");
 
 	validate_query_plans_clone(queries);
-	array_free(queries);
+	arr_free(queries);
 }
 
 void test_deleteClause() {
-	const char **queries = array_new(const char *, 2);
-	array_append(queries, "MATCH (n) DELETE n");
-	array_append(queries, "MATCH ()-[e]->() DELETE e");
+	const char **queries = arr_new(const char *, 2);
+	arr_append(queries, "MATCH (n) DELETE n");
+	arr_append(queries, "MATCH ()-[e]->() DELETE e");
 
 	validate_query_plans_clone(queries);
-	array_free(queries);
+	arr_free(queries);
 }
 
 void test_mergeClause() {
-	const char **queries = array_new(const char *, 9);
-	array_append(queries, "MERGE ()");
-	array_append(queries, "MERGE (:N)");
-	array_append(queries, "MERGE (:N {val:1})");
+	const char **queries = arr_new(const char *, 9);
+	arr_append(queries, "MERGE ()");
+	arr_append(queries, "MERGE (:N)");
+	arr_append(queries, "MERGE (:N {val:1})");
 
-	array_append(queries, "MERGE (n) ON MATCH SET n.val2 = 2");
-	array_append(queries, "MERGE (n:N) ON MATCH SET n.val2 = 2");
-	array_append(queries, "MERGE (n:N {val:1}) ON MATCH SET n.val2 = 2");
+	arr_append(queries, "MERGE (n) ON MATCH SET n.val2 = 2");
+	arr_append(queries, "MERGE (n:N) ON MATCH SET n.val2 = 2");
+	arr_append(queries, "MERGE (n:N {val:1}) ON MATCH SET n.val2 = 2");
 
-	array_append(queries, "MERGE (n) ON CREATE SET n.val2 = 2");
-	array_append(queries, "MERGE (n:N) ON CREATE SET n.val2 = 2");
-	array_append(queries, "MERGE (n:N {val:1}) ON CREATE SET n.val2 = 2");
+	arr_append(queries, "MERGE (n) ON CREATE SET n.val2 = 2");
+	arr_append(queries, "MERGE (n:N) ON CREATE SET n.val2 = 2");
+	arr_append(queries, "MERGE (n:N {val:1}) ON CREATE SET n.val2 = 2");
 
 	validate_query_plans_clone(queries);
-	array_free(queries);
+	arr_free(queries);
 }
 
 void test_cartesProduct() {
-	const char **queries = array_new(const char *, 1);
-	array_append(queries, "MATCH (a), (b) RETURN a, b");
+	const char **queries = arr_new(const char *, 1);
+	arr_append(queries, "MATCH (a), (b) RETURN a, b");
 
 	validate_query_plans_clone(queries);
-	array_free(queries);
+	arr_free(queries);
 }
 
 void test_skipLimitSort() {
-	const char **queries = array_new(const char *, 5);
-	array_append(queries, "MATCH (n) RETURN n SKIP 5");
-	array_append(queries, "MATCH (n) RETURN n LIMIT 5");
-	array_append(queries, "MATCH (n) RETURN n SKIP 5 LIMIT 5");
-	array_append(queries, "MATCH (n) RETURN n ORDER BY n.val");
-	array_append(queries, "MATCH (n) RETURN n ORDER BY n.val SKIP 5 LIMIT 5");
+	const char **queries = arr_new(const char *, 5);
+	arr_append(queries, "MATCH (n) RETURN n SKIP 5");
+	arr_append(queries, "MATCH (n) RETURN n LIMIT 5");
+	arr_append(queries, "MATCH (n) RETURN n SKIP 5 LIMIT 5");
+	arr_append(queries, "MATCH (n) RETURN n ORDER BY n.val");
+	arr_append(queries, "MATCH (n) RETURN n ORDER BY n.val SKIP 5 LIMIT 5");
 
 	validate_query_plans_clone(queries);
-	array_free(queries);
+	arr_free(queries);
 }
 
 void test_optionalMatch() {
-	const char **queries = array_new(const char *, 3);
-	array_append(queries, "OPTIONAL MATCH (n) RETURN n");
-	array_append(queries, "MATCH (a) OPTIONAL MATCH (b) RETURN a, b");
-	array_append(queries, "MATCH (a) OPTIONAL MATCH (a)-[e]->(b) RETURN a, e, b");
+	const char **queries = arr_new(const char *, 3);
+	arr_append(queries, "OPTIONAL MATCH (n) RETURN n");
+	arr_append(queries, "MATCH (a) OPTIONAL MATCH (b) RETURN a, b");
+	arr_append(queries, "MATCH (a) OPTIONAL MATCH (a)-[e]->(b) RETURN a, e, b");
 
 	validate_query_plans_clone(queries);
-	array_free(queries);
+	arr_free(queries);
 }
 
 void test_procCall() {
-	const char **queries = array_new(const char *, 1);
-	array_append(queries,
+	const char **queries = arr_new(const char *, 1);
+	arr_append(queries,
 			"CALL db.idx.fulltext.queryNodes('fruit', 'Orange*') YIELD node RETURN node");
 
 	validate_query_plans_clone(queries);
-	array_free(queries);
+	arr_free(queries);
 }
 
 void test_callSubquery() {
-	const char **queries = array_new(const char *, 2);
-	array_append(queries, "CALL { MATCH (n) RETURN n } RETURN n");
-	array_append(queries, "MATCH (m) CALL { CREATE (:M) } RETURN n");
+	const char **queries = arr_new(const char *, 2);
+	arr_append(queries, "CALL { MATCH (n) RETURN n } RETURN n");
+	arr_append(queries, "MATCH (m) CALL { CREATE (:M) } RETURN n");
 
 	validate_query_plans_clone(queries);
-	array_free(queries);
+	arr_free(queries);
 }
 
 void test_unwind() {
-	const char **queries = array_new(const char *, 1);
-	array_append(queries, "UNWIND [1,2,3] as x RETURN x");
+	const char **queries = arr_new(const char *, 1);
+	arr_append(queries, "UNWIND [1,2,3] as x RETURN x");
 
 	validate_query_plans_clone(queries);
-	array_free(queries);
+	arr_free(queries);
 }
 
 void test_with() {
-	const char **queries = array_new(const char *, 7);
-	array_append(queries, "MATCH (n) WITH n RETURN n");
-	array_append(queries, "MATCH (n) WITH n AS m RETURN m");
-	array_append(queries, "MATCH (n) WITH n AS m SKIP 5 RETURN m");
-	array_append(queries, "MATCH (n) WITH n AS m LIMIT 5 RETURN m");
-	array_append(queries, "MATCH (n) WITH collect(n) AS ns RETURN ns");
-	array_append(queries, "MATCH (n) WITH n AS m ORDER BY n.val RETURN m");
-	array_append(queries, "MATCH (n) WITH n AS m WHERE n.val < 5 RETURN m");
+	const char **queries = arr_new(const char *, 7);
+	arr_append(queries, "MATCH (n) WITH n RETURN n");
+	arr_append(queries, "MATCH (n) WITH n AS m RETURN m");
+	arr_append(queries, "MATCH (n) WITH n AS m SKIP 5 RETURN m");
+	arr_append(queries, "MATCH (n) WITH n AS m LIMIT 5 RETURN m");
+	arr_append(queries, "MATCH (n) WITH collect(n) AS ns RETURN ns");
+	arr_append(queries, "MATCH (n) WITH n AS m ORDER BY n.val RETURN m");
+	arr_append(queries, "MATCH (n) WITH n AS m WHERE n.val < 5 RETURN m");
 
 	validate_query_plans_clone(queries);
-	array_free(queries);
+	arr_free(queries);
 }
 
 void test_union() {
-	const char **queries = array_new(const char *, 1);
-	array_append(queries, "MATCH (n) RETURN n UNION MATCH (n) RETURN n");
+	const char **queries = arr_new(const char *, 1);
+	arr_append(queries, "MATCH (n) RETURN n UNION MATCH (n) RETURN n");
 
 	validate_query_plans_clone(queries);
-	array_free(queries);
+	arr_free(queries);
 }
 
 void test_foreach() {
-	const char **queries = array_new(const char *, 2);
-	array_append(queries, "FOREACH (x in [1,2,3] | CREATE (:L {val:x}))");
-	array_append(queries, "MATCH (n) WITH collect(n) AS ns FOREACH (x in ns | CREATE (:L {val:x.v}))");
+	const char **queries = arr_new(const char *, 2);
+	arr_append(queries, "FOREACH (x in [1,2,3] | CREATE (:L {val:x}))");
+	arr_append(queries, "MATCH (n) WITH collect(n) AS ns FOREACH (x in ns | CREATE (:L {val:x.v}))");
 
 	validate_query_plans_clone(queries);
-	array_free(queries);
+	arr_free(queries);
 }
 
 void test_apply_multiplexer() {
@@ -340,7 +340,7 @@ void test_edge_by_index_scan() {
 
 	// add edge_index_scan operation to plan
 	QGEdge *e = QGEdge_New("R", "e");
-	array_append(e->reltypes, 0);
+	arr_append(e->reltypes, 0);
 
 	Index idx = Index_New("R", 0, GETYPE_EDGE);
 

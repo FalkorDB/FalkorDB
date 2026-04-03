@@ -63,7 +63,7 @@ static void _compactFilters
 	OpBase *op
 ) {
 	OpBase **filters = ExecutionPlan_CollectOps(op, OPType_FILTER);
-	int n = array_len(filters);
+	int n = arr_len(filters);
 
 	for(int i = 0; i < n; i++) {
 		OpBase *op = filters[i];
@@ -73,7 +73,7 @@ static void _compactFilters
 			_removeTrueFilter(plan, op);
 		}
 	}
-	array_free(filters);
+	arr_free(filters);
 }
 
 void compactFilters

@@ -42,35 +42,35 @@ static OpBase **_find_feeding_points
 ) {
 	ASSERT(plan != NULL);
 
-	OpBase **ops  = array_new (OpBase*, 1) ;
-	OpBase **taps = array_new (OpBase*, 1) ;
+	OpBase **ops  = arr_new (OpBase*, 1) ;
+	OpBase **taps = arr_new (OpBase*, 1) ;
 
 	OpBase *sub_query_root = plan->root ;
-	array_append (ops, sub_query_root) ;
+	arr_append (ops, sub_query_root) ;
 
-	while (array_len (ops) > 0) {
-		OpBase *child = array_pop (ops) ;
+	while (arr_len (ops) > 0) {
+		OpBase *child = arr_pop (ops) ;
 		OPType t = OpBase_Type (child) ;
 
 		// tap located
 		if ((OpBase_ChildCount (child) == 0) && t == OPType_PROJECT) {
-			array_append (taps, child) ;
+			arr_append (taps, child) ;
 		}
 
 		// join op, traverse each branch
 		else if (OP_JOIN_MULTIPLE_STREAMS (child)) {
 			for (uint i = 0; i < OpBase_ChildCount (child); i++) {
-				array_append (ops, OpBase_GetChild (child, i)) ;
+				arr_append (ops, OpBase_GetChild (child, i)) ;
 			}
 		}
 
 		// go "left"
 		else if (OpBase_ChildCount (child) > 0) {
-			array_append (ops, OpBase_GetChild (child, 0)) ;
+			arr_append (ops, OpBase_GetChild (child, 0)) ;
 		}
 	}
 
-	array_free (ops) ;
+	arr_free (ops) ;
 	return taps ;
 }
 
@@ -218,13 +218,13 @@ void buildCallSubqueryPlan
 	// find the feeding points, to which we will add the projections and feeders
 	OpBase **feeding_points = _find_feeding_points (embedded_plan) ;
 
-	uint n_feeding_points = array_len (feeding_points) ;
+	uint n_feeding_points = arr_len (feeding_points) ;
 	for (uint i = 0; i < n_feeding_points; i++) {
 		OpBase *argument = NewArgumentOp (plan, NULL) ;
 		ExecutionPlan_AddOp (feeding_points[i], argument) ;
 	}
 
-	array_free(feeding_points);
+	arr_free(feeding_points);
 
 	//--------------------------------------------------------------------------
 	// connect the embedded plan

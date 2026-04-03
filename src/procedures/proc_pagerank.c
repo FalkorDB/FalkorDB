@@ -37,7 +37,7 @@ static void _process_yield
 	const char **yield
 ) {
 	int idx = 0;
-	for(uint i = 0; i < array_len(yield); i++) {
+	for(uint i = 0; i < arr_len(yield); i++) {
 		if(strcasecmp("node", yield[i]) == 0) {
 			ctx->yield_node = ctx->output + idx;
 			idx++;
@@ -59,7 +59,7 @@ ProcedureResult Proc_PagerankInvoke
 	const char **yield
 ) {
 	// expecting 2 arguments
-	if(array_len((SIValue *)args) != 2) {
+	if(arr_len((SIValue *)args) != 2) {
 		return PROCEDURE_ERR;
 	}
 
@@ -275,12 +275,12 @@ ProcedureResult Proc_PagerankFree
 
 ProcedureCtx *Proc_PagerankCtx() {
 	void *privateData = NULL;
-	ProcedureOutput *outputs     = array_new(ProcedureOutput, 2);
+	ProcedureOutput *outputs     = arr_new(ProcedureOutput, 2);
 	ProcedureOutput output_node  = {.name = "node",  .type = T_NODE};
 	ProcedureOutput output_score = {.name = "score", .type = T_DOUBLE};
 
-	array_append(outputs, output_node);
-	array_append(outputs, output_score);
+	arr_append(outputs, output_node);
+	arr_append(outputs, output_score);
 
 	ProcedureCtx *ctx = ProcCtxNew("algo.pageRank",
 								   2,
