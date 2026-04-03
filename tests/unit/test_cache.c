@@ -26,13 +26,13 @@ typedef struct {
 
 CacheObj *CacheObj_New(const char *str) {
 	CacheObj *obj = (CacheObj *)rm_malloc(sizeof(CacheObj));
-	obj->str = str;
+	obj->str = rm_strdup(str);
 	return obj;
 }
 
 CacheObj *CacheObj_Dup(const CacheObj *obj) {
 	CacheObj *dup = (CacheObj *)rm_malloc(sizeof(CacheObj));
-	memcpy(dup, obj, sizeof(CacheObj));
+	dup->str = rm_strdup(obj->str);
 	return dup;
 }
 
@@ -43,6 +43,7 @@ bool CacheObj_EQ(const CacheObj *a, const CacheObj *b) {
 
 void CacheObj_Free(CacheObj *obj) {
 	free_count++;
+	rm_free((char *)obj->str);
 	rm_free(obj);
 }
 
@@ -125,7 +126,6 @@ void test_executionPlanCache() {
 typedef struct {
 	Cache *cache;
 	int    thread_id;
-	atomic_int *stop_flag;
 } ThreadCtx;
 
 // generate a key string for index i; caller must provide buffer
