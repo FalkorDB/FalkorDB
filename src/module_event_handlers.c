@@ -501,11 +501,6 @@ static void _ForkPrepare() {
 			GraphContext *gc = graphs [i] ;
 			Graph *g = GraphContext_GetGraph (gc) ;
 
-			// print once per thread, on first iteration that thread executes
-			if (omp_get_thread_num () == 0 && i == 0) {
-				printf ("OpenMP: using %d threads\n", omp_get_num_threads ()) ;
-			}
-
 		//	printf("OpenMP: thread %d syncing graph %s\n",
 		//			omp_get_thread_num (), GraphContext_GetName (gc)) ;
 
