@@ -11,7 +11,7 @@ FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
 
 FROM node:24-bookworm-slim AS node
 
-FROM redis:8.2.3
+FROM redis:8.6.2
 
 ENV FALKORDB_HOME=/var/lib/falkordb
 
@@ -38,7 +38,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends libgomp1 ca-certificates && \
     apt-get upgrade -y && \
     # Remove packages not needed at runtime to reduce CVE surface
-    (apt-get purge -y python3.11 python3.11-minimal libpython3.11-minimal libpython3.11-stdlib || true) && \
+    (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
