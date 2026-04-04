@@ -439,6 +439,9 @@ static void _RegisterServerEvents
 // FORK callbacks
 //------------------------------------------------------------------------------
 
+static bool   fork_prep_timedout    = false ;  // _ForkPrepare timeout
+static double fork_prep_interval_ms = 100   ;  // 100ms
+
 // before fork at parent
 static void _ForkPrepare() {
 	// at this point, fork been issued, we assume that this is due to BGSAVE
@@ -482,8 +485,17 @@ static void _ForkPrepare() {
 
 		// sync each graph's matrices in parallel
 		// each iteration is independent — different graph, different locks
-		#pragma omp parallel for schedule(dynamic)
+		#pragma omp parallel for schedule(dynamic) if(n > 3)
 		for (uint32_t i = 0; i < n; i++) {
+			// check if we've exceeds our preperation time
+			if (fork_prep_timedout == false &&
+				simple_toc (tic) * 1000 > fork_prep_interval_ms) {
+				// abort only if the previous run did not timedout
+				// if it did we have no option but to keep going
+				// and complete our preperation
+				continue ;
+			}
+
 			// acquire read lock, guarantee graph isn't modified by a writer
 			GraphContext *gc = graphs [i] ;
 			Graph *g = GraphContext_GetGraph (gc) ;
@@ -503,16 +515,10 @@ static void _ForkPrepare() {
 			// calling Graph_Get* will sync the retrieved matrix
 
 			Graph_GetZeroMatrix (g) ;
-			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-					"preparing to fork") ;
 
 			Graph_GetAdjacencyMatrix (g, false) ;
-			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-					"preparing to fork") ;
 
 			Graph_GetNodeLabelMatrix (g) ;
-			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-					"preparing to fork") ;
 
 			int n_lbls = Graph_LabelTypeCount (g) ;
 			for (int i = 0; i < n_lbls; i++) {
@@ -522,9 +528,10 @@ static void _ForkPrepare() {
 			int n_rels = Graph_RelationTypeCount (g) ;
 			for (int i = 0; i < n_rels; i++) {
 				Graph_GetRelationMatrix (g, i, false) ;
-				RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-						"preparing to fork") ;
 			}
+
+			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
+					"preparing to fork") ;
 
 			// decrease graph context ref count
 			GraphContext_DecreaseRefCount (gc) ;
@@ -533,8 +540,11 @@ static void _ForkPrepare() {
 		rm_free (graphs) ;
 	}
 
+	double prep_time = simple_toc (tic) * 1000 ;
+	fork_prep_timedout = (prep_time > fork_prep_interval_ms) ;
+
 	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
-			"Fork preparation time: %.6f ms\n", simple_toc (tic) * 1000) ;
+			"Fork preparation time: %.6f ms\n", prep_time) ;
 
 	// clean up
 	RedisModule_FreeThreadSafeContext (ctx) ;
