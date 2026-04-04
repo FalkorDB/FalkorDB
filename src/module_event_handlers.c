@@ -21,7 +21,6 @@
 #include "serializers/graphcontext_type.h"
 #include "commands/util/run_redis_command_as.h"
 
-#include <omp.h>
 #include <pthread.h>
 #include <stdbool.h>
 
@@ -536,7 +535,7 @@ static void _ForkPrepare() {
 		}
 
 		// only the master thread (= Redis main thread) may yield
-		if (omp_get_thread_num() == 0) {
+		if (pthread_equal (pthread_self (), redis_main_thread_id)) {
 			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
 					"preparing to fork") ;
 		}
