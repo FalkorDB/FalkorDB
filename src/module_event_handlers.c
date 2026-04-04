@@ -21,6 +21,7 @@
 #include "serializers/graphcontext_type.h"
 #include "commands/util/run_redis_command_as.h"
 
+#include <omp.h>
 #include <pthread.h>
 #include <stdbool.h>
 
@@ -439,9 +440,9 @@ static void _RegisterServerEvents
 // FORK callbacks
 //------------------------------------------------------------------------------
 
-static atomic_bool *locked = NULL ;                 // read locked graphs
-static atomic_bool fork_prep_timedout    = false ;  // _ForkPrepare timeout
-static double      fork_prep_interval_ms = 100   ;  // 100ms
+static atomic_bool *locked = NULL ;                  // read locked graphs
+static atomic_bool  fork_prep_timedout    = false ;  // _ForkPrepare timeout
+static const double fork_prep_interval_ms = 100   ;  // 100ms
 
 // before fork at parent
 static void _ForkPrepare() {
@@ -539,8 +540,11 @@ static void _ForkPrepare() {
 			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
 					"preparing to fork") ;
 		}
+	}
 
-		// decrease graph context ref count
+	// decrease graph context ref count
+	for (uint32_t i = 0 ; i < n ; i++) {
+		GraphContext *gc = graphs [i] ;
 		GraphContext_DecreaseRefCount (gc) ;
 	}
 
