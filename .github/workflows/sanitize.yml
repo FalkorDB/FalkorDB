@@ -17,116 +17,19 @@ jobs:
   sanitize-test:
     runs-on: ubuntu-latest
     container: falkordb/falkordb-build:ubuntu
-    steps:
-
-    - name: Safe dir
-      run: git config --global --add safe.directory '*'
-
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      with:
-        set-safe-directory: '*'
-        submodules: recursive
-
-    - name: Cache GraphBLAS
-      id: cache_graphblas
-      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
-      with:
-        path: ./bin/linux-x64-debug-asan/GraphBLAS
-        key: graphblas-sanitizer-llvm-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
-
-    - name: Cache parser
-      id: cache_parser
-      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
-      with:
-        path: ./bin/linux-x64-debug-asan/libcypher-parser
-        key: parser-sanitizer-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
-
-    - name: Cache search
-      id: cache_search
-      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
-      with:
-        path: ./bin/linux-x64-debug-asan/search-static
-        key: search-sanitizer-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
-
-    - name: Cache libcurl
-      id: cache_libcurl
-      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
-      with:
-        path: ./bin/linux-x64-debug-asan/libcurl
-        key: libcurl-sanitizer-llvm-${{ hashFiles('./deps/libcurl/RELEASE-NOTES', './build.sh') }}
-
-    - name: Cache libcsv
-      id: cache_libcsv
-      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
-      with:
-        path: ./bin/linux-x64-debug-asan/libcsv
-        key: libcsv-sanitizer-llvm-${{ hashFiles('./deps/libcsv/ChangeLog') }}
-
-    - name: Build
-      run: |
-        rustup default nightly
-        apt-get update
-        apt-get install -y lsb-release wget software-properties-common gnupg
-        wget https://apt.llvm.org/llvm.sh
-        chmod +x llvm.sh
-        ./llvm.sh 17
-        apt-get update
-        apt-get install -y libomp-17-dev libc6-dbg python3-venv
-        python3 -m venv venv
-        . venv/bin/activate
-        pip install -r tests/requirements.txt
-        update-alternatives \
-          --verbose \
-          --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
-          --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17
-        make CLANG=1 SAN=address NPROC=16
-
-    - name: Unit tests
-      id: unit_tests
-      run: make unit-tests CLEAR_LOGS=0 SAN=address
-      continue-on-error: true
-
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-      with:
-        name: Upload unit tests logs
-        path: ${{ github.workspace }}/tests/unit/logs/
-        retention-days: 7
-
-    - name: Flow tests
-      id: flow_tests
-      run: |
-        . venv/bin/activate
-        make flow-tests CLEAR_LOGS=0 SAN=address
-      continue-on-error: true
-
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-      with:
-        name: Upload flow tests logs
-        path: ${{ github.workspace }}/tests/flow/logs/
-        retention-days: 7
-
-    - name: TCK tests
-      id: tck_tests
-      run: |
-        . venv/bin/activate
-        make tck-tests CLEAR_LOGS=0 SAN=address
-      continue-on-error: true
-
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-      with:
-        name: Upload TCK tests logs
-        path: ${{ github.workspace }}/tests/tck/logs/
-        retention-days: 7
-
-    - name: Check on failures
-      if: steps.unit_tests.outcome != 'success' || steps.flow_tests.outcome != 'success' || steps.tck_tests.outcome != 'success'
-      run: exit 1
-
-  thread-sanitize-test:
-    runs-on: ubuntu-latest
-    container: falkordb/falkordb-build:ubuntu
     permissions:
       contents: read
+    strategy:
+      matrix:
+        include:
+          - san: address
+            suffix: asan
+            key_prefix: sanitizer
+            label: ASAN
+          - san: thread
+            suffix: tsan
+            key_prefix: tsan
+            label: TSAN
     steps:
 
     - name: Safe dir
@@ -141,36 +44,36 @@ jobs:
       id: cache_graphblas
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
-        path: ./bin/linux-x64-debug-tsan/GraphBLAS
-        key: graphblas-tsan-llvm-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
+        path: ./bin/linux-x64-debug-${{ matrix.suffix }}/GraphBLAS
+        key: graphblas-${{ matrix.key_prefix }}-llvm-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
 
     - name: Cache parser
       id: cache_parser
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
-        path: ./bin/linux-x64-debug-tsan/libcypher-parser
-        key: parser-tsan-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+        path: ./bin/linux-x64-debug-${{ matrix.suffix }}/libcypher-parser
+        key: parser-${{ matrix.key_prefix }}-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
     - name: Cache search
       id: cache_search
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
-        path: ./bin/linux-x64-debug-tsan/search-static
-        key: search-tsan-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+        path: ./bin/linux-x64-debug-${{ matrix.suffix }}/search-static
+        key: search-${{ matrix.key_prefix }}-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
     - name: Cache libcurl
       id: cache_libcurl
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
-        path: ./bin/linux-x64-debug-tsan/libcurl
-        key: libcurl-tsan-llvm-${{ hashFiles('./deps/libcurl/RELEASE-NOTES', './build.sh') }}
+        path: ./bin/linux-x64-debug-${{ matrix.suffix }}/libcurl
+        key: libcurl-${{ matrix.key_prefix }}-llvm-${{ hashFiles('./deps/libcurl/RELEASE-NOTES', './build.sh') }}
 
     - name: Cache libcsv
       id: cache_libcsv
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
-        path: ./bin/linux-x64-debug-tsan/libcsv
-        key: libcsv-tsan-llvm-${{ hashFiles('./deps/libcsv/ChangeLog') }}
+        path: ./bin/linux-x64-debug-${{ matrix.suffix }}/libcsv
+        key: libcsv-${{ matrix.key_prefix }}-llvm-${{ hashFiles('./deps/libcsv/ChangeLog') }}
 
     - name: Build
       run: |
@@ -189,16 +92,16 @@ jobs:
           --verbose \
           --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
           --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17
-        make CLANG=1 SAN=thread NPROC=16
+        make CLANG=1 SAN=${{ matrix.san }} NPROC=16
 
     - name: Unit tests
       id: unit_tests
-      run: make unit-tests CLEAR_LOGS=0 SAN=thread
+      run: make unit-tests CLEAR_LOGS=0 SAN=${{ matrix.san }}
       continue-on-error: true
 
-    - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
-        name: Upload TSAN unit tests logs
+        name: Upload ${{ matrix.label }} unit tests logs
         path: ${{ github.workspace }}/tests/unit/logs/
         retention-days: 7
 
@@ -206,12 +109,12 @@ jobs:
       id: flow_tests
       run: |
         . venv/bin/activate
-        make flow-tests CLEAR_LOGS=0 SAN=thread
+        make flow-tests CLEAR_LOGS=0 SAN=${{ matrix.san }}
       continue-on-error: true
 
-    - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
-        name: Upload TSAN flow tests logs
+        name: Upload ${{ matrix.label }} flow tests logs
         path: ${{ github.workspace }}/tests/flow/logs/
         retention-days: 7
 
@@ -219,12 +122,12 @@ jobs:
       id: tck_tests
       run: |
         . venv/bin/activate
-        make tck-tests CLEAR_LOGS=0 SAN=thread
+        make tck-tests CLEAR_LOGS=0 SAN=${{ matrix.san }}
       continue-on-error: true
 
-    - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
-        name: Upload TSAN TCK tests logs
+        name: Upload ${{ matrix.label }} TCK tests logs
         path: ${{ github.workspace }}/tests/tck/logs/
         retention-days: 7
 
