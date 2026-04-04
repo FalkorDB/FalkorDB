@@ -439,8 +439,9 @@ static void _RegisterServerEvents
 // FORK callbacks
 //------------------------------------------------------------------------------
 
-static bool   fork_prep_timedout    = false ;  // _ForkPrepare timeout
-static double fork_prep_interval_ms = 100   ;  // 100ms
+static atomic_bool *locked = NULL ;                 // read locked graphs
+static atomic_bool fork_prep_timedout    = false ;  // _ForkPrepare timeout
+static double      fork_prep_interval_ms = 100   ;  // 100ms
 
 // before fork at parent
 static void _ForkPrepare() {
@@ -462,115 +463,132 @@ static void _ForkPrepare() {
 		pthread_equal (pthread_self (), redis_main_thread_id) != 0 &&
 		!INTERMEDIATE_GRAPHS ;
 
+	if (!sync_graphs_before_fork) {
+		return ;
+	}
+
+	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext (NULL) ;
+
 	// measure and report prep time
 	double tic [2] ;
 	simple_tic (tic) ;
 
-	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext (NULL) ;
+	uint32_t n = Globals_GraphsCount () ;
+	locked = rm_calloc (n, sizeof (atomic_bool)) ;
+	GraphContext **graphs = rm_malloc (sizeof (GraphContext*) * n) ;
 
-	if (sync_graphs_before_fork) {
-		uint32_t n = Globals_GraphsCount () ;
-		GraphContext **graphs = rm_malloc (sizeof (GraphContext*) * n) ;
+	// scan through each graph in the keyspace
+	GraphContext *gc = NULL ;
+	KeySpaceGraphIterator it ;
+	Globals_ScanGraphs (&it) ;
 
-		// scan through each graph in the keyspace
-		GraphContext *gc = NULL ;
-		KeySpaceGraphIterator it ;
-		Globals_ScanGraphs (&it) ;
+	// collect graphs
+	for (uint32_t i = 0 ; i < n ; i++) {
+		graphs [i] = GraphIterator_Next (&it) ;
+		ASSERT (graphs [i] != NULL) ;
+	}
 
-		// collect graphs
-		for (uint32_t i = 0 ; i < n ; i++) {
-			graphs [i] = GraphIterator_Next (&it) ;
-			ASSERT (graphs [i] != NULL) ;
+	// sync each graph's matrices in parallel
+	// each iteration is independent — different graph, different locks
+	#pragma omp parallel for schedule(dynamic) if(n > 3)
+	for (uint32_t i = 0; i < n; i++) {
+		// check if we've exceeds our preperation time
+		if (fork_prep_timedout == false &&
+				simple_toc (tic) * 1000 > fork_prep_interval_ms) {
+			// abort only if the previous run did not timedout
+			// if it did we have no option but to keep going
+			// and complete our preperation
+			continue ;
 		}
 
-		// sync each graph's matrices in parallel
-		// each iteration is independent — different graph, different locks
-		#pragma omp parallel for schedule(dynamic) if(n > 3)
-		for (uint32_t i = 0; i < n; i++) {
-			// check if we've exceeds our preperation time
-			if (fork_prep_timedout == false &&
-				simple_toc (tic) * 1000 > fork_prep_interval_ms) {
-				// abort only if the previous run did not timedout
-				// if it did we have no option but to keep going
-				// and complete our preperation
-				continue ;
-			}
+		// acquire read lock, guarantee graph isn't modified by a writer
+		GraphContext *gc = graphs [i] ;
+		Graph *g = GraphContext_GetGraph (gc) ;
 
-			// acquire read lock, guarantee graph isn't modified by a writer
-			GraphContext *gc = graphs [i] ;
-			Graph *g = GraphContext_GetGraph (gc) ;
+		Graph_AcquireReadLock (g) ;  // release in _AfterForkParent
+		locked [i] = true ;
 
-			Graph_AcquireReadLock (g) ;  // release in _AfterForkParent
+		// set matrix synchronization policy to default
+		Graph_SetMatrixPolicy (g, SYNC_POLICY_FLUSH_RESIZE) ;
 
-			// set matrix synchronization policy to default
-			Graph_SetMatrixPolicy (g, SYNC_POLICY_FLUSH_RESIZE) ;
+		// synchronize all matrices, make sure they're in a consistent state
+		// do not force-flush as this can take awhile
 
-			// synchronize all matrices, make sure they're in a consistent state
-			// do not force-flush as this can take awhile
+		//------------------------------------------------------------------
+		// sync graph's matrices
+		//------------------------------------------------------------------
 
-			//------------------------------------------------------------------
-			// sync graph's matrices
-			//------------------------------------------------------------------
+		// calling Graph_Get* will sync the retrieved matrix
 
-			// calling Graph_Get* will sync the retrieved matrix
+		Graph_GetZeroMatrix (g) ;
+		Graph_GetAdjacencyMatrix (g, false) ;
+		Graph_GetNodeLabelMatrix (g) ;
 
-			Graph_GetZeroMatrix (g) ;
+		int n_lbls = Graph_LabelTypeCount (g) ;
+		for (int j = 0; j < n_lbls; j++) {
+			Graph_GetLabelMatrix (g, j) ;
+		}
 
-			Graph_GetAdjacencyMatrix (g, false) ;
+		int n_rels = Graph_RelationTypeCount (g) ;
+		for (int j = 0; j < n_rels; j++) {
+			Graph_GetRelationMatrix (g, j, false) ;
+		}
 
-			Graph_GetNodeLabelMatrix (g) ;
-
-			int n_lbls = Graph_LabelTypeCount (g) ;
-			for (int i = 0; i < n_lbls; i++) {
-				Graph_GetLabelMatrix (g, i) ;
-			}
-
-			int n_rels = Graph_RelationTypeCount (g) ;
-			for (int i = 0; i < n_rels; i++) {
-				Graph_GetRelationMatrix (g, i, false) ;
-			}
-
+		// only the master thread (= Redis main thread) may yield
+		if (omp_get_thread_num() == 0) {
 			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
 					"preparing to fork") ;
-
-			// decrease graph context ref count
-			GraphContext_DecreaseRefCount (gc) ;
 		}
 
-		rm_free (graphs) ;
+		// decrease graph context ref count
+		GraphContext_DecreaseRefCount (gc) ;
 	}
+
+	rm_free (graphs) ;
 
 	double prep_time = simple_toc (tic) * 1000 ;
 	fork_prep_timedout = (prep_time > fork_prep_interval_ms) ;
 
 	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
 			"Fork preparation time: %.6f ms\n", prep_time) ;
-
 	// clean up
 	RedisModule_FreeThreadSafeContext (ctx) ;
 }
 
 // after fork at parent
-static void _AfterForkParent() {
+static void _AfterForkParent(void) {
 	bool release_graphs_after_fork =
 		pthread_equal (pthread_self (), redis_main_thread_id) &&
 		!INTERMEDIATE_GRAPHS ;
 
-	if (release_graphs_after_fork) {
-		// the child process forked, release all acquired locks
-		GraphContext *gc = NULL ;
-		KeySpaceGraphIterator it ;
-		Globals_ScanGraphs (&it) ;
-
-		while ((gc = GraphIterator_Next (&it)) != NULL) {
-			// release read lock
-			Graph *g = GraphContext_GetGraph (gc) ;
-			Graph_ReleaseLock (g) ;
-
-			// decrease graph context ref count
-			GraphContext_DecreaseRefCount (gc) ;
-		}
+	if (!release_graphs_after_fork) {
+		ASSERT (locked == NULL) ;
+		return ;
 	}
+
+	ASSERT (locked != NULL) ;
+
+	// the child process forked, release all acquired locks
+	GraphContext *gc = NULL ;
+	KeySpaceGraphIterator it ;
+	Globals_ScanGraphs (&it) ;
+
+	int i = 0 ;
+	while ((gc = GraphIterator_Next (&it)) != NULL) {
+		// release read lock
+		Graph *g = GraphContext_GetGraph (gc) ;
+
+		if (locked [i++]) {
+			Graph_ReleaseLock (g) ;
+		}
+
+		// decrease graph context ref count
+		GraphContext_DecreaseRefCount (gc) ;
+	}
+
+	// free locked array
+	rm_free (locked) ;
+	locked = NULL ;
 }
 
 // after fork at child
