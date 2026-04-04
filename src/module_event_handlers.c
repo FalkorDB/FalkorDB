@@ -460,20 +460,7 @@ static void _ForkPrepare() {
 		!INTERMEDIATE_GRAPHS ;
 
 	// measure and report prep time
-	double tic   [2] ;
-	double sync  [2] ;
-	double read  [2] ;
-	double yield [2] ;
-
-	double sync_time       = 0 ;
-	double total_sync_time = 0 ;
-
-	double yield_time       = 0 ;
-	double total_yield_time = 0 ;
-
-	double read_acquire_time = 0 ;
-	double total_read_acquire_time = 0 ;
-
+	double tic [2] ;
 	simple_tic (tic) ;
 
 	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext (NULL) ;
@@ -501,15 +488,7 @@ static void _ForkPrepare() {
 			GraphContext *gc = graphs [i] ;
 			Graph *g = GraphContext_GetGraph (gc) ;
 
-		//	printf("OpenMP: thread %d syncing graph %s\n",
-		//			omp_get_thread_num (), GraphContext_GetName (gc)) ;
-
-			// simple_tic (read) ;
 			Graph_AcquireReadLock (g) ;  // release in _AfterForkParent
-			//read_acquire_time = simple_toc (read) ;
-			//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
-			//		"acquire read lock time: %.6f ms\n", read_acquire_time * 1000) ;
-			//total_read_acquire_time += read_acquire_time ;
 
 			// set matrix synchronization policy to default
 			Graph_SetMatrixPolicy (g, SYNC_POLICY_FLUSH_RESIZE) ;
@@ -523,137 +502,39 @@ static void _ForkPrepare() {
 
 			// calling Graph_Get* will sync the retrieved matrix
 
-			// simple_tic (sync) ;
 			Graph_GetZeroMatrix (g) ;
-			//sync_time = simple_toc (sync) ;
-
-			//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
-			//		"Matrix sync time: %.6f ms\n", sync_time) ;
-			//total_sync_time += sync_time ;
-
-			// simple_tic (yield) ;
-
 			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
 					"preparing to fork") ;
 
-			//yield_time = simple_toc (yield) ;
-			//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
-			//		"Yield time: %.6f ms\n", yield_time) ;
-			//total_yield_time += yield_time ;
-
-			// simple_tic (sync) ;
 			Graph_GetAdjacencyMatrix (g, false) ;
-			//sync_time = simple_toc (sync) ;
-
-			//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
-			//		"Matrix sync time: %.6f ms\n", sync_time) ;
-			//total_sync_time += sync_time ;
-
-			// simple_tic (yield) ;
-
 			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
 					"preparing to fork") ;
 
-			//yield_time = simple_toc (yield) ;
-			//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
-			//		"Yield time: %.6f ms\n", yield_time) ;
-			//total_yield_time += yield_time ;
-
-			// simple_tic (sync) ;
 			Graph_GetNodeLabelMatrix (g) ;
-			//sync_time = simple_toc (sync) ;
-
-			//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
-			//		"Matrix sync time: %.6f ms\n", sync_time) ;
-			//total_sync_time += sync_time ;
-
-			// simple_tic (yield) ;
-
 			RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
 					"preparing to fork") ;
-
-			//yield_time = simple_toc (yield) ;
-
-			//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
-			//		"Yield time: %.6f ms\n", yield_time) ;
-			//total_yield_time += yield_time ;
 
 			int n_lbls = Graph_LabelTypeCount (g) ;
 			for (int i = 0; i < n_lbls; i++) {
-				// simple_tic (sync) ;
 				Graph_GetLabelMatrix (g, i) ;
-				//sync_time = simple_toc (sync) ;
-
-				//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
-				//		"Matrix sync time: %.6f ms\n", sync_time) ;
-				//total_sync_time += sync_time ;
-
-				// simple_tic (yield) ;
-
-				//RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-				//		"preparing to fork") ;
-
-				//yield_time = simple_toc (yield) ;
-
-				//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
-				//		"Yield time: %.6f ms\n", yield_time) ;
-				//total_yield_time += yield_time ;
 			}
 
 			int n_rels = Graph_RelationTypeCount (g) ;
 			for (int i = 0; i < n_rels; i++) {
-				// simple_tic (sync) ;
 				Graph_GetRelationMatrix (g, i, false) ;
-				//sync_time = simple_toc (sync) ;
-
-				//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
-				//		"Matrix sync time: %.6f ms\n", sync_time) ;
-				//total_sync_time += sync_time ;
-
-				// simple_tic (yield) ;
-
 				RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
 						"preparing to fork") ;
-
-				//yield_time = simple_toc (yield) ;
-
-				//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
-				//		"Yield time: %.6f ms\n", yield_time) ;
-				//total_yield_time += yield_time ;
-			}
-
-			bool synced = Graph_Synced (g) ;
-
-			// quick return if graph sync failed
-			// as we can't abort the fork it is the child which will shortly
-			// discover that one of the graphs isn't sync causing it to exit
-			// before redis starts encoding the RDB file
-			if (!synced) {
-				RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_WARNING,
-						"Graph %s isn't synchronize, BGSAVE will fail",
-						GraphContext_GetName (gc));
 			}
 
 			// decrease graph context ref count
 			GraphContext_DecreaseRefCount (gc) ;
-
-			//if (!synced) {
-			//	break ;
-			//}
 		}
+
+		rm_free (graphs) ;
 	}
 
 	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
 			"Fork preparation time: %.6f ms\n", simple_toc (tic) * 1000) ;
-
-	//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
-	//		"Read lock total time: %.6f ms\n", total_read_acquire_time * 1000) ;
-
-	//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
-	//		"Yield total time: %.6f ms\n", total_yield_time * 1000) ;
-
-	//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
-	//		"Matrix sync total time: %.6f ms\n", total_sync_time * 1000) ;
 
 	// clean up
 	RedisModule_FreeThreadSafeContext (ctx) ;
@@ -722,13 +603,19 @@ static void _AfterForkChild() {
 
 		ASSERT (!Graph_IsWriteLocked (g)) ;
 
-		// decrease graph context ref count
-		GraphContext_DecreaseRefCount (gc) ;
-
 		// abort BGSAVE if graph isn't synced
 		// it's the parent process responsibility (_ForkPrepare) to synchronize
 		// the entire graph, if one of the graph's matrices isn't synced
 		// it might be related to a GraphBLAS failure e.g. out of memory
+		if (!synced) {
+			RedisModule_Log (NULL, REDISMODULE_LOGLEVEL_WARNING,
+					"Graph %s isn't synchronize, BGSAVE will fail",
+					GraphContext_GetName (gc));
+		}
+
+		// decrease graph context ref count
+		GraphContext_DecreaseRefCount (gc) ;
+
 		if (!synced) {
 			RedisModule_ExitFromChild (-1) ;
 		}
