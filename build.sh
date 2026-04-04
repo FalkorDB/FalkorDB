@@ -1237,6 +1237,15 @@ build_falkordbrs() {
                 rustup +nightly target add "$rust_target"
             fi
             cargo_flags+=(--target "$rust_target")
+            # TSAN requires rebuilding the standard library with the same sanitizer
+            # flags to avoid ABI mismatch errors with crates like `core` and `libc`
+            if [[ "$SAN" == "thread" ]]; then
+                if ! rustup +nightly component list --installed | grep -q "^rust-src"; then
+                    log_info "Installing rust-src component for nightly (required for TSAN build-std)"
+                    rustup +nightly component add rust-src
+                fi
+                cargo_flags+=(-Zbuild-std)
+            fi
         else
             log_warn "Rust nightly toolchain not available, skipping sanitizer for Rust build"
             log_warn "Install with: rustup toolchain install nightly"
