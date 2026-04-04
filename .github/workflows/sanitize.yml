@@ -17,19 +17,23 @@ jobs:
   sanitize-test:
     runs-on: ubuntu-latest
     container: falkordb/falkordb-build:ubuntu
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     permissions:
       contents: read
     strategy:
+      fail-fast: false
       matrix:
         include:
           - san: address
             suffix: asan
             key_prefix: sanitizer
             label: ASAN
+            timeout_minutes: 120
           - san: thread
-            suffix: tsan
+            suffix: thread
             key_prefix: tsan
             label: TSAN
+            timeout_minutes: 360
     steps:
 
     - name: Safe dir

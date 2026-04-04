@@ -44,7 +44,7 @@ sanitizer_defs() {
 			export TSAN_OPTIONS="halt_on_error=0:second_deadlock_stack=1:history_size=4:log_path=${TSAN_LOG}"
 		else
 			ASAN_LOG=${LOGS_DIR}/${TEST_NAME}.asan.log
-			export ASAN_OPTIONS="detect_odr_violation=0:halt_on_error=0::detect_leaks=1:log_path=${ASAN_LOG}"
+			export ASAN_OPTIONS="detect_odr_violation=0:halt_on_error=0:detect_leaks=1:log_path=${ASAN_LOG}"
 			export LSAN_OPTIONS="suppressions=$ROOT/tests/memcheck/asan.supp:use_tls=0"
 		fi
 		# Set SANITIZER env var for tests that check it to skip
