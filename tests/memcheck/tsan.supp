@@ -1,0 +1,21 @@
+# ThreadSanitizer suppression file for FalkorDB tests
+#
+# This file suppresses known false positives reported by ThreadSanitizer (TSAN)
+# when running FalkorDB tests against a TSAN-instrumented Redis server.
+#
+# Suppressions follow the format:
+#   race:<function_or_symbol>
+#
+# Common false positives from Redis internals and OS primitives:
+
+# epoll_wait is a kernel syscall — any apparent "race" on it is a TSAN
+# instrumentation artifact, not a real data race.
+race:epoll_wait
+
+# Redis event-loop processing; aeProcessEvents accesses event state that is
+# protected by the single-threaded event loop model but TSAN cannot infer that.
+race:aeProcessEvents
+
+# Redis background I/O thread (BIO) performs disk/close operations; accesses
+# to the job queue are serialised by Redis but TSAN may flag them.
+race:bioProcessBackgroundJobs

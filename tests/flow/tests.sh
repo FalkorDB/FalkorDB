@@ -153,18 +153,32 @@ setup_rltest() {
 
 build_redis_with_sanitizer() {
 	local san_type=$1
-	local redis_dir="/tmp/redis-san-build"
 	local redis_version="8.6.2"
 	local ignorelist=$ROOT/tests/memcheck/redis.san-ignorelist
-	local build_log="/tmp/redis-san-build.log"
 	local original_dir="$PWD"
 
-	# Check if we already have a working ASAN Redis build
+	# Choose build directory based on sanitizer type
+	local redis_dir
+	local build_log
+	local san_symbol
+	if [[ $san_type == "address" ]]; then
+		redis_dir="/tmp/redis-san-build"
+		build_log="/tmp/redis-san-build.log"
+		san_symbol="__asan"
+	elif [[ $san_type == "thread" ]]; then
+		redis_dir="/tmp/redis-tsan-build"
+		build_log="/tmp/redis-tsan-build.log"
+		san_symbol="__tsan"
+	else
+		echo "Error: Unsupported sanitizer type: $san_type"
+		return 1
+	fi
+
+	# Check if we already have a working sanitizer Redis build
 	if [[ -f "$redis_dir/src/redis-server" ]]; then
-		# Verify it's an ASAN build by checking for ASAN symbols
-		if nm "$redis_dir/src/redis-server" 2>/dev/null | grep -q "__asan"; then
+		if nm "$redis_dir/src/redis-server" 2>/dev/null | grep -q "$san_symbol"; then
 			REDIS_SERVER="$redis_dir/src/redis-server"
-			echo "Using cached ASAN Redis build: $REDIS_SERVER"
+			echo "Using cached $(echo "$san_type" | tr '[:lower:]' '[:upper:]') Redis build: $REDIS_SERVER"
 			return 0
 		fi
 	fi
@@ -192,7 +206,7 @@ build_redis_with_sanitizer() {
 
 	cd "$redis_dir"
 
-	# Clean previous build only if needed (not an ASAN build)
+	# Clean previous build
 	make distclean > /dev/null 2>&1 || true
 
 	# Build with sanitizer flags
@@ -222,6 +236,30 @@ build_redis_with_sanitizer() {
 			CFLAGS="$san_flags" \
 			CXXFLAGS="$san_flags" \
 			LDFLAGS="-fsanitize=address" \
+			>> "$build_log" 2>&1 || build_result=$?
+
+	elif [[ $san_type == "thread" ]]; then
+		local san_flags="-fsanitize=thread -fno-omit-frame-pointer"
+
+		# Build dependencies first with sanitizer flags
+		echo "Building Redis dependencies with TSAN..."
+		make -C deps \
+			CC=clang \
+			CXX=clang++ \
+			CFLAGS="$san_flags" \
+			CXXFLAGS="$san_flags" \
+			hiredis linenoise lua fpconv fast_float \
+			>> "$build_log" 2>&1 || true
+
+		echo "Building Redis with CFLAGS: $san_flags"
+		make -j$(get_nproc) \
+			CC=clang \
+			CXX=clang++ \
+			OPTIMIZATION="-O1" \
+			MALLOC="libc" \
+			CFLAGS="$san_flags" \
+			CXXFLAGS="$san_flags" \
+			LDFLAGS="-fsanitize=thread" \
 			>> "$build_log" 2>&1 || build_result=$?
 	fi
 
@@ -309,6 +347,22 @@ WRAPPER_EOF
 				exit 1
 			fi
 		fi
+
+	elif [[ $SAN == thread ]]; then
+		# Build Redis with TSAN to detect data races in Redis<->module interactions
+		if [[ -z $REDIS_SERVER ]]; then
+			build_redis_with_sanitizer "thread" || {
+				echo "Error: Failed to build Redis with TSAN."
+				exit 1
+			}
+		fi
+
+		local tsan_options="halt_on_error=0:second_deadlock_stack=1:history_size=4"
+		local tsan_supp="$ROOT/tests/memcheck/tsan.supp"
+		if [[ -f "$tsan_supp" ]]; then
+			tsan_options="$tsan_options:suppressions=$tsan_supp"
+		fi
+		export TSAN_OPTIONS="$tsan_options"
 	fi
 }
 
