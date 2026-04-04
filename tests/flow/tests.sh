@@ -209,59 +209,41 @@ build_redis_with_sanitizer() {
 	# Clean previous build
 	make distclean > /dev/null 2>&1 || true
 
-	# Build with sanitizer flags
-	local build_result=0
+	# Compute sanitizer-specific flags
+	local san_flags="-fsanitize=$san_type -fno-omit-frame-pointer"
+	local ldflags="-fsanitize=$san_type"
 	if [[ $san_type == "address" ]]; then
-		local san_flags="-fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls"
+		san_flags="$san_flags -fno-optimize-sibling-calls"
 		if [[ -f "$ignorelist" ]]; then
 			san_flags="$san_flags -fsanitize-blacklist=$ignorelist"
 		fi
-
-		# Build dependencies first with sanitizer flags
-		echo "Building Redis dependencies with ASAN..."
-		make -C deps \
-			CC=clang \
-			CXX=clang++ \
-			CFLAGS="$san_flags" \
-			CXXFLAGS="$san_flags" \
-			hiredis linenoise lua fpconv fast_float \
-			>> "$build_log" 2>&1 || true
-
-		echo "Building Redis with CFLAGS: $san_flags"
-		make -j$(get_nproc) \
-			CC=clang \
-			CXX=clang++ \
-			OPTIMIZATION="-O1" \
-			MALLOC="libc" \
-			CFLAGS="$san_flags" \
-			CXXFLAGS="$san_flags" \
-			LDFLAGS="-fsanitize=address" \
-			>> "$build_log" 2>&1 || build_result=$?
-
-	elif [[ $san_type == "thread" ]]; then
-		local san_flags="-fsanitize=thread -fno-omit-frame-pointer"
-
-		# Build dependencies first with sanitizer flags
-		echo "Building Redis dependencies with TSAN..."
-		make -C deps \
-			CC=clang \
-			CXX=clang++ \
-			CFLAGS="$san_flags" \
-			CXXFLAGS="$san_flags" \
-			hiredis linenoise lua fpconv fast_float \
-			>> "$build_log" 2>&1 || true
-
-		echo "Building Redis with CFLAGS: $san_flags"
-		make -j$(get_nproc) \
-			CC=clang \
-			CXX=clang++ \
-			OPTIMIZATION="-O1" \
-			MALLOC="libc" \
-			CFLAGS="$san_flags" \
-			CXXFLAGS="$san_flags" \
-			LDFLAGS="-fsanitize=thread" \
-			>> "$build_log" 2>&1 || build_result=$?
 	fi
+
+	# Build with sanitizer flags
+	local build_result=0
+	local san_label
+	san_label=$(echo "$san_type" | tr '[:lower:]' '[:upper:]')
+
+	# Build dependencies first with sanitizer flags
+	echo "Building Redis dependencies with ${san_label}SAN..."
+	make -C deps \
+		CC=clang \
+		CXX=clang++ \
+		CFLAGS="$san_flags" \
+		CXXFLAGS="$san_flags" \
+		hiredis linenoise lua fpconv fast_float \
+		>> "$build_log" 2>&1 || true
+
+	echo "Building Redis with CFLAGS: $san_flags"
+	make -j$(get_nproc) \
+		CC=clang \
+		CXX=clang++ \
+		OPTIMIZATION="-O1" \
+		MALLOC="libc" \
+		CFLAGS="$san_flags" \
+		CXXFLAGS="$san_flags" \
+		LDFLAGS="$ldflags" \
+		>> "$build_log" 2>&1 || build_result=$?
 
 	if [[ $build_result -ne 0 ]]; then
 		echo "Redis build failed. Last 50 lines of build log:"
