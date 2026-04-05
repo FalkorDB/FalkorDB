@@ -11,6 +11,7 @@
 #include "src/util/thpool/pool.h"
 #include "src/procedures/procedure.h"
 #include "src/execution_plan/ops/ops.h"
+#include "src/graph/graphcontext_struct.h"
 #include "src/execution_plan/execution_plan_clone.h"
 #include "src/execution_plan/optimizations/optimizer.h"
 #include "src/execution_plan/execution_plan_build/execution_plan_modify.h"
@@ -72,7 +73,7 @@ static void _fake_graph_context() {
 	gc->relation_schemas = (Schema**)arr_new(Schema*, GRAPH_DEFAULT_RELATION_TYPE_CAP);
 	gc->queries_log      = QueriesLog_New();
 
-	pthread_rwlock_init(&gc->_attribute_rwlock,  NULL);
+	pthread_rwlock_init(&gc->_schema_rwlock,  NULL);
 	QueryCtx_SetGraphCtx(gc);
 }
 
