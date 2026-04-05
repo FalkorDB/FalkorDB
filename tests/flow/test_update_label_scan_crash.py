@@ -33,6 +33,7 @@ class testUpdateLabelScanCrash():
     def __init__(self):
         self.env, self.db = Env()
         self.graph = self.db.select_graph(GRAPH_ID)
+        self.conn = self.env.getConnection()
 
     def setUp(self):
         # delete graph before each test to start with an empty slate
@@ -93,29 +94,34 @@ class testUpdateLabelScanCrash():
         self.env.assertEquals(res.properties_set, 0)
 
     # -------------------------------------------------------------------------
-    # test 3 – bulk DELETE (>= default DELTA_MAX_PENDING_CHANGES threshold)
-    #           then SET via label scan
+    # test 3 – DELETE crossing the DELTA_MAX_PENDING_CHANGES flush boundary
     # -------------------------------------------------------------------------
-    def test03_bulk_delete_then_set(self):
+    def test03_flush_boundary_delete_then_set(self):
         """
-        When the number of pending deletions exceeds DELTA_MAX_PENDING_CHANGES
-        (default 10 000) the DeltaMatrix flushes DM into M.  After that flush
-        M no longer contains the deleted entries and the iterator should see
-        none; yet we want the NULL-attributes guard to protect against any
-        residual edge cases.
+        Lower DELTA_MAX_PENDING_CHANGES to 5 and delete 10 nodes so that
+        the DeltaMatrix is forced to flush DM into M mid-deletion.  After the
+        flush, M no longer contains the deleted entries and the iterator yields
+        nothing; a subsequent label-scan SET must not crash.
         """
-        # Use 200 nodes to stay well below the threshold but still exercise
-        # the batch deletion path.  Running 10 001 nodes would take too long
-        # in CI; the important thing is that the code path is exercised.
-        n = 200
-        self._create_labeled_nodes("C", n, prop=True)
-        deleted = self._delete_all_labeled("C")
-        self.env.assertEquals(deleted, n)
+        # Lower threshold so the flush happens during the 10-node delete
+        self.conn.execute_command(
+            "GRAPH.CONFIG", "SET", "DELTA_MAX_PENDING_CHANGES", 5
+        )
+        try:
+            n = 10  # > 5 threshold → flush triggered during deletion
+            self._create_labeled_nodes("C", n, prop=True)
+            deleted = self._delete_all_labeled("C")
+            self.env.assertEquals(deleted, n)
 
-        # SET on the now-empty label must not crash
-        res = self.graph.query("MATCH (n:C) SET n.v = 0 RETURN count(n)")
-        self.env.assertEquals(res.result_set, [[0]])
-        self.env.assertEquals(res.properties_set, 0)
+            # SET on the now-empty label must not crash
+            res = self.graph.query("MATCH (n:C) SET n.v = 0 RETURN count(n)")
+            self.env.assertEquals(res.result_set, [[0]])
+            self.env.assertEquals(res.properties_set, 0)
+        finally:
+            # Always restore the default so other tests are unaffected
+            self.conn.execute_command(
+                "GRAPH.CONFIG", "SET", "DELTA_MAX_PENDING_CHANGES", 10000
+            )
 
     # -------------------------------------------------------------------------
     # test 4 – DELETE and SET in the same query (pipeline)
@@ -256,13 +262,10 @@ class testUpdateLabelScanCrash():
         for round_n in range(1, 6):
             self._create_labeled_nodes("G", 20, prop=True)
             deleted = self._delete_all_labeled("G")
-            self.env.assertEquals(deleted, 20,
-                msg=f"round {round_n}: unexpected delete count")
+            self.env.assertEquals(deleted, 20)
 
             res = self.graph.query(
                 "MATCH (n:G) SET n.v = 0 RETURN count(n)"
             )
-            self.env.assertEquals(res.result_set, [[0]],
-                msg=f"round {round_n}: expected empty result after delete")
-            self.env.assertEquals(res.properties_set, 0,
-                msg=f"round {round_n}: expected 0 properties_set after delete")
+            self.env.assertEquals(res.result_set, [[0]])
+            self.env.assertEquals(res.properties_set, 0)
