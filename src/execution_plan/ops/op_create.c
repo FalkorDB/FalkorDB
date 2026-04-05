@@ -62,13 +62,15 @@ static void _CreateNodes
 	Record r,
 	GraphContext *gc
 ) {
+	Graph *g = GraphContext_GetGraph (gc) ;
+
 	uint nodes_to_create_count = arr_len(op->pending.nodes.nodes_to_create);
 	for (uint i = 0; i < nodes_to_create_count; i++) {
 		// get specified node to create
 		NodeCreateCtx *n = op->pending.nodes.nodes_to_create + i;
 
 		// create a new node
-		Node newNode = Graph_ReserveNode(gc->g);
+		Node newNode = Graph_ReserveNode (g) ;
 
 		// add new node to Record and save a reference to it
 		Node *node_ref = Record_AddNode(r, n->node_idx, newNode);

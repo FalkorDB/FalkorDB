@@ -273,9 +273,9 @@ GraphContext *QueryCtx_GetGraphCtx(void) {
 }
 
 // retrieve the Graph object
-Graph *QueryCtx_GetGraph(void) {
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	return gc->g;
+Graph *QueryCtx_GetGraph (void) {
+	GraphContext *gc = QueryCtx_GetGraphCtx() ;
+	return GraphContext_GetGraph (gc) ;
 }
 
 // retrieve undo log
@@ -290,16 +290,18 @@ UndoLog QueryCtx_GetUndoLog(void) {
 }
 
 // rollback the current command
-void QueryCtx_Rollback(void) {
-	QueryCtx *ctx = _QueryCtx_GetCtx();
-	ASSERT(ctx != NULL);
+void QueryCtx_Rollback (void) {
+	QueryCtx *ctx = _QueryCtx_GetCtx () ;
+	ASSERT (ctx != NULL) ;
 
-	Graph_ResetReservedNode(ctx->gc->g);
+	Graph_ResetReservedNode (GraphContext_GetGraph (ctx->gc)) ;
 
-	if(ctx->undo_log == NULL) return;
+	if (ctx->undo_log == NULL) {
+		return ;
+	}
 	
-	UndoLog_Rollback(ctx->undo_log, ctx->gc);
-	ctx->undo_log = NULL;
+	UndoLog_Rollback (ctx->undo_log, ctx->gc) ;
+	ctx->undo_log = NULL ;
 }
 
 // retrieve effects-buffer
@@ -388,18 +390,19 @@ static void _QueryCtx_ThreadSafeContextUnlock
 // in case that the locks are already locked, there will be no attempt to lock
 // them again this method returns false if the key has changed
 // from the current graph, and sets the relevant error message
-bool QueryCtx_LockForCommit(void) {
+bool QueryCtx_LockForCommit (void) {
 	QueryCtx *ctx = _QueryCtx_GetCreateCtx () ;
 	if (ctx->internal_exec_ctx.locked_for_commit) {
 		return true ;
 	}
 
 	// lock GIL
-	GraphContext   *gc        = ctx->gc ;
-	RedisModuleCtx *redis_ctx = ctx->global_exec_ctx.redis_ctx ;
+	GraphContext   *gc         = ctx->gc ;
+	RedisModuleCtx *redis_ctx  = ctx->global_exec_ctx.redis_ctx ;
+	const char     *graph_name = GraphContext_GetName (gc) ;
 
 	RedisModuleString *graphID = RedisModule_CreateString (redis_ctx,
-			gc->graph_name, strlen (gc->graph_name)) ;
+			graph_name, strlen (graph_name)) ;
 
 	_QueryCtx_ThreadSafeContextLock (ctx) ;
 
@@ -409,25 +412,25 @@ bool QueryCtx_LockForCommit(void) {
 	RedisModule_FreeString (redis_ctx, graphID) ;
 
 	if (RedisModule_KeyType (key) == REDISMODULE_KEYTYPE_EMPTY) {
-		ErrorCtx_SetError (EMSG_EMPTY_KEY, ctx->gc->graph_name) ;
+		ErrorCtx_SetError (EMSG_EMPTY_KEY, graph_name) ;
 		goto clean_up ;
 	}
 
 	if (RedisModule_ModuleTypeGetType (key) != GraphContextRedisModuleType) {
-		ErrorCtx_SetError (EMSG_NON_GRAPH_KEY, ctx->gc->graph_name) ;
+		ErrorCtx_SetError (EMSG_NON_GRAPH_KEY, graph_name) ;
 		goto clean_up ;
 
 	}
 
 	if (gc != RedisModule_ModuleTypeGetValue (key)) {
-		ErrorCtx_SetError (EMSG_DIFFERENT_VALUE, ctx->gc->graph_name) ;
+		ErrorCtx_SetError (EMSG_DIFFERENT_VALUE, graph_name) ;
 		goto clean_up ;
 	}
 
 	ctx->internal_exec_ctx.key = key ;
 
 	// acquire graph write lock
-	Graph_AcquireWriteLock (gc->g) ;
+	Graph_AcquireWriteLock (GraphContext_GetGraph (gc)) ;
 	ctx->internal_exec_ctx.locked_for_commit = true ;
 
 	return true ;
@@ -448,17 +451,17 @@ static void _QueryCtx_UnlockCommit
 (
 	QueryCtx *ctx
 ) {
-	GraphContext *gc = ctx->gc;
+	GraphContext *gc = ctx->gc ;
 
-	ctx->internal_exec_ctx.locked_for_commit = false;
+	ctx->internal_exec_ctx.locked_for_commit = false ;
 	// release graph R/W lock
-	Graph_ReleaseLock(gc->g);
+	Graph_ReleaseLock (GraphContext_GetGraph (gc)) ;
 
 	// close Key
-	RedisModule_CloseKey(ctx->internal_exec_ctx.key);
+	RedisModule_CloseKey (ctx->internal_exec_ctx.key) ;
 
 	// unlock GIL
-	_QueryCtx_ThreadSafeContextUnlock(ctx);
+	_QueryCtx_ThreadSafeContextUnlock (ctx) ;
 }
 
 // starts an ulocking flow and notifies Redis after commiting changes
@@ -491,8 +494,8 @@ void QueryCtx_Replicate
 	RedisModuleCtx *redis_ctx = ctx->global_exec_ctx.redis_ctx;
 
 	// replicate
-	RedisModule_Replicate(redis_ctx, ctx->global_exec_ctx.command_name,
-			"cc!", gc->graph_name, ctx->query_data.query);
+	RedisModule_Replicate (redis_ctx, ctx->global_exec_ctx.command_name,
+			"cc!", GraphContext_GetName (gc), ctx->query_data.query) ;
 }
 
 // compute and return elapsed query execution time

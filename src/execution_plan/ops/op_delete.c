@@ -30,8 +30,8 @@ static void _BulkDeleteEntities
 
 	ASSERT ((node_count + explicit_edge_count) > 0) ;
 
-	Graph        *g  = op->gc->g ;
 	GraphContext *gc = op->gc ;
+	Graph        *g  = GraphContext_GetGraph (gc) ;
 
 	Node *nodes = op->deleted_nodes ;
 	Edge *edges = op->deleted_edges ;
@@ -134,8 +134,8 @@ static void _DeleteEntities
 		return _BulkDeleteEntities (op) ;
 	}
 
-	Graph        *g  = op->gc->g;
 	GraphContext *gc = op->gc;
+	Graph        *g  = GraphContext_GetGraph (gc) ;
 	Edge *implicit_edges = NULL ;
 	uint implicit_edge_count = 0 ;
 

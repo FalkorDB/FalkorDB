@@ -215,28 +215,27 @@ static void _Decode_Delta_Matrix
 void RdbLoadLabelMatrices_v18
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 ) {
 	// format:
 	//  number of label matrices
 	//   label id
 	//   matrix
 
-	ASSERT(gc  != NULL);
-	ASSERT(rdb != NULL);
+	ASSERT (g   != NULL) ;
+	ASSERT (rdb != NULL) ;
 
 	GrB_Info info;
-	Graph *g = gc->g;
 
 	// read number of label matricies
-	int n = SerializerIO_ReadUnsigned(rdb);
+	int n = SerializerIO_ReadUnsigned (rdb) ;
 	
 	// decode each label matrix
-	for(int i = 0; i < n; i++) {
+	for (int i = 0; i < n; i++) {
 		// read label ID
-		LabelID l = SerializerIO_ReadUnsigned(rdb);
-		Delta_Matrix lbl = Graph_GetLabelMatrix(g, l);
-		_Decode_Delta_Matrix(rdb, lbl);
+		LabelID l = SerializerIO_ReadUnsigned (rdb) ;
+		Delta_Matrix lbl = Graph_GetLabelMatrix (g, l) ;
+		_Decode_Delta_Matrix (rdb, lbl) ;
 	}
 }
 
@@ -244,7 +243,7 @@ void RdbLoadLabelMatrices_v18
 void RdbLoadRelationMatrices_v18
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 ) {
 	// format:
 	//   relation id   X N
@@ -252,11 +251,10 @@ void RdbLoadRelationMatrices_v18
 	//   tensors count X N
 	//   tensors
 
-	ASSERT(gc  != NULL);
-	ASSERT(rdb != NULL);
+	ASSERT (g   != NULL) ;
+	ASSERT (rdb != NULL) ;
 
 	GrB_Info info;
-	Graph *g = gc->g;
 
 	// number of relation matricies
 	int n = Graph_RelationTypeCount (g) ;
@@ -295,30 +293,31 @@ void RdbLoadRelationMatrices_v18
 void RdbLoadAdjMatrix_v18
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 ) {
 	// format:
 	//   adjacency matrix
 
-	ASSERT(gc  != NULL);
+	ASSERT(g   != NULL);
 	ASSERT(rdb != NULL);
 
-	Delta_Matrix adj = Graph_GetAdjacencyMatrix(gc->g, false);
-	_Decode_Delta_Matrix(rdb, adj);
+	Delta_Matrix adj = Graph_GetAdjacencyMatrix (g, false) ;
+	_Decode_Delta_Matrix (rdb, adj) ;
 }
 
 // decode labels matrix
 void RdbLoadLblsMatrix_v18
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 ) {
 	// format:
 	//   lbls matrix
 
-	ASSERT(gc  != NULL);
-	ASSERT(rdb != NULL);
+	ASSERT (g   != NULL) ;
+	ASSERT (rdb != NULL) ;
 
-	Delta_Matrix lbl = Graph_GetNodeLabelMatrix(gc->g);
-	_Decode_Delta_Matrix(rdb, lbl);
+	Delta_Matrix lbl = Graph_GetNodeLabelMatrix (g) ;
+	_Decode_Delta_Matrix (rdb, lbl) ;
 }
+
