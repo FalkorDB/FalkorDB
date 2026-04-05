@@ -135,7 +135,7 @@ static void _ResultSet_BoltReplyWithNode
 	bolt_reply_structure(client, BST_NODE, 4);
 	bolt_reply_int64(client, n->id);
 	uint lbls_count;
-	NODE_GET_LABELS(gc->g, n, lbls_count);
+	NODE_GET_LABELS (GraphContext_GetGraph (gc), n, lbls_count);
 	bolt_reply_list(client, lbls_count);
 	for(int i = 0; i < lbls_count; i++) {
 		Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);

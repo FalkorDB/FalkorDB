@@ -16,7 +16,7 @@ void buffer_index_set
 ) {
 	ASSERT(buf != NULL);
 	ASSERT(index != NULL);
-	ASSERT(offset < BUFFER_CHUNK_SIZE * array_len(buf->chunks));
+	ASSERT(offset < BUFFER_CHUNK_SIZE * arr_len(buf->chunks));
 
 	index->buf = buf;
 	index->chunk = offset / BUFFER_CHUNK_SIZE;
@@ -133,8 +133,8 @@ void buffer_new
 ) {
 	ASSERT(buf != NULL);
 
-	buf->chunks = array_new(char *, 0);
-	array_append(buf->chunks, rm_malloc(BUFFER_CHUNK_SIZE));
+	buf->chunks = arr_new(char *, 0);
+	arr_append(buf->chunks, rm_malloc(BUFFER_CHUNK_SIZE));
 	buffer_index_set(&buf->read, buf, 0);
 	buffer_index_set(&buf->write, buf, 0);
 }
@@ -226,8 +226,8 @@ void buffer_read
 			size -= dst_available_size;
 			dst->offset = 0;
 			dst->chunk++;
-			if(array_len(dst->buf->chunks) == dst->chunk) {
-				array_append(dst->buf->chunks, rm_malloc(BUFFER_CHUNK_SIZE));
+			if(arr_len(dst->buf->chunks) == dst->chunk) {
+				arr_append(dst->buf->chunks, rm_malloc(BUFFER_CHUNK_SIZE));
 			}
 			buf->offset += dst_available_size;
 		}
@@ -253,7 +253,7 @@ bool buffer_socket_read
 	while(buf->write.offset == BUFFER_CHUNK_SIZE) {
 		buf->write.offset = 0;
 		buf->write.chunk++;
-		array_append(buf->chunks, rm_malloc(BUFFER_CHUNK_SIZE));
+		arr_append(buf->chunks, rm_malloc(BUFFER_CHUNK_SIZE));
 		nread = socket_read(socket, buf->chunks[buf->write.chunk], BUFFER_CHUNK_SIZE);
 		if(nread < 0) {
 			return false;
@@ -352,8 +352,8 @@ void buffer_write
 		size -= n;
 		buf->chunk++;
 		buf->offset = 0;
-		if(array_len(buf->buf->chunks) == buf->chunk) {
-			array_append(buf->buf->chunks, rm_malloc(BUFFER_CHUNK_SIZE));
+		if(arr_len(buf->buf->chunks) == buf->chunk) {
+			arr_append(buf->buf->chunks, rm_malloc(BUFFER_CHUNK_SIZE));
 		}
 	}
 	char *ptr = buf->buf->chunks[buf->chunk] + buf->offset;
@@ -410,5 +410,5 @@ void buffer_free
 ) {
 	ASSERT(buf != NULL);
 
-	array_free_cb(buf->chunks, rm_free);
+	arr_free_cb(buf->chunks, rm_free);
 }

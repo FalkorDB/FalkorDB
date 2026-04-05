@@ -142,11 +142,11 @@ void batchOptionalMatch
 
 	OpBase **applies = ExecutionPlan_CollectOps (plan->root, OPType_APPLY) ;
 	
-	uint n = array_len (applies) ;
+	uint n = arr_len (applies) ;
 	for (uint i = 0; i < n; i++) {
 		_reduceOptionalMatch (plan, applies[i]) ;
 	}
 
-	array_free (applies) ;
+	arr_free (applies) ;
 }
 

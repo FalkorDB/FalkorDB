@@ -8,6 +8,7 @@
 #include "udf_ctx.h"
 #include "classes.h"
 #include "traverse.h"
+#include "GraphBLAS.h"
 #include "repository.h"
 #include "../query_ctx.h"
 #include "../arithmetic/func_desc.h"
@@ -18,13 +19,181 @@
 
 extern JSClassID js_node_class_id;  // JS Node class
 
+// return a node iterator over the specified label
+// usage: const it = graph.iterateNodes('Country');
+static JSValue graph_iterate_nodes
+(
+	JSContext *js_ctx,
+	JSValueConst this_val,
+	int argc,
+	JSValueConst *argv
+) {
+	const Graph *g = QueryCtx_GetGraph () ;
+	ASSERT (g != NULL) ;
+
+    // validate arguments: ensure a label string is provided
+    if (argc < 1 || !JS_IsString (argv [0])) {
+        return JS_ThrowTypeError (js_ctx,
+				"iterateNodes expects a label string as the first argument") ;
+    }
+
+    const char *label = JS_ToCString (js_ctx, argv [0]) ;
+    if (!label) {
+		return JS_EXCEPTION ;
+	}
+
+    // get the label matrix from the graph
+	Delta_Matrix L = NULL ;
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
+	Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
+
+	if (s == NULL) {
+		L = Graph_GetZeroMatrix (g) ;
+	} else {
+		L = Graph_GetLabelMatrix (g, Schema_GetID (s)) ;
+	}
+	ASSERT (L != NULL) ;
+
+    // free the C string immediately after use
+    JS_FreeCString (js_ctx, label) ;
+
+    // create the DeltaMatrix Iterator
+    Delta_MatrixTupleIter *it = rm_malloc (sizeof (Delta_MatrixTupleIter)) ;
+    Delta_MatrixTupleIter_attach (it, L) ;
+
+    // wrap it in our custom NodeIterator JS Object
+    // we pass 'g' as well so the iterator knows which graph to query for node data
+    return UDF_CreateNodeIterator (js_ctx, g, it) ;
+}
+
+// return an edge iterator over the specified relationship-type
+// usage: const it = graph.iterateEdges('FOLLOWS');
+static JSValue graph_iterate_edges
+(
+	JSContext *js_ctx,
+	JSValueConst this_val,
+	int argc,
+	JSValueConst *argv
+) {
+	const Graph *g = QueryCtx_GetGraph () ;
+	ASSERT (g != NULL) ;
+
+	// validate arguments: ensure a label string is provided
+	if (argc < 1 || !JS_IsString (argv [0])) {
+		return JS_ThrowTypeError (js_ctx,
+				"iterateEdges expects a relationship-type string as the first argument") ;
+	}
+
+	const char *rel = JS_ToCString (js_ctx, argv [0]) ;
+	if (!rel) {
+		return JS_EXCEPTION ;
+	}
+
+	// get the label matrix from the graph
+	Tensor R = NULL ;
+	RelationID rel_id = GRAPH_UNKNOWN_RELATION ;
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
+	Schema *s = GraphContext_GetSchema (gc, rel, SCHEMA_EDGE) ;
+
+	if (s == NULL) {
+		R = Graph_GetZeroMatrix (g) ;
+	} else {
+		rel_id = Schema_GetID (s) ;
+		R = Graph_GetRelationMatrix (g, rel_id, false) ;
+	}
+	ASSERT (R != NULL) ;
+
+	// free the C string immediately after use
+	JS_FreeCString (js_ctx, rel) ;
+
+	// create the Tensor Iterator
+	TensorIterator *it = rm_malloc (sizeof (TensorIterator)) ;
+	TensorIterator_ScanRange (it, R, 0, UINT64_MAX, false) ;
+
+	// wrap it in our custom EdgeIterator JS Object
+	// we pass 'g' as well so the iterator knows which graph to query for edge data
+	return UDF_CreateEdgeIterator (js_ctx, g, rel_id, it) ;
+}
+
+//------------------------------------------------------------------------------
+// graph.getNodeById implementations
+//------------------------------------------------------------------------------
+
+// retrieves a node from the graph by its integer ID
+// JS Usage: const node = graph.getNodeById(nodeId);
+// argv[0] the integer ID of the node
+// return JSValue The Node object if found, JS_NULL if not found,
+// or a TypeError if arguments are invalid
+static JSValue graph_get_node_by_id
+(
+	JSContext *ctx,
+	JSValueConst this_val,
+	int argc,
+	JSValueConst *argv
+) {
+    // validation: ensure an argument is provided
+    if (argc < 1) {
+        return JS_ThrowTypeError (ctx, "getNodeById: At least one "
+				"argument (ID) expected") ;
+    }
+
+	int64_t node_id = -1 ;
+	JSValueConst val = argv [0] ;
+
+	// check if it's a BigInt (common for 64-bit IDs in JS)
+	if (JS_IsBigInt (ctx, val)) {
+		if (JS_ToInt64 (ctx, &node_id, val)) {
+			return JS_EXCEPTION ;
+		}
+	}
+
+	// check if it's a standard JS Number
+	else if (JS_IsNumber (val)) {
+		double d;
+		JS_ToFloat64 (ctx, &d, val) ;
+
+		// ensure the number has no fractional part and is within uint64 range
+		// fmod(d, 1.0) != 0 checks if it's a "true" float (e.g., 1.5)
+		if (d < 0 || fmod (d, 1.0) != 0) {
+			return JS_ThrowTypeError (ctx,
+					"getNodeById: ID must be a positive integer") ;
+		}
+
+		// safe to convert now that we've validated it's a whole number
+		JS_ToInt64 (ctx, &node_id, val) ;
+	}
+
+	else {
+		return JS_ThrowTypeError (ctx,
+				"getNodeById: Argument must be a positive integer") ;
+	}
+
+	// final safety check for the logic
+	if (node_id < 0) {
+		return JS_ThrowTypeError (ctx,
+				"getNodeById: ID must be a positive integer") ;
+	}
+
+	const Graph *graph = QueryCtx_GetGraph () ;
+	ASSERT (graph != NULL) ;
+
+    // fetch the node from the underlying C engine
+    Node node ;
+    if (Graph_GetNode (graph, (NodeID) node_id, &node)) {
+        // successfully found: return the JS wrapper for the Node
+        return UDF_CreateNode (ctx, &node) ;
+    }
+
+    // fallback: Node not found
+    return JS_NULL ;
+}
+
 //------------------------------------------------------------------------------
 // graph.traverse implementations
 //------------------------------------------------------------------------------
 
-// non-runtime implementation of `graph.traverse`
-// JS call: graph.traverse();
-static JSValue non_runtime_traverse
+// non-runtime implementation of `graph.*`
+static JSValue non_runtime_function
 (
 	JSContext *js_ctx,      // JavaScript context
 	JSValueConst this_val,  // 'this' value passed by the caller
@@ -35,7 +204,7 @@ static JSValue non_runtime_traverse
 	ASSERT (js_ctx != NULL) ;
 
 	return JS_ThrowTypeError (js_ctx,
-			"graph.traverse shouldn't be called in a global context") ;
+			"graph API shouldn't be called in a global context") ;
 }
 
 // traverse from multiple sources
@@ -181,7 +350,7 @@ static JSValue graph_traverse
 				JS_SetPropertyUint32 (js_ctx, js_neighbors, j,
 						UDF_CreateEdge (js_ctx, edges + j)) ;
 			}
-			array_free (edges) ;
+			arr_free (edges) ;
 		}
 
 		JS_SetPropertyUint32 (js_ctx, output, i, js_neighbors) ;
@@ -196,17 +365,17 @@ static JSValue graph_traverse
 	rm_free (neighbors_count) ;
 
 	if (labels != NULL) {
-		for (int i = 0; i < array_len (labels) ; i++) {
+		for (int i = 0; i < arr_len (labels) ; i++) {
 			free (labels[i]) ;
 		}
-		array_free (labels) ;
+		arr_free (labels) ;
 	}
 
 	if (rel_types != NULL) {
-		for (int i = 0; i < array_len (rel_types) ; i++) {
+		for (int i = 0; i < arr_len (rel_types) ; i++) {
 			free (rel_types[i]) ;
 		}
-		array_free (rel_types) ;
+		arr_free (rel_types) ;
 	}
 
 	return output ;
@@ -227,11 +396,11 @@ void UDF_RegisterGraphObject
     JSValue graph_obj = JS_NewObject (js_ctx) ;
 
 	// register graph.traverse
-	JSValue func_obj = JS_NewCFunction (js_ctx, graph_traverse, "traverse", 2) ;
-
-    int def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "traverse",
-			func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
-	ASSERT (def_res >= 0) ;
+//	JSValue func_obj = JS_NewCFunction (js_ctx, graph_traverse, "traverse", 2) ;
+//
+//    int def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "traverse",
+//			func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
+//	ASSERT (def_res >= 0) ;
 
     // expose the namespace globally as "graph"
     JSValue global_obj = JS_GetGlobalObject (js_ctx) ;
@@ -243,7 +412,7 @@ void UDF_RegisterGraphObject
 }
 
 // set the implementation of the `graph.traverse` function
-void UDF_SetGraphTraverseImpl
+void UDF_SetGraphAPI
 (
 	JSContext *js_ctx,              // the QuickJS context
 	UDF_JSCtxRegisterFuncMode mode  // the registration mode
@@ -257,19 +426,53 @@ void UDF_SetGraphTraverseImpl
 	ASSERT (JS_IsObject (graph_obj));
 
 	// pick implementation
-    JSValue func_obj = JS_UNDEFINED;
+    JSValue traverse_func_obj      = JS_UNDEFINED ;
+    JSValue get_node_func_obj      = JS_UNDEFINED ;
+	JSValue iterate_nodes_func_obj = JS_UNDEFINED ;
+	JSValue iterate_edges_func_obj = JS_UNDEFINED ;
+
 	if (mode == UDF_FUNC_REG_MODE_LOCAL) {
-		func_obj = JS_NewCFunction (js_ctx, graph_traverse, "traverse", 2) ;
+		traverse_func_obj =
+			JS_NewCFunction (js_ctx, graph_traverse,       "traverse",     2) ;
+		get_node_func_obj =
+			JS_NewCFunction (js_ctx, graph_get_node_by_id, "getNodeById",  1) ;
+		iterate_nodes_func_obj =
+			JS_NewCFunction (js_ctx, graph_iterate_nodes,  "iterateNodes", 1) ;
+		iterate_edges_func_obj =
+			JS_NewCFunction (js_ctx, graph_iterate_edges,  "iterateEdges", 1) ;
 	} else {
-		func_obj = JS_NewCFunction (js_ctx, non_runtime_traverse, "traverse", 2) ;
+		traverse_func_obj =
+			JS_NewCFunction (js_ctx, non_runtime_function, "traverse",     2) ;
+		get_node_func_obj =
+			JS_NewCFunction (js_ctx, non_runtime_function, "getNodeById",  1) ;
+		iterate_nodes_func_obj =
+			JS_NewCFunction (js_ctx, non_runtime_function, "iterateNodes", 1) ;
+		iterate_edges_func_obj =
+			JS_NewCFunction (js_ctx, non_runtime_function, "iterateEdges", 1) ;
 	}
 
-	ASSERT (JS_IsFunction (js_ctx, func_obj)) ;
+	ASSERT (JS_IsFunction (js_ctx, traverse_func_obj)) ;
+	ASSERT (JS_IsFunction (js_ctx, get_node_func_obj)) ;
+	ASSERT (JS_IsFunction (js_ctx, iterate_nodes_func_obj)) ;
+	ASSERT (JS_IsFunction (js_ctx, iterate_edges_func_obj)) ;
 
     // define property with explicit flags (writable, configurable)
-    int def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "traverse",
-			func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
+    int def_res ;
 
+    def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "traverse",
+			traverse_func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
+	ASSERT (def_res >= 0) ;
+
+    def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "getNodeById",
+			get_node_func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
+	ASSERT (def_res >= 0) ;
+
+    def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "iterateNodes",
+			iterate_nodes_func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
+	ASSERT (def_res >= 0) ;
+
+    def_res = JS_DefinePropertyValueStr (js_ctx, graph_obj, "iterateEdges",
+			iterate_edges_func_obj, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE) ;
 	ASSERT (def_res >= 0) ;
 
     // clean up

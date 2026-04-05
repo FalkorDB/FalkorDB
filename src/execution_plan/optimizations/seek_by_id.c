@@ -65,7 +65,7 @@ static void _UseIdOptimization
 	// where X is a constant and op in [EQ, GE, LE, GT, LT]
 	OpBase *grandparent;
 	OpBase *parent = scan_op->parent;
-	RangeExpression *ranges = array_new(RangeExpression, 1);
+	RangeExpression *ranges = arr_new(RangeExpression, 1);
 	while(parent && parent->type == OPType_FILTER) {
 		// track the next op to visit in case we free parent
 		grandparent = parent->parent;
@@ -82,13 +82,13 @@ static void _UseIdOptimization
 
 			// Free replaced operations.
 			ExecutionPlan_RemoveOp(plan, (OpBase *)filter);
-			array_append(ranges, ((RangeExpression){.op = op, .exp = id_exp}));
+			arr_append(ranges, ((RangeExpression){.op = op, .exp = id_exp}));
 			OpBase_Free((OpBase *)filter);
 		}
 		// advance
 		parent = grandparent;
 	}
-	if(array_len(ranges) > 0) {
+	if(arr_len(ranges) > 0) {
 		/* Don't replace label scan, but set it to have range query.
 		 * Issue 818 https://github.com/RedisGraph/RedisGraph/issues/818
 		 * This optimization caused a range query over the entire range of ids in the graph
@@ -105,7 +105,7 @@ static void _UseIdOptimization
 			OpBase_Free(scan_op);
 		}
 	} else {
-		array_free(ranges);
+		arr_free(ranges);
 	}
 }
 
@@ -118,10 +118,10 @@ void seekByID
 	const OPType types[] = {OPType_ALL_NODE_SCAN, OPType_NODE_BY_LABEL_SCAN};
 	OpBase **scan_ops = ExecutionPlan_CollectOpsMatchingTypes(plan->root, types, 2);
 
-	for(int i = 0; i < array_len(scan_ops); i++) {
+	for(int i = 0; i < arr_len(scan_ops); i++) {
 		_UseIdOptimization(plan, scan_ops[i]);
 	}
 
-	array_free(scan_ops);
+	arr_free(scan_ops);
 }
 

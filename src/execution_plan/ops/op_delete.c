@@ -25,13 +25,13 @@ static void _BulkDeleteEntities
 (
 	OpDelete *op
 ) {
-	uint node_count = array_len (op->deleted_nodes) ;
-	uint explicit_edge_count = array_len (op->deleted_edges) ;
+	uint node_count = arr_len (op->deleted_nodes) ;
+	uint explicit_edge_count = arr_len (op->deleted_edges) ;
 
 	ASSERT ((node_count + explicit_edge_count) > 0) ;
 
-	Graph        *g  = op->gc->g ;
 	GraphContext *gc = op->gc ;
+	Graph        *g  = GraphContext_GetGraph (gc) ;
 
 	Node *nodes = op->deleted_nodes ;
 	Edge *edges = op->deleted_edges ;
@@ -46,12 +46,12 @@ static void _BulkDeleteEntities
 	uint64_t incoming_edge_count = 0 ;
 
 	if (node_count > 0) {
-		outgoing = array_new (Edge, 32) ;
-		incoming = array_new (Edge, 32) ;
+		outgoing = arr_new (Edge, 32) ;
+		incoming = arr_new (Edge, 32) ;
 		Graph_CollectInOutEdges (&outgoing, &incoming, g, nodes, node_count) ;
 
-		outgoing_edge_count = array_len (outgoing) ;
-		incoming_edge_count = array_len (incoming) ;
+		outgoing_edge_count = arr_len (outgoing) ;
+		incoming_edge_count = arr_len (incoming) ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -66,7 +66,7 @@ static void _BulkDeleteEntities
 			Edge *e = edges + i ;
 			if (roaring64_bitmap_contains (op->node_bitmap, e->src_id)  ||
 				roaring64_bitmap_contains (op->node_bitmap, e->dest_id)) {
-				array_del_fast (edges, i) ;
+				arr_del_fast (edges, i) ;
 				i-- ;
 				explicit_edge_count-- ;
 			}
@@ -112,11 +112,11 @@ static void _BulkDeleteEntities
 
 	// clean up
 	if (outgoing != NULL) {
-		array_free (outgoing) ;
+		arr_free (outgoing) ;
 	}
 
 	if (incoming != NULL) {
-		array_free (incoming) ;
+		arr_free (incoming) ;
 	}
 }
 
@@ -124,8 +124,8 @@ static void _DeleteEntities
 (
 	OpDelete *op
 ) {
-	uint node_count = array_len (op->deleted_nodes) ;
-	uint edge_count = array_len (op->deleted_edges);
+	uint node_count = arr_len (op->deleted_nodes) ;
+	uint edge_count = arr_len (op->deleted_edges);
 
 	ASSERT ((node_count + edge_count) > 0) ;
 
@@ -134,8 +134,8 @@ static void _DeleteEntities
 		return _BulkDeleteEntities (op) ;
 	}
 
-	Graph        *g  = op->gc->g;
 	GraphContext *gc = op->gc;
+	Graph        *g  = GraphContext_GetGraph (gc) ;
 	Edge *implicit_edges = NULL ;
 	uint implicit_edge_count = 0 ;
 
@@ -145,7 +145,7 @@ static void _DeleteEntities
 
 	if (node_count > 0) {
 		Node *nodes = op->deleted_nodes ;
-		implicit_edges = array_new (Edge, node_count) ;
+		implicit_edges = arr_new (Edge, node_count) ;
 
 		for (uint i = 0; i < node_count; i++) {
 			Node *n = nodes + i ;
@@ -159,7 +159,7 @@ static void _DeleteEntities
 		// remove edge duplicates
 		//----------------------------------------------------------------------
 
-		implicit_edge_count = array_len (implicit_edges) ;
+		implicit_edge_count = arr_len (implicit_edges) ;
 		for (uint i = 0; i < implicit_edge_count; i++) {
 			Edge *e = implicit_edges + i ;
 			EntityID eid = ENTITY_GET_ID (e) ;
@@ -169,7 +169,7 @@ static void _DeleteEntities
 
 			if (!roaring64_bitmap_add_checked (op->edge_bitmap, eid)) {
 				// duplicated edge, remove it
-				array_del_fast (implicit_edges, i) ;
+				arr_del_fast (implicit_edges, i) ;
 
 				// adjust loop index
 				i-- ;
@@ -202,7 +202,7 @@ static void _DeleteEntities
 
 	// clean up
 	if (implicit_edges != NULL) {
-		array_free (implicit_edges) ;
+		arr_free (implicit_edges) ;
 	}
 }
 
@@ -215,9 +215,9 @@ OpBase *NewDeleteOp
 
 	op->gc            = QueryCtx_GetGraphCtx () ;
 	op->exps          = exps ;
-	op->exp_count     = array_len (exps) ;
-	op->deleted_nodes = array_new (Node, 32) ;
-	op->deleted_edges = array_new (Edge, 32) ;
+	op->exp_count     = arr_len (exps) ;
+	op->deleted_nodes = arr_new (Node, 32) ;
+	op->deleted_edges = arr_new (Edge, 32) ;
 
 	op->node_bitmap = roaring64_bitmap_create () ;
 	op->edge_bitmap = roaring64_bitmap_create () ;
@@ -252,7 +252,7 @@ static inline void _CollectDeletedEntities
 			// skip duplicated & deleted nodes
 			if (!Graph_EntityIsDeleted ((GraphEntity *)n) &&
 				roaring64_bitmap_add_checked (op->node_bitmap, ENTITY_GET_ID (n))) {
-				array_append (op->deleted_nodes, *n) ;
+				arr_append (op->deleted_nodes, *n) ;
 			}
 		}
 
@@ -264,7 +264,7 @@ static inline void _CollectDeletedEntities
 				!roaring64_bitmap_contains (op->node_bitmap, e->src_id)  &&
 				!roaring64_bitmap_contains (op->node_bitmap, e->dest_id) &&
 				roaring64_bitmap_add_checked (op->edge_bitmap, ENTITY_GET_ID (e))) {
-				array_append (op->deleted_edges, *e) ;
+				arr_append (op->deleted_edges, *e) ;
 			}
 		}
 
@@ -279,7 +279,7 @@ static inline void _CollectDeletedEntities
 				// skip duplicated & deleted nodes
 				if (!Graph_EntityIsDeleted ((GraphEntity *)n) &&
 					roaring64_bitmap_add_checked (op->node_bitmap, ENTITY_GET_ID (n))) {
-					array_append (op->deleted_nodes, *n) ;
+					arr_append (op->deleted_nodes, *n) ;
 				}
 			}
 
@@ -303,7 +303,7 @@ static inline Record _handoff
 (
 	OpDelete *op
 ) {
-	if(op->rec_idx < array_len(op->records)) {
+	if(op->rec_idx < arr_len(op->records)) {
 		return op->records[op->rec_idx++];
 	} else {
 		return NULL;
@@ -330,20 +330,20 @@ static Record DeleteConsume
 
 	GraphContext *gc = QueryCtx_GetGraphCtx () ;
 
-	op->records = array_new (Record, 32) ;
+	op->records = arr_new (Record, 32) ;
 
 	// pull data until child is depleted
 	OpBase *child = op->op.children[0] ;
 	while ((r = OpBase_Consume (child))) {
 		// save record for later use
-		array_append (op->records, r) ;
+		arr_append (op->records, r) ;
 
 		// collect entities to be deleted
 		_CollectDeletedEntities (r, op) ;
 	}
 
 	// done reading, we're not going to call consume any longer
-	if (array_len (op->deleted_nodes) > 0 || array_len (op->deleted_edges) > 0) {
+	if (arr_len (op->deleted_nodes) > 0 || arr_len (op->deleted_edges) > 0) {
 		// delete entities
 		// there might be operations e.g. index scan that need to free
 		// index R/W lock, as such reset all operation up the chain
@@ -369,7 +369,7 @@ static OpBase *DeleteClone
 
 	OpDelete *op = (OpDelete *)opBase;
 	AR_ExpNode **exps;
-	array_clone_with_cb(exps, op->exps, AR_EXP_Clone);
+	arr_clone_with_cb(exps, op->exps, AR_EXP_Clone);
 	return NewDeleteOp(plan, exps);
 }
 
@@ -380,28 +380,28 @@ static void DeleteFree
 	OpDelete *op = (OpDelete *)opBase;
 
 	if (op->records) {
-		uint rec_count = array_len (op->records) ;
+		uint rec_count = arr_len (op->records) ;
 		// records[0..rec_idx-1] had been already emitted, skip them
 		for (uint i = op->rec_idx; i < rec_count; i++) {
 			OpBase_DeleteRecord (op->records+i) ;
 		}
-		array_free (op->records) ;
+		arr_free (op->records) ;
 		op->records = NULL ;
 	}
 
 	if (op->deleted_nodes) {
-		array_free (op->deleted_nodes) ;
+		arr_free (op->deleted_nodes) ;
 		op->deleted_nodes = NULL ;
 	}
 
 	if (op->deleted_edges) {
-		array_free (op->deleted_edges) ;
+		arr_free (op->deleted_edges) ;
 		op->deleted_edges = NULL ;
 	}
 
 	if(op->exps) {
 		for(int i = 0; i < op->exp_count; i++) AR_EXP_Free(op->exps[i]);
-		array_free(op->exps);
+		arr_free(op->exps);
 		op->exps = NULL;
 	}
 

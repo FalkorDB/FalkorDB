@@ -90,7 +90,7 @@ void test_BFSLevels() {
 		nodes = BFS(S, &level);
 		QGNode **expectation = expected[level];
 
-		int node_count = array_len(nodes);
+		int node_count = arr_len(nodes);
 		for(int i = 0; i < node_count; i++) {
 			bool found = false;
 			for(int j = 0; j < node_count; j++) {
@@ -102,7 +102,7 @@ void test_BFSLevels() {
 			TEST_ASSERT(found);
 		}
 
-		array_free(nodes);
+		arr_free(nodes);
 	}
 
 	//------------------------------------------------------------------------------
@@ -114,7 +114,7 @@ void test_BFSLevels() {
 
 	// Determine number of expected nodes.
 	int expected_node_count = sizeof(expected_level_deepest) / sizeof(expected_level_deepest[0]);
-	TEST_ASSERT(expected_node_count == array_len(nodes));
+	TEST_ASSERT(expected_node_count == arr_len(nodes));
 
 	for(int i = 0; i < expected_node_count; i++) {
 		bool found = false;
@@ -128,7 +128,7 @@ void test_BFSLevels() {
 	}
 
 	// Clean up.
-	array_free(nodes);
+	arr_free(nodes);
 	QueryGraph_Free(g);
 }
 
