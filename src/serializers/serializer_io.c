@@ -11,7 +11,7 @@
 #include <stdint.h>
 #include <unistd.h>
 
-#define BUFFER_SIZE 256000  // buffered searializer buffer size 256KB
+#define BUFFER_SIZE 256000  // buffered-searializer buffer size 256KB
 
 typedef struct {
 	unsigned char *buffer;  // io buffer
@@ -270,7 +270,7 @@ typedef enum {
 	SERIALIZER_TYPE_SIGNED      = 3,
 	SERIALIZER_TYPE_UNSIGNED    = 4,
 	SERIALIZER_TYPE_LONG_DOUBLE = 5,
-	SERIALIZER_TYPE_BLOB        = 6  // found at the end of a buffer, signals
+	SERIALIZER_TYPE_BLOB        = 6  // found at the end of a buffer
 	                                 // signals that the next write will be a
 	                                 // standalone blob
 } serializer_type_t;
@@ -289,15 +289,16 @@ typedef enum {
 	blob_t           : SERIALIZER_TYPE_BLOB))
 
 // write the given type to buffer
-#define SERIALIZER_WRITE_TYPE(t)                                \
-ASSERT (buffer->count < buffer->cap);                           \
-*((uint8_t*)(buffer->buffer + buffer->count)) = TYPE_ENCODE(t); \
-buffer->count++;                                                \
+#define SERIALIZER_WRITE_TYPE(t)                                    \
+	ASSERT (buffer->count < buffer->cap);                           \
+	*((uint8_t*)(buffer->buffer + buffer->count)) = TYPE_ENCODE(t); \
+	buffer->count++;
 
 // read the type
-#define SERIALIZER_READ_TYPE(s)                                 \
-s = *((uint8_t*)(buffer->buffer + buffer->count));              \
-buffer->count++;
+#define SERIALIZER_READ_TYPE(s)                                     \
+	ASSERT (buffer->count < buffer->cap);                           \
+	s = *((uint8_t*)(buffer->buffer + buffer->count));              \
+	buffer->count++;
 
 // check that the type being read matches expectations.
 #define SERIALIZER_VALIDATE_TYPE(t)                             \
