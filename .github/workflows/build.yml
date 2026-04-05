@@ -44,8 +44,8 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          # Ubuntu builds
-          - name: ubuntu-x64
+          # Debian builds
+          - name: debian-x64
             suffix: x64
             os: debian
             arch: amd64
@@ -54,7 +54,7 @@ jobs:
             build_variants: [release, server]
             use_docker: true
             build_test_image: true
-          - name: ubuntu-arm64
+          - name: debian-arm64
             suffix: arm64v8
             os: debian
             arch: arm64
