@@ -79,7 +79,7 @@ ProcedureResult Proc_FulltextQueryNodeInvoke
 	ctx->privateData = rm_malloc(sizeof(QueryNodeContext));
 	QueryNodeContext *pdata = ctx->privateData;
 
-	pdata->g   = gc->g;
+	pdata->g   = GraphContext_GetGraph (gc) ;
 	pdata->n   = GE_NEW_NODE();
 	pdata->idx = idx;
 

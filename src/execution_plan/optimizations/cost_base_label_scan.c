@@ -83,7 +83,7 @@ static bool _transposeExpression
 	// node as the 'opening" node for the traversal
 
 	Graph               *g        = QueryCtx_GetGraph();
-	const GraphContext  *gc       = QueryCtx_GetGraphCtx();
+	GraphContext        *gc       = QueryCtx_GetGraphCtx();
 	const ExecutionPlan *plan     = op->plan;
 	QueryGraph          *qg       = plan->query_graph;
 	NodeScanCtx         *scan_ctx = scan->n;

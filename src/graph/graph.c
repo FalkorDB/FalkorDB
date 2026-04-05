@@ -544,19 +544,20 @@ LabelID Graph_AddLabel
 (
 	Graph *g
 ) {
-	ASSERT(g != NULL);
+	ASSERT (g != NULL) ;
 
-	Delta_Matrix m;
-	GrB_Info info;
-	size_t n = Graph_RequiredMatrixDim(g);
-	Delta_Matrix_new(&m, GrB_BOOL, n, n, false);
+	GrB_Info info ;
+	Delta_Matrix m ;
 
-	arr_append(g->labels, m);
+	size_t n = Graph_RequiredMatrixDim (g) ;
+	Delta_Matrix_new (&m, GrB_BOOL, n, n, false) ;
+
+	arr_append (g->labels, m) ;
 	// adding a new label, update the stats structures to support it
-	GraphStatistics_IntroduceLabel(&g->stats);
+	GraphStatistics_IntroduceLabel (&g->stats) ;
 
-	LabelID l = Graph_LabelTypeCount(g) - 1;
-	return l;
+	LabelID l = Graph_LabelTypeCount (g) - 1 ;
+	return l ;
 }
 
 // adds a label from the graph

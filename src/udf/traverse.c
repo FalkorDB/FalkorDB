@@ -293,8 +293,8 @@ GraphEntity **traverse
 	ASSERT (sources         != NULL) ;
 	ASSERT (neighbors_count != NULL) ;
 
-	const Graph         *g  = QueryCtx_GetGraph () ;
-	const GraphContext  *gc = QueryCtx_GetGraphCtx () ;
+	const Graph   *g  = QueryCtx_GetGraph () ;
+	GraphContext  *gc = QueryCtx_GetGraphCtx () ;
 	AlgebraicExpression *ae = NULL ;
 
 	size_t required_dim = Graph_RequiredMatrixDim (g) ;
