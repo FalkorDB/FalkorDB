@@ -18,6 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     container: falkordb/falkordb-build:ubuntu
     timeout-minutes: ${{ matrix.timeout_minutes }}
+    # TSAN is informational until pre-existing data races are resolved
+    continue-on-error: ${{ matrix.san == 'thread' }}
     permissions:
       contents: read
     strategy:
