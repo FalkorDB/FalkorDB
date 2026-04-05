@@ -40,6 +40,14 @@ RUN apt-get update && \
     # Remove packages not needed at runtime to reduce CVE surface
     (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
     apt-get autoremove -y && \
+    # Remove ncurses (CVE-2025-69720 HIGH) and bash - not needed by redis-server or falkordb.so
+    # run.sh uses #!/bin/sh (dash), so bash is not required
+    dpkg --force-remove-essential --purge ncurses-base ncurses-bin bash && \
+    dpkg --force-remove-essential --force-depends --purge libtinfo6 && \
+    # Remove additional packages not needed at runtime
+    dpkg --force-remove-essential --purge perl-base && \
+    dpkg --force-remove-protected --purge login && \
+    (dpkg --purge passwd || true) && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
