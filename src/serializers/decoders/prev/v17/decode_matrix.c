@@ -109,18 +109,17 @@ static GrB_Matrix _DecodeMatrix
 void RdbLoadLabelMatrices_v17
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 ) {
 	// format:
 	//  number of label matrices
 	//   label id
 	//   matrix
 
-	ASSERT(gc  != NULL);
+	ASSERT(g   != NULL);
 	ASSERT(rdb != NULL);
 
 	GrB_Info info;
-	Graph *g = gc->g;
 
 	// read number of label matricies
 	int n = SerializerIO_ReadUnsigned(rdb);
@@ -150,17 +149,16 @@ void RdbLoadLabelMatrices_v17
 void RdbLoadRelationMatrices_v17
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph 
 ) {
 	// format:
 	//   relation id X N
 	//   matrix      X N
 
-	ASSERT(gc  != NULL);
+	ASSERT(g   != NULL);
 	ASSERT(rdb != NULL);
 
 	GrB_Info info;
-	Graph *g = gc->g;
 
 	// number of relation matricies
 	int n = Graph_RelationTypeCount(g);
@@ -200,43 +198,43 @@ void RdbLoadRelationMatrices_v17
 void RdbLoadAdjMatrix_v17
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph context
 ) {
 	// format:
 	//   adjacency matrix
 
-	ASSERT(gc  != NULL);
-	ASSERT(rdb != NULL);
+	ASSERT (g   != NULL) ;
+	ASSERT (rdb != NULL) ;
 
-	GrB_Matrix A = _DecodeMatrix(rdb);
+	GrB_Matrix A = _DecodeMatrix (rdb) ;
 
-	Delta_Matrix adj = Graph_GetAdjacencyMatrix(gc->g, false);
-	ASSERT(adj != NULL);
+	Delta_Matrix adj = Graph_GetAdjacencyMatrix (g, false) ;
+	ASSERT (adj != NULL) ;
 
 	// replace adj's current M matrix with A
-	GrB_Info info = Delta_Matrix_setM(adj, &A);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_Info info = Delta_Matrix_setM (adj, &A) ;
+	ASSERT (info == GrB_SUCCESS) ;
 }
 
 // decode labels matrix
 void RdbLoadLblsMatrix_v17
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 ) {
 	// format:
 	//   lbls matrix
 
-	ASSERT(gc  != NULL);
+	ASSERT(g   != NULL);
 	ASSERT(rdb != NULL);
 
 	GrB_Matrix A = _DecodeMatrix(rdb);
 
-	Delta_Matrix lbl = Graph_GetNodeLabelMatrix(gc->g);
-	ASSERT(lbl != NULL);
+	Delta_Matrix lbl = Graph_GetNodeLabelMatrix (g) ;
+	ASSERT (lbl != NULL) ;
 
 	// replace lbl's current M matrix with A
-	GrB_Info info = Delta_Matrix_setM(lbl, &A);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_Info info = Delta_Matrix_setM (lbl, &A) ;
+	ASSERT (info == GrB_SUCCESS) ;
 }
 

@@ -159,6 +159,7 @@ static void _ExecuteQuery(void *args) {
 	GraphQueryCtx  *gq_ctx      = args;
 	QueryCtx       *query_ctx   = gq_ctx->query_ctx;
 	GraphContext   *gc          = gq_ctx->graph_ctx;
+	Graph          *g           = GraphContext_GetGraph (gc) ;
 	RedisModuleCtx *rm_ctx      = gq_ctx->rm_ctx;
 	ExecutionCtx   *exec_ctx    = gq_ctx->exec_ctx;
 	CommandCtx     *command_ctx = gq_ctx->command_ctx;
@@ -199,7 +200,7 @@ static void _ExecuteQuery(void *args) {
 
 	// acquire the appropriate lock
 	if(readonly) {
-		Graph_AcquireReadLock(gc->g);
+		Graph_AcquireReadLock(g);
 	} else {
 		// if this is a writer query `we need to re-open the graph key with write flag
 		// this notifies Redis that the key is "dirty" any watcher on that key will
@@ -214,7 +215,7 @@ static void _ExecuteQuery(void *args) {
 	if(exec_type == EXECUTION_TYPE_QUERY) {  // query operation
 		// set policy after lock acquisition,
 		// avoid resetting policies between readers and writers
-		Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_FLUSH_RESIZE);
+		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
 
 		ExecutionPlan_PreparePlan(plan);
 		if(profile) {
@@ -291,7 +292,9 @@ static void _ExecuteQuery(void *args) {
 		QueryCtx_AdvanceStage(query_ctx);
 	}
 
-	if(readonly) Graph_ReleaseLock(gc->g); // release read lock
+	if (readonly) {
+		Graph_ReleaseLock(g) ; // release read lock
+	}
 
 	//--------------------------------------------------------------------------
 	// log query to slowlog

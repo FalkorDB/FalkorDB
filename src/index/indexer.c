@@ -91,15 +91,16 @@ static void _indexer_idx_populate
 ) {
 	Index idx = ctx->idx;
 	GraphContext *gc = ctx->gc;
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// populate index
-	Index_Populate(idx, ctx->gc->g);
+	Index_Populate (idx, g) ;
 
 	// we're required to hold both GIL and write lock
 	// as Schema_ActivateIndex might drop an index
 	RedisModuleCtx *rm_ctx = RedisModule_GetThreadSafeContext(NULL);
 	RedisModule_ThreadSafeContextLock(rm_ctx);
-	Graph_AcquireWriteLock(ctx->gc->g);
+	Graph_AcquireWriteLock (g) ;
 
 	// index populated, try to enable
 	Index_Enable(idx);
@@ -109,7 +110,7 @@ static void _indexer_idx_populate
 	}
 
 	// release locks
-	Graph_ReleaseLock(ctx->gc->g);
+	Graph_ReleaseLock (g) ;
 	RedisModule_ThreadSafeContextUnlock(rm_ctx);
 	RedisModule_FreeThreadSafeContext(rm_ctx);
 
