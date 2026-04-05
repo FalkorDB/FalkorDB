@@ -61,25 +61,25 @@ void RdbLoadGraphSchema_v19
 void RdbLoadLabelMatrices_v19
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 );
 
 void RdbLoadRelationMatrices_v19
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 );
 
 // decode adjacency matrix
 void RdbLoadAdjMatrix_v19
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 );
 
 void RdbLoadLblsMatrix_v19
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 );
 

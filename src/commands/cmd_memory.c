@@ -382,7 +382,7 @@ static void _EstimateNodeAttributeMemory
 // estimate edges attribute-set memory consumption
 static void _EstimateEdgeAttributeMemory
 (
-	const GraphContext *gc,    // graph context
+	GraphContext *gc,          // graph context
 	const Graph *g,            // graph
 	uint samples,              // #samples per relationship type to collect
 	MemoryUsageResult *result  // [output] memory usage
@@ -437,7 +437,7 @@ static void _EstimateEdgeAttributeMemory
 // returns the amortized amount of memory consumed by a graph
 static void _estimate_memory_consumption
 (
-	const GraphContext *gc,    // graph context
+	GraphContext *gc,          // graph context
 	double samples,            // random set size
 	MemoryUsageResult *result  // [output] memory usage
 ) {
@@ -541,6 +541,7 @@ static void _Graph_Memory
 	GraphMemoryCtx *ctx = (GraphMemoryCtx*)_ctx;
 
 	GraphContext             *gc     = ctx->gc;
+	Graph                    *g      = GraphContext_GetGraph (gc) ;
 	int64_t                  samples = ctx->samples;
 	RedisModuleBlockedClient *bc     = ctx->bc;
 
@@ -553,12 +554,12 @@ static void _Graph_Memory
 	result.node_attr_by_label_sz = arr_new(size_t, 0);
 
 	// acquire read lock
-	Graph_AcquireReadLock(gc->g);
+	Graph_AcquireReadLock(g);
 
 	_estimate_memory_consumption(gc, samples, &result);
 
 	// release read lock
-	Graph_ReleaseLock(gc->g);
+	Graph_ReleaseLock(g);
 
 	// counter to GraphContext_Retrieve
 	GraphContext_Release(gc);

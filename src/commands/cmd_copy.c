@@ -438,7 +438,7 @@ static void _Graph_Copy
 	RedisModule_CloseKey(dest_key);
 
 	// make sure src key is a graph
-	gc = GraphContext_Retrieve(ctx, rm_src, true, false);
+	gc = GraphContext_Retrieve (ctx, rm_src, true, false) ;
 
 	// release GIL
 	RedisModule_ThreadSafeContextUnlock(ctx);
@@ -469,8 +469,9 @@ static void _Graph_Copy
 	// acquire READ lock on gc
 	// we do not want to fork while the graph is modified
 	// might be redundant, see: GraphContext_LockForCommit
-	Graph_AcquireReadLock (gc->g) ;
-	Graph_ApplyAllPending (gc->g, false) ;  // flush all pending changes
+	Graph *g = GraphContext_GetGraph (gc) ;
+	Graph_AcquireReadLock (g) ;
+	Graph_ApplyAllPending (g, false) ;  // flush all pending changes
 
 	int pid   = -1 ;
 	while (pid == -1 && retry > 0) {
@@ -495,7 +496,7 @@ static void _Graph_Copy
 	}
 
 	// in parent process, release graph READ lock
-	Graph_ReleaseLock (gc->g) ;
+	Graph_ReleaseLock (g) ;
 
 	// clean up
 cleanup:

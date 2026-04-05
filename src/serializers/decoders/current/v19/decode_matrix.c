@@ -215,18 +215,17 @@ static void _Decode_Delta_Matrix
 void RdbLoadLabelMatrices_v19
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 ) {
 	// format:
 	//  number of label matrices
 	//   label id
 	//   matrix
 
-	ASSERT(gc  != NULL);
+	ASSERT(g   != NULL);
 	ASSERT(rdb != NULL);
 
 	GrB_Info info;
-	Graph *g = gc->g;
 
 	// read number of label matricies
 	int n = SerializerIO_ReadUnsigned(rdb);
@@ -244,7 +243,7 @@ void RdbLoadLabelMatrices_v19
 void RdbLoadRelationMatrices_v19
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 ) {
 	// format:
 	//   relation id   X N
@@ -252,11 +251,10 @@ void RdbLoadRelationMatrices_v19
 	//   tensors count X N
 	//   tensors
 
-	ASSERT(gc  != NULL);
+	ASSERT(g   != NULL);
 	ASSERT(rdb != NULL);
 
 	GrB_Info info;
-	Graph *g = gc->g;
 
 	// number of relation matricies
 	int n = Graph_RelationTypeCount (g) ;
@@ -295,15 +293,15 @@ void RdbLoadRelationMatrices_v19
 void RdbLoadAdjMatrix_v19
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 ) {
 	// format:
 	//   adjacency matrix
 
-	ASSERT(gc  != NULL);
+	ASSERT(g   != NULL);
 	ASSERT(rdb != NULL);
 
-	Delta_Matrix adj = Graph_GetAdjacencyMatrix(gc->g, false);
+	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
 	_Decode_Delta_Matrix(rdb, adj);
 }
 
@@ -311,14 +309,14 @@ void RdbLoadAdjMatrix_v19
 void RdbLoadLblsMatrix_v19
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 ) {
 	// format:
 	//   lbls matrix
 
-	ASSERT(gc  != NULL);
+	ASSERT(g   != NULL);
 	ASSERT(rdb != NULL);
 
-	Delta_Matrix lbl = Graph_GetNodeLabelMatrix(gc->g);
+	Delta_Matrix lbl = Graph_GetNodeLabelMatrix(g);
 	_Decode_Delta_Matrix(rdb, lbl);
 }
