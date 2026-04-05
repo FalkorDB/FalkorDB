@@ -55,53 +55,50 @@ jobs:
             exit 1
           fi
 
-      - name: Get build workflow run ID
-        id: get_run_id
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          RUN_ID=$(gh api "repos/${{ github.repository }}/actions/workflows/${{ env.BUILD_WORKFLOW_NAME }}/runs?head_sha=${{ env.COMMIT_SHA }}&status=success" \
-            --jq '.workflow_runs[0].id')
-          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "::error::No successful ${{ env.BUILD_WORKFLOW_NAME }} run found for commit ${{ env.COMMIT_SHA }}"
-            exit 1
-          fi
-          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
-
       - name: Download rhel8 ramp file
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: dawidd6/action-download-artifact@8a338493df3d275e4a7a63bcff3b8fe97e51a927 # v19
         with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
           name: falkordb-ramp-rhel8-x64-${{ steps.set_semver.outputs.SEMVER }}.zip
-          github-token: ${{ github.token }}
-          run-id: ${{ steps.get_run_id.outputs.run_id }}
+          if_no_artifact_found: error
 
       - name: Download rhel9 ramp file
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: dawidd6/action-download-artifact@8a338493df3d275e4a7a63bcff3b8fe97e51a927 # v19
         with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
           name: falkordb-ramp-rhel9-x64-${{ steps.set_semver.outputs.SEMVER }}.zip
-          github-token: ${{ github.token }}
-          run-id: ${{ steps.get_run_id.outputs.run_id }}
+          if_no_artifact_found: error
 
       - name: Download amazonlinux2023 ramp file
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: dawidd6/action-download-artifact@8a338493df3d275e4a7a63bcff3b8fe97e51a927 # v19
         with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
           name: falkordb-ramp-amazonlinux2023-x64-${{ steps.set_semver.outputs.SEMVER }}.zip
-          github-token: ${{ github.token }}
-          run-id: ${{ steps.get_run_id.outputs.run_id }}
+          if_no_artifact_found: error
 
       - name: Download linux x64 ramp file
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: dawidd6/action-download-artifact@8a338493df3d275e4a7a63bcff3b8fe97e51a927 # v19
         with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
           name: falkordb-ramp-x64-${{ steps.set_semver.outputs.SEMVER }}.zip
-          github-token: ${{ github.token }}
-          run-id: ${{ steps.get_run_id.outputs.run_id }}
+          if_no_artifact_found: error
 
       - name: Download linux arm64v8 ramp file
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: dawidd6/action-download-artifact@8a338493df3d275e4a7a63bcff3b8fe97e51a927 # v19
         with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
           name: falkordb-ramp-arm64v8-${{ steps.set_semver.outputs.SEMVER }}.zip
-          github-token: ${{ github.token }}
-          run-id: ${{ steps.get_run_id.outputs.run_id }}
+          if_no_artifact_found: error
 
       - name: Upload ramp files to release
         env:
