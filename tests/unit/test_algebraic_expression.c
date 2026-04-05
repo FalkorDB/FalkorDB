@@ -13,6 +13,7 @@
 #include "src/util/thpool/pool.h"
 #include "src/graph/query_graph.h"
 #include "src/graph/graphcontext.h"
+#include "src/graph/graphcontext_struct.h"
 #include "src/util/simple_timer.h"
 #include "src/configuration/config.h"
 #include "src/execution_plan/execution_plan.h"
@@ -75,7 +76,7 @@ static void _fake_graph_context() {
 	gc->relation_schemas = (Schema**)arr_new(Schema*, GRAPH_DEFAULT_RELATION_TYPE_CAP);
 	gc->queries_log      = QueriesLog_New();
 
-	pthread_rwlock_init(&gc->_attribute_rwlock,  NULL);
+	pthread_rwlock_init(&gc->_schema_rwlock,  NULL);
 
 	GraphContext_AddSchema(gc, "Person", SCHEMA_NODE);
 	GraphContext_AddSchema(gc, "City", SCHEMA_NODE);
@@ -94,7 +95,7 @@ static void _build_graph() {
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 
 	Node n;
-	Graph *g = gc->g;
+	Graph *g = GraphContext_GetGraph (gc) ;
 	Graph_AcquireWriteLock(g);
 
 	size_t city_count = 2;
@@ -140,7 +141,7 @@ static void _build_graph() {
 static void _bind_matrices() {
 	int mat_id;
 	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Graph *g = gc->g;
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	mat_id = GraphContext_GetSchema(gc, "Person", SCHEMA_NODE)->id;
 	mat_p = Graph_GetLabelMatrix(g, mat_id);
@@ -720,7 +721,7 @@ void test_Exp_OP_ADD_Transpose() {
 	 */
 
 	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Graph *g = gc->g;
+	Graph *g = GraphContext_GetGraph (gc) ;
 	GrB_Index n = Graph_RequiredMatrixDim(g);
 
 	GrB_Matrix_new(&expected, GrB_BOOL, n, n);
@@ -773,7 +774,7 @@ void test_Exp_OP_MUL_Transpose() {
 	 * 1 0 0 0
 	 */
 	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Graph *g = gc->g;
+	Graph *g = GraphContext_GetGraph (gc) ;
 	GrB_Index n = Graph_RequiredMatrixDim(g);
 
 	GrB_Matrix_new(&B, GrB_BOOL, n, n);
@@ -1501,7 +1502,7 @@ void test_VariableLength() {
 
 void test_ExpressionExecute() {
 	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Graph *g = gc->g;
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// "MATCH (p:Person)-[ef:friend]->(f:Person)-[ev:visit]->(c:City)-[ew:war]->(e:City) RETURN p, e"
 	const char *q = query_no_intermidate_return_nodes;
