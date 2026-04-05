@@ -304,8 +304,6 @@ void *BufferSerializerIO_ReadBuffer
 			// this is a large string
 			// large string stand on their own
 			// they're not encoded within the buffer, they are the buffer
-			ASSERT (buffer->count == 0) ;
-
 			void *ret = buffer->buffer ;
 
 			if(lenptr != NULL) {
@@ -314,6 +312,7 @@ void *BufferSerializerIO_ReadBuffer
 
 			// reset serializer buffer
 			buffer->cap    = 0 ;
+			buffer->count  = 0 ;
 			buffer->buffer = NULL ;
 
 			return ret ;
@@ -324,7 +323,11 @@ void *BufferSerializerIO_ReadBuffer
 
 	// copy buffer
 	void *v = rm_malloc(sizeof(char) * l);
-	memcpy(v, buffer->buffer + buffer->count, l);
+
+	if (l > 0) {
+		ASSERT ((buffer->cap - buffer->count) >= l) ;
+		memcpy(v, buffer->buffer + buffer->count, l);
+	}
 
 	buffer->count += l;
 
@@ -380,7 +383,8 @@ SerializerIO SerializerIO_FromBufferedRedisModuleIO
 
 	serializer->stream    = buffer_io;
 	serializer->encoder   = encoder;
-	serializer->free_buff = false;
+	serializer->free_buff = true;
 
 	return serializer;
 }
+

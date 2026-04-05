@@ -21,7 +21,7 @@ void AUXLoadUDF_v18
 
 	ASSERT (io != NULL) ;
 
-	// write the library count
+	// read the library count
 	uint64_t n = RedisModule_LoadUnsigned (io) ;
 
 	for (unsigned int i = 0; i < n; i++) {

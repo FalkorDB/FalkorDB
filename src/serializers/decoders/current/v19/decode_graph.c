@@ -54,7 +54,6 @@ static void _ComputeTransposeMatrices
 ) {
 	ASSERT(g != NULL);
 
-	GrB_Info info;
 	int n = Graph_RelationTypeCount(g);
 
 	// compute transpose for each relation matrix

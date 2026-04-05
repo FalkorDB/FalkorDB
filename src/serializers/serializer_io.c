@@ -275,9 +275,6 @@ typedef enum {
 	                                 // standalone blob
 } serializer_type_t;
 
-#undef TYPE_ENCODE
-#undef REQUIRED_SIZE
-
 // Helper macro to encode the type
 #define TYPE_ENCODE(t) ((uint8_t) _Generic((t){0},       \
 	char*            : SERIALIZER_TYPE_BYTES,            \
@@ -360,19 +357,19 @@ static t BufferSerializerIOv2_Read##suffix(void *io) {          \
 // create buffer serializer read & write functions
 //------------------------------------------------------------------------------
 
-// BufferSerializerIO_ReadFloat & BufferSerializerIO_WriteFloat
+// BufferSerializerIOv2_ReadFloat & BufferSerializerIOv2_WriteFloat
 BUFFERED_SERIALIZERV2_READ_WRITE(Float, float)
 
-// BufferSerializerIO_ReadDouble & BufferSerializerIO_WriteDouble
+// BufferSerializerIOv2_ReadDouble & BufferSerializerIOv2_WriteDouble
 BUFFERED_SERIALIZERV2_READ_WRITE(Double, double)
 
-// BufferSerializerIO_ReadSigned & BufferSerializerIO_WriteSigned
+// BufferSerializerIOv2_ReadSigned & BufferSerializerIOv2_WriteSigned
 BUFFERED_SERIALIZERV2_READ_WRITE(Signed, int64_t)
 
-// BufferSerializerIO_ReadUnsigned & BufferSerializerIO_WriteUnsigned
+// BufferSerializerIOv2_ReadUnsigned & BufferSerializerIOv2_WriteUnsigned
 BUFFERED_SERIALIZERV2_READ_WRITE(Unsigned, uint64_t)
 
-// BufferSerializerIO_ReadLongDouble & BufferSerializerIO_WriteLongDouble
+// BufferSerializerIOv2_ReadLongDouble & BufferSerializerIOv2_WriteLongDouble
 BUFFERED_SERIALIZERV2_READ_WRITE(LongDouble, long double)
 
 // write buffer to stream
@@ -382,9 +379,10 @@ void BufferSerializerIOv2_WriteBuffer
 	const void *value,  // value
 	size_t len          // value size
 ) {
-	ASSERT(io != NULL);
+	ASSERT (io != NULL) ;
+	ASSERT (len == 0 || (len > 0 && value != NULL)) ;
 
-	BufferedIO *buffer = (BufferedIO*)io;
+	BufferedIO *buffer = (BufferedIO*)io ;
 
 	if (REQUIRED_SIZE(size_t) + len > buffer->cap) {
 		// value is too big, we will write as a blob
@@ -396,19 +394,21 @@ void BufferSerializerIOv2_WriteBuffer
 		RedisModule_SaveStringBuffer(buffer->stream, value, len);
 	} else {
 		// make sure value has enough room
-		bool res = _accommodate(buffer, REQUIRED_SIZE(size_t) + len);
+		bool res = _accommodate (buffer, REQUIRED_SIZE (size_t) + len) ;
 		ASSERT (res == true) ;
 		// write the value type
-		SERIALIZER_WRITE_TYPE(char*);
+		SERIALIZER_WRITE_TYPE (char*) ;
 
 		// add to buffer
 		// write value length to stream
-		*((size_t*)(buffer->buffer + buffer->count)) = len;
-		buffer->count += sizeof(size_t);
+		*((size_t*)(buffer->buffer + buffer->count)) = len ;
+		buffer->count += sizeof (size_t) ;
 
 		// write value to buffer
-		memcpy(buffer->buffer + buffer->count, value, len);
-		buffer->count += len;
+		if (len > 0) {
+			memcpy (buffer->buffer + buffer->count, value, len) ;
+			buffer->count += len;
+		}
 	}
 }
 
@@ -463,17 +463,19 @@ void *BufferSerializerIOv2_ReadBuffer
 
 		// copy buffer
 		ret = rm_malloc(sizeof(char) * l) ;
-		memcpy(ret, buffer->buffer + buffer->count, l);
+
+		if (l > 0) {
+			memcpy (ret, buffer->buffer + buffer->count, l) ;
+		}
 
 		buffer->count += l;
 		if(lenptr != NULL) {
 			*lenptr = l;
 		}
 	}
-	return ret;
-}
 
-static void BufferSerializerIO_WriteUnsigned(void *io, uint64_t v);
+	return ret ;
+}
 
 //------------------------------------------------------------------------------
 // Serializer Create API

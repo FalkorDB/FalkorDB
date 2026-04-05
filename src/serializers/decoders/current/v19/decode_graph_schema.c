@@ -76,16 +76,16 @@ static void _RdbLoadIndex
 	 * #properties - M
 	 * M * property: {options} */
 
-	Index idx        = NULL;
-	char *language   = SerializerIO_ReadBuffer(rdb, NULL);
-	char **stopwords = NULL;
+	Index idx        = NULL ;
+	char *language   = SerializerIO_ReadBuffer (rdb, NULL) ;
+	char **stopwords = NULL ;
 	
-	uint stopwords_count = SerializerIO_ReadUnsigned(rdb);
-	if(stopwords_count > 0) {
-		stopwords = arr_new(char *, stopwords_count);
+	uint stopwords_count = SerializerIO_ReadUnsigned (rdb) ;
+	if (stopwords_count > 0) {
+		stopwords = arr_new (char *, stopwords_count) ;
 		for (uint i = 0; i < stopwords_count; i++) {
-			char *stopword = SerializerIO_ReadBuffer(rdb, NULL);
-			arr_append(stopwords, stopword);
+			char *stopword = SerializerIO_ReadBuffer (rdb, NULL) ;
+			arr_append (stopwords, stopword) ;
 		}
 	}
 
@@ -96,54 +96,73 @@ static void _RdbLoadIndex
 		bool           nostem;
 		char*          phonetic;
 		char*          field_name;
-		uint32_t       dimension;
-		size_t		   M;
-		size_t         efConstruction;
-		size_t         efRuntime;
+
+		// vector related options
+		uint32_t       dimension = 0 ;
+		size_t         M = INDEX_FIELD_DEFAULT_M ;
+		size_t         efConstruction = INDEX_FIELD_DEFAULT_EF_CONSTRUCTION ;
+		size_t         efRuntime = INDEX_FIELD_DEFAULT_EF_RUNTIME ;
 		VecSimMetric   simFunc;
 
-		_RdbDecodeIndexField(rdb, &field_name, &type, &weight, &nostem,
-				&phonetic, &dimension, &M, &efConstruction, &efRuntime, &simFunc);
+		_RdbDecodeIndexField (rdb, &field_name, &type, &weight, &nostem,
+				&phonetic, &dimension, &M, &efConstruction, &efRuntime,
+				&simFunc) ;
 
-		if(!already_loaded) {
-			IndexField field;
-			AttributeID field_id = GraphContext_FindOrAddAttribute(gc,
-					field_name, NULL);
+		if (!already_loaded) {
+			IndexField field ;
+			AttributeID field_id =
+				GraphContext_FindOrAddAttribute (gc, field_name, NULL) ;
 
 			// create new index field
-			IndexField_Init(&field, field_name, field_id, type);
+			IndexField_Init (&field, field_name, field_id, type) ;
 
 			// set field options
-			IndexField_SetOptions(&field, weight, nostem, phonetic, dimension);
-			IndexField_OptionsSetM(&field, M);
-			IndexField_OptionsSetEfConstruction(&field, efConstruction);
-			IndexField_OptionsSetEfRuntime(&field, efRuntime);
-			IndexField_OptionsSetSimFunc(&field, simFunc);
+			IndexField_SetOptions (&field, weight, nostem, phonetic, dimension) ;
+
+			if (type == INDEX_FLD_VECTOR) {
+				IndexField_OptionsSetM (&field, M) ;
+				IndexField_OptionsSetEfConstruction (&field, efConstruction) ;
+				IndexField_OptionsSetEfRuntime (&field, efRuntime) ;
+				IndexField_OptionsSetSimFunc (&field, simFunc) ;
+			}
 
 			// add field to index
-			Schema_AddIndex(&idx, s, &field);
+			Schema_AddIndex (&idx, s, &field) ;
 		}
 
-		RedisModule_Free(field_name);
-		RedisModule_Free(phonetic);
+		RedisModule_Free (phonetic) ;
+		RedisModule_Free (field_name) ;
 	}
 
-	if(!already_loaded) {
-		ASSERT(idx != NULL);
+	if (!already_loaded) {
+		ASSERT (idx != NULL) ;
 
-		Index_SetLanguage(idx, language);
-		if(stopwords != NULL) Index_SetStopwords(idx, &stopwords);
+		Index_SetLanguage (idx, language) ;
+		if (stopwords != NULL) {
+			bool stopwords_set = Index_SetStopwords (idx, &stopwords) ;
+			ASSERT (stopwords_set == true) ;
+		}
 
 		// disable and create index structure
 		// must be enabled once the graph is fully loaded
-		Index_Disable(idx);
+		Index_Disable (idx) ;
 	}
 	
-	// free language
-	RedisModule_Free(language);
+	//--------------------------------------------------------------------------
+	// clean up
+	//--------------------------------------------------------------------------
+
+	if (stopwords != NULL) {
+		for (uint i = 0; i < stopwords_count; i++) {
+			rm_free (stopwords [i]) ;
+		}
+		arr_free (stopwords) ;
+	}
+
+	RedisModule_Free (language) ;
 }
 
-static void _RdbLoadConstaint
+static void _RdbLoadConstraint
 (
 	SerializerIO rdb,
 	GraphContext *gc,    // graph context
@@ -203,7 +222,7 @@ static void _RdbLoadConstaint
 }
 
 // load schema's constraints
-static void _RdbLoadConstaints
+static void _RdbLoadConstraints
 (
 	SerializerIO rdb,
 	GraphContext *gc,    // graph context
@@ -214,7 +233,7 @@ static void _RdbLoadConstaints
 	uint constraint_count = SerializerIO_ReadUnsigned(rdb);
 
 	for (uint i = 0; i < constraint_count; i++) {
-		_RdbLoadConstaint(rdb, gc, s, already_loaded);
+		_RdbLoadConstraint(rdb, gc, s, already_loaded);
 	}
 }
 
@@ -259,7 +278,7 @@ static void _RdbLoadSchema
 	// load constraints
 	//--------------------------------------------------------------------------
 
-	_RdbLoadConstaints (rdb, gc, s, already_loaded) ;
+	_RdbLoadConstraints (rdb, gc, s, already_loaded) ;
 }
 
 static void _RdbLoadAttributeKeys
