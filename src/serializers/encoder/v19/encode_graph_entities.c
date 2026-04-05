@@ -3,7 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "encode_v18.h"
+#include "encode_v19.h"
 #include "../../../datatypes/datatypes.h"
 
 // forword decleration
@@ -109,7 +109,7 @@ static void _RdbSaveSIValue
 }
 
 // encode deleted entities IDs
-static inline void _RdbSaveDeletedEntities_v18
+static inline void _RdbSaveDeletedEntities_v19
 (
 	SerializerIO rdb,          // RDB
 	uint64_t n,                // number of deleted entities IDs to encode
@@ -125,7 +125,7 @@ static inline void _RdbSaveDeletedEntities_v18
 }
 
 // encode deleted node IDs
-void RdbSaveDeletedNodes_v18
+void RdbSaveDeletedNodes_v19
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc,  // graph context
@@ -139,12 +139,12 @@ void RdbSaveDeletedNodes_v18
 	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// get deleted nodes list
-	uint64_t *deleted_nodes_list = Serializer_Graph_GetDeletedNodesList (g) ;
-	_RdbSaveDeletedEntities_v18(rdb, n, offset, deleted_nodes_list);
+	uint64_t *deleted_nodes_list = Serializer_Graph_GetDeletedNodesList(g);
+	_RdbSaveDeletedEntities_v19(rdb, n, offset, deleted_nodes_list);
 }
 
 // encode deleted edges IDs
-void RdbSaveDeletedEdges_v18
+void RdbSaveDeletedEdges_v19
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc,  // graph context
@@ -158,12 +158,12 @@ void RdbSaveDeletedEdges_v18
 	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// get deleted edges list
-	uint64_t *deleted_edges_list = Serializer_Graph_GetDeletedEdgesList (g) ;
-	_RdbSaveDeletedEntities_v18(rdb, n, offset, deleted_edges_list);
+	uint64_t *deleted_edges_list = Serializer_Graph_GetDeletedEdgesList(g);
+	_RdbSaveDeletedEntities_v19(rdb, n, offset, deleted_edges_list);
 }
 
 // encode graph entities
-static void _SaveEntities_v18
+static void _SaveEntities_v19
 (
 	SerializerIO rdb,         // RDB
 	GraphContext *gc,         // graph context
@@ -202,7 +202,7 @@ static void _SaveEntities_v18
 }
 
 // encode nodes
-void RdbSaveNodes_v18
+void RdbSaveNodes_v19
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc,  // graph context
@@ -231,7 +231,7 @@ void RdbSaveNodes_v18
 		GraphEncodeContext_SetDatablockIterator (encoding_context, iter) ;
 	}
 
-	_SaveEntities_v18(rdb, gc, iter, n);
+	_SaveEntities_v19(rdb, gc, iter, n);
 
 	// check if done encodeing nodes
 	if(offset + n == graph_nodes) {
@@ -242,7 +242,7 @@ void RdbSaveNodes_v18
 }
 
 // encode edges
-void RdbSaveEdges_v18
+void RdbSaveEdges_v19
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc,  // graph context
@@ -271,7 +271,7 @@ void RdbSaveEdges_v18
 		GraphEncodeContext_SetDatablockIterator (encoding_context, iter) ;
 	}
 
-	_SaveEntities_v18(rdb, gc, iter, n);
+	_SaveEntities_v19(rdb, gc, iter, n);
 
 	// check if done encodeing edges
 	if(offset + n == graph_edges) {
