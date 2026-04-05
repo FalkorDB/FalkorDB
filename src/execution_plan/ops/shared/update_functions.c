@@ -60,8 +60,10 @@ void CommitUpdates
 
 	dictEntry *entry ;
 	dictIterator *it = HashTableGetIterator (updates) ;
-	MATRIX_POLICY policy = Graph_GetMatrixPolicy (gc->g) ;
-	Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_NOP) ;
+
+	Graph *g = GraphContext_GetGraph (gc) ;
+	MATRIX_POLICY policy = Graph_GetMatrixPolicy (g) ;
+	Graph_SetMatrixPolicy (g, SYNC_POLICY_NOP) ;
 
 	while ((entry = HashTableNext(it)) != NULL) {
 		PendingUpdateCtx *update = HashTableGetVal (entry) ;
@@ -94,11 +96,11 @@ void CommitUpdates
 			// retrieve labels/rel-type
 			uint label_count = 1 ;
 			if (type == ENTITY_NODE) {
-				label_count = Graph_LabelTypeCount (gc->g) ;
+				label_count = Graph_LabelTypeCount (g) ;
 			}
 			LabelID labels[label_count] ;
 			if (type == ENTITY_NODE) {
-				label_count = Graph_GetNodeLabels (gc->g, (Node*)update->ge,
+				label_count = Graph_GetNodeLabels (g, (Node*)update->ge,
 						labels, label_count) ;
 			} else {
 				labels[0] = Edge_GetRelationID ((Edge*)update->ge) ;
@@ -120,8 +122,9 @@ void CommitUpdates
 			}
 		}
 	}
-	Graph_SetMatrixPolicy(gc->g, policy);
-	HashTableReleaseIterator(it);
+
+	Graph_SetMatrixPolicy (g, policy) ;
+	HashTableReleaseIterator (it) ;
 }
 
 static void _WriteUpdatesToEffectsBuffer
