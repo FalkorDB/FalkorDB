@@ -760,7 +760,7 @@ SIValue *Proc_MaxFlowStep
 
 		GrB_Info info = GxB_Vector_Iterator_seek (it, 0) ;
 		int counter = 0 ;
-		while (info != GxB_EXHAUSTED) {
+		while (info == GrB_SUCCESS) {
 			// get the entry v(i)
 			GrB_Index node_id = GxB_Vector_Iterator_getIndex (it) ;
 
@@ -776,6 +776,7 @@ SIValue *Proc_MaxFlowStep
 			// move to the next entry in v
 			info = GxB_Vector_Iterator_next (it) ;
 		}
+		ASSERT (info == GxB_EXHAUSTED) ;
 
 		// clean up
 		GrB_OK (GrB_free (&it)) ;
@@ -818,7 +819,7 @@ SIValue *Proc_MaxFlowStep
 		// seek to the first entry
 		GrB_Info info = GxB_Matrix_Iterator_seek (it, 0) ;
 		int counter = 0 ;
-		while (info != GxB_EXHAUSTED) {
+		while (info == GrB_SUCCESS) {
 			// get current iterator indices
 			GrB_Index i, j ;
 			GxB_Matrix_Iterator_getIndex (it, &i, &j) ;
@@ -852,6 +853,7 @@ SIValue *Proc_MaxFlowStep
 			// move to the next entry
 			info = GxB_Matrix_Iterator_next (it) ;
 		}
+		ASSERT (info == GxB_EXHAUSTED) ;
 
 		GrB_OK (GrB_free (&it)) ;
 	}
