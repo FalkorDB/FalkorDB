@@ -244,13 +244,15 @@ bool CronTask_streamFinishedQueries
 	while(TIMER_GET_ELAPSED_MILLISECONDS(stopwatch) < deadline) {
 		// get next graph to populate
 		QueriesLog queries_log = NULL;
-		while((gc = GraphIterator_Next(&it)) != NULL) {
-			ctx->graph_idx++;  // prepare next iteration
-			if(QueriesLog_GetQueriesCount(gc->queries_log) > 0) {
-				queries_log = gc->queries_log;
-				break;
+		while ((gc = GraphIterator_Next(&it)) != NULL) {
+			ctx->graph_idx++ ;  // prepare next iteration
+			QueriesLog log = GraphContext_GetQueriesLog (gc) ;
+			if (QueriesLog_GetQueriesCount (log) > 0) {
+				queries_log = log ;
+				break ;
 			}
-			GraphContext_DecreaseRefCount(gc);
+
+			GraphContext_DecreaseRefCount (gc) ;
 		}
 
 		// iterator depleted

@@ -30,21 +30,23 @@ int AllShortestPaths_FindMinimumLength
 	GrB_Vector newly_visited; // nodes visited in current level
 
 	// initialize both `visited` and `newly_visited` vectors
-	GrB_Vector_new(&visited, GrB_BOOL, Graph_UncompactedNodeCount(ctx->g));
-	GxB_set(visited, GxB_SPARSITY_CONTROL, GxB_BITMAP);
+	GrB_OK (GrB_Vector_new (
+		&visited, GrB_BOOL, Graph_UncompactedNodeCount(ctx->g)));
+	GrB_OK (GrB_set (visited, GxB_BITMAP, GxB_SPARSITY_CONTROL));
 
-	GrB_Vector_new(&newly_visited, GrB_BOOL, Graph_UncompactedNodeCount(ctx->g));
-	GxB_set(newly_visited, GxB_SPARSITY_CONTROL, GxB_BITMAP);
+	GrB_OK (GrB_Vector_new (
+		&newly_visited, GrB_BOOL, Graph_UncompactedNodeCount(ctx->g)));
+	GrB_OK (GrB_set(newly_visited, GxB_BITMAP, GxB_SPARSITY_CONTROL));
 
 	while (true) {
 		// see if we have nodes in the current level
-		uint neighborCount = array_len(ctx->levels[depth]);
+		uint neighborCount = arr_len(ctx->levels[depth]);
 		if(neighborCount == 0) {
 			// current level depleted, move to next level
 			depth++;
 			if(depth == ctx->maxLen            ||
-			   depth >= array_len(ctx->levels) ||   // max level reached
-			   array_len(ctx->levels[depth]) == 0)  // no way to proceed
+			   depth >= arr_len(ctx->levels) ||   // max level reached
+			   arr_len(ctx->levels[depth]) == 0)  // no way to proceed
 			{
 				// we either reached max level and didn't found the dest node
 				// or frontier is empty and there's no way to proceed
@@ -54,15 +56,15 @@ int AllShortestPaths_FindMinimumLength
 
 			// add the newly_visited nodes to the global visited vector
 			// as we finished with current level and move to next level
-			GrB_Vector_eWiseAdd_BinaryOp(visited, NULL, NULL, GxB_ANY_BOOL,
-					visited, newly_visited, NULL);
+			GrB_OK (GrB_Vector_eWiseAdd_BinaryOp(visited, NULL, NULL,
+				GxB_ANY_BOOL, visited, newly_visited, NULL));
 
 			// clear newly visited
-			GrB_Vector_clear(newly_visited);
+			GrB_OK (GrB_Vector_clear(newly_visited));
 		}
 
 		// get the node from the frontier
-		LevelConnection frontierConnection = array_pop(ctx->levels[depth]);
+		LevelConnection frontierConnection = arr_pop(ctx->levels[depth]);
 		Node frontierNode = frontierConnection.node;
 		NodeID frontierID = ENTITY_GET_ID(&frontierNode);
 		// check if we reached dest
@@ -85,19 +87,19 @@ int AllShortestPaths_FindMinimumLength
 		if(is_visited) continue;
 
 		// mark node in newly_visited vector
-		GrB_Vector_setElement_BOOL(newly_visited, true, frontierID);
+		GrB_OK (GrB_Vector_setElement_BOOL(newly_visited, true, frontierID));
 		// add all neighbors of the current node to the next level
 		addNeighbors(ctx, &frontierConnection, depth + 1, ctx->dir);
 	}
 
 	if(depth > 0) {
 		// `dest` was reached
-		array_clear(ctx->levels[depth]); // clean data
+		arr_clear(ctx->levels[depth]); // clean data
 		depth++; // switch from edge count to node count
-		if(depth < array_len(ctx->levels)) array_clear(ctx->levels[depth]);
+		if(depth < arr_len(ctx->levels)) arr_clear(ctx->levels[depth]);
 	}
 
-	GrB_free(&newly_visited);
+	GrB_OK (GrB_free(&newly_visited));
 	ctx->visited = visited;
 
 	return depth;
@@ -118,10 +120,10 @@ Path *AllShortestPaths_NextPath
 		// advance to next path by backtracking
 		depth--;
 	} else {
-		if(array_len(ctx->levels[0]) == 0) return NULL;
+		if(arr_len(ctx->levels[0]) == 0) return NULL;
 
 		Path_EnsureLen(ctx->path, ctx->minLen);
-		LevelConnection frontierConnection = array_pop(ctx->levels[0]);
+		LevelConnection frontierConnection = arr_pop(ctx->levels[0]);
 		Node frontierNode = frontierConnection.node;
 		Path_SetNode(ctx->path, ctx->minLen - depth - 1, frontierNode);
 		depth++;
@@ -130,10 +132,10 @@ Path *AllShortestPaths_NextPath
 
 	// as long as we didn't found a full path from src to dest
 	while (depth < ctx->maxLen) {
-		if (array_len(ctx->levels[depth]) > 0) {
+		if (arr_len(ctx->levels[depth]) > 0) {
 			// get a new node from the frontier
 			bool is_visited;
-			LevelConnection frontierConnection = array_pop(ctx->levels[depth]);
+			LevelConnection frontierConnection = arr_pop(ctx->levels[depth]);
 			Node frontierNode = frontierConnection.node;
 			NodeID frontierID = ENTITY_GET_ID(&frontierNode);
 			GrB_Info info = GrB_Vector_extractElement_BOOL(&is_visited,

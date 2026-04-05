@@ -172,7 +172,7 @@ void _FilterTree_SubTrees
 		case FT_N_EXP:
 		case FT_N_PRED:
 			// this is a simple predicate tree, can not traverse further
-			array_append(*sub_trees, root);
+			arr_append(*sub_trees, root);
 			break;
 		case FT_N_COND:
 			switch(root->cond.op) {
@@ -185,7 +185,7 @@ void _FilterTree_SubTrees
 				case OP_XOR:
 				case OP_XNOR:
 					// OR, XOR, and XNOR trees must be return as is
-					array_append(*sub_trees, root);
+					arr_append(*sub_trees, root);
 					break;
 				default:
 					ASSERT(0);
@@ -226,7 +226,7 @@ const FT_FilterNode **FilterTree_SubTrees
 (
 	const FT_FilterNode *root
 ) {
-	const FT_FilterNode **sub_trees = array_new(const FT_FilterNode *, 1);
+	const FT_FilterNode **sub_trees = arr_new(const FT_FilterNode *, 1);
 	_FilterTree_SubTrees(root, &sub_trees);
 	return sub_trees;
 }

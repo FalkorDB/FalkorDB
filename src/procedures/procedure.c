@@ -134,7 +134,7 @@ ProcedureResult Proc_Invoke
 	}
 
 	if(proc->argc != PROCEDURE_VARIABLE_ARG_COUNT) {
-		uint argc = array_len((SIValue *)args);
+		uint argc = arr_len((SIValue *)args);
 		ASSERT(proc->argc == argc);
 	}
 
@@ -172,7 +172,7 @@ uint Procedure_OutputCount
 	const ProcedureCtx *proc
 ) {
 	ASSERT(proc != NULL);
-	return array_len(proc->output);
+	return arr_len(proc->output);
 }
 
 const char *Procedure_GetOutput
@@ -192,7 +192,7 @@ bool Procedure_ContainsOutput
 ) {
 	ASSERT(proc != NULL);
 	ASSERT(output != NULL);
-	uint output_count = array_len(proc->output);
+	uint output_count = arr_len(proc->output);
 	for(uint i = 0; i < output_count; i++) {
 		if(strcmp(proc->output[i].name, output) == 0) return true;
 	}
@@ -228,7 +228,7 @@ void Proc_Free
 	}
 
 	if(proc->output != NULL) {
-		array_free(proc->output);
+		arr_free(proc->output);
 	}
 
 	rm_free(proc);

@@ -29,11 +29,11 @@ static void _replace_match_clause
 	int scope_end,               // ending of scope
 	replace_func replace         // replace function pointer
 ) {
-	uint count = array_len(clauses);
+	uint count = arr_len(clauses);
 
 	cypher_astnode_t *predicate = NULL;
 	struct cypher_input_range range = cypher_astnode_range(clauses[0]);
-	cypher_astnode_t **paths = array_new(cypher_astnode_t *, count);
+	cypher_astnode_t **paths = arr_new(cypher_astnode_t *, count);
 
 	// collect MATCH patterns and predicates
 	for (uint i = 0; i < count; i++) {
@@ -44,7 +44,7 @@ static void _replace_match_clause
 		for (uint j = 0; j < npaths; j++) {
 			const cypher_astnode_t *path =
 				cypher_ast_pattern_get_path(pattern, j);
-			array_append(paths, cypher_ast_clone(path));	
+			arr_append(paths, cypher_ast_clone(path));	
 		}
 
 		// combine MATCH predicates into a single predicate using AND connectors
@@ -65,7 +65,7 @@ static void _replace_match_clause
 	
 	// build the replacement pattern
 	cypher_astnode_t *pattern =
-		cypher_ast_pattern(paths, array_len(paths), paths, array_len(paths),
+		cypher_ast_pattern(paths, arr_len(paths), paths, arr_len(paths),
 				range);
 	
 	// build the replacement clause
@@ -76,7 +76,7 @@ static void _replace_match_clause
 	// replace original clause with the new one
 	replace(root, new_clause, scope_start, scope_end);
 	
-	array_free(paths);
+	arr_free(paths);
 }
 
 // compresses multiple consecutive DELETE clauses into a single DELETE clause
@@ -88,10 +88,10 @@ static void _replace_delete_clause
 	int scope_end,               // ending of scope
 	replace_func replace         // replace function pointer
 ) {
-	uint count = array_len(clauses);
+	uint count = arr_len(clauses);
 
 	struct cypher_input_range range = cypher_astnode_range(clauses[0]);
-	cypher_astnode_t **exps = array_new(cypher_astnode_t *, count);
+	cypher_astnode_t **exps = arr_new(cypher_astnode_t *, count);
 	rax *identifiers = raxNew();
 
 	// collect expressions
@@ -105,11 +105,11 @@ static void _replace_delete_clause
 			if(cypher_astnode_type(exp) == CYPHER_AST_IDENTIFIER) {
 				const char *identifier = cypher_ast_identifier_get_name(exp);
 				if(raxTryInsert(identifiers, (unsigned char *)identifier, strlen(identifier), NULL, NULL)) {
-					array_append(exps, cypher_ast_clone(exp));
+					arr_append(exps, cypher_ast_clone(exp));
 				}
 			} else {
 				// "MATCH p1=(n:N), p2=(m:M) DELETE nodes(p1)[0] DELETE nodes(p2)[0]"
-				array_append(exps, cypher_ast_clone(exp));
+				arr_append(exps, cypher_ast_clone(exp));
 			}
 		}
 	}
@@ -117,12 +117,12 @@ static void _replace_delete_clause
 
 	// build the replacement clause
 	cypher_astnode_t *new_clause = cypher_ast_delete(false, exps,
-			array_len(exps), exps, array_len(exps), range);
+			arr_len(exps), exps, arr_len(exps), range);
 
 	// replace original clause with the new one
 	replace(root, new_clause, scope_start, scope_end);
 	
-	array_free(exps);
+	arr_free(exps);
 }
 
 // compresses multiple consecutive SET clauses into a single SET clause
@@ -134,28 +134,28 @@ static void _replace_set_clause
 	int scope_end,               // ending of scope
 	replace_func replace         // replace function pointer
 ) {
-	uint count = array_len(clauses);
+	uint count = arr_len(clauses);
 
 	struct cypher_input_range range = cypher_astnode_range(clauses[0]);
-	cypher_astnode_t **items = array_new(cypher_astnode_t *, count);
+	cypher_astnode_t **items = arr_new(cypher_astnode_t *, count);
 
 	for (uint i = 0; i < count; i++) {
 		uint nitems = cypher_ast_set_nitems(clauses[i]);
 		for(uint j = 0; j < nitems; j++) {
 			const cypher_astnode_t *item =
 				cypher_ast_set_get_item(clauses[i], j);
-			array_append(items, cypher_ast_clone(item));
+			arr_append(items, cypher_ast_clone(item));
 		}
 	}
 	
 	// build the replacement clause
-	cypher_astnode_t *new_clause = cypher_ast_set(items, array_len(items),
-			items, array_len(items), range);
+	cypher_astnode_t *new_clause = cypher_ast_set(items, arr_len(items),
+			items, arr_len(items), range);
 
 	// replace original clause with the new one
 	replace(root, new_clause, scope_start, scope_end);
 	
-	array_free(items);
+	arr_free(items);
 }
 
 // compresses multiple consecutive REMOVE clauses into a single REMOVE clause
@@ -167,29 +167,29 @@ static void _replace_remove_clause
 	int scope_end,               // ending of scope
 	replace_func replace         // replace function pointer
 ) {
-	uint count = array_len(clauses);
+	uint count = arr_len(clauses);
 
 	struct cypher_input_range range = cypher_astnode_range(clauses[0]);
-	cypher_astnode_t **items = array_new(cypher_astnode_t *, count);
+	cypher_astnode_t **items = arr_new(cypher_astnode_t *, count);
 
 	for (uint i = 0; i < count; i++) {
 		uint nitems = cypher_ast_remove_nitems(clauses[i]);
 		for(uint j = 0; j < nitems; j++) {
 			const cypher_astnode_t *item =
 				cypher_ast_remove_get_item(clauses[i], j);
-			array_append(items, cypher_ast_clone(item));
+			arr_append(items, cypher_ast_clone(item));
 		}
 	}
 	
 	// build the replacement clause
 	cypher_astnode_t *new_clause =
-		cypher_ast_remove(items, array_len(items), items, array_len(items),
+		cypher_ast_remove(items, arr_len(items), items, arr_len(items),
 				range);
 
 	// replace original clause with fully populated one
 	replace(root, new_clause, scope_start, scope_end);
 	
-	array_free(items);
+	arr_free(items);
 }
 
 // tries to compress clauses of a query or a foreach clause
@@ -204,7 +204,7 @@ static bool _compress_clauses
 
 	ASSERT(type == CYPHER_AST_QUERY || type == CYPHER_AST_FOREACH);
 
-	cypher_astnode_t **clauses = array_new(cypher_astnode_t *, 0);
+	cypher_astnode_t **clauses = arr_new(cypher_astnode_t *, 0);
 	// is the node representing a FOREACH clause
 	uint            clause_count  = 0;
 	replace_func    replace_func  = NULL;
@@ -249,7 +249,7 @@ static bool _compress_clauses
 			if(t2 != t || !is_compressible(clause, t2)) {
 				break;
 			}
-			array_append(clauses, (cypher_astnode_t *)clause);
+			arr_append(clauses, (cypher_astnode_t *)clause);
 		}
 
 		//----------------------------------------------------------------------
@@ -257,8 +257,8 @@ static bool _compress_clauses
 		//----------------------------------------------------------------------
 
 		uint s = i;
-		uint e = s + array_len(clauses) - 1;
-		if(array_len(clauses) > 1) {
+		uint e = s + arr_len(clauses) - 1;
+		if(arr_len(clauses) > 1) {
 			// multiple consecutive clauses of the same type
 			// compress them
 			if(t == CYPHER_AST_MATCH) {
@@ -274,13 +274,13 @@ static bool _compress_clauses
 			rewritten = true;
 
 			// update clause count, skip compressed clauses
-			clause_count -= array_len(clauses) - 1;
+			clause_count -= arr_len(clauses) - 1;
 		}
 
-		array_clear(clauses);
+		arr_clear(clauses);
 	}
 
-	array_free(clauses);
+	arr_free(clauses);
 	return rewritten;
 }
 

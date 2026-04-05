@@ -40,7 +40,7 @@ static void _reduceScans
 	if(scan->childCount == 0) return;
 
 	// the scan operation should be operating on a single alias
-	ASSERT(array_len(scan->modifies) == 1);
+	ASSERT(arr_len(scan->modifies) == 1);
 	const char *alias = scan->modifies[0];
 
 	// collect variables bound before this operation
@@ -80,11 +80,11 @@ void reduceScans
 	OpBase **scans = ExecutionPlan_CollectOpsMatchingTypes(plan->root, op_types,
 			2);
 
-	uint scan_count = array_len(scans);
+	uint scan_count = arr_len(scans);
 	for(uint i = 0; i < scan_count; i++) {
 		_reduceScans(plan, scans[i]);
 	}
 
-	array_free(scans);
+	arr_free(scans);
 }
 

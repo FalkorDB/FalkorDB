@@ -50,15 +50,21 @@ static sds _JsonEncoder_Properties
 	return s ;
 }
 
-static sds _JsonEncoder_Node(const Node *n, sds s) {
+static sds _JsonEncoder_Node
+(
+	const Node *n, sds s
+) {
 	s = sdscatfmt(s, "\"id\": %U", ENTITY_GET_ID(n));
 	s = sdscat(s, ", \"labels\": [");
 	// Retrieve node labels
 	uint label_count;
+
 	GraphContext *gc = QueryCtx_GetGraphCtx();
-	NODE_GET_LABELS(gc->g, n, label_count);
+	Graph *g = GraphContext_GetGraph (gc) ;
+
+	NODE_GET_LABELS (g, n, label_count) ;
 	for(uint i = 0; i < label_count; i ++) {
-		Schema *schema = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
+		Schema *schema = GraphContext_GetSchemaByID (gc, labels[i], SCHEMA_NODE) ;
 		ASSERT(schema);
 		const char *label = Schema_GetName(schema);
 		ASSERT(label);
@@ -73,9 +79,11 @@ static sds _JsonEncoder_Node(const Node *n, sds s) {
 static sds _JsonEncoder_Edge(Edge *e, sds s) {
 	s = sdscatfmt(s, "\"id\": %U", ENTITY_GET_ID(e));
 	GraphContext *gc = QueryCtx_GetGraphCtx();
+	Graph *g = GraphContext_GetGraph (gc) ;
+
 	// Retrieve reltype data.
 	int id = Edge_GetRelationID(e);
-	Schema *schema = GraphContext_GetSchemaByID(gc, id, SCHEMA_EDGE);
+	Schema *schema = GraphContext_GetSchemaByID (gc, id, SCHEMA_EDGE) ;
 	ASSERT(schema);
 	const char *relationship = Schema_GetName(schema);
 	ASSERT(relationship);
@@ -86,13 +94,13 @@ static sds _JsonEncoder_Edge(Edge *e, sds s) {
 	s = sdscat(s, ", \"start\": {");
 	// Retrieve source node data.
 	Node src;
-	Graph_GetNode(gc->g, e->src_id, &src);
+	Graph_GetNode (g, e->src_id, &src) ;
 	s = _JsonEncoder_Node(&src, s);
 
 	s = sdscat(s, "}, \"end\": {");
 	// Retrieve dest node data.
 	Node dest;
-	Graph_GetNode(gc->g, e->dest_id, &dest);
+	Graph_GetNode (g, e->dest_id, &dest) ;
 	s = _JsonEncoder_Node(&dest, s);
 
 	s = sdscat(s, "}");
