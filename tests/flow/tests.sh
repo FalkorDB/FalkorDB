@@ -640,6 +640,10 @@ PARALLEL=${PARALLEL:-1}
 
 [[ $EXT == 1 || $EXT == run || $BB == 1 || $GDB == 1 || -n $TEST ]] && PARALLEL=0
 
+# TSAN has ~10-20x overhead and fork() in TSAN-instrumented processes can
+# deadlock.  Run tests serially to avoid hangs and resource exhaustion.
+[[ $SAN == thread ]] && PARALLEL=0
+
 if [[ -n $PARALLEL && $PARALLEL != 0 ]]; then
 	if [[ $PARALLEL == 1 ]]; then
 		parallel="$(get_nproc)"

@@ -41,7 +41,12 @@ sanitizer_defs() {
 	if [[ -n $SAN ]]; then
 		if [[ $SAN == thread ]]; then
 			TSAN_LOG=${LOGS_DIR}/${TEST_NAME}.tsan.log
-			export TSAN_OPTIONS="halt_on_error=0:second_deadlock_stack=1:history_size=4:log_path=${TSAN_LOG}"
+			local tsan_opts="halt_on_error=0:second_deadlock_stack=1:history_size=4:log_path=${TSAN_LOG}"
+			local tsan_supp="$ROOT/tests/memcheck/tsan.supp"
+			if [[ -f "$tsan_supp" ]]; then
+				tsan_opts="${tsan_opts}:suppressions=${tsan_supp}"
+			fi
+			export TSAN_OPTIONS="$tsan_opts"
 		else
 			ASAN_LOG=${LOGS_DIR}/${TEST_NAME}.asan.log
 			export ASAN_OPTIONS="detect_odr_violation=0:halt_on_error=0:detect_leaks=1:log_path=${ASAN_LOG}"
