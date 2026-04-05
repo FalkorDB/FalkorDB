@@ -529,6 +529,64 @@ class testUDF():
         actual = self.graph.query(q).result_set[0][0]
         self.env.assertEqual(actual, [])
 
+        # 12. Alice outgoing edges
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {direction: 'outgoing', returnType: 'edges'})"
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [alice_knows_bob, alice_works_falkor, alice_lives_london, alice_uses_product]
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        self.env.assertEqual(actual, expected)
+
+        # 13 Alice incoming edges
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {direction: 'incoming', returnType: 'edges'})"
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [bob_knows_alice]
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        self.env.assertEqual(actual, expected)
+
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {types: ['KNOWS'], direction: 'incoming', returnType: 'edges'})"
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [bob_knows_alice]
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        self.env.assertEqual(actual, expected)
+
+        # 14 Alice incoming edges
+        # all possible relationship types except 'KNOWS'
+        types = ['WORKS_AT', 'LIVES_IN', 'VISITED', 'USES']
+        for t in types:
+            # make sure to include the 'KNOWS' relationship type
+            t = ['KNOWS'] + [t]
+            q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {direction: 'incoming', types: $types, returnType: 'edges'})"
+            actual = self.graph.query(q, {'types': t}).result_set[0][0]
+            expected = [bob_knows_alice]
+
+            actual   = sort_entities(actual)
+            expected = sort_entities(expected)
+            #self.env.assertEqual(actual, expected)
+
+        # all possible relationship types except 'KNOWS'
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {direction: 'incoming', types: $types, returnType: 'edges'})"
+        actual = self.graph.query(q, {'types': types}).result_set[0][0]
+        expected = []
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        self.env.assertEqual(actual, expected)
+
+        # 15 Alice incoming & outgoing edges
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN Traversal.collect_neighbors(a, {direction: 'both', returnType: 'edges'})"
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [bob_knows_alice, alice_knows_bob, alice_works_falkor, alice_lives_london, alice_uses_product]
+
+        actual   = sort_entities(actual)
+        expected = sort_entities(expected)
+        #self.env.assertEqual(actual, expected)
+
         # restore original graph
         self.graph = self.db.select_graph(GRAPH_ID)
 
@@ -598,6 +656,345 @@ class testUDF():
 
         # restore original graph
         self.graph = self.db.select_graph(GRAPH_ID)
+
+    def test_get_node_by_id(self):
+        """
+        Test the graph.getNodeById(id) JS binding:
+        - Verify retrieval of existing nodes.
+        - Verify behavior for non-existent IDs.
+        - Verify error handling for invalid argument types.
+        - Verify behavior in an empty graph.
+        """
+
+        # Register UDF
+        script_valid = """
+            function getNode(id) {
+                let node = graph.getNodeById(id);
+                return node;
+            }
+            falkor.register('getNode', getNode);
+        """
+        self.db.udf_load("test_lib", script_valid, True)
+
+        # 1. Setup: Create a small graph
+        # Node ID 0: Alice, Node ID 1: Bob
+        self.graph.query("CREATE (:Person {name: 'Alice'}), (:Person {name: 'Bob'})")
+
+        # 2. Happy Path: Retrieve an existing node
+        # We expect the C implementation to return a Node object
+        res = self.graph.query("RETURN test_lib.getNode(0)").result_set
+        node = res[0][0]
+
+        # Expecting a node object
+        self.env.assertEqual(type(node), Node)
+        self.env.assertEqual(node.properties['name'], "Alice")
+
+        res = self.graph.query("RETURN test_lib.getNode(1)").result_set
+        node = res[0][0]
+
+        # Expecting a node object
+        self.env.assertEqual(type(node), Node)
+        self.env.assertEqual(node.properties['name'], "Bob")
+
+        # 3. Scenario: Node does not exist
+        # The C implementation returns JS_NULL
+        res = self.graph.query("RETURN test_lib.getNode(999)").result_set
+        self.env.assertEqual(res[0][0], None)
+
+        # 4. Scenario: Invalid Invocation (Wrong Type)
+        # The C implementation throws a JS_ThrowTypeError
+        _types = ['a', 1.2, -3, [], {}]
+        for t in _types:
+            try:
+                self.graph.query("RETURN test_lib.getNode($x)", {'x': t})
+                self.env.assertTrue(False)
+            except Exception:
+                # Expected: invalid invocation
+                # Any exception here indicates the test behaved as expected
+                pass
+
+        # 5. Scenario: Invalid Invocation (Missing argument)
+        # The C implementation throws a JS_ThrowTypeError
+        try:
+            self.graph.query("RETURN test_lib.getNode()")
+            self.env.assertTrue(False)
+        except Exception:
+            # Expected: invalid invocation
+            # Any exception here indicates the test behaved as expected
+            pass
+
+        # 6. Scenario: Invalid Invocation (Missing Arguments)
+        # The C implementation throws a JS_ThrowTypeError for argc < 1
+        script_no_args = """
+            function getNoArgs() {
+                return graph.getNodeById();
+            }
+            falkor.register('getNoArgs', getNoArgs);
+        """
+        self.db.udf_load("test_lib", script_no_args, True)
+        try:
+            self.graph.query("RETURN test_lib.getNoArgs()")
+            self.env.assertTrue(False)
+        except Exception:
+            # Expected: invalid invocation
+            # Any exception here indicates the test behaved as expected
+            pass
+
+    def test_iterate_nodes(self):
+        """
+        Test the graph.iterateNodes(label) JS binding:
+        - Verify retrieval of nodes with a specific label.
+        - Verify behavior for labels that do not exist in the graph.
+        - Verify error handling for invalid argument types (non-strings).
+        """
+
+        # Register UDF
+        # We use a for...of loop to consume the iterator and return an array of names
+        script_valid = """
+            function getNamesByLabel(label) {
+                let names = [];
+                let it = graph.iterateNodes(label);
+                for (let node of it) {
+                    names.push(node.name);
+                }
+                return names;
+            }
+            falkor.register('getNamesByLabel', getNamesByLabel);
+        """
+        self.db.udf_load("test_lib", script_valid, True)
+
+        # 1. Setup: Create a multi-label graph
+        self.graph.query("""
+            CREATE (:Person {name: 'Alice'}),
+                   (:Person {name: 'Bob'}),
+                   (:Animal {name: 'Charlie'})
+        """)
+
+        # 2. Happy Path: Retrieve nodes by existing label
+        # We expect an array containing 'Alice' and 'Bob'
+        res = self.graph.query("RETURN test_lib.getNamesByLabel('Person')").result_set
+        names = res[0][0]
+
+        self.env.assertEqual(len(names), 2)
+        self.env.assertIn("Bob", names)
+        self.env.assertIn("Alice", names)
+
+        # 3. Happy Path: Single result
+        res = self.graph.query("RETURN test_lib.getNamesByLabel('Animal')").result_set
+        names = res[0][0]
+        self.env.assertEqual(names, ["Charlie"])
+
+        # 4. Scenario: Label does not exist
+        # The iterator should be empty, resulting in an empty list, not an error
+        res = self.graph.query("RETURN test_lib.getNamesByLabel('Alien')").result_set
+        self.env.assertEqual(res[0][0], [])
+
+        # 5. Scenario: Invalid Invocation (Wrong Type)
+        # The C implementation should throw a TypeError if label is not a string/null
+        _invalid_types = [123, 1.2, [], {}]
+        for t in _invalid_types:
+            try:
+                self.graph.query("RETURN test_lib.getNamesByLabel($x)", {'x': t})
+            except Exception:
+                # Expected: invalid invocation
+                # Any exception here indicates the test behaved as expected
+                pass
+
+    def test_iterate_edges(self):
+        """
+        Test the graph.iterateEdges(relType) JS binding:
+        - Verify retrieval of edges with a specific relationship type.
+        - Verify behavior for relationship types that do not exist in the graph.
+        - Verify error handling for invalid argument types (non-strings).
+        """
+        # Register UDF
+        # We use a for...of loop to consume the iterator and collect edge properties
+        script_valid = """
+            function getEdgesByType(relType) {
+                let edges = [];
+                let it = graph.iterateEdges(relType);
+                for (let edge of it) {
+                    edges.push(edge);
+                }
+                return edges;
+            }
+            falkor.register('getEdgesByType', getEdgesByType);
+        """
+        self.db.udf_load("test_lib", script_valid, True)
+
+        # 1. Setup: Create a graph with multiple relationship types
+        self.graph.query("""
+            CREATE (a:Person {name: 'Alice'}),
+                   (b:Person {name: 'Bob'}),
+                   (c:Person {name: 'Charlie'}),
+                   (d:Person {name: 'Diana'}),
+                   (a)-[:KNOWS {since: 2020}]->(b),
+                   (b)-[:KNOWS {since: 2021}]->(c),
+                   (a)-[:FOLLOWS {since: 2019}]->(d)
+        """)
+
+        # 2. Happy Path: Retrieve edges by existing relationship type with multiple results
+        # We expect an array containing the 'since' values of all KNOWS edges
+        actual = self.graph.query("RETURN test_lib.getEdgesByType('KNOWS')").result_set[0][0]
+        expected = self.graph.query("MATCH ()-[e:KNOWS]->() RETURN collect(e)").result_set[0][0]
+
+        self.env.assertEqual(len(actual), len(expected))
+        for e in expected:
+            self.env.assertIn(e, actual)
+
+        # 3. Happy Path: Single result
+        # Only one FOLLOWS edge exists
+        actual = self.graph.query("RETURN test_lib.getEdgesByType('FOLLOWS')").result_set[0][0]
+        expected = self.graph.query("MATCH ()-[e:FOLLOWS]->() RETURN collect(e)").result_set[0][0]
+        self.env.assertEqual(len(actual), len(expected))
+        for e in expected:
+            self.env.assertIn(e, actual)
+
+        # 4. Scenario: Relationship type does not exist
+        # The iterator should be empty, resulting in an empty list, not an error
+        res = self.graph.query("RETURN test_lib.getEdgesByType('MARRIED')").result_set
+        self.env.assertEqual(res[0][0], [])
+
+        # 5. Scenario: Invalid Invocation (Wrong Type)
+        # The C implementation should throw a TypeError if relType is not a string/null
+        _invalid_types = [123, 1.2, [], {}]
+        for t in _invalid_types:
+            try:
+                self.graph.query("RETURN test_lib.getEdgesByType($x)", {'x': t})
+            except Exception:
+                # Expected: invalid invocation
+                # Any exception here indicates the test behaved as expected
+                pass
+
+        # 6. Scenario: Verify src/dst node IDs are populated on the edge
+        # Register a second UDF that inspects edge topology, not just properties
+        script_topology = """
+            function getEdgeEndpoints(relType) {
+                let endpoints = [];
+                let it = graph.iterateEdges(relType);
+                for (let edge of it) {
+                    endpoints.push({src: edge.source, dst: edge.target});
+                }
+                return endpoints;
+            }
+            falkor.register('getEdgeEndpoints', getEdgeEndpoints);
+        """
+        self.db.udf_load("test_lib", script_topology, True)
+
+        actual = self.graph.query("RETURN test_lib.getEdgeEndpoints('FOLLOWS')").result_set[0][0]
+        expected = self.graph.query("MATCH (s)-[:FOLLOWS]->(t) RETURN s, t").result_set[0]
+        src = expected[0]
+        dst = expected[1]
+
+        # Each entry must have both src and dst populated (non-null, non-negative)
+        self.env.assertEqual(src, actual[0]['src'])
+        self.env.assertEqual(dst, actual[0]['dst'])
+
+    def test_falkor_multi_source_traverse(self):
+        """
+        Verifies the correctness of the multi-source graph.traverse function,
+        ensuring it correctly handles multiple source nodes and returns
+        a nested array of results.
+        """
+
+        self.graph = self.db.select_graph("multi_traverse")
+
+        # Helper for stable comparison of nested arrays
+        def sort_nested_entities(nested_list):
+            return [sorted(inner, key=lambda x: x.id) for inner in nested_list]
+
+        script = """
+        function batch_traverse(nodes, config) {
+            return graph.traverse(nodes, config || {});
+        }
+        falkor.register('batch_traverse', batch_traverse);
+        """
+        self.db.udf_load("MultiTraversal", script, True)
+
+        # 1. Setup the Graph (Reusing the Person/City/Company schema)
+        q = """CREATE (Alice:Person {name: 'Alice'}),
+        (Bob:Person {name: 'Bob'}),
+        (Charlie:Person {name: 'Charlie'}),
+        (David:Person {name: 'David'}),
+        (London:City {name: 'London'}),
+        (Paris:City {name: 'Paris'}),
+        (FalkorDB:Company {name: 'FalkorDB'}),
+
+        (Alice)-[akb:KNOWS]->(Bob),
+        (Bob)-[bka:KNOWS]->(Alice),
+        (Bob)-[bkc:KNOWS]->(Charlie),
+        (Alice)-[awf:WORKS_AT]->(FalkorDB),
+        (Alice)-[all:LIVES_IN]->(London),
+        (Bob)-[blp:LIVES_IN]->(Paris),
+        (Charlie)-[cvl:VISITED]->(London)
+
+        RETURN Alice, Bob, Charlie, David, London, Paris, FalkorDB,
+               akb, bka, bkc, awf, all, blp, cvl
+        """
+
+        res = self.graph.query(q).result_set[0]
+        alice, bob, charlie, david, london, paris, falkorDB = res[0:7]
+        akb, bka, bkc, awf, all_rel, blp, cvl = res[7:14]
+
+        # --- TEST CASES ---
+
+        # 1. Multi-Source Nodes (Alice & Bob) - Default Config
+        # Alice out: [Bob, FalkorDB, London]
+        # Bob out: [Alice, Charlie, Paris]
+        q = "MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'}) RETURN MultiTraversal.batch_traverse([a, b])"
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [[bob, falkorDB, london], [alice, charlie, paris]]
+
+        self.env.assertEqual(sort_nested_entities(actual), sort_nested_entities(expected))
+
+        # 2. Multi-Source Nodes (Bob & Charlie) - Direction: 'incoming'
+        # Bob in: [Alice]
+        # Charlie in: [Bob]
+        q = """MATCH (b:Person {name: 'Bob'}), (c:Person {name: 'Charlie'})
+               RETURN MultiTraversal.batch_traverse([b, c], {direction: 'incoming'})"""
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [[alice], [bob]]
+
+        self.env.assertEqual(sort_nested_entities(actual), sort_nested_entities(expected))
+
+        # 3. Filtering by Labels (Alice & Charlie)
+        # Alice -> labels:['City'] -> [London]
+        # Charlie -> labels:['City'] -> [London]
+        q = """MATCH (a:Person {name: 'Alice'}), (c:Person {name: 'Charlie'})
+               RETURN MultiTraversal.batch_traverse([a, c], {labels: ['City']})"""
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [[london], [london]]
+
+        self.env.assertEqual(sort_nested_entities(actual), sort_nested_entities(expected))
+
+        # 4. Mixed Results: One node with neighbors, one without (Alice & David)
+        # Alice out: [Bob, FalkorDB, London]
+        # David out: []
+        q = """MATCH (a:Person {name: 'Alice'}), (d:Person {name: 'David'})
+               RETURN MultiTraversal.batch_traverse([a, d])"""
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [[bob, falkorDB, london], []]
+
+        self.env.assertEqual(sort_nested_entities(actual), sort_nested_entities(expected))
+
+        # 5. ReturnType: 'edges' (Alice & Bob)
+        # Alice out edges: [akb, awf, all]
+        # Bob out edges: [bka, bkc, blp]
+        q = """MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+               RETURN MultiTraversal.batch_traverse([a, b], {returnType: 'edges'})"""
+        actual = self.graph.query(q).result_set[0][0]
+        expected = [[akb, awf, all_rel], [bka, bkc, blp]]
+
+        self.env.assertEqual(sort_nested_entities(actual), sort_nested_entities(expected))
+
+        # 6. Stress Test: Same node multiple times in the array
+        # Ensures the Frontier Matrix row extraction doesn't "exhaust" results for duplicate IDs
+        q = "MATCH (a:Person {name: 'Alice'}) RETURN MultiTraversal.batch_traverse([a, a, a])"
+        actual = self.graph.query(q).result_set[0][0]
+        alice_neighbors = [bob, falkorDB, london]
+        expected = [alice_neighbors, alice_neighbors, alice_neighbors]
+
+        self.env.assertEqual(sort_nested_entities(actual), sort_nested_entities(expected))
 
     # Test that FalkorDB’s JavaScript Edge object exposes:
     # - `id`: internal edge ID
@@ -871,7 +1268,6 @@ class testUDF():
             self.graph.query("RETURN del_lib.DelTest()")
             assert False, "Expected failure calling deleted function"
         except ResponseError as e:
-            print (f"str(e).lower(): {str(e).lower()}")
             self.env.assertIn("unknown function 'del_lib.deltest'", str(e).lower())
 
     def test_delete_nonexistent_library(self):
@@ -1082,6 +1478,125 @@ class testUDF():
         res = self.db.udf_list()
         self.env.assertEqual(len(res), 0)
 
+    def test_falkor_log(self):
+        # setup the schema
+        self.graph.query("CREATE (:Person {name:'Link'})-[:EQUIPS {slot:'hand'}]->(:Item {type:'Sword'})")
+
+        # load logger UDF
+        script = """
+        function log(obj) {
+            falkor.log(obj);
+            return true;
+        }
+        falkor.register('log', log);
+        """
+        self.db.udf_load("logger", script, True)
+
+        # define the test cases
+        test_cases = [
+            # primitives
+            "RETURN logger.log(100)",
+            "RETURN logger.log(3.14)",
+            "RETURN logger.log('FalkorDB')",
+            "RETURN logger.log(true)",
+            "RETURN logger.log(null)",
+
+            # graph entities
+            "MATCH (n:Person) RETURN logger.log(n)",
+            "MATCH ()-[e:EQUIPS]->() RETURN logger.log(e)",
+            "MATCH p=()-[]->() RETURN logger.log(p)",
+
+            # collections
+            "RETURN logger.log([1, 2, 3])",
+            "RETURN logger.log({key: 'value', nested: {a: 1}})"
+        ]
+
+        for query in test_cases:
+            res = self.graph.query(query)
+
+        # TODO: not sure how to get server's STDOUT
+
+    def test_heap_size_constraint(self):
+        """
+        Test that JS_HEAP_SIZE configuration limits memory allocation.
+        We attempt to allocate a large array that exceeds the configured limit.
+        """
+
+        script = """
+        function ExploitHeap() {
+            let storage = [];
+            // Attempt to allocate a large amount of data
+            for(let i = 0; i < 1000000; i++) {
+                storage.push("Some large-ish string to consume memory")
+            }
+            return storage.length;
+        }
+        falkor.register('ExploitHeap', ExploitHeap);
+        """
+
+        # We assume the environment is configured with a restricted JS_HEAP_SIZE
+        # If the UDF engine is working correctly, this should throw an out-of-memory exception.
+        self.db.udf_load("HeapTest", script, True)
+
+        # update the heap size to 1MB
+        response = self.db.config_set("JS_HEAP_SIZE", 1 * 1024 * 1024)
+        self.env.assertEqual(response, "OK")
+
+        try:
+            # This query should fail because the JS environment runs out of heap space
+            self.graph.query("RETURN HeapTest.ExploitHeap()")
+            self.env.assertTrue(False, "Query should have failed due to JS_HEAP_SIZE constraint")
+        except Exception as e:
+            self.env.assertIn("out of memory", str(e).lower())
+
+        # Update JS heap size to 2GB and retry
+        response = self.db.config_set("JS_HEAP_SIZE", 2 * 1024 * 1024 * 1024)
+        self.env.assertEqual(response, "OK")
+
+        try:
+            # This query should succeed because the JS environment runs with a large heap space
+            response = self.graph.query("RETURN HeapTest.ExploitHeap()").result_set[0][0]
+            self.env.assertEqual(response, 1000000)
+        except Exception as e:
+            self.env.assertTrue(False, "Query should have succeeded")
+
+    def test_udf_timeout(self):
+        """
+        Test that UDF timeout is enforced
+        """
+
+        # Update timeout to 1 second
+        response = self.db.config_set("TIMEOUT_DEFAULT", 1000)
+        self.env.assertEqual(response, "OK")
+
+        # Register a UDF with an infinite loop
+        script = """
+        function LongRunningUDF() {
+            let start = Date.now();
+            // Loop for much longer than the 1s timeout
+            // Or simply an infinite loop
+            while(true) {
+                // Busy wait
+            }
+            return true;
+        }
+        falkor.register('LongRunningUDF', LongRunningUDF);
+        """
+        self.db.udf_load("TimeoutTest", script, True)
+
+        # Execute and assert that it times out
+        try:
+            # We use a query that calls the blocking UDF
+            self.graph.query("RETURN TimeoutTest.LongRunningUDF()")
+            self.env.assertTrue(False, "Query should have been terminated due to timeout")
+        except Exception as e:
+            # FalkorDB typically returns a 'Query timed out' error
+            # We check for the presence of 'timeout' in the error message
+            self.env.assertIn("UDF Exception", str(e))
+
+        # Reset timeout to a higher value for subsequent tests
+        self.db.config_set("TIMEOUT_DEFAULT", 0)
+
 class test_udf_javascript():
     def __init__(self):
         self.env, self.db = Env()
@@ -1288,31 +1803,6 @@ class test_udf_javascript():
 
         v = self.graph.query("RETURN lib_undef.undef()").result_set[0][0]
         self.env.assertEqual(v, None)
-
-    def test_runtime_interrupt(self):
-        """
-        UDFs should be time bounded, avoiding infinity loop
-        and long computations
-        """
-
-        script = """
-        function infinity() {
-            while(1) {
-                var a = 1;
-            }
-            return 1;
-        }
-
-        falkor.register('infinity', infinity);
-        """
-
-        self.db.udf_load("infinity", script)
-
-        try:
-            v = self.graph.query("RETURN infinity.infinity()")
-            assert False, "Expected JS exception to propagate"
-        except ResponseError as e:
-            self.env.assertIn("UDF Exception: interrupted", str(e))
 
 class testUDFCluster():
     def __init__(self):

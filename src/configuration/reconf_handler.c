@@ -9,6 +9,7 @@
 #include "util/rmalloc.h"
 #include "reconf_handler.h"
 #include "util/thpool/pool.h"
+#include "../udf/repository.h"
 
 // handler function invoked when config changes
 void reconf_handler(Config_Option_Field type) {
@@ -52,6 +53,17 @@ void reconf_handler(Config_Option_Field type) {
 				if(info_enabled) {
 					CronTask_AddStreamFinishedQueries();
 				}
+			}
+			break;
+
+		//----------------------------------------------------------------------
+		// quickjs heap/stack limit
+		//----------------------------------------------------------------------
+
+		case Config_JS_HEAP_SIZE:
+		case Config_JS_STACK_SIZE:
+			{
+				UDF_RepoBumpVersion () ;
 			}
 			break;
 

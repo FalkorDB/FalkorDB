@@ -35,8 +35,9 @@ GrB_Info GB_bitonic
             // parallel loop for all threads in the threadblock:
 //          for (int64_t ipair = tid ; ipair < Nhalf ; ipair += nthreads)
 
+            int64_t ipair ;
             #pragma omp parallel for num_threads(nthreads) schedule(static)
-            for (int64_t ipair = 0 ; ipair < Nhalf ; ipair++)
+            for (ipair = 0 ; ipair < Nhalf ; ipair++)
             {
                 // Consider the pair of entries A [ileft] and A [iright] where
                 // ileft < iright always holds.  The ileft entry is obtained by

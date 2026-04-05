@@ -304,7 +304,7 @@ OpFilter **_applicableFilters
 	const char *filtered_entity,
 	const Index idx
 ) {
-	OpFilter **filters = array_new(OpFilter *, 0);
+	OpFilter **filters = arr_new(OpFilter *, 0);
 
 	// we want to find predicate filters that modify the active entity
 	OpBase *current = op->parent;
@@ -312,7 +312,7 @@ OpFilter **_applicableFilters
 		OpFilter *filter = (OpFilter *)current;
 
 		if(_applicableFilter(filtered_entity, idx, &filter->filterTree)) {
-			array_append(filters, filter);
+			arr_append(filters, filter);
 		}
 
 		// advance to the next operation
@@ -323,7 +323,7 @@ OpFilter **_applicableFilters
 }
 
 static FT_FilterNode *_Concat_Filters(OpFilter **filter_ops) {
-	uint count = array_len(filter_ops);
+	uint count = arr_len(filter_ops);
 	ASSERT(count >= 1);
 	if(count == 1) return FilterTree_Clone(filter_ops[0]->filterTree);
 
@@ -398,10 +398,10 @@ void reduce_scan_op
 		// TODO consider heuristic which combines max
 		// number / restrictiveness of applicable filters
 		// vs. the label's NNZ?
-		uint cur_filters_count = array_len(cur_filters);
+		uint cur_filters_count = arr_len(cur_filters);
 		if(cur_filters_count == 0) {
 			// no filters
-			array_free(cur_filters);
+			arr_free(cur_filters);
 			continue;
 		}
 
@@ -414,7 +414,7 @@ void reduce_scan_op
 
 			// swap previously stored index and
 			// filters array (if any) with current filters
-			array_free(filters);
+			arr_free(filters);
 			filters = cur_filters;
 			filters_count = cur_filters_count;
 		}
@@ -474,7 +474,7 @@ void reduce_scan_op
 	}
 
 cleanup:
-	array_free(filters);
+	arr_free(filters);
 }
 
 // try to replace given Conditional Traverse operation and a set of Filter
@@ -501,7 +501,7 @@ void reduce_cond_op
 	OpFilter **filters = _applicableFilters((OpBase *)cond, edge, idx);
 
 	// no filters, return
-	uint filters_count = array_len(filters);
+	uint filters_count = arr_len(filters);
 	if(filters_count == 0) goto cleanup;
 
 	FT_FilterNode *root = _Concat_Filters(filters);
@@ -569,7 +569,7 @@ void reduce_cond_op
 	}
 
 cleanup:
-	array_free(filters);
+	arr_free(filters);
 }
 
 static void traversalToIndexScan
@@ -581,7 +581,7 @@ static void traversalToIndexScan
 	OpBase **condOps = ExecutionPlan_CollectOps(plan->root,
 			OPType_CONDITIONAL_TRAVERSE);
 
-	uint condOpCount = array_len(condOps);
+	uint condOpCount = arr_len(condOps);
 	for(uint i = 0; i < condOpCount; i++) {
 		OpCondTraverse *condOp = (OpCondTraverse *)condOps[i];
 		// try to reduce conditional travers + filter(s)
@@ -590,7 +590,7 @@ static void traversalToIndexScan
 	}
 
 	// cleanup
-	array_free(condOps);
+	arr_free(condOps);
 }
 
 static void labelScanToIndexScan
@@ -602,7 +602,7 @@ static void labelScanToIndexScan
 	OpBase **scanOps = ExecutionPlan_CollectOps(plan->root,
 			OPType_NODE_BY_LABEL_SCAN);
 
-	int scanOpCount = array_len(scanOps);
+	int scanOpCount = arr_len(scanOps);
 	for(int i = 0; i < scanOpCount; i++) {
 		NodeByLabelScan *scanOp = (NodeByLabelScan *)scanOps[i];
 
@@ -617,7 +617,7 @@ static void labelScanToIndexScan
 		reduce_scan_op(plan, scanOp);
 	}
 
-	array_free(scanOps);
+	arr_free(scanOps);
 }
 
 void utilizeIndices

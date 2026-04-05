@@ -90,33 +90,29 @@ static void _Print_Config
 }
 
 static int GraphBLAS_Init (RedisModuleCtx *ctx) {
-	// GraphBLAS should use Redis allocator
-	GrB_Info info = GxB_init (GrB_NONBLOCKING, RedisModule_Alloc,
-			RedisModule_Calloc, RedisModule_Realloc, RedisModule_Free);
-
-	if (info != GrB_SUCCESS) {
-		RedisModule_Log (ctx, "warning", "Encountered error initializing GraphBLAS") ;
-		return REDISMODULE_ERR ;
-	}
-
-	// all matrices in CSR format
-	GrB_OK (GxB_set (GxB_FORMAT, GxB_BY_ROW)) ;
-
-	// alow only baked-in JIT kernels (pre-jit)
-    GrB_OK (GrB_set (GrB_GLOBAL, GxB_JIT_RUN, GxB_JIT_C_CONTROL)) ;
-	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
-			"GraphBLAS JIT restrict to pre-jit kernels") ;
-
-	// initialize LAGraph
+	// initialize GraphBLAS via LAGraph, use Redis allocator
 	char msg [LAGRAPH_MSG_LEN] ;
-	info = LAGr_Init (GrB_NONBLOCKING, RedisModule_Alloc, RedisModule_Calloc,
-			RedisModule_Realloc, RedisModule_Free, msg) ;
+	GrB_Info info = LAGr_Init (GrB_NONBLOCKING, RedisModule_Alloc,
+			RedisModule_Calloc, RedisModule_Realloc, RedisModule_Free, msg) ;
 
 	if (info != GrB_SUCCESS) {
 		RedisModule_Log (ctx, "warning",
 				"Encountered error initializing LAGraph: %s", msg) ;
 		return REDISMODULE_ERR ;
 	}
+
+	// all matrices in CSR format
+	GrB_OK (GrB_set (GrB_GLOBAL, GxB_BY_ROW, GxB_FORMAT)) ;
+
+	// alow only baked-in JIT kernels (pre-jit)
+    GrB_OK (GrB_set (GrB_GLOBAL, GxB_JIT_RUN, GxB_JIT_C_CONTROL)) ;
+	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+			"GraphBLAS JIT restrict to pre-jit kernels") ;
+
+	// turn JIT off
+    //GrB_OK (GrB_set (GrB_GLOBAL, GxB_JIT_OFF, GxB_JIT_C_CONTROL)) ;
+	//RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
+	//		"GraphBLAS JIT off") ;
 
 	return REDISMODULE_OK ;
 }
@@ -127,7 +123,7 @@ int RedisModule_OnLoad
 	RedisModuleString **argv,
 	int argc
 ) {
-	if(RedisModule_Init(ctx, "graph", REDISGRAPH_MODULE_VERSION,
+	if(RedisModule_Init(ctx, "graph", FALKOR_MODULE_VERSION,
 						REDISMODULE_APIVER_1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
@@ -160,7 +156,7 @@ int RedisModule_OnLoad
 	}
 
 	RedisModule_Log(ctx, "notice", "Starting up FalkorDB version %d.%d.%d.",
-					REDISGRAPH_VERSION_MAJOR, REDISGRAPH_VERSION_MINOR, REDISGRAPH_VERSION_PATCH);
+					FALKOR_VERSION_MAJOR, FALKOR_VERSION_MINOR, FALKOR_VERSION_PATCH);
 
 	Proc_Register();     // register procedures
 	AR_RegisterFuncs();  // register arithmetic functions
@@ -168,8 +164,10 @@ int RedisModule_OnLoad
 	// set up the module's configurable variables,
 	// using user-defined values where provided
 	// register for config updates
-	Config_Subscribe_Changes(reconf_handler);
-	if(Config_Init(ctx, argv, argc) != REDISMODULE_OK) return REDISMODULE_ERR;
+	Config_Subscribe_Changes (reconf_handler) ;
+	if (Config_Init (ctx, argv, argc) != REDISMODULE_OK) {
+		return REDISMODULE_ERR ;
+	}
 
 	RegisterEventHandlers(ctx);
 
@@ -196,7 +194,8 @@ int RedisModule_OnLoad
 	uint64_t ompThreadCount;
 	Config_Option_get(Config_OPENMP_NTHREAD, &ompThreadCount);
 
-	if(GxB_set(GxB_NTHREADS, ompThreadCount) != GrB_SUCCESS) {
+	if(GrB_set(GrB_GLOBAL, (int32_t) ompThreadCount, GxB_NTHREADS)
+		!= GrB_SUCCESS) {
 		RedisModule_Log(ctx, "warning",
 				"Failed to set OpenMP thread count to %" PRIu64, ompThreadCount);
 		return REDISMODULE_ERR;

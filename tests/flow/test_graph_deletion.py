@@ -466,3 +466,266 @@ class testGraphDeletionFlow(FlowTestsBase):
         for i in range(1, 1000):
             self.graph.query("MATCH (n:N) WITH n LIMIT 10000 DELETE n")
             self.graph.query("MATCH (n:N) RETURN n.v LIMIT 1")
+
+class testGraphBulkDeletion(FlowTestsBase):
+    def __init__(self):
+        self.env, self.db = Env()
+
+        if SANITIZER or VALGRIND:
+            self.env.skip()
+
+        self.graph = self.db.select_graph("bulk-delete")
+
+    def test01_bulk_delete_tensors(self):
+        """ delete a large number of nodes > .5M
+            implicitly deleted edges include tensors
+        """
+
+        #-----------------------------------------------------------------------
+        # populate the graph
+        #-----------------------------------------------------------------------
+
+        q = """UNWIND range(1, 500000) as x
+               CREATE (:A)-[:R]->()"""
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_created, 1000000)
+        self.env.assertEquals(res.relationships_created, 500000)
+
+        #-----------------------------------------------------------------------
+        # introduce tensors
+        # connect node s to t via multiple edges of the same type
+        #-----------------------------------------------------------------------
+
+        q = """MATCH (s), (t)
+               WHERE ID(s) = 32442 AND ID(t) = 559139
+               CREATE (s)-[:X]->(t), (s)-[:X]->(t), (s)-[:R]->(t)
+               CREATE (t)-[:X]->(s), (t)-[:X]->(s), (t)-[:R]->(s)"""
+
+        res = self.graph.query(q)
+        self.env.assertEquals(res.relationships_created, 6)
+
+        #-----------------------------------------------------------------------
+        # delete all nodes
+        #-----------------------------------------------------------------------
+
+        q = "MATCH (n) DELETE n"
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_deleted, 1000000)
+        self.env.assertEquals(res.relationships_deleted, 500006)
+
+        #-----------------------------------------------------------------------
+        # verify graph stats
+        #-----------------------------------------------------------------------
+
+        q = "CALL db.meta.stats() YIELD labels, relTypes, nodeCount, relCount"
+        res = self.graph.query(q).result_set
+
+        labels    = res[0][0]
+        relTypes  = res[0][1]
+        nodeCount = res[0][2]
+        relCount  = res[0][3]
+
+        labels_expected    = {'A': 0}
+        relTypes_expected  = {'R': 0, 'X': 0}
+        relCount_expected  = 0
+        nodeCount_expected = 0
+
+        self.env.assertEquals(labels,    labels_expected)
+        self.env.assertEquals(relTypes,  relTypes_expected)
+        self.env.assertEquals(relCount,  relCount_expected)
+        self.env.assertEquals(nodeCount, nodeCount_expected)
+
+    def test02_bulk_delete_diff_dim(self):
+        """ delete a large number of nodes > .5M
+            at the time of the deletion some matrices aren't at the right dimension
+        """
+
+        #-----------------------------------------------------------------------
+        # populate the graph
+        #-----------------------------------------------------------------------
+
+        # introduce a small number of entities
+        # these will eventually have their matrices lag behind in terms of dimentionality
+        q = "CREATE (:A)-[:R]->()"""
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_created, 2)
+        self.env.assertEquals(res.relationships_created, 1)
+
+        # create additional entities under a different label / rel-types
+        q = """UNWIND range(1, 499999) as x
+               CREATE (:B)-[:X]->()"""
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_created, 999998)
+        self.env.assertEquals(res.relationships_created, 499999)
+
+        #-----------------------------------------------------------------------
+        # delete all nodes
+        #-----------------------------------------------------------------------
+
+        q = "MATCH (n) DELETE n"
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_deleted, 1000000)
+        self.env.assertEquals(res.relationships_deleted, 500000)
+
+        #-----------------------------------------------------------------------
+        # verify graph stats
+        #-----------------------------------------------------------------------
+
+        q = "CALL db.meta.stats() YIELD labels, relTypes, nodeCount, relCount"
+        res = self.graph.query(q).result_set
+
+        labels    = res[0][0]
+        relTypes  = res[0][1]
+        nodeCount = res[0][2]
+        relCount  = res[0][3]
+
+        labels_expected    = {'A': 0, 'B': 0}
+        relTypes_expected  = {'R': 0, 'X': 0}
+        relCount_expected  = 0
+        nodeCount_expected = 0
+
+        self.env.assertEquals(labels,    labels_expected)
+        self.env.assertEquals(relTypes,  relTypes_expected)
+        self.env.assertEquals(relCount,  relCount_expected)
+        self.env.assertEquals(nodeCount, nodeCount_expected)
+
+    def test03_bulk_delete_overlap_edges(self):
+        """
+        combine the deletion of both explicit and implicitly edges
+        where the explicit overlap the implicit
+        """
+
+        #-----------------------------------------------------------------------
+        # populate the graph
+        #-----------------------------------------------------------------------
+
+        q = """UNWIND range(1, 500000) as x
+               CREATE (:A)-[:R]->()"""
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_created, 1000000)
+        self.env.assertEquals(res.relationships_created, 500000)
+
+        #-----------------------------------------------------------------------
+        # delete all nodes and a few explicit edges
+        #-----------------------------------------------------------------------
+
+        q = "MATCH ()-[e]->() WITH e LIMIT 1 MATCH (n) DELETE e, n"
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_deleted, 1000000)
+        self.env.assertEquals(res.relationships_deleted, 500000)
+
+        #-----------------------------------------------------------------------
+        # verify graph stats
+        #-----------------------------------------------------------------------
+
+        q = "CALL db.meta.stats() YIELD labels, relTypes, nodeCount, relCount"
+        res = self.graph.query(q).result_set
+
+        labels    = res[0][0]
+        relTypes  = res[0][1]
+        nodeCount = res[0][2]
+        relCount  = res[0][3]
+
+        labels_expected    = {'A': 0, 'B': 0}
+        relTypes_expected  = {'R': 0, 'X': 0}
+        relCount_expected  = 0
+        nodeCount_expected = 0
+
+        self.env.assertEquals(labels,    labels_expected)
+        self.env.assertEquals(relTypes,  relTypes_expected)
+        self.env.assertEquals(relCount,  relCount_expected)
+        self.env.assertEquals(nodeCount, nodeCount_expected)
+
+    def test04_bulk_delete_duplicated_nodes(self):
+        """
+        introduce duplicated nodes to the DELETE op
+        """
+
+        #-----------------------------------------------------------------------
+        # populate the graph
+        #-----------------------------------------------------------------------
+
+        q = """UNWIND range(1, 500000) as x
+               CREATE (:A)-[:R]->()"""
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_created, 1000000)
+        self.env.assertEquals(res.relationships_created, 500000)
+
+        #-----------------------------------------------------------------------
+        # delete all nodes and a few explicit edges
+        #-----------------------------------------------------------------------
+
+        q = "MATCH (n) DELETE n, n, n"
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_deleted, 1000000)
+        self.env.assertEquals(res.relationships_deleted, 500000)
+
+        #-----------------------------------------------------------------------
+        # verify graph stats
+        #-----------------------------------------------------------------------
+
+        q = "CALL db.meta.stats() YIELD labels, relTypes, nodeCount, relCount"
+        res = self.graph.query(q).result_set
+
+        labels    = res[0][0]
+        relTypes  = res[0][1]
+        nodeCount = res[0][2]
+        relCount  = res[0][3]
+
+        labels_expected    = {'A': 0, 'B': 0}
+        relTypes_expected  = {'R': 0, 'X': 0}
+        relCount_expected  = 0
+        nodeCount_expected = 0
+
+        self.env.assertEquals(labels,    labels_expected)
+        self.env.assertEquals(relTypes,  relTypes_expected)
+        self.env.assertEquals(relCount,  relCount_expected)
+        self.env.assertEquals(nodeCount, nodeCount_expected)
+
+    def test05_bulk_delete_duplicated_edges(self):
+        """
+        combine the deletion of both explicit and implicitly edges
+        where the explicit edges are duplicated
+        """
+
+        #-----------------------------------------------------------------------
+        # populate the graph
+        #-----------------------------------------------------------------------
+
+        q = """UNWIND range(1, 500000) as x
+               CREATE (:A)-[:R]->()"""
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_created, 1000000)
+        self.env.assertEquals(res.relationships_created, 500000)
+
+        #-----------------------------------------------------------------------
+        # delete all nodes and a few explicit edges
+        #-----------------------------------------------------------------------
+
+        q = "MATCH ()-[e]->() WITH e LIMIT 1 MATCH (n) DELETE e, e, n, e, e"
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_deleted, 1000000)
+        self.env.assertEquals(res.relationships_deleted, 500000)
+
+        #-----------------------------------------------------------------------
+        # verify graph stats
+        #-----------------------------------------------------------------------
+
+        q = "CALL db.meta.stats() YIELD labels, relTypes, nodeCount, relCount"
+        res = self.graph.query(q).result_set
+
+        labels    = res[0][0]
+        relTypes  = res[0][1]
+        nodeCount = res[0][2]
+        relCount  = res[0][3]
+
+        labels_expected    = {'A': 0, 'B': 0}
+        relTypes_expected  = {'R': 0, 'X': 0}
+        relCount_expected  = 0
+        nodeCount_expected = 0
+
+        self.env.assertEquals(labels,    labels_expected)
+        self.env.assertEquals(relTypes,  relTypes_expected)
+        self.env.assertEquals(relCount,  relCount_expected)
+        self.env.assertEquals(nodeCount, nodeCount_expected)
+

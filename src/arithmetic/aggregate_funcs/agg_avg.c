@@ -115,8 +115,8 @@ void Register_AVG(void) {
 	SIType ret_type;
 	AR_FuncDesc *func_desc;
 
-	types = array_new (SIType, 1) ;
-	array_append (types, T_NULL | T_INT64 | T_DOUBLE) ;
+	types = arr_new (SIType, 1) ;
+	arr_append (types, T_NULL | T_INT64 | T_DOUBLE) ;
 	ret_type = T_NULL | T_DOUBLE ;
 	func_desc = AR_AggFuncDescNew ("avg", AGG_AVG, 1, 1, types, ret_type,
 			rm_free, Avg_Finalize, Avg_PrivateData) ;

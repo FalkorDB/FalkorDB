@@ -8,9 +8,10 @@
 #include "src/util/arr.h"
 #include "src/util/rmalloc.h"
 #include "src/errors/errors.h"
+#include "src/arithmetic/funcs.h"
 #include "src/filter_tree/filter_tree.h"
 #include "src/ast/ast_build_filter_tree.h"
-#include "src/arithmetic/funcs.h"
+#include "src/graph/graphcontext_struct.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -30,7 +31,7 @@ void _fake_graph_context() {
 	// fake graph context and placing it within thread local storage
 	GraphContext *gc = (GraphContext *)calloc(1, sizeof(GraphContext));
 	gc->attributes = raxNew();
-	pthread_rwlock_init(&gc->_attribute_rwlock, NULL);
+	pthread_rwlock_init(&gc->_schema_rwlock, NULL);
 	QueryCtx_SetGraphCtx(gc);
 }
 
@@ -282,13 +283,13 @@ void compareFilterTrees
 void test_subTrees() {
 	FT_FilterNode *tree = _build_simple_const_tree();
 	const FT_FilterNode **sub_trees = FilterTree_SubTrees(tree);
-	TEST_ASSERT(array_len(sub_trees) == 1);
+	TEST_ASSERT(arr_len(sub_trees) == 1);
 
 	const FT_FilterNode *sub_tree = sub_trees[0];
 	compareFilterTrees(tree, sub_tree);
 
 	FilterTree_Free(tree);
-	array_free(sub_trees);
+	arr_free(sub_trees);
 	AST *ast = QueryCtx_GetAST();
 	AST_Free(ast);
 
@@ -296,12 +297,12 @@ void test_subTrees() {
 
 	tree = _build_simple_varying_tree();
 	sub_trees = FilterTree_SubTrees(tree);
-	TEST_ASSERT(array_len(sub_trees) == 1);
+	TEST_ASSERT(arr_len(sub_trees) == 1);
 
 	sub_tree = sub_trees[0];
 	compareFilterTrees(tree, sub_tree);
 
-	array_free(sub_trees);
+	arr_free(sub_trees);
 	FilterTree_Free(tree);
 	ast = QueryCtx_GetAST();
 	AST_Free(ast);
@@ -312,7 +313,7 @@ void test_subTrees() {
 	ast = QueryCtx_GetAST();
 	tree = _build_AND_cond_tree();
 	sub_trees = FilterTree_SubTrees(tree);
-	TEST_ASSERT(array_len(sub_trees) == 2);
+	TEST_ASSERT(arr_len(sub_trees) == 2);
 
 	sub_tree = sub_trees[0];
 	compareFilterTrees(original_tree->cond.left, sub_tree);
@@ -320,7 +321,7 @@ void test_subTrees() {
 	sub_tree = sub_trees[1];
 	compareFilterTrees(original_tree->cond.right, sub_tree);
 
-	array_free(sub_trees);
+	arr_free(sub_trees);
 	FilterTree_Free(tree);
 	FilterTree_Free(original_tree);
 	AST_Free(ast);
@@ -331,12 +332,12 @@ void test_subTrees() {
 
 	tree = _build_XOR_cond_tree();
 	sub_trees = FilterTree_SubTrees(tree);
-	TEST_ASSERT(array_len(sub_trees) == 1);
+	TEST_ASSERT(arr_len(sub_trees) == 1);
 
 	sub_tree = sub_trees[0];
 	compareFilterTrees(tree, sub_tree);
 
-	array_free(sub_trees);
+	arr_free(sub_trees);
 	FilterTree_Free(tree);
 	ast = QueryCtx_GetAST();
 	AST_Free(ast);
@@ -345,12 +346,12 @@ void test_subTrees() {
 
 	tree = _build_OR_cond_tree();
 	sub_trees = FilterTree_SubTrees(tree);
-	TEST_ASSERT(array_len(sub_trees) == 1);
+	TEST_ASSERT(arr_len(sub_trees) == 1);
 
 	sub_tree = sub_trees[0];
 	compareFilterTrees(tree, sub_tree);
 
-	array_free(sub_trees);
+	arr_free(sub_trees);
 	FilterTree_Free(tree);
 	ast = QueryCtx_GetAST();
 	AST_Free(ast);
@@ -361,7 +362,7 @@ void test_subTrees() {
 	ast = QueryCtx_GetAST();
 	tree = _build_deep_tree();
 	sub_trees = FilterTree_SubTrees(tree);
-	TEST_ASSERT(array_len(sub_trees) == 3);
+	TEST_ASSERT(arr_len(sub_trees) == 3);
 
 	sub_tree = sub_trees[0];
 	compareFilterTrees(original_tree->cond.left->cond.left, sub_tree);
@@ -372,7 +373,7 @@ void test_subTrees() {
 	sub_tree = sub_trees[2];
 	compareFilterTrees(original_tree->cond.right, sub_tree);
 
-	array_free(sub_trees);
+	arr_free(sub_trees);
 	FilterTree_Free(original_tree);
 	FilterTree_Free(tree);
 	AST_Free(ast);

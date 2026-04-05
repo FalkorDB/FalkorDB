@@ -19,7 +19,7 @@ SIValue SIArray_New
 ) {
 	SIValue siarray;
 
-	siarray.array      = array_new (SIValue, initialCapacity) ;
+	siarray.array      = arr_new (SIValue, initialCapacity) ;
 	siarray.type       = T_ARRAY ;
 	siarray.allocation = M_SELF ;
 
@@ -58,7 +58,7 @@ void SIArray_Append
 	// clone and persist incase of pointer values
 	SIValue clone = SI_CloneValue(value);
 
-	array_append(siarray->array, clone);
+	arr_append(siarray->array, clone);
 }
 
 // appends value to array
@@ -74,7 +74,7 @@ void SIArray_AppendAsOwner
 	ASSERT(SI_ALLOCATION(value) != M_VOLATILE);
 
 	// add value as is
-	array_append(siarray->array, *value);
+	arr_append(siarray->array, *value);
 	SIValue_SetAllocationType(value, M_VOLATILE);
 }
 
@@ -117,7 +117,7 @@ u_int32_t SIArray_Length
 (
 	SIValue siarray  // array to return length of
 ) {
-	return array_len(siarray.array);
+	return arr_len(siarray.array);
 }
 
 // returns true if any of the types in 't' are contained in the array
@@ -304,7 +304,7 @@ SIValue SIArray_FromBinary
 	SIValue arr = SIArray_New(n);
 
 	for(uint32_t i = 0; i < n; i++) {
-		array_append(arr.array, SIValue_FromBinary(stream));
+		arr_append(arr.array, SIValue_FromBinary(stream));
 	}
 
 	return arr;
@@ -321,13 +321,13 @@ bool SIArray_Defrag
 	ASSERT (ctx != NULL) ;
 
 	// pointer to arr's elements
-	void *p     = array_hdr (arr->array) ;  // array header points to allocation
+	void *p     = arr_hdr (arr->array) ;  // array header points to allocation
 	void *moved = RedisModule_DefragAlloc (ctx, p) ;
 
 	// update arr if p been relocated
 	if (moved != NULL) {
 		// assign back array's buffer
-		arr->array = (struct SIValue *) (((array_hdr_t *)moved)->buf) ;
+		arr->array = (struct SIValue *) (((arr_hdr_t *)moved)->buf) ;
 		return true ;
 	}
 
@@ -344,6 +344,6 @@ void SIArray_Free
 		SIValue value = siarray.array[i];
 		SIValue_Free(value);
 	}
-	array_free(siarray.array);
+	arr_free(siarray.array);
 }
 

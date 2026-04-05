@@ -8,6 +8,7 @@
 #include "repository.h"
 #include "../util/arr.h"
 #include "../errors/errors.h"
+#include "../configuration/config.h"
 #include "../arithmetic/func_desc.h"
 
 extern JSClassID js_node_class_id;        // JS Node class
@@ -27,7 +28,16 @@ JSRuntime *UDF_GetJSRuntime(void) {
 	ASSERT (js_rt != NULL) ;
 
 	UDF_RT_RegisterClasses (js_rt) ;
-	JS_SetMaxStackSize (js_rt, 1024 * 1024) ; // 1 MB stack limit
+
+	size_t heap_size  = -1 ;  // unlimited
+	size_t stack_size = 0 ;   // unlimited
+
+	// read JS heap and stack limits from config
+	Config_Option_get (Config_JS_HEAP_SIZE,  &heap_size)  ;
+	Config_Option_get (Config_JS_STACK_SIZE, &stack_size) ;
+
+	JS_SetMemoryLimit  (js_rt, heap_size)  ;
+	JS_SetMaxStackSize (js_rt, stack_size) ;
 
 	return js_rt ;
 }
@@ -47,8 +57,11 @@ JSContext *UDF_GetValidationJSContext
 	JSContext *js_ctx = JS_NewContext (js_rt) ;
 	ASSERT (js_ctx != NULL) ;
 
+	UDF_RegisterGraphObject  (js_ctx) ;
+	UDF_SetGraphAPI (js_ctx, UDF_FUNC_REG_MODE_VALIDATE) ;
+
 	// provide validation-only register() hook
-	UDF_RegisterFalkorObject (js_ctx) ;
+	UDF_RegisterFalkorObject  (js_ctx) ;
 	UDF_SetFalkorRegisterImpl (js_ctx, UDF_FUNC_REG_MODE_VALIDATE) ;
 
 	return js_ctx ;
@@ -69,7 +82,10 @@ JSContext *UDF_GetRegistrationJSContext
 	JSContext *js_ctx = JS_NewContext(js_rt) ;
 	ASSERT (js_ctx != NULL) ;
 
-	UDF_RegisterFalkorObject (js_ctx) ;
+	UDF_RegisterGraphObject  (js_ctx) ;
+	UDF_SetGraphAPI (js_ctx, UDF_FUNC_REG_MODE_GLOBAL) ;
+
+	UDF_RegisterFalkorObject  (js_ctx) ;
 	UDF_SetFalkorRegisterImpl (js_ctx, UDF_FUNC_REG_MODE_GLOBAL) ;
 
 	return js_ctx ;
@@ -87,10 +103,11 @@ JSContext *UDF_GetExecutionJSContext
 ) {
 	ASSERT (js_rt != NULL) ;
 
-	JSContext *js_ctx = JS_NewContext(js_rt) ;
+	JSContext *js_ctx = JS_NewContext (js_rt) ;
 	ASSERT (js_ctx != NULL) ;
 
 	UDF_CTX_RegisterClasses (js_ctx) ;
+	UDF_SetGraphAPI (js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
 	UDF_SetFalkorRegisterImpl (js_ctx, UDF_FUNC_REG_MODE_LOCAL) ;
 
 	return js_ctx ;
@@ -140,7 +157,7 @@ bool UDF_Delete
 
 	// remove library's functions from global functions repo
 	bool removed ;
-	int n = array_len (functions) ;
+	int n = arr_len (functions) ;
 	for (int i = 0; i < n; i++) {
 		// concat lib and function name
 		char *udf;
