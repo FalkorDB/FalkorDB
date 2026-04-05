@@ -106,8 +106,9 @@ def _bolt_handshake_over_ws(s):
     # Bolt magic preamble (0x6060B017) + 4 version proposals
     handshake = struct.pack('>I', 0x6060B017)
     # version proposals: [5.7, 5.1, 0, 0]
-    handshake += struct.pack('>I', 0x00070005)
-    handshake += struct.pack('>I', 0x00010005)
+    # each proposal is 4 raw bytes: [patch, range, minor, major]
+    handshake += struct.pack('>I', 0x00000705)
+    handshake += struct.pack('>I', 0x00000105)
     handshake += struct.pack('>I', 0x00000000)
     handshake += struct.pack('>I', 0x00000000)
     _ws_send_frame(s, handshake)
