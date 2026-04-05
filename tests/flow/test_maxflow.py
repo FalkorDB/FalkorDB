@@ -143,6 +143,28 @@ class testMaxFlow(FlowTestsBase):
             except:
                 pass
 
+    def test_01b_tensor_relationship_rejected(self):
+        """Relationship types that contain multi-edges (tensors) must be
+        rejected because maxFlow requires a simple adjacency matrix."""
+        self.graph.query("""
+            CREATE (a:Node {name:'A'})-[:R {cap:1}]->(b:Node {name:'B'}),
+                   (a)-[:R {cap:2}]->(b)
+        """)
+        try:
+            self.graph.query("""
+                MATCH (s:Node {name:'A'}), (t:Node {name:'B'})
+                CALL algo.maxFlow({
+                    sourceNodes:       [s],
+                    targetNodes:       [t],
+                    capacityProperty:  'cap',
+                    relationshipTypes: ['R']
+                })
+                YIELD maxFlow
+            """)
+            self.env.assertTrue(False, "Expected error for tensor relationship")
+        except Exception as e:
+            self.env.assertContains("multi-edges", str(e))
+
     # ------------------------------------------------------------------ #
     #  empty / trivial graphs                                            #
     # ------------------------------------------------------------------ #
@@ -842,6 +864,94 @@ class testMaxFlow(FlowTestsBase):
                                        "source and sink sets")
         except Exception:
             pass
+
+    def test_23b_source_also_in_targets(self):
+        """When a source node also appears in the target set the procedure
+        must raise an error (sets not disjoint)."""
+        self.graph.query("""
+            CREATE (s:Node {name:'S'}),
+                   (t:Node {name:'T'}),
+                   (s)-[:PIPE {cap:5}]->(t)
+        """)
+        try:
+            self.graph.query("""
+                MATCH (s:Node {name:'S'}),
+                      (t:Node {name:'T'})
+                CALL algo.maxFlow({
+                    sourceNodes:       [s, t],
+                    targetNodes:       [t],
+                    capacityProperty:  'cap',
+                    relationshipTypes: ['PIPE']
+                })
+                YIELD maxFlow
+            """)
+            self.env.assertTrue(False, "Expected error for overlapping "
+                                       "source and sink sets")
+        except Exception as e:
+            self.env.assertContains("disjoint", str(e))
+
+    def test_23c_target_also_in_sources(self):
+        """When a target node also appears in the source set the procedure
+        must raise an error (sets not disjoint)."""
+        self.graph.query("""
+            CREATE (s:Node {name:'S'}),
+                   (t:Node {name:'T'}),
+                   (s)-[:PIPE {cap:5}]->(t)
+        """)
+        try:
+            self.graph.query("""
+                MATCH (s:Node {name:'S'}),
+                      (t:Node {name:'T'})
+                CALL algo.maxFlow({
+                    sourceNodes:       [s],
+                    targetNodes:       [s, t],
+                    capacityProperty:  'cap',
+                    relationshipTypes: ['PIPE']
+                })
+                YIELD maxFlow
+            """)
+            self.env.assertTrue(False, "Expected error for overlapping "
+                                       "source and sink sets")
+        except Exception as e:
+            self.env.assertContains("disjoint", str(e))
+
+    def test_23d_multi_source_multi_sink_shared_node(self):
+        """Multi-source and multi-sink sets that share exactly one node
+        must be rejected."""
+        self.graph.query("""
+            CREATE (s0:Node {name:'S0'}),
+                   (s1:Node {name:'S1'}),
+                   (s2:Node {name:'S2'}),
+                   (x:Node  {name:'X'}),
+                   (t0:Node {name:'T0'}),
+                   (t1:Node {name:'T1'}),
+                   (t2:Node {name:'T2'}),
+                   (s0)-[:PIPE {cap:1}]->(t0),
+                   (s1)-[:PIPE {cap:1}]->(t1),
+                   (s2)-[:PIPE {cap:1}]->(t2),
+                   (x)-[:PIPE  {cap:1}]->(t0)
+        """)
+        try:
+            self.graph.query("""
+                MATCH (s0:Node {name:'S0'}),
+                      (s1:Node {name:'S1'}),
+                      (s2:Node {name:'S2'}),
+                      (x:Node  {name:'X'}),
+                      (t0:Node {name:'T0'}),
+                      (t1:Node {name:'T1'}),
+                      (t2:Node {name:'T2'})
+                CALL algo.maxFlow({
+                    sourceNodes:       [s0, s1, s2, x],
+                    targetNodes:       [t0, t1, t2, x],
+                    capacityProperty:  'cap',
+                    relationshipTypes: ['PIPE']
+                })
+                YIELD maxFlow
+            """)
+            self.env.assertTrue(False, "Expected error for overlapping "
+                                       "source and sink sets")
+        except Exception as e:
+            self.env.assertContains("disjoint", str(e))
 
     # ------------------------------------------------------------------ #
     #  numeric capacity types: integer, double, mixed, zero              #
