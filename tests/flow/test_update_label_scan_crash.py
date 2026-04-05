@@ -89,7 +89,7 @@ class testUpdateLabelScanCrash():
         self.env.assertEquals(deleted, 10)
 
         res = self.graph.query("MATCH (n:B) SET n.v = 0 RETURN count(n)")
-        self.env.assertEquals(res.result_set, [])
+        self.env.assertEquals(res.result_set, [[0]])
         self.env.assertEquals(res.properties_set, 0)
 
     # -------------------------------------------------------------------------
@@ -114,7 +114,7 @@ class testUpdateLabelScanCrash():
 
         # SET on the now-empty label must not crash
         res = self.graph.query("MATCH (n:C) SET n.v = 0 RETURN count(n)")
-        self.env.assertEquals(res.result_set, [])
+        self.env.assertEquals(res.result_set, [[0]])
         self.env.assertEquals(res.properties_set, 0)
 
     # -------------------------------------------------------------------------
@@ -156,7 +156,7 @@ class testUpdateLabelScanCrash():
 
         # now try to SET on the deleted label
         res = self.graph.query("MATCH (n:E) SET n.v = 0 RETURN count(n)")
-        self.env.assertEquals(res.result_set, [])
+        self.env.assertEquals(res.result_set, [[0]])
         self.env.assertEquals(res.properties_set, 0)
 
     # -------------------------------------------------------------------------
@@ -192,7 +192,7 @@ class testUpdateLabelScanCrash():
         This baseline ensures the label-scan guard paths are tested.
         """
         res = self.graph.query("MATCH (n:Ghost) SET n.x = 1 RETURN count(n)")
-        self.env.assertEquals(res.result_set, [])
+        self.env.assertEquals(res.result_set, [[0]])
         self.env.assertEquals(res.properties_set, 0)
 
     # -------------------------------------------------------------------------
@@ -262,7 +262,7 @@ class testUpdateLabelScanCrash():
             res = self.graph.query(
                 "MATCH (n:G) SET n.v = 0 RETURN count(n)"
             )
-            self.env.assertEquals(res.result_set, [],
+            self.env.assertEquals(res.result_set, [[0]],
                 msg=f"round {round_n}: expected empty result after delete")
             self.env.assertEquals(res.properties_set, 0,
                 msg=f"round {round_n}: expected 0 properties_set after delete")
