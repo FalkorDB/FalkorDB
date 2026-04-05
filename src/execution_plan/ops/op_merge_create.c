@@ -223,10 +223,11 @@ static bool _CreateEntities
 	// roll back all the creations that have just been prepared
 	if(should_create_entities) {
 		// reserve node ids for edges creation
+		Graph *g = GraphContext_GetGraph (gc) ;
 		for(uint i = 0; i < nodes_to_create_count; i++) {
 			NodeCreateCtx *n = op->pending.nodes.nodes_to_create + i;
 
-			Node newNode = Graph_ReserveNode(gc->g);
+			Node newNode = Graph_ReserveNode (g) ;
 
 			// add new node to Record and save a reference to it
 			Node *node_ref = Record_AddNode(r, n->node_idx, newNode);

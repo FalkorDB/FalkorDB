@@ -8,9 +8,10 @@
 #include "src/util/arr.h"
 #include "src/util/rmalloc.h"
 #include "src/errors/errors.h"
+#include "src/arithmetic/funcs.h"
 #include "src/filter_tree/filter_tree.h"
 #include "src/ast/ast_build_filter_tree.h"
-#include "src/arithmetic/funcs.h"
+#include "src/graph/graphcontext_struct.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -30,7 +31,7 @@ void _fake_graph_context() {
 	// fake graph context and placing it within thread local storage
 	GraphContext *gc = (GraphContext *)calloc(1, sizeof(GraphContext));
 	gc->attributes = raxNew();
-	pthread_rwlock_init(&gc->_attribute_rwlock, NULL);
+	pthread_rwlock_init(&gc->_schema_rwlock, NULL);
 	QueryCtx_SetGraphCtx(gc);
 }
 
