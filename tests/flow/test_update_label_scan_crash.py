@@ -241,7 +241,7 @@ class testUpdateLabelScanCrash():
         res = self.graph.query(
             "MATCH ()-[e:R]->() SET e.v = 99 RETURN count(e)"
         )
-        self.env.assertEquals(res.result_set, [])
+        self.env.assertEquals(res.result_set, [[0]])
         self.env.assertEquals(res.properties_set, 0)
 
     # -------------------------------------------------------------------------
