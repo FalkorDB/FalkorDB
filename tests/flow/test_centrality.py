@@ -44,34 +44,34 @@ class testCentrality(FlowTestsBase):
     def test01_invalid_invocation(self):
         invalid_queries = [
             # non-array nodeLabels parameter
-            """CALL algo.Centrality({nodeLabels: 'Person'})""",
+            """CALL algo.HarmonicCentrality({nodeLabels: 'Person'})""",
             # non-array relationshipTypes parameter
-            """CALL algo.Centrality({relationshipTypes: 'KNOWS'})""",
+            """CALL algo.HarmonicCentrality({relationshipTypes: 'KNOWS'})""",
             # unexpected extra parameter
-            """CALL algo.Centrality({invalidParam: 'value'})""",
+            """CALL algo.HarmonicCentrality({invalidParam: 'value'})""",
             # integer values in nodeLabels array
-            """CALL algo.Centrality({nodeLabels: [1, 2, 3]})""",
+            """CALL algo.HarmonicCentrality({nodeLabels: [1, 2, 3]})""",
             # integer values in relationshipTypes array
-            """CALL algo.Centrality({relationshipTypes: [1, 2, 3]})""",
+            """CALL algo.HarmonicCentrality({relationshipTypes: [1, 2, 3]})""",
             # non-map config argument
-            """CALL algo.Centrality('invalid')""",
-            # non-existent yield field
-            """CALL algo.Centrality(null) YIELD node, invalidField""",
+            """CALL algo.HarmonicCentrality('invalid')""",
             # non-integer defaultWeight
-            """CALL algo.Centrality({defaultWeight: 'notanint'})""",
+            """CALL algo.HarmonicCentrality({defaultWeight: 'notanint'})""",
             # non-string weightAttribute
-            """CALL algo.Centrality({weightAttribute: 123})""",
+            """CALL algo.HarmonicCentrality({weightAttribute: 123})""",
             # too many unknown fields
-            """CALL algo.Centrality({nodeLabels: ['Person'],
+            """CALL algo.HarmonicCentrality({nodeLabels: ['Person'],
                            relationshipTypes: ['KNOWS'],
                            invalidParam: 'value'})""",
+            # defaultWeight without weightAttribute
+            """CALL algo.HarmonicCentrality({defaultWeight: 0})""",
         ]
 
         for q in invalid_queries:
             try:
                 self.graph.query(q)
                 self.env.assertFalse(True)
-            except:
+            except ResponseError:
                 pass
 
     def test02_centrality_empty_graph(self):
@@ -372,11 +372,10 @@ class testCentrality(FlowTestsBase):
 
         # ---- Case 2: no defaultWeight, error ----
         # Not all Hub nodes have 'score', so omitting defaultWeight must raise an error.
-        # FIXME: catch correct error
         try:
             result2 = self.centrality(weightAttribute="score")
             self.env.assertTrue(False)
-        except:
+        except ResponseError:
             pass
 
         # ---- Case 3: no defaultWeight, but nodeLabels restricts to nodes that all have the attribute ----

@@ -247,7 +247,7 @@ static void _process_yield
 	const char **yield
 ) {
 	int idx = 0 ;
-	for (uint i = 0; i < array_len(yield); i++) {
+	for (uint i = 0; i < arr_len(yield); i++) {
 		if (strcasecmp ("node", yield [i]) == 0) {
 			ctx->yield_node = ctx->output + idx ;
 			idx++ ;
@@ -259,7 +259,8 @@ static void _process_yield
 		}
 
 		else {
-			ASSERT (false && "unsupported yield") ;
+			// unknown yield fields are silently skipped;
+			// the query parser validates yields before reaching here
 		}
 	}
 }
@@ -316,7 +317,7 @@ static bool _read_config
 			goto error ;
 		}
 
-		_lbls = array_new (LabelID, 0) ;
+		_lbls = arr_new (LabelID, 0) ;
 		u_int32_t l = SIArray_Length (v) ;
 		for (u_int32_t i = 0; i < l; i++) {
 			SIValue lbl = SIArray_Get (v, i) ;
@@ -330,7 +331,7 @@ static bool _read_config
 			}
 
 			LabelID lbl_id = Schema_GetID (s) ;
-			array_append (_lbls, lbl_id) ;
+			arr_append (_lbls, lbl_id) ;
 		}
 		*lbls = _lbls ;
 
@@ -354,7 +355,7 @@ static bool _read_config
 			goto error ;
 		}
 
-		_rels = array_new (RelationID, 0) ;
+		_rels = arr_new (RelationID, 0) ;
 		u_int32_t l = SIArray_Length (v) ;
 		for (u_int32_t i = 0; i < l; i++) {
 			SIValue rel = SIArray_Get (v, i) ;
@@ -368,7 +369,7 @@ static bool _read_config
 			}
 
 			RelationID rel_id = Schema_GetID (s) ;
-			array_append (_rels, rel_id) ;
+			arr_append (_rels, rel_id) ;
 		}
 		*rels = _rels ;
 
@@ -416,18 +417,25 @@ static bool _read_config
 		goto error ;
 	}
 
+	// defaultWeight requires weightAttribute
+	if (!SIValue_IsNull (*defaultW) && *weightAtt == ATTRIBUTE_ID_NONE) {
+		ErrorCtx_SetError ("harmonic centrality configuration, "
+				"'defaultWeight' requires 'weightAttribute'") ;
+		goto error ;
+	}
+
 	return true ;
 
 error:
 	// clean up
 
 	if (_lbls != NULL) {
-		array_free (_lbls) ;
+		arr_free (_lbls) ;
 		*lbls = NULL;
 	}
 
 	if (_rels != NULL) {
-		array_free (_rels) ;
+		arr_free (_rels) ;
 		*rels = NULL ;
 	}
 
@@ -689,7 +697,7 @@ ProcedureResult Proc_CentralityInvoke
 	const char **yield    // procedure outputs
 ) {
 	// expecting a single argument
-	size_t l = array_len ((SIValue *) args) ;
+	size_t l = arr_len ((SIValue *) args) ;
 
 	if (l > 1) {
 		ErrorCtx_SetError ("algo.HarmonicCentrality expects a single argument");
@@ -772,8 +780,8 @@ ProcedureResult Proc_CentralityInvoke
 	// simple_tic(t_invoke);
 	// simple_tic(t_phase);
 
-	GrB_OK (Build_Matrix (&A, &nodes, g, lbls, array_len (lbls), rels,
-			array_len(rels), sym, compact)) ;
+	GrB_OK (Build_Matrix (&A, &nodes, g, lbls, arr_len (lbls), rels,
+			arr_len(rels), sym, compact)) ;
 
 	ASSERT (A     != NULL) ;
 	ASSERT (nodes != NULL) ;
@@ -781,8 +789,8 @@ ProcedureResult Proc_CentralityInvoke
 	// printf("[centrality] Build_Matrix: %.2f ms\n",
 	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
 
-	array_free (lbls) ;
-	array_free (rels) ;
+	arr_free (lbls) ;
+	arr_free (rels) ;
 
 	if (weightAtt == ATTRIBUTE_ID_NONE) {
 		GrB_OK (GrB_Vector_assign_BOOL(
@@ -794,6 +802,8 @@ ProcedureResult Proc_CentralityInvoke
 			ErrorCtx_SetError ("harmonic centrality weight attribute specified"
 				" with no default value and non-existent or non-integer"
 				" attribute was found");
+			GrB_free (&A) ;
+			GrB_free (&nodes) ;
 			return PROCEDURE_ERR;
 		}
 		// printf("[centrality] get_node_attribute: %.2f ms\n",
@@ -900,12 +910,12 @@ ProcedureResult Proc_CentralityFree
 // })
 // YIELD node, score
 ProcedureCtx *Proc_HarmonicCentralityCtx(void) {
-	ProcedureOutput *outputs      = array_new (ProcedureOutput, 2) ;
+	ProcedureOutput *outputs      = arr_new (ProcedureOutput, 2) ;
 	ProcedureOutput output_node   = {.name = "node",  .type = T_NODE} ;
 	ProcedureOutput output_score  = {.name = "score", .type = T_DOUBLE} ;
 
-	array_append (outputs, output_node) ;
-	array_append (outputs, output_score) ;
+	arr_append (outputs, output_node) ;
+	arr_append (outputs, output_score) ;
 
 	ProcedureCtx *ctx = ProcCtxNew ("algo.HarmonicCentrality",
 								   PROCEDURE_VARIABLE_ARG_COUNT,

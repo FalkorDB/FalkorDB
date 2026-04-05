@@ -79,17 +79,26 @@ void get_nodes_with_lbls
 	ASSERT(rows != NULL);
 
 	if(n_lbls > 0) {
-		Delta_Matrix lbls = Graph_GetNodeLabelMatrix(g);
-		GrB_Matrix   L    = NULL;
-		GrB_Vector   x    = NULL;
+		Delta_Matrix dm = Graph_GetNodeLabelMatrix(g);
+		GrB_Matrix   L  = NULL;
+		GrB_Vector   x  = NULL;
 		GrB_OK (GrB_Vector_new(&x, GrB_BOOL, Graph_RequiredMatrixDim(g)));
 		GrB_OK (GrB_Vector_new(rows, GrB_BOOL, Graph_RequiredMatrixDim(g)));
 
+		// mark which label IDs we want to select
+		for(unsigned short i = 0; i < n_lbls; i++) {
+			GrB_OK (GrB_Vector_setElement_BOOL(x, true, lbls[i]));
+		}
+
 		// TODO: use some sort of Delta_mxv instead of exporting
-		GrB_OK (Delta_Matrix_export(&L, lbls, GrB_BOOL));
-		
+		GrB_OK (Delta_Matrix_export(&L, dm, GrB_BOOL));
+
+		// rows = L * x: nodes that possess at least one selected label
 		GrB_OK (GrB_mxv(*rows, NULL, NULL, GxB_ANY_PAIR_BOOL, L, x, NULL));
-		GrB_OK(GrB_Vector_resize(*rows, Graph_UncompactedNodeCount(g)));
+		GrB_OK (GrB_Vector_resize(*rows, Graph_UncompactedNodeCount(g)));
+
+		GrB_free(&L);
+		GrB_free(&x);
 	} else if(rows != NULL) {
 		GrB_OK (GrB_Vector_new(rows, GrB_BOOL, Graph_UncompactedNodeCount(g)));
 		// no labels, N = present nodes
