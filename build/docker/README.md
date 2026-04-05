@@ -65,12 +65,12 @@ FalkorDB publishes two image variants:
 
 | Variant | Base | Tag suffix | Example |
 |---------|------|------------|---------|
-| **Debian** (default) | `redis:8.6.2` (Debian Trixie) | *(none)* | `falkordb/falkordb:latest` |
+| **Debian** (default) | `redis:8.6.2` (Debian-based) | *(none)* | `falkordb/falkordb:latest` |
 | **Alpine** | `redis:8.6.2-alpine` | `-alpine` | `falkordb/falkordb:latest-alpine` |
 
 ### Security Recommendation
 
 For production deployments where CVE compliance is required, **use the Alpine variant**.
-Alpine images carry significantly fewer OS-level vulnerabilities due to musl libc and a
-minimal package set. The Debian variant includes additional system libraries (glibc,
-systemd, ncurses) that may carry unfixed upstream CVEs.
+Alpine images typically carry fewer OS-level vulnerabilities due to musl libc and a
+minimal package set. The Debian variant still includes a broader glibc/system-library
+surface that may carry unfixed upstream CVEs.

@@ -42,12 +42,13 @@ RUN apt-get update && \
     apt-get autoremove -y && \
     # Remove ncurses (CVE-2025-69720 HIGH) and bash - not needed by redis-server or falkordb.so
     # run.sh uses #!/bin/sh (dash), so bash is not required
-    dpkg --force-remove-essential --purge ncurses-base ncurses-bin bash && \
-    dpkg --force-remove-essential --force-depends --purge libtinfo6 && \
+    (dpkg --force-remove-essential --purge ncurses-base ncurses-bin bash || true) && \
+    (dpkg --force-remove-essential --force-depends --purge libtinfo6 || true) && \
     # Remove additional packages not needed at runtime
-    dpkg --force-remove-essential --purge perl-base && \
-    dpkg --force-remove-protected --purge login && \
+    (dpkg --force-remove-essential --purge perl-base || true) && \
+    (dpkg --force-remove-protected --force-remove-essential --purge login || true) && \
     (dpkg --purge passwd || true) && \
+    apt-get autoremove -y --purge 2>/dev/null || true && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
