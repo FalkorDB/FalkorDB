@@ -113,72 +113,17 @@ static void _AR_EXP_InplaceRepurposeConstant(AR_ExpNode *node, SIValue v) {
 	node->operand.constant  =  v;
 }
 
-static AR_ExpNode *_AR_EXP_CloneOperand
+static AR_ExpNode *_AR_EXP_NewOpNode
 (
-	const AR_ExpNode *exp
+	uint child_count
 ) {
-	AR_ExpNode *clone = rm_calloc(1, sizeof(AR_ExpNode));
-	clone->type = AR_EXP_OPERAND;
+	AR_ExpNode *node = rm_calloc (1, sizeof (AR_ExpNode)) ;
 
-	switch(exp->operand.type) {
-	case AR_EXP_CONSTANT:
-		clone->operand.type = AR_EXP_CONSTANT;
-		clone->operand.constant = SI_ShallowCloneValue(exp->operand.constant);
-		break;
-	case AR_EXP_VARIADIC:
-		clone->operand.type = exp->operand.type;
-		clone->operand.variadic.entity_alias = exp->operand.variadic.entity_alias;
-		clone->operand.variadic.entity_alias_idx = exp->operand.variadic.entity_alias_idx;
-		break;
-	case AR_EXP_PARAM:
-		clone->operand.type = AR_EXP_PARAM;
-		clone->operand.param_name = exp->operand.param_name;
-		break;
-	case AR_EXP_BORROW_RECORD:
-		clone->operand.type = AR_EXP_BORROW_RECORD;
-		break;
-	default:
-		ASSERT(false);
-		break;
-	}
-
-	return clone;
-}
-
-static AR_ExpNode *_AR_EXP_NewOpNode(uint child_count) {
-	AR_ExpNode *node = rm_calloc(1, sizeof(AR_ExpNode));
-
-	node->type           = AR_EXP_OP;
+	node->type           = AR_EXP_OP ;
 	node->op.children    = rm_calloc (child_count, sizeof (AR_ExpNode *)) ;
-	node->op.child_count = child_count;
+	node->op.child_count = child_count ;
 
-	return node;
-}
-
-static AR_ExpNode *_AR_EXP_CloneOp
-(
-	const AR_ExpNode *exp
-) {
-	const char *func_name = exp->op.f->name ;
-	bool include_internal = exp->op.f->internal ;
-	uint child_count = exp->op.child_count ;
-	AR_ExpNode *clone =
-		AR_EXP_NewOpNode (func_name, include_internal, child_count) ;
-
-	AR_Func_Clone clone_cb = clone->op.f->callbacks.clone ;
-	void *pdata = exp->op.private_data ;
-	if (clone_cb != NULL) {
-		// clone callback specified, use it to duplicate function's private data
-		clone->op.private_data = clone_cb (exp->op.private_data) ;
-	}
-
-	// clone child nodes
-	for (uint i = 0; i < exp->op.child_count; i++) {
-		AR_ExpNode *child = AR_EXP_Clone (exp->op.children[i]) ;
-		clone->op.children[i] = child ;
-	}
-
-	return clone ;
+	return node ;
 }
 
 static void _AR_EXP_ValidateArgsCount
@@ -205,19 +150,36 @@ AR_ExpNode *AR_EXP_NewOpNode
 	uint child_count
 ) {
 	// retrieve function
-	AR_FuncDesc *func = AR_GetFunc(func_name, include_internal);
-	AR_ExpNode  *node = _AR_EXP_NewOpNode(child_count);
+	AR_FuncDesc *func = AR_GetFunc (func_name, include_internal) ;
+	if (unlikely (func == NULL)) {
+		// function wasn't found, this can happen when
+		// an execution-plan is cloned and a UDF function been removed
 
-	if(!func->internal) _AR_EXP_ValidateArgsCount(func, child_count);
+		ErrorCtx_SetError ("undefined function: '%s'", func_name);
 
-	ASSERT(func != NULL);
+		// use a placeholder function
+		func = AR_GetFunc ("nop", true) ;
+	}
+
+	// increase child count by 2 in case of a user define function
+	// accommodating the UDF lib name & function name as the first arguments
+	if (func->udf) {
+		child_count += 2 ;
+	}
+
+	AR_ExpNode *node = _AR_EXP_NewOpNode (child_count) ;
+
+	if (!func->internal) {
+		_AR_EXP_ValidateArgsCount (func, child_count) ;
+	}
+
 	node->op.f = func;
 
 	// add aggregation context as function private data
-	if(func->aggregate) {
+	if (func->aggregate) {
 		// generate aggregation context and store it in node's private data
-		ASSERT(func->callbacks.private_data != NULL);
-		node->op.private_data = func->callbacks.private_data();
+		ASSERT (func->callbacks.private_data != NULL) ;
+		node->op.private_data = func->callbacks.private_data () ;
 	}
 
 	// mark query as non deterministic if function is non deterministic
@@ -437,7 +399,7 @@ static bool _AR_EXP_ValidateInvocation
 	SIType actual_type;
 	SIType expected_type = T_NULL;
 
-	uint expected_types_count = array_len(fdesc->types);
+	uint expected_types_count = arr_len(fdesc->types);
 	for(int i = 0; i < argc; i++) {
 		actual_type = SI_TYPE(argv[i]);
 		/* For a function that accepts a variable number of arguments.
@@ -893,10 +855,10 @@ AR_ExpNode **AR_EXP_CollectVariableOperands
 ) {
 	ASSERT (root != NULL) ;
 	uint i = 0 ;
-	AR_ExpNode **nodes = array_new (AR_ExpNode*, 1) ;
+	AR_ExpNode **nodes = arr_new (AR_ExpNode*, 1) ;
 
-	array_append (nodes, root) ;
-	while (i < array_len(nodes)) {
+	arr_append (nodes, root) ;
+	while (i < arr_len(nodes)) {
 		AR_ExpNode *node = nodes[i] ;
 
 		switch (node->type) {
@@ -905,7 +867,7 @@ AR_ExpNode **AR_EXP_CollectVariableOperands
 					case AR_EXP_PARAM:
 					case AR_EXP_CONSTANT:
 					case AR_EXP_BORROW_RECORD:
-						array_del_fast (nodes, i) ;
+						arr_del_fast (nodes, i) ;
 						break ;
 
 					case AR_EXP_VARIADIC:
@@ -927,10 +889,10 @@ AR_ExpNode **AR_EXP_CollectVariableOperands
 						continue ;
 					}
 
-					array_append (nodes, child) ;
+					arr_append (nodes, child) ;
 				}
 
-				array_del_fast (nodes, i) ;
+				arr_del_fast (nodes, i) ;
 				break;
 
 			default:
@@ -948,27 +910,27 @@ AR_ExpNode **AR_EXP_CollectFunctions
 ) {
 	ASSERT (root != NULL) ;
 
-	AR_ExpNode **funcs = array_new (AR_ExpNode*, 0) ;
-	AR_ExpNode **nodes = array_new (AR_ExpNode*, 1) ;
+	AR_ExpNode **funcs = arr_new (AR_ExpNode*, 0) ;
+	AR_ExpNode **nodes = arr_new (AR_ExpNode*, 1) ;
 
-	array_append (nodes, root) ;
+	arr_append (nodes, root) ;
 
-	while (array_len (nodes) > 0) {
-		AR_ExpNode *node = array_pop (nodes) ;
+	while (arr_len (nodes) > 0) {
+		AR_ExpNode *node = arr_pop (nodes) ;
 
 		if (node->type == AR_EXP_OP) {
-			array_append (funcs, node) ;
+			arr_append (funcs, node) ;
 
 			for (int i = 0; i < NODE_CHILD_COUNT (node); i++) {
 				AR_ExpNode *child = NODE_CHILD (node, i) ;
 				if (child->type == AR_EXP_OP) {
-					array_append (nodes, child) ;
+					arr_append (nodes, child) ;
 				}
 			}
 		}
 	}
 
-	array_free (nodes) ;
+	arr_free (nodes) ;
 
 	return funcs ;
 }
@@ -982,18 +944,18 @@ AR_ExpNode **AR_EXP_CollectAggregations
 ) {
 	ASSERT (root != NULL) ;
 
-	AR_ExpNode **nodes        = array_new (AR_ExpNode*, 1) ;
-	AR_ExpNode **aggregations = array_new (AR_ExpNode*, 1) ;
+	AR_ExpNode **nodes        = arr_new (AR_ExpNode*, 1) ;
+	AR_ExpNode **aggregations = arr_new (AR_ExpNode*, 1) ;
 
-	array_append (nodes, root) ;
+	arr_append (nodes, root) ;
 
-	while (array_len (nodes) > 0) {
-		AR_ExpNode *node = array_pop (nodes) ;
+	while (arr_len (nodes) > 0) {
+		AR_ExpNode *node = arr_pop (nodes) ;
 
 		if (AGGREGATION_NODE (node)) {
 			// found an aggregation node, as aggregation functions can not be
 			// nested, we can simply continue
-			array_append (aggregations, node) ;
+			arr_append (aggregations, node) ;
 			continue ;
 		}
 
@@ -1002,13 +964,13 @@ AR_ExpNode **AR_EXP_CollectAggregations
 			for (uint i = 0; i < NODE_CHILD_COUNT (node); i++) {
 				AR_ExpNode *child = NODE_CHILD (node, i) ;
 				if (child->type == AR_EXP_OP) {
-					array_append (nodes, child) ;
+					arr_append (nodes, child) ;
 				}
 			}
 		}
 	}
 
-	array_free (nodes) ;
+	arr_free (nodes) ;
 
 	return aggregations ;
 }
@@ -1183,35 +1145,6 @@ inline const char *AR_EXP_GetFuncName(const AR_ExpNode *exp) {
 	ASSERT(exp->type == AR_EXP_OP);
 
 	return exp->op.f->name;
-}
-
-AR_ExpNode *AR_EXP_Clone
-(
-	const AR_ExpNode *exp
-) {
-	if (exp == NULL) {
-		return NULL ;
-	}
-
-	AR_ExpNode *clone = NULL;
-
-	switch (exp->type) {
-		case AR_EXP_OPERAND:
-			clone = _AR_EXP_CloneOperand (exp) ;
-			break ;
-
-		case AR_EXP_OP:
-			clone = _AR_EXP_CloneOp (exp) ;
-			break ;
-
-		default:
-			ASSERT (false) ;
-			break ;
-	}
-
-	clone->resolved_name = exp->resolved_name ;
-
-	return clone ;
 }
 
 // copies the content of `src` into `dest`

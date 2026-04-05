@@ -105,8 +105,8 @@ void ShortestPath_Free
 ) {
 	ShortestPathCtx *ctx = (ShortestPathCtx*)ctx_ptr;
 
-	if(ctx->reltypes)      array_free(ctx->reltypes);
-	if(ctx->reltype_names) array_free(ctx->reltype_names);
+	if(ctx->reltypes)      arr_free(ctx->reltypes);
+	if(ctx->reltype_names) arr_free(ctx->reltype_names);
 
 	rm_free(ctx);
 }
@@ -130,7 +130,7 @@ void *ShortestPath_Clone
 	ctx_clone->reltype_count = ctx->reltype_count;
 
 	if(ctx->reltype_names) {
-		array_clone(ctx_clone->reltype_names, ctx->reltype_names);
+		arr_clone(ctx_clone->reltype_names, ctx->reltype_names);
 	}
 
 	return ctx_clone;
@@ -160,36 +160,37 @@ SIValue AR_SHORTEST_PATH
 	GrB_Vector PI    = NULL;  // vector backtracking results to their parents
 	Edge *edges      = NULL;
 	GraphContext *gc = QueryCtx_GetGraphCtx();
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// BFS max depth
 	int64_t max_level = (ctx->maxHops == EDGE_LENGTH_INF) ? -1 : ctx->maxHops;
 
 	if(ctx->reltype_count > 0) {
 		// retrieve IDs of traversed relationship types
-		ctx->reltypes = array_new(RelationID, ctx->reltype_count);
+		ctx->reltypes = arr_new(RelationID, ctx->reltype_count);
 
 		for(uint i = 0; i < ctx->reltype_count; i++) {
 			Schema *s = GraphContext_GetSchema(gc, ctx->reltype_names[i],
 					SCHEMA_EDGE);
 			// skip missing schemas
 			if(s != NULL) {
-				array_append(ctx->reltypes, Schema_GetID(s));
+				arr_append(ctx->reltypes, Schema_GetID(s));
 			}
 		}
 
 		// update the reltype count
 		// as it may have changed due to missing schemas
-		ctx->reltype_count = array_len(ctx->reltypes);
+		ctx->reltype_count = arr_len(ctx->reltypes);
 	}
 
 	// build the adjacency matrix BFS will be executed on
 	if(ctx->reltype_names != NULL && ctx->reltype_count == 0) {
 		// if edge types were specified but none were valid,
 		// use the zero matrix
-		info = Delta_Matrix_export(&M, Graph_GetZeroMatrix(gc->g), GrB_BOOL);
+		info = Delta_Matrix_export(&M, Graph_GetZeroMatrix(g), GrB_BOOL);
 		ASSERT(info == GrB_SUCCESS);
 	} else {
-		info = Build_Matrix(&M, NULL, gc->g, NULL, 0, ctx->reltypes,
+		info = Build_Matrix(&M, NULL, g, NULL, 0, ctx->reltypes,
 				ctx->reltype_count, false, false);
 		ASSERT(info == GrB_SUCCESS);
 	}
@@ -231,11 +232,11 @@ SIValue AR_SHORTEST_PATH
 	p = SIPathBuilder_New(path_len);
 	SIPathBuilder_AppendNode(p, SI_Node(destNode));
 
-	edges = array_new(Edge, 1);
+	edges = arr_new(Edge, 1);
 
 	NodeID id = destNode->id;
 	for(uint i = 0; i < path_len; i++) {
-		array_clear(edges);
+		arr_clear(edges);
 		GrB_Index parent_id;
 
 		// find the parent of the reached node
@@ -244,17 +245,17 @@ SIValue AR_SHORTEST_PATH
 
 		// retrieve edges connecting the parent node to the current node
 		if(ctx->reltype_count == 0) {
-			Graph_GetEdgesConnectingNodes(gc->g, parent_id, id,
+			Graph_GetEdgesConnectingNodes(g, parent_id, id,
 					GRAPH_NO_RELATION, &edges);
 		} else {
 			for(uint j = 0; j < ctx->reltype_count; j++) {
-				Graph_GetEdgesConnectingNodes(gc->g, parent_id, id,
+				Graph_GetEdgesConnectingNodes(g, parent_id, id,
 						ctx->reltypes[j], &edges);
-				if(array_len(edges) > 0) break;
+				if(arr_len(edges) > 0) break;
 			}
 		}
 
-		ASSERT(array_len(edges) > 0);
+		ASSERT(arr_len(edges) > 0);
 
 		// append the edge to the path
 		SIPathBuilder_AppendEdge(p, SI_Edge(&edges[0]), false);
@@ -262,7 +263,7 @@ SIValue AR_SHORTEST_PATH
 		// append the reached node to the path
 		id = Edge_GetSrcNodeID(&edges[0]);
 		Node n = GE_NEW_NODE();
-		Graph_GetNode(gc->g, id, &n);
+		Graph_GetNode(g, id, &n);
 		SIPathBuilder_AppendNode(p, SI_Node(&n));
 	}
 
@@ -272,7 +273,7 @@ SIValue AR_SHORTEST_PATH
 cleanup:
 	if(V)     GrB_free(&V);
 	if(PI)    GrB_free(&PI);
-	if(edges) array_free(edges);
+	if(edges) arr_free(edges);
 
 	return p;
 }
@@ -312,42 +313,42 @@ void Register_PathFuncs() {
 	SIType ret_type;
 	AR_FuncDesc *func_desc;
 
-	types = array_new(SIType, 2);
-	array_append(types, T_PTR);
-	array_append(types, T_NULL | T_NODE | T_EDGE | T_PATH);
+	types = arr_new(SIType, 2);
+	arr_append(types, T_PTR);
+	arr_append(types, T_NULL | T_NODE | T_EDGE | T_PATH);
 	ret_type = T_PATH | T_NULL;
 	func_desc = AR_FuncDescNew("topath", AR_TOPATH, 1, VAR_ARG_LEN, types,
 			ret_type, true, false, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 3);
-	array_append(types, T_NULL | T_NODE);
-	array_append(types, T_NULL | T_NODE);
+	types = arr_new(SIType, 3);
+	arr_append(types, T_NULL | T_NODE);
+	arr_append(types, T_NULL | T_NODE);
 	ret_type = T_PATH | T_NULL;
 	func_desc = AR_FuncDescNew("shortestpath", AR_SHORTEST_PATH, 2, 2, types,
 			ret_type, true, false, true);
 	AR_SetPrivateDataRoutines(func_desc, ShortestPath_Free, ShortestPath_Clone);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, T_NULL | T_PATH);
+	types = arr_new(SIType, 1);
+	arr_append(types, T_NULL | T_PATH);
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("nodes", AR_PATH_NODES, 1, 1, types, ret_type,
 			false, false, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, T_NULL | T_PATH);
+	types = arr_new(SIType, 1);
+	arr_append(types, T_NULL | T_PATH);
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("relationships", AR_PATH_RELATIONSHIPS, 1, 1,
 			types, ret_type, false, false, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 
-	types = array_new(SIType, 1);
-	array_append(types, T_NULL | T_PATH);
+	types = arr_new(SIType, 1);
+	arr_append(types, T_NULL | T_PATH);
 	ret_type = T_INT64 | T_NULL;
 	func_desc = AR_FuncDescNew("length", AR_PATH_LENGTH, 1, 1, types, ret_type,
 			false, false, true);
-	AR_RegFunc(func_desc);
+	AR_FuncRegister(func_desc);
 }
 

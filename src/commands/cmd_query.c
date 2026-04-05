@@ -12,6 +12,7 @@
 #include "../globals.h"
 #include "../query_ctx.h"
 #include "execution_ctx.h"
+#include "../udf/udf_ctx.h"
 #include "../graph/graph.h"
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
@@ -158,6 +159,7 @@ static void _ExecuteQuery(void *args) {
 	GraphQueryCtx  *gq_ctx      = args;
 	QueryCtx       *query_ctx   = gq_ctx->query_ctx;
 	GraphContext   *gc          = gq_ctx->graph_ctx;
+	Graph          *g           = GraphContext_GetGraph (gc) ;
 	RedisModuleCtx *rm_ctx      = gq_ctx->rm_ctx;
 	ExecutionCtx   *exec_ctx    = gq_ctx->exec_ctx;
 	CommandCtx     *command_ctx = gq_ctx->command_ctx;
@@ -171,9 +173,10 @@ static void _ExecuteQuery(void *args) {
 	// update thread-local storage and track the CommandCtx
 	if (command_ctx->thread == EXEC_THREAD_WRITER) {
 		// transition the query from waiting to executing
-		QueryCtx_AdvanceStage(query_ctx);
-		QueryCtx_SetTLS(query_ctx);
-		Globals_TrackCommandCtx(command_ctx);
+		QueryCtx_AdvanceStage (query_ctx) ;
+		QueryCtx_SetTLS (query_ctx) ;
+		Globals_TrackCommandCtx (command_ctx) ;
+		UDFCtx_Update () ;  // make sure thread's UDFs are up to date
 	}
 
 	// instantiate the query ResultSet
@@ -197,7 +200,7 @@ static void _ExecuteQuery(void *args) {
 
 	// acquire the appropriate lock
 	if(readonly) {
-		Graph_AcquireReadLock(gc->g);
+		Graph_AcquireReadLock(g);
 	} else {
 		// if this is a writer query `we need to re-open the graph key with write flag
 		// this notifies Redis that the key is "dirty" any watcher on that key will
@@ -212,7 +215,7 @@ static void _ExecuteQuery(void *args) {
 	if(exec_type == EXECUTION_TYPE_QUERY) {  // query operation
 		// set policy after lock acquisition,
 		// avoid resetting policies between readers and writers
-		Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_FLUSH_RESIZE);
+		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
 
 		ExecutionPlan_PreparePlan(plan);
 		if(profile) {
@@ -289,7 +292,9 @@ static void _ExecuteQuery(void *args) {
 		QueryCtx_AdvanceStage(query_ctx);
 	}
 
-	if(readonly) Graph_ReleaseLock(gc->g); // release read lock
+	if (readonly) {
+		Graph_ReleaseLock(g) ; // release read lock
+	}
 
 	//--------------------------------------------------------------------------
 	// log query to slowlog
@@ -387,6 +392,7 @@ void _query
 
 	Globals_TrackCommandCtx(command_ctx);
 	QueryCtx_SetGlobalExecutionCtx(command_ctx);
+	UDFCtx_Update () ;  // make sure thread's UDFs are up to date
 
 	// transition the query from waiting to executing
 	QueryCtx_AdvanceStage(query_ctx);
@@ -394,7 +400,9 @@ void _query
 	// parse query parameters and build an execution plan
 	// or retrieve it from the cache
 	exec_ctx = ExecutionCtx_FromQuery(command_ctx);
-	if(exec_ctx == NULL) goto cleanup;
+	if(exec_ctx == NULL || ErrorCtx_EncounteredError()) {
+		goto cleanup;
+	}
 
 	// update cached flag
 	QueryCtx_SetUtilizedCache(query_ctx, exec_ctx->cached);
@@ -494,4 +502,3 @@ void Graph_Profile(void *args) {
 void Graph_Query(void *args) {
 	_query(false, args);
 }
-

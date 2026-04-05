@@ -10,6 +10,7 @@
 // convert from string representation to an enum
 GRAPH_Commands CommandFromString(const char *cmd_name) {
 	if (!strcasecmp(cmd_name, "graph.ACL"))      return CMD_ACL;
+	if (!strcasecmp(cmd_name, "graph.UDF"))      return CMD_UDF;
 	if (!strcasecmp(cmd_name, "graph.BULK"))     return CMD_BULK_INSERT;
 	if (!strcasecmp(cmd_name, "graph.INFO"))     return CMD_INFO;
 	if (!strcasecmp(cmd_name, "graph.LIST"))     return CMD_LIST;

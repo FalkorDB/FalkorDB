@@ -28,7 +28,7 @@ static int _record_cmp
 ) {
 	ASSERT (a->owner == b->owner) ;
 
-	uint comparison_count = array_len (op->sort_offsets) ;
+	uint comparison_count = arr_len (op->sort_offsets) ;
 	for(uint i = 0; i < comparison_count; i++) {
 		SIValue aVal = Record_Get (a, op->sort_offsets[i]) ;
 		SIValue bVal = Record_Get (b, op->sort_offsets[i]) ;
@@ -61,7 +61,7 @@ static void _accumulate
 ) {
 	if(op->limit == UNLIMITED) {
 		// not using a heap
-		array_append (op->buffer, r) ;
+		arr_append (op->buffer, r) ;
 		return ;
 	}
 
@@ -86,7 +86,7 @@ static inline Record _handoff
 (
 	OpSort *op
 ) {
-	if(op->record_idx < array_len(op->buffer)) {
+	if(op->record_idx < arr_len(op->buffer)) {
 		return op->buffer[op->record_idx++];
 	}
 	return NULL;
@@ -100,8 +100,8 @@ static void _map_expressions
 	// compute expressions record index
 	//--------------------------------------------------------------------------
 
-	uint n = array_len (op->exps) ;
-	op->to_eval = array_new (AR_ExpNode *, n) ;  // expressions to eval
+	uint n = arr_len (op->exps) ;
+	op->to_eval = arr_new (AR_ExpNode *, n) ;  // expressions to eval
 
 	// process sort expressions
 	for (uint i = 0; i < n; i++) {
@@ -112,7 +112,7 @@ static void _map_expressions
 		if (!mapped) {
 			// expression value is missing from record, make sure to evaluate
 			OpBase_Modifies ((OpBase*)op, alias) ;
-			array_append (op->to_eval, AR_EXP_Clone (exp)) ;
+			arr_append (op->to_eval, AR_EXP_Clone (exp)) ;
 		}
 	}
 }
@@ -164,7 +164,7 @@ static OpResult SortInit
 		op->heap = Heap_new((heap_cmp)_record_cmp, op);
 	} else {
 		// if all records are being sorted, use quicksort
-		op->buffer = array_new(Record, 32);
+		op->buffer = arr_new(Record, 32);
 	}
 
 	//--------------------------------------------------------------------------
@@ -172,8 +172,8 @@ static OpResult SortInit
 	//--------------------------------------------------------------------------
 
 	// process sort expressions
-	uint n = array_len (op->exps) ;
-	op->sort_offsets = array_new (uint, n) ;  // used for sorting
+	uint n = arr_len (op->exps) ;
+	op->sort_offsets = arr_new (uint, n) ;  // used for sorting
 	for (uint i = 0; i < n; i++) {
 		int rec_idx ;
 		AR_ExpNode *exp = op->exps[i] ;
@@ -182,12 +182,12 @@ static OpResult SortInit
 		bool mapped = OpBase_AliasMapping ((OpBase*)op, alias, &rec_idx) ;
 		ASSERT (mapped == true) ;
 
-		array_append (op->sort_offsets, rec_idx) ;
+		arr_append (op->sort_offsets, rec_idx) ;
 	}
 
 	// process eval expressions
-	n = array_len (op->to_eval) ;
-	op->record_offsets = array_new (uint, n) ;  // used for exp eval
+	n = arr_len (op->to_eval) ;
+	op->record_offsets = arr_new (uint, n) ;  // used for exp eval
 	for (uint i = 0; i < n; i++) {
 		int rec_idx ;
 		AR_ExpNode *exp = op->to_eval[i] ;
@@ -196,7 +196,7 @@ static OpResult SortInit
 		bool mapped = OpBase_AliasMapping ((OpBase*)op, alias, &rec_idx) ;
 		ASSERT (mapped == true) ;
 
-		array_append (op->record_offsets, rec_idx) ;
+		arr_append (op->record_offsets, rec_idx) ;
 	}
 
 	return OP_OK;
@@ -222,7 +222,7 @@ static Record SortConsume
 
 	while ((r = OpBase_Consume (child))) {
 		// evaluate sort expressions
-		for (uint i = 0; i < array_len (op->to_eval); i++) {
+		for (uint i = 0; i < arr_len (op->to_eval); i++) {
 			SIValue v = AR_EXP_Evaluate (op->to_eval[i], r) ;
 			Record_Add (r, op->record_offsets[i], v) ;
 		}
@@ -231,12 +231,12 @@ static Record SortConsume
 	}
 
 	if(op->buffer) {
-		sort_r(op->buffer, array_len(op->buffer), sizeof(Record),
+		sort_r(op->buffer, arr_len(op->buffer), sizeof(Record),
 				(heap_cmp)_buffer_elem_cmp, op);
 	} else {
 		// heap
 		int records_count = Heap_count (op->heap) ;
-		op->buffer = array_newlen (Record, records_count) ;
+		op->buffer = arr_newlen (Record, records_count) ;
 
 		for (int i = records_count-1; i >= 0 ; i--) {
 			op->buffer[i] = Heap_poll (op->heap) ;
@@ -256,12 +256,12 @@ static OpResult SortReset
 	uint recordCount;
 
 	if (op->buffer) {
-		recordCount = array_len (op->buffer) ;
+		recordCount = arr_len (op->buffer) ;
 		for (uint i = op->record_idx; i < recordCount; i++) {
 			Record r = op->buffer[i] ;
 			OpBase_DeleteRecord (&r) ;
 		}
-		array_clear (op->buffer) ;
+		arr_clear (op->buffer) ;
 	}
 
 	if (op->heap) {
@@ -270,7 +270,7 @@ static OpResult SortReset
 			Record r = (Record)Heap_poll (op->heap) ;
 			OpBase_DeleteRecord (&r) ;
 		}
-		array_free (op->buffer) ;
+		arr_free (op->buffer) ;
 		op->buffer = NULL ;
 	}
 
@@ -293,9 +293,9 @@ static OpBase *SortClone
 	clone->first = true ;
 	clone->limit = UNLIMITED ;
 
-	array_clone (clone->directions, op->directions) ;
-	array_clone_with_cb (clone->exps, op->exps, AR_EXP_Clone) ;
-	array_clone_with_cb (clone->to_eval, op->to_eval, AR_EXP_Clone) ;
+	arr_clone (clone->directions, op->directions) ;
+	arr_clone_with_cb (clone->exps, op->exps, AR_EXP_Clone) ;
+	arr_clone_with_cb (clone->to_eval, op->to_eval, AR_EXP_Clone) ;
 
 	// set our Op operations
 	OpBase_Init ((OpBase *)clone, OPType_SORT, "Sort", SortInit, SortConsume,
@@ -313,7 +313,7 @@ void SortBindToPlan
 	opBase->plan = plan ;
 
 	// introduce the projected aliases to the plan record-mapping, 
-	for (uint i = 0; i < array_len (op->to_eval); i++) {
+	for (uint i = 0; i < arr_len (op->to_eval); i++) {
 		// the projected record will associate values with their resolved name
 		// to ensure that space is allocated for each entry
 		OpBase_Modifies ((OpBase *)op, op->to_eval[i]->resolved_name) ;
@@ -338,45 +338,45 @@ static void SortFree
 	}
 
 	if(op->buffer) {
-		uint recordCount = array_len(op->buffer);
+		uint recordCount = arr_len(op->buffer);
 		for(uint i = op->record_idx; i < recordCount; i++) {
 			Record r = op->buffer[i];
 			OpBase_DeleteRecord(&r);
 		}
-		array_free(op->buffer);
+		arr_free(op->buffer);
 		op->buffer = NULL;
 	}
 
 	if(op->sort_offsets) {
-		array_free(op->sort_offsets);
+		arr_free(op->sort_offsets);
 		op->sort_offsets = NULL;
 	}
 
 	if (op->record_offsets) {
-		array_free (op->record_offsets) ;
+		arr_free (op->record_offsets) ;
 		op->record_offsets = NULL ;
 	}
 
 	if(op->directions) {
-		array_free(op->directions);
+		arr_free(op->directions);
 		op->directions = NULL;
 	}
 
 	if (op->to_eval) {
-		uint n = array_len (op->to_eval) ;
+		uint n = arr_len (op->to_eval) ;
 		for (uint i = 0; i < n; i++) {
 			AR_EXP_Free (op->to_eval[i]) ;
 		}
-		array_free (op->to_eval) ;
+		arr_free (op->to_eval) ;
 		op->to_eval = NULL ;
 	}
 
 	if (op->exps) {
-		uint n = array_len (op->exps) ;
+		uint n = arr_len (op->exps) ;
 		for (uint i = 0; i < n; i++) {
 			AR_EXP_Free (op->exps[i]) ;
 		}
-		array_free (op->exps) ;
+		arr_free (op->exps) ;
 		op->exps = NULL ;
 	}
 }

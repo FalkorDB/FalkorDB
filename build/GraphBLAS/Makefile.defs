@@ -1,2 +1,0 @@
-
-export GRAPHBLAS=$(GRAPHBLAS_BINDIR)/libgraphblas.a

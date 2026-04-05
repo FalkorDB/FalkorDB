@@ -86,10 +86,10 @@ static bool _TransposeRangeIter
 	uint64_t *x,         // [optional] value
 	bool *tensor         // [optional out] tensor
 ) {
-	ASSERT(it != NULL);
+	ASSERT (it != NULL) ;
 
-	GrB_Info info;
-	GxB_Iterator v_it;
+	GrB_Info info ;
+	GxB_Iterator v_it ;
 
 	// resuming scan over vector
 	if(it->vec) {
@@ -114,7 +114,7 @@ vector_consume:
 
 	// iterate over T transpose
 	// trying to advance to the next vector
-	info = Delta_MatrixTupleIter_next_BOOL(&it->a_it, &it->col, &it->row, NULL);
+	info = Delta_MatrixTupleIter_next_BOOL (&it->a_it, &it->col, &it->row, NULL) ;
 
 	if(info == GrB_SUCCESS) {
 		// extract T[row, col]
@@ -277,17 +277,17 @@ void TensorIterator_ScanRange
 	ASSERT(it != NULL);
 
 	// reset iterator
-	memset(it, 0, sizeof(TensorIterator));
+	memset (it, 0, sizeof (TensorIterator)) ;
 
 	it->T = T;
 
-	if(transpose) {
-		Delta_Matrix TT = Delta_Matrix_getTranspose(T);
-		Delta_MatrixTupleIter_AttachRange(&it->a_it, TT, min_row, max_row);
-		it->iter_func = _TransposeRangeIter;
+	if (transpose) {
+		Delta_Matrix TT = Delta_Matrix_getTranspose (T) ;
+		Delta_MatrixTupleIter_AttachRange (&it->a_it, TT, min_row, max_row) ;
+		it->iter_func = _TransposeRangeIter ;
 	} else {
-		Delta_MatrixTupleIter_AttachRange(&it->a_it, it->T, min_row, max_row);
-		it->iter_func = _RangeIter;
+		Delta_MatrixTupleIter_AttachRange (&it->a_it, it->T, min_row, max_row) ;
+		it->iter_func = _RangeIter ;
 	}
 }
 
@@ -300,9 +300,9 @@ bool TensorIterator_next
 	uint64_t *x,         // [optional out] edge id
 	bool *tensor         // [optional out] tensor
 ) {
-	ASSERT(it != NULL);
+	ASSERT (it != NULL) ;
 
-	return it->iter_func(it, row, col, x, tensor);
+	return it->iter_func (it, row, col, x, tensor) ;
 }
 
 // checks whether iterator is attached to tensor

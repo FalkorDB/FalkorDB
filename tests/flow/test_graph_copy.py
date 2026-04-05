@@ -1,9 +1,9 @@
-from common import Env, FalkorDB, SANITIZER, VALGRIND
-from redis import BusyLoadingError
-from random_graph import create_random_schema, create_random_graph
-from graph_utils import graph_eq
-from constraint_utils import create_constraint
 import time
+from graph_utils import graph_eq
+from redis import BusyLoadingError, ResponseError
+from constraint_utils import create_constraint
+from common import Env, FalkorDB, SANITIZER, VALGRIND
+from random_graph import create_random_schema, create_random_graph
 
 GRAPH_ID = "graph_copy"
 
@@ -16,6 +16,20 @@ class testGraphCopy():
     def graph_copy(self, src, dest):
         # invokes the GRAPH.COPY command
         self.conn.execute_command("GRAPH.COPY", src, dest)
+
+    def graph_copy_with_retry(self, src, dest):
+        # invokes GRAPH.COPY, retrying on fork errors for up to 1 minute
+        deadline = time.time() + 60
+        while True:
+            try:
+                self.conn.execute_command("GRAPH.COPY", src, dest)
+                return
+            except ResponseError as e:
+                if "could not fork" in str(e).lower() and time.time() + 5 <= deadline:
+                    print(f"Fork error, retrying in 5 seconds: {e}")
+                    time.sleep(5)
+                else:
+                    raise
 
     # compare graphs
     def assert_graph_eq(self, A, B):
@@ -284,6 +298,7 @@ class testGraphCopy():
         self.env, self.db = Env(env='oss', useSlaves=True)
 
         master_con = self.env.getConnection()
+        self.conn = master_con
 
         # create a random graph
         src_graph_id  = GRAPH_ID
@@ -294,7 +309,7 @@ class testGraphCopy():
         create_random_graph(src_graph, nodes, edges)
 
         # copy graph
-        self.graph_copy(src_graph_id, copy_graph_id)
+        self.graph_copy_with_retry(src_graph_id, copy_graph_id)
 
         # the WAIT command forces master slave sync to complete
         master_con.execute_command("WAIT", "1", "0")
@@ -306,4 +321,41 @@ class testGraphCopy():
         
         # make sure src graph on master is the same as cloned graph on replica
         self.assert_graph_eq(src_graph, replica_cloned_graph)
+
+    def test_09_copy_with_multiple_graphs(self):
+        # skip test if we're running under Sanitizer
+        if SANITIZER:
+            self.env.skip()
+
+        # regression test for issue #1611
+        # GRAPH.COPY should succeed when other graphs exist in the database
+
+        # refresh connection (test_08 may have restarted the environment)
+        self.conn = self.env.getConnection()
+        self.conn.flushall()
+
+        dummy_id    = "dummy"
+        src_id      = "copy_src"
+        dest_id     = "copy_dest"
+
+        dummy_graph = self.db.select_graph(dummy_id)
+        src_graph   = self.db.select_graph(src_id)
+
+        # create a dummy graph so multiple graphs exist in keyspace
+        dummy_graph.query("CREATE (:X {v:1})")
+
+        # create src graph with nodes, edges, indices and constraints
+        src_graph.query("CREATE (:A {v:1})-[:R {v:2}]->(:B {v:3})")
+        src_graph.query("CREATE INDEX FOR (n:A) ON (n.v)")
+        src_graph.query("CREATE INDEX FOR ()-[r:R]-() ON (r.v)")
+        create_constraint(src_graph, "UNIQUE", "NODE", "A", "v", sync=True)
+
+        # expecting GRAPH.COPY to succeed
+        self.graph_copy_with_retry(src_id, dest_id)
+
+        dest_graph = self.db.select_graph(dest_id)
+        self.assert_graph_eq(src_graph, dest_graph)
+
+        # clean up
+        self.conn.flushall()
 

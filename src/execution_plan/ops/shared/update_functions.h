@@ -25,6 +25,14 @@ void CommitUpdates
 	EntityType type
 );
 
+// make sure label matrices used in SET n:L
+// are of the correct dimensions NxN
+void ensureMatrixDim
+(
+	GraphContext *gc,
+	rax *blueprints
+);
+
 // build pending updates in the 'updates' array to match all
 // AST-level updates described in the context
 // NULL values are allowed in SET clauses but not in MERGE clauses

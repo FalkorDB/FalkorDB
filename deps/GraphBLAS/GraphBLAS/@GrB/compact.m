@@ -17,7 +17,7 @@ function [C, I, J] = compact (A, id, symmetric)
 % the indices of non-empty rows and columns of A are returned, so that
 % C = A (I,J).  The lists I and J are returned in sorted order.
 %
-% An third parameter specifies if C should be constructed symmetrically.
+% A third parameter specifies if C should be constructed symmetrically.
 % C = GrB.compact (A, [ ], 'symmetric') constructs a list I = union (I,J),
 % and then extracts C = A (I,I).  To use this option, A must be square, but
 % it need not be symmetric.  This option is useful for pruning nodes of

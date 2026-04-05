@@ -120,6 +120,12 @@ void QueryCtx_AdvanceStage
 	QueryCtx *ctx  // query context
 );
 
+// returns the number of milliseconds elapsed for the current stage
+double QueryCtx_StageElapsed
+(
+	const QueryCtx *ctx  // query context
+) ;
+
 // reset query's stage
 // waiting <- executing
 void QueryCtx_ResetStage

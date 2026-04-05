@@ -35,7 +35,7 @@ static void _relationship_process_yield
 	ctx->yield_relationship = NULL;
 
 	int idx = 0;
-	for(uint i = 0; i < array_len(yield); i++) {
+	for(uint i = 0; i < arr_len(yield); i++) {
 		if(strcasecmp("relationship", yield[i]) == 0) {
 			ctx->yield_relationship = ctx->output + idx;
 			idx++;
@@ -131,7 +131,7 @@ ProcedureResult Proc_FulltextQueryRelationshipInvoke
 	const SIValue *args,  // arguments
 	const char **yield    // output names
 ) {
-	if(array_len((SIValue *)args) != 2) return PROCEDURE_ERR;
+	if(arr_len((SIValue *)args) != 2) return PROCEDURE_ERR;
 	if(!(SI_TYPE(args[0]) & SI_TYPE(args[1]) & T_STRING)) return PROCEDURE_ERR;
 
 	ctx->privateData = NULL;
@@ -159,7 +159,7 @@ ProcedureResult Proc_FulltextQueryRelationshipInvoke
 	QueryRelationshipContext *pdata = ctx->privateData;
 
 	// populate context
-	pdata->g   = gc->g;
+	pdata->g   = GraphContext_GetGraph (gc) ;
 	pdata->r   = Schema_GetID(s);
 	pdata->idx = idx;
 
@@ -196,12 +196,12 @@ ProcedureResult Proc_FulltextQueryRelationshipInvoke
 ProcedureCtx *Proc_FulltextQueryRelationshipGen() {
 	void *privateData = NULL;
 
-	ProcedureOutput *output   = array_new(ProcedureOutput, 2);
+	ProcedureOutput *output   = arr_new(ProcedureOutput, 2);
 	ProcedureOutput out_edge  = {.name = "relationship", .type = T_EDGE};
 	ProcedureOutput out_score = {.name = "score",        .type = T_DOUBLE};
 
-	array_append(output, out_edge);
-	array_append(output, out_score);
+	arr_append(output, out_edge);
+	arr_append(output, out_score);
 
 	ProcedureCtx *ctx = ProcCtxNew("db.idx.fulltext.queryRelationships",
 								   2,

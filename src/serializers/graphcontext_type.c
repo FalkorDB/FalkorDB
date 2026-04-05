@@ -4,14 +4,16 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "graphcontext_type.h"
 #include "../version.h"
 #include "../globals.h"
 #include "encoding_version.h"
+#include "graphcontext_type.h"
+#include "encoder/encode_aux.h"
+#include "decoders/decode_aux.h"
 #include "encoder/encode_graph.h"
 #include "decoders/decode_graph.h"
-#include "decoders/decode_previous.h"
 #include "../util/redis_version.h"
+#include "decoders/decode_previous.h"
 
 // forward declerations of the module event handler functions
 void ModuleEventHandler_AUXBeforeKeyspaceEvent(void);
@@ -29,13 +31,13 @@ static void *_GraphContextType_RdbLoad
 
 	if(encver > GRAPH_ENCODING_LATEST_V) {
 		// not forward compatible
-		printf("Failed loading Graph, RedisGraph version (%d) is not forward compatible.\n",
-			   REDISGRAPH_MODULE_VERSION);
+		printf("Failed loading Graph, FalkorDB version (%d) is not forward compatible.\n",
+			   FALKOR_MODULE_VERSION);
 		return NULL;
 		// not backward compatible
 	} else if(encver < GRAPH_DECODE_MIN_V) {
-		printf("Failed loading Graph, RedisGraph version (%d) is not backward compatible with encoder version %d.\n",
-			   REDISGRAPH_MODULE_VERSION, encver);
+		printf("Failed loading Graph, FalkorDB version (%d) is not backward compatible with encoder version %d.\n",
+			   FALKOR_MODULE_VERSION, encver);
 		return NULL;
 		// previous version
 	}
@@ -59,16 +61,34 @@ static void _GraphContextType_RdbSave(RedisModuleIO *rdb, void *value) {
 }
 
 // save an unsigned placeholder before and after the keyspace encoding
-static void _GraphContextType_AuxSave(RedisModuleIO *rdb, int when) {
-	RedisModule_SaveUnsigned(rdb, 0);
+static void _GraphContextType_AuxSave
+(
+	RedisModuleIO *rdb,
+	int when
+) {
+	if (when == REDISMODULE_AUX_BEFORE_RDB) {
+		AUXSave (rdb) ;
+	} else {
+		RedisModule_SaveUnsigned(rdb, 0);	
+	}
 }
 
 // decode the unsigned placeholders saved before and after the keyspace values
 // and call the module event handler
-static int _GraphContextType_AuxLoad(RedisModuleIO *rdb, int encver, int when) {
-	RedisModule_LoadUnsigned(rdb);
-	if(when == REDISMODULE_AUX_BEFORE_RDB) ModuleEventHandler_AUXBeforeKeyspaceEvent();
-	else ModuleEventHandler_AUXAfterKeyspaceEvent();
+static int _GraphContextType_AuxLoad
+(
+	RedisModuleIO *rdb,
+	int encver,
+	int when
+) {
+	if (when == REDISMODULE_AUX_BEFORE_RDB) {
+		AUXLoad (rdb) ;
+		ModuleEventHandler_AUXBeforeKeyspaceEvent();
+	} else {
+		RedisModule_LoadUnsigned (rdb) ;
+		ModuleEventHandler_AUXAfterKeyspaceEvent();
+	}
+
 	return REDISMODULE_OK;
 }
 

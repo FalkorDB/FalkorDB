@@ -36,14 +36,6 @@ void Delta_Matrix_mulCompatible
 	const Delta_Matrix B
 ) ;
 
-// validate 'C' isn't in an invalid state
-void Delta_Matrix_validateState
-(
-	const Delta_Matrix C,
-	GrB_Index i,
-	GrB_Index j
-);
-
 // Check every assumption for the Delta Matrix
 //         ∅ = m  ∩ dp
 //         ∅ = dp ∩ dm
@@ -59,3 +51,4 @@ void Delta_Matrix_validate
 	const Delta_Matrix C,
 	bool check_transpose
 ) ;
+
