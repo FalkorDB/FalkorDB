@@ -26,8 +26,6 @@ static void _RdbLoadSchema
 	if (!already_loaded) {
 		s = GraphContext_AddSchema (gc, name, type) ;
 		ASSERT (s != NULL) ;
-		printf ("id: %d\n", id) ;
-		printf ("schema's id: %d\n", Schema_GetID (s)) ;
 		ASSERT (Schema_GetID (s) == id) ;
 	}
 

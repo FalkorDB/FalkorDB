@@ -78,10 +78,6 @@ static GraphContext *_GetOrCreateGraphContext
 		// inform the module and create new graph context
 		gc = GraphContext_New (graph_name) ;
 		Graph *g = GraphContext_GetGraph (gc) ;
-
-		// while loading the graph
-		// minimize matrix realloc and synchronization calls
-		Graph_AcquireWriteLock (g) ;
 	}
 
 	// free the name string, as it either not in used or copied
@@ -345,9 +341,6 @@ GraphContext *RdbLoadGraphContext_latest
 
 		// compute transposes
 		_ComputeTransposeMatrices (g) ;
-
-		// release graph write lock
-		Graph_ReleaseLock (g) ;
 
 		uint rel_count   = Graph_RelationTypeCount(g);
 		uint label_count = Graph_LabelTypeCount(g);

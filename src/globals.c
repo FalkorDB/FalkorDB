@@ -108,8 +108,8 @@ GraphContext **Globals_Get_GraphsInKeyspace(void) {
 }
 
 uint32_t Globals_GraphsCount (void) {
-	// acuire write lock
-	Globals_WriteLock () ;
+	// acuire read lock
+	Globals_ReadLock () ;
 
 	uint32_t n = arr_len (_globals.graphs_in_keyspace) ;
 
