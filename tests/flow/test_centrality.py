@@ -72,7 +72,7 @@ class testCentrality(FlowTestsBase):
                 self.graph.query(q)
                 self.env.assertFalse(True)
             except ResponseError:
-                pass
+                pass  # expected: invalid queries must raise
 
     def test02_centrality_empty_graph(self):
         """Test harmonic centrality on an empty graph returns no results"""
@@ -373,10 +373,10 @@ class testCentrality(FlowTestsBase):
         # ---- Case 2: no defaultWeight, error ----
         # Not all Hub nodes have 'score', so omitting defaultWeight must raise an error.
         try:
-            result2 = self.centrality(weightAttribute="score")
+            self.centrality(weightAttribute="score")
             self.env.assertTrue(False)
         except ResponseError:
-            pass
+            pass  # expected: missing attribute without defaultWeight must raise
 
         # ---- Case 3: no defaultWeight, but nodeLabels restricts to nodes that all have the attribute ----
         # Only B has the Scored label and carries the score attribute, so no error is expected.
