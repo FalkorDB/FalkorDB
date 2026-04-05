@@ -209,7 +209,7 @@ int RedisModule_OnLoad
 	if(RedisModule_CreateCommand(ctx,
 				"graph.QUERY",
 				CommandDispatch,
-				"write deny-oom deny-script blocking",
+				"write deny-oom deny-script blocking allow-busy",
 				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
@@ -217,7 +217,7 @@ int RedisModule_OnLoad
 	if(RedisModule_CreateCommand(ctx,
 				"graph.RO_QUERY",
 				CommandDispatch,
-				"readonly deny-script blocking",
+				"readonly deny-script blocking allow-busy",
 				1, 1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
