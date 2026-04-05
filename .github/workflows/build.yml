@@ -47,7 +47,7 @@ jobs:
           # Ubuntu builds
           - name: ubuntu-x64
             suffix: x64
-            os: ubuntu
+            os: debian
             arch: amd64
             machine_label: ubuntu-latest
             cache_path: linux-x64
@@ -56,7 +56,7 @@ jobs:
             build_test_image: true
           - name: ubuntu-arm64
             suffix: arm64v8
-            os: ubuntu
+            os: debian
             arch: arm64
             machine_label: ubuntu-24.04-arm
             cache_path: linux-arm64v8
