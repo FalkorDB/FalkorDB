@@ -396,7 +396,7 @@ class testMaxFlow(FlowTestsBase):
 
         node_ids = [n.id for n in nodes]
         for idx, e in enumerate(edges):
-            self.env.assertTrue(e.src_node in node_ids)
+            self.env.assertIn(e.src_node, node_ids)
             self.env.assertTrue(e.properties['cap'] == flows[idx])
 
     # ------------------------------------------------------------------ #
