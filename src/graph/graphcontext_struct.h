@@ -4,6 +4,7 @@
  */
 
 #pragma once
+
 // GraphContext holds refrences to various elements of a graph object
 // it is the value sitting behind a Redis graph key
 //

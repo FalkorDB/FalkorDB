@@ -441,7 +441,7 @@ static void _RegisterServerEvents
 
 static atomic_bool *locked = NULL ;                  // read locked graphs
 static atomic_bool  fork_prep_timedout    = false ;  // _ForkPrepare timeout
-static const double fork_prep_interval_ms = 100   ;  // 100ms
+static const double fork_prep_interval_ms = 80    ;  // 80ms TODO: get redis conf
 
 // before fork at parent
 static void _ForkPrepare() {
@@ -474,11 +474,12 @@ static void _ForkPrepare() {
 	simple_tic (tic) ;
 
 	uint32_t n = Globals_GraphsCount () ;
+
+	ASSERT (locked == NULL) ;
 	locked = rm_calloc (n, sizeof (atomic_bool)) ;
 	GraphContext **graphs = rm_malloc (sizeof (GraphContext*) * n) ;
 
 	// scan through each graph in the keyspace
-	GraphContext *gc = NULL ;
 	KeySpaceGraphIterator it ;
 	Globals_ScanGraphs (&it) ;
 
@@ -487,6 +488,7 @@ static void _ForkPrepare() {
 		graphs [i] = GraphIterator_Next (&it) ;
 		ASSERT (graphs [i] != NULL) ;
 	}
+	ASSERT (GraphIterator_Next (&it) == NULL) ;
 
 	// sync each graph's matrices in parallel
 	// each iteration is independent — different graph, different locks
@@ -520,7 +522,7 @@ static void _ForkPrepare() {
 
 		// calling Graph_Get* will sync the retrieved matrix
 
-		Graph_GetZeroMatrix (g) ;
+		Graph_GetZeroMatrix      (g) ;
 		Graph_GetAdjacencyMatrix (g, false) ;
 		Graph_GetNodeLabelMatrix (g) ;
 
