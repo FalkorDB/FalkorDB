@@ -117,7 +117,9 @@ static void *_curl_thread
 	session->stream = NULL;
 
 	if(res != CURLE_OK && !session->abort) {
-		// if download was not aborted, set thread exit code to 'res'
+		// log curl error for diagnostics
+		RedisModule_Log(NULL, "warning",
+			"curl download failed: %s", curl_easy_strerror(res));
 		return (void *)(intptr_t)res;
 	}
 

@@ -106,12 +106,12 @@ static OpResult OpApplyMultiplexerInit
 	ASSERT(apply_multiplexer->bound_branch);
 	int childCount = opBase->childCount;
 	// for every child, find its argument op for record injection
-	apply_multiplexer->branch_arguments = array_new(OpArgument *, childCount - 1);
+	apply_multiplexer->branch_arguments = arr_new(OpArgument *, childCount - 1);
 	for(int i = 1; i < childCount; i++) {
 		OpBase *child = opBase->children[i];
 		OpArgument *arg = (OpArgument *)ExecutionPlan_LocateOp(child, OPType_ARGUMENT);
 		ASSERT(arg);
-		array_append(apply_multiplexer->branch_arguments, arg);
+		arr_append(apply_multiplexer->branch_arguments, arg);
 	}
 	return OP_OK;
 }
@@ -206,7 +206,7 @@ static void OpApplyMultiplexerFree
 	OpApplyMultiplexer *op = (OpApplyMultiplexer *)opBase;
 
 	if(op->branch_arguments) {
-		array_free(op->branch_arguments);
+		arr_free(op->branch_arguments);
 		op->branch_arguments = NULL;
 	}
 

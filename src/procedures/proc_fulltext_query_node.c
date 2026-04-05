@@ -39,7 +39,7 @@ static void _process_yield
 	ctx->yield_score  =    NULL;
 
 	int idx = 0;
-	for(uint i = 0; i < array_len(yield); i++) {
+	for(uint i = 0; i < arr_len(yield); i++) {
 		if(strcasecmp("node", yield[i]) == 0) {
 			ctx->yield_node = ctx->output + idx;
 			idx++;
@@ -60,7 +60,7 @@ ProcedureResult Proc_FulltextQueryNodeInvoke
 	const SIValue *args,
 	const char **yield
 ) {
-	if(array_len((SIValue *)args) != 2) return PROCEDURE_ERR;
+	if(arr_len((SIValue *)args) != 2) return PROCEDURE_ERR;
 	if(!(SI_TYPE(args[0]) & SI_TYPE(args[1]) & T_STRING)) return PROCEDURE_ERR;
 
 	ctx->privateData = NULL;
@@ -79,7 +79,7 @@ ProcedureResult Proc_FulltextQueryNodeInvoke
 	ctx->privateData = rm_malloc(sizeof(QueryNodeContext));
 	QueryNodeContext *pdata = ctx->privateData;
 
-	pdata->g   = gc->g;
+	pdata->g   = GraphContext_GetGraph (gc) ;
 	pdata->n   = GE_NEW_NODE();
 	pdata->idx = idx;
 
@@ -151,11 +151,11 @@ ProcedureResult Proc_FulltextQueryNodeFree
 
 ProcedureCtx *Proc_FulltextQueryNodeGen() {
 	void *privateData = NULL;
-	ProcedureOutput *output   = array_new(ProcedureOutput, 2);
+	ProcedureOutput *output   = arr_new(ProcedureOutput, 2);
 	ProcedureOutput out_node  = {.name = "node", .type = T_NODE};
 	ProcedureOutput out_score = {.name = "score", .type = T_DOUBLE};
-	array_append(output, out_node);
-	array_append(output, out_score);
+	arr_append(output, out_node);
+	arr_append(output, out_score);
 
 	ProcedureCtx *ctx = ProcCtxNew("db.idx.fulltext.queryNodes",
 								   2,

@@ -41,6 +41,25 @@ SIValue SIPath_New(Path *p) {
 	return path;
 }
 
+// creates a new SIPath out of path struct
+// the new SIPath object owns the path object and is responsible for freeing it
+SIValue SIPath_Wrap
+(
+	Path **p  // path to wrap as an SIValue
+) {
+	ASSERT (p != NULL && *p != NULL) ;
+
+	SIValue path ;
+
+	path.type       = T_PATH ;
+	path.ptrval     = *p ;
+	path.allocation = M_SELF ;
+
+	*p = NULL ;
+
+	return path ;
+}
+
 SIValue SIPath_Clone(SIValue p) {
 	return SIPath_New((Path *)p.ptrval);
 }

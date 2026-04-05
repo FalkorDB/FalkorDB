@@ -78,9 +78,12 @@ SIValue SI_Edge(void *e) {
 	};
 }
 
-SIValue SI_Path(void *p) {
-	Path *path = (Path *)p;
-	return SIPath_New(path);
+SIValue SI_Path
+(
+	void *p
+) {
+	Path *path = (Path *)p ;
+	return SIPath_New (path) ;
 }
 
 SIValue SI_EmptyArray() {

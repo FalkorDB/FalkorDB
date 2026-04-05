@@ -87,6 +87,6 @@ void buildMergeOp(ExecutionPlan *plan, AST *ast, const cypher_astnode_t *clause,
 	_buildMergeCreateStream(plan, &merge_ctx, arguments);
 
 	if(bound_vars) raxFree(bound_vars);
-	array_free(arguments);
+	arr_free(arguments);
 }
 

@@ -43,7 +43,6 @@ GrB_Info Delta_Matrix_removeElement
 		GrB_OK (GrB_Matrix_removeElement (dp, i, j)) ;
 	}
 	
-	Delta_Matrix_setDirty (C) ;
 	return GrB_SUCCESS ;
 }
 
@@ -78,7 +77,6 @@ GrB_Info Delta_Matrix_removeElements
 				GrB_DESC_S)) ;
 	GrB_OK (GrB_free (&s)) ;
 
-	Delta_Matrix_setDirty (C) ;
 	return GrB_SUCCESS ;
 }
 

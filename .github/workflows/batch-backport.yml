@@ -10,9 +10,11 @@ on:
 
 jobs:
   backport:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      workflows: write
       pull-requests: write
     steps:
       - name: Validate version format
@@ -25,7 +27,7 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
