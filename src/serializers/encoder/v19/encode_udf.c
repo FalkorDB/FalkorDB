@@ -16,7 +16,7 @@
 //
 // notes:
 //   - both library name and script must be NUL-terminated strings
-//   - this function defines the v18 on-disk format; changes require a new
+//   - this function defines the v19 on-disk format; changes require a new
 //     versioned save/load pair to preserve backward compatibility
 void AUXSaveUDF_latest
 (
