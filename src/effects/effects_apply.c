@@ -271,7 +271,7 @@ static void ApplyLabels
 	//--------------------------------------------------------------------------
 
 	Node  n ;
-	Graph *g = gc->g ;
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	bool found = Graph_GetNode (g, id, &n) ;
 	ASSERT (found == true) ;
@@ -495,8 +495,8 @@ static void ApplyDeleteNode
 	//    node ID
 	//--------------------------------------------------------------------------
 	
-	EntityID id;       // node ID
-	Graph *g = gc->g;  // graph to delete node from
+	EntityID id;                             // node ID
+	Graph *g = GraphContext_GetGraph (gc) ;  // graph to delete node from
 
 	int i = 0 ;                      // size of batch
 	const size_t batch_size = 4096 ; // max batch size
@@ -568,7 +568,7 @@ static void ApplyDeleteEdge
 	} _edge_desc ;
 	#pragma pack(pop)
 
-	Graph *g = gc->g ;  // graph to delete edge from
+	Graph *g = GraphContext_GetGraph (gc) ;  // graph to delete edge from
 
 	while (true) {
 		// read edge description from stream

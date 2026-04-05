@@ -160,6 +160,7 @@ SIValue AR_SHORTEST_PATH
 	GrB_Vector PI    = NULL;  // vector backtracking results to their parents
 	Edge *edges      = NULL;
 	GraphContext *gc = QueryCtx_GetGraphCtx();
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// BFS max depth
 	int64_t max_level = (ctx->maxHops == EDGE_LENGTH_INF) ? -1 : ctx->maxHops;
@@ -186,10 +187,10 @@ SIValue AR_SHORTEST_PATH
 	if(ctx->reltype_names != NULL && ctx->reltype_count == 0) {
 		// if edge types were specified but none were valid,
 		// use the zero matrix
-		info = Delta_Matrix_export(&M, Graph_GetZeroMatrix(gc->g), GrB_BOOL);
+		info = Delta_Matrix_export(&M, Graph_GetZeroMatrix(g), GrB_BOOL);
 		ASSERT(info == GrB_SUCCESS);
 	} else {
-		info = Build_Matrix(&M, NULL, gc->g, NULL, 0, ctx->reltypes,
+		info = Build_Matrix(&M, NULL, g, NULL, 0, ctx->reltypes,
 				ctx->reltype_count, false, false);
 		ASSERT(info == GrB_SUCCESS);
 	}
@@ -244,11 +245,11 @@ SIValue AR_SHORTEST_PATH
 
 		// retrieve edges connecting the parent node to the current node
 		if(ctx->reltype_count == 0) {
-			Graph_GetEdgesConnectingNodes(gc->g, parent_id, id,
+			Graph_GetEdgesConnectingNodes(g, parent_id, id,
 					GRAPH_NO_RELATION, &edges);
 		} else {
 			for(uint j = 0; j < ctx->reltype_count; j++) {
-				Graph_GetEdgesConnectingNodes(gc->g, parent_id, id,
+				Graph_GetEdgesConnectingNodes(g, parent_id, id,
 						ctx->reltypes[j], &edges);
 				if(arr_len(edges) > 0) break;
 			}
@@ -262,7 +263,7 @@ SIValue AR_SHORTEST_PATH
 		// append the reached node to the path
 		id = Edge_GetSrcNodeID(&edges[0]);
 		Node n = GE_NEW_NODE();
-		Graph_GetNode(gc->g, id, &n);
+		Graph_GetNode(g, id, &n);
 		SIPathBuilder_AppendNode(p, SI_Node(&n));
 	}
 
