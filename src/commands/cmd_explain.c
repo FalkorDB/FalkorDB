@@ -23,6 +23,7 @@ void Graph_Explain(void *args) {
 	CommandCtx     *command_ctx = (CommandCtx *)args;
 	RedisModuleCtx *ctx         = CommandCtx_GetRedisCtx(command_ctx);
 	GraphContext   *gc          = CommandCtx_GetGraphContext(command_ctx);
+	Graph          *g           = GraphContext_GetGraph (gc) ;
 	ExecutionCtx   *exec_ctx    = NULL;
 	QueryCtx       *query_ctx   = QueryCtx_GetQueryCtx();
 
@@ -52,7 +53,7 @@ void Graph_Explain(void *args) {
 		goto cleanup;
 	}
 
-	Graph_AcquireReadLock(gc->g);
+	Graph_AcquireReadLock (g) ;
 	lock_acquired = true;
 
 	ExecutionPlan_PreparePlan(plan);
@@ -66,14 +67,21 @@ void Graph_Explain(void *args) {
 	ExecutionPlan_Print(plan, ctx); // Print the execution plan.
 
 cleanup:
-	if(ErrorCtx_EncounteredError()) ErrorCtx_EmitException();
-	if(lock_acquired) Graph_ReleaseLock(gc->g);
-	ExecutionCtx_Free(exec_ctx);
-	GraphContext_DecreaseRefCount(gc);
-	Globals_UntrackCommandCtx(command_ctx);
-	CommandCtx_UnblockClient(command_ctx);
-	CommandCtx_Free(command_ctx);
-	QueryCtx_Free(); // Reset the QueryCtx and free its allocations.
-	ErrorCtx_Clear();
+
+	if (ErrorCtx_EncounteredError ()) {
+		ErrorCtx_EmitException () ;
+	}
+
+	if (lock_acquired) {
+		Graph_ReleaseLock (g) ;
+	}
+
+	ExecutionCtx_Free (exec_ctx) ;
+	GraphContext_DecreaseRefCount (gc) ;
+	Globals_UntrackCommandCtx (command_ctx) ;
+	CommandCtx_UnblockClient (command_ctx) ;
+	CommandCtx_Free (command_ctx) ;
+	QueryCtx_Free () ; // reset the QueryCtx and free its allocations
+	ErrorCtx_Clear () ;
 }
 

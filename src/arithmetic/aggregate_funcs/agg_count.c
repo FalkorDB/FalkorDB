@@ -40,8 +40,8 @@ void Register_COUNT(void) {
 	SIType ret_type;
 	AR_FuncDesc *func_desc;
 
-	types = array_new (SIType, 2) ;
-	array_append (types, SI_ALL) ;
+	types = arr_new (SIType, 2) ;
+	arr_append (types, SI_ALL) ;
 	ret_type = T_INT64 ;
 	func_desc = AR_AggFuncDescNew ("count", AGG_COUNT, 1, 1, types, ret_type,
 			NULL, NULL, Count_PrivateData) ;

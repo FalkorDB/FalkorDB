@@ -39,7 +39,7 @@ static void _emit_lib
 	RedisModule_ReplyWithSimpleString (ctx, name) ;
 
 	// functions
-	int func_count = array_len (functions) ;
+	int func_count = arr_len (functions) ;
 	RedisModule_ReplyWithSimpleString (ctx, "functions") ;
 	RedisModule_ReplyWithArray (ctx, func_count) ;
 	for (int i = 0; i < func_count; i++) {

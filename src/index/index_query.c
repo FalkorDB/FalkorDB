@@ -461,14 +461,14 @@ static void _compose_ranges
 	ASSERT(string_ranges  != NULL);
 	ASSERT(numeric_ranges != NULL);
 
-	uint count = array_len(trees);
+	uint count = arr_len(trees);
 	for(uint i = 0; i < count; i++) {
 		const FT_FilterNode *tree = trees[i];
 		if(tree->t == FT_N_PRED) {
 			if(_predicateTreeToRange(tree, string_ranges, numeric_ranges)) {
 				// managed to convert tree into range
 				// discard tree and update loop index
-				array_del_fast(trees, i);
+				arr_del_fast(trees, i);
 				i--;
 				count--;
 			}
@@ -725,7 +725,7 @@ RSQNode *Index_BuildQueryTree
 	ASSERT(none_converted_filters != NULL);
 
 	RSIndex             *rsIdx  = Index_RSIndex(idx);
-	RSQNode             **nodes = array_new(RSQNode*, 1);     // intermidate nodes
+	RSQNode             **nodes = arr_new(RSQNode*, 1);     // intermidate nodes
 	const FT_FilterNode **trees = FilterTree_SubTrees(tree);  // individual subtrees
 
 	//--------------------------------------------------------------------------
@@ -738,25 +738,25 @@ RSQNode *Index_BuildQueryTree
 	if(raxSize(string_ranges) > 0 || raxSize(numeric_ranges) > 0) {
 		RSQNode *ranges = _ranges_to_query_nodes(rsIdx, string_ranges, numeric_ranges);
 		// TODO: check for empty node RediSearch_CreateEmptyNode
-		array_append(nodes, ranges);
+		arr_append(nodes, ranges);
 	}
 
 	//--------------------------------------------------------------------------
 	// convert remaining filters into RediSearch query nodes
 	//--------------------------------------------------------------------------
 
-	uint tree_count = array_len(trees);
+	uint tree_count = arr_len(trees);
 	for(uint i = 0; i < tree_count; i++) {
 		RSQNode *node = NULL;
 		bool resolved_filter = _FilterTreeToQueryNode(&node, trees[i], rsIdx);
 
 		if(node != NULL) {
-			array_append(nodes, node);
+			arr_append(nodes, node);
 		}
 
 		if(resolved_filter) {
 			// remove converted filter from filters array
-			array_del_fast(trees, i);
+			arr_del_fast(trees, i);
 			i--;
 			tree_count--;
 		}
@@ -773,7 +773,7 @@ RSQNode *Index_BuildQueryTree
 	*none_converted_filters = FilterTree_Combine(trees, tree_count);
 
 	RSQNode *root      = NULL;
-	uint    node_count = array_len(nodes);
+	uint    node_count = arr_len(nodes);
 
 	// compose root query node by intersecting individual query nodes
 	root = _concat_query_nodes(rsIdx, nodes, node_count);
@@ -782,8 +782,8 @@ RSQNode *Index_BuildQueryTree
 	// clean up
 	//--------------------------------------------------------------------------
 
-	array_free(nodes);
-	array_free(trees);
+	arr_free(nodes);
+	arr_free(trees);
 	raxFreeWithCallback(string_ranges, (void(*)(void *))StringRange_Free);
 	raxFreeWithCallback(numeric_ranges, (void(*)(void *))NumericRange_Free);
 

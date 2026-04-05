@@ -37,7 +37,7 @@ static void _process_yield
 	ctx->yield_entity_type = NULL;
 
 	int idx = 0;
-	for(uint i = 0; i < array_len(yield); i++) {
+	for(uint i = 0; i < arr_len(yield); i++) {
 		if(strcasecmp("type", yield[i]) == 0) {
 			ctx->yield_type = ctx->out + idx;
 			idx++;
@@ -157,11 +157,11 @@ SIValue *Proc_ConstraintsStep
 	ConstraintsContext *pdata = ctx->privateData;
 
 	// no more constraints to emit
-	if(array_len(pdata->constraints) == 0) {
+	if(arr_len(pdata->constraints) == 0) {
 		return NULL;
 	}
 
-	Constraint c = array_pop(pdata->constraints);
+	Constraint c = arr_pop(pdata->constraints);
 	_EmitConstraint(c, pdata);
 
 	return pdata->out;
@@ -181,7 +181,7 @@ ProcedureResult Proc_ConstraintsInvoke
 
 	// TODO: introduce invoke validation, similar to arithmetic expressions
 	// expecting no arguments
-	uint arg_count = array_len((SIValue *)args);
+	uint arg_count = arr_len((SIValue *)args);
 	if(arg_count != 0) return PROCEDURE_ERR;
 
 	GraphContext *gc = QueryCtx_GetGraphCtx();
@@ -189,7 +189,7 @@ ProcedureResult Proc_ConstraintsInvoke
 	ConstraintsContext *pdata = rm_malloc(sizeof(ConstraintsContext));
 
 	pdata->gc          = gc;
-    pdata->constraints = array_new(Constraint, 0);
+    pdata->constraints = arr_new(Constraint, 0);
 
 	_process_yield(pdata, yield);
 
@@ -212,8 +212,8 @@ ProcedureResult Proc_ConstraintsInvoke
 			const Constraint *cs = Schema_GetConstraints(s);
 			// foreach schema's constraint
 
-			for(uint32_t k = 0; k < array_len((Constraint*)cs); k++) {
-				array_append(pdata->constraints, cs[k]);
+			for(uint32_t k = 0; k < arr_len((Constraint*)cs); k++) {
+				arr_append(pdata->constraints, cs[k]);
 			}
 		}
 	}
@@ -228,7 +228,7 @@ ProcedureResult Proc_ConstraintsFree
 	// clean up
 	if(ctx->privateData) {
 		ConstraintsContext *pdata = ctx->privateData;
-		array_free(pdata->constraints);
+		arr_free(pdata->constraints);
 		rm_free(pdata);
 	}
 
@@ -238,37 +238,37 @@ ProcedureResult Proc_ConstraintsFree
 ProcedureCtx *Proc_ConstraintsCtx(void) {
 	void *privateData = NULL;
 	ProcedureOutput output;
-	ProcedureOutput *outputs = array_new(ProcedureOutput, 5);
+	ProcedureOutput *outputs = arr_new(ProcedureOutput, 5);
 
 	// constraint type (unique / mandatory)
 	output = (ProcedureOutput) {
 		.name = "type", .type = T_STRING
 	};
-	array_append(outputs, output);
+	arr_append(outputs, output);
 
 	// constraint label
 	output = (ProcedureOutput) {
 		.name = "label", .type = T_STRING
 	};
-	array_append(outputs, output);
+	arr_append(outputs, output);
 
 	// constraint properties
 	output = (ProcedureOutput) {
 		.name = "properties", .type = T_ARRAY
 	};
-	array_append(outputs, output);
+	arr_append(outputs, output);
 
 	// constraint entity type (node / relationship)
 	output = (ProcedureOutput) {
 		.name = "entitytype", .type = T_STRING
 	};
-	array_append(outputs, output);
+	arr_append(outputs, output);
 
 	// constraint status (operational / under construction/ failed)
 	output = (ProcedureOutput) {
 		.name = "status", .type = T_STRING
 	};
-	array_append(outputs, output);
+	arr_append(outputs, output);
 
 	ProcedureCtx *ctx = ProcCtxNew("db.constraints",
 								   0,
