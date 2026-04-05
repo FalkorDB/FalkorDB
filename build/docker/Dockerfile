@@ -50,7 +50,10 @@ RUN apt-get update && \
     (dpkg --purge passwd || true) && \
     apt-get autoremove -y --purge 2>/dev/null || true && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    # Remove libsystemd0 AFTER all apt-get operations (apt depends on libsystemd0)
+    # CVE-2026-29111 HIGH - not needed, no systemd PID 1 inside container
+    (dpkg --force-remove-essential --force-depends --purge libsystemd0 || true)
 
 # Copy only Node.js runtime from official image (no npm, no curl/gnupg needed)
 COPY --from=node /usr/local/bin/node /usr/local/bin/
