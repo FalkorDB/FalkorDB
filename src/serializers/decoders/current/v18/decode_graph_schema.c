@@ -82,10 +82,10 @@ static void _RdbLoadIndex
 	
 	uint stopwords_count = SerializerIO_ReadUnsigned(rdb);
 	if(stopwords_count > 0) {
-		stopwords = array_new(char *, stopwords_count);
+		stopwords = arr_new(char *, stopwords_count);
 		for (uint i = 0; i < stopwords_count; i++) {
 			char *stopword = SerializerIO_ReadBuffer(rdb, NULL);
-			array_append(stopwords, stopword);
+			arr_append(stopwords, stopword);
 		}
 	}
 
@@ -235,36 +235,31 @@ static void _RdbLoadSchema
 	 */
 
 	Schema *s    = NULL;
-	int     id   = SerializerIO_ReadUnsigned(rdb);
-	char   *name = SerializerIO_ReadBuffer(rdb, NULL);
+	int     id   = SerializerIO_ReadUnsigned (rdb) ;
+	char   *name = SerializerIO_ReadBuffer (rdb, NULL) ;
 
-	if(!already_loaded) {
-		s = Schema_New(type, id, name);
-		if(type == SCHEMA_NODE) {
-			ASSERT(array_len(gc->node_schemas) == id);
-			array_append(gc->node_schemas, s);
-		} else {
-			ASSERT(array_len(gc->relation_schemas) == id);
-			array_append(gc->relation_schemas, s);
-		}
+	if (!already_loaded) {
+		s = GraphContext_AddSchema (gc, name, type) ;
+		ASSERT (s != NULL) ;
+		ASSERT (Schema_GetID (s) == id) ;
 	}
 
-	RedisModule_Free(name);
+	RedisModule_Free (name) ;
 
 	//--------------------------------------------------------------------------
 	// load indices
 	//--------------------------------------------------------------------------
 
-	uint index_count = SerializerIO_ReadUnsigned(rdb);
-	for(uint index = 0; index < index_count; index++) {
-		_RdbLoadIndex(rdb, gc, s, already_loaded);
+	uint index_count = SerializerIO_ReadUnsigned (rdb) ;
+	for (uint index = 0; index < index_count; index++) {
+		_RdbLoadIndex (rdb, gc, s, already_loaded) ;
 	}
 
 	//--------------------------------------------------------------------------
 	// load constraints
 	//--------------------------------------------------------------------------
 
-	_RdbLoadConstaints(rdb, gc, s, already_loaded);
+	_RdbLoadConstaints (rdb, gc, s, already_loaded) ;
 }
 
 static void _RdbLoadAttributeKeys
@@ -300,25 +295,23 @@ void RdbLoadGraphSchema_v18
 	 * relation schema X #relation schemas
 	 */
 
-	// Attributes, Load the full attribute mapping.
-	_RdbLoadAttributeKeys(rdb, gc);
+	// Attributes, Load the full attribute mapping
+	_RdbLoadAttributeKeys (rdb, gc) ;
 
 	// #Node schemas
-	uint schema_count = SerializerIO_ReadUnsigned(rdb);
+	uint schema_count = SerializerIO_ReadUnsigned (rdb) ;
 
-	// Load each node schema
-	gc->node_schemas = array_ensure_cap(gc->node_schemas, schema_count);
-	for(uint i = 0; i < schema_count; i ++) {
-		_RdbLoadSchema(rdb, gc, SCHEMA_NODE, already_loaded);
+	// load each node schema
+	for (uint i = 0 ; i < schema_count ; i ++) {
+		_RdbLoadSchema (rdb, gc, SCHEMA_NODE, already_loaded) ;
 	}
 
 	// #Edge schemas
-	schema_count = SerializerIO_ReadUnsigned(rdb);
+	schema_count = SerializerIO_ReadUnsigned (rdb) ;
 
-	// Load each edge schema
-	gc->relation_schemas = array_ensure_cap(gc->relation_schemas, schema_count);
-	for(uint i = 0; i < schema_count; i ++) {
-		_RdbLoadSchema(rdb, gc, SCHEMA_EDGE, already_loaded);
+	// load each edge schema
+	for (uint i = 0 ; i < schema_count ; i ++) {
+		_RdbLoadSchema (rdb, gc, SCHEMA_EDGE, already_loaded) ;
 	}
 }
 

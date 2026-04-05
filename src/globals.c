@@ -30,7 +30,7 @@ void Globals_Init(void) {
 	// initialize
 	_globals.process_is_child   = false;
 	_globals.string_pool        = StringPool_create();
-	_globals.graphs_in_keyspace = array_new(GraphContext*, 1);
+	_globals.graphs_in_keyspace = arr_new(GraphContext*, 1);
 	_globals.command_ctxs       = rm_calloc(ThreadPool_ThreadCount() + 1,
 			sizeof(CommandCtx *));
 
@@ -107,6 +107,18 @@ GraphContext **Globals_Get_GraphsInKeyspace(void) {
 	return _globals.graphs_in_keyspace;
 }
 
+uint32_t Globals_GraphsCount (void) {
+	// acuire read lock
+	Globals_ReadLock () ;
+
+	uint32_t n = arr_len (_globals.graphs_in_keyspace) ;
+
+	// release lock
+	Globals_Unlock () ;
+
+	return n ;
+}
+
 // add graph to global tracker
 void Globals_AddGraph
 (
@@ -121,7 +133,7 @@ void Globals_AddGraph
 	Globals_WriteLock () ;
 
 	bool registered = false;
-	uint n = array_len(_globals.graphs_in_keyspace);
+	uint n = arr_len(_globals.graphs_in_keyspace);
 	for(uint i = 0; i < n; i++) {
 		if(_globals.graphs_in_keyspace[i] == gc) {
 			registered = true;
@@ -131,7 +143,7 @@ void Globals_AddGraph
 
 	if(registered == false) {
 		// append graph
-		array_append(_globals.graphs_in_keyspace, gc);
+		arr_append(_globals.graphs_in_keyspace, gc);
 	}
 
 	// release lock
@@ -146,7 +158,7 @@ void Globals_RemoveGraph
 	ASSERT(gc != NULL);
 
 	uint64_t i = 0;
-	uint64_t n = array_len(_globals.graphs_in_keyspace);
+	uint64_t n = arr_len(_globals.graphs_in_keyspace);
 	if(n == 0) return;
 
 	// acuire write lock
@@ -163,7 +175,7 @@ void Globals_RemoveGraph
 	ASSERT(i != n);
 
 	// graph located, remove it
-	array_del_fast(_globals.graphs_in_keyspace, i);
+	arr_del_fast(_globals.graphs_in_keyspace, i);
 
 	// release lock
 	Globals_Unlock () ;
@@ -181,7 +193,7 @@ void Globals_RemoveGraphByName
 
 	// search for graph
 	uint64_t i = 0;
-	uint64_t n = array_len(_globals.graphs_in_keyspace);
+	uint64_t n = arr_len(_globals.graphs_in_keyspace);
 	for(; i < n; i++) {
 		GraphContext *gc = _globals.graphs_in_keyspace[i];
 		if(strcmp(name, GraphContext_GetName(gc)) == 0) {
@@ -191,7 +203,7 @@ void Globals_RemoveGraphByName
 
 	if(i != n) {
 		// graph located, remove it
-		array_del_fast(_globals.graphs_in_keyspace, i);
+		arr_del_fast(_globals.graphs_in_keyspace, i);
 	}
 
 	// release lock
@@ -206,16 +218,13 @@ void Globals_ClearGraphs
 	// acquire write lock
 	Globals_WriteLock () ;
 	
-	for(uint i = 0; i < array_len(_globals.graphs_in_keyspace); i++) {
-		GraphContext *gc = _globals.graphs_in_keyspace[i];
-		if(gc->telemetry_stream != NULL) {
-			RedisModule_FreeString(ctx, gc->telemetry_stream);
-			gc->telemetry_stream = NULL;
-		}
+	for (uint i = 0 ; i < arr_len (_globals.graphs_in_keyspace) ; i++) {
+		GraphContext *gc = _globals.graphs_in_keyspace [i] ;
+		GraphContext_FreeTelemetryStreamName (gc, ctx) ;
 	}
 
 	// clear graph tracking
-	array_clear(_globals.graphs_in_keyspace);
+	arr_clear (_globals.graphs_in_keyspace) ;
 
 	// release lock
 	Globals_Unlock () ;
@@ -343,7 +352,7 @@ GraphContext *GraphIterator_Next
 
 	Globals_ReadLock () ;
 
-	if(it->idx < array_len(_globals.graphs_in_keyspace)) {
+	if(it->idx < arr_len(_globals.graphs_in_keyspace)) {
 		// prepare next call
 		gc = _globals.graphs_in_keyspace[it->idx++];
 		GraphContext_IncreaseRefCount(gc);
@@ -357,7 +366,7 @@ GraphContext *GraphIterator_Next
 // free globals
 void Globals_Free(void) {
 	rm_free(_globals.command_ctxs);
-	array_free(_globals.graphs_in_keyspace);
+	arr_free(_globals.graphs_in_keyspace);
 	StringPool_free(&_globals.string_pool);
 	pthread_rwlock_destroy(&_globals.lock);
 

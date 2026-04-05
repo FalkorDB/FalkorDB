@@ -99,22 +99,26 @@ bool _reduceNodeCount
 	// optimize by skiping SCAN and AGGREGATE
 	SIValue nodeCount;
 	GraphContext *gc = QueryCtx_GetGraphCtx();
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// if label is specified, count only labeled entities
-	if(label) {
+	if (label) {
 		Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
-		if(s) nodeCount = SI_LongVal(Graph_LabeledNodeCount(gc->g, s->id));
-		else nodeCount = SI_LongVal(0); // specified Label doesn't exists
+		if (s) {
+			nodeCount = SI_LongVal (Graph_LabeledNodeCount (g, s->id)) ;
+		} else {
+			nodeCount = SI_LongVal (0) ; // specified Label doesn't exists
+		}
 	} else {
-		nodeCount = SI_LongVal(Graph_NodeCount(gc->g));
+		nodeCount = SI_LongVal (Graph_NodeCount (g)) ;
 	}
 
 	// construct a constant expression, used by a new projection operation
 	AR_ExpNode *exp = AR_EXP_NewConstOperandNode(nodeCount);
 	// the new expression must be aliased to populate the Record
 	exp->resolved_name = opAggregate->aggregate_exps[0]->resolved_name;
-	AR_ExpNode **exps = array_new(AR_ExpNode *, 1);
-	array_append(exps, exp);
+	AR_ExpNode **exps = arr_new(AR_ExpNode *, 1);
+	arr_append(exps, exp);
 
 	OpBase *opProject = NewProjectOp (opAggregate->op.plan, exps) ;
 
@@ -216,8 +220,8 @@ void _reduceEdgeCount
 	AR_ExpNode *exp = AR_EXP_NewConstOperandNode(edgeCount);
 	// the new expression must be aliased to populate the Record
 	exp->resolved_name = opAggregate->aggregate_exps[0]->resolved_name;
-	AR_ExpNode **exps = array_new(AR_ExpNode *, 1);
-	array_append(exps, exp);
+	AR_ExpNode **exps = arr_new(AR_ExpNode *, 1);
+	arr_append(exps, exp);
 
 	OpBase *opProject = NewProjectOp (opAggregate->op.plan, exps) ;
 

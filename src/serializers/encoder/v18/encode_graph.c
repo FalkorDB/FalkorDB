@@ -29,9 +29,11 @@ static void _RdbSaveHeader
 	// Number of graph keys (graph context key + meta keys)
 	// Schema
 
-	ASSERT(gc != NULL);
+	ASSERT (gc != NULL) ;
 
-	GraphEncodeHeader *header = &(gc->encoding_context->header);
+	GraphEncodeContext *encoding_context = GraphContext_GetEncodingCtx (gc) ;
+
+	GraphEncodeHeader *header = &(encoding_context->header);
 
 	// graph name
 	SerializerIO_WriteBuffer(rdb, header->graph_name, strlen(header->graph_name) + 1);
@@ -76,7 +78,7 @@ static PayloadInfo _StatePayloadInfo
 	uint64_t offset,
 	uint64_t capacity
 ) {
-	Graph *g = gc->g;
+	Graph *g = GraphContext_GetGraph (gc) ;
 	uint64_t required_entities_count = 0;
 
 	switch(state) {
@@ -141,11 +143,12 @@ static PayloadInfo *_RdbSaveKeySchema
 	//      Number of entities encoded in this state
 
 	uint32_t payloads_count = 0;
-	PayloadInfo *payloads = array_new(PayloadInfo, 1);
+	PayloadInfo *payloads = arr_new(PayloadInfo, 1);
+	GraphEncodeContext *encoding_context = GraphContext_GetEncodingCtx (gc) ;
 
 	// get current encoding state
 	EncodeState current_state =
-		GraphEncodeContext_GetEncodeState(gc->encoding_context);
+		GraphEncodeContext_GetEncodeState (encoding_context) ;
 
 	// if this is the start of the encodeing, set the state to be NODES
 	if(current_state == ENCODE_STATE_INIT) current_state = ENCODE_STATE_NODES;
@@ -156,15 +159,15 @@ static PayloadInfo *_RdbSaveKeySchema
 
 	// check if this is the last key
 	bool last_key =
-		GraphEncodeContext_GetProcessedKeyCount(gc->encoding_context) ==
-		(GraphEncodeContext_GetKeyCount(gc->encoding_context) - 1);
+		GraphEncodeContext_GetProcessedKeyCount(encoding_context) ==
+		(GraphEncodeContext_GetKeyCount(encoding_context) - 1);
 
 	// remove capacity limitation on last key
 	if(last_key) capacity = VKEY_ENTITY_COUNT_UNLIMITED;
 
 	// get the current state encoded entities count
 	uint64_t offset =
-		GraphEncodeContext_GetProcessedEntitiesOffset(gc->encoding_context);
+		GraphEncodeContext_GetProcessedEntitiesOffset (encoding_context) ;
 
 	// while there are still capacity in this key and the state is valid
 	while(capacity > 0 && current_state < ENCODE_STATE_FINAL) {
@@ -174,7 +177,7 @@ static PayloadInfo *_RdbSaveKeySchema
 
 		// only include non empty states
 		if(payload.entities_count > 0) {
-			array_append(payloads, payload);
+			arr_append(payloads, payload);
 			if(!last_key) capacity -= payload.entities_count;
 		}
 
@@ -188,7 +191,7 @@ static PayloadInfo *_RdbSaveKeySchema
 	}
 
 	// save the number of payloads
-	payloads_count = array_len(payloads);
+	payloads_count = arr_len(payloads);
 	SerializerIO_WriteUnsigned(rdb, payloads_count);
 
 	// save paylopads
@@ -228,30 +231,35 @@ void RdbSaveGraph_latest
 	// each containing 100,000 nodes, encoded into two different RDB meta keys
 
 	GraphContext *gc = value;
-	Graph        *g = gc->g;
+	Graph        *g = GraphContext_GetGraph (gc) ;
 
 	// TODO: remove, no need, as GIL is taken
 
 	// acquire a read lock if we're not in a thread-safe context
-	if(_shouldAcquireLocks()) Graph_AcquireReadLock(gc->g);
+	if (_shouldAcquireLocks()) {
+		Graph_AcquireReadLock (g) ;
+	}
+
+	GraphEncodeContext *encoding_context = GraphContext_GetEncodingCtx (gc) ;
 
 	// get last encoded state
 	EncodeState current_state =
-		GraphEncodeContext_GetEncodeState(gc->encoding_context);
+		GraphEncodeContext_GetEncodeState(encoding_context);
 
 	if(current_state == ENCODE_STATE_INIT) {
 		// inital state, populate encoding context header
-		GraphEncodeContext_InitHeader(gc->encoding_context, gc->graph_name, g);
+		GraphEncodeContext_InitHeader (encoding_context,
+				GraphContext_GetName (gc), g) ;
 	}
 
 	// save header
-	_RdbSaveHeader(rdb, gc);
+	_RdbSaveHeader (rdb, gc) ;
 
 	// save payloads info for this key and retrive the key schema
 	PayloadInfo *payloads = _RdbSaveKeySchema(rdb, gc);
 
 	PayloadInfo *payload = NULL;
-	uint32_t payloads_count = array_len(payloads);
+	uint32_t payloads_count = arr_len(payloads);
 
 	for(uint i = 0; i < payloads_count; i++) {
 		payload = payloads+i;
@@ -302,24 +310,26 @@ void RdbSaveGraph_latest
 	// update encoding state for next virtual key
 	if(payload != NULL) {
 		// save the current state
-		GraphEncodeContext_SetEncodeState(gc->encoding_context, payload->state);
+		GraphEncodeContext_SetEncodeState(encoding_context, payload->state);
 
 		// save offset
-		GraphEncodeContext_SetProcessedEntitiesOffset(gc->encoding_context,
+		GraphEncodeContext_SetProcessedEntitiesOffset(encoding_context,
 				payload->offset + payload->entities_count);
 	}
 
 	// free payloads
-	array_free(payloads);
+	arr_free(payloads);
 
 	// increase processed key count
 	// if finished encoding, reset context
-	GraphEncodeContext_IncreaseProcessedKeyCount(gc->encoding_context);
-	if(GraphEncodeContext_Finished(gc->encoding_context)) {
-		GraphEncodeContext_Reset(gc->encoding_context);
+	GraphEncodeContext_IncreaseProcessedKeyCount (encoding_context) ;
+	if (GraphEncodeContext_Finished (encoding_context)) {
+		GraphEncodeContext_Reset (encoding_context) ;
 	}
 
 	// if a lock was acquired, release it
-	if(_shouldAcquireLocks()) Graph_ReleaseLock(g);
+	if (_shouldAcquireLocks()) {
+		Graph_ReleaseLock (g) ;
+	}
 }
 

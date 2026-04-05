@@ -75,7 +75,7 @@ EdgeTraverseCtx *EdgeTraverseCtx_New
 	EdgeTraverseCtx *edge_ctx = rm_malloc (sizeof (EdgeTraverseCtx)) ;
 
 	edge_ctx->e = e ;
-	edge_ctx->edges = array_new (Edge, 32) ;   // instantiate array to collect matching edges
+	edge_ctx->edges = arr_new (Edge, 32) ;   // instantiate array to collect matching edges
 
 	edge_ctx->edgeRecIdx = idx ;
 	edge_ctx->direction = _Traverse_SetDirection (ae, e) ;
@@ -143,10 +143,10 @@ bool EdgeTraverseCtx_SetEdge
 	ASSERT(edge_ctx != NULL);
 
 	// return false if all edges have been consumed
-	if(array_len(edge_ctx->edges) == 0) return false;
+	if(arr_len(edge_ctx->edges) == 0) return false;
 
 	// pop an edge and add it to the Record
-	Edge e = array_pop(edge_ctx->edges);
+	Edge e = arr_pop(edge_ctx->edges);
 	Record_AddEdge(r, edge_ctx->edgeRecIdx, e);
 
 	return true;
@@ -157,7 +157,7 @@ int EdgeTraverseCtx_EdgeCount
 	const EdgeTraverseCtx *edge_ctx
 ) {
 	ASSERT(edge_ctx != NULL);
-	return array_len(edge_ctx->edges);
+	return arr_len(edge_ctx->edges);
 }
 
 void EdgeTraverseCtx_Reset
@@ -166,7 +166,7 @@ void EdgeTraverseCtx_Reset
 ) {
 	ASSERT (edge_ctx != NULL) ;
 
-	array_clear (edge_ctx->edges) ;
+	arr_clear (edge_ctx->edges) ;
 	QGEdge_ResolveUnknownRelIDS (edge_ctx->e) ;
 }
 
@@ -178,7 +178,7 @@ void EdgeTraverseCtx_Free
 		return ;
 	}
 
-	array_free (edge_ctx->edges) ;
+	arr_free (edge_ctx->edges) ;
 	rm_free (edge_ctx) ;
 }
 

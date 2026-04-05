@@ -45,14 +45,14 @@ void Graph_DeleteNodes
 	Graph_SetMatrixPolicy (g, SYNC_POLICY_NOP) ;
 
 #if RG_DEBUG
-	Edge *es = array_new (Edge, 0) ;
+	Edge *es = arr_new (Edge, 0) ;
 	for (uint i = 0; i < node_count; i++) {
 		Node *n = nodes + i;
 		// validate assumption
 		Graph_GetNodeEdges (g, n, GRAPH_EDGE_DIR_BOTH, GRAPH_NO_RELATION, &es) ;
-		ASSERT (array_len (es) == 0) ;
+		ASSERT (arr_len (es) == 0) ;
 	}
-	array_free (es) ;
+	arr_free (es) ;
 #endif
 
 	//--------------------------------------------------------------------------
