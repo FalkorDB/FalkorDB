@@ -25,24 +25,32 @@ SIValue AR_ID(SIValue *argv, int argc, void *private_data) {
 }
 
 // returns an array of string representations of each label of a node
-SIValue AR_LABELS(SIValue *argv, int argc, void *private_data) {
-	if(SI_TYPE(argv[0]) == T_NULL) return SI_NullVal();
-
-	Node *node = argv[0].ptrval;
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	// retrieve node labels
-	uint label_count;
-	NODE_GET_LABELS(gc->g, node, label_count);
-	SIValue res = SI_Array(label_count);
-
-	for(uint i = 0; i < label_count; i++) {
-		Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
-		ASSERT(s != NULL);
-		const char *name = Schema_GetName(s);
-		SIArray_Append(&res, SI_ConstStringVal(name));
+SIValue AR_LABELS
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
+	if (SI_TYPE(argv[0]) == T_NULL) {
+		return SI_NullVal () ;
 	}
 
-	return res;
+	Node *node = argv[0].ptrval ;
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
+	Graph *g = GraphContext_GetGraph (gc) ;
+	// retrieve node labels
+	uint label_count ;
+	NODE_GET_LABELS (g, node, label_count) ;
+	SIValue res = SI_Array (label_count) ;
+
+	for (uint i = 0 ; i < label_count ; i++) {
+		Schema *s = GraphContext_GetSchemaByID (gc, labels [i], SCHEMA_NODE) ;
+		ASSERT (s != NULL) ;
+		const char *name = Schema_GetName (s) ;
+		SIArray_Append (&res, SI_ConstStringVal (name)) ;
+	}
+
+	return res ;
 }
 
 // returns true if input node contains all specified labels, otherwise false
@@ -54,7 +62,7 @@ SIValue AR_HAS_LABELS(SIValue *argv, int argc, void *private_data) {
 	SIValue      labels = argv[1];
 	EntityID     id     = ENTITY_GET_ID(node);
 	GraphContext *gc    = QueryCtx_GetGraphCtx();
-	Graph        *g     = gc->g;
+	Graph        *g     = GraphContext_GetGraph (gc) ;
 
 	// iterate over given labels
 	uint32_t labels_length = SIArray_Length(labels);
@@ -86,47 +94,85 @@ SIValue AR_HAS_LABELS(SIValue *argv, int argc, void *private_data) {
 	return SI_BoolVal(res);
 }
 
-/* returns a string representation of the type of a relation. */
-SIValue AR_TYPE(SIValue *argv, int argc, void *private_data) {
-	if(SI_TYPE(argv[0]) == T_NULL) return SI_NullVal();
-	char *type = "";
-	Edge *e = argv[0].ptrval;
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	int id = Edge_GetRelationID(e);
-	if(id != GRAPH_NO_RELATION) type = gc->relation_schemas[id]->name;
-	return SI_ConstStringVal(type);
+// returns a string representation of the type of a relation
+SIValue AR_TYPE
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
+	if (SI_TYPE (argv [0]) == T_NULL) {
+		return SI_NullVal () ;
+	}
+
+	const char *type = "" ;
+	Edge *e = argv[0].ptrval ;
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
+	int id = Edge_GetRelationID (e) ;
+
+	if (id != GRAPH_NO_RELATION) {
+		Schema *s = GraphContext_GetSchemaByID (gc, id, SCHEMA_EDGE) ;
+		ASSERT (s != NULL) ;
+		type = Schema_GetName (s) ;
+	}
+
+	return SI_ConstStringVal (type) ;
 }
 
-/* returns the start node of a relationship. */
-SIValue AR_STARTNODE(SIValue *argv, int argc, void *private_data) {
-	if(SI_TYPE(argv[0]) == T_NULL) return SI_NullVal();
-	Edge *e = argv[0].ptrval;
-	NodeID start_id = Edge_GetSrcNodeID(e);
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Node *src = rm_malloc(sizeof(Node));
-	*src = GE_NEW_NODE();
-	// Retrieve the node from the graph.
-	Graph_GetNode(gc->g, start_id, src);
-	SIValue si_node = SI_Node(src);
-	// Mark this value as a heap allocation so that it gets freed properly.
-	SIValue_SetAllocationType(&si_node, M_SELF);
-	return si_node;
+// returns the start node of a relationship
+SIValue AR_STARTNODE
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
+	if (SI_TYPE (argv [0]) == T_NULL) {
+		return SI_NullVal () ;
+	}
+
+	Edge *e = argv [0].ptrval ;
+	NodeID start_id = Edge_GetSrcNodeID (e) ;
+
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
+
+	Node *src = rm_malloc (sizeof (Node)) ;
+	*src = GE_NEW_NODE () ;
+
+	// retrieve the node from the graph
+	Graph_GetNode (GraphContext_GetGraph (gc), start_id, src) ;
+	SIValue si_node = SI_Node (src) ;
+
+	// mark this value as a heap allocation so that it gets freed properly
+	SIValue_SetAllocationType (&si_node, M_SELF) ;
+	return si_node ;
 }
 
-/* returns the end node of a relationship. */
-SIValue AR_ENDNODE(SIValue *argv, int argc, void *private_data) {
-	if(SI_TYPE(argv[0]) == T_NULL) return SI_NullVal();
-	Edge *e = argv[0].ptrval;
-	NodeID end_id = Edge_GetDestNodeID(e);
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Node *dest = rm_malloc(sizeof(Node));
-	*dest = GE_NEW_NODE();
-	// Retrieve the node from the graph.
-	Graph_GetNode(gc->g, end_id, dest);
-	SIValue si_node = SI_Node(dest);
-	// Mark this value as a heap allocation so that it gets freed properly.
-	SIValue_SetAllocationType(&si_node, M_SELF);
-	return si_node;
+// returns the end node of a relationship
+SIValue AR_ENDNODE
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
+	if (SI_TYPE(argv [0]) == T_NULL) {
+		return SI_NullVal () ;
+	}
+
+	Edge *e = argv[0].ptrval ;
+	NodeID end_id = Edge_GetDestNodeID (e) ;
+
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
+
+	Node *dest = rm_malloc (sizeof (Node)) ;
+	*dest = GE_NEW_NODE () ;
+
+	// retrieve the node from the graph
+	Graph_GetNode (GraphContext_GetGraph (gc), end_id, dest) ;
+	SIValue si_node = SI_Node (dest) ;
+
+	// mark this value as a heap allocation so that it gets freed properly
+	SIValue_SetAllocationType (&si_node, M_SELF) ;
+	return si_node ;
 }
 
 /* returns true if the specified property exists in the node, or relationship. */
@@ -148,9 +194,10 @@ static SIValue _AR_NodeDegree
 ) {
 	ASSERT(SI_TYPE(argv[0]) != T_NULL);
 
-	Node          *n     = (Node*)argv[0].ptrval;
-	uint64_t      count  = 0;
-	GraphContext  *gc    = QueryCtx_GetGraphCtx();
+	Node          *n    = (Node*)argv[0].ptrval;
+	uint64_t      count = 0;
+	GraphContext  *gc   = QueryCtx_GetGraphCtx();
+	Graph         *g    = GraphContext_GetGraph (gc) ;
 
 	if(argc > 1) {
 		// we're interested in specific relationship type(s)
@@ -191,18 +238,18 @@ static SIValue _AR_NodeDegree
 			SIValue elem = SIArray_Get(labels, i);
 			const char *label = elem.stringval;
 			// make sure relationship exists.
-			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_EDGE);
+			Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_EDGE) ;
 			if(s == NULL) {
 				continue;
 			}
 
 			// count edges
-			count += Graph_GetNodeDegree(gc->g, n, dir, s->id);
+			count += Graph_GetNodeDegree (g, n, dir, s->id) ;
 		}
 		SIArray_Free(labels);
 	} else {
-		// get all relations, regardless of their type.
-		count = Graph_GetNodeDegree(gc->g, n, dir, GRAPH_NO_RELATION);
+		// get all relations, regardless of their type
+		count = Graph_GetNodeDegree (g, n, dir, GRAPH_NO_RELATION) ;
 	}
 
 	SIValue res = SI_LongVal(count);
