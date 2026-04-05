@@ -90,6 +90,10 @@ jobs:
         run: |
           RUN_ID=$(gh api "repos/${{ github.repository }}/actions/workflows/${{ env.BUILD_WORKFLOW_NAME }}/runs?head_sha=${{ env.COMMIT_SHA }}&status=success" \
             --jq '.workflow_runs[0].id')
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "::error::No successful ${{ env.BUILD_WORKFLOW_NAME }} run found for commit ${{ env.COMMIT_SHA }}"
+            exit 1
+          fi
           echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
 
       - name: Retrieve built image AMD
