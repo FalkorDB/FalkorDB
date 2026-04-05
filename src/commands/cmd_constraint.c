@@ -204,12 +204,14 @@ static bool _Constraint_Drop
 	//--------------------------------------------------------------------------
 
 	// acquire graph write lock
-	Graph_AcquireWriteLock(gc->g);
+	Graph *g = GraphContext_GetGraph (gc) ;
+
+	Graph_AcquireWriteLock(g);
 
 	Schema_RemoveConstraint(s, c);
 
 	// release graph R/W lock
-	Graph_ReleaseLock(gc->g);
+	Graph_ReleaseLock(g);
 
 	// TODO: consider disallowing droping a pending constraint
 	// asynchronously delete constraint
@@ -254,7 +256,7 @@ static bool _Constraint_Create
 	Graph *g = GraphContext_GetGraph(gc);
 
 	// acquire graph write lock
-	Graph_AcquireWriteLock(gc->g);
+	Graph_AcquireWriteLock(g);
 
 	//--------------------------------------------------------------------------
 	// convert attribute name to attribute ID

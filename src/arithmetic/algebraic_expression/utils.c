@@ -261,12 +261,12 @@ AlgebraicExpression *_AlgebraicExpression_GetOperand
 static void _AlgebraicExpression_PopulateOperand
 (
 	AlgebraicExpression *operand,
-	const GraphContext *gc
+	GraphContext *gc
 ) {
 	// do not update matrix if already set,
 	// as algebraic expression test depends on this behavior
 	// TODO: Redesign _AlgebraicExpression_FromString to remove this condition
-	Graph *g = gc->g;
+	Graph *g = GraphContext_GetGraph (gc) ;
 	Delta_Matrix a = operand->operand.matrix;
 	Delta_Matrix z = Graph_GetZeroMatrix(g);
 	if(a != NULL && a != z) return;
@@ -300,7 +300,7 @@ static void _AlgebraicExpression_PopulateOperand
 static void _AlgebraicExpression_PopulateTransposedOperand
 (
 	AlgebraicExpression *operand,
-	const GraphContext *gc
+	GraphContext *gc
 ) {
 	// swap the row and column domains of the operand
 	const char *tmp = operand->operand.dest;
@@ -318,13 +318,17 @@ static void _AlgebraicExpression_PopulateTransposedOperand
 	Schema *s = NULL;
 	Delta_Matrix m = NULL;
 	const char *label = operand->operand.label;
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	if(label == NULL) {
-		m = Graph_GetAdjacencyMatrix(gc->g, true);
+		m = Graph_GetAdjacencyMatrix (g, true) ;
 	} else {
-		s = GraphContext_GetSchema(gc, operand->operand.label, SCHEMA_EDGE);
-		if(!s) m = Graph_GetZeroMatrix(gc->g);
-		else m = Graph_GetRelationMatrix(gc->g, s->id, true);
+		s = GraphContext_GetSchema (gc, operand->operand.label, SCHEMA_EDGE) ;
+		if (!s) {
+			m = Graph_GetZeroMatrix (g) ;
+		} else {
+			m = Graph_GetRelationMatrix (g, s->id, true) ;
+		}
 	}
 
 	operand->operand.matrix = m;
@@ -334,29 +338,29 @@ static void _AlgebraicExpression_PopulateTransposedOperand
 // if they are available
 void _AlgebraicExpression_PopulateOperands
 (
-	AlgebraicExpression *root,
-	const GraphContext *gc
+	AlgebraicExpression *exp,  // expression to resolve operands for
+	GraphContext *gc           // graph context
 ) {
 	uint child_count = 0;
 
-	switch(root->type) {
+	switch(exp->type) {
 		case AL_OPERATION:
-			child_count = AlgebraicExpression_ChildCount(root);
-			if(root->operation.op == AL_EXP_TRANSPOSE) {
+			child_count = AlgebraicExpression_ChildCount(exp);
+			if(exp->operation.op == AL_EXP_TRANSPOSE) {
 				ASSERT(child_count == 1 && "Transpose operation had invalid number of children");
-				AlgebraicExpression *child = _AlgebraicExpression_OperationRemoveDest(root);
+				AlgebraicExpression *child = _AlgebraicExpression_OperationRemoveDest(exp);
 				// fetch the transposed matrix and update the operand
 				_AlgebraicExpression_PopulateTransposedOperand(child, gc);
 				// replace this operation with the transposed operand
-				_AlgebraicExpression_InplaceRepurpose(root, child);
+				_AlgebraicExpression_InplaceRepurpose(exp, child);
 				break;
 			}
 			for(uint i = 0; i < child_count; i++) {
-				_AlgebraicExpression_PopulateOperands(CHILD_AT(root, i), gc);
+				_AlgebraicExpression_PopulateOperands(CHILD_AT(exp, i), gc);
 			}
 			break;
 		case AL_OPERAND:
-			_AlgebraicExpression_PopulateOperand(root, gc);
+			_AlgebraicExpression_PopulateOperand(exp, gc);
 			break;
 		default:
 			ASSERT("Unknown algebraic expression node type" && false);

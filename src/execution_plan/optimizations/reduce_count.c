@@ -99,14 +99,18 @@ bool _reduceNodeCount
 	// optimize by skiping SCAN and AGGREGATE
 	SIValue nodeCount;
 	GraphContext *gc = QueryCtx_GetGraphCtx();
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// if label is specified, count only labeled entities
-	if(label) {
+	if (label) {
 		Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
-		if(s) nodeCount = SI_LongVal(Graph_LabeledNodeCount(gc->g, s->id));
-		else nodeCount = SI_LongVal(0); // specified Label doesn't exists
+		if (s) {
+			nodeCount = SI_LongVal (Graph_LabeledNodeCount (g, s->id)) ;
+		} else {
+			nodeCount = SI_LongVal (0) ; // specified Label doesn't exists
+		}
 	} else {
-		nodeCount = SI_LongVal(Graph_NodeCount(gc->g));
+		nodeCount = SI_LongVal (Graph_NodeCount (g)) ;
 	}
 
 	// construct a constant expression, used by a new projection operation

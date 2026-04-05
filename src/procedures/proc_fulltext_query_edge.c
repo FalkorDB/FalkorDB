@@ -159,7 +159,7 @@ ProcedureResult Proc_FulltextQueryRelationshipInvoke
 	QueryRelationshipContext *pdata = ctx->privateData;
 
 	// populate context
-	pdata->g   = gc->g;
+	pdata->g   = GraphContext_GetGraph (gc) ;
 	pdata->r   = Schema_GetID(s);
 	pdata->idx = idx;
 
