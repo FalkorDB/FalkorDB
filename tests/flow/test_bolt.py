@@ -7,6 +7,7 @@ import struct
 import base64
 import os
 import time
+import websocket
 
 BOLT_PORT = 7687
 
@@ -23,85 +24,24 @@ def _bolt_teardown(env_self):
     if hasattr(env_self, 'bolt_con') and env_self.bolt_con is not None:
         env_self.bolt_con.close()
 
-def _ws_connect(port, retries=3):
-    """Perform a WebSocket upgrade handshake to the Bolt port.
+def _ws_create_connection(port, retries=3):
+    """Open a WebSocket connection to the Bolt port using websocket-client.
     Retries on timeout to handle slow server thread release (e.g. ASAN).
-    Returns (socket, True) on success, (None, False) on failure."""
+    Returns (ws, True) on success, (None, False) on failure."""
     for attempt in range(retries):
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(10)
         try:
-            s.connect(('127.0.0.1', port))
-            key = base64.b64encode(os.urandom(16)).decode()
-            request = (
-                "GET / HTTP/1.1\r\n"
-                f"Host: 127.0.0.1:{port}\r\n"
-                "Upgrade: websocket\r\n"
-                "Connection: Upgrade\r\n"
-                f"Sec-WebSocket-Key: {key}\r\n"
-                "Sec-WebSocket-Version: 13\r\n"
-                f"Origin: http://127.0.0.1:{port}\r\n"
-                "\r\n"
-            )
-            s.sendall(request.encode())
-            # read response byte-by-byte to avoid consuming WS frame data
-            response = b''
-            while b'\r\n\r\n' not in response:
-                b = s.recv(1)
-                if not b:
-                    break
-                response += b
-            return s, response.startswith(b'HTTP/1.1 101')
-        except (socket.timeout, TimeoutError):
-            s.close()
+            ws = websocket.create_connection(
+                f"ws://127.0.0.1:{port}/", timeout=10)
+            return ws, True
+        except (websocket.WebSocketTimeoutException,
+                websocket.WebSocketException, ConnectionRefusedError):
             if attempt < retries - 1:
                 time.sleep(2)
     return None, False
 
-def _ws_send_frame(s, data):
-    """Send a WebSocket binary frame (masked, as required by client)."""
-    mask_key = os.urandom(4)
-    masked = bytearray(len(data))
-    for i in range(len(data)):
-        masked[i] = data[i] ^ mask_key[i % 4]
-    header = bytearray()
-    header.append(0x82)  # FIN + binary opcode
-    length = len(data)
-    if length < 126:
-        header.append(0x80 | length)  # MASK bit set
-    elif length < 65536:
-        header.append(0x80 | 126)
-        header += struct.pack('>H', length)
-    else:
-        header.append(0x80 | 127)
-        header += struct.pack('>Q', length)
-    header += mask_key
-    s.sendall(header + masked)
-
-def _ws_recv_frame(s):
-    """Receive a WebSocket frame and return the payload bytes."""
-    head = s.recv(2)
-    if len(head) < 2:
-        return b''
-    payload_len = head[1] & 0x7F
-    if payload_len == 126:
-        ext = s.recv(2)
-        payload_len = struct.unpack('>H', ext)[0]
-    elif payload_len == 127:
-        ext = s.recv(8)
-        payload_len = struct.unpack('>Q', ext)[0]
-    data = bytearray()
-    while len(data) < payload_len:
-        chunk = s.recv(payload_len - len(data))
-        if not chunk:
-            break
-        data += chunk
-    return bytes(data)
-
-def _bolt_handshake_over_ws(s):
+def _bolt_handshake_over_ws(ws):
     """Send the Bolt handshake over an established WebSocket connection.
     Returns the server version response bytes."""
-    # small delay to let the server finish processing the WS upgrade
     time.sleep(0.1)
     # Bolt magic preamble (0x6060B017) + 4 version proposals
     handshake = struct.pack('>I', 0x6060B017)
@@ -111,8 +51,8 @@ def _bolt_handshake_over_ws(s):
     handshake += struct.pack('>I', 0x00000105)
     handshake += struct.pack('>I', 0x00000000)
     handshake += struct.pack('>I', 0x00000000)
-    _ws_send_frame(s, handshake)
-    response = _ws_recv_frame(s)
+    ws.send_binary(handshake)
+    _, response = ws.recv_data()
     return response
 
 
@@ -565,16 +505,16 @@ class testBolt():
         """Test WebSocket upgrade and Bolt protocol handshake over WS.
         Verifies that the server accepts a WS upgrade (HTTP 101) and then
         successfully negotiates a Bolt version over the WS transport."""
-        s, ok = _ws_connect(BOLT_PORT)
+        ws, ok = _ws_create_connection(BOLT_PORT)
         self.env.assertTrue(ok)
-        response = _bolt_handshake_over_ws(s)
+        response = _bolt_handshake_over_ws(ws)
         # response should be 4 bytes: 2 zero bytes + minor + major
         self.env.assertGreaterEqual(len(response), 4)
         if len(response) >= 4:
             # Bolt version 5.x expected
             self.env.assertEquals(response[-1], 5)
             self.env.assertGreaterEqual(response[-2], 1)
-        s.close()
+        ws.close(timeout=0)
 
     def test31_ws_reject_invalid_upgrade(self):
         """Test that the server rejects a non-WebSocket, non-Bolt connection
