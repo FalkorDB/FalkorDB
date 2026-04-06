@@ -175,7 +175,7 @@ static bool _read_config
 			goto error ;
 		}
 
-		_lbls = array_new (LabelID, 0) ;
+		_lbls = arr_new (LabelID, 0) ;
 		uint32_t l = SIArray_Length (v) ;
 
 		for (uint32_t i = 0; i < l; i++) {
@@ -187,7 +187,7 @@ static bool _read_config
 				goto error ;
 			}
 
-			array_append (_lbls, Schema_GetID (s)) ;
+			arr_append (_lbls, Schema_GetID (s)) ;
 		}
 
 		*lbls = _lbls ;
@@ -211,7 +211,7 @@ static bool _read_config
 			goto error ;
 		}
 
-		_rels = array_new (RelationID, 1) ;
+		_rels = arr_new (RelationID, 1) ;
 
 		const char *relation = SIArray_Get (v, 0).stringval ;
 		Schema *s = GraphContext_GetSchema (gc, relation, SCHEMA_EDGE) ;
@@ -221,7 +221,7 @@ static bool _read_config
 			goto error ;
 		}
 
-		array_append (_rels, Schema_GetID (s)) ;
+		arr_append (_rels, Schema_GetID (s)) ;
 		*rels = _rels ;
 		matched++ ;
 	}
@@ -237,11 +237,11 @@ static bool _read_config
 			goto error ;
 		}
 
-		*srcs = array_new (Node*, 1) ;
+		*srcs = arr_new (Node*, 1) ;
 		uint32_t l = SIArray_Length (v) ;
 		for (uint32_t i = 0; i < l; i++) {
 			SIValue *src = SIArray_GetRef (v, i) ;
-			array_append (*srcs, (Node*)src->ptrval) ;
+			arr_append (*srcs, (Node*)src->ptrval) ;
 		}
 
 		matched++ ;
@@ -258,11 +258,11 @@ static bool _read_config
 			goto error ;
 		}
 
-		*sinks = array_new (Node*, 1) ;
+		*sinks = arr_new (Node*, 1) ;
 		uint32_t l = SIArray_Length (v) ;
 		for (uint32_t i = 0; i < l; i++) {
 			SIValue *t = SIArray_GetRef (v, i) ;
-			array_append (*sinks, (Node*)t->ptrval) ;
+			arr_append (*sinks, (Node*)t->ptrval) ;
 		}
 		
 		matched++ ;
@@ -316,12 +316,12 @@ static bool _read_config
 
 error:
 	if (_lbls != NULL) {
-		array_free (_lbls) ;
+		arr_free (_lbls) ;
 		*lbls = NULL ;
 	}
 
 	if (_rels != NULL) {
-		array_free (_rels) ;
+		arr_free (_rels) ;
 		*rels = NULL ;
 	}
 
@@ -343,7 +343,7 @@ static void _process_yield
 ) {
 	int slot = 0 ;
 
-	for (uint i = 0; i < array_len (yield); i++) {
+	for (uint i = 0; i < arr_len (yield); i++) {
 		if (strcasecmp ("nodes", yield [i]) == 0) {
 			ctx->yield_nodes = ctx->output + slot++ ;
 		}
@@ -388,7 +388,7 @@ ProcedureResult Proc_MaxFlowInvoke
 	ASSERT (args != NULL) ;
 
 	// expecting a single argument
-	if (array_len ((SIValue *) args) != 1 || SI_TYPE (args[0]) != T_MAP) {
+	if (arr_len ((SIValue *) args) != 1 || SI_TYPE (args[0]) != T_MAP) {
 		ErrorCtx_SetError ("algo.maxFlow expects a single configuration map") ;
 		return PROCEDURE_ERR ;
 	}
@@ -414,7 +414,7 @@ ProcedureResult Proc_MaxFlowInvoke
 		goto cleanup ;
 	}
 
-	if (rels == NULL || array_len (rels) != 1) {
+	if (rels == NULL || arr_len (rels) != 1) {
 		ErrorCtx_SetError ("algo.maxFlow: 'relationshipTypes' is required "
 				"and must contain exactly one type") ;
 
@@ -432,8 +432,8 @@ ProcedureResult Proc_MaxFlowInvoke
 
 	if (srcs              == NULL ||
 		sinks             == NULL ||
-		array_len (srcs)  == 0    ||
-		array_len (sinks) == 0
+		arr_len (srcs)  == 0    ||
+		arr_len (sinks) == 0
 	) {
 		ErrorCtx_SetError ("algo.maxFlow: expects at least "
 				"one source and one sink") ;
@@ -443,8 +443,8 @@ ProcedureResult Proc_MaxFlowInvoke
 	}
 
 	// validate that source and sink sets are disjoint
-	uint n_srcs  = array_len (srcs) ;
-	uint n_sinks = array_len (sinks) ;
+	uint n_srcs  = arr_len (srcs) ;
+	uint n_sinks = arr_len (sinks) ;
 	bool disjoint = true ;
 
 	if (n_srcs == 1 && n_sinks == 1) {
@@ -507,8 +507,8 @@ ProcedureResult Proc_MaxFlowInvoke
 	GrB_OK (Delta_Matrix_export (&U, R, GrB_UINT64)) ;
 
 	GrB_Matrix A ;
-	GrB_OK (Build_Matrix (&A, NULL, g, lbls, array_len (lbls), rels,
-			array_len(rels), false, false)) ;
+	GrB_OK (Build_Matrix (&A, NULL, g, lbls, arr_len (lbls), rels,
+			arr_len(rels), false, false)) ;
 
 	//--------------------------------------------------------------------------
 	// cast A to uint64 matrix
@@ -575,8 +575,8 @@ ProcedureResult Proc_MaxFlowInvoke
 	NodeID src_id  = INVALID_ENTITY_ID ;
 	NodeID sink_id = INVALID_ENTITY_ID ;
 
-	bool multi_srcs  = array_len (srcs)  > 1 ;
-	bool multi_sinks = array_len (sinks) > 1 ;
+	bool multi_srcs  = arr_len (srcs)  > 1 ;
+	bool multi_sinks = arr_len (sinks) > 1 ;
 
 	if (!multi_srcs)  src_id  = ENTITY_GET_ID (srcs  [0]) ;
 	if (!multi_sinks) sink_id = ENTITY_GET_ID (sinks [0]) ;
@@ -601,7 +601,7 @@ ProcedureResult Proc_MaxFlowInvoke
 		if (multi_srcs) {
 			src_id = --n ; // source of sources id
 			// connect source of sources to each individual source
-			int l = array_len (srcs) ;
+			int l = arr_len (srcs) ;
 			for (int i = 0 ; i < l ; i++) {
 				Node *s = srcs[i] ;
 				NodeID s_id = ENTITY_GET_ID (s) ;
@@ -612,7 +612,7 @@ ProcedureResult Proc_MaxFlowInvoke
 		if (multi_sinks) {
 			sink_id = --n ; // sink of sinks id
 			// connect each sink to sink of sinks
-			int l = array_len (sinks) ;
+			int l = arr_len (sinks) ;
 			for (int i = 0 ; i < l ; i++) {
 				Node *s = sinks[i] ;
 				NodeID s_id = ENTITY_GET_ID (s) ;
@@ -655,7 +655,7 @@ ProcedureResult Proc_MaxFlowInvoke
 
 	if (info == GrB_SUCCESS) {
 		if (multi_srcs) {
-			int l = array_len (srcs) ;
+			int l = arr_len (srcs) ;
 			for (int i = 0 ; i < l ; i++) {
 				Node *s = srcs [i] ;
 				NodeID s_id = ENTITY_GET_ID (s) ;
@@ -664,7 +664,7 @@ ProcedureResult Proc_MaxFlowInvoke
 		}
 
 		if (multi_sinks) {
-			int l = array_len (sinks) ;
+			int l = arr_len (sinks) ;
 			for (int i = 0 ; i < l ; i++) {
 				Node *s = sinks [i] ;
 				NodeID s_id = ENTITY_GET_ID (s) ;
@@ -679,19 +679,19 @@ ProcedureResult Proc_MaxFlowInvoke
 
 cleanup:
 	if (srcs != NULL) {
-		array_free (srcs)  ;
+		arr_free (srcs)  ;
 	}
 
 	if (sinks != NULL) {
-		array_free (sinks) ;
+		arr_free (sinks) ;
 	}
 
 	if (lbls != NULL) {
-		array_free (lbls) ;
+		arr_free (lbls) ;
 	}
 
 	if (rels != NULL) {
-		array_free (rels) ;
+		arr_free (rels) ;
 	}
 
 	return res ;
@@ -753,7 +753,7 @@ SIValue *Proc_MaxFlowStep
 		GrB_OK (GrB_Vector_nvals (&nvals, unique_nodes)) ;
 
 		// allocate node arrays
-		SIValue *nodes = array_new (SIValue, nvals) ;
+		SIValue *nodes = arr_new (SIValue, nvals) ;
 
 		// start collecting nodes
 		GxB_Iterator it ;
@@ -769,7 +769,7 @@ SIValue *Proc_MaxFlowStep
 			// fetch node
 			Node *n = rm_malloc (sizeof (Node)) ;
 			Graph_GetNode (g, node_id, n) ;
-			array_append (nodes, SI_Node (n)) ;
+			arr_append (nodes, SI_Node (n)) ;
 
 			// mark as owner of memory allocation
 			SIValue_SetAllocationType (nodes + counter, M_SELF) ;
@@ -798,11 +798,11 @@ SIValue *Proc_MaxFlowStep
 	SIValue *flows = NULL ;
 
 	if (pdata->yield_edges != NULL) {
-		edges = array_new (SIValue, edge_count) ;
+		edges = arr_new (SIValue, edge_count) ;
 	}
 
 	if (pdata->yield_edgeFlows != NULL) {
-		flows = array_new (SIValue, edge_count) ;
+		flows = arr_new (SIValue, edge_count) ;
 	}
 
 	if (pdata->yield_maxFlow != NULL) {
@@ -839,7 +839,7 @@ SIValue *Proc_MaxFlowStep
 				e->dest_id    = j ;
 				e->relationID = pdata->rel_id ;
 
-				array_append (edges, SI_Edge (e)) ;
+				arr_append (edges, SI_Edge (e)) ;
 
 				// mark as owner of memory allocation
 				SIValue_SetAllocationType (edges + counter, M_SELF) ;
@@ -849,7 +849,7 @@ SIValue *Proc_MaxFlowStep
 			if (pdata->yield_edgeFlows != NULL) {
 				// get the entry A(i,j)
 				double flow_val = GxB_Iterator_get_FP64 (it) ;
-				array_append (flows, SI_DoubleVal (flow_val)) ;
+				arr_append (flows, SI_DoubleVal (flow_val)) ;
 			}
 
 			// move to the next entry
@@ -915,17 +915,17 @@ ProcedureResult Proc_MaxFlowFree
 // combination of: nodes (T_ARRAY), edges (T_ARRAY), edgeFlows (T_ARRAY)
 // and maxFlow (T_DOUBLE)
 ProcedureCtx *Proc_MaxFlowCtx(void) {
-	ProcedureOutput *outputs = array_new (ProcedureOutput, 4) ;
+	ProcedureOutput *outputs = arr_new (ProcedureOutput, 4) ;
 
 	ProcedureOutput output_nodes     = {.name = "nodes",     .type = T_ARRAY}  ;
 	ProcedureOutput output_edges     = {.name = "edges",     .type = T_ARRAY}  ;
 	ProcedureOutput output_maxFlow   = {.name = "maxFlow",   .type = T_DOUBLE} ;
 	ProcedureOutput output_edgeFlows = {.name = "edgeFlows", .type = T_ARRAY}  ;
 
-	array_append (outputs, output_nodes) ;
-	array_append (outputs, output_edges) ;
-	array_append (outputs, output_maxFlow) ;
-	array_append (outputs, output_edgeFlows) ;
+	arr_append (outputs, output_nodes) ;
+	arr_append (outputs, output_edges) ;
+	arr_append (outputs, output_maxFlow) ;
+	arr_append (outputs, output_edgeFlows) ;
 
 	ProcedureCtx *ctx = ProcCtxNew ("algo.maxFlow", 1,
 								   outputs,
