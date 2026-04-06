@@ -173,7 +173,7 @@ jobs:
           path: /tmp
           if_no_artifact_found: error
 
-      - name: Retrieve built image Ubuntu AMD server only
+      - name: Retrieve built image Debian AMD server only
         uses: dawidd6/action-download-artifact@8a338493df3d275e4a7a63bcff3b8fe97e51a927 # v19
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
@@ -183,7 +183,7 @@ jobs:
           path: /tmp
           if_no_artifact_found: error
 
-      - name: Retrieve built image Ubuntu ARM server only
+      - name: Retrieve built image Debian ARM server only
         uses: dawidd6/action-download-artifact@8a338493df3d275e4a7a63bcff3b8fe97e51a927 # v19
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
@@ -433,7 +433,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Ubuntu binaries
+          # Debian binaries
           gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-x64.so
           gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-arm64v8.so
           gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-x64.so
