@@ -1091,7 +1091,7 @@ class testEffects():
         self.env.flush()
 
         # replicate via effects
-        self.effects_enabled()
+        self.effects_enable()
 
         self.master_graph  = Graph(self.master, GRAPH_ID)
         self.replica_graph = Graph(self.replica, GRAPH_ID)
