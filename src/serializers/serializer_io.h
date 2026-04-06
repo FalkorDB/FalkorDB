@@ -41,6 +41,14 @@ SerializerIO SerializerIO_FromBufferedRedisModuleIO
 	bool encoder        // true for encoder, false decoder
 );
 
+// create a buffered serializer which uses RedisIO
+SerializerIO SerializerIOv2_FromBufferedRedisModuleIO
+(
+	RedisModuleIO *io,  // redis module io
+	bool encoder        // true for encoder, false decoder
+);
+
+
 //------------------------------------------------------------------------------
 // Serializer Write API
 //------------------------------------------------------------------------------
