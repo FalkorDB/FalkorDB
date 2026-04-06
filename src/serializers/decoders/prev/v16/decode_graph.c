@@ -15,11 +15,12 @@ static GraphContext *_GetOrCreateGraphContext
 		// new graph is being decoded
 		// inform the module and create new graph context
 		gc = GraphContext_New (graph_name) ;
+		Graph *g = GraphContext_GetGraph (gc) ;
 
 		// while loading the graph
 		// minimize matrix realloc and synchronization calls
-		Graph_AcquireWriteLock (gc->g) ;
-		Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_RESIZE) ;
+		Graph_AcquireWriteLock (g) ;
+		Graph_SetMatrixPolicy (g, SYNC_POLICY_RESIZE) ;
 	}
 
 	// free the name string, as it either not in used or copied
@@ -37,17 +38,10 @@ static void _InitGraphDataStructure
 	uint64_t node_count,
 	uint64_t edge_count,
 	uint64_t deleted_node_count,
-	uint64_t deleted_edge_count,
-	uint64_t label_count,
-	uint64_t relation_count
+	uint64_t deleted_edge_count
 ) {
-	Graph_AllocateNodes(g, node_count + deleted_node_count);
-	Graph_AllocateEdges(g, edge_count + deleted_edge_count);
-	for(uint64_t i = 0; i < label_count; i++) Graph_AddLabel(g);
-	for(uint64_t i = 0; i < relation_count; i++) Graph_AddRelationType(g);
-	// flush all matrices
-	// guarantee matrix dimensions matches graph's nodes count
-	Graph_ApplyAllPending(g, true);
+	Graph_AllocateNodes (g, node_count + deleted_node_count) ;
+	Graph_AllocateEdges (g, edge_count + deleted_edge_count) ;
 }
 
 static GraphContext *_DecodeHeader
@@ -87,26 +81,27 @@ static GraphContext *_DecodeHeader
 	uint64_t key_number = SerializerIO_ReadUnsigned(rdb);
 
 	GraphContext *gc = _GetOrCreateGraphContext(graph_name);
-	Graph *g = gc->g;
+	Graph *g = GraphContext_GetGraph (gc) ;
+	GraphDecodeContext *decoding_context = GraphContext_GetDecodingCtx (gc) ;
 
 	// if it is the first key of this graph,
 	// allocate all the data structures, with the appropriate dimensions
 	bool first_vkey =
-		GraphDecodeContext_GetProcessedKeyCount(gc->decoding_context) == 0;
+		GraphDecodeContext_GetProcessedKeyCount(decoding_context) == 0;
 
 	if(first_vkey == true) {
-		_InitGraphDataStructure(gc->g, node_count, edge_count,
-			deleted_node_count, deleted_edge_count, label_count, relation_count);
+		_InitGraphDataStructure (g, node_count, edge_count, deleted_node_count,
+				deleted_edge_count) ;
 
-		gc->decoding_context->multi_edge = arr_new(uint64_t, relation_count);
+		decoding_context->multi_edge = arr_new(uint64_t, relation_count);
 		for(uint i = 0; i < relation_count; i++) {
 			// enable/Disable support for multi-edge
 			// we will enable support for multi-edge on all relationship
 			// matrices once we finish loading the graph
-			arr_append(gc->decoding_context->multi_edge,  multi_edge[i]);
+			arr_append(decoding_context->multi_edge,  multi_edge[i]);
 		}
 
-		GraphDecodeContext_SetKeyCount(gc->decoding_context, key_number);
+		GraphDecodeContext_SetKeyCount(decoding_context, key_number);
 	}
 
 	// decode graph schemas
@@ -114,10 +109,10 @@ static GraphContext *_DecodeHeader
 
 	// save decode statistics for later progess reporting
 	// e.g. "Decoded 20000/4500000 nodes"
-	gc->decoding_context->node_count         = node_count;
-	gc->decoding_context->edge_count         = edge_count;
-	gc->decoding_context->deleted_node_count = deleted_node_count;
-	gc->decoding_context->deleted_edge_count = deleted_edge_count;
+	decoding_context->node_count         = node_count;
+	decoding_context->edge_count         = edge_count;
+	decoding_context->deleted_node_count = deleted_node_count;
+	decoding_context->deleted_edge_count = deleted_edge_count;
 
 	return gc;
 }
@@ -162,13 +157,15 @@ GraphContext *RdbLoadGraphContext_v16
 	//      Entities in payload
 	//  Payload(s) X N
 
-	GraphContext *gc = _DecodeHeader(rdb);
+	GraphContext *gc = _DecodeHeader (rdb) ;
+	Graph *g = GraphContext_GetGraph (gc) ;
+	GraphDecodeContext *decoding_context = GraphContext_GetDecodingCtx (gc) ;
 
 	// log progress
 	RedisModule_Log(NULL, "notice",
 			"Graph '%s' processing virtual key: %" PRId64 "/%" PRId64,
-			GraphContext_GetName(gc), gc->decoding_context->keys_processed + 1,
-			gc->decoding_context->graph_keys_count);
+			GraphContext_GetName(gc), decoding_context->keys_processed + 1,
+			decoding_context->graph_keys_count);
 
 	// load the key schema
 	PayloadInfo *payloads = _RdbLoadKeySchema(rdb);
@@ -185,15 +182,15 @@ GraphContext *RdbLoadGraphContext_v16
 		PayloadInfo payload = payloads[i];
 		switch(payload.state) {
 			case ENCODE_STATE_NODES:
-				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
+				Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
 				RdbLoadNodes_v16(rdb, gc, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
 						"Graph '%s' processed %zu/%" PRIu64 " nodes",
 						GraphContext_GetName(gc),
-						Graph_UncompactedNodeCount(gc->g),
-						gc->decoding_context->node_count);
+						Graph_UncompactedNodeCount(g),
+						decoding_context->node_count);
 
 				break;
 			case ENCODE_STATE_DELETED_NODES:
@@ -203,19 +200,19 @@ GraphContext *RdbLoadGraphContext_v16
 				RedisModule_Log(NULL, "notice",
 						"Graph '%s' processed %u/%" PRId64 " deleted nodes",
 						GraphContext_GetName(gc),
-						Graph_DeletedNodeCount(gc->g),
-						gc->decoding_context->deleted_node_count);
+						Graph_DeletedNodeCount(g),
+						decoding_context->deleted_node_count);
 
 				break;
 			case ENCODE_STATE_EDGES:
-				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
+				Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
 				RdbLoadEdges_v16(rdb, gc, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
 						"Graph '%s' processed %" PRId64 "/%" PRId64 " edges",
-						GraphContext_GetName(gc), Graph_EdgeCount(gc->g),
-						gc->decoding_context->edge_count);
+						GraphContext_GetName(gc), Graph_EdgeCount(g),
+						decoding_context->edge_count);
 
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
@@ -225,8 +222,8 @@ GraphContext *RdbLoadGraphContext_v16
 				RedisModule_Log(NULL, "notice",
 						"Graph '%s' processed %u/%" PRId64 " deleted edges",
 						GraphContext_GetName(gc),
-						Graph_DeletedEdgeCount(gc->g),
-						gc->decoding_context->deleted_edge_count);
+						Graph_DeletedEdgeCount(g),
+						decoding_context->deleted_edge_count);
 
 				break;
 			default:
@@ -238,19 +235,17 @@ GraphContext *RdbLoadGraphContext_v16
 	arr_free(payloads);
 
 	// update decode context
-	GraphDecodeContext_IncreaseProcessedKeyCount(gc->decoding_context);
+	GraphDecodeContext_IncreaseProcessedKeyCount(decoding_context);
 
 	// before finalizing keep encountered meta keys names, for future deletion
 	const char *key_name = RedisModule_StringPtrLen(rm_key_name, NULL);
 
 	// the virtual key name is not equal the graph name
-	if(strcmp(key_name, gc->graph_name) != 0) {
-		GraphDecodeContext_AddMetaKey(gc->decoding_context, key_name);
+	if(strcmp(key_name, GraphContext_GetName (gc)) != 0) {
+		GraphDecodeContext_AddMetaKey(decoding_context, key_name);
 	}
 
-	if (GraphDecodeContext_Finished (gc->decoding_context)) {
-		Graph *g = gc->g ;
-
+	if (GraphDecodeContext_Finished (decoding_context)) {
 		// release graph write lock
 		Graph_ReleaseLock (g) ;
 
@@ -310,7 +305,7 @@ GraphContext *RdbLoadGraphContext_v16
 		// make sure graph doesn't contains may pending changes
 		ASSERT(Graph_Pending(g) == false);
 
-		GraphDecodeContext_Reset(gc->decoding_context);
+		GraphDecodeContext_Reset (decoding_context) ;
 
 		RedisModule_Log(NULL, "notice", "Done decoding graph %s", GraphContext_GetName(gc));
 	}

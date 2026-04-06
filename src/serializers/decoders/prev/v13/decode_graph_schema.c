@@ -203,14 +203,9 @@ static void _RdbLoadSchema
 	char   *name = RedisModule_LoadStringBuffer(rdb, NULL);
 
 	if(!already_loaded) {
-		s = Schema_New(type, id, name);
-		if(type == SCHEMA_NODE) {
-			ASSERT(arr_len(gc->node_schemas) == id);
-			arr_append(gc->node_schemas, s);
-		} else {
-			ASSERT(arr_len(gc->relation_schemas) == id);
-			arr_append(gc->relation_schemas, s);
-		}
+		s = GraphContext_AddSchema (gc, name, type) ;
+		ASSERT (s != NULL) ;
+		ASSERT (Schema_GetID (s) == id) ;
 	}
 
 	RedisModule_Free(name);
@@ -279,7 +274,6 @@ void RdbLoadGraphSchema_v13
 	uint schema_count = RedisModule_LoadUnsigned(rdb);
 
 	// Load each node schema
-	gc->node_schemas = arr_ensure_cap(gc->node_schemas, schema_count);
 	for(uint i = 0; i < schema_count; i ++) {
 		_RdbLoadSchema(rdb, gc, SCHEMA_NODE, already_loaded);
 	}
@@ -288,7 +282,6 @@ void RdbLoadGraphSchema_v13
 	schema_count = RedisModule_LoadUnsigned(rdb);
 
 	// Load each edge schema
-	gc->relation_schemas = arr_ensure_cap(gc->relation_schemas, schema_count);
 	for(uint i = 0; i < schema_count; i ++) {
 		_RdbLoadSchema(rdb, gc, SCHEMA_EDGE, already_loaded);
 	}

@@ -10,6 +10,7 @@
 #include "src/util/rmalloc.h"
 #include "src/graph/query_graph.h"
 #include "src/graph/graphcontext.h"
+#include "src/graph/graphcontext_struct.h"
 
 void setup();
 void tearDown();
