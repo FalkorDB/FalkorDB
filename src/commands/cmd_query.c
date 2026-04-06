@@ -388,6 +388,7 @@ void _query
 	QueryCtx       *query_ctx   = QueryCtx_GetQueryCtx();
 	RedisModuleCtx *ctx         = CommandCtx_GetRedisCtx(command_ctx);
 	GraphContext   *gc          = CommandCtx_GetGraphContext(command_ctx);
+	Graph          *g           = GraphContext_GetGraph (gc) ;
 	ExecutionCtx   *exec_ctx    = NULL;
 
 	Globals_TrackCommandCtx(command_ctx);
@@ -397,9 +398,33 @@ void _query
 	// transition the query from waiting to executing
 	QueryCtx_AdvanceStage(query_ctx);
 
+	// acquire graph READ lock
+	// `ExecutionCtx_FromQuery` might read data from the graph's
+	// node / relationship schemas
+	// in rare cases this information can get invalidated by a WRITE query
+	// which introduces new schemas but later on removes them due to a failing
+	// for example:
+	//
+	// query e.g. "CREATE (a:A) RETURN a / 4"
+	//
+	// in case this query introduces the node label `A` it will remove it once
+	// it evaluates the expression a/4
+	//
+	// a READ query which discovered that label during `ExecutionCtx_FromQuery`
+	// will rely on a schema which will soon be removed
+	//
+	// NOTE: acquiring this lock at this point in time might be a bit too early
+	// as we should push it into `ExecutionCtx_FromQuery` some time after
+	// query parsing
+	Graph_AcquireReadLock (g) ;
+
 	// parse query parameters and build an execution plan
 	// or retrieve it from the cache
 	exec_ctx = ExecutionCtx_FromQuery(command_ctx);
+
+	// release graph READ lock
+	Graph_ReleaseLock (g) ;
+
 	if(exec_ctx == NULL || ErrorCtx_EncounteredError()) {
 		goto cleanup;
 	}
