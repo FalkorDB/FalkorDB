@@ -77,7 +77,6 @@ static GraphContext *_GetOrCreateGraphContext
 		// new graph is being decoded
 		// inform the module and create new graph context
 		gc = GraphContext_New (graph_name) ;
-		Graph *g = GraphContext_GetGraph (gc) ;
 	}
 
 	// free the name string, as it either not in used or copied
@@ -201,7 +200,7 @@ static PayloadInfo *_RdbLoadKeySchema
 	return payloads;
 }
 
-GraphContext *RdbLoadGraphContext_latest
+GraphContext *RdbLoadGraphContext_v18
 (
 	SerializerIO rdb,
 	const RedisModuleString *rm_key_name
