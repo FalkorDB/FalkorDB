@@ -1526,6 +1526,21 @@ Delta_Matrix Graph_GetAdjacencyMatrix
 
 // retrieves a label matrix
 // matrix is resized if its size doesn't match graph's node count
+// schema ID out of range — replica/primary are out of sync
+// log a warning and terminate to force a full resync on restart
+static void _SchemaDesyncAbort
+(
+	const char *type,  // "label" or "relation"
+	int id,            // the out-of-range ID
+	int count          // current schema count
+) {
+	RedisModule_Log(NULL, "warning",
+		"%s ID %d out of range (count: %d) - "
+		"replica/primary schema desync detected, aborting",
+		type, id, count);
+	exit(1);
+}
+
 Delta_Matrix Graph_GetLabelMatrix
 (
 	const Graph *g,
@@ -1536,6 +1551,10 @@ Delta_Matrix Graph_GetLabelMatrix
 
 	// return zero matrix if label_idx is out of range
 	if(label_idx < 0) return Graph_GetZeroMatrix(g);
+
+	if(label_idx >= Graph_LabelTypeCount(g)) {
+		_SchemaDesyncAbort("label", label_idx, Graph_LabelTypeCount(g));
+	}
 
 	Delta_Matrix m = g->labels[label_idx];
 	size_t n = Graph_RequiredMatrixDim(g);
@@ -1561,6 +1580,11 @@ Tensor Graph_GetRelationMatrix
 	if(relation_idx == GRAPH_NO_RELATION) {
 		m = g->adjacency_matrix;
 	} else {
+		if(relation_idx < 0 ||
+		   relation_idx >= Graph_RelationTypeCount(g)) {
+			_SchemaDesyncAbort("relation", relation_idx,
+				Graph_RelationTypeCount(g));
+		}
 		m = g->relations[relation_idx];
 	}
 
