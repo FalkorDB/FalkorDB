@@ -270,8 +270,8 @@ static OpResult SortReset
 			Record r = (Record)Heap_poll (op->heap) ;
 			OpBase_DeleteRecord (&r) ;
 		}
-		arr_free (op->buffer) ;
-		op->buffer = NULL ;
+		Heap_free (op->heap) ;
+		op->heap = NULL ;
 	}
 
 	op->first = true ;
