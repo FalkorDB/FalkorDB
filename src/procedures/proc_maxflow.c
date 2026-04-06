@@ -502,6 +502,8 @@ ProcedureResult Proc_MaxFlowInvoke
 	// then transpose into U so that U(i,j) represents the edge i→j
 	//--------------------------------------------------------------------------
 
+	//TODO: compress the matrix A to speed up max_flow on queries where fewer
+	// nodes are involved
 	GrB_Matrix U ;
 	Delta_Matrix R = Graph_GetRelationMatrix (g, rels[0], false) ;
 	GrB_OK (Delta_Matrix_export (&U, R, GrB_UINT64)) ;
@@ -594,9 +596,8 @@ ProcedureResult Proc_MaxFlowInvoke
 
 		GrB_OK (GrB_Matrix_resize (C, n, n)) ;
 
-		// FIXME: LAGraph will hang on values spread accross many orders of
-		// magnitude
 		double x =  INT32_MAX;
+
 
 		if (multi_srcs) {
 			src_id = --n ; // source of sources id
@@ -624,6 +625,14 @@ ProcedureResult Proc_MaxFlowInvoke
 	ASSERT (src_id  != INVALID_ENTITY_ID) ;
 	ASSERT (sink_id != INVALID_ENTITY_ID) ;
 
+	//--------------------------------------------------------------------------
+	// Filter out edges that are too small to stop LAGraph hang
+	//--------------------------------------------------------------------------
+	double max_capacity = 0;
+	GrB_OK (GrB_Matrix_reduce_FP64 (
+		&max_capacity, NULL, GrB_MAX_MONOID_FP64, C, NULL));
+	GrB_OK (GrB_Matrix_select_FP64(
+		C, NULL, NULL, GrB_VALUEGE_FP64, C, max_capacity / UINT32_MAX, NULL));
 
 	//--------------------------------------------------------------------------
 	// build the LAGraph graph (includes AT and EMin caches required by MaxFlow)
