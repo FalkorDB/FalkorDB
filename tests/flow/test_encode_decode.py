@@ -33,8 +33,9 @@ class test_encode_decode(FlowTestsBase):
         try:
             self.graph.delete()
         except Exception as e:
-            # graph may not exist if test was skipped or failed before creation
-            if "empty key" not in str(e).lower():
+            # tolerate missing graph key and dead server (e.g. ASAN timeout)
+            msg = str(e).lower()
+            if "empty key" not in msg and "connection" not in msg:
                 raise
 
     def test_01_nodes_over_multiple_keys(self):
