@@ -341,3 +341,105 @@ class test_encode_decode(FlowTestsBase):
             self.env, nodes_before.result_set, nodes_after.result_set
         )
         self.env.assertEquals(edges_before.result_set, edges_after.result_set)
+
+    def test_15_blob_boundary_node_counts(self):
+        # Boundary test for the v19 buffered serializer inline vs standalone blob
+        # threshold. BUFFER_SIZE = 256000, type prefix = 1 byte, size_t = 8 bytes.
+        # Inline max payload: 255991 bytes. Standalone min: 255992 bytes.
+        # We bracket the boundary with several node counts around ~63997-64001
+        # to ensure both inline and standalone blob paths survive encode/decode.
+        response = self.db.config_set("VKEY_MAX_ENTITY_COUNT", 100000)
+        self.env.assertEqual(response, "OK")
+
+        for n in [63997, 63998, 63999, 64000, 64001]:
+            label = f"Boundary_{n}"
+            self.graph.query(f"UNWIND range(1, {n}) AS id CREATE (:{label} {{id:id}})")
+
+            expected = self.graph.query(f"MATCH (n:{label}) RETURN count(n)")
+
+            # Save RDB & Load from RDB
+            self.redis_con.execute_command("DEBUG", "RELOAD")
+
+            actual = self.graph.query(f"MATCH (n:{label}) RETURN count(n)")
+            self.env.assertEquals(expected.result_set, actual.result_set)
+
+    def test_16_mixed_inline_and_blob_labels(self):
+        # Validate that mixing small (inline) and large (standalone blob) label
+        # matrices in a single graph encode/decode works correctly.
+        response = self.db.config_set("VKEY_MAX_ENTITY_COUNT", 100000)
+        self.env.assertEqual(response, "OK")
+
+        # Small label — matrix fits easily inline
+        self.graph.query("UNWIND range(1, 100) AS id CREATE (:SmallLabel {id:id})")
+        # Large label — matrix crosses the standalone blob boundary
+        self.graph.query("UNWIND range(1, 63999) AS id CREATE (:LargeLabel {id:id})")
+
+        expected_small = self.graph.query("MATCH (n:SmallLabel) RETURN count(n)")
+        expected_large = self.graph.query("MATCH (n:LargeLabel) RETURN count(n)")
+
+        # Save RDB & Load from RDB
+        self.redis_con.execute_command("DEBUG", "RELOAD")
+
+        actual_small = self.graph.query("MATCH (n:SmallLabel) RETURN count(n)")
+        actual_large = self.graph.query("MATCH (n:LargeLabel) RETURN count(n)")
+        self.env.assertEquals(expected_small.result_set, actual_small.result_set)
+        self.env.assertEquals(expected_large.result_set, actual_large.result_set)
+
+    def test_17_deleted_entities_boundary(self):
+        # Test that deleted entity ID lists near the 256KB boundary
+        # survive encode/decode. Each deleted ID is a uint64_t (8 bytes).
+        # 31999 * 8 = 255992 bytes → standalone blob path
+        # 31998 * 8 = 255984 bytes → inline path
+        response = self.db.config_set("VKEY_MAX_ENTITY_COUNT", 100000)
+        self.env.assertEqual(response, "OK")
+
+        for total, to_delete in [(32000, 31998), (32000, 31999)]:
+            label = f"Del_{to_delete}"
+            self.graph.query(
+                f"UNWIND range(1, {total}) AS id CREATE (:{label} {{id:id}})"
+            )
+
+            # Delete nodes to produce a deleted ID list near the boundary
+            self.graph.query(
+                f"MATCH (n:{label}) WHERE n.id <= {to_delete} DELETE n"
+            )
+
+            expected = self.graph.query(
+                f"MATCH (n:{label}) RETURN count(n)"
+            )
+
+            # Save RDB & Load from RDB
+            self.redis_con.execute_command("DEBUG", "RELOAD")
+
+            actual = self.graph.query(
+                f"MATCH (n:{label}) RETURN count(n)"
+            )
+            self.env.assertEquals(expected.result_set, actual.result_set)
+
+    def test_18_large_string_property_boundary(self):
+        # Test that large string properties near the blob boundary survive
+        # encode/decode. Strings are written as strlen(s) + 1 (null terminator).
+        # Max inline: 255990 chars + 1 null = 255991 bytes
+        # Min blob: 255991 chars + 1 null = 255992 bytes
+        response = self.db.config_set("VKEY_MAX_ENTITY_COUNT", 100000)
+        self.env.assertEqual(response, "OK")
+
+        for str_len in [255990, 255991]:
+            # Create a string of the given length using REDUCE to build it
+            self.graph.query(
+                "CREATE (:BigStr {val: " +
+                f"REDUCE(s = '', x IN range(1, {str_len}) | s + 'a')" +
+                "})"
+            )
+
+            expected = self.graph.query(
+                "MATCH (n:BigStr) RETURN size(n.val)"
+            )
+
+            # Save RDB & Load from RDB
+            self.redis_con.execute_command("DEBUG", "RELOAD")
+
+            actual = self.graph.query(
+                "MATCH (n:BigStr) RETURN size(n.val)"
+            )
+            self.env.assertEquals(expected.result_set, actual.result_set)
