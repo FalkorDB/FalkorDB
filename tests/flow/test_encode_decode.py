@@ -410,10 +410,10 @@ class test_encode_decode(FlowTestsBase):
         # encode / decode
         sizes = [100, 1000, 5000, 10000]
         for i, sz in enumerate(sizes):
+            val = 'a' * sz
             self.graph.query(
-                "CREATE (:Str {id: %d, val: "
-                "REDUCE(s = '', x IN range(1, %d) | s + 'a')" % (i, sz) +
-                "})"
+                "CREATE (:Str {id: $id, val: $val})",
+                params={'id': i, 'val': val}
             )
 
         expected = self.graph.query(
