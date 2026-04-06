@@ -30,7 +30,10 @@ class test_encode_decode(FlowTestsBase):
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def tearDown(self):
-        self.graph.delete()
+        try:
+            self.graph.delete()
+        except Exception:
+            pass
 
     def test_01_nodes_over_multiple_keys(self):
         # Create 3 nodes meta keys
