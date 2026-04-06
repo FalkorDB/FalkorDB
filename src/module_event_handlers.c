@@ -185,8 +185,8 @@ static void _CreateGraphMetaKeys
 		rm_free(uuid);
 	}
 
-	RedisModule_Log(ctx, "notice", "Created %d virtual keys for graph %s",
-			meta_key_count, GraphContext_GetName (gc)) ;
+	//RedisModule_Log(ctx, "notice", "Created %d virtual keys for graph %s",
+	//		meta_key_count, GraphContext_GetName (gc)) ;
 }
 
 // delete meta keys, upon RDB encode or decode finished event triggering
@@ -234,8 +234,8 @@ static void _DeleteGraphMetaKeys
 		GraphEncodeContext_ClearMetaKeys (encoding_ctx) ;
 	}
 
-	RedisModule_Log(ctx, "notice", "Deleted %d virtual keys for graph %s",
-			key_count, GraphContext_GetName (gc)) ;
+	//RedisModule_Log(ctx, "notice", "Deleted %d virtual keys for graph %s",
+	//		key_count, GraphContext_GetName (gc)) ;
 }
 
 // create the meta keys for each graph in the keyspace
