@@ -4,8 +4,6 @@
  */
 
 #include "RG.h"
-#include "LAGraphX.h"
-#include "GraphBLAS.h"
 
 #include "../value.h"
 #include "../util/arr.h"
@@ -20,203 +18,20 @@
 
 #include <string.h>
 #include <stdio.h>
-#include "../util/simple_timer.h"
 #include "procedures/proc_ctx.h"
 
-#define CENTRALITY_MAX_ITER 100
-
-//WARNING: JIT cannot use these macros, so you will have to change the
-// JIT functions below by hand if you want to change these. look for '(1 << 10)'
-#define HLL_P 10                   // Precision
-#define HLL_REGISTERS (1 << HLL_P) // number of registers
-#define HLL_ALPHA 0.72134          // Constant for m >= 128
-// register a function (or type) and the jit string for its definition
-#define JIT_STR(f, var) static char* var = #f; f
-
-JIT_STR(
-typedef struct {
-	uint8_t registers[(1 << 10)];
-} HLL;
-, HLL_jit)
-
-static __inline uint8_t _hll_rank(uint32_t hash, uint8_t bits) {
-	uint8_t i;
-
-	for(i = 1; i <= 32 - bits; i++) {
-		if(hash & 1)
-			break;
-
-		hash >>= 1;
-	}
-
-	return i;
-}
-
-static __inline void _hll_add_hash(HLL *hll, uint32_t hash) {
-	uint32_t index = hash >> (32 - HLL_P);
-	uint8_t rank = _hll_rank(hash, HLL_P);
-
-	if(rank > hll->registers[index]) {
-		hll->registers[index] = rank;
-	}
-}
-
-double _hll_count(const HLL *hll) {
-	uint32_t i;
-
-	double alpha_mm = 0.7213 / (1.0 + 1.079 / (double) HLL_REGISTERS);
-
-	alpha_mm *= ((double) HLL_REGISTERS * (double) HLL_REGISTERS);
-
-	double sum = 0;
-	for(uint32_t i = 0; i < HLL_REGISTERS; i++) {
-		sum += 1.0 / (1 << hll->registers[i]);
-	}
-
-	double estimate = alpha_mm / sum;
-
-	if (estimate <= 5.0 / 2.0 * (double) HLL_REGISTERS) {
-		int zeros = 0;
-
-		for(i = 0; i < HLL_REGISTERS; i++)
-			zeros += (hll->registers[i] == 0);
-
-		if(zeros)
-			estimate = (double)HLL_REGISTERS * log((double) HLL_REGISTERS / zeros);
-
-	} else if (estimate > (1.0 / 30.0) * 4294967296.0) {
-		estimate = -4294967296.0 * log(1.0 - (estimate / 4294967296.0));
-	}
-
-	return estimate;
-}
-
-//------------------------------------------------------------------------------
-// GraphBLAS Ops
-//------------------------------------------------------------------------------
-
-// no need to register in JIT, not proformance critical
-// load a new HLL set with *x hashes in the set.
-void fdb_hll_init(
-	HLL *z,
-	const uint64_t *x,
-	GrB_Index i,
-	GrB_Index j,
-	bool theta
-) {
-	int64_t weight = *x;
-	memset (z->registers, 0, HLL_REGISTERS);
-	// build a hash chain seeded from the node index i:
-	// each iteration hashes the previous result, yielding 'weight'
-	// distinct pseudo-random values for the HLL sketch
-	uint32_t hash = XXH32(&i, sizeof(GrB_Index), 0);
-	for(int64_t h = 0; h < weight; h++) {
-		_hll_add_hash(z, hash);
-		hash = XXH32(&hash, sizeof(uint32_t), 0);
-	}
-}
-
-JIT_STR (
-void fdb_hll_merge
+// Forward declaration. FUTURE: add to LAGraph and simply include
+int LAGr_HarmonicCentrality
 (
-	HLL *z,
-	const HLL *x,
-	const HLL *y
-) {
-	for(uint32_t i = 0; i < (1 << 10); i++) {
-		z->registers[i] = y->registers[i] > x->registers[i] ?
-		                  y->registers[i] : x->registers[i];
-	}
-}, FDB_HLL_MERGE_STR)
-
-JIT_STR (
-void fdb_hll_delta
-(
-	double *z,
-	const HLL *x,
-	const HLL *y
-) {
-	*z = 0;
-	bool diff = 0 != memcmp(x->registers, y->registers, (1 << 10));
-	if(diff) {
-		uint32_t i;
-
-		double alpha_mm = 0.7213 / (1.0 + 1.079 / (double) (1 << 10));
-
-		alpha_mm *= ((double) (1 << 10) * (double) (1 << 10));
-
-		double sum = 0;
-		for(uint32_t i = 0; i < (1 << 10); i++) {
-			sum += 1.0 / (1 << x->registers[i]);
-		}
-
-		double estimate = alpha_mm / sum;
-
-		if (estimate <= 5.0 / 2.0 * (double) (1 << 10)) {
-			int zeros = 0;
-
-			for(i = 0; i < (1 << 10); i++)
-				zeros += (x->registers[i] == 0);
-
-			if(zeros)
-				estimate = (double)(1 << 10) * log((double) (1 << 10) / zeros);
-
-		} else if (estimate > (1.0 / 30.0) * 4294967296.0) {
-			estimate = -4294967296.0 * log(1.0 - (estimate / 4294967296.0));
-		}
-
-		*z = estimate;
-
-		sum = 0;
-		for(uint32_t i = 0; i < (1 << 10); i++) {
-			sum += 1.0 / (1 << y->registers[i]);
-		}
-
-		estimate = alpha_mm / sum;
-
-		if (estimate <= 5.0 / 2.0 * (double) (1 << 10)) {
-			int zeros = 0;
-
-			for(i = 0; i < (1 << 10); i++)
-				zeros += (y->registers[i] == 0);
-
-			if(zeros)
-				estimate = (double)(1 << 10) * log((double) (1 << 10) / zeros);
-
-		} else if (estimate > (1.0 / 30.0) * 4294967296.0) {
-			estimate = -4294967296.0 * log(1.0 - (estimate / 4294967296.0));
-		}
-		*z -= estimate;
-	}
-}, FDB_HLL_DELTA_STR)
-
-JIT_STR (
-void fdb_hll_second
-(
-	HLL *z,
-	bool *x, //unused
-	const HLL *y
-) {
-	memcpy(z->registers, y->registers, 1 << 10);
-}, FDB_HLL_SECOND_STR)
-
-int64_t print_hll
-(
-	char *string,        // value is printed to the string
-	size_t string_size,  // size of the string array
-	const void *value,   // HLL value to print
-	int verbose          // if >0, print verbosely; else tersely
-) {
-	const HLL *hll = (const HLL *)value;
-
-	if(verbose > 0) {
-		return snprintf(string, string_size,
-			"HLL{bits=%u, size=%u, count=%.2f}",
-			HLL_P, HLL_REGISTERS, _hll_count(hll));
-	}
-
-	return snprintf(string, string_size, "HLL{count=%.2f}", _hll_count(hll));
-}
+	// outputs:
+	GrB_Vector *scores,          // FP64 scores by original node ID
+	GrB_Vector *reachable_nodes, // [optional] estimate the number of reach-
+	                             // able nodes from the given node.
+	// inputs:
+	const LAGraph_Graph G,         // input graph
+	const GrB_Vector node_weights, // participating nodes and their weights
+	char *msg
+) ;
 
 // closeness invoke examples:
 //
@@ -229,15 +44,18 @@ int64_t print_hll
 
 // Harmonic Centrality procedure context
 typedef struct {
-	const Graph *g;            // graph
-	AttributeID  weight_prop;  // weight attribute id
-	GrB_Vector   scores;       // harmonic centrality scores (FP64, index = nodeID)
-	GrB_Info     info;         // iterator state
-	GxB_Iterator it;           // iterator over scores
-	Node         node;         // current node
-	SIValue     *yield_node;   // nodes
-	SIValue     *yield_score;  // score
-	SIValue      output[2];    // array with up to 2 entries [node, score]
+	const Graph *g;                // graph
+	AttributeID  weight_prop;      // weight attribute id
+	GrB_Vector   scores;           // harmonic centrality scores (FP64)
+	GrB_Vector   reachable_nodes;  // reachable node estimates (INT64)
+	GrB_Info     info;             // iterator state
+	GxB_Iterator it;               // iterator over scores
+	GxB_Iterator it_reach;         // iterator over reachable_nodes (same sparsity as scores)
+	Node         node;             // current node
+	SIValue     *yield_node;       // nodes
+	SIValue     *yield_score;      // score
+	SIValue     *yield_reachable;  // reachable node estimate
+	SIValue      output[3];        // array with up to 3 entries [node, score, reachable]
 } HarmonicCentrality_Context ;
 
 // process procedure yield
@@ -255,6 +73,11 @@ static void _process_yield
 
 		else if (strcasecmp ("score", yield[i]) == 0) {
 			ctx->yield_score = ctx->output + idx ;
+			idx++ ;
+		}
+
+		else if (strcasecmp ("reachable", yield[i]) == 0) {
+			ctx->yield_reachable = ctx->output + idx ;
 			idx++ ;
 		}
 
@@ -442,252 +265,6 @@ error:
 	return false ;
 }
 
-// compute harmonic closeness centrality estimates using HLL BFS propagation
-//
-// each node maintains an HLL sketch of "reachable nodes seen so far"
-// at BFS level d, sketches are propagated along edges
-// the harmonic contribution delta/d is accumulated into each node's score,
-// where delta is the number of new nodes discovered at that level
-static ProcedureResult _calculate_centrality
-(
-	GrB_Vector *scores,            // output: FP64 scores by original node ID
-	const GrB_Matrix A,            // adjacency matrix (original indices)
-	const GrB_Vector node_weights  // participating nodes (original indices)
-) {
-	ASSERT (A            != NULL) ;
-	ASSERT (scores       != NULL) ;
-	ASSERT (node_weights != NULL) ;
-
-	GrB_Matrix    _A         = NULL;
-	GxB_Container score_cont = NULL;
-	GrB_Index     nrows      = 0;
-	GrB_Index     nvals      = 0;
-
-	// simple_timer_t t_total;
-	// simple_timer_t t_phase;
-	// simple_tic(t_total);
-
-	GrB_OK (GrB_Vector_size(&nrows, node_weights));
-	GrB_OK (GrB_Vector_nvals(&nvals, node_weights));
-	GrB_OK (GrB_Vector_new(scores, GrB_FP64, nrows));
-
-	if (nvals == 0) {
-		return PROCEDURE_OK;
-	}
-
-	// printf("[centrality] n_participating=%llu\n", (unsigned long long) nvals);
-	
-	// double check weight type and maximum weight requirements
-	GrB_Type weight_t = NULL;
-	GrB_OK (GxB_Vector_type(&weight_t, node_weights));
-	ASSERT(weight_t == GrB_BOOL || weight_t == GrB_INT64);
-	if (weight_t == GrB_INT64){
-		int64_t max_w = 0, min_w = 0;
-		GrB_OK (GrB_Vector_reduce_INT64(
-			&max_w, NULL, GrB_MAX_MONOID_INT64, node_weights, NULL));
-		GrB_OK (GrB_Vector_reduce_INT64(
-			&min_w, NULL, GrB_MIN_MONOID_INT64, node_weights, NULL));
-		if (min_w < 0 || max_w > 127){
-			ErrorCtx_SetError(
-				"algo.Centrality: node weights to large (>127)");
-			return PROCEDURE_ERR;
-		}
-	}
-
-	//--------------------------------------------------------------------------
-	// build compact submatrix _A
-	//--------------------------------------------------------------------------
-
-	// simple_tic(t_phase);
-
-	GrB_Descriptor desc = NULL ;
-	GrB_OK (GrB_Descriptor_new (&desc)) ;
-	GrB_OK (GrB_set (desc, GxB_USE_INDICES, GxB_COLINDEX_LIST)) ;
-	GrB_OK (GrB_set (desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST)) ;
-	GrB_OK (GrB_Matrix_new (&_A, GrB_BOOL, nvals, nvals)) ;
-	GrB_set (_A, GrB_ROWMAJOR, GrB_STORAGE_ORIENTATION_HINT) ;
-	GrB_set (_A, GxB_SPARSE, GxB_SPARSITY_CONTROL) ;
-	GrB_OK (GxB_Matrix_extract_Vector (
-		_A, NULL, NULL, A, node_weights, node_weights, desc)) ;
-	GrB_free (&desc) ;
-
-	//--------------------------------------------------------------------------
-	// create scores vector (0.0 at each participating node)
-	//--------------------------------------------------------------------------
-
-	GrB_OK (GrB_Vector_assign_FP64(*scores, node_weights, NULL, 0.0,
-			GrB_ALL, 0, GrB_DESC_S));
-	GrB_OK (GrB_set (*scores, GxB_SPARSE | GxB_FULL, GxB_SPARSITY_CONTROL));
-	GrB_OK (GxB_Container_new(&score_cont));
-	GrB_OK (GxB_unload_Vector_into_Container(*scores, score_cont, NULL));
-
-	//--------------------------------------------------------------------------
-	// Initialize HLL
-	//--------------------------------------------------------------------------
-
-	// simple_tic(t_phase);
-	GrB_Type      hll_t       = NULL;
-	GrB_Vector    new_sets    = NULL;
-	GrB_Vector    old_sets    = NULL;
-	GxB_Container old_cont    = NULL;
-	GrB_Vector    flat_scores = NULL;
-	GrB_Vector    flat_weight = NULL;
-	GrB_Vector    delta_vec   = NULL;
-
-	GrB_IndexUnaryOp init_hlls      = NULL;
-	GrB_BinaryOp     shallow_second = NULL;
-	GrB_BinaryOp     merge_hll_biop = NULL;
-	GrB_Monoid       merge_hll      = NULL;
-	GrB_Semiring     merge_second   = NULL;
-	// WARNING: op has side effects
-	GrB_BinaryOp     delta_hll      = NULL;
-
-
-	GrB_OK (GxB_Type_new (&hll_t, sizeof(HLL), "HLL" , HLL_jit));
-	GrB_OK (GrB_Vector_new (&new_sets, hll_t, nvals));
-	GrB_OK (GrB_Vector_new (&old_sets, hll_t, nvals));
-	GrB_OK (GxB_Container_new (&old_cont)) ;
-	GrB_OK (GrB_Vector_new (&flat_scores, GrB_FP64, nvals));
-	GrB_OK (GrB_Vector_new (&flat_weight, GrB_INT64, nvals));
-	GrB_OK (GxB_Vector_extractTuples_Vector (
-		NULL, flat_weight, node_weights, NULL));
-
-	GrB_OK(GrB_free(&score_cont->x));
-	score_cont->x = flat_scores;
-
-	// init op: weight (INT64) at row index i → HLL seeded with 'weight' hashes
-	GrB_OK(GrB_IndexUnaryOp_new(&init_hlls,
-		(GxB_index_unary_function) fdb_hll_init, hll_t, GrB_INT64, GrB_BOOL));
-
-	// merge binary op (HLL, HLL) -> HLL  in-place: z == x required
-	GrB_OK(GxB_BinaryOp_new(&merge_hll_biop,
-		(GxB_binary_function) fdb_hll_merge, hll_t, hll_t, hll_t,
-		"fdb_hll_merge", FDB_HLL_MERGE_STR));
-
-	// second op
-	GrB_OK(GxB_BinaryOp_new(&shallow_second,
-		(GxB_binary_function) fdb_hll_second, hll_t, GrB_BOOL, hll_t,
-		"fdb_hll_second", FDB_HLL_SECOND_STR));
-
-	// merge monoid — identity is an empty (all-zero) HLL sketch
-	HLL hll_zero = {0};
-	GrB_OK(GrB_Monoid_new_UDT(&merge_hll, merge_hll_biop, &hll_zero));
-
-	// semiring: add = merge monoid, multiply = copy (pass-through second operand)
-	GrB_OK(GrB_Semiring_new(&merge_second, merge_hll, shallow_second));
-
-	// delta op: (HLL_old, HLL_new) → FP64 cardinality change
-	// WARNING: side-effect: overwrites old registers with new on any difference
-	GrB_OK(GxB_BinaryOp_new(&delta_hll,
-		(GxB_binary_function) fdb_hll_delta, GrB_FP64, hll_t, hll_t,
-		"fdb_hll_delta", FDB_HLL_DELTA_STR));
-
-	// delta output: one FP64 entry per participating node
-	GrB_OK(GrB_Vector_new(&delta_vec, GrB_FP64, nvals));
-
-	//--------------------------------------------------------------------------
-	// Load vector values
-	//--------------------------------------------------------------------------
-	// initialize HLLs
-	GrB_OK (GrB_Vector_apply_IndexOp_BOOL (
-		new_sets, NULL, NULL, init_hlls, flat_weight, false, NULL));
-	GrB_OK (GrB_Vector_apply_IndexOp_BOOL (
-		old_sets, NULL, NULL, init_hlls, flat_weight, false, NULL));
-	GrB_OK (GrB_set (old_sets, GxB_BITMAP, GxB_SPARSITY_CONTROL));
-
-	GrB_OK (GrB_free (&flat_weight));
-	GrB_OK (GrB_Vector_assign_FP64 (
-		flat_scores, NULL, NULL, 0.0, GrB_ALL, 0, NULL));
-
-	//--------------------------------------------------------------------------
-	// HLL BFS propagation
-	//--------------------------------------------------------------------------
-
-	int64_t changes = 0 ;
-	// simple_tic(t_phase);
-	for (int d = 1; d <= CENTRALITY_MAX_ITER; d++) {
-		simple_timer_t t_loop ;
-
-		changes = 0 ;
-		// simple_tic(t_loop);
-
-		// foward bfs
-		// merge each neighbor's pre-round set into this node's set
-		// target kernel for inplace adjustments
-		GrB_OK (GrB_mxv(
-			new_sets, NULL, merge_hll_biop, merge_second, _A, old_sets, NULL)) ;
-		// printf("[centrality] merge time: %.2f ms\n",
-		// 	TIMER_GET_ELAPSED_MILLISECONDS(t_loop));
-
-		GrB_OK (GxB_unload_Vector_into_Container(old_sets, old_cont, NULL));
-		// simple_tic(t_loop);
-		// find the delta between last round and this one
-
-		GrB_OK (GrB_eWiseMult(
-			delta_vec, NULL, NULL, delta_hll, new_sets, old_cont->x, NULL));
-		GrB_OK (GrB_Vector_assign (
-			old_cont->x, NULL, NULL, new_sets, GrB_ALL, 0, NULL));
-
-		int32_t status = 0;
-		GrB_OK (GrB_get(delta_vec, &status, GxB_SPARSITY_STATUS));
-		ASSERT (status == GxB_FULL);
-
-		// old_set bitmap is the set of nodes with non-zero deltas
-		GrB_OK (GrB_apply(
-			old_cont->b, NULL, NULL, GrB_IDENTITY_BOOL, delta_vec, NULL));
-		GrB_OK (GrB_Vector_reduce_INT64(
-			&changes, NULL, GrB_PLUS_MONOID_INT64, old_cont->b, NULL));
-		old_cont->nvals = changes;
-		GrB_OK (GxB_load_Vector_from_Container(old_sets, old_cont, NULL));
-
-		// use the deltas to update the score
-		GrB_OK (GrB_apply(flat_scores, NULL, GrB_PLUS_FP64, GrB_DIV_FP64,
-			delta_vec, (double) d, NULL));
-
-		// stop when no HLL cardinality changed this round
-		if (changes == 0) {
-			break ;
-		}
-	}
-	// printf("[centrality] HLL BFS propagation: %.2f ms\n",
-	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
-
-	//--------------------------------------------------------------------------
-	// write flat_scores into score_cont->x, clear iso, reload scores vector
-	//--------------------------------------------------------------------------
-
-	// simple_tic(t_phase);
-	score_cont->iso = false;
-	GrB_OK (GxB_load_Vector_from_Container(*scores, score_cont, NULL));
-	GrB_OK (GxB_Container_free(&score_cont));
-
-	// printf("[centrality] score write-back: %.2f ms\n",
-	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
-
-	//--------------------------------------------------------------------------
-	// cleanup
-	//--------------------------------------------------------------------------
-
-	// free operators (semiring before monoid)
-	GrB_free(&merge_second);
-	GrB_free(&merge_hll);
-	GrB_free(&shallow_second);
-	GrB_free(&merge_hll_biop);
-	GrB_free(&delta_hll);
-	GrB_free(&init_hlls);
-
-	GrB_free(&delta_vec);
-	GrB_free(&new_sets);
-	GrB_free(&old_sets);
-	GrB_free(&old_cont);
-	GrB_free(&hll_t);
-	GrB_free(&_A);
-
-	// printf("[centrality] _calculate_centrality total: %.2f ms\n",
-	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_total));
-
-	return PROCEDURE_OK ;
-}
 
 // invoke the procedure
 ProcedureResult Proc_CentralityInvoke
@@ -769,11 +346,13 @@ ProcedureResult Proc_CentralityInvoke
 	// run centrality
 	//--------------------------------------------------------------------------
 
-	GrB_Matrix A      = NULL;   // Matrix with the edges of specified types
-	GrB_Vector nodes  = NULL;   // Vector of participating nodes
-	GrB_Vector scores = NULL;   // score[i] is the centrality of node i
-	bool sym          = false;  // matrix is directed
-	bool compact      = true;
+	GrB_Matrix    A              = NULL;   // Matrix with the edges of specified types
+	GrB_Vector    nodes          = NULL;   // Vector of participating nodes
+	GrB_Vector    scores         = NULL;   // score[i] is the centrality of node i
+	GrB_Vector    reachable_nodes = NULL;  // reachable[i] is the estimated reachable count
+	LAGraph_Graph G              = NULL;
+	bool sym                     = false;  // matrix is directed
+	bool compact                 = true;
 
 	// simple_timer_t t_invoke;
 	// simple_timer_t t_phase;
@@ -810,21 +389,26 @@ ProcedureResult Proc_CentralityInvoke
 		// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
 	}
 
+	char msg[LAGRAPH_MSG_LEN] ;
+	GrB_Info info = LAGraph_New (&G, &A, LAGraph_ADJACENCY_DIRECTED, msg) ;
+	ASSERT (info == GrB_SUCCESS) ;
 
-	ProcedureResult res = _calculate_centrality (&scores, A, nodes) ;
+	info = LAGr_HarmonicCentrality (&scores, &reachable_nodes, G, nodes, msg) ;
 
-	GrB_free (&A) ;
+	LAGraph_Delete (&G, msg) ;
 	GrB_free (&nodes) ;
 
-	if (res != PROCEDURE_OK) {
+	if (info != GrB_SUCCESS) {
 		GrB_free (&scores) ;
+		GrB_free (&reachable_nodes) ;
 		return PROCEDURE_ERR ;
 	}
 
 	// printf("[centrality] Proc_CentralityInvoke total: %.2f ms\n",
 	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_invoke));
 
-	pdata->scores = scores ;
+	pdata->scores          = scores ;
+	pdata->reachable_nodes = reachable_nodes ;
 
 	//--------------------------------------------------------------------------
 	// initialize iterator directly over scores (index = nodeID, value = score)
@@ -833,6 +417,17 @@ ProcedureResult Proc_CentralityInvoke
 	GrB_OK (GxB_Iterator_new (&pdata->it)) ;
 	GrB_OK (GxB_Vector_Iterator_attach (pdata->it, pdata->scores, NULL)) ;
 	pdata->info = GxB_Vector_Iterator_seek (pdata->it, 0) ;
+
+	//--------------------------------------------------------------------------
+	// initialize iterator over reachable_nodes (same sparsity pattern as scores)
+	//--------------------------------------------------------------------------
+
+	if (pdata->reachable_nodes != NULL) {
+		GrB_OK (GxB_Iterator_new (&pdata->it_reach)) ;
+		GrB_OK (GxB_Vector_Iterator_attach (pdata->it_reach,
+			pdata->reachable_nodes, NULL)) ;
+		GrB_OK (GxB_Vector_Iterator_seek (pdata->it_reach, 0)) ;
+	}
 
 	return PROCEDURE_OK ;
 }
@@ -858,11 +453,18 @@ SIValue *Proc_CentralityStep
 		}
 
 		pdata->info = GxB_Vector_Iterator_next (pdata->it) ;
+		if (pdata->it_reach != NULL) {
+			GxB_Vector_Iterator_next (pdata->it_reach) ;
+		}
 	}
 
 	if (pdata->info == GxB_EXHAUSTED) {
 		return NULL ;
 	}
+
+	// reachable_nodes has the same sparsity pattern as scores
+	ASSERT (pdata->it_reach == NULL ||
+		GxB_Vector_Iterator_getIndex (pdata->it_reach) == node_id) ;
 
 	//--------------------------------------------------------------------------
 	// set outputs
@@ -876,8 +478,16 @@ SIValue *Proc_CentralityStep
 		*pdata->yield_score = SI_DoubleVal (GxB_Iterator_get_FP64 (pdata->it)) ;
 	}
 
-	// advance iterator for next call
+	if (pdata->yield_reachable != NULL && pdata->it_reach != NULL) {
+		*pdata->yield_reachable =
+			SI_LongVal (GxB_Iterator_get_INT64 (pdata->it_reach)) ;
+	}
+
+	// advance both iterators in lockstep for next call
 	pdata->info = GxB_Vector_Iterator_next (pdata->it) ;
+	if (pdata->it_reach != NULL) {
+		GxB_Vector_Iterator_next (pdata->it_reach) ;
+	}
 
 	return pdata->output ;
 }
@@ -892,8 +502,14 @@ ProcedureResult Proc_CentralityFree
 		if (pdata->it     != NULL) {
 			GrB_free (&pdata->it) ;
 		}
+		if (pdata->it_reach != NULL) {
+			GrB_free (&pdata->it_reach) ;
+		}
 		if (pdata->scores != NULL) {
 			GrB_free (&pdata->scores) ;
+		}
+		if (pdata->reachable_nodes != NULL) {
+			GrB_free (&pdata->reachable_nodes) ;
 		}
 
 		rm_free (ctx->privateData) ;
@@ -910,12 +526,14 @@ ProcedureResult Proc_CentralityFree
 // })
 // YIELD node, score
 ProcedureCtx *Proc_HarmonicCentralityCtx(void) {
-	ProcedureOutput *outputs      = arr_new (ProcedureOutput, 2) ;
-	ProcedureOutput output_node   = {.name = "node",  .type = T_NODE} ;
-	ProcedureOutput output_score  = {.name = "score", .type = T_DOUBLE} ;
+	ProcedureOutput *outputs      = arr_new (ProcedureOutput, 3) ;
+	ProcedureOutput output_node      = {.name = "node",      .type = T_NODE} ;
+	ProcedureOutput output_score     = {.name = "score",     .type = T_DOUBLE} ;
+	ProcedureOutput output_reachable = {.name = "reachable", .type = T_INT64} ;
 
 	arr_append (outputs, output_node) ;
 	arr_append (outputs, output_score) ;
+	arr_append (outputs, output_reachable) ;
 
 	ProcedureCtx *ctx = ProcCtxNew ("algo.HarmonicCentrality",
 								   PROCEDURE_VARIABLE_ARG_COUNT,
