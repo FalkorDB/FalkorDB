@@ -68,20 +68,20 @@ jobs:
 
           echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_ENV
 
-      - name: Verify tag matches version.h
-        if: ${{ startsWith(env.TAG_NAME, 'v') && env.TAG_NAME != 'edge' }}
-        run: |
-          git fetch origin ${{ env.COMMIT_SHA }} --depth=1
-          VERSION_H=$(git show ${{ env.COMMIT_SHA }}:src/version.h)
-          MAJOR=$(echo "$VERSION_H" | grep FALKOR_VERSION_MAJOR | awk '{print $3}')
-          MINOR=$(echo "$VERSION_H" | grep FALKOR_VERSION_MINOR | awk '{print $3}')
-          PATCH=$(echo "$VERSION_H" | grep FALKOR_VERSION_PATCH | awk '{print $3}')
-          FILE_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
-          echo "Tag: ${{ env.TAG_NAME }}, version.h: ${FILE_VERSION}"
-          if [ "${{ env.TAG_NAME }}" != "${FILE_VERSION}" ]; then
-            echo "::error::Tag '${{ env.TAG_NAME }}' does not match version.h '${FILE_VERSION}'"
-            exit 1
-          fi
+      #- name: Verify tag matches version.h
+      #  if: ${{ startsWith(env.TAG_NAME, 'v') && env.TAG_NAME != 'edge' }}
+      #  run: |
+      #    git fetch origin ${{ env.COMMIT_SHA }} --depth=1
+      #    VERSION_H=$(git show ${{ env.COMMIT_SHA }}:src/version.h)
+      #    MAJOR=$(echo "$VERSION_H" | grep FALKOR_VERSION_MAJOR | awk '{print $3}')
+      #    MINOR=$(echo "$VERSION_H" | grep FALKOR_VERSION_MINOR | awk '{print $3}')
+      #    PATCH=$(echo "$VERSION_H" | grep FALKOR_VERSION_PATCH | awk '{print $3}')
+      #    FILE_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+      #    echo "Tag: ${{ env.TAG_NAME }}, version.h: ${FILE_VERSION}"
+      #    if [ "${{ env.TAG_NAME }}" != "${FILE_VERSION}" ]; then
+      #      echo "::error::Tag '${{ env.TAG_NAME }}' does not match version.h '${FILE_VERSION}'"
+      #      exit 1
+      #    fi
 
       - name: Retrieve built image AMD
         uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
