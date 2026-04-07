@@ -165,6 +165,35 @@ class testMaxFlow(FlowTestsBase):
         except Exception as e:
             self.env.assertContains("multi-edges", str(e))
 
+    def test_01c_capacity_range_too_wide(self):
+        """Reject graphs where the max capacity is >= min capacity * 2^32.
+        LAGraph internally computes (a - b) for capacity values; when max and
+        min differ by >= 2^32 the subtraction loses the smaller value entirely
+        in double precision (i.e. (max - min) == max), causing the solver to
+        hang.  The 2^32 threshold is a conservative cushion below the true
+        double-precision limit to catch dangerous inputs early."""
+        # min=1, max=2^32 satisfies max >= min * UINT32_MAX (2^32-1)
+        cap_max = 2 ** 32
+        self.graph.query(f"""
+            CREATE (a:Node {{name:'A'}})-[:PIPE {{cap: 1}}]->
+                   (b:Node {{name:'B'}})-[:PIPE {{cap: {cap_max}}}]->
+                   (c:Node {{name:'C'}})
+        """)
+        try:
+            self.graph.query("""
+                MATCH (s:Node {name:'A'}), (t:Node {name:'C'})
+                CALL algo.maxFlow({
+                    sourceNodes:       [s],
+                    targetNodes:       [t],
+                    capacityProperty:  'cap',
+                    relationshipTypes: ['PIPE']
+                })
+                YIELD maxFlow
+            """)
+            self.env.assertTrue(False, "Expected error for wide capacity range")
+        except Exception as e:
+            self.env.assertContains("capacity range too wide", str(e))
+
     # ------------------------------------------------------------------ #
     #  empty / trivial graphs                                            #
     # ------------------------------------------------------------------ #

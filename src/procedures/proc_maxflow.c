@@ -502,7 +502,7 @@ ProcedureResult Proc_MaxFlowInvoke
 	// then transpose into U so that U(i,j) represents the edge i→j
 	//--------------------------------------------------------------------------
 
-	//TODO: compress the matrix A to speed up max_flow on queries where fewer
+	// TODO: compress the matrix A to speed up max_flow on queries where fewer
 	// nodes are involved
 	GrB_Matrix U ;
 	Delta_Matrix R = Graph_GetRelationMatrix (g, rels[0], false) ;
@@ -626,13 +626,30 @@ ProcedureResult Proc_MaxFlowInvoke
 	ASSERT (sink_id != INVALID_ENTITY_ID) ;
 
 	//--------------------------------------------------------------------------
-	// Filter out edges that are too small to stop LAGraph hang
+	// Error on matricies where max >= min * 2^32 to stop LAGraph hang
 	//--------------------------------------------------------------------------
+	// filter out zeros so they don't mess with calculation (LAGraph will filter
+	// these immediately anyways)
+	GrB_OK (GrB_Matrix_select_FP64 (
+		C, NULL, NULL, GrB_VALUEGT_FP64, C, 0, NULL));
 	double max_capacity = 0;
 	GrB_OK (GrB_Matrix_reduce_FP64 (
 		&max_capacity, NULL, GrB_MAX_MONOID_FP64, C, NULL));
-	GrB_OK (GrB_Matrix_select_FP64(
-		C, NULL, NULL, GrB_VALUEGE_FP64, C, max_capacity / UINT32_MAX, NULL));
+
+	double min_capacity = 0;
+	GrB_OK (GrB_Matrix_reduce_FP64 (
+		&min_capacity, NULL, GrB_MIN_MONOID_FP64, C, NULL));
+
+	if (max_capacity >= min_capacity * UINT32_MAX) {
+		ErrorCtx_SetError ("algo.maxFlow: capacity range too wide "
+			"(max >= min * 2^32); narrow the capacity values to avoid "
+			"internal overflow") ;
+		GrB_free (&C) ;
+		rm_free (pdata) ;
+		res = PROCEDURE_ERR ;
+		goto cleanup ;
+	}
+	
 
 	//--------------------------------------------------------------------------
 	// build the LAGraph graph (includes AT and EMin caches required by MaxFlow)
