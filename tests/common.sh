@@ -161,10 +161,26 @@ _sanitizer_check() {
     return 0
 }
 
+_tsan_check() {
+    local logdir="$1"
+    local pattern="$2"
+    local type="$3"
+
+    if grep -rl "$pattern" "$logdir"/*.tsan.log* &> /dev/null; then
+        echo
+        echo -e "${LIGHTRED}### Sanitizer: ${type} detected:${RED}"
+        grep -rl "$pattern" "$logdir"/*.tsan.log*
+        echo -e "${NOCOLOR}"
+        return 1
+    fi
+    return 0
+}
+
 _sanitizer_summary() {
     local logdir="$1"
     local E=0
 
+    # ASAN checks
     if ! _sanitizer_check "$logdir" "Direct leak" "leaks"; then
         E=1
     elif ! _sanitizer_check "$logdir" "detected memory leaks" "leaks"; then
@@ -176,6 +192,10 @@ _sanitizer_summary() {
     _sanitizer_check "$logdir" "stack-use-after-scope" "stack use after scope" || E=1
     _sanitizer_check "$logdir" "heap-use-after-free" "use after free" || E=1
     _sanitizer_check "$logdir" "signal 11" "signal 11" 1  # warn only
+
+    # TSAN checks
+    _tsan_check "$logdir" "WARNING: ThreadSanitizer" "data races" || E=1
+    _tsan_check "$logdir" "data race" "data races" || E=1
 
     return $E
 }

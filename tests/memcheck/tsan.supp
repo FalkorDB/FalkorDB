@@ -12,9 +12,11 @@
 # instrumentation artifact, not a real data race.
 race:epoll_wait
 
-# Redis event-loop processing; aeProcessEvents accesses event state that is
-# protected by the single-threaded event loop model but TSAN cannot infer that.
-race:aeProcessEvents
+# Redis event-loop I/O polling; aeApiPoll wraps epoll/kqueue and its internal
+# state is protected by the single-threaded event loop model. We suppress only
+# the polling leaf rather than the broader aeProcessEvents dispatch function to
+# avoid masking real races in FalkorDB module callbacks.
+race:aeApiPoll
 
 # Redis background I/O thread (BIO) performs disk/close operations; accesses
 # to the job queue are serialised by Redis but TSAN may flag them.

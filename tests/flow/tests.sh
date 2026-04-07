@@ -280,7 +280,12 @@ setup_clang_sanitizer() {
 	export SHORT_READ_BYTES_DELTA=512
 
 	# --no-output-catch --exit-on-failure --check-exitcode
-	RLTEST_SAN_ARGS="--sanitizer $SAN"
+	# rltest only handles addr/address sanitizer; pass nothing for other types
+	if [[ $SAN == addr || $SAN == address ]]; then
+		RLTEST_SAN_ARGS="--sanitizer $SAN"
+	else
+		RLTEST_SAN_ARGS=""
+	fi
 
 	if [[ $SAN == addr || $SAN == address ]]; then
 		# Build Redis with ASAN to detect memory issues in Redis<->module interactions
@@ -340,6 +345,7 @@ WRAPPER_EOF
 		fi
 
 		local tsan_options="halt_on_error=0:second_deadlock_stack=1:history_size=4"
+		tsan_options="$tsan_options:log_path=$ROOT/tests/flow/logs/redis-tsan"
 		local tsan_supp="$ROOT/tests/memcheck/tsan.supp"
 		if [[ -f "$tsan_supp" ]]; then
 			tsan_options="$tsan_options:suppressions=$tsan_supp"

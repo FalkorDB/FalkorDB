@@ -35,7 +35,7 @@ jobs:
             suffix: thread
             key_prefix: tsan
             label: TSAN
-            timeout_minutes: 360
+            timeout_minutes: 180
     steps:
 
     - name: Safe dir
