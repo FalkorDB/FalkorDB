@@ -19,7 +19,7 @@ QGEdge *QGEdge_New
 ) {
 	QGEdge *e = rm_malloc(sizeof(QGEdge));
 
-	e->alias         = alias;
+	e->alias         = (alias != NULL) ? rm_strdup(alias) : NULL;
 	e->reltypes      = arr_new(const char*, 1);
 	e->reltypeIDs    = arr_new(int, 1);
 	e->src           = NULL;
@@ -67,7 +67,19 @@ QGEdge *QGEdge_Clone
 	memcpy(e, orig, sizeof(QGEdge));
 	e->src = NULL;
 	e->dest = NULL;
+
+	// deep-copy alias so clone doesn't point into AST parse tree
+	if(orig->alias != NULL) {
+		e->alias = rm_strdup(orig->alias);
+	}
+
+	// deep-copy reltype strings
 	arr_clone(e->reltypes, orig->reltypes);
+	uint reltype_count = arr_len(orig->reltypes);
+	for(uint i = 0; i < reltype_count; i++) {
+		e->reltypes[i] = rm_strdup(orig->reltypes[i]);
+	}
+
 	arr_clone(e->reltypeIDs, orig->reltypeIDs);
 
 	return e;
@@ -217,6 +229,17 @@ void QGEdge_Free
 	QGEdge *e
 ) {
 	if(!e) return;
+
+	// free owned alias string
+	if(e->alias != NULL) {
+		rm_free((char *)e->alias);
+	}
+
+	// free owned reltype strings
+	uint reltype_count = arr_len(e->reltypes);
+	for(uint i = 0; i < reltype_count; i++) {
+		rm_free((char *)e->reltypes[i]);
+	}
 
 	arr_free(e->reltypes);
 	arr_free(e->reltypeIDs);
