@@ -71,6 +71,44 @@ bool StagedUpdatesCtx_HasEdgeUpdates
 	return (HashTableElemCount (ctx->edge_updates) > 0) ;
 }
 
+// retrieve an entity update context
+PendingUpdateCtx *StagedUpdatesCtx_GetEntityUpdateCtx
+(
+	StagedUpdatesCtx *ctx,  // staged updates
+	GraphEntityType t,      // entity type Node/Edge
+	GraphEntity *e          // entity
+) {
+	ASSERT (e   != NULL) ;
+	ASSERT (ctx != NULL) ;
+	ASSERT (t == GETYPE_NODE || t == GETYPE_EDGE) ;
+
+	dict *updates ;
+
+	updates = (t == GETYPE_NODE) ?
+		StagedUpdatesCtx_NodeUpdates (ctx) :
+		StagedUpdatesCtx_EdgeUpdates (ctx) ;
+
+	// does entity already has an entry ?
+	PendingUpdateCtx *ret ;
+	dictEntry *entry = HashTableFind (updates,
+			(void *)ENTITY_GET_ID (e)) ;
+
+	if (entry == NULL) {
+		// create a new update context
+		ret = rm_malloc (sizeof (PendingUpdateCtx)) ;
+		ret->ge = e ;
+		ret->attributes = AttributeSet_ShallowClone (*e->attributes) ;
+		// add update context to updates dictionary
+		HashTableAdd (updates, (void *)ENTITY_GET_ID (e), ret) ;
+	} else {
+		// update context already exists
+		ret = (PendingUpdateCtx *) HashTableGetVal (entry) ;
+	}
+
+	ASSERT (ret != NULL) ;
+	return ret ;
+}
+
 // populate either added_labels or removed_labels depending on `add`
 // creates the label vector if it does not already exist
 static void _PopulateVector

@@ -11,7 +11,7 @@
 
 // context representing a single update to perform on an entity
 typedef struct {
-	GraphEntity *ge;           // entity to be updated
+	GraphEntity *ge;          // entity to be updated
 	AttributeSet attributes;  // attributes to update
 } PendingUpdateCtx;
 
@@ -33,6 +33,14 @@ bool StagedUpdatesCtx_HasEdgeUpdates
 	const StagedUpdatesCtx *ctx  // staged updates context
 ) ;
 
+// retrieve an entity update context
+PendingUpdateCtx *StagedUpdatesCtx_GetEntityUpdateCtx
+(
+	StagedUpdatesCtx *ctx,  // staged updates
+	GraphEntity *e,         // entity
+	GraphEntityType t      // entity type Node/Edge
+) ;
+
 // free staged update context
 void StagedUpdatesCtx_Free
 (
@@ -42,13 +50,15 @@ void StagedUpdatesCtx_Free
 // build pending updates in the 'updates' array to match all
 // AST-level updates described in the context
 // NULL values are allowed in SET clauses but not in MERGE clauses
-void EvalEntityUpdates
+void EvalUpdates
 (
-	GraphContext *gc,
-	StagedUpdatesCtx *staged_updates
-	const Record r,
-	const EntityUpdateDesc *desc,
-	bool allow_null
+	GraphContext *gc,                 // graph context
+	StagedUpdatesCtx *staged_updates  // staged updates context
+	const Record *recs,               // records
+	uint32_t n_recs,                  // number of records
+	EntityUpdateDesc **descs,         // update descriptors
+	uint32_t n_descs,                 // number of update descriptors
+	bool allow_null                   // allow nulls
 );
 
 // commit all updates described in the array of pending updates

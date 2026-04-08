@@ -82,9 +82,6 @@ static Record UpdateConsume
 		array_append (op->records, r) ;
 	}
 	
-	uint node_updates_count = HashTableElemCount (op->node_updates) ;
-	uint edge_updates_count = HashTableElemCount (op->edge_updates) ;
-
 	if (StagedUpdatesCtx_HasNodeUpdates (op->staged_updates) ||
 		StagedUpdatesCtx_HasEdgeUpdates (op->staged_updates)) {
 		// done reading; we're not going to call Consume any longer
