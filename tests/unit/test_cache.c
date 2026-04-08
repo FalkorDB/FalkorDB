@@ -243,9 +243,168 @@ void test_cacheConcurrency() {
 	Cache_Free(cache);
 }
 
+//------------------------------------------------------------------------------
+// Test: Cache eviction causes dangling borrowed pointers (Issue #1823)
+//
+// Reproduces the exact ownership bug where QGNode.alias points into AST
+// parse tree memory. When the cache evicts the original entry and the AST
+// is freed, clones hold dangling pointers.
+//------------------------------------------------------------------------------
+
+// Extended cache object that has both owned and borrowed strings,
+// mirroring how QGNode has rm_malloc'd fields AND borrowed alias/labels
+typedef struct {
+	char *owned_str;            // owned by this object (freed on Free)
+	const char *borrowed_ptr;   // NOT owned - points into external memory (like QGNode.alias -> AST)
+} BorrowCacheObj;
+
+static BorrowCacheObj *BorrowCacheObj_New(const char *owned, const char *borrowed) {
+	BorrowCacheObj *obj = rm_malloc(sizeof(BorrowCacheObj));
+	obj->owned_str = rm_strdup(owned);
+	obj->borrowed_ptr = borrowed;  // shallow copy — intentionally NOT duplicated
+	return obj;
+}
+
+// This clone function mimics QGNode_Clone: it copies the borrowed pointer
+// without rm_strdup, exactly reproducing the bug
+static BorrowCacheObj *BorrowCacheObj_ShallowDup(const BorrowCacheObj *obj) {
+	BorrowCacheObj *dup = rm_malloc(sizeof(BorrowCacheObj));
+	dup->owned_str = rm_strdup(obj->owned_str);
+	dup->borrowed_ptr = obj->borrowed_ptr;  // BUG: shallow copy of borrowed pointer
+	return dup;
+}
+
+// This clone function mimics the FIXED QGNode_Clone: it deep-copies
+// the borrowed string so the clone is self-contained
+static BorrowCacheObj *BorrowCacheObj_DeepDup(const BorrowCacheObj *obj) {
+	BorrowCacheObj *dup = rm_malloc(sizeof(BorrowCacheObj));
+	dup->owned_str = rm_strdup(obj->owned_str);
+	dup->borrowed_ptr = rm_strdup(obj->borrowed_ptr);  // FIX: deep copy
+	return dup;
+}
+
+static void BorrowCacheObj_Free(BorrowCacheObj *obj) {
+	rm_free(obj->owned_str);
+	// NOTE: borrowed_ptr is NOT freed here — it's not owned by this object
+	// (just like QGNode_Free currently does NOT free node->alias)
+	rm_free(obj);
+}
+
+// Free function for the fixed version where borrowed_ptr is now owned
+static void BorrowCacheObj_DeepFree(BorrowCacheObj *obj) {
+	rm_free(obj->owned_str);
+	rm_free((char *)obj->borrowed_ptr);  // NOW owned after deep copy
+	rm_free(obj);
+}
+
+void test_cacheEvictionDanglingPointer() {
+	//--------------------------------------------------------------------------
+	// Part 1: Demonstrate the bug (shallow copy of borrowed pointer)
+	//--------------------------------------------------------------------------
+
+	// Simulate AST parse tree memory — this is the external owner
+	char *ast_string = rm_strdup("ast_parse_tree_alias");
+
+	// Create cache with capacity 1 — any second insert forces eviction
+	Cache *cache = Cache_New(1,
+		(CacheEntryFreeFunc)BorrowCacheObj_Free,
+		(CacheEntryCopyFunc)BorrowCacheObj_ShallowDup);
+
+	// Create object with borrowed pointer into "AST memory"
+	// This mirrors: QGNode.alias = <pointer into AST parse tree>
+	BorrowCacheObj *original = BorrowCacheObj_New("owned_data", ast_string);
+	TEST_ASSERT(original->borrowed_ptr == ast_string);  // same pointer
+
+	// Insert into cache — cache takes ownership of `original`,
+	// returns a shallow clone to the caller
+	BorrowCacheObj *clone = (BorrowCacheObj *)Cache_SetGetValue(
+		cache, "query_1", original);
+
+	// The clone's borrowed_ptr points to the SAME ast_string
+	// (this is the bug — it should have been rm_strdup'd)
+	TEST_ASSERT(clone->borrowed_ptr == ast_string);
+	TEST_ASSERT(strcmp(clone->borrowed_ptr, "ast_parse_tree_alias") == 0);
+
+	// Now insert a different key to force eviction of "query_1"
+	// This frees `original` via BorrowCacheObj_Free
+	// (simulates CacheArray_CleanEntry → ExecutionCtx_Free → ExecutionPlan_Free)
+	BorrowCacheObj *obj2 = BorrowCacheObj_New("other_data", ast_string);
+	BorrowCacheObj *clone2 = (BorrowCacheObj *)Cache_SetGetValue(
+		cache, "query_2", obj2);
+
+	// Now simulate AST_Free: free the AST parse tree memory
+	// In real code, this happens when AST ref_count reaches 0 after eviction
+	// Write a sentinel to prove the memory is now invalid
+	memset(ast_string, 'X', strlen(ast_string));
+	rm_free(ast_string);
+
+	// clone->borrowed_ptr is now a DANGLING POINTER
+	// In production this causes SIGSEGV in QGNode_Free or corrupted data
+	// We can't safely dereference it, but we've proven the scenario:
+	// the clone outlived the AST memory it borrowed from.
+
+	// Clean up
+	// WARNING: clone->borrowed_ptr is now a DANGLING POINTER pointing to freed memory.
+	// This is intentionally unsafe — we rely on BorrowCacheObj_Free not dereferencing
+	// borrowed_ptr (it only frees owned_str). Do not add any borrowed_ptr access here.
+	BorrowCacheObj_Free(clone);   // safe: only accesses owned_str, not borrowed_ptr
+	BorrowCacheObj_Free(clone2);  // safe: clone2->borrowed_ptr is also dangling (ast_string freed)
+	Cache_Free(cache);
+
+	//--------------------------------------------------------------------------
+	// Part 2: Demonstrate the fix (deep copy of borrowed pointer)
+	//--------------------------------------------------------------------------
+
+	// Fresh AST string
+	char *ast_string2 = rm_strdup("ast_parse_tree_alias_v2");
+
+	// The cache's eviction function uses BorrowCacheObj_Free (NOT DeepFree)
+	// because the ORIGINAL stored in the cache borrows the pointer (does not own it),
+	// mirroring how QGNode_Free doesn't free node->alias in the current code.
+	// Only the CLONE (returned to caller) owns a deep copy and uses DeepFree.
+	Cache *fixed_cache = Cache_New(1,
+		(CacheEntryFreeFunc)BorrowCacheObj_Free,
+		(CacheEntryCopyFunc)BorrowCacheObj_DeepDup);
+
+	// Create object with borrowed pointer
+	BorrowCacheObj *orig2 = BorrowCacheObj_New("owned_data", ast_string2);
+
+	// Insert — cache stores original (shallow borrow), returns deep clone to caller
+	BorrowCacheObj *fixed_clone = (BorrowCacheObj *)Cache_SetGetValue(
+		fixed_cache, "query_1", orig2);
+
+	// The fixed clone's borrowed_ptr is a DIFFERENT pointer (deep copied)
+	TEST_ASSERT(fixed_clone->borrowed_ptr != ast_string2);
+	TEST_ASSERT(strcmp(fixed_clone->borrowed_ptr, "ast_parse_tree_alias_v2") == 0);
+
+	// Force eviction: inserting "query_2" evicts "query_1" (orig2) via
+	// BorrowCacheObj_Free, which does NOT free orig2->borrowed_ptr (ast_string2)
+	char *another_ast = rm_strdup("another_ast_string");
+	BorrowCacheObj *orig3 = BorrowCacheObj_New("other_data", another_ast);
+	BorrowCacheObj *fixed_clone2 = (BorrowCacheObj *)Cache_SetGetValue(
+		fixed_cache, "query_2", orig3);
+
+	// Free the AST memory — simulates AST_Free when ref_count reaches 0.
+	// With shallow copy this would leave clone->borrowed_ptr dangling;
+	// with deep copy the clone is self-contained and survives.
+	rm_free(ast_string2);
+
+	// fixed_clone's borrowed_ptr is STILL VALID because it was deep copied
+	TEST_ASSERT(strcmp(fixed_clone->borrowed_ptr, "ast_parse_tree_alias_v2") == 0);
+
+	// Clean up — DeepFree properly frees the duplicated borrowed_ptr in the clones
+	BorrowCacheObj_DeepFree(fixed_clone);
+	BorrowCacheObj_DeepFree(fixed_clone2);
+	// Cache_Free evicts orig3 via BorrowCacheObj_Free (does NOT free another_ast)
+	Cache_Free(fixed_cache);
+	// Manually free another_ast since the cache's eviction didn't own it
+	rm_free(another_ast);
+}
+
 TEST_LIST = {
-	{"executionPlanCache", test_executionPlanCache},
-	{"cacheConcurrency",   test_cacheConcurrency},
+	{"executionPlanCache",           test_executionPlanCache},
+	{"cacheConcurrency",             test_cacheConcurrency},
+	{"cacheEvictionDanglingPointer", test_cacheEvictionDanglingPointer},
 	{NULL, NULL}
 };
 
