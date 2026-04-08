@@ -36,7 +36,7 @@ QGNode *QGNode_New
 ) {
 	QGNode *n = rm_malloc(sizeof(QGNode));
 
-	n->alias             =  alias;
+	n->alias             =  (alias != NULL) ? rm_strdup(alias) : NULL;
 	n->labels            =  arr_new(const char *, 0);
 	n->labelsID          =  arr_new(int, 0);
 	n->incoming_edges    =  arr_new(QGEdge *, 0);
@@ -139,7 +139,7 @@ void QGNode_AddLabel
 	// node already labeled as l
 	if(QGNode_HasLabel(n, l)) return;
 
-	arr_append(n->labels, l);
+	arr_append(n->labels, rm_strdup(l));
 	arr_append(n->labelsID, l_id);
 }
 
@@ -243,7 +243,18 @@ QGNode *QGNode_Clone
 	QGNode *clone = rm_malloc(sizeof(QGNode));
 	memcpy(clone, orig, sizeof(QGNode));
 
+	// deep-copy alias so clone doesn't point into AST parse tree
+	if(orig->alias != NULL) {
+		clone->alias = rm_strdup(orig->alias);
+	}
+
+	// deep-copy label strings
 	arr_clone(clone->labels, orig->labels);
+	uint label_count = arr_len(orig->labels);
+	for(uint i = 0; i < label_count; i++) {
+		clone->labels[i] = rm_strdup(orig->labels[i]);
+	}
+
 	arr_clone(clone->labelsID, orig->labelsID);
 
 	// don't clone edges when duplicating a node
@@ -278,6 +289,17 @@ void QGNode_Free
 	QGNode *node
 ) {
 	if(node == NULL) return;
+
+	// free owned alias string
+	if(node->alias != NULL) {
+		rm_free((char *)node->alias);
+	}
+
+	// free owned label strings
+	uint label_count = arr_len(node->labels);
+	for(uint i = 0; i < label_count; i++) {
+		rm_free((char *)node->labels[i]);
+	}
 
 	arr_free(node->labels);
 	arr_free(node->labelsID);

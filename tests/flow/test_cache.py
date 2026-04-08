@@ -8,7 +8,8 @@ GRAPH_IDS = ["Cache_Test_plans", "Cache_Sanity_Check", 'Cache_Test_Create',
         'Cache_Test_Create_With_Params', 'Cache_Test_Delete', 'Cache_Test_Merge',
         'Cache_Test_Path_Filter', 'Cache_Test_Index', 'Cache_Test_ID_Scan',
         'Cache_Test_Join', 'Cache_Test_Edge_Merge', 'Cache_test_labelscan_update',
-        'Cache_test_index_scan_update', 'Cache_Empty_Key', 'cache_eviction']
+        'Cache_test_index_scan_update', 'Cache_Empty_Key', 'cache_eviction',
+        'cache_eviction_uaf']
 CACHE_SIZE = 16
 
 class testCache():
@@ -279,3 +280,46 @@ class testCache():
 
         asyncio.run(run(self))
 
+
+    def test_15_concurrent_cache_eviction_stability(self):
+        """Regression test for use-after-free in QGNode_Free/QGEdge_Free during cache eviction.
+
+        When cached execution plans are evicted, QGNode alias/label pointers and
+        QGEdge alias/reltype pointers previously pointed into freed AST parse tree
+        memory. This test forces heavy cache churn with complex queries involving
+        multiple labels and relationship types to trigger the bug.
+        """
+        # stop previous env
+        self.env.stop()
+
+        self.env, self.db = Env(moduleArgs='THREAD_COUNT 8 CACHE_SIZE 1')
+
+        async def run(self):
+            pool = BlockingConnectionPool(max_connections=16, timeout=None,
+                                          port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph('cache_eviction_uaf')
+
+            # create graph with labeled nodes and typed edges
+            await g.query(
+                "UNWIND range(1, 20) AS id "
+                "CREATE (:Activity {id: id})-[:HAS_REQUIREMENT {evidence: 'test'}]->(:Entity {id: id})"
+            )
+
+            tasks = []
+            for i in range(1, 60):
+                # each query is unique (different param name) to force cache miss + eviction
+                param_name = 'p_' + str(i)
+                q = (f"MATCH (a:Activity)-[r:HAS_REQUIREMENT]->(e:Entity) "
+                     f"WHERE a.id >= ${param_name} "
+                     f"RETURN a.id, type(r), e.id LIMIT 5")
+                params = {param_name: i % 20}
+                tasks.append(asyncio.create_task(g.query(q, params)))
+
+            results = await asyncio.gather(*tasks)
+            for r in results:
+                self.env.assertIsNotNone(r.result_set)
+
+            await pool.aclose()
+
+        asyncio.run(run(self))

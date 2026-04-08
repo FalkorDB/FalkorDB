@@ -95,7 +95,7 @@ static void _QueryGraphAddEdge
 				}
 			}
 			if(!found) {
-				arr_append(edge->reltypes, reltype);
+				arr_append(edge->reltypes, rm_strdup(reltype));
 				arr_append(edge->reltypeIDs, GRAPH_UNKNOWN_RELATION);
 				qg->unknown_reltype_ids = true;
 			}
@@ -110,7 +110,7 @@ static void _QueryGraphAddEdge
 			}
 		}
 		if(!found) {
-			arr_append(edge->reltypes, reltype);
+			arr_append(edge->reltypes, rm_strdup(reltype));
 			arr_append(edge->reltypeIDs, s->id);
 		}
 	}
