@@ -307,6 +307,9 @@ class testCache():
             )
 
             tasks = []
+            # 59 unique queries (different param names) each force a cache miss and eviction
+            # with CACHE_SIZE=1; concurrent execution maximizes the chance of hitting
+            # the use-after-free window between eviction and in-flight plan execution
             for i in range(1, 60):
                 # each query is unique (different param name) to force cache miss + eviction
                 param_name = 'p_' + str(i)
