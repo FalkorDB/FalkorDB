@@ -396,6 +396,16 @@ bool QueryCtx_LockForCommit (void) {
 		return true ;
 	}
 
+	// release graph READ lock if held by writer
+	// writer queries hold a READ lock during the match phase to prevent
+	// concurrent memory modifications by defrag or GRAPH.EFFECT
+	// must release before acquiring GIL to avoid deadlock:
+	//   worker: READ lock → GIL  vs  main thread: GIL → WRITE lock
+	if (ctx->internal_exec_ctx.read_locked) {
+		Graph_ReleaseLock (GraphContext_GetGraph (ctx->gc)) ;
+		ctx->internal_exec_ctx.read_locked = false ;
+	}
+
 	// lock GIL
 	GraphContext   *gc         = ctx->gc ;
 	RedisModuleCtx *redis_ctx  = ctx->global_exec_ctx.redis_ctx ;

@@ -202,14 +202,21 @@ static void _ExecuteQuery(void *args) {
 	if(readonly) {
 		Graph_AcquireReadLock(g);
 	} else {
-		// if this is a writer query `we need to re-open the graph key with write flag
-		// this notifies Redis that the key is "dirty" any watcher on that key will
-		// be notified
+		// if this is a writer query we need to re-open the graph key with
+		// write flag this notifies Redis that the key is "dirty" any watcher
+		// on that key will be notified
+		// must happen before READ lock to avoid deadlock:
+		//   worker: READ → GIL  vs  main thread: GIL → WRITE
 		CommandCtx_ThreadSafeContextLock(command_ctx);
 		{
 			GraphContext_MarkWriter(rm_ctx, gc);
 		}
 		CommandCtx_ThreadSafeContextUnlock(command_ctx);
+
+		// acquire graph READ lock to protect match phase from concurrent
+		// memory modifications by defrag or GRAPH.EFFECT on main thread
+		Graph_AcquireReadLock(g);
+		query_ctx->internal_exec_ctx.read_locked = true;
 	}
 
 	if(exec_type == EXECUTION_TYPE_QUERY) {  // query operation
@@ -294,6 +301,11 @@ static void _ExecuteQuery(void *args) {
 
 	if (readonly) {
 		Graph_ReleaseLock(g) ; // release read lock
+	} else if(query_ctx->internal_exec_ctx.read_locked) {
+		// writer that never committed (e.g. read-only MERGE match)
+		// still holds READ lock from match-phase protection
+		Graph_ReleaseLock(g);
+		query_ctx->internal_exec_ctx.read_locked = false;
 	}
 
 	//--------------------------------------------------------------------------

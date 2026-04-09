@@ -60,6 +60,7 @@ typedef struct {
 	RedisModuleKey *key;     // graph open key, for later extraction and closing
 	ResultSet *result_set;   // execution result set
 	bool locked_for_commit;  // indicates if QueryCtx_LockForCommit been called
+	bool read_locked;        // writer holds graph READ lock for match-phase protection
 } QueryCtx_InternalExecCtx;
 
 typedef struct {
