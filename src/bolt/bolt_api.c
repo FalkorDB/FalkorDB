@@ -117,6 +117,8 @@ static bool is_authenticated
 	// read the principal (username) — accept any non-empty username
 	uint32_t principal_len;
 	bolt_read_string_size(&client->msg_buf.read, &principal_len);
+	// reject empty or oversized names; the check guarantees principal_len <= sizeof(s)-1
+	// so the null terminator below always fits within principal[sizeof(s)]
 	if(principal_len == 0 || principal_len >= sizeof(s)) {
 		return false;
 	}
