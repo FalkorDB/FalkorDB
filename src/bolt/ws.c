@@ -9,6 +9,8 @@
 #include "rax/rax.h"
 #include "util/rmalloc.h"
 #include <string.h>
+#include <strings.h>
+#include <ctype.h>
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/sha.h>
@@ -73,12 +75,17 @@ static bool validate_headers
 	}
 	char *i = v;
 	bool is_upgrade = false;
-	while (i != NULL && strlen(i) > 0) {
-		if(strncmp(i, "Upgrade", 7) == 0) {
+	while (i != NULL && *i != '\0') {
+		// skip leading OWS (spaces and tabs) per RFC 7230
+		while(*i == ' ' || *i == '\t') i++;
+		if(strncasecmp(i, "Upgrade", 7) == 0 &&
+		   (i[7] == '\0' || i[7] == ',' || i[7] == ' ' || i[7] == '\t')) {
 			is_upgrade = true;
 			break;
 		}
-		i = strchr(i, ',') + 2;
+		char *comma = strchr(i, ',');
+		if(comma == NULL) break;
+		i = comma + 1;
 	}
 	if(!is_upgrade) {
 		return false;
@@ -197,16 +204,21 @@ uint64_t ws_read_frame
 }
 
 // write an empty websocket frame header
-uint64_t ws_write_empty_header
+// reserves 10 bytes (max WS header: 2 byte header + 8 byte extended length)
+void ws_write_empty_header
 (
 	buffer_index_t *buf  // the buffer to write to
 ) {
 	ASSERT(buf != NULL);
 
 	buffer_write_uint32(buf, 0x00000000);
+	buffer_write_uint32(buf, 0x00000000);
+	buffer_write_uint16(buf, 0x0000);
 }
 
 // write a websocket frame header
+// ws_write_empty_header reserves 10 bytes; skip unused leading bytes
+// so that *buf points to the start of the actual header on return
 void ws_write_frame_header
 (
 	buffer_index_t *buf,  // the buffer to write to
@@ -214,12 +226,20 @@ void ws_write_frame_header
 ) {
 	ASSERT(buf != NULL);
 
-	buffer_index_t msg = *buf;
-	if(n > 125) {
+	if(n > 65535) {
+		// 10-byte header: uses all reserved bytes
+		buffer_index_t msg = *buf;
+		buffer_write_uint16(&msg, htons(0x827F));
+		buffer_write_uint64(&msg, htonll(n));
+	} else if(n > 125) {
+		// 4-byte header: skip 6 bytes of padding
+		buffer_index_advance(buf, 6);
+		buffer_index_t msg = *buf;
 		buffer_write_uint32(&msg, htonl(0x827E0000 + n));
 	} else {
-		buffer_write_uint16(buf, 0x0000);
-		msg = *buf;
+		// 2-byte header: skip 8 bytes of padding
+		buffer_index_advance(buf, 8);
+		buffer_index_t msg = *buf;
 		buffer_write_uint8(&msg, 0x82);
 		buffer_write_uint8(&msg, n);
 	}
