@@ -278,8 +278,7 @@ class testDefrag():
 
             # verify no connection-lost errors (would indicate a crash)
             crash_errors = [e for e in errors if "crash" in e.lower()]
-            self.env.assertEquals(len(crash_errors), 0,
-                f"Server crashed during concurrent defrag+writes: {crash_errors}")
+            self.env.assertEquals(len(crash_errors), 0)
 
         finally:
             #------------------------------------------------------------------
