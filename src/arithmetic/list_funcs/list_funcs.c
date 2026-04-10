@@ -322,6 +322,10 @@ SIValue AR_SLICE(SIValue *argv, int argc, void *private_data) {
 	return subArray;
 }
 
+// Maximum number of elements allowed in a range() result.
+// Prevents uncontrolled memory allocation from extreme argument values.
+#define RANGE_MAX_SIZE 10000000
+
 /* Create a new list of integers in the range of [start, end]. If a step was given
    the step between two consecutive list members will be this step.
    If step was not suppllied, it will be default as 1
@@ -343,6 +347,11 @@ SIValue AR_RANGE(SIValue *argv, int argc, void *private_data) {
 	uint64_t size = 0;
 	if((end >= start && interval > 0) || (end <= start && interval < 0)) {
 		size = 1 + (end - start) / interval;
+	}
+
+	if(size > RANGE_MAX_SIZE) {
+		ErrorCtx_RaiseRuntimeException("ArgumentError: range() computed list size %lu exceeds the maximum allowed size of %d", (unsigned long)size, RANGE_MAX_SIZE);
+		return SI_NullVal();
 	}
 
 	SIValue array = SI_Array(size);
