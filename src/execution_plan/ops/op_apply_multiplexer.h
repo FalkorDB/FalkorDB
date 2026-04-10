@@ -13,7 +13,7 @@
 /* ApplyMultiplexer operation tests for condition satisfaction over multiple execution plan
  * branches. The branches can be a simple filter operation, SemiApply operations,
  * or ApplyMultiplexer operations. The logic applied by the operation is defined by the
- * boolean operators OR and AND.
+ * boolean operators OR, AND, XOR and XNOR.
  * ORApplyMultiplexer: Starts by pulling on the bounded branch,
  * for each record received it tries to get a record from the filter branch, if exists. If
  * the filter is not exists, or did not return any record, the operation will check each of its branches
@@ -25,6 +25,12 @@
  * each branch was able to produce a record. If one branch did not produced any data, the operation will try to fetch
  * a new data point from the bounded branch, otherwise the bounded branch
  * record is passed onward.
+ * XOR/XNOR use parity semantics over the number of branches that produce a record:
+ * XORApplyMultiplexer: evaluates to true when an odd number of branches produce
+ * a record (odd parity). For two branches this means exactly one succeeds.
+ * XNORApplyMultiplexer: evaluates to true when an even number of branches produce
+ * a record (even parity, including zero). For two branches this means both
+ * succeed or both fail.
  *                  .                                                        _______________
  *                  .                                                       || argument op ||
  *                  .                                                        ______________
@@ -49,7 +55,7 @@ typedef struct OpApplyMultiplexer {
 	Record r;                       // bound branch record
 	OpBase *bound_branch;           // bound branch root
 	OpArgument **branch_arguments;  // branches taps
-	AST_Operator boolean_operator;  // defines the operation logic - OR/AND
+	AST_Operator boolean_operator;  // defines the operation logic - OR/AND/XOR/XNOR
 } OpApplyMultiplexer;
 
 OpBase *NewApplyMultiplexerOp

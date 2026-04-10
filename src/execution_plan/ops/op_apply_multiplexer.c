@@ -11,6 +11,8 @@
 static OpResult OpApplyMultiplexerInit(OpBase *opBase);
 static Record OrMultiplexer_Consume(OpBase *opBase);
 static Record AndMultiplexer_Consume(OpBase *opBase);
+static Record XorMultiplexer_Consume(OpBase *opBase);
+static Record XnorMultiplexer_Consume(OpBase *opBase);
 static OpResult OpApplyMultiplexerReset(OpBase *opBase);
 static OpBase *OpApplyMultiplexerClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void OpApplyMultiplexerFree(OpBase *opBase);
@@ -47,8 +49,18 @@ OpBase *NewApplyMultiplexerOp
 				"AND Apply Multiplexer", OpApplyMultiplexerInit,
 				AndMultiplexer_Consume, OpApplyMultiplexerReset, NULL,
 				OpApplyMultiplexerClone, OpApplyMultiplexerFree, false, plan);
+	} else if(boolean_operator == OP_XOR) {
+		OpBase_Init((OpBase *)op, OPType_XOR_APPLY_MULTIPLEXER,
+				"XOR Apply Multiplexer", OpApplyMultiplexerInit,
+				XorMultiplexer_Consume, OpApplyMultiplexerReset, NULL,
+				OpApplyMultiplexerClone, OpApplyMultiplexerFree, false, plan);
+	} else if(boolean_operator == OP_XNOR) {
+		OpBase_Init((OpBase *)op, OPType_XNOR_APPLY_MULTIPLEXER,
+				"XNOR Apply Multiplexer", OpApplyMultiplexerInit,
+				XnorMultiplexer_Consume, OpApplyMultiplexerReset, NULL,
+				OpApplyMultiplexerClone, OpApplyMultiplexerFree, false, plan);
 	} else {
-		ASSERT("apply multiplexer boolean operator should be AND or OR only" && false);
+		ASSERT("apply multiplexer boolean operator should be AND, OR, XOR or XNOR" && false);
 	}
 
 	return (OpBase *) op;
@@ -173,6 +185,57 @@ static Record AndMultiplexer_Consume
 	}
 }
 
+// shared XOR/XNOR helper: passes when branch-pass parity matches expected_parity
+// XOR expects odd parity (1), XNOR expects even parity (0)
+static Record _ParityMultiplexer_Consume
+(
+	OpBase *opBase,
+	int expected_parity
+) {
+	OpApplyMultiplexer *op = (OpApplyMultiplexer *)opBase;
+	while(true) {
+		// try to get a record from bound stream
+		op->r = OpBase_Consume(op->bound_branch);
+		if(!op->r) return NULL; // depleted
+
+		// evaluate all branches, track parity of branches that produce a record
+		int parity = 0;
+		for(int i = 1; i < op->op.childCount; i++) {
+			Record branch_record = _pullFromBranchStream(op, i);
+			if(branch_record) {
+				OpBase_DeleteRecord(&branch_record);
+				parity ^= 1;
+			}
+		}
+
+		if(parity == expected_parity) {
+			Record r = op->r;
+			op->r = NULL;
+			return r;
+		}
+
+		OpBase_DeleteRecord(&op->r);
+	}
+}
+
+// XOR: passes when an odd number of branches produce a record
+// for two branches: exactly one must produce a record
+static Record XorMultiplexer_Consume
+(
+	OpBase *opBase
+) {
+	return _ParityMultiplexer_Consume(opBase, 1);
+}
+
+// XNOR: passes when an even number of branches produce a record
+// for two branches: both must produce or both must fail
+static Record XnorMultiplexer_Consume
+(
+	OpBase *opBase
+) {
+	return _ParityMultiplexer_Consume(opBase, 0);
+}
+
 static OpResult OpApplyMultiplexerReset
 (
 	OpBase *opBase
@@ -191,8 +254,10 @@ static inline OpBase *OpApplyMultiplexerClone
 	const ExecutionPlan *plan,
 	const OpBase *opBase
 ) {
-	ASSERT(opBase->type == OPType_OR_APPLY_MULTIPLEXER ||
-		   opBase->type == OPType_AND_APPLY_MULTIPLEXER);
+	ASSERT(opBase->type == OPType_OR_APPLY_MULTIPLEXER  ||
+		   opBase->type == OPType_AND_APPLY_MULTIPLEXER  ||
+		   opBase->type == OPType_XOR_APPLY_MULTIPLEXER  ||
+		   opBase->type == OPType_XNOR_APPLY_MULTIPLEXER);
 
 	OpApplyMultiplexer *op = (OpApplyMultiplexer *)opBase;
 
