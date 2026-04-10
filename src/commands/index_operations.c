@@ -137,7 +137,7 @@ static bool index_delete
 	//--------------------------------------------------------------------------
 
 	// lock
-	QueryCtx_LockForCommit();
+	QueryCtx_AcquireWriteLock () ;
 
 	if(is_node) {
 		// try deleting node index
@@ -435,7 +435,7 @@ static void index_create
 		   idx_type == INDEX_FLD_VECTOR);
 
 	// lock
-	QueryCtx_LockForCommit();
+	QueryCtx_AcquireWriteLock () ;
 
 	Index idx = NULL;
 	ResultSet *result_set = QueryCtx_GetResultSet();

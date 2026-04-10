@@ -23,7 +23,7 @@ static inline QueryCtx *_QueryCtx_GetCreateCtx(void) {
 
 	if(ctx == NULL) {
 		// set a new thread-local QueryCtx if one has not been created
-		ctx = rm_calloc(1, sizeof(QueryCtx));
+		ctx = rm_calloc (1, sizeof(QueryCtx)) ;
 
 		// created lazily only when needed
 		ctx->undo_log       = NULL ;
@@ -351,14 +351,18 @@ void QueryCtx_PrintQuery(void) {
 	printf("%s\n", ctx->query_data.query);
 }
 
+//------------------------------------------------------------------------------
+// Lock management
+//------------------------------------------------------------------------------
+
 static void _QueryCtx_ThreadSafeContextLock
 (
 	QueryCtx *ctx
 ) {
 	// acquire GIL if we're running with a blocked client
 	// implicates we're running on a worker thread and not on Redis main thread
-	if(ctx->global_exec_ctx.bc) {
-		RedisModule_ThreadSafeContextLock(ctx->global_exec_ctx.redis_ctx);
+	if (ctx->global_exec_ctx.bc) {
+		RedisModule_ThreadSafeContextLock (ctx->global_exec_ctx.redis_ctx) ;
 	} else {
 		// no blocked client, most likely we're running on Redis main thread
 		// ASSERT(pthread_equal(Globals_Get_MainThreadId(), pthread_self()) != 0);
@@ -368,8 +372,8 @@ static void _QueryCtx_ThreadSafeContextLock
 		// to alow Redis to reply to PING requests we should yield execution
 		// giving Redis the opportunity to process commands
 		// see RedisModule_Yield docs
-		RedisModule_Yield(ctx->global_exec_ctx.redis_ctx,
-				REDISMODULE_YIELD_FLAG_CLIENTS, NULL);
+		RedisModule_Yield (ctx->global_exec_ctx.redis_ctx,
+				REDISMODULE_YIELD_FLAG_CLIENTS, NULL) ;
 	}
 }
 
@@ -377,36 +381,64 @@ static void _QueryCtx_ThreadSafeContextUnlock
 (
 	QueryCtx *ctx
 ) {
-	if(ctx->global_exec_ctx.bc) RedisModule_ThreadSafeContextUnlock(ctx->global_exec_ctx.redis_ctx);
+	if (ctx->global_exec_ctx.bc != NULL) {
+		RedisModule_ThreadSafeContextUnlock (ctx->global_exec_ctx.redis_ctx) ;
+	}
 }
 
-// starts a locking flow before commiting changes
-// Locking flow:
-// 1. lock GIL
-// 2. open key with `write` flag
-// 3. graph R/W lock with write flag
-// since 2PL protocal is implemented, the method returns true if
-// it managed to achieve locks in this call or a previous call
-// in case that the locks are already locked, there will be no attempt to lock
-// them again this method returns false if the key has changed
-// from the current graph, and sets the relevant error message
-bool QueryCtx_LockForCommit (void) {
+// acquire graph's read lock
+void QueryCtx_AcquireReadLock (void) {
 	QueryCtx *ctx = _QueryCtx_GetCreateCtx () ;
-	if (ctx->internal_exec_ctx.locked_for_commit) {
+
+	// shouldn't try to acquire write lock when read lock is held
+	ASSERT (ctx->internal_exec_ctx.write_locked == false) ;
+
+	// return if we've already acquired read lock
+	if (ctx->internal_exec_ctx.read_locked == true) {
+		return ;
+	}
+
+	// acquire read lock
+	// TODO: change to TryAcquireReadLock with the appropriate timeout
+	Graph_AcquireReadLock (QueryCtx_GetGraph ()) ;
+	ctx->internal_exec_ctx.read_locked = true ;
+}
+
+// acquire graph's write lock
+bool QueryCtx_AcquireWriteLock (void) {
+	QueryCtx *ctx = _QueryCtx_GetCreateCtx () ;
+
+	// return if we've already acquired write lock
+	if (ctx->internal_exec_ctx.write_locked == true) {
+		ASSERT (ctx->internal_exec_ctx.read_locked == false) ;
 		return true ;
 	}
 
-	// release graph READ lock if held by writer
+	// locking flow:
+	// 1. release read lock
+	// 2. lock GIL
+	// 3. open key with `write` flag
+	// 4. graph R/W lock with write flag
+	// since 2PL protocal is implemented, the method returns true if
+	// it managed to achieve locks in this call or a previous call
+	// in case that the locks are already locked, there will be no attempt to lock
+	// them again this method returns false if the key has changed
+	// from the current graph, and sets the relevant error message
+
+	// release graph READ lock if held
 	// writer queries hold a READ lock during the match phase to prevent
-	// concurrent memory modifications by defrag or GRAPH.EFFECT
+	// concurrent memory modifications by defrag
 	// must release before acquiring GIL to avoid deadlock:
 	//   worker: READ lock → GIL  vs  main thread: GIL → WRITE lock
-	if (ctx->internal_exec_ctx.read_locked) {
+	if (ctx->internal_exec_ctx.read_locked == true) {
 		Graph_ReleaseLock (GraphContext_GetGraph (ctx->gc)) ;
 		ctx->internal_exec_ctx.read_locked = false ;
 	}
 
+	//--------------------------------------------------------------------------
 	// lock GIL
+	//--------------------------------------------------------------------------
+
 	GraphContext   *gc         = ctx->gc ;
 	RedisModuleCtx *redis_ctx  = ctx->global_exec_ctx.redis_ctx ;
 	const char     *graph_name = GraphContext_GetName (gc) ;
@@ -416,7 +448,10 @@ bool QueryCtx_LockForCommit (void) {
 
 	_QueryCtx_ThreadSafeContextLock (ctx) ;
 
-	// open key and verify
+	//--------------------------------------------------------------------------
+	// make sure graph key exists
+	//--------------------------------------------------------------------------
+
 	RedisModuleKey *key = RedisModule_OpenKey (redis_ctx, graphID,
 			REDISMODULE_WRITE) ;
 	RedisModule_FreeString (redis_ctx, graphID) ;
@@ -429,7 +464,6 @@ bool QueryCtx_LockForCommit (void) {
 	if (RedisModule_ModuleTypeGetType (key) != GraphContextRedisModuleType) {
 		ErrorCtx_SetError (EMSG_NON_GRAPH_KEY, graph_name) ;
 		goto clean_up ;
-
 	}
 
 	if (gc != RedisModule_ModuleTypeGetValue (key)) {
@@ -440,8 +474,10 @@ bool QueryCtx_LockForCommit (void) {
 	ctx->internal_exec_ctx.key = key ;
 
 	// acquire graph write lock
+	// TODO: change to TryAcquireWriteLock with the appropriate timeout
 	Graph_AcquireWriteLock (GraphContext_GetGraph (gc)) ;
-	ctx->internal_exec_ctx.locked_for_commit = true ;
+	ctx->internal_exec_ctx.write_locked = true ;
+	ASSERT (ctx->internal_exec_ctx.read_locked == false) ;
 
 	return true ;
 
@@ -452,45 +488,43 @@ clean_up:
 	// unlock GIL
 	_QueryCtx_ThreadSafeContextUnlock (ctx) ;
 
-	// if there is a break point for runtime exception, raise it, otherwise return false
+	// if there is a break point for runtime exception, raise it
+	// otherwise return false
 	ErrorCtx_RaiseRuntimeException (NULL) ;
 	return false ;
 }
 
-static void _QueryCtx_UnlockCommit
-(
-	QueryCtx *ctx
-) {
-	GraphContext *gc = ctx->gc ;
+// release graph's lock
+void QueryCtx_ReleaseLock (void) {
+	QueryCtx *ctx = _QueryCtx_GetCtx () ;
+	ASSERT (ctx != NULL) ;
 
-	ctx->internal_exec_ctx.locked_for_commit = false ;
-	// release graph R/W lock
-	Graph_ReleaseLock (GraphContext_GetGraph (gc)) ;
+	// return if neither lock is held
+	if (ctx->internal_exec_ctx.write_locked == false &&
+		ctx->internal_exec_ctx.read_locked  == false) {
+		return ;
+	}
 
-	// close Key
-	RedisModule_CloseKey (ctx->internal_exec_ctx.key) ;
+	// starts an ulocking flow
+	// Unlocking flow:
+	// 1. unlock graph R/W lock
+	// 2. close key
+	// 3. unlock GIL
 
-	// unlock GIL
-	_QueryCtx_ThreadSafeContextUnlock (ctx) ;
-}
+	// release graph lock
+	Graph_ReleaseLock (QueryCtx_GetGraph ()) ;
 
-// starts an ulocking flow and notifies Redis after commiting changes
-// the only writer which allow to perform the unlock and commit (replicate)
-// is the last_writer the method get an OpBase and compares it to
-// the last writer, if they are equal then the commit and unlock flow will start
-// Unlocking flow:
-// 1. replicate
-// 2. unlock graph R/W lock
-// 3. close key
-// 4. unlock GIL
-void QueryCtx_UnlockCommit() {
-	QueryCtx *ctx = _QueryCtx_GetCtx();
-	if(!ctx) return;
+	// release WRITE lock
+	if (ctx->internal_exec_ctx.write_locked == true) {
+		// close Key
+		RedisModule_CloseKey (ctx->internal_exec_ctx.key) ;
 
-	// already unlocked?
-	if(!ctx->internal_exec_ctx.locked_for_commit) return;
+		// unlock GIL
+		_QueryCtx_ThreadSafeContextUnlock (ctx) ;
+	}
 
-	_QueryCtx_UnlockCommit(ctx);
+	ctx->internal_exec_ctx.read_locked  = false ;
+	ctx->internal_exec_ctx.write_locked = false ;
 }
 
 // replicate command to AOF/Replicas
@@ -527,8 +561,8 @@ uint64_t QueryCtx_GetReceivedTS (void) {
 
 // free the allocations within the QueryCtx and reset it for the next query
 void QueryCtx_Free(void) {
-	QueryCtx *ctx = _QueryCtx_GetCtx();
-	ASSERT(ctx != NULL);
+	QueryCtx *ctx = _QueryCtx_GetCtx () ;
+	ASSERT (ctx != NULL) ;
 
 	if (ctx->undo_log) {
 		UndoLog_Free (ctx->undo_log) ;
