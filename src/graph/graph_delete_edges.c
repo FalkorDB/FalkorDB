@@ -34,12 +34,12 @@ static int _edge_cmp
 
 	// same relationship-type, different source node ID
 	if (as != bs) {
-		return as - bs ;
+		return (as > bs) - (as < bs) ;
 	}
 
 	// same relationship-type and src node ID
 	// compare base on destination node ID
-	return at - bt ;
+	return (at > bt) - (at < bt) ;
 }
 
 static void _clear_adj

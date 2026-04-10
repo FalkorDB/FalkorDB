@@ -505,7 +505,7 @@ static int _value_cmp
 	Edge *eb = (Edge *)b;
 	uint64_t a_id = ENTITY_GET_ID(ea);  // A's value
 	uint64_t b_id = ENTITY_GET_ID(eb);  // B's value
-	return a_id - b_id;
+	return (a_id > b_id) - (a_id < b_id);
 }
 
 // remove multiple entries
