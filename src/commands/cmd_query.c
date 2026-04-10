@@ -153,21 +153,24 @@ inline static bool _readonly_cmd_mode(CommandCtx *ctx) {
 // _ExecuteQuery accepts a GraphQueryCtx as an argument
 // it may be called directly by a reader thread or the Redis main thread,
 // or dispatched as a worker thread job when used for writing.
-static void _ExecuteQuery(void *args) {
-	ASSERT(args != NULL);
+static void _ExecuteQuery
+(
+	void *args
+) {
+	ASSERT (args != NULL) ;
 
-	GraphQueryCtx  *gq_ctx      = args;
-	QueryCtx       *query_ctx   = gq_ctx->query_ctx;
-	GraphContext   *gc          = gq_ctx->graph_ctx;
+	GraphQueryCtx  *gq_ctx      = args ;
+	QueryCtx       *query_ctx   = gq_ctx->query_ctx ;
+	GraphContext   *gc          = gq_ctx->graph_ctx ;
 	Graph          *g           = GraphContext_GetGraph (gc) ;
-	RedisModuleCtx *rm_ctx      = gq_ctx->rm_ctx;
-	ExecutionCtx   *exec_ctx    = gq_ctx->exec_ctx;
-	CommandCtx     *command_ctx = gq_ctx->command_ctx;
-	AST            *ast         = exec_ctx->ast;
-	ExecutionPlan  *plan        = exec_ctx->plan;
-	ExecutionType  exec_type    = exec_ctx->exec_type;
-	const bool     profile      = (query_ctx->flags & QueryExecutionTypeFlag_PROFILE);
-	const bool     readonly     = !(query_ctx->flags & QueryExecutionTypeFlag_WRITE);
+	RedisModuleCtx *rm_ctx      = gq_ctx->rm_ctx ;
+	ExecutionCtx   *exec_ctx    = gq_ctx->exec_ctx ;
+	CommandCtx     *command_ctx = gq_ctx->command_ctx ;
+	AST            *ast         = exec_ctx->ast ;
+	ExecutionPlan  *plan        = exec_ctx->plan ;
+	ExecutionType  exec_type    = exec_ctx->exec_type ;
+	const bool     profile      = (query_ctx->flags & QueryExecutionTypeFlag_PROFILE) ;
+	const bool     readonly     = !(query_ctx->flags & QueryExecutionTypeFlag_WRITE) ;
 
 	// if we have migrated to a writer thread,
 	// update thread-local storage and track the CommandCtx
@@ -180,37 +183,45 @@ static void _ExecuteQuery(void *args) {
 	}
 
 	// instantiate the query ResultSet
-	bool bolt    = command_ctx->bolt_client != NULL;
-	bool compact = command_ctx->compact;
+	bool bolt    = command_ctx->bolt_client != NULL ;
+	bool compact = command_ctx->compact ;
+
 	// replicated command don't need to return result
 	ResultSetFormatterType resultset_format =
-		profile || command_ctx->replicated_command
-		? FORMATTER_NOP
-		: (bolt)
-			? FORMATTER_BOLT
-			: (compact)
-				? FORMATTER_COMPACT
-				: FORMATTER_VERBOSE;
-	ResultSet *result_set = NewResultSet(rm_ctx, command_ctx->bolt_client, resultset_format);
-	if(exec_ctx->cached) {
-		ResultSet_CachedExecution(result_set); // indicate a cached execution
+		(profile || command_ctx->replicated_command) ?
+			FORMATTER_NOP :
+				(bolt) ?
+					FORMATTER_BOLT :
+					(compact) ?
+						FORMATTER_COMPACT :
+						FORMATTER_VERBOSE ;
+
+	ResultSet *result_set =
+		NewResultSet (rm_ctx, command_ctx->bolt_client, resultset_format) ;
+
+	if (exec_ctx->cached) {
+		ResultSet_CachedExecution (result_set) ; // indicate a cached execution
 	}
 
-	QueryCtx_SetResultSet(result_set);
+	QueryCtx_SetResultSet (result_set) ;
 
 	// acquire the appropriate lock
-	if(readonly) {
-		Graph_AcquireReadLock(g);
-	} else {
-		// if this is a writer query `we need to re-open the graph key with write flag
-		// this notifies Redis that the key is "dirty" any watcher on that key will
-		// be notified
-		CommandCtx_ThreadSafeContextLock(command_ctx);
+	if (!readonly) {
+		// if this is a writer query we need to re-open the graph key with
+		// write flag this notifies Redis that the key is "dirty" any watcher
+		// on that key will be notified
+		// must happen before READ lock to avoid deadlock:
+		//   worker: READ → GIL  vs  main thread: GIL → WRITE
+		CommandCtx_ThreadSafeContextLock (command_ctx) ;
 		{
-			GraphContext_MarkWriter(rm_ctx, gc);
+			GraphContext_MarkWriter (rm_ctx, gc) ;
 		}
-		CommandCtx_ThreadSafeContextUnlock(command_ctx);
+		CommandCtx_ThreadSafeContextUnlock (command_ctx) ;
 	}
+
+	// acquire graph READ lock to protect match phase from concurrent
+	// memory modifications by defrag or GRAPH.EFFECT on main thread
+	QueryCtx_AcquireReadLock () ;
 
 	if(exec_type == EXECUTION_TYPE_QUERY) {  // query operation
 		// set policy after lock acquisition,
@@ -274,12 +285,10 @@ static void _ExecuteQuery(void *args) {
 				rm_free(effects);
 			} else {
 				// replicate original query
-				QueryCtx_Replicate(query_ctx);
+				QueryCtx_Replicate (query_ctx) ;
 			}
 		}
 	}
-
-	QueryCtx_UnlockCommit();
 
 	if(!profile || ErrorCtx_EncounteredError()) {
 		// if we encountered an error, ResultSet_Reply will emit the error
@@ -292,9 +301,7 @@ static void _ExecuteQuery(void *args) {
 		QueryCtx_AdvanceStage(query_ctx);
 	}
 
-	if (readonly) {
-		Graph_ReleaseLock(g) ; // release read lock
-	}
+	QueryCtx_ReleaseLock () ;
 
 	//--------------------------------------------------------------------------
 	// log query to slowlog
@@ -358,12 +365,12 @@ static void enter_writer_loop
 	while (true) {
 		// drain the queue
 		GraphQueryCtx *gq_ctx;
-		while ((gq_ctx = (GraphQueryCtx *)GraphContext_DequeueWriteQuery(gc))) {
-			_ExecuteQuery(gq_ctx);
+		while ((gq_ctx = (GraphQueryCtx *)GraphContext_DequeueWriteQuery (gc))) {
+			_ExecuteQuery (gq_ctx) ;
 		}
 
 		// release write access
-		GraphContext_ExitWrite(gc);
+		GraphContext_ExitWrite (gc) ;
 
 		// race condition handling: after releasing write access, another thread
 		// may have enqueued a query
@@ -371,10 +378,11 @@ static void enter_writer_loop
 		// to reacquire write access
 		// if we succeed, continue processing
 		// if we fail, another thread is now the writer and will handle the queue
-		if(GraphContext_WriteQueueEmpty(gc) || !GraphContext_TryEnterWrite(gc)) {
+		if (GraphContext_WriteQueueEmpty (gc) ||
+			!GraphContext_TryEnterWrite  (gc)) {
 			// either the queue is empty
 			// or the another thread became a writer
-			break;
+			break ;
 		}
 	}
 }
@@ -416,108 +424,109 @@ void _query
 	// NOTE: acquiring this lock at this point in time might be a bit too early
 	// as we should push it into `ExecutionCtx_FromQuery` some time after
 	// query parsing
-	Graph_AcquireReadLock (g) ;
+	QueryCtx_AcquireReadLock () ;
 
 	// parse query parameters and build an execution plan
 	// or retrieve it from the cache
-	exec_ctx = ExecutionCtx_FromQuery(command_ctx);
+	exec_ctx = ExecutionCtx_FromQuery (command_ctx) ;
 
 	// release graph READ lock
-	Graph_ReleaseLock (g) ;
+	QueryCtx_ReleaseLock () ;
 
-	if(exec_ctx == NULL || ErrorCtx_EncounteredError()) {
-		goto cleanup;
+	if (exec_ctx == NULL || ErrorCtx_EncounteredError ()) {
+		goto cleanup ;
 	}
 
 	// update cached flag
-	QueryCtx_SetUtilizedCache(query_ctx, exec_ctx->cached);
+	QueryCtx_SetUtilizedCache (query_ctx, exec_ctx->cached) ;
 
-	ExecutionType exec_type = exec_ctx->exec_type;
-	bool readonly = AST_ReadOnly(exec_ctx->ast->root);
+	ExecutionType exec_type = exec_ctx->exec_type ;
+	bool readonly = AST_ReadOnly (exec_ctx->ast->root) ;
 	bool index_op = (exec_type == EXECUTION_TYPE_INDEX_CREATE ||
-	     exec_type == EXECUTION_TYPE_INDEX_DROP);
+	     exec_type == EXECUTION_TYPE_INDEX_DROP) ;
 
-	if(profile && index_op) {
-		RedisModule_ReplyWithError(ctx, "Can't profile index operations.");
-		goto cleanup;
+	if (profile && index_op) {
+		RedisModule_ReplyWithError (ctx, "Can't profile index operations.") ;
+		goto cleanup ;
 	}
 
 	// write query executing via GRAPH.RO_QUERY isn't allowed
-	if(!profile && !readonly && _readonly_cmd_mode(command_ctx)) {
-		ErrorCtx_SetError(EMSG_MISUSE_GRAPH_ROQUERY);
-		goto cleanup;
+	if (!profile && !readonly && _readonly_cmd_mode (command_ctx)) {
+		ErrorCtx_SetError (EMSG_MISUSE_GRAPH_ROQUERY) ;
+		goto cleanup ;
 	}
 
-	CronTaskHandle timeout_task = 0;
+	CronTaskHandle timeout_task = 0 ;
 
 	// enforce specified timeout when query is readonly
 	// or timeout applies to both read and write
-	bool enforce_timeout = command_ctx->timeout != 0 && !index_op &&
-		(readonly || command_ctx->timeout_rw) &&
-		!command_ctx->replicated_command;
-	if(enforce_timeout) {
-		timeout_task = Query_SetTimeOut(command_ctx->timeout, exec_ctx->plan);
+	bool enforce_timeout = command_ctx->timeout != 0             &&
+						   !index_op                             &&
+						   (readonly || command_ctx->timeout_rw) &&
+						   !command_ctx->replicated_command ;
+	if (enforce_timeout) {
+		timeout_task = Query_SetTimeOut (command_ctx->timeout, exec_ctx->plan) ;
 	}
 
 	// populate the container struct for invoking _ExecuteQuery.
-	QueryExecutionTypeFlag flags = QueryExecutionTypeFlag_READ;
+	QueryExecutionTypeFlag flags = QueryExecutionTypeFlag_READ ;
 	if (!readonly) {
-		flags |= QueryExecutionTypeFlag_WRITE;
+		flags |= QueryExecutionTypeFlag_WRITE ;
 	}
 	if (profile) {
-		flags |= QueryExecutionTypeFlag_PROFILE;
+		flags |= QueryExecutionTypeFlag_PROFILE ;
 	}
-	GraphQueryCtx *gq_ctx = GraphQueryCtx_New(gc, ctx, exec_ctx, command_ctx,
-											  flags, timeout_task);
+	GraphQueryCtx *gq_ctx =
+		GraphQueryCtx_New (gc, ctx, exec_ctx, command_ctx, flags, timeout_task) ;
 
 	// if 'thread' is redis main thread, continue running
 	// if readonly is true we're executing on a worker thread from
 	// the read-only threadpool
-	if(readonly || command_ctx->thread == EXEC_THREAD_MAIN) {
-		_ExecuteQuery(gq_ctx);
+	if (readonly || command_ctx->thread == EXEC_THREAD_MAIN) {
+		_ExecuteQuery (gq_ctx) ;
 	} else {
 		// increase graph ref count, guard against the graph context
 		// being free too early as the writer need access to the graph's
 		// pending queries queue and the writer's flag
-		GraphContext_IncreaseRefCount(gc);
+		GraphContext_IncreaseRefCount (gc) ;
 
 		// thread failed getting exclusive write access to graph
 		// delegate query to current writer
-		if(!_DelegateQuery(gc, gq_ctx)) {
-			ErrorCtx_SetError(EMSG_WRITE_QUEUE_FULL);
+		if (!_DelegateQuery (gc, gq_ctx)) {
+			ErrorCtx_SetError (EMSG_WRITE_QUEUE_FULL) ;
 
 			// counter to GraphContext_IncreaseRefCount just above
-			GraphContext_DecreaseRefCount(gc);
-			goto cleanup;
+			GraphContext_DecreaseRefCount (gc) ;
+			goto cleanup ;
 		}
 
 		// try to acquire exclusive write access to graph
-		if(GraphContext_TryEnterWrite(gc)) {
+		if (GraphContext_TryEnterWrite (gc)) {
 			// thread has exclusive write access to graph
 			// go ahead and run the query
-			enter_writer_loop(gc);
+			enter_writer_loop (gc) ;
 		}
 
 		// counter to GraphContext_IncreaseRefCount just above
-		GraphContext_DecreaseRefCount(gc);
+		GraphContext_DecreaseRefCount (gc) ;
 	}
 
-	return;
+	return ;
 
 cleanup:
 	// if there were any query compile time errors, report them
-	if(ErrorCtx_EncounteredError()) {
-		ErrorCtx_EmitException();
+	if (ErrorCtx_EncounteredError ()) {
+		ErrorCtx_EmitException () ;
 	}
 
 	// cleanup routine invoked after encountering errors in this function
-	ExecutionCtx_Free(exec_ctx);
-	GraphContext_DecreaseRefCount(gc);
-	Globals_UntrackCommandCtx(command_ctx);
-	CommandCtx_UnblockClient(command_ctx);
-	CommandCtx_Free(command_ctx);
-	QueryCtx_Free(); // reset the QueryCtx and free its allocations
-	ErrorCtx_Clear();
+	ExecutionCtx_Free (exec_ctx) ;
+	GraphContext_DecreaseRefCount (gc) ;
+	Globals_UntrackCommandCtx (command_ctx) ;
+	CommandCtx_UnblockClient (command_ctx) ;
+	CommandCtx_Free (command_ctx) ;
+	QueryCtx_Free () ; // reset the QueryCtx and free its allocations
+	ErrorCtx_Clear () ;
 }
 
 void Graph_Profile(void *args) {

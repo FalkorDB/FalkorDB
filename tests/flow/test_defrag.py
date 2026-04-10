@@ -2,6 +2,7 @@ import time
 import redis
 import random
 import datetime
+import threading
 from dateutil.relativedelta import relativedelta
 from common import *
 
@@ -161,3 +162,135 @@ class testDefrag():
             self.env.assertEquals(props, row[0])
             self.env.assertEquals(props, row[1])
 
+    def test_concurrent_writers_during_defrag(self):
+        """Regression test for issue #1831: writer queries must hold a graph
+        READ lock during the match phase to prevent active defrag from
+        relocating entity memory mid-execution."""
+
+        conn = self.env.getConnection()
+
+        #----------------------------------------------------------------------
+        # 1. Seed the graph with data to defragment
+        #----------------------------------------------------------------------
+
+        g = self.db.select_graph("defrag_race")
+
+        # create nodes with properties to give defrag something to relocate
+        g.query("""UNWIND range(0, 500) AS i
+                   CREATE (:Item {id: i, name: 'item_' + toString(i),
+                                  value: i * 1.5, tag: 'bulk'})""")
+
+        # delete half to create fragmentation
+        g.query("MATCH (n:Item) WHERE n.id % 2 = 0 DELETE n")
+        conn.execute_command("MEMORY PURGE")
+
+        #----------------------------------------------------------------------
+        # 2. Enable aggressive active defrag
+        #----------------------------------------------------------------------
+
+        keys = [
+            "activedefrag",
+            "active-defrag-threshold-lower",
+            "active-defrag-threshold-upper",
+            "active-defrag-ignore-bytes",
+        ]
+
+        original_cfg = {}
+        for k in keys:
+            original_cfg.update(conn.config_get(k))
+
+        try:
+            conn.config_set("activedefrag", "yes")
+            conn.config_set("active-defrag-threshold-lower", "1")
+            conn.config_set("active-defrag-threshold-upper", "1")
+            conn.config_set("active-defrag-ignore-bytes", "1")
+        except ResponseError:
+            self.env.skip()
+            return
+
+        #----------------------------------------------------------------------
+        # 3. Run concurrent MERGE+SET writers while defrag is active
+        #----------------------------------------------------------------------
+
+        errors = []
+        stop_event = threading.Event()
+
+        def writer_thread(thread_id):
+            """Run MERGE+SET queries concurrently with defrag."""
+            try:
+                tg = self.db.select_graph("defrag_race")
+                i = 0
+                while not stop_event.is_set():
+                    try:
+                        tg.query(
+                            "UNWIND $rows AS row "
+                            "MERGE (n:Item {id: row.id}) "
+                            "SET n.name = row.name, n.value = row.value",
+                            {"rows": [
+                                {"id": thread_id * 1000 + i,
+                                 "name": f"t{thread_id}_{i}",
+                                 "value": float(i)},
+                                {"id": thread_id * 1000 + i + 1,
+                                 "name": f"t{thread_id}_{i+1}",
+                                 "value": float(i + 1)},
+                            ]}
+                        )
+                    except Exception as e:
+                        err_str = str(e)
+                        if "connection" not in err_str.lower():
+                            errors.append(f"Thread {thread_id}: {e}")
+                        else:
+                            # server crash — connection lost
+                            errors.append(f"Thread {thread_id}: server crashed: {e}")
+                            return
+                    i += 2
+            except Exception as e:
+                errors.append(f"Thread {thread_id} setup: {e}")
+
+        # start writer threads
+        num_threads = 4
+        threads = []
+        for t in range(num_threads):
+            th = threading.Thread(target=writer_thread, args=(t,))
+            th.daemon = True
+            th.start()
+            threads.append(th)
+
+        try:
+            # let writers and defrag run concurrently
+            time.sleep(3)
+
+            # signal threads to stop
+            stop_event.set()
+            for th in threads:
+                th.join(timeout=5)
+
+            #------------------------------------------------------------------
+            # 4. Verify server is alive and data is consistent
+            #------------------------------------------------------------------
+
+            # server should still respond
+            self.env.assertTrue(conn.ping())
+
+            # query should return valid results
+            res = g.query("MATCH (n:Item) RETURN count(n)").result_set
+            self.env.assertGreater(res[0][0], 0)
+
+            # verify no connection-lost errors (would indicate a crash)
+            crash_errors = [e for e in errors if "crash" in e.lower()]
+            self.env.assertEquals(len(crash_errors), 0)
+
+        finally:
+            #------------------------------------------------------------------
+            # 5. Restore original config
+            #------------------------------------------------------------------
+
+            stop_event.set()
+            for th in threads:
+                th.join(timeout=5)
+
+            for k, v in original_cfg.items():
+                try:
+                    conn.config_set(k, v)
+                except Exception:
+                    pass
