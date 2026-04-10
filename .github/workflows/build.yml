@@ -460,6 +460,54 @@ jobs:
           path: /tmp/logs
           retention-days: 7
 
+  smoke-test:
+    needs: build
+    if: ${{ !inputs.skip_tests && (needs.build.result == 'success') }}
+    runs-on: ${{ matrix.platform.machine_label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - suffix: x64
+            machine_label: ubuntu-latest
+          - suffix: arm64v8
+            machine_label: ubuntu-24.04-arm
+          - suffix: alpine-x64
+            machine_label: ubuntu-latest
+          - suffix: alpine-arm64v8
+            machine_label: ubuntu-24.04-arm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Install test dependencies
+        run: python3 -m pip install --quiet -r tests/requirements.txt
+
+      - name: Download production image
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: falkordb-${{ matrix.platform.suffix }}
+          path: /tmp
+
+      - name: Load production image
+        run: docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
+
+      - name: Run smoke tests
+        run: ./tests/docker/smoke-test.sh falkordb/falkordb-${{ matrix.platform.suffix }}
+
+      - name: Upload smoke test logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: smoke-test-logs-${{ matrix.platform.suffix }}
+          path: tests/flow/logs
+          retention-days: 7
+
   security-scan:
     needs: build
     if: needs.build.result == 'success'
