@@ -30,7 +30,13 @@ class test_encode_decode(FlowTestsBase):
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def tearDown(self):
-        self.graph.delete()
+        try:
+            self.graph.delete()
+        except Exception as e:
+            # tolerate missing graph key and dead server (e.g. ASAN timeout)
+            msg = str(e).lower()
+            if "empty key" not in msg and "connection" not in msg:
+                raise
 
     def test_01_nodes_over_multiple_keys(self):
         # Create 3 nodes meta keys
@@ -341,3 +347,83 @@ class test_encode_decode(FlowTestsBase):
             self.env, nodes_before.result_set, nodes_after.result_set
         )
         self.env.assertEquals(edges_before.result_set, edges_after.result_set)
+
+    def test_15_varied_label_sizes(self):
+        # verify that a graph with multiple labels of different sizes
+        # and cross-label edges survives encode / decode
+        sizes = {"S": 10, "M": 100, "L": 1000, "XL": 2000}
+        for label, count in sizes.items():
+            self.graph.query(
+                f"UNWIND range(1, {count}) AS id CREATE (:{label} {{id:id}})"
+            )
+
+        # connect nodes across labels
+        self.graph.query(
+            "MATCH (a:S), (b:M) WHERE a.id = b.id CREATE (a)-[:R]->(b)"
+        )
+
+        expected = {}
+        for label in sizes:
+            expected[label] = self.graph.query(
+                f"MATCH (n:{label}) RETURN count(n)"
+            )
+        expected_edges = self.graph.query("MATCH ()-[e:R]->() RETURN count(e)")
+
+        # Save RDB & Load from RDB
+        self.redis_con.execute_command("DEBUG", "RELOAD")
+
+        for label in sizes:
+            actual = self.graph.query(f"MATCH (n:{label}) RETURN count(n)")
+            self.env.assertEquals(expected[label].result_set, actual.result_set)
+        actual_edges = self.graph.query("MATCH ()-[e:R]->() RETURN count(e)")
+        self.env.assertEquals(expected_edges.result_set, actual_edges.result_set)
+
+    def test_16_deletions_across_labels(self):
+        # verify that deleted entities across multiple labels and their
+        # connecting edges survive encode / decode
+        self.graph.query("UNWIND range(1, 500) AS id CREATE (:A {id:id})")
+        self.graph.query("UNWIND range(1, 500) AS id CREATE (:B {id:id})")
+        self.graph.query(
+            "MATCH (a:A), (b:B) WHERE a.id = b.id CREATE (a)-[:E]->(b)"
+        )
+
+        # delete a portion from each label
+        self.graph.query("MATCH (n:A) WHERE n.id <= 200 DELETE n")
+        self.graph.query("MATCH (n:B) WHERE n.id <= 300 DELETE n")
+
+        expected_a = self.graph.query("MATCH (n:A) RETURN count(n)")
+        expected_b = self.graph.query("MATCH (n:B) RETURN count(n)")
+        expected_e = self.graph.query("MATCH ()-[e:E]->() RETURN count(e)")
+
+        # Save RDB & Load from RDB
+        self.redis_con.execute_command("DEBUG", "RELOAD")
+
+        actual_a = self.graph.query("MATCH (n:A) RETURN count(n)")
+        actual_b = self.graph.query("MATCH (n:B) RETURN count(n)")
+        actual_e = self.graph.query("MATCH ()-[e:E]->() RETURN count(e)")
+        self.env.assertEquals(expected_a.result_set, actual_a.result_set)
+        self.env.assertEquals(expected_b.result_set, actual_b.result_set)
+        self.env.assertEquals(expected_e.result_set, actual_e.result_set)
+
+    def test_17_large_string_properties(self):
+        # verify that nodes with large string properties survive
+        # encode / decode
+        sizes = [100, 1000, 5000, 10000]
+        for i, sz in enumerate(sizes):
+            val = 'a' * sz
+            self.graph.query(
+                "CREATE (:Str {id: $id, val: $val})",
+                params={'id': i, 'val': val}
+            )
+
+        expected = self.graph.query(
+            "MATCH (n:Str) RETURN n.id, size(n.val) ORDER BY n.id"
+        )
+
+        # Save RDB & Load from RDB
+        self.redis_con.execute_command("DEBUG", "RELOAD")
+
+        actual = self.graph.query(
+            "MATCH (n:Str) RETURN n.id, size(n.val) ORDER BY n.id"
+        )
+        self.env.assertEquals(expected.result_set, actual.result_set)

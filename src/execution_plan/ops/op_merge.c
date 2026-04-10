@@ -471,7 +471,7 @@ static Record MergeConsume
 	OpBase_PropagateReset (op->match_stream) ;
 
 	// lock everything
-	QueryCtx_LockForCommit ();
+	QueryCtx_AcquireWriteLock ();
 
 	// in cases such as:
 	// MERGE (n) ON MATCH SET n:L ON CREATE n:M
