@@ -6,6 +6,7 @@
 // tests for RdbLoadDeletedNodes / RdbLoadDeletedEdges buffer validation
 // verifies that a misaligned buffer does not cause use-after-free / double-free
 
+#include "src/RG.h"
 #include "src/util/rmalloc.h"
 #include "src/graph/graph.h"
 #include "src/serializers/graph_extensions.h"
@@ -93,8 +94,11 @@ void tearDown() {
 
 //------------------------------------------------------------------------------
 // test: misaligned buffer in RdbLoadDeletedNodes_v19
+// only meaningful in release builds — in debug builds ASSERT(false) crashes
+// intentionally before the return statement is reached
 //------------------------------------------------------------------------------
 
+#if !RG_DEBUG
 void test_deletedNodes_misaligned_buffer(void) {
 	// write a buffer whose byte length (7) is not a multiple of
 	// sizeof(NodeID) (8) — this must not cause a use-after-free or
@@ -126,11 +130,13 @@ void test_deletedNodes_misaligned_buffer(void) {
 
 	_close_reader(pipefd, fs_read, &reader);
 }
+#endif
 
 //------------------------------------------------------------------------------
 // test: misaligned buffer in RdbLoadDeletedEdges_v19
 //------------------------------------------------------------------------------
 
+#if !RG_DEBUG
 void test_deletedEdges_misaligned_buffer(void) {
 	// same idea — 7 bytes is not aligned to sizeof(EdgeID)
 
@@ -156,6 +162,7 @@ void test_deletedEdges_misaligned_buffer(void) {
 
 	_close_reader(pipefd, fs_read, &reader);
 }
+#endif
 
 //------------------------------------------------------------------------------
 // test: aligned buffer in RdbLoadDeletedNodes_v19 (happy path)
@@ -243,6 +250,7 @@ void test_deletedEdges_aligned_buffer(void) {
 // test: single-byte buffer (edge case)
 //------------------------------------------------------------------------------
 
+#if !RG_DEBUG
 void test_deletedNodes_single_byte_buffer(void) {
 	// a 1-byte buffer is the smallest misalignment case
 
@@ -268,16 +276,19 @@ void test_deletedNodes_single_byte_buffer(void) {
 
 	_close_reader(pipefd, fs_read, &reader);
 }
+#endif
 
 //------------------------------------------------------------------------------
 // test list
 //------------------------------------------------------------------------------
 
 TEST_LIST = {
+#if !RG_DEBUG
 	{"deletedNodes_misaligned_buffer", test_deletedNodes_misaligned_buffer},
 	{"deletedEdges_misaligned_buffer", test_deletedEdges_misaligned_buffer},
+	{"deletedNodes_single_byte",       test_deletedNodes_single_byte_buffer},
+#endif
 	{"deletedNodes_aligned_buffer",    test_deletedNodes_aligned_buffer},
 	{"deletedEdges_aligned_buffer",    test_deletedEdges_aligned_buffer},
-	{"deletedNodes_single_byte",       test_deletedNodes_single_byte_buffer},
 	{NULL, NULL}
 };
