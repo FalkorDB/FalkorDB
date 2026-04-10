@@ -204,6 +204,7 @@ void RdbLoadDeletedNodes_v19
 	if (n % sizeof(NodeID) != 0) {
 		rm_free (deleted_nodes_list) ;
 		ASSERT (false && "corrupted deleted nodes buffer") ;
+		return;
 	}
 
 	ASSERT((n / sizeof(NodeID)) == deleted_node_count);
@@ -272,6 +273,7 @@ void RdbLoadDeletedEdges_v19
 	if (n % sizeof(EdgeID) != 0) {
 		rm_free(deleted_edges_list);
 		ASSERT(false && "corrupted deleted edges buffer");
+		return;
 	}
 
 	ASSERT((n / sizeof(EdgeID)) == deleted_edge_count);
