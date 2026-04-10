@@ -791,11 +791,11 @@ class testGraphMergeFlow():
 
         # setup: John connected to Anna and Germany
         self.graph.query(
-            "CREATE (j:Person {name: 'John'}),"
-            "       (a:Person {name: 'Anna'}),"
-            "       (g:Country {name: 'Germany'}),"
-            "       (j)-[:KNOWS]->(a),"
-            "       (j)-[:VISITED]->(g)"
+            """CREATE (j:Person {name: 'John'}),
+                      (a:Person {name: 'Anna'}),
+                      (g:Country {name: 'Germany'}),
+                      (j)-[:KNOWS]->(a),
+                      (j)-[:VISITED]->(g)"""
         )
 
         # first invocation: creates City nodes + LOCATED_IN edges
