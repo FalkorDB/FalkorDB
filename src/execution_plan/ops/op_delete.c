@@ -80,7 +80,7 @@ static void _BulkDeleteEntities
 	ASSERT ((node_count + total_edge_count) > 0) ;
 
 	// lock everything
-	QueryCtx_LockForCommit();
+	QueryCtx_AcquireWriteLock () ;
 
 	// NOTE: delete edges before nodes
 	// required as a deleted node must be detached
@@ -179,7 +179,7 @@ static void _DeleteEntities
 	}
 
 	// lock everything
-	QueryCtx_LockForCommit();
+	QueryCtx_AcquireWriteLock () ;
 	// NOTE: delete edges before nodes
 	// required as a deleted node must be detached
 

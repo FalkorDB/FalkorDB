@@ -268,7 +268,7 @@ void CommitNewEntities
 	}
 
 	// lock everything
-	QueryCtx_LockForCommit();
+	QueryCtx_AcquireWriteLock () ;
 
 	//--------------------------------------------------------------------------
 	// commit nodes
