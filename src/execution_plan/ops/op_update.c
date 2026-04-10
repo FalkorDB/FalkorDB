@@ -116,7 +116,7 @@ static Record UpdateConsume
 		OpBase_PropagateReset (child) ;
 
 		// lock everything
-		QueryCtx_LockForCommit () ;
+		QueryCtx_AcquireWriteLock () ;
 
 		// in cases such as:
 		// MATCH (n) SET n:L

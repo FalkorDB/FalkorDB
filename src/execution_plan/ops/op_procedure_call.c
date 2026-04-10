@@ -138,7 +138,9 @@ static Record ProcCallConsume
 		// introduced
 
 		// lock if procedure can modify the graph
-		if(!Procedure_IsReadOnly(op->procedure)) QueryCtx_LockForCommit();
+		if (!Procedure_IsReadOnly (op->procedure)) {
+			QueryCtx_AcquireWriteLock () ;
+		}
 
 		ProcedureResult res = Proc_Invoke(op->procedure, op->args, op->output);
 

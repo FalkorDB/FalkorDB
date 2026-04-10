@@ -3,7 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#pragma one
+#pragma once
 
 #include <stdint.h>
 #include <stdbool.h>
