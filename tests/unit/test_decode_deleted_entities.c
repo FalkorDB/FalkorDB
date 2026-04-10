@@ -52,6 +52,8 @@ static void _mock_assert
 	int line
 ) {
 	(void)estr; (void)file; (void)line;
+	// use _exit to avoid atexit handlers (ASAN cleanup can hang after fork)
+	_exit(1);
 }
 
 //------------------------------------------------------------------------------
