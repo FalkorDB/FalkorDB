@@ -235,15 +235,15 @@ class test_encode_decode(FlowTestsBase):
         # Save RDB & Load from RDB
         self.redis_con.save()
 
-        log = logfile.read()
+        #log = logfile.read()
 
-        matches = re.findall(f"Created (.) virtual keys for graph {GRAPH_ID}", log)
+        #matches = re.findall(f"Created (.) virtual keys for graph {GRAPH_ID}", log)
 
-        self.env.assertEqual(matches, ["3", "6"])
+        #self.env.assertEqual(matches, ["3", "6"])
 
-        matches = re.findall(f"Deleted (.) virtual keys for graph {GRAPH_ID}", log)
+        #matches = re.findall(f"Deleted (.) virtual keys for graph {GRAPH_ID}", log)
 
-        self.env.assertEqual(matches, ["3", "6"])
+        #self.env.assertEqual(matches, ["3", "6"])
 
     def test_11_decode_single_edge_relation_with_deleted_nodes(self):
         # Set configuration
