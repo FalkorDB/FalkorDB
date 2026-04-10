@@ -3,8 +3,9 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-// tests for RdbLoadDeletedNodes / RdbLoadDeletedEdges buffer validation
-// verifies that a misaligned buffer does not cause use-after-free / double-free
+// Tests for RdbLoadDeletedNodes / RdbLoadDeletedEdges buffer validation.
+// Malformed buffers (misaligned or count-mismatch) must cause the process
+// to exit via RedisModule_Assert.  We verify this with fork-based death tests.
 
 #include "src/RG.h"
 #include "src/util/rmalloc.h"
@@ -18,6 +19,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <sys/wait.h>
 
 void setup();
 void tearDown();
@@ -28,6 +30,29 @@ void tearDown();
 
 #define NODE_CAP 16384
 #define EDGE_CAP 16384
+
+//------------------------------------------------------------------------------
+// mock Redis module functions for death-test child processes
+//------------------------------------------------------------------------------
+
+static void _mock_log
+(
+	RedisModuleCtx *ctx,
+	const char *level,
+	const char *fmt,
+	...
+) {
+	(void)ctx; (void)level; (void)fmt;
+}
+
+static void _mock_assert
+(
+	const char *estr,
+	const char *file,
+	int line
+) {
+	(void)estr; (void)file; (void)line;
+}
 
 //------------------------------------------------------------------------------
 // helpers
@@ -77,6 +102,67 @@ static void _close_reader
 	SerializerIO_Free(reader);
 }
 
+// Death-test helper: write data to a pipe, fork a child that calls the loader,
+// assert the child exits abnormally (non-zero exit or signal).
+typedef void (*DeletedEntityLoader)(SerializerIO, Graph *, uint64_t);
+
+static void _assert_loader_exits
+(
+	const void *data,
+	size_t data_len,
+	uint64_t expected_count,
+	DeletedEntityLoader loader
+) {
+	// create pipe and write data before fork
+	int pipefd[2];
+	TEST_ASSERT(pipe(pipefd) != -1);
+
+	FILE *fs_write = fdopen(pipefd[1], "w");
+	TEST_ASSERT(fs_write != NULL);
+	SerializerIO writer = SerializerIO_FromStream(fs_write, true);
+	SerializerIO_WriteBuffer(writer, data, data_len);
+	fclose(fs_write);
+	close(pipefd[1]);
+	SerializerIO_Free(&writer);
+
+	// create graph before fork to avoid GrB thread-pool issues
+	Graph *g = Graph_New(NODE_CAP, EDGE_CAP);
+	Graph_AcquireWriteLock(g);
+
+	pid_t pid = fork();
+	TEST_ASSERT(pid >= 0);
+
+	if (pid == 0) {
+		// child: install mock Redis module functions
+		RedisModule_Log    = (void (*)(RedisModuleCtx *, const char *,
+			const char *, ...))_mock_log;
+		RedisModule__Assert = _mock_assert;
+
+		FILE *fs_read = fdopen(pipefd[0], "r");
+		SerializerIO reader = SerializerIO_FromStream(fs_read, false);
+
+		// should detect malformed buffer and exit(1)
+		loader(reader, g, expected_count);
+
+		// must not be reached
+		_exit(0);
+	}
+
+	// parent: close read end (child owns it) and wait
+	close(pipefd[0]);
+
+	int status;
+	waitpid(pid, &status, 0);
+
+	Graph_ReleaseLock(g);
+	Graph_Free(g);
+
+	bool died = false;
+	if(WIFEXITED(status))        died = (WEXITSTATUS(status) != 0);
+	else if(WIFSIGNALED(status)) died = true;
+	TEST_ASSERT(died);
+}
+
 //------------------------------------------------------------------------------
 // setup / teardown
 //------------------------------------------------------------------------------
@@ -93,121 +179,77 @@ void tearDown() {
 }
 
 //------------------------------------------------------------------------------
-// test: misaligned buffer in RdbLoadDeletedNodes_v19
-// only meaningful in release builds — in debug builds ASSERT(false) crashes
-// intentionally before the return statement is reached
+// death tests: misaligned buffer
 //------------------------------------------------------------------------------
 
-#if !RG_DEBUG
 void test_deletedNodes_misaligned_buffer(void) {
-	// write a buffer whose byte length (7) is not a multiple of
-	// sizeof(NodeID) (8) — this must not cause a use-after-free or
-	// double-free in release builds
-
-	int pipefd[2];
-	FILE *fs_write, *fs_read;
-	SerializerIO writer, reader;
-	_create_pipe_io(pipefd, &fs_write, &fs_read, &writer, &reader);
-
-	// 7 bytes — misaligned for uint64_t
-	uint8_t bad_data[7] = {0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03};
-	SerializerIO_WriteBuffer(writer, bad_data, sizeof(bad_data));
-
-	_close_writer(pipefd, fs_write, &writer);
-
-	Graph *g = Graph_New(NODE_CAP, EDGE_CAP);
-	Graph_AcquireWriteLock(g);
-
-	// should detect misalignment, free the buffer, and return immediately
-	// without touching the freed memory
-	RdbLoadDeletedNodes_v19(reader, g, 0);
-
-	// no nodes should have been marked as deleted
-	TEST_ASSERT(Graph_DeletedNodeCount(g) == 0);
-
-	Graph_ReleaseLock(g);
-	Graph_Free(g);
-
-	_close_reader(pipefd, fs_read, &reader);
+	uint8_t bad[7] = {0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03};
+	_assert_loader_exits(bad, sizeof(bad), 0,
+		(DeletedEntityLoader)RdbLoadDeletedNodes_v19);
 }
-#endif
 
-//------------------------------------------------------------------------------
-// test: misaligned buffer in RdbLoadDeletedEdges_v19
-//------------------------------------------------------------------------------
-
-#if !RG_DEBUG
 void test_deletedEdges_misaligned_buffer(void) {
-	// same idea — 7 bytes is not aligned to sizeof(EdgeID)
-
-	int pipefd[2];
-	FILE *fs_write, *fs_read;
-	SerializerIO writer, reader;
-	_create_pipe_io(pipefd, &fs_write, &fs_read, &writer, &reader);
-
-	uint8_t bad_data[7] = {0xCA, 0xFE, 0xBA, 0xBE, 0x04, 0x05, 0x06};
-	SerializerIO_WriteBuffer(writer, bad_data, sizeof(bad_data));
-
-	_close_writer(pipefd, fs_write, &writer);
-
-	Graph *g = Graph_New(NODE_CAP, EDGE_CAP);
-	Graph_AcquireWriteLock(g);
-
-	RdbLoadDeletedEdges_v19(reader, g, 0);
-
-	TEST_ASSERT(Graph_DeletedEdgeCount(g) == 0);
-
-	Graph_ReleaseLock(g);
-	Graph_Free(g);
-
-	_close_reader(pipefd, fs_read, &reader);
+	uint8_t bad[7] = {0xCA, 0xFE, 0xBA, 0xBE, 0x04, 0x05, 0x06};
+	_assert_loader_exits(bad, sizeof(bad), 0,
+		(DeletedEntityLoader)RdbLoadDeletedEdges_v19);
 }
-#endif
+
+void test_deletedNodes_single_byte_buffer(void) {
+	uint8_t one = 0xFF;
+	_assert_loader_exits(&one, 1, 0,
+		(DeletedEntityLoader)RdbLoadDeletedNodes_v19);
+}
 
 //------------------------------------------------------------------------------
-// test: aligned buffer in RdbLoadDeletedNodes_v19 (happy path)
+// death tests: count mismatch (aligned buffer, wrong count)
+//------------------------------------------------------------------------------
+
+void test_deletedNodes_count_mismatch(void) {
+	// 2 valid NodeIDs (16 bytes) but claim 3 — count mismatch
+	NodeID ids[2] = {0, 1};
+	_assert_loader_exits(ids, sizeof(ids), 3,
+		(DeletedEntityLoader)RdbLoadDeletedNodes_v19);
+}
+
+void test_deletedEdges_count_mismatch(void) {
+	// 1 valid EdgeID (8 bytes) but claim 2 — count mismatch
+	EdgeID ids[1] = {0};
+	_assert_loader_exits(ids, sizeof(ids), 2,
+		(DeletedEntityLoader)RdbLoadDeletedEdges_v19);
+}
+
+//------------------------------------------------------------------------------
+// happy path: aligned buffer with correct count
 //------------------------------------------------------------------------------
 
 void test_deletedNodes_aligned_buffer(void) {
-	// write a properly aligned buffer with 2 node IDs and verify they
-	// are recorded as deleted
-
 	int pipefd[2];
 	FILE *fs_write, *fs_read;
 	SerializerIO writer, reader;
 	_create_pipe_io(pipefd, &fs_write, &fs_read, &writer, &reader);
 
-	// two valid NodeIDs
 	NodeID ids[2] = {0, 1};
 	SerializerIO_WriteBuffer(writer, ids, sizeof(ids));
-
 	_close_writer(pipefd, fs_write, &writer);
 
 	Graph *g = Graph_New(NODE_CAP, EDGE_CAP);
 	Graph_AcquireWriteLock(g);
 
-	// pre-allocate the node slots so MarkDeleted has something to mark
+	// pre-allocate node slots so MarkDeleted has something to mark
 	Node n;
-	for (int i = 0; i < 2; i++) {
+	for(int i = 0; i < 2; i++) {
 		n = GE_NEW_NODE();
 		Graph_CreateNode(g, &n, NULL, 0);
 	}
 
 	TEST_ASSERT(Graph_DeletedNodeCount(g) == 0);
-
 	RdbLoadDeletedNodes_v19(reader, g, 2);
-
 	TEST_ASSERT(Graph_DeletedNodeCount(g) == 2);
 
 	Graph_ReleaseLock(g);
 	Graph_Free(g);
-
 	_close_reader(pipefd, fs_read, &reader);
 }
-
-//------------------------------------------------------------------------------
-// test: aligned buffer in RdbLoadDeletedEdges_v19 (happy path)
-//------------------------------------------------------------------------------
 
 void test_deletedEdges_aligned_buffer(void) {
 	int pipefd[2];
@@ -215,10 +257,8 @@ void test_deletedEdges_aligned_buffer(void) {
 	SerializerIO writer, reader;
 	_create_pipe_io(pipefd, &fs_write, &fs_read, &writer, &reader);
 
-	// one valid EdgeID
 	EdgeID ids[1] = {0};
 	SerializerIO_WriteBuffer(writer, ids, sizeof(ids));
-
 	_close_writer(pipefd, fs_write, &writer);
 
 	Graph *g = Graph_New(NODE_CAP, EDGE_CAP);
@@ -227,7 +267,7 @@ void test_deletedEdges_aligned_buffer(void) {
 	// create 2 nodes and 1 edge so edge slot 0 exists
 	Node n;
 	Edge e;
-	for (int i = 0; i < 2; i++) {
+	for(int i = 0; i < 2; i++) {
 		n = GE_NEW_NODE();
 		Graph_CreateNode(g, &n, NULL, 0);
 	}
@@ -235,60 +275,25 @@ void test_deletedEdges_aligned_buffer(void) {
 	Graph_CreateEdge(g, 0, 1, r, &e);
 
 	TEST_ASSERT(Graph_DeletedEdgeCount(g) == 0);
-
 	RdbLoadDeletedEdges_v19(reader, g, 1);
-
 	TEST_ASSERT(Graph_DeletedEdgeCount(g) == 1);
 
 	Graph_ReleaseLock(g);
 	Graph_Free(g);
-
 	_close_reader(pipefd, fs_read, &reader);
 }
-
-//------------------------------------------------------------------------------
-// test: single-byte buffer (edge case)
-//------------------------------------------------------------------------------
-
-#if !RG_DEBUG
-void test_deletedNodes_single_byte_buffer(void) {
-	// a 1-byte buffer is the smallest misalignment case
-
-	int pipefd[2];
-	FILE *fs_write, *fs_read;
-	SerializerIO writer, reader;
-	_create_pipe_io(pipefd, &fs_write, &fs_read, &writer, &reader);
-
-	uint8_t one = 0xFF;
-	SerializerIO_WriteBuffer(writer, &one, 1);
-
-	_close_writer(pipefd, fs_write, &writer);
-
-	Graph *g = Graph_New(NODE_CAP, EDGE_CAP);
-	Graph_AcquireWriteLock(g);
-
-	RdbLoadDeletedNodes_v19(reader, g, 0);
-
-	TEST_ASSERT(Graph_DeletedNodeCount(g) == 0);
-
-	Graph_ReleaseLock(g);
-	Graph_Free(g);
-
-	_close_reader(pipefd, fs_read, &reader);
-}
-#endif
 
 //------------------------------------------------------------------------------
 // test list
 //------------------------------------------------------------------------------
 
 TEST_LIST = {
-#if !RG_DEBUG
-	{"deletedNodes_misaligned_buffer", test_deletedNodes_misaligned_buffer},
-	{"deletedEdges_misaligned_buffer", test_deletedEdges_misaligned_buffer},
-	{"deletedNodes_single_byte",       test_deletedNodes_single_byte_buffer},
-#endif
-	{"deletedNodes_aligned_buffer",    test_deletedNodes_aligned_buffer},
-	{"deletedEdges_aligned_buffer",    test_deletedEdges_aligned_buffer},
+	{"deletedNodes_misaligned_buffer",  test_deletedNodes_misaligned_buffer},
+	{"deletedEdges_misaligned_buffer",  test_deletedEdges_misaligned_buffer},
+	{"deletedNodes_single_byte",        test_deletedNodes_single_byte_buffer},
+	{"deletedNodes_count_mismatch",     test_deletedNodes_count_mismatch},
+	{"deletedEdges_count_mismatch",     test_deletedEdges_count_mismatch},
+	{"deletedNodes_aligned_buffer",     test_deletedNodes_aligned_buffer},
+	{"deletedEdges_aligned_buffer",     test_deletedEdges_aligned_buffer},
 	{NULL, NULL}
 };
