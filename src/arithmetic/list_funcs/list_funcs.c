@@ -70,22 +70,43 @@ static void _PopulateReduceCtx
 	Record outer_record
 ) {
 	rax *record_map = raxClone(outer_record->mapping);
+	int n_pad = 0;
 
 	//--------------------------------------------------------------------------
 	// map variable name
 	//--------------------------------------------------------------------------
 
 	intptr_t id = raxSize(record_map);
-	raxTryInsert(record_map, (unsigned char *)ctx->variable,
-				 strlen(ctx->variable), (void *)id, NULL);
+	if(!raxTryInsert(record_map, (unsigned char *)ctx->variable,
+				 strlen(ctx->variable), (void *)id, NULL)) {
+		// variable name shadows an outer scope variable
+		// overwrite to assign a new unique slot index
+		raxInsert(record_map, (unsigned char *)ctx->variable,
+				  strlen(ctx->variable), (void *)id, NULL);
+		n_pad++;
+	}
 
 	//--------------------------------------------------------------------------
 	// map accumulator name
 	//--------------------------------------------------------------------------
 
 	id++;
-	raxTryInsert(record_map, (unsigned char *)ctx->accumulator,
-				 strlen(ctx->accumulator), (void *)id, NULL);
+	if(!raxTryInsert(record_map, (unsigned char *)ctx->accumulator,
+				 strlen(ctx->accumulator), (void *)id, NULL)) {
+		raxInsert(record_map, (unsigned char *)ctx->accumulator,
+				  strlen(ctx->accumulator), (void *)id, NULL);
+		n_pad++;
+	}
+
+	// when names were shadowed, raxInsert overwrote entries without
+	// increasing raxSize, so the record would be too small for the new
+	// slot indices; add padding entries to ensure correct allocation
+	for(int i = 0; i < n_pad; i++) {
+		char pad[48];
+		snprintf(pad, sizeof(pad), "\x01_reduce_pad_%d_%p", i, (void *)ctx);
+		raxTryInsert(record_map, (unsigned char *)pad, strlen(pad),
+					 (void *)(intptr_t)0, NULL);
+	}
 
 	ctx->record = Record_New(record_map);
 

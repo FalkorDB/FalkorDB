@@ -452,3 +452,12 @@ class testComprehensionFunctions(FlowTestsBase):
         expected_result = [[[1, 1]], [[2]], [[3]], [[]]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
+    def test21_nested_reduce_shadowed_variables(self):
+        # regression test for issue #1481
+        # nested reduce with shadowed variable names must not corrupt
+        # outer scope record slots
+        query = """RETURN [x IN [1] |
+                     reduce(s=0, x IN [1] | s + [x IN [1] | x][0])
+                   ][0]"""
+        result = self.graph.query(query)
+        self.env.assertEquals(result.result_set[0][0], 1)
