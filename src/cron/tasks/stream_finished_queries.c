@@ -13,6 +13,8 @@
 #include "util/circular_buffer.h"
 #include "stream_finished_queries.h"
 
+#include <unistd.h>  // required by usleep
+
 // event fields count
 #define FLD_COUNT 10
 

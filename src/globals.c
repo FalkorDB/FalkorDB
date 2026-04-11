@@ -108,7 +108,7 @@ GraphContext **Globals_Get_GraphsInKeyspace(void) {
 }
 
 uint32_t Globals_GraphsCount (void) {
-	// acuire read lock
+	// acquire read lock
 	Globals_ReadLock () ;
 
 	uint32_t n = arr_len (_globals.graphs_in_keyspace) ;
@@ -129,7 +129,7 @@ void Globals_AddGraph
 	// increase ref count regardless if 'gc' is already tracked
 	GraphContext_IncreaseRefCount(gc);
 
-	// acuire write lock
+	// acquire write lock
 	Globals_WriteLock () ;
 
 	bool registered = false;
@@ -157,7 +157,7 @@ void Globals_RemoveGraph
 ) {
 	ASSERT(gc != NULL);
 
-	// acuire write lock
+	// acquire write lock
 	Globals_WriteLock () ;
 
 	uint64_t i = 0;
@@ -193,7 +193,7 @@ void Globals_RemoveGraphByName
 ) {
 	ASSERT(name != NULL);
 
-	// acuire write lock
+	// acquire write lock
 	Globals_WriteLock () ;
 
 	// search for graph
@@ -249,7 +249,7 @@ void Globals_TrackCommandCtx
 
 	int tid = ThreadPool_GetThreadID();
 
-	// acuire read lock
+	// acquire read lock
 	Globals_ReadLock () ;
 
 	// expecting slot to be empty
@@ -275,7 +275,7 @@ void Globals_UntrackCommandCtx
 
 	int tid = ThreadPool_GetThreadID();
 
-	// acuire read lock
+	// acquire read lock
 	Globals_ReadLock () ;
 
 	ASSERT(_globals.command_ctxs[tid] == ctx);
