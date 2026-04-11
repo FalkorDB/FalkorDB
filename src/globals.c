@@ -157,12 +157,17 @@ void Globals_RemoveGraph
 ) {
 	ASSERT(gc != NULL);
 
-	uint64_t i = 0;
-	uint64_t n = arr_len(_globals.graphs_in_keyspace);
-	if(n == 0) return;
-
 	// acuire write lock
 	Globals_WriteLock () ;
+
+	uint64_t i = 0;
+	uint64_t n = arr_len(_globals.graphs_in_keyspace);
+
+	if (n == 0) {
+		// release lock
+		Globals_Unlock () ;
+		return;
+	}
 
 	// search for graph
 	for(; i < n; i++) {
@@ -346,21 +351,21 @@ GraphContext *GraphIterator_Next
 (
 	KeySpaceGraphIterator *it  // iterator to advance
 ) {
-	ASSERT(it != NULL);
+	ASSERT (it != NULL) ;
 
-	GraphContext *gc = NULL;
+	GraphContext *gc = NULL ;
 
 	Globals_ReadLock () ;
 
-	if(it->idx < arr_len(_globals.graphs_in_keyspace)) {
+	if (it->idx < arr_len (_globals.graphs_in_keyspace)) {
 		// prepare next call
-		gc = _globals.graphs_in_keyspace[it->idx++];
-		GraphContext_IncreaseRefCount(gc);
+		gc = _globals.graphs_in_keyspace [it->idx++] ;
+		GraphContext_IncreaseRefCount (gc) ;
 	}
 
 	Globals_Unlock () ;
 
-	return gc;
+	return gc ;
 }
 
 // free globals
