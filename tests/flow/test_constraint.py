@@ -5,7 +5,7 @@ from constraint_utils import *
 
 GRAPH_ID = "constraints"
 
-class testConstraintNodes():
+class testConstraintNodesCreate():
     def __init__(self):
         self.env, self.db = Env()
         self.con = self.env.getConnection()
@@ -50,7 +50,37 @@ class testConstraintNodes():
         for c in constraints:
             self.env.assertTrue(c.status != 'FAILED')
 
-    def test02_constraint_violations(self):
+    def test02_constraint_creation_with_new_label_attr(self):
+        # create a constraint against a new label and a new attribute
+        create_unique_node_constraint(self.g, "Artist", "nickname", sync=True)
+        self.g.query("CREATE (:Artist {nickname: 'Banksy'})")
+
+        # make sure constraint is enforced
+        try:
+            self.g.query("CREATE (:Artist {nickname: 'Banksy'})")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type Artist", str(e))
+
+
+class testConstraintNodesViolations():
+    def __init__(self):
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+        self.con.delete(GRAPH_ID)
+        self.g = self.db.select_graph(GRAPH_ID)
+        self.populate_graph()
+        self.create_constraints()
+
+    def populate_graph(self):
+        g = self.g
+        g.query("CREATE (:Engineer:Person {name: 'Mike', age: 10, height: 180, loc: point({latitude:1, longitude:2})})")
+        g.query("CREATE (:Engineer:Person {name: 'Tim', age: 20, height: 190, loc: point({latitude:2, longitude:2})})")
+        g.query("CREATE (:Person:Engineer {name: 'Rick', age: 30, height: 200, loc: point({latitude:3, longitude:2})})")
+        g.query("CREATE (:Person:Engineer {name: 'Andrew', age: 36, height: 173, loc: point({latitude:4, longitude:2})})")
+        g.query("MATCH (a{name: 'Andrew'}),({name:'Rick'}) CREATE (a)-[:Knows {since:1984}]->(b)")
+
+    def create_constraints(self):
         # active constrains:
         # 1. mandatory node constraint over Person height
         # 2. unique node constraint over Person height
@@ -58,7 +88,14 @@ class testConstraintNodes():
         # 4. unique node constraint over Person loc
         # 5. mandatory edge constraint over Knows since
         # 6. unique edge constraint over Knows since
+        create_mandatory_node_constraint(self.g, 'Person', 'height', sync=True)
+        create_unique_node_constraint(self.g, 'Person', 'height', sync=True)
+        create_unique_node_constraint(self.g, 'Person', 'name', 'age', sync=True)
+        create_unique_node_constraint(self.g, 'Person', 'loc', sync=True)
+        create_mandatory_edge_constraint(self.g, 'Knows', 'since', sync=True)
+        create_unique_edge_constraint(self.g, 'Knows', 'since', sync=True)
 
+    def test01_constraint_violations(self):
         g = self.g
 
         # backup original dataset
@@ -288,7 +325,32 @@ class testConstraintNodes():
             self.env.assertContains("Invalid constraint command use the GRAPH.CONSTRAINT command instead", str(e))
 
 
-    def test03_drop_constraint(self):
+class testConstraintNodesDrop():
+    def __init__(self):
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+        self.con.delete(GRAPH_ID)
+        self.g = self.db.select_graph(GRAPH_ID)
+        self.populate_graph()
+        self.create_constraints()
+
+    def populate_graph(self):
+        g = self.g
+        g.query("CREATE (:Engineer:Person {name: 'Mike', age: 10, height: 180, loc: point({latitude:1, longitude:2})})")
+        g.query("CREATE (:Engineer:Person {name: 'Tim', age: 20, height: 190, loc: point({latitude:2, longitude:2})})")
+        g.query("CREATE (:Person:Engineer {name: 'Rick', age: 30, height: 200, loc: point({latitude:3, longitude:2})})")
+        g.query("CREATE (:Person:Engineer {name: 'Andrew', age: 36, height: 173, loc: point({latitude:4, longitude:2})})")
+        g.query("MATCH (a{name: 'Andrew'}),({name:'Rick'}) CREATE (a)-[:Knows {since:1984}]->(b)")
+
+    def create_constraints(self):
+        create_mandatory_node_constraint(self.g, 'Person', 'height', sync=True)
+        create_unique_node_constraint(self.g, 'Person', 'height', sync=True)
+        create_unique_node_constraint(self.g, 'Person', 'name', 'age', sync=True)
+        create_unique_node_constraint(self.g, 'Person', 'loc', sync=True)
+        create_mandatory_edge_constraint(self.g, 'Knows', 'since', sync=True)
+        create_unique_edge_constraint(self.g, 'Knows', 'since', sync=True)
+
+    def test01_drop_constraint(self):
         #-----------------------------------------------------------------------
         # drop constraints
         #-----------------------------------------------------------------------
@@ -304,7 +366,24 @@ class testConstraintNodes():
         constraints = list_constraints(self.g)
         self.env.assertEqual(len(constraints), 0)
 
-    def test04_invalid_constraint_command(self):
+
+class testConstraintNodesInvalidCommands():
+    def __init__(self):
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+        self.con.delete(GRAPH_ID)
+        self.g = self.db.select_graph(GRAPH_ID)
+        self.populate_graph()
+
+    def populate_graph(self):
+        g = self.g
+        g.query("CREATE (:Engineer:Person {name: 'Mike', age: 10, height: 180, loc: point({latitude:1, longitude:2})})")
+        g.query("CREATE (:Engineer:Person {name: 'Tim', age: 20, height: 190, loc: point({latitude:2, longitude:2})})")
+        g.query("CREATE (:Person:Engineer {name: 'Rick', age: 30, height: 200, loc: point({latitude:3, longitude:2})})")
+        g.query("CREATE (:Person:Engineer {name: 'Andrew', age: 36, height: 173, loc: point({latitude:4, longitude:2})})")
+        g.query("MATCH (a{name: 'Andrew'}),({name:'Rick'}) CREATE (a)-[:Knows {since:1984}]->(b)")
+
+    def test01_invalid_constraint_command(self):
         # constraint create command:
         # GRAPH.CONSTRAIN <key> CREATE/DEL UNIQUE/MANDATORY [NODE label / RELATIONSHIP type] PROPERTIES prop_count prop0...
 
@@ -418,11 +497,24 @@ class testConstraintNodes():
         self.env.assertFalse("New_Attr" in attributes)
         self.env.assertFalse("None_Existing_Attr" in attributes)
 
-        #-----------------------------------------------------------------------
-        # unique constraint missing supporting exact-match index
-        #-----------------------------------------------------------------------
 
-    def test05_constraint_create_drop_simultanously(self):
+class testConstraintNodesConcurrent():
+    def __init__(self):
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+        self.con.delete(GRAPH_ID)
+        self.g = self.db.select_graph(GRAPH_ID)
+        self.populate_graph()
+
+    def populate_graph(self):
+        g = self.g
+        g.query("CREATE (:Engineer:Person {name: 'Mike', age: 10, height: 180, loc: point({latitude:1, longitude:2})})")
+        g.query("CREATE (:Engineer:Person {name: 'Tim', age: 20, height: 190, loc: point({latitude:2, longitude:2})})")
+        g.query("CREATE (:Person:Engineer {name: 'Rick', age: 30, height: 200, loc: point({latitude:3, longitude:2})})")
+        g.query("CREATE (:Person:Engineer {name: 'Andrew', age: 36, height: 173, loc: point({latitude:4, longitude:2})})")
+        g.query("MATCH (a{name: 'Andrew'}),({name:'Rick'}) CREATE (a)-[:Knows {since:1984}]->(b)")
+
+    def test01_constraint_create_drop_simultanously(self):
         # make sure there are no constraints in the graph
         for c in list_constraints(self.g):
             drop_constraint(self.g, c.type, c.entity_type, c.label, *c.attributes)
@@ -450,7 +542,15 @@ class testConstraintNodes():
         # try to create two nodes which would have conflicted
         self.g.query("CREATE (:MarineBiologist {age: 35}), (:MarineBiologist {age: 35})")
 
-    def test06_constraint_fix(self):
+
+class testConstraintNodesFix():
+    def __init__(self):
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+        self.con.delete(GRAPH_ID)
+        self.g = self.db.select_graph(GRAPH_ID)
+
+    def test01_constraint_fix(self):
         # test that a failing constraint can be recreated successfully once
         # all conflicts are resolved
 
@@ -530,19 +630,24 @@ class testConstraintNodes():
         self.env.assertEqual(constraints[0].status, "OPERATIONAL")
         self.env.assertEqual(constraints[1].status, "OPERATIONAL")
 
-    def test07_constraint_creation_with_new_label_attr(self):
-        # create a constraint against a new label and a new attribute
-        create_unique_node_constraint(self.g, "Artist", "nickname", sync=True)
-        self.g.query("CREATE (:Artist {nickname: 'Banksy'})")
 
-        # make sure constraint is enforced
-        try:
-            self.g.query("CREATE (:Artist {nickname: 'Banksy'})")
-            self.env.assertTrue(False)
-        except ResponseError as e:
-            self.env.assertContains("unique constraint violation on node of type Artist", str(e))
+class testConstraintNodesIndex():
+    def __init__(self):
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+        self.con.delete(GRAPH_ID)
+        self.g = self.db.select_graph(GRAPH_ID)
+        self.populate_graph()
 
-    def test08_remove_supporting_index(self):
+    def populate_graph(self):
+        g = self.g
+        g.query("CREATE (:Engineer:Person {name: 'Mike', age: 10, height: 180, loc: point({latitude:1, longitude:2})})")
+        g.query("CREATE (:Engineer:Person {name: 'Tim', age: 20, height: 190, loc: point({latitude:2, longitude:2})})")
+        g.query("CREATE (:Person:Engineer {name: 'Rick', age: 30, height: 200, loc: point({latitude:3, longitude:2})})")
+        g.query("CREATE (:Person:Engineer {name: 'Andrew', age: 36, height: 173, loc: point({latitude:4, longitude:2})})")
+        g.query("MATCH (a{name: 'Andrew'}),({name:'Rick'}) CREATE (a)-[:Knows {since:1984}]->(b)")
+
+    def test01_remove_supporting_index(self):
         # try to create unique index without a supporting index
         try:
             create_constraint(self.g, "unique", "node", "Author", "nickname", "birthdate")
