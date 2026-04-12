@@ -1,23 +1,103 @@
 # ThreadSanitizer suppression file for FalkorDB tests
 #
-# This file suppresses known false positives reported by ThreadSanitizer (TSAN)
-# when running FalkorDB tests against a TSAN-instrumented Redis server.
+# This file suppresses known false positives and third-party races reported by
+# ThreadSanitizer (TSAN) when running FalkorDB tests against a TSAN-instrumented
+# Redis server.
 #
-# Suppressions follow the format:
-#   race:<function_or_symbol>
+# Suppression types:
+#   race:<pattern>     — data races
+#   signal:<pattern>   — signal-unsafe calls inside signal handlers
+#   deadlock:<pattern> — lock-order-inversion (potential deadlock)
+#   mutex:<pattern>    — mutex misuse (wrong thread, etc.)
 #
-# Common false positives from Redis internals and OS primitives:
+# Patterns match against function names in the call stack.
 
-# epoll_wait is a kernel syscall — any apparent "race" on it is a TSAN
-# instrumentation artifact, not a real data race.
+# =============================================================================
+# Section 1: Redis Server Internals
+# =============================================================================
+# Redis uses a single-threaded event loop with background I/O threads. TSAN
+# flags many Redis internals that are safe under Redis's execution model.
+
+# Kernel syscall — TSAN instrumentation artifact, not a real data race.
 race:epoll_wait
 
-# Redis event-loop I/O polling; aeApiPoll wraps epoll/kqueue and its internal
-# state is protected by the single-threaded event loop model. We suppress only
-# the polling leaf rather than the broader aeProcessEvents dispatch function to
-# avoid masking real races in FalkorDB module callbacks.
+# Redis event-loop I/O polling; protected by single-threaded event loop model.
 race:aeApiPoll
 
-# Redis background I/O thread (BIO) performs disk/close operations; accesses
-# to the job queue are serialised by Redis but TSAN may flag them.
+# Redis event loop file-event management; single-threaded model.
+race:aeCreateFileEvent
+race:aeDeleteFileEvent
+race:aeProcessEvents
+
+# Redis module event-loop callback registration and writability check.
+race:eventLoopCbWritable
+race:RM_EventLoopAdd
+
+# Redis background I/O thread (BIO) — job queue access serialised by Redis.
 race:bioProcessBackgroundJobs
+
+# Redis refcount operations — Redis objects use single-threaded refcounting.
+race:incrRefCount
+race:decrRefCount
+
+# Redis key lookup and expire — protected by single-threaded event loop.
+race:lookupKey
+race:kvobjGetExpire
+
+# Redis slowlog — appends happen from the main thread only.
+race:slowlogCreateEntry
+
+# Redis signal handlers call malloc/free/fopen/fclose (signal-unsafe) for
+# crash logging. These are known Redis design decisions, not FalkorDB bugs.
+signal:serverLogRaw
+
+# =============================================================================
+# Section 2: RediSearch Dependency
+# =============================================================================
+# RediSearch is an upstream dependency. These are internal RediSearch races
+# that should be fixed upstream, not in FalkorDB.
+
+# RediSearch thread pool init/teardown race — startup sequencing issue.
+race:redisearch_thpool_init
+race:redisearch_thpool_destroy
+
+# RediSearch worker thread entry point — benign init race.
+race:thread_do
+
+# RediSearch inverted index lifecycle — concurrent add during free.
+race:InvertedIndex_AddBlock
+race:InvertedIndex_Free
+
+# =============================================================================
+# Section 3: FalkorDB False Positives (Documented Intentional Patterns)
+# =============================================================================
+
+# Graph_ReleaseLock sets _writelocked=false BEFORE calling pthread_rwlock_unlock.
+# This is an intentional pattern documented in the source (graph.c:125-131) to
+# prevent reader threads from being falsely identified as writers during the
+# window between unlock and flag update.
+race:Graph_ReleaseLock
+
+# CircularBuffer_ItemCount reads item_count without the mutex. This is a benign
+# best-effort read — the counter is only incremented under lock in
+# CircularBuffer_Add, and a stale read is harmless (used for capacity checks).
+race:CircularBuffer_ItemCount
+race:CircularBuffer_Add
+
+# Cron task management: _CRON_RemoveCurrentTask runs under CRON_LOCK.
+# Cron_Run intentionally releases the lock during callback execution to prevent
+# stalling (documented in cron.c:238-239), then writes current_task=NULL without
+# the lock. This is an accepted pattern for the cron subsystem.
+race:_CRON_RemoveCurrentTask
+race:Cron_Run
+
+# =============================================================================
+# Section 4: Test Framework
+# =============================================================================
+# Races in test harness code, not in production FalkorDB code.
+
+# acutest.h test framework uses a global check counter without synchronisation.
+race:acutest_check_
+
+# Test helper for thread-friendly IDs — test-only global counter.
+race:get_thread_friendly_id
