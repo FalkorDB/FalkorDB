@@ -4,7 +4,7 @@
  */
 
 #include "encode_graph.h"
-#include "v18/encode_v18.h"
+#include "v19/encode_v19.h"
 #include "../serializer_io.h"
 
 void RdbSaveGraph
@@ -12,7 +12,7 @@ void RdbSaveGraph
 	RedisModuleIO *rdb,
 	void *value
 ) {
-	SerializerIO io = SerializerIO_FromBufferedRedisModuleIO(rdb, true);
+	SerializerIO io = SerializerIOv2_FromBufferedRedisModuleIO(rdb, true);
 	RdbSaveGraph_latest(io, value);
 	SerializerIO_Free(&io);
 }

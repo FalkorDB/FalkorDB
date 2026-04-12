@@ -13,6 +13,8 @@
 #include "util/circular_buffer.h"
 #include "stream_finished_queries.h"
 
+#include <unistd.h>  // required by usleep
+
 // event fields count
 #define FLD_COUNT 10
 
@@ -215,78 +217,95 @@ bool CronTask_streamFinishedQueries
 (
 	void *pdata  // task context
 ) {
-	StreamFinishedQueryCtx *ctx    = (StreamFinishedQueryCtx*)pdata;
-	RedisModuleCtx         *rm_ctx = RedisModule_GetThreadSafeContext(NULL);
+	// early return if there are no graphs
+	if (Globals_GraphsCount () == 0) {
+		return false ;
+	}
 
-	// initialize stream event template
-	if(unlikely(_event[0] == NULL)) {
-		_initEventTemplate(rm_ctx);
+	GraphContext           *gc     = NULL ;
+	StreamFinishedQueryCtx *ctx    = (StreamFinishedQueryCtx*) pdata ;
+	RedisModuleCtx         *rm_ctx = RedisModule_GetThreadSafeContext (NULL) ;
+
+	// one time initialization of stream event template
+	if (unlikely (_event [0] == NULL)) {
+		_initEventTemplate (rm_ctx) ;
 	}
 
 	// start stopwatch
-	double deadline = 3;  // 3ms
-	simple_timer_t stopwatch;
-	simple_tic(stopwatch);
+	double deadline = 3 ;  // 3ms
+	simple_timer_t stopwatch ;
+	simple_tic (stopwatch) ;
 
-	uint64_t max_query_count = 0;  // determine max number of queries to collect
-	Config_Option_get(Config_CMD_INFO_MAX_QUERY_COUNT, &max_query_count);
+	//--------------------------------------------------------------------------
+	// try to acquire GIL
+	//--------------------------------------------------------------------------
 
-	KeySpaceGraphIterator it;
-	Globals_ScanGraphs(&it);
+	bool gil_acquired = false ;
+
+	while (!gil_acquired &&
+			TIMER_GET_ELAPSED_MILLISECONDS (stopwatch) < deadline) {
+		gil_acquired =
+			(RedisModule_ThreadSafeContextTryLock (rm_ctx) == REDISMODULE_OK) ;
+
+		if (gil_acquired == false) {
+		   	usleep (100) ;
+		}
+	}
+
+	if (!gil_acquired) {
+		// failed to acquire GIL
+		goto cleanup ;
+	}
+
+	// determine max number of queries to collect
+	uint64_t max_query_count = 0 ;
+	Config_Option_get (Config_CMD_INFO_MAX_QUERY_COUNT, &max_query_count) ;
+
+	// initialize graph iterator
+	KeySpaceGraphIterator it ;
+	Globals_ScanGraphs (&it) ;
 
 	// pick up from where we've left
-	GraphIterator_Seek(&it, ctx->graph_idx);
-
-	GraphContext *gc = NULL;
+	GraphIterator_Seek (&it, ctx->graph_idx) ;
 
 	// as long as we've got processing time
-	bool gil_acquired = false;
-	while(TIMER_GET_ELAPSED_MILLISECONDS(stopwatch) < deadline) {
-		// get next graph to populate
+	while (TIMER_GET_ELAPSED_MILLISECONDS (stopwatch) < deadline) {
 		QueriesLog queries_log = NULL;
-		while((gc = GraphIterator_Next(&it)) != NULL) {
-			ctx->graph_idx++;  // prepare next iteration
-			if(QueriesLog_GetQueriesCount(gc->queries_log) > 0) {
-				queries_log = gc->queries_log;
-				break;
+
+		// find a graph with logged queries to stream
+		while ((gc = GraphIterator_Next (&it)) != NULL) {
+			ctx->graph_idx++ ;  // prepare next iteration
+
+			// see if graph logged any queries
+			QueriesLog log = GraphContext_GetQueriesLog (gc) ;
+			if (QueriesLog_GetQueriesCount (log) > 0) {
+				queries_log = log ;
+				break ;
 			}
-			GraphContext_DecreaseRefCount(gc);
+
+			GraphContext_DecreaseRefCount (gc) ;
 		}
 
 		// iterator depleted
-		if((gc) == NULL) {
-			break;
+		if (gc == NULL) {
+			break ;
 		}
 
-		//----------------------------------------------------------------------
-		// try to acquire GIL
-		//----------------------------------------------------------------------
-
-		while(!gil_acquired && TIMER_GET_ELAPSED_MILLISECONDS(stopwatch) < deadline) {
-			gil_acquired =
-				RedisModule_ThreadSafeContextTryLock(rm_ctx) == REDISMODULE_OK;
-		}
-
-		if(!gil_acquired) {
-			GraphContext_DecreaseRefCount(gc);
-			break;
-		}
-
-		CircularBuffer queries = QueriesLog_ResetQueries(queries_log);
+		CircularBuffer queries = QueriesLog_ResetQueries (queries_log) ;
 
 		//----------------------------------------------------------------------
 		// stream queries
 		//----------------------------------------------------------------------
 
 		RedisModuleString *keyname =
-			(RedisModuleString*)GraphContext_GetTelemetryStreamName(gc);
+			(RedisModuleString*) GraphContext_GetTelemetryStreamName (gc) ;
 
-		RedisModuleKey *key = RedisModule_OpenKey(rm_ctx, keyname,
-			REDISMODULE_WRITE);
+		RedisModuleKey *key = RedisModule_OpenKey (rm_ctx, keyname,
+			REDISMODULE_WRITE) ;
 
 		// make sure key is of type stream
-		int key_type = RedisModule_KeyType(key);
-		if(key_type == REDISMODULE_KEYTYPE_STREAM ||
+		int key_type = RedisModule_KeyType (key) ;
+		if (key_type == REDISMODULE_KEYTYPE_STREAM ||
 			key_type == REDISMODULE_KEYTYPE_EMPTY) {
 			// add queries to stream
 			_stream_queries (rm_ctx, key, queries) ;
@@ -299,20 +318,23 @@ bool CronTask_streamFinishedQueries
 		}
 
 		// clean up
-		RedisModule_CloseKey(key);
-
-		GraphContext_DecreaseRefCount(gc);
+		RedisModule_CloseKey (key) ;
+		GraphContext_DecreaseRefCount (gc) ;
 	}
-
-	if(gil_acquired) {
-		RedisModule_ThreadSafeContextUnlock(rm_ctx);
-	}
-
-	RedisModule_FreeThreadSafeContext(rm_ctx);
 
 	// set next iteration graph index
-	ctx->graph_idx = (gc == NULL) ? 0 : ctx->graph_idx;
+	ctx->graph_idx = (gc == NULL) ? 0 : ctx->graph_idx ;
 
-	return (gc != NULL);
+cleanup:
+	// release GIL and free thread safe context
+	if (gil_acquired == true) {
+		RedisModule_ThreadSafeContextUnlock (rm_ctx) ;
+		gil_acquired = false ;
+	}
+
+	RedisModule_FreeThreadSafeContext (rm_ctx) ;
+
+	// indicate if there's still work to do
+	return (gc != NULL) ;
 }
 

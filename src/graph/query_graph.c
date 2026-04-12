@@ -85,7 +85,7 @@ static void _QueryGraphAddEdge
 		if(!s) {
 			// unknown relationship
 			// search if reltype exists in edge->reltypes to don't insert duplicated reltype
-			int len = array_len(edge->reltypes);
+			int len = arr_len(edge->reltypes);
 			for (int j = 0; j < len; j++) {
 				if(edge->reltypeIDs[j] == GRAPH_UNKNOWN_RELATION) {
 					if(strcasecmp(edge->reltypes[j],reltype) == 0) {
@@ -95,14 +95,14 @@ static void _QueryGraphAddEdge
 				}
 			}
 			if(!found) {
-				array_append(edge->reltypes, reltype);
-				array_append(edge->reltypeIDs, GRAPH_UNKNOWN_RELATION);
+				arr_append(edge->reltypes, reltype);
+				arr_append(edge->reltypeIDs, GRAPH_UNKNOWN_RELATION);
 				qg->unknown_reltype_ids = true;
 			}
 			continue;
 		}
 		// search if s-id exists in edge->reltypeIDs to don't insert duplicated ids
-		int len = array_len(edge->reltypeIDs);
+		int len = arr_len(edge->reltypeIDs);
 		for (int j = 0; j < len; j++) {
 			if(edge->reltypeIDs[j] == s->id) {
 				found = true;
@@ -110,8 +110,8 @@ static void _QueryGraphAddEdge
 			}
 		}
 		if(!found) {
-			array_append(edge->reltypes, reltype);
-			array_append(edge->reltypeIDs, s->id);
+			arr_append(edge->reltypes, reltype);
+			arr_append(edge->reltypeIDs, s->id);
 		}
 	}
 
@@ -166,8 +166,8 @@ static void _QueryGraph_ExtractNode
 			n = QGNode_Clone(n);
 
 			// clear node label information
-			array_clear(n->labels);
-			array_clear(n->labelsID);
+			arr_clear(n->labels);
+			arr_clear(n->labelsID);
 
 			QueryGraph_AddNode(graph, n);
 			// set node label information
@@ -247,8 +247,8 @@ QueryGraph *QueryGraph_New
 ) {
 	QueryGraph *qg = rm_malloc(sizeof(QueryGraph));
 
-	qg->nodes = array_new(QGNode *, node_cap);
-	qg->edges = array_new(QGEdge *, edge_cap);
+	qg->nodes = arr_new(QGNode *, node_cap);
+	qg->edges = arr_new(QGEdge *, edge_cap);
 	qg->unknown_reltype_ids = false;
 
 	return qg;
@@ -259,7 +259,7 @@ void QueryGraph_AddNode
 	QueryGraph *qg,
 	QGNode *n
 ) {
-	array_append(qg->nodes, n);
+	arr_append(qg->nodes, n);
 }
 
 void QueryGraph_ConnectNodes
@@ -272,7 +272,7 @@ void QueryGraph_ConnectNodes
 	QGNode_ConnectNode(src, dest, e);
 	e->src = src;
 	e->dest = dest;
-	array_append(qg->edges, e);
+	arr_append(qg->edges, e);
 }
 
 void QueryGraph_AddPath
@@ -389,7 +389,7 @@ QueryGraph *BuildQueryGraph
 		// collect all path objects
 		const cypher_astnode_t **clauses = AST_GetTypedNodes(ast->root,
 															 clause_type);
-		uint clause_count = array_len(clauses);
+		uint clause_count = arr_len(clauses);
 
 		// for each clause of the current type
 		for(uint j = 0; j < clause_count; j ++) {
@@ -402,8 +402,8 @@ QueryGraph *BuildQueryGraph
 
 			// differentiate between regular paths and shortest paths
 			// as a path can be marked as shortest
-			uint  path_count           =  array_len(paths);
-			uint  shortest_path_count  =  array_len(shortest_paths);
+			uint  path_count           =  arr_len(paths);
+			uint  shortest_path_count  =  arr_len(shortest_paths);
 			bool only_shortest[path_count];
 			memset(only_shortest, 0, path_count*sizeof(bool));
 
@@ -425,15 +425,15 @@ QueryGraph *BuildQueryGraph
 				only_shortest[l] = true;
 				l++; // advance for next match
 			}
-			array_free(shortest_paths);
+			arr_free(shortest_paths);
 
 			// introduce each path object to the query graph
 			for(uint k = 0; k < path_count; k ++) {
 				QueryGraph_AddPath(qg, paths[k], only_shortest[k]);
 			}
-			array_free(paths);
+			arr_free(paths);
 		}
-		array_free(clauses);
+		arr_free(clauses);
 	}
 
 	return qg;
@@ -569,14 +569,14 @@ QGNode *QueryGraph_RemoveNode
 
 	// remove node from query graph
 	// remove and free all edges associated with node
-	uint incoming_edge_count = array_len(n->incoming_edges);
+	uint incoming_edge_count = arr_len(n->incoming_edges);
 	for(uint i = 0; i < incoming_edge_count; i++) {
 		QGEdge *e = n->incoming_edges[i];
 		QueryGraph_RemoveEdge(qg, e);
 		QGEdge_Free(e);
 	}
 
-	uint outgoing_edge_count = array_len(n->outgoing_edges);
+	uint outgoing_edge_count = arr_len(n->outgoing_edges);
 	for(uint i = 0; i < outgoing_edge_count; i++) {
 		QGEdge *e = n->outgoing_edges[i];
 		QueryGraph_RemoveEdge(qg, e);
@@ -588,7 +588,7 @@ QGNode *QueryGraph_RemoveNode
 	uint i = 0;
 	for(; i < node_count; i++) {
 		if(n == qg->nodes[i]) {
-			array_del_fast(qg->nodes, i);
+			arr_del_fast(qg->nodes, i);
 			break;
 		}
 	}
@@ -612,7 +612,7 @@ QGEdge *QueryGraph_RemoveEdge
 	uint i = 0;
 	for(; i < edge_count; i++) {
 		if(e == qg->edges[i]) {
-			array_del_fast(qg->edges, i);
+			arr_del_fast(qg->edges, i);
 			break;
 		}
 	}
@@ -624,14 +624,14 @@ QueryGraph **QueryGraph_ConnectedComponents
 	const QueryGraph *qg
 ) {
 	QGNode *n;                              // current node
-	QGNode **q = array_new(QGNode *, 1);    // node frontier
+	QGNode **q = arr_new(QGNode *, 1);    // node frontier
 	void *seen;                             // has node been visited?
 	QueryGraph *g = QueryGraph_Clone(qg);   // clone query graph
 	rax *visited;                           // dictionary of visited nodes
 	QueryGraph **connected_components;      // list of connected components
 
 	// at least one connected component (the original graph)
-	connected_components = array_new(QueryGraph *, 1);
+	connected_components = arr_new(QueryGraph *, 1);
 
 	// as long as there are nodes to process
 	while(true) {
@@ -639,11 +639,11 @@ QueryGraph **QueryGraph_ConnectedComponents
 
 		// get a random node and add it to the frontier
 		QGNode *s = g->nodes[0];
-		array_append(q, s);
+		arr_append(q, s);
 
 		// as long as there are nodes in the frontier
-		while(array_len(q) > 0) {
-			n = array_pop(q);
+		while(arr_len(q) > 0) {
+			n = arr_pop(q);
 
 			// mark n as visited
 			if(!raxInsert(visited, (unsigned char *)n->alias, strlen(n->alias),
@@ -653,18 +653,18 @@ QueryGraph **QueryGraph_ConnectedComponents
 			}
 
 			// expand node N by visiting all of its neighbors
-			for(int i = 0; i < array_len(n->outgoing_edges); i++) {
+			for(int i = 0; i < arr_len(n->outgoing_edges); i++) {
 				QGEdge *e = n->outgoing_edges[i];
 				seen = raxFind(visited, (unsigned char *)e->dest->alias,
 						strlen(e->dest->alias));
-				if(seen == raxNotFound) array_append(q, e->dest);
+				if(seen == raxNotFound) arr_append(q, e->dest);
 			}
 
-			for(int i = 0; i < array_len(n->incoming_edges); i++) {
+			for(int i = 0; i < arr_len(n->incoming_edges); i++) {
 				QGEdge *e = n->incoming_edges[i];
 				seen = raxFind(visited, (unsigned char *)e->src->alias,
 						strlen(e->src->alias));
-				if(seen == raxNotFound) array_append(q, e->src);
+				if(seen == raxNotFound) arr_append(q, e->src);
 			}
 		}
 
@@ -693,7 +693,7 @@ QueryGraph **QueryGraph_ConnectedComponents
 			}
 		}
 
-		array_append(connected_components, cc);
+		arr_append(connected_components, cc);
 
 		// clear visited dict for next iteration
 		raxFree(visited);
@@ -702,7 +702,7 @@ QueryGraph **QueryGraph_ConnectedComponents
 		if(QueryGraph_NodeCount(g) == 0) break;
 	}
 
-	array_free(q);
+	arr_free(q);
 	QueryGraph_Free(g);
 
 	return connected_components;
@@ -712,7 +712,7 @@ uint QueryGraph_NodeCount
 (
 	const QueryGraph *qg
 ) {
-	return array_len(qg->nodes);
+	return arr_len(qg->nodes);
 }
 
 // retrieve the number of edges in a QueryGraph
@@ -720,7 +720,7 @@ uint QueryGraph_EdgeCount
 (
 	const QueryGraph *qg
 ) {
-	return array_len(qg->edges);
+	return arr_len(qg->edges);
 }
 
 GrB_Matrix QueryGraph_MatrixRepresentation
@@ -812,8 +812,8 @@ void QueryGraph_Free
 		QGEdge_Free(qg->edges[i]);
 	}
 
-	array_free(qg->nodes);
-	array_free(qg->edges);
+	arr_free(qg->nodes);
+	arr_free(qg->edges);
 	rm_free(qg);
 }
 

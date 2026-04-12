@@ -90,9 +90,9 @@ PropertyMap *PropertyMap_New
 	PropertyMap *m = rm_malloc (sizeof (PropertyMap)) ;
 
 	// allocate arrays
-	m->keys     = array_new (const char *, prop_count) ;
-	m->values   = array_new (AR_ExpNode *, prop_count) ;
-	m->attr_ids = array_new (AttributeID,  prop_count) ;
+	m->keys     = arr_new (const char *, prop_count) ;
+	m->values   = arr_new (AR_ExpNode *, prop_count) ;
+	m->attr_ids = arr_new (AttributeID,  prop_count) ;
 
 	//--------------------------------------------------------------------------
 	// process AST props
@@ -117,7 +117,7 @@ PropertyMap *PropertyMap_New
 		// handle duplicates
 		//----------------------------------------------------------------------
 
-		uint count = array_len (m->keys) ;
+		uint count = arr_len (m->keys) ;
 		for (uint i = 0; i < count; i++) {
 			if (strcmp (attr, m->keys[i]) == 0) {
 				// duplicate!
@@ -128,12 +128,12 @@ PropertyMap *PropertyMap_New
 
 		if (insert_idx == prop_idx) {
 			// new entry
-			array_append (m->keys, attr) ;
-			array_append (m->values, exp) ;
+			arr_append (m->keys, attr) ;
+			arr_append (m->values, exp) ;
 			//array_append (m->attr_ids, GraphContext_GetAttributeID (gc, attr)) ;
 
 			// NOTE: might introduce a change to the graph schema!
-			array_append (m->attr_ids,
+			arr_append (m->attr_ids,
 					GraphHub_FindOrAddAttribute (gc, attr, true)) ;
 
 		} else {
@@ -153,9 +153,9 @@ static PropertyMap *_PropertyMap_Clone
 ) {
 	PropertyMap *clone = rm_malloc (sizeof (PropertyMap)) ;
 
-	array_clone (clone->keys, map->keys) ;
-	array_clone (clone->attr_ids, map->attr_ids) ;
-	array_clone_with_cb (clone->values, map->values, AR_EXP_Clone) ;
+	arr_clone (clone->keys, map->keys) ;
+	arr_clone (clone->attr_ids, map->attr_ids) ;
+	arr_clone_with_cb (clone->values, map->values, AR_EXP_Clone) ;
 
 	return clone ;
 }
@@ -168,9 +168,9 @@ void PropertyMap_Free
 		return ;
 	}
 
-	array_free (map->keys) ;
-	array_free (map->attr_ids) ;
-	array_free_cb (map->values, AR_EXP_Free) ;
+	arr_free (map->keys) ;
+	arr_free (map->attr_ids) ;
+	arr_free_cb (map->values, AR_EXP_Free) ;
 
 	rm_free (map) ;
 }
@@ -180,8 +180,8 @@ NodeCreateCtx NodeCreateCtx_Clone
 	NodeCreateCtx ctx
 ) {
 	NodeCreateCtx clone = ctx ;
-	array_clone (clone.labels, ctx.labels) ;
-	array_clone (clone.labelsId, ctx.labelsId) ;
+	arr_clone (clone.labels, ctx.labels) ;
+	arr_clone (clone.labelsId, ctx.labelsId) ;
 
 	if (ctx.properties != NULL) {
 		clone.properties = _PropertyMap_Clone (ctx.properties) ;
@@ -194,8 +194,8 @@ void NodeCreateCtx_Free
 (
 	NodeCreateCtx ctx
 ) {
-	array_free (ctx.labels) ;
-	array_free (ctx.labelsId) ;
+	arr_free (ctx.labels) ;
+	arr_free (ctx.labelsId) ;
 	PropertyMap_Free (ctx.properties) ;
 }
 
@@ -220,7 +220,7 @@ EntityUpdateEvalCtx *UpdateCtx_New
 
 	ctx->alias         = alias;
 	ctx->record_idx    = INVALID_INDEX;
-	ctx->properties    = array_new(PropertySetCtx, 1);
+	ctx->properties    = arr_new(PropertySetCtx, 1);
 	ctx->add_labels    = NULL;
 	ctx->remove_labels = NULL;
 
@@ -233,18 +233,18 @@ EntityUpdateEvalCtx *UpdateCtx_Clone
 ) {
 	EntityUpdateEvalCtx *clone = rm_malloc(sizeof(EntityUpdateEvalCtx));
 
-	uint count = array_len(orig->properties);
+	uint count = arr_len(orig->properties);
 
 	clone->alias         = orig->alias;
 	clone->record_idx    = orig->record_idx;
-	clone->properties    = array_new(PropertySetCtx, count);
+	clone->properties    = arr_new(PropertySetCtx, count);
 	clone->add_labels    = NULL;
 	clone->remove_labels = NULL;
 	if(orig->add_labels != NULL) {
-		array_clone(clone->add_labels, orig->add_labels);
+		arr_clone(clone->add_labels, orig->add_labels);
 	}
 	if(orig->remove_labels != NULL) {
-		array_clone(clone->remove_labels, orig->remove_labels);
+		arr_clone(clone->remove_labels, orig->remove_labels);
 	}
 
 	for(uint i = 0; i < count; i ++) {
@@ -254,7 +254,7 @@ EntityUpdateEvalCtx *UpdateCtx_Clone
 			.attr_id   = orig->properties[i].attr_id,
 			.attr_name = orig->properties[i].attr_name,
 		};
-		array_append(clone->properties, update);
+		arr_append(clone->properties, update);
 	}
 
 	return clone;
@@ -264,23 +264,23 @@ void UpdateCtx_Clear
 (
 	EntityUpdateEvalCtx *ctx
 ) {
-	uint count = array_len(ctx->properties);
+	uint count = arr_len(ctx->properties);
 	for(uint i = 0; i < count; i ++) AR_EXP_Free(ctx->properties[i].exp);
-	array_clear(ctx->properties);
+	arr_clear(ctx->properties);
 }
 
 void UpdateCtx_Free
 (
 	EntityUpdateEvalCtx *ctx
 ) {
-	uint count = array_len(ctx->properties);
+	uint count = arr_len(ctx->properties);
 	for(uint i = 0; i < count; i ++) {
 		AR_EXP_Free(ctx->properties[i].exp);
 	}
 
-	array_free(ctx->properties);
-	if(ctx->add_labels != NULL) array_free(ctx->add_labels);
-	if(ctx->remove_labels != NULL) array_free(ctx->remove_labels);
+	arr_free(ctx->properties);
+	if(ctx->add_labels != NULL) arr_free(ctx->add_labels);
+	if(ctx->remove_labels != NULL) arr_free(ctx->remove_labels);
 
 	rm_free(ctx);
 }

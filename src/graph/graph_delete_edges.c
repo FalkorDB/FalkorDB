@@ -34,12 +34,12 @@ static int _edge_cmp
 
 	// same relationship-type, different source node ID
 	if (as != bs) {
-		return as - bs ;
+		return (as > bs) - (as < bs) ;
 	}
 
 	// same relationship-type and src node ID
 	// compare base on destination node ID
-	return at - bt ;
+	return (at > bt) - (at < bt) ;
 }
 
 static void _clear_adj
@@ -268,14 +268,14 @@ void Graph_ClearConnections
 			Tensor_RemoveElements (R, edges + i, d, &cleared_entries) ;
 
 			// for each cleared entry E see if ADJ[E.src, E.dest] needs clearing
-			uint64_t m = array_len (cleared_entries) ;
+			uint64_t m = arr_len (cleared_entries) ;
 			for (uint k = 0; k < m; k++) {
 				e = edges + (i + cleared_entries[k]) ;
 				_clear_adj (g, ADJ, e) ;
 			}
 
 			// free reported cleared entries
-			array_free (cleared_entries) ;
+			arr_free (cleared_entries) ;
 		}
 
 		i = j ;

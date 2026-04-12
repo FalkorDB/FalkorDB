@@ -37,7 +37,7 @@ void GraphDecodeContext_Reset
 	ctx->deleted_edge_count = 0;
 
 	if(ctx->multi_edge) {
-		array_free(ctx->multi_edge);
+		arr_free(ctx->multi_edge);
 		ctx->multi_edge = NULL;
 	}
 }
@@ -126,7 +126,7 @@ void GraphDecodeContext_Free
 		raxFree(ctx->meta_keys);
 
 		if(ctx->multi_edge) {
-			array_free(ctx->multi_edge);
+			arr_free(ctx->multi_edge);
 			ctx->multi_edge = NULL;
 		}
 
