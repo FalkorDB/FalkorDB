@@ -137,7 +137,7 @@ static bool index_delete
 	//--------------------------------------------------------------------------
 
 	// lock
-	QueryCtx_LockForCommit();
+	QueryCtx_AcquireWriteLock () ;
 
 	if(is_node) {
 		// try deleting node index
@@ -366,10 +366,10 @@ static bool extract_index_level_config
 		}
 
 		uint nstopwords = SIArray_Length(stopwords_val);
-		*stopwords = array_new(char*, nstopwords);
+		*stopwords = arr_new(char*, nstopwords);
 		for(uint i = 0; i < nstopwords; i++) {
 			SIValue stopword = SIArray_Get(stopwords_val, i);
-			array_append((*stopwords), rm_strdup(stopword.stringval));
+			arr_append((*stopwords), rm_strdup(stopword.stringval));
 		}
 	}
 
@@ -435,7 +435,7 @@ static void index_create
 		   idx_type == INDEX_FLD_VECTOR);
 
 	// lock
-	QueryCtx_LockForCommit();
+	QueryCtx_AcquireWriteLock () ;
 
 	Index idx = NULL;
 	ResultSet *result_set = QueryCtx_GetResultSet();
@@ -476,7 +476,7 @@ static void index_create
 
 cleanup:
 	if(fields    != NULL) rm_free(fields);
-	if(stopwords != NULL) array_free_cb(stopwords, rm_free);
+	if(stopwords != NULL) arr_free_cb(stopwords, rm_free);
 	SIValue_Free(options);
 
 	// make sure no effects were generated

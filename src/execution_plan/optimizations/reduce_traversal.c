@@ -47,7 +47,7 @@ static void _removeRedundantTraversal(ExecutionPlan *plan, OpCondTraverse *trave
 void reduceTraversal(ExecutionPlan *plan) {
 	OpBase **traversals = ExecutionPlan_CollectOpsMatchingTypes(plan->root, TRAVERSE_OPS,
 															   TRAVERSE_OP_COUNT);
-	uint traversals_count = array_len(traversals);
+	uint traversals_count = arr_len(traversals);
 
 	/* Keep track of redundant traversals which will be removed
 	 * once we'll inspect every traversal operation. */
@@ -139,6 +139,6 @@ void reduceTraversal(ExecutionPlan *plan) {
 		_removeRedundantTraversal(plan, redundantTraversals[i]);
 
 	// Clean up.
-	array_free(traversals);
+	arr_free(traversals);
 }
 

@@ -40,286 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Retrieve built image AMD
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-x64
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image ARM
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-arm64v8
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image RHEL8 AMD
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-rhel8-x64
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image RHEL9 AMD
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-rhel9-x64
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image Alpine AMD
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-alpine-x64
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image Alpine ARM
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-alpine-arm64v8
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image Alpine AMD server only
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-server-alpine-x64
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image Alpine ARM server only
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-server-alpine-arm64v8
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image Amazon Linux AMD
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-amazonlinux2023-x64
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image Ubuntu AMD server only
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-server-x64
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image Ubuntu ARM server only
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-server-arm64v8
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built .so AMD
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built .so ARM
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-arm64v8.so
-          path: /tmp
-          if_no_artifact_found: error
-      - name: Retrieve built .so RHEL9 AMD
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-rhel9-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built .so RHEL8 AMD
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-rhel8-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built .so Alpine AMD
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-alpine-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built .so Alpine ARM
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-alpine-arm64v8.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built .so Amazon Linux AMD
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-amazonlinux2023-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built debug.so AMD
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-debug-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built debug.so ARM
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-debug-arm64v8.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built debug.so RHEL9 AMD
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-debug-rhel9-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built debug.so RHEL8 AMD
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-debug-rhel8-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built debug.so Alpine AMD
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-debug-alpine-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built debug.so Alpine ARM
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-debug-alpine-arm64v8.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built .so macOS ARM64
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-macos-arm64v8.so
-          path: /tmp
-          if_no_artifact_found: ignore
-
-      - name: Retrieve built debug.so macOS ARM64
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-debug-macos-arm64v8.so
-          path: /tmp
-          if_no_artifact_found: ignore
-
-      - name: Load image
-        run: |
-          docker load -i /tmp/falkordb-x64.tar
-          docker load -i /tmp/falkordb-arm64v8.tar
-          docker load -i /tmp/falkordb-rhel9-x64.tar
-          docker load -i /tmp/falkordb-rhel8-x64.tar
-          docker load -i /tmp/falkordb-server-alpine-x64.tar
-          docker load -i /tmp/falkordb-server-alpine-arm64v8.tar
-          docker load -i /tmp/falkordb-server-x64.tar
-          docker load -i /tmp/falkordb-server-arm64v8.tar
-          docker load -i /tmp/falkordb-alpine-x64.tar
-          docker load -i /tmp/falkordb-alpine-arm64v8.tar
-          docker load -i /tmp/falkordb-amazonlinux2023-x64.tar
-
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Set tag name
         id: set_tag
@@ -346,6 +67,300 @@ jobs:
           fi
 
           echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_ENV
+
+      - name: Verify tag matches version.h
+        if: ${{ startsWith(env.TAG_NAME, 'v') && env.TAG_NAME != 'edge' }}
+        run: |
+          git fetch origin ${{ env.COMMIT_SHA }} --depth=1
+          VERSION_H=$(git show ${{ env.COMMIT_SHA }}:src/version.h)
+          MAJOR=$(echo "$VERSION_H" | grep FALKOR_VERSION_MAJOR | awk '{print $3}')
+          MINOR=$(echo "$VERSION_H" | grep FALKOR_VERSION_MINOR | awk '{print $3}')
+          PATCH=$(echo "$VERSION_H" | grep FALKOR_VERSION_PATCH | awk '{print $3}')
+          FILE_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "Tag: ${{ env.TAG_NAME }}, version.h: ${FILE_VERSION}"
+          if [ "${{ env.TAG_NAME }}" != "${FILE_VERSION}" ]; then
+            echo "::error::Tag '${{ env.TAG_NAME }}' does not match version.h '${FILE_VERSION}'"
+            exit 1
+          fi
+
+      - name: Retrieve built image AMD
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-x64
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image ARM
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-arm64v8
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image RHEL8 AMD
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-rhel8-x64
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image RHEL9 AMD
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-rhel9-x64
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image Alpine AMD
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-alpine-x64
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image Alpine ARM
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-alpine-arm64v8
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image Alpine AMD server only
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-server-alpine-x64
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image Alpine ARM server only
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-server-alpine-arm64v8
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image Amazon Linux AMD
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-amazonlinux2023-x64
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image Ubuntu AMD server only
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-server-x64
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image Ubuntu ARM server only
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-server-arm64v8
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so AMD
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so ARM
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-arm64v8.so
+          path: /tmp
+          if_no_artifact_found: error
+      - name: Retrieve built .so RHEL9 AMD
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-rhel9-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so RHEL8 AMD
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-rhel8-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so Alpine AMD
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-alpine-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so Alpine ARM
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-alpine-arm64v8.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so Amazon Linux AMD
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-amazonlinux2023-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built debug.so AMD
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built debug.so ARM
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-arm64v8.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built debug.so RHEL9 AMD
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-rhel9-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built debug.so RHEL8 AMD
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-rhel8-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built debug.so Alpine AMD
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-alpine-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built debug.so Alpine ARM
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-alpine-arm64v8.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so macOS ARM64
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-macos-arm64v8.so
+          path: /tmp
+          if_no_artifact_found: ignore
+
+      - name: Retrieve built debug.so macOS ARM64
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-debug-macos-arm64v8.so
+          path: /tmp
+          if_no_artifact_found: ignore
+
+      - name: Load image
+        run: |
+          docker load -i /tmp/falkordb-x64.tar
+          docker load -i /tmp/falkordb-arm64v8.tar
+          docker load -i /tmp/falkordb-rhel9-x64.tar
+          docker load -i /tmp/falkordb-rhel8-x64.tar
+          docker load -i /tmp/falkordb-server-alpine-x64.tar
+          docker load -i /tmp/falkordb-server-alpine-arm64v8.tar
+          docker load -i /tmp/falkordb-server-x64.tar
+          docker load -i /tmp/falkordb-server-arm64v8.tar
+          docker load -i /tmp/falkordb-alpine-x64.tar
+          docker load -i /tmp/falkordb-alpine-arm64v8.tar
+          docker load -i /tmp/falkordb-amazonlinux2023-x64.tar
+
+      - name: Login to DockerHub
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Tag x64, ARM, and rhel-x64 images
         run: |
@@ -453,7 +468,7 @@ jobs:
     if: github.event_name == 'release' || github.event.inputs.run_falkordb_cloud_update == 'true'
     steps:
       - name: Trigger FalkorDB Cloud version update
-        uses: peter-evans/repository-dispatch@v4
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4
         with:
           token: ${{ secrets.FALKORDB_OMNISTRATE_PAT }}
           repository: FalkorDB/falkordb-omnistrate
@@ -466,7 +481,7 @@ jobs:
     if: github.event_name == 'release' || github.event.inputs.run_testflight_workflow == 'true'
     steps:
       - name: Trigger Redis Enterprise tests in FalkorDB/testflight
-        uses: peter-evans/repository-dispatch@v4
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4
         with:
           token: ${{ secrets.GH_TESTFLIGHT_TOKEN }}
           repository: FalkorDB/testflight

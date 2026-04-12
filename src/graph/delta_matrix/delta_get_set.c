@@ -16,13 +16,13 @@ GrB_Info Delta_Matrix_setMatrices
 	GrB_Matrix *DP,  // new delta-plus
 	GrB_Matrix *DM   // new delta-minus
 ) {
-	ASSERT(C  != NULL);
-	ASSERT(M  != NULL);
-	ASSERT(DP != NULL);
-	ASSERT(DM != NULL);
-	ASSERT(*M  != NULL);
-	ASSERT(*DP != NULL);
-	ASSERT(*DM != NULL);
+	ASSERT (C   != NULL) ;
+	ASSERT (M   != NULL) ;
+	ASSERT (DP  != NULL) ;
+	ASSERT (DM  != NULL) ;
+	ASSERT (*M  != NULL) ;
+	ASSERT (*DP != NULL) ;
+	ASSERT (*DM != NULL) ;
 
 	GrB_Index nvals = 0;
 
@@ -42,8 +42,15 @@ GrB_Info Delta_Matrix_setMatrices
 
 	// Set correct sparcity controls
 	GrB_OK (GrB_set(*M, GxB_SPARSE | GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
+
 	GrB_OK (GrB_set(*DP, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
 	GrB_OK (GrB_set(*DM, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
+
+	GrB_OK (GrB_set (*DP, (int32_t) false, GxB_HYPER_HASH));
+	GrB_OK (GrB_set (*DM, (int32_t) false, GxB_HYPER_HASH));
+	// Using historical method because modern one requires me to create a scalar
+	GrB_OK (GxB_set (*DP, GxB_HYPER_SWITCH, GxB_ALWAYS_HYPER));
+	GrB_OK (GxB_set (*DM, GxB_HYPER_SWITCH, GxB_ALWAYS_HYPER));
 
 	*M  = NULL;
 	*DP  = NULL;

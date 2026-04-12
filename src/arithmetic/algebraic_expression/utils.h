@@ -115,8 +115,8 @@ AlgebraicExpression *_AlgebraicExpression_GetOperand
 // transposed operands if they are available.
 void _AlgebraicExpression_PopulateOperands
 (
-	AlgebraicExpression *exp,   // Expression to resolve operands for.
-	const GraphContext *gc      // Graph context.
+	AlgebraicExpression *exp,  // expression to resolve operands for
+	GraphContext *gc           // graph context
 );
 
 // given a list of algebraic expressions remove redundent label operands

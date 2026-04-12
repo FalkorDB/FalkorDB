@@ -4,7 +4,7 @@
  */
 
 #include "decode_graph.h"
-#include "current/v18/decode_v18.h"
+#include "current/v19/decode_v19.h"
 
 GraphContext *RdbLoadGraph
 (
@@ -12,7 +12,7 @@ GraphContext *RdbLoadGraph
 ) {
 	const RedisModuleString *rm_key_name = RedisModule_GetKeyNameFromIO(rdb);
 
-	SerializerIO io = SerializerIO_FromBufferedRedisModuleIO(rdb, false);
+	SerializerIO io = SerializerIOv2_FromBufferedRedisModuleIO(rdb, false);
 	GraphContext *gc = RdbLoadGraphContext_latest(io, rm_key_name);
 	SerializerIO_Free(&io);
 

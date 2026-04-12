@@ -59,7 +59,8 @@ typedef struct {
 typedef struct {
 	RedisModuleKey *key;     // graph open key, for later extraction and closing
 	ResultSet *result_set;   // execution result set
-	bool locked_for_commit;  // indicates if QueryCtx_LockForCommit been called
+	bool read_locked;        // thread holds graph READ lock
+	bool write_locked;       // thread holds graph WRITE lock
 } QueryCtx_InternalExecCtx;
 
 typedef struct {
@@ -119,6 +120,12 @@ void QueryCtx_AdvanceStage
 (
 	QueryCtx *ctx  // query context
 );
+
+// returns the number of milliseconds elapsed for the current stage
+double QueryCtx_StageElapsed
+(
+	const QueryCtx *ctx  // query context
+) ;
 
 // reset query's stage
 // waiting <- executing
@@ -214,28 +221,18 @@ ResultSetStatistics *QueryCtx_GetResultSetStatistics(void);
 // print the current query
 void QueryCtx_PrintQuery(void);
 
-// starts a locking flow before commiting changes
-// Locking flow:
-// 1. lock GIL
-// 2. open key with `write` flag
-// 3. graph R/W lock with write flag
-// since 2PL protocal is implemented, the method returns true if
-// it managed to achieve locks in this call or a previous call
-// in case that the locks are already locked, there will be no attempt to lock
-// them again this method returns false if the key has changed
-// from the current graph, and sets the relevant error message
-bool QueryCtx_LockForCommit(void);
+//------------------------------------------------------------------------------
+// Lock management
+//------------------------------------------------------------------------------
 
-// starts an ulocking flow and notifies Redis after commiting changes
-// the only writer which allow to perform the unlock and commit (replicate)
-// is the last_writer the method get an OpBase and compares it to
-// the last writer, if they are equal then the commit and unlock flow will start
-// Unlocking flow:
-// 1. replicate
-// 2. unlock graph R/W lock
-// 3. close key
-// 4. unlock GIL
-void QueryCtx_UnlockCommit(void);
+// acquire graph's read lock
+void QueryCtx_AcquireReadLock (void) ;
+
+// acquire graph's write lock
+bool QueryCtx_AcquireWriteLock (void) ;
+
+// release graph's lock
+void QueryCtx_ReleaseLock (void) ;
 
 // replicate command to AOF/Replicas
 void QueryCtx_Replicate

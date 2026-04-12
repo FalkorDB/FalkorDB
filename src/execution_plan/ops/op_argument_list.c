@@ -25,7 +25,7 @@ OpBase *NewArgumentListOp
 			ArgumentListConsume, ArgumentListReset, NULL, ArgumentListClone,
 			ArgumentListFree, false, plan);
 
-	uint variable_count = array_len(variables);
+	uint variable_count = arr_len(variables);
 	for(uint i = 0; i < variable_count; i ++) {
 		OpBase_Modifies((OpBase *)op, variables[i]);
 	}
@@ -43,7 +43,7 @@ void ArgumentList_AddRecordList
 	// take ownership over the records array
 	op->records = *records ;
 	*records = NULL ;
-	op->rec_len = array_len (op->records) ;
+	op->rec_len = arr_len (op->records) ;
 }
 
 static Record ArgumentListConsume
@@ -56,7 +56,7 @@ static Record ArgumentListConsume
 
 	if(op->rec_len > 0) {
 		op->rec_len--;
-		return array_pop(op->records);
+		return arr_pop(op->records);
 	}
 
 	return NULL;
@@ -74,7 +74,7 @@ static OpResult ArgumentListReset
 			OpBase_DeleteRecord(op->records+i);
 		}
 
-		array_free(op->records);
+		arr_free(op->records);
 		op->records = NULL;
 	}
 
@@ -104,7 +104,7 @@ static void ArgumentListFree
 			OpBase_DeleteRecord(op->records+i);
 		}
 
-		array_free(op->records);
+		arr_free(op->records);
 		op->records = NULL;
 	}
 }

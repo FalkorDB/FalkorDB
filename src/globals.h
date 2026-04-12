@@ -24,10 +24,6 @@ void Globals_WriteLock(void);
 // release globals RWLock
 void Globals_Unlock(void);
 
-// reinitialize globals RWLock
-// required by forked child process
-void Globals_ReInitLock(void);
-
 // get string pool
 StringPool Globals_Get_StringPool(void);
 
@@ -45,6 +41,8 @@ pthread_t Globals_Get_MainThreadId(void);
 
 // get direct access to 'graphs_in_keyspace'
 GraphContext **Globals_Get_GraphsInKeyspace(void);
+
+uint32_t Globals_GraphsCount (void) ;
 
 // add graph to global tracker
 void Globals_AddGraph

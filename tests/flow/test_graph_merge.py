@@ -707,3 +707,73 @@ class testGraphMergeFlow():
                             ON CREATE SET
                               cv.x = x""")
         self.env.assertEquals(res.nodes_created, 2)
+
+    def test37_updated_schema_awareness(self):
+        """
+        the merge clause must be aware of schema changes it performs
+        this test invokes merge twice, the first invocations is going to trigger
+        a merge-create while the second is going to avoid a duplicate and trigger
+        a merge-match
+        the merge ON MATCH SET directive must be able to locate duplicated entities
+        which were just created by the merge but are now treated as matches
+        """
+
+        # start with a clean graph
+        self.graph.delete()
+
+        # introduce a single node
+        q = "CREATE ()"
+        self.graph.query(q)
+
+        # merge the same edge twice
+        # on the first encounter merge would create the edge
+        # on the second encounter merge would avoid duplication by postpone matching
+        # merge must be able to match its owned created entities
+        q = """
+        UNWIND $relationships AS relData
+        MATCH (src), (dest)
+        WITH relData, src, dest
+        MERGE (src)-[rel:R]->(dest)
+        ON CREATE SET rel.created = true
+        ON MATCH SET rel.matched = true
+        RETURN rel
+        """
+
+        params = {'relationships': [1, 2]}
+        res = self.graph.query(q, params).result_set
+        self.env.assertEquals(len(res), 2)
+        self.env.assertEquals(res[0][0], res[1][0])
+
+        edge = res[0][0]
+        self.env.assertEquals(edge.properties['created'], True)
+        self.env.assertEquals(edge.properties['matched'], True)
+
+        # run a similar query only this time the merge pattern matching operation
+        # is going to be 'ConditionalTraverse' instead of 'ExpandInto'
+
+        # start with a clean graph
+        self.graph.delete()
+
+        # introduce a single node
+        q = "CREATE ()"
+        self.graph.query(q)
+
+        q = """
+        UNWIND $relationships AS relData
+        MATCH (src)
+        WITH relData, src
+        MERGE (src)-[rel:R]->()
+        ON CREATE SET rel.created = true
+        ON MATCH SET rel.matched = true
+        RETURN rel
+        """
+
+        params = {'relationships': [1, 2]}
+        res = self.graph.query(q, params).result_set
+        self.env.assertEquals(len(res), 2)
+        self.env.assertEquals(res[0][0], res[1][0])
+
+        edge = res[0][0]
+        self.env.assertEquals(edge.properties['created'], True)
+        self.env.assertEquals(edge.properties['matched'], True)
+

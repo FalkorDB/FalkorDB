@@ -44,8 +44,8 @@ void Register_MAX(void) {
 	SIType ret_type;
 	AR_FuncDesc *func_desc;
 
-	types = array_new (SIType, 1) ;
-	array_append (types, SI_ALL) ;
+	types = arr_new (SIType, 1) ;
+	arr_append (types, SI_ALL) ;
 
 	ret_type  = SI_ALL ;
 

@@ -23,7 +23,7 @@ jobs:
     steps:
       - name: Check label or branch
         id: haslabel
-        uses: actions/github-script@v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             if (context.eventName !== 'pull_request') {
@@ -53,7 +53,7 @@ jobs:
     steps:
       - name: Create Runner For Benchmark
         id: create-runner
-        uses: FalkorDB/gce-github-runner@install_docker
+        uses: FalkorDB/gce-github-runner@afc782cd7ea95146eac57b53d27fc08489d14d1b # install_docker
         with:
           token: ${{ secrets.GH_SA_TOKEN }}
           project_id: ${{ secrets.GCP_PROJECT_ID }}
@@ -72,48 +72,51 @@ jobs:
     runs-on: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
     container: falkordb/falkordb-build:ubuntu
     steps:
+      - name: Sanitize ref name
+        run: echo "SAFE_REF=$(echo '${{ github.head_ref || github.ref_name }}' | tr '/' '-')" >> "$GITHUB_ENV"
+
       - name: Safe dir
         run: git config --global --add safe.directory '*'
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           set-safe-directory: '*'
           submodules: recursive
 
       - name: Cache GraphBLAS
         id: cache_graphblas
-        uses: actions/cache@v4
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
         with:
           path: ./bin/linux-x64-release/GraphBLAS
-          key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
+          key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c', './build.sh') }}
 
       - name: Cache parser
         id: cache_parser
-        uses: actions/cache@v4
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
         with:
           path: ./bin/linux-x64-release/libcypher-parser
-          key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+          key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c', './build.sh') }}
 
       - name: Cache search
         id: cache_search
-        uses: actions/cache@v4
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
         with:
           path: ./bin/linux-x64-release/search-static
           key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
       - name: Cache libcurl
         id: cache_libcurl
-        uses: actions/cache@v4
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
         with:
           path: ./bin/linux-x64-release/libcurl
-          key: libcurl-x64-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}
+          key: libcurl-x64-${{ hashFiles('./deps/libcurl/RELEASE-NOTES', './build.sh') }}
 
       - name: Cache libcsv
         id: cache_libcsv
-        uses: actions/cache@v4
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
         with:
           path: ./bin/linux-x64-release/libcsv
-          key: libcsv-x64-${{ hashFiles('./deps/libcsv/ChangeLog') }}
+          key: libcsv-x64-${{ hashFiles('./deps/libcsv/ChangeLog', './build.sh') }}
 
       - name: Build
         run: |
@@ -138,9 +141,9 @@ jobs:
           python3 run_benchmarks.py group_${{ matrix.benchmark_group }}
 
       - name: Upload results
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
-          name: ${{ github.head_ref || github.ref_name }}-benchmark-group_${{ matrix.benchmark_group }}-results
+          name: ${{ env.SAFE_REF }}-benchmark-group_${{ matrix.benchmark_group }}-results
           path: tests/benchmarks/*-results.json
           retention-days: 1
 
@@ -151,7 +154,7 @@ jobs:
         benchmark_group: [ a, b ]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: ./.github/actions/cleanup-runner
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
@@ -164,16 +167,19 @@ jobs:
       - run-benchmarks
     runs-on: ubuntu-latest
     steps:
+      - name: Sanitize ref name
+        run: echo "SAFE_REF=$(echo '${{ github.head_ref || github.ref_name }}' | tr '/' '-')" >> "$GITHUB_ENV"
+
       - name: Download artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           # change this so it uses a pattern to download all group_* artifacts
-          pattern: ${{ github.head_ref || github.ref_name }}-benchmark-group_*-results
+          pattern: ${{ env.SAFE_REF }}-benchmark-group_*-results
           merge-multiple: true
       - name: Upload merged results
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
-          name: ${{ github.head_ref || github.ref_name }}-benchmark-results
+          name: ${{ env.SAFE_REF }}-benchmark-results
           path: ./*-results.json
 
   compare-results:
@@ -182,20 +188,23 @@ jobs:
     if: ${{ github.event_name == 'pull_request' }} # No need to run this job for branches and tags
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Sanitize ref name
+        run: echo "SAFE_REF=$(echo '${{ github.head_ref }}' | tr '/' '-')" >> "$GITHUB_ENV"
+
       - name: Create paths
         run: |
           mkdir -p tests/benchmarks/compare/${{ github.head_ref }}
           mkdir -p tests/benchmarks/compare/master
 
       - name: Download artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: ${{ github.head_ref }}-benchmark-results
+          name: ${{ env.SAFE_REF }}-benchmark-results
           path: tests/benchmarks/compare/${{ github.head_ref }}
 
       - name: Download master artifact
-        uses: actions/github-script@v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const artifacts = await github.rest.actions.listArtifactsForRepo({
@@ -245,7 +254,7 @@ jobs:
           python3 generate_markdown.py --new_branch ${{ github.head_ref }}
 
       - name: Update Pull Request Text
-        uses: actions/github-script@v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const existing_pull = await github.rest.pulls.get({

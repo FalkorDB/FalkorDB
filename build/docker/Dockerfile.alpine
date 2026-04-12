@@ -10,7 +10,7 @@ FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
 
 FROM node:24-alpine AS node
 
-FROM redis:8.2.2-alpine
+FROM redis:8.6.2-alpine
 
 ENV FALKORDB_HOME=/var/lib/falkordb
 
@@ -24,22 +24,20 @@ ENV FALKORDB_TLS_PATH=${FALKORDB_HOME}/tls
 
 ENV FALKORDB_BROWSER_PATH=${FALKORDB_HOME}/browser
 
-# Install runtime dependencies using Alpine packages (equivalent to Debian version)
-RUN apk add --no-cache libgomp openssl curl
+# Install only runtime dependencies (openssl for TLS cert generation, libgomp for GraphBLAS,
+# ca-certificates for HTTPS in LOAD CSV)
+RUN apk add --no-cache libgomp openssl ca-certificates
 
 WORKDIR ${FALKORDB_HOME}
 
 COPY ./build/docker/run.sh ${FALKORDB_BIN_PATH}/run.sh
 COPY ./build/docker/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 
-# Copy Node.js and npm from official node:24-alpine image
-COPY --from=node /usr/local/bin/node /usr/local/bin/node
-COPY --from=node /usr/local/bin/npm /usr/local/bin/npm
-COPY --from=node /usr/local/bin/npx /usr/local/bin/npx
-COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
+# Copy only Node.js runtime binary from official image (no npm, headers, or yarn)
+COPY --from=node /usr/local/bin/node /usr/local/bin/
 
 # Copy the compiled FalkorDB module from the Alpine compiler
-COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
+COPY --from=compiler /FalkorDB/bin/linux*/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
 # Copy browser files from the Alpine-based browser image
 COPY --from=browser /app ${FALKORDB_BROWSER_PATH}

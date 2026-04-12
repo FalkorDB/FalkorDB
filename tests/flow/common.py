@@ -1,33 +1,102 @@
 import os
+import platform
 import sys
 from functools import wraps
 
-from RLTest import Env as Environment, Defaults
-
 import redis
-from redis import ResponseError
-from falkordb import FalkorDB, Graph, Node, Edge, Path, ExecutionPlan
-
 from base import FlowTestsBase
+from falkordb import Edge, ExecutionPlan, FalkorDB, Graph, Node, Path
+from redis import ResponseError
+from RLTest import Defaults
+from RLTest import Env as Environment
 
 Defaults.decode_responses = True
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../deps/readies"))
-import paella
 
-VALGRIND      = os.getenv('VALGRIND', '0')      == '1'
-SANITIZER     = os.getenv('SANITIZER', '')      != ''
-CODE_COVERAGE = os.getenv('CODE_COVERAGE', '0') == '1'
+# Platform detection (replaces paella dependency)
+def _get_os():
+    """Get OS name (linux, macos, etc.)"""
+    system = platform.system().lower()
+    if system == "darwin":
+        return "macos"
+    return system
 
-OS     = paella.Platform().os
-ARCH   = paella.Platform().arch
-OSNICK = paella.Platform().osnick
 
-def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, shardsCount=None):
-    env = Environment(decodeResponses=True, moduleArgs=moduleArgs, env=env,
-                      useSlaves=useSlaves, enableDebugCommand=enableDebugCommand,
-                      shardsCount=shardsCount)
-    db  = FalkorDB("localhost", env.port)
+def _get_arch():
+    """Get architecture (x64, arm64v8, etc.)"""
+    machine = platform.machine().lower()
+    if machine == "x86_64" or machine == "amd64":
+        return "x64"
+    elif machine == "aarch64" or machine == "arm64":
+        return "arm64v8"
+    return machine
+
+
+def _get_osnick():
+    """Get OS nickname (e.g., ubuntu22.04, macos, etc.)"""
+    system = platform.system().lower()
+    if system == "darwin":
+        return "macos"
+    # Try to get Linux distribution info
+    try:
+        # Python 3.10+ has platform.freedesktop_os_release()
+        if hasattr(platform, "freedesktop_os_release"):
+            info = platform.freedesktop_os_release()
+            dist_id = info.get("ID", "linux").lower()
+            version_id = info.get("VERSION_ID", "")
+            return f"{dist_id}{version_id}"
+    except (OSError, AttributeError):
+        pass
+    # Fallback: try reading /etc/os-release directly
+    try:
+        with open("/etc/os-release") as f:
+            info = {}
+            for line in f:
+                if "=" in line:
+                    key, value = line.strip().split("=", 1)
+                    info[key] = value.strip('"')
+            dist_id = info.get("ID", "linux").lower()
+            version_id = info.get("VERSION_ID", "")
+            return f"{dist_id}{version_id}"
+    except (OSError, IOError):
+        pass
+    return "linux"
+
+
+VALGRIND = os.getenv("VALGRIND", "0") == "1"
+SANITIZER = os.getenv("SANITIZER", "") != ""
+CODE_COVERAGE = os.getenv("CODE_COVERAGE", "0") == "1"
+
+OS = _get_os()
+ARCH = _get_arch()
+OSNICK = _get_osnick()
+
+
+def Env(
+    moduleArgs=None,
+    env="oss",
+    useSlaves=False,
+    enableDebugCommand=False,
+    shardsCount=None,
+):
+    env = Environment(
+        decodeResponses=True,
+        moduleArgs=moduleArgs,
+        env=env,
+        useSlaves=useSlaves,
+        enableDebugCommand=enableDebugCommand,
+        shardsCount=shardsCount,
+    )
+    # Use envRunner.port to get the actual running port (may differ from Defaults.port
+    # when using --randomize-ports or parallel execution)
+    # ClusterEnv has shards[], StandardEnv has port directly
+    if hasattr(env.envRunner, 'shards'):
+        # Cluster mode - get port from first shard
+        port = env.envRunner.shards[0].port
+    else:
+        # Standard mode - direct port access
+        port = env.envRunner.port
+    db = FalkorDB("localhost", port)
 
     if SANITIZER or VALGRIND:
         # patch env, turning every assert call into NOP
@@ -48,22 +117,24 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
             # Simply do nothing. The side effects (evaluation) have already happened.
             pass
 
-        setattr(env, '_assertion', sanitized_assertion_nop.__get__(env))
+        setattr(env, "_assertion", sanitized_assertion_nop.__get__(env))
 
     return (env, db)
+
 
 def skip(cluster=False, macos=False):
     def decorate(f):
         @wraps(f)
         def wrapper(x, *args, **kwargs):
             env = x if isinstance(x, Env) else x.env
-            if not(cluster or macos):
+            if not (cluster or macos):
                 env.skip()
             if cluster and env.isCluster():
                 env.skip()
-            if macos and OS == 'macos':
+            if macos and OS == "macos":
                 env.skip()
             return f(x, *args, **kwargs)
-        return wrapper
-    return decorate
 
+        return wrapper
+
+    return decorate

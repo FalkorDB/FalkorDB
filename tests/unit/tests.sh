@@ -3,8 +3,9 @@
 PROGNAME="${BASH_SOURCE[0]}"
 HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
 ROOT=$(cd $HERE/../.. && pwd)
-READIES=$ROOT/deps/readies
-. $READIES/shibumi/defs
+
+# Source common definitions and functions
+. "$ROOT/tests/common.sh"
 
 cd $HERE
 
@@ -41,6 +42,8 @@ sanitizer_defs() {
 		ASAN_LOG=${LOGS_DIR}/${TEST_NAME}.asan.log
 		export ASAN_OPTIONS="detect_odr_violation=0:halt_on_error=0::detect_leaks=1:log_path=${ASAN_LOG}"
 		export LSAN_OPTIONS="suppressions=$ROOT/tests/memcheck/asan.supp:use_tls=0"
+		# Set SANITIZER env var for tests that check it to skip
+		export SANITIZER=1
 	fi
 }
 
@@ -49,30 +52,30 @@ sanitizer_defs() {
 sanitizer_summary() {
 	if grep -l "leaked in" ${LOGS_DIR}/*.asan.log* &> /dev/null; then
 		echo
-		echo "${LIGHTRED}Sanitizer: leaks detected:${RED}"
+		echo -e "${LIGHTRED}Sanitizer: leaks detected:${RED}"
 		grep -l "leaked in" ${LOGS_DIR}/*.asan.log*
-		echo "${NOCOLOR}"
+		echo -e "${NOCOLOR}"
 		E=1
 	fi
 	if grep -l "dynamic-stack-buffer-overflow" ${LOGS_DIR}/*.asan.log* &> /dev/null; then
 		echo
-		echo "${LIGHTRED}Sanitizer: buffer overflow detected:${RED}"
+		echo -e "${LIGHTRED}Sanitizer: buffer overflow detected:${RED}"
 		grep -l "dynamic-stack-buffer-overflow" ${LOGS_DIR}/*.asan.log*
-		echo "${NOCOLOR}"
+		echo -e "${NOCOLOR}"
 		E=1
 	fi
 	if grep -l "stack-buffer-overflow" ${LOGS_DIR}/*.asan.log* &> /dev/null; then
 		echo
-		echo "${LIGHTRED}Sanitizer: buffer overflow detected:${RED}"
+		echo -e "${LIGHTRED}Sanitizer: buffer overflow detected:${RED}"
 		grep -l "stack-buffer-overflow" ${LOGS_DIR}/*.asan.log*
-		echo "${NOCOLOR}"
+		echo -e "${NOCOLOR}"
 		E=1
 	fi
 	if grep -l "stack-use-after-scope" ${LOGS_DIR}/*.asan.log* &> /dev/null; then
 		echo
-		echo "${LIGHTRED}Sanitizer: stack use after scope detected:${RED}"
+		echo -e "${LIGHTRED}Sanitizer: stack use after scope detected:${RED}"
 		grep -l "stack-use-after-scope" ${LOGS_DIR}/*.asan.log*
-		echo "${NOCOLOR}"
+		echo -e "${NOCOLOR}"
 		E=1
 	fi
 }
@@ -137,12 +140,13 @@ fi
 
 E=0
 
-$READIES/bin/sep
+separator
 echo "# Running unit tests"
-TESTS_DIR="$(cd $BINROOT/src/tests/unit; pwd)"
+TESTS_DIR="$(cd $BINROOT/tests/unit; pwd)"
 cd $ROOT/tests/unit
 if [[ -z $TEST ]]; then
-	for test in $(find $TESTS_DIR -name "test_*" -type f -print); do
+	# Find test executables - exclude CMakeFiles directory and .o/.d files
+	for test in $(find $TESTS_DIR -maxdepth 1 -name "test_*" -type f -print); do
 		if [[ ! -x $test ]]; then
 			continue
 		fi
@@ -174,8 +178,7 @@ else
 fi
 
 if [[ -n $SAN || $VG == 1 ]]; then
-	# sanitizer_summary
-	{ UNIT=1 $ROOT/sbin/memcheck-summary.sh; (( E |= $? )); } || true
+	{ memcheck_summary unit; (( E |= $? )); } || true
 fi
 
 exit $E

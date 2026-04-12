@@ -209,8 +209,10 @@ static void _ResultSet_CompactReplyWithNode
 
 	// [label string index X N]
 	// Retrieve node labels
+	Graph *g = GraphContext_GetGraph (gc) ;
+
 	uint lbls_count;
-	NODE_GET_LABELS(gc->g, n, lbls_count);
+	NODE_GET_LABELS (g, n, lbls_count) ;
 	RedisModule_ReplyWithArray(ctx, lbls_count);
 	for(int i = 0; i < lbls_count; i++) {
 		RedisModule_ReplyWithLongLong(ctx, labels[i]);
@@ -546,4 +548,3 @@ void ResultSet_EmitCompactStats
 	buflen = sprintf(buff, "Query internal execution time: %.6f milliseconds", t);
 	RedisModule_ReplyWithStringBuffer(ctx, buff, buflen);
 }
-
