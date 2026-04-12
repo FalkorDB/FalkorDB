@@ -48,8 +48,12 @@ race:kvobjGetExpire
 race:slowlogCreateEntry
 
 # Redis signal handlers call malloc/free/fopen/fclose (signal-unsafe) for
-# crash logging. These are known Redis design decisions, not FalkorDB bugs.
+# crash logging and stack collection. These are known Redis design decisions.
+signal:invoke_callback
+signal:collect_stacktrace_data
 signal:serverLogRaw
+signal:printCrashReport
+signal:logServerInfo
 
 # =============================================================================
 # Section 2: RediSearch Dependency
