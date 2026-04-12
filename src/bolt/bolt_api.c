@@ -74,6 +74,7 @@ static bool is_authenticated
 		//   - "ERR ... no password is set" → no password needed → allow
 		RedisModuleCallReply *reply =
 			RedisModule_Call(client->ctx, "AUTH", "c", "");
+		if(reply == NULL) return false;
 		if(RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR) {
 			RedisModule_FreeCallReply(reply);
 			return true;
