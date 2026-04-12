@@ -146,13 +146,30 @@ static bool is_authenticated
 	// this works for Redis ACL users and for Redis 6+ default user
 	RedisModuleCallReply *reply = RedisModule_Call(client->ctx, "AUTH", "bb",
 		principal, (size_t)principal_len, credentials, (size_t)len);
+	if(reply == NULL) return false;
 	bool res = RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR;
-	RedisModule_FreeCallReply(reply);
 
 	if(!res) {
-		// fall back to single-argument AUTH (for requirepass mode or old Redis)
-		// this preserves backward compatibility when the server does not use ACL
-		reply = RedisModule_Call(client->ctx, "AUTH", "b", credentials, len);
+		// 2-arg AUTH failed — decide whether to fall back to single-arg AUTH
+		//
+		// when credentials are non-empty and the error is WRONGPASS, the server
+		// supports ACL-style AUTH but rejected the credentials; falling back to
+		// single-arg AUTH (AUTH <password>) could bypass ACL restrictions by
+		// authenticating as the default user, so we refuse in that case
+		if(len > 0) {
+			size_t err_len;
+			const char *err = RedisModule_CallReplyStringPtr(reply, &err_len);
+			if(err_len >= 9 && memcmp(err, "WRONGPASS", 9) == 0) {
+				RedisModule_FreeCallReply(reply);
+				return false;
+			}
+		}
+		RedisModule_FreeCallReply(reply);
+
+		// fall back to single-argument AUTH (for no-password or legacy setups)
+		reply = RedisModule_Call(client->ctx, "AUTH", "b",
+			credentials, (size_t)len);
+		if(reply == NULL) return false;
 		res = RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR;
 		if(!res && len == 0) {
 			// empty credentials — check if no password is required
@@ -160,8 +177,8 @@ static bool is_authenticated
 			const char *err = RedisModule_CallReplyStringPtr(reply, &err_len);
 			res = !(err_len >= 9 && memcmp(err, "WRONGPASS", 9) == 0);
 		}
-		RedisModule_FreeCallReply(reply);
 	}
+	RedisModule_FreeCallReply(reply);
 	return res;
 }
 
