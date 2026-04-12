@@ -842,8 +842,50 @@ class testGraphMergeFlow():
         self.env.assertEquals(result.result_set[0][0], 1)
         self.env.assertEquals(result.result_set[1][0], 2)
         self.env.assertEquals(result.result_set[2][0], 3)
+        self.env.assertEquals(result.nodes_created, 3)
 
         # second run: all three match, nothing created
         result = self.graph.query(q)
         self.env.assertEquals(len(result.result_set), 3)
+        self.env.assertEquals(result.result_set[0][0], 1)
+        self.env.assertEquals(result.result_set[1][0], 2)
+        self.env.assertEquals(result.result_set[2][0], 3)
+        self.env.assertEquals(result.nodes_created, 0)
+
+    def test40_call_subquery_merge_edge_with_properties(self):
+        """
+        verify CALL { MERGE } with edge properties preserves all rows
+        and does not leak edge attribute sets across resets.
+        """
+
+        self.graph.delete()
+
+        self.graph.query(
+            """CREATE (:Person {name: 'Alice'}),
+                      (:Person {name: 'Bob'}),
+                      (:Person {name: 'Carol'})"""
+        )
+
+        q = """MATCH (p:Person)
+               CALL {
+                 WITH p
+                 MERGE (p)-[:HAS_TAG {tagged_by: 'system', priority: 1}]->(:Tag {name: 'active'})
+                 RETURN p.name AS who
+               }
+               RETURN who
+               ORDER BY who"""
+
+        # first run: creates Tag nodes and HAS_TAG edges with properties
+        result = self.graph.query(q)
+        self.env.assertEquals(len(result.result_set), 3)
+        self.env.assertEquals(result.result_set[0][0], 'Alice')
+        self.env.assertEquals(result.result_set[1][0], 'Bob')
+        self.env.assertEquals(result.result_set[2][0], 'Carol')
+
+        # second run (cached): matches existing, no new creations
+        result = self.graph.query(q)
+        self.env.assertEquals(len(result.result_set), 3)
+        self.env.assertEquals(result.result_set[0][0], 'Alice')
+        self.env.assertEquals(result.result_set[1][0], 'Bob')
+        self.env.assertEquals(result.result_set[2][0], 'Carol')
         self.env.assertEquals(result.nodes_created, 0)
