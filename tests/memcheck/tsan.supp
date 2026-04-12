@@ -76,8 +76,11 @@ race:InvertedIndex_Free
 race:___kmp_free
 race:libomp.so
 
-# GraphBLAS merge sort — internal parallel sort race.
+# GraphBLAS parallel sort and memory operations — internal OpenMP races.
 race:GB_msort_2_merge
+race:GB_msort_3_merge
+race:GB_memcpy
+race:GB_memset
 
 # =============================================================================
 # Section 3: FalkorDB False Positives (Documented Intentional Patterns)
