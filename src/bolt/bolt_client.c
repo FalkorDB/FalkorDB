@@ -333,6 +333,19 @@ static void bolt_change_txstreaming_state
 					ASSERT(false);
 			}
 			break;
+		case BST_ROLLBACK:
+			switch (response_type)
+			{
+				case BST_SUCCESS:
+					client->state = BS_READY;
+					break;
+				case BST_FAILURE:
+					client->state = BS_FAILED;
+					break;
+				default:
+					ASSERT(false);
+			}
+			break;
 		case BST_RESET:
 			client->state = BS_READY;
 			break;

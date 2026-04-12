@@ -11,6 +11,8 @@
 #include "../util/uuid.h"
 #include "../commands/commands.h"
 #include "../configuration/config.h"
+#include <stdarg.h>
+#include <strings.h>
 
 rax *clients;
 RedisModuleString *BOLT;
@@ -66,60 +68,85 @@ static bool is_authenticated
 	uint32_t auth_size = bolt_read_map_size(&client->msg_buf.read);
 
 	if(auth_size < 3) {
-		// if no password provided check we can call PING
-		RedisModuleCallReply *reply = RedisModule_Call(client->ctx, "PING", "");
-		bool res = RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR;
+		// no credentials provided
+		// probe with AUTH to determine whether a password is required:
+		//   - "WRONGPASS ..." → requirepass/ACL is active → deny
+		//   - "ERR ... no password is set" → no password needed → allow
+		RedisModuleCallReply *reply =
+			RedisModule_Call(client->ctx, "AUTH", "c", "");
+		if(RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR) {
+			RedisModule_FreeCallReply(reply);
+			return true;
+		}
+		size_t err_len;
+		const char *err = RedisModule_CallReplyStringPtr(reply, &err_len);
+		// WRONGPASS means a password IS required but was not provided
+		bool password_required =
+			(err_len >= 9 && memcmp(err, "WRONGPASS", 9) == 0);
 		RedisModule_FreeCallReply(reply);
-		return res;
+		return !password_required;
 	}
 
 	uint32_t len;
 	char s[64];
+
 	bolt_read_string_size(&client->msg_buf.read, &len);
+	if(len >= sizeof(s)) return false;
 	bolt_read_string(&client->msg_buf.read, s);
 	// check if the first key is scheme
-	if(strncmp(s, "scheme", len) != 0) {
+	if(len != 6 || memcmp(s, "scheme", 6) != 0) {
 		return false;
 	}
-	
+
 	// check if the scheme is basic
 	bolt_read_string_size(&client->msg_buf.read, &len);
+	if(len >= sizeof(s)) return false;
 	bolt_read_string(&client->msg_buf.read, s);
-	if(strncmp(s, "basic", len) != 0) {
+	if(len != 5 || memcmp(s, "basic", 5) != 0) {
 		return false;
 	}
 
 	// check if the second key is principal
 	bolt_read_string_size(&client->msg_buf.read, &len);
+	if(len >= sizeof(s)) return false;
 	bolt_read_string(&client->msg_buf.read, s);
-	if(strncmp(s, "principal", len) != 0) {
+	if(len != 9 || memcmp(s, "principal", 9) != 0) {
 		return false;
 	}
-	
+
 	// check if the principal is falkordb
 	uint32_t principal_len;
 	bolt_read_string_size(&client->msg_buf.read, &principal_len);
-	if(principal_len > 64) {
+	if(principal_len >= sizeof(s)) {
 		return false;
 	}
 	bolt_read_string(&client->msg_buf.read, s);
-	if(strncmp(s, "falkordb", principal_len) != 0) {
+	if(principal_len != 8 || memcmp(s, "falkordb", 8) != 0) {
 		return false;
 	}
-	
+
 	// check if the third key is credentials
 	bolt_read_string_size(&client->msg_buf.read, &len);
+	if(len >= sizeof(s)) return false;
 	bolt_read_string(&client->msg_buf.read, s);
-	if(strncmp(s, "credentials", len) != 0) {
+	if(len != 11 || memcmp(s, "credentials", 11) != 0) {
 		return false;
 	}
-	
+
 	// check if the credentials are valid
 	bolt_read_string_size(&client->msg_buf.read, &len);
-	char credentials[len];
+	if(len > 1024) return false;
+	char credentials[len + 1];
 	bolt_read_string(&client->msg_buf.read, credentials);
+	credentials[len] = '\0';
 	RedisModuleCallReply *reply = RedisModule_Call(client->ctx, "AUTH", "b", credentials, len);
 	bool res = RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR;
+	if(!res && len == 0) {
+		// empty credentials — check if no password is required
+		size_t err_len;
+		const char *err = RedisModule_CallReplyStringPtr(reply, &err_len);
+		res = !(err_len >= 9 && memcmp(err, "WRONGPASS", 9) == 0);
+	}
 	RedisModule_FreeCallReply(reply);
 	return res;
 }
@@ -182,88 +209,176 @@ static RedisModuleString *get_graph_name
 	return res;
 }
 
-// write the bolt value to the buffer as string
-int write_value
+// growable write buffer for parameterized query construction
+typedef struct {
+	char *buf;      // heap-allocated buffer
+	uint32_t n;     // current write offset
+	uint32_t cap;   // buffer capacity
+	bool err;       // sticky error flag
+} wbuf_t;
+
+// ensure at least 'need' more bytes are available
+static bool wbuf_ensure
 (
-	char *buff,            // the buffer to write to
-	buffer_index_t *value  // the value to write
+	wbuf_t *wb,      // write buffer
+	uint32_t need    // additional bytes needed
 ) {
-	ASSERT(buff != NULL);
+	uint64_t target = (uint64_t)wb->n + need;
+	if(target <= wb->cap) return true;
+	if(target > UINT32_MAX) return false;
+	uint64_t new_cap = wb->cap;
+	while(new_cap < target) {
+		new_cap *= 2;
+		if(new_cap > UINT32_MAX) return false;
+	}
+	char *tmp = rm_realloc(wb->buf, (uint32_t)new_cap);
+	if(tmp == NULL) return false;
+	wb->buf = tmp;
+	wb->cap = (uint32_t)new_cap;
+	return true;
+}
+
+// append formatted string to the buffer, growing as needed
+// returns false and sets wb->err on failure
+static bool wbuf_printf
+(
+	wbuf_t *wb,      // write buffer
+	const char *fmt,  // format string
+	...
+) {
+	if(wb->err) return false;
+	va_list args;
+	uint32_t remaining = wb->cap - wb->n;
+	va_start(args, fmt);
+	int written = vsnprintf(wb->buf + wb->n, remaining, fmt, args);
+	va_end(args);
+	if(written < 0) { wb->err = true; return false; }
+	if((uint32_t)written >= remaining) {
+		if(!wbuf_ensure(wb, written + 1)) { wb->err = true; return false; }
+		va_start(args, fmt);
+		vsnprintf(wb->buf + wb->n, wb->cap - wb->n, fmt, args);
+		va_end(args);
+	}
+	wb->n += written;
+	return true;
+}
+
+// maximum nesting depth for recursive value serialization
+#define WRITE_VALUE_MAX_DEPTH 128
+
+// write the bolt value to the growable buffer as string
+// returns false if a write error occurred
+static bool _write_value
+(
+	wbuf_t *wb,            // growable write buffer
+	buffer_index_t *value, // the value to write
+	int depth              // current recursion depth
+) {
+	ASSERT(wb != NULL);
 	ASSERT(value != NULL);
+
+	if(wb->err) return false;
+
+	if(depth > WRITE_VALUE_MAX_DEPTH) {
+		wb->err = true;
+		return false;
+	}
 
 	switch (bolt_read_type(*value))
 	{
 		case BVT_NULL:
 			bolt_read_null(value);
-			return sprintf(buff, "NULL");
+			wbuf_printf(wb, "NULL");
+			return !wb->err;
 		case BVT_BOOL:
-			return sprintf(buff, "%s", bolt_read_bool(value) ? "true" : "false");
+			wbuf_printf(wb, "%s", bolt_read_bool(value) ? "true" : "false");
+			return !wb->err;
 		case BVT_INT8:
-			return sprintf(buff, "%d", bolt_read_int8(value));
+			wbuf_printf(wb, "%d", bolt_read_int8(value));
+			return !wb->err;
 		case BVT_INT16:
-			return sprintf(buff, "%d", bolt_read_int16(value));
+			wbuf_printf(wb, "%d", bolt_read_int16(value));
+			return !wb->err;
 		case BVT_INT32:
-			return sprintf(buff, "%d", bolt_read_int32(value));
+			wbuf_printf(wb, "%d", bolt_read_int32(value));
+			return !wb->err;
 		case BVT_INT64:
-			return sprintf(buff, "%" PRId64, bolt_read_int64(value));
+			wbuf_printf(wb, "%" PRId64, bolt_read_int64(value));
+			return !wb->err;
 		case BVT_FLOAT:
-			return sprintf(buff, "%f", bolt_read_float(value));
+			wbuf_printf(wb, "%f", bolt_read_float(value));
+			return !wb->err;
 		case BVT_STRING: {
 			uint32_t len;
 			bolt_read_string_size(value, &len);
-			char str[len];
+			char *str = rm_malloc(len);
+			if(str == NULL) { wb->err = true; return false; }
 			bolt_read_string(value, str);
-			return sprintf(buff, "'%.*s'", len, str);
+			wbuf_ensure(wb, len + 3);
+			wbuf_printf(wb, "'%.*s'", len, str);
+			rm_free(str);
+			return !wb->err;
 		}
 		case BVT_LIST: {
 			uint32_t size = bolt_read_list_size(value);
-			int n = 0;
-			n += sprintf(buff, "[");
+			wbuf_printf(wb, "[");
 			if(size > 0) {
-				n += write_value(buff + n, value);
-				for (int i = 1; i < size; i++) {
-					n += sprintf(buff + n, ", ");
-					n += write_value(buff + n, value);
+				_write_value(wb, value, depth + 1);
+				for (uint32_t i = 1; i < size; i++) {
+					wbuf_printf(wb, ", ");
+					_write_value(wb, value, depth + 1);
 				}
 			}
-			n += sprintf(buff + n, "]");
-			return n;
+			wbuf_printf(wb, "]");
+			return !wb->err;
 		}
 		case BVT_MAP: {
 			uint32_t size = bolt_read_map_size(value);
-			int n = 0;
-			n += sprintf(buff, "{");
+			wbuf_printf(wb, "{");
 			if(size > 0) {
 				uint32_t key_len;
 				bolt_read_string_size(value, &key_len);
-				char key[key_len];
+				char *key = rm_malloc(key_len);
+				if(key == NULL) { wb->err = true; return false; }
 				bolt_read_string(value, key);
-				n += sprintf(buff + n, "%.*s: ", key_len, key);
-				n += write_value(buff + n, value);
-				for (int i = 1; i < size; i++) {
+				wbuf_printf(wb, "%.*s: ", key_len, key);
+				rm_free(key);
+				_write_value(wb, value, depth + 1);
+				for (uint32_t i = 1; i < size; i++) {
 					bolt_read_string_size(value, &key_len);
-					char key[key_len];
+					key = rm_malloc(key_len);
+					if(key == NULL) { wb->err = true; return false; }
 					bolt_read_string(value, key);
-					n += sprintf(buff + n, ", ");
-					n += sprintf(buff + n, "%.*s: ", key_len, key);
-					n += write_value(buff + n, value);
+					wbuf_printf(wb, ", %.*s: ", key_len, key);
+					rm_free(key);
+					_write_value(wb, value, depth + 1);
 				}
 			}
-			n += sprintf(buff + n, "}");
-			return n;
+			wbuf_printf(wb, "}");
+			return !wb->err;
 		}
 		case BVT_STRUCTURE:
 			if(bolt_read_structure_type(value) == BST_POINT2D) {
 				double x = bolt_read_float(value);
 				double y = bolt_read_float(value);
-				return sprintf(buff, "POINT({longitude: %f, latitude: %f})", x, y);
+				wbuf_printf(wb, "POINT({longitude: %f, latitude: %f})", x, y);
+				return !wb->err;
 			}
 			ASSERT(false);
-			return 0;
+			return false;
 		default:
 			ASSERT(false);
-			return 0;
+			return false;
 	}
+}
+
+// public entry point — starts recursion at depth 0
+static bool write_value
+(
+	wbuf_t *wb,            // growable write buffer
+	buffer_index_t *value  // the value to write
+) {
+	return _write_value(wb, value, 0);
 }
 
 // read the query from the message buffer
@@ -278,23 +393,44 @@ RedisModuleString *get_query
 	uint32_t query_len;
 	bolt_read_string_size(&client->msg_buf.read, &query_len);
 	char *query = rm_malloc(query_len);
+	if(query == NULL) return NULL;
 	bolt_read_string(&client->msg_buf.read, query);
 	uint32_t params_count = bolt_read_map_size(&client->msg_buf.read);
 	if(params_count > 0) {
-		char prametrize_query[4096];
-		int n = sprintf(prametrize_query, "CYPHER ");
-		for (int i = 0; i < params_count; i++) {
+		wbuf_t wb;
+		wb.cap = query_len + 4096;
+		wb.n   = 0;
+		wb.buf = rm_malloc(wb.cap);
+		wb.err = (wb.buf == NULL);
+
+		wbuf_printf(&wb, "CYPHER ");
+		for (uint32_t i = 0; i < params_count; i++) {
 			uint32_t key_len;
 			bolt_read_string_size(&client->msg_buf.read, &key_len);
-			char key[key_len];
+			char *key = rm_malloc(key_len);
+			if(key == NULL) { wb.err = true; break; }
 			bolt_read_string(&client->msg_buf.read, key);
-			n += sprintf(prametrize_query + n, "%.*s=", key_len, key);
-			n += write_value(prametrize_query + n, &client->msg_buf.read);
-			n += sprintf(prametrize_query + n, " ");
+			if(!wbuf_ensure(&wb, key_len + 2)) { rm_free(key); wb.err = true; break; }
+			wbuf_printf(&wb, "%.*s=", key_len, key);
+			rm_free(key);
+			write_value(&wb, &client->msg_buf.read);
+			wbuf_printf(&wb, " ");
+			if(wb.err) break;
 		}
-		n += sprintf(prametrize_query + n, "%.*s", query_len, query);
+		if(!wb.err) {
+			if(!wbuf_ensure(&wb, query_len + 1)) wb.err = true;
+		}
+		if(!wb.err) {
+			wbuf_printf(&wb, "%.*s", query_len, query);
+		}
 		rm_free(query);
-		return RedisModule_CreateString(ctx, prametrize_query, n);
+		if(wb.err) {
+			rm_free(wb.buf);
+			return NULL;
+		}
+		RedisModuleString *res = RedisModule_CreateString(ctx, wb.buf, wb.n);
+		rm_free(wb.buf);
+		return res;
 	}
 
 	RedisModuleString *res = RedisModule_CreateString(ctx, query, query_len);
@@ -327,6 +463,17 @@ void BoltRunCommand
 	RedisModuleCtx *ctx = client->ctx;
 	RedisModuleString *args[5];
 	RedisModuleString *query = get_query(ctx, client);
+	if(query == NULL) {
+		bolt_client_reply_for(client, BST_RUN, BST_FAILURE, 1);
+		bolt_reply_map(client, 2);
+		bolt_reply_string(client, "code", 4);
+		bolt_reply_string(client, "FalkorDB.ClientError", 20);
+		bolt_reply_string(client, "message", 7);
+		bolt_reply_string(client, "Query construction failed", 25);
+		bolt_client_end_message(client);
+		bolt_client_finish_write(client);
+		return;
+	}
 	RedisModuleString *graph_name = get_graph_name(ctx, client);
 
 	const char *q = RedisModule_StringPtrLen(query, NULL);
