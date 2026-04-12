@@ -23,7 +23,7 @@ jobs:
     steps:
       - name: Check label or branch
         id: haslabel
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             if (context.eventName !== 'pull_request') {
@@ -204,7 +204,7 @@ jobs:
           path: tests/benchmarks/compare/${{ github.head_ref }}
 
       - name: Download master artifact
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const artifacts = await github.rest.actions.listArtifactsForRepo({
@@ -254,7 +254,7 @@ jobs:
           python3 generate_markdown.py --new_branch ${{ github.head_ref }}
 
       - name: Update Pull Request Text
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const existing_pull = await github.rest.pulls.get({
