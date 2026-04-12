@@ -56,10 +56,10 @@ signal:printCrashReport
 signal:logServerInfo
 
 # =============================================================================
-# Section 2: RediSearch Dependency
+# Section 2: Third-Party Dependencies (RediSearch, GraphBLAS, OpenMP)
 # =============================================================================
-# RediSearch is an upstream dependency. These are internal RediSearch races
-# that should be fixed upstream, not in FalkorDB.
+# These are internal races in upstream dependencies that should be fixed
+# upstream, not in FalkorDB.
 
 # RediSearch thread pool init/teardown race — startup sequencing issue.
 race:redisearch_thpool_init
@@ -71,6 +71,13 @@ race:thread_do
 # RediSearch inverted index lifecycle — concurrent add during free.
 race:InvertedIndex_AddBlock
 race:InvertedIndex_Free
+
+# OpenMP runtime (libomp.so) — internal allocator and lock races.
+race:___kmp_free
+race:libomp.so
+
+# GraphBLAS merge sort — internal parallel sort race.
+race:GB_msort_2_merge
 
 # =============================================================================
 # Section 3: FalkorDB False Positives (Documented Intentional Patterns)
