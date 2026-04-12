@@ -1215,7 +1215,9 @@ build_falkordbrs() {
         # Check if nightly toolchain is available
         if rustup run nightly rustc --version &>/dev/null; then
             cargo_cmd="cargo +nightly"
-            rustflags="-Zsanitizer=${SAN}"
+            # -Zub-checks=no: disable nightly's ptr::read null/alignment checks
+            # which cause false panics in FFI code under sanitizer builds
+            rustflags="-Zsanitizer=${SAN} -Zub-checks=no"
             # Use the correct target triple for the current architecture and OS
             local rust_target
             if [[ "$OS" == "macos" ]]; then
