@@ -151,34 +151,61 @@ pub struct Field {
     pub ty: IndexType,
     options: Option<TextIndexOptions>,
     vector_options: Option<VectorIndexOptions>,
+    /// Precomputed name for numeric array sub-field (e.g. "range:attr:numeric:arr").
+    /// Only set for Range fields.
+    numeric_arr_name: Option<CString>,
+    /// Precomputed name for string array sub-field (e.g. "range:attr:string:arr").
+    /// Only set for Range fields.
+    string_arr_name: Option<CString>,
 }
 
 impl Field {
+    fn make_arr_names(
+        name: &CString,
+        ty: &IndexType,
+    ) -> (Option<CString>, Option<CString>) {
+        if *ty == IndexType::Range {
+            let base = name.to_str().unwrap_or("");
+            (
+                CString::new(format!("{base}:numeric:arr")).ok(),
+                CString::new(format!("{base}:string:arr")).ok(),
+            )
+        } else {
+            (None, None)
+        }
+    }
+
     #[must_use]
-    pub const fn new(
+    pub fn new(
         name: CString,
         ty: IndexType,
         options: Option<TextIndexOptions>,
     ) -> Self {
+        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, &ty);
         Self {
             name,
             ty,
             options,
             vector_options: None,
+            numeric_arr_name,
+            string_arr_name,
         }
     }
 
     #[must_use]
-    pub const fn new_with_vector_options(
+    pub fn new_with_vector_options(
         name: CString,
         ty: IndexType,
         vector_options: VectorIndexOptions,
     ) -> Self {
+        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, &ty);
         Self {
             name,
             ty,
             options: None,
             vector_options: Some(vector_options),
+            numeric_arr_name,
+            string_arr_name,
         }
     }
 
@@ -190,6 +217,16 @@ impl Field {
     #[must_use]
     pub const fn vector_options(&self) -> Option<&VectorIndexOptions> {
         self.vector_options.as_ref()
+    }
+
+    #[must_use]
+    pub const fn numeric_arr_name(&self) -> Option<&CString> {
+        self.numeric_arr_name.as_ref()
+    }
+
+    #[must_use]
+    pub const fn string_arr_name(&self) -> Option<&CString> {
+        self.string_arr_name.as_ref()
     }
 }
 
@@ -341,9 +378,6 @@ pub type ScoredIdIter = IndexResultsIter<(u64, f64), fn(*mut RSResultsIterator, 
 pub struct Document {
     rs_doc: *mut RSDoc,
     id: u64,
-    /// CStrings that must outlive the document because RediSearch stores
-    /// raw pointers to field names (not copies).
-    _owned_names: Vec<CString>,
 }
 
 impl Document {
@@ -351,7 +385,6 @@ impl Document {
     pub fn new(id: u64) -> Self {
         Self {
             id,
-            _owned_names: Vec::new(),
             rs_doc: unsafe {
                 let doc = RediSearch_CreateDocument2(
                     (&raw const id).cast::<c_void>(),
@@ -466,11 +499,7 @@ impl Document {
                         }
                     }
                     if !numerics.is_empty() {
-                        let numeric_arr_name = CString::new(format!(
-                            "{}:numeric:arr",
-                            field.name.to_str().unwrap_or("")
-                        ));
-                        if let Ok(name) = numeric_arr_name {
+                        if let Some(name) = field.numeric_arr_name() {
                             let mut c_arr = rs_array_new(&numerics);
                             if !c_arr.is_null() {
                                 RediSearch_DocumentAddFieldNumericArray(
@@ -480,17 +509,10 @@ impl Document {
                                     RSFLDTYPE_NUMERIC,
                                 );
                             }
-                            // Keep CString alive — RediSearch stores the raw
-                            // pointer to the field name, not a copy.
-                            self._owned_names.push(name);
                         }
                     }
                     if !string_cstrs.is_empty() {
-                        let string_arr_name = CString::new(format!(
-                            "{}:string:arr",
-                            field.name.to_str().unwrap_or("")
-                        ));
-                        if let Ok(name) = string_arr_name {
+                        if let Some(name) = field.string_arr_name() {
                             let ptrs: Vec<*mut c_char> = string_cstrs
                                 .iter()
                                 .map(|cs| cs.as_ptr() as *mut c_char)
@@ -505,8 +527,6 @@ impl Document {
                                     RSFLDTYPE_TAG,
                                 );
                             }
-                            // Keep field name CString alive.
-                            self._owned_names.push(name);
                             // Keep string content CStrings alive — the pointer
                             // array references them.
                             std::mem::forget(string_cstrs);
@@ -630,29 +650,28 @@ impl Index {
 
                         // Array sub-fields: numeric and string array elements
                         // are indexed in separate fields for array-contains queries.
-                        let numeric_arr_name = CString::new(format!(
-                            "{}:numeric:arr",
-                            field.name.to_str().unwrap_or("")
-                        ))
-                        .map_err(|e| e.to_string())?;
-                        RediSearch_CreateField(
-                            self.rs_idx,
-                            numeric_arr_name.as_ptr(),
-                            RSFLDTYPE_NUMERIC,
-                            RSFLDOPT_NONE,
-                        );
+                        // Names are precomputed on the Field struct.
+                        if let Some(numeric_arr_name) = field.numeric_arr_name() {
+                            RediSearch_CreateField(
+                                self.rs_idx,
+                                numeric_arr_name.as_ptr(),
+                                RSFLDTYPE_NUMERIC,
+                                RSFLDOPT_NONE,
+                            );
+                        }
 
-                        let string_arr_name = CString::new(format!(
-                            "{}:string:arr",
-                            field.name.to_str().unwrap_or("")
-                        ))
-                        .map_err(|e| e.to_string())?;
-                        let string_arr_field_id = RediSearch_CreateField(
-                            self.rs_idx,
-                            string_arr_name.as_ptr(),
-                            RSFLDTYPE_TAG,
-                            RSFLDOPT_NONE,
-                        );
+                        let string_arr_field_id = if let Some(string_arr_name) =
+                            field.string_arr_name()
+                        {
+                            RediSearch_CreateField(
+                                self.rs_idx,
+                                string_arr_name.as_ptr(),
+                                RSFLDTYPE_TAG,
+                                RSFLDOPT_NONE,
+                            )
+                        } else {
+                            continue;
+                        };
                         RediSearch_TagFieldSetSeparator(
                             self.rs_idx,
                             string_arr_field_id,
@@ -1001,11 +1020,12 @@ impl Index {
                 let Some(fields) = self.fields.get(&key) else {
                     return std::ptr::null_mut();
                 };
-                let base_name = fields[0].name.to_str().unwrap_or("");
+                let field = &fields[0];
                 match value {
                     Value::Int(i) => {
-                        let arr_name =
-                            CString::new(format!("{base_name}:numeric:arr")).unwrap();
+                        let Some(arr_name) = field.numeric_arr_name() else {
+                            return std::ptr::null_mut();
+                        };
                         unsafe {
                             RediSearch_CreateNumericNode(
                                 self.rs_idx,
@@ -1018,8 +1038,9 @@ impl Index {
                         }
                     }
                     Value::Float(f) => {
-                        let arr_name =
-                            CString::new(format!("{base_name}:numeric:arr")).unwrap();
+                        let Some(arr_name) = field.numeric_arr_name() else {
+                            return std::ptr::null_mut();
+                        };
                         unsafe {
                             RediSearch_CreateNumericNode(
                                 self.rs_idx,
@@ -1032,8 +1053,9 @@ impl Index {
                         }
                     }
                     Value::Bool(b) => {
-                        let arr_name =
-                            CString::new(format!("{base_name}:numeric:arr")).unwrap();
+                        let Some(arr_name) = field.numeric_arr_name() else {
+                            return std::ptr::null_mut();
+                        };
                         unsafe {
                             RediSearch_CreateNumericNode(
                                 self.rs_idx,
@@ -1046,8 +1068,9 @@ impl Index {
                         }
                     }
                     Value::String(s) => {
-                        let arr_name =
-                            CString::new(format!("{base_name}:string:arr")).unwrap();
+                        let Some(arr_name) = field.string_arr_name() else {
+                            return std::ptr::null_mut();
+                        };
                         let root = unsafe {
                             RediSearch_CreateTagNode(self.rs_idx, arr_name.as_ptr())
                         };
