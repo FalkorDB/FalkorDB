@@ -1080,3 +1080,46 @@ class testEffects():
         self.master.execute_command("WAIT", 1, 0)
         self.assert_graph_eq()
 
+    def test22_schema_replication(self):
+        """
+        Make sure a query which introduces a new schema
+        but fails doesn't replicate the schema creation
+        and removes the schema
+        """
+
+        # clean slate
+        self.env.flush()
+
+        # replicate via effects
+        self.effects_enable()
+
+        self.master_graph  = Graph(self.master, GRAPH_ID)
+        self.replica_graph = Graph(self.replica, GRAPH_ID)
+
+        # create a new node schame 'A' mapped to schema id 0
+        q = "CREATE (a:A) RETURN a / 0"
+        try:
+            self.master_graph.query (q)
+            # we shouldn't be here
+            self.env.assertTrue(False)
+        except Exception:
+            # as expected
+            pass
+
+        # graph should remain empty
+        q = "CALL db.labels()"
+        res = self.master_graph.ro_query(q).result_set
+        self.env.assertEqual(len(res), 0)
+
+        # try to create a second label
+        q = "CREATE (b:B)"
+        #res = self.master_graph.query (q)
+        res = self.query_master_and_wait(q)
+        self.env.assertEquals(res.labels_added, 1)
+
+        q = "CALL db.meta.stats()"
+        master_stats  = self.master_graph.ro_query  (q).result_set
+        replica_stats = self.replica_graph.ro_query (q).result_set
+
+        self.env.assertEquals(master_stats, replica_stats)
+

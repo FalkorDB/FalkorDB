@@ -200,13 +200,16 @@ void RdbLoadDeletedNodes_v19
 	size_t n;
 	NodeID *deleted_nodes_list = (NodeID*)SerializerIO_ReadBuffer(rdb, &n);
 
-	// validate buffer alignment
-	if (n % sizeof(NodeID) != 0) {
-		rm_free (deleted_nodes_list) ;
-		ASSERT (false && "corrupted deleted nodes buffer") ;
+	// validate buffer: must be aligned and match expected count
+	if (n % sizeof(NodeID) != 0 ||
+		n / sizeof(NodeID) != deleted_node_count) {
+		rm_free(deleted_nodes_list);
+		RedisModule_Log(NULL, "warning",
+			"Malformed RDB: deleted nodes buffer size %zu "
+			"is not aligned or does not match expected count %" PRIu64,
+			n, deleted_node_count);
+		RedisModule_Assert(false);
 	}
-
-	ASSERT((n / sizeof(NodeID)) == deleted_node_count);
 
 	// mark each node id as deleted
 	for(uint64_t i = 0; i < deleted_node_count; i++) {
@@ -268,13 +271,16 @@ void RdbLoadDeletedEdges_v19
 	size_t n;
 	EdgeID *deleted_edges_list = (EdgeID*)SerializerIO_ReadBuffer(rdb, &n);
 
-	// validate buffer alignment
-	if (n % sizeof(EdgeID) != 0) {
+	// validate buffer: must be aligned and match expected count
+	if (n % sizeof(EdgeID) != 0 ||
+		n / sizeof(EdgeID) != deleted_edge_count) {
 		rm_free(deleted_edges_list);
-		ASSERT(false && "corrupted deleted edges buffer");
+		RedisModule_Log(NULL, "warning",
+			"Malformed RDB: deleted edges buffer size %zu "
+			"is not aligned or does not match expected count %" PRIu64,
+			n, deleted_edge_count);
+		RedisModule_Assert(false);
 	}
-
-	ASSERT((n / sizeof(EdgeID)) == deleted_edge_count);
 
 	// mark each edge id as deleted
 	for(uint64_t i = 0; i < deleted_edge_count; i++) {
