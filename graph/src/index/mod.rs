@@ -378,6 +378,9 @@ pub type ScoredIdIter = IndexResultsIter<(u64, f64), fn(*mut RSResultsIterator, 
 pub struct Document {
     rs_doc: *mut RSDoc,
     id: u64,
+    /// CStrings for array string elements. RediSearch stores raw pointers
+    /// into these during `set`, so they must live until after `add_document`.
+    _string_arr_values: Vec<CString>,
 }
 
 impl Document {
@@ -385,6 +388,7 @@ impl Document {
     pub fn new(id: u64) -> Self {
         Self {
             id,
+            _string_arr_values: Vec::new(),
             rs_doc: unsafe {
                 let doc = RediSearch_CreateDocument2(
                     (&raw const id).cast::<c_void>(),
@@ -528,8 +532,9 @@ impl Document {
                                 );
                             }
                             // Keep string content CStrings alive — the pointer
-                            // array references them.
-                            std::mem::forget(string_cstrs);
+                            // array in RediSearch references them. They'll be
+                            // properly freed when the Document is dropped.
+                            self._string_arr_values.extend(string_cstrs);
                         }
                     }
                 }
