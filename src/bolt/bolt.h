@@ -24,30 +24,6 @@ typedef enum bolt_value_type {
 	BVT_STRUCTURE
 } bolt_value_type;
 
-typedef enum bolt_structure_type {
-	BST_HELLO = 0x01,                 // hello message from client
-	BST_GOODBYE = 0x02,               // goodbye message from client
-	BST_RESET = 0x0F,                 // reset message from client
-	BST_RUN = 0x10,                   // run query message from client
-	BST_BEGIN = 0x11,                 // begin transaction message from client
-	BST_COMMIT = 0x12,                // commit transaction message from client
-	BST_ROLLBACK = 0x13,              // rollback transaction message from client
-	BST_DISCARD = 0x2F,               // discard all message from client
-	BST_PULL = 0x3F,                  // pull records message from client
-	BST_NODE = 0x4E,                  // node value
-	BST_PATH = 0x50,                  // path value
-	BST_RELATIONSHIP = 0x52,          // relationship value
-	BST_POINT2D = 0x58,               // point2d value
-	BST_ROUTE = 0x66,                 // route message from client
-	BST_LOGON = 0x6A,                 // logon message from client
-	BST_LOGOFF = 0x6B,                // logoff message from client
-	BST_SUCCESS = 0x70,               // success message
-	BST_RECORD = 0x71,                // record message
-	BST_UNBOUND_RELATIONSHIP = 0x72,  // unbound relationship value
-	BST_IGNORED = 0x7E,               // ignored message
-	BST_FAILURE = 0x7F,               // failure message
-} bolt_structure_type;
-
 //------------------------------------------------------------------------------
 // Write functions
 //------------------------------------------------------------------------------
