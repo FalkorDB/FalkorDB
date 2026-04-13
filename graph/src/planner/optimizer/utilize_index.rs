@@ -611,8 +611,7 @@ pub(super) fn utilize_index(
                                 &n.alias,
                             );
                         if is_array_contains {
-                            let filter_copy =
-                                filter.root().clone_as_tree();
+                            let filter_copy = filter.root().clone_as_tree();
                             (n, l, q, vec![filter_copy])
                         } else {
                             (n, l, q, Vec::new())
@@ -623,13 +622,12 @@ pub(super) fn utilize_index(
                 None
             };
             if let Some((node, index, query, remaining)) = node {
-                let filter_arc = if let IR::Filter(f) =
-                    optimized_plan.node(idx).parent().unwrap().data()
-                {
-                    f.clone()
-                } else {
-                    unreachable!()
-                };
+                let filter_arc =
+                    if let IR::Filter(f) = optimized_plan.node(idx).parent().unwrap().data() {
+                        f.clone()
+                    } else {
+                        unreachable!()
+                    };
                 let mut op = optimized_plan.node_mut(idx);
                 *op.data_mut() = IR::NodeByIndexScan { node, index, query };
                 // Check if the original filter has runtime expressions that

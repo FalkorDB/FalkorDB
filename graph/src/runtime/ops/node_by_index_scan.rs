@@ -186,12 +186,7 @@ impl<'a> NodeByIndexScanOp<'a> {
             }
             IndexQuery::InList { key, list } => {
                 let list_val = {
-                    ExprEval::from_runtime(runtime).eval(
-                        list,
-                        list.root().idx(),
-                        Some(vars),
-                        None,
-                    )
+                    ExprEval::from_runtime(runtime).eval(list, list.root().idx(), Some(vars), None)
                 }?;
                 match list_val {
                     Value::List(items) => {
@@ -312,12 +307,7 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                                 .get_nodes(&self.node_pattern.labels, 0),
                         )
                     } else {
-                        Box::new(
-                            self.runtime
-                                .g
-                                .borrow()
-                                .get_indexed_nodes(self.index, q),
-                        )
+                        Box::new(self.runtime.g.borrow().get_indexed_nodes(self.index, q))
                     };
                 self.pending
                     .push_back((vars.clone_pooled(self.runtime.env_pool), iter));

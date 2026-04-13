@@ -70,9 +70,7 @@ use crate::runtime::value::Value;
 /// RediSearch uses a custom array format with a 12-byte header (len, cap, elem_sz)
 /// prepended to the data. `array_free` reads this header, so we must allocate
 /// in the same format.
-unsafe fn rs_array_new<T>(
-    data: &[T],
-) -> *mut T {
+unsafe fn rs_array_new<T>(data: &[T]) -> *mut T {
     use redisearch::redis::RedisModule_Alloc;
 
     #[repr(C)]
@@ -100,7 +98,10 @@ unsafe fn rs_array_new<T>(
         (*hdr).cap = n as u32;
         (*hdr).elem_sz = elem_sz as u32;
 
-        let arr_ptr = raw.cast::<u8>().add(std::mem::size_of::<ArrayHdr>()).cast::<T>();
+        let arr_ptr = raw
+            .cast::<u8>()
+            .add(std::mem::size_of::<ArrayHdr>())
+            .cast::<T>();
         // Use byte-level copy to avoid alignment issues — the array header
         // is 12 bytes, so the data pointer may not be naturally aligned for T.
         std::ptr::copy_nonoverlapping(
@@ -116,11 +117,11 @@ use redisearch::{
     GC_POLICY_FORK, REDISEARCH_ADD_REPLACE, RSDoc, RSFLDOPT_NONE, RSFLDOPT_TXTNOSTEM,
     RSFLDOPT_TXTPHONETIC, RSFLDTYPE_FULLTEXT, RSFLDTYPE_GEO, RSFLDTYPE_NUMERIC, RSFLDTYPE_TAG,
     RSFLDTYPE_VECTOR, RSGeoDistance_RS_GEO_DISTANCE_M, RSIndex, RSRANGE_INF, RSRANGE_NEG_INF,
-    RSResultsIterator, RediSearch_CreateDocument2, RediSearch_CreateField,
-    RediSearch_CreateGeoNode, RediSearch_CreateIndex, RediSearch_CreateIndexOptions,
-    RediSearch_CreateEmptyNode, RediSearch_CreateIntersectNode, RediSearch_CreateNumericNode,
-    RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode, RediSearch_CreateUnionNode,
-    RediSearch_CreateTagLexRangeNode, RediSearch_DeleteDocument, RediSearch_DocumentAddFieldGeo,
+    RSResultsIterator, RediSearch_CreateDocument2, RediSearch_CreateEmptyNode,
+    RediSearch_CreateField, RediSearch_CreateGeoNode, RediSearch_CreateIndex,
+    RediSearch_CreateIndexOptions, RediSearch_CreateIntersectNode, RediSearch_CreateNumericNode,
+    RediSearch_CreateTagLexRangeNode, RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode,
+    RediSearch_CreateUnionNode, RediSearch_DeleteDocument, RediSearch_DocumentAddFieldGeo,
     RediSearch_DocumentAddFieldNumber, RediSearch_DocumentAddFieldNumericArray,
     RediSearch_DocumentAddFieldString, RediSearch_DocumentAddFieldStringArray,
     RediSearch_DocumentAddFieldVector, RediSearch_DropIndex, RediSearch_FreeIndexOptions,
@@ -665,28 +666,23 @@ impl Index {
                             );
                         }
 
-                        let string_arr_field_id = if let Some(string_arr_name) =
-                            field.string_arr_name()
-                        {
-                            RediSearch_CreateField(
-                                self.rs_idx,
-                                string_arr_name.as_ptr(),
-                                RSFLDTYPE_TAG,
-                                RSFLDOPT_NONE,
-                            )
-                        } else {
-                            continue;
-                        };
+                        let string_arr_field_id =
+                            if let Some(string_arr_name) = field.string_arr_name() {
+                                RediSearch_CreateField(
+                                    self.rs_idx,
+                                    string_arr_name.as_ptr(),
+                                    RSFLDTYPE_TAG,
+                                    RSFLDOPT_NONE,
+                                )
+                            } else {
+                                continue;
+                            };
                         RediSearch_TagFieldSetSeparator(
                             self.rs_idx,
                             string_arr_field_id,
                             1 as c_char,
                         );
-                        RediSearch_TagFieldSetCaseSensitive(
-                            self.rs_idx,
-                            string_arr_field_id,
-                            1,
-                        );
+                        RediSearch_TagFieldSetCaseSensitive(self.rs_idx, string_arr_field_id, 1);
                     }
                     IndexType::Fulltext => {
                         let mut field_options_flag = RSFLDOPT_NONE;
@@ -850,12 +846,8 @@ impl Index {
         // Lex range: NULL pointer means open bound (infinity)
         let min_cstr = min.and_then(|s| CString::new(s).ok());
         let max_cstr = max.and_then(|s| CString::new(s).ok());
-        let min_ptr = min_cstr
-            .as_ref()
-            .map_or(std::ptr::null(), |cs| cs.as_ptr());
-        let max_ptr = max_cstr
-            .as_ref()
-            .map_or(std::ptr::null(), |cs| cs.as_ptr());
+        let min_ptr = min_cstr.as_ref().map_or(std::ptr::null(), |cs| cs.as_ptr());
+        let max_ptr = max_cstr.as_ref().map_or(std::ptr::null(), |cs| cs.as_ptr());
 
         let child = unsafe {
             RediSearch_CreateTagLexRangeNode(
@@ -876,22 +868,13 @@ impl Index {
     ) -> *mut redisearch::RSQNode {
         match query {
             // Numeric equality (Int, Float, Bool)
-            IndexQuery::Equal { ref key, ref value }
-                if Self::value_to_numeric(value).is_some() =>
-            {
+            IndexQuery::Equal { ref key, ref value } if Self::value_to_numeric(value).is_some() => {
                 let d = Self::value_to_numeric(value).unwrap();
                 let Some(field) = self.fields.get(key).and_then(|f| f.first()) else {
                     return std::ptr::null_mut();
                 };
                 unsafe {
-                    RediSearch_CreateNumericNode(
-                        self.rs_idx,
-                        field.name.as_ptr(),
-                        d,
-                        d,
-                        1,
-                        1,
-                    )
+                    RediSearch_CreateNumericNode(self.rs_idx, field.name.as_ptr(), d, d, 1, 1)
                 }
             }
             // String equality
@@ -921,8 +904,8 @@ impl Index {
                 include_max,
             } => {
                 // Check if this is a string range
-                let is_string_range = matches!(min, Some(Value::String(_)))
-                    || matches!(max, Some(Value::String(_)));
+                let is_string_range =
+                    matches!(min, Some(Value::String(_))) || matches!(max, Some(Value::String(_)));
 
                 if is_string_range {
                     let min_str = match min {
@@ -1013,10 +996,7 @@ impl Index {
                 }
                 union_node
             }
-            IndexQuery::ArrayContains {
-                key,
-                ref value,
-            } => {
+            IndexQuery::ArrayContains { key, ref value } => {
                 let Some(field) = self.fields.get(&key).and_then(|f| f.first()) else {
                     return std::ptr::null_mut();
                 };
@@ -1070,9 +1050,8 @@ impl Index {
                         let Some(arr_name) = field.string_arr_name() else {
                             return std::ptr::null_mut();
                         };
-                        let root = unsafe {
-                            RediSearch_CreateTagNode(self.rs_idx, arr_name.as_ptr())
-                        };
+                        let root =
+                            unsafe { RediSearch_CreateTagNode(self.rs_idx, arr_name.as_ptr()) };
                         let Ok(token) = CString::new(s.as_str()) else {
                             return std::ptr::null_mut();
                         };
