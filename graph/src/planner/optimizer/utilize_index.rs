@@ -53,7 +53,10 @@ use orx_tree::{Bfs, Dyn, DynTree, NodeIdx, NodeRef};
 
 use crate::{
     graph::graph::Graph,
-    index::indexer::{IndexQuery, IndexType},
+    index::{
+        Index,
+        indexer::{IndexQuery, IndexType},
+    },
     parser::ast::{ExprIR, QueryExpr, QueryNode, Variable},
     tree,
 };
@@ -623,22 +626,29 @@ pub(super) fn utilize_index(
                     } else {
                         unreachable!()
                     };
+                // Check if the filter contains runtime values (Variables other
+                // than the scan target, or Parameters) that might evaluate to
+                // non-indexable types at runtime. If so, keep the filter as a
+                // safety net. The scan target's own Variable is always present
+                // in property access and should be ignored.
+                let scan_alias_id = node.alias.id;
+                let needs_post_filter =
+                    filter_arc
+                        .root()
+                        .indices::<Bfs>()
+                        .any(|i| match filter_arc.node(i).data() {
+                            ExprIR::Variable(v) => v.id != scan_alias_id,
+                            ExprIR::Parameter(_) => true,
+                            ExprIR::Integer(v) => Index::int_loses_f64_precision(*v),
+                            _ => false,
+                        });
                 let mut op = optimized_plan.node_mut(idx);
                 *op.data_mut() = IR::NodeByIndexScan {
                     node,
                     index,
                     query: Arc::new(query),
                 };
-                // Check if the original filter has runtime expressions that
-                // might evaluate to non-indexable values. If so, keep the filter
-                // as a safety net for correct results.
-                let has_runtime_expr = filter_arc.root().indices::<Bfs>().any(|i| {
-                    matches!(
-                        filter_arc.node(i).data(),
-                        ExprIR::Variable(_) | ExprIR::Parameter(_)
-                    )
-                });
-                if remaining.is_empty() && !has_runtime_expr {
+                if remaining.is_empty() && !needs_post_filter {
                     op.parent_mut().unwrap().take_out();
                 } else if remaining.is_empty() {
                     // Keep the original filter for runtime safety
@@ -664,17 +674,23 @@ pub(super) fn utilize_index(
             if let Some((node, label, attr, filter)) = has_inline_index
                 && !node.labels.is_empty()
             {
-                // Convert the label scan to an index scan with a post-filter.
-                // The Filter ensures correct results when the index scan falls
-                // back to a label scan at runtime (e.g., non-indexable value
-                // like List, or large Int that loses f64 precision).
-                //
-                // First push_parent to add Filter, then change node data.
-                // Do NOT set changed=true/break — if we restart the loop,
-                // the main path would see Filter+IndexScan and remove the filter.
-                optimized_plan
-                    .node_mut(idx)
-                    .push_parent(IR::Filter(Arc::new(filter.clone())));
+                // Only add a post-filter if the inline attribute's value expression
+                // contains runtime expressions (Variable, Parameter) that might
+                // evaluate to non-indexable types. For constant literals (e.g.
+                // {vi: 5}), the index handles it exactly and no filter is needed.
+                let value_subtree_idx = filter.root().child(1).idx();
+                let needs_post_filter = filter.node(value_subtree_idx).indices::<Bfs>().any(|i| {
+                    match filter.node(i).data() {
+                        ExprIR::Variable(_) | ExprIR::Parameter(_) => true,
+                        ExprIR::Integer(v) => Index::int_loses_f64_precision(*v),
+                        _ => false,
+                    }
+                });
+                if needs_post_filter {
+                    optimized_plan
+                        .node_mut(idx)
+                        .push_parent(IR::Filter(Arc::new(filter.clone())));
+                }
                 let mut op = optimized_plan.node_mut(idx);
                 *op.data_mut() = IR::NodeByIndexScan {
                     node: node.clone(),
