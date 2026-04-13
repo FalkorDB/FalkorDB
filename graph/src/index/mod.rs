@@ -834,17 +834,17 @@ impl Index {
         let root = unsafe { RediSearch_CreateTagNode(self.rs_idx, field.name.as_ptr()) };
 
         // If both bounds are equal, use exact match (TagTokenNode)
-        if let (Some(lo), Some(hi)) = (min, max) {
-            if lo == hi {
-                let Ok(token) = CString::new(lo) else {
-                    return std::ptr::null_mut();
-                };
-                let child = unsafe {
-                    RediSearch_CreateTagTokenNode(self.rs_idx, token.as_ptr().cast::<c_char>())
-                };
-                unsafe { RediSearch_QueryNodeAddChild(root, child) };
-                return root;
-            }
+        if let (Some(lo), Some(hi)) = (min, max)
+            && lo == hi
+        {
+            let Ok(token) = CString::new(lo) else {
+                return std::ptr::null_mut();
+            };
+            let child = unsafe {
+                RediSearch_CreateTagTokenNode(self.rs_idx, token.as_ptr().cast::<c_char>())
+            };
+            unsafe { RediSearch_QueryNodeAddChild(root, child) };
+            return root;
         }
 
         // Lex range: NULL pointer means open bound (infinity)
