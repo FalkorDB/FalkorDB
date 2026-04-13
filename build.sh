@@ -27,7 +27,7 @@ SAN=""               # Sanitizer type (address/memory/leak/thread)
 VARIANT=""           # Custom variant name
 GCC=0                # Force GCC toolchain
 CLANG=0              # Force Clang toolchain
-JIT=1                # GraphBLAS JIT support (default on)
+JIT=0                # GraphBLAS JIT support (default off)
 
 # Test configuration (0=disabled, 1=enabled)
 BUILD_TESTS=0        # Build test binaries
@@ -35,6 +35,13 @@ RUN_TESTS=0          # Run all tests
 RUN_UNIT_TESTS=0     # Run unit tests
 RUN_FLOW_TESTS=0     # Run flow tests
 RUN_TCK_TESTS=0      # Run TCK tests
+LAGRAPH_TESTS=0      # Build and run LAGraph tests (for JIT kernel generation)
+
+# Default ctest -R regex: only the tests for algorithms FalkorDB directly uses.
+# Override at the command line with LAGRAPH_TEST_FILTER=<regex> (e.g. '.*' to
+# run all LAGraph tests).
+LAGRAPH_FALKORDB_TESTS="LAGraph_(Betweenness|BreadthFirstSearch|Cached_AT|Cached_Degree|ConnectedComponents|Init|minmax|New|PageRank)|LAGraphX_(cdlp|MaxFlow|msf)"
+LAGRAPH_TEST_FILTER=""   # set in setup_build_environment from the constant above
 
 # Other options
 LIST_TESTS=0         # List tests only
@@ -144,7 +151,7 @@ BUILD OPTIONS:
     VARIANT=name        Add 'name' to build products directory
     GCC=1               Build with GCC toolchain (default for Linux)
     CLANG=1             Build with Clang toolchain (default for macOS)
-    JIT=0               Disable GraphBLAS JIT support
+    JIT=1               Enable GraphBLAS JIT support
 
 TEST OPTIONS:
     TESTS=1             Build test binaries
@@ -280,6 +287,12 @@ parse_arguments() {
                 ;;
             RUN_FLOW_TESTS=1|FLOW=1)
                 RUN_FLOW_TESTS=1
+                ;;
+            LAGRAPH_TESTS=1)
+                LAGRAPH_TESTS=1
+                ;;
+            LAGRAPH_TEST_FILTER=*)
+                LAGRAPH_TEST_FILTER="${arg#*=}"
                 ;;
             RUN_TCK_TESTS=1|TCK=1)
                 RUN_TCK_TESTS=1
@@ -595,6 +608,12 @@ setup_build_environment() {
     if [[ "$VG" == "1" ]]; then
         log_info "  VALGRIND:     enabled              # Valgrind-compatible build"
     fi
+
+    # Apply default LAGraph test filter if not overridden by the user.
+    if [[ -z "$LAGRAPH_TEST_FILTER" ]]; then
+        LAGRAPH_TEST_FILTER="$LAGRAPH_FALKORDB_TESTS"
+    fi
+
     echo ""
 }
 
@@ -993,6 +1012,82 @@ build_lagraph() {
     cd "$ROOT"
 
     log_success "LAGraph built successfully"
+    end_group
+}
+
+#-----------------------------------------------------------------------------
+# Function: build_lagraph_tests
+# Compile the LAGraph test binaries against the same GraphBLAS that FalkorDB
+# links against (deps/GraphBLAS built into GRAPHBLAS_BINDIR).
+#
+# The libraries themselves must already be present (build_lagraph must have
+# run first).  This function re-configures the existing LAGRAPH_BINDIR with
+# BUILD_TESTING=ON and builds only the test targets; it does not wipe the
+# build directory, so CMake's incremental logic keeps the already-built
+# liblagraph.a / liblagraphx.a intact.
+#
+# The resulting test executables land in:
+#   $LAGRAPH_BINDIR/src/test/
+#   $LAGRAPH_BINDIR/experimental/test/
+# and can be run with:
+#   ctest --test-dir $LAGRAPH_BINDIR
+#-----------------------------------------------------------------------------
+build_lagraph_tests() {
+    if [[ ! -f "$LAGRAPH" ]]; then
+        log_error "LAGraph library not found – run build_lagraph first"
+        exit 1
+    fi
+
+    start_group "Building LAGraph tests"
+    log_info "Building LAGraph test binaries..."
+
+    local src_dir="${ROOT}/deps/LAGraph"
+    local build_dir="$LAGRAPH_BINDIR"
+
+    cd "$build_dir"
+
+    local cmake_args=(
+        -DBUILD_STATIC_LIBS=ON
+        -DBUILD_SHARED_LIBS=OFF
+        -DBUILD_TESTING=ON
+        -DGRAPHBLAS_ROOT="$GRAPHBLAS_BINDIR"
+        -DGRAPHBLAS_INCLUDE_DIR="${ROOT}/deps/GraphBLAS/Include"
+        -DGRAPHBLAS_LIBRARY="$GRAPHBLAS"
+        -DGraphBLAS_DIR="$GRAPHBLAS_BINDIR"
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+        -DCMAKE_C_FLAGS="-fPIC"
+        -DCMAKE_CXX_FLAGS="-fPIC"
+    )
+
+    if [[ "$DEPS_DEBUG" == "1" ]]; then
+        cmake_args+=(-DCMAKE_BUILD_TYPE=Debug)
+    else
+        cmake_args+=(
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+            "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O3 -g -DNDEBUG -fPIC"
+            "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O3 -g -DNDEBUG -fPIC"
+        )
+    fi
+
+    log_info "Reconfiguring LAGraph with BUILD_TESTING=ON..."
+    if ! cmake "$src_dir" "${cmake_args[@]}"; then
+        log_error "Failed to reconfigure LAGraph for testing"
+        cd "$ROOT"
+        end_group
+        exit 1
+    fi
+
+    log_info "Building LAGraph tests..."
+    if ! cmake --build . --config RelWithDebInfo -j "$NPROC"; then
+        log_error "Failed to build LAGraph tests"
+        cd "$ROOT"
+        end_group
+        exit 1
+    fi
+
+    cd "$ROOT"
+
+    log_success "LAGraph tests built successfully"
     end_group
 }
 
@@ -2019,6 +2114,18 @@ main() {
             run_unit_tests || test_result=1
             run_flow_tests || test_result=1
             run_tck_tests || test_result=1
+        fi
+    fi
+
+    # Build (and optionally run) LAGraph tests if requested
+    if [[ "$LAGRAPH_TESTS" == "1" ]]; then
+        build_lagraph_tests
+        log_info "Running LAGraph tests (filter: $LAGRAPH_TEST_FILTER)..."
+        if ! ctest --test-dir "$LAGRAPH_BINDIR" -R "$LAGRAPH_TEST_FILTER" --output-on-failure; then
+            log_error "LAGraph tests failed"
+            test_result=1
+        else
+            log_success "LAGraph tests passed"
         fi
     fi
 
