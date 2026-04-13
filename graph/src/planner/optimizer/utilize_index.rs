@@ -376,7 +376,7 @@ fn list_has_nested_list(
 ///
 /// Handles two patterns:
 /// 1. `property IN [list]` — converts to InList index query
-/// 2. `value IN property` — converts to Equal index query (array contains)
+/// 2. `value IN property` — converts to ArrayContains index query
 fn try_in_filter_index_scan(
     node: &Arc<QueryNode<Arc<String>, Variable>>,
     filter: &DynTree<ExprIR<Variable>>,
@@ -392,47 +392,43 @@ fn try_in_filter_index_scan(
     let lhs_has_target_property = subtree_has_property_of(filter, lhs_idx, &node.alias);
     let rhs_has_target_property = subtree_has_property_of(filter, rhs_idx, &node.alias);
 
-    if lhs_has_target_property && !rhs_has_target_property {
-        // Pattern 1: property IN [list] (e.g., p.age IN [1,2,3])
-        let attr = extract_attribute_from_subtree(filter, lhs_idx)?;
-        if !graph.is_indexed(&node.labels[0], &attr, &IndexType::Range) {
-            return None;
-        }
-        // Don't index if the list contains nested arrays
-        if list_has_nested_list(filter, rhs_idx) {
-            return None;
-        }
-        // Don't index if the RHS has graph entity dependencies
-        if subtree_has_any_property(filter, rhs_idx) {
-            return None;
-        }
-        let list_expr = filter.node(rhs_idx).clone_as_tree();
-        Some((
-            node.clone(),
-            node.labels[0].clone(),
-            Arc::new(IndexQuery::InList {
-                key: attr,
-                list: Arc::new(list_expr),
-            }),
-        ))
-    } else if rhs_has_target_property && !lhs_has_target_property {
-        // Pattern 2: value IN property (e.g., $x IN p.samples)
-        let attr = extract_attribute_from_subtree(filter, rhs_idx)?;
-        if !graph.is_indexed(&node.labels[0], &attr, &IndexType::Range) {
-            return None;
-        }
-        let value_expr = filter.node(lhs_idx).clone_as_tree();
-        Some((
-            node.clone(),
-            node.labels[0].clone(),
-            Arc::new(IndexQuery::ArrayContains {
-                key: attr,
-                value: Arc::new(value_expr),
-            }),
-        ))
-    } else {
-        None
+    // Determine which side holds the target node's property and which is the expression.
+    // Exactly one side must reference the target node for index utilization.
+    let (attr_side, expr_side, is_property_in_list) =
+        match (lhs_has_target_property, rhs_has_target_property) {
+            (true, false) => (lhs_idx, rhs_idx, true), // property IN [list]
+            (false, true) => (rhs_idx, lhs_idx, false), // value IN property
+            _ => return None,                          // both or neither reference target
+        };
+
+    let attr = extract_attribute_from_subtree(filter, attr_side)?;
+    if !graph.is_indexed(&node.labels[0], &attr, &IndexType::Range) {
+        return None;
     }
+
+    let query = if is_property_in_list {
+        // Pattern: p.age IN [1, 2, 3]
+        // Don't index if the list contains nested arrays
+        if list_has_nested_list(filter, expr_side) {
+            return None;
+        }
+        // Don't index if the expression has graph entity dependencies
+        if subtree_has_any_property(filter, expr_side) {
+            return None;
+        }
+        IndexQuery::InList {
+            key: attr,
+            list: Arc::new(filter.node(expr_side).clone_as_tree()),
+        }
+    } else {
+        // Pattern: $x IN p.samples
+        IndexQuery::ArrayContains {
+            key: attr,
+            value: Arc::new(filter.node(expr_side).clone_as_tree()),
+        }
+    };
+
+    Some((node.clone(), node.labels[0].clone(), Arc::new(query)))
 }
 
 /// Tries to convert a single comparison filter into an index scan for the given node.
