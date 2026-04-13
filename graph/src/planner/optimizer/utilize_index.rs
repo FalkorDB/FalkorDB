@@ -98,12 +98,14 @@ fn extract_attribute_and_expression_from_filter(
     let rhs_idx = filter.root().child(1).idx();
 
     if let Some(alias) = target_alias {
-        // Check which side has a property of the target node
-        let lhs_has = subtree_has_property_of(filter, lhs_idx, alias);
-        let rhs_has = subtree_has_property_of(filter, rhs_idx, alias);
+        // Check which side has a property of the target node.
+        // If both sides reference the target (e.g. `n.age > n.salary`),
+        // we can't use the index — it can only accelerate one property lookup.
+        let lhs_has_target_property = subtree_has_property_of(filter, lhs_idx, alias);
+        let rhs_has_target_property = subtree_has_property_of(filter, rhs_idx, alias);
 
-        match (lhs_has, rhs_has) {
-            (true, true) => None, // Both sides reference target - can't use index
+        match (lhs_has_target_property, rhs_has_target_property) {
+            (true, true) => None,
             (true, _) => {
                 let attr = extract_attribute_from_subtree(filter, lhs_idx)?;
                 Some((attr, lhs_idx, rhs_idx))
@@ -387,10 +389,10 @@ fn try_in_filter_index_scan(
     let lhs_idx = filter.root().child(0).idx();
     let rhs_idx = filter.root().child(1).idx();
 
-    let lhs_has_prop = subtree_has_property_of(filter, lhs_idx, &node.alias);
-    let rhs_has_prop = subtree_has_property_of(filter, rhs_idx, &node.alias);
+    let lhs_has_target_property = subtree_has_property_of(filter, lhs_idx, &node.alias);
+    let rhs_has_target_property = subtree_has_property_of(filter, rhs_idx, &node.alias);
 
-    if lhs_has_prop && !rhs_has_prop {
+    if lhs_has_target_property && !rhs_has_target_property {
         // Pattern 1: property IN [list] (e.g., p.age IN [1,2,3])
         let attr = extract_attribute_from_subtree(filter, lhs_idx)?;
         if !graph.is_indexed(&node.labels[0], &attr, &IndexType::Range) {
@@ -413,7 +415,7 @@ fn try_in_filter_index_scan(
                 list: Arc::new(list_expr),
             }),
         ))
-    } else if rhs_has_prop && !lhs_has_prop {
+    } else if rhs_has_target_property && !lhs_has_target_property {
         // Pattern 2: value IN property (e.g., $x IN p.samples)
         let attr = extract_attribute_from_subtree(filter, rhs_idx)?;
         if !graph.is_indexed(&node.labels[0], &attr, &IndexType::Range) {
