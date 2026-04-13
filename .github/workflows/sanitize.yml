@@ -17,6 +17,25 @@ jobs:
   sanitize-test:
     runs-on: ubuntu-latest
     container: falkordb/falkordb-build:ubuntu
+    timeout-minutes: ${{ matrix.timeout_minutes }}
+    # TSAN is informational until pre-existing data races are resolved
+    continue-on-error: ${{ matrix.san == 'thread' }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - san: address
+            suffix: asan
+            key_prefix: sanitizer
+            label: ASAN
+            timeout_minutes: 120
+          - san: thread
+            suffix: thread
+            key_prefix: tsan
+            label: TSAN
+            timeout_minutes: 180
     steps:
 
     - name: Safe dir
@@ -31,36 +50,36 @@ jobs:
       id: cache_graphblas
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
-        path: ./bin/linux-x64-debug-asan/GraphBLAS
-        key: graphblas-sanitizer-llvm-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
+        path: ./bin/linux-x64-debug-${{ matrix.suffix }}/GraphBLAS
+        key: graphblas-${{ matrix.key_prefix }}-llvm-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
 
     - name: Cache parser
       id: cache_parser
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
-        path: ./bin/linux-x64-debug-asan/libcypher-parser
-        key: parser-sanitizer-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+        path: ./bin/linux-x64-debug-${{ matrix.suffix }}/libcypher-parser
+        key: parser-${{ matrix.key_prefix }}-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
     - name: Cache search
       id: cache_search
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
-        path: ./bin/linux-x64-debug-asan/search-static
-        key: search-sanitizer-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+        path: ./bin/linux-x64-debug-${{ matrix.suffix }}/search-static
+        key: search-${{ matrix.key_prefix }}-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
     - name: Cache libcurl
       id: cache_libcurl
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
-        path: ./bin/linux-x64-debug-asan/libcurl
-        key: libcurl-sanitizer-llvm-${{ hashFiles('./deps/libcurl/RELEASE-NOTES', './build.sh') }}
+        path: ./bin/linux-x64-debug-${{ matrix.suffix }}/libcurl
+        key: libcurl-${{ matrix.key_prefix }}-llvm-${{ hashFiles('./deps/libcurl/RELEASE-NOTES', './build.sh') }}
 
     - name: Cache libcsv
       id: cache_libcsv
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
-        path: ./bin/linux-x64-debug-asan/libcsv
-        key: libcsv-sanitizer-llvm-${{ hashFiles('./deps/libcsv/ChangeLog') }}
+        path: ./bin/linux-x64-debug-${{ matrix.suffix }}/libcsv
+        key: libcsv-${{ matrix.key_prefix }}-llvm-${{ hashFiles('./deps/libcsv/ChangeLog') }}
 
     - name: Build
       run: |
@@ -79,16 +98,16 @@ jobs:
           --verbose \
           --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
           --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17
-        make CLANG=1 SAN=address NPROC=16
+        make CLANG=1 SAN=${{ matrix.san }} NPROC=16
 
     - name: Unit tests
       id: unit_tests
-      run: make unit-tests CLEAR_LOGS=0 SAN=address
+      run: make unit-tests CLEAR_LOGS=0 SAN=${{ matrix.san }}
       continue-on-error: true
 
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
-        name: Upload unit tests logs
+        name: Upload ${{ matrix.label }} unit tests logs
         path: ${{ github.workspace }}/tests/unit/logs/
         retention-days: 7
 
@@ -96,28 +115,45 @@ jobs:
       id: flow_tests
       run: |
         . venv/bin/activate
-        make flow-tests CLEAR_LOGS=0 SAN=address
+        make flow-tests CLEAR_LOGS=0 SAN=${{ matrix.san }}
       continue-on-error: true
 
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
-        name: Upload flow tests logs
+        name: Upload ${{ matrix.label }} flow tests logs
         path: ${{ github.workspace }}/tests/flow/logs/
         retention-days: 7
 
+    # TCK tests are skipped under TSAN: Redis's internal wait_threads() timeout
+    # fires during shutdown because TSAN instrumentation slows thread cleanup,
+    # causing SIGABRT.  TCK is compliance testing and does not exercise
+    # additional thread-safety paths, so skipping it loses no TSAN value.
     - name: TCK tests
       id: tck_tests
+      if: matrix.san != 'thread'
       run: |
         . venv/bin/activate
-        make tck-tests CLEAR_LOGS=0 SAN=address
+        make tck-tests CLEAR_LOGS=0 SAN=${{ matrix.san }}
       continue-on-error: true
 
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      if: matrix.san != 'thread'
       with:
-        name: Upload TCK tests logs
+        name: Upload ${{ matrix.label }} TCK tests logs
         path: ${{ github.workspace }}/tests/tck/logs/
         retention-days: 7
 
+    # For TSAN: skip the failure check entirely.  Each test step has
+    # continue-on-error and the job has continue-on-error.  Pre-existing
+    # data races cause the TSAN summary check to exit non-zero for unit
+    # tests, and Redis process crashes under TSAN instrumentation cause
+    # flow/TCK test failures.  The real TSAN value is in the uploaded
+    # race-detection log artifacts, not in pass/fail status.
+    # For ASAN: all test stages must pass.
     - name: Check on failures
-      if: steps.unit_tests.outcome != 'success' || steps.flow_tests.outcome != 'success' || steps.tck_tests.outcome != 'success'
+      if: >-
+        matrix.san != 'thread' &&
+        (steps.unit_tests.outcome != 'success' ||
+         steps.flow_tests.outcome != 'success' ||
+         steps.tck_tests.outcome != 'success')
       run: exit 1

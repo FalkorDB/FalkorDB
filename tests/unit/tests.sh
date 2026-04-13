@@ -39,9 +39,19 @@ help() {
 
 sanitizer_defs() {
 	if [[ -n $SAN ]]; then
-		ASAN_LOG=${LOGS_DIR}/${TEST_NAME}.asan.log
-		export ASAN_OPTIONS="detect_odr_violation=0:halt_on_error=0::detect_leaks=1:log_path=${ASAN_LOG}"
-		export LSAN_OPTIONS="suppressions=$ROOT/tests/memcheck/asan.supp:use_tls=0"
+		if [[ $SAN == thread ]]; then
+			TSAN_LOG=${LOGS_DIR}/${TEST_NAME}.tsan.log
+			local tsan_opts="halt_on_error=0:second_deadlock_stack=1:history_size=4:log_path=${TSAN_LOG}"
+			local tsan_supp="$ROOT/tests/memcheck/tsan.supp"
+			if [[ -f "$tsan_supp" ]]; then
+				tsan_opts="${tsan_opts}:suppressions=${tsan_supp}"
+			fi
+			export TSAN_OPTIONS="$tsan_opts"
+		else
+			ASAN_LOG=${LOGS_DIR}/${TEST_NAME}.asan.log
+			export ASAN_OPTIONS="detect_odr_violation=0:halt_on_error=0:detect_leaks=1:log_path=${ASAN_LOG}"
+			export LSAN_OPTIONS="suppressions=$ROOT/tests/memcheck/asan.supp:use_tls=0"
+		fi
 		# Set SANITIZER env var for tests that check it to skip
 		export SANITIZER=1
 	fi
@@ -75,6 +85,13 @@ sanitizer_summary() {
 		echo
 		echo -e "${LIGHTRED}Sanitizer: stack use after scope detected:${RED}"
 		grep -l "stack-use-after-scope" ${LOGS_DIR}/*.asan.log*
+		echo -e "${NOCOLOR}"
+		E=1
+	fi
+	if grep -rl "WARNING: ThreadSanitizer\|data race" ${LOGS_DIR}/*.tsan.log* &> /dev/null; then
+		echo
+		echo -e "${LIGHTRED}Sanitizer: data races detected:${RED}"
+		grep -rl "WARNING: ThreadSanitizer\|data race" ${LOGS_DIR}/*.tsan.log*
 		echo -e "${NOCOLOR}"
 		E=1
 	fi

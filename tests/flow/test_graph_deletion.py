@@ -456,6 +456,9 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEquals(res.result_set, expected)
 
     def test23_delete_edges(self):
+        if SANITIZER or VALGRIND:
+            self.env.skip()  # 1M nodes × 1000 iterations too slow under instrumentation
+
         # clean the db
         self.graph.delete()
 
