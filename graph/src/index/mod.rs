@@ -802,10 +802,9 @@ impl Index {
             },
             None => RSRANGE_INF,
         };
-        let Some(fields) = self.fields.get(key) else {
+        let Some(field) = self.fields.get(key).and_then(|f| f.first()) else {
             return std::ptr::null_mut();
         };
-        let field = &fields[0];
         unsafe {
             RediSearch_CreateNumericNode(
                 self.rs_idx,
@@ -828,10 +827,9 @@ impl Index {
         include_min: bool,
         include_max: bool,
     ) -> *mut redisearch::RSQNode {
-        let Some(fields) = self.fields.get(key) else {
+        let Some(field) = self.fields.get(key).and_then(|f| f.first()) else {
             return std::ptr::null_mut();
         };
-        let field = &fields[0];
 
         let root = unsafe { RediSearch_CreateTagNode(self.rs_idx, field.name.as_ptr()) };
 
@@ -882,10 +880,9 @@ impl Index {
                 if Self::value_to_numeric(value).is_some() =>
             {
                 let d = Self::value_to_numeric(value).unwrap();
-                let Some(fields) = self.fields.get(key) else {
+                let Some(field) = self.fields.get(key).and_then(|f| f.first()) else {
                     return std::ptr::null_mut();
                 };
-                let field = &fields[0];
                 unsafe {
                     RediSearch_CreateNumericNode(
                         self.rs_idx,
@@ -902,10 +899,9 @@ impl Index {
                 key,
                 value: Value::String(value),
             } => {
-                let Some(fields) = self.fields.get(&key) else {
+                let Some(field) = self.fields.get(&key).and_then(|f| f.first()) else {
                     return std::ptr::null_mut();
                 };
-                let field = &fields[0];
                 let root = unsafe { RediSearch_CreateTagNode(self.rs_idx, field.name.as_ptr()) };
                 let Ok(msg) = CString::new(value.as_str()) else {
                     return std::ptr::null_mut();
@@ -961,10 +957,9 @@ impl Index {
                     Value::Int(i) => i as f64,
                     _ => return std::ptr::null_mut(),
                 };
-                let Some(fields) = self.fields.get(&key) else {
+                let Some(field) = self.fields.get(&key).and_then(|f| f.first()) else {
                     return std::ptr::null_mut();
                 };
-                let field = &fields[0];
                 unsafe {
                     RediSearch_CreateGeoNode(
                         self.rs_idx,
@@ -1022,10 +1017,9 @@ impl Index {
                 key,
                 ref value,
             } => {
-                let Some(fields) = self.fields.get(&key) else {
+                let Some(field) = self.fields.get(&key).and_then(|f| f.first()) else {
                     return std::ptr::null_mut();
                 };
-                let field = &fields[0];
                 match value {
                     Value::Int(i) => {
                         let Some(arr_name) = field.numeric_arr_name() else {
