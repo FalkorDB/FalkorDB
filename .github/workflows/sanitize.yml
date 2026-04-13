@@ -102,7 +102,7 @@ jobs:
       run: make unit-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: Upload unit tests logs
         path: ${{ github.workspace }}/tests/unit/logs/
@@ -115,7 +115,7 @@ jobs:
         make flow-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: Upload flow tests logs
         path: ${{ github.workspace }}/tests/flow/logs/
@@ -128,7 +128,7 @@ jobs:
         make tck-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: Upload TCK tests logs
         path: ${{ github.workspace }}/tests/tck/logs/

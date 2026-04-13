@@ -23,7 +23,7 @@ jobs:
     steps:
       - name: Check label or branch
         id: haslabel
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             if (context.eventName !== 'pull_request') {
@@ -141,7 +141,7 @@ jobs:
           python3 run_benchmarks.py group_${{ matrix.benchmark_group }}
 
       - name: Upload results
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ env.SAFE_REF }}-benchmark-group_${{ matrix.benchmark_group }}-results
           path: tests/benchmarks/*-results.json
@@ -177,7 +177,7 @@ jobs:
           pattern: ${{ env.SAFE_REF }}-benchmark-group_*-results
           merge-multiple: true
       - name: Upload merged results
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ env.SAFE_REF }}-benchmark-results
           path: ./*-results.json
@@ -204,7 +204,7 @@ jobs:
           path: tests/benchmarks/compare/${{ github.head_ref }}
 
       - name: Download master artifact
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const artifacts = await github.rest.actions.listArtifactsForRepo({
@@ -254,7 +254,7 @@ jobs:
           python3 generate_markdown.py --new_branch ${{ github.head_ref }}
 
       - name: Update Pull Request Text
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const existing_pull = await github.rest.pulls.get({
