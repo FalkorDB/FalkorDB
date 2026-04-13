@@ -429,6 +429,23 @@ unsafe extern "C" {
     ) -> ::std::os::raw::c_int;
 }
 unsafe extern "C" {
+    pub fn RediSearch_DocumentAddFieldNumericArray(
+        d: *mut RSDoc,
+        fieldName: *const ::std::os::raw::c_char,
+        arr: *mut *mut f64,
+        indexAsTypes: ::std::os::raw::c_uint,
+    );
+}
+unsafe extern "C" {
+    pub fn RediSearch_DocumentAddFieldStringArray(
+        d: *mut RSDoc,
+        fieldName: *const ::std::os::raw::c_char,
+        arr: *mut *mut *mut ::std::os::raw::c_char,
+        len: usize,
+        indexAsTypes: ::std::os::raw::c_uint,
+    );
+}
+unsafe extern "C" {
     pub fn RediSearch_IndexAddDocument(
         sp: *mut RSIndex,
         d: *mut RSDoc,

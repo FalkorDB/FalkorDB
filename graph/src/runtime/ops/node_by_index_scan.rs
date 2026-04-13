@@ -163,7 +163,98 @@ impl<'a> NodeByIndexScanOp<'a> {
                 }
                 Ok(IndexQuery::And(evaluated))
             }
-            IndexQuery::Or(_) => Err("OR index queries are not yet supported".into()),
+            IndexQuery::Or(queries) => {
+                let mut evaluated = Vec::with_capacity(queries.len());
+                for q in queries {
+                    evaluated.push(Self::evaluate_index_query(runtime, q, vars)?);
+                }
+                Ok(IndexQuery::Or(evaluated))
+            }
+            IndexQuery::ArrayContains { key, value } => {
+                let value = {
+                    ExprEval::from_runtime(runtime).eval(
+                        value,
+                        value.root().idx(),
+                        Some(vars),
+                        None,
+                    )
+                }?;
+                Ok(IndexQuery::ArrayContains {
+                    key: key.clone(),
+                    value,
+                })
+            }
+            IndexQuery::InList { key, list } => {
+                let list_val = {
+                    ExprEval::from_runtime(runtime).eval(
+                        list,
+                        list.root().idx(),
+                        Some(vars),
+                        None,
+                    )
+                }?;
+                match list_val {
+                    Value::List(items) => {
+                        let equals = items
+                            .iter()
+                            .filter(|v| {
+                                matches!(
+                                    v,
+                                    Value::Int(_)
+                                        | Value::Float(_)
+                                        | Value::String(_)
+                                        | Value::Bool(_)
+                                )
+                            })
+                            .map(|v| IndexQuery::Equal {
+                                key: key.clone(),
+                                value: v.clone(),
+                            })
+                            .collect::<Vec<_>>();
+                        Ok(IndexQuery::Or(equals))
+                    }
+                    _ => Err("IN operator requires a list".into()),
+                }
+            }
+        }
+    }
+
+    /// Check if an evaluated index query contains non-indexable values.
+    /// When a query like `Equal { value: List(...) }` or `Range { min: List(...) }`
+    /// is encountered at runtime, the index can't satisfy it. The caller should
+    /// fall back to a label scan instead.
+    fn query_has_non_indexable_value(q: &IndexQuery<Value>) -> bool {
+        use crate::index::Index;
+
+        fn is_non_indexable(v: &Value) -> bool {
+            match v {
+                Value::Int(i) => Index::int_loses_f64_precision(*i),
+                Value::Float(_)
+                | Value::String(_)
+                | Value::Bool(_)
+                | Value::Point(_)
+                | Value::Null => false,
+                _ => true, // List, Map, Node, Relationship, Path, etc.
+            }
+        }
+        match q {
+            IndexQuery::Equal { value, .. } => is_non_indexable(value),
+            IndexQuery::Range { min, max, .. } => {
+                min.as_ref().is_some_and(is_non_indexable)
+                    || max.as_ref().is_some_and(is_non_indexable)
+            }
+            IndexQuery::And(children) | IndexQuery::Or(children) => {
+                children.iter().any(Self::query_has_non_indexable_value)
+            }
+            IndexQuery::ArrayContains { value, .. } => {
+                // Non-indexable array element types (List, Point, Map, etc.)
+                // can't be looked up in the array sub-fields.
+                !matches!(
+                    value,
+                    Value::Int(_) | Value::Float(_) | Value::String(_) | Value::Bool(_)
+                )
+            }
+            _ => false,
         }
     }
 
@@ -210,7 +301,24 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                     Err(e) => return Some(Err(e)),
                 };
 
-                let iter = Box::new(self.runtime.g.borrow().get_indexed_nodes(self.index, q));
+                // Check if the evaluated query has non-indexable values.
+                // If so, fall back to a label scan (iterate all nodes with the label).
+                let iter: Box<dyn Iterator<Item = NodeId>> =
+                    if Self::query_has_non_indexable_value(&q) {
+                        Box::new(
+                            self.runtime
+                                .g
+                                .borrow()
+                                .get_nodes(&self.node_pattern.labels, 0),
+                        )
+                    } else {
+                        Box::new(
+                            self.runtime
+                                .g
+                                .borrow()
+                                .get_indexed_nodes(self.index, q),
+                        )
+                    };
                 self.pending
                     .push_back((vars.clone_pooled(self.runtime.env_pool), iter));
             }
