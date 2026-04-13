@@ -102,8 +102,11 @@ static int GraphBLAS_Init (RedisModuleCtx *ctx) {
 	// all matrices in CSR format
 	GrB_OK (GrB_set (GrB_GLOBAL, GxB_BY_ROW, GxB_FORMAT)) ;
 
-	// alow only baked-in JIT kernels (pre-jit)
-    GrB_OK (GrB_set (GrB_GLOBAL, GxB_JIT_RUN, GxB_JIT_C_CONTROL)) ;
+	// If JIT is disabled in GraphBLAS compilation (default for falkordb)
+	// then this is equivalent to setting GxB_JIT_RUN, meaning only PreJIT
+	// kernels will be run and no new JIT kernels will be generated
+	GrB_OK (GrB_set (GrB_GLOBAL, GxB_JIT_ON, GxB_JIT_C_CONTROL)) ;
+
 	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_NOTICE,
 			"GraphBLAS JIT restrict to pre-jit kernels") ;
 

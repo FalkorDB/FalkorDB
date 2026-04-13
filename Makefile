@@ -4,7 +4,7 @@
 # all actual build operations to build.sh
 
 .PHONY: all build deps clean pack package test unit-tests flow-tests tck-tests \
-        fuzz-tests benchmark coverage help run
+        fuzz-tests benchmark coverage help run lagraph-tests jit-warmup
 
 #----------------------------------------------------------------------------------------------
 # Default target
@@ -50,6 +50,10 @@ make flow-tests     # Run flow tests
 make tck-tests      # Run TCK tests
 make fuzz-tests     # Run fuzz tester
   TIMEOUT=secs      # Timeout in `secs`
+
+make lagraph-tests  # Build LAGraph tests (linked against deps/ GraphBLAS) and run them
+  LAGRAPH_TEST_FILTER=regex  # Override which tests run (default: FalkorDB-relevant only; use '.*' for all)
+make jit-warmup     # Run flow-tests + lagraph-tests to maximise GraphBLAS JIT kernel generation
 
 make benchmark    # Run benchmarks
 
@@ -199,6 +203,13 @@ flow-tests:
 
 tck-tests:
 	@./build.sh RUN_TCK_TESTS=1 $(BUILD_ARGS)
+
+lagraph-tests:
+	@./build.sh LAGRAPH_TESTS=1 $(BUILD_ARGS)
+
+## Run both FalkorDB flow tests and LAGraph tests to warm up as many GraphBLAS
+## JIT/PreJIT kernels as possible.
+jit-warmup: flow-tests lagraph-tests
 
 fuzz-tests fuzz:
 	@./build.sh RUN_FUZZ_TESTS=1 $(BUILD_ARGS)
