@@ -140,7 +140,9 @@ class testMaxFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 self.env.assertFalse(True)
-            except:
+            except Exception:
+                # Each query exercises a different config-validation path; a
+                # server-side error is the only acceptable outcome here.
                 pass
 
     def test_01b_tensor_relationship_rejected(self):
@@ -163,7 +165,9 @@ class testMaxFlow(FlowTestsBase):
             """)
             self.env.assertTrue(False, "Expected error for tensor relationship")
         except Exception as e:
-            self.env.assertContains("multi-edges", str(e))
+            # Multi-edge (tensor) relationship → procedure rejects it.
+            if "multi-edges" not in str(e):
+                raise
 
     def test_01c_capacity_range_too_wide(self):
         """Reject graphs where the max capacity is >= min capacity * 2^32.
@@ -192,7 +196,9 @@ class testMaxFlow(FlowTestsBase):
             """)
             self.env.assertTrue(False, "Expected error for wide capacity range")
         except Exception as e:
-            self.env.assertContains("capacity range too wide", str(e))
+            # Max capacity ≥ min * 2^32 would cause the solver to hang.
+            if "capacity range too wide" not in str(e):
+                raise
 
     # ------------------------------------------------------------------ #
     #  empty / trivial graphs                                            #
@@ -213,8 +219,10 @@ class testMaxFlow(FlowTestsBase):
                 YIELD maxFlow
             """)
             self.env.assertFalse(True)
-        except:
-            pass
+        except Exception as e:
+            # Empty source/sink lists → procedure must raise an error.
+            if "expects at least one source" not in str(e):
+                raise
 
     def test_03_max_flow_no_path_between_source_and_sink(self):
         """Two disconnected nodes yield zero flow."""
@@ -863,8 +871,10 @@ class testMaxFlow(FlowTestsBase):
             """)
             self.env.assertTrue(False, "Expected error for overlapping "
                                        "source and sink sets")
-        except Exception:
-            pass
+        except Exception as e:
+            # source == sink means source/sink sets are not disjoint.
+            if "disjoint" not in str(e):
+                raise
 
     def test_23_overlapping_multi_source_sink_errors(self):
         """When a node appears in both sourceNodes and targetNodes the
@@ -891,8 +901,10 @@ class testMaxFlow(FlowTestsBase):
             """)
             self.env.assertTrue(False, "Expected error for overlapping "
                                        "source and sink sets")
-        except Exception:
-            pass
+        except Exception as e:
+            # A node in both sourceNodes and targetNodes → sets not disjoint.
+            if "disjoint" not in str(e):
+                raise
 
     def test_23b_source_also_in_targets(self):
         """When a source node also appears in the target set the procedure
@@ -917,7 +929,9 @@ class testMaxFlow(FlowTestsBase):
             self.env.assertTrue(False, "Expected error for overlapping "
                                        "source and sink sets")
         except Exception as e:
-            self.env.assertContains("disjoint", str(e))
+            # Source set contains the sink node → sets not disjoint.
+            if "disjoint" not in str(e):
+                raise
 
     def test_23c_target_also_in_sources(self):
         """When a target node also appears in the source set the procedure
@@ -942,7 +956,9 @@ class testMaxFlow(FlowTestsBase):
             self.env.assertTrue(False, "Expected error for overlapping "
                                        "source and sink sets")
         except Exception as e:
-            self.env.assertContains("disjoint", str(e))
+            # Target set contains the source node → sets not disjoint.
+            if "disjoint" not in str(e):
+                raise
 
     def test_23d_multi_source_multi_sink_shared_node(self):
         """Multi-source and multi-sink sets that share exactly one node
@@ -980,7 +996,9 @@ class testMaxFlow(FlowTestsBase):
             self.env.assertTrue(False, "Expected error for overlapping "
                                        "source and sink sets")
         except Exception as e:
-            self.env.assertContains("disjoint", str(e))
+            # Node x in both source and target sets → sets not disjoint.
+            if "disjoint" not in str(e):
+                raise
 
     # ------------------------------------------------------------------ #
     #  numeric capacity types: integer, double, mixed, zero              #
@@ -1143,8 +1161,10 @@ class testMaxFlow(FlowTestsBase):
             """)
             self.env.assertTrue(False, "Expected error for missing attribute "
                                        "without defaultCapacity")
-        except Exception:
-            pass
+        except Exception as e:
+            # Edge missing the capacity attribute with no defaultCapacity → error.
+            if "invalid or missing attribute" not in str(e):
+                raise
 
     def test_31_max_flow_string_attr_no_default_errors(self):
         """When the capacity attribute is a string and no defaultCapacity
@@ -1165,8 +1185,10 @@ class testMaxFlow(FlowTestsBase):
             """)
             self.env.assertTrue(False, "Expected error for string capacity "
                                        "without defaultCapacity")
-        except Exception:
-            pass
+        except Exception as e:
+            # String capacity attribute with no defaultCapacity → error.
+            if "invalid or missing attribute" not in str(e):
+                raise
 
     def test_32_max_flow_array_attr_no_default_errors(self):
         """When the capacity attribute is an array and no defaultCapacity
@@ -1187,8 +1209,10 @@ class testMaxFlow(FlowTestsBase):
             """)
             self.env.assertTrue(False, "Expected error for array capacity "
                                        "without defaultCapacity")
-        except Exception:
-            pass
+        except Exception as e:
+            # Array capacity attribute with no defaultCapacity → error.
+            if "invalid or missing attribute" not in str(e):
+                raise
 
     def test_33_max_flow_mixed_valid_invalid_attr_no_default_errors(self):
         """Even if some edges have valid numeric capacity, one edge with a
@@ -1213,8 +1237,10 @@ class testMaxFlow(FlowTestsBase):
             """)
             self.env.assertTrue(False, "Expected error for mixed valid/invalid "
                                        "capacities without defaultCapacity")
-        except Exception:
-            pass
+        except Exception as e:
+            # Even one non-numeric edge with no defaultCapacity → error.
+            if "invalid or missing attribute" not in str(e):
+                raise
 
     # ------------------------------------------------------------------ #
     #  defaultCapacity fallback                                          #
