@@ -104,7 +104,7 @@ void setup() {
 
 	// Initialize GraphBLAS
 	GrB_init(GrB_NONBLOCKING);
-	GxB_set(GxB_FORMAT, GxB_BY_ROW);
+	GrB_set(GrB_GLOBAL, GxB_BY_ROW, GxB_FORMAT);
 }
 
 void tearDown() {

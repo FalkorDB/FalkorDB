@@ -106,7 +106,7 @@ typedef _Delta_Matrix *Delta_Matrix;
 //------------------------------------------------------------------------------
 
 struct _Delta_Matrix {
-	volatile bool dirty;      // Indicates if matrix requires sync
+	bool locked;
 	GrB_Matrix matrix;        // Underlying GrB_Matrix
 	GrB_Matrix delta_plus;    // Pending additions
 	GrB_Matrix delta_minus;   // Pending deletions
@@ -135,9 +135,12 @@ Delta_Matrix Delta_Matrix_getTranspose
 	const Delta_Matrix C
 );
 
-bool Delta_Matrix_isDirty
+// checks if C or its transpose (if exists) will trigger a GrB_wait
+// as a result of some pending work that GraphBLAS need to perform
+GrB_Info Delta_Matrix_willWait
 (
-	const Delta_Matrix C
+	const Delta_Matrix C,  // matrix to query
+	bool *willWait         // [output] true if the matrix requires GrB_wait
 );
 
 // get the internal matrix M
@@ -295,15 +298,6 @@ GrB_Info Delta_Matrix_export
     const GrB_Type type    // output matrix type (values will be typecast)
 );
 
-// checks to see if matrix has pending operations
-// pending is set to true if any of the internal matricies have pending
-// operations
-GrB_Info Delta_Matrix_pending
-(
-	const Delta_Matrix C,  // matrix to query
-	bool *pending          // are there any pending operations
-);
-
 // return # of bytes used for a matrix
 GrB_Info Delta_Matrix_memoryUsage
 (
@@ -317,11 +311,15 @@ GrB_Info Delta_Matrix_wait
 	bool force_sync
 );
 
+// synchronizes the DeltaMatrix `C`
+// in case `C` isn't of the expected dimensions it will be resized
+// in case GraphBLAS indicates one of `C`'s internal matrices: `M`, `DP` or `DM`
+// requires waiting then these matrices will be synchronized
 GrB_Info Delta_Matrix_synchronize
 (
-	Delta_Matrix C,
-	GrB_Index nrows,
-	GrB_Index ncols
+	Delta_Matrix C,   // the DeltaMatrix to synchronize
+	GrB_Index nrows,  // the required number of rows
+	GrB_Index ncols   // the required number of columns
 );
 
 bool Delta_Matrix_Synced
@@ -335,11 +333,6 @@ void Delta_Matrix_lock
 );
 
 void Delta_Matrix_unlock
-(
-	Delta_Matrix C
-);
-
-void Delta_Matrix_setDirty
 (
 	Delta_Matrix C
 );

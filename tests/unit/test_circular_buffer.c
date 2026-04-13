@@ -163,7 +163,7 @@ void _assert_val_cb
 	const void *item,
 	void *user_data
 ) {
-	int n = array_pop((int *)user_data);
+	int n = arr_pop((int *)user_data);
 	TEST_ASSERT(n == *(int *)item);
 }
 

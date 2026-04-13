@@ -11,6 +11,7 @@
 #include "tests/utils/mock_log.h"
 #include "src/graph/query_graph.h"
 #include "src/graph/graphcontext.h"
+#include "src/graph/graphcontext_struct.h"
 
 void setup();
 void tearDown();
@@ -45,14 +46,14 @@ void compare_nodes(const QGNode *a, const QGNode *b) {
 	for(uint i = 0; i < a_lbl_count; i++) {
 		TEST_ASSERT(a->labelsID[i] == b->labelsID[i]);
 	}
-	TEST_ASSERT(array_len(a->incoming_edges) == array_len(b->incoming_edges));
-	TEST_ASSERT(array_len(a->outgoing_edges) == array_len(b->outgoing_edges));
+	TEST_ASSERT(arr_len(a->incoming_edges) == arr_len(b->incoming_edges));
+	TEST_ASSERT(arr_len(a->outgoing_edges) == arr_len(b->outgoing_edges));
 }
 
 void compare_edges(const QGEdge *a, const QGEdge *b) {
 	TEST_ASSERT(a->alias == b->alias);
-	uint relcount = array_len(a->reltypes);
-	TEST_ASSERT(relcount == array_len(b->reltypes));
+	uint relcount = arr_len(a->reltypes);
+	TEST_ASSERT(relcount == arr_len(b->reltypes));
 	for(uint i = 0; i < relcount; i ++) {
 		TEST_ASSERT(strcmp(a->reltypes[i], b->reltypes[i]) == 0);
 		TEST_ASSERT(a->reltypeIDs[i] == b->reltypeIDs[i]);
@@ -296,14 +297,14 @@ void test_QueryGraphConnectedComponents() {
 	g = SingleNodeGraph();
 	connected_components = QueryGraph_ConnectedComponents(g);
 
-	TEST_ASSERT(array_len(connected_components) == 1);
+	TEST_ASSERT(arr_len(connected_components) == 1);
 
 	// Clean up.
 	QueryGraph_Free(g);
-	for(int i = 0; i < array_len(connected_components); i++) {
+	for(int i = 0; i < arr_len(connected_components); i++) {
 		QueryGraph_Free(connected_components[i]);
 	}
-	array_free(connected_components);
+	arr_free(connected_components);
 
 	//--------------------------------------------------------------------------
 	// triangle graph
@@ -312,14 +313,14 @@ void test_QueryGraphConnectedComponents() {
 	g = TriangleGraph();
 	connected_components = QueryGraph_ConnectedComponents(g);
 
-	TEST_ASSERT(array_len(connected_components) == 1);
+	TEST_ASSERT(arr_len(connected_components) == 1);
 
 	// clean up
 	QueryGraph_Free(g);
-	for(int i = 0; i < array_len(connected_components); i++) {
+	for(int i = 0; i < arr_len(connected_components); i++) {
 		QueryGraph_Free(connected_components[i]);
 	}
-	array_free(connected_components);
+	arr_free(connected_components);
 
 	//--------------------------------------------------------------------------
 	// disjoint graph
@@ -328,14 +329,14 @@ void test_QueryGraphConnectedComponents() {
 	g = DisjointGraph();
 	connected_components = QueryGraph_ConnectedComponents(g);
 
-	TEST_ASSERT(array_len(connected_components) == 2);
+	TEST_ASSERT(arr_len(connected_components) == 2);
 
 	// clean up
 	QueryGraph_Free(g);
-	for(int i = 0; i < array_len(connected_components); i++) {
+	for(int i = 0; i < arr_len(connected_components); i++) {
 		QueryGraph_Free(connected_components[i]);
 	}
-	array_free(connected_components);
+	arr_free(connected_components);
 
 	//--------------------------------------------------------------------------
 	// single node cycle graph
@@ -344,14 +345,14 @@ void test_QueryGraphConnectedComponents() {
 	g = SingleNodeCycleGraph();
 	connected_components = QueryGraph_ConnectedComponents(g);
 
-	TEST_ASSERT(array_len(connected_components) == 1);
+	TEST_ASSERT(arr_len(connected_components) == 1);
 
 	// Clean up.
 	QueryGraph_Free(g);
-	for(int i = 0; i < array_len(connected_components); i++) {
+	for(int i = 0; i < arr_len(connected_components); i++) {
 		QueryGraph_Free(connected_components[i]);
 	}
-	array_free(connected_components);
+	arr_free(connected_components);
 }
 
 void test_QueryGraphExtractSubGraph() {
@@ -444,7 +445,7 @@ void test_QueryGraphExtractSubGraph() {
 	QueryGraph_Free(sub);
 
 	// clean up
-	array_free(match_clauses);
+	arr_free(match_clauses);
 	QueryGraph_Free(qg);
 	AST_Free(ast);
 }

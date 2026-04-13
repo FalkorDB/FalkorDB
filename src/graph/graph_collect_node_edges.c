@@ -98,7 +98,7 @@ void Graph_CollectInOutEdges
 				} ;
 
 				ASSERT (e.attributes) ;
-				array_append (*outgoing, e) ;
+				arr_append (*outgoing, e) ;
 			}
 
 			else {
@@ -119,7 +119,7 @@ void Graph_CollectInOutEdges
 					} ;
 
 					ASSERT (e.attributes) ;
-					array_append (*outgoing, e) ;
+					arr_append (*outgoing, e) ;
 
 					// move to the next entry in v
 					info = GxB_Vector_Iterator_next (vec_it) ;
@@ -165,7 +165,7 @@ void Graph_CollectInOutEdges
 				} ;
 
 				ASSERT (e.attributes) ;
-				array_append (*incoming, e) ;
+				arr_append (*incoming, e) ;
 			}
 			
 			else {
@@ -186,7 +186,7 @@ void Graph_CollectInOutEdges
 					} ;
 
 					ASSERT (e.attributes) ;
-					array_append (*incoming, e) ;
+					arr_append (*incoming, e) ;
 
 					// move to the next entry in v
 					info = GxB_Vector_Iterator_next (vec_it) ;
@@ -285,7 +285,7 @@ void Graph_CollectOutgoingEdges
 				} ;
 
 				ASSERT (e.attributes) ;
-				array_append (*edges, e) ;
+				arr_append (*edges, e) ;
 			}
 
 			else {
@@ -306,7 +306,7 @@ void Graph_CollectOutgoingEdges
 					} ;
 
 					ASSERT (e.attributes) ;
-					array_append (*edges, e) ;
+					arr_append (*edges, e) ;
 
 					// move to the next entry in v
 					info = GxB_Vector_Iterator_next (vec_it) ;
@@ -405,7 +405,7 @@ void Graph_CollectIncomingEdges
 				} ;
 
 				ASSERT (e.attributes) ;
-				array_append (*edges, e) ;
+				arr_append (*edges, e) ;
 			}
 			
 			else {
@@ -426,7 +426,7 @@ void Graph_CollectIncomingEdges
 					} ;
 
 					ASSERT (e.attributes) ;
-					array_append (*edges, e) ;
+					arr_append (*edges, e) ;
 
 					// move to the next entry in v
 					info = GxB_Vector_Iterator_next (vec_it) ;

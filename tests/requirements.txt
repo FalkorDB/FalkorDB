@@ -10,3 +10,4 @@ rmtest
 psutil
 python-dateutil
 RLTest==0.7.20
+websocket-client

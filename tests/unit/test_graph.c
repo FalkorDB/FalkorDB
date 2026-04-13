@@ -299,7 +299,7 @@ void test_removeNodes() {
 	Delta_Matrix_nvals(&nnz, M);
 	TEST_ASSERT(nnz == 3);
 
-	Edge *edges = (Edge *)array_new(Edge, 3);
+	Edge *edges = (Edge *)arr_new(Edge, 3);
 
 	//--------------------------------------------------------------------------
 	// delete node 0
@@ -308,7 +308,7 @@ void test_removeNodes() {
 	// first node should have 2 edges
 	Graph_GetNode(g, 0, &node);
 	Graph_GetNodeEdges(g, &node, GRAPH_EDGE_DIR_BOTH, GRAPH_NO_RELATION, &edges);
-	uint edge_count = array_len(edges);
+	uint edge_count = arr_len(edges);
 	TEST_ASSERT(edge_count == 2);
 
 	Graph_DeleteEdges(g, edges, edge_count, false);
@@ -317,7 +317,7 @@ void test_removeNodes() {
 	
 	Graph_ReleaseLock(g);
 
-	array_free(edges);
+	arr_free(edges);
 
 	TEST_ASSERT(Graph_NodeCount(g) == 2);
 	TEST_ASSERT(Graph_EdgeCount(g) == 1);
@@ -400,7 +400,7 @@ void test_getEdge() {
 	NodeID src;
 	NodeID dest;
 	int relation;
-	Edge *edges = (Edge *)array_new(Edge, 4);
+	Edge *edges = (Edge *)arr_new(Edge, 4);
 
 	// get all edges connecting node 0 to node 1,
 	// expecting 2 edges
@@ -408,7 +408,7 @@ void test_getEdge() {
 	dest = 1;
 	relation = GRAPH_NO_RELATION;   // relation agnostic
 	Graph_GetEdgesConnectingNodes(g, src, dest, relation, &edges);
-	TEST_ASSERT(array_len(edges) == 2);
+	TEST_ASSERT(arr_len(edges) == 2);
 	for(int i = 0; i < 2; i++) {
 		e = edges[i];
 		relation = relations[i];
@@ -417,7 +417,7 @@ void test_getEdge() {
 		TEST_ASSERT(Edge_GetDestNodeID(&e) == dest);
 		TEST_ASSERT(Edge_GetRelationID(&e) == relation);
 	}
-	array_clear(edges);
+	arr_clear(edges);
 
 	// try to get none existing edges:
 
@@ -426,24 +426,24 @@ void test_getEdge() {
 	dest = 2;
 	relation = GRAPH_NO_RELATION;
 	Graph_GetEdgesConnectingNodes(g, src, dest, relation, &edges);
-	TEST_ASSERT(array_len(edges) == 0);
-	array_clear(edges);
+	TEST_ASSERT(arr_len(edges) == 0);
+	arr_clear(edges);
 
 	// node 0 is not connected to 1 via relation 2
 	src = 0;
 	dest = 1;
 	relation = relations[2];
 	Graph_GetEdgesConnectingNodes(g, src, dest, relation, &edges);
-	TEST_ASSERT(array_len(edges) == 0);
-	array_clear(edges);
+	TEST_ASSERT(arr_len(edges) == 0);
+	arr_clear(edges);
 
 	// node 1 is not connected to 0 via relation 0
 	src = 1;
 	dest = 0;
 	relation = relations[0];
 	Graph_GetEdgesConnectingNodes(g, src, dest, relation, &edges);
-	TEST_ASSERT(array_len(edges) == 0);
-	array_clear(edges);
+	TEST_ASSERT(arr_len(edges) == 0);
+	arr_clear(edges);
 
 	// no node connects to itself
 	for(NodeID i = 0; i < nodeCount; i++) {
@@ -451,16 +451,16 @@ void test_getEdge() {
 			src = i;
 			relation = relations[j];
 			Graph_GetEdgesConnectingNodes(g, src, src, relation, &edges);
-			TEST_ASSERT(array_len(edges) == 0);
-			array_clear(edges); // reset edge count
+			TEST_ASSERT(arr_len(edges) == 0);
+			arr_clear(edges); // reset edge count
 		}
 		relation = GRAPH_NO_RELATION;
 		Graph_GetEdgesConnectingNodes(g, src, src, relation, &edges);
-		TEST_ASSERT(array_len(edges) == 0);
-		array_clear(edges); // reset edge count
+		TEST_ASSERT(arr_len(edges) == 0);
+		arr_clear(edges); // reset edge count
 	}
 
-	array_free(edges);
+	arr_free(edges);
 	Graph_ReleaseLock(g);
 	Graph_Free(g);
 }

@@ -95,14 +95,14 @@ void test_objectPoolRemoveItem() {
 	uint delete_idx = 10;
 	ObjectPool_DeleteItem(object_pool, item_pointers[delete_idx]);
 	TEST_ASSERT(object_pool->itemCount == item_count - 1);
-	TEST_ASSERT(array_len(object_pool->deletedIdx) == 1);
+	TEST_ASSERT(arr_len(object_pool->deletedIdx) == 1);
 	// Index 10 should be added to ObjectPool deletedIdx array.
 	TEST_ASSERT(object_pool->deletedIdx[0] == 10);
 
 	// Add a new item and verify that the deleted entry is reused.
 	uint *new_item = (uint *)ObjectPool_NewItem(object_pool);
 	TEST_ASSERT(object_pool->itemCount == item_count);
-	TEST_ASSERT(array_len(object_pool->deletedIdx) == 0);
+	TEST_ASSERT(arr_len(object_pool->deletedIdx) == 0);
 	// Verify that the new entry is zeroed.
 	TEST_ASSERT(*new_item == 0);
 

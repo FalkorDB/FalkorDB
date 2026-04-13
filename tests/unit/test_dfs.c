@@ -88,7 +88,7 @@ void test_DFSLevels() {
 		path = DFS(S, level, true);
 		QGEdge **expectation = expected[level];
 
-		int edge_count = array_len(path);
+		int edge_count = arr_len(path);
 		for(int i = 0; i < edge_count; i++) {
 			bool found = false;
 			for(int j = 0; j < edge_count; j++) {
@@ -99,7 +99,7 @@ void test_DFSLevels() {
 			}
 			TEST_ASSERT(found);
 		}
-		array_free(path);
+		arr_free(path);
 	}
 
 	// Clean up.

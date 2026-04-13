@@ -365,12 +365,98 @@ void test_attributeset_shallowClone() {
 	AttributeSet_Free (&clone) ;
 }
 
+// regression test: batch-remove two heap-owning attributes including the last
+// slot must not produce a dangling pointer (use-after-free)
+void test_attributeset_batch_remove_uaf() {
+	AttributeSet set = NULL ;
+
+	// create 4 string (heap-owning) attributes
+	uint16_t n = 4 ;
+	SIValue values[4] = {
+		SI_DuplicateStringVal ("alpha"),
+		SI_DuplicateStringVal ("bravo"),
+		SI_DuplicateStringVal ("charlie"),
+		SI_DuplicateStringVal ("delta"),
+	} ;
+	AttributeID attr_ids[4] = {10, 11, 12, 13} ;
+
+	AttributeSet_Add (&set, attr_ids, values, n, false) ;
+	TEST_ASSERT (AttributeSet_Count (set) == n) ;
+
+	//--------------------------------------------------------------------------
+	// batch-remove attrs at index 1 and last (index 3) via AttributeSet_Update
+	// this triggered a use-after-free: the swap-with-last copied the value at
+	// position 3 into position 1, then a later iteration freed the original
+	// at position 3, leaving position 1 with a dangling pointer
+	//--------------------------------------------------------------------------
+
+	SIValue nulls[2] = { SI_NullVal (), SI_NullVal () } ;
+	AttributeID remove_ids[2] = { 11, 13 } ;  // attrs "bravo" and "delta"
+	AttributeSetChangeType changes[2] ;
+
+	AttributeSet_Update (changes, &set, remove_ids, nulls, 2, false) ;
+
+	TEST_ASSERT (changes[0] == CT_DEL) ;
+	TEST_ASSERT (changes[1] == CT_DEL) ;
+	TEST_ASSERT (AttributeSet_Count (set) == 2) ;
+
+	// surviving attributes must be valid and accessible
+	SIValue v ;
+	TEST_ASSERT (AttributeSet_Get (set, 10, &v) == true) ;
+	TEST_ASSERT (strcmp (v.stringval, "alpha") == 0) ;
+	TEST_ASSERT (AttributeSet_Get (set, 12, &v) == true) ;
+	TEST_ASSERT (strcmp (v.stringval, "charlie") == 0) ;
+
+	// removed attributes must be gone
+	TEST_ASSERT (AttributeSet_Get (set, 11, &v) == false) ;
+	TEST_ASSERT (AttributeSet_Get (set, 13, &v) == false) ;
+
+	// free must not double-free or crash
+	AttributeSet_Free (&set) ;
+	TEST_ASSERT (set == NULL) ;
+
+	//--------------------------------------------------------------------------
+	// batch-remove 3 heap-owning attrs from 5 including the last two
+	//--------------------------------------------------------------------------
+
+	set = NULL ;
+	uint16_t m = 5 ;
+	SIValue values2[5] = {
+		SI_DuplicateStringVal ("e0"),
+		SI_DuplicateStringVal ("e1"),
+		SI_DuplicateStringVal ("e2"),
+		SI_DuplicateStringVal ("e3"),
+		SI_DuplicateStringVal ("e4"),
+	} ;
+	AttributeID ids2[5] = {0, 1, 2, 3, 4} ;
+
+	AttributeSet_Add (&set, ids2, values2, m, false) ;
+	TEST_ASSERT (AttributeSet_Count (set) == m) ;
+
+	// remove attrs at positions 1, 3, 4 (includes last two)
+	SIValue nulls3[3] = { SI_NullVal (), SI_NullVal (), SI_NullVal () } ;
+	AttributeID rm3[3] = { 1, 3, 4 } ;
+	AttributeSetChangeType ch3[3] ;
+
+	AttributeSet_Update (ch3, &set, rm3, nulls3, 3, false) ;
+	TEST_ASSERT (AttributeSet_Count (set) == 2) ;
+
+	TEST_ASSERT (AttributeSet_Get (set, 0, &v) == true) ;
+	TEST_ASSERT (strcmp (v.stringval, "e0") == 0) ;
+	TEST_ASSERT (AttributeSet_Get (set, 2, &v) == true) ;
+	TEST_ASSERT (strcmp (v.stringval, "e2") == 0) ;
+
+	AttributeSet_Free (&set) ;
+	TEST_ASSERT (set == NULL) ;
+}
+
 TEST_LIST = {
 	{ "null_attributeset", test_null_attributeset},
 	{ "attributeset_add", test_attributeset_add},
 	{ "attributeset_update", test_attributeset_update},
 	{ "attributeset_remove", test_attributeset_remove},
 	{ "attributeset_shallowClone", test_attributeset_shallowClone},
+	{ "attributeset_batch_remove_uaf", test_attributeset_batch_remove_uaf},
 	{ NULL, NULL }
 };
 

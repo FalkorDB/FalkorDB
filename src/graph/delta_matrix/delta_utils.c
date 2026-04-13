@@ -231,7 +231,7 @@ void Delta_Matrix_validate
 	// check sparcity control
 	//--------------------------------------------------------------------------
 
-	int32_t sparticy;
+	int32_t sparticy = 0;
 	GrB_OK(GrB_Matrix_get_INT32(m, &sparticy, GxB_SPARSITY_CONTROL));
 	ASSERT(sparticy == (GxB_SPARSE | GxB_HYPERSPARSE));
 
@@ -240,6 +240,21 @@ void Delta_Matrix_validate
 
 	GrB_OK(GrB_Matrix_get_INT32(dm, &sparticy, GxB_SPARSITY_CONTROL));
 	ASSERT(sparticy == GxB_HYPERSPARSE);
+
+	int32_t hyper_hash = 0;
+
+	GrB_OK (GrB_get (dp, &hyper_hash, GxB_HYPER_HASH));
+	ASSERT (hyper_hash == false);
+
+	GrB_OK (GrB_get (dm, &hyper_hash, GxB_HYPER_HASH));
+	ASSERT (hyper_hash == false);
+
+	double hyper_switch = 0;
+	// Using historical method because modern one requires me to create a scalar
+	GrB_OK (GxB_get (dp, GxB_HYPER_SWITCH, &hyper_switch));
+	ASSERT (hyper_switch == GxB_ALWAYS_HYPER);
+	GrB_OK (GxB_get (dm, GxB_HYPER_SWITCH, &hyper_switch));
+	ASSERT (hyper_switch == GxB_ALWAYS_HYPER);
 
 	//--------------------------------------------------------------------------
 	// check that m has no pending changes

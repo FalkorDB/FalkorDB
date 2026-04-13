@@ -29,7 +29,7 @@ static void _process_yield
 	ctx->yield_name = NULL;
 	ctx->yield_mode = NULL;
 	int idx = 0;
-	for(uint i = 0; i < array_len(yield); i++) {
+	for(uint i = 0; i < arr_len(yield); i++) {
 		if(strcasecmp("name", yield[i]) == 0) {
 			ctx->yield_name = ctx->output + idx;
 			idx++;
@@ -49,7 +49,7 @@ ProcedureResult Proc_ProceduresInvoke
 	const SIValue *args,
 	const char **yield
 ) {
-	if(array_len((SIValue *)args) != 0) return PROCEDURE_ERR;
+	if(arr_len((SIValue *)args) != 0) return PROCEDURE_ERR;
 
 	ProcProceduresPrivateData *pdata = rm_malloc(sizeof(ProcProceduresPrivateData));
 
@@ -104,11 +104,11 @@ ProcedureResult Proc_ProceduresFree
 ProcedureCtx *Proc_ProceduresCtx() {
 	void *privateData = NULL;
 
-	ProcedureOutput *outputs = array_new(ProcedureOutput, 2);
+	ProcedureOutput *outputs = arr_new(ProcedureOutput, 2);
 	ProcedureOutput out_name = {.name = "name", .type = T_STRING};
 	ProcedureOutput out_mode = {.name = "mode", .type = T_STRING};
-	array_append(outputs, out_name);
-	array_append(outputs, out_mode);
+	arr_append(outputs, out_name);
+	arr_append(outputs, out_mode);
 
 	ProcedureCtx *ctx = ProcCtxNew("dbms.procedures",
 								   0,
