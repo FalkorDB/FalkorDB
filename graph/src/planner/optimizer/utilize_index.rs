@@ -63,7 +63,7 @@ use super::super::IR;
 type IndexScanResult = Option<(
     Arc<QueryNode<Arc<String>, Variable>>,
     Arc<String>,
-    Arc<IndexQuery<QueryExpr<Variable>>>,
+    IndexQuery<QueryExpr<Variable>>,
 )>;
 
 fn extract_attribute_from_subtree(
@@ -141,54 +141,54 @@ fn try_property_index_scan(
         ExprIR::Eq => Some((
             node.clone(),
             node.labels[0].clone(),
-            Arc::new(IndexQuery::Equal {
+            IndexQuery::Equal {
                 key: attr.clone(),
                 value: Arc::new(constant_node),
-            }),
+            },
         )),
         ExprIR::Gt => Some((
             node.clone(),
             node.labels[0].clone(),
-            Arc::new(IndexQuery::Range {
+            IndexQuery::Range {
                 key: attr.clone(),
                 min: Some(Arc::new(constant_node)),
                 max: None,
                 include_min: false,
                 include_max: false,
-            }),
+            },
         )),
         ExprIR::Ge => Some((
             node.clone(),
             node.labels[0].clone(),
-            Arc::new(IndexQuery::Range {
+            IndexQuery::Range {
                 key: attr.clone(),
                 min: Some(Arc::new(constant_node)),
                 max: None,
                 include_min: true,
                 include_max: false,
-            }),
+            },
         )),
         ExprIR::Lt => Some((
             node.clone(),
             node.labels[0].clone(),
-            Arc::new(IndexQuery::Range {
+            IndexQuery::Range {
                 key: attr.clone(),
                 min: None,
                 max: Some(Arc::new(constant_node)),
                 include_min: false,
                 include_max: false,
-            }),
+            },
         )),
         ExprIR::Le => Some((
             node.clone(),
             node.labels[0].clone(),
-            Arc::new(IndexQuery::Range {
+            IndexQuery::Range {
                 key: attr.clone(),
                 min: None,
                 max: Some(Arc::new(constant_node)),
                 include_min: false,
                 include_max: true,
-            }),
+            },
         )),
         _ => None,
     }
@@ -228,20 +228,20 @@ fn try_distance_index_scan(
         (Some(_), None) => Some((
             node.clone(),
             node.labels[0].clone(),
-            Arc::new(IndexQuery::Point {
+            IndexQuery::Point {
                 key: attr.clone(),
                 point: Arc::new(filter.node(child_1_idx).clone_as_tree()),
                 radius: Arc::new(constant_node),
-            }),
+            },
         )),
         (None, Some(_)) => Some((
             node.clone(),
             node.labels[0].clone(),
-            Arc::new(IndexQuery::Point {
+            IndexQuery::Point {
                 key: attr.clone(),
                 point: Arc::new(filter.node(child_0_idx).clone_as_tree()),
                 radius: Arc::new(constant_node),
-            }),
+            },
         )),
         _ => None,
     }
@@ -428,7 +428,7 @@ fn try_in_filter_index_scan(
         }
     };
 
-    Some((node.clone(), node.labels[0].clone(), Arc::new(query)))
+    Some((node.clone(), node.labels[0].clone(), query))
 }
 
 /// Tries to convert a single comparison filter into an index scan for the given node.
@@ -547,7 +547,6 @@ pub(super) fn utilize_index(
                         if let Some((_, _, query)) =
                             try_single_filter_index_scan(node, &conjunct, graph)
                         {
-                            let query = Arc::try_unwrap(query).unwrap();
                             merged = Some(match merged {
                                 None => query,
                                 Some(prev) => merge_range_queries(prev, query),
@@ -560,7 +559,7 @@ pub(super) fn utilize_index(
                         (
                             node.clone(),
                             node.labels[0].clone(),
-                            Arc::new(combined_query),
+                            combined_query,
                             remaining_conjuncts,
                         )
                     })
@@ -573,7 +572,7 @@ pub(super) fn utilize_index(
                         if let Some((_, _, query)) =
                             try_single_filter_index_scan(node, &branch, graph)
                         {
-                            or_queries.push(Arc::try_unwrap(query).unwrap());
+                            or_queries.push(query);
                         } else {
                             all_converted = false;
                             break;
@@ -583,7 +582,7 @@ pub(super) fn utilize_index(
                         Some((
                             node.clone(),
                             node.labels[0].clone(),
-                            Arc::new(IndexQuery::Or(or_queries)),
+                            IndexQuery::Or(or_queries),
                             Vec::new(),
                         ))
                     } else {
@@ -625,7 +624,11 @@ pub(super) fn utilize_index(
                         unreachable!()
                     };
                 let mut op = optimized_plan.node_mut(idx);
-                *op.data_mut() = IR::NodeByIndexScan { node, index, query };
+                *op.data_mut() = IR::NodeByIndexScan {
+                    node,
+                    index,
+                    query: Arc::new(query),
+                };
                 // Check if the original filter has runtime expressions that
                 // might evaluate to non-indexable values. If so, keep the filter
                 // as a safety net for correct results.
