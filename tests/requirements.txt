@@ -1,5 +1,6 @@
 behave
 falkordb
+falkordb-bulk-loader
 hypothesis
 pytest
 pytest-benchmark
