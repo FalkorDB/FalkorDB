@@ -127,8 +127,7 @@ pub fn reply_compact_value(
                 }
 
                 raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
-                let attrs = bg
-                    .get_node_all_attrs_by_id(*id);
+                let attrs = bg.get_node_all_attrs_by_id(*id);
                 for (key, value) in attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
                     raw::reply_with_long_long(ctx.ctx, (*key).into());
@@ -172,8 +171,7 @@ pub fn reply_compact_value(
                 raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
                 let node_attr_offset = bg.node_attribute_count() as i64;
                 raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
-                let attrs = bg
-                    .get_relationship_all_attrs_by_id(*rel_id);
+                let attrs = bg.get_relationship_all_attrs_by_id(*rel_id);
                 for (key, value) in attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
                     raw::reply_with_long_long(ctx.ctx, i64::from(*key) + node_attr_offset);
