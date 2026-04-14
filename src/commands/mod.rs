@@ -21,6 +21,7 @@ use redis_module::{RedisError, RedisResult};
 
 pub mod config_cmd;
 pub mod delete;
+pub mod effect;
 pub mod explain;
 pub mod list;
 pub mod memory;
@@ -31,6 +32,7 @@ pub mod udf;
 
 pub use config_cmd::graph_config;
 pub use delete::graph_delete;
+pub use effect::graph_effect;
 pub use explain::graph_explain;
 pub use list::graph_list;
 pub use memory::graph_memory;
