@@ -61,6 +61,7 @@
 use super::{
     GxB_Print_Level,
     matrix::{self, Dup, Get, MaskedElementWiseAdd, Matrix, New, Remove, Set, Size, Transpose},
+    serialization::{Decode, Encode, Reader, Writer},
 };
 use crate::graph::cow::Cow;
 
@@ -73,7 +74,7 @@ pub struct VersionedMatrix {
     m: Cow<Matrix>,
     /// Delta-plus: edges added in current transaction
     dp: Cow<Matrix>,
-    /// Delta-minus: edges removed in current transaction  
+    /// Delta-minus: edges removed in current transaction
     dm: Cow<Matrix>,
 }
 
@@ -182,6 +183,35 @@ impl VersionedMatrix {
         self.dp.print(level);
         self.dm.print(level);
     }
+
+    #[must_use]
+    pub fn extract_m_dp(&self) -> (Matrix, Matrix) {
+        let mut m = Matrix::new(self.m.nrows(), self.m.ncols());
+        let mut dp = Matrix::new(self.dp.nrows(), self.dp.ncols());
+
+        m.select(&self.dm, &self.m);
+        dp.select(&self.dm, &self.dp);
+
+        (m, dp)
+    }
+
+    /// Returns true if the base matrix has UINT64 element type.
+    ///
+    /// C-produced relation matrices store edge IDs as UINT64, while
+    /// Rust-produced ones use BOOL.
+    #[must_use]
+    pub fn is_uint64(&self) -> bool {
+        self.m.is_uint64()
+    }
+
+    /// Iterate UINT64 entries from the base M and delta-plus DP matrices.
+    ///
+    /// Used during RDB decode to read C-produced relation matrices where
+    /// single-edge entries store the edge ID as a UINT64 value.
+    /// Returns an empty iterator for Rust-produced BOOL matrices.
+    pub fn uint64_iter(&self) -> impl Iterator<Item = (u64, u64, u64)> + '_ {
+        self.m.uint64_iter().chain(self.dp.uint64_iter())
+    }
 }
 
 impl Remove for VersionedMatrix {
@@ -198,22 +228,6 @@ impl Remove for VersionedMatrix {
         }
     }
 }
-
-// impl MxM<bool> for VersionedMatrix<bool> {
-//     fn lmxm(
-//         &mut self,
-//         b: &Self,
-//     ) {
-
-//     }
-
-//     fn rmxm(
-//         &mut self,
-//         b: &Self,
-//     ) {
-
-//     }
-// }
 
 impl Get for VersionedMatrix {
     fn get(
@@ -267,6 +281,30 @@ where
             dp: Cow::new(self.dp.transpose()),
             dm: Cow::new(self.dm.transpose()),
         }
+    }
+}
+
+impl Encode<19> for VersionedMatrix {
+    fn encode(
+        &self,
+        w: &mut dyn Writer,
+    ) {
+        self.m.encode(w);
+        self.dp.encode(w);
+        self.dm.encode(w);
+    }
+}
+
+impl Decode<19> for VersionedMatrix {
+    fn decode(r: &mut dyn Reader) -> Result<Self, String> {
+        let m = Matrix::decode(r)?;
+        let dp = Matrix::decode(r)?;
+        let dm = Matrix::decode(r)?;
+        Ok(Self {
+            m: Cow::new(m),
+            dp: Cow::new(dp),
+            dm: Cow::new(dm),
+        })
     }
 }
 

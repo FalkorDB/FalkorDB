@@ -36,14 +36,21 @@
 use std::{
     marker::PhantomData,
     mem::MaybeUninit,
+    os::raw::c_void,
     ptr::{addr_of_mut, null_mut},
 };
 
+use crate::graph::graphblas::{GrB_UINT64, GrB_Vector_clear, GrB_Vector_setElement_UINT64};
+
+use super::serialization::{Decode, Encode, Reader, Writer};
 use super::{
-    GrB_BOOL, GrB_Info, GrB_Vector, GrB_Vector_free, GrB_Vector_new, GrB_Vector_removeElement,
-    GrB_Vector_resize, GrB_Vector_setElement_BOOL, GrB_Vector_size, GrB_Vector_wait, GrB_WaitMode,
-    GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new, GxB_Vector_Iterator_attach,
-    GxB_Vector_Iterator_getIndex, GxB_Vector_Iterator_next, GxB_Vector_Iterator_seek,
+    GrB_BOOL, GrB_Info, GrB_Type, GrB_Type_get_String, GrB_Vector, GrB_Vector_free, GrB_Vector_new,
+    GrB_Vector_removeElement, GrB_Vector_resize, GrB_Vector_setElement_BOOL, GrB_Vector_size,
+    GrB_Vector_wait, GrB_WaitMode, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64,
+    GxB_Iterator_new, GxB_MAX_NAME_LEN, GxB_Option_Field, GxB_Type_from_name,
+    GxB_Vector_Iterator_attach, GxB_Vector_Iterator_getIndex, GxB_Vector_Iterator_next,
+    GxB_Vector_Iterator_seek, GxB_Vector_deserialize, GxB_Vector_load, GxB_Vector_serialize,
+    GxB_Vector_unload,
 };
 
 /// A sparse vector backed by GraphBLAS.
@@ -69,6 +76,24 @@ impl From<GrB_Vector> for Vector<bool> {
         Self {
             v,
             phantom: PhantomData,
+        }
+    }
+}
+
+impl From<GrB_Vector> for Vector<u64> {
+    fn from(v: GrB_Vector) -> Self {
+        Self {
+            v,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<T> Vector<T> {
+    pub fn clear(&mut self) {
+        unsafe {
+            let info = GrB_Vector_clear(self.v);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -112,6 +137,186 @@ impl Vector<bool> {
     #[must_use]
     #[allow(clippy::iter_without_into_iter)]
     pub fn iter(&self) -> Iter<bool> {
+        Iter::new(self)
+    }
+}
+
+impl Encode<19> for Vector<u64> {
+    fn encode(
+        &self,
+        w: &mut dyn Writer,
+    ) {
+        unsafe {
+            let mut blob: *mut c_void = null_mut();
+            let mut blob_size: u64 = 0;
+
+            let info = GxB_Vector_serialize(&raw mut blob, &raw mut blob_size, self.v, null_mut());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+
+            let blob_slice = std::slice::from_raw_parts(blob.cast::<u8>(), blob_size as usize);
+            w.write_buffer(blob_slice);
+
+            let layout = std::alloc::Layout::from_size_align(blob_size as usize, 8).unwrap();
+            std::alloc::dealloc(blob.cast::<u8>(), layout);
+        }
+    }
+}
+
+impl Decode<19> for Vector<u64> {
+    fn decode(r: &mut dyn Reader) -> Result<Self, String> {
+        let blob = r.read_buffer()?;
+        unsafe {
+            let mut v: MaybeUninit<GrB_Vector> = MaybeUninit::uninit();
+            let info = GxB_Vector_deserialize(
+                v.as_mut_ptr(),
+                null_mut(),
+                blob.as_ptr().cast(),
+                blob.len() as u64,
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            Ok(Self::from(v.assume_init()))
+        }
+    }
+}
+
+impl Encode<19> for Vector<bool> {
+    fn encode(
+        &self,
+        w: &mut dyn Writer,
+    ) {
+        unsafe {
+            let mut arr: *mut c_void = null_mut();
+            let mut type_: MaybeUninit<GrB_Type> = MaybeUninit::uninit();
+            let mut n_entries: u64 = 0;
+            let mut n_bytes: u64 = 0;
+            let mut handling: i32 = 0;
+
+            let info = GxB_Vector_unload(
+                self.v,
+                &raw mut arr,
+                type_.as_mut_ptr(),
+                &raw mut n_entries,
+                &raw mut n_bytes,
+                &raw mut handling,
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+
+            let type_ = type_.assume_init();
+
+            let mut t_name = [0u8; GxB_MAX_NAME_LEN as usize];
+            let info = GrB_Type_get_String(
+                type_,
+                t_name.as_mut_ptr().cast(),
+                GxB_Option_Field::GrB_NAME as _,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+
+            let t_name_len = t_name
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(GxB_MAX_NAME_LEN as usize)
+                + 1;
+
+            let arr_slice = if n_bytes > 0 {
+                std::slice::from_raw_parts(arr.cast::<u8>(), n_bytes as usize)
+            } else {
+                &[]
+            };
+
+            w.write_buffer(arr_slice);
+            w.write_buffer(&t_name[..t_name_len]);
+            w.write_unsigned(n_entries);
+            w.write_unsigned(n_bytes);
+            w.write_signed(handling as i64);
+
+            // Reload the vector so it remains usable
+            let info = GxB_Vector_load(
+                self.v,
+                &raw mut arr,
+                type_,
+                n_entries,
+                n_bytes,
+                handling,
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
+}
+
+impl Decode<19> for Vector<bool> {
+    fn decode(r: &mut dyn Reader) -> Result<Self, String> {
+        let arr_data = r.read_buffer()?;
+        let type_name = r.read_buffer()?;
+        let n_entries = r.read_unsigned()?;
+        let n_bytes = r.read_unsigned()?;
+        let handling = r.read_signed()? as i32;
+
+        unsafe {
+            let mut type_: MaybeUninit<GrB_Type> = MaybeUninit::uninit();
+            let info = GxB_Type_from_name(type_.as_mut_ptr(), type_name.as_ptr().cast());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            let type_ = type_.assume_init();
+
+            let mut v: MaybeUninit<GrB_Vector> = MaybeUninit::uninit();
+            let info = GrB_Vector_new(v.as_mut_ptr(), type_, 0);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            let v = v.assume_init();
+
+            let mut arr_ptr: *mut c_void = if n_bytes > 0 {
+                let layout = std::alloc::Layout::from_size_align(n_bytes as usize, 8).unwrap();
+                let ptr = std::alloc::alloc(layout);
+                std::ptr::copy_nonoverlapping(arr_data.as_ptr(), ptr, n_bytes as usize);
+                ptr.cast()
+            } else {
+                null_mut()
+            };
+
+            let info = GxB_Vector_load(
+                v,
+                &raw mut arr_ptr,
+                type_,
+                n_entries,
+                n_bytes,
+                handling,
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+
+            Ok(Self::from(v))
+        }
+    }
+}
+
+impl Vector<u64> {
+    pub fn new(nrows: u64) -> Self {
+        unsafe {
+            let mut v: MaybeUninit<GrB_Vector> = MaybeUninit::uninit();
+            let info = GrB_Vector_new(v.as_mut_ptr(), GrB_UINT64, nrows);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            Self {
+                v: v.assume_init(),
+                phantom: PhantomData,
+            }
+        }
+    }
+
+    pub fn set(
+        &mut self,
+        i: u64,
+        value: u64,
+    ) {
+        unsafe {
+            let info = GrB_Vector_setElement_UINT64(self.v, value, i);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
+
+    #[must_use]
+    #[allow(clippy::iter_without_into_iter)]
+    pub fn iter(&self) -> Iter<u64> {
         Iter::new(self)
     }
 }
@@ -233,6 +438,22 @@ impl Iterator for Iter<bool> {
             let row = GxB_Vector_Iterator_getIndex(self.inner);
             self.depleted = GxB_Vector_Iterator_next(self.inner) == GrB_Info::GxB_EXHAUSTED;
             Some(row)
+        }
+    }
+}
+
+impl Iterator for Iter<u64> {
+    type Item = (u64, u64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.depleted {
+            return None;
+        }
+        unsafe {
+            let idx = GxB_Vector_Iterator_getIndex(self.inner);
+            let val = GxB_Iterator_get_UINT64(self.inner);
+            self.depleted = GxB_Vector_Iterator_next(self.inner) == GrB_Info::GxB_EXHAUSTED;
+            Some((idx, val))
         }
     }
 }
