@@ -419,6 +419,7 @@ pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "timestamp",
         args: [],
         ret: Type::Int,
+        non_deterministic,
         fn timestamp_fn(_, args) {
             debug_assert!(args.is_empty());
             let now = Utc::now();
@@ -428,8 +429,9 @@ pub fn register(funcs: &mut Functions) {
 
     // ── date() ──
     cypher_fn!(funcs, "date",
-        args: [Type::Union(vec![Type::Map, Type::String, Type::Null])],
+        var_arg: Type::Union(vec![Type::Map, Type::String, Type::Null]),
         ret: Type::Union(vec![Type::Date, Type::Null]),
+        non_deterministic,
         fn date_fn(_, args) {
             let mut iter = args.into_iter();
             match iter.next() {
@@ -444,6 +446,12 @@ pub fn register(funcs: &mut Functions) {
                     Ok(Value::Date(ts))
                 }
                 Some(Value::Null) => Ok(Value::Null),
+                None => {
+                    // Zero args: return current date
+                    let now = Utc::now().date_naive();
+                    let ts = now.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+                    Ok(Value::Date(ts))
+                }
                 _ => unreachable!(),
             }
         }
@@ -451,8 +459,9 @@ pub fn register(funcs: &mut Functions) {
 
     // ── localtime() ──
     cypher_fn!(funcs, "localtime",
-        args: [Type::Union(vec![Type::Map, Type::String, Type::Null])],
+        var_arg: Type::Union(vec![Type::Map, Type::String, Type::Null]),
         ret: Type::Union(vec![Type::Time, Type::Null]),
+        non_deterministic,
         fn localtime_fn(_, args) {
             let mut iter = args.into_iter();
             match iter.next() {
@@ -472,6 +481,14 @@ pub fn register(funcs: &mut Functions) {
                     Ok(Value::Time(ts))
                 }
                 Some(Value::Null) => Ok(Value::Null),
+                None => {
+                    // Zero args: return current local time
+                    let now = Utc::now().time();
+                    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+                    let dt = NaiveDateTime::new(epoch, now);
+                    let ts = dt.and_utc().timestamp();
+                    Ok(Value::Time(ts))
+                }
                 _ => unreachable!(),
             }
         }
@@ -479,8 +496,9 @@ pub fn register(funcs: &mut Functions) {
 
     // ── localdatetime() ──
     cypher_fn!(funcs, "localdatetime",
-        args: [Type::Union(vec![Type::Map, Type::String, Type::Null])],
+        var_arg: Type::Union(vec![Type::Map, Type::String, Type::Null]),
         ret: Type::Union(vec![Type::Datetime, Type::Null]),
+        non_deterministic,
         fn localdatetime_fn(_, args) {
             let mut iter = args.into_iter();
             match iter.next() {
@@ -497,6 +515,12 @@ pub fn register(funcs: &mut Functions) {
                     Ok(Value::Datetime(ts))
                 }
                 Some(Value::Null) => Ok(Value::Null),
+                None => {
+                    // Zero args: return current local datetime
+                    let now = Utc::now().naive_utc();
+                    let ts = now.and_utc().timestamp();
+                    Ok(Value::Datetime(ts))
+                }
                 _ => unreachable!(),
             }
         }
@@ -528,6 +552,44 @@ pub fn register(funcs: &mut Functions) {
                 Some(Value::Null) => Ok(Value::Null),
                 _ => unreachable!(),
             }
+        }
+    );
+
+    // ── date.transaction() ──
+    cypher_fn!(funcs, "date.transaction",
+        args: [],
+        ret: Type::Date,
+        non_deterministic,
+        fn date_transaction_fn(rt, _args) {
+            let now = rt.transaction_timestamp.date_naive();
+            let ts = now.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+            Ok(Value::Date(ts))
+        }
+    );
+
+    // ── localtime.transaction() ──
+    cypher_fn!(funcs, "localtime.transaction",
+        args: [],
+        ret: Type::Time,
+        non_deterministic,
+        fn localtime_transaction_fn(rt, _args) {
+            let now = rt.transaction_timestamp.time();
+            let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+            let dt = NaiveDateTime::new(epoch, now);
+            let ts = dt.and_utc().timestamp();
+            Ok(Value::Time(ts))
+        }
+    );
+
+    // ── localdatetime.transaction() ──
+    cypher_fn!(funcs, "localdatetime.transaction",
+        args: [],
+        ret: Type::Datetime,
+        non_deterministic,
+        fn localdatetime_transaction_fn(rt, _args) {
+            let now = rt.transaction_timestamp.naive_utc();
+            let ts = now.and_utc().timestamp();
+            Ok(Value::Datetime(ts))
         }
     );
 }

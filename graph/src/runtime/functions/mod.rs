@@ -72,6 +72,58 @@
 /// | `procedure:`            | read-only procedure   | `Procedure(yields)`     |
 /// | `write procedure:`      | write procedure       | `Procedure(yields)`     |
 macro_rules! cypher_fn {
+    // ── Non-deterministic scalar function (fixed args) ──
+    ($funcs:ident, $name:expr,
+     args: [$($arg:expr),* $(,)?],
+     ret: $ret:expr,
+     non_deterministic,
+     $(#[$attr:meta])*
+     fn $fn_name:ident($rt:pat, $args:pat) $body:block
+    ) => {
+        $(#[$attr])*
+        fn $fn_name(
+            $rt: &Runtime,
+            $args: ThinVec<Value>,
+        ) -> Result<Value, String>
+        $body
+
+        $funcs.add(
+            $name,
+            $fn_name,
+            false,
+            true,
+            vec![$($arg),*],
+            FnType::Function,
+            $ret,
+        );
+    };
+
+    // ── Non-deterministic variable-length argument function ──
+    ($funcs:ident, $name:expr,
+     var_arg: $arg_type:expr,
+     ret: $ret:expr,
+     non_deterministic,
+     $(#[$attr:meta])*
+     fn $fn_name:ident($rt:pat, $args:pat) $body:block
+    ) => {
+        $(#[$attr])*
+        fn $fn_name(
+            $rt: &Runtime,
+            $args: ThinVec<Value>,
+        ) -> Result<Value, String>
+        $body
+
+        $funcs.add_var_len(
+            $name,
+            $fn_name,
+            false,
+            true,
+            $arg_type,
+            FnType::Function,
+            $ret,
+        );
+    };
+
     // ── Scalar function (FnType::Function, write=false, fixed args) ──
     ($funcs:ident, $name:expr,
      args: [$($arg:expr),* $(,)?],
@@ -89,6 +141,7 @@ macro_rules! cypher_fn {
         $funcs.add(
             $name,
             $fn_name,
+            false,
             false,
             vec![$($arg),*],
             FnType::Function,
@@ -114,6 +167,7 @@ macro_rules! cypher_fn {
             $name,
             $fn_name,
             false,
+            false,
             $arg_type,
             FnType::Function,
             $ret,
@@ -138,6 +192,7 @@ macro_rules! cypher_fn {
         $funcs.add(
             $name,
             $fn_name,
+            false,
             false,
             vec![$($arg),*],
             FnType::Aggregation { initial: $init, finalizer: None },
@@ -165,6 +220,7 @@ macro_rules! cypher_fn {
             $name,
             $fn_name,
             false,
+            false,
             vec![$($arg),*],
             FnType::Aggregation { initial: $init, finalizer: Some(Box::new($finalizer)) },
             $ret,
@@ -189,6 +245,7 @@ macro_rules! cypher_fn {
         $funcs.add(
             $name,
             $fn_name,
+            false,
             false,
             vec![$($arg),*],
             FnType::Internal,
@@ -215,6 +272,7 @@ macro_rules! cypher_fn {
             $name,
             $fn_name,
             false,
+            false,
             vec![$($arg),*],
             FnType::Procedure(vec![$(String::from($yield_col)),*]),
             $ret,
@@ -240,6 +298,7 @@ macro_rules! cypher_fn {
             $name,
             $fn_name,
             true,
+            false,
             vec![$($arg),*],
             FnType::Procedure(vec![$(String::from($yield_col)),*]),
             $ret,
@@ -457,6 +516,7 @@ pub struct GraphFn {
     pub name: String,
     pub func: RuntimeFn,
     pub write: bool,
+    pub non_deterministic: bool,
     pub args_type: FnArguments,
     pub fn_type: FnType,
     pub ret_type: Type,
@@ -470,6 +530,7 @@ impl Debug for GraphFn {
         f.debug_struct("GraphFn")
             .field("name", &self.name)
             .field("write", &self.write)
+            .field("non_deterministic", &self.non_deterministic)
             .field("args_type", &self.args_type)
             .field("fn_type", &self.fn_type)
             .field("ret_type", &self.ret_type)
@@ -483,6 +544,7 @@ impl GraphFn {
         name: &str,
         func: fn(&Runtime, ThinVec<Value>) -> Result<Value, String>,
         write: bool,
+        non_deterministic: bool,
         args_type: FnArguments,
         fn_type: FnType,
         ret_type: Type,
@@ -491,6 +553,7 @@ impl GraphFn {
             name: String::from(name),
             func: Arc::new(func),
             write,
+            non_deterministic,
             args_type,
             fn_type,
             ret_type,
@@ -506,6 +569,7 @@ impl GraphFn {
                 crate::udf::js_context::call_udf_bridge(&udf_name, rt, &args)
             }),
             write: false,
+            non_deterministic: false,
             args_type: FnArguments::VarLength(Type::Any),
             fn_type: FnType::Udf,
             ret_type: Type::Any,
@@ -622,11 +686,13 @@ impl Functions {
         Self::default()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add(
         &mut self,
         name: &str,
         func: fn(&Runtime, ThinVec<Value>) -> Result<Value, String>,
         write: bool,
+        non_deterministic: bool,
         args_type: Vec<Type>,
         fn_type: FnType,
         ret_type: Type,
@@ -640,6 +706,7 @@ impl Functions {
             name,
             func,
             write,
+            non_deterministic,
             FnArguments::Fixed(args_type),
             fn_type,
             ret_type,
@@ -647,11 +714,13 @@ impl Functions {
         self.functions.insert(lower_name, graph_fn);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add_var_len(
         &mut self,
         name: &str,
         func: fn(&Runtime, ThinVec<Value>) -> Result<Value, String>,
         write: bool,
+        non_deterministic: bool,
         arg_type: Type,
         fn_type: FnType,
         ret_type: Type,
@@ -665,6 +734,7 @@ impl Functions {
             &name,
             func,
             write,
+            non_deterministic,
             FnArguments::VarLength(arg_type),
             fn_type,
             ret_type,

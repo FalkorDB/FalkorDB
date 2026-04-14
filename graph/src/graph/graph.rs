@@ -73,10 +73,10 @@ use std::{
 };
 
 use atomic_refcell::AtomicRefCell;
-use fjall::Database;
+
 use itertools::Itertools;
 use lru::LruCache;
-use once_cell::sync::OnceCell;
+
 use orx_tree::DynTree;
 use parking_lot::Mutex;
 use roaring::RoaringTreemap;
@@ -219,6 +219,8 @@ pub struct MemoryUsageReport {
 /// The Graph is `Send + Sync` but not internally synchronized. Use [`MvccGraph`]
 /// for concurrent access with proper read/write isolation.
 pub struct Graph {
+    /// Graph name (Redis key name)
+    name: String,
     /// Maximum node capacity (for matrix sizing)
     node_cap: u64,
     /// Maximum relationship capacity (for matrix sizing)
@@ -263,6 +265,8 @@ pub struct Graph {
     cache: Arc<Mutex<LruCache<String, PlanTree>>>,
     /// Version counter (incremented on each write transaction)
     pub version: u64,
+    /// Schema version (incremented only on schema changes: new labels, relationship types, or attributes)
+    pub schema_version: u64,
 }
 
 /// Wrapper for plan trees to implement Send+Sync.
@@ -392,8 +396,6 @@ fn drop_index_bg(
     );
 }
 
-static DATABASE: OnceCell<Database> = OnceCell::new();
-
 impl Graph {
     #[must_use]
     pub fn new(
@@ -403,15 +405,8 @@ impl Graph {
         version: u64,
         name: &str,
     ) -> Self {
-        let db = DATABASE.get_or_init(|| {
-            Database::builder(format!("./attrs/{}", std::process::id()))
-                .temporary(true)
-                .manual_journal_persist(true)
-                .cache_size(128 * 1_024 * 1_024)
-                .open()
-                .expect("failed to open fjall database")
-        });
         Self {
+            name: name.to_string(),
             node_cap: n,
             relationship_cap: e,
             reserved_node_count: 0,
@@ -427,12 +422,8 @@ impl Graph {
             all_nodes_matrix: VersionedMatrix::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
-            node_attrs: AttributeStore::new(db.clone(), &format!("{name}/nodes"), version),
-            relationship_attrs: AttributeStore::new(
-                db.clone(),
-                &format!("{name}/relationships"),
-                version,
-            ),
+            node_attrs: AttributeStore::new(&format!("{name}/nodes"), version),
+            relationship_attrs: AttributeStore::new(&format!("{name}/relationships"), version),
             node_indexer: Indexer::default(),
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
@@ -440,6 +431,7 @@ impl Graph {
                 NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
             ))),
             version,
+            schema_version: 0,
         }
     }
 
@@ -450,6 +442,7 @@ impl Graph {
         let node_attrs = self.node_attrs.new_version(self.version + 1);
         let relationship_attrs = self.relationship_attrs.new_version(self.version + 1);
         Self {
+            name: self.name.clone(),
             node_cap: self.node_cap,
             relationship_cap: self.relationship_cap,
             reserved_node_count: 0,
@@ -476,7 +469,13 @@ impl Graph {
             relationship_types: self.relationship_types.clone(),
             cache: self.cache.clone(),
             version: self.version + 1,
+            schema_version: self.schema_version,
         }
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     #[must_use]
@@ -609,6 +608,29 @@ impl Graph {
             .iter()
             .position(|t| t.as_str() == relationship_type)
             .map(TypeId)
+    }
+
+    /// Get-or-create a relationship type by name, returning its `TypeId`.
+    pub fn get_type_id_mut(
+        &mut self,
+        relationship_type: &str,
+    ) -> TypeId {
+        if let Some(pos) = self
+            .relationship_types
+            .iter()
+            .position(|t| t.as_str() == relationship_type)
+            .map(TypeId)
+        {
+            return pos;
+        }
+
+        self.relationship_types
+            .push(Arc::new(relationship_type.to_string()));
+        self.relationship_matrices.insert(
+            self.relationship_types.len() - 1,
+            Tensor::new(self.node_cap, self.node_cap),
+        );
+        TypeId(self.relationship_types.len() - 1)
     }
 
     pub fn get_plan(
@@ -782,6 +804,10 @@ impl Graph {
         NodeId(self.node_count + self.reserved_node_count - 1)
     }
 
+    pub const fn inc_reserved_node_count(&mut self) {
+        self.reserved_node_count += 1;
+    }
+
     pub fn reserve_nodes(
         &mut self,
         count: usize,
@@ -846,6 +872,14 @@ impl Graph {
         attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
     ) {
         self.relationship_attrs.import_attrs(attrs);
+    }
+
+    #[must_use]
+    pub fn max_relationship_id(&self) -> u64 {
+        if self.relationship_count == 0 {
+            return 0;
+        }
+        self.relationship_count + self.deleted_relationships.len() - 1
     }
 
     pub fn set_nodes_attributes(
@@ -1109,6 +1143,10 @@ impl Graph {
         attr_idx: u16,
     ) -> Option<Value> {
         self.node_attrs.get_attr_by_idx(id.0, attr_idx)
+    }
+
+    pub const fn inc_reserved_relationship_count(&mut self) {
+        self.reserved_relationship_count += 1;
     }
 
     pub fn reserve_relationship(&mut self) -> RelationshipId {
@@ -1418,21 +1456,30 @@ impl Graph {
         self.relationship_attrs.get_attr(id.0, attr)
     }
 
+    fn resize_node_matrices(&mut self) {
+        self.adjacancy_matrix.resize(self.node_cap, self.node_cap);
+        self.node_labels_matrix
+            .resize(self.node_cap, self.labels_matices.len() as u64);
+        self.all_nodes_matrix.resize(self.node_cap, self.node_cap);
+        for label_matrix in &mut self.labels_matices {
+            label_matrix.resize(self.node_cap, self.node_cap);
+        }
+        for relationship_matrix in &mut self.relationship_matrices {
+            relationship_matrix.resize(self.node_cap, self.node_cap);
+        }
+    }
+
+    fn resize_relationship_matrices(&mut self) {
+        self.relationship_type_matrix
+            .resize(self.relationship_cap, self.relationship_types.len() as u64);
+    }
+
     fn resize(&mut self) {
         if self.node_count > self.node_cap {
             while self.node_count > self.node_cap {
                 self.node_cap *= 2;
             }
-            self.adjacancy_matrix.resize(self.node_cap, self.node_cap);
-            self.node_labels_matrix
-                .resize(self.node_cap, self.labels_matices.len() as u64);
-            self.all_nodes_matrix.resize(self.node_cap, self.node_cap);
-            for label_matrix in &mut self.labels_matices {
-                label_matrix.resize(self.node_cap, self.node_cap);
-            }
-            for relationship_matrix in &mut self.relationship_matrices {
-                relationship_matrix.resize(self.node_cap, self.node_cap);
-            }
+            self.resize_node_matrices();
         }
 
         if self.labels_matices.len() as u64 > self.node_labels_matrix.ncols() {
@@ -1444,8 +1491,7 @@ impl Graph {
             while self.relationship_count > self.relationship_cap {
                 self.relationship_cap *= 2;
             }
-            self.relationship_type_matrix
-                .resize(self.relationship_cap, self.relationship_types.len() as u64);
+            self.resize_relationship_matrices();
         }
 
         if self.relationship_types.len() as u64 > self.relationship_type_matrix.ncols() {
@@ -1892,5 +1938,145 @@ impl Graph {
             sz += std::mem::size_of::<u16>() + std::mem::size_of::<Value>() + val.heap_size();
         }
         sz
+    }
+
+    #[must_use]
+    pub fn deleted_nodes_count(&self) -> u64 {
+        self.deleted_nodes.len()
+    }
+
+    #[must_use]
+    pub fn deleted_relationships_count(&self) -> u64 {
+        self.deleted_relationships.len()
+    }
+
+    #[must_use]
+    pub const fn deleted_relationships(&self) -> &RoaringTreemap {
+        &self.deleted_relationships
+    }
+
+    #[must_use]
+    pub fn label_matrices(&self) -> &[VersionedMatrix] {
+        &self.labels_matices
+    }
+
+    #[must_use]
+    pub fn relationship_tensors(&self) -> &[Tensor] {
+        &self.relationship_matrices
+    }
+
+    /// Synchronously create an index (without spawning background population).
+    pub fn create_index_sync(
+        &mut self,
+        index_type: &IndexType,
+        entity_type: &EntityType,
+        label: &Arc<String>,
+        attrs: &Vec<Arc<String>>,
+        options: Option<IndexOptions>,
+    ) -> Result<(), String> {
+        match entity_type {
+            EntityType::Node => {
+                let len = self.get_label_matrix_mut(label).nvals();
+                self.node_indexer
+                    .create_index(index_type, label, attrs, len, options)?;
+            }
+            EntityType::Relationship => {}
+        }
+        Ok(())
+    }
+
+    /// Synchronously populate all pending indexes.
+    /// Used after RDB load when the graph is fully constructed.
+    pub fn populate_indexes_sync(&mut self) {
+        let fields_by_label = self.node_indexer.get_all_pending_fields();
+        for (label, attrs) in fields_by_label {
+            if let Some(lm) = self.get_label_matrix(&label) {
+                let resolved_attrs: Vec<(u16, Vec<_>)> = attrs
+                    .iter()
+                    .filter_map(|(attr, fields)| {
+                        self.get_node_attribute_id(attr)
+                            .map(|idx| (idx as u16, fields.clone()))
+                    })
+                    .collect();
+
+                let mut batch = Vec::new();
+                for (n, _) in lm.iter(0, u64::MAX) {
+                    let mut doc = Document::new(n);
+                    let mut has_fields = false;
+                    for (attr_idx, fields) in &resolved_attrs {
+                        let value = self.get_node_attribute_by_idx(NodeId(n), *attr_idx);
+                        if let Some(value) = value {
+                            for field in fields {
+                                doc.set(field, &value);
+                            }
+                            has_fields = true;
+                        }
+                    }
+                    if has_fields {
+                        batch.push(doc);
+                    }
+                }
+                if !batch.is_empty() {
+                    let mut add_docs = HashMap::new();
+                    add_docs.insert(label.clone(), batch);
+                    self.node_indexer.commit(&mut add_docs, &mut HashMap::new());
+                }
+                self.node_indexer.enable(&label);
+            }
+        }
+    }
+
+    /// Get node attribute names.
+    pub fn get_node_attribute_names(&self) -> Vec<Arc<String>> {
+        self.node_attrs.attrs_name.iter().cloned().collect()
+    }
+
+    /// Get relationship attribute names.
+    pub fn get_relationship_attribute_names(&self) -> Vec<Arc<String>> {
+        self.relationship_attrs.attrs_name.iter().cloned().collect()
+    }
+
+    /// Register a node attribute name (get-or-create).
+    pub fn add_node_attribute_name(
+        &mut self,
+        name: &str,
+    ) {
+        let arc = Arc::new(name.to_string());
+        if self.node_attrs.attrs_name.get_index_of(&arc).is_none() {
+            self.node_attrs.attrs_name.insert(arc);
+        }
+    }
+
+    /// Register a relationship attribute name (get-or-create).
+    pub fn add_rel_attribute_name(
+        &mut self,
+        name: &str,
+    ) {
+        let arc = Arc::new(name.to_string());
+        if self
+            .relationship_attrs
+            .attrs_name
+            .get_index_of(&arc)
+            .is_none()
+        {
+            self.relationship_attrs.attrs_name.insert(arc);
+        }
+    }
+
+    /// Build the unified global attribute list (node attrs ∪ relationship attrs, in order).
+    pub fn build_global_attrs(&self) -> Vec<Arc<String>> {
+        let mut attrs = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for name in self.node_attrs.attrs_name.iter() {
+            if seen.insert(name.clone()) {
+                attrs.push(name.clone());
+            }
+        }
+        for name in self.relationship_attrs.attrs_name.iter() {
+            if seen.insert(name.clone()) {
+                attrs.push(name.clone());
+            }
+        }
+        attrs
     }
 }

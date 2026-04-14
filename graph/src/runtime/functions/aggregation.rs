@@ -257,6 +257,7 @@ pub fn register(funcs: &mut Functions) {
         "percentileCont",
         percentile,
         false,
+        false,
         vec![
             Type::Union(vec![Type::Int, Type::Float, Type::Null]),
             Type::Union(vec![Type::Int, Type::Float]),
@@ -306,6 +307,7 @@ pub fn register(funcs: &mut Functions) {
     funcs.add(
         "stDevP",
         stdev,
+        false,
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Aggregation {
