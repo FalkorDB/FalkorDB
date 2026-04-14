@@ -363,18 +363,12 @@ static void _QueryCtx_ThreadSafeContextLock
 	// implicates we're running on a worker thread and not on Redis main thread
 	if (ctx->global_exec_ctx.bc) {
 		RedisModule_ThreadSafeContextLock (ctx->global_exec_ctx.redis_ctx) ;
-	} else {
-		// no blocked client, most likely we're running on Redis main thread
-		// ASSERT(pthread_equal(Globals_Get_MainThreadId(), pthread_self()) != 0);
-
-		// it likely we're here because of an execution of a write query
-		// e.g. loading from AOF
-		// to alow Redis to reply to PING requests we should yield execution
-		// giving Redis the opportunity to process commands
-		// see RedisModule_Yield docs
-		RedisModule_Yield (ctx->global_exec_ctx.redis_ctx,
-				REDISMODULE_YIELD_FLAG_CLIENTS, NULL) ;
 	}
+	// NOTE: RedisModule_Yield must NOT be called here when bc == NULL.
+	// Calling it from the main thread (e.g. replicated/AOF write queries)
+	// triggers a Redis 8 assertion: `server.blocked_last_cron` must be true
+	// inside whileBlockedCron(), which is not the case in this code path.
+	// See: https://github.com/redis/redis/issues/14266
 }
 
 static void _QueryCtx_ThreadSafeContextUnlock
