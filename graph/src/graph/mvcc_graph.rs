@@ -89,6 +89,16 @@ impl MvccGraph {
         }
     }
 
+    /// Create an `MvccGraph` from an already-constructed `Graph`.
+    /// Used by the RDB load path.
+    #[must_use]
+    pub fn from_graph(graph: Graph) -> Self {
+        Self {
+            graph: Arc::new(AtomicRefCell::new(graph)),
+            write: AtomicBool::new(false),
+        }
+    }
+
     #[must_use]
     pub fn read(&self) -> Arc<AtomicRefCell<Graph>> {
         self.graph.clone()
@@ -114,6 +124,28 @@ impl MvccGraph {
         new_graph: Arc<AtomicRefCell<Graph>>,
     ) {
         debug_assert_eq!(self.graph.borrow().version + 1, new_graph.borrow().version);
+
+        // Check if schema changed (new labels, relationship types, or attributes)
+        let old_labels = self.graph.borrow().get_labels().len();
+        let old_types = self.graph.borrow().get_types().len();
+        let old_node_attrs = self.graph.borrow().get_node_attribute_names().len();
+        let old_rel_attrs = self.graph.borrow().get_relationship_attribute_names().len();
+
+        let new_labels = new_graph.borrow().get_labels().len();
+        let new_types = new_graph.borrow().get_types().len();
+        let new_node_attrs = new_graph.borrow().get_node_attribute_names().len();
+        let new_rel_attrs = new_graph.borrow().get_relationship_attribute_names().len();
+
+        // If schema changed, ensure schema_version is incremented
+        if (old_labels != new_labels
+            || old_types != new_types
+            || old_node_attrs != new_node_attrs
+            || old_rel_attrs != new_rel_attrs)
+            && new_graph.borrow().schema_version == self.graph.borrow().schema_version
+        {
+            new_graph.borrow_mut().schema_version += 1;
+        }
+
         new_graph.borrow_mut().set_indexer_graph(new_graph.clone());
         self.graph = new_graph;
         self.write.store(false, Ordering::Release);
