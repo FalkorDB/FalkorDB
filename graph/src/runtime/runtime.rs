@@ -63,6 +63,7 @@ use crate::{
     },
 };
 use atomic_refcell::AtomicRefCell;
+use chrono::{DateTime, Utc};
 use once_cell::unsync::Lazy;
 use orx_tree::{Bfs, Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
 use roaring::RoaringTreemap;
@@ -144,6 +145,10 @@ pub struct Runtime<'a> {
     pub env_pool: &'a Pool<Value>,
     /// Maximum number of result rows to return. Negative means unlimited.
     pub result_set_size: i64,
+    /// Timestamp captured at the start of the transaction/query.
+    /// Used by `date.transaction()`, `localtime.transaction()`, and `localdatetime.transaction()`
+    /// so every call in the same transaction returns the same value.
+    pub transaction_timestamp: DateTime<Utc>,
 }
 
 pub trait GetVariables {
@@ -343,6 +348,7 @@ impl<'a> Runtime<'a> {
             merge_pattern_cache: RefCell::new(HashMap::new()),
             env_pool,
             result_set_size,
+            transaction_timestamp: Utc::now(),
         }
     }
 
