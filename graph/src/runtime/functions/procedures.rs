@@ -127,14 +127,17 @@ pub fn register(funcs: &mut Functions) {
                          }| {
                             let mut map = OrderMap::default();
                             map.insert(Arc::new(String::from("label")), Value::String(label));
+                            let mut sorted_keys: Vec<_> = fields.keys().cloned().collect();
+                            sorted_keys.sort();
                             map.insert(
                                 Arc::new(String::from("properties")),
-                                Value::List(Arc::new(fields.keys().map(|f| Value::String(f.clone())).collect())),
+                                Value::List(Arc::new(sorted_keys.iter().map(|f| Value::String(f.clone())).collect())),
                             );
                             let mut types_map = OrderMap::default();
-                            for (attr, fields) in fields {
+                            for attr in &sorted_keys {
+                                let field_list = &fields[attr];
                                 let mut types = thin_vec![];
-                                for field in fields {
+                                for field in field_list {
                                     match field.ty {
                                         IndexType::Range => {
                                             types.push(Value::String(Arc::new(String::from("RANGE"))));
@@ -147,7 +150,7 @@ pub fn register(funcs: &mut Functions) {
                                         }
                                     }
                                 }
-                                types_map.insert(attr, Value::List(Arc::new(types)));
+                                types_map.insert(attr.clone(), Value::List(Arc::new(types)));
                             }
                             map.insert(Arc::new(String::from("types")), Value::Map(Arc::new(types_map)));
                             map.insert(Arc::new(String::from("options")), Value::Null);
