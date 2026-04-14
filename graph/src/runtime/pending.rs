@@ -709,8 +709,8 @@ impl Pending {
         }
         if !self.deleted_relationships.is_empty() {
             stats.borrow_mut().relationships_deleted += self.deleted_relationships.len();
-            let rels = std::mem::take(&mut self.deleted_relationships);
-            g.borrow_mut().delete_relationships(rels)?;
+            g.borrow_mut()
+                .delete_relationships(&self.deleted_relationships)?;
         }
         // Commit attribute changes and indexes after all deletions have been
         // applied. This ensures relationship_attrs.remove() pending_deletes

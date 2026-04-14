@@ -1427,7 +1427,7 @@ impl Graph {
 
     pub fn delete_relationships(
         &mut self,
-        rels: HashMap<RelationshipId, (NodeId, NodeId)>,
+        rels: &HashMap<RelationshipId, (NodeId, NodeId)>,
     ) -> Result<(), String> {
         self.deleted_relationships
             .extend(rels.keys().map(|id| id.0));
@@ -1438,7 +1438,7 @@ impl Graph {
             rels.values().map(|(src, dst)| (src.0, dst.0)).collect();
 
         for (type_id, rels) in &rels
-            .into_iter()
+            .iter()
             .map(|(id, (src, dst))| (id.0, src.0, dst.0))
             .into_group_map_by(|(id, _, _)| self.get_relationship_type_id(RelationshipId(*id)))
         {

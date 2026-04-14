@@ -230,7 +230,7 @@ fn apply_effects(
                 let rel = RelationshipId::from(rel_id);
                 let mut rels = HashMap::new();
                 rels.insert(rel, (NodeId::from(src_id), NodeId::from(dst_id)));
-                g.delete_relationships(rels)?;
+                g.delete_relationships(&rels)?;
             }
 
             EFFECT_ADD_SCHEMA => {
