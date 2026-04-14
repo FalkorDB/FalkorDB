@@ -54,6 +54,7 @@
 pub mod lagraph_bindings;
 pub mod lagraphx_bindings;
 pub mod matrix;
+pub mod serialization;
 pub mod tensor;
 pub mod vector;
 pub mod versioned_matrix;

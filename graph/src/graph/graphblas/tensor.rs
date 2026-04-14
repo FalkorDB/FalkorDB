@@ -56,7 +56,9 @@
 //! with different amounts and dates.
 
 use super::{
-    matrix::{Dup, New, Remove, Set, Size},
+    matrix::{Dup, Matrix, New, Remove, Set, Size, Transpose},
+    serialization::{Decode, Encode, Reader, Writer},
+    vector::Vector,
     versioned_matrix::{self, VersionedMatrix},
 };
 
@@ -115,7 +117,7 @@ impl Tensor {
 
     pub fn remove_all(
         &mut self,
-        rels: &Vec<(u64, u64, u64)>,
+        rels: &[(u64, u64, u64)],
     ) {
         for (id, src, dest) in rels {
             self.me.remove(src << 32 | dest, *id);
@@ -140,6 +142,11 @@ impl Tensor {
     ) {
         self.m.resize(nrows, ncols);
         self.mt.resize(ncols, nrows);
+    }
+
+    /// Rebuild the backward matrix as the transpose of the forward matrix.
+    pub fn rebuild_backward(&mut self) {
+        self.mt = self.m.transpose();
     }
 
     #[must_use]
@@ -172,6 +179,12 @@ impl Tensor {
         Iter::new(self, min_row, max_row, transpose)
     }
 
+    /// Whether this tensor has any (src, dst) pair with more than one edge.
+    #[must_use]
+    pub fn has_multi_edge(&self) -> bool {
+        self.m.nvals() != self.me.nvals()
+    }
+
     pub fn wait(&mut self) {
         self.m.wait();
         self.mt.wait();
@@ -181,6 +194,137 @@ impl Tensor {
     #[must_use]
     pub fn memory_usage(&self) -> usize {
         self.m.memory_usage() + self.mt.memory_usage() + self.me.memory_usage()
+    }
+}
+
+/// MSB flag used by C FalkorDB to indicate multi-edge entries in the
+/// UINT64 forward matrix.
+const MSB_MASK: u64 = 1u64 << 63;
+
+impl Encode<19> for Tensor {
+    fn encode(
+        &self,
+        w: &mut dyn Writer,
+    ) {
+        // Build a UINT64 forward matrix for C compatibility.
+        // Single-edge (src,dst): cell = edge_id
+        // Multi-edge (src,dst): cell = edge_count | MSB_MASK
+        let (m, dp) = self.m.extract_m_dp();
+
+        let mut uint64_m = Matrix::new_uint64(m.nrows(), m.ncols());
+        let mut uint64_dp = Matrix::new_uint64(dp.nrows(), dp.ncols());
+        // Track multi-edge (src, dst) pairs per sub-matrix for tensor section
+        let mut multi_edge_m: Vec<(u64, u64)> = Vec::new();
+        let mut multi_edge_dp: Vec<(u64, u64)> = Vec::new();
+
+        for (matrix, uint64_matrix, multi_edges) in [
+            (&m, &mut uint64_m, &mut multi_edge_m),
+            (&dp, &mut uint64_dp, &mut multi_edge_dp),
+        ] {
+            for (src, dst) in matrix.iter(0, u64::MAX) {
+                let compound_key = (src << 32) | dst;
+                let mut edge_ids: Vec<u64> = self
+                    .me
+                    .iter(compound_key, compound_key)
+                    .map(|(_, edge_id)| edge_id)
+                    .collect();
+
+                if edge_ids.len() == 1 {
+                    // Single edge: store edge ID directly
+                    uint64_matrix.set_uint64(src, dst, edge_ids[0]);
+                } else {
+                    // Multi-edge: store count with MSB set
+                    uint64_matrix.set_uint64(src, dst, edge_ids.len() as u64 | MSB_MASK);
+                    multi_edges.push((src, dst));
+                }
+            }
+        }
+
+        // Encode the UINT64 forward matrix (as a VersionedMatrix: m, dp, dm)
+        let dm = Matrix::new_uint64(m.nrows(), m.ncols()); // empty delta-minus
+        uint64_m.encode(w);
+        uint64_dp.encode(w);
+        dm.encode(w);
+
+        let total = self.edge_count();
+        w.write_unsigned(total);
+
+        if total == 0 {
+            return;
+        }
+
+        // Tensor section: only multi-edge pairs
+        let mut v = Vector::<u64>::new(GrB_INDEX_MAX);
+        for (multi_edges, _matrix) in [(&multi_edge_m, &m), (&multi_edge_dp, &dp)] {
+            w.write_unsigned(multi_edges.len() as u64);
+            for &(src, dst) in multi_edges {
+                let compound_key = (src << 32) | dst;
+                v.clear();
+
+                for (idx, edge_id) in self
+                    .me
+                    .iter(compound_key, compound_key)
+                    .map(|(_, edge_id)| edge_id)
+                    .enumerate()
+                {
+                    v.set(idx as u64, edge_id);
+                }
+
+                w.write_unsigned(src);
+                w.write_unsigned(dst);
+                v.encode(w);
+            }
+        }
+    }
+}
+
+impl Decode<19> for Tensor {
+    fn decode(r: &mut dyn Reader) -> Result<Self, String> {
+        let forward = VersionedMatrix::decode(r)?;
+        let mut edges = VersionedMatrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
+
+        // C FalkorDB stores edge IDs as UINT64 values in the forward matrix.
+        // Single-edge entries (MSB not set) hold the edge ID directly.
+        // Multi-edge entries (MSB set) are stored in the tensor section below.
+        // Iterate entries, extract single-edge IDs, and rebuild as BOOL.
+        let forward = if forward.is_uint64() {
+            let mut bool_forward = VersionedMatrix::new(forward.nrows(), forward.ncols());
+            for (src, dst, value) in forward.uint64_iter() {
+                bool_forward.set(src, dst, true);
+                if value & MSB_MASK == 0 {
+                    // Single-edge: value is the edge ID
+                    let compound_key = (src << 32) | dst;
+                    edges.set(compound_key, value, true);
+                }
+            }
+            bool_forward
+        } else {
+            forward
+        };
+
+        let total_tensor_count = r.read_unsigned()?;
+        if total_tensor_count > 0 {
+            // TM tensors (base), then TDP tensors (delta-plus)
+            for _ in 0..2 {
+                let count = r.read_unsigned()?;
+                for _ in 0..count {
+                    let src = r.read_unsigned()?;
+                    let dst = r.read_unsigned()?;
+                    let v = Vector::<u64>::decode(r)?;
+                    let compound_key = (src << 32) | dst;
+                    for (_, edge_id) in v.iter() {
+                        edges.set(compound_key, edge_id, true);
+                    }
+                }
+            }
+        }
+
+        let backward = VersionedMatrix::new(0, 0);
+        Ok(Self {
+            m: forward,
+            mt: backward,
+            me: edges,
+        })
     }
 }
 

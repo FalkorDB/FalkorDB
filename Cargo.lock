@@ -394,7 +394,9 @@ dependencies = [
  "parking_lot",
  "redis-module",
  "redis-module-macros",
+ "roaring",
  "ryu",
+ "thin-vec",
 ]
 
 [[package]]
