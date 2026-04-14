@@ -250,10 +250,10 @@ impl AttributeStore {
     fn populate_cache_from_fjall(
         &self,
         entity_id: u64,
-    ) -> Vec<(u16, Value)> {
+    ) -> Arc<Vec<(u16, Value)>> {
         // If this entity is pending full deletion, return empty regardless of fjall state.
         if self.pending_deletes.contains(entity_id) {
-            return Vec::new();
+            return Arc::new(Vec::new());
         }
         let prefix = entity_id.to_be_bytes();
         let attrs: Vec<(u16, Value)> = self
@@ -271,7 +271,7 @@ impl AttributeStore {
         let _ = self
             .cache
             .insert_entity_if_older(entity_id, attrs.clone(), self.version);
-        attrs
+        Arc::new(attrs)
     }
 
     // ---- read path (cache → fjall) --------------------------------------
@@ -340,14 +340,18 @@ impl AttributeStore {
         // Try cache first.
         let cached = self.cache.get_entity(key, self.version);
         let attrs = cached.unwrap_or_else(|| self.populate_cache_from_fjall(key));
-        attrs.into_iter().filter_map(move |(idx, _)| {
-            let i = idx as usize;
-            if i < self.attrs_name.len() {
-                Some(self.attrs_name[i].clone())
-            } else {
-                None
-            }
-        })
+        attrs
+            .iter()
+            .filter_map(move |(idx, _)| {
+                let i = *idx as usize;
+                if i < self.attrs_name.len() {
+                    Some(self.attrs_name[i].clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
     pub fn get_all_attrs(
@@ -356,23 +360,27 @@ impl AttributeStore {
     ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
         let cached = self.cache.get_entity(key, self.version);
         let attrs = cached.unwrap_or_else(|| self.populate_cache_from_fjall(key));
-        attrs.into_iter().filter_map(move |(idx, value)| {
-            let i = idx as usize;
-            if i < self.attrs_name.len() {
-                Some((self.attrs_name[i].clone(), value))
-            } else {
-                None
-            }
-        })
+        attrs
+            .iter()
+            .filter_map(move |(idx, value)| {
+                let i = *idx as usize;
+                if i < self.attrs_name.len() {
+                    Some((self.attrs_name[i].clone(), value.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
     pub fn get_all_attrs_by_id(
         &self,
         key: u64,
-    ) -> impl Iterator<Item = (u16, Value)> + '_ {
-        let cached = self.cache.get_entity(key, self.version);
-        let attrs = cached.unwrap_or_else(|| self.populate_cache_from_fjall(key));
-        attrs.into_iter()
+    ) -> Arc<Vec<(u16, Value)>> {
+        self.cache
+            .get_entity(key, self.version)
+            .unwrap_or_else(|| self.populate_cache_from_fjall(key))
     }
 
     // ---- write path (cache only) ----------------------------------------
@@ -473,7 +481,7 @@ impl AttributeStore {
             }
 
             // Merge: start from current, apply overwrites, remove nulls.
-            let mut merged: Vec<(u16, Value)> = current;
+            let mut merged: Vec<(u16, Value)> = (*current).clone();
             for (idx, value) in new_entries {
                 match merged.binary_search_by_key(&idx, |(i, _)| *i) {
                     Ok(pos) => merged[pos].1 = value,
@@ -564,7 +572,7 @@ impl AttributeStore {
                 }
             }
             // Then insert the current attribute set.
-            for &(attr_idx, ref value) in attrs {
+            for &(attr_idx, ref value) in attrs.iter() {
                 let composite_key = make_key(*entity_id, attr_idx);
                 batch.insert(self.keyspace(), composite_key, value.to_bytes());
             }
@@ -573,7 +581,7 @@ impl AttributeStore {
             // Re-insert entries to prevent data loss on commit failure.
             for (entity_id, attrs) in dirty_entries {
                 self.cache
-                    .insert_entity(entity_id, attrs, self.version, true);
+                    .insert_entity(entity_id, (*attrs).clone(), self.version, true);
             }
             e.to_string()
         })?;
@@ -604,7 +612,7 @@ impl AttributeStore {
             // Safe to flush: these are pre-existing dirty entries from prior
             // transactions, not from the active one.
             let mut batch = self.database.batch();
-            for &(attr_idx, ref value) in &cached {
+            for &(attr_idx, ref value) in cached.iter() {
                 let composite_key = make_key(entity_id, attr_idx);
                 batch.insert(self.keyspace(), composite_key, value.to_bytes());
             }

@@ -1456,7 +1456,7 @@ impl Graph {
     pub fn get_node_all_attrs_by_id(
         &self,
         id: NodeId,
-    ) -> impl Iterator<Item = (u16, Value)> + '_ {
+    ) -> Arc<Vec<(u16, Value)>> {
         self.node_attrs.get_all_attrs_by_id(id.0)
     }
 
@@ -1478,7 +1478,7 @@ impl Graph {
     pub fn get_relationship_all_attrs_by_id(
         &self,
         id: RelationshipId,
-    ) -> impl Iterator<Item = (u16, Value)> + '_ {
+    ) -> Arc<Vec<(u16, Value)>> {
         self.relationship_attrs.get_all_attrs_by_id(id.0)
     }
 
@@ -1872,7 +1872,7 @@ impl Graph {
         entity_id: u64,
     ) -> usize {
         let mut sz: usize = 0;
-        for (_, val) in store.get_all_attrs_by_id(entity_id) {
+        for (_, val) in store.get_all_attrs_by_id(entity_id).iter() {
             sz += std::mem::size_of::<u16>() + std::mem::size_of::<Value>() + val.heap_size();
         }
         sz
