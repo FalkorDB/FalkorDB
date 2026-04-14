@@ -244,6 +244,113 @@ pub fn subtree_contains(
         .any(|n| predicate(n.data()))
 }
 
+/// Returns true if a QueryExpr tree contains any non-deterministic function call.
+fn expr_has_non_deterministic(expr: &DynTree<ExprIR<Variable>>) -> bool {
+    expr.root()
+        .walk_with(&mut Traversal.bfs().over_nodes())
+        .any(|n| matches!(n.data(), ExprIR::FuncInvocation(func) if func.non_deterministic))
+}
+
+/// Returns true if a SetItem references any non-deterministic expression.
+fn set_item_has_non_deterministic(item: &SetItem<Arc<String>, Variable>) -> bool {
+    match item {
+        SetItem::Attribute { target, value, .. } => {
+            expr_has_non_deterministic(target) || expr_has_non_deterministic(value)
+        }
+        SetItem::Label { .. } => false,
+    }
+}
+
+/// Returns true if a QueryGraph (CREATE/MERGE pattern) contains non-deterministic expressions.
+fn query_graph_has_non_deterministic(qg: &QueryGraph<Arc<String>, Arc<String>, Variable>) -> bool {
+    for node in qg.nodes() {
+        if expr_has_non_deterministic(&node.attrs) {
+            return true;
+        }
+    }
+    for rel in qg.relationships() {
+        if expr_has_non_deterministic(&rel.attrs) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Returns true if an IndexQuery tree contains any non-deterministic function call.
+fn index_query_has_non_deterministic(query: &IndexQuery<QueryExpr<Variable>>) -> bool {
+    match query {
+        IndexQuery::Range { min, max, .. } => {
+            min.as_ref().is_some_and(|e| expr_has_non_deterministic(e))
+                || max.as_ref().is_some_and(|e| expr_has_non_deterministic(e))
+        }
+        IndexQuery::And(queries) | IndexQuery::Or(queries) => {
+            queries.iter().any(index_query_has_non_deterministic)
+        }
+        IndexQuery::Point { point, radius, .. } => {
+            expr_has_non_deterministic(point) || expr_has_non_deterministic(radius)
+        }
+        IndexQuery::InList { list, .. } => expr_has_non_deterministic(list),
+        IndexQuery::Equal { value, .. } | IndexQuery::ArrayContains { value, .. } => {
+            expr_has_non_deterministic(value)
+        }
+    }
+}
+
+/// Returns true if the execution plan contains any non-deterministic function call.
+#[must_use]
+pub fn plan_is_non_deterministic(plan: &DynTree<IR>) -> bool {
+    plan.root()
+        .walk_with(&mut Traversal.bfs().over_nodes())
+        .any(|node| match node.data() {
+            IR::Create(qg) => query_graph_has_non_deterministic(qg),
+            IR::Merge {
+                pattern,
+                on_create,
+                on_match,
+            } => {
+                query_graph_has_non_deterministic(pattern)
+                    || on_create.iter().any(set_item_has_non_deterministic)
+                    || on_match.iter().any(set_item_has_non_deterministic)
+            }
+            IR::Set(items) => items.iter().any(set_item_has_non_deterministic),
+            IR::Remove(exprs) | IR::Delete { exprs, .. } => {
+                exprs.iter().any(|e| expr_has_non_deterministic(e))
+            }
+            IR::Unwind { expr, .. }
+            | IR::Filter(expr)
+            | IR::Skip(expr)
+            | IR::Limit(expr)
+            | IR::ForEach { list: expr, .. } => expr_has_non_deterministic(expr),
+            IR::Sort(exprs) => exprs.iter().any(|(e, _)| expr_has_non_deterministic(e)),
+            IR::Project { exprs, .. } => exprs.iter().any(|(_, e)| expr_has_non_deterministic(e)),
+            IR::Aggregate {
+                keys, aggregations, ..
+            } => {
+                keys.iter().any(|(_, e)| expr_has_non_deterministic(e))
+                    || aggregations
+                        .iter()
+                        .any(|(_, e)| expr_has_non_deterministic(e))
+            }
+            IR::ProcedureCall { args, .. } => args.iter().any(|e| expr_has_non_deterministic(e)),
+            IR::LoadCsv {
+                file_path,
+                delimiter,
+                ..
+            } => expr_has_non_deterministic(file_path) || expr_has_non_deterministic(delimiter),
+            IR::ValueHashJoin { lhs_exp, rhs_exp } => {
+                expr_has_non_deterministic(lhs_exp) || expr_has_non_deterministic(rhs_exp)
+            }
+            IR::NodeByIndexScan { query, .. } => index_query_has_non_deterministic(query),
+            IR::NodeByFulltextScan { label, query, .. } => {
+                expr_has_non_deterministic(label) || expr_has_non_deterministic(query)
+            }
+            IR::NodeByLabelAndIdScan { filter, .. } | IR::NodeByIdSeek { filter, .. } => {
+                filter.iter().any(|(e, _)| expr_has_non_deterministic(e))
+            }
+            _ => false,
+        })
+}
+
 /// Formats a relationship for CondTraverse/ExpandInto display.
 /// Shows node labels and hides anonymous edge aliases.
 fn fmt_rel_with_labels(rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>) -> String {

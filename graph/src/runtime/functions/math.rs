@@ -139,6 +139,7 @@ pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "randomUUID",
         args: [],
         ret: Type::String,
+        non_deterministic,
         fn random_uuid(_, _args) {
             // Generate 16 random bytes (128 bits)
             let mut rng = rand::rng();
@@ -184,6 +185,7 @@ pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "rand",
         args: [],
         ret: Type::Float,
+        non_deterministic,
         #[allow(clippy::needless_pass_by_value)]
         fn rand(_, args) {
             debug_assert!(args.is_empty());
