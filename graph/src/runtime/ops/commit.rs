@@ -70,16 +70,6 @@ impl<'a> Iterator for CommitOp<'a> {
                     None => break,
                 }
             }
-            // Build effects before commit() so we read pending data.
-            let mut n_effects = 0u64;
-            {
-                let pending = self.runtime.pending.borrow();
-                if pending.effects_count() > 0 {
-                    let mut buf_ref = self.runtime.effects_buffer.borrow_mut();
-                    let buf = buf_ref.get_or_insert_with(Vec::new);
-                    n_effects = pending.build_effects_buffer(&self.runtime.g, buf);
-                }
-            }
             if let Err(e) = self
                 .runtime
                 .pending
@@ -88,10 +78,18 @@ impl<'a> Iterator for CommitOp<'a> {
             {
                 return Some(Err(e));
             }
-            // Commit succeeded — finalize effects and clear pending state.
-            self.runtime
-                .effects_count
-                .set(self.runtime.effects_count.get() + n_effects);
+            // Commit succeeded — build effects buffer from pending data, then clear.
+            {
+                let pending = self.runtime.pending.borrow();
+                if pending.effects_count() > 0 {
+                    let mut buf_ref = self.runtime.effects_buffer.borrow_mut();
+                    let buf = buf_ref.get_or_insert_with(Vec::new);
+                    let n_effects = pending.build_effects_buffer(&self.runtime.g, buf);
+                    self.runtime
+                        .effects_count
+                        .set(self.runtime.effects_count.get() + n_effects);
+                }
+            }
             self.runtime.pending.borrow_mut().clear();
             // Update schema baseline so the next commit in this query only
             // emits newly added schema entries.
