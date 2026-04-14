@@ -689,12 +689,12 @@ class testIndexScanFlow():
         # create a node
         self.graph.query("CREATE (:User {loc:point({latitude:40.4, longitude:30.3})})")
 
-        # invalid query
+        # invalid query - distance() receives only 1 argument instead of 2
         try:
-            self.graph.query("MATCH (u:User) WHERE distance(point({latitude:40.5, longitude: 30.4}, u.loc)) < 20000 RETURN u")
+            self.graph.query("MATCH (u:User) WHERE distance(u.loc) < 20000 RETURN u")
             self.env.assertTrue(False)
         except redis.ResponseError as e:
-            self.env.assertContains("Received 2 arguments to function 'point', expected at most 1", str(e))
+            self.env.assertContains("Received 1 arguments to function 'distance', expected at least 2", str(e))
 
     def test_22_pickup_on_index_creation(self):
         g = Graph(self.env.getConnection(), 'late_index_creation')
