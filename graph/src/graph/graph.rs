@@ -73,10 +73,10 @@ use std::{
 };
 
 use atomic_refcell::AtomicRefCell;
-use fjall::Database;
+
 use itertools::Itertools;
 use lru::LruCache;
-use once_cell::sync::OnceCell;
+
 use orx_tree::DynTree;
 use parking_lot::Mutex;
 use roaring::RoaringTreemap;
@@ -219,6 +219,8 @@ pub struct MemoryUsageReport {
 /// The Graph is `Send + Sync` but not internally synchronized. Use [`MvccGraph`]
 /// for concurrent access with proper read/write isolation.
 pub struct Graph {
+    /// Graph name (Redis key name)
+    name: String,
     /// Maximum node capacity (for matrix sizing)
     node_cap: u64,
     /// Maximum relationship capacity (for matrix sizing)
@@ -392,8 +394,6 @@ fn drop_index_bg(
     );
 }
 
-static DATABASE: OnceCell<Database> = OnceCell::new();
-
 impl Graph {
     #[must_use]
     pub fn new(
@@ -403,15 +403,8 @@ impl Graph {
         version: u64,
         name: &str,
     ) -> Self {
-        let db = DATABASE.get_or_init(|| {
-            Database::builder(format!("./attrs/{}", std::process::id()))
-                .temporary(true)
-                .manual_journal_persist(true)
-                .cache_size(128 * 1_024 * 1_024)
-                .open()
-                .expect("failed to open fjall database")
-        });
         Self {
+            name: name.to_string(),
             node_cap: n,
             relationship_cap: e,
             reserved_node_count: 0,
@@ -427,12 +420,8 @@ impl Graph {
             all_nodes_matrix: VersionedMatrix::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
-            node_attrs: AttributeStore::new(db.clone(), &format!("{name}/nodes"), version),
-            relationship_attrs: AttributeStore::new(
-                db.clone(),
-                &format!("{name}/relationships"),
-                version,
-            ),
+            node_attrs: AttributeStore::new(&format!("{name}/nodes"), version),
+            relationship_attrs: AttributeStore::new(&format!("{name}/relationships"), version),
             node_indexer: Indexer::default(),
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
@@ -450,6 +439,7 @@ impl Graph {
         let node_attrs = self.node_attrs.new_version(self.version + 1);
         let relationship_attrs = self.relationship_attrs.new_version(self.version + 1);
         Self {
+            name: self.name.clone(),
             node_cap: self.node_cap,
             relationship_cap: self.relationship_cap,
             reserved_node_count: 0,
@@ -477,6 +467,11 @@ impl Graph {
             cache: self.cache.clone(),
             version: self.version + 1,
         }
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     #[must_use]
