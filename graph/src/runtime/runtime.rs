@@ -67,7 +67,13 @@ use chrono::{DateTime, Utc};
 use once_cell::unsync::Lazy;
 use orx_tree::{Bfs, Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
 use roaring::RoaringTreemap;
-use std::{cell::RefCell, collections::HashMap, fmt::Debug, sync::Arc, time::Instant};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    fmt::Debug,
+    sync::Arc,
+    time::Instant,
+};
 
 pub use super::eval::ValueIter;
 
@@ -145,6 +151,10 @@ pub struct Runtime<'a> {
     pub env_pool: &'a Pool<Value>,
     /// Maximum number of result rows to return. Negative means unlimited.
     pub result_set_size: i64,
+    /// Effects buffer built before commit, for replication.
+    pub effects_buffer: RefCell<Option<Vec<u8>>>,
+    /// Total number of effect records across all commits in this query.
+    pub effects_count: Cell<u64>,
     /// Timestamp captured at the start of the transaction/query.
     /// Used by `date.transaction()`, `localtime.transaction()`, and `localdatetime.transaction()`
     /// so every call in the same transaction returns the same value.
@@ -331,11 +341,15 @@ impl<'a> Runtime<'a> {
         result_set_size: i64,
     ) -> Self {
         let return_names = plan.root().get_return_names();
+        let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
+        if write {
+            pending.borrow_mut().set_schema_baseline(&g);
+        }
         Self {
             parameters,
             g,
             write,
-            pending: Lazy::new(|| RefCell::new(Pending::new())),
+            pending,
             stats: RefCell::new(QueryStatistics::default()),
             plan,
             return_names,
@@ -348,6 +362,8 @@ impl<'a> Runtime<'a> {
             merge_pattern_cache: RefCell::new(HashMap::new()),
             env_pool,
             result_set_size,
+            effects_buffer: RefCell::new(None),
+            effects_count: Cell::new(0),
             transaction_timestamp: Utc::now(),
         }
     }
