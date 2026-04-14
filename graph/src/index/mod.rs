@@ -770,9 +770,11 @@ impl Index {
     }
 
     /// Check if an Int value would lose precision when cast to f64.
-    /// Uses the same bitmask as C FalkorDB's RediSearch INT64 workaround.
+    /// Uses the same bitmask as C FalkorDB's RediSearch INT64 workaround,
+    /// applied to the value's magnitude so negative integers are handled
+    /// correctly.
     pub fn int_loses_f64_precision(i: i64) -> bool {
-        (i as u64) & 0x7FF0_0000_0000_0000 != 0
+        i.unsigned_abs() & 0x7FF0_0000_0000_0000 != 0
     }
 
     /// Build a RediSearch numeric range node for numeric values.
@@ -958,9 +960,13 @@ impl Index {
                 let intersect = unsafe { RediSearch_CreateIntersectNode(self.rs_idx, 0) };
                 for child in children {
                     let child_node = self.build_query_node(child);
-                    if !child_node.is_null() {
-                        unsafe { RediSearch_QueryNodeAddChild(intersect, child_node) };
+                    if child_node.is_null() {
+                        // If any AND child can't be converted, the whole AND
+                        // is unsatisfiable — return null to avoid broadening
+                        // the query by silently dropping a conjunct.
+                        return std::ptr::null_mut();
                     }
+                    unsafe { RediSearch_QueryNodeAddChild(intersect, child_node) };
                 }
                 intersect
             }
