@@ -672,7 +672,7 @@ impl Pending {
                 + count_properties(&self.existing_nodes_attrs);
             let mut g = g.borrow_mut();
             if !self.new_nodes_attrs.is_empty() {
-                g.import_node_attrs(&self.new_nodes_attrs);
+                g.import_node_attrs(&self.new_nodes_attrs, &mut self.index_add_docs);
             }
             if !self.existing_nodes_attrs.is_empty() {
                 stats.borrow_mut().properties_removed +=
