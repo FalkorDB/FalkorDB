@@ -13,7 +13,7 @@ RUN apt install -y git make cmake curl zlib1g zlib1g-dev libpolly-22-dev libomp-
 
 RUN python3 -m venv venv
 
-RUN venv/bin/pip install behave falkordb hypothesis pytest pytest-benchmark RLTest
+RUN venv/bin/pip install behave falkordb falkordb-bulk-loader hypothesis pytest pytest-benchmark RLTest
 
 RUN git clone --branch dev2 --single-branch https://github.com/DrTimothyAldenDavis/GraphBLAS.git
 # RUN git clone --branch v10.3.1 --single-branch https://github.com/DrTimothyAldenDavis/GraphBLAS.git
