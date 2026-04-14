@@ -264,7 +264,8 @@ impl Runtime<'_> {
                             }
                         }
                         Value::Relationship(target_rel) => {
-                            if self.g.borrow().is_relationship_deleted(target_rel.0)
+                            if (self.g.borrow().is_relationship_deleted(target_rel.0)
+                                && !self.pending.borrow().is_relationship_created(target_rel.0))
                                 || self.pending.borrow().is_relationship_deleted(
                                     target_rel.0,
                                     target_rel.1,
