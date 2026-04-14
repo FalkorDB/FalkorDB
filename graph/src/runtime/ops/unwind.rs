@@ -16,19 +16,18 @@
 //!  └────────────────┘
 //! ```
 //!
-//! Large lists are expanded lazily: the operator stores a cursor into the
-//! current list and only materializes `Env` rows in `BATCH_SIZE` chunks,
-//! preventing memory blow-up for queries like `UNWIND range(1, 20000000)`.
+//! Large lists are expanded lazily: the operator uses `ValueIter` (which can
+//! be a lazy range iterator) and only materializes `Env` rows in `BATCH_SIZE`
+//! chunks, preventing memory blow-up for queries like
+//! `UNWIND range(1, 20000000)`.
 //! Non-list values are treated as single-element results; NULL values
 //! produce no output rows.
 
 use std::collections::VecDeque;
-use std::sync::Arc;
-use thin_vec::ThinVec;
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
-use crate::runtime::eval::ExprEval;
+use crate::runtime::eval::{ExprEval, ValueIter};
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp},
     env::Env,
@@ -38,17 +37,15 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
-/// State for lazily expanding a single list across multiple `next()` calls.
-struct ListExpansion<'a> {
-    /// The list being expanded.
-    items: Arc<ThinVec<Value>>,
+/// State for lazily expanding a value iterator across multiple `next()` calls.
+struct IterExpansion<'a> {
+    /// The lazy iterator being expanded.
+    iter: ValueIter,
     /// The base env for each output row (cloned per element).
     base_env: Env<'a>,
-    /// Next index into `items` to emit.
-    cursor: usize,
 }
 
-impl<'a> ListExpansion<'a> {
+impl<'a> IterExpansion<'a> {
     /// Drain up to `budget` elements into `out`.
     /// Returns `true` if the expansion is fully drained.
     fn drain(
@@ -58,19 +55,22 @@ impl<'a> ListExpansion<'a> {
         name: &Variable,
         pool: &'a Pool<Value>,
     ) -> bool {
-        let end = (self.cursor + budget).min(self.items.len());
-        for i in self.cursor..end {
-            let mut row = self.base_env.clone_pooled(pool);
-            row.insert(name, self.items[i].clone());
-            out.push_back(row);
+        for _ in 0..budget {
+            match self.iter.next() {
+                Some(val) => {
+                    let mut row = self.base_env.clone_pooled(pool);
+                    row.insert(name, val);
+                    out.push_back(row);
+                }
+                None => return true,
+            }
         }
-        self.cursor = end;
-        self.cursor >= self.items.len()
+        false
     }
 }
 
 /// Evaluate the list expression for a given row. Returns either:
-/// - A `ListExpansion` if the result is a non-empty list
+/// - An `IterExpansion` if the result is a non-empty list or lazy range
 /// - A single `Env` pushed onto `pending` for scalar values
 /// - Nothing for `Null`
 fn eval_row<'a>(
@@ -79,28 +79,23 @@ fn eval_row<'a>(
     name: &Variable,
     env: &Env<'a>,
     pending: &mut VecDeque<Env<'a>>,
-) -> Result<Option<ListExpansion<'a>>, String> {
+) -> Result<Option<IterExpansion<'a>>, String> {
     let pool = runtime.env_pool;
-    let value = ExprEval::from_runtime(runtime).eval(list, list.root().idx(), Some(env), None)?;
+    let eval = ExprEval::from_runtime(runtime);
+    let iter = eval.eval_iter_expr(list, list.root().idx(), Some(env))?;
 
-    match value {
-        Value::Null => Ok(None),
-        Value::List(list) => {
-            if list.is_empty() {
-                return Ok(None);
-            }
-            Ok(Some(ListExpansion {
-                items: list,
-                base_env: env.clone_pooled(pool),
-                cursor: 0,
-            }))
-        }
-        other => {
+    match iter {
+        ValueIter::Empty | ValueIter::Once(None | Some(Value::Null)) => Ok(None),
+        ValueIter::Once(Some(val)) => {
             let mut out_row = env.clone_pooled(pool);
-            out_row.insert(name, other);
+            out_row.insert(name, val);
             pending.push_back(out_row);
             Ok(None)
         }
+        _ => Ok(Some(IterExpansion {
+            iter,
+            base_env: env.clone_pooled(pool),
+        })),
     }
 }
 
@@ -113,7 +108,7 @@ pub struct UnwindOp<'a> {
     current_batch: Option<Batch<'a>>,
     current_pos: usize,
     /// Lazy expansion state for a large list.
-    list_expansion: Option<ListExpansion<'a>>,
+    iter_expansion: Option<IterExpansion<'a>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -133,7 +128,7 @@ impl<'a> UnwindOp<'a> {
             pending: VecDeque::new(),
             current_batch: None,
             current_pos: 0,
-            list_expansion: None,
+            iter_expansion: None,
             idx,
         }
     }
@@ -153,15 +148,15 @@ impl<'a> Iterator for UnwindOp<'a> {
                 break;
             }
 
-            // Continue draining a partially-expanded list.
-            if let Some(ref mut exp) = self.list_expansion {
+            // Continue draining a partially-expanded iterator.
+            if let Some(ref mut exp) = self.iter_expansion {
                 let budget = BATCH_SIZE - envs.len();
                 let done = exp.drain(&mut self.pending, budget, self.name, self.runtime.env_pool);
                 if done {
-                    self.list_expansion = None;
+                    self.iter_expansion = None;
                 }
                 super::drain_pending(&mut self.pending, &mut envs);
-                if envs.len() >= BATCH_SIZE || self.list_expansion.is_some() {
+                if envs.len() >= BATCH_SIZE || self.iter_expansion.is_some() {
                     break;
                 }
                 continue;
@@ -186,11 +181,9 @@ impl<'a> Iterator for UnwindOp<'a> {
                     let row_idx = active[self.current_pos];
                     self.current_pos += 1;
                     let env = batch.env_ref(row_idx);
-                    // eval_row borrows only runtime, list, name, env, and pending
-                    // — not current_batch or list_expansion — so no borrow conflict.
                     match eval_row(self.runtime, self.list, self.name, env, &mut self.pending) {
                         Ok(Some(expansion)) => {
-                            self.list_expansion = Some(expansion);
+                            self.iter_expansion = Some(expansion);
                             break; // drain the expansion in the next loop iteration
                         }
                         Ok(None) => {}
@@ -203,19 +196,19 @@ impl<'a> Iterator for UnwindOp<'a> {
                 }
             }
 
-            // Drain list expansion outside the batch borrow scope.
-            if let Some(ref mut exp) = self.list_expansion {
+            // Drain iterator expansion outside the batch borrow scope.
+            if let Some(ref mut exp) = self.iter_expansion {
                 let budget = BATCH_SIZE.saturating_sub(self.pending.len());
                 let done = exp.drain(&mut self.pending, budget, self.name, self.runtime.env_pool);
                 if done {
-                    self.list_expansion = None;
+                    self.iter_expansion = None;
                 }
             }
 
             super::drain_pending(&mut self.pending, &mut envs);
 
             // Check if batch is exhausted.
-            if self.list_expansion.is_none()
+            if self.iter_expansion.is_none()
                 && let Some(ref batch) = self.current_batch
                 && self.current_pos >= batch.active_len()
             {

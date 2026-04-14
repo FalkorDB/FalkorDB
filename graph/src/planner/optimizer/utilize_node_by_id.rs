@@ -59,6 +59,7 @@ fn get_id_filter(
         && inner_func.name == "id"
         && let ExprIR::Variable(var) = filter.child(0).child(0).data()
         && var == node_alias
+        && !references_var(&filter.child(1), node_alias)
     {
         Some((
             Arc::new(filter.child(1).clone_as_tree()),
@@ -71,6 +72,7 @@ fn get_id_filter(
         && inner_func.name == "id"
         && let ExprIR::Variable(var) = filter.child(1).child(0).data()
         && var == node_alias
+        && !references_var(&filter.child(0), node_alias)
     {
         let op = match filter.data() {
             ExprIR::Eq => ExprIR::Eq,
@@ -84,6 +86,21 @@ fn get_id_filter(
     } else {
         None
     }
+}
+
+/// Returns true if the expression tree references the given variable.
+fn references_var(
+    expr: &DynNode<ExprIR<Variable>>,
+    var: &Variable,
+) -> bool {
+    for node in expr.walk::<Bfs>() {
+        if let ExprIR::Variable(v) = node
+            && v == var
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Replaces label scan + ID filter with direct node ID lookup.
