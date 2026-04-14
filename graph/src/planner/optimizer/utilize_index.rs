@@ -53,7 +53,10 @@ use orx_tree::{Bfs, Dyn, DynTree, NodeIdx, NodeRef};
 
 use crate::{
     graph::graph::Graph,
-    index::indexer::{IndexQuery, IndexType},
+    index::{
+        Index,
+        indexer::{IndexQuery, IndexType},
+    },
     parser::ast::{ExprIR, QueryExpr, QueryNode, Variable},
     tree,
 };
@@ -63,7 +66,7 @@ use super::super::IR;
 type IndexScanResult = Option<(
     Arc<QueryNode<Arc<String>, Variable>>,
     Arc<String>,
-    Arc<IndexQuery<QueryExpr<Variable>>>,
+    IndexQuery<QueryExpr<Variable>>,
 )>;
 
 fn extract_attribute_from_subtree(
@@ -80,14 +83,15 @@ fn extract_attribute_from_subtree(
     None
 }
 
-/// Extract the attribute and the expression from the filter
+/// Extract the attribute of the target node and the expression from the filter.
 ///
-/// Look for single attribute (either left or right child)
-/// And a an expression that does not depends on graph entity - so we can pass it to the filter for a single query
-///
-/// Returns the attribute, the expression, and the child index of the attribute.
+/// Looks for a Property access on the target node (identified by alias) in either
+/// child. The other child is treated as the constant/expression side, even if it
+/// contains properties of other (already-bound) variables. This enables runtime
+/// index utilization for queries like `WHERE b.age > a.age` when `a` is already bound.
 fn extract_attribute_and_expression_from_filter(
-    filter: &DynTree<ExprIR<Variable>>
+    filter: &DynTree<ExprIR<Variable>>,
+    target_alias: Option<&Variable>,
 ) -> Option<(
     Arc<String>,
     NodeIdx<Dyn<ExprIR<Variable>>>,
@@ -96,14 +100,36 @@ fn extract_attribute_and_expression_from_filter(
     let lhs_idx = filter.root().child(0).idx();
     let rhs_idx = filter.root().child(1).idx();
 
-    match (
-        extract_attribute_from_subtree(filter, lhs_idx),
-        extract_attribute_from_subtree(filter, rhs_idx),
-    ) {
-        (Some(_), Some(_)) => None,
-        (Some(attr), _) => Some((attr, lhs_idx, rhs_idx)),
-        (_, Some(attr)) => Some((attr, rhs_idx, lhs_idx)),
-        _ => None,
+    if let Some(alias) = target_alias {
+        // Check which side has a property of the target node.
+        // If both sides reference the target (e.g. `n.age > n.salary`),
+        // we can't use the index — it can only accelerate one property lookup.
+        let lhs_has_target_property = subtree_has_property_of(filter, lhs_idx, alias);
+        let rhs_has_target_property = subtree_has_property_of(filter, rhs_idx, alias);
+
+        match (lhs_has_target_property, rhs_has_target_property) {
+            (true, true) => None,
+            (true, _) => {
+                let attr = extract_attribute_from_subtree(filter, lhs_idx)?;
+                Some((attr, lhs_idx, rhs_idx))
+            }
+            (_, true) => {
+                let attr = extract_attribute_from_subtree(filter, rhs_idx)?;
+                Some((attr, rhs_idx, lhs_idx))
+            }
+            _ => None,
+        }
+    } else {
+        // Fallback: no target alias, use original logic
+        match (
+            extract_attribute_from_subtree(filter, lhs_idx),
+            extract_attribute_from_subtree(filter, rhs_idx),
+        ) {
+            (Some(_), Some(_)) => None,
+            (Some(attr), _) => Some((attr, lhs_idx, rhs_idx)),
+            (_, Some(attr)) => Some((attr, rhs_idx, lhs_idx)),
+            _ => None,
+        }
     }
 }
 
@@ -118,54 +144,54 @@ fn try_property_index_scan(
         ExprIR::Eq => Some((
             node.clone(),
             node.labels[0].clone(),
-            Arc::new(IndexQuery::Equal {
+            IndexQuery::Equal {
                 key: attr.clone(),
                 value: Arc::new(constant_node),
-            }),
+            },
         )),
         ExprIR::Gt => Some((
             node.clone(),
             node.labels[0].clone(),
-            Arc::new(IndexQuery::Range {
+            IndexQuery::Range {
                 key: attr.clone(),
                 min: Some(Arc::new(constant_node)),
                 max: None,
                 include_min: false,
                 include_max: false,
-            }),
+            },
         )),
         ExprIR::Ge => Some((
             node.clone(),
             node.labels[0].clone(),
-            Arc::new(IndexQuery::Range {
+            IndexQuery::Range {
                 key: attr.clone(),
                 min: Some(Arc::new(constant_node)),
                 max: None,
                 include_min: true,
                 include_max: false,
-            }),
+            },
         )),
         ExprIR::Lt => Some((
             node.clone(),
             node.labels[0].clone(),
-            Arc::new(IndexQuery::Range {
+            IndexQuery::Range {
                 key: attr.clone(),
                 min: None,
                 max: Some(Arc::new(constant_node)),
                 include_min: false,
                 include_max: false,
-            }),
+            },
         )),
         ExprIR::Le => Some((
             node.clone(),
             node.labels[0].clone(),
-            Arc::new(IndexQuery::Range {
+            IndexQuery::Range {
                 key: attr.clone(),
                 min: None,
                 max: Some(Arc::new(constant_node)),
                 include_min: false,
                 include_max: true,
-            }),
+            },
         )),
         _ => None,
     }
@@ -180,16 +206,16 @@ fn try_distance_index_scan(
     constant_node: DynTree<ExprIR<Variable>>,
 ) -> IndexScanResult {
     let operand = filter.root().data();
-    // If attribute side is 0 than operand must be <
-    // else if attribute_side == 1 than operand must be >
-    // Fail in any other case
+    // distance() must be on the "less than" side of the comparison:
+    // distance(...) < x  or  distance(...) <= x  (attribute_side == child(0))
+    // x > distance(...)  or  x >= distance(...)  (attribute_side == child(1))
     match operand {
-        ExprIR::Lt => {
+        ExprIR::Lt | ExprIR::Le => {
             if filter.root().child(0).idx() != attribute_side {
                 return None;
             }
         }
-        ExprIR::Gt => {
+        ExprIR::Gt | ExprIR::Ge => {
             if filter.root().child(1).idx() != attribute_side {
                 return None;
             }
@@ -205,20 +231,20 @@ fn try_distance_index_scan(
         (Some(_), None) => Some((
             node.clone(),
             node.labels[0].clone(),
-            Arc::new(IndexQuery::Point {
+            IndexQuery::Point {
                 key: attr.clone(),
                 point: Arc::new(filter.node(child_1_idx).clone_as_tree()),
                 radius: Arc::new(constant_node),
-            }),
+            },
         )),
         (None, Some(_)) => Some((
             node.clone(),
             node.labels[0].clone(),
-            Arc::new(IndexQuery::Point {
+            IndexQuery::Point {
                 key: attr.clone(),
                 point: Arc::new(filter.node(child_0_idx).clone_as_tree()),
                 radius: Arc::new(constant_node),
-            }),
+            },
         )),
         _ => None,
     }
@@ -296,19 +322,136 @@ fn merge_range_queries(
     }
 }
 
+/// Checks if a subtree contains any Property node referencing the given node alias.
+fn subtree_has_property_of(
+    tree: &DynTree<ExprIR<Variable>>,
+    root_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+    alias: &Variable,
+) -> bool {
+    let indices = tree.node(root_idx).indices::<Bfs>().collect::<Vec<_>>();
+    for idx in indices {
+        let node = tree.node(idx);
+        if let ExprIR::Property(_) = node.data() {
+            // Check if the Variable child of this Property matches the alias
+            for child in node.children() {
+                if let ExprIR::Variable(v) = child.data() {
+                    if v == alias {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Checks if a subtree has any graph entity dependency (any Property access at all).
+fn subtree_has_any_property(
+    tree: &DynTree<ExprIR<Variable>>,
+    root_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+) -> bool {
+    let indices = tree.node(root_idx).indices::<Bfs>().collect::<Vec<_>>();
+    for idx in indices {
+        if let ExprIR::Property(_) = tree.node(idx).data() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Checks if a list expression subtree contains any nested List (non-indexable).
+fn list_has_nested_list(
+    tree: &DynTree<ExprIR<Variable>>,
+    root_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+) -> bool {
+    if !matches!(tree.node(root_idx).data(), ExprIR::List) {
+        return false;
+    }
+    for child in tree.node(root_idx).children() {
+        if matches!(child.data(), ExprIR::List) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Tries to convert an IN filter into an index scan.
+///
+/// Handles two patterns:
+/// 1. `property IN [list]` — converts to InList index query
+/// 2. `value IN property` — converts to ArrayContains index query
+fn try_in_filter_index_scan(
+    node: &Arc<QueryNode<Arc<String>, Variable>>,
+    filter: &DynTree<ExprIR<Variable>>,
+    graph: &Graph,
+) -> IndexScanResult {
+    if !matches!(filter.root().data(), ExprIR::In) {
+        return None;
+    }
+
+    let lhs_idx = filter.root().child(0).idx();
+    let rhs_idx = filter.root().child(1).idx();
+
+    let lhs_has_target_property = subtree_has_property_of(filter, lhs_idx, &node.alias);
+    let rhs_has_target_property = subtree_has_property_of(filter, rhs_idx, &node.alias);
+
+    // Determine which side holds the target node's property and which is the expression.
+    // Exactly one side must reference the target node for index utilization.
+    let (attr_side, expr_side, is_property_in_list) =
+        match (lhs_has_target_property, rhs_has_target_property) {
+            (true, false) => (lhs_idx, rhs_idx, true), // property IN [list]
+            (false, true) => (rhs_idx, lhs_idx, false), // value IN property
+            _ => return None,                          // both or neither reference target
+        };
+
+    let attr = extract_attribute_from_subtree(filter, attr_side)?;
+    if !graph.is_indexed(&node.labels[0], &attr, &IndexType::Range) {
+        return None;
+    }
+
+    let query = if is_property_in_list {
+        // Pattern: p.age IN [1, 2, 3]
+        // Don't index if the list contains nested arrays
+        if list_has_nested_list(filter, expr_side) {
+            return None;
+        }
+        // Don't index if the expression has graph entity dependencies
+        if subtree_has_any_property(filter, expr_side) {
+            return None;
+        }
+        IndexQuery::InList {
+            key: attr,
+            list: Arc::new(filter.node(expr_side).clone_as_tree()),
+        }
+    } else {
+        // Pattern: $x IN p.samples
+        IndexQuery::ArrayContains {
+            key: attr,
+            value: Arc::new(filter.node(expr_side).clone_as_tree()),
+        }
+    };
+
+    Some((node.clone(), node.labels[0].clone(), query))
+}
+
 /// Tries to convert a single comparison filter into an index scan for the given node.
 fn try_single_filter_index_scan(
     node: &Arc<QueryNode<Arc<String>, Variable>>,
     filter: &DynTree<ExprIR<Variable>>,
     graph: &Graph,
 ) -> IndexScanResult {
+    // Try IN filter first
+    if matches!(filter.root().data(), ExprIR::In) {
+        return try_in_filter_index_scan(node, filter, graph);
+    }
     if !matches!(
         filter.root().data(),
         ExprIR::Eq | ExprIR::Gt | ExprIR::Ge | ExprIR::Lt | ExprIR::Le
     ) {
         return None;
     }
-    let (attr, attr_side, constant_side) = extract_attribute_and_expression_from_filter(filter)?;
+    let (attr, attr_side, constant_side) =
+        extract_attribute_and_expression_from_filter(filter, Some(&node.alias))?;
     if !graph.is_indexed(&node.labels[0], &attr, &IndexType::Range) {
         return None;
     }
@@ -407,7 +550,6 @@ pub(super) fn utilize_index(
                         if let Some((_, _, query)) =
                             try_single_filter_index_scan(node, &conjunct, graph)
                         {
-                            let query = Arc::try_unwrap(query).unwrap();
                             merged = Some(match merged {
                                 None => query,
                                 Some(prev) => merge_range_queries(prev, query),
@@ -420,23 +562,96 @@ pub(super) fn utilize_index(
                         (
                             node.clone(),
                             node.labels[0].clone(),
-                            Arc::new(combined_query),
+                            combined_query,
                             remaining_conjuncts,
                         )
                     })
+                } else if matches!(filter.root().data(), ExprIR::Or) {
+                    // OR filter: try to convert all branches to index scans
+                    let mut or_queries = Vec::new();
+                    let mut all_converted = true;
+                    for child in filter.root().children() {
+                        let branch = child.clone_as_tree();
+                        if let Some((_, _, query)) =
+                            try_single_filter_index_scan(node, &branch, graph)
+                        {
+                            or_queries.push(query);
+                        } else {
+                            all_converted = false;
+                            break;
+                        }
+                    }
+                    if all_converted && !or_queries.is_empty() {
+                        Some((
+                            node.clone(),
+                            node.labels[0].clone(),
+                            IndexQuery::Or(or_queries),
+                            Vec::new(),
+                        ))
+                    } else {
+                        None
+                    }
                 } else {
-                    // Single comparison filter
-                    try_single_filter_index_scan(node, filter, graph)
-                        .map(|(n, l, q)| (n, l, q, Vec::new()))
+                    // Single comparison or IN filter
+                    try_single_filter_index_scan(node, filter, graph).map(|(n, l, q)| {
+                        // For "value IN property" (array contains), keep the filter
+                        // as post-filter since the index may return false positives
+                        // for non-indexable array elements.
+                        let is_array_contains = matches!(filter.root().data(), ExprIR::In)
+                            && !subtree_has_property_of(
+                                filter,
+                                filter.root().child(0).idx(),
+                                &n.alias,
+                            )
+                            && subtree_has_property_of(
+                                filter,
+                                filter.root().child(1).idx(),
+                                &n.alias,
+                            );
+                        if is_array_contains {
+                            let filter_copy = filter.root().clone_as_tree();
+                            (n, l, q, vec![filter_copy])
+                        } else {
+                            (n, l, q, Vec::new())
+                        }
+                    })
                 }
             } else {
                 None
             };
             if let Some((node, index, query, remaining)) = node {
+                let filter_arc =
+                    if let IR::Filter(f) = optimized_plan.node(idx).parent().unwrap().data() {
+                        f.clone()
+                    } else {
+                        unreachable!()
+                    };
+                // Check if the filter contains runtime values (Variables other
+                // than the scan target, or Parameters) that might evaluate to
+                // non-indexable types at runtime. If so, keep the filter as a
+                // safety net. The scan target's own Variable is always present
+                // in property access and should be ignored.
+                let scan_alias_id = node.alias.id;
+                let needs_post_filter =
+                    filter_arc
+                        .root()
+                        .indices::<Bfs>()
+                        .any(|i| match filter_arc.node(i).data() {
+                            ExprIR::Variable(v) => v.id != scan_alias_id,
+                            ExprIR::Parameter(_) => true,
+                            ExprIR::Integer(v) => Index::int_loses_f64_precision(*v),
+                            _ => false,
+                        });
                 let mut op = optimized_plan.node_mut(idx);
-                *op.data_mut() = IR::NodeByIndexScan { node, index, query };
-                if remaining.is_empty() {
+                *op.data_mut() = IR::NodeByIndexScan {
+                    node,
+                    index,
+                    query: Arc::new(query),
+                };
+                if remaining.is_empty() && !needs_post_filter {
                     op.parent_mut().unwrap().take_out();
+                } else if remaining.is_empty() {
+                    // Keep the original filter for runtime safety
                 } else {
                     // Replace the AND filter with only the remaining conjuncts
                     let remaining_filter = if remaining.len() == 1 {
@@ -450,14 +665,32 @@ pub(super) fn utilize_index(
                 break; // Restart traversal after structural modification
             }
 
-            let node = if let IR::NodeByLabelScan(node) = optimized_plan.node(idx).data() {
-                get_index(graph, node)
-            } else {
-                None
-            };
-            if let Some((node, label, attr, filter)) = node
+            let has_inline_index =
+                if let IR::NodeByLabelScan(node) = optimized_plan.node(idx).data() {
+                    get_index(graph, node)
+                } else {
+                    None
+                };
+            if let Some((node, label, attr, filter)) = has_inline_index
                 && !node.labels.is_empty()
             {
+                // Only add a post-filter if the inline attribute's value expression
+                // contains runtime expressions (Variable, Parameter) that might
+                // evaluate to non-indexable types. For constant literals (e.g.
+                // {vi: 5}), the index handles it exactly and no filter is needed.
+                let value_subtree_idx = filter.root().child(1).idx();
+                let needs_post_filter = filter.node(value_subtree_idx).indices::<Bfs>().any(|i| {
+                    match filter.node(i).data() {
+                        ExprIR::Variable(_) | ExprIR::Parameter(_) => true,
+                        ExprIR::Integer(v) => Index::int_loses_f64_precision(*v),
+                        _ => false,
+                    }
+                });
+                if needs_post_filter {
+                    optimized_plan
+                        .node_mut(idx)
+                        .push_parent(IR::Filter(Arc::new(filter.clone())));
+                }
                 let mut op = optimized_plan.node_mut(idx);
                 *op.data_mut() = IR::NodeByIndexScan {
                     node: node.clone(),

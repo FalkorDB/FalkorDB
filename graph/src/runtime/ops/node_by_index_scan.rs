@@ -163,7 +163,90 @@ impl<'a> NodeByIndexScanOp<'a> {
                 }
                 Ok(IndexQuery::And(evaluated))
             }
-            IndexQuery::Or(_) => Err("OR index queries are not yet supported".into()),
+            IndexQuery::Or(queries) => {
+                let mut evaluated = Vec::with_capacity(queries.len());
+                for q in queries {
+                    evaluated.push(Self::evaluate_index_query(runtime, q, vars)?);
+                }
+                Ok(IndexQuery::Or(evaluated))
+            }
+            IndexQuery::ArrayContains { key, value } => {
+                let value = {
+                    ExprEval::from_runtime(runtime).eval(
+                        value,
+                        value.root().idx(),
+                        Some(vars),
+                        None,
+                    )
+                }?;
+                Ok(IndexQuery::ArrayContains {
+                    key: key.clone(),
+                    value,
+                })
+            }
+            IndexQuery::InList { key, list } => {
+                let list_val = {
+                    ExprEval::from_runtime(runtime).eval(list, list.root().idx(), Some(vars), None)
+                }?;
+                match list_val {
+                    Value::List(items) => {
+                        let equals = items
+                            .iter()
+                            .filter(|v| {
+                                matches!(
+                                    v,
+                                    Value::Int(_)
+                                        | Value::Float(_)
+                                        | Value::String(_)
+                                        | Value::Bool(_)
+                                )
+                            })
+                            .map(|v| IndexQuery::Equal {
+                                key: key.clone(),
+                                value: v.clone(),
+                            })
+                            .collect::<Vec<_>>();
+                        Ok(IndexQuery::Or(equals))
+                    }
+                    _ => Err("IN operator requires a list".into()),
+                }
+            }
+        }
+    }
+
+    /// Check if an evaluated index query can be satisfied by the index.
+    /// Returns false when runtime values are types the index can't handle
+    /// (e.g. List, Map, large Int64), in which case the caller should fall
+    /// back to a label scan.
+    fn can_utilize_index(q: &IndexQuery<Value>) -> bool {
+        use crate::index::Index;
+
+        fn is_indexable(v: &Value) -> bool {
+            match v {
+                Value::Int(i) => !Index::int_loses_f64_precision(*i),
+                Value::Float(_)
+                | Value::String(_)
+                | Value::Bool(_)
+                | Value::Point(_)
+                | Value::Null => true,
+                _ => false, // List, Map, Node, Relationship, Path, etc.
+            }
+        }
+        match q {
+            IndexQuery::Equal { value, .. } => is_indexable(value),
+            IndexQuery::Range { min, max, .. } => {
+                min.as_ref().map_or(true, is_indexable) && max.as_ref().map_or(true, is_indexable)
+            }
+            IndexQuery::And(children) | IndexQuery::Or(children) => {
+                children.iter().all(Self::can_utilize_index)
+            }
+            IndexQuery::ArrayContains { value, .. } => {
+                matches!(
+                    value,
+                    Value::Int(_) | Value::Float(_) | Value::String(_) | Value::Bool(_)
+                )
+            }
+            _ => true,
         }
     }
 
@@ -210,7 +293,18 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                     Err(e) => return Some(Err(e)),
                 };
 
-                let iter = Box::new(self.runtime.g.borrow().get_indexed_nodes(self.index, q));
+                // Check if the index can satisfy this query. If not (e.g.
+                // non-indexable value types), fall back to a label scan.
+                let iter: Box<dyn Iterator<Item = NodeId>> = if Self::can_utilize_index(&q) {
+                    Box::new(self.runtime.g.borrow().get_indexed_nodes(self.index, q))
+                } else {
+                    Box::new(
+                        self.runtime
+                            .g
+                            .borrow()
+                            .get_nodes(&self.node_pattern.labels, 0),
+                    )
+                };
                 self.pending
                     .push_back((vars.clone_pooled(self.runtime.env_pool), iter));
             }
