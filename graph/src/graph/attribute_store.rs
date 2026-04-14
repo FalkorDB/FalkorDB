@@ -526,6 +526,34 @@ impl AttributeStore {
         self.cache.memory_usage()
     }
 
+    /// Bulk import attributes for entities known to be new (no prior state).
+    ///
+    /// Optimized for RDB decode: skips cache/fjall lookups since entities
+    /// don't exist yet. Attributes are written directly to cache.
+    pub fn import_attrs(
+        &mut self,
+        attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
+    ) {
+        for (key, entity_attrs) in attrs {
+            let mut entries: Vec<(u16, Value)> = Vec::with_capacity(entity_attrs.len());
+
+            for (attr, value) in entity_attrs.iter() {
+                if matches!(value, Value::Null) {
+                    continue;
+                }
+                let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
+                    self.attrs_name.insert(attr.clone());
+                    self.attrs_name.len() - 1
+                }) as u16;
+                entries.push((idx, value.clone()));
+            }
+
+            entries.sort_by_key(|(idx, _)| *idx);
+            self.cache.insert_entity(*key, entries, self.version, true);
+            self.dirty_entities.insert(*key);
+        }
+    }
+
     pub fn commit(&mut self) -> Result<(), String> {
         // Apply pending full entity deletions to fjall.
         if !self.pending_deletes.is_empty() {

@@ -858,6 +858,22 @@ impl Graph {
         self.node_count + self.deleted_nodes.len() - 1
     }
 
+    /// Bulk import node attributes (for RDB decode, skips indexing/cache lookup).
+    pub fn import_node_attrs(
+        &mut self,
+        attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
+    ) {
+        self.node_attrs.import_attrs(attrs);
+    }
+
+    /// Bulk import relationship attributes (for RDB decode).
+    pub fn import_relationship_attrs(
+        &mut self,
+        attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
+    ) {
+        self.relationship_attrs.import_attrs(attrs);
+    }
+
     #[must_use]
     pub fn max_relationship_id(&self) -> u64 {
         if self.relationship_count == 0 {

@@ -73,7 +73,11 @@ fn is_valid_property(
         | Value::Float(_)
         | Value::String(_)
         | Value::Point(_)
-        | Value::VecF32(_) => true,
+        | Value::VecF32(_)
+        | Value::Datetime(_)
+        | Value::Date(_)
+        | Value::Time(_)
+        | Value::Duration(_) => true,
         Value::List(items) => items.iter().all(|v| is_valid_property(v, false)),
         _ => false,
     }
