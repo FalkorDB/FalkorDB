@@ -28,7 +28,10 @@
 //! queue guarded by `write_loop`.
 
 use crate::{
-    config::{CONFIGURATION_IMPORT_FOLDER, MAX_QUEUED_QUERIES, RESULTSET_SIZE, TIMEOUT_DEFAULT},
+    config::{
+        CONFIGURATION_IMPORT_FOLDER, EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES, RESULTSET_SIZE,
+        TIMEOUT_DEFAULT,
+    },
     reply::{reply_compact, reply_verbose},
 };
 use atomic_refcell::AtomicRefCell;
@@ -41,8 +44,15 @@ use graph::{
         graph::{Graph, Plan},
         mvcc_graph::MvccGraph,
     },
-    planner::IR,
-    runtime::{eval::evaluate_param, pool::Pool, runtime::Runtime},
+    planner::{IR, plan_is_non_deterministic},
+    runtime::{
+        eval::evaluate_param,
+        pending::{
+            EFFECT_CREATE_INDEX, EFFECT_DROP_INDEX, EFFECTS_VERSION, write_string, write_u16,
+        },
+        pool::Pool,
+        runtime::Runtime,
+    },
     threadpool::{pending_count, spawn},
 };
 use orx_tree::Collection;
@@ -62,6 +72,7 @@ use std::{
 use crate::allocator::{current_thread_usage, disable_tracking, enable_tracking, reset_counter};
 
 type WriteMessage = (BlockedClient, Arc<String>, bool, bool, Arc<String>);
+type WriteQueryResult = Result<(Arc<AtomicRefCell<Graph>>, Option<Vec<u8>>, bool), String>;
 
 pub struct ThreadedGraph {
     pub graph: MvccGraph,
@@ -85,6 +96,24 @@ impl ThreadedGraph {
             receiver,
             write_loop: AtomicBool::new(false),
         }
+    }
+
+    /// Create a `ThreadedGraph` from an existing `MvccGraph`.
+    /// Used by the RDB load path.
+    pub fn from_mvcc(graph: MvccGraph) -> Self {
+        let (sender, receiver) = bounded_blocking(1024);
+        Self {
+            graph,
+            sender,
+            receiver,
+            write_loop: AtomicBool::new(false),
+        }
+    }
+
+    /// Returns the graph name.
+    pub fn name(&self) -> String {
+        let g = self.graph.read();
+        g.borrow().name().to_string()
     }
 
     pub fn execute_query(
@@ -149,7 +178,7 @@ impl ThreadedGraph {
         query: &str,
         compact: bool,
         first_cached: bool,
-    ) -> Result<Arc<AtomicRefCell<Graph>>, String> {
+    ) -> WriteQueryResult {
         let Plan {
             plan, parameters, ..
         } = self.graph.read().borrow().get_plan(query)?;
@@ -162,6 +191,9 @@ impl ThreadedGraph {
             n,
             IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
         )));
+
+        let is_non_deterministic = plan_is_non_deterministic(&plan);
+
         let g = self.graph.write().unwrap();
         let env_pool = Pool::new();
         let runtime = Runtime::new(
@@ -182,13 +214,31 @@ impl ThreadedGraph {
                 return Err(err);
             }
         };
+
+        // Capture effects buffer before replying (pending data is still available)
+        let mut effects_buffer =
+            should_use_effects(is_non_deterministic, &runtime, result.stats.execution_time);
+
+        // Build index effects for CreateIndex / DropIndex IR nodes (not tracked by Pending)
+        effects_buffer = build_index_effects(&runtime, effects_buffer);
+
         result.stats.cached = cached;
         if compact {
             reply_compact(ctx, &runtime, &result);
         } else {
             reply_verbose(ctx, &runtime, &result);
         }
-        Ok(g)
+        let modified = result.stats.nodes_created > 0
+            || result.stats.nodes_deleted > 0
+            || result.stats.relationships_created > 0
+            || result.stats.relationships_deleted > 0
+            || result.stats.properties_set > 0
+            || result.stats.properties_removed > 0
+            || result.stats.labels_added > 0
+            || result.stats.labels_removed > 0
+            || result.stats.indexes_created > 0
+            || result.stats.indexes_dropped > 0;
+        Ok((g, effects_buffer, modified))
     }
 }
 
@@ -217,7 +267,7 @@ pub fn query_mut(
 ) -> RedisResult {
     // Inside MULTI/EXEC: execute synchronously (blocking commands not allowed).
     if ctx.get_flags().contains(ContextFlags::MULTI) {
-        return query_sync(ctx, graph, query, compact, write);
+        return query_sync(ctx, graph, query, compact, write, &key_name);
     }
 
     // Check pending queries limit before dispatching.
@@ -307,6 +357,7 @@ fn query_sync(
     query: &str,
     compact: bool,
     write: bool,
+    key_name: &Arc<String>,
 ) -> RedisResult {
     // First pass: parse + detect if write, execute reads inline.
     // Sync query timeout to UDF JS runtime
@@ -324,8 +375,11 @@ fn query_sync(
                 let mut g = graph.write();
                 let res = g.execute_query_write(ctx, query, compact, cached);
                 match res {
-                    Ok(new_graph) => {
+                    Ok((new_graph, effects_buffer, modified)) => {
                         g.graph.commit(new_graph);
+                        if modified {
+                            replicate_effects(ctx, key_name, effects_buffer, query);
+                        }
                         // Flush dirty cache entries to fjall if over budget.
                         let value = g.graph.read().borrow().maybe_flush_caches();
                         if let Err(e) = value {
@@ -360,7 +414,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
             let ctx = Context::new(ctx);
             let res = graph.execute_query_write(&ctx, &query, compact, cached);
             match res {
-                Ok(g) => {
+                Ok((g, effects_buffer, modified)) => {
                     // Signal the key as modified so WATCH gets triggered.
                     unsafe {
                         raw::RedisModule_ThreadSafeContextLock.unwrap()(ctx.ctx);
@@ -371,6 +425,12 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                         );
                         raw::RedisModule_SignalModifiedKey.unwrap()(ctx.ctx, rstr);
                         raw::RedisModule_FreeString.unwrap()(ctx.ctx, rstr);
+                    };
+                    // Send replication while GIL is held
+                    if modified {
+                        replicate_effects(&ctx, &key_name, effects_buffer, &query);
+                    }
+                    unsafe {
                         raw::RedisModule_ThreadSafeContextUnlock.unwrap()(ctx.ctx);
                         raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx);
                     };
@@ -393,6 +453,118 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         }
         graph.write_loop.store(false, Ordering::Release);
     }
+}
+
+/// Decide whether to use effects replication and get the pre-built buffer.
+/// The buffer was built in CommitOp before pending was cleared.
+/// Returns Some(buffer) if effects should be sent, None for verbatim replication.
+fn should_use_effects(
+    is_non_deterministic: bool,
+    runtime: &Runtime,
+    exec_time_ms: f64,
+) -> Option<Vec<u8>> {
+    let threshold = EFFECTS_THRESHOLD.load(Ordering::Relaxed);
+
+    let buf = runtime.effects_buffer.borrow_mut().take();
+    let buf = match buf {
+        Some(b) if b.len() > 1 => b, // > 1 because version byte alone means empty
+        _ => return None,
+    };
+
+    let n_effects = runtime.effects_count.get();
+
+    let use_effects = if is_non_deterministic || threshold == 0 {
+        true
+    } else if n_effects == 0 {
+        false
+    } else {
+        let avg_mod_time_us = (exec_time_ms / n_effects as f64) * 1000.0;
+        avg_mod_time_us > threshold as f64
+    };
+
+    if use_effects { Some(buf) } else { None }
+}
+
+/// Send replication: GRAPH.EFFECT with binary buffer, or verbatim query replay.
+fn replicate_effects(
+    ctx: &Context,
+    key_name: &str,
+    effects_buffer: Option<Vec<u8>>,
+    query: &str,
+) {
+    if let Some(buf) = effects_buffer {
+        let args: &[&[u8]] = &[key_name.as_bytes(), &buf];
+        ctx.replicate("GRAPH.EFFECT", args);
+    } else {
+        let args: &[&[u8]] = &[key_name.as_bytes(), query.as_bytes()];
+        ctx.replicate("GRAPH.QUERY", args);
+    }
+}
+
+/// Encode IndexType as u8 tag for effects buffer.
+const fn index_type_tag(it: &graph::index::IndexType) -> u8 {
+    use graph::index::IndexType;
+    match it {
+        IndexType::Range => 0,
+        IndexType::Fulltext => 1,
+        IndexType::Vector => 2,
+    }
+}
+
+/// Encode EntityType as u8 tag for effects buffer.
+const fn entity_type_tag(et: &graph::entity_type::EntityType) -> u8 {
+    use graph::entity_type::EntityType;
+    match et {
+        EntityType::Node => 0,
+        EntityType::Relationship => 1,
+    }
+}
+
+/// Scan the plan for CreateIndex / DropIndex IR nodes and append their
+/// effects to the buffer. Returns the (possibly new) effects buffer.
+fn build_index_effects(
+    runtime: &Runtime,
+    mut effects_buffer: Option<Vec<u8>>,
+) -> Option<Vec<u8>> {
+    for node in runtime.plan.iter() {
+        match node {
+            IR::CreateIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+                ..
+            } => {
+                let buf = effects_buffer.get_or_insert_with(|| vec![EFFECTS_VERSION]);
+                buf.push(EFFECT_CREATE_INDEX);
+                buf.push(index_type_tag(index_type));
+                buf.push(entity_type_tag(entity_type));
+                write_string(buf, label);
+                write_u16(buf, attrs.len() as u16);
+                for attr in attrs {
+                    write_string(buf, attr);
+                }
+            }
+            IR::DropIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+            } => {
+                let buf = effects_buffer.get_or_insert_with(|| vec![EFFECTS_VERSION]);
+                buf.push(EFFECT_DROP_INDEX);
+                buf.push(index_type_tag(index_type));
+                buf.push(entity_type_tag(entity_type));
+                write_string(buf, label);
+                write_u16(buf, attrs.len() as u16);
+                for attr in attrs {
+                    write_string(buf, attr);
+                }
+            }
+            _ => {}
+        }
+    }
+    effects_buffer
 }
 
 #[unsafe(no_mangle)]
