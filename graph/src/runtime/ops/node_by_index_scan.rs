@@ -221,7 +221,7 @@ impl<'a> NodeByIndexScanOp<'a> {
     fn can_utilize_index(q: &IndexQuery<Value>) -> bool {
         use crate::index::Index;
 
-        fn is_indexable(v: &Value) -> bool {
+        const fn is_indexable(v: &Value) -> bool {
             match v {
                 Value::Int(i) => !Index::int_loses_f64_precision(*i),
                 Value::Float(_)
@@ -235,7 +235,7 @@ impl<'a> NodeByIndexScanOp<'a> {
         match q {
             IndexQuery::Equal { value, .. } => is_indexable(value),
             IndexQuery::Range { min, max, .. } => {
-                min.as_ref().map_or(true, is_indexable) && max.as_ref().map_or(true, is_indexable)
+                min.as_ref().is_none_or(is_indexable) && max.as_ref().map_or(true, is_indexable)
             }
             IndexQuery::And(children) | IndexQuery::Or(children) => {
                 children.iter().all(Self::can_utilize_index)

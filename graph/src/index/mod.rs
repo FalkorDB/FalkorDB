@@ -82,7 +82,7 @@ unsafe fn rs_array_new<T>(data: &[T]) -> *mut T {
 
     let n = data.len();
     let elem_sz = std::mem::size_of::<T>();
-    let total = std::mem::size_of::<ArrayHdr>() + n * elem_sz;
+    let total = std::mem::size_of::<ArrayHdr>() + std::mem::size_of_val(data);
 
     unsafe {
         // Must use RedisModule_Alloc because RediSearch's array_free uses
@@ -107,7 +107,7 @@ unsafe fn rs_array_new<T>(data: &[T]) -> *mut T {
         std::ptr::copy_nonoverlapping(
             data.as_ptr().cast::<u8>(),
             arr_ptr.cast::<u8>(),
-            n * elem_sz,
+            std::mem::size_of_val(data),
         );
 
         arr_ptr
@@ -503,40 +503,40 @@ impl Document {
                             _ => {} // Skip non-indexable types
                         }
                     }
-                    if !numerics.is_empty() {
-                        if let Some(name) = field.numeric_arr_name() {
-                            let mut c_arr = rs_array_new(&numerics);
-                            if !c_arr.is_null() {
-                                RediSearch_DocumentAddFieldNumericArray(
-                                    self.rs_doc,
-                                    name.as_ptr(),
-                                    &raw mut c_arr,
-                                    RSFLDTYPE_NUMERIC,
-                                );
-                            }
+                    if !numerics.is_empty()
+                        && let Some(name) = field.numeric_arr_name()
+                    {
+                        let mut c_arr = rs_array_new(&numerics);
+                        if !c_arr.is_null() {
+                            RediSearch_DocumentAddFieldNumericArray(
+                                self.rs_doc,
+                                name.as_ptr(),
+                                &raw mut c_arr,
+                                RSFLDTYPE_NUMERIC,
+                            );
                         }
                     }
-                    if !string_cstrs.is_empty() {
-                        if let Some(name) = field.string_arr_name() {
-                            let ptrs: Vec<*mut c_char> = string_cstrs
-                                .iter()
-                                .map(|cs| cs.as_ptr() as *mut c_char)
-                                .collect();
-                            let mut c_arr = rs_array_new(&ptrs);
-                            if !c_arr.is_null() {
-                                RediSearch_DocumentAddFieldStringArray(
-                                    self.rs_doc,
-                                    name.as_ptr(),
-                                    &raw mut c_arr,
-                                    ptrs.len(),
-                                    RSFLDTYPE_TAG,
-                                );
-                            }
-                            // Keep string content CStrings alive — the pointer
-                            // array in RediSearch references them. They'll be
-                            // properly freed when the Document is dropped.
-                            self._string_arr_values.extend(string_cstrs);
+                    if !string_cstrs.is_empty()
+                        && let Some(name) = field.string_arr_name()
+                    {
+                        let ptrs: Vec<*mut c_char> = string_cstrs
+                            .iter()
+                            .map(|cs| cs.as_ptr().cast_mut())
+                            .collect();
+                        let mut c_arr = rs_array_new(&ptrs);
+                        if !c_arr.is_null() {
+                            RediSearch_DocumentAddFieldStringArray(
+                                self.rs_doc,
+                                name.as_ptr(),
+                                &raw mut c_arr,
+                                ptrs.len(),
+                                RSFLDTYPE_TAG,
+                            );
                         }
+                        // Keep string content CStrings alive — the pointer
+                        // array in RediSearch references them. They'll be
+                        // properly freed when the Document is dropped.
+                        self._string_arr_values.extend(string_cstrs);
                     }
                 }
                 Value::VecF32(_) => {} // Only for vector fields
@@ -773,7 +773,8 @@ impl Index {
     /// Uses the same bitmask as C FalkorDB's RediSearch INT64 workaround,
     /// applied to the value's magnitude so negative integers are handled
     /// correctly.
-    pub fn int_loses_f64_precision(i: i64) -> bool {
+    #[must_use]
+    pub const fn int_loses_f64_precision(i: i64) -> bool {
         i.unsigned_abs() & 0x7FF0_0000_0000_0000 != 0
     }
 

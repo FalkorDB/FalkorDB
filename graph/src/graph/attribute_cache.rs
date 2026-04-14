@@ -60,6 +60,8 @@
 //! The default budget is 2 GiB per attribute store (nodes and relationships
 //! each get their own cache).
 
+use std::sync::Arc;
+
 use quick_cache::sync::Cache;
 use quick_cache::{DefaultHashBuilder, Lifecycle, Weighter};
 
@@ -69,7 +71,9 @@ use crate::runtime::value::Value;
 #[derive(Clone)]
 struct CachedEntity {
     /// Sorted by `attr_idx` for O(log n) binary-search lookups.
-    attrs: Vec<(u16, Value)>,
+    /// Wrapped in Arc so `quick_cache::get()` clone is O(1) refcount bump
+    /// instead of a full Vec heap allocation.
+    attrs: Arc<Vec<(u16, Value)>>,
     /// Graph version when this entry was written/populated.
     version: u64,
     /// `true` when the entry has not yet been flushed to fjall.
@@ -89,7 +93,12 @@ impl Weighter<u64, CachedEntity> for EntityWeighter {
         let base = val.attrs.len() * (std::mem::size_of::<u16>() + std::mem::size_of::<Value>());
         let heap: usize = val.attrs.iter().map(|(_, v)| v.heap_size()).sum();
         // Minimum weight of 1 to satisfy quick_cache invariant.
-        (base + heap + std::mem::size_of::<CachedEntity>()).max(1) as u64
+        // Include Arc overhead.
+        (base
+            + heap
+            + std::mem::size_of::<CachedEntity>()
+            + std::mem::size_of::<Arc<Vec<(u16, Value)>>>())
+        .max(1) as u64
     }
 }
 
@@ -182,12 +191,13 @@ impl AttributeCache {
     /// Return all cached attributes for an entity.
     ///
     /// Returns `None` on cache miss or version mismatch.
+    /// The returned `Arc` avoids cloning the underlying Vec.
     #[must_use]
     pub fn get_entity(
         &self,
         entity_id: u64,
         version: u64,
-    ) -> Option<Vec<(u16, Value)>> {
+    ) -> Option<Arc<Vec<(u16, Value)>>> {
         let entry = self.entries.get(&entity_id)?;
         if entry.version > version {
             return None;
@@ -203,7 +213,7 @@ impl AttributeCache {
         &self,
         entity_id: u64,
         version: u64,
-    ) -> Option<(Vec<(u16, Value)>, bool)> {
+    ) -> Option<(Arc<Vec<(u16, Value)>>, bool)> {
         let entry = self.entries.get(&entity_id)?;
         if entry.version > version {
             return None;
@@ -240,7 +250,7 @@ impl AttributeCache {
         // Ensure attrs are sorted by attr_idx to support binary searches.
         attrs.sort_by_key(|item| item.0);
         let entry = CachedEntity {
-            attrs,
+            attrs: Arc::new(attrs),
             version,
             dirty,
         };
@@ -340,7 +350,9 @@ impl AttributeCache {
         if let Some(mut entry) = self.entries.get(&entity_id)
             && let Ok(pos) = entry.attrs.binary_search_by_key(&attr_idx, |(idx, _)| *idx)
         {
-            entry.attrs.remove(pos);
+            let mut new_attrs = (*entry.attrs).clone();
+            new_attrs.remove(pos);
+            entry.attrs = Arc::new(new_attrs);
             entry.dirty = true;
             // Update the cache with the modified entry
             self.entries.insert(entity_id, entry);
@@ -363,7 +375,7 @@ impl AttributeCache {
     pub fn collect_dirty_lru(
         &self,
         n: usize,
-    ) -> Vec<(u64, Vec<(u16, Value)>)> {
+    ) -> Vec<(u64, Arc<Vec<(u16, Value)>>)> {
         let mut result = Vec::with_capacity(n);
         // Iterate and collect dirty entries.
         for (entity_id, entry) in self.entries.iter() {

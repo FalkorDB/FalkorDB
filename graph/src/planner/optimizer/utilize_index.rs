@@ -334,10 +334,10 @@ fn subtree_has_property_of(
         if let ExprIR::Property(_) = node.data() {
             // Check if the Variable child of this Property matches the alias
             for child in node.children() {
-                if let ExprIR::Variable(v) = child.data() {
-                    if v == alias {
-                        return true;
-                    }
+                if let ExprIR::Variable(v) = child.data()
+                    && v == alias
+                {
+                    return true;
                 }
             }
         }
