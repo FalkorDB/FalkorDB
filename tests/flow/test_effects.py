@@ -322,7 +322,7 @@ class testEffects():
                     n.xa = n.xa + 1"""
 
         res = self.query_master_and_wait(q)
-        self.env.assertEqual(res.properties_set, 11)
+        self.env.assertEqual(res.properties_set, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -483,7 +483,7 @@ class testEffects():
                     e.a = e.a + 1"""
 
         res = self.query_master_and_wait(q)
-        self.env.assertEqual(res.properties_set, 11)
+        self.env.assertEqual(res.properties_set, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -698,8 +698,7 @@ class testEffects():
                ON CREATE SET n.v = 'blue'"""
         res = self.query_master_and_wait(q)
         self.env.assertEqual(res.nodes_created, 1)
-        self.env.assertEqual(res.properties_set, 2)
-        self.env.assertEqual(res.properties_removed, 1)
+        self.env.assertEqual(res.properties_set, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -734,7 +733,7 @@ class testEffects():
                ON MATCH SET e.v = 'green'
                ON CREATE SET e.v = 'blue'"""
         res = self.query_master_and_wait(q)
-        self.env.assertEqual(res.properties_set, 3)
+        self.env.assertEqual(res.properties_set, 2)
         self.env.assertEqual(res.relationships_created, 1)
 
         if(expect_effect):

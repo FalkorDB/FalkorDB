@@ -78,6 +78,25 @@ impl<'a> Iterator for CommitOp<'a> {
             {
                 return Some(Err(e));
             }
+            // Commit succeeded — build effects buffer from pending data, then clear.
+            {
+                let pending = self.runtime.pending.borrow();
+                if pending.effects_count() > 0 {
+                    let mut buf_ref = self.runtime.effects_buffer.borrow_mut();
+                    let buf = buf_ref.get_or_insert_with(Vec::new);
+                    let n_effects = pending.build_effects_buffer(&self.runtime.g, buf);
+                    self.runtime
+                        .effects_count
+                        .set(self.runtime.effects_count.get() + n_effects);
+                }
+            }
+            self.runtime.pending.borrow_mut().clear();
+            // Update schema baseline so the next commit in this query only
+            // emits newly added schema entries.
+            self.runtime
+                .pending
+                .borrow_mut()
+                .set_schema_baseline(&self.runtime.g);
             // Reverse once so we can pop from the end in O(1) while preserving order.
             self.results.reverse();
         }
