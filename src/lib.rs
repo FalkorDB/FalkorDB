@@ -42,11 +42,12 @@ mod graph_core;
 mod module_init;
 mod redis_type;
 mod reply;
+mod serializers;
 
 use allocator::ThreadCountingAllocator;
 use commands::{
-    graph_config, graph_delete, graph_explain, graph_list, graph_memory, graph_query, graph_record,
-    graph_ro_query, graph_udf,
+    graph_config, graph_debug, graph_delete, graph_effect, graph_explain, graph_list, graph_memory,
+    graph_query, graph_record, graph_ro_query, graph_udf,
 };
 use config::{
     CONFIGURATION_CACHE_SIZE, CONFIGURATION_CMD_INFO, CONFIGURATION_DELAY_INDEXING,
@@ -56,13 +57,13 @@ use config::{
 };
 use module_init::graph_init;
 use redis_module::{configuration::ConfigurationFlags, redis_module};
-use redis_type::GRAPH_TYPE;
+use redis_type::{GRAPH_TYPE, GRAPHMETA_TYPE};
 
 redis_module! {
     name: "graph",
     version: 1,
     allocator: (ThreadCountingAllocator, ThreadCountingAllocator),
-    data_types: [GRAPH_TYPE],
+    data_types: [GRAPH_TYPE, GRAPHMETA_TYPE],
     init: graph_init,
     commands: [
         ["graph.DELETE", graph_delete, "write deny-script", 1, 1, 1, ""],
@@ -74,6 +75,8 @@ redis_module! {
         ["graph.MEMORY", graph_memory, "readonly deny-script", 2, 2, 1, ""],
         ["graph.CONFIG", graph_config, "readonly deny-script allow-busy", 0, 0, 0, ""],
         ["graph.UDF", graph_udf, "write deny-script", 0, 0, 0, ""],
+        ["graph.DEBUG", graph_debug, "write deny-script", 0, 0, 0, ""],
+        ["graph.EFFECT", graph_effect, "write deny-script", 1, 1, 1, ""],
     ],
     configurations: [
         i64: [

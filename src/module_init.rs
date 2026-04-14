@@ -26,6 +26,7 @@ use crate::config::{
     CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_TEMP_FOLDER,
     OMP_THREAD_COUNT, get_thread_count,
 };
+use crate::redis_type::on_persistence;
 use graph::{
     graph::graphblas::matrix::init,
     index::redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_Init},
@@ -43,6 +44,10 @@ use std::{os::raw::c_int, os::raw::c_void, panic};
 /// Redis event ID for FlushDB event (database flush/clear).
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_FlushDB: RedisModuleEvent = RedisModuleEvent { id: 2, dataver: 1 };
+
+/// Redis event ID for Persistence events (RDB save start/end).
+#[allow(non_upper_case_globals)]
+static RedisModuleEvent_Persistence: RedisModuleEvent = RedisModuleEvent { id: 1, dataver: 1 };
 
 pub fn graph_init(
     ctx: &Context,
@@ -72,6 +77,17 @@ pub fn graph_init(
             Some(on_flush),
         );
         debug_assert_eq!(res, REDISMODULE_OK as c_int);
+
+        // Subscribe to persistence events for virtual key management.
+        let res = RedisModule_SubscribeToServerEvent.unwrap()(
+            ctx.ctx,
+            RedisModuleEvent_Persistence,
+            Some(on_persistence),
+        );
+        if res != REDISMODULE_OK as c_int {
+            eprintln!("FalkorDB: failed to subscribe to persistence events: code {res}");
+            return Status::Err;
+        }
     }
     match init_functions() {
         Ok(()) => {}

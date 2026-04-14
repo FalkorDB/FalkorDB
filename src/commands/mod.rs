@@ -20,6 +20,7 @@
 use redis_module::{RedisError, RedisResult};
 
 pub mod config_cmd;
+pub mod debug;
 pub mod delete;
 pub mod effect;
 pub mod explain;
@@ -31,6 +32,7 @@ pub mod ro_query;
 pub mod udf;
 
 pub use config_cmd::graph_config;
+pub use debug::graph_debug;
 pub use delete::graph_delete;
 pub use effect::graph_effect;
 pub use explain::graph_explain;
