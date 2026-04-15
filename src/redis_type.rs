@@ -284,6 +284,10 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
             let g = tg.graph.read();
             let graph = g.borrow();
 
+            // Pre-populate attribute caches from fjall so the BGSAVE fork child
+            // never needs to access fjall (which is unsafe after fork).
+            graph.preload_attributes_from_fjall();
+
             let multi_payloads = build_multi_key_payloads(&graph, vkey_max as u64);
             let key_count = multi_payloads.len();
 

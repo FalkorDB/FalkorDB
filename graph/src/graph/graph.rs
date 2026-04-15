@@ -1825,6 +1825,13 @@ impl Graph {
         Ok(())
     }
 
+    /// Pre-populate attribute caches from fjall for RDB save.
+    /// Ensures all entities are cache-resident so encoding never hits fjall.
+    pub fn preload_attributes_from_fjall(&self) {
+        self.node_attrs.preload_from_fjall();
+        self.relationship_attrs.preload_from_fjall();
+    }
+
     pub fn commit_index(
         &mut self,
         index_add_docs: &mut HashMap<u64, RoaringTreemap>,

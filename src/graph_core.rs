@@ -450,6 +450,9 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     graph.graph.rollback();
                 }
             }
+            // Yield between batched writes so other graph write loops
+            // (on different threadpool workers) can make progress.
+            std::thread::yield_now();
         }
         graph.write_loop.store(false, Ordering::Release);
     }
