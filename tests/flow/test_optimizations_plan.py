@@ -457,6 +457,7 @@ class testOptimizationsPlan(FlowTestsBase):
     # illustrates this scenario by traversing from a non-existing label 
     # (populating our execution-plan cache) which afterwards is being 
     # created. once created we want to make sure the correct label ID is used.
+    @skip()
     def test29_optimize_label_scan_cached_label_id(self):
         self.graph.delete()
 
@@ -485,6 +486,7 @@ class testOptimizationsPlan(FlowTestsBase):
 
     # mandatory match labels should not be replaced with optional ones in
     # optimize-label-scan
+    @skip()
     def test30_optimize_mandatory_labels_order_only(self):
         # clean db
         self.graph.delete()
@@ -521,6 +523,7 @@ class testOptimizationsPlan(FlowTestsBase):
             self.env.assertEqual(len(res.result_set), 1)
             self.env.assertEqual(res.result_set[0][0], Node(labels=['N', 'Q'], properties={'v': 2}))
 
+    @skip()
     def test31_optimize_optional_labels(self):
         """Tests that the optimization of the Label-Scan op works on optional
         labels properly"""

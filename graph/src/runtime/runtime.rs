@@ -435,6 +435,72 @@ impl<'a> Runtime<'a> {
         )
     }
 
+    /// Walk IR ancestors from `idx` upward to find the effective limit.
+    /// Returns `None` if a non-transparent operation is encountered before
+    /// a Limit node, or if no Limit ancestor exists.
+    /// Only transparent operators (Project, Skip) are safe to propagate
+    /// through — Sort is NOT transparent because it needs all rows.
+    fn effective_limit(
+        &self,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> Option<usize> {
+        let mut cur = idx;
+        while let Some(parent) = self.plan.node(cur).parent() {
+            match parent.data() {
+                IR::Limit(expr) => {
+                    let env = Env::new(self.env_pool);
+                    let val = super::eval::ExprEval::from_runtime(self)
+                        .eval(expr, expr.root().idx(), Some(&env), None)
+                        .ok()?;
+                    return match val {
+                        Value::Int(n) if n >= 0 => Some(n as usize),
+                        _ => None,
+                    };
+                }
+                // These operators pass rows through 1:1.
+                IR::Project { .. } | IR::Skip(_) => {}
+                // Everything else is a barrier.
+                _ => {
+                    return None;
+                }
+            }
+            cur = parent.idx();
+        }
+        None
+    }
+
+    /// Walk IR ancestors from `idx` upward to find the effective skip.
+    /// Returns 0 if a row-reducing or eager operation is encountered before
+    /// a Skip node, or if no Skip ancestor exists.
+    fn effective_skip(
+        &self,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> usize {
+        let mut cur = idx;
+        while let Some(parent) = self.plan.node(cur).parent() {
+            match parent.data() {
+                IR::Skip(expr) => {
+                    let env = Env::new(self.env_pool);
+                    let val = super::eval::ExprEval::from_runtime(self)
+                        .eval(expr, expr.root().idx(), Some(&env), None)
+                        .ok();
+                    return match val {
+                        Some(Value::Int(n)) if n >= 0 => n as usize,
+                        _ => 0,
+                    };
+                }
+                // Safe pass-through operators.
+                IR::Project { .. } | IR::Limit(_) => {}
+                // Everything else is a barrier.
+                _ => {
+                    return 0;
+                }
+            }
+            cur = parent.idx();
+        }
+        0
+    }
+
     /// Builds a batch-mode operator tree for the given IR node.
     pub fn run_batch(
         &'a self,
@@ -528,12 +594,16 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::Sort(trees) => {
+                let limit = self.effective_limit(idx);
+                let skip = self.effective_skip(idx);
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::Sort(SortOp::new(
                     self,
                     Box::new(child),
                     trees,
                     idx,
+                    limit,
+                    skip,
                 )))
             }
             IR::Aggregate {
@@ -571,6 +641,7 @@ impl<'a> Runtime<'a> {
                 sibling_edges,
                 transposed,
             } => {
+                let record_cap = self.effective_limit(idx);
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::CondTraverse(CondTraverseOp::new(
                     self,
@@ -580,6 +651,7 @@ impl<'a> Runtime<'a> {
                     sibling_edges,
                     *transposed,
                     idx,
+                    record_cap,
                 )))
             }
             IR::ExpandInto {
@@ -587,6 +659,7 @@ impl<'a> Runtime<'a> {
                 emit_relationship,
                 sibling_edges,
             } => {
+                let record_cap = self.effective_limit(idx);
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::ExpandInto(ExpandIntoOp::new(
                     self,
@@ -595,6 +668,7 @@ impl<'a> Runtime<'a> {
                     *emit_relationship,
                     sibling_edges,
                     idx,
+                    record_cap,
                 )))
             }
             IR::NodeByIdSeek { node, filter } => {

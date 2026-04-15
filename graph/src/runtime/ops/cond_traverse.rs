@@ -61,6 +61,11 @@ pub struct CondTraverseOp<'a> {
     /// transposed accordingly.
     transposed: bool,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
+    /// Maximum number of records this operator should produce. Once reached,
+    /// subsequent `next()` calls return `None`. Set by limit propagation.
+    record_cap: Option<usize>,
+    /// Number of records produced so far (tracked when `record_cap` is set).
+    produced: usize,
     /// Cached forward relationship matrix (built once, reused per row).
     fwd_matrix: Matrix,
     /// Cached reverse relationship matrix (only for bidirectional patterns).
@@ -85,6 +90,7 @@ impl<'a> CondTraverseOp<'a> {
         sibling_edges: &'a [u32],
         transposed: bool,
         idx: NodeIdx<Dyn<IR>>,
+        record_cap: Option<usize>,
     ) -> Self {
         let rp = relationship_pattern;
         let g = runtime.g.borrow();
@@ -159,6 +165,8 @@ impl<'a> CondTraverseOp<'a> {
             sibling_edges,
             transposed,
             idx,
+            record_cap,
+            produced: 0,
             fwd_matrix,
             rev_matrix,
             bidir_dedup,
@@ -418,6 +426,13 @@ impl<'a> Iterator for CondTraverseOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        // Check if record_cap already reached.
+        if let Some(cap) = self.record_cap {
+            if self.produced >= cap {
+                return None;
+            }
+        }
+
         let mut envs = Vec::with_capacity(BATCH_SIZE);
 
         // Drain leftover rows from previous call.
@@ -478,6 +493,14 @@ impl<'a> Iterator for CondTraverseOp<'a> {
         if envs.is_empty() {
             None
         } else {
+            // Trim to record_cap if set.
+            if let Some(cap) = self.record_cap {
+                let remaining = cap - self.produced;
+                if envs.len() > remaining {
+                    envs.truncate(remaining);
+                }
+            }
+            self.produced += envs.len();
             Some(Ok(Batch::from_envs(envs)))
         }
     }
