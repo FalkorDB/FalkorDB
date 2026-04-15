@@ -17,6 +17,7 @@
 #include "arithmetic/arithmetic_expression.h"
 #include "arithmetic/arithmetic_expression_construct.h"
 
+#include <ctype.h>
 #include <inttypes.h>
 
 // TODO duplicated logic, find shared place for it
@@ -652,9 +653,9 @@ cypher_parse_result_t *parse_query
 (
 	const char *query  // query to parse
 ) {
-	// remove trailing semicolons
-	int len = strlen(query);
-	while(len > 0 && query[len - 1] == ';') {
+	// remove trailing whitespace and semicolons
+	size_t len = strlen(query);
+	while(len > 0 && (query[len - 1] == ';' || isspace((unsigned char)query[len - 1]))) {
 		len--;
 	}
 
