@@ -14,7 +14,7 @@
 #       LAGRAPH_FALKORDB_TESTS regex in build.sh before running this script
 #       so the new algorithm's tests are included in the warm-up.
 
-set -uo pipefail
+set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # Locate the FalkorDB repository root (directory containing this script).
@@ -34,6 +34,11 @@ fi
 GB_MAJOR=$(grep -E "^#define GxB_IMPLEMENTATION_MAJOR" "$GB_HEADER" | awk '{print $3}')
 GB_MINOR=$(grep -E "^#define GxB_IMPLEMENTATION_MINOR" "$GB_HEADER" | awk '{print $3}')
 GB_SUB=$(grep   -E "^#define GxB_IMPLEMENTATION_SUB"   "$GB_HEADER" | awk '{print $3}')
+
+[[ -n "$GB_MAJOR" ]] || { echo "ERROR: could not parse GxB_IMPLEMENTATION_MAJOR from ${GB_HEADER}" >&2; exit 1; }
+[[ -n "$GB_MINOR" ]] || { echo "ERROR: could not parse GxB_IMPLEMENTATION_MINOR from ${GB_HEADER}" >&2; exit 1; }
+[[ -n "$GB_SUB"   ]] || { echo "ERROR: could not parse GxB_IMPLEMENTATION_SUB from ${GB_HEADER}" >&2;   exit 1; }
+
 SUITESPARSE_GRB="${HOME}/.SuiteSparse/GrB${GB_MAJOR}.${GB_MINOR}.${GB_SUB}"
 
 echo "============================================================"
@@ -103,7 +108,7 @@ read -r
 #           regenerated).
 # ---------------------------------------------------------------------------
 echo "[Step 2] Removing previous build output (bin/)..."
-cd "${FALKORDB_DIR}"
+cd "${FALKORDB_DIR}" || die "Cannot cd to ${FALKORDB_DIR}"
 rm -rf bin/
 
 # ---------------------------------------------------------------------------
@@ -121,6 +126,7 @@ echo "   PreJIT directory cleared."
 #           fresh rather than loaded from a previous warm-up run.
 # ---------------------------------------------------------------------------
 echo "[Step 4] Clearing GraphBLAS JIT runtime cache (${SUITESPARSE_GRB})..."
+[[ -n "${SUITESPARSE_GRB}" ]] || die "SUITESPARSE_GRB is empty – refusing to rm -rf"
 if [[ -d "${SUITESPARSE_GRB}" ]]; then
     rm -rf "${SUITESPARSE_GRB}/tmp" \
            "${SUITESPARSE_GRB}/c"   \
@@ -134,7 +140,7 @@ fi
 # Step 5 – Run the JIT warm-up: FalkorDB flow tests + LAGraph algorithm tests.
 # ---------------------------------------------------------------------------
 echo "[Step 5] Running jit-warmup (this will take a while)..."
-cd "${FALKORDB_DIR}"
+cd "${FALKORDB_DIR}" || die "Cannot cd to ${FALKORDB_DIR}"
 run_with_retry "make jit-warmup" make jit-warmup JIT=1
 
 # ---------------------------------------------------------------------------
@@ -170,7 +176,7 @@ echo "   OK – ${NEW_COUNT} kernel source(s) in place."
 #           then run the full test suite to verify them.
 # ---------------------------------------------------------------------------
 echo "[Step 8] Clearing build output and rebuilding with new PreJIT kernels..."
-cd "${FALKORDB_DIR}"
+cd "${FALKORDB_DIR}" || die "Cannot cd to ${FALKORDB_DIR}"
 rm -rf bin/
 
 echo "[Step 8] Running make test to verify new kernels..."
