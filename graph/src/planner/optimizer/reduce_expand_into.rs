@@ -13,6 +13,8 @@
 
 use orx_tree::{Bfs, DynTree, NodeRef};
 
+use crate::parser::ast::SetItem;
+
 use super::super::IR;
 
 /// Check if any expression in an IR node references a variable with the
@@ -49,10 +51,37 @@ fn ir_references_variable(
                 .iter()
                 .any(|v| v.id == var_id && v.scope_id == scope_id)
         }),
-        IR::Unwind { var, .. } => var.id == var_id && var.scope_id == scope_id,
-        IR::ForEach { var, .. } => var.id == var_id && var.scope_id == scope_id,
+        IR::Unwind { var, .. } | IR::ForEach { var, .. } => {
+            var.id == var_id && var.scope_id == scope_id
+        }
+        IR::Delete { exprs, .. } | IR::Remove(exprs) => exprs
+            .iter()
+            .any(|expr| expr_references_variable(expr, var_id, scope_id)),
+        IR::Set(items) => set_items_reference_variable(items, var_id, scope_id),
+        IR::Merge {
+            on_create,
+            on_match,
+            ..
+        } => {
+            set_items_reference_variable(on_create, var_id, scope_id)
+                || set_items_reference_variable(on_match, var_id, scope_id)
+        }
         _ => false,
     }
+}
+
+fn set_items_reference_variable(
+    items: &[SetItem<std::sync::Arc<String>, crate::parser::ast::Variable>],
+    var_id: u32,
+    scope_id: u32,
+) -> bool {
+    items.iter().any(|item| match item {
+        SetItem::Attribute { target, value, .. } => {
+            expr_references_variable(target, var_id, scope_id)
+                || expr_references_variable(value, var_id, scope_id)
+        }
+        SetItem::Label { var, .. } => var.id == var_id && var.scope_id == scope_id,
+    })
 }
 
 fn expr_references_variable(
@@ -61,10 +90,11 @@ fn expr_references_variable(
     scope_id: u32,
 ) -> bool {
     for idx in expr.root().indices::<Bfs>() {
-        if let crate::parser::ast::ExprIR::Variable(v) = expr.node(idx).data() {
-            if v.id == var_id && v.scope_id == scope_id {
-                return true;
-            }
+        if let crate::parser::ast::ExprIR::Variable(v) = expr.node(idx).data()
+            && v.id == var_id
+            && v.scope_id == scope_id
+        {
+            return true;
         }
     }
     false
