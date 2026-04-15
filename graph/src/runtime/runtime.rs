@@ -655,7 +655,11 @@ impl<'a> Runtime<'a> {
                 sibling_edges,
                 transposed,
             } => {
-                let record_cap = self.effective_limit(idx);
+                // Account for both limit and skip so the traverse produces
+                // enough rows for a downstream SkipOp + LimitOp pipeline.
+                let record_cap = self
+                    .effective_limit(idx)
+                    .map(|l| l + self.effective_skip(idx));
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::CondTraverse(CondTraverseOp::new(
                     self,
@@ -673,7 +677,11 @@ impl<'a> Runtime<'a> {
                 emit_relationship,
                 sibling_edges,
             } => {
-                let record_cap = self.effective_limit(idx);
+                // Account for both limit and skip so the traverse produces
+                // enough rows for a downstream SkipOp + LimitOp pipeline.
+                let record_cap = self
+                    .effective_limit(idx)
+                    .map(|l| l + self.effective_skip(idx));
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::ExpandInto(ExpandIntoOp::new(
                     self,
