@@ -46,6 +46,7 @@ fn main() {
                 String::new(),
                 &pool,
                 -1,
+                false,
             );
             let _ = runtime.query();
         }

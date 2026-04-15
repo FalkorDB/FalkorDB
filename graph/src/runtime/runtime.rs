@@ -72,7 +72,7 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 pub use super::eval::ValueIter;
@@ -159,6 +159,12 @@ pub struct Runtime<'a> {
     /// Used by `date.transaction()`, `localtime.transaction()`, and `localdatetime.transaction()`
     /// so every call in the same transaction returns the same value.
     pub transaction_timestamp: DateTime<Utc>,
+    /// Whether profiling is enabled for this query.
+    pub profile: bool,
+    /// Per-operator profile data: (records_produced, exclusive_time).
+    pub profile_data: RefCell<HashMap<NodeIdx<Dyn<IR>>, (usize, Duration)>>,
+    /// Accumulator for child time subtraction during profiling.
+    pub profile_child_time: Cell<Duration>,
 }
 
 pub trait GetVariables {
@@ -339,6 +345,7 @@ impl<'a> Runtime<'a> {
         import_folder: String,
         env_pool: &'a Pool<Value>,
         result_set_size: i64,
+        profile: bool,
     ) -> Self {
         let return_names = plan.root().get_return_names();
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
@@ -365,6 +372,9 @@ impl<'a> Runtime<'a> {
             effects_buffer: RefCell::new(None),
             effects_count: Cell::new(0),
             transaction_timestamp: Utc::now(),
+            profile,
+            profile_data: RefCell::new(HashMap::new()),
+            profile_child_time: Cell::new(Duration::ZERO),
         }
     }
 
@@ -457,8 +467,12 @@ impl<'a> Runtime<'a> {
                         _ => None,
                     };
                 }
-                // These operators pass rows through 1:1.
-                IR::Project { .. } | IR::Skip(_) => {}
+                // These operators pass rows through 1:1 or 1:N — limit still
+                // provides a useful early-stop hint through them.
+                IR::Project { .. }
+                | IR::Skip(_)
+                | IR::CondTraverse { .. }
+                | IR::ExpandInto { .. } => {}
                 // Everything else is a barrier.
                 _ => {
                     return None;

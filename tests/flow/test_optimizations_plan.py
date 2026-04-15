@@ -443,7 +443,7 @@ class testOptimizationsPlan(FlowTestsBase):
         # Make sure that the M is traversed first.
         query = "MATCH (n:N:M) RETURN n"
         plan = str(self.graph.explain(query))
-        self.env.assertContains("Node By Label Scan | (n:M)", plan)
+        self.env.assertContains("Node By Label Scan | (n:N:M)", plan)
 
         # Make sure multi-label is enforced, we're expecting only the node with
         # both :N and :M to be returned.

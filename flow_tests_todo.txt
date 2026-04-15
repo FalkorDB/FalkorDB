@@ -11,9 +11,6 @@ tests/flow/test_fulltext_query.py
 tests/flow/test_vecsim.py
 tests/flow/test_constraint.py
 
-## Query Execution & Optimization
-tests/flow/test_profile.py
-
 ## Concurrency & Multi-writer
 tests/flow/test_stress.py
 
