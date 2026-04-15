@@ -654,7 +654,7 @@ cypher_parse_result_t *parse_query
 	const char *query  // query to parse
 ) {
 	// remove trailing whitespace and semicolons
-	int len = strlen(query);
+	size_t len = strlen(query);
 	while(len > 0 && (query[len - 1] == ';' || isspace((unsigned char)query[len - 1]))) {
 		len--;
 	}
