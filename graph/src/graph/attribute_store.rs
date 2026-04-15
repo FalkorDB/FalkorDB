@@ -295,56 +295,76 @@ impl AttributeStore {
         Arc::new(attrs)
     }
 
-    /// Bulk-load all entities from fjall into the cache in a single pass.
-    /// Called before RDB save to ensure every entity is cache-resident,
-    /// avoiding per-entity fjall lookups (which are unsafe in fork children
-    /// and slow under coverage instrumentation).
-    pub fn preload_from_fjall(&self) {
-        // If keyspace was never initialized, all data is in cache already.
-        if self.keyspace.get().is_none() {
-            return;
-        }
-        let mut current_id: Option<u64> = None;
-        let mut current_attrs: Vec<(u16, Value)> = Vec::new();
-        // Single scan: keys are sorted [entity_id(8B BE) | attr_idx(2B BE)],
-        // so all attributes for the same entity are contiguous.
-        for entry in self.snapshot().iter(self.keyspace()) {
-            let (key, data) = match entry.into_inner() {
-                Ok(kv) => kv,
-                Err(_) => continue,
-            };
-            let Some(attr_idx) = extract_attr_idx(&key) else {
-                continue;
-            };
-            let eid = u64::from_be_bytes(key[..8].try_into().unwrap());
-            let Some((value, _)) = Value::from_bytes(&data) else {
-                continue;
-            };
-            if current_id != Some(eid) {
-                // Flush previous entity to cache.
-                if let Some(prev_id) = current_id {
-                    if !self.pending_deletes.contains(prev_id) {
-                        let _ = self.cache.insert_entity_if_older(
-                            prev_id,
-                            std::mem::take(&mut current_attrs),
-                            self.version,
-                        );
-                    } else {
-                        current_attrs.clear();
+    /// Build a complete snapshot of all entity attributes by merging cache and
+    /// fjall data.  Returns a map from entity-ID to its attribute list.
+    ///
+    /// Called **before** Redis forks for BGSAVE so the fork child can encode
+    /// entities without touching fjall (which is unsafe after fork).
+    /// The returned map is passed to [`encode_with_range`] as the data source.
+    pub fn build_rdb_snapshot(
+        &self,
+        deleted: &RoaringTreemap,
+        max_id: u64,
+    ) -> std::collections::HashMap<u64, Arc<Vec<(u16, Value)>>> {
+        let mut snap: std::collections::HashMap<u64, Arc<Vec<(u16, Value)>>> =
+            std::collections::HashMap::new();
+
+        // 1. Collect everything from fjall (cold store) in a single sequential scan.
+        if self.keyspace.get().is_some() {
+            let mut current_id: Option<u64> = None;
+            let mut current_attrs: Vec<(u16, Value)> = Vec::new();
+            for entry in self.snapshot().iter(self.keyspace()) {
+                let (key, data) = match entry.into_inner() {
+                    Ok(kv) => kv,
+                    Err(_) => continue,
+                };
+                let Some(attr_idx) = extract_attr_idx(&key) else {
+                    continue;
+                };
+                let eid = u64::from_be_bytes(key[..8].try_into().unwrap());
+                let Some((value, _)) = Value::from_bytes(&data) else {
+                    continue;
+                };
+                if current_id != Some(eid) {
+                    if let Some(prev_id) = current_id {
+                        if !deleted.contains(prev_id)
+                            && !self.pending_deletes.contains(prev_id)
+                        {
+                            current_attrs.sort_by_key(|item| item.0);
+                            snap.insert(
+                                prev_id,
+                                Arc::new(std::mem::take(&mut current_attrs)),
+                            );
+                        } else {
+                            current_attrs.clear();
+                        }
                     }
+                    current_id = Some(eid);
                 }
-                current_id = Some(eid);
+                current_attrs.push((attr_idx, value));
             }
-            current_attrs.push((attr_idx, value));
-        }
-        // Flush last entity.
-        if let Some(prev_id) = current_id {
-            if !self.pending_deletes.contains(prev_id) {
-                let _ = self
-                    .cache
-                    .insert_entity_if_older(prev_id, current_attrs, self.version);
+            if let Some(prev_id) = current_id {
+                if !deleted.contains(prev_id)
+                    && !self.pending_deletes.contains(prev_id)
+                {
+                    current_attrs.sort_by_key(|item| item.0);
+                    snap.insert(prev_id, Arc::new(current_attrs));
+                }
             }
         }
+
+        // 2. Overlay cache entries (hot store) — cache wins over fjall because
+        //    it may contain newer dirty writes not yet flushed.
+        for id in 0..=max_id {
+            if deleted.contains(id) || self.pending_deletes.contains(id) {
+                continue;
+            }
+            if let Some(cached) = self.cache.get_entity(id, self.version) {
+                snap.insert(id, cached);
+            }
+        }
+
+        snap
     }
 
     // ---- read path (cache → fjall) --------------------------------------
@@ -729,7 +749,8 @@ impl AttributeStore {
         &self.cache
     }
 
-    /// Encode a range of entities, borrowing the deleted bitmap directly.
+    /// Encode a range of entities, using the pre-built RDB snapshot when
+    /// provided, falling back to cache → fjall otherwise.
     pub fn encode_with_range(
         &self,
         w: &mut dyn Writer,
@@ -738,6 +759,7 @@ impl AttributeStore {
         global_attrs: &[Arc<String>],
         count: u64,
         offset: u64,
+        rdb_snapshot: Option<&std::collections::HashMap<u64, Arc<Vec<(u16, Value)>>>>,
     ) {
         // Build attr remap inline.
         let global_index: std::collections::HashMap<&Arc<String>, usize> = global_attrs
@@ -753,6 +775,7 @@ impl AttributeStore {
             }
         }
 
+        let empty: Arc<Vec<(u16, Value)>> = Arc::new(Vec::new());
         let mut skipped = 0u64;
         let mut encoded = 0u64;
 
@@ -767,7 +790,11 @@ impl AttributeStore {
 
             w.write_unsigned(id);
 
-            let props = self.get_all_attrs_by_id(id);
+            let props = if let Some(snap) = rdb_snapshot {
+                snap.get(&id).cloned().unwrap_or_else(|| empty.clone())
+            } else {
+                self.get_all_attrs_by_id(id)
+            };
             w.write_unsigned(props.len() as u64);
 
             for &(local_attr_id, ref value) in props.iter() {

@@ -133,12 +133,19 @@ unsafe extern "C" fn graph_rdb_save(
             let Some(graph_arc) = vkey_state.get_graph_ref(&graph_name).cloned() else {
                 return;
             };
+            let snap = vkey_state.rdb_snapshots.get(&graph_name).cloned();
             drop(vkey_state);
 
             let tg = graph_arc.read();
             let g = tg.graph.read();
             let graph = g.borrow();
-            serializers::encoder::rdb_save_graph_key(rdb, &graph, &payloads, key_count);
+            serializers::encoder::rdb_save_graph_key(
+                rdb,
+                &graph,
+                &payloads,
+                key_count,
+                snap.as_ref().map(|s| s.as_ref()),
+            );
         } else {
             // Main key: use the value pointer directly.
             let graph_arc = &*(value.cast::<Arc<RwLock<ThreadedGraph>>>());
@@ -153,11 +160,23 @@ unsafe extern "C" fn graph_rdb_save(
                     .graph_vkeys
                     .get(&graph_name)
                     .map_or(1, |vkeys| (vkeys.len() + 1) as u64);
+                let snap = vkey_state.rdb_snapshots.get(&graph_name).cloned();
                 drop(vkey_state);
-                serializers::encoder::rdb_save_graph_key(rdb, &graph, &payloads, key_count);
+                serializers::encoder::rdb_save_graph_key(
+                    rdb,
+                    &graph,
+                    &payloads,
+                    key_count,
+                    snap.as_ref().map(|s| s.as_ref()),
+                );
             } else {
+                let snap = vkey_state.rdb_snapshots.get(&graph_name).cloned();
                 drop(vkey_state);
-                serializers::encoder::rdb_save_graph(rdb, &graph);
+                serializers::encoder::rdb_save_graph(
+                    rdb,
+                    &graph,
+                    snap.as_ref().map(|s| s.as_ref()),
+                );
             }
         }
     }
@@ -284,9 +303,12 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
             let g = tg.graph.read();
             let graph = g.borrow();
 
-            // Pre-populate attribute caches from fjall so the BGSAVE fork child
-            // never needs to access fjall (which is unsafe after fork).
-            graph.preload_attributes_from_fjall();
+            // Build attribute snapshots (cache + fjall) before fork.
+            // The fork child will use these instead of accessing fjall.
+            let snapshots = Arc::new(graph.build_rdb_snapshots());
+            vkey_state
+                .rdb_snapshots
+                .insert(graph_name.clone(), snapshots);
 
             let multi_payloads = build_multi_key_payloads(&graph, vkey_max as u64);
             let key_count = multi_payloads.len();

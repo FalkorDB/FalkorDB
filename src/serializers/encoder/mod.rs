@@ -1,4 +1,4 @@
-use graph::graph::graph::Graph;
+use graph::graph::graph::{Graph, RdbSnapshots};
 use graph::graph::graphblas::serialization::{Encode, EncodeState, PayloadEntry};
 use redis_module::RedisModuleIO;
 
@@ -11,9 +11,10 @@ use super::{Header, Schema};
 pub fn rdb_save_graph(
     rdb: *mut RedisModuleIO,
     graph: &Graph,
+    snapshots: Option<&RdbSnapshots>,
 ) {
     let payloads = build_payloads(graph);
-    rdb_save_graph_key(rdb, graph, &payloads, 1);
+    rdb_save_graph_key(rdb, graph, &payloads, 1, snapshots);
 }
 
 /// Encode a single key's portion of the graph (used for both primary and virtual keys).
@@ -22,6 +23,7 @@ pub fn rdb_save_graph_key(
     graph: &Graph,
     payloads: &[PayloadEntry],
     key_count: u64,
+    snapshots: Option<&RdbSnapshots>,
 ) {
     let mut w = BufferedWriter::new(rdb);
 
@@ -43,7 +45,7 @@ pub fn rdb_save_graph_key(
 
     // --- Payload data ---
     for p in payloads {
-        graph.encode_payload(&mut w, p, &global_attrs);
+        graph.encode_payload(&mut w, p, &global_attrs, snapshots);
     }
 
     w.finish();

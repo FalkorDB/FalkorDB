@@ -204,6 +204,13 @@ pub struct MemoryUsageReport {
     pub indices_sz: usize,
 }
 
+/// Pre-built attribute snapshots for RDB save.
+/// Built before Redis forks so the child never accesses fjall.
+pub struct RdbSnapshots {
+    pub nodes: std::collections::HashMap<u64, Arc<Vec<(u16, Value)>>>,
+    pub relationships: std::collections::HashMap<u64, Arc<Vec<(u16, Value)>>>,
+}
+
 /// The main graph data structure.
 ///
 /// Stores nodes, relationships, labels, and properties using sparse matrices
@@ -1826,10 +1833,19 @@ impl Graph {
     }
 
     /// Pre-populate attribute caches from fjall for RDB save.
-    /// Ensures all entities are cache-resident so encoding never hits fjall.
-    pub fn preload_attributes_from_fjall(&self) {
-        self.node_attrs.preload_from_fjall();
-        self.relationship_attrs.preload_from_fjall();
+    pub fn build_rdb_snapshots(&self) -> RdbSnapshots {
+        let node_snap = self.node_attrs.build_rdb_snapshot(
+            &self.deleted_nodes,
+            self.max_node_id(),
+        );
+        let rel_snap = self.relationship_attrs.build_rdb_snapshot(
+            &self.deleted_relationships,
+            self.max_relationship_id(),
+        );
+        RdbSnapshots {
+            nodes: node_snap,
+            relationships: rel_snap,
+        }
     }
 
     pub fn commit_index(
@@ -2183,6 +2199,7 @@ impl Graph {
         w: &mut dyn Writer,
         p: &PayloadEntry,
         global_attrs: &[Arc<String>],
+        snapshots: Option<&RdbSnapshots>,
     ) {
         match p.state {
             EncodeState::Nodes => {
@@ -2193,6 +2210,7 @@ impl Graph {
                     global_attrs,
                     p.count,
                     p.offset,
+                    snapshots.map(|s| &s.nodes),
                 );
             }
             EncodeState::DeletedNodes => {
@@ -2206,6 +2224,7 @@ impl Graph {
                     global_attrs,
                     p.count,
                     p.offset,
+                    snapshots.map(|s| &s.relationships),
                 );
             }
             EncodeState::DeletedEdges => {
