@@ -554,8 +554,10 @@ pub fn profile_mut(
             match res {
                 Ok(is_write) => {
                     if is_write {
-                        // Write path: drop read lock, acquire write lock
+                        // Write path: drop read lock, acquire write lock.
+                        // Free the read-phase context before creating a new one.
                         drop(graph_read);
+                        unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
                         let mut graph_write = g.write();
                         let ctx2 =
                             unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
