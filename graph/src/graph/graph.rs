@@ -1834,14 +1834,12 @@ impl Graph {
 
     /// Pre-populate attribute caches from fjall for RDB save.
     pub fn build_rdb_snapshots(&self) -> RdbSnapshots {
-        let node_snap = self.node_attrs.build_rdb_snapshot(
-            &self.deleted_nodes,
-            self.max_node_id(),
-        );
-        let rel_snap = self.relationship_attrs.build_rdb_snapshot(
-            &self.deleted_relationships,
-            self.max_relationship_id(),
-        );
+        let node_snap = self
+            .node_attrs
+            .build_rdb_snapshot(&self.deleted_nodes, self.max_node_id());
+        let rel_snap = self
+            .relationship_attrs
+            .build_rdb_snapshot(&self.deleted_relationships, self.max_relationship_id());
         RdbSnapshots {
             nodes: node_snap,
             relationships: rel_snap,

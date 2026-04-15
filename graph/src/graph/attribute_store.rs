@@ -327,14 +327,9 @@ impl AttributeStore {
                 };
                 if current_id != Some(eid) {
                     if let Some(prev_id) = current_id {
-                        if !deleted.contains(prev_id)
-                            && !self.pending_deletes.contains(prev_id)
-                        {
+                        if !deleted.contains(prev_id) && !self.pending_deletes.contains(prev_id) {
                             current_attrs.sort_by_key(|item| item.0);
-                            snap.insert(
-                                prev_id,
-                                Arc::new(std::mem::take(&mut current_attrs)),
-                            );
+                            snap.insert(prev_id, Arc::new(std::mem::take(&mut current_attrs)));
                         } else {
                             current_attrs.clear();
                         }
@@ -344,9 +339,7 @@ impl AttributeStore {
                 current_attrs.push((attr_idx, value));
             }
             if let Some(prev_id) = current_id {
-                if !deleted.contains(prev_id)
-                    && !self.pending_deletes.contains(prev_id)
-                {
+                if !deleted.contains(prev_id) && !self.pending_deletes.contains(prev_id) {
                     current_attrs.sort_by_key(|item| item.0);
                     snap.insert(prev_id, Arc::new(current_attrs));
                 }
