@@ -269,11 +269,8 @@ impl AttributeStore {
         }
         // If the fjall keyspace was never initialized, no data was ever flushed
         // to persistent storage. All live data is in the cache. Return empty
-        // without triggering expensive keyspace creation.
+        // without triggering expensive keyspace creation or cache writes.
         if self.keyspace.get().is_none() {
-            let _ = self
-                .cache
-                .insert_entity_if_older(entity_id, Vec::new(), self.version);
             return Arc::new(Vec::new());
         }
         let prefix = entity_id.to_be_bytes();
