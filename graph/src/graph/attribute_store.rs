@@ -95,6 +95,11 @@ use super::attribute_cache::AttributeCache;
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
 use crate::runtime::{ordermap::OrderMap, orderset::OrderSet, value::Value};
 
+/// Shared empty attribute vector to avoid per-entity allocations when an
+/// entity has no properties.
+static EMPTY_ATTRS: once_cell::sync::Lazy<Arc<Vec<(u16, Value)>>> =
+    once_cell::sync::Lazy::new(|| Arc::new(Vec::new()));
+
 /// Create a composite key from entity ID and attribute index.
 fn make_key(
     entity_id: u64,
@@ -265,13 +270,13 @@ impl AttributeStore {
     ) -> Arc<Vec<(u16, Value)>> {
         // If this entity is pending full deletion, return empty regardless of fjall state.
         if self.pending_deletes.contains(entity_id) {
-            return Arc::new(Vec::new());
+            return EMPTY_ATTRS.clone();
         }
         // If the fjall keyspace was never initialized, no data was ever flushed
         // to persistent storage. All live data is in the cache. Return empty
         // without triggering expensive keyspace creation or cache writes.
         if self.keyspace.get().is_none() {
-            return Arc::new(Vec::new());
+            return EMPTY_ATTRS.clone();
         }
         let prefix = entity_id.to_be_bytes();
         let attrs: Vec<(u16, Value)> = self
@@ -772,7 +777,6 @@ impl AttributeStore {
             }
         }
 
-        let empty: Arc<Vec<(u16, Value)>> = Arc::new(Vec::new());
         let mut skipped = 0u64;
         let mut encoded = 0u64;
 
@@ -788,7 +792,9 @@ impl AttributeStore {
             w.write_unsigned(id);
 
             let props = if let Some(snap) = rdb_snapshot {
-                snap.get(&id).cloned().unwrap_or_else(|| empty.clone())
+                snap.get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| EMPTY_ATTRS.clone())
             } else {
                 self.get_all_attrs_by_id(id)
             };
