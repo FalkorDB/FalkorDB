@@ -1832,6 +1832,12 @@ impl Graph {
         Ok(())
     }
 
+    /// Returns `true` if any attribute store has cold data in fjall that
+    /// would be unsafe to read from a fork child.
+    pub fn needs_rdb_snapshot(&self) -> bool {
+        self.node_attrs.has_fjall_data() || self.relationship_attrs.has_fjall_data()
+    }
+
     /// Pre-populate attribute caches from fjall for RDB save.
     pub fn build_rdb_snapshots(&self) -> RdbSnapshots {
         let node_snap = self

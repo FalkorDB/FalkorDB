@@ -305,10 +305,13 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
 
             // Build attribute snapshots (cache + fjall) before fork.
             // The fork child will use these instead of accessing fjall.
-            let snapshots = Arc::new(graph.build_rdb_snapshots());
-            vkey_state
-                .rdb_snapshots
-                .insert(graph_name.clone(), snapshots);
+            // Skip if no fjall data exists — all data is in cache already.
+            if graph.needs_rdb_snapshot() {
+                let snapshots = Arc::new(graph.build_rdb_snapshots());
+                vkey_state
+                    .rdb_snapshots
+                    .insert(graph_name.clone(), snapshots);
+            }
 
             let multi_payloads = build_multi_key_payloads(&graph, vkey_max as u64);
             let key_count = multi_payloads.len();

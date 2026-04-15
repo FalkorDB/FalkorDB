@@ -295,6 +295,13 @@ impl AttributeStore {
         Arc::new(attrs)
     }
 
+    /// Returns `true` if this store has a fjall keyspace that might contain
+    /// cold data not present in cache.  When `false`, all data is in cache
+    /// and the fork child can safely read from cache without touching fjall.
+    pub fn has_fjall_data(&self) -> bool {
+        self.keyspace.get().is_some()
+    }
+
     /// Build a complete snapshot of all entity attributes by merging cache and
     /// fjall data.  Returns a map from entity-ID to its attribute list.
     ///
