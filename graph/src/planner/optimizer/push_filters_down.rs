@@ -246,6 +246,60 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 }
             }
 
+            // Try CP splitting for remaining cross-branch conjuncts.
+            // When a conjunct references variables from a proper subset of CP
+            // branches (>=2 but < all), extract those branches into an inner
+            // CP wrapped with that conjunct as a filter.
+            if !remaining.is_empty() && child_conjuncts.iter().all(Vec::is_empty) {
+                if let Some(filter_child) = optimized_plan.node(idx).get_child(0)
+                    && matches!(filter_child.data(), IR::CartesianProduct)
+                    && filter_child.num_children() > 2
+                {
+                    let total_children = children.len();
+                    let mut split_idx = None;
+
+                    for (ci, conjunct) in remaining.iter().enumerate() {
+                        let conj_vars = collect_expr_variables(conjunct);
+                        // Find solving branches: children that contribute >=1
+                        // variable referenced by this conjunct.
+                        let solving: Vec<usize> = children
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, (_, child_vars))| {
+                                conj_vars.iter().any(|v| child_vars.contains(v))
+                            })
+                            .map(|(i, _)| i)
+                            .collect();
+
+                        if solving.len() >= 2 && solving.len() < total_children {
+                            split_idx = Some((ci, solving));
+                            break;
+                        }
+                    }
+
+                    if let Some((ci, solving)) = split_idx {
+                        // Rebuild the entire plan using a recursive approach
+                        // to avoid in-place tree mutation issues with prune.
+                        let split_filter_idx = idx;
+                        let conjunct_to_split = remaining[ci].clone();
+                        let solving_set: HashSet<usize> = solving.iter().copied().collect();
+                        let mut remaining_conjuncts = remaining.clone();
+                        remaining_conjuncts.remove(ci);
+
+                        *optimized_plan = rebuild_with_cp_split(
+                            optimized_plan,
+                            split_filter_idx,
+                            &conjunct_to_split,
+                            &solving_set,
+                            &remaining_conjuncts,
+                        );
+
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+
             // Skip if nothing can be pushed down
             if child_conjuncts.iter().all(Vec::is_empty) {
                 continue;
@@ -292,4 +346,88 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
             break;
         }
     }
+}
+
+/// Rebuilds the plan tree, splitting one CP node at the given filter index.
+///
+/// Instead of in-place tree mutation (which can trigger crashes in
+/// orx-tree's unsafe prune code), this rebuilds the entire tree,
+/// substituting the target filter+CP node with the split version.
+fn rebuild_with_cp_split(
+    plan: &DynTree<IR>,
+    target_filter_idx: orx_tree::NodeIdx<orx_tree::Dyn<IR>>,
+    conjunct: &DynTree<ExprIR<Variable>>,
+    solving_set: &HashSet<usize>,
+    remaining_conjuncts: &[DynTree<ExprIR<Variable>>],
+) -> DynTree<IR> {
+    fn rebuild_node(
+        node: &orx_tree::DynNode<IR>,
+        target_filter_idx: orx_tree::NodeIdx<orx_tree::Dyn<IR>>,
+        conjunct: &DynTree<ExprIR<Variable>>,
+        solving_set: &HashSet<usize>,
+        remaining_conjuncts: &[DynTree<ExprIR<Variable>>],
+    ) -> DynTree<IR> {
+        use orx_tree::DynTree;
+
+        if node.idx() == target_filter_idx {
+            // This is the filter node we want to transform.
+            // Its child(0) is the CartesianProduct.
+            let cp = node.child(0);
+            let cp_children: Vec<DynTree<IR>> = cp.children().map(|c| c.clone_as_tree()).collect();
+
+            let extracted: Vec<DynTree<IR>> = cp_children
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| solving_set.contains(i))
+                .map(|(_, t)| t.clone())
+                .collect();
+            let others: Vec<DynTree<IR>> = cp_children
+                .into_iter()
+                .enumerate()
+                .filter(|(i, _)| !solving_set.contains(i))
+                .map(|(_, t)| t)
+                .collect();
+
+            let inner_cp = tree!(IR::CartesianProduct; extracted);
+            let filter_expr = Arc::new(conjunct.clone());
+            let inner_filtered = tree!(IR::Filter(filter_expr); vec![inner_cp]);
+
+            let mut new_children = others;
+            new_children.push(inner_filtered);
+
+            if remaining_conjuncts.is_empty() {
+                tree!(IR::CartesianProduct; new_children)
+            } else {
+                let remaining_filter = if remaining_conjuncts.len() == 1 {
+                    Arc::new(remaining_conjuncts[0].clone())
+                } else {
+                    Arc::new(tree!(ExprIR::And; remaining_conjuncts.to_vec()))
+                };
+                let cp = tree!(IR::CartesianProduct; new_children);
+                tree!(IR::Filter(remaining_filter), cp)
+            }
+        } else {
+            // Default: clone this node and recursively rebuild children.
+            let mut new_tree = DynTree::new(node.data().clone());
+            for child in node.children() {
+                let child_tree = rebuild_node(
+                    &child,
+                    target_filter_idx,
+                    conjunct,
+                    solving_set,
+                    remaining_conjuncts,
+                );
+                new_tree.root_mut().push_child_tree(child_tree);
+            }
+            new_tree
+        }
+    }
+
+    rebuild_node(
+        &plan.root(),
+        target_filter_idx,
+        conjunct,
+        solving_set,
+        remaining_conjuncts,
+    )
 }

@@ -64,6 +64,7 @@ fn record_mut(
         (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
         &env_pool,
         -1,
+        false,
     );
     let _ = runtime.query();
     let ids = plan.root().indices::<Bfs>().collect::<Vec<_>>();

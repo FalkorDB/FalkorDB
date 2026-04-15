@@ -126,7 +126,7 @@ fuzz_target!(init: {
             return Corpus::Reject;
         };
         let pool = Pool::new();
-        let runtime = Runtime::new(g.read(), parameters, true, plan, false, String::new(), &pool, -1);
+        let runtime = Runtime::new(g.read(), parameters, true, plan, false, String::new(), &pool, -1, false);
         match runtime.query() {
             Ok(_) => Corpus::Keep,
             _ => Corpus::Reject,

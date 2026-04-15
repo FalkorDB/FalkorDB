@@ -48,18 +48,21 @@
 mod absorb_edge_filters_into_vlt;
 mod eliminate_true_filters;
 mod push_filters_down;
+mod reduce_count;
+mod reduce_expand_into;
 mod replace_cartesian_with_hash_join;
 mod select_scan_node;
 mod utilize_index;
 mod utilize_node_by_id;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use orx_tree::{Bfs, DynTree, NodeRef};
 
 use crate::{
     graph::graph::Graph,
     parser::ast::{ExprIR, Variable},
+    runtime::value::Value,
 };
 
 use super::IR;
@@ -67,6 +70,8 @@ use super::IR;
 use absorb_edge_filters_into_vlt::absorb_edge_filters_into_vlt;
 use eliminate_true_filters::eliminate_true_filters;
 use push_filters_down::push_filters_down;
+use reduce_count::reduce_count;
+use reduce_expand_into::reduce_expand_into;
 use replace_cartesian_with_hash_join::replace_cartesian_with_hash_join;
 use select_scan_node::select_scan_node;
 use utilize_index::utilize_index;
@@ -108,10 +113,13 @@ pub(crate) fn collect_subtree_variables(node: &orx_tree::DynNode<IR>) -> HashSet
 pub fn optimize(
     plan: &DynTree<IR>,
     graph: &Graph,
+    params: &HashMap<String, Value>,
 ) -> DynTree<IR> {
     let mut optimized_plan = plan.clone();
 
-    eliminate_true_filters(&mut optimized_plan);
+    reduce_count(&mut optimized_plan, graph);
+    reduce_expand_into(&mut optimized_plan);
+    eliminate_true_filters(&mut optimized_plan, params);
     select_scan_node(&mut optimized_plan, graph);
     push_filters_down(&mut optimized_plan);
     replace_cartesian_with_hash_join(&mut optimized_plan);

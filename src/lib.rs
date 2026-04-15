@@ -47,7 +47,7 @@ mod serializers;
 use allocator::ThreadCountingAllocator;
 use commands::{
     graph_config, graph_debug, graph_delete, graph_effect, graph_explain, graph_list, graph_memory,
-    graph_query, graph_record, graph_ro_query, graph_udf,
+    graph_profile, graph_query, graph_record, graph_ro_query, graph_udf,
 };
 use config::{
     CONFIGURATION_CACHE_SIZE, CONFIGURATION_CMD_INFO, CONFIGURATION_DELAY_INDEXING,
@@ -70,6 +70,7 @@ redis_module! {
         ["graph.QUERY", graph_query, "write deny-oom deny-script blocking", 1, 1, 1, ""],
         ["graph.RO_QUERY", graph_ro_query, "readonly deny-script blocking", 1, 1, 1, ""],
         ["graph.EXPLAIN", graph_explain, "write deny-oom deny-script", 1, 1, 1, ""],
+        ["graph.PROFILE", graph_profile, "write deny-oom deny-script blocking", 1, 1, 1, ""],
         ["graph.LIST", graph_list, "readonly deny-script allow-busy", 0, 0, 0, ""],
         ["graph.RECORD", graph_record, "write deny-oom deny-script blocking", 1, 1, 1, ""],
         ["graph.MEMORY", graph_memory, "readonly deny-script", 2, 2, 1, ""],

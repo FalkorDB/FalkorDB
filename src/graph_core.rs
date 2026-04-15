@@ -55,13 +55,13 @@ use graph::{
     },
     threadpool::{pending_count, spawn},
 };
-use orx_tree::Collection;
+use orx_tree::{Collection, Dfs, NodeRef};
 use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, RedisResult, RedisValue, raw};
 use std::{
     collections::HashMap,
     ffi::CString,
-    os::raw::c_void,
+    os::raw::{c_char, c_void},
     ptr::null_mut,
     sync::{
         Arc,
@@ -159,6 +159,7 @@ impl ThreadedGraph {
             (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
             &env_pool,
             RESULTSET_SIZE.load(Ordering::Relaxed),
+            false,
         );
         let mut result = runtime.query()?;
         result.stats.cached = cached;
@@ -205,6 +206,7 @@ impl ThreadedGraph {
             (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
             &env_pool,
             RESULTSET_SIZE.load(Ordering::Relaxed),
+            false,
         );
         let mut result = match runtime.query() {
             Ok(r) => r,
@@ -239,6 +241,126 @@ impl ThreadedGraph {
             || result.stats.indexes_created > 0
             || result.stats.indexes_dropped > 0;
         Ok((g, effects_buffer, modified))
+    }
+
+    /// Execute a query with profiling enabled (read path).
+    pub fn execute_profile(
+        &self,
+        ctx: &Context,
+        query: &str,
+    ) -> Result<bool, String> {
+        let Plan {
+            plan, parameters, ..
+        } = self.graph.read().borrow().get_plan(query)?;
+        let parameters = parameters
+            .into_iter()
+            .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
+            .collect::<Result<HashMap<_, _>, String>>()?;
+        let is_write = plan.iter().any(|n| {
+            matches!(
+                n,
+                IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
+            )
+        });
+        if is_write {
+            return Ok(true);
+        }
+        let g = self.graph.read();
+        let env_pool = Pool::new();
+        let runtime = Runtime::new(
+            g,
+            parameters,
+            false,
+            plan.clone(),
+            false,
+            String::new(),
+            &env_pool,
+            -1,
+            true,
+        );
+        let _ = runtime.query()?;
+        reply_profile(ctx, &runtime, &plan);
+        Ok(false)
+    }
+
+    /// Execute a write query with profiling enabled.
+    pub fn execute_profile_write(
+        &self,
+        ctx: &Context,
+        query: &str,
+    ) -> WriteQueryResult {
+        let Plan {
+            plan, parameters, ..
+        } = self.graph.read().borrow().get_plan(query)?;
+        let parameters = parameters
+            .into_iter()
+            .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
+            .collect::<Result<HashMap<_, _>, String>>()?;
+
+        let g = self.graph.write().unwrap();
+        let env_pool = Pool::new();
+        let runtime = Runtime::new(
+            g.clone(),
+            parameters,
+            true,
+            plan.clone(),
+            false,
+            String::new(),
+            &env_pool,
+            -1,
+            true,
+        );
+        match runtime.query() {
+            Ok(_) => {
+                reply_profile(ctx, &runtime, &plan);
+                Ok((g, None, false))
+            }
+            Err(err) => {
+                g.borrow_mut().rollback_cache();
+                Err(err)
+            }
+        }
+    }
+}
+
+/// Reply with profile output: DFS walk of the plan tree, each line annotated
+/// with `Records produced: N, Execution time: T.TTTTTT ms`.
+/// Skips `Commit` nodes (internal implementation detail).
+fn reply_profile(
+    ctx: &Context,
+    runtime: &Runtime,
+    plan: &orx_tree::DynTree<IR>,
+) {
+    let all_ops: Vec<_> = plan.root().indices::<Dfs>().collect();
+    // Filter out Commit nodes and adjust depth accordingly.
+    let ops: Vec<_> = all_ops
+        .iter()
+        .filter(|idx| !matches!(plan.node(**idx).data(), IR::Commit))
+        .collect();
+    let profile_data = runtime.profile_data.borrow();
+    raw::reply_with_array(ctx.ctx, ops.len() as _);
+    for idx in ops {
+        let node = plan.node(*idx);
+        // Calculate effective depth (subtract number of Commit ancestors).
+        let mut depth = node.depth();
+        let mut cur = *idx;
+        while let Some(parent) = plan.node(cur).parent() {
+            if matches!(parent.data(), IR::Commit) {
+                depth -= 1;
+            }
+            cur = parent.idx();
+        }
+        let (records, time) = profile_data
+            .get(idx)
+            .copied()
+            .unwrap_or((0, std::time::Duration::ZERO));
+        let time_ms = time.as_secs_f64() * 1000.0;
+        let line = format!(
+            "{}{} | Records produced: {records}, Execution time: {time_ms:.6} ms",
+            "    ".repeat(depth),
+            node.data()
+        );
+        raw::reply_with_string_buffer(ctx.ctx, line.as_ptr().cast::<c_char>(), line.len());
     }
 }
 
@@ -381,6 +503,118 @@ fn query_sync(
                             replicate_effects(ctx, key_name, effects_buffer, query);
                         }
                         // Flush dirty cache entries to fjall if over budget.
+                        let value = g.graph.read().borrow().maybe_flush_caches();
+                        if let Err(e) = value {
+                            eprintln!("FalkorDB: cache flush failed: {e}");
+                        }
+                    }
+                    Err(err) => {
+                        g.graph.rollback();
+                        return Err(redis_module::RedisError::String(err));
+                    }
+                }
+                drop(g);
+            }
+        }
+        Err(err) => {
+            return Err(redis_module::RedisError::String(err));
+        }
+    }
+    Ok(RedisValue::NoReply)
+}
+
+#[inline]
+pub fn profile_mut(
+    ctx: &Context,
+    graph: &Arc<RwLock<ThreadedGraph>>,
+    query: &str,
+    key_name: Arc<String>,
+) -> RedisResult {
+    // Inside MULTI/EXEC: execute synchronously.
+    if ctx.get_flags().contains(ContextFlags::MULTI) {
+        return profile_sync(ctx, graph, query, &key_name);
+    }
+
+    let bc = BlockedClient {
+        inner: unsafe { raw::RedisModule_BlockClient.unwrap()(ctx.ctx, None, None, None, 0) },
+    };
+    let graph = graph.clone();
+    let query = Arc::new(query.to_string());
+    spawn(
+        move || {
+            let g = graph.clone();
+            let binding = graph.clone();
+            let graph_read = binding.read();
+            let bc = bc;
+            let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
+            let ctx = Context::new(ctx);
+
+            let res = graph_read.execute_profile(&ctx, &query);
+
+            match res {
+                Ok(is_write) => {
+                    if is_write {
+                        // Write path: drop read lock, acquire write lock.
+                        // Free the read-phase context before creating a new one.
+                        drop(graph_read);
+                        unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
+                        let mut graph_write = g.write();
+                        let ctx2 =
+                            unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
+                        let ctx2 = Context::new(ctx2);
+                        let res = graph_write.execute_profile_write(&ctx2, &query);
+                        match res {
+                            Ok((new_graph, _, _)) => {
+                                graph_write.graph.commit(new_graph);
+                                let value = graph_write.graph.read().borrow().maybe_flush_caches();
+                                if let Err(e) = value {
+                                    eprintln!("FalkorDB: cache flush failed: {e}");
+                                }
+                            }
+                            Err(err) => {
+                                let cerr = CString::new(err).unwrap();
+                                raw::reply_with_error(ctx2.ctx, cerr.as_ptr());
+                                graph_write.graph.rollback();
+                            }
+                        }
+                        drop(bc);
+                        unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx2.ctx) };
+                    } else {
+                        drop(bc);
+                        unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
+                    }
+                }
+                Err(err) => {
+                    let cerr = CString::new(err).unwrap();
+                    raw::reply_with_error(ctx.ctx, cerr.as_ptr());
+                    drop(bc);
+                    unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
+                }
+            }
+        },
+        None,
+    );
+    Ok(RedisValue::NoReply)
+}
+
+fn profile_sync(
+    ctx: &Context,
+    graph: &Arc<RwLock<ThreadedGraph>>,
+    query: &str,
+    _key_name: &Arc<String>,
+) -> RedisResult {
+    let res = {
+        let g = graph.read();
+        g.execute_profile(ctx, query)
+    };
+    match res {
+        Ok(is_write) => {
+            if is_write {
+                let mut g = graph.write();
+                let res = g.execute_profile_write(ctx, query);
+                match res {
+                    Ok((new_graph, _, _)) => {
+                        g.graph.commit(new_graph);
                         let value = g.graph.read().borrow().maybe_flush_caches();
                         if let Err(e) = value {
                             eprintln!("FalkorDB: cache flush failed: {e}");
