@@ -99,7 +99,10 @@ use crate::{
     },
     parser::{ast::ExprIR, cypher::Parser},
     planner::{IR, Planner, binder::Binder, optimizer::optimize},
-    runtime::{ordermap::OrderMap, orderset::OrderSet, pending::PendingRelationship, value::Value},
+    runtime::{
+        eval::evaluate_param, ordermap::OrderMap, orderset::OrderSet, pending::PendingRelationship,
+        value::Value,
+    },
     threadpool::spawn,
 };
 
@@ -734,13 +737,19 @@ impl Graph {
         let mut parser = Parser::new(query);
         let (parameters, query) = parser.parse_parameters()?;
 
+        // Evaluate parameter expressions to values for the optimizer.
+        let param_values: HashMap<String, Value> = parameters
+            .iter()
+            .filter_map(|(k, v)| evaluate_param(&v.root()).ok().map(|val| (k.clone(), val)))
+            .collect();
+
         let current_udf_version = crate::runtime::functions::udf_version();
 
         {
             let mut cache = self.cache.lock();
             if let Some(plan) = cache.get(query) {
                 if plan.udf_version == current_udf_version {
-                    let optimize_plan = optimize(&plan.plan, self);
+                    let optimize_plan = optimize(&plan.plan, self, &param_values);
                     return Ok(Plan::new(
                         Arc::new(optimize_plan),
                         true,
@@ -763,7 +772,7 @@ impl Graph {
         let mut planner = Planner::new(scope_vars);
         let start = Instant::now();
         let plan = planner.plan(ir);
-        let optimize_plan = optimize(&plan, self);
+        let optimize_plan = optimize(&plan, self, &param_values);
         plan_duration = start.elapsed();
 
         // Only cache the plan if UDF version hasn't changed during planning.

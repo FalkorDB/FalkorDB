@@ -816,6 +816,18 @@ impl<'a> Iterator for BatchOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        // Check if profiling is enabled and save state before dispatch.
+        // We must not hold a reference to `self` across the dispatch.
+        let profiling = self.inspect_context().and_then(|(runtime, idx)| {
+            if runtime.profile {
+                let saved = runtime.profile_child_time.get();
+                runtime.profile_child_time.set(std::time::Duration::ZERO);
+                Some((idx, saved, std::time::Instant::now()))
+            } else {
+                None
+            }
+        });
+
         let result = match self {
             Self::Once(batch) | Self::Argument(batch) => batch.take().map(Ok),
             Self::NodeByLabelScan(op) => op.next(),
@@ -853,10 +865,35 @@ impl<'a> Iterator for BatchOp<'a> {
             Self::ForEach(op) => op.next(),
             Self::ValueHashJoin(op) => op.next(),
         };
+
         if let Some(ref res) = result
             && let Some((runtime, idx)) = self.inspect_context()
         {
+            // Record profiling data after dispatch.
+            if let Some((prof_idx, saved_child_time, start)) = profiling {
+                debug_assert_eq!(idx, prof_idx);
+                let inclusive = start.elapsed();
+                let child_time = runtime.profile_child_time.get();
+                let self_time = inclusive.saturating_sub(child_time);
+                let records = res.as_ref().map_or(0, Batch::active_len);
+                let mut pd = runtime.profile_data.borrow_mut();
+                let entry = pd.entry(idx).or_insert((0, std::time::Duration::ZERO));
+                entry.0 += records;
+                entry.1 += self_time;
+                runtime.profile_child_time.set(saved_child_time + inclusive);
+            }
             runtime.inspect_batch(idx, res);
+        } else if let Some((prof_idx, saved_child_time, start)) = profiling {
+            // Result is None (iterator exhausted) — still need to restore child time.
+            if let Some((runtime, _)) = self.inspect_context() {
+                let inclusive = start.elapsed();
+                let child_time = runtime.profile_child_time.get();
+                let self_time = inclusive.saturating_sub(child_time);
+                let mut pd = runtime.profile_data.borrow_mut();
+                let entry = pd.entry(prof_idx).or_insert((0, std::time::Duration::ZERO));
+                entry.1 += self_time;
+                runtime.profile_child_time.set(saved_child_time + inclusive);
+            }
         }
         result
     }

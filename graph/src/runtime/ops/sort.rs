@@ -47,6 +47,11 @@ pub struct SortOp<'a> {
     /// Sorted results stored in reverse order so we can pop from the end in O(1).
     results: Vec<Env<'a>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
+    /// When set, only the top `limit` rows (after skip) are needed.
+    /// Allows truncation after sorting to avoid excess work.
+    limit: Option<usize>,
+    /// Number of rows to skip before the limit applies.
+    skip: usize,
 }
 
 impl<'a> SortOp<'a> {
@@ -55,6 +60,8 @@ impl<'a> SortOp<'a> {
         child: Box<BatchOp<'a>>,
         trees: &'a [(QueryExpr<Variable>, bool)],
         idx: NodeIdx<Dyn<IR>>,
+        limit: Option<usize>,
+        skip: usize,
     ) -> Self {
         Self {
             runtime,
@@ -62,6 +69,8 @@ impl<'a> SortOp<'a> {
             trees,
             results: Vec::new(),
             idx,
+            limit,
+            skip,
         }
     }
 }
@@ -138,7 +147,18 @@ impl<'a> Iterator for SortOp<'a> {
 
             // Reverse so we can pop from the end in O(1) while preserving
             // sorted order, and drop sort keys immediately (no longer needed).
-            self.results = items.into_iter().rev().map(|(env, _keys)| env).collect();
+            let mut sorted: Vec<Env<'a>> = items.into_iter().map(|(env, _keys)| env).collect();
+
+            // When limit is known, truncate to limit + skip to avoid keeping
+            // excess rows. The Skip and Limit operators above handle the actual
+            // row-level trimming.
+            if let Some(limit) = self.limit {
+                let keep = limit + self.skip;
+                sorted.truncate(keep);
+            }
+
+            sorted.reverse();
+            self.results = sorted;
         }
 
         // Emit sorted rows in batches by popping from the end.

@@ -42,6 +42,7 @@ tests/flow/test_multi_writer.py
 tests/flow/test_multiple_edges
 tests/flow/test_node_by_id
 tests/flow/test_opening_node.py
+tests/flow/test_optimizations_plan.py
 tests/flow/test_optional_match
 tests/flow/test_order_by.py
 tests/flow/test_pagerank.py
@@ -53,6 +54,7 @@ tests/flow/test_path_filter
 tests/flow/test_path_projections.py
 tests/flow/test_pending_queries_limit.py
 tests/flow/test_point
+tests/flow/test_profile.py
 tests/flow/test_query_validation
 tests/flow/test_reduce.py
 tests/flow/test_results.py

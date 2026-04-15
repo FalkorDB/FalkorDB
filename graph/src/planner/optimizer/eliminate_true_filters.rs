@@ -31,7 +31,7 @@
 //!
 //! If all AND conjuncts are constant true, the entire Filter is removed.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use orx_tree::{Bfs, DynTree, NodeRef};
 
@@ -44,18 +44,74 @@ use crate::{
 use super::super::IR;
 
 /// Returns true if the filter expression evaluates to a constant `true`.
-fn is_constant_true(filter: &DynTree<ExprIR<Variable>>) -> bool {
-    matches!(
+/// First tries constant-only evaluation. If that fails (e.g. parameter
+/// references), substitutes parameter values and retries.
+fn is_constant_true(
+    filter: &DynTree<ExprIR<Variable>>,
+    params: &HashMap<String, Value>,
+) -> bool {
+    // Fast path: pure constant (no params needed).
+    if matches!(
         ExprEval::constant().eval(filter, filter.root().idx(), None, None),
         Ok(Value::Bool(true))
-    )
+    ) {
+        return true;
+    }
+
+    // Slow path: substitute parameters into a cloned expression, then
+    // re-evaluate as constant.
+    if !params.is_empty() && expr_has_parameter(filter) {
+        let substituted = substitute_params(filter, params);
+        return matches!(
+            ExprEval::constant().eval(&substituted, substituted.root().idx(), None, None),
+            Ok(Value::Bool(true))
+        );
+    }
+
+    false
+}
+
+/// Check if the expression tree contains any parameter references.
+fn expr_has_parameter(expr: &DynTree<ExprIR<Variable>>) -> bool {
+    expr.root()
+        .indices::<Bfs>()
+        .any(|idx| matches!(expr.node(idx).data(), ExprIR::Parameter(_)))
+}
+
+/// Clone the expression tree, replacing `ExprIR::Parameter(name)` nodes
+/// with their evaluated constant values from `params`.
+fn substitute_params(
+    expr: &DynTree<ExprIR<Variable>>,
+    params: &HashMap<String, Value>,
+) -> DynTree<ExprIR<Variable>> {
+    let mut result = expr.clone();
+    let indices: Vec<_> = result.root().indices::<Bfs>().collect();
+    for idx in indices {
+        if let ExprIR::Parameter(name) = result.node(idx).data()
+            && let Some(val) = params.get(name)
+        {
+            let replacement = match val {
+                Value::Null => ExprIR::Null,
+                Value::Bool(b) => ExprIR::Bool(*b),
+                Value::Int(n) => ExprIR::Integer(*n),
+                Value::Float(f) => ExprIR::Float(*f),
+                Value::String(s) => ExprIR::String(s.clone()),
+                _ => continue,
+            };
+            *result.node_mut(idx).data_mut() = replacement;
+        }
+    }
+    result
 }
 
 /// Eliminates filter nodes whose expression evaluates to constant `true`.
 ///
 /// Also removes `Bool(true)` conjuncts from AND filters, and removes the
 /// entire filter if all conjuncts are true.
-pub(super) fn eliminate_true_filters(optimized_plan: &mut DynTree<IR>) {
+pub(super) fn eliminate_true_filters(
+    optimized_plan: &mut DynTree<IR>,
+    params: &HashMap<String, Value>,
+) {
     loop {
         let mut changed = false;
         let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
@@ -65,7 +121,7 @@ pub(super) fn eliminate_true_filters(optimized_plan: &mut DynTree<IR>) {
                 continue;
             };
 
-            if is_constant_true(filter) {
+            if is_constant_true(filter, params) {
                 optimized_plan.node_mut(idx).take_out();
                 changed = true;
                 break;
@@ -76,7 +132,7 @@ pub(super) fn eliminate_true_filters(optimized_plan: &mut DynTree<IR>) {
                 let remaining: Vec<DynTree<ExprIR<Variable>>> = filter
                     .root()
                     .children()
-                    .filter(|c| !is_constant_true(&c.clone_as_tree()))
+                    .filter(|c| !is_constant_true(&c.clone_as_tree(), params))
                     .map(|c| c.clone_as_tree())
                     .collect();
 

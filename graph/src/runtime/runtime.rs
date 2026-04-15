@@ -72,7 +72,7 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 pub use super::eval::ValueIter;
@@ -159,6 +159,12 @@ pub struct Runtime<'a> {
     /// Used by `date.transaction()`, `localtime.transaction()`, and `localdatetime.transaction()`
     /// so every call in the same transaction returns the same value.
     pub transaction_timestamp: DateTime<Utc>,
+    /// Whether profiling is enabled for this query.
+    pub profile: bool,
+    /// Per-operator profile data: (records_produced, exclusive_time).
+    pub profile_data: RefCell<HashMap<NodeIdx<Dyn<IR>>, (usize, Duration)>>,
+    /// Accumulator for child time subtraction during profiling.
+    pub profile_child_time: Cell<Duration>,
 }
 
 pub trait GetVariables {
@@ -339,6 +345,7 @@ impl<'a> Runtime<'a> {
         import_folder: String,
         env_pool: &'a Pool<Value>,
         result_set_size: i64,
+        profile: bool,
     ) -> Self {
         let return_names = plan.root().get_return_names();
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
@@ -365,6 +372,9 @@ impl<'a> Runtime<'a> {
             effects_buffer: RefCell::new(None),
             effects_count: Cell::new(0),
             transaction_timestamp: Utc::now(),
+            profile,
+            profile_data: RefCell::new(HashMap::new()),
+            profile_child_time: Cell::new(Duration::ZERO),
         }
     }
 
@@ -433,6 +443,76 @@ impl<'a> Runtime<'a> {
             || Ok(BatchOp::Once(Some(self.default_batch()))),
             |child| self.run_batch(child.idx()),
         )
+    }
+
+    /// Walk IR ancestors from `idx` upward to find the effective limit.
+    /// Returns `None` if a non-transparent operation is encountered before
+    /// a Limit node, or if no Limit ancestor exists.
+    /// Only transparent operators (Project, Skip) are safe to propagate
+    /// through — Sort is NOT transparent because it needs all rows.
+    fn effective_limit(
+        &self,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> Option<usize> {
+        let mut cur = idx;
+        while let Some(parent) = self.plan.node(cur).parent() {
+            match parent.data() {
+                IR::Limit(expr) => {
+                    let env = Env::new(self.env_pool);
+                    let val = super::eval::ExprEval::from_runtime(self)
+                        .eval(expr, expr.root().idx(), Some(&env), None)
+                        .ok()?;
+                    return match val {
+                        Value::Int(n) if n >= 0 => Some(n as usize),
+                        _ => None,
+                    };
+                }
+                // These operators pass rows through 1:1 or 1:N — limit still
+                // provides a useful early-stop hint through them.
+                IR::Project { .. }
+                | IR::Skip(_)
+                | IR::CondTraverse { .. }
+                | IR::ExpandInto { .. } => {}
+                // Everything else is a barrier.
+                _ => {
+                    return None;
+                }
+            }
+            cur = parent.idx();
+        }
+        None
+    }
+
+    /// Walk IR ancestors from `idx` upward to find the effective skip.
+    /// Returns 0 if a row-reducing or eager operation is encountered before
+    /// a Skip node, or if no Skip ancestor exists.
+    fn effective_skip(
+        &self,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> usize {
+        let mut cur = idx;
+        while let Some(parent) = self.plan.node(cur).parent() {
+            match parent.data() {
+                IR::Skip(expr) => {
+                    let env = Env::new(self.env_pool);
+                    let val = super::eval::ExprEval::from_runtime(self)
+                        .eval(expr, expr.root().idx(), Some(&env), None)
+                        .ok();
+                    return match val {
+                        Some(Value::Int(n)) if n >= 0 => n as usize,
+                        _ => 0,
+                    };
+                }
+                // Safe pass-through operators.
+                IR::Project { .. } | IR::Limit(_) => {}
+                // Everything else is a barrier.
+                _ => {
+                    return 0;
+                }
+            }
+            cur = parent.idx();
+        }
+        0
     }
 
     /// Builds a batch-mode operator tree for the given IR node.
@@ -528,12 +608,16 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::Sort(trees) => {
+                let limit = self.effective_limit(idx);
+                let skip = self.effective_skip(idx);
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::Sort(SortOp::new(
                     self,
                     Box::new(child),
                     trees,
                     idx,
+                    limit,
+                    skip,
                 )))
             }
             IR::Aggregate {
@@ -571,6 +655,11 @@ impl<'a> Runtime<'a> {
                 sibling_edges,
                 transposed,
             } => {
+                // Account for both limit and skip so the traverse produces
+                // enough rows for a downstream SkipOp + LimitOp pipeline.
+                let record_cap = self
+                    .effective_limit(idx)
+                    .map(|l| l + self.effective_skip(idx));
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::CondTraverse(CondTraverseOp::new(
                     self,
@@ -580,6 +669,7 @@ impl<'a> Runtime<'a> {
                     sibling_edges,
                     *transposed,
                     idx,
+                    record_cap,
                 )))
             }
             IR::ExpandInto {
@@ -587,6 +677,11 @@ impl<'a> Runtime<'a> {
                 emit_relationship,
                 sibling_edges,
             } => {
+                // Account for both limit and skip so the traverse produces
+                // enough rows for a downstream SkipOp + LimitOp pipeline.
+                let record_cap = self
+                    .effective_limit(idx)
+                    .map(|l| l + self.effective_skip(idx));
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::ExpandInto(ExpandIntoOp::new(
                     self,
@@ -595,6 +690,7 @@ impl<'a> Runtime<'a> {
                     *emit_relationship,
                     sibling_edges,
                     idx,
+                    record_cap,
                 )))
             }
             IR::NodeByIdSeek { node, filter } => {

@@ -42,6 +42,11 @@ pub struct ExpandIntoOp<'a> {
     /// Alias IDs of sibling relationship variables in the same MATCH clause.
     sibling_edges: &'a [u32],
     pub(crate) idx: NodeIdx<Dyn<IR>>,
+    /// Maximum number of records this operator should produce. Once reached,
+    /// subsequent `next()` calls return `None`. Set by limit propagation.
+    record_cap: Option<usize>,
+    /// Number of records produced so far (tracked when `record_cap` is set).
+    produced: usize,
 }
 
 impl<'a> ExpandIntoOp<'a> {
@@ -52,6 +57,7 @@ impl<'a> ExpandIntoOp<'a> {
         emit_relationship: bool,
         sibling_edges: &'a [u32],
         idx: NodeIdx<Dyn<IR>>,
+        record_cap: Option<usize>,
     ) -> Self {
         Self {
             runtime,
@@ -63,6 +69,8 @@ impl<'a> ExpandIntoOp<'a> {
             emit_relationship,
             sibling_edges,
             idx,
+            record_cap,
+            produced: 0,
         }
     }
 
@@ -204,6 +212,13 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        // Check if record_cap already reached.
+        if let Some(cap) = self.record_cap {
+            if self.produced >= cap {
+                return None;
+            }
+        }
+
         let mut envs = Vec::with_capacity(BATCH_SIZE);
 
         // Drain leftover rows from previous call.
@@ -258,6 +273,14 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
         if envs.is_empty() {
             None
         } else {
+            // Trim to record_cap if set.
+            if let Some(cap) = self.record_cap {
+                let remaining = cap - self.produced;
+                if envs.len() > remaining {
+                    envs.truncate(remaining);
+                }
+            }
+            self.produced += envs.len();
             Some(Ok(Batch::from_envs(envs)))
         }
     }
