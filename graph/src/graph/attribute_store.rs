@@ -85,6 +85,9 @@
 
 use std::{collections::HashMap, process, sync::Arc};
 
+use std::cmp::Ordering;
+use std::collections::HashMap as StdHashMap;
+
 use fjall::{
     Database, Keyspace, KeyspaceCreateOptions, Readable, Snapshot, config::HashRatioPolicy,
 };
@@ -375,10 +378,11 @@ impl AttributeStore {
         &mut self,
         key: u64,
     ) -> Result<(), String> {
-        // Flush any pending dirty attributes to fjall before invalidating the cache.
-        self.flush_and_invalidate(key)?;
+        // Don't invalidate cache — older MVCC versions sharing this cache may
+        // still need the dirty entry. pending_deletes guards reads on this
+        // version; the cache entry is harmless to older/newer readers because
+        // the version check in the cache handles visibility.
         self.dirty_entities.insert(key);
-        // Stage the deletion to be applied on commit (not immediately to fjall).
         self.pending_deletes.insert(key);
         Ok(())
     }
@@ -399,6 +403,9 @@ impl AttributeStore {
         key: u64,
         attr_idx: u16,
     ) -> Option<Value> {
+        if self.pending_deletes.contains(key) {
+            return None;
+        }
         // 1. Check cache.
         if let Some(result) = self.cache.get_attr(key, attr_idx, self.version) {
             return result;
@@ -432,6 +439,9 @@ impl AttributeStore {
         &self,
         key: u64,
     ) -> impl Iterator<Item = Arc<String>> + '_ {
+        if self.pending_deletes.contains(key) {
+            return Vec::new().into_iter();
+        }
         // Try cache first.
         let cached = self.cache.get_entity(key, self.version);
         let attrs = cached.unwrap_or_else(|| self.populate_cache_from_fjall(key));
@@ -452,7 +462,10 @@ impl AttributeStore {
     pub fn get_all_attrs(
         &self,
         key: u64,
-    ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
+    ) -> Vec<(Arc<String>, Value)> {
+        if self.pending_deletes.contains(key) {
+            return Vec::new();
+        }
         let cached = self.cache.get_entity(key, self.version);
         let attrs = cached.unwrap_or_else(|| self.populate_cache_from_fjall(key));
         attrs
@@ -466,13 +479,15 @@ impl AttributeStore {
                 }
             })
             .collect::<Vec<_>>()
-            .into_iter()
     }
 
     pub fn get_all_attrs_by_id(
         &self,
         key: u64,
     ) -> Arc<Vec<(u16, Value)>> {
+        if self.pending_deletes.contains(key) {
+            return Arc::new(Vec::new());
+        }
         self.cache
             .get_entity(key, self.version)
             .unwrap_or_else(|| self.populate_cache_from_fjall(key))
@@ -518,42 +533,56 @@ impl AttributeStore {
     pub fn remove_all(
         &mut self,
         keys: &RoaringTreemap,
-    ) -> Result<(), String> {
-        // Flush pending dirty attributes for each entity before invalidating cache entries.
+    ) {
         for key in keys {
-            self.flush_and_invalidate(key)?;
             self.dirty_entities.insert(key);
-            // Stage the deletion to be applied on commit (not immediately to fjall).
             self.pending_deletes.insert(key);
         }
-        Ok(())
     }
 
     /// Batch insert/update multiple attributes for entities.
     ///
-    /// Writes go to the in-memory cache (`dirty = true`).  Returns the number
-    /// of attributes that were *replaced* (vs newly added).
+    /// Writes go to the in-memory cache (`dirty = true`).  Returns `(nremoved, nset)`:
+    /// the number of attributes *replaced* and the number of non-null attributes *set*.
     pub fn insert_attrs(
         &mut self,
         attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
-    ) -> Result<usize, String> {
+    ) -> Result<(usize, usize), String> {
         let mut nremoved = 0;
+        let mut nset = 0;
+
+        // Pre-resolve all unique attribute names → indices ONCE.
+        // Uses Arc pointer identity as key to avoid rehashing strings.
+        let mut name_to_idx: StdHashMap<*const String, u16> =
+            StdHashMap::with_capacity(attrs.values().next().map_or(0, |v| v.len()));
+        for entity_attrs in attrs.values() {
+            for (attr, _) in entity_attrs.iter() {
+                let ptr = Arc::as_ptr(attr);
+                if !name_to_idx.contains_key(&ptr) {
+                    let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
+                        self.attrs_name.insert(attr.clone());
+                        self.attrs_name.len() - 1
+                    }) as u16;
+                    name_to_idx.insert(ptr, idx);
+                }
+            }
+        }
+
+        // Reusable buffer to avoid per-entity allocation.
+        let mut merged: Vec<(u16, Value)> = Vec::new();
 
         for (key, entity_attrs) in attrs {
-            // Resolve attribute indices (creating new ones as needed).
+            // Resolve attribute indices using pre-resolved map.
             let mut new_entries: Vec<(u16, Value)> = Vec::with_capacity(entity_attrs.len());
             let mut null_indices: Vec<u16> = Vec::new();
 
             for (attr, value) in entity_attrs.iter() {
-                let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
-                    self.attrs_name.insert(attr.clone());
-                    self.attrs_name.len() - 1
-                }) as u16;
-
+                let idx = name_to_idx[&Arc::as_ptr(attr)];
                 if matches!(value, Value::Null) {
                     null_indices.push(idx);
                 } else {
                     new_entries.push((idx, value.clone()));
+                    nset += 1;
                 }
             }
 
@@ -563,48 +592,109 @@ impl AttributeStore {
                 .get_entity(*key, self.version)
                 .unwrap_or_else(|| self.populate_cache_from_fjall(*key));
 
-            // Count removals: existing attrs being overwritten or nulled.
-            for &(idx, _) in &new_entries {
-                if current.binary_search_by_key(&idx, |(i, _)| *i).is_ok() {
-                    nremoved += 1;
+            // Sort new entries for O(n+m) merge.
+            new_entries.sort_unstable_by_key(|(idx, _)| *idx);
+
+            // Fast path: if no nulls AND all new entries come after all current entries,
+            // we can just clone current + append new without a full merge.
+            if null_indices.is_empty()
+                && !new_entries.is_empty()
+                && (current.is_empty() || current.last().unwrap().0 < new_entries[0].0)
+            {
+                merged.clear();
+                merged.reserve(current.len() + new_entries.len());
+                merged.extend_from_slice(&current);
+                merged.extend(new_entries.drain(..));
+            } else {
+                null_indices.sort_unstable();
+
+                // Single-pass sorted merge of current + new_entries, skipping nulls.
+                merged.clear();
+                merged.reserve(current.len() + new_entries.len());
+                let mut ci = 0;
+                let mut ni = 0;
+                let mut di = 0;
+
+                while ci < current.len() && ni < new_entries.len() {
+                    let cur_idx = current[ci].0;
+                    let new_idx = new_entries[ni].0;
+                    match cur_idx.cmp(&new_idx) {
+                        Ordering::Less => {
+                            if di < null_indices.len() && cur_idx == null_indices[di] {
+                                nremoved += 1;
+                                di += 1;
+                            } else {
+                                merged.push(current[ci].clone());
+                            }
+                            ci += 1;
+                        }
+                        Ordering::Equal => {
+                            nremoved += 1;
+                            merged.push((new_idx, new_entries[ni].1.clone()));
+                            ci += 1;
+                            ni += 1;
+                        }
+                        Ordering::Greater => {
+                            merged.push((new_idx, new_entries[ni].1.clone()));
+                            ni += 1;
+                        }
+                    }
                 }
-            }
-            for &idx in &null_indices {
-                if current.binary_search_by_key(&idx, |(i, _)| *i).is_ok() {
-                    nremoved += 1;
+                while ci < current.len() {
+                    let cur_idx = current[ci].0;
+                    if di < null_indices.len() && cur_idx == null_indices[di] {
+                        nremoved += 1;
+                        di += 1;
+                    } else {
+                        merged.push(current[ci].clone());
+                    }
+                    ci += 1;
+                }
+                while ni < new_entries.len() {
+                    merged.push((new_entries[ni].0, new_entries[ni].1.clone()));
+                    ni += 1;
                 }
             }
 
-            // Merge: start from current, apply overwrites, remove nulls.
-            let mut merged: Vec<(u16, Value)> = (*current).clone();
-            for (idx, value) in new_entries {
-                match merged.binary_search_by_key(&idx, |(i, _)| *i) {
-                    Ok(pos) => merged[pos].1 = value,
-                    Err(pos) => merged.insert(pos, (idx, value)),
-                }
-            }
-            for idx in null_indices {
-                if let Ok(pos) = merged.binary_search_by_key(&idx, |(i, _)| *i) {
-                    merged.remove(pos);
-                }
-            }
-
-            // Write merged attrs to cache as dirty.
-            self.cache.insert_entity(*key, merged, self.version, true);
+            // Write merged attrs to cache as dirty (already sorted, skip re-sort).
+            self.cache.insert_entity_presorted(
+                *key,
+                std::mem::take(&mut merged),
+                self.version,
+                true,
+            );
             self.dirty_entities.insert(*key);
         }
 
-        Ok(nremoved)
+        Ok((nremoved, nset))
     }
 
     /// Bulk import attributes for entities known to be new (no prior state).
     ///
     /// Optimized for RDB decode: skips cache/fjall lookups since entities
     /// don't exist yet. Attributes are written directly to cache.
+    /// Returns the number of non-null attributes imported.
     pub fn import_attrs(
         &mut self,
         attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
-    ) {
+    ) -> usize {
+        // Pre-resolve all unique attribute names → indices ONCE.
+        let mut name_to_idx: StdHashMap<*const String, u16> =
+            StdHashMap::with_capacity(attrs.values().next().map_or(0, |v| v.len()));
+        for entity_attrs in attrs.values() {
+            for (attr, _) in entity_attrs.iter() {
+                let ptr = Arc::as_ptr(attr);
+                if !name_to_idx.contains_key(&ptr) {
+                    let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
+                        self.attrs_name.insert(attr.clone());
+                        self.attrs_name.len() - 1
+                    }) as u16;
+                    name_to_idx.insert(ptr, idx);
+                }
+            }
+        }
+
+        let mut nset = 0;
         for (key, entity_attrs) in attrs {
             let mut entries: Vec<(u16, Value)> = Vec::with_capacity(entity_attrs.len());
 
@@ -612,17 +702,16 @@ impl AttributeStore {
                 if matches!(value, Value::Null) {
                     continue;
                 }
-                let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
-                    self.attrs_name.insert(attr.clone());
-                    self.attrs_name.len() - 1
-                }) as u16;
+                let idx = name_to_idx[&Arc::as_ptr(attr)];
                 entries.push((idx, value.clone()));
+                nset += 1;
             }
 
             entries.sort_by_key(|(idx, _)| *idx);
             self.cache.insert_entity(*key, entries, self.version, true);
             self.dirty_entities.insert(*key);
         }
+        nset
     }
 
     #[must_use]
@@ -642,15 +731,26 @@ impl AttributeStore {
         // Apply pending full entity deletions to fjall.
         if !self.pending_deletes.is_empty() {
             let mut batch = get_database().batch();
-            for key in &self.pending_deletes {
-                let prefix = key.to_be_bytes();
-                for entry in self.keyspace().prefix(prefix) {
-                    if let Ok(k) = entry.key() {
-                        batch.remove(self.keyspace(), k);
+            // Use a single sorted scan over the keyspace instead of
+            // N individual prefix scans. For each key encountered,
+            // extract the entity ID (first 8 bytes) and check bitmap
+            // membership — O(1) per key vs O(log N) for a prefix seek.
+            for entry in self.keyspace().iter() {
+                if let Ok(k) = entry.key() {
+                    if k.len() >= 8 {
+                        let entity_id = u64::from_be_bytes(k[..8].try_into().unwrap());
+                        if self.pending_deletes.contains(entity_id) {
+                            batch.remove(self.keyspace(), k);
+                        }
                     }
                 }
             }
             batch.durability(None).commit().map_err(|e| e.to_string())?;
+            // Invalidate deleted entities from the shared cache to prevent stale reads.
+            // After persisting the deletions to fjall, remove cached entries for all
+            // deleted entities so subsequent get_attr*/get_all_attrs* calls won't
+            // resurrect deleted data.
+            self.cache.invalidate_batch(&self.pending_deletes);
         }
         let new_snapshot = OnceCell::new();
         let _ = new_snapshot.set(get_database().snapshot());

@@ -35,4 +35,4 @@ regex = "1.12.3"
 rquickjs = { version = "0.11", features = ["bindgen", "classes", "macro", "parallel"] }
 ureq = { version = "3.3.0", default-features = false, features = ["rustls"] }
 roaring = "0.11.3"
-thin-vec = "0.2.15"
+thin-vec = "0.2.16"

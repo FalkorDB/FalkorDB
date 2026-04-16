@@ -1087,10 +1087,32 @@ impl<'a> Runtime<'a> {
             }
             return None;
         }
+        self.get_node_attribute_no_delete_check(id, attr)
+    }
+
+    /// Like `get_node_attribute` but skips the deleted_nodes check.
+    /// Use when the caller has already verified no deletions exist.
+    pub fn get_node_attribute_no_delete_check(
+        &self,
+        id: NodeId,
+        attr: &Arc<String>,
+    ) -> Option<Value> {
         if let Some(value) = self.pending.borrow().get_node_attribute(id, attr) {
             return Some(value.clone());
         }
         self.g.borrow().get_node_attribute(id, attr)
+    }
+
+    /// Like `get_relationship_attribute` but skips the deleted check.
+    pub fn get_relationship_attribute_no_delete_check(
+        &self,
+        id: RelationshipId,
+        attr: &Arc<String>,
+    ) -> Option<Value> {
+        if let Some(value) = self.pending.borrow().get_relationship_attribute(id, attr) {
+            return Some(value.clone());
+        }
+        self.g.borrow().get_relationship_attribute(id, attr)
     }
 
     pub fn get_relationship_attribute(
@@ -1178,37 +1200,37 @@ impl<'a> Runtime<'a> {
     pub fn get_node_attrs(
         &self,
         id: NodeId,
-    ) -> impl Iterator<Item = (Arc<String>, Value)> {
+    ) -> OrderMap<Arc<String>, Value> {
         if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
-            let attrs: OrderMap<Arc<String>, Value> = dn
+            let attrs = dn
                 .attrs
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
-            return attrs.into_iter();
+            return attrs;
         }
-        let mut actual = self.g.borrow().get_node_all_attrs(id).collect();
+        let mut actual = OrderMap::from_vec(self.g.borrow().get_node_all_attrs(id));
         self.pending.borrow().update_node_attrs(id, &mut actual);
-        actual.into_iter()
+        actual
     }
 
     pub fn get_relationship_attrs(
         &self,
         id: RelationshipId,
-    ) -> impl Iterator<Item = (Arc<String>, Value)> {
+    ) -> OrderMap<Arc<String>, Value> {
         if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
-            let attrs: OrderMap<Arc<String>, Value> = dr
+            let attrs = dr
                 .attrs
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
-            return attrs.into_iter();
+            return attrs;
         }
-        let mut actual = self.g.borrow().get_relationship_all_attrs(id).collect();
+        let mut actual = OrderMap::from_vec(self.g.borrow().get_relationship_all_attrs(id));
         self.pending
             .borrow()
             .update_relationship_attrs(id, &mut actual);
-        actual.into_iter()
+        actual
     }
 
     pub fn get_relationship_type(
@@ -1230,7 +1252,9 @@ impl<'a> Runtime<'a> {
         &self,
         id: NodeId,
     ) -> usize {
-        if self.deleted_nodes.borrow().contains_key(&id) {
+        if self.deleted_nodes.borrow().contains_key(&id)
+            || self.pending.borrow().is_node_deleted(id)
+        {
             return 0;
         }
         let g = self.g.borrow();
@@ -1246,7 +1270,9 @@ impl<'a> Runtime<'a> {
         id: NodeId,
         types: &[Arc<String>],
     ) -> usize {
-        if self.deleted_nodes.borrow().contains_key(&id) {
+        if self.deleted_nodes.borrow().contains_key(&id)
+            || self.pending.borrow().is_node_deleted(id)
+        {
             return 0;
         }
         let g = self.g.borrow();
@@ -1261,7 +1287,9 @@ impl<'a> Runtime<'a> {
         &self,
         id: NodeId,
     ) -> usize {
-        if self.deleted_nodes.borrow().contains_key(&id) {
+        if self.deleted_nodes.borrow().contains_key(&id)
+            || self.pending.borrow().is_node_deleted(id)
+        {
             return 0;
         }
         let g = self.g.borrow();
@@ -1277,7 +1305,9 @@ impl<'a> Runtime<'a> {
         id: NodeId,
         types: &[Arc<String>],
     ) -> usize {
-        if self.deleted_nodes.borrow().contains_key(&id) {
+        if self.deleted_nodes.borrow().contains_key(&id)
+            || self.pending.borrow().is_node_deleted(id)
+        {
             return 0;
         }
         let g = self.g.borrow();

@@ -154,9 +154,9 @@ pub fn register(funcs: &mut Functions) {
             let mut iter = args.into_iter();
             match iter.next() {
                 Some(Value::Map(map)) => Ok(Value::Map(map)),
-                Some(Value::Node(id)) => Ok(Value::Map(Arc::new(runtime.get_node_attrs(id).collect()))),
+                Some(Value::Node(id)) => Ok(Value::Map(Arc::new(runtime.get_node_attrs(id)))),
                 Some(Value::Relationship(rel)) => {
-                    Ok(Value::Map(Arc::new(runtime.get_relationship_attrs(rel.0).collect())))
+                    Ok(Value::Map(Arc::new(runtime.get_relationship_attrs(rel.0))))
                 }
                 Some(Value::Null) => Ok(Value::Null),
 
@@ -221,12 +221,14 @@ pub fn register(funcs: &mut Functions) {
                 Some(Value::Node(id)) => Ok(Value::List(Arc::new(
                     runtime
                         .get_node_attrs(id)
+                        .into_iter()
                         .map(|(k, _)| Value::String(k))
                         .collect::<ThinVec<_>>(),
                 ))),
                 Some(Value::Relationship(rel)) => Ok(Value::List(Arc::new(
                     runtime
                         .get_relationship_attrs(rel.0)
+                        .into_iter()
                         .map(|(k, _)| Value::String(k))
                         .collect::<ThinVec<_>>(),
                 ))),

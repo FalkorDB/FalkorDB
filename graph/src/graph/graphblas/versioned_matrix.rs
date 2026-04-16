@@ -195,6 +195,23 @@ impl VersionedMatrix {
         (m, dp)
     }
 
+    /// Bulk-remove all entries matching a mask matrix.
+    ///
+    /// Equivalent to calling `remove(i, j)` for every entry `(i, j)` in `mask`,
+    /// but executes in two GraphBLAS bulk operations instead of N individual calls:
+    /// - Entries in base `m` matching `mask` are marked deleted in `dm`
+    /// - Entries in delta-plus `dp` matching `mask` are removed from `dp`
+    pub fn remove_mask(
+        &mut self,
+        mask: &Matrix,
+    ) {
+        // dm |= (m & mask): for each entry in mask that exists in m, add to dm
+        self.dm
+            .element_wise_add(Some(&self.m), None, Some(mask), None);
+        // dp &= ~mask: remove entries from dp that exist in mask
+        self.dp.remove_all(mask);
+    }
+
     /// Returns true if the base matrix has UINT64 element type.
     ///
     /// C-produced relation matrices store edge IDs as UINT64, while
