@@ -56,7 +56,6 @@ tests/flow/test_path_algorithms.py
 tests/flow/test_path_filter
 tests/flow/test_path_projections.py
 tests/flow/test_pending_queries_limit.py
-tests/flow/test_persistency.py
 tests/flow/test_point
 tests/flow/test_profile.py
 tests/flow/test_query_validation

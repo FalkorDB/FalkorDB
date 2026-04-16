@@ -15,6 +15,7 @@ tests/flow/test_constraint.py
 tests/flow/test_stress.py
 
 ## Persistence & Replication
+tests/flow/test_persistency.py
 tests/flow/test_replication.py
 tests/flow/test_replication_states.py
 
