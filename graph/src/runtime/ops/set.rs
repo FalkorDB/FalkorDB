@@ -83,9 +83,17 @@ impl Runtime<'_> {
         items: &Vec<SetItem<LabelId, Variable>>,
         batch: &Batch<'_>,
     ) -> Result<(), String> {
+        // Pre-check: if no nodes/relationships have been deleted in this
+        // transaction, we can skip the per-row deletion checks entirely.
+        let has_deleted_nodes = self.deleted_nodes.borrow().len() > 0;
+        let has_pending_deleted_nodes = self.pending.borrow().has_deleted_nodes();
+        let has_pending_deleted_rels = self.pending.borrow().has_deleted_relationships();
+        let skip_delete_checks =
+            !has_deleted_nodes && !has_pending_deleted_nodes && !has_pending_deleted_rels;
+
         for row in batch.active_indices() {
             let env = batch.env_ref(row);
-            self.set(items, env)?;
+            self.set_inner(items, env, skip_delete_checks)?;
         }
         Ok(())
     }
@@ -122,6 +130,16 @@ impl Runtime<'_> {
         &self,
         items: &Vec<SetItem<LabelId, Variable>>,
         vars: &Env<'_>,
+    ) -> Result<(), String> {
+        self.set_inner(items, vars, false)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn set_inner(
+        &self,
+        items: &Vec<SetItem<LabelId, Variable>>,
+        vars: &Env<'_>,
+        skip_delete_checks: bool,
     ) -> Result<(), String> {
         for item in items {
             match item {
@@ -163,14 +181,20 @@ impl Runtime<'_> {
                     };
                     match entity {
                         Value::Node(id) => {
-                            if (self.g.borrow().is_node_deleted(id)
-                                && !self.pending.borrow().is_node_created(id))
-                                || self.pending.borrow().is_node_deleted(id)
+                            if !skip_delete_checks
+                                && ((self.g.borrow().is_node_deleted(id)
+                                    && !self.pending.borrow().is_node_created(id))
+                                    || self.pending.borrow().is_node_deleted(id))
                             {
                                 continue;
                             }
                             if let Some(attr) = attr {
-                                if let Some(v) = self.get_node_attribute(id, attr)
+                                let existing = if skip_delete_checks {
+                                    self.get_node_attribute_no_delete_check(id, attr)
+                                } else {
+                                    self.get_node_attribute(id, attr)
+                                };
+                                if let Some(v) = existing
                                     && v == run_expr
                                 {
                                     continue;
@@ -195,7 +219,12 @@ impl Runtime<'_> {
                                             }
                                         }
                                         for (key, value) in map.iter() {
-                                            if let Some(v) = self.get_node_attribute(id, key)
+                                            let existing = if skip_delete_checks {
+                                                self.get_node_attribute_no_delete_check(id, key)
+                                            } else {
+                                                self.get_node_attribute(id, key)
+                                            };
+                                            if let Some(v) = existing
                                                 && v == *value
                                             {
                                                 continue;
@@ -212,7 +241,7 @@ impl Runtime<'_> {
                                             continue;
                                         }
                                         let g = self.g.borrow();
-                                        let attrs: Vec<_> = self.get_node_attrs(tid).collect();
+                                        let attrs = self.get_node_attrs(tid);
                                         if *replace {
                                             for key in g.get_node_attrs(id) {
                                                 self.pending.borrow_mut().set_node_attribute(
@@ -235,8 +264,7 @@ impl Runtime<'_> {
                                     }
                                     Value::Relationship(rel) => {
                                         let g = self.g.borrow();
-                                        let attrs: Vec<_> =
-                                            self.get_relationship_attrs(rel.0).collect();
+                                        let attrs = self.get_relationship_attrs(rel.0);
                                         if *replace {
                                             for key in g.get_node_attrs(id) {
                                                 self.pending.borrow_mut().set_node_attribute(
@@ -264,18 +292,30 @@ impl Runtime<'_> {
                             }
                         }
                         Value::Relationship(target_rel) => {
-                            if (self.g.borrow().is_relationship_deleted(target_rel.0)
-                                && !self.pending.borrow().is_relationship_created(target_rel.0))
-                                || self.pending.borrow().is_relationship_deleted(
-                                    target_rel.0,
-                                    target_rel.1,
-                                    target_rel.2,
-                                )
+                            if !skip_delete_checks
+                                && ((self.g.borrow().is_relationship_deleted(target_rel.0)
+                                    && !self
+                                        .pending
+                                        .borrow()
+                                        .is_relationship_created(target_rel.0))
+                                    || self.pending.borrow().is_relationship_deleted(
+                                        target_rel.0,
+                                        target_rel.1,
+                                        target_rel.2,
+                                    ))
                             {
                                 continue;
                             }
                             if let Some(attr) = attr {
-                                if let Some(v) = self.get_relationship_attribute(target_rel.0, attr)
+                                let existing = if skip_delete_checks {
+                                    self.get_relationship_attribute_no_delete_check(
+                                        target_rel.0,
+                                        attr,
+                                    )
+                                } else {
+                                    self.get_relationship_attribute(target_rel.0, attr)
+                                };
+                                if let Some(v) = existing
                                     && v == run_expr
                                 {
                                     continue;
@@ -302,8 +342,15 @@ impl Runtime<'_> {
                                             }
                                         }
                                         for (key, value) in map.iter() {
-                                            if let Some(v) =
+                                            let existing = if skip_delete_checks {
+                                                self.get_relationship_attribute_no_delete_check(
+                                                    target_rel.0,
+                                                    key,
+                                                )
+                                            } else {
                                                 self.get_relationship_attribute(target_rel.0, key)
+                                            };
+                                            if let Some(v) = existing
                                                 && v == *value
                                             {
                                                 continue;
@@ -317,7 +364,7 @@ impl Runtime<'_> {
                                     }
                                     Value::Node(sid) => {
                                         let g = self.g.borrow();
-                                        let attrs: Vec<_> = self.get_node_attrs(sid).collect();
+                                        let attrs = self.get_node_attrs(sid);
                                         if *replace {
                                             for key in g.get_relationship_attrs(target_rel.0) {
                                                 self.pending
@@ -348,8 +395,7 @@ impl Runtime<'_> {
                                             continue;
                                         }
                                         let g = self.g.borrow();
-                                        let attrs: Vec<_> =
-                                            self.get_relationship_attrs(source_rel.0).collect();
+                                        let attrs = self.get_relationship_attrs(source_rel.0);
                                         if *replace {
                                             for key in g.get_relationship_attrs(target_rel.0) {
                                                 self.pending
@@ -393,9 +439,10 @@ impl Runtime<'_> {
                     let run_expr = vars.get(entity);
                     match run_expr {
                         Some(Value::Node(id)) => {
-                            if (self.g.borrow().is_node_deleted(*id)
-                                && !self.pending.borrow().is_node_created(*id))
-                                || self.pending.borrow().is_node_deleted(*id)
+                            if !skip_delete_checks
+                                && ((self.g.borrow().is_node_deleted(*id)
+                                    && !self.pending.borrow().is_node_created(*id))
+                                    || self.pending.borrow().is_node_deleted(*id))
                             {
                                 continue;
                             }

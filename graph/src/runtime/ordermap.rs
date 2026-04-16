@@ -12,10 +12,10 @@
 //! Uses a `ThinVec<(K, V)>` internally with O(n) lookup. This is efficient
 //! for small maps (typical property counts) while preserving order.
 
-use std::{borrow::Borrow, hash::Hash, ops::Index};
+use std::{borrow::Borrow, collections::HashSet, hash::Hash, ops::Index};
 
 use itertools::Itertools;
-use thin_vec::{ThinVec, thin_vec};
+use thin_vec::ThinVec;
 
 /// A map that preserves insertion order during iteration.
 ///
@@ -39,10 +39,20 @@ impl<K, V> Default for OrderMap<K, V> {
 
 impl<K: PartialEq, V> OrderMap<K, V> {
     #[must_use]
-    pub fn from_vec<I: IntoIterator<Item = (K, V)>>(vec: I) -> Self {
-        let mut res = Self { vec: thin_vec![] };
+    pub fn from_vec(vec: Vec<(K, V)>) -> Self
+    where
+        K: Hash + Eq + Clone,
+    {
+        let mut set = HashSet::new();
+        let mut res = Self {
+            vec: ThinVec::with_capacity(vec.len()),
+        };
         for (k, v) in vec {
-            res.insert(k, v);
+            if set.insert(k.clone()) {
+                res.vec.push((k, v));
+            } else {
+                res.insert(k, v);
+            }
         }
         res
     }
@@ -161,9 +171,24 @@ impl<K: PartialEq, V: PartialEq> PartialEq for OrderMap<K, V> {
     }
 }
 
-impl<K: PartialEq, V: PartialEq> FromIterator<(K, V)> for OrderMap<K, V> {
+impl<K: PartialEq + Hash + Eq + Clone, V: PartialEq> FromIterator<(K, V)> for OrderMap<K, V> {
     fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
-        Self::from_vec(iter)
+        {
+            let mut set = HashSet::new();
+            let iter = iter.into_iter();
+            let size_hint = iter.size_hint().0;
+            let mut res = Self {
+                vec: ThinVec::with_capacity(size_hint),
+            };
+            for (k, v) in iter {
+                if set.insert(k.clone()) {
+                    res.vec.push((k, v));
+                } else {
+                    res.insert(k, v);
+                }
+            }
+            res
+        }
     }
 }
 

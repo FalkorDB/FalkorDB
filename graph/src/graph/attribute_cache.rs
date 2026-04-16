@@ -257,6 +257,30 @@ impl AttributeCache {
         self.entries.insert(entity_id, entry);
     }
 
+    /// Insert (or replace) the full attribute set for an entity when the
+    /// caller guarantees the attrs are already sorted by `attr_idx`.
+    ///
+    /// This avoids the O(n log n) sort in [`insert_entity`] for callers
+    /// (like `insert_attrs` merge) that produce sorted output.
+    pub fn insert_entity_presorted(
+        &self,
+        entity_id: u64,
+        attrs: Vec<(u16, Value)>,
+        version: u64,
+        dirty: bool,
+    ) {
+        debug_assert!(
+            attrs.windows(2).all(|w| w[0].0 <= w[1].0),
+            "insert_entity_presorted: attrs not sorted"
+        );
+        let entry = CachedEntity {
+            attrs: Arc::new(attrs),
+            version,
+            dirty,
+        };
+        self.entries.insert(entity_id, entry);
+    }
+
     /// Insert or update a cache entry only if not overwriting a newer or dirty entry.
     ///
     /// This is used by `populate_cache_from_fjall` to safely cache fjall reads without

@@ -23,9 +23,6 @@
 //!                       │
 //!              output batch (with new IDs bound)
 //! ```
-//!
-//! When the direct parent is a `Commit` node at the plan root, result rows
-//! are suppressed (write-only optimization).
 
 use std::cell::OnceCell;
 use std::sync::Arc;
@@ -46,7 +43,6 @@ pub struct CreateOp<'a> {
     pub(crate) child: Box<BatchOp<'a>>,
     pattern: QueryGraph<Arc<String>, Arc<String>, Variable>,
     resolved_pattern: OnceCell<QueryGraph<Arc<String>, LabelId, Variable>>,
-    parent_commit: bool,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -57,17 +53,11 @@ impl<'a> CreateOp<'a> {
         pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
-        let parent_commit =
-            runtime.plan.node(idx).parent().is_some_and(|parent| {
-                matches!(parent.data(), IR::Commit) && parent.parent().is_none()
-            });
-
         Self {
             runtime,
             child,
             pattern: pattern.clone(),
             resolved_pattern: OnceCell::new(),
-            parent_commit,
             idx,
         }
     }
@@ -77,29 +67,24 @@ impl<'a> Iterator for CreateOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let mut batch = match self.child.next()? {
-                Ok(b) => b,
-                Err(e) => return Some(Err(e)),
-            };
+        let mut batch = match self.child.next()? {
+            Ok(b) => b,
+            Err(e) => return Some(Err(e)),
+        };
 
-            let resolved_pattern = self.resolved_pattern.get_or_init(|| {
-                let resolved = self.runtime.resolve_pattern(&self.pattern);
-                self.runtime.pending.borrow_mut().resize(
-                    self.runtime.g.borrow().node_cap(),
-                    self.runtime.g.borrow().labels_count(),
-                );
-                resolved
-            });
-            if let Err(e) = self.runtime.create_batch(resolved_pattern, &mut batch) {
-                return Some(Err(e));
-            }
-
-            if self.parent_commit {
-                continue;
-            }
-            return Some(Ok(batch));
+        let resolved_pattern = self.resolved_pattern.get_or_init(|| {
+            let resolved = self.runtime.resolve_pattern(&self.pattern);
+            self.runtime.pending.borrow_mut().resize(
+                self.runtime.g.borrow().node_cap(),
+                self.runtime.g.borrow().labels_count(),
+            );
+            resolved
+        });
+        if let Err(e) = self.runtime.create_batch(resolved_pattern, &mut batch) {
+            return Some(Err(e));
         }
+
+        Some(Ok(batch))
     }
 }
 

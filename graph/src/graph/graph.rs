@@ -984,8 +984,8 @@ impl Graph {
         &mut self,
         attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
         index_add_docs: &mut HashMap<u64, RoaringTreemap>,
-    ) -> Result<usize, String> {
-        let nremoved = self.node_attrs.insert_attrs(attrs)?;
+    ) -> Result<(usize, usize), String> {
+        let (nremoved, nset) = self.node_attrs.insert_attrs(attrs)?;
 
         if self.node_indexer.has_indices() {
             for (id, attrs) in attrs {
@@ -999,15 +999,15 @@ impl Graph {
                 }
             }
         }
-        Ok(nremoved)
+        Ok((nremoved, nset))
     }
 
     pub fn import_node_attrs(
         &mut self,
         attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
         index_add_docs: &mut HashMap<u64, RoaringTreemap>,
-    ) {
-        self.node_attrs.import_attrs(attrs);
+    ) -> usize {
+        let nset = self.node_attrs.import_attrs(attrs);
 
         if self.node_indexer.has_indices() {
             for (id, attrs) in attrs {
@@ -1021,13 +1021,14 @@ impl Graph {
                 }
             }
         }
+        nset
     }
 
     pub fn import_relationship_attrs(
         &mut self,
         attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
-    ) {
-        self.relationship_attrs.import_attrs(attrs);
+    ) -> usize {
+        self.relationship_attrs.import_attrs(attrs)
     }
 
     pub fn set_nodes_labels(
@@ -1072,27 +1073,64 @@ impl Graph {
         self.deleted_nodes |= deleted_nodes;
         self.node_count -= deleted_nodes.len();
 
+        // Build a diagonal mask matrix from all deleted node IDs
+        let n = self.node_cap;
+        let mut diag_mask = Matrix::new(n, n);
         for id in deleted_nodes {
-            self.all_nodes_matrix.remove(id, id);
+            diag_mask.set(id, id, true);
+        }
 
-            for (_, label_id) in self.node_labels_matrix.iter(id, id) {
-                let label = &self.node_labels[label_id as usize];
-                self.labels_matices[label_id as usize].remove(id, id);
-                if self.node_indexer.has_index(label) {
-                    for attr in self.node_attrs.get_attrs(id) {
-                        if self.node_indexer.has_indexed_attr(label, &attr) {
-                            remove_docs.entry(label_id).or_default().insert(id);
-                            break;
-                        }
+        // Bulk-remove from all_nodes_matrix
+        self.all_nodes_matrix.remove_mask(&diag_mask);
+
+        // Build per-label masks and nlm_mask using a single scan of the
+        // node_labels_matrix instead of one iterator per deleted node.
+        let num_labels = self.labels_matices.len();
+        let mut label_masks: Vec<Option<Matrix>> = vec![None; num_labels];
+        let mut nlm_mask = Matrix::new(
+            self.node_labels_matrix.nrows().max(1),
+            self.node_labels_matrix
+                .ncols()
+                .max(num_labels as u64)
+                .max(1),
+        );
+
+        // Single scan: iterate all entries in node_labels_matrix and filter
+        // by deleted_nodes membership (O(1) bitmap check per entry).
+        for (node_id, label_id) in self.node_labels_matrix.iter(0, n) {
+            if !deleted_nodes.contains(node_id) {
+                continue;
+            }
+            let lid = label_id as usize;
+            let lm = label_masks[lid].get_or_insert_with(|| Matrix::new(n, n));
+            lm.set(node_id, node_id, true);
+
+            let label = &self.node_labels[lid];
+            if self.node_indexer.has_index(label) {
+                for attr in self.node_attrs.get_attrs(node_id) {
+                    if self.node_indexer.has_indexed_attr(label, &attr) {
+                        remove_docs.entry(label_id).or_default().insert(node_id);
+                        break;
                     }
                 }
             }
 
-            for label_id in 0..self.labels_matices.len() {
-                self.node_labels_matrix.remove(id, label_id as _);
+            nlm_mask.set(node_id, label_id, true);
+        }
+
+        // Bulk-remove from per-label matrices
+        for (lid, mask_opt) in label_masks.into_iter().enumerate() {
+            if let Some(mask) = mask_opt {
+                self.labels_matices[lid].remove_mask(&mask);
             }
         }
-        self.node_attrs.remove_all(deleted_nodes)?;
+
+        // Bulk-remove from node_labels_matrix
+        if nlm_mask.nvals() > 0 {
+            self.node_labels_matrix.remove_mask(&nlm_mask);
+        }
+
+        self.node_attrs.remove_all(deleted_nodes);
         Ok(())
     }
 
@@ -1108,6 +1146,11 @@ impl Graph {
                 let dest_node = NodeId(dest);
                 (src_node, dest_node, RelationshipId(id))
             })
+    }
+
+    /// Returns an iterator over all relationship tensors (one per type).
+    pub fn relationship_matrices_iter(&self) -> impl Iterator<Item = &Tensor> {
+        self.relationship_matrices.iter()
     }
 
     /// Get all relationships for a node, optionally filtered by relationship types.
@@ -1383,9 +1426,9 @@ impl Graph {
     pub fn set_relationships_attributes(
         &mut self,
         attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
-    ) -> Result<usize, String> {
-        let nremoved = self.relationship_attrs.insert_attrs(attrs)?;
-        Ok(nremoved)
+    ) -> Result<(usize, usize), String> {
+        let (nremoved, nset) = self.relationship_attrs.insert_attrs(attrs)?;
+        Ok((nremoved, nset))
     }
 
     #[must_use]
@@ -1471,6 +1514,108 @@ impl Graph {
         }
 
         Ok(())
+    }
+
+    /// Bulk-delete all edges incident on a set of deleted nodes (implicit cascade).
+    ///
+    /// Instead of discovering edges per-node during the delete operator, this
+    /// method iterates each tensor once for all deleted nodes and batch-removes
+    /// the edges. Edges already in `explicit_rels` are skipped (they're handled
+    /// by `delete_relationships`).
+    ///
+    /// The adjacency matrix is NOT updated for node pairs where both endpoints
+    /// are deleted — those entries are unreachable since the nodes themselves
+    /// are gone.
+    /// Returns the list of implicitly deleted edges as `(edge_id, src, dst)`
+    /// so the caller can record them for effects/replication.
+    pub fn delete_implicit_edges(
+        &mut self,
+        deleted_nodes: &RoaringTreemap,
+        explicit_rels: &HashMap<RelationshipId, (NodeId, NodeId)>,
+    ) -> Result<Vec<(RelationshipId, NodeId, NodeId)>, String> {
+        if self.relationship_matrices.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut all_implicit: Vec<(RelationshipId, NodeId, NodeId)> = Vec::new();
+        // Pairs where only one endpoint is deleted — need adjacency check
+        let mut check_adj_pairs: std::collections::HashSet<(u64, u64)> = Default::default();
+
+        for type_idx in 0..self.relationship_matrices.len() {
+            let mut rels: Vec<(u64, u64, u64)> = Vec::new();
+
+            // Collect all edges for deleted nodes from this tensor
+            for node_id in deleted_nodes {
+                // Outgoing edges
+                for (src, dst, edge_id) in
+                    self.relationship_matrices[type_idx].iter(node_id, node_id, false)
+                {
+                    if !explicit_rels.contains_key(&RelationshipId(edge_id)) {
+                        rels.push((edge_id, src, dst));
+                    }
+                }
+                // Incoming edges — skip if source is also a deleted node
+                // (those edges are already collected from the source's
+                // outgoing iteration), and skip self-loops already found above.
+                for (src, dst, edge_id) in
+                    self.relationship_matrices[type_idx].iter(node_id, node_id, true)
+                {
+                    if src != node_id
+                        && !deleted_nodes.contains(src)
+                        && !explicit_rels.contains_key(&RelationshipId(edge_id))
+                    {
+                        rels.push((edge_id, src, dst));
+                    }
+                }
+            }
+
+            if rels.is_empty() {
+                continue;
+            }
+
+            // Remove from relationship_type_matrix and relationship_attrs
+            let type_id = type_idx as u64;
+            for &(edge_id, src, dst) in &rels {
+                self.relationship_type_matrix.remove(edge_id, type_id);
+                self.relationship_attrs.remove(edge_id)?;
+                self.deleted_relationships.insert(edge_id);
+                all_implicit.push((RelationshipId(edge_id), NodeId(src), NodeId(dst)));
+
+                // Only check adjacency if the other endpoint is NOT deleted
+                if !deleted_nodes.contains(src) || !deleted_nodes.contains(dst) {
+                    check_adj_pairs.insert((src, dst));
+                }
+            }
+
+            // Build (src, dst) mask for bulk tensor removal
+            let mut mask = Matrix::new(self.node_cap, self.node_cap);
+            for &(_, src, dst) in &rels {
+                mask.set(src, dst, true);
+            }
+            let mask_t = mask.transpose();
+
+            // Batch-remove from tensor using mask operations
+            self.relationship_matrices[type_idx].clear_elements(&mask, &mask_t);
+        }
+
+        self.relationship_count -= all_implicit.len() as u64;
+
+        // Update adjacency_matrix only for pairs where one endpoint survives
+        let mut adj_mask = Matrix::new(self.node_cap, self.node_cap);
+        for (src, dst) in check_adj_pairs {
+            let has_edges = self
+                .relationship_matrices
+                .iter()
+                .any(|tensor| tensor.get(src, dst).next().is_some());
+            if !has_edges {
+                adj_mask.set(src, dst, true);
+            }
+        }
+        if adj_mask.nvals() > 0 {
+            self.adjacancy_matrix.remove_mask(&adj_mask);
+        }
+
+        Ok(all_implicit)
     }
 
     pub fn get_src_dest_relationships(
@@ -1676,20 +1821,15 @@ impl Graph {
     pub fn get_node_all_attrs(
         &self,
         id: NodeId,
-    ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
+    ) -> Vec<(Arc<String>, Value)> {
         self.node_attrs.get_all_attrs(id.0)
     }
 
     pub fn get_node_all_attrs_by_id(
         &self,
         id: NodeId,
-    ) -> impl Iterator<Item = (u16, Value)> + '_ {
-        self.node_attrs
-            .get_all_attrs_by_id(id.0)
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>()
-            .into_iter()
+    ) -> Arc<Vec<(u16, Value)>> {
+        self.node_attrs.get_all_attrs_by_id(id.0)
     }
 
     pub fn get_relationship_attrs(
@@ -1703,20 +1843,15 @@ impl Graph {
     pub fn get_relationship_all_attrs(
         &self,
         id: RelationshipId,
-    ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
+    ) -> Vec<(Arc<String>, Value)> {
         self.relationship_attrs.get_all_attrs(id.0)
     }
 
     pub fn get_relationship_all_attrs_by_id(
         &self,
         id: RelationshipId,
-    ) -> impl Iterator<Item = (u16, Value)> + '_ {
-        self.relationship_attrs
-            .get_all_attrs_by_id(id.0)
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>()
-            .into_iter()
+    ) -> Arc<Vec<(u16, Value)>> {
+        self.relationship_attrs.get_all_attrs_by_id(id.0)
     }
 
     pub fn create_index(

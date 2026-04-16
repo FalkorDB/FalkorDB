@@ -126,18 +126,14 @@ pub fn reply_compact_value(
                     raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, labels_len as _);
                 }
 
-                raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
-                let attrs: Vec<_> = bg.get_node_all_attrs_by_id(*id).collect();
-                for (key, value) in &attrs {
+                let attrs = bg.get_node_all_attrs_by_id(*id);
+                raw::reply_with_array(ctx.ctx, attrs.len() as _);
+                for (key, value) in attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
-                    raw::reply_with_long_long(ctx.ctx, (*key).into());
+                    raw::reply_with_long_long(ctx.ctx, *key as _);
                     reply_compact_value(ctx, runtime, value);
                 }
-                let attrs_len = attrs.len();
                 drop(bg);
-                unsafe {
-                    raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, attrs_len as _);
-                }
             }
         }
         Value::Relationship(rel) => {
@@ -170,18 +166,14 @@ pub fn reply_compact_value(
                 raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
                 let node_attr_offset = bg.node_attribute_count() as i64;
-                raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
-                let attrs: Vec<_> = bg.get_relationship_all_attrs_by_id(*rel_id).collect();
-                for (key, value) in &attrs {
+                let attrs = bg.get_relationship_all_attrs_by_id(*rel_id);
+                raw::reply_with_array(ctx.ctx, attrs.len() as _);
+                for (key, value) in attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
                     raw::reply_with_long_long(ctx.ctx, i64::from(*key) + node_attr_offset);
                     reply_compact_value(ctx, runtime, value);
                 }
-                let attrs_len = attrs.len();
                 drop(bg);
-                unsafe {
-                    raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, attrs_len as _);
-                }
             }
         }
         Value::Path(path) => {
@@ -371,23 +363,18 @@ pub fn reply_verbose_value(
                     raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, labels_len as _);
                 }
 
-                raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
-                let attrs_len = bg
-                    .get_node_all_attrs(*id)
-                    .inspect(|(key, value)| {
-                        raw::reply_with_array(ctx.ctx, 2);
-                        raw::reply_with_string_buffer(
-                            ctx.ctx,
-                            key.as_ptr().cast::<c_char>(),
-                            key.len(),
-                        );
-                        reply_verbose_value(ctx, runtime, value);
-                    })
-                    .count();
-                drop(bg);
-                unsafe {
-                    raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, attrs_len as _);
+                let attrs = bg.get_node_all_attrs(*id);
+                raw::reply_with_array(ctx.ctx, attrs.len() as _);
+                for (key, value) in attrs.iter() {
+                    raw::reply_with_array(ctx.ctx, 2);
+                    raw::reply_with_string_buffer(
+                        ctx.ctx,
+                        key.as_ptr().cast::<c_char>(),
+                        key.len(),
+                    );
+                    reply_verbose_value(ctx, runtime, value);
                 }
+                drop(bg);
             }
         }
         Value::Relationship(rel) => {
@@ -417,23 +404,18 @@ pub fn reply_verbose_value(
                 raw::reply_with_long_long(ctx.ctx, usize::from(rel_type) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
-                raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
-                let attrs_len = bg
-                    .get_relationship_all_attrs(*rel_id)
-                    .inspect(|(key, value)| {
-                        raw::reply_with_array(ctx.ctx, 2);
-                        raw::reply_with_string_buffer(
-                            ctx.ctx,
-                            key.as_ptr().cast::<c_char>(),
-                            key.len(),
-                        );
-                        reply_verbose_value(ctx, runtime, value);
-                    })
-                    .count();
-                drop(bg);
-                unsafe {
-                    raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, attrs_len as _);
+                let attrs = bg.get_relationship_all_attrs(*rel_id);
+                raw::reply_with_array(ctx.ctx, attrs.len() as _);
+                for (key, value) in attrs {
+                    raw::reply_with_array(ctx.ctx, 2);
+                    raw::reply_with_string_buffer(
+                        ctx.ctx,
+                        key.as_ptr().cast::<c_char>(),
+                        key.len(),
+                    );
+                    reply_verbose_value(ctx, runtime, &value);
                 }
+                drop(bg);
             }
         }
         Value::Path(path) => {
@@ -557,6 +539,12 @@ fn reply_result<const COMPACT: bool>(
     runtime: &Runtime<'_>,
     result: &ResultSummary<'_>,
 ) {
+    if runtime.return_names.is_empty() {
+        // No RETURN clause — send only stats (matches C FalkorDB behavior).
+        raw::reply_with_array(ctx.ctx, 1);
+        reply_stats(ctx, &result.stats, runtime.g.borrow().version);
+        return;
+    }
     raw::reply_with_array(ctx.ctx, 3);
     raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
     for name in &runtime.return_names {
