@@ -27,7 +27,7 @@ pub fn graph_profile(
     if let Some(graph) = read_key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
         let graph = graph.clone();
         drop(read_key);
-        return profile_mut(ctx, &graph, query, key_name);
+        return profile_mut(ctx, &graph, query, &key_name);
     }
 
     // Graph doesn't exist - open writable key to create it.
@@ -35,14 +35,14 @@ pub fn graph_profile(
     let key = ctx.open_key_writable(&key_str);
     if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
         let graph = graph.clone();
-        return profile_mut(ctx, &graph, query, key_name);
+        return profile_mut(ctx, &graph, query, &key_name);
     }
 
     let graph = Arc::new(RwLock::new(ThreadedGraph::new(
         *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
         &key_str.to_string(),
     )));
-    let result = profile_mut(ctx, &graph, query, key_name);
+    let result = profile_mut(ctx, &graph, query, &key_name);
     key.set_value(&GRAPH_TYPE, graph)?;
     result
 }

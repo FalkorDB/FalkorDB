@@ -85,7 +85,7 @@ impl Runtime<'_> {
     ) -> Result<(), String> {
         // Pre-check: if no nodes/relationships have been deleted in this
         // transaction, we can skip the per-row deletion checks entirely.
-        let has_deleted_nodes = self.deleted_nodes.borrow().len() > 0;
+        let has_deleted_nodes = !self.deleted_nodes.borrow().is_empty();
         let has_pending_deleted_nodes = self.pending.borrow().has_deleted_nodes();
         let has_pending_deleted_rels = self.pending.borrow().has_deleted_relationships();
         let skip_delete_checks =

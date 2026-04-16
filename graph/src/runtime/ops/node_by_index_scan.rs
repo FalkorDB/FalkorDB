@@ -235,7 +235,7 @@ impl<'a> NodeByIndexScanOp<'a> {
         match q {
             IndexQuery::Equal { value, .. } => is_indexable(value),
             IndexQuery::Range { min, max, .. } => {
-                min.as_ref().is_none_or(is_indexable) && max.as_ref().map_or(true, is_indexable)
+                min.as_ref().is_none_or(is_indexable) && max.as_ref().is_none_or(is_indexable)
             }
             IndexQuery::And(children) | IndexQuery::Or(children) => {
                 children.iter().all(Self::can_utilize_index)

@@ -1411,7 +1411,7 @@ impl Graph {
             std::collections::HashMap::new();
         for rel in relationships.values() {
             let ptr = Arc::as_ptr(&rel.type_name);
-            if !type_cache.contains_key(&ptr) {
+            if let std::collections::hash_map::Entry::Vacant(e) = type_cache.entry(ptr) {
                 // Ensure the type + matrix exist
                 self.get_relationship_matrix_mut(&rel.type_name);
                 let type_idx = self
@@ -1419,7 +1419,7 @@ impl Graph {
                     .iter()
                     .position(|t| t.as_str() == rel.type_name.as_str())
                     .unwrap();
-                type_cache.insert(ptr, (type_idx, type_idx as u64));
+                e.insert((type_idx, type_idx as u64));
             }
         }
 
@@ -1566,7 +1566,8 @@ impl Graph {
 
         let mut all_implicit: Vec<(RelationshipId, NodeId, NodeId)> = Vec::new();
         // Pairs where only one endpoint is deleted — need adjacency check
-        let mut check_adj_pairs: std::collections::HashSet<(u64, u64)> = Default::default();
+        let mut check_adj_pairs: std::collections::HashSet<(u64, u64)> =
+            std::collections::HashSet::default();
 
         for type_idx in 0..self.relationship_matrices.len() {
             let mut rels: Vec<(u64, u64, u64)> = Vec::new();

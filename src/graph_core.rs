@@ -528,11 +528,11 @@ pub fn profile_mut(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
-    key_name: Arc<String>,
+    key_name: &Arc<String>,
 ) -> RedisResult {
     // Inside MULTI/EXEC: execute synchronously.
     if ctx.get_flags().contains(ContextFlags::MULTI) {
-        return profile_sync(ctx, graph, query, &key_name);
+        return profile_sync(ctx, graph, query, key_name);
     }
 
     let bc = BlockedClient {

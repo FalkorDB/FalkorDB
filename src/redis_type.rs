@@ -174,7 +174,7 @@ unsafe extern "C" fn graph_rdb_save(
                 &graph,
                 &payloads,
                 key_count,
-                snap.as_ref().map(|s| s.as_ref()),
+                snap.as_ref().map(AsRef::as_ref),
             );
         } else {
             // Main key: use the value pointer directly.
@@ -197,16 +197,12 @@ unsafe extern "C" fn graph_rdb_save(
                     &graph,
                     &payloads,
                     key_count,
-                    snap.as_ref().map(|s| s.as_ref()),
+                    snap.as_ref().map(AsRef::as_ref),
                 );
             } else {
                 let snap = vkey_state.rdb_snapshots.get(&graph_name).cloned();
                 drop(vkey_state);
-                serializers::encoder::rdb_save_graph(
-                    rdb,
-                    &graph,
-                    snap.as_ref().map(|s| s.as_ref()),
-                );
+                serializers::encoder::rdb_save_graph(rdb, &graph, snap.as_ref().map(AsRef::as_ref));
             }
         }
     }

@@ -117,7 +117,7 @@ impl Runtime<'_> {
             // NOTE: eval() may borrow pending internally (e.g. property reads),
             // so we cannot hold pending.borrow_mut() across eval calls.
             let mut all_attrs: Vec<OrderMap<Arc<String>, Value>> = Vec::with_capacity(active_len);
-            for (_i, row) in batch.active_indices().enumerate() {
+            for row in batch.active_indices() {
                 let env = batch.env_ref(row);
                 let attrs = ExprEval::from_runtime(self).eval(
                     &node.attrs,
@@ -216,7 +216,7 @@ impl Runtime<'_> {
             // Same as nodes: eval() may borrow pending, so separate eval from insert.
             let mut all_rel_attrs: Vec<OrderMap<Arc<String>, Value>> =
                 Vec::with_capacity(rel_ids.len());
-            for (_i, row) in batch.active_indices().enumerate() {
+            for row in batch.active_indices() {
                 let env = batch.env_ref(row);
                 let attrs = ExprEval::from_runtime(self).eval(
                     &rel.attrs,

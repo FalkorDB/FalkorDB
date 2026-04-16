@@ -326,9 +326,8 @@ impl AttributeStore {
             let mut current_id: Option<u64> = None;
             let mut current_attrs: Vec<(u16, Value)> = Vec::new();
             for entry in self.snapshot().iter(self.keyspace()) {
-                let (key, data) = match entry.into_inner() {
-                    Ok(kv) => kv,
-                    Err(_) => continue,
+                let Ok((key, data)) = entry.into_inner() else {
+                    continue;
                 };
                 let Some(attr_idx) = extract_attr_idx(&key) else {
                     continue;
@@ -350,11 +349,12 @@ impl AttributeStore {
                 }
                 current_attrs.push((attr_idx, value));
             }
-            if let Some(prev_id) = current_id {
-                if !deleted.contains(prev_id) && !self.pending_deletes.contains(prev_id) {
-                    current_attrs.sort_by_key(|item| item.0);
-                    snap.insert(prev_id, Arc::new(current_attrs));
-                }
+            if let Some(prev_id) = current_id
+                && !deleted.contains(prev_id)
+                && !self.pending_deletes.contains(prev_id)
+            {
+                current_attrs.sort_by_key(|item| item.0);
+                snap.insert(prev_id, Arc::new(current_attrs));
             }
         }
 
@@ -554,16 +554,16 @@ impl AttributeStore {
         // Pre-resolve all unique attribute names → indices ONCE.
         // Uses Arc pointer identity as key to avoid rehashing strings.
         let mut name_to_idx: StdHashMap<*const String, u16> =
-            StdHashMap::with_capacity(attrs.values().next().map_or(0, |v| v.len()));
+            StdHashMap::with_capacity(attrs.values().next().map_or(0, OrderMap::len));
         for entity_attrs in attrs.values() {
             for (attr, _) in entity_attrs.iter() {
                 let ptr = Arc::as_ptr(attr);
-                if !name_to_idx.contains_key(&ptr) {
+                if let std::collections::hash_map::Entry::Vacant(e) = name_to_idx.entry(ptr) {
                     let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
                         self.attrs_name.insert(attr.clone());
                         self.attrs_name.len() - 1
                     }) as u16;
-                    name_to_idx.insert(ptr, idx);
+                    e.insert(idx);
                 }
             }
         }
@@ -604,7 +604,7 @@ impl AttributeStore {
                 merged.clear();
                 merged.reserve(current.len() + new_entries.len());
                 merged.extend_from_slice(&current);
-                merged.extend(new_entries.drain(..));
+                merged.append(&mut new_entries);
             } else {
                 null_indices.sort_unstable();
 
@@ -680,16 +680,16 @@ impl AttributeStore {
     ) -> usize {
         // Pre-resolve all unique attribute names → indices ONCE.
         let mut name_to_idx: StdHashMap<*const String, u16> =
-            StdHashMap::with_capacity(attrs.values().next().map_or(0, |v| v.len()));
+            StdHashMap::with_capacity(attrs.values().next().map_or(0, OrderMap::len));
         for entity_attrs in attrs.values() {
             for (attr, _) in entity_attrs.iter() {
                 let ptr = Arc::as_ptr(attr);
-                if !name_to_idx.contains_key(&ptr) {
+                if let std::collections::hash_map::Entry::Vacant(e) = name_to_idx.entry(ptr) {
                     let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
                         self.attrs_name.insert(attr.clone());
                         self.attrs_name.len() - 1
                     }) as u16;
-                    name_to_idx.insert(ptr, idx);
+                    e.insert(idx);
                 }
             }
         }
@@ -821,39 +821,6 @@ impl AttributeStore {
         Ok(())
     }
 
-    /// Flush an entity's pending dirty attributes to fjall, then invalidate from cache.
-    ///
-    /// This ensures that any unflushed writes to the cache are persisted to fjall
-    /// before the cache entry is removed, preventing data loss when the entry is
-    /// about to be deleted from fjall.
-    ///
-    /// However, if the entity was modified by the current transaction
-    /// (`dirty_entities`), the flush is skipped — those writes are uncommitted
-    /// and must not be persisted to fjall until `commit()`.  This prevents
-    /// rollback from leaving current-tx inserts in the durable store.
-    fn flush_and_invalidate(
-        &self,
-        entity_id: u64,
-    ) -> Result<(), String> {
-        if !self.dirty_entities.contains(entity_id)
-            && let Some((cached, dirty)) = self.cache.get_entity_with_dirty(entity_id, self.version)
-            && dirty
-            && !cached.is_empty()
-        {
-            // Write dirty cached attributes to fjall before losing the cache entry.
-            // Safe to flush: these are pre-existing dirty entries from prior
-            // transactions, not from the active one.
-            let mut batch = get_database().batch();
-            for &(attr_idx, ref value) in cached.iter() {
-                let composite_key = make_key(entity_id, attr_idx);
-                batch.insert(self.keyspace(), composite_key, value.to_bytes());
-            }
-            batch.durability(None).commit().map_err(|e| e.to_string())?;
-        }
-        self.cache.invalidate(entity_id);
-        Ok(())
-    }
-
     /// Access the shared cache (for background flush scheduling).
     #[must_use]
     pub const fn cache(&self) -> &Arc<AttributeCache> {
@@ -896,14 +863,14 @@ impl AttributeStore {
             if current_id != Some(eid) {
                 // Flush previous entity.
                 if let Some(prev_id) = current_id {
-                    if !self.pending_deletes.contains(prev_id) {
+                    if self.pending_deletes.contains(prev_id) {
+                        current_attrs.clear();
+                    } else {
                         let _ = self.cache.insert_entity_if_older(
                             prev_id,
                             std::mem::take(&mut current_attrs),
                             self.version,
                         );
-                    } else {
-                        current_attrs.clear();
                     }
                 }
                 current_id = Some(eid);
@@ -911,17 +878,18 @@ impl AttributeStore {
             current_attrs.push((idx, value));
         }
         // Flush the last entity.
-        if let Some(prev_id) = current_id {
-            if !self.pending_deletes.contains(prev_id) {
-                let _ = self
-                    .cache
-                    .insert_entity_if_older(prev_id, current_attrs, self.version);
-            }
+        if let Some(prev_id) = current_id
+            && !self.pending_deletes.contains(prev_id)
+        {
+            let _ = self
+                .cache
+                .insert_entity_if_older(prev_id, current_attrs, self.version);
         }
     }
 
     /// Encode a range of entities, using the pre-built RDB snapshot when
     /// provided, falling back to cache → fjall otherwise.
+    #[allow(clippy::too_many_arguments)]
     pub fn encode_with_range(
         &self,
         w: &mut dyn Writer,
@@ -966,13 +934,14 @@ impl AttributeStore {
 
             w.write_unsigned(id);
 
-            let props = if let Some(snap) = rdb_snapshot {
-                snap.get(&id)
-                    .cloned()
-                    .unwrap_or_else(|| EMPTY_ATTRS.clone())
-            } else {
-                self.get_all_attrs_by_id(id)
-            };
+            let props = rdb_snapshot.map_or_else(
+                || self.get_all_attrs_by_id(id),
+                |snap| {
+                    snap.get(&id)
+                        .cloned()
+                        .unwrap_or_else(|| EMPTY_ATTRS.clone())
+                },
+            );
             w.write_unsigned(props.len() as u64);
 
             for &(local_attr_id, ref value) in props.iter() {

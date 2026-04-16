@@ -1342,7 +1342,7 @@ impl DisplayJson for Value {
                     if i > 0 {
                         write!(f, ",")?;
                     }
-                    write_json_string(f, &k)?;
+                    write_json_string(f, k)?;
                     write!(f, ":")?;
                     v.fmt_json(f, runtime)?;
                 }
@@ -1448,7 +1448,7 @@ fn write_node_json(
         if i > 0 {
             write!(f, ",")?;
         }
-        write_json_string(f, &k)?;
+        write_json_string(f, k)?;
         write!(f, ":")?;
         v.fmt_json(f, runtime)?;
     }

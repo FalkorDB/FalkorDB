@@ -141,7 +141,8 @@ impl Runtime<'_> {
         for &id in node_ids {
             if self.pending.borrow().is_node_deleted(id) {
                 continue;
-            } else if self.pending.borrow().is_node_created(id) {
+            }
+            if self.pending.borrow().is_node_created(id) {
                 // Created in this txn — use existing per-node path
                 self.delete_entity(&Value::Node(id))?;
             } else if !self.g.borrow().is_node_deleted(id) {

@@ -248,6 +248,7 @@ impl Tensor {
 const MSB_MASK: u64 = 1u64 << 63;
 
 impl Encode<19> for Tensor {
+    #[allow(clippy::similar_names)]
     fn encode(
         &self,
         w: &mut dyn Writer,
@@ -289,13 +290,11 @@ impl Encode<19> for Tensor {
                         .get(&compound_key)
                         .map_or(&[][..], |v| v.as_slice());
 
+                    u_rows.push(src);
+                    u_cols.push(dst);
                     if edge_ids.len() == 1 {
-                        u_rows.push(src);
-                        u_cols.push(dst);
                         u_vals.push(edge_ids[0]);
                     } else {
-                        u_rows.push(src);
-                        u_cols.push(dst);
                         u_vals.push(edge_ids.len() as u64 | MSB_MASK);
                         multi_edges.push((src, dst));
                     }
@@ -324,9 +323,9 @@ impl Encode<19> for Tensor {
                 let m_len = me_m_rows.len();
                 let mut m_src = Vec::with_capacity(m_len);
                 let mut m_dst = Vec::with_capacity(m_len);
-                for i in 0..m_len {
-                    m_src.push(me_m_rows[i] >> 32);
-                    m_dst.push(me_m_rows[i] & 0xFFFF_FFFF);
+                for &row in &me_m_rows {
+                    m_src.push(row >> 32);
+                    m_dst.push(row & 0xFFFF_FFFF);
                 }
                 let mut uint64_m = Matrix::new_uint64(nrows, ncols);
                 uint64_m.build_uint64(&m_src, &m_dst, &me_m_cols);
@@ -340,9 +339,9 @@ impl Encode<19> for Tensor {
                 let dp_len = me_dp_rows.len();
                 let mut dp_src = Vec::with_capacity(dp_len);
                 let mut dp_dst = Vec::with_capacity(dp_len);
-                for i in 0..dp_len {
-                    dp_src.push(me_dp_rows[i] >> 32);
-                    dp_dst.push(me_dp_rows[i] & 0xFFFF_FFFF);
+                for &row in &me_dp_rows {
+                    dp_src.push(row >> 32);
+                    dp_dst.push(row & 0xFFFF_FFFF);
                 }
                 let mut uint64_dp = Matrix::new_uint64(nrows, ncols);
                 uint64_dp.build_uint64(&dp_src, &dp_dst, &me_dp_cols);

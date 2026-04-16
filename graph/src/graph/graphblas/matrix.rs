@@ -869,6 +869,7 @@ impl Matrix {
     }
 
     /// Bulk-extract all (row, col) entries from a boolean matrix.
+    #[must_use]
     pub fn extract_tuples_bool(&self) -> (Vec<u64>, Vec<u64>) {
         let mut nvals = self.nvals();
         if nvals == 0 {

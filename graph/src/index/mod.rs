@@ -381,7 +381,7 @@ pub struct Document {
     id: u64,
     /// CStrings for array string elements. RediSearch stores raw pointers
     /// into these during `set`, so they must live until after `add_document`.
-    _string_arr_values: Vec<CString>,
+    string_arr_values: Vec<CString>,
 }
 
 impl Document {
@@ -389,7 +389,7 @@ impl Document {
     pub fn new(id: u64) -> Self {
         Self {
             id,
-            _string_arr_values: Vec::new(),
+            string_arr_values: Vec::new(),
             rs_doc: unsafe {
                 let doc = RediSearch_CreateDocument2(
                     (&raw const id).cast::<c_void>(),
@@ -536,7 +536,7 @@ impl Document {
                         // Keep string content CStrings alive — the pointer
                         // array in RediSearch references them. They'll be
                         // properly freed when the Document is dropped.
-                        self._string_arr_values.extend(string_cstrs);
+                        self.string_arr_values.extend(string_cstrs);
                     }
                 }
                 Value::VecF32(_) => {} // Only for vector fields
@@ -782,19 +782,19 @@ impl Index {
     fn build_numeric_range_node(
         &self,
         key: &Arc<String>,
-        min: Option<Value>,
-        max: Option<Value>,
+        min: Option<&Value>,
+        max: Option<&Value>,
         include_min: bool,
         include_max: bool,
     ) -> *mut redisearch::RSQNode {
-        let min_f = match &min {
+        let min_f = match min {
             Some(v) => match Self::value_to_numeric(v) {
                 Some(f) => f,
                 None => return std::ptr::null_mut(),
             },
             None => RSRANGE_NEG_INF,
         };
-        let max_f = match &max {
+        let max_f = match max {
             Some(v) => match Self::value_to_numeric(v) {
                 Some(f) => f,
                 None => return std::ptr::null_mut(),
@@ -926,8 +926,8 @@ impl Index {
                     // Numeric range (Int, Float, Bool)
                     self.build_numeric_range_node(
                         key,
-                        min.clone(),
-                        max.clone(),
+                        min.as_ref(),
+                        max.as_ref(),
                         include_min,
                         include_max,
                     )
