@@ -55,6 +55,8 @@
 //! For example, two "TRANSFERRED" relationships between the same bank accounts
 //! with different amounts and dates.
 
+use std::collections::HashMap;
+
 use super::{
     matrix::{Dup, Matrix, New, Remove, Set, Size, Transpose},
     serialization::{Decode, Encode, Reader, Writer},
@@ -246,17 +248,23 @@ impl Encode<19> for Tensor {
         let mut multi_edge_m: Vec<(u64, u64)> = Vec::new();
         let mut multi_edge_dp: Vec<(u64, u64)> = Vec::new();
 
+        // Pre-build edge-ID map in a single pass over `me` to avoid creating
+        // one GxB_Iterator per edge pair in the inner loop below.
+        // me rows = compound_key (src<<32|dst), cols = edge_id.
+        let mut edge_id_map: HashMap<u64, Vec<u64>> = HashMap::new();
+        for (compound_key, edge_id) in self.me.iter(0, u64::MAX) {
+            edge_id_map.entry(compound_key).or_default().push(edge_id);
+        }
+
         for (matrix, uint64_matrix, multi_edges) in [
             (&m, &mut uint64_m, &mut multi_edge_m),
             (&dp, &mut uint64_dp, &mut multi_edge_dp),
         ] {
             for (src, dst) in matrix.iter(0, u64::MAX) {
                 let compound_key = (src << 32) | dst;
-                let mut edge_ids: Vec<u64> = self
-                    .me
-                    .iter(compound_key, compound_key)
-                    .map(|(_, edge_id)| edge_id)
-                    .collect();
+                let edge_ids = edge_id_map
+                    .get(&compound_key)
+                    .map_or(&[][..], |v| v.as_slice());
 
                 if edge_ids.len() == 1 {
                     // Single edge: store edge ID directly
@@ -282,21 +290,19 @@ impl Encode<19> for Tensor {
             return;
         }
 
-        // Tensor section: only multi-edge pairs
+        // Tensor section: only multi-edge pairs (rare in practice).
+        // Re-use the already-built edge_id_map instead of calling me.iter() again.
         let mut v = Vector::<u64>::new(GrB_INDEX_MAX);
-        for (multi_edges, _matrix) in [(&multi_edge_m, &m), (&multi_edge_dp, &dp)] {
+        for multi_edges in [&multi_edge_m, &multi_edge_dp] {
             w.write_unsigned(multi_edges.len() as u64);
             for &(src, dst) in multi_edges {
                 let compound_key = (src << 32) | dst;
                 v.clear();
 
-                for (idx, edge_id) in self
-                    .me
-                    .iter(compound_key, compound_key)
-                    .map(|(_, edge_id)| edge_id)
-                    .enumerate()
-                {
-                    v.set(idx as u64, edge_id);
+                if let Some(ids) = edge_id_map.get(&compound_key) {
+                    for (idx, &edge_id) in ids.iter().enumerate() {
+                        v.set(idx as u64, edge_id);
+                    }
                 }
 
                 w.write_unsigned(src);
