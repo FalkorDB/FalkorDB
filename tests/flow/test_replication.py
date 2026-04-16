@@ -73,7 +73,7 @@ class testReplication(FlowTestsBase):
         create_node_fulltext_index(src, 'L', 'title', 'desc', sync=True)
 
         # create full-text index with index config
-        q = "CALL db.idx.fulltext.createNodeIndex({label: 'L1', language: 'german', stopwords: ['a', 'b'] }, 'title', 'desc')"
+        q = "CREATE FULLTEXT INDEX FOR (n:L1) ON (n.title, n.desc) OPTIONS {language: 'german', stopwords: ['a', 'b']}"
         src.query(q)
 
         #-----------------------------------------------------------------------

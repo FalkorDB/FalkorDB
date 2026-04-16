@@ -32,6 +32,8 @@ pub struct VirtualKeyState {
     pub graph_vkeys: HashMap<String, Vec<String>>,
     /// Graph references keyed by graph_name for use by virtual key rdb_save.
     graph_refs: HashMap<String, Arc<RwLock<ThreadedGraph>>>,
+    /// Pre-built attribute snapshots (cache + fjall) built before fork.
+    pub rdb_snapshots: HashMap<String, Arc<graph::graph::graph::RdbSnapshots>>,
 }
 
 impl VirtualKeyState {
@@ -40,6 +42,7 @@ impl VirtualKeyState {
             vkey_map: HashMap::new(),
             graph_vkeys: HashMap::new(),
             graph_refs: HashMap::new(),
+            rdb_snapshots: HashMap::new(),
         }
     }
 
@@ -47,6 +50,7 @@ impl VirtualKeyState {
         self.vkey_map.clear();
         self.graph_vkeys.clear();
         self.graph_refs.clear();
+        self.rdb_snapshots.clear();
     }
 
     pub fn get_vkey_payloads(

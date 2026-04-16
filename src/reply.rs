@@ -365,7 +365,7 @@ pub fn reply_verbose_value(
 
                 let attrs = bg.get_node_all_attrs(*id);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
-                for (key, value) in attrs.iter() {
+                for (key, value) in &attrs {
                     raw::reply_with_array(ctx.ctx, 2);
                     raw::reply_with_string_buffer(
                         ctx.ctx,

@@ -213,10 +213,10 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         // Check if record_cap already reached.
-        if let Some(cap) = self.record_cap {
-            if self.produced >= cap {
-                return None;
-            }
+        if let Some(cap) = self.record_cap
+            && self.produced >= cap
+        {
+            return None;
         }
 
         let mut envs = Vec::with_capacity(BATCH_SIZE);

@@ -395,6 +395,7 @@ dependencies = [
  "redis-module",
  "redis-module-macros",
  "roaring",
+ "rustc-hash",
  "ryu",
  "thin-vec",
 ]
@@ -532,6 +533,7 @@ dependencies = [
  "regex",
  "roaring",
  "rquickjs",
+ "rustc-hash",
  "thin-vec",
  "ureq",
 ]

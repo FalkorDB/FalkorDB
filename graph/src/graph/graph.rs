@@ -72,6 +72,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use rustc_hash::FxHashMap;
+
 use atomic_refcell::AtomicRefCell;
 use itertools::Itertools;
 use lru::LruCache;
@@ -205,6 +207,13 @@ pub struct MemoryUsageReport {
     pub edge_block_storage_sz: usize,
     pub edge_attr_by_type: Vec<(Arc<String>, usize)>,
     pub indices_sz: usize,
+}
+
+/// Pre-built attribute snapshots for RDB save.
+/// Built before Redis forks so the child never accesses fjall.
+pub struct RdbSnapshots {
+    pub nodes: FxHashMap<u64, Arc<Vec<(u16, Value)>>>,
+    pub relationships: FxHashMap<u64, Arc<Vec<(u16, Value)>>>,
 }
 
 /// The main graph data structure.
@@ -981,8 +990,8 @@ impl Graph {
 
     pub fn set_nodes_attributes(
         &mut self,
-        attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
-        index_add_docs: &mut HashMap<u64, RoaringTreemap>,
+        attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
+        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> Result<(usize, usize), String> {
         let (nremoved, nset) = self.node_attrs.insert_attrs(attrs)?;
 
@@ -1003,8 +1012,8 @@ impl Graph {
 
     pub fn import_node_attrs(
         &mut self,
-        attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
-        index_add_docs: &mut HashMap<u64, RoaringTreemap>,
+        attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
+        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> usize {
         let nset = self.node_attrs.import_attrs(attrs);
 
@@ -1025,7 +1034,7 @@ impl Graph {
 
     pub fn import_relationship_attrs(
         &mut self,
-        attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
+        attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
     ) -> usize {
         self.relationship_attrs.import_attrs(attrs)
     }
@@ -1033,7 +1042,7 @@ impl Graph {
     pub fn set_nodes_labels(
         &mut self,
         nodes_labels: &mut Matrix,
-        index_add_docs: &mut HashMap<u64, RoaringTreemap>,
+        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
         self.resize();
 
@@ -1064,7 +1073,7 @@ impl Graph {
     pub fn remove_nodes_labels(
         &mut self,
         nodes_labels: &mut Matrix,
-        remove_docs: &mut HashMap<u64, RoaringTreemap>,
+        remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
         self.resize();
 
@@ -1081,7 +1090,7 @@ impl Graph {
     pub fn delete_nodes(
         &mut self,
         deleted_nodes: &RoaringTreemap,
-        remove_docs: &mut HashMap<u64, RoaringTreemap>,
+        remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> Result<(), String> {
         self.deleted_nodes |= deleted_nodes;
         self.node_count -= deleted_nodes.len();
@@ -1375,7 +1384,7 @@ impl Graph {
 
     pub fn create_relationships(
         &mut self,
-        relationships: &HashMap<RelationshipId, PendingRelationship>,
+        relationships: &FxHashMap<RelationshipId, PendingRelationship>,
     ) {
         self.relationship_count += relationships.len() as u64;
         self.reserved_relationship_count -= relationships.len() as u64;
@@ -1400,11 +1409,10 @@ impl Graph {
         }
 
         // Pre-resolve type names → (matrix index, type_id) ONCE.
-        let mut type_cache: std::collections::HashMap<*const String, (usize, u64)> =
-            std::collections::HashMap::new();
+        let mut type_cache: FxHashMap<*const String, (usize, u64)> = FxHashMap::default();
         for rel in relationships.values() {
             let ptr = Arc::as_ptr(&rel.type_name);
-            if !type_cache.contains_key(&ptr) {
+            if let std::collections::hash_map::Entry::Vacant(e) = type_cache.entry(ptr) {
                 // Ensure the type + matrix exist
                 self.get_relationship_matrix_mut(&rel.type_name);
                 let type_idx = self
@@ -1412,15 +1420,14 @@ impl Graph {
                     .iter()
                     .position(|t| t.as_str() == rel.type_name.as_str())
                     .unwrap();
-                type_cache.insert(ptr, (type_idx, type_idx as u64));
+                e.insert((type_idx, type_idx as u64));
             }
         }
 
         self.resize();
 
         // Collect entries per-tensor, plus adjacency and type matrix entries
-        let mut by_tensor: std::collections::HashMap<usize, Vec<(u64, u64, u64)>> =
-            std::collections::HashMap::new();
+        let mut by_tensor: FxHashMap<usize, Vec<(u64, u64, u64)>> = FxHashMap::default();
         let mut adj_entries: Vec<(u64, u64)> = Vec::with_capacity(relationships.len());
         let mut type_entries: Vec<(u64, u64)> = Vec::with_capacity(relationships.len());
 
@@ -1445,7 +1452,7 @@ impl Graph {
 
     pub fn set_relationships_attributes(
         &mut self,
-        attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
+        attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
     ) -> Result<(usize, usize), String> {
         let (nremoved, nset) = self.relationship_attrs.insert_attrs(attrs)?;
         Ok((nremoved, nset))
@@ -1499,7 +1506,7 @@ impl Graph {
 
     pub fn delete_relationships(
         &mut self,
-        rels: HashMap<RelationshipId, (NodeId, NodeId)>,
+        rels: &FxHashMap<RelationshipId, (NodeId, NodeId)>,
     ) -> Result<(), String> {
         self.deleted_relationships
             .extend(rels.keys().map(|id| id.0));
@@ -1510,7 +1517,7 @@ impl Graph {
             rels.values().map(|(src, dst)| (src.0, dst.0)).collect();
 
         for (type_id, rels) in &rels
-            .into_iter()
+            .iter()
             .map(|(id, (src, dst))| (id.0, src.0, dst.0))
             .into_group_map_by(|(id, _, _)| self.get_relationship_type_id(RelationshipId(*id)))
         {
@@ -1551,7 +1558,7 @@ impl Graph {
     pub fn delete_implicit_edges(
         &mut self,
         deleted_nodes: &RoaringTreemap,
-        explicit_rels: &HashMap<RelationshipId, (NodeId, NodeId)>,
+        explicit_rels: &FxHashMap<RelationshipId, (NodeId, NodeId)>,
     ) -> Result<Vec<(RelationshipId, NodeId, NodeId)>, String> {
         if self.relationship_matrices.is_empty() {
             return Ok(Vec::new());
@@ -1559,7 +1566,8 @@ impl Graph {
 
         let mut all_implicit: Vec<(RelationshipId, NodeId, NodeId)> = Vec::new();
         // Pairs where only one endpoint is deleted — need adjacency check
-        let mut check_adj_pairs: std::collections::HashSet<(u64, u64)> = Default::default();
+        let mut check_adj_pairs: std::collections::HashSet<(u64, u64)> =
+            std::collections::HashSet::default();
 
         for type_idx in 0..self.relationship_matrices.len() {
             let mut rels: Vec<(u64, u64, u64)> = Vec::new();
@@ -1989,10 +1997,30 @@ impl Graph {
         Ok(())
     }
 
+    /// Returns `true` if any attribute store has cold data in fjall that
+    /// would be unsafe to read from a fork child.
+    pub fn needs_rdb_snapshot(&self) -> bool {
+        self.node_attrs.has_fjall_data() || self.relationship_attrs.has_fjall_data()
+    }
+
+    /// Pre-populate attribute caches from fjall for RDB save.
+    pub fn build_rdb_snapshots(&self) -> RdbSnapshots {
+        let node_snap = self
+            .node_attrs
+            .build_rdb_snapshot(&self.deleted_nodes, self.max_node_id());
+        let rel_snap = self
+            .relationship_attrs
+            .build_rdb_snapshot(&self.deleted_relationships, self.max_relationship_id());
+        RdbSnapshots {
+            nodes: node_snap,
+            relationships: rel_snap,
+        }
+    }
+
     pub fn commit_index(
         &mut self,
-        index_add_docs: &mut HashMap<u64, RoaringTreemap>,
-        remove_docs: &mut HashMap<u64, RoaringTreemap>,
+        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
         let lock = self.node_indexer.write_lock();
         let _guard = lock.lock();
@@ -2347,6 +2375,7 @@ impl Graph {
         w: &mut dyn Writer,
         p: &PayloadEntry,
         global_attrs: &[Arc<String>],
+        snapshots: Option<&RdbSnapshots>,
     ) {
         match p.state {
             EncodeState::Nodes => {
@@ -2357,6 +2386,7 @@ impl Graph {
                     global_attrs,
                     p.count,
                     p.offset,
+                    snapshots.map(|s| &s.nodes),
                 );
             }
             EncodeState::DeletedNodes => {
@@ -2370,6 +2400,7 @@ impl Graph {
                     global_attrs,
                     p.count,
                     p.offset,
+                    snapshots.map(|s| &s.relationships),
                 );
             }
             EncodeState::DeletedEdges => {

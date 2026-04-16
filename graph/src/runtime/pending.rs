@@ -24,7 +24,9 @@
 //!
 //! On error or ROLLBACK, the Pending is simply dropped without applying.
 
-use std::{cell::RefCell, collections::HashMap, sync::Arc};
+use std::{cell::RefCell, sync::Arc};
+
+use rustc_hash::FxHashMap;
 
 use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
@@ -107,27 +109,27 @@ pub struct Pending {
     /// Nodes created in this transaction
     created_nodes: RoaringTreemap,
     /// Relationships created (id → pending relationship data)
-    created_relationships: HashMap<RelationshipId, PendingRelationship>,
+    created_relationships: FxHashMap<RelationshipId, PendingRelationship>,
     /// Nodes to be deleted
     deleted_nodes: RoaringTreemap,
     /// Relationships to be deleted (edge_id, src, dst)
-    deleted_relationships: HashMap<RelationshipId, (NodeId, NodeId)>,
+    deleted_relationships: FxHashMap<RelationshipId, (NodeId, NodeId)>,
     /// Property updates for newly created nodes (fast path: skip fjall)
-    new_nodes_attrs: HashMap<u64, OrderMap<Arc<String>, Value>>,
+    new_nodes_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>>,
     /// Property updates for existing nodes (full merge path)
-    existing_nodes_attrs: HashMap<u64, OrderMap<Arc<String>, Value>>,
+    existing_nodes_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>>,
     /// Property updates for newly created relationships (fast path: skip fjall)
-    new_relationships_attrs: HashMap<u64, OrderMap<Arc<String>, Value>>,
+    new_relationships_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>>,
     /// Property updates for existing relationships (full merge path)
-    existing_relationships_attrs: HashMap<u64, OrderMap<Arc<String>, Value>>,
+    existing_relationships_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>>,
     /// Labels to add (node_id × label_id matrix)
     set_node_labels: Matrix,
     /// Labels to remove
     remove_node_labels: Matrix,
     /// Documents to add to indexes (keyed by label id)
-    index_add_docs: HashMap<u64, RoaringTreemap>,
+    index_add_docs: FxHashMap<u64, RoaringTreemap>,
     /// Documents to remove from indexes (keyed by label id)
-    index_remove_docs: HashMap<u64, RoaringTreemap>,
+    index_remove_docs: FxHashMap<u64, RoaringTreemap>,
     /// Schema baseline: number of labels when the current commit window started.
     schema_label_count: usize,
     /// Schema baseline: number of relationship types when the current commit window started.
@@ -149,17 +151,17 @@ impl Pending {
     pub fn new() -> Self {
         Self {
             created_nodes: RoaringTreemap::new(),
-            created_relationships: HashMap::new(),
+            created_relationships: FxHashMap::default(),
             deleted_nodes: RoaringTreemap::new(),
-            deleted_relationships: HashMap::new(),
-            new_nodes_attrs: HashMap::new(),
-            existing_nodes_attrs: HashMap::new(),
-            new_relationships_attrs: HashMap::new(),
-            existing_relationships_attrs: HashMap::new(),
+            deleted_relationships: FxHashMap::default(),
+            new_nodes_attrs: FxHashMap::default(),
+            existing_nodes_attrs: FxHashMap::default(),
+            new_relationships_attrs: FxHashMap::default(),
+            existing_relationships_attrs: FxHashMap::default(),
             set_node_labels: Matrix::new(0, 0),
             remove_node_labels: Matrix::new(0, 0),
-            index_add_docs: HashMap::new(),
-            index_remove_docs: HashMap::new(),
+            index_add_docs: FxHashMap::default(),
+            index_remove_docs: FxHashMap::default(),
             schema_label_count: 0,
             schema_rel_type_count: 0,
             schema_node_attr_count: 0,
@@ -741,7 +743,10 @@ impl Pending {
         }
         if !explicit_rels.is_empty() {
             stats.borrow_mut().relationships_deleted += explicit_rels.len();
-            g.borrow_mut().delete_relationships(explicit_rels)?;
+            // Re-record explicit rels so the effects buffer can serialize them.
+            self.deleted_relationships
+                .extend(explicit_rels.iter().map(|(&k, &v)| (k, v)));
+            g.borrow_mut().delete_relationships(&explicit_rels)?;
         }
         // Commit attribute changes and indexes after all deletions have been
         // applied. This ensures relationship_attrs.remove() pending_deletes
@@ -944,7 +949,7 @@ impl Pending {
         {
             let nrows = self.set_node_labels.nrows();
             if nrows > 0 {
-                let mut label_map: HashMap<u64, Vec<u64>> = HashMap::new();
+                let mut label_map: FxHashMap<u64, Vec<u64>> = FxHashMap::default();
                 for (node_id, label_id) in self.set_node_labels.iter(0, nrows - 1) {
                     if !self.created_nodes.contains(node_id) {
                         label_map.entry(node_id).or_default().push(label_id);
@@ -968,7 +973,7 @@ impl Pending {
         {
             let nrows = self.remove_node_labels.nrows();
             if nrows > 0 {
-                let mut label_map: HashMap<u64, Vec<u64>> = HashMap::new();
+                let mut label_map: FxHashMap<u64, Vec<u64>> = FxHashMap::default();
                 for (node_id, label_id) in self.remove_node_labels.iter(0, nrows - 1) {
                     label_map.entry(node_id).or_default().push(label_id);
                 }

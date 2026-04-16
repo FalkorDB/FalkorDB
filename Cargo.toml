@@ -29,6 +29,7 @@ lazy_static = "1.5.0"
 parking_lot = "0.12.5"
 redis-module = { git = "https://github.com/AviAvni/redismodule-rs", branch = "master" }
 roaring = "0.11.3"
+rustc-hash = "2"
 ryu = "1.0.23"
 thin-vec = "0.2.16"
 orx-tree = "2.2.0"

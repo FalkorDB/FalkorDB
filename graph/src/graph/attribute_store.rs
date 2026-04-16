@@ -83,10 +83,11 @@
 //! Each attribute is stored as a separate fjall entry:
 //! `entity_id (8 bytes big-endian) + attr_idx (2 bytes big-endian)`
 
-use std::{collections::HashMap, process, sync::Arc};
+use std::{process, sync::Arc};
 
 use std::cmp::Ordering;
-use std::collections::HashMap as StdHashMap;
+
+use rustc_hash::FxHashMap;
 
 use fjall::{
     Database, Keyspace, KeyspaceCreateOptions, Readable, Snapshot, config::HashRatioPolicy,
@@ -97,6 +98,11 @@ use roaring::RoaringTreemap;
 use super::attribute_cache::AttributeCache;
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
 use crate::runtime::{ordermap::OrderMap, orderset::OrderSet, value::Value};
+
+/// Shared empty attribute vector to avoid per-entity allocations when an
+/// entity has no properties.
+static EMPTY_ATTRS: once_cell::sync::Lazy<Arc<Vec<(u16, Value)>>> =
+    once_cell::sync::Lazy::new(|| Arc::new(Vec::new()));
 
 /// Create a composite key from entity ID and attribute index.
 fn make_key(
@@ -268,14 +274,13 @@ impl AttributeStore {
     ) -> Arc<Vec<(u16, Value)>> {
         // If this entity is pending full deletion, return empty regardless of fjall state.
         if self.pending_deletes.contains(entity_id) {
-            return Arc::new(Vec::new());
+            return EMPTY_ATTRS.clone();
         }
-        // Fast path: if the fjall keyspace was never initialized, no data has
-        // ever been flushed from cache to fjall — all entity data is either in
-        // the cache (which already returned None to the caller) or doesn't
-        // exist. Skip the expensive keyspace creation + prefix scan.
+        // If the fjall keyspace was never initialized, no data was ever flushed
+        // to persistent storage. All live data is in the cache. Return empty
+        // without triggering expensive keyspace creation or cache writes.
         if self.keyspace.get().is_none() {
-            return Arc::new(Vec::new());
+            return EMPTY_ATTRS.clone();
         }
         let prefix = entity_id.to_be_bytes();
         let attrs: Vec<(u16, Value)> = self
@@ -294,6 +299,77 @@ impl AttributeStore {
             .cache
             .insert_entity_if_older(entity_id, attrs.clone(), self.version);
         Arc::new(attrs)
+    }
+
+    /// Returns `true` if this store has a fjall keyspace that might contain
+    /// cold data not present in cache.  When `false`, all data is in cache
+    /// and the fork child can safely read from cache without touching fjall.
+    pub fn has_fjall_data(&self) -> bool {
+        self.keyspace.get().is_some()
+    }
+
+    /// Build a complete snapshot of all entity attributes by merging cache and
+    /// fjall data.  Returns a map from entity-ID to its attribute list.
+    ///
+    /// Called **before** Redis forks for BGSAVE so the fork child can encode
+    /// entities without touching fjall (which is unsafe after fork).
+    /// The returned map is passed to [`encode_with_range`] as the data source.
+    pub fn build_rdb_snapshot(
+        &self,
+        deleted: &RoaringTreemap,
+        max_id: u64,
+    ) -> FxHashMap<u64, Arc<Vec<(u16, Value)>>> {
+        let mut snap: FxHashMap<u64, Arc<Vec<(u16, Value)>>> = FxHashMap::default();
+
+        // 1. Collect everything from fjall (cold store) in a single sequential scan.
+        if self.keyspace.get().is_some() {
+            let mut current_id: Option<u64> = None;
+            let mut current_attrs: Vec<(u16, Value)> = Vec::new();
+            for entry in self.snapshot().iter(self.keyspace()) {
+                let Ok((key, data)) = entry.into_inner() else {
+                    continue;
+                };
+                let Some(attr_idx) = extract_attr_idx(&key) else {
+                    continue;
+                };
+                let eid = u64::from_be_bytes(key[..8].try_into().unwrap());
+                let Some((value, _)) = Value::from_bytes(&data) else {
+                    continue;
+                };
+                if current_id != Some(eid) {
+                    if let Some(prev_id) = current_id {
+                        if !deleted.contains(prev_id) && !self.pending_deletes.contains(prev_id) {
+                            current_attrs.sort_by_key(|item| item.0);
+                            snap.insert(prev_id, Arc::new(std::mem::take(&mut current_attrs)));
+                        } else {
+                            current_attrs.clear();
+                        }
+                    }
+                    current_id = Some(eid);
+                }
+                current_attrs.push((attr_idx, value));
+            }
+            if let Some(prev_id) = current_id
+                && !deleted.contains(prev_id)
+                && !self.pending_deletes.contains(prev_id)
+            {
+                current_attrs.sort_by_key(|item| item.0);
+                snap.insert(prev_id, Arc::new(current_attrs));
+            }
+        }
+
+        // 2. Overlay cache entries (hot store) — cache wins over fjall because
+        //    it may contain newer dirty writes not yet flushed.
+        for id in 0..=max_id {
+            if deleted.contains(id) || self.pending_deletes.contains(id) {
+                continue;
+            }
+            if let Some(cached) = self.cache.get_entity(id, self.version) {
+                snap.insert(id, cached);
+            }
+        }
+
+        snap
     }
 
     // ---- read path (cache → fjall) --------------------------------------
@@ -470,24 +546,23 @@ impl AttributeStore {
     /// the number of attributes *replaced* and the number of non-null attributes *set*.
     pub fn insert_attrs(
         &mut self,
-        attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
+        attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
     ) -> Result<(usize, usize), String> {
         let mut nremoved = 0;
         let mut nset = 0;
 
         // Pre-resolve all unique attribute names → indices ONCE.
         // Uses Arc pointer identity as key to avoid rehashing strings.
-        let mut name_to_idx: StdHashMap<*const String, u16> =
-            StdHashMap::with_capacity(attrs.values().next().map_or(0, |v| v.len()));
+        let mut name_to_idx: FxHashMap<*const String, u16> = FxHashMap::default();
         for entity_attrs in attrs.values() {
             for (attr, _) in entity_attrs.iter() {
                 let ptr = Arc::as_ptr(attr);
-                if !name_to_idx.contains_key(&ptr) {
+                if let std::collections::hash_map::Entry::Vacant(e) = name_to_idx.entry(ptr) {
                     let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
                         self.attrs_name.insert(attr.clone());
                         self.attrs_name.len() - 1
                     }) as u16;
-                    name_to_idx.insert(ptr, idx);
+                    e.insert(idx);
                 }
             }
         }
@@ -528,7 +603,7 @@ impl AttributeStore {
                 merged.clear();
                 merged.reserve(current.len() + new_entries.len());
                 merged.extend_from_slice(&current);
-                merged.extend(new_entries.drain(..));
+                merged.append(&mut new_entries);
             } else {
                 null_indices.sort_unstable();
 
@@ -600,20 +675,19 @@ impl AttributeStore {
     /// Returns the number of non-null attributes imported.
     pub fn import_attrs(
         &mut self,
-        attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
+        attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
     ) -> usize {
         // Pre-resolve all unique attribute names → indices ONCE.
-        let mut name_to_idx: StdHashMap<*const String, u16> =
-            StdHashMap::with_capacity(attrs.values().next().map_or(0, |v| v.len()));
+        let mut name_to_idx: FxHashMap<*const String, u16> = FxHashMap::default();
         for entity_attrs in attrs.values() {
             for (attr, _) in entity_attrs.iter() {
                 let ptr = Arc::as_ptr(attr);
-                if !name_to_idx.contains_key(&ptr) {
+                if let std::collections::hash_map::Entry::Vacant(e) = name_to_idx.entry(ptr) {
                     let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
                         self.attrs_name.insert(attr.clone());
                         self.attrs_name.len() - 1
                     }) as u16;
-                    name_to_idx.insert(ptr, idx);
+                    e.insert(idx);
                 }
             }
         }
@@ -745,39 +819,6 @@ impl AttributeStore {
         Ok(())
     }
 
-    /// Flush an entity's pending dirty attributes to fjall, then invalidate from cache.
-    ///
-    /// This ensures that any unflushed writes to the cache are persisted to fjall
-    /// before the cache entry is removed, preventing data loss when the entry is
-    /// about to be deleted from fjall.
-    ///
-    /// However, if the entity was modified by the current transaction
-    /// (`dirty_entities`), the flush is skipped — those writes are uncommitted
-    /// and must not be persisted to fjall until `commit()`.  This prevents
-    /// rollback from leaving current-tx inserts in the durable store.
-    fn flush_and_invalidate(
-        &self,
-        entity_id: u64,
-    ) -> Result<(), String> {
-        if !self.dirty_entities.contains(entity_id)
-            && let Some((cached, dirty)) = self.cache.get_entity_with_dirty(entity_id, self.version)
-            && dirty
-            && !cached.is_empty()
-        {
-            // Write dirty cached attributes to fjall before losing the cache entry.
-            // Safe to flush: these are pre-existing dirty entries from prior
-            // transactions, not from the active one.
-            let mut batch = get_database().batch();
-            for &(attr_idx, ref value) in cached.iter() {
-                let composite_key = make_key(entity_id, attr_idx);
-                batch.insert(self.keyspace(), composite_key, value.to_bytes());
-            }
-            batch.durability(None).commit().map_err(|e| e.to_string())?;
-        }
-        self.cache.invalidate(entity_id);
-        Ok(())
-    }
-
     /// Access the shared cache (for background flush scheduling).
     #[must_use]
     pub const fn cache(&self) -> &Arc<AttributeCache> {
@@ -820,14 +861,14 @@ impl AttributeStore {
             if current_id != Some(eid) {
                 // Flush previous entity.
                 if let Some(prev_id) = current_id {
-                    if !self.pending_deletes.contains(prev_id) {
+                    if self.pending_deletes.contains(prev_id) {
+                        current_attrs.clear();
+                    } else {
                         let _ = self.cache.insert_entity_if_older(
                             prev_id,
                             std::mem::take(&mut current_attrs),
                             self.version,
                         );
-                    } else {
-                        current_attrs.clear();
                     }
                 }
                 current_id = Some(eid);
@@ -835,16 +876,18 @@ impl AttributeStore {
             current_attrs.push((idx, value));
         }
         // Flush the last entity.
-        if let Some(prev_id) = current_id {
-            if !self.pending_deletes.contains(prev_id) {
-                let _ = self
-                    .cache
-                    .insert_entity_if_older(prev_id, current_attrs, self.version);
-            }
+        if let Some(prev_id) = current_id
+            && !self.pending_deletes.contains(prev_id)
+        {
+            let _ = self
+                .cache
+                .insert_entity_if_older(prev_id, current_attrs, self.version);
         }
     }
 
-    /// Encode a range of entities, borrowing the deleted bitmap directly.
+    /// Encode a range of entities, using the pre-built RDB snapshot when
+    /// provided, falling back to cache → fjall otherwise.
+    #[allow(clippy::too_many_arguments)]
     pub fn encode_with_range(
         &self,
         w: &mut dyn Writer,
@@ -853,9 +896,10 @@ impl AttributeStore {
         global_attrs: &[Arc<String>],
         count: u64,
         offset: u64,
+        rdb_snapshot: Option<&FxHashMap<u64, Arc<Vec<(u16, Value)>>>>,
     ) {
         // Build attr remap inline.
-        let global_index: std::collections::HashMap<&Arc<String>, usize> = global_attrs
+        let global_index: FxHashMap<&Arc<String>, usize> = global_attrs
             .iter()
             .enumerate()
             .map(|(i, n)| (n, i))
@@ -888,7 +932,14 @@ impl AttributeStore {
 
             w.write_unsigned(id);
 
-            let props = self.get_all_attrs_by_id(id);
+            let props = rdb_snapshot.map_or_else(
+                || self.get_all_attrs_by_id(id),
+                |snap| {
+                    snap.get(&id)
+                        .cloned()
+                        .unwrap_or_else(|| EMPTY_ATTRS.clone())
+                },
+            );
             w.write_unsigned(props.len() as u64);
 
             for &(local_attr_id, ref value) in props.iter() {

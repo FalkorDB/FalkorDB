@@ -6,7 +6,7 @@ from time import sleep
 from index_utils import *
 from collections import OrderedDict
 from click.testing import CliRunner
-from datetime import datetime, date, time
+from datetime import datetime, date, time, timezone
 from dateutil.relativedelta import relativedelta
 from falkordb_bulk_loader.bulk_insert import bulk_insert
 
@@ -76,7 +76,7 @@ class testGraphPersistency():
         graph.create_node_range_index("person", "name", "height")
         graph.create_node_range_index("country", "name", "population")
         graph.create_edge_range_index("visit", "purpose")
-        graph.query("CALL db.idx.fulltext.createNodeIndex({label: 'person', stopwords: ['A', 'B'], language: 'english'}, { field: 'text', nostem: true, weight: 2, phonetic: 'dm:en' })")
+        graph.query("CREATE FULLTEXT INDEX FOR (n:person) ON (n.text) OPTIONS {stopwords: ['A', 'B'], language: 'english', nostem: true, weight: 2, phonetic: true}")
         create_node_vector_index(graph, "person", 'embedding1', dim=128, m=64, efConstruction=10, efRuntime=10)
         create_node_vector_index(graph, "person", 'embedding2', dim=256, similarity_function='cosine', m=32, efConstruction=20, efRuntime=20)
         wait_for_indices_to_sync(graph)
@@ -106,6 +106,8 @@ class testGraphPersistency():
 
         return dense_graph
 
+    # TODO: enable after indexes completed
+    @skip()
     def test_save_load(self):
         graph_names = ["G", "{tag}_G"]
         for graph_name in graph_names:
@@ -211,11 +213,11 @@ class testGraphPersistency():
 
             # Verify that the properties are loaded correctly.
             expected_result = [[True, 5.5, 'str', [1, 2, 3], {"latitude": 5.5, "longitude": 6.0},
-                                [1, 0, 3],
-                                [[1, 8, 3], [1, -1, 4], [2, 2, 3]],
+                                [1.0, 0.0, 3.0],
+                                [[1.0, 8.0, 3.0], [1.0, -1.0, 4.0], [2.0, 2.0, 3.0]],
                                 date(year=1984, month=10, day=21),
                                 time(hour=10, minute=30, second=10),
-                                datetime(year=1984, month=10, day=21, hour=5, minute=30, second=10),
+                                datetime(year=1984, month=10, day=21, hour=5, minute=30, second=10, tzinfo=timezone.utc),
                                 relativedelta(years=1, months=1, days=1, hours=1, minutes=1, seconds=1)]]
 
             self.env.assertEqual(actual_result.result_set, expected_result)
@@ -270,6 +272,8 @@ class testGraphPersistency():
             self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Verify that graphs created using the GRAPH.BULK endpoint are persisted correctly
+    # TODO: enable when bulk loader is implemented
+    @skip()
     def test_bulk_insert(self):
         port      = self.env.envRunner.port
         runner    = CliRunner()

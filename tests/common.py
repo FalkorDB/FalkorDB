@@ -33,10 +33,11 @@ def start_redis(release=None, moduleEnvs=[]):
         shutdown = True
         if os.path.exists("redis-test.log"):
             os.remove("redis-test.log")
-        redis_server = subprocess.Popen(executable="/usr/local/bin/redis-server",
-                                        args=["--save", "", "--port", port, "--logfile", "redis-test.log",
-                                              "--loadmodule", target] + moduleEnvs,
-                                        stdout=subprocess.PIPE)
+        redis_server = subprocess.Popen(
+            ["/usr/local/bin/redis-server",
+             "--save", "", "--port", port, "--logfile", "redis-test.log",
+             "--loadmodule", target] + moduleEnvs,
+            stdout=subprocess.PIPE)
     while True:
         try:
             r.ping()

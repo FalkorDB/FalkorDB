@@ -14,7 +14,9 @@ tests/flow/test_concurrent_query.py
 tests/flow/test_config.py
 tests/flow/test_create_clause
 tests/flow/test_distinct
+tests/flow/test_effects.py
 tests/flow/test_empty_query
+tests/flow/test_encode_decode.py
 tests/flow/test_entity_update
 tests/flow/test_execution_plan_print.py
 tests/flow/test_expand_into
@@ -24,6 +26,7 @@ tests/flow/test_function_calls
 tests/flow/test_graph_create
 tests/flow/test_graph_deletion
 tests/flow/test_graph_merge
+tests/flow/test_graph_versioning.py
 tests/flow/test_hashjoin.py
 tests/flow/test_imdb
 tests/flow/test_index_create
@@ -56,6 +59,7 @@ tests/flow/test_pending_queries_limit.py
 tests/flow/test_point
 tests/flow/test_profile.py
 tests/flow/test_query_validation
+tests/flow/test_rdb_load.py
 tests/flow/test_reduce.py
 tests/flow/test_results.py
 tests/flow/test_reversed_patterns

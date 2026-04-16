@@ -16,12 +16,8 @@ tests/flow/test_stress.py
 
 ## Persistence & Replication
 tests/flow/test_persistency.py
-tests/flow/test_encode_decode.py
-tests/flow/test_rdb_load.py
-tests/flow/test_prev_rdb_decode.py
 tests/flow/test_replication.py
 tests/flow/test_replication_states.py
-tests/flow/test_graph_versioning.py
 
 ## Redis Integration & Server Features
 tests/flow/test_acl.py
@@ -42,5 +38,4 @@ tests/flow/test_undo_log.py
 
 ## Metadata & Internals
 tests/flow/test_multi_label.py
-tests/flow/test_effects.py
 tests/flow/test_intern_string.py

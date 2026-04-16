@@ -82,6 +82,7 @@ pub struct CondTraverseOp<'a> {
 }
 
 impl<'a> CondTraverseOp<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
@@ -427,10 +428,10 @@ impl<'a> Iterator for CondTraverseOp<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         // Check if record_cap already reached.
-        if let Some(cap) = self.record_cap {
-            if self.produced >= cap {
-                return None;
-            }
+        if let Some(cap) = self.record_cap
+            && self.produced >= cap
+        {
+            return None;
         }
 
         let mut envs = Vec::with_capacity(BATCH_SIZE);

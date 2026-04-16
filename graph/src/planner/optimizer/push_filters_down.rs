@@ -250,53 +250,53 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
             // When a conjunct references variables from a proper subset of CP
             // branches (>=2 but < all), extract those branches into an inner
             // CP wrapped with that conjunct as a filter.
-            if !remaining.is_empty() && child_conjuncts.iter().all(Vec::is_empty) {
-                if let Some(filter_child) = optimized_plan.node(idx).get_child(0)
-                    && matches!(filter_child.data(), IR::CartesianProduct)
-                    && filter_child.num_children() > 2
-                {
-                    let total_children = children.len();
-                    let mut split_idx = None;
+            if !remaining.is_empty()
+                && child_conjuncts.iter().all(Vec::is_empty)
+                && let Some(filter_child) = optimized_plan.node(idx).get_child(0)
+                && matches!(filter_child.data(), IR::CartesianProduct)
+                && filter_child.num_children() > 2
+            {
+                let total_children = children.len();
+                let mut split_idx = None;
 
-                    for (ci, conjunct) in remaining.iter().enumerate() {
-                        let conj_vars = collect_expr_variables(conjunct);
-                        // Find solving branches: children that contribute >=1
-                        // variable referenced by this conjunct.
-                        let solving: Vec<usize> = children
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, (_, child_vars))| {
-                                conj_vars.iter().any(|v| child_vars.contains(v))
-                            })
-                            .map(|(i, _)| i)
-                            .collect();
+                for (ci, conjunct) in remaining.iter().enumerate() {
+                    let conj_vars = collect_expr_variables(conjunct);
+                    // Find solving branches: children that contribute >=1
+                    // variable referenced by this conjunct.
+                    let solving: Vec<usize> = children
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, (_, child_vars))| {
+                            conj_vars.iter().any(|v| child_vars.contains(v))
+                        })
+                        .map(|(i, _)| i)
+                        .collect();
 
-                        if solving.len() >= 2 && solving.len() < total_children {
-                            split_idx = Some((ci, solving));
-                            break;
-                        }
-                    }
-
-                    if let Some((ci, solving)) = split_idx {
-                        // Rebuild the entire plan using a recursive approach
-                        // to avoid in-place tree mutation issues with prune.
-                        let split_filter_idx = idx;
-                        let conjunct_to_split = remaining[ci].clone();
-                        let solving_set: HashSet<usize> = solving.iter().copied().collect();
-                        let mut remaining_conjuncts = remaining.clone();
-                        remaining_conjuncts.remove(ci);
-
-                        *optimized_plan = rebuild_with_cp_split(
-                            optimized_plan,
-                            split_filter_idx,
-                            &conjunct_to_split,
-                            &solving_set,
-                            &remaining_conjuncts,
-                        );
-
-                        changed = true;
+                    if solving.len() >= 2 && solving.len() < total_children {
+                        split_idx = Some((ci, solving));
                         break;
                     }
+                }
+
+                if let Some((ci, solving)) = split_idx {
+                    // Rebuild the entire plan using a recursive approach
+                    // to avoid in-place tree mutation issues with prune.
+                    let split_filter_idx = idx;
+                    let conjunct_to_split = remaining[ci].clone();
+                    let solving_set: HashSet<usize> = solving.iter().copied().collect();
+                    let mut remaining_conjuncts = remaining.clone();
+                    remaining_conjuncts.remove(ci);
+
+                    *optimized_plan = rebuild_with_cp_split(
+                        optimized_plan,
+                        split_filter_idx,
+                        &conjunct_to_split,
+                        &solving_set,
+                        &remaining_conjuncts,
+                    );
+
+                    changed = true;
+                    break;
                 }
             }
 
@@ -390,7 +390,7 @@ fn rebuild_with_cp_split(
 
             let inner_cp = tree!(IR::CartesianProduct; extracted);
             let filter_expr = Arc::new(conjunct.clone());
-            let inner_filtered = tree!(IR::Filter(filter_expr); vec![inner_cp]);
+            let inner_filtered = tree!(IR::Filter(filter_expr); [inner_cp]);
 
             let mut new_children = others;
             new_children.push(inner_filtered);
@@ -401,6 +401,7 @@ fn rebuild_with_cp_split(
                 let remaining_filter = if remaining_conjuncts.len() == 1 {
                     Arc::new(remaining_conjuncts[0].clone())
                 } else {
+                    #[allow(clippy::unnecessary_to_owned)]
                     Arc::new(tree!(ExprIR::And; remaining_conjuncts.to_vec()))
                 };
                 let cp = tree!(IR::CartesianProduct; new_children);

@@ -110,6 +110,7 @@ pub(crate) fn collect_subtree_variables(node: &orx_tree::DynNode<IR>) -> HashSet
 /// # Returns
 /// An optimized copy of the plan
 #[must_use]
+#[allow(clippy::implicit_hasher)]
 pub fn optimize(
     plan: &DynTree<IR>,
     graph: &Graph,
