@@ -470,8 +470,8 @@ class testGraphPersistency():
         # Issue BGSAVE
         self.conn.bgsave()
 
-        max_iterations = 600
-        # Wait for BGSAVE to complete for a maximum of 60 seconds
+        max_iterations = 100
+        # Wait for BGSAVE to complete for a maximum of 10 seconds
         for _ in range(max_iterations):
             in_progress = self.conn.info("persistence").get("rdb_bgsave_in_progress")
             if not in_progress:
@@ -479,8 +479,6 @@ class testGraphPersistency():
             sleep(0.1)  # poll every 100ms
 
         self.env.assertFalse(in_progress)
-        if in_progress:
-            return  # BGSAVE did not complete; skip the rest to avoid cascading failures
 
         # Save & Load from RDB
         self.env.dumpAndReload()
@@ -537,9 +535,9 @@ class testGraphPersistency():
         # Issue BGSAVE
         self.conn.bgsave()
         start = datetime.now()
-        max_iterations = 600
+        max_iterations = 100
 
-        # Wait for BGSAVE to complete for a maximum of 60 seconds
+        # Wait for BGSAVE to complete for a maximum of 10 seconds
         for _ in range(max_iterations):
             pending = self.conn.info("persistence").get("rdb_bgsave_in_progress")
             if not pending:
