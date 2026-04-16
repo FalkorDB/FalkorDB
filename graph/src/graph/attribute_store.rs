@@ -546,6 +546,7 @@ impl AttributeStore {
                             ci += 1;
                         }
                         Ordering::Equal => {
+                            nremoved += 1;
                             merged.push((new_idx, new_entries[ni].1.clone()));
                             ci += 1;
                             ni += 1;
@@ -662,6 +663,11 @@ impl AttributeStore {
                 }
             }
             batch.durability(None).commit().map_err(|e| e.to_string())?;
+            // Invalidate deleted entities from the shared cache to prevent stale reads.
+            // After persisting the deletions to fjall, remove cached entries for all
+            // deleted entities so subsequent get_attr*/get_all_attrs* calls won't
+            // resurrect deleted data.
+            self.cache.invalidate_batch(&self.pending_deletes);
         }
         let new_snapshot = OnceCell::new();
         let _ = new_snapshot.set(get_database().snapshot());

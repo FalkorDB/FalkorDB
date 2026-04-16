@@ -139,9 +139,7 @@ impl Runtime<'_> {
             {
                 let mut pending = self.pending.borrow_mut();
                 for (i, attrs) in all_attrs.into_iter().enumerate() {
-                    if !attrs.is_empty() {
-                        pending.set_node_attributes(node_ids[i], attrs)?;
-                    }
+                    pending.set_node_attributes(node_ids[i], attrs)?;
                 }
             }
 
@@ -236,9 +234,7 @@ impl Runtime<'_> {
             {
                 let mut pending = self.pending.borrow_mut();
                 for (i, attrs) in all_rel_attrs.into_iter().enumerate() {
-                    if !attrs.is_empty() {
-                        pending.set_relationship_attributes(rel_ids[i].0, attrs)?;
-                    }
+                    pending.set_relationship_attributes(rel_ids[i].0, attrs)?;
                 }
             }
 
