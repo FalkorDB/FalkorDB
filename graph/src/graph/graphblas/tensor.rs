@@ -135,6 +135,35 @@ impl Tensor {
         }
     }
 
+    /// Bulk-remove all edges whose `(src, dst)` pair appears in `mask`.
+    ///
+    /// `mask_t` must be the transpose of `mask`.
+    /// This removes ALL edges at matching `(src, dst)` pairs — suitable for
+    /// implicit (cascade) deletion where a node and all its edges are removed.
+    pub fn clear_elements(
+        &mut self,
+        mask: &Matrix,
+        mask_t: &Matrix,
+    ) {
+        // Build me_mask: me uses compound key (src<<32|dst) as row, edge_id as col
+        let mut me_mask = Matrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
+        for (src, dst) in mask.iter(0, u64::MAX) {
+            let compound = src << 32 | dst;
+            for (_, edge_id) in self.me.iter(compound, compound) {
+                me_mask.set(compound, edge_id, true);
+            }
+        }
+
+        // Bulk-remove from edge ID matrix
+        if me_mask.nvals() > 0 {
+            self.me.remove_mask(&me_mask);
+        }
+
+        // Bulk-remove from forward and backward adjacency
+        self.m.remove_mask(mask);
+        self.mt.remove_mask(mask_t);
+    }
+
     pub fn resize(
         &mut self,
         nrows: u64,

@@ -441,6 +441,17 @@ impl Pending {
         }
     }
 
+    pub fn created_relationship(
+        &mut self,
+        id: RelationshipId,
+        from: NodeId,
+        to: NodeId,
+        type_name: Arc<String>,
+    ) {
+        self.created_relationships
+            .insert(id, PendingRelationship::new(from, to, type_name));
+    }
+
     pub fn set_relationship_attributes(
         &mut self,
         id: RelationshipId,
@@ -543,6 +554,21 @@ impl Pending {
         id: RelationshipId,
     ) -> bool {
         self.created_relationships.contains_key(&id)
+    }
+
+    #[must_use]
+    pub fn has_deleted_nodes(&self) -> bool {
+        !self.deleted_nodes.is_empty()
+    }
+
+    #[must_use]
+    pub fn has_deleted_relationships(&self) -> bool {
+        !self.deleted_relationships.is_empty()
+    }
+
+    #[must_use]
+    pub fn has_created_relationships(&self) -> bool {
+        !self.created_relationships.is_empty()
     }
 
     #[must_use]
@@ -659,47 +685,33 @@ impl Pending {
                 .remove_nodes_labels(&mut self.remove_node_labels, &mut self.index_remove_docs);
         }
         if !self.new_nodes_attrs.is_empty() || !self.existing_nodes_attrs.is_empty() {
-            let count_properties = |map: &HashMap<u64, OrderMap<Arc<String>, Value>>| -> usize {
-                map.values()
-                    .flat_map(super::ordermap::OrderMap::values)
-                    .map(|v| match *v {
-                        Value::Null => 0,
-                        _ => 1,
-                    })
-                    .sum()
-            };
-            stats.borrow_mut().properties_set += count_properties(&self.new_nodes_attrs)
-                + count_properties(&self.existing_nodes_attrs);
             let mut g = g.borrow_mut();
             if !self.new_nodes_attrs.is_empty() {
-                g.import_node_attrs(&self.new_nodes_attrs, &mut self.index_add_docs);
+                let nset = g.import_node_attrs(&self.new_nodes_attrs, &mut self.index_add_docs);
+                stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_nodes_attrs.is_empty() {
-                stats.borrow_mut().properties_removed +=
+                let (nremoved, nset) =
                     g.set_nodes_attributes(&self.existing_nodes_attrs, &mut self.index_add_docs)?;
+                let mut s = stats.borrow_mut();
+                s.properties_set += nset;
+                s.properties_removed += nremoved;
             }
         }
 
         if !self.new_relationships_attrs.is_empty() || !self.existing_relationships_attrs.is_empty()
         {
-            let count_properties = |map: &HashMap<u64, OrderMap<Arc<String>, Value>>| -> usize {
-                map.values()
-                    .flat_map(super::ordermap::OrderMap::values)
-                    .map(|v| match *v {
-                        Value::Null => 0,
-                        _ => 1,
-                    })
-                    .sum()
-            };
-            stats.borrow_mut().properties_set += count_properties(&self.new_relationships_attrs)
-                + count_properties(&self.existing_relationships_attrs);
             let mut g = g.borrow_mut();
             if !self.new_relationships_attrs.is_empty() {
-                g.import_relationship_attrs(&self.new_relationships_attrs);
+                let nset = g.import_relationship_attrs(&self.new_relationships_attrs);
+                stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_relationships_attrs.is_empty() {
-                stats.borrow_mut().properties_removed +=
+                let (nremoved, nset) =
                     g.set_relationships_attributes(&self.existing_relationships_attrs)?;
+                let mut s = stats.borrow_mut();
+                s.properties_set += nset;
+                s.properties_removed += nremoved;
             }
         }
         if !self.deleted_nodes.is_empty() {
@@ -707,10 +719,29 @@ impl Pending {
             g.borrow_mut()
                 .delete_nodes(&self.deleted_nodes, &mut self.index_remove_docs)?;
         }
-        if !self.deleted_relationships.is_empty() {
-            stats.borrow_mut().relationships_deleted += self.deleted_relationships.len();
-            let rels = std::mem::take(&mut self.deleted_relationships);
-            g.borrow_mut().delete_relationships(rels)?;
+        // Take explicit relationship deletions BEFORE implicit edge processing
+        // so we can pass them to delete_implicit_edges for dedup, and then
+        // process them separately via delete_relationships.
+        let explicit_rels = std::mem::take(&mut self.deleted_relationships);
+
+        // Bulk cascade-delete edges for implicitly deleted nodes.
+        // This must run after delete_nodes so that node matrices are already
+        // cleaned up, and before delete_relationships so explicit edges are
+        // still tracked separately.
+        if !self.deleted_nodes.is_empty() {
+            let implicit_edges = g
+                .borrow_mut()
+                .delete_implicit_edges(&self.deleted_nodes, &explicit_rels)?;
+            let count = implicit_edges.len();
+            stats.borrow_mut().relationships_deleted += count;
+            // Record in deleted_relationships so effects buffer can serialize them
+            for (rel_id, from, to) in implicit_edges {
+                self.deleted_relationships.insert(rel_id, (from, to));
+            }
+        }
+        if !explicit_rels.is_empty() {
+            stats.borrow_mut().relationships_deleted += explicit_rels.len();
+            g.borrow_mut().delete_relationships(explicit_rels)?;
         }
         // Commit attribute changes and indexes after all deletions have been
         // applied. This ensures relationship_attrs.remove() pending_deletes

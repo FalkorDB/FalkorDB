@@ -23,9 +23,6 @@
 //!                       │
 //!              output batch (with new IDs bound)
 //! ```
-//!
-//! When the direct parent is a `Commit` node at the plan root, result rows
-//! are suppressed (write-only optimization).
 
 use std::cell::OnceCell;
 use std::sync::Arc;
@@ -34,6 +31,7 @@ use crate::graph::graph::LabelId;
 use crate::parser::ast::{QueryGraph, QueryNode, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
+use crate::runtime::ordermap::OrderMap;
 use crate::runtime::{
     batch::{Batch, BatchOp},
     runtime::Runtime,
@@ -46,7 +44,6 @@ pub struct CreateOp<'a> {
     pub(crate) child: Box<BatchOp<'a>>,
     pattern: QueryGraph<Arc<String>, Arc<String>, Variable>,
     resolved_pattern: OnceCell<QueryGraph<Arc<String>, LabelId, Variable>>,
-    parent_commit: bool,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -57,17 +54,11 @@ impl<'a> CreateOp<'a> {
         pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
-        let parent_commit =
-            runtime.plan.node(idx).parent().is_some_and(|parent| {
-                matches!(parent.data(), IR::Commit) && parent.parent().is_none()
-            });
-
         Self {
             runtime,
             child,
             pattern: pattern.clone(),
             resolved_pattern: OnceCell::new(),
-            parent_commit,
             idx,
         }
     }
@@ -77,29 +68,24 @@ impl<'a> Iterator for CreateOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let mut batch = match self.child.next()? {
-                Ok(b) => b,
-                Err(e) => return Some(Err(e)),
-            };
+        let mut batch = match self.child.next()? {
+            Ok(b) => b,
+            Err(e) => return Some(Err(e)),
+        };
 
-            let resolved_pattern = self.resolved_pattern.get_or_init(|| {
-                let resolved = self.runtime.resolve_pattern(&self.pattern);
-                self.runtime.pending.borrow_mut().resize(
-                    self.runtime.g.borrow().node_cap(),
-                    self.runtime.g.borrow().labels_count(),
-                );
-                resolved
-            });
-            if let Err(e) = self.runtime.create_batch(resolved_pattern, &mut batch) {
-                return Some(Err(e));
-            }
-
-            if self.parent_commit {
-                continue;
-            }
-            return Some(Ok(batch));
+        let resolved_pattern = self.resolved_pattern.get_or_init(|| {
+            let resolved = self.runtime.resolve_pattern(&self.pattern);
+            self.runtime.pending.borrow_mut().resize(
+                self.runtime.g.borrow().node_cap(),
+                self.runtime.g.borrow().labels_count(),
+            );
+            resolved
+        });
+        if let Err(e) = self.runtime.create_batch(resolved_pattern, &mut batch) {
+            return Some(Err(e));
         }
+
+        Some(Ok(batch))
     }
 }
 
@@ -109,6 +95,10 @@ impl Runtime<'_> {
         pattern: &QueryGraph<Arc<String>, LabelId, Variable>,
         batch: &mut Batch<'_>,
     ) -> Result<(), String> {
+        // Track which aliases are created in this pattern for validation skip
+        let created_aliases: std::collections::HashSet<u32> =
+            pattern.nodes().iter().map(|n| n.alias.id).collect();
+
         // Process nodes: reserve IDs, evaluate attrs, write IDs back via write_column
         for node in pattern.nodes() {
             let active_len = batch.active_len();
@@ -123,8 +113,11 @@ impl Runtime<'_> {
                 pending.set_nodes_labels(&node_ids, &node.labels);
             }
 
-            // Evaluate attributes per row (run_expr only reads from env)
-            for (i, row) in batch.active_indices().enumerate() {
+            // Evaluate attributes per row, then batch-insert into pending.
+            // NOTE: eval() may borrow pending internally (e.g. property reads),
+            // so we cannot hold pending.borrow_mut() across eval calls.
+            let mut all_attrs: Vec<OrderMap<Arc<String>, Value>> = Vec::with_capacity(active_len);
+            for (_i, row) in batch.active_indices().enumerate() {
                 let env = batch.env_ref(row);
                 let attrs = ExprEval::from_runtime(self).eval(
                     &node.attrs,
@@ -133,17 +126,20 @@ impl Runtime<'_> {
                     None,
                 )?;
                 match attrs {
-                    Value::Map(attrs) => {
-                        self.pending
-                            .borrow_mut()
-                            .set_node_attributes(node_ids[i], Arc::unwrap_or_clone(attrs))?;
-                    }
+                    Value::Map(attrs) => all_attrs.push(Arc::unwrap_or_clone(attrs)),
                     other => {
                         return Err(format!(
                             "Expected map for node attributes, got {}",
                             other.name()
                         ));
                     }
+                }
+            }
+            // Single borrow to insert all evaluated attrs
+            {
+                let mut pending = self.pending.borrow_mut();
+                for (i, attrs) in all_attrs.into_iter().enumerate() {
+                    pending.set_node_attributes(node_ids[i], attrs)?;
                 }
             }
 
@@ -157,9 +153,23 @@ impl Runtime<'_> {
             // Read endpoint IDs using read_columns
             let endpoint_rows = batch.read_columns(&[rel.from.alias.id, rel.to.alias.id]);
 
-            // Validate all endpoints first
+            // Extract endpoints — skip validation when both endpoints were
+            // created in this same CREATE pattern (guaranteed valid).
+            let skip_validation = created_aliases.contains(&rel.from.alias.id)
+                && created_aliases.contains(&rel.to.alias.id);
+
             let mut endpoints = Vec::with_capacity(endpoint_rows.len());
-            {
+            if skip_validation {
+                for row_vals in &endpoint_rows {
+                    let Value::Node(from_id) = row_vals[0] else {
+                        return Err(String::from("Invalid node id"));
+                    };
+                    let Value::Node(to_id) = row_vals[1] else {
+                        return Err(String::from("Invalid node id"));
+                    };
+                    endpoints.push((*from_id, *to_id));
+                }
+            } else {
                 let g = self.g.borrow();
                 let pending = self.pending.borrow();
                 for row_vals in &endpoint_rows {
@@ -188,22 +198,25 @@ impl Runtime<'_> {
             // Reserve all relationship IDs at once
             let ids = self.g.borrow_mut().reserve_relationships(endpoints.len());
 
-            // Record all created relationships in batch
+            // Record all created relationships directly into pending (no intermediate Vec)
             let type_name = rel.types.first().unwrap().clone();
             let rel_ids: Vec<_> = ids
                 .iter()
                 .zip(endpoints.iter())
                 .map(|(id, (from, to))| (*id, *from, *to))
                 .collect();
-            self.pending.borrow_mut().created_relationships(
-                ids.into_iter()
-                    .zip(endpoints)
-                    .map(|(id, (from, to))| (id, from, to, type_name.clone()))
-                    .collect(),
-            );
+            {
+                let mut pending = self.pending.borrow_mut();
+                for (&id, &(from, to)) in ids.iter().zip(endpoints.iter()) {
+                    pending.created_relationship(id, from, to, type_name.clone());
+                }
+            }
 
-            // Evaluate relationship attributes per row
-            for (i, row) in batch.active_indices().enumerate() {
+            // Evaluate relationship attributes per row, then batch-insert.
+            // Same as nodes: eval() may borrow pending, so separate eval from insert.
+            let mut all_rel_attrs: Vec<OrderMap<Arc<String>, Value>> =
+                Vec::with_capacity(rel_ids.len());
+            for (_i, row) in batch.active_indices().enumerate() {
                 let env = batch.env_ref(row);
                 let attrs = ExprEval::from_runtime(self).eval(
                     &rel.attrs,
@@ -212,15 +225,16 @@ impl Runtime<'_> {
                     None,
                 )?;
                 match attrs {
-                    Value::Map(attrs) => {
-                        self.pending.borrow_mut().set_relationship_attributes(
-                            rel_ids[i].0,
-                            Arc::unwrap_or_clone(attrs),
-                        )?;
-                    }
+                    Value::Map(attrs) => all_rel_attrs.push(Arc::unwrap_or_clone(attrs)),
                     _ => {
                         return Err(String::from("Invalid relationship properties"));
                     }
+                }
+            }
+            {
+                let mut pending = self.pending.borrow_mut();
+                for (i, attrs) in all_rel_attrs.into_iter().enumerate() {
+                    pending.set_relationship_attributes(rel_ids[i].0, attrs)?;
                 }
             }
 

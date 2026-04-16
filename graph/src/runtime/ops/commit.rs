@@ -26,13 +26,18 @@ use crate::runtime::{
     batch::{Batch, BatchOp},
     runtime::Runtime,
 };
-use orx_tree::{Dyn, NodeIdx};
+use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 pub struct CommitOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Option<Box<BatchOp<'a>>>,
     results: Vec<Batch<'a>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
+    /// When true, this Commit is the root of the plan (no parent) and
+    /// no downstream operator will consume the batches. We drain the
+    /// child but discard the batches to avoid allocating a large result
+    /// vector that nobody reads.
+    is_root: bool,
 }
 
 impl<'a> CommitOp<'a> {
@@ -46,11 +51,13 @@ impl<'a> CommitOp<'a> {
                 "graph.RO_QUERY is to be executed only on read-only queries",
             ));
         }
+        let is_root = runtime.plan.node(idx).parent().is_none();
         Ok(Self {
             runtime,
             child: Some(child),
             results: Vec::new(),
             idx,
+            is_root,
         })
     }
 }
@@ -64,7 +71,9 @@ impl<'a> Iterator for CommitOp<'a> {
             loop {
                 match child.next() {
                     Some(Ok(batch)) => {
-                        self.results.push(batch);
+                        if !self.is_root {
+                            self.results.push(batch);
+                        }
                     }
                     Some(Err(e)) => return Some(Err(e)),
                     None => break,
