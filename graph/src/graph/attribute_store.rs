@@ -834,6 +834,17 @@ impl AttributeStore {
             }
         }
     }
+
+    /// Delete the fjall keyspace, releasing all persisted data.
+    ///
+    /// No-op if the keyspace was never initialized.
+    /// Safe to call while other clones still hold `Keyspace` handles —
+    /// fjall defers physical cleanup until the last handle drops.
+    pub fn delete_keyspace(&self) {
+        if let Some(ks) = self.keyspace.get() {
+            let _ = get_database().delete_keyspace(ks.clone());
+        }
+    }
 }
 
 // SAFETY: AttributeStore is Send+Sync because:
