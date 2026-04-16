@@ -80,17 +80,17 @@ use super::{
     GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC, GrB_DESC_SCT0, GrB_DESC_SCT0T1,
     GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1, GrB_DESC_T0, GrB_DESC_T0T1,
     GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32, GrB_Info, GrB_Matrix,
-    GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_Semiring, GrB_Matrix_eWiseMult_Semiring,
-    GrB_Matrix_extractElement_BOOL, GrB_Matrix_extractElement_UINT64, GrB_Matrix_free,
-    GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals,
-    GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
-    GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_UINT64, GrB_WaitMode,
-    GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_Container_free,
-    GxB_Container_new, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new, GxB_Matrix_fprint,
-    GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_Option_Field, GxB_Print_Level, GxB_init,
-    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
-    GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
-    GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
+    GrB_Matrix_build_BOOL, GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_Semiring,
+    GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
+    GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
+    GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
+    GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_setElement_UINT64, GrB_Matrix_wait,
+    GrB_Mode, GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
+    GxB_ANY_PAIR_BOOL, GxB_Container_free, GxB_Container_new, GxB_Iterator, GxB_Iterator_free,
+    GxB_Iterator_new, GxB_Matrix_fprint, GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_Option_Field,
+    GxB_Print_Level, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
+    GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol,
+    GxB_rowIterator_nextRow, GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -809,6 +809,34 @@ impl Set for Matrix {
     ) {
         unsafe {
             let info = GrB_Matrix_setElement_BOOL(*self.m, value, i, j);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
+}
+
+impl Matrix {
+    /// Bulk-insert entries from (row, col) arrays. Matrix must be empty.
+    /// Uses a single GraphBLAS FFI call instead of N individual setElement calls.
+    pub fn build_bool(
+        &mut self,
+        rows: &[u64],
+        cols: &[u64],
+    ) {
+        debug_assert_eq!(rows.len(), cols.len());
+        if rows.is_empty() {
+            return;
+        }
+        let nvals = rows.len() as u64;
+        let vals = vec![true; rows.len()];
+        unsafe {
+            let info = GrB_Matrix_build_BOOL(
+                *self.m,
+                rows.as_ptr(),
+                cols.as_ptr(),
+                vals.as_ptr(),
+                nvals,
+                GxB_ANY_BOOL,
+            );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
