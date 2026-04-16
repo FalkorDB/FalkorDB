@@ -744,7 +744,7 @@ impl Pending {
             // Re-record explicit rels so the effects buffer can serialize them.
             self.deleted_relationships
                 .extend(explicit_rels.iter().map(|(&k, &v)| (k, v)));
-            g.borrow_mut().delete_relationships(explicit_rels)?;
+            g.borrow_mut().delete_relationships(&explicit_rels)?;
         }
         // Commit attribute changes and indexes after all deletions have been
         // applied. This ensures relationship_attrs.remove() pending_deletes
