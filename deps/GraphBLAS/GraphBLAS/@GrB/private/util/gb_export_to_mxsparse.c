@@ -159,7 +159,8 @@ mxArray *gb_export_to_mxsparse  // return exported MATLAB sparse matrix S
         // export the content of T as a sparse CSC matrix (all-64-bit)
         //----------------------------------------------------------------------
 
-        uint64_t Tp_size, Ti_size, Tx_size, type_size, plen, ilen, xlen ;
+        uint64_t Tp_memsize, Ti_memsize, Tx_memsize, typesize,
+            plen, ilen, xlen ;
         uint64_t *Tp, *Ti ;
         void *Tx ;
 
@@ -194,11 +195,26 @@ mxArray *gb_export_to_mxsparse  // return exported MATLAB sparse matrix S
         GrB_Type Tp_type, Ti_type, Tx_type ;
         int ignore = 0 ;
         OK (GxB_Vector_unload (Container->p, (void **) &Tp, &Tp_type, &plen,
-            &Tp_size, &ignore, NULL)) ;
+            &Tp_memsize, &ignore, NULL)) ;
+        if (ignore != GrB_DEFAULT)
+        {
+            printf ("handling %d\n", ignore) ;
+            mexErrMsgIdAndTxt ("GrB:memlane", "memlane invalid (3)") ;
+        }
         OK (GxB_Vector_unload (Container->i, (void **) &Ti, &Ti_type, &ilen,
-            &Ti_size, &ignore, NULL)) ;
+            &Ti_memsize, &ignore, NULL)) ;
+        if (ignore != GrB_DEFAULT)
+        {
+            printf ("handling %d\n", ignore) ;
+            mexErrMsgIdAndTxt ("GrB:memlane", "memlane invalid (4)") ;
+        }
         OK (GxB_Vector_unload (Container->x, (void **) &Tx, &Tx_type, &xlen,
-            &Tx_size, &ignore, NULL)) ;
+            &Tx_memsize, &ignore, NULL)) ;
+        if (ignore != GrB_DEFAULT)
+        {
+            printf ("handling %d\n", ignore) ;
+            mexErrMsgIdAndTxt ("GrB:memlane", "memlane invalid (5)") ;
+        }
 
         // ensure the types are correct; this 'cannot' fail but check anyway
         CHECK_ERROR (Tp_type != GrB_UINT64, "internal error 901") ;
@@ -212,23 +228,24 @@ mxArray *gb_export_to_mxsparse  // return exported MATLAB sparse matrix S
         if (type == GrB_BOOL)
         { 
             S = mxCreateSparseLogicalMatrix (0, 0, 1) ;
-            type_size = 1 ;
+            typesize = 1 ;
         }
         else if (type == GxB_FC64)
         { 
             S = mxCreateSparse (0, 0, 1, mxCOMPLEX) ;
-            type_size = 16 ;
+            typesize = 16 ;
         }
         else // type == GrB_FP64
         { 
             S = mxCreateSparse (0, 0, 1, mxREAL) ;
-            type_size = 8 ;
+            typesize = 8 ;
         }
 
         // set the size
         mxSetM (S, nrows) ;
         mxSetN (S, ncols) ;
-        int64_t nzmax = MIN (Ti_size / sizeof (int64_t), Tx_size / type_size) ;
+        int64_t nzmax = MIN (Ti_memsize / sizeof (int64_t),
+                             Tx_memsize / typesize) ;
         mxSetNzmax (S, nzmax) ;
 
         // set the column pointers

@@ -28,8 +28,8 @@
     GB_Matrix_free (&Cwork) ;       \
     GB_Matrix_free (&Mwork) ;       \
     GB_Matrix_free (&Awork) ;       \
-    GB_FREE_MEMORY (&I2, I2_size) ;   \
-    GB_FREE_MEMORY (&J2, J2_size) ;   \
+    GB_FREE_MEMORY (&I2, I2_mem) ;  \
+    GB_FREE_MEMORY (&J2, J2_mem) ;  \
 }
 
 GrB_Info GB_subassign               // C(Rows,Cols)<M> += A or A'
@@ -68,14 +68,15 @@ GrB_Info GB_subassign               // C(Rows,Cols)<M> += A or A'
     void *J = NULL ;                // Rows, Cols, or J2
     bool I_is_32, J_is_32 ;
 
+    int memlane = GB_memlane (C_in->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     // temporary matrices and arrays
     GrB_Matrix Cwork = NULL ;
     GrB_Matrix Mwork = NULL ;
     GrB_Matrix Awork = NULL ;
-    struct GB_Matrix_opaque
-        Cwork_header, Mwork_header, Awork_header, MT_header, AT_header ;
-    void *I2 = NULL ; size_t I2_size = 0 ;
-    void *J2 = NULL ; size_t J2_size = 0 ;
+    void *I2 = NULL ; uint64_t I2_mem = mem ;
+    void *J2 = NULL ; uint64_t J2_mem = mem ;
 
     GrB_Type scalar_type = NULL ;
     int64_t ni, nj, nI, nJ, Icolon [3], Jcolon [3] ;
@@ -85,9 +86,8 @@ GrB_Info GB_subassign               // C(Rows,Cols)<M> += A or A'
 
     GB_OK (GB_assign_prep (&C, &M, &A, &subassign_method,
         &Cwork, &Mwork, &Awork,
-        &Cwork_header, &Mwork_header, &Awork_header, &MT_header, &AT_header,
-        &I, &I_is_32, &I2, &I2_size, &ni, &nI, &Ikind, Icolon,
-        &J, &J_is_32, &J2, &J2_size, &nj, &nJ, &Jkind, Jcolon,
+        &I, &I_is_32, &I2, &I2_mem, &ni, &nI, &Ikind, Icolon,
+        &J, &J_is_32, &J2, &J2_mem, &nj, &nJ, &Jkind, Jcolon,
         &scalar_type, C_in, &C_replace, &assign_kind,
         M_in, Mask_comp, Mask_struct, M_transpose, accum,
         A_in, A_transpose,
@@ -126,7 +126,6 @@ GrB_Info GB_subassign               // C(Rows,Cols)<M> += A or A'
         // Transplant the content of Cwork into C_in and free Cwork.  Zombies
         // and pending tuples can be transplanted from Cwork into C_in, and if
         // Cwork is jumbled, C_in becomes jumbled too.
-        ASSERT (Cwork->header_size == 0 || GBNSTATIC) ;
         GB_OK (GB_transplant (C_in, C_in->type, &Cwork, Werk)) ;
     }
 

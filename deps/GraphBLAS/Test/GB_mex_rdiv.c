@@ -37,7 +37,6 @@ int64_t ancols = 0 ;
 int64_t bnrows = 0 ;
 int64_t bncols = 0 ;
 int AxB_method = GxB_DEFAULT ;
-struct GB_Matrix_opaque MT_header, C_header ;
 
 GrB_Info axb (GB_Werk Werk, bool cprint) ;
 
@@ -86,8 +85,13 @@ GrB_Info axb (GB_Werk Werk, bool cprint)
         return (info) ;
     }
 
-    MT = GB_clear_matrix_header (&MT_header) ;
-    C  = GB_clear_matrix_header (&C_header) ;
+    GB_matrix_header_new (&MT, GB_MEMLANE_MATLAB) ;
+    if (MT == NULL)
+    {
+        GrB_BinaryOp_free_(&My_rdiv) ;
+        GrB_Semiring_free_(&My_plus_rdiv) ;
+        return (GrB_OUT_OF_MEMORY) ;
+    }
 
     // C = A*B
     info = GB_AxB_meta (C, NULL,       // C cannot be computed in place
@@ -110,6 +114,8 @@ GrB_Info axb (GB_Werk Werk, bool cprint)
         true,       // do the sort
         Werk) ;
 
+    GrB_Matrix_free_(&MT) ;
+
     if (info == GrB_SUCCESS && C != NULL)
     {
         if (cprint) GxB_Matrix_fprint_(C, GxB_COMPLETE, NULL) ;
@@ -117,7 +123,6 @@ GrB_Info axb (GB_Werk Werk, bool cprint)
 
     GrB_BinaryOp_free_(&My_rdiv) ;
     GrB_Semiring_free_(&My_plus_rdiv) ;
-
     return (info) ;
 }
 
@@ -200,6 +205,7 @@ void mexFunction
         mexErrMsgTxt ("invalid dimensions") ;
     }
 
+    GB_matrix_header_new (&C, GB_MEMLANE_MATLAB) ;
     METHOD (axb (Werk, cprint)) ;
 
     // return C

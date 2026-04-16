@@ -118,7 +118,7 @@ void *GB_file_dlopen (char *library_name)
     #else
     {
         // open a POSIX dynamic library
-        return (dlopen (library_name, RTLD_LAZY)) ;
+        return (dlopen (library_name, RTLD_NOW)) ;
     }
     #endif
 }

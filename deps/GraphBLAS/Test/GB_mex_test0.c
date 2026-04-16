@@ -123,7 +123,8 @@ void mexFunction
     OK (GxB_init (GrB_NONBLOCKING, mxMalloc, NULL, NULL, mxFree)) ;
 
     // mxMalloc, mxCalloc, mxRealloc, and mxFree are not thread safe
-    GB_Global_malloc_is_thread_safe_set (false) ;
+    GB_Global_malloc_is_thread_safe_set (false, 0) ;
+    GB_Global_malloc_is_thread_safe_set (false, 1) ;
 
     GB_Global_abort_set (GB_mx_abort) ;
     GB_Global_malloc_tracking_set (true) ;
@@ -281,7 +282,7 @@ void mexFunction
     OK (GrB_Type_free_(&T)) ;
     CHECK (T == NULL) ;
 
-    s = GB_code_size (-1,1) ;
+    s = GB_code_typesize (-1,1) ;
     CHECK (s == 0) ;
 
     #define FREE_DEEP_COPY ;
@@ -2135,8 +2136,8 @@ void mexFunction
     GB_Matrix_check (HugeRow, "huge row", G3, NULL) ;
     GxB_Matrix_fprint (HugeRow, "HugeRow", G3, ff) ;
 
-    struct GB_Matrix_opaque HugeMatrix_header ;
-    GrB_Matrix HugeMatrix = GB_clear_matrix_header (&HugeMatrix_header) ;
+    GrB_Matrix HugeMatrix = NULL ;
+    OK (GB_matrix_header_new (&HugeMatrix, GB_MEMLANE_MATLAB)) ;
 
     OK (GB_AxB_dot2 (HugeMatrix, false, NULL, NULL, false, false,
         false, HugeRow, HugeRow, GxB_PLUS_TIMES_FP64, false, Werk)) ;
@@ -3711,18 +3712,19 @@ void mexFunction
 
     printf ("\n-------------- GB_entry_check:\n") ;
 
-    Werk->where = "GB_entry_check (type, x, pr, f, &string, &string_size)" ;
+    Werk->where =
+        "GB_entry_check (type, x, pr, f, &string, &string_mem, memlane)" ;
 
     expected = GrB_NULL_POINTER ;
 
-    ERR (GB_entry_check (NULL, NULL, 5, NULL, NULL, NULL)) ;
-    ERR (GB_entry_check (NULL, X, 5, NULL, NULL, NULL)) ;
-    OK (GB_entry_check (GrB_FP64, X, 5, NULL, NULL, NULL)) ;
+    ERR (GB_entry_check (NULL, NULL, 5, NULL, NULL, NULL, 0)) ;
+    ERR (GB_entry_check (NULL, X, 5, NULL, NULL, NULL, 0)) ;
+    OK (GB_entry_check (GrB_FP64, X, 5, NULL, NULL, NULL, 0)) ;
     printf ("\n") ;
 
     expected = GrB_UNINITIALIZED_OBJECT ;
 
-    ERR (GB_entry_check (Tcrud, X, 5, NULL, NULL, NULL)) ;
+    ERR (GB_entry_check (Tcrud, X, 5, NULL, NULL, NULL, 0)) ;
     printf ("\nAll GB_entry_check tests passed (errors expected)\n") ;
 
     //--------------------------------------------------------------------------
@@ -4032,14 +4034,14 @@ void mexFunction
 
     v->vdim = 2 ;
     void *psave = v->p ;
-    size_t p_size_save = v->p_size ;
+    size_t p_mem_save = v->p_mem ;
     printf ("test0, remove v->p from memtable %d\n", v->p) ;
     GB_Global_memtable_remove (v->p) ;
-    v->p_size = 3 * sizeof (int64_t) ;
-    v->p = mxMalloc (v->p_size) ;
-    memset (v->p, 0, v->p_size) ;
+    v->p_mem = GB_mem (0, 3 * sizeof (int64_t)) ;
+    v->p = mxMalloc (GB_memsize (v->p_mem)) ;
+    memset (v->p, 0, GB_memsize (v->p_mem)) ;
     printf ("test0, add v->p to memtable %d\n", v->p) ;
-    GB_Global_memtable_add (v->p, v->p_size) ;
+    GB_Global_memtable_add (v->p, v->p_mem) ;
     ERR (GB_Vector_check (v, "v invalid", G1, ff)) ;
     v->vdim = 1 ;
 
@@ -4054,9 +4056,9 @@ void mexFunction
     printf ("test0, remove v->p from memtable %d\n", v->p) ;
     GB_Global_memtable_remove (v->p) ;
     v->p = psave ;
-    v->p_size = p_size_save ;
+    v->p_mem = p_mem_save ;
     printf ("test0, add v->p to memtable %d\n", v->p) ;
-    GB_Global_memtable_add (v->p, v->p_size) ;
+    GB_Global_memtable_add (v->p, v->p_mem) ;
     psave = NULL ;
     OK (GB_Vector_check (v, "v OK now", G1, ff)) ;
 
@@ -4702,11 +4704,11 @@ void mexFunction
     OK (GB_convert_hyper_to_sparse (Eleven, true)) ;
     int64_t nothing = 42 ;
     printf ("\nEleven invalid hypersparse:\n") ;
-    GB_free_memory ((void **) &(Eleven->h), Eleven->h_size) ;
+    GB_free_memory ((void **) &(Eleven->h), Eleven->h_mem) ;
     Eleven->h = &nothing ;
-    Eleven->h_size = sizeof (int64_t) ;
+    Eleven->h_mem = GB_mem (0, sizeof (int64_t)) ;  // h is on the stack
     printf ("test0, add Eleven->h to memtable %d\n", Eleven->h) ;
-    GB_Global_memtable_add (Eleven->h, 1 * sizeof (int64_t)) ;
+    GB_Global_memtable_add (Eleven->h, GB_mem (0, 1 * sizeof (int64_t))) ;
     ERR (GB_Matrix_check (Eleven, "Eleven invalid", G2, NULL)) ;
     ERR (GxB_Matrix_fprint (Eleven, "Eleven", G2, NULL)) ;
     ERR (GxB_Matrix_fprint (Eleven, "Eleven invalid", G2, ff)) ;
@@ -4845,26 +4847,26 @@ void mexFunction
     CHECK (nbytes == 0) ;
 
     s = 1 ;
-    ok = GB_size_t_multiply (&s, UINT64_MAX, 0) ;
+    ok = GB_Size_t_multiply (&s, UINT64_MAX, 0) ;
     CHECK (ok) ;
     CHECK (s == 0) ;
 
     s = 911 ;
-    ok = GB_size_t_multiply (&s, UINT64_MAX/2, UINT64_MAX/2) ;
+    ok = GB_Size_t_multiply (&s, UINT64_MAX/2, UINT64_MAX/2) ;
     CHECK (!ok) ;
     CHECK (s == 0) ;
 
-    ok = GB_size_t_multiply (&s,
+    ok = GB_Size_t_multiply (&s,
         ((size_t) UINT32_MAX)+2,
         ((size_t) UINT32_MAX)+1) ;
     CHECK (!ok) ;
 
-    ok = GB_size_t_multiply (&s,
+    ok = GB_Size_t_multiply (&s,
         ((size_t) UINT32_MAX)+1,
         ((size_t) UINT32_MAX)+1) ;
     CHECK (!ok) ;
 
-    ok = GB_size_t_multiply (&s,
+    ok = GB_Size_t_multiply (&s,
         ((size_t) UINT32_MAX)/4,
         ((size_t) UINT32_MAX)/4) ;
     CHECK (ok) ;
@@ -4926,8 +4928,8 @@ void mexFunction
     OK (GB_Matrix_check (A, "A for shallow op", G3, NULL)) ;
     Werk->where = "GB_shallow_op" ;
 
-    struct GB_Matrix_opaque Q_header ;
-    GrB_Matrix Q = GB_clear_matrix_header (&Q_header) ;
+    GrB_Matrix Q = NULL ;
+    OK (GB_matrix_header_new (&Q, GB_MEMLANE_MATLAB)) ;
     OK (GB_shallow_op (Q, true, (GB_Operator) GrB_AINV_FP32, NULL, NULL,
         false, C, Werk)) ;
     OK (GB_Matrix_check (Q, "Q empty, float", G3, NULL)) ;
@@ -5302,18 +5304,19 @@ void mexFunction
     double *Ax ;
     GrB_Type atype ;
     bool jumbled, iso ;
-    uint64_t Ap_size, Aj_size, Ai_size, Ax_size, Ah_size, Ab_size ;
+    uint64_t Ap_memsize, Aj_memsize, Ai_memsize, Ax_memsize, Ah_memsize,
+        Ab_memsize ;
 
 {
     // import/export are all-64-bit
     uint64_t *Ap, *Ah, *Ai ;    // OK
 
     OK (GxB_Matrix_export_CSR (&A, &atype, &nrows, &ncols,
-        &Ap, &Aj, (void **) &Ax, &Ap_size, &Aj_size, &Ax_size, &iso,
+        &Ap, &Aj, (void **) &Ax, &Ap_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     OK (GxB_Type_fprint (atype, "type of A", GxB_COMPLETE, stdout)) ;
-    printf ("Ax_size %llu\n", Ax_size) ;
+    printf ("Ax_memsize %llu\n", Ax_memsize) ;
     for (int64_t i = 0 ; i < ((int64_t) nrows) ; i++)
     {
         printf ("exported row %lld\n", j) ;
@@ -5323,342 +5326,341 @@ void mexFunction
         }
     }
     OK (GxB_Matrix_import_CSR (&A, atype, nrows, ncols,
-        &Ap, &Aj, (void **) &Ax, Ap_size, Aj_size, Ax_size, iso, jumbled, desc)) ;
+        &Ap, &Aj, (void **) &Ax, Ap_memsize, Aj_memsize, Ax_memsize,
+        iso, jumbled, desc)) ;
 
     OK (GxB_Matrix_fprint (A, "A imported", GxB_COMPLETE, stdout)) ;
 
     expected = GrB_NULL_POINTER ;
 
     ERR (GxB_Matrix_export_CSR (NULL, &atype, &nrows, &ncols,
-        &Ap, &Aj, (void **) &Ax, &Ap_size, &Aj_size, &Ax_size, &iso,
+        &Ap, &Aj, (void **) &Ax, &Ap_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSR (&A, NULL, &nrows, &ncols,
-        &Ap, &Aj, (void **) &Ax, &Ap_size, &Aj_size, &Ax_size, &iso,
+        &Ap, &Aj, (void **) &Ax, &Ap_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSR (&A, &atype, NULL, &ncols,
-        &Ap, &Aj, (void **) &Ax, &Ap_size, &Aj_size, &Ax_size, &iso,
+        &Ap, &Aj, (void **) &Ax, &Ap_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSR (&A, &atype, &nrows, NULL,
-        &Ap, &Aj, (void **) &Ax, &Ap_size, &Aj_size, &Ax_size, &iso,
+        &Ap, &Aj, (void **) &Ax, &Ap_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSR (&A, &atype, &nrows, &ncols,
-        NULL, &Aj, (void **) &Ax, &Ap_size, &Aj_size, &Ax_size, &iso,
+        NULL, &Aj, (void **) &Ax, &Ap_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSR (&A, &atype, &nrows, &ncols,
-        &Ap, NULL, (void **) &Ax, &Ap_size, &Aj_size, &Ax_size, &iso,
+        &Ap, NULL, (void **) &Ax, &Ap_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSR (&A, &atype, &nrows, &ncols,
-        &Ap, &Aj, NULL, &Ap_size, &Aj_size, &Ax_size, &iso,
+        &Ap, &Aj, NULL, &Ap_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSR (&A, &atype, &nrows, &ncols,
-        &Ap, &Aj, (void **) &Ax, NULL, &Aj_size, &Ax_size, &iso,
+        &Ap, &Aj, (void **) &Ax, NULL, &Aj_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSR (&A, &atype, &nrows, &ncols,
-        &Ap, &Aj, (void **) &Ax, &Ap_size, NULL, &Ax_size, &iso,
+        &Ap, &Aj, (void **) &Ax, &Ap_memsize, NULL, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSR (&A, &atype, &nrows, &ncols,
-        &Ap, &Aj, (void **) &Ax, &Ap_size, &Aj_size, NULL, &iso,
+        &Ap, &Aj, (void **) &Ax, &Ap_memsize, &Aj_memsize, NULL, &iso,
         &jumbled, desc)) ;
 
 
     ERR (GxB_Matrix_export_CSC (NULL, &atype, &nrows, &ncols,
-        &Ap, &Ai, (void **) &Ax, &Ap_size, &Ai_size, &Ax_size, &iso,
+        &Ap, &Ai, (void **) &Ax, &Ap_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSC (&A, NULL, &nrows, &ncols,
-        &Ap, &Ai, (void **) &Ax, &Ap_size, &Ai_size, &Ax_size, &iso,
+        &Ap, &Ai, (void **) &Ax, &Ap_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSC (&A, &atype, NULL, &ncols,
-        &Ap, &Ai, (void **) &Ax, &Ap_size, &Ai_size, &Ax_size, &iso,
+        &Ap, &Ai, (void **) &Ax, &Ap_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSC (&A, &atype, &nrows, NULL,
-        &Ap, &Ai, (void **) &Ax, &Ap_size, &Ai_size, &Ax_size, &iso,
+        &Ap, &Ai, (void **) &Ax, &Ap_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSC (&A, &atype, &nrows, &ncols,
-        NULL, &Ai, (void **) &Ax, &Ap_size, &Ai_size, &Ax_size, &iso,
+        NULL, &Ai, (void **) &Ax, &Ap_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSC (&A, &atype, &nrows, &ncols,
-        &Ap, NULL, (void **) &Ax, &Ap_size, &Ai_size, &Ax_size, &iso,
+        &Ap, NULL, (void **) &Ax, &Ap_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSC (&A, &atype, &nrows, &ncols,
-        &Ap, &Ai, NULL, &Ap_size, &Ai_size, &Ax_size, &iso,
+        &Ap, &Ai, NULL, &Ap_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSC (&A, &atype, &nrows, &ncols,
-        &Ap, &Ai, (void **) &Ax, NULL, &Ai_size, &Ax_size, &iso,
+        &Ap, &Ai, (void **) &Ax, NULL, &Ai_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSC (&A, &atype, &nrows, &ncols,
-        &Ap, &Ai, (void **) &Ax, &Ap_size, NULL, &Ax_size, &iso,
+        &Ap, &Ai, (void **) &Ax, &Ap_memsize, NULL, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_CSC (&A, &atype, &nrows, &ncols,
-        &Ap, &Ai, (void **) &Ax, &Ap_size, &Ai_size, NULL, &iso,
+        &Ap, &Ai, (void **) &Ax, &Ap_memsize, &Ai_memsize, NULL, &iso,
         &jumbled, desc)) ;
 
 
 
     ERR (GxB_Matrix_export_HyperCSR (NULL, &atype, &nrows, &ncols,
-        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_size, &Ah_size, &Aj_size, &Ax_size, &iso,
+        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSR (&A, NULL, &nrows, &ncols,
-        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_size, &Ah_size, &Aj_size, &Ax_size, &iso,
+        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSR (&A, &atype, NULL, &ncols,
-        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_size, &Ah_size, &Aj_size, &Ax_size, &iso,
+        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSR (&A, &atype, &nrows, NULL,
-        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_size, &Ah_size, &Aj_size, &Ax_size, &iso,
+        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSR (&A, &atype, &nrows, &ncols,
-        NULL, &Ah, &Aj, (void **) &Ax, &Ap_size, &Ah_size, &Aj_size, &Ax_size, &iso,
+        NULL, &Ah, &Aj, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSR (&A, &atype, &nrows, &ncols,
-        &Ap, NULL, &Aj, (void **) &Ax, &Ap_size, &Ah_size, &Aj_size, &Ax_size, &iso,
+        &Ap, NULL, &Aj, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSR (&A, &atype, &nrows, &ncols,
-        &Ap, &Ah, NULL, (void **) &Ax, &Ap_size, &Ah_size, &Aj_size, &Ax_size, &iso,
+        &Ap, &Ah, NULL, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSR (&A, &atype, &nrows, &ncols,
-        &Ap, &Ah, &Aj, NULL, &Ap_size, &Ah_size, &Aj_size, &Ax_size, &iso,
+        &Ap, &Ah, &Aj, NULL, &Ap_memsize, &Ah_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSR (&A, &atype, &nrows, &ncols,
-        &Ap, &Ah, &Aj, (void **) &Ax, NULL, &Ah_size, &Aj_size, &Ax_size, &iso,
+        &Ap, &Ah, &Aj, (void **) &Ax, NULL, &Ah_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSR (&A, &atype, &nrows, &ncols,
-        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_size, NULL, &Aj_size, &Ax_size, &iso,
+        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_memsize, NULL, &Aj_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSR (&A, &atype, &nrows, &ncols,
-        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_size, &Ah_size, NULL, &Ax_size, &iso,
+        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_memsize, &Ah_memsize, NULL, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSR (&A, &atype, &nrows, &ncols,
-        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_size, &Ah_size, &Aj_size, NULL, &iso,
+        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Aj_memsize, NULL, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSR (&A, &atype, &nrows, &ncols,
-        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_size, &Ah_size, &Aj_size, &Ax_size, &iso,
+        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Aj_memsize, &Ax_memsize, &iso,
         NULL, &jumbled, desc)) ;
 
 
 
-
-
     ERR (GxB_Matrix_export_HyperCSC (NULL, &atype, &nrows, &ncols,
-        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_size, &Ah_size, &Ai_size, &Ax_size, &iso,
+        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSC (&A, NULL, &nrows, &ncols,
-        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_size, &Ah_size, &Ai_size, &Ax_size, &iso,
+        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSC (&A, &atype, NULL, &ncols,
-        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_size, &Ah_size, &Ai_size, &Ax_size, &iso,
+        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSC (&A, &atype, &nrows, NULL,
-        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_size, &Ah_size, &Ai_size, &Ax_size, &iso,
+        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSC (&A, &atype, &nrows, &ncols,
-        NULL, &Ah, &Ai, (void **) &Ax, &Ap_size, &Ah_size, &Ai_size, &Ax_size, &iso,
+        NULL, &Ah, &Ai, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSC (&A, &atype, &nrows, &ncols,
-        &Ap, NULL, &Ai, (void **) &Ax, &Ap_size, &Ah_size, &Ai_size, &Ax_size, &iso,
+        &Ap, NULL, &Ai, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSC (&A, &atype, &nrows, &ncols,
-        &Ap, &Ah, NULL, (void **) &Ax, &Ap_size, &Ah_size, &Ai_size, &Ax_size, &iso,
+        &Ap, &Ah, NULL, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSC (&A, &atype, &nrows, &ncols,
-        &Ap, &Ah, &Ai, NULL, &Ap_size, &Ah_size, &Ai_size, &Ax_size, &iso,
+        &Ap, &Ah, &Ai, NULL, &Ap_memsize, &Ah_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSC (&A, &atype, &nrows, &ncols,
-        &Ap, &Ah, &Ai, (void **) &Ax, NULL, &Ah_size, &Ai_size, &Ax_size, &iso,
+        &Ap, &Ah, &Ai, (void **) &Ax, NULL, &Ah_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSC (&A, &atype, &nrows, &ncols,
-        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_size, NULL, &Ai_size, &Ax_size, &iso,
+        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_memsize, NULL, &Ai_memsize, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSC (&A, &atype, &nrows, &ncols,
-        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_size, &Ah_size, NULL, &Ax_size, &iso,
+        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_memsize, &Ah_memsize, NULL, &Ax_memsize, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSC (&A, &atype, &nrows, &ncols,
-        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_size, &Ah_size, &Ai_size, NULL, &iso,
+        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Ai_memsize, NULL, &iso,
         &nvec, &jumbled, desc)) ;
 
     ERR (GxB_Matrix_export_HyperCSC (&A, &atype, &nrows, &ncols,
-        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_size, &Ah_size, &Ai_size, &Ax_size, &iso,
+        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Ai_memsize, &Ax_memsize, &iso,
         NULL, &jumbled, desc)) ;
 
 
     OK (GB_Matrix_check (A, "A still OK", G1, NULL)) ;
 
     OK (GxB_Matrix_export_CSR (&A, &atype, &nrows, &ncols,
-        &Ap, &Aj, (void **) &Ax, &Ap_size, &Aj_size, &Ax_size, &iso,
+        &Ap, &Aj, (void **) &Ax, &Ap_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
 
     ERR (GxB_Matrix_import_CSR (NULL, atype, nrows, ncols,
-        &Ap, &Aj, (void **) &Ax, Ap_size, Aj_size, Ax_size, iso,
+        &Ap, &Aj, (void **) &Ax, Ap_memsize, Aj_memsize, Ax_memsize, iso,
         jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_CSR (&A, NULL, nrows, ncols,
-        &Ap, &Aj, (void **) &Ax, Ap_size, Aj_size, Ax_size, iso,
+        &Ap, &Aj, (void **) &Ax, Ap_memsize, Aj_memsize, Ax_memsize, iso,
         jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_CSR (&A, atype, nrows, ncols,
-        NULL, &Aj, (void **) &Ax, Ap_size, Aj_size, Ax_size, iso,
+        NULL, &Aj, (void **) &Ax, Ap_memsize, Aj_memsize, Ax_memsize, iso,
         jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_CSR (&A, atype, nrows, ncols,
-        &Ap, NULL, (void **) &Ax, Ap_size, Aj_size, Ax_size, iso,
+        &Ap, NULL, (void **) &Ax, Ap_memsize, Aj_memsize, Ax_memsize, iso,
         jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_CSR (&A, atype, nrows, ncols,
-        &Ap, &Aj, NULL, Ap_size, Aj_size, Ax_size, iso,
+        &Ap, &Aj, NULL, Ap_memsize, Aj_memsize, Ax_memsize, iso,
         jumbled, desc)) ;
 
     expected = GrB_INVALID_VALUE ;
 
     ERR (GxB_Matrix_import_CSR (&A, atype, INT64_MAX, ncols,
-        &Ap, &Aj, (void **) &Ax, Ap_size, Aj_size, Ax_size, iso,
+        &Ap, &Aj, (void **) &Ax, Ap_memsize, Aj_memsize, Ax_memsize, iso,
         jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_CSR (&A, atype, nrows, INT64_MAX,
-        &Ap, &Aj, (void **) &Ax, Ap_size, Aj_size, Ax_size, iso,
+        &Ap, &Aj, (void **) &Ax, Ap_memsize, Aj_memsize, Ax_memsize, iso,
         jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_CSR (&A, atype, nrows, ncols,
-        &Ap, &Aj, (void **) &Ax, Ap_size, Aj_size, INT64_MAX, iso,
+        &Ap, &Aj, (void **) &Ax, Ap_memsize, Aj_memsize, INT64_MAX, iso,
         jumbled, desc)) ;
 
 
     expected = GrB_NULL_POINTER ;
 
     OK (GxB_Matrix_import_CSR (&A, atype, nrows, ncols,
-        &Ap, &Aj, (void **) &Ax, Ap_size, Aj_size, Ax_size, iso,
+        &Ap, &Aj, (void **) &Ax, Ap_memsize, Aj_memsize, Ax_memsize, iso,
         jumbled, desc)) ;
 
     OK (GB_Matrix_check (A, "A also OK", G1, NULL)) ;
 
     OK (GxB_Matrix_export_CSC (&A, &atype, &nrows, &ncols,
-        &Ap, &Ai, (void **) &Ax, &Ap_size, &Ai_size, &Ax_size, &iso,
+        &Ap, &Ai, (void **) &Ax, &Ap_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &jumbled, desc)) ;
 
 
 
     ERR (GxB_Matrix_import_CSC (NULL, atype, nrows, ncols,
-        &Ap, &Ai, (void **) &Ax, Ap_size, Ai_size, Ax_size, iso,
+        &Ap, &Ai, (void **) &Ax, Ap_memsize, Ai_memsize, Ax_memsize, iso,
         jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_CSC (&A, atype, nrows, ncols,
-        NULL, &Ai, (void **) &Ax, Ap_size, Ai_size, Ax_size, iso,
+        NULL, &Ai, (void **) &Ax, Ap_memsize, Ai_memsize, Ax_memsize, iso,
         jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_CSC (&A, atype, nrows, ncols,
-        &Ap, NULL, (void **) &Ax, Ap_size, Ai_size, Ax_size, iso,
+        &Ap, NULL, (void **) &Ax, Ap_memsize, Ai_memsize, Ax_memsize, iso,
         jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_CSC (&A, atype, nrows, ncols,
-        &Ap, &Ai, NULL, Ap_size, Ai_size, Ax_size, iso,
+        &Ap, &Ai, NULL, Ap_memsize, Ai_memsize, Ax_memsize, iso,
         jumbled, desc)) ;
 
     expected = GrB_INVALID_VALUE ;
 
     ERR (GxB_Matrix_import_CSC (&A, atype, INT64_MAX, ncols,
-        &Ap, &Ai, (void **) &Ax, Ap_size, Ai_size, Ax_size, iso,
+        &Ap, &Ai, (void **) &Ax, Ap_memsize, Ai_memsize, Ax_memsize, iso,
         jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_CSC (&A, atype, nrows, INT64_MAX,
-        &Ap, &Ai, (void **) &Ax, Ap_size, Ai_size, Ax_size, iso,
+        &Ap, &Ai, (void **) &Ax, Ap_memsize, Ai_memsize, Ax_memsize, iso,
         jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_CSC (&A, atype, nrows, ncols,
-        &Ap, &Ai, (void **) &Ax, Ap_size, Ai_size, INT64_MAX, iso,
+        &Ap, &Ai, (void **) &Ax, Ap_memsize, Ai_memsize, INT64_MAX, iso,
         jumbled, desc)) ;
 
 
     expected = GrB_NULL_POINTER ;
 
     OK (GxB_Matrix_import_CSC (&A, atype, nrows, ncols,
-        &Ap, &Ai, (void **) &Ax, Ap_size, Ai_size, Ax_size, iso,
+        &Ap, &Ai, (void **) &Ax, Ap_memsize, Ai_memsize, Ax_memsize, iso,
         jumbled, desc)) ;
 
     OK (GB_Matrix_check (A, "A here too OK", G1, NULL)) ;
 
     OK (GxB_Matrix_export_HyperCSR (&A, &atype, &nrows, &ncols,
-        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_size, &Ah_size, &Aj_size, &Ax_size, &iso,
+        &Ap, &Ah, &Aj, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Aj_memsize, &Ax_memsize, &iso,
         &nvecs, &jumbled, desc)) ;
 
 
 
     ERR (GxB_Matrix_import_HyperCSR (NULL, atype, nrows, ncols,
-        &Ap, &Ah, &Aj, (void **) &Ax, Ap_size, Ah_size, Aj_size, Ax_size, iso,
+        &Ap, &Ah, &Aj, (void **) &Ax, Ap_memsize, Ah_memsize, Aj_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_HyperCSR (&A, NULL, nrows, ncols,
-        &Ap, &Ah, &Aj, (void **) &Ax, Ap_size, Ah_size, Aj_size, Ax_size, iso,
+        &Ap, &Ah, &Aj, (void **) &Ax, Ap_memsize, Ah_memsize, Aj_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_HyperCSR (&A, atype, nrows, ncols,
-        NULL, &Ah, &Aj, (void **) &Ax, Ap_size, Ah_size, Aj_size, Ax_size, iso,
+        NULL, &Ah, &Aj, (void **) &Ax, Ap_memsize, Ah_memsize, Aj_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_HyperCSR (&A, atype, nrows, ncols,
-        &Ap, NULL, &Aj, (void **) &Ax, Ap_size, Ah_size, Aj_size, Ax_size, iso,
+        &Ap, NULL, &Aj, (void **) &Ax, Ap_memsize, Ah_memsize, Aj_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_HyperCSR (&A, atype, nrows, ncols,
-        &Ap, &Ah, NULL, (void **) &Ax, Ap_size, Ah_size, Aj_size, Ax_size, iso,
+        &Ap, &Ah, NULL, (void **) &Ax, Ap_memsize, Ah_memsize, Aj_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_HyperCSR (&A, atype, nrows, ncols,
-        &Ap, &Ah, &Aj, NULL, Ap_size, Ah_size, Aj_size, Ax_size, iso,
+        &Ap, &Ah, &Aj, NULL, Ap_memsize, Ah_memsize, Aj_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
 
     expected = GrB_INVALID_VALUE ;
 
     ERR (GxB_Matrix_import_HyperCSR (&A, atype, INT64_MAX, ncols,
-        &Ap, &Ah, &Aj, (void **) &Ax, Ap_size, Ah_size, Aj_size, Ax_size, iso,
+        &Ap, &Ah, &Aj, (void **) &Ax, Ap_memsize, Ah_memsize, Aj_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_HyperCSR (&A, atype, nrows, INT64_MAX,
-        &Ap, &Ah, &Aj, (void **) &Ax, Ap_size, Ah_size, Aj_size, Ax_size, iso,
+        &Ap, &Ah, &Aj, (void **) &Ax, Ap_memsize, Ah_memsize, Aj_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_HyperCSR (&A, atype, nrows, ncols,
-        &Ap, &Ah, &Aj, (void **) &Ax, Ap_size, Ah_size, Aj_size, INT64_MAX, iso,
+        &Ap, &Ah, &Aj, (void **) &Ax, Ap_memsize, Ah_memsize, Aj_memsize, INT64_MAX, iso,
         nvecs, jumbled, desc)) ;
 
 
@@ -5666,59 +5668,59 @@ void mexFunction
     expected = GrB_NULL_POINTER ;
 
     OK (GxB_Matrix_import_HyperCSR (&A, atype, nrows, ncols,
-        &Ap, &Ah, &Aj, (void **) &Ax, Ap_size, Ah_size, Aj_size, Ax_size, iso,
+        &Ap, &Ah, &Aj, (void **) &Ax, Ap_memsize, Ah_memsize, Aj_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
     OK (GB_Matrix_check (A, "A yet still OK", G1, NULL)) ;
 
     OK (GxB_Matrix_export_HyperCSC (&A, &atype, &nrows, &ncols,
-        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_size, &Ah_size, &Ai_size, &Ax_size, &iso,
+        &Ap, &Ah, &Ai, (void **) &Ax, &Ap_memsize, &Ah_memsize, &Ai_memsize, &Ax_memsize, &iso,
         &nvecs, &jumbled, desc)) ;
 
 
 
     ERR (GxB_Matrix_import_HyperCSC (NULL, atype, nrows, ncols,
-        &Ap, &Ah, &Ai, (void **) &Ax, Ap_size, Ah_size, Ai_size, Ax_size, iso,
+        &Ap, &Ah, &Ai, (void **) &Ax, Ap_memsize, Ah_memsize, Ai_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_HyperCSC (&A, NULL, nrows, ncols,
-        &Ap, &Ah, &Ai, (void **) &Ax, Ap_size, Ah_size, Ai_size, Ax_size, iso,
+        &Ap, &Ah, &Ai, (void **) &Ax, Ap_memsize, Ah_memsize, Ai_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_HyperCSC (&A, atype, nrows, ncols,
-        NULL, &Ah, &Ai, (void **) &Ax, Ap_size, Ah_size, Ai_size, Ax_size, iso,
+        NULL, &Ah, &Ai, (void **) &Ax, Ap_memsize, Ah_memsize, Ai_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_HyperCSC (&A, atype, nrows, ncols,
-        &Ap, NULL, &Ai, (void **) &Ax, Ap_size, Ah_size, Ai_size, Ax_size, iso,
+        &Ap, NULL, &Ai, (void **) &Ax, Ap_memsize, Ah_memsize, Ai_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_HyperCSC (&A, atype, nrows, ncols,
-        &Ap, &Ah, NULL, (void **) &Ax, Ap_size, Ah_size, Ai_size, Ax_size, iso,
+        &Ap, &Ah, NULL, (void **) &Ax, Ap_memsize, Ah_memsize, Ai_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_HyperCSC (&A, atype, nrows, ncols,
-        &Ap, &Ah, &Ai, NULL, Ap_size, Ah_size, Ai_size, Ax_size, iso,
+        &Ap, &Ah, &Ai, NULL, Ap_memsize, Ah_memsize, Ai_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
     expected = GrB_INVALID_VALUE ;
 
     ERR (GxB_Matrix_import_HyperCSC (&A, atype, INT64_MAX, ncols,
-        &Ap, &Ah, &Ai, (void **) &Ax, Ap_size, Ah_size, Ai_size, Ax_size, iso,
+        &Ap, &Ah, &Ai, (void **) &Ax, Ap_memsize, Ah_memsize, Ai_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_HyperCSC (&A, atype, nrows, INT64_MAX,
-        &Ap, &Ah, &Ai, (void **) &Ax, Ap_size, Ah_size, Ai_size, Ax_size, iso,
+        &Ap, &Ah, &Ai, (void **) &Ax, Ap_memsize, Ah_memsize, Ai_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
     ERR (GxB_Matrix_import_HyperCSC (&A, atype, nrows, ncols,
-        &Ap, &Ah, &Ai, (void **) &Ax, Ap_size, Ah_size, Ai_size, INT64_MAX, iso,
+        &Ap, &Ah, &Ai, (void **) &Ax, Ap_memsize, Ah_memsize, Ai_memsize, INT64_MAX, iso,
         nvecs, jumbled, desc)) ;
 
     expected = GrB_NULL_POINTER ;
 
     OK (GxB_Matrix_import_HyperCSC (&A, atype, nrows, ncols,
-        &Ap, &Ah, &Ai, (void **) &Ax, Ap_size, Ah_size, Ai_size, Ax_size, iso,
+        &Ap, &Ah, &Ai, (void **) &Ax, Ap_memsize, Ah_memsize, Ai_memsize, Ax_memsize, iso,
         nvecs, jumbled, desc)) ;
 
     OK (GB_Matrix_check (A, "A yet again OK", G1, NULL)) ;
@@ -5731,7 +5733,7 @@ void mexFunction
     OK (GxB_Vector_fprint (u, "u to import/export", GxB_COMPLETE, stdout)) ;
     GrB_Type utype ;
     OK (GxB_Vector_export_CSC (&u, &utype, &n, &Ai, (void **) &Ax,
-        &Ai_size, &Ax_size, &iso,
+        &Ai_memsize, &Ax_memsize, &iso,
         &nvals, &jumbled, desc)) ;
 
     OK (GxB_Type_fprint (utype, "type of u", GxB_COMPLETE, stdout)) ;
@@ -5744,37 +5746,37 @@ void mexFunction
         CHECK (i >= 0 && i < n) ;
         printf ("   col %lld value %g\n", Ai [p], Ax [p]) ;
     }
-    OK (GxB_Vector_import_CSC (&u, utype, n, &Ai, (void **) &Ax, Ai_size, Ax_size, iso, nvals, jumbled, desc)) ;
+    OK (GxB_Vector_import_CSC (&u, utype, n, &Ai, (void **) &Ax, Ai_memsize, Ax_memsize, iso, nvals, jumbled, desc)) ;
     OK (GxB_Vector_fprint (u, "u imported", GxB_COMPLETE, stdout)) ;
 
     expected = GrB_NULL_POINTER ;
 
-    ERR (GxB_Vector_export_CSC (NULL, &utype, &n, &Ai, (void **) &Ax, &Ai_size, &Ax_size, &iso, &nvals, &jumbled, desc)) ;
-    ERR (GxB_Vector_export_CSC (&u, NULL, &n, &Ai, (void **) &Ax, &Ai_size, &Ax_size, &iso, &nvals, &jumbled, desc)) ;
-    ERR (GxB_Vector_export_CSC (&u, &utype, NULL, &Ai, (void **) &Ax, &Ai_size, &Ax_size, &iso, &nvals, &jumbled, desc)) ;
-    ERR (GxB_Vector_export_CSC (&u, &utype, &n, NULL, (void **) &Ax, &Ai_size, &Ax_size, &iso, &nvals, &jumbled, desc)) ;
-    ERR (GxB_Vector_export_CSC (&u, &utype, &n, &Ai, NULL, &Ai_size, &Ax_size, &iso, &nvals, &jumbled, desc)) ;
-    ERR (GxB_Vector_export_CSC (&u, &utype, &n, &Ai, (void **) &Ax, NULL, &Ax_size, &iso, &nvals, &jumbled, desc)) ;
-    ERR (GxB_Vector_export_CSC (&u, &utype, &n, &Ai, (void **) &Ax, &Ai_size, NULL, &iso, &nvals, &jumbled, desc)) ;
-    ERR (GxB_Vector_export_CSC (&u, &utype, &n, &Ai, (void **) &Ax, &Ai_size, &Ax_size, &iso, NULL, &jumbled, desc)) ;
-//  ERR (GxB_Vector_export_CSC (&u, &utype, &n, &Ai, (void **) &Ax, &Ai_size, &Ax_size, &iso, &nvals, NULL, desc)) ;
+    ERR (GxB_Vector_export_CSC (NULL, &utype, &n, &Ai, (void **) &Ax, &Ai_memsize, &Ax_memsize, &iso, &nvals, &jumbled, desc)) ;
+    ERR (GxB_Vector_export_CSC (&u, NULL, &n, &Ai, (void **) &Ax, &Ai_memsize, &Ax_memsize, &iso, &nvals, &jumbled, desc)) ;
+    ERR (GxB_Vector_export_CSC (&u, &utype, NULL, &Ai, (void **) &Ax, &Ai_memsize, &Ax_memsize, &iso, &nvals, &jumbled, desc)) ;
+    ERR (GxB_Vector_export_CSC (&u, &utype, &n, NULL, (void **) &Ax, &Ai_memsize, &Ax_memsize, &iso, &nvals, &jumbled, desc)) ;
+    ERR (GxB_Vector_export_CSC (&u, &utype, &n, &Ai, NULL, &Ai_memsize, &Ax_memsize, &iso, &nvals, &jumbled, desc)) ;
+    ERR (GxB_Vector_export_CSC (&u, &utype, &n, &Ai, (void **) &Ax, NULL, &Ax_memsize, &iso, &nvals, &jumbled, desc)) ;
+    ERR (GxB_Vector_export_CSC (&u, &utype, &n, &Ai, (void **) &Ax, &Ai_memsize, NULL, &iso, &nvals, &jumbled, desc)) ;
+    ERR (GxB_Vector_export_CSC (&u, &utype, &n, &Ai, (void **) &Ax, &Ai_memsize, &Ax_memsize, &iso, NULL, &jumbled, desc)) ;
+//  ERR (GxB_Vector_export_CSC (&u, &utype, &n, &Ai, (void **) &Ax, &Ai_memsize, &Ax_memsize, &iso, &nvals, NULL, desc)) ;
 
     OK (GB_Vector_check (u, "u still OK", G1, NULL)) ;
 
-    OK (GxB_Vector_export_CSC (&u, &utype, &n, &Ai, (void **) &Ax, &Ai_size, &Ax_size, &iso, &nvals, &jumbled, desc)) ;
+    OK (GxB_Vector_export_CSC (&u, &utype, &n, &Ai, (void **) &Ax, &Ai_memsize, &Ax_memsize, &iso, &nvals, &jumbled, desc)) ;
 
-    ERR (GxB_Vector_import_CSC (NULL, utype, n, &Ai, (void **) &Ax, Ai_size, Ax_size, iso, nvals, jumbled, desc)) ;
-    ERR (GxB_Vector_import_CSC (&u, NULL, n, &Ai, (void **) &Ax, Ai_size, Ax_size, iso, nvals, jumbled, desc)) ;
-    ERR (GxB_Vector_import_CSC (&u, utype, n, NULL, (void **) &Ax, Ai_size, Ax_size, iso, nvals, jumbled, desc)) ;
-    ERR (GxB_Vector_import_CSC (&u, utype, n, &Ai, NULL, Ai_size, Ax_size, iso, nvals, jumbled, desc)) ;
+    ERR (GxB_Vector_import_CSC (NULL, utype, n, &Ai, (void **) &Ax, Ai_memsize, Ax_memsize, iso, nvals, jumbled, desc)) ;
+    ERR (GxB_Vector_import_CSC (&u, NULL, n, &Ai, (void **) &Ax, Ai_memsize, Ax_memsize, iso, nvals, jumbled, desc)) ;
+    ERR (GxB_Vector_import_CSC (&u, utype, n, NULL, (void **) &Ax, Ai_memsize, Ax_memsize, iso, nvals, jumbled, desc)) ;
+    ERR (GxB_Vector_import_CSC (&u, utype, n, &Ai, NULL, Ai_memsize, Ax_memsize, iso, nvals, jumbled, desc)) ;
 
     expected = GrB_INVALID_VALUE ;
-    ERR (GxB_Vector_import_CSC (&u, utype, INT64_MAX, &Ai, (void **) &Ax, Ai_size, Ax_size, iso, nvals, jumbled, desc)) ;
-    ERR (GxB_Vector_import_CSC (&u, utype, n, &Ai, (void **) &Ax, INT64_MAX, Ax_size, iso, nvals, jumbled, desc)) ;
+    ERR (GxB_Vector_import_CSC (&u, utype, INT64_MAX, &Ai, (void **) &Ax, Ai_memsize, Ax_memsize, iso, nvals, jumbled, desc)) ;
+    ERR (GxB_Vector_import_CSC (&u, utype, n, &Ai, (void **) &Ax, INT64_MAX, Ax_memsize, iso, nvals, jumbled, desc)) ;
 
     expected = GrB_NULL_POINTER ;
 
-    OK (GxB_Vector_import_CSC (&u, utype, n, &Ai, (void **) &Ax, Ai_size, Ax_size, iso, nvals, jumbled, desc)) ;
+    OK (GxB_Vector_import_CSC (&u, utype, n, &Ai, (void **) &Ax, Ai_memsize, Ax_memsize, iso, nvals, jumbled, desc)) ;
 
     OK (GB_Vector_check (u, "u still OK", G3, NULL)) ;
 }

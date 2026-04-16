@@ -26,7 +26,7 @@
     // The mask M can be optionally checked, if it is dense and checked in
     // place.  This method is not used if M is present and sparse.
 
-    if (team_size == 1)
+    if (team_nfine == 1)
     {
 
         //----------------------------------------------------------------------

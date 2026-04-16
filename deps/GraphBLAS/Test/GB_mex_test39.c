@@ -42,8 +42,8 @@ void mexFunction
     GxB_Container Container = NULL ;
     uint32_t *X = NULL, *X2 = NULL, *X3 = NULL, *X4 = NULL, *X5 = NULL ;
     bool malloc_debug = GB_mx_get_global (true) ;
-    uint64_t n = 10, n2 = 999, X_size, X_size2 = 911, n4 = 0, X4_size = 0,
-        n5 = 0, X5_size = 0 ;
+    uint64_t n = 10, n2 = 999, X_memsize, X_memsize2 = 911, n4 = 0, X4_memsize = 0,
+        n5 = 0, X5_memsize = 0 ;
     GrB_Type type = NULL ;
     int handling = 0 ;
 
@@ -51,8 +51,8 @@ void mexFunction
     // test load/unload
     //--------------------------------------------------------------------------
 
-    X_size = GB_IMAX (1, n * sizeof (uint32_t)) ;
-    X = mxMalloc (X_size) ;     // X is owned by the user application
+    X_memsize = GB_IMAX (1, n * sizeof (uint32_t)) ;
+    X = mxMalloc (X_memsize) ;     // X is owned by the user application
     X2 = X ;
 
     printf ("mxMalloc: X = %p\n", (void *) X) ;
@@ -71,7 +71,7 @@ void mexFunction
     CHECK (X == X2) ;           // X is still owned by the user application
 
     // handling is GrB_DEFAULT, so after the load, X is owned by GraphBLAS
-    OK (GxB_Vector_load (V, (void **) &X, GrB_UINT32, n, X_size, GrB_DEFAULT,
+    OK (GxB_Vector_load (V, (void **) &X, GrB_UINT32, n, X_memsize, GrB_DEFAULT,
         NULL)) ;
     OK (GxB_print (V, 5)) ;
     CHECK (X == NULL) ;         // X is not freed, but owned by V
@@ -79,12 +79,12 @@ void mexFunction
 
     // handling is GrB_DEFAULT, so after the unload, X is owned by the user
     // application (this test function)
-    OK (GxB_Vector_unload (V, (void **) &X, &type, &n2, &X_size2, &handling,
+    OK (GxB_Vector_unload (V, (void **) &X, &type, &n2, &X_memsize2, &handling,
         NULL)) ;
     OK (GxB_print (V, 5)) ;
     CHECK (X == X2) ;           // X is owned by the user application again
     CHECK (n2 == n) ;
-    CHECK (X_size == X_size2) ;
+    CHECK (X_memsize == X_memsize2) ;
     CHECK (type == GrB_UINT32) ;
     CHECK (handling == GrB_DEFAULT) ;
 
@@ -94,12 +94,12 @@ void mexFunction
     }
 
     // unload an empty vector
-    OK (GxB_Vector_unload (V, (void **) &X3, &type, &n2, &X_size2, &handling,
+    OK (GxB_Vector_unload (V, (void **) &X3, &type, &n2, &X_memsize2, &handling,
         NULL)) ;
     OK (GxB_print (V, 5)) ;
     CHECK (X3 == NULL) ;
     CHECK (n2 == 0) ;
-    CHECK (X_size2 == 0) ;
+    CHECK (X_memsize2 == 0) ;
     CHECK (type == GrB_UINT32) ;
     CHECK (handling == GrB_DEFAULT) ;
 
@@ -114,7 +114,7 @@ void mexFunction
     // handling should be GrB_DEFAULT, so X4 is now owned by the user
     // application
     OK (GxB_print (V, 5)) ;
-    OK (GxB_Vector_unload (V, (void **) &X4, &type, &n4, &X4_size, &handling,
+    OK (GxB_Vector_unload (V, (void **) &X4, &type, &n4, &X4_memsize, &handling,
         NULL)) ;
     OK (GxB_print (V, 5)) ;
     CHECK (n4 == n) ;
@@ -128,7 +128,7 @@ void mexFunction
     expected = GrB_INVALID_OBJECT ;
     OK (GrB_Vector_free (&V)) ;
     OK (GrB_Vector_new (&V, GrB_FP64, n)) ;
-    ERR (GxB_Vector_unload (V, (void **) &X5, &type, &n5, &X5_size, &handling,
+    ERR (GxB_Vector_unload (V, (void **) &X5, &type, &n5, &X5_memsize, &handling,
         NULL)) ;
     OK (GrB_Vector_free (&V)) ;
 
@@ -216,12 +216,12 @@ void mexFunction
     OK (GxB_unload_Matrix_into_Container (C, Container, NULL)) ;
 
     void *x = Container->p->x ;
-    size_t x_size = Container->p->x_size ;
+    uint64_t x_memsize = GB_memsize (Container->p->x_mem) ;
     Container->p->x_shallow = true ;
     Container->jumbled = true ;
     ERR (GxB_load_Matrix_from_Container (C, Container, NULL)) ;
     Container->p->x_shallow = false ;
-    GB_FREE_MEMORY ((void **) &x, x_size) ;
+    GB_FREE_MEMORY ((void **) &x, x_memsize) ;
     OK (GxB_Container_free (&Container)) ;
 
     //--------------------------------------------------------------------------

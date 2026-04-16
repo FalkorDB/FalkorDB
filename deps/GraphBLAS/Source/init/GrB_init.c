@@ -38,8 +38,7 @@ GrB_Info GrB_init           // start up GraphBLAS
     {
         return (GB_init (mode,              // blocking or non-blocking mode
             // RMM C memory management functions
-            rmm_wrap_malloc, rmm_wrap_calloc, rmm_wrap_realloc, rmm_wrap_free,
-            Werk)) ;
+            rmm_wrap_malloc, NULL, NULL, rmm_wrap_free, Werk)) ;
     }
 #endif
 

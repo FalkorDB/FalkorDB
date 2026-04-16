@@ -147,7 +147,7 @@
     #endif
 
     GB_Mi_DECLARE (Mi, const) ; GB_Mi_PTR (Mi, M) ;
-    const size_t mvlen = M->vlen ;
+    const int64_t mvlen = M->vlen ;
     const GB_M_TYPE *restrict Mx = (GB_M_TYPE *) (Mask_struct ? NULL : (M->x)) ;
 
     //--------------------------------------------------------------------------

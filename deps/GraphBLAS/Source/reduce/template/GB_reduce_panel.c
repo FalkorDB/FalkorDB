@@ -55,8 +55,8 @@
         //----------------------------------------------------------------------
 
         GB_Z_TYPE Panel [GB_PANEL] ;
-        int64_t first_panel_size = GB_IMIN (GB_PANEL, anz) ;
-        for (int64_t k = 0 ; k < first_panel_size ; k++)
+        int64_t first_panel_nentries = GB_IMIN (GB_PANEL, anz) ;
+        for (int64_t k = 0 ; k < first_panel_nentries ; k++)
         { 
             // Panel [k] = (ztype) Ax [k] ;
             GB_GETA (Panel [k], Ax, k, false) ;
@@ -114,7 +114,7 @@
         //----------------------------------------------------------------------
 
         z = Panel [0] ;
-        for (int64_t k = 1 ; k < first_panel_size ; k++)
+        for (int64_t k = 1 ; k < first_panel_nentries ; k++)
         { 
             // z += Panel [k]
             GB_UPDATE (z, Panel [k]) ;
@@ -181,8 +181,8 @@
 
                 GB_Z_TYPE Panel [GB_PANEL] ;
                 int64_t my_anz = pend - pstart ;
-                int64_t first_panel_size = GB_IMIN (GB_PANEL, my_anz) ;
-                for (int64_t k = 0 ; k < first_panel_size ; k++)
+                int64_t first_panel_nentries = GB_IMIN (GB_PANEL, my_anz) ;
+                for (int64_t k = 0 ; k < first_panel_nentries ; k++)
                 { 
                     // Panel [k] = (ztype) Ax [pstart + k] ;
                     GB_GETA (Panel [k], Ax, pstart + k, false) ;
@@ -241,7 +241,7 @@
                 //--------------------------------------------------------------
 
                 t = Panel [0] ;
-                for (int64_t k = 1 ; k < first_panel_size ; k++)
+                for (int64_t k = 1 ; k < first_panel_nentries ; k++)
                 { 
                     // t += Panel [k]
                     GB_UPDATE (t, Panel [k]) ;

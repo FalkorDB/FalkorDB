@@ -20,10 +20,10 @@ GrB_Info GxB_Matrix_import_HyperCSR      // import a hypersparse CSR matrix
     uint64_t **Ah,      // row indices
     uint64_t **Aj,      // column indices
     void **Ax,          // values
-    uint64_t Ap_size,   // size of Ap in bytes
-    uint64_t Ah_size,   // size of Ah in bytes
-    uint64_t Aj_size,   // size of Aj in bytes
-    uint64_t Ax_size,   // size of Ax in bytes
+    uint64_t Ap_memsize,   // size of Ap in bytes
+    uint64_t Ah_memsize,   // size of Ah in bytes
+    uint64_t Aj_memsize,   // size of Aj in bytes
+    uint64_t Ax_memsize,   // size of Ax in bytes
     bool iso,           // if true, A is iso
 
     uint64_t nvec,      // number of rows that appear in Ah
@@ -37,8 +37,8 @@ GrB_Info GxB_Matrix_import_HyperCSR      // import a hypersparse CSR matrix
     //--------------------------------------------------------------------------
 
     GB_WHERE0 ("GxB_Matrix_import_HyperCSR (&A, type, nrows, ncols, "
-        "&Ap, &Ah, &Aj, &Ax, Ap_size, Ah_size, Aj_size, Ax_size, iso, "
-        "nvec, jumbled, desc)") ;
+        "&Ap, &Ah, &Aj, &Ax, Ap_memsize, Ah_memsize, Aj_memsize, Ax_memsize, "
+        "iso, nvec, jumbled, desc)") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_GET_DESCRIPTOR_IMPORT (desc, fast_import) ;
@@ -48,11 +48,11 @@ GrB_Info GxB_Matrix_import_HyperCSR      // import a hypersparse CSR matrix
     //--------------------------------------------------------------------------
 
     info = GB_import (false, A, type, ncols, nrows, false,
-        Ap,   Ap_size,  // Ap
-        Ah,   Ah_size,  // Ah
+        Ap,   Ap_memsize,  // Ap
+        Ah,   Ah_memsize,  // Ah
         NULL, 0,        // Ab
-        Aj,   Aj_size,  // Aj
-        Ax,   Ax_size,  // Ax
+        Aj,   Aj_memsize,  // Aj
+        Ax,   Ax_memsize,  // Ax
         0, jumbled, nvec,                   // jumbled or not
         GxB_HYPERSPARSE, false,             // hypersparse by row
         iso, fast_import, true, Werk) ;

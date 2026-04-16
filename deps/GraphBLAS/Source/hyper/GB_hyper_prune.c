@@ -38,6 +38,9 @@ GrB_Info GB_hyper_prune
         return (GrB_SUCCESS) ;
     }
 
+    int memlane = GB_memlane (A->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     //--------------------------------------------------------------------------
     // count # of empty vectors and check if pruning is needed
     //--------------------------------------------------------------------------
@@ -60,10 +63,10 @@ GrB_Info GB_hyper_prune
     GB_Ap_DECLARE (Ap_old, const) ; GB_Ap_PTR (Ap_old, A) ;
     GB_Ah_DECLARE (Ah_old, const) ; GB_Ah_PTR (Ah_old, A) ;
 
-    GB_Ap_DECLARE (Ap_new, ) ; size_t Ap_new_size = 0 ;
-    GB_Ah_DECLARE (Ah_new, ) ; size_t Ah_new_size = 0 ;
+    GB_Ap_DECLARE (Ap_new, ) ; uint64_t Ap_new_mem = mem ;
+    GB_Ah_DECLARE (Ah_new, ) ; uint64_t Ah_new_mem = mem ;
 
-    GB_MDECL (W, , u) ; size_t W_size = 0 ;
+    GB_MDECL (W, , u) ; uint64_t W_mem = mem ;
 
     int64_t nvec_old = A->nvec ;
 
@@ -82,7 +85,7 @@ GrB_Info GB_hyper_prune
     // allocate workspace
     //--------------------------------------------------------------------------
 
-    W = GB_MALLOC_MEMORY (nvec_old+1, jsize, &W_size) ;
+    W = GB_MALLOC_MEMORY (nvec_old+1, jsize, &W_mem) ;
     if (W == NULL)
     { 
         // out of memory
@@ -112,14 +115,14 @@ GrB_Info GB_hyper_prune
     //--------------------------------------------------------------------------
 
     int64_t plen_new = GB_IMAX (1, nvec_new) ;
-    Ap_new = GB_MALLOC_MEMORY (plen_new+1, psize, &Ap_new_size) ;
-    Ah_new = GB_MALLOC_MEMORY (plen_new  , jsize, &Ah_new_size) ;
+    Ap_new = GB_MALLOC_MEMORY (plen_new+1, psize, &Ap_new_mem) ;
+    Ah_new = GB_MALLOC_MEMORY (plen_new  , jsize, &Ah_new_mem) ;
     if (Ap_new == NULL || Ah_new == NULL)
     { 
         // out of memory
-        GB_FREE_MEMORY (&W, W_size) ;
-        GB_FREE_MEMORY (&Ap_new, Ap_new_size) ;
-        GB_FREE_MEMORY (&Ah_new, Ah_new_size) ;
+        GB_FREE_MEMORY (&W, W_mem) ;
+        GB_FREE_MEMORY (&Ap_new, Ap_new_mem) ;
+        GB_FREE_MEMORY (&Ah_new, Ah_new_mem) ;
         return (GrB_OUT_OF_MEMORY) ;
     }
     GB_IPTR (Ap_new, A->p_is_32) ;
@@ -153,15 +156,15 @@ GrB_Info GB_hyper_prune
     // free workspace and old matrix components, including the A->Y hyper_hash
     //--------------------------------------------------------------------------
 
-    GB_FREE_MEMORY (&W, W_size) ;
+    GB_FREE_MEMORY (&W, W_mem) ;
     GB_phy_free (A) ;
 
     //--------------------------------------------------------------------------
     // transplant the new hyperlist into A
     //--------------------------------------------------------------------------
 
-    A->p = Ap_new ; A->p_size = Ap_new_size ;
-    A->h = Ah_new ; A->h_size = Ah_new_size ;
+    A->p = Ap_new ; A->p_mem = Ap_new_mem ;
+    A->h = Ah_new ; A->h_mem = Ah_new_mem ;
     A->nvec = nvec_new ;
     A->plen = plen_new ;
     ASSERT (nvec_new == nvec_save) ;

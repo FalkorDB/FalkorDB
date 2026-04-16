@@ -26,13 +26,11 @@
 // dot3 kernel launch geometry
 //------------------------------------------------------------------------------
 
-// FIXME: some duplicates here
+// FIXME: some duplicates here; move to GB_cuda_geomtry.hpp
 // FIXME: tune these values.  Bigger chunk_size leads to fewer binary searches
 // with GB_cuda_ek_slice_setup, for example.
 #define chunk_size 128
 #define log2_chunk_size 7
-#define tile_sz 32 
-#define log2_tile_sz 5 
 #define shared_vector_size 256 
 #define threads_per_block 32
 
@@ -153,12 +151,12 @@ GB_bucket_code ;    // FIXME: rename GB_dot3_bucket_code
     // sparse-sparse, sparse-dense, or dense-sparse
 
     #undef  GB_FREE_ALL
-    #define GB_FREE_ALL                     \
-    {                                       \
-        GB_FREE_MEMORY (&Nanobuckets, Nb_size) ;   \
-        GB_FREE_MEMORY (&Blockbucket, Bb_size) ;   \
-        GB_FREE_MEMORY (&Bucketp, Bup_size) ;      \
-        GB_FREE_MEMORY (&Bucket, Bu_size) ;        \
+    #define GB_FREE_ALL                         \
+    {                                           \
+        GB_FREE_MEMORY (&Nanobuckets, Nb_mem) ; \
+        GB_FREE_MEMORY (&Blockbucket, Bb_mem) ; \
+        GB_FREE_MEMORY (&Bucketp, Bup_mem) ;    \
+        GB_FREE_MEMORY (&Bucket, Bu_mem) ;      \
     }
 
     #include "template/GB_cuda_jit_AxB_dot3_phase1.cuh"
@@ -210,10 +208,11 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
     // dense-dense case requires no workspace
     #else
     // sparse-sparse, sparse-dense, and dense-sparse requires workspace
-    int64_t *Nanobuckets = NULL ; size_t Nb_size  = 0 ;
-    int64_t *Blockbucket = NULL ; size_t Bb_size  = 0 ;
-    int64_t *Bucket = NULL      ; size_t Bu_size  = 0 ;
-    int64_t *Bucketp = NULL     ; size_t Bup_size = 0 ;
+    uint64_t mem = GB_mem (GB_MEMLANE_RMM, 0) ;
+    int64_t *Nanobuckets = NULL ; uint64_t Nb_mem  = mem ;
+    int64_t *Blockbucket = NULL ; uint64_t Bb_mem  = mem ;
+    int64_t *Bucket = NULL      ; uint64_t Bu_mem  = mem ;
+    int64_t *Bucketp = NULL     ; uint64_t Bup_mem = mem ;
     #endif
 
     //--------------------------------------------------------------------------
@@ -309,10 +308,10 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
         int64_t Blockbucket_size = NBUCKETS * (number_of_blocks_1 + 1) ;
         int64_t nanobuckets_size = Blockbucket_size * threads_per_block ;
 
-        Nanobuckets = (int64_t *) GB_MALLOC_MEMORY (nanobuckets_size, sizeof (int64_t), &Nb_size) ;
-        Blockbucket = (int64_t *) GB_MALLOC_MEMORY (Blockbucket_size, sizeof (int64_t), &Bb_size) ;
-        Bucketp = (int64_t *) GB_MALLOC_MEMORY (NBUCKETS+1, sizeof (int64_t), &Bup_size) ;
-        Bucket = (int64_t *) GB_MALLOC_MEMORY (mnz, sizeof (int64_t), &Bu_size) ;
+        Nanobuckets = (int64_t *) GB_MALLOC_MEMORY (nanobuckets_size, sizeof (int64_t), &Nb_mem) ;
+        Blockbucket = (int64_t *) GB_MALLOC_MEMORY (Blockbucket_size, sizeof (int64_t), &Bb_mem) ;
+        Bucketp = (int64_t *) GB_MALLOC_MEMORY (NBUCKETS+1, sizeof (int64_t), &Bup_mem) ;
+        Bucket = (int64_t *) GB_MALLOC_MEMORY (mnz, sizeof (int64_t), &Bu_mem) ;
 
 //      memset (Bucketp, 0, (NBUCKETS+1) * sizeof (int64_t)) ;
 

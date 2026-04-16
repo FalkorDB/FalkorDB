@@ -19,9 +19,9 @@ GrB_Info GxB_Matrix_import_CSC      // import a CSC matrix
     uint64_t **Ap,      // column "pointers"
     uint64_t **Ai,      // row indices
     void **Ax,          // values
-    uint64_t Ap_size,   // size of Ap in bytes
-    uint64_t Ai_size,   // size of Ai in bytes
-    uint64_t Ax_size,   // size of Ax in bytes
+    uint64_t Ap_memsize,   // size of Ap in bytes
+    uint64_t Ai_memsize,   // size of Ai in bytes
+    uint64_t Ax_memsize,   // size of Ax in bytes
     bool iso,           // if true, A is iso
 
     bool jumbled,       // if true, indices in each column may be unsorted
@@ -34,7 +34,7 @@ GrB_Info GxB_Matrix_import_CSC      // import a CSC matrix
     //--------------------------------------------------------------------------
 
     GB_WHERE0 ("GxB_Matrix_import_CSC (&A, type, nrows, ncols, "
-        "&Ap, &Ai, &Ax, Ap_size, Ai_size, Ax_size, iso, "
+        "&Ap, &Ai, &Ax, Ap_memsize, Ai_memsize, Ax_memsize, iso, "
         "jumbled, desc)") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
@@ -45,11 +45,11 @@ GrB_Info GxB_Matrix_import_CSC      // import a CSC matrix
     //--------------------------------------------------------------------------
 
     info = GB_import (false, A, type, nrows, ncols, false,
-        Ap,   Ap_size,  // Ap
+        Ap,   Ap_memsize,  // Ap
         NULL, 0,        // Ah
         NULL, 0,        // Ab
-        Ai,   Ai_size,  // Ai
-        Ax,   Ax_size,  // Ax
+        Ai,   Ai_memsize,  // Ai
+        Ax,   Ax_memsize,  // Ax
         0, jumbled, 0,                      // jumbled or not
         GxB_SPARSE, true,                   // sparse by col
         iso, fast_import, true, Werk) ;

@@ -12,7 +12,7 @@
 const char *GB_monoid_name_get (GrB_Monoid monoid)
 {
 
-    if (monoid->user_name_size > 0)
+    if (GB_memsize (monoid->user_name_mem) > 0)
     { 
         // user-defined monoid, with name defined by GrB_set
         return (monoid->user_name) ;

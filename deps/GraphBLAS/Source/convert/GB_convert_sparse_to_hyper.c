@@ -33,6 +33,10 @@ GrB_Info GB_convert_sparse_to_hyper // convert from sparse to hypersparse
     //--------------------------------------------------------------------------
 
     ASSERT_MATRIX_OK (A, "A converting to hypersparse", GB0) ;
+
+    int memlane = GB_memlane (A->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     int64_t anz = GB_nnz (A) ;
     ASSERT (GB_ZOMBIES_OK (A)) ;
     ASSERT (GB_JUMBLED_OK (A)) ;
@@ -65,7 +69,7 @@ GrB_Info GB_convert_sparse_to_hyper // convert from sparse to hypersparse
         ASSERT (A->nvec == A->plen && A->plen == n) ;
 
         GB_Ap_DECLARE (Ap_old, const) ; GB_Ap_PTR (Ap_old, A) ;
-        size_t Ap_old_size = A->p_size ;
+        uint64_t Ap_old_mem = A->p_mem ;
         bool Ap_old_shallow = A->p_shallow ;
 
         GB_WERK_DECLARE (Count, int64_t) ;
@@ -105,19 +109,19 @@ GrB_Info GB_convert_sparse_to_hyper // convert from sparse to hypersparse
         // allocate the new A->p and A->h
         //----------------------------------------------------------------------
 
-        GB_Ap_DECLARE (Ap_new, ) ; size_t Ap_new_size = 0 ;
-        GB_Ah_DECLARE (Ah_new, ) ; size_t Ah_new_size = 0 ;
+        GB_Ap_DECLARE (Ap_new, ) ; uint64_t Ap_new_mem = mem ;
+        GB_Ah_DECLARE (Ah_new, ) ; uint64_t Ah_new_mem = mem ;
         int64_t plen_new = (n == 1) ? 1 : nvec_nonempty ;
         size_t psize = A->p_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
         size_t jsize = A->j_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
-        Ap_new = GB_MALLOC_MEMORY (plen_new+1, psize, &Ap_new_size) ;
-        Ah_new = GB_MALLOC_MEMORY (plen_new  , jsize, &Ah_new_size) ;
+        Ap_new = GB_MALLOC_MEMORY (plen_new+1, psize, &Ap_new_mem) ;
+        Ah_new = GB_MALLOC_MEMORY (plen_new  , jsize, &Ah_new_mem) ;
         if (Ap_new == NULL || Ah_new == NULL)
         { 
             // out of memory
             GB_WERK_POP (Count, int64_t) ;
-            GB_FREE_MEMORY (&Ap_new, Ap_new_size) ;
-            GB_FREE_MEMORY (&Ah_new, Ah_new_size) ;
+            GB_FREE_MEMORY (&Ap_new, Ap_new_mem) ;
+            GB_FREE_MEMORY (&Ah_new, Ah_new_mem) ;
             return (GrB_OUT_OF_MEMORY) ;
         }
         GB_IPTR (Ap_new, A->p_is_32) ;
@@ -129,8 +133,8 @@ GrB_Info GB_convert_sparse_to_hyper // convert from sparse to hypersparse
 
         A->plen = plen_new ;
         A->nvec = nvec_nonempty ;
-        A->p = Ap_new ; A->p_size = Ap_new_size ;
-        A->h = Ah_new ; A->h_size = Ah_new_size ;
+        A->p = Ap_new ; A->p_mem = Ap_new_mem ;
+        A->h = Ah_new ; A->h_mem = Ah_new_mem ;
         A->p_shallow = false ;
         A->h_shallow = false ;
 
@@ -170,7 +174,7 @@ GrB_Info GB_convert_sparse_to_hyper // convert from sparse to hypersparse
         GB_WERK_POP (Count, int64_t) ;
         if (!Ap_old_shallow)
         { 
-            GB_FREE_MEMORY (&Ap_old, Ap_old_size) ;
+            GB_FREE_MEMORY (&Ap_old, Ap_old_mem) ;
         }
 
         //----------------------------------------------------------------------

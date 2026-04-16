@@ -21,9 +21,9 @@ GrB_Info GxB_Matrix_export_CSC  // export and free a CSC matrix
     uint64_t **Ap,      // column "pointers"
     uint64_t **Ai,      // row indices
     void **Ax,          // values
-    uint64_t *Ap_size,  // size of Ap in bytes
-    uint64_t *Ai_size,  // size of Ai in bytes
-    uint64_t *Ax_size,  // size of Ax in bytes
+    uint64_t *Ap_memsize,  // size of Ap in bytes
+    uint64_t *Ai_memsize,  // size of Ai in bytes
+    uint64_t *Ax_memsize,  // size of Ax in bytes
     bool *iso,          // if true, A is iso
 
     bool *jumbled,      // if true, indices in each column may be unsorted
@@ -38,7 +38,7 @@ GrB_Info GxB_Matrix_export_CSC  // export and free a CSC matrix
     GB_RETURN_IF_NULL (A) ;
     GB_RETURN_IF_NULL (*A) ;
     GB_WHERE_1 (*A, "GxB_Matrix_export_CSC (&A, &type, &nrows, &ncols, "
-        "&Ap, &Ai, &Ax, &Ap_size, &Ai_size, &Ax_size, &iso, "
+        "&Ap, &Ai, &Ax, &Ap_memsize, &Ai_memsize, &Ax_memsize, &iso, "
         "&jumbled, desc)") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
@@ -89,11 +89,11 @@ GrB_Info GxB_Matrix_export_CSC  // export and free a CSC matrix
     bool is_csc ;
 
     info = GB_export (false, A, type, nrows, ncols, false,
-        Ap,   Ap_size,  // Ap
+        Ap,   Ap_memsize,  // Ap
         NULL, NULL,     // Ah
         NULL, NULL,     // Ab
-        Ai,   Ai_size,  // Ai
-        Ax,   Ax_size,  // Ax
+        Ai,   Ai_memsize,  // Ai
+        Ax,   Ax_memsize,  // Ax
         NULL, jumbled, NULL,                // jumbled or not
         &sparsity, &is_csc,                 // sparse by col
         iso, Werk) ;

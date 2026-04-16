@@ -65,7 +65,8 @@ GrB_Info GB_Type_check      // check a GraphBLAS Type
 
     GBPR0 (" size: %zu\n", type->size) ;
 
-    if (type->size == 0 || type->size != GB_code_size (type->code, type->size))
+    if (type->size == 0 ||
+        type->size != GB_code_typesize (type->code, type->size))
     { 
         GBPR0 ("    Type has an invalid size\n") ;
         return (GrB_INVALID_OBJECT) ;
@@ -81,7 +82,7 @@ GrB_Info GB_Type_check      // check a GraphBLAS Type
 
     // name given by GrB_set
     char *given_name = type->user_name ;
-    if (type->user_name_size > 0 && given_name != NULL)
+    if (GB_memsize (type->user_name_mem) > 0 && given_name != NULL)
     { 
         GBPR0 ("    Type given name: [%s]\n", given_name) ;
     }

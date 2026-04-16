@@ -156,8 +156,9 @@ mxArray *GB_mx_object_to_mxArray    // returns the MATLAB mxArray
     if (C->x == NULL)
     {
         ASSERT (cnz == 0) ;
+        C->x_mem = GB_MEMLANE_MATLAB ;
         C->x = (GB_void *) GB_malloc_memory (2 * sizeof (double),
-            sizeof (GB_void), &(C->x_size)) ;
+            sizeof (GB_void), &(C->x_mem)) ;
         memset (C->x, 0, 2 * sizeof (double)) ;
         C->x_shallow = false ;
     }
@@ -169,8 +170,9 @@ mxArray *GB_mx_object_to_mxArray    // returns the MATLAB mxArray
         if (C->i == NULL)
         {
             ASSERT (cnz == 0) ;
+            C->i_mem = GB_MEMLANE_MATLAB ;
             C->i = (int64_t *) GB_malloc_memory (1, sizeof (uint64_t),
-                &(C->i_size)) ;
+                &(C->i_mem)) ;
             uint64_t *Ci = C->i ;
             Ci [0] = 0 ;
             C->i_shallow = false ;
@@ -178,8 +180,9 @@ mxArray *GB_mx_object_to_mxArray    // returns the MATLAB mxArray
         if (C->p == NULL)
         {
             ASSERT (cnz == 0) ;
+            C->p_mem = GB_MEMLANE_MATLAB ;
             C->p = (int64_t *) GB_malloc_memory (C->vdim + 1, sizeof (uint64_t),
-                &(C->p_size)) ;
+                &(C->p_mem)) ;
             memset (C->p, 0, (C->vdim + 1) * sizeof (int64_t)) ;
             C->p_shallow = false ;
         }
@@ -318,13 +321,13 @@ mxArray *GB_mx_object_to_mxArray    // returns the MATLAB mxArray
 
         // otherwise C is cast into a MATLAB double sparse matrix
         A = mxCreateSparse (0, 0, 0, mxREAL) ;
-        size_t Sx_size ;
+        uint64_t Sx_mem = GB_MEMLANE_MATLAB ;
         double *Sx = (double *) GB_malloc_memory (cnz+1, sizeof (double),
-            &Sx_size) ;
+            &Sx_mem) ;
         if (Sx == NULL && cnz > 0) mexErrMsgTxt ("Sx is NULL!\n") ;
         GB_cast_array ((GB_void *) Sx, GB_FP64_code, C, 1) ;
         mexMakeMemoryPersistent (Sx) ;
-        mxSetPr (A, Sx) ;
+        mxSetData (A, Sx) ;
 
         // Sx was just malloc'd.  Treat it as if GraphBLAS has freed it
         GB_AS_IF_FREE (Sx) ;

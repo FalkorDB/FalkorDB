@@ -137,9 +137,9 @@ GrB_Info ewise
     int8_t *Ab = NULL, *Bb = NULL, *Tb = NULL ;
     double *Ax = NULL, *Bx = NULL, *Tx = NULL ;
     GrB_Matrix T = NULL, C = NULL, a = NULL, b = NULL ;
-    uint64_t Ab_size = 0, Ax_size = 0, A_nvals = 0,
-             Bb_size = 0, Bx_size = 0, B_nvals = 0,
-             Tb_size = 0, Tx_size = 0, T_nvals = 0 ;
+    uint64_t Ab_memsize = 0, Ax_memsize = 0, A_nvals = 0,
+             Bb_memsize = 0, Bx_memsize = 0, B_nvals = 0,
+             Tb_memsize = 0, Tx_memsize = 0, T_nvals = 0 ;
     void (* free_function) (void *) = NULL ;
     uint64_t n = 0 ;
     (*C_handle) = NULL ;
@@ -148,7 +148,8 @@ GrB_Info ewise
     // get the current free function
     //--------------------------------------------------------------------------
 
-    free_function = GB_Global_free_function_get ( ) ;
+    int memlane = 0 ;
+    free_function = GB_Global_free_function_get (memlane) ;
 
     //--------------------------------------------------------------------------
     // create bitmap format of A, A', and T
@@ -164,18 +165,18 @@ GrB_Info ewise
     OK (GrB_transpose (b, NULL, NULL, b, NULL)) ;
 
     // extract a in bitmap CSC format
-    OK (GxB_Matrix_unpack_BitmapC (a, &Ab, (void **) &Ax, &Ab_size, &Ax_size,
+    OK (GxB_Matrix_unpack_BitmapC (a, &Ab, (void **) &Ax, &Ab_memsize, &Ax_memsize,
         NULL, &A_nvals, NULL)) ;
     GrB_Matrix_free (&a) ;
 
     // extract b in bitmap CSC format
-    OK (GxB_Matrix_unpack_BitmapC (b, &Bb, (void **) &Bx, &Bb_size, &Bx_size,
+    OK (GxB_Matrix_unpack_BitmapC (b, &Bb, (void **) &Bx, &Bb_memsize, &Bx_memsize,
         NULL, &B_nvals, NULL)) ;
     GrB_Matrix_free (&b) ;
 
     // create T and extract in bitmap CSC format
     OK (GrB_Matrix_new (&T, GrB_FP64, n, n)) ;
-    OK (GxB_Matrix_unpack_BitmapC (T, &Tb, (void **) &Tx, &Tb_size, &Tx_size,
+    OK (GxB_Matrix_unpack_BitmapC (T, &Tb, (void **) &Tx, &Tb_memsize, &Tx_memsize,
         NULL, &T_nvals, NULL)) ;
 
     //--------------------------------------------------------------------------
@@ -251,7 +252,7 @@ GrB_Info ewise
     }
 
     // pack T in bitmap CSC format
-    OK (GxB_Matrix_pack_BitmapC (T, &Tb, (void **) &Tx, Tb_size, Tx_size,
+    OK (GxB_Matrix_pack_BitmapC (T, &Tb, (void **) &Tx, Tb_memsize, Tx_memsize,
         false, T_nvals, NULL)) ;
 
     //--------------------------------------------------------------------------

@@ -20,10 +20,9 @@ void GB_hy_free                 // free A-h and A->Y of a matrix
         // free A->h unless it is shallow
         if (!A->h_shallow)
         { 
-            GB_FREE_MEMORY (&(A->h), A->h_size) ;
+            GB_FREE_MEMORY (&(A->h), A->h_mem) ;
         }
-        A->h = NULL ;
-        A->h_size = 0 ;
+        A->h = NULL ; A->h_mem = 0 ;
         A->h_shallow = false ;
         GB_hyper_hash_free (A) ;
     }

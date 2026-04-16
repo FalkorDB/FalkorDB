@@ -87,21 +87,21 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     void *blob = NULL ;
-    uint64_t blob_size ;
+    uint64_t blob_memsize ;
 
     if (debug)
     { 
         // debug GrB_Matrix_serializeSize and GrB_Matrix_serialize
-        OK (GrB_Matrix_serializeSize (&blob_size, A)) ;
-        blob = mxMalloc (blob_size) ;
-        OK (GrB_Matrix_serialize (blob, &blob_size, A)) ;
+        OK (GrB_Matrix_serializeSize (&blob_memsize, A)) ;
+        blob = mxMalloc (blob_memsize) ;
+        OK (GrB_Matrix_serialize (blob, &blob_memsize, A)) ;
         // shrink the blob to its actual size
-        blob = mxRealloc (blob, blob_size) ;
+        blob = mxRealloc (blob, blob_memsize) ;
     }
     else
     { 
         // use GxB_Matrix_serialize by default
-        OK (GxB_Matrix_serialize (&blob, &blob_size, A, desc)) ;
+        OK (GxB_Matrix_serialize (&blob, &blob_memsize, A, desc)) ;
     }
 
     OK (GrB_Descriptor_free (&desc)) ;
@@ -119,7 +119,7 @@ void mexFunction
     pargout [0] = mxCreateNumericMatrix (0, 1, mxUINT8_CLASS, mxREAL) ;
     mxFree (mxGetData (pargout [0])) ;
     mxSetData (pargout [0], blob) ;
-    mxSetM (pargout [0], blob_size) ;
+    mxSetM (pargout [0], blob_memsize) ;
     gb_wrapup ( ) ;
 }
 

@@ -38,7 +38,9 @@ GrB_Info GxB_Container_free
         // free the Container itself
         //----------------------------------------------------------------------
 
-        GB_FREE_MEMORY (Container, sizeof (struct GxB_Container_struct)) ;
+        uint64_t Container_mem = GB_mem ((*Container)->memlane,
+            sizeof (struct GxB_Container_struct)) ;
+        GB_FREE_MEMORY (Container, Container_mem) ;
     }
 
     return (GrB_SUCCESS) ;

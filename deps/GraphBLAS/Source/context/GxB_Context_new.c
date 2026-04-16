@@ -30,10 +30,13 @@ GrB_Info GxB_Context_new            // create a new Context
     // create the Context
     //--------------------------------------------------------------------------
 
+    int memlane = GB_Context_memlane ( ) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     // allocate the Context
-    size_t header_size ;
+    uint64_t header_mem = mem ;
     Context = GB_CALLOC_MEMORY (1, sizeof (struct GB_Context_opaque),
-        &header_size);
+        &header_mem);
     if (Context == NULL)
     { 
         // out of memory
@@ -41,9 +44,9 @@ GrB_Info GxB_Context_new            // create a new Context
     }
 
     Context->magic = GB_MAGIC ;
-    Context->header_size = header_size ;
-    Context->user_name = NULL ;             // user_name for GrB_get/GrB_set
-    Context->user_name_size = 0 ;
+    Context->header_mem = header_mem ;
+    // user_name for GrB_get/GrB_set:
+    Context->user_name = NULL ; Context->user_name_mem = 0 ;
 
     // initialize the Context with the same settings as GxB_CONTEXT_WORLD
     Context->nthreads_max = GB_Context_nthreads_max_get (NULL) ;

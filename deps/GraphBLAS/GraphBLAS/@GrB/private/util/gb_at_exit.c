@@ -23,17 +23,15 @@ void gb_at_exit ( void )
     // Finalize GraphBLAS, clearing all JIT kernels and freeing the hash table.
     // MATLAB can only use GraphBLAS if GrB_init / GxB_init is called again.
 
-    // The call to GB_Global_GrB_init_called_set allows GrB_init or GxB_init to
-    // be called again.  This is an extension to the spec that is possible with
-    // SuiteSparse:GraphBLAS but not available via a documented function.
-    // Instead, an internal method is used.  If this flag is set, the next call
-    // to any @GrB mexFunction will first call gb_usage, which calls GxB_init
-    // to re-initialize GraphBLAS.  That method will re-load the hash table
-    // with all PreJIT kernels.
+    // SuiteSparse:GraphBLAS allows GrB_init or GxB_init to be called again, as
+    // an extension to the spec.  G[rx]B_init can be called if
+    // GxB_initialized returns false, or if GxB_finalized returns true.
 
-    // These 2 lines are placed together so a "grep GrB_finalize" reports
-    // both of them.
+    // If GraphBLAS has not ever been initialized or if it has been finalized,
+    // the next call to any @GrB mexFunction will first call gb_usage, which
+    // calls GxB_init to re-initialize GraphBLAS.  That method will re-load the
+    // hash table with all PreJIT kernels.
 
-    GrB_finalize ( ) ; GB_Global_GrB_init_called_set (false) ;
+    GrB_finalize ( ) ;
 }
 

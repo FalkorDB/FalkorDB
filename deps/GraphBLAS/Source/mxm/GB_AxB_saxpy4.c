@@ -29,7 +29,7 @@
 {                                           \
     GB_WERK_POP (A_slice, int64_t) ;        \
     GB_WERK_POP (H_slice, int64_t) ;        \
-    GB_FREE_MEMORY (&Wcx, Wcx_size) ;       \
+    GB_FREE_MEMORY (&Wcx, Wcx_mem) ;        \
 }
 
 #define GB_FREE_ALL                         \
@@ -59,9 +59,14 @@ GrB_Info GB_AxB_saxpy4              // C += A*B
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
+
+    ASSERT (C != NULL) ;
+    int memlane = GB_memlane (C->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     GB_WERK_DECLARE (A_slice, int64_t) ;
     GB_WERK_DECLARE (H_slice, int64_t) ;
-    GB_void *restrict Wcx= NULL ; size_t Wcx_size = 0 ;
+    GB_void *restrict Wcx= NULL ; uint64_t Wcx_mem = mem ;
 
     ASSERT_MATRIX_OK (C, "C for saxpy4 C+=A*B", GB0) ;
     ASSERT (GB_IS_FULL (C)) ;
@@ -199,7 +204,7 @@ GrB_Info GB_AxB_saxpy4              // C += A*B
 
     if (wspace > 0)
     {
-        Wcx = GB_MALLOC_MEMORY (wspace, sizeof (GB_void), &Wcx_size) ;
+        Wcx = GB_MALLOC_MEMORY (wspace, sizeof (GB_void), &Wcx_mem) ;
         if (Wcx == NULL)
         { 
             // out of memory

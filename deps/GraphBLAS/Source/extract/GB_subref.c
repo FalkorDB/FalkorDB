@@ -72,19 +72,19 @@
 
 #define GB_FREE_WORKSPACE                       \
 {                                               \
-    GB_FREE_MEMORY (&TaskList, TaskList_size) ; \
-    GB_FREE_MEMORY (&Ap_start, Ap_start_size) ; \
-    GB_FREE_MEMORY (&Ap_end, Ap_end_size) ;     \
-    GB_FREE_MEMORY (&Cwork, Cwork_size) ;       \
+    GB_FREE_MEMORY (&TaskList, TaskList_mem) ;  \
+    GB_FREE_MEMORY (&Ap_start, Ap_start_mem) ;  \
+    GB_FREE_MEMORY (&Ap_end, Ap_end_mem) ;      \
+    GB_FREE_MEMORY (&Cwork, Cwork_mem) ;        \
     GB_Matrix_free (&R) ;                       \
 }
 
-#define GB_FREE_ALL                     \
-{                                       \
-    GB_FREE_MEMORY (&Cp, Cp_size) ;     \
-    GB_FREE_MEMORY (&Ch, Ch_size) ;     \
-    GB_phybix_free (C) ;                \
-    GB_FREE_WORKSPACE ;                 \
+#define GB_FREE_ALL                 \
+{                                   \
+    GB_FREE_MEMORY (&Cp, Cp_mem) ;  \
+    GB_FREE_MEMORY (&Ch, Ch_mem) ;  \
+    GB_phybix_free (C) ;            \
+    GB_FREE_WORKSPACE ;             \
 }
 
 #include "extract/GB_subref.h"
@@ -92,7 +92,7 @@
 GrB_Info GB_subref              // C = A(I,J): either symbolic or numeric
 (
     // output
-    GrB_Matrix C,               // output matrix, static header
+    GrB_Matrix C,               // output matrix, existing header
     // input, not modified
     bool C_iso,                 // if true, return C as iso, regardless of A
     const bool C_is_csc,        // requested format of C
@@ -113,7 +113,7 @@ GrB_Info GB_subref              // C = A(I,J): either symbolic or numeric
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (C != NULL) ;
     ASSERT_MATRIX_OK (A, "A for C=A(I,J) subref", GB0) ;
     ASSERT (GB_ZOMBIES_OK (A)) ;
     ASSERT (GB_JUMBLED_OK (A)) ;    // A is sorted, below, if jumbled on input
@@ -180,12 +180,13 @@ GrB_Info GB_subref              // C = A(I,J): either symbolic or numeric
     // C = A(I,J) where C and A are both sparse or hypersparse
     //--------------------------------------------------------------------------
 
-    void *Cp       = NULL ; size_t Cp_size = 0 ;
-    void *Ch       = NULL ; size_t Ch_size = 0 ;
-    void *Ap_start = NULL ; size_t Ap_start_size = 0 ;
-    void *Ap_end   = NULL ; size_t Ap_end_size = 0 ;
-    uint64_t *Cwork = NULL ; size_t Cwork_size = 0 ;
-    GB_task_struct *TaskList = NULL ; size_t TaskList_size = 0 ;
+    // FIXME memlane:
+    void *Cp       = NULL ; uint64_t Cp_mem = 0 ;
+    void *Ch       = NULL ; uint64_t Ch_mem = 0 ;
+    void *Ap_start = NULL ; uint64_t Ap_start_mem = 0 ;
+    void *Ap_end   = NULL ; uint64_t Ap_end_mem = 0 ;
+    uint64_t *Cwork = NULL ; uint64_t Cwork_mem = 0 ;
+    GB_task_struct *TaskList = NULL ; uint64_t TaskList_mem = 0 ;
     int64_t Cnvec = 0, nI = 0, nJ, Icolon [3], Cnvec_nonempty ;
     bool post_sort, need_qsort, Cp_is_32, Cj_is_32, Ci_is_32 ;
     int Ikind, ntasks, nthreads ;
@@ -207,8 +208,8 @@ GrB_Info GB_subref              // C = A(I,J): either symbolic or numeric
 
     GB_OK (GB_subref_phase0 (
         // computed by phase0:
-        &Ch, &Cj_is_32, &Ci_is_32, &Ch_size, &Ap_start, &Ap_start_size,
-        &Ap_end, &Ap_end_size, &Cnvec, &need_qsort, &Ikind, &nI, Icolon, &nJ,
+        &Ch, &Cj_is_32, &Ci_is_32, &Ch_mem, &Ap_start, &Ap_start_mem,
+        &Ap_end, &Ap_end_mem, &Cnvec, &need_qsort, &Ikind, &nI, Icolon, &nJ,
         // original input:
         A, I, I_is_32, ni, J, J_is_32, nj, Werk)) ;
 
@@ -221,8 +222,8 @@ GrB_Info GB_subref              // C = A(I,J): either symbolic or numeric
 
     GB_OK (GB_subref_slice (
         // computed by phase1:
-        &TaskList, &TaskList_size, &ntasks, &nthreads, &post_sort,
-        &R, &Cwork, &Cwork_size,
+        &TaskList, &TaskList_mem, &ntasks, &nthreads, &post_sort,
+        &R, &Cwork, &Cwork_mem,
         // computed by phase0:
         Ap_start, Ap_end, Cnvec, need_qsort, Ikind, nI, Icolon,
         // original input:
@@ -234,9 +235,9 @@ GrB_Info GB_subref              // C = A(I,J): either symbolic or numeric
 
     GB_OK (GB_subref_phase2 (
         // computed by phase2:
-        &Cp, &Cp_is_32, &Cp_size, &Cnvec_nonempty,
+        &Cp, &Cp_is_32, &Cp_mem, &Cnvec_nonempty,
         // computed by phase1:
-        TaskList, ntasks, nthreads, R, &Cwork, Cwork_size,
+        TaskList, ntasks, nthreads, R, &Cwork, Cwork_mem,
         // computed by phase0:
         Ap_start, Ap_end, Cnvec, need_qsort, Ikind, nI, Icolon, nJ,
         // original input:
@@ -250,11 +251,11 @@ GrB_Info GB_subref              // C = A(I,J): either symbolic or numeric
         // computed by phase3:
         C,
         // from phase2:
-        &Cp, Cp_is_32, Cp_size, Cnvec_nonempty,
+        &Cp, Cp_is_32, Cp_mem, Cnvec_nonempty,
         // from phase1:
         TaskList, ntasks, nthreads, post_sort, R,
         // from phase0:
-        &Ch, Cj_is_32, Ci_is_32, Ch_size, Ap_start, Ap_end, Cnvec, need_qsort,
+        &Ch, Cj_is_32, Ci_is_32, Ch_mem, Ap_start, Ap_end, Cnvec, need_qsort,
         Ikind, nI, Icolon, nJ,
         // from GB_subref, above:
         ctype, C_iso, cscalar,

@@ -40,8 +40,9 @@ GrB_Info GB_Matrix_diag     // build a diagonal matrix from a vector
     ASSERT (!GB_any_aliased (C, V_in)) ; // C and V_in cannot be aliased
     ASSERT (!GB_IS_HYPERSPARSE (V_in)) ; // vectors cannot be hypersparse
 
-    struct GB_Matrix_opaque T_header ;
     GrB_Matrix T = NULL ;
+
+    int memlane = GB_memlane (C->header_mem) ;
 
     GrB_Type ctype = C->type ;
     int64_t n = V_in->vlen + GB_IABS (k) ;     // C must be n-by-n
@@ -65,8 +66,7 @@ GrB_Info GB_Matrix_diag     // build a diagonal matrix from a vector
     if (GB_IS_BITMAP (V_in))
     { 
         // make a deep copy of V_in and convert to CSC
-        GB_CLEAR_MATRIX_HEADER (T, &T_header) ;
-        GB_OK (GB_dup_worker (&T, V_in->iso, V_in, true, NULL)) ;
+        GB_OK (GB_dup_worker (&T, V_in->iso, V_in, true, NULL, memlane)) ;
         GB_OK (GB_convert_bitmap_to_sparse (T, Werk)) ;
         V = T ;
     }
@@ -100,7 +100,8 @@ GrB_Info GB_Matrix_diag     // build a diagonal matrix from a vector
 
     GB_OK (GB_new_bix (&C, // existing header
         ctype, n, n, GB_ph_malloc, csc, C_sparsity, false,
-        C->hyper_switch, vnz, vnz, true, C_iso, Cp_is_32, Cj_is_32, Ci_is_32)) ;
+        C->hyper_switch, vnz, vnz, true, C_iso, Cp_is_32, Cj_is_32, Ci_is_32,
+        memlane)) ;
     C->sparsity_control = sparsity_control ;
     C->bitmap_switch = bitmap_switch ;
 

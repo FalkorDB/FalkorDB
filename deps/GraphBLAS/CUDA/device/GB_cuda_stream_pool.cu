@@ -45,7 +45,7 @@ GrB_Info GB_cuda_stream_pool_release (cudaStream_t *stream)
     // release the stream inside a process-wide critical section
     //--------------------------------------------------------------------------
 
-    GB_OPENMP_LOCK_SET (4)
+    GB_OPENMP_LOCK_SET (4)      // CUDA stream pool
     {
         if (pool.nstreams_avail[device] == STREAMS_PER_DEVICE)
         {
@@ -62,7 +62,7 @@ GrB_Info GB_cuda_stream_pool_release (cudaStream_t *stream)
             pool.nstreams_avail[device]++ ;
         }
     }
-    GB_OPENMP_LOCK_UNSET (4)
+    GB_OPENMP_LOCK_UNSET (4)    // CUDA stream pool
 
     //--------------------------------------------------------------------------
     // handle any error and return results
@@ -99,7 +99,7 @@ GrB_Info GB_cuda_stream_pool_acquire (cudaStream_t *stream)
     // acquire the stream inside a process-wide critical section
     //--------------------------------------------------------------------------
 
-    GB_OPENMP_LOCK_SET (4)
+    GB_OPENMP_LOCK_SET (4)      // CUDA stream pool
     {
         if (!pool.nstreams_avail[device])
         {
@@ -114,7 +114,7 @@ GrB_Info GB_cuda_stream_pool_acquire (cudaStream_t *stream)
             pool.nstreams_avail[device]-- ;
         }
     }
-    GB_OPENMP_LOCK_UNSET (4)
+    GB_OPENMP_LOCK_UNSET (4)    // CUDA stream pool
 
     //--------------------------------------------------------------------------
     // handle any error and return results

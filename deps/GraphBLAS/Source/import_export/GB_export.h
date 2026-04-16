@@ -11,7 +11,6 @@
 #define GB_EXPORT_H
 #include "transpose/GB_transpose.h"
 
-
 GrB_Info GB_import      // import/pack a matrix in any format
 (
     bool packing,       // pack if true, create and import false
@@ -24,25 +23,25 @@ GrB_Info GB_import      // import/pack a matrix in any format
 
     // the 5 arrays:
     uint64_t **Ap,      // pointers, for sparse and hypersparse formats.
-    uint64_t Ap_size,   // size of Ap in bytes
+    uint64_t Ap_memsize,   // size of Ap in bytes (memlane = 0)
 
     uint64_t **Ah,      // vector indices for hypersparse matrices
-    uint64_t Ah_size,   // size of Ah in bytes
+    uint64_t Ah_memsize,   // size of Ah in bytes (memlane = 0)
 
     int8_t **Ab,        // bitmap, for bitmap format only.
-    uint64_t Ab_size,   // size of Ab in bytes
+    uint64_t Ab_memsize,   // size of Ab in bytes (memlane = 0)
 
     uint64_t **Ai,      // indices for hyper and sparse formats
-    uint64_t Ai_size,   // size of Ai in bytes
+    uint64_t Ai_memsize,   // size of Ai in bytes (memlane = 0)
 
     void **Ax,          // values
-    uint64_t Ax_size,   // size of Ax in bytes
+    uint64_t Ax_memsize,   // size of Ax in bytes (memlane = 0)
 
     // additional information for specific formats:
     uint64_t nvals,     // # of entries for bitmap format, or for a vector
                         // in CSC format.
     bool jumbled,       // if true, sparse/hypersparse may be jumbled.
-    uint64_t nvec,      // size of Ah for hypersparse format.
+    uint64_t nvec,      // # entries of Ah for hypersparse format.
 
     // information for all formats:
     int sparsity,       // hypersparse, sparse, bitmap, or full
@@ -68,24 +67,24 @@ GrB_Info GB_export      // export/unpack a matrix in any format
 
     // the 5 arrays:
     uint64_t **Ap,      // pointers
-    uint64_t *Ap_size,  // size of Ap in bytes
+    uint64_t *Ap_memsize,  // size of Ap in bytes (memlane = 0)
 
     uint64_t **Ah,      // vector indices
-    uint64_t *Ah_size,  // size of Ah in bytes
+    uint64_t *Ah_memsize,  // size of Ah in bytes (memlane = 0)
 
     int8_t **Ab,        // bitmap
-    uint64_t *Ab_size,  // size of Ab in bytes
+    uint64_t *Ab_memsize,  // size of Ab in bytes (memlane = 0)
 
     uint64_t **Ai,      // indices
-    uint64_t *Ai_size,  // size of Ai in bytes
+    uint64_t *Ai_memsize,  // size of Ai in bytes (memlane = 0)
 
     void **Ax,          // values
-    uint64_t *Ax_size,  // size of Ax in bytes
+    uint64_t *Ax_memsize,  // size of Ax in bytes (memlane = 0)
 
     // additional information for specific formats:
     uint64_t *nvals,    // # of entries for bitmap format.
     bool *jumbled,      // if true, sparse/hypersparse may be jumbled.
-    uint64_t *nvec,     // size of Ah for hypersparse format.
+    uint64_t *nvec,     // # entries of Ah for hypersparse format.
 
     // information for all formats:
     int *sparsity,      // hypersparse, sparse, bitmap, or full

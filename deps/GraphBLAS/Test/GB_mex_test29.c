@@ -411,7 +411,7 @@ void mexFunction
     OK (GrB_Global_set_VOID_ (GrB_GLOBAL, (void *) myflush, GxB_FLUSH,
         sizeof (GB_flush_function_t))) ;
     OK (GxB_print (s_int32, 3)) ;
-    OK (GrB_Global_set_VOID_ (GrB_GLOBAL, (void *) mexPrintf, GxB_PRINTF,
+    OK (GrB_Global_set_VOID_ (GrB_GLOBAL, (void *) printf, GxB_PRINTF,
         sizeof (GB_printf_function_t))) ;
     OK (GrB_Global_set_VOID_ (GrB_GLOBAL, (void *) NULL, GxB_FLUSH,
         sizeof (GB_flush_function_t))) ;

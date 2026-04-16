@@ -17,7 +17,7 @@
 //      A new, dynamically allocated header for the matrix A is allocated.  If
 //      successful, *Ahandle points to the new handle, and its contents, on
 //      output.  If an out-of-memory condition occurs, the header is freed and
-//      *Ahandle is NULL on output.  If successful, (*Ahandle)->header_size
+//      *Ahandle is NULL on output.  If successful, (*Ahandle)->header_mem
 //      will always be nonzero on output.
 
 // If *Ahandle is not NULL on input:
@@ -26,10 +26,13 @@
 //      modified on output, either on success or failure.  If successful, the
 //      content of A has been created.  If an out-of-memory condition occurs,
 //      the preexisting header is not freed and *Ahandle is unmodified on
-//      output. (*Ahandle)->header_size is unchanged.
+//      output. (*Ahandle)->header_mem is unchanged.
 
 #include "GB.h"
 
+// The prototype is in Source/callback/GB_callbacks.h:
+
+#if 0
 GrB_Info GB_new_bix             // create a new matrix, incl. A->b, A->i, A->x
 (
     GrB_Matrix *Ahandle,        // output matrix to create
@@ -48,8 +51,12 @@ GrB_Info GB_new_bix             // create a new matrix, incl. A->b, A->i, A->x
     const bool A_iso,           // if true, allocate A as iso
     bool p_is_32,               // if true, A->p is 32 bit; 64 bit otherwise
     bool j_is_32,               // if true, A->h and A->Y are 32 bit; else 64
-    bool i_is_32                // if true, A->i is 32 bit; 64 bit otherwise
+    bool i_is_32,               // if true, A->i is 32 bit; 64 bit otherwise
+    int memlane                 // memlane for the matrix
 )
+#endif
+
+GB_CALLBACK_NEW_BIX_PROTO (GB_new_bix)
 {
 
     //--------------------------------------------------------------------------
@@ -70,9 +77,10 @@ GrB_Info GB_new_bix             // create a new matrix, incl. A->b, A->i, A->x
     //--------------------------------------------------------------------------
 
     bool preexisting_header = (*Ahandle != NULL) ;
-    GrB_Info info = GB_new (Ahandle, type, vlen, vdim,
-        Ap_option, is_csc, sparsity, hyper_switch, plen,
-        p_is_32, j_is_32, i_is_32) ;
+
+    GrB_Info info = GB_new (Ahandle, // either new or existing header
+        type, vlen, vdim, Ap_option, is_csc, sparsity, hyper_switch, plen,
+        p_is_32, j_is_32, i_is_32, memlane) ;
     if (info != GrB_SUCCESS)
     { 
         // out of memory.

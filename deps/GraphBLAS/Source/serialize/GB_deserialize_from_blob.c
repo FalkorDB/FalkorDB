@@ -18,25 +18,25 @@
 #include "lz4_wrapper/GB_lz4.h"
 #include "zstd_wrapper/GB_zstd.h"
 
-#define GB_FREE_ALL         \
-{                           \
-    GB_FREE_MEMORY (&X, X_size) ;  \
+#define GB_FREE_ALL                 \
+{                                   \
+    GB_FREE_MEMORY (&X, X_mem) ;    \
 }
 
 GrB_Info GB_deserialize_from_blob
 (
     // output:
     GB_void **X_handle,         // uncompressed output array
-    size_t *X_size_handle,      // size of X as allocated
+    uint64_t *X_mem_handle,     // size of X as allocated
     // input:
     int64_t X_len,              // size of X in bytes
-    const GB_void *blob,        // serialized blob of size blob_size
-    size_t blob_size,
+    const GB_void *blob,        // serialized blob of size blob_memsize
+    uint64_t blob_memsize,
     uint64_t *Sblocks,          // array of size nblocks
     int32_t nblocks,            // # of compressed blocks for this array
     int32_t method,             // compression method used for each block
     // input/output:
-    size_t *s_handle            // where to read from the blob
+    uint64_t *s_handle          // where to read from the blob
 )
 {
 
@@ -44,12 +44,15 @@ GrB_Info GB_deserialize_from_blob
     // check inputs
     //--------------------------------------------------------------------------
 
+    int memlane = 0 ;           // FIXME memlane param
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     ASSERT (blob != NULL) ;
     ASSERT (s_handle != NULL) ;
     ASSERT (X_handle != NULL) ;
-    ASSERT (X_size_handle != NULL) ;
+    ASSERT (X_mem_handle != NULL) ;
     (*X_handle) = NULL ;
-    (*X_size_handle) = 0 ;
+    (*X_mem_handle) = mem ;
 
     //--------------------------------------------------------------------------
     // parse the method
@@ -62,17 +65,17 @@ GrB_Info GB_deserialize_from_blob
     // allocate the output array
     //--------------------------------------------------------------------------
 
-    size_t X_size = 0 ;
+    uint64_t X_mem = mem ;
     GB_void *X = NULL ;
     if (nblocks == 0)
     {
         // allocate an "empty" block (of 8 bytes) and set it zero
-        X = GB_CALLOC_MEMORY (X_len, sizeof (GB_void), &X_size) ;
+        X = GB_CALLOC_MEMORY (X_len, sizeof (GB_void), &X_mem) ;
     }
     else
     {
         // allocate a block that is filled below
-        X = GB_MALLOC_MEMORY (X_len, sizeof (GB_void), &X_size) ;
+        X = GB_MALLOC_MEMORY (X_len, sizeof (GB_void), &X_mem) ;
     }
 
     if (X == NULL)
@@ -108,7 +111,7 @@ GrB_Info GB_deserialize_from_blob
         // no compression; the array is held in a single block
         //----------------------------------------------------------------------
 
-        if (nblocks != 1 || Sblocks [0] != X_len || s + X_len > blob_size)
+        if (nblocks != 1 || Sblocks [0] != X_len || s + X_len > blob_memsize)
         { 
             // blob is invalid: guard against an unsafe memcpy
             ok = false ;
@@ -139,21 +142,21 @@ GrB_Info GB_deserialize_from_blob
             GB_PARTITION (kstart, kend, X_len, blockid, nblocks) ;
             int64_t s_start = (blockid == 0) ? 0 : Sblocks [blockid-1] ;
             int64_t s_end   = Sblocks [blockid] ;
-            size_t  s_size  = s_end - s_start ;
-            size_t  d_size  = kend - kstart ;
+            size_t  s_memsize  = s_end - s_start ;
+            size_t  d_memsize  = kend - kstart ;
             // ensure s_start, s_end, kstart, and kend are all valid,
             // to avoid accessing arrays out of bounds, if input is corrupted.
             if (kstart < 0 || kend < 0 || s_start < 0 || s_end < 0 ||
-                kstart >= kend || s_start >= s_end || s_size > INT32_MAX ||
-                s + s_start > blob_size || s + s_end > blob_size ||
-                kstart > X_len || kend > X_len || d_size > INT32_MAX)
+                kstart >= kend || s_start >= s_end || s_memsize > INT32_MAX ||
+                s + s_start > blob_memsize || s + s_end > blob_memsize ||
+                kstart > X_len || kend > X_len || d_memsize > INT32_MAX)
             { 
                 // blob is invalid
                 ok = false ;
             }
             else
             { 
-                // uncompress the compressed block of size s_size
+                // uncompress the compressed block of size s_memsize
                 // from blob [s + s_start:s_end-1] into X [kstart:kend-1].
                 // This is safe and secure so far.  The contents of X are
                 // not yet checked, however.  That step is done in
@@ -163,8 +166,8 @@ GrB_Info GB_deserialize_from_blob
                 if (algo == GxB_COMPRESSION_ZSTD)
                 { 
                     // ZSTD
-                    size_t u = ZSTD_decompress (dst, d_size, src, s_size) ;
-                    if (u != d_size)
+                    size_t u = ZSTD_decompress (dst, d_memsize, src, s_memsize);
+                    if (u != d_memsize)
                     {
                         // blob is invalid
                         ok = false ;
@@ -173,10 +176,11 @@ GrB_Info GB_deserialize_from_blob
                 else
                 { 
                     // LZ4 or LZ4HC
-                    int src_size = (int) s_size ;
-                    int dst_size = (int) d_size ;
-                    int u = LZ4_decompress_safe (src, dst, src_size, dst_size) ;
-                    if (u != dst_size)
+                    int src_memsize = (int) s_memsize ;
+                    int dst_memsize = (int) d_memsize ;
+                    int u = LZ4_decompress_safe (src, dst,
+                        src_memsize, dst_memsize) ;
+                    if (u != dst_memsize)
                     {
                         // blob is invalid
                         ok = false ;
@@ -198,7 +202,7 @@ GrB_Info GB_deserialize_from_blob
     //--------------------------------------------------------------------------
 
     (*X_handle) = X ;
-    (*X_size_handle) = X_size ;
+    (*X_mem_handle) = X_mem ;
     if (nblocks > 0)
     { 
         s += Sblocks [nblocks-1] ;

@@ -17,7 +17,7 @@ GrB_Info GxB_Matrix_import_FullC  // import a full matrix, held by column
     uint64_t ncols,     // number of columns of the matrix
 
     void **Ax,          // values
-    uint64_t Ax_size,   // size of Ax in bytes
+    uint64_t Ax_memsize,   // size of Ax in bytes
     bool iso,           // if true, A is iso
 
     const GrB_Descriptor desc
@@ -29,7 +29,7 @@ GrB_Info GxB_Matrix_import_FullC  // import a full matrix, held by column
     //--------------------------------------------------------------------------
 
     GB_WHERE0 ("GxB_Matrix_import_FullC (&A, type, nrows, ncols, "
-        "&Ax, Ax_size, iso, desc)") ;
+        "&Ax, Ax_memsize, iso, desc)") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_GET_DESCRIPTOR_IMPORT (desc, fast_import) ;
@@ -43,7 +43,7 @@ GrB_Info GxB_Matrix_import_FullC  // import a full matrix, held by column
         NULL, 0,        // Ah
         NULL, 0,        // Ab
         NULL, 0,        // Ai
-        Ax,   Ax_size,  // Ax
+        Ax,   Ax_memsize,  // Ax
         0, false, 0,
         GxB_FULL, true,                     // full by col
         iso, fast_import, true, Werk) ;

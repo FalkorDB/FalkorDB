@@ -148,7 +148,7 @@ void mexFunction
     expected = GrB_INVALID_VALUE ;
     ERR (GB_new_bix (&B, GrB_FP64, INT64_MAX / 4, INT64_MAX / 4, GB_ph_null,
         true, GxB_HYPERSPARSE, false, 0.1, 2, 2, true, true,
-        true, true, true)) ;
+        true, true, true, GB_MEMLANE_MATLAB)) ;
     CHECK (B == NULL) ;
 
     //--------------------------------------------------------------------------

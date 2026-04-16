@@ -11,10 +11,12 @@
 // GxB_SelectOp all use the same internal structure.
 
     int64_t magic ;         // for detecting uninitialized objects
-    size_t header_size ;    // size of the malloc'd block for this struct, or 0
+    uint64_t header_mem ;   // size of the malloc'd block for this struct, or 0,
+                            // and memlane = 0
     // ---------------------//
     char *user_name ;       // user name for GrB_get/GrB_set
-    size_t user_name_size ; // allocated size of user_name for GrB_get/GrB_set
+    uint64_t user_name_mem ; // allocated size of user_name for GrB_get/GrB_set
+                            // and memlane = 0
     // ---------------------//
 
     GrB_Type ztype ;        // type of z
@@ -31,7 +33,8 @@
     int32_t name_len ;      // length of JIT C name; 0 for builtin
     GB_Opcode opcode ;      // operator opcode
     char *defn ;            // function definition
-    size_t defn_size ;      // allocated size of the definition
+    uint64_t defn_mem ;     // allocated size of the definition,
+                            // and memlane = 0
 
     uint64_t hash ;         // if 0, operator uses only builtin ops and types
 
@@ -47,5 +50,5 @@
 
     void *theta ;           // theta for binary op created from an index binary
                             // op, NULL otherwise (even for an index binary op)
-    size_t theta_size ;     // allocated size of theta, or 0
+    uint64_t theta_mem ;    // allocated size of theta, or 0, and memlane
 

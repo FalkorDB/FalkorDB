@@ -21,7 +21,7 @@
 // GB_C_FLAGS: the C compiler flags used to compile GraphBLAS.  Used
 // for compiling and linking:
 #ifndef GB_C_FLAGS
-#define GB_C_FLAGS      "@GB_C_FLAGS@ @GB_OPENMP_C_FLAGS@"
+#define GB_C_FLAGS      "@GB_C_FLAGS@"
 #endif
 
 // GB_C_LINK_FLAGS: the flags passed to the C compiler for the link phase:

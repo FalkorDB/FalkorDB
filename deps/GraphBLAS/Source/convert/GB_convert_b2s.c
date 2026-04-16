@@ -18,7 +18,7 @@
 #include "GB.h"
 #include "jitifyer/GB_stringify.h"
 #include "unaryop/GB_unop.h"
-#define GB_FREE_ALL GB_FREE_MEMORY (&W, W_size) ;
+#define GB_FREE_ALL GB_FREE_MEMORY (&W, W_mem) ;
 
 GrB_Info GB_convert_b2s   // extract CSC/CSR or triplets from bitmap
 (
@@ -30,10 +30,11 @@ GrB_Info GB_convert_b2s   // extract CSC/CSR or triplets from bitmap
     int64_t *cnvec_nonempty,    // # of non-empty vectors
     // inputs: not modified
     const bool Cp_is_32,        // if true, Cp is uint32_t; otherwise uint64_t
-    const bool Ci_is_32,        // if true, Ci is uint32_t; otherwise uint64_t
     const bool Cj_is_32,        // if true, Cj is uint32_t; otherwise uint64_t
+    const bool Ci_is_32,        // if true, Ci is uint32_t; otherwise uint64_t
     const GrB_Type ctype,       // type of Cx
     const GrB_Matrix A,         // matrix to extract; not modified
+    const int memlane,
     GB_Werk Werk
 )
 {
@@ -48,11 +49,13 @@ GrB_Info GB_convert_b2s   // extract CSC/CSR or triplets from bitmap
     ASSERT_TYPE_OK (ctype, "ctype for b2s", GB0) ;
     ASSERT ((Cp_is_32 && A->nvals < UINT32_MAX) || !Cp_is_32) ;
 
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     //--------------------------------------------------------------------------
     // get inputs and determine tasks
     //--------------------------------------------------------------------------
 
-    void *W = NULL ; size_t W_size = 0 ;
+    void *W = NULL ; uint64_t W_mem = mem ;
     GB_IDECL (W , , u) ;
     GB_IDECL (Cp, , u) ; GB_IPTR (Cp, Cp_is_32) ;
     GB_IDECL (Ci, , u) ; GB_IPTR (Ci, Ci_is_32) ;
@@ -108,7 +111,7 @@ GrB_Info GB_convert_b2s   // extract CSC/CSR or triplets from bitmap
         //----------------------------------------------------------------------
 
         // allocate one row of W per thread, each row of length avdim
-        W = GB_MALLOC_MEMORY (nthreads * avdim, psize, &W_size) ;
+        W = GB_MALLOC_MEMORY (nthreads * avdim, psize, &W_mem) ;
         if (W == NULL)
         {
             // out of memory
@@ -284,7 +287,7 @@ GrB_Info GB_convert_b2s   // extract CSC/CSR or triplets from bitmap
             struct GB_UnaryOp_opaque op_header ;
             GB_Operator op = GB_unop_identity (ctype, &op_header) ;
             info = GB_convert_b2s_jit (Cp, Ci, Cj, Cx_new,
-                Cp_is_32, Ci_is_32, Cj_is_32, ctype, op, A, W, nthreads) ;
+                Cp_is_32, Cj_is_32, Ci_is_32, ctype, op, A, W, nthreads) ;
         }
 
         //----------------------------------------------------------------------

@@ -7,7 +7,7 @@
 
 //------------------------------------------------------------------------------
 
-// This is for testing only.  See GrB.argmax instead.
+// This is for testing only.
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
@@ -269,9 +269,9 @@ void mexFunction
     code = 62 ;
     OK (GxB_IndexBinaryOp_get_INT32 (Iop, &code, GrB_OUTP_TYPE_CODE)) ;
     CHECK (code == GrB_UDT_CODE) ;
-    size_t name_size ;
-    OK (GxB_IndexBinaryOp_get_SIZE (Iop, &name_size, GxB_JIT_C_NAME)) ;
-    // printf ("name size %d\n", (int) name_size) ;
+    size_t name_len ;
+    OK (GxB_IndexBinaryOp_get_SIZE (Iop, &name_len, GxB_JIT_C_NAME)) ;
+    // printf ("name size %d\n", (int) name_len) ;
     char name [256] ;
     OK (GxB_IndexBinaryOp_get_String (Iop, name, GxB_JIT_C_NAME)) ;
     // printf ("name [%s]\n", name) ;

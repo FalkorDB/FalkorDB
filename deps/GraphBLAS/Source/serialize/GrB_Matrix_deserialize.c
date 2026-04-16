@@ -25,7 +25,7 @@ GrB_Info GrB_Matrix_deserialize     // deserialize blob into a GrB_Matrix
                         // holds a built-in type; otherwise must match the
                         // type of C.
     const void *blob,   // the blob
-    uint64_t blob_size  // size of the blob
+    uint64_t blob_memsize  // size of the blob
 )
 { 
 
@@ -43,7 +43,7 @@ GrB_Info GrB_Matrix_deserialize     // deserialize blob into a GrB_Matrix
     //--------------------------------------------------------------------------
 
     GrB_Info info = GB_deserialize (C, type, (const GB_void *) blob,
-        (size_t) blob_size) ;
+        (size_t) blob_memsize) ;
     GB_BURBLE_END ;
     return (info) ;
 }

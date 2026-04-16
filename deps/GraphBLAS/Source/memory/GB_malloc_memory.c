@@ -7,30 +7,32 @@
 
 //------------------------------------------------------------------------------
 
-// A wrapper for malloc.  Space is not initialized.
+// A wrapper for malloc.  Space is not initialized
 
 #include "GB.h"
 
 //------------------------------------------------------------------------------
-// GB_malloc_helper:  use malloc to allocate an uninitialized memory block
+// GB_malloc_helper:  malloc to allocate an non-initialized block
 //------------------------------------------------------------------------------
 
 static inline void *GB_malloc_helper
 (
     // input/output:
-    size_t *size            // on input: # of bytes requested
+    uint64_t *memsize,      // on input: # of bytes requested
                             // on output: # of bytes actually allocated
+    // input
+    int memlane
 )
-{ 
+{
     void *p = NULL ;
 
     // make sure the block is at least 8 bytes in size
-    (*size) = GB_IMAX (*size, 8) ;
+    (*memsize) = GB_IMAX (*memsize, 8) ;
 
-    p = GB_Global_malloc_function (*size) ;
+    p = GB_Global_malloc_function (*memsize, memlane) ;
 
     #ifdef GB_MEMDUMP
-    GBMDUMP ("malloc  %p %8ld: ", p, *size) ;
+    GBMDUMP ("malloc  %p %8ld: lane:%d ", p, *memsize, memlane) ;
     GB_Global_memtable_dump ( ) ;
     #endif
 
@@ -44,24 +46,25 @@ static inline void *GB_malloc_helper
 #if 0
 void *GB_malloc_memory      // pointer to allocated block of memory
 (
-    size_t nitems,          // number of items to allocate
-    size_t size_of_item,    // sizeof each item
-    // output:
-    size_t *size_allocated  // # of bytes actually allocated
+    uint64_t nitems,        // number of items to allocate
+    uint64_t size_of_item,  // sizeof each item
+    // input/output
+    uint64_t *mem           // # of bytes actually allocated, and memlane
 )
 #endif
 
-GB_CALLBACK_MALLOC_MEMORY_PROTO (GB_malloc_memory)
+GB_CALLBACK_CALLOC_MEMORY_PROTO (GB_malloc_memory)
 {
 
     //--------------------------------------------------------------------------
     // check inputs
     //--------------------------------------------------------------------------
 
-    ASSERT (size_allocated != NULL) ;
+    ASSERT (mem != NULL) ;
 
     void *p ;
-    size_t size ;
+    uint64_t memsize = 0 ;
+    int memlane = GB_memlane (*mem) ;
 
     // make sure at least one item is allocated
     nitems = GB_IMAX (1, nitems) ;
@@ -69,12 +72,11 @@ GB_CALLBACK_MALLOC_MEMORY_PROTO (GB_malloc_memory)
     // make sure at least one byte is allocated
     size_of_item = GB_IMAX (1, size_of_item) ;
 
-    bool ok = GB_size_t_multiply (&size, nitems, size_of_item) ;
-    if (!ok || (((uint64_t) nitems) > GB_NMAX)
-            || (((uint64_t) size_of_item) > GB_NMAX))
+    bool ok = GB_uint64_multiply (&memsize, nitems, size_of_item) ;
+    if (!ok || nitems > GB_NMAX || size_of_item > GB_NMAX)
     { 
         // overflow
-        (*size_allocated) = 0 ;
+        (*mem) = GB_mem (memlane, 0) ;
         return (NULL) ;
     }
 
@@ -103,7 +105,7 @@ GB_CALLBACK_MALLOC_MEMORY_PROTO (GB_malloc_memory)
         }
         else
         { 
-            p = GB_malloc_helper (&size) ;
+            p = GB_malloc_helper (&memsize, memlane) ;
         }
 
     }
@@ -114,15 +116,20 @@ GB_CALLBACK_MALLOC_MEMORY_PROTO (GB_malloc_memory)
         // normal use, in production
         //----------------------------------------------------------------------
 
-        p = GB_malloc_helper (&size) ;
+        p = GB_malloc_helper (&memsize, memlane) ;
     }
 
     //--------------------------------------------------------------------------
     // return result
     //--------------------------------------------------------------------------
 
-    (*size_allocated) = (p == NULL) ? 0 : size ;
-    ASSERT (GB_IMPLIES (p != NULL, size == GB_Global_memtable_size (p))) ;
+    memsize = (p == NULL) ? 0 : memsize ;
+    if (p != NULL)
+    {
+        MEMTABLE_ASSERT (memsize == GB_Global_memtable_memsize (p)) ;
+        MEMTABLE_ASSERT (memlane == GB_Global_memtable_memlane (p)) ;
+    }
+    (*mem) = GB_mem (memlane, memsize) ;
     return (p) ;
 }
 

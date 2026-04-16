@@ -16,6 +16,9 @@
 // their consituient parts (the types and ops in a semiring for example) have a
 // hash of UINT64_MAX.
 
+// This method does not determine if any GPUs are available, or which to use.
+// It only checks if the type can be handle by any GPU.
+
 #include "GB_cuda.hpp"
 
 bool GB_cuda_type_branch            // return true if the type is OK on GPU
@@ -37,6 +40,14 @@ bool GB_cuda_type_branch            // return true if the type is OK on GPU
     }
 
     size_t size = type->size ;
+
+    if (size > 128) // FIXME: max type size should depend on major/minor device
+    {
+        // the type is too big for the GPU (the builder will fail at 192 bytes
+        // on the sm70 architecture, at least; see the wildtype_demo, which
+        // causes the CUB Radix sort to use too much shared memory)
+        return (false) ;
+    }
 
     if (size == sizeof (uint8_t) || size == sizeof (uint16_t))
     {

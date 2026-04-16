@@ -46,7 +46,7 @@
 
 GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
 (
-    GrB_Matrix C,           // output matrix, static header
+    GrB_Matrix C,           // output matrix, header already allocated
     const GrB_Type ctype,   // type of output matrix C
     const bool C_is_csc,    // format of output matrix C
     const GrB_Matrix M,     // sparse/hyper, not NULL
@@ -65,7 +65,8 @@ GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (C != NULL) ;
+    int memlane = GB_memlane (C->header_mem) ;
 
     ASSERT_MATRIX_OK (M, "M for emult_04", GB0) ;
     ASSERT_MATRIX_OK (A, "A for emult_04", GB0) ;
@@ -127,7 +128,7 @@ GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
     GB_OK (GB_new (&C, // sparse or hyper (same as M), existing header
         ctype, vlen, vdim, GB_ph_calloc, C_is_csc,
         C_sparsity, M->hyper_switch, nvec,
-        M->p_is_32, M->j_is_32, M->i_is_32)) ;
+        M->p_is_32, M->j_is_32, M->i_is_32, memlane)) ;
 
     GB_Cp_DECLARE (Cp, ) ; GB_Cp_PTR (Cp, C) ;
     GB_Ci_DECLARE (Ci, ) ; GB_Ci_PTR (Ci, C) ;

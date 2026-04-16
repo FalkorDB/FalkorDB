@@ -34,6 +34,7 @@ GrB_Info GB_dup             // make an exact copy of a matrix
 (
     GrB_Matrix *Chandle,    // handle of output matrix to create
     const GrB_Matrix A,     // input matrix to copy
+    const int memlane,
     GB_Werk Werk
 )
 { 
@@ -51,6 +52,6 @@ GrB_Info GB_dup             // make an exact copy of a matrix
     //--------------------------------------------------------------------------
 
     GB_BURBLE_MATRIX (A, "(%sdup) ", A->iso ? "iso " : "") ;
-    return (GB_dup_worker (Chandle, A->iso, A, true, NULL)) ;
+    return (GB_dup_worker (Chandle, A->iso, A, true, NULL, memlane)) ;
 }
 

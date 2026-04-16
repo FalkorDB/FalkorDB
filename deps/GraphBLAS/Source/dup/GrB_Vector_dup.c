@@ -27,13 +27,15 @@ GrB_Info GrB_Vector_dup     // make an exact copy of a vector
     GB_WHERE_1 (u, "GrB_Vector_dup (&w, u)") ;
     GB_BURBLE_START ("GrB_Vector_dup") ;
 
+    int memlane = GB_Context_memlane ( ) ;
+
     ASSERT (GB_VECTOR_OK (u)) ;
 
     //--------------------------------------------------------------------------
     // duplicate the vector
     //--------------------------------------------------------------------------
 
-    info = GB_dup ((GrB_Matrix *) w, (GrB_Matrix) u, Werk) ;
+    info = GB_dup ((GrB_Matrix *) w, (GrB_Matrix) u, memlane, Werk) ;
     GB_BURBLE_END ;
     return (info) ;
 }

@@ -1,12 +1,22 @@
+//------------------------------------------------------------------------------
+// GraphBLAS/CUDA/select/template/GB_jit_kernel_select_bitmap.cu
+//------------------------------------------------------------------------------
+
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//------------------------------------------------------------------------------
+
 #define GB_FREE_ALL ;
 
 using namespace cooperative_groups ;
 
-#define tile_sz 32
-#define log2_tile_sz 5
-
 #include "template/GB_cuda_tile_sum_uint64.cuh"
 #include "template/GB_cuda_threadblock_sum_uint64.cuh"
+
+//------------------------------------------------------------------------------
+// GB_cuda_select_bitmap_kernel
+//------------------------------------------------------------------------------
 
 __global__ void GB_cuda_select_bitmap_kernel
 (
@@ -68,6 +78,9 @@ __global__ void GB_cuda_select_bitmap_kernel
     }
 }
 
+//------------------------------------------------------------------------------
+// select bitmap, host method
+//------------------------------------------------------------------------------
 
 extern "C"
 {
@@ -76,6 +89,7 @@ extern "C"
 
 GB_JIT_CUDA_KERNEL_SELECT_BITMAP_PROTO (GB_jit_kernel)
 {
+
     GB_GET_CALLBACKS ;
     dim3 grid (gridsz) ;
     dim3 block (GB_CUDA_SELECT_BITMAP_BLOCKDIM) ;

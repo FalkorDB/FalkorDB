@@ -74,7 +74,8 @@ __global__ void GB_cuda_AxB_dot3_phase3_vssp_kernel
     GB_M_NVALS (mnz) ;
     int all_in_one = ( (end - start) == mnz ) ;
 
-    thread_block_tile<tile_sz> tile = tiled_partition<tile_sz>( this_thread_block());
+    thread_block_tile<GB_CUDA_TILE_SIZE> tile =
+        tiled_partition<GB_CUDA_TILE_SIZE>(this_thread_block()) ;
 
     // Main loop over pairs in Bucket [start:end-1]
     for (int64_t kk = start+ blockIdx.x; 

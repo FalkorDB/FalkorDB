@@ -17,7 +17,11 @@
 // 13 built-in types, and the _UDT method for all user-defined types.
 // It also constructs GxB_Vector_isStoredElement.
 
-// FUTURE: tolerate zombies
+// The search strategy has been revised in GraphBLAS 10.4.0:  Do not wait
+// unless jumbled.  First try to find the element.  If found (live or zombie),
+// no need to wait.  If not found and pending tuples exist, wait and then
+// search for it again.  Prior to this version, any call to this method would
+// always finish any pending work.
 
 GrB_Info GB_EXTRACT_ELEMENT     // extract a single entry, x = V(i)
 (
@@ -39,16 +43,13 @@ GrB_Info GB_EXTRACT_ELEMENT     // extract a single entry, x = V(i)
     GB_RETURN_IF_NULL (x) ;
     #endif
 
-    // delete any lingering zombies, assemble any pending tuples, and unjumble
-    if (GB_ANY_PENDING_WORK (V))
+    if (V->jumbled)
     { 
         GB_WHERE_1 (V, GB_WHERE_STRING) ;
         GB_BURBLE_START ("GrB_Vector_extractElement") ;
         GB_OK (GB_wait ((GrB_Matrix) V, "v", Werk)) ;
         GB_BURBLE_END ;
     }
-
-    ASSERT (!GB_ANY_PENDING_WORK (V)) ;
 
     // check index
     if (i >= V->vlen)
@@ -61,39 +62,28 @@ GrB_Info GB_EXTRACT_ELEMENT     // extract a single entry, x = V(i)
     //--------------------------------------------------------------------------
 
     int64_t pleft ;
-    bool found ;
-    GB_Ap_DECLARE (Vp, const) ; GB_Ap_PTR (Vp, V) ;
+    bool found, is_zombie ;
+    GB_Vector_find_entry (&pleft, &found, &is_zombie, V, i) ;
 
-    if (Vp != NULL)
+    //--------------------------------------------------------------------------
+    // check again if not found and the vector has pending tuples
+    //--------------------------------------------------------------------------
+
+    if (!found && V->Pending != NULL)
     { 
-        // V is sparse
-        pleft = 0 ;
-        int64_t pright = GB_IGET (Vp, 1) - 1 ;
-        // Time taken for this step is at most O(log(nnz(V))).
-        found = GB_binary_search (i, V->i, V->i_is_32, &pleft, &pright) ;
-    }
-    else
-    {
-        // V is bitmap or full
-        pleft = i ;
-        const int8_t *restrict Vb = V->b ;
-        if (Vb != NULL)
-        { 
-            // V is bitmap
-            found = (Vb [pleft] == 1) ;
-        }
-        else
-        { 
-            // V is full
-            found = true ;
-        }
+        GB_WHERE_1 (V, GB_WHERE_STRING) ;
+        GB_BURBLE_START ("GrB_Vector_extractElement") ;
+        GB_OK (GB_wait ((GrB_Matrix) V, "v", Werk)) ;
+        GB_BURBLE_END ;
+        GB_Vector_find_entry (&pleft, &found, &is_zombie, V, i) ;
+        ASSERT (!is_zombie) ;   // GB_wait has removed all zombies
     }
 
     //--------------------------------------------------------------------------
     // extract the element
     //--------------------------------------------------------------------------
 
-    if (found)
+    if (found && !is_zombie)
     {
         // entry found
         #ifdef GB_XTYPE
@@ -118,7 +108,6 @@ GrB_Info GB_EXTRACT_ELEMENT     // extract a single entry, x = V(i)
             void *vx = ((GB_void *) V->x) + (V->iso ? 0 : (pleft*vsize)) ;
             GB_cast_scalar (x, GB_XCODE, vx, vcode, vsize) ;
         }
-        // TODO: do not flush if extracting to GrB_Scalar
         #pragma omp flush
         #endif
         return (GrB_SUCCESS) ;

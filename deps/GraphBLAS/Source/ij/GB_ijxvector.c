@@ -46,14 +46,14 @@
 #include "GB_ij.h"
 #include "container/GB_container.h"
 
-#define GB_FREE_ALL                     \
-{                                       \
-    GB_FREE_MEMORY (&I2, I2_size) ;     \
-    if (I != NULL && I_size > 0)        \
-    {                                   \
-        GB_FREE_MEMORY (&I, I_size) ;   \
-    }                                   \
-    GB_Matrix_free (&T) ;               \
+#define GB_FREE_ALL                             \
+{                                               \
+    GB_FREE_MEMORY (&I2, I2_mem) ;              \
+    if (I != NULL && GB_memsize (I_mem) > 0)    \
+    {                                           \
+        GB_FREE_MEMORY (&I, I_mem) ;            \
+    }                                           \
+    GB_Matrix_free (&T) ;                       \
 }
 
 //------------------------------------------------------------------------------
@@ -68,7 +68,7 @@
 //      GxB_BACKWARDS   I = [begin, end, -stride]
 //      GxB_STRIDE      I = [begin, end, +stride]
 //
-// Tyis method is not used for GrB_build.
+// This method is not used for GrB_build.
 
 static inline GrB_Info GB_stride
 (
@@ -79,13 +79,12 @@ static inline GrB_Info GB_stride
     // output:
     void **I_handle,        // the list I; may be GrB_ALL
     int64_t *ni_handle,     // the length of I, or special (GxB_RANGE)
-    size_t *I_size_handle,  // if > 0, I has been allocated by this
+    uint64_t *I_mem_handle, // if memsize > 0, I has been allocated by this
     GrB_Type *I_type_handle // the type of I: always GrB_UINT64
 )
 {
     ASSERT ((*I_handle) == NULL) ;
-    ASSERT ((*I_size_handle) == 0) ;
-    (*I_handle) = GB_CALLOC_MEMORY (3, sizeof (uint64_t), I_size_handle) ;
+    (*I_handle) = GB_CALLOC_MEMORY (3, sizeof (uint64_t), I_mem_handle) ;
     if ((*I_handle) == NULL)
     { 
         // out of memory
@@ -123,8 +122,9 @@ static inline GrB_Info GB_stride
 GrB_Info GB_ijxvector
 (
     // input:
-    GrB_Vector List,        // defines the list, either from List->x or List-i.
-                            // If List is NULL, it defines I = GrB_ALL.
+    GrB_Vector List,        // defines the list of integers, either from
+                            // List->x or List-i.  If List is NULL, it defines
+                            // I = GrB_ALL.
     bool need_copy,         // if true, I must be allocated
     int which,              // 0: I list, 1: J list, 2: X list
     const GrB_Descriptor desc,  // row_list, col_list, val_list descriptors
@@ -133,15 +133,15 @@ GrB_Info GB_ijxvector
     // output:
     void **I_handle,        // the list I; may be GrB_ALL
     int64_t *ni_handle,     // the length of I, or special (GxB_RANGE)
-    size_t *I_size_handle,  // if > 0, I has been allocated by this
+    uint64_t *I_mem_handle, // if memsize > 0, I has been allocated by this
                             // method.  Otherwise, it is a shallow pointer into
-                            // List->x or List->i, or is equal to GrB_ALL.
+                            // List->x or List->i.
     GrB_Type *I_type_handle,    // the type of I: GrB_UINT32 or GrB_UINT64 for
-                            // assign, subassign, extract, or for build when
-                            // descriptor is GxB_USE_INDICES.  For build,
-                            // this is List->type when the descriptor is
-                            // GxB_USE_VALUES.
+                            // assign, subassign, extract, or for build with
+                            // the descriptor uses the indices.  For build,
+                            // this is List->type when using the values.
     GB_Werk Werk                            
+    // FIXME memlane
 )
 {
 
@@ -150,21 +150,25 @@ GrB_Info GB_ijxvector
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
+
+    int memlane = 0 ;       // FIXME memlane: make param
+
     ASSERT (I_handle != NULL) ;
     ASSERT (ni_handle != NULL) ;
-    ASSERT (I_size_handle != NULL) ;
+    ASSERT (I_mem_handle != NULL) ;
     ASSERT (I_type_handle != NULL) ;
     ASSERT_VECTOR_OK_OR_NULL (List, "List", GB0) ;
 
     (*I_handle) = NULL ;
     (*ni_handle) = 0 ;
-    (*I_size_handle) = 0 ;
     (*I_type_handle) = NULL ;
 
-    struct GB_Matrix_opaque T_header ;
     GrB_Matrix T = NULL ;
-    size_t I_size = 0, I2_size = 0 ;
+//  int memlane = (List == NULL) ? 0 : GB_memlane (List->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+    uint64_t I_mem = mem, I2_mem = mem ;
     void *I = NULL, *I2 = NULL ;
+    (*I_mem_handle) = mem ;
 
     //--------------------------------------------------------------------------
     // quick return if List is NULL
@@ -225,7 +229,7 @@ GrB_Info GB_ijxvector
     if (ni == 0)
     { 
         // List is not NULL, but has no entries (nvals (List) == 0)
-        (*I_handle) = GB_CALLOC_MEMORY (1, sizeof (uint64_t), I_size_handle) ;
+        (*I_handle) = GB_CALLOC_MEMORY (1, sizeof (uint64_t), I_mem_handle) ;
         if ((*I_handle) == NULL)
         { 
             return (GrB_OUT_OF_MEMORY) ;
@@ -281,14 +285,15 @@ GrB_Info GB_ijxvector
             else
             { 
                 // extract the values from the bitmap vector
-                I = GB_MALLOC_MEMORY (ni, List->type->size, &I_size) ;
+                I = GB_MALLOC_MEMORY (ni, List->type->size, &I_mem) ;
                 if (I == NULL)
                 { 
                     // out of memory
                     return (GrB_OUT_OF_MEMORY) ;
                 }
                 GB_OK (GB_convert_b2s (Cp, NULL, NULL, /* Cx: */ I, NULL,
-                    false, false, false, List->type, (GrB_Matrix) List, Werk)) ;
+                    false, false, false, List->type, (GrB_Matrix) List,
+                    memlane, Werk)) ;
             }
             I_type = List->type ;
         }
@@ -296,15 +301,15 @@ GrB_Info GB_ijxvector
         { 
             // extract the indices from the bitmap vector
             I_type = (ni <= UINT32_MAX) ? GrB_UINT32 : GrB_UINT64 ;
-            I = GB_MALLOC_MEMORY (ni, I_type->size, &I_size) ;
+            I = GB_MALLOC_MEMORY (ni, I_type->size, &I_mem) ;
             if (I == NULL)
             { 
                 // out of memory
                 return (GrB_OUT_OF_MEMORY) ;
             }
             GB_OK (GB_convert_b2s (Cp, /* Ci: */ I, NULL, NULL, NULL,
-                false, I_type == GrB_UINT32, false, List->type,
-                (GrB_Matrix) List, Werk)) ;
+                false, false, I_type == GrB_UINT32, List->type,
+                (GrB_Matrix) List, memlane, Werk)) ;
         }
 
     }
@@ -330,7 +335,7 @@ GrB_Info GB_ijxvector
             { 
                 // build an explicit list for GrB_build
                 I_type = (n <= UINT32_MAX) ? GrB_UINT32 : GrB_UINT64 ;
-                (*I_handle) = GB_MALLOC_MEMORY (n, I_type->size, I_size_handle);
+                (*I_handle) = GB_MALLOC_MEMORY (n, I_type->size, I_mem_handle);
                 if ((*I_handle) == NULL)
                 { 
                     // out of memory
@@ -368,7 +373,7 @@ GrB_Info GB_ijxvector
             { 
                 // use I = [0, n-1, 1] and GxB_STRIDE
                 return (GB_stride (0, 1, n-1,
-                    I_handle, ni_handle, I_size_handle, I_type_handle)) ;
+                    I_handle, ni_handle, I_mem_handle, I_type_handle)) ;
             }
         }
     }
@@ -381,8 +386,8 @@ GrB_Info GB_ijxvector
     { 
         // I has not been allocted; it is a shallow copy of List->x
         ASSERT (I == List->x) ;
-        ASSERT (I_size == 0) ;
-        I2 = GB_MALLOC_MEMORY (ni, I_type->size, &I2_size) ;
+        ASSERT (GB_memsize (I_mem) == 0) ;
+        I2 = GB_MALLOC_MEMORY (ni, I_type->size, &I2_mem) ;
         if (I2 == NULL)
         { 
             // out of memory
@@ -392,9 +397,8 @@ GrB_Info GB_ijxvector
         GB_OK (GB_iso_expand (I2, ni, I, I_type)) ;
         // replace I with the newly-allocated and expanded I2
         I = I2 ;
-        I_size = I2_size ;
-        I2 = NULL ;
-        I2_size = 0 ;
+        I_mem = I2_mem ;
+        I2 = NULL ; I2_mem = 0 ;
         // the list I is no longer iso
         iso = false ;
     }
@@ -436,19 +440,18 @@ GrB_Info GB_ijxvector
     // copy/typecast the indices if needed
     //--------------------------------------------------------------------------
 
-    if ((need_copy && I_size == 0) || I_type != I_target_type)
+    if ((need_copy && GB_memsize (I_mem) == 0) || I_type != I_target_type)
     { 
         // Create an ni-by-1 matrix T containing the values of I
-        GB_CLEAR_MATRIX_HEADER (T, &T_header) ;
-        GB_OK (GB_new (&T, // static header
+        GB_OK (GB_new (&T, // new header
             I_type, ni, 1, GB_ph_null, true, GxB_FULL, 0, 0,
-            false, false, false)) ;
+            false, false, false, memlane)) ;
         GB_vector_load ((GrB_Vector) T, &I, I_type, ni, ni * (I_type->size),
             true) ;
         ASSERT_MATRIX_OK (T, "T for typecast to I", GB0) ;
 
         // I2 = (uint64_t) T->x or (int64_t) T->x
-        I2 = GB_MALLOC_MEMORY (ni, sizeof (uint64_t), &I2_size) ;
+        I2 = GB_MALLOC_MEMORY (ni, sizeof (uint64_t), &I2_mem) ;
         if (I2 == NULL)
         { 
             // out of memory
@@ -460,19 +463,18 @@ GrB_Info GB_ijxvector
         GB_Matrix_free (&T) ;
 
         // free the old I and replace it with I2
-        if (I_size > 0)
+        if (GB_memsize (I_mem) > 0)
         { 
-            GB_FREE_MEMORY (&I, I_size) ;
+            GB_FREE_MEMORY (&I, I_mem) ;
         }
         I = I2 ;
-        I_size = I2_size ;
-        I2 = NULL ;
-        I2_size = 0 ;
+        I_mem = I2_mem ;
+        I2 = NULL ; I2_mem = 0 ;
         I_type = I_target_type ;
     }
 
     ASSERT (I_type == I_target_type) ;
-    ASSERT (GB_IMPLIES (need_copy, I_size > 0)) ;
+    ASSERT (GB_IMPLIES (need_copy, GB_memsize (I_mem) > 0)) ;
 
     //--------------------------------------------------------------------------
     // create the stride or return the list I
@@ -490,7 +492,7 @@ GrB_Info GB_ijxvector
         int64_t stride_end   = I64 [GxB_END  ] ;
         // create the stride
         GB_OK (GB_stride (stride_begin, stride_inc, stride_end,
-            I_handle, ni_handle, I_size_handle, I_type_handle)) ;
+            I_handle, ni_handle, I_mem_handle, I_type_handle)) ;
     }
     else
     { 
@@ -499,7 +501,7 @@ GrB_Info GB_ijxvector
             (is_build && I_type == List->type)) ;
         (*I_handle) = I ;
         (*ni_handle) = ni ;
-        (*I_size_handle) = I_size ;
+        (*I_mem_handle) = I_mem ;
         (*I_type_handle) = I_type ;
         I = NULL ;
     }

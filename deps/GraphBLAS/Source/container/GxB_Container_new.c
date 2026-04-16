@@ -33,14 +33,22 @@ GrB_Info GxB_Container_new
     // allocate the new Container
     //--------------------------------------------------------------------------
 
-    size_t header_size ;
+    int memlane = GB_Context_memlane ( ) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
+    uint64_t header_mem = mem ;
     (*Container) = GB_CALLOC_MEMORY (1, sizeof (struct GxB_Container_struct),
-        &header_size) ;
+        &header_mem) ;
     if (*Container == NULL)
     { 
         // out of memory
         return (GrB_OUT_OF_MEMORY) ;
     }
+
+    // Keep track of just the memlane of the Container struct.  Container_mem
+    // is just GB_mem (memlane, sizeof (struct GxB_Container_struct).
+    // See GxB_Container_free.
+    (*Container)->memlane = memlane ;
 
     // clear the Container scalars
     (*Container)->nrows = 0 ;
@@ -57,11 +65,16 @@ GrB_Info GxB_Container_new
     // allocate the p, h, b, i and x components
     //--------------------------------------------------------------------------
 
-    GB_OK (GB_container_component_new (&((*Container)->p), GrB_UINT32)) ;
-    GB_OK (GB_container_component_new (&((*Container)->h), GrB_INT32)) ;
-    GB_OK (GB_container_component_new (&((*Container)->b), GrB_INT8)) ;
-    GB_OK (GB_container_component_new (&((*Container)->i), GrB_INT32)) ;
-    GB_OK (GB_container_component_new (&((*Container)->x), GrB_BOOL)) ;
+    GB_OK (GB_container_component_new (&((*Container)->p), GrB_UINT32,
+        memlane)) ;
+    GB_OK (GB_container_component_new (&((*Container)->h), GrB_INT32,
+        memlane)) ;
+    GB_OK (GB_container_component_new (&((*Container)->b), GrB_INT8,
+        memlane)) ;
+    GB_OK (GB_container_component_new (&((*Container)->i), GrB_INT32,
+        memlane)) ;
+    GB_OK (GB_container_component_new (&((*Container)->x), GrB_BOOL,
+        memlane)) ;
 
     //--------------------------------------------------------------------------
     // return result

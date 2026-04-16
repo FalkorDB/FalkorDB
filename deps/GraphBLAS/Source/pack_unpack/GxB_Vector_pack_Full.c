@@ -12,9 +12,9 @@
 GrB_Info GxB_Vector_pack_Full // pack a full vector
 (
     GrB_Vector v,       // vector to create (type and length unchanged)
-    void **vx,          // values, vx_size >= nvals(v) * (type size)
-                        // or vx_size >= (type size), if iso is true
-    uint64_t vx_size,   // size of vx in bytes
+    void **vx,          // values, vx_memsize >= nvals(v) * (type size)
+                        // or vx_memsize >= (type size), if iso is true
+    uint64_t vx_memsize,   // size of vx in bytes
     bool iso,           // if true, v is iso
     const GrB_Descriptor desc
 )
@@ -26,7 +26,7 @@ GrB_Info GxB_Vector_pack_Full // pack a full vector
 
     GB_RETURN_IF_NULL (v) ;
     GB_RETURN_IF_OUTPUT_IS_READONLY (v) ;
-    GB_WHERE_1 (v, "GxB_Vector_pack_Full (v, &vx, vx_size, iso, desc)") ;
+    GB_WHERE_1 (v, "GxB_Vector_pack_Full (v, &vx, vx_memsize, iso, desc)") ;
     GB_BURBLE_START ("GxB_Vector_pack_Full") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
@@ -41,7 +41,7 @@ GrB_Info GxB_Vector_pack_Full // pack a full vector
         NULL, 0,        // Ah
         NULL, 0,        // Ab
         NULL, 0,        // Ai
-        vx,   vx_size,  // Ax
+        vx,   vx_memsize,  // Ax
         0, false, 0,
         GxB_FULL, true,                     // full by col
         iso, fast_import, true, Werk) ;

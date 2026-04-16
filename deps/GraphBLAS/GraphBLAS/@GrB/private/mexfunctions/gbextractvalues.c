@@ -53,12 +53,17 @@ void mexFunction
     void *X = NULL ;
     GrB_Type xtype = NULL ;
     int ignore = 0 ;
-    uint64_t X_size = 0 ;
+    uint64_t X_memsize = 0 ;
     GrB_Vector X_vector = NULL ;
     OK (GrB_Vector_new (&X_vector, GrB_FP64, 0)) ;
     OK (GxB_Matrix_extractTuples_Vector (NULL, NULL, X_vector, A, NULL)) ;
-    OK (GxB_Vector_unload (X_vector, &X, &xtype, &nvals, &X_size, &ignore,
+    OK (GxB_Vector_unload (X_vector, &X, &xtype, &nvals, &X_memsize, &ignore,
         NULL)) ;
+    if (ignore != GrB_DEFAULT)
+    {
+        printf ("handling %d\n", ignore) ;
+        mexErrMsgIdAndTxt ("GrB:memlane", "memlane invalid (1)") ;
+    }
     pargout [0] = gb_export_to_mxfull (&X, nvals, 1, xtype) ;
 
     //--------------------------------------------------------------------------

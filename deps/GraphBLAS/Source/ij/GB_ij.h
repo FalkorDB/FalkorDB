@@ -56,10 +56,10 @@ GrB_Info GB_ijsort
     void **p_I2,                // size ni2, where I2 [0..ni2-1] contains the
                                 // sorted indices with duplicates removed.
     bool *I2_is_32_handle,      // if I2_is_32 true, I2 is 32 bits; else 64 bits
-    size_t *I2_size_handle,
+    uint64_t *I2_mem_handle,
     void **p_I2k,               // output array of size ni2
     bool *I2k_is_32_handle,     // if I2k_is_32 true, I2 is 32 bits; else 64
-    size_t *I2k_size_handle,
+    uint64_t *I2k_mem_handle,
     GB_Werk Werk
 ) ;
 
@@ -77,7 +77,7 @@ GrB_Info GB_ijxvector
     // output:
     void **I_handle,        // the list I; may be GrB_ALL
     int64_t *ni_handle,     // the length of I, or special (GxB_RANGE)
-    size_t *I_size_handle,  // if > 0, I has been allocated by this
+    uint64_t *I_mem_handle, // if memsize > 0, I has been allocated by this
                             // method.  Otherwise, it is a shallow pointer into
                             // List->x or List->i.
     GrB_Type *I_type_handle,    // the type of I: GrB_UINT32 or GrB_UINT64 for

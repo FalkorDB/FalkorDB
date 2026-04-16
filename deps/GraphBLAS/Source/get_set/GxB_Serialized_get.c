@@ -11,6 +11,8 @@
 #include "serialize/GB_serialize.h"
 #define GB_FREE_ALL ;
 
+// FIXME: how to define memlane for the blob?
+
 //------------------------------------------------------------------------------
 // GB_blob_header_get: get all properties of the blob
 //------------------------------------------------------------------------------
@@ -39,7 +41,7 @@ static GrB_Info GB_blob_header_get
 
     // input, not modified:
     const GB_void *blob,        // the blob
-    uint64_t blob_size          // size of the blob
+    uint64_t blob_memsize          // size of the blob
 )
 {
 
@@ -49,13 +51,13 @@ static GrB_Info GB_blob_header_get
 
     size_t s = 0 ;
 
-    if (blob_size < GB_BLOB_HEADER_SIZE)
+    if (blob_memsize < GB_BLOB_HEADER_SIZE)
     { 
         // blob is invalid
         return (GrB_INVALID_OBJECT)  ;
     }
 
-    GB_BLOB_READ (blob_size2, uint64_t) ;
+    GB_BLOB_READ (blob_memsize2, uint64_t) ;
 
 // was in v9.4.2 and earlier::
 //  GB_BLOB_READ (typecode, int32_t) ;
@@ -71,14 +73,14 @@ static GrB_Info GB_blob_header_get
     // more bits to create a serialized blob, then GrB 10.0.0 will gracefully
     // fail if it attempts to deserialize the blob.
 
-    uint64_t blob_size1 = (uint64_t) blob_size ;
+    uint64_t blob_memsize1 = (uint64_t) blob_memsize ;
 
     // GrB v9.4.2 has the same test below, so it will safely declare the blob
     // invalid if it sees any encoding with a 1 in bit position 4 or 5.
-    if (blob_size1 != blob_size2
+    if (blob_memsize1 != blob_memsize2
         || typecode < GB_BOOL_code || typecode > GB_UDT_code
         || (typecode == GB_UDT_code &&
-            blob_size < GB_BLOB_HEADER_SIZE + GxB_MAX_NAME_LEN)
+            blob_memsize < GB_BLOB_HEADER_SIZE + GxB_MAX_NAME_LEN)
         // GrB v10.0.0 adds the following check, since it only supports the
         // values of 0 and 1, denoting 64-bit and 32-bit integers respectively:
         || (Cp_is_32 > 1) || (Cj_is_32 > 1) || (Ci_is_32 > 1))
@@ -215,12 +217,12 @@ static GrB_Info GB_blob_header_get
     { 
 
         //----------------------------------------------------------------------
-        // look for the two nul bytes in blob [s : blob_size-1]
+        // look for the two nul bytes in blob [s : blob_memsize-1]
         //----------------------------------------------------------------------
 
         int nfound = 0 ;
         size_t ss [2] ;
-        for (size_t p = s ; p < blob_size && nfound < 2 ; p++)
+        for (size_t p = s ; p < blob_memsize && nfound < 2 ; p++)
         {
             if (blob [p] == 0)
             { 
@@ -257,7 +259,7 @@ static GrB_Info GB_Serialized_get
     char *cvalue,
     bool *is_double,
     bool *is_char,
-    size_t blob_size
+    size_t blob_memsize
 )
 {
 
@@ -281,7 +283,7 @@ static GrB_Info GB_Serialized_get
     GB_OK (GB_blob_header_get (type_name, &type_code,
         &sparsity_status, &sparsity_ctrl, &hyper_sw, &bitmap_sw, &storage,
         &user_name, &eltype_string, &is_csc, &p_is_32, &j_is_32, &i_is_32,
-        &p_control, &j_control, &i_control, &iso, blob, blob_size)) ;
+        &p_control, &j_control, &i_control, &iso, blob, blob_memsize)) ;
 
     //--------------------------------------------------------------------------
     // get the field
@@ -402,7 +404,7 @@ GrB_Info GxB_Serialized_get_Scalar
     const void * blob,
     GrB_Scalar scalar,
     int field,
-    size_t blob_size
+    size_t blob_memsize
 )
 {
 
@@ -411,7 +413,7 @@ GrB_Info GxB_Serialized_get_Scalar
     //--------------------------------------------------------------------------
 
     GB_WHERE_1 (scalar, "GxB_Serialized_get_Scalar (blob, scalar, field,"
-        " blob_size)") ;
+        " blob_memsize)") ;
     GB_RETURN_IF_NULL (blob) ;
     GB_RETURN_IF_NULL (scalar) ;
 
@@ -425,7 +427,7 @@ GrB_Info GxB_Serialized_get_Scalar
     bool is_double, is_char ;
 
     GB_OK (GB_Serialized_get (blob, field, &ivalue, &dvalue, cvalue,
-        &is_double, &is_char, blob_size)) ;
+        &is_double, &is_char, blob_memsize)) ;
 
     if (is_char)
     { 
@@ -454,7 +456,7 @@ GrB_Info GxB_Serialized_get_String
     const void * blob,
     char * value,
     int field,
-    size_t blob_size
+    size_t blob_memsize
 )
 {
 
@@ -476,7 +478,7 @@ GrB_Info GxB_Serialized_get_String
     bool is_double, is_char ;
 
     GB_OK (GB_Serialized_get (blob, field, &ivalue, &dvalue, value,
-        &is_double, &is_char, blob_size)) ;
+        &is_double, &is_char, blob_memsize)) ;
 
     if (is_char)
     { 
@@ -498,7 +500,7 @@ GrB_Info GxB_Serialized_get_INT32
     const void * blob,
     int32_t * value,
     int field,
-    size_t blob_size
+    size_t blob_memsize
 )
 {
 
@@ -520,7 +522,7 @@ GrB_Info GxB_Serialized_get_INT32
     //--------------------------------------------------------------------------
 
     GB_OK (GB_Serialized_get (blob, field, value, &dvalue, cvalue,
-        &is_double, &is_char, blob_size)) ;
+        &is_double, &is_char, blob_memsize)) ;
 
     if (is_double || is_char)
     { 
@@ -542,7 +544,7 @@ GrB_Info GxB_Serialized_get_SIZE
     const void * blob,
     size_t * value,
     int field,
-    size_t blob_size
+    size_t blob_memsize
 )
 {
 
@@ -565,7 +567,7 @@ GrB_Info GxB_Serialized_get_SIZE
     //--------------------------------------------------------------------------
 
     GB_OK (GB_Serialized_get (blob, field, &ivalue, &dvalue, cvalue,
-        &is_double, &is_char, blob_size)) ;
+        &is_double, &is_char, blob_memsize)) ;
 
     if (is_char)
     { 
@@ -588,7 +590,7 @@ GrB_Info GxB_Serialized_get_VOID
     const void * blob,
     void * value,
     int field,
-    size_t blob_size
+    size_t blob_memsize
 )
 { 
     return (GrB_INVALID_VALUE) ;

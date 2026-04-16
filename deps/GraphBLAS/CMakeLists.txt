@@ -41,8 +41,8 @@ if ( NOT BUILD_SHARED_LIBS )
 endif ( )
 
 # CUDA is under development for now, and not deployed in production:
-  set ( GRAPHBLAS_USE_CUDA OFF )    # turn CUDA off in production
-# set ( GRAPHBLAS_USE_CUDA ON )     # use this for CUDA development only
+# set ( GRAPHBLAS_USE_CUDA OFF )    # turn CUDA off in production
+  set ( GRAPHBLAS_USE_CUDA ON )     # use this for CUDA development only
 
 include ( SuiteSparsePolicy )
 
@@ -86,8 +86,8 @@ if ( GRAPHBLAS_HAS_CUDA )
     # with CUDA, and supporting libraries: Rapids Memory Manager (rmm), and spdlog
     cmake_policy ( SET CMP0135 NEW )    # URL download timestamp policy
     find_package ( CUDAToolkit REQUIRED )
-    set ( CMAKE_CUDA_FLAGS "-cudart=static -lineinfo -Wno-deprecated-gpu-targets " )
-    set ( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --std=c++17 -fPIC " )
+    set ( CMAKE_CUDA_FLAGS "-forward-unknown-to-host-compiler -cudart=shared -Wno-deprecated-gpu-targets --std=c++17 -fPIC" )
+    set ( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --std=c++17 -fPIC" )
     message ( STATUS "C++ flags for CUDA: ${CMAKE_CXX_FLAGS}" )
     message ( STATUS "CUDA include dirs:  ${CUDA_INCLUDE_DIRS}" )
     message ( STATUS "CUDA libraries:     ${CUDA_LIBRARIES}" )
@@ -95,34 +95,64 @@ if ( GRAPHBLAS_HAS_CUDA )
 
     include_directories ( "rmm_wrap" "CUDA/include" "CUDA" ${CUDA_INCLUDE_DIRS} )
 
-    set ( EXTERNAL_INCLUDES_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/external_includes )
+    include ( FetchContent )
+    FetchContent_Declare ( rmm
+        GIT_REPOSITORY "https://github.com/rapidsai/rmm"
+        GIT_TAG branch-21.10
+        OVERRIDE_FIND_PACKAGE )
+    FetchContent_MakeAvailable ( rmm )
 
-    if ( NOT EXISTS ${EXTERNAL_INCLUDES_DIRECTORY} )
-        file ( MAKE_DIRECTORY ${EXTERNAL_INCLUDES_DIRECTORY} )
-    endif ( )
+    find_package ( rmm REQUIRED )
+    message ( STATUS "RMM bin: " ${RMM_BINARY_DIR} )
+    message ( STATUS "RMM src: " ${RMM_SOURCE_DIR} )
+    message ( STATUS "spdlog bin: " ${spdlog_BINARY_DIR} )
+    message ( STATUS "spdlog src: " ${spdlog_SOURCE_DIR} )
 
-    if ( NOT EXISTS ${EXTERNAL_INCLUDES_DIRECTORY}/spdlog )
-        message ( STATUS "cloning spdlog v1.10.0" )
-        execute_process (
-            COMMAND git clone "https://github.com/gabime/spdlog" --branch v1.10.0 --recursive spdlog
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/external_includes )
-    endif ( )
+#   set ( EXTERNAL_INCLUDES_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/external_includes )
 
-    if ( NOT EXISTS ${EXTERNAL_INCLUDES_DIRECTORY}/rmm )
-        message ( STATUS "cloning rmm branch-21.10" )
-        execute_process (
-            COMMAND git clone "https://github.com/rapidsai/rmm" --branch branch-21.10 --recursive rmm
+#   if ( NOT EXISTS ${EXTERNAL_INCLUDES_DIRECTORY} )
+#       file ( MAKE_DIRECTORY ${EXTERNAL_INCLUDES_DIRECTORY} )
+#   endif ( )
+
+#   if ( NOT EXISTS ${EXTERNAL_INCLUDES_DIRECTORY}/spdlog )
+#       message ( STATUS "cloning spdlog v1.10.0" )
+#       execute_process (
+#           COMMAND git clone "https://github.com/gabime/spdlog" --branch v1.10.0 --recursive spdlog
+#           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/external_includes )
+#   endif ( )
+
+#   if ( NOT EXISTS ${EXTERNAL_INCLUDES_DIRECTORY}/rmm )
+#       message ( STATUS "cloning rmm branch-21.10" )
+#       execute_process (
+#           COMMAND git clone "https://github.com/rapidsai/rmm" --branch branch-21.10 --recursive rmm
 #           COMMAND git clone "https://github.com/rapidsai/rmm" --branch branch-25.10 --recursive rmm
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/external_includes )
-    endif()
+#           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/external_includes )
+#   endif()
 
-    set ( RMM_WRAP_INCLUDES ${PROJECT_BINARY_DIR}
-        ${CMAKE_CURRENT_BINARY_DIR}/external_includes/spdlog/include
-# for v21.10:
-        ${CMAKE_CURRENT_BINARY_DIR}/external_includes/rmm/include
-# for v25.10:
-#       ${CMAKE_CURRENT_BINARY_DIR}/external_includes/rmm/cpp/include
-        ${CUDA_INCLUDE_DIRS} )
+#     set ( RMM_WRAP_INCLUDES ${PROJECT_BINARY_DIR}
+#         ${PROJECT_SOURCE_DIR}/external_includes/spdlog/include
+# #       ${CMAKE_CURRENT_BINARY_DIR}/external_includes/spdlog/include
+#         ${PROJECT_SOURCE_DIR}/external_includes/rmm/include
+# # for v21.10:
+# #       ${CMAKE_CURRENT_BINARY_DIR}/external_includes/rmm/include
+# # for v25.10:
+# #       ${CMAKE_CURRENT_BINARY_DIR}/external_includes/rmm/cpp/include
+#         ${CUDA_INCLUDE_DIRS} )
+
+#     set ( RMM_WRAP_INCLUDES ${PROJECT_BINARY_DIR}
+#         ${PROJECT_SOURCE_DIR}/external_includes/spdlog/include
+# #       ${CMAKE_CURRENT_BINARY_DIR}/external_includes/spdlog/include
+#         ${PROJECT_SOURCE_DIR}/external_includes/rmm/include
+# # for v21.10:
+# #       ${CMAKE_CURRENT_BINARY_DIR}/external_includes/rmm/include
+# # for v25.10:
+# #       ${CMAKE_CURRENT_BINARY_DIR}/external_includes/rmm/cpp/include
+#         ${CUDA_INCLUDE_DIRS} )
+
+  set ( RMM_WRAP_INCLUDES ${PROJECT_BINARY_DIR}
+      ${RMM_SOURCE_DIR}/include
+      ${spdlog_SOURCE_DIR}/include
+      ${CUDA_INCLUDE_DIRS} )
 
 else ( )
 
@@ -596,7 +626,12 @@ if ( GRAPHBLAS_HAS_OPENMP )
         endif ( )
     endif ( )
     message ( STATUS "CMAKE OpenMP C flags:      ${OpenMP_C_FLAGS}" )
-    set ( GB_OPENMP_C_FLAGS "${OpenMP_C_FLAGS}" )
+    message ( STATUS "CMAKE OpenMP CXX flags:    ${OpenMP_CXX_FLAGS}" )
+    set ( GB_OPENMP_C_FLAGS   "${OpenMP_C_FLAGS}" )
+    set ( GB_OPENMP_CXX_FLAGS "${OpenMP_CXX_FLAGS}" )
+    set ( CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   ${GB_OPENMP_C_FLAGS}" )
+    set ( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${GB_OPENMP_CXX_FLAGS}" )
+    set ( CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --compiler-options=\"${GB_OPENMP_CXX_FLAGS}\"" )
 else ( )
     message ( WARNING
     "WARNING:  OpenMP was not found (or was disabled with "
@@ -618,6 +653,7 @@ else ( )
         "GxB_Context_engage will return GrB_NOT_IMPLEMENTED." )
     endif ( )
     set ( GB_OPENMP_C_FLAGS "" )
+    set ( GB_OPENMP_CXX_FLAGS "" )
 endif ( )
 
 #-------------------------------------------------------------------------------
@@ -869,17 +905,17 @@ include ( GraphBLAS_PreJIT )
 # set ( DUMP true )
 
 if ( DUMP )
-    message("====")
-    message("Begin dumping all CMake variables in alphabetic order")
-    message("====")
+    message ( STATUS "====" )
+    message ( STATUS "Begin dumping all CMake variables in alphabetic order" )
+    message ( STATUS "====" )
     get_cmake_property ( _variableNames VARIABLES )
     list ( SORT _variableNames )
     foreach ( _variableName ${_variableNames} )
         message ( STATUS "${_variableName}=${${_variableName}}" )
     endforeach ( )
-    message("====")
-    message("End dumping all CMake variables in alphabetic order")
-    message("====")
+    message ( STATUS "====" )
+    message ( STATUS "End dumping all CMake variables in alphabetic order" )
+    message ( STATUS "====" )
 endif ( )
 
 #-------------------------------------------------------------------------------

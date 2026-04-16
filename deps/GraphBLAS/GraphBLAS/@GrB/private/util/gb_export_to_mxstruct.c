@@ -96,7 +96,6 @@ mxArray *gb_export_to_mxstruct  // return exported MATLAB struct G
     //--------------------------------------------------------------------------
 
     OK1 (A, GrB_Matrix_wait (A, GrB_MATERIALIZE)) ;
-    // OK (GxB_Matrix_fprint (A, "A to export", 0, NULL)) ;
 
     //--------------------------------------------------------------------------
     // extract the content of the GrB_Matrix and free it
@@ -106,6 +105,8 @@ mxArray *gb_export_to_mxstruct  // return exported MATLAB struct G
     OK (GrB_Matrix_get_INT32 (A, &sparsity_control, GxB_SPARSITY_CONTROL)) ;
 
     GxB_Container Container = GB_helper_container ( ) ;
+    // printf ("\n===================== unloading into container:\n") ;
+    // OK (GxB_Matrix_fprint (A, "A to container", 5, stdout)) ;
     OK (GxB_unload_Matrix_into_Container (A, Container, NULL)) ;
     GrB_Matrix_free (&A) ;
 
@@ -122,27 +123,52 @@ mxArray *gb_export_to_mxstruct  // return exported MATLAB struct G
 //  bool jumbled = Container->jumbled ; // not needed; matrix is not jumbled
 
     // get the vectors from the Container
-    void *Ap = NULL ; uint64_t Ap_size, Ap_len ; GrB_Type Ap_type = NULL ;
-    void *Ah = NULL ; uint64_t Ah_size, Ah_len ; GrB_Type Ah_type = NULL ;
-    void *Ab = NULL ; uint64_t Ab_size, Ab_len ; GrB_Type Ab_type = NULL ;
-    void *Ai = NULL ; uint64_t Ai_size, Ai_len ; GrB_Type Ai_type = NULL ;
-    void *Ax = NULL ; uint64_t Ax_size, Ax_len ; GrB_Type Ax_type = NULL ;
+    void *Ap = NULL ; uint64_t Ap_memsize, Ap_len ; GrB_Type Ap_type = NULL ;
+    void *Ah = NULL ; uint64_t Ah_memsize, Ah_len ; GrB_Type Ah_type = NULL ;
+    void *Ab = NULL ; uint64_t Ab_memsize, Ab_len ; GrB_Type Ab_type = NULL ;
+    void *Ai = NULL ; uint64_t Ai_memsize, Ai_len ; GrB_Type Ai_type = NULL ;
+    void *Ax = NULL ; uint64_t Ax_memsize, Ax_len ; GrB_Type Ax_type = NULL ;
 
-    OK (GxB_Vector_unload (Container->p, &Ap, &Ap_type, &Ap_len, &Ap_size, &ro,
-        NULL)) ;
-    OK (GxB_Vector_unload (Container->h, &Ah, &Ah_type, &Ah_len, &Ah_size, &ro,
-        NULL)) ;
-    OK (GxB_Vector_unload (Container->b, &Ab, &Ab_type, &Ab_len, &Ab_size, &ro,
-        NULL)) ;
-    OK (GxB_Vector_unload (Container->i, &Ai, &Ai_type, &Ai_len, &Ai_size, &ro,
-        NULL)) ;
-    OK (GxB_Vector_unload (Container->x, &Ax, &Ax_type, &Ax_len, &Ax_size, &ro,
-        NULL)) ;
+    OK (GxB_Vector_unload (Container->p, &Ap, &Ap_type, &Ap_len, &Ap_memsize,
+        &ro, NULL)) ;
+    if (ro != GrB_DEFAULT)
+    {
+        printf ("handling %d\n", ro) ;
+        mexErrMsgIdAndTxt ("GrB:memlane", "memlane invalid (6)") ;
+    }
+    OK (GxB_Vector_unload (Container->h, &Ah, &Ah_type, &Ah_len, &Ah_memsize,
+        &ro, NULL)) ;
+    if (ro != GrB_DEFAULT)
+    {
+        printf ("handling %d Ah %p\n", ro, Ah) ;
+        mexErrMsgIdAndTxt ("GrB:memlane", "memlane invalid (7)") ;
+    }
+    OK (GxB_Vector_unload (Container->b, &Ab, &Ab_type, &Ab_len, &Ab_memsize,
+        &ro, NULL)) ;
+    if (ro != GrB_DEFAULT)
+    {
+        printf ("handling %d\n", ro) ;
+        mexErrMsgIdAndTxt ("GrB:memlane", "memlane invalid (8)") ;
+    }
+    OK (GxB_Vector_unload (Container->i, &Ai, &Ai_type, &Ai_len, &Ai_memsize,
+        &ro, NULL)) ;
+    if (ro != GrB_DEFAULT)
+    {
+        printf ("handling %d\n", ro) ;
+        mexErrMsgIdAndTxt ("GrB:memlane", "memlane invalid (9)") ;
+    }
+    OK (GxB_Vector_unload (Container->x, &Ax, &Ax_type, &Ax_len, &Ax_memsize,
+        &ro, NULL)) ;
+    if (ro != GrB_DEFAULT)
+    {
+        printf ("handling %d\n", ro) ;
+        mexErrMsgIdAndTxt ("GrB:memlane", "memlane invalid (10)") ;
+    }
 
     // get the Y matrix from the Container
-    void *Yp = NULL ; uint64_t Yp_size, Yp_len ; GrB_Type Yp_type = NULL ;
-    void *Yi = NULL ; uint64_t Yi_size, Yi_len ; GrB_Type Yi_type = NULL ;
-    void *Yx = NULL ; uint64_t Yx_size, Yx_len ; GrB_Type Yx_type = NULL ;
+    void *Yp = NULL ; uint64_t Yp_memsize, Yp_len ; GrB_Type Yp_type = NULL ;
+    void *Yi = NULL ; uint64_t Yi_memsize, Yi_len ; GrB_Type Yi_type = NULL ;
+    void *Yx = NULL ; uint64_t Yx_memsize, Yx_len ; GrB_Type Yx_type = NULL ;
     uint64_t yncols = 0 ;
     if (Container->Y != NULL)
     {
@@ -151,12 +177,27 @@ mxArray *gb_export_to_mxstruct  // return exported MATLAB struct G
         Container->Y = NULL ;
         OK (GxB_unload_Matrix_into_Container (Y, Container, NULL)) ;
         GrB_Matrix_free (&Y) ;
-        OK (GxB_Vector_unload (Container->p, &Yp, &Yp_type, &Yp_len, &Yp_size,
-            &ro, NULL)) ;
-        OK (GxB_Vector_unload (Container->i, &Yi, &Yi_type, &Yi_len, &Yi_size,
-            &ro, NULL)) ;
-        OK (GxB_Vector_unload (Container->x, &Yx, &Yx_type, &Yx_len, &Yx_size,
-            &ro, NULL)) ;
+        OK (GxB_Vector_unload (Container->p, &Yp, &Yp_type, &Yp_len,
+            &Yp_memsize, &ro, NULL)) ;
+        if (ro != GrB_DEFAULT)
+        {
+            printf ("handling %d\n", ro) ;
+            mexErrMsgIdAndTxt ("GrB:memlane", "memlane invalid (11)") ;
+        }
+        OK (GxB_Vector_unload (Container->i, &Yi, &Yi_type, &Yi_len,
+            &Yi_memsize, &ro, NULL)) ;
+        if (ro != GrB_DEFAULT)
+        {
+            printf ("handling %d\n", ro) ;
+            mexErrMsgIdAndTxt ("GrB:memlane", "memlane invalid (12)") ;
+        }
+        OK (GxB_Vector_unload (Container->x, &Yx, &Yx_type, &Yx_len,
+            &Yx_memsize, &ro, NULL)) ;
+        if (ro != GrB_DEFAULT)
+        {
+            printf ("handling %d\n", ro) ;
+            mexErrMsgIdAndTxt ("GrB:memlane", "memlane invalid (13)") ;
+        }
         yncols = Container->ncols ;
     }
 
@@ -233,7 +274,7 @@ mxArray *gb_export_to_mxstruct  // return exported MATLAB struct G
         mxClassID Ai_class = (Ai_type == GrB_INT32 || Ai_type == GrB_UINT32) ?
             mxUINT32_CLASS : mxUINT64_CLASS ;
         mxArray *Ai_mx = mxCreateNumericMatrix (1, 0, Ai_class, mxREAL) ;
-        if (Ai_size > 0)
+        if (Ai_memsize > 0)
         { 
             mxSetN (Ai_mx, Ai_len) ;
             p = (void *) mxGetData (Ai_mx) ; gb_mxfree (&p) ;
@@ -244,9 +285,9 @@ mxArray *gb_export_to_mxstruct  // return exported MATLAB struct G
 
     // export the values as uint8
     mxArray *Ax_mx = mxCreateNumericMatrix (1, 0, mxUINT8_CLASS, mxREAL) ;
-    if (Ax_size > 0)
+    if (Ax_memsize > 0)
     { 
-        mxSetN (Ax_mx, Ax_size) ;
+        mxSetN (Ax_mx, Ax_memsize) ;
         void *p = mxGetData (Ax_mx) ; gb_mxfree (&p) ;
         mxSetData (Ax_mx, Ax) ;
     }
@@ -259,7 +300,7 @@ mxArray *gb_export_to_mxstruct  // return exported MATLAB struct G
     {
         // export the hyperlist
         mxArray *Ah_mx = mxCreateNumericMatrix (1, 0, Ah_class, mxREAL) ;
-        if (Ah_size > 0)
+        if (Ah_memsize > 0)
         { 
             mxSetN (Ah_mx, Ah_len) ;
             void *p = (void *) mxGetData (Ah_mx) ; gb_mxfree (&p) ;
@@ -297,7 +338,7 @@ mxArray *gb_export_to_mxstruct  // return exported MATLAB struct G
     { 
         // export the bitmap
         mxArray *Ab_mx = mxCreateNumericMatrix (1, 0, mxINT8_CLASS, mxREAL) ;
-        if (Ab_size > 0)
+        if (Ab_memsize > 0)
         { 
             mxSetN (Ab_mx, Ab_len) ;
             void *p = (void *) mxGetData (Ab_mx) ; gb_mxfree (&p) ;

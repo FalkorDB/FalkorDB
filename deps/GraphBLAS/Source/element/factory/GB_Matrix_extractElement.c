@@ -17,7 +17,11 @@
 // 13 built-in types, and the _UDT method for all user-defined types.
 // It also constructs GxB_Matrix_isStoredElement.
 
-// FUTURE: tolerate zombies
+// The search strategy has been revised in GraphBLAS 10.4.0:  Do not wait
+// unless jumbled.  First try to find the element.  If found (live or zombie),
+// no need to wait.  If not found and pending tuples exist, wait and then
+// search for it again.  Prior to this version, any call to this method would
+// always finish any pending work.
 
 GrB_Info GB_EXTRACT_ELEMENT     // extract a single entry, x = A(row,col)
 (
@@ -40,20 +44,13 @@ GrB_Info GB_EXTRACT_ELEMENT     // extract a single entry, x = A(row,col)
     GB_RETURN_IF_NULL (x) ;
     #endif
 
-    // TODO: do not wait unless jumbled.  First try to find the element.
-    // If found (live or zombie), no need to wait.  If not found and pending
-    // tuples exist, wait and then extractElement again.
-
-    // delete any lingering zombies, assemble any pending tuples, and unjumble
-    if (A->Pending != NULL || A->nzombies > 0 || A->jumbled)
+    if (A->jumbled)
     { 
         GB_WHERE_1 (A, GB_WHERE_STRING) ;
         GB_BURBLE_START ("GrB_Matrix_extractElement") ;
         GB_OK (GB_wait (A, "A", Werk)) ;
         GB_BURBLE_END ;
     }
-
-    ASSERT (!GB_ANY_PENDING_WORK (A)) ;
 
     // look for index i in vector j
     int64_t i, j ;
@@ -82,88 +79,28 @@ GrB_Info GB_EXTRACT_ELEMENT     // extract a single entry, x = A(row,col)
     //--------------------------------------------------------------------------
 
     int64_t pleft ;
-    bool found ;
-    GB_Ap_DECLARE (Ap, const) ; GB_Ap_PTR (Ap, A) ;
+    bool found, is_zombie ;
+    GB_Matrix_find_entry (&pleft, &found, &is_zombie, A, i, j) ;
 
-    if (Ap != NULL)
-    {
+    //--------------------------------------------------------------------------
+    // check again if not found and the matrix has pending tuples
+    //--------------------------------------------------------------------------
 
-        //----------------------------------------------------------------------
-        // A is sparse or hypersparse
-        //----------------------------------------------------------------------
-
-        int64_t pA_start, pA_end ;
-        if (A->h != NULL)
-        {
-
-            //------------------------------------------------------------------
-            // A is hypersparse: look for j in hyperlist A->h [0 ... A->nvec-1]
-            //------------------------------------------------------------------
-
-            void *A_Yp = (A->Y == NULL) ? NULL : A->Y->p ;
-            void *A_Yi = (A->Y == NULL) ? NULL : A->Y->i ;
-            void *A_Yx = (A->Y == NULL) ? NULL : A->Y->x ;
-            const int64_t A_hash_bits = (A->Y == NULL) ? 0 : (A->Y->vdim - 1) ;
-            int64_t k = GB_hyper_hash_lookup (A->p_is_32, A->j_is_32,
-                A->h, A->nvec, Ap, A_Yp, A_Yi, A_Yx, A_hash_bits,
-                j, &pA_start, &pA_end) ;
-            found = (k >= 0) ;
-            if (!found)
-            { 
-                // vector j is empty
-                return (GrB_NO_VALUE) ;
-            }
-            #ifdef GB_DEBUG
-            GB_Ah_DECLARE (Ah, const) ; GB_Ah_PTR (Ah, A) ;
-            ASSERT (j == GB_IGET (Ah, k)) ;
-            #endif
-
-        }
-        else
-        { 
-
-            //------------------------------------------------------------------
-            // A is sparse: look in the jth vector
-            //------------------------------------------------------------------
-
-            pA_start = GB_IGET (Ap, j);
-            pA_end   = GB_IGET (Ap, j+1) ;
-        }
-
-        // vector j has been found, now look for index i
-        pleft = pA_start ;
-        int64_t pright = pA_end - 1 ;
-
-        // Time taken for this step is at most O(log(nnz(A(:,j))).
-        found = GB_binary_search (i, A->i, A->i_is_32, &pleft, &pright) ;
-
-    }
-    else
-    {
-
-        //----------------------------------------------------------------------
-        // A is bitmap or full
-        //----------------------------------------------------------------------
-
-        pleft = i + j * vlen ;
-        const int8_t *restrict Ab = A->b ;
-        if (Ab != NULL)
-        { 
-            // A is bitmap
-            found = (Ab [pleft] == 1) ;
-        }
-        else
-        { 
-            // A is full
-            found = true ;
-        }
+    if (!found && A->Pending != NULL)
+    { 
+        GB_WHERE_1 (A, GB_WHERE_STRING) ;
+        GB_BURBLE_START ("GrB_Matrix_extractElement") ;
+        GB_OK (GB_wait (A, "A", Werk)) ;
+        GB_BURBLE_END ;
+        GB_Matrix_find_entry (&pleft, &found, &is_zombie, A, i, j) ;
+        ASSERT (!is_zombie) ;   // GB_wait has removed all zombies
     }
 
     //--------------------------------------------------------------------------
     // extract the element
     //--------------------------------------------------------------------------
 
-    if (found)
+    if (found && !is_zombie)
     {
         // entry found
         #ifdef GB_XTYPE
@@ -188,7 +125,6 @@ GrB_Info GB_EXTRACT_ELEMENT     // extract a single entry, x = A(row,col)
             void *ax = ((GB_void *) A->x) + (A->iso ? 0 : (pleft*asize)) ;
             GB_cast_scalar (x, GB_XCODE, ax, acode, asize) ;
         }
-        // TODO: do not flush if extracting to GrB_Scalar
         #pragma omp flush
         #endif
         return (GrB_SUCCESS) ;

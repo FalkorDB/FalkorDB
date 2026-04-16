@@ -35,12 +35,12 @@ GrB_Info GB_builder                 // build a matrix from tuples
     const int64_t vdim,             // number of vectors in T
     const bool is_csc,              // true if T is CSC, false if CSR
     void **I_work_handle,           // for (i,k) or (j,i,k) tuples
-    size_t *I_work_size_handle,
+    size_t *I_work_mem_handle,
     void **J_work_handle,           // for (j,i,k) tuples
-    size_t *J_work_size_handle,
+    size_t *J_work_mem_handle,
     GB_void **S_work_handle,        // array of values of tuples, size ijslen,
                                     // or size 1 if S is iso
-    size_t *S_work_size_handle,
+    size_t *S_work_mem_handle,
     bool known_sorted,              // true if tuples known to be sorted
     bool known_no_duplicates,       // true if tuples known to not have dupl
     int64_t ijslen,                 // size of I_work and J_work arrays

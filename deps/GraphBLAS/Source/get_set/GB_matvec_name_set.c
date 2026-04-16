@@ -22,7 +22,7 @@ GrB_Info GB_matvec_name_set
         return (GrB_INVALID_VALUE) ;
     }
 
-    return (GB_user_name_set (&(A->user_name), &(A->user_name_size), value,
+    return (GB_user_name_set (&(A->user_name), &(A->user_name_mem), value,
         false)) ;
 }
 

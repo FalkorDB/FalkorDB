@@ -31,7 +31,7 @@
     // h == i+1, f == 1: occupied with M(i,j)=1
 
     uint64_t *restrict Hf = (uint64_t *restrict) SaxpyTasks [taskid].Hf ;
-    uint64_t hash_bits = (hash_size-1) ;
+    uint64_t hash_bits = (hash_nitems-1) ;
     // scan this task's M(:,j)
     for (int64_t pM = mystart ; pM < myend ; pM++)
     {

@@ -9,8 +9,8 @@
 
 #define GB_FREE_WORKSPACE                   \
 {                                           \
-    GB_FREE_MEMORY (&Wf, Wf_size) ;           \
-    GB_FREE_MEMORY (&Wcx, Wcx_size) ;         \
+    GB_FREE_MEMORY (&Wf, Wf_mem) ;          \
+    GB_FREE_MEMORY (&Wcx, Wcx_mem) ;        \
     GB_WERK_POP (H_slice, int64_t) ;        \
     GB_WERK_POP (A_slice, int64_t) ;        \
     GB_WERK_POP (M_ek_slicing, int64_t) ;   \
@@ -42,7 +42,7 @@
 
 GrB_Info GB_AxB_saxbit        // C = A*B where C is bitmap
 (
-    GrB_Matrix C,                   // output matrix, static header
+    GrB_Matrix C,                   // output matrix, existing header
     const bool C_iso,               // true if C is iso
     const GB_void *cscalar,         // iso value of C
     const GrB_Matrix M,             // optional mask matrix
@@ -62,7 +62,10 @@ GrB_Info GB_AxB_saxbit        // C = A*B where C is bitmap
 
     GrB_Info info ;
 
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (C != NULL) ;
+
+    int memlane = GB_memlane (C->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
 
     ASSERT_MATRIX_OK_OR_NULL (M, "M for bitmap saxpy A*B", GB0) ;
     ASSERT (!GB_PENDING (M)) ;
@@ -86,8 +89,8 @@ GrB_Info GB_AxB_saxbit        // C = A*B where C is bitmap
     // declare workspace
     //--------------------------------------------------------------------------
 
-    int8_t  *restrict Wf  = NULL ; size_t Wf_size = 0 ;
-    GB_void *restrict Wcx = NULL ; size_t Wcx_size = 0 ;
+    int8_t  *restrict Wf  = NULL ; uint64_t Wf_mem = mem ;
+    GB_void *restrict Wcx = NULL ; uint64_t Wcx_mem = mem ;
     GB_WERK_DECLARE (H_slice, int64_t) ;
     GB_WERK_DECLARE (A_slice, int64_t) ;
     GB_WERK_DECLARE (M_ek_slicing, int64_t) ;
@@ -120,7 +123,7 @@ GrB_Info GB_AxB_saxbit        // C = A*B where C is bitmap
     GB_OK (GB_new_bix (&C, // existing header
         ctype, A->vlen, B->vdim, GB_ph_null, true, GxB_BITMAP, true,
         GB_HYPER_SWITCH_DEFAULT, -1, cnzmax, true, C_iso,
-        /* OK: */ false, false, false)) ;
+        /* OK: */ false, false, false, memlane)) ;
     C->magic = GB_MAGIC ;
 
     //--------------------------------------------------------------------------
@@ -173,7 +176,7 @@ GrB_Info GB_AxB_saxbit        // C = A*B where C is bitmap
         // allocate workspace
         //----------------------------------------------------------------------
 
-        size_t wspace = 0 ;
+        uint64_t wspace = 0 ;
 
         if (use_coarse_tasks)
         {
@@ -228,8 +231,8 @@ GrB_Info GB_AxB_saxbit        // C = A*B where C is bitmap
             //------------------------------------------------------------------
 
             size_t csize = (C_iso) ? 0 : C->type->size ;
-            Wf  = GB_MALLOC_MEMORY (wspace, sizeof (int8_t), &Wf_size) ;
-            Wcx = GB_MALLOC_MEMORY (wspace, csize, &Wcx_size) ;
+            Wf  = GB_MALLOC_MEMORY (wspace, sizeof (int8_t), &Wf_mem) ;
+            Wcx = GB_MALLOC_MEMORY (wspace, csize, &Wcx_mem) ;
             if (Wf == NULL || Wcx == NULL)
             { 
                 // out of memory

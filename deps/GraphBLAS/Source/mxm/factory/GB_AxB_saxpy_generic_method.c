@@ -113,8 +113,8 @@ GrB_Info GB_AXB_SAXPY_GENERIC_METHOD
     // be the same as the size of the A and B types.
     // GB_GENERIC_FLIPXY false: aik = (xtype) A(i,k) and bkj = (ytype) B(k,j)
     // GB_GENERIC_FLIPXY true:  aik = (ytype) A(i,k) and bkj = (xtype) B(k,j)
-    size_t aik_size = GB_GENERIC_FLIPXY ? ysize : xsize ;
-    size_t bkj_size = GB_GENERIC_FLIPXY ? xsize : ysize ;
+    size_t aiksize = GB_GENERIC_FLIPXY ? ysize : xsize ;
+    size_t bkjsize = GB_GENERIC_FLIPXY ? xsize : ysize ;
 
     GB_cast_function cast_A, cast_B ;
     #if GB_GENERIC_FLIPXY
@@ -154,7 +154,7 @@ GrB_Info GB_AXB_SAXPY_GENERIC_METHOD
     #define GB_A_IS_PATTERN 0
     #undef  GB_DECLAREA
     #define GB_DECLAREA(aik)                                            \
-        GB_void aik [GB_VLA(aik_size)] ;
+        GB_void aik [GB_VLA(aiksize)] ;
     #undef  GB_GETA
     #define GB_GETA(aik,Ax,pA,A_iso)                                    \
         if (!A_is_pattern)                                              \
@@ -167,7 +167,7 @@ GrB_Info GB_AXB_SAXPY_GENERIC_METHOD
     #define GB_B_IS_PATTERN 0
     #undef  GB_DECLAREB
     #define GB_DECLAREB(bkj)                                            \
-        GB_void bkj [GB_VLA(bkj_size)] ;
+        GB_void bkj [GB_VLA(bkjsize)] ;
     #undef  GB_GETB
     #define GB_GETB(bkj,Bx,pB,B_iso)                                    \
         if (!B_is_pattern)                                              \

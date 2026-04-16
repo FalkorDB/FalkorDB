@@ -436,11 +436,11 @@
         // C += A'*B: with workspace W for transposing B, one panel at a time
         //----------------------------------------------------------------------
 
-        size_t W_size = 0 ;
+        uint64_t W_mem = 0 ;   // FIXME memlane
         GB_B2TYPE *restrict W = NULL ;
         if (bvdim > 1)
         {
-            W = GB_MALLOC_MEMORY (wp * vlen, sizeof (GB_B2TYPE), &W_size) ;
+            W = GB_MALLOC_MEMORY (wp * vlen, sizeof (GB_B2TYPE), &W_mem) ;
             if (W == NULL)
             { 
                 // out of memory
@@ -699,7 +699,7 @@
         }
 
         // free workspace
-        GB_FREE_MEMORY (&W, W_size) ;
+        GB_FREE_MEMORY (&W, W_mem) ;
     }
     #endif
 

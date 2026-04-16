@@ -19,7 +19,7 @@ GrB_Info GxB_Matrix_export_FullC  // export and free a full matrix, by column
     uint64_t *ncols,    // number of columns of the matrix
 
     void **Ax,          // values
-    uint64_t *Ax_size,  // size of Ax in bytes
+    uint64_t *Ax_memsize,  // size of Ax in bytes
     bool *iso,          // if true, A is iso
 
     const GrB_Descriptor desc
@@ -33,7 +33,7 @@ GrB_Info GxB_Matrix_export_FullC  // export and free a full matrix, by column
     GB_RETURN_IF_NULL (A) ;
     GB_RETURN_IF_NULL (*A) ;
     GB_WHERE_1 (*A, "GxB_Matrix_export_FullC (&A, &type, &nrows, &ncols, "
-        "&Ax, &Ax_size, &iso, desc)") ;
+        "&Ax, &Ax_memsize, &iso, desc)") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
 
@@ -80,7 +80,7 @@ GrB_Info GxB_Matrix_export_FullC  // export and free a full matrix, by column
         NULL, NULL,     // Ah
         NULL, NULL,     // Ab
         NULL, NULL,     // Ai
-        Ax,   Ax_size,  // Ax
+        Ax,   Ax_memsize,  // Ax
         NULL, NULL, NULL,
         &sparsity, &is_csc,                 // full by col
         iso, Werk) ;

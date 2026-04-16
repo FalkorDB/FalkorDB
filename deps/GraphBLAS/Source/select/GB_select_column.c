@@ -41,9 +41,11 @@ GrB_Info GB_select_column
             opcode == GB_COLLE_idxunop_code ||
             opcode == GB_COLGT_idxunop_code) ;
     ASSERT (!GB_IS_BITMAP (A)) ;
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (C != NULL) ;
     ASSERT (GB_JUMBLED_OK (A)) ;
     ASSERT (GB_IS_SPARSE (A) || GB_IS_HYPERSPARSE (A)) ;
+
+    int memlane = GB_memlane (C->header_mem) ;
 
     //--------------------------------------------------------------------------
     // get A
@@ -156,7 +158,7 @@ GrB_Info GB_select_column
         return (GB_new (&C, // auto (sparse or hyper), existing header
             A->type, avlen, avdim, GB_ph_calloc, true,
             GxB_AUTO_SPARSITY, GB_Global_hyper_switch_get ( ), 1,
-            Cp_is_32, Cj_is_32, Ci_is_32)) ;
+            Cp_is_32, Cj_is_32, Ci_is_32, memlane)) ;
     }
 
     //--------------------------------------------------------------------------
@@ -167,7 +169,7 @@ GrB_Info GB_select_column
     GB_OK (GB_new_bix (&C, // sparse or hyper (from A), existing header
         A->type, avlen, avdim, GB_ph_malloc, true, csparsity, false,
         A->hyper_switch, cnvec, cnz, true, A_iso,
-        Cp_is_32, Cj_is_32, Ci_is_32)) ;
+        Cp_is_32, Cj_is_32, Ci_is_32, memlane)) ;
 
     ASSERT (Cp_is_32 == C->p_is_32) ;
     ASSERT (Cj_is_32 == C->j_is_32) ;

@@ -1,9 +1,13 @@
+//------------------------------------------------------------------------------
+// ...
+//------------------------------------------------------------------------------
+
 #include "apply/GB_cuda_apply.hpp"
 
 #undef  GB_FREE_WORKSPACE
 #define GB_FREE_WORKSPACE                                   \
 {                                                           \
-    GB_FREE_MEMORY (&scalarx_cuda, scalarx_cuda_size) ;     \
+    GB_FREE_MEMORY (&scalarx_cuda, scalarx_cuda_mem) ;      \
 }
 
 #undef  GB_FREE_ALL
@@ -28,32 +32,32 @@ GrB_Info GB_cuda_apply_binop
 {
     GrB_Info info ;
     GB_void *scalarx_cuda = NULL ;
-    size_t scalarx_cuda_size = 0 ;
+    uint64_t scalarx_cuda_mem = GB_MEMLANE_RMM ;
 
     cudaStream_t stream = nullptr ;
     GB_OK (GB_cuda_stream_pool_acquire (&stream)) ;
 
     ASSERT (scalarx != NULL) ;
-    // make a copy of scalarx to ensure it's not on the CPU stack
 
+    // make a copy of scalarx to ensure it's not on the CPU stack
     if (bind1st)
     {
         ASSERT (op->xtype != NULL) ;
         scalarx_cuda = (GB_void *) GB_MALLOC_MEMORY (1, op->xtype->size,
-            &scalarx_cuda_size) ;
+            &scalarx_cuda_mem) ;
     }
     else
     {
         ASSERT (op->ytype != NULL) ;
         scalarx_cuda = (GB_void *) GB_MALLOC_MEMORY (1, op->ytype->size,
-            &scalarx_cuda_size) ;
+            &scalarx_cuda_mem) ;
     }
     if (scalarx_cuda == NULL)
     {
         GB_FREE_ALL ;
         return (GrB_OUT_OF_MEMORY) ;
     }
-    memcpy (scalarx_cuda, scalarx, scalarx_cuda_size) ;
+    memcpy (scalarx_cuda, scalarx, scalarx_cuda_mem) ;
 
     GrB_Index anz = GB_nnz_held (A) ;
 

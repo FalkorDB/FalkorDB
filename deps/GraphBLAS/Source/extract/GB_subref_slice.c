@@ -40,21 +40,21 @@
 #define GB_FREE_ALL                             \
 {                                               \
     GB_FREE_WORKSPACE ;                         \
-    GB_FREE_MEMORY (&Cwork, Cwork_size) ;       \
-    GB_FREE_MEMORY (&TaskList, TaskList_size) ; \
+    GB_FREE_MEMORY (&Cwork, Cwork_mem) ;        \
+    GB_FREE_MEMORY (&TaskList, TaskList_mem) ;  \
     GB_Matrix_free (&R) ;                       \
 }
 
 #define GB_RETURN_RESULTS                   \
 {                                           \
     (*p_TaskList     ) = TaskList ;         \
-    (*p_TaskList_size) = TaskList_size ;    \
+    (*p_TaskList_mem ) = TaskList_mem ;     \
     (*p_ntasks       ) = ntasks ;           \
     (*p_nthreads     ) = nthreads ;         \
     (*p_post_sort    ) = post_sort ;        \
     (*R_handle       ) = R ;                \
     (*p_Cwork        ) = Cwork ;            \
-    (*p_Cwork_size   ) = Cwork_size ;       \
+    (*p_Cwork_mem    ) = Cwork_mem ;        \
 }
 
 #include "extract/GB_subref.h"
@@ -63,13 +63,13 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
 (
     // output:
     GB_task_struct **p_TaskList,    // array of structs
-    size_t *p_TaskList_size,        // size of TaskList
+    uint64_t *p_TaskList_mem,       // memsize of TaskList and memlane
     int *p_ntasks,              // # of tasks constructed
     int *p_nthreads,            // # of threads for subref operation
     bool *p_post_sort,          // true if a final post-sort is needed
     GrB_Matrix *R_handle,       // R = inverse (I), if needed
     uint64_t **p_Cwork,         // workspace of size max(2,C->nvec+1)
-    size_t *p_Cwork_size,
+    uint64_t *p_Cwork_mem,
     // from phase0:
     const void *Ap_start,       // location of A(imin:imax,kA)
     const void *Ap_end,
@@ -85,6 +85,7 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     const void *I,
     const bool I_is_32,         // if true, I is 32-bit; else 64 bit
     GB_Werk Werk
+    // FIXME memlane param
 )
 {
 
@@ -93,23 +94,26 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     //--------------------------------------------------------------------------
 
     ASSERT (p_TaskList != NULL) ;
-    ASSERT (p_TaskList_size != NULL) ;
+    ASSERT (p_TaskList_mem != NULL) ;
     ASSERT (p_ntasks != NULL) ;
     ASSERT (p_nthreads != NULL) ;
     ASSERT (p_post_sort != NULL) ;
     ASSERT (p_Cwork != NULL) ;
-    ASSERT (p_Cwork_size != NULL) ;
+    ASSERT (p_Cwork_mem != NULL) ;
     ASSERT (R_handle != NULL) ;
 
     ASSERT ((Cnvec > 0) == (Ap_start != NULL)) ;
     ASSERT ((Cnvec > 0) == (Ap_end != NULL)) ;
 
-    (*p_TaskList) = NULL ;
-    (*p_TaskList_size) = 0 ;
-    (*p_Cwork) = NULL ;
-    (*p_Cwork_size) = 0 ;
+    int memlane = 0 ;   // FIXME memlane param
+    uint64_t mem = GB_mem (memlane, 0) ;
 
-    uint64_t *restrict Cwork = NULL ; size_t Cwork_size = 0 ;
+    (*p_TaskList) = NULL ;
+    (*p_TaskList_mem) = 0 ;
+    (*p_Cwork) = NULL ;
+    (*p_Cwork_mem) = 0 ;
+
+    uint64_t *restrict Cwork = NULL ; uint64_t Cwork_mem = mem ;
     GB_WERK_DECLARE (Coarse, int64_t) ;     // size ntasks1+1
     int ntasks1 = 0 ;
     GrB_Matrix R = NULL ;
@@ -138,7 +142,8 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     // When the mask is present, it is often fastest to break the work up
     // into tasks, even when nthreads_max is 1.
 
-    GB_task_struct *restrict TaskList = NULL ; size_t TaskList_size = 0 ;
+    GB_task_struct *restrict TaskList = NULL ;
+    uint64_t TaskList_mem = mem ;
     int max_ntasks = 0 ;
     int ntasks0 = (nthreads_max == 1) ? 1 : (32 * nthreads_max) ;
     GB_REALLOC_TASK_WORK (TaskList, ntasks0, max_ntasks) ;
@@ -156,7 +161,7 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     //--------------------------------------------------------------------------
 
     Cwork = GB_MALLOC_MEMORY (GB_IMAX (2, Cnvec+1), sizeof (uint64_t),
-        &Cwork_size) ;
+        &Cwork_mem) ;
     if (Cwork == NULL)
     { 
         // out of memory
@@ -208,8 +213,8 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     int nthreads = GB_nthreads (cwork, chunk, nthreads_max) ;
     int ntasks = 0 ;
     ntasks1 = (nthreads == 1) ? 1 : (32 * nthreads) ;
-    double target_task_size = cwork / (double) (ntasks1) ;
-    target_task_size = GB_IMAX (target_task_size, chunk) ;
+    double target_work_per_task = cwork / (double) (ntasks1) ;
+    target_work_per_task = GB_IMAX (target_work_per_task, chunk) ;
 
     //--------------------------------------------------------------------------
     // invert I if required
@@ -322,7 +327,7 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
             //------------------------------------------------------------------
 
             double ckwork = Cwork [k+1] - Cwork [k] ;
-            int nfine = ckwork / target_task_size ;
+            int nfine = ckwork / target_work_per_task ;
             nfine = GB_IMAX (nfine, 1) ;
 
             // make the TaskList bigger, if needed

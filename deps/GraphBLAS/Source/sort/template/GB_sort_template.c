@@ -646,13 +646,13 @@ static void GB_SORT (vector)    // sort the pair of arrays A_0, A_1
 //------------------------------------------------------------------------------
 
 #undef  GB_FREE_WORKSPACE
-#define GB_FREE_WORKSPACE                       \
-{                                               \
-    GB_WERK_POP (SortTasks, int64_t) ;          \
-    GB_FREE_MEMORY (&C_skipped, C_skipped_size) ; \
-    GB_FREE_MEMORY (&W_0, W_0_size) ;             \
-    GB_FREE_MEMORY (&W_1, W_1_size) ;             \
-    GB_FREE_MEMORY (&W, W_size) ;                 \
+#define GB_FREE_WORKSPACE                           \
+{                                                   \
+    GB_WERK_POP (SortTasks, int64_t) ;              \
+    GB_FREE_MEMORY (&C_skipped, C_skipped_mem) ;    \
+    GB_FREE_MEMORY (&W_0, W_0_mem) ;                \
+    GB_FREE_MEMORY (&W_1, W_1_mem) ;                \
+    GB_FREE_MEMORY (&W, W_mem) ;                    \
 }
 
 #ifdef GB_JIT_KERNEL
@@ -688,6 +688,9 @@ static GrB_Info GB_SORT (mtx)
     ASSERT (op->xtype == op->ytype) ;
     #endif
 
+    int memlane = GB_memlane (C->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     //--------------------------------------------------------------------------
     // get callback functions
     //--------------------------------------------------------------------------
@@ -710,11 +713,11 @@ static GrB_Info GB_SORT (mtx)
     GB_C_TYPE  *restrict Cx = (GB_C_TYPE  *) C->x ;
 
     // workspace
-    GB_C_TYPE  *restrict W_0 = NULL ; size_t W_0_size = 0 ;
-    GB_Ci_TYPE *restrict W_1 = NULL ; size_t W_1_size = 0 ;
-    int64_t    *restrict W   = NULL ; size_t W_size   = 0 ;
+    GB_C_TYPE  *restrict W_0 = NULL ; uint64_t W_0_mem = mem ;
+    GB_Ci_TYPE *restrict W_1 = NULL ; uint64_t W_1_mem = mem ;
+    int64_t    *restrict W   = NULL ; uint64_t W_mem   = mem ;
     int64_t *restrict C_skipped = NULL ;
-    size_t C_skipped_size = 0 ;
+    uint64_t C_skipped_mem = mem ;
     GB_WERK_DECLARE (SortTasks, int64_t) ;
 
     #if GB_SORT_UDT
@@ -810,7 +813,7 @@ static GrB_Info GB_SORT (mtx)
     int64_t total_skipped = C_skip [ntasks] ;
 
     C_skipped = GB_MALLOC_MEMORY (total_skipped, sizeof (int64_t),
-        &C_skipped_size) ;
+        &C_skipped_mem) ;
     if (C_skipped == NULL)
     { 
         // out of memory
@@ -860,11 +863,10 @@ static GrB_Info GB_SORT (mtx)
     //--------------------------------------------------------------------------
 
     W   = GB_MALLOC_MEMORY (max_length + 6*ntasks2 + 1, sizeof (int64_t),
-        &W_size) ;
-    W_0 = (GB_C_TYPE *) GB_MALLOC_MEMORY (max_length, GB_SIZE,
-        &W_0_size) ;
+        &W_mem) ;
+    W_0 = (GB_C_TYPE *) GB_MALLOC_MEMORY (max_length, GB_SIZE, &W_0_mem) ;
     W_1 = (GB_Ci_TYPE *) GB_MALLOC_MEMORY (max_length, sizeof (GB_Ci_TYPE),
-        &W_1_size) ;
+        &W_1_mem) ;
 
     if (W == NULL || W_0 == NULL || W_1 == NULL)
     { 

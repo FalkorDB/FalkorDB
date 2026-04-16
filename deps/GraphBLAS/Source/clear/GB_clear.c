@@ -48,6 +48,9 @@ GrB_Info GB_clear           // clear a matrix, type and dimensions unchanged
     ASSERT (GB_JUMBLED_OK (A)) ;
     ASSERT (GB_PENDING_OK (A)) ;
 
+    int memlane = GB_memlane (A->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     //--------------------------------------------------------------------------
     // clear the content of A if bitmap
     //--------------------------------------------------------------------------
@@ -106,7 +109,8 @@ GrB_Info GB_clear           // clear a matrix, type and dimensions unchanged
         int64_t plen = A->vdim ;
         A->nvec = plen ;
         A->plen = plen ;
-        A->p = GB_MALLOC_MEMORY (plen+1, apsize, &(A->p_size)) ;
+        A->p_mem = mem ;
+        A->p = GB_MALLOC_MEMORY (plen+1, apsize, &(A->p_mem)) ;
         ASSERT (A->h == NULL) ;
         if (A->p == NULL)
         { 
@@ -127,8 +131,10 @@ GrB_Info GB_clear           // clear a matrix, type and dimensions unchanged
         int64_t plen = GB_IMIN (1, A->vdim) ;
         A->nvec = 0 ;
         A->plen = plen ;
-        A->p = GB_CALLOC_MEMORY (plen+1, apsize, &(A->p_size)) ;
-        A->h = GB_CALLOC_MEMORY (plen  , ajsize, &(A->h_size)) ;
+        A->p_mem = mem ;
+        A->h_mem = mem ;
+        A->p = GB_CALLOC_MEMORY (plen+1, apsize, &(A->p_mem)) ;
+        A->h = GB_CALLOC_MEMORY (plen  , ajsize, &(A->h_mem)) ;
         if (A->p == NULL || A->h == NULL)
         { 
             // out of memory

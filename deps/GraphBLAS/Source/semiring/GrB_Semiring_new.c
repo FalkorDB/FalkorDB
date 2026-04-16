@@ -33,9 +33,9 @@
 #include "GB.h"
 #include "semiring/GB_Semiring_new.h"
 
-#define GB_FREE_ALL                     \
-{                                       \
-    GB_FREE_MEMORY (semiring, header_size) ;   \
+#define GB_FREE_ALL                         \
+{                                           \
+    GB_FREE_MEMORY (semiring, header_mem) ; \
 }
 
 GrB_Info GrB_Semiring_new           // create a semiring
@@ -64,16 +64,18 @@ GrB_Info GrB_Semiring_new           // create a semiring
     // allocate the semiring
     //--------------------------------------------------------------------------
 
-    size_t header_size ;
+    int memlane = GB_Context_memlane ( ) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+    uint64_t header_mem = mem ;
     (*semiring) = GB_MALLOC_MEMORY (1, sizeof (struct GB_Semiring_opaque),
-        &header_size) ;
+        &header_mem) ;
     if (*semiring == NULL)
     { 
         // out of memory
         return (GrB_OUT_OF_MEMORY) ;
     }
 
-    (*semiring)->header_size = header_size ;
+    (*semiring)->header_mem = header_mem ;
 
     //--------------------------------------------------------------------------
     // create the semiring

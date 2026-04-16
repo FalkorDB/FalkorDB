@@ -30,7 +30,7 @@ GrB_Info GB_unload_into_container   // GrB_Matrix -> GxB_Container
     GrB_Info info ;
     ASSERT_MATRIX_OK (A, "A to unload into Container", GB0) ;
     ASSERT_MATRIX_OK_OR_NULL (Container->Y, "Container->Y before unload", GB0) ;
-    GB_CHECK_CONTAINER (Container) ;
+    GB_CHECK_CONTAINER (Container, Container->memlane) ;
 
     //--------------------------------------------------------------------------
     // finish any pending work, but permit A to still be jumbled
@@ -75,13 +75,13 @@ GrB_Info GB_unload_into_container   // GrB_Matrix -> GxB_Container
             // unload A->p, A->h, and A->i into the Container
             GB_vector_load (Container->p, &(A->p),
                 A->p_is_32 ? GrB_UINT32 : GrB_UINT64,
-                A->nvec+1, A->p_size, A->p_shallow) ;
+                A->nvec+1, A->p_mem, A->p_shallow) ;
             GB_vector_load (Container->h, &(A->h),
                 A->j_is_32 ? GrB_INT32 : GrB_INT64,
-                A->nvec, A->h_size, A->h_shallow) ;
+                A->nvec, A->h_mem, A->h_shallow) ;
             GB_vector_load (Container->i, &(A->i),
                 A->i_is_32 ? GrB_INT32 : GrB_INT64,
-                nvals, A->i_size, A->i_shallow) ;
+                nvals, A->i_mem, A->i_shallow) ;
             break ;
 
         case GxB_SPARSE : 
@@ -89,17 +89,17 @@ GrB_Info GB_unload_into_container   // GrB_Matrix -> GxB_Container
             // unload A->p and A->i into the Container
             GB_vector_load (Container->p, &(A->p),
                 A->p_is_32 ? GrB_UINT32 : GrB_UINT64,
-                A->plen+1, A->p_size, A->p_shallow) ;
+                A->plen+1, A->p_mem, A->p_shallow) ;
             GB_vector_load (Container->i, &(A->i),
                 A->i_is_32 ? GrB_INT32 : GrB_INT64,
-                nvals, A->i_size, A->i_shallow) ;
+                nvals, A->i_mem, A->i_shallow) ;
             break ;
 
         case GxB_BITMAP : 
 
             // unload A->b into the Container
             GB_vector_load (Container->b, (void **) &(A->b), GrB_INT8,
-                nx, A->b_size, A->b_shallow) ;
+                nx, A->b_mem, A->b_shallow) ;
             break ;
 
         case GxB_FULL : 
@@ -109,7 +109,7 @@ GrB_Info GB_unload_into_container   // GrB_Matrix -> GxB_Container
 
     // unload A->x into the Container
     GB_vector_load (Container->x, &(A->x), A->type, iso ? 1 : nx,
-        A->x_size, A->x_shallow) ;
+        A->x_mem, A->x_shallow) ;
 
     //--------------------------------------------------------------------------
     // change A to a dense 0-by-0 matrix with no content
@@ -122,8 +122,7 @@ GrB_Info GB_unload_into_container   // GrB_Matrix -> GxB_Container
     A->plen = -1 ;
     A->vlen = 0 ;
     A->vdim = 0 ;
-//  A->nvec_nonempty = 0 ;
-    GB_nvec_nonempty_set (A, 0) ;
+    GB_nvec_nonempty_set (A, 0) ;       // atomic: A->nvec_nonempty = 0
     A->p_is_32 = false ;
     A->j_is_32 = false ;
     A->i_is_32 = false ;

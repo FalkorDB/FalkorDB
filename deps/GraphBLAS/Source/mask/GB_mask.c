@@ -137,11 +137,12 @@ GrB_Info GB_mask                // C<M> = Z
 
     // C_result may be aliased with M
     ASSERT_MATRIX_OK (C_result, "C_result for GB_mask", GB0) ;
-    ASSERT (!(C_result->header_size == 0)) ;
     // C may be cleared anyway, without the need for finishing it
     ASSERT (GB_ZOMBIES_OK (C_result)) ;
     ASSERT (GB_JUMBLED_OK (C_result)) ;
     ASSERT (GB_PENDING_OK (C_result)) ;
+
+    int memlane = GB_memlane (C_result->header_mem) ;
 
     ASSERT_MATRIX_OK_OR_NULL (M, "M for GB_mask", GB0) ;
     // M may have zombies and pending tuples
@@ -168,7 +169,6 @@ GrB_Info GB_mask                // C<M> = Z
 
     GrB_Info info = GrB_SUCCESS ;
     GrB_Matrix C = NULL, C0 = NULL, R = NULL ;
-    struct GB_Matrix_opaque C0_header, R_header ;
 
     //--------------------------------------------------------------------------
     // apply the mask
@@ -268,13 +268,11 @@ GrB_Info GB_mask                // C<M> = Z
                 bool Cp_is_32, Cj_is_32, Ci_is_32 ;
                 GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
                     GxB_HYPERSPARSE, 1, vlen, vdim, Werk) ;
-                GB_CLEAR_MATRIX_HEADER (C0, &C0_header) ;
-                GB_OK (GB_new_bix (&C0, // sparse or hyper, existing header
+                GB_OK (GB_new_bix (&C0, // sparse or hyper, new header
                     C_result->type, vlen, vdim, GB_ph_calloc, R_is_csc,
                     GxB_HYPERSPARSE, true, C_result->hyper_switch, 0, 0,
-                    true, false, Cp_is_32, Cj_is_32, Ci_is_32)) ;
+                    true, false, Cp_is_32, Cj_is_32, Ci_is_32, memlane)) ;
                 C = C0 ;
-                ASSERT (C->header_size == 0 || GBNSTATIC) ;
             }
             else
             { 
@@ -285,7 +283,6 @@ GrB_Info GB_mask                // C<M> = Z
                 GB_OK (GB_clear (C_result, Werk)) ;
                 C_result->sparsity_control = save ;         // restore control
                 C = C_result ;  // C must have a dynamic header
-                ASSERT (!(C->header_size == 0)) ;
             }
             // C has been cleared, so it has no zombies or pending tuples
         }
@@ -294,7 +291,6 @@ GrB_Info GB_mask                // C<M> = Z
             // C has already been finished if C_replace is false, via the
             // GB_MATRIX_WAIT (C) in GB_accum_mask.
             C = C_result ;
-            ASSERT (!(C->header_size == 0)) ;
         }
 
         // C cannot be bitmap or full for GB_masker
@@ -316,7 +312,7 @@ GrB_Info GB_mask                // C<M> = Z
         // R = masker (C, M, Z):  compute C<M>=Z, placing results in R
         //----------------------------------------------------------------------
 
-        GB_CLEAR_MATRIX_HEADER (R, &R_header) ;
+        GB_OK (GB_matrix_header_new (&R, memlane)) ;
         GB_OK (GB_masker (R, R_is_csc, M, Mask_comp, Mask_struct, C, Z, Werk)) ;
 
         //----------------------------------------------------------------------

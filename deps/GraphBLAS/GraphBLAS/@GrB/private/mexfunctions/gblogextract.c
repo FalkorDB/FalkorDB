@@ -160,10 +160,10 @@ void mexFunction
 
     // Remove G->x from G
     void *Gx = G->x ;
-    size_t Gx_size = G->x_size ;
+    uint64_t Gx_mem = G->x_mem ;
     GBMDUMP ("remove G->x from memtable: %p\n", G->x) ;
     GB_Global_memtable_remove (G->x) ;
-    G->x = NULL ; G->x_size = 0 ;
+    G->x = NULL ; G->x_mem = 0 ;
     bool G_iso = G->iso  ;            	
 
     //--------------------------------------------------------------------------
@@ -175,32 +175,33 @@ void mexFunction
     G->x = &Gbool ;            		 	 	 	 	 	
     G->iso = true ;            		 	 	 	 	 	
     G->x_shallow = true ;      		 	 	 	 	 	
-    G->x_size = sizeof (bool) ; 						
+    G->x_mem = GB_mem (0, sizeof (bool)) ;      // G->x is on the stack
 
     //--------------------------------------------------------------------------
     // K = structure of M, where the kth entry in K is equal to k
     //--------------------------------------------------------------------------
 
     // K is a shallow copy of M, except for its numerical values
-    struct GB_Matrix_opaque K_header ;
-    GrB_Matrix K = GB_clear_matrix_header (&K_header) ;
+    GrB_Matrix K = NULL ;
+    OK (GB_matrix_header_new (&K, /* memlane: */ 0)) ;
 
     OK (GB_shallow_copy (K, GxB_BY_COL, M, NULL)) ;
     OK (GrB_Matrix_get_INT32 (K, &sparsity, GxB_SPARSITY_STATUS)) ;
     CHECK_ERROR (sparsity == GxB_BITMAP, "internal error 10") ;
 
     // Kx = uint64 (0:mnz-1)
-    size_t Kx_size = (MAX (mnz, 1) * sizeof (uint64_t)) ;
-    uint64_t *Kx = mxMalloc (Kx_size) ;
+    size_t Kx_memsize = (MAX (mnz, 1) * sizeof (uint64_t)) ;
+    uint64_t Kx_mem = GB_mem (GB_MEMLANE_MATLAB, Kx_memsize) ;
+    uint64_t *Kx = mxMalloc (Kx_memsize) ;  // same as GB_MEMLANE_MATLAB
     GB_helper7 (Kx, mnz) ;
 
     // add a new K->x to K
     K->x = Kx ;
     K->x_shallow = false ;
     K->type = GrB_UINT64 ;
-    K->x_size = Kx_size ;
+    K->x_mem = Kx_mem ;
     GBMDUMP ("add K->x to memtable: %p\n", K->x) ;
-    GB_Global_memtable_add (K->x, K->x_size) ;
+    GB_Global_memtable_add (K->x, K->x_mem) ;
     K->iso = false  ;            	
 
     //--------------------------------------------------------------------------
@@ -219,10 +220,10 @@ void mexFunction
     OK1 (T, GrB_Matrix_wait (T, GrB_MATERIALIZE)) ;
     OK (GrB_Matrix_nvals (&tnvals, T)) ;
     uint64_t *Tx = T->x ;
-    size_t Tx_size = T->x_size ;
+    size_t Tx_mem = T->x_mem ;
     GBMDUMP ("remove T->x from memtable: %p\n", T->x) ;
     GB_Global_memtable_remove (T->x) ;
-    T->x = NULL ; T->x_size = 0 ;
+    T->x = NULL ; T->x_mem = 0 ;
 
     // gnvals and tnvals are identical, by construction
     CHECK_ERROR (gnvals != tnvals, "internal error 1") ;
@@ -248,19 +249,19 @@ void mexFunction
 
     // transplant values of T as the row indices of V
     V->i = (void *) Tx ;
-    V->i_size = Tx_size ;
+    V->i_mem = Tx_mem ;
     V->i_shallow = false ;
     V->i_is_32 = false ;
     GBMDUMP ("add V->i to memtable: %p\n", V->i) ;
-    GB_Global_memtable_add (V->i, V->i_size) ;  // this was the old T->x
+    GB_Global_memtable_add (V->i, V->i_mem) ;
 
     // transplant the values of G as the values of V
     V->x = Gx ;
-    V->x_size = Gx_size ;
+    V->x_mem = Gx_mem ;
     V->x_shallow = false ;
     V->iso = G_iso  ;            	
     GBMDUMP ("add V->x to memtable: %p\n", V->x) ;
-    GB_Global_memtable_add (V->x, V->x_size) ;  // this was the old G->x
+    GB_Global_memtable_add (V->x, V->x_mem) ;
 
     GB_Ap_DECLARE (Vp, ) ; GB_Ap_PTR (Vp, V) ;
     GB_ISET (Vp, 0, 0) ;        // Vp [0] = 0 ;

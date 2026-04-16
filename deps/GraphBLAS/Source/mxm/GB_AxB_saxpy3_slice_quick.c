@@ -19,7 +19,7 @@ GrB_Info GB_AxB_saxpy3_slice_quick
     const GrB_Matrix B,             // input matrix B
     // outputs
     GB_saxpy3task_struct **SaxpyTasks_handle,
-    size_t *SaxpyTasks_size_handle,
+    uint64_t *SaxpyTasks_mem_handle,
     int *ntasks,                    // # of tasks created (coarse and fine)
     int *nfine,                     // # of fine tasks created
     int *nthreads,                  // # of threads to use
@@ -42,10 +42,10 @@ GrB_Info GB_AxB_saxpy3_slice_quick
     // allocate the task
     //--------------------------------------------------------------------------
 
-    size_t SaxpyTasks_size = 0 ;
+    uint64_t SaxpyTasks_mem = 0 ;   // FIXME memlane
     GB_saxpy3task_struct
         *SaxpyTasks = GB_MALLOC_MEMORY (1, sizeof (GB_saxpy3task_struct),
-            &SaxpyTasks_size) ;
+            &SaxpyTasks_mem) ;
     if (SaxpyTasks == NULL)
     { 
         // out of memory
@@ -53,7 +53,7 @@ GrB_Info GB_AxB_saxpy3_slice_quick
     }
 
     // clear SaxpyTasks
-    memset (SaxpyTasks, 0, SaxpyTasks_size) ;
+    memset (SaxpyTasks, 0, SaxpyTasks_mem) ;
 
     //--------------------------------------------------------------------------
     // create a single coarse Gustavson task
@@ -62,20 +62,20 @@ GrB_Info GB_AxB_saxpy3_slice_quick
     SaxpyTasks [0].start   = 0 ;
     SaxpyTasks [0].end     = bnvec-1 ;
     SaxpyTasks [0].vector  = -1 ;
-    SaxpyTasks [0].hsize   = cvlen ;
+    SaxpyTasks [0].hash_nitems = cvlen ;
     SaxpyTasks [0].Hi      = NULL ;      // assigned later
     SaxpyTasks [0].Hf      = NULL ;      // assigned later
     SaxpyTasks [0].Hx      = NULL ;      // assigned later
     SaxpyTasks [0].my_cjnz = 0 ;         // unused
     SaxpyTasks [0].leader  = 0 ;
-    SaxpyTasks [0].team_size = 1 ;
+    SaxpyTasks [0].team_nfine = 1 ;
 
     //--------------------------------------------------------------------------
     // return result
     //--------------------------------------------------------------------------
 
     (*SaxpyTasks_handle) = SaxpyTasks ;
-    (*SaxpyTasks_size_handle) = SaxpyTasks_size ;
+    (*SaxpyTasks_mem_handle) = SaxpyTasks_mem ;
     return (GrB_SUCCESS) ;
 }
 

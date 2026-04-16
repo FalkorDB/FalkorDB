@@ -16,7 +16,7 @@ GrB_Info GxB_Vector_import_Full // import a full vector
     uint64_t n,         // vector length
 
     void **vx,          // values
-    uint64_t vx_size,   // size of vx in bytes
+    uint64_t vx_memsize,   // size of vx in bytes
     bool iso,           // if true, v is iso
 
     const GrB_Descriptor desc
@@ -28,7 +28,7 @@ GrB_Info GxB_Vector_import_Full // import a full vector
     //--------------------------------------------------------------------------
 
     GB_WHERE0 ("GxB_Vector_import_Full (&v, type, n, "
-        "&vx, vx_size, iso, desc)") ;
+        "&vx, vx_memsize, iso, desc)") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_GET_DESCRIPTOR_IMPORT (desc, fast_import) ;
@@ -42,7 +42,7 @@ GrB_Info GxB_Vector_import_Full // import a full vector
         NULL, 0,        // Ah
         NULL, 0,        // Ab
         NULL, 0,        // Ai
-        vx,   vx_size,  // Ax
+        vx,   vx_memsize,  // Ax
         0, false, 0,
         GxB_FULL, true,                     // full by col
         iso, fast_import, true, Werk) ;

@@ -41,7 +41,7 @@ GrB_Info GB_Context_check       // check a GraphBLAS Context
 
     // name given by GrB_set, or 'GrB_*' name for built-in objects
     char *given_name = Context->user_name ;
-    if (Context->user_name_size > 0 && given_name != NULL)
+    if (GB_memsize (Context->user_name_mem) > 0 && given_name != NULL)
     { 
         GBPR0 ("    Context given name: [%s]\n", given_name) ;
     }
