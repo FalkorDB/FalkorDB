@@ -32,7 +32,8 @@ use graph::{
 use parking_lot::RwLock;
 use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
 use roaring::RoaringTreemap;
-use std::{collections::HashMap, sync::Arc};
+use rustc_hash::FxHashMap;
+use std::sync::Arc;
 
 pub fn graph_effect(
     ctx: &Context,
@@ -107,8 +108,8 @@ fn apply_effects(
         return Err(format!("unsupported effects version: {version}"));
     }
 
-    let mut index_add_docs: HashMap<u64, RoaringTreemap> = HashMap::new();
-    let mut index_remove_docs: HashMap<u64, RoaringTreemap> = HashMap::new();
+    let mut index_add_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+    let mut index_remove_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
     let mut has_index_ops = false;
 
     while offset < buf.len() {
@@ -143,7 +144,7 @@ fn apply_effects(
                 let attr_count = read_u16(buf, &mut offset)?;
                 if attr_count > 0 {
                     let attrs = read_attrs(buf, &mut offset, attr_count)?;
-                    let mut attr_map = HashMap::new();
+                    let mut attr_map = FxHashMap::default();
                     attr_map.insert(node_id_raw, attrs);
                     g.set_nodes_attributes(&attr_map, &mut index_add_docs)?;
                 }
@@ -159,7 +160,7 @@ fn apply_effects(
 
                 let pending_rel =
                     PendingRelationship::new(NodeId::from(src_id), NodeId::from(dst_id), type_name);
-                let mut rels = HashMap::new();
+                let mut rels = FxHashMap::default();
                 rels.insert(RelationshipId::from(rel_id_raw), pending_rel);
                 g.create_relationships(&rels);
 
@@ -167,7 +168,7 @@ fn apply_effects(
                 let attr_count = read_u16(buf, &mut offset)?;
                 if attr_count > 0 {
                     let attrs = read_attrs(buf, &mut offset, attr_count)?;
-                    let mut attr_map = HashMap::new();
+                    let mut attr_map = FxHashMap::default();
                     attr_map.insert(rel_id_raw, attrs);
                     g.set_relationships_attributes(&attr_map)?;
                 }
@@ -177,7 +178,7 @@ fn apply_effects(
                 let node_id = read_u64(buf, &mut offset)?;
                 let attr_count = read_u16(buf, &mut offset)?;
                 let attrs = read_attrs(buf, &mut offset, attr_count)?;
-                let mut attr_map = HashMap::new();
+                let mut attr_map = FxHashMap::default();
                 attr_map.insert(node_id, attrs);
                 g.set_nodes_attributes(&attr_map, &mut index_add_docs)?;
             }
@@ -186,7 +187,7 @@ fn apply_effects(
                 let rel_id = read_u64(buf, &mut offset)?;
                 let attr_count = read_u16(buf, &mut offset)?;
                 let attrs = read_attrs(buf, &mut offset, attr_count)?;
-                let mut attr_map = HashMap::new();
+                let mut attr_map = FxHashMap::default();
                 attr_map.insert(rel_id, attrs);
                 g.set_relationships_attributes(&attr_map)?;
             }
@@ -228,7 +229,7 @@ fn apply_effects(
                 let src_id = read_u64(buf, &mut offset)?;
                 let dst_id = read_u64(buf, &mut offset)?;
                 let rel = RelationshipId::from(rel_id);
-                let mut rels = HashMap::new();
+                let mut rels = FxHashMap::default();
                 rels.insert(rel, (NodeId::from(src_id), NodeId::from(dst_id)));
                 g.delete_relationships(&rels)?;
             }

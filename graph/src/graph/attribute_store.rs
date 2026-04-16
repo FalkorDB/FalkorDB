@@ -83,10 +83,11 @@
 //! Each attribute is stored as a separate fjall entry:
 //! `entity_id (8 bytes big-endian) + attr_idx (2 bytes big-endian)`
 
-use std::{collections::HashMap, process, sync::Arc};
+use std::{process, sync::Arc};
 
 use std::cmp::Ordering;
-use std::collections::HashMap as StdHashMap;
+
+use rustc_hash::FxHashMap;
 
 use fjall::{
     Database, Keyspace, KeyspaceCreateOptions, Readable, Snapshot, config::HashRatioPolicy,
@@ -317,9 +318,8 @@ impl AttributeStore {
         &self,
         deleted: &RoaringTreemap,
         max_id: u64,
-    ) -> std::collections::HashMap<u64, Arc<Vec<(u16, Value)>>> {
-        let mut snap: std::collections::HashMap<u64, Arc<Vec<(u16, Value)>>> =
-            std::collections::HashMap::new();
+    ) -> FxHashMap<u64, Arc<Vec<(u16, Value)>>> {
+        let mut snap: FxHashMap<u64, Arc<Vec<(u16, Value)>>> = FxHashMap::default();
 
         // 1. Collect everything from fjall (cold store) in a single sequential scan.
         if self.keyspace.get().is_some() {
@@ -546,15 +546,14 @@ impl AttributeStore {
     /// the number of attributes *replaced* and the number of non-null attributes *set*.
     pub fn insert_attrs(
         &mut self,
-        attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
+        attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
     ) -> Result<(usize, usize), String> {
         let mut nremoved = 0;
         let mut nset = 0;
 
         // Pre-resolve all unique attribute names → indices ONCE.
         // Uses Arc pointer identity as key to avoid rehashing strings.
-        let mut name_to_idx: StdHashMap<*const String, u16> =
-            StdHashMap::with_capacity(attrs.values().next().map_or(0, OrderMap::len));
+        let mut name_to_idx: FxHashMap<*const String, u16> = FxHashMap::default();
         for entity_attrs in attrs.values() {
             for (attr, _) in entity_attrs.iter() {
                 let ptr = Arc::as_ptr(attr);
@@ -676,11 +675,10 @@ impl AttributeStore {
     /// Returns the number of non-null attributes imported.
     pub fn import_attrs(
         &mut self,
-        attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
+        attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
     ) -> usize {
         // Pre-resolve all unique attribute names → indices ONCE.
-        let mut name_to_idx: StdHashMap<*const String, u16> =
-            StdHashMap::with_capacity(attrs.values().next().map_or(0, OrderMap::len));
+        let mut name_to_idx: FxHashMap<*const String, u16> = FxHashMap::default();
         for entity_attrs in attrs.values() {
             for (attr, _) in entity_attrs.iter() {
                 let ptr = Arc::as_ptr(attr);
@@ -898,10 +896,10 @@ impl AttributeStore {
         global_attrs: &[Arc<String>],
         count: u64,
         offset: u64,
-        rdb_snapshot: Option<&std::collections::HashMap<u64, Arc<Vec<(u16, Value)>>>>,
+        rdb_snapshot: Option<&FxHashMap<u64, Arc<Vec<(u16, Value)>>>>,
     ) {
         // Build attr remap inline.
-        let global_index: std::collections::HashMap<&Arc<String>, usize> = global_attrs
+        let global_index: FxHashMap<&Arc<String>, usize> = global_attrs
             .iter()
             .enumerate()
             .map(|(i, n)| (n, i))
