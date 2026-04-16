@@ -90,7 +90,7 @@ unsafe extern "C" fn graph_rdb_save(
     rdb: *mut RedisModuleIO,
     value: *mut c_void,
 ) {
-    let tg = unsafe { &*(value.cast::<Arc<RwLock<ThreadedGraph>>>()) };
+    let tg = &*(value.cast::<Arc<RwLock<ThreadedGraph>>>());
     let guard = tg.read();
     let g_arc = guard.graph.read();
     let g = g_arc.borrow();
