@@ -2122,6 +2122,13 @@ impl Graph {
         self.node_indexer.cancel();
     }
 
+    /// Delete fjall keyspaces for both node and relationship attribute stores.
+    /// Called during graph destruction to release persisted attribute data.
+    pub fn delete_keyspaces(&self) {
+        self.node_attrs.delete_keyspace();
+        self.relationship_attrs.delete_keyspace();
+    }
+
     pub fn set_indexer_graph(
         &mut self,
         graph: Arc<AtomicRefCell<Self>>,
