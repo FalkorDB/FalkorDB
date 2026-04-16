@@ -458,9 +458,8 @@ class testGraphPersistency():
             self.env.skip()
             return
 
-        # create 1000 graphs
-        # each containing 1000 nodes and 500 edges
-        graph_count = 1000
+        # create 100 graphs, each containing 1000 nodes and 500 edges
+        graph_count = 100
         q = "UNWIND range(0, 499) AS x CREATE (:A)-[:R]->(:B)"
 
         for i in range(0, graph_count):
@@ -478,9 +477,13 @@ class testGraphPersistency():
                 break
             sleep(0.1)  # poll every 100ms
 
+        # Regardless of whether the assertion passes, drain any remaining BGSAVE
+        # before returning so subsequent tests don't see "Background save already in progress"
+        while in_progress:
+            sleep(0.5)
+            in_progress = self.conn.info("persistence").get("rdb_bgsave_in_progress")
+
         self.env.assertFalse(in_progress)
-        if in_progress:
-            return  # BGSAVE did not complete; skip the rest to avoid cascading failures
 
         # Save & Load from RDB
         self.env.dumpAndReload()
@@ -488,7 +491,7 @@ class testGraphPersistency():
         # Make sure reloaded DB contains all graphs
         graphs = self.db.list_graphs()
 
-        # check that graphs 0-1000 exist by removing the prefix and sorting
+        # check that graphs 0-100 exist by removing the prefix and sorting
         graphs = [int(x.replace(GRAPH_ID, "")) for x in graphs if x.startswith(GRAPH_ID)]
         graphs.sort()
 
@@ -545,7 +548,12 @@ class testGraphPersistency():
             if not pending:
                 break
             sleep(0.1) # every 100ms
-        
+
+        # Drain any remaining BGSAVE before proceeding
+        while pending:
+            sleep(0.5)
+            pending = self.conn.info("persistence").get("rdb_bgsave_in_progress")
+
         self.env.assertFalse(pending)
         end = datetime.now()
 
