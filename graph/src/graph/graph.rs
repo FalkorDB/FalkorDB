@@ -1386,40 +1386,32 @@ impl Graph {
             }
         }
 
-        for (
-            id,
-            PendingRelationship {
-                type_name,
-                from: start,
-                to: end,
-                ..
-            },
-        ) in relationships
-        {
-            self.get_relationship_matrix_mut(type_name)
-                .set(start.0, end.0, id.0);
+        // Pre-resolve type names → (matrix index, type_id) ONCE.
+        let mut type_cache: std::collections::HashMap<*const String, (usize, u64)> =
+            std::collections::HashMap::new();
+        for rel in relationships.values() {
+            let ptr = Arc::as_ptr(&rel.type_name);
+            if !type_cache.contains_key(&ptr) {
+                // Ensure the type + matrix exist
+                self.get_relationship_matrix_mut(&rel.type_name);
+                let type_idx = self
+                    .relationship_types
+                    .iter()
+                    .position(|t| t.as_str() == rel.type_name.as_str())
+                    .unwrap();
+                type_cache.insert(ptr, (type_idx, type_idx as u64));
+            }
         }
 
         self.resize();
 
-        for (
-            id,
-            PendingRelationship {
-                type_name,
-                from: start,
-                to: end,
-            },
-        ) in relationships
-        {
-            self.adjacancy_matrix.set(start.0, end.0, true);
-            self.relationship_type_matrix.set(
-                id.0,
-                self.relationship_types
-                    .iter()
-                    .position(|p| p.as_str() == type_name.as_str())
-                    .unwrap() as u64,
-                true,
-            );
+        // Single loop: set tensor + adjacency + type matrix
+        for (id, rel) in relationships {
+            let ptr = Arc::as_ptr(&rel.type_name);
+            let (matrix_idx, type_id) = type_cache[&ptr];
+            self.relationship_matrices[matrix_idx].set(rel.from.0, rel.to.0, id.0);
+            self.adjacancy_matrix.set(rel.from.0, rel.to.0, true);
+            self.relationship_type_matrix.set(id.0, type_id, true);
         }
     }
 

@@ -171,14 +171,6 @@ impl Runtime<'_> {
                     if !src_deleted && !dest_deleted {
                         continue;
                     }
-                    // Skip if other endpoint is also being deleted and has lower ID
-                    // (it will be discovered from that node's perspective)
-                    if src_deleted && dest_deleted && src_node != dest_node {
-                        // Only snapshot from the node with lower ID
-                        if dest_node < src_node {
-                            continue;
-                        }
-                    }
                     // Skip if other endpoint is already pending-deleted
                     if !src_deleted && self.pending.borrow().is_node_deleted(src_node) {
                         continue;

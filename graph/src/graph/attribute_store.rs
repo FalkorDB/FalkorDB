@@ -295,9 +295,10 @@ impl AttributeStore {
         &mut self,
         key: u64,
     ) -> Result<(), String> {
-        // Skip flush_and_invalidate: no point persisting dirty attrs to fjall
-        // for an entity that will be deleted from fjall in commit().
-        self.cache.invalidate(key);
+        // Don't invalidate cache — older MVCC versions sharing this cache may
+        // still need the dirty entry. pending_deletes guards reads on this
+        // version; the cache entry is harmless to older/newer readers because
+        // the version check in the cache handles visibility.
         self.dirty_entities.insert(key);
         self.pending_deletes.insert(key);
         Ok(())
@@ -319,6 +320,9 @@ impl AttributeStore {
         key: u64,
         attr_idx: u16,
     ) -> Option<Value> {
+        if self.pending_deletes.contains(key) {
+            return None;
+        }
         // 1. Check cache.
         if let Some(result) = self.cache.get_attr(key, attr_idx, self.version) {
             return result;
@@ -352,6 +356,9 @@ impl AttributeStore {
         &self,
         key: u64,
     ) -> impl Iterator<Item = Arc<String>> + '_ {
+        if self.pending_deletes.contains(key) {
+            return Vec::new().into_iter();
+        }
         // Try cache first.
         let cached = self.cache.get_entity(key, self.version);
         let attrs = cached.unwrap_or_else(|| self.populate_cache_from_fjall(key));
@@ -373,6 +380,9 @@ impl AttributeStore {
         &self,
         key: u64,
     ) -> Vec<(Arc<String>, Value)> {
+        if self.pending_deletes.contains(key) {
+            return Vec::new();
+        }
         let cached = self.cache.get_entity(key, self.version);
         let attrs = cached.unwrap_or_else(|| self.populate_cache_from_fjall(key));
         attrs
@@ -392,6 +402,9 @@ impl AttributeStore {
         &self,
         key: u64,
     ) -> Arc<Vec<(u16, Value)>> {
+        if self.pending_deletes.contains(key) {
+            return Arc::new(Vec::new());
+        }
         self.cache
             .get_entity(key, self.version)
             .unwrap_or_else(|| self.populate_cache_from_fjall(key))
@@ -439,9 +452,6 @@ impl AttributeStore {
         keys: &RoaringTreemap,
     ) {
         for key in keys {
-            // Skip flush_and_invalidate: no point persisting dirty attrs to fjall
-            // for entities that will be deleted from fjall in commit().
-            self.cache.invalidate(key);
             self.dirty_entities.insert(key);
             self.pending_deletes.insert(key);
         }
@@ -536,7 +546,6 @@ impl AttributeStore {
                             ci += 1;
                         }
                         Ordering::Equal => {
-                            nremoved += 1;
                             merged.push((new_idx, new_entries[ni].1.clone()));
                             ci += 1;
                             ni += 1;

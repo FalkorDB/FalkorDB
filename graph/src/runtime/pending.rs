@@ -441,6 +441,17 @@ impl Pending {
         }
     }
 
+    pub fn created_relationship(
+        &mut self,
+        id: RelationshipId,
+        from: NodeId,
+        to: NodeId,
+        type_name: Arc<String>,
+    ) {
+        self.created_relationships
+            .insert(id, PendingRelationship::new(from, to, type_name));
+    }
+
     pub fn set_relationship_attributes(
         &mut self,
         id: RelationshipId,
