@@ -860,6 +860,66 @@ impl AttributeStore {
         &self.cache
     }
 
+    /// Pre-populate the cache from fjall in a single sequential scan.
+    ///
+    /// This is much faster than N individual prefix scans when many entities
+    /// need to be loaded. Entities already in cache are not overwritten.
+    fn bulk_populate_cache_from_fjall(&self) {
+        // Nothing to scan if fjall keyspace was never initialized.
+        if self.keyspace.get().is_none() {
+            return;
+        }
+        let snapshot = self.snapshot();
+        let ks = self.keyspace();
+
+        let mut current_id: Option<u64> = None;
+        let mut current_attrs: Vec<(u16, Value)> = Vec::new();
+
+        // Iterate the entire keyspace in sorted order.
+        // Keys are (entity_id:8B BE, attr_idx:2B BE), so entries naturally
+        // group by entity_id.
+        for entry in snapshot.prefix(ks, []) {
+            let Ok((k, data)) = entry.into_inner() else {
+                continue;
+            };
+            if k.len() < 10 {
+                continue;
+            }
+            let eid = u64::from_be_bytes(k[..8].try_into().unwrap());
+            let Some(idx) = extract_attr_idx(&k) else {
+                continue;
+            };
+            let Some((value, _)) = Value::from_bytes(&data) else {
+                continue;
+            };
+
+            if current_id != Some(eid) {
+                // Flush previous entity.
+                if let Some(prev_id) = current_id {
+                    if !self.pending_deletes.contains(prev_id) {
+                        let _ = self.cache.insert_entity_if_older(
+                            prev_id,
+                            std::mem::take(&mut current_attrs),
+                            self.version,
+                        );
+                    } else {
+                        current_attrs.clear();
+                    }
+                }
+                current_id = Some(eid);
+            }
+            current_attrs.push((idx, value));
+        }
+        // Flush the last entity.
+        if let Some(prev_id) = current_id {
+            if !self.pending_deletes.contains(prev_id) {
+                let _ = self
+                    .cache
+                    .insert_entity_if_older(prev_id, current_attrs, self.version);
+            }
+        }
+    }
+
     /// Encode a range of entities, using the pre-built RDB snapshot when
     /// provided, falling back to cache → fjall otherwise.
     pub fn encode_with_range(
@@ -885,6 +945,12 @@ impl AttributeStore {
                 remap[local_id] = global_id as u16;
             }
         }
+
+        // Pre-populate the cache from fjall in a single sequential scan.
+        // This is O(total_fjall_entries) instead of O(N × log(M)) for N
+        // individual prefix scans, dramatically speeding up RDB encoding
+        // when many entities have been flushed from cache to fjall.
+        self.bulk_populate_cache_from_fjall();
 
         let mut skipped = 0u64;
         let mut encoded = 0u64;

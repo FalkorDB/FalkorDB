@@ -7,6 +7,36 @@
 //! `GRAPHMETA_TYPE` is needed to load C FalkorDB RDB files, which use
 //! `"graphmeta"` for virtual keys and AUX data. Rust's own virtual keys
 //! use `"graphdata"` so that C FalkorDB can also load them.
+//!
+//! ## Callbacks
+//!
+//! ```text
+//! Redis event               Callback             Purpose
+//! -------------------------+--------------------+------------------------------
+//! Key deleted/expired      | graph_free()       | Drop Arc<RwLock<ThreadedGraph>>
+//! RDB save (before RDB)    | graph_aux_save()   | Serialize UDF libraries
+//! RDB load (aux payload)   | graph_aux_load()   | Deserialize + register UDFs
+//! RDB save (per-key)       | graph_rdb_save()   | Encode graph to RDB stream
+//! RDB load (per-key)       | graph_rdb_load()   | Decode graph from RDB stream
+//! ```
+//!
+//! ## UDF persistence
+//!
+//! User-defined function (UDF) libraries are persisted through the auxiliary
+//! RDB callbacks (`graph_aux_save` / `graph_aux_load`), which run once per
+//! RDB cycle rather than per key. On load, existing UDFs are flushed and
+//! replaced with the snapshot's contents, then each function is re-registered
+//! with the runtime function table.
+//!
+//! ## Value lifecycle
+//! ```text
+//! set_value(GRAPH_TYPE, Arc<RwLock<ThreadedGraph>>)
+//!              |
+//!              +--> key survives Redis operations
+//!              |
+//!              +--> on key delete/overwrite/expire:
+//!                        Redis invokes `free` callback -> graph_free()
+//! ```
 
 use crate::config::CONFIGURATION_VKEY_MAX_ENTITY_COUNT;
 use crate::graph_core::{ThreadedGraph, graph_free};
