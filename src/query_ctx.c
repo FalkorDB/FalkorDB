@@ -367,13 +367,19 @@ static void _QueryCtx_ThreadSafeContextLock
 		// no blocked client, most likely we're running on Redis main thread
 		// ASSERT(pthread_equal(Globals_Get_MainThreadId(), pthread_self()) != 0);
 
-		// it likely we're here because of an execution of a write query
-		// e.g. loading from AOF
-		// to alow Redis to reply to PING requests we should yield execution
-		// giving Redis the opportunity to process commands
-		// see RedisModule_Yield docs
-		RedisModule_Yield (ctx->global_exec_ctx.redis_ctx,
-				REDISMODULE_YIELD_FLAG_CLIENTS, NULL) ;
+		// yield only during AOF/RDB loading so that Redis can respond to
+		// health-check PINGs (e.g. from Sentinel or external monitors)
+		// while replaying potentially long-running write commands.
+		//
+		// we must NOT yield during replication or MULTI/EXEC because
+		// RedisModule_Yield with REDISMODULE_YIELD_FLAG_CLIENTS puts
+		// Redis into a "busy" state, causing other clients to receive
+		// BUSY errors (JedisBusyException)
+		int flags = RedisModule_GetContextFlags (ctx->global_exec_ctx.redis_ctx) ;
+		if (flags & REDISMODULE_CTX_FLAGS_LOADING) {
+			RedisModule_Yield (ctx->global_exec_ctx.redis_ctx,
+					REDISMODULE_YIELD_FLAG_CLIENTS, NULL) ;
+		}
 	}
 }
 
