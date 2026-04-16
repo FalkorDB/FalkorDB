@@ -159,10 +159,10 @@ void AR_FuncRegisterUDF
 	_NormalizeFunctionName (name, name, &len) ;
 
 	SIType ret_type = SI_ALL ;
-	SIType *types = array_new (SIType, 3) ;
-	array_append (types, T_STRING) ;
-	array_append (types, T_STRING) ;
-	array_append (types, SI_ALL) ;
+	SIType *types = arr_new (SIType, 3) ;
+	arr_append (types, T_STRING) ;
+	arr_append (types, T_STRING) ;
+	arr_append (types, SI_ALL) ;
 
 	AR_FuncDesc *func = AR_FuncDescNew (name, AR_UDF, 2, VAR_ARG_LEN, types,
 			ret_type, false, false, false) ;
@@ -320,7 +320,7 @@ void AR_FuncFree
 	ASSERT (f != NULL) ;
 
 	if (f->types != NULL) {
-		array_free (f->types) ;
+		arr_free (f->types) ;
 	}
 
 	rm_free (f) ;

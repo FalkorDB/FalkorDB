@@ -7,46 +7,12 @@
 #include "delta_utils.h"
 #include "../../util/rmalloc.h"
 
-
-void Delta_Matrix_setDirty
-(
-	Delta_Matrix C
-) {
-	ASSERT(C);
-	C->dirty = true;
-	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) C->transposed->dirty = true;
-}
-
 Delta_Matrix Delta_Matrix_getTranspose
 (
 	const Delta_Matrix C
 ) {
 	ASSERT(C != NULL);
 	return C->transposed;
-}
-
-bool Delta_Matrix_isDirty
-(
-	const Delta_Matrix C
-) {
-	ASSERT(C);
-
-	if(C->dirty) {
-		return true;
-	}
-
-	int pending_M;
-	int pending_DP;
-	int pending_DM;
-
-	GrB_OK(GrB_Matrix_get_INT32(DELTA_MATRIX_M(C), &pending_M, 
-		GxB_WILL_WAIT));
-	GrB_OK(GrB_Matrix_get_INT32(DELTA_MATRIX_DELTA_PLUS(C), &pending_DP, 
-		GxB_WILL_WAIT));
-	GrB_OK(GrB_Matrix_get_INT32(DELTA_MATRIX_DELTA_MINUS(C), &pending_DM, 
-		GxB_WILL_WAIT));
-	
-	return (pending_M || pending_DM || pending_DP);
 }
 
 // checks if C is fully synced
@@ -56,19 +22,13 @@ bool Delta_Matrix_Synced
 (
 	const Delta_Matrix C  // matrix to inquery
 ) {
-	ASSERT(C);
+	ASSERT (C) ;
 
-	// quick indication, if the matrix is marked as dirty that means
-	// entires exists in either DP or DM
-	if(C->dirty) {
-		return false;
-	}
+	GrB_Index dp_nvals ;
+	GrB_Index dm_nvals ;
 
-	GrB_Index dp_nvals;
-	GrB_Index dm_nvals;
-
-	GrB_OK(GrB_Matrix_nvals(&dp_nvals, DELTA_MATRIX_DELTA_PLUS(C)));
-	GrB_OK(GrB_Matrix_nvals(&dm_nvals, DELTA_MATRIX_DELTA_MINUS(C)));
+	GrB_OK (GrB_Matrix_nvals (&dp_nvals, DELTA_MATRIX_DELTA_PLUS  (C))) ;
+	GrB_OK (GrB_Matrix_nvals (&dm_nvals, DELTA_MATRIX_DELTA_MINUS (C))) ;
 
 	return ((dp_nvals + dm_nvals) == 0);
 }
@@ -78,8 +38,14 @@ void Delta_Matrix_lock
 (
 	Delta_Matrix C
 ) {
-	ASSERT(C);
-	pthread_mutex_lock(&C->mutex);
+	ASSERT (C) ;
+
+	int res = pthread_mutex_lock (&C->mutex) ;
+
+	ASSERT (res       == 0) ;
+	ASSERT (C->locked == false) ;
+
+	C->locked = true ;
 }
 
 // unlocks the matrix
@@ -87,8 +53,12 @@ void Delta_Matrix_unlock
 (
 	Delta_Matrix C
 ) {
-	ASSERT(C);
-	pthread_mutex_unlock(&C->mutex);
+	ASSERT (C) ;
+	ASSERT (C->locked == true) ;
+
+	C->locked = false ;
+	int res = pthread_mutex_unlock (&C->mutex) ;
+	ASSERT (res == 0) ;
 }
 
 // get the number of rows of a matrix
@@ -154,15 +124,14 @@ GrB_Info Delta_Matrix_clear
 ) {
 	ASSERT (A !=  NULL) ;
 
-	GrB_Matrix m  = DELTA_MATRIX_M (A) ;
-	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS (A) ;
+	GrB_Matrix m  = DELTA_MATRIX_M           (A) ;
+	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS  (A) ;
 	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS (A) ;
 
 	GrB_OK (GrB_Matrix_clear (m)) ;
 	GrB_OK (GrB_Matrix_clear (dp)) ;
 	GrB_OK (GrB_Matrix_clear (dm)) ;
 
-	A->dirty = false ;
 	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE (A)) {
 		GrB_OK (Delta_Matrix_clear (A->transposed)) ;
 	}

@@ -26,7 +26,7 @@ static void _vector_size
 // if the rdb we are loading is old, then we must recalculate the number of
 // edges connecting each pair of nodes
 // precondition: relation matricies have been calculated and fully synced
-void RdbNormalizeAdjMatrix
+void NormalizeAdjMatrix
 (
 	const Graph *g  // graph
 ) {
@@ -92,6 +92,7 @@ void RdbNormalizeAdjMatrix
 	ASSERT (edge_count == Graph_EdgeCount(g));
 #endif
 
+	GxB_print(a_m, GxB_SHORT);
 	Delta_Matrix_setMatrices (adj, &a_m, &a_dp, &a_dm) ;
 
 	// clean up

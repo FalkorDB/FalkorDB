@@ -6,7 +6,6 @@
 #pragma once
 
 #include "../../../serializers_include.h"
-#include "../../decode_utilies.h"
 
 GraphContext *RdbLoadGraphContext_v17
 (
@@ -56,25 +55,25 @@ void RdbLoadGraphSchema_v17
 void RdbLoadLabelMatrices_v17
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 );
 
 void RdbLoadRelationMatrices_v17
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 );
 
 // decode adjacency matrix
 void RdbLoadAdjMatrix_v17
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 );
 
 void RdbLoadLblsMatrix_v17
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 );
 

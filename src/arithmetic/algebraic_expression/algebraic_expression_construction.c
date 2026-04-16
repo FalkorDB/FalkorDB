@@ -89,7 +89,7 @@ static void _RemovePathFromGraph
 	ASSERT(g    != NULL);
 	ASSERT(path != NULL);
 
-	uint edge_count = array_len(path);
+	uint edge_count = arr_len(path);
 	for(uint i = 0; i < edge_count; i++) {
 		QGEdge *e = path[i];
 		QGNode *src = e->src;
@@ -139,15 +139,15 @@ static AlgebraicExpression **_AlgebraicExpression_IsolateVariableLenExps
 	// is guaranteed to have a single operand
 	// as such in the worst case the number of
 	// expressions doubles + 1
-	size_t expCount = array_len(expressions);
-	AlgebraicExpression **res = array_new(AlgebraicExpression*, expCount*2+1);
+	size_t expCount = arr_len(expressions);
+	AlgebraicExpression **res = arr_new(AlgebraicExpression*, expCount*2+1);
 
 	// scan through each expression, locate expression which
 	// have a variable length edge in them
 	for(size_t expIdx = 0; expIdx < expCount; expIdx++) {
 		AlgebraicExpression *exp = expressions[expIdx];
 		if(!_AlgebraicExpression_ContainsVariableLengthEdge(qg, exp)) {
-			array_append(res, exp);
+			arr_append(res, exp);
 			continue;
 		}
 
@@ -171,13 +171,13 @@ static AlgebraicExpression **_AlgebraicExpression_IsolateVariableLenExps
 
 		if(op != NULL) {
 			if(expIdx == 0) {
-				array_append(res, op);
+				arr_append(res, op);
 			} else {
 				AlgebraicExpression_Free(op);
 			}
 		}
 
-		array_append(res, exp);
+		arr_append(res, exp);
 
 		// if the expression has a labeled destination,
 		// separate it into its own expression
@@ -203,12 +203,12 @@ static AlgebraicExpression **_AlgebraicExpression_IsolateVariableLenExps
 			   !_AlgebraicExpression_ContainsVariableLengthEdge(qg, expressions[expIdx + 1])) {
 				AlgebraicExpression_Free(op);
 			} else {
-				array_append(res, op);
+				arr_append(res, op);
 			}
 		}
 	}
 
-	array_free(expressions);
+	arr_free(expressions);
 	return res;
 }
 
@@ -223,28 +223,28 @@ static QGEdge ***_Intermediate_Paths
 	ASSERT(qg != NULL);
 
 	QGEdge *e = NULL;
-	int pathLen = array_len(path);
+	int pathLen = arr_len(path);
 
 	// allocating maximum number of expression possible
-	QGEdge ***paths = array_new(QGEdge **, pathLen);
-	QGEdge **intermediate_path = array_new(QGEdge *, pathLen);
-	array_append(paths, intermediate_path);
+	QGEdge ***paths = arr_new(QGEdge **, pathLen);
+	QGEdge **intermediate_path = arr_new(QGEdge *, pathLen);
+	arr_append(paths, intermediate_path);
 
 	// scan path left to right
 	// construct intermidate paths by "breaking" on referenced entities
 	for(int i = 0; i < pathLen - 1; i++) {
 		e = path[i];
-		array_append(intermediate_path, e);
+		arr_append(intermediate_path, e);
 		if(_should_divide_expression(path, i, qg)) {
 			// break! add current path to paths and create a new path
-			intermediate_path = array_new(QGEdge *, pathLen);
-			array_append(paths, intermediate_path);
+			intermediate_path = arr_new(QGEdge *, pathLen);
+			arr_append(paths, intermediate_path);
 		}
 	}
 
 	// handle last hop
 	e = path[pathLen - 1];
-	array_append(intermediate_path, e);
+	arr_append(intermediate_path, e);
 
 	return paths;
 }
@@ -352,7 +352,7 @@ static AlgebraicExpression *_AlgebraicExpression_OperandFromEdge
 		src_filter = _AlgebraicExpression_OperandFromNode(src_node);
 	}
 
-	uint reltype_count = array_len(e->reltypeIDs);
+	uint reltype_count = arr_len(e->reltypeIDs);
 	switch(reltype_count) {
 	case 0: // no relationship types specified; use the adjacency matrix
 		root = AlgebraicExpression_NewOperand(NULL, false, src, dest, edge, NULL);
@@ -529,7 +529,7 @@ static AlgebraicExpression *_AlgebraicExpression_FromPath
 
 	QGEdge               *e        =  NULL;
 	AlgebraicExpression  *root     =  NULL;
-	uint                 path_len  =  array_len(path);
+	uint                 path_len  =  arr_len(path);
 
 	ASSERT(path_len > 0);
 
@@ -589,7 +589,7 @@ AlgebraicExpression **AlgebraicExpression_FromQueryGraph
 	// a graph with no edges implies an empty algebraic expression
 	// the reasoning behind this decision is that the algebraic expression
 	// represents graph traversals, no edges means no traversals
-	AlgebraicExpression **exps = array_new(AlgebraicExpression *, 1);
+	AlgebraicExpression **exps = arr_new(AlgebraicExpression *, 1);
 	uint edge_count = QueryGraph_EdgeCount(qg);
 
 	if(edge_count == 0) {
@@ -597,7 +597,7 @@ AlgebraicExpression **AlgebraicExpression_FromQueryGraph
 		QGNode *n = qg->nodes[0];
 		AlgebraicExpression *exp = _AlgebraicExpression_OperandFromNode(n);
 		_AlgebraicExpression_ExpandNodeOperands(qg, exp);
-		array_append(exps, exp);
+		arr_append(exps, exp);
 		return exps;
 	}
 
@@ -615,7 +615,7 @@ AlgebraicExpression **AlgebraicExpression_FromQueryGraph
 		// get a path of length level
 		// allow closing a cycle if the graph is not acyclic
 		QGEdge **path = DFS(n, depth, !acyclic);
-		uint path_len = array_len(path);
+		uint path_len = arr_len(path);
 		ASSERT(path_len == depth);
 
 		// TODO:
@@ -633,17 +633,17 @@ AlgebraicExpression **AlgebraicExpression_FromQueryGraph
 		_normalizePath(path, path_len, transpositions);
 
 		QGEdge ***paths = _Intermediate_Paths(path, qg);
-		AlgebraicExpression **sub_exps = array_new(AlgebraicExpression *, 1);
+		AlgebraicExpression **sub_exps = arr_new(AlgebraicExpression *, 1);
 
-		uint path_count = array_len(paths);
+		uint path_count = arr_len(paths);
 		uint edge_converted = 0;
 		for(uint i = 0; i < path_count; i++) {
 			// construct expression
 			AlgebraicExpression *exp = _AlgebraicExpression_FromPath(paths[i],
 					transpositions + edge_converted);
 
-			edge_converted += array_len(paths[i]);
-			array_append(sub_exps, exp);
+			edge_converted += arr_len(paths[i]);
+			arr_append(sub_exps, exp);
 
 			// remove exp[i] src label matrix (left most operand) as it's
 			// being used by exp[i-1] dest label matrix
@@ -673,22 +673,22 @@ AlgebraicExpression **AlgebraicExpression_FromQueryGraph
 
 		sub_exps = _AlgebraicExpression_IsolateVariableLenExps(qg, sub_exps);
 
-		uint sub_count = array_len(sub_exps);
+		uint sub_count = arr_len(sub_exps);
 		for(uint i = 0; i < sub_count; i++) {
 			AlgebraicExpression *exp = sub_exps[i];
 			_AlgebraicExpression_ExpandNodeOperands(qg, exp);
 			// add constructed expression to return value
-			array_append(exps, exp);
+			arr_append(exps, exp);
 		}
 
 		// remove path from graph
 		_RemovePathFromGraph(g, path);
 
 		// clean up
-		for(uint i = 0; i < path_count; i++) array_free(paths[i]);
-		array_free(path);
-		array_free(paths);
-		array_free(sub_exps);
+		for(uint i = 0; i < path_count; i++) arr_free(paths[i]);
+		arr_free(path);
+		arr_free(paths);
+		arr_free(sub_exps);
 
 		// if original graph contained a cycle
 		// see now after we've removed a path if this is still the case

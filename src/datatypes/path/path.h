@@ -10,8 +10,8 @@
 #include "../../graph/entities/edge.h"
 
 typedef struct {
-	Node *nodes;    // Nodes in paths.
-	Edge *edges;    // Edges in path.
+	Node *nodes;  // nodes in paths
+	Edge *edges;  // edges in path
 } Path;
 
 // creates a new Path with given capacity
@@ -33,10 +33,10 @@ void Path_SetNode(Path *p, uint i, Node n);
 void Path_SetEdge(Path *p, uint i, Edge e);
 
 // returns a refernce to a node in the specific index
-Node *Path_GetNode(const Path *p, int index);
+Node *Path_GetNode(const Path *p, uint index);
 
 // returns a refernce to an edge in the specific index
-Edge *Path_GetEdge(const Path *p, int index);
+Edge *Path_GetEdge(const Path *p, uint index);
 
 // removes the last node from the path
 Node Path_PopNode(Path *p);

@@ -382,11 +382,13 @@ detect_platform() {
     # Detect OS nickname (simplified version)
     if [[ "$OS" == "linux" ]]; then
         if [[ -f /etc/os-release ]]; then
-            . /etc/os-release
-            OSNICK=$(echo "$ID" | tr '[:upper:]' '[:lower:]')
-            if [[ -n "$VERSION_ID" ]]; then
-                OSNICK="${OSNICK}${VERSION_ID}"
+            # source only the desired varibles to prevent others from leaking
+            read -r _os_id _os_ver < <(unset ID VERSION_ID; source /etc/os-release; echo "$ID" "$VERSION_ID")
+            OSNICK=$(echo "$_os_id" | tr '[:upper:]' '[:lower:]')
+            if [[ -n "$_os_ver" ]]; then
+                OSNICK="${OSNICK}${_os_ver}"
             fi
+            unset _os_id _os_ver
         else
             OSNICK="linux"
         fi
@@ -769,8 +771,25 @@ build_libcurl() {
         # Disable all optional dependencies to build a minimal static library
         # Use -fPIC for position-independent code (required for linking into shared library)
         # Use -O3 for optimization, -g for debug symbols
+        # On Linux: enable OpenSSL for HTTPS support (required for LOAD CSV from HTTPS URLs)
+        # On macOS: use SecureTransport (auto-detected, no --with-ssl needed)
+        # Note: libcurl >= 8.18.0 requires OpenSSL >= 3.0.0.
+        # On RHEL8/UBI8, openssl3-devel installs OpenSSL 3 to a non-standard path
+        # (/usr/lib64/openssl3/pkgconfig/); set PKG_CONFIG_PATH so configure finds it.
+        local ssl_flags
+        if [[ "$OS" == "linux" ]]; then
+            ssl_flags="--with-openssl"
+            if ! pkg-config --atleast-version=3.0.0 openssl 2>/dev/null; then
+                if [[ -f /usr/lib64/openssl3/pkgconfig/openssl.pc ]]; then
+                    export PKG_CONFIG_PATH="/usr/lib64/openssl3/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+                    log_info "Using OpenSSL 3 from /usr/lib64/openssl3 (RHEL8 non-standard path)"
+                fi
+            fi
+        else
+            ssl_flags="--without-ssl"
+        fi
         if ! CFLAGS="-fPIC -O3 -g" "$src_dir/configure" --disable-dependency-tracking --disable-shared --enable-static \
-            --without-ssl --without-libssh2 --without-librtmp --without-libidn2 \
+            $ssl_flags --without-libssh2 --without-librtmp --without-libidn2 \
             --without-nghttp2 --without-brotli --without-zstd --without-libpsl \
             --without-zlib --disable-ldap; then
             log_error "Failed to configure libcurl"
@@ -938,6 +957,7 @@ build_lagraph() {
         -DGRAPHBLAS_ROOT="$GRAPHBLAS_BINDIR"
         -DGRAPHBLAS_INCLUDE_DIR="${ROOT}/deps/GraphBLAS/Include"
         -DGRAPHBLAS_LIBRARY="$GRAPHBLAS"
+        -DGraphBLAS_DIR="$GRAPHBLAS_BINDIR"
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
         -DCMAKE_C_FLAGS="-fPIC"
         -DCMAKE_CXX_FLAGS="-fPIC"
@@ -1254,8 +1274,8 @@ build_falkordbrs() {
 prepare_cmake_arguments() {
     CMAKE_ARGS=()
 
-    # Build type
-    if [[ "$DEBUG" == "1" ]]; then
+    # Build type debug if specified or using a sanitizer
+    if [[ "$DEBUG" == "1" || -n "$SAN" ]]; then
         CMAKE_ARGS+=(-DCMAKE_BUILD_TYPE=Debug)
     else
         CMAKE_ARGS+=(-DCMAKE_BUILD_TYPE=RelWithDebInfo)
@@ -1292,6 +1312,14 @@ prepare_cmake_arguments() {
     fi
     if [[ -n "$CXX" ]]; then
         CMAKE_ARGS+=(-DCMAKE_CXX_COMPILER="$CXX")
+    fi
+
+    # On RHEL8/UBI8, openssl3-devel installs OpenSSL 3 to non-standard paths.
+    # Direct CMake's FindOpenSSL to the correct locations so that find_package(OpenSSL)
+    # finds OpenSSL 3 rather than the system OpenSSL 1.1.x from openssl-devel.
+    if [[ -f /usr/lib64/openssl3/pkgconfig/openssl.pc ]]; then
+        CMAKE_ARGS+=(-DOPENSSL_ROOT_DIR=/usr/lib64/openssl3)
+        CMAKE_ARGS+=(-DOPENSSL_INCLUDE_DIR=/usr/include/openssl3)
     fi
 
     # Export platform info

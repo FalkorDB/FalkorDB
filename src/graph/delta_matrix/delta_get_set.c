@@ -41,14 +41,21 @@ GrB_Info Delta_Matrix_setMatrices
 	DELTA_MATRIX_DELTA_MINUS(C) = *DM ;
 	GrB_OK (GrB_Matrix_wait (*M, GrB_MATERIALIZE)) ;
 
-	// set correct sparcity controls
-	GrB_OK (GrB_set (*M,  GxB_SPARSE | GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL)) ;
-	GrB_OK (GrB_set (*DP, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL)) ;
-	GrB_OK (GrB_set (*DM, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL)) ;
+	// Set correct sparcity controls
+	GrB_OK (GrB_set(*M, GxB_SPARSE | GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
 
-	*M  = NULL ;
-	*DP = NULL ;
-	*DM = NULL ;
+	GrB_OK (GrB_set(*DP, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
+	GrB_OK (GrB_set(*DM, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
+
+	GrB_OK (GrB_set (*DP, (int32_t) false, GxB_HYPER_HASH));
+	GrB_OK (GrB_set (*DM, (int32_t) false, GxB_HYPER_HASH));
+	// Using historical method because modern one requires me to create a scalar
+	GrB_OK (GxB_set (*DP, GxB_HYPER_SWITCH, GxB_ALWAYS_HYPER));
+	GrB_OK (GxB_set (*DM, GxB_HYPER_SWITCH, GxB_ALWAYS_HYPER));
+
+	*M  = NULL;
+	*DP  = NULL;
+	*DM  = NULL;
 
 	Delta_Matrix_validate (C, VAL_NO_T) ;
 	return GrB_SUCCESS ;

@@ -79,7 +79,9 @@ GrB_Info Delta_Matrix_extractElement_lazy_##TYPE_SUFFIX                        \
 	in_M = info == GrB_SUCCESS;                                                \
                                                                                \
 	/* WARNING: I do not check dm. A pending deletion will not be detected */  \
-	if (!in_M) {                                                               \
+	if (in_M) {                                                                \
+		*x = _x ;                                                              \
+	} else {                                                                   \
 		/* if dp[i,j] exists return it */                                      \
 		GrB_OK (info = GrB_Matrix_extractElement (x, dp, i, j)) ;              \
 	}                                                                          \

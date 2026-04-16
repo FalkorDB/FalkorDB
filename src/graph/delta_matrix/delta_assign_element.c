@@ -55,7 +55,6 @@ GrB_Info Delta_Matrix_assign_scalar_##TYPE_SUFFIX                              \
 		GrB_OK (GrB_assign (dp, NULL, accum, x, &i, 1, &j, 1, NULL)) ;         \
 	}                                                                          \
                                                                                \
-	Delta_Matrix_setDirty (C) ;                                                \
 	return GrB_SUCCESS ;                                                       \
 }
 

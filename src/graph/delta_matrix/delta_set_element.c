@@ -51,7 +51,6 @@ GrB_Info Delta_Matrix_setElement_##TYPE_SUFFIX                                 \
 		GrB_OK (GrB_Matrix_setElement (dp, x, i, j)) ;                         \
 	}                                                                          \
                                                                                \
-	Delta_Matrix_setDirty (C) ;                                                \
 	return GrB_SUCCESS ;                                                       \
 }
 

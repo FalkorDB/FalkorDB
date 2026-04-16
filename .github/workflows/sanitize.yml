@@ -22,42 +22,42 @@ jobs:
     - name: Safe dir
       run: git config --global --add safe.directory '*'
 
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       with:
         set-safe-directory: '*'
         submodules: recursive
 
     - name: Cache GraphBLAS
       id: cache_graphblas
-      uses: actions/cache@v5
+      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: ./bin/linux-x64-debug-asan/GraphBLAS
         key: graphblas-sanitizer-llvm-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
 
     - name: Cache parser
       id: cache_parser
-      uses: actions/cache@v5
+      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: ./bin/linux-x64-debug-asan/libcypher-parser
         key: parser-sanitizer-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
     - name: Cache search
       id: cache_search
-      uses: actions/cache@v5
+      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: ./bin/linux-x64-debug-asan/search-static
         key: search-sanitizer-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
     - name: Cache libcurl
       id: cache_libcurl
-      uses: actions/cache@v5
+      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: ./bin/linux-x64-debug-asan/libcurl
-        key: libcurl-sanitizer-llvm-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}
+        key: libcurl-sanitizer-llvm-${{ hashFiles('./deps/libcurl/RELEASE-NOTES', './build.sh') }}
 
     - name: Cache libcsv
       id: cache_libcsv
-      uses: actions/cache@v5
+      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: ./bin/linux-x64-debug-asan/libcsv
         key: libcsv-sanitizer-llvm-${{ hashFiles('./deps/libcsv/ChangeLog') }}
@@ -86,7 +86,7 @@ jobs:
       run: make unit-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@v6
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: Upload unit tests logs
         path: ${{ github.workspace }}/tests/unit/logs/
@@ -99,7 +99,7 @@ jobs:
         make flow-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@v6
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: Upload flow tests logs
         path: ${{ github.workspace }}/tests/flow/logs/
@@ -112,7 +112,7 @@ jobs:
         make tck-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@v6
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: Upload TCK tests logs
         path: ${{ github.workspace }}/tests/tck/logs/

@@ -8,7 +8,7 @@
 // if the rdb we are loading is old, then we must recalculate the number of
 // edges connecting each pair of nodes
 // precondition: relation matricies have been calculated and fully synced
-void RdbNormalizeAdjMatrix
+void NormalizeAdjMatrix
 (
 	const Graph *g  // graph
 ) ;

@@ -6,16 +6,15 @@
 #pragma once
 
 #include "../../../serializers_include.h"
-#include "../../decode_utilies.h"
 
-GraphContext *RdbLoadGraphContext_latest
+GraphContext *RdbLoadGraphContext_v18
 (
 	SerializerIO rdb,
 	const RedisModuleString *rm_key_name
 );
 
 // encode DB UDFs
-void AUXLoadUDF_latest
+void AUXLoadUDF_v18
 (
 	RedisModuleIO *io  // IO
 );
@@ -62,25 +61,25 @@ void RdbLoadGraphSchema_v18
 void RdbLoadLabelMatrices_v18
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 );
 
 void RdbLoadRelationMatrices_v18
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 );
 
 // decode adjacency matrix
 void RdbLoadAdjMatrix_v18
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 );
 
 void RdbLoadLblsMatrix_v18
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc   // graph context
+	Graph *g           // graph
 );
 
