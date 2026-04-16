@@ -708,7 +708,8 @@ impl AttributeStore {
             }
 
             entries.sort_by_key(|(idx, _)| *idx);
-            self.cache.insert_entity(*key, entries, self.version, true);
+            self.cache
+                .insert_entity_presorted(*key, entries, self.version, true);
             self.dirty_entities.insert(*key);
         }
         nset
@@ -730,31 +731,39 @@ impl AttributeStore {
     pub fn commit(&mut self) -> Result<(), String> {
         // Apply pending full entity deletions to fjall.
         if !self.pending_deletes.is_empty() {
-            let mut batch = get_database().batch();
-            // Use a single sorted scan over the keyspace instead of
-            // N individual prefix scans. For each key encountered,
-            // extract the entity ID (first 8 bytes) and check bitmap
-            // membership — O(1) per key vs O(log N) for a prefix seek.
-            for entry in self.keyspace().iter() {
-                if let Ok(k) = entry.key() {
-                    if k.len() >= 8 {
-                        let entity_id = u64::from_be_bytes(k[..8].try_into().unwrap());
-                        if self.pending_deletes.contains(entity_id) {
+            // Only scan fjall if the keyspace was already initialized AND has entries.
+            // For freshly created entities that were never flushed to fjall,
+            // the keyspace was never accessed, so we skip the expensive
+            // keyspace initialization + prefix scans entirely.
+            if self
+                .keyspace
+                .get()
+                .is_some_and(|ks| ks.approximate_len() > 0)
+            {
+                let mut batch = get_database().batch();
+                // Targeted prefix scans: O(pending_deletes × attrs_per_entity)
+                // instead of scanning the entire keyspace.
+                for entity_id in &self.pending_deletes {
+                    let prefix = entity_id.to_be_bytes();
+                    for entry in self.keyspace().prefix(prefix) {
+                        if let Ok(k) = entry.key() {
                             batch.remove(self.keyspace(), k);
                         }
                     }
                 }
+                batch.durability(None).commit().map_err(|e| e.to_string())?;
             }
-            batch.durability(None).commit().map_err(|e| e.to_string())?;
             // Invalidate deleted entities from the shared cache to prevent stale reads.
-            // After persisting the deletions to fjall, remove cached entries for all
-            // deleted entities so subsequent get_attr*/get_all_attrs* calls won't
-            // resurrect deleted data.
             self.cache.invalidate_batch(&self.pending_deletes);
         }
-        let new_snapshot = OnceCell::new();
-        let _ = new_snapshot.set(get_database().snapshot());
-        self.snapshot = new_snapshot;
+        // Only refresh the fjall snapshot if the database/keyspace was already
+        // initialized. For stores that never touched fjall (all data in cache),
+        // skip the expensive database + keyspace initialization.
+        if self.keyspace.get().is_some() {
+            let new_snapshot = OnceCell::new();
+            let _ = new_snapshot.set(get_database().snapshot());
+            self.snapshot = new_snapshot;
+        }
         self.dirty_entities.clear();
         self.pending_deletes.clear();
         Ok(())

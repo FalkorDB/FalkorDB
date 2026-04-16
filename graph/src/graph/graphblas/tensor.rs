@@ -117,6 +117,21 @@ impl Tensor {
         self.me.set(src << 32 | dest, id, true);
     }
 
+    /// Set multiple entries, checking dm emptiness once per sub-matrix.
+    pub fn set_all(
+        &mut self,
+        entries: impl Iterator<Item = (u64, u64, u64)>,
+    ) {
+        // Collect entries since we need to iterate 3 times (once per sub-matrix)
+        let entries: Vec<_> = entries.collect();
+        self.m
+            .set_all(entries.iter().map(|&(src, dst, _)| (src, dst)));
+        self.mt
+            .set_all(entries.iter().map(|&(src, dst, _)| (dst, src)));
+        self.me
+            .set_all(entries.iter().map(|&(src, dst, id)| (src << 32 | dst, id)));
+    }
+
     pub fn remove_all(
         &mut self,
         rels: &[(u64, u64, u64)],

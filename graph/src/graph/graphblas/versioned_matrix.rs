@@ -284,6 +284,27 @@ impl Set for VersionedMatrix {
     }
 }
 
+impl VersionedMatrix {
+    /// Set multiple entries, checking dm emptiness once upfront.
+    ///
+    /// If dm is empty, uses the fast path (1 FFI call per entry).
+    /// Otherwise falls back to the full `set` path (2+ FFI calls per entry).
+    pub fn set_all(
+        &mut self,
+        entries: impl Iterator<Item = (u64, u64)>,
+    ) {
+        if self.dm.nvals() == 0 {
+            for (i, j) in entries {
+                self.dp.set(i, j, true);
+            }
+        } else {
+            for (i, j) in entries {
+                self.set(i, j, true);
+            }
+        }
+    }
+}
+
 impl Transpose for VersionedMatrix
 where
     Self: New,
