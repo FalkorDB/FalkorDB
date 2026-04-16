@@ -154,7 +154,7 @@ unsafe extern "C" fn graph_aux_load(
 
 pub static GRAPH_TYPE: RedisType = RedisType::new(
     "graphdata",
-    0,
+    19,
     RedisModuleTypeMethods {
         version: REDISMODULE_TYPE_METHOD_VERSION as u64,
         rdb_load: Some(graph_rdb_load),
