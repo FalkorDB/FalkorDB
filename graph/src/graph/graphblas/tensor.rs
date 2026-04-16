@@ -275,10 +275,7 @@ impl Encode<19> for Tensor {
             let mut multi_edge_m: Vec<(u64, u64)> = Vec::new();
             let mut multi_edge_dp: Vec<(u64, u64)> = Vec::new();
 
-            for (matrix, multi_edges) in [
-                (&m, &mut multi_edge_m),
-                (&dp, &mut multi_edge_dp),
-            ] {
+            for (matrix, multi_edges) in [(&m, &mut multi_edge_m), (&dp, &mut multi_edge_dp)] {
                 let (rows, cols) = matrix.extract_tuples_bool();
                 let mut u_rows = Vec::with_capacity(rows.len());
                 let mut u_cols = Vec::with_capacity(rows.len());
