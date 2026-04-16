@@ -959,9 +959,8 @@ impl Graph {
 
         self.resize();
 
-        for id in nodes {
-            self.all_nodes_matrix.set(id, id, true);
-        }
+        self.all_nodes_matrix
+            .set_all(nodes.iter().map(|id| (id, id)));
     }
 
     #[must_use]
@@ -1038,12 +1037,26 @@ impl Graph {
     ) {
         self.resize();
 
+        // Collect entries grouped by label for bulk set_all on per-label matrices
+        let num_labels = self.labels_matices.len();
+        let mut by_label: Vec<Vec<u64>> = vec![Vec::new(); num_labels];
+        let mut nl_entries: Vec<(u64, u64)> = Vec::new();
+
         for (id, label_id) in nodes_labels.iter(0, u64::MAX) {
-            self.node_labels_matrix.set(id, label_id, true);
-            self.labels_matices[label_id as usize].set(id, id, true);
+            nl_entries.push((id, label_id));
+            by_label[label_id as usize].push(id);
+
             let label = &self.node_labels[label_id as usize];
             if self.node_indexer.has_index(label) && self.node_attrs.has_attributes(id) {
                 index_add_docs.entry(label_id).or_default().insert(id);
+            }
+        }
+
+        self.node_labels_matrix.set_all(nl_entries.into_iter());
+
+        for (lid, ids) in by_label.into_iter().enumerate() {
+            if !ids.is_empty() {
+                self.labels_matices[lid].set_all(ids.into_iter().map(|id| (id, id)));
             }
         }
     }
@@ -1405,14 +1418,29 @@ impl Graph {
 
         self.resize();
 
-        // Single loop: set tensor + adjacency + type matrix
+        // Collect entries per-tensor, plus adjacency and type matrix entries
+        let mut by_tensor: std::collections::HashMap<usize, Vec<(u64, u64, u64)>> =
+            std::collections::HashMap::new();
+        let mut adj_entries: Vec<(u64, u64)> = Vec::with_capacity(relationships.len());
+        let mut type_entries: Vec<(u64, u64)> = Vec::with_capacity(relationships.len());
+
         for (id, rel) in relationships {
             let ptr = Arc::as_ptr(&rel.type_name);
             let (matrix_idx, type_id) = type_cache[&ptr];
-            self.relationship_matrices[matrix_idx].set(rel.from.0, rel.to.0, id.0);
-            self.adjacancy_matrix.set(rel.from.0, rel.to.0, true);
-            self.relationship_type_matrix.set(id.0, type_id, true);
+            by_tensor
+                .entry(matrix_idx)
+                .or_default()
+                .push((rel.from.0, rel.to.0, id.0));
+            adj_entries.push((rel.from.0, rel.to.0));
+            type_entries.push((id.0, type_id));
         }
+
+        for (matrix_idx, entries) in by_tensor {
+            self.relationship_matrices[matrix_idx].set_all(entries.into_iter());
+        }
+        self.adjacancy_matrix.set_all(adj_entries.into_iter());
+        self.relationship_type_matrix
+            .set_all(type_entries.into_iter());
     }
 
     pub fn set_relationships_attributes(

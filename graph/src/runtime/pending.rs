@@ -796,6 +796,13 @@ impl Pending {
     ) -> u64 {
         let mut n_effects = 0u64;
 
+        // Pre-allocate buffer: ~40 bytes per created node, ~50 per edge, ~30 per delete
+        let estimated_bytes = (self.created_nodes.len() as usize) * 40
+            + self.created_relationships.len() * 50
+            + (self.deleted_nodes.len() as usize) * 10
+            + self.deleted_relationships.len() * 25;
+        buf.reserve(estimated_bytes);
+
         // Version header (only write once at the start)
         if buf.is_empty() {
             buf.push(EFFECTS_VERSION);
@@ -837,35 +844,56 @@ impl Pending {
         }
 
         // --- Created nodes ---
-        for node_id in &self.created_nodes {
-            buf.push(EFFECT_CREATE_NODE);
-            buf.extend_from_slice(&node_id.to_le_bytes());
-
-            // Labels: iterate the set_node_labels matrix for this row
-            let label_entries: Vec<u64> = self
-                .set_node_labels
-                .iter(node_id, node_id)
-                .map(|(_, col)| col)
-                .collect();
-            write_u16(buf, label_entries.len() as u16);
-            let graph = g.borrow();
-            for label_id in &label_entries {
-                let label_name = graph.get_label_by_id(LabelId(*label_id as usize));
-                write_string(buf, &label_name);
-            }
-            drop(graph);
-
-            // Attributes
-            if let Some(attrs) = self.new_nodes_attrs.get(&node_id) {
-                write_u16(buf, attrs.len() as u16);
-                for (key, value) in attrs.iter() {
-                    write_string(buf, key);
-                    write_value(buf, value);
-                }
+        // Use lockstep iteration: both created_nodes and set_node_labels
+        // are sorted, so we advance both in parallel. This avoids per-node
+        // GraphBLAS iterator creation (which was 100K+ FFI calls).
+        if !self.created_nodes.is_empty() {
+            let nrows = self.set_node_labels.nrows();
+            let mut label_iter = if nrows > 0 {
+                Some(self.set_node_labels.iter(0, nrows - 1).peekable())
             } else {
-                write_u16(buf, 0);
+                None
+            };
+
+            let graph = g.borrow();
+            for node_id in &self.created_nodes {
+                buf.push(EFFECT_CREATE_NODE);
+                buf.extend_from_slice(&node_id.to_le_bytes());
+
+                // Labels: advance the label iterator in lockstep
+                let label_count_pos = buf.len();
+                write_u16(buf, 0); // placeholder for label count
+                let mut label_count = 0u16;
+
+                if let Some(ref mut iter) = label_iter {
+                    // Skip labels for non-created nodes (node_id < current)
+                    while iter.peek().is_some_and(|(nid, _)| *nid < node_id) {
+                        iter.next();
+                    }
+                    // Collect all labels for this node
+                    while iter.peek().is_some_and(|(nid, _)| *nid == node_id) {
+                        let (_, label_id) = iter.next().unwrap();
+                        let label_name = graph.get_label_by_id(LabelId(label_id as usize));
+                        write_string(buf, &label_name);
+                        label_count += 1;
+                    }
+                }
+                // Patch label count
+                buf[label_count_pos..label_count_pos + 2]
+                    .copy_from_slice(&label_count.to_le_bytes());
+
+                // Attributes
+                if let Some(attrs) = self.new_nodes_attrs.get(&node_id) {
+                    write_u16(buf, attrs.len() as u16);
+                    for (key, value) in attrs.iter() {
+                        write_string(buf, key);
+                        write_value(buf, value);
+                    }
+                } else {
+                    write_u16(buf, 0);
+                }
+                n_effects += 1;
             }
-            n_effects += 1;
         }
 
         // --- Created relationships ---
