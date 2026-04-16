@@ -257,40 +257,93 @@ impl Encode<19> for Tensor {
         // Multi-edge (src,dst): cell = edge_count | MSB_MASK
         let (m, dp) = self.m.extract_m_dp();
 
-        let mut uint64_m = Matrix::new_uint64(m.nrows(), m.ncols());
-        let mut uint64_dp = Matrix::new_uint64(dp.nrows(), dp.ncols());
-        // Track multi-edge (src, dst) pairs per sub-matrix for tensor section
-        let mut multi_edge_m: Vec<(u64, u64)> = Vec::new();
-        let mut multi_edge_dp: Vec<(u64, u64)> = Vec::new();
+        let has_multi = self.has_multi_edge();
 
-        // Pre-build edge-ID map in a single pass over `me` to avoid creating
-        // one GxB_Iterator per edge pair in the inner loop below.
-        // me rows = compound_key (src<<32|dst), cols = edge_id.
-        let mut edge_id_map: HashMap<u64, Vec<u64>> = HashMap::new();
-        for (compound_key, edge_id) in self.me.iter(0, u64::MAX) {
-            edge_id_map.entry(compound_key).or_default().push(edge_id);
-        }
-
-        for (matrix, uint64_matrix, multi_edges) in [
-            (&m, &mut uint64_m, &mut multi_edge_m),
-            (&dp, &mut uint64_dp, &mut multi_edge_dp),
-        ] {
-            for (src, dst) in matrix.iter(0, u64::MAX) {
-                let compound_key = (src << 32) | dst;
-                let edge_ids = edge_id_map
-                    .get(&compound_key)
-                    .map_or(&[][..], |v| v.as_slice());
-
-                if edge_ids.len() == 1 {
-                    // Single edge: store edge ID directly
-                    uint64_matrix.set_uint64(src, dst, edge_ids[0]);
-                } else {
-                    // Multi-edge: store count with MSB set
-                    uint64_matrix.set_uint64(src, dst, edge_ids.len() as u64 | MSB_MASK);
-                    multi_edges.push((src, dst));
-                }
+        // For single-edge tensors with no pending deletions, we can extract
+        // edge IDs from me's internal m/dp directly, decompose compound keys,
+        // and build uint64 matrices without any HashMap or iteration.
+        let (uint64_m, uint64_dp, multi_edge_m, multi_edge_dp, edge_id_map) = if has_multi {
+            // Slow path: multi-edges present, need HashMap to resolve counts vs IDs
+            let (me_rows, me_cols) = self.me.extract_all_tuples();
+            let mut edge_id_map: HashMap<u64, Vec<u64>> = HashMap::with_capacity(me_rows.len());
+            for i in 0..me_rows.len() {
+                edge_id_map.entry(me_rows[i]).or_default().push(me_cols[i]);
             }
-        }
+
+            let mut multi_edge_m: Vec<(u64, u64)> = Vec::new();
+            let mut multi_edge_dp: Vec<(u64, u64)> = Vec::new();
+
+            let mut uint64_m = Matrix::new_uint64(m.nrows(), m.ncols());
+            let mut uint64_dp = Matrix::new_uint64(dp.nrows(), dp.ncols());
+
+            for (matrix, uint64_matrix, multi_edges) in [
+                (&m, &mut uint64_m, &mut multi_edge_m),
+                (&dp, &mut uint64_dp, &mut multi_edge_dp),
+            ] {
+                let (rows, cols) = matrix.extract_tuples_bool();
+                let mut u_rows = Vec::with_capacity(rows.len());
+                let mut u_cols = Vec::with_capacity(rows.len());
+                let mut u_vals = Vec::with_capacity(rows.len());
+
+                for i in 0..rows.len() {
+                    let src = rows[i];
+                    let dst = cols[i];
+                    let compound_key = (src << 32) | dst;
+                    let edge_ids = edge_id_map
+                        .get(&compound_key)
+                        .map_or(&[][..], |v| v.as_slice());
+
+                    if edge_ids.len() == 1 {
+                        u_rows.push(src);
+                        u_cols.push(dst);
+                        u_vals.push(edge_ids[0]);
+                    } else {
+                        u_rows.push(src);
+                        u_cols.push(dst);
+                        u_vals.push(edge_ids.len() as u64 | MSB_MASK);
+                        multi_edges.push((src, dst));
+                    }
+                }
+
+                uint64_matrix.build_uint64(&u_rows, &u_cols, &u_vals);
+            }
+
+            (
+                uint64_m,
+                uint64_dp,
+                multi_edge_m,
+                multi_edge_dp,
+                Some(edge_id_map),
+            )
+        } else {
+            // Fast path: no multi-edges. Each (src,dst) has exactly one edge_id.
+            // me rows = compound_key (src<<32|dst), cols = edge_id.
+            let ((me_m_rows, me_m_cols), (me_dp_rows, me_dp_cols)) = self.me.extract_m_dp_tuples();
+
+            let mut uint64_m = Matrix::new_uint64(m.nrows(), m.ncols());
+            let mut uint64_dp = Matrix::new_uint64(dp.nrows(), dp.ncols());
+
+            // Decompose compound keys and build uint64 matrices directly
+            let m_len = me_m_rows.len();
+            let mut m_src = Vec::with_capacity(m_len);
+            let mut m_dst = Vec::with_capacity(m_len);
+            for i in 0..m_len {
+                m_src.push(me_m_rows[i] >> 32);
+                m_dst.push(me_m_rows[i] & 0xFFFF_FFFF);
+            }
+            uint64_m.build_uint64(&m_src, &m_dst, &me_m_cols);
+
+            let dp_len = me_dp_rows.len();
+            let mut dp_src = Vec::with_capacity(dp_len);
+            let mut dp_dst = Vec::with_capacity(dp_len);
+            for i in 0..dp_len {
+                dp_src.push(me_dp_rows[i] >> 32);
+                dp_dst.push(me_dp_rows[i] & 0xFFFF_FFFF);
+            }
+            uint64_dp.build_uint64(&dp_src, &dp_dst, &me_dp_cols);
+
+            (uint64_m, uint64_dp, Vec::new(), Vec::new(), None)
+        };
 
         // Encode the UINT64 forward matrix (as a VersionedMatrix: m, dp, dm)
         let dm = Matrix::new_uint64(m.nrows(), m.ncols()); // empty delta-minus
@@ -306,7 +359,6 @@ impl Encode<19> for Tensor {
         }
 
         // Tensor section: only multi-edge pairs (rare in practice).
-        // Re-use the already-built edge_id_map instead of calling me.iter() again.
         let mut v = Vector::<u64>::new(GrB_INDEX_MAX);
         for multi_edges in [&multi_edge_m, &multi_edge_dp] {
             w.write_unsigned(multi_edges.len() as u64);
@@ -314,7 +366,9 @@ impl Encode<19> for Tensor {
                 let compound_key = (src << 32) | dst;
                 v.clear();
 
-                if let Some(ids) = edge_id_map.get(&compound_key) {
+                if let Some(ref map) = edge_id_map
+                    && let Some(ids) = map.get(&compound_key)
+                {
                     for (idx, &edge_id) in ids.iter().enumerate() {
                         v.set(idx as u64, edge_id);
                     }

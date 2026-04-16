@@ -80,12 +80,15 @@ use super::{
     GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC, GrB_DESC_SCT0, GrB_DESC_SCT0T1,
     GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1, GrB_DESC_T0, GrB_DESC_T0T1,
     GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32, GrB_Info, GrB_Matrix,
-    GrB_Matrix_build_BOOL, GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_Semiring,
+    GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64, GrB_Matrix_clear, GrB_Matrix_dup,
+    GrB_Matrix_eWiseAdd_Semiring,
     GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
-    GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
+    GrB_Matrix_extractElement_UINT64, GrB_Matrix_extractTuples_BOOL, GrB_Matrix_free,
+    GrB_Matrix_get_INT32, GrB_Matrix_ncols,
     GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
     GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_setElement_UINT64, GrB_Matrix_wait,
     GrB_Mode, GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
+    GxB_ANY_UINT64,
     GxB_ANY_PAIR_BOOL, GxB_Container_free, GxB_Container_new, GxB_Iterator, GxB_Iterator_free,
     GxB_Iterator_new, GxB_Matrix_fprint, GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_Option_Field,
     GxB_Print_Level, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
@@ -839,6 +842,56 @@ impl Matrix {
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+    }
+
+    /// Bulk-insert UINT64 entries from (row, col, val) arrays. Matrix must be empty and UINT64 typed.
+    pub fn build_uint64(
+        &mut self,
+        rows: &[u64],
+        cols: &[u64],
+        vals: &[u64],
+    ) {
+        debug_assert_eq!(rows.len(), cols.len());
+        debug_assert_eq!(rows.len(), vals.len());
+        if rows.is_empty() {
+            return;
+        }
+        let nvals = rows.len() as u64;
+        unsafe {
+            let info = GrB_Matrix_build_UINT64(
+                *self.m,
+                rows.as_ptr(),
+                cols.as_ptr(),
+                vals.as_ptr(),
+                nvals,
+                GxB_ANY_UINT64,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
+
+    /// Bulk-extract all (row, col) entries from a boolean matrix.
+    pub fn extract_tuples_bool(&self) -> (Vec<u64>, Vec<u64>) {
+        let mut nvals = self.nvals();
+        if nvals == 0 {
+            return (Vec::new(), Vec::new());
+        }
+        let mut rows = vec![0u64; nvals as usize];
+        let mut cols = vec![0u64; nvals as usize];
+        let mut vals = vec![false; nvals as usize];
+        unsafe {
+            let info = GrB_Matrix_extractTuples_BOOL(
+                rows.as_mut_ptr(),
+                cols.as_mut_ptr(),
+                vals.as_mut_ptr(),
+                &raw mut nvals,
+                *self.m,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        rows.truncate(nvals as usize);
+        cols.truncate(nvals as usize);
+        (rows, cols)
     }
 }
 
