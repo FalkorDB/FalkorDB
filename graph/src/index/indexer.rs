@@ -516,6 +516,9 @@ impl Indexer {
 
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Relaxed);
+        // Clear the graph reference to break the circular Arc:
+        // MvccGraph → Arc<Graph> → Indexer → Arc<Graph>
+        *self.graph.lock() = None;
     }
 
     #[must_use]
