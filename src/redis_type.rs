@@ -11,8 +11,8 @@
 //! Key deleted/expired      | graph_free()       | Drop Arc<RwLock<ThreadedGraph>>
 //! RDB save (before RDB)    | graph_aux_save()   | Serialize UDF libraries
 //! RDB load (aux payload)   | graph_aux_load()   | Deserialize + register UDFs
-//! RDB save (per-key)       | graph_rdb_save()   | Stub (not used)
-//! RDB load (per-key)       | graph_rdb_load()   | Stub (returns null)
+//! RDB save (per-key)       | graph_rdb_save()   | Encode graph to RDB stream
+//! RDB load (per-key)       | graph_rdb_load()   | Decode graph from RDB stream
 //! ```
 //!
 //! ## UDF persistence
@@ -33,9 +33,13 @@
 //!                        Redis invokes `free` callback -> graph_free()
 //! ```
 
-use crate::graph_core::graph_free;
+use crate::graph_core::{ThreadedGraph, graph_free};
+use crate::serializers::decoder::rdb_load_graph;
+use crate::serializers::encoder::rdb_save_graph;
+use graph::graph::mvcc_graph::MvccGraph;
 use graph::runtime::functions::{GraphFn, register_udf};
 use graph::udf::get_udf_repo;
+use parking_lot::RwLock;
 use redis_module::raw::{load_string_buffer, load_unsigned, save_string, save_unsigned};
 use redis_module::{
     REDISMODULE_TYPE_METHOD_VERSION, RedisModuleIO, RedisModuleTypeMethods, native_types::RedisType,
@@ -43,21 +47,54 @@ use redis_module::{
 use std::sync::Arc;
 use std::{os::raw::c_void, ptr::null_mut};
 
+/// Decode a graph from the RDB stream.
+///
+/// Called by Redis for each key of type `GRAPH_TYPE` during RDB load.
+/// Returns a heap-allocated `Arc<RwLock<ThreadedGraph>>` that Redis
+/// will associate with the key, or null on failure.
 #[unsafe(no_mangle)]
-#[allow(clippy::missing_const_for_fn)]
 unsafe extern "C" fn graph_rdb_load(
-    _: *mut RedisModuleIO,
-    _: i32,
+    rdb: *mut RedisModuleIO,
+    _encver: i32,
 ) -> *mut c_void {
-    null_mut()
+    // Default cache size for the query plan cache.
+    // During RDB load we don't have a Context to read the module config,
+    // so use the default value (25).
+    let cache_size = 25;
+
+    match rdb_load_graph(rdb, cache_size) {
+        Ok(Some(graph)) => {
+            let mvcc = MvccGraph::from_graph(graph);
+            let tg = Arc::new(RwLock::new(ThreadedGraph::from_mvcc(mvcc)));
+            Box::into_raw(Box::new(tg)).cast::<c_void>()
+        }
+        Ok(None) => {
+            // Multi-key graph: data accumulated in DECODE_STATE.
+            // Return null for now; the graph will be finalized later.
+            null_mut()
+        }
+        Err(e) => {
+            eprintln!("FalkorDB: RDB load error: {e}");
+            null_mut()
+        }
+    }
 }
 
+/// Encode a graph into the RDB stream.
+///
+/// Called by Redis for each key of type `GRAPH_TYPE` during RDB save
+/// (BGSAVE, SAVE, or replication). The `value` pointer is the
+/// `Arc<RwLock<ThreadedGraph>>` that was stored via `set_value`.
 #[unsafe(no_mangle)]
-#[allow(clippy::missing_const_for_fn)]
 unsafe extern "C" fn graph_rdb_save(
-    _: *mut RedisModuleIO,
-    _: *mut c_void,
+    rdb: *mut RedisModuleIO,
+    value: *mut c_void,
 ) {
+    let tg = &*(value.cast::<Arc<RwLock<ThreadedGraph>>>());
+    let guard = tg.read();
+    let g_arc = guard.graph.read();
+    let g = g_arc.borrow();
+    rdb_save_graph(rdb, &g);
 }
 
 /// Save UDF libraries to RDB.
@@ -117,7 +154,7 @@ unsafe extern "C" fn graph_aux_load(
 
 pub static GRAPH_TYPE: RedisType = RedisType::new(
     "graphdata",
-    0,
+    19,
     RedisModuleTypeMethods {
         version: REDISMODULE_TYPE_METHOD_VERSION as u64,
         rdb_load: Some(graph_rdb_load),

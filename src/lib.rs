@@ -42,6 +42,7 @@ mod graph_core;
 mod module_init;
 mod redis_type;
 mod reply;
+mod serializers;
 
 use allocator::ThreadCountingAllocator;
 use commands::{
