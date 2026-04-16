@@ -252,18 +252,20 @@ impl Encode<19> for Tensor {
         &self,
         w: &mut dyn Writer,
     ) {
-        // Build a UINT64 forward matrix for C compatibility.
-        // Single-edge (src,dst): cell = edge_id
-        // Multi-edge (src,dst): cell = edge_count | MSB_MASK
-        let (m, dp) = self.m.extract_m_dp();
+        let nrows = self.m.nrows();
+        let ncols = self.m.ncols();
 
-        let has_multi = self.has_multi_edge();
+        // Compute both nvals at once to avoid redundant wait()/nvals() FFI calls.
+        let m_nvals = self.m.nvals();
+        let me_nvals = self.me.nvals();
+        let has_multi = m_nvals != me_nvals;
+        let total = me_nvals;
 
-        // For single-edge tensors with no pending deletions, we can extract
-        // edge IDs from me's internal m/dp directly, decompose compound keys,
-        // and build uint64 matrices without any HashMap or iteration.
-        let (uint64_m, uint64_dp, multi_edge_m, multi_edge_dp, edge_id_map) = if has_multi {
-            // Slow path: multi-edges present, need HashMap to resolve counts vs IDs
+        // Reusable empty UINT64 matrix — shared across the 2 empty slots.
+        let empty = Matrix::new_uint64(nrows, ncols);
+
+        let (multi_edge_m, multi_edge_dp, edge_id_map) = if has_multi {
+            let (m, dp) = self.m.extract_m_dp();
             let (me_rows, me_cols) = self.me.extract_all_tuples();
             let mut edge_id_map: HashMap<u64, Vec<u64>> = HashMap::with_capacity(me_rows.len());
             for i in 0..me_rows.len() {
@@ -273,12 +275,9 @@ impl Encode<19> for Tensor {
             let mut multi_edge_m: Vec<(u64, u64)> = Vec::new();
             let mut multi_edge_dp: Vec<(u64, u64)> = Vec::new();
 
-            let mut uint64_m = Matrix::new_uint64(m.nrows(), m.ncols());
-            let mut uint64_dp = Matrix::new_uint64(dp.nrows(), dp.ncols());
-
-            for (matrix, uint64_matrix, multi_edges) in [
-                (&m, &mut uint64_m, &mut multi_edge_m),
-                (&dp, &mut uint64_dp, &mut multi_edge_dp),
+            for (matrix, multi_edges) in [
+                (&m, &mut multi_edge_m),
+                (&dp, &mut multi_edge_dp),
             ] {
                 let (rows, cols) = matrix.extract_tuples_bool();
                 let mut u_rows = Vec::with_capacity(rows.len());
@@ -305,60 +304,66 @@ impl Encode<19> for Tensor {
                     }
                 }
 
-                uint64_matrix.build_uint64(&u_rows, &u_cols, &u_vals);
+                if u_rows.is_empty() {
+                    empty.encode(w);
+                } else {
+                    let mut uint64_mat = Matrix::new_uint64(nrows, ncols);
+                    uint64_mat.build_uint64(&u_rows, &u_cols, &u_vals);
+                    uint64_mat.encode(w);
+                }
             }
 
-            (
-                uint64_m,
-                uint64_dp,
-                multi_edge_m,
-                multi_edge_dp,
-                Some(edge_id_map),
-            )
+            empty.encode(w);
+
+            (multi_edge_m, multi_edge_dp, Some(edge_id_map))
         } else {
-            // Fast path: no multi-edges. Each (src,dst) has exactly one edge_id.
-            // me rows = compound_key (src<<32|dst), cols = edge_id.
+            // Fast path: no multi-edges, no extract_m_dp() needed.
             let ((me_m_rows, me_m_cols), (me_dp_rows, me_dp_cols)) = self.me.extract_m_dp_tuples();
 
-            let mut uint64_m = Matrix::new_uint64(m.nrows(), m.ncols());
-            let mut uint64_dp = Matrix::new_uint64(dp.nrows(), dp.ncols());
-
-            // Decompose compound keys and build uint64 matrices directly
-            let m_len = me_m_rows.len();
-            let mut m_src = Vec::with_capacity(m_len);
-            let mut m_dst = Vec::with_capacity(m_len);
-            for i in 0..m_len {
-                m_src.push(me_m_rows[i] >> 32);
-                m_dst.push(me_m_rows[i] & 0xFFFF_FFFF);
+            // Encode uint64_m
+            if me_m_rows.is_empty() {
+                empty.encode(w);
+            } else {
+                let m_len = me_m_rows.len();
+                let mut m_src = Vec::with_capacity(m_len);
+                let mut m_dst = Vec::with_capacity(m_len);
+                for i in 0..m_len {
+                    m_src.push(me_m_rows[i] >> 32);
+                    m_dst.push(me_m_rows[i] & 0xFFFF_FFFF);
+                }
+                let mut uint64_m = Matrix::new_uint64(nrows, ncols);
+                uint64_m.build_uint64(&m_src, &m_dst, &me_m_cols);
+                uint64_m.encode(w);
             }
-            uint64_m.build_uint64(&m_src, &m_dst, &me_m_cols);
 
-            let dp_len = me_dp_rows.len();
-            let mut dp_src = Vec::with_capacity(dp_len);
-            let mut dp_dst = Vec::with_capacity(dp_len);
-            for i in 0..dp_len {
-                dp_src.push(me_dp_rows[i] >> 32);
-                dp_dst.push(me_dp_rows[i] & 0xFFFF_FFFF);
+            // Encode uint64_dp
+            if me_dp_rows.is_empty() {
+                empty.encode(w);
+            } else {
+                let dp_len = me_dp_rows.len();
+                let mut dp_src = Vec::with_capacity(dp_len);
+                let mut dp_dst = Vec::with_capacity(dp_len);
+                for i in 0..dp_len {
+                    dp_src.push(me_dp_rows[i] >> 32);
+                    dp_dst.push(me_dp_rows[i] & 0xFFFF_FFFF);
+                }
+                let mut uint64_dp = Matrix::new_uint64(nrows, ncols);
+                uint64_dp.build_uint64(&dp_src, &dp_dst, &me_dp_cols);
+                uint64_dp.encode(w);
             }
-            uint64_dp.build_uint64(&dp_src, &dp_dst, &me_dp_cols);
 
-            (uint64_m, uint64_dp, Vec::new(), Vec::new(), None)
+            // Empty delta-minus
+            empty.encode(w);
+
+            (Vec::new(), Vec::new(), None)
         };
 
-        // Encode the UINT64 forward matrix (as a VersionedMatrix: m, dp, dm)
-        let dm = Matrix::new_uint64(m.nrows(), m.ncols()); // empty delta-minus
-        uint64_m.encode(w);
-        uint64_dp.encode(w);
-        dm.encode(w);
-
-        let total = self.edge_count();
         w.write_unsigned(total);
 
         if total == 0 {
             return;
         }
 
-        // Tensor section: only multi-edge pairs (rare in practice).
         let mut v = Vector::<u64>::new(GrB_INDEX_MAX);
         for multi_edges in [&multi_edge_m, &multi_edge_dp] {
             w.write_unsigned(multi_edges.len() as u64);
