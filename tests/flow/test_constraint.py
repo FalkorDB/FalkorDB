@@ -514,7 +514,7 @@ class testConstraintNodesConcurrent():
         g.query("CREATE (:Person:Engineer {name: 'Andrew', age: 36, height: 173, loc: point({latitude:4, longitude:2})})")
         g.query("MATCH (a{name: 'Andrew'}),({name:'Rick'}) CREATE (a)-[:Knows {since:1984}]->(b)")
 
-    def test01_constraint_create_drop_simultanously(self):
+    def test01_constraint_create_drop_simultaneously(self):
         # make sure there are no constraints in the graph
         for c in list_constraints(self.g):
             drop_constraint(self.g, c.type, c.entity_type, c.label, *c.attributes)
