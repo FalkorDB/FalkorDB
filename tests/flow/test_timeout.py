@@ -1,5 +1,6 @@
 import asyncio
 from common import *
+from common import Env
 from index_utils import *
 from falkordb.asyncio import FalkorDB
 from redis.asyncio import BlockingConnectionPool
@@ -8,14 +9,23 @@ GRAPH_ID = "timeout"
 
 
 class testQueryTimeout():
+    def _reset_env(self, module_args=None):
+        if hasattr(self, 'env'):
+            self.env.stop()
+
+        env_kwargs = {}
+        if module_args is not None:
+            env_kwargs['moduleArgs'] = module_args
+
+        self.env, self.db = Env(**env_kwargs)
+        self.graph = self.db.select_graph(GRAPH_ID)
+
     def __init__(self):
-        self.env, self.db = Env(moduleArgs="TIMEOUT 1000")
+        self._reset_env("TIMEOUT 1000")
 
         # skip test if we're running under Valgrind
         if VALGRIND or SANITIZER:
             self.env.skip() # valgrind is not working correctly with replication
-
-        self.graph = self.db.select_graph(GRAPH_ID)
 
     def test01_read_write_query_timeout(self):
         query = "UNWIND range(0, 1000000) AS x WITH x AS x WHERE x = 10000 RETURN x"
@@ -136,7 +146,7 @@ class testQueryTimeout():
             self.env.assertTrue(True)
 
     def test06_error_timeout_default_higher_than_timeout_max(self):
-        self.env, self.db = Env(moduleArgs="TIMEOUT_DEFAULT 10 TIMEOUT_MAX 10")
+        self._reset_env("TIMEOUT_DEFAULT 10 TIMEOUT_MAX 10")
 
         # get current timeout configuration
         max_timeout = self.db.config_get("TIMEOUT_MAX")
@@ -214,8 +224,7 @@ class testQueryTimeout():
                 self.env.assertContains("The query TIMEOUT parameter value cannot exceed the TIMEOUT_MAX configuration parameter value", str(error))
 
     def test09_fallback(self):
-        self.env.stop()
-        self.env, self.db = Env(moduleArgs="TIMEOUT 1")
+        self._reset_env("TIMEOUT 1")
 
         configs = ["TIMEOUT_DEFAULT", "TIMEOUT_MAX"]
 
@@ -254,8 +263,7 @@ class testQueryTimeout():
     # should return to user
     def test11_profile_no_double_response(self):
         # reset timeout params to default
-        self.env.stop()
-        self.env, self.db = Env()
+        self._reset_env()
 
         # Set timeout parameters to small values (1 millisecond)
         self.db.config_set("TIMEOUT_MAX", 1)
@@ -277,8 +285,7 @@ class testQueryTimeout():
         self.env.assertEquals(res.result_set[0][0], 1)
 
     def test12_concurrent_timeout(self):
-        self.env.stop()
-        self.env, self.db = Env()
+        self._reset_env()
 
         self.graph.query("UNWIND range(1, 1000) AS x CREATE (:N {v:x})")
 

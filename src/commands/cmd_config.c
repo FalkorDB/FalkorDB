@@ -5,8 +5,77 @@
  */
 
 #include <string.h>
+#include <limits.h>
 #include "RG.h"
 #include "configuration/config.h"
+
+static bool _Config_GetNumericValue(Config_Option_Field field, long long *value) {
+	ASSERT(value != NULL);
+
+	switch(field) {
+	case Config_TIMEOUT:
+	case Config_TIMEOUT_DEFAULT:
+	case Config_TIMEOUT_MAX:
+	case Config_CACHE_SIZE:
+	case Config_OPENMP_NTHREAD:
+	case Config_THREAD_POOL_SIZE:
+	case Config_VKEY_MAX_ENTITY_COUNT:
+	case Config_MAX_QUEUED_QUERIES:
+	case Config_NODE_CREATION_BUFFER:
+	case Config_CMD_INFO_MAX_QUERY_COUNT:
+	case Config_EFFECTS_THRESHOLD: {
+		uint64_t n = 0;
+		bool res = Config_Option_get(field, &n);
+		if(!res) return false;
+		ASSERT(n <= (uint64_t)LLONG_MAX);
+		*value = (long long)n;
+		return true;
+	}
+
+	case Config_RESULTSET_MAX_SIZE: {
+		uint64_t n = 0;
+		bool res = Config_Option_get(field, &n);
+		if(!res) return false;
+		if(n == RESULTSET_SIZE_UNLIMITED) {
+			*value = -1;
+			return true;
+		}
+		ASSERT(n <= (uint64_t)LLONG_MAX);
+		*value = (long long)n;
+		return true;
+	}
+
+	case Config_QUERY_MEM_CAPACITY:
+	case Config_DELTA_MAX_PENDING_CHANGES: {
+		int64_t n = 0;
+		bool res = Config_Option_get(field, &n);
+		if(!res) return false;
+		*value = (long long)n;
+		return true;
+	}
+
+	case Config_BOLT_PORT: {
+		int32_t n = 0;
+		bool res = Config_Option_get(field, &n);
+		if(!res) return false;
+		*value = (long long)n;
+		return true;
+	}
+
+	case Config_JS_HEAP_SIZE:
+	case Config_JS_STACK_SIZE: {
+		size_t n = 0;
+		bool res = Config_Option_get(field, &n);
+		if(!res) return false;
+		ASSERT(n <= (size_t)LLONG_MAX);
+		*value = (long long)n;
+		return true;
+	}
+
+	default:
+		return false;
+	}
+}
 
 // emit config field name and value
 static void _Emit_config
@@ -36,7 +105,7 @@ static void _Emit_config
 			break;
 
 		case T_INT64:
-			res = Config_Option_get(field, &numeric_value);
+				res = _Config_GetNumericValue(field, &numeric_value);
 			ASSERT(res == true);
 
 			RedisModule_ReplyWithArray(ctx, 2);

@@ -927,10 +927,10 @@ void BoltAcceptHandler
 // checks if bolt is enabled
 static bool _bolt_enabled
 (
-	int16_t *port  // [output] the bolt port
+	int32_t *port  // [output] the bolt port
 ) {
 	// get bolt port from configuration
-	int16_t p;
+	int32_t p;
 	Config_Option_get(Config_BOLT_PORT, &p);
 
 	// bolt is disabled if port is -1
@@ -950,7 +950,7 @@ int BoltApi_Register
 (
     RedisModuleCtx *ctx  // redis context
 ) {
-	int16_t port;
+	int32_t port;
 
 	// quick return if bolt is disabled
 	if(!_bolt_enabled(&port)) {
@@ -962,7 +962,13 @@ int BoltApi_Register
 		return REDISMODULE_OK;
 	}
 
-    socket_t bolt = socket_bind(port);
+	// out of range for TCP port
+	if(port < 0 || port > UINT16_MAX) {
+		RedisModule_Log(ctx, "warning", "Invalid bolt port: %d", (int)port);
+		return REDISMODULE_ERR;
+	}
+
+	socket_t bolt = socket_bind((uint16_t)port);
 	if(bolt == -1) {
 		RedisModule_Log(ctx, "warning", "Failed to bind to port %d", port);
 		return REDISMODULE_ERR;
