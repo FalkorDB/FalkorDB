@@ -153,22 +153,25 @@ static Record AndMultiplexer_Consume
 		op->r = OpBase_Consume(op->bound_branch);
 		if(!op->r) return NULL; // depleted
 
-		// try to get a record from some stream
+		// try to get a record from every branch (all must pass for AND)
 		for(int i = 1; i < op->op.childCount; i++) {
 			Record branch_record = _pullFromBranchStream(op, i);
 			// don't care about the branch record
 			if(branch_record) OpBase_DeleteRecord(&branch_record);
 			else {
-				// did not managed to get a record from some branch
-				// loop back and restart
+				// this branch failed: discard the bound record and try the next one
 				OpBase_DeleteRecord(&op->r);
 				break;
 			}
 		}
-		// all branches returned record =>
-		// all filters are satisfied by the bounded record
+
+		// a branch failed (op->r was deleted): restart with the next bound record
+		if(!op->r) continue;
+
+		// all branches returned a record =>
+		// all filters are satisfied by the bound record
 		Record r = op->r;
-		op->r = NULL;  // Null to avoid double free
+		op->r = NULL;  // null to avoid double free
 		return r;
 	}
 }
