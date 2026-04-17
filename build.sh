@@ -1322,6 +1322,19 @@ prepare_cmake_arguments() {
         CMAKE_ARGS+=(-DOPENSSL_INCLUDE_DIR=/usr/include/openssl3)
     fi
 
+    # On macOS, Homebrew installs openssl@3 keg-only (not symlinked into the
+    # system prefix). Without an explicit hint, CMake's FindOpenSSL may locate
+    # libcrypto but fail to discover libssl, which leaves the OpenSSL::SSL
+    # imported target undefined and breaks target_link_libraries(... OpenSSL::SSL).
+    # This regressed when Homebrew upgraded openssl@3 to 3.6.x.
+    if [[ "$OS" == "macos" ]] && command -v brew &>/dev/null; then
+        local brew_openssl
+        brew_openssl="$(brew --prefix openssl@3 2>/dev/null || true)"
+        if [[ -n "$brew_openssl" && -d "$brew_openssl" ]]; then
+            CMAKE_ARGS+=(-DOPENSSL_ROOT_DIR="$brew_openssl")
+        fi
+    fi
+
     # Export platform info
     export OS
     export OSNICK
