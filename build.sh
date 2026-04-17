@@ -1327,11 +1327,40 @@ prepare_cmake_arguments() {
     # libcrypto but fail to discover libssl, which leaves the OpenSSL::SSL
     # imported target undefined and breaks target_link_libraries(... OpenSSL::SSL).
     # This regressed when Homebrew upgraded openssl@3 to 3.6.x.
+    #
+    # We also pass OPENSSL_SSL_LIBRARY / OPENSSL_CRYPTO_LIBRARY explicitly:
+    #   1. Newer openssl@3 builds may ship only the versioned ".3.dylib" files
+    #      without the unsuffixed symlinks that CMake's find_library() expects.
+    #   2. The macOS build directory is restored from cache between runs, so a
+    #      previously cached OPENSSL_SSL_LIBRARY-NOTFOUND value would otherwise
+    #      stick around even after fixing OPENSSL_ROOT_DIR. Passing the value
+    #      on the command line forces an override.
     if [[ "$OS" == "macos" ]] && command -v brew &>/dev/null; then
         local brew_openssl
         brew_openssl="$(brew --prefix openssl@3 2>/dev/null || true)"
         if [[ -n "$brew_openssl" && -d "$brew_openssl" ]]; then
             CMAKE_ARGS+=(-DOPENSSL_ROOT_DIR="$brew_openssl")
+            CMAKE_ARGS+=(-DOPENSSL_INCLUDE_DIR="$brew_openssl/include")
+
+            local libssl="" libcrypto="" candidate
+            for candidate in libssl.dylib libssl.3.dylib; do
+                if [[ -e "$brew_openssl/lib/$candidate" ]]; then
+                    libssl="$brew_openssl/lib/$candidate"
+                    break
+                fi
+            done
+            for candidate in libcrypto.dylib libcrypto.3.dylib; do
+                if [[ -e "$brew_openssl/lib/$candidate" ]]; then
+                    libcrypto="$brew_openssl/lib/$candidate"
+                    break
+                fi
+            done
+            if [[ -n "$libssl" ]]; then
+                CMAKE_ARGS+=(-DOPENSSL_SSL_LIBRARY="$libssl")
+            fi
+            if [[ -n "$libcrypto" ]]; then
+                CMAKE_ARGS+=(-DOPENSSL_CRYPTO_LIBRARY="$libcrypto")
+            fi
         fi
     fi
 
