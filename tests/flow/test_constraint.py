@@ -340,7 +340,7 @@ class testConstraintNodesDrop():
         g.query("CREATE (:Engineer:Person {name: 'Tim', age: 20, height: 190, loc: point({latitude:2, longitude:2})})")
         g.query("CREATE (:Person:Engineer {name: 'Rick', age: 30, height: 200, loc: point({latitude:3, longitude:2})})")
         g.query("CREATE (:Person:Engineer {name: 'Andrew', age: 36, height: 173, loc: point({latitude:4, longitude:2})})")
-        g.query("MATCH (a{name: 'Andrew'}),({name:'Rick'}) CREATE (a)-[:Knows {since:1984}]->(b)")
+        g.query("MATCH (a{name: 'Andrew'}),(b{name:'Rick'}) CREATE (a)-[:Knows {since:1984}]->(b)")
 
     def create_constraints(self):
         create_mandatory_node_constraint(self.g, 'Person', 'height', sync=True)
