@@ -448,6 +448,112 @@ void test_attributeset_batch_remove_uaf() {
 	TEST_ASSERT (set == NULL) ;
 }
 
+// Regression test for C-1: duplicate attribute IDs in a single AttributeSet_Update call.
+//
+// Bug: if the same attr_id appears twice with NULL values, the categorization loop
+// pushes the same slot index into remove_idx[] twice.  AttributeSet_RemoveIdx then
+// frees the neighbour attribute that was swap-copied into that slot on the first
+// iteration, producing a double-free / use-after-free of a live attribute.
+//
+// Under ASan the double-free is detected immediately inside AttributeSet_RemoveIdx.
+// Without ASan, the post-update attribute count and value checks below expose the bug.
+void test_attributeset_duplicate_id_remove() {
+	// build a set with 3 heap-owning string attributes
+	// positions: id=0 -> "alpha", id=1 -> "bravo", id=2 -> "charlie"
+	AttributeSet set = NULL ;
+
+	SIValue values[3] = {
+		SI_DuplicateStringVal ("alpha"),
+		SI_DuplicateStringVal ("bravo"),
+		SI_DuplicateStringVal ("charlie"),
+	} ;
+	AttributeID attr_ids[3] = {0, 1, 2} ;
+
+	AttributeSet_Add (&set, attr_ids, values, 3, false) ;
+	TEST_ASSERT (AttributeSet_Count (set) == 3) ;
+
+	// pass the SAME attr_id (0) twice with NULL values — duplicate removal
+	// expected (correct) behaviour: attribute 0 is removed exactly once,
+	//   attributes 1 and 2 survive intact, count drops to 2
+	// buggy behaviour: attribute 2 ("charlie") is double-freed and orphaned,
+	//   count drops to 1, and subsequent reads of attr 2 return stale/corrupt data
+	SIValue  nulls[2]   = { SI_NullVal (), SI_NullVal () } ;
+	AttributeID dup_ids[2] = { 0, 0 } ;
+	AttributeSetChangeType changes[2] ;
+
+	AttributeSet_Update (changes, &set, dup_ids, nulls, 2, false) ;
+
+	// attribute 0 must be removed (either CT_DEL for one occurrence, CT_NONE for
+	// the redundant second, or both CT_DEL — either is acceptable as long as the
+	// structural invariants hold)
+	TEST_ASSERT (changes[0] == CT_DEL || changes[0] == CT_NONE) ;
+
+	// exactly ONE attribute should have been removed — count must be 2
+	TEST_ASSERT (AttributeSet_Count (set) == 2) ;
+
+	// attribute 0 must be gone
+	SIValue v ;
+	TEST_ASSERT (AttributeSet_Get (set, 0, &v) == false) ;
+
+	// attribute 1 ("bravo") must survive with the correct value
+	TEST_ASSERT (AttributeSet_Get (set, 1, &v) == true) ;
+	TEST_ASSERT (strcmp (v.stringval, "bravo") == 0) ;
+
+	// attribute 2 ("charlie") must survive with the correct value
+	// (this assertion catches the double-free corruption without ASan)
+	TEST_ASSERT (AttributeSet_Get (set, 2, &v) == true) ;
+	TEST_ASSERT (strcmp (v.stringval, "charlie") == 0) ;
+
+	// AttributeSet_Free must not crash or trigger ASan double-free
+	AttributeSet_Free (&set) ;
+	TEST_ASSERT (set == NULL) ;
+}
+
+// Same bug via the edge path: duplicate attr_id in a REMOVE-then-SET pattern
+// within a single batch.  ids=[2, 2], vals=[NULL, "new"] — first occurrence is
+// a remove, second is a re-add of the same id.  After the batch, id=2 must hold
+// the new value "new" and count must be unchanged.
+void test_attributeset_duplicate_id_remove_then_add() {
+	AttributeSet set = NULL ;
+
+	SIValue values[3] = {
+		SI_DuplicateStringVal ("a"),
+		SI_DuplicateStringVal ("b"),
+		SI_DuplicateStringVal ("c"),
+	} ;
+	AttributeID attr_ids[3] = {0, 1, 2} ;
+
+	AttributeSet_Add (&set, attr_ids, values, 3, false) ;
+	TEST_ASSERT (AttributeSet_Count (set) == 3) ;
+
+	// remove then re-set the same id in one batch: semantics = last-write-wins
+	SIValue batch_vals[2] = {
+		SI_NullVal (),                    // remove id=2
+		SI_DuplicateStringVal ("new"),    // re-add id=2
+	} ;
+	AttributeID batch_ids[2] = { 2, 2 } ;
+	AttributeSetChangeType changes[2] ;
+
+	AttributeSet_Update (changes, &set, batch_ids, batch_vals, 2, false) ;
+
+	// count must remain at 3 (remove then add = net zero)
+	TEST_ASSERT (AttributeSet_Count (set) == 3) ;
+
+	// id=2 must hold "new"
+	SIValue v ;
+	TEST_ASSERT (AttributeSet_Get (set, 2, &v) == true) ;
+	TEST_ASSERT (strcmp (v.stringval, "new") == 0) ;
+
+	// id=0 and id=1 must be intact
+	TEST_ASSERT (AttributeSet_Get (set, 0, &v) == true) ;
+	TEST_ASSERT (strcmp (v.stringval, "a") == 0) ;
+	TEST_ASSERT (AttributeSet_Get (set, 1, &v) == true) ;
+	TEST_ASSERT (strcmp (v.stringval, "b") == 0) ;
+
+	AttributeSet_Free (&set) ;
+	TEST_ASSERT (set == NULL) ;
+}
+
 TEST_LIST = {
 	{ "null_attributeset", test_null_attributeset},
 	{ "attributeset_add", test_attributeset_add},
@@ -455,6 +561,8 @@ TEST_LIST = {
 	{ "attributeset_remove", test_attributeset_remove},
 	{ "attributeset_shallowClone", test_attributeset_shallowClone},
 	{ "attributeset_batch_remove_uaf", test_attributeset_batch_remove_uaf},
+	{ "attributeset_duplicate_id_remove", test_attributeset_duplicate_id_remove},
+	{ "attributeset_duplicate_id_remove_then_add", test_attributeset_duplicate_id_remove_then_add},
 	{ NULL, NULL }
 };
 
