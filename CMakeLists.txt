@@ -296,13 +296,16 @@ set(FALKORDB_LIBS
     ${UTF8PROC}
     ${ONIGURUMA}
     redisearch-static
-    VectorSimilarity
     OpenSSL::SSL
     ${CMAKE_DL_LIBS}
 )
 
 if(APPLE)
     list(APPEND FALKORDB_LIBS ${CoreFoundation_Library} ${SystemConfiguration_Library})
+endif()
+
+if(TARGET VectorSimilarity)
+    list(APPEND FALKORDB_LIBS VectorSimilarity)
 endif()
 
 # Ensure RediSearch is built before falkordb
