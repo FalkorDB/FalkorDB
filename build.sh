@@ -1339,10 +1339,9 @@ prepare_cmake_arguments() {
         local brew_openssl
         brew_openssl="$(brew --prefix openssl@3 2>/dev/null || true)"
         if [[ -n "$brew_openssl" && -d "$brew_openssl" ]]; then
-            CMAKE_ARGS+=(-DOPENSSL_ROOT_DIR="$brew_openssl")
-            CMAKE_ARGS+=(-DOPENSSL_INCLUDE_DIR="$brew_openssl/include")
-
+            local openssl_include="$brew_openssl/include"
             local libssl="" libcrypto="" candidate
+
             for candidate in libssl.dylib libssl.3.dylib; do
                 if [[ -e "$brew_openssl/lib/$candidate" ]]; then
                     libssl="$brew_openssl/lib/$candidate"
@@ -1355,12 +1354,28 @@ prepare_cmake_arguments() {
                     break
                 fi
             done
-            if [[ -n "$libssl" ]]; then
-                CMAKE_ARGS+=(-DOPENSSL_SSL_LIBRARY="$libssl")
+
+            # Resolve and verify all four pieces (root, include dir, libssl,
+            # libcrypto) before passing any of them to CMake. Setting only a
+            # subset would let CMake's FindOpenSSL fall back to system / stale
+            # cached *-NOTFOUND values and silently mix Homebrew headers with
+            # other libraries, which is exactly the failure mode this hint is
+            # meant to prevent.
+            if [[ ! -d "$openssl_include" || -z "$libssl" || -z "$libcrypto" ]]; then
+                log_error "Homebrew openssl@3 is installed at '$brew_openssl' but required files are missing:"
+                [[ ! -d "$openssl_include" ]] && log_error "  include directory not found: $openssl_include"
+                [[ -z "$libssl" ]]            && log_error "  libssl(.3).dylib not found in: $brew_openssl/lib"
+                [[ -z "$libcrypto" ]]         && log_error "  libcrypto(.3).dylib not found in: $brew_openssl/lib"
+                log_error "Try: brew reinstall openssl@3"
+                exit 1
             fi
-            if [[ -n "$libcrypto" ]]; then
-                CMAKE_ARGS+=(-DOPENSSL_CRYPTO_LIBRARY="$libcrypto")
-            fi
+
+            CMAKE_ARGS+=(
+                -DOPENSSL_ROOT_DIR="$brew_openssl"
+                -DOPENSSL_INCLUDE_DIR="$openssl_include"
+                -DOPENSSL_SSL_LIBRARY="$libssl"
+                -DOPENSSL_CRYPTO_LIBRARY="$libcrypto"
+            )
         fi
     fi
 
