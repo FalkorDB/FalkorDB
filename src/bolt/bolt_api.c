@@ -74,6 +74,7 @@ static bool is_authenticated
 		//   - "ERR ... no password is set" → no password needed → allow
 		RedisModuleCallReply *reply =
 			RedisModule_Call(client->ctx, "AUTH", "c", "");
+		if(reply == NULL) return false;
 		if(RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR) {
 			RedisModule_FreeCallReply(reply);
 			return true;
@@ -114,16 +115,18 @@ static bool is_authenticated
 		return false;
 	}
 
-	// check if the principal is falkordb
+	// read the principal (username) — accept any non-empty username
 	uint32_t principal_len;
 	bolt_read_string_size(&client->msg_buf.read, &principal_len);
-	if(principal_len >= sizeof(s)) {
+	// reject empty or oversized names; the check guarantees principal_len <= sizeof(s)-1
+	// so the null terminator below always fits within principal[sizeof(s)]
+	if(principal_len == 0 || principal_len >= sizeof(s)) {
 		return false;
 	}
-	bolt_read_string(&client->msg_buf.read, s);
-	if(principal_len != 8 || memcmp(s, "falkordb", 8) != 0) {
-		return false;
-	}
+	// save principal to a dedicated buffer before s is reused for the next key
+	char principal[sizeof(s)];
+	bolt_read_string(&client->msg_buf.read, principal);
+	principal[principal_len] = '\0';
 
 	// check if the third key is credentials
 	bolt_read_string_size(&client->msg_buf.read, &len);
@@ -139,13 +142,42 @@ static bool is_authenticated
 	char credentials[len + 1];
 	bolt_read_string(&client->msg_buf.read, credentials);
 	credentials[len] = '\0';
-	RedisModuleCallReply *reply = RedisModule_Call(client->ctx, "AUTH", "b", credentials, len);
+
+	// try ACL-style two-argument AUTH (AUTH username password)
+	// this works for Redis ACL users and for Redis 6+ default user
+	RedisModuleCallReply *reply = RedisModule_Call(client->ctx, "AUTH", "bb",
+		principal, (size_t)principal_len, credentials, (size_t)len);
+	if(reply == NULL) return false;
 	bool res = RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR;
-	if(!res && len == 0) {
-		// empty credentials — check if no password is required
-		size_t err_len;
-		const char *err = RedisModule_CallReplyStringPtr(reply, &err_len);
-		res = !(err_len >= 9 && memcmp(err, "WRONGPASS", 9) == 0);
+
+	if(!res) {
+		// 2-arg AUTH failed — decide whether to fall back to single-arg AUTH
+		//
+		// when credentials are non-empty and the error is WRONGPASS, the server
+		// supports ACL-style AUTH but rejected the credentials; falling back to
+		// single-arg AUTH (AUTH <password>) could bypass ACL restrictions by
+		// authenticating as the default user, so we refuse in that case
+		if(len > 0) {
+			size_t err_len;
+			const char *err = RedisModule_CallReplyStringPtr(reply, &err_len);
+			if(err_len >= 9 && memcmp(err, "WRONGPASS", 9) == 0) {
+				RedisModule_FreeCallReply(reply);
+				return false;
+			}
+		}
+		RedisModule_FreeCallReply(reply);
+
+		// fall back to single-argument AUTH (for no-password or legacy setups)
+		reply = RedisModule_Call(client->ctx, "AUTH", "b",
+			credentials, (size_t)len);
+		if(reply == NULL) return false;
+		res = RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR;
+		if(!res && len == 0) {
+			// empty credentials — check if no password is required
+			size_t err_len;
+			const char *err = RedisModule_CallReplyStringPtr(reply, &err_len);
+			res = !(err_len >= 9 && memcmp(err, "WRONGPASS", 9) == 0);
+		}
 	}
 	RedisModule_FreeCallReply(reply);
 	return res;
