@@ -79,7 +79,7 @@ pub fn graph_effect(
             ctx.replicate_verbatim();
             let value = tg.graph.read().borrow().maybe_flush_caches();
             if let Err(e) = value {
-                eprintln!("FalkorDB: cache flush failed: {e}");
+                ctx.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
             }
             Ok(RedisValue::SimpleStringStatic("OK"))
         }

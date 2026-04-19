@@ -54,7 +54,6 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use atomic_refcell::AtomicRefCell;
@@ -550,12 +549,10 @@ fn js_traverse_impl<'js>(
         let outer_results = Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
 
         // Build a deadline from the UDF timeout so the BFS cannot run forever.
-        let timeout_ms = crate::udf::js_context::JS_TIMEOUT_MS.load(Ordering::Relaxed);
-        let deadline = if timeout_ms > 0 {
-            Some(Instant::now() + Duration::from_millis(timeout_ms as u64))
-        } else {
-            None
-        };
+        // Use the same capped value as the QuickJS interrupt handler so the
+        // traversal cannot bypass JS_TIMEOUT_ABSOLUTE_CAP_MS.
+        let effective_ms = crate::udf::js_context::compute_effective_js_timeout_ms();
+        let deadline = Some(Instant::now() + Duration::from_millis(effective_ms));
 
         for (src_idx, &start_id) in source_ids.iter().enumerate() {
             let inner_results =

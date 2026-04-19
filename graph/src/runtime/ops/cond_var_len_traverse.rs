@@ -172,16 +172,27 @@ impl<'a> CondVarLenTraverseOp<'a> {
             > = std::collections::HashMap::new();
 
             // DFS to enumerate paths with no repeated edges.
-            // Each stack frame: (node, path_elems, used_edges).
+            // Each stack frame: (node, path_elems, used_edges, nodes_in_path).
             // path_elems uses alternating Path format: [Node, Rel, Node, Rel, ...]
-            let mut stack: Vec<(NodeId, ThinVec<Value>, RoaringTreemap)> = Vec::new();
+            // `nodes_in_path` mirrors the Node entries of `path_elems` as a set
+            // so cycle detection is O(log n) instead of O(path_len) per step
+            // (PERF-1).
+            let mut stack: Vec<(NodeId, ThinVec<Value>, RoaringTreemap, RoaringTreemap)> =
+                Vec::new();
             {
                 let mut initial_path = ThinVec::new();
                 initial_path.push(Value::Node(start_node));
-                stack.push((start_node, initial_path, RoaringTreemap::new()));
+                let mut initial_nodes = RoaringTreemap::new();
+                initial_nodes.insert(u64::from(start_node));
+                stack.push((
+                    start_node,
+                    initial_path,
+                    RoaringTreemap::new(),
+                    initial_nodes,
+                ));
             }
 
-            while let Some((current, path, used_edges)) = stack.pop() {
+            while let Some((current, path, used_edges, nodes_in_path)) = stack.pop() {
                 // path is in alternating format: [Node, Rel, Node, Rel, ...Node]
                 // Number of hops so far = number of Relationship elements = (path.len() - 1) / 2
                 let hops_so_far = (path.len() as u32).saturating_sub(1) / 2;
@@ -272,9 +283,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
                                 .iter()
                                 .all(|l| g.get_node_labels(dest).any(|nl| nl == *l)));
 
-                    let node_already_in_path = path
-                        .iter()
-                        .any(|v| matches!(v, Value::Node(id) if *id == dest));
+                    let node_already_in_path = nodes_in_path.contains(u64::from(dest));
                     let will_continue = hop < max_hops && !node_already_in_path;
 
                     if will_emit && will_continue {
@@ -294,7 +303,9 @@ impl<'a> CondVarLenTraverseOp<'a> {
                         let owned = Arc::try_unwrap(shared).unwrap_or_else(|arc| (*arc).clone());
                         let mut next_used = used_edges.clone();
                         next_used.insert(u64::from(edge_id));
-                        stack.push((dest, owned, next_used));
+                        let mut next_nodes = nodes_in_path.clone();
+                        next_nodes.insert(u64::from(dest));
+                        stack.push((dest, owned, next_used, next_nodes));
                     } else if will_emit {
                         // Emit only — move path directly into Arc
                         let mut env = vars.clone_pooled(self.runtime.env_pool);
@@ -311,7 +322,9 @@ impl<'a> CondVarLenTraverseOp<'a> {
                         // Continue only — move path to stack
                         let mut next_used = used_edges.clone();
                         next_used.insert(u64::from(edge_id));
-                        stack.push((dest, new_path, next_used));
+                        let mut next_nodes = nodes_in_path.clone();
+                        next_nodes.insert(u64::from(dest));
+                        stack.push((dest, new_path, next_used, next_nodes));
                     }
                     // else: neither emit nor continue — drop path
                 }

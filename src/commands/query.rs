@@ -25,7 +25,6 @@ use crate::{
 };
 use parking_lot::RwLock;
 use redis_module::{Context, NextArg, RedisResult, RedisString, raw};
-use std::ffi::CString;
 use std::sync::Arc;
 #[cfg(feature = "fuzz")]
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -34,6 +33,18 @@ use std::{fs::File, io::Write};
 
 #[cfg(feature = "fuzz")]
 static FILE_ID: AtomicI32 = AtomicI32::new(0);
+
+/// Replies `[error, current_version]` for a client-supplied version that does
+/// not match the graph's current schema version.
+fn reply_invalid_graph_version(
+    ctx: &Context,
+    current_version: i64,
+) {
+    const ERR: &std::ffi::CStr = c"ERR invalid graph version";
+    raw::reply_with_array(ctx.ctx, 2);
+    raw::reply_with_error(ctx.ctx, ERR.as_ptr());
+    raw::reply_with_long_long(ctx.ctx, current_version);
+}
 
 #[allow(unused_imports)]
 pub fn graph_query(
@@ -67,7 +78,7 @@ pub fn graph_query(
 
     // Try read-only key access first to avoid triggering WATCH on existing graphs.
     let read_key = ctx.open_key(&key_str);
-    let key_name = Arc::new(key_str.to_string());
+    let key_name: Arc<str> = Arc::from(key_str.to_string());
 
     if let Some(graph) = read_key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
         let graph = graph.clone();
@@ -78,11 +89,7 @@ pub fn graph_query(
             if provided_version != current_schema_version {
                 drop(read_key);
                 drop(graph);
-                // Return array with [error, version]
-                raw::reply_with_array(ctx.ctx, 2);
-                let err_msg = CString::new("ERR invalid graph version").unwrap();
-                raw::reply_with_error(ctx.ctx, err_msg.as_ptr());
-                raw::reply_with_long_long(ctx.ctx, current_schema_version as i64);
+                reply_invalid_graph_version(ctx, current_schema_version as i64);
                 return Ok(redis_module::RedisValue::NoReply);
             }
         }
@@ -102,11 +109,7 @@ pub fn graph_query(
         if let Some(provided_version) = version_check {
             let current_schema_version = graph.read().graph.read().borrow().schema_version;
             if provided_version != current_schema_version {
-                // Return array with [error, version]
-                raw::reply_with_array(ctx.ctx, 2);
-                let err_msg = CString::new("ERR invalid graph version").unwrap();
-                raw::reply_with_error(ctx.ctx, err_msg.as_ptr());
-                raw::reply_with_long_long(ctx.ctx, current_schema_version as i64);
+                reply_invalid_graph_version(ctx, current_schema_version as i64);
                 return Ok(redis_module::RedisValue::NoReply);
             }
         }
@@ -123,11 +126,7 @@ pub fn graph_query(
     if let Some(provided_version) = version_check
         && provided_version != 0
     {
-        // Return array with [error, version]
-        raw::reply_with_array(ctx.ctx, 2);
-        let err_msg = CString::new("ERR invalid graph version").unwrap();
-        raw::reply_with_error(ctx.ctx, err_msg.as_ptr());
-        raw::reply_with_long_long(ctx.ctx, 0i64);
+        reply_invalid_graph_version(ctx, 0);
         return Ok(redis_module::RedisValue::NoReply);
     }
 

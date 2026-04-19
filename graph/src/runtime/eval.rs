@@ -858,14 +858,25 @@ impl<'a> ExprEval<'a> {
         let max_level = max_hops.map_or(u64::MAX, |m| m as u64);
         let node_cap = g.node_cap();
 
-        // Build adjacency list from the sparse matrix for efficient BFS
-        let mut adj_list: Vec<Vec<u64>> = vec![Vec::new(); node_cap as usize];
+        // Build adjacency list from the sparse matrix for efficient BFS.
+        // Use a hash map keyed by source node so memory scales with the
+        // number of edges actually present — not with `node_cap`, which
+        // reflects allocated matrix capacity and can be much larger than
+        // the live node count (SEC-3).
+        let mut adj_list: rustc_hash::FxHashMap<u64, Vec<u64>> = rustc_hash::FxHashMap::default();
         for (row, col) in adj.iter(0, node_cap.saturating_sub(1)) {
-            adj_list[row as usize].push(col);
+            adj_list.entry(row).or_default().push(col);
         }
         if let Some(ref t) = adj_t {
             for (row, col) in t.iter(0, node_cap.saturating_sub(1)) {
-                adj_list[row as usize].push(col);
+                adj_list.entry(row).or_default().push(col);
+            }
+            // In undirected mode reciprocal edges (a→b and b→a) cause the
+            // same neighbour to be inserted twice, which would double-count
+            // predecessors during BFS and produce duplicate shortest paths.
+            for neighbours in adj_list.values_mut() {
+                neighbours.sort_unstable();
+                neighbours.dedup();
             }
         }
 
@@ -887,11 +898,11 @@ impl<'a> ExprEval<'a> {
     fn bfs_shortest_path(
         &self,
         g: &crate::graph::graph::Graph,
-        adj_list: &[Vec<u64>],
+        adj_list: &rustc_hash::FxHashMap<u64, Vec<u64>>,
         src_id: crate::graph::graph::NodeId,
         dst_id: crate::graph::graph::NodeId,
         max_level: u64,
-        node_cap: u64,
+        _node_cap: u64,
         rel_types: &[Arc<String>],
         min_hops: u32,
     ) -> Value {
@@ -900,9 +911,10 @@ impl<'a> ExprEval<'a> {
         let src = u64::from(src_id);
         let dst = u64::from(dst_id);
 
-        // parent[i] = Some(parent_node_u64) during BFS
-        let mut parent: Vec<Option<u64>> = vec![None; node_cap as usize];
-        parent[src as usize] = Some(src); // mark source visited (self-parent)
+        // parent[n] = Some(prev) during BFS, keyed only by visited nodes
+        // (SEC-3: bounded by visited count, not node_cap).
+        let mut parent: rustc_hash::FxHashMap<u64, u64> = rustc_hash::FxHashMap::default();
+        parent.insert(src, src); // mark source visited (self-parent)
 
         let mut queue: VecDeque<(u64, u64)> = VecDeque::new(); // (node, depth)
         queue.push_back((src, 0));
@@ -913,14 +925,20 @@ impl<'a> ExprEval<'a> {
             if depth >= max_level {
                 continue;
             }
-            for &col in &adj_list[cur as usize] {
-                if parent[col as usize].is_none() {
-                    parent[col as usize] = Some(cur);
-                    if col == dst {
-                        found = true;
-                        break;
+            if let Some(neighbours) = adj_list.get(&cur) {
+                for &col in neighbours {
+                    // Not using the Entry API: we only want to insert when
+                    // absent and also `break` out of the loop on `dst`,
+                    // which Entry::or_insert_with doesn't express cleanly.
+                    #[allow(clippy::map_entry)]
+                    if !parent.contains_key(&col) {
+                        parent.insert(col, cur);
+                        if col == dst {
+                            found = true;
+                            break;
+                        }
+                        queue.push_back((col, depth + 1));
                     }
-                    queue.push_back((col, depth + 1));
                 }
             }
             if found {
@@ -936,7 +954,7 @@ impl<'a> ExprEval<'a> {
         let mut path_nodes: Vec<u64> = vec![dst];
         let mut cur = dst;
         while cur != src {
-            cur = parent[cur as usize].unwrap();
+            cur = *parent.get(&cur).expect("BFS parent chain broken");
             path_nodes.push(cur);
         }
         path_nodes.reverse();
@@ -976,11 +994,11 @@ impl<'a> ExprEval<'a> {
     fn bfs_all_shortest_paths(
         &self,
         g: &crate::graph::graph::Graph,
-        adj_list: &[Vec<u64>],
+        adj_list: &rustc_hash::FxHashMap<u64, Vec<u64>>,
         src_id: crate::graph::graph::NodeId,
         dst_id: crate::graph::graph::NodeId,
         max_level: u64,
-        node_cap: u64,
+        _node_cap: u64,
         rel_types: &[Arc<String>],
         min_hops: u32,
     ) -> Value {
@@ -989,12 +1007,14 @@ impl<'a> ExprEval<'a> {
         let src = u64::from(src_id);
         let dst = u64::from(dst_id);
 
-        // BFS to find distance and all shortest-path predecessors
-        let mut distances: Vec<Option<u64>> = vec![None; node_cap as usize];
-        distances[src as usize] = Some(0);
+        // BFS to find distance and all shortest-path predecessors.
+        // Maps keyed by visited nodes only (SEC-3).
+        let mut distances: rustc_hash::FxHashMap<u64, u64> = rustc_hash::FxHashMap::default();
+        distances.insert(src, 0);
 
-        // predecessors[i] = list of all nodes that are parents on some shortest path
-        let mut predecessors: Vec<Vec<u64>> = vec![Vec::new(); node_cap as usize];
+        // predecessors[n] = list of all nodes that are parents on some shortest path
+        let mut predecessors: rustc_hash::FxHashMap<u64, Vec<u64>> =
+            rustc_hash::FxHashMap::default();
 
         let mut queue: VecDeque<u64> = VecDeque::new();
         queue.push_back(src);
@@ -1002,7 +1022,7 @@ impl<'a> ExprEval<'a> {
         let mut found_dist: Option<u64> = None;
 
         while let Some(cur) = queue.pop_front() {
-            let cur_dist = distances[cur as usize].unwrap();
+            let cur_dist = *distances.get(&cur).expect("BFS dequeued unvisited node");
             if let Some(fd) = found_dist
                 && cur_dist >= fd
             {
@@ -1011,12 +1031,15 @@ impl<'a> ExprEval<'a> {
             if cur_dist >= max_level {
                 continue;
             }
-            for &col in &adj_list[cur as usize] {
+            let Some(neighbours) = adj_list.get(&cur) else {
+                continue;
+            };
+            for &col in neighbours {
                 let new_dist = cur_dist + 1;
-                match distances[col as usize] {
+                match distances.get(&col).copied() {
                     None => {
-                        distances[col as usize] = Some(new_dist);
-                        predecessors[col as usize].push(cur);
+                        distances.insert(col, new_dist);
+                        predecessors.entry(col).or_default().push(cur);
                         if col == dst {
                             found_dist = Some(new_dist);
                         } else {
@@ -1024,7 +1047,7 @@ impl<'a> ExprEval<'a> {
                         }
                     }
                     Some(d) if d == new_dist => {
-                        predecessors[col as usize].push(cur);
+                        predecessors.entry(col).or_default().push(cur);
                     }
                     _ => {}
                 }
@@ -1066,10 +1089,12 @@ impl<'a> ExprEval<'a> {
                 all_paths.push(path);
                 continue;
             }
-            for &pred in &predecessors[cur as usize] {
-                let mut new_path = path_so_far.clone();
-                new_path.push(pred);
-                stack.push((pred, new_path));
+            if let Some(preds) = predecessors.get(&cur) {
+                for &pred in preds {
+                    let mut new_path = path_so_far.clone();
+                    new_path.push(pred);
+                    stack.push((pred, new_path));
+                }
             }
         }
 

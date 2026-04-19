@@ -98,13 +98,10 @@ pub fn register(funcs: &mut Functions) {
                 // Skip null values - return accumulator unchanged
                 (Some(Value::Null), Some(acc)) => Ok(acc),
 
-                // Numeric value + Int accumulator (cast before adding to avoid i64 overflow)
-                (Some(Value::Int(a)), Some(Value::Int(b))) => Ok(Value::Float(a as f64 + b as f64)),
+                // sum() always returns Float per Cypher spec
                 (Some(Value::Int(a)), Some(Value::Float(b))) => Ok(Value::Float(a as f64 + b)),
-
-                // Numeric value + Float accumulator
-                (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(Value::Float(a + b)),
                 (Some(Value::Float(a)), Some(Value::Int(b))) => Ok(Value::Float(a + b as f64)),
+                (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(Value::Float(a + b)),
 
                 _ => unreachable!("sum expects Integer, Float, or Null (validation done before call)"),
             }

@@ -105,7 +105,37 @@ fn caught_error_message(
 /// Atomic copies of JS config values, accessible without Redis GIL.
 pub static JS_HEAP_SIZE: AtomicI64 = AtomicI64::new(256 * 1024 * 1024);
 pub static JS_STACK_SIZE: AtomicI64 = AtomicI64::new(1024 * 1024);
-pub static JS_TIMEOUT_MS: AtomicI64 = AtomicI64::new(0);
+/// Per-call JS execution timeout in milliseconds.
+///
+/// `0` preserves the historical "unlimited" contract that operators can opt
+/// into, but in that case callers fall back to [`JS_TIMEOUT_ABSOLUTE_CAP_MS`]
+/// so a runaway UDF cannot permanently consume a worker (or the Redis main
+/// thread during `GRAPH.UDF LOAD` validation).
+pub static JS_TIMEOUT_MS: AtomicI64 = AtomicI64::new(5_000);
+
+/// Hard upper bound used when the configured timeout is `0` (unlimited) or
+/// when validating user-submitted scripts on the Redis main thread.
+pub const JS_TIMEOUT_ABSOLUTE_CAP_MS: u64 = 30_000;
+/// Tighter cap for `validate_script`, which runs on the Redis main thread.
+pub const JS_VALIDATE_CAP_MS: u64 = 10_000;
+
+/// Resolve the per-call JS execution timeout, applying the absolute cap.
+///
+/// `JS_TIMEOUT_MS == 0` is the operator's "unlimited" opt-in; in that case
+/// we still bound the deadline by `JS_TIMEOUT_ABSOLUTE_CAP_MS` so a runaway
+/// script cannot hold a worker forever. Returns the effective timeout in
+/// milliseconds; both the QuickJS interrupt handler in `call_udf_bridge`
+/// and the BFS deadline in `js_classes` should derive from this value so
+/// the cap cannot be bypassed.
+#[must_use]
+pub fn compute_effective_js_timeout_ms() -> u64 {
+    let timeout_ms = JS_TIMEOUT_MS.load(Ordering::Relaxed);
+    if timeout_ms > 0 {
+        (timeout_ms as u64).min(JS_TIMEOUT_ABSOLUTE_CAP_MS)
+    } else {
+        JS_TIMEOUT_ABSOLUTE_CAP_MS
+    }
+}
 
 struct ThreadJsState {
     runtime: JsRuntime,
@@ -128,10 +158,17 @@ pub fn validate_script(code: &str) -> Result<Vec<String>, String> {
     rt.set_max_stack_size(JS_STACK_SIZE.load(Ordering::Relaxed) as usize);
 
     let timeout_ms = JS_TIMEOUT_MS.load(Ordering::Relaxed);
-    if timeout_ms > 0 {
-        let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
-        rt.set_interrupt_handler(Some(Box::new(move || Instant::now() > deadline)));
-    }
+    // `validate_script` runs on the Redis main thread, so we must always
+    // install an interrupt handler — a runaway user script would otherwise
+    // freeze the entire server. Cap at `JS_VALIDATE_CAP_MS` regardless of
+    // configuration.
+    let effective_ms = if timeout_ms > 0 {
+        (timeout_ms as u64).min(JS_VALIDATE_CAP_MS)
+    } else {
+        JS_VALIDATE_CAP_MS
+    };
+    let deadline = Instant::now() + Duration::from_millis(effective_ms);
+    rt.set_interrupt_handler(Some(Box::new(move || Instant::now() > deadline)));
 
     let ctx = Context::full(&rt).map_err(|e| format!("Failed to create JS context: {e}"))?;
 
@@ -259,14 +296,14 @@ pub fn call_udf_bridge(
             .get(&lower_name)
             .ok_or_else(|| format!("UDF function '{name}' not found in JS context"))?;
 
-        // Set up timeout interrupt handler
-        let timeout_ms = JS_TIMEOUT_MS.load(Ordering::Relaxed);
-        if timeout_ms > 0 {
-            let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
-            state
-                .runtime
-                .set_interrupt_handler(Some(Box::new(move || Instant::now() > deadline)));
-        }
+        // Set up timeout interrupt handler. We always install one: a configured
+        // timeout of 0 (unlimited) falls back to the absolute cap so a runaway
+        // UDF cannot hold a worker forever.
+        let effective_ms = compute_effective_js_timeout_ms();
+        let deadline = Instant::now() + Duration::from_millis(effective_ms);
+        state
+            .runtime
+            .set_interrupt_handler(Some(Box::new(move || Instant::now() > deadline)));
 
         let result = state.context.with(|ctx| {
             let js_fn: Function = persistent_fn
@@ -307,11 +344,9 @@ pub fn call_udf_bridge(
         });
 
         // Clear interrupt handler
-        if timeout_ms > 0 {
-            state
-                .runtime
-                .set_interrupt_handler(None::<Box<dyn FnMut() -> bool + Send>>);
-        }
+        state
+            .runtime
+            .set_interrupt_handler(None::<Box<dyn FnMut() -> bool + Send>>);
 
         // Clear graph reference
         clear_current_graph();

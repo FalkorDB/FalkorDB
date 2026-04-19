@@ -65,12 +65,15 @@ pub fn graph_init(
             ctx.log_notice("Failed initializing RediSearch.");
             return Status::Err;
         }
-        init(
+        if let Err(err) = init(
             RedisModule_Alloc,
             RedisModule_Calloc,
             RedisModule_Realloc,
             RedisModule_Free,
-        );
+        ) {
+            ctx.log_warning(&format!("Failed to initialize GraphBLAS/LAGraph: {err}"));
+            return Status::Err;
+        }
         let res = RedisModule_SubscribeToServerEvent.unwrap()(
             ctx.ctx,
             RedisModuleEvent_FlushDB,
