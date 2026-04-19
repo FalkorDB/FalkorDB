@@ -287,7 +287,15 @@ impl<'a> EdgeByIndexScanOp<'a> {
                     (src, dst)
                 };
                 row.insert(&rp.from.alias, Value::Node(from_node));
-                row.insert(&rp.to.alias, Value::Node(to_node));
+                // Self-loop patterns share the same alias on both
+                // endpoints; the second `insert` would overwrite the
+                // first with the (equal, per the filter above)
+                // destination value. Skip when aliases are the same
+                // to avoid redundant work and to preserve the
+                // semantics that the single variable is bound once.
+                if rp.to.alias != rp.from.alias {
+                    row.insert(&rp.to.alias, Value::Node(to_node));
+                }
                 // Relationship value always stores (edge_id, src, dst) in graph order
                 row.insert(
                     &rp.alias,
@@ -365,6 +373,12 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // graph-side (src/dst) role the pattern's from/to
                 // endpoints play in the tensor, so the binding check
                 // swaps correspondingly.
+                //
+                // Self-loop patterns like `MATCH (n)-[r:T]->(n)` have
+                // `rp.from.alias == rp.to.alias`. Without filtering
+                // for `from_id == to_id`, non-loop edges leak through
+                // and `drain_pending`'s second `row.insert(to.alias)`
+                // overwrites the `from.alias` binding.
                 let bound_from = match vars.get(&rp.from.alias) {
                     Some(Value::Node(id)) => Some(*id),
                     _ => None,
@@ -374,8 +388,9 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                     _ => None,
                 };
                 let transposed = self.transposed;
+                let same_endpoint_alias = rp.from.alias == rp.to.alias;
                 let edges: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
-                    if bound_from.is_some() || bound_to.is_some() {
+                    if bound_from.is_some() || bound_to.is_some() || same_endpoint_alias {
                         Box::new(base.filter(move |(src, dst, _)| {
                             let (from_id, to_id) = if transposed {
                                 (*dst, *src)
@@ -384,6 +399,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                             };
                             bound_from.is_none_or(|id| id == from_id)
                                 && bound_to.is_none_or(|id| id == to_id)
+                                && (!same_endpoint_alias || from_id == to_id)
                         }))
                     } else {
                         base

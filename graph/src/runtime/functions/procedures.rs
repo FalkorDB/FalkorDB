@@ -194,8 +194,17 @@ pub fn register(funcs: &mut Functions) {
                             // lookups (`a:numeric:arr`, `a:string:arr`) —
                             // and we surface all of them here for parity
                             // with the original FalkorDB implementation.
+                            // Walk attributes in `sorted_keys` order
+                            // (not the underlying HashMap's random
+                            // iteration order) so the output is
+                            // deterministic across runs — tests and
+                            // clients parsing this list can rely on
+                            // stable ordering.
                             let mut rs_field_names = thin_vec![];
-                            for field_list in fields.values() {
+                            for attr_key in &sorted_keys {
+                                let Some(field_list) = fields.get(attr_key) else {
+                                    continue;
+                                };
                                 for field in field_list {
                                     // Primary RediSearch field name.
                                     let name = field.name.to_str().unwrap_or("").to_string();

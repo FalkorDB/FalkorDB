@@ -772,3 +772,57 @@ class testEdgeByIndexScanRegressionsFlow(FlowTestsBase):
         finally:
             g.delete()
 
+    def test23_self_loop_alias(self):
+        """
+        Regression for self-loop MATCH patterns:
+        `MATCH (n)-[r:T]->(n)` shares an alias on both endpoints.
+        Without the `from_id == to_id` filter, every edge of the
+        type would match (both endpoints leak through unbound) and
+        `drain_pending` would overwrite the from-alias with the
+        destination value.
+        """
+        g = self.db.select_graph("edge_index_self_loop")
+        try:
+            # Three edges: one self-loop + two non-loops.
+            g.query("CREATE (a {tag: 'a'})-[:T {v: 1}]->(a)")
+            g.query("CREATE (b {tag: 'b'})-[:T {v: 2}]->(c {tag: 'c'})")
+            g.query("CREATE (d {tag: 'd'})-[:T {v: 3}]->(e {tag: 'e'})")
+            create_edge_range_index(g, "T", "v", sync=True)
+
+            # Only the self-loop should match.
+            q = "MATCH (n)-[r:T]->(n) WHERE r.v > 0 RETURN n.tag, r.v"
+            res = g.query(q)
+            self.env.assertEqual(res.result_set, [["a", 1]])
+        finally:
+            g.delete()
+
+    def test24_multi_edge_populate(self):
+        """
+        Regression for the BatchCursor edge_id tracking:
+        `MULTI EDGES` between the same `(src, dst)` pair must all
+        be indexed even when a batch boundary falls mid-group.
+        Uses a BATCH_SIZE-sized multi-edge group to force the
+        cursor to resume inside it.
+        """
+        g = self.db.select_graph("edge_index_multi_edge_populate")
+        try:
+            # 11_000 edges between the same (a)-(b) pair — crosses
+            # the BATCH_SIZE=10_000 boundary inside one multi-edge
+            # group. Each edge carries a unique `v` we can probe.
+            g.query("CREATE (a {tag: 'a'}), (b {tag: 'b'})")
+            g.query(
+                "MATCH (a {tag: 'a'}), (b {tag: 'b'}) "
+                "UNWIND range(0, 10999) AS i "
+                "CREATE (a)-[:T {v: i}]->(b)"
+            )
+            create_edge_range_index(g, "T", "v", sync=True)
+
+            # Values on both sides of the 10 000 boundary must be
+            # findable through the index.
+            for target in [0, 5000, 9999, 10000, 10999]:
+                q = f"MATCH ()-[r:T]->() WHERE r.v = {target} RETURN r.v"
+                res = g.query(q)
+                self.env.assertEqual(res.result_set, [[target]])
+        finally:
+            g.delete()
+

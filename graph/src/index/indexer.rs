@@ -186,13 +186,18 @@ impl Indexer {
 
         // Pre-validate: check all attrs for conflicts BEFORE inserting any,
         // so that a conflict on a later attribute does not leave earlier
-        // attributes partially registered. Also rejects duplicate attrs in
-        // the same request (e.g., `ON (height, height)`) via the prefix
-        // scan — `attrs` is always small, so O(n²) is fine.
+        // attributes partially registered. `attrs` is always small, so
+        // the O(n²) prefix scan for intra-request duplicates is fine.
         for (i, attr) in attrs.iter().enumerate() {
-            if label_indexes.has_field_with_type(attr, index_type)
-                || attrs[..i].contains(attr)
-            {
+            if attrs[..i].contains(attr) {
+                // Distinguish from the "already indexed" case below:
+                // the attribute isn't indexed yet — the caller
+                // listed it twice in the same statement.
+                return Err(format!(
+                    "Attribute '{attr}' is duplicated in the same request"
+                ));
+            }
+            if label_indexes.has_field_with_type(attr, index_type) {
                 return Err(format!("Attribute '{attr}' is already indexed"));
             }
         }

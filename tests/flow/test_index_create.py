@@ -213,7 +213,10 @@ class testIndexCreationFlow:
             result = self.graph.query("CREATE INDEX ON :person(height, height)")
             assert False
         except ResponseError as e:
-            self.env.assertContains("Attribute 'height' is already indexed", str(e))
+            # "duplicated in the same request" distinguishes this from
+            # the "already indexed" case when `height` is previously
+            # registered in a separate statement.
+            self.env.assertContains("Attribute 'height' is duplicated in the same request", str(e))
 
     def test04_index_creation_pattern_syntax(self):
         # create an index over user:age and user:name

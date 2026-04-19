@@ -318,19 +318,22 @@ enum IndexKind {
 
 /// Cursor position between batches.
 ///
-/// - For nodes: `row` is the next node id to visit; `within_row_dst`
-///   is always `None` (per-row cursor suffices).
-/// - For edges: `row` is the next `src` row in the relationship tensor,
-///   and `within_row_dst` (when `Some`) is the last processed `dst`
-///   column for that row — edges `(src, dst)` with `src == row` and
-///   `dst <= within_row_dst` have already been indexed and must be
-///   skipped on resume. Matches the C implementation's
-///   `(prev_src, prev_dst)` skip pattern in
-///   `src/index/index_construct.c:_Index_PopulateEdgeIndex`.
+/// - For nodes: `row` is the next node id to visit; the other fields
+///   are always `None` (per-row cursor suffices).
+/// - For edges: `row` is the next `src` row in the relationship tensor.
+///   When `within_row_dst` is `Some(d)`, all edges at `(row, dst)`
+///   with `dst < d` have been indexed and must be skipped on resume.
+///   When additionally `within_pair_edge_id` is `Some(e)`, the pair
+///   at `(row, d)` has multiple edges and the ones with
+///   `edge_id <= e` have already been indexed — the remainder of the
+///   same-pair group must still be processed. Matches the C
+///   implementation's `(prev_src, prev_dst, prev_eid)` skip pattern
+///   in `src/index/index_construct.c:_Index_PopulateEdgeIndex`.
 #[derive(Clone, Copy, Default)]
 struct BatchCursor {
     row: u64,
     within_row_dst: Option<u64>,
+    within_pair_edge_id: Option<u64>,
 }
 
 fn populate_index(
@@ -419,15 +422,27 @@ fn populate_index_batch(
                         IndexKind::Edge => {
                             let skip_src = cursor.row;
                             let skip_dst = cursor.within_row_dst;
+                            let skip_eid = cursor.within_pair_edge_id;
                             let triples: Vec<(u64, u64, u64)> = g
                                 .get_relationship_matrix(&label)
                                 .map(|t| {
                                     t.iter(cursor.row, u64::MAX, false)
-                                        .filter(|(src, dst, _)| {
-                                            // Skip previously-processed
-                                            // edges within the resume row.
-                                            skip_dst
-                                                .is_none_or(|d| !(*src == skip_src && *dst <= d))
+                                        .filter(|(src, dst, eid)| {
+                                            // Row mismatch: past the resume
+                                            // src entirely, always included.
+                                            if *src != skip_src {
+                                                return true;
+                                            }
+                                            // Within the resume row: skip
+                                            // completed columns; within the
+                                            // resume column (multi-edge),
+                                            // skip the already-indexed edge
+                                            // ids.
+                                            match (skip_dst, skip_eid) {
+                                                (Some(d), Some(e)) if *dst == d => *eid > e,
+                                                (Some(d), _) => *dst > d,
+                                                _ => true,
+                                            }
                                         })
                                         .take(BATCH_SIZE)
                                         .collect()
@@ -482,11 +497,13 @@ fn populate_index_batch(
                             next_cursor = BatchCursor {
                                 row: id + 1,
                                 within_row_dst: None,
+                                within_pair_edge_id: None,
                             };
                         }
                     }
                     IndexKind::Edge => {
-                        let last_pair = edge_triples.last().map(|(s, d, _)| (*s, *d));
+                        let last_pos =
+                            edge_triples.last().map(|(s, d, e)| (*s, *d, *e));
                         for (src, dst, eid) in edge_triples {
                             let mut doc = Document::new_edge(src, dst, eid);
                             let g = graph.borrow();
@@ -494,10 +511,11 @@ fn populate_index_batch(
                                 batch.push(doc);
                             }
                         }
-                        if let Some((last_src, last_dst)) = last_pair {
+                        if let Some((last_src, last_dst, last_eid)) = last_pos {
                             next_cursor = BatchCursor {
                                 row: last_src,
                                 within_row_dst: Some(last_dst),
+                                within_pair_edge_id: Some(last_eid),
                             };
                         }
                     }
@@ -2406,9 +2424,15 @@ impl Graph {
                 Ok(dropped)
             }
             _ => {
-                let attr = attrs.first().map_or("", |a| a.as_str());
+                // Include every requested attr so multi-attribute
+                // drops don't silently trim the list in the error.
+                let attr_list = attrs
+                    .iter()
+                    .map(|a| a.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 Err(format!(
-                    "Unable to drop index on :{label}({attr}): no such index."
+                    "Unable to drop index on :{label}({attr_list}): no such index."
                 ))
             }
         }
