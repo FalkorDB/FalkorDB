@@ -375,6 +375,60 @@ pub type IdIter = IndexResultsIter<u64, fn(*mut RSResultsIterator, u64) -> u64>;
 /// Iterator yielding (entity ID, score) pairs from fulltext index queries.
 pub type ScoredIdIter = IndexResultsIter<(u64, f64), fn(*mut RSResultsIterator, u64) -> (u64, f64)>;
 
+/// Iterator yielding `(src, dst, edge_id)` triples from edge-index
+/// queries. Reads a 24-byte `[u64; 3]` key per result (as written by
+/// `Document::new_edge`).
+pub struct EdgeTripleIter {
+    iter: *mut RSResultsIterator,
+    rs_idx: *mut RSIndex,
+}
+
+impl EdgeTripleIter {
+    const fn new(
+        iter: *mut RSResultsIterator,
+        rs_idx: *mut RSIndex,
+    ) -> Self {
+        Self { iter, rs_idx }
+    }
+
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            iter: null_mut(),
+            rs_idx: null_mut(),
+        }
+    }
+}
+
+impl Iterator for EdgeTripleIter {
+    type Item = (u64, u64, u64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.iter.is_null() {
+            return None;
+        }
+        unsafe {
+            let ptr = RediSearch_ResultsIteratorNext(self.iter, self.rs_idx, null_mut())
+                .cast::<[u64; 3]>();
+            if ptr.is_null() {
+                return None;
+            }
+            let triple = ptr.read_unaligned();
+            Some((triple[0], triple[1], triple[2]))
+        }
+    }
+}
+
+impl Drop for EdgeTripleIter {
+    fn drop(&mut self) {
+        if !self.iter.is_null() {
+            unsafe {
+                RediSearch_ResultsIteratorFree(self.iter);
+            }
+        }
+    }
+}
+
 /// A document to be indexed, wrapping a RediSearch document.
 #[derive(Clone)]
 pub struct Document {
@@ -395,6 +449,35 @@ impl Document {
                 let doc = RediSearch_CreateDocument2(
                     (&raw const id).cast::<c_void>(),
                     8,
+                    null_mut(),
+                    1.0,
+                    null_mut(),
+                );
+                debug_assert!(!doc.is_null(), "Failed to create RediSearch document");
+                doc
+            },
+        }
+    }
+
+    /// Build a document keyed by the 24-byte `[src, dst, edge_id]`
+    /// triple. Used by edge indexes so query results carry endpoints
+    /// directly — no tensor scan needed to materialize `(src, dst)`
+    /// after an index hit. Mirrors FalkorDB C's `EdgeIndexKey` in
+    /// `src/index/index_edge.c`.
+    #[must_use]
+    pub fn new_edge(
+        src: u64,
+        dst: u64,
+        edge_id: u64,
+    ) -> Self {
+        let key: [u64; 3] = [src, dst, edge_id];
+        Self {
+            id: edge_id,
+            string_arr_values: Vec::new(),
+            rs_doc: unsafe {
+                let doc = RediSearch_CreateDocument2(
+                    key.as_ptr().cast::<c_void>(),
+                    std::mem::size_of::<[u64; 3]>(),
                     null_mut(),
                     1.0,
                     null_mut(),
@@ -1106,6 +1189,24 @@ impl Index {
         }
     }
 
+    /// Execute an edge-index query and yield `(src, dst, edge_id)`
+    /// triples. Expects documents stored with `Document::new_edge`
+    /// (24-byte key encoding the triple). Caller is responsible for
+    /// only calling this on edge indexes.
+    pub fn query_edges(
+        &self,
+        query: IndexQuery<Value>,
+    ) -> EdgeTripleIter {
+        unsafe {
+            let query_node = self.build_query_node(query);
+            if query_node.is_null() {
+                return EdgeTripleIter::empty();
+            }
+            let iter = RediSearch_GetResultsIterator(query_node, self.rs_idx);
+            EdgeTripleIter::new(iter, self.rs_idx)
+        }
+    }
+
     /// Execute a fulltext query and return matching entity IDs with scores.
     pub fn fulltext_query(
         &self,
@@ -1151,6 +1252,24 @@ impl Index {
     ) {
         unsafe {
             RediSearch_DeleteDocument(self.rs_idx, (&raw const id).cast::<c_void>(), 8);
+        }
+    }
+
+    /// Delete an edge-index document by its 24-byte `[src, dst, edge_id]`
+    /// key (set via `Document::new_edge`).
+    pub fn delete_edge_document(
+        &self,
+        src: u64,
+        dst: u64,
+        edge_id: u64,
+    ) {
+        let key: [u64; 3] = [src, dst, edge_id];
+        unsafe {
+            RediSearch_DeleteDocument(
+                self.rs_idx,
+                key.as_ptr().cast::<c_void>(),
+                std::mem::size_of::<[u64; 3]>(),
+            );
         }
     }
 

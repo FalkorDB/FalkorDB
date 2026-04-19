@@ -552,3 +552,105 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         # make sure the same edge is returned
         self.env.assertEqual(expected, actual)
 
+
+# Regression tests for PR #393 review feedback. Placed in their own
+# class so they can own a dedicated graph without polluting the main
+# suite's setup.
+class testEdgeByIndexScanRegressionsFlow(FlowTestsBase):
+    def __init__(self):
+        self.env, self.db = Env()
+
+    def test15_selectivity_large_type(self):
+        """
+        Creating >BATCH_SIZE (10 000) edges of a single type and then
+        running a highly selective `WHERE r.v = …` query must:
+          - complete the background population cursor without losing
+            any edges (regresses the edge-id-as-row-cursor bug);
+          - materialize endpoints directly from the index without a
+            full tensor scan (regresses the O(|E_type|) path — the
+            query should be comfortably sub-second on 10k edges).
+        """
+        g = self.db.select_graph("edge_index_selectivity")
+        try:
+            n = 10_500  # BATCH_SIZE + margin so population spans > 1 batch
+            g.query(f"UNWIND range(0, {n - 1}) AS i CREATE ()-[:T {{v: i}}]->()")
+            create_edge_range_index(g, "T", "v", sync=True)
+
+            q = "MATCH ()-[r:T]->() WHERE r.v = 7777 RETURN r.v"
+            plan = str(g.explain(q))
+            self.env.assertContains("Edge By Index Scan", plan)
+
+            res = g.query(q)
+            self.env.assertEqual(res.result_set, [[7777]])
+        finally:
+            g.delete()
+
+    def test16_rewrite_gating(self):
+        """
+        The rewriter must NOT substitute `EdgeByIndexScan` for
+        multi-type OR patterns. These cases the operator can't serve
+        faithfully, so the plan should keep `CondTraverse`.
+        (Bidirectional `-[]-` with a single type IS supported and
+        exercised elsewhere in this file — see test04.)
+        """
+        g = self.db.select_graph("edge_index_gating")
+        try:
+            g.query("CREATE ()-[:A {v: 1}]->()")
+            g.query("CREATE ()-[:B {v: 1}]->()")
+            create_edge_range_index(g, "A", "v")
+            create_edge_range_index(g, "B", "v", sync=True)
+
+            # Multi-type OR: two indexes, our op only serves one.
+            q = "MATCH ()-[r:A|B]->() WHERE r.v = 1 RETURN r"
+            plan = str(g.explain(q))
+            self.env.assertNotContains("Edge By Index Scan", plan)
+            self.env.assertContains("Conditional Traverse", plan)
+        finally:
+            g.delete()
+
+    def test17_child_var_reference_safety(self):
+        """
+        `prune_all_node_scan_child` must not drop the source scan when
+        the edge-index query still references the scan's output.
+        `WHERE r.p = n.q` references `n` through `r.p`'s peer — we
+        don't currently rewrite patterns whose filter depends on the
+        child, but this test guards the invariant that rewrites which
+        DO fire never strand child-bound variables.
+        """
+        g = self.db.select_graph("edge_index_child_ref")
+        try:
+            g.query("CREATE (a {q: 7})-[:T {p: 7}]->(b)")
+            g.query("CREATE (a {q: 8})-[:T {p: 8}]->(b)")
+            create_edge_range_index(g, "T", "p", sync=True)
+
+            q = "MATCH (n)-[r:T]->() WHERE r.p = n.q RETURN r.p ORDER BY r.p"
+            # Must execute correctly regardless of whether the
+            # rewriter fires. We don't assert plan shape here — only
+            # correctness — because the optimizer is free to keep
+            # CondTraverse when the filter references `n`.
+            res = g.query(q)
+            self.env.assertEqual(res.result_set, [[7], [8]])
+        finally:
+            g.delete()
+
+    def test18_non_indexable_literal_retains_filter(self):
+        """
+        `WHERE r.v = [1,2,3]` produces an `IndexQuery::Equal` whose
+        value is a list — the runtime `can_utilize_index` correctly
+        rejects this, but the optimizer must retain the original
+        Filter above the index scan so the fallback path doesn't
+        return every edge of the type.
+        """
+        g = self.db.select_graph("edge_index_non_indexable_literal")
+        try:
+            g.query("CREATE ()-[:T {v: 1}]->()")
+            g.query("CREATE ()-[:T {v: 2}]->()")
+            create_edge_range_index(g, "T", "v", sync=True)
+
+            # No row should match since `r.v` is a scalar int, never a list.
+            q = "MATCH ()-[r:T]->() WHERE r.v = [1, 2, 3] RETURN r.v"
+            res = g.query(q)
+            self.env.assertEqual(res.result_set, [])
+        finally:
+            g.delete()
+

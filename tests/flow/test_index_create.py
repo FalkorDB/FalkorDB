@@ -93,8 +93,8 @@ class testIndexCreationFlow:
 
         # drop L1:p6 - not indexed, so an error should be raised
         try:
-            result = self.graph.query("DROP FULLTEXT INDEX FOR (n:L1) ON (n.p6)")
-            assert False
+            self.graph.query("DROP FULLTEXT INDEX FOR (n:L1) ON (n.p6)")
+            raise AssertionError("Expected DROP FULLTEXT INDEX for L1.p6 to fail")
         except ResponseError as e:
             self.env.assertContains("Unable to drop index on :L1(p6): no such index.", str(e))
 

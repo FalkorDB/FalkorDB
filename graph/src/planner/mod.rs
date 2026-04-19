@@ -347,7 +347,9 @@ pub fn plan_is_non_deterministic(plan: &DynTree<IR>) -> bool {
             IR::ValueHashJoin { lhs_exp, rhs_exp } => {
                 expr_has_non_deterministic(lhs_exp) || expr_has_non_deterministic(rhs_exp)
             }
-            IR::NodeByIndexScan { query, .. } => index_query_has_non_deterministic(query),
+            IR::NodeByIndexScan { query, .. } | IR::EdgeByIndexScan { query, .. } => {
+                index_query_has_non_deterministic(query)
+            }
             IR::NodeByFulltextScan { label, query, .. } => {
                 expr_has_non_deterministic(label) || expr_has_non_deterministic(query)
             }
@@ -1832,6 +1834,7 @@ impl Planner {
                     | IR::CondVarLenTraverse { .. }
                     | IR::AllShortestPaths(_)
                     | IR::ExpandInto { .. }
+                    | IR::EdgeByIndexScan { .. }
                     | IR::PathBuilder(_))
             {
                 idx = res.node(idx).child(0).idx();
@@ -1890,6 +1893,7 @@ impl Planner {
                 | IR::CondVarLenTraverse { .. }
                 | IR::AllShortestPaths(_)
                 | IR::ExpandInto { .. }
+                | IR::EdgeByIndexScan { .. }
                 | IR::CartesianProduct
                 | IR::ValueHashJoin { .. }
                 | IR::Argument

@@ -111,7 +111,8 @@ fn apply_effects(
     let mut index_add_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
     let mut index_remove_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
     let mut index_add_edge_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
-    let mut index_remove_edge_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+    let mut index_remove_edge_docs: FxHashMap<u64, FxHashMap<u64, (u64, u64)>> =
+        FxHashMap::default();
     let mut has_index_ops = false;
 
     while offset < buf.len() {

@@ -38,6 +38,12 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
+/// Invariant: `relationship.from` is always the bound endpoint of the
+/// edge scan; `transposed` flips which graph-side endpoint the edge
+/// tensor keys on (src vs dst) but the bound endpoint is always read
+/// via `rp.from.alias`. The planner's `select_scan_node` pass enforces
+/// this by swapping the relationship and setting `transposed`
+/// accordingly before any rewrite to `EdgeByIndexScan`.
 pub struct EdgeByIndexScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
@@ -237,7 +243,7 @@ impl<'a> EdgeByIndexScanOp<'a> {
         match q {
             IndexQuery::Equal { value, .. } => is_indexable(value),
             IndexQuery::Range { min, max, .. } => {
-                min.as_ref().is_none_or(is_indexable) && max.as_ref().map_or(true, is_indexable)
+                min.as_ref().is_none_or(is_indexable) && max.as_ref().is_none_or(is_indexable)
             }
             IndexQuery::And(children) | IndexQuery::Or(children) => {
                 children.iter().all(Self::can_utilize_index)
@@ -312,7 +318,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
 
                 let mut edges: Vec<(NodeId, NodeId, RelationshipId)> =
                     if Self::can_utilize_index(&q) {
-                        self.runtime.g.borrow().get_indexed_edges(label, q)
+                        self.runtime.g.borrow().get_indexed_edges(label, q).collect()
                     } else {
                         // Fall back to scanning all edges of this type
                         self.runtime.g.borrow().get_all_edges(label)

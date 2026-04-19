@@ -354,6 +354,20 @@ impl Indexer {
         IndexResultsIter::empty()
     }
 
+    /// Like `query`, but for edge indexes: yields `(src, dst, edge_id)`
+    /// triples read from the 24-byte document key.
+    #[must_use]
+    pub fn query_edges(
+        &self,
+        label: &Arc<String>,
+        query: IndexQuery<Value>,
+    ) -> super::EdgeTripleIter {
+        if let Some(index) = self.index.read().get(label) {
+            return index.query_edges(query);
+        }
+        super::EdgeTripleIter::empty()
+    }
+
     pub fn fulltext_query(
         &self,
         label: &Arc<String>,
@@ -432,6 +446,35 @@ impl Indexer {
             for id in remove_docs.iter() {
                 index.delete_document(id);
             }
+        }
+        drop(index);
+    }
+
+    /// Edge-index variant of `commit`: adds documents built with
+    /// `Document::new_edge`, deletes by the 24-byte `[src, dst, edge_id]`
+    /// key. Callers pass the delete set as `type → { edge_id → (src, dst) }`.
+    pub fn commit_edge(
+        &mut self,
+        add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
+        remove_docs: &mut HashMap<Arc<String>, std::collections::HashMap<u64, (u64, u64)>>,
+    ) {
+        let mut index = self.index.write();
+        for (label, add_docs) in add_docs {
+            let Some(index) = index.get_mut(label) else {
+                continue;
+            };
+            for doc in add_docs.drain(..) {
+                index.add_document(&doc);
+            }
+        }
+        for (label, edges) in remove_docs {
+            let Some(index) = index.get_mut(label) else {
+                continue;
+            };
+            for (&edge_id, &(src, dst)) in edges.iter() {
+                index.delete_edge_document(src, dst, edge_id);
+            }
+            edges.clear();
         }
         drop(index);
     }

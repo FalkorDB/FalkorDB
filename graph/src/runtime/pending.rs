@@ -132,8 +132,11 @@ pub struct Pending {
     index_remove_docs: FxHashMap<u64, RoaringTreemap>,
     /// Edge documents to add to indexes (keyed by relationship type id)
     index_add_edge_docs: FxHashMap<u64, RoaringTreemap>,
-    /// Edge documents to remove from indexes (keyed by relationship type id)
-    index_remove_edge_docs: FxHashMap<u64, RoaringTreemap>,
+    /// Edge documents to remove from indexes: `type_id → { edge_id → (src, dst) }`.
+    /// `(src, dst)` is captured at deletion time — the edge is gone
+    /// from the tensor by the time `commit_edge_index` runs so the
+    /// 24-byte RediSearch key must be reconstructable from here.
+    index_remove_edge_docs: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
     /// Schema baseline: number of labels when the current commit window started.
     schema_label_count: usize,
     /// Schema baseline: number of relationship types when the current commit window started.

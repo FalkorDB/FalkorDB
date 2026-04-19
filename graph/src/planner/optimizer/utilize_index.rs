@@ -237,12 +237,30 @@ impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
         let IR::CondTraverse {
             relationship,
             transposed,
+            sibling_edges,
             ..
         } = ir
         else {
             return None;
         };
-        if relationship.types.is_empty() {
+        // EdgeByIndexScan can only faithfully replace CondTraverse when
+        // the pattern has exactly one relationship type — matches
+        // FalkorDB C's `utilize_indices.c:reduce_cond_op` gate
+        // (`QGEdge_RelationCount(e) != 1`). A multi-type `[:A|B]`
+        // pattern would require a UNION over two separate indexes
+        // which this operator doesn't implement.
+        if relationship.types.len() != 1 {
+            return None;
+        }
+        // `sibling_edges` always includes the edge's own alias for
+        // named edges; a real uniqueness constraint means at least one
+        // sibling alias that *isn't* this edge's own alias. When that
+        // constraint is present, CondTraverseOp enforces it — our op
+        // doesn't, so bail.
+        if sibling_edges
+            .iter()
+            .any(|&id| id != relationship.alias.id)
+        {
             return None;
         }
         Some((relationship.clone(), *transposed))
@@ -760,21 +778,45 @@ fn try_filter_pushdown<T: IndexSubject>(
 
 /// Whether a filter contains runtime values that might evaluate to
 /// non-indexable types (variables from other scans, parameters,
-/// int-precision-losing literals), requiring a post-filter safety net
-/// even after the filter has been pushed into the index.
+/// int-precision-losing literals, or non-scalar literals like lists,
+/// maps, and function calls whose return type can't be statically
+/// proven indexable), requiring a post-filter safety net even after
+/// the filter has been pushed into the index.
+///
+/// If the runtime's `can_utilize_index` rejects the evaluated query
+/// (e.g. a list or a `date(...)` value), the scan op falls back to
+/// iterating all entities of the label/type; the retained Filter
+/// above it re-establishes correctness. Mirrors the C
+/// `unresolved_filters` path in `op_edge_by_index_scan.c`.
+///
+/// Structural walker conservatively flags any compound / function
+/// subexpression on either side of the filter, *except* when it's the
+/// RHS (list expression) of an `IN` operator — `InList` index queries
+/// handle the list natively, so that subtree is whitelisted.
 fn needs_post_filter(
     filter: &QueryExpr<Variable>,
     scan_alias_id: u32,
 ) -> bool {
-    filter
-        .root()
-        .indices::<Bfs>()
-        .any(|i| match filter.node(i).data() {
-            ExprIR::Variable(v) => v.id != scan_alias_id,
-            ExprIR::Parameter(_) => true,
-            ExprIR::Integer(v) => Index::int_loses_f64_precision(*v),
-            _ => false,
-        })
+    // RHS of an IN operator is the "list expression" side for
+    // `property IN list` — `InList` handles it natively at the index
+    // layer, so its subtree isn't a post-filter trigger.
+    let skip_descendants: std::collections::HashSet<_> =
+        if matches!(filter.root().data(), ExprIR::In)
+            && matches!(filter.root().child(0).data(), ExprIR::Property(_))
+        {
+            filter
+                .node(filter.root().child(1).idx())
+                .indices::<Bfs>()
+                .collect()
+        } else {
+            std::collections::HashSet::new()
+        };
+    filter.root().indices::<Bfs>().any(|i| {
+        if skip_descendants.contains(&i) {
+            return false;
+        }
+        is_non_indexable_subexpr(filter.node(i).data(), Some(scan_alias_id))
+    })
 }
 
 /// Same as `needs_post_filter`, but applied to the value subtree of an
@@ -786,11 +828,31 @@ fn needs_inline_post_filter(filter: &DynTree<ExprIR<Variable>>) -> bool {
     filter
         .node(value_idx)
         .indices::<Bfs>()
-        .any(|i| match filter.node(i).data() {
-            ExprIR::Variable(_) | ExprIR::Parameter(_) => true,
-            ExprIR::Integer(v) => Index::int_loses_f64_precision(*v),
-            _ => false,
-        })
+        .any(|i| is_non_indexable_subexpr(filter.node(i).data(), None))
+}
+
+/// Returns true when the given `ExprIR` describes a value that the
+/// index may not be able to resolve. `scan_alias_id`, when `Some`,
+/// tolerates `Variable` references to the scan target itself (the
+/// property-access side), so only *other* variables count as runtime
+/// dependencies.
+fn is_non_indexable_subexpr(
+    expr: &ExprIR<Variable>,
+    scan_alias_id: Option<u32>,
+) -> bool {
+    match expr {
+        ExprIR::Variable(v) => scan_alias_id.is_none_or(|id| v.id != id),
+        ExprIR::Parameter(_) => true,
+        ExprIR::Integer(v) => Index::int_loses_f64_precision(*v),
+        // Compound / non-primitive literals: the index backing store
+        // only handles numeric, string, bool, and point scalars.
+        ExprIR::List | ExprIR::Map => true,
+        // Function calls can return any type, including non-indexable
+        // temporal values (`date()`, `datetime()`, `duration()`…).
+        // Conservative: keep the filter as a safety net.
+        ExprIR::FuncInvocation(_) => true,
+        _ => false,
+    }
 }
 
 /// Drives a local rewrite to a fixed point: walks the plan in BFS
@@ -922,22 +984,61 @@ fn try_index_rewrite<T: IndexSubject>(
 /// Cleanup: prune a redundant `AllNodeScan` under an `EdgeByIndexScan`.
 /// When the edge scan has no source-node constraint, the child scan
 /// does nothing — the index directly yields edge endpoints.
+///
+/// Must not fire when the index query references variables bound by
+/// the child scan: `MATCH (n)-[r:T]->() WHERE r.p = n.q` would leave
+/// `n` unbound at runtime and fail expression evaluation.
 fn prune_all_node_scan_child(
     plan: &mut DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
 ) -> bool {
-    if !matches!(plan.node(idx).data(), IR::EdgeByIndexScan { .. }) {
+    let IR::EdgeByIndexScan { query, .. } = plan.node(idx).data() else {
         return false;
-    }
+    };
+    let query = query.clone();
     let Some(child) = plan.node(idx).get_child(0) else {
         return false;
     };
-    if !matches!(child.data(), IR::AllNodeScan(_)) {
+    let IR::AllNodeScan(child_node) = child.data() else {
+        return false;
+    };
+    let child_alias_id = child_node.alias.id;
+    let child_idx = child.idx();
+    // Safety: don't drop the scan that binds `child_alias_id` if the
+    // edge-index query still depends on it.
+    if index_query_references_var(&query, child_alias_id) {
         return false;
     }
-    let child_idx = child.idx();
     plan.node_mut(child_idx).prune();
     true
+}
+
+/// Walks every expression subtree inside an `IndexQuery` looking for a
+/// `Variable` reference with the given alias id. Used by
+/// `prune_all_node_scan_child` to avoid pruning a scan whose output is
+/// still needed by the index query.
+fn index_query_references_var(
+    q: &IndexQuery<QueryExpr<Variable>>,
+    alias_id: u32,
+) -> bool {
+    let expr_refs = |e: &QueryExpr<Variable>| -> bool {
+        e.root()
+            .indices::<Bfs>()
+            .any(|i| matches!(e.node(i).data(), ExprIR::Variable(v) if v.id == alias_id))
+    };
+    match q {
+        IndexQuery::Equal { value, .. } | IndexQuery::ArrayContains { value, .. } => {
+            expr_refs(value)
+        }
+        IndexQuery::Range { min, max, .. } => {
+            min.as_ref().is_some_and(expr_refs) || max.as_ref().is_some_and(expr_refs)
+        }
+        IndexQuery::Point { point, radius, .. } => expr_refs(point) || expr_refs(radius),
+        IndexQuery::InList { list, .. } => expr_refs(list),
+        IndexQuery::And(children) | IndexQuery::Or(children) => children
+            .iter()
+            .any(|c| index_query_references_var(c, alias_id)),
+    }
 }
 
 /// Cleanup: add a `hasLabels` filter above an `EdgeByIndexScan` whose
