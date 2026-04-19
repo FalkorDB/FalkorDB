@@ -72,7 +72,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use atomic_refcell::AtomicRefCell;
 use itertools::Itertools;
@@ -2259,19 +2259,30 @@ impl Graph {
         for (type_id, ids) in index_add_edge_docs.drain() {
             let name = &self.relationship_types[type_id as usize];
             let fields = indexer.get_fields(name);
-            // Build a transient `edge_id -> (src, dst)` lookup by
-            // iterating this type's tensor once. Edges being indexed
-            // are live in the tensor (delete goes through the remove
-            // path instead), so this always resolves.
-            let endpoints: FxHashMap<u64, (u64, u64)> = self
-                .relationship_matrices
-                .get(type_id as usize)
-                .map(|t| {
-                    t.iter(0, u64::MAX, false)
-                        .map(|(src, dst, eid)| (eid, (src, dst)))
-                        .collect()
-                })
-                .unwrap_or_default();
+
+            // Resolve `(src, dst)` only for the edge ids we actually
+            // need, instead of materializing the full tensor every
+            // commit. With N ids out of M tensor entries we stop the
+            // scan as soon as all N are found. Edges being indexed
+            // are expected to still be live in the tensor (deletes
+            // go through the remove path), so any id left in
+            // `pending` after the scan is treated the same as before
+            // — skipped below.
+            let mut pending: FxHashSet<u64> = ids.iter().collect();
+            let mut endpoints: FxHashMap<u64, (u64, u64)> = FxHashMap::with_capacity_and_hasher(
+                ids.len() as usize,
+                Default::default(),
+            );
+            if let Some(t) = self.relationship_matrices.get(type_id as usize) {
+                for (src, dst, eid) in t.iter(0, u64::MAX, false) {
+                    if pending.remove(&eid) {
+                        endpoints.insert(eid, (src, dst));
+                        if pending.is_empty() {
+                            break;
+                        }
+                    }
+                }
+            }
 
             let mut docs = Vec::with_capacity(ids.len() as usize);
             for id in ids {

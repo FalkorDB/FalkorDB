@@ -275,10 +275,18 @@ impl Encode<19> for Schema {
             w.write_unsigned(i as u64);
             w.write_buffer(&null_terminated(label));
 
+            // Only include NODE indexes here — edge indexes are
+            // encoded under the relationship-schema block (or dropped
+            // on this encoder version). Without the entity_type
+            // filter, an edge index on a type whose name collides
+            // with a node label would be written as if it belonged
+            // to the node schema.
             let label_indices: Vec<_> = self
                 .indexes
                 .iter()
-                .filter(|info| info.label.as_str() == label.as_str())
+                .filter(|info| {
+                    info.label.as_str() == label.as_str() && info.entity_type != "RELATIONSHIP"
+                })
                 .collect();
 
             let has_index = !label_indices.is_empty();
@@ -444,7 +452,10 @@ fn decode_schema_entry(r: &mut dyn Reader) -> Result<(String, Option<IndexInfo>)
             } else {
                 Some(stopwords)
             },
-            entity_type: String::new(),
+            // This decoder is called from the node-schema block, so
+            // every index it produces is a NODE index. The encoder
+            // filters out RELATIONSHIP indexes from this block.
+            entity_type: String::from("NODE"),
         })
     } else {
         None

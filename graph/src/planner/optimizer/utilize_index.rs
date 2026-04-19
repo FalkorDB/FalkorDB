@@ -797,25 +797,37 @@ fn needs_post_filter(
     filter: &QueryExpr<Variable>,
     scan_alias_id: u32,
 ) -> bool {
-    // Whitelist the RHS subtree of `property IN [literal, ...]` — the
-    // index's `InList` path handles a List constructor directly, and
-    // its scalar children are exactly the per-element values it
-    // will query. Do NOT whitelist `property IN $param`,
-    // `property IN range(...)`, or any other runtime expression,
-    // because those can evaluate to non-indexable types at runtime
-    // and the filter must stay as a safety net.
-    let skip_descendants: std::collections::HashSet<_> =
-        if matches!(filter.root().data(), ExprIR::In)
-            && matches!(filter.root().child(0).data(), ExprIR::Property(_))
-            && matches!(filter.root().child(1).data(), ExprIR::List)
-        {
-            filter
-                .node(filter.root().child(1).idx())
-                .indices::<Bfs>()
-                .collect()
-        } else {
-            std::collections::HashSet::new()
-        };
+    // Whitelist the RHS subtree of `property IN [literal, ...]` only
+    // when the list is non-empty *and* every direct element is a
+    // bare scalar literal (Null / Bool / Integer / Float / String).
+    // Those are the exact cases the `InList` runtime path can push
+    // into the index without fallback.
+    //
+    // Everything else — empty lists, lists with `$param`,
+    // `date(…)`, sub-expressions, nested lists — must keep the
+    // filter as a post-filter safety net: the runtime can filter
+    // out non-indexable elements and hand the index an `Or([])`
+    // which some backends treat as match-all.
+    let rhs = filter.root().child(1);
+    let rhs_is_scalar_literal_list = matches!(filter.root().data(), ExprIR::In)
+        && matches!(filter.root().child(0).data(), ExprIR::Property(_))
+        && matches!(rhs.data(), ExprIR::List)
+        && rhs.num_children() > 0
+        && rhs.children().all(|child| {
+            matches!(
+                child.data(),
+                ExprIR::Null
+                    | ExprIR::Bool(_)
+                    | ExprIR::Integer(_)
+                    | ExprIR::Float(_)
+                    | ExprIR::String(_)
+            )
+        });
+    let skip_descendants: std::collections::HashSet<_> = if rhs_is_scalar_literal_list {
+        filter.node(rhs.idx()).indices::<Bfs>().collect()
+    } else {
+        std::collections::HashSet::new()
+    };
     filter.root().indices::<Bfs>().any(|i| {
         if skip_descendants.contains(&i) {
             return false;

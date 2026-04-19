@@ -54,6 +54,15 @@ pub struct EdgeByIndexScanOp<'a> {
         Env<'a>,
         Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>>,
     )>,
+    /// Lazily-populated cache of all edges of `relationship_pattern.types[0]`
+    /// for the non-indexable-runtime-value fallback. Materialized once
+    /// on the first fallback and shared across subsequent input rows
+    /// so we don't pay O(|E_type|) per row when the index can't serve
+    /// the query (e.g. value is a list or date). The cache is
+    /// dropped when the op is dropped.
+    all_edges_cache: std::cell::RefCell<
+        Option<Arc<Vec<(NodeId, NodeId, RelationshipId)>>>,
+    >,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -73,6 +82,7 @@ impl<'a> EdgeByIndexScanOp<'a> {
             query,
             transposed,
             pending: VecDeque::new(),
+            all_edges_cache: std::cell::RefCell::new(None),
             idx,
         }
     }
@@ -320,12 +330,34 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // batch may have many rows and each row would
                 // otherwise materialize the full edge set before any
                 // emission. Matches `NodeByIndexScanOp`'s pattern.
+                //
+                // On the fallback path (non-indexable runtime value),
+                // `get_all_edges` is materialized once into the op's
+                // cache and shared by all subsequent rows via `Arc`,
+                // so we don't rebuild the full-type Vec per row.
                 let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
                     if Self::can_utilize_index(&q) {
                         Box::new(self.runtime.g.borrow().get_indexed_edges(label, q))
                     } else {
-                        // Fall back to scanning all edges of this type
-                        Box::new(self.runtime.g.borrow().get_all_edges(label).into_iter())
+                        let cached = {
+                            let mut cache = self.all_edges_cache.borrow_mut();
+                            if cache.is_none() {
+                                *cache = Some(Arc::new(
+                                    self.runtime.g.borrow().get_all_edges(label),
+                                ));
+                            }
+                            Arc::clone(cache.as_ref().unwrap())
+                        };
+                        let mut idx = 0usize;
+                        Box::new(std::iter::from_fn(move || {
+                            if idx < cached.len() {
+                                let v = cached[idx];
+                                idx += 1;
+                                Some(v)
+                            } else {
+                                None
+                            }
+                        }))
                     };
 
                 // Filter edges by *both* endpoints when the child has

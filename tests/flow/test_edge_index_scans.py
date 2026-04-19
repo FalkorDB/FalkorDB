@@ -744,3 +744,31 @@ class testEdgeByIndexScanRegressionsFlow(FlowTestsBase):
         finally:
             g.delete()
 
+    def test22_in_list_with_parameter(self):
+        """
+        Regression for the narrowed `needs_post_filter` whitelist:
+        `WHERE r.v IN $lst` must retain the filter because the list
+        is a runtime `Parameter`, not a scalar-literal `ExprIR::List`.
+        At runtime the parameter could evaluate to non-indexable
+        elements (e.g. a list of dates); the retained filter keeps
+        correctness even when the index path devolves to `Or([])`.
+        """
+        g = self.db.select_graph("edge_index_in_param")
+        try:
+            g.query("CREATE ()-[:T {v: 1}]->()")
+            g.query("CREATE ()-[:T {v: 2}]->()")
+            create_edge_range_index(g, "T", "v", sync=True)
+
+            # A parameter list that would produce an empty index
+            # query after non-scalar filtering. No row should match.
+            q = "MATCH ()-[r:T]->() WHERE r.v IN $lst RETURN r.v"
+            res = g.query(q, {"lst": []})
+            self.env.assertEqual(res.result_set, [])
+
+            # Same parameter shape but legal values — correctness
+            # must hold on the index path too.
+            res = g.query(q, {"lst": [1]})
+            self.env.assertEqual(res.result_set, [[1]])
+        finally:
+            g.delete()
+
