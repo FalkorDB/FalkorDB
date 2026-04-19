@@ -259,6 +259,7 @@ pub struct IndexInfo {
     pub fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
     pub language: Option<Arc<String>>,
     pub stopwords: Option<Vec<Arc<String>>>,
+    pub entity_type: String,
 }
 
 #[derive(Debug)]
@@ -629,6 +630,18 @@ impl Index {
             let clabel = CString::new(label.as_str()).map_err(|e| e.to_string())?;
             self.rs_idx = RediSearch_CreateIndex(clabel.as_ptr().cast::<c_char>(), options);
             RediSearch_FreeIndexOptions(options);
+
+            // Create the special NONE_INDEXABLE_FIELDS tag field used for
+            // attribute-existence queries and reported in db.indexes() info.
+            let none_field = CString::new("NONE_INDEXABLE_FIELDS").unwrap();
+            let field_id = RediSearch_CreateField(
+                self.rs_idx,
+                none_field.as_ptr(),
+                RSFLDTYPE_TAG,
+                RSFLDOPT_NONE,
+            );
+            RediSearch_TagFieldSetSeparator(self.rs_idx, field_id, 1 as c_char);
+            RediSearch_TagFieldSetCaseSensitive(self.rs_idx, field_id, 1);
         }
         Ok(())
     }

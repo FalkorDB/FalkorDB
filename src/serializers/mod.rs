@@ -444,6 +444,7 @@ fn decode_schema_entry(r: &mut dyn Reader) -> Result<(String, Option<IndexInfo>)
             } else {
                 Some(stopwords)
             },
+            entity_type: String::new(),
         })
     } else {
         None

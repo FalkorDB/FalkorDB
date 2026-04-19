@@ -91,9 +91,12 @@ class testIndexCreationFlow:
         except ResponseError as e:
             self.env.assertIn("Can not override index configuration", str(e))
 
-        # drop L1:p6 - not indexed, so indices_deleted should be 0
-        result = self.graph.query("DROP FULLTEXT INDEX FOR (n:L1) ON (n.p6)")
-        self.env.assertEqual(result.indices_deleted, 0)
+        # drop L1:p6 - not indexed, so an error should be raised
+        try:
+            result = self.graph.query("DROP FULLTEXT INDEX FOR (n:L1) ON (n.p6)")
+            assert False
+        except ResponseError as e:
+            self.env.assertContains("Unable to drop index on :L1(p6): no such index.", str(e))
 
         # drop L1:p1 - is indexed, so indices_deleted should be 1
         result = self.graph.query("DROP FULLTEXT INDEX FOR (n:L1) ON (n.p1)")

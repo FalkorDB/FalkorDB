@@ -110,6 +110,8 @@ fn apply_effects(
 
     let mut index_add_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
     let mut index_remove_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+    let mut index_add_edge_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+    let mut index_remove_edge_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
     let mut has_index_ops = false;
 
     while offset < buf.len() {
@@ -170,7 +172,7 @@ fn apply_effects(
                     let attrs = read_attrs(buf, &mut offset, attr_count)?;
                     let mut attr_map = FxHashMap::default();
                     attr_map.insert(rel_id_raw, attrs);
-                    g.set_relationships_attributes(&attr_map)?;
+                    g.set_relationships_attributes(&attr_map, &mut index_add_edge_docs)?;
                 }
             }
 
@@ -189,7 +191,7 @@ fn apply_effects(
                 let attrs = read_attrs(buf, &mut offset, attr_count)?;
                 let mut attr_map = FxHashMap::default();
                 attr_map.insert(rel_id, attrs);
-                g.set_relationships_attributes(&attr_map)?;
+                g.set_relationships_attributes(&attr_map, &mut index_add_edge_docs)?;
             }
 
             EFFECT_SET_LABELS => {
@@ -231,7 +233,7 @@ fn apply_effects(
                 let rel = RelationshipId::from(rel_id);
                 let mut rels = FxHashMap::default();
                 rels.insert(rel, (NodeId::from(src_id), NodeId::from(dst_id)));
-                g.delete_relationships(&rels)?;
+                g.delete_relationships(&rels, &mut index_remove_edge_docs)?;
             }
 
             EFFECT_ADD_SCHEMA => {
@@ -298,6 +300,7 @@ fn apply_effects(
 
     g.commit_attrs()?;
     g.commit_index(&mut index_add_docs, &mut index_remove_docs);
+    g.commit_edge_index(&mut index_add_edge_docs, &mut index_remove_edge_docs);
 
     if has_index_ops {
         g.populate_indexes_sync();

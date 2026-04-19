@@ -124,6 +124,7 @@ pub fn register(funcs: &mut Functions) {
                              fields,
                              language,
                              stopwords,
+                             entity_type,
                          }| {
                             let mut map = OrderMap::default();
                             map.insert(Arc::new(String::from("label")), Value::String(label));
@@ -134,20 +135,24 @@ pub fn register(funcs: &mut Functions) {
                                 Value::List(Arc::new(sorted_keys.iter().map(|f| Value::String(f.clone())).collect())),
                             );
                             let mut types_map = OrderMap::default();
+                            // Per-attribute index types. A single attribute
+                            // can hold several fields of the same index type
+                            // (e.g. a range index spans `range:a`,
+                            // `range:a:numeric:arr`, `range:a:string:arr`),
+                            // so dedupe — but do not impose an order; callers
+                            // that care should compare as sets.
                             for attr in &sorted_keys {
-                                let field_list = &fields[attr];
+                                let mut seen = [false; 3];
                                 let mut types = thin_vec![];
-                                for field in field_list {
-                                    match field.ty {
-                                        IndexType::Range => {
-                                            types.push(Value::String(Arc::new(String::from("RANGE"))));
-                                        }
-                                        IndexType::Fulltext => {
-                                            types.push(Value::String(Arc::new(String::from("FULLTEXT"))));
-                                        }
-                                        IndexType::Vector => {
-                                            types.push(Value::String(Arc::new(String::from("VECTOR"))));
-                                        }
+                                for field in &fields[attr] {
+                                    let (slot, name) = match field.ty {
+                                        IndexType::Range => (0, "RANGE"),
+                                        IndexType::Vector => (1, "VECTOR"),
+                                        IndexType::Fulltext => (2, "FULLTEXT"),
+                                    };
+                                    if !seen[slot] {
+                                        seen[slot] = true;
+                                        types.push(Value::String(Arc::new(name.to_string())));
                                     }
                                 }
                                 types_map.insert(attr.clone(), Value::List(Arc::new(types)));
@@ -167,7 +172,7 @@ pub fn register(funcs: &mut Functions) {
                             );
                             map.insert(
                                 Arc::new(String::from("entitytype")),
-                                Value::String(Arc::new(String::from("NODE"))),
+                                Value::String(Arc::new(entity_type)),
                             );
                             map.insert(
                                 Arc::new(String::from("status")),
@@ -179,7 +184,61 @@ pub fn register(funcs: &mut Functions) {
                                     Value::String(Arc::new(String::from("OPERATIONAL")))
                                 },
                             );
-                            map.insert(Arc::new(String::from("info")), Value::Null);
+
+                            // Build the `info.fields` list: one entry per
+                            // underlying RediSearch field name, not per
+                            // user-facing attribute. A single range attr
+                            // expands into up to three RediSearch fields —
+                            // the scalar (e.g. `range:a`) plus the numeric-
+                            // and string-array companions used by list
+                            // lookups (`a:numeric:arr`, `a:string:arr`) —
+                            // and we surface all of them here for parity
+                            // with the original FalkorDB implementation.
+                            let mut rs_field_names = thin_vec![];
+                            for field_list in fields.values() {
+                                for field in field_list {
+                                    // Primary RediSearch field name.
+                                    let name = field.name.to_str().unwrap_or("").to_string();
+                                    if !name.is_empty() {
+                                        rs_field_names.push(name);
+                                    }
+                                    // Companion array fields, present only
+                                    // for range indexes.
+                                    if let Some(arr_name) = field.numeric_arr_name() {
+                                        if let Ok(s) = arr_name.to_str() {
+                                            rs_field_names.push(s.to_string());
+                                        }
+                                    }
+                                    if let Some(arr_name) = field.string_arr_name() {
+                                        if let Ok(s) = arr_name.to_str() {
+                                            rs_field_names.push(s.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                            // Sentinel field used by the engine to track
+                            // non-indexable properties.
+                            rs_field_names.push(String::from("NONE_INDEXABLE_FIELDS"));
+
+                            // Wrap each field name as `{name: "..."}` — the
+                            // map shape the Python test helpers expect.
+                            let fields_list: ThinVec<Value> = rs_field_names
+                                .into_iter()
+                                .map(|name| {
+                                    let mut field_map = OrderMap::default();
+                                    field_map.insert(
+                                        Arc::new(String::from("name")),
+                                        Value::String(Arc::new(name)),
+                                    );
+                                    Value::Map(Arc::new(field_map))
+                                })
+                                .collect();
+                            let mut info_map = OrderMap::default();
+                            info_map.insert(
+                                Arc::new(String::from("fields")),
+                                Value::List(Arc::new(fields_list)),
+                            );
+                            map.insert(Arc::new(String::from("info")), Value::Map(Arc::new(info_map)));
 
                             Value::Map(Arc::new(map))
                         },

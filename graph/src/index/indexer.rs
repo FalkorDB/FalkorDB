@@ -184,6 +184,19 @@ impl Indexer {
             return Err("Text index options are only valid for fulltext indexes".into());
         }
 
+        // Pre-validate: check all attrs for conflicts BEFORE inserting any,
+        // so that a conflict on a later attribute does not leave earlier
+        // attributes partially registered. Also rejects duplicate attrs in
+        // the same request (e.g., `ON (height, height)`) via the prefix
+        // scan — `attrs` is always small, so O(n²) is fine.
+        for (i, attr) in attrs.iter().enumerate() {
+            if label_indexes.has_field_with_type(attr, index_type)
+                || attrs[..i].contains(attr)
+            {
+                return Err(format!("Attribute '{attr}' is already indexed"));
+            }
+        }
+
         let mut new_fields: HashMap<Arc<String>, Vec<Arc<Field>>> = HashMap::new();
 
         for attr in attrs {
@@ -192,10 +205,6 @@ impl Indexer {
                 IndexType::Fulltext => attr.clone(),
                 IndexType::Vector => Arc::new(format!("vector:{attr}")),
             };
-
-            if label_indexes.has_field_with_type(attr, index_type) {
-                return Err(format!("Attribute '{attr}' is already indexed"));
-            }
 
             let field = if let Some(ref vopts) = vector_options {
                 Arc::new(Field::new_with_vector_options(
@@ -457,6 +466,7 @@ impl Indexer {
         self.index
             .read()
             .iter()
+            .filter(|(_, index)| !index.is_empty())
             .map(|(label, index)| {
                 let (progress, total) = index.progress();
                 IndexInfo {
@@ -467,6 +477,7 @@ impl Indexer {
                     fields: index.fields().clone(),
                     language: index.language().cloned(),
                     stopwords: index.stopwords().cloned(),
+                    entity_type: String::new(),
                 }
             })
             .collect()
