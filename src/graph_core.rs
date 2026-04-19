@@ -149,6 +149,45 @@ mod ffi {
     ) {
         raw::reply_with_error(ctx, err);
     }
+
+    /// Acquire the global Redis lock for a thread-safe context.
+    ///
+    /// # Safety
+    /// `ctx` must be a valid thread-safe context.
+    pub unsafe fn lock_thread_safe_ctx(ctx: *mut raw::RedisModuleCtx) {
+        let f = unsafe { raw::RedisModule_ThreadSafeContextLock }.expect(MSG);
+        unsafe { f(ctx) };
+    }
+
+    /// Release the global Redis lock previously acquired with
+    /// [`lock_thread_safe_ctx`].
+    ///
+    /// # Safety
+    /// `ctx` must be a valid thread-safe context whose lock the current
+    /// thread already holds.
+    pub unsafe fn unlock_thread_safe_ctx(ctx: *mut raw::RedisModuleCtx) {
+        let f = unsafe { raw::RedisModule_ThreadSafeContextUnlock }.expect(MSG);
+        unsafe { f(ctx) };
+    }
+
+    /// Mark `key_name` as modified so `WATCH` clients are notified. Must be
+    /// called with the GIL held (see [`lock_thread_safe_ctx`]).
+    ///
+    /// # Safety
+    /// `ctx` must be a valid Redis module context with the GIL held.
+    pub unsafe fn signal_modified_key(
+        ctx: *mut raw::RedisModuleCtx,
+        key_name: &[u8],
+    ) {
+        let create = unsafe { raw::RedisModule_CreateString }.expect(MSG);
+        let signal = unsafe { raw::RedisModule_SignalModifiedKey }.expect(MSG);
+        let free = unsafe { raw::RedisModule_FreeString }.expect(MSG);
+        unsafe {
+            let rstr = create(ctx, key_name.as_ptr().cast(), key_name.len());
+            signal(ctx, rstr);
+            free(ctx, rstr);
+        }
+    }
 }
 
 pub struct ThreadedGraph {
@@ -757,34 +796,29 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                 match res {
                     Ok((g, effects_buffer, modified)) => {
                         // Signal the key as modified so WATCH gets triggered.
-                        const MSG: &str = "Redis module FFI pointer not initialised";
                         unsafe {
-                            raw::RedisModule_ThreadSafeContextLock.expect(MSG)(ctx.ctx);
-                            let rstr = raw::RedisModule_CreateString.expect(MSG)(
-                                ctx.ctx,
-                                key_name.as_ptr().cast(),
-                                key_name.len(),
-                            );
-                            raw::RedisModule_SignalModifiedKey.expect(MSG)(ctx.ctx, rstr);
-                            raw::RedisModule_FreeString.expect(MSG)(ctx.ctx, rstr);
+                            ffi::lock_thread_safe_ctx(ctx.ctx);
+                            ffi::signal_modified_key(ctx.ctx, key_name.as_bytes());
                         };
                         // Send replication while GIL is held
                         if modified {
                             replicate_effects(&ctx, &key_name, effects_buffer, &query);
                         }
                         unsafe {
-                            raw::RedisModule_ThreadSafeContextUnlock.expect(MSG)(ctx.ctx);
+                            ffi::unlock_thread_safe_ctx(ctx.ctx);
                             ffi::free_thread_safe_context(ctx.ctx);
                         };
                         drop(bc);
                         graph.graph.commit(g);
                         // Flush dirty cache entries to fjall if over budget.
                         // No Context is available here (thread-safe ctx already freed
-                        // to release the GIL before this non-Redis I/O), so fall back
-                        // to stderr for the (rare) failure case.
+                        // to release the GIL before this non-Redis I/O), so log via
+                        // the module-level logging helper instead of borrowing one.
                         let value = graph.graph.read().borrow().maybe_flush_caches();
                         if let Err(e) = value {
-                            eprintln!("FalkorDB: cache flush failed: {e}");
+                            redis_module::logging::log_warning(format!(
+                                "FalkorDB: cache flush failed: {e}"
+                            ));
                         }
                     }
                     Err(err) => {

@@ -871,6 +871,13 @@ impl<'a> ExprEval<'a> {
             for (row, col) in t.iter(0, node_cap.saturating_sub(1)) {
                 adj_list.entry(row).or_default().push(col);
             }
+            // In undirected mode reciprocal edges (a→b and b→a) cause the
+            // same neighbour to be inserted twice, which would double-count
+            // predecessors during BFS and produce duplicate shortest paths.
+            for neighbours in adj_list.values_mut() {
+                neighbours.sort_unstable();
+                neighbours.dedup();
+            }
         }
 
         if all_paths {

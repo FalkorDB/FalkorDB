@@ -302,10 +302,8 @@ impl Encode<19> for Tensor {
                 for i in 0..rows.len() {
                     let src = rows[i];
                     let dst = cols[i];
-                    let compound_key = (src << 32) | dst;
-                    let edge_ids = edge_id_map
-                        .get(&compound_key)
-                        .map_or(&[][..], |v| v.as_slice());
+                    let key = compound_key(src, dst);
+                    let edge_ids = edge_id_map.get(&key).map_or(&[][..], |v| v.as_slice());
 
                     u_rows.push(src);
                     u_cols.push(dst);
@@ -381,11 +379,11 @@ impl Encode<19> for Tensor {
         for multi_edges in [&multi_edge_m, &multi_edge_dp] {
             w.write_unsigned(multi_edges.len() as u64);
             for &(src, dst) in multi_edges {
-                let compound_key = (src << 32) | dst;
+                let key = compound_key(src, dst);
                 v.clear();
 
                 if let Some(ref map) = edge_id_map
-                    && let Some(ids) = map.get(&compound_key)
+                    && let Some(ids) = map.get(&key)
                 {
                     for (idx, &edge_id) in ids.iter().enumerate() {
                         v.set(idx as u64, edge_id);
@@ -415,8 +413,8 @@ impl Decode<19> for Tensor {
                 bool_forward.set(src, dst, true);
                 if value & MSB_MASK == 0 {
                     // Single-edge: value is the edge ID
-                    let compound_key = (src << 32) | dst;
-                    edges.set(compound_key, value, true);
+                    let key = compound_key(src, dst);
+                    edges.set(key, value, true);
                 }
             }
             bool_forward
@@ -433,9 +431,9 @@ impl Decode<19> for Tensor {
                     let src = r.read_unsigned()?;
                     let dst = r.read_unsigned()?;
                     let v = Vector::<u64>::decode(r)?;
-                    let compound_key = (src << 32) | dst;
+                    let key = compound_key(src, dst);
                     for (_, edge_id) in v.iter() {
-                        edges.set(compound_key, edge_id, true);
+                        edges.set(key, edge_id, true);
                     }
                 }
             }
@@ -500,7 +498,7 @@ impl Iterator for Iter<'_> {
                 self.src = src;
                 self.dest = dest;
             }
-            let row = self.src << 32 | self.dest;
+            let row = compound_key(self.src, self.dest);
             self.vit = Some(self.t.me.iter(row, row));
             return self.next();
         }

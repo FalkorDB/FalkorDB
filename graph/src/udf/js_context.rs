@@ -119,6 +119,24 @@ pub const JS_TIMEOUT_ABSOLUTE_CAP_MS: u64 = 30_000;
 /// Tighter cap for `validate_script`, which runs on the Redis main thread.
 pub const JS_VALIDATE_CAP_MS: u64 = 10_000;
 
+/// Resolve the per-call JS execution timeout, applying the absolute cap.
+///
+/// `JS_TIMEOUT_MS == 0` is the operator's "unlimited" opt-in; in that case
+/// we still bound the deadline by `JS_TIMEOUT_ABSOLUTE_CAP_MS` so a runaway
+/// script cannot hold a worker forever. Returns the effective timeout in
+/// milliseconds; both the QuickJS interrupt handler in `call_udf_bridge`
+/// and the BFS deadline in `js_classes` should derive from this value so
+/// the cap cannot be bypassed.
+#[must_use]
+pub fn compute_effective_js_timeout_ms() -> u64 {
+    let timeout_ms = JS_TIMEOUT_MS.load(Ordering::Relaxed);
+    if timeout_ms > 0 {
+        (timeout_ms as u64).min(JS_TIMEOUT_ABSOLUTE_CAP_MS)
+    } else {
+        JS_TIMEOUT_ABSOLUTE_CAP_MS
+    }
+}
+
 struct ThreadJsState {
     runtime: JsRuntime,
     context: Context,
@@ -281,12 +299,7 @@ pub fn call_udf_bridge(
         // Set up timeout interrupt handler. We always install one: a configured
         // timeout of 0 (unlimited) falls back to the absolute cap so a runaway
         // UDF cannot hold a worker forever.
-        let timeout_ms = JS_TIMEOUT_MS.load(Ordering::Relaxed);
-        let effective_ms = if timeout_ms > 0 {
-            (timeout_ms as u64).min(JS_TIMEOUT_ABSOLUTE_CAP_MS)
-        } else {
-            JS_TIMEOUT_ABSOLUTE_CAP_MS
-        };
+        let effective_ms = compute_effective_js_timeout_ms();
         let deadline = Instant::now() + Duration::from_millis(effective_ms);
         state
             .runtime
