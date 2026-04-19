@@ -24,7 +24,6 @@
 #include "udf/repository.h"
 #include "udf/replication.h"
 #include "redisearch_api.h"
-#include "commands/cmd_acl.h"
 #include "arithmetic/funcs.h"
 #include "util/thpool/pool.h"
 #include "commands/commands.h"
@@ -38,7 +37,6 @@
 #include "configuration/reconf_handler.h"
 #include "serializers/graphcontext_type.h"
 #include "arithmetic/arithmetic_expression.h"
-#include "commands/util/run_redis_command_as.h"
 
 // minimal supported Redis version
 #define MIN_REDIS_VERSION_MAJOR 8
@@ -186,8 +184,6 @@ int RedisModule_OnLoad
 	if(!Indexer_Init())               return REDISMODULE_ERR;
 	if(!AST_ValidationsMappingInit()) return REDISMODULE_ERR;
 
-	init_acl_admin_username(ctx);  // set ACL ADMIN username
-
 	RedisModule_Log(ctx, "notice", "Thread pool created, using %d threads.",
 			ThreadPool_ThreadCount());
 
@@ -323,24 +319,6 @@ int RedisModule_OnLoad
 				Graph_Restore,
 				"write deny-oom deny-script",
 				1, 1, 1) == REDISMODULE_ERR) {
-		return REDISMODULE_ERR;
-	}
-
-	if(init_cmd_acl(ctx) == REDISMODULE_OK) {
-		if(RedisModule_CreateCommand(ctx,
-					"graph.ACL",
-					Graph_ACL,
-					"write deny-oom deny-script",
-					0, 0, 0) == REDISMODULE_ERR) {
-			return REDISMODULE_ERR;
-		}
-	}
-
-	if(RedisModule_CreateCommand(ctx,
-				"graph.PASSWORD",
-				Graph_SetPassword,
-				"write deny-oom deny-script",
-				0, 0, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
