@@ -829,9 +829,11 @@ class testEntityUpdate():
         self.graph.query("CREATE (n {x: 'alpha', y: 'bravo', z: 'charlie'})")
 
         result = self.graph.query("MATCH (n) SET n.x = NULL, n.x = 'new'")
-        # last-write-wins: x is updated (not deleted), so 1 property set, 0 removed
+        # last-write-wins: x is updated ('alpha' → 'new').
+        # Updating an existing property increments both properties_set and
+        # properties_removed (old value replaced), so both equal 1.
         self.env.assertEqual(result.properties_set, 1)
-        self.env.assertEqual(result.properties_removed, 0)
+        self.env.assertEqual(result.properties_removed, 1)
 
         result = self.graph.query("MATCH (n) RETURN n.x, n.y, n.z")
         row = result.result_set[0]
