@@ -796,6 +796,30 @@ class testEdgeByIndexScanRegressionsFlow(FlowTestsBase):
         finally:
             g.delete()
 
+    def test25_in_list_precision_losing_int(self):
+        """
+        Regression for the scalar-literal whitelist: an int64 that
+        can't round-trip through f64 is non-indexable at runtime.
+        `WHERE r.v IN [<big int>]` must keep the filter — otherwise
+        the runtime rejects the query and the fallback returns every
+        edge of the type.
+        """
+        g = self.db.select_graph("edge_index_precision_int_in_list")
+        try:
+            g.query("CREATE ()-[:T {v: 1}]->()")
+            g.query("CREATE ()-[:T {v: 2}]->()")
+            create_edge_range_index(g, "T", "v", sync=True)
+
+            # 2^53 + 1 is the smallest positive int64 that can't
+            # round-trip through f64. No edge has `v` equal to it,
+            # so the query must return zero rows.
+            big = 9007199254740993
+            q = f"MATCH ()-[r:T]->() WHERE r.v IN [{big}] RETURN r.v"
+            res = g.query(q)
+            self.env.assertEqual(res.result_set, [])
+        finally:
+            g.delete()
+
     def test24_multi_edge_populate(self):
         """
         Regression for the BatchCursor edge_id tracking:

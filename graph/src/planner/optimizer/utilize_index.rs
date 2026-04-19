@@ -813,15 +813,14 @@ fn needs_post_filter(
         && matches!(filter.root().child(0).data(), ExprIR::Property(_))
         && matches!(rhs.data(), ExprIR::List)
         && rhs.num_children() > 0
-        && rhs.children().all(|child| {
-            matches!(
-                child.data(),
-                ExprIR::Null
-                    | ExprIR::Bool(_)
-                    | ExprIR::Integer(_)
-                    | ExprIR::Float(_)
-                    | ExprIR::String(_)
-            )
+        && rhs.children().all(|child| match child.data() {
+            ExprIR::Null | ExprIR::Bool(_) | ExprIR::Float(_) | ExprIR::String(_) => true,
+            // Large int64s can't round-trip through f64 exactly,
+            // so the runtime will reject them and fall back to a
+            // full scan — the Filter has to stay above to
+            // re-establish correctness in that case.
+            ExprIR::Integer(v) => !Index::int_loses_f64_precision(*v),
+            _ => false,
         });
     let skip_descendants: std::collections::HashSet<_> = if rhs_is_scalar_literal_list {
         filter.node(rhs.idx()).indices::<Bfs>().collect()
