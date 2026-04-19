@@ -76,7 +76,9 @@ impl ThreadPool {
             let mut min_len = usize::MAX;
             for tx in &self.sender {
                 if tx.is_empty() {
-                    return tx.send(Box::new(job)).unwrap();
+                    return tx
+                        .send(Box::new(job))
+                        .expect("thread pool worker died: cannot dispatch job");
                 }
                 let len = tx.len();
                 if len < min_len {
@@ -86,7 +88,9 @@ impl ThreadPool {
             }
             min_tx
         };
-        sender.send(Box::new(job)).unwrap();
+        sender
+            .send(Box::new(job))
+            .expect("thread pool worker died: cannot dispatch job");
     }
     pub fn pending_count(&self) -> usize {
         self.sender

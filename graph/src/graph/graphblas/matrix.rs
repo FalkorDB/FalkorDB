@@ -98,6 +98,13 @@ use super::{
 ///
 /// Custom allocators can be provided to integrate with Redis memory management.
 /// This ensures GraphBLAS memory counts toward Redis limits.
+///
+/// # Errors
+///
+/// Returns `Err` with a descriptive message if `GxB_init` or `LAGraph_Init`
+/// fail. The caller (Redis module-load path) should propagate this as
+/// `Status::Err` so Redis refuses to load the module rather than aborting
+/// the whole server process.
 #[allow(clippy::similar_names)]
 pub fn init(
     user_malloc_function: Option<unsafe extern "C" fn(arg1: usize) -> *mut c_void>,
@@ -106,20 +113,30 @@ pub fn init(
         unsafe extern "C" fn(arg1: *mut c_void, arg2: usize) -> *mut c_void,
     >,
     user_free_function: Option<unsafe extern "C" fn(arg1: *mut c_void)>,
-) {
+) -> Result<(), String> {
     unsafe {
-        GxB_init(
+        let info = GxB_init(
             GrB_Mode::GrB_NONBLOCKING as _,
             user_malloc_function,
             user_calloc_function,
             user_realloc_function,
             user_free_function,
         );
+        if info != GrB_Info::GrB_SUCCESS {
+            return Err(format!("GraphBLAS GxB_init failed: {info:?}"));
+        }
 
         // Initialize LAGraph after GraphBLAS
         let mut msg = [0i8; 256];
-        LAGraph_Init(msg.as_mut_ptr());
+        let rc = LAGraph_Init(msg.as_mut_ptr());
+        if rc != 0 {
+            return Err(format!(
+                "LAGraph_Init failed (rc={rc}): {}",
+                std::ffi::CStr::from_ptr(msg.as_ptr()).to_string_lossy(),
+            ));
+        }
     }
+    Ok(())
 }
 
 /// Enable or disable GraphBLAS diagnostic output (burble mode).
@@ -451,7 +468,11 @@ impl Decode<19> for Matrix {
         unsafe {
             let mut container: MaybeUninit<super::GxB_Container> = MaybeUninit::uninit();
             let info = GxB_Container_new(container.as_mut_ptr());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GxB_Container_new failed: {info:?}"
+            );
             let container = container.assume_init();
 
             // Copy struct data into the allocated container
@@ -479,7 +500,11 @@ impl Decode<19> for Matrix {
             // Create matrix and load from container
             let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
             let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_BOOL, 0, 0);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Matrix_new failed: {info:?}"
+            );
             let m = m.assume_init();
 
             let info = GxB_load_Matrix_from_Container(m, container, null_mut());
@@ -505,7 +530,11 @@ impl Encode<19> for Matrix {
         unsafe {
             let mut container: MaybeUninit<super::GxB_Container> = MaybeUninit::uninit();
             let info = GxB_Container_new(container.as_mut_ptr());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GxB_Container_new failed: {info:?}"
+            );
             let container = container.assume_init();
 
             let info = GxB_unload_Matrix_into_Container(self.inner(), container, null_mut());
@@ -559,7 +588,11 @@ impl Matrix {
         unsafe {
             let mut t: MaybeUninit<super::GrB_Type> = MaybeUninit::uninit();
             let info = GxB_Matrix_type(t.as_mut_ptr(), *self.m);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GxB_Matrix_type failed: {info:?}"
+            );
             t.assume_init() == GrB_UINT64
         }
     }
@@ -573,7 +606,11 @@ impl Matrix {
                 pending.as_mut_ptr(),
                 GxB_Option_Field::GxB_WILL_WAIT as _,
             );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Matrix_get_INT32 failed: {info:?}"
+            );
             pending.assume_init() == 1
         }
     }
@@ -681,7 +718,11 @@ impl New for Matrix {
         unsafe {
             let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
             let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_BOOL, nrows, ncols);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Matrix_new failed: {info:?}"
+            );
             Self {
                 m: Arc::new(m.assume_init()),
                 lock: Arc::new(Mutex::new(())),
@@ -700,7 +741,11 @@ impl Dup<Self> for Matrix {
             m: Arc::new(unsafe {
                 let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
                 let info = GrB_Matrix_dup(m.as_mut_ptr(), *self.m);
-                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                assert_eq!(
+                    info,
+                    GrB_Info::GrB_SUCCESS,
+                    "GrB_Matrix_dup failed: {info:?}"
+                );
                 m.assume_init()
             }),
             lock: Arc::new(Mutex::new(())),
@@ -718,7 +763,11 @@ impl Matrix {
         unsafe {
             let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
             let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_UINT64, nrows, ncols);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Matrix_new failed: {info:?}"
+            );
             Self {
                 m: Arc::new(m.assume_init()),
                 lock: Arc::new(Mutex::new(())),
@@ -1005,7 +1054,11 @@ impl<E: IterExtract> Iter<E> {
         unsafe {
             let mut iter = MaybeUninit::uninit();
             let info = GxB_Iterator_new(iter.as_mut_ptr());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GxB_Iterator_new failed: {info:?}"
+            );
             let iter = iter.assume_init();
             let info = GxB_rowIterator_attach(iter, *m.m, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);

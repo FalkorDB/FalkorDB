@@ -103,7 +103,11 @@ impl Vector<bool> {
         unsafe {
             let mut v: MaybeUninit<GrB_Vector> = MaybeUninit::uninit();
             let info = GrB_Vector_new(v.as_mut_ptr(), GrB_BOOL, nrows);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Vector_new failed: {info:?}"
+            );
             Self {
                 v: v.assume_init(),
                 phantom: PhantomData,
@@ -174,7 +178,11 @@ impl Decode<19> for Vector<u64> {
                 blob.len() as u64,
                 null_mut(),
             );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GxB_Vector_deserialize failed: {info:?}"
+            );
             Ok(Self::from(v.assume_init()))
         }
     }
@@ -201,7 +209,11 @@ impl Encode<19> for Vector<bool> {
                 &raw mut handling,
                 null_mut(),
             );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GxB_Vector_unload failed: {info:?}"
+            );
 
             let type_ = type_.assume_init();
 
@@ -257,12 +269,20 @@ impl Decode<19> for Vector<bool> {
         unsafe {
             let mut type_: MaybeUninit<GrB_Type> = MaybeUninit::uninit();
             let info = GxB_Type_from_name(type_.as_mut_ptr(), type_name.as_ptr().cast());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GxB_Type_from_name failed: {info:?}"
+            );
             let type_ = type_.assume_init();
 
             let mut v: MaybeUninit<GrB_Vector> = MaybeUninit::uninit();
             let info = GrB_Vector_new(v.as_mut_ptr(), type_, 0);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Vector_new failed: {info:?}"
+            );
             let v = v.assume_init();
 
             let mut arr_ptr: *mut c_void = if n_bytes > 0 {
@@ -295,7 +315,11 @@ impl Vector<u64> {
         unsafe {
             let mut v: MaybeUninit<GrB_Vector> = MaybeUninit::uninit();
             let info = GrB_Vector_new(v.as_mut_ptr(), GrB_UINT64, nrows);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Vector_new failed: {info:?}"
+            );
             Self {
                 v: v.assume_init(),
                 phantom: PhantomData,
@@ -413,10 +437,18 @@ impl<T> Iter<T> {
         unsafe {
             let mut iter = MaybeUninit::uninit();
             let info = GxB_Iterator_new(iter.as_mut_ptr());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GxB_Iterator_new failed: {info:?}"
+            );
             let iter = iter.assume_init();
             let info = GxB_Vector_Iterator_attach(iter, v.v, null_mut());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GxB_Vector_Iterator_attach failed: {info:?}"
+            );
             let info = GxB_Vector_Iterator_seek(iter, 0);
             Self {
                 inner: iter,

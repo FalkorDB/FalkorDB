@@ -60,9 +60,7 @@ use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, RedisResult, RedisValue, raw};
 use std::{
     collections::HashMap,
-    ffi::CString,
     os::raw::{c_char, c_void},
-    ptr::null_mut,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -71,8 +69,87 @@ use std::{
 
 use crate::allocator::{current_thread_usage, disable_tracking, enable_tracking, reset_counter};
 
-type WriteMessage = (BlockedClient, Arc<String>, bool, bool, Arc<String>);
+type WriteMessage = (BlockedClient, Arc<str>, bool, bool, Arc<str>);
 type WriteQueryResult = Result<(Arc<AtomicRefCell<Graph>>, Option<Vec<u8>>, bool), String>;
+
+/// Safe wrappers over Redis module FFI function pointers.
+///
+/// Redis guarantees these pointers are non-null after `RedisModule_Init` succeeds.
+/// Centralising the `.expect()` here documents that invariant in one place and
+/// keeps call sites free of `unwrap()` noise.
+mod ffi {
+    use redis_module::raw;
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+    use std::ptr::null_mut;
+
+    const MSG: &str = "Redis module FFI pointer not initialised (call RedisModule_Init first)";
+
+    /// Wrap a user error string into a CString, replacing any NUL bytes so
+    /// malformed strings never crash the module. NUL is extremely unlikely in
+    /// practice but must be handled because `CString::new` rejects it.
+    pub fn sanitise_error(err: impl Into<Vec<u8>>) -> CString {
+        let mut bytes = err.into();
+        for b in &mut bytes {
+            if *b == 0 {
+                *b = b' ';
+            }
+        }
+        // Safety: we just stripped all interior NULs.
+        CString::new(bytes).expect("interior NULs were sanitised above")
+    }
+
+    /// Block the calling client; returns the opaque blocked-client handle.
+    ///
+    /// # Safety
+    /// `ctx` must be a valid Redis module context for the active command.
+    pub unsafe fn block_client(
+        ctx: *mut raw::RedisModuleCtx
+    ) -> *mut raw::RedisModuleBlockedClient {
+        let f = unsafe { raw::RedisModule_BlockClient }.expect(MSG);
+        unsafe { f(ctx, None, None, None, 0) }
+    }
+
+    /// Unblock a client previously returned from [`block_client`].
+    ///
+    /// # Safety
+    /// `bc` must be a valid pointer returned by `RedisModule_BlockClient`.
+    pub unsafe fn unblock_client(bc: *mut raw::RedisModuleBlockedClient) {
+        let f = unsafe { raw::RedisModule_UnblockClient }.expect(MSG);
+        unsafe { f(bc, null_mut()) };
+    }
+
+    /// Obtain a thread-safe context bound to `bc`.
+    ///
+    /// # Safety
+    /// `bc` must be a valid blocked-client handle.
+    pub unsafe fn get_thread_safe_context(
+        bc: *mut raw::RedisModuleBlockedClient
+    ) -> *mut raw::RedisModuleCtx {
+        let f = unsafe { raw::RedisModule_GetThreadSafeContext }.expect(MSG);
+        unsafe { f(bc) }
+    }
+
+    /// Free a thread-safe context obtained from [`get_thread_safe_context`].
+    ///
+    /// # Safety
+    /// `ctx` must be a valid thread-safe context.
+    pub unsafe fn free_thread_safe_context(ctx: *mut raw::RedisModuleCtx) {
+        let f = unsafe { raw::RedisModule_FreeThreadSafeContext }.expect(MSG);
+        unsafe { f(ctx) };
+    }
+
+    /// Reply to the client with a NUL-terminated error string.
+    ///
+    /// # Safety
+    /// `ctx` must be a valid reply context; `err` must outlive the call.
+    pub unsafe fn reply_error(
+        ctx: *mut raw::RedisModuleCtx,
+        err: *const c_char,
+    ) {
+        raw::reply_with_error(ctx, err);
+    }
+}
 
 pub struct ThreadedGraph {
     pub graph: MvccGraph,
@@ -195,7 +272,14 @@ impl ThreadedGraph {
 
         let is_non_deterministic = plan_is_non_deterministic(&plan);
 
-        let g = self.graph.write().unwrap();
+        // Invariant: callers hold the outer `RwLock<ThreadedGraph>` write guard
+        // (via `process_write_queued_query` or `query_sync`), so the MVCC write
+        // slot must be free here. If it is not, the write queue has been bypassed
+        // and the MVCC single-writer invariant is violated.
+        let g = self
+            .graph
+            .write()
+            .expect("MVCC write slot busy: single-writer invariant violated");
         let env_pool = Pool::new();
         let runtime = Runtime::new(
             g.clone(),
@@ -297,7 +381,12 @@ impl ThreadedGraph {
             .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()?;
 
-        let g = self.graph.write().unwrap();
+        // Invariant: see `execute_query_write` — outer RwLock guarantees the
+        // MVCC write slot is free at this point.
+        let g = self
+            .graph
+            .write()
+            .expect("MVCC write slot busy: single-writer invariant violated");
         let env_pool = Pool::new();
         let runtime = Runtime::new(
             g.clone(),
@@ -373,7 +462,7 @@ unsafe impl Sync for BlockedClient {}
 
 impl Drop for BlockedClient {
     fn drop(&mut self) {
-        unsafe { raw::RedisModule_UnblockClient.unwrap()(self.inner, null_mut()) };
+        unsafe { ffi::unblock_client(self.inner) };
     }
 }
 
@@ -385,7 +474,7 @@ pub fn query_mut(
     compact: bool,
     write: bool,
     track_mem: bool,
-    key_name: Arc<String>,
+    key_name: Arc<str>,
 ) -> RedisResult {
     // Inside MULTI/EXEC: execute synchronously (blocking commands not allowed).
     if ctx.get_flags().contains(ContextFlags::MULTI) {
@@ -396,22 +485,22 @@ pub fn query_mut(
     let max = MAX_QUEUED_QUERIES.load(Ordering::Relaxed) as usize;
     if pending_count() >= max {
         let bc = BlockedClient {
-            inner: unsafe { raw::RedisModule_BlockClient.unwrap()(ctx.ctx, None, None, None, 0) },
+            inner: unsafe { ffi::block_client(ctx.ctx) },
         };
-        let err_ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
+        let err_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
         let err_ctx = Context::new(err_ctx);
-        let cerr = CString::new("Max pending queries exceeded").unwrap();
-        raw::reply_with_error(err_ctx.ctx, cerr.as_ptr());
+        let cerr = ffi::sanitise_error("Max pending queries exceeded");
+        unsafe { ffi::reply_error(err_ctx.ctx, cerr.as_ptr()) };
         drop(bc);
-        unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(err_ctx.ctx) };
+        unsafe { ffi::free_thread_safe_context(err_ctx.ctx) };
         return Ok(RedisValue::NoReply);
     }
 
     let bc = BlockedClient {
-        inner: unsafe { raw::RedisModule_BlockClient.unwrap()(ctx.ctx, None, None, None, 0) },
+        inner: unsafe { ffi::block_client(ctx.ctx) },
     };
     let graph = graph.clone();
-    let query = Arc::new(query.to_string());
+    let query: Arc<str> = Arc::from(query);
     spawn(
         move || {
             if track_mem {
@@ -426,7 +515,7 @@ pub fn query_mut(
             let binding = graph.clone();
             let graph = binding.read();
             let bc = bc;
-            let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
+            let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
             let ctx = Context::new(ctx);
 
             let res = graph.execute_query(&ctx, &query, compact, write);
@@ -447,22 +536,34 @@ pub fn query_mut(
             match res {
                 Ok((is_write, cached)) => {
                     if is_write {
-                        graph
-                            .sender
-                            .send((bc, query, compact, cached, key_name))
-                            .unwrap();
+                        if let Err(send_err) =
+                            graph.sender.send((bc, query, compact, cached, key_name))
+                        {
+                            // Receiver closed — the write-queue worker is gone.
+                            // Recover by replying with an error and releasing
+                            // the channel slot instead of panicking the module.
+                            let (bc, _q, _c, _cached, _k) = send_err.0;
+                            let cerr = ffi::sanitise_error(
+                                "ERR graph write queue unavailable".to_string(),
+                            );
+                            unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
+                            drop(bc);
+                            drop(graph);
+                            unsafe { ffi::free_thread_safe_context(ctx.ctx) };
+                            return;
+                        }
                         drop(graph);
                         process_write_queued_query(&g);
                     } else {
                         drop(bc);
-                        unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
+                        unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                     }
                 }
                 Err(err) => {
-                    let cerr = CString::new(err).unwrap();
-                    raw::reply_with_error(ctx.ctx, cerr.as_ptr());
+                    let cerr = ffi::sanitise_error(err);
+                    unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
                     drop(bc);
-                    unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
+                    unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                 }
             }
         },
@@ -479,7 +580,7 @@ fn query_sync(
     query: &str,
     compact: bool,
     write: bool,
-    key_name: &Arc<String>,
+    key_name: &Arc<str>,
 ) -> RedisResult {
     // First pass: parse + detect if write, execute reads inline.
     // Sync query timeout to UDF JS runtime
@@ -505,7 +606,7 @@ fn query_sync(
                         // Flush dirty cache entries to fjall if over budget.
                         let value = g.graph.read().borrow().maybe_flush_caches();
                         if let Err(e) = value {
-                            eprintln!("FalkorDB: cache flush failed: {e}");
+                            ctx.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
                         }
                     }
                     Err(err) => {
@@ -528,7 +629,7 @@ pub fn profile_mut(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
-    key_name: &Arc<String>,
+    key_name: &Arc<str>,
 ) -> RedisResult {
     // Inside MULTI/EXEC: execute synchronously.
     if ctx.get_flags().contains(ContextFlags::MULTI) {
@@ -536,17 +637,17 @@ pub fn profile_mut(
     }
 
     let bc = BlockedClient {
-        inner: unsafe { raw::RedisModule_BlockClient.unwrap()(ctx.ctx, None, None, None, 0) },
+        inner: unsafe { ffi::block_client(ctx.ctx) },
     };
     let graph = graph.clone();
-    let query = Arc::new(query.to_string());
+    let query: Arc<str> = Arc::from(query);
     spawn(
         move || {
             let g = graph.clone();
             let binding = graph.clone();
             let graph_read = binding.read();
             let bc = bc;
-            let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
+            let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
             let ctx = Context::new(ctx);
 
             let res = graph_read.execute_profile(&ctx, &query);
@@ -557,10 +658,9 @@ pub fn profile_mut(
                         // Write path: drop read lock, acquire write lock.
                         // Free the read-phase context before creating a new one.
                         drop(graph_read);
-                        unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
+                        unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                         let mut graph_write = g.write();
-                        let ctx2 =
-                            unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
+                        let ctx2 = unsafe { ffi::get_thread_safe_context(bc.inner) };
                         let ctx2 = Context::new(ctx2);
                         let res = graph_write.execute_profile_write(&ctx2, &query);
                         match res {
@@ -568,27 +668,27 @@ pub fn profile_mut(
                                 graph_write.graph.commit(new_graph);
                                 let value = graph_write.graph.read().borrow().maybe_flush_caches();
                                 if let Err(e) = value {
-                                    eprintln!("FalkorDB: cache flush failed: {e}");
+                                    ctx2.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
                                 }
                             }
                             Err(err) => {
-                                let cerr = CString::new(err).unwrap();
-                                raw::reply_with_error(ctx2.ctx, cerr.as_ptr());
+                                let cerr = ffi::sanitise_error(err);
+                                unsafe { ffi::reply_error(ctx2.ctx, cerr.as_ptr()) };
                                 graph_write.graph.rollback();
                             }
                         }
                         drop(bc);
-                        unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx2.ctx) };
+                        unsafe { ffi::free_thread_safe_context(ctx2.ctx) };
                     } else {
                         drop(bc);
-                        unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
+                        unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                     }
                 }
                 Err(err) => {
-                    let cerr = CString::new(err).unwrap();
-                    raw::reply_with_error(ctx.ctx, cerr.as_ptr());
+                    let cerr = ffi::sanitise_error(err);
+                    unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
                     drop(bc);
-                    unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
+                    unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                 }
             }
         },
@@ -601,7 +701,7 @@ fn profile_sync(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
-    _key_name: &Arc<String>,
+    _key_name: &Arc<str>,
 ) -> RedisResult {
     let res = {
         let g = graph.read();
@@ -617,7 +717,7 @@ fn profile_sync(
                         g.graph.commit(new_graph);
                         let value = g.graph.read().borrow().maybe_flush_caches();
                         if let Err(e) = value {
-                            eprintln!("FalkorDB: cache flush failed: {e}");
+                            ctx.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
                         }
                     }
                     Err(err) => {
@@ -643,52 +743,78 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
     {
         drop(g);
         let mut graph = graph.write();
-        while let Ok((bc, query, compact, cached, key_name)) = { graph.receiver.try_recv() } {
-            let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
-            let ctx = Context::new(ctx);
-            let res = graph.execute_query_write(&ctx, &query, compact, cached);
-            match res {
-                Ok((g, effects_buffer, modified)) => {
-                    // Signal the key as modified so WATCH gets triggered.
-                    unsafe {
-                        raw::RedisModule_ThreadSafeContextLock.unwrap()(ctx.ctx);
-                        let rstr = raw::RedisModule_CreateString.unwrap()(
-                            ctx.ctx,
-                            key_name.as_ptr().cast(),
-                            key_name.len(),
-                        );
-                        raw::RedisModule_SignalModifiedKey.unwrap()(ctx.ctx, rstr);
-                        raw::RedisModule_FreeString.unwrap()(ctx.ctx, rstr);
-                    };
-                    // Send replication while GIL is held
-                    if modified {
-                        replicate_effects(&ctx, &key_name, effects_buffer, &query);
+        // Outer loop guards against a lost-wakeup race: a sender may enqueue
+        // a message between the inner `try_recv` returning empty and the
+        // `store(false)` below. Such a sender's CAS would fail (write_loop
+        // was still true) and it would return without processing, leaving
+        // the message stranded. After clearing the flag we re-check the
+        // queue and re-acquire the flag if work remains.
+        loop {
+            while let Ok((bc, query, compact, cached, key_name)) = { graph.receiver.try_recv() } {
+                let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
+                let ctx = Context::new(ctx);
+                let res = graph.execute_query_write(&ctx, &query, compact, cached);
+                match res {
+                    Ok((g, effects_buffer, modified)) => {
+                        // Signal the key as modified so WATCH gets triggered.
+                        const MSG: &str = "Redis module FFI pointer not initialised";
+                        unsafe {
+                            raw::RedisModule_ThreadSafeContextLock.expect(MSG)(ctx.ctx);
+                            let rstr = raw::RedisModule_CreateString.expect(MSG)(
+                                ctx.ctx,
+                                key_name.as_ptr().cast(),
+                                key_name.len(),
+                            );
+                            raw::RedisModule_SignalModifiedKey.expect(MSG)(ctx.ctx, rstr);
+                            raw::RedisModule_FreeString.expect(MSG)(ctx.ctx, rstr);
+                        };
+                        // Send replication while GIL is held
+                        if modified {
+                            replicate_effects(&ctx, &key_name, effects_buffer, &query);
+                        }
+                        unsafe {
+                            raw::RedisModule_ThreadSafeContextUnlock.expect(MSG)(ctx.ctx);
+                            ffi::free_thread_safe_context(ctx.ctx);
+                        };
+                        drop(bc);
+                        graph.graph.commit(g);
+                        // Flush dirty cache entries to fjall if over budget.
+                        // No Context is available here (thread-safe ctx already freed
+                        // to release the GIL before this non-Redis I/O), so fall back
+                        // to stderr for the (rare) failure case.
+                        let value = graph.graph.read().borrow().maybe_flush_caches();
+                        if let Err(e) = value {
+                            eprintln!("FalkorDB: cache flush failed: {e}");
+                        }
                     }
-                    unsafe {
-                        raw::RedisModule_ThreadSafeContextUnlock.unwrap()(ctx.ctx);
-                        raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx);
-                    };
-                    drop(bc);
-                    graph.graph.commit(g);
-                    // Flush dirty cache entries to fjall if over budget.
-                    let value = graph.graph.read().borrow().maybe_flush_caches();
-                    if let Err(e) = value {
-                        eprintln!("FalkorDB: cache flush failed: {e}");
+                    Err(err) => {
+                        let cerr = ffi::sanitise_error(err);
+                        unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
+                        drop(bc);
+                        unsafe { ffi::free_thread_safe_context(ctx.ctx) };
+                        graph.graph.rollback();
                     }
                 }
-                Err(err) => {
-                    let cerr = CString::new(err).unwrap();
-                    raw::reply_with_error(ctx.ctx, cerr.as_ptr());
-                    drop(bc);
-                    unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
-                    graph.graph.rollback();
-                }
+                // Yield between batched writes so other graph write loops
+                // (on different threadpool workers) can make progress.
+                std::thread::yield_now();
             }
-            // Yield between batched writes so other graph write loops
-            // (on different threadpool workers) can make progress.
-            std::thread::yield_now();
+            graph.write_loop.store(false, Ordering::Release);
+            // Re-check the queue: if a sender enqueued between the last
+            // `try_recv` and `store(false)`, its CAS failed and we must
+            // drain here. Try to re-acquire the flag; if another thread
+            // already grabbed it, it will drain the queue for us.
+            if graph.receiver.is_empty() {
+                return;
+            }
+            if graph
+                .write_loop
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+                .is_err()
+            {
+                return;
+            }
         }
-        graph.write_loop.store(false, Ordering::Release);
     }
 }
 

@@ -68,6 +68,25 @@ use super::{
 #[allow(non_upper_case_globals)]
 pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
 
+/// Pack a `(src, dst)` node-id pair into the compound row key used by the
+/// edge-id matrix `me`.
+///
+/// The encoding `(src << 32) | dst` reserves 32 bits for each side, so both
+/// values must fit in a `u32`. We check this unconditionally (not just under
+/// `debug_assert!`) because silent truncation would corrupt the key and
+/// conflate edges between different node pairs.
+#[inline]
+fn compound_key(
+    src: u64,
+    dst: u64,
+) -> u64 {
+    assert!(
+        src <= u64::from(u32::MAX) && dst <= u64::from(u32::MAX),
+        "Tensor compound key overflow: src={src}, dst={dst} (each must fit in u32)",
+    );
+    (src << 32) | dst
+}
+
 /// Multi-edge storage supporting multiple edges between node pairs.
 ///
 /// Maintains three matrices for efficient traversal in both directions
@@ -101,8 +120,7 @@ impl Tensor {
         src: u64,
         dest: u64,
     ) -> versioned_matrix::Iter {
-        debug_assert!(u32::try_from(src).is_ok() && u32::try_from(dest).is_ok());
-        let row = src << 32 | dest;
+        let row = compound_key(src, dest);
         self.me.iter(row, row)
     }
 
@@ -114,7 +132,7 @@ impl Tensor {
     ) {
         self.m.set(src, dest, true);
         self.mt.set(dest, src, true);
-        self.me.set(src << 32 | dest, id, true);
+        self.me.set(compound_key(src, dest), id, true);
     }
 
     /// Set multiple entries, checking dm emptiness once per sub-matrix.
@@ -128,8 +146,11 @@ impl Tensor {
             .set_all(entries.iter().map(|&(src, dst, _)| (src, dst)));
         self.mt
             .set_all(entries.iter().map(|&(src, dst, _)| (dst, src)));
-        self.me
-            .set_all(entries.iter().map(|&(src, dst, id)| (src << 32 | dst, id)));
+        self.me.set_all(
+            entries
+                .iter()
+                .map(|&(src, dst, id)| (compound_key(src, dst), id)),
+        );
     }
 
     pub fn remove_all(
@@ -137,15 +158,11 @@ impl Tensor {
         rels: &[(u64, u64, u64)],
     ) {
         for (id, src, dest) in rels {
-            self.me.remove(src << 32 | dest, *id);
+            self.me.remove(compound_key(*src, *dest), *id);
         }
         for (_, src, dest) in rels {
-            if self
-                .me
-                .iter(src << 32 | dest, src << 32 | dest)
-                .next()
-                .is_none()
-            {
+            let key = compound_key(*src, *dest);
+            if self.me.iter(key, key).next().is_none() {
                 self.m.remove(*src, *dest);
                 self.mt.remove(*dest, *src);
             }
@@ -165,7 +182,7 @@ impl Tensor {
         // Build me_mask: me uses compound key (src<<32|dst) as row, edge_id as col
         let mut me_mask = Matrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
         for (src, dst) in mask.iter(0, u64::MAX) {
-            let compound = src << 32 | dst;
+            let compound = compound_key(src, dst);
             for (_, edge_id) in self.me.iter(compound, compound) {
                 me_mask.set(compound, edge_id, true);
             }

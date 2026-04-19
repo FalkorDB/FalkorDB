@@ -87,8 +87,8 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "sum",
         args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
-        agg_init: Value::Float(0.0),
+        ret: Type::Union(vec![Type::Int, Type::Float, Type::Null]),
+        agg_init: Value::Int(0),
         fn sum(_, args) {
             let mut iter = args.into_iter();
             let first = iter.next();
@@ -98,13 +98,16 @@ pub fn register(funcs: &mut Functions) {
                 // Skip null values - return accumulator unchanged
                 (Some(Value::Null), Some(acc)) => Ok(acc),
 
-                // Numeric value + Int accumulator (cast before adding to avoid i64 overflow)
-                (Some(Value::Int(a)), Some(Value::Int(b))) => Ok(Value::Float(a as f64 + b as f64)),
-                (Some(Value::Int(a)), Some(Value::Float(b))) => Ok(Value::Float(a as f64 + b)),
+                // Int + Int — stay Int when possible, promote to Float on overflow.
+                // Matches Cypher spec: sum() of all Integers returns Integer.
+                (Some(Value::Int(a)), Some(Value::Int(b))) => Ok(a
+                    .checked_add(b)
+                    .map_or_else(|| Value::Float(a as f64 + b as f64), Value::Int)),
 
-                // Numeric value + Float accumulator
-                (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(Value::Float(a + b)),
+                // Once we see a Float, stay in Float.
+                (Some(Value::Int(a)), Some(Value::Float(b))) => Ok(Value::Float(a as f64 + b)),
                 (Some(Value::Float(a)), Some(Value::Int(b))) => Ok(Value::Float(a + b as f64)),
+                (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(Value::Float(a + b)),
 
                 _ => unreachable!("sum expects Integer, Float, or Null (validation done before call)"),
             }

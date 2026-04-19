@@ -20,7 +20,7 @@ pub fn graph_profile(
     let key_str = args.next_arg()?;
     let query = args.next_str()?;
 
-    let key_name = Arc::new(key_str.to_string());
+    let key_name: Arc<str> = Arc::from(key_str.to_string());
 
     // Try read-only key access first.
     let read_key = ctx.open_key(&key_str);

@@ -41,7 +41,7 @@ pub fn graph_ro_query(
         }
     }
 
-    let key_name = Arc::new(key.to_string());
+    let key_name: Arc<str> = Arc::from(key.to_string());
     let key = ctx.open_key(&key);
 
     (key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?).map_or(EMPTY_KEY_ERR, |graph| {
