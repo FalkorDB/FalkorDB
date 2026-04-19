@@ -36,6 +36,9 @@ use crate::runtime::{
     runtime::Runtime,
     value::Value,
 };
+// `NodeRef` supplies the `.root()` / `.idx()` methods used below via
+// trait import — it appears unused in signatures but removing it
+// breaks `value.root().idx()` etc.
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 /// Invariant: `relationship.from` is always the bound endpoint of the
@@ -60,9 +63,7 @@ pub struct EdgeByIndexScanOp<'a> {
     /// so we don't pay O(|E_type|) per row when the index can't serve
     /// the query (e.g. value is a list or date). The cache is
     /// dropped when the op is dropped.
-    all_edges_cache: std::cell::RefCell<
-        Option<Arc<Vec<(NodeId, NodeId, RelationshipId)>>>,
-    >,
+    all_edges_cache: std::cell::RefCell<Option<Arc<Vec<(NodeId, NodeId, RelationshipId)>>>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -258,12 +259,14 @@ impl<'a> EdgeByIndexScanOp<'a> {
             IndexQuery::And(children) | IndexQuery::Or(children) => {
                 children.iter().all(Self::can_utilize_index)
             }
-            IndexQuery::ArrayContains { value, .. } => {
-                matches!(
-                    value,
-                    Value::Int(_) | Value::Float(_) | Value::String(_) | Value::Bool(_)
-                )
-            }
+            IndexQuery::ArrayContains { value, .. } => match value {
+                // Match `Equal` / `Range`: reject int64s that lose
+                // f64 precision — the index can't represent them
+                // exactly so the query must fall back to post-filter.
+                Value::Int(i) => !Index::int_loses_f64_precision(*i),
+                Value::Float(_) | Value::String(_) | Value::Bool(_) => true,
+                _ => false,
+            },
             _ => true,
         }
     }
@@ -350,9 +353,8 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                         let cached = {
                             let mut cache = self.all_edges_cache.borrow_mut();
                             if cache.is_none() {
-                                *cache = Some(Arc::new(
-                                    self.runtime.g.borrow().get_all_edges(label),
-                                ));
+                                *cache =
+                                    Some(Arc::new(self.runtime.g.borrow().get_all_edges(label)));
                             }
                             Arc::clone(cache.as_ref().unwrap())
                         };

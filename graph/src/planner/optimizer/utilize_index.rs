@@ -257,10 +257,7 @@ impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
         // sibling alias that *isn't* this edge's own alias. When that
         // constraint is present, CondTraverseOp enforces it — our op
         // doesn't, so bail.
-        if sibling_edges
-            .iter()
-            .any(|&id| id != relationship.alias.id)
-        {
+        if sibling_edges.iter().any(|&id| id != relationship.alias.id) {
             return None;
         }
         Some((relationship.clone(), *transposed))
@@ -1065,7 +1062,10 @@ fn add_to_labels_filter(
     plan: &mut DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
 ) -> bool {
-    let IR::EdgeByIndexScan { relationship: rel, .. } = plan.node(idx).data() else {
+    let IR::EdgeByIndexScan {
+        relationship: rel, ..
+    } = plan.node(idx).data()
+    else {
         return false;
     };
     if rel.to.labels.is_empty() {

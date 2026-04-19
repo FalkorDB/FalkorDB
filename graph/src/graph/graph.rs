@@ -457,27 +457,24 @@ fn populate_index_batch(
 
                 let mut batch: Vec<Document> = Vec::with_capacity(scanned_count);
 
-                let build_doc_with_fields = |doc: &mut Document,
-                                             id: u64,
-                                             is_edge: bool,
-                                             g: &Graph|
-                 -> bool {
-                    let mut has_fields = false;
-                    for (attr, fields) in &attrs {
-                        let value = if is_edge {
-                            g.get_relationship_attribute(RelationshipId(id), attr)
-                        } else {
-                            g.get_node_attribute(NodeId(id), attr)
-                        };
-                        if let Some(value) = value {
-                            for field in fields {
-                                doc.set(field, &value);
+                let build_doc_with_fields =
+                    |doc: &mut Document, id: u64, is_edge: bool, g: &Graph| -> bool {
+                        let mut has_fields = false;
+                        for (attr, fields) in &attrs {
+                            let value = if is_edge {
+                                g.get_relationship_attribute(RelationshipId(id), attr)
+                            } else {
+                                g.get_node_attribute(NodeId(id), attr)
+                            };
+                            if let Some(value) = value {
+                                for field in fields {
+                                    doc.set(field, &value);
+                                }
+                                has_fields = true;
                             }
-                            has_fields = true;
                         }
-                    }
-                    has_fields
-                };
+                        has_fields
+                    };
 
                 // Advance `next_cursor` based on the *last scanned id*,
                 // not the last emitted doc, so we don't get stuck when
@@ -502,8 +499,7 @@ fn populate_index_batch(
                         }
                     }
                     IndexKind::Edge => {
-                        let last_pos =
-                            edge_triples.last().map(|(s, d, e)| (*s, *d, *e));
+                        let last_pos = edge_triples.last().map(|(s, d, e)| (*s, *d, *e));
                         for (src, dst, eid) in edge_triples {
                             let mut doc = Document::new_edge(src, dst, eid);
                             let g = graph.borrow();
@@ -2287,10 +2283,8 @@ impl Graph {
             // `pending` after the scan is treated the same as before
             // — skipped below.
             let mut pending: FxHashSet<u64> = ids.iter().collect();
-            let mut endpoints: FxHashMap<u64, (u64, u64)> = FxHashMap::with_capacity_and_hasher(
-                ids.len() as usize,
-                Default::default(),
-            );
+            let mut endpoints: FxHashMap<u64, (u64, u64)> =
+                FxHashMap::with_capacity_and_hasher(ids.len() as usize, Default::default());
             if let Some(t) = self.relationship_matrices.get(type_id as usize) {
                 for (src, dst, eid) in t.iter(0, u64::MAX, false) {
                     if pending.remove(&eid) {
@@ -2350,11 +2344,7 @@ impl Graph {
         }
 
         let (indexer, names, attr_store) = match kind {
-            IndexKind::Node => (
-                &mut self.node_indexer,
-                &self.node_labels,
-                &self.node_attrs,
-            ),
+            IndexKind::Node => (&mut self.node_indexer, &self.node_labels, &self.node_attrs),
             IndexKind::Edge => unreachable!("use commit_edge_index for edges"),
         };
 

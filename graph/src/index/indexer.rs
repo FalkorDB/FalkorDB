@@ -457,7 +457,10 @@ impl Indexer {
 
     /// Edge-index variant of `commit`: adds documents built with
     /// `Document::new_edge`, deletes by the 24-byte `[src, dst, edge_id]`
-    /// key. Callers pass the delete set as `type → { edge_id → (src, dst) }`.
+    /// key. Callers pass the delete set as
+    /// `relationship-type-name → { edge_id → (src, dst) }`; the
+    /// type-id → name conversion is done upstream in
+    /// `Graph::commit_edge_index` before this call.
     pub fn commit_edge(
         &mut self,
         add_docs: &mut HashMap<Arc<String>, Vec<Document>>,

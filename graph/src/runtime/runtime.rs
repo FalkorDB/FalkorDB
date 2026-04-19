@@ -49,8 +49,8 @@ use crate::{
         env::Env,
         ops::{
             AggregateOp, AllShortestPathsOp, ApplyOp, CartesianProductOp, CommitOp, CondTraverseOp,
-            CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, EdgeByIndexScanOp, ExpandIntoOp, FilterOp,
-            ForEachOp, LimitOp, LoadCsvOp, MergeOp, NodeByFulltextScanOp, NodeByIdSeekOp,
+            CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, EdgeByIndexScanOp, ExpandIntoOp,
+            FilterOp, ForEachOp, LimitOp, LoadCsvOp, MergeOp, NodeByFulltextScanOp, NodeByIdSeekOp,
             NodeByIndexScanOp, NodeByLabelAndIdScanOp, NodeByLabelScanOp, OptionalOp,
             OrApplyMultiplexerOp, PathBuilderOp, ProcedureCallOp, ProjectOp, RemoveOp, SemiApplyOp,
             SetOp, SkipOp, SortOp, UnionOp, UnwindOp, ValueHashJoinOp,
@@ -1405,16 +1405,27 @@ fn map_to_index_options(
                     *n as u32
                 }
                 None => 0,
-                _ => return Err("Invalid vector index configuration: dimension must be an integer".into()),
+                _ => {
+                    return Err(
+                        "Invalid vector index configuration: dimension must be an integer".into(),
+                    );
+                }
             };
-            let similarity_function = match get("similarityFunction") {
-                Some(Value::String(s)) => Some(s.to_string()),
-                None => None,
-                _ => return Err("Invalid vector index configuration: similarityFunction must be a string".into()),
-            };
+            let similarity_function =
+                match get("similarityFunction") {
+                    Some(Value::String(s)) => Some(s.to_string()),
+                    None => None,
+                    _ => return Err(
+                        "Invalid vector index configuration: similarityFunction must be a string"
+                            .into(),
+                    ),
+                };
             let m = match get("M") {
                 Some(Value::Int(n)) if *n < 0 => {
-                    return Err("Invalid vector index configuration: M must be a non-negative integer".into());
+                    return Err(
+                        "Invalid vector index configuration: M must be a non-negative integer"
+                            .into(),
+                    );
                 }
                 Some(Value::Int(n)) => Some(*n as usize),
                 None => None,
@@ -1426,7 +1437,12 @@ fn map_to_index_options(
                 }
                 Some(Value::Int(n)) => Some(*n as usize),
                 None => None,
-                _ => return Err("Invalid vector index configuration: efConstruction must be an integer".into()),
+                _ => {
+                    return Err(
+                        "Invalid vector index configuration: efConstruction must be an integer"
+                            .into(),
+                    );
+                }
             };
             let ef_runtime = match get("efRuntime") {
                 Some(Value::Int(n)) if *n < 0 => {
@@ -1434,7 +1450,11 @@ fn map_to_index_options(
                 }
                 Some(Value::Int(n)) => Some(*n as usize),
                 None => None,
-                _ => return Err("Invalid vector index configuration: efRuntime must be an integer".into()),
+                _ => {
+                    return Err(
+                        "Invalid vector index configuration: efRuntime must be an integer".into(),
+                    );
+                }
             };
             Ok(Some(IndexOptions::Vector(VectorIndexOptions {
                 dimension,
