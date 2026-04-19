@@ -316,13 +316,30 @@ enum IndexKind {
     Edge,
 }
 
+/// Cursor position between batches.
+///
+/// - For nodes: `row` is the next node id to visit; `within_row_dst`
+///   is always `None` (per-row cursor suffices).
+/// - For edges: `row` is the next `src` row in the relationship tensor,
+///   and `within_row_dst` (when `Some`) is the last processed `dst`
+///   column for that row — edges `(src, dst)` with `src == row` and
+///   `dst <= within_row_dst` have already been indexed and must be
+///   skipped on resume. Matches the C implementation's
+///   `(prev_src, prev_dst)` skip pattern in
+///   `src/index/index_construct.c:_Index_PopulateEdgeIndex`.
+#[derive(Clone, Copy, Default)]
+struct BatchCursor {
+    row: u64,
+    within_row_dst: Option<u64>,
+}
+
 fn populate_index(
     kind: IndexKind,
     label: Arc<String>,
     indexer: Indexer,
 ) {
     let attrs = indexer.get_fields(&label);
-    populate_index_batch(kind, label, indexer, attrs, 0, 0);
+    populate_index_batch(kind, label, indexer, attrs, 0, BatchCursor::default());
 }
 
 /// Processes one batch of index population and spawns the next batch.
@@ -336,7 +353,7 @@ fn populate_index_batch(
     mut indexer: Indexer,
     attrs: HashMap<Arc<String>, Vec<Arc<Field>>>,
     mut progress: u64,
-    min_row: u64,
+    cursor: BatchCursor,
 ) {
     spawn(
         move || {
@@ -348,7 +365,7 @@ fn populate_index_batch(
             }
 
             let exhausted;
-            let mut next_min_row = min_row;
+            let mut next_cursor = cursor;
 
             // Hold the Indexer's serialization lock for the entire batch so
             // that write-path `commit_index` calls wait until this batch
@@ -364,28 +381,25 @@ fn populate_index_batch(
                     drop(guard);
                     drop(lock);
                     std::thread::sleep(Duration::from_millis(1));
-                    populate_index_batch(kind, label, indexer, attrs, progress, min_row);
+                    populate_index_batch(kind, label, indexer, attrs, progress, cursor);
                     return;
                 };
 
-                // Collect this batch's entities. The underlying iterator
-                // for `IndexKind::Edge` is keyed by **source row** in the
-                // relationship tensor, so we must advance the cursor by
-                // the last source we saw — not by the edge id, which has
-                // no ordering relationship to source-row. Matches the C
-                // implementation's `_Index_PopulateEdgeIndex` cursor
-                // in `src/index/index_construct.c`.
+                // Collect this batch's entities.
                 //
-                // `last_src` is only populated for the edge path. If the
-                // underlying matrix/tensor is absent (e.g. the label/type
-                // has no entities yet) the batch is simply empty and we
-                // fall through to enable().
-                // For nodes: `ids` holds `node_id`.
-                // For edges: `edge_triples` holds `(src, dst, edge_id)`
-                // so `Document::new_edge` can assemble the 24-byte key.
+                // For nodes: walk the label matrix from `cursor.row`
+                // (keyed by node id).
+                // For edges: walk the relationship tensor from
+                // `cursor.row` (keyed by `src` row). When
+                // `cursor.within_row_dst` is `Some`, skip entries
+                // `(src, dst)` where `src == cursor.row` and
+                // `dst <= within_row_dst` — those were already
+                // processed in a prior batch that ran out of
+                // BATCH_SIZE mid-row. Matches C's `(prev_src, prev_dst)`
+                // skip in `_Index_PopulateEdgeIndex`.
                 let ids: Vec<u64>;
                 let edge_triples: Vec<(u64, u64, u64)>;
-                let last_src: Option<u64>;
+                let scanned_count: usize;
                 {
                     let g = graph.borrow();
                     match kind {
@@ -393,43 +407,40 @@ fn populate_index_batch(
                             ids = g
                                 .get_label_matrix(&label)
                                 .map(|lm| {
-                                    lm.iter(min_row, u64::MAX)
+                                    lm.iter(cursor.row, u64::MAX)
                                         .take(BATCH_SIZE)
                                         .map(|(n, _)| n)
                                         .collect()
                                 })
                                 .unwrap_or_default();
                             edge_triples = Vec::new();
-                            last_src = None;
+                            scanned_count = ids.len();
                         }
                         IndexKind::Edge => {
-                            let (triples, last) = g
+                            let skip_src = cursor.row;
+                            let skip_dst = cursor.within_row_dst;
+                            let triples: Vec<(u64, u64, u64)> = g
                                 .get_relationship_matrix(&label)
                                 .map(|t| {
-                                    let mut last = None;
-                                    let triples: Vec<(u64, u64, u64)> = t
-                                        .iter(min_row, u64::MAX, false)
-                                        .take(BATCH_SIZE)
-                                        .map(|(src, dst, e)| {
-                                            last = Some(src);
-                                            (src, dst, e)
+                                    t.iter(cursor.row, u64::MAX, false)
+                                        .filter(|(src, dst, _)| {
+                                            // Skip previously-processed
+                                            // edges within the resume row.
+                                            skip_dst
+                                                .is_none_or(|d| !(*src == skip_src && *dst <= d))
                                         })
-                                        .collect();
-                                    (triples, last)
+                                        .take(BATCH_SIZE)
+                                        .collect()
                                 })
                                 .unwrap_or_default();
                             ids = Vec::new();
+                            scanned_count = triples.len();
                             edge_triples = triples;
-                            last_src = last;
                         }
                     }
                 }
 
-                let batch_len = match kind {
-                    IndexKind::Node => ids.len(),
-                    IndexKind::Edge => edge_triples.len(),
-                };
-                let mut batch: Vec<Document> = Vec::with_capacity(batch_len);
+                let mut batch: Vec<Document> = Vec::with_capacity(scanned_count);
 
                 let build_doc_with_fields = |doc: &mut Document,
                                              id: u64,
@@ -453,8 +464,13 @@ fn populate_index_batch(
                     has_fields
                 };
 
+                // Advance `next_cursor` based on the *last scanned id*,
+                // not the last emitted doc, so we don't get stuck when
+                // most entities have no indexed attributes (few docs
+                // produced) but there are still more to scan.
                 match kind {
                     IndexKind::Node => {
+                        let last_id = ids.last().copied();
                         for id in ids {
                             let mut doc = Document::new(id);
                             let g = graph.borrow();
@@ -462,8 +478,15 @@ fn populate_index_batch(
                                 batch.push(doc);
                             }
                         }
+                        if let Some(id) = last_id {
+                            next_cursor = BatchCursor {
+                                row: id + 1,
+                                within_row_dst: None,
+                            };
+                        }
                     }
                     IndexKind::Edge => {
+                        let last_pair = edge_triples.last().map(|(s, d, _)| (*s, *d));
                         for (src, dst, eid) in edge_triples {
                             let mut doc = Document::new_edge(src, dst, eid);
                             let g = graph.borrow();
@@ -471,15 +494,16 @@ fn populate_index_batch(
                                 batch.push(doc);
                             }
                         }
+                        if let Some((last_src, last_dst)) = last_pair {
+                            next_cursor = BatchCursor {
+                                row: last_src,
+                                within_row_dst: Some(last_dst),
+                            };
+                        }
                     }
                 }
 
-                next_min_row = match kind {
-                    IndexKind::Node => batch.last().map_or(next_min_row, |doc| doc.id() + 1),
-                    IndexKind::Edge => last_src.map_or(next_min_row, |s| s + 1),
-                };
-
-                exhausted = batch.len() < BATCH_SIZE;
+                exhausted = scanned_count < BATCH_SIZE;
 
                 if !batch.is_empty() {
                     progress += batch.len() as u64;
@@ -494,7 +518,7 @@ fn populate_index_batch(
             if exhausted {
                 indexer.enable(&label);
             } else {
-                populate_index_batch(kind, label, indexer, attrs, progress, next_min_row);
+                populate_index_batch(kind, label, indexer, attrs, progress, next_cursor);
             }
         },
         Some(0),
@@ -1709,6 +1733,10 @@ impl Graph {
         &mut self,
         deleted_nodes: &RoaringTreemap,
         explicit_rels: &FxHashMap<RelationshipId, (NodeId, NodeId)>,
+        // Same contract as in `delete_relationships`: carries `(src, dst)`
+        // per edge because the 24-byte RediSearch key can't be
+        // reconstructed after the tensor is cleared.
+        index_remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
     ) -> Result<Vec<(RelationshipId, NodeId, NodeId)>, String> {
         if self.relationship_matrices.is_empty() {
             return Ok(Vec::new());
@@ -1753,11 +1781,23 @@ impl Graph {
 
             // Remove from relationship_type_matrix and relationship_attrs
             let type_id = type_idx as u64;
+            let type_name = &self.relationship_types[type_idx];
+            let is_indexed = self.edge_indexer.has_index(type_name);
             for &(edge_id, src, dst) in &rels {
                 self.relationship_type_matrix.remove(edge_id, type_id);
                 self.relationship_attrs.remove(edge_id)?;
                 self.deleted_relationships.insert(edge_id);
                 all_implicit.push((RelationshipId(edge_id), NodeId(src), NodeId(dst)));
+
+                // Stage an edge-index document removal so cascade
+                // deletes don't leave stale index hits on the next
+                // query. Matches `delete_relationships`' handling.
+                if is_indexed {
+                    index_remove_edge_docs
+                        .entry(type_id)
+                        .or_default()
+                        .insert(edge_id, (src, dst));
+                }
 
                 // Only check adjacency if the other endpoint is NOT deleted
                 if !deleted_nodes.contains(src) || !deleted_nodes.contains(dst) {
@@ -2083,14 +2123,26 @@ impl Graph {
                 let len = self.get_label_matrix_mut(label).nvals();
                 self.node_indexer
                     .create_index(index_type, label, attrs, len, options)?;
+                // Same bookkeeping as `create_index`: surface the
+                // indexed attr names in `db.propertyKeys()` even if no
+                // entity has yet written to them. Critical for
+                // RDB-load and EFFECT_CREATE_INDEX (replica) paths,
+                // which go through this sync variant.
+                for attr in attrs {
+                    self.add_node_attribute_name(attr);
+                }
                 // Don't spawn async — caller will populate via populate_index_sync
             }
             EntityType::Relationship => {
-                let len = self
-                    .get_relationship_matrix(label)
-                    .map_or(0, |t| t.edge_count());
+                // get-or-create the relationship type so
+                // `db.relationshipTypes()` reflects indexed (but still
+                // empty) types even on replicas / after RDB load.
+                let len = self.get_relationship_matrix_mut(label).edge_count();
                 self.edge_indexer
                     .create_index(index_type, label, attrs, len, options)?;
+                for attr in attrs {
+                    self.add_rel_attribute_name(attr);
+                }
             }
         }
         Ok(())
@@ -2658,7 +2710,7 @@ impl Graph {
         }
 
         // --- indices ---
-        let indices_sz = self.node_indexer.memory_usage();
+        let indices_sz = self.node_indexer.memory_usage() + self.edge_indexer.memory_usage();
 
         MemoryUsageReport {
             label_matrices_sz,

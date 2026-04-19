@@ -797,12 +797,17 @@ fn needs_post_filter(
     filter: &QueryExpr<Variable>,
     scan_alias_id: u32,
 ) -> bool {
-    // RHS of an IN operator is the "list expression" side for
-    // `property IN list` — `InList` handles it natively at the index
-    // layer, so its subtree isn't a post-filter trigger.
+    // Whitelist the RHS subtree of `property IN [literal, ...]` — the
+    // index's `InList` path handles a List constructor directly, and
+    // its scalar children are exactly the per-element values it
+    // will query. Do NOT whitelist `property IN $param`,
+    // `property IN range(...)`, or any other runtime expression,
+    // because those can evaluate to non-indexable types at runtime
+    // and the filter must stay as a safety net.
     let skip_descendants: std::collections::HashSet<_> =
         if matches!(filter.root().data(), ExprIR::In)
             && matches!(filter.root().child(0).data(), ExprIR::Property(_))
+            && matches!(filter.root().child(1).data(), ExprIR::List)
         {
             filter
                 .node(filter.root().child(1).idx())

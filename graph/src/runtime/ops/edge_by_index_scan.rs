@@ -52,7 +52,7 @@ pub struct EdgeByIndexScanOp<'a> {
     transposed: bool,
     pending: VecDeque<(
         Env<'a>,
-        std::vec::IntoIter<(NodeId, NodeId, RelationshipId)>,
+        Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>>,
     )>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
@@ -316,28 +316,49 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                     Err(e) => return Some(Err(e)),
                 };
 
-                let mut edges: Vec<(NodeId, NodeId, RelationshipId)> =
+                // Stream results instead of collecting: the child
+                // batch may have many rows and each row would
+                // otherwise materialize the full edge set before any
+                // emission. Matches `NodeByIndexScanOp`'s pattern.
+                let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
                     if Self::can_utilize_index(&q) {
-                        self.runtime.g.borrow().get_indexed_edges(label, q).collect()
+                        Box::new(self.runtime.g.borrow().get_indexed_edges(label, q))
                     } else {
                         // Fall back to scanning all edges of this type
-                        self.runtime.g.borrow().get_all_edges(label)
+                        Box::new(self.runtime.g.borrow().get_all_edges(label).into_iter())
                     };
 
-                // If the child already bound the from-node (e.g. from
-                // NodeByLabelScan or AllNodeScan), filter edges to only
-                // those originating from that node.
-                if let Some(Value::Node(bound_from)) = vars.get(&rp.from.alias) {
-                    let bound_id = *bound_from;
-                    if self.transposed {
-                        edges.retain(|(_, dst, _)| *dst == bound_id);
+                // Filter edges by *both* endpoints when the child has
+                // already bound them. `transposed` flips which
+                // graph-side (src/dst) role the pattern's from/to
+                // endpoints play in the tensor, so the binding check
+                // swaps correspondingly.
+                let bound_from = match vars.get(&rp.from.alias) {
+                    Some(Value::Node(id)) => Some(*id),
+                    _ => None,
+                };
+                let bound_to = match vars.get(&rp.to.alias) {
+                    Some(Value::Node(id)) => Some(*id),
+                    _ => None,
+                };
+                let transposed = self.transposed;
+                let edges: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
+                    if bound_from.is_some() || bound_to.is_some() {
+                        Box::new(base.filter(move |(src, dst, _)| {
+                            let (from_id, to_id) = if transposed {
+                                (*dst, *src)
+                            } else {
+                                (*src, *dst)
+                            };
+                            bound_from.is_none_or(|id| id == from_id)
+                                && bound_to.is_none_or(|id| id == to_id)
+                        }))
                     } else {
-                        edges.retain(|(src, _, _)| *src == bound_id);
-                    }
-                }
+                        base
+                    };
 
                 self.pending
-                    .push_back((vars.clone_pooled(self.runtime.env_pool), edges.into_iter()));
+                    .push_back((vars.clone_pooled(self.runtime.env_pool), edges));
             }
 
             self.drain_pending(&mut envs);

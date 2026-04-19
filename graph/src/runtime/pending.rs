@@ -745,9 +745,11 @@ impl Pending {
         // cleaned up, and before delete_relationships so explicit edges are
         // still tracked separately.
         if !self.deleted_nodes.is_empty() {
-            let implicit_edges = g
-                .borrow_mut()
-                .delete_implicit_edges(&self.deleted_nodes, &explicit_rels)?;
+            let implicit_edges = g.borrow_mut().delete_implicit_edges(
+                &self.deleted_nodes,
+                &explicit_rels,
+                &mut self.index_remove_edge_docs,
+            )?;
             let count = implicit_edges.len();
             stats.borrow_mut().relationships_deleted += count;
             // Record in deleted_relationships so effects buffer can serialize them

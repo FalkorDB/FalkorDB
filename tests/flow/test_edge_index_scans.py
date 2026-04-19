@@ -654,3 +654,93 @@ class testEdgeByIndexScanRegressionsFlow(FlowTestsBase):
         finally:
             g.delete()
 
+    def test19_cascade_delete_cleans_edge_index(self):
+        """
+        Deleting a node must remove its incident indexed edges from
+        the edge index (via `delete_implicit_edges`), not just the
+        relationship tensor. Otherwise a subsequent index query sees
+        stale (src, dst) triples for edges that no longer exist.
+        """
+        g = self.db.select_graph("edge_index_cascade_delete")
+        try:
+            g.query("CREATE (:N {id: 1})-[:T {v: 100}]->(:N {id: 2})")
+            g.query("CREATE (:N {id: 3})-[:T {v: 200}]->(:N {id: 4})")
+            create_edge_range_index(g, "T", "v", sync=True)
+
+            # Pre-sanity: both edges are visible via the index.
+            q = "MATCH ()-[r:T]->() WHERE r.v > 0 RETURN r.v ORDER BY r.v"
+            res = g.query(q)
+            self.env.assertEqual(res.result_set, [[100], [200]])
+
+            # Cascade-delete one endpoint; the incident T-edge is
+            # implicitly deleted.
+            g.query("MATCH (n:N {id: 1}) DELETE n")
+
+            # The remaining edge is still indexed; the deleted edge
+            # must not appear.
+            res = g.query(q)
+            self.env.assertEqual(res.result_set, [[200]])
+        finally:
+            g.delete()
+
+    def test20_pre_bound_destination_respected(self):
+        """
+        When the child has already bound `rp.to.alias` (e.g. via a
+        prior MATCH component), the edge scan must filter by both
+        endpoints — not just `from` — so edges pointing at the wrong
+        destination don't leak through and clobber the binding.
+        """
+        g = self.db.select_graph("edge_index_pre_bound_to")
+        try:
+            g.query("""CREATE
+                      (a {tag: 'a'}),
+                      (b {tag: 'b'}),
+                      (c {tag: 'c'}),
+                      (a)-[:T {v: 1}]->(b),
+                      (a)-[:T {v: 2}]->(c)""")
+            create_edge_range_index(g, "T", "v", sync=True)
+
+            q = """MATCH (src {tag: 'a'}), (dst {tag: 'b'})
+                   MATCH (src)-[r:T]->(dst)
+                   WHERE r.v > 0
+                   RETURN r.v"""
+            res = g.query(q)
+            # Only the edge to `b` (v=1) should be returned —
+            # the edge to `c` (v=2) has the wrong destination.
+            self.env.assertEqual(res.result_set, [[1]])
+        finally:
+            g.delete()
+
+    def test21_sparse_attribute_population(self):
+        """
+        Background edge-index population must not declare a type
+        "exhausted" just because few docs were emitted in the current
+        batch. Here only every 100th edge carries the indexed attr,
+        so if `exhausted` were based on `batch.len()` (docs produced)
+        vs. `BATCH_SIZE`, the population would stop prematurely and
+        later hits would be missing.
+        """
+        g = self.db.select_graph("edge_index_sparse_attr")
+        try:
+            # 15_000 edges > BATCH_SIZE (10k); only the ~150 multiples
+            # of 100 carry the indexed `v` attr, the rest have none.
+            g.query(
+                "UNWIND range(0, 14999) AS i "
+                "CREATE ()-[:T]->()"
+            )
+            g.query(
+                "MATCH ()-[r:T]->() "
+                "WITH r, ID(r) AS eid "
+                "WHERE eid % 100 = 0 "
+                "SET r.v = eid"
+            )
+            create_edge_range_index(g, "T", "v", sync=True)
+
+            # Grab an indexed value that lives deep in the second
+            # batch (by source-row ordering). It must be findable.
+            q = "MATCH ()-[r:T]->() WHERE r.v = 14900 RETURN r.v"
+            res = g.query(q)
+            self.env.assertEqual(res.result_set, [[14900]])
+        finally:
+            g.delete()
+
