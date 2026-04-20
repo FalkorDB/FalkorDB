@@ -150,7 +150,6 @@ impl Indexer {
         options: Option<IndexOptions>,
     ) -> Result<(), String> {
         let mut index = self.index.write();
-        let label_indexes = index.entry(label.clone()).or_default();
 
         let (language, stopwords, field_options, vector_options) = match options {
             Some(IndexOptions::Text(text_opts)) => {
@@ -162,8 +161,16 @@ impl Indexer {
             None => (None, None, None, None),
         };
 
+        // Pre-validate against the existing entry (if any) *before*
+        // creating one. Using `entry(...).or_default()` here would
+        // insert an empty `Index` for a previously-unseen label, and
+        // a later validation error would leave that empty entry
+        // behind — `has_index()` / `has_indices()` would then lie
+        // about the label being indexed.
+        let existing = index.get(label);
+
         // Validate language/stopwords are not already set for existing fulltext indexes
-        let has_fulltext = label_indexes.has_fulltext_field();
+        let has_fulltext = existing.is_some_and(Index::has_fulltext_field);
 
         if has_fulltext {
             if language.is_some() {
@@ -197,10 +204,13 @@ impl Indexer {
                     "Attribute '{attr}' is duplicated in the same request"
                 ));
             }
-            if label_indexes.has_field_with_type(attr, index_type) {
+            if existing.is_some_and(|idx| idx.has_field_with_type(attr, index_type)) {
                 return Err(format!("Attribute '{attr}' is already indexed"));
             }
         }
+
+        // Validation passed — now it's safe to materialize the entry.
+        let label_indexes = index.entry(label.clone()).or_default();
 
         let mut new_fields: HashMap<Arc<String>, Vec<Arc<Field>>> = HashMap::new();
 

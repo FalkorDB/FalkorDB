@@ -820,6 +820,71 @@ class testEdgeByIndexScanRegressionsFlow(FlowTestsBase):
         finally:
             g.delete()
 
+    def test27_in_list_with_null_keeps_filter(self):
+        """
+        Regression for the NULL-in-IN-list whitelist fix.
+
+        `r.v IN [NULL]` semantically returns UNKNOWN → row filtered
+        out. When the optimizer whitelisted `ExprIR::Null` as a
+        scalar literal, it dropped the post-filter and the runtime
+        then built `IndexQuery::Or([])` (NULL was filtered out of the
+        list), which some index backends treat as match-all — the
+        query would leak every edge.
+
+        Must return zero rows whether NULL is alone or mixed with
+        other literals that do match existing edges.
+        """
+        g = self.db.select_graph("edge_index_in_null")
+        try:
+            g.query("CREATE ()-[:T {v: 1}]->()")
+            g.query("CREATE ()-[:T {v: 2}]->()")
+            create_edge_range_index(g, "T", "v", sync=True)
+
+            # `v IN [NULL]` must match nothing.
+            q = "MATCH ()-[r:T]->() WHERE r.v IN [NULL] RETURN r.v"
+            res = g.query(q)
+            self.env.assertEqual(res.result_set, [])
+
+            # `v IN [NULL, 1]` must match only the `v = 1` row.
+            q = "MATCH ()-[r:T]->() WHERE r.v IN [NULL, 1] RETURN r.v"
+            res = g.query(q)
+            self.env.assertEqual(res.result_set, [[1]])
+        finally:
+            g.delete()
+
+    def test28_post_filter_keeps_pushed_conjuncts(self):
+        """
+        Regression for the critical `apply_filter_pushdown` fix.
+
+        `r.v = 2 AND $p < r.v` combines an indexable conjunct with
+        one that depends on a runtime parameter. The optimizer
+        pushes the equality into the index and keeps `keep_filter`
+        true (the parameter can't be statically proven indexable).
+        Without restoring the *full* original filter above the scan,
+        only the unpushed `$p < r.v` conjunct would survive — but
+        that conjunct alone is satisfied by multiple edges if the
+        scan falls back to a type iterator, leaking false positives.
+        """
+        g = self.db.select_graph("edge_index_post_filter_pushed")
+        try:
+            g.query("CREATE ()-[:T {v: 1}]->()")
+            g.query("CREATE ()-[:T {v: 2}]->()")
+            g.query("CREATE ()-[:T {v: 3}]->()")
+            create_edge_range_index(g, "T", "v", sync=True)
+
+            # Only `v = 2` passes the equality; the extra
+            # `$p < r.v` with `$p = 0` is satisfied by all three,
+            # so the pushed equality must stay enforced.
+            q = "MATCH ()-[r:T]->() WHERE r.v = 2 AND $p < r.v RETURN r.v"
+            res = g.query(q, {"p": 0})
+            self.env.assertEqual(res.result_set, [[2]])
+
+            # With `$p = 10`, no row satisfies `$p < r.v`.
+            res = g.query(q, {"p": 10})
+            self.env.assertEqual(res.result_set, [])
+        finally:
+            g.delete()
+
     def test24_multi_edge_populate(self):
         """
         Regression for the BatchCursor edge_id tracking:

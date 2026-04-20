@@ -811,12 +811,18 @@ fn needs_post_filter(
         && matches!(rhs.data(), ExprIR::List)
         && rhs.num_children() > 0
         && rhs.children().all(|child| match child.data() {
-            ExprIR::Null | ExprIR::Bool(_) | ExprIR::Float(_) | ExprIR::String(_) => true,
+            ExprIR::Bool(_) | ExprIR::Float(_) | ExprIR::String(_) => true,
             // Large int64s can't round-trip through f64 exactly,
             // so the runtime will reject them and fall back to a
             // full scan — the Filter has to stay above to
             // re-establish correctness in that case.
             ExprIR::Integer(v) => !Index::int_loses_f64_precision(*v),
+            // `Null` is intentionally *not* whitelisted: the runtime
+            // drops `Null` from the IN list when building the index
+            // query, which can collapse to an empty `Or([])` that the
+            // index backend treats as match-all. Keeping the filter
+            // keeps Cypher semantics (`v IN [NULL]` → unknown → row
+            // filtered out).
             _ => false,
         });
     let skip_descendants: std::collections::HashSet<_> = if rhs_is_scalar_literal_list {
@@ -935,6 +941,14 @@ fn apply_filter_pushdown<T: IndexSubject>(
             op.parent_mut().unwrap().take_out();
         }
         // else: leave the original filter as a runtime safety net.
+    } else if keep_filter {
+        // Some conjuncts were pushed, but the filter contains runtime
+        // values the index may not resolve. Keep the *full* original
+        // filter above so the pushed conjuncts act as a safety net
+        // when the scan falls back to a label/type iterator — not
+        // just the unpushed conjuncts (which would let false
+        // positives through).
+        *op.parent_mut().unwrap().data_mut() = IR::Filter(original_filter.clone());
     } else {
         let remaining_filter = if remaining.len() == 1 {
             Arc::new(remaining.into_iter().next().unwrap())

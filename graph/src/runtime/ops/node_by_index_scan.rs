@@ -238,7 +238,14 @@ impl<'a> NodeByIndexScanOp<'a> {
                 min.as_ref().is_none_or(is_indexable) && max.as_ref().is_none_or(is_indexable)
             }
             IndexQuery::And(children) | IndexQuery::Or(children) => {
-                children.iter().all(Self::can_utilize_index)
+                // Empty `Or([])` / `And([])` is not a valid index
+                // query: the RediSearch backend treats it as
+                // match-all, which is unsafe when the optimizer has
+                // already pushed an IN-list whose elements were all
+                // filtered out at runtime (e.g. `IN [NULL]`). Force
+                // the fallback path so the retained post-filter
+                // re-establishes correctness.
+                !children.is_empty() && children.iter().all(Self::can_utilize_index)
             }
             IndexQuery::ArrayContains { value, .. } => {
                 matches!(
