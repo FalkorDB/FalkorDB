@@ -378,3 +378,17 @@ class testAccessDelEdge():
         self.env.assertEquals(edges[1].properties['v'], 2)
         self.env.assertEquals(edges[1].relation, 'R2')
 
+    def test09_uaf_via_dangling_list_reference(self):
+        # regression test for issue #1591
+        # collecting a node into a list, deleting it, then accessing
+        # the collected copy must not cause use-after-free
+        q = "CREATE (:A {payload: 123})"
+        self.graph.query(q)
+
+        q = """MATCH (n:A)
+               WITH collect(n) AS list
+               DETACH DELETE list[0]
+               RETURN list[0].payload"""
+        res = self.graph.query(q)
+        # the collected copy should still be accessible
+        self.env.assertEquals(res.result_set[0][0], 123)
