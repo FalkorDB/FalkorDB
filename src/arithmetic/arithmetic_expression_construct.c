@@ -308,6 +308,30 @@ static AR_ExpNode *_AR_EXP_FromUnaryOpExpression(const cypher_astnode_t *expr) {
 	return op;
 }
 
+static AR_ExpNode *_AttemptRotation(AR_ExpNode *op, AST_Operator op_enum) {
+	if(op_enum >= OP_PLUS && op_enum <= OP_POW) {
+		AR_ExpNode *rhs = op->op.children[1];
+		if(rhs->type == AR_EXP_OP) {
+			const char *name = rhs->op.f->name;
+			if(strcmp(name, "CONTAINS") == 0 ||
+			   strcmp(name, "STARTS WITH") == 0 ||
+			   strcmp(name, "ENDS WITH") == 0 ||
+			   strcmp(name, "IN") == 0) {
+				
+				AR_ExpNode *A = op->op.children[0];
+				AR_ExpNode *B = rhs->op.children[0];
+				AR_ExpNode *C = rhs->op.children[1];
+
+				op->op.children[1] = B;
+				rhs->op.children[0] = op;
+				
+				return rhs;
+			}
+		}
+	}
+	return op;
+}
+
 static AR_ExpNode *_AR_EXP_FromBinaryOpExpression(const cypher_astnode_t *expr) {
 	const cypher_operator_t *operator = cypher_ast_binary_operator_get_operator(expr);
 	AST_Operator operator_enum = AST_ConvertOperatorNode(operator);
@@ -317,7 +341,7 @@ static AR_ExpNode *_AR_EXP_FromBinaryOpExpression(const cypher_astnode_t *expr) 
 	op->op.children[0] = _AR_EXP_FromASTNode(lhs_node);
 	const cypher_astnode_t *rhs_node = cypher_ast_binary_operator_get_argument2(expr);
 	op->op.children[1] = _AR_EXP_FromASTNode(rhs_node);
-	return op;
+	return _AttemptRotation(op, operator_enum);
 }
 
 static AR_ExpNode *_AR_EXP_FromComparisonExpression(const cypher_astnode_t *expr) {
