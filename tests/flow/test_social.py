@@ -325,15 +325,14 @@ class testSocialFlow(FlowTestsBase):
             actual_result,
             queries.number_of_paths_to_places_visited)
 
-    # TODO: enable after pagerank implementation is complete.
-    # def test26_pagerank_friends(self):
-    #     q = queries.pagerank_friends.query
-    #     actual_result = self.graph.query(q)
+    def test26_pagerank_friends(self):
+        q = queries.pagerank_friends.query
+        actual_result = self.graph.query(q)
 
-    #     # assert result set
-    #     self._assert_only_expected_results_are_in_actual_results(
-    #         actual_result,
-    #         queries.pagerank_friends)
+        # assert result set
+        self._assert_only_expected_results_are_in_actual_results(
+            actual_result,
+            queries.pagerank_friends)
 
     def test27_edge_counting(self):
         aggregations = [

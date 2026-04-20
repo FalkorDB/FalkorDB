@@ -34,7 +34,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
     def test01_run_script(self):
         runner = CliRunner()
 
-        csv_path = os.path.dirname(os.path.abspath(__file__)) + '/../../demo/social/resources/bulk_formatted/'
+        csv_path = os.path.dirname(os.path.abspath(__file__)) + '/social/bulk_formatted/'
         res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{self.port}",
                                           '--nodes', csv_path + 'Person.csv',
                                           '--nodes', csv_path + 'Country.csv',
@@ -233,7 +233,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         graphname = "batched_graph"
         runner = CliRunner()
 
-        csv_path = os.path.dirname(os.path.abspath(__file__)) + '/../../demo/social/resources/bulk_formatted/'
+        csv_path = os.path.dirname(os.path.abspath(__file__)) + '/social/bulk_formatted/'
         res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{self.port}",
                                           '--nodes', csv_path + 'Person.csv',
                                           '--nodes', csv_path + 'Country.csv',
@@ -523,7 +523,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         # Create the social graph with multi-labeled nodes
         graphname = "multilabel_social"
         graph = self.db.select_graph(graphname)
-        csv_path = os.path.dirname(os.path.abspath(__file__)) + '/../../demo/social/resources/bulk_formatted/'
+        csv_path = os.path.dirname(os.path.abspath(__file__)) + '/social/bulk_formatted/'
 
         runner = CliRunner()
         res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{self.port}",

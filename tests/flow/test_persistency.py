@@ -272,15 +272,14 @@ class testGraphPersistency():
             self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Verify that graphs created using the GRAPH.BULK endpoint are persisted correctly
-    # TODO: enable when bulk loader is implemented
-    @skip()
     def test_bulk_insert(self):
         port      = self.env.envRunner.port
         runner    = CliRunner()
         graphname = "bulk_inserted_graph"
 
 
-        csv_path = os.path.dirname(os.path.abspath(__file__)) + '/../../demo/social/resources/bulk_formatted/'
+        csv_path = os.path.dirname(os.path.abspath(__file__)) + '/social/bulk_formatted/'
+        print(f"Using CSV path: {csv_path}")
         res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{port}",
                                           '--nodes', csv_path + 'Person.csv',
                                           '--nodes', csv_path + 'Country.csv',
