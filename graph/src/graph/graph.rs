@@ -2202,6 +2202,42 @@ impl Graph {
                 self.node_indexer.enable(&label);
             }
         }
+
+        // Edge indexes: symmetric to the node path, but walk the
+        // relationship tensor and emit `Document::new_edge(src, dst, eid)`
+        // so RediSearch keys stay the 24-byte `[src, dst, edge_id]`
+        // triple that `Index_RemoveEdge` expects on delete.
+        let edge_fields_by_type = self.edge_indexer.get_all_pending_fields();
+        for (type_name, attrs) in edge_fields_by_type {
+            if let Some(tensor) = self.get_relationship_matrix(&type_name) {
+                let triples: Vec<(u64, u64, u64)> = tensor.iter(0, u64::MAX, false).collect();
+
+                let mut batch = Vec::new();
+                for (src, dst, eid) in triples {
+                    let mut doc = Document::new_edge(src, dst, eid);
+                    let mut has_fields = false;
+                    for (attr, fields) in &attrs {
+                        if let Some(value) =
+                            self.get_relationship_attribute(RelationshipId(eid), attr)
+                        {
+                            for field in fields {
+                                doc.set(field, &value);
+                            }
+                            has_fields = true;
+                        }
+                    }
+                    if has_fields {
+                        batch.push(doc);
+                    }
+                }
+                if !batch.is_empty() {
+                    let mut add_docs = HashMap::new();
+                    add_docs.insert(type_name.clone(), batch);
+                    self.edge_indexer.commit(&mut add_docs, &mut HashMap::new());
+                }
+                self.edge_indexer.enable(&type_name);
+            }
+        }
     }
 
     pub fn commit_attrs(&mut self) -> Result<(), String> {

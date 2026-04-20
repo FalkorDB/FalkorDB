@@ -850,3 +850,42 @@ class testEdgeByIndexScanRegressionsFlow(FlowTestsBase):
         finally:
             g.delete()
 
+
+# RDB round-trip regression for edge indexes. Needs DEBUG RELOAD so it
+# lives in its own class with `enableDebugCommand=True`. Matches
+# FalkorDB C's behavior: edge indexes are encoded and restored under
+# the relationship-schema block, symmetric with node indexes.
+class testEdgeIndexRdbRoundtripFlow(FlowTestsBase):
+    def __init__(self):
+        self.env, self.db = Env(enableDebugCommand=True)
+
+    def test26_rdb_roundtrip_edge_index(self):
+        g = self.db.select_graph("edge_index_rdb_roundtrip")
+        try:
+            g.query("CREATE ()-[:T {v: 1}]->()")
+            g.query("CREATE ()-[:T {v: 2}]->()")
+            g.query("CREATE ()-[:T {v: 3}]->()")
+            create_edge_range_index(g, "T", "v", sync=True)
+
+            probe = "MATCH ()-[r:T]->() WHERE r.v = 2 RETURN r.v"
+            plan_before = str(g.explain(probe))
+            self.env.assertContains("Edge By Index Scan", plan_before)
+            self.env.assertEqual(g.query(probe).result_set, [[2]])
+
+            self.env.dumpAndReload()
+
+            # After reload the edge index must still exist and the
+            # planner must still route the probe through it.
+            plan_after = str(g.explain(probe))
+            self.env.assertContains("Edge By Index Scan", plan_after)
+            self.env.assertEqual(g.query(probe).result_set, [[2]])
+
+            # The probe must also see edges inserted after reload —
+            # the index is live, not a frozen snapshot.
+            g.query("CREATE ()-[:T {v: 42}]->()")
+            q = "MATCH ()-[r:T]->() WHERE r.v = 42 RETURN r.v"
+            self.env.assertContains("Edge By Index Scan", str(g.explain(q)))
+            self.env.assertEqual(g.query(q).result_set, [[42]])
+        finally:
+            g.delete()
+
