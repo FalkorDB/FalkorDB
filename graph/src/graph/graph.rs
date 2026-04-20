@@ -1528,10 +1528,6 @@ impl Graph {
             }
         }
 
-        // Count how many types had edges removed — used to choose fast vs slow
-        // adjacency removal path.
-        let active_types = by_type.iter().filter(|v| !v.is_empty()).count();
-
         // Track (src, dst) pairs that were emptied from at least one tensor —
         // only these are candidates for adjacency matrix removal.
         let mut adj_candidates: Vec<(u64, u64)> = Vec::new();
@@ -1555,25 +1551,22 @@ impl Graph {
 
         // Update adjacancy_matrix for pairs that lost all edges.
         if !adj_candidates.is_empty() {
-            if active_types == num_types || num_types == 1 {
-                // All types participated — use bulk mask removal.
+            if num_types > 1 {
+                // Multiple types — keep only pairs empty across all tensors.
+                adj_candidates.retain(|&(src, dst)| {
+                    !self
+                        .relationship_matrices
+                        .iter()
+                        .any(|tensor| tensor.get(src, dst).next().is_some())
+                });
+            }
+            if !adj_candidates.is_empty() {
                 let node_cap = self.node_cap;
                 let adj_rows: Vec<u64> = adj_candidates.iter().map(|&(src, _)| src).collect();
                 let adj_cols: Vec<u64> = adj_candidates.iter().map(|&(_, dst)| dst).collect();
                 let mut adj_mask = Matrix::new(node_cap, node_cap);
                 adj_mask.build_bool(&adj_rows, &adj_cols);
                 self.adjacancy_matrix.remove_mask(&adj_mask);
-            } else {
-                // Multiple types, not all participating — must check other tensors.
-                for (src, dst) in adj_candidates {
-                    let has_edges = self
-                        .relationship_matrices
-                        .iter()
-                        .any(|tensor| tensor.get(src, dst).next().is_some());
-                    if !has_edges {
-                        self.adjacancy_matrix.remove(src, dst);
-                    }
-                }
             }
         }
 
