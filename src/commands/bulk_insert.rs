@@ -1,4 +1,8 @@
-use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
+use crate::{
+    config::CONFIGURATION_CACHE_SIZE,
+    graph_core::{ThreadedGraph, ffi},
+    redis_type::GRAPH_TYPE,
+};
 use graph::{
     graph::graph::{Graph, NodeId, RelationshipId},
     graph::graphblas::matrix::{Matrix, New, Set},
@@ -361,16 +365,19 @@ pub fn graph_bulk_insert(
         let mut node_id_cursor = 0usize;
         let mut rel_id_cursor = 0usize;
 
-        // Process node tokens
+        // Process node tokens, yielding to Redis between each token
+        // so the server stays responsive (e.g. PING)
         for i in 0..node_token_count {
             let data = tokens[i].as_slice();
             process_node_token(&mut g, data, &node_ids, &mut node_id_cursor)?;
+            unsafe { ffi::yield_ctx(ctx.ctx, ffi::YIELD_FLAG_CLIENTS) };
         }
 
         // Process edge tokens
         for i in 0..rel_token_count {
             let data = tokens[node_token_count + i].as_slice();
             process_edge_token(&mut g, data, &rel_ids, &mut rel_id_cursor)?;
+            unsafe { ffi::yield_ctx(ctx.ctx, ffi::YIELD_FLAG_CLIENTS) };
         }
 
         // Commit attribute stores
