@@ -75,7 +75,6 @@ use std::{
 use rustc_hash::FxHashMap;
 
 use atomic_refcell::AtomicRefCell;
-use itertools::Itertools;
 use lru::LruCache;
 use orx_tree::DynTree;
 use parking_lot::Mutex;
@@ -92,7 +91,7 @@ use crate::{
             },
             serialization::{Encode, EncodeState, PayloadEntry, Writer},
             tensor::Tensor,
-            versioned_matrix::VersionedMatrix,
+            versioned_matrix::{self, VersionedMatrix},
         },
     },
     index::{
@@ -130,7 +129,7 @@ pub struct LabelId(pub usize);
 
 /// Opaque identifier for a relationship type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct TypeId(usize);
+pub struct TypeId(pub(crate) usize);
 
 /// Opaque identifier for a node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -1512,38 +1511,75 @@ impl Graph {
             .extend(rels.keys().map(|id| id.0));
         self.relationship_count -= rels.len() as u64;
 
-        // Collect unique (src, dst) pairs to check adjacancy_matrix after deletion
-        let pairs: std::collections::HashSet<(u64, u64)> =
-            rels.values().map(|(src, dst)| (src.0, dst.0)).collect();
+        // Batch remove from relationship_attrs: collect all edge IDs at once
+        let del_keys: RoaringTreemap = rels.keys().map(|id| id.0).collect();
+        self.relationship_attrs.remove_all(&del_keys);
 
-        for (type_id, rels) in &rels
-            .iter()
-            .map(|(id, (src, dst))| (id.0, src.0, dst.0))
-            .into_group_map_by(|(id, _, _)| self.get_relationship_type_id(RelationshipId(*id)))
-        {
-            for (id, _, _) in rels {
-                self.relationship_type_matrix.remove(*id, type_id.0 as u64);
-                self.relationship_attrs.remove(*id)?;
+        // Build edge_id -> type_id mapping using a single type matrix scan.
+        // Use the rels HashMap directly instead of building a separate FxHashSet.
+        let min_id = del_keys.min().unwrap_or(0);
+        let max_id = del_keys.max().unwrap_or(0);
+        let num_types = self.relationship_matrices.len();
+        let mut by_type: Vec<Vec<(u64, u64, u64)>> = vec![Vec::new(); num_types];
+        #[allow(clippy::cast_possible_truncation)]
+        for (edge_id, type_idx) in self.relationship_type_matrix.iter(min_id, max_id) {
+            if let Some(&(src, dst)) = rels.get(&RelationshipId::from(edge_id)) {
+                by_type[type_idx as usize].push((edge_id, src.0, dst.0));
             }
-            let typ = self.relationship_types[type_id.0].clone();
-            self.get_relationship_matrix_mut(&typ).remove_all(rels);
         }
 
-        // Update adjacancy_matrix: remove entries where no typed edges remain
-        for (src, dst) in pairs {
-            let has_edges = self
-                .relationship_matrices
-                .iter()
-                .any(|tensor| tensor.get(src, dst).next().is_some());
-            if !has_edges {
-                self.adjacancy_matrix.remove(src, dst);
+        // Count how many types had edges removed — used to choose fast vs slow
+        // adjacency removal path.
+        let active_types = by_type.iter().filter(|v| !v.is_empty()).count();
+
+        // Track (src, dst) pairs that were emptied from at least one tensor —
+        // only these are candidates for adjacency matrix removal.
+        let mut adj_candidates: Vec<(u64, u64)> = Vec::new();
+
+        for (type_idx, type_rels) in by_type.iter().enumerate() {
+            if type_rels.is_empty() {
+                continue;
+            }
+
+            // Batch remove from relationship_type_matrix using bulk build_bool
+            let tm_rows: Vec<u64> = type_rels.iter().map(|&(id, _, _)| id).collect();
+            let tm_cols: Vec<u64> = vec![type_idx as u64; type_rels.len()];
+            let mut type_mask =
+                Matrix::new(self.relationship_cap, self.relationship_types.len() as u64);
+            type_mask.build_bool(&tm_rows, &tm_cols);
+            self.relationship_type_matrix.remove_mask(&type_mask);
+
+            let emptied = self.relationship_matrices[type_idx].remove_all(type_rels);
+            adj_candidates.extend(emptied);
+        }
+
+        // Update adjacancy_matrix for pairs that lost all edges.
+        if !adj_candidates.is_empty() {
+            if active_types == num_types || num_types == 1 {
+                // All types participated — use bulk mask removal.
+                let node_cap = self.node_cap;
+                let adj_rows: Vec<u64> = adj_candidates.iter().map(|&(src, _)| src).collect();
+                let adj_cols: Vec<u64> = adj_candidates.iter().map(|&(_, dst)| dst).collect();
+                let mut adj_mask = Matrix::new(node_cap, node_cap);
+                adj_mask.build_bool(&adj_rows, &adj_cols);
+                self.adjacancy_matrix.remove_mask(&adj_mask);
+            } else {
+                // Multiple types, not all participating — must check other tensors.
+                for (src, dst) in adj_candidates {
+                    let has_edges = self
+                        .relationship_matrices
+                        .iter()
+                        .any(|tensor| tensor.get(src, dst).next().is_some());
+                    if !has_edges {
+                        self.adjacancy_matrix.remove(src, dst);
+                    }
+                }
             }
         }
 
         Ok(())
     }
 
-    /// Bulk-delete all edges incident on a set of deleted nodes (implicit cascade).
     ///
     /// Instead of discovering edges per-node during the delete operator, this
     /// method iterates each tensor once for all deleted nodes and batch-removes
@@ -1601,29 +1637,30 @@ impl Graph {
                 continue;
             }
 
-            // Remove from relationship_type_matrix and relationship_attrs
+            // Batch remove from relationship_type_matrix using bulk mask
             let type_id = type_idx as u64;
-            for &(edge_id, src, dst) in &rels {
-                self.relationship_type_matrix.remove(edge_id, type_id);
-                self.relationship_attrs.remove(edge_id)?;
-                self.deleted_relationships.insert(edge_id);
-                all_implicit.push((RelationshipId(edge_id), NodeId(src), NodeId(dst)));
+            let tm_rows: Vec<u64> = rels.iter().map(|&(id, _, _)| id).collect();
+            let tm_cols: Vec<u64> = vec![type_id; rels.len()];
+            let mut type_mask =
+                Matrix::new(self.relationship_cap, self.relationship_types.len() as u64);
+            type_mask.build_bool(&tm_rows, &tm_cols);
 
+            let del_keys: RoaringTreemap = rels.iter().map(|&(id, _, _)| id).collect();
+            self.deleted_relationships |= &del_keys;
+            for &(edge_id, src, dst) in &rels {
+                all_implicit.push((RelationshipId(edge_id), NodeId(src), NodeId(dst)));
+            }
+            self.relationship_type_matrix.remove_mask(&type_mask);
+            self.relationship_attrs.remove_all(&del_keys);
+
+            // Batch-remove from tensor — remove_all uses bulk mask operations
+            let emptied = self.relationship_matrices[type_idx].remove_all(&rels);
+            for (src, dst) in emptied {
                 // Only check adjacency if the other endpoint is NOT deleted
                 if !deleted_nodes.contains(src) || !deleted_nodes.contains(dst) {
                     check_adj_pairs.insert((src, dst));
                 }
             }
-
-            // Build (src, dst) mask for bulk tensor removal
-            let mut mask = Matrix::new(self.node_cap, self.node_cap);
-            for &(_, src, dst) in &rels {
-                mask.set(src, dst, true);
-            }
-            let mask_t = mask.transpose();
-
-            // Batch-remove from tensor using mask operations
-            self.relationship_matrices[type_idx].clear_elements(&mask, &mask_t);
         }
 
         self.relationship_count -= all_implicit.len() as u64;
@@ -1783,6 +1820,16 @@ impl Graph {
             .map(|(_, l)| TypeId(l as usize))
             .next()
             .expect("relationship must have a type in type_matrix")
+    }
+
+    /// Iterate the relationship type matrix over a range of edge IDs.
+    /// Returns `(edge_id, type_index)` pairs.
+    pub fn relationship_type_matrix_iter(
+        &self,
+        min_edge_id: u64,
+        max_edge_id: u64,
+    ) -> versioned_matrix::Iter {
+        self.relationship_type_matrix.iter(min_edge_id, max_edge_id)
     }
 
     #[must_use]

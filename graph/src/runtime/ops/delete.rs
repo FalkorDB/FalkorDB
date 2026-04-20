@@ -92,15 +92,17 @@ impl Runtime<'_> {
 
         // Fast path: read all simple variable columns at once, no env needed
         if !var_ids.is_empty() {
-            // Collect all node IDs for bulk deletion
+            // Collect all node IDs and relationship tuples for bulk deletion
             let mut node_ids = Vec::new();
+            let mut rel_ids = Vec::new();
             let rows = batch.read_columns(&var_ids);
             for row in rows {
                 for val in row {
                     match val {
                         Value::Node(id) => node_ids.push(*id),
+                        Value::Relationship(rel) => rel_ids.push(**rel),
                         _ => {
-                            // Non-node values (relationships, paths, etc.) go through per-entity path
+                            // Paths, etc. go through per-entity path
                             self.delete_entity(val)?;
                         }
                     }
@@ -108,6 +110,9 @@ impl Runtime<'_> {
             }
             if !node_ids.is_empty() {
                 self.delete_nodes_bulk(&node_ids)?;
+            }
+            if !rel_ids.is_empty() {
+                self.delete_relationships_bulk(&rel_ids)?;
             }
         }
 
@@ -230,6 +235,106 @@ impl Runtime<'_> {
                     crate::runtime::ordermap::OrderMap::from_vec(g.get_node_all_attrs(id));
                 self.pending.borrow().update_node_attrs(id, &mut actual);
                 deleted_nodes.insert(id, DeletedNode::new(labels, actual));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Bulk delete committed relationships — avoids per-edge iterator creation
+    /// for type lookups and reduces RefCell borrow overhead.
+    fn delete_relationships_bulk(
+        &self,
+        rels: &[(RelationshipId, NodeId, NodeId)],
+    ) -> Result<(), String> {
+        if rels.is_empty() {
+            return Ok(());
+        }
+
+        // Filter out already-deleted, pending-created, and duplicate relationships
+        let mut committed = Vec::with_capacity(rels.len());
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut pending_created = Vec::new();
+        {
+            let pending = self.pending.borrow();
+            let g = self.g.borrow();
+            for &(rel_id, src, dst) in rels {
+                if !seen.insert(rel_id) {
+                    continue;
+                }
+                if pending.is_relationship_deleted(rel_id, src, dst) {
+                    continue;
+                }
+                if pending.is_relationship_created(rel_id) {
+                    // Created in this txn — use per-entity path
+                    pending_created.push((rel_id, src, dst));
+                } else if !g.is_relationship_deleted(rel_id) {
+                    committed.push((rel_id, src, dst));
+                }
+            }
+        }
+
+        // Handle pending-created relationships via the per-entity path
+        for (rel_id, src, dst) in pending_created {
+            self.delete_entity(&Value::Relationship(Box::new((rel_id, src, dst))))?;
+        }
+
+        if committed.is_empty() {
+            return Ok(());
+        }
+
+        // Mark for deletion and optionally snapshot data.
+        {
+            let mut pending = self.pending.borrow_mut();
+
+            if self.return_names.is_empty() {
+                // Fast path: no RETURN clause — skip snapshotting, just mark for deletion
+                pending.deleted_relationships_bulk(&committed);
+            } else {
+                // Need snapshot for RETURN to reference deleted relationship data.
+                // Build edge_id -> type_id mapping using a single type matrix scan
+                // instead of N individual GraphBLAS iterators.
+                let edge_set: rustc_hash::FxHashSet<u64> =
+                    committed.iter().map(|(r, _, _)| u64::from(*r)).collect();
+                let mut edge_type_map: rustc_hash::FxHashMap<u64, usize> =
+                    rustc_hash::FxHashMap::with_capacity_and_hasher(
+                        committed.len(),
+                        Default::default(),
+                    );
+                let g = self.g.borrow();
+                let min_id = committed
+                    .iter()
+                    .map(|(r, _, _)| u64::from(*r))
+                    .min()
+                    .unwrap();
+                let max_id = committed
+                    .iter()
+                    .map(|(r, _, _)| u64::from(*r))
+                    .max()
+                    .unwrap();
+                #[allow(clippy::cast_possible_truncation)]
+                for (row, col) in g.relationship_type_matrix_iter(min_id, max_id) {
+                    if edge_set.contains(&row) {
+                        edge_type_map.insert(row, col as usize);
+                    }
+                }
+
+                let mut deleted_rels = self.deleted_relationships.borrow_mut();
+                for &(rel_id, src, dst) in &committed {
+                    let type_idx = edge_type_map
+                        .get(&u64::from(rel_id))
+                        .expect("relationship must have a type");
+                    let type_name = g
+                        .get_type(crate::graph::graph::TypeId(*type_idx))
+                        .expect("type must exist");
+                    let mut actual = crate::runtime::ordermap::OrderMap::from_vec(
+                        g.get_relationship_all_attrs(rel_id),
+                    );
+                    pending.update_relationship_attrs(rel_id, &mut actual);
+
+                    pending.deleted_relationship(rel_id, src, dst);
+                    deleted_rels.insert(rel_id, DeletedRelationship::new(type_name, actual));
+                }
             }
         }
 
