@@ -101,10 +101,18 @@ static const OPType SCAN_OPS[] = {
 	OPType_NODE_BY_LABEL_AND_ID_SCAN
 };
 
-#define BLACKLIST_OP_COUNT 2
+#define BLACKLIST_OP_COUNT 6
 static const OPType FILTER_RECURSE_BLACKLIST[] = {
 	OPType_APPLY,
-	OPType_MERGE
+	OPType_MERGE,
+	// write/modifying operations: filters that follow a write
+	// (e.g. via `WITH ... WHERE`) must not be pushed below the write,
+	// otherwise they would observe stale graph state
+	// (e.g. a pattern predicate seeing an edge that was just DELETEd)
+	OPType_CREATE,
+	OPType_UPDATE,
+	OPType_DELETE,
+	OPType_FOREACH
 };
 
 #define EAGER_OP_COUNT 8
