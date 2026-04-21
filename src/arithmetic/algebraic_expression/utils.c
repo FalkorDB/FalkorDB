@@ -209,6 +209,13 @@ void _AlgebraicExpression_FreeOperand
 	if(node->operand.bfree) {
 		Delta_Matrix_free(&node->operand.matrix);
 	}
+
+	if(node->operand.owned_strings) {
+		if(node->operand.src   != NULL) rm_free((char *)node->operand.src);
+		if(node->operand.dest  != NULL) rm_free((char *)node->operand.dest);
+		if(node->operand.edge  != NULL) rm_free((char *)node->operand.edge);
+		if(node->operand.label != NULL) rm_free((char *)node->operand.label);
+	}
 }
 
 // locate operand at position `operand_idx` counting from left to right

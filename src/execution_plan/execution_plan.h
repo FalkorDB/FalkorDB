@@ -15,12 +15,13 @@
 typedef struct ExecutionPlan ExecutionPlan;
 
 struct ExecutionPlan {
-	OpBase *root;             // root operation of overall ExecutionPlan
-	AST *ast_segment;         // the segment which the current ExecutionPlan segment is built from
-	rax *record_map;          // mapping between identifiers and record indices
-	QueryGraph *query_graph;  // queryGraph representing all graph entities in this segment
+	OpBase *root;              // root operation of overall ExecutionPlan
+	AST *ast_segment;          // the segment which the current ExecutionPlan segment is built from
+	rax *record_map;           // mapping between identifiers and record indices
+	QueryGraph *query_graph;   // queryGraph representing all graph entities in this segment
+	QueryGraph **sub_qgs;      // per-clause sub query-graphs, freed with the plan; ops borrow strings from these
 	ObjectPool *record_pool;
-	bool prepared;            // indicates if the execution plan is ready for execute
+	bool prepared;             // indicates if the execution plan is ready for execute
 };
 
 // creates a new execution plan from AST

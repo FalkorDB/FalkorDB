@@ -23,10 +23,14 @@ NodeScanCtx *NodeScanCtx_New
 
     NodeScanCtx *ctx = rm_malloc(sizeof(NodeScanCtx));
 
-	ctx->alias    = alias;
-	ctx->label    = label;
-	ctx->label_id = label_id;
 	ctx->n        = QGNode_Clone(n);
+	// the cloned QGNode owns its own alias/label strings; point at those so
+	// ctx->alias / ctx->label live as long as ctx (caller-provided pointers
+	// may be borrowed from short-lived AlgebraicExpression operands)
+	ctx->alias    = ctx->n->alias;
+	ctx->label    = (QGNode_LabelCount(ctx->n) > 0) ? QGNode_GetLabel(ctx->n, 0)
+	                                                : NULL;
+	ctx->label_id = label_id;
 
     return ctx;
 }
@@ -41,7 +45,11 @@ NodeScanCtx *NodeScanCtx_Clone
 
     NodeScanCtx *clone = rm_malloc(sizeof(NodeScanCtx));
     memcpy(clone, ctx, sizeof(NodeScanCtx));
-    clone->n = QGNode_Clone(ctx->n);
+    clone->n     = QGNode_Clone(ctx->n);
+    // re-anchor borrowed pointers to the clone's owned QGNode
+    clone->alias = clone->n->alias;
+    clone->label = (QGNode_LabelCount(clone->n) > 0)
+                       ? QGNode_GetLabel(clone->n, 0) : NULL;
 
     return clone;
 }

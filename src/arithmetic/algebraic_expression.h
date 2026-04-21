@@ -36,6 +36,7 @@ struct AlgebraicExpression {
 		struct {
 			bool bfree;                      // should matrix be free
 			bool diagonal;                   // diagonal matrix
+			bool owned_strings;              // src/dest/edge/label are heap-owned and must be rm_free'd
 			const char *src;                 // alias given to operand's rows
 			const char *dest;                // alias given to operand's columns
 			const char *edge;                // alias given to operand (edge)

@@ -662,6 +662,13 @@ static void _ExecutionPlan_FreeInternals
 	if(plan->query_graph) {
 		QueryGraph_Free(plan->query_graph);
 	}
+	if(plan->sub_qgs != NULL) {
+		uint n = arr_len(plan->sub_qgs);
+		for(uint i = 0; i < n; i++) {
+			QueryGraph_Free(plan->sub_qgs[i]);
+		}
+		arr_free(plan->sub_qgs);
+	}
 	if(plan->record_map != NULL) {
 		raxFree(plan->record_map);
 	}

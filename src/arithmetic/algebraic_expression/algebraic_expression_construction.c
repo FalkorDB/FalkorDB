@@ -281,8 +281,9 @@ static void _AlgebraicExpression_ExpandNodeOperand
 	if(label_count > 0) l = QGNode_GetLabel(n, 0);
 
 	if(label_count < 2) {
-		// set label
-		exp->operand.label = l;
+		// set label (operand owns its label string; previous label was NULL)
+		ASSERT(exp->operand.label == NULL);
+		if(l != NULL) exp->operand.label = rm_strdup(l);
 	} else {
 		// two or more labels
 		_InplaceRepurposeOperandToOperation(exp, AL_EXP_MUL);

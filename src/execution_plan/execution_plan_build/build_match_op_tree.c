@@ -12,6 +12,7 @@
 #include "execution_plan_modify.h"
 #include "execution_plan_construct.h"
 #include "../../util/rax_extensions.h"
+#include "../../util/arr.h"
 #include "../optimizations/optimizations.h"
 #include "../../ast/ast_build_filter_tree.h"
 
@@ -198,7 +199,10 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 	}
 
 	for(uint i = 0; i < connectedComponentsCount; i++) {
-		QueryGraph_Free(connectedComponents[i]);
+		// defer free until plan teardown — ops borrow alias / label / reltype
+		// pointers from these connected-component query graphs
+		if(plan->sub_qgs == NULL) plan->sub_qgs = arr_new(QueryGraph *, 1);
+		arr_append(plan->sub_qgs, connectedComponents[i]);
 	}
 
 	FilterTree_Free(ft);
@@ -277,6 +281,11 @@ void buildMatchOpTree
 
 	// clean up
 cleanup:
-	QueryGraph_Free(sub_qg);
+	// defer sub_qg free until plan teardown — ops built from sub_qg
+	// (NodeScanCtx, AllNodeScan, AE operands, NodeCreateCtx, EdgeCreateCtx, ...)
+	// keep borrowed pointers into its QGNode/QGEdge alias / label / reltype
+	// strings; freeing sub_qg eagerly would dangle them
+	if(plan->sub_qgs == NULL) plan->sub_qgs = arr_new(QueryGraph *, 1);
+	arr_append(plan->sub_qgs, sub_qg);
 }
 

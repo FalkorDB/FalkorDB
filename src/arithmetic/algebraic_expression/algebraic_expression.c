@@ -58,6 +58,14 @@ static AlgebraicExpression *_AlgebraicExpression_CloneOperand
 ) {
 	AlgebraicExpression *clone = rm_malloc(sizeof(AlgebraicExpression));
 	memcpy(clone, exp, sizeof(AlgebraicExpression));
+
+	// produce an independent owned-string clone
+	if(clone->operand.src   != NULL) clone->operand.src   = rm_strdup(clone->operand.src);
+	if(clone->operand.dest  != NULL) clone->operand.dest  = rm_strdup(clone->operand.dest);
+	if(clone->operand.edge  != NULL) clone->operand.edge  = rm_strdup(clone->operand.edge);
+	if(clone->operand.label != NULL) clone->operand.label = rm_strdup(clone->operand.label);
+	clone->operand.owned_strings = true;
+
 	return clone;
 }
 
@@ -207,10 +215,14 @@ AlgebraicExpression *AlgebraicExpression_NewOperand
 	AlgebraicExpression *node = rm_malloc(sizeof(AlgebraicExpression));
 
 	node->type             = AL_OPERAND;
-	node->operand.src      = src;
-	node->operand.dest     = dest;
-	node->operand.edge     = edge;
-	node->operand.label    = label;
+	// always own a copy of the alias / label strings; caller-provided pointers
+	// may be borrowed from short-lived QueryGraph clones (sub_qg, AE construction
+	// working clones) and would dangle after construction
+	node->operand.src      = (src   != NULL) ? rm_strdup(src)   : NULL;
+	node->operand.dest     = (dest  != NULL) ? rm_strdup(dest)  : NULL;
+	node->operand.edge     = (edge  != NULL) ? rm_strdup(edge)  : NULL;
+	node->operand.label    = (label != NULL) ? rm_strdup(label) : NULL;
+	node->operand.owned_strings = true;
 	node->operand.bfree    = false;
 	node->operand.diagonal = diagonal;
 	node->operand.matrix   = mat;
