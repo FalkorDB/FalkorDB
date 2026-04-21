@@ -325,7 +325,10 @@ impl AttributeCache {
         self.entries.remove(&entity_id);
     }
 
-    /// Batch-invalidate entities (used during rollback).
+    /// Batch-invalidate entities (used during rollback and commit).
+    ///
+    /// Cannot use `cache.clear()` because dirty entries for non-deleted
+    /// entities would be destroyed before being flushed to fjall.
     pub fn invalidate_batch(
         &self,
         entity_ids: &roaring::RoaringTreemap,
@@ -383,6 +386,12 @@ impl AttributeCache {
             return true;
         }
         false
+    }
+
+    /// Returns `true` when the cache contains any entries.
+    #[must_use]
+    pub fn has_entries(&self) -> bool {
+        !self.entries.is_empty()
     }
 
     /// Returns `true` when the cache is over its memory budget.
