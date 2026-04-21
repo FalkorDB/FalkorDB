@@ -46,6 +46,51 @@ SIValue AR_TOMAP
 	return map;
 }
 
+// create a new SIMap object for a map projection: entity { .a, b: ..., c }
+// the first argument is the projected entity (node, edge, map or null)
+// if the entity is null, the entire map projection evaluates to null
+// (matching openCypher / Neo4j semantics)
+// the remaining arguments are key/value pairs:
+// argv[1], argv[3], ... = keys
+// argv[2], argv[4], ... = values
+SIValue AR_TOMAP_PROJECTION
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
+	// the first argument is the projected entity
+	ASSERT(argc >= 1);
+
+	// if the projected entity is null, the map projection is null
+	if(SI_TYPE(argv[0]) == T_NULL) {
+		return SI_NullVal();
+	}
+
+	// validate number of key/value arguments is even
+	int kv_argc = argc - 1;
+	if(kv_argc % 2 != 0) {
+		ErrorCtx_RaiseRuntimeException("map expects even number of elements");
+	}
+
+	SIValue map = SI_Map(kv_argc / 2);
+
+	for(int i = 1; i < argc; i += 2) {
+		SIValue key = argv[i];
+		SIValue val = argv[i + 1];
+
+		// make sure key is a string
+		if(!(SI_TYPE(key) & T_STRING)) {
+			Error_SITypeMismatch(key, T_STRING);
+			break;
+		}
+
+		Map_Add(&map, key, val);
+	}
+
+	return map;
+}
+
 SIValue AR_KEYS(SIValue *argv, int argc, void *private_data) {
 	ASSERT(argc == 1);
 	switch(SI_TYPE(argv[0])) {
@@ -140,6 +185,13 @@ void Register_MapFuncs() {
 	ret_type = T_MAP;
 	func_desc = AR_FuncDescNew("tomap", AR_TOMAP, 0, VAR_ARG_LEN, types,
 			ret_type, true, true, true);
+	AR_FuncRegister(func_desc);
+
+	types = arr_new(SIType, 1);
+	arr_append(types, SI_ALL);
+	ret_type = T_NULL | T_MAP;
+	func_desc = AR_FuncDescNew("tomap_projection", AR_TOMAP_PROJECTION, 1,
+			VAR_ARG_LEN, types, ret_type, true, true, true);
 	AR_FuncRegister(func_desc);
 
 	types = arr_new(SIType, 1);
