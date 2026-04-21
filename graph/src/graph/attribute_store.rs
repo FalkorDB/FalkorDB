@@ -534,10 +534,10 @@ impl AttributeStore {
         &mut self,
         keys: &RoaringTreemap,
     ) {
-        for key in keys {
-            self.dirty_entities.insert(key);
-            self.pending_deletes.insert(key);
-        }
+        // Only track in pending_deletes — no need to add to dirty_entities
+        // since deleted entities don't need cache write-back on flush.
+        // rollback_cache() handles pending_deletes separately.
+        self.pending_deletes |= keys;
     }
 
     /// Batch insert/update multiple attributes for entities.
@@ -733,11 +733,11 @@ impl AttributeStore {
             // For freshly created entities that were never flushed to fjall,
             // the keyspace was never accessed, so we skip the expensive
             // keyspace initialization + prefix scans entirely.
-            if self
+            let has_keyspace = self
                 .keyspace
                 .get()
-                .is_some_and(|ks| ks.approximate_len() > 0)
-            {
+                .is_some_and(|ks| ks.approximate_len() > 0);
+            if has_keyspace {
                 let mut batch = get_database().batch();
                 // Targeted prefix scans: O(pending_deletes × attrs_per_entity)
                 // instead of scanning the entire keyspace.
@@ -752,7 +752,10 @@ impl AttributeStore {
                 batch.durability(None).commit().map_err(|e| e.to_string())?;
             }
             // Invalidate deleted entities from the shared cache to prevent stale reads.
-            self.cache.invalidate_batch(&self.pending_deletes);
+            // Skip when no keyspace (entities never had attributes stored).
+            if has_keyspace || self.cache.has_entries() {
+                self.cache.invalidate_batch(&self.pending_deletes);
+            }
         }
         // Only refresh the fjall snapshot if the database/keyspace was already
         // initialized. For stores that never touched fjall (all data in cache),
@@ -773,6 +776,7 @@ impl AttributeStore {
     /// Called on write-transaction rollback.
     pub fn rollback_cache(&mut self) {
         self.cache.invalidate_batch(&self.dirty_entities);
+        self.cache.invalidate_batch(&self.pending_deletes);
         self.dirty_entities.clear();
         self.pending_deletes.clear();
     }

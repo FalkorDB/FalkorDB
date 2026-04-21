@@ -57,6 +57,8 @@
 
 use std::collections::HashMap;
 
+use rustc_hash::FxHashSet;
+
 use super::{
     matrix::{Dup, Matrix, New, Remove, Set, Size, Transpose},
     serialization::{Decode, Encode, Reader, Writer},
@@ -153,49 +155,75 @@ impl Tensor {
         );
     }
 
+    /// Bulk-remove specific edges from this tensor.
+    ///
+    /// Each entry in `rels` is `(edge_id, src, dst)`.
+    /// Returns the list of `(src, dst)` pairs that became completely empty
+    /// in this tensor (no remaining edges of this type between those nodes).
     pub fn remove_all(
         &mut self,
         rels: &[(u64, u64, u64)],
-    ) {
-        for (id, src, dest) in rels {
-            self.me.remove(compound_key(*src, *dest), *id);
+    ) -> Vec<(u64, u64)> {
+        if rels.is_empty() {
+            return Vec::new();
         }
-        for (_, src, dest) in rels {
-            let key = compound_key(*src, *dest);
-            if self.me.iter(key, key).next().is_none() {
-                self.m.remove(*src, *dest);
-                self.mt.remove(*dest, *src);
-            }
-        }
-    }
 
-    /// Bulk-remove all edges whose `(src, dst)` pair appears in `mask`.
-    ///
-    /// `mask_t` must be the transpose of `mask`.
-    /// This removes ALL edges at matching `(src, dst)` pairs — suitable for
-    /// implicit (cascade) deletion where a node and all its edges are removed.
-    pub fn clear_elements(
-        &mut self,
-        mask: &Matrix,
-        mask_t: &Matrix,
-    ) {
-        // Build me_mask: me uses compound key (src<<32|dst) as row, edge_id as col
+        // Build me_mask arrays for bulk GraphBLAS build
+        let mut me_rows = Vec::with_capacity(rels.len());
+        let mut me_cols = Vec::with_capacity(rels.len());
+        for &(id, src, dest) in rels {
+            me_rows.push(compound_key(src, dest));
+            me_cols.push(id);
+        }
         let mut me_mask = Matrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
-        for (src, dst) in mask.iter(0, u64::MAX) {
-            let compound = compound_key(src, dst);
-            for (_, edge_id) in self.me.iter(compound, compound) {
-                me_mask.set(compound, edge_id, true);
+        me_mask.build_bool(&me_rows, &me_cols);
+
+        // Check for multi-edges BEFORE removal
+        let no_multi_edges = !self.has_multi_edge();
+
+        // Single bulk GraphBLAS operation
+        self.me.remove_mask(&me_mask);
+
+        if no_multi_edges {
+            // Non-multi-edge: each pair had exactly one edge, so all pairs
+            // with a removed edge are now empty. Build m/mt masks directly
+            // from rels without an intermediate FxHashSet.
+            let nrows = self.m.nrows();
+            let ncols = self.m.ncols();
+            let mut m_rows = Vec::with_capacity(rels.len());
+            let mut m_cols = Vec::with_capacity(rels.len());
+            let mut mt_rows = Vec::with_capacity(rels.len());
+            let mut mt_cols = Vec::with_capacity(rels.len());
+            for &(_, src, dst) in rels {
+                m_rows.push(src);
+                m_cols.push(dst);
+                mt_rows.push(dst);
+                mt_cols.push(src);
+            }
+            let mut m_mask = Matrix::new(nrows, ncols);
+            m_mask.build_bool(&m_rows, &m_cols);
+            let mut mt_mask = Matrix::new(ncols, nrows);
+            mt_mask.build_bool(&mt_rows, &mt_cols);
+            self.m.remove_mask(&m_mask);
+            self.mt.remove_mask(&mt_mask);
+            return rels.iter().map(|&(_, src, dst)| (src, dst)).collect();
+        }
+
+        // Slow path for multi-edge tensors: need FxHashSet to dedup pairs.
+        let mut pairs: FxHashSet<(u64, u64)> = FxHashSet::default();
+        for &(_, src, dest) in rels {
+            pairs.insert((src, dest));
+        }
+        let mut emptied = Vec::new();
+        for (src, dst) in pairs {
+            let key = compound_key(src, dst);
+            if self.me.iter(key, key).next().is_none() {
+                self.m.remove(src, dst);
+                self.mt.remove(dst, src);
+                emptied.push((src, dst));
             }
         }
-
-        // Bulk-remove from edge ID matrix
-        if me_mask.nvals() > 0 {
-            self.me.remove_mask(&me_mask);
-        }
-
-        // Bulk-remove from forward and backward adjacency
-        self.m.remove_mask(mask);
-        self.mt.remove_mask(mask_t);
+        emptied
     }
 
     pub fn resize(

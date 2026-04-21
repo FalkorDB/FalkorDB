@@ -112,7 +112,7 @@ pub struct Pending {
     created_relationships: FxHashMap<RelationshipId, PendingRelationship>,
     /// Nodes to be deleted
     deleted_nodes: RoaringTreemap,
-    /// Relationships to be deleted (edge_id, src, dst)
+    /// Relationships to be deleted (edge_id → (src, dst))
     deleted_relationships: FxHashMap<RelationshipId, (NodeId, NodeId)>,
     /// Property updates for newly created nodes (fast path: skip fjall)
     new_nodes_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>>,
@@ -541,6 +541,16 @@ impl Pending {
         self.deleted_relationships.insert(id, (from, to));
     }
 
+    pub fn deleted_relationships_bulk(
+        &mut self,
+        rels: &[(RelationshipId, NodeId, NodeId)],
+    ) {
+        self.deleted_relationships.reserve(rels.len());
+        for &(id, from, to) in rels {
+            self.deleted_relationships.insert(id, (from, to));
+        }
+    }
+
     #[must_use]
     pub fn get_relationship_type(
         &self,
@@ -594,12 +604,10 @@ impl Pending {
     pub fn is_relationship_deleted(
         &self,
         id: RelationshipId,
-        from: NodeId,
-        to: NodeId,
+        _from: NodeId,
+        _to: NodeId,
     ) -> bool {
-        self.deleted_relationships
-            .get(&id)
-            .is_some_and(|(from_id, to_id)| *from_id == from && *to_id == to)
+        self.deleted_relationships.contains_key(&id)
     }
 
     /// Count pending-created relationships whose destination is `node_id` and
@@ -735,9 +743,8 @@ impl Pending {
             g.borrow_mut()
                 .delete_nodes(&self.deleted_nodes, &mut self.index_remove_docs)?;
         }
-        // Take explicit relationship deletions BEFORE implicit edge processing
-        // so we can pass them to delete_implicit_edges for dedup, and then
-        // process them separately via delete_relationships.
+        // Take relationship deletions BEFORE implicit edge processing
+        // so we can pass them to delete_implicit_edges for dedup.
         let explicit_rels = std::mem::take(&mut self.deleted_relationships);
 
         // Bulk cascade-delete edges for implicitly deleted nodes.
