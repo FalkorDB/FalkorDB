@@ -324,7 +324,7 @@ class testQueryValidationFlow(FlowTestsBase):
         try:
            query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN node"""
            self.graph.query(query)
-           assert(False)
+           self.env.assertTrue(False)
         except redis.ResponseError as e:
            # Expecting an error.
            assert("not defined" in str(e))

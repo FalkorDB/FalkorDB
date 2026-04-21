@@ -42,7 +42,7 @@ fn read_cstring<'a>(
     Ok(s)
 }
 
-fn read_u32_le(
+fn read_u32_ne(
     data: &[u8],
     idx: &mut usize,
 ) -> Result<u32, String> {
@@ -124,7 +124,11 @@ fn read_property(
         }
         BI_ARRAY => {
             let len = read_i64_ne(data, idx)?;
-            let mut arr = thin_vec::ThinVec::with_capacity(len as usize);
+            if len < 0 {
+                return Err(format!("negative array length in bulk data: {len}"));
+            }
+            let len = len as usize;
+            let mut arr = thin_vec::ThinVec::with_capacity(len);
             for _ in 0..len {
                 arr.push(read_property(data, idx)?);
             }
@@ -144,7 +148,7 @@ fn parse_header(
     let labels: Vec<String> = labels_str.split(':').map(|s| s.to_string()).collect();
 
     // Read property count (4 bytes)
-    let prop_count = read_u32_le(data, idx)? as usize;
+    let prop_count = read_u32_ne(data, idx)? as usize;
 
     // Read property names
     let mut prop_names = Vec::with_capacity(prop_count);
@@ -176,6 +180,9 @@ fn process_node_token(
 
     let mut records_since_yield = 0usize;
     while idx < data.len() {
+        if *node_id_cursor >= node_ids.len() {
+            return Err("bulk data contains more node records than advertised count".to_string());
+        }
         let node_id = node_ids[*node_id_cursor];
         *node_id_cursor += 1;
         let raw_id: u64 = node_id.into();
@@ -248,6 +255,9 @@ fn process_edge_token(
 
     let mut records_since_yield = 0usize;
     while idx < data.len() {
+        if *rel_id_cursor >= rel_ids.len() {
+            return Err("bulk data contains more edge records than advertised count".to_string());
+        }
         let src_id = read_u64_ne(data, &mut idx)?;
         let dst_id = read_u64_ne(data, &mut idx)?;
 

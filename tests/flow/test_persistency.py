@@ -279,7 +279,6 @@ class testGraphPersistency():
 
 
         csv_path = os.path.dirname(os.path.abspath(__file__)) + '/social/bulk_formatted/'
-        print(f"Using CSV path: {csv_path}")
         res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{port}",
                                           '--nodes', csv_path + 'Person.csv',
                                           '--nodes', csv_path + 'Country.csv',
