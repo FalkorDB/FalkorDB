@@ -91,9 +91,12 @@ class testIndexCreationFlow:
         except ResponseError as e:
             self.env.assertIn("Can not override index configuration", str(e))
 
-        # drop L1:p6 - not indexed, so indices_deleted should be 0
-        result = self.graph.query("DROP FULLTEXT INDEX FOR (n:L1) ON (n.p6)")
-        self.env.assertEqual(result.indices_deleted, 0)
+        # drop L1:p6 - not indexed, so an error should be raised
+        try:
+            self.graph.query("DROP FULLTEXT INDEX FOR (n:L1) ON (n.p6)")
+            raise AssertionError("Expected DROP FULLTEXT INDEX for L1.p6 to fail")
+        except ResponseError as e:
+            self.env.assertContains("Unable to drop index on :L1(p6): no such index.", str(e))
 
         # drop L1:p1 - is indexed, so indices_deleted should be 1
         result = self.graph.query("DROP FULLTEXT INDEX FOR (n:L1) ON (n.p1)")
@@ -210,7 +213,10 @@ class testIndexCreationFlow:
             result = self.graph.query("CREATE INDEX ON :person(height, height)")
             assert False
         except ResponseError as e:
-            self.env.assertContains("Attribute 'height' is already indexed", str(e))
+            # "duplicated in the same request" distinguishes this from
+            # the "already indexed" case when `height` is previously
+            # registered in a separate statement.
+            self.env.assertContains("Attribute 'height' is duplicated in the same request", str(e))
 
     def test04_index_creation_pattern_syntax(self):
         # create an index over user:age and user:name

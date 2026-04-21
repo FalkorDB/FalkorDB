@@ -150,7 +150,6 @@ impl Indexer {
         options: Option<IndexOptions>,
     ) -> Result<(), String> {
         let mut index = self.index.write();
-        let label_indexes = index.entry(label.clone()).or_default();
 
         let (language, stopwords, field_options, vector_options) = match options {
             Some(IndexOptions::Text(text_opts)) => {
@@ -162,8 +161,16 @@ impl Indexer {
             None => (None, None, None, None),
         };
 
+        // Pre-validate against the existing entry (if any) *before*
+        // creating one. Using `entry(...).or_default()` here would
+        // insert an empty `Index` for a previously-unseen label, and
+        // a later validation error would leave that empty entry
+        // behind — `has_index()` / `has_indices()` would then lie
+        // about the label being indexed.
+        let existing = index.get(label);
+
         // Validate language/stopwords are not already set for existing fulltext indexes
-        let has_fulltext = label_indexes.has_fulltext_field();
+        let has_fulltext = existing.is_some_and(Index::has_fulltext_field);
 
         if has_fulltext {
             if language.is_some() {
@@ -184,6 +191,27 @@ impl Indexer {
             return Err("Text index options are only valid for fulltext indexes".into());
         }
 
+        // Pre-validate: check all attrs for conflicts BEFORE inserting any,
+        // so that a conflict on a later attribute does not leave earlier
+        // attributes partially registered. `attrs` is always small, so
+        // the O(n²) prefix scan for intra-request duplicates is fine.
+        for (i, attr) in attrs.iter().enumerate() {
+            if attrs[..i].contains(attr) {
+                // Distinguish from the "already indexed" case below:
+                // the attribute isn't indexed yet — the caller
+                // listed it twice in the same statement.
+                return Err(format!(
+                    "Attribute '{attr}' is duplicated in the same request"
+                ));
+            }
+            if existing.is_some_and(|idx| idx.has_field_with_type(attr, index_type)) {
+                return Err(format!("Attribute '{attr}' is already indexed"));
+            }
+        }
+
+        // Validation passed — now it's safe to materialize the entry.
+        let label_indexes = index.entry(label.clone()).or_default();
+
         let mut new_fields: HashMap<Arc<String>, Vec<Arc<Field>>> = HashMap::new();
 
         for attr in attrs {
@@ -192,10 +220,6 @@ impl Indexer {
                 IndexType::Fulltext => attr.clone(),
                 IndexType::Vector => Arc::new(format!("vector:{attr}")),
             };
-
-            if label_indexes.has_field_with_type(attr, index_type) {
-                return Err(format!("Attribute '{attr}' is already indexed"));
-            }
 
             let field = if let Some(ref vopts) = vector_options {
                 Arc::new(Field::new_with_vector_options(
@@ -345,6 +369,20 @@ impl Indexer {
         IndexResultsIter::empty()
     }
 
+    /// Like `query`, but for edge indexes: yields `(src, dst, edge_id)`
+    /// triples read from the 24-byte document key.
+    #[must_use]
+    pub fn query_edges(
+        &self,
+        label: &Arc<String>,
+        query: IndexQuery<Value>,
+    ) -> super::EdgeTripleIter {
+        if let Some(index) = self.index.read().get(label) {
+            return index.query_edges(query);
+        }
+        super::EdgeTripleIter::empty()
+    }
+
     pub fn fulltext_query(
         &self,
         label: &Arc<String>,
@@ -427,6 +465,38 @@ impl Indexer {
         drop(index);
     }
 
+    /// Edge-index variant of `commit`: adds documents built with
+    /// `Document::new_edge`, deletes by the 24-byte `[src, dst, edge_id]`
+    /// key. Callers pass the delete set as
+    /// `relationship-type-name → { edge_id → (src, dst) }`; the
+    /// type-id → name conversion is done upstream in
+    /// `Graph::commit_edge_index` before this call.
+    pub fn commit_edge(
+        &mut self,
+        add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
+        remove_docs: &mut HashMap<Arc<String>, std::collections::HashMap<u64, (u64, u64)>>,
+    ) {
+        let mut index = self.index.write();
+        for (label, add_docs) in add_docs {
+            let Some(index) = index.get_mut(label) else {
+                continue;
+            };
+            for doc in add_docs.drain(..) {
+                index.add_document(&doc);
+            }
+        }
+        for (label, edges) in remove_docs {
+            let Some(index) = index.get_mut(label) else {
+                continue;
+            };
+            for (&edge_id, &(src, dst)) in edges.iter() {
+                index.delete_edge_document(src, dst, edge_id);
+            }
+            edges.clear();
+        }
+        drop(index);
+    }
+
     #[must_use]
     pub fn get_fields(
         &self,
@@ -457,6 +527,7 @@ impl Indexer {
         self.index
             .read()
             .iter()
+            .filter(|(_, index)| !index.is_empty())
             .map(|(label, index)| {
                 let (progress, total) = index.progress();
                 IndexInfo {
@@ -467,6 +538,7 @@ impl Indexer {
                     fields: index.fields().clone(),
                     language: index.language().cloned(),
                     stopwords: index.stopwords().cloned(),
+                    entity_type: String::new(),
                 }
             })
             .collect()
