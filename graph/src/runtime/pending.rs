@@ -130,6 +130,13 @@ pub struct Pending {
     index_add_docs: FxHashMap<u64, RoaringTreemap>,
     /// Documents to remove from indexes (keyed by label id)
     index_remove_docs: FxHashMap<u64, RoaringTreemap>,
+    /// Edge documents to add to indexes (keyed by relationship type id)
+    index_add_edge_docs: FxHashMap<u64, RoaringTreemap>,
+    /// Edge documents to remove from indexes: `type_id → { edge_id → (src, dst) }`.
+    /// `(src, dst)` is captured at deletion time — the edge is gone
+    /// from the tensor by the time `commit_edge_index` runs so the
+    /// 24-byte RediSearch key must be reconstructable from here.
+    index_remove_edge_docs: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
     /// Schema baseline: number of labels when the current commit window started.
     schema_label_count: usize,
     /// Schema baseline: number of relationship types when the current commit window started.
@@ -162,6 +169,8 @@ impl Pending {
             remove_node_labels: Matrix::new(0, 0),
             index_add_docs: FxHashMap::default(),
             index_remove_docs: FxHashMap::default(),
+            index_add_edge_docs: FxHashMap::default(),
+            index_remove_edge_docs: FxHashMap::default(),
             schema_label_count: 0,
             schema_rel_type_count: 0,
             schema_node_attr_count: 0,
@@ -713,12 +722,17 @@ impl Pending {
         {
             let mut g = g.borrow_mut();
             if !self.new_relationships_attrs.is_empty() {
-                let nset = g.import_relationship_attrs(&self.new_relationships_attrs);
+                let nset = g.import_relationship_attrs(
+                    &self.new_relationships_attrs,
+                    &mut self.index_add_edge_docs,
+                );
                 stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_relationships_attrs.is_empty() {
-                let (nremoved, nset) =
-                    g.set_relationships_attributes(&self.existing_relationships_attrs)?;
+                let (nremoved, nset) = g.set_relationships_attributes(
+                    &self.existing_relationships_attrs,
+                    &mut self.index_add_edge_docs,
+                )?;
                 let mut s = stats.borrow_mut();
                 s.properties_set += nset;
                 s.properties_removed += nremoved;
@@ -738,9 +752,11 @@ impl Pending {
         // cleaned up, and before delete_relationships so explicit edges are
         // still tracked separately.
         if !self.deleted_nodes.is_empty() {
-            let implicit_edges = g
-                .borrow_mut()
-                .delete_implicit_edges(&self.deleted_nodes, &explicit_rels)?;
+            let implicit_edges = g.borrow_mut().delete_implicit_edges(
+                &self.deleted_nodes,
+                &explicit_rels,
+                &mut self.index_remove_edge_docs,
+            )?;
             let count = implicit_edges.len();
             stats.borrow_mut().relationships_deleted += count;
             // Record in deleted_relationships so effects buffer can serialize them
@@ -753,7 +769,8 @@ impl Pending {
             // Re-record explicit rels so the effects buffer can serialize them.
             self.deleted_relationships
                 .extend(explicit_rels.iter().map(|(&k, &v)| (k, v)));
-            g.borrow_mut().delete_relationships(&explicit_rels)?;
+            g.borrow_mut()
+                .delete_relationships(&explicit_rels, &mut self.index_remove_edge_docs)?;
         }
         // Commit attribute changes and indexes after all deletions have been
         // applied. This ensures relationship_attrs.remove() pending_deletes
@@ -762,6 +779,10 @@ impl Pending {
             let mut g = g.borrow_mut();
             g.commit_attrs()?;
             g.commit_index(&mut self.index_add_docs, &mut self.index_remove_docs);
+            g.commit_edge_index(
+                &mut self.index_add_edge_docs,
+                &mut self.index_remove_edge_docs,
+            );
         }
 
         Ok(())
@@ -779,6 +800,10 @@ impl Pending {
         self.existing_relationships_attrs.clear();
         self.deleted_nodes.clear();
         self.deleted_relationships.clear();
+        self.index_add_docs.clear();
+        self.index_remove_docs.clear();
+        self.index_add_edge_docs.clear();
+        self.index_remove_edge_docs.clear();
     }
 
     /// Returns the number of effects (operations) tracked in this Pending.

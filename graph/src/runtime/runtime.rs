@@ -49,8 +49,8 @@ use crate::{
         env::Env,
         ops::{
             AggregateOp, AllShortestPathsOp, ApplyOp, CartesianProductOp, CommitOp, CondTraverseOp,
-            CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, ExpandIntoOp, FilterOp,
-            ForEachOp, LimitOp, LoadCsvOp, MergeOp, NodeByFulltextScanOp, NodeByIdSeekOp,
+            CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, EdgeByIndexScanOp, ExpandIntoOp,
+            FilterOp, ForEachOp, LimitOp, LoadCsvOp, MergeOp, NodeByFulltextScanOp, NodeByIdSeekOp,
             NodeByIndexScanOp, NodeByLabelAndIdScanOp, NodeByLabelScanOp, OptionalOp,
             OrApplyMultiplexerOp, PathBuilderOp, ProcedureCallOp, ProjectOp, RemoveOp, SemiApplyOp,
             SetOp, SkipOp, SortOp, UnionOp, UnwindOp, ValueHashJoinOp,
@@ -235,6 +235,10 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     }
                 }
                 IR::CondTraverse {
+                    relationship: query_relationship,
+                    ..
+                }
+                | IR::EdgeByIndexScan {
                     relationship: query_relationship,
                     ..
                 }
@@ -711,6 +715,21 @@ impl<'a> Runtime<'a> {
                     node,
                     index,
                     query,
+                    idx,
+                )))
+            }
+            IR::EdgeByIndexScan {
+                relationship,
+                query,
+                transposed,
+            } => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::EdgeByIndexScan(EdgeByIndexScanOp::new(
+                    self,
+                    Box::new(child),
+                    relationship,
+                    query,
+                    *transposed,
                     idx,
                 )))
             }
@@ -1381,41 +1400,61 @@ fn map_to_index_options(
             let dimension = match get("dimension") {
                 Some(Value::Int(n)) => {
                     if *n < 0 {
-                        return Err("dimension must be a non-negative integer".into());
+                        return Err("Invalid vector index configuration: dimension must be a non-negative integer".into());
                     }
                     *n as u32
                 }
                 None => 0,
-                _ => return Err("dimension must be an integer".into()),
+                _ => {
+                    return Err(
+                        "Invalid vector index configuration: dimension must be an integer".into(),
+                    );
+                }
             };
-            let similarity_function = match get("similarityFunction") {
-                Some(Value::String(s)) => Some(s.to_string()),
-                None => None,
-                _ => return Err("similarityFunction must be a string".into()),
-            };
+            let similarity_function =
+                match get("similarityFunction") {
+                    Some(Value::String(s)) => Some(s.to_string()),
+                    None => None,
+                    _ => return Err(
+                        "Invalid vector index configuration: similarityFunction must be a string"
+                            .into(),
+                    ),
+                };
             let m = match get("M") {
                 Some(Value::Int(n)) if *n < 0 => {
-                    return Err("M must be a non-negative integer".into());
+                    return Err(
+                        "Invalid vector index configuration: M must be a non-negative integer"
+                            .into(),
+                    );
                 }
                 Some(Value::Int(n)) => Some(*n as usize),
                 None => None,
-                _ => return Err("M must be an integer".into()),
+                _ => return Err("Invalid vector index configuration: M must be an integer".into()),
             };
             let ef_construction = match get("efConstruction") {
                 Some(Value::Int(n)) if *n < 0 => {
-                    return Err("efConstruction must be a non-negative integer".into());
+                    return Err("Invalid vector index configuration: efConstruction must be a non-negative integer".into());
                 }
                 Some(Value::Int(n)) => Some(*n as usize),
                 None => None,
-                _ => return Err("efConstruction must be an integer".into()),
+                _ => {
+                    return Err(
+                        "Invalid vector index configuration: efConstruction must be an integer"
+                            .into(),
+                    );
+                }
             };
             let ef_runtime = match get("efRuntime") {
                 Some(Value::Int(n)) if *n < 0 => {
-                    return Err("efRuntime must be a non-negative integer".into());
+                    return Err("Invalid vector index configuration: efRuntime must be a non-negative integer".into());
                 }
                 Some(Value::Int(n)) => Some(*n as usize),
                 None => None,
-                _ => return Err("efRuntime must be an integer".into()),
+                _ => {
+                    return Err(
+                        "Invalid vector index configuration: efRuntime must be an integer".into(),
+                    );
+                }
             };
             Ok(Some(IndexOptions::Vector(VectorIndexOptions {
                 dimension,

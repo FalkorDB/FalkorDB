@@ -103,6 +103,13 @@ pub enum IR {
         index: Arc<String>,
         query: Arc<IndexQuery<QueryExpr<Variable>>>,
     },
+    /// Scan edges using an index, replacing CondTraverse when a filter
+    /// can be pushed into the edge index.
+    EdgeByIndexScan {
+        relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+        query: Arc<IndexQuery<QueryExpr<Variable>>>,
+        transposed: bool,
+    },
     /// Scan nodes using a fulltext index
     NodeByFulltextScan {
         node: Variable,
@@ -340,7 +347,9 @@ pub fn plan_is_non_deterministic(plan: &DynTree<IR>) -> bool {
             IR::ValueHashJoin { lhs_exp, rhs_exp } => {
                 expr_has_non_deterministic(lhs_exp) || expr_has_non_deterministic(rhs_exp)
             }
-            IR::NodeByIndexScan { query, .. } => index_query_has_non_deterministic(query),
+            IR::NodeByIndexScan { query, .. } | IR::EdgeByIndexScan { query, .. } => {
+                index_query_has_non_deterministic(query)
+            }
             IR::NodeByFulltextScan { label, query, .. } => {
                 expr_has_non_deterministic(label) || expr_has_non_deterministic(query)
             }
@@ -408,6 +417,11 @@ impl Display for IR {
             }
             Self::NodeByIndexScan { node, .. } => {
                 write!(f, "Node By Index Scan | {node}")
+            }
+            Self::EdgeByIndexScan {
+                relationship: rel, ..
+            } => {
+                write!(f, "Edge By Index Scan | {}", fmt_rel_with_labels(rel))
             }
             Self::NodeByFulltextScan { .. } => {
                 write!(f, "Node By Fulltext Index Scan")
@@ -1820,6 +1834,7 @@ impl Planner {
                     | IR::CondVarLenTraverse { .. }
                     | IR::AllShortestPaths(_)
                     | IR::ExpandInto { .. }
+                    | IR::EdgeByIndexScan { .. }
                     | IR::PathBuilder(_))
             {
                 idx = res.node(idx).child(0).idx();
@@ -1878,6 +1893,7 @@ impl Planner {
                 | IR::CondVarLenTraverse { .. }
                 | IR::AllShortestPaths(_)
                 | IR::ExpandInto { .. }
+                | IR::EdgeByIndexScan { .. }
                 | IR::CartesianProduct
                 | IR::ValueHashJoin { .. }
                 | IR::Argument
