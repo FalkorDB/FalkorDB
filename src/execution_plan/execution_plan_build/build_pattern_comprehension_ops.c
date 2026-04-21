@@ -137,7 +137,7 @@ void buildPatternComprehensionOps
 			raxFree(bound_vars);
 		}
 
-		// constuct sub execution-plan resolving path
+		// construct sub execution-plan resolving path
 		match_stream = ExecutionPlan_BuildOpsFromPath(plan, arguments, path);
 		match_streams[i] = match_stream;
 
