@@ -10,9 +10,26 @@
 #include "execution_plan_util.h"
 #include "execution_plan_construct.h"
 #include "../../util/rax_extensions.h"
+#include "../../util/rmalloc.h"
 #include "../../ast/ast_build_filter_tree.h"
 #include "../execution_plan_build/execution_plan_modify.h"
 #include "../../arithmetic/arithmetic_expression_construct.h"
+
+// returns true if `needle` is `root` or one of its descendants in the AST
+static bool _ast_contains
+(
+	const cypher_astnode_t *root,
+	const cypher_astnode_t *needle
+) {
+	if(root == needle) return true;
+	uint nchildren = cypher_astnode_nchildren(root);
+	for(uint i = 0; i < nchildren; i++) {
+		if(_ast_contains(cypher_astnode_get_child(root, i), needle)) {
+			return true;
+		}
+	}
+	return false;
+}
 
 // build pattern comprehension plan operations for example:
 // RETURN [p = (n)-->() | p] AS ps
@@ -60,14 +77,31 @@ void buildPatternComprehensionOps
 	AST *prev_ast = QueryCtx_GetAST();
 	QueryCtx_SetAST(plan->ast_segment);
 
-	const char **arguments = NULL;
-	if(root->childCount > 0) {
-		// get the bound variable to use when building the traversal ops
-		rax *bound_vars = raxNew();
-		ExecutionPlan_BoundVariables(root->children[0], bound_vars,
-			root->children[0]->plan);
-		arguments = (const char **)raxValues(bound_vars);
-		raxFree(bound_vars);
+	// for each pattern comprehension determine its enclosing pattern
+	// comprehension (if any). pcs are returned in pre-order DFS, so a parent
+	// pattern comprehension always appears before its children.
+	// `parent_idx[i]` is the index of the deepest enclosing pattern
+	// comprehension, or -1 if pcs[i] is not nested inside another pattern
+	// comprehension.
+	int *parent_idx = rm_malloc(count * sizeof(int));
+
+	// `match_streams[i]` holds the path traversal sub-plan built for pcs[i].
+	// nested pattern comprehensions are anchored on their parent's match
+	// stream so that variables introduced by the outer pattern are bound
+	// when the inner pattern is evaluated.
+	OpBase **match_streams = rm_calloc(count, sizeof(OpBase *));
+
+	for(uint i = 0; i < count; i++) {
+		parent_idx[i] = -1;
+		for(uint j = 0; j < i; j++) {
+			if(_ast_contains(pcs[j], pcs[i])) {
+				// pcs[j] encloses pcs[i] - keep the deepest such j
+				if(parent_idx[i] == -1 ||
+				   _ast_contains(pcs[parent_idx[i]], pcs[j])) {
+					parent_idx[i] = (int)j;
+				}
+			}
+		}
 	}
 
 	for (uint i = 0; i < count; i++) {
@@ -80,8 +114,32 @@ void buildPatternComprehensionOps
 		pc = pcs[i];
 		path = cypher_ast_pattern_comprehension_get_pattern(pc);
 
+		// determine the anchor operation under which this pattern
+		// comprehension's apply will be installed. for nested pattern
+		// comprehensions the anchor is the enclosing pattern's match stream
+		// so that variables introduced by the outer pattern (e.g. `p` in
+		// `[(i)-->(p) | p { worksFor: [(p)-->(o) | o] }]`) are bound when
+		// resolving the inner traversal
+		OpBase *anchor = NULL;
+		if(parent_idx[i] >= 0) {
+			anchor = match_streams[parent_idx[i]];
+		} else if(root->childCount > 0) {
+			anchor = root->children[0];
+		}
+
+		// collect the variables bound under the anchor; these are passed as
+		// arguments to the traversal sub-plan
+		const char **arguments = NULL;
+		if(anchor != NULL) {
+			rax *bound_vars = raxNew();
+			ExecutionPlan_BoundVariables(anchor, bound_vars, anchor->plan);
+			arguments = (const char **)raxValues(bound_vars);
+			raxFree(bound_vars);
+		}
+
 		// constuct sub execution-plan resolving path
 		match_stream = ExecutionPlan_BuildOpsFromPath(plan, arguments, path);
+		match_streams[i] = match_stream;
 
 		// construct evaluation expression
 		// [(a)-[]->(z) | z.v] `z.v` is the evaluation expression
@@ -119,23 +177,28 @@ void buildPatternComprehensionOps
 			}
 		}
 
-		// in case the execution-plan had child operations we need to combine
-		// records coming out of our newly constucted aggregation with the rest
-		// of the execution-plan, use APPLY to do so
-		// otherwise (no children) RETURN [() | n.v] simply set `root`
-		if(root->childCount > 0) {
+		// combine the aggregation with the rest of the execution plan via
+		// an APPLY operation. for nested pattern comprehensions the apply
+		// is pushed below the enclosing pattern's match stream so the inner
+		// result is computed for each row produced by the outer traversal.
+		// when there is no anchor (e.g. RETURN [() | n.v]) simply attach
+		// the aggregation directly to the root.
+		if(anchor != NULL) {
 			OpBase *apply_op = NewApplyOp(plan);
-			ExecutionPlan_PushBelow(root->children[0], apply_op);
+			ExecutionPlan_PushBelow(anchor, apply_op);
 			ExecutionPlan_AddOp(apply_op, aggregate);
 		} else {
 			ExecutionPlan_AddOp(root, aggregate);
 		}
+
+		if(arguments != NULL) arr_free(arguments);
 	}
 
 	// restore AST
 	QueryCtx_SetAST(prev_ast);
 
-	if(arguments != NULL) arr_free(arguments);
+	rm_free(parent_idx);
+	rm_free(match_streams);
 	arr_free(pcs);
 }
 

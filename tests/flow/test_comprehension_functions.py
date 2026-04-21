@@ -314,6 +314,44 @@ class testComprehensionFunctions(FlowTestsBase):
                            ['v3', 1]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
+    def test16b_nested_pattern_comprehension_outer_scope(self):
+        # Inner pattern comprehensions must be able to reference variables
+        # introduced by the enclosing pattern comprehension (e.g. `p` below).
+        # Reproduces the issue where the inner comprehension previously
+        # produced NULL because `p` was not bound in its scope.
+        self.graph.delete()
+        self.graph.query("CREATE (:Issue {id:1})-[:RAISED_BY]->"
+                         "(:Person {name:'Alice'})-[:WORKS_FOR]->"
+                         "(:Organization {name:'Acme'})")
+
+        query = """MATCH (i:Issue)
+                   RETURN [(i)-[:RAISED_BY]->(p:Person) |
+                           p { .name,
+                               worksFor: [(p)-[:WORKS_FOR]->(o:Organization) |
+                                          o { .name }] }][0] AS raisedBy"""
+        actual_result = self.graph.query(query)
+        expected_result = [[{'name': 'Alice',
+                             'worksFor': [{'name': 'Acme'}]}]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
+
+        # Triple-nested pattern comprehensions
+        query = """MATCH (i:Issue)
+                   RETURN [(i)-[:RAISED_BY]->(p:Person) |
+                           p { .name,
+                               worksFor: [(p)-[:WORKS_FOR]->(o:Organization) |
+                                          o { .name,
+                                              employs: [(o)<-[:WORKS_FOR]-(p2:Person) |
+                                                        p2.name] }] }][0] AS r"""
+        actual_result = self.graph.query(query)
+        expected_result = [[{'name': 'Alice',
+                             'worksFor': [{'name': 'Acme',
+                                           'employs': ['Alice']}]}]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
+
+        # Restore the populated graph for subsequent tests
+        self.graph.delete()
+        self.populate_graph()
+
     def test17_pattern_comprehension_in_aggregation(self):
         # Perform pattern comprehension as an aggregation key
         query = """UNWIND range(1, 3) AS x MATCH (a) RETURN COUNT(a) AS v, [p=(a)-[]->(b) | b.val] AS w ORDER BY v, w"""
