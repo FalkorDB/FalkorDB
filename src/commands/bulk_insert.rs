@@ -15,6 +15,9 @@ use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
+/// Number of records to process between yields to Redis.
+const YIELD_INTERVAL: usize = 10_000;
+
 // Binary property type markers (matching Python bulk loader's TYPE enum)
 const BI_NULL: u8 = 0;
 const BI_BOOL: u8 = 1;
@@ -154,6 +157,7 @@ fn parse_header(
 }
 
 fn process_node_token(
+    ctx: &Context,
     g: &mut Graph,
     data: &[u8],
     node_ids: &[NodeId],
@@ -170,6 +174,7 @@ fn process_node_token(
     let mut label_matrix = Matrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
     let mut attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>> = FxHashMap::default();
 
+    let mut records_since_yield = 0usize;
     while idx < data.len() {
         let node_id = node_ids[*node_id_cursor];
         *node_id_cursor += 1;
@@ -193,6 +198,12 @@ fn process_node_token(
         if !node_attrs.is_empty() {
             attrs.insert(raw_id, node_attrs);
         }
+
+        records_since_yield += 1;
+        if records_since_yield >= YIELD_INTERVAL {
+            records_since_yield = 0;
+            unsafe { ffi::yield_ctx(ctx.ctx, ffi::YIELD_FLAG_CLIENTS) };
+        }
     }
 
     // Create nodes
@@ -211,6 +222,7 @@ fn process_node_token(
 }
 
 fn process_edge_token(
+    ctx: &Context,
     g: &mut Graph,
     data: &[u8],
     rel_ids: &[RelationshipId],
@@ -234,6 +246,7 @@ fn process_edge_token(
     let mut rels: FxHashMap<RelationshipId, PendingRelationship> = FxHashMap::default();
     let mut rel_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>> = FxHashMap::default();
 
+    let mut records_since_yield = 0usize;
     while idx < data.len() {
         let src_id = read_u64_ne(data, &mut idx)?;
         let dst_id = read_u64_ne(data, &mut idx)?;
@@ -259,6 +272,12 @@ fn process_edge_token(
 
         if !edge_attrs.is_empty() {
             rel_attrs.insert(rel_id.into(), edge_attrs);
+        }
+
+        records_since_yield += 1;
+        if records_since_yield >= YIELD_INTERVAL {
+            records_since_yield = 0;
+            unsafe { ffi::yield_ctx(ctx.ctx, ffi::YIELD_FLAG_CLIENTS) };
         }
     }
 
@@ -365,19 +384,17 @@ pub fn graph_bulk_insert(
         let mut node_id_cursor = 0usize;
         let mut rel_id_cursor = 0usize;
 
-        // Process node tokens, yielding to Redis between each token
+        // Process node tokens, yielding to Redis periodically
         // so the server stays responsive (e.g. PING)
         for i in 0..node_token_count {
             let data = tokens[i].as_slice();
-            process_node_token(&mut g, data, &node_ids, &mut node_id_cursor)?;
-            unsafe { ffi::yield_ctx(ctx.ctx, ffi::YIELD_FLAG_CLIENTS) };
+            process_node_token(ctx, &mut g, data, &node_ids, &mut node_id_cursor)?;
         }
 
         // Process edge tokens
         for i in 0..rel_token_count {
             let data = tokens[node_token_count + i].as_slice();
-            process_edge_token(&mut g, data, &rel_ids, &mut rel_id_cursor)?;
-            unsafe { ffi::yield_ctx(ctx.ctx, ffi::YIELD_FLAG_CLIENTS) };
+            process_edge_token(ctx, &mut g, data, &rel_ids, &mut rel_id_cursor)?;
         }
 
         // Commit attribute stores
