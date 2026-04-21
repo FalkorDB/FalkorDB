@@ -50,7 +50,7 @@ SIValue AR_TOMAP
 // the first argument is the projected entity (node, edge, map or null)
 // if the entity is null, the entire map projection evaluates to null
 // (matching openCypher / Neo4j semantics)
-// the remaining arguments are key/value pairs:
+// the remaining arguments are key/value pairs forwarded to AR_TOMAP:
 // argv[1], argv[3], ... = keys
 // argv[2], argv[4], ... = values
 SIValue AR_TOMAP_PROJECTION
@@ -67,28 +67,8 @@ SIValue AR_TOMAP_PROJECTION
 		return SI_NullVal();
 	}
 
-	// validate number of key/value arguments is even
-	int kv_argc = argc - 1;
-	if(kv_argc % 2 != 0) {
-		ErrorCtx_RaiseRuntimeException("map expects even number of elements");
-	}
-
-	SIValue map = SI_Map(kv_argc / 2);
-
-	for(int i = 1; i < argc; i += 2) {
-		SIValue key = argv[i];
-		SIValue val = argv[i + 1];
-
-		// make sure key is a string
-		if(!(SI_TYPE(key) & T_STRING)) {
-			Error_SITypeMismatch(key, T_STRING);
-			break;
-		}
-
-		Map_Add(&map, key, val);
-	}
-
-	return map;
+	// delegate to AR_TOMAP, skipping the projected entity argument
+	return AR_TOMAP(argv + 1, argc - 1, private_data);
 }
 
 SIValue AR_KEYS(SIValue *argv, int argc, void *private_data) {
