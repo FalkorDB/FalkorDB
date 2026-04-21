@@ -160,6 +160,32 @@ fn parse_header(
     Ok((labels, prop_names))
 }
 
+fn flush_node_batch(
+    g: &mut Graph,
+    nodes_bitmap: &mut RoaringTreemap,
+    label_matrix: &mut Matrix,
+    attrs: &mut FxHashMap<u64, OrderMap<Arc<String>, Value>>,
+) -> Result<(), String> {
+    if nodes_bitmap.is_empty() {
+        return Ok(());
+    }
+
+    g.create_nodes(nodes_bitmap);
+
+    let mut index_add_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+    g.set_nodes_labels(label_matrix, &mut index_add_docs);
+
+    if !attrs.is_empty() {
+        g.set_nodes_attributes(attrs, &mut index_add_docs)?;
+    }
+
+    nodes_bitmap.clear();
+    *label_matrix = Matrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
+    attrs.clear();
+
+    Ok(())
+}
+
 fn process_node_token(
     ctx: &Context,
     g: &mut Graph,
@@ -173,12 +199,12 @@ fn process_node_token(
     // Get or create label IDs
     let label_ids: Vec<_> = labels.iter().map(|l| g.get_label_id_mut(l)).collect();
 
-    // Process node records
+    // Process node records in batches, flushing to graph and yielding periodically
     let mut nodes_bitmap = RoaringTreemap::new();
     let mut label_matrix = Matrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
     let mut attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>> = FxHashMap::default();
 
-    let mut records_since_yield = 0usize;
+    let mut records_in_batch = 0usize;
     while idx < data.len() {
         if *node_id_cursor >= node_ids.len() {
             return Err("bulk data contains more node records than advertised count".to_string());
@@ -206,24 +232,38 @@ fn process_node_token(
             attrs.insert(raw_id, node_attrs);
         }
 
-        records_since_yield += 1;
-        if records_since_yield >= YIELD_INTERVAL {
-            records_since_yield = 0;
+        records_in_batch += 1;
+        if records_in_batch >= YIELD_INTERVAL {
+            flush_node_batch(g, &mut nodes_bitmap, &mut label_matrix, &mut attrs)?;
+            records_in_batch = 0;
             unsafe { ffi::yield_ctx(ctx.ctx, ffi::YIELD_FLAG_CLIENTS) };
         }
     }
 
-    // Create nodes
-    g.create_nodes(&nodes_bitmap);
+    // Flush remaining
+    flush_node_batch(g, &mut nodes_bitmap, &mut label_matrix, &mut attrs)?;
 
-    // Set labels
-    let mut index_add_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
-    g.set_nodes_labels(&mut label_matrix, &mut index_add_docs);
+    Ok(())
+}
 
-    // Set attributes
-    if !attrs.is_empty() {
-        g.set_nodes_attributes(&attrs, &mut index_add_docs)?;
+fn flush_edge_batch(
+    g: &mut Graph,
+    rels: &mut FxHashMap<RelationshipId, PendingRelationship>,
+    rel_attrs: &mut FxHashMap<u64, OrderMap<Arc<String>, Value>>,
+    index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
+) -> Result<(), String> {
+    if rels.is_empty() {
+        return Ok(());
     }
+
+    g.create_relationships(rels);
+
+    if !rel_attrs.is_empty() {
+        g.set_relationships_attributes(rel_attrs, index_add_edge_docs)?;
+    }
+
+    rels.clear();
+    rel_attrs.clear();
 
     Ok(())
 }
@@ -249,11 +289,12 @@ fn process_edge_token(
     // Ensure the relationship type exists
     g.get_type_id_mut(&type_name);
 
-    // Process edge records
+    // Process edge records in batches, flushing to graph and yielding periodically
     let mut rels: FxHashMap<RelationshipId, PendingRelationship> = FxHashMap::default();
     let mut rel_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>> = FxHashMap::default();
+    let mut index_add_edge_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
 
-    let mut records_since_yield = 0usize;
+    let mut records_in_batch = 0usize;
     while idx < data.len() {
         if *rel_id_cursor >= rel_ids.len() {
             return Err("bulk data contains more edge records than advertised count".to_string());
@@ -284,20 +325,16 @@ fn process_edge_token(
             rel_attrs.insert(rel_id.into(), edge_attrs);
         }
 
-        records_since_yield += 1;
-        if records_since_yield >= YIELD_INTERVAL {
-            records_since_yield = 0;
+        records_in_batch += 1;
+        if records_in_batch >= YIELD_INTERVAL {
+            flush_edge_batch(g, &mut rels, &mut rel_attrs, &mut index_add_edge_docs)?;
+            records_in_batch = 0;
             unsafe { ffi::yield_ctx(ctx.ctx, ffi::YIELD_FLAG_CLIENTS) };
         }
     }
 
-    // Create relationships
-    g.create_relationships(&rels);
-
-    // Set attributes
-    if !rel_attrs.is_empty() {
-        g.set_relationships_attributes(&rel_attrs)?;
-    }
+    // Flush remaining
+    flush_edge_batch(g, &mut rels, &mut rel_attrs, &mut index_add_edge_docs)?;
 
     Ok(())
 }
