@@ -54,6 +54,7 @@ use super::ops::cond_var_len_traverse::CondVarLenTraverseOp;
 use super::ops::create::CreateOp;
 use super::ops::delete::DeleteOp;
 use super::ops::distinct::DistinctOp;
+use super::ops::edge_by_index_scan::EdgeByIndexScanOp;
 use super::ops::expand_into::ExpandIntoOp;
 use super::ops::filter::FilterOp;
 use super::ops::foreach::ForEachOp;
@@ -627,6 +628,8 @@ pub enum BatchOp<'a> {
     NodeByIdSeek(NodeByIdSeekOp<'a>),
     /// Scan nodes by index.
     NodeByIndexScan(NodeByIndexScanOp<'a>),
+    /// Scan edges by index.
+    EdgeByIndexScan(EdgeByIndexScanOp<'a>),
     /// Cartesian product of sub-plans.
     CartesianProduct(CartesianProductOp<'a>),
     /// Correlated sub-query execution.
@@ -708,6 +711,7 @@ impl<'a> BatchOp<'a> {
             Self::ExpandInto(op) => op.child.set_argument_batch(batch),
             Self::NodeByIdSeek(op) => op.child.set_argument_batch(batch),
             Self::NodeByIndexScan(op) => op.child.set_argument_batch(batch),
+            Self::EdgeByIndexScan(op) => op.child.set_argument_batch(batch),
             Self::CartesianProduct(op) => {
                 for right_child in &mut op.right_children {
                     let cloned: Vec<Env<'a>> = batch
@@ -787,6 +791,7 @@ impl<'a> BatchOp<'a> {
             Self::ExpandInto(op) => Some((op.runtime, op.idx)),
             Self::NodeByIdSeek(op) => Some((op.runtime, op.idx)),
             Self::NodeByIndexScan(op) => Some((op.runtime, op.idx)),
+            Self::EdgeByIndexScan(op) => Some((op.runtime, op.idx)),
             Self::CartesianProduct(op) => Some((op.runtime, op.idx)),
             Self::Apply(op) => Some((op.runtime, op.idx)),
             Self::SemiApply(op) => Some((op.runtime, op.idx)),
@@ -843,6 +848,7 @@ impl<'a> Iterator for BatchOp<'a> {
             Self::ExpandInto(op) => op.next(),
             Self::NodeByIdSeek(op) => op.next(),
             Self::NodeByIndexScan(op) => op.next(),
+            Self::EdgeByIndexScan(op) => op.next(),
             Self::CartesianProduct(op) => op.next(),
             Self::Apply(op) => op.next(),
             Self::SemiApply(op) => op.next(),

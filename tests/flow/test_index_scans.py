@@ -1232,3 +1232,18 @@ class testIndexScanFlow():
         res = self.graph.query(q, {'entries': entries}).result_set
         self.env.assertEqual(len(res), 1)
 
+    def test_35_non_indexable_literal_retains_filter(self):
+        # Regression (PR #393 review): `WHERE n.v = [1,2,3]` must not
+        # drop the filter. At plan time we can't prove the list is
+        # indexable, and at runtime `can_utilize_index` rejects it
+        # — without the retained filter the scan falls back to all
+        # nodes of the label and returns every one.
+        self.graph.query("CREATE (:L {v: 1})")
+        self.graph.query("CREATE (:L {v: 2})")
+        self.graph.create_node_range_index('L', 'v')
+        wait_for_indices_to_sync(self.graph)
+
+        q = "MATCH (n:L) WHERE n.v = [1, 2, 3] RETURN n.v"
+        res = self.graph.query(q).result_set
+        # `n.v` is a scalar int, never a list — no row should match.
+        self.env.assertEqual(res, [])

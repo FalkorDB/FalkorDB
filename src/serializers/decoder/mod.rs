@@ -300,6 +300,16 @@ fn rebuild_indexes(
     indexes: &[IndexInfo],
 ) {
     for info in indexes {
+        // `IndexInfo::entity_type` is set to `"NODE"` or
+        // `"RELATIONSHIP"` by `Graph::index_info` when the schema is
+        // captured on encode — honor it here so an edge index doesn't
+        // get rebuilt as a node index on decode (which would also
+        // collide with any node label that shares the name).
+        let entity_type = match info.entity_type.as_str() {
+            "RELATIONSHIP" => EntityType::Relationship,
+            _ => EntityType::Node,
+        };
+
         for (attr_name, fields) in &info.fields {
             for field in fields {
                 // The Field.name includes the type prefix (e.g. "range:val").
@@ -317,7 +327,7 @@ fn rebuild_indexes(
 
                 if let Err(e) = graph.create_index_sync(
                     &field.ty,
-                    &EntityType::Node,
+                    &entity_type,
                     &info.label,
                     &vec![attr],
                     options,

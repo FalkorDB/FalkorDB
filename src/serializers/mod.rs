@@ -275,93 +275,125 @@ impl Encode<19> for Schema {
             w.write_unsigned(i as u64);
             w.write_buffer(&null_terminated(label));
 
-            let label_indices: Vec<_> = self
+            // Only include NODE indexes here — edge indexes are
+            // encoded under the relationship-schema block below.
+            // Without the entity_type filter, an edge index on a
+            // type whose name collides with a node label would be
+            // written as if it belonged to the node schema.
+            let label_indices: Vec<&IndexInfo> = self
                 .indexes
                 .iter()
-                .filter(|info| info.label.as_str() == label.as_str())
+                .filter(|info| {
+                    info.label.as_str() == label.as_str() && info.entity_type != "RELATIONSHIP"
+                })
                 .collect();
-
-            let has_index = !label_indices.is_empty();
-            w.write_unsigned(u64::from(has_index));
-
-            if has_index {
-                let language = label_indices
-                    .first()
-                    .and_then(|info| info.language.as_ref())
-                    .map_or("english", |l| l.as_str());
-                w.write_buffer(&null_terminated(language));
-
-                let stopwords: Vec<_> = label_indices
-                    .first()
-                    .and_then(|info| info.stopwords.as_ref())
-                    .map(|sw| sw.iter().map(|s| s.as_str()).collect())
-                    .unwrap_or_default();
-                w.write_unsigned(stopwords.len() as u64);
-                for sw in &stopwords {
-                    w.write_buffer(&null_terminated(sw));
-                }
-
-                let all_fields: Vec<_> = label_indices
-                    .iter()
-                    .flat_map(|info| info.fields.values().flatten())
-                    .collect();
-                w.write_unsigned(all_fields.len() as u64);
-                for f in &all_fields {
-                    let name = f.name.to_str().unwrap_or("");
-                    w.write_buffer(&null_terminated(name));
-
-                    let field_type = match f.ty {
-                        IndexType::Fulltext => index_field_type::INDEX_FLD_FULLTEXT,
-                        IndexType::Range => {
-                            index_field_type::INDEX_FLD_NUMERIC
-                                | index_field_type::INDEX_FLD_STR
-                                | index_field_type::INDEX_FLD_GEO
-                        }
-                        IndexType::Vector => index_field_type::INDEX_FLD_VECTOR,
-                    };
-                    w.write_unsigned(field_type);
-
-                    let opts = f.options();
-                    w.write_double(opts.and_then(|o| o.weight).unwrap_or(1.0));
-                    w.write_unsigned(u64::from(opts.and_then(|o| o.nostem).unwrap_or(false)));
-                    let phonetic = opts.and_then(|o| o.phonetic).map_or(String::new(), |p| {
-                        if p {
-                            "dm:en".to_string()
-                        } else {
-                            String::new()
-                        }
-                    });
-                    w.write_buffer(&null_terminated(&phonetic));
-
-                    if field_type & index_field_type::INDEX_FLD_VECTOR != 0
-                        && let Some(vopts) = f.vector_options()
-                    {
-                        w.write_unsigned(u64::from(vopts.dimension));
-                        w.write_unsigned(vopts.m.unwrap_or(16) as u64);
-                        w.write_unsigned(vopts.ef_construction.unwrap_or(200) as u64);
-                        w.write_unsigned(vopts.ef_runtime.unwrap_or(10) as u64);
-                        // similarity function: 0 = cosine (default)
-                        let sim = match vopts.similarity_function.as_deref() {
-                            Some("L2") => 1u64,
-                            Some("IP") => 2u64,
-                            _ => 0u64,
-                        };
-                        w.write_unsigned(sim);
-                    }
-                }
-            }
+            encode_schema_index_block(w, &label_indices);
 
             // Constraints (not implemented yet)
             w.write_unsigned(0);
         }
 
         // --- Relation schemas ---
+        // Symmetric to the node block: write the edge-index blob for
+        // each relationship type so indexes survive RDB save/reload.
+        // Matches FalkorDB C's `_RdbSaveSchema`, which uses a single
+        // codepath for node and edge schemas.
         w.write_unsigned(self.relationship_types.len() as u64);
         for (i, type_name) in self.relationship_types.iter().enumerate() {
             w.write_unsigned(i as u64);
             w.write_buffer(&null_terminated(type_name));
-            w.write_unsigned(0); // no indices
-            w.write_unsigned(0); // no constraints
+
+            let type_indices: Vec<&IndexInfo> = self
+                .indexes
+                .iter()
+                .filter(|info| {
+                    info.label.as_str() == type_name.as_str() && info.entity_type == "RELATIONSHIP"
+                })
+                .collect();
+            encode_schema_index_block(w, &type_indices);
+
+            // Constraints (not implemented yet)
+            w.write_unsigned(0);
+        }
+    }
+}
+
+/// Write the `has_index + [language/stopwords/fields]` block that
+/// lives inside a schema entry. Shared by the node and relation
+/// encode paths so the two can't drift; the matching decoder is
+/// `decode_schema_entry`.
+fn encode_schema_index_block(
+    w: &mut dyn Writer,
+    infos: &[&IndexInfo],
+) {
+    let has_index = !infos.is_empty();
+    w.write_unsigned(u64::from(has_index));
+    if !has_index {
+        return;
+    }
+
+    let language = infos
+        .first()
+        .and_then(|info| info.language.as_ref())
+        .map_or("english", |l| l.as_str());
+    w.write_buffer(&null_terminated(language));
+
+    let stopwords: Vec<&str> = infos
+        .first()
+        .and_then(|info| info.stopwords.as_ref())
+        .map(|sw| sw.iter().map(|s| s.as_str()).collect())
+        .unwrap_or_default();
+    w.write_unsigned(stopwords.len() as u64);
+    for sw in &stopwords {
+        w.write_buffer(&null_terminated(sw));
+    }
+
+    let all_fields: Vec<_> = infos
+        .iter()
+        .flat_map(|info| info.fields.values().flatten())
+        .collect();
+    w.write_unsigned(all_fields.len() as u64);
+    for f in &all_fields {
+        let name = f.name.to_str().unwrap_or("");
+        w.write_buffer(&null_terminated(name));
+
+        let field_type = match f.ty {
+            IndexType::Fulltext => index_field_type::INDEX_FLD_FULLTEXT,
+            IndexType::Range => {
+                index_field_type::INDEX_FLD_NUMERIC
+                    | index_field_type::INDEX_FLD_STR
+                    | index_field_type::INDEX_FLD_GEO
+            }
+            IndexType::Vector => index_field_type::INDEX_FLD_VECTOR,
+        };
+        w.write_unsigned(field_type);
+
+        let opts = f.options();
+        w.write_double(opts.and_then(|o| o.weight).unwrap_or(1.0));
+        w.write_unsigned(u64::from(opts.and_then(|o| o.nostem).unwrap_or(false)));
+        let phonetic = opts.and_then(|o| o.phonetic).map_or(String::new(), |p| {
+            if p {
+                "dm:en".to_string()
+            } else {
+                String::new()
+            }
+        });
+        w.write_buffer(&null_terminated(&phonetic));
+
+        if field_type & index_field_type::INDEX_FLD_VECTOR != 0
+            && let Some(vopts) = f.vector_options()
+        {
+            w.write_unsigned(u64::from(vopts.dimension));
+            w.write_unsigned(vopts.m.unwrap_or(16) as u64);
+            w.write_unsigned(vopts.ef_construction.unwrap_or(200) as u64);
+            w.write_unsigned(vopts.ef_runtime.unwrap_or(10) as u64);
+            // similarity function: 0 = cosine (default)
+            let sim = match vopts.similarity_function.as_deref() {
+                Some("L2") => 1u64,
+                Some("IP") => 2u64,
+                _ => 0u64,
+            };
+            w.write_unsigned(sim);
         }
     }
 }
@@ -385,17 +417,28 @@ impl Decode<19> for Schema {
             let label = Arc::new(label);
             if let Some(mut info) = info {
                 info.label = label.clone();
+                info.entity_type = String::from("NODE");
                 indexes.push(info);
             }
             node_labels.push(label);
         }
 
         // --- Relation schemas ---
+        // Symmetric to the node block: preserve any `IndexInfo` the
+        // encoder wrote and stamp it as RELATIONSHIP so
+        // `rebuild_indexes` calls `create_index_sync` with the right
+        // entity type.
         let rel_schema_count = r.read_unsigned()?;
         let mut relationship_types = Vec::with_capacity(rel_schema_count as usize);
         for _ in 0..rel_schema_count {
-            let (schema_name, _) = decode_schema_entry(r)?;
-            relationship_types.push(Arc::new(schema_name));
+            let (type_name, info) = decode_schema_entry(r)?;
+            let type_name = Arc::new(type_name);
+            if let Some(mut info) = info {
+                info.label = type_name.clone();
+                info.entity_type = String::from("RELATIONSHIP");
+                indexes.push(info);
+            }
+            relationship_types.push(type_name);
         }
 
         Ok(Self {
@@ -444,6 +487,11 @@ fn decode_schema_entry(r: &mut dyn Reader) -> Result<(String, Option<IndexInfo>)
             } else {
                 Some(stopwords)
             },
+            // Left empty here: this helper is shared by the node and
+            // relation-schema decode blocks and doesn't know which
+            // one called it. Each caller stamps the appropriate
+            // `entity_type` on the returned info.
+            entity_type: String::new(),
         })
     } else {
         None
