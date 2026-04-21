@@ -63,7 +63,13 @@ use std::{
     },
 };
 
-use crate::runtime::value::Value;
+use crate::{
+    index::redisearch::redis::{
+        RedisModule_FreeThreadSafeContext, RedisModule_GetThreadSafeContext,
+        RedisModule_ThreadSafeContextLock, RedisModule_ThreadSafeContextUnlock,
+    },
+    runtime::value::Value,
+};
 
 /// Allocate a C array compatible with RediSearch's `array_free`.
 ///
@@ -414,7 +420,7 @@ impl Iterator for EdgeTripleIter {
                 return None;
             }
             let triple = ptr.read_unaligned();
-            Some((triple[0], triple[1], triple[2]))
+            Some(triple.into())
         }
     }
 }
@@ -711,7 +717,22 @@ impl Index {
             }
 
             let clabel = CString::new(label.as_str()).map_err(|e| e.to_string())?;
+
+            // RediSearch_CreateIndex requires the Redis GIL.
+            let ctx = RedisModule_GetThreadSafeContext
+                .expect("RedisModule_GetThreadSafeContext not initialized")(
+                std::ptr::null_mut()
+            );
+            RedisModule_ThreadSafeContextLock
+                .expect("RedisModule_ThreadSafeContextLock not initialized")(ctx);
+
             self.rs_idx = RediSearch_CreateIndex(clabel.as_ptr().cast::<c_char>(), options);
+
+            RedisModule_ThreadSafeContextUnlock
+                .expect("RedisModule_ThreadSafeContextUnlock not initialized")(ctx);
+            RedisModule_FreeThreadSafeContext
+                .expect("RedisModule_FreeThreadSafeContext not initialized")(ctx);
+
             RediSearch_FreeIndexOptions(options);
 
             // Create the special NONE_INDEXABLE_FIELDS tag field used for

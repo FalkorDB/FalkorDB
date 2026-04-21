@@ -81,7 +81,7 @@ fn compound_key(
     dst: u64,
 ) -> u64 {
     assert!(
-        src <= u64::from(u32::MAX) && dst <= u64::from(u32::MAX),
+        u32::try_from(src).is_ok() && u32::try_from(dst).is_ok(),
         "Tensor compound key overflow: src={src}, dst={dst} (each must fit in u32)",
     );
     (src << 32) | dst

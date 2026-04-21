@@ -145,7 +145,10 @@ fn parse_header(
 ) -> Result<(Vec<String>, Vec<Arc<String>>), String> {
     // Read colon-delimited label/type names
     let labels_str = read_cstring(data, idx)?;
-    let labels: Vec<String> = labels_str.split(':').map(|s| s.to_string()).collect();
+    let labels: Vec<String> = labels_str
+        .split(':')
+        .map(std::string::ToString::to_string)
+        .collect();
 
     // Read property count (4 bytes)
     let prop_count = read_u32_ne(data, idx)? as usize;
@@ -367,8 +370,7 @@ pub fn graph_bulk_insert(
             .is_some()
         {
             return Err(redis_module::RedisError::String(format!(
-                "Graph with name '{}' cannot be created, as key '{}' already exists.",
-                key_str, key_str
+                "Graph with name '{key_str}' cannot be created, as key '{key_str}' already exists."
             )));
         }
         let g = Arc::new(RwLock::new(ThreadedGraph::new(

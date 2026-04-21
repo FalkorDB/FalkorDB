@@ -213,16 +213,14 @@ pub fn register(funcs: &mut Functions) {
                                     }
                                     // Companion array fields, present only
                                     // for range indexes.
-                                    if let Some(arr_name) = field.numeric_arr_name() {
-                                        if let Ok(s) = arr_name.to_str() {
+                                    if let Some(arr_name) = field.numeric_arr_name()
+                                        && let Ok(s) = arr_name.to_str() {
                                             rs_field_names.push(s.to_string());
                                         }
-                                    }
-                                    if let Some(arr_name) = field.string_arr_name() {
-                                        if let Ok(s) = arr_name.to_str() {
+                                    if let Some(arr_name) = field.string_arr_name()
+                                        && let Ok(s) = arr_name.to_str() {
                                             rs_field_names.push(s.to_string());
                                         }
-                                    }
                                 }
                             }
                             // Sentinel field used by the engine to track

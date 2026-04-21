@@ -72,7 +72,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 
 use atomic_refcell::AtomicRefCell;
 use itertools::Itertools;
@@ -2319,7 +2319,7 @@ impl Graph {
             // — skipped below.
             let mut pending: FxHashSet<u64> = ids.iter().collect();
             let mut endpoints: FxHashMap<u64, (u64, u64)> =
-                FxHashMap::with_capacity_and_hasher(ids.len() as usize, Default::default());
+                FxHashMap::with_capacity_and_hasher(ids.len() as usize, FxBuildHasher);
             if let Some(t) = self.relationship_matrices.get(type_id as usize) {
                 for (src, dst, eid) in t.iter(0, u64::MAX, false) {
                     if pending.remove(&eid) {
@@ -2431,7 +2431,7 @@ impl Graph {
             EntityType::Relationship => {
                 let total = self
                     .get_relationship_matrix(label)
-                    .map_or(0, |t| t.edge_count());
+                    .map_or(0, Tensor::edge_count);
                 (&mut self.edge_indexer, total, IndexKind::Edge)
             }
         };
@@ -2510,14 +2510,13 @@ impl Graph {
         &self,
         label: &Arc<String>,
     ) -> Vec<(NodeId, NodeId, RelationshipId)> {
-        if let Some(tensor) = self.get_relationship_matrix(label) {
-            tensor
-                .iter(0, u64::MAX, false)
-                .map(|(src, dst, eid)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
-                .collect()
-        } else {
-            vec![]
-        }
+        self.get_relationship_matrix(label)
+            .map_or_else(std::vec::Vec::new, |tensor| {
+                tensor
+                    .iter(0, u64::MAX, false)
+                    .map(|(src, dst, eid)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
+                    .collect()
+            })
     }
 
     pub fn fulltext_query_nodes(
