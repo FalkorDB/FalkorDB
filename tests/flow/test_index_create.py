@@ -311,7 +311,7 @@ class testIndexCreationFlow():
         # 3.c. queries aren't utilizing the index while it is being constructed
 
         min_node_v = 0
-        max_node_v = 1000000 # 1 milion
+        max_node_v = 999999 # exactly 1,000,000 nodes (range is inclusive)
 
         g = Graph(self.env.getConnection(), "async-index")
 
@@ -417,7 +417,7 @@ class testIndexCreationFlow():
         # 3.c. queries aren't utilizing the index while it is being constructed
 
         min_node_v = 0
-        max_node_v = 1000000
+        max_node_v = 999999
         self.graph.delete()
 
         #-----------------------------------------------------------------------
@@ -514,7 +514,7 @@ class testIndexCreationFlow():
         # 3. delete the graph while the index is being constructed
 
         min_node_v = 0
-        max_node_v = 1000000
+        max_node_v = 999999
 
         # clear DB
         self.graph.delete()
@@ -558,7 +558,7 @@ class testIndexCreationFlow():
         # 3. delete the graph while the index is being constructed
 
         min_node_v = 0
-        max_node_v = 1000000
+        max_node_v = 999999
         conn = self.env.getConnection()
 
         #-----------------------------------------------------------------------
