@@ -552,3 +552,44 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         # make sure the same edge is returned
         self.env.assertEquals(expected, actual)
 
+    def test15_chained_optional_match_indexed_edge(self):
+        # regression test for FalkorDB/private#102:
+        # crash in UpdateCurrentAwareIds when a chained OPTIONAL MATCH feeds a
+        # NULL node into an Edge By Index Scan. The first OPTIONAL MATCH
+        # produces no row -> `able` is NULL in the record -> the second
+        # OPTIONAL MATCH performs an edge-index scan whose source aware id is
+        # derived from the NULL node, dereferencing a NULL `Node*`.
+        self.graph.delete()
+
+        # seed graph with a single node and no RELATES_TO edges
+        self.graph.query("CREATE (:Hypothesis {id:'h1'})")
+
+        # index the edge property used by the scan
+        create_edge_range_index(self.graph, "RELATES_TO", "name", sync=True)
+
+        q = """MATCH (h:Hypothesis {id:'h1'})
+               OPTIONAL MATCH (h)-[:RELATES_TO {name:'HasABLEDecomposition'}]->(able:ABLEDecomposition)
+               OPTIONAL MATCH (able)-[:RELATES_TO {name:'UsesDataSource'}]->(ds:DataSource)
+               RETURN h.id, able, ds"""
+
+        # ensure the second OPTIONAL MATCH actually plans an edge-index scan,
+        # otherwise the regression would not be exercised
+        plan = str(self.graph.explain(q))
+        self.env.assertIn("Edge By Index Scan", plan)
+
+        # must not crash; both optional sides resolve to NULL
+        res = self.graph.query(q)
+        self.env.assertEquals(res.result_set, [["h1", None, None]])
+
+        # also exercise the destination-aware code path: the second OPTIONAL
+        # MATCH treats `able` (NULL from the first OPTIONAL MATCH) as the
+        # destination of the indexed edge scan.
+        q_dest = """MATCH (h:Hypothesis {id:'h1'})
+                    OPTIONAL MATCH (h)-[:RELATES_TO {name:'HasABLEDecomposition'}]->(able:ABLEDecomposition)
+                    OPTIONAL MATCH (src:Source)-[:RELATES_TO {name:'PointsTo'}]->(able)
+                    RETURN h.id, able, src"""
+        plan_dest = str(self.graph.explain(q_dest))
+        self.env.assertIn("Edge By Index Scan", plan_dest)
+        res = self.graph.query(q_dest)
+        self.env.assertEquals(res.result_set, [["h1", None, None]])
+
