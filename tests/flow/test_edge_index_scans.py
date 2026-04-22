@@ -577,8 +577,18 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         plan = str(self.graph.explain(q))
         self.env.assertIn("Edge By Index Scan", plan)
 
-        # must not crash; both optional sides resolve to NULL
-        res = self.graph.query(q)
+        # must not crash; both optional sides resolve to NULL.
+        # Wrap so a server crash is reported as a clean assertion failure on
+        # this test instead of leaking out to tearDown as a connection error.
+        conn = self.env.getConnection()
+        try:
+            res = self.graph.query(q)
+        except redis.exceptions.ConnectionError as e:
+            self.env.assertTrue(False,
+                message=f"server crashed on chained OPTIONAL MATCH (src-aware NULL): {e}")
+            return
+        self.env.assertTrue(conn.ping(),
+            message="server is not alive after chained OPTIONAL MATCH (src-aware NULL)")
         self.env.assertEquals(res.result_set, [["h1", None, None]])
 
         # also exercise the destination-aware code path: the second OPTIONAL
@@ -590,6 +600,13 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
                     RETURN h.id, able, src"""
         plan_dest = str(self.graph.explain(q_dest))
         self.env.assertIn("Edge By Index Scan", plan_dest)
-        res = self.graph.query(q_dest)
+        try:
+            res = self.graph.query(q_dest)
+        except redis.exceptions.ConnectionError as e:
+            self.env.assertTrue(False,
+                message=f"server crashed on chained OPTIONAL MATCH (dest-aware NULL): {e}")
+            return
+        self.env.assertTrue(conn.ping(),
+            message="server is not alive after chained OPTIONAL MATCH (dest-aware NULL)")
         self.env.assertEquals(res.result_set, [["h1", None, None]])
 
