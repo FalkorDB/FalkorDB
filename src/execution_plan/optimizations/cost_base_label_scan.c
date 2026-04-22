@@ -323,25 +323,22 @@ static void _costBaseLabelScan
 	OpBase *parent = op->parent;
 	while(OpBase_Type(parent) == OPType_FILTER) parent = parent->parent;
 	OPType t = OpBase_Type(parent);
-	ASSERT(t == OPType_CONDITIONAL_TRAVERSE || t == OPType_EXPAND_INTO);
 
 	AlgebraicExpression *ae = NULL;
-	if(t == OPType_CONDITIONAL_TRAVERSE) {
-		// GRAPH.EXPLAIN g "match (n:B:A:C)-[]->() RETURN n"
-		// 1) "Results"
-		// 2) "    Project"
-		// 3) "        Conditional Traverse | (n:B:C)->(@anon_0)"
-		// 4) "            Node By Label Scan | (n:A)"
-		OpCondTraverse *op_traverse = (OpCondTraverse*)parent;
-		ae = op_traverse->ae;
-	} else {
-		// GRAPH.EXPLAIN g "MATCH (n:B:A:C) RETURN n"
-		// 1) "Results"
-		// 2) "    Project"
-		// 3) "        Expand Into | (n:A:C)->(n:A:C)"
-		// 4) "            Node By Label Scan | (n:B)"
-		OpExpandInto *op_expand = (OpExpandInto*)parent;
-		ae = op_expand->ae;
+	switch(t) {
+		case OPType_CONDITIONAL_TRAVERSE:
+		case OPType_OPTIONAL_CONDITIONAL_TRAVERSE: {
+			OpCondTraverse *op_traverse = (OpCondTraverse*)parent;
+			ae = op_traverse->ae;
+			break;
+		}
+		case OPType_EXPAND_INTO: {
+			OpExpandInto *op_expand = (OpExpandInto*)parent;
+			ae = op_expand->ae;
+			break;
+		}
+		default:
+			return;
 	}
 
 	AlgebraicExpression *operand;
