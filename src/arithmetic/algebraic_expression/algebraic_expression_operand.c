@@ -131,6 +131,7 @@ const char *AlgebraicExpression_Src
 	const AlgebraicExpression *exp = NULL;
 
 	exp = _AlgebraicExpression_SrcOperand(root, &transposed);
+	if(exp == NULL) return NULL;
 	return (transposed) ? exp->operand.dest : exp->operand.src;
 }
 
