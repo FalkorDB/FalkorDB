@@ -63,13 +63,7 @@ use std::{
     },
 };
 
-use crate::{
-    index::redisearch::redis::{
-        RedisModule_FreeThreadSafeContext, RedisModule_GetThreadSafeContext,
-        RedisModule_ThreadSafeContextLock, RedisModule_ThreadSafeContextUnlock,
-    },
-    runtime::value::Value,
-};
+use crate::runtime::value::Value;
 
 /// Allocate a C array compatible with RediSearch's `array_free`.
 ///
