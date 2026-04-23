@@ -104,27 +104,28 @@ jobs:
         . venv/bin/activate
         make flow-tests SKIP_BUILD=1 SAN=address LIST=1
 
-    - name: Run tests (unit / flow / tck in parallel)
+    - name: Run tests (unit parallel with flow+tck sequential)
       id: run_tests
       run: |
         . venv/bin/activate
         set +e
 
+        # Unit tests have no Redis dependency — run them concurrently with flow+tck.
+        # Flow and TCK tests must be sequential: both hardcode BOLT_PORT 7687 so
+        # running them simultaneously causes a port conflict and all TCK scenarios error.
         make unit-tests CLEAR_LOGS=0 SAN=address SKIP_BUILD=1 \
           > /tmp/unit.log 2>&1 &
         UNIT_PID=$!
 
         RANDPORTS=1 make flow-tests CLEAR_LOGS=0 SAN=address SKIP_BUILD=1 \
-          > /tmp/flow.log 2>&1 &
-        FLOW_PID=$!
+          > /tmp/flow.log 2>&1
+        FLOW_STATUS=$?
 
         RANDPORTS=1 make tck-tests CLEAR_LOGS=0 SAN=address SKIP_BUILD=1 \
-          > /tmp/tck.log 2>&1 &
-        TCK_PID=$!
+          > /tmp/tck.log 2>&1
+        TCK_STATUS=$?
 
         wait $UNIT_PID; UNIT_STATUS=$?
-        wait $FLOW_PID; FLOW_STATUS=$?
-        wait $TCK_PID; TCK_STATUS=$?
 
         echo "::group::Unit tests output"
         cat /tmp/unit.log
