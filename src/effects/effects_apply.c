@@ -308,7 +308,15 @@ static void ApplyLabels
 		LabelID l ;
 		fread_assert (&l, sizeof (LabelID), stream) ;
 		Schema *s = GraphContext_GetSchemaByID (gc, l, SCHEMA_NODE) ;
-		ASSERT (s != NULL) ;
+		if (s == NULL) {
+			// schema desync: label `l` does not exist locally - exit
+			// cleanly so Redis triggers a full RDB resync on restart
+			RedisModule_Log (NULL, "warning",
+					"ApplyLabels: label ID %d schema not found"
+					" - replica/primary schema desync detected, aborting",
+					l) ;
+			exit (1) ;
+		}
 		lbl[i] = Schema_GetName (s) ;
 	}
 
