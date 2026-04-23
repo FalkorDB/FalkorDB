@@ -1442,12 +1442,20 @@ static bool _expr_contains_aggregation
 
 	cypher_astnode_type_t type = cypher_astnode_type(expr);
 
-	if(type == CYPHER_AST_APPLY_OPERATOR ||
-	   type == CYPHER_AST_APPLY_ALL_OPERATOR) {
-		const cypher_astnode_t *fn =
-			cypher_ast_apply_operator_get_func_name(expr);
-		const char *name = cypher_ast_function_name_get_value(fn);
-		if(AR_FuncIsAggregate(name)) return true;
+	// count(*) is APPLY_ALL_OPERATOR — always an aggregation
+	if(type == CYPHER_AST_APPLY_ALL_OPERATOR) return true;
+
+	if(type == CYPHER_AST_APPLY_OPERATOR) {
+		// function name is always the first child
+		uint nchildren = cypher_astnode_nchildren(expr);
+		if(nchildren > 0) {
+			const cypher_astnode_t *fn = cypher_astnode_get_child(expr, 0);
+			if(cypher_astnode_type(fn) == CYPHER_AST_FUNCTION_NAME) {
+				const char *name = cypher_ast_function_name_get_value(fn);
+				if(name != NULL && AR_FuncIsAggregate(name)) return true;
+			}
+		}
+		return false;
 	}
 
 	uint nchildren = cypher_astnode_nchildren(expr);
@@ -1468,13 +1476,19 @@ static bool _expr_contains_vars_outside_agg
 
 	cypher_astnode_type_t type = cypher_astnode_type(expr);
 
-	// stop recursing into aggregation calls
-	if(type == CYPHER_AST_APPLY_OPERATOR ||
-	   type == CYPHER_AST_APPLY_ALL_OPERATOR) {
-		const cypher_astnode_t *fn =
-			cypher_ast_apply_operator_get_func_name(expr);
-		const char *name = cypher_ast_function_name_get_value(fn);
-		if(AR_FuncIsAggregate(name)) return false;
+	// count(*) never has variable children
+	if(type == CYPHER_AST_APPLY_ALL_OPERATOR) return false;
+
+	if(type == CYPHER_AST_APPLY_OPERATOR) {
+		// if it's an aggregate function, stop recursing into it
+		uint nchildren = cypher_astnode_nchildren(expr);
+		if(nchildren > 0) {
+			const cypher_astnode_t *fn = cypher_astnode_get_child(expr, 0);
+			if(cypher_astnode_type(fn) == CYPHER_AST_FUNCTION_NAME) {
+				const char *name = cypher_ast_function_name_get_value(fn);
+				if(name != NULL && AR_FuncIsAggregate(name)) return false;
+			}
+		}
 	}
 
 	if(type == CYPHER_AST_IDENTIFIER) return true;
