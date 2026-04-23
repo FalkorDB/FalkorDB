@@ -270,6 +270,8 @@ static bool wbuf_printf
 
 // check if a string is a valid Cypher identifier (letters, digits, underscore;
 // must start with a letter or underscore)
+// NOTE: only ASCII characters are checked; non-ASCII identifiers (though rare)
+// are not supported and will be backtick-quoted by write_map_key.
 static bool is_cypher_identifier
 (
 	const char *s,   // string to check
@@ -291,7 +293,8 @@ static bool write_quoted_string
 	uint32_t len      // length of the string
 ) {
 	if(wb->err) return false;
-	// worst case: every char needs escaping → 2*len + 2 quotes + 1 for sentinel
+	// worst case: every char needs escaping (2*len) plus 2 enclosing quotes
+	// and 1 extra byte so subsequent vsnprintf always has a writable byte
 	uint64_t worst = (uint64_t)len * 2 + 3;
 	if(worst > UINT32_MAX || !wbuf_ensure(wb, (uint32_t)worst)) {
 		wb->err = true;

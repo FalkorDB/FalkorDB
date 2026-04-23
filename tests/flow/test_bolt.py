@@ -586,20 +586,22 @@ class testBolt():
         """Test that string values containing single quotes and backslashes
         are properly escaped when serialized to the CYPHER parameter format."""
         with self.bolt_con.session() as session:
-            # string containing a single quote
+            # string containing a single quote (e.g. "O'Brien")
             result = session.run("RETURN $v", {"v": "O'Brien"})
             record = result.single()
             self.env.assertEquals(record[0], "O'Brien")
 
-            # string containing a backslash
+            # string containing a backslash (Python "path\\to" → one backslash)
             result = session.run("RETURN $v", {"v": "path\\to\\file"})
             record = result.single()
             self.env.assertEquals(record[0], "path\\to\\file")
 
-            # string containing both single quote and backslash
-            result = session.run("RETURN $v", {"v": "it\\'s"})
+            # string containing both a backslash and a single quote
+            # "it\\'s a test" in Python is: i t \ ' s   a   t e s t
+            both = "it\\'s a test"  # 12 chars: backslash + apostrophe in middle
+            result = session.run("RETURN $v", {"v": both})
             record = result.single()
-            self.env.assertEquals(record[0], "it\\'s")
+            self.env.assertEquals(record[0], both)
 
             # map with string values that contain special characters
             m = {"name": "O'Brien", "path": "C:\\Users"}
