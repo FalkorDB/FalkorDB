@@ -16,7 +16,7 @@ use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 /// Number of records to process between yields to Redis.
-const YIELD_INTERVAL: usize = 10_000;
+const YIELD_INTERVAL: usize = 1_000;
 
 // Binary property type markers (matching Python bulk loader's TYPE enum)
 const BI_NULL: u8 = 0;

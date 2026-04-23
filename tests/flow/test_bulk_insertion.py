@@ -16,6 +16,9 @@ def ping_server(stop_event, res, self, interval = 0.1, delay = 2):
         t0 = time.time()
         self.db.connection.ping()
         t1 = time.time() - t0
+        # write this log to a file
+        with open("ping_log.txt", "a") as log_file:
+            log_file.write(f"Ping {ping_count}: {t1} < {delay}\n")
         # Verify that pinging the server takes less than delay seconds during bulk insertion
         self.env.assertLess(t1, delay)
         ping_count += 1
@@ -383,6 +386,12 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         stop_event.set()
 
         thread.join()
+        # print the content of ping_log.txt
+        with open("ping_log.txt", "r") as log_file:
+            print(log_file.read())
+        # clear the content of ping_log.txt
+        with open("ping_log.txt", "w") as log_file:
+            log_file.write("")
         ping_count = res[0]
         # Verify that at least one ping was issued
         self.env.assertGreaterEqual(ping_count, 1)
@@ -804,6 +813,13 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         # Signal the thread to stop
         stop_event.set()
         thread.join()
+        # print the content of ping_log.txt
+        with open("ping_log.txt", "r") as log_file:
+            print(log_file.read())
+        # clear the content of ping_log.txt
+        with open("ping_log.txt", "w") as log_file:
+            log_file.write("")
+
         ping_count = pings[0]
         # Expecting at minimum ping every 2 seconds
         self.env.assertGreaterEqual(ping_count, execution_time / 2)
