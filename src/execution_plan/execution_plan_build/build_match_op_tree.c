@@ -22,6 +22,7 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 	AST *ast
 ) {
 	GraphContext *gc = QueryCtx_GetGraphCtx();
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// build the full FilterTree for this AST
 	// so that we can order traversals properly
@@ -147,9 +148,9 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 						ErrorCtx_SetError(EMSG_ALLSHORTESTPATH_SRC_DST_RESLOVED);
 					}
 				}
-				root = NewCondVarLenTraverseOp (plan, gc->g, exp) ;
+				root = NewCondVarLenTraverseOp (plan, g, exp) ;
 			} else {
-				root = NewCondTraverseOp (plan, gc->g, exp) ;
+				root = NewCondTraverseOp (plan, g, exp) ;
 			}
 
 			// insert the new traversal op at the root of the chain

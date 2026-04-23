@@ -353,7 +353,10 @@ static void AttributeSet_RemoveIdx
 	AttributeID *ids  = ATTRIBUTE_SET_IDS  (_set) ;
 	AttrValue_t *vals = ATTRIBUTE_SET_VALS (_set) ;
 
-	for (int16_t i = n-1; i >= 0; i--) {
+	// iterate highest-to-lowest so the swap source (position l-1)
+	// is never a slot scheduled for removal in a later iteration,
+	// preventing a use-after-free of heap-owning attribute values
+	for (uint16_t i = 0; i < n; i++) {
 		// free attribute
 		uint16_t idx = indices[i] ;
 		AttrValue_t *attr = vals + idx ;

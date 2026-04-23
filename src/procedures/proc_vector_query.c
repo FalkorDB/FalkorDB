@@ -51,7 +51,7 @@ static VectorKNNCtx *_create_private_data
 
 	ctx->t           = t;
 	ctx->q           = q;
-	ctx->g           = gc->g;
+	ctx->g           = GraphContext_GetGraph (gc) ;
 	ctx->idx         = idx;
 	ctx->iter        = RediSearch_GetResultsIterator(root, idx);
 	ctx->attr_id     = attr_id;

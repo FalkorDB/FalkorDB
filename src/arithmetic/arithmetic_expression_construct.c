@@ -460,7 +460,11 @@ static AR_ExpNode *_AR_ExpFromMapProjection(const cypher_astnode_t *expr) {
 		}
 	}
 
-	tomapOp = AR_EXP_NewOpNode("tomap", true, (n_selectors - allProps_selectors) * 2);
+	tomapOp = AR_EXP_NewOpNode("tomap_projection", true,
+			1 + (n_selectors - allProps_selectors) * 2);
+	// first child is the projected entity itself; if it evaluates to NULL
+	// the entire map projection evaluates to NULL (Neo4j semantics)
+	tomapOp->op.children[0] = AR_EXP_NewVariableOperandNode(entity_name);
 
 	uint j = 0;
 	for(uint i = 0; i < n_selectors; i++) {
@@ -474,9 +478,9 @@ static AR_ExpNode *_AR_ExpFromMapProjection(const cypher_astnode_t *expr) {
 			// { .name }
 			prop = cypher_ast_map_projection_property_get_prop_name(selector);
 			prop_name = cypher_ast_prop_name_get_value(prop);
-			tomapOp->op.children[j * 2] = AR_EXP_NewConstOperandNode(SI_ConstStringVal((char *)prop_name));
+			tomapOp->op.children[1 + j * 2] = AR_EXP_NewConstOperandNode(SI_ConstStringVal((char *)prop_name));
 			AR_ExpNode *entity = AR_EXP_NewVariableOperandNode(entity_name);
-			tomapOp->op.children[j * 2 + 1] = AR_EXP_NewAttributeAccessNode(entity, prop_name);
+			tomapOp->op.children[1 + j * 2 + 1] = AR_EXP_NewAttributeAccessNode(entity, prop_name);
 			j++;
 		} else if(t == CYPHER_AST_MAP_PROJECTION_LITERAL) {
 			// { v: n.v }
@@ -484,15 +488,15 @@ static AR_ExpNode *_AR_ExpFromMapProjection(const cypher_astnode_t *expr) {
 			prop_name = cypher_ast_prop_name_get_value(prop);
 			const cypher_astnode_t *literal_exp =
 				cypher_ast_map_projection_literal_get_expression(selector);
-			tomapOp->op.children[j * 2] = AR_EXP_NewConstOperandNode(SI_ConstStringVal((char *)prop_name));
-			tomapOp->op.children[j * 2 + 1] = AR_EXP_FromASTNode(literal_exp);
+			tomapOp->op.children[1 + j * 2] = AR_EXP_NewConstOperandNode(SI_ConstStringVal((char *)prop_name));
+			tomapOp->op.children[1 + j * 2 + 1] = AR_EXP_FromASTNode(literal_exp);
 			j++;
 		} else if(t == CYPHER_AST_MAP_PROJECTION_IDENTIFIER) {
 			// { v }
 			prop = cypher_ast_map_projection_identifier_get_identifier(selector);
 			prop_name = cypher_ast_identifier_get_name(prop);
-			tomapOp->op.children[j * 2] = AR_EXP_NewConstOperandNode(SI_ConstStringVal((char *)prop_name));
-			tomapOp->op.children[j * 2 + 1] = AR_EXP_NewVariableOperandNode(prop_name);
+			tomapOp->op.children[1 + j * 2] = AR_EXP_NewConstOperandNode(SI_ConstStringVal((char *)prop_name));
+			tomapOp->op.children[1 + j * 2 + 1] = AR_EXP_NewVariableOperandNode(prop_name);
 			j++;
 		} else if(t == CYPHER_AST_MAP_PROJECTION_ALL_PROPERTIES) {
 			continue;

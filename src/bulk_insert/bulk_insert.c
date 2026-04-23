@@ -303,6 +303,7 @@ static int _BulkInsert_ProcessEdgeFile
 	size_t   data_idx   = 0 ;
 	uint16_t prop_count = 0 ;
 	uint64_t iterations = 0 ;
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	//--------------------------------------------------------------------------
 	// parse CSV headers
@@ -323,14 +324,14 @@ static int _BulkInsert_ProcessEdgeFile
 	// prepare matrices
 	//--------------------------------------------------------------------------
 
-	ASSERT (Graph_GetMatrixPolicy(gc->g) == SYNC_POLICY_RESIZE) ;
+	ASSERT (Graph_GetMatrixPolicy(g) == SYNC_POLICY_RESIZE) ;
 
 	// warm up matrices to avoid resizes
-	Graph_GetRelationMatrix (gc->g, rel, false) ;
-	Graph_GetAdjacencyMatrix (gc->g, false) ;
+	Graph_GetRelationMatrix (g, rel, false) ;
+	Graph_GetAdjacencyMatrix (g, false) ;
 
 	// temporarily disable sync policy
-	MATRIX_POLICY policy = Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_NOP) ;
+	MATRIX_POLICY policy = Graph_SetMatrixPolicy (g, SYNC_POLICY_NOP) ;
 
 	//--------------------------------------------------------------------------
 	// load edges
@@ -418,7 +419,7 @@ static int _BulkInsert_ProcessEdgeFile
 		rm_free (prop_indices) ;
 	}
 
-	Graph_SetMatrixPolicy (gc->g, policy) ;
+	Graph_SetMatrixPolicy (g, policy) ;
 
 	return BULK_OK ;
 }
@@ -492,7 +493,7 @@ int BulkInsert
 	// prepare graph for bulk load
 	//--------------------------------------------------------------------------
 
-	Graph *g = gc->g ;
+	Graph *g = GraphContext_GetGraph (gc) ;
 	int res = BULK_OK ;
 
 	// lock graph under write lock

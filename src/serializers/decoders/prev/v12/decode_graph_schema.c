@@ -115,12 +115,18 @@ static Schema *_RdbLoadSchema
 	 * index type
 	 * index data */
 
-	int id = RedisModule_LoadUnsigned(rdb);
-	char *name = RedisModule_LoadStringBuffer(rdb, NULL);
-	Schema *s = already_loaded ? NULL : Schema_New(type, id, name);
+	Schema *s = NULL ;
+	int id = RedisModule_LoadUnsigned (rdb) ;
+	char *name = RedisModule_LoadStringBuffer (rdb, NULL) ;
+	if (!already_loaded) {
+		s = GraphContext_AddSchema (gc, name, type) ;	
+		ASSERT (s != NULL) ;
+		ASSERT (Schema_GetID (s) == id) ;
+	}
+
 	RedisModule_Free(name);
 
-	uint index_count = RedisModule_LoadUnsigned(rdb);
+	uint index_count = RedisModule_LoadUnsigned (rdb) ;
 	for (uint index = 0; index < index_count; index++) {
 		IndexType index_type = RedisModule_LoadUnsigned(rdb);
 
@@ -137,7 +143,7 @@ static Schema *_RdbLoadSchema
 		}
 	}
 
-	return s;
+	return s ;
 }
 
 static void _RdbLoadAttributeKeys(RedisModuleIO *rdb, GraphContext *gc) {
@@ -154,7 +160,11 @@ static void _RdbLoadAttributeKeys(RedisModuleIO *rdb, GraphContext *gc) {
 	}
 }
 
-void RdbLoadGraphSchema_v12(RedisModuleIO *rdb, GraphContext *gc) {
+void RdbLoadGraphSchema_v12
+(
+	RedisModuleIO *rdb,
+	GraphContext *gc
+) {
 	/* Format:
 	 * attribute keys (unified schema)
 	 * #node schemas
@@ -170,23 +180,19 @@ void RdbLoadGraphSchema_v12(RedisModuleIO *rdb, GraphContext *gc) {
 	// #Node schemas
 	uint schema_count = RedisModule_LoadUnsigned(rdb);
 
-	bool already_loaded = arr_len(gc->node_schemas) > 0;
+	bool already_loaded = GraphContext_SchemaCount (gc, SCHEMA_NODE) > 0 ;
 
-	// Load each node schema
-	gc->node_schemas = arr_ensure_cap(gc->node_schemas, schema_count);
-	for(uint i = 0; i < schema_count; i ++) {
-		Schema *s = _RdbLoadSchema(rdb, gc, SCHEMA_NODE, already_loaded);
-		if(!already_loaded) arr_append(gc->node_schemas, s);
+	// load each node schema
+	for (uint i = 0; i < schema_count; i ++) {
+		_RdbLoadSchema (rdb, gc, SCHEMA_NODE, already_loaded) ;
 	}
 
 	// #Edge schemas
-	schema_count = RedisModule_LoadUnsigned(rdb);
+	schema_count = RedisModule_LoadUnsigned (rdb) ;
 
 	// Load each edge schema
-	gc->relation_schemas = arr_ensure_cap(gc->relation_schemas, schema_count);
-	for(uint i = 0; i < schema_count; i ++) {
-		Schema *s = _RdbLoadSchema(rdb, gc, SCHEMA_EDGE, already_loaded);
-		if(!already_loaded) arr_append(gc->relation_schemas, s);
+	for (uint i = 0; i < schema_count; i ++) {
+		_RdbLoadSchema (rdb, gc, SCHEMA_EDGE, already_loaded) ;
 	}
 }
 
