@@ -23,7 +23,7 @@ jobs:
     steps:
       - name: Check label or branch
         id: haslabel
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             if (context.eventName !== 'pull_request') {
@@ -85,35 +85,35 @@ jobs:
 
       - name: Cache GraphBLAS
         id: cache_graphblas
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ./bin/linux-x64-release/GraphBLAS
           key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c', './build.sh') }}
 
       - name: Cache parser
         id: cache_parser
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ./bin/linux-x64-release/libcypher-parser
           key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c', './build.sh') }}
 
       - name: Cache search
         id: cache_search
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ./bin/linux-x64-release/search-static
           key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
       - name: Cache libcurl
         id: cache_libcurl
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ./bin/linux-x64-release/libcurl
           key: libcurl-x64-${{ hashFiles('./deps/libcurl/RELEASE-NOTES', './build.sh') }}
 
       - name: Cache libcsv
         id: cache_libcsv
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ./bin/linux-x64-release/libcsv
           key: libcsv-x64-${{ hashFiles('./deps/libcsv/ChangeLog', './build.sh') }}
@@ -141,7 +141,7 @@ jobs:
           python3 run_benchmarks.py group_${{ matrix.benchmark_group }}
 
       - name: Upload results
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ env.SAFE_REF }}-benchmark-group_${{ matrix.benchmark_group }}-results
           path: tests/benchmarks/*-results.json
@@ -171,13 +171,13 @@ jobs:
         run: echo "SAFE_REF=$(echo '${{ github.head_ref || github.ref_name }}' | tr '/' '-')" >> "$GITHUB_ENV"
 
       - name: Download artifacts
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           # change this so it uses a pattern to download all group_* artifacts
           pattern: ${{ env.SAFE_REF }}-benchmark-group_*-results
           merge-multiple: true
       - name: Upload merged results
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ env.SAFE_REF }}-benchmark-results
           path: ./*-results.json
@@ -198,13 +198,13 @@ jobs:
           mkdir -p tests/benchmarks/compare/master
 
       - name: Download artifact
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ env.SAFE_REF }}-benchmark-results
           path: tests/benchmarks/compare/${{ github.head_ref }}
 
       - name: Download master artifact
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const artifacts = await github.rest.actions.listArtifactsForRepo({
@@ -254,7 +254,7 @@ jobs:
           python3 generate_markdown.py --new_branch ${{ github.head_ref }}
 
       - name: Update Pull Request Text
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const existing_pull = await github.rest.pulls.get({

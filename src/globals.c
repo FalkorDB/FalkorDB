@@ -107,6 +107,18 @@ GraphContext **Globals_Get_GraphsInKeyspace(void) {
 	return _globals.graphs_in_keyspace;
 }
 
+uint32_t Globals_GraphsCount (void) {
+	// acquire read lock
+	Globals_ReadLock () ;
+
+	uint32_t n = arr_len (_globals.graphs_in_keyspace) ;
+
+	// release lock
+	Globals_Unlock () ;
+
+	return n ;
+}
+
 // add graph to global tracker
 void Globals_AddGraph
 (
@@ -117,7 +129,7 @@ void Globals_AddGraph
 	// increase ref count regardless if 'gc' is already tracked
 	GraphContext_IncreaseRefCount(gc);
 
-	// acuire write lock
+	// acquire write lock
 	Globals_WriteLock () ;
 
 	bool registered = false;
@@ -145,12 +157,17 @@ void Globals_RemoveGraph
 ) {
 	ASSERT(gc != NULL);
 
+	// acquire write lock
+	Globals_WriteLock () ;
+
 	uint64_t i = 0;
 	uint64_t n = arr_len(_globals.graphs_in_keyspace);
-	if(n == 0) return;
 
-	// acuire write lock
-	Globals_WriteLock () ;
+	if (n == 0) {
+		// release lock
+		Globals_Unlock () ;
+		return;
+	}
 
 	// search for graph
 	for(; i < n; i++) {
@@ -176,7 +193,7 @@ void Globals_RemoveGraphByName
 ) {
 	ASSERT(name != NULL);
 
-	// acuire write lock
+	// acquire write lock
 	Globals_WriteLock () ;
 
 	// search for graph
@@ -206,16 +223,13 @@ void Globals_ClearGraphs
 	// acquire write lock
 	Globals_WriteLock () ;
 	
-	for(uint i = 0; i < arr_len(_globals.graphs_in_keyspace); i++) {
-		GraphContext *gc = _globals.graphs_in_keyspace[i];
-		if(gc->telemetry_stream != NULL) {
-			RedisModule_FreeString(ctx, gc->telemetry_stream);
-			gc->telemetry_stream = NULL;
-		}
+	for (uint i = 0 ; i < arr_len (_globals.graphs_in_keyspace) ; i++) {
+		GraphContext *gc = _globals.graphs_in_keyspace [i] ;
+		GraphContext_FreeTelemetryStreamName (gc, ctx) ;
 	}
 
 	// clear graph tracking
-	arr_clear(_globals.graphs_in_keyspace);
+	arr_clear (_globals.graphs_in_keyspace) ;
 
 	// release lock
 	Globals_Unlock () ;
@@ -235,7 +249,7 @@ void Globals_TrackCommandCtx
 
 	int tid = ThreadPool_GetThreadID();
 
-	// acuire read lock
+	// acquire read lock
 	Globals_ReadLock () ;
 
 	// expecting slot to be empty
@@ -261,7 +275,7 @@ void Globals_UntrackCommandCtx
 
 	int tid = ThreadPool_GetThreadID();
 
-	// acuire read lock
+	// acquire read lock
 	Globals_ReadLock () ;
 
 	ASSERT(_globals.command_ctxs[tid] == ctx);
@@ -337,21 +351,21 @@ GraphContext *GraphIterator_Next
 (
 	KeySpaceGraphIterator *it  // iterator to advance
 ) {
-	ASSERT(it != NULL);
+	ASSERT (it != NULL) ;
 
-	GraphContext *gc = NULL;
+	GraphContext *gc = NULL ;
 
 	Globals_ReadLock () ;
 
-	if(it->idx < arr_len(_globals.graphs_in_keyspace)) {
+	if (it->idx < arr_len (_globals.graphs_in_keyspace)) {
 		// prepare next call
-		gc = _globals.graphs_in_keyspace[it->idx++];
-		GraphContext_IncreaseRefCount(gc);
+		gc = _globals.graphs_in_keyspace [it->idx++] ;
+		GraphContext_IncreaseRefCount (gc) ;
 	}
 
 	Globals_Unlock () ;
 
-	return gc;
+	return gc ;
 }
 
 // free globals

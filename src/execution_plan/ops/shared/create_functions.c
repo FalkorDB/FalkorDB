@@ -18,7 +18,7 @@ static void _CommitNodesBlueprint
 	PendingCreations *pending
 ) {
 	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Graph *g = gc->g;
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// sync policy should be set to resize to capacity, no need to sync
 	ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_RESIZE);
@@ -60,7 +60,7 @@ static void _CommitNodes
 ) {
 	Node         *n                   = NULL ;
 	GraphContext *gc                  = QueryCtx_GetGraphCtx () ;
-	Graph        *g                   = gc->g ;
+	Graph        *g                   = GraphContext_GetGraph (gc) ;
 	uint         node_count           = arr_len (pending->nodes.created_nodes) ;
 	bool         constraint_violation = false;
 
@@ -104,7 +104,7 @@ static void _CommitEdgesBlueprint
 	PendingCreations *pending
 ) {
 	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Graph *g = gc->g;
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// sync policy should be set to resize to capacity, no need to sync
 	ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_RESIZE);
@@ -140,7 +140,7 @@ static void _CommitEdges
 ) {
 	Edge         *e                   = NULL;
 	GraphContext *gc                  = QueryCtx_GetGraphCtx();
-	Graph        *g                   = gc->g;
+	Graph        *g                   = GraphContext_GetGraph (gc) ;
 	bool         constraint_violation = false;
 
 	// sync policy should be set to NOP, no need to sync/resize
@@ -268,7 +268,7 @@ void CommitNewEntities
 	}
 
 	// lock everything
-	QueryCtx_LockForCommit();
+	QueryCtx_AcquireWriteLock () ;
 
 	//--------------------------------------------------------------------------
 	// commit nodes

@@ -451,78 +451,7 @@ class testUndoLog():
         self.env.assertEquals(result.result_set, expected_result)
 
 
-    # due to a recent change
-    # we've decided against the removal of a schema
-    # this test is now disabled
-    def disabled_test16_undo_label_set(self):
-        create_node_range_index(self.graph, "L1", "v", sync=True)
-        self.graph.query("CREATE (n:L1 {v:1})")
-        try:
-            self.graph.query("MATCH (n:L1) SET n:L2 WITH n RETURN 1 * n")
-            # we're not supposed to be here, expecting query to fail
-            self.env.assertTrue(False)
-        except:
-            pass
-
-        # node label L2 should not be added, expecting an empty result set
-        result = self.graph.query("MATCH (n:L2) RETURN n")
-        self.env.assertEquals(len(result.result_set), 0)
-        # check index is ok
-        query = "MATCH (n:L1 {v: 1}) RETURN n.v"
-        plan = str(self.graph.explain(query))
-        self.env.assertContains("Node By Index Scan", plan)
-        result = self.graph.query(query)
-        self.env.assertEquals(result.result_set[0][0], 1)
-
-        # L2 label should not be created
-        result = self.graph.query("CALL db.labels")
-        self.env.assertEquals(result.result_set, [["L1"]])
-
-    def test16_undo_label_set(self):
-        # labels / relationship-types introduced by a failing query should
-        # NOT be rolled back
-
-        self.graph.query("CREATE (n:L1 {v:1})")
-        try:
-            self.graph.query("MATCH (n:L1) SET n:L2 WITH n RETURN 1 * n")
-            # we're not supposed to be here, expecting query to fail
-            self.env.assertTrue(False)
-        except:
-            pass
-
-        # label L2 should be introduced to the graph
-        q = """CALL db.labels() YIELD label
-               RETURN collect(label)"""
-        result = self.graph.query(q).result_set
-        labels = result[0][0]
-
-        # check index is ok
-        self.env.assertEquals(len(labels), 2)
-        self.env.assertIn("L1", labels)
-        self.env.assertIn("L2", labels)
-
-        #-----------------------------------------------------------------------
-
-        try:
-            self.graph.query("CREATE ()-[e:Z]->() RETURN 1 * e")
-            # we're not supposed to be here, expecting query to fail
-            self.env.assertTrue(False)
-        except:
-            pass
-
-        # relationship type Z should exists
-        q = """CALL db.relationshipTypes()
-               YIELD relationshipType
-               RETURN collect(relationshipType)"""
-
-        result = self.graph.query(q).result_set
-        relationships = result[0][0]
-
-        # check index is ok
-        self.env.assertEquals(len(relationships), 1)
-        self.env.assertIn("Z", relationships)
-
-    def test17_undo_remove_label(self):
+    def test16_undo_remove_label(self):
         create_node_range_index(self.graph, "L2", "v", sync=True)
         self.graph.query("CREATE (n:L2 {v:1})")
         try:
@@ -543,7 +472,7 @@ class testUndoLog():
         result = self.graph.query(query)
         self.env.assertEquals(result.result_set[0][0], 1)
 
-    def test18_undo_set_remove_label(self):
+    def test17_undo_set_remove_label(self):
         self.graph.query("CREATE (n:L3)")
         try:
             self.graph.query("MATCH (n:L3) SET n:L4 REMOVE n:L3 WITH n RETURN 1 * n")
@@ -557,7 +486,7 @@ class testUndoLog():
         self.env.assertEquals(len(result.result_set), 1)
         self.env.assertEquals(["L3"], result.result_set[0][0])
 
-    def test19_undo_remove_set_label(self):
+    def test18_undo_remove_set_label(self):
         self.graph.query("CREATE (n:L4)")
         try:
             self.graph.query("MATCH (n:L4) REMOVE n:L4 SET n:L5 WITH n RETURN 1 * n")
@@ -571,7 +500,7 @@ class testUndoLog():
         self.env.assertEquals(len(result.result_set), 1)
         self.env.assertEquals(["L4"], result.result_set[0][0])
 
-    def test_20_index_rollback(self):
+    def test_19_index_rollback(self):
         # make sure graph rollsback to its previous state if index creation fails
 
         # create an index over 'L', 'age'
@@ -610,3 +539,36 @@ class testUndoLog():
         # drop index over 'L', 'age'
         result = drop_node_range_index(self.graph, 'L', 'age')
 
+    def test_20_undo_label_creation(self):
+        """
+        a label introduced via a failing query should be rolledback
+        """
+
+        lbls = self.graph.query("CALL db.labels()").result_set
+        self.env.assertEqual(len(lbls), 0)
+
+        try:
+            self.graph.query ("CREATE (a:A) RETURN a / 3")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            pass
+
+        lbls = self.graph.query("CALL db.labels()").result_set
+        self.env.assertEqual(len(lbls), 0)
+
+    def test_21_undo_rel_creation(self):
+        """
+        a relationship-type introduced via a failing query should be rolledback
+        """
+
+        rels = self.graph.query("CALL db.relationshipTypes()").result_set
+        self.env.assertEqual(len(rels), 0)
+
+        try:
+            self.graph.query ("CREATE ()-[e:R]->() RETURN e / 3")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            pass
+
+        rels = self.graph.query("CALL db.relationshipTypes()").result_set
+        self.env.assertEqual(len(rels), 0)
