@@ -9,6 +9,7 @@
 #include "../value.h"
 #include "../datatypes/map.h"
 #include "../datatypes/array.h"
+#include "../errors/errors.h"
 
 #include <ctype.h>
 
@@ -728,7 +729,9 @@ dict *ParamParser_Parse
 		SIValue *v = rm_malloc(sizeof(SIValue));
 		if (!parse_value(&head, v)) {
 			rm_free(v);
-			// todo: release individual values
+			// report a clear error citing the failing parameter name
+			// (the param name was already null-terminated by parse_param_name)
+			ErrorCtx_SetError(EMSG_INVALID_PARAMETER_VALUE, param);
 			HashTableRelease(params);
 			return NULL;
 		}

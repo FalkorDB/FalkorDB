@@ -402,3 +402,31 @@ class testParams(FlowTestsBase):
             {'id': 'abc', 'props': {'x': 1, 'y': 2}})
         self.env.assertEqual(result.result_set, [['abc', {'x': 1, 'y': 2}]])
 
+    def test_invalid_param_value_error(self):
+        # When a parameter value is malformed (e.g. a Java client sending a Map
+        # using Java's default toString '{key=value}' instead of the Cypher
+        # '{key:value}' syntax), the server must report a clear error citing
+        # the parameter that failed, not the cryptic Cypher parse error
+        # 'Invalid input ... expected =' that resulted from buffer corruption.
+        bad_queries = [
+            # Map with '=' instead of ':' (Java Map.toString() format)
+            "CYPHER properties={title=Test} RETURN $properties",
+            # Map with non-identifier key (no quoting)
+            "CYPHER properties={my-key:1} RETURN $properties",
+            # Mixed scalar + bad map (the JFalkorDB scenario from the issue)
+            'CYPHER id="abc" properties={title=Test, uri=http://example.com} '
+                'MERGE (e:Node {id: $id}) SET e += $properties',
+        ]
+        for q in bad_queries:
+            try:
+                self.graph.query(q)
+                self.env.assertTrue(False,
+                    f"Expected error for malformed query: {q}")
+            except ResponseError as e:
+                # error must reference the parameter name that failed and
+                # must NOT be the cryptic 'expected =' message that results
+                # from the corrupted-buffer bug
+                msg = str(e)
+                self.env.assertContains("parameter", msg.lower())
+                self.env.assertContains("properties", msg)
+
