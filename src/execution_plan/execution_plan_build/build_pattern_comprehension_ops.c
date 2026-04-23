@@ -7,10 +7,10 @@
 #include "RG.h"
 #include "../ops/ops.h"
 #include "../../query_ctx.h"
+#include "../../util/rmalloc.h"
 #include "execution_plan_util.h"
 #include "execution_plan_construct.h"
 #include "../../util/rax_extensions.h"
-#include "../../util/rmalloc.h"
 #include "../../ast/ast_build_filter_tree.h"
 #include "../execution_plan_build/execution_plan_modify.h"
 #include "../../arithmetic/arithmetic_expression_construct.h"
@@ -21,31 +21,34 @@ static bool _ast_contains
 	const cypher_astnode_t *root,
 	const cypher_astnode_t *needle
 ) {
-	if(root == needle) return true;
-	uint nchildren = cypher_astnode_nchildren(root);
-	for(uint i = 0; i < nchildren; i++) {
-		if(_ast_contains(cypher_astnode_get_child(root, i), needle)) {
-			return true;
+	if (root == needle) {
+		return true ;
+	}
+
+	uint nchildren = cypher_astnode_nchildren (root) ;
+	for (uint i = 0; i < nchildren ; i++) {
+		if (_ast_contains (cypher_astnode_get_child (root, i), needle)) {
+			return true ;
 		}
 	}
-	return false;
+
+	return false ;
 }
 
-// build pattern comprehension plan operations for example:
+// build pattern comprehension plan operations
+// for example:
 // RETURN [p = (n)-->() | p] AS ps
 // Results
 //     Project
-//         Optional
-//             Aggregate
-//                 Conditional Traverse | (n)-[anon_0]->(anon_1)
-//                     All Node Scan | (n)
+//         Aggregate
+//             Conditional Traverse | (n)-[anon_0]->(anon_1)
+//                 All Node Scan | (n)
 //
 // MATCH (n) RETURN [p = (n)-->() | p] AS ps
 // Results
 //     Project
 //         Apply
 //             All Node Scan | (n)
-//             Optional
 //                 Aggregate
 //                     Conditional Traverse | (n)-[anon_1]->(anon_2)
 //                         Argument
@@ -57,149 +60,157 @@ void buildPatternComprehensionOps
 	const cypher_astnode_t *ast
 ) {
 	// validations
-	ASSERT(plan != NULL);
-	ASSERT(root != NULL);
-	ASSERT(ast  != NULL);
-	ASSERT(root->type == OPType_PROJECT || root->type == OPType_AGGREGATE);
+	ASSERT (ast  != NULL) ;
+	ASSERT (plan != NULL) ;
+	ASSERT (root != NULL) ;
+	ASSERT (root->type == OPType_PROJECT || root->type == OPType_AGGREGATE) ;
 
 	// search for pattern comprehension AST nodes
 	// quickly return if none been found
 	const cypher_astnode_t **pcs =
-		AST_GetTypedNodes(ast, CYPHER_AST_PATTERN_COMPREHENSION);
-	uint count = arr_len(pcs);
+		AST_GetTypedNodes (ast, CYPHER_AST_PATTERN_COMPREHENSION) ;
+	uint count = arr_len (pcs) ;
 
-	if(count == 0) {
-		arr_free(pcs);
-		return;
+	if (count == 0) {
+		arr_free (pcs) ;
+		return ;
 	}
 
 	// backup AST, restore at the end
-	AST *prev_ast = QueryCtx_GetAST();
-	QueryCtx_SetAST(plan->ast_segment);
+	AST *prev_ast = QueryCtx_GetAST () ;
+	QueryCtx_SetAST (plan->ast_segment) ;
 
 	// for each pattern comprehension determine its enclosing pattern
 	// comprehension (if any). pcs are returned in pre-order DFS, so a parent
-	// pattern comprehension always appears before its children.
+	// pattern comprehension always appears before its children
 	// `parent_idx[i]` is the index of the deepest enclosing pattern
 	// comprehension, or -1 if pcs[i] is not nested inside another pattern
-	// comprehension.
-	int *parent_idx = rm_malloc(count * sizeof(int));
+	// comprehension
+	int *parent_idx = rm_malloc (count * sizeof (int)) ;
 
-	// `match_streams[i]` holds the path traversal sub-plan built for pcs[i].
+	// `match_streams[i]` holds the path traversal sub-plan built for pcs[i]
 	// nested pattern comprehensions are anchored on their parent's match
 	// stream so that variables introduced by the outer pattern are bound
-	// when the inner pattern is evaluated.
-	OpBase **match_streams = rm_calloc(count, sizeof(OpBase *));
+	// when the inner pattern is evaluated
+	OpBase **match_streams = rm_calloc (count, sizeof (OpBase *)) ;
 
-	for(uint i = 0; i < count; i++) {
-		parent_idx[i] = -1;
-		for(uint j = 0; j < i; j++) {
-			if(_ast_contains(pcs[j], pcs[i])) {
-				// pcs[j] encloses pcs[i] - keep the deepest such j
-				if(parent_idx[i] == -1 ||
-				   _ast_contains(pcs[parent_idx[i]], pcs[j])) {
-					parent_idx[i] = (int)j;
+	for (uint i = 0; i < count; i++) {
+		parent_idx [i] = -1 ;
+		for (uint j = 0; j < i; j++) {
+			if(_ast_contains (pcs [j], pcs [i])) {
+				// pcs [j] encloses pcs [i] - keep the deepest such j
+				if (parent_idx [i] == -1 ||
+				   _ast_contains (pcs [parent_idx [i]], pcs [j])) {
+					parent_idx [i] = (int) j ;
 				}
 			}
 		}
 	}
 
-	for (uint i = 0; i < count; i++) {
-		OpBase *match_stream;
-		const cypher_astnode_t *pc;
-		const cypher_astnode_t *path;
-		const cypher_astnode_t *eval_node;
-		const cypher_astnode_t *predicate;
+	for (uint i = 0; i < count ; i++) {
+		OpBase *match_stream ;
+		const cypher_astnode_t *pc ;
+		const cypher_astnode_t *path ;
+		const cypher_astnode_t *eval_node ;
+		const cypher_astnode_t *predicate ;
 
-		pc = pcs[i];
-		path = cypher_ast_pattern_comprehension_get_pattern(pc);
+		pc = pcs [i] ;
+		path = cypher_ast_pattern_comprehension_get_pattern (pc) ;
 
 		// determine the anchor operation under which this pattern
-		// comprehension's apply will be installed. for nested pattern
-		// comprehensions the anchor is the enclosing pattern's match stream
-		// so that variables introduced by the outer pattern (e.g. `p` in
+		// comprehension's apply will be installed
+		// for nested pattern comprehensions the anchor is the enclosing
+		// pattern's match stream so that variables introduced by the outer
+		// pattern (e.g. `p` in
 		// `[(i)-->(p) | p { worksFor: [(p)-->(o) | o] }]`) are bound when
 		// resolving the inner traversal
-		OpBase *anchor = NULL;
-		if(parent_idx[i] >= 0) {
-			anchor = match_streams[parent_idx[i]];
-		} else if(root->childCount > 0) {
-			anchor = root->children[0];
+
+		OpBase *anchor = NULL ;
+		if (parent_idx [i] >= 0) {
+			anchor = match_streams [parent_idx [i]] ;
+		} else if (root->childCount > 0) {
+			anchor = root->children [0] ;
 		}
 
 		// collect the variables bound under the anchor; these are passed as
 		// arguments to the traversal sub-plan
-		const char **arguments = NULL;
-		if(anchor != NULL) {
-			rax *bound_vars = raxNew();
-			ExecutionPlan_BoundVariables(anchor, bound_vars, anchor->plan);
-			arguments = (const char **)raxValues(bound_vars);
-			raxFree(bound_vars);
+		const char **arguments = NULL ;
+		if (anchor != NULL) {
+			rax *bound_vars = raxNew () ;
+			ExecutionPlan_BoundVariables (anchor, bound_vars, anchor->plan) ;
+			arguments = (const char **) raxValues (bound_vars) ;
+			raxFree (bound_vars) ;
 		}
 
 		// construct sub execution-plan resolving path
-		match_stream = ExecutionPlan_BuildOpsFromPath(plan, arguments, path);
-		match_streams[i] = match_stream;
+		match_stream = ExecutionPlan_BuildOpsFromPath (plan, arguments, path) ;
+		match_streams [i] = match_stream ;
 
 		// construct evaluation expression
 		// [(a)-[]->(z) | z.v] `z.v` is the evaluation expression
-		eval_node = cypher_ast_pattern_comprehension_get_eval(pc);
-		AR_ExpNode *eval_exp = AR_EXP_FromASTNode(eval_node);
+		eval_node = cypher_ast_pattern_comprehension_get_eval (pc) ;
+		AR_ExpNode *eval_exp = AR_EXP_FromASTNode (eval_node) ;
 
 		// collect evaluation results into an array using `collect`
-		AR_ExpNode *collect_exp = AR_EXP_NewOpNode("collect", false, 1);
-		collect_exp->op.children[0] = eval_exp;
-		collect_exp->resolved_name = AST_ToString(pc);
+		AR_ExpNode *collect_exp = AR_EXP_NewOpNode ("collect", false, 1) ;
+		collect_exp->op.children [0] = eval_exp ;
+		collect_exp->resolved_name = AST_ToString (pc) ;
 
 		// add collect expression to an AGGREGATION Operation
-		AR_ExpNode **exps = arr_new(AR_ExpNode *, 1);
-		arr_append(exps, collect_exp);
-		OpBase *aggregate = NewAggregateOp(plan, exps);
-		ExecutionPlan_AddOp(aggregate, match_stream);
+		AR_ExpNode **exps = arr_new (AR_ExpNode*, 1) ;
+		arr_append (exps, collect_exp) ;
+		OpBase *aggregate = NewAggregateOp (plan, exps) ;
+		ExecutionPlan_AddOp (aggregate, match_stream) ;
 
 		// handle filters attached to pattern
 		// [(a {v:1})-[]->(z) WHERE z.v = 2 | z.x]
-		predicate = cypher_ast_pattern_comprehension_get_predicate(pc);
-		if(predicate != NULL) {
+		predicate = cypher_ast_pattern_comprehension_get_predicate (pc) ;
+		if (predicate != NULL) {
 			// build filter tree
-			FT_FilterNode *filter_tree = NULL;
-			AST_ConvertFilters(&filter_tree, predicate);
+			FT_FilterNode *filter_tree = NULL ;
+			AST_ConvertFilters (&filter_tree, predicate) ;
 
-			if(!FilterTree_Valid(filter_tree)) {
-				// Invalid filter tree structure, a compile-time error has been set.
-				FilterTree_Free(filter_tree);
+			if (!FilterTree_Valid (filter_tree)) {
+				// invalid filter tree structure
+				// a compile-time error has been set
+				FilterTree_Free (filter_tree) ;
 			} else {
-				// Apply De Morgan's laws
-				FilterTree_DeMorgan(&filter_tree);
+				// apply De Morgan's laws
+				FilterTree_DeMorgan (&filter_tree) ;
 
 				// place filters
-				ExecutionPlan_PlaceFilterOps(plan, aggregate, filter_tree);
+				ExecutionPlan_PlaceFilterOps (plan, aggregate, filter_tree) ;
+
+				// update match stream op
+				match_streams [i] = OpBase_GetChild (aggregate, 0) ;
 			}
 		}
 
 		// combine the aggregation with the rest of the execution plan via
 		// an APPLY operation. for nested pattern comprehensions the apply
 		// is pushed below the enclosing pattern's match stream so the inner
-		// result is computed for each row produced by the outer traversal.
+		// result is computed for each row produced by the outer traversal
 		// when there is no anchor (e.g. RETURN [() | n.v]) simply attach
-		// the aggregation directly to the root.
-		if(anchor != NULL) {
-			OpBase *apply_op = NewApplyOp(plan);
-			ExecutionPlan_PushBelow(anchor, apply_op);
-			ExecutionPlan_AddOp(apply_op, aggregate);
+		// the aggregation directly to the root
+		if (anchor != NULL) {
+			OpBase *apply_op = NewApplyOp (plan) ;
+			ExecutionPlan_PushBelow (anchor, apply_op) ;
+			ExecutionPlan_AddOp (apply_op, aggregate) ;
 		} else {
-			ExecutionPlan_AddOp(root, aggregate);
+			ExecutionPlan_AddOp (root, aggregate) ;
 		}
 
-		if(arguments != NULL) arr_free(arguments);
+		if (arguments != NULL) {
+			arr_free (arguments) ;
+		}
 	}
 
 	// restore AST
-	QueryCtx_SetAST(prev_ast);
+	QueryCtx_SetAST (prev_ast) ;
 
-	rm_free(parent_idx);
-	rm_free(match_streams);
-	arr_free(pcs);
+	rm_free (parent_idx) ;
+	rm_free (match_streams) ;
+	arr_free (pcs) ;
 }
 
 // build pattern path plan operations for example:
@@ -260,7 +271,7 @@ void buildPatternPathOps
 	for (uint i = 0; i < count; i++) {
 		OpBase *match_stream;
 		const cypher_astnode_t *path = pps[i];
-		
+
 		// skip pattern paths declared within pattern comprehension
 		// as these are already handeled by `buildPatternComprehensionOps`
 		bool skip_path = false;

@@ -317,40 +317,51 @@ class testComprehensionFunctions(FlowTestsBase):
     def test16b_nested_pattern_comprehension_outer_scope(self):
         # Inner pattern comprehensions must be able to reference variables
         # introduced by the enclosing pattern comprehension (e.g. `p` below).
-        # Reproduces the issue where the inner comprehension previously
-        # produced NULL because `p` was not bound in its scope.
         self.graph.delete()
+
         self.graph.query("CREATE (:Issue {id:1})-[:RAISED_BY]->"
                          "(:Person {name:'Alice'})-[:WORKS_FOR]->"
                          "(:Organization {name:'Acme'})")
 
-        query = """MATCH (i:Issue)
-                   RETURN [(i)-[:RAISED_BY]->(p:Person) |
-                           p { .name,
-                               worksFor: [(p)-[:WORKS_FOR]->(o:Organization) |
-                                          o { .name }] }][0] AS raisedBy"""
-        actual_result = self.graph.query(query)
-        expected_result = [[{'name': 'Alice',
-                             'worksFor': [{'name': 'Acme'}]}]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        try:
+            query = """MATCH (i:Issue)
+                       RETURN [
+                        (i)-[:RAISED_BY]->(p:Person)
+                        WHERE p.name IS NOT NULL |
+                            p { .name, worksFor: [
+                                (p)-[:WORKS_FOR]->(o:Organization)
+                                WHERE o.name IS NOT NULL |
+                                    o { .name }
+                                ]}
+                            ][0] AS raisedBy"""
 
-        # Triple-nested pattern comprehensions
-        query = """MATCH (i:Issue)
-                   RETURN [(i)-[:RAISED_BY]->(p:Person) |
-                           p { .name,
-                               worksFor: [(p)-[:WORKS_FOR]->(o:Organization) |
-                                          o { .name,
-                                              employs: [(o)<-[:WORKS_FOR]-(p2:Person) |
-                                                        p2.name] }] }][0] AS r"""
-        actual_result = self.graph.query(query)
-        expected_result = [[{'name': 'Alice',
-                             'worksFor': [{'name': 'Acme',
-                                           'employs': ['Alice']}]}]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+            actual_result = self.graph.query(query)
+            expected_result = [[{'name': 'Alice',
+                                 'worksFor': [{'name': 'Acme'}]}]]
+            self.env.assertEquals(actual_result.result_set, expected_result)
 
-        # Restore the populated graph for subsequent tests
-        self.graph.delete()
-        self.populate_graph()
+            # Triple-nested pattern comprehensions
+            query = """MATCH (i:Issue)
+                       RETURN [
+                        (i)-[:RAISED_BY]->(p:Person) |
+                            p { .name, worksFor: [
+                                (p)-[:WORKS_FOR]->(o:Organization) |
+                                    o { .name, employs: [
+                                        (o)<-[:WORKS_FOR]-(p2:Person) |
+                                            p2.name]}
+                            ]}
+                        ][0] AS r"""
+
+            actual_result = self.graph.query(query)
+            expected_result = [[{'name': 'Alice',
+                                 'worksFor': [{'name': 'Acme',
+                                               'employs': ['Alice']}]}]]
+            self.env.assertEquals(actual_result.result_set, expected_result)
+
+        finally:
+            # Restore the populated graph for subsequent tests
+            self.graph.delete()
+            self.populate_graph()
 
     def test17_pattern_comprehension_in_aggregation(self):
         # Perform pattern comprehension as an aggregation key
@@ -437,7 +448,7 @@ class testComprehensionFunctions(FlowTestsBase):
         actual_result = self.graph.query(query)
         expected_result = [[[]]]
         self.env.assertEquals(actual_result.result_set, expected_result)
-        
+
         # Create a single relationship
         query = "CREATE ()-[:R]->()"
         self.graph.query(query)
