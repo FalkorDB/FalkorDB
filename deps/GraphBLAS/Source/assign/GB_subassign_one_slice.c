@@ -39,7 +39,7 @@
 #define GB_FREE_ALL                             \
 {                                               \
     GB_FREE_WORKSPACE ;                         \
-    GB_FREE_MEMORY (&TaskList, TaskList_size) ;   \
+    GB_FREE_MEMORY (&TaskList, TaskList_mem) ;  \
 }
 
 //------------------------------------------------------------------------------
@@ -51,7 +51,7 @@ GrB_Info GB_subassign_one_slice     // slice M for subassign_05, 06n, 07
 (
     // output:
     GB_task_struct **p_TaskList,    // array of structs
-    size_t *p_TaskList_size,        // size of TaskList
+    uint64_t *p_TaskList_mem,       // size of TaskList
     int *p_ntasks,                  // # of tasks constructed
     int *p_nthreads,                // # of threads to use
     // input:
@@ -67,6 +67,7 @@ GrB_Info GB_subassign_one_slice     // slice M for subassign_05, 06n, 07
     const int Jkind,
     const int64_t Jcolon [3],
     const GrB_Matrix M,             // matrix to slice
+    const int memlane,
     GB_Werk Werk
 )
 #endif
@@ -90,6 +91,8 @@ GB_CALLBACK_SUBASSIGN_ONE_SLICE_PROTO (GB_subassign_one_slice)
     ASSERT (!GB_JUMBLED (C)) ;      // but it is not jumbled
 
     ASSERT (!GB_JUMBLED (M)) ;
+
+    uint64_t mem = GB_mem (memlane, 0) ;
 
     (*p_TaskList  ) = NULL ;
     (*p_ntasks    ) = 0 ;
@@ -135,7 +138,7 @@ GB_CALLBACK_SUBASSIGN_ONE_SLICE_PROTO (GB_subassign_one_slice)
     GB_WERK_DECLARE (Coarse, int64_t) ;     // size ntasks1+1
     int ntasks1 = 0 ;
     int nthreads = GB_nthreads (mnz, chunk, nthreads_max) ;
-    GB_task_struct *restrict TaskList = NULL ; size_t TaskList_size = 0 ;
+    GB_task_struct *restrict TaskList = NULL ; uint64_t TaskList_mem = mem ;
     int max_ntasks = 0 ;
     int ntasks = 0 ;
     int ntasks0 = (nthreads == 1) ? 1 : (32 * nthreads) ;
@@ -154,7 +157,7 @@ GB_CALLBACK_SUBASSIGN_ONE_SLICE_PROTO (GB_subassign_one_slice)
         TaskList [0].kfirst = 0 ;
         TaskList [0].klast  = Mnvec-1 ;
         (*p_TaskList  ) = TaskList ;
-        (*p_TaskList_size) = TaskList_size ;
+        (*p_TaskList_mem) = TaskList_mem ;
         (*p_ntasks    ) = (Mnvec == 0) ? 0 : 1 ;
         (*p_nthreads  ) = 1 ;
         return (GrB_SUCCESS) ;
@@ -164,9 +167,9 @@ GB_CALLBACK_SUBASSIGN_ONE_SLICE_PROTO (GB_subassign_one_slice)
     // determine # of threads and tasks for the subassign operation
     //--------------------------------------------------------------------------
 
-    double target_task_size = ((double) mnz) / (double) (ntasks0) ;
-    target_task_size = GB_IMAX (target_task_size, chunk) ;
-    ntasks1 = ((double) mnz) / target_task_size ;
+    double target_work_per_task = ((double) mnz) / (double) (ntasks0) ;
+    target_work_per_task = GB_IMAX (target_work_per_task, chunk) ;
+    ntasks1 = ((double) mnz) / target_work_per_task ;
     ntasks1 = GB_IMAX (ntasks1, 1) ;
 
     //--------------------------------------------------------------------------
@@ -271,7 +274,7 @@ GB_CALLBACK_SUBASSIGN_ONE_SLICE_PROTO (GB_subassign_one_slice)
 
             int64_t mknz = (Mp == NULL) ?
                 Mvlen : (GB_IGET (Mp, k+1) - GB_IGET (Mp, k)) ;
-            int nfine = ((double) mknz) / target_task_size ;
+            int nfine = ((double) mknz) / target_work_per_task ;
             nfine = GB_IMAX (nfine, 1) ;
 
             // make the TaskList bigger, if needed
@@ -373,7 +376,7 @@ GB_CALLBACK_SUBASSIGN_ONE_SLICE_PROTO (GB_subassign_one_slice)
 
     GB_FREE_WORKSPACE ;
     (*p_TaskList  ) = TaskList ;
-    (*p_TaskList_size) = TaskList_size ;
+    (*p_TaskList_mem) = TaskList_mem ;
     (*p_ntasks    ) = ntasks ;
     (*p_nthreads  ) = nthreads ;
     return (GrB_SUCCESS) ;

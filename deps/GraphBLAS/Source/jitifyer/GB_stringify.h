@@ -960,8 +960,8 @@ void GB_enumify_apply       // enumerate an apply or tranpose/apply problem
     const bool C_is_matrix, // true for C=op(A), false for Cx=op(A)
     const GrB_Type ctype,   // C=((ctype) T) is the final typecast
     const bool Cp_is_32,        // if true, Cp is uint32_t, else uint64_t
-    const bool Ci_is_32,        // if true, Ci is uint32_t, else uint64_t
     const bool Cj_is_32,        // if true, Cj is uint32_t, else uint64_t
+    const bool Ci_is_32,        // if true, Ci is uint32_t, else uint64_t
     // operator:
         const GB_Operator op,       // unary/index-unary to apply; not binaryop
         const bool flipij,          // if true, flip i,j for user idxunop
@@ -1025,8 +1025,8 @@ uint64_t GB_encodify_apply      // encode an apply problem
     const bool C_is_matrix,     // true for C=op(A), false for Cx=op(A)
     const GrB_Type ctype,
     const bool Cp_is_32,        // if true, Cp is uint32_t, else uint64_t
-    const bool Ci_is_32,        // if true, Ci is uint32_t, else uint64_t
     const bool Cj_is_32,        // if true, Cj is uint32_t, else uint64_t
+    const bool Ci_is_32,        // if true, Ci is uint32_t, else uint64_t
     // operator:
     const GB_Operator op,       // not JIT'd if NULL
     const bool flipij,
@@ -1144,8 +1144,8 @@ GrB_Info GB_convert_b2s_jit         // extract CSC/CSR or triplets from bitmap
     GB_void *restrict Cx,           // values for CSC/CSR or triplet form
     // inputs: not modified
     const bool Cp_is_32,            // if true, Cp is uint32_t, else uint64_t
-    const bool Ci_is_32,            // if true, Cp is uint32_t, else uint64_t
     const bool Cj_is_32,            // if true, Cp is uint32_t, else uint64_t
+    const bool Ci_is_32,            // if true, Cp is uint32_t, else uint64_t
     const GrB_Type ctype,           // type of Cx
     GB_Operator op,
     const GrB_Matrix A,             // matrix to extract; not modified
@@ -1244,12 +1244,20 @@ uint64_t GB_encodify_build      // encode an build problem
     const GB_jit_kcode kcode,   // kernel to encode
     const GrB_BinaryOp dup,     // operator for summing up duplicates
     const GrB_Type ttype,       // type of Tx array
-    const GrB_Type stype,       // type of Sx array
+    const GrB_Type stype,       // type of Sx array (values of input tuples)
+    bool is_matrix,             // if true, J is NULL, else non-NULL
+    bool iso_build,             // if true, Tx and Sx are iso
+    bool Tp_is_32,              // if true, Tp is uint32_t, else uint64_t
+    bool Tj_is_32,              // if true, Tj is uint32_t, else uint64_t
     bool Ti_is_32,              // if true, Ti is uint32_t, else uint64_t
-    bool I_is_32,               // if true, I_work is uint32_t else uint64_t
+    bool I_is_32,               // if true, I is uint32_t else uint64_t
+    bool J_is_32,               // if true, J is uint32_t else uint64_t
     bool K_is_32,               // if true, K_work is uint32_t else uint64_t
     bool K_is_null,             // if true, K_work is NULL
-    bool no_duplicates          // if true, no duplicates appear
+    bool Key_preloaded,         // if true, Key_in is preloaded on input
+    bool Key_is_32,             // if true, GB_key_t is uint32_t else uint64_t
+    bool known_no_duplicates,   // if true, tuples known to not have duplicates
+    bool known_sorted           // if true, tuples known to already be sorted
 ) ;
 
 void GB_enumify_build           // enumerate a GB_build problem
@@ -1257,14 +1265,22 @@ void GB_enumify_build           // enumerate a GB_build problem
     // output:
     uint64_t *method_code,      // unique encoding of the entire operation
     // input:
-    GrB_BinaryOp dup,           // operator for duplicates
-    GrB_Type ttype,             // type of Tx
-    GrB_Type stype,             // type of Sx
+    const GrB_BinaryOp dup,     // operator for duplicates
+    const GrB_Type ttype,       // type of Tx
+    const GrB_Type stype,       // type of Sx array (values of input tuples)
+    bool is_matrix,             // if true, J is NULL, else non-NULL
+    bool iso_build,             // if true, Tx and Sx are iso
+    bool Tp_is_32,              // if true, Tp is uint32_t, else uint64_t
+    bool Tj_is_32,              // if true, Tj is uint32_t, else uint64_t
     bool Ti_is_32,              // if true, Ti is uint32_t, else uint64_t
-    bool I_is_32,               // if true, I_work is uint32_t else uint64_t
+    bool I_is_32,               // if true, I is uint32_t else uint64_t
+    bool J_is_32,               // if true, J is uint32_t else uint64_t
     bool K_is_32,               // if true, K_work is uint32_t else uint64_t
     bool K_is_null,             // if true, K_work is NULL
-    bool no_duplicates          // if true, no duplicates appear
+    bool Key_preloaded,         // if true, Key_in is preloaded on input
+    bool Key_is_32,             // if true, GB_key_t is uint32_t else uint64_t
+    bool known_no_duplicates,   // if true, tuples known to not have duplicates
+    bool known_sorted           // if true, tuples known to already be sorted
 ) ;
 
 void GB_macrofy_build           // construct all macros for GB_build
@@ -1584,7 +1600,7 @@ GrB_Info GB_masker_phase1_jit       // count nnz in each R(:,j)
 
 GrB_Info GB_masker_phase2_jit       // phase2 for R = masker (C,M,Z)
 (
-    GrB_Matrix R,                   // output matrix, static header
+    GrB_Matrix R,                   // output matrix, existing header
     // tasks from phase1a:
     const GB_task_struct *restrict TaskList,     // array of structs
     const int R_ntasks,               // # of tasks

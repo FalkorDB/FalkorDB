@@ -52,12 +52,12 @@ uint64_t nrows = 0 ;
 uint64_t ncols = 0 ;
 uint64_t nvals = 0 ;
 uint64_t nvec = 0 ;
-uint64_t Ai_size = 0 ;
-uint64_t Ax_size = 0 ;
+uint64_t Ai_memsize = 0 ;
+uint64_t Ax_memsize = 0 ;
 bool iso = false ;
-uint64_t Ap_size = 0 ;
-uint64_t Aj_size = 0 ;
-uint64_t Ah_size = 0 ;
+uint64_t Ap_memsize = 0 ;
+uint64_t Aj_memsize = 0 ;
+uint64_t Ah_memsize = 0 ;
 int64_t ignore = -1 ;
 char *Ax = NULL ;
 int format = 0 ;
@@ -87,7 +87,7 @@ GrB_Info import_export ( )
     if (GB_VECTOR_OK (C))
     {
         OK (GxB_Vector_export_CSC ((GrB_Vector *) (&C), &type, &nrows,
-            &Ai, (void **) &Ax, &Ai_size, &Ax_size, &iso,
+            &Ai, (void **) &Ax, &Ai_memsize, &Ax_memsize, &iso,
             &nvals, &jumbled, desc)) ;
 
         OK (GxB_Type_size (&asize, type)) ;
@@ -98,19 +98,20 @@ GrB_Info import_export ( )
                 nrows, nvals) ;
             OK (GB_Type_check (type, "type", GxB_SUMMARY, stdout)) ;
             char *string = NULL ;
-            size_t string_size = 0 ;
+            uint64_t string_mem = 0 ;   // set by GB_entry_check
             for (int64_t p = 0 ; p < nvals ; p++)
             {
                 printf ("  row %llu value ", Ai [p]) ;
                 GB_entry_check (type, Ax + (iso ? 0:p)*asize, 5, stdout,
-                    &string, &string_size) ;
+                    &string, &string_mem, GB_MEMLANE_MATLAB) ;
                 printf ("\n") ;
             }
-            GB_FREE_MEMORY (&string, string_size) ;
+            GB_FREE_MEMORY (&string, string_mem) ;
         }
 
         OK (GxB_Vector_import_CSC ((GrB_Vector *) (&C), type, nrows,
-            &Ai, (void **) &Ax, Ai_size, Ax_size, iso, nvals, jumbled, desc)) ;
+            &Ai, (void **) &Ax, Ai_memsize, Ax_memsize, iso, nvals, jumbled,
+            desc)) ;
 
         return (GrB_SUCCESS) ;
     }
@@ -127,19 +128,19 @@ GrB_Info import_export ( )
         //----------------------------------------------------------------------
 
             OK (GxB_Matrix_export_CSR (&C, &type, &nrows, &ncols,
-                    &Ap, &Aj, (void **) &Ax, &Ap_size, &Aj_size, &Ax_size, &iso,
-                    &jumbled, desc)) ;
+                    &Ap, &Aj, (void **) &Ax, &Ap_memsize, &Aj_memsize,
+                    &Ax_memsize, &iso, &jumbled, desc)) ;
 
             OK (GxB_Type_size (&asize, type)) ;
             nvec = nrows ;
 
             if (dump)
             {
-                printf ("\nexport standard CSR: %llu-by-%llu, Ax_size %llu:\n",
-                    nrows, ncols, Ax_size) ;
+                printf ("\nexport standard CSR: %llu-by-%llu, Ax_memsize "
+                    "%llu:\n", nrows, ncols, Ax_memsize) ;
                 OK (GB_Type_check (type, "type", GxB_SUMMARY, stdout));
                 char *string = NULL ;
-                size_t string_size = 0 ;
+                uint64_t string_mem = 0 ;   // set by GB_entry_check
                 for (int64_t i = 0 ; i < nrows ; i++)
                 {
                     printf ("Row %lld\n", i) ;
@@ -147,16 +148,17 @@ GrB_Info import_export ( )
                     {
                         printf ("  col %llu value ", Aj [p]) ;
                         GB_entry_check (type, Ax + (iso ? 0:p)*asize,
-                            5, stdout, &string, &string_size) ;
+                            5, stdout, &string, &string_mem,
+                            GB_MEMLANE_MATLAB) ;
                         printf ("\n") ;
                     }
                 }
-                GB_FREE_MEMORY (&string, string_size) ;
+                GB_FREE_MEMORY (&string, string_mem) ;
             }
 
             OK (GxB_Matrix_import_CSR (&C, type, nrows, ncols,
-                &Ap, &Aj, (void **) &Ax, Ap_size, Aj_size, Ax_size, iso,
-                jumbled, desc)) ;
+                &Ap, &Aj, (void **) &Ax, Ap_memsize, Aj_memsize, Ax_memsize,
+                iso, jumbled, desc)) ;
 
             OK (GB_Matrix_check (C, "C reimported",
                 dump ? GxB_COMPLETE : GxB_SILENT, stdout)) ;
@@ -167,19 +169,19 @@ GrB_Info import_export ( )
         //----------------------------------------------------------------------
 
             OK (GxB_Matrix_export_CSC (&C, &type, &nrows, &ncols,
-                    &Ap, &Ai, (void **) &Ax, &Ap_size, &Ai_size, &Ax_size, &iso,
-                    &jumbled, desc)) ;
+                    &Ap, &Ai, (void **) &Ax, &Ap_memsize, &Ai_memsize,
+                    &Ax_memsize, &iso, &jumbled, desc)) ;
 
             nvec = ncols ;
             OK (GxB_Type_size (&asize, type)) ;
 
             if (dump)
             {
-                printf ("\nexport standard CSC: %llu-by-%llu, Ax_size %llu:\n",
-                    nrows, ncols, Ax_size) ;
+                printf ("\nexport standard CSC: %llu-by-%llu, Ax_memsize "
+                    "%llu:\n", nrows, ncols, Ax_memsize) ;
                 OK (GB_Type_check (type, "type", GxB_SUMMARY, stdout));
                 char *string = NULL ;
-                size_t string_size = 0 ;
+                uint64_t string_mem = 0 ;   // set by GB_entry_check
                 for (int64_t j = 0 ; j < ncols ; j++)
                 {
                     printf ("Col %lld\n", j) ;
@@ -187,16 +189,17 @@ GrB_Info import_export ( )
                     {
                         printf ("  row %llu value ", Ai [p]) ;
                         GB_entry_check (type, Ax + (iso ? 0:p)*asize,
-                            5, stdout, &string, &string_size) ;
+                            5, stdout, &string, &string_mem,
+                            GB_MEMLANE_MATLAB) ;
                         printf ("\n") ;
                     }
                 }
-                GB_FREE_MEMORY (&string, string_size) ;
+                GB_FREE_MEMORY (&string, string_mem) ;
             }
 
             OK (GxB_Matrix_import_CSC (&C, type, nrows, ncols,
-                &Ap, &Ai, (void **) &Ax, Ap_size, Ai_size, Ax_size, iso,
-                jumbled, desc)) ;
+                &Ap, &Ai, (void **) &Ax, Ap_memsize, Ai_memsize, Ax_memsize,
+                iso, jumbled, desc)) ;
 
             OK (GB_Matrix_check (C, "C reimported",
                 dump ? GxB_COMPLETE : GxB_SILENT, stdout)) ;
@@ -208,18 +211,18 @@ GrB_Info import_export ( )
 
             OK (GxB_Matrix_export_HyperCSR (&C, &type, &nrows, &ncols,
                 &Ap, &Ah, &Aj, (void **) &Ax,
-                &Ap_size, &Ah_size, &Aj_size, &Ax_size, &iso,
+                &Ap_memsize, &Ah_memsize, &Aj_memsize, &Ax_memsize, &iso,
                 &nvec, &jumbled, desc)) ;
 
             OK (GxB_Type_size (&asize, type)) ;
 
             if (dump)
             {
-                printf ("\nexport hyper CSR: %llu-by-%llu, Ax_size %llu, "
-                    "nvec %llu:\n", nrows, ncols, Ax_size, nvec) ;
+                printf ("\nexport hyper CSR: %llu-by-%llu, Ax_memsize %llu, "
+                    "nvec %llu:\n", nrows, ncols, Ax_memsize, nvec) ;
                 OK (GB_Type_check (type, "type", GxB_SUMMARY, stdout));
                 char *string = NULL ;
-                size_t string_size = 0 ;
+                uint64_t string_mem = 0 ;   // set by GB_entry_check
                 for (int64_t k = 0 ; k < nvec ; k++)
                 {
                     int64_t i = Ah [k] ;
@@ -228,16 +231,17 @@ GrB_Info import_export ( )
                     {
                         printf ("  col %llu value ", Aj [p]) ;
                         GB_entry_check (type, Ax + (iso ? 0:p)*asize,
-                            5, stdout, &string, &string_size) ;
+                            5, stdout, &string, &string_mem,
+                            GB_MEMLANE_MATLAB) ;
                         printf ("\n") ;
                     }
                 }
-                GB_FREE_MEMORY (&string, string_size) ;
+                GB_FREE_MEMORY (&string, string_mem) ;
             }
 
             OK (GxB_Matrix_import_HyperCSR (&C, type, nrows, ncols,
                 &Ap, &Ah, &Aj, (void **) &Ax,
-                Ap_size, Ah_size, Aj_size, Ax_size, iso,
+                Ap_memsize, Ah_memsize, Aj_memsize, Ax_memsize, iso,
                 nvec, jumbled, desc)) ;
 
             OK (GB_Matrix_check (C, "C reimported",
@@ -250,18 +254,18 @@ GrB_Info import_export ( )
 
             OK (GxB_Matrix_export_HyperCSC (&C, &type, &nrows, &ncols,
                 &Ap, &Ah, &Ai, (void **) &Ax,
-                &Ap_size, &Ah_size, &Ai_size, &Ax_size, &iso,
+                &Ap_memsize, &Ah_memsize, &Ai_memsize, &Ax_memsize, &iso,
                 &nvec, &jumbled, desc)) ;
 
             OK (GxB_Type_size (&asize, type)) ;
 
             if (dump)
             {
-                printf ("export hyper CSC: %llu-by-%llu, Ax_size %llu, "
-                    "c %llu:\n", nrows, ncols, Ax_size, nvec) ;
+                printf ("export hyper CSC: %llu-by-%llu, Ax_memsize %llu, "
+                    "c %llu:\n", nrows, ncols, Ax_memsize, nvec) ;
                 OK (GB_Type_check (type, "type", GxB_SUMMARY, stdout));
                 char *string = NULL ;
-                size_t string_size = 0 ;
+                uint64_t string_mem = 0 ;   // set by GB_entry_check
                 for (int64_t k = 0 ; k < nvec ; k++)
                 {
                     int64_t j = Ah [k] ;
@@ -270,16 +274,17 @@ GrB_Info import_export ( )
                     {
                         printf ("  row %llu value ", Ai [p]) ;
                         GB_entry_check (type, Ax + (iso ? 0:p)*asize,
-                            5, stdout, &string, &string_size) ;
+                            5, stdout, &string, &string_mem,
+                            GB_MEMLANE_MATLAB) ;
                         printf ("\n") ;
                     }
                 }
-                GB_FREE_MEMORY (&string, string_size) ;
+                GB_FREE_MEMORY (&string, string_mem) ;
             }
 
             OK (GxB_Matrix_import_HyperCSC (&C, type, nrows, ncols,
                 &Ap, &Ah, &Ai, (void **) &Ax,
-                Ap_size, Ah_size, Ai_size, Ax_size, iso,
+                Ap_memsize, Ah_memsize, Ai_memsize, Ax_memsize, iso,
                 nvec, jumbled, desc)) ;
 
             OK (GB_Matrix_check (C, "C reimported",

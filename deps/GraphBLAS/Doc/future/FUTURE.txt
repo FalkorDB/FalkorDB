@@ -1,5 +1,9 @@
 FUTURE plans for GraphBLAS:
 
+    select:  exploit the mask for C<M> = select(A) during the select operation;
+        currently, if a mask is present, it is exploited only after computing
+        T=select(A).
+
     JIT package: don't just check 1st line of GraphBLAS.h when deciding to
         unpack the src in user cache folder. Use a crc test.
 
@@ -11,19 +15,11 @@ FUTURE plans for GraphBLAS:
 
     kernel fusion
 
-    CUDA kernels
-        CUDA: finding src
-        CUDA: kernel source location, and name
-
-    distributed framework
-
     fine-grain parallelism for dot-product based mxm, mxv, vxm,
         then add GxB_vxvt (outer product) and GxB_vtxv (inner product)
         (or call them GxB_outerProduct and GxB_innerProduct?)
 
     aggregators
-
-    GrB_extract with GrB_Vectors instead of (GrB_Index *) arrays for I and J
 
     iso: set a flag with GrB_get/set to disable iso.  useful if the matrix is
     about to become non-iso anyway. Pagerank does:

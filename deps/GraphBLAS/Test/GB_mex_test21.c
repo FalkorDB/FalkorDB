@@ -255,16 +255,32 @@ void mexFunction
     GrB_BinaryOp op2 = GxB_TIMES_FC32 ;
     fprintf (fp, "GB_enumify_build / GB_macrofy_build: %s\n", op2->name) ;
     printf ("GB_enumify_build / GB_macrofy_build: %s\n", op2->name) ;
-    GB_enumify_build (&method_code, op2, GrB_BOOL, GrB_BOOL, false, false,
-        false, false, false) ;
+    GB_enumify_build (&method_code, op2, GrB_BOOL, GrB_BOOL,
+        /* is_matrix: */ true,
+        /* iso_build: */ false,
+        /* Tp, Tj, Tj is_32: */ false, false, false,
+        /* I,J,K is_32: */ false, false, false,
+        /* K is NULL: */ false,
+        /* Key_preloaded: */ false,
+        /* Key_is_32: */ true,
+        /* no dupl: */ false,
+        /* sorted: */ false) ;
     GB_macrofy_build (fp, method_code, op2, GrB_BOOL, GrB_BOOL) ;
 
     HEADER ;
     op2 = GrB_LAND ;
     fprintf (fp, "GB_enumify_build / GB_macrofy_build: %s\n", op2->name) ;
     printf ("GB_enumify_build / GB_macrofy_build: %s\n", op2->name) ;
-    GB_enumify_build (&method_code, op2, GxB_FC32, GxB_FC32, false, false,
-        false, false, true) ;
+    GB_enumify_build (&method_code, op2, GxB_FC32, GxB_FC32,
+        /* is_matrix: */ true,
+        /* iso_build: */ false,
+        /* Tp, Tj, Tj is_32: */ false, false, false,
+        /* I,J,K is_32: */ false, false, false,
+        /* K is NULL: */ false,
+        /* Key_preloaded: */ false,
+        /* Key_is_32: */ true,
+        /* no dupl: */ true,
+        /* sorted: */ false) ;
     GB_macrofy_build (fp, method_code, op2, GxB_FC32, GxB_FC32) ;
 
     //--------------------------------------------------------------------------

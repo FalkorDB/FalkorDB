@@ -601,7 +601,7 @@
 // which expands into the following, where f(i) is the GB_HASHF(i) hash
 // function:
 //
-//      for (uint64_t hash = f(i) ; ; hash = (hash+1)&(hash_size-1))
+//      for (uint64_t hash = f(i) ; ; hash = (hash+1)&(hash_nitems-1))
 //      {
 //          ...
 //      }

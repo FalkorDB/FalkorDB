@@ -8,7 +8,7 @@
 //------------------------------------------------------------------------------
 
 // Similar to GxB_Matrix_diag (C, v, k, NULL), except that C is constructed
-// as a new matrix, like GrB_Matrix_new.  C has the same type as v.
+// as a new matrix, like GrB_Matrix_new.  C has the same type and memlane as v.
 
 #include "diag/GB_diag.h"
 
@@ -34,8 +34,11 @@ GrB_Info GrB_Matrix_diag        // construct a diagonal matrix from a vector
     // C = diag (v,k)
     //--------------------------------------------------------------------------
 
+    int memlane = GB_memlane (v->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     uint64_t n = v->vlen + GB_IABS (k) ;
-    GB_OK (GB_Matrix_new (C, v->type, n, n)) ;
+    GB_OK (GB_Matrix_new (C, v->type, n, n, memlane)) ;
     GB_OK (GB_Matrix_diag (*C, (GrB_Matrix) v, k, Werk)) ;
 
     GB_BURBLE_END ;

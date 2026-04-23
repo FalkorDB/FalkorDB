@@ -59,12 +59,13 @@ GrB_Info GB_subassign_01
     GrB_Matrix S = NULL ;
     ASSERT (!GB_IS_BITMAP (C)) ;
 
+    int memlane = GB_memlane (C->header_mem) ;
+
     //--------------------------------------------------------------------------
     // S = C(I,J)
     //--------------------------------------------------------------------------
 
-    struct GB_Matrix_opaque S_header ;
-    GB_CLEAR_MATRIX_HEADER (S, &S_header) ;
+    GB_OK (GB_matrix_header_new (&S, memlane)) ;
     GB_OK (GB_subassign_symbolic (S, C, I, I_is_32, ni, J, J_is_32, nj, true,
         Werk)) ;
 

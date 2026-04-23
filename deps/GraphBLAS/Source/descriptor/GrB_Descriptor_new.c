@@ -25,14 +25,17 @@ GrB_Info GrB_Descriptor_new     // create a new descriptor
     GB_RETURN_IF_NULL (descriptor) ;
     (*descriptor) = NULL ;
 
+    int memlane = GB_Context_memlane ( ) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     //--------------------------------------------------------------------------
     // create the descriptor
     //--------------------------------------------------------------------------
 
     // allocate the descriptor
-    size_t header_size ;
+    uint64_t header_mem = mem ;
     (*descriptor) = GB_MALLOC_MEMORY (1, sizeof (struct GB_Descriptor_opaque),
-        &header_size) ;
+        &header_mem) ;
     if (*descriptor == NULL)
     { 
         // out of memory
@@ -42,11 +45,11 @@ GrB_Info GrB_Descriptor_new     // create a new descriptor
     // initialize the descriptor
     GrB_Descriptor desc = *descriptor ;
     desc->magic = GB_MAGIC ;
-    desc->header_size = header_size ;
-    desc->user_name = NULL ;       // user_name for GrB_get/GrB_set
-    desc->user_name_size = 0 ;
-    desc->logger = NULL ;          // error string
-    desc->logger_size = 0 ;
+    desc->header_mem = header_mem ;
+    // user_name for GrB_get/GrB_set:
+    desc->user_name = NULL ; desc->user_name_mem = 0 ;
+    // error string:
+    desc->logger = NULL ; desc->logger_mem = 0 ;
     desc->out  = GxB_DEFAULT ;     // descriptor for output
     desc->mask = GxB_DEFAULT ;     // descriptor for the mask input
     desc->in0  = GxB_DEFAULT ;     // descriptor for the first input

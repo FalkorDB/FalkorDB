@@ -20,12 +20,13 @@ bool GB_cuda_apply_unop_branch
         return false ;
     }
 
-    if (A->header_size == 0)
+    if (A->header_mem == 0)
     {
-        return false ;
+        // FIXME memlane: check all of A
+        return (false) ;
     }
-    
-    bool ok = (GB_cuda_type_branch (ctype) && GB_cuda_type_branch (A->type)) ;
+
+    bool ok = true ;
 
     if (op->xtype != NULL)
     {
@@ -42,6 +43,8 @@ bool GB_cuda_apply_unop_branch
     
     double work = GB_nnz_held (A) ;
     int gpu_count = GB_ngpus_to_use (work) ;
+    int ngpus_max = GB_Context_gpu_ids (NULL) ;     // FIXME: get gpu_ids
+    gpu_count = std::min (gpu_count, ngpus_max) ;
     ok = ok && (gpu_count > 0);
     return ok ;
 }

@@ -61,20 +61,20 @@ void mexFunction
     double *Cx = NULL ;
     uint64_t *Cp = NULL, *Ch = NULL, *Ci = NULL ;   // OK; 64-bit only
     int8_t *Cb = NULL ;
-    uint64_t Cp_size = 0, Ch_size = 0, Cb_size = 0, Ci_size = 0, Cx_size = 0 ;
+    uint64_t Cp_memsize = 0, Ch_memsize = 0, Cb_memsize = 0, Ci_memsize = 0, Cx_memsize = 0 ;
     bool C_iso = false ;
     bool jumbled = false ;
     uint64_t nrows = 0, ncols = 0, nvals = 0, nvec = 0 ;
 
     // full (row to col)
     OK (GrB_Matrix_dup (&C, S)) ;
-    OK (GxB_Matrix_unpack_FullR (C, (void **) &Cx, &Cx_size, &C_iso, NULL)) ;
+    OK (GxB_Matrix_unpack_FullR (C, (void **) &Cx, &Cx_memsize, &C_iso, NULL)) ;
     OK (GxB_Matrix_fprint (C, "unpacked C by row", pr, NULL)) ;
     for (int k = 0 ; k < m*n ; k++)
     {
         CHECK (Cx [k] == (double) k) ;
     }
-    OK (GxB_Matrix_pack_FullC (C, (void **) &Cx, Cx_size, C_iso, NULL)) ;
+    OK (GxB_Matrix_pack_FullC (C, (void **) &Cx, Cx_memsize, C_iso, NULL)) ;
     OK (GxB_Matrix_fprint (C, "packed C by col", pr, NULL)) ;
     CHECK (Cx == NULL) ;
     OK (GrB_Matrix_nrows (&nrows, C)) ;
@@ -85,7 +85,7 @@ void mexFunction
 
     // full (col to row)
     OK (GrB_Matrix_dup (&C, S)) ;
-    OK (GxB_Matrix_unpack_FullC (C, (void **) &Cx, &Cx_size, &C_iso, NULL)) ;
+    OK (GxB_Matrix_unpack_FullC (C, (void **) &Cx, &Cx_memsize, &C_iso, NULL)) ;
     OK (GxB_Matrix_fprint (C, "unpacked C by col", pr, NULL)) ;
     for (int k = 0 ; k < m*n ; k++)
     {
@@ -93,7 +93,7 @@ void mexFunction
         int j = k / m ;
         CHECK (Cx [k] == (double) (i * n + j)) ;
     }
-    OK (GxB_Matrix_pack_FullR (C, (void **) &Cx, Cx_size, C_iso, NULL)) ;
+    OK (GxB_Matrix_pack_FullR (C, (void **) &Cx, Cx_memsize, C_iso, NULL)) ;
     OK (GxB_Matrix_fprint (C, "packed C by row", pr, NULL)) ;
     CHECK (Cx == NULL) ;
     OK (GrB_Matrix_nrows (&nrows, C)) ;
@@ -104,14 +104,14 @@ void mexFunction
 
     // bitmap (row to col)
     OK (GrB_Matrix_dup (&C, S)) ;
-    OK (GxB_Matrix_unpack_BitmapR (C, &Cb, (void **) &Cx, &Cb_size, &Cx_size,
+    OK (GxB_Matrix_unpack_BitmapR (C, &Cb, (void **) &Cx, &Cb_memsize, &Cx_memsize,
         &C_iso, &nvals, NULL)) ;
     OK (GxB_Matrix_fprint (C, "unpacked C by row", pr, NULL)) ;
     for (int k = 0 ; k < m*n ; k++)
     {
         CHECK (Cx [k] == (double) k) ;
     }
-    OK (GxB_Matrix_pack_BitmapC (C, &Cb, (void **) &Cx, Cb_size, Cx_size,
+    OK (GxB_Matrix_pack_BitmapC (C, &Cb, (void **) &Cx, Cb_memsize, Cx_memsize,
         C_iso, nvals, NULL)) ;
     OK (GxB_Matrix_fprint (C, "packed C by col", pr, NULL)) ;
     CHECK (Cx == NULL) ;
@@ -123,7 +123,7 @@ void mexFunction
 
     // bitmap (col to row)
     OK (GrB_Matrix_dup (&C, S)) ;
-    OK (GxB_Matrix_unpack_BitmapC (C, &Cb, (void **) &Cx, &Cb_size, &Cx_size,
+    OK (GxB_Matrix_unpack_BitmapC (C, &Cb, (void **) &Cx, &Cb_memsize, &Cx_memsize,
         &C_iso, &nvals, NULL)) ;
     OK (GxB_Matrix_fprint (C, "unpacked C by col", pr, NULL)) ;
     for (int k = 0 ; k < m*n ; k++)
@@ -132,7 +132,7 @@ void mexFunction
         int j = k / m ;
         CHECK (Cx [k] == (double) (i * n + j)) ;
     }
-    OK (GxB_Matrix_pack_BitmapR (C, &Cb, (void **) &Cx, Cb_size, Cx_size,
+    OK (GxB_Matrix_pack_BitmapR (C, &Cb, (void **) &Cx, Cb_memsize, Cx_memsize,
         C_iso, nvals, NULL)) ;
     OK (GxB_Matrix_fprint (C, "packed C by row", pr, NULL)) ;
     CHECK (Cx == NULL) ;
@@ -145,7 +145,7 @@ void mexFunction
     // sparse (row)
     OK (GrB_Matrix_dup (&C, S)) ;
     OK (GxB_Matrix_unpack_CSR (C, &Cp, &Ci, (void **) &Cx,
-        &Cp_size, &Ci_size, &Cx_size, &C_iso, &jumbled, NULL)) ;
+        &Cp_memsize, &Ci_memsize, &Cx_memsize, &C_iso, &jumbled, NULL)) ;
     OK (GxB_Matrix_fprint (C, "unpacked C by row", pr, NULL)) ;
     for (int k = 0 ; k < m*n ; k++)
     {
@@ -153,7 +153,7 @@ void mexFunction
     }
     OK (GxB_Matrix_Option_set (C, GxB_FORMAT, GxB_BY_COL)) ;
     OK (GxB_Matrix_pack_CSR (C, &Cp, &Ci, (void **) &Cx,
-        Cp_size, Ci_size, Cx_size, C_iso, jumbled, NULL)) ;
+        Cp_memsize, Ci_memsize, Cx_memsize, C_iso, jumbled, NULL)) ;
     OK (GxB_Matrix_fprint (C, "packed C by row", pr, NULL)) ;
     CHECK (Cx == NULL) ;
     OK (GrB_Matrix_nrows (&nrows, C)) ;
@@ -165,7 +165,7 @@ void mexFunction
     // sparse (col)
     OK (GrB_Matrix_dup (&C, S)) ;
     OK (GxB_Matrix_unpack_CSC (C, &Cp, &Ci, (void **) &Cx,
-        &Cp_size, &Ci_size, &Cx_size, &C_iso, &jumbled, NULL)) ;
+        &Cp_memsize, &Ci_memsize, &Cx_memsize, &C_iso, &jumbled, NULL)) ;
     OK (GxB_Matrix_fprint (C, "unpacked C by col", pr, NULL)) ;
     for (int k = 0 ; k < m*n ; k++)
     {
@@ -175,7 +175,7 @@ void mexFunction
     }
     OK (GxB_Matrix_Option_set (C, GxB_FORMAT, GxB_BY_ROW)) ;
     OK (GxB_Matrix_pack_CSC (C, &Cp, &Ci, (void **) &Cx,
-        Cp_size, Ci_size, Cx_size, C_iso, jumbled, NULL)) ;
+        Cp_memsize, Ci_memsize, Cx_memsize, C_iso, jumbled, NULL)) ;
     OK (GxB_Matrix_fprint (C, "packed C by col", pr, NULL)) ;
     CHECK (Cx == NULL) ;
     OK (GrB_Matrix_nrows (&nrows, C)) ;
@@ -187,7 +187,7 @@ void mexFunction
     // hypersparse (row)
     OK (GrB_Matrix_dup (&C, S)) ;
     OK (GxB_Matrix_unpack_HyperCSR (C, &Cp, &Ch, &Ci, (void **) &Cx,
-        &Cp_size, &Ch_size, &Ci_size, &Cx_size, &C_iso, &nvec, &jumbled,
+        &Cp_memsize, &Ch_memsize, &Ci_memsize, &Cx_memsize, &C_iso, &nvec, &jumbled,
         NULL)) ;
     OK (GxB_Matrix_fprint (C, "unpacked C by row", pr, NULL)) ;
     for (int k = 0 ; k < m*n ; k++)
@@ -196,7 +196,7 @@ void mexFunction
     }
     OK (GxB_Matrix_Option_set (C, GxB_FORMAT, GxB_BY_COL)) ;
     OK (GxB_Matrix_pack_HyperCSR (C, &Cp, &Ch, &Ci, (void **) &Cx,
-        Cp_size, Ch_size, Ci_size, Cx_size, C_iso, nvec, jumbled, NULL)) ;
+        Cp_memsize, Ch_memsize, Ci_memsize, Cx_memsize, C_iso, nvec, jumbled, NULL)) ;
     OK (GxB_Matrix_fprint (C, "packed C by row", pr, NULL)) ;
     CHECK (Cx == NULL) ;
     OK (GrB_Matrix_nrows (&nrows, C)) ;
@@ -208,7 +208,7 @@ void mexFunction
     // hypersparse (col)
     OK (GrB_Matrix_dup (&C, S)) ;
     OK (GxB_Matrix_unpack_HyperCSC (C, &Cp, &Ch, &Ci, (void **) &Cx,
-        &Cp_size, &Ch_size, &Ci_size, &Cx_size, &C_iso, &nvec, &jumbled,
+        &Cp_memsize, &Ch_memsize, &Ci_memsize, &Cx_memsize, &C_iso, &nvec, &jumbled,
         NULL)) ;
     OK (GxB_Matrix_fprint (C, "unpacked C by col", pr, NULL)) ;
     for (int k = 0 ; k < m*n ; k++)
@@ -219,7 +219,7 @@ void mexFunction
     }
     OK (GxB_Matrix_Option_set (C, GxB_FORMAT, GxB_BY_ROW)) ;
     OK (GxB_Matrix_pack_HyperCSC (C, &Cp, &Ch, &Ci, (void **) &Cx,
-        Cp_size, Ch_size, Ci_size, Cx_size, C_iso, nvec, jumbled, NULL)) ;
+        Cp_memsize, Ch_memsize, Ci_memsize, Cx_memsize, C_iso, nvec, jumbled, NULL)) ;
     OK (GxB_Matrix_fprint (C, "packed C by col", pr, NULL)) ;
     CHECK (Cx == NULL) ;
     OK (GrB_Matrix_nrows (&nrows, C)) ;

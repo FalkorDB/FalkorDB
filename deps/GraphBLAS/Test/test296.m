@@ -1,7 +1,7 @@
 function test296
 %TEST296 test integer overflow in GB_AxB_saxpy3_cumsum.c
 %
-% See also test_saxpy3.m
+% See also GraphBLAS/GraphBLAS/test/test_saxpy3.m
 
 % SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0

@@ -73,7 +73,7 @@ GrB_Info GB_select_column
 
 GrB_Info GB_select_bitmap
 (
-    GrB_Matrix C,               // output matrix, static header
+    GrB_Matrix C,               // output matrix, existing header
     const bool C_iso,           // if true, C is iso
     const GrB_IndexUnaryOp op,
     const bool flipij,          // if true, flip i and j for user operator

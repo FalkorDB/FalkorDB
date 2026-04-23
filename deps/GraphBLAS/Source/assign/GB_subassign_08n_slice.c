@@ -36,19 +36,19 @@
 #include "assign/include/GB_assign_shared_definitions.h"
 
 #if 0
-GrB_Info GX_subassign_08n_slice                                             \
+GrB_Info GB_subassign_08n_slice                                             \
 (                                                                           \
     /* output: */                                                           \
     GB_task_struct **p_TaskList,    /* size max_ntasks */                   \
-    size_t *p_TaskList_size,        /* size of TaskList */                  \
+    uint64_t *p_TaskList_mem,       /* size of TaskList */                  \
     int *p_ntasks,                  /* # of tasks constructed */            \
     int *p_nthreads,                /* # of threads to use */               \
     int64_t *p_Znvec,               /* # of vectors to compute in Z */      \
     const void **Zh_handle,         /* Zh is A->h, M->h, or NULL */         \
     int64_t **Z_to_A_handle,        /* Z_to_A: size Znvec, or NULL */       \
-    size_t *Z_to_A_size_handle,                                             \
+    uint64_t *Z_to_A_mem_handle,                                            \
     int64_t **Z_to_M_handle,        /* Z_to_M: size Znvec, or NULL */       \
-    size_t *Z_to_M_size_handle,                                             \
+    uint64_t *Z_to_M_mem_handle,                                            \
     bool *Zj_is_32_handle,                                                  \
     /* input: */                                                            \
     const GrB_Matrix C,         /* output matrix C */                       \
@@ -76,7 +76,7 @@ GB_CALLBACK_SUBASSIGN_08N_SLICE_PROTO (GB_subassign_08n_slice)
     //--------------------------------------------------------------------------
 
     GrB_Matrix S = NULL ;           // not constructed
-    GB_EMPTY_TASKLIST
+    GB_EMPTY_TASKLIST ;
 
     ASSERT (!GB_IS_BITMAP (C)) ;
     ASSERT (!GB_IS_BITMAP (M)) ;    // Method 08n is not used for M bitmap
@@ -99,7 +99,7 @@ GB_CALLBACK_SUBASSIGN_08N_SLICE_PROTO (GB_subassign_08n_slice)
     ASSERT (Z_to_M_handle != NULL) ;
 
     (*p_TaskList  ) = NULL ;
-    (*p_TaskList_size) = 0 ;
+    (*p_TaskList_mem) = mem ;
     (*p_ntasks    ) = 0 ;
     (*p_nthreads  ) = 1 ;
 
@@ -150,8 +150,8 @@ GB_CALLBACK_SUBASSIGN_08N_SLICE_PROTO (GB_subassign_08n_slice)
     bool Zp_is_32, Zj_is_32, Zi_is_32 ;
 
     int Z_sparsity = GxB_SPARSE ;
-    GB_OK (GB_emult_08_phase0 (&Znvec, &Zh_shallow, &Zh_size, NULL, NULL,
-        &Z_to_A, &Z_to_A_size, &Z_to_M, &Z_to_M_size,
+    GB_OK (GB_emult_08_phase0 (&Znvec, &Zh_shallow, &Zh_mem, NULL, NULL,
+        &Z_to_A, &Z_to_A_mem, &Z_to_M, &Z_to_M_mem,
         &Zp_is_32, &Zj_is_32, &Zi_is_32,
         &Z_sparsity, NULL, false, A, M, Werk)) ;
 
@@ -159,7 +159,7 @@ GB_CALLBACK_SUBASSIGN_08N_SLICE_PROTO (GB_subassign_08n_slice)
     ASSERT (Z_sparsity == GxB_SPARSE || Z_sparsity == GxB_HYPERSPARSE) ;
 
     GB_OK (GB_ewise_slice (
-        &TaskList, &TaskList_size, &ntasks, &nthreads,
+        &TaskList, &TaskList_mem, &ntasks, &nthreads,
         Znvec, Zh_shallow, Zj_is_32, NULL, Z_to_A, Z_to_M, false,
         NULL, A, M, Werk)) ;
 
@@ -287,14 +287,14 @@ GB_CALLBACK_SUBASSIGN_08N_SLICE_PROTO (GB_subassign_08n_slice)
     //--------------------------------------------------------------------------
 
     (*p_TaskList  ) = TaskList ;
-    (*p_TaskList_size) = TaskList_size ;
+    (*p_TaskList_mem) = TaskList_mem ;
     (*p_ntasks    ) = ntasks ;
     (*p_nthreads  ) = nthreads ;
 
     (*p_Znvec      ) = Znvec ;
     (*Zh_handle    ) = Zh_shallow ;
-    (*Z_to_A_handle) = Z_to_A ; (*Z_to_A_size_handle) = Z_to_A_size ;
-    (*Z_to_M_handle) = Z_to_M ; (*Z_to_M_size_handle) = Z_to_M_size ;
+    (*Z_to_A_handle) = Z_to_A ; (*Z_to_A_mem_handle) = Z_to_A_mem ;
+    (*Z_to_M_handle) = Z_to_M ; (*Z_to_M_mem_handle) = Z_to_M_mem ;
     (*Zj_is_32_handle) = Zj_is_32 ;
 
     return (GrB_SUCCESS) ;

@@ -22,8 +22,8 @@ GrB_Info GB_convert_b2s_jit         // extract CSC/CSR or triplets from bitmap
     GB_void *restrict Cx,           // values for CSC/CSR or triplet form
     // inputs: not modified
     const bool Cp_is_32,            // if true, Cp is uint32_t, else uint64_t
-    const bool Ci_is_32,            // if true, Ci is uint32_t, else uint64_t
     const bool Cj_is_32,            // if true, Cj is uint32_t, else uint64_t
+    const bool Ci_is_32,            // if true, Ci is uint32_t, else uint64_t
     const GrB_Type ctype,           // type of Cx
     GB_Operator op,
     const GrB_Matrix A,             // matrix to extract; not modified
@@ -40,7 +40,7 @@ GrB_Info GB_convert_b2s_jit         // extract CSC/CSR or triplets from bitmap
     char *suffix ;
     uint64_t hash = GB_encodify_apply (&encoding, &suffix,
         GB_JIT_KERNEL_CONVERT_B2S, GxB_SPARSE, false, ctype, Cp_is_32,
-        Ci_is_32, Cj_is_32, op, false, GxB_BITMAP, true, A->type,
+        Cj_is_32, Ci_is_32, op, false, GxB_BITMAP, true, A->type,
         A->p_is_32, A->j_is_32, A->i_is_32, A->iso, 0) ;
 
     //--------------------------------------------------------------------------

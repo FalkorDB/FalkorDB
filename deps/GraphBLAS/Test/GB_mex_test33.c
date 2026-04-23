@@ -50,6 +50,14 @@ void mexFunction
     // GxB_Context get/set
     //--------------------------------------------------------------------------
 
+    int ngpus ;
+    OK (GxB_Context_get_INT_ (GxB_CONTEXT_WORLD, &ngpus, GxB_NGPUS)) ;
+    printf ("ngpus at start, in GxB_CONTEXT_WORLD): %d\n", ngpus) ;
+    OK (GxB_Context_set_INT_ (GxB_CONTEXT_WORLD, 0, GxB_NGPUS)) ;
+    OK (GxB_Context_get_INT_ (GxB_CONTEXT_WORLD, &ngpus, GxB_NGPUS)) ;
+    printf ("ngpus at now, in GxB_CONTEXT_WORLD): %d\n", ngpus) ;
+    CHECK (ngpus == 0) ;
+
     int32_t nthreads1 = 999, nthreads2 = 777 ;
     GxB_get (GxB_NTHREADS, &nthreads1) ;
     printf ("nthreads: %d\n", nthreads1) ;

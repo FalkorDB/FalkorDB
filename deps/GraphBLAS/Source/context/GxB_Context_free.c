@@ -33,14 +33,14 @@ GrB_Info GxB_Context_free           // free a Context
         GxB_Context Context = *Context_handle ;
         if (Context != NULL)
         {
-            size_t header_size = Context->header_size ;
+            uint64_t header_mem = Context->header_mem ;
             // free the Context user_name
-            GB_FREE_MEMORY (&(Context->user_name), Context->user_name_size) ;
-            if (header_size > 0)
+            GB_FREE_MEMORY (&(Context->user_name), Context->user_name_mem) ;
+            if (GB_memsize (header_mem) > 0)
             { 
                 Context->magic = GB_FREED ;  // to help detect dangling pointers
-                Context->header_size = 0 ;
-                GB_FREE_MEMORY (Context_handle, header_size) ;
+                Context->header_mem = 0 ;    // header will be freed
+                GB_FREE_MEMORY (Context_handle, header_mem) ;
             }
         }
     }

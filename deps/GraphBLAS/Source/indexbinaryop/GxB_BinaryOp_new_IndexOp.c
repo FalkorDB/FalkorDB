@@ -38,16 +38,18 @@ GrB_Info GxB_BinaryOp_new_IndexOp
     // allocate the binary op
     //--------------------------------------------------------------------------
 
-    size_t header_size ;
+    int memlane = GB_Context_memlane ( ) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+    uint64_t header_mem = mem ;
     GrB_BinaryOp
         binop = GB_CALLOC_MEMORY (1, sizeof (struct GB_BinaryOp_opaque),
-            &header_size) ;
+            &header_mem) ;
     if (binop == NULL)
     { 
         // out of memory
         return (GrB_OUT_OF_MEMORY) ;
     }
-    binop->header_size = header_size ;
+    binop->header_mem = header_mem ;
 
     //--------------------------------------------------------------------------
     // create the binary op
@@ -57,23 +59,21 @@ GrB_Info GxB_BinaryOp_new_IndexOp
     memcpy (binop, idxbinop, sizeof (struct GB_BinaryOp_opaque)) ;
 
     // remove the components owned by the index binary op
-    binop->user_name = NULL ;
-    binop->user_name_size = 0 ;
-    binop->defn = NULL ;
-    binop->defn_size = 0 ;
+    binop->user_name = NULL ; binop->user_name_mem = 0 ;
+    binop->defn = NULL ; binop->defn_mem = 0 ;
 
     bool jitable = (idxbinop->hash != UINT64_MAX) ;
 
     info = GB_op_name_and_defn (
         // output:
         binop->name, &(binop->name_len), &(binop->hash),
-        &(binop->defn), &(binop->defn_size),
+        &(binop->defn), &(binop->defn_mem),
         // input:
-        idxbinop->name, idxbinop->defn, true, jitable) ;
+        idxbinop->name, idxbinop->defn, true, jitable, memlane) ;
     if (info != GrB_SUCCESS)
     { 
         // out of memory
-        GB_FREE_MEMORY (&binop, header_size) ;
+        GB_FREE_MEMORY (&binop, header_mem) ;
         return (info) ;
     }
 
@@ -82,7 +82,7 @@ GrB_Info GxB_BinaryOp_new_IndexOp
     //--------------------------------------------------------------------------
 
     binop->theta = GB_MALLOC_MEMORY (1, binop->theta_type->size,
-        &(binop->theta_size)) ;
+        &(binop->theta_mem)) ;
     if (binop->theta == NULL)
     { 
         // out of memory

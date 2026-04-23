@@ -4,7 +4,9 @@
  */
 
 #include "decode_v17.h"
+#include "../../decode_utilies.h"
 #include "../../../../index/indexer.h"
+#include "src/graph/delta_matrix/delta_utils.h"
 
 // TODO: have the delta matrix upon setting M, incase the matrix
 // contains a transpose, we should overwrite it with MT
@@ -44,11 +46,13 @@ static void _ComputeTransposeMatrices
 	for(RelationID r = 0; r < n; r++) {
 		Delta_Matrix R = Graph_GetRelationMatrix(g, r, false);
 		_ComputeTransposeMatrix(R);
+		Delta_Matrix_validate(R, VAL_T_FULL);
 	}
 
 	// compute transpose for the adjacency matrix
 	Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
 	_ComputeTransposeMatrix(ADJ);
+	Delta_Matrix_validate(ADJ, VAL_T_FULL);
 }
 
 static GraphContext *_GetOrCreateGraphContext
@@ -326,14 +330,15 @@ GraphContext *RdbLoadGraphContext_v17
 	}
 
 	if(GraphDecodeContext_Finished(decoding_context)) {
+		// make sure adjacency matrix is numeric
+		NormalizeAdjMatrix (g) ;
+
 		// compute transposes
 		_ComputeTransposeMatrices(g);
 
 		// release graph write lock
 		Graph_ReleaseLock (g) ;
 
-		// flush graph matrices
-		Graph_ApplyAllPending(g, true);
 
 		uint rel_count   = Graph_RelationTypeCount(g);
 		uint label_count = Graph_LabelTypeCount(g);

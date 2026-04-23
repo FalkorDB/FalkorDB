@@ -33,7 +33,7 @@ typedef struct
     GB_void Stack [GB_WERK_SIZE] ;  // werkspace stack
     const char *where ;             // GraphBLAS function where error occurred
     char **logger_handle ;          // error report
-    size_t *logger_size_handle ;
+    uint64_t *logger_mem_handle ;
     int pwerk ;                     // top of Werk stack, initially zero
 
     // integer control, combines C->[pji]_control and Global [pji]_control:
@@ -64,11 +64,11 @@ typedef GB_Werk_struct *GB_Werk ;
 void *GB_werk_push    // return pointer to newly allocated space
 (
     // output
-    size_t *size_allocated,     // # of bytes actually allocated
-    bool *on_stack,             // true if werkspace is from Werk stack
+    uint64_t *mem,          // memsize and memlane of allocated space
+    bool *on_stack,         // true if werkspace is from Werk stack
     // input
-    size_t nitems,              // # of items to allocate
-    size_t size_of_item,        // size of each item
+    uint64_t nitems,        // # of items to allocate
+    uint64_t size_of_item,  // size of each item
     GB_Werk Werk
 ) ;
 #endif
@@ -87,11 +87,11 @@ void *GB_werk_pop     // free the top block of werkspace memory
 (
     // input/output
     void *p,                    // werkspace to free
-    size_t *size_allocated,     // # of bytes actually allocated for p
+    uint64_t *mem,              // memsize and memlane of p
     // input
     bool on_stack,              // true if werkspace is from Werk stack
-    size_t nitems,              // # of items to allocate
-    size_t size_of_item,        // size of each item
+    uint64_t nitems,            // # of items to allocate
+    uint64_t size_of_item,      // size of each item
     GB_Werk Werk
 ) ;
 #endif
@@ -101,20 +101,20 @@ void *GB_werk_pop     // free the top block of werkspace memory
 //------------------------------------------------------------------------------
 
 // declare a werkspace X of a given type
-#define GB_WERK_DECLARE(X,type)                             \
-    type *restrict X = NULL ;                               \
-    bool X ## _on_stack = false ;                           \
-    size_t X ## _nitems = 0, X ## _size_allocated = 0 ;
+#define GB_WERK_DECLARE(X,type)                                     \
+    type *restrict X = NULL ;                                       \
+    bool X ## _on_stack = false ;                                   \
+    uint64_t X ## _nitems = 0, X ## _mem = 0 ; /* FIXME memlane */
 
 // push werkspace X
-#define GB_WERK_PUSH(X,nitems,type)                                         \
-    X ## _nitems = (nitems) ;                                               \
-    X = (type *) GB_werk_push (&(X ## _size_allocated), &(X ## _on_stack),  \
+#define GB_WERK_PUSH(X,nitems,type)                                 \
+    X ## _nitems = (nitems) ;                                       \
+    X = (type *) GB_werk_push (&(X ## _mem), &(X ## _on_stack),     \
         X ## _nitems, sizeof (type), Werk) ; 
 
 // pop werkspace X
-#define GB_WERK_POP(X,type)                                                 \
-    X = (type *) GB_werk_pop (X, &(X ## _size_allocated), X ## _on_stack,   \
+#define GB_WERK_POP(X,type)                                         \
+    X = (type *) GB_werk_pop (X, &(X ## _mem), X ## _on_stack,      \
         X ## _nitems, sizeof (type), Werk) ; 
 
 // GB_ROUND8(s) rounds up s to a multiple of 8

@@ -40,13 +40,17 @@
 //
 // To use CUDA and its RMM memory manager:
 //
-//      GxB_init (mode, rmm_malloc, rmm_calloc, rmm_realloc, rmm_free) ;
+//      GxB_init (mode, rmm_malloc, NULL, rmm_realloc, rmm_free) ;
 //
 //          where mode is GxB_BLOCKING_GPU or GxB_NONBLOCKING_GPU
 //
 // To use user-provided malloc and free functions, but not calloc/realloc:
 //
 //      GxB_init (mode, my_malloc, NULL, NULL, my_free) ;
+//
+// The calloc function is not called by GraphBLAS; malloc and a parallel memset
+// are used instead.  The only place where the calloc function pointer is used
+// is by GrB_get, which can return it to the user application.
 
 #include "GB.h"
 #include "init/GB_init.h"
@@ -57,7 +61,7 @@ GrB_Info GxB_init           // start up GraphBLAS and also define malloc, etc
 
     // pointers to memory management functions
     void * (* user_malloc_function  ) (size_t),         // required
-    void * (* user_calloc_function  ) (size_t, size_t), // optional, can be NULL
+    void * (* user_calloc_function  ) (size_t, size_t), // not used
     void * (* user_realloc_function ) (void *, size_t), // optional, can be NULL
     void   (* user_free_function    ) (void *)          // required
 )
@@ -78,15 +82,14 @@ GrB_Info GxB_init           // start up GraphBLAS and also define malloc, etc
     {
         return (GB_init (mode,              // blocking or non-blocking mode
             // RMM C memory management functions
-            rmm_wrap_malloc, rmm_wrap_calloc, rmm_wrap_realloc, rmm_wrap_free,
-            Werk)) ;
+            rmm_wrap_malloc, NULL, NULL, rmm_wrap_free, Werk)) ;
     }
 #endif
 
     return (GB_init
         (mode,                          // blocking or non-blocking mode
         user_malloc_function,           // user-defined malloc, required
-        user_calloc_function,           // user-defined malloc, may be NULL
+        user_calloc_function,           // user-defined calloc, not used
         user_realloc_function,          // user-defined realloc, may be NULL
         user_free_function,             // user-defined free, required
         Werk)) ;

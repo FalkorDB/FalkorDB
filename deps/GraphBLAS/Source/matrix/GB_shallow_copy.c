@@ -27,7 +27,7 @@
 
 GrB_Info GB_shallow_copy    // create a purely shallow matrix
 (
-    GrB_Matrix C,           // output matrix C, with a static header
+    GrB_Matrix C,           // output matrix C, with a existing header
     const bool C_is_csc,    // desired CSR/CSC format of C
     const GrB_Matrix A,     // input matrix
     GB_Werk Werk
@@ -38,12 +38,14 @@ GrB_Info GB_shallow_copy    // create a purely shallow matrix
     // check inputs
     //--------------------------------------------------------------------------
 
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (C != NULL) ;
     ASSERT_MATRIX_OK (A, "A for shallow copy", GB0) ;
     GB_MATRIX_WAIT_IF_PENDING_OR_ZOMBIES (A) ;
     ASSERT (!GB_PENDING (A)) ;
     ASSERT (GB_JUMBLED_OK (A)) ;
     ASSERT (!GB_ZOMBIES (A)) ;
+
+    int memlane = GB_memlane (C->header_mem) ;
 
     //--------------------------------------------------------------------------
     // construct a shallow copy of A for the pattern of C
@@ -57,7 +59,7 @@ GrB_Info GB_shallow_copy    // create a purely shallow matrix
     GB_new (&C, // sparse or hyper, existing header
         A->type, A->vlen, A->vdim, GB_ph_null, C_is_csc,
         GB_sparsity (A), A->hyper_switch, 0,
-        A->p_is_32, A->j_is_32, A->i_is_32) ;
+        A->p_is_32, A->j_is_32, A->i_is_32, memlane) ;
     ASSERT (info == GrB_SUCCESS) ;
 
     //--------------------------------------------------------------------------
@@ -72,8 +74,8 @@ GrB_Info GB_shallow_copy    // create a purely shallow matrix
     C->p_is_32 = A->p_is_32 ;
     C->j_is_32 = A->j_is_32 ;
     C->i_is_32 = A->i_is_32 ;
-    C->p_size = A->p_size ;
-    C->h_size = A->h_size ;
+    C->p_mem = A->p_mem ;
+    C->h_mem = A->h_mem ;
     C->plen = A->plen ;                 // C and A have the same hyperlist size
     C->nvec = A->nvec ;
 //  C->nvec_nonempty = A->nvec_nonempty ;
@@ -118,9 +120,9 @@ GrB_Info GB_shallow_copy    // create a purely shallow matrix
     // make a shallow copy of the pattern and values
     //--------------------------------------------------------------------------
 
-    C->b = A->b ; C->b_shallow = (A->b != NULL) ; C->b_size = A->b_size ;
-    C->i = A->i ; C->i_shallow = (A->i != NULL) ; C->i_size = A->i_size ;
-    C->x = A->x ; C->x_shallow = (A->x != NULL) ; C->x_size = A->x_size ;
+    C->b = A->b ; C->b_shallow = (A->b != NULL) ; C->b_mem = A->b_mem ;
+    C->i = A->i ; C->i_shallow = (A->i != NULL) ; C->i_mem = A->i_mem ;
+    C->x = A->x ; C->x_shallow = (A->x != NULL) ; C->x_mem = A->x_mem ;
 
     ASSERT_MATRIX_OK (C, "C = pure shallow (A)", GB0) ;
     return (GrB_SUCCESS) ;

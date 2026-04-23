@@ -55,7 +55,8 @@ GrB_Info GB_binop_new
     GrB_Type ytype,                 // type of input y
     const char *binop_name,         // name of the user function
     const char *binop_defn,         // definition of the user function
-    const GB_Opcode opcode          // opcode for the function
+    const GB_Opcode opcode,         // opcode for the function
+    int memlane
 ) ;
 
 GrB_Monoid GB_binop_to_monoid       // return the corresponding monoid, or NULL

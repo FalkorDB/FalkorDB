@@ -51,6 +51,9 @@ GrB_Info GB_Matrix_subassign_scalar   // C(I,J)<M> = accum (C(I,J),s)
     GB_RETURN_IF_NULL (J) ;
     GB_RETURN_IF_OUTPUT_IS_READONLY (C) ;
 
+    int memlane = GB_memlane (C->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     // if C has a user-defined type, its type must match the scalar type
     if (C->type->code == GB_UDT_code && C->type != scalar->type)
     { 
@@ -152,14 +155,13 @@ GrB_Info GB_Matrix_subassign_scalar   // C(I,J)<M> = accum (C(I,J),s)
         GB_ijlength (J, J_is_32, nj, GB_NCOLS (C), &nJ, &J_Kind, Jcolon) ;
 
         // create an empty matrix A of the right size, and use matrix assign
-        struct GB_Matrix_opaque A_header ;
-        GB_CLEAR_MATRIX_HEADER (A, &A_header) ;
         bool is_csc = C->is_csc ;
         int64_t vlen = is_csc ? nI : nJ ;
         int64_t vdim = is_csc ? nJ : nI ;
-        GB_OK (GB_new (&A, // existing header
+        GB_OK (GB_new (&A, // new header
             scalar->type, vlen, vdim, GB_ph_calloc, is_csc, GxB_AUTO_SPARSITY,
-            GB_HYPER_SWITCH_DEFAULT, 1, /* OK: */ false, false, false)) ;
+            GB_HYPER_SWITCH_DEFAULT, 1, /* OK: */ false, false, false,
+            memlane)) ;
         info = GB_subassign (
             C, C_replace,                   // C matrix and its descriptor
             M, Mask_comp, Mask_struct,      // mask matrix and its descriptor

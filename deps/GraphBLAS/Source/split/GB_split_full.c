@@ -37,6 +37,8 @@ GrB_Info GB_split_full              // split a full matrix
     ASSERT (GB_IS_FULL (A)) ;
     GrB_Matrix C = NULL ;
 
+    int memlane = GB_memlane (A->header_mem) ;
+
     int sparsity_control = A->sparsity_control ;
     float hyper_switch = A->hyper_switch ;
     bool csc = A->is_csc ;
@@ -84,7 +86,7 @@ GrB_Info GB_split_full              // split a full matrix
             GB_OK (GB_new_bix (&C, // new header
                 atype, cvlen, cvdim, GB_ph_null, csc, GxB_FULL, false,
                 hyper_switch, 0, cnz, true, A_iso,
-                /* OK: */ false, false, false)) ;
+                /* OK: */ false, false, false, memlane)) ;
             C->sparsity_control = sparsity_control ;
             C->hyper_switch = hyper_switch ;
             int C_nthreads = GB_nthreads (cnz, chunk, nthreads_max) ;

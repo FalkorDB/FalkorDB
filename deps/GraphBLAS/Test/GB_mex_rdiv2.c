@@ -23,6 +23,7 @@
     GrB_Matrix_free_(&B64) ;                \
     GrB_Matrix_free_(&C) ;                  \
     GrB_Matrix_free_(&T) ;                  \
+    GrB_Matrix_free_(&MT) ;                 \
     GrB_BinaryOp_free_(&My_rdiv2) ;         \
     GrB_Semiring_free_(&My_plus_rdiv2) ;    \
     GB_mx_put_global (true) ;               \
@@ -44,7 +45,6 @@ int AxB_method = GxB_DEFAULT ;
 bool flipxy = false ;
 bool done_in_place = false ;
 double C_scalar = 0 ;
-struct GB_Matrix_opaque MT_header, T_header ;
 
 GrB_Info axb (GB_Werk Werk) ;
 
@@ -110,8 +110,17 @@ GrB_Info axb (GB_Werk Werk)
         }
     }
 
-    MT = GB_clear_matrix_header (&MT_header) ;
-    T  = GB_clear_matrix_header (&T_header) ;
+    GB_matrix_header_new (&T, GB_MEMLANE_MATLAB) ;
+    GB_matrix_header_new (&MT, GB_MEMLANE_MATLAB) ;
+    if (T == NULL || MT == NULL)
+    {
+        GrB_BinaryOp_free_(&My_rdiv2) ;
+        GrB_Semiring_free_(&My_plus_rdiv2) ;
+        GrB_Matrix_free_(&C) ;
+        GrB_Matrix_free_(&T) ;
+        GrB_Matrix_free_(&MT) ;
+        return (GrB_OUT_OF_MEMORY) ;
+    }
 
     // C = A*B or C += A*B
     info = GB_AxB_meta (T, C,  // can be done in place if C != NULL
@@ -152,6 +161,7 @@ GrB_Info axb (GB_Werk Werk)
         GrB_Matrix_free_(&C) ;
     }
     GrB_Matrix_free_(&T) ;
+    GrB_Matrix_free_(&MT) ;
     GrB_BinaryOp_free_(&My_rdiv2) ;
     GrB_Semiring_free_(&My_plus_rdiv2) ;
     return (info) ;

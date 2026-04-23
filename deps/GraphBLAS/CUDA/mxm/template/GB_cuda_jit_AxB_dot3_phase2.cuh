@@ -14,6 +14,8 @@
 // BlockPrefixCallbackOp
 //------------------------------------------------------------------------------
 
+// FIXME: do we really need our own operator here?
+
 // A stateful callback functor that maintains a running prefix to be applied
 // during consecutive scan operations.
 struct BlockPrefixCallbackOp
@@ -48,6 +50,8 @@ __inline__ __device__ void blockBucketExclusiveSum
 )
 {
 
+    // FIXME: make "32" below a #define
+
     // Specialize BlockScan for a 1D block of 32 threads
     typedef cub::BlockScan<int64_t, 32, cub::BLOCK_SCAN_WARP_SCANS> BlockScan ;
 
@@ -59,11 +63,17 @@ __inline__ __device__ void blockBucketExclusiveSum
 
     // Have the block iterate over segments of items
 
+    // FIXME: threads_per_block is a #define; make uppercase and
+    // use GB_cuda_geometry.hpp
     for (int block_id = 0 ; block_id <= nblocks ; block_id += threads_per_block)
     {
         int64_t data = 0 ;
 
         // Load a segment of consecutive items that are blocked across threads
+
+        // FIXME: use BlockLoad and BlockScan, and make Blockbucket size
+        // a multiple of 32 with zero-padding, so the if(..) below is not
+        // needed.
 
         int loc = block_id + threadIdx.x;
         if (loc <= nblocks)
@@ -71,6 +81,9 @@ __inline__ __device__ void blockBucketExclusiveSum
             data = Blockbucket [bucketId*(nblocks+1) + loc] ;
         }
         this_thread_block().sync() ;
+
+        // FIXME: why is prefix_op needed?  builder and select-sparse
+        // don't need it.
 
         // Collectively compute the block-wide exclusive prefix sum
         BlockScan(temp_storage).ExclusiveSum (data, data, prefix_op) ;

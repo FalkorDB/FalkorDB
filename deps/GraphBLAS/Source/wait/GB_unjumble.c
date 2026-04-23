@@ -112,8 +112,8 @@ GrB_Info GB_unjumble        // unjumble a matrix
                 {
                     uint8_t *Ax = (uint8_t *) A->x ;
                     #define GB_QSORT                                        \
-                    if (Ai_is_32) GB_qsort_1b_32_size1 (Ai32+p, Ax+p, n) ;  \
-                    else          GB_qsort_1b_64_size1 (Ai64+p, Ax+p, n) ;
+                    if (Ai_is_32) GB_qsort_1b_32_1 (Ai32+p, Ax+p, n) ;      \
+                    else          GB_qsort_1b_64_1 (Ai64+p, Ax+p, n) ;
                     #include "wait/template/GB_unjumbled_template.c"
                     info = GrB_SUCCESS ;
                 }
@@ -123,8 +123,8 @@ GrB_Info GB_unjumble        // unjumble a matrix
                 {
                     uint16_t *Ax = (uint16_t *) A->x ;
                     #define GB_QSORT                                        \
-                    if (Ai_is_32) GB_qsort_1b_32_size2 (Ai32+p, Ax+p, n) ;  \
-                    else          GB_qsort_1b_64_size2 (Ai64+p, Ax+p, n) ;
+                    if (Ai_is_32) GB_qsort_1b_32_2 (Ai32+p, Ax+p, n) ;      \
+                    else          GB_qsort_1b_64_2 (Ai64+p, Ax+p, n) ;
                     #include "wait/template/GB_unjumbled_template.c"
                     info = GrB_SUCCESS ;
                 }
@@ -134,8 +134,8 @@ GrB_Info GB_unjumble        // unjumble a matrix
                 {
                     uint32_t *Ax = (uint32_t *) A->x ;
                     #define GB_QSORT                                        \
-                    if (Ai_is_32) GB_qsort_1b_32_size4 (Ai32+p, Ax+p, n) ;  \
-                    else          GB_qsort_1b_64_size4 (Ai64+p, Ax+p, n) ;
+                    if (Ai_is_32) GB_qsort_1b_32_4 (Ai32+p, Ax+p, n) ;      \
+                    else          GB_qsort_1b_64_4 (Ai64+p, Ax+p, n) ;
                     #include "wait/template/GB_unjumbled_template.c"
                     info = GrB_SUCCESS ;
                 }
@@ -146,8 +146,8 @@ GrB_Info GB_unjumble        // unjumble a matrix
                 {
                     uint64_t *Ax = (uint64_t *) A->x ;
                     #define GB_QSORT                                        \
-                    if (Ai_is_32) GB_qsort_1b_32_size8 (Ai32+p, Ax+p, n) ;  \
-                    else          GB_qsort_1b_64_size8 (Ai64+p, Ax+p, n) ;
+                    if (Ai_is_32) GB_qsort_1b_32_8 (Ai32+p, Ax+p, n) ;      \
+                    else          GB_qsort_1b_64_8 (Ai64+p, Ax+p, n) ;
                     #include "wait/template/GB_unjumbled_template.c"
                     info = GrB_SUCCESS ;
                 }
@@ -157,8 +157,8 @@ GrB_Info GB_unjumble        // unjumble a matrix
                 {
                     GB_blob16 *Ax = (GB_blob16 *) A->x ;
                     #define GB_QSORT                                        \
-                    if (Ai_is_32) GB_qsort_1b_32_size16 (Ai32+p, Ax+p, n) ; \
-                    else          GB_qsort_1b_64_size16 (Ai64+p, Ax+p, n) ;
+                    if (Ai_is_32) GB_qsort_1b_32_16 (Ai32+p, Ax+p, n) ;     \
+                    else          GB_qsort_1b_64_16 (Ai64+p, Ax+p, n) ;
                     #include "wait/template/GB_unjumbled_template.c"
                     info = GrB_SUCCESS ;
                 }

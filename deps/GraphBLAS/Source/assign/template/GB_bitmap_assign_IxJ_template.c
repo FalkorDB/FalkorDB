@@ -17,7 +17,8 @@
 
 // The workspace must already have been declared as follow:
 //
-//      GB_task_struct *TaskList_IxJ = NULL ; size_t TaskList_IxJ_size = 0 ;
+//      GB_task_struct *TaskList_IxJ = NULL ;
+//      uint64_t TaskList_IxJ_mem = mem ;
 //      int ntasks_IxJ = 0, nthreads_IxJ = 0 ;
 
 // This template is used in the GB_bitmap_assign_* methods, and
@@ -27,7 +28,7 @@
 // It is not freed, so it can be used for subsequent uses of this template.
 // To free the workspace, the method that uses this template must do:
 //
-//      GB_FREE_MEMORY (&TaskList_IxJ, TaskList_IxJ_size) ;
+//      GB_FREE_MEMORY (&TaskList_IxJ, TaskList_IxJ_mem) ;
 
 {
 
@@ -37,8 +38,8 @@
 
     if (TaskList_IxJ == NULL)
     { 
-        GB_OK (GB_subassign_IxJ_slice (&TaskList_IxJ, &TaskList_IxJ_size,
-            &ntasks_IxJ, &nthreads_IxJ, nI, nJ, Werk)) ;
+        GB_OK (GB_subassign_IxJ_slice (&TaskList_IxJ, &TaskList_IxJ_mem,
+            &ntasks_IxJ, &nthreads_IxJ, nI, nJ, memlane, Werk)) ;
     }
 
     //--------------------------------------------------------------------------

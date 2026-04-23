@@ -173,8 +173,8 @@ void mexFunction
     OK (GrB_Matrix_wait (A, GrB_MATERIALIZE)) ;
     OK (GxB_Matrix_fprint (A, "valid matrix", GxB_SHORT, NULL)) ;
     // mangle the matrix
-    GB_free_memory (&(A->p), A->p_size) ;
-    GB_free_memory (&(A->x), A->x_size) ;  // OK
+    GB_free_memory (&(A->p), A->p_mem) ;
+    GB_free_memory (&(A->x), A->x_mem) ;  // OK
     expected = GrB_INVALID_OBJECT ;
     ERR (GxB_Matrix_fprint (A, "invalid sparse matrix", GxB_SHORT, NULL)) ;
     GrB_Matrix_free_(&A) ;
@@ -270,14 +270,14 @@ void mexFunction
     OK (GrB_Matrix_wait (A, GrB_MATERIALIZE)) ;
     OK (GrB_Matrix_dup (&C, A)) ;
     CHECK (!GB_any_aliased (A, C)) ;
-    GB_free_memory (&(C->p), C->p_size) ;
+    GB_free_memory (&(C->p), C->p_mem) ;
     C->p = A->p ;
     C->p_shallow = true ;
     CHECK (GB_any_aliased (A, C)) ;
     C->p = NULL ;
     C->p_shallow = false ;
     CHECK (!GB_any_aliased (A, C)) ;
-    GB_free_memory (&(C->i), C->i_size) ;
+    GB_free_memory (&(C->i), C->i_mem) ;
     C->i = A->i ;
     C->i_shallow = true ;
     CHECK (GB_any_aliased (A, C)) ;

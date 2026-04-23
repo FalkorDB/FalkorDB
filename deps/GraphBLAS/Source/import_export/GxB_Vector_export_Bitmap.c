@@ -19,8 +19,8 @@ GrB_Info GxB_Vector_export_Bitmap   // export and free a bitmap vector
 
     int8_t **vb,        // bitmap
     void **vx,          // values
-    uint64_t *vb_size,  // size of vb in bytes
-    uint64_t *vx_size,  // size of vx in bytes
+    uint64_t *vb_memsize,  // size of vb in bytes
+    uint64_t *vx_memsize,  // size of vx in bytes
     bool *iso,          // if true, A is iso
 
     uint64_t *nvals,    // # of entries in bitmap
@@ -35,7 +35,7 @@ GrB_Info GxB_Vector_export_Bitmap   // export and free a bitmap vector
     GB_RETURN_IF_NULL (v) ;
     GB_RETURN_IF_NULL (*v) ;
     GB_WHERE_1 (*v, "GxB_Vector_export_Bitmap (&v, &type, &n, "
-        "&vb, &vx, &vb_size, &vx_size, &iso, &nvals, desc)") ;
+        "&vb, &vx, &vb_memsize, &vx_memsize, &iso, &nvals, desc)") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
 
@@ -69,9 +69,9 @@ GrB_Info GxB_Vector_export_Bitmap   // export and free a bitmap vector
     info = GB_export (false, (GrB_Matrix *) v, type, n, &vdim, false,
         NULL, NULL,     // Ap
         NULL, NULL,     // Ah
-        vb,   vb_size,  // Ab
+        vb,   vb_memsize,  // Ab
         NULL, NULL,     // Ai
-        vx,   vx_size,  // Ax
+        vx,   vx_memsize,  // Ax
         nvals, NULL, NULL,                  // nvals for bitmap
         &sparsity, &is_csc,                 // bitmap by col
         iso, Werk) ;

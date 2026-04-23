@@ -17,8 +17,8 @@ GrB_Info GxB_Vector_import_CSC  // import a vector in CSC format
 
     uint64_t **vi,      // indices
     void **vx,          // values
-    uint64_t vi_size,   // size of Ai in bytes
-    uint64_t vx_size,   // size of Ax in bytes
+    uint64_t vi_memsize,   // size of Ai in bytes
+    uint64_t vx_memsize,   // size of Ax in bytes
     bool iso,           // if true, A is iso
 
     uint64_t nvals,     // # of entries in vector
@@ -32,7 +32,7 @@ GrB_Info GxB_Vector_import_CSC  // import a vector in CSC format
     //--------------------------------------------------------------------------
 
     GB_WHERE0 ("GxB_Vector_import_CSC (&v, type, n, "
-        "&vi, &vx, vi_size, vx_size, iso, nvals, jumbled, desc)") ;
+        "&vi, &vx, vi_memsize, vx_memsize, iso, nvals, jumbled, desc)") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_GET_DESCRIPTOR_IMPORT (desc, fast_import) ;
@@ -45,8 +45,8 @@ GrB_Info GxB_Vector_import_CSC  // import a vector in CSC format
         NULL, 0,        // Ap
         NULL, 0,        // Ah
         NULL, 0,        // Ab
-        vi,   vi_size,  // Ai
-        vx,   vx_size,  // Ax
+        vi,   vi_memsize,  // Ai
+        vx,   vx_memsize,  // Ax
         nvals, jumbled, 0,                  // jumbled or not
         GxB_SPARSE, true,                   // sparse by col
         iso, fast_import, true, Werk) ;

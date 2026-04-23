@@ -72,6 +72,8 @@ GrB_Info GB_subassign_25
     ASSERT_MATRIX_OK (A, "A for subassign method_25", GB0) ;
     ASSERT (GB_IS_FULL (A) || GB_IS_BITMAP (A)) ;
 
+    int memlane = GB_memlane (C->header_mem) ;
+
     //--------------------------------------------------------------------------
     // get inputs
     //--------------------------------------------------------------------------
@@ -101,7 +103,7 @@ GrB_Info GB_subassign_25
 
     bool C_is_csc = C->is_csc ;
     GB_phybix_free (C) ;
-    GB_OK (GB_dup_worker (&C, C_iso, M, false, C->type)) ;
+    GB_OK (GB_dup_worker (&C, C_iso, M, false, C->type, memlane)) ;
     C->is_csc = C_is_csc ;
 
     //--------------------------------------------------------------------------

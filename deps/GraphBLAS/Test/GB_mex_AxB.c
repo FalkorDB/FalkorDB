@@ -42,7 +42,6 @@ int64_t anrows = 0 ;
 int64_t ancols = 0 ;
 int64_t bnrows = 0 ;
 int64_t bncols = 0 ;
-struct GB_Matrix_opaque C_header ;
 
 int AxB_method = GxB_DEFAULT ;
 
@@ -65,8 +64,14 @@ GrB_Info axb (GB_Werk Werk)
         return (info) ;
     }
 
-    struct GB_Matrix_opaque MT_header ;
-    GrB_Matrix MT = GB_clear_matrix_header (&MT_header) ;
+    GrB_Matrix MT = NULL ;
+    GB_matrix_header_new (&MT, GB_MEMLANE_MATLAB) ;
+    if (MT == NULL)
+    {
+        GrB_Monoid_free_(&add) ;
+        GrB_Semiring_free_(&semiring) ;
+        return (GrB_OUT_OF_MEMORY) ;
+    }
 
     // C = A*B, A'*B, A*B', or A'*B'
     info = GB_AxB_meta (C, NULL,
@@ -92,6 +97,7 @@ GrB_Info axb (GB_Werk Werk)
 
     GrB_Monoid_free_(&add) ;
     GrB_Semiring_free_(&semiring) ;
+    GrB_Matrix_free_(&MT) ;
     return (info) ;
 }
 
@@ -161,8 +167,14 @@ GrB_Info axb_complex (GB_Werk Werk)
         }
     }
 
-    struct GB_Matrix_opaque MT_header ;
-    GrB_Matrix MT = GB_clear_matrix_header (&MT_header) ;
+    GrB_Matrix MT = NULL ;
+    GB_matrix_header_new (&MT, GB_MEMLANE_MATLAB) ;
+    if (MT == NULL)
+    {
+        GrB_Matrix_free_(&Aconj) ;
+        GrB_Matrix_free_(&Bconj) ;
+        return (GrB_OUT_OF_MEMORY) ;
+    }
 
     info = GB_AxB_meta (C, NULL,
         false,      // C_replace
@@ -187,6 +199,7 @@ GrB_Info axb_complex (GB_Werk Werk)
 
     GrB_Matrix_free_(&Bconj) ;
     GrB_Matrix_free_(&Aconj) ;
+    GrB_Matrix_free_(&MT) ;
     return (info) ;
 }
 
@@ -273,7 +286,7 @@ void mexFunction
         mexErrMsgTxt ("invalid dimensions") ;
     }
 
-    C = GB_clear_matrix_header (&C_header) ;
+    GB_matrix_header_new (&C, GB_MEMLANE_MATLAB) ;
 
     if (A->type == Complex)
     {

@@ -57,15 +57,18 @@ bool GB_mx_get_global       // true if doing malloc_debug
     // save JIT control
     int control = GB_jitifyer_get_control ( ) ;
 
-    if (!GB_Global_GrB_init_called_get ( ))
+    int GraphBLAS_is_initialized = 0 ;
+    GxB_initialized (&GraphBLAS_is_initialized) ;
+    if (!GraphBLAS_is_initialized)
     {
-        // call GxB_init (see also gb_usage in @GrB)
+        // call GxB_init
         mexAtExit (GB_mx_at_exit) ;
         GB_Global_persistent_set (mexMakeMemoryPersistent) ;
         GxB_init (GrB_NONBLOCKING, mxMalloc, mxCalloc, mxRealloc, mxFree) ;
     }
     // mxMalloc, mxCalloc, mxRealloc, and mxFree are not thread safe
-    GB_Global_malloc_is_thread_safe_set (false) ;
+    GB_Global_malloc_is_thread_safe_set (false, 0) ;
+    GB_Global_malloc_is_thread_safe_set (false, 1) ;
     ASSERT (GB_Global_nmalloc_get ( ) == 0) ;
     GB_Global_abort_set (GB_mx_abort) ;
     GB_Global_malloc_tracking_set (true) ;

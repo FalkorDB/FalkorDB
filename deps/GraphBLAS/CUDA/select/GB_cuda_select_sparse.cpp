@@ -1,3 +1,11 @@
+//------------------------------------------------------------------------------
+// GraphBLAS/CUDA/select/GB_cuda_select_sparse
+//------------------------------------------------------------------------------
+
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//------------------------------------------------------------------------------
 
 #include "select/GB_cuda_select.hpp"
 
@@ -23,14 +31,15 @@ GrB_Info GB_cuda_select_sparse
 
     // check inputs
     GrB_Info info = GrB_NO_VALUE ;
-    ASSERT (C != NULL && !(C->header_size == 0)) ;
-    ASSERT (A != NULL && !(A->header_size == 0)) ;
+    ASSERT (C != NULL) ;
+    ASSERT (A != NULL) ;
+    int memlane = GB_memlane (C->header_mem) ;
 
     GBURBLE ("(select sparse on cuda) ") ;
-    printf ("\nblockdim1: %d chunksize1: %d\n", 
+    printf ("\nblockdim1: %d chunksize1: %d\n",
         GB_CUDA_SELECT_SPARSE_BLOCKDIM1,
         GB_CUDA_SELECT_SPARSE_CHUNKSIZE1) ;
-    printf ("blockdim2: %d chunksize2: %d\n", 
+    printf ("blockdim2: %d chunksize2: %d\n",
         GB_CUDA_SELECT_SPARSE_BLOCKDIM2,
         GB_CUDA_SELECT_SPARSE_CHUNKSIZE2) ;
 
@@ -56,7 +65,7 @@ GrB_Info GB_cuda_select_sparse
     GB_OK (GB_new (&C, // sparse or hyper (from A), existing header
         A->type, A->vlen, A->vdim, GB_ph_calloc, A->is_csc,
         csparsity, A->hyper_switch, /* C->plen: revised later: */ 1,
-        Cp_is_32, Cj_is_32, Ci_is_32)) ;
+        Cp_is_32, Cj_is_32, Ci_is_32, memlane)) ;
 
     C->iso = C_iso ;
 
@@ -83,7 +92,7 @@ GrB_Info GB_cuda_select_sparse
     if (C->nvec == C->vdim)
     {
         // C hypersparse with all vectors present; quick convert to sparse
-        GB_FREE_MEMORY (&(C->h), C->h_size) ;
+        GB_FREE_MEMORY (&(C->h), C->h_mem) ;
     }
 
     ASSERT_MATRIX_OK (C, "C output of cuda_select_sparse", GB0) ;

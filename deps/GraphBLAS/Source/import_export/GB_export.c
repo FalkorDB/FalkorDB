@@ -13,10 +13,10 @@
 
 #include "import_export/GB_export.h"
 
-#define GB_FREE_ALL                     \
-{                                       \
-    GB_FREE_MEMORY (&Ap_new, Ap_new_size) ;    \
-    GB_FREE_MEMORY (&Ah_new, Ah_new_size) ;    \
+#define GB_FREE_ALL                         \
+{                                           \
+    GB_FREE_MEMORY (&Ap_new, Ap_new_mem) ;  \
+    GB_FREE_MEMORY (&Ah_new, Ah_new_mem) ;  \
 }
 
 GrB_Info GB_export      // export/unpack a matrix in any format
@@ -34,19 +34,19 @@ GrB_Info GB_export      // export/unpack a matrix in any format
 
     // the 5 arrays:
     uint64_t **Ap,      // pointers
-    uint64_t *Ap_size,  // size of Ap in bytes
+    uint64_t *Ap_memsize,  // size of Ap in bytes (memlane = 0)
 
     uint64_t **Ah,      // vector indices
-    uint64_t *Ah_size,  // size of Ah in bytes
+    uint64_t *Ah_memsize,  // size of Ah in bytes (memlane = 0)
 
     int8_t **Ab,        // bitmap
-    uint64_t *Ab_size,  // size of Ab in bytes
+    uint64_t *Ab_memsize,  // size of Ab in bytes (memlane = 0)
 
     uint64_t **Ai,      // indices
-    uint64_t *Ai_size,  // size of Ai in bytes
+    uint64_t *Ai_memsize,  // size of Ai in bytes (memlane = 0)
 
     void **Ax,          // values
-    uint64_t *Ax_size,  // size of Ax in bytes
+    uint64_t *Ax_memsize,  // size of Ax in bytes (memlane = 0)
 
     // additional information for specific formats:
     uint64_t *nvals,    // # of entries for bitmap format.
@@ -67,10 +67,12 @@ GrB_Info GB_export      // export/unpack a matrix in any format
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    int64_t *Ap_new = NULL ; size_t Ap_new_size = 0 ;   // OK; only 64-bit
-    int64_t *Ah_new = NULL ; size_t Ah_new_size = 0 ;   // OK; only 64-bit
+    int64_t *Ap_new = NULL ; uint64_t Ap_new_mem = 0 ;   // FIXME memlane = 0
+    int64_t *Ah_new = NULL ; uint64_t Ah_new_mem = 0 ;   // FIXME memlane = 0
     ASSERT (A != NULL) ;
     GB_RETURN_IF_NULL (*A) ;
+
+    // FIXME: ensure all components of the matrix are in memlane 0
 
     // ensure the matrix is all-64-bit
     GB_OK (GB_convert_int (*A, false, false, false, false)) ;
@@ -85,7 +87,7 @@ GrB_Info GB_export      // export/unpack a matrix in any format
     GB_RETURN_IF_NULL (vlen) ;
     GB_RETURN_IF_NULL (vdim) ;
     GB_RETURN_IF_NULL (Ax) ;
-    GB_RETURN_IF_NULL (Ax_size) ;
+    GB_RETURN_IF_NULL (Ax_memsize) ;
 
     int s = GB_sparsity (*A) ;
 
@@ -93,7 +95,7 @@ GrB_Info GB_export      // export/unpack a matrix in any format
     {
         case GxB_HYPERSPARSE : 
             GB_RETURN_IF_NULL (nvec) ;
-            GB_RETURN_IF_NULL (Ah) ; GB_RETURN_IF_NULL (Ah_size) ;
+            GB_RETURN_IF_NULL (Ah) ; GB_RETURN_IF_NULL (Ah_memsize) ;
             // fall through to the sparse case
 
         case GxB_SPARSE : 
@@ -103,14 +105,14 @@ GrB_Info GB_export      // export/unpack a matrix in any format
             }
             else
             { 
-                GB_RETURN_IF_NULL (Ap) ; GB_RETURN_IF_NULL (Ap_size) ;
+                GB_RETURN_IF_NULL (Ap) ; GB_RETURN_IF_NULL (Ap_memsize) ;
             }
-            GB_RETURN_IF_NULL (Ai) ; GB_RETURN_IF_NULL (Ai_size) ;
+            GB_RETURN_IF_NULL (Ai) ; GB_RETURN_IF_NULL (Ai_memsize) ;
             break ;
 
         case GxB_BITMAP : 
             GB_RETURN_IF_NULL (nvals) ;
-            GB_RETURN_IF_NULL (Ab) ; GB_RETURN_IF_NULL (Ab_size) ;
+            GB_RETURN_IF_NULL (Ab) ; GB_RETURN_IF_NULL (Ab_memsize) ;
             // fall through to the full case
 
         case GxB_FULL : 
@@ -130,12 +132,12 @@ GrB_Info GB_export      // export/unpack a matrix in any format
         plen_new = (avdim == 0) ? 0 : 1 ;
         nvec_new = (avdim == 1) ? 1 : 0 ;
         Ap_new = GB_CALLOC_MEMORY (plen_new+1, sizeof (int64_t),
-            &(Ap_new_size)) ;
+            &(Ap_new_mem)) ;
         if (avdim > 1)
         { 
             // A is sparse if avdim <= 1, hypersparse if avdim > 1
             Ah_new = GB_CALLOC_MEMORY (1, sizeof (int64_t),
-                &(Ah_new_size)) ;
+                &(Ah_new_mem)) ;
         }
         if (Ap_new == NULL || (avdim > 1 && Ah_new == NULL))
         { 
@@ -181,7 +183,7 @@ GrB_Info GB_export      // export/unpack a matrix in any format
     GBMDUMP ("export A->x from memtable: %p\n", (*A)->x) ;
     GB_Global_memtable_remove ((*A)->x) ;
     (*Ax) = (*A)->x ; (*A)->x = NULL ;
-    (*Ax_size) = (*A)->x_size ;
+    (*Ax_memsize) = GB_memsize ((*A)->x_mem) ;    // FIXME: move to memlane = 0
 
     switch (s)
     {
@@ -192,7 +194,7 @@ GrB_Info GB_export      // export/unpack a matrix in any format
             GBMDUMP ("export A->h from memtable: %p\n", (*A)->h) ;
             GB_Global_memtable_remove ((*A)->h) ;
             (*Ah) = (uint64_t *) ((*A)->h) ; (*A)->h = NULL ;
-            (*Ah_size) = (*A)->h_size ;
+            (*Ah_memsize) = GB_memsize ((*A)->h_mem) ; // FIXME to memlane 0
             // fall through to the sparse case
 
         case GxB_SPARSE : 
@@ -212,14 +214,14 @@ GrB_Info GB_export      // export/unpack a matrix in any format
                 GBMDUMP ("export A->p from memtable: %p\n", (*A)->p) ;
                 GB_Global_memtable_remove ((*A)->p) ;
                 (*Ap) = (uint64_t *) ((*A)->p) ; (*A)->p = NULL ;
-                (*Ap_size) = (*A)->p_size ;
+                (*Ap_memsize) = GB_memsize ((*A)->p_mem) ; // FIXME to memlane 0
             }
 
             // export A->i
             GBMDUMP ("export A->i from memtable: %p\n", (*A)->i) ;
             GB_Global_memtable_remove ((*A)->i) ;
             (*Ai) = (uint64_t *) ((*A)->i) ; (*A)->i = NULL ;
-            (*Ai_size) = (*A)->i_size ;
+            (*Ai_memsize) = GB_memsize ((*A)->i_mem) ; // FIXME to memlane 0
             break ;
 
         case GxB_BITMAP : 
@@ -229,7 +231,7 @@ GrB_Info GB_export      // export/unpack a matrix in any format
             GBMDUMP ("export A->b from memtable: %p\n", (*A)->b) ;
             GB_Global_memtable_remove ((*A)->b) ;
             (*Ab) = (*A)->b ; (*A)->b = NULL ;
-            (*Ab_size) = (*A)->b_size ;
+            (*Ab_memsize) = GB_memsize ((*A)->b_mem) ; // FIXME to memlane 0
 
         case GxB_FULL : 
 
@@ -258,8 +260,8 @@ GrB_Info GB_export      // export/unpack a matrix in any format
         GB_phybix_free (*A) ;
         (*A)->plen = plen_new ;
         (*A)->nvec = nvec_new ;
-        (*A)->p = Ap_new ; (*A)->p_size = Ap_new_size ;
-        (*A)->h = Ah_new ; (*A)->h_size = Ah_new_size ;
+        (*A)->p = Ap_new ; (*A)->p_mem = Ap_new_mem ;
+        (*A)->h = Ah_new ; (*A)->h_mem = Ah_new_mem ;
         (*A)->magic = GB_MAGIC ;
         (*A)->p_is_32 = false ;
         (*A)->j_is_32 = false ;

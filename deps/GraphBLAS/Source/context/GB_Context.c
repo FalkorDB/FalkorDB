@@ -57,12 +57,24 @@
 
 #endif
 
+// GB_Context_disabled is a global variable that disables the use of any
+// Context objects and any thread-local-storage.  The global context is used
+// instead.  This is set only in a forked child, which cannot safely use
+// thread-local-storage.
+bool GB_Context_disabled = false ;
+
 //------------------------------------------------------------------------------
 // GB_Context_engage: engage the Context for a user thread
 //------------------------------------------------------------------------------
 
 GrB_Info GB_Context_engage (GxB_Context Context)
 { 
+    if (GB_Context_disabled)
+    {
+        // no thread-local-storage can be used
+        return (GrB_NOT_IMPLEMENTED) ;
+    }
+
     if (Context == GxB_CONTEXT_WORLD)
     { 
         // GxB_Context_engage (GxB_CONTEXT_WORLD) is the same as engaging
@@ -83,6 +95,11 @@ GrB_Info GB_Context_engage (GxB_Context Context)
 
 GrB_Info GB_Context_disengage (GxB_Context Context)
 {
+    if (GB_Context_disabled)
+    {
+        // no thread-local-storage can be used
+        return (GrB_SUCCESS) ;
+    }
     #if defined ( NO_THREAD_LOCAL_STORAGE )
         // nothing to do
         return (GrB_SUCCESS) ;
@@ -114,6 +131,11 @@ GrB_Info GB_Context_disengage (GxB_Context Context)
 // GB_Context_nthreads_max_get: get max # of threads from a Context
 int GB_Context_nthreads_max_get (GxB_Context Context)
 {
+    if (GB_Context_disabled)
+    {
+        // no thread-local-storage can be used; use a single thread
+        return (1) ;
+    }
     int nthreads_max ;
     if (Context == NULL || Context == GxB_CONTEXT_WORLD)
     { 
@@ -133,6 +155,11 @@ int GB_Context_nthreads_max (void)
     // This method is used by most GraphBLAS functions to determine the # of
     // threads to use.  If a Context is engaged, it uses the engaged context.
     // Otherwise, it uses the default GxB_CONTEXT_WORLD.
+    if (GB_Context_disabled)
+    {
+        // no thread-local-storage can be used; use a single thread
+        return (1) ;
+    }
     return (GB_Context_nthreads_max_get (GB_CONTEXT_THREAD)) ;
 }
 
@@ -143,6 +170,11 @@ void GB_Context_nthreads_max_set
     int nthreads_max
 )
 {
+    if (GB_Context_disabled)
+    {
+        // no thread-local-storage can be used; use a single thread
+        return ;
+    }
     nthreads_max = GB_IMAX (1, nthreads_max) ;
     if (Context == NULL || Context == GxB_CONTEXT_WORLD)
     { 
@@ -162,6 +194,11 @@ void GB_Context_nthreads_max_set
 // GB_Context_chunk_get: get chunk from a Context
 double GB_Context_chunk_get (GxB_Context Context)
 {
+    if (GB_Context_disabled)
+    {
+        // no thread-local-storage can be used; use the default chunk size
+        return (GB_CHUNK_DEFAULT) ;
+    }
     double chunk ;
     if (Context == NULL || Context == GxB_CONTEXT_WORLD)
     { 
@@ -181,6 +218,11 @@ double GB_Context_chunk (void)
     // This method is used by most GraphBLAS functions to determine the chunk
     // parameter.  If a Context is engaged, it uses the engaged context.
     // Otherwise, it uses the default GxB_CONTEXT_WORLD.
+    if (GB_Context_disabled)
+    {
+        // no thread-local-storage can be used; use the default chunk size
+        return (GB_CHUNK_DEFAULT) ;
+    }
     return (GB_Context_chunk_get (GB_CONTEXT_THREAD)) ;
 }
 
@@ -191,6 +233,11 @@ void GB_Context_chunk_set
     double chunk
 )
 {
+    if (GB_Context_disabled)
+    {
+        // no thread-local-storage can be used; use the default chunk size
+        return ;
+    }
     if (chunk < 1)
     { 
         chunk = GB_CHUNK_DEFAULT ;
@@ -217,10 +264,21 @@ int32_t GB_Context_gpu_ids_get          // return # of GPUs to use
     int32_t gpu_ids [GB_MAX_NGPUS]      // list of GPU ids to use
 )
 {
+    if (GB_Context_disabled)
+    {
+        // no thread-local-storage can be used; use no GPUs
+        return (0) ;
+    }
     if (Context == NULL)
     {
         Context = GxB_CONTEXT_WORLD ;
     }
+
+    if (Context == GxB_CONTEXT_WORLD)
+    {
+        GB_OPENMP_LOCK_SET (5) ;        // global get (gpu ids array)
+    }
+
     int32_t ngpus = Context->ngpus ;
     ngpus = GB_IMIN (ngpus, GB_MAX_NGPUS) ;
     ngpus = GB_IMAX (ngpus, 0) ;
@@ -230,6 +288,11 @@ int32_t GB_Context_gpu_ids_get          // return # of GPUs to use
         { 
             gpu_ids [k] = (int32_t) Context->gpu_ids [k] ;
         }
+    }
+
+    if (Context == GxB_CONTEXT_WORLD)
+    {
+        GB_OPENMP_LOCK_UNSET (5) ;      // global get (gpu ids array)
     }
     return (ngpus) ;
 }
@@ -244,6 +307,11 @@ int32_t GB_Context_gpu_ids              // return # of GPUs to use
     // This method is used by most GraphBLAS functions to determine the
     // gpu(s) to use.  If a Context is engaged, it uses the engaged context.
     // Otherwise, it uses the default GxB_CONTEXT_WORLD.
+    if (GB_Context_disabled)
+    {
+        // no thread-local-storage can be used; use no GPUs
+        return (0) ;
+    }
     return (GB_Context_gpu_ids_get (GB_CONTEXT_THREAD, gpu_ids)) ;
 }
 
@@ -252,28 +320,29 @@ GrB_Info GB_Context_gpu_ids_set
 (
     GxB_Context Context,
     int32_t gpu_ids [GB_MAX_NGPUS],     // list of GPU ids to use
-    int32_t ngpus                       // # of GPUs to use
+    int32_t ngpus                       // # of GPUs to use (if <0 use all)
 )
 {
+    if (GB_Context_disabled)
+    {
+        // no thread-local-storage can be used; use no GPUs
+        return (GrB_SUCCESS) ;
+    }
     if (Context == NULL)
     {
         Context = GxB_CONTEXT_WORLD ;
     }
     int32_t ngpus_max = GB_Global_gpu_count_get ( ) ;
-    if (ngpus < 0 || ngpus > ngpus_max)
+    if (ngpus > ngpus_max)
     { 
-        return (GrB_INVALID_VALUE) ;
+        return (GrB_INVALID_VALUE) ;    // too many GPUs requested
     }
-    Context->ngpus = ngpus ;
-    if (gpu_ids == NULL)
+    if (ngpus < 0)
     {
-        // use GPUs with ids 0 to ngpus-1
-        for (int32_t id = 0 ; id < ngpus ; id++)
-        {
-            Context->gpu_ids [id] = (uint8_t) id ;
-        }
+        ngpus = ngpus_max ;             // use all GPUs available
     }
-    else
+
+    if (gpu_ids != NULL)
     {
         for (int32_t k = 0 ; k < ngpus ; k++)
         {
@@ -283,9 +352,110 @@ GrB_Info GB_Context_gpu_ids_set
             { 
                 return (GrB_INVALID_VALUE) ;
             }
-            Context->gpu_ids [k] = (uint8_t) id ;
         }
     }
+
+    // default: use GPUs with ids 0 to ngpus-1
+    for (int32_t id = 0 ; id < ngpus ; id++)
+    {
+        Context->gpu_ids [id] = (uint16_t) id ;
+    }
+
+    if (Context == GxB_CONTEXT_WORLD)
+    {
+        GB_OPENMP_LOCK_SET (5) ;        // global set (gpu ids array)
+    }
+
+    Context->ngpus = ngpus ;
+    if (gpu_ids != NULL)
+    {
+        for (int32_t k = 0 ; k < ngpus ; k++)
+        {
+            // get the GPU id and save it in the Context list
+            int32_t id = gpu_ids [k] ;
+            Context->gpu_ids [k] = (uint16_t) id ;
+        }
+    }
+
+    if (Context == GxB_CONTEXT_WORLD)
+    {
+        GB_OPENMP_LOCK_UNSET (5) ;      // global set (gpu ids array)
+    }
+
     return (GrB_SUCCESS) ;
+}
+
+//------------------------------------------------------------------------------
+// Context->memlane: memory lane to use
+//------------------------------------------------------------------------------
+
+// GB_Context_memlane_get : get memlane from a Context
+int GB_Context_memlane_get (GxB_Context Context)
+{
+    if (GB_Context_disabled)
+    {
+        // no thread-local-storage can be used; use memlane 0
+        return (0) ;
+    }
+    int memlane ;
+    if (Context == NULL || Context == GxB_CONTEXT_WORLD)
+    { 
+        GB_ATOMIC_READ
+        memlane = GxB_CONTEXT_WORLD->memlane ;
+    }
+    else
+    { 
+        memlane = Context->memlane ;
+    }
+    return (memlane) ;
+}
+
+// GB_Context_memlane: get memlane from the current Context
+int GB_Context_memlane (void)
+{ 
+    // This method is used by most GraphBLAS functions to determine the memlane
+    // to use.  If a Context is engaged, it uses the engaged context.
+    // Otherwise, it uses the default GxB_CONTEXT_WORLD.
+    if (GB_Context_disabled)
+    {
+        // no thread-local-storage can be used; use memlane 0
+        return (0) ;
+    }
+    return (GB_Context_memlane_get (GB_CONTEXT_THREAD)) ;
+}
+
+// GB_Context_memlane_set: set memlane in a Context
+void GB_Context_memlane_set
+(
+    GxB_Context Context,
+    int memlane
+)
+{
+    if (GB_Context_disabled)
+    {
+        // no thread-local-storage can be used; use memlane 0
+        return ;
+    }
+    // ensure memlane is in range
+    memlane = GB_IMAX (memlane, 0) ;
+    memlane = GB_IMIN (memlane, GB_MEMLANES) ;
+    if (Context == NULL || Context == GxB_CONTEXT_WORLD)
+    { 
+        GB_ATOMIC_WRITE
+        GxB_CONTEXT_WORLD->memlane = memlane ;
+    }
+    else
+    { 
+        Context->memlane = memlane ;
+    }
+}
+
+//------------------------------------------------------------------------------
+// GB_Context_disable: disable all Context methods; use 1 thread, no GPUs
+//------------------------------------------------------------------------------
+
+void GB_Context_disable (void)
+{
+    GB_Context_disabled = true ;
 }
 

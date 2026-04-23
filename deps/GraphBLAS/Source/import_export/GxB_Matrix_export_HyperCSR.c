@@ -22,10 +22,10 @@ GrB_Info GxB_Matrix_export_HyperCSR  // export and free a hypersparse CSR matrix
     uint64_t **Ah,      // row indices
     uint64_t **Aj,      // column indices
     void **Ax,          // values
-    uint64_t *Ap_size,  // size of Ap in bytes
-    uint64_t *Ah_size,  // size of Ah in bytes
-    uint64_t *Aj_size,  // size of Aj in bytes
-    uint64_t *Ax_size,  // size of Ax in bytes
+    uint64_t *Ap_memsize,  // size of Ap in bytes
+    uint64_t *Ah_memsize,  // size of Ah in bytes
+    uint64_t *Aj_memsize,  // size of Aj in bytes
+    uint64_t *Ax_memsize,  // size of Ax in bytes
     bool *iso,          // if true, A is iso
 
     uint64_t *nvec,     // number of rows that appear in Ah
@@ -41,8 +41,8 @@ GrB_Info GxB_Matrix_export_HyperCSR  // export and free a hypersparse CSR matrix
     GB_RETURN_IF_NULL (A) ;
     GB_RETURN_IF_NULL (*A) ;
     GB_WHERE_1 (*A, "GxB_Matrix_export_HyperCSR (&A, &type, &nrows, &ncols, "
-        "&Ap, &Ah, &Aj, &Ax, &Ap_size, &Ah_size, &Aj_size, &Ax_size, "
-        "&iso, &nvec, &jumbled, desc)") ;
+        "&Ap, &Ah, &Aj, &Ax, &Ap_memsize, &Ah_memsize, &Aj_memsize, "
+        "&Ax_memsize, &iso, &nvec, &jumbled, desc)") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
 
@@ -91,11 +91,11 @@ GrB_Info GxB_Matrix_export_HyperCSR  // export and free a hypersparse CSR matrix
     bool is_csc ;
 
     info = GB_export (false, A, type, ncols, nrows, false,
-        Ap,   Ap_size,  // Ap
-        Ah,   Ah_size,  // Ah
+        Ap,   Ap_memsize,  // Ap
+        Ah,   Ah_memsize,  // Ah
         NULL, NULL,     // Ab
-        Aj,   Aj_size,  // Aj
-        Ax,   Ax_size,  // Ax
+        Aj,   Aj_memsize,  // Aj
+        Ax,   Ax_memsize,  // Ax
         NULL, jumbled, nvec,                // jumbled or not
         &sparsity, &is_csc,                 // hypersparse by row
         iso, Werk) ;

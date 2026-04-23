@@ -98,7 +98,7 @@ mxArray *gb_export              // return the exported MATLAB matrix or struct
 
         // unload C into the Container and free C
         GxB_Container Container = GB_helper_container ( ) ;
-        CHECK_ERROR (Container == NULL, "internal error 911") ;
+        CHECK_ERROR (Container == NULL, "internal error 911a") ;
         OK (GxB_unload_Matrix_into_Container (C, Container, NULL)) ;
         OK (GrB_Matrix_free (C_handle)) ;
 
@@ -113,11 +113,15 @@ mxArray *gb_export              // return the exported MATLAB matrix or struct
         // unload the Container->x vector into the raw C array Cx
         void *Cx = NULL ;
         GrB_Type ctype = NULL ;
-        uint64_t Cx_size, xlen ;
+        uint64_t Cx_memsize, xlen ;
         int ignore = 0 ;
-        OK (GxB_Vector_unload (Container->x, &Cx, &ctype, &xlen, &Cx_size,
+        OK (GxB_Vector_unload (Container->x, &Cx, &ctype, &xlen, &Cx_memsize,
             &ignore, NULL)) ;
-
+        if (ignore != GrB_DEFAULT)
+        {
+            printf ("handling %d\n", ignore) ;
+            mexErrMsgIdAndTxt ("GrB:memlane", "memlane invalid (2)") ;
+        }
         // export Cx as a dense nrows-by-ncols MATLAB matrix
         return (gb_export_to_mxfull (&Cx, nrows, ncols, ctype)) ;
 

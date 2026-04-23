@@ -17,11 +17,11 @@
 // zombie status.
 
 //------------------------------------------------------------------------------
-// GB_cuda_AxB_dot3_dense_phase1_kernel: lookup i,k pairs and store in Ci 
+// GB_cuda_AxB_dot3_dense_phase1_kernel: lookup i,k pairs and store in Ci
 //------------------------------------------------------------------------------
 
 // GB_cuda_AxB_dot3_dense_phase1_kernel is a CUDA kernel that scans all entries
-// in M and assigns i,j coordinates for each entries and stores in Mi and Ci. 
+// in M and assigns i,j coordinates for each entries and stores in Mi and Ci.
 // A and B are both bitmap/full.  C and M are sparse/hypersparse.
 
 __global__ void GB_cuda_AxB_dot3_dense_phase1_kernel

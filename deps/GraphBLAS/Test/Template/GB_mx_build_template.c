@@ -130,6 +130,7 @@ static GrB_Info builder
     GrB_Info info ;
     GrB_Scalar scalar = NULL ;
     (*Chandle) = NULL ;
+    int memlane = GB_MEMLANE_MATLAB ;
 
     // create the GraphBLAS output object C
     int sparsity = GxB_SPARSE + GxB_HYPERSPARSE ;
@@ -139,14 +140,16 @@ static GrB_Info builder
         // create a hypersparse CSC matrix
         info = GB_new (Chandle, // sparse/hyper, new header
             ctype, nrows, ncols, GB_ph_calloc,
-            true, sparsity, GxB_HYPER_DEFAULT, 1, false, false, false) ;
+            true, sparsity, GxB_HYPER_DEFAULT, 1, false, false, false,
+            memlane) ;
     }
     else
     {
         // create a hypersparse CSR matrix
         info = GB_new (Chandle, // sparse/hyper, new header
             ctype, ncols, nrows, GB_ph_calloc,
-            false, sparsity, GxB_HYPER_DEFAULT, 1, false, false, false) ;
+            false, sparsity, GxB_HYPER_DEFAULT, 1, false, false, false,
+            memlane) ;
     }
     #else
     info = GrB_Vector_new (Chandle, ctype, nrows) ;

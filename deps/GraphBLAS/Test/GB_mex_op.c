@@ -38,7 +38,7 @@ void mexFunction
     GB_void *X = NULL, *Y = NULL, *Z = NULL ;
     GrB_Type X_type = NULL, Y_type = NULL ;
     int64_t nrows = 0, ncols = 0, nx = 0, ny = 0, nrows2 = 0, ncols2 = 0 ;
-    size_t Y_size = 1 ;
+    size_t Ysize = 1 ;
 
     bool do_cover = (nargin == 4) ;
     bool malloc_debug = GB_mx_get_global (do_cover) ;
@@ -129,7 +129,7 @@ void mexFunction
         mexErrMsgTxt ("X must be numeric") ;
     }
     ASSERT_TYPE_OK (X_type, "X type", GB0) ;
-    size_t X_size = X_type->size ;
+    size_t Xsize = X_type->size ;
 
     if (!GB_Type_compatible (op_xtype, X_type))
     {
@@ -156,7 +156,7 @@ void mexFunction
             mexErrMsgTxt ("Y must be numeric") ;
         }
         ASSERT_TYPE_OK (Y_type, "Y type", GB0) ;
-        Y_size = Y_type->size ;
+        Ysize = Y_type->size ;
 
         if (!GB_Type_compatible (op_ytype, Y_type))
         {
@@ -193,8 +193,8 @@ void mexFunction
         GB_cast_function cast_Y = GB_cast_factory (op_ytype->code,Y_type->code);
         for (int64_t k = 0 ; k < nx ; k++)
         {
-            cast_X (xwork, X +(k*X_size), X_size) ;
-            cast_Y (ywork, Y +(k*Y_size), Y_size) ;
+            cast_X (xwork, X +(k*Xsize), Xsize) ;
+            cast_Y (ywork, Y +(k*Ysize), Ysize) ;
             f_binary (Z +(k*op_zsize), xwork, ywork) ;
         }
 
@@ -205,7 +205,7 @@ void mexFunction
         GxB_unary_function f_unary = op1->unop_function ;
         for (int64_t k = 0 ; k < nx ; k++)
         {
-            cast_X (xwork, X +(k*X_size), X_size) ;
+            cast_X (xwork, X +(k*Xsize), Xsize) ;
             f_unary (Z +(k*op_zsize), xwork) ;
         }
     }

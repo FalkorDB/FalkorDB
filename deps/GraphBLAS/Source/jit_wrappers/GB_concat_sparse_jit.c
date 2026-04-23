@@ -35,7 +35,7 @@ GrB_Info GB_concat_sparse_jit      // concatenate A into a sparse matrix C
     char *suffix ;
     uint64_t hash = GB_encodify_apply (&encoding, &suffix,
         GB_JIT_KERNEL_CONCAT_SPARSE, GxB_SPARSE, true, C->type, C->p_is_32,
-        C->i_is_32, false, op, false, GB_sparsity (A), true, A->type,
+        false, C->i_is_32, op, false, GB_sparsity (A), true, A->type,
         A->p_is_32, A->j_is_32, A->i_is_32, A->iso, A->nzombies) ;
 
     //--------------------------------------------------------------------------

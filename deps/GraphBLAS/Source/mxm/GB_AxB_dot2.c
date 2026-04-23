@@ -50,7 +50,7 @@
 
 GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
 (
-    GrB_Matrix C,                   // output matrix, static header
+    GrB_Matrix C,                   // output matrix, existing header
     const bool C_iso,               // true if C is iso
     const GB_void *cscalar,         // iso value of C
     const GrB_Matrix M_in,          // mask matrix for C<#M>=A'*B, may be NULL
@@ -71,7 +71,10 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
 
     GrB_Info info ;
 
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (C != NULL) ;
+
+    int memlane = GB_memlane (C->header_mem) ;
+
     ASSERT_MATRIX_OK_OR_NULL (M_in, "M for dot A'*B", GB0) ;
     ASSERT_MATRIX_OK (A_in, "A for dot A'*B", GB0) ;
     ASSERT_MATRIX_OK (B_in, "B for dot A'*B", GB0) ;
@@ -88,7 +91,6 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
 
     ASSERT_SEMIRING_OK (semiring, "semiring for numeric A'*B", GB0) ;
 
-    struct GB_Matrix_opaque Awork_header, Bwork_header, Mwork_header ;
     GrB_Matrix M = NULL, Mwork = NULL ;
     GrB_Matrix A = NULL, Awork = NULL ;
     GrB_Matrix B = NULL, Bwork = NULL ;
@@ -130,7 +132,7 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
     if (A_is_hyper)
     { 
         // A = hypershallow version of A_in
-        GB_CLEAR_MATRIX_HEADER (Awork, &Awork_header) ;
+        GB_OK (GB_matrix_header_new (&Awork, memlane)) ;
         A = GB_hyper_shallow (Awork, A_in) ;
     }
     else
@@ -142,7 +144,7 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
     if (B_is_hyper)
     { 
         // B = hypershallow version of B_in
-        GB_CLEAR_MATRIX_HEADER (Bwork, &Bwork_header) ;
+        GB_OK (GB_matrix_header_new (&Bwork, memlane)) ;
         B = GB_hyper_shallow (Bwork, B_in) ;
     }
     else
@@ -174,9 +176,9 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
 
     if (A_or_B_hyper && M_in != NULL)
     { 
-        // Mwork = M_in (Ah, Bh), where Mwork has a static header
+        // Mwork = M_in (Ah, Bh)
         // if Mask_struct then Mwork is extracted as iso
-        GB_CLEAR_MATRIX_HEADER (Mwork, &Mwork_header) ;
+        GB_OK (GB_matrix_header_new (&Mwork, memlane)) ;
         GB_OK (GB_subref (Mwork, Mask_struct, M_in->is_csc, M_in,
             (A_is_hyper) ? Ah : GrB_ALL, A->j_is_32, cvlen,
             (B_is_hyper) ? Bh : GrB_ALL, B->j_is_32, cvdim,
@@ -366,7 +368,7 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
     GB_OK (GB_new_bix (&C, // bitmap/full, existing header
         ctype, cvlen, cvdim, GB_ph_malloc, true, C_sparsity,
         M_is_sparse_or_hyper, B->hyper_switch, cnvec, cnz, true, C_iso,
-        Cp_is_32, Cj_is_32, Ci_is_32)) ;
+        Cp_is_32, Cj_is_32, Ci_is_32, memlane)) ;
 
     //--------------------------------------------------------------------------
     // if M is sparse/hyper, scatter it into the C bitmap
@@ -498,6 +500,16 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
     //--------------------------------------------------------------------------
     // free workspace
     //--------------------------------------------------------------------------
+
+    // printf ("dot2, free workspace\n") ;
+    // GxB_print (Mwork, 5) ;
+    // GB_Matrix_free (&Mwork) ;
+
+    // GxB_print (Awork, 5) ;
+    // GB_Matrix_free (&Awork) ;
+
+    // GxB_print (Bwork, 5) ;
+    // GB_Matrix_free (&Bwork) ;
 
     GB_FREE_WORKSPACE ;
     C->magic = GB_MAGIC ;

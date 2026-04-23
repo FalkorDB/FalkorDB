@@ -26,7 +26,7 @@ GrB_Info GB_deserialize             // deserialize a matrix from a blob
     // input:
     GrB_Type type_expected,         // type expected (NULL for any built-in)
     const GB_void *blob,            // serialized matrix 
-    size_t blob_size                // size of the blob
+    size_t blob_memsize             // size of the blob
 )
 {
 
@@ -39,19 +39,21 @@ GrB_Info GB_deserialize             // deserialize a matrix from a blob
     (*Chandle) = NULL ;
     GrB_Matrix C = NULL, T = NULL ;
 
+    int memlane = GB_Context_memlane ( ) ;
+
     //--------------------------------------------------------------------------
     // read the content of the header (160 bytes)
     //--------------------------------------------------------------------------
 
     size_t s = 0 ;
 
-    if (blob_size < GB_BLOB_HEADER_SIZE)
+    if (blob_memsize < GB_BLOB_HEADER_SIZE)
     { 
         // blob is invalid
         return (GrB_INVALID_OBJECT)  ;
     }
 
-    GB_BLOB_READ (blob_size2, uint64_t) ;
+    GB_BLOB_READ (blob_memsize2, uint64_t) ;
 
 // was in v9.4.2 and earlier::
 //  GB_BLOB_READ (typecode, int32_t) ;
@@ -67,14 +69,14 @@ GrB_Info GB_deserialize             // deserialize a matrix from a blob
     // more bits to create a serialized blob, then GrB 10.0.0 will gracefully
     // fail if it attempts to deserialize the blob.
 
-    uint64_t blob_size1 = (uint64_t) blob_size ;
+    uint64_t blob_memsize1 = (uint64_t) blob_memsize ;
 
     // GrB v9.4.2 has the same test below, so it will safely declare the blob
     // invalid if it sees any encoding with a 1 in bit position 4 or 5.
-    if (blob_size1 != blob_size2
+    if (blob_memsize1 != blob_memsize2
         || typecode < GB_BOOL_code || typecode > GB_UDT_code
         || (typecode == GB_UDT_code &&
-            blob_size < GB_BLOB_HEADER_SIZE + GxB_MAX_NAME_LEN)
+            blob_memsize < GB_BLOB_HEADER_SIZE + GxB_MAX_NAME_LEN)
         // GrB v10.0.0 adds the following check, since it only supports the
         // values of 0 and 1, denoting 64-bit and 32-bit integers respectively:
         || (Cp_is_32 > 1) || (Cj_is_32 > 1) || (Ci_is_32 > 1))
@@ -173,7 +175,7 @@ GrB_Info GB_deserialize             // deserialize a matrix from a blob
     // allocate the matrix with info from the header
     GB_OK (GB_new (&C,  // new header (C is NULL on input)
         ctype, vlen, vdim, GB_ph_null, is_csc,
-        sparsity, hyper_switch, nvec, Cp_is_32, Cj_is_32, Ci_is_32)) ;
+        sparsity, hyper_switch, nvec, Cp_is_32, Cj_is_32, Ci_is_32, memlane)) ;
 
     C->nvec = nvec ;
 //  C->nvec_nonempty = nvec_nonempty ;
@@ -199,36 +201,36 @@ GrB_Info GB_deserialize             // deserialize a matrix from a blob
     {
         case GxB_HYPERSPARSE : 
             // decompress Cp, Ch, and Ci
-            GB_OK (GB_deserialize_from_blob ((GB_void **) &(C->p), &(C->p_size),
-                Cp_len, blob, blob_size, Cp_Sblocks, Cp_nblocks, Cp_method,
+            GB_OK (GB_deserialize_from_blob ((GB_void **) &(C->p), &(C->p_mem),
+                Cp_len, blob, blob_memsize, Cp_Sblocks, Cp_nblocks, Cp_method,
                 &s)) ;
 
-            GB_OK (GB_deserialize_from_blob ((GB_void **) &(C->h), &(C->h_size),
-                Ch_len, blob, blob_size, Ch_Sblocks, Ch_nblocks, Ch_method,
+            GB_OK (GB_deserialize_from_blob ((GB_void **) &(C->h), &(C->h_mem),
+                Ch_len, blob, blob_memsize, Ch_Sblocks, Ch_nblocks, Ch_method,
                 &s)) ;
 
-            GB_OK (GB_deserialize_from_blob ((GB_void **) &(C->i), &(C->i_size),
-                Ci_len, blob, blob_size, Ci_Sblocks, Ci_nblocks, Ci_method,
+            GB_OK (GB_deserialize_from_blob ((GB_void **) &(C->i), &(C->i_mem),
+                Ci_len, blob, blob_memsize, Ci_Sblocks, Ci_nblocks, Ci_method,
                 &s)) ;
             break ;
 
         case GxB_SPARSE : 
 
             // decompress Cp and Ci
-            GB_OK (GB_deserialize_from_blob ((GB_void **) &(C->p), &(C->p_size),
-                Cp_len, blob, blob_size, Cp_Sblocks, Cp_nblocks, Cp_method,
+            GB_OK (GB_deserialize_from_blob ((GB_void **) &(C->p), &(C->p_mem),
+                Cp_len, blob, blob_memsize, Cp_Sblocks, Cp_nblocks, Cp_method,
                 &s)) ;
 
-            GB_OK (GB_deserialize_from_blob ((GB_void **) &(C->i), &(C->i_size),
-                Ci_len, blob, blob_size, Ci_Sblocks, Ci_nblocks, Ci_method,
+            GB_OK (GB_deserialize_from_blob ((GB_void **) &(C->i), &(C->i_mem),
+                Ci_len, blob, blob_memsize, Ci_Sblocks, Ci_nblocks, Ci_method,
                 &s)) ;
             break ;
 
         case GxB_BITMAP : 
 
             // decompress Cb
-            GB_OK (GB_deserialize_from_blob ((GB_void **) &(C->b), &(C->b_size),
-                Cb_len, blob, blob_size, Cb_Sblocks, Cb_nblocks, Cb_method,
+            GB_OK (GB_deserialize_from_blob ((GB_void **) &(C->b), &(C->b_mem),
+                Cb_len, blob, blob_memsize, Cb_Sblocks, Cb_nblocks, Cb_method,
                 &s)) ;
             break ;
 
@@ -238,8 +240,8 @@ GrB_Info GB_deserialize             // deserialize a matrix from a blob
     }
 
     // decompress Cx
-    GB_OK (GB_deserialize_from_blob ((GB_void **) &(C->x), &(C->x_size), Cx_len,
-        blob, blob_size, Cx_Sblocks, Cx_nblocks, Cx_method, &s)) ;
+    GB_OK (GB_deserialize_from_blob ((GB_void **) &(C->x), &(C->x_mem), Cx_len,
+        blob, blob_memsize, Cx_Sblocks, Cx_nblocks, Cx_method, &s)) ;
 
     if (C->p != NULL && version <= GxB_VERSION (7,2,0))
     {
@@ -268,12 +270,12 @@ GrB_Info GB_deserialize             // deserialize a matrix from a blob
     { 
 
         //----------------------------------------------------------------------
-        // look for the two nul bytes in blob [s : blob_size-1]
+        // look for the two nul bytes in blob [s : blob_memsize-1]
         //----------------------------------------------------------------------
 
         int nfound = 0 ;
 //      size_t ss [2] ;
-        for (size_t p = s ; p < blob_size && nfound < 2 ; p++)
+        for (size_t p = s ; p < blob_memsize && nfound < 2 ; p++)
         {
             if (blob [p] == 0)
             {

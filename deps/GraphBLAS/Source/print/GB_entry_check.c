@@ -52,7 +52,8 @@ GrB_Info GB_entry_check     // print a single value
     FILE *f,                // file to print to
     // for user-defined types only:
     char **string_handle,   // string buffer for printing
-    size_t *string_size     // size of the string buffer
+    uint64_t *string_mem,   // memsize and memlane of the string buffer
+    int memlane
 )
 {
 
@@ -152,15 +153,17 @@ GrB_Info GB_entry_check     // print a single value
             { 
                 GxB_print_function pfunc = type->print_function ;
                 if (pfunc != NULL
-                    && string_handle != NULL && string_size != NULL)
+                    && string_handle != NULL && string_mem != NULL)
                 { 
                     // ensure the string buffer exists
                     if ((*string_handle) == NULL)
                     { 
                         // allocate the string buffer with its initial size;
                         // it is not freed here but in the caller
+                        uint64_t mem = GB_mem (memlane, 0) ;
+                        (*string_mem) = mem ;
                         (*string_handle) = GB_MALLOC_MEMORY (1024,
-                            sizeof (char), string_size) ;
+                            sizeof (char), string_mem) ;
                         if ((*string_handle) == NULL)
                         { 
                             return (GrB_OUT_OF_MEMORY) ;
@@ -168,27 +171,27 @@ GrB_Info GB_entry_check     // print a single value
                     }
                     for (int k = 0 ; k < 32 ; k++)
                     { 
-                        int64_t result = pfunc (*string_handle, *string_size,
-                            x, pr_verbose) ;
+                        int64_t result = pfunc (*string_handle,
+                            (size_t) GB_memsize (*string_mem), x, pr_verbose) ;
                         if (result < 0)
                         { 
                             // something went completely wrong
                             return (GrB_INVALID_VALUE) ;
                         }
-                        else if (result >= (*string_size))
+                        else if (result >= GB_memsize (*string_mem))
                         { 
                             // string is too small; make it bigger
                             size_t newsize = GB_IMAX (result+2,
-                                2 * (*string_size)) ;
+                                2 * GB_memsize (*string_mem)) ;
                             bool ok = true ;
                             GB_REALLOC_MEMORY ((*string_handle), newsize,
-                                sizeof (char), string_size, &ok) ;
+                                sizeof (char), string_mem, &ok) ;
                             if (!ok)
                             { 
                                 // out of memory
                                 return (GrB_OUT_OF_MEMORY) ;
                             }
-                            (*string_size) = newsize ;
+                            (*string_mem) = GB_mem (0, newsize) ;
                         }
                         else
                         { 
@@ -198,7 +201,7 @@ GrB_Info GB_entry_check     // print a single value
                     }
                     // print the string (also ensure it is NUL terminated)
                     char *string = (*string_handle) ;
-                    string [(*string_size)-1] = '\0' ;
+                    string [(GB_memsize (*string_mem))-1] = '\0' ;
                     GBPR ("   %s", string) ;
                 }
                 else

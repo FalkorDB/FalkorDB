@@ -22,7 +22,7 @@
 GrB_Info GB_emult_generic       // generic emult
 (
     // input/output:
-    GrB_Matrix C,           // output matrix, static header
+    GrB_Matrix C,           // output matrix, header already allocated
     // input:
     const GrB_BinaryOp op,  // op to perform C = op (A,B)
     const bool flipij,      // if true, i,j must be flipped
@@ -56,7 +56,7 @@ GrB_Info GB_emult_generic       // generic emult
     // check inputs
     //--------------------------------------------------------------------------
 
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (C != NULL) ;
     ASSERT_MATRIX_OK_OR_NULL (M, "M for ewise generic", GB0) ;
     ASSERT_MATRIX_OK (A, "A for ewise generic", GB0) ;
     ASSERT_MATRIX_OK (B, "B for ewise generic", GB0) ;

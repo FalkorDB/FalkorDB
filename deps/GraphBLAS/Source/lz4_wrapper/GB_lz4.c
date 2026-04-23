@@ -18,24 +18,27 @@
 
 void *LZ4_malloc (size_t s)
 {
-    return (GB_Global_malloc_function (s)) ;
+    int memlane = 0 ;   // FIXME
+    return (GB_Global_malloc_function (s, memlane)) ;
 }
 
 void *LZ4_calloc (size_t n, size_t s)
 {
+    int memlane = 0 ;   // FIXME
     // ns = n*s, the size of the space to allocate
     size_t ns = 0 ;
-    bool ok = GB_size_t_multiply (&ns, n, s) ;
+    bool ok = GB_Size_t_multiply (&ns, n, s) ;
     if (!ok) return (NULL) ;
     // malloc the space and then use memset to clear it
-    void *p = GB_Global_malloc_function (ns) ;
+    void *p = GB_Global_malloc_function (ns, memlane) ;
     if (p != NULL) memset (p, 0, ns) ;
     return (p) ;
 }
 
 void LZ4_free (void *p)
 {
-    GB_Global_free_function (p) ;
+    int memlane = 0 ;   // FIXME
+    GB_Global_free_function (p, memlane) ;
 }
 
 // LZ4 uses switch statements with no default case.

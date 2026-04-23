@@ -14,7 +14,7 @@ void GB_serialize_to_blob
 (
     // input/output
     GB_void *blob,          // blocks are appended to the blob
-    size_t *s_handle,       // location to append into the blob
+    uint64_t *s_handle,     // location to append into the blob
     // input:
     GB_blocks *Blocks,      // Blocks: array of size nblocks+1
     uint64_t *Sblocks,      // array of size nblocks
@@ -47,7 +47,7 @@ void GB_serialize_to_blob
     // copy the blocks into the blob
     //--------------------------------------------------------------------------
 
-    size_t s = (*s_handle) ;
+    uint64_t s = (*s_handle) ;
 
     if (nblocks == 1)
     { 
@@ -62,11 +62,12 @@ void GB_serialize_to_blob
         #pragma omp parallel for num_threads(nthreads) schedule(dynamic)
         for (blockid = 0 ; blockid < nblocks ; blockid++)
         { 
-            // copy the compressed block of size s_size into the blob
-            size_t s_start = (blockid == 0) ? 0 : Sblocks [blockid-1] ;
-            size_t s_end   = Sblocks [blockid] ;
-            size_t s_size  = s_end - s_start ;
-            memcpy (blob + s + s_start, Blocks [blockid].p, s_size) ;
+            // copy the compressed block of size s_memsize into the blob
+            uint64_t s_start = (blockid == 0) ? 0 : Sblocks [blockid-1] ;
+            uint64_t s_end   = Sblocks [blockid] ;
+            uint64_t s_memsize  = s_end - s_start ;
+            memcpy (blob + s + s_start, Blocks [blockid].p,
+                (size_t) s_memsize) ;
         }
     }
 

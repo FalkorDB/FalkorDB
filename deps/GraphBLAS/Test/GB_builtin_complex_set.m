@@ -1,5 +1,5 @@
 function builtin_complex = GB_builtin_complex_set (builtin_complex)
-%GB_BUILTIN_COMPLEX_SET set a global flag to determine the GrB Complex type 
+%GB_BUILTIN_COMPLEX_SET set a global flag to determine the GraphBLAS Complex type
 %
 % builtin_complex = GB_builtin_complex_set (builtin_complex)
 %

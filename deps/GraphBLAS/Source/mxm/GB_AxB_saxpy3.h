@@ -19,7 +19,7 @@
 
 GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
 (
-    GrB_Matrix C,                   // output matrix, static header
+    GrB_Matrix C,                   // output matrix, existing header
     const bool C_iso,               // true if C is iso
     const GB_void *cscalar,         // iso value of C
     int C_sparsity,                 // construct C as sparse or hypersparse
@@ -94,7 +94,7 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
     bool builtin_semiring,          // if true, semiring is builtin
     // outputs
     GB_saxpy3task_struct **SaxpyTasks_handle,
-    size_t *SaxpyTasks_size_handle,
+    uint64_t *SaxpyTasks_mem_handle,
     bool *apply_mask,               // if true, apply M during sapxy3
     bool *M_in_place,               // if true, use M in-place
     int *ntasks,                    // # of tasks created (coarse and fine)
@@ -115,7 +115,7 @@ GrB_Info GB_AxB_saxpy3_slice_quick
     const GrB_Matrix B,             // input matrix B
     // outputs
     GB_saxpy3task_struct **SaxpyTasks_handle,
-    size_t *SaxpyTasks_size_handle,
+    uint64_t *SaxpyTasks_mem_handle,
     int *ntasks,                    // # of tasks created (coarse and fine)
     int *nfine,                     // # of fine tasks created
     int *nthreads,                  // # of threads to use

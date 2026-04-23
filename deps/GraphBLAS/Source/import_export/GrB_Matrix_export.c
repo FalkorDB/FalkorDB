@@ -19,9 +19,9 @@
 // GrB_Matrix or the size of a type.  SuiteSparse:GraphBLAS provides
 // GxB_Matrix_type_name to query the type of a matrix (returning a string),
 // which can be converted into a GrB_Type with GxB_Type_from_name.  The size of
-// a type can be queried with GxB_Type_size.  Using these methods, a user
-// application can ensure that its Ax array has the correct size for any
-// given GrB_Matrix it wishes to export, regardless of its type.
+// a type can be queried with GrB_get  Using these methods, a user application
+// can ensure that its Ax array has the correct size for any given GrB_Matrix
+// it wishes to export, regardless of its type.
 
 #define GB_FREE_ALL                 \
 {                                   \
@@ -56,8 +56,9 @@ static GrB_Info GB_export_worker  // export a matrix
     GrB_Info info ;
 
     GrB_Matrix A = A_input ;
-    struct GB_Matrix_opaque T_header ;
     GrB_Matrix T = NULL ;
+
+    int memlane = GB_memlane (A->header_mem) ;
 
     switch (format)
     {
@@ -131,17 +132,17 @@ static GrB_Info GB_export_worker  // export a matrix
 
     if (make_copy)
     { 
-        GB_CLEAR_MATRIX_HEADER (T, &T_header) ;
         if (is_csc != csc_requested)
         { 
             // T = A'
+            GB_OK (GB_matrix_header_new (&T, memlane)) ;
             GB_OK (GB_transpose_cast (T, A->type, csc_requested, A, false,
                 Werk)) ;
         }
         else
         { 
             // T = A
-            GB_OK (GB_dup_worker (&T, A->iso, A, true, A->type)) ;
+            GB_OK (GB_dup_worker (&T, A->iso, A, true, A->type, memlane)) ;
         }
 
         switch (format)
@@ -180,9 +181,7 @@ static GrB_Info GB_export_worker  // export a matrix
                 GB_FREE_ALL ;
                 return (GrB_INSUFFICIENT_SPACE) ;
             }
-//          GB_memcpy (Ap, A->p, plen  * sizeof (uint64_t), nthreads_max) ;
             GB_cast_int (Ap, GB_UINT64_code, A->p, apcode, plen, nthreads_max) ;
-//          GB_memcpy (Ai, A->i, nvals * sizeof (uint64_t), nthreads_max) ;
             GB_cast_int (Ai, GB_UINT64_code, A->i, aicode, nvals, nthreads_max);
             (*Ap_len) = plen ;
             (*Ai_len) = nvals ;

@@ -17,6 +17,7 @@
     GrB_Scalar_free (&scalar) ;     \
     GB_Global_hack_set (6, 0) ;     \
     GB_Global_hack_set (7, 0) ;     \
+    OK (GrB_Global_set_INT32 (GrB_GLOBAL, 0, GxB_NGPUS)) ; \
 }
 
 //------------------------------------------------------------------------------

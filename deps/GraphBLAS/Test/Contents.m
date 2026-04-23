@@ -71,7 +71,7 @@
 %   GB_user_opsall                - return list of complex operators
 %   GB_random_mask                - Mask = GB_random_mask (m, n, d, M_is_csc, M_is_hyper)
 %   GB_builtin_complex_get        - get the flag that determines the GrB_Type Complex
-%   GB_builtin_complex_set        - set a global flag to determine the GrB Complex type 
+%   GB_builtin_complex_set        - set a global flag to determine the GraphBLAS Complex type
 %   GB_sparsity                   - a string describing the sparsity
 %   GB_spok                       - check if a matrix is valid
 
@@ -297,8 +297,8 @@
 %   debug_off            - turn off malloc debugging
 %   debug_on             - turn on malloc debugging
 %   grbinfo              - print info about the GraphBLAS version
-%   irand                - construct a random integer matrix 
-%   logstat              - run a GraphBLAS test and log the results to log.txt 
+%   irand                - construct a random integer matrix
+%   logstat              - run a GraphBLAS test and log the results to log.txt
 %   runtest              - run a single GraphBLAS test
 %   stat                 - report status of statement coverage and malloc debugging
 %   isequal_roundoff     - compare two matrices, allowing for roundoff errors
@@ -307,7 +307,7 @@
 %   feature_numcores     - determine # of cores the system has
 %   jit_reset            - turn off the JIT and then set it back to its original state
 %   grblines             - total # of lines in the test coverage
-%   set_malloc_debug     - Turn on/off malloc debugging and mark the log.txt 
+%   set_malloc_debug     - Turn on/off malloc debugging and mark the log.txt
 %   bench3               - test and benchmark qsort and msort
 %   GB_isequal_ignore_32 - compare two structs but ignore [phi]_is_32 fields
 

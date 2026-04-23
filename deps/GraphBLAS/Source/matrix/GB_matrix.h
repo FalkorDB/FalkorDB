@@ -10,25 +10,20 @@
 #ifndef GB_MATRIX_H
 #define GB_MATRIX_H
 
-typedef enum                    // input parameter to GB_new and GB_new_bix
-{
-    GB_ph_calloc,               // 0: calloc A->p, malloc A->h if hypersparse
-    GB_ph_malloc,               // 1: malloc A->p, malloc A->h if hypersparse
-    GB_ph_null                  // 2: do not allocate A->p or A->h
-}
-GB_ph_code ;
-
 GrB_Info GB_Matrix_new          // create a new matrix with no entries
 (
     GrB_Matrix *A,              // handle of matrix to create
     GrB_Type type,              // type of matrix to create
     uint64_t nrows,             // matrix dimension is nrows-by-ncols
-    uint64_t ncols
+    uint64_t ncols,
+    int memlane                 // memlane for the matrix
 ) ;
 
 GrB_Info GB_new                 // create matrix, except for indices & values
 (
+    // output:
     GrB_Matrix *Ahandle,        // handle of matrix to create
+    // inputs:
     const GrB_Type type,        // matrix type
     const int64_t vlen,         // length of each vector
     const int64_t vdim,         // number of vectors
@@ -40,9 +35,11 @@ GrB_Info GB_new                 // create matrix, except for indices & values
                                 // Ignored if A is not hypersparse.
     bool p_is_32,               // if true, A->p is 32 bit; 64 bit otherwise
     bool j_is_32,               // if true, A->h and A->Y are 32 bit; else 64
-    bool i_is_32                // if true, A->i is 32 bit; 64 bit otherwise
+    bool i_is_32,               // if true, A->i is 32 bit; 64 bit otherwise
+    int memlane                 // memlane for the matrix
 ) ;
 
+/*
 GrB_Info GB_new_bix             // create a new matrix, incl. A->b, A->i, A->x
 (
     GrB_Matrix *Ahandle,        // output matrix to create
@@ -63,6 +60,7 @@ GrB_Info GB_new_bix             // create a new matrix, incl. A->b, A->i, A->x
     bool j_is_32,               // if true, A->h and A->Y are 32 bit; else 64
     bool i_is_32                // if true, A->i is 32 bit; 64 bit otherwise
 ) ;
+*/
 
 GrB_Info GB_ix_realloc      // reallocate space in a matrix
 (
@@ -95,18 +93,45 @@ void GB_phybix_free             // free all content of a matrix
     GrB_Matrix A                // matrix with content to free
 ) ;
 
+/*
 void GB_Matrix_free             // free a matrix
 (
     GrB_Matrix *Ahandle         // handle of matrix to free
 ) ;
+*/
 
 GrB_Info GB_shallow_copy    // create a purely shallow matrix
 (
-    GrB_Matrix C,           // output matrix C, with a static header
+    GrB_Matrix C,           // output matrix C, with a existing header
     const bool C_is_csc,    // desired CSR/CSC format of C
     const GrB_Matrix A,     // input matrix
     GB_Werk Werk
 ) ;
+
+//------------------------------------------------------------------------------
+// GB_matrix_header_new
+//------------------------------------------------------------------------------
+
+// Allocate an empty matrix header
+
+static inline GrB_Info GB_matrix_header_new
+(
+    GrB_Matrix *Ahandle,
+    int memlane
+)
+{
+    ASSERT (Ahandle != NULL) ;
+    uint64_t header_mem = GB_mem (memlane, 0) ;
+    (*Ahandle) = (GrB_Matrix) GB_CALLOC_MEMORY (1,
+        sizeof (struct GB_Matrix_opaque), &header_mem) ;
+    if (*Ahandle == NULL)
+    {
+        return (GrB_OUT_OF_MEMORY) ;
+    }
+    (*Ahandle)->header_mem = header_mem ;
+    (*Ahandle)->magic = GB_MAGIC2 ;
+    return (GrB_SUCCESS) ;
+}
 
 #endif
 

@@ -16,14 +16,12 @@
 // is returned, and ok is returned as true.  If the allocation fails, ok is set
 // to false and a pointer to the old (unmodified) object is returned.
 
-// The actual size_allocated on input can differ from nitems_old*size_of_item,
-// and the size_allocated on output can be larger than nitems_new*size_of_item,
-// if the size_allocated is rounded up to the nearest power of two.
+// GB_memsize(*p_mem) on input can differ from nitems_old*size_of_item, and the
+// GB_memsize(*p_mem) on output can be larger than nitems_new*size_of_item.
 
 // Usage:
 
-//      p = GB_realloc_memory (nitems_new, size_of_item, p,
-//              &size_allocated, &ok)
+//      p = GB_realloc_memory (nitems_new, size_of_item, p, &p_mem, &ok)
 //      if (ok)
 //      {
 //          p points to a block of at least nitems_new*size_of_item bytes and
@@ -32,22 +30,24 @@
 //      }
 //      else
 //      {
-//          p points to the old block, and size_allocated is left
+//          p points to the old block, and p_mem is left
 //          unchanged.  This case never occurs if nitems_new < nitems_old.
 //      }
-//      on output, size_allocated is set to the actual size of the block of
-//      memory
+//      on output, p_mem is set to the actual memsize and memlane of the block
+//      of memory
+
+// The memlane of the object is not changed.
 
 #include "GB.h"
 
 void *GB_realloc_memory     // pointer to reallocated block of memory, or
                             // to original block if the reallocation failed.
 (
-    size_t nitems_new,      // new number of items in the object
-    size_t size_of_item,    // size of each item
+    uint64_t nitems_new,    // new number of items in the object
+    uint64_t size_of_item,  // size of each item
     // input/output
     void *p,                // old object to reallocate
-    size_t *size_allocated, // # of bytes actually allocated
+    uint64_t *p_mem,        // memsize and memlane of object p to reallocate
     // output
     bool *ok                // true if successful, false otherwise
 )
@@ -59,7 +59,7 @@ void *GB_realloc_memory     // pointer to reallocated block of memory, or
 
     if (p == NULL)
     { 
-        p = GB_MALLOC_MEMORY (nitems_new, size_of_item, size_allocated) ;
+        p = GB_MALLOC_MEMORY (nitems_new, size_of_item, p_mem) ;
         (*ok) = (p != NULL) ;
         return (p) ;
     }
@@ -71,16 +71,17 @@ void *GB_realloc_memory     // pointer to reallocated block of memory, or
     // make sure at least one byte is allocated
     size_of_item = GB_IMAX (1, size_of_item) ;
 
-    size_t oldsize_allocated = (*size_allocated) ;
-    ASSERT (oldsize_allocated == GB_Global_memtable_size (p)) ;
+    uint64_t oldsize_allocated = GB_memsize (*p_mem) ;
+    int memlane = GB_memlane (*p_mem) ;
+    MEMTABLE_ASSERT (oldsize_allocated == GB_Global_memtable_memsize (p)) ;
 
     // make sure at least one item is allocated
-    size_t nitems_old = oldsize_allocated / size_of_item ;
+    uint64_t nitems_old = oldsize_allocated / size_of_item ;
     nitems_new = GB_IMAX (1, nitems_new) ;
 
-    size_t newsize, oldsize ;
-    (*ok) = GB_size_t_multiply (&newsize, nitems_new, size_of_item)
-         && GB_size_t_multiply (&oldsize, nitems_old, size_of_item) ;
+    uint64_t newsize, oldsize ;
+    (*ok) = GB_uint64_multiply (&newsize, nitems_new, size_of_item)
+         && GB_uint64_multiply (&oldsize, nitems_old, size_of_item) ;
 
     if (!(*ok) || (((uint64_t) nitems_new) > GB_NMAX)
                || (((uint64_t) size_of_item) > GB_NMAX))
@@ -110,8 +111,9 @@ void *GB_realloc_memory     // pointer to reallocated block of memory, or
     //--------------------------------------------------------------------------
 
     void *pnew = NULL ;
-    size_t newsize_allocated = GB_IMAX (newsize, 8) ;
-    if (!GB_Global_have_realloc_function ( ))
+    uint64_t pnew_mem = GB_mem (memlane, 0) ;
+
+    if (!GB_Global_realloc_function_have (memlane))
     {
 
         //----------------------------------------------------------------------
@@ -119,7 +121,7 @@ void *GB_realloc_memory     // pointer to reallocated block of memory, or
         //----------------------------------------------------------------------
 
         // allocate the new space
-        pnew = GB_MALLOC_MEMORY (nitems_new, size_of_item, &newsize_allocated) ;
+        pnew = GB_malloc_memory (nitems_new, size_of_item, &pnew_mem) ;
         // copy over the data from the old block to the new block
         if (pnew != NULL)
         { 
@@ -145,8 +147,9 @@ void *GB_realloc_memory     // pointer to reallocated block of memory, or
         if (!pretend_to_fail)
         { 
             GBMDUMP ("realloc %p oldsize %8ld newsize %8ld: ",
-                p, oldsize_allocated, newsize_allocated) ;
-            pnew = GB_Global_realloc_function (p, newsize_allocated) ;
+                p, oldsize, newsize) ;
+            pnew = GB_Global_realloc_function (p, newsize, memlane) ;
+            pnew_mem = GB_mem (memlane, newsize) ;
             #ifdef GB_MEMDUMP
             GB_Global_memtable_dump ( ) ;
             #endif
@@ -164,8 +167,7 @@ void *GB_realloc_memory     // pointer to reallocated block of memory, or
         { 
             // the attempt to reduce the size of the block failed, but the old
             // block is unchanged.  So pretend to succeed, but do not change
-            // size_allocated since it must reflect the actual size of the
-            // block.
+            // p_mem since it must reflect the actual size of the block.
             (*ok) = true ;
         }
         else
@@ -176,10 +178,11 @@ void *GB_realloc_memory     // pointer to reallocated block of memory, or
     }
     else
     { 
-        // realloc succeeded
+        // realloc succeeded; change p_mem to reflect the reallocated memsize;
+        // the memlane is unchanged.
         p = pnew ;
         (*ok) = true ;
-        (*size_allocated) = newsize_allocated ;
+        (*p_mem) = pnew_mem ;
     }
 
     return (p) ;

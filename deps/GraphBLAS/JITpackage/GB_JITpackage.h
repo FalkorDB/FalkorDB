@@ -12,8 +12,8 @@
 
 typedef struct
 {
-    size_t uncompressed_size ;  // size of the uncompressed file
-    size_t compressed_size ;    // size of the compressed blob
+    size_t uncompressed_memsize ;  // size of the uncompressed file
+    size_t compressed_memsize ;    // size of the compressed blob
     uint8_t *blob ;             // the compressed blob
     char *filename ;            // filename, including the suffix
 }

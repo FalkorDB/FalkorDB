@@ -17,7 +17,7 @@
 
 #define GB_FREE_WORKSPACE                   \
 {                                           \
-    GB_FREE_MEMORY (&Zp, Zp_size) ;           \
+    GB_FREE_MEMORY (&Zp, Zp_mem) ;          \
     GB_WERK_POP (Work, uint64_t) ;          \
     GB_WERK_POP (A_ek_slicing, int64_t) ;   \
 }
@@ -50,7 +50,7 @@ GrB_Info GB_select_sparse
     // sparse/hypersparse, with one exception: for the DIAG operator, A may be
     // sparse, hypersparse, or full.
 
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (C != NULL) ;
     ASSERT_MATRIX_OK (A, "A input for GB_select_sparse", GB0) ;
     ASSERT_INDEXUNARYOP_OK (op, "op for GB_select_sparse", GB0) ;
     ASSERT (!GB_IS_BITMAP (A)) ;
@@ -58,12 +58,15 @@ GrB_Info GB_select_sparse
     ASSERT (GB_IMPLIES (op->opcode != GB_DIAG_idxunop_code,
         GB_IS_SPARSE (A) || GB_IS_HYPERSPARSE (A))) ;
 
+    int memlane = GB_memlane (C->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     //--------------------------------------------------------------------------
     // declare workspace
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    void *Zp = NULL ; size_t Zp_size = 0 ;
+    void *Zp = NULL ; uint64_t Zp_mem = mem ;
     GB_WERK_DECLARE (Work, uint64_t) ;
     GB_WERK_DECLARE (A_ek_slicing, int64_t) ;
 
@@ -99,7 +102,8 @@ GrB_Info GB_select_sparse
 
     GB_OK (GB_new (&C, // sparse or hyper (from A), existing header
         A->type, A->vlen, A->vdim, GB_ph_calloc, A->is_csc,
-        csparsity, A->hyper_switch, A->plen, Cp_is_32, Cj_is_32, Ci_is_32)) ;
+        csparsity, A->hyper_switch, A->plen, Cp_is_32, Cj_is_32, Ci_is_32,
+        memlane)) ;
 
     ASSERT (csparsity == GB_sparsity (C)) ;
     ASSERT (Cp_is_32 == C->p_is_32) ;
@@ -171,7 +175,7 @@ GrB_Info GB_select_sparse
     if (op_is_positional)
     {
         // allocate Zp
-        Zp = GB_MALLOC_MEMORY (C->plen + 1, cpsize, &Zp_size) ;
+        Zp = GB_MALLOC_MEMORY (C->plen + 1, cpsize, &Zp_mem) ;
         if (Zp == NULL)
         { 
             // out of memory

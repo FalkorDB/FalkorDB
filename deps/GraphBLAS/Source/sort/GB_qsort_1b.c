@@ -89,7 +89,7 @@ void GB_qsort_1b_64_generic // sort array A of size 2-by-n, using A0: 64
 }
 
 //------------------------------------------------------------------------------
-// GB_qsort_1b_32_size1:  quicksort, A_1 of type that has sizeof 1, A0: 32bit
+// GB_qsort_1b_32_1:  quicksort, A_1 of type that has sizeof 1, A0: 32bit
 //------------------------------------------------------------------------------
 
 #undef  GB_A0_t
@@ -99,8 +99,8 @@ void GB_qsort_1b_64_generic // sort array A of size 2-by-n, using A0: 64
 
 #define GB_A0_t uint32_t
 #define GB_A1_t uint8_t
-#define GB_partition GB_partition_1b_32_size1
-#define GB_quicksort GB_quicksort_1b_32_size1
+#define GB_partition GB_partition_1b_32_1
+#define GB_quicksort GB_quicksort_1b_32_1
 
 // argument list for calling a function
 #undef  GB_arg
@@ -128,7 +128,7 @@ void GB_qsort_1b_64_generic // sort array A of size 2-by-n, using A0: 64
 
 #include "sort/template/GB_qsort_template.c"
 
-void GB_qsort_1b_32_size1  // GB_qsort_1b, A_1 with sizeof = 1, A0: 32 bit
+void GB_qsort_1b_32_1  // GB_qsort_1b, A_1 with sizeof = 1, A0: 32 bit
 (
     GB_A0_t *restrict A_0,      // size n array
     GB_A1_t *restrict A_1,      // size n array
@@ -140,7 +140,7 @@ void GB_qsort_1b_32_size1  // GB_qsort_1b, A_1 with sizeof = 1, A0: 32 bit
 }
 
 //------------------------------------------------------------------------------
-// GB_qsort_1b_64_size1:  quicksort, A_1 of type that has sizeof 1, A0: 64bit
+// GB_qsort_1b_64_1:  quicksort, A_1 of type that has sizeof 1, A0: 64bit
 //------------------------------------------------------------------------------
 
 #undef  GB_A0_t
@@ -148,12 +148,12 @@ void GB_qsort_1b_32_size1  // GB_qsort_1b, A_1 with sizeof = 1, A0: 32 bit
 #undef  GB_quicksort
 
 #define GB_A0_t uint64_t
-#define GB_partition GB_partition_1b_64_size1
-#define GB_quicksort GB_quicksort_1b_64_size1
+#define GB_partition GB_partition_1b_64_1
+#define GB_quicksort GB_quicksort_1b_64_1
 
 #include "sort/template/GB_qsort_template.c"
 
-void GB_qsort_1b_64_size1  // GB_qsort_1b with A_1 with sizeof = 1, A0: 64
+void GB_qsort_1b_64_1  // GB_qsort_1b with A_1 with sizeof = 1, A0: 64
 (
     GB_A0_t *restrict A_0,      // size n array
     GB_A1_t *restrict A_1,      // size n array
@@ -165,7 +165,7 @@ void GB_qsort_1b_64_size1  // GB_qsort_1b with A_1 with sizeof = 1, A0: 64
 }
 
 //------------------------------------------------------------------------------
-// GB_qsort_1b_32_size2:  quicksort: A_1 of type with sizeof 2, A0: 32 bit
+// GB_qsort_1b_32_2:  quicksort: A_1 of type with sizeof 2, A0: 32 bit
 //------------------------------------------------------------------------------
 
 #undef  GB_A0_t
@@ -175,12 +175,12 @@ void GB_qsort_1b_64_size1  // GB_qsort_1b with A_1 with sizeof = 1, A0: 64
 
 #define GB_A0_t uint32_t
 #define GB_A1_t uint16_t
-#define GB_partition GB_partition_1b_32_size2
-#define GB_quicksort GB_quicksort_1b_32_size2
+#define GB_partition GB_partition_1b_32_2
+#define GB_quicksort GB_quicksort_1b_32_2
 
 #include "sort/template/GB_qsort_template.c"
 
-void GB_qsort_1b_32_size2  // GB_qsort_1b, A_1 with sizeof = 2, A0: 32 bit
+void GB_qsort_1b_32_2  // GB_qsort_1b, A_1 with sizeof = 2, A0: 32 bit
 (
     GB_A0_t *restrict A_0,      // size n array
     GB_A1_t *restrict A_1,      // size n array
@@ -192,7 +192,7 @@ void GB_qsort_1b_32_size2  // GB_qsort_1b, A_1 with sizeof = 2, A0: 32 bit
 }
 
 //------------------------------------------------------------------------------
-// GB_qsort_1b_64_size2:  quicksort: A_1 of type with sizeof 2, A0: 64 bit
+// GB_qsort_1b_64_2:  quicksort: A_1 of type with sizeof 2, A0: 64 bit
 //------------------------------------------------------------------------------
 
 #undef  GB_A0_t
@@ -200,12 +200,12 @@ void GB_qsort_1b_32_size2  // GB_qsort_1b, A_1 with sizeof = 2, A0: 32 bit
 #undef  GB_quicksort
 
 #define GB_A0_t uint64_t
-#define GB_partition GB_partition_1b_64_size2
-#define GB_quicksort GB_quicksort_1b_64_size2
+#define GB_partition GB_partition_1b_64_2
+#define GB_quicksort GB_quicksort_1b_64_2
 
 #include "sort/template/GB_qsort_template.c"
 
-void GB_qsort_1b_64_size2  // GB_qsort_1b, A_1 with sizeof = 2, A0: 64 bit
+void GB_qsort_1b_64_2  // GB_qsort_1b, A_1 with sizeof = 2, A0: 64 bit
 (
     GB_A0_t *restrict A_0,      // size n array
     GB_A1_t *restrict A_1,      // size n array
@@ -217,7 +217,7 @@ void GB_qsort_1b_64_size2  // GB_qsort_1b, A_1 with sizeof = 2, A0: 64 bit
 }
 
 //------------------------------------------------------------------------------
-// GB_qsort_1b_32_size4:  quicksort, A_1 of type that has sizeof 4, A0: 32 bit
+// GB_qsort_1b_32_4:  quicksort, A_1 of type that has sizeof 4, A0: 32 bit
 //------------------------------------------------------------------------------
 
 #undef  GB_A0_t
@@ -227,12 +227,12 @@ void GB_qsort_1b_64_size2  // GB_qsort_1b, A_1 with sizeof = 2, A0: 64 bit
 
 #define GB_A0_t uint32_t
 #define GB_A1_t uint32_t
-#define GB_partition GB_partition_1b_32_size4
-#define GB_quicksort GB_quicksort_1b_32_size4
+#define GB_partition GB_partition_1b_32_4
+#define GB_quicksort GB_quicksort_1b_32_4
 
 #include "sort/template/GB_qsort_template.c"
 
-void GB_qsort_1b_32_size4  // GB_qsort_1b A_1 with sizeof = 4, A0: 32 bit
+void GB_qsort_1b_32_4  // GB_qsort_1b A_1 with sizeof = 4, A0: 32 bit
 (
     GB_A0_t *restrict A_0,      // size n array
     GB_A1_t *restrict A_1,      // size n array
@@ -244,7 +244,7 @@ void GB_qsort_1b_32_size4  // GB_qsort_1b A_1 with sizeof = 4, A0: 32 bit
 }
 
 //------------------------------------------------------------------------------
-// GB_qsort_1b_64_size4:  quicksort, A_1 of type that has sizeof 4, A0: 64 bit
+// GB_qsort_1b_64_4:  quicksort, A_1 of type that has sizeof 4, A0: 64 bit
 //------------------------------------------------------------------------------
 
 #undef  GB_A0_t
@@ -252,12 +252,12 @@ void GB_qsort_1b_32_size4  // GB_qsort_1b A_1 with sizeof = 4, A0: 32 bit
 #undef  GB_quicksort
 
 #define GB_A0_t uint64_t
-#define GB_partition GB_partition_1b_64_size4
-#define GB_quicksort GB_quicksort_1b_64_size4
+#define GB_partition GB_partition_1b_64_4
+#define GB_quicksort GB_quicksort_1b_64_4
 
 #include "sort/template/GB_qsort_template.c"
 
-void GB_qsort_1b_64_size4  // GB_qsort_1b A_1 with sizeof = 4, A0: 64 bit
+void GB_qsort_1b_64_4  // GB_qsort_1b A_1 with sizeof = 4, A0: 64 bit
 (
     GB_A0_t *restrict A_0,      // size n array
     GB_A1_t *restrict A_1,      // size n array
@@ -269,7 +269,7 @@ void GB_qsort_1b_64_size4  // GB_qsort_1b A_1 with sizeof = 4, A0: 64 bit
 }
 
 //------------------------------------------------------------------------------
-// GB_qsort_1b_32_size8:  quicksort, A_1 of type that has sizeof 8, A0: 32 bit
+// GB_qsort_1b_32_8:  quicksort, A_1 of type that has sizeof 8, A0: 32 bit
 //------------------------------------------------------------------------------
 
 #undef  GB_A0_t
@@ -279,12 +279,12 @@ void GB_qsort_1b_64_size4  // GB_qsort_1b A_1 with sizeof = 4, A0: 64 bit
 
 #define GB_A0_t uint32_t
 #define GB_A1_t uint64_t
-#define GB_partition GB_partition_1b_32_size8
-#define GB_quicksort GB_quicksort_1b_32_size8
+#define GB_partition GB_partition_1b_32_8
+#define GB_quicksort GB_quicksort_1b_32_8
 
 #include "sort/template/GB_qsort_template.c"
 
-void GB_qsort_1b_32_size8  // GB_qsort_1b, A_1 with sizeof = 8, A0: 32 bit
+void GB_qsort_1b_32_8  // GB_qsort_1b, A_1 with sizeof = 8, A0: 32 bit
 (
     GB_A0_t *restrict A_0,      // size n array
     GB_A1_t *restrict A_1,      // size n array
@@ -296,7 +296,7 @@ void GB_qsort_1b_32_size8  // GB_qsort_1b, A_1 with sizeof = 8, A0: 32 bit
 }
 
 //------------------------------------------------------------------------------
-// GB_qsort_1b_64_size8:  quicksort, A_1 of type that has sizeof 8, A0: 64 bit
+// GB_qsort_1b_64_8:  quicksort, A_1 of type that has sizeof 8, A0: 64 bit
 //------------------------------------------------------------------------------
 
 #undef  GB_A0_t
@@ -304,12 +304,12 @@ void GB_qsort_1b_32_size8  // GB_qsort_1b, A_1 with sizeof = 8, A0: 32 bit
 #undef  GB_quicksort
 
 #define GB_A0_t uint64_t
-#define GB_partition GB_partition_1b_64_size8
-#define GB_quicksort GB_quicksort_1b_64_size8
+#define GB_partition GB_partition_1b_64_8
+#define GB_quicksort GB_quicksort_1b_64_8
 
 #include "sort/template/GB_qsort_template.c"
 
-void GB_qsort_1b_64_size8  // GB_qsort_1b, A_1 with sizeof = 8, A0: 64 bit
+void GB_qsort_1b_64_8  // GB_qsort_1b, A_1 with sizeof = 8, A0: 64 bit
 (
     GB_A0_t *restrict A_0,      // size n array
     GB_A1_t *restrict A_1,      // size n array
@@ -321,7 +321,7 @@ void GB_qsort_1b_64_size8  // GB_qsort_1b, A_1 with sizeof = 8, A0: 64 bit
 }
 
 //------------------------------------------------------------------------------
-// GB_qsort_1b_32_size16:  quicksort, A_1 of type that has sizeof 16, A0: 32 bit
+// GB_qsort_1b_32_16:  quicksort, A_1 of type that has sizeof 16, A0: 32 bit
 //------------------------------------------------------------------------------
 
 #undef  GB_A0_t
@@ -331,12 +331,12 @@ void GB_qsort_1b_64_size8  // GB_qsort_1b, A_1 with sizeof = 8, A0: 64 bit
 
 #define GB_A0_t uint32_t
 #define GB_A1_t GB_blob16
-#define GB_partition GB_partition_1b_32_size16
-#define GB_quicksort GB_quicksort_1b_32_size16
+#define GB_partition GB_partition_1b_32_16
+#define GB_quicksort GB_quicksort_1b_32_16
 
 #include "sort/template/GB_qsort_template.c"
 
-void GB_qsort_1b_32_size16 // GB_qsort_1b, A_1 with sizeof = 16, A0: 32 bit
+void GB_qsort_1b_32_16 // GB_qsort_1b, A_1 with sizeof = 16, A0: 32 bit
 (
     GB_A0_t *restrict A_0,      // size n array
     GB_A1_t *restrict A_1,      // size n array
@@ -348,7 +348,7 @@ void GB_qsort_1b_32_size16 // GB_qsort_1b, A_1 with sizeof = 16, A0: 32 bit
 }
 
 //------------------------------------------------------------------------------
-// GB_qsort_1b_64_size16:  quicksort, A_1 of type that has sizeof 16, A0: 64 bit
+// GB_qsort_1b_64_16:  quicksort, A_1 of type that has sizeof 16, A0: 64 bit
 //------------------------------------------------------------------------------
 
 #undef  GB_A0_t
@@ -356,12 +356,12 @@ void GB_qsort_1b_32_size16 // GB_qsort_1b, A_1 with sizeof = 16, A0: 32 bit
 #undef  GB_quicksort
 
 #define GB_A0_t uint64_t
-#define GB_partition GB_partition_1b_64_size16
-#define GB_quicksort GB_quicksort_1b_64_size16
+#define GB_partition GB_partition_1b_64_16
+#define GB_quicksort GB_quicksort_1b_64_16
 
 #include "sort/template/GB_qsort_template.c"
 
-void GB_qsort_1b_64_size16 // GB_qsort_1b, A_1 with sizeof = 16, A0: 64 bit
+void GB_qsort_1b_64_16 // GB_qsort_1b, A_1 with sizeof = 16, A0: 64 bit
 (
     GB_A0_t *restrict A_0,      // size n array
     GB_A1_t *restrict A_1,      // size n array

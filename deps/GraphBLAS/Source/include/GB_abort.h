@@ -42,6 +42,14 @@ typedef void (*GB_abort_f) (const char *file, int line) ;
     #define ASSERT(X)
 #endif
 
+#ifdef GB_MEMTABLE_DEBUG
+    // assert X is true
+    #define MEMTABLE_ASSERT(X) GB_assert (X)
+#else
+    // debugging disabled
+    #define MEMTABLE_ASSERT(X)
+#endif
+
 #define GB_IMPLIES(p,q) (!(p) || (q))
 
 #endif

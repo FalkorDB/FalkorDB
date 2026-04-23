@@ -35,7 +35,7 @@ GrB_Info GB_mxm                     // C<M> = A*B
 
 GrB_Info GB_AxB_dot                 // dot product (multiple methods)
 (
-    GrB_Matrix C,                   // output matrix, static header
+    GrB_Matrix C,                   // output matrix, existing header
     GrB_Matrix C_in_place,          // input/output matrix, if done in-place
     GrB_Matrix M,                   // optional mask matrix
     const bool Mask_comp,           // if true, use !M
@@ -52,11 +52,11 @@ GrB_Info GB_AxB_dot                 // dot product (multiple methods)
 
 GrB_Info GB_AxB_meta                // C<M>=A*B meta algorithm
 (
-    GrB_Matrix C,                   // output, static header (if not in-place)
+    GrB_Matrix C,                   // output, existing header (if not in-place)
     GrB_Matrix C_in,                // input/output matrix, if done in-place
     bool C_replace,                 // C matrix descriptor
     const bool C_is_csc,            // desired CSR/CSC format of C
-    GrB_Matrix MT,                  // return MT = M' (static header)
+    GrB_Matrix MT,                  // return MT = M' (existing header)
     bool *M_transposed,             // true if MT = M' was computed
     const GrB_Matrix M_in,          // mask for C<M> (not complemented)
     const bool Mask_comp,           // if true, use !M
@@ -77,7 +77,7 @@ GrB_Info GB_AxB_meta                // C<M>=A*B meta algorithm
 
 GrB_Info GB_rowscale                // C = D*B, row scale with diagonal D
 (
-    GrB_Matrix C,                   // output matrix, static header
+    GrB_Matrix C,                   // output matrix, existing header
     const GrB_Matrix D,             // diagonal input matrix
     const GrB_Matrix B,             // input matrix
     const GrB_Semiring semiring,    // semiring that defines C=D*A
@@ -88,7 +88,7 @@ GrB_Info GB_rowscale                // C = D*B, row scale with diagonal D
 
 GrB_Info GB_colscale                // C = A*D, column scale with diagonal D
 (
-    GrB_Matrix C,                   // output matrix, static header
+    GrB_Matrix C,                   // output matrix, existing header
     const GrB_Matrix A,             // input matrix
     const GrB_Matrix D,             // diagonal input matrix
     const GrB_Semiring semiring,    // semiring that defines C=A*D;
@@ -116,7 +116,7 @@ bool GB_AxB_semiring_builtin        // true if semiring is builtin
 
 GrB_Info GB_AxB_dot2                // C=A'*B or C<!M>=A'*B, dot product method
 (
-    GrB_Matrix C,                   // output matrix, static header
+    GrB_Matrix C,                   // output matrix, existing header
     const bool C_iso,               // true if C is iso
     const GB_void *cscalar,         // iso value of C
     const GrB_Matrix M_in,          // mask matrix for C<!M>=A'*B, may be NULL
@@ -137,7 +137,7 @@ bool GB_is_diagonal             // true if A is diagonal
 
 GrB_Info GB_AxB_dot3                // C<M> = A'*B using dot product method
 (
-    GrB_Matrix C,                   // output matrix, static header
+    GrB_Matrix C,                   // output matrix, existing header
     const bool C_iso,               // true if C is iso
     const GB_void *cscalar,         // iso value of C
     const GrB_Matrix M,             // mask matrix
@@ -153,7 +153,7 @@ GrB_Info GB_AxB_dot3_slice
 (
     // output:
     GB_task_struct **p_TaskList,    // array of structs
-    size_t *p_TaskList_size,        // size of TaskList
+    uint64_t *p_TaskList_mem,       // memsize and memlane of TaskList
     int *p_ntasks,                  // # of tasks constructed
     int *p_nthreads,                // # of threads to use
     // input:
@@ -167,7 +167,7 @@ GrB_Info GB_AxB_dot3_one_slice
 (
     // output:
     GB_task_struct **p_TaskList,    // array of structs, of size max_ntasks
-    size_t *p_TaskList_size,        // size of TaskList
+    uint64_t *p_TaskList_mem,       // memsize and memlane of TaskList
     int *p_ntasks,                  // # of tasks constructed
     int *p_nthreads,                // # of threads to use
     // input:

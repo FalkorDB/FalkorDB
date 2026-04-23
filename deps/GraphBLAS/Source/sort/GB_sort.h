@@ -35,70 +35,70 @@ void GB_qsort_1b_64_generic // sort array A of size 2-by-n, using A0: 64 bit
     const int64_t n
 ) ;
 
-void GB_qsort_1b_32_size1  // GB_qsort_1b, A1 with sizeof = 1, A0: 32 bit
+void GB_qsort_1b_32_1  // GB_qsort_1b, A1 with sizeof = 1, A0: 32 bit
 (
     uint32_t *restrict A_0,     // size n array
     uint8_t *restrict A_1,      // size n array
     const int64_t n
 ) ;
 
-void GB_qsort_1b_64_size1  // GB_qsort_1b, A1 with sizeof = 1, A0: 64 bit
+void GB_qsort_1b_64_1  // GB_qsort_1b, A1 with sizeof = 1, A0: 64 bit
 (
     uint64_t *restrict A_0,     // size n array
     uint8_t *restrict A_1,      // size n array
     const int64_t n
 ) ;
 
-void GB_qsort_1b_32_size2  // GB_qsort_1b, A1 with sizeof = 2, A0: 32 bit
+void GB_qsort_1b_32_2  // GB_qsort_1b, A1 with sizeof = 2, A0: 32 bit
 (
     uint32_t *restrict A_0,     // size n array
     uint16_t *restrict A_1,     // size n array
     const int64_t n
 ) ;
 
-void GB_qsort_1b_64_size2  // GB_qsort_1b, A1 with sizeof = 2, A0: 64 bit
+void GB_qsort_1b_64_2  // GB_qsort_1b, A1 with sizeof = 2, A0: 64 bit
 (
     uint64_t *restrict A_0,     // size n array
     uint16_t *restrict A_1,     // size n array
     const int64_t n
 ) ;
 
-void GB_qsort_1b_32_size4  // GB_qsort_1b, A1 with sizeof = 4, A0: 32 bit
+void GB_qsort_1b_32_4  // GB_qsort_1b, A1 with sizeof = 4, A0: 32 bit
 (
     uint32_t *restrict A_0,     // size n array
     uint32_t *restrict A_1,     // size n array
     const int64_t n
 ) ;
 
-void GB_qsort_1b_64_size4  // GB_qsort_1b, A1 with sizeof = 4, A0: 64 bit
+void GB_qsort_1b_64_4  // GB_qsort_1b, A1 with sizeof = 4, A0: 64 bit
 (
     uint64_t *restrict A_0,     // size n array
     uint32_t *restrict A_1,     // size n array
     const int64_t n
 ) ;
 
-void GB_qsort_1b_32_size8  // GB_qsort_1b, A_1 with sizeof = 8, A0: 32 bit
+void GB_qsort_1b_32_8  // GB_qsort_1b, A_1 with sizeof = 8, A0: 32 bit
 (
     uint32_t *restrict A_0,     // size n array
     uint64_t *restrict A_1,     // size n array
     const int64_t n
 ) ;
 
-void GB_qsort_1b_64_size8  // GB_qsort_1b, A_1 with sizeof = 8, A0: 64 bit
+void GB_qsort_1b_64_8  // GB_qsort_1b, A_1 with sizeof = 8, A0: 64 bit
 (
     uint64_t *restrict A_0,     // size n array
     uint64_t *restrict A_1,     // size n array
     const int64_t n
 ) ;
 
-void GB_qsort_1b_32_size16 // GB_qsort_1b, A_1 with sizeof = 16, A0: 64 bit
+void GB_qsort_1b_32_16 // GB_qsort_1b, A_1 with sizeof = 16, A0: 64 bit
 (
     uint32_t *restrict A_0,     // size n array
     GB_blob16 *restrict A_1,    // size n array
     const int64_t n
 ) ;
 
-void GB_qsort_1b_64_size16 // GB_qsort_1b, A_1 with sizeof = 16, A0: 64 bit
+void GB_qsort_1b_64_16 // GB_qsort_1b, A_1 with sizeof = 16, A0: 64 bit
 (
     uint64_t *restrict A_0,     // size n array
     GB_blob16 *restrict A_1,    // size n array

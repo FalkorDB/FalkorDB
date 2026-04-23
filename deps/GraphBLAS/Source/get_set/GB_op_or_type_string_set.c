@@ -20,11 +20,11 @@ GrB_Info GB_op_or_type_string_set
     int field,
     // output:
     char **user_name,
-    size_t *user_name_size,
+    uint64_t *user_name_mem,
     char *name,
     int32_t *name_len,
     char **defn,
-    size_t *defn_size,
+    uint64_t *defn_mem,
     uint64_t *hash
 ) 
 {
@@ -51,7 +51,7 @@ GrB_Info GB_op_or_type_string_set
 
         case GrB_NAME : 
 
-            return (GB_user_name_set (user_name, user_name_size, value, true)) ;
+            return (GB_user_name_set (user_name, user_name_mem, value, true)) ;
 
         case GxB_JIT_C_NAME : 
 
@@ -83,7 +83,7 @@ GrB_Info GB_op_or_type_string_set
             }
 
             // allocate space for the definition
-            (*defn) = GB_MALLOC_MEMORY (len+1, sizeof (char), defn_size) ;
+            (*defn) = GB_MALLOC_MEMORY (len+1, sizeof (char), defn_mem) ;
             if ((*defn) == NULL)
             { 
                 // out of memory
