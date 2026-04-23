@@ -374,3 +374,31 @@ class testParams(FlowTestsBase):
         plan = str(self.graph.explain(query, params=params))
         self.env.assertIn('NodeByIdSeek', plan)
 
+    def test_map_param(self):
+        # test passing a map as a parameter value via the Python client dict interface
+        # this exercises the RESP protocol path for map parameters
+
+        # simple map parameter returned as-is
+        m = {'key': 'val'}
+        result = self.graph.query("RETURN $m", {'m': m})
+        self.env.assertEqual(result.result_set, [[m]])
+
+        # nested map
+        nested = {'outer': {'inner': 42}}
+        result = self.graph.query("RETURN $m", {'m': nested})
+        self.env.assertEqual(result.result_set, [[nested]])
+
+        # map used in SET += (the primary use-case from the issue)
+        self.graph.query("CREATE (n:MP {id: 1})")
+        props = {'title': 'Hello', 'count': 99}
+        result = self.graph.query(
+            "MATCH (n:MP {id: 1}) SET n += $props RETURN n.title, n.count",
+            {'props': props})
+        self.env.assertEqual(result.result_set, [['Hello', 99]])
+
+        # map with multiple parameters (scalar + map)
+        result = self.graph.query(
+            "RETURN $id, $props",
+            {'id': 'abc', 'props': {'x': 1, 'y': 2}})
+        self.env.assertEqual(result.result_set, [['abc', {'x': 1, 'y': 2}]])
+
