@@ -16,7 +16,7 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
 
     def tearDown(self):
         self.graph.delete()
-    
+
     def populate_graph(self):
         nodes = {}
 
@@ -210,7 +210,7 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         # find all person nodes with age in the range 33-37
         # current age (x) should be resolved at runtime
         # index query should be constructed for each age value
-        q = """UNWIND range(33, 37) AS x
+        q = """unwind range(33, 37) as x
         MATCH (n)-[f:friend {created_at: x}]->()
         RETURN n.name
         ORDER BY n.name"""
@@ -222,7 +222,7 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
 
         # similar to the query above, only this time the filter is specified
         # by an OR condition
-        q = """WITH 33 AS min, 37 AS max 
+        q = """WITH 33 AS min, 37 AS max
         MATCH (n)-[f:friend]->()
         WHERE f.created_at = min OR f.created_at = max
         RETURN n.name
@@ -551,4 +551,42 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
 
         # make sure the same edge is returned
         self.env.assertEquals(expected, actual)
+
+    def test15_chained_optional_match_indexed_edge(self):
+        # test chained OPTIONAL MATCH feeds a NULL node into an Edge By Index Scan.
+        # The first OPTIONAL MATCH produces a NULL node
+        # the second OPTIONAL MATCH performs an edge-index scan whose source node
+        # is NULL.
+        self.graph.delete()
+
+        # seed graph with a single node and no RELATES_TO edges
+        self.graph.query("CREATE (:Hypothesis {id:'h1'})")
+
+        # index the edge property used by the scan
+        create_edge_range_index(self.graph, "RELATES_TO", "name", sync=True)
+
+        q = """MATCH (h:Hypothesis {id:'h1'})
+               OPTIONAL MATCH (h)-[:RELATES_TO {name:'HasABLEDecomposition'}]->(able:ABLEDecomposition)
+               OPTIONAL MATCH (able)-[:RELATES_TO {name:'UsesDataSource'}]->(ds:DataSource)
+               RETURN h.id, able, ds"""
+
+        # ensure the second OPTIONAL MATCH actually plans an edge-index scan
+        plan = str(self.graph.explain(q))
+        self.env.assertIn("Edge By Index Scan", plan)
+
+        # both optional sides resolve to NULL.
+        res = self.graph.query(q)
+        self.env.assertEquals(res.result_set, [["h1", None, None]])
+
+        # also exercise the destination-aware code path: the second OPTIONAL
+        # MATCH treats `able` (NULL from the first OPTIONAL MATCH) as the
+        # destination of the indexed edge scan.
+        q_dest = """MATCH (h:Hypothesis {id:'h1'})
+                    OPTIONAL MATCH (h)-[:RELATES_TO {name:'HasABLEDecomposition'}]->(able:ABLEDecomposition)
+                    OPTIONAL MATCH (src:Source)-[:RELATES_TO {name:'PointsTo'}]->(able)
+                    RETURN h.id, able, src"""
+        plan_dest = str(self.graph.explain(q_dest))
+        self.env.assertIn("Edge By Index Scan", plan_dest)
+        res = self.graph.query(q_dest)
+        self.env.assertEquals(res.result_set, [["h1", None, None]])
 
