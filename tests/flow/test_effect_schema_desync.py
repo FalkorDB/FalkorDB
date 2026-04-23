@@ -191,55 +191,75 @@ class testEffectSetLabelsOOBLabel():
 # Real master/replica integration test - reproduces the customer-reported
 # desync chain organically (no synthetic GRAPH.EFFECT payloads).
 #
-# Customer scenario (v4.18.1, prior to PR #1815 "rollback schema creation
-# for failing queries"):
+# Two desync mechanisms were identified in v4.18.1:
 #
-#   1. A write query introduces a NEW schema as part of its plan but later
-#      raises an error (e.g. division by zero in a projection that runs
-#      AFTER the CREATE clause).
+# ── Mechanism 1: RedisModule_Yield interleaving (PRIMARY crash path) ────────
 #
-#   2. Pre-PR-#1815 behaviour: the rollback path did NOT undo the schema
-#      addition, and ResultSet_Clear suppressed any replication. The new
-#      schema therefore became an "orphan" present on the master only.
+#   In v4.18.1, _QueryCtx_ThreadSafeContextLock calls RedisModule_Yield
+#   (YIELD_FLAG_CLIENTS) whenever the query runs without a blocked client
+#   (i.e. every replicated GRAPH.QUERY on the replica's main thread).
+#   The Yield fires BETWEEN the READ-lock release and the WRITE-lock
+#   acquisition, opening a window where the Redis event loop can process
+#   the *next* command from the replication socket.
 #
-#   3. A subsequent successful write query that references a different,
-#      brand-new relation type was replicated as GRAPH.EFFECT (because
-#      EFFECTS_THRESHOLD is 0 on this deployment, so every write goes
-#      through the effects path).
+#   If that next command is a GRAPH.EFFECT that references a schema just
+#   about to be committed by the still-in-flight GRAPH.QUERY, the replica
+#   crashes:
 #
-#      The EFFECT stream contained:
-#        EFFECT_ADD_SCHEMA(name=<new relation>) - replica appends, gets the
-#        next sequential id locally.
-#        EFFECT_CREATE_EDGE(relation_id=<master's id>, ...) - master's id
-#        is one ahead of the replica's because of the orphan schema.
+#     Replica main thread:
+#       GRAPH.QUERY "CREATE ()-[:R1]->()"   ← fast (<threshold) → GRAPH.QUERY
+#         QueryCtx_AcquireWriteLock():
+#           Graph_ReleaseLock(READ)          ← R1 not yet committed
+#           _QueryCtx_ThreadSafeContextLock:
+#             RedisModule_Yield()            ← event loop runs here
+#               → processes replication socket
+#               → GRAPH.EFFECT [EFFECT_CREATE_EDGE(r_id=0)]
+#                   GraphHub_CreateEdges(r=0)
+#                   GraphContext_GetSchemaByID(gc,0,SCHEMA_EDGE) → NULL
+#                   Schema_HasIndices(NULL) → SIGSEGV   ← crash
+#           Graph_AcquireWriteLock()
+#           _CommitEdgesBlueprint()          ← creates R1 (too late)
 #
-#   4. On the replica, GraphHub_CreateEdges resolved the (out-of-range)
-#      relation id via GraphContext_GetSchemaByID, which OOB-read the
-#      schemas array. Schema_HasIndices(NULL) then dereferenced NULL ->
-#      SIGSEGV at (nil) (the symbolicator pointed at QGEdge_RelationID,
-#      the nearest exported symbol in the stripped release build).
+#   This race is closed by PR #1877 (already in master), which restricts
+#   the Yield to AOF-loading paths only. Because the timing is
+#   sub-millisecond, this race cannot be triggered deterministically from
+#   a Python test; it is documented here for completeness.
 #
-# The fix has two layers:
+# ── Mechanism 2: Failed-query orphan schema (before PR #1815) ───────────────
 #
-#   * PR #1815 makes the failing query roll back the schema, so master and
-#     replica stay aligned and no malformed EFFECT is ever produced.
+#   A write query introduces a NEW schema as part of its plan but later
+#   raises an error (e.g. division by zero in a projection that runs
+#   AFTER the CREATE clause).
 #
-#   * PR #1907 (this branch) hardens GraphContext_GetSchemaByID with a
-#     bounds check and makes GraphHub_CreateEdges / ApplyLabels detect a
-#     desync and exit(1) cleanly. exit(1) triggers a full RDB resync on
-#     restart - matching the existing ValidateVersion + exit(1) pattern in
-#     Effects_Apply (effects_apply.c:654-656). This prevents future regressions
-#     where some other code path leaves master and replica out of sync.
+#   Pre-PR-#1815: the rollback path did NOT undo the schema addition, and
+#   ResultSet_Clear suppressed any replication. The new schema became an
+#   "orphan" present on the master only.
 #
-# This integration test runs an actual master + replica pair, drives the
-# failing-query scenario through the public Cypher API, and asserts that:
+#   A subsequent successful write query referencing a different brand-new
+#   relation type was replicated as GRAPH.EFFECT (EFFECTS_THRESHOLD=0):
 #
-#   - the replica is still alive after the EFFECT replicates
-#   - the replica's view of the graph matches the master byte-for-byte
+#     EFFECT_ADD_SCHEMA(<new relation>) → replica appends, gets the next
+#       sequential id locally (one behind master's because of the orphan).
+#     EFFECT_CREATE_EDGE(relation_id=<master's id>) → master's id is one
+#       ahead of the replica's; GraphContext_GetSchemaByID OOB-reads the
+#       schemas array → Schema_HasIndices(garbage) → SIGSEGV.
 #
-# Reverting either PR #1815 or PR #1907 will cause this test to fail
-# (replica process dies under SIGSEGV before the second assertion can
-# complete).
+#   PR #1815 (f2a8531c3, in v4.18.0+) makes failing queries roll back the
+#   schema atomically, so the orphan can no longer form.
+#
+# ── Defensive hardening (this PR #1907) ─────────────────────────────────────
+#
+#   Regardless of *how* desync occurs, GraphContext_GetSchemaByID had no
+#   bounds check on the schema ID. This PR adds:
+#     - bounds check in GraphContext_GetSchemaByID (returns NULL for OOB id)
+#     - NULL check in GraphHub_CreateEdges BEFORE Graph_CreateEdges
+#     - NULL check in ApplyLabels
+#   On NULL: log a warning and exit(1), triggering a full RDB resync.
+#   This matches the existing ValidateVersion + exit(1) pattern in
+#   Effects_Apply (effects_apply.c:654-656).
+#
+# The integration tests below drive Mechanism 2 through the public Cypher API.
+# They pass on this branch. Reverting PR #1815 causes the replica to SIGSEGV.
 # ---------------------------------------------------------------------------
 class testEffectSchemaDesyncReplica():
     def __init__(self):
