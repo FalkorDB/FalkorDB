@@ -31,7 +31,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BASE_IMAGE_VERSION: 1.2.0
+  BASE_IMAGE_VERSION: 1.3.0
 jobs:
   build:
     runs-on: ${{ matrix.platform.machine_label }}
@@ -44,19 +44,19 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          # Ubuntu builds
-          - name: ubuntu-x64
+          # Debian builds
+          - name: debian-x64
             suffix: x64
-            os: ubuntu
+            os: debian
             arch: amd64
             machine_label: ubuntu-latest
             cache_path: linux-x64
             build_variants: [release, server]
             use_docker: true
             build_test_image: true
-          - name: ubuntu-arm64
+          - name: debian-arm64
             suffix: arm64v8
-            os: ubuntu
+            os: debian
             arch: arm64
             machine_label: ubuntu-24.04-arm
             cache_path: linux-arm64v8

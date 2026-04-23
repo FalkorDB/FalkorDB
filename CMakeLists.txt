@@ -211,6 +211,21 @@ endif()
 # Add RediSearch subdirectory
 add_subdirectory(${root}/deps/RediSearch ${CMAKE_BINARY_DIR}/search-static)
 
+# GCC 12 has a false positive -Wuninitialized warning in AVX512 intrinsic
+# headers (_mm256_undefined_pd / _mm_undefined_ps use self-initialization).
+# Suppress the error for affected VectorSimilarity targets on GCC 12.
+# See: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105593
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+   CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 12 AND
+   CMAKE_CXX_COMPILER_VERSION VERSION_LESS 13)
+    if(TARGET VectorSimilaritySpaces_avx512)
+        target_compile_options(VectorSimilaritySpaces_avx512 PRIVATE -Wno-error=uninitialized)
+    endif()
+    if(TARGET VectorSimilaritySpaces_avx512dq)
+        target_compile_options(VectorSimilaritySpaces_avx512dq PRIVATE -Wno-error=uninitialized)
+    endif()
+endif()
+
 #-----------------------------------------------------------------------------
 # Source files and library
 #-----------------------------------------------------------------------------
