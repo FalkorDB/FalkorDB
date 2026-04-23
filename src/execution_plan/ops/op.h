@@ -104,15 +104,16 @@ static const OPType SCAN_OPS[] = {
 #define BLACKLIST_OP_COUNT 6
 static const OPType FILTER_RECURSE_BLACKLIST[] = {
 	OPType_APPLY,
-	OPType_MERGE,
+	OPType_FOREACH,
+
 	// write/modifying operations: filters that follow a write
 	// (e.g. via `WITH ... WHERE`) must not be pushed below the write,
 	// otherwise they would observe stale graph state
-	// (e.g. a pattern predicate seeing an edge that was just DELETEd)
+	// (e.g. a pattern predicate seeing an edge that was just deleted)
+	OPType_MERGE,
 	OPType_CREATE,
 	OPType_UPDATE,
-	OPType_DELETE,
-	OPType_FOREACH
+	OPType_DELETE
 };
 
 #define EAGER_OP_COUNT 8
