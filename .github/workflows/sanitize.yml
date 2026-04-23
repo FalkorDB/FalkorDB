@@ -95,45 +95,58 @@ jobs:
           --verbose \
           --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
           --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17
-        make CLANG=1 SAN=address NPROC=16
+        make CLANG=1 SAN=address NPROC=16 BUILD_TESTS=1
 
-    - name: Unit tests
-      id: unit_tests
-      run: make unit-tests CLEAR_LOGS=0 SAN=address
-      continue-on-error: true
-
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-      with:
-        name: Upload unit tests logs
-        path: ${{ github.workspace }}/tests/unit/logs/
-        retention-days: 7
-
-    - name: Flow tests
-      id: flow_tests
+    - name: Prebuild ASAN Redis
+      # Build the sanitized Redis binary once so parallel test suites reuse
+      # the cache at /tmp/redis-san-build rather than racing to build it.
       run: |
         . venv/bin/activate
-        make flow-tests CLEAR_LOGS=0 SAN=address
-      continue-on-error: true
+        make flow-tests SKIP_BUILD=1 SAN=address LIST=1
 
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-      with:
-        name: Upload flow tests logs
-        path: ${{ github.workspace }}/tests/flow/logs/
-        retention-days: 7
-
-    - name: TCK tests
-      id: tck_tests
+    - name: Run tests (unit / flow / tck in parallel)
+      id: run_tests
       run: |
         . venv/bin/activate
-        make tck-tests CLEAR_LOGS=0 SAN=address
-      continue-on-error: true
+        set +e
+
+        make unit-tests CLEAR_LOGS=0 SAN=address SKIP_BUILD=1 \
+          > /tmp/unit.log 2>&1 &
+        UNIT_PID=$!
+
+        RANDPORTS=1 make flow-tests CLEAR_LOGS=0 SAN=address SKIP_BUILD=1 \
+          > /tmp/flow.log 2>&1 &
+        FLOW_PID=$!
+
+        RANDPORTS=1 make tck-tests CLEAR_LOGS=0 SAN=address SKIP_BUILD=1 \
+          > /tmp/tck.log 2>&1 &
+        TCK_PID=$!
+
+        wait $UNIT_PID; UNIT_STATUS=$?
+        wait $FLOW_PID; FLOW_STATUS=$?
+        wait $TCK_PID; TCK_STATUS=$?
+
+        echo "::group::Unit tests output"
+        cat /tmp/unit.log
+        echo "::endgroup::"
+        echo "::group::Flow tests output"
+        cat /tmp/flow.log
+        echo "::endgroup::"
+        echo "::group::TCK tests output"
+        cat /tmp/tck.log
+        echo "::endgroup::"
+
+        if [ $UNIT_STATUS -ne 0 ] || [ $FLOW_STATUS -ne 0 ] || [ $TCK_STATUS -ne 0 ]; then
+          echo "::error::Test failures: unit=$UNIT_STATUS flow=$FLOW_STATUS tck=$TCK_STATUS"
+          exit 1
+        fi
 
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      if: always()
       with:
-        name: Upload TCK tests logs
-        path: ${{ github.workspace }}/tests/tck/logs/
+        name: sanitizer-test-logs
+        path: |
+          ${{ github.workspace }}/tests/unit/logs/
+          ${{ github.workspace }}/tests/flow/logs/
+          ${{ github.workspace }}/tests/tck/logs/
         retention-days: 7
-
-    - name: Check on failures
-      if: steps.unit_tests.outcome != 'success' || steps.flow_tests.outcome != 'success' || steps.tck_tests.outcome != 'success'
-      run: exit 1

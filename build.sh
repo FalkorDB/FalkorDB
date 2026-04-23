@@ -47,6 +47,7 @@ GDB=0                # Run with GDB
 # Build flags
 MEMCHECK=0           # Memory checking mode
 DEPS_DEBUG=0         # Build deps in debug mode
+SKIP_BUILD=0         # Skip build phase (deps + cmake + compile); only run tests
 
 # Clean options
 CLEAN=0              # Run clean operation
@@ -301,6 +302,9 @@ parse_arguments() {
                 ;;
             GDB=1)
                 GDB=1
+                ;;
+            SKIP_BUILD=1)
+                SKIP_BUILD=1
                 ;;
             # Clean options
             CLEAN=1)
@@ -2044,17 +2048,21 @@ main() {
         # Otherwise, fall through to build first
     fi
 
-    # Build dependencies
-    build_dependencies
+    if [[ "$SKIP_BUILD" != "1" ]]; then
+        # Build dependencies
+        build_dependencies
 
-    # Prepare CMake arguments
-    prepare_cmake_arguments
+        # Prepare CMake arguments
+        prepare_cmake_arguments
 
-    # Run CMake configuration
-    run_cmake
+        # Run CMake configuration
+        run_cmake
 
-    # Build the project
-    build_project
+        # Build the project
+        build_project
+    else
+        log_info "Skipping build phase (SKIP_BUILD=1)"
+    fi
 
     # Run pack if requested
     if [[ "$PACK" == "1" ]]; then
