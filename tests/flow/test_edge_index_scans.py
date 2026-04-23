@@ -16,7 +16,7 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
 
     def tearDown(self):
         self.graph.delete()
-    
+
     def populate_graph(self):
         nodes = {}
 
@@ -210,7 +210,7 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         # find all person nodes with age in the range 33-37
         # current age (x) should be resolved at runtime
         # index query should be constructed for each age value
-        q = """UNWIND range(33, 37) AS x
+        q = """unwind range(33, 37) as x
         MATCH (n)-[f:friend {created_at: x}]->()
         RETURN n.name
         ORDER BY n.name"""
@@ -222,7 +222,7 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
 
         # similar to the query above, only this time the filter is specified
         # by an OR condition
-        q = """WITH 33 AS min, 37 AS max 
+        q = """WITH 33 AS min, 37 AS max
         MATCH (n)-[f:friend]->()
         WHERE f.created_at = min OR f.created_at = max
         RETURN n.name
@@ -553,12 +553,10 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         self.env.assertEquals(expected, actual)
 
     def test15_chained_optional_match_indexed_edge(self):
-        # regression test for FalkorDB/private#102:
-        # crash in UpdateCurrentAwareIds when a chained OPTIONAL MATCH feeds a
-        # NULL node into an Edge By Index Scan. The first OPTIONAL MATCH
-        # produces no row -> `able` is NULL in the record -> the second
-        # OPTIONAL MATCH performs an edge-index scan whose source aware id is
-        # derived from the NULL node, dereferencing a NULL `Node*`.
+        # test chained OPTIONAL MATCH feeds a NULL node into an Edge By Index Scan.
+        # The first OPTIONAL MATCH produces a NULL node
+        # the second OPTIONAL MATCH performs an edge-index scan whose source node
+        # is NULL.
         self.graph.delete()
 
         # seed graph with a single node and no RELATES_TO edges
@@ -572,23 +570,12 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
                OPTIONAL MATCH (able)-[:RELATES_TO {name:'UsesDataSource'}]->(ds:DataSource)
                RETURN h.id, able, ds"""
 
-        # ensure the second OPTIONAL MATCH actually plans an edge-index scan,
-        # otherwise the regression would not be exercised
+        # ensure the second OPTIONAL MATCH actually plans an edge-index scan
         plan = str(self.graph.explain(q))
         self.env.assertIn("Edge By Index Scan", plan)
 
-        # must not crash; both optional sides resolve to NULL.
-        # Wrap so a server crash is reported as a clean assertion failure on
-        # this test instead of leaking out to tearDown as a connection error.
-        conn = self.env.getConnection()
-        try:
-            res = self.graph.query(q)
-        except redis.exceptions.ConnectionError as e:
-            self.env.assertTrue(False,
-                message=f"server crashed on chained OPTIONAL MATCH (src-aware NULL): {e}")
-            return
-        self.env.assertTrue(conn.ping(),
-            message="server is not alive after chained OPTIONAL MATCH (src-aware NULL)")
+        # both optional sides resolve to NULL.
+        res = self.graph.query(q)
         self.env.assertEquals(res.result_set, [["h1", None, None]])
 
         # also exercise the destination-aware code path: the second OPTIONAL
@@ -600,13 +587,6 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
                     RETURN h.id, able, src"""
         plan_dest = str(self.graph.explain(q_dest))
         self.env.assertIn("Edge By Index Scan", plan_dest)
-        try:
-            res = self.graph.query(q_dest)
-        except redis.exceptions.ConnectionError as e:
-            self.env.assertTrue(False,
-                message=f"server crashed on chained OPTIONAL MATCH (dest-aware NULL): {e}")
-            return
-        self.env.assertTrue(conn.ping(),
-            message="server is not alive after chained OPTIONAL MATCH (dest-aware NULL)")
+        res = self.graph.query(q_dest)
         self.env.assertEquals(res.result_set, [["h1", None, None]])
 
