@@ -414,8 +414,8 @@ class testParams(FlowTestsBase):
             # Map with non-identifier key (no quoting)
             "CYPHER properties={my-key:1} RETURN $properties",
             # Mixed scalar + bad map (the JFalkorDB scenario from the issue)
-            'CYPHER id="abc" properties={title=Test, uri=http://example.com} '
-                'MERGE (e:Node {id: $id}) SET e += $properties',
+            ('CYPHER id="abc" properties={title=Test, uri=http://example.com} '
+             + 'MERGE (e:Node {id: $id}) SET e += $properties'),
         ]
         for q in bad_queries:
             try:
