@@ -11,9 +11,7 @@
 #include "../util/uuid.h"
 #include "../commands/commands.h"
 #include "../configuration/config.h"
-#include <ctype.h>
 #include <stdarg.h>
-#include <string.h>
 #include <strings.h>
 
 rax *clients;
@@ -268,74 +266,6 @@ static bool wbuf_printf
 // maximum nesting depth for recursive value serialization
 #define WRITE_VALUE_MAX_DEPTH 128
 
-// check if a string is a valid Cypher identifier (letters, digits, underscore;
-// must start with a letter or underscore)
-// NOTE: only ASCII characters are checked; non-ASCII identifiers (though rare)
-// are not supported and will be backtick-quoted by write_map_key.
-static bool is_cypher_identifier
-(
-	const char *s,   // string to check
-	uint32_t len     // length of the string
-) {
-	if(len == 0) return false;
-	if(!(isalpha((unsigned char)s[0]) || s[0] == '_')) return false;
-	for(uint32_t i = 1; i < len; i++) {
-		if(!(isalnum((unsigned char)s[i]) || s[i] == '_')) return false;
-	}
-	return true;
-}
-
-// write a string value wrapped in single quotes with \ and ' escaped
-static bool write_quoted_string
-(
-	wbuf_t *wb,       // growable write buffer
-	const char *s,    // string to write
-	uint32_t len      // length of the string
-) {
-	if(wb->err) return false;
-	// worst case: every char needs escaping (2*len) plus 2 enclosing quotes
-	// and 1 extra byte so subsequent vsnprintf always has a writable byte
-	uint64_t worst = (uint64_t)len * 2 + 3;
-	if(worst > UINT32_MAX || !wbuf_ensure(wb, (uint32_t)worst)) {
-		wb->err = true;
-		return false;
-	}
-	wb->buf[wb->n++] = '\'';
-	for(uint32_t i = 0; i < len; i++) {
-		char c = s[i];
-		if(c == '\'' || c == '\\') {
-			wb->buf[wb->n++] = '\\';
-		}
-		wb->buf[wb->n++] = c;
-	}
-	wb->buf[wb->n++] = '\'';
-	return true;
-}
-
-// write a map key, backtick-quoting it when it is not a plain Cypher identifier
-static bool write_map_key
-(
-	wbuf_t *wb,          // growable write buffer
-	const char *key,     // map key string
-	uint32_t key_len     // length of the map key
-) {
-	if(wb->err) return false;
-	if(is_cypher_identifier(key, key_len)) {
-		// plain identifier — write as-is
-		if(!wbuf_ensure(wb, key_len + 1)) { wb->err = true; return false; }
-		memcpy(wb->buf + wb->n, key, key_len);
-		wb->n += key_len;
-	} else {
-		// non-identifier — backtick-quote it
-		if(!wbuf_ensure(wb, key_len + 3)) { wb->err = true; return false; }
-		wb->buf[wb->n++] = '`';
-		memcpy(wb->buf + wb->n, key, key_len);
-		wb->n += key_len;
-		wb->buf[wb->n++] = '`';
-	}
-	return !wb->err;
-}
-
 // write the bolt value to the growable buffer as string
 // returns false if a write error occurred
 static bool _write_value
@@ -384,7 +314,8 @@ static bool _write_value
 			char *str = rm_malloc(len);
 			if(str == NULL) { wb->err = true; return false; }
 			bolt_read_string(value, str);
-			write_quoted_string(wb, str, len);
+			wbuf_ensure(wb, len + 3);
+			wbuf_printf(wb, "'%.*s'", len, str);
 			rm_free(str);
 			return !wb->err;
 		}
@@ -410,8 +341,7 @@ static bool _write_value
 				char *key = rm_malloc(key_len);
 				if(key == NULL) { wb->err = true; return false; }
 				bolt_read_string(value, key);
-				write_map_key(wb, key, key_len);
-				wbuf_printf(wb, ": ");
+				wbuf_printf(wb, "%.*s: ", key_len, key);
 				rm_free(key);
 				_write_value(wb, value, depth + 1);
 				for (uint32_t i = 1; i < size; i++) {
@@ -419,9 +349,7 @@ static bool _write_value
 					key = rm_malloc(key_len);
 					if(key == NULL) { wb->err = true; return false; }
 					bolt_read_string(value, key);
-					wbuf_printf(wb, ", ");
-					write_map_key(wb, key, key_len);
-					wbuf_printf(wb, ": ");
+					wbuf_printf(wb, ", %.*s: ", key_len, key);
 					rm_free(key);
 					_write_value(wb, value, depth + 1);
 				}
@@ -482,8 +410,8 @@ RedisModuleString *get_query
 			char *key = rm_malloc(key_len);
 			if(key == NULL) { wb.err = true; break; }
 			bolt_read_string(&client->msg_buf.read, key);
-			write_map_key(&wb, key, key_len);
-			wbuf_printf(&wb, "=");
+			if(!wbuf_ensure(&wb, key_len + 2)) { rm_free(key); wb.err = true; break; }
+			wbuf_printf(&wb, "%.*s=", key_len, key);
 			rm_free(key);
 			write_value(&wb, &client->msg_buf.read);
 			wbuf_printf(&wb, " ");
