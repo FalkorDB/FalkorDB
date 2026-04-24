@@ -424,9 +424,12 @@ class testParams(FlowTestsBase):
                     f"Expected error for malformed query: {q}")
             except ResponseError as e:
                 # error must reference the parameter name that failed and
-                # must NOT be the cryptic 'expected =' message that results
-                # from the corrupted-buffer bug
+                # must NOT be the cryptic Cypher parse error 'Invalid input
+                # ... expected =' that resulted from the corrupted-buffer bug
                 msg = str(e)
-                self.env.assertContains("parameter", msg.lower())
+                msg_lower = msg.lower()
+                self.env.assertContains("parameter", msg_lower)
                 self.env.assertContains("properties", msg)
+                self.env.assertNotIn("invalid input", msg_lower)
+                self.env.assertNotIn("expected '='", msg_lower)
 
