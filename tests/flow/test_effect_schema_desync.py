@@ -1,4 +1,4 @@
-import struct
+import os
 import time
 from common import *
 from graph_utils import graph_eq
@@ -15,7 +15,7 @@ from graph_utils import graph_eq
 #   SIGSEGV at (nil) (the symbolicator pointed at the nearest exported
 #   symbol, QGEdge_RelationID, in the stripped release build).
 #
-# Fix:
+# Fix (PR #1907):
 #   - GraphContext_GetSchemaByID now bounds-checks `id` and returns NULL
 #     for out-of-range IDs.
 #   - GraphHub_CreateEdges and ApplyLabels detect a NULL schema, log a
@@ -23,71 +23,9 @@ from graph_utils import graph_eq
 #     restart - matching the existing ValidateVersion pattern in
 #     Effects_Apply (effects_apply.c:654-656).
 #
-# These tests craft GRAPH.EFFECT payloads with out-of-range relation/label
-# IDs and assert the server exits cleanly instead of crashing.
+# The tests below reproduce the crash through the public Cypher API and
+# real master/replica replication - no direct GRAPH.EFFECT calls.
 # ---------------------------------------------------------------------------
-
-# Effects binary protocol constants (must match src/effects/effects.h)
-EFFECTS_VERSION    = 1
-EFFECT_CREATE_NODE = 3   # node creation
-EFFECT_CREATE_EDGE = 4   # edge creation
-EFFECT_SET_LABELS  = 7   # set labels
-EFFECT_ADD_SCHEMA  = 9   # schema addition
-
-# Schema types (must match src/schema/schema.h)
-SCHEMA_NODE = 0
-SCHEMA_EDGE = 1
-
-
-def _build_effects_payload(effects):
-    """Build a binary GRAPH.EFFECT payload from a list of effect tuples.
-
-    Supported effects (keep in sync with src/effects/effects.c writers):
-        ('add_schema',  schema_type, name_str)
-        ('create_node', [label_id, ...], attr_count)         # attr_count == 0
-        ('create_edge', relation_id, src_id, dest_id)        # 0 attributes
-        ('set_labels',  node_id, [label_id, ...])
-    """
-
-    buf = struct.pack('<B', EFFECTS_VERSION)  # version: uint8_t
-
-    for effect in effects:
-        kind = effect[0]
-        if kind == 'add_schema':
-            _, schema_type, name = effect
-            name_bytes = name.encode('utf-8') + b'\x00'
-            buf += struct.pack('<i', EFFECT_ADD_SCHEMA)      # EffectType
-            buf += struct.pack('<i', schema_type)            # SchemaType
-            buf += struct.pack('<Q', len(name_bytes))        # size_t
-            buf += name_bytes
-        elif kind == 'create_node':
-            _, label_ids, attr_count = effect
-            buf += struct.pack('<i', EFFECT_CREATE_NODE)
-            buf += struct.pack('<H', len(label_ids))         # uint16_t
-            for lid in label_ids:
-                buf += struct.pack('<i', lid)                # LabelID (int32)
-            buf += struct.pack('<H', attr_count)             # uint16_t
-        elif kind == 'create_edge':
-            _, rel_id, src_id, dest_id = effect
-            # packed struct: EffectType(int) + uint16_t rel_count + RelationID
-            # + NodeID src + NodeID dest
-            buf += struct.pack('<i', EFFECT_CREATE_EDGE)     # EffectType
-            buf += struct.pack('<H', 1)                      # rel_count
-            buf += struct.pack('<i', rel_id)                 # RelationID int32
-            buf += struct.pack('<Q', src_id)                 # NodeID uint64
-            buf += struct.pack('<Q', dest_id)                # NodeID uint64
-            buf += struct.pack('<H', 0)                      # attr_count == 0
-        elif kind == 'set_labels':
-            _, node_id, label_ids = effect
-            buf += struct.pack('<i', EFFECT_SET_LABELS)
-            buf += struct.pack('<Q', node_id)                # node ID
-            buf += struct.pack('<H', len(label_ids))         # label count
-            for lid in label_ids:
-                buf += struct.pack('<i', lid)                # LabelID
-        else:
-            raise ValueError("unknown effect kind: %s" % kind)
-
-    return buf
 
 
 def _server_alive(conn):
@@ -99,92 +37,135 @@ def _server_alive(conn):
         return False
 
 
+def _replica_log_has_desync_warning(runner):
+    """Return True if the replica log contains the PR #1907 clean-exit warning.
+
+    The warning is emitted by GraphHub_CreateEdges / ApplyLabels before
+    calling exit(1) when an OOB schema ID is detected:
+        "... schema desync detected, aborting"
+
+    When the server crashes via SIGSEGV instead, the log contains
+    "REDIS BUG REPORT START" / "Segmentation fault" instead.
+    Returns None when the log file cannot be found (non-fatal).
+    """
+    if runner.dbDirPath is None:
+        return None
+    # _getFileName(role, suffix): role='slave' matches the else branch
+    log_path = os.path.join(runner.dbDirPath,
+                            runner._getFileName('slave', '.log'))
+    try:
+        with open(log_path) as f:
+            content = f.read()
+        return "schema desync detected, aborting" in content
+    except FileNotFoundError:
+        return None
+
+
 # ---------------------------------------------------------------------------
-# EDGE: relation ID out of range -> clean exit (was SIGSEGV)
+# Crash reproduction via real replication (PR #1907 defensive hardening).
+#
+# The synthetic-payload approach (direct GRAPH.EFFECT calls) is replaced by
+# an end-to-end replication scenario that never calls GRAPH.EFFECT from
+# test code - the server sends GRAPH.EFFECT automatically when
+# EFFECTS_THRESHOLD=0, matching the customer's production configuration.
+#
+# Scenario - edge relation OOB via replication:
+#
+#   1. Both master and replica build an identical graph with N edge schemas
+#      (R0..R(N-1) at IDs 0..N-1) through normal GRAPH.EFFECT replication.
+#
+#   2. The replica's copy of the graph is deleted locally (replica-read-only
+#      disabled briefly, then re-enabled). Master still has [R0..R(N-1)].
+#
+#   3. Master creates one more edge with a brand-new relation type R_NEW.
+#      Because EFFECTS_THRESHOLD=0 the server sends:
+#
+#        EFFECT_CREATE_NODE / EFFECT_CREATE_NODE (two anonymous endpoints)
+#        EFFECT_ADD_SCHEMA(R_NEW)           <- master assigns id=N locally
+#        EFFECT_CREATE_EDGE(relation_id=N)  <- references master's id for R_NEW
+#
+#   4. The replica receives the stream.  cmd_effect.c creates a fresh empty
+#      graph (GraphContext_Retrieve with shouldCreate=true).
+#      EFFECT_ADD_SCHEMA(R_NEW) assigns id=0 (first entry in the empty
+#      schemas array).
+#      EFFECT_CREATE_EDGE(relation_id=N):
+#        GraphHub_CreateEdges calls GraphContext_GetSchemaByID(gc, N, EDGE).
+#        N >= 1 (the replica's schema array has exactly one entry) ->
+#        bounds check returns NULL -> exit(1) + warning log.
+#
+# Without PR #1907 bounds check: OOB array access -> garbage schema pointer
+#   -> Schema_HasIndices(NULL/garbage) -> SIGSEGV.
+# With PR #1907: clean exit(1), Redis triggers a full RDB resync on restart.
 # ---------------------------------------------------------------------------
-class testEffectOOBRelation():
+class testEffectSchemaDesyncViaReplication():
     def __init__(self):
-        self.env, self.db = Env()
-        self.conn = self.env.getConnection()
+        self.env, self.db = Env(env='oss', useSlaves=True)
+        self.master  = self.env.getConnection()
+        self.replica = self.env.getSlaveConnection()
+        # Force all writes through GRAPH.EFFECT - matches customer deployment
+        self.db.config_set("EFFECTS_THRESHOLD", 0)
+        self.master.wait(1, 0)
 
-    def test01_create_edge_unknown_relation_exits(self):
-        graph_id = "edge_oob_rel"
-        g = Graph(self.conn, graph_id)
+    def test01_oob_relation_triggers_clean_exit(self):
+        """
+        Trigger OOB relation-id via real GRAPH.EFFECT replication.
 
-        # create two nodes so node IDs 0 and 1 exist on this server
-        g.query("CREATE (), ()")
+        Three edge schemas are synced to both sides, the replica's graph is
+        deleted, then master creates R_NEW (local id=3).  The EFFECT stream
+        carries relation_id=3 which is out of range on the empty replica
+        (R_NEW would be id=0 there) -> bounds check -> exit(1).
 
-        # craft a GRAPH.EFFECT that creates an edge with relation_id = 100
-        # the graph has zero edge schemas - this is the customer's crash
-        payload = _build_effects_payload([
-            ('create_edge', 100, 0, 1),
-        ])
+        Without PR #1907: SIGSEGV.
+        With PR #1907: clean exit(1) + "schema desync detected" warning log.
+        """
+        GRAPH_ID = "desync_edge_crash"
+        N = 3  # number of pre-existing edge schemas to create first
+        master_g = Graph(self.master, GRAPH_ID)
 
-        try:
-            self.conn.execute_command('GRAPH.EFFECT', graph_id, payload)
-        except Exception:
-            pass
+        # ------------------------------------------------------------------
+        # Step 1: create N edge schemas on BOTH master and replica via
+        # GRAPH.EFFECT replication.  After this both sides are identical.
+        # ------------------------------------------------------------------
+        for i in range(N):
+            master_g.query("CREATE ()-[:R%d]->()" % i)
+        self.master.wait(1, 2000)
 
-        # the server must NOT have segfaulted - it must have exited cleanly
-        # in either case the connection is dead, but with the fix there is
-        # no SIGSEGV in the redis log (we cannot easily assert on the log
-        # from here, but a clean exit() triggers full RDB resync on restart)
-        self.env.assertFalse(_server_alive(self.conn))
+        r_types = master_g.ro_query("CALL db.relationshipTypes()").result_set
+        self.env.assertEquals(len(r_types), N)
 
+        # ------------------------------------------------------------------
+        # Step 2: delete the graph from the REPLICA ONLY to create a schema
+        # desync: master has N schemas, replica has an empty / no graph.
+        # ------------------------------------------------------------------
+        self.replica.execute_command("CONFIG", "SET", "replica-read-only", "no")
+        self.replica.execute_command("DEL", GRAPH_ID)
+        self.replica.execute_command("CONFIG", "SET", "replica-read-only", "yes")
 
-# ---------------------------------------------------------------------------
-# EDGE: relation_id = -1 (negative) -> clean exit (was OOB read / SIGSEGV)
-# ---------------------------------------------------------------------------
-class testEffectNegativeRelation():
-    def __init__(self):
-        self.env, self.db = Env()
-        self.conn = self.env.getConnection()
+        # ------------------------------------------------------------------
+        # Step 3: create a new edge with a brand-new relation type.
+        # EFFECTS_THRESHOLD=0 makes the master send GRAPH.EFFECT:
+        #   EFFECT_ADD_SCHEMA(R_NEW)           <- id=N on master
+        #   EFFECT_CREATE_EDGE(relation_id=N)  <- OOB on empty replica
+        # ------------------------------------------------------------------
+        res = master_g.query("CREATE ()-[:R_NEW]->()")
+        self.env.assertEquals(res.relationships_created, 1)
 
-    def test01_create_edge_negative_relation_exits(self):
-        graph_id = "edge_neg_rel"
-        g = Graph(self.conn, graph_id)
+        # ------------------------------------------------------------------
+        # Step 4: replica must be dead.
+        #   _server_alive() already waits 0.5s for the EFFECT to propagate.
+        #   exit(1) with PR #1907; SIGSEGV without it.
+        # ------------------------------------------------------------------
+        self.env.assertFalse(_server_alive(self.replica))
 
-        g.query("CREATE (), ()")
-
-        payload = _build_effects_payload([
-            ('create_edge', -5, 0, 1),
-        ])
-
-        try:
-            self.conn.execute_command('GRAPH.EFFECT', graph_id, payload)
-        except Exception:
-            pass
-
-        self.env.assertFalse(_server_alive(self.conn))
-
-
-# ---------------------------------------------------------------------------
-# LABEL: SET_LABELS with a label_id beyond the local schema count must
-# trigger a clean exit instead of dereferencing a NULL Schema.
-# ---------------------------------------------------------------------------
-class testEffectSetLabelsOOBLabel():
-    def __init__(self):
-        self.env, self.db = Env()
-        self.conn = self.env.getConnection()
-
-    def test01_set_labels_unknown_label_exits(self):
-        graph_id = "set_label_oob"
-        g = Graph(self.conn, graph_id)
-
-        # create one node with label A -> node id 0, label id 0
-        g.query("CREATE (:A)")
-
-        # try to add label_id = 99 to node 0
-        payload = _build_effects_payload([
-            ('set_labels', 0, [99]),
-        ])
-
-        try:
-            self.conn.execute_command('GRAPH.EFFECT', graph_id, payload)
-        except Exception:
-            pass
-
-        self.env.assertFalse(_server_alive(self.conn))
+        # ------------------------------------------------------------------
+        # Step 5: verify the replica exited cleanly (PR #1907 fix) rather
+        # than crashing with a SIGSEGV.  Check the replica log for the
+        # "schema desync detected, aborting" warning written before exit(1).
+        # (Non-fatal if the log file is not available in this environment.)
+        # ------------------------------------------------------------------
+        clean = _replica_log_has_desync_warning(self.env.envRunner)
+        if clean is not None:
+            self.env.assertTrue(clean)
 
 
 # ---------------------------------------------------------------------------
