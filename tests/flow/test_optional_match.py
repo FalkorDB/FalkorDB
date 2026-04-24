@@ -315,3 +315,45 @@ class testOptionalFlow(FlowTestsBase):
         self.env.assertIn("Optional Conditional Traverse | (a)->(b)", plan)
         self.env.assertIn("Optional Conditional Traverse | (b)->(c)", plan)
 
+    # regression test for issues #753 and #636
+    # an OPTIONAL MATCH on the same alias with a different (indexed) label
+    # used to crash the server in reduce_scan_op via a NULL operand returned
+    # from AlgebraicExpression_LocateOperand.
+    def test27_optional_match_indexed_label_on_same_alias(self):
+        # use a fresh graph
+        crash_graph_id = "optional_match_indexed_label"
+        crash_graph = self.db.select_graph(crash_graph_id)
+
+        # create an index on the label that only appears in the OPTIONAL MATCH
+        result = crash_graph.query("CREATE INDEX ON :L3(k21)")
+        self.env.assertEquals(result.indices_created, 1)
+
+        # exact repro from issue #753 - empty graph
+        # before the fix this crashed the server with a NULL deref
+        # in AlgebraicExpression_Dest+0x4 / _AlgebraicExpression_InplaceRepurpose
+        q = """MATCH (n2 :L5{k21:'txLpbrhL'})-[r1]->(n3)
+               OPTIONAL MATCH (n2 :L3)-[r6]->(n3)
+               RETURN DISTINCT *"""
+
+        result = crash_graph.query(q)
+        self.env.assertEquals(result.result_set, [])
+
+        # populate with data and run again - results must be correct
+        crash_graph.query(
+            """CREATE (a:L5 {k21:'txLpbrhL'})-[:R1]->(b),
+                      (a)-[:R2]->(b),
+                      (c:L3 {k21:'foo'})""")
+
+        result = crash_graph.query(q)
+        # n2 (L5) is connected to n3 via two edges (R1, R2);
+        # n2 has no L3 label so OPTIONAL MATCH yields NULL r6 in both rows
+        self.env.assertEquals(len(result.result_set), 2)
+        for row in result.result_set:
+            self.env.assertIsNone(row[3])  # r6 must be null
+
+        # ping by running a trivial query - server must still be alive
+        ping = crash_graph.query("RETURN 1")
+        self.env.assertEquals(ping.result_set, [[1]])
+
+        crash_graph.delete()
+

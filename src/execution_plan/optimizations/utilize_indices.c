@@ -434,14 +434,23 @@ void reduce_scan_op
 		if(OpBase_Type(parent) == OPType_CONDITIONAL_TRAVERSE) {
 			OpCondTraverse *op_traverse = (OpCondTraverse*)parent;
 			AlgebraicExpression *ae = op_traverse->ae;
-			AlgebraicExpression *operand;
+			AlgebraicExpression *operand = NULL;
 
 			const char *row_domain = scan->n->alias;
 			const char *column_domain = scan->n->alias;
 
 			bool found = AlgebraicExpression_LocateOperand(ae, &operand, NULL,
 					row_domain, column_domain, NULL, min_label_str);
-			ASSERT(found == true);
+
+			// the indexed label may not be present as an operand in the
+			// parent traversal expression - this happens when the label was
+			// introduced on the same alias by a different clause
+			// (e.g. OPTIONAL MATCH) whose constraints are evaluated in a
+			// separate sub-plan.
+			// in that case we cannot safely swap the scanned label without
+			// losing the original label constraint, so abort the
+			// optimization for this scan op.
+			if(!found) goto cleanup;
 
 			AlgebraicExpression *replacement = AlgebraicExpression_NewOperand(NULL,
 					true, AlgebraicExpression_Src(operand),

@@ -344,7 +344,7 @@ static void _costBaseLabelScan
 		ae = op_expand->ae;
 	}
 
-	AlgebraicExpression *operand;
+	AlgebraicExpression *operand = NULL;
 	const char *row_domain    = n_ctx->alias;
 	const char *column_domain = n_ctx->alias;
 
@@ -352,7 +352,14 @@ static void _costBaseLabelScan
 	// in the parent operation (conditional traverse)
 	bool found = AlgebraicExpression_LocateOperand(ae, &operand, NULL,
 			row_domain, column_domain, NULL, min_label_str);
-	ASSERT(found == true);
+
+	// the candidate label may not be present as an operand in the parent
+	// traversal expression - this happens when the label was introduced on
+	// the same alias by a different clause (e.g. OPTIONAL MATCH) whose
+	// constraints are evaluated in a separate sub-plan.
+	// in that case we cannot safely swap the scanned label without losing
+	// the original label constraint, so abort this optimization.
+	if(!found) return;
 
 	// create a replacement operand for the migrated label matrix
 	AlgebraicExpression *replacement = AlgebraicExpression_NewOperand(NULL,
