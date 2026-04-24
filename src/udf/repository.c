@@ -37,13 +37,13 @@ void static UDF_Lib_Free
 
 	// free each function
 	if (lib->functions != NULL) {
-		int n = array_len (lib->functions) ;
+		int n = arr_len (lib->functions) ;
 
 		for (int i = 0; i < n; i++) {
 			rm_free (lib->functions[i]) ;
 		}
 	}
-	array_free (lib->functions) ;
+	arr_free (lib->functions) ;
 
 	if (lib->script != NULL) {
 		rm_free (lib->script) ;
@@ -62,7 +62,7 @@ static bool _lib_contains_func
 	ASSERT (func != NULL) ;
 
 	// make sure function isn't already registered
-	int n = array_len (l->functions) ;
+	int n = arr_len (l->functions) ;
 	for (int i = 0; i < n; i++) {
 		const char *_func = l->functions[i] ;
 		if (strcmp (_func, func) == 0) {
@@ -81,7 +81,7 @@ static UDF_Lib *_UDF_RepoGetLib
 	ASSERT (lib      != NULL) ;
 	ASSERT (udf_repo != NULL) ;
 
-	int n = array_len (udf_repo->libs) ;
+	int n = arr_len (udf_repo->libs) ;
 	for (int i = 0; i < n; i++) {
 		UDF_Lib *_lib = udf_repo->libs + i ;
 
@@ -109,9 +109,22 @@ bool UDF_RepoInit(void) {
 		return false ;
 	}
 
-	udf_repo->libs = array_new(UDF_Lib, 1) ;
+	udf_repo->libs = arr_new(UDF_Lib, 1) ;
 
 	return (udf_repo->libs != NULL) ;
+}
+
+// bumps repo's version by 1
+// function is exposed to allow quickjs runtime heap & stack size adjustment
+// via runtime re-configuration, once the user changes either the heap or stack
+// size limit the configuration handler would bump the UDFs repo version
+// without changing its internal content, this will force each query execution
+// thread to reload a new quickjs runtime picking up on the new limits
+void UDF_RepoBumpVersion(void) {
+	ASSERT (udf_repo != NULL) ;
+
+	// bump version
+	udf_repo->v++ ;
 }
 
 // return repo's version
@@ -141,7 +154,7 @@ void UDF_RepoPopulateJSContext
 	*v = udf_repo->v ;
 
 	// load each registered library
-	int n = array_len (udf_repo->libs) ;
+	int n = arr_len (udf_repo->libs) ;
 	for (int i = 0; i < n; i++) {
 		const char *script   = udf_repo->libs[i].script ;
 		const char *lib_name = udf_repo->libs[i].name ;
@@ -164,7 +177,7 @@ void UDF_RepoPopulateJSContext
 unsigned int UDF_RepoLibsCount(void) {
 	ASSERT (udf_repo != NULL) ;
 
-	return array_len (udf_repo->libs) ;
+	return arr_len (udf_repo->libs) ;
 }
 
 // get lib by name
@@ -226,7 +239,7 @@ const char *UDF_RepoGetScript
 
 	pthread_rwlock_rdlock (&udf_repo->rwlock) ;
 
-	int n = array_len(udf_repo->libs) ;
+	int n = arr_len(udf_repo->libs) ;
 	for (int i = 0; i < n; i++) {
 		const char *_lib = udf_repo->libs[i].name ;
 
@@ -280,7 +293,7 @@ bool UDF_RepoContainsLib
 	// lock under READ
 	pthread_rwlock_rdlock (&udf_repo->rwlock) ;
 
-	int n = array_len (udf_repo->libs) ;
+	int n = arr_len (udf_repo->libs) ;
 
 	for (int i = 0; i < n; i++) {
 		if (strcmp (udf_repo->libs[i].name, lib) == 0) {
@@ -319,7 +332,7 @@ bool UDF_RepoRegisterLib
 					.script = rm_strdup (script),
 					.functions = NULL } ;
 
-	array_append (udf_repo->libs, _lib) ;
+	arr_append (udf_repo->libs, _lib) ;
 
 	// unlock
 	pthread_rwlock_unlock (&udf_repo->rwlock) ;
@@ -340,7 +353,7 @@ bool UDF_RepoRegisterFunc
 	ASSERT (_lib != NULL) ;
 
 	if (unlikely (_lib->functions == NULL)) {
-		_lib->functions = array_new (char *, 1) ;
+		_lib->functions = arr_new (char *, 1) ;
 	}
 
 	// make sure function isn't already registered
@@ -352,7 +365,7 @@ bool UDF_RepoRegisterFunc
 	pthread_rwlock_wrlock (&udf_repo->rwlock) ;
 
 	// new function
-	array_append (_lib->functions, rm_strdup (func)) ;
+	arr_append (_lib->functions, rm_strdup (func)) ;
 
 	// unlock
 	pthread_rwlock_unlock (&udf_repo->rwlock) ;
@@ -391,10 +404,10 @@ bool UDF_RepoRemoveLib
 	UDF_Lib_Free (_lib) ;
 
 	// remove library from repo
-	array_del_fast (udf_repo->libs, idx);
+	arr_del_fast (udf_repo->libs, idx);
 
 	// bump version
-	udf_repo->v++ ;
+	UDF_RepoBumpVersion ();
 
 	// unlock
 	pthread_rwlock_unlock (&udf_repo->rwlock) ;
@@ -416,9 +429,9 @@ void UDF_RepoExposeLib
 	ASSERT (_lib != NULL) ;
 
 	// bump version
-	udf_repo->v++ ;
+	UDF_RepoBumpVersion ();
 
-	int n = array_len (_lib->functions) ;
+	int n = arr_len (_lib->functions) ;
 	for (int i = 0; i < n ; i++) {
 		char *fullname ;
 		const char *func = _lib->functions[i] ;
@@ -437,12 +450,12 @@ void UDF_RepoFree(void) {
 	}
 
 	// free each registered library
-	for (int i = 0; i < array_len (udf_repo->libs); i++) {
+	for (int i = 0; i < arr_len (udf_repo->libs); i++) {
 		UDF_Lib * lib = udf_repo->libs + i ;
 		UDF_Lib_Free (lib) ;
 	}
 
-	array_free (udf_repo->libs) ;
+	arr_free (udf_repo->libs) ;
 
 	// free lock
 	int res = pthread_rwlock_destroy (&udf_repo->rwlock) ;

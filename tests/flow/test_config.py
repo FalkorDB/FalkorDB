@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 20 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 22 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -45,7 +45,9 @@ class testConfig(FlowTestsBase):
                 ("BOLT_PORT", 65535),
                 ("DELAY_INDEXING", 0),
                 ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
-                ("TEMP_FOLDER", "/tmp")
+                ("TEMP_FOLDER", "/tmp"),
+                ("JS_HEAP_SIZE", 256 * 1024 * 1024),
+                ("JS_STACK_SIZE", 1024 * 1024)
         ]
 
         for i, config in enumerate(response):
@@ -254,6 +256,20 @@ class testConfig(FlowTestsBase):
         expected_response = 0
         self.env.assertEqual(response, expected_response)
 
+        response = self.db.config_set("JS_HEAP_SIZE", 256 * 1024 * 1024)
+        self.env.assertEqual(response, "OK")
+
+        response = self.db.config_get("JS_HEAP_SIZE")
+        expected_response = 256 * 1024 * 1024
+        self.env.assertEqual(response, expected_response)
+
+        response = self.db.config_set("JS_STACK_SIZE", 1024 * 1024)
+        self.env.assertEqual(response, "OK")
+
+        response = self.db.config_get("JS_STACK_SIZE")
+        expected_response = 1024 * 1024
+        self.env.assertEqual(response, expected_response)
+
     def test09_set_invalid_values(self):
         # The run-time configurations supported by RedisGraph are:
         # MAX_QUEUED_QUERIES
@@ -414,4 +430,64 @@ class testConfigTempFolder:
         finally:
             # clean up
             shutil.rmtree(valid_dir)
+
+class testLoadTimeConfig(FlowTestsBase):
+    """
+    Test suite for validating FalkorDB load-time configuration defaults.
+
+    Inherits from FlowTestsBase to leverage shared test environment setup
+    and assertion utilities.
+    """
+
+    def __init__(self):
+        """
+        Initialize the test class.
+
+        Note: super().__init__() must be called to ensure FlowTestsBase
+        performs any required setup (e.g. connecting to the test environment).
+        """
+        super().__init__()
+
+    def test01_loadtime_config(self):
+        """
+        Verify that FalkorDB starts with the expected default configuration values.
+
+        Constructs a module argument string from the known defaults, launches
+        a FalkorDB environment with those arguments, then asserts that each
+        config key returns the expected value via `config_get`.
+
+        Defaults tested:
+            - CACHE_SIZE:              25
+            - VKEY_MAX_ENTITY_COUNT:   100000
+            - CMD_INFO:                True
+            - DELAY_INDEXING:          False
+            - IMPORT_FOLDER:           /var/lib/FalkorDB/import/
+            - TEMP_FOLDER:             /tmp
+            - JS_HEAP_SIZE:            268435456  (256 MB)
+            - JS_STACK_SIZE:           1048576    (1 MB)
+        """
+
+        defaults = [
+            ("CACHE_SIZE",            25),
+            ("VKEY_MAX_ENTITY_COUNT", 100000),
+            ("CMD_INFO",              "yes"),
+            ("DELAY_INDEXING",        "no"),
+            ("IMPORT_FOLDER",         "/var/lib/FalkorDB/import/"),
+            ("TEMP_FOLDER",           "/tmp"),
+            ("JS_HEAP_SIZE",          268435456),
+            ("JS_STACK_SIZE",         1048576),
+        ]
+
+        loadtime_args = " ".join(str(token) for pair in defaults for token in pair)
+
+        env, db = Env(moduleArgs=loadtime_args)
+
+        for name, val in defaults:
+            if val == "yes":
+                val = True
+
+            elif val == "no":
+                val = False
+
+            env.assertEqual(db.config_get(name), val)
 

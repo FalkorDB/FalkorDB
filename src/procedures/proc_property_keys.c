@@ -26,7 +26,7 @@ ProcedureResult Proc_PropKeysInvoke
 	const SIValue *args,
 	const char **yield
 ) {
-	if(array_len((SIValue *)args) != 0) return PROCEDURE_ERR;
+	if(arr_len((SIValue *)args) != 0) return PROCEDURE_ERR;
 
 	RelationsContext *pdata = rm_malloc(sizeof(RelationsContext));
 
@@ -70,9 +70,9 @@ ProcedureResult Proc_PropKeysFree
 
 ProcedureCtx *Proc_PropKeysCtx() {
 	void *privateData = NULL;
-	ProcedureOutput *outputs = array_new(ProcedureOutput, 1);
+	ProcedureOutput *outputs = arr_new(ProcedureOutput, 1);
 	ProcedureOutput output = {.name = "propertyKey", .type = T_STRING};
-	array_append(outputs, output);
+	arr_append(outputs, output);
 
 	ProcedureCtx *ctx = ProcCtxNew("db.propertyKeys",
 								   0,

@@ -16,39 +16,7 @@
 #include "../serializers/encode_context.h"
 #include "../serializers/decode_context.h"
 
-#include <stdatomic.h>
-
-// GraphContext holds refrences to various elements of a graph object
-// it is the value sitting behind a Redis graph key
-//
-// the graph context is versioned, the version value itself is meaningless
-// it is used as a "signature" for the graph schema: (labels, relationship-types
-// and attribute set) client libraries which cache the mapping between graph
-// schema elements and their internal IDs (see COMPACT reply formatter)
-// can use the graph version to understand if the schema was modified
-// and take action accordingly
-
-typedef struct {
-	Graph *g;                              // container for all matrices and entity properties
-	int ref_count;                         // number of active references
-	rax *attributes;                       // from strings to attribute IDs
-	pthread_rwlock_t _attribute_rwlock;    // read-write lock to protect access to the attribute maps
-	char *graph_name;                      // string associated with graph
-	char **string_mapping;                 // from attribute IDs to strings
-	Schema **node_schemas;                 // array of schemas for each node label
-	Schema **relation_schemas;             // array of schemas for each relation type
-	unsigned short index_count;            // number of indicies
-	SlowLog *slowlog;                      // slowlog associated with graph
-	QueriesLog queries_log;                // log last x executed queries
-	GraphEncodeContext *encoding_context;  // encode context of the graph
-	GraphDecodeContext *decoding_context;  // decode context of the graph
-	Cache *cache;                          // global cache of execution plans
-	XXH32_hash_t version;                  // graph version
-	RedisModuleString *telemetry_stream;   // telemetry stream name
-	
-	atomic_bool write_in_progress;         // write query in progess
-	CircularBuffer pending_write_queue;    // pending write queries queue
-} GraphContext;
+typedef struct GraphContext GraphContext;
 
 //------------------------------------------------------------------------------
 // GraphContext API
@@ -159,6 +127,12 @@ const RedisModuleString *GraphContext_GetTelemetryStreamName
 	const GraphContext *gc
 );
 
+void GraphContext_FreeTelemetryStreamName
+(
+	GraphContext *gc,
+	RedisModuleCtx *ctx
+) ;
+
 // rename a graph context
 void GraphContext_Rename
 (
@@ -186,20 +160,20 @@ Graph *GraphContext_GetGraph
 // retrieve number of schemas created for given type
 unsigned short GraphContext_SchemaCount
 (
-	const GraphContext *gc,
+	GraphContext *gc,
 	SchemaType t
 );
 
 // checks if graph has constraints
 bool GraphContext_HasConstraints
 (
-	const GraphContext *gc
+	GraphContext *gc
 );
 
 // enable all constraints
 void GraphContext_EnableConstrains
 (
-	const GraphContext *gc
+	GraphContext *gc
 );
 
 // disable all constraints
@@ -211,7 +185,7 @@ void GraphContext_DisableConstrains
 // retrieve the specific schema for the provided ID
 Schema *GraphContext_GetSchemaByID
 (
-	const GraphContext *gc,
+	GraphContext *gc,
 	int id,
 	SchemaType t
 );
@@ -220,7 +194,7 @@ Schema *GraphContext_GetSchemaByID
 // or relation type string
 Schema *GraphContext_GetSchema
 (
-	const GraphContext *gc,
+	GraphContext *gc,
 	const char *label,
 	SchemaType t
 );
@@ -241,17 +215,10 @@ void GraphContext_RemoveSchema
 	SchemaType t
 );
 
-// returns the label string for a given Node object
-const char *GraphContext_GetNodeLabel
-(
-	const GraphContext *gc,
-	Node *n
-);
-
 // returns the relation type string for a given edge object
 const char *GraphContext_GetEdgeRelationType
 (
-	const GraphContext *gc,
+	GraphContext *gc,
 	Edge *e
 );
 
@@ -302,21 +269,21 @@ bool GraphContext_HasIndices
 );
 
 // returns the number of node indices within the passed graph context.
-uint64_t GraphContext_NodeIndexCount
+uint16_t GraphContext_NodeIndexCount
 (
-	const GraphContext *gc
+	GraphContext *gc
 );
 
 // returns the number of edge indices within the passed graph context.
-uint64_t GraphContext_EdgeIndexCount
+uint16_t GraphContext_EdgeIndexCount
 (
-	const GraphContext *gc
+	GraphContext *gc
 );
 
 // attempt to retrieve an index on the given label and attribute IDs
 Index GraphContext_GetIndexByID
 (
-	const GraphContext *gc,      // graph context
+	GraphContext *gc,            // graph context
 	int lbl_id,                  // label / rel-type ID
 	const AttributeID *attrs,    // attributes
 	uint n,                      // attributes count
@@ -327,7 +294,7 @@ Index GraphContext_GetIndexByID
 // attempt to retrieve an index on the given label and attribute
 Index GraphContext_GetIndex
 (
-	const GraphContext *gc,
+	GraphContext *gc,
 	const char *label,
 	AttributeID *attrs,
 	uint n,
@@ -426,5 +393,28 @@ void GraphContext_LogQuery
 Cache *GraphContext_GetCache
 (
 	const GraphContext *gc
+);
+
+//------------------------------------------------------------------------------
+// Encoding context
+//------------------------------------------------------------------------------
+
+GraphEncodeContext *GraphContext_GetEncodingCtx
+(
+	GraphContext *gc
+);
+
+GraphDecodeContext *GraphContext_GetDecodingCtx
+(
+	GraphContext *gc
+);
+
+//------------------------------------------------------------------------------
+// QueriesLog
+//------------------------------------------------------------------------------
+
+QueriesLog GraphContext_GetQueriesLog
+(
+	GraphContext *gc
 );
 

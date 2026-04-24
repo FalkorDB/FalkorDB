@@ -56,7 +56,7 @@ deps/GraphBLAS/Config/GraphBLAS.h.tmp
 # test result files
 /tests/flow/logs/
 /tests/tck/logs/
-
+tests/**/*.csv
 # gcov
 *.gcda
 *.gcno
@@ -73,8 +73,6 @@ cov.all
 cov.json
 *~
 redis.conf
-aclfile.acl
-perm.sh
 
 # ctags
 tags

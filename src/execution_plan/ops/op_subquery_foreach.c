@@ -46,38 +46,38 @@ static OpResult SubQueryForeachInit
 	// search for taps
 	//--------------------------------------------------------------------------
 
-	op->taps     = array_new (OpArgument*, 1) ;
-	OpBase **ops = array_new (OpBase*, 1) ;
+	op->taps     = arr_new (OpArgument*, 1) ;
+	OpBase **ops = arr_new (OpBase*, 1) ;
 
 	OpBase *sub_query_root = OpBase_GetChild (opBase, 1) ;
-	array_append (ops, sub_query_root) ;
+	arr_append (ops, sub_query_root) ;
 
-	while (array_len (ops) > 0) {
-		OpBase *child = array_pop (ops) ;
+	while (arr_len (ops) > 0) {
+		OpBase *child = arr_pop (ops) ;
 		OPType t = OpBase_Type (child) ;
 
 		// tap located
 		if (t == OPType_ARGUMENT) {
 			ASSERT (OpBase_ChildCount (child) == 0) ;
-			array_append (op->taps, (OpArgument*) child) ;
+			arr_append (op->taps, (OpArgument*) child) ;
 		}
 
 		// join op, traverse each branch
 		else if (OP_JOIN_MULTIPLE_STREAMS (child)) {
 			for (uint i = 0; i < OpBase_ChildCount (child); i++) {
-				array_append (ops, OpBase_GetChild (child, i)) ;
+				arr_append (ops, OpBase_GetChild (child, i)) ;
 			}
 		}
 
 		// go "left"
 		else if (OpBase_ChildCount (child) > 0) {
-			array_append (ops, OpBase_GetChild (child, 0)) ;
+			arr_append (ops, OpBase_GetChild (child, 0)) ;
 		}
 	}
 
-	op->n_taps = array_len (op->taps) ;
+	op->n_taps = arr_len (op->taps) ;
 
-	array_free (ops) ;
+	arr_free (ops) ;
 
 	return OP_OK ;
 }
@@ -138,7 +138,7 @@ static void SubQueryForeachFree
 	OpSubQueryForeach *op = (OpSubQueryForeach*)opBase;
 
 	if (op->taps != NULL) {
-		array_free (op->taps) ;
+		arr_free (op->taps) ;
 		op->taps = NULL ;
 	}
 }

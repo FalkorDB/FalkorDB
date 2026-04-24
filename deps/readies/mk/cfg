@@ -1,7 +1,0 @@
-
-include $(MK)/platform.cfg
-
-include $(MK)/cc.cfg
-include $(MK)/coverage.cfg
-include $(MK)/valgrind.cfg
-include $(MK)/clang-sanitizer.cfg

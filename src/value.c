@@ -78,9 +78,12 @@ SIValue SI_Edge(void *e) {
 	};
 }
 
-SIValue SI_Path(void *p) {
-	Path *path = (Path *)p;
-	return SIPath_New(path);
+SIValue SI_Path
+(
+	void *p
+) {
+	Path *path = (Path *)p ;
+	return SIPath_New (path) ;
 }
 
 SIValue SI_EmptyArray() {
@@ -873,7 +876,11 @@ int SIValue_Compare
 
 		case T_NODE:
 		case T_EDGE:
-			return ENTITY_GET_ID((GraphEntity *)a.ptrval) - ENTITY_GET_ID((GraphEntity *)b.ptrval);
+		{
+			EntityID a_id = ENTITY_GET_ID((GraphEntity *)a.ptrval);
+			EntityID b_id = ENTITY_GET_ID((GraphEntity *)b.ptrval);
+			return (a_id > b_id) - (a_id < b_id);
+		}
 
 		case T_ARRAY:
 			return SIArray_Compare(a, b, disjointOrNull);

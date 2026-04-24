@@ -11,7 +11,7 @@
 #include "../../datatypes/set.h"
 
 typedef SIValue AggregateResult;
-AggregateResult AGGREGATE_OK;
+extern AggregateResult AGGREGATE_OK;
 
 // create a new aggregation function descriptor
 AR_FuncDesc *AR_AggFuncDescNew
