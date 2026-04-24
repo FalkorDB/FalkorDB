@@ -7,6 +7,8 @@
 #include "graph_hub.h"
 #include "../query_ctx.h"
 
+#include <unistd.h>
+
 // create a node
 // set the node labels and attributes
 // add the node to the relevant indexes
@@ -166,7 +168,7 @@ void GraphHub_CreateEdges
 		RedisModule_Log (NULL, "warning",
 				"GraphHub_CreateEdges: relation ID %d schema not found"
 				" - replica/primary schema desync detected, aborting", r) ;
-		exit (1) ;
+		_exit (1) ;
 	}
 
 	Graph_CreateEdges (GraphContext_GetGraph (gc), r, edges, sets) ;

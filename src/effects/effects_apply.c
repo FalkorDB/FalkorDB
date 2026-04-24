@@ -9,6 +9,7 @@
 #include "../graph/graph_hub.h"
 
 #include <stdio.h>
+#include <unistd.h>
 
 // read effect type from stream
 static inline EffectType ReadEffectType
@@ -315,7 +316,7 @@ static void ApplyLabels
 					"ApplyLabels: label ID %d schema not found"
 					" - replica/primary schema desync detected, aborting",
 					l) ;
-			exit (1) ;
+			_exit (1) ;
 		}
 		lbl[i] = Schema_GetName (s) ;
 	}
@@ -661,7 +662,7 @@ void Effects_Apply
 	// validate effects version
 	if(ValidateVersion(stream) == false) {
 		// replica/primary out of sync
-		exit(1);
+		_exit(1);
 	}
 
 	// lock graph for writing
