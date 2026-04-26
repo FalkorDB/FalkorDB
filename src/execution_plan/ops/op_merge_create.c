@@ -11,6 +11,7 @@
 
 // forward declarations
 static Record MergeCreateConsume(OpBase *opBase);
+static OpResult MergeCreateReset(OpBase *opBase);
 static OpBase *MergeCreateClone(const ExecutionPlan *plan, const OpBase *opBase);
 static OpResult MergeCreateInit(OpBase* opBase);
 static void MergeCreateFree(OpBase *opBase);
@@ -75,8 +76,8 @@ OpBase *NewMergeCreateOp
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_MERGE_CREATE, "MergeCreate",
-			MergeCreateInit, MergeCreateConsume, NULL, NULL, MergeCreateClone,
-			MergeCreateFree, true, plan);
+			MergeCreateInit, MergeCreateConsume, MergeCreateReset, NULL,
+			MergeCreateClone, MergeCreateFree, true, plan);
 
 	uint node_blueprint_count = arr_len(nodes);
 	uint edge_blueprint_count = arr_len(edges);
@@ -322,6 +323,39 @@ static Record MergeCreateConsume
 	// return the input record in case it represents a duplicate
 	// which will later on be matched
 	return r;
+}
+
+static OpResult MergeCreateReset
+(
+	OpBase *opBase
+) {
+	OpMergeCreate *op = (OpMergeCreate *)opBase ;
+
+	// switch back to consume mode
+	op->handoff_mode = false ;
+
+	// free remaining records and restore the NULL terminator
+	if (op->records != NULL) {
+		uint rec_count = arr_len (op->records) ;
+		for (uint i = 0; i < rec_count; i++) {
+			if (op->records[i] != NULL) {
+				OpBase_DeleteRecord (op->records + i) ;
+			}
+		}
+		arr_clear (op->records) ;
+		arr_append (op->records, NULL) ;
+	}
+
+	// clear unique entities map
+	if (op->unique_entities != NULL) {
+		raxFree (op->unique_entities) ;
+		op->unique_entities = raxNew () ;
+	}
+
+	// reset pending creations
+	PendingCreations_Reset (&op->pending) ;
+
+	return OP_OK ;
 }
 
 // commit accumulated changes and switch to Record handoff mode
