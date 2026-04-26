@@ -298,6 +298,14 @@ static void _ExecutionPlan_BindOpsToPlan
 
 // for all ops in the given tree, associate the provided ExecutionPlan
 // merge the query graphs of the temporary and main plans
+//
+// IMPORTANT LIFETIME INVARIANT: QueryGraph_MergeGraphs clones QGEdge/QGNode
+// objects from root->plan->query_graph into plan->query_graph.  Any op that
+// stores a raw QGEdge* pointer (e.g. EdgeTraverseCtx->e) still references the
+// originals in the temporary QueryGraph after this call.  The caller must
+// rebind those pointers to the cloned equivalents in plan->query_graph before
+// freeing the temporary plan; see _RebindEdgeCtxToMergedQG in
+// execution_plan_construct.c for the canonical example.
 void ExecutionPlan_BindOpsToPlan
 (
 	ExecutionPlan *plan,  // plan to bind the operations to
