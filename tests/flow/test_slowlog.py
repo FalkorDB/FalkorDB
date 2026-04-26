@@ -1,7 +1,7 @@
 import asyncio
 from common import *
 from falkordb.asyncio import FalkorDB
-from distutils.version import StrictVersion
+from packaging.version import Version
 from redis.asyncio import BlockingConnectionPool
 
 GRAPH_ID = "slowlog_test"
@@ -59,7 +59,7 @@ class testSlowLog():
         self.env.assertEqual(len(A), 10)
 
         server = self.redis_con.info("Server")
-        if StrictVersion(server["redis_version"]) < StrictVersion("6.2.0"):
+        if Version(server["redis_version"]) < Version("6.2.0"):
             # redis < 6.2.0 not support slowlog time measure
             return
 

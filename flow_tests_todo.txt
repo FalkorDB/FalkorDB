@@ -20,7 +20,6 @@ tests/flow/test_bolt.py
 tests/flow/test_graph_copy.py
 tests/flow/test_graph_info.py
 tests/flow/test_ro_query.py
-tests/flow/test_slowlog.py
 tests/flow/test_procedures.py
 
 ## Memory & Resource Management
