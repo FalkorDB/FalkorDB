@@ -15,7 +15,7 @@ class testParams(FlowTestsBase):
 
     def tearDown(self):
         self.graph.delete()
-    
+
     def test_simple_params(self):
         params = [1, 2.3, -1, -2.3, "str", True, False, None, [0, 1, 2]]
         query = "RETURN $param"
@@ -55,7 +55,7 @@ class testParams(FlowTestsBase):
             ("CYPHER x = -1.2e2", -1.2e2),
             ("CYPHER x = -1.2e+2", -1.2e+2),
             ("CYPHER x = -1.2e-2", -1.2e-2),
-    
+
             # --- Strings ---
 
             ("CYPHER x = ''", ''),           # Empty single-quoted
@@ -68,7 +68,7 @@ class testParams(FlowTestsBase):
             ("CYPHER x = 'a\\nb'", "a\nb"),  # Escaped newline
             ("CYPHER x = 'a\\\\b'", "a\\b"), # Escaped backslash
             ("CYPHER x = 'aBc'", "aBc"),     # "aBc"
-    
+
             # --- Booleans ---
 
             ("CYPHER x = true",  True),
@@ -77,12 +77,12 @@ class testParams(FlowTestsBase):
             ("CYPHER x = false", False),
             ("CYPHER x = False", False),
             ("CYPHER x = FALSE", False),
-    
+
             # --- Null ---
             ("CYPHER x = null", None),
             ("CYPHER x = Null", None),
             ("CYPHER x = NULL", None),
-    
+
             # --- Arrays ---
             ("CYPHER x = []", []),
             ("CYPHER x = [1, 2, 3]", [1, 2, 3]),
@@ -91,7 +91,7 @@ class testParams(FlowTestsBase):
             ("CYPHER x = [[1, 2], [3, 4]]", [[1, 2], [3, 4]]),
             ("CYPHER x = [[1, [2]], [3]]", [[1, [2]], [3]]),
             ("CYPHER x = [[], []]", [[], []]),
-    
+
             # --- Maps ---
             ("CYPHER x = {}", {}),
             ("CYPHER x = {a: 1}", {'a': 1}),
@@ -276,7 +276,7 @@ class testParams(FlowTestsBase):
         params = {'param': 1}
         query = "RETURN $param + 1"
         expected_results = [[2]]
-            
+
         query_info = QueryInfo(query = query, description="Tests expression on param", expected_result = expected_results)
         self._assert_resultset_equals_expected(self.graph.query(query, params), query_info)
 
@@ -289,7 +289,7 @@ class testParams(FlowTestsBase):
         params = {'name': 'a'}
         query = "MATCH (n :Person {name:$name}) RETURN n"
         expected_results = [[p0]]
-            
+
         query_info = QueryInfo(query = query, description="Tests expression on param", expected_result = expected_results)
         self._assert_resultset_equals_expected(self.graph.query(query, params), query_info)
 
@@ -297,7 +297,7 @@ class testParams(FlowTestsBase):
         params = {'skip': 1, 'limit': 1}
         query = "UNWIND [1,2,3] AS X RETURN X SKIP $skip LIMIT $limit"
         expected_results = [[2]]
-            
+
         query_info = QueryInfo(query = query, description="Tests skip limit as params", expected_result = expected_results)
         self._assert_resultset_equals_expected(self.graph.query(query, params), query_info)
 
@@ -388,7 +388,7 @@ class testParams(FlowTestsBase):
         result = self.graph.query("RETURN $m", {'m': nested})
         self.env.assertEqual(result.result_set, [[nested]])
 
-        # map used in SET += (the primary use-case from the issue)
+        # map used in SET +=
         self.graph.query("CREATE (n:MP {id: 1})")
         props = {'title': 'Hello', 'count': 99}
         result = self.graph.query(
