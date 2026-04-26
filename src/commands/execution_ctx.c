@@ -124,6 +124,12 @@ ExecutionCtx *ExecutionCtx_FromQuery
 	// cmd_ctx->query string excluding query parameters
 	parse_params (cmd_ctx->params, &query_no_params) ;
 
+	// if parameter parsing set an error, bail out before the (potentially
+	// corrupted) query buffer reaches the Cypher parser
+	if (unlikely (ErrorCtx_EncounteredError ())) {
+		return NULL ;
+	}
+
 	// query included only params e.g. 'cypher a=1' was provided
 	if (unlikely (*query_no_params == '\0')) {
 		ErrorCtx_SetError (EMSG_EMPTY_QUERY) ;
