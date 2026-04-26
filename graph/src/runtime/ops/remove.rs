@@ -27,16 +27,12 @@ pub struct RemoveOp<'a> {
 }
 
 impl<'a> RemoveOp<'a> {
-    pub fn new(
+    pub const fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         items: &'a Vec<QueryExpr<Variable>>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
-        runtime.pending.borrow_mut().resize(
-            runtime.g.borrow().node_cap(),
-            runtime.g.borrow().labels_count(),
-        );
         Self {
             runtime,
             child,

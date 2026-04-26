@@ -14,8 +14,6 @@ use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_t
 use graph::{
     entity_type::EntityType,
     graph::graph::{Graph, NodeId, RelationshipId},
-    graph::graphblas::matrix::{Matrix, New, Set},
-    graph::graphblas::tensor::GrB_INDEX_MAX,
     index::IndexType,
     runtime::{
         ordermap::OrderMap,
@@ -23,8 +21,8 @@ use graph::{
             ATTR_NODE, ATTR_REL, EFFECT_ADD_ATTRIBUTE, EFFECT_ADD_SCHEMA, EFFECT_CREATE_EDGE,
             EFFECT_CREATE_INDEX, EFFECT_CREATE_NODE, EFFECT_DELETE_EDGE, EFFECT_DELETE_NODE,
             EFFECT_DROP_INDEX, EFFECT_REMOVE_LABELS, EFFECT_SET_LABELS, EFFECT_UPDATE_EDGE,
-            EFFECT_UPDATE_NODE, EFFECTS_VERSION, PendingRelationship, SCHEMA_NODE_LABEL,
-            SCHEMA_REL_TYPE, read_string, read_u16, read_u64, read_value,
+            EFFECT_UPDATE_NODE, EFFECTS_VERSION, SCHEMA_NODE_LABEL, SCHEMA_REL_TYPE, read_string,
+            read_u16, read_u64, read_value,
         },
         value::Value,
     },
@@ -126,11 +124,13 @@ fn apply_effects(
 
                 // Labels
                 let label_count = read_u16(buf, &mut offset)?;
-                let mut set_labels = Matrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
+                let mut label_rows = Vec::with_capacity(label_count as usize);
+                let mut label_cols = Vec::with_capacity(label_count as usize);
                 for _ in 0..label_count {
                     let label_name = read_string(buf, &mut offset)?;
                     let label_id = g.get_label_id_mut(&label_name);
-                    set_labels.set(node_id_raw, label_id.0 as u64, true);
+                    label_rows.push(node_id_raw);
+                    label_cols.push(label_id.0 as u64);
                 }
 
                 // Create the node
@@ -140,7 +140,7 @@ fn apply_effects(
 
                 // Apply labels
                 if label_count > 0 {
-                    g.set_nodes_labels(&mut set_labels, &mut index_add_docs);
+                    g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut index_add_docs);
                 }
 
                 // Attributes
@@ -161,11 +161,7 @@ fn apply_effects(
 
                 g.inc_reserved_relationship_count();
 
-                let pending_rel =
-                    PendingRelationship::new(NodeId::from(src_id), NodeId::from(dst_id), type_name);
-                let mut rels = FxHashMap::default();
-                rels.insert(RelationshipId::from(rel_id_raw), pending_rel);
-                g.create_relationships(&rels);
+                g.create_relationships_bulk(&type_name, &[src_id], &[dst_id], &[rel_id_raw]);
 
                 // Attributes
                 let attr_count = read_u16(buf, &mut offset)?;
@@ -198,26 +194,30 @@ fn apply_effects(
             EFFECT_SET_LABELS => {
                 let node_id = read_u64(buf, &mut offset)?;
                 let label_count = read_u16(buf, &mut offset)?;
-                let mut set_labels = Matrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
+                let mut label_rows = Vec::with_capacity(label_count as usize);
+                let mut label_cols = Vec::with_capacity(label_count as usize);
                 for _ in 0..label_count {
                     let label_name = read_string(buf, &mut offset)?;
                     let label_id = g.get_label_id_mut(&label_name);
-                    set_labels.set(node_id, label_id.0 as u64, true);
+                    label_rows.push(node_id);
+                    label_cols.push(label_id.0 as u64);
                 }
-                g.set_nodes_labels(&mut set_labels, &mut index_add_docs);
+                g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut index_add_docs);
             }
 
             EFFECT_REMOVE_LABELS => {
                 let node_id = read_u64(buf, &mut offset)?;
                 let label_count = read_u16(buf, &mut offset)?;
-                let mut remove_labels = Matrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
+                let mut label_rows = Vec::with_capacity(label_count as usize);
+                let mut label_cols = Vec::with_capacity(label_count as usize);
                 for _ in 0..label_count {
                     let label_name = read_string(buf, &mut offset)?;
                     if let Some(label_id) = g.get_label_id(&label_name) {
-                        remove_labels.set(node_id, label_id.0 as u64, true);
+                        label_rows.push(node_id);
+                        label_cols.push(label_id.0 as u64);
                     }
                 }
-                g.remove_nodes_labels(&mut remove_labels, &mut index_remove_docs);
+                g.remove_nodes_labels(&label_rows, &label_cols, &mut index_remove_docs);
             }
 
             EFFECT_DELETE_NODE => {

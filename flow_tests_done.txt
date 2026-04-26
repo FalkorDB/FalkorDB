@@ -5,6 +5,7 @@ tests/flow/test_betweenness.py
 tests/flow/test_bfs.py
 tests/flow/test_bidirectional_traversals.py
 tests/flow/test_bound_variables
+tests/flow/test_bulk_insertion.py
 tests/flow/test_cache
 tests/flow/test_call_subquery.py
 tests/flow/test_cdlp.py

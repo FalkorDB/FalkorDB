@@ -19,6 +19,7 @@
 
 use redis_module::{RedisError, RedisResult};
 
+pub mod bulk_insert;
 pub mod config_cmd;
 pub mod debug;
 pub mod delete;
@@ -32,6 +33,7 @@ pub mod record;
 pub mod ro_query;
 pub mod udf;
 
+pub use bulk_insert::graph_bulk_insert;
 pub use config_cmd::graph_config;
 pub use debug::graph_debug;
 pub use delete::graph_delete;

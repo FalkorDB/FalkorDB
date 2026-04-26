@@ -713,6 +713,33 @@ impl AttributeStore {
         nset
     }
 
+    /// Import pre-resolved attribute data directly into the cache.
+    /// Skips name resolution and OrderMap construction; used by bulk insert.
+    pub fn import_attrs_resolved(
+        &mut self,
+        data: &mut Vec<(u64, Vec<(u16, Value)>)>,
+    ) -> usize {
+        let mut nset = 0;
+        for (entity_id, entries) in data.drain(..) {
+            nset += entries.len();
+            self.cache
+                .insert_entity_presorted(entity_id, entries, self.version, true);
+            self.dirty_entities.insert(entity_id);
+        }
+        nset
+    }
+
+    /// Resolve an attribute name to its index, creating a new mapping if needed.
+    pub fn get_or_create_attr_id(
+        &mut self,
+        attr: &Arc<String>,
+    ) -> u16 {
+        self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
+            self.attrs_name.insert(attr.clone());
+            self.attrs_name.len() - 1
+        }) as u16
+    }
+
     #[must_use]
     pub fn get_attr_id(
         &self,

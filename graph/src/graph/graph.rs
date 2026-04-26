@@ -72,7 +72,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 
 use atomic_refcell::AtomicRefCell;
 use lru::LruCache;
@@ -100,10 +100,7 @@ use crate::{
     },
     parser::{ast::ExprIR, cypher::Parser},
     planner::{IR, Planner, binder::Binder, optimizer::optimize},
-    runtime::{
-        eval::evaluate_param, ordermap::OrderMap, orderset::OrderSet, pending::PendingRelationship,
-        value::Value,
-    },
+    runtime::{eval::evaluate_param, ordermap::OrderMap, orderset::OrderSet, value::Value},
     threadpool::spawn,
 };
 
@@ -1178,6 +1175,39 @@ impl Graph {
         nset
     }
 
+    /// Import pre-resolved node attributes directly into the cache.
+    /// Used by bulk insert to avoid per-node OrderMap allocations.
+    pub fn import_node_attrs_resolved(
+        &mut self,
+        data: &mut Vec<(u64, Vec<(u16, Value)>)>,
+    ) -> usize {
+        self.node_attrs.import_attrs_resolved(data)
+    }
+
+    /// Resolve a node attribute name to its index, creating if needed.
+    pub fn get_or_create_node_attr_id(
+        &mut self,
+        attr: &Arc<String>,
+    ) -> u16 {
+        self.node_attrs.get_or_create_attr_id(attr)
+    }
+
+    /// Import pre-resolved relationship attributes directly into the cache.
+    pub fn import_relationship_attrs_resolved(
+        &mut self,
+        data: &mut Vec<(u64, Vec<(u16, Value)>)>,
+    ) -> usize {
+        self.relationship_attrs.import_attrs_resolved(data)
+    }
+
+    /// Resolve a relationship attribute name to its index, creating if needed.
+    pub fn get_or_create_rel_attr_id(
+        &mut self,
+        attr: &Arc<String>,
+    ) -> u16 {
+        self.relationship_attrs.get_or_create_attr_id(attr)
+    }
+
     pub fn import_relationship_attrs(
         &mut self,
         attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
@@ -1213,20 +1243,20 @@ impl Graph {
         }
     }
 
-    pub fn set_nodes_labels(
+    /// Bulk set node labels using parallel row/col slices (2 FFI calls per matrix).
+    pub fn set_nodes_labels_bulk(
         &mut self,
-        nodes_labels: &mut Matrix,
+        label_rows: &[u64],
+        label_cols: &[u64],
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
         self.resize();
 
-        // Collect entries grouped by label for bulk set_all on per-label matrices
+        // Collect entries grouped by label for per-label matrices
         let num_labels = self.labels_matices.len();
         let mut by_label: Vec<Vec<u64>> = vec![Vec::new(); num_labels];
-        let mut nl_entries: Vec<(u64, u64)> = Vec::new();
 
-        for (id, label_id) in nodes_labels.iter(0, u64::MAX) {
-            nl_entries.push((id, label_id));
+        for (&id, &label_id) in label_rows.iter().zip(label_cols.iter()) {
             by_label[label_id as usize].push(id);
 
             let label = &self.node_labels[label_id as usize];
@@ -1235,23 +1265,25 @@ impl Graph {
             }
         }
 
-        self.node_labels_matrix.set_all(nl_entries.into_iter());
+        self.node_labels_matrix
+            .set_all(label_rows.iter().copied().zip(label_cols.iter().copied()));
 
         for (lid, ids) in by_label.into_iter().enumerate() {
             if !ids.is_empty() {
-                self.labels_matices[lid].set_all(ids.into_iter().map(|id| (id, id)));
+                self.labels_matices[lid].set_all(ids.iter().map(|&id| (id, id)));
             }
         }
     }
 
     pub fn remove_nodes_labels(
         &mut self,
-        nodes_labels: &mut Matrix,
+        label_rows: &[u64],
+        label_cols: &[u64],
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
         self.resize();
 
-        for (id, label_id) in nodes_labels.iter(0, u64::MAX) {
+        for (&id, &label_id) in label_rows.iter().zip(label_cols.iter()) {
             self.node_labels_matrix.remove(id, label_id);
             self.labels_matices[label_id as usize].remove(id, id);
             let label = &self.node_labels[label_id as usize];
@@ -1556,23 +1588,27 @@ impl Graph {
         ids
     }
 
-    pub fn create_relationships(
+    /// Create relationships of a single type using flat arrays.
+    /// Avoids HashMap overhead while using individual GraphBLAS set calls.
+    pub fn create_relationships_bulk(
         &mut self,
-        relationships: &FxHashMap<RelationshipId, PendingRelationship>,
+        type_name: &Arc<String>,
+        srcs: &[u64],
+        dsts: &[u64],
+        rel_ids: &[u64],
     ) {
-        self.relationship_count += relationships.len() as u64;
-        self.reserved_relationship_count -= relationships.len() as u64;
+        let count = srcs.len() as u64;
+        self.relationship_count += count;
+        self.reserved_relationship_count -= count;
 
-        for id in relationships.keys() {
+        for &id in rel_ids {
             if self.deleted_relationships.is_empty() {
                 break;
             }
-            self.deleted_relationships.remove(id.0);
+            self.deleted_relationships.remove(id);
         }
 
-        // Ensure capacity covers the highest relationship ID (effects replay
-        // may insert IDs above the current count when applied one-by-one).
-        if let Some(max_id) = relationships.keys().map(|id| id.0).max() {
+        if let Some(&max_id) = rel_ids.iter().max() {
             let needed = max_id + 1;
             if needed > self.relationship_cap {
                 while needed > self.relationship_cap {
@@ -1582,46 +1618,36 @@ impl Graph {
             }
         }
 
-        // Pre-resolve type names → (matrix index, type_id) ONCE.
-        let mut type_cache: FxHashMap<*const String, (usize, u64)> = FxHashMap::default();
-        for rel in relationships.values() {
-            let ptr = Arc::as_ptr(&rel.type_name);
-            if let std::collections::hash_map::Entry::Vacant(e) = type_cache.entry(ptr) {
-                // Ensure the type + matrix exist
-                self.get_relationship_matrix_mut(&rel.type_name);
-                let type_idx = self
-                    .relationship_types
-                    .iter()
-                    .position(|t| t.as_str() == rel.type_name.as_str())
-                    .unwrap();
-                e.insert((type_idx, type_idx as u64));
-            }
-        }
+        self.get_relationship_matrix_mut(type_name);
+        let type_idx = self
+            .relationship_types
+            .iter()
+            .position(|t| t.as_str() == type_name.as_str())
+            .unwrap();
 
         self.resize();
 
-        // Collect entries per-tensor, plus adjacency and type matrix entries
-        let mut by_tensor: FxHashMap<usize, Vec<(u64, u64, u64)>> = FxHashMap::default();
-        let mut adj_entries: Vec<(u64, u64)> = Vec::with_capacity(relationships.len());
-        let mut type_entries: Vec<(u64, u64)> = Vec::with_capacity(relationships.len());
+        self.relationship_matrices[type_idx].set_all_from_slices(srcs, dsts, rel_ids);
 
-        for (id, rel) in relationships {
-            let ptr = Arc::as_ptr(&rel.type_name);
-            let (matrix_idx, type_id) = type_cache[&ptr];
-            by_tensor
-                .entry(matrix_idx)
-                .or_default()
-                .push((rel.from.0, rel.to.0, id.0));
-            adj_entries.push((rel.from.0, rel.to.0));
-            type_entries.push((id.0, type_id));
-        }
+        self.adjacancy_matrix
+            .set_all(srcs.iter().copied().zip(dsts.iter().copied()));
 
-        for (matrix_idx, entries) in by_tensor {
-            self.relationship_matrices[matrix_idx].set_all(entries.into_iter());
-        }
-        self.adjacancy_matrix.set_all(adj_entries.into_iter());
+        let type_id = type_idx as u64;
+        let type_ids: Vec<u64> = vec![type_id; rel_ids.len()];
         self.relationship_type_matrix
-            .set_all(type_entries.into_iter());
+            .set_all(rel_ids.iter().copied().zip(type_ids.iter().copied()));
+    }
+
+    /// Flush delta-plus into base for all shared matrices.
+    /// Reduces dp accumulation across multiple GRAPH.BULK commands.
+    pub fn flush_for_bulk(&mut self) {
+        self.all_nodes_matrix.flush();
+        self.node_labels_matrix.flush();
+        for m in &mut self.labels_matices {
+            m.flush();
+        }
+        self.adjacancy_matrix.flush();
+        self.relationship_type_matrix.flush();
     }
 
     pub fn set_relationships_attributes(
@@ -2364,7 +2390,7 @@ impl Graph {
             // — skipped below.
             let mut pending: FxHashSet<u64> = ids.iter().collect();
             let mut endpoints: FxHashMap<u64, (u64, u64)> =
-                FxHashMap::with_capacity_and_hasher(ids.len() as usize, Default::default());
+                FxHashMap::with_capacity_and_hasher(ids.len() as usize, FxBuildHasher);
             if let Some(t) = self.relationship_matrices.get(type_id as usize) {
                 for (src, dst, eid) in t.iter(0, u64::MAX, false) {
                     if pending.remove(&eid) {
@@ -2476,7 +2502,7 @@ impl Graph {
             EntityType::Relationship => {
                 let total = self
                     .get_relationship_matrix(label)
-                    .map_or(0, |t| t.edge_count());
+                    .map_or(0, Tensor::edge_count);
                 (&mut self.edge_indexer, total, IndexKind::Edge)
             }
         };
@@ -2555,14 +2581,13 @@ impl Graph {
         &self,
         label: &Arc<String>,
     ) -> Vec<(NodeId, NodeId, RelationshipId)> {
-        if let Some(tensor) = self.get_relationship_matrix(label) {
-            tensor
-                .iter(0, u64::MAX, false)
-                .map(|(src, dst, eid)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
-                .collect()
-        } else {
-            vec![]
-        }
+        self.get_relationship_matrix(label)
+            .map_or_else(std::vec::Vec::new, |tensor| {
+                tensor
+                    .iter(0, u64::MAX, false)
+                    .map(|(src, dst, eid)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
+                    .collect()
+            })
     }
 
     pub fn fulltext_query_nodes(

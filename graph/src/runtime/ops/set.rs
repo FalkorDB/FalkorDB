@@ -62,14 +62,9 @@ impl<'a> Iterator for SetOp<'a> {
             Err(e) => return Some(Err(e)),
         };
 
-        let resolved = self.resolved_items.get_or_init(|| {
-            let items = self.runtime.resolve_set_items(self.items);
-            self.runtime.pending.borrow_mut().resize(
-                self.runtime.g.borrow().node_cap(),
-                self.runtime.g.borrow().labels_count(),
-            );
-            items
-        });
+        let resolved = self
+            .resolved_items
+            .get_or_init(|| self.runtime.resolve_set_items(self.items));
         if let Err(e) = self.runtime.set_batch(resolved, &batch) {
             return Some(Err(e));
         }

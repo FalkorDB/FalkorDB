@@ -194,10 +194,9 @@ impl<'a> AggregateOp<'a> {
 
         let mut agg_kinds = Vec::with_capacity(self.agg.len());
         for (_target, tree) in self.agg {
-            if let Some(agg) = Self::analyze_agg_tree(tree) {
+            {
+                let agg = Self::analyze_agg_tree(tree)?;
                 agg_kinds.push(agg);
-            } else {
-                return None;
             }
         }
 

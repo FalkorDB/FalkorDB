@@ -77,7 +77,7 @@ type WriteQueryResult = Result<(Arc<AtomicRefCell<Graph>>, Option<Vec<u8>>, bool
 /// Redis guarantees these pointers are non-null after `RedisModule_Init` succeeds.
 /// Centralising the `.expect()` here documents that invariant in one place and
 /// keeps call sites free of `unwrap()` noise.
-mod ffi {
+pub(crate) mod ffi {
     use redis_module::raw;
     use std::ffi::CString;
     use std::os::raw::c_char;
@@ -188,6 +188,26 @@ mod ffi {
             free(ctx, rstr);
         }
     }
+
+    /// Yield execution back to Redis so it can serve other clients (e.g. PING)
+    /// during long-running commands.
+    ///
+    /// `flags`: `REDISMODULE_YIELD_FLAG_NONE` (1) or `REDISMODULE_YIELD_FLAG_CLIENTS` (2).
+    /// `busy_reply`: optional busy reply string (null pointer for default).
+    ///
+    /// # Safety
+    /// `ctx` must be a valid Redis module context for the active command.
+    pub unsafe fn yield_ctx(
+        ctx: *mut raw::RedisModuleCtx,
+        flags: i32,
+    ) {
+        let f = unsafe { raw::RedisModule_Yield }.expect(MSG);
+        unsafe { f(ctx, flags, null_mut() as *const c_char) };
+    }
+
+    /// `REDISMODULE_YIELD_FLAG_CLIENTS` — allow Redis to process client
+    /// commands (including PING) while we yield.
+    pub const YIELD_FLAG_CLIENTS: i32 = 1 << 1;
 }
 
 pub struct ThreadedGraph {

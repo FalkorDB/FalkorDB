@@ -96,36 +96,18 @@ impl<'a> MergeOp<'a> {
     }
 
     fn resolve_pattern(&self) -> &QueryGraph<Arc<String>, LabelId, Variable> {
-        self.resolved_pattern.get_or_init(|| {
-            let resolved = self.runtime.resolve_pattern(self.pattern);
-            self.runtime.pending.borrow_mut().resize(
-                self.runtime.g.borrow().node_cap(),
-                self.runtime.g.borrow().labels_count(),
-            );
-            resolved
-        })
+        self.resolved_pattern
+            .get_or_init(|| self.runtime.resolve_pattern(self.pattern))
     }
 
     fn resolve_on_create_set_items(&self) -> &Vec<SetItem<LabelId, Variable>> {
-        self.resolved_on_create_set_items.get_or_init(|| {
-            let resolved = self.runtime.resolve_set_items(self.on_create_set_items);
-            self.runtime.pending.borrow_mut().resize(
-                self.runtime.g.borrow().node_cap(),
-                self.runtime.g.borrow().labels_count(),
-            );
-            resolved
-        })
+        self.resolved_on_create_set_items
+            .get_or_init(|| self.runtime.resolve_set_items(self.on_create_set_items))
     }
 
     fn resolve_on_match_set_items(&self) -> &Vec<SetItem<LabelId, Variable>> {
-        self.resolved_on_match_set_items.get_or_init(|| {
-            let resolved = self.runtime.resolve_set_items(self.on_match_set_items);
-            self.runtime.pending.borrow_mut().resize(
-                self.runtime.g.borrow().node_cap(),
-                self.runtime.g.borrow().labels_count(),
-            );
-            resolved
-        })
+        self.resolved_on_match_set_items
+            .get_or_init(|| self.runtime.resolve_set_items(self.on_match_set_items))
     }
 
     fn do_create_fallback(
