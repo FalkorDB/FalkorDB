@@ -278,3 +278,94 @@ class testPathFilter(FlowTestsBase):
 
         res = self.graph.query(q).result_set
         self.env.assertEqual(res[0][0], 1)
+
+    def test16_and_multiplexer_all_branches_evaluated(self):
+        # Regression test for C-6: AndMultiplexer_Consume silently truncates
+        # query results when any branch returns NULL.
+        #
+        # Root cause (op_apply_multiplexer.c:146-174): after a branch returns NULL
+        # (filter fails for the current bound record), the for-loop breaks and
+        # execution falls through unconditionally to `return r` (where r is now NULL).
+        # This terminates the entire AND Apply Multiplexer as if the bound stream were
+        # exhausted, instead of discarding the current record and retrying with the next.
+        #
+        # PLANNER NOTE: `WHERE A AND B` (two path predicates) is always decomposed by
+        # FilterTree_SubTrees into two stacked Semi Apply ops — the AND Apply Multiplexer
+        # is only created when the AND lives inside an OR, e.g.
+        #   WHERE P1 OR (P2 AND P3)
+        # In that structure the AND Apply Multiplexer's bound_branch is an Argument fed
+        # ONE record at a time by its parent OR Apply Multiplexer, so the early-return
+        # NULL is accidentally equivalent to the correct behaviour (Argument exhausted).
+        # The bug is therefore LATENT in the current planner: the while(true) loop never
+        # needs to iterate more than once.  These tests pin the correct semantics so that
+        # any future planner change that exposes the bug will be caught immediately.
+        #
+        # Graph layout:
+        #   (:N {name:'or_branch'})  – has R1 only  → satisfies the OR's R1 branch
+        #   (:N {name:'and_branch'}) – has R2 and R3 → satisfies the OR's AND(R2,R3) branch
+        #   (:N {name:'neither'})    – has R2 only   → fails both branches
+        #   (:N {name:'both'})       – has R1, R2, R3 → satisfies both branches
+        self.graph.query("""
+            CREATE
+                (:N {name: 'or_branch'})-[:R1]->(:X),
+                (:N {name: 'and_branch'})-[:R2]->(:X),
+                (:N {name: 'neither'})-[:R2]->(:X),
+                (:N {name: 'both'})-[:R1]->(:X)
+        """)
+        self.graph.query("MATCH (n:N {name: 'and_branch'}) CREATE (n)-[:R3]->(:Y)")
+        self.graph.query("MATCH (n:N {name: 'both'})  CREATE (n)-[:R2]->(:X), (n)-[:R3]->(:Y)")
+
+        # This query is the canonical trigger for the AND Apply Multiplexer:
+        # the AND is nested inside an OR so FilterTree_SubTrees keeps it as one tree.
+        query = """MATCH (n:N)
+                   WHERE (n)-[:R1]->() OR ((n)-[:R2]->() AND (n)-[:R3]->())
+                   RETURN n.name ORDER BY n.name"""
+
+        # Verify the planner actually emits an AND Apply Multiplexer; if this
+        # assertion ever fails, the test setup needs updating.
+        plan = str(self.graph.explain(query))
+        self.env.assertIn('AND Apply Multiplexer', plan)
+
+        result = self.graph.query(query)
+        # 'neither' has R2 but not R3, so it fails both branches of the OR.
+        # All three passing nodes must be returned.
+        expected = [['and_branch'], ['both'], ['or_branch']]
+        self.env.assertEqual(result.result_set, expected)
+
+    def test17_and_multiplexer_partial_branch_failure(self):
+        # Companion to test16 (C-6 regression): verifies that a node satisfying only
+        # ONE of the two AND sub-conditions is correctly excluded, while nodes
+        # satisfying the sibling OR branch are still returned.
+        #
+        # The AND Apply Multiplexer must evaluate BOTH branches before deciding to
+        # discard a bound record.  If it short-circuits incorrectly (returning NULL
+        # after the first failing branch without attempting all of them for that
+        # record, or without moving on to the next record from the bound stream),
+        # the result set is silently incomplete.
+        #
+        # Graph:
+        #   (:N {name:'r3_only'})    – has R3 but not R2 → fails AND(R2,R3)
+        #   (:N {name:'r2_only'})    – has R2 but not R3 → fails AND(R2,R3)
+        #   (:N {name:'r1_pass'})    – has R1          → passes the OR's R1 branch
+        #   (:N {name:'r2r3_pass'})  – has R2 and R3   → passes the AND branch
+        self.graph.query("""
+            CREATE
+                (:N {name: 'r3_only'})-[:R3]->(:Y),
+                (:N {name: 'r2_only'})-[:R2]->(:X),
+                (:N {name: 'r1_pass'})-[:R1]->(:X),
+                (:N {name: 'r2r3_pass'})-[:R2]->(:X)
+        """)
+        self.graph.query("MATCH (n:N {name: 'r2r3_pass'}) CREATE (n)-[:R3]->(:Y)")
+
+        query = """MATCH (n:N)
+                   WHERE (n)-[:R1]->() OR ((n)-[:R2]->() AND (n)-[:R3]->())
+                   RETURN n.name ORDER BY n.name"""
+
+        plan = str(self.graph.explain(query))
+        self.env.assertIn('AND Apply Multiplexer', plan)
+
+        result = self.graph.query(query)
+        # r3_only and r2_only each satisfy only one half of AND(R2,R3) and have no R1.
+        # Only r1_pass and r2r3_pass should appear.
+        expected = [['r1_pass'], ['r2r3_pass']]
+        self.env.assertEqual(result.result_set, expected)
