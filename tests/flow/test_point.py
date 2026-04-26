@@ -227,3 +227,26 @@ class testPath():
         q = "RETURN point({latitude:32.070794860, longitude:34.820751118}).v"
         res = self.graph.query(q)
         self.env.assertEquals(res.result_set, [[None]])
+
+    def test_point_aggregation(self):
+        # validate that aggregating / grouping by a point value does not crash
+        # see: https://github.com/FalkorDB/FalkorDB/issues - DoS via ASSERTION FAILED
+        # in SIValue_HashUpdate when value type is T_POINT
+        g = self.db.select_graph("point_agg")
+
+        g.query("CREATE (n1:Conference {id: point({latitude: 2, longitude: 5})})")
+        g.query("CREATE (n2:Conference {id: point({latitude: 2, longitude: 5})})")
+        g.query("CREATE (n3:Conference {id: point({latitude: 3, longitude: 7})})")
+
+        # group by a point property, should not crash
+        res = g.query("MATCH (n:Conference) RETURN n.id, count(*) AS v1 ORDER BY v1 DESC")
+        self.env.assertEquals(len(res.result_set), 2)
+        # the most common point should appear twice
+        self.env.assertEquals(res.result_set[0][1], 2)
+        self.env.assertEquals(res.result_set[1][1], 1)
+
+        # equal points should hash equally (single group)
+        res = g.query("WITH point({latitude: 1, longitude: 2}) AS p "
+                      "UNWIND [p, p, p] AS x RETURN x, count(*) AS c")
+        self.env.assertEquals(len(res.result_set), 1)
+        self.env.assertEquals(res.result_set[0][1], 3)
