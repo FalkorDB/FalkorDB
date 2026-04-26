@@ -5,6 +5,8 @@
 
 #include "RG.h"
 
+#include "LAGraphX.h"
+#include "GraphBLAS.h"
 #include "../value.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
@@ -19,19 +21,6 @@
 #include <string.h>
 #include <stdio.h>
 #include "procedures/proc_ctx.h"
-
-// Forward declaration. FUTURE: add to LAGraph and simply include
-int LAGr_HarmonicCentrality
-(
-	// outputs:
-	GrB_Vector *scores,          // FP64 scores by original node ID
-	GrB_Vector *reachable_nodes, // [optional] estimate the number of reach-
-	                             // able nodes from the given node.
-	// inputs:
-	const LAGraph_Graph G,         // input graph
-	const GrB_Vector node_weights, // participating nodes and their weights
-	char *msg
-) ;
 
 // closeness invoke examples:
 //
@@ -317,7 +306,7 @@ ProcedureResult Proc_CentralityInvoke
 	//--------------------------------------------------------------------------
 
 	bool config_ok = _read_config (config, &lbls, &rels, &weightAtt, &defaultW) ;
-	
+
 	// free input config
 	SIValue_Free (config) ;
 
