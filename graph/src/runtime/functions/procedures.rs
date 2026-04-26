@@ -313,4 +313,18 @@ pub fn register(funcs: &mut Functions) {
             Err(String::from("db.idx.fulltext.queryNodes() is not supported in this version"))
         }
     );
+
+    // ── db.idx.fulltext.queryRelationships ─────────────────────────────
+    // Registered so the binder validates the `relationship` / `score`
+    // yields. Execution is rewritten to `IR::EdgeByFulltextScan` in the
+    // planner (see `planner::mod::plan` — the `QueryIR::Call` arm), so
+    // this body is never actually reached at runtime.
+    cypher_fn!(funcs, "db.idx.fulltext.queryRelationships",
+        args: [Type::String, Type::String],
+        ret: Type::Any,
+        procedure: ["relationship", "score"],
+        fn db_fulltext_query_relationships(_, _) {
+            Err(String::from("db.idx.fulltext.queryRelationships() is not supported in this version"))
+        }
+    );
 }

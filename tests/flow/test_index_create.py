@@ -165,13 +165,23 @@ class testIndexCreationFlow:
             self.env.assertContains("Nostem must be bool", str(e))
 
         try:
-            # phonetic must be boolean
+            # phonetic accepts either a bool or the 'dm:en' algorithm
+            # code. Any other string is rejected as unsupported.
             result = self.graph.query(
                 "CREATE FULLTEXT INDEX FOR (n:L7) ON (n.p1) OPTIONS {phonetic: 'true'}"
             )
             assert False
         except ResponseError as e:
-            self.env.assertContains("Phonetic must be bool", str(e))
+            self.env.assertContains("Unsupported phonetic algorithm", str(e))
+
+        try:
+            # phonetic must be bool or string
+            result = self.graph.query(
+                "CREATE FULLTEXT INDEX FOR (n:L7) ON (n.p1) OPTIONS {phonetic: 1}"
+            )
+            assert False
+        except ResponseError as e:
+            self.env.assertContains("Phonetic must be bool or string", str(e))
 
     def test03_multi_prop_index_creation(self):
         # create an index over person:age and person:name

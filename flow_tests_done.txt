@@ -82,3 +82,4 @@ tests/flow/test_index_updates.py
 tests/flow/test_edge_index_scans.py
 tests/flow/test_index_delete.py
 tests/flow/test_edge_index_updates.py
+tests/flow/test_fulltext_query.py
