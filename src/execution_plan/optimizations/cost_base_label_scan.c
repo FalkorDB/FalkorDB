@@ -24,7 +24,7 @@
 // and adding A back
 //
 // consider MATCH (n:A:B)-[:R]->(m) RETURN m
-// 
+//
 // Scan(A)
 // Traverse B*R
 //
@@ -277,37 +277,39 @@ static void _costBaseLabelScan
 (
 	NodeByLabelScan *scan
 ) {
-	ASSERT(scan != NULL);
+	ASSERT (scan != NULL) ;
 
-	Graph       *g     = QueryCtx_GetGraph();
-	GraphContext *gc   = QueryCtx_GetGraphCtx();
-	OpBase      *op    = (OpBase*)scan;
-	NodeScanCtx *n_ctx = scan->n;
+	Graph        *g     = QueryCtx_GetGraph () ;
+	GraphContext *gc    = QueryCtx_GetGraphCtx () ;
+	OpBase       *op    = (OpBase*) scan ;
+	NodeScanCtx  *n_ctx = scan->n ;
 
-	const char *node_alias = n_ctx->alias;
+	const char *node_alias = n_ctx->alias ;
 
-	// determine the parent traversal op (if any) above filters
+	// determine the parent traversal op (if any) below filters
 	// (CondTraverse or ExpandInto) - its algebraic expression is the
 	// authoritative source of truth for which labels are in scope on
 	// this scan's alias
-	OpBase *parent = op->parent;
-	while(parent != NULL && OpBase_Type(parent) == OPType_FILTER) {
-		parent = parent->parent;
+
+	OpBase *parent = op->parent ;
+	while (parent != NULL && OpBase_Type (parent) == OPType_FILTER) {
+		parent = parent->parent ;
 	}
-	OPType t = (parent != NULL) ? OpBase_Type(parent) : OPType_AGGREGATE;
-	if(t != OPType_CONDITIONAL_TRAVERSE && t != OPType_EXPAND_INTO) {
+
+	OPType t = (parent != NULL) ? OpBase_Type (parent) : OPType_AGGREGATE ;
+	if (t != OPType_CONDITIONAL_TRAVERSE && t != OPType_EXPAND_INTO) {
 		// no AE to swap operands on; nothing to do here
-		return;
+		return ;
 	}
 
 	AlgebraicExpression *ae = (t == OPType_CONDITIONAL_TRAVERSE)
-		? ((OpCondTraverse*)parent)->ae
-		: ((OpExpandInto*)parent)->ae;
+		? ((OpCondTraverse*) parent)->ae
+		: ((OpExpandInto*)   parent)->ae ;
 
 	// collect operands from the parent AE
-	uint operand_n = 0;
+	uint operand_n = 0 ;
 	AlgebraicExpression **operands =
-		AlgebraicExpression_CollectOperandsInOrder(ae, &operand_n);
+		AlgebraicExpression_CollectOperandsInOrder (ae, &operand_n) ;
 
 	// find label with minimum entities
 	// candidates are:
@@ -316,67 +318,80 @@ static void _costBaseLabelScan
 	//
 	// note: we deliberately do NOT iterate scan->n->n's QGNode labels here -
 	// that holistic QGNode merges labels from sibling MATCH/OPTIONAL MATCH
-	// clauses on the same alias (whose operands live in a separate sub-stream
-	// AE), and considering them used to lead to a NULL-deref when
-	// AlgebraicExpression_LocateOperand failed to find them (issues #753, #636)
-	int min_label_id = n_ctx->label_id;
-	const char *min_label_str = n_ctx->label;
-	uint64_t min_nnz =(uint64_t) Graph_LabeledNodeCount(g, n_ctx->label_id);
-	AlgebraicExpression *min_operand = NULL;  // operand for chosen label, NULL = scan label
+	// clauses on the same alias (whose operands live in a separate sub-stream)
+	int min_label_id = n_ctx->label_id ;
+	const char *min_label_str = n_ctx->label ;
+	uint64_t min_nnz = (uint64_t) Graph_LabeledNodeCount (g, n_ctx->label_id) ;
+	AlgebraicExpression *min_operand = NULL ;  // operand for chosen label
 
-	for(uint i = 0; i < operand_n; i++) {
-		AlgebraicExpression *operand = operands[i];
-		if(!AlgebraicExpression_Diagonal(operand)) continue;
-		const char *src   = AlgebraicExpression_Src(operand);
-		const char *dest  = AlgebraicExpression_Dest(operand);
-		const char *label = AlgebraicExpression_Label(operand);
-		if(src == NULL || dest == NULL || label == NULL) continue;
-		if(strcmp(src,  node_alias) != 0) continue;
-		if(strcmp(dest, node_alias) != 0) continue;
+	for (uint i = 0; i < operand_n; i++) {
+		AlgebraicExpression *operand = operands [i] ;
 
-		Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
-		int label_id;
-		uint64_t nnz;
-		if(s != NULL) {
-			label_id = Schema_GetID(s);
-			nnz = Graph_LabeledNodeCount(g, label_id);
+		if (!AlgebraicExpression_Diagonal (operand)) {
+			continue ;
+		}
+
+		const char *src   = AlgebraicExpression_Src   (operand) ;
+		const char *dest  = AlgebraicExpression_Dest  (operand) ;
+		const char *label = AlgebraicExpression_Label (operand) ;
+
+		if (src == NULL || dest == NULL || label == NULL) {
+			continue ;
+		}
+
+		if (strcmp (src,  node_alias) != 0) {
+			continue ;
+		}
+
+		if (strcmp (dest, node_alias) != 0) {
+			continue ;
+		}
+
+		int label_id ;
+		uint64_t nnz ;
+		Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
+
+		if (s != NULL) {
+			label_id = Schema_GetID (s) ;
+			nnz      = Graph_LabeledNodeCount (g, label_id) ;
 		} else {
 			// label has no schema yet (no node was ever created with it);
 			// it has zero entities so it is automatically the cheapest
-			label_id = GRAPH_UNKNOWN_LABEL;
-			nnz = 0;
+			label_id = GRAPH_UNKNOWN_LABEL ;
+			nnz = 0 ;
 		}
-		if(min_nnz > nnz) {
-			min_nnz       = nnz;
-			min_label_id  = label_id;
-			min_label_str = label;
-			min_operand   = operand;
+
+		if (min_nnz > nnz) {
+			min_nnz       = nnz ;
+			min_label_id  = label_id ;
+			min_label_str = label ;
+			min_operand   = operand ;
 		}
 	}
 
-	rm_free(operands);
+	rm_free (operands) ;
 
 	// scanned label has the minimum number of entries
 	// no switching required
-	if(min_label_id == n_ctx->label_id) {
-		return;
+	if (min_label_id == n_ctx->label_id) {
+		return ;
 	}
 
 	// the new minimum was discovered by walking the parent AE's operands,
 	// so we already have a pointer to the operand to swap - the assert is
 	// now a real invariant
-	ASSERT(min_operand != NULL);
+	ASSERT (min_operand != NULL) ;
 
 	// create a replacement operand for the migrated label matrix
-	AlgebraicExpression *replacement = AlgebraicExpression_NewOperand(NULL,
-			true, AlgebraicExpression_Src(min_operand),
-			AlgebraicExpression_Dest(min_operand), NULL, n_ctx->label);
+	AlgebraicExpression *replacement = AlgebraicExpression_NewOperand (NULL,
+			true, AlgebraicExpression_Src (min_operand),
+			AlgebraicExpression_Dest (min_operand), NULL, n_ctx->label) ;
 
 	// swap current label with minimum label
-	n_ctx->label    = min_label_str;
-	n_ctx->label_id = min_label_id;
+	n_ctx->label    = min_label_str ;
+	n_ctx->label_id = min_label_id ;
 
-	_AlgebraicExpression_InplaceRepurpose(min_operand, replacement);
+	_AlgebraicExpression_InplaceRepurpose (min_operand, replacement) ;
 }
 
 void costBaseLabelScan
