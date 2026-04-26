@@ -258,7 +258,7 @@ bool _applicableFilter
 	// make sure all filtered attributes are indexed
 	attr = FilterTree_CollectAttributes(filter_tree, filtered_entity);
 	uint filter_attribute_count = raxSize(attr);
-	
+
 	// no attributes to filter on
 	if(filter_attribute_count == 0) {
 		res = false;
@@ -355,126 +355,226 @@ void reduce_scan_op
 ) {
 	// in the multi-label case, we want to pick the label which will allow us to
 	// both utilize an index and iterate over the fewest values
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Graph        *g  = QueryCtx_GetGraph();
-	QueryGraph   *qg = scan->op.plan->query_graph;
+	Graph        *g  = QueryCtx_GetGraph () ;
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
 
 	// find label with filtered indexed properties
 	// that has the minimum NNZ entries
-	int         min_label_id;                 // tracks min label ID
-	uint64_t    min_nnz        = UINT64_MAX;  // tracks min entries
-	Index       idx            = NULL;        // the index to be applied
-	OpFilter    **filters      = NULL;        // tracks indexed filters to apply
-	uint        filters_count  = 0;           // number of matching filters
-	const char  *min_label_str = NULL;        // tracks min label name
+	int         min_label_id ;                 // tracks min label ID
+	uint64_t    min_nnz        = UINT64_MAX ;  // tracks min entries
+	Index       idx            = NULL ;        // the index to be applied
+	OpFilter    **filters      = NULL ;        // tracks indexed filters to apply
+	uint        filters_count  = 0 ;           // number of matching filters
+	const char  *min_label_str = NULL ;        // tracks min label name
 
-	// see if scanned node has multiple labels
-	const char *node_alias = scan->n->alias;
-	QGNode *qn = QueryGraph_GetNodeByAlias(qg, node_alias);
-	ASSERT(qn != NULL);
+	// operand of the chosen label in the parent traversal expression;
+	// stays NULL when the chosen label is the originally-scanned one
+	// (which lives on the scan op, not in the AE)
+	AlgebraicExpression *min_operand = NULL ;
 
-	uint label_count = QGNode_LabelCount(qn);
-	for(uint i = 0; i < label_count; i++) {
-		uint64_t nnz;
-		Index cur_idx = NULL;
-		int label_id = QGNode_GetLabelID(qn, i);
-		const char *label = QGNode_GetLabel(qn, i);
+	const char *node_alias = scan->n->alias ;
 
-		// unknown label
-		if(label_id == GRAPH_UNKNOWN_LABEL) continue;
+	// determine the parent traversal op (if any) below filters
+	// the algebraic expression of that op tells us which labels are
+	// actually in scope for this scan
+	OpBase *parent = scan->op.parent ;
+	while (parent != NULL && OpBase_Type (parent) == OPType_FILTER) {
+		parent = parent->parent ;
+	}
 
-		cur_idx = GraphContext_GetIndexByID(gc, label_id, NULL, 0,
-				INDEX_FLD_RANGE, GETYPE_NODE);
+	AlgebraicExpression  *parent_ae    = NULL ;
+	AlgebraicExpression **ae_operands  = NULL ;
+	uint                  ae_operand_n = 0 ;
 
-		// no index for current label
-		if(cur_idx == NULL) continue;
+	if (parent != NULL) {
+		OPType t = OpBase_Type (parent) ;
+		if (t == OPType_CONDITIONAL_TRAVERSE) {
+			parent_ae = ((OpCondTraverse*) parent)->ae ;
+			ae_operands = AlgebraicExpression_CollectOperandsInOrder (parent_ae,
+					&ae_operand_n) ;
+		} else if (t == OPType_EXPAND_INTO) {
+			parent_ae = ((OpExpandInto*) parent)->ae ;
+			ae_operands = AlgebraicExpression_CollectOperandsInOrder (parent_ae,
+					&ae_operand_n) ;
+		}
+	}
 
-		ASSERT(Index_Enabled(cur_idx));
+	//--------------------------------------------------------------------------
+	// build the candidate label set
+	//--------------------------------------------------------------------------
+	//
+	// the candidate labels for this scan are:
+	// 1. the originally-scanned label (always in scope, encoded on the scan
+	//    op itself - not in the parent's AE)
+	// 2. labels carried by diagonal operands of this alias in the parent
+	//    traversal expression (when the parent is a CondTraverse)
+	//
+	// note: it is intentionally NOT the union of all labels attached to
+	// this alias in plan->query_graph - that "holistic" QGNode also
+	// accumulates labels from sibling clauses (e.g. an OPTIONAL MATCH on
+	// the same alias) that are evaluated in a separate sub-stream and
+	// whose label operands do NOT live in this scan's parent expression.
+	//
+	// when there is no CondTraverse above the scan, the only candidate is
+	// the originally-scanned label - we cannot safely swap to a sibling
+	// label of the QGNode without an AE to update, so we leave that case
+	// as a no-op for the swap (an IndexScan over the original label is
+	// still applied below if appropriate)
 
-		// TODO switch to reusable array
-		OpFilter **cur_filters = _applicableFilters((OpBase *)scan,
-				scan->n->alias, cur_idx);
+	uint cand_n = 1 + ae_operand_n ;              // upper bound
+	const char *cand_labels[cand_n] ;             // candidate label name
+	int cand_label_ids[cand_n] ;                  // candidate label id
+	AlgebraicExpression *cand_operands[cand_n] ;  // operand to repurpose
 
-		// TODO consider heuristic which combines max
-		// number / restrictiveness of applicable filters
-		// vs. the label's NNZ?
-		uint cur_filters_count = arr_len(cur_filters);
-		if(cur_filters_count == 0) {
-			// no filters
-			arr_free(cur_filters);
-			continue;
+	// candidate 0: originally-scanned label
+	cand_labels    [0] = scan->n->label ;
+	cand_label_ids [0] = scan->n->label_id ;
+	cand_operands  [0] = NULL ;
+
+	uint cand_count = 1 ;
+
+	// candidates from the AE: diagonal operands matching this alias
+	for (uint i = 0; i < ae_operand_n; i++) {
+		AlgebraicExpression *operand = ae_operands [i] ;
+
+		if (!AlgebraicExpression_Diagonal (operand)) {
+			continue ;
 		}
 
-		nnz = Graph_LabeledNodeCount(g, label_id);
-		if(min_nnz > nnz) {
-			idx           = cur_idx;
-			min_nnz       = nnz;
-			min_label_str = label;
-			min_label_id  = label_id;
+		const char *src   = AlgebraicExpression_Src   (operand) ;
+		const char *dest  = AlgebraicExpression_Dest  (operand) ;
+		const char *label = AlgebraicExpression_Label (operand) ;
+
+		if (src == NULL || dest == NULL || label == NULL) {
+			continue ;
+		}
+
+		if (strcmp (src,  node_alias) != 0) {
+			continue ;
+		}
+
+		if (strcmp (dest, node_alias) != 0) {
+			continue ;
+		}
+
+		// skip duplicates of the originally-scanned label
+		if (scan->n->label != NULL && strcmp (label, scan->n->label) == 0) {
+			continue ;
+		}
+
+		Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
+		int label_id = (s != NULL) ? Schema_GetID (s) : GRAPH_UNKNOWN_LABEL ;
+
+		cand_labels    [cand_count] = label ;
+		cand_label_ids [cand_count] = label_id ;
+		cand_operands  [cand_count] = operand ;
+		cand_count++ ;
+	}
+
+	if (ae_operands != NULL) {
+		rm_free (ae_operands) ;
+	}
+
+	//--------------------------------------------------------------------------
+	// pick the best candidate
+	//--------------------------------------------------------------------------
+
+	for (uint i = 0; i < cand_count; i++) {
+		uint64_t nnz ;
+		Index cur_idx = NULL ;
+		int label_id = cand_label_ids   [i] ;
+		const char *label = cand_labels [i] ;
+
+		// unknown label
+		if (label_id == GRAPH_UNKNOWN_LABEL) {
+			continue ;
+		}
+
+		cur_idx = GraphContext_GetIndexByID (gc, label_id, NULL, 0,
+				INDEX_FLD_RANGE, GETYPE_NODE) ;
+
+		// no index for current label
+		if (cur_idx == NULL) {
+			continue ;
+		}
+
+		ASSERT (Index_Enabled (cur_idx)) ;
+
+		// TODO: switch to reusable array
+		OpFilter **cur_filters = _applicableFilters ((OpBase *)scan,
+				scan->n->alias, cur_idx) ;
+
+		// TODO: consider heuristic which combines max
+		// number / restrictiveness of applicable filters
+		// vs. the label's NNZ?
+		uint cur_filters_count = arr_len (cur_filters) ;
+		if (cur_filters_count == 0) {
+			// no filters
+			arr_free (cur_filters) ;
+			continue ;
+		}
+
+		nnz = Graph_LabeledNodeCount (g, label_id) ;
+		if (min_nnz > nnz) {
+			idx           = cur_idx ;
+			min_nnz       = nnz ;
+			min_label_str = label ;
+			min_label_id  = label_id ;
+			min_operand   = cand_operands [i] ;
 
 			// swap previously stored index and
 			// filters array (if any) with current filters
-			arr_free(filters);
-			filters = cur_filters;
-			filters_count = cur_filters_count;
+			arr_free (filters) ;
+			filters = cur_filters ;
+			filters_count = cur_filters_count ;
+		} else {
+			arr_free (cur_filters) ;
 		}
 	}
 
 	// no label possessed indexed and filtered attributes, return early
-	if(idx == NULL) goto cleanup;
-
-	// did we found a better label to utilize? if so swap
-	if(scan->n->label_id != min_label_id) {
-		// the scanned label does not match the one we will build an
-		// index scan over, update the traversal expression to
-		// remove the indexed label and insert the previously-scanned label
-		OpBase *parent = scan->op.parent;
-		// skip filters
-		while(OpBase_Type(parent) == OPType_FILTER) parent = parent->parent;
-		if(OpBase_Type(parent) == OPType_CONDITIONAL_TRAVERSE) {
-			OpCondTraverse *op_traverse = (OpCondTraverse*)parent;
-			AlgebraicExpression *ae = op_traverse->ae;
-			AlgebraicExpression *operand;
-
-			const char *row_domain = scan->n->alias;
-			const char *column_domain = scan->n->alias;
-
-			bool found = AlgebraicExpression_LocateOperand(ae, &operand, NULL,
-					row_domain, column_domain, NULL, min_label_str);
-			ASSERT(found == true);
-
-			AlgebraicExpression *replacement = AlgebraicExpression_NewOperand(NULL,
-					true, AlgebraicExpression_Src(operand),
-					AlgebraicExpression_Dest(operand), NULL, scan->n->label);
-
-			_AlgebraicExpression_InplaceRepurpose(operand, replacement);
-		}
-
-		scan->n->label = min_label_str;
-		scan->n->label_id = min_label_id;
+	if (idx == NULL) {
+		goto cleanup ;
 	}
 
-	FT_FilterNode *root = _Concat_Filters(filters);
-	OpBase *indexOp = NewIndexScanOp(scan->op.plan, scan->g, scan->n, idx,
-			root);
-	scan->n = NULL;
+	// did we found a better label to utilize? if so swap
+	if (scan->n->label_id != min_label_id) {
+		// candidate came from the parent AE, so we already have the operand
+		// the assert is now a real invariant: any non-original candidate
+		// was discovered by walking the parent AE's operands above
+		ASSERT (min_operand != NULL) ;
+
+		AlgebraicExpression *replacement = AlgebraicExpression_NewOperand (NULL,
+				true, AlgebraicExpression_Src (min_operand),
+				AlgebraicExpression_Dest (min_operand), NULL, scan->n->label) ;
+
+		_AlgebraicExpression_InplaceRepurpose (min_operand, replacement) ;
+
+		scan->n->label    = min_label_str ;
+		scan->n->label_id = min_label_id  ;
+	}
+
+	FT_FilterNode *root = _Concat_Filters (filters) ;
+	OpBase *indexOp = NewIndexScanOp (scan->op.plan, scan->g, scan->n, idx,
+			root) ;
+	scan->n = NULL ;
 
 	// replace the redundant scan op with the newly-constructed Index Scan
-	ExecutionPlan_ReplaceOp(plan, (OpBase *)scan, indexOp);
-	OpBase_Free((OpBase *)scan);
+	ExecutionPlan_ReplaceOp (plan, (OpBase *)scan, indexOp) ;
+	OpBase_Free ((OpBase *)scan) ;
 
 	// remove and free all redundant filter ops
 	// since this is a chain of single-child operations
 	// all operations are replaced in-place
 	// avoiding problems with stream-sensitive ops like SemiApply
-	for(uint i = 0; i < filters_count; i++) {
-		OpFilter *filter = filters[i];
-		ExecutionPlan_RemoveOp(plan, (OpBase *)filter);
-		OpBase_Free((OpBase *)filter);
+	for (uint i = 0; i < filters_count; i++) {
+		OpFilter *filter = filters [i] ;
+		ExecutionPlan_RemoveOp (plan, (OpBase *)filter) ;
+		OpBase_Free ((OpBase *)filter) ;
 	}
 
 cleanup:
-	arr_free(filters);
+	arr_free (filters) ;
 }
 
 // try to replace given Conditional Traverse operation and a set of Filter
@@ -487,7 +587,7 @@ void reduce_cond_op
 	// make sure there's an index for scanned label
 	const char *edge = AlgebraicExpression_Edge(cond->ae);
 	if(!edge) return;
-	
+
 	QGEdge *e = QueryGraph_GetEdgeByAlias(cond->op.plan->query_graph, edge);
 	if(QGEdge_RelationCount(e) != 1) return;
 
