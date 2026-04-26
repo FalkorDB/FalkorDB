@@ -386,10 +386,17 @@ void reduce_scan_op
 	AlgebraicExpression **ae_operands  = NULL ;
 	uint                  ae_operand_n = 0 ;
 
-	if (parent != NULL && OpBase_Type (parent) == OPType_CONDITIONAL_TRAVERSE) {
-		parent_ae = ((OpCondTraverse*) parent)->ae ;
-		ae_operands = AlgebraicExpression_CollectOperandsInOrder (parent_ae,
-				&ae_operand_n) ;
+	if (parent != NULL) {
+		OPType t = OpBase_Type (parent) ;
+		if (t == OPType_CONDITIONAL_TRAVERSE) {
+			parent_ae = ((OpCondTraverse*) parent)->ae ;
+			ae_operands = AlgebraicExpression_CollectOperandsInOrder (parent_ae,
+					&ae_operand_n) ;
+		} else if (t == OPType_EXPAND_INTO) {
+			parent_ae = ((OpExpandInto*) parent)->ae ;
+			ae_operands = AlgebraicExpression_CollectOperandsInOrder (parent_ae,
+					&ae_operand_n) ;
+		}
 	}
 
 	//--------------------------------------------------------------------------
