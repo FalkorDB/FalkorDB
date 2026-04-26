@@ -775,6 +775,87 @@ class testEntityUpdate():
         self.env.assertEqual(actual_node.properties['a'], 4)
         self.env.assertEqual(actual_node.properties['c'], 'str')
 
+    # Regression test for C-1: duplicate property id in a single SET batch.
+    #
+    # Bug: AttributeSet_Update's categorization loop pushes the same attribute-set
+    # slot index into remove_idx[] twice when the same property name appears twice
+    # with NULL in one SET clause.  AttributeSet_RemoveIdx then double-frees the
+    # neighbour attribute that was swap-copied into that slot, producing heap
+    # corruption (detectable with ASan) and wrong property count / stale values
+    # (detectable by the assertions below).
+    def test42_duplicate_property_id_in_set_batch(self):
+        self.graph.delete()
+
+        # -------------------------------------------------------------------
+        # Sub-case 1: same property SET to NULL twice in one SET clause
+        # Expected: property x removed exactly once; y and z survive intact
+        # -------------------------------------------------------------------
+        self.graph.query("CREATE (n {x: 'alpha', y: 'bravo', z: 'charlie'})")
+
+        result = self.graph.query("MATCH (n) SET n.x = NULL, n.x = NULL")
+
+        # Only one property removed (x), not two
+        self.env.assertEqual(result.properties_removed, 1)
+
+        result = self.graph.query("MATCH (n) RETURN n.x, n.y, n.z")
+        row = result.result_set[0]
+
+        # x must be gone
+        self.env.assertIsNone(row[0])
+        # y and z must survive with their original string values
+        self.env.assertEqual(row[1], 'bravo')
+        self.env.assertEqual(row[2], 'charlie')
+
+        # -------------------------------------------------------------------
+        # Sub-case 2: same property SET to NULL three times — removes it once
+        # -------------------------------------------------------------------
+        self.graph.delete()
+        self.graph.query("CREATE (n {x: 'alpha', y: 'bravo', z: 'charlie'})")
+
+        result = self.graph.query("MATCH (n) SET n.x = NULL, n.x = NULL, n.x = NULL")
+        self.env.assertEqual(result.properties_removed, 1)
+
+        result = self.graph.query("MATCH (n) RETURN n.x, n.y, n.z")
+        row = result.result_set[0]
+        self.env.assertIsNone(row[0])
+        self.env.assertEqual(row[1], 'bravo')
+        self.env.assertEqual(row[2], 'charlie')
+
+        # -------------------------------------------------------------------
+        # Sub-case 3: last-write-wins — duplicate property, first NULL then value
+        # Expected: property x ends up with the final value 'new'
+        # -------------------------------------------------------------------
+        self.graph.delete()
+        self.graph.query("CREATE (n {x: 'alpha', y: 'bravo', z: 'charlie'})")
+
+        result = self.graph.query("MATCH (n) SET n.x = NULL, n.x = 'new'")
+        # last-write-wins: x is updated ('alpha' → 'new').
+        # Updating an existing property increments both properties_set and
+        # properties_removed (old value replaced), so both equal 1.
+        self.env.assertEqual(result.properties_set, 1)
+        self.env.assertEqual(result.properties_removed, 1)
+
+        result = self.graph.query("MATCH (n) RETURN n.x, n.y, n.z")
+        row = result.result_set[0]
+        self.env.assertEqual(row[0], 'new')   # last write wins
+        self.env.assertEqual(row[1], 'bravo')
+        self.env.assertEqual(row[2], 'charlie')
+
+        # -------------------------------------------------------------------
+        # Sub-case 4: same scenario on an edge (same code path via graph_hub)
+        # -------------------------------------------------------------------
+        self.graph.delete()
+        self.graph.query("CREATE ()-[:R {x: 'alpha', y: 'bravo', z: 'charlie'}]->()")
+
+        result = self.graph.query("MATCH ()-[e:R]->() SET e.x = NULL, e.x = NULL")
+        self.env.assertEqual(result.properties_removed, 1)
+
+        result = self.graph.query("MATCH ()-[e:R]->() RETURN e.x, e.y, e.z")
+        row = result.result_set[0]
+        self.env.assertIsNone(row[0])
+        self.env.assertEqual(row[1], 'bravo')
+        self.env.assertEqual(row[2], 'charlie')
+
 class testEntityUpdateReplication():
     def __init__(self):
         self.env, self.db = Env(env='oss', useSlaves=True)
