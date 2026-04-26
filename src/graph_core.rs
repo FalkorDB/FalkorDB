@@ -66,6 +66,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::Instant,
 };
 
 use crate::allocator::{current_thread_usage, disable_tracking, enable_tracking, reset_counter};
@@ -285,6 +286,7 @@ impl ThreadedGraph {
         write: bool,
         cmd: &str,
     ) -> Result<(bool, bool), String> {
+        let wall_start = Instant::now();
         let Plan {
             plan,
             cached,
@@ -331,7 +333,7 @@ impl ThreadedGraph {
         } else {
             reply_verbose(ctx, &runtime, &result);
         }
-        let latency = result.stats.execution_time;
+        let latency = wall_start.elapsed().as_secs_f64() * 1000.0;
         drop(result);
         drop(runtime);
         self.slow_log.add(cmd, query, params_offset, latency);
@@ -345,6 +347,7 @@ impl ThreadedGraph {
         compact: bool,
         first_cached: bool,
     ) -> WriteQueryResult {
+        let wall_start = Instant::now();
         let Plan {
             plan,
             parameters,
@@ -405,7 +408,7 @@ impl ThreadedGraph {
         } else {
             reply_verbose(ctx, &runtime, &result);
         }
-        let latency = result.stats.execution_time;
+        let latency = wall_start.elapsed().as_secs_f64() * 1000.0;
         let modified = result.stats.nodes_created > 0
             || result.stats.nodes_deleted > 0
             || result.stats.relationships_created > 0
