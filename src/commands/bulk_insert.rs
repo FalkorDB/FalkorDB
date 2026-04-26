@@ -1,22 +1,18 @@
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{ThreadedGraph, ffi},
+    graph_core::{BlockedClient, ThreadedGraph, ffi},
     redis_type::GRAPH_TYPE,
 };
 use graph::{
     graph::graph::{Graph, NodeId, RelationshipId},
-    graph::graphblas::matrix::{Matrix, New, Set},
-    graph::graphblas::tensor::GrB_INDEX_MAX,
-    runtime::{ordermap::OrderMap, pending::PendingRelationship, value::Value},
+    runtime::value::Value,
+    threadpool::spawn,
 };
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
+use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue, raw};
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
-
-/// Number of records to process between yields to Redis.
-const YIELD_INTERVAL: usize = 500_000;
 
 // Binary property type markers (matching Python bulk loader's TYPE enum)
 const BI_NULL: u8 = 0;
@@ -163,38 +159,21 @@ fn parse_header(
     Ok((labels, prop_names))
 }
 
-fn flush_node_batch(
-    g: &mut Graph,
-    nodes_bitmap: &mut RoaringTreemap,
-    label_matrix: &mut Matrix,
-    attrs: &mut FxHashMap<u64, OrderMap<Arc<String>, Value>>,
-) -> Result<(), String> {
-    if nodes_bitmap.is_empty() {
-        return Ok(());
+/// Yield to Redis if running on the main thread (non-null context).
+/// No-op when called from a background thread (null context).
+#[inline]
+unsafe fn maybe_yield(raw_ctx: *mut raw::RedisModuleCtx) {
+    if !raw_ctx.is_null() {
+        unsafe { ffi::yield_ctx(raw_ctx, ffi::YIELD_FLAG_CLIENTS) };
     }
-
-    g.create_nodes(nodes_bitmap);
-
-    let mut index_add_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
-    g.set_nodes_labels(label_matrix, &mut index_add_docs);
-
-    if !attrs.is_empty() {
-        g.set_nodes_attributes(attrs, &mut index_add_docs)?;
-    }
-
-    nodes_bitmap.clear();
-    *label_matrix = Matrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
-    attrs.clear();
-
-    Ok(())
 }
 
 fn process_node_token(
-    ctx: &Context,
     g: &mut Graph,
     data: &[u8],
     node_ids: &[NodeId],
     node_id_cursor: &mut usize,
+    raw_ctx: *mut raw::RedisModuleCtx,
 ) -> Result<(), String> {
     let mut idx = 0;
     let (labels, prop_names) = parse_header(data, &mut idx)?;
@@ -202,12 +181,18 @@ fn process_node_token(
     // Get or create label IDs
     let label_ids: Vec<_> = labels.iter().map(|l| g.get_label_id_mut(l)).collect();
 
-    // Process node records in batches, flushing to graph and yielding periodically
-    let mut nodes_bitmap = RoaringTreemap::new();
-    let mut label_matrix = Matrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
-    let mut attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>> = FxHashMap::default();
+    // Pre-resolve property name → attribute index once
+    let attr_ids: Vec<u16> = prop_names
+        .iter()
+        .map(|name| g.get_or_create_node_attr_id(name))
+        .collect();
 
-    let mut records_in_batch = 0usize;
+    // Collect all node data first, then insert at the end
+    let mut nodes_bitmap = RoaringTreemap::new();
+    let mut label_rows: Vec<u64> = Vec::new();
+    let mut label_cols: Vec<u64> = Vec::new();
+    let mut resolved_attrs: Vec<(u64, Vec<(u16, Value)>)> = Vec::new();
+
     while idx < data.len() {
         if *node_id_cursor >= node_ids.len() {
             return Err("bulk data contains more node records than advertised count".to_string());
@@ -217,71 +202,54 @@ fn process_node_token(
         let raw_id: u64 = node_id.into();
         nodes_bitmap.insert(raw_id);
 
-        // Set labels
         for &lid in &label_ids {
-            label_matrix.set(raw_id, lid.0 as u64, true);
+            label_rows.push(raw_id);
+            label_cols.push(lid.0 as u64);
         }
 
-        // Read properties
-        let mut node_attrs = OrderMap::default();
-        for prop_name in &prop_names {
-            let val = read_property(data, &mut idx)?;
-            if !matches!(val, Value::Null) {
-                node_attrs.insert(prop_name.clone(), val);
+        if !attr_ids.is_empty() {
+            let mut entries: Vec<(u16, Value)> = Vec::with_capacity(attr_ids.len());
+            for &attr_id in &attr_ids {
+                let val = read_property(data, &mut idx)?;
+                if !matches!(val, Value::Null) {
+                    entries.push((attr_id, val));
+                }
             }
-        }
-
-        if !node_attrs.is_empty() {
-            attrs.insert(raw_id, node_attrs);
-        }
-
-        records_in_batch += 1;
-        if records_in_batch >= YIELD_INTERVAL {
-            flush_node_batch(g, &mut nodes_bitmap, &mut label_matrix, &mut attrs)?;
-            records_in_batch = 0;
-            unsafe { ffi::yield_ctx(ctx.ctx, ffi::YIELD_FLAG_CLIENTS) };
+            if !entries.is_empty() {
+                resolved_attrs.push((raw_id, entries));
+            }
         }
     }
 
-    // Flush remaining
-    flush_node_batch(g, &mut nodes_bitmap, &mut label_matrix, &mut attrs)?;
-
-    Ok(())
-}
-
-fn flush_edge_batch(
-    g: &mut Graph,
-    rels: &mut FxHashMap<RelationshipId, PendingRelationship>,
-    rel_attrs: &mut FxHashMap<u64, OrderMap<Arc<String>, Value>>,
-    index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
-) -> Result<(), String> {
-    if rels.is_empty() {
+    if nodes_bitmap.is_empty() {
         return Ok(());
     }
 
-    g.create_relationships(rels);
+    g.create_nodes(&nodes_bitmap);
+    unsafe { maybe_yield(raw_ctx) };
 
-    if !rel_attrs.is_empty() {
-        g.set_relationships_attributes(rel_attrs, index_add_edge_docs)?;
+    let mut index_add_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+    g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut index_add_docs);
+    unsafe { maybe_yield(raw_ctx) };
+
+    if !resolved_attrs.is_empty() {
+        g.import_node_attrs_resolved(&mut resolved_attrs);
+        unsafe { maybe_yield(raw_ctx) };
     }
-
-    rels.clear();
-    rel_attrs.clear();
 
     Ok(())
 }
 
 fn process_edge_token(
-    ctx: &Context,
     g: &mut Graph,
     data: &[u8],
     rel_ids: &[RelationshipId],
     rel_id_cursor: &mut usize,
+    raw_ctx: *mut raw::RedisModuleCtx,
 ) -> Result<(), String> {
     let mut idx = 0;
     let (type_names, prop_names) = parse_header(data, &mut idx)?;
 
-    // Edges must have exactly one type
     if type_names.len() != 1 {
         return Err(format!(
             "edges must have exactly one type, got {}",
@@ -289,15 +257,19 @@ fn process_edge_token(
         ));
     }
     let type_name = Arc::new(type_names[0].clone());
-    // Ensure the relationship type exists
     g.get_type_id_mut(&type_name);
 
-    // Process edge records in batches, flushing to graph and yielding periodically
-    let mut rels: FxHashMap<RelationshipId, PendingRelationship> = FxHashMap::default();
-    let mut rel_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>> = FxHashMap::default();
-    let mut index_add_edge_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+    let attr_ids: Vec<u16> = prop_names
+        .iter()
+        .map(|name| g.get_or_create_rel_attr_id(name))
+        .collect();
 
-    let mut records_in_batch = 0usize;
+    // Collect all edge data first, then bulk-insert at the end
+    let mut srcs: Vec<u64> = Vec::new();
+    let mut dsts: Vec<u64> = Vec::new();
+    let mut edge_ids: Vec<u64> = Vec::new();
+    let mut resolved_rel_attrs: Vec<(u64, Vec<(u16, Value)>)> = Vec::new();
+
     while idx < data.len() {
         if *rel_id_cursor >= rel_ids.len() {
             return Err("bulk data contains more edge records than advertised count".to_string());
@@ -308,37 +280,97 @@ fn process_edge_token(
         let rel_id = rel_ids[*rel_id_cursor];
         *rel_id_cursor += 1;
 
-        let pending = PendingRelationship::new(
-            NodeId::from(src_id),
-            NodeId::from(dst_id),
-            type_name.clone(),
-        );
-        rels.insert(rel_id, pending);
+        srcs.push(src_id);
+        dsts.push(dst_id);
+        edge_ids.push(rel_id.into());
 
-        // Read properties
-        let mut edge_attrs = OrderMap::default();
-        for prop_name in &prop_names {
-            let val = read_property(data, &mut idx)?;
-            if !matches!(val, Value::Null) {
-                edge_attrs.insert(prop_name.clone(), val);
+        if !attr_ids.is_empty() {
+            let mut entries: Vec<(u16, Value)> = Vec::with_capacity(attr_ids.len());
+            for &attr_id in &attr_ids {
+                let val = read_property(data, &mut idx)?;
+                if !matches!(val, Value::Null) {
+                    entries.push((attr_id, val));
+                }
             }
-        }
-
-        if !edge_attrs.is_empty() {
-            rel_attrs.insert(rel_id.into(), edge_attrs);
-        }
-
-        records_in_batch += 1;
-        if records_in_batch >= YIELD_INTERVAL {
-            flush_edge_batch(g, &mut rels, &mut rel_attrs, &mut index_add_edge_docs)?;
-            records_in_batch = 0;
-            unsafe { ffi::yield_ctx(ctx.ctx, ffi::YIELD_FLAG_CLIENTS) };
+            if !entries.is_empty() {
+                resolved_rel_attrs.push((rel_id.into(), entries));
+            }
         }
     }
 
-    // Flush remaining
-    flush_edge_batch(g, &mut rels, &mut rel_attrs, &mut index_add_edge_docs)?;
+    if srcs.is_empty() {
+        return Ok(());
+    }
 
+    g.create_relationships_bulk(&type_name, &srcs, &dsts, &edge_ids);
+    unsafe { maybe_yield(raw_ctx) };
+
+    if !resolved_rel_attrs.is_empty() {
+        g.import_relationship_attrs_resolved(&mut resolved_rel_attrs);
+        unsafe { maybe_yield(raw_ctx) };
+    }
+
+    Ok(())
+}
+
+/// Process bulk insert on a background thread (no yield needed — main thread handles PING).
+fn bulk_insert_sync(
+    g: &mut Graph,
+    tokens: &[&[u8]],
+    node_count: usize,
+    edge_count: usize,
+    node_token_count: usize,
+    rel_token_count: usize,
+) -> Result<(), String> {
+    let node_ids = g.reserve_nodes(node_count);
+    let rel_ids = g.reserve_relationships(edge_count);
+    let mut node_id_cursor = 0usize;
+    let mut rel_id_cursor = 0usize;
+
+    let null_ctx = std::ptr::null_mut();
+    for token in tokens.iter().take(node_token_count) {
+        process_node_token(g, token, &node_ids, &mut node_id_cursor, null_ctx)?;
+    }
+
+    for token in tokens.iter().skip(node_token_count).take(rel_token_count) {
+        process_edge_token(g, token, &rel_ids, &mut rel_id_cursor, null_ctx)?;
+    }
+
+    g.commit_attrs()?;
+    // Flush delta-plus into base to prevent large dp from slowing subsequent commands
+    g.flush_for_bulk();
+    Ok(())
+}
+
+/// Process bulk insert synchronously with periodic yield for PING handling.
+fn bulk_insert_sync_yield(
+    g: &mut Graph,
+    tokens: &[&[u8]],
+    node_count: usize,
+    edge_count: usize,
+    node_token_count: usize,
+    rel_token_count: usize,
+    raw_ctx: *mut raw::RedisModuleCtx,
+) -> Result<(), String> {
+    let node_ids = g.reserve_nodes(node_count);
+    let rel_ids = g.reserve_relationships(edge_count);
+    let mut node_id_cursor = 0usize;
+    let mut rel_id_cursor = 0usize;
+
+    for token in tokens.iter().take(node_token_count) {
+        process_node_token(g, token, &node_ids, &mut node_id_cursor, raw_ctx)?;
+        // Yield to let Redis process PING from other clients
+        unsafe { maybe_yield(raw_ctx) };
+    }
+
+    for token in tokens.iter().skip(node_token_count).take(rel_token_count) {
+        process_edge_token(g, token, &rel_ids, &mut rel_id_cursor, raw_ctx)?;
+        unsafe { maybe_yield(raw_ctx) };
+    }
+
+    g.commit_attrs()?;
+    // Flush delta-plus into base to prevent O(N²) dp accumulation across commands
+    g.flush_for_bulk();
     Ok(())
 }
 
@@ -361,10 +393,9 @@ pub fn graph_bulk_insert(
         (false, next)
     };
 
-    // Get or create graph - must happen BEFORE parsing counts (matches C behavior)
+    // Get or create graph
     let key = ctx.open_key_writable(&key_str);
     let graph = if begin {
-        // BEGIN: verify key doesn't exist, then create
         if key
             .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
             .is_some()
@@ -380,7 +411,6 @@ pub fn graph_bulk_insert(
         key.set_value(&GRAPH_TYPE, g.clone())?;
         g
     } else {
-        // No BEGIN: graph must already exist
         if let Some(g) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
             g.clone()
         } else {
@@ -408,67 +438,123 @@ pub fn graph_bulk_insert(
         .map_err(|_| redis_module::RedisError::Str("Error parsing relation token count."))?;
 
     // Collect remaining binary token args
-    let tokens: Vec<RedisString> = args.collect();
-    if tokens.len() != node_token_count + rel_token_count {
+    let token_strings: Vec<RedisString> = args.collect();
+    if token_strings.len() != node_token_count + rel_token_count {
         return Err(redis_module::RedisError::Str(
             "Bulk insert format error, token count mismatch.",
         ));
     }
 
-    // Acquire MVCC write lock
-    let mut tg = graph.write();
-    let Some(g_arc) = tg.graph.write() else {
-        return Err(redis_module::RedisError::String(
-            "ERR write lock unavailable".to_string(),
-        ));
-    };
-
-    let result: Result<(), String> = (|| {
-        let mut g = g_arc.borrow_mut();
-
-        // Reserve node and relationship IDs upfront
-        let node_ids = g.reserve_nodes(node_count);
-        let rel_ids = g.reserve_relationships(edge_count);
-
-        let mut node_id_cursor = 0usize;
-        let mut rel_id_cursor = 0usize;
-
-        // Process node tokens, yielding to Redis periodically
-        // so the server stays responsive (e.g. PING)
-        for i in 0..node_token_count {
-            let data = tokens[i].as_slice();
-            process_node_token(ctx, &mut g, data, &node_ids, &mut node_id_cursor)?;
-        }
-
-        // Process edge tokens
-        for i in 0..rel_token_count {
-            let data = tokens[node_token_count + i].as_slice();
-            process_edge_token(ctx, &mut g, data, &rel_ids, &mut rel_id_cursor)?;
-        }
-
-        // Commit attribute stores
-        g.commit_attrs()?;
-
-        Ok(())
-    })();
-
-    match result {
-        Ok(()) => {
-            tg.graph.commit(g_arc);
-            let value = tg.graph.read().borrow().maybe_flush_caches();
-            if let Err(e) = value {
-                ctx.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
+    // Inside MULTI/EXEC: blocking commands are not allowed, run synchronously
+    // with RM_Yield to let Redis process PING between operations.
+    if ctx.get_flags().contains(ContextFlags::MULTI) {
+        let tokens: Vec<&[u8]> = token_strings.iter().map(|rs| rs.as_slice()).collect();
+        let mut tg = graph.write();
+        let Some(g_arc) = tg.graph.write() else {
+            return Err(redis_module::RedisError::String(
+                "ERR write lock unavailable".to_string(),
+            ));
+        };
+        let result = {
+            let mut g = g_arc.borrow_mut();
+            bulk_insert_sync_yield(
+                &mut g,
+                &tokens,
+                node_count,
+                edge_count,
+                node_token_count,
+                rel_token_count,
+                ctx.ctx,
+            )
+        };
+        return match result {
+            Ok(()) => {
+                tg.graph.commit(g_arc);
+                let value = tg.graph.read().borrow().maybe_flush_caches();
+                if let Err(e) = value {
+                    ctx.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
+                }
+                ctx.replicate_verbatim();
+                let reply = format!("{node_count} nodes created, {edge_count} relations created");
+                Ok(RedisValue::SimpleString(reply))
             }
-            ctx.replicate_verbatim();
-
-            let reply = format!("{node_count} nodes created, {edge_count} relations created");
-            Ok(RedisValue::SimpleString(reply))
-        }
-        Err(e) => {
-            tg.graph.rollback();
-            Err(redis_module::RedisError::String(format!(
-                "ERR bulk insert failed: {e}"
-            )))
-        }
+            Err(e) => {
+                tg.graph.rollback();
+                Err(redis_module::RedisError::String(format!(
+                    "ERR bulk insert failed: {e}"
+                )))
+            }
+        };
     }
+
+    // Block the client and process on a background thread so the main
+    // Redis thread stays free to handle PING and other commands.
+    let bc = BlockedClient {
+        inner: unsafe { ffi::block_client(ctx.ctx) },
+    };
+    let token_data: Vec<Vec<u8>> = token_strings
+        .iter()
+        .map(|rs| rs.as_slice().to_vec())
+        .collect();
+    spawn(
+        move || {
+            let mut tg = graph.write();
+            let g_arc = match tg.graph.write() {
+                Some(g) => g,
+                None => {
+                    let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
+                    unsafe { ffi::lock_thread_safe_ctx(ts_ctx) };
+                    let cerr = ffi::sanitise_error("ERR write lock unavailable");
+                    unsafe { ffi::reply_error(ts_ctx, cerr.as_ptr()) };
+                    unsafe { ffi::unlock_thread_safe_ctx(ts_ctx) };
+                    drop(bc);
+                    unsafe { ffi::free_thread_safe_context(ts_ctx) };
+                    return;
+                }
+            };
+            let result = {
+                let mut g = g_arc.borrow_mut();
+                let tokens: Vec<&[u8]> = token_data.iter().map(|v| v.as_slice()).collect();
+                bulk_insert_sync(
+                    &mut g,
+                    &tokens,
+                    node_count,
+                    edge_count,
+                    node_token_count,
+                    rel_token_count,
+                )
+            };
+            let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
+            match result {
+                Ok(()) => {
+                    tg.graph.commit(g_arc);
+                    let value = tg.graph.read().borrow().maybe_flush_caches();
+                    unsafe { ffi::lock_thread_safe_ctx(ts_ctx) };
+                    if let Err(e) = value {
+                        let ctx_w = Context::new(ts_ctx);
+                        ctx_w.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
+                        #[allow(clippy::forget_non_drop)]
+                        std::mem::forget(ctx_w);
+                    }
+                    raw::replicate_verbatim(ts_ctx);
+                    let reply =
+                        format!("{node_count} nodes created, {edge_count} relations created");
+                    let c_reply = std::ffi::CString::new(reply).expect("reply has no NUL bytes");
+                    raw::reply_with_simple_string(ts_ctx, c_reply.as_ptr());
+                    unsafe { ffi::unlock_thread_safe_ctx(ts_ctx) };
+                }
+                Err(e) => {
+                    tg.graph.rollback();
+                    unsafe { ffi::lock_thread_safe_ctx(ts_ctx) };
+                    let cerr = ffi::sanitise_error(format!("ERR bulk insert failed: {e}"));
+                    unsafe { ffi::reply_error(ts_ctx, cerr.as_ptr()) };
+                    unsafe { ffi::unlock_thread_safe_ctx(ts_ctx) };
+                }
+            }
+            drop(bc);
+            unsafe { ffi::free_thread_safe_context(ts_ctx) };
+        },
+        None,
+    );
+    Ok(RedisValue::NoReply)
 }

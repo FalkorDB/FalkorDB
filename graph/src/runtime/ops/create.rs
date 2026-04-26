@@ -73,14 +73,9 @@ impl<'a> Iterator for CreateOp<'a> {
             Err(e) => return Some(Err(e)),
         };
 
-        let resolved_pattern = self.resolved_pattern.get_or_init(|| {
-            let resolved = self.runtime.resolve_pattern(&self.pattern);
-            self.runtime.pending.borrow_mut().resize(
-                self.runtime.g.borrow().node_cap(),
-                self.runtime.g.borrow().labels_count(),
-            );
-            resolved
-        });
+        let resolved_pattern = self
+            .resolved_pattern
+            .get_or_init(|| self.runtime.resolve_pattern(&self.pattern));
         if let Err(e) = self.runtime.create_batch(resolved_pattern, &mut batch) {
             return Some(Err(e));
         }

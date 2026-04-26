@@ -11,7 +11,7 @@
 //!
 //! - `created_nodes`: Nodes created in this query
 //! - `deleted_nodes`: Nodes marked for deletion
-//! - `created_relationships`: Edges created in this query
+//! - `created_rels_by_type`: Edges created in this query, grouped by type
 //! - `deleted_relationships`: Edges marked for deletion
 //! - `set_*_attrs`: Property updates by entity ID
 //! - `set/remove_node_labels`: Label changes
@@ -32,33 +32,22 @@ use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 
 use crate::{
-    graph::{
-        graph::{Graph, LabelId, NodeId, RelationshipId},
-        graphblas::matrix::{Matrix, New, Remove, Set, Size},
-    },
+    graph::graph::{Graph, LabelId, NodeId, RelationshipId},
     runtime::{ordermap::OrderMap, orderset::OrderSet, runtime::QueryStatistics, value::Value},
 };
 
-/// A relationship waiting to be created.
-pub struct PendingRelationship {
-    pub from: NodeId,
-    pub to: NodeId,
-    pub type_name: Arc<String>,
-}
-
-impl PendingRelationship {
-    #[must_use]
-    pub const fn new(
-        from: NodeId,
-        to: NodeId,
-        type_name: Arc<String>,
-    ) -> Self {
-        Self {
-            from,
-            to,
-            type_name,
+/// Flatten a node_id → [label_ids] map into parallel (rows, cols) arrays.
+fn flatten_label_map(map: &FxHashMap<u64, Vec<u64>>) -> (Vec<u64>, Vec<u64>) {
+    let total: usize = map.values().map(|v| v.len()).sum();
+    let mut rows = Vec::with_capacity(total);
+    let mut cols = Vec::with_capacity(total);
+    for (&node_id, label_ids) in map {
+        for &label_id in label_ids {
+            rows.push(node_id);
+            cols.push(label_id);
         }
     }
+    (rows, cols)
 }
 
 const INVALID_PROPERTY_MSG: &str =
@@ -108,8 +97,10 @@ fn validate_relationship_property(value: &Value) -> Result<(), String> {
 pub struct Pending {
     /// Nodes created in this transaction
     created_nodes: RoaringTreemap,
-    /// Relationships created (id → pending relationship data)
-    created_relationships: FxHashMap<RelationshipId, PendingRelationship>,
+    /// Relationships created, grouped by type: type_name → [(rel_id, from, to)]
+    created_rels_by_type: FxHashMap<Arc<String>, Vec<(RelationshipId, NodeId, NodeId)>>,
+    /// Reverse index: rel_id → type_name for O(1) existence/type lookups
+    created_rel_types: FxHashMap<RelationshipId, Arc<String>>,
     /// Nodes to be deleted
     deleted_nodes: RoaringTreemap,
     /// Relationships to be deleted (edge_id → (src, dst))
@@ -122,10 +113,10 @@ pub struct Pending {
     new_relationships_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>>,
     /// Property updates for existing relationships (full merge path)
     existing_relationships_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>>,
-    /// Labels to add (node_id × label_id matrix)
-    set_node_labels: Matrix,
-    /// Labels to remove
-    remove_node_labels: Matrix,
+    /// Labels to add: node_id → [label_ids]
+    set_labels: FxHashMap<u64, Vec<u64>>,
+    /// Labels to remove: node_id → [label_ids]
+    remove_labels: FxHashMap<u64, Vec<u64>>,
     /// Documents to add to indexes (keyed by label id)
     index_add_docs: FxHashMap<u64, RoaringTreemap>,
     /// Documents to remove from indexes (keyed by label id)
@@ -158,15 +149,16 @@ impl Pending {
     pub fn new() -> Self {
         Self {
             created_nodes: RoaringTreemap::new(),
-            created_relationships: FxHashMap::default(),
+            created_rels_by_type: FxHashMap::default(),
+            created_rel_types: FxHashMap::default(),
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: FxHashMap::default(),
             new_nodes_attrs: FxHashMap::default(),
             existing_nodes_attrs: FxHashMap::default(),
             new_relationships_attrs: FxHashMap::default(),
             existing_relationships_attrs: FxHashMap::default(),
-            set_node_labels: Matrix::new(0, 0),
-            remove_node_labels: Matrix::new(0, 0),
+            set_labels: FxHashMap::default(),
+            remove_labels: FxHashMap::default(),
             index_add_docs: FxHashMap::default(),
             index_remove_docs: FxHashMap::default(),
             index_add_edge_docs: FxHashMap::default(),
@@ -191,42 +183,12 @@ impl Pending {
         self.schema_rel_attr_count = graph.get_relationship_attribute_names().len();
     }
 
-    pub fn resize(
-        &mut self,
-        node_cap: u64,
-        labels_count: usize,
-    ) {
-        // Use max dimensions from both set and remove matrices to avoid shrinking either
-        let new_nrows = node_cap
-            .max(self.set_node_labels.nrows())
-            .max(self.remove_node_labels.nrows());
-        let new_ncols = (labels_count as u64)
-            .max(self.set_node_labels.ncols())
-            .max(self.remove_node_labels.ncols());
-        self.set_node_labels.resize(new_nrows, new_ncols);
-        self.remove_node_labels.resize(new_nrows, new_ncols);
-    }
-
     pub fn created_nodes(
         &mut self,
         ids: &[NodeId],
     ) {
-        let max_id = ids.iter().map(|id| u64::from(*id)).max();
         for id in ids {
             self.created_nodes.insert((*id).into());
-        }
-        if let Some(max_id) = max_id {
-            let mut cap = self.set_node_labels.nrows();
-            if cap <= max_id {
-                if cap == 0 {
-                    cap = 1;
-                }
-                while cap <= max_id {
-                    cap *= 2;
-                }
-                self.set_node_labels
-                    .resize(cap, self.set_node_labels.ncols());
-            }
         }
     }
 
@@ -313,9 +275,9 @@ impl Pending {
         id: NodeId,
         labels: &OrderSet<LabelId>,
     ) {
+        let entry = self.set_labels.entry(id.into()).or_default();
         for label in labels.iter() {
-            self.set_node_labels
-                .set(id.into(), usize::from(*label) as u64, true);
+            entry.push(usize::from(*label) as u64);
         }
     }
 
@@ -325,9 +287,9 @@ impl Pending {
         labels: &OrderSet<LabelId>,
     ) {
         for id in ids {
+            let entry = self.set_labels.entry((*id).into()).or_default();
             for label in labels.iter() {
-                self.set_node_labels
-                    .set((*id).into(), usize::from(*label) as u64, true);
+                entry.push(usize::from(*label) as u64);
             }
         }
     }
@@ -337,11 +299,16 @@ impl Pending {
         id: NodeId,
         labels: &[LabelId],
     ) {
+        let raw_id: u64 = id.into();
         for label in labels {
-            self.set_node_labels
-                .remove(id.into(), usize::from(*label) as u64);
-            self.remove_node_labels
-                .set(id.into(), usize::from(*label) as u64, true);
+            let label_id = usize::from(*label) as u64;
+            // Remove from pending set labels
+            if let Some(set) = self.set_labels.get_mut(&raw_id) {
+                if let Some(pos) = set.iter().position(|&l| l == label_id) {
+                    set.swap_remove(pos);
+                }
+            }
+            self.remove_labels.entry(raw_id).or_default().push(label_id);
         }
     }
 
@@ -350,14 +317,16 @@ impl Pending {
         id: NodeId,
         labels: &mut OrderSet<LabelId>,
     ) {
-        labels.extend(
-            self.set_node_labels
-                .iter(id.into(), id.into())
-                .map(|(_, label_id)| LabelId(label_id as usize)),
-        );
-
-        for (_, label) in self.remove_node_labels.iter(id.into(), id.into()) {
-            labels.remove(&LabelId(label as usize));
+        let raw_id: u64 = id.into();
+        if let Some(set) = self.set_labels.get(&raw_id) {
+            for &label_id in set {
+                labels.insert(LabelId(label_id as usize));
+            }
+        }
+        if let Some(removed) = self.remove_labels.get(&raw_id) {
+            for &label_id in removed {
+                labels.remove(&LabelId(label_id as usize));
+            }
         }
     }
 
@@ -383,10 +352,7 @@ impl Pending {
         // Collect pending labels
         let mut label_ids = OrderSet::default();
         self.update_node_labels(id, &mut label_ids);
-        for label in label_ids.iter() {
-            self.set_node_labels
-                .remove(id.into(), usize::from(*label) as u64);
-        }
+        self.set_labels.remove(&id.into());
 
         // Collect pending attrs
         let attrs = self
@@ -396,16 +362,27 @@ impl Pending {
             .unwrap_or_default();
 
         // Find pending-created relationships connected to this node
-        let rels: Vec<_> = self
-            .created_relationships
-            .iter()
-            .filter(|(_, r)| r.from == id || r.to == id)
-            .map(|(rid, r)| (*rid, r.from, r.to))
-            .collect();
-
-        for (rel_id, _, _) in &rels {
-            self.created_relationships.remove(rel_id);
+        let mut rels = Vec::new();
+        for (type_name, entries) in &self.created_rels_by_type {
+            for &(rel_id, from, to) in entries {
+                if from == id || to == id {
+                    rels.push((rel_id, from, to, type_name.clone()));
+                }
+            }
         }
+
+        for (rel_id, _, _, type_name) in &rels {
+            self.created_rel_types.remove(rel_id);
+            if let Some(entries) = self.created_rels_by_type.get_mut(type_name) {
+                if let Some(pos) = entries.iter().position(|(rid, _, _)| rid == rel_id) {
+                    entries.swap_remove(pos);
+                }
+            }
+        }
+        let rels: Vec<_> = rels
+            .into_iter()
+            .map(|(id, from, to, _)| (id, from, to))
+            .collect();
 
         (label_ids, attrs, rels)
     }
@@ -424,16 +401,23 @@ impl Pending {
         Arc<String>,
         Option<OrderMap<Arc<String>, Value>>,
     )> {
-        let rels: Vec<_> = self
-            .created_relationships
-            .iter()
-            .filter(|(_, r)| r.from == id || r.to == id)
-            .map(|(rid, r)| (*rid, r.from, r.to, r.type_name.clone()))
-            .collect();
+        let mut rels = Vec::new();
+        for (type_name, entries) in &self.created_rels_by_type {
+            for &(rel_id, from, to) in entries {
+                if from == id || to == id {
+                    rels.push((rel_id, from, to, type_name.clone()));
+                }
+            }
+        }
 
         let mut result = Vec::with_capacity(rels.len());
         for (rel_id, from, to, type_name) in rels {
-            self.created_relationships.remove(&rel_id);
+            self.created_rel_types.remove(&rel_id);
+            if let Some(entries) = self.created_rels_by_type.get_mut(&type_name) {
+                if let Some(pos) = entries.iter().position(|(rid, _, _)| *rid == rel_id) {
+                    entries.swap_remove(pos);
+                }
+            }
             let attrs = self.new_relationships_attrs.remove(&rel_id.into());
             self.deleted_relationships.remove(&rel_id);
             result.push((rel_id, from, to, type_name, attrs));
@@ -447,8 +431,11 @@ impl Pending {
         rels: Vec<(RelationshipId, NodeId, NodeId, Arc<String>)>,
     ) {
         for (id, from, to, type_name) in rels {
-            self.created_relationships
-                .insert(id, PendingRelationship::new(from, to, type_name));
+            self.created_rels_by_type
+                .entry(type_name.clone())
+                .or_default()
+                .push((id, from, to));
+            self.created_rel_types.insert(id, type_name);
         }
     }
 
@@ -459,8 +446,11 @@ impl Pending {
         to: NodeId,
         type_name: Arc<String>,
     ) {
-        self.created_relationships
-            .insert(id, PendingRelationship::new(from, to, type_name));
+        self.created_rels_by_type
+            .entry(type_name.clone())
+            .or_default()
+            .push((id, from, to));
+        self.created_rel_types.insert(id, type_name);
     }
 
     pub fn set_relationship_attributes(
@@ -471,7 +461,7 @@ impl Pending {
         for value in attrs.values() {
             validate_relationship_property(value)?;
         }
-        if self.created_relationships.contains_key(&id) {
+        if self.created_rel_types.contains_key(&id) {
             self.new_relationships_attrs.insert(id.into(), attrs);
         } else {
             self.existing_relationships_attrs.insert(id.into(), attrs);
@@ -486,7 +476,7 @@ impl Pending {
         value: Value,
     ) -> Result<(), String> {
         validate_relationship_property(&value)?;
-        let map = if self.created_relationships.contains_key(&id) {
+        let map = if self.created_rel_types.contains_key(&id) {
             &mut self.new_relationships_attrs
         } else {
             &mut self.existing_relationships_attrs
@@ -556,9 +546,7 @@ impl Pending {
         &self,
         id: RelationshipId,
     ) -> Option<Arc<String>> {
-        self.created_relationships
-            .get(&id)
-            .map(|r| r.type_name.clone())
+        self.created_rel_types.get(&id).cloned()
     }
 
     #[must_use]
@@ -574,7 +562,7 @@ impl Pending {
         &self,
         id: RelationshipId,
     ) -> bool {
-        self.created_relationships.contains_key(&id)
+        self.created_rel_types.contains_key(&id)
     }
 
     #[must_use]
@@ -589,7 +577,7 @@ impl Pending {
 
     #[must_use]
     pub fn has_created_relationships(&self) -> bool {
-        !self.created_relationships.is_empty()
+        !self.created_rel_types.is_empty()
     }
 
     #[must_use]
@@ -618,10 +606,20 @@ impl Pending {
         node_id: NodeId,
         types: &[Arc<String>],
     ) -> usize {
-        self.created_relationships
-            .values()
-            .filter(|r| r.to == node_id && (types.is_empty() || types.contains(&r.type_name)))
-            .count()
+        if types.is_empty() {
+            self.created_rels_by_type
+                .values()
+                .flat_map(|v| v.iter())
+                .filter(|(_, _, to)| *to == node_id)
+                .count()
+        } else {
+            types
+                .iter()
+                .filter_map(|t| self.created_rels_by_type.get(t))
+                .flat_map(|v| v.iter())
+                .filter(|(_, _, to)| *to == node_id)
+                .count()
+        }
     }
 
     /// Count pending-created relationships whose source is `node_id` and
@@ -632,10 +630,20 @@ impl Pending {
         node_id: NodeId,
         types: &[Arc<String>],
     ) -> usize {
-        self.created_relationships
-            .values()
-            .filter(|r| r.from == node_id && (types.is_empty() || types.contains(&r.type_name)))
-            .count()
+        if types.is_empty() {
+            self.created_rels_by_type
+                .values()
+                .flat_map(|v| v.iter())
+                .filter(|(_, from, _)| *from == node_id)
+                .count()
+        } else {
+            types
+                .iter()
+                .filter_map(|t| self.created_rels_by_type.get(t))
+                .flat_map(|v| v.iter())
+                .filter(|(_, from, _)| *from == node_id)
+                .count()
+        }
     }
 
     /// Count pending-deleted relationships whose destination is `node_id` and
@@ -689,19 +697,31 @@ impl Pending {
             stats.borrow_mut().nodes_created += self.created_nodes.len();
             g.borrow_mut().create_nodes(&self.created_nodes);
         }
-        if !self.created_relationships.is_empty() {
-            stats.borrow_mut().relationships_created += self.created_relationships.len();
-            g.borrow_mut()
-                .create_relationships(&self.created_relationships);
+        if !self.created_rel_types.is_empty() {
+            stats.borrow_mut().relationships_created += self.created_rel_types.len();
+            let mut g = g.borrow_mut();
+            for (type_name, rel_ids) in &self.created_rels_by_type {
+                let mut srcs = Vec::with_capacity(rel_ids.len());
+                let mut dsts = Vec::with_capacity(rel_ids.len());
+                let mut ids = Vec::with_capacity(rel_ids.len());
+                for &(rel_id, from, to) in rel_ids {
+                    srcs.push(from.into());
+                    dsts.push(to.into());
+                    ids.push(rel_id.into());
+                }
+                g.create_relationships_bulk(type_name, &srcs, &dsts, &ids);
+            }
         }
-        if self.set_node_labels.nvals() > 0 {
+        if !self.set_labels.is_empty() {
+            let (rows, cols) = flatten_label_map(&self.set_labels);
             g.borrow_mut()
-                .set_nodes_labels(&mut self.set_node_labels, &mut self.index_add_docs);
+                .set_nodes_labels_bulk(&rows, &cols, &mut self.index_add_docs);
         }
-        if self.remove_node_labels.nvals() > 0 {
-            stats.borrow_mut().labels_removed += self.remove_node_labels.nvals() as usize;
+        if !self.remove_labels.is_empty() {
+            let (rows, cols) = flatten_label_map(&self.remove_labels);
+            stats.borrow_mut().labels_removed += rows.len();
             g.borrow_mut()
-                .remove_nodes_labels(&mut self.remove_node_labels, &mut self.index_remove_docs);
+                .remove_nodes_labels(&rows, &cols, &mut self.index_remove_docs);
         }
         if !self.new_nodes_attrs.is_empty() || !self.existing_nodes_attrs.is_empty() {
             let mut g = g.borrow_mut();
@@ -791,9 +811,10 @@ impl Pending {
     /// Clear all pending mutation state.
     pub fn clear(&mut self) {
         self.created_nodes.clear();
-        self.created_relationships.clear();
-        self.set_node_labels.clear();
-        self.remove_node_labels.clear();
+        self.created_rels_by_type.clear();
+        self.created_rel_types.clear();
+        self.set_labels.clear();
+        self.remove_labels.clear();
         self.new_nodes_attrs.clear();
         self.existing_nodes_attrs.clear();
         self.new_relationships_attrs.clear();
@@ -810,15 +831,23 @@ impl Pending {
     #[must_use]
     pub fn effects_count(&self) -> u64 {
         self.created_nodes.len()
-            + self.created_relationships.len() as u64
+            + self.created_rel_types.len() as u64
             + self.deleted_nodes.len()
             + self.deleted_relationships.len() as u64
             + self.new_nodes_attrs.len() as u64
             + self.existing_nodes_attrs.len() as u64
             + self.new_relationships_attrs.len() as u64
             + self.existing_relationships_attrs.len() as u64
-            + self.set_node_labels.nvals()
-            + self.remove_node_labels.nvals()
+            + self
+                .set_labels
+                .values()
+                .map(|v| v.len() as u64)
+                .sum::<u64>()
+            + self
+                .remove_labels
+                .values()
+                .map(|v| v.len() as u64)
+                .sum::<u64>()
     }
 
     /// Build a binary effects buffer from the accumulated mutations.
@@ -835,7 +864,7 @@ impl Pending {
 
         // Pre-allocate buffer: ~40 bytes per created node, ~50 per edge, ~30 per delete
         let estimated_bytes = (self.created_nodes.len() as usize) * 40
-            + self.created_relationships.len() * 50
+            + self.created_rel_types.len() * 50
             + (self.deleted_nodes.len() as usize) * 10
             + self.deleted_relationships.len() * 25;
         buf.reserve(estimated_bytes);
@@ -881,41 +910,24 @@ impl Pending {
         }
 
         // --- Created nodes ---
-        // Use lockstep iteration: both created_nodes and set_node_labels
-        // are sorted, so we advance both in parallel. This avoids per-node
-        // GraphBLAS iterator creation (which was 100K+ FFI calls).
         if !self.created_nodes.is_empty() {
-            let nrows = self.set_node_labels.nrows();
-            let mut label_iter = if nrows > 0 {
-                Some(self.set_node_labels.iter(0, nrows - 1).peekable())
-            } else {
-                None
-            };
-
             let graph = g.borrow();
             for node_id in &self.created_nodes {
                 buf.push(EFFECT_CREATE_NODE);
                 buf.extend_from_slice(&node_id.to_le_bytes());
 
-                // Labels: advance the label iterator in lockstep
+                // Labels
                 let label_count_pos = buf.len();
-                write_u16(buf, 0); // placeholder for label count
+                write_u16(buf, 0); // placeholder
                 let mut label_count = 0u16;
 
-                if let Some(ref mut iter) = label_iter {
-                    // Skip labels for non-created nodes (node_id < current)
-                    while iter.peek().is_some_and(|(nid, _)| *nid < node_id) {
-                        iter.next();
-                    }
-                    // Collect all labels for this node
-                    while iter.peek().is_some_and(|(nid, _)| *nid == node_id) {
-                        let (_, label_id) = iter.next().unwrap();
+                if let Some(label_ids) = self.set_labels.get(&node_id) {
+                    for &label_id in label_ids {
                         let label_name = graph.get_label_by_id(LabelId(label_id as usize));
                         write_string(buf, &label_name);
                         label_count += 1;
                     }
                 }
-                // Patch label count
                 buf[label_count_pos..label_count_pos + 2]
                     .copy_from_slice(&label_count.to_le_bytes());
 
@@ -934,23 +946,25 @@ impl Pending {
         }
 
         // --- Created relationships ---
-        for (rel_id, rel) in &self.created_relationships {
-            buf.push(EFFECT_CREATE_EDGE);
-            buf.extend_from_slice(&u64::from(*rel_id).to_le_bytes());
-            buf.extend_from_slice(&u64::from(rel.from).to_le_bytes());
-            buf.extend_from_slice(&u64::from(rel.to).to_le_bytes());
-            write_string(buf, &rel.type_name);
+        for (type_name, entries) in &self.created_rels_by_type {
+            for &(rel_id, from, to) in entries {
+                buf.push(EFFECT_CREATE_EDGE);
+                buf.extend_from_slice(&u64::from(rel_id).to_le_bytes());
+                buf.extend_from_slice(&u64::from(from).to_le_bytes());
+                buf.extend_from_slice(&u64::from(to).to_le_bytes());
+                write_string(buf, type_name);
 
-            if let Some(attrs) = self.new_relationships_attrs.get(&u64::from(*rel_id)) {
-                write_u16(buf, attrs.len() as u16);
-                for (key, value) in attrs.iter() {
-                    write_string(buf, key);
-                    write_value(buf, value);
+                if let Some(attrs) = self.new_relationships_attrs.get(&u64::from(rel_id)) {
+                    write_u16(buf, attrs.len() as u16);
+                    for (key, value) in attrs.iter() {
+                        write_string(buf, key);
+                        write_value(buf, value);
+                    }
+                } else {
+                    write_u16(buf, 0);
                 }
-            } else {
-                write_u16(buf, 0);
+                n_effects += 1;
             }
-            n_effects += 1;
         }
 
         // --- Updated node attributes (existing nodes only) ---
@@ -978,22 +992,15 @@ impl Pending {
         }
 
         // --- Set labels (non-created nodes only) ---
-        {
-            let nrows = self.set_node_labels.nrows();
-            if nrows > 0 {
-                let mut label_map: FxHashMap<u64, Vec<u64>> = FxHashMap::default();
-                for (node_id, label_id) in self.set_node_labels.iter(0, nrows - 1) {
-                    if !self.created_nodes.contains(node_id) {
-                        label_map.entry(node_id).or_default().push(label_id);
-                    }
-                }
-                let graph = g.borrow();
-                for (node_id, label_ids) in &label_map {
+        if !self.set_labels.is_empty() {
+            let graph = g.borrow();
+            for (&node_id, label_ids) in &self.set_labels {
+                if !self.created_nodes.contains(node_id) {
                     buf.push(EFFECT_SET_LABELS);
                     buf.extend_from_slice(&node_id.to_le_bytes());
                     write_u16(buf, label_ids.len() as u16);
-                    for label_id in label_ids {
-                        let label_name = graph.get_label_by_id(LabelId(*label_id as usize));
+                    for &label_id in label_ids {
+                        let label_name = graph.get_label_by_id(LabelId(label_id as usize));
                         write_string(buf, &label_name);
                     }
                     n_effects += 1;
@@ -1002,24 +1009,17 @@ impl Pending {
         }
 
         // --- Remove labels ---
-        {
-            let nrows = self.remove_node_labels.nrows();
-            if nrows > 0 {
-                let mut label_map: FxHashMap<u64, Vec<u64>> = FxHashMap::default();
-                for (node_id, label_id) in self.remove_node_labels.iter(0, nrows - 1) {
-                    label_map.entry(node_id).or_default().push(label_id);
+        if !self.remove_labels.is_empty() {
+            let graph = g.borrow();
+            for (&node_id, label_ids) in &self.remove_labels {
+                buf.push(EFFECT_REMOVE_LABELS);
+                buf.extend_from_slice(&node_id.to_le_bytes());
+                write_u16(buf, label_ids.len() as u16);
+                for &label_id in label_ids {
+                    let label_name = graph.get_label_by_id(LabelId(label_id as usize));
+                    write_string(buf, &label_name);
                 }
-                let graph = g.borrow();
-                for (node_id, label_ids) in &label_map {
-                    buf.push(EFFECT_REMOVE_LABELS);
-                    buf.extend_from_slice(&node_id.to_le_bytes());
-                    write_u16(buf, label_ids.len() as u16);
-                    for label_id in label_ids {
-                        let label_name = graph.get_label_by_id(LabelId(*label_id as usize));
-                        write_string(buf, &label_name);
-                    }
-                    n_effects += 1;
-                }
+                n_effects += 1;
             }
         }
 

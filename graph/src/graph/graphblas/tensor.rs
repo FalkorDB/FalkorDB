@@ -137,22 +137,28 @@ impl Tensor {
         self.me.set(compound_key(src, dest), id, true);
     }
 
-    /// Set multiple entries, checking dm emptiness once per sub-matrix.
-    pub fn set_all(
+    /// Set entries from parallel slices, updating all three sub-matrices.
+    pub fn set_all_from_slices(
         &mut self,
-        entries: impl Iterator<Item = (u64, u64, u64)>,
+        srcs: &[u64],
+        dsts: &[u64],
+        ids: &[u64],
     ) {
-        // Collect entries since we need to iterate 3 times (once per sub-matrix)
-        let entries: Vec<_> = entries.collect();
+        debug_assert_eq!(srcs.len(), dsts.len());
+        debug_assert_eq!(srcs.len(), ids.len());
+        if srcs.is_empty() {
+            return;
+        }
         self.m
-            .set_all(entries.iter().map(|&(src, dst, _)| (src, dst)));
+            .set_all(srcs.iter().copied().zip(dsts.iter().copied()));
         self.mt
-            .set_all(entries.iter().map(|&(src, dst, _)| (dst, src)));
-        self.me.set_all(
-            entries
-                .iter()
-                .map(|&(src, dst, id)| (compound_key(src, dst), id)),
-        );
+            .set_all(dsts.iter().copied().zip(srcs.iter().copied()));
+        let compound_iter = srcs
+            .iter()
+            .zip(dsts.iter())
+            .zip(ids.iter())
+            .map(|((&s, &d), &id)| (compound_key(s, d), id));
+        self.me.set_all(compound_iter);
     }
 
     /// Bulk-remove specific edges from this tensor.
