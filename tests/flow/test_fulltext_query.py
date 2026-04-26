@@ -176,4 +176,74 @@ class testFulltextIndexQuery():
 
         # verify no results
         self.env.assertEqual(result.result_set, [])
-    
+
+    # exercise non-canonical YIELD orderings to lock in name-based
+    # resolution of the relationship/score slots in the planner rewrite.
+    def test04_fulltext_query_yield_variants(self):
+        # YIELD with reversed canonical order: score first, relationship second.
+        # The planner must resolve slots by field name, not list position;
+        # otherwise the relationship slot would be bound to the score value.
+        result = self.graph.query(
+            """CALL db.idx.fulltext.queryRelationships('E', 'nice')
+            YIELD score, relationship
+            RETURN relationship.name AS name, score
+            ORDER BY name"""
+        )
+        self.env.assertEqual(len(result.result_set), 2)
+        names = [row[0] for row in result.result_set]
+        self.env.assertEqual(
+            names,
+            [
+                "a nice place to be",
+                "just another nice relationship that was updated",
+            ],
+        )
+        # score column must be a number, not a relationship value
+        for row in result.result_set:
+            self.env.assertTrue(isinstance(row[1], (int, float)))
+            self.env.assertGreater(row[1], 0.0)
+
+        # YIELD with AS aliases on both fields, also reversed.
+        result = self.graph.query(
+            """CALL db.idx.fulltext.queryRelationships('E', 'nice')
+            YIELD score AS s, relationship AS r
+            RETURN r.name AS name, s
+            ORDER BY name"""
+        )
+        self.env.assertEqual(len(result.result_set), 2)
+
+        # Same property on the node-fulltext path.
+        result = self.graph.query(
+            """CALL db.idx.fulltext.queryNodes('L3', 'redis')
+            YIELD score AS s, node AS n
+            RETURN n.v2 AS v2, s
+            ORDER BY s DESC"""
+        )
+        self.env.assertEqual(result.result_set[0][0], "hello redis")
+        self.env.assertGreater(result.result_set[0][1], result.result_set[1][1])
+
+        # YIELD without the entity field must be rejected — the scan operator
+        # needs an entity slot to bind into.
+        try:
+            self.graph.query(
+                """CALL db.idx.fulltext.queryRelationships('E', 'nice')
+                YIELD score
+                RETURN score"""
+            )
+            raise AssertionError(
+                "Expected error when YIELD omits the 'relationship' field"
+            )
+        except ResponseError as e:
+            self.env.assertContains("requires YIELD of 'relationship'", str(e))
+
+        try:
+            self.graph.query(
+                """CALL db.idx.fulltext.queryNodes('L1', 'hello')
+                YIELD score
+                RETURN score"""
+            )
+            raise AssertionError(
+                "Expected error when YIELD omits the 'node' field"
+            )
+        except ResponseError as e:
+            self.env.assertContains("requires YIELD of 'node'", str(e))

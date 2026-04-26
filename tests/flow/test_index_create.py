@@ -167,19 +167,23 @@ class testIndexCreationFlow:
         try:
             # phonetic accepts either a bool or the 'dm:en' algorithm
             # code. Any other string is rejected as unsupported.
-            result = self.graph.query(
+            self.graph.query(
                 "CREATE FULLTEXT INDEX FOR (n:L7) ON (n.p1) OPTIONS {phonetic: 'true'}"
             )
-            assert False
+            raise AssertionError(
+                "Expected unsupported phonetic algorithm to raise"
+            )
         except ResponseError as e:
             self.env.assertContains("Unsupported phonetic algorithm", str(e))
 
         try:
             # phonetic must be bool or string
-            result = self.graph.query(
+            self.graph.query(
                 "CREATE FULLTEXT INDEX FOR (n:L7) ON (n.p1) OPTIONS {phonetic: 1}"
             )
-            assert False
+            raise AssertionError(
+                "Expected invalid phonetic option type to raise"
+            )
         except ResponseError as e:
             self.env.assertContains("Phonetic must be bool or string", str(e))
 
