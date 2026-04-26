@@ -74,7 +74,12 @@ EdgeTraverseCtx *EdgeTraverseCtx_New
 
 	EdgeTraverseCtx *edge_ctx = rm_malloc (sizeof (EdgeTraverseCtx)) ;
 
-	edge_ctx->e = e ;
+	// own a deep clone of the QGEdge to decouple our lifetime from the
+	// plan's QueryGraph (issue #1823)
+	// the source plan's QGEdge can be freed by LRU cache eviction while a
+	// cloned ExecutionPlan that borrows the same pointer is still executing
+	// on a worker thread
+	edge_ctx->e = QGEdge_Clone (e) ;
 	edge_ctx->edges = arr_new (Edge, 32) ;   // instantiate array to collect matching edges
 
 	edge_ctx->edgeRecIdx = idx ;
@@ -179,6 +184,7 @@ void EdgeTraverseCtx_Free
 	}
 
 	arr_free (edge_ctx->edges) ;
+	QGEdge_Free (edge_ctx->e) ;
 	rm_free (edge_ctx) ;
 }
 
