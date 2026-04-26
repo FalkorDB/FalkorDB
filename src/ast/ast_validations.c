@@ -467,12 +467,18 @@ static VISITOR_STRATEGY _Validate_pattern_comprehension
 	// introduce local identifier if it is not yet introduced
 	if(is_new) _IdentifierAdd(vctx, identifier, NULL);
 
+	// change clause type so that aggregation functions are not allowed
+	// inside the pattern comprehension's predicate and eval expressions
+	cypher_astnode_type_t orig_clause = vctx->clause;
+	vctx->clause = CYPHER_AST_PATTERN_COMPREHENSION;
+
 	// Visit expression-children
 	// Visit pattern
 	const cypher_astnode_t *pattern = cypher_ast_pattern_comprehension_get_pattern(n);
 	if(pattern) {
 		AST_Visitor_visit(pattern, visitor);
 		if(ErrorCtx_EncounteredError()) {
+			vctx->clause = orig_clause;
 			return VISITOR_BREAK;
 		}
 	}
@@ -482,6 +488,7 @@ static VISITOR_STRATEGY _Validate_pattern_comprehension
 	if(pred) {
 		AST_Visitor_visit(pred, visitor);
 		if(ErrorCtx_EncounteredError()) {
+			vctx->clause = orig_clause;
 			return VISITOR_BREAK;
 		}
 	}
@@ -491,9 +498,13 @@ static VISITOR_STRATEGY _Validate_pattern_comprehension
 	if(eval) {
 		AST_Visitor_visit(eval, visitor);
 		if(ErrorCtx_EncounteredError()) {
+			vctx->clause = orig_clause;
 			return VISITOR_BREAK;
 		}
 	}
+
+	// restore the original clause type
+	vctx->clause = orig_clause;
 
 	// pattern comprehension identifier is no longer bound, remove it from bound vars
 	// if it was introduced
