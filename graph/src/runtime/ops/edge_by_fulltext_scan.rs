@@ -115,7 +115,9 @@ impl<'a> Iterator for EdgeByFulltextScanOp<'a> {
                 ) {
                     Ok(Value::String(s)) => s,
                     Ok(_) => {
-                        return Some(Err("fulltext query expects a string label".into()));
+                        return Some(Err(
+                            "fulltext query expects a string relationship type".into()
+                        ));
                     }
                     Err(e) => return Some(Err(e)),
                 };

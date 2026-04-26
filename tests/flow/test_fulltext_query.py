@@ -179,25 +179,48 @@ class testFulltextIndexQuery():
 
     # exercise non-canonical YIELD orderings to lock in name-based
     # resolution of the relationship/score slots in the planner rewrite.
+    #
+    # This test owns its own labels (`Yield`, `YieldW`) and edge type
+    # (`Yield`) so it does not depend on data created or mutated by any
+    # earlier test in the class.
     def test04_fulltext_query_yield_variants(self):
+        # Dedicated indexes — `YieldW` uses per-field weights so the
+        # node test below can verify that scoring actually distinguishes
+        # the two rows.
+        self.graph.query("CREATE FULLTEXT INDEX FOR (n:Yield) ON (n.text)")
+        self.graph.query(
+            "CREATE FULLTEXT INDEX FOR (n:YieldW) ON (n.a) OPTIONS {weight: 1}"
+        )
+        self.graph.query(
+            "CREATE FULLTEXT INDEX FOR (n:YieldW) ON (n.b) OPTIONS {weight: 2}"
+        )
+        self.graph.query("CREATE FULLTEXT INDEX FOR ()-[e:Yield]-() ON (e.text)")
+        wait_for_indices_to_sync(self.graph)
+
+        # Dedicated dataset (vocabulary deliberately uses generic words
+        # so the test isn't entangled with any other suite's fixtures).
+        self.graph.query(
+            """CREATE
+              (a:Yield {text:'apple banana cherry'}),
+              (b:Yield {text:'apple cherry'}),
+              (a)-[:Yield {text:'apple banana'}]->(b),
+              (b)-[:Yield {text:'banana cherry'}]->(a),
+              (:YieldW {a:'banana cherry', b:'apple cherry'}),
+              (:YieldW {a:'apple cherry', b:'banana cherry'})"""
+        )
+
         # YIELD with reversed canonical order: score first, relationship second.
         # The planner must resolve slots by field name, not list position;
         # otherwise the relationship slot would be bound to the score value.
         result = self.graph.query(
-            """CALL db.idx.fulltext.queryRelationships('E', 'nice')
+            """CALL db.idx.fulltext.queryRelationships('Yield', 'banana')
             YIELD score, relationship
-            RETURN relationship.name AS name, score
-            ORDER BY name"""
+            RETURN relationship.text AS text, score
+            ORDER BY text"""
         )
         self.env.assertEqual(len(result.result_set), 2)
-        names = [row[0] for row in result.result_set]
-        self.env.assertEqual(
-            names,
-            [
-                "a nice place to be",
-                "just another nice relationship that was updated",
-            ],
-        )
+        texts = [row[0] for row in result.result_set]
+        self.env.assertEqual(texts, ["apple banana", "banana cherry"])
         # score column must be a number, not a relationship value
         for row in result.result_set:
             self.env.assertTrue(isinstance(row[1], (int, float)))
@@ -205,28 +228,31 @@ class testFulltextIndexQuery():
 
         # YIELD with AS aliases on both fields, also reversed.
         result = self.graph.query(
-            """CALL db.idx.fulltext.queryRelationships('E', 'nice')
+            """CALL db.idx.fulltext.queryRelationships('Yield', 'banana')
             YIELD score AS s, relationship AS r
-            RETURN r.name AS name, s
-            ORDER BY name"""
+            RETURN r.text AS text, s
+            ORDER BY text"""
         )
         self.env.assertEqual(len(result.result_set), 2)
 
-        # Same property on the node-fulltext path.
+        # Same on the node-fulltext path: YIELD with score first and node
+        # aliased. The `b` field has weight 2 vs `a`'s weight 1, so the row
+        # whose `b` contains the search term must score higher.
         result = self.graph.query(
-            """CALL db.idx.fulltext.queryNodes('L3', 'redis')
+            """CALL db.idx.fulltext.queryNodes('YieldW', 'apple')
             YIELD score AS s, node AS n
-            RETURN n.v2 AS v2, s
+            RETURN n.b AS b, s
             ORDER BY s DESC"""
         )
-        self.env.assertEqual(result.result_set[0][0], "hello redis")
+        self.env.assertEqual(len(result.result_set), 2)
+        self.env.assertEqual(result.result_set[0][0], "apple cherry")
         self.env.assertGreater(result.result_set[0][1], result.result_set[1][1])
 
         # YIELD without the entity field must be rejected — the scan operator
         # needs an entity slot to bind into.
         try:
             self.graph.query(
-                """CALL db.idx.fulltext.queryRelationships('E', 'nice')
+                """CALL db.idx.fulltext.queryRelationships('Yield', 'banana')
                 YIELD score
                 RETURN score"""
             )
@@ -238,7 +264,7 @@ class testFulltextIndexQuery():
 
         try:
             self.graph.query(
-                """CALL db.idx.fulltext.queryNodes('L1', 'hello')
+                """CALL db.idx.fulltext.queryNodes('Yield', 'banana')
                 YIELD score
                 RETURN score"""
             )
