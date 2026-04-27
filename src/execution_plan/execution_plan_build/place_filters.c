@@ -100,11 +100,14 @@ void ExecutionPlan_RePositionFilterOp
 		// the filter tree does not contain references
 		// e.g.
 		// WHERE 1=1
-		// place the filter directly below the first projection if there is one
-		// otherwise update the execution plan's root
-		op = ExecutionPlan_LocateOpMatchingTypes(plan->root, PROJECT_OPS,
+		// place the filter directly below the first projection within the
+		// caller-supplied root subtree (preserving scope semantics).
+		// if no projection is found within that subtree, fall back to the
+		// subtree's root, and finally to the plan root.
+		op = ExecutionPlan_LocateOpMatchingTypes(root, PROJECT_OPS,
 				PROJECT_OP_COUNT, NULL);
-		op = (op == NULL) ? plan->root : op;
+		if(op == NULL) op = root;
+		if(op == NULL) op = plan->root;
 	}
 
 	ASSERT(op != NULL);
