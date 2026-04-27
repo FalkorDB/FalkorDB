@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "../value.h"
 #include "../util/rmalloc.h"
+#include "temporal_value.h"
 
 #define _XOPEN_SOURCE  700 // needed for gmtime_r
 
@@ -225,16 +226,12 @@ bool Date_getComponent
         *value = (month - 1) / 3 + 1;
     } else if(strcasecmp(component, "dayOfQuarter") == 0 ||
 			  strcasecmp(component, "quarterDay")   == 0) {
-        int doy = yday;
         int q = (month - 1) / 3 + 1;
-        int dayOfQuarter = doy;
-
-        if(q > 1) {
-            // subtract days of prior months in current year
-            static const int daysUntilQuarter[] = {0, 0, 90, 181, 273};
-            dayOfQuarter = doy - daysUntilQuarter[q];
-        }
-        *value = dayOfQuarter + 1;
+        static const int quarter_offsets[]      = {0, 0, 90, 181, 273};
+        static const int quarter_offsets_leap[] = {0, 0, 91, 182, 274};
+        const int *offsets = is_leap_year(year) ? quarter_offsets_leap
+                                                : quarter_offsets;
+        *value = yday - offsets[q];
     }
 
     return (*value != -1);
