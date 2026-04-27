@@ -1,4 +1,5 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 language: "en-US"
-path_filters:
+reviews:
+  path_filters:
   - "!deps/**"
