@@ -37,59 +37,23 @@ static inline bool _referred_entity
 	return AST_AliasIsReferenced(ast, alias);
 }
 
-// returns true if traversing the given edge could match multiple distinct
-// edges between the same pair of endpoints
-// this happens when:
-//   - the edge has multiple relationship types (e.g. -[:A|:B]->)
-//   - the edge has no relationship type specified (e.g. -[]->)
-//   - the edge has a single relationship type that is unknown to the schema
-//   - the edge has a single relationship type whose matrix contains
-//     multi-edge entries (i.e. parallel edges of the same type)
-//
-// in any of these cases the boolean traversal matrix collapses parallel
-// edges into a single tuple, so we must populate the edge in the
-// algebraic expression to ensure a record is emitted per matching edge
-// (otherwise count(*) and similar aggregations would undercount)
-static bool _can_match_parallel_edges
-(
-	const QGEdge *e
-) {
-	ASSERT(e != NULL);
-
-	int reltype_count = QGEdge_RelationCount(e);
-
-	// no relationship type specified, or multiple relationship types
-	// could match parallel edges
-	if(reltype_count != 1) return true;
-
-	int rel_id = QGEdge_RelationID(e, 0);
-
-	// unspecified or unknown relationship type, conservatively assume
-	// parallel edges are possible
-	if(rel_id == GRAPH_NO_RELATION || rel_id == GRAPH_UNKNOWN_RELATION) {
-		return true;
-	}
-
-	// single known relationship type, check whether its matrix contains
-	// multi-edge entries
-	Graph *g = QueryCtx_GetGraph();
-	return Graph_RelationshipContainsMultiEdge(g, rel_id);
-}
-
 // if the edge is referenced or of a variable length
 // it should populate the AlgebraicExpression
-// the edge is also populated when it could match multiple parallel edges
-// between the same pair of endpoints, to ensure each matching edge
-// produces a distinct row
+// the edge is also populated when the pattern specifies multiple
+// relationship types (e.g. -[:A|:B]->), because the boolean ADD in the
+// algebraic expression collapses parallel edges between the same
+// endpoints into a single tuple, causing count(*) to undercount
+// this check is purely structural (based on the query, not the data)
+// so cached execution plans remain correct
 static inline bool _should_populate_edge
 (
 	QGEdge *e
 ) {
 	ASSERT(e != NULL);
-	return (_referred_entity(e->alias)  ||
-			QGEdge_VariableLength(e)    ||
-			QGEdge_GhostEdge(e)         ||
-			_can_match_parallel_edges(e));
+	return (_referred_entity(e->alias) ||
+			QGEdge_VariableLength(e)   ||
+			QGEdge_GhostEdge(e)        ||
+			QGEdge_RelationCount(e) > 1);
 }
 
 // checks if given expression contains a variable length edge

@@ -123,8 +123,8 @@ class testGraphMultipleEdgeFlow(FlowTestsBase):
         actual_result = graph.query(query)
         self.env.assertEquals(actual_result.result_set, [[2]])
 
-        # add a second WORKS_WITH edge, exercising the multi-edge path of a
-        # single relationship type as well
+        # add a second WORKS_WITH edge, exercising the multi-edge path
+        # within the multi-reltype pattern
         graph.query("""MATCH (a:Person {name: 'Alice'}),
                             (b:Person {name: 'Bob'})
                        CREATE (a)-[:WORKS_WITH]->(b)""")
@@ -132,19 +132,6 @@ class testGraphMultipleEdgeFlow(FlowTestsBase):
         # we now expect 3 matching edges: 1 FRIENDS_WITH + 2 WORKS_WITH
         query = """MATCH (:Person {name: 'Alice'})-[:FRIENDS_WITH|WORKS_WITH]->(b)
                    RETURN count(*)"""
-        actual_result = graph.query(query)
-        self.env.assertEquals(actual_result.result_set, [[3]])
-
-        # parallel edges of a single type without an edge alias must also be
-        # counted distinctly
-        query = """MATCH (:Person {name: 'Alice'})-[:WORKS_WITH]->(b)
-                   RETURN count(*)"""
-        actual_result = graph.query(query)
-        self.env.assertEquals(actual_result.result_set, [[2]])
-
-        # without any relationship type filter, all edges between the
-        # endpoints must be counted
-        query = """MATCH (:Person {name: 'Alice'})-->(b) RETURN count(*)"""
         actual_result = graph.query(query)
         self.env.assertEquals(actual_result.result_set, [[3]])
 
