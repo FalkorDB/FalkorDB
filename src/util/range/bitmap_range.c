@@ -3,9 +3,94 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include <math.h>
+
 #include "../arr.h"
 #include "bitmap_range.h"
 #include "../../query_ctx.h"
+
+// convert a double-valued bound to an equivalent integer bound
+// returns true if the converted bound was applied (or is a no-op)
+// returns false if the predicate is unsatisfiable for any node id
+// (in which case 'min'/'max' may have been left unchanged)
+static bool _Tighten_Double (
+	double v,         // double value
+	AST_Operator op,  // <, <=, =, >=, >
+	uint64_t *min,    // [in/out] minimum value
+	uint64_t *max     // [in/out] maximum value
+) {
+	ASSERT (min != NULL) ;
+	ASSERT (max != NULL) ;
+
+	// NaN never compares true
+	if (isnan (v)) {
+		return false ;
+	}
+
+	// node ids are non-negative integers in the uint64_t range
+	const double UINT64_MAX_AS_DOUBLE = 18446744073709551616.0 ;  // 2^64
+
+	switch (op) {
+		case OP_EQUAL:  // id = v
+			// only an exact non-negative integer can match
+			if (v < 0.0 || v >= UINT64_MAX_AS_DOUBLE || floor (v) != v) {
+				return false ;
+			}
+			return BitmapRange_Tighten ((uint64_t) v, OP_EQUAL, min, max) ;
+
+		case OP_GE:  // id >= v
+			if (v <= 0.0) {
+				// no constraint, ids are >= 0
+				return true ;
+			}
+			if (v >= UINT64_MAX_AS_DOUBLE) {
+				// no id can be that large
+				return false ;
+			}
+			return BitmapRange_Tighten ((uint64_t) ceil (v), OP_GE, min, max) ;
+
+		case OP_GT:  // id > v
+			if (v < 0.0) {
+				return true ;
+			}
+			if (v >= UINT64_MAX_AS_DOUBLE - 1.0) {
+				return false ;
+			}
+			{
+				uint64_t iv = (floor (v) == v)
+					? (uint64_t) v + 1
+					: (uint64_t) ceil (v) ;
+				return BitmapRange_Tighten (iv, OP_GE, min, max) ;
+			}
+
+		case OP_LE:  // id <= v
+			if (v < 0.0) {
+				return false ;
+			}
+			if (v >= UINT64_MAX_AS_DOUBLE) {
+				return true ;
+			}
+			return BitmapRange_Tighten ((uint64_t) floor (v), OP_LE, min, max) ;
+
+		case OP_LT:  // id < v
+			if (v <= 0.0) {
+				return false ;
+			}
+			if (v >= UINT64_MAX_AS_DOUBLE) {
+				return true ;
+			}
+			{
+				uint64_t iv = (floor (v) == v)
+					? (uint64_t) v - 1
+					: (uint64_t) floor (v) ;
+				return BitmapRange_Tighten (iv, OP_LE, min, max) ;
+			}
+
+		default:
+			ASSERT (false && "operation not supported") ;
+			return false ;
+	}
+}
 
 // tighten the range
 // e.g.
@@ -84,12 +169,18 @@ bool BitmapRange_FromRanges (
 	for (int i = 0; i < n; i++) {
 		SIValue v = AR_EXP_Evaluate (ranges[i].exp, r) ;
 
-		// fail if range expression isn't an integer
-		if (SI_TYPE(v) != T_INT64) {
-			return false ;
-		}
-
-		if (!BitmapRange_Tighten (v.longval, ranges[i].op, &min, &max)) {
+		if (SI_TYPE(v) == T_INT64) {
+			if (!BitmapRange_Tighten (v.longval, ranges[i].op, &min, &max)) {
+				return false ;
+			}
+		} else if (SI_TYPE(v) == T_DOUBLE) {
+			// e.g. WHERE id(n) >= 0.0
+			// translate the double bound into an equivalent integer bound
+			if (!_Tighten_Double (v.doubleval, ranges[i].op, &min, &max)) {
+				return false ;
+			}
+		} else {
+			// fail if range expression isn't numeric
 			return false ;
 		}
 	}

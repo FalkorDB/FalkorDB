@@ -243,6 +243,68 @@ class testNodeByIDFlow(FlowTestsBase):
             self.env.assertEquals(len(resultset), 0)    # Expecting no results.
             self.env.assertIn("Node By Label and ID Scan", str(self.graph.explain(query)))
 
+    def test_id_compare_with_float_literal(self):
+        # https://github.com/FalkorDB/FalkorDB/issues/...
+        # WHERE id(n) op <float> used to be reduced to an empty range,
+        # producing no rows. Verify that float literals work the same as
+        # integer literals.
+
+        # all 10 nodes
+        int_q   = """MATCH (n) WHERE ID(n) >= 0   RETURN n.id ORDER BY n.id"""
+        float_q = """MATCH (n) WHERE ID(n) >= 0.0 RETURN n.id ORDER BY n.id"""
+        self.env.assertEqual(self.graph.query(int_q).result_set,
+                             self.graph.query(float_q).result_set)
+
+        # 5 nodes (5..9)
+        int_q   = """MATCH (n) WHERE ID(n) >= 5   RETURN n.id ORDER BY n.id"""
+        float_q = """MATCH (n) WHERE ID(n) >= 5.0 RETURN n.id ORDER BY n.id"""
+        self.env.assertEqual(self.graph.query(int_q).result_set,
+                             self.graph.query(float_q).result_set)
+
+        # 4 nodes (6..9): id > 5.5 -> id >= 6
+        float_q = """MATCH (n) WHERE ID(n) > 5.5 RETURN n.id ORDER BY n.id"""
+        int_q   = """MATCH (n) WHERE ID(n) > 5   RETURN n.id ORDER BY n.id"""
+        self.env.assertEqual(self.graph.query(int_q).result_set,
+                             self.graph.query(float_q).result_set)
+
+        # 6 nodes (0..5): id <= 5.5 -> id <= 5
+        float_q = """MATCH (n) WHERE ID(n) <= 5.5 RETURN n.id ORDER BY n.id"""
+        int_q   = """MATCH (n) WHERE ID(n) <= 5   RETURN n.id ORDER BY n.id"""
+        self.env.assertEqual(self.graph.query(int_q).result_set,
+                             self.graph.query(float_q).result_set)
+
+        # 5 nodes (0..4): id < 4.5 -> id <= 4
+        float_q = """MATCH (n) WHERE ID(n) < 4.5 RETURN n.id ORDER BY n.id"""
+        int_q   = """MATCH (n) WHERE ID(n) < 5   RETURN n.id ORDER BY n.id"""
+        self.env.assertEqual(self.graph.query(int_q).result_set,
+                             self.graph.query(float_q).result_set)
+
+        # exact equality with integer-valued float
+        float_q = """MATCH (n) WHERE ID(n) = 3.0 RETURN n.id ORDER BY n.id"""
+        int_q   = """MATCH (n) WHERE ID(n) = 3   RETURN n.id ORDER BY n.id"""
+        self.env.assertEqual(self.graph.query(int_q).result_set,
+                             self.graph.query(float_q).result_set)
+
+        # equality with non-integer float -> no match
+        q = """MATCH (n) WHERE ID(n) = 3.5 RETURN n.id"""
+        self.env.assertEqual(self.graph.query(q).result_set, [])
+
+        # negative float lower bound -> all nodes
+        all_q   = """MATCH (n) RETURN n.id ORDER BY n.id"""
+        float_q = """MATCH (n) WHERE ID(n) >= -1.5 RETURN n.id ORDER BY n.id"""
+        self.env.assertEqual(self.graph.query(all_q).result_set,
+                             self.graph.query(float_q).result_set)
+
+        # negative float upper bound -> empty result
+        q = """MATCH (n) WHERE ID(n) <= -0.5 RETURN n.id"""
+        self.env.assertEqual(self.graph.query(q).result_set, [])
+
+        # combination with label scan path
+        int_q   = """MATCH (n:person) WHERE ID(n) >= 0   RETURN n.id ORDER BY n.id"""
+        float_q = """MATCH (n:person) WHERE ID(n) >= 0.0 RETURN n.id ORDER BY n.id"""
+        self.env.assertEqual(self.graph.query(int_q).result_set,
+                             self.graph.query(float_q).result_set)
+
     def test_node_by_id_scan_reset(self):
         # the following query used to crash due to wrong reset handeling by
         # the op_node_by_label_scan operation
