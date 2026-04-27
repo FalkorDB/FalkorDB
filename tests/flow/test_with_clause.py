@@ -248,8 +248,8 @@ class testWithClause(FlowTestsBase):
         self.env.assertTrue(re.search('Filter\s+Project', plan))
 
     # Verify that aggregation following a WITH ... WHERE that filters out all
-    # rows still yields a default aggregation result (e.g. count(*) = 0).
-    # https://github.com/FalkorDB/FalkorDB/issues - "Aggregation after WITH ... WHERE false returns empty result"
+    # rows still yields a default aggregation result (e.g. count(*) = 0),
+    # matching the behavior of the equivalent MATCH ... WHERE form.
     def test10b_aggregation_after_with_where_filters_all(self):
         # use a dedicated graph so we don't interfere with the populated graph
         g = self.db.select_graph(GRAPH_ID + "_aggr_with_where_false")
