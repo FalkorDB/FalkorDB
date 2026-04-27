@@ -107,7 +107,14 @@ static void _NegateOrderPredicate
 ) {
 	ASSERT(node != NULL && node->t == FT_N_PRED);
 	AST_Operator op = node->pred.op;
-	AR_ExpNode *cmp = AR_EXP_NewOpNode(_OrderOpFuncName(op), true, 2);
+	const char *fname = _OrderOpFuncName(op);
+	// defense-in-depth: ASSERT compiles out in release builds, so guard
+	// against an unexpected operator producing a NULL function name and
+	// crashing AR_EXP_NewOpNode. Leave the node untouched in that case;
+	// the caller has already filtered to LT/LE/GT/GE so this is unreachable
+	// in practice.
+	if(fname == NULL) return;
+	AR_ExpNode *cmp = AR_EXP_NewOpNode(fname, true, 2);
 	cmp->op.children[0] = node->pred.lhs;
 	cmp->op.children[1] = node->pred.rhs;
 	AR_ExpNode *not_exp = AR_EXP_NewOpNode("not", true, 1);
