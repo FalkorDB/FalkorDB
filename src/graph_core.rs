@@ -30,7 +30,7 @@
 use crate::{
     config::{
         CONFIGURATION_IMPORT_FOLDER, EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES, RESULTSET_SIZE,
-        TIMEOUT_DEFAULT,
+        TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
     },
     reply::{reply_compact, reply_verbose},
     slow_log::SlowLog,
@@ -71,7 +71,7 @@ use std::{
 
 use crate::allocator::{current_thread_usage, disable_tracking, enable_tracking, reset_counter};
 
-type WriteMessage = (BlockedClient, Arc<str>, bool, bool, Arc<str>);
+type WriteMessage = (BlockedClient, Arc<str>, bool, bool, Arc<str>, Option<i64>);
 type WriteQueryResult = Result<(Arc<AtomicRefCell<Graph>>, Option<Vec<u8>>, bool), String>;
 
 /// Safe wrappers over Redis module FFI function pointers.
@@ -285,6 +285,7 @@ impl ThreadedGraph {
         compact: bool,
         write: bool,
         cmd: &str,
+        per_query_timeout: Option<i64>,
     ) -> Result<(bool, bool), String> {
         let wall_start = Instant::now();
         let Plan {
@@ -315,6 +316,7 @@ impl ThreadedGraph {
             self.graph.read()
         };
         let env_pool = Pool::new();
+        let timeout_ms = compute_effective_timeout(per_query_timeout, is_write)?;
         let runtime = Runtime::new(
             g,
             parameters,
@@ -325,6 +327,7 @@ impl ThreadedGraph {
             &env_pool,
             RESULTSET_SIZE.load(Ordering::Relaxed),
             false,
+            timeout_ms,
         );
         let mut result = runtime.query()?;
         result.stats.cached = cached;
@@ -346,6 +349,7 @@ impl ThreadedGraph {
         query: &str,
         compact: bool,
         first_cached: bool,
+        per_query_timeout: Option<i64>,
     ) -> WriteQueryResult {
         let wall_start = Instant::now();
         let Plan {
@@ -375,6 +379,7 @@ impl ThreadedGraph {
             .write()
             .expect("MVCC write slot busy: single-writer invariant violated");
         let env_pool = Pool::new();
+        let timeout_ms = compute_effective_timeout(per_query_timeout, true)?;
         let runtime = Runtime::new(
             g.clone(),
             parameters,
@@ -385,6 +390,7 @@ impl ThreadedGraph {
             &env_pool,
             RESULTSET_SIZE.load(Ordering::Relaxed),
             false,
+            timeout_ms,
         );
         let mut result = match runtime.query() {
             Ok(r) => r,
@@ -429,6 +435,7 @@ impl ThreadedGraph {
         &self,
         ctx: &Context,
         query: &str,
+        per_query_timeout: Option<i64>,
     ) -> Result<bool, String> {
         let Plan {
             plan, parameters, ..
@@ -448,6 +455,7 @@ impl ThreadedGraph {
         }
         let g = self.graph.read();
         let env_pool = Pool::new();
+        let timeout_ms = compute_effective_timeout(per_query_timeout, false)?;
         let runtime = Runtime::new(
             g,
             parameters,
@@ -458,6 +466,7 @@ impl ThreadedGraph {
             &env_pool,
             -1,
             true,
+            timeout_ms,
         );
         let _ = runtime.query()?;
         reply_profile(ctx, &runtime, &plan);
@@ -469,6 +478,7 @@ impl ThreadedGraph {
         &self,
         ctx: &Context,
         query: &str,
+        per_query_timeout: Option<i64>,
     ) -> WriteQueryResult {
         let Plan {
             plan, parameters, ..
@@ -485,6 +495,7 @@ impl ThreadedGraph {
             .write()
             .expect("MVCC write slot busy: single-writer invariant violated");
         let env_pool = Pool::new();
+        let timeout_ms = compute_effective_timeout(per_query_timeout, true)?;
         let runtime = Runtime::new(
             g.clone(),
             parameters,
@@ -495,6 +506,7 @@ impl ThreadedGraph {
             &env_pool,
             -1,
             true,
+            timeout_ms,
         );
         match runtime.query() {
             Ok(_) => {
@@ -578,6 +590,48 @@ impl Drop for BlockedClient {
     }
 }
 
+/// Compute the effective timeout in milliseconds for a query.
+///
+/// Rules:
+/// - Per-query timeout cannot exceed TIMEOUT_MAX (if set).
+/// - Per-query timeout is only applied to read queries (write queries ignore it).
+/// - Falls back to TIMEOUT_DEFAULT, then deprecated TIMEOUT.
+/// - Returns None for unlimited.
+fn compute_effective_timeout(
+    per_query_timeout: Option<i64>,
+    is_write: bool,
+) -> Result<Option<u64>, String> {
+    let timeout_max = TIMEOUT_MAX.load(Ordering::Relaxed);
+    let timeout_default = TIMEOUT_DEFAULT.load(Ordering::Relaxed);
+    let timeout_legacy = TIMEOUT.load(Ordering::Relaxed);
+
+    // Per-query timeout: enforce TIMEOUT_MAX limit, skip for writes
+    if let Some(pq) = per_query_timeout {
+        if timeout_max > 0 && pq > timeout_max {
+            return Err("The query TIMEOUT parameter value cannot exceed the TIMEOUT_MAX configuration parameter value".to_string());
+        }
+        // Per-query timeout is ignored for write queries
+        if !is_write && pq > 0 {
+            return Ok(Some(pq as u64));
+        }
+    }
+
+    // Global config fallback
+    if timeout_default > 0 {
+        return Ok(Some(timeout_default as u64));
+    }
+    if timeout_max > 0 {
+        return Ok(Some(timeout_max as u64));
+    }
+    if timeout_legacy > 0 {
+        // Legacy TIMEOUT: only apply to read queries
+        if !is_write {
+            return Ok(Some(timeout_legacy as u64));
+        }
+    }
+    Ok(None)
+}
+
 #[inline]
 pub fn query_mut(
     ctx: &Context,
@@ -587,10 +641,19 @@ pub fn query_mut(
     write: bool,
     track_mem: bool,
     key_name: Arc<str>,
+    per_query_timeout: Option<i64>,
 ) -> RedisResult {
     // Inside MULTI/EXEC: execute synchronously (blocking commands not allowed).
     if ctx.get_flags().contains(ContextFlags::MULTI) {
-        return query_sync(ctx, graph, query, compact, write, &key_name);
+        return query_sync(
+            ctx,
+            graph,
+            query,
+            compact,
+            write,
+            &key_name,
+            per_query_timeout,
+        );
     }
 
     // Check pending queries limit before dispatching.
@@ -633,7 +696,7 @@ pub fn query_mut(
             } else {
                 "GRAPH.RO_QUERY"
             };
-            let res = graph.execute_query(&ctx, &query, compact, write, cmd);
+            let res = graph.execute_query(&ctx, &query, compact, write, cmd, per_query_timeout);
 
             // Log memory tracking BEFORE freeing the context.
             if track_mem {
@@ -651,13 +714,18 @@ pub fn query_mut(
             match res {
                 Ok((is_write, cached)) => {
                     if is_write {
-                        if let Err(send_err) =
-                            graph.sender.send((bc, query, compact, cached, key_name))
-                        {
+                        if let Err(send_err) = graph.sender.send((
+                            bc,
+                            query,
+                            compact,
+                            cached,
+                            key_name,
+                            per_query_timeout,
+                        )) {
                             // Receiver closed — the write-queue worker is gone.
                             // Recover by replying with an error and releasing
                             // the channel slot instead of panicking the module.
-                            let (bc, _q, _c, _cached, _k) = send_err.0;
+                            let (bc, _q, _c, _cached, _k, _t) = send_err.0;
                             let cerr = ffi::sanitise_error(
                                 "ERR graph write queue unavailable".to_string(),
                             );
@@ -696,6 +764,7 @@ fn query_sync(
     compact: bool,
     write: bool,
     key_name: &Arc<str>,
+    per_query_timeout: Option<i64>,
 ) -> RedisResult {
     // First pass: parse + detect if write, execute reads inline.
     // Sync query timeout to UDF JS runtime
@@ -709,14 +778,14 @@ fn query_sync(
     };
     let res = {
         let g = graph.read();
-        g.execute_query(ctx, query, compact, write, cmd)
+        g.execute_query(ctx, query, compact, write, cmd, per_query_timeout)
     };
     match res {
         Ok((is_write, cached)) => {
             if is_write {
                 // Write path: acquire exclusive lock and execute.
                 let mut g = graph.write();
-                let res = g.execute_query_write(ctx, query, compact, cached);
+                let res = g.execute_query_write(ctx, query, compact, cached, per_query_timeout);
                 match res {
                     Ok((new_graph, effects_buffer, modified)) => {
                         g.graph.commit(new_graph);
@@ -750,10 +819,11 @@ pub fn profile_mut(
     graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
     key_name: &Arc<str>,
+    per_query_timeout: Option<i64>,
 ) -> RedisResult {
     // Inside MULTI/EXEC: execute synchronously.
     if ctx.get_flags().contains(ContextFlags::MULTI) {
-        return profile_sync(ctx, graph, query, key_name);
+        return profile_sync(ctx, graph, query, key_name, per_query_timeout);
     }
 
     let bc = unsafe { BlockedClient::new(ctx.ctx) };
@@ -768,7 +838,7 @@ pub fn profile_mut(
             let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
             let ctx = Context::new(ctx);
 
-            let res = graph_read.execute_profile(&ctx, &query);
+            let res = graph_read.execute_profile(&ctx, &query, per_query_timeout);
 
             match res {
                 Ok(is_write) => {
@@ -780,7 +850,8 @@ pub fn profile_mut(
                         let mut graph_write = g.write();
                         let ctx2 = unsafe { ffi::get_thread_safe_context(bc.inner) };
                         let ctx2 = Context::new(ctx2);
-                        let res = graph_write.execute_profile_write(&ctx2, &query);
+                        let res =
+                            graph_write.execute_profile_write(&ctx2, &query, per_query_timeout);
                         match res {
                             Ok((new_graph, _, _)) => {
                                 graph_write.graph.commit(new_graph);
@@ -820,16 +891,17 @@ fn profile_sync(
     graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
     _key_name: &Arc<str>,
+    per_query_timeout: Option<i64>,
 ) -> RedisResult {
     let res = {
         let g = graph.read();
-        g.execute_profile(ctx, query)
+        g.execute_profile(ctx, query, per_query_timeout)
     };
     match res {
         Ok(is_write) => {
             if is_write {
                 let mut g = graph.write();
-                let res = g.execute_profile_write(ctx, query);
+                let res = g.execute_profile_write(ctx, query, per_query_timeout);
                 match res {
                     Ok((new_graph, _, _)) => {
                         g.graph.commit(new_graph);
@@ -868,10 +940,13 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         // the message stranded. After clearing the flag we re-check the
         // queue and re-acquire the flag if work remains.
         loop {
-            while let Ok((bc, query, compact, cached, key_name)) = { graph.receiver.try_recv() } {
+            while let Ok((bc, query, compact, cached, key_name, per_query_timeout)) =
+                { graph.receiver.try_recv() }
+            {
                 let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
                 let ctx = Context::new(ctx);
-                let res = graph.execute_query_write(&ctx, &query, compact, cached);
+                let res =
+                    graph.execute_query_write(&ctx, &query, compact, cached, per_query_timeout);
                 match res {
                     Ok((g, effects_buffer, modified)) => {
                         // Signal the key as modified so WATCH gets triggered.

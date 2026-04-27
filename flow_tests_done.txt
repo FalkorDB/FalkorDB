@@ -70,12 +70,14 @@ tests/flow/test_rdb_load.py
 tests/flow/test_reduce.py
 tests/flow/test_results.py
 tests/flow/test_reversed_patterns
+tests/flow/test_ro_query.py
 tests/flow/test_self_pointing_node
 tests/flow/test_shortest_path.py
 tests/flow/test_slowlog.py
 tests/flow/test_social.py
 tests/flow/test_star_projections.py
 tests/flow/test_temporal
+tests/flow/test_timeout.py
 tests/flow/test_traversal_construction.py
 tests/flow/test_udf.py
 tests/flow/test_union

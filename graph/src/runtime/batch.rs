@@ -821,6 +821,13 @@ impl<'a> Iterator for BatchOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        // Check timeout before dispatching to the next operator.
+        if let Some((runtime, _idx)) = self.inspect_context()
+            && let Err(e) = runtime.check_timeout()
+        {
+            return Some(Err(e));
+        }
+
         // Check if profiling is enabled and save state before dispatch.
         // We must not hold a reference to `self` across the dispatch.
         let profiling = self.inspect_context().and_then(|(runtime, idx)| {
