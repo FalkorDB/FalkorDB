@@ -94,6 +94,24 @@ class testFilters():
         res = self.g.query("WITH 1 AS x WHERE 0.0 / 0.0 <> 0.0 / 0.0 RETURN x")
         self.env.assertEquals(res.result_set, [[1]])
 
+        # NOT applied to an ordering predicate involving NaN must remain
+        # consistent with the projected boolean.
+        # NaN <= NaN evaluates to false, so NOT(NaN <= NaN) must evaluate
+        # to true and the row must be returned by the WHERE filter.
+        nan = "0.0 / 0.0"
+        for op in ("<", "<=", ">", ">="):
+            q = f"WITH {nan} AS k RETURN ({nan}) {op} (-({nan})) AS p, NOT(({nan}) {op} (-({nan}))) AS np"
+            res = self.g.query(q)
+            self.env.assertEquals(res.result_set, [[False, True]])
+
+            q = f"WITH {nan} AS k WHERE NOT((k) {op} (-(k))) RETURN 1"
+            res = self.g.query(q)
+            self.env.assertEquals(res.result_set, [[1]])
+
+            q = f"WITH {nan} AS k WHERE (k) {op} (-(k)) RETURN 1"
+            res = self.g.query(q)
+            self.env.assertEquals(res.result_set, [])
+
     def test04_redundant_filter(self):
         q = """MATCH (n), (), ()
                WHERE ('a' <= ('km' + 'X'))
