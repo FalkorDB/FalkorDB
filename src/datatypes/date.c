@@ -17,6 +17,14 @@
 #include <string.h>
 #include <stdbool.h>
 
+// helper: check if a year is a leap year
+static bool is_leap_year
+(
+	int year
+) {
+    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}
+
 // helper: construct an SIValue date from a struct tm
 static SIValue _create_date_from_tm
 (
@@ -232,8 +240,7 @@ bool Date_getComponent
         if(q > 1) {
             // subtract days of prior months in current year
             // leap-year aware offsets (1-based yday of quarter start - 1)
-            int isLeap = ((year % 4 == 0) && (year % 100 != 0)) ||
-                         (year % 400 == 0);
+            int isLeap = is_leap_year(year) ? 1 : 0;
             static const int daysUntilQuarter[2][5] = {
                 {0, 0, 90, 181, 273}, // non-leap
                 {0, 0, 91, 182, 274}  // leap
