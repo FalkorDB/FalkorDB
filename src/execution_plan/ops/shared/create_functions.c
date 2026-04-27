@@ -347,7 +347,7 @@ static bool _ValidatePropValue
 	if (!(SI_TYPE(val) & SI_VALID_PROPERTY_VALUE)) {
 		// this value is of an invalid type
 		if (!SIValue_IsNull(val)) {
-			// if the value was a complex type, set an error
+			// invalid property type (e.g. node, edge, path, map)
 			Error_InvalidPropertyValue () ;
 			return false ;
 		}
