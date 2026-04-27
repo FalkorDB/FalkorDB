@@ -27,13 +27,15 @@ static bool _Tighten_Double (
 		return false ;
 	}
 
-	// node ids are non-negative integers in the uint64_t range
-	const double UINT64_MAX_AS_DOUBLE = 18446744073709551616.0 ;  // 2^64
+	// node ids are non-negative integers in the uint64_t range.
+	// 2^64 is one past UINT64_MAX; it is used here as the exclusive upper
+	// bound so doubles compared against it stay safely castable to uint64_t.
+	const double UINT64_LIMIT_AS_DOUBLE = 18446744073709551616.0 ;  // 2^64
 
 	switch (op) {
 		case OP_EQUAL:  // id = v
 			// only an exact non-negative integer can match
-			if (v < 0.0 || v >= UINT64_MAX_AS_DOUBLE || floor (v) != v) {
+			if (v < 0.0 || v >= UINT64_LIMIT_AS_DOUBLE || floor (v) != v) {
 				return false ;
 			}
 			return BitmapRange_Tighten ((uint64_t) v, OP_EQUAL, min, max) ;
@@ -43,7 +45,7 @@ static bool _Tighten_Double (
 				// no constraint, ids are >= 0
 				return true ;
 			}
-			if (v >= UINT64_MAX_AS_DOUBLE) {
+			if (v >= UINT64_LIMIT_AS_DOUBLE) {
 				// no id can be that large
 				return false ;
 			}
@@ -53,7 +55,7 @@ static bool _Tighten_Double (
 			if (v < 0.0) {
 				return true ;
 			}
-			if (v >= UINT64_MAX_AS_DOUBLE - 1.0) {
+			if (v >= UINT64_LIMIT_AS_DOUBLE - 1.0) {
 				return false ;
 			}
 			{
@@ -67,7 +69,7 @@ static bool _Tighten_Double (
 			if (v < 0.0) {
 				return false ;
 			}
-			if (v >= UINT64_MAX_AS_DOUBLE) {
+			if (v >= UINT64_LIMIT_AS_DOUBLE) {
 				return true ;
 			}
 			return BitmapRange_Tighten ((uint64_t) floor (v), OP_LE, min, max) ;
@@ -76,7 +78,7 @@ static bool _Tighten_Double (
 			if (v <= 0.0) {
 				return false ;
 			}
-			if (v >= UINT64_MAX_AS_DOUBLE) {
+			if (v >= UINT64_LIMIT_AS_DOUBLE) {
 				return true ;
 			}
 			{

@@ -244,64 +244,82 @@ class testNodeByIDFlow(FlowTestsBase):
             self.env.assertIn("Node By Label and ID Scan", str(self.graph.explain(query)))
 
     def test_id_compare_with_float_literal(self):
-        # https://github.com/FalkorDB/FalkorDB/issues/...
         # WHERE id(n) op <float> used to be reduced to an empty range,
         # producing no rows. Verify that float literals work the same as
-        # integer literals.
+        # integer literals AND that the seek_by_id optimization still
+        # rewrites the predicate into NodeByIdSeek / "Node By Label and ID
+        # Scan" — without these plan assertions this test could pass via
+        # fallback filter evaluation and silently miss a regression in
+        # BitmapRange_FromRanges.
+
+        def assert_id_seek(query):
+            self.env.assertIn("NodeByIdSeek", str(self.graph.explain(query)))
 
         # all 10 nodes
         int_q   = """MATCH (n) WHERE ID(n) >= 0   RETURN n.id ORDER BY n.id"""
         float_q = """MATCH (n) WHERE ID(n) >= 0.0 RETURN n.id ORDER BY n.id"""
+        assert_id_seek(float_q)
         self.env.assertEqual(self.graph.query(int_q).result_set,
                              self.graph.query(float_q).result_set)
 
         # 5 nodes (5..9)
         int_q   = """MATCH (n) WHERE ID(n) >= 5   RETURN n.id ORDER BY n.id"""
         float_q = """MATCH (n) WHERE ID(n) >= 5.0 RETURN n.id ORDER BY n.id"""
+        assert_id_seek(float_q)
         self.env.assertEqual(self.graph.query(int_q).result_set,
                              self.graph.query(float_q).result_set)
 
         # 4 nodes (6..9): id > 5.5 -> id >= 6
         float_q = """MATCH (n) WHERE ID(n) > 5.5 RETURN n.id ORDER BY n.id"""
         int_q   = """MATCH (n) WHERE ID(n) > 5   RETURN n.id ORDER BY n.id"""
+        assert_id_seek(float_q)
         self.env.assertEqual(self.graph.query(int_q).result_set,
                              self.graph.query(float_q).result_set)
 
         # 6 nodes (0..5): id <= 5.5 -> id <= 5
         float_q = """MATCH (n) WHERE ID(n) <= 5.5 RETURN n.id ORDER BY n.id"""
         int_q   = """MATCH (n) WHERE ID(n) <= 5   RETURN n.id ORDER BY n.id"""
+        assert_id_seek(float_q)
         self.env.assertEqual(self.graph.query(int_q).result_set,
                              self.graph.query(float_q).result_set)
 
         # 5 nodes (0..4): id < 4.5 -> id <= 4
         float_q = """MATCH (n) WHERE ID(n) < 4.5 RETURN n.id ORDER BY n.id"""
         int_q   = """MATCH (n) WHERE ID(n) < 5   RETURN n.id ORDER BY n.id"""
+        assert_id_seek(float_q)
         self.env.assertEqual(self.graph.query(int_q).result_set,
                              self.graph.query(float_q).result_set)
 
         # exact equality with integer-valued float
         float_q = """MATCH (n) WHERE ID(n) = 3.0 RETURN n.id ORDER BY n.id"""
         int_q   = """MATCH (n) WHERE ID(n) = 3   RETURN n.id ORDER BY n.id"""
+        assert_id_seek(float_q)
         self.env.assertEqual(self.graph.query(int_q).result_set,
                              self.graph.query(float_q).result_set)
 
         # equality with non-integer float -> no match
         q = """MATCH (n) WHERE ID(n) = 3.5 RETURN n.id"""
+        assert_id_seek(q)
         self.env.assertEqual(self.graph.query(q).result_set, [])
 
         # negative float lower bound -> all nodes
         all_q   = """MATCH (n) RETURN n.id ORDER BY n.id"""
         float_q = """MATCH (n) WHERE ID(n) >= -1.5 RETURN n.id ORDER BY n.id"""
+        assert_id_seek(float_q)
         self.env.assertEqual(self.graph.query(all_q).result_set,
                              self.graph.query(float_q).result_set)
 
         # negative float upper bound -> empty result
         q = """MATCH (n) WHERE ID(n) <= -0.5 RETURN n.id"""
+        assert_id_seek(q)
         self.env.assertEqual(self.graph.query(q).result_set, [])
 
-        # combination with label scan path
-        int_q   = """MATCH (n:person) WHERE ID(n) >= 0   RETURN n.id ORDER BY n.id"""
-        float_q = """MATCH (n:person) WHERE ID(n) >= 0.0 RETURN n.id ORDER BY n.id"""
+        # combination with label scan path — use a non-trivial bound so
+        # the result actually depends on _Tighten_Double running
+        int_q   = """MATCH (n:person) WHERE ID(n) > 5   RETURN n.id ORDER BY n.id"""
+        float_q = """MATCH (n:person) WHERE ID(n) > 5.5 RETURN n.id ORDER BY n.id"""
+        self.env.assertIn("Node By Label and ID Scan",
+                          str(self.graph.explain(float_q)))
         self.env.assertEqual(self.graph.query(int_q).result_set,
                              self.graph.query(float_q).result_set)
 
