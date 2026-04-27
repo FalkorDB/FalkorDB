@@ -135,3 +135,11 @@ class testGraphMultipleEdgeFlow(FlowTestsBase):
         actual_result = graph.query(query)
         self.env.assertEquals(actual_result.result_set, [[3]])
 
+        # bidirectional variant exercises the undirected branch of the
+        # algebraic expression construction; it must also count every edge
+        # (3 outgoing edges, traversed once in each direction = 6)
+        query = """MATCH (:Person {name: 'Alice'})-[:FRIENDS_WITH|WORKS_WITH]-(b)
+                   RETURN count(*)"""
+        actual_result = graph.query(query)
+        self.env.assertEquals(actual_result.result_set, [[6]])
+
