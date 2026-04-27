@@ -169,16 +169,16 @@ class testQueryValidationFlow(FlowTestsBase):
             # Expecting an error.
             pass
 
-    # Run a query in which a parsed parameter introduces a type in an unsupported context.
+    # Run a query in which a parameter is used as inlined pattern properties.
+    # This used to raise "Encountered unhandled type in inlined properties."
+    # but is now supported - the parameter is evaluated to a map at runtime
+    # and applied as the entity's properties.
     def test16_param_introduces_unhandled_type(self):
-        try:
-            query = """CYPHER props={a:1,b:2} CREATE (a:A $props)"""
-            self.graph.query(query)
-            assert(False)
-        except redis.exceptions.ResponseError as e:
-            # Expecting an error.
-            assert("Encountered unhandled type" in str(e))
-            pass
+        query = """CYPHER props={a:1,b:2} CREATE (a:A $props) RETURN a.a, a.b"""
+        result = self.graph.query(query)
+        assert result.nodes_created == 1
+        assert result.properties_set == 2
+        assert result.result_set == [[1, 2]]
 
     # Validate that the module fails properly with incorrect argument counts.
     def test17_query_arity(self):
