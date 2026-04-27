@@ -49,6 +49,21 @@ static RedisModuleEvent_FlushDB: RedisModuleEvent = RedisModuleEvent { id: 2, da
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_Persistence: RedisModuleEvent = RedisModuleEvent { id: 1, dataver: 1 };
 
+unsafe extern "C" {
+    fn pthread_atfork(
+        prepare: Option<unsafe extern "C" fn()>,
+        parent: Option<unsafe extern "C" fn()>,
+        child: Option<unsafe extern "C" fn()>,
+    ) -> c_int;
+}
+
+/// Called in the forked child process (via `pthread_atfork`).
+/// Forces GraphBLAS/OpenMP to single-threaded mode so they don't
+/// touch the parent's (now-invalid) thread pool handles.
+unsafe extern "C" fn on_fork_child() {
+    graph::graph::graphblas::matrix::set_nthreads(1);
+}
+
 pub fn graph_init(
     ctx: &Context,
     _: &Vec<redis_module::RedisString>,
@@ -58,6 +73,12 @@ pub fn graph_init(
         std::process::exit(1);
     }));
     unsafe {
+        // Disable OpenMP's pthread_atfork handlers. Without this, the
+        // libomp atfork child handler crashes (SIGSEGV in __kmpc_set_lock)
+        // when Redis forks for bgsave because the OMP thread pool state
+        // is invalid in the child process.
+        std::env::set_var("KMP_INIT_AT_FORK", "FALSE");
+
         let result = RediSearch_Init(ctx.ctx.cast(), REDISEARCH_INIT_LIBRARY as c_int);
         if result == REDISMODULE_OK as c_int {
             ctx.log_notice("RediSearch initialized successfully.");
@@ -74,6 +95,11 @@ pub fn graph_init(
             ctx.log_warning(&format!("Failed to initialize GraphBLAS/LAGraph: {err}"));
             return Status::Err;
         }
+
+        // Register fork child handler to make GraphBLAS/OpenMP single-threaded
+        // in bgsave child processes.
+        pthread_atfork(None, None, Some(on_fork_child));
+
         let res = RedisModule_SubscribeToServerEvent.unwrap()(
             ctx.ctx,
             RedisModuleEvent_FlushDB,

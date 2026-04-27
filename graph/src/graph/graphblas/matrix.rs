@@ -87,9 +87,10 @@ use super::{
     GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_UINT64, GrB_WaitMode,
     GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64,
-    GxB_Container_free, GxB_Container_new, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new,
-    GxB_Matrix_fprint, GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_Option_Field, GxB_Print_Level,
-    GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
+    GxB_Container_free, GxB_Container_new, GxB_Global_Option_set_INT32, GxB_Iterator,
+    GxB_Iterator_free, GxB_Iterator_new, GxB_Matrix_fprint, GxB_Matrix_memoryUsage,
+    GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level, GxB_init,
+    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
     GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
     GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
@@ -137,6 +138,23 @@ pub fn init(
         }
     }
     Ok(())
+}
+
+/// Set the number of threads GraphBLAS and OpenMP may use internally.
+///
+/// Call with `n = 1` in a fork child process to prevent GraphBLAS/OpenMP from
+/// touching thread pool handles that are invalid after `fork()`.
+pub fn set_nthreads(n: i32) {
+    unsafe {
+        // Tell OpenMP directly — after fork, its thread team is invalid.
+        omp_set_num_threads(n);
+        // Also tell GraphBLAS, which gates its own parallel-for loops.
+        GxB_Global_Option_set_INT32(GxB_NTHREADS as i32, n);
+    }
+}
+
+unsafe extern "C" {
+    fn omp_set_num_threads(num_threads: i32);
 }
 
 /// Enable or disable GraphBLAS diagnostic output (burble mode).

@@ -15,6 +15,8 @@ tests/flow/test_concurrent_query.py
 tests/flow/test_config.py
 tests/flow/test_create_clause
 tests/flow/test_distinct
+tests/flow/test_edge_index_scans.py
+tests/flow/test_edge_index_updates.py
 tests/flow/test_effects.py
 tests/flow/test_empty_query
 tests/flow/test_encode_decode.py
@@ -31,6 +33,9 @@ tests/flow/test_graph_versioning.py
 tests/flow/test_hashjoin.py
 tests/flow/test_imdb
 tests/flow/test_index_create
+tests/flow/test_index_delete.py
+tests/flow/test_index_scans.py
+tests/flow/test_index_updates.py
 tests/flow/test_keyspace_accesses.py
 tests/flow/test_list
 tests/flow/test_load_csv
@@ -57,6 +62,7 @@ tests/flow/test_path_algorithms.py
 tests/flow/test_path_filter
 tests/flow/test_path_projections.py
 tests/flow/test_pending_queries_limit.py
+tests/flow/test_persistency.py
 tests/flow/test_point
 tests/flow/test_profile.py
 tests/flow/test_query_validation
@@ -77,8 +83,3 @@ tests/flow/test_value_comparisons
 tests/flow/test_variable_length_traversals.py
 tests/flow/test_wcc.py
 tests/flow/test_with_clause
-tests/flow/test_index_scans.py
-tests/flow/test_index_updates.py
-tests/flow/test_edge_index_scans.py
-tests/flow/test_index_delete.py
-tests/flow/test_edge_index_updates.py
