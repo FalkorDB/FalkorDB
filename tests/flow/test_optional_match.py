@@ -351,7 +351,7 @@ class testOptionalFlow(FlowTestsBase):
     # if any edge in the chain fails to match, all pattern variables must be
     # NULL - we should not bind some variables while leaving others NULL.
     # see issue #1861
-    def test21_optional_multi_edge_chain_all_or_nothing(self):
+    def test28_optional_multi_edge_chain_all_or_nothing(self):
         g = self.db.select_graph("optional_multi_edge_chain")
         # graph:
         # (a)<-[:E]-(b:L)  with no other incoming edges to b
