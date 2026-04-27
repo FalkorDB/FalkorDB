@@ -15,6 +15,7 @@
 #include "../execution_plan.h"
 #include "execution_plan_util.h"
 #include "execution_plan_modify.h"
+#include "execution_plan_awareness.h"
 
 // looks for a Join operation at root or root->children[0] and returns it, or
 // NULL if not found
@@ -109,6 +110,22 @@ static bool _bind_returning_ops_to_plan
 		OpBase *ops[depth];
 		uint n_ops = ExecutionPlan_CollectUpwards(ops, returning_op);
 		ExecutionPlan_MigrateOpsExcludeType(ops, OPType_JOIN, n_ops, plan);
+
+		// the migrated ops were previously in the embedded plan and may have
+		// inherited awareness of variables introduced by ops which remain in
+		// the embedded plan (e.g. inner MATCH variables). these variables are
+		// not visible in the outer scope, so reset awareness for the migrated
+		// chain to only reflect each op's own modifiers, and re-propagate
+		// upward through the chain
+		for(uint i = 0; i < n_ops; i++) {
+			ExecutionPlanAwareness_SelfAware(ops[i]);
+		}
+		// propagate from bottom up so each op accumulates awareness from its
+		// children that share the outer plan
+		for(uint i = 0; i < n_ops; i++) {
+			ExecutionPlanAwareness_PropagateAwareness(ops[i]);
+		}
+
 		if(returning_op->childCount == 0) {
 			if(old_plan == embedded_plan) {
 				return true;
@@ -127,6 +144,11 @@ static bool _bind_returning_ops_to_plan
 		for(uint i = 0; i < join_op->childCount; i++) {
 			OpBase *child = join_op->children[i];
 
+			// collect ops in the branch from the topmost downward, so we can
+			// reset awareness after binding
+			OpBase *branch_ops[256];
+			uint n_branch_ops = 0;
+
 			while (true) {
 				OPType t = OpBase_Type (child) ;
 
@@ -142,6 +164,7 @@ static bool _bind_returning_ops_to_plan
 				}
 
 				OpBase_BindOpToPlan (child, plan) ;
+				if(n_branch_ops < 256) branch_ops[n_branch_ops++] = child;
 
 				if (stop) {
 					break ;
@@ -149,6 +172,17 @@ static bool _bind_returning_ops_to_plan
 
 				// continue on to the LHS
 				child = OpBase_GetChild (child, 0) ;
+			}
+
+			// reset awareness for the migrated ops in this branch and
+			// re-propagate; child ops not migrated remain in the embedded
+			// plan and their variables should not leak into the outer scope
+			for(uint j = 0; j < n_branch_ops; j++) {
+				ExecutionPlanAwareness_SelfAware(branch_ops[j]);
+			}
+			// propagate bottom-up (deepest op first)
+			for(uint j = n_branch_ops; j > 0; j--) {
+				ExecutionPlanAwareness_PropagateAwareness(branch_ops[j - 1]);
 			}
 		}
 
