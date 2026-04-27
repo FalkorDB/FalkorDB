@@ -1289,18 +1289,18 @@ void test_ShareableEntity() {
 	AST_Free(master_ast);
 
 	// Cycle.
-	/* TODO: The algebraic expression here can be improved
-	 * reducing from 2 expression into a single one
-	 * mat_p * mat_ef * mat_p * mat_ef * mat_p
-	 * see comment in AlgebraicExpression_FromQueryGraph regarding cycles. */
+	// Both edges are populated for the edge-isomorphism filter, so the cycle
+	// produces 2 separate traversal expressions instead of a single combined
+	// matrix product.
 	exp_count = 0;
 	q = "MATCH (a:Person)-[:friend]->(b:Person)-[:friend]->(a:Person) RETURN a";
 	actual = build_algebraic_expression(q, &master_ast);
 	exp_count = arr_len(actual);
-	TEST_ASSERT(exp_count == 1);
+	TEST_ASSERT(exp_count == 2);
 
-	expected[0] = AlgebraicExpression_FromString("p*F*p*F*p", _matrices);
-	compare_algebraic_expressions(actual, expected, 1);
+	expected[0] = AlgebraicExpression_FromString("p*F*p", _matrices);
+	expected[1] = AlgebraicExpression_FromString("F*p", _matrices);
+	compare_algebraic_expressions(actual, expected, 2);
 
 	// Clean up.
 	free_algebraic_expressions(actual, exp_count);
@@ -1313,10 +1313,12 @@ void test_ShareableEntity() {
 	q = "MATCH (a:Person)-[:friend]->(b:Person)-[:friend]->(c:Person)-[:friend]->(a:Person) RETURN a";
 	actual = build_algebraic_expression(q, &master_ast);
 	exp_count = arr_len(actual);
-	TEST_ASSERT(exp_count == 1);
+	TEST_ASSERT(exp_count == 3);
 
-	expected[0] = AlgebraicExpression_FromString("p*F*p*F*p*F*p", _matrices);
-	compare_algebraic_expressions(actual, expected, 1);
+	expected[0] = AlgebraicExpression_FromString("p*F*p", _matrices);
+	expected[1] = AlgebraicExpression_FromString("F*p", _matrices);
+	expected[2] = AlgebraicExpression_FromString("F*p", _matrices);
+	compare_algebraic_expressions(actual, expected, 3);
 
 	// Clean up.
 	free_algebraic_expressions(actual, exp_count);
@@ -1345,12 +1347,14 @@ void test_ShareableEntity() {
 	q = "MATCH (p1)-[:friend]->(p2)-[:friend]->(p3)-[:friend]->(p2)-[:friend]->(p4)-[:friend]->(p5) RETURN p1";
 	actual = build_algebraic_expression(q, &master_ast);
 	exp_count = arr_len(actual);
-	TEST_ASSERT(exp_count == 3);
+	TEST_ASSERT(exp_count == 5);
 
 	expected[0] = AlgebraicExpression_FromString("F", _matrices);
-	expected[1] = AlgebraicExpression_FromString("F*F", _matrices);
-	expected[2] = AlgebraicExpression_FromString("F*F", _matrices);
-	compare_algebraic_expressions(actual, expected, 3);
+	expected[1] = AlgebraicExpression_FromString("F", _matrices);
+	expected[2] = AlgebraicExpression_FromString("F", _matrices);
+	expected[3] = AlgebraicExpression_FromString("F", _matrices);
+	expected[4] = AlgebraicExpression_FromString("F", _matrices);
+	compare_algebraic_expressions(actual, expected, 5);
 
 	// Clean up.
 	free_algebraic_expressions(actual, exp_count);
@@ -1383,13 +1387,17 @@ void test_ShareableEntity() {
 	q = "MATCH (p1)-[:friend]->(p2)-[:friend]->(p3)-[:friend]->(p4)-[:friend]->(p5)-[:friend]->(p2)-[:friend]->(p6)-[:friend]->(p7)-[:friend]->(p3) RETURN p1";
 	actual = build_algebraic_expression(q, &master_ast);
 	exp_count = arr_len(actual);
-	TEST_ASSERT(exp_count == 4);
+	TEST_ASSERT(exp_count == 8);
 
 	expected[0] = AlgebraicExpression_FromString("F", _matrices);
-	expected[1] = AlgebraicExpression_FromString("F*F*F", _matrices);
-	expected[2] = AlgebraicExpression_FromString("F*F*F", _matrices);
+	expected[1] = AlgebraicExpression_FromString("F", _matrices);
+	expected[2] = AlgebraicExpression_FromString("F", _matrices);
 	expected[3] = AlgebraicExpression_FromString("F", _matrices);
-	compare_algebraic_expressions(actual, expected, 4);
+	expected[4] = AlgebraicExpression_FromString("F", _matrices);
+	expected[5] = AlgebraicExpression_FromString("F", _matrices);
+	expected[6] = AlgebraicExpression_FromString("F", _matrices);
+	expected[7] = AlgebraicExpression_FromString("F", _matrices);
+	compare_algebraic_expressions(actual, expected, 8);
 
 	// Clean up.
 	free_algebraic_expressions(actual, exp_count);
@@ -1425,13 +1433,15 @@ void test_ShareableEntity() {
 	q = "MATCH (p1)-[:friend]->(p2)-[:friend]->(p3)-[:friend]->(p4)-[:friend]->(p1)-[:friend]->(p4)-[:friend]->(p5) RETURN p1";
 	actual = build_algebraic_expression(q, &master_ast);
 	exp_count = arr_len(actual);
-	TEST_ASSERT(exp_count == 4);
+	TEST_ASSERT(exp_count == 6);
 
 	expected[0] = AlgebraicExpression_FromString("tF", _matrices);
 	expected[1] = AlgebraicExpression_FromString("F", _matrices);
-	expected[2] = AlgebraicExpression_FromString("F*F*F", _matrices);
+	expected[2] = AlgebraicExpression_FromString("F", _matrices);
 	expected[3] = AlgebraicExpression_FromString("F", _matrices);
-	compare_algebraic_expressions(actual, expected, 4);
+	expected[4] = AlgebraicExpression_FromString("F", _matrices);
+	expected[5] = AlgebraicExpression_FromString("F", _matrices);
+	compare_algebraic_expressions(actual, expected, 6);
 
 	// Clean up.
 	free_algebraic_expressions(actual, exp_count);
