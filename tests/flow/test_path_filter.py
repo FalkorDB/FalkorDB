@@ -278,3 +278,74 @@ class testPathFilter(FlowTestsBase):
 
         res = self.graph.query(q).result_set
         self.env.assertEqual(res[0][0], 1)
+
+    def test_16_bidirectional_filter_path(self):
+        # check bidirectional filter
+        # create a graph where
+        # s0->s1
+        # s2 isn't connected
+
+        res = self.graph.query("""CREATE (s0:Service {name:'s0'}),
+                         (s1:Service {name:'s1'}),
+                         (s2:Service {name:'s2'}),
+                         (s0)-[:R]->(s1)
+                         RETURN s0, s1, s2""").result_set
+        s0 = res[0][0]
+        s1 = res[0][1]
+        s2 = res[0][2]
+
+        # find all services which aren't connected
+        q = "MATCH (s:Service) WHERE NOT (s)--(:Service) RETURN s"
+        res = self.graph.query(q).result_set
+
+        self.env.assertEqual(len(res), 1)
+        self.env.assertEqual(res[0][0], s2)
+
+        # find all connected services
+        q = "MATCH (s:Service) WHERE (s)--(:Service) RETURN s ORDER BY ID(s)"
+        res = self.graph.query(q).result_set
+
+        self.env.assertEqual(len(res), 2)
+        self.env.assertEqual(res[0][0], s0)
+        self.env.assertEqual(res[1][0], s1)
+
+        # clean up
+        self.graph.query ("MATCH (s:Service) DELETE s")
+
+    def test_17_filter_count(self):
+        # filter paths should hit multiple times for tensors
+        # create a graph where
+        # s0->s1, s0->s1, s0->s2
+
+        self.graph.query("""CREATE (s0:Service {name:'s0'}),
+        (s1:Service {name:'s1'}),
+        (s2:Service {name:'s2'}),
+        (s0)-[:R]->(s1),
+        (s0)-[:R]->(s1),
+        (s0)-[:R]->(s2)""")
+
+        # count all services which aren't connected
+        queries = ["MATCH (s:Service) WHERE NOT (s)-[]->(:Service) RETURN count(1)",
+                   "MATCH (s:Service) WHERE NOT (s)-[*1..]->(:Service) RETURN count(1)",
+                   "MATCH (s:Service) WHERE NOT (:Service)<-[]-(s) RETURN count(1)",
+                   "MATCH (s:Service) WHERE NOT (:Service)<-[*1..]-(s) RETURN count(1)"
+                   ]
+
+        for q in queries:
+            res = self.graph.query(q).result_set
+            self.env.assertEqual(res[0][0], 2)
+
+        # count all connected services
+        queries = ["MATCH (s:Service) WHERE (s)-[]->(:Service) RETURN count(1)",
+                   "MATCH (s:Service) WHERE (s)-[*1..]->(:Service) RETURN count(1)",
+                   "MATCH (s:Service) WHERE (:Service)<-[]-(s) RETURN count(1)",
+                   "MATCH (s:Service) WHERE (:Service)<-[*1..]-(s) RETURN count(1)"
+                   ]
+
+        for q in queries:
+            res = self.graph.query(q).result_set
+            self.env.assertEqual(res[0][0], 1)
+
+        # clean up
+        self.graph.query ("MATCH (s:Service) DELETE s")
+

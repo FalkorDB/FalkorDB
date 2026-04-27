@@ -615,38 +615,66 @@ static inline char *_create_anon_alias
 	return alias;
 }
 
+// get a string representation of an AST node
+// usually used by to get either a node or an edge alias
+// the function will auto generate an `anon_x` alias for anonymous entities
+// e.g. MATCH (a)-[]->()
+// both the edge [] and the destination node are anonymous
 const char *AST_ToString
 (
-	const cypher_astnode_t *node
+	const cypher_astnode_t *node,  // AST node
+	bool *anonymous                // [optional] rather or not node is anonymous
 ) {
-	QueryCtx *ctx = QueryCtx_GetQueryCtx();
-	AST *ast = QueryCtx_GetAST();
-	AnnotationCtx *to_string_ctx = AST_AnnotationCtxCollection_GetToStringCtx(ast->anot_ctx_collection);
+	AST *ast = QueryCtx_GetAST () ;
+	QueryCtx *ctx = QueryCtx_GetQueryCtx () ;
 
-	char *str = (char *)cypher_astnode_get_annotation(to_string_ctx, node);
-	if(str == NULL) {
-		cypher_astnode_type_t t = cypher_astnode_type(node);
-		const cypher_astnode_t *ast_identifier = NULL;
-		if(t == CYPHER_AST_NODE_PATTERN) {
-			ast_identifier = cypher_ast_node_pattern_get_identifier(node);
-		} else if(t == CYPHER_AST_REL_PATTERN) {
-			ast_identifier = cypher_ast_rel_pattern_get_identifier(node);
-		} else {
-			struct cypher_input_range range = cypher_astnode_range(node);
-			uint length = range.end.offset - range.start.offset + 1;
-			str = malloc(sizeof(char) * length);
-			strncpy(str, ctx->query_data.query_no_params + range.start.offset, length - 1);
-			str[length - 1] = '\0';
+	AnnotationCtx *to_string_ctx =
+		AST_AnnotationCtxCollection_GetToStringCtx (ast->anot_ctx_collection) ;
+
+	char *str = (char *)cypher_astnode_get_annotation (to_string_ctx, node) ;
+
+	// string annotation exists
+	if (str != NULL) {
+		if (anonymous != NULL) {
+			*anonymous = true ;
 		}
-		if(ast_identifier) {
-			// Graph entity has a user-defined alias return it.
-			return cypher_ast_identifier_get_name(ast_identifier);
-		} else if(str == NULL) {
-			str = _create_anon_alias(ast->anot_ctx_collection->anon_count++);
-		}
-		cypher_astnode_attach_annotation(to_string_ctx, node, (void *)str, NULL);
+		return str ;
 	}
-	return str;
+
+	const cypher_astnode_t *ast_identifier = NULL ;
+	cypher_astnode_type_t t = cypher_astnode_type (node) ;
+
+	if (t == CYPHER_AST_NODE_PATTERN) {
+		ast_identifier = cypher_ast_node_pattern_get_identifier (node) ;
+	} else if (t == CYPHER_AST_REL_PATTERN) {
+		ast_identifier = cypher_ast_rel_pattern_get_identifier (node) ;
+	} else {
+		struct cypher_input_range range = cypher_astnode_range (node) ;
+		uint length = range.end.offset - range.start.offset + 1;
+		str = malloc(sizeof(char) * length);
+		strncpy(str, ctx->query_data.query_no_params + range.start.offset, length - 1);
+		str[length - 1] = '\0';
+	}
+
+	if (ast_identifier) {
+		if (anonymous != NULL) {
+			*anonymous = false ;
+		}
+		// graph entity has a user-defined alias return it
+		return cypher_ast_identifier_get_name (ast_identifier) ;
+	}
+
+	if (str == NULL) {
+		str = _create_anon_alias (ast->anot_ctx_collection->anon_count++) ;
+	}
+
+	if (anonymous != NULL) {
+		*anonymous = true ;
+	}
+
+	cypher_astnode_attach_annotation (to_string_ctx, node, (void *)str, NULL) ;
+
+	return str ;
 }
 
 cypher_parse_result_t *parse_query

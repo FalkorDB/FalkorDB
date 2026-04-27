@@ -654,7 +654,7 @@ static AR_ExpNode *_AR_ExpFromShortestPath
 }
 
 static AR_ExpNode *_AR_ExpNodeFromGraphEntity(const cypher_astnode_t *entity) {
-	const char *alias = AST_ToString(entity);
+	const char *alias = AST_ToString(entity, NULL);
 	return AR_EXP_NewVariableOperandNode(alias);
 }
 
@@ -913,7 +913,7 @@ static AR_ExpNode *_AR_EXP_FromASTNode(const cypher_astnode_t *expr) {
 		return _AR_ExpNodeFromReduceFunction(expr);
 	} else if(t == CYPHER_AST_PATTERN_PATH || t == CYPHER_AST_PATTERN_COMPREHENSION) {
 		// this variable is assign by operitions that created in build_pattern_comprehension_ops.c
-		const char *alias = AST_ToString(expr);
+		const char *alias = AST_ToString(expr, NULL);
 		return AR_EXP_NewVariableOperandNode(alias);
 	} else {
 		/*
