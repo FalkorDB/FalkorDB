@@ -501,3 +501,23 @@ class testComprehensionFunctions(FlowTestsBase):
         expected_result = [[[1, 1]], [[2]], [[3]], [[]]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
+    def test21_aggregation_in_pattern_comprehension(self):
+        # Aggregation functions are not allowed inside a pattern comprehension's
+        # eval expression or predicate. Previously this caused a server crash
+        # (double-free / assertion failure) at execution time.
+        # Validate that an explicit error is returned instead.
+
+        # aggregation in eval expression
+        try:
+            self.graph.query("MATCH (n1) RETURN [(n1)-[]->(n2) | count(n1)] AS v1")
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertIn("Invalid use of aggregating function", str(e))
+
+        # aggregation in predicate
+        try:
+            self.graph.query("MATCH (n1) RETURN [(n1)-[]->(n2) WHERE count(n2) > 0 | n2] AS v1")
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertIn("Invalid use of aggregating function", str(e))
+
