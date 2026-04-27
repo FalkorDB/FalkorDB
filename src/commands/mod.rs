@@ -31,6 +31,7 @@ pub mod profile;
 pub mod query;
 pub mod record;
 pub mod ro_query;
+pub mod slowlog;
 pub mod udf;
 
 pub use bulk_insert::graph_bulk_insert;
@@ -45,6 +46,7 @@ pub use profile::graph_profile;
 pub use query::graph_query;
 pub use record::graph_record;
 pub use ro_query::graph_ro_query;
+pub use slowlog::graph_slowlog;
 pub use udf::graph_udf;
 
 pub const EMPTY_KEY_ERR: RedisResult =

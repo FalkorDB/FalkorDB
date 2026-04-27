@@ -489,9 +489,7 @@ pub fn graph_bulk_insert(
 
     // Block the client and process on a background thread so the main
     // Redis thread stays free to handle PING and other commands.
-    let bc = BlockedClient {
-        inner: unsafe { ffi::block_client(ctx.ctx) },
-    };
+    let bc = unsafe { BlockedClient::new(ctx.ctx) };
     let token_data: Vec<Vec<u8>> = token_strings
         .iter()
         .map(|rs| rs.as_slice().to_vec())

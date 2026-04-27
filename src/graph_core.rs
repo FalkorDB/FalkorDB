@@ -33,6 +33,7 @@ use crate::{
         TIMEOUT_DEFAULT,
     },
     reply::{reply_compact, reply_verbose},
+    slow_log::SlowLog,
 };
 use atomic_refcell::AtomicRefCell;
 use crossfire::{
@@ -65,6 +66,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::Instant,
 };
 
 use crate::allocator::{current_thread_usage, disable_tracking, enable_tracking, reset_counter};
@@ -208,6 +210,27 @@ pub(crate) mod ffi {
     /// `REDISMODULE_YIELD_FLAG_CLIENTS` — allow Redis to process client
     /// commands (including PING) while we yield.
     pub const YIELD_FLAG_CLIENTS: i32 = 1 << 1;
+
+    /// Start measuring the time a blocked client is waiting. This enables
+    /// Redis to record the command in its own slowlog and latency reporting.
+    ///
+    /// # Safety
+    /// `bc` must be a valid blocked-client handle.
+    pub unsafe fn measure_time_start(bc: *mut raw::RedisModuleBlockedClient) {
+        if let Some(f) = unsafe { raw::RedisModule_BlockedClientMeasureTimeStart } {
+            unsafe { f(bc) };
+        }
+    }
+
+    /// Stop measuring the time for a blocked client.
+    ///
+    /// # Safety
+    /// `bc` must be a valid blocked-client handle.
+    pub unsafe fn measure_time_end(bc: *mut raw::RedisModuleBlockedClient) {
+        if let Some(f) = unsafe { raw::RedisModule_BlockedClientMeasureTimeEnd } {
+            unsafe { f(bc) };
+        }
+    }
 }
 
 pub struct ThreadedGraph {
@@ -215,6 +238,7 @@ pub struct ThreadedGraph {
     pub sender: Tx<Array<WriteMessage>>,
     pub receiver: Rx<Array<WriteMessage>>,
     pub write_loop: AtomicBool,
+    pub slow_log: SlowLog,
 }
 
 unsafe impl Send for ThreadedGraph {}
@@ -231,6 +255,7 @@ impl ThreadedGraph {
             sender,
             receiver,
             write_loop: AtomicBool::new(false),
+            slow_log: SlowLog::new(),
         }
     }
 
@@ -243,6 +268,7 @@ impl ThreadedGraph {
             sender,
             receiver,
             write_loop: AtomicBool::new(false),
+            slow_log: SlowLog::new(),
         }
     }
 
@@ -258,11 +284,14 @@ impl ThreadedGraph {
         query: &str,
         compact: bool,
         write: bool,
+        cmd: &str,
     ) -> Result<(bool, bool), String> {
+        let wall_start = Instant::now();
         let Plan {
             plan,
             cached,
             parameters,
+            params_offset,
             ..
         } = self.graph.read().borrow().get_plan(query)?;
         let parameters = parameters
@@ -304,8 +333,10 @@ impl ThreadedGraph {
         } else {
             reply_verbose(ctx, &runtime, &result);
         }
+        let latency = wall_start.elapsed().as_secs_f64() * 1000.0;
         drop(result);
         drop(runtime);
+        self.slow_log.add(cmd, query, params_offset, latency);
         Ok((is_write, cached))
     }
 
@@ -316,8 +347,12 @@ impl ThreadedGraph {
         compact: bool,
         first_cached: bool,
     ) -> WriteQueryResult {
+        let wall_start = Instant::now();
         let Plan {
-            plan, parameters, ..
+            plan,
+            parameters,
+            params_offset,
+            ..
         } = self.graph.read().borrow().get_plan(query)?;
         let cached = first_cached;
         let parameters = parameters
@@ -373,6 +408,7 @@ impl ThreadedGraph {
         } else {
             reply_verbose(ctx, &runtime, &result);
         }
+        let latency = wall_start.elapsed().as_secs_f64() * 1000.0;
         let modified = result.stats.nodes_created > 0
             || result.stats.nodes_deleted > 0
             || result.stats.relationships_created > 0
@@ -383,6 +419,8 @@ impl ThreadedGraph {
             || result.stats.labels_removed > 0
             || result.stats.indexes_created > 0
             || result.stats.indexes_dropped > 0;
+        self.slow_log
+            .add("GRAPH.QUERY", query, params_offset, latency);
         Ok((g, effects_buffer, modified))
     }
 
@@ -519,9 +557,24 @@ pub struct BlockedClient {
 unsafe impl Send for BlockedClient {}
 unsafe impl Sync for BlockedClient {}
 
+impl BlockedClient {
+    /// Block the calling client and start measuring time for Redis slowlog.
+    ///
+    /// # Safety
+    /// `ctx` must be a valid Redis module context for the active command.
+    pub unsafe fn new(ctx: *mut raw::RedisModuleCtx) -> Self {
+        let inner = unsafe { ffi::block_client(ctx) };
+        unsafe { ffi::measure_time_start(inner) };
+        Self { inner }
+    }
+}
+
 impl Drop for BlockedClient {
     fn drop(&mut self) {
-        unsafe { ffi::unblock_client(self.inner) };
+        unsafe {
+            ffi::measure_time_end(self.inner);
+            ffi::unblock_client(self.inner);
+        }
     }
 }
 
@@ -555,9 +608,7 @@ pub fn query_mut(
         return Ok(RedisValue::NoReply);
     }
 
-    let bc = BlockedClient {
-        inner: unsafe { ffi::block_client(ctx.ctx) },
-    };
+    let bc = unsafe { BlockedClient::new(ctx.ctx) };
     let graph = graph.clone();
     let query: Arc<str> = Arc::from(query);
     spawn(
@@ -577,7 +628,12 @@ pub fn query_mut(
             let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
             let ctx = Context::new(ctx);
 
-            let res = graph.execute_query(&ctx, &query, compact, write);
+            let cmd = if write {
+                "GRAPH.QUERY"
+            } else {
+                "GRAPH.RO_QUERY"
+            };
+            let res = graph.execute_query(&ctx, &query, compact, write, cmd);
 
             // Log memory tracking BEFORE freeing the context.
             if track_mem {
@@ -646,9 +702,14 @@ fn query_sync(
     graph::udf::js_context::JS_TIMEOUT_MS
         .store(TIMEOUT_DEFAULT.load(Ordering::Relaxed), Ordering::Relaxed);
 
+    let cmd = if write {
+        "GRAPH.QUERY"
+    } else {
+        "GRAPH.RO_QUERY"
+    };
     let res = {
         let g = graph.read();
-        g.execute_query(ctx, query, compact, write)
+        g.execute_query(ctx, query, compact, write, cmd)
     };
     match res {
         Ok((is_write, cached)) => {
@@ -695,9 +756,7 @@ pub fn profile_mut(
         return profile_sync(ctx, graph, query, key_name);
     }
 
-    let bc = BlockedClient {
-        inner: unsafe { ffi::block_client(ctx.ctx) },
-    };
+    let bc = unsafe { BlockedClient::new(ctx.ctx) };
     let graph = graph.clone();
     let query: Arc<str> = Arc::from(query);
     spawn(
