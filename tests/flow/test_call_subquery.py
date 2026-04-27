@@ -2868,6 +2868,73 @@ updating clause.")
         #self.env.assertEquals(res.nodes_created, 1)
         #self.env.assertEquals(res.nodes_deleted, 1)
 
+    def test_54_delete_in_subquery_per_outer_row(self):
+        """Tests that DELETE inside a CALL {} subquery is executed once per
+        outer row, correctly reporting the count of deletions on every row
+        and removing the matched relationship before subsequent reads.
+        See issue: DELETE inside a subquery may report count(r)=0 and leave
+        the deleted path visible on a later row."""
+
+        # reset graph state
+        self.graph.delete()
+
+        # two employees connected to the same manager
+        self.graph.query("""CREATE
+            (a:Person {name: 'Alice'})-[:WORKS_FOR]->(b:Person {name: 'Bob'}),
+            (c:Person {name: 'Charlie'})-[:WORKS_FOR]->(b)""")
+
+        q = """MATCH (employee:Person)-[:WORKS_FOR]->(p)
+               WITH employee, p
+               CALL {
+                   WITH employee, p
+                   MATCH (employee)-[r:WORKS_FOR]->(p)
+                   DELETE r
+                   RETURN count(r) AS deleted
+               }
+               RETURN employee.name AS employee_name,
+                      p.name AS manager_name,
+                      deleted
+               ORDER BY employee_name"""
+
+        res = self.graph.query(q)
+
+        # both relationships should be reported as deleted, one per row
+        self.env.assertEquals(res.relationships_deleted, 2)
+        self.env.assertEquals(res.result_set, [
+            ['Alice',   'Bob', 1],
+            ['Charlie', 'Bob', 1],
+        ])
+
+        # additionally validate that the deleted edges are not visible to
+        # subsequent reads in the same query
+        self.graph.delete()
+        self.graph.query("""CREATE
+            (a:Person {name: 'Alice'})-[:WORKS_FOR]->(b:Person {name: 'Bob'}),
+            (c:Person {name: 'Charlie'})-[:WORKS_FOR]->(b)""")
+
+        q = """MATCH (employee:Person)-[:WORKS_FOR]->(p)
+               WITH employee, p
+               CALL {
+                   WITH employee, p
+                   MATCH (employee)-[r:WORKS_FOR]->(p)
+                   DELETE r
+                   RETURN count(r) AS deleted
+               }
+               WITH employee, p, deleted
+               OPTIONAL MATCH path = (employee)-[:WORKS_FOR*1..2]->(p)
+               RETURN employee.name AS employee_name,
+                      p.name AS manager_name,
+                      deleted,
+                      CASE WHEN path IS NOT NULL THEN true ELSE false END
+                          AS path_exists
+               ORDER BY employee_name"""
+
+        res = self.graph.query(q)
+        self.env.assertEquals(res.result_set, [
+            ['Alice',   'Bob', 1, False],
+            ['Charlie', 'Bob', 1, False],
+        ])
+
     def test_53_nested_union(self):
         q = """CALL {
                    RETURN 1 AS x

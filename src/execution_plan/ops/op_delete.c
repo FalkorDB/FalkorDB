@@ -18,6 +18,7 @@
 
 // forward declarations
 static Record DeleteConsume(OpBase *opBase);
+static OpResult DeleteReset(OpBase *opBase);
 static OpBase *DeleteClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void DeleteFree(OpBase *opBase);
 
@@ -224,7 +225,7 @@ OpBase *NewDeleteOp
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_DELETE, "Delete", NULL, DeleteConsume,
-				NULL, NULL, DeleteClone, DeleteFree, true, plan);
+				DeleteReset, NULL, DeleteClone, DeleteFree, true, plan);
 
 	return (OpBase *)op;
 }
@@ -371,6 +372,44 @@ static OpBase *DeleteClone
 	AR_ExpNode **exps;
 	arr_clone_with_cb(exps, op->exps, AR_EXP_Clone);
 	return NewDeleteOp(plan, exps);
+}
+
+// reset the Delete operation so it can be re-executed
+// this is required when the op resides on the RHS of an Apply op
+// (e.g. inside a CALL {} subquery) and is invoked once per outer record
+static OpResult DeleteReset
+(
+	OpBase *opBase
+) {
+	OpDelete *op = (OpDelete *)opBase ;
+
+	// release any records that were pulled but not yet emitted
+	if (op->records) {
+		uint rec_count = arr_len (op->records) ;
+		for (uint i = op->rec_idx; i < rec_count; i++) {
+			OpBase_DeleteRecord (op->records + i) ;
+		}
+		arr_free (op->records) ;
+		op->records = NULL ;
+	}
+	op->rec_idx = 0 ;
+
+	// clear pending deletion sets so the next invocation starts fresh
+	if (op->deleted_nodes) {
+		arr_clear (op->deleted_nodes) ;
+	}
+	if (op->deleted_edges) {
+		arr_clear (op->deleted_edges) ;
+	}
+
+	if (op->node_bitmap) {
+		roaring64_bitmap_clear (op->node_bitmap) ;
+	}
+	if (op->edge_bitmap) {
+		roaring64_bitmap_clear (op->edge_bitmap) ;
+	}
+
+	return OP_OK ;
 }
 
 static void DeleteFree
