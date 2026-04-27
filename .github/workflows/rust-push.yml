@@ -101,14 +101,45 @@ jobs:
         run: |
           . /data/venv/bin/activate
           RELEASE=1 pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
-      - name: Run Flow tests
-        run: |
-          . /data/venv/bin/activate
-          RELEASE=1 ./flow.sh
       - name: Run TCK tests
         run: |
           . /data/venv/bin/activate
           RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+  flow-test-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      test_files: ${{ steps.set-matrix.outputs.test_files }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Generate test matrix
+        id: set-matrix
+        run: |
+          echo "test_files=$(jq -Rc '[., inputs] | map(select(length > 0))' flow_tests_done.txt)" >> $GITHUB_OUTPUT
+  test-flow:
+    runs-on: ubuntu-latest
+    container: aviavni/falkordb-build:latest
+    needs:
+      - check-files
+      - docker
+      - flow-test-matrix
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        test_file: ${{ fromJson(needs.flow-test-matrix.outputs.test_files) }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "release"
+      - name: Build
+        run: |
+          cargo build --release
+      - name: Run Flow test - ${{ matrix.test_file }}
+        run: |
+          . /data/venv/bin/activate
+          RELEASE=1 TEST="${{ matrix.test_file }}" FAIL_FAST=1 ./flow.sh
   coverage:
     runs-on: ubuntu-latest
     container: aviavni/falkordb-build:latest
