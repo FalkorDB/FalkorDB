@@ -76,6 +76,16 @@ void GraphContext_UnlockCommit
 	GraphContext *gc
 );
 
+uint64_t GraphContext_GetWriteTransactionID
+(
+	const GraphContext *gc
+);
+
+uint64_t GraphContext_AdvanceWriteTransactionID
+(
+	GraphContext *gc
+);
+
 // attempt to acquire exclusive write access to the given graph
 // returns true if the calling thread successfully acquired write ownership
 // returns false if another write is already in progress
@@ -417,4 +427,3 @@ QueriesLog GraphContext_GetQueriesLog
 (
 	GraphContext *gc
 );
-

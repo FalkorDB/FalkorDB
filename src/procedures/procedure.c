@@ -5,6 +5,7 @@
  */
 
 #include "RG.h"
+#include "procedures/proc_harmonic_centrality.h"
 #include "rax.h"
 #include "./procedure.h"
 #include "procedures.h"
@@ -39,14 +40,15 @@ void Proc_Register() {
 	_procRegister("db.relationshipTypes", Proc_RelationsCtx);
 
 	// register graph algorithms
-	_procRegister("algo.BFS",              Proc_BFS_Ctx);
-	_procRegister("algo.MSF",              Proc_MSFCtx);
-	_procRegister("algo.WCC",              Proc_WCCCtx);
-	_procRegister("algo.pageRank",         Proc_PagerankCtx);
-	_procRegister("algo.SPpaths",          Proc_SPpathCtx);
-	_procRegister("algo.SSpaths",          Proc_SSpathCtx);
-	_procRegister("algo.betweenness",      Proc_BetweennessCtx);
-	_procRegister("algo.labelPropagation", Proc_CDLPCtx);
+	_procRegister("algo.BFS",                Proc_BFS_Ctx);
+	_procRegister("algo.MSF",                Proc_MSFCtx);
+	_procRegister("algo.WCC",                Proc_WCCCtx);
+	_procRegister("algo.pageRank",           Proc_PagerankCtx);
+	_procRegister("algo.SPpaths",            Proc_SPpathCtx);
+	_procRegister("algo.SSpaths",            Proc_SSpathCtx);
+	_procRegister("algo.betweenness",        Proc_BetweennessCtx);
+	_procRegister("algo.HarmonicCentrality", Proc_HarmonicCentralityCtx);
+	_procRegister("algo.labelPropagation",   Proc_CDLPCtx);
 
 	// register FullText Search generator
 	_procRegister("db.idx.fulltext.drop",               Proc_FulltextDropIdxGen);

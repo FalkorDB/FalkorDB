@@ -34,6 +34,7 @@ typedef struct GraphContext {
 	RedisModuleString *telemetry_stream;   // telemetry stream name
 	
 	atomic_bool write_in_progress;         // write query in progess
+	atomic_uint_fast64_t write_txn_id;     // monotonic write transaction ID
 	CircularBuffer pending_write_queue;    // pending write queries queue
 } GraphContext;
 
