@@ -32,12 +32,15 @@ static void _reduceOptionalMatch
 		return ;
 	}
 
-	while (t == OPType_CONDITIONAL_TRAVERSE) {
-		rhs = OpBase_GetChild (rhs, 0) ;
-		t = OpBase_Type (rhs) ;
-	}
-
-	if (t != OPType_ARGUMENT) {
+	// only apply the optimization when the Optional has a single
+	// CondTraverse directly above the Argument
+	// chains of multiple CondTraverses cannot be reduced this way:
+	// making each traversal individually optional changes Cypher
+	// semantics, since the original OPTIONAL MATCH requires the
+	// entire pattern to match, otherwise all pattern variables are
+	// null
+	if (OpBase_ChildCount (rhs) != 1 ||
+	    OpBase_Type (OpBase_GetChild (rhs, 0)) != OPType_ARGUMENT) {
 		return ;
 	}
 
