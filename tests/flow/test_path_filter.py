@@ -279,7 +279,7 @@ class testPathFilter(FlowTestsBase):
         res = self.graph.query(q).result_set
         self.env.assertEqual(res[0][0], 1)
 
-    def test_16_bidirectional_filter_path(self):
+    def test16_bidirectional_filter_path(self):
         # check bidirectional filter
         # create a graph where
         # s0->s1
@@ -312,7 +312,7 @@ class testPathFilter(FlowTestsBase):
         # clean up
         self.graph.query ("MATCH (s:Service) DELETE s")
 
-    def test_17_filter_count(self):
+    def test17_filter_count(self):
         # filter paths should hit multiple times for tensors
         # create a graph where
         # s0->s1, s0->s1, s0->s2

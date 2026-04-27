@@ -8,14 +8,14 @@
 #include "RG.h"
 #include "../util/arr.h"
 
-// define the which entities get mapped
+// define which entities get mapped
 typedef enum {
 	MAP_ALL        = 0,  // map all entities
-	MAP_IDENTIFIED = 1,  // map only non anonymous entities
+	MAP_IDENTIFIED = 1,  // map only non-anonymous entities
 	MAP_SKIP       = 2,  // don't map entity
 } MappingLevel;
 
-// forward declerations
+// forward declarations
 static void _AST_MapReferencedEntitiesInPath
 (
 	AST *ast,

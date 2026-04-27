@@ -623,7 +623,7 @@ static inline char *_create_anon_alias
 const char *AST_ToString
 (
 	const cypher_astnode_t *node,  // AST node
-	bool *anonymous                // [optional] rather or not node is anonymous
+	bool *anonymous                // [optional] whether or not node is anonymous
 ) {
 	AST *ast = QueryCtx_GetAST () ;
 	QueryCtx *ctx = QueryCtx_GetQueryCtx () ;

@@ -244,7 +244,7 @@ AST_AnnotationCtxCollection *AST_GetAnnotationCtxCollection
 const char *AST_ToString
 (
 	const cypher_astnode_t *node,  // AST node
-	bool *anonymous                // [optional] rather or not node is anonymous
+	bool *anonymous                // [optional] whether or not node is anonymous
 ) ;
 
 void AST_Free
