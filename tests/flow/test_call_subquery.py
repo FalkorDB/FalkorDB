@@ -2868,6 +2868,22 @@ updating clause.")
         #self.env.assertEquals(res.nodes_created, 1)
         #self.env.assertEquals(res.nodes_deleted, 1)
 
+    def test_53_nested_union(self):
+        q = """CALL {
+                   RETURN 1 AS x
+                   UNION ALL
+                   CALL {
+                       RETURN 2 AS x
+                       UNION ALL
+                       RETURN 3 AS x
+                   }
+                   RETURN x
+               }
+               RETURN avg(x) AS avgX"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], 2) # avgX
+
     def test_54_delete_in_subquery_per_outer_row(self):
         """Tests that DELETE inside a CALL {} subquery is executed once per
         outer row, correctly reporting the count of deletions on every row
@@ -2934,20 +2950,4 @@ updating clause.")
             ['Alice',   'Bob', 1, False],
             ['Charlie', 'Bob', 1, False],
         ])
-
-    def test_53_nested_union(self):
-        q = """CALL {
-                   RETURN 1 AS x
-                   UNION ALL
-                   CALL {
-                       RETURN 2 AS x
-                       UNION ALL
-                       RETURN 3 AS x
-                   }
-                   RETURN x
-               }
-               RETURN avg(x) AS avgX"""
-
-        res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 2) # avgX
 
