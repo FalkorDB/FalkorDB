@@ -116,12 +116,15 @@ static bool _bind_returning_ops_to_plan
 		// the embedded plan (e.g. inner MATCH variables). these variables are
 		// not visible in the outer scope, so reset awareness for the migrated
 		// chain to only reflect each op's own modifiers, and re-propagate
-		// upward through the chain
+		// upward through the chain.
+		// note: ExecutionPlan_CollectUpwards walks parent pointers starting
+		// from `returning_op`, so ops[0] is the deepest op and
+		// ops[n_ops - 1] is the topmost. iterating 0..n_ops-1 is therefore
+		// a bottom-up traversal which is required by PropagateAwareness so
+		// each op accumulates awareness from its (already-propagated) child
 		for(uint i = 0; i < n_ops; i++) {
 			ExecutionPlanAwareness_SelfAware(ops[i]);
 		}
-		// propagate from bottom up so each op accumulates awareness from its
-		// children that share the outer plan
 		for(uint i = 0; i < n_ops; i++) {
 			ExecutionPlanAwareness_PropagateAwareness(ops[i]);
 		}
@@ -144,10 +147,10 @@ static bool _bind_returning_ops_to_plan
 		for(uint i = 0; i < join_op->childCount; i++) {
 			OpBase *child = join_op->children[i];
 
-			// collect ops in the branch from the topmost downward, so we can
-			// reset awareness after binding
-			OpBase *branch_ops[256];
-			uint n_branch_ops = 0;
+			// collect ops in the branch from the topmost downward (root-to-leaf)
+			// using a dynamic array, so we can reset awareness after binding
+			// without imposing an arbitrary fixed cap
+			OpBase **branch_ops = arr_new(OpBase *, 1);
 
 			while (true) {
 				OPType t = OpBase_Type (child) ;
@@ -164,7 +167,7 @@ static bool _bind_returning_ops_to_plan
 				}
 
 				OpBase_BindOpToPlan (child, plan) ;
-				if(n_branch_ops < 256) branch_ops[n_branch_ops++] = child;
+				arr_append(branch_ops, child);
 
 				if (stop) {
 					break ;
@@ -176,14 +179,18 @@ static bool _bind_returning_ops_to_plan
 
 			// reset awareness for the migrated ops in this branch and
 			// re-propagate; child ops not migrated remain in the embedded
-			// plan and their variables should not leak into the outer scope
+			// plan and their variables should not leak into the outer scope.
+			// branch_ops is in root-to-leaf order, so iterate in reverse
+			// (leaf-to-root, deepest first) so PropagateAwareness sees
+			// already-propagated children before their parents
+			uint n_branch_ops = arr_len(branch_ops);
 			for(uint j = 0; j < n_branch_ops; j++) {
 				ExecutionPlanAwareness_SelfAware(branch_ops[j]);
 			}
-			// propagate bottom-up (deepest op first)
 			for(uint j = n_branch_ops; j > 0; j--) {
 				ExecutionPlanAwareness_PropagateAwareness(branch_ops[j - 1]);
 			}
+			arr_free(branch_ops);
 		}
 
 		// if there is a join op, we never free the embedded plan
