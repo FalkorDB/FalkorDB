@@ -156,6 +156,7 @@ jobs:
         with:
           name: release-binary
           path: target/release
+      - run: chmod +x target/release/libfalkordb.so
       - name: Run Flow test - ${{ matrix.test_file }}
         run: |
           . /data/venv/bin/activate
@@ -227,6 +228,7 @@ jobs:
         with:
           name: coverage-binary
           path: target/debug
+      - run: chmod +x target/debug/libfalkordb.so
       - name: Run coverage - ${{ matrix.test_file }}
         run: |
           . /data/venv/bin/activate
