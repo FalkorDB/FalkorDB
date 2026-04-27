@@ -240,6 +240,51 @@ FT_FilterNode *_FilterNode_FromAST(const cypher_astnode_t *expr) {
 	}
 }
 
+// build a filter enforcing relationship isomorphism within a single path
+// every pair of single-hop relationships in the path must refer to different
+// graph edges, i.e. id(eA) <> id(eB).
+//
+// variable-length relationships are skipped here because they evaluate to a
+// list rather than a single edge, so a simple id() comparison does not apply.
+static FT_FilterNode *_BuildPathEdgeUniquenessFilter
+(
+	const cypher_astnode_t *path
+) {
+	uint nelements = cypher_ast_pattern_path_nelements(path);
+	if(nelements < 5) return NULL;  // need at least two edges in the path
+
+	// collect aliases of single-hop edges in the path
+	const char **aliases = arr_new(const char *, 1);
+	for(uint e = 1; e < nelements; e += 2) {
+		const cypher_astnode_t *edge = cypher_ast_pattern_path_get_element(path, e);
+		// skip variable-length relationships
+		if(cypher_ast_rel_pattern_get_varlength(edge) != NULL) continue;
+		const char *alias = AST_ToString(edge);
+		arr_append(aliases, alias);
+	}
+
+	uint n = arr_len(aliases);
+	FT_FilterNode *root = NULL;
+
+	// emit id(eA) <> id(eB) for every distinct pair
+	for(uint i = 0; i < n; i++) {
+		for(uint j = i + 1; j < n; j++) {
+			AR_ExpNode *id_a = AR_EXP_NewOpNode("id", true, 1);
+			id_a->op.children[0] = AR_EXP_NewVariableOperandNode(aliases[i]);
+
+			AR_ExpNode *id_b = AR_EXP_NewOpNode("id", true, 1);
+			id_b->op.children[0] = AR_EXP_NewVariableOperandNode(aliases[j]);
+
+			FT_FilterNode *neq =
+				FilterTree_CreatePredicateFilter(OP_NEQUAL, id_a, id_b);
+			_FT_Append(&root, neq);
+		}
+	}
+
+	arr_free(aliases);
+	return root;
+}
+
 void _AST_ConvertGraphPatternToFilter(const AST *ast, FT_FilterNode **root,
 									  const cypher_astnode_t *pattern) {
 	if(!pattern) return;
@@ -262,6 +307,10 @@ void _AST_ConvertGraphPatternToFilter(const AST *ast, FT_FilterNode **root,
 			ft_node = _convertInlinedProperties(edge, GETYPE_EDGE);
 			if(ft_node) _FT_Append(root, ft_node);
 		}
+		// Enforce relationship isomorphism within the path:
+		// distinct single-hop relationships must refer to distinct edges.
+		ft_node = _BuildPathEdgeUniquenessFilter(path);
+		if(ft_node) _FT_Append(root, ft_node);
 	}
 }
 
