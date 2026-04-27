@@ -1813,6 +1813,9 @@ class testFunctionCallsFlow(FlowTestsBase):
             "RETURN lTrim('muchacho   ')": [["muchacho   "]], 
             "RETURN lTrim('   much   acho   ')": [["much   acho   "]], 
             "RETURN lTrim('muchacho')": [["muchacho"]], 
+            "RETURN lTrim('\tmuchacho')": [["muchacho"]],
+            "RETURN lTrim('\t\n\r muchacho')": [["muchacho"]],
+            "RETURN lTrim('\t>')": [[">"]],
             "RETURN lTrim(NULL)": [[None]]
         }
         for query, expected_result in query_to_expected_result.items():
@@ -1824,6 +1827,8 @@ class testFunctionCallsFlow(FlowTestsBase):
             "RETURN rTrim('muchacho   ')": [["muchacho"]], 
             "RETURN rTrim('   much   acho   ')": [["   much   acho"]], 
             "RETURN rTrim('muchacho')": [["muchacho"]], 
+            "RETURN rTrim('muchacho\t')": [["muchacho"]],
+            "RETURN rTrim('muchacho \t\n\r')": [["muchacho"]],
             "RETURN rTrim(NULL)": [[None]]
         }
         for query, expected_result in query_to_expected_result.items():
@@ -1835,6 +1840,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             "RETURN trim('muchacho   ')": [["muchacho"]],
             "RETURN trim('   much   acho   ')": [["much   acho"]],
             "RETURN trim('muchacho')": [["muchacho"]],
+            "RETURN trim('\t\n muchacho \r\t')": [["muchacho"]],
             "RETURN trim(NULL)": [[None]]
         }
         for query, expected_result in query_to_expected_result.items():

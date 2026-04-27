@@ -4,6 +4,8 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include <ctype.h>
+
 #include "string_funcs.h"
 #include "../func_desc.h"
 #include "../../util/arr.h"
@@ -70,7 +72,7 @@ SIValue AR_LTRIM
 
 	char *trimmed = argv[0].stringval;
 
-	while(*trimmed == ' ') {
+	while(isspace((unsigned char)*trimmed)) {
 		trimmed ++;
 	}
 
@@ -125,7 +127,7 @@ SIValue AR_RTRIM
 	char *str = argv[0].stringval;
 
 	size_t i = strlen(str);
-	while(i > 0 && str[i - 1] == ' ') {
+	while(i > 0 && isspace((unsigned char)str[i - 1])) {
 		i --;
 	}
 
