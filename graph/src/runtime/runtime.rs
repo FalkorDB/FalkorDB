@@ -166,6 +166,8 @@ pub struct Runtime<'a> {
     pub profile_data: RefCell<HashMap<NodeIdx<Dyn<IR>>, (usize, Duration)>>,
     /// Accumulator for child time subtraction during profiling.
     pub profile_child_time: Cell<Duration>,
+    /// Optional deadline for query timeout enforcement.
+    pub deadline: Option<Instant>,
 }
 
 pub trait GetVariables {
@@ -364,6 +366,7 @@ impl<'a> Runtime<'a> {
         env_pool: &'a Pool<Value>,
         result_set_size: i64,
         profile: bool,
+        timeout_ms: Option<u64>,
     ) -> Self {
         let return_names = plan.root().get_return_names();
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
@@ -393,7 +396,20 @@ impl<'a> Runtime<'a> {
             profile,
             profile_data: RefCell::new(HashMap::new()),
             profile_child_time: Cell::new(Duration::ZERO),
+            deadline: timeout_ms.map(|ms| Instant::now() + Duration::from_millis(ms)),
         }
+    }
+
+    /// Check if the query has exceeded its timeout deadline.
+    /// Returns `Err("Query timed out")` if the deadline has passed.
+    #[inline]
+    pub fn check_timeout(&self) -> Result<(), String> {
+        if let Some(deadline) = self.deadline
+            && Instant::now() >= deadline
+        {
+            return Err("Query timed out".to_string());
+        }
+        Ok(())
     }
 
     pub fn query(&'a self) -> Result<ResultSummary<'a>, String> {

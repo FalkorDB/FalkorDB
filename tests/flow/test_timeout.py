@@ -122,7 +122,7 @@ class testQueryTimeout():
 
         try:
             # The query is expected to timeout
-            res = self.graph.query(query, timeout=int(res.run_time_ms))
+            res = self.graph.query(query, timeout=max(int(res.run_time_ms), 1))
             self.env.assertTrue(False)
         except ResponseError as error:
             self.env.assertContains("Query timed out", str(error))

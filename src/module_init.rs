@@ -24,7 +24,7 @@
 
 use crate::config::{
     CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_TEMP_FOLDER,
-    OMP_THREAD_COUNT, get_thread_count,
+    OMP_THREAD_COUNT, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count,
 };
 use crate::redis_type::on_persistence;
 use graph::{
@@ -49,15 +49,87 @@ static RedisModuleEvent_FlushDB: RedisModuleEvent = RedisModuleEvent { id: 2, da
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_Persistence: RedisModuleEvent = RedisModuleEvent { id: 1, dataver: 1 };
 
+unsafe extern "C" {
+    fn pthread_atfork(
+        prepare: Option<unsafe extern "C" fn()>,
+        parent: Option<unsafe extern "C" fn()>,
+        child: Option<unsafe extern "C" fn()>,
+    ) -> c_int;
+}
+
+/// Called in the forked child process (via `pthread_atfork`).
+/// Forces GraphBLAS/OpenMP to single-threaded mode so they don't
+/// touch the parent's (now-invalid) thread pool handles.
+unsafe extern "C" fn on_fork_child() {
+    graph::graph::graphblas::matrix::set_nthreads(1);
+}
+
 pub fn graph_init(
     ctx: &Context,
-    _: &Vec<redis_module::RedisString>,
+    args: &Vec<redis_module::RedisString>,
 ) -> Status {
     panic::set_hook(Box::new(|info| {
         eprintln!("FalkorDB panic: {info}");
         std::process::exit(1);
     }));
+
+    // Parse timeout-related module args (TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX).
+    // These are AtomicI64 statics not registered in the redis_module! config section,
+    // so we parse them manually here.
+    {
+        let args_str: Vec<String> = args
+            .iter()
+            .map(redis_module::RedisString::to_string_lossy)
+            .collect();
+        let mut i = 0;
+        while i < args_str.len() {
+            match args_str[i].to_uppercase().as_str() {
+                "TIMEOUT" => {
+                    if i + 1 < args_str.len()
+                        && let Ok(v) = args_str[i + 1].parse::<i64>()
+                    {
+                        TIMEOUT.store(v, std::sync::atomic::Ordering::Relaxed);
+                        i += 2;
+                        continue;
+                    }
+                    ctx.log_warning("Invalid value for TIMEOUT module argument");
+                    return Status::Err;
+                }
+                "TIMEOUT_DEFAULT" => {
+                    if i + 1 < args_str.len()
+                        && let Ok(v) = args_str[i + 1].parse::<i64>()
+                    {
+                        TIMEOUT_DEFAULT.store(v, std::sync::atomic::Ordering::Relaxed);
+                        i += 2;
+                        continue;
+                    }
+                    ctx.log_warning("Invalid value for TIMEOUT_DEFAULT module argument");
+                    return Status::Err;
+                }
+                "TIMEOUT_MAX" => {
+                    if i + 1 < args_str.len()
+                        && let Ok(v) = args_str[i + 1].parse::<i64>()
+                    {
+                        TIMEOUT_MAX.store(v, std::sync::atomic::Ordering::Relaxed);
+                        i += 2;
+                        continue;
+                    }
+                    ctx.log_warning("Invalid value for TIMEOUT_MAX module argument");
+                    return Status::Err;
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+    }
     unsafe {
+        // Disable OpenMP's pthread_atfork handlers. Without this, the
+        // libomp atfork child handler crashes (SIGSEGV in __kmpc_set_lock)
+        // when Redis forks for bgsave because the OMP thread pool state
+        // is invalid in the child process.
+        std::env::set_var("KMP_INIT_AT_FORK", "FALSE");
+
         let result = RediSearch_Init(ctx.ctx.cast(), REDISEARCH_INIT_LIBRARY as c_int);
         if result == REDISMODULE_OK as c_int {
             ctx.log_notice("RediSearch initialized successfully.");
@@ -74,6 +146,11 @@ pub fn graph_init(
             ctx.log_warning(&format!("Failed to initialize GraphBLAS/LAGraph: {err}"));
             return Status::Err;
         }
+
+        // Register fork child handler to make GraphBLAS/OpenMP single-threaded
+        // in bgsave child processes.
+        pthread_atfork(None, None, Some(on_fork_child));
+
         let res = RedisModule_SubscribeToServerEvent.unwrap()(
             ctx.ctx,
             RedisModuleEvent_FlushDB,
@@ -122,6 +199,22 @@ pub fn graph_init(
             let _ = std::fs::remove_file(&test_path);
         } else {
             ctx.log_warning(&format!("TEMP_FOLDER '{tf}' is not writable"));
+            return Status::Err;
+        }
+    }
+
+    // Validate timeout mutual exclusion: cannot use deprecated TIMEOUT
+    // together with TIMEOUT_DEFAULT / TIMEOUT_MAX.
+    {
+        let timeout = TIMEOUT.load(std::sync::atomic::Ordering::Relaxed);
+        let timeout_default = TIMEOUT_DEFAULT.load(std::sync::atomic::Ordering::Relaxed);
+        let timeout_max = TIMEOUT_MAX.load(std::sync::atomic::Ordering::Relaxed);
+        if timeout > 0 && (timeout_default > 0 || timeout_max > 0) {
+            ctx.log_warning("Cannot specify TIMEOUT together with TIMEOUT_DEFAULT or TIMEOUT_MAX");
+            return Status::Err;
+        }
+        if timeout_default > 0 && timeout_max > 0 && timeout_default > timeout_max {
+            ctx.log_warning("TIMEOUT_DEFAULT cannot exceed TIMEOUT_MAX");
             return Status::Err;
         }
     }

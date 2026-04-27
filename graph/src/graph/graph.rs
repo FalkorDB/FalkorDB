@@ -118,6 +118,10 @@ pub struct Plan {
     pub parse_duration: Duration,
     /// Time spent planning/optimizing the query
     pub plan_duration: Duration,
+    /// Byte offset in the original query where the actual query (without
+    /// CYPHER params prefix) begins. Used by the slowlog to separate the
+    /// parameter portion from the query text.
+    pub params_offset: usize,
 }
 
 /// Opaque identifier for a node label.
@@ -180,6 +184,7 @@ impl Plan {
         parameters: HashMap<String, DynTree<ExprIR<Arc<String>>>>,
         parse_duration: Duration,
         plan_duration: Duration,
+        params_offset: usize,
     ) -> Self {
         Self {
             plan,
@@ -187,6 +192,7 @@ impl Plan {
             parameters,
             parse_duration,
             plan_duration,
+            params_offset,
         }
     }
 }
@@ -887,7 +893,9 @@ impl Graph {
         let mut plan_duration = Duration::ZERO;
 
         let mut parser = Parser::new(query);
-        let (parameters, query) = parser.parse_parameters()?;
+        let (parameters, query_no_params) = parser.parse_parameters()?;
+        let params_offset = query.len() - query_no_params.len();
+        let query = query_no_params;
 
         // Evaluate parameter expressions to values for the optimizer.
         let param_values: HashMap<String, Value> = parameters
@@ -908,6 +916,7 @@ impl Graph {
                         parameters,
                         parse_duration,
                         plan_duration,
+                        params_offset,
                     ));
                 }
                 // UDF version mismatch — discard stale cache entry
@@ -944,6 +953,7 @@ impl Graph {
             parameters,
             parse_duration,
             plan_duration,
+            params_offset,
         ))
     }
 

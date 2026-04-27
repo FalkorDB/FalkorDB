@@ -33,11 +33,16 @@ pub fn graph_ro_query(
     let query = args.next_str()?;
     let mut compact = false;
     let mut track_memory = false;
+    let mut timeout: Option<i64> = None;
     while let Ok(arg) = args.next_str() {
         if arg == "--compact" {
             compact = true;
         } else if arg == "--track-memory" {
             track_memory = true;
+        } else if arg == "timeout"
+            && let Ok(t_str) = args.next_str()
+        {
+            timeout = t_str.parse::<i64>().ok();
         }
     }
 
@@ -45,6 +50,15 @@ pub fn graph_ro_query(
     let key = ctx.open_key(&key);
 
     (key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?).map_or(EMPTY_KEY_ERR, |graph| {
-        query_mut(ctx, graph, query, compact, false, track_memory, key_name)
+        query_mut(
+            ctx,
+            graph,
+            query,
+            compact,
+            false,
+            track_memory,
+            key_name,
+            timeout,
+        )
     })
 }

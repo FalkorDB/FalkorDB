@@ -43,11 +43,13 @@ mod module_init;
 mod redis_type;
 mod reply;
 mod serializers;
+mod slow_log;
 
 use allocator::ThreadCountingAllocator;
 use commands::{
     graph_bulk_insert, graph_config, graph_debug, graph_delete, graph_effect, graph_explain,
-    graph_list, graph_memory, graph_profile, graph_query, graph_record, graph_ro_query, graph_udf,
+    graph_list, graph_memory, graph_profile, graph_query, graph_record, graph_ro_query,
+    graph_slowlog, graph_udf,
 };
 use config::{
     CONFIGURATION_CACHE_SIZE, CONFIGURATION_CMD_INFO, CONFIGURATION_DELAY_INDEXING,
@@ -79,6 +81,7 @@ redis_module! {
         ["graph.DEBUG", graph_debug, "write deny-script", 0, 0, 0, ""],
         ["graph.EFFECT", graph_effect, "write deny-script", 1, 1, 1, ""],
         ["graph.BULK", graph_bulk_insert, "write deny-oom deny-script", 1, 1, 1, ""],
+        ["graph.SLOWLOG", graph_slowlog, "readonly deny-script", 1, 1, 1, ""],
     ],
     configurations: [
         i64: [

@@ -10,7 +10,6 @@ tests/flow/test_constraint.py
 tests/flow/test_stress.py
 
 ## Persistence & Replication
-tests/flow/test_persistency.py
 tests/flow/test_replication.py
 tests/flow/test_replication_states.py
 
@@ -18,13 +17,10 @@ tests/flow/test_replication_states.py
 tests/flow/test_bolt.py
 tests/flow/test_graph_copy.py
 tests/flow/test_graph_info.py
-tests/flow/test_ro_query.py
-tests/flow/test_slowlog.py
 tests/flow/test_procedures.py
 
 ## Memory & Resource Management
 tests/flow/test_query_mem_limit.py
-tests/flow/test_timeout.py
 tests/flow/test_expiry.py
 tests/flow/test_defrag.py
 tests/flow/test_undo_log.py
