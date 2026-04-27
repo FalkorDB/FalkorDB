@@ -65,6 +65,7 @@ pub fn graph_query(
     let mut compact = false;
     let mut track_memory = false;
     let mut version_check: Option<u64> = None;
+    let mut timeout: Option<i64> = None;
     while let Ok(arg) = args.next_str() {
         if arg == "--compact" {
             compact = true;
@@ -73,6 +74,9 @@ pub fn graph_query(
         } else if arg == "version" {
             let ver_str = args.next_str()?;
             version_check = Some(ver_str.parse::<u64>()?);
+        } else if arg == "timeout" {
+            let t_str = args.next_str()?;
+            timeout = Some(t_str.parse::<i64>()?);
         }
     }
 
@@ -95,7 +99,16 @@ pub fn graph_query(
         }
 
         drop(read_key);
-        return query_mut(ctx, &graph, query, compact, true, track_memory, key_name);
+        return query_mut(
+            ctx,
+            &graph,
+            query,
+            compact,
+            true,
+            track_memory,
+            key_name,
+            timeout,
+        );
     }
 
     // Graph doesn't exist - open writable key to create it.
@@ -114,7 +127,16 @@ pub fn graph_query(
             }
         }
 
-        return query_mut(ctx, &graph, query, compact, true, track_memory, key_name);
+        return query_mut(
+            ctx,
+            &graph,
+            query,
+            compact,
+            true,
+            track_memory,
+            key_name,
+            timeout,
+        );
     }
 
     let graph = Arc::new(RwLock::new(ThreadedGraph::new(
@@ -130,7 +152,16 @@ pub fn graph_query(
         return Ok(redis_module::RedisValue::NoReply);
     }
 
-    let result = query_mut(ctx, &graph, query, compact, true, track_memory, key_name);
+    let result = query_mut(
+        ctx,
+        &graph,
+        query,
+        compact,
+        true,
+        track_memory,
+        key_name,
+        timeout,
+    );
     key.set_value(&GRAPH_TYPE, graph)?;
     result
 }

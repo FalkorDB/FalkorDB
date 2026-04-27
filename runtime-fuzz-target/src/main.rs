@@ -47,6 +47,7 @@ fn main() {
                 &pool,
                 -1,
                 false,
+                None,
             );
             let _ = runtime.query();
         }
