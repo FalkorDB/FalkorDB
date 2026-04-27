@@ -94,3 +94,41 @@ class testGraphMultipleEdgeFlow(FlowTestsBase):
         edge_count = actual_result.result_set[0][0]
         self.env.assertEquals(edge_count, 1)
 
+    def test_relationship_isomorphism_count(self):
+        # Regression: each edge variable in a path must bind to a distinct
+        # graph edge (relationship isomorphism).  Without the fix, the same
+        # edge could be reused for multiple positions, causing double-counting.
+
+        g = self.db.select_graph("rel_isomorphism")
+
+        # --- scenario 1: self-loop ---
+        # One node with one self-loop of type R.
+        # The chain (a)-[e1:R]->(a)-[e2:R]->(a) has no valid binding because
+        # e1 and e2 would have to be the same edge, which isomorphism forbids.
+        g.query("CREATE (a:Loop)-[:R]->(a)")
+        result = g.query(
+            "MATCH (a:Loop)-[e1:R]->(a)-[e2:R]->(a) RETURN count(e1)")
+        self.env.assertEquals(result.result_set[0][0], 0)
+
+        # --- scenario 2: converging-relationship pattern ---
+        # Two nodes A and B with a single directed edge A->B.
+        # The converging pattern (a)-[e1:S]->(b)<-[e2:S]-(a) requires two
+        # distinct edges from a to b.  With only one such edge the count must
+        # be 0, not 1.
+        g.query("CREATE (:Conv {id:'a'}), (:Conv {id:'b'})")
+        g.query(
+            "MATCH (a:Conv {id:'a'}), (b:Conv {id:'b'}) CREATE (a)-[:S]->(b)")
+
+        result = g.query(
+            "MATCH (a:Conv)-[e1:S]->(b:Conv)<-[e2:S]-(a) RETURN count(e1)")
+        self.env.assertEquals(result.result_set[0][0], 0)
+
+        # Add a second edge A->B.  Now there are two valid bindings:
+        # (e1=edge0, e2=edge1) and (e1=edge1, e2=edge0) -> count must be 2,
+        # not 4 (which the unfixed code would produce).
+        g.query(
+            "MATCH (a:Conv {id:'a'}), (b:Conv {id:'b'}) CREATE (a)-[:S]->(b)")
+
+        result = g.query(
+            "MATCH (a:Conv)-[e1:S]->(b:Conv)<-[e2:S]-(a) RETURN count(e1)")
+        self.env.assertEquals(result.result_set[0][0], 2)
