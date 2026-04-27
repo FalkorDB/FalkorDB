@@ -249,7 +249,19 @@ void PendingCreations_Reset
 
 	for(uint i = 0; i < arr_len(ctx->edges); i++) {
 		arr_clear (ctx->edges[i].created_edges) ;
-		arr_clear (ctx->edges[i].edge_attributes) ;
+
+		// free any AttributeSets that were built but not yet committed
+		// (e.g. when reset is called after _buildPendingCreations but
+		// before CommitNewEntities runs, which is the case when the op
+		// is reused as the RHS of an Apply driving a CALL { ... } subquery)
+		AttributeSet *edge_attrs = ctx->edges[i].edge_attributes ;
+		if (edge_attrs != NULL) {
+			uint n = arr_len (edge_attrs) ;
+			for (uint j = 0; j < n; j++) {
+				AttributeSet_Free (edge_attrs + j) ;
+			}
+			arr_clear (edge_attrs) ;
+		}
 	}
 }
 
