@@ -100,14 +100,25 @@ void ExecutionPlan_RePositionFilterOp
 		// the filter tree does not contain references
 		// e.g.
 		// WHERE 1=1
-		// place the filter directly below the first projection within the
-		// caller-supplied root subtree (preserving scope semantics).
-		// if no projection is found within that subtree, fall back to the
-		// subtree's root, and finally to the plan root.
+		// locate the first projection / aggregation op within the caller-
+		// supplied root subtree (preserving scope semantics), falling back to
+		// the subtree's root, and finally to the plan root.
 		op = ExecutionPlan_LocateOpMatchingTypes(root, PROJECT_OPS,
 				PROJECT_OP_COUNT, NULL);
 		if(op == NULL) op = root;
 		if(op == NULL) op = plan->root;
+
+		// if the located op has no parent (e.g. an in-progress sub-plan
+		// being constructed by a caller such as the pattern-comprehension
+		// builder), avoid PushBelow's degenerate path that would replace
+		// plan->root with the filter and detach the in-progress subtree.
+		// instead, place the filter as the located op's child so it sits
+		// between the projection and its data input -- which is also the
+		// semantic intended for no-reference filters: short-circuit the
+		// pipeline before the projection consumes input rows.
+		if(op->parent == NULL && op->childCount > 0) {
+			op = op->children[0];
+		}
 	}
 
 	ASSERT(op != NULL);
