@@ -94,6 +94,7 @@ class testEffectSchemaDesyncReplica():
         try:
             self.replica.shutdown()
         except Exception:
+            # best-effort teardown; replica may already be terminated
             pass
 
     # ------------------------------------------------------------------
@@ -122,15 +123,15 @@ class testEffectSchemaDesyncReplica():
         # master only, prior to PR #1815. The "/0" raises ArithmeticError
         # AFTER the CREATE clause has registered the relation type.
         # ----------------------------------------------------------------
+        query_raised = False
         try:
             master_g.query(
                 "CREATE ()-[:R_BAD]->() WITH 1 AS x RETURN x / 0"
             )
-            # the projection must raise; if we get here the test premise
-            # is broken (the query accidentally succeeded)
-            self.env.assertTrue(False)
         except Exception:
-            pass
+            # expected: division by zero raises after CREATE registers R_BAD
+            query_raised = True
+        self.env.assertTrue(query_raised)
 
         # ----------------------------------------------------------------
         # step 2 - successful write that introduces a different brand-new
@@ -181,13 +182,15 @@ class testEffectSchemaDesyncReplica():
 
         for i in range(5):
             # failing schema-introducing query - must roll back cleanly
+            query_raised = False
             try:
                 master_g.query(
                     "CREATE ()-[:R_FAIL_%d]->() WITH 1 AS x RETURN x / 0" % i
                 )
-                self.env.assertTrue(False)
             except Exception:
-                pass
+                # expected: division by zero raises after CREATE registers type
+                query_raised = True
+            self.env.assertTrue(query_raised)
 
             # successful EFFECT-replicated write with a fresh relation
             res = self._run_and_replicate(
@@ -226,6 +229,7 @@ class testEffectReplicationStability():
         try:
             self.replica.shutdown()
         except Exception:
+            # best-effort teardown; replica may already be terminated
             pass
 
     def _wait_replica(self):

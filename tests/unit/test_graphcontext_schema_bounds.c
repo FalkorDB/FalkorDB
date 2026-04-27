@@ -55,6 +55,35 @@ void tearDown() {
 #define TEST_FINI tearDown();
 #include "acutest.h"
 
+// Free a GraphContext created by _fake_graph_context().  Mirrors the cleanup
+// in _GraphContext_Free (graphcontext.c) but avoids Config / RedisModule
+// dependencies that are absent in the unit-test harness.
+static void _free_graph_context(GraphContext *gc) {
+	uint32_t len;
+
+	if(gc->node_schemas) {
+		len = arr_len(gc->node_schemas);
+		for(uint32_t i = 0; i < len; i++) Schema_Free(gc->node_schemas[i]);
+		arr_free(gc->node_schemas);
+	}
+	if(gc->relation_schemas) {
+		len = arr_len(gc->relation_schemas);
+		for(uint32_t i = 0; i < len; i++) Schema_Free(gc->relation_schemas[i]);
+		arr_free(gc->relation_schemas);
+	}
+	QueriesLog_Free(gc->queries_log);
+	if(gc->attributes) raxFree(gc->attributes);
+	if(gc->string_mapping) {
+		len = arr_len(gc->string_mapping);
+		for(uint32_t i = 0; i < len; i++) rm_free(gc->string_mapping[i]);
+		arr_free(gc->string_mapping);
+	}
+	Graph_Free(gc->g);
+	pthread_rwlock_destroy(&gc->_schema_rwlock);
+	free(gc->graph_name);
+	free(gc);
+}
+
 // Build a minimal GraphContext suitable for exercising
 // GraphContext_GetSchemaByID without dragging in the full module-load path.
 // Mirrors the _fake_graph_context() helper used by test_algebraic_expression.c.
@@ -102,6 +131,8 @@ void test_get_schema_by_id_in_range_returns_schema(void) {
 	s = GraphContext_GetSchemaByID(gc, 1, SCHEMA_EDGE);
 	TEST_ASSERT(s != NULL);
 	TEST_ASSERT(strcmp(Schema_GetName(s), "REL1") == 0);
+
+	_free_graph_context(gc);
 }
 
 // Out-of-range positive IDs (>= arr_len(schemas)) must return NULL,
@@ -122,6 +153,8 @@ void test_get_schema_by_id_oob_positive_returns_null(void) {
 	// id far past the end.
 	TEST_ASSERT(GraphContext_GetSchemaByID(gc, 999,    SCHEMA_NODE) == NULL);
 	TEST_ASSERT(GraphContext_GetSchemaByID(gc, 999999, SCHEMA_EDGE) == NULL);
+
+	_free_graph_context(gc);
 }
 
 // Negative IDs other than the GRAPH_NO_LABEL sentinel must also be
@@ -143,6 +176,8 @@ void test_get_schema_by_id_negative_returns_null(void) {
 	// array.
 	TEST_ASSERT(GraphContext_GetSchemaByID(gc, -2,  SCHEMA_NODE) == NULL);
 	TEST_ASSERT(GraphContext_GetSchemaByID(gc, -42, SCHEMA_EDGE) == NULL);
+
+	_free_graph_context(gc);
 }
 
 // On an empty schema array every positive ID must come back NULL.
@@ -154,6 +189,8 @@ void test_get_schema_by_id_empty_arrays_returns_null(void) {
 	TEST_ASSERT(GraphContext_GetSchemaByID(gc, 0,   SCHEMA_EDGE) == NULL);
 	TEST_ASSERT(GraphContext_GetSchemaByID(gc, 1,   SCHEMA_NODE) == NULL);
 	TEST_ASSERT(GraphContext_GetSchemaByID(gc, 100, SCHEMA_EDGE) == NULL);
+
+	_free_graph_context(gc);
 }
 
 // Boundary: id == arr_len - 1 is the LAST valid index; id == arr_len is
@@ -173,6 +210,8 @@ void test_get_schema_by_id_boundary(void) {
 
 	// first invalid id - must be rejected
 	TEST_ASSERT(GraphContext_GetSchemaByID(gc, 3, SCHEMA_NODE) == NULL);
+
+	_free_graph_context(gc);
 }
 
 // SchemaType selection: a relation id that is in range for the EDGE array
@@ -194,6 +233,8 @@ void test_get_schema_by_id_type_dispatch(void) {
 	// edge id 1 is OUT OF RANGE against the NODE array (only 1 node
 	// schema exists) - must return NULL, not a stale Schema*.
 	TEST_ASSERT(GraphContext_GetSchemaByID(gc, 1, SCHEMA_NODE) == NULL);
+
+	_free_graph_context(gc);
 }
 
 TEST_LIST = {
