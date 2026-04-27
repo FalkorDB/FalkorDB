@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "../value.h"
 #include "../util/rmalloc.h"
+#include "temporal_value.h"
 
 #define _XOPEN_SOURCE  700 // needed for gmtime_r
 
@@ -16,14 +17,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
-
-// helper: check if a year is a leap year
-static bool is_leap_year
-(
-	int year
-) {
-    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-}
 
 // helper: construct an SIValue date from a struct tm
 static SIValue _create_date_from_tm
