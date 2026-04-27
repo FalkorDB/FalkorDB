@@ -158,8 +158,37 @@ jobs:
           RUSTFLAGS="-C instrument-coverage" cargo test -p graph
           . /data/venv/bin/activate
           pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
-          ./flow.sh
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+          llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov.profdata
+          llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
+          lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+  coverage-flow:
+    runs-on: ubuntu-latest
+    container: aviavni/falkordb-build:latest
+    needs:
+      - docker
+      - flow-test-matrix
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        test_file: ${{ fromJson(needs.flow-test-matrix.outputs.test_files) }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "coverage"
+          env-vars: "RUSTFLAGS"
+      - name: Run coverage - ${{ matrix.test_file }}
+        run: |
+          RUSTFLAGS="-C instrument-coverage" cargo build
+          . /data/venv/bin/activate
+          TEST="${{ matrix.test_file }}" FAIL_FAST=1 ./flow.sh
           llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov.profdata
           llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
