@@ -2,4 +2,4 @@
 language: "en-US"
 reviews:
   path_filters:
-  - "!deps/**"
+    - "!deps/**"
