@@ -231,10 +231,16 @@ bool Date_getComponent
 
         if(q > 1) {
             // subtract days of prior months in current year
-            static const int daysUntilQuarter[] = {0, 0, 90, 181, 273};
-            dayOfQuarter = doy - daysUntilQuarter[q];
+            // leap-year aware offsets (1-based yday of quarter start - 1)
+            int isLeap = ((year % 4 == 0) && (year % 100 != 0)) ||
+                         (year % 400 == 0);
+            static const int daysUntilQuarter[2][5] = {
+                {0, 0, 90, 181, 273}, // non-leap
+                {0, 0, 91, 182, 274}  // leap
+            };
+            dayOfQuarter = doy - daysUntilQuarter[isLeap][q];
         }
-        *value = dayOfQuarter + 1;
+        *value = dayOfQuarter;
     }
 
     return (*value != -1);
