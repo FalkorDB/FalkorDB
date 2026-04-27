@@ -105,6 +105,27 @@ jobs:
         run: |
           . /data/venv/bin/activate
           RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+  build-release:
+    runs-on: ubuntu-latest
+    container: aviavni/falkordb-build:latest
+    needs:
+      - check-files
+      - docker
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "release"
+      - name: Build
+        run: |
+          cargo build --release
+      - name: Upload release binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-binary
+          path: target/release/libfalkordb.so
   flow-test-matrix:
     runs-on: ubuntu-latest
     outputs:
@@ -122,20 +143,19 @@ jobs:
       - check-files
       - docker
       - flow-test-matrix
-    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+      - build-release
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-release.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
         test_file: ${{ fromJson(needs.flow-test-matrix.outputs.test_files) }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - run: rustup default stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: Download release binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          shared-key: "release"
-      - name: Build
-        run: |
-          cargo build --release
+          name: release-binary
+          path: target/release
       - name: Run Flow test - ${{ matrix.test_file }}
         run: |
           . /data/venv/bin/activate
@@ -166,17 +186,13 @@ jobs:
         uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-  coverage-flow:
+  build-coverage:
     runs-on: ubuntu-latest
     container: aviavni/falkordb-build:latest
     needs:
+      - check-files
       - docker
-      - flow-test-matrix
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
-    strategy:
-      fail-fast: false
-      matrix:
-        test_file: ${{ fromJson(needs.flow-test-matrix.outputs.test_files) }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - run: rustup default stable
@@ -184,9 +200,35 @@ jobs:
         with:
           shared-key: "coverage"
           env-vars: "RUSTFLAGS"
-      - name: Run coverage - ${{ matrix.test_file }}
+      - name: Build with coverage
         run: |
           RUSTFLAGS="-C instrument-coverage" cargo build
+      - name: Upload coverage binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-binary
+          path: target/debug/libfalkordb.so
+  coverage-flow:
+    runs-on: ubuntu-latest
+    container: aviavni/falkordb-build:latest
+    needs:
+      - docker
+      - flow-test-matrix
+      - build-coverage
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-coverage.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        test_file: ${{ fromJson(needs.flow-test-matrix.outputs.test_files) }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Download coverage binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: coverage-binary
+          path: target/debug
+      - name: Run coverage - ${{ matrix.test_file }}
+        run: |
           . /data/venv/bin/activate
           TEST="${{ matrix.test_file }}" FAIL_FAST=1 ./flow.sh
           llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov.profdata
