@@ -124,6 +124,62 @@ static void _AST_MapReferencedEntitiesInPath(AST *ast, const cypher_astnode_t *p
 		_AST_MapReferencedEdge(ast, cypher_ast_pattern_path_get_element(path, i), force_mapping);
 }
 
+// returns true if two relationship pattern AST nodes can ever match the same
+// physical edge based purely on their declared relationship-type filter.
+// kept in sync with _RelPatternsRelTypesOverlap in ast_build_filter_tree.c
+static bool _RelPatternsRelTypesOverlap
+(
+	const cypher_astnode_t *e1,
+	const cypher_astnode_t *e2
+) {
+	uint n1 = cypher_ast_rel_pattern_nreltypes(e1);
+	uint n2 = cypher_ast_rel_pattern_nreltypes(e2);
+	if(n1 == 0 || n2 == 0) return true;
+	for(uint i = 0; i < n1; i++) {
+		const cypher_astnode_t *r1 = cypher_ast_rel_pattern_get_reltype(e1, i);
+		const char *t1 = cypher_ast_reltype_get_name(r1);
+		for(uint j = 0; j < n2; j++) {
+			const cypher_astnode_t *r2 = cypher_ast_rel_pattern_get_reltype(e2, j);
+			const char *t2 = cypher_ast_reltype_get_name(r2);
+			if(strcmp(t1, t2) == 0) return true;
+		}
+	}
+	return false;
+}
+
+// Map every single-hop relationship alias of a path that participates in at
+// least one edge-uniqueness filter (see _BuildPathEdgeUniquenessFilter in
+// ast_build_filter_tree.c). These aliases are implicitly referenced by those
+// filters and must be present in the reference map so traversal ops populate
+// them in the record.
+static void _AST_MapEdgeIsomorphismRefs(AST *ast, const cypher_astnode_t *path) {
+	uint path_len = cypher_ast_pattern_path_nelements(path);
+
+	// collect single-hop edge AST nodes
+	const cypher_astnode_t **edges = arr_new(const cypher_astnode_t *, 1);
+	for(uint i = 1; i < path_len; i += 2) {
+		const cypher_astnode_t *edge =
+			cypher_ast_pattern_path_get_element(path, i);
+		if(cypher_ast_rel_pattern_get_varlength(edge) != NULL) continue;
+		arr_append(edges, edge);
+	}
+
+	uint n = arr_len(edges);
+	for(uint i = 0; i < n; i++) {
+		// map this edge if any other single-hop edge in the path has an
+		// overlapping reltype constraint with it
+		for(uint j = 0; j < n; j++) {
+			if(i == j) continue;
+			if(_RelPatternsRelTypesOverlap(edges[i], edges[j])) {
+				const char *alias = AST_ToString(edges[i]);
+				_AST_UpdateRefMap(ast, alias);
+				break;
+			}
+		}
+	}
+	arr_free(edges);
+}
+
 // Add referenced aliases from MATCH clause - inline filtered and explicit WHERE filter.
 static void _AST_MapMatchClauseReferences(AST *ast, const cypher_astnode_t *match_clause) {
 	// Inline filters.
@@ -133,6 +189,7 @@ static void _AST_MapMatchClauseReferences(AST *ast, const cypher_astnode_t *matc
 		const cypher_astnode_t *path = cypher_ast_pattern_get_path(pattern, i);
 		bool force_mapping = _shouldForceMapping(path);
 		_AST_MapReferencedEntitiesInPath(ast, path, force_mapping);
+		_AST_MapEdgeIsomorphismRefs(ast, path);
 	}
 
 	// Where clause.
@@ -386,6 +443,9 @@ static void _AST_MapMergeClauseReference(AST *ast, const cypher_astnode_t *merge
 	const cypher_astnode_t *merge_path = cypher_ast_merge_get_pattern_path(merge_clause);
 	bool force_mapping = _shouldForceMapping(merge_path);
 	_AST_MapReferencedEntitiesInPath(ast, merge_path, force_mapping);
+	// Edge-uniqueness filters added when the MERGE pattern is matched also
+	// reference every single-hop relationship in the path.
+	_AST_MapEdgeIsomorphismRefs(ast, merge_path);
 
 	// Map modified entities, either by ON MATCH or ON CREATE clause.
 	uint merge_actions = cypher_ast_merge_nactions(merge_clause);

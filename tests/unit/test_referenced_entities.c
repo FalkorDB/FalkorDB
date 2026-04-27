@@ -218,10 +218,12 @@ void test_set() {
 	segmentIndices = getASTSegmentIndices(ast);
 	TEST_ASSERT(1 == arr_len(segmentIndices));
 	astSegment = AST_NewSegment(ast, 0, segmentIndices[0]);
-	TEST_ASSERT(2 == raxSize(astSegment->referenced_entities));
+	// edge isomorphism enforcement marks both edges as referenced so that
+	// the generated id(e) <> id(@anon) filter can access them at runtime
+	TEST_ASSERT(4 == raxSize(astSegment->referenced_entities));
 	TEST_ASSERT(raxNotFound != raxFind(astSegment->referenced_entities, (unsigned char *)"n", 1));
 	TEST_ASSERT(raxNotFound != raxFind(astSegment->referenced_entities, (unsigned char *)"x", 1));
-	TEST_ASSERT(raxNotFound == raxFind(astSegment->referenced_entities, (unsigned char *)"e", 1));
+	TEST_ASSERT(raxNotFound != raxFind(astSegment->referenced_entities, (unsigned char *)"e", 1));
 	TEST_ASSERT(raxNotFound == raxFind(astSegment->referenced_entities, (unsigned char *)"m", 1));
 	arr_free(segmentIndices);
 	AST_Free(astSegment);

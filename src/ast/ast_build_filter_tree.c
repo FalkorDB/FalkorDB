@@ -240,6 +240,87 @@ FT_FilterNode *_FilterNode_FromAST(const cypher_astnode_t *expr) {
 	}
 }
 
+// returns true if two relationship pattern AST nodes can ever match the same
+// physical edge based purely on their declared relationship-type filter.
+//
+// - if either side has no reltype constraint then any reltype is accepted and
+//   they could match the same edge
+// - otherwise the two reltype sets must intersect for them to potentially
+//   refer to the same edge
+static bool _RelPatternsRelTypesOverlap
+(
+	const cypher_astnode_t *e1,
+	const cypher_astnode_t *e2
+) {
+	uint n1 = cypher_ast_rel_pattern_nreltypes(e1);
+	uint n2 = cypher_ast_rel_pattern_nreltypes(e2);
+	if(n1 == 0 || n2 == 0) return true;
+	for(uint i = 0; i < n1; i++) {
+		const cypher_astnode_t *r1 = cypher_ast_rel_pattern_get_reltype(e1, i);
+		const char *t1 = cypher_ast_reltype_get_name(r1);
+		for(uint j = 0; j < n2; j++) {
+			const cypher_astnode_t *r2 = cypher_ast_rel_pattern_get_reltype(e2, j);
+			const char *t2 = cypher_ast_reltype_get_name(r2);
+			if(strcmp(t1, t2) == 0) return true;
+		}
+	}
+	return false;
+}
+
+// build a filter enforcing relationship isomorphism within a single path
+// every pair of single-hop relationships in the path must refer to different
+// graph edges, i.e. id(eA) <> id(eB).
+//
+// variable-length relationships are skipped here because they evaluate to a
+// list rather than a single edge, so a simple id() comparison does not apply.
+//
+// pairs of relationships whose reltype constraints don't overlap are also
+// skipped: two such relationships can never resolve to the same physical
+// edge so the filter would be a tautology.
+static FT_FilterNode *_BuildPathEdgeUniquenessFilter
+(
+	const cypher_astnode_t *path
+) {
+	uint nelements = cypher_ast_pattern_path_nelements(path);
+	if(nelements < 5) return NULL;  // need at least two edges in the path
+
+	// collect single-hop edge AST nodes in the path
+	const cypher_astnode_t **edges = arr_new(const cypher_astnode_t *, 1);
+	for(uint e = 1; e < nelements; e += 2) {
+		const cypher_astnode_t *edge = cypher_ast_pattern_path_get_element(path, e);
+		// skip variable-length relationships
+		if(cypher_ast_rel_pattern_get_varlength(edge) != NULL) continue;
+		arr_append(edges, edge);
+	}
+
+	uint n = arr_len(edges);
+	FT_FilterNode *root = NULL;
+
+	// emit id(eA) <> id(eB) for every distinct pair whose reltype constraints
+	// could overlap on a common physical edge
+	for(uint i = 0; i < n; i++) {
+		for(uint j = i + 1; j < n; j++) {
+			if(!_RelPatternsRelTypesOverlap(edges[i], edges[j])) continue;
+
+			const char *alias_a = AST_ToString(edges[i]);
+			const char *alias_b = AST_ToString(edges[j]);
+
+			AR_ExpNode *id_a = AR_EXP_NewOpNode("id", true, 1);
+			id_a->op.children[0] = AR_EXP_NewVariableOperandNode(alias_a);
+
+			AR_ExpNode *id_b = AR_EXP_NewOpNode("id", true, 1);
+			id_b->op.children[0] = AR_EXP_NewVariableOperandNode(alias_b);
+
+			FT_FilterNode *neq =
+				FilterTree_CreatePredicateFilter(OP_NEQUAL, id_a, id_b);
+			_FT_Append(&root, neq);
+		}
+	}
+
+	arr_free(edges);
+	return root;
+}
+
 void _AST_ConvertGraphPatternToFilter(const AST *ast, FT_FilterNode **root,
 									  const cypher_astnode_t *pattern) {
 	if(!pattern) return;
@@ -262,6 +343,10 @@ void _AST_ConvertGraphPatternToFilter(const AST *ast, FT_FilterNode **root,
 			ft_node = _convertInlinedProperties(edge, GETYPE_EDGE);
 			if(ft_node) _FT_Append(root, ft_node);
 		}
+		// Enforce relationship isomorphism within the path:
+		// distinct single-hop relationships must refer to distinct edges.
+		ft_node = _BuildPathEdgeUniquenessFilter(path);
+		if(ft_node) _FT_Append(root, ft_node);
 	}
 }
 

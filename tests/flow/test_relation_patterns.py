@@ -353,3 +353,29 @@ class testRelationPattern(FlowTestsBase):
         self.env.assertEquals(e12.src_node, 1)
         self.env.assertEquals(e12.dest_node, 2)
         self.env.assertEquals(e12.relation, 'R')
+
+    # relationship isomorphism: distinct relationships in the same MATCH path
+    # must refer to distinct graph edges
+    # https://github.com/FalkorDB/FalkorDB/issues : `count(variable)` may
+    # double-count matches in a converging-relationship pattern
+    def test14_relationship_isomorphism(self):
+        g = self.db.select_graph("relationship_isomorphism")
+
+        # graph: (Alice)-[:FRIEND]->(Bob)<-[:FRIEND]-(Charlie)
+        q = ("CREATE (:Person {name: 'Alice'})-[:FRIEND]->(:Person {name: 'Bob'})"
+             "<-[:FRIEND]-(:Person {name: 'Charlie'})")
+        g.query(q)
+
+        # the converging pattern has two distinct anonymous FRIEND edges
+        # so each (p1, p3) binding must use two different edges
+        # valid bindings: (Alice, Charlie) and (Charlie, Alice) => count = 2
+        q = ("MATCH (p1:Person)-[:FRIEND]->(p2:Person)<-[:FRIEND]-(p3:Person) "
+             "RETURN p2.name AS person, count(p1) AS friendsCount")
+        result = g.query(q)
+        self.env.assertEquals(result.result_set, [['Bob', 2]])
+
+        # similar pattern with two single-hop edges and aliased relationships
+        q = ("MATCH (p1:Person)-[r1:FRIEND]->(p2:Person)<-[r2:FRIEND]-(p3:Person) "
+             "RETURN count(*)")
+        result = g.query(q)
+        self.env.assertEquals(result.result_set, [[2]])

@@ -100,13 +100,22 @@ friends_visited_same_places_as_me_query = QueryInfo(
     query="""MATCH (ME:person {name:"Roi Lipman"})-[:visited]->(c:country)<-[:visited]-(f:person)<-[:friend]-(ME)
              RETURN f.name, c.name ORDER BY f.name, c.name""",
     description='Friends who have been to places I have visited?',
-    expected_result=[['Tal Doron', 'Japan'],
+    # The dataset contains multiple `:visited` edges between the same person
+    # and the same country (one per visit purpose), so Cypher relationship
+    # isomorphism produces one row per pair of distinct visit edges.
+    expected_result=[['Alon Fital', 'Prague'],
                      ['Alon Fital', 'Prague'],
-                     ['Tal Doron', 'USA'],
-                     ['Omri Traub', 'USA'],
+                     ['Alon Fital', 'Prague'],
+                     ['Alon Fital', 'Prague'],
+                     ['Alon Fital', 'USA'],
+                     ['Alon Fital', 'USA'],
                      ['Boaz Arad', 'USA'],
+                     ['Boaz Arad', 'USA'],
+                     ['Omri Traub', 'USA'],
                      ['Ori Laslo', 'USA'],
-                     ['Alon Fital', 'USA']]
+                     ['Tal Doron', 'Japan'],
+                     ['Tal Doron', 'USA'],
+                     ['Tal Doron', 'USA']]
 )
 
 countries_visited_by_roi_tal_boaz = QueryInfo(

@@ -109,7 +109,9 @@ class testTraversalConstruction():
         q = """match (a)--(b)--(c)--(d)--(e)--(f)--(g)--(h)--(i)--(j)--(k)--(l) return *"""
         plan = str(self.graph.explain(q))
         ops = plan.split(os.linesep)
-        self.env.assertEqual(len(ops), 14)
+        # The plan now also contains filter operations enforcing relationship
+        # isomorphism between the 11 single-hop edges of the pattern.
+        self.env.assertEqual(len(ops), 24)
 
     def test_start_with_index_filter(self):
         # TODO: enable this test, once we'll score higher filters that
