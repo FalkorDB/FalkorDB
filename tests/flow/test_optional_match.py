@@ -1,4 +1,5 @@
 from common import *
+from index_utils import create_node_range_index
 import re
 
 nodes = {}
@@ -314,4 +315,35 @@ class testOptionalFlow(FlowTestsBase):
         plan = str(self.graph.explain(query))
         self.env.assertIn("Optional Conditional Traverse | (a)->(b)", plan)
         self.env.assertIn("Optional Conditional Traverse | (b)->(c)", plan)
+
+    # OPTIONAL MATCH on the same alias with a different (indexed) label
+    def test27_optional_match_indexed_label_on_same_alias(self):
+        # use a fresh graph
+        graph_id = "optional_match_indexed_label"
+        g = self.db.select_graph(graph_id)
+
+        # create an index on the label that only appears in the OPTIONAL MATCH
+        create_node_range_index(g, 'N', 'v', sync=True)
+
+        q = """MATCH (n :M {v:-2})-[r1]->(m)
+               OPTIONAL MATCH (n :N)-[r2]->(m)
+               RETURN DISTINCT n, r1, r2, m"""
+
+        result = g.query(q)
+        self.env.assertEquals(result.result_set, [])
+
+        # populate with data and run again
+        g.query(
+            """CREATE (n:M {v:-2})-[:R1]->(m),
+                      (n)-[:R2]->(m),
+                      (x:N {v:6})""")
+
+        result = g.query(q)
+        # n (M) is connected to m via two edges (R1, R2);
+        # n has no N label so OPTIONAL MATCH yields NULL r2 in both rows
+        self.env.assertEquals(len(result.result_set), 2)
+        for row in result.result_set:
+            self.env.assertIsNone(row[2])  # r2 must be null
+
+        g.delete()
 
