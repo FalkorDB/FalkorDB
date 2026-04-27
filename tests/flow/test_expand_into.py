@@ -87,10 +87,15 @@ class testExpandInto():
 
         # make sure (a) is connected to (b) via a 'R' edge
         # there are multiple ways to reach (b) from (a)
-        query = "MATCH (a:A)-[*]->(b:B) WITH a,b MATCH (a)-[:R]->()-[]->(b) RETURN count(1)"
+        # use WITH DISTINCT to collapse the var-len traversal duplicates so we
+        # only test the inner Expand Into match cardinality
+        query = "MATCH (a:A)-[*]->(b:B) WITH DISTINCT a,b MATCH (a)-[:R]->()-[]->(b) RETURN count(1)"
         plan = str(self.graph.explain(query))
         result = self.graph.query(query)
         self.env.assertIn("Expand Into", plan)
+        # 2 'R' edges from a to i and 2 edges from i to b; relationship
+        # isomorphism allows the 4 (first-edge, second-edge) pairs since
+        # each pair refers to two distinct edges
         self.env.assertEquals(4, result.result_set[0][0])
 
     def test05_no_hop_multi_label(self):

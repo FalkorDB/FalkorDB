@@ -561,7 +561,13 @@ class testGraphMergeFlow():
         res = self.graph.query(query)
         self.env.assertEquals(res.nodes_created, 0)
         self.env.assertEquals(res.relationships_created, 2)
-        self.env.assertEquals(res.result_set, [['abcd', 'x', 'y'],['abcd', 'x', 'y']])
+        # MERGE pattern matches twice for (u, n='y'_existing): u has 2 R edges
+        # to m and the existing 'y' has 2 R edges to m, giving 4 matches under
+        # relationship isomorphism. For the second 'y' node MERGE creates the
+        # missing edges and returns 1 row.
+        self.env.assertEquals(res.result_set, [['abcd', 'x', 'y'], ['abcd', 'x', 'y'],
+                                               ['abcd', 'x', 'y'], ['abcd', 'x', 'y'],
+                                               ['abcd', 'x', 'y']])
 
     def test30_record_clone_under_merge(self):
         # the following operations
