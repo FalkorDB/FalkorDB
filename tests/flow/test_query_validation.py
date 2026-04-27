@@ -173,7 +173,7 @@ class testQueryValidationFlow(FlowTestsBase):
     # This used to raise "Encountered unhandled type in inlined properties."
     # but is now supported - the parameter is evaluated to a map at runtime
     # and applied as the entity's properties.
-    def test16_param_introduces_unhandled_type(self):
+    def test16_param_inlined_properties_supported(self):
         query = """CYPHER props={a:1,b:2} CREATE (a:A $props) RETURN a.a, a.b"""
         result = self.graph.query(query)
         assert result.nodes_created == 1

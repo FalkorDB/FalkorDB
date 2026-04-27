@@ -329,9 +329,13 @@ cleanup:
 	Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
 }
 
-// validate a property value and convert array/null to be insertable
-// returns true on success, false on error (raise has been emitted)
-// returns false also for nulls that should be skipped (sets *skip = true)
+// validate a property value
+// on success: returns true
+// for nulls that should be skipped: returns true and sets *skip = true
+// on validation error: sets the error context (without raising) and
+//                      returns false; the caller is responsible for releasing
+//                      any resources and then calling
+//                      ErrorCtx_RaiseRuntimeException
 static bool _ValidatePropValue
 (
 	SIValue val,             // value to validate
@@ -343,19 +347,17 @@ static bool _ValidatePropValue
 	if (!(SI_TYPE(val) & SI_VALID_PROPERTY_VALUE)) {
 		// this value is of an invalid type
 		if (!SIValue_IsNull(val)) {
-			// if the value was a complex type, emit an exception
-			SIValue_Free (val) ;
+			// if the value was a complex type, set an error
 			Error_InvalidPropertyValue () ;
-			ErrorCtx_RaiseRuntimeException (NULL) ;
 			return false ;
 		}
 
 		// the value was NULL
-		// if this was prohibited in this context, raise an exception,
+		// if this was prohibited in this context, set an error
 		// otherwise skip this value
 		if (fail_on_null) {
-			ErrorCtx_RaiseRuntimeException (
-				"Cannot merge node using null property value") ;
+			ErrorCtx_SetError (
+				"Cannot merge entity using null property value") ;
 			return false ;
 		}
 
@@ -364,16 +366,13 @@ static bool _ValidatePropValue
 		return true ;
 	}
 
-	// emit an error and exit if we're trying to add
+	// set an error and exit if we're trying to add
 	// an array containing an invalid type
 	if (unlikely (SI_TYPE(val) == T_ARRAY)) {
 		SIType invalid_properties = ~SI_VALID_PROPERTY_VALUE ;
 		bool res = SIArray_ContainsType (val, invalid_properties) ;
 		if (res) {
-			// validation failed
-			SIValue_Free (val) ;
 			Error_InvalidPropertyValue () ;
-			ErrorCtx_RaiseRuntimeException (NULL) ;
 			return false ;
 		}
 	}
@@ -403,8 +402,8 @@ void ConvertPropertyMap
 		}
 
 		if (SI_TYPE (v) != T_MAP) {
-			SIValue_Free (v) ;
 			Error_SITypeMismatch (v, T_MAP) ;
+			SIValue_Free (v) ;
 			ErrorCtx_RaiseRuntimeException (NULL) ;
 			return ;
 		}
@@ -426,8 +425,10 @@ void ConvertPropertyMap
 
 			bool skip = false ;
 			if (!_ValidatePropValue (val, fail_on_null, &skip)) {
+				// release everything, then raise after cleanup
 				for (uint j = 0; j < attrs_count; j++) SIValue_Free (vals[j]) ;
 				SIValue_Free (v) ;
+				ErrorCtx_RaiseRuntimeException (NULL) ;
 				return ;
 			}
 			if (skip) continue ;
@@ -461,10 +462,15 @@ void ConvertPropertyMap
 
 		bool skip = false ;
 		if (!_ValidatePropValue (val, fail_on_null, &skip)) {
+			SIValue_Free (val) ;
 			for (int j = 0; j < attrs_count; j++) SIValue_Free (vals[j]) ;
+			ErrorCtx_RaiseRuntimeException (NULL) ;
 			return ;
 		}
-		if (skip) continue ;
+		if (skip) {
+			SIValue_Free (val) ;
+			continue ;
+		}
 
 		// set the converted attribute
 		ids [attrs_count] = map->attr_ids[i] ;
